@@ -1,7 +1,9 @@
 #include "raylib.h"
 #include <math.h>
+#include <stdio.h>
 #include "skill_manager.h"
 #include "raymath.h"
+#include "sword_rain_skill.h"
 
 typedef struct {
     Vector2 position;
@@ -118,9 +120,10 @@ int main(void) {
 
     // Khởi tạo hệ thống quản lý chiêu thức
     InitSkillManager(screenWidth, screenHeight);
+    InitSwordRainSkill(); // Đảm bảo chiêu Mưa Kiếm được liên kết và đăng ký
 
     Vector2 characterPos = { 130, 350 };
-    SkillType activeSkill = SKILL_WATER; // Mặc định vào game là hệ Thủy
+    int activeSkillIndex = 0; // Chỉ mục chiêu thức đang kích hoạt (bắt đầu từ hệ Thủy)
 
     // Khai báo biến vị trí Enemy và tỉ lệ dao động
     Vector2 enemyPos = { 900, 350 };
@@ -189,12 +192,13 @@ int main(void) {
     }
     Rectangle rectPortalToggle = { 870, 220, 200, 35 };
 
-    // Khung UI của các nút bấm (cách nhau 170px)
-    Rectangle btnWater = { 20, 20, 150, 45 };
-    Rectangle btnMetal = { 190, 20, 150, 45 };
-    Rectangle btnFire  = { 360, 20, 150, 45 }; 
-    Rectangle btnWood  = { 530, 20, 150, 45 }; // Khung nút hệ Mộc
-    Rectangle btnEarth = { 700, 20, 150, 45 }; // Khung nút hệ Thổ
+    // Khung UI của các nút bấm được tính toán động dựa trên Registry
+    Rectangle skillButtons[32];
+    int skillCount = GetRegisteredSkillCount();
+    if (skillCount > 32) skillCount = 32;
+    for (int i = 0; i < skillCount; i++) {
+        skillButtons[i] = (Rectangle){ 20 + i * 135, 20, 125, 45 };
+    }
 
     SetTargetFPS(60);
 
@@ -240,11 +244,7 @@ int main(void) {
             characterPos.y += dashDir.y * dashSpeed * dt;
 
             // Sinh hạt dư ảnh lướt theo nguyên tố hiện tại, lấy theo chiều cao Z
-            Color trailColor = SKYBLUE;
-            if (activeSkill == SKILL_METAL) trailColor = GetColor(0xFFD700FF);
-            else if (activeSkill == SKILL_FIRE) trailColor = GetColor(0xFF5500FF);
-            else if (activeSkill == SKILL_WOOD) trailColor = GetColor(0x22AA33FF);
-            else if (activeSkill == SKILL_ELECTRIC) trailColor = GetColor(0xBA55D3FF);
+            Color trailColor = GetRegisteredSkillColor(activeSkillIndex);
 
             SpawnDashParticle((Vector2){ characterPos.x, characterPos.y - charZ }, trailColor, 12.0f, 0.35f);
 
@@ -371,11 +371,16 @@ int main(void) {
         }
 
         // 1. KIỂM TRA TƯƠNG TÁC UI
-        bool hoverWater = CheckCollisionPointRec(mousePos, btnWater);
-        bool hoverMetal = CheckCollisionPointRec(mousePos, btnMetal);
-        bool hoverFire  = CheckCollisionPointRec(mousePos, btnFire);
-        bool hoverWood  = CheckCollisionPointRec(mousePos, btnWood); // Hover hệ Mộc
-        bool hoverEarth = CheckCollisionPointRec(mousePos, btnEarth); // Hover hệ Thổ
+        int skillCount = GetRegisteredSkillCount();
+        if (skillCount > 32) skillCount = 32;
+        
+        int hoverSkillIndex = -1;
+        for (int i = 0; i < skillCount; i++) {
+            if (CheckCollisionPointRec(mousePos, skillButtons[i])) {
+                hoverSkillIndex = i;
+                break;
+            }
+        }
         bool clickedOnUI = false;
 
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
@@ -417,24 +422,8 @@ int main(void) {
             }
 
             // Nếu bấm trúng nút UI thì đổi chiêu & đánh dấu là đã click UI
-            if (hoverWater) {
-                activeSkill = SKILL_WATER;
-                clickedOnUI = true;
-            } 
-            else if (hoverMetal) {
-                activeSkill = SKILL_METAL;
-                clickedOnUI = true;
-            }
-            else if (hoverFire) {
-                activeSkill = SKILL_FIRE;
-                clickedOnUI = true;
-            }
-            else if (hoverWood) {
-                activeSkill = SKILL_WOOD;
-                clickedOnUI = true;
-            }
-            else if (hoverEarth) {
-                activeSkill = SKILL_ELECTRIC;
+            if (hoverSkillIndex != -1) {
+                activeSkillIndex = hoverSkillIndex;
                 clickedOnUI = true;
             }
 
@@ -456,7 +445,7 @@ int main(void) {
                 // Bắn từ tọa độ chân đất của nhân vật, truyền độ cao nhảy charZ vào params
                 Vector2 startCastPos = characterPos; // Chân đất của nhân vật
                 params.casterZ = charZ;
-                CastSkill(activeSkill, startCastPos, target, params);
+                CastSkill(activeSkillIndex, startCastPos, target, params);
             }
         }
 
@@ -548,11 +537,7 @@ int main(void) {
 
                         // Đổi màu viền nếu đang lướt
                         if (isDashing) {
-                            if (activeSkill == SKILL_METAL) pOutline = GetColor(0xFFD700FF);
-                            else if (activeSkill == SKILL_FIRE) pOutline = RED;
-                            else if (activeSkill == SKILL_WOOD) pOutline = GREEN;
-                            else if (activeSkill == SKILL_ELECTRIC) pOutline = GOLD;
-                            else pOutline = SKYBLUE;
+                            pOutline = GetRegisteredSkillColor(activeSkillIndex);
                         }
 
                         float aimAngle = atan2f(mousePos.y - (characterPos.y - charZ - 25.0f), mousePos.x - characterPos.x);
@@ -592,36 +577,31 @@ int main(void) {
 
 
             // --- VẼ GIAO DIỆN CHỌN SKILL (UI) ---
-            
-            // Vẽ nút Hệ Thủy
-            Color colorWater = activeSkill == SKILL_WATER ? BLUE : (hoverWater ? SKYBLUE : DARKBLUE);
-            DrawRectangleRounded(btnWater, 0.3f, 10, colorWater);
-            DrawRectangleRoundedLines(btnWater, 0.3f, 10, WHITE);            
-            DrawText("WATER SKILL", (int)btnWater.x + 20, (int)btnWater.y + 15, 15, WHITE);
-
-            // Vẽ nút Hệ Kim
-            Color colorMetal = activeSkill == SKILL_METAL ? ORANGE : (hoverMetal ? GOLD : DARKGRAY);
-            DrawRectangleRounded(btnMetal, 0.3f, 10, colorMetal);
-            DrawRectangleRoundedLines(btnMetal, 0.3f, 10, WHITE);
-            DrawText("METAL SKILL", (int)btnMetal.x + 22, (int)btnMetal.y + 15, 15, WHITE);
-            
-            // Vẽ nút Hệ Hỏa
-            Color colorFire = activeSkill == SKILL_FIRE ? RED : (hoverFire ? ORANGE : MAROON);
-            DrawRectangleRounded(btnFire, 0.3f, 10, colorFire);
-            DrawRectangleRoundedLines(btnFire, 0.3f, 10, WHITE);
-            DrawText("FIRE SKILL", (int)btnFire.x + 28, (int)btnFire.y + 15, 15, WHITE);
-
-            // Vẽ nút Hệ Mộc
-            Color colorWood = activeSkill == SKILL_WOOD ? GetColor(0x118822FF) : (hoverWood ? GetColor(0x22AA33FF) : GetColor(0x054410FF));
-            DrawRectangleRounded(btnWood, 0.3f, 10, colorWood);
-            DrawRectangleRoundedLines(btnWood, 0.3f, 10, WHITE);
-            DrawText("WOOD SKILL", (int)btnWood.x + 28, (int)btnWood.y + 15, 15, WHITE);
-
-            // Vẽ nút Hệ Thổ (dùng chiêu Lôi/Electric dưới nền)
-            Color colorEarth = activeSkill == SKILL_ELECTRIC ? GetColor(0x8B5A2BFF) : (hoverEarth ? GetColor(0xCD853FFF) : GetColor(0x5C3A21FF));
-            DrawRectangleRounded(btnEarth, 0.3f, 10, colorEarth);
-            DrawRectangleRoundedLines(btnEarth, 0.3f, 10, WHITE);
-            DrawText("EARTH SKILL", (int)btnEarth.x + 28, (int)btnEarth.y + 15, 15, WHITE);
+            for (int i = 0; i < skillCount; i++) {
+                bool isSelected = (activeSkillIndex == i);
+                bool isHover = (hoverSkillIndex == i);
+                Color baseColor = GetRegisteredSkillColor(i);
+                
+                Color btnColor;
+                if (isSelected) {
+                    btnColor = baseColor;
+                } else if (isHover) {
+                    btnColor = ColorAlpha(baseColor, 0.6f);
+                } else {
+                    btnColor = ColorAlpha(baseColor, 0.3f);
+                }
+                
+                DrawRectangleRounded(skillButtons[i], 0.3f, 10, btnColor);
+                DrawRectangleRoundedLines(skillButtons[i], 0.3f, 10, WHITE);
+                
+                const char* skillName = GetRegisteredSkillName(i);
+                char btnText[64];
+                snprintf(btnText, sizeof(btnText), "%s SKILL", skillName);
+                
+                int fontSize = 12;
+                int textWidth = MeasureText(btnText, fontSize);
+                DrawText(btnText, (int)(skillButtons[i].x + (skillButtons[i].width - textWidth) / 2), (int)(skillButtons[i].y + 15), fontSize, WHITE);
+            }
             
             // Vẽ bảng chọn số lượng (Quantity Selector)
             DrawText("Quantity:", 770, 30, 16, LIGHTGRAY);
