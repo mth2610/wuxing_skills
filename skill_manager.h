@@ -11,12 +11,27 @@ typedef enum {
     SKILL_ELECTRIC
 } SkillType;
 
+typedef enum {
+    CAST_ANCHOR_CASTER = 0,
+    CAST_ANCHOR_TARGET
+} CastAnchorType;
+
+typedef enum {
+    CAST_PATH_PROJECTILE = 0,
+    CAST_PATH_UNDERGROUND,
+    CAST_PATH_SKY
+} CastPathType;
+
 typedef struct {
     int level;
     int milestone;
     int quantity;
     float sizeScale;
     float damage;
+    CastAnchorType anchorType;
+    CastPathType pathType;
+    float casterZ;
+    bool showPortal;
 } SkillParams;
 
 void InitSkillManager(int screenWidth, int screenHeight);

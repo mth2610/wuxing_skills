@@ -395,6 +395,17 @@ void UpdateMetalSkill(float dt) {
 }
 
 void DrawMetalSkill(void) {
+    bool active = false;
+    for (int i = 0; i < MAX_EMITTERS; i++) {
+        if (emitters[i].active) { active = true; break; }
+    }
+    if (!active) {
+        for (int i = 0; i < MAX_METAL_PARTICLES; i++) {
+            if (metalPool[i].active) { active = true; break; }
+        }
+    }
+    if (!active) return;
+
     float time = (float)GetTime();
 
     BeginTextureMode(metalCanvas);

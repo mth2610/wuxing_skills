@@ -60,6 +60,57 @@ static void DrawCylinder25D(Vector2 basePos, float radius, float height, Color b
     DrawEllipseLines((int)basePos.x, (int)basePos.y, (int)radius, (int)(radius * 0.4f), outlineColor);
 }
 
+static void DrawCharacter25D(Vector2 groundPos, float charZ, float radius, Color skinCol, Color clothesCol, Color outlineCol, bool isPlayer, float aimAngle) {
+    // Tọa độ vẽ thân/đầu (ở trên không nếu charZ > 0)
+    Vector2 visualPos = { groundPos.x, groundPos.y - charZ };
+    
+    // 1. Vẽ Chân (hai chân bằng hình elip nhỏ, di chuyển theo visualPos)
+    Vector2 leftFoot = { visualPos.x - 8.0f, visualPos.y };
+    Vector2 rightFoot = { visualPos.x + 8.0f, visualPos.y };
+    DrawEllipse((int)leftFoot.x, (int)leftFoot.y, 5, 3, outlineCol);
+    DrawEllipse((int)rightFoot.x, (int)rightFoot.y, 5, 3, outlineCol);
+
+    // 2. Vẽ Thân (áo quần)
+    Rectangle bodyRect = { visualPos.x - 15, visualPos.y - 38, 30, 36 };
+    DrawRectangleRounded(bodyRect, 0.4f, 4, clothesCol);
+    DrawRectangleRoundedLines(bodyRect, 0.4f, 4, outlineCol);
+
+    // 3. Vẽ Đầu
+    Vector2 headPos = { visualPos.x, visualPos.y - 48 };
+    DrawCircleV(headPos, 10.0f, skinCol);
+    DrawCircleLines((int)headPos.x, (int)headPos.y, 10.0f, outlineCol);
+
+    // 4. Vẽ Tay (Arms/Hands)
+    if (isPlayer) {
+        // Tay cầm chiêu thức chỉ hướng xoay theo aimAngle
+        Vector2 armOrigin = { visualPos.x, visualPos.y - 25.0f }; // Khớp vai
+        Vector2 handPos = {
+            armOrigin.x + cosf(aimAngle) * 22.0f,
+            armOrigin.y + sinf(aimAngle) * 22.0f
+        };
+        // Vẽ cánh tay bằng nét dày, bàn tay bằng hình tròn
+        DrawLineEx(armOrigin, handPos, 4.0f, clothesCol);
+        DrawCircleV(handPos, 5.0f, skinCol);
+        DrawCircleLines((int)handPos.x, (int)handPos.y, 5.0f, outlineCol);
+        
+        // Tay còn lại thả tự nhiên bên sườn
+        Vector2 restHand = { visualPos.x - 18.0f, visualPos.y - 20.0f };
+        DrawLineEx((Vector2){ visualPos.x - 12.0f, visualPos.y - 30.0f }, restHand, 3.5f, clothesCol);
+        DrawCircleV(restHand, 4.5f, skinCol);
+        DrawCircleLines((int)restHand.x, (int)restHand.y, 4.5f, outlineCol);
+    } else {
+        // Enemy buông thõng 2 tay bên sườn
+        Vector2 leftHand = { visualPos.x - 18.0f, visualPos.y - 20.0f };
+        Vector2 rightHand = { visualPos.x + 18.0f, visualPos.y - 20.0f };
+        DrawLineEx((Vector2){ visualPos.x - 12.0f, visualPos.y - 30.0f }, leftHand, 3.5f, clothesCol);
+        DrawLineEx((Vector2){ visualPos.x + 12.0f, visualPos.y - 30.0f }, rightHand, 3.5f, clothesCol);
+        DrawCircleV(leftHand, 4.5f, skinCol);
+        DrawCircleV(rightHand, 4.5f, skinCol);
+        DrawCircleLines((int)leftHand.x, (int)leftHand.y, 4.5f, outlineCol);
+        DrawCircleLines((int)rightHand.x, (int)rightHand.y, 4.5f, outlineCol);
+    }
+}
+
 int main(void) {
     const int screenWidth = 1200;
     const int screenHeight = 700;
@@ -122,6 +173,21 @@ int main(void) {
     for (int i = 0; i < 3; i++) {
         rectSize[i] = (Rectangle){ 870 + i * 100, 70, 90, 35 };
     }
+
+    // Khung UI chọn Anchor và Path ở góc trên bên phải
+    CastAnchorType selectedAnchor = CAST_ANCHOR_TARGET;
+    CastPathType selectedPath = CAST_PATH_PROJECTILE;
+    bool showPortals = true;
+
+    Rectangle rectAnchor[2];
+    for (int i = 0; i < 2; i++) {
+        rectAnchor[i] = (Rectangle){ 870 + i * 150, 120, 140, 35 };
+    }
+    Rectangle rectPath[3];
+    for (int i = 0; i < 3; i++) {
+        rectPath[i] = (Rectangle){ 870 + i * 100, 170, 95, 35 };
+    }
+    Rectangle rectPortalToggle = { 870, 220, 200, 35 };
 
     // Khung UI của các nút bấm (cách nhau 170px)
     Rectangle btnWater = { 20, 20, 150, 45 };
@@ -329,6 +395,27 @@ int main(void) {
                 }
             }
 
+            // Kiểm tra click vào nút chọn nguồn xuất chiêu (Anchor)
+            for (int i = 0; i < 2; i++) {
+                if (CheckCollisionPointRec(mousePos, rectAnchor[i])) {
+                    selectedAnchor = (CastAnchorType)i;
+                    clickedOnUI = true;
+                }
+            }
+            // Kiểm tra click vào nút chọn đường đi (Path)
+            for (int i = 0; i < 3; i++) {
+                if (CheckCollisionPointRec(mousePos, rectPath[i])) {
+                    selectedPath = (CastPathType)i;
+                    clickedOnUI = true;
+                }
+            }
+
+            // Kiểm tra click vào nút chọn bật/tắt Portals
+            if (CheckCollisionPointRec(mousePos, rectPortalToggle)) {
+                showPortals = !showPortals;
+                clickedOnUI = true;
+            }
+
             // Nếu bấm trúng nút UI thì đổi chiêu & đánh dấu là đã click UI
             if (hoverWater) {
                 activeSkill = SKILL_WATER;
@@ -362,9 +449,13 @@ int main(void) {
                 params.sizeScale = selectedSize;
                 params.damage = 100.0f;
                 params.quantity = selectedQty;
+                params.anchorType = selectedAnchor;
+                params.pathType = selectedPath;
+                params.showPortal = showPortals;
 
-                // Nếu đang nhảy, chiêu thức được bắn từ tọa độ trên không của nhân vật
-                Vector2 startCastPos = { characterPos.x, characterPos.y - charZ };
+                // Bắn từ tọa độ chân đất của nhân vật, truyền độ cao nhảy charZ vào params
+                Vector2 startCastPos = characterPos; // Chân đất của nhân vật
+                params.casterZ = charZ;
                 CastSkill(activeSkill, startCastPos, target, params);
             }
         }
@@ -395,13 +486,28 @@ int main(void) {
                             pillars[i].radius * 1.1f, pillars[i].radius * 0.4f, ColorAlpha(BLACK, 0.5f));
             }
 
-            // Vẽ bóng đổ của Enemy dưới mặt đất
-            DrawEllipse((int)enemyPos.x, (int)enemyPos.y + 28, 30, 12, ColorAlpha(BLACK, 0.45f));
+            // Enemy luôn ở dưới đất không lơ lửng bồng bềnh nữa
+            float enemyZ = 0.0f;
 
-            // Vẽ bóng đổ của Player dưới mặt đất (Bóng sẽ nhỏ và mờ đi khi nhảy cao)
+            // Vẽ bóng đổ của Enemy dưới mặt đất
+            DrawEllipse((int)enemyPos.x, (int)enemyPos.y, 36, 14, ColorAlpha(BLACK, 0.5f));
+
+            // Vẽ bóng đổ của Player dưới mặt đất (co giãn theo độ cao nhảy charZ, không bị lệch khe hở)
             float shadowScale = 1.0f - (charZ / 350.0f);
             if (shadowScale < 0.2f) shadowScale = 0.2f;
-            DrawEllipse((int)characterPos.x, (int)characterPos.y + 24, 26 * shadowScale, 10 * shadowScale, ColorAlpha(BLACK, 0.5f * shadowScale));
+            DrawEllipse((int)characterPos.x, (int)characterPos.y, (int)(32.0f * shadowScale), (int)(12.8f * shadowScale), ColorAlpha(BLACK, 0.5f * shadowScale));
+
+            // Vẽ đường dóng thẳng đứng biểu diễn độ cao (Height Lines) khi đang ở trên không
+            if (charZ > 5.0f) {
+                DrawLine((int)characterPos.x, (int)characterPos.y, (int)characterPos.x, (int)(characterPos.y - charZ), ColorAlpha(GRAY, 0.4f));
+            }
+            if (enemyZ > 5.0f) {
+                DrawLine((int)enemyPos.x, (int)enemyPos.y, (int)enemyPos.x, (int)(enemyPos.y - enemyZ), ColorAlpha(GRAY, 0.4f));
+            }
+
+            // Vẽ vòng định vị mặt đất (Ground Rings / Feet indicators) luôn ghim chặt dưới sàn
+            DrawEllipseLines((int)characterPos.x, (int)characterPos.y, 25, 10, ColorAlpha(LIME, 0.5f));
+            DrawEllipseLines((int)enemyPos.x, (int)enemyPos.y, 30, 12, ColorAlpha(RED, 0.5f));
 
             // Vẽ dư ảnh hạt lướt (dash particles)
             for (int i = 0; i < MAX_DASH_PARTICLES; i++) {
@@ -438,10 +544,6 @@ int main(void) {
             for (int i = 0; i < 5; i++) {
                 switch (drawQueue[i].type) {
                     case ENTITY_PLAYER: {
-                        // Vẽ hình trụ nhân vật
-                        Vector2 charVisualPos = { characterPos.x, characterPos.y - charZ };
-                        Color pBase = GetColor(0x5A5A5AFF);
-                        Color pTop = GetColor(0x808080FF);
                         Color pOutline = GetColor(0xCCCCCCFF);
 
                         // Đổi màu viền nếu đang lướt
@@ -453,41 +555,28 @@ int main(void) {
                             else pOutline = SKYBLUE;
                         }
 
-                        DrawCylinder25D(charVisualPos, 25.0f, 50.0f, pBase, pTop, pOutline);
-
-                        // Vẽ hướng ngắm bắn từ tâm hình trụ (ở giữa độ cao)
-                        Vector2 aimOrigin = { charVisualPos.x, charVisualPos.y - 25.0f };
-                        Vector2 aimDir = Vector2Normalize(Vector2Subtract(mousePos, aimOrigin));
-                        DrawCircleV(Vector2Add(aimOrigin, Vector2Scale(aimDir, 22)), 4, MAROON);
+                        float aimAngle = atan2f(mousePos.y - (characterPos.y - charZ - 25.0f), mousePos.x - characterPos.x);
+                        DrawCharacter25D(characterPos, charZ, 25.0f, GetColor(0xFFD39BFF), GetColor(0x3B5998FF), pOutline, true, aimAngle);
                         break;
                     }
                     case ENTITY_ENEMY: {
-                        // Xác định màu sắc hình trụ Enemy dựa theo hiệu ứng khống chế
-                        Color eBase = GetColor(0x8B2500FF);
-                        Color eTop = GetColor(0xCD3700FF);
+                        Color eClothes = GetColor(0x8B2500FF);
                         Color eOutline = GetColor(0xFF5500FF);
 
                         if (IsEnemySlowed()) {
-                            eBase = GetColor(0x1B4F72FF);
-                            eTop = GetColor(0x2874A6FF);
+                            eClothes = GetColor(0x1B4F72FF);
                             eOutline = SKYBLUE;
                         } else if (IsEnemyBurning()) {
-                            eBase = RED;
-                            eTop = ORANGE;
+                            eClothes = RED;
                             eOutline = YELLOW;
                         }
 
-                        // Tính độ cao bồng bềnh nếu ở chế độ đứng yên
-                        float enemyZ = 0.0f;
-                        if (enemyMode == ENEMY_STATIC) {
-                            enemyZ = (sinf(time * (IsEnemySlowed() ? 0.8f : 2.5f)) * 15.0f + 15.0f) * enemyOscillationScale;
-                        }
+                        float enemyZ = 0.0f; // Đứng trên mặt phẳng đất
 
-                        Vector2 enemyVisualPos = { enemyPos.x, enemyPos.y - enemyZ };
-                        DrawCylinder25D(enemyVisualPos, 30.0f, 60.0f, eBase, eTop, eOutline);
+                        DrawCharacter25D(enemyPos, enemyZ, 30.0f, GetColor(0xFFC0CBFF), eClothes, eOutline, false, 0.0f);
 
-                        // Vẽ chữ ENEMY trên đầu hình trụ
-                        DrawText("ENEMY", (int)enemyVisualPos.x - 22, (int)(enemyVisualPos.y - 75), 12, WHITE);
+                        // Vẽ chữ ENEMY trên đầu nhân vật
+                        DrawText("ENEMY", (int)enemyPos.x - 22, (int)(enemyPos.y - 65), 12, WHITE);
                         break;
                     }
                     case ENTITY_PILLAR_0:
@@ -557,14 +646,54 @@ int main(void) {
                 DrawText(TextFormat("%.1fx", sizes[i]), (int)rectSize[i].x + 25, (int)rectSize[i].y + 10, 15, WHITE);
             }
 
+            // Vẽ bảng chọn Anchor (Caster / Target)
+            DrawText("Anchor:", 770, 130, 16, LIGHTGRAY);
+            const char* anchorNames[2] = { "CASTER", "TARGET" };
+            for (int i = 0; i < 2; i++) {
+                bool isSelected = (selectedAnchor == (CastAnchorType)i);
+                bool isHover = CheckCollisionPointRec(mousePos, rectAnchor[i]);
+                Color btnCol = isSelected ? RED : (isHover ? MAROON : DARKGRAY);
+                DrawRectangleRounded(rectAnchor[i], 0.2f, 10, btnCol);
+                DrawRectangleRoundedLines(rectAnchor[i], 0.2f, 10, WHITE);
+                DrawText(anchorNames[i], (int)rectAnchor[i].x + 35, (int)rectAnchor[i].y + 10, 14, WHITE);
+            }
+
+            // Vẽ bảng chọn Path (Projectile / Ground / Sky)
+            DrawText("Path:", 770, 180, 16, LIGHTGRAY);
+            const char* pathNames[3] = { "PROJECTILE", "GROUND", "SKY" };
+            for (int i = 0; i < 3; i++) {
+                bool isSelected = (selectedPath == (CastPathType)i);
+                bool isHover = CheckCollisionPointRec(mousePos, rectPath[i]);
+                Color btnCol = isSelected ? SKYBLUE : (isHover ? DARKBLUE : DARKGRAY);
+                DrawRectangleRounded(rectPath[i], 0.2f, 10, btnCol);
+                DrawRectangleRoundedLines(rectPath[i], 0.2f, 10, WHITE);
+                int textOffset = (i == 0) ? 10 : ((i == 1) ? 22 : 32);
+                DrawText(pathNames[i], (int)rectPath[i].x + textOffset, (int)rectPath[i].y + 10, 13, WHITE);
+            }
+
+            // Vẽ nút bật/tắt Cổng Phép Thuật (Portals Toggle)
+            DrawText("Effects:", 770, 230, 16, LIGHTGRAY);
+            bool hoverToggle = CheckCollisionPointRec(mousePos, rectPortalToggle);
+            Color toggleCol = showPortals ? (hoverToggle ? GetColor(0x22AA33FF) : GetColor(0x118822FF)) : 
+                                            (hoverToggle ? MAROON : DARKGRAY);
+            DrawRectangleRounded(rectPortalToggle, 0.2f, 10, toggleCol);
+            DrawRectangleRoundedLines(rectPortalToggle, 0.2f, 10, WHITE);
+            DrawText(showPortals ? "PORTALS: ENABLED" : "PORTALS: DISABLED", (int)rectPortalToggle.x + 20, (int)rectPortalToggle.y + 10, 14, WHITE);
+
             // Text hướng dẫn
             const char* modeStr = "STATIC (STATIONARY)";
             if (enemyMode == ENEMY_CHASE) modeStr = "CHASING PLAYER";
             else if (enemyMode == ENEMY_PATROL) modeStr = "CIRCULAR PATROL";
 
+            const char* anchorStr = (selectedAnchor == CAST_ANCHOR_CASTER) ? "CASTER" : "TARGET";
+            const char* pathStr = (selectedPath == CAST_PATH_PROJECTILE) ? "PROJECTILE" : 
+                                  ((selectedPath == CAST_PATH_UNDERGROUND) ? "GROUND" : "SKY");
+            const char* portalStr = showPortals ? "ON" : "OFF";
+
             DrawText("Controls: WASD/Arrows to Move | Space to Jump | Left Shift to Dash (leaves elemental trail)", 20, 80, 16, LIGHTGRAY);
             DrawText("Click anywhere to shoot (supports mid-air casting) | Press P to cycle Enemy Mode", 20, 105, 16, LIGHTGRAY);
-            DrawText(TextFormat("Params: Qty = %d | Size = %.1fx | Enemy Mode = %s", selectedQty, selectedSize, modeStr), 20, 130, 16, GetColor(0x55DD66FF));
+            DrawText(TextFormat("Params: Qty = %d | Size = %.1fx | Anchor = %s | Path = %s | Portals = %s | Enemy = %s", 
+                                selectedQty, selectedSize, anchorStr, pathStr, portalStr, modeStr), 20, 130, 16, GetColor(0x55DD66FF));
             DrawText("Selected element affects skills & dash trail visuals (character/enemy/pillars have shadows)", 20, 155, 16, GetColor(0xBA55D3FF));
 
         EndDrawing();

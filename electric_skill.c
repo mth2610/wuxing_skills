@@ -375,6 +375,17 @@ void UpdateElectricSkill(float dt) {
 }
 
 void DrawElectricSkill(void) {
+    bool active = false;
+    for (int i = 0; i < MAX_EMITTERS; i++) {
+        if (emitters[i].active) { active = true; break; }
+    }
+    if (!active) {
+        for (int i = 0; i < MAX_PARTICLES; i++) {
+            if (particlePool[i].active) { active = true; break; }
+        }
+    }
+    if (!active) return;
+
     float time = GetTime();
 
     // PASS 1: Draw density fields onto render texture canvas

@@ -678,6 +678,17 @@ static float GetWoodThickness(float t, float maxThick, int branchCount) {
 }
 
 void DrawWoodSkill(void) {
+  bool active = false;
+  for (int i = 0; i < MAX_EMITTERS; i++) {
+    if (emitters[i].active) { active = true; break; }
+  }
+  if (!active) {
+    for (int i = 0; i < MAX_WOOD_PARTICLES; i++) {
+      if (woodPool[i].active) { active = true; break; }
+    }
+  }
+  if (!active) return;
+
   float time = GetTime();
 
   BeginTextureMode(canvasTexture);
