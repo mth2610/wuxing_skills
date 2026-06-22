@@ -30,9 +30,26 @@ FetchContent_MakeAvailable(raylib)
 # -----------------------------------------------------------------
 
 # Khai báo mục tiêu build ứng dụng chạy trực tiếp trên máy tính
-add_executable(wuxing main.c fluid_skill.c metal_skill.c fire_skill.c wood_skill.c electric_skill.c wind_skill.c skill_manager.c sword_rain_skill.c ui_panel.c sandbox_core.c)
+add_executable(wuxing 
+    main.c 
+    fluid_skill.c 
+    metal_skill.c 
+    fire_skill.c 
+    wood_skill.c 
+    electric_skill.c 
+    wind_skill.c 
+    skill_manager.c 
+    sword_rain_skill.c 
+    ui_panel.c 
+    sandbox_core.c 
+    ribbon_strip.c
+    # --- Các file Core Systems mới được thêm vào ---
+    utils_math.c
+    path_spline.c
+    particle_system.c
+)
 
-# Tự động copy file Shader vào thư mục build để game không bị lỗi load shader
+# Tự động copy file Shader và Texture vào thư mục build để game không bị lỗi load
 configure_file(fluid.fs ${CMAKE_CURRENT_BINARY_DIR}/fluid.fs COPYONLY)
 configure_file(fire.fs ${CMAKE_CURRENT_BINARY_DIR}/fire.fs COPYONLY)
 configure_file(metal.fs ${CMAKE_CURRENT_BINARY_DIR}/metal.fs COPYONLY)
@@ -41,6 +58,8 @@ configure_file(electric.fs ${CMAKE_CURRENT_BINARY_DIR}/electric.fs COPYONLY)
 configure_file(wind.fs ${CMAKE_CURRENT_BINARY_DIR}/wind.fs COPYONLY)
 configure_file(taiji.fs ${CMAKE_CURRENT_BINARY_DIR}/taiji.fs COPYONLY)
 
+# --- Copy thêm Texture đầu rồng của chiêu Lửa ---
+configure_file(dragon_head.png ${CMAKE_CURRENT_BINARY_DIR}/dragon_head.png COPYONLY)
 
 
 # Liên kết tĩnh với thư viện Raylib vừa tải về

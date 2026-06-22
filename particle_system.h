@@ -1,0 +1,36 @@
+#ifndef PARTICLE_SYSTEM_H
+#define PARTICLE_SYSTEM_H
+
+#include "raylib.h"
+#include <stdbool.h>
+
+#define MAX_GLOBAL_PARTICLES 4000
+
+// Định nghĩa các cờ bật/tắt tính năng vật lý bằng Bitmask
+typedef enum {
+  P_PHYSICS_NONE = 0,
+  P_PHYSICS_DRAG = 1 << 0,      // 0001
+  P_PHYSICS_FORCE = 1 << 1,     // 0010
+  P_PHYSICS_TURBULENCE = 1 << 2 // 0100
+} ParticlePhysicsFlags;
+
+typedef struct {
+  Vector3 position;
+  Vector3 velocity;
+  Vector3 force;
+  float drag;
+  float turbulence;
+  float radius;
+  float lifetime;
+  Color colorStart;
+  Color colorEnd;
+  unsigned int physicsFlags;
+} ParticleConfig;
+
+void InitParticleSystem(void);
+void SpawnParticle(ParticleConfig config);
+void UpdateParticles(float dt);
+void DrawParticles(Camera3D camera, Texture2D texture);
+bool IsParticleSystemActive(void);
+
+#endif // PARTICLE_SYSTEM_H
