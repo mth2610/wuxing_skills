@@ -27,8 +27,10 @@
 #define DRAGON_BODY_RIBBON_WIDTH_SCALE 2.0f
 
 #define EMITTER_PATH_MAX 360
-#define MAX_SAMPLED_SEGMENTS 96
-#define MAX_PATH_STEPS_PER_FRAME 80 // UPDATE: Giới hạn loop/frame
+#define MAX_SAMPLED_SEGMENTS                                                   \
+  256 // TỐI ƯU: Tăng kích thước tránh tràn mảng khi hạ spacing
+#define MAX_PATH_STEPS_PER_FRAME                                               \
+  80 // TỐI ƯU: Chặn đứng tình trạng stall CPU do lag đột biến
 
 extern Camera3D camera;
 
@@ -42,7 +44,7 @@ typedef struct {
   float sizeScale;
   Vector3 path[EMITTER_PATH_MAX];
   int pathCount;
-  int pathHead; // UPDATE: Ring buffer head
+  int pathHead; // ĐÃ CẬP NHẬT: Đầu Ring Buffer
   Vector3 sampledPath[MAX_SAMPLED_SEGMENTS];
   int sampledCount;
   float spawnAccum;
@@ -130,7 +132,7 @@ static void TriggerFireImpact(Vector3 pos, float sizeScale) {
     cfg.lifetime = Math_Mix(0.3f, 0.7f, Random01());
     cfg.colorStart = (Color){255, 200, 40, 230};
     cfg.colorEnd = (Color){200, 20, 0, 0};
-    cfg.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE; // Bổ sung cờ
+    cfg.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE;
     SpawnParticle(cfg);
   }
 
@@ -152,8 +154,7 @@ static void TriggerFireImpact(Vector3 pos, float sizeScale) {
     cfg.lifetime = Math_Mix(0.6f, 1.3f, Random01());
     cfg.colorStart = (Color){255, 120, 20, 200};
     cfg.colorEnd = (Color){120, 10, 0, 0};
-    cfg.physicsFlags =
-        P_PHYSICS_DRAG | P_PHYSICS_FORCE | P_PHYSICS_TURBULENCE; // Bổ sung cờ
+    cfg.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE | P_PHYSICS_TURBULENCE;
     SpawnParticle(cfg);
   }
 
@@ -200,7 +201,7 @@ void CastFireSkill(Vector3 startPos, Vector3 target, float twistPhase,
       emitters[i].twistPhase = twistPhase;
       emitters[i].sizeScale = sizeScale;
       emitters[i].pathCount = 1;
-      emitters[i].pathHead = 0; // UPDATE: Reset ring buffer head
+      emitters[i].pathHead = 0;
       emitters[i].path[0] = startPos;
       emitters[i].spawnAccum = 0.0f;
 
@@ -238,7 +239,7 @@ void CastFireSkill(Vector3 startPos, Vector3 target, float twistPhase,
         Math_Mix(CAST_BURST_LIFETIME_MIN, CAST_BURST_LIFETIME_MAX, Random01());
     cfg.colorStart = (Color){255, 90, 10, 200};
     cfg.colorEnd = (Color){0, 0, 0, 0};
-    cfg.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE; // Bổ sung cờ
+    cfg.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE;
     SpawnParticle(cfg);
   }
 }
@@ -254,7 +255,7 @@ void UpdateFireSkill(float dt) {
 
     float step = 0.008f;
     float currentProgress = emitters[e].headProgress;
-    int stepCount = 0; // UPDATE: Biến đếm chặn đứng lặp vô hạn
+    int stepCount = 0;
 
     while (currentProgress < targetProgress &&
            stepCount < MAX_PATH_STEPS_PER_FRAME) {
@@ -270,7 +271,6 @@ void UpdateFireSkill(float dt) {
               ? Vector3Distance(pos, emitters[e].path[emitters[e].pathHead])
               : Vector3Distance(pos, emitters[e].startPos);
       if (dist > 1.5f || emitters[e].pathCount == 0) {
-        // UPDATE: Khử memmove bằng Ring Buffer (Circular Buffer)
         emitters[e].pathHead =
             (emitters[e].pathHead - 1 + EMITTER_PATH_MAX) % EMITTER_PATH_MAX;
         emitters[e].path[emitters[e].pathHead] = pos;
@@ -278,8 +278,6 @@ void UpdateFireSkill(float dt) {
           emitters[e].pathCount++;
       }
     }
-    // Gán lại bằng currentProgress để tránh teleport nếu loop bị ngắt do max
-    // limit
     emitters[e].headProgress = currentProgress;
 
     if (emitters[e].headProgress >= FIRE_PROGRESS_MAX) {
@@ -287,13 +285,21 @@ void UpdateFireSkill(float dt) {
       continue;
     }
 
-    // UPDATE: Unwrap mảng Ring Buffer thành mảng tuyến tính tạm thời cho
-    // SamplePath
-    Vector3 linearPath[EMITTER_PATH_MAX];
-    for (int i = 0; i < emitters[e].pathCount; i++) {
-      linearPath[i] =
-          emitters[e].path[(emitters[e].pathHead + i) % EMITTER_PATH_MAX];
+    // TỐI ƯU SIÊU TỐC: Trích xuất Ring Buffer ra mảng phẳng bằng memcpy (Không
+    // thèm dùng vòng lặp for)
+    static Vector3 linearPath[EMITTER_PATH_MAX];
+    int head = emitters[e].pathHead;
+    int count = emitters[e].pathCount;
+
+    if (head + count <= EMITTER_PATH_MAX) {
+      memcpy(linearPath, &emitters[e].path[head], count * sizeof(Vector3));
+    } else {
+      int part1 = EMITTER_PATH_MAX - head;
+      int part2 = count - part1;
+      memcpy(linearPath, &emitters[e].path[head], part1 * sizeof(Vector3));
+      memcpy(&linearPath[part1], &emitters[e].path[0], part2 * sizeof(Vector3));
     }
+
     emitters[e].sampledCount =
         SamplePath(linearPath, emitters[e].pathCount, 4.5f,
                    emitters[e].sampledPath, MAX_SAMPLED_SEGMENTS);
@@ -353,8 +359,8 @@ void UpdateFireSkill(float dt) {
         cfgCore.lifetime = Math_Mix(0.2f, 0.4f, Random01());
         cfgCore.colorStart = (Color){255, 230, 100, 255};
         cfgCore.colorEnd = (Color){255, 60, 0, 0};
-        cfgCore.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE |
-                               P_PHYSICS_TURBULENCE; // Bổ sung cờ
+        cfgCore.physicsFlags =
+            P_PHYSICS_DRAG | P_PHYSICS_FORCE | P_PHYSICS_TURBULENCE;
         SpawnParticle(cfgCore);
 
         ParticleConfig cfgAura = {0};
@@ -369,26 +375,9 @@ void UpdateFireSkill(float dt) {
         cfgAura.lifetime = Math_Mix(0.35f, 0.65f, Random01());
         cfgAura.colorStart = (Color){255, 90, 15, 140};
         cfgAura.colorEnd = (Color){100, 5, 0, 0};
-        cfgAura.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE |
-                               P_PHYSICS_TURBULENCE; // Bổ sung cờ
+        cfgAura.physicsFlags =
+            P_PHYSICS_DRAG | P_PHYSICS_FORCE | P_PHYSICS_TURBULENCE;
         SpawnParticle(cfgAura);
-
-        // UPDATE: BỔ SUNG TẦNG KHÓI XÁM
-        ParticleConfig cfgSmoke = {0};
-        cfgSmoke.position = (Vector3){spawnPos.x + (Random01() - 0.5f) * 5.0f,
-                                      spawnPos.y + (Random01() - 0.5f) * 5.0f,
-                                      spawnPos.z + (Random01() - 0.5f) * 5.0f};
-        cfgSmoke.velocity = Vector3Scale(vel, 0.35f);
-        cfgSmoke.force = (Vector3){0, 80.0f, 0};
-        cfgSmoke.drag = 2.8f;
-        cfgSmoke.turbulence = 120.0f;
-        cfgSmoke.radius = rad * 8.0f;
-        cfgSmoke.lifetime = Math_Mix(0.5f, 0.9f, Random01());
-        cfgSmoke.colorStart = (Color){100, 60, 40, 60};
-        cfgSmoke.colorEnd = (Color){20, 10, 5, 0};
-        cfgSmoke.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE |
-                                P_PHYSICS_TURBULENCE; // Bổ sung cờ
-        SpawnParticle(cfgSmoke);
       }
     }
   }
@@ -404,7 +393,6 @@ void DrawFireSkill(void) {
     return;
 
   float time = GetTime();
-
   rlDisableDepthMask();
 
   SetShaderValue(fireShader, timeLoc, &time, SHADER_UNIFORM_FLOAT);
