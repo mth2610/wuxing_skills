@@ -4,6 +4,7 @@
 #include "fire_skill.h"
 #include "wood_skill.h"
 #include "electric_skill.h"
+#include "wind_skill.h"
 #include "raymath.h"
 #include <math.h>
 #include <stdio.h>
@@ -73,12 +74,14 @@ static void CastMetalWrapper(Vector3 startPos, Vector3 target, SkillParams param
 static void CastFireWrapper(Vector3 startPos, Vector3 target, SkillParams params);
 static void CastWoodWrapper(Vector3 startPos, Vector3 target, SkillParams params);
 static void CastElectricWrapper(Vector3 startPos, Vector3 target, SkillParams params);
+static void CastWindWrapper(Vector3 startPos, Vector3 target, SkillParams params);
 
 static void UpdateFluidSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius);
 static void UpdateMetalSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius);
 static void UpdateFireSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius);
 static void UpdateWoodSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius);
 static void UpdateElectricSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius);
+static void UpdateWindWrapper(float dt, Vector3 enemyPos, float enemyRadius);
 
 static void DrawCircleLines3D(Vector3 center, float radius, Color color) {
     const int segments = 24;
@@ -139,6 +142,7 @@ static void EnsureBuiltInRegistered(void) {
         RegisterSkill("FIRE", ORANGE, InitFireSkill, CastFireWrapper, UpdateFireSkillWrapper, DrawFireSkill, UnloadFireSkill);
         RegisterSkill("WOOD", LIME, InitWoodSkill, CastWoodWrapper, UpdateWoodSkillWrapper, DrawWoodSkill, UnloadWoodSkill);
         RegisterSkill("ELECTRIC", PURPLE, InitElectricSkill, CastElectricWrapper, UpdateElectricSkillWrapper, DrawElectricSkill, UnloadElectricSkill);
+        RegisterSkill("WIND", LIGHTGRAY, InitWindSkill, CastWindWrapper, UpdateWindWrapper, DrawWindSkill, UnloadWindSkill);
     }
 }
 
@@ -644,4 +648,12 @@ static void UpdateElectricSkillWrapper(float dt, Vector3 enemyPos, float enemyRa
         AddFloatingText(electricHitPos[i], "120", MAGENTA, 26.0f, 0.9f);
         AddFloatingText(electricHitPos[i], "SHOCK!", PURPLE, 19.0f, 0.9f);
     }
+}
+
+static void CastWindWrapper(Vector3 startPos, Vector3 target, SkillParams params) {
+    CastWindSkill(startPos, target, params.sizeScale);
+}
+
+static void UpdateWindWrapper(float dt, Vector3 enemyPos, float enemyRadius) {
+    UpdateWindSkill(dt);
 }

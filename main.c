@@ -5,6 +5,7 @@
 #include "skill_manager.h"
 #include "raymath.h"
 #include "sword_rain_skill.h"
+#include "wind_skill.h"
 
 // Biến camera toàn cục để chia sẻ với các chiêu thức
 Camera3D camera = { 0 };
@@ -35,6 +36,26 @@ static void SpawnDashParticle(Vector3 pos, Color color, float radius, float life
     }
 }
 
+// Hàm vẽ vòng tròn phẳng đục dưới đất 3D (trục X-Z)
+static void DrawCircleSolid3D(Vector3 center, float radius, Color color) {
+    int segments = 128;
+    rlDisableBackfaceCulling();
+    rlBegin(RL_TRIANGLES);
+    rlColor4ub(color.r, color.g, color.b, color.a);
+    for (int i = 0; i < segments; i++) {
+        float a1 = ((float)i / segments) * 2.0f * PI;
+        float a2 = ((float)(i + 1) / segments) * 2.0f * PI;
+        Vector3 p1 = { center.x + cosf(a1) * radius, center.y, center.z + sinf(a1) * radius };
+        Vector3 p2 = { center.x + cosf(a2) * radius, center.y, center.z + sinf(a2) * radius };
+        
+        rlVertex3f(center.x, center.y, center.z);
+        rlVertex3f(p2.x, p2.y, p2.z);
+        rlVertex3f(p1.x, p1.y, p1.z);
+    }
+    rlEnd();
+    rlEnableBackfaceCulling();
+}
+
 // Hàm vẽ vòng tròn phẳng dưới đất 3D (trục X-Z)
 static void DrawCircleOutline3D(Vector3 center, float radius, Color color) {
     int segments = 64;
@@ -51,26 +72,39 @@ static void DrawCircleOutline3D(Vector3 center, float radius, Color color) {
     }
 }
 
-// Vẽ bóng đổ phẳng hình elip/tròn dưới mặt đất Y = 0.01f (để tránh z-fighting)
-static void DrawShadow3D(Vector3 pos, float radius, float alpha) {
-    int segments = 16;
+// Vẽ bóng đổ phẳng hình elip/tròn dưới mặt đất Y = 0.05f (để tránh z-fighting)
+static void DrawShadow3D(Vector3 pos, float height, float radius, float alpha, Vector3 moonPos) {
+    // Project the center of the cylinder (pos.y + height * 0.5f) on the floor Y = 0.05f
+    Vector3 centerPoint = { pos.x, pos.y + height * 0.5f, pos.z };
+    Vector3 toObj = Vector3Subtract(centerPoint, moonPos);
+    
+    if (toObj.y >= -0.001f) return; // Prevent backward shadow or div by zero
+
+    // Intersection of line (moonPos + t * toObj) with floor plane Y = 0.05f:
+    float t = (0.05f - moonPos.y) / toObj.y;
+    Vector3 projectedCenter = Vector3Add(moonPos, Vector3Scale(toObj, t));
+    projectedCenter.y = 0.05f;
+
+    int segments = 32;
+    rlDisableBackfaceCulling();
     rlBegin(RL_TRIANGLES);
     Color color = ColorAlpha(BLACK, alpha);
     for (int i = 0; i < segments; i++) {
         float a1 = ((float)i / segments) * 2.0f * PI;
         float a2 = ((float)(i + 1) / segments) * 2.0f * PI;
-        Vector3 p0 = { pos.x, 0.01f, pos.z };
-        Vector3 p1 = { pos.x + cosf(a1) * radius, 0.01f, pos.z + sinf(a1) * radius };
-        Vector3 p2 = { pos.x + cosf(a2) * radius, 0.01f, pos.z + sinf(a2) * radius };
+        Vector3 p0 = projectedCenter;
+        Vector3 p1 = { projectedCenter.x + cosf(a1) * radius, 0.05f, projectedCenter.z + sinf(a1) * radius };
+        Vector3 p2 = { projectedCenter.x + cosf(a2) * radius, 0.05f, projectedCenter.z + sinf(a2) * radius };
         
         rlColor4ub(color.r, color.g, color.b, color.a);
         rlVertex3f(p0.x, p0.y, p0.z);
         rlColor4ub(color.r, color.g, color.b, color.a);
-        rlVertex3f(p1.x, p1.y, p1.z);
-        rlColor4ub(color.r, color.g, color.b, color.a);
         rlVertex3f(p2.x, p2.y, p2.z);
+        rlColor4ub(color.r, color.g, color.b, color.a);
+        rlVertex3f(p1.x, p1.y, p1.z);
     }
     rlEnd();
+    rlEnableBackfaceCulling();
 }
 
 // Hàm vẽ nhân vật 3D ghép từ các khối nguyên thủy
@@ -118,14 +152,72 @@ static void DrawCharacter3D(Vector3 position, float radius, Color skinCol, Color
     }
 }
 
+static void MyBeginMode3D(Camera3D camera)
+{
+    rlDrawRenderBatchActive();
+
+    rlMatrixMode(RL_PROJECTION);
+    rlPushMatrix();
+    rlLoadIdentity();
+
+    float aspect = (float)GetScreenWidth()/(float)GetScreenHeight();
+
+    if (camera.projection == CAMERA_PERSPECTIVE)
+    {
+        double top = 10.0*tan(camera.fovy*0.5*DEG2RAD);
+        double right = top*aspect;
+        rlFrustum(-right, right, -top, top, 10.0, 15000.0);
+    }
+    else if (camera.projection == CAMERA_ORTHOGRAPHIC)
+    {
+        double top = camera.fovy/2.0;
+        double right = top*aspect;
+        rlOrtho(-right, right, -top, top, 0.01, 15000.0);
+    }
+
+    rlMatrixMode(RL_MODELVIEW);
+    rlPushMatrix();
+    rlLoadIdentity();
+
+    Matrix matView = MatrixLookAt(camera.position, camera.target, camera.up);
+    rlMultMatrixf(MatrixToFloat(matView));
+
+    rlEnableDepthTest();
+}
+
+static void MyEndMode3D(void)
+{
+    rlDrawRenderBatchActive();
+
+    rlMatrixMode(RL_PROJECTION);
+    rlPopMatrix();
+
+    rlMatrixMode(RL_MODELVIEW);
+    rlPopMatrix();
+
+    rlLoadIdentity();
+
+    rlDisableDepthTest();
+}
+
 int main(void) {
     const int screenWidth = 1200;
     const int screenHeight = 700;
     InitWindow(screenWidth, screenHeight, "Avatar: True 3D Element Testbed");
 
+    // Tăng khoảng cách cắt xa (far clipping plane) để vẽ được map rộng 3600 và mặt trăng ở xa
+    rlSetClipPlanes(0.1f, 15000.0f);
+
     // Khởi tạo hệ thống quản lý chiêu thức
     InitSkillManager(screenWidth, screenHeight);
     InitSwordRainSkill(); 
+
+    // Cấu hình màn hình phụ và shader cho Thái Cực
+    Shader taijiShader = LoadShader(0, "taiji.fs");
+    RenderTexture2D screenTarget = LoadRenderTexture(screenWidth, screenHeight);
+    bool taijiActive = false;
+    int jumpCount = 0;
+    Vector3 moonPos = { 880.0f, 700.0f, -83.0f };
 
     // Cấu hình Camera3D
     camera.position = (Vector3){ 600.0f, 500.0f, 840.0f }; // Góc isometric nhìn từ trên cao xuống
@@ -203,6 +295,7 @@ int main(void) {
         rectPath[i] = (Rectangle){ 870 + i * 100, 170, 95, 35 };
     }
     Rectangle rectPortalToggle = { 870, 220, 200, 35 };
+    Rectangle rectTaijiToggle = { 870, 270, 200, 35 };
 
     // Khung UI các nút bấm chiêu thức
     Rectangle skillButtons[32];
@@ -219,12 +312,50 @@ int main(void) {
         Vector2 mousePos = GetMousePosition();
         float time = GetTime();
 
+        // Định nghĩa các hằng số kích thước võ đài và nhân vật ở đầu vòng lặp để các tính toán va chạm sử dụng
+        Vector3 arenaCenter = { 600.0f, 0.0f, 440.0f };
+        float arenaRadius = 1800.0f; // Đã mở rộng gấp 3 lần
+        float charRadius = 30.0f;
+
         // 1. NGẮM BẮN CHUỘT 3D (Tia ngắm chuột giao cắt với mặt phẳng Y = 0)
         Ray mouseRay = GetScreenToWorldRay(mousePos, camera);
         Vector3 mouseTarget3D = { 0.0f, 0.0f, 0.0f };
         if (mouseRay.direction.y != 0.0f) {
             float t = -mouseRay.position.y / mouseRay.direction.y;
             mouseTarget3D = Vector3Add(mouseRay.position, Vector3Scale(mouseRay.direction, t));
+        }
+
+        // Phím nhanh bật/tắt Thái Cực
+        if (IsKeyPressed(KEY_T)) {
+            taijiActive = !taijiActive;
+        }
+
+        // Danh sách kỹ năng có sẵn dựa trên chế độ Thái Cực
+        int availableSkills[10];
+        int availableCount = 0;
+        if (!taijiActive) {
+            availableSkills[0] = 0; // WATER
+            availableSkills[1] = 1; // METAL
+            availableSkills[2] = 2; // FIRE
+            availableSkills[3] = 3; // WOOD
+            availableSkills[4] = 6; // SWORD RAIN
+            availableCount = 5;
+        } else {
+            availableSkills[0] = 4; // ELECTRIC (LÔI)
+            availableSkills[1] = 5; // WIND (PHONG)
+            availableCount = 2;
+        }
+
+        // Đảm bảo chiêu đang chọn luôn hợp lệ
+        bool activeValid = false;
+        for (int i = 0; i < availableCount; i++) {
+            if (activeSkillIndex == availableSkills[i]) {
+                activeValid = true;
+                break;
+            }
+        }
+        if (!activeValid) {
+            activeSkillIndex = availableSkills[0];
         }
 
         // 2. DỊCH CHUYỂN NHÂN VẬT & KHINH CÔNG (DASH & JUMP)
@@ -243,19 +374,53 @@ int main(void) {
             dashCooldown -= dt;
         }
 
-        // Cập nhật nhảy khinh công (Trục Y)
-        if (characterPos.y > 0.0f || charZVelocity > 0.0f) {
-            charZVelocity -= gravity * dt;
-            characterPos.y += charZVelocity * dt;
-            if (characterPos.y <= 0.0f) {
-                characterPos.y = 0.0f;
-                charZVelocity = 0.0f;
+        // Xác định độ cao mặt đất cục bộ dưới chân (mặc định là sàn đấu Y = 0)
+        float currentGroundY = 0.0f;
+        
+        // Kiểm tra va chạm với các trụ đá (đặc biệt đứng lên trụ 0)
+        for (int i = 0; i < NUM_PILLARS; i++) {
+            Vector3 diff = Vector3Subtract(characterPos, pillars[i].position);
+            diff.y = 0.0f;
+            float dist = Vector3Length(diff);
+            float pillarHeight = pillars[i].radius * 2.5f;
+            float checkRadius = charRadius + pillars[i].radius;
+            
+            if (dist < checkRadius) {
+                // Chỉ đứng lên đỉnh trụ đá đầu tiên (pillars[0]) để nhảy thử, các trụ khác đẩy ngang
+                if (i == 0 && characterPos.y >= pillarHeight - 15.0f && charZVelocity <= 0.0f) {
+                    currentGroundY = pillarHeight;
+                } else {
+                    // Đẩy ngang nếu ở dưới đỉnh trụ
+                    Vector3 pushDir = Vector3Normalize(diff);
+                    characterPos.x = pillars[i].position.x + pushDir.x * checkRadius;
+                    characterPos.z = pillars[i].position.z + pushDir.z * checkRadius;
+                }
             }
         }
 
-        // Kích hoạt nhảy khi nhấn Space
-        if (IsKeyPressed(KEY_SPACE) && characterPos.y == 0.0f) {
-            charZVelocity = 550.0f;
+        // Cập nhật nhảy khinh công (Trục Y)
+        bool isOnSolid = (characterPos.y <= currentGroundY);
+        if (!isOnSolid || charZVelocity > 0.0f) {
+            charZVelocity -= gravity * dt;
+            characterPos.y += charZVelocity * dt;
+            if (characterPos.y <= currentGroundY) {
+                characterPos.y = currentGroundY;
+                charZVelocity = 0.0f;
+                jumpCount = 0;
+            }
+        } else {
+            charZVelocity = 0.0f;
+        }
+
+        // Kích hoạt nhảy và nhảy đúp tối đa 2 lần
+        if (IsKeyPressed(KEY_SPACE)) {
+            if (characterPos.y <= currentGroundY + 1.0f) {
+                charZVelocity = 550.0f;
+                jumpCount = 1;
+            } else if (jumpCount < 2) {
+                charZVelocity = 500.0f;
+                jumpCount = 2;
+            }
         }
 
         if (isDashing) {
@@ -276,7 +441,7 @@ int main(void) {
             characterPos.z += moveDir.z * moveSpeed * dt;
 
             // Kích hoạt lướt (Dash)
-            if (IsKeyPressed(KEY_LEFT_SHIFT) && dashCooldown <= 0.0f) {
+            if (IsKeyPressed(KEY_X) && dashCooldown <= 0.0f) {
                 isDashing = true;
                 dashTimer = 0.15f;
                 dashCooldown = 0.8f;
@@ -292,9 +457,6 @@ int main(void) {
         }
 
         // Ràng buộc vị trí nhân vật bên trong võ đài hình tròn X-Z
-        Vector3 arenaCenter = { 600.0f, 0.0f, 440.0f };
-        float arenaRadius = 360.0f;
-        float charRadius = 30.0f;
 
         Vector3 toChar = Vector3Subtract(characterPos, arenaCenter);
         toChar.y = 0.0f;
@@ -305,18 +467,7 @@ int main(void) {
             characterPos.z = arenaCenter.z + normal.z * (arenaRadius - charRadius);
         }
 
-        // Va chạm vật lý X-Z với 3 cột đá chướng ngại vật
-        for (int i = 0; i < NUM_PILLARS; i++) {
-            Vector3 diff = Vector3Subtract(characterPos, pillars[i].position);
-            diff.y = 0.0f;
-            float dist = Vector3Length(diff);
-            float minDist = charRadius + pillars[i].radius;
-            if (dist < minDist) {
-                Vector3 pushDir = Vector3Normalize(diff);
-                characterPos.x = pillars[i].position.x + pushDir.x * minDist;
-                characterPos.z = pillars[i].position.z + pushDir.z * minDist;
-            }
-        }
+        // Va chạm vật lý X-Z được xử lý bên trên cùng nhảy, tránh đẩy trùng lặp.
 
         // Cập nhật hạt lướt
         for (int i = 0; i < MAX_DASH_PARTICLES; i++) {
@@ -372,6 +523,19 @@ int main(void) {
             enemyPos.x = patrolCenter.x + cosf(patrolAngle) * 250.0f;
             enemyPos.z = patrolCenter.z + sinf(patrolAngle) * 200.0f;
             enemyPos.y = 0.0f;
+        }
+
+        // Áp dụng lực hút từ cơn gió (Wind Pull) của chiêu Phong lên quái
+        Vector3 windPullCenter = { 0 };
+        float windPullStrength = 0.0f;
+        if (GetWindPullForce(&windPullCenter, &windPullStrength)) {
+            Vector3 pullDir = Vector3Subtract(windPullCenter, enemyPos);
+            pullDir.y = 0.0f;
+            float pullDist = Vector3Length(pullDir);
+            if (pullDist > 10.0f) {
+                Vector3 pullForce = Vector3Scale(Vector3Normalize(pullDir), windPullStrength * dt);
+                enemyPos = Vector3Add(enemyPos, pullForce);
+            }
         }
 
         // Ràng buộc vị trí enemy bên trong võ đài hình tròn X-Z
@@ -450,9 +614,15 @@ int main(void) {
                 clickedOnUI = true;
             }
 
+            // Kiểm tra click Toggle Taiji Realm
+            if (CheckCollisionPointRec(mousePos, rectTaijiToggle)) {
+                taijiActive = !taijiActive;
+                clickedOnUI = true;
+            }
+
             // Click đổi chiêu hệ ngũ hành
             if (hoverSkillIndex != -1) {
-                activeSkillIndex = hoverSkillIndex;
+                activeSkillIndex = availableSkills[hoverSkillIndex];
                 clickedOnUI = true;
             }
 
@@ -476,36 +646,51 @@ int main(void) {
         // Cập nhật hệ thống chiêu thức ngũ hành
         UpdateSkillManager(dt, enemyPos, 35.0f);
 
+        // Cập nhật vị trí mặt trăng tương đối theo nhân vật (lệch 30 độ so với trục Tây/Đông, bóng đổ Tây và Nam)
+        Vector3 moonPos = { characterPos.x + 750.0f, 700.0f, characterPos.z - 433.0f };
+
+        // Cập nhật Camera theo chân nhân vật
+        camera.target = characterPos;
+        camera.position = (Vector3){ characterPos.x, characterPos.y + 500.0f, characterPos.z + 400.0f };
+
         // --- VẼ MÀN HÌNH ---
-        BeginDrawing();
+        // 1. RENDER CẢNH 3D VÀ HIỆU ỨNG RA SCREEN TARGET RENDERTEXTURE
+        BeginTextureMode(screenTarget);
             ClearBackground(GetColor(0x111111FF)); 
 
             // RENDER 3D MODE
-            BeginMode3D(camera);
-                // Vẽ nền võ đài 3D
-                DrawCylinder((Vector3){ 600.0f, -0.5f, 440.0f }, 360.0f, 360.0f, 1.0f, 48, GetColor(0x28282FFF));
-                DrawCylinder((Vector3){ 600.0f, -1.5f, 440.0f }, 365.0f, 365.0f, 1.0f, 48, GetColor(0x1B1B1FFF));
+            MyBeginMode3D(camera);
+                // Vẽ nền võ đài 3D phẳng
+                DrawCircleSolid3D((Vector3){ 600.0f, -0.05f, 440.0f }, 1805.0f, GetColor(0x1B1B1FFF));
+                DrawCircleSolid3D((Vector3){ 600.0f, 0.0f, 440.0f }, 1800.0f, GetColor(0x222228FF));
                 
-                // Vẽ các đường hoa văn võ đài ngũ hành bằng các đường line 3D
-                DrawCircleOutline3D((Vector3){ 600.0f, 0.02f, 440.0f }, 320.0f, GetColor(0x3E3E4FFF));
-                DrawCircleOutline3D((Vector3){ 600.0f, 0.02f, 440.0f }, 240.0f, GetColor(0x33333FFF));
-                DrawCircleOutline3D((Vector3){ 600.0f, 0.02f, 440.0f }, 80.0f, GetColor(0x3A3A4AFF));
+                // Vẽ các đường hoa văn võ đài ngũ hành bằng các đường line 3D sáng màu hơn
+                DrawCircleOutline3D((Vector3){ 600.0f, 0.08f, 440.0f }, 1600.0f, GetColor(0x5A5A6FFF));
+                DrawCircleOutline3D((Vector3){ 600.0f, 0.08f, 440.0f }, 1200.0f, GetColor(0x4F4F5FFF));
+                DrawCircleOutline3D((Vector3){ 600.0f, 0.08f, 440.0f }, 400.0f, GetColor(0x444455FF));
                 
-                DrawLine3D((Vector3){ 600.0f - 360.0f, 0.02f, 440.0f }, (Vector3){ 600.0f + 360.0f, 0.02f, 440.0f }, GetColor(0x2E2E39FF));
-                DrawLine3D((Vector3){ 600.0f, 0.02f, 440.0f - 360.0f }, (Vector3){ 600.0f, 0.02f, 440.0f + 360.0f }, GetColor(0x2E2E39FF));
+                DrawLine3D((Vector3){ 600.0f - 1800.0f, 0.08f, 440.0f }, (Vector3){ 600.0f + 1800.0f, 0.08f, 440.0f }, GetColor(0x40404FFF));
+                DrawLine3D((Vector3){ 600.0f, 0.08f, 440.0f - 1800.0f }, (Vector3){ 600.0f, 0.08f, 440.0f + 1800.0f }, GetColor(0x40404FFF));
+
+                // Vẽ mặt trăng trên trời làm nguồn sáng
+                DrawSphere(moonPos, 60.0f, WHITE);
+                for (float rFactor = 1.1f; rFactor < 1.4f; rFactor += 0.1f) {
+                    DrawSphere(moonPos, 60.0f * rFactor, ColorAlpha(YELLOW, 0.06f));
+                }
 
                 // Vẽ bóng đổ chân nhân vật và cột đá
                 for (int i = 0; i < NUM_PILLARS; i++) {
-                    DrawShadow3D(pillars[i].position, pillars[i].radius * 1.1f, 0.5f);
+                    float pillarHeight = pillars[i].radius * 2.5f;
+                    DrawShadow3D(pillars[i].position, pillarHeight, pillars[i].radius * 1.1f, 0.5f, moonPos);
                 }
 
-                // Bóng đổ Enemy
-                DrawShadow3D(enemyPos, 36.0f, 0.5f);
+                // Bóng đổ Enemy (Chiều cao enemy là 55.0f)
+                DrawShadow3D(enemyPos, 55.0f, 36.0f, 0.5f, moonPos);
 
-                // Bóng đổ Player (co giãn theo độ cao nhảy Y)
+                // Bóng đổ Player (Chiều cao player là 45.0f, co giãn theo Y và nghiêng theo mặt trăng)
                 float shadowScale = 1.0f - (characterPos.y / 350.0f);
                 if (shadowScale < 0.2f) shadowScale = 0.2f;
-                DrawShadow3D((Vector3){ characterPos.x, 0.0f, characterPos.z }, 32.0f * shadowScale, 0.5f * shadowScale);
+                DrawShadow3D(characterPos, 45.0f, 32.0f * shadowScale, 0.5f * shadowScale, moonPos);
 
                 // Vẽ đường thẳng độ cao biểu diễn vị trí trên không trung
                 if (characterPos.y > 5.0f) {
@@ -513,15 +698,18 @@ int main(void) {
                 }
 
                 // Vẽ vòng định vị chân luôn ghim sát mặt sàn 3D
-                DrawCircleOutline3D((Vector3){ characterPos.x, 0.02f, characterPos.z }, 25.0f, ColorAlpha(LIME, 0.6f));
-                DrawCircleOutline3D((Vector3){ enemyPos.x, 0.02f, enemyPos.z }, 30.0f, ColorAlpha(RED, 0.6f));
+                DrawCircleOutline3D((Vector3){ characterPos.x, 0.08f, characterPos.z }, 25.0f, ColorAlpha(LIME, 0.6f));
+                DrawCircleOutline3D((Vector3){ enemyPos.x, 0.08f, enemyPos.z }, 30.0f, ColorAlpha(RED, 0.6f));
 
                 // Vẽ 3 cột đá bằng cylinder 3D
                 for (int i = 0; i < NUM_PILLARS; i++) {
                     float pillarHeight = pillars[i].radius * 2.5f;
                     Vector3 center = { pillars[i].position.x, pillars[i].position.y + pillarHeight * 0.5f, pillars[i].position.z };
-                    DrawCylinder(center, pillars[i].radius, pillars[i].radius, pillarHeight, 16, GetColor(0x3B3B42FF));
-                    DrawCylinderWires(center, pillars[i].radius, pillars[i].radius, pillarHeight, 16, GetColor(0x73737CFF));
+                    // Tô màu cột 0 khác biệt (màu vàng kim nhẹ) để làm điểm đứng thử
+                    Color pCol = (i == 0) ? GetColor(0xDAA520FF) : GetColor(0x3B3B42FF);
+                    Color pLineCol = (i == 0) ? YELLOW : GetColor(0x73737CFF);
+                    DrawCylinder(center, pillars[i].radius, pillars[i].radius, pillarHeight, 16, pCol);
+                    DrawCylinderWires(center, pillars[i].radius, pillars[i].radius, pillarHeight, 16, pLineCol);
                 }
 
                 // Vẽ Enemy và Player trong không gian 3D
@@ -529,9 +717,23 @@ int main(void) {
                 
                 DrawCharacter3D(characterPos, 25.0f, GetColor(0xFFD39BFF), GetColor(0x3B5998FF), isDashing ? GetRegisteredSkillColor(activeSkillIndex) : GetColor(0xCCCCCCFF), true, mouseTarget3D);
 
-            EndMode3D();
+            MyEndMode3D();
+        EndTextureMode();
 
-            // RENDER 2D SCREEN OVERLAYS
+        // 2. VẼ TOÀN BỘ MÀN HÌNH CHÍNH
+        BeginDrawing();
+            ClearBackground(BLACK);
+
+            // Vẽ screen target kết xuất kèm hiệu ứng shader Thái Cực đơn sắc nếu được kích hoạt
+            if (taijiActive) {
+                BeginShaderMode(taijiShader);
+            }
+            DrawTextureRec(screenTarget.texture, (Rectangle){ 0, 0, (float)screenTarget.texture.width, (float)-screenTarget.texture.height }, (Vector2){ 0, 0 }, WHITE);
+            if (taijiActive) {
+                EndShaderMode();
+            }
+
+            // RENDER 2D SCREEN OVERLAYS (UI, Hạt dư ảnh bay)
             // Vẽ các hạt dư ảnh lướt dash
             for (int i = 0; i < MAX_DASH_PARTICLES; i++) {
                 if (dashParticles[i].active) {
@@ -550,10 +752,11 @@ int main(void) {
             DrawText("ENEMY", (int)enemyScreenHead.x - 22, (int)enemyScreenHead.y, 12, WHITE);
 
             // --- VẼ GIAO DIỆN CHỌN SKILL (UI) ---
-            for (int i = 0; i < skillCount; i++) {
-                bool isSelected = (activeSkillIndex == i);
+            for (int i = 0; i < availableCount; i++) {
+                int skillIdx = availableSkills[i];
+                bool isSelected = (activeSkillIndex == skillIdx);
                 bool isHover = (hoverSkillIndex == i);
-                Color baseColor = GetRegisteredSkillColor(i);
+                Color baseColor = GetRegisteredSkillColor(skillIdx);
                 
                 Color btnColor;
                 if (isSelected) {
@@ -567,7 +770,7 @@ int main(void) {
                 DrawRectangleRounded(skillButtons[i], 0.3f, 10, btnColor);
                 DrawRectangleRoundedLines(skillButtons[i], 0.3f, 10, WHITE);
                 
-                const char* skillName = GetRegisteredSkillName(i);
+                const char* skillName = GetRegisteredSkillName(skillIdx);
                 char btnText[64];
                 snprintf(btnText, sizeof(btnText), "%s SKILL", skillName);
                 
@@ -632,6 +835,15 @@ int main(void) {
             DrawRectangleRoundedLines(rectPortalToggle, 0.2f, 10, WHITE);
             DrawText(showPortals ? "PORTALS: ENABLED" : "PORTALS: DISABLED", (int)rectPortalToggle.x + 20, (int)rectPortalToggle.y + 10, 14, WHITE);
 
+            // Vẽ nút bật/tắt Thái Cực (Taiji Realm Toggle)
+            DrawText("Taiji Realm:", 770, 280, 16, LIGHTGRAY);
+            bool hoverTaiji = CheckCollisionPointRec(mousePos, rectTaijiToggle);
+            Color taijiCol = taijiActive ? (hoverTaiji ? GetColor(0xFF5500FF) : GetColor(0xDD3300FF)) : 
+                                           (hoverTaiji ? DARKGRAY : GetColor(0x333333FF));
+            DrawRectangleRounded(rectTaijiToggle, 0.2f, 10, taijiCol);
+            DrawRectangleRoundedLines(rectTaijiToggle, 0.2f, 10, WHITE);
+            DrawText(taijiActive ? "TAIJI: ACTIVE (B&W)" : "TAIJI: INACTIVE", (int)rectTaijiToggle.x + 20, (int)rectTaijiToggle.y + 10, 14, WHITE);
+
             // Bảng hướng dẫn & thông số
             const char* modeStr = "STATIC (STATIONARY)";
             if (enemyMode == ENEMY_CHASE) modeStr = "CHASING PLAYER";
@@ -642,16 +854,18 @@ int main(void) {
                                   ((selectedPath == CAST_PATH_UNDERGROUND) ? "GROUND" : "SKY");
             const char* portalStr = showPortals ? "ON" : "OFF";
 
-            DrawText("Controls: WASD/Arrows to Move | Space to Jump | Left Shift to Dash (leaves elemental trail)", 20, 80, 16, LIGHTGRAY);
-            DrawText("Click anywhere to shoot (supports mid-air casting) | Press P to cycle Enemy Mode", 20, 105, 16, LIGHTGRAY);
+            DrawText("Controls: WASD/Arrows to Move | Space to Jump (Double Jump up to 2x) | X to Dash", 20, 80, 16, LIGHTGRAY);
+            DrawText("Press T to toggle Taiji Realm (switch to Phong-Lôi B&W) | Jump on Golden Pillar 0 to stand on top", 20, 105, 16, LIGHTGRAY);
             DrawText(TextFormat("Params: Qty = %d | Size = %.1fx | Anchor = %s | Path = %s | Portals = %s | Enemy = %s", 
                                 selectedQty, selectedSize, anchorStr, pathStr, portalStr, modeStr), 20, 130, 16, GetColor(0x55DD66FF));
-            DrawText("Selected element affects skills & dash trail visuals (character/enemy/pillars have shadows)", 20, 155, 16, GetColor(0xBA55D3FF));
+            DrawText("Camera follow enabled. Character/pillars have dynamic shadows projected from the Moon.", 20, 155, 16, GetColor(0xBA55D3FF));
 
         EndDrawing();
     }
 
     // Dọn dẹp bộ nhớ RAM/VRAM
+    UnloadShader(taijiShader);
+    UnloadRenderTexture(screenTarget);
     UnloadSkillManager();
     CloseWindow();
     
