@@ -1,4 +1,5 @@
 #include "wood_skill.h"
+#include "skill_manager.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <math.h>
@@ -716,14 +717,10 @@ void DrawWoodSkill(void) {
         for (int i = 0; i < numPoints; i++) {
           float t = t_start + ((float)i / (numPoints - 1)) * (t_end - t_start);
           Vector3 pos3D = GetWoodPointAt(&emitters[e], t, 0);
-          screenPos[i] = GetWorldToScreen(pos3D, camera);
+          ProjectedPoint pt = ProjectPointCached(pos3D, camera);
+          screenPos[i] = pt.screenPos;
           tValues[i] = t;
-
-          float dist = Vector3Distance(camera.position, pos3D);
-          float depthFactor = 800.0f / (dist + 0.1f);
-          if (depthFactor < 0.2f) depthFactor = 0.2f;
-          if (depthFactor > 3.0f) depthFactor = 3.0f;
-          depthFactors[i] = depthFactor;
+          depthFactors[i] = pt.depthFactor;
         }
 
         // Vẽ các đốt rễ bằng đa giác
@@ -791,14 +788,10 @@ void DrawWoodSkill(void) {
           for (int i = 0; i < numPoints; i++) {
             float t = t_start + ((float)i / (numPoints - 1)) * (t_end - t_start);
             Vector3 pos3D = GetWoodPointAt(&emitters[e], t, b);
-            screenPos[i] = GetWorldToScreen(pos3D, camera);
+            ProjectedPoint pt = ProjectPointCached(pos3D, camera);
+            screenPos[i] = pt.screenPos;
             tValues[i] = t;
-
-            float dist = Vector3Distance(camera.position, pos3D);
-            float depthFactor = 800.0f / (dist + 0.1f);
-            if (depthFactor < 0.2f) depthFactor = 0.2f;
-            if (depthFactor > 3.0f) depthFactor = 3.0f;
-            depthFactors[i] = depthFactor;
+            depthFactors[i] = pt.depthFactor;
           }
 
           for (int i = 0; i < numPoints - 1; i++) {
@@ -868,12 +861,10 @@ void DrawWoodSkill(void) {
     float tipFade = Clamp(emitters[e].progress * 6.0f, 0.0f, 1.0f);
     float tipT = fminf(emitters[e].progress, 1.8f);
     Vector3 tipPos3D = GetWoodPointAt(&emitters[e], tipT, 0);
-    Vector2 tipPos = GetWorldToScreen(tipPos3D, camera);
-
-    float dist = Vector3Distance(camera.position, tipPos3D);
-    float depthFactor = 800.0f / (dist + 0.1f);
-    if (depthFactor < 0.2f) depthFactor = 0.2f;
-    if (depthFactor > 3.0f) depthFactor = 3.0f;
+    ProjectedPoint pt = ProjectPointCached(tipPos3D, camera);
+    if (pt.behindCamera) continue;
+    Vector2 tipPos = pt.screenPos;
+    float depthFactor = pt.depthFactor;
 
     float pulse = 0.65f + 0.35f * sinf(time * 13.0f);
     float tipGlowRadius = 9.0f * emitters[e].sizeScale * pulse * depthFactor;
@@ -902,15 +893,13 @@ void DrawWoodSkill(void) {
     float stemProgress = fminf(emitters[e].progress, 1.0f);
     for (float t = 0.05f; t < stemProgress - 0.02f; t += 0.08f) {
       Vector3 pos3D = GetWoodPointAt(&emitters[e], t, 0);
-      Vector2 pos = GetWorldToScreen(pos3D, camera);
+      ProjectedPoint pt = ProjectPointCached(pos3D, camera);
+      if (pt.behindCamera) continue;
+      Vector2 pos = pt.screenPos;
+      float depthFactor = pt.depthFactor;
 
-      float dist = Vector3Distance(camera.position, pos3D);
-      float depthFactor = 800.0f / (dist + 0.1f);
-      if (depthFactor < 0.2f) depthFactor = 0.2f;
-      if (depthFactor > 3.0f) depthFactor = 3.0f;
-
-      Vector2 screenNext = GetWorldToScreen(GetWoodPointAt(&emitters[e], t + 0.01f, 0), camera);
-      Vector2 screenPrev = GetWorldToScreen(GetWoodPointAt(&emitters[e], fmaxf(0.0f, t - 0.01f), 0), camera);
+      Vector2 screenNext = ProjectPointCached(GetWoodPointAt(&emitters[e], t + 0.01f, 0), camera).screenPos;
+      Vector2 screenPrev = ProjectPointCached(GetWoodPointAt(&emitters[e], fmaxf(0.0f, t - 0.01f), 0), camera).screenPos;
       Vector2 tangent = Vector2Normalize(Vector2Subtract(screenNext, screenPrev));
       float baseAngle = atan2f(tangent.y, tangent.x);
       float sideSign = (sinf(t * 100.0f) > 0.0f) ? 1.0f : -1.0f;
@@ -934,15 +923,13 @@ void DrawWoodSkill(void) {
       for (int b = 0; b < emitters[e].branchCount; b++) {
         for (float t = 1.05f; t < branchProgress - 0.02f; t += 0.10f) {
           Vector3 pos3D = GetWoodPointAt(&emitters[e], t, b);
-          Vector2 pos = GetWorldToScreen(pos3D, camera);
+          ProjectedPoint pt = ProjectPointCached(pos3D, camera);
+          if (pt.behindCamera) continue;
+          Vector2 pos = pt.screenPos;
+          float depthFactor = pt.depthFactor;
 
-          float dist = Vector3Distance(camera.position, pos3D);
-          float depthFactor = 800.0f / (dist + 0.1f);
-          if (depthFactor < 0.2f) depthFactor = 0.2f;
-          if (depthFactor > 3.0f) depthFactor = 3.0f;
-
-          Vector2 screenNext = GetWorldToScreen(GetWoodPointAt(&emitters[e], t + 0.01f, b), camera);
-          Vector2 screenPrev = GetWorldToScreen(GetWoodPointAt(&emitters[e], t - 0.01f, b), camera);
+          Vector2 screenNext = ProjectPointCached(GetWoodPointAt(&emitters[e], t + 0.01f, b), camera).screenPos;
+          Vector2 screenPrev = ProjectPointCached(GetWoodPointAt(&emitters[e], t - 0.01f, b), camera).screenPos;
           Vector2 tangent = Vector2Normalize(Vector2Subtract(screenNext, screenPrev));
           float baseAngle = atan2f(tangent.y, tangent.x);
           float sideSign = (sinf(t * 100.0f + (float)b) > 0.0f) ? 1.0f : -1.0f;
@@ -973,11 +960,10 @@ void DrawWoodSkill(void) {
       continue;
 
     float lifeRatio = woodPool[i].lifetime / woodPool[i].maxLifetime;
-    Vector2 screenPos = GetWorldToScreen(woodPool[i].position, camera);
-    float dist = Vector3Distance(camera.position, woodPool[i].position);
-    float depthFactor = 800.0f / (dist + 0.1f);
-    if (depthFactor < 0.2f) depthFactor = 0.2f;
-    if (depthFactor > 3.0f) depthFactor = 3.0f;
+    ProjectedPoint pt = ProjectPointCached(woodPool[i].position, camera);
+    if (pt.behindCamera) continue;
+    Vector2 screenPos = pt.screenPos;
+    float depthFactor = pt.depthFactor;
 
     // Vẽ vệt motion trail cho lá và mảnh gỗ
     if ((woodPool[i].type == PARTICLE_LEAF || woodPool[i].type == PARTICLE_WOOD_SHARD) && woodPool[i].historyFilled > 0) {
@@ -985,7 +971,7 @@ void DrawWoodSkill(void) {
         float trailT = 1.0f - (float)(h + 1) / (float)(PARTICLE_HISTORY_COUNT + 1);
         float trailFade = lifeRatio * trailT * 0.5f;
         float trailRadius = woodPool[i].radius * (0.3f + 0.7f * lifeRatio) * (0.4f + 0.5f * trailT) * depthFactor;
-        Vector2 trailScreenPos = GetWorldToScreen(woodPool[i].history[h], camera);
+        Vector2 trailScreenPos = ProjectPointCached(woodPool[i].history[h], camera).screenPos;
         if (woodPool[i].type == PARTICLE_LEAF) {
           DrawProceduralLeafUV(trailScreenPos, trailRadius, woodPool[i].angle, trailFade);
         } else {

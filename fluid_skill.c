@@ -1,4 +1,5 @@
 #include "fluid_skill.h"
+#include "skill_manager.h"
 #include "raymath.h"
 #include <math.h>
 #include <stddef.h>
@@ -284,13 +285,11 @@ void DrawFluidSkill(void) {
                     currentAlpha = lifeRatio * 1.0f; 
                 }
 
-                // Project 3D position to 2D screen coordinate
-                Vector2 screenPos = GetWorldToScreen(waterPool[i].position, camera);
-                
-                // Adjust drawing radius based on camera depth perspective
-                float depthFactor = 800.0f / (Vector3Distance(camera.position, waterPool[i].position) + 0.1f);
-                if (depthFactor < 0.2f) depthFactor = 0.2f;
-                if (depthFactor > 3.0f) depthFactor = 3.0f;
+                // Project 3D position to 2D screen coordinate using cached helper
+                ProjectedPoint pt = ProjectPointCached(waterPool[i].position, camera);
+                if (pt.behindCamera) continue;
+                Vector2 screenPos = pt.screenPos;
+                float depthFactor = pt.depthFactor;
                 
                 DrawCircleGradient((int)screenPos.x, (int)screenPos.y, currentRadius * depthFactor, ColorAlpha(WHITE, currentAlpha), BLANK);
             }

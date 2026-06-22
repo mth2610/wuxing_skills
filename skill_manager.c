@@ -277,7 +277,7 @@ void UpdateSkillManager(float dt, Vector3 enemyPos, float enemyRadius) {
     }
 }
 
-void DrawSkillManager(void) {
+void DrawSkillManagerWorld3D(void) {
     float time = (float)GetTime();
     EnsureBuiltInRegistered();
 
@@ -342,6 +342,10 @@ void DrawSkillManager(void) {
             }
         }
     }
+}
+
+void DrawSkillManagerOverlay(void) {
+    EnsureBuiltInRegistered();
 
     // Draw all registered skills
     for (int i = 0; i < registeredSkillCount; i++) {
@@ -656,4 +660,95 @@ static void CastWindWrapper(Vector3 startPos, Vector3 target, SkillParams params
 
 static void UpdateWindWrapper(float dt, Vector3 enemyPos, float enemyRadius) {
     UpdateWindSkill(dt);
+}
+
+ProjectedPoint ProjectPointCached(Vector3 worldPos, Camera3D cam) {
+    ProjectedPoint pt;
+    Vector3 camDir = Vector3Subtract(cam.target, cam.position);
+    Vector3 toPoint = Vector3Subtract(worldPos, cam.position);
+    pt.behindCamera = (Vector3DotProduct(camDir, toPoint) <= 0.0f);
+    
+    pt.screenPos = GetWorldToScreen(worldPos, cam);
+    
+    float dist = Vector3Distance(cam.position, worldPos);
+    float refScale = ((float)GetScreenHeight() * 0.5f) / tanf(cam.fovy * 0.5f * DEG2RAD);
+    pt.depthFactor = refScale / (dist + 0.1f);
+    if (pt.depthFactor < 0.2f) pt.depthFactor = 0.2f;
+    if (pt.depthFactor > 3.0f) pt.depthFactor = 3.0f;
+    
+    return pt;
+}
+
+typedef struct {
+    Vector3 center;
+    float radius;
+    float height;
+} StaticOccluder;
+
+#define MAX_STATIC_OCCLUDERS 16
+static StaticOccluder staticOccluders[MAX_STATIC_OCCLUDERS];
+static int staticOccluderCount = 0;
+
+void RegisterStaticOccluder(Vector3 center, float radius, float height) {
+    if (staticOccluderCount < MAX_STATIC_OCCLUDERS) {
+        staticOccluders[staticOccluderCount].center = center;
+        staticOccluders[staticOccluderCount].radius = radius;
+        staticOccluders[staticOccluderCount].height = height;
+        staticOccluderCount++;
+    }
+}
+
+void ClearStaticOccluders(void) {
+    staticOccluderCount = 0;
+}
+
+float GetLineOfSightVisibility(Vector3 viewPoint, Vector3 targetPoint) {
+    for (int idx = 0; idx < staticOccluderCount; idx++) {
+        StaticOccluder oc = staticOccluders[idx];
+        Vector3 center = oc.center;
+        float radius = oc.radius;
+        float height = oc.height;
+
+        Vector2 A = { viewPoint.x, viewPoint.z };
+        Vector2 B = { targetPoint.x, targetPoint.z };
+        Vector2 C = { center.x, center.z };
+        Vector2 D = { B.x - A.x, B.y - A.y };
+        Vector2 V = { A.x - C.x, A.y - C.y };
+
+        float a = D.x * D.x + D.y * D.y;
+        float b = 2.0f * (V.x * D.x + V.y * D.y);
+        float c = V.x * V.x + V.y * V.y - radius * radius;
+
+        if (a < 1e-6f) {
+            if (c <= 0.0f && viewPoint.y >= 0.0f && viewPoint.y <= height) {
+                return 0.0f;
+            }
+            continue;
+        }
+
+        float discriminant = b * b - 4.0f * a * c;
+        if (discriminant >= 0.0f) {
+            float sqrtDisc = sqrtf(discriminant);
+            float u1 = (-b - sqrtDisc) / (2.0f * a);
+            float u2 = (-b + sqrtDisc) / (2.0f * a);
+
+            float u_start = u1 < 0.0f ? 0.0f : u1;
+            float u_end = u2 > 1.0f ? 1.0f : u2;
+
+            if (u_start <= u_end) {
+                float y1 = viewPoint.y + u_start * (targetPoint.y - viewPoint.y);
+                float y2 = viewPoint.y + u_end * (targetPoint.y - viewPoint.y);
+                float y_min = y1 < y2 ? y1 : y2;
+                float y_max = y1 > y2 ? y1 : y2;
+
+                float overlap_min = y_min > 0.0f ? y_min : 0.0f;
+                float overlap_max = y_max < height ? y_max : height;
+
+                if (overlap_min <= overlap_max) {
+                    return 0.0f;
+                }
+            }
+        }
+    }
+    return 1.0f;
 }

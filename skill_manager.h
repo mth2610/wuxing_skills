@@ -35,7 +35,8 @@ typedef struct {
 
 void InitSkillManager(int screenWidth, int screenHeight);
 void UpdateSkillManager(float dt, Vector3 enemyPos, float enemyRadius);
-void DrawSkillManager(void);
+void DrawSkillManagerWorld3D(void);
+void DrawSkillManagerOverlay(void);
 void UnloadSkillManager(void);
 void CastSkill(int skillIndex, Vector3 startPos, Vector3 target, SkillParams params);
 
@@ -49,6 +50,18 @@ void SetSkillOverrides(int skillIndex, int pathType, int anchorType, int quantit
 int GetRegisteredSkillCount(void);
 const char* GetRegisteredSkillName(int index);
 Color GetRegisteredSkillColor(int index);
+
+typedef struct {
+    Vector2 screenPos;
+    float   depthFactor;
+    bool    behindCamera;
+} ProjectedPoint;
+
+ProjectedPoint ProjectPointCached(Vector3 worldPos, Camera3D cam);
+
+void RegisterStaticOccluder(Vector3 center, float radius, float height);
+void ClearStaticOccluders(void);
+float GetLineOfSightVisibility(Vector3 viewPoint, Vector3 targetPoint);
 
 bool IsAnySkillCoiling(void);
 bool IsAnySkillShocking(void);

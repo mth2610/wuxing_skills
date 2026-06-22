@@ -1,4 +1,5 @@
 #include "metal_skill.h"
+#include "skill_manager.h"
 #include "raymath.h"
 #include <stddef.h>
 #include <math.h>
@@ -419,18 +420,21 @@ void DrawMetalSkill(void) {
             float lifeRatio = metalPool[i].lifetime / metalPool[i].maxLifetime;
             unsigned char intensity = (unsigned char)(255.0f * lifeRatio);
             
-            // Project 3D position to screen-space coordinates
-            Vector2 screenPos = GetWorldToScreen(metalPool[i].position, camera);
-            float depthFactor = 800.0f / (Vector3Distance(camera.position, metalPool[i].position) + 0.1f);
-            if (depthFactor < 0.2f) depthFactor = 0.2f;
-            if (depthFactor > 3.0f) depthFactor = 3.0f;
+            // Project 3D position to screen-space coordinates using cached helper
+            ProjectedPoint pt = ProjectPointCached(metalPool[i].position, camera);
+            if (pt.behindCamera) continue;
+            Vector2 screenPos = pt.screenPos;
+            float depthFactor = pt.depthFactor;
 
             // 1. PROJECTED RIBBON TRAIL AND SWORD SPRITE
             if (metalPool[i].type == PARTICLE_SWORD) {
                 if (metalPool[i].historyCount > 1) {
                     for (int h = 0; h < metalPool[i].historyCount - 1; h++) {
-                        Vector2 p1 = GetWorldToScreen(metalPool[i].history[h], camera);
-                        Vector2 p2 = GetWorldToScreen(metalPool[i].history[h + 1], camera);
+                        ProjectedPoint pt1 = ProjectPointCached(metalPool[i].history[h], camera);
+                        ProjectedPoint pt2 = ProjectPointCached(metalPool[i].history[h + 1], camera);
+                        if (pt1.behindCamera || pt2.behindCamera) continue;
+                        Vector2 p1 = pt1.screenPos;
+                        Vector2 p2 = pt2.screenPos;
                         
                         float segRatio = 1.0f - (float)h / (float)PARTICLE_HISTORY_COUNT;
                         
@@ -459,9 +463,8 @@ void DrawMetalSkill(void) {
                 // Calculate sprite rotation angle from screen velocity projection
                 float rotation = 0.0f;
                 if (metalPool[i].historyCount > 1) {
-                    Vector2 p0 = GetWorldToScreen(metalPool[i].position, camera);
-                    Vector2 p1 = GetWorldToScreen(metalPool[i].history[1], camera);
-                    rotation = atan2f(p0.y - p1.y, p0.x - p1.x) * RAD2DEG;
+                    ProjectedPoint pt1 = ProjectPointCached(metalPool[i].history[1], camera);
+                    rotation = atan2f(screenPos.y - pt1.screenPos.y, screenPos.x - pt1.screenPos.x) * RAD2DEG;
                 }
                 
                 Rectangle sourceRec = { 0.0f, 0.0f, (float)swordSprite.width, (float)swordSprite.height };
@@ -476,7 +479,8 @@ void DrawMetalSkill(void) {
                 float speed = Vector3Length(metalPool[i].velocity);
                 Vector3 tail3D = Vector3Subtract(metalPool[i].position, Vector3Scale(dir, speed * 0.012f));
                 
-                Vector2 tail = GetWorldToScreen(tail3D, camera);
+                ProjectedPoint tailPt = ProjectPointCached(tail3D, camera);
+                Vector2 tail = tailPt.screenPos;
                 float thick = metalPool[i].thickness * lifeRatio * depthFactor;
                 Color sparkCol = { intensity, (unsigned char)(intensity * 0.85f), (unsigned char)(intensity * 0.15f), 255 };
                 

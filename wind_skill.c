@@ -1,4 +1,5 @@
 #include "wind_skill.h"
+#include "skill_manager.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <math.h>
@@ -164,12 +165,10 @@ void DrawWindSkill(void) {
                 if (!particlePool[i].active) continue;
 
                 float lifeRatio = particlePool[i].lifetime / particlePool[i].maxLifetime;
-                Vector2 screenPos = GetWorldToScreen(particlePool[i].position, camera);
-
-                float dist = Vector3Distance(camera.position, particlePool[i].position);
-                float depthFactor = 800.0f / (dist + 0.1f);
-                if (depthFactor < 0.2f) depthFactor = 0.2f;
-                if (depthFactor > 3.0f) depthFactor = 3.0f;
+                ProjectedPoint pt = ProjectPointCached(particlePool[i].position, camera);
+                if (pt.behindCamera) continue;
+                Vector2 screenPos = pt.screenPos;
+                float depthFactor = pt.depthFactor;
 
                 float r = particlePool[i].radius * lifeRatio * depthFactor;
                 // Swirling particles drawn in pale blue/cyan/white gradients

@@ -53,6 +53,9 @@ int main(void) {
     rlSetClipPlanes(0.1f, 15000.0f);
 
     InitSkillManager(screenWidth, screenHeight);
+    RegisterStaticOccluder((Vector3){ 400.0f, 0.0f, 320.0f }, 25.0f, 62.5f);
+    RegisterStaticOccluder((Vector3){ 800.0f, 0.0f, 520.0f }, 30.0f, 75.0f);
+    RegisterStaticOccluder((Vector3){ 600.0f, 0.0f, 260.0f }, 20.0f, 50.0f);
     InitSwordRainSkill(); 
     InitUIPanel();
 
@@ -92,9 +95,10 @@ int main(void) {
 
             MyBeginMode3D(camera);
                 DrawSandbox3D(&player, &enemy, mouseTarget3D, &uiState);
+                DrawSkillManagerWorld3D();
             MyEndMode3D();
 
-            DrawSkillManager();
+            DrawSkillManagerOverlay();
 
             Vector2 enemyScreenHead = GetWorldToScreen((Vector3){ enemy.position.x, enemy.position.y + 55.0f, enemy.position.z }, camera);
             DrawText("ENEMY", (int)enemyScreenHead.x - 22, (int)enemyScreenHead.y, 12, WHITE);

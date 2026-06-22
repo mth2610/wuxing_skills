@@ -1,4 +1,5 @@
 #include "electric_skill.h"
+#include "skill_manager.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <math.h>
@@ -456,11 +457,10 @@ void DrawElectricSkill(void) {
                 if (!emitters[e].active || emitters[e].impacted)
                     continue;
 
-                Vector2 screenPos = GetWorldToScreen(emitters[e].currentPos, camera);
-                float dist = Vector3Distance(camera.position, emitters[e].currentPos);
-                float depthFactor = 800.0f / (dist + 0.1f);
-                if (depthFactor < 0.2f) depthFactor = 0.2f;
-                if (depthFactor > 3.0f) depthFactor = 3.0f;
+                ProjectedPoint pt = ProjectPointCached(emitters[e].currentPos, camera);
+                if (pt.behindCamera) continue;
+                Vector2 screenPos = pt.screenPos;
+                float depthFactor = pt.depthFactor;
 
                 float sizePulse = 1.0f + sinf(emitters[e].erraticTimer * 30.0f) * 0.15f;
                 float r = 18.0f * sizePulse * emitters[e].sizeScale * depthFactor;
@@ -486,13 +486,12 @@ void DrawElectricSkill(void) {
                         for (int i = 0; i < emitters[e].lightningPathCount - 1; i++) {
                             Vector3 p1_3d = emitters[e].lightningPath[i];
                             Vector3 p2_3d = emitters[e].lightningPath[i + 1];
-                            Vector2 p1 = GetWorldToScreen(p1_3d, camera);
-                            Vector2 p2 = GetWorldToScreen(p2_3d, camera);
-
-                            float dist = Vector3Distance(camera.position, p1_3d);
-                            float depthFactor = 800.0f / (dist + 0.1f);
-                            if (depthFactor < 0.2f) depthFactor = 0.2f;
-                            if (depthFactor > 3.0f) depthFactor = 3.0f;
+                            ProjectedPoint pt1 = ProjectPointCached(p1_3d, camera);
+                            ProjectedPoint pt2 = ProjectPointCached(p2_3d, camera);
+                            if (pt1.behindCamera || pt2.behindCamera) continue;
+                            Vector2 p1 = pt1.screenPos;
+                            Vector2 p2 = pt2.screenPos;
+                            float depthFactor = pt1.depthFactor;
 
                             DrawGlowLine(p1, p2, width * depthFactor, 0.95f * boltFade);
                         }
@@ -504,13 +503,12 @@ void DrawElectricSkill(void) {
                         for (int i = 0; i < emitters[e].branchPath1Count - 1; i++) {
                             Vector3 p1_3d = emitters[e].branchPath1[i];
                             Vector3 p2_3d = emitters[e].branchPath1[i + 1];
-                            Vector2 p1 = GetWorldToScreen(p1_3d, camera);
-                            Vector2 p2 = GetWorldToScreen(p2_3d, camera);
-
-                            float dist = Vector3Distance(camera.position, p1_3d);
-                            float depthFactor = 800.0f / (dist + 0.1f);
-                            if (depthFactor < 0.2f) depthFactor = 0.2f;
-                            if (depthFactor > 3.0f) depthFactor = 3.0f;
+                            ProjectedPoint pt1 = ProjectPointCached(p1_3d, camera);
+                            ProjectedPoint pt2 = ProjectPointCached(p2_3d, camera);
+                            if (pt1.behindCamera || pt2.behindCamera) continue;
+                            Vector2 p1 = pt1.screenPos;
+                            Vector2 p2 = pt2.screenPos;
+                            float depthFactor = pt1.depthFactor;
 
                             DrawGlowLineThin(p1, p2, width * depthFactor, 0.85f * boltFade);
                         }
@@ -522,13 +520,12 @@ void DrawElectricSkill(void) {
                         for (int i = 0; i < emitters[e].branchPath2Count - 1; i++) {
                             Vector3 p1_3d = emitters[e].branchPath2[i];
                             Vector3 p2_3d = emitters[e].branchPath2[i + 1];
-                            Vector2 p1 = GetWorldToScreen(p1_3d, camera);
-                            Vector2 p2 = GetWorldToScreen(p2_3d, camera);
-
-                            float dist = Vector3Distance(camera.position, p1_3d);
-                            float depthFactor = 800.0f / (dist + 0.1f);
-                            if (depthFactor < 0.2f) depthFactor = 0.2f;
-                            if (depthFactor > 3.0f) depthFactor = 3.0f;
+                            ProjectedPoint pt1 = ProjectPointCached(p1_3d, camera);
+                            ProjectedPoint pt2 = ProjectPointCached(p2_3d, camera);
+                            if (pt1.behindCamera || pt2.behindCamera) continue;
+                            Vector2 p1 = pt1.screenPos;
+                            Vector2 p2 = pt2.screenPos;
+                            float depthFactor = pt1.depthFactor;
 
                             DrawGlowLineThin(p1, p2, width * depthFactor, 0.85f * boltFade);
                         }
@@ -542,11 +539,10 @@ void DrawElectricSkill(void) {
                     continue;
 
                 float lifeRatio = particlePool[i].lifetime / particlePool[i].maxLifetime;
-                Vector2 screenPos = GetWorldToScreen(particlePool[i].position, camera);
-                float dist = Vector3Distance(camera.position, particlePool[i].position);
-                float depthFactor = 800.0f / (dist + 0.1f);
-                if (depthFactor < 0.2f) depthFactor = 0.2f;
-                if (depthFactor > 3.0f) depthFactor = 3.0f;
+                ProjectedPoint pt = ProjectPointCached(particlePool[i].position, camera);
+                if (pt.behindCamera) continue;
+                Vector2 screenPos = pt.screenPos;
+                float depthFactor = pt.depthFactor;
 
                 if (particlePool[i].type == PARTICLE_SPARK || particlePool[i].type == PARTICLE_BURST_SPARK) {
                     float r = particlePool[i].radius * (0.4f + 0.6f * lifeRatio) * depthFactor;
@@ -557,8 +553,11 @@ void DrawElectricSkill(void) {
                     float width = particlePool[i].radius * lifeRatio * depthFactor;
                     if (particlePool[i].pointCount > 1) {
                         for (int k = 0; k < particlePool[i].pointCount - 1; k++) {
-                            Vector2 p1 = GetWorldToScreen(particlePool[i].points[k], camera);
-                            Vector2 p2 = GetWorldToScreen(particlePool[i].points[k + 1], camera);
+                            ProjectedPoint pt1 = ProjectPointCached(particlePool[i].points[k], camera);
+                            ProjectedPoint pt2 = ProjectPointCached(particlePool[i].points[k + 1], camera);
+                            if (pt1.behindCamera || pt2.behindCamera) continue;
+                            Vector2 p1 = pt1.screenPos;
+                            Vector2 p2 = pt2.screenPos;
                             DrawGlowLineThin(p1, p2, width, lifeRatio);
                         }
                     }

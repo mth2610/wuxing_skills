@@ -1,4 +1,5 @@
 #include "fire_skill.h"
+#include "skill_manager.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <math.h>
@@ -649,6 +650,35 @@ void DrawFireSkill(void) {
 
   float time = GetTime();
 
+  // Cache projections
+  static ProjectedPoint emitterProjected[MAX_EMITTERS][MAX_SAMPLED_SEGMENTS];
+  static ProjectedPoint particleProjected[MAX_PARTICLES];
+
+  for (int e = 0; e < MAX_EMITTERS; e++) {
+    if (!emitters[e].active) continue;
+    int bodySegments = emitters[e].sampledCount;
+    for (int i = 0; i < bodySegments; i++) {
+      ProjectedPoint pt = ProjectPointCached(emitters[e].sampledPath[i], camera);
+      if (!pt.behindCamera) {
+        if (GetLineOfSightVisibility(camera.position, emitters[e].sampledPath[i]) <= 0.0f) {
+          pt.behindCamera = true;
+        }
+      }
+      emitterProjected[e][i] = pt;
+    }
+  }
+
+  for (int i = 0; i < MAX_PARTICLES; i++) {
+    if (!firePool[i].active) continue;
+    ProjectedPoint pt = ProjectPointCached(firePool[i].position, camera);
+    if (!pt.behindCamera) {
+      if (GetLineOfSightVisibility(camera.position, firePool[i].position) <= 0.0f) {
+        pt.behindCamera = true;
+      }
+    }
+    particleProjected[i] = pt;
+  }
+
   BeginTextureMode(canvasTexture);
   ClearBackground(BLANK);
 
@@ -664,13 +694,11 @@ void DrawFireSkill(void) {
 
     BeginBlendMode(BLEND_ALPHA);
     for (int i = 0; i < bodySegments; i += 2) {
-      Vector3 pos3D = emitters[e].sampledPath[i];
-      Vector2 drawPos = GetWorldToScreen(pos3D, camera);
+      ProjectedPoint pt = emitterProjected[e][i];
+      if (pt.behindCamera) continue;
 
-      float dist = Vector3Distance(camera.position, pos3D);
-      float depthFactor = 800.0f / (dist + 0.1f);
-      if (depthFactor < 0.2f) depthFactor = 0.2f;
-      if (depthFactor > 3.0f) depthFactor = 3.0f;
+      Vector2 drawPos = pt.screenPos;
+      float depthFactor = pt.depthFactor;
 
       float normDist = (bodySegments > 1) ? ((float)i / (float)(bodySegments - 1)) : 0.0f;
       float taper = powf(1.0f - normDist, 0.5f);
@@ -691,14 +719,14 @@ void DrawFireSkill(void) {
     if (!firePool[i].active)
       continue;
 
+    ProjectedPoint pt = particleProjected[i];
+    if (pt.behindCamera) continue;
+
+    Vector2 screenPos = pt.screenPos;
+    float depthFactor = pt.depthFactor;
+
     float lifeRatio = firePool[i].lifetime / firePool[i].maxLifetime;
     Color edgeCol = {0, 0, 0, 0};
-
-    Vector2 screenPos = GetWorldToScreen(firePool[i].position, camera);
-    float dist = Vector3Distance(camera.position, firePool[i].position);
-    float depthFactor = 800.0f / (dist + 0.1f);
-    if (depthFactor < 0.2f) depthFactor = 0.2f;
-    if (depthFactor > 3.0f) depthFactor = 3.0f;
 
     if (firePool[i].type == 1) {
       float rad = firePool[i].radius * (0.5f + 0.5f * lifeRatio);
@@ -756,18 +784,20 @@ void DrawFireSkill(void) {
 
     BeginBlendMode(BLEND_ADDITIVE);
     Vector2 prevDrawPos = {0};
+    bool prevValid = false;
     Vector2 headDrawPos = {0};
     Vector2 headPureTangent = {1, 0};
     float headDepthFactor = 1.0f;
 
     for (int i = 0; i < bodySegments; i++) {
-      Vector3 pos3D = emitters[e].sampledPath[i];
-      Vector2 drawPos = GetWorldToScreen(pos3D, camera);
+      ProjectedPoint pt = emitterProjected[e][i];
+      if (pt.behindCamera) {
+        prevValid = false;
+        continue;
+      }
 
-      float dist = Vector3Distance(camera.position, pos3D);
-      float depthFactor = 800.0f / (dist + 0.1f);
-      if (depthFactor < 0.2f) depthFactor = 0.2f;
-      if (depthFactor > 3.0f) depthFactor = 3.0f;
+      Vector2 drawPos = pt.screenPos;
+      float depthFactor = pt.depthFactor;
 
       if (i == 0) {
         headDrawPos = drawPos;
@@ -775,7 +805,7 @@ void DrawFireSkill(void) {
         
         Vector2 nextDrawPos = drawPos;
         if (bodySegments > 1) {
-          nextDrawPos = GetWorldToScreen(emitters[e].sampledPath[1], camera);
+          nextDrawPos = emitterProjected[e][1].screenPos;
         }
         headPureTangent = Vector2Normalize(Vector2Subtract(drawPos, nextDrawPos));
         if (headPureTangent.x == 0 && headPureTangent.y == 0) {
@@ -796,7 +826,7 @@ void DrawFireSkill(void) {
       Color ribbonColor = FireDensityColor(0.42f * brightness, 1.0f);
       Color hotColor = FireDensityColor(0.88f * brightness, 1.0f);
 
-      if (i > 0) {
+      if (i > 0 && prevValid) {
         DrawLineEx(prevDrawPos, drawPos, auraRad * 1.7f * depthFactor, outerColor);
         DrawLineEx(prevDrawPos, drawPos, ribbonRad * 1.9f * depthFactor, ribbonColor);
         DrawLineEx(prevDrawPos, drawPos, ribbonRad * 0.55f * depthFactor, hotColor);
@@ -807,8 +837,8 @@ void DrawFireSkill(void) {
       // Vẽ gai nhọn hai bên hông
       if (i % 8 == 0 && i > 4 && i < bodySegments - 5) {
         Vector2 nextDrawPos = drawPos;
-        if (i < bodySegments - 1) {
-          nextDrawPos = GetWorldToScreen(emitters[e].sampledPath[i + 1], camera);
+        if (i < bodySegments - 1 && !emitterProjected[e][i + 1].behindCamera) {
+          nextDrawPos = emitterProjected[e][i + 1].screenPos;
         }
         Vector2 pureTangent = Vector2Normalize(Vector2Subtract(drawPos, nextDrawPos));
         if (pureTangent.x == 0 && pureTangent.y == 0) pureTangent = (Vector2){1.0f, 0.0f};
@@ -837,14 +867,15 @@ void DrawFireSkill(void) {
                            FireDensityColor(0.42f * brightness, 1.0f), BLANK);
       }
       prevDrawPos = drawPos;
+      prevValid = true;
     }
 
     // Đuôi rồng
-    if (bodySegments > 5) {
+    if (bodySegments > 5 && prevValid) {
       Vector2 tailPos = prevDrawPos;
       Vector2 tailTangent;
-      if (bodySegments > 1) {
-        tailTangent = Vector2Normalize(Vector2Subtract(GetWorldToScreen(emitters[e].sampledPath[bodySegments - 2], camera), GetWorldToScreen(emitters[e].sampledPath[bodySegments - 1], camera)));
+      if (bodySegments > 1 && !emitterProjected[e][bodySegments - 2].behindCamera && !emitterProjected[e][bodySegments - 1].behindCamera) {
+        tailTangent = Vector2Normalize(Vector2Subtract(emitterProjected[e][bodySegments - 2].screenPos, emitterProjected[e][bodySegments - 1].screenPos));
       } else {
         tailTangent = headPureTangent;
       }
@@ -855,7 +886,7 @@ void DrawFireSkill(void) {
                          FireDensityColor(0.18f, 1.0f), BLANK);
     }
 
-    if (emitters[e].headProgress < FIRE_PROGRESS_MAX && bodySegments > 1) {
+    if (emitters[e].headProgress < FIRE_PROGRESS_MAX && bodySegments > 1 && !emitterProjected[e][0].behindCamera) {
       Vector2 headPerp = {-headPureTangent.y, headPureTangent.x};
       float rotation = atan2f(headPureTangent.y, headPureTangent.x) * RAD2DEG;
       float flipY = (headPureTangent.x < 0.0f) ? -1.0f : 1.0f;
@@ -874,9 +905,9 @@ void DrawFireSkill(void) {
 
       float headAlpha = (emitters[e].headProgress > FIRE_PROGRESS_MAX - 0.4f)
                             ? Clamp(1.0f - (emitters[e].headProgress -
-                                            (FIRE_PROGRESS_MAX - 0.4f)) /
-                                               0.4f,
-                                    0.0f, 1.0f)
+                                             (FIRE_PROGRESS_MAX - 0.4f)) /
+                                                0.4f,
+                                     0.0f, 1.0f)
                             : 1.0f;
 
       unsigned char jointV = (unsigned char)(255.0f * headAlpha * 0.35f);
@@ -949,9 +980,7 @@ void DrawFireSkill(void) {
                              (float)-canvasTexture.texture.height},
                  (Vector2){0, 0}, WHITE);
   EndShaderMode();
-}
-
-void UnloadFireSkill(void) {
+}void UnloadFireSkill(void) {
   UnloadShader(fireShader);
   UnloadTexture(dragonHeadTex);
   UnloadRenderTexture(canvasTexture);
