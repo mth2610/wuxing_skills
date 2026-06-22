@@ -30,7 +30,7 @@ FetchContent_MakeAvailable(raylib)
 # -----------------------------------------------------------------
 
 # Khai báo mục tiêu build ứng dụng chạy trực tiếp trên máy tính
-add_executable(wuxing main.c fluid_skill.c metal_skill.c fire_skill.c wood_skill.c electric_skill.c wind_skill.c skill_manager.c sword_rain_skill.c)
+add_executable(wuxing main.c fluid_skill.c metal_skill.c fire_skill.c wood_skill.c electric_skill.c wind_skill.c skill_manager.c sword_rain_skill.c ui_panel.c sandbox_core.c)
 
 # Tự động copy file Shader vào thư mục build để game không bị lỗi load shader
 configure_file(fluid.fs ${CMAKE_CURRENT_BINARY_DIR}/fluid.fs COPYONLY)

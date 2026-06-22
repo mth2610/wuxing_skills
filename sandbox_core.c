@@ -1,0 +1,334 @@
+#include "sandbox_core.h"
+#include "skill_manager.h"
+#include "wind_skill.h"
+#include "raymath.h"
+#include "rlgl.h"
+
+// Biến môi trường
+static const Vector3 arenaCenter = { 600.0f, 0.0f, 440.0f };
+static const float arenaRadius = 1800.0f;
+static const float gravity = 1500.0f;
+
+typedef struct {
+    Vector3 position;
+    float radius;
+} StonePillar;
+
+#define NUM_PILLARS 3
+static StonePillar pillars[NUM_PILLARS] = {
+    { { 400.0f, 0.0f, 320.0f }, 25.0f },
+    { { 800.0f, 0.0f, 520.0f }, 30.0f },
+    { { 600.0f, 0.0f, 260.0f }, 20.0f }
+};
+
+// Hàm vẽ helper
+static void DrawCircleSolid3D(Vector3 center, float radius, Color color) {
+    int segments = 128;
+    rlDisableBackfaceCulling();
+    rlBegin(RL_TRIANGLES);
+    rlColor4ub(color.r, color.g, color.b, color.a);
+    for (int i = 0; i < segments; i++) {
+        float a1 = ((float)i / segments) * 2.0f * PI;
+        float a2 = ((float)(i + 1) / segments) * 2.0f * PI;
+        Vector3 p1 = { center.x + cosf(a1) * radius, center.y, center.z + sinf(a1) * radius };
+        Vector3 p2 = { center.x + cosf(a2) * radius, center.y, center.z + sinf(a2) * radius };
+        rlVertex3f(center.x, center.y, center.z);
+        rlVertex3f(p2.x, p2.y, p2.z);
+        rlVertex3f(p1.x, p1.y, p1.z);
+    }
+    rlEnd();
+    rlEnableBackfaceCulling();
+}
+
+static void DrawCircleOutline3D(Vector3 center, float radius, Color color) {
+    int segments = 64;
+    Vector3 prevPt = { center.x + radius, center.y, center.z };
+    for (int i = 1; i <= segments; i++) {
+        float angle = ((float)i / segments) * 2.0f * PI;
+        Vector3 currPt = {
+            center.x + cosf(angle) * radius,
+            center.y,
+            center.z + sinf(angle) * radius
+        };
+        DrawLine3D(prevPt, currPt, color);
+        prevPt = currPt;
+    }
+}
+
+static void DrawCharacter3D(Vector3 position, float radius, Color skinCol, Color clothesCol, Color outlineCol, bool isPlayer, Vector3 targetPos) {
+    Vector3 leftFoot = { position.x - 8.0f, position.y, position.z };
+    Vector3 rightFoot = { position.x + 8.0f, position.y, position.z };
+    DrawSphere(leftFoot, 4.0f, outlineCol);
+    DrawSphere(rightFoot, 4.0f, outlineCol);
+
+    Vector3 bodyPos = { position.x, position.y + 18.0f, position.z };
+    DrawCylinder(bodyPos, 12.0f, 12.0f, 30.0f, 8, clothesCol);
+    DrawCylinderWires(bodyPos, 12.0f, 12.0f, 30.0f, 8, outlineCol);
+
+    Vector3 headPos = { position.x, position.y + 38.0f, position.z };
+    DrawSphere(headPos, 9.0f, skinCol);
+    DrawSphereWires(headPos, 9.0f, 6, 6, outlineCol);
+
+    if (isPlayer) {
+        Vector3 armOrigin = { position.x, position.y + 25.0f, position.z };
+        Vector3 dir = Vector3Normalize(Vector3Subtract(targetPos, armOrigin));
+        Vector3 handPos = Vector3Add(armOrigin, Vector3Scale(dir, 22.0f));
+        DrawLine3D(armOrigin, handPos, clothesCol);
+        DrawSphere(handPos, 4.0f, skinCol);
+        DrawSphereWires(handPos, 4.0f, 4, 4, outlineCol);
+
+        Vector3 restHand = { position.x - 14.0f, position.y + 14.0f, position.z };
+        DrawLine3D((Vector3){ position.x - 12.0f, position.y + 24.0f, position.z }, restHand, clothesCol);
+        DrawSphere(restHand, 3.5f, skinCol);
+        DrawSphereWires(restHand, 3.5f, 4, 4, outlineCol);
+    } else {
+        Vector3 leftHand = { position.x - 14.0f, position.y + 14.0f, position.z };
+        Vector3 rightHand = { position.x + 14.0f, position.y + 14.0f, position.z };
+        DrawLine3D((Vector3){ position.x - 12.0f, position.y + 24.0f, position.z }, leftHand, clothesCol);
+        DrawLine3D((Vector3){ position.x + 12.0f, position.y + 24.0f, position.z }, rightHand, clothesCol);
+        DrawSphere(leftHand, 3.5f, skinCol);
+        DrawSphere(rightHand, 3.5f, skinCol);
+        DrawSphereWires(leftHand, 3.5f, 4, 4, outlineCol);
+        DrawSphereWires(rightHand, 3.5f, 4, 4, outlineCol);
+    }
+}
+
+void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
+    // Camera
+    camera.position = (Vector3){ 600.0f, 500.0f, 840.0f }; 
+    camera.target = (Vector3){ 600.0f, 0.0f, 440.0f };    
+    camera.up = (Vector3){ 0.0f, 1.0f, 0.0f };
+    camera.fovy = 45.0f;
+    camera.projection = CAMERA_PERSPECTIVE;
+
+    // Cấu hình Player
+    player->position = (Vector3){ 130.0f, 0.0f, 350.0f };
+    player->radius = 30.0f;
+    player->dashCooldown = 0.0f;
+    player->dashTimer = 0.0f;
+    player->dashDir = (Vector3){ 0 };
+    player->isDashing = false;
+    player->zVelocity = 0.0f;
+    player->jumpCount = 0;
+
+    // Cấu hình Enemy
+    enemy->position = (Vector3){ 900.0f, 0.0f, 350.0f };
+    enemy->radius = 35.0f;
+    enemy->mode = ENEMY_STATIC;
+    enemy->speed = 120.0f;
+    enemy->patrolAngle = 0.0f;
+    enemy->oscillationScale = 1.0f;
+}
+
+void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelState* uiState, Vector3* outMouseTarget) {
+    Vector2 mousePos = GetMousePosition();
+
+    // 1. NGẮM BẮN CHUỘT 3D
+    Ray mouseRay = GetScreenToWorldRay(mousePos, camera);
+    if (mouseRay.direction.y != 0.0f) {
+        float t = -mouseRay.position.y / mouseRay.direction.y;
+        *outMouseTarget = Vector3Add(mouseRay.position, Vector3Scale(mouseRay.direction, t));
+    } else {
+        *outMouseTarget = (Vector3){0};
+    }
+
+    // 2. DI CHUYỂN PLAYER (DASH & JUMP)
+    Vector3 moveDir = { 0.0f, 0.0f, 0.0f };
+    if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) moveDir.z -= 1.0f; 
+    if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) moveDir.z += 1.0f; 
+    if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) moveDir.x -= 1.0f; 
+    if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) moveDir.x += 1.0f; 
+
+    if (Vector3Length(moveDir) > 0.0f) {
+        moveDir = Vector3Scale(moveDir, 1.0f / Vector3Length(moveDir));
+    }
+
+    if (player->dashCooldown > 0.0f) player->dashCooldown -= dt;
+
+    float currentGroundY = 0.0f;
+    for (int i = 0; i < NUM_PILLARS; i++) {
+        Vector3 diff = Vector3Subtract(player->position, pillars[i].position);
+        diff.y = 0.0f;
+        float dist = Vector3Length(diff);
+        float pillarHeight = pillars[i].radius * 2.5f;
+        float checkRadius = player->radius + pillars[i].radius;
+        
+        if (dist < checkRadius) {
+            if (i == 0 && player->position.y >= pillarHeight - 15.0f && player->zVelocity <= 0.0f) {
+                currentGroundY = pillarHeight;
+            } else {
+                Vector3 pushDir = Vector3Normalize(diff);
+                player->position.x = pillars[i].position.x + pushDir.x * checkRadius;
+                player->position.z = pillars[i].position.z + pushDir.z * checkRadius;
+            }
+        }
+    }
+
+    bool isOnSolid = (player->position.y <= currentGroundY);
+    if (!isOnSolid || player->zVelocity > 0.0f) {
+        player->zVelocity -= gravity * dt;
+        player->position.y += player->zVelocity * dt;
+        if (player->position.y <= currentGroundY) {
+            player->position.y = currentGroundY;
+            player->zVelocity = 0.0f;
+            player->jumpCount = 0;
+        }
+    } else {
+        player->zVelocity = 0.0f;
+    }
+
+    if (IsKeyPressed(KEY_SPACE)) {
+        if (player->position.y <= currentGroundY + 1.0f) {
+            player->zVelocity = 550.0f;
+            player->jumpCount = 1;
+        } else if (player->jumpCount < 2) {
+            player->zVelocity = 500.0f;
+            player->jumpCount = 2;
+        }
+    }
+
+    if (player->isDashing) {
+        player->dashTimer -= dt;
+        float dashSpeed = 1200.0f;
+        player->position.x += player->dashDir.x * dashSpeed * dt;
+        player->position.z += player->dashDir.z * dashSpeed * dt;
+
+        if (player->dashTimer <= 0.0f) {
+            player->isDashing = false;
+        }
+    } else {
+        float moveSpeed = 300.0f;
+        player->position.x += moveDir.x * moveSpeed * dt;
+        player->position.z += moveDir.z * moveSpeed * dt;
+
+        if (IsKeyPressed(KEY_X) && player->dashCooldown <= 0.0f) {
+            player->isDashing = true;
+            player->dashTimer = 0.15f;
+            player->dashCooldown = 0.8f;
+            if (Vector3Length(moveDir) == 0.0f) {
+                Vector3 diff = Vector3Subtract(*outMouseTarget, player->position);
+                diff.y = 0.0f;
+                player->dashDir = Vector3Normalize(diff);
+            } else {
+                player->dashDir = moveDir;
+            }
+        }
+    }
+
+    Vector3 toChar = Vector3Subtract(player->position, arenaCenter);
+    toChar.y = 0.0f;
+    if (Vector3Length(toChar) > arenaRadius - player->radius) {
+        Vector3 normal = Vector3Normalize(toChar);
+        player->position.x = arenaCenter.x + normal.x * (arenaRadius - player->radius);
+        player->position.z = arenaCenter.z + normal.z * (arenaRadius - player->radius);
+    }
+
+    // 3. CẬP NHẬT ENEMY
+    if (IsKeyPressed(KEY_P)) enemy->mode = (enemy->mode + 1) % 3;
+
+    float currentEnemySpeed = enemy->speed;
+    if (IsEnemySlowed()) currentEnemySpeed *= 0.4f; 
+    if (IsAnySkillCoiling()) currentEnemySpeed = 0.0f; 
+
+    if (enemy->mode == ENEMY_STATIC) {
+        if (IsAnySkillCoiling()) {
+            enemy->oscillationScale += (0.0f - enemy->oscillationScale) * 9.0f * dt;
+        } else {
+            enemy->oscillationScale += (1.0f - enemy->oscillationScale) * 2.0f * dt;
+        }
+        enemy->position.x = 900.0f;
+        float oscillationFreq = IsEnemySlowed() ? 0.8f : 2.5f;
+        enemy->position.z = 350.0f + sinf(GetTime() * oscillationFreq) * 100.0f * enemy->oscillationScale;
+        enemy->position.y = 0.0f;
+    } else if (enemy->mode == ENEMY_CHASE) {
+        if (currentEnemySpeed > 0.0f) {
+            Vector3 toPlayer = Vector3Subtract(player->position, enemy->position);
+            toPlayer.y = 0.0f;
+            float dist = Vector3Length(toPlayer);
+            if (dist > 15.0f) {
+                Vector3 dir = Vector3Scale(Vector3Normalize(toPlayer), currentEnemySpeed * dt);
+                enemy->position = Vector3Add(enemy->position, dir);
+            }
+        }
+    } else if (enemy->mode == ENEMY_PATROL) {
+        if (currentEnemySpeed > 0.0f) {
+            float rotSpeed = (currentEnemySpeed / 200.0f);
+            enemy->patrolAngle += rotSpeed * dt;
+        }
+        Vector3 patrolCenter = { 600.0f, 0.0f, 440.0f };
+        enemy->position.x = patrolCenter.x + cosf(enemy->patrolAngle) * 250.0f;
+        enemy->position.z = patrolCenter.z + sinf(enemy->patrolAngle) * 200.0f;
+        enemy->position.y = 0.0f;
+    }
+
+    Vector3 windPullCenter = { 0 };
+    float windPullStrength = 0.0f;
+    if (GetWindPullForce(&windPullCenter, &windPullStrength)) {
+        Vector3 pullDir = Vector3Subtract(windPullCenter, enemy->position);
+        pullDir.y = 0.0f;
+        if (Vector3Length(pullDir) > 10.0f) {
+            Vector3 pullForce = Vector3Scale(Vector3Normalize(pullDir), windPullStrength * dt);
+            enemy->position = Vector3Add(enemy->position, pullForce);
+        }
+    }
+
+    Vector3 toEnemy = Vector3Subtract(enemy->position, arenaCenter);
+    toEnemy.y = 0.0f;
+    if (Vector3Length(toEnemy) > arenaRadius - enemy->radius) {
+        Vector3 normal = Vector3Normalize(toEnemy);
+        enemy->position.x = arenaCenter.x + normal.x * (arenaRadius - enemy->radius);
+        enemy->position.z = arenaCenter.z + normal.z * (arenaRadius - enemy->radius);
+    }
+
+    for (int i = 0; i < NUM_PILLARS; i++) {
+        Vector3 diff = Vector3Subtract(enemy->position, pillars[i].position);
+        diff.y = 0.0f;
+        float dist = Vector3Length(diff);
+        float minDist = enemy->radius + pillars[i].radius;
+        if (dist < minDist) {
+            Vector3 pushDir = Vector3Normalize(diff);
+            enemy->position.x = pillars[i].position.x + pushDir.x * minDist;
+            enemy->position.z = pillars[i].position.z + pushDir.z * minDist;
+        }
+    }
+
+    if (IsAnySkillShocking()) {
+        enemy->position.x += (float)GetRandomValue(-6, 6);
+        enemy->position.z += (float)GetRandomValue(-6, 6);
+    }
+
+    // Cập nhật Camera theo chân nhân vật
+    camera.target = player->position;
+    camera.position = (Vector3){ player->position.x, player->position.y + 500.0f, player->position.z + 400.0f };
+}
+
+void DrawSandbox3D(const PlayerEntity* player, const EnemyEntity* enemy, Vector3 mouseTarget, UIPanelState* uiState) {
+    DrawCircleSolid3D((Vector3){ 600.0f, -0.05f, 440.0f }, 1805.0f, GetColor(0x1B1B1FFF));
+    DrawCircleSolid3D((Vector3){ 600.0f, 0.0f, 440.0f }, 1800.0f, GetColor(0x222228FF));
+    
+    DrawCircleOutline3D((Vector3){ 600.0f, 0.08f, 440.0f }, 1600.0f, GetColor(0x5A5A6FFF));
+    DrawCircleOutline3D((Vector3){ 600.0f, 0.08f, 440.0f }, 1200.0f, GetColor(0x4F4F5FFF));
+    DrawCircleOutline3D((Vector3){ 600.0f, 0.08f, 440.0f }, 400.0f, GetColor(0x444455FF));
+    
+    DrawLine3D((Vector3){ 600.0f - 1800.0f, 0.08f, 440.0f }, (Vector3){ 600.0f + 1800.0f, 0.08f, 440.0f }, GetColor(0x40404FFF));
+    DrawLine3D((Vector3){ 600.0f, 0.08f, 440.0f - 1800.0f }, (Vector3){ 600.0f, 0.08f, 440.0f + 1800.0f }, GetColor(0x40404FFF));
+
+    if (player->position.y > 5.0f) {
+        DrawLine3D((Vector3){ player->position.x, 0.0f, player->position.z }, player->position, ColorAlpha(GRAY, 0.5f));
+    }
+
+    DrawCircleOutline3D((Vector3){ player->position.x, 0.08f, player->position.z }, 25.0f, ColorAlpha(LIME, 0.6f));
+    DrawCircleOutline3D((Vector3){ enemy->position.x, 0.08f, enemy->position.z }, 30.0f, ColorAlpha(RED, 0.6f));
+
+    for (int i = 0; i < NUM_PILLARS; i++) {
+        float pillarHeight = pillars[i].radius * 2.5f;
+        Vector3 center = { pillars[i].position.x, pillars[i].position.y + pillarHeight * 0.5f, pillars[i].position.z };
+        Color pCol = (i == 0) ? GetColor(0xDAA520FF) : GetColor(0x3B3B42FF);
+        Color pLineCol = (i == 0) ? YELLOW : GetColor(0x73737CFF);
+        DrawCylinder(center, pillars[i].radius, pillars[i].radius, pillarHeight, 16, pCol);
+        DrawCylinderWires(center, pillars[i].radius, pillars[i].radius, pillarHeight, 16, pLineCol);
+    }
+
+    DrawCharacter3D(enemy->position, 30.0f, GetColor(0xFFC0CBFF), IsEnemySlowed() ? GetColor(0x1B4F72FF) : (IsEnemyBurning() ? RED : GetColor(0x8B2500FF)), IsEnemySlowed() ? SKYBLUE : (IsEnemyBurning() ? YELLOW : GetColor(0xFF5500FF)), false, (Vector3){0});
+    DrawCharacter3D(player->position, 25.0f, GetColor(0xFFD39BFF), GetColor(0x3B5998FF), player->isDashing ? GetRegisteredSkillColor(uiState->activeSkillIndex) : GetColor(0xCCCCCCFF), true, mouseTarget);
+}
