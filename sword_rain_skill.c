@@ -3,7 +3,7 @@
 #include "skill_manager.h"
 #include <stddef.h>
 
-static void CastSwordRain(Vector2 startPos, Vector2 target, SkillParams params) {
+static void CastSwordRain(Vector3 startPos, Vector3 target, SkillParams params) {
     // Call CastMetalSkill using the adjusted positions and overridden quantity/size scale
     CastMetalSkill(startPos, target, params.quantity, params.sizeScale);
 }

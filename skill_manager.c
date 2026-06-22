@@ -14,7 +14,7 @@
 #define MAX_SKILLS 32
 
 typedef struct {
-    Vector2 position;
+    Vector3 position; // 3D position
     char text[32];
     Color color;
     float size;
@@ -33,18 +33,20 @@ static float burnTickAccumulator = 0.0f;
 #define MAX_ACTIVE_PORTALS 16
 
 typedef struct {
-    Vector2 position;
+    Vector3 position;
     Color color;
     float maxLifetime;
     float lifetime;
     float size;
     float angle;
-    float tiltRatio;
     bool active;
     bool isGround;
 } CastPortal;
 
 static CastPortal activePortals[MAX_ACTIVE_PORTALS];
+
+// External camera reference to project 3D coordinates to 2D screen space
+extern Camera3D camera;
 
 // Dynamic Skill Registry Entry
 typedef struct {
@@ -55,8 +57,8 @@ typedef struct {
     int forceQuantity;
     float forceSizeScale;
     void (*init)(int screenWidth, int screenHeight);
-    void (*cast)(Vector2 startPos, Vector2 target, SkillParams params);
-    void (*update)(float dt, Vector2 enemyPos, float enemyRadius);
+    void (*cast)(Vector3 startPos, Vector3 target, SkillParams params);
+    void (*update)(float dt, Vector3 enemyPos, float enemyRadius);
     void (*draw)(void);
     void (*unload)(void);
 } SkillRegistryEntry;
@@ -66,61 +68,36 @@ static int registeredSkillCount = 0;
 static bool builtInRegistered = false;
 
 // Forward declaration of wrappers
-static void CastWaterWrapper(Vector2 startPos, Vector2 target, SkillParams params);
-static void CastMetalWrapper(Vector2 startPos, Vector2 target, SkillParams params);
-static void CastFireWrapper(Vector2 startPos, Vector2 target, SkillParams params);
-static void CastWoodWrapper(Vector2 startPos, Vector2 target, SkillParams params);
-static void CastElectricWrapper(Vector2 startPos, Vector2 target, SkillParams params);
+static void CastWaterWrapper(Vector3 startPos, Vector3 target, SkillParams params);
+static void CastMetalWrapper(Vector3 startPos, Vector3 target, SkillParams params);
+static void CastFireWrapper(Vector3 startPos, Vector3 target, SkillParams params);
+static void CastWoodWrapper(Vector3 startPos, Vector3 target, SkillParams params);
+static void CastElectricWrapper(Vector3 startPos, Vector3 target, SkillParams params);
 
-static void UpdateFluidSkillWrapper(float dt, Vector2 enemyPos, float enemyRadius);
-static void UpdateMetalSkillWrapper(float dt, Vector2 enemyPos, float enemyRadius);
-static void UpdateFireSkillWrapper(float dt, Vector2 enemyPos, float enemyRadius);
-static void UpdateWoodSkillWrapper(float dt, Vector2 enemyPos, float enemyRadius);
-static void UpdateElectricSkillWrapper(float dt, Vector2 enemyPos, float enemyRadius);
+static void UpdateFluidSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius);
+static void UpdateMetalSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius);
+static void UpdateFireSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius);
+static void UpdateWoodSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius);
+static void UpdateElectricSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius);
 
-static void DrawTiltedEllipseFilled(Vector2 center, float rx, float ry, float angleRad, Color color) {
+static void DrawCircleLines3D(Vector3 center, float radius, Color color) {
     const int segments = 24;
-    Vector2 prevPoint = { 0 };
-    float cosA = cosf(angleRad);
-    float sinA = sinf(angleRad);
-
+    Vector3 prevPoint = { 0 };
     for (int i = 0; i <= segments; i++) {
         float t = ((float)i / (float)segments) * PI * 2.0f;
-        float x = rx * cosf(t);
-        float y = ry * sinf(t);
-        Vector2 point = {
-            center.x + x * cosA - y * sinA,
-            center.y + x * sinA + y * cosA
+        Vector3 point = {
+            center.x + radius * cosf(t),
+            center.y,
+            center.z + radius * sinf(t)
         };
         if (i > 0) {
-            DrawTriangle(center, prevPoint, point, color);
+            DrawLine3D(prevPoint, point, color);
         }
         prevPoint = point;
     }
 }
 
-static void DrawTiltedEllipseLines(Vector2 center, float rx, float ry, float angleRad, Color color, float thickness) {
-    const int segments = 24;
-    Vector2 prevPoint = { 0 };
-    float cosA = cosf(angleRad);
-    float sinA = sinf(angleRad);
-
-    for (int i = 0; i <= segments; i++) {
-        float t = ((float)i / (float)segments) * PI * 2.0f;
-        float x = rx * cosf(t);
-        float y = ry * sinf(t);
-        Vector2 point = {
-            center.x + x * cosA - y * sinA,
-            center.y + x * sinA + y * cosA
-        };
-        if (i > 0) {
-            DrawLineEx(prevPoint, point, thickness, color);
-        }
-        prevPoint = point;
-    }
-}
-
-static void AddCastPortal(Vector2 pos, Color portalColor, CastPathType pathType, float sizeScale, Vector2 target) {
+static void AddCastPortal(Vector3 pos, Color portalColor, CastPathType pathType, float sizeScale, Vector3 target) {
     for (int i = 0; i < MAX_ACTIVE_PORTALS; i++) {
         if (!activePortals[i].active) {
             activePortals[i].position = pos;
@@ -129,28 +106,19 @@ static void AddCastPortal(Vector2 pos, Color portalColor, CastPathType pathType,
             activePortals[i].lifetime = 0.8f;
             activePortals[i].size = 70.0f * sizeScale;
             activePortals[i].active = true;
-
-            if (pathType == CAST_PATH_UNDERGROUND) {
-                activePortals[i].isGround = true;
-                activePortals[i].angle = 0.0f;
-                activePortals[i].tiltRatio = 0.4f;
-            } else {
-                activePortals[i].isGround = false;
-                Vector2 dir = Vector2Normalize(Vector2Subtract(target, pos));
-                activePortals[i].angle = atan2f(dir.y, dir.x) + PI/2.0f;
-                activePortals[i].tiltRatio = 0.35f;
-            }
+            activePortals[i].angle = 0.0f;
+            activePortals[i].isGround = (pathType == CAST_PATH_UNDERGROUND);
             break;
         }
     }
 }
 
-static void AddFloatingText(Vector2 pos, const char* text, Color color, float size, float maxLife) {
+static void AddFloatingText(Vector3 pos, const char* text, Color color, float size, float maxLife) {
     for (int i = 0; i < MAX_FLOATING_TEXTS; i++) {
         if (!floatingTexts[i].active) {
             floatingTexts[i].position = pos;
             floatingTexts[i].position.x += GetRandomValue(-25, 25);
-            floatingTexts[i].position.y += GetRandomValue(-15, 5);
+            floatingTexts[i].position.y += GetRandomValue(-15, 5); // This offset works on the height Y axis in 3D
             snprintf(floatingTexts[i].text, sizeof(floatingTexts[i].text), "%s", text);
             floatingTexts[i].color = color;
             floatingTexts[i].size = size;
@@ -176,8 +144,8 @@ static void EnsureBuiltInRegistered(void) {
 
 int RegisterSkill(const char* name, Color color,
                   void (*init)(int screenWidth, int screenHeight),
-                  void (*cast)(Vector2 startPos, Vector2 target, SkillParams params),
-                  void (*update)(float dt, Vector2 enemyPos, float enemyRadius),
+                  void (*cast)(Vector3 startPos, Vector3 target, SkillParams params),
+                  void (*update)(float dt, Vector3 enemyPos, float enemyRadius),
                   void (*draw)(void),
                   void (*unload)(void)) {
     
@@ -257,7 +225,7 @@ void InitSkillManager(int screenWidth, int screenHeight) {
     }
 }
 
-void UpdateSkillManager(float dt, Vector2 enemyPos, float enemyRadius) {
+void UpdateSkillManager(float dt, Vector3 enemyPos, float enemyRadius) {
     EnsureBuiltInRegistered();
 
     if (slowTimer > 0.0f) {
@@ -268,9 +236,10 @@ void UpdateSkillManager(float dt, Vector2 enemyPos, float enemyRadius) {
         burnTickAccumulator += dt;
         if (burnTickAccumulator >= 0.5f) {
             burnTickAccumulator = 0.0f;
-            Vector2 tickPos = enemyPos;
+            Vector3 tickPos = enemyPos;
             tickPos.x += (float)GetRandomValue(-20, 20);
-            tickPos.y += (float)GetRandomValue(-20, 20);
+            tickPos.y += (float)GetRandomValue(-20, 20); // vertical height jitter
+            tickPos.z += (float)GetRandomValue(-20, 20);
             AddFloatingText(tickPos, "12", RED, 16.0f, 0.4f);
         }
     } else {
@@ -296,7 +265,7 @@ void UpdateSkillManager(float dt, Vector2 enemyPos, float enemyRadius) {
     for (int i = 0; i < MAX_FLOATING_TEXTS; i++) {
         if (floatingTexts[i].active) {
             floatingTexts[i].lifetime -= dt;
-            floatingTexts[i].position.y -= 55.0f * dt;
+            floatingTexts[i].position.y += 55.0f * dt; // Rises vertically in Y axis
             if (floatingTexts[i].lifetime <= 0.0f) {
                 floatingTexts[i].active = false;
             }
@@ -308,6 +277,7 @@ void DrawSkillManager(void) {
     float time = (float)GetTime();
     EnsureBuiltInRegistered();
 
+    // Portals are drawn inside 3D mode (must be called within BeginMode3D/EndMode3D context in main.c)
     for (int i = 0; i < MAX_ACTIVE_PORTALS; i++) {
         if (activePortals[i].active) {
             float progress = 1.0f - (activePortals[i].lifetime / activePortals[i].maxLifetime);
@@ -318,51 +288,53 @@ void DrawSkillManager(void) {
                 currentScale = (1.0f - progress) / 0.2f;
             }
             float r = activePortals[i].size * currentScale;
-            float tilt = activePortals[i].tiltRatio;
-            float angle = activePortals[i].angle;
             Color col = activePortals[i].color;
-            float cosA = cosf(angle);
-            float sinA = sinf(angle);
 
+            // 1. Draw volumetric glowing aura flat on X-Z plane
             for (float f = 1.0f; f <= 1.4f; f += 0.1f) {
                 float alphaFactor = (1.4f - f) / 0.4f;
-                DrawTiltedEllipseFilled(activePortals[i].position, r * f, r * f * tilt, angle, ColorAlpha(col, 0.15f * alphaFactor * currentScale));
+                DrawCircle3D(activePortals[i].position, r * f, (Vector3){ 1.0f, 0.0f, 0.0f }, 90.0f, ColorAlpha(col, 0.15f * alphaFactor * currentScale));
             }
 
-            DrawTiltedEllipseFilled(activePortals[i].position, r * 0.75f, r * 0.75f * tilt, angle, ColorAlpha(BLACK, 0.95f * currentScale));
-            DrawTiltedEllipseLines(activePortals[i].position, r * 0.85f, r * 0.85f * tilt, angle, ColorAlpha(col, 0.8f * currentScale), 2.5f);
-            DrawTiltedEllipseLines(activePortals[i].position, r * 0.65f, r * 0.65f * tilt, angle, ColorAlpha(col, 0.5f * currentScale), 1.5f);
+            // 2. Draw magical pitch-black core
+            DrawCircle3D(activePortals[i].position, r * 0.75f, (Vector3){ 1.0f, 0.0f, 0.0f }, 90.0f, ColorAlpha(BLACK, 0.95f * currentScale));
             
+            // 3. Draw outline rings
+            DrawCircleLines3D(activePortals[i].position, r * 0.85f, ColorAlpha(col, 0.8f * currentScale));
+            DrawCircleLines3D(activePortals[i].position, r * 0.65f, ColorAlpha(col, 0.5f * currentScale));
+            
+            // 4. Draw rotating spokes (Magic Runes Spokes)
             int spokes = 8;
             for (int s = 0; s < spokes; s++) {
                 float spAngle = (float)s * (PI * 2.0f / spokes) + time * 1.5f;
-                float cosSp = cosf(spAngle);
-                float sinSp = sinf(spAngle);
-                Vector2 pInner = {
-                    activePortals[i].position.x + (r * 0.5f * cosSp) * cosA - (r * 0.5f * tilt * sinSp) * sinA,
-                    activePortals[i].position.y + (r * 0.5f * cosSp) * sinA + (r * 0.5f * tilt * sinSp) * cosA
+                Vector3 pInner = {
+                    activePortals[i].position.x + r * 0.5f * cosf(spAngle),
+                    activePortals[i].position.y,
+                    activePortals[i].position.z + r * 0.5f * sinf(spAngle)
                 };
-                Vector2 pOuter = {
-                    activePortals[i].position.x + (r * 1.15f * cosSp) * cosA - (r * 1.15f * tilt * sinSp) * sinA,
-                    activePortals[i].position.y + (r * 1.15f * cosSp) * sinA + (r * 1.15f * tilt * sinSp) * cosA
+                Vector3 pOuter = {
+                    activePortals[i].position.x + r * 1.15f * cosf(spAngle),
+                    activePortals[i].position.y,
+                    activePortals[i].position.z + r * 1.15f * sinf(spAngle)
                 };
-                DrawLineEx(pInner, pOuter, 1.5f, ColorAlpha(col, 0.35f * currentScale));
+                DrawLine3D(pInner, pOuter, ColorAlpha(col, 0.35f * currentScale));
             }
             
+            // 5. Draw 8 swirling sparks (drawn as small 3D spheres)
             float rotSpeed = time * 7.0f;
             for (int p = 0; p < 8; p++) {
                 float angleOffset = (float)p * (PI * 0.25f) + rotSpeed;
-                float px = r * 0.85f * cosf(angleOffset);
-                float py = r * 0.85f * tilt * sinf(angleOffset);
-                Vector2 sparkPos = {
-                    activePortals[i].position.x + px * cosA - py * sinA,
-                    activePortals[i].position.y + px * sinA + py * cosA
+                Vector3 sparkPos = {
+                    activePortals[i].position.x + r * 0.85f * cosf(angleOffset),
+                    activePortals[i].position.y,
+                    activePortals[i].position.z + r * 0.85f * sinf(angleOffset)
                 };
-                DrawCircleV(sparkPos, 3.0f * currentScale, ColorAlpha(col, 0.95f * currentScale));
+                DrawSphere(sparkPos, 3.0f * currentScale, ColorAlpha(col, 0.95f * currentScale));
             }
 
+            // 6. Draw additional outer ring for ground portal
             if (activePortals[i].isGround) {
-                DrawTiltedEllipseLines(activePortals[i].position, r * 1.25f, r * 1.25f * tilt, angle, ColorAlpha(col, 0.25f * currentScale), 1.0f);
+                DrawCircleLines3D(activePortals[i].position, r * 1.25f, ColorAlpha(col, 0.25f * currentScale));
             }
         }
     }
@@ -374,20 +346,27 @@ void DrawSkillManager(void) {
         }
     }
 
+    // Floating text is drawn in 2D mode (outside BeginMode3D/EndMode3D context in main.c)
+    // We temporarily exit 3D mode in main.c, project the positions to screen-space using GetWorldToScreen,
+    // and draw them here.
     for (int i = 0; i < MAX_FLOATING_TEXTS; i++) {
         if (floatingTexts[i].active) {
             float alpha = floatingTexts[i].lifetime / floatingTexts[i].maxLifetime;
             Color col = ColorAlpha(floatingTexts[i].color, alpha);
             
+            // Project 3D coordinate to 2D screen coordinates
+            Vector2 screenPos = GetWorldToScreen(floatingTexts[i].position, camera);
+
+            // Draw text outline shadow
             DrawText(floatingTexts[i].text, 
-                     (int)floatingTexts[i].position.x - 1, 
-                     (int)floatingTexts[i].position.y + 1, 
+                     (int)screenPos.x - 1, 
+                     (int)screenPos.y + 1, 
                      (int)floatingTexts[i].size, 
                      ColorAlpha(BLACK, alpha * 0.7f));
             
             DrawText(floatingTexts[i].text, 
-                     (int)floatingTexts[i].position.x, 
-                     (int)floatingTexts[i].position.y, 
+                     (int)screenPos.x, 
+                     (int)screenPos.y, 
                      (int)floatingTexts[i].size, 
                      col);
         }
@@ -403,7 +382,7 @@ void UnloadSkillManager(void) {
     }
 }
 
-void CastSkill(int skillIndex, Vector2 startPos, Vector2 target, SkillParams params) {
+void CastSkill(int skillIndex, Vector3 startPos, Vector3 target, SkillParams params) {
     EnsureBuiltInRegistered();
     if (skillIndex < 0 || skillIndex >= registeredSkillCount) return;
 
@@ -421,22 +400,24 @@ void CastSkill(int skillIndex, Vector2 startPos, Vector2 target, SkillParams par
         params.sizeScale = skillRegistry[skillIndex].forceSizeScale;
     }
 
-    Vector2 adjustedStartPos = startPos;
-    Vector2 adjustedTarget = target;
+    Vector3 adjustedStartPos = startPos;
+    Vector3 adjustedTarget = target;
     Color skillColor = skillRegistry[skillIndex].color;
 
     switch (params.pathType) {
         case CAST_PATH_PROJECTILE: {
-            Vector2 shoulderPos = (Vector2){ startPos.x, startPos.y - params.casterZ - 25.0f };
-            Vector2 aimDir = Vector2Normalize(Vector2Subtract(target, shoulderPos));
-            adjustedStartPos = Vector2Add(shoulderPos, Vector2Scale(aimDir, 22.0f));
+            // PROJECTILE: shoulder is at height startPos.y + 25.0f
+            Vector3 shoulderPos = (Vector3){ startPos.x, startPos.y + 25.0f, startPos.z };
+            Vector3 aimDir = Vector3Normalize(Vector3Subtract(target, shoulderPos));
+            adjustedStartPos = Vector3Add(shoulderPos, Vector3Scale(aimDir, 22.0f));
             adjustedTarget = target;
             break;
         }
         case CAST_PATH_UNDERGROUND: {
             if (params.anchorType == CAST_ANCHOR_CASTER) {
-                Vector2 dir = Vector2Normalize(Vector2Subtract(target, startPos));
-                adjustedStartPos = Vector2Add(startPos, Vector2Scale(dir, 35.0f));
+                Vector3 dir = Vector3Normalize(Vector3Subtract(target, startPos));
+                adjustedStartPos = Vector3Add(startPos, Vector3Scale(dir, 35.0f));
+                adjustedStartPos.y = 0.02f; // lay flat on the ground plane (Y-offset to avoid Z-fighting)
                 adjustedTarget = target;
                 
                 if (params.showPortal) {
@@ -444,7 +425,8 @@ void CastSkill(int skillIndex, Vector2 startPos, Vector2 target, SkillParams par
                 }
             } else {
                 adjustedStartPos = target;
-                adjustedTarget = (Vector2){ target.x, target.y - 100.0f };
+                adjustedStartPos.y = 0.02f; // target ground
+                adjustedTarget = (Vector3){ target.x, target.y + 100.0f, target.z }; // shoots straight up
                 
                 if (params.showPortal) {
                     AddCastPortal(adjustedStartPos, skillColor, CAST_PATH_UNDERGROUND, params.sizeScale, adjustedTarget);
@@ -454,10 +436,10 @@ void CastSkill(int skillIndex, Vector2 startPos, Vector2 target, SkillParams par
         }
         case CAST_PATH_SKY: {
             if (params.anchorType == CAST_ANCHOR_CASTER) {
-                adjustedStartPos = (Vector2){ startPos.x, startPos.y - params.casterZ - 348.0f };
+                adjustedStartPos = (Vector3){ startPos.x, startPos.y + 348.0f, startPos.z };
                 adjustedTarget = target;
             } else {
-                adjustedStartPos = (Vector2){ target.x, target.y - 348.0f };
+                adjustedStartPos = (Vector3){ target.x, target.y + 348.0f, target.z };
                 adjustedTarget = target;
             }
             if (params.showPortal) {
@@ -490,9 +472,9 @@ bool IsAnySkillShocking(void) {
     return IsElectricSkillShocking();
 }
 
-// Built-in skill wrappers implementation
+// Built-in skill wrappers implementation using Vector3
 
-static void CastWaterWrapper(Vector2 startPos, Vector2 target, SkillParams params) {
+static void CastWaterWrapper(Vector3 startPos, Vector3 target, SkillParams params) {
     int qty = params.quantity > 0 ? params.quantity : 1;
     if (qty > 1) {
         for (int i = 0; i < qty; i++) {
@@ -504,12 +486,12 @@ static void CastWaterWrapper(Vector2 startPos, Vector2 target, SkillParams param
     }
 }
 
-static void CastMetalWrapper(Vector2 startPos, Vector2 target, SkillParams params) {
+static void CastMetalWrapper(Vector3 startPos, Vector3 target, SkillParams params) {
     int qty = params.quantity > 0 ? params.quantity : 3;
     CastMetalSkill(startPos, target, qty, params.sizeScale);
 }
 
-static void CastFireWrapper(Vector2 startPos, Vector2 target, SkillParams params) {
+static void CastFireWrapper(Vector3 startPos, Vector3 target, SkillParams params) {
     int qty = params.quantity > 0 ? params.quantity : 1;
     if (qty > 1) {
         for (int i = 0; i < qty; i++) {
@@ -521,19 +503,20 @@ static void CastFireWrapper(Vector2 startPos, Vector2 target, SkillParams params
     }
 }
 
-static void CastWoodWrapper(Vector2 startPos, Vector2 target, SkillParams params) {
+static void CastWoodWrapper(Vector3 startPos, Vector3 target, SkillParams params) {
     int qty = params.quantity > 0 ? params.quantity : 3;
     CastWoodSkill(startPos, target, qty, params.sizeScale);
 }
 
-static void CastElectricWrapper(Vector2 startPos, Vector2 target, SkillParams params) {
+static void CastElectricWrapper(Vector3 startPos, Vector3 target, SkillParams params) {
     int qty = params.quantity > 0 ? params.quantity : 1;
     if (qty > 1) {
         for (int i = 0; i < qty; i++) {
             float angle = ((float)i / (float)(qty - 1) - 0.5f) * 0.35f;
-            Vector2 dir = Vector2Normalize(Vector2Subtract(target, startPos));
-            Vector2 perp = { -dir.y, dir.x };
-            Vector2 offsetTarget = Vector2Add(target, Vector2Scale(perp, angle * 180.0f));
+            Vector3 dir = Vector3Normalize(Vector3Subtract(target, startPos));
+            // Rotate perp direction vector around Y axis by angle
+            Vector3 perp = { -dir.z, 0.0f, dir.x };
+            Vector3 offsetTarget = Vector3Add(target, Vector3Scale(perp, angle * 180.0f));
             CastElectricSkill(startPos, offsetTarget, params.sizeScale);
         }
     } else {
@@ -541,15 +524,15 @@ static void CastElectricWrapper(Vector2 startPos, Vector2 target, SkillParams pa
     }
 }
 
-static void UpdateFluidSkillWrapper(float dt, Vector2 enemyPos, float enemyRadius) {
+static void UpdateFluidSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius) {
     UpdateFluidSkill(dt);
     int waterHits[MAX_TEMP_PROJECTILES];
     int waterHitCount = 0;
-    Vector2 waterHitPos[MAX_TEMP_PROJECTILES];
+    Vector3 waterHitPos[MAX_TEMP_PROJECTILES];
     int numWater = GetFluidSkillProjectiles(tempProjectiles, MAX_TEMP_PROJECTILES);
     for (int i = 0; i < numWater; i++) {
         if (tempProjectiles[i].active) {
-            float dist = Vector2Distance(tempProjectiles[i].position, enemyPos);
+            float dist = Vector3Distance(tempProjectiles[i].position, enemyPos);
             if (dist < (tempProjectiles[i].radius + enemyRadius)) {
                 waterHits[waterHitCount] = i;
                 waterHitPos[waterHitCount] = tempProjectiles[i].position;
@@ -565,15 +548,15 @@ static void UpdateFluidSkillWrapper(float dt, Vector2 enemyPos, float enemyRadiu
     }
 }
 
-static void UpdateMetalSkillWrapper(float dt, Vector2 enemyPos, float enemyRadius) {
+static void UpdateMetalSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius) {
     UpdateMetalSkill(dt);
     int metalHits[MAX_TEMP_PROJECTILES];
     int metalHitCount = 0;
-    Vector2 metalHitPos[MAX_TEMP_PROJECTILES];
+    Vector3 metalHitPos[MAX_TEMP_PROJECTILES];
     int numMetal = GetMetalSkillProjectiles(tempProjectiles, MAX_TEMP_PROJECTILES);
     for (int i = 0; i < numMetal; i++) {
         if (tempProjectiles[i].active) {
-            float dist = Vector2Distance(tempProjectiles[i].position, enemyPos);
+            float dist = Vector3Distance(tempProjectiles[i].position, enemyPos);
             if (dist < (tempProjectiles[i].radius + enemyRadius)) {
                 metalHits[metalHitCount] = i;
                 metalHitPos[metalHitCount] = tempProjectiles[i].position;
@@ -592,15 +575,15 @@ static void UpdateMetalSkillWrapper(float dt, Vector2 enemyPos, float enemyRadiu
     }
 }
 
-static void UpdateFireSkillWrapper(float dt, Vector2 enemyPos, float enemyRadius) {
+static void UpdateFireSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius) {
     UpdateFireSkill(dt);
     int fireHits[MAX_TEMP_PROJECTILES];
     int fireHitCount = 0;
-    Vector2 fireHitPos[MAX_TEMP_PROJECTILES];
+    Vector3 fireHitPos[MAX_TEMP_PROJECTILES];
     int numFire = GetFireSkillProjectiles(tempProjectiles, MAX_TEMP_PROJECTILES);
     for (int i = 0; i < numFire; i++) {
         if (tempProjectiles[i].active) {
-            float dist = Vector2Distance(tempProjectiles[i].position, enemyPos);
+            float dist = Vector3Distance(tempProjectiles[i].position, enemyPos);
             if (dist < (tempProjectiles[i].radius + enemyRadius)) {
                 fireHits[fireHitCount] = i;
                 fireHitPos[fireHitCount] = tempProjectiles[i].position;
@@ -617,15 +600,15 @@ static void UpdateFireSkillWrapper(float dt, Vector2 enemyPos, float enemyRadius
     }
 }
 
-static void UpdateWoodSkillWrapper(float dt, Vector2 enemyPos, float enemyRadius) {
+static void UpdateWoodSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius) {
     UpdateWoodSkill(dt);
     int woodHits[MAX_TEMP_PROJECTILES];
     int woodHitCount = 0;
-    Vector2 woodHitPos[MAX_TEMP_PROJECTILES];
+    Vector3 woodHitPos[MAX_TEMP_PROJECTILES];
     int numWood = GetWoodSkillProjectiles(tempProjectiles, MAX_TEMP_PROJECTILES);
     for (int i = 0; i < numWood; i++) {
         if (tempProjectiles[i].active) {
-            float dist = Vector2Distance(tempProjectiles[i].position, enemyPos);
+            float dist = Vector3Distance(tempProjectiles[i].position, enemyPos);
             if (dist < (tempProjectiles[i].radius + enemyRadius)) {
                 woodHits[woodHitCount] = i;
                 woodHitPos[woodHitCount] = tempProjectiles[i].position;
@@ -640,15 +623,15 @@ static void UpdateWoodSkillWrapper(float dt, Vector2 enemyPos, float enemyRadius
     }
 }
 
-static void UpdateElectricSkillWrapper(float dt, Vector2 enemyPos, float enemyRadius) {
+static void UpdateElectricSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius) {
     UpdateElectricSkill(dt);
     int electricHits[MAX_TEMP_PROJECTILES];
     int electricHitCount = 0;
-    Vector2 electricHitPos[MAX_TEMP_PROJECTILES];
+    Vector3 electricHitPos[MAX_TEMP_PROJECTILES];
     int numElectric = GetElectricSkillProjectiles(tempProjectiles, MAX_TEMP_PROJECTILES);
     for (int i = 0; i < numElectric; i++) {
         if (tempProjectiles[i].active) {
-            float dist = Vector2Distance(tempProjectiles[i].position, enemyPos);
+            float dist = Vector3Distance(tempProjectiles[i].position, enemyPos);
             if (dist < (tempProjectiles[i].radius + enemyRadius)) {
                 electricHits[electricHitCount] = i;
                 electricHitPos[electricHitCount] = tempProjectiles[i].position;

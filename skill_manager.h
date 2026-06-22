@@ -30,20 +30,19 @@ typedef struct {
     float damage;
     CastAnchorType anchorType;
     CastPathType pathType;
-    float casterZ;
     bool showPortal;
 } SkillParams;
 
 void InitSkillManager(int screenWidth, int screenHeight);
-void UpdateSkillManager(float dt, Vector2 enemyPos, float enemyRadius);
+void UpdateSkillManager(float dt, Vector3 enemyPos, float enemyRadius);
 void DrawSkillManager(void);
 void UnloadSkillManager(void);
-void CastSkill(int skillIndex, Vector2 startPos, Vector2 target, SkillParams params);
+void CastSkill(int skillIndex, Vector3 startPos, Vector3 target, SkillParams params);
 
 int RegisterSkill(const char* name, Color color,
                   void (*init)(int screenWidth, int screenHeight),
-                  void (*cast)(Vector2 startPos, Vector2 target, SkillParams params),
-                  void (*update)(float dt, Vector2 enemyPos, float enemyRadius),
+                  void (*cast)(Vector3 startPos, Vector3 target, SkillParams params),
+                  void (*update)(float dt, Vector3 enemyPos, float enemyRadius),
                   void (*draw)(void),
                   void (*unload)(void));
 void SetSkillOverrides(int skillIndex, int pathType, int anchorType, int quantity, float sizeScale);

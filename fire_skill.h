@@ -6,14 +6,14 @@
 #ifndef SKILL_PROJECTILE_DEF
 #define SKILL_PROJECTILE_DEF
 typedef struct {
-    Vector2 position;
+    Vector3 position;
     float radius;
     bool active;
 } SkillProjectile;
 #endif
 
 void InitFireSkill(int screenWidth, int screenHeight);
-void CastFireSkill(Vector2 startPos, Vector2 target, float twistPhase, float sizeScale);
+void CastFireSkill(Vector3 startPos, Vector3 target, float twistPhase, float sizeScale);
 void UpdateFireSkill(float dt);
 void DrawFireSkill(void);
 void UnloadFireSkill(void);

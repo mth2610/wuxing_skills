@@ -1,32 +1,35 @@
 #include "fluid_skill.h"
 #include "raymath.h"
 #include <math.h>
-#include <stddef.h>  // BỔ SUNG DÒNG NÀY ĐỂ C NĂM ĐƯỢC "NULL" LÀ GÌ
+#include <stddef.h>
 
-#define PARTICLES_PER_SECOND 225.0f // Đã chia đôi vì giờ mỗi tia tự spawn hạt riêng
+#define PARTICLES_PER_SECOND 225.0f
 #define SPAWN_INTERVAL (1.0f / PARTICLES_PER_SECOND)
 #define MAX_PARTICLES 100000 
-#define MAX_EMITTERS 10 // Hỗ trợ tối đa 10 tia nước cùng lúc
+#define MAX_EMITTERS 10
 
-// Cấu trúc Nguồn phát tia
+// External camera reference to project 3D coordinates to screen space
+extern Camera3D camera;
+
+// 3D Stream Emitter Structure
 typedef struct {
     bool active;
-    Vector2 startPos;
-    Vector2 targetPos;
-    Vector2 p1;
-    Vector2 p2;
+    Vector3 startPos;
+    Vector3 targetPos;
+    Vector3 p1;
+    Vector3 p2;
     float progress;
     float durationTimer;
     float spawnAccumulator;
     float twistPhase;
-    float sizeScale; // Hệ số thu phóng kích thước và lượng nước
+    float sizeScale;
 } StreamEmitter;
 
-// Cấu trúc Hạt nước độc lập
+// 3D Water Particle Structure
 typedef struct {
-    Vector2 position;
-    Vector2 velocity;    
-    Vector2 startPos, p1, p2, targetPos; // Lưu trữ quỹ đạo cá nhân
+    Vector3 position;
+    Vector3 velocity;    
+    Vector3 startPos, p1, p2, targetPos;
     float progress;      
     float speed;         
     float radius;
@@ -34,7 +37,7 @@ typedef struct {
     float maxLifetime;
     float spreadOffset;   
     float twistPhase;
-    float sizeScale; // Bản sao của emitter's sizeScale
+    float sizeScale;
     int type;            // 0: Stream, 2: Splash
     bool active;
 } WaterParticle;
@@ -47,21 +50,22 @@ static RenderTexture2D canvasTexture;
 static Shader fluidShader;
 static int timeLoc;
 
-static Vector2 GetBezierPoint(Vector2 p0, Vector2 p1, Vector2 p2, Vector2 p3, float t) {
+// Bezier Curve point calculation in 3D space
+static Vector3 GetBezierPoint(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t) {
     float u = 1.0f - t;
     float tt = t * t;
     float uu = u * u;
     float uuu = uu * u;
     float ttt = tt * t;
 
-    Vector2 p = Vector2Scale(p0, uuu);
-    p = Vector2Add(p, Vector2Scale(p1, 3.0f * uu * t));
-    p = Vector2Add(p, Vector2Scale(p2, 3.0f * u * tt));
-    p = Vector2Add(p, Vector2Scale(p3, ttt));
+    Vector3 p = Vector3Scale(p0, uuu);
+    p = Vector3Add(p, Vector3Scale(p1, 3.0f * uu * t));
+    p = Vector3Add(p, Vector3Scale(p2, 3.0f * u * tt));
+    p = Vector3Add(p, Vector3Scale(p3, ttt));
     return p;
 }
 
-static void SpawnParticle(int type, Vector2 pos, Vector2 vel, float speed, float progress, float maxLife, float baseRadius, StreamEmitter* em) {
+static void SpawnParticle(int type, Vector3 pos, Vector3 vel, float speed, float progress, float maxLife, float baseRadius, StreamEmitter* em) {
     for (int i = 0; i < MAX_PARTICLES; i++) {
         int index = (lastUsedParticle + i) % MAX_PARTICLES;
         if (!waterPool[index].active) {
@@ -76,7 +80,6 @@ static void SpawnParticle(int type, Vector2 pos, Vector2 vel, float speed, float
             waterPool[index].spreadOffset = (float)GetRandomValue(-15, 15);
             waterPool[index].active = true;
             
-            // Nếu hạt sinh ra từ luồng, copy quỹ đạo của luồng cho nó tự bay
             if (em != NULL) {
                 waterPool[index].startPos = em->startPos;
                 waterPool[index].targetPos = em->targetPos;
@@ -102,8 +105,7 @@ void InitFluidSkill(int screenWidth, int screenHeight) {
     for (int i = 0; i < MAX_EMITTERS; i++) emitters[i].active = false;
 }
 
-// Bác gọi hàm này 1 lần thì bắn 1 tia, gọi n lần thì n tia bay ra.
-void CastFluidSkill(Vector2 startPos, Vector2 target, float twistPhase, float sizeScale) {
+void CastFluidSkill(Vector3 startPos, Vector3 target, float twistPhase, float sizeScale) {
     for (int i = 0; i < MAX_EMITTERS; i++) {
         if (!emitters[i].active) {
             emitters[i].active = true;
@@ -115,26 +117,28 @@ void CastFluidSkill(Vector2 startPos, Vector2 target, float twistPhase, float si
             emitters[i].twistPhase = twistPhase;
             emitters[i].sizeScale = sizeScale;
 
-            float dist = Vector2Distance(startPos, target);
-            Vector2 dir = Vector2Normalize(Vector2Subtract(target, startPos));
-            Vector2 perp = (Vector2){ -dir.y, dir.x };
+            float dist = Vector3Distance(startPos, target);
+            Vector3 dir = Vector3Normalize(Vector3Subtract(target, startPos));
             
+            // Perpendicular direction vector flat on X-Z plane (rotating around Y up axis)
+            Vector3 perp = (Vector3){ -dir.z, 0.0f, dir.x };
             float spreadScale = sinf(twistPhase);
             
-            emitters[i].p1 = Vector2Add(Vector2Add(startPos, Vector2Scale(dir, dist * 0.35f)), Vector2Scale(perp, spreadScale * dist * 0.35f));
-            emitters[i].p2 = Vector2Add(Vector2Add(startPos, Vector2Scale(dir, dist * 0.70f)), Vector2Scale(perp, -spreadScale * dist * 0.25f));
-            break; // Tìm được 1 slot trống để bắn là thoát
+            emitters[i].p1 = Vector3Add(Vector3Add(startPos, Vector3Scale(dir, dist * 0.35f)), Vector3Scale(perp, spreadScale * dist * 0.35f));
+            emitters[i].p2 = Vector3Add(Vector3Add(startPos, Vector3Scale(dir, dist * 0.70f)), Vector3Scale(perp, -spreadScale * dist * 0.25f));
+            break;
         }
     }
 
-    // Nổ bọt nước ở tay (Muzzle Flash) - lượng hạt tỷ lệ thuận với sizeScale
+    // Water burst at caster's hands
     int burstCount = GetRandomValue(10, 16) * sizeScale;
     for(int s = 0; s < burstCount; s++) {
-        Vector2 burstVel = {
-            (float)GetRandomValue(-150, 250) * sizeScale, // Cho văng rộng hơn theo kích cỡ
-            (float)GetRandomValue(-250, 250) * sizeScale 
+        Vector3 burstVel = {
+            (float)GetRandomValue(-150, 250) * sizeScale,
+            (float)GetRandomValue(-100, 300) * sizeScale, // height velocity
+            (float)GetRandomValue(-150, 250) * sizeScale
         };
-        float burstRad = (float)GetRandomValue(3, 8); // Giảm bán kính, không nhân sizeScale ở đây để tránh double scaling
+        float burstRad = (float)GetRandomValue(3, 8);
         float burstLife = (float)GetRandomValue(3, 8) / 10.0f;
         SpawnParticle(2, startPos, burstVel, 0, 0, burstLife, burstRad, NULL);
     }
@@ -143,7 +147,7 @@ void CastFluidSkill(Vector2 startPos, Vector2 target, float twistPhase, float si
 void UpdateFluidSkill(float dt) {
     float time = GetTime();
 
-    // 1. CẬP NHẬT CÁC ĐẦU PHUN NƯỚC (EMITTERS)
+    // 1. UPDATE EMITTERS
     for (int e = 0; e < MAX_EMITTERS; e++) {
         if (!emitters[e].active) continue;
 
@@ -155,22 +159,22 @@ void UpdateFluidSkill(float dt) {
 
         emitters[e].durationTimer -= dt;
         if (emitters[e].durationTimer <= 0.0f) {
-            emitters[e].active = false; // Tắt vòi phun
+            emitters[e].active = false;
             continue;
         }
         
         emitters[e].spawnAccumulator += dt;
         int maxSpawnsThisFrame = 30; 
-        float actualInterval = SPAWN_INTERVAL / emitters[e].sizeScale; // Đốt tia nước mau hơn khi size to (lượng nước ra nhiều hơn)
+        float actualInterval = SPAWN_INTERVAL / emitters[e].sizeScale;
         while (emitters[e].spawnAccumulator >= actualInterval && maxSpawnsThisFrame-- > 0) {
-            Vector2 zeroVel = {0, 0};
-            float baseRad = (float)GetRandomValue(9, 16); // Giảm kích thước và không nhân sizeScale ở đây để tránh double scaling
+            Vector3 zeroVel = {0, 0, 0};
+            float baseRad = (float)GetRandomValue(9, 16);
             SpawnParticle(0, emitters[e].startPos, zeroVel, commonSpeed, 0.0f, 1.2f, baseRad, &emitters[e]); 
             emitters[e].spawnAccumulator -= actualInterval;
         }
     }
 
-    // 2. CẬP NHẬT CÁC HẠT NƯỚC (Bây giờ chúng tự trị hoàn toàn)
+    // 2. UPDATE WATER PARTICLES
     for (int i = 0; i < MAX_PARTICLES; i++) {
         if (!waterPool[i].active) continue;
 
@@ -181,32 +185,34 @@ void UpdateFluidSkill(float dt) {
             continue;
         }
 
-        if (waterPool[i].type == 2) { // Splash
+        if (waterPool[i].type == 2) { // Splash/mist particles
             waterPool[i].position.x += waterPool[i].velocity.x * dt;
             waterPool[i].position.y += waterPool[i].velocity.y * dt;
-            waterPool[i].velocity.y += 800.0f * dt; 
+            waterPool[i].position.z += waterPool[i].velocity.z * dt;
+            waterPool[i].velocity.y -= 800.0f * dt; // Gravity falls on Y axis (height)
             continue;
         }
 
-        // Stream
+        // Stream particles along Bezier path
         waterPool[i].progress += waterPool[i].speed * dt;
 
         if (waterPool[i].progress >= 1.0f) {
             waterPool[i].active = false;
-            int splashCount = GetRandomValue(2, 4) * waterPool[i].sizeScale; // Giảm số lượng splash
+            int splashCount = GetRandomValue(2, 4) * waterPool[i].sizeScale;
             for(int s = 0; s < splashCount; s++) {
-                Vector2 splashVel = {
+                Vector3 splashVel = {
                     (float)GetRandomValue(-160, 160) * waterPool[i].sizeScale,
-                    (float)GetRandomValue(-260, 40) * waterPool[i].sizeScale
+                    (float)GetRandomValue(-100, 300) * waterPool[i].sizeScale,
+                    (float)GetRandomValue(-160, 160) * waterPool[i].sizeScale
                 };
-                float splashRad = (float)GetRandomValue(2, 6); // Giảm kích thước, không nhân sizeScale ở đây để tránh double scaling
+                float splashRad = (float)GetRandomValue(2, 6);
                 float splashLife = (float)GetRandomValue(4, 10) / 10.0f;
                 SpawnParticle(2, waterPool[i].position, splashVel, 0, 0, splashLife, splashRad, NULL);
             }
             continue;
         }
 
-        Vector2 basePos = GetBezierPoint(
+        Vector3 basePos = GetBezierPoint(
             waterPool[i].startPos, 
             waterPool[i].p1, 
             waterPool[i].p2, 
@@ -217,25 +223,24 @@ void UpdateFluidSkill(float dt) {
         float focusFactor = 1.0f - powf(waterPool[i].progress, 4.0f); 
         float waveFreq = waterPool[i].progress * 15.0f - time * 25.0f; 
         
-        // Cộng thêm twistPhase của riêng tia đó để pha sóng không bị trùng nhau
         float noiseX = sinf(waveFreq + waterPool[i].spreadOffset + waterPool[i].twistPhase) * (15.0f * focusFactor); 
         float noiseY = cosf(waveFreq * 1.2f - waterPool[i].spreadOffset + waterPool[i].twistPhase) * (15.0f * focusFactor);
+        float noiseZ = sinf(waveFreq * 0.8f + waterPool[i].spreadOffset * 1.5f + waterPool[i].twistPhase) * (15.0f * focusFactor);
 
         waterPool[i].position.x = basePos.x + noiseX;
-        waterPool[i].position.y = basePos.y + noiseY;
+        waterPool[i].position.y = basePos.y + noiseY; // height noise
+        waterPool[i].position.z = basePos.z + noiseZ;
 
-     // Xé gió rớt lại bụi nước
+        // Leave mist particles behind
         if (GetRandomValue(1, 100) <= 8) { 
-            // 1. Tính hướng bay tới trước (đà của luồng chưởng)
-            Vector2 forwardDir = Vector2Normalize(Vector2Subtract(waterPool[i].targetPos, waterPool[i].position));
-            
-            // 2. Vận tốc = Quán tính bay tới (lực mạnh) + Trọng lượng rơi xuống (lực yếu) + Nhiễu loạn
-            Vector2 dropVel = {
+            Vector3 forwardDir = Vector3Normalize(Vector3Subtract(waterPool[i].targetPos, waterPool[i].position));
+            Vector3 dropVel = {
                 ((forwardDir.x * GetRandomValue(150, 300)) + GetRandomValue(-30, 30)) * waterPool[i].sizeScale,
-                ((forwardDir.y * GetRandomValue(150, 300)) + GetRandomValue(50, 150)) * waterPool[i].sizeScale
+                ((forwardDir.y * GetRandomValue(150, 300)) - GetRandomValue(50, 150)) * waterPool[i].sizeScale, // Y gravity
+                ((forwardDir.z * GetRandomValue(150, 300)) + GetRandomValue(-30, 30)) * waterPool[i].sizeScale
             };
             
-            float mistRad = (float)GetRandomValue(1, 2);  // Giảm kích thước, không nhân sizeScale ở đây để tránh double scaling
+            float mistRad = (float)GetRandomValue(1, 2);
             float mistLife = (float)GetRandomValue(2, 4) / 10.0f; 
             
             SpawnParticle(2, waterPool[i].position, dropVel, 0, 0, mistLife, mistRad, NULL);
@@ -257,6 +262,7 @@ void DrawFluidSkill(void) {
 
     float time = GetTime();
 
+    // Project 3D particles onto 2D canvas to render fluid Metaball shader
     BeginTextureMode(canvasTexture);
         ClearBackground(BLANK); 
         BeginBlendMode(BLEND_ALPHA);
@@ -275,11 +281,18 @@ void DrawFluidSkill(void) {
                     currentAlpha *= fadeScale; 
                 } else {
                     currentRadius *= lifeRatio * waterPool[i].sizeScale;
-                    // FIX LỖI TÀNG HÌNH: Ép Alpha gốc lên 1.0 để dù đứng 1 mình, hạt vẫn sáng rực
                     currentAlpha = lifeRatio * 1.0f; 
                 }
 
-                DrawCircleGradient((int)waterPool[i].position.x, (int)waterPool[i].position.y, currentRadius, ColorAlpha(WHITE, currentAlpha), BLANK);
+                // Project 3D position to 2D screen coordinate
+                Vector2 screenPos = GetWorldToScreen(waterPool[i].position, camera);
+                
+                // Adjust drawing radius based on camera depth perspective
+                float depthFactor = 800.0f / (Vector3Distance(camera.position, waterPool[i].position) + 0.1f);
+                if (depthFactor < 0.2f) depthFactor = 0.2f;
+                if (depthFactor > 3.0f) depthFactor = 3.0f;
+                
+                DrawCircleGradient((int)screenPos.x, (int)screenPos.y, currentRadius * depthFactor, ColorAlpha(WHITE, currentAlpha), BLANK);
             }
         EndBlendMode();
     EndTextureMode();
@@ -299,7 +312,7 @@ int GetFluidSkillProjectiles(SkillProjectile* outProjectiles, int maxProjectiles
     int count = 0;
     for (int i = 0; i < MAX_EMITTERS; i++) {
         if (emitters[i].active && emitters[i].progress < 1.0f && count < maxProjectiles) {
-            Vector2 headPos = GetBezierPoint(
+            Vector3 headPos = GetBezierPoint(
                 emitters[i].startPos,
                 emitters[i].p1,
                 emitters[i].p2,
@@ -307,7 +320,7 @@ int GetFluidSkillProjectiles(SkillProjectile* outProjectiles, int maxProjectiles
                 emitters[i].progress
             );
             outProjectiles[count].position = headPos;
-            outProjectiles[count].radius = 11.0f * emitters[i].sizeScale; // Bán kính va chạm đầu tia nước tỷ lệ theo cỡ
+            outProjectiles[count].radius = 11.0f * emitters[i].sizeScale;
             outProjectiles[count].active = true;
             count++;
         }
@@ -321,21 +334,22 @@ void DeactivateFluidProjectile(int index) {
         if (emitters[i].active && emitters[i].progress < 1.0f) {
             if (count == index) {
                 emitters[i].active = false;
-                Vector2 headPos = GetBezierPoint(
+                Vector3 headPos = GetBezierPoint(
                     emitters[i].startPos,
                     emitters[i].p1,
                     emitters[i].p2,
                     emitters[i].targetPos,
                     emitters[i].progress
                 );
-                // Tạo hiệu ứng nổ bọt nước văng toé tung tại điểm va chạm
+                
                 int splashCount = GetRandomValue(10, 16) * emitters[i].sizeScale;
                 for(int s = 0; s < splashCount; s++) {
-                    Vector2 splashVel = {
+                    Vector3 splashVel = {
                         (float)GetRandomValue(-160, 160) * emitters[i].sizeScale,
-                        (float)GetRandomValue(-260, 40) * emitters[i].sizeScale
+                        (float)GetRandomValue(-100, 300) * emitters[i].sizeScale,
+                        (float)GetRandomValue(-160, 160) * emitters[i].sizeScale
                     };
-                    float splashRad = (float)GetRandomValue(3, 8); // Giảm kích thước, không nhân sizeScale ở đây để tránh double scaling
+                    float splashRad = (float)GetRandomValue(3, 8);
                     float splashLife = (float)GetRandomValue(4, 12) / 10.0f;
                     SpawnParticle(2, headPos, splashVel, 0, 0, splashLife, splashRad, NULL);
                 }

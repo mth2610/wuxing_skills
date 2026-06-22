@@ -1,12 +1,16 @@
 #include "raylib.h"
+#include "rlgl.h"
 #include <math.h>
 #include <stdio.h>
 #include "skill_manager.h"
 #include "raymath.h"
 #include "sword_rain_skill.h"
 
+// Biến camera toàn cục để chia sẻ với các chiêu thức
+Camera3D camera = { 0 };
+
 typedef struct {
-    Vector2 position;
+    Vector3 position;
     Color color;
     float radius;
     float lifetime;
@@ -17,7 +21,7 @@ typedef struct {
 #define MAX_DASH_PARTICLES 150
 static DashParticle dashParticles[MAX_DASH_PARTICLES];
 
-static void SpawnDashParticle(Vector2 pos, Color color, float radius, float lifetime) {
+static void SpawnDashParticle(Vector3 pos, Color color, float radius, float lifetime) {
     for (int i = 0; i < MAX_DASH_PARTICLES; i++) {
         if (!dashParticles[i].active) {
             dashParticles[i].position = pos;
@@ -31,115 +35,124 @@ static void SpawnDashParticle(Vector2 pos, Color color, float radius, float life
     }
 }
 
-typedef enum {
-    ENTITY_PLAYER = 0,
-    ENTITY_ENEMY,
-    ENTITY_PILLAR_0,
-    ENTITY_PILLAR_1,
-    ENTITY_PILLAR_2
-} RenderEntityType;
-
-typedef struct {
-    RenderEntityType type;
-    float ySortValue;
-    int index; // Cho cột đá
-} RenderEntity;
-
-static void DrawCylinder25D(Vector2 basePos, float radius, float height, Color baseColor, Color topColor, Color outlineColor) {
-    // 1. Vẽ hình elip đáy
-    DrawEllipse((int)basePos.x, (int)basePos.y, (int)radius, (int)(radius * 0.4f), baseColor);
-    
-    // 2. Vẽ thân hình trụ chữ nhật
-    DrawRectangle((int)(basePos.x - radius), (int)(basePos.y - height), (int)(radius * 2.0f), (int)height, baseColor);
-    
-    // 3. Vẽ hình elip nắp đỉnh
-    DrawEllipse((int)basePos.x, (int)(basePos.y - height), (int)radius, (int)(radius * 0.4f), topColor);
-    
-    // 4. Vẽ các đường viền nổi khối 2.5D
-    DrawLine((int)(basePos.x - radius), (int)basePos.y, (int)(basePos.x - radius), (int)(basePos.y - height), outlineColor);
-    DrawLine((int)(basePos.x + radius), (int)basePos.y, (int)(basePos.x + radius), (int)(basePos.y - height), outlineColor);
-    DrawEllipseLines((int)basePos.x, (int)(basePos.y - height), (int)radius, (int)(radius * 0.4f), outlineColor);
-    DrawEllipseLines((int)basePos.x, (int)basePos.y, (int)radius, (int)(radius * 0.4f), outlineColor);
+// Hàm vẽ vòng tròn phẳng dưới đất 3D (trục X-Z)
+static void DrawCircleOutline3D(Vector3 center, float radius, Color color) {
+    int segments = 64;
+    Vector3 prevPt = { center.x + radius, center.y, center.z };
+    for (int i = 1; i <= segments; i++) {
+        float angle = ((float)i / segments) * 2.0f * PI;
+        Vector3 currPt = {
+            center.x + cosf(angle) * radius,
+            center.y,
+            center.z + sinf(angle) * radius
+        };
+        DrawLine3D(prevPt, currPt, color);
+        prevPt = currPt;
+    }
 }
 
-static void DrawCharacter25D(Vector2 groundPos, float charZ, float radius, Color skinCol, Color clothesCol, Color outlineCol, bool isPlayer, float aimAngle) {
-    // Tọa độ vẽ thân/đầu (ở trên không nếu charZ > 0)
-    Vector2 visualPos = { groundPos.x, groundPos.y - charZ };
-    
-    // 1. Vẽ Chân (hai chân bằng hình elip nhỏ, di chuyển theo visualPos)
-    Vector2 leftFoot = { visualPos.x - 8.0f, visualPos.y };
-    Vector2 rightFoot = { visualPos.x + 8.0f, visualPos.y };
-    DrawEllipse((int)leftFoot.x, (int)leftFoot.y, 5, 3, outlineCol);
-    DrawEllipse((int)rightFoot.x, (int)rightFoot.y, 5, 3, outlineCol);
-
-    // 2. Vẽ Thân (áo quần)
-    Rectangle bodyRect = { visualPos.x - 15, visualPos.y - 38, 30, 36 };
-    DrawRectangleRounded(bodyRect, 0.4f, 4, clothesCol);
-    DrawRectangleRoundedLines(bodyRect, 0.4f, 4, outlineCol);
-
-    // 3. Vẽ Đầu
-    Vector2 headPos = { visualPos.x, visualPos.y - 48 };
-    DrawCircleV(headPos, 10.0f, skinCol);
-    DrawCircleLines((int)headPos.x, (int)headPos.y, 10.0f, outlineCol);
-
-    // 4. Vẽ Tay (Arms/Hands)
-    if (isPlayer) {
-        // Tay cầm chiêu thức chỉ hướng xoay theo aimAngle
-        Vector2 armOrigin = { visualPos.x, visualPos.y - 25.0f }; // Khớp vai
-        Vector2 handPos = {
-            armOrigin.x + cosf(aimAngle) * 22.0f,
-            armOrigin.y + sinf(aimAngle) * 22.0f
-        };
-        // Vẽ cánh tay bằng nét dày, bàn tay bằng hình tròn
-        DrawLineEx(armOrigin, handPos, 4.0f, clothesCol);
-        DrawCircleV(handPos, 5.0f, skinCol);
-        DrawCircleLines((int)handPos.x, (int)handPos.y, 5.0f, outlineCol);
+// Vẽ bóng đổ phẳng hình elip/tròn dưới mặt đất Y = 0.01f (để tránh z-fighting)
+static void DrawShadow3D(Vector3 pos, float radius, float alpha) {
+    int segments = 16;
+    rlBegin(RL_TRIANGLES);
+    Color color = ColorAlpha(BLACK, alpha);
+    for (int i = 0; i < segments; i++) {
+        float a1 = ((float)i / segments) * 2.0f * PI;
+        float a2 = ((float)(i + 1) / segments) * 2.0f * PI;
+        Vector3 p0 = { pos.x, 0.01f, pos.z };
+        Vector3 p1 = { pos.x + cosf(a1) * radius, 0.01f, pos.z + sinf(a1) * radius };
+        Vector3 p2 = { pos.x + cosf(a2) * radius, 0.01f, pos.z + sinf(a2) * radius };
         
-        // Tay còn lại thả tự nhiên bên sườn
-        Vector2 restHand = { visualPos.x - 18.0f, visualPos.y - 20.0f };
-        DrawLineEx((Vector2){ visualPos.x - 12.0f, visualPos.y - 30.0f }, restHand, 3.5f, clothesCol);
-        DrawCircleV(restHand, 4.5f, skinCol);
-        DrawCircleLines((int)restHand.x, (int)restHand.y, 4.5f, outlineCol);
+        rlColor4ub(color.r, color.g, color.b, color.a);
+        rlVertex3f(p0.x, p0.y, p0.z);
+        rlColor4ub(color.r, color.g, color.b, color.a);
+        rlVertex3f(p1.x, p1.y, p1.z);
+        rlColor4ub(color.r, color.g, color.b, color.a);
+        rlVertex3f(p2.x, p2.y, p2.z);
+    }
+    rlEnd();
+}
+
+// Hàm vẽ nhân vật 3D ghép từ các khối nguyên thủy
+static void DrawCharacter3D(Vector3 position, float radius, Color skinCol, Color clothesCol, Color outlineCol, bool isPlayer, Vector3 targetPos) {
+    // 1. Chân (feet)
+    Vector3 leftFoot = { position.x - 8.0f, position.y, position.z };
+    Vector3 rightFoot = { position.x + 8.0f, position.y, position.z };
+    DrawSphere(leftFoot, 4.0f, outlineCol);
+    DrawSphere(rightFoot, 4.0f, outlineCol);
+
+    // 2. Thân (body cylinder)
+    Vector3 bodyPos = { position.x, position.y + 18.0f, position.z };
+    DrawCylinder(bodyPos, 12.0f, 12.0f, 30.0f, 8, clothesCol);
+    DrawCylinderWires(bodyPos, 12.0f, 12.0f, 30.0f, 8, outlineCol);
+
+    // 3. Đầu (head)
+    Vector3 headPos = { position.x, position.y + 38.0f, position.z };
+    DrawSphere(headPos, 9.0f, skinCol);
+    DrawSphereWires(headPos, 9.0f, 6, 6, outlineCol);
+
+    // 4. Tay (arms)
+    if (isPlayer) {
+        Vector3 armOrigin = { position.x, position.y + 25.0f, position.z };
+        Vector3 dir = Vector3Normalize(Vector3Subtract(targetPos, armOrigin));
+        Vector3 handPos = Vector3Add(armOrigin, Vector3Scale(dir, 22.0f));
+
+        DrawLine3D(armOrigin, handPos, clothesCol);
+        DrawSphere(handPos, 4.0f, skinCol);
+        DrawSphereWires(handPos, 4.0f, 4, 4, outlineCol);
+
+        // Tay còn lại
+        Vector3 restHand = { position.x - 14.0f, position.y + 14.0f, position.z };
+        DrawLine3D((Vector3){ position.x - 12.0f, position.y + 24.0f, position.z }, restHand, clothesCol);
+        DrawSphere(restHand, 3.5f, skinCol);
+        DrawSphereWires(restHand, 3.5f, 4, 4, outlineCol);
     } else {
-        // Enemy buông thõng 2 tay bên sườn
-        Vector2 leftHand = { visualPos.x - 18.0f, visualPos.y - 20.0f };
-        Vector2 rightHand = { visualPos.x + 18.0f, visualPos.y - 20.0f };
-        DrawLineEx((Vector2){ visualPos.x - 12.0f, visualPos.y - 30.0f }, leftHand, 3.5f, clothesCol);
-        DrawLineEx((Vector2){ visualPos.x + 12.0f, visualPos.y - 30.0f }, rightHand, 3.5f, clothesCol);
-        DrawCircleV(leftHand, 4.5f, skinCol);
-        DrawCircleV(rightHand, 4.5f, skinCol);
-        DrawCircleLines((int)leftHand.x, (int)leftHand.y, 4.5f, outlineCol);
-        DrawCircleLines((int)rightHand.x, (int)rightHand.y, 4.5f, outlineCol);
+        Vector3 leftHand = { position.x - 14.0f, position.y + 14.0f, position.z };
+        Vector3 rightHand = { position.x + 14.0f, position.y + 14.0f, position.z };
+        DrawLine3D((Vector3){ position.x - 12.0f, position.y + 24.0f, position.z }, leftHand, clothesCol);
+        DrawLine3D((Vector3){ position.x + 12.0f, position.y + 24.0f, position.z }, rightHand, clothesCol);
+        DrawSphere(leftHand, 3.5f, skinCol);
+        DrawSphere(rightHand, 3.5f, skinCol);
+        DrawSphereWires(leftHand, 3.5f, 4, 4, outlineCol);
+        DrawSphereWires(rightHand, 3.5f, 4, 4, outlineCol);
     }
 }
 
 int main(void) {
     const int screenWidth = 1200;
     const int screenHeight = 700;
-    InitWindow(screenWidth, screenHeight, "Avatar: Element Testbed");
+    InitWindow(screenWidth, screenHeight, "Avatar: True 3D Element Testbed");
 
     // Khởi tạo hệ thống quản lý chiêu thức
     InitSkillManager(screenWidth, screenHeight);
-    InitSwordRainSkill(); // Đảm bảo chiêu Mưa Kiếm được liên kết và đăng ký
+    InitSwordRainSkill(); 
 
-    Vector2 characterPos = { 130, 350 };
-    int activeSkillIndex = 0; // Chỉ mục chiêu thức đang kích hoạt (bắt đầu từ hệ Thủy)
+    // Cấu hình Camera3D
+    camera.position = (Vector3){ 600.0f, 500.0f, 840.0f }; // Góc isometric nhìn từ trên cao xuống
+    camera.target = (Vector3){ 600.0f, 0.0f, 440.0f };    // Tiêu điểm tâm võ đài
+    camera.up = (Vector3){ 0.0f, 1.0f, 0.0f };
+    camera.fovy = 45.0f;
+    camera.projection = CAMERA_PERSPECTIVE;
 
-    // Khai báo biến vị trí Enemy và tỉ lệ dao động
-    Vector2 enemyPos = { 900, 350 };
+    // Vị trí người chơi dạng Vector3
+    Vector3 characterPos = { 130.0f, 0.0f, 350.0f };
+    int activeSkillIndex = 0; 
+
+    // Vị trí quái Enemy
+    Vector3 enemyPos = { 900.0f, 0.0f, 350.0f };
     float enemyOscillationScale = 1.0f;
 
-    int selectedQty = 3; // Mặc định số lượng là 3
-    float selectedSize = 1.0f; // Mặc định kích thước là 1.0x
+    int selectedQty = 3; 
+    float selectedSize = 1.0f; 
+    float sizes[3] = { 1.0f, 1.5f, 2.0f };
 
     // Các biến trạng thái lướt (Dash / Khinh Công)
     float dashCooldown = 0.0f;
     float dashTimer = 0.0f;
-    Vector2 dashDir = { 0.0f, 0.0f };
+    Vector3 dashDir = { 0.0f, 0.0f, 0.0f };
     bool isDashing = false;
 
-    // Các biến trạng thái Nhảy 2.5D
-    float charZ = 0.0f;
+    // Các biến vật lý Nhảy
     float charZVelocity = 0.0f;
     const float gravity = 1500.0f;
 
@@ -153,19 +166,18 @@ int main(void) {
     float enemySpeed = 120.0f;
     float patrolAngle = 0.0f;
 
-    // Vị trí và kích thước các cột đá chướng ngại vật
+    // Vị trí và kích thước các cột đá chướng ngại vật trong không gian 3D
     typedef struct {
-        Vector2 position;
+        Vector3 position;
         float radius;
     } StonePillar;
     
     #define NUM_PILLARS 3
     StonePillar pillars[NUM_PILLARS] = {
-        { { 400.0f, 320.0f }, 25.0f },
-        { { 800.0f, 520.0f }, 30.0f },
-        { { 600.0f, 260.0f }, 20.0f }
+        { { 400.0f, 0.0f, 320.0f }, 25.0f },
+        { { 800.0f, 0.0f, 520.0f }, 30.0f },
+        { { 600.0f, 0.0f, 260.0f }, 20.0f }
     };
-
 
     // Khung UI chọn số lượng (Quantity) và kích thước (Size) ở góc trên bên phải
     Rectangle rectQty[5];
@@ -192,7 +204,7 @@ int main(void) {
     }
     Rectangle rectPortalToggle = { 870, 220, 200, 35 };
 
-    // Khung UI của các nút bấm được tính toán động dựa trên Registry
+    // Khung UI các nút bấm chiêu thức
     Rectangle skillButtons[32];
     int skillCount = GetRegisteredSkillCount();
     if (skillCount > 32) skillCount = 32;
@@ -207,33 +219,42 @@ int main(void) {
         Vector2 mousePos = GetMousePosition();
         float time = GetTime();
 
-        // 1. DỊCH CHUYỂN NHÂN VẬT & KHINH CÔNG (DASH & JUMP)
-        Vector2 moveDir = { 0.0f, 0.0f };
-        if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) moveDir.y -= 1.0f;
-        if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) moveDir.y += 1.0f;
-        if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) moveDir.x -= 1.0f;
-        if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) moveDir.x += 1.0f;
+        // 1. NGẮM BẮN CHUỘT 3D (Tia ngắm chuột giao cắt với mặt phẳng Y = 0)
+        Ray mouseRay = GetScreenToWorldRay(mousePos, camera);
+        Vector3 mouseTarget3D = { 0.0f, 0.0f, 0.0f };
+        if (mouseRay.direction.y != 0.0f) {
+            float t = -mouseRay.position.y / mouseRay.direction.y;
+            mouseTarget3D = Vector3Add(mouseRay.position, Vector3Scale(mouseRay.direction, t));
+        }
 
-        if (Vector2Length(moveDir) > 0.0f) {
-            moveDir = Vector2Normalize(moveDir);
+        // 2. DỊCH CHUYỂN NHÂN VẬT & KHINH CÔNG (DASH & JUMP)
+        Vector3 moveDir = { 0.0f, 0.0f, 0.0f };
+        if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) moveDir.z -= 1.0f; // Đi xa camera
+        if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) moveDir.z += 1.0f; // Lại gần camera
+        if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) moveDir.x -= 1.0f; // Sang trái
+        if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) moveDir.x += 1.0f; // Sang phải
+
+        float moveLen = Vector3Length(moveDir);
+        if (moveLen > 0.0f) {
+            moveDir = Vector3Scale(moveDir, 1.0f / moveLen);
         }
 
         if (dashCooldown > 0.0f) {
             dashCooldown -= dt;
         }
 
-        // Cập nhật trọng lực nhảy (Jump physics Z-axis)
-        if (charZ > 0.0f || charZVelocity > 0.0f) {
+        // Cập nhật nhảy khinh công (Trục Y)
+        if (characterPos.y > 0.0f || charZVelocity > 0.0f) {
             charZVelocity -= gravity * dt;
-            charZ += charZVelocity * dt;
-            if (charZ <= 0.0f) {
-                charZ = 0.0f;
+            characterPos.y += charZVelocity * dt;
+            if (characterPos.y <= 0.0f) {
+                characterPos.y = 0.0f;
                 charZVelocity = 0.0f;
             }
         }
 
-        // Kích hoạt nhảy (Jump) khi nhấn Space
-        if (IsKeyPressed(KEY_SPACE) && charZ == 0.0f) {
+        // Kích hoạt nhảy khi nhấn Space
+        if (IsKeyPressed(KEY_SPACE) && characterPos.y == 0.0f) {
             charZVelocity = 550.0f;
         }
 
@@ -241,12 +262,10 @@ int main(void) {
             dashTimer -= dt;
             float dashSpeed = 1200.0f;
             characterPos.x += dashDir.x * dashSpeed * dt;
-            characterPos.y += dashDir.y * dashSpeed * dt;
+            characterPos.z += dashDir.z * dashSpeed * dt;
 
-            // Sinh hạt dư ảnh lướt theo nguyên tố hiện tại, lấy theo chiều cao Z
             Color trailColor = GetRegisteredSkillColor(activeSkillIndex);
-
-            SpawnDashParticle((Vector2){ characterPos.x, characterPos.y - charZ }, trailColor, 12.0f, 0.35f);
+            SpawnDashParticle(characterPos, trailColor, 12.0f, 0.35f);
 
             if (dashTimer <= 0.0f) {
                 isDashing = false;
@@ -254,43 +273,52 @@ int main(void) {
         } else {
             float moveSpeed = 300.0f;
             characterPos.x += moveDir.x * moveSpeed * dt;
-            characterPos.y += moveDir.y * moveSpeed * dt;
+            characterPos.z += moveDir.z * moveSpeed * dt;
 
-            // Kích hoạt lướt (Dash) khi nhấn Left Shift
+            // Kích hoạt lướt (Dash)
             if (IsKeyPressed(KEY_LEFT_SHIFT) && dashCooldown <= 0.0f) {
                 isDashing = true;
                 dashTimer = 0.15f;
                 dashCooldown = 0.8f;
                 
-                if (Vector2Length(moveDir) == 0.0f) {
-                    dashDir = Vector2Normalize(Vector2Subtract(mousePos, characterPos));
+                if (Vector3Length(moveDir) == 0.0f) {
+                    Vector3 diff = Vector3Subtract(mouseTarget3D, characterPos);
+                    diff.y = 0.0f;
+                    dashDir = Vector3Normalize(diff);
                 } else {
                     dashDir = moveDir;
                 }
             }
         }
 
-        // Ràng buộc vị trí nhân vật bên trong võ đài hình tròn
-        Vector2 arenaCenter = { 600.0f, 440.0f };
+        // Ràng buộc vị trí nhân vật bên trong võ đài hình tròn X-Z
+        Vector3 arenaCenter = { 600.0f, 0.0f, 440.0f };
         float arenaRadius = 360.0f;
         float charRadius = 30.0f;
 
-        Vector2 toChar = Vector2Subtract(characterPos, arenaCenter);
-        if (Vector2Length(toChar) > arenaRadius - charRadius) {
-            characterPos = Vector2Add(arenaCenter, Vector2Scale(Vector2Normalize(toChar), arenaRadius - charRadius));
+        Vector3 toChar = Vector3Subtract(characterPos, arenaCenter);
+        toChar.y = 0.0f;
+        float distToCenter = Vector3Length(toChar);
+        if (distToCenter > arenaRadius - charRadius) {
+            Vector3 normal = Vector3Normalize(toChar);
+            characterPos.x = arenaCenter.x + normal.x * (arenaRadius - charRadius);
+            characterPos.z = arenaCenter.z + normal.z * (arenaRadius - charRadius);
         }
 
-        // Va chạm vật lý với 3 cột đá chướng ngại vật
+        // Va chạm vật lý X-Z với 3 cột đá chướng ngại vật
         for (int i = 0; i < NUM_PILLARS; i++) {
-            float dist = Vector2Distance(characterPos, pillars[i].position);
+            Vector3 diff = Vector3Subtract(characterPos, pillars[i].position);
+            diff.y = 0.0f;
+            float dist = Vector3Length(diff);
             float minDist = charRadius + pillars[i].radius;
             if (dist < minDist) {
-                Vector2 pushDir = Vector2Normalize(Vector2Subtract(characterPos, pillars[i].position));
-                characterPos = Vector2Add(pillars[i].position, Vector2Scale(pushDir, minDist));
+                Vector3 pushDir = Vector3Normalize(diff);
+                characterPos.x = pillars[i].position.x + pushDir.x * minDist;
+                characterPos.z = pillars[i].position.z + pushDir.z * minDist;
             }
         }
 
-        // Cập nhật hạt lướt (dash particles)
+        // Cập nhật hạt lướt
         for (int i = 0; i < MAX_DASH_PARTICLES; i++) {
             if (dashParticles[i].active) {
                 dashParticles[i].lifetime -= dt;
@@ -300,22 +328,20 @@ int main(void) {
             }
         }
 
-        // 2. CẬP NHẬT ENEMY THEO CHẾ ĐỘ DI CHUYỂN
+        // 3. CẬP NHẬT ENEMY THEO CHẾ ĐỘ DI CHUYỂN
         if (IsKeyPressed(KEY_P)) {
             enemyMode = (enemyMode + 1) % 3;
         }
 
-        // Tốc độ thực tế của enemy bị giảm/dừng theo hiệu ứng khống chế
         float currentEnemySpeed = enemySpeed;
         if (IsEnemySlowed()) {
-            currentEnemySpeed *= 0.4f; // Chậm 60%
+            currentEnemySpeed *= 0.4f; 
         }
         if (IsAnySkillCoiling()) {
-            currentEnemySpeed = 0.0f; // Trói cứng
+            currentEnemySpeed = 0.0f; 
         }
 
         if (enemyMode == ENEMY_STATIC) {
-            // Dao động dọc truyền thống quanh vị trí (900, 350)
             if (IsAnySkillCoiling()) {
                 enemyOscillationScale += (0.0f - enemyOscillationScale) * 9.0f * dt;
             } else {
@@ -323,57 +349,61 @@ int main(void) {
             }
             enemyPos.x = 900.0f;
             float oscillationFreq = IsEnemySlowed() ? 0.8f : 2.5f;
-            enemyPos.y = 350.0f + sinf(time * oscillationFreq) * 100.0f * enemyOscillationScale;
+            enemyPos.z = 350.0f + sinf(time * oscillationFreq) * 100.0f * enemyOscillationScale;
+            enemyPos.y = 0.0f;
         } 
         else if (enemyMode == ENEMY_CHASE) {
-            // Đuổi theo người chơi
             if (currentEnemySpeed > 0.0f) {
-                Vector2 toPlayer = Vector2Subtract(characterPos, enemyPos);
-                float dist = Vector2Length(toPlayer);
+                Vector3 toPlayer = Vector3Subtract(characterPos, enemyPos);
+                toPlayer.y = 0.0f;
+                float dist = Vector3Length(toPlayer);
                 if (dist > 15.0f) {
-                    Vector2 dir = Vector2Scale(Vector2Normalize(toPlayer), currentEnemySpeed * dt);
-                    enemyPos = Vector2Add(enemyPos, dir);
+                    Vector3 dir = Vector3Scale(Vector3Normalize(toPlayer), currentEnemySpeed * dt);
+                    enemyPos = Vector3Add(enemyPos, dir);
                 }
             }
         } 
         else if (enemyMode == ENEMY_PATROL) {
-            // Tuần tra vòng tròn
             if (currentEnemySpeed > 0.0f) {
                 float rotSpeed = (currentEnemySpeed / 200.0f);
                 patrolAngle += rotSpeed * dt;
             }
-            Vector2 patrolCenter = { 600.0f, 440.0f };
+            Vector3 patrolCenter = { 600.0f, 0.0f, 440.0f };
             enemyPos.x = patrolCenter.x + cosf(patrolAngle) * 250.0f;
-            enemyPos.y = patrolCenter.y + sinf(patrolAngle) * 200.0f;
+            enemyPos.z = patrolCenter.z + sinf(patrolAngle) * 200.0f;
+            enemyPos.y = 0.0f;
         }
 
-        // Ràng buộc vị trí enemy bên trong võ đài hình tròn
+        // Ràng buộc vị trí enemy bên trong võ đài hình tròn X-Z
         float enemyRadius = 35.0f;
-        Vector2 toEnemy = Vector2Subtract(enemyPos, arenaCenter);
-        if (Vector2Length(toEnemy) > arenaRadius - enemyRadius) {
-            enemyPos = Vector2Add(arenaCenter, Vector2Scale(Vector2Normalize(toEnemy), arenaRadius - enemyRadius));
+        Vector3 toEnemy = Vector3Subtract(enemyPos, arenaCenter);
+        toEnemy.y = 0.0f;
+        if (Vector3Length(toEnemy) > arenaRadius - enemyRadius) {
+            Vector3 normal = Vector3Normalize(toEnemy);
+            enemyPos.x = arenaCenter.x + normal.x * (arenaRadius - enemyRadius);
+            enemyPos.z = arenaCenter.z + normal.z * (arenaRadius - enemyRadius);
         }
 
-        // Va chạm vật lý của enemy với 3 cột đá chướng ngại vật
+        // Va chạm vật lý của enemy với 3 cột đá
         for (int i = 0; i < NUM_PILLARS; i++) {
-            float dist = Vector2Distance(enemyPos, pillars[i].position);
+            Vector3 diff = Vector3Subtract(enemyPos, pillars[i].position);
+            diff.y = 0.0f;
+            float dist = Vector3Length(diff);
             float minDist = enemyRadius + pillars[i].radius;
             if (dist < minDist) {
-                Vector2 pushDir = Vector2Normalize(Vector2Subtract(enemyPos, pillars[i].position));
-                enemyPos = Vector2Add(pillars[i].position, Vector2Scale(pushDir, minDist));
+                Vector3 pushDir = Vector3Normalize(diff);
+                enemyPos.x = pillars[i].position.x + pushDir.x * minDist;
+                enemyPos.z = pillars[i].position.z + pushDir.z * minDist;
             }
         }
 
-        // Rung chấn lắc lư khi bị choáng (Shock)
+        // Choáng lắc lư giật điện
         if (IsAnySkillShocking()) {
             enemyPos.x += (float)GetRandomValue(-6, 6);
-            enemyPos.y += (float)GetRandomValue(-6, 6);
+            enemyPos.z += (float)GetRandomValue(-6, 6);
         }
 
-        // 1. KIỂM TRA TƯƠNG TÁC UI
-        int skillCount = GetRegisteredSkillCount();
-        if (skillCount > 32) skillCount = 32;
-        
+        // 4. KIỂM TRA TƯƠNG TÁC UI
         int hoverSkillIndex = -1;
         for (int i = 0; i < skillCount; i++) {
             if (CheckCollisionPointRec(mousePos, skillButtons[i])) {
@@ -384,15 +414,14 @@ int main(void) {
         bool clickedOnUI = false;
 
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-            // Kiểm tra click vào nút chọn số lượng
+            // Kiểm tra click chọn Quantity
             for (int i = 0; i < 5; i++) {
                 if (CheckCollisionPointRec(mousePos, rectQty[i])) {
                     selectedQty = i + 1;
                     clickedOnUI = true;
                 }
             }
-            // Kiểm tra click vào nút chọn kích thước
-            float sizes[3] = { 1.0f, 1.5f, 2.0f };
+            // Kiểm tra click chọn Size
             for (int i = 0; i < 3; i++) {
                 if (CheckCollisionPointRec(mousePos, rectSize[i])) {
                     selectedSize = sizes[i];
@@ -400,14 +429,14 @@ int main(void) {
                 }
             }
 
-            // Kiểm tra click vào nút chọn nguồn xuất chiêu (Anchor)
+            // Kiểm tra click chọn Anchor
             for (int i = 0; i < 2; i++) {
                 if (CheckCollisionPointRec(mousePos, rectAnchor[i])) {
                     selectedAnchor = (CastAnchorType)i;
                     clickedOnUI = true;
                 }
             }
-            // Kiểm tra click vào nút chọn đường đi (Path)
+            // Kiểm tra click chọn Path
             for (int i = 0; i < 3; i++) {
                 if (CheckCollisionPointRec(mousePos, rectPath[i])) {
                     selectedPath = (CastPathType)i;
@@ -415,23 +444,21 @@ int main(void) {
                 }
             }
 
-            // Kiểm tra click vào nút chọn bật/tắt Portals
+            // Kiểm tra click Toggle Portals
             if (CheckCollisionPointRec(mousePos, rectPortalToggle)) {
                 showPortals = !showPortals;
                 clickedOnUI = true;
             }
 
-            // Nếu bấm trúng nút UI thì đổi chiêu & đánh dấu là đã click UI
+            // Click đổi chiêu hệ ngũ hành
             if (hoverSkillIndex != -1) {
                 activeSkillIndex = hoverSkillIndex;
                 clickedOnUI = true;
             }
 
-            // 3. NẾU KHÔNG CLICK VÀO UI -> PHÓNG CHIÊU THỨC THEO CHỈ HƯỚNG CHUỘT
+            // 5. CLICK TRÊN TRƯỜNG ĐẤU -> BẮN CHIÊU THỨC Tới mục tiêu 3D
             if (!clickedOnUI) {
-                Vector2 target = mousePos;
-
-                // Cấu hình tham số chiêu thức
+                // Thiết lập tham số chiêu thức ngũ hành
                 SkillParams params = {0};
                 params.level = 1;
                 params.milestone = 1;
@@ -442,139 +469,85 @@ int main(void) {
                 params.pathType = selectedPath;
                 params.showPortal = showPortals;
 
-                // Bắn từ tọa độ chân đất của nhân vật, truyền độ cao nhảy charZ vào params
-                Vector2 startCastPos = characterPos; // Chân đất của nhân vật
-                params.casterZ = charZ;
-                CastSkill(activeSkillIndex, startCastPos, target, params);
+                CastSkill(activeSkillIndex, characterPos, mouseTarget3D, params);
             }
         }
 
-        // Cập nhật vật lý và va chạm chiêu thức qua SkillManager
+        // Cập nhật hệ thống chiêu thức ngũ hành
         UpdateSkillManager(dt, enemyPos, 35.0f);
 
         // --- VẼ MÀN HÌNH ---
         BeginDrawing();
             ClearBackground(GetColor(0x111111FF)); 
 
-            // Vẽ Võ Đài đá hình tròn làm nền bản đồ
-            DrawCircleV(arenaCenter, arenaRadius, GetColor(0x1B1B1FFF)); 
-            DrawCircleV(arenaCenter, arenaRadius - 10.0f, GetColor(0x28282FFF));
-            
-            // Vẽ các vòng tròn cổ kính đồng tâm trong võ đài
-            DrawCircleLinesV(arenaCenter, arenaRadius - 40.0f, GetColor(0x3E3E4FFF));
-            DrawCircleLinesV(arenaCenter, arenaRadius - 120.0f, GetColor(0x33333FFF));
-            DrawCircleLinesV(arenaCenter, 80.0f, GetColor(0x3A3A4AFF));
-            
-            // Vẽ các đường kinh tuyến ngũ hành giao cắt ở tâm võ đài
-            DrawLineV(Vector2Add(arenaCenter, (Vector2){-arenaRadius, 0}), Vector2Add(arenaCenter, (Vector2){arenaRadius, 0}), GetColor(0x2E2E39FF));
-            DrawLineV(Vector2Add(arenaCenter, (Vector2){0, -arenaRadius}), Vector2Add(arenaCenter, (Vector2){0, arenaRadius}), GetColor(0x2E2E39FF));
+            // RENDER 3D MODE
+            BeginMode3D(camera);
+                // Vẽ nền võ đài 3D
+                DrawCylinder((Vector3){ 600.0f, -0.5f, 440.0f }, 360.0f, 360.0f, 1.0f, 48, GetColor(0x28282FFF));
+                DrawCylinder((Vector3){ 600.0f, -1.5f, 440.0f }, 365.0f, 365.0f, 1.0f, 48, GetColor(0x1B1B1FFF));
+                
+                // Vẽ các đường hoa văn võ đài ngũ hành bằng các đường line 3D
+                DrawCircleOutline3D((Vector3){ 600.0f, 0.02f, 440.0f }, 320.0f, GetColor(0x3E3E4FFF));
+                DrawCircleOutline3D((Vector3){ 600.0f, 0.02f, 440.0f }, 240.0f, GetColor(0x33333FFF));
+                DrawCircleOutline3D((Vector3){ 600.0f, 0.02f, 440.0f }, 80.0f, GetColor(0x3A3A4AFF));
+                
+                DrawLine3D((Vector3){ 600.0f - 360.0f, 0.02f, 440.0f }, (Vector3){ 600.0f + 360.0f, 0.02f, 440.0f }, GetColor(0x2E2E39FF));
+                DrawLine3D((Vector3){ 600.0f, 0.02f, 440.0f - 360.0f }, (Vector3){ 600.0f, 0.02f, 440.0f + 360.0f }, GetColor(0x2E2E39FF));
 
-            // Vẽ bóng đổ của các cột đá
-            for (int i = 0; i < NUM_PILLARS; i++) {
-                DrawEllipse((int)pillars[i].position.x, (int)pillars[i].position.y + pillars[i].radius * 0.4f, 
-                            pillars[i].radius * 1.1f, pillars[i].radius * 0.4f, ColorAlpha(BLACK, 0.5f));
-            }
+                // Vẽ bóng đổ chân nhân vật và cột đá
+                for (int i = 0; i < NUM_PILLARS; i++) {
+                    DrawShadow3D(pillars[i].position, pillars[i].radius * 1.1f, 0.5f);
+                }
 
-            // Enemy luôn ở dưới đất không lơ lửng bồng bềnh nữa
-            float enemyZ = 0.0f;
+                // Bóng đổ Enemy
+                DrawShadow3D(enemyPos, 36.0f, 0.5f);
 
-            // Vẽ bóng đổ của Enemy dưới mặt đất
-            DrawEllipse((int)enemyPos.x, (int)enemyPos.y, 36, 14, ColorAlpha(BLACK, 0.5f));
+                // Bóng đổ Player (co giãn theo độ cao nhảy Y)
+                float shadowScale = 1.0f - (characterPos.y / 350.0f);
+                if (shadowScale < 0.2f) shadowScale = 0.2f;
+                DrawShadow3D((Vector3){ characterPos.x, 0.0f, characterPos.z }, 32.0f * shadowScale, 0.5f * shadowScale);
 
-            // Vẽ bóng đổ của Player dưới mặt đất (co giãn theo độ cao nhảy charZ, không bị lệch khe hở)
-            float shadowScale = 1.0f - (charZ / 350.0f);
-            if (shadowScale < 0.2f) shadowScale = 0.2f;
-            DrawEllipse((int)characterPos.x, (int)characterPos.y, (int)(32.0f * shadowScale), (int)(12.8f * shadowScale), ColorAlpha(BLACK, 0.5f * shadowScale));
+                // Vẽ đường thẳng độ cao biểu diễn vị trí trên không trung
+                if (characterPos.y > 5.0f) {
+                    DrawLine3D((Vector3){ characterPos.x, 0.0f, characterPos.z }, characterPos, ColorAlpha(GRAY, 0.5f));
+                }
 
-            // Vẽ đường dóng thẳng đứng biểu diễn độ cao (Height Lines) khi đang ở trên không
-            if (charZ > 5.0f) {
-                DrawLine((int)characterPos.x, (int)characterPos.y, (int)characterPos.x, (int)(characterPos.y - charZ), ColorAlpha(GRAY, 0.4f));
-            }
-            if (enemyZ > 5.0f) {
-                DrawLine((int)enemyPos.x, (int)enemyPos.y, (int)enemyPos.x, (int)(enemyPos.y - enemyZ), ColorAlpha(GRAY, 0.4f));
-            }
+                // Vẽ vòng định vị chân luôn ghim sát mặt sàn 3D
+                DrawCircleOutline3D((Vector3){ characterPos.x, 0.02f, characterPos.z }, 25.0f, ColorAlpha(LIME, 0.6f));
+                DrawCircleOutline3D((Vector3){ enemyPos.x, 0.02f, enemyPos.z }, 30.0f, ColorAlpha(RED, 0.6f));
 
-            // Vẽ vòng định vị mặt đất (Ground Rings / Feet indicators) luôn ghim chặt dưới sàn
-            DrawEllipseLines((int)characterPos.x, (int)characterPos.y, 25, 10, ColorAlpha(LIME, 0.5f));
-            DrawEllipseLines((int)enemyPos.x, (int)enemyPos.y, 30, 12, ColorAlpha(RED, 0.5f));
+                // Vẽ 3 cột đá bằng cylinder 3D
+                for (int i = 0; i < NUM_PILLARS; i++) {
+                    float pillarHeight = pillars[i].radius * 2.5f;
+                    Vector3 center = { pillars[i].position.x, pillars[i].position.y + pillarHeight * 0.5f, pillars[i].position.z };
+                    DrawCylinder(center, pillars[i].radius, pillars[i].radius, pillarHeight, 16, GetColor(0x3B3B42FF));
+                    DrawCylinderWires(center, pillars[i].radius, pillars[i].radius, pillarHeight, 16, GetColor(0x73737CFF));
+                }
 
-            // Vẽ dư ảnh hạt lướt (dash particles)
+                // Vẽ Enemy và Player trong không gian 3D
+                DrawCharacter3D(enemyPos, 30.0f, GetColor(0xFFC0CBFF), IsEnemySlowed() ? GetColor(0x1B4F72FF) : (IsEnemyBurning() ? RED : GetColor(0x8B2500FF)), IsEnemySlowed() ? SKYBLUE : (IsEnemyBurning() ? YELLOW : GetColor(0xFF5500FF)), false, (Vector3){0});
+                
+                DrawCharacter3D(characterPos, 25.0f, GetColor(0xFFD39BFF), GetColor(0x3B5998FF), isDashing ? GetRegisteredSkillColor(activeSkillIndex) : GetColor(0xCCCCCCFF), true, mouseTarget3D);
+
+            EndMode3D();
+
+            // RENDER 2D SCREEN OVERLAYS
+            // Vẽ các hạt dư ảnh lướt dash
             for (int i = 0; i < MAX_DASH_PARTICLES; i++) {
                 if (dashParticles[i].active) {
                     float lifeRatio = dashParticles[i].lifetime / dashParticles[i].maxLifetime;
                     Color pCol = ColorAlpha(dashParticles[i].color, lifeRatio * 0.5f);
-                    DrawCircleV(dashParticles[i].position, dashParticles[i].radius * (0.3f + 0.7f * lifeRatio), pCol);
+                    Vector2 screenPos = GetWorldToScreen(dashParticles[i].position, camera);
+                    DrawCircleV(screenPos, dashParticles[i].radius * (0.3f + 0.7f * lifeRatio), pCol);
                 }
             }
 
-            // Vẽ các chiêu thức đang bay và chữ sát thương qua SkillManager
+            // Vẽ các chiêu thức đang bay và chữ sát thương chiếu từ 3D ra màn hình
             DrawSkillManager();
 
-            // Sắp xếp các thực thể theo trục Y (Y-Sorting) để vẽ đúng thứ tự xa gần
-            RenderEntity drawQueue[5];
-            drawQueue[0] = (RenderEntity){ ENTITY_PLAYER, characterPos.y, 0 };
-            drawQueue[1] = (RenderEntity){ ENTITY_ENEMY, enemyPos.y, 0 };
-            drawQueue[2] = (RenderEntity){ ENTITY_PILLAR_0, pillars[0].position.y, 0 };
-            drawQueue[3] = (RenderEntity){ ENTITY_PILLAR_1, pillars[1].position.y, 1 };
-            drawQueue[4] = (RenderEntity){ ENTITY_PILLAR_2, pillars[2].position.y, 2 };
-
-            // Sắp xếp nổi bọt (Bubble Sort) cho 5 phần tử
-            for (int i = 0; i < 4; i++) {
-                for (int j = 0; j < 4 - i; j++) {
-                    if (drawQueue[j].ySortValue > drawQueue[j+1].ySortValue) {
-                        RenderEntity temp = drawQueue[j];
-                        drawQueue[j] = drawQueue[j+1];
-                        drawQueue[j+1] = temp;
-                    }
-                }
-            }
-
-            // Vẽ các thực thể theo thứ tự đã sắp xếp Y-Sorting
-            for (int i = 0; i < 5; i++) {
-                switch (drawQueue[i].type) {
-                    case ENTITY_PLAYER: {
-                        Color pOutline = GetColor(0xCCCCCCFF);
-
-                        // Đổi màu viền nếu đang lướt
-                        if (isDashing) {
-                            pOutline = GetRegisteredSkillColor(activeSkillIndex);
-                        }
-
-                        float aimAngle = atan2f(mousePos.y - (characterPos.y - charZ - 25.0f), mousePos.x - characterPos.x);
-                        DrawCharacter25D(characterPos, charZ, 25.0f, GetColor(0xFFD39BFF), GetColor(0x3B5998FF), pOutline, true, aimAngle);
-                        break;
-                    }
-                    case ENTITY_ENEMY: {
-                        Color eClothes = GetColor(0x8B2500FF);
-                        Color eOutline = GetColor(0xFF5500FF);
-
-                        if (IsEnemySlowed()) {
-                            eClothes = GetColor(0x1B4F72FF);
-                            eOutline = SKYBLUE;
-                        } else if (IsEnemyBurning()) {
-                            eClothes = RED;
-                            eOutline = YELLOW;
-                        }
-
-                        float enemyZ = 0.0f; // Đứng trên mặt phẳng đất
-
-                        DrawCharacter25D(enemyPos, enemyZ, 30.0f, GetColor(0xFFC0CBFF), eClothes, eOutline, false, 0.0f);
-
-                        // Vẽ chữ ENEMY trên đầu nhân vật
-                        DrawText("ENEMY", (int)enemyPos.x - 22, (int)(enemyPos.y - 65), 12, WHITE);
-                        break;
-                    }
-                    case ENTITY_PILLAR_0:
-                    case ENTITY_PILLAR_1:
-                    case ENTITY_PILLAR_2: {
-                        int idx = drawQueue[i].index;
-                        DrawCylinder25D(pillars[idx].position, pillars[idx].radius, pillars[idx].radius * 2.5f, 
-                                     GetColor(0x3B3B42FF), GetColor(0x5A5A63FF), GetColor(0x73737CFF));
-                        break;
-                    }
-                }
-            }
-
+            // Nhãn tên Enemy trên đầu quái
+            Vector2 enemyScreenHead = GetWorldToScreen((Vector3){ enemyPos.x, enemyPos.y + 55.0f, enemyPos.z }, camera);
+            DrawText("ENEMY", (int)enemyScreenHead.x - 22, (int)enemyScreenHead.y, 12, WHITE);
 
             // --- VẼ GIAO DIỆN CHỌN SKILL (UI) ---
             for (int i = 0; i < skillCount; i++) {
@@ -616,7 +589,6 @@ int main(void) {
 
             // Vẽ bảng chọn kích thước (Size Selector)
             DrawText("Size:", 770, 80, 16, LIGHTGRAY);
-            float sizes[3] = { 1.0f, 1.5f, 2.0f };
             for (int i = 0; i < 3; i++) {
                 bool isSelected = (selectedSize == sizes[i]);
                 bool isHover = CheckCollisionPointRec(mousePos, rectSize[i]);
@@ -660,7 +632,7 @@ int main(void) {
             DrawRectangleRoundedLines(rectPortalToggle, 0.2f, 10, WHITE);
             DrawText(showPortals ? "PORTALS: ENABLED" : "PORTALS: DISABLED", (int)rectPortalToggle.x + 20, (int)rectPortalToggle.y + 10, 14, WHITE);
 
-            // Text hướng dẫn
+            // Bảng hướng dẫn & thông số
             const char* modeStr = "STATIC (STATIONARY)";
             if (enemyMode == ENEMY_CHASE) modeStr = "CHASING PLAYER";
             else if (enemyMode == ENEMY_PATROL) modeStr = "CIRCULAR PATROL";
@@ -679,7 +651,7 @@ int main(void) {
         EndDrawing();
     }
 
-    // Dọn dẹp RAM/VRAM qua hệ thống quản lý
+    // Dọn dẹp bộ nhớ RAM/VRAM
     UnloadSkillManager();
     CloseWindow();
     

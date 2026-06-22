@@ -6,7 +6,7 @@
 #ifndef SKILL_PROJECTILE_DEF
 #define SKILL_PROJECTILE_DEF
 typedef struct {
-    Vector2 position;
+    Vector3 position;
     float radius;
     bool active;
 } SkillProjectile;
@@ -15,7 +15,7 @@ typedef struct {
 void InitMetalSkill(int screenWidth, int screenHeight);
 
 // Gọi chiêu: Bắn 'count' luồng kiếm khí từ startPos về phía target
-void CastMetalSkill(Vector2 startPos, Vector2 target, int count, float sizeScale);
+void CastMetalSkill(Vector3 startPos, Vector3 target, int count, float sizeScale);
 
 void UpdateMetalSkill(float dt);
 void DrawMetalSkill(void);
