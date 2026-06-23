@@ -231,6 +231,7 @@ void DrawFluidSkill(void) {
   float time = GetTime();
 
   rlDisableDepthMask();
+  rlEnableBackfaceCulling(); // <--- THÊM DÒNG NÀY ĐỂ LỌC MẶT SAU
   BeginBlendMode(BLEND_ALPHA);
   BeginShaderMode(fluidShader);
 
@@ -250,6 +251,8 @@ void DrawFluidSkill(void) {
 
   EndShaderMode();
   EndBlendMode();
+  rlDisableBackfaceCulling(); // <--- TẮT ĐI SAU KHI VẼ XONG ĐỂ KHÔNG ẢNH HƯỞNG
+                              // SKILL KHÁC
   rlEnableDepthMask();
 }
 
