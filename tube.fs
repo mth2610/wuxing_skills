@@ -10,18 +10,18 @@ uniform float u_uvLength;
 
 out vec4 finalColor;
 
-// Đồng bộ sóng dài từ Vertex Shader
+// Đồng bộ chính xác với Vertex Shader
 float getIrregularity(vec2 uv) {
     float t = uv.y / u_uvLength;
     float phi = uv.x * 6.28318;
     
-    float swell = sin(t * 6.0 - u_time * 10.0) * cos(t * 2.0 - u_time * 4.0);
-    float bump = sin(phi * 2.0 + u_time * 4.0) * cos(t * 8.0 - u_time * 8.0);
+    float swell = sin(t * 4.0 - u_time * 12.0);
+    float bump = sin(t * 8.0 - u_time * 20.0) * cos(phi * 2.0);
     
-    float irregularity = swell * 0.6 + bump * 0.4;
+    float irregularity = swell * 0.5 + bump * 0.5;
     float dampen = smoothstep(0.02, 0.15, t) * smoothstep(0.98, 0.85, t);
     
-    return irregularity * dampen * 3.5; 
+    return irregularity * dampen * 4.0; 
 }
 
 void main() {
@@ -37,16 +37,15 @@ void main() {
     if (length(tangent) < 0.1) tangent = normalize(cross(vec3(1.0, 0.0, 0.0), fragNormal));
     vec3 bitangent = cross(fragNormal, tangent);
     
-    // Normal mềm lại để bóng hắt không gắt
-    vec3 normal = normalize(fragNormal + (tangent * dNormal.x + bitangent * dNormal.y) * 0.8);
+    // Giảm độ gắt của Normal Map (từ 0.8 xuống 0.5) để bóng râm mượt hơn, hết bị đốm đen
+    vec3 normal = normalize(fragNormal + (tangent * dNormal.x + bitangent * dNormal.y) * 0.5);
 
     vec3 viewDir = normalize(viewPos - fragPosition);
     vec3 lightDir = normalize(vec3(0.5, 0.8, 0.5));
 
     float NdotV = max(dot(normal, viewDir), 0.0);
-    float fresnel = pow(1.0 - NdotV, 2.5); // Fresnel dịu lại một xíu
+    float fresnel = pow(1.0 - NdotV, 2.5);
 
-    // Lõi nước nâng sáng nhẹ để bớt giống mực đen, giữ màu xanh biển thẳm
     vec3 waterCore = vec3(0.05, 0.35, 0.80); 
     vec3 waterEdge = vec3(0.40, 0.95, 1.00); 
     vec3 baseColor = mix(waterCore, waterEdge, fresnel);
@@ -54,25 +53,22 @@ void main() {
     float fakeSubsurface = max(dot(normal, -viewDir), 0.0) * 0.3;
     baseColor += waterCore * fakeSubsurface;
 
-    // --- SỬA VÂN CAUSTICS THÀNH CÁC DẢI SỌC DÀI CHẢY DỌC ---
-    // Ép UV trục Y (dọc thân) nhỏ lại, trục X (ngang) to ra để tạo sọc
-    vec2 scroll1 = vec2(fragTexCoord.x * 2.0, fragTexCoord.y * 0.5) - vec2(u_time * 1.5, u_time * 5.0);
-    vec2 scroll2 = vec2(fragTexCoord.x * 3.0, fragTexCoord.y * 0.4) + vec2(u_time * 1.0, -u_time * 6.0);
+    // Vân nước chạy dọc
+    vec2 scroll1 = vec2(fragTexCoord.x * 2.0, fragTexCoord.y * 0.5) - vec2(0.0, u_time * 5.0);
+    vec2 scroll2 = vec2(fragTexCoord.x * 3.0, fragTexCoord.y * 0.4) + vec2(0.0, -u_time * 6.0);
     
     float caustics = sin(scroll1.x) * cos(scroll1.y) + sin(scroll2.x + scroll2.y);
     caustics = pow(max(caustics, 0.0), 1.5); 
     baseColor += vec3(0.4, 0.8, 1.0) * caustics * 0.3; 
 
-    // --- MỞ RỘNG VỆT PHẢN QUANG ---
     vec3 halfVector = normalize(lightDir + viewDir);
     float NdotH = max(dot(normal, halfVector), 0.0);
-    // Ép điểm sáng to và trượt dài ra (hạ pow từ 90 xuống 60), hạ cường độ bớt chói lóa
-    float specular = pow(NdotH, 60.0) * 1.6; 
+    // Tán rộng điểm phản quang một xíu (giảm pow xuống 50.0) để nó thành "vệt sáng" thay vì "đốm sáng"
+    float specular = pow(NdotH, 50.0) * 1.5; 
 
     vec3 finalRGB = baseColor + vec3(specular);
 
     float normalizedT = fragTexCoord.y / u_uvLength;
-    // Nâng độ đục của lõi lên một chút (0.25) để ánh sáng xuyên thấu mượt hơn
     float alphaFresnel = mix(0.25, 0.95, fresnel); 
     
     float headGlow = smoothstep(0.85, 1.0, normalizedT);
