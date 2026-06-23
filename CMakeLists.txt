@@ -57,6 +57,8 @@ configure_file(wood.fs ${CMAKE_CURRENT_BINARY_DIR}/wood.fs COPYONLY)
 configure_file(electric.fs ${CMAKE_CURRENT_BINARY_DIR}/electric.fs COPYONLY)
 configure_file(wind.fs ${CMAKE_CURRENT_BINARY_DIR}/wind.fs COPYONLY)
 configure_file(taiji.fs ${CMAKE_CURRENT_BINARY_DIR}/taiji.fs COPYONLY)
+configure_file(fluid.vs ${CMAKE_CURRENT_BINARY_DIR}/fluid.vs COPYONLY)
+
 
 # --- Copy thêm Texture đầu rồng của chiêu Lửa ---
 configure_file(dragon_head.png ${CMAKE_CURRENT_BINARY_DIR}/dragon_head.png COPYONLY)

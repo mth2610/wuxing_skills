@@ -142,7 +142,7 @@ static void EnsureBuiltInRegistered(void) {
   if (!builtInRegistered) {
     builtInRegistered = true;
     RegisterSkill("WATER", SKYBLUE, InitFluidSkill, CastWaterWrapper,
-                  UpdateFluidSkillWrapper, DrawFluidSkill, UnloadFluidSkill);
+                  UpdateFluidSkillWrapper, NULL, UnloadFluidSkill);
     RegisterSkill("METAL", GOLD, InitMetalSkill, CastMetalWrapper,
                   UpdateMetalSkillWrapper, DrawMetalSkill, UnloadMetalSkill);
 
@@ -335,6 +335,7 @@ void DrawSkillManagerWorld3D(void) {
   // ĐÃ VÁ LỖI: Lệnh vẽ lửa được dời vào đây, sống 100% trong không gian 3D an
   // toàn
   DrawFireSkill();
+  DrawFluidSkill();
 }
 
 void DrawSkillManagerOverlay(void) {
