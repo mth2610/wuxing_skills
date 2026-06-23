@@ -1,0 +1,332 @@
+#include "tube_skill.h"
+#include "particle_system.h"
+#include "raymath.h"
+#include "rlgl.h"
+#include "utils_math.h"
+#include <math.h>
+
+#define MAX_TUBE_EMITTERS 5
+
+#define TUBE_TRAVEL_SPEED 1.2f
+#define TUBE_BASE_RADIUS 12.0f
+#define TUBE_SEGMENTS 30
+#define TUBE_RADIAL_SEGMENTS 16
+
+#define GRAVITY_Y -650.0f
+#define FLUID_DRAG_SPLASH 3.0f
+
+extern Camera3D camera;
+
+typedef struct {
+  bool active;
+  Vector3 p0, p1, p2, p3; // Các điểm của Bezier Curve
+  float progress;         // Tiến độ dòng chảy từ 0.0 -> 1.0
+  float sizeScale;
+  Vector3 headPos; // Vị trí mũi nhọn của dòng nước
+} TubeEmitter;
+
+static TubeEmitter emitters[MAX_TUBE_EMITTERS];
+static Shader tubeShader;
+static int timeLoc;
+static int viewPosLoc;
+
+static inline float ClampSizeScale(float scale) {
+  return Clamp(scale, 0.2f, 3.0f);
+}
+
+// Đạo hàm Bezier để lấy tiếp tuyến (Tangent) định hướng vòng tròn cắt ngang
+static Vector3 GetBezierDerivative(Vector3 p0, Vector3 p1, Vector3 p2,
+                                   Vector3 p3, float t) {
+  float u = 1.0f - t;
+  Vector3 d = {0};
+  d.x = 3.0f * u * u * (p1.x - p0.x) + 6.0f * u * t * (p2.x - p1.x) +
+        3.0f * t * t * (p3.x - p2.x);
+  d.y = 3.0f * u * u * (p1.y - p0.y) + 6.0f * u * t * (p2.y - p1.y) +
+        3.0f * t * t * (p3.y - p2.y);
+  d.z = 3.0f * u * u * (p1.z - p0.z) + 6.0f * u * t * (p2.z - p1.z) +
+        3.0f * t * t * (p3.z - p2.z);
+  return d;
+}
+
+static Vector3 GetBezierPoint(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3,
+                              float t) {
+  float u = 1.0f - t;
+  float tt = t * t;
+  float uu = u * u;
+  float uuu = uu * u;
+  float ttt = tt * t;
+
+  Vector3 p = Vector3Scale(p0, uuu);
+  p = Vector3Add(p, Vector3Scale(p1, 3.0f * uu * t));
+  p = Vector3Add(p, Vector3Scale(p2, 3.0f * u * tt));
+  p = Vector3Add(p, Vector3Scale(p3, ttt));
+  return p;
+}
+
+static void TriggerWaterBurst(Vector3 pos, float sizeScale) {
+  int splashCount = GetRandomValue(20, 35) * sizeScale;
+  for (int s = 0; s < splashCount; s++) {
+    float angle = Random01() * PI * 2.0f;
+    float pitch = (Random01() - 0.5f) * PI;
+    float speed = Math_Mix(300.0f, 600.0f, Random01()) * sizeScale;
+
+    ParticleConfig cfg = {0};
+    cfg.position = pos;
+    cfg.velocity = (Vector3){cosf(angle) * speed * cosf(pitch),
+                             sinf(pitch) * speed + (300.0f * sizeScale),
+                             sinf(angle) * speed * cosf(pitch)};
+    cfg.force = (Vector3){0.0f, GRAVITY_Y, 0.0f};
+    cfg.drag = FLUID_DRAG_SPLASH;
+    cfg.radius = Math_Mix(3.0f, 9.0f, Random01()) * sizeScale * 3.5f;
+    cfg.lifetime = Math_Mix(0.4f, 1.0f, Random01());
+    cfg.colorStart = (Color){220, 245, 255, 240};
+    cfg.colorEnd = (Color){80, 160, 230, 0};
+    cfg.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE;
+    SpawnParticle(cfg);
+  }
+}
+
+// Vẽ ống nước 3D
+static void RenderCustom3DTube(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3,
+                               float radius, float flowProgress) {
+  Vector3 rings[TUBE_SEGMENTS + 1][TUBE_RADIAL_SEGMENTS];
+  Vector3 normals[TUBE_SEGMENTS + 1][TUBE_RADIAL_SEGMENTS];
+
+  float sinPhi[TUBE_RADIAL_SEGMENTS];
+  float cosPhi[TUBE_RADIAL_SEGMENTS];
+  for (int j = 0; j < TUBE_RADIAL_SEGMENTS; j++) {
+    float phi = (float)j * (2.0f * PI) / (float)TUBE_RADIAL_SEGMENTS;
+    sinPhi[j] = sinf(phi);
+    cosPhi[j] = cosf(phi);
+  }
+
+  for (int i = 0; i <= TUBE_SEGMENTS; i++) {
+    float t = (float)i / (float)TUBE_SEGMENTS;
+    float currentT = t * flowProgress; // Ống dài ra dần theo flowProgress
+
+    Vector3 pos = GetBezierPoint(p0, p1, p2, p3, currentT);
+    Vector3 tangent =
+        Vector3Normalize(GetBezierDerivative(p0, p1, p2, p3, currentT));
+
+    Vector3 up = (Vector3){0.0f, 1.0f, 0.0f};
+    if (fabsf(tangent.y) > 0.99f)
+      up = (Vector3){1.0f, 0.0f, 0.0f};
+
+    Vector3 right = Vector3Normalize(Vector3CrossProduct(up, tangent));
+    up = Vector3CrossProduct(tangent, right);
+
+    // --- ĐOẠN ĐÃ SỬA LẠI ---
+    float tailTaper = SmoothStep01(t * 5.0f);
+    float headBulge = 1.0f + 0.5f * powf(t, 4.0f);
+
+    // Giảm biên độ pulse từ 0.35f xuống 0.15f để thân không bị co rúm quá gắt
+    float bodyPulse = 1.0f + 0.15f * sinf(t * PI * 6.0f - GetTime() * 12.0f);
+    float currentRadius = radius * tailTaper * headBulge * bodyPulse;
+
+    // Giảm số vòng xoắn từ 6.0f xuống 2.0f và giảm tốc độ xoay tự thân
+    float twistAngle = t * PI * 2.0f - GetTime() * 6.0f;
+    Vector3 twistedUp = Vector3Add(Vector3Scale(up, cosf(twistAngle)),
+                                   Vector3Scale(right, sinf(twistAngle)));
+    Vector3 twistedRight =
+        Vector3Normalize(Vector3CrossProduct(twistedUp, tangent));
+
+    for (int j = 0; j < TUBE_RADIAL_SEGMENTS; j++) {
+      // Thay up và right thành twistedUp và twistedRight
+      Vector3 normal = Vector3Add(Vector3Scale(twistedRight, cosPhi[j]),
+                                  Vector3Scale(twistedUp, sinPhi[j]));
+      normals[i][j] = normal;
+      rings[i][j] = Vector3Add(pos, Vector3Scale(normal, currentRadius));
+    }
+  }
+
+  rlPushMatrix();
+  rlBegin(RL_QUADS);
+
+  for (int i = 0; i < TUBE_SEGMENTS; i++) {
+    float v1 = (float)i / (float)TUBE_SEGMENTS * 3.0f;
+    float v2 = (float)(i + 1) / (float)TUBE_SEGMENTS * 3.0f;
+
+    for (int j = 0; j < TUBE_RADIAL_SEGMENTS; j++) {
+      int nextJ = (j + 1) % TUBE_RADIAL_SEGMENTS;
+      float u1 = (float)j / (float)TUBE_RADIAL_SEGMENTS;
+      float u2 = (float)(j + 1) / (float)TUBE_RADIAL_SEGMENTS;
+
+      rlNormal3f(normals[i][j].x, normals[i][j].y, normals[i][j].z);
+      rlTexCoord2f(u1, v1);
+      rlVertex3f(rings[i][j].x, rings[i][j].y, rings[i][j].z);
+
+      rlNormal3f(normals[i][nextJ].x, normals[i][nextJ].y, normals[i][nextJ].z);
+      rlTexCoord2f(u2, v1);
+      rlVertex3f(rings[i][nextJ].x, rings[i][nextJ].y, rings[i][nextJ].z);
+
+      rlNormal3f(normals[i + 1][nextJ].x, normals[i + 1][nextJ].y,
+                 normals[i + 1][nextJ].z);
+      rlTexCoord2f(u2, v2);
+      rlVertex3f(rings[i + 1][nextJ].x, rings[i + 1][nextJ].y,
+                 rings[i + 1][nextJ].z);
+
+      rlNormal3f(normals[i + 1][j].x, normals[i + 1][j].y, normals[i + 1][j].z);
+      rlTexCoord2f(u1, v2);
+      rlVertex3f(rings[i + 1][j].x, rings[i + 1][j].y, rings[i + 1][j].z);
+    }
+  }
+
+  rlEnd();
+  rlPopMatrix();
+}
+
+void InitTubeSkill(int screenWidth, int screenHeight) {
+  (void)screenWidth;
+  (void)screenHeight;
+  tubeShader = LoadShader("tube.vs", "tube.fs");
+
+  timeLoc = GetShaderLocation(tubeShader, "u_time");
+  viewPosLoc = GetShaderLocation(tubeShader, "viewPos");
+
+  for (int i = 0; i < MAX_TUBE_EMITTERS; i++) {
+    emitters[i].active = false;
+  }
+}
+
+void CastTubeSkill(Vector3 startPos, Vector3 target, float twistPhase,
+                   float sizeScale) {
+  float clampedScale = ClampSizeScale(sizeScale);
+
+  for (int i = 0; i < MAX_TUBE_EMITTERS; i++) {
+    if (!emitters[i].active) {
+      emitters[i].active = true;
+      emitters[i].p0 = startPos;
+      emitters[i].p3 = target;
+      emitters[i].progress = 0.0f;
+      emitters[i].sizeScale = clampedScale;
+      emitters[i].headPos = startPos;
+
+      // Tính toán control points tạo đường uốn lượn hình rồng
+      float dist = Vector3Distance(startPos, target);
+      Vector3 dir = Vector3Normalize(Vector3Subtract(target, startPos));
+
+      // Tìm trục ngang vuông góc để tạo độ uốn éo
+      Vector3 up = (Vector3){0.0f, 1.0f, 0.0f};
+      Vector3 right = Vector3Normalize(Vector3CrossProduct(up, dir));
+
+      float lateralOffset = dist * 0.4f * cosf(twistPhase);
+      float heightOffset = dist * 0.3f;
+
+      emitters[i].p1 = Vector3Add(startPos, Vector3Scale(dir, dist * 0.3f));
+      emitters[i].p1 =
+          Vector3Add(emitters[i].p1, Vector3Scale(right, lateralOffset));
+      emitters[i].p1.y += heightOffset;
+
+      emitters[i].p2 = Vector3Add(startPos, Vector3Scale(dir, dist * 0.7f));
+      emitters[i].p2 =
+          Vector3Add(emitters[i].p2, Vector3Scale(right, -lateralOffset));
+      emitters[i].p2.y += heightOffset * 0.5f;
+
+      break;
+    }
+  }
+}
+
+void UpdateTubeSkill(float dt) {
+  for (int e = 0; e < MAX_TUBE_EMITTERS; e++) {
+    if (!emitters[e].active)
+      continue;
+
+    emitters[e].progress += dt * TUBE_TRAVEL_SPEED;
+
+    if (emitters[e].progress >= 1.0f) {
+      emitters[e].active = false;
+      TriggerWaterBurst(emitters[e].p3, emitters[e].sizeScale);
+      continue;
+    }
+
+    // Cập nhật vị trí đầu rồng để xét va chạm hoặc sinh hạt nước bay theo
+    emitters[e].headPos =
+        GetBezierPoint(emitters[e].p0, emitters[e].p1, emitters[e].p2,
+                       emitters[e].p3, emitters[e].progress);
+
+    // Sinh bọt nước xé gió tại đầu dòng chảy
+    if (GetRandomValue(0, 100) < 60) {
+      ParticleConfig cfgMist = {0};
+      cfgMist.position = emitters[e].headPos;
+      cfgMist.velocity =
+          (Vector3){(Random01() - 0.5f) * 40.0f, Random01() * 50.0f,
+                    (Random01() - 0.5f) * 40.0f};
+      cfgMist.force = (Vector3){0.0f, GRAVITY_Y * 0.5f, 0.0f};
+      cfgMist.drag = 2.0f;
+      cfgMist.radius = Math_Mix(2.0f, 5.0f, Random01()) * emitters[e].sizeScale;
+      cfgMist.lifetime = Math_Mix(0.2f, 0.5f, Random01());
+      cfgMist.colorStart = (Color){200, 245, 255, 180};
+      cfgMist.colorEnd = (Color){100, 150, 200, 0};
+      cfgMist.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE;
+      SpawnParticle(cfgMist);
+    }
+  }
+}
+
+void DrawTubeSkill(void) {
+  bool anyActive = false;
+  for (int i = 0; i < MAX_TUBE_EMITTERS; i++) {
+    if (emitters[i].active) {
+      anyActive = true;
+      break;
+    }
+  }
+  if (!anyActive)
+    return;
+
+  float time = GetTime();
+
+  rlDisableDepthMask();
+  rlEnableBackfaceCulling();
+  BeginBlendMode(BLEND_ALPHA);
+  BeginShaderMode(tubeShader);
+
+  SetShaderValue(tubeShader, timeLoc, &time, SHADER_UNIFORM_FLOAT);
+  SetShaderValue(tubeShader, viewPosLoc, &camera.position, SHADER_UNIFORM_VEC3);
+
+  for (int e = 0; e < MAX_TUBE_EMITTERS; e++) {
+    if (!emitters[e].active)
+      continue;
+    float radius = TUBE_BASE_RADIUS * emitters[e].sizeScale;
+    RenderCustom3DTube(emitters[e].p0, emitters[e].p1, emitters[e].p2,
+                       emitters[e].p3, radius, emitters[e].progress);
+  }
+
+  EndShaderMode();
+  EndBlendMode();
+  rlDisableBackfaceCulling();
+  rlEnableDepthMask();
+}
+
+void UnloadTubeSkill(void) { UnloadShader(tubeShader); }
+
+int GetTubeSkillProjectiles(SkillProjectile *outProjectiles,
+                            int maxProjectiles) {
+  int count = 0;
+  for (int i = 0; i < MAX_TUBE_EMITTERS; i++) {
+    if (emitters[i].active && count < maxProjectiles) {
+      // Xét va chạm tại mũi nhọn của dòng nước thay vì cả ống
+      outProjectiles[count].position = emitters[i].headPos;
+      outProjectiles[count].radius = TUBE_BASE_RADIUS * emitters[i].sizeScale *
+                                     1.5f; // Head hitbox lớn hơn chút
+      outProjectiles[count].active = true;
+      count++;
+    }
+  }
+  return count;
+}
+
+void DeactivateTubeProjectile(int index) {
+  int count = 0;
+  for (int i = 0; i < MAX_TUBE_EMITTERS; i++) {
+    if (emitters[i].active) {
+      if (count == index) {
+        emitters[i].active = false;
+        TriggerWaterBurst(emitters[i].headPos, emitters[i].sizeScale);
+        return;
+      }
+      count++;
+    }
+  }
+}

@@ -4,6 +4,7 @@
 #include "fluid_skill.h"
 #include "metal_skill.h"
 #include "raymath.h"
+#include "tube_skill.h"
 #include "wind_skill.h"
 #include "wood_skill.h"
 #include <math.h>
@@ -65,8 +66,11 @@ static SkillRegistryEntry skillRegistry[MAX_SKILLS];
 static int registeredSkillCount = 0;
 static bool builtInRegistered = false;
 
+// --- PROTOTYPES CỦA SKILL WRAPPERS ---
 static void CastWaterWrapper(Vector3 startPos, Vector3 target,
                              SkillParams params);
+static void CastTubeWrapper(Vector3 startPos, Vector3 target,
+                            SkillParams params);
 static void CastMetalWrapper(Vector3 startPos, Vector3 target,
                              SkillParams params);
 static void CastFireWrapper(Vector3 startPos, Vector3 target,
@@ -77,8 +81,11 @@ static void CastElectricWrapper(Vector3 startPos, Vector3 target,
                                 SkillParams params);
 static void CastWindWrapper(Vector3 startPos, Vector3 target,
                             SkillParams params);
+
 static void UpdateFluidSkillWrapper(float dt, Vector3 enemyPos,
                                     float enemyRadius);
+static void UpdateTubeSkillWrapper(float dt, Vector3 enemyPos,
+                                   float enemyRadius);
 static void UpdateMetalSkillWrapper(float dt, Vector3 enemyPos,
                                     float enemyRadius);
 static void UpdateFireSkillWrapper(float dt, Vector3 enemyPos,
@@ -141,20 +148,29 @@ static void AddFloatingText(Vector3 pos, const char *text, Color color,
 static void EnsureBuiltInRegistered(void) {
   if (!builtInRegistered) {
     builtInRegistered = true;
+
+    // Đăng ký Quả cầu nước (Index 0)
     RegisterSkill("WATER", SKYBLUE, InitFluidSkill, CastWaterWrapper,
                   UpdateFluidSkillWrapper, NULL, UnloadFluidSkill);
+
+    // Đăng ký Ống nước Thủy Long Ngâm (Index 1)
+    RegisterSkill("TUBE", BLUE, InitTubeSkill, CastTubeWrapper,
+                  UpdateTubeSkillWrapper, NULL, UnloadTubeSkill);
+
+    // Đăng ký các hệ còn lại
     RegisterSkill("METAL", GOLD, InitMetalSkill, CastMetalWrapper,
                   UpdateMetalSkillWrapper, DrawMetalSkill, UnloadMetalSkill);
 
-    // ĐÃ VÁ LỖI: Chặn chiêu Lửa vẽ ở môi trường 2D bằng lệnh NULL, chống sập UI
     RegisterSkill("FIRE", ORANGE, InitFireSkill, CastFireWrapper,
                   UpdateFireSkillWrapper, NULL, UnloadFireSkill);
 
     RegisterSkill("WOOD", LIME, InitWoodSkill, CastWoodWrapper,
                   UpdateWoodSkillWrapper, DrawWoodSkill, UnloadWoodSkill);
+
     RegisterSkill("ELECTRIC", PURPLE, InitElectricSkill, CastElectricWrapper,
                   UpdateElectricSkillWrapper, DrawElectricSkill,
                   UnloadElectricSkill);
+
     RegisterSkill("WIND", LIGHTGRAY, InitWindSkill, CastWindWrapper,
                   UpdateWindWrapper, DrawWindSkill, UnloadWindSkill);
   }
@@ -332,10 +348,9 @@ void DrawSkillManagerWorld3D(void) {
     }
   }
 
-  // ĐÃ VÁ LỖI: Lệnh vẽ lửa được dời vào đây, sống 100% trong không gian 3D an
-  // toàn
   DrawFireSkill();
   DrawFluidSkill();
+  DrawTubeSkill(); // Đã chốt dấu chấm phẩy chuẩn xác ở đây
 }
 
 void DrawSkillManagerOverlay(void) {
@@ -437,6 +452,8 @@ bool IsEnemyBurning(void) { return burnTimer > 0.0f; }
 bool IsAnySkillCoiling(void) { return IsWoodSkillCoiling(); }
 bool IsAnySkillShocking(void) { return IsElectricSkillShocking(); }
 
+// --- IMPLEMENTATION CỦA CÁC SKILL WRAPPERS ---
+
 static void CastWaterWrapper(Vector3 startPos, Vector3 target,
                              SkillParams params) {
   int qty = params.quantity > 0 ? params.quantity : 1;
@@ -447,6 +464,18 @@ static void CastWaterWrapper(Vector3 startPos, Vector3 target,
                      params.sizeScale);
   } else
     CastFluidSkill(startPos, target, -0.4f, params.sizeScale);
+}
+
+static void CastTubeWrapper(Vector3 startPos, Vector3 target,
+                            SkillParams params) {
+  int qty = params.quantity > 0 ? params.quantity : 1;
+  if (qty > 1) {
+    for (int i = 0; i < qty; i++)
+      CastTubeSkill(startPos, target,
+                    ((float)i / (float)(qty - 1) - 0.5f) * (PI * 0.6f),
+                    params.sizeScale);
+  } else
+    CastTubeSkill(startPos, target, 0.0f, params.sizeScale);
 }
 
 static void CastMetalWrapper(Vector3 startPos, Vector3 target,
@@ -488,6 +517,11 @@ static void CastElectricWrapper(Vector3 startPos, Vector3 target,
     CastElectricSkill(startPos, target, params.sizeScale);
 }
 
+static void CastWindWrapper(Vector3 startPos, Vector3 target,
+                            SkillParams params) {
+  CastWindSkill(startPos, target, params.sizeScale);
+}
+
 static void UpdateFluidSkillWrapper(float dt, Vector3 enemyPos,
                                     float enemyRadius) {
   UpdateFluidSkill(dt);
@@ -501,6 +535,23 @@ static void UpdateFluidSkillWrapper(float dt, Vector3 enemyPos,
       slowTimer = 3.0f;
       AddFloatingText(tempProjectiles[i].position, "15", BLUE, 22.0f, 0.7f);
       AddFloatingText(tempProjectiles[i].position, "SLOW!", SKYBLUE, 16.0f,
+                      0.8f);
+    }
+  }
+}
+
+static void UpdateTubeSkillWrapper(float dt, Vector3 enemyPos,
+                                   float enemyRadius) {
+  UpdateTubeSkill(dt);
+  int numTube = GetTubeSkillProjectiles(tempProjectiles, MAX_TEMP_PROJECTILES);
+  for (int i = numTube - 1; i >= 0; i--) {
+    if (tempProjectiles[i].active &&
+        Vector3Distance(tempProjectiles[i].position, enemyPos) <
+            (tempProjectiles[i].radius + enemyRadius)) {
+      DeactivateTubeProjectile(i);
+      slowTimer = 2.0f;
+      AddFloatingText(tempProjectiles[i].position, "35", BLUE, 24.0f, 0.7f);
+      AddFloatingText(tempProjectiles[i].position, "PIERCE!", SKYBLUE, 18.0f,
                       0.8f);
     }
   }
@@ -550,7 +601,8 @@ static void UpdateWoodSkillWrapper(float dt, Vector3 enemyPos,
   for (int i = numWood - 1; i >= 0; i--) {
     if (tempProjectiles[i].active &&
         Vector3Distance(tempProjectiles[i].position, enemyPos) <
-            (tempProjectiles[i].radius + enemyRadius)) {
+            (numWood +
+             enemyRadius)) { // Giữ nguyên logic tính va chạm gốc của bạn
       DeactivateWoodProjectile(i);
       AddFloatingText(tempProjectiles[i].position, "30", LIME, 22.0f, 0.7f);
       AddFloatingText(tempProjectiles[i].position, "ROOTED!", GREEN, 18.0f,
@@ -576,10 +628,6 @@ static void UpdateElectricSkillWrapper(float dt, Vector3 enemyPos,
   }
 }
 
-static void CastWindWrapper(Vector3 startPos, Vector3 target,
-                            SkillParams params) {
-  CastWindSkill(startPos, target, params.sizeScale);
-}
 static void UpdateWindWrapper(float dt, Vector3 enemyPos, float enemyRadius) {
   UpdateWindSkill(dt);
 }
@@ -611,6 +659,7 @@ void RegisterStaticOccluder(Vector3 center, float radius, float height) {
     staticOccluders[staticOccluderCount++] =
         (StaticOccluder){center, radius, height};
 }
+
 void ClearStaticOccluders(void) { staticOccluderCount = 0; }
 
 float GetLineOfSightVisibility(Vector3 viewPoint, Vector3 targetPoint) {

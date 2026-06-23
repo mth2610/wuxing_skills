@@ -33,6 +33,7 @@ FetchContent_MakeAvailable(raylib)
 add_executable(wuxing 
     main.c 
     fluid_skill.c 
+    tube_skill.c
     metal_skill.c 
     fire_skill.c 
     wood_skill.c 
@@ -51,13 +52,16 @@ add_executable(wuxing
 
 # Tự động copy file Shader và Texture vào thư mục build để game không bị lỗi load
 configure_file(fluid.fs ${CMAKE_CURRENT_BINARY_DIR}/fluid.fs COPYONLY)
+configure_file(fluid.vs ${CMAKE_CURRENT_BINARY_DIR}/fluid.vs COPYONLY)
+configure_file(tube.fs ${CMAKE_CURRENT_BINARY_DIR}/tube.fs COPYONLY)
+configure_file(tube.vs ${CMAKE_CURRENT_BINARY_DIR}/tube.vs COPYONLY)
 configure_file(fire.fs ${CMAKE_CURRENT_BINARY_DIR}/fire.fs COPYONLY)
 configure_file(metal.fs ${CMAKE_CURRENT_BINARY_DIR}/metal.fs COPYONLY)
 configure_file(wood.fs ${CMAKE_CURRENT_BINARY_DIR}/wood.fs COPYONLY)
 configure_file(electric.fs ${CMAKE_CURRENT_BINARY_DIR}/electric.fs COPYONLY)
 configure_file(wind.fs ${CMAKE_CURRENT_BINARY_DIR}/wind.fs COPYONLY)
 configure_file(taiji.fs ${CMAKE_CURRENT_BINARY_DIR}/taiji.fs COPYONLY)
-configure_file(fluid.vs ${CMAKE_CURRENT_BINARY_DIR}/fluid.vs COPYONLY)
+
 
 
 # --- Copy thêm Texture đầu rồng của chiêu Lửa ---

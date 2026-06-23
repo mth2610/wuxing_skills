@@ -1,5 +1,5 @@
 #include "ui_panel.h"
-#include "rlgl.h" // BẮT BUỘC THÊM: Để can thiệp đồng bộ ma trận tầng sâu
+#include "rlgl.h"
 #include <stdio.h>
 
 static Rectangle rectQty[5];
@@ -31,8 +31,11 @@ void InitUIPanel(void) {
   int skillCount = GetRegisteredSkillCount();
   if (skillCount > 32)
     skillCount = 32;
+
+  // Đã căn chỉnh lại khoảng cách và kích thước nút bấm để vừa vặn 8 chiêu trên
+  // màn hình
   for (int i = 0; i < skillCount; i++) {
-    skillButtons[i] = (Rectangle){20 + i * 135, 20, 125, 45};
+    skillButtons[i] = (Rectangle){20 + i * 105, 20, 95, 45};
   }
 }
 
@@ -40,8 +43,9 @@ void UpdateUIPanel(Vector2 mousePos, UIPanelState *state) {
   state->clickedOnUI = false;
   hoverSkillIndex = -1;
 
-  int availableSkills[] = {0, 1, 2, 3, 4, 5, 6};
-  int availableCount = 7;
+  // Cập nhật: Thêm chỉ số 1 (TUBE) vào mảng và tăng tổng số lên 8
+  int availableSkills[] = {0, 1, 2, 3, 4, 5, 6, 7};
+  int availableCount = 8;
   bool activeValid = false;
   for (int i = 0; i < availableCount; i++) {
     if (state->activeSkillIndex == availableSkills[i]) {
@@ -116,15 +120,10 @@ void UpdateUIPanel(Vector2 mousePos, UIPanelState *state) {
 }
 
 void DrawUIPanel(const UIPanelState *state) {
-  // =========================================================================
-  // SIÊU LÁ CHẮN ĐỒ HỌA: ĐỒNG BỘ LẠI TOÀN BỘ PIPELINE 2D CHỐNG SAI LỆCH MA TRẬN
-  // =========================================================================
-  rlDrawRenderBatchActive(); // Giải phóng hoàn toàn các phần tử cũ khỏi bộ đệm
-                             // vẽ
-  EndShaderMode();             // Ép ngắt kết nối mọi Shader rò rỉ
-  BeginBlendMode(BLEND_ALPHA); // Đưa Blend Mode về Alpha mặc định cho UI 2D
+  rlDrawRenderBatchActive();
+  EndShaderMode();
+  BeginBlendMode(BLEND_ALPHA);
 
-  // Cưỡng chế nạp lại Ma trận hình chiếu 2D phẳng (Orthographic) chuẩn màn hình
   rlMatrixMode(RL_PROJECTION);
   rlLoadIdentity();
   rlOrtho(0.0, (double)GetScreenWidth(), (double)GetScreenHeight(), 0.0, -1.0,
@@ -132,11 +131,11 @@ void DrawUIPanel(const UIPanelState *state) {
 
   rlMatrixMode(RL_MODELVIEW);
   rlLoadIdentity();
-  rlSetTexture(0); // Xóa bỏ kết cấu cũ tránh nhiễm màu hình ảnh rồng
-  // =========================================================================
+  rlSetTexture(0);
 
-  int availableSkills[] = {0, 1, 2, 3, 4, 5, 6};
-  int availableCount = 7;
+  // Cập nhật: Tương thích với danh sách 8 chiêu thức
+  int availableSkills[] = {0, 1, 2, 3, 4, 5, 6, 7};
+  int availableCount = 8;
 
   Vector2 mousePos = GetMousePosition();
 
@@ -158,10 +157,11 @@ void DrawUIPanel(const UIPanelState *state) {
     char btnText[64];
     snprintf(btnText, sizeof(btnText), "%s SKILL", skillName);
 
-    int textWidth = MeasureText(btnText, 12);
+    int textWidth = MeasureText(
+        btnText, 10); // Đổi size chữ xuống 10 để nhét vừa nút hẹp hơn
     DrawText(btnText,
              (int)(skillButtons[i].x + (skillButtons[i].width - textWidth) / 2),
-             (int)(skillButtons[i].y + 15), 12, WHITE);
+             (int)(skillButtons[i].y + 16), 10, WHITE);
   }
 
   // Quantity

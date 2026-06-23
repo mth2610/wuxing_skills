@@ -17,6 +17,11 @@
 #define FLUID_DRAG_SPLASH 3.0f
 #define FLUID_DRAG_MIST 4.5f
 
+// Độ phân giải lưới quả cầu. VS displacement che hầu hết đường thô,
+// nên 40x40 là đủ mượt. Giảm xuống 28 nếu cần squeeze thêm FPS.
+#define SPHERE_RINGS 40
+#define SPHERE_COLUMNS 40
+
 extern Camera3D camera;
 
 typedef struct {
@@ -32,8 +37,7 @@ typedef struct {
 
 static FluidEmitter emitters[MAX_EMITTERS];
 static Shader fluidShader;
-static int timeLocVS;
-static int timeLocFS;
+static int timeLoc; // u_time dùng chung cho cả VS và FS (1 uniform, 1 lần set)
 static int viewPosLoc;
 
 static inline float ClampSizeScale(float scale) {
@@ -63,52 +67,63 @@ static void TriggerFluidImpact(Vector3 pos, float sizeScale) {
   }
 }
 
-// HÀM TỰ DỰNG KHỐI CẦU 3D ĐỘ PHÂN GIẢI CAO QUA TẦNG RLGL
-static void RenderCustom3DSphere(Vector3 center, float radius, int rings,
-                                 int columns) {
-  rlPushMatrix();
-  rlTranslatef(center.x, center.y,
-               center.z); // Chỉ gọi hàm dịch chuyển ma trận thôi
+// HÀM VẼ KHỐI CẦU 3D QUA TẦNG RLGL
+// TỐI ƯU: Pre-compute toàn bộ sin/cos một lần trước vòng lặp vẽ.
+// Từ 40*40*4*2 = 12.800 lần gọi trig/frame xuống còn (41+41)*2 = 164 lần.
+static void RenderCustom3DSphere(Vector3 center, float radius) {
+  // Bảng góc pre-computed — stack alloc an toàn ở kích thước này
+  float sinTheta[SPHERE_RINGS + 1], cosTheta[SPHERE_RINGS + 1];
+  float sinPhi[SPHERE_COLUMNS + 1], cosPhi[SPHERE_COLUMNS + 1];
 
+  for (int i = 0; i <= SPHERE_RINGS; i++) {
+    float theta = (float)i * PI / (float)SPHERE_RINGS;
+    sinTheta[i] = sinf(theta);
+    cosTheta[i] = cosf(theta);
+  }
+  for (int j = 0; j <= SPHERE_COLUMNS; j++) {
+    float phi = (float)j * (2.0f * PI) / (float)SPHERE_COLUMNS;
+    sinPhi[j] = sinf(phi);
+    cosPhi[j] = cosf(phi);
+  }
+
+  rlPushMatrix();
+  rlTranslatef(center.x, center.y, center.z);
   rlBegin(RL_QUADS);
 
-  for (int i = 0; i < rings; i++) {
-    float theta1 = (float)i * PI / rings;
-    float theta2 = (float)(i + 1) * PI / rings;
+  for (int i = 0; i < SPHERE_RINGS; i++) {
+    float st1 = sinTheta[i], ct1 = cosTheta[i];
+    float st2 = sinTheta[i + 1], ct2 = cosTheta[i + 1];
+    float vt1 = (float)i / (float)SPHERE_RINGS;
+    float vt2 = (float)(i + 1) / (float)SPHERE_RINGS;
 
-    for (int j = 0; j < columns; j++) {
-      float phi1 = (float)j * 2.0f * PI / columns;
-      float phi2 = (float)(j + 1) * 2.0f * PI / columns;
+    for (int j = 0; j < SPHERE_COLUMNS; j++) {
+      float cp1 = cosPhi[j], sp1 = sinPhi[j];
+      float cp2 = cosPhi[j + 1], sp2 = sinPhi[j + 1];
+      float u1 = (float)j / (float)SPHERE_COLUMNS;
+      float u2 = (float)(j + 1) / (float)SPHERE_COLUMNS;
 
-      // Đỉnh 1
-      Vector3 n1 = {sinf(theta1) * cosf(phi1), cosf(theta1),
-                    sinf(theta1) * sinf(phi1)};
-      rlNormal3f(n1.x, n1.y, n1.z);
-      rlTexCoord2f((float)j / columns, (float)i / rings);
-      rlVertex3f(n1.x * radius, n1.y * radius, n1.z * radius);
+      // Đỉnh 1 (theta1, phi1)
+      rlNormal3f(st1 * cp1, ct1, st1 * sp1);
+      rlTexCoord2f(u1, vt1);
+      rlVertex3f(st1 * cp1 * radius, ct1 * radius, st1 * sp1 * radius);
 
-      // Đỉnh 2
-      Vector3 n2 = {sinf(theta1) * cosf(phi2), cosf(theta1),
-                    sinf(theta1) * sinf(phi2)};
-      rlNormal3f(n2.x, n2.y, n2.z);
-      rlTexCoord2f((float)(j + 1) / columns, (float)i / rings);
-      rlVertex3f(n2.x * radius, n2.y * radius, n2.z * radius);
+      // Đỉnh 2 (theta1, phi2)
+      rlNormal3f(st1 * cp2, ct1, st1 * sp2);
+      rlTexCoord2f(u2, vt1);
+      rlVertex3f(st1 * cp2 * radius, ct1 * radius, st1 * sp2 * radius);
 
-      // Đỉnh 3
-      Vector3 n3 = {sinf(theta2) * cosf(phi2), cosf(theta2),
-                    sinf(theta2) * sinf(phi2)};
-      rlNormal3f(n3.x, n3.y, n3.z);
-      rlTexCoord2f((float)(j + 1) / columns, (float)(i + 1) / rings);
-      rlVertex3f(n3.x * radius, n3.y * radius, n3.z * radius);
+      // Đỉnh 3 (theta2, phi2)
+      rlNormal3f(st2 * cp2, ct2, st2 * sp2);
+      rlTexCoord2f(u2, vt2);
+      rlVertex3f(st2 * cp2 * radius, ct2 * radius, st2 * sp2 * radius);
 
-      // Đỉnh 4
-      Vector3 n4 = {sinf(theta2) * cosf(phi1), cosf(theta2),
-                    sinf(theta2) * sinf(phi1)};
-      rlNormal3f(n4.x, n4.y, n4.z);
-      rlTexCoord2f((float)j / columns, (float)(i + 1) / rings);
-      rlVertex3f(n4.x * radius, n4.y * radius, n4.z * radius);
+      // Đỉnh 4 (theta2, phi1)
+      rlNormal3f(st2 * cp1, ct2, st2 * sp1);
+      rlTexCoord2f(u1, vt2);
+      rlVertex3f(st2 * cp1 * radius, ct2 * radius, st2 * sp1 * radius);
     }
   }
+
   rlEnd();
   rlPopMatrix();
 }
@@ -118,8 +133,9 @@ void InitFluidSkill(int screenWidth, int screenHeight) {
   (void)screenHeight;
   fluidShader = LoadShader("fluid.vs", "fluid.fs");
 
-  timeLocVS = GetShaderLocation(fluidShader, "u_timeVS");
-  timeLocFS = GetShaderLocation(fluidShader, "u_timeFS");
+  // u_time là uniform dùng chung cho VS và FS — một location, một lần
+  // SetShaderValue
+  timeLoc = GetShaderLocation(fluidShader, "u_time");
   viewPosLoc = GetShaderLocation(fluidShader, "viewPos");
 
   for (int i = 0; i < MAX_EMITTERS; i++)
@@ -218,25 +234,26 @@ void UpdateFluidSkill(float dt) {
 }
 
 void DrawFluidSkill(void) {
-  bool active = false;
+  // Early exit để tránh setup shader/blend khi không có gì bay
+  bool anyActive = false;
   for (int i = 0; i < MAX_EMITTERS; i++) {
     if (emitters[i].active) {
-      active = true;
+      anyActive = true;
       break;
     }
   }
-  if (!active)
+  if (!anyActive)
     return;
 
   float time = GetTime();
 
   rlDisableDepthMask();
-  rlEnableBackfaceCulling(); // <--- THÊM DÒNG NÀY ĐỂ LỌC MẶT SAU
+  rlEnableBackfaceCulling();
   BeginBlendMode(BLEND_ALPHA);
   BeginShaderMode(fluidShader);
 
-  SetShaderValue(fluidShader, timeLocVS, &time, SHADER_UNIFORM_FLOAT);
-  SetShaderValue(fluidShader, timeLocFS, &time, SHADER_UNIFORM_FLOAT);
+  // u_time dùng chung VS + FS — chỉ cần set một lần
+  SetShaderValue(fluidShader, timeLoc, &time, SHADER_UNIFORM_FLOAT);
   SetShaderValue(fluidShader, viewPosLoc, &camera.position,
                  SHADER_UNIFORM_VEC3);
 
@@ -244,15 +261,12 @@ void DrawFluidSkill(void) {
     if (!emitters[e].active)
       continue;
     float radius = WATER_BASE_RADIUS * emitters[e].sizeScale;
-
-    // Vẽ lưới 3D thực với mật độ 40x40 ô đa giác để biến đổi mượt mà
-    RenderCustom3DSphere(emitters[e].currentPos, radius, 40, 40);
+    RenderCustom3DSphere(emitters[e].currentPos, radius);
   }
 
   EndShaderMode();
   EndBlendMode();
-  rlDisableBackfaceCulling(); // <--- TẮT ĐI SAU KHI VẼ XONG ĐỂ KHÔNG ẢNH HƯỞNG
-                              // SKILL KHÁC
+  rlDisableBackfaceCulling();
   rlEnableDepthMask();
 }
 
@@ -279,7 +293,7 @@ void DeactivateFluidProjectile(int index) {
       if (count == index) {
         emitters[i].active = false;
         TriggerFluidImpact(emitters[i].currentPos, emitters[i].sizeScale);
-        break;
+        return; // early return thay vì break + fall-through vô nghĩa
       }
       count++;
     }
