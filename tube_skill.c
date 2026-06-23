@@ -17,9 +17,9 @@
 #define WATER_BODY_PULSE_FREQUENCY 4.0f
 #define WATER_BODY_PULSE_SPEED 5.0f
 
-#define WATER_BODY_WOBBLE_AMPLITUDE 0.25f
-#define WATER_BODY_WOBBLE_FREQUENCY 1.5f
-#define WATER_BODY_WOBBLE_SPEED 3.0f
+#define WATER_BODY_WOBBLE_AMPLITUDE 0.1f
+#define WATER_BODY_WOBBLE_FREQUENCY 4.0f
+#define WATER_BODY_WOBBLE_SPEED 8.0f
 
 #define GRAVITY_Y -650.0f
 #define FLUID_DRAG_SPLASH 3.0f
@@ -143,6 +143,11 @@ static void RenderCustom3DTube(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3,
     float tailTaper = 0.15f + 0.85f * t;
 
     float capsuleCurve = baseCapsule * tailTaper;
+    float bodyNoise = 1.0f + 0.18f * sinf(t * 22.0f + time * 7.0f) +
+                      0.08f * sinf(t * 55.0f - time * 13.0f);
+
+    capsuleCurve *= bodyNoise;
+
     float headWeight = 1.0f + 0.2f * t;
 
     if (i == 0) {
@@ -157,8 +162,10 @@ static void RenderCustom3DTube(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3,
     float wobble = WATER_BODY_WOBBLE_AMPLITUDE *
                    sinf(t * PI * WATER_BODY_WOBBLE_FREQUENCY +
                         time * WATER_BODY_WOBBLE_SPEED);
+
     Vector3 twistedUp = Vector3Add(Vector3Scale(up, cosf(wobble)),
                                    Vector3Scale(right, sinf(wobble)));
+
     Vector3 twistedRight =
         Vector3Normalize(Vector3CrossProduct(twistedUp, tangent));
 
@@ -166,8 +173,16 @@ static void RenderCustom3DTube(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3,
       Vector3 normal = Vector3Add(Vector3Scale(twistedRight, cosPhi[j]),
                                   Vector3Scale(twistedUp, sinPhi[j]));
       normals[i][j] = normal;
-      rings[i][j] = Vector3Add(
-          pos, Vector3Scale(normal, radius * capsuleCurve * headWeight));
+      float phi = (float)j * (2.0f * PI) / (float)TUBE_RADIAL_SEGMENTS;
+      float deform1 = sinf(t * 18.0f + phi * 3.0f + time * 10.0f);
+
+      float deform2 = sinf(t * 9.0f - phi * 5.0f - time * 6.0f);
+
+      float deform = 1.0f + deform1 * 0.12f + deform2 * 0.08f;
+
+      rings[i][j] =
+          Vector3Add(pos, Vector3Scale(normal, radius * capsuleCurve *
+                                                   headWeight * deform));
     }
 
     if (i == 0)
@@ -231,7 +246,8 @@ static void RenderCustom3DTube(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3,
 
   // Đầu giữ nguyên độ bo tròn ưng ý
   Vector3 headApex =
-      Vector3Add(headCenter, Vector3Scale(headTangent, headRadius * 0.25f));
+      Vector3Add(headCenter, Vector3Scale(headTangent, headRadius * 0.8f));
+
   float headV_ring = TUBE_UV_LENGTH_SCALE;
   float headV_apex = TUBE_UV_LENGTH_SCALE + 0.1f;
   for (int j = 0; j < TUBE_RADIAL_SEGMENTS; j++) {

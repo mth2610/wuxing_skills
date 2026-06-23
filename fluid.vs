@@ -6,41 +6,86 @@ in vec3 vertexNormal;
 
 uniform mat4 mvp;
 uniform mat4 matModel;
-uniform float u_time;
-uniform float u_uvLength; 
+uniform float u_timeVS;
 
 out vec3 fragPosition;
 out vec2 fragTexCoord;
 out vec3 fragNormal;
 
-void main() {
-    float t = vertexTexCoord.y / u_uvLength; 
-    float phi = vertexTexCoord.x * 6.28318;
+void main()
+{
+    vec3 p = vertexPosition;
 
-// 1. Phình/Thắt (Tạo khối nước cuộn to nhỏ theo chiều dọc)
-    float swell = sin(t * 10.0 - u_time * 12.0) * cos(t * 4.0 - u_time * 6.0);
-    
-    // 2. Gồ ghề bề mặt (CHỈNH SỬA Ở ĐÂY)
-    // Tách phi và t ra thành 2 hàm nhân với nhau. 
-    // Các u cục sẽ nổi lên hạ xuống tại chỗ hoặc trượt dọc, TUYỆT ĐỐI KHÔNG XOẮN.
-    float bump = sin(phi * 4.0 + u_time * 5.0) * cos(t * 14.0 - u_time * 10.0);
-    
-    // 3. Xoắn (Đã tắt theo ý bạn)
-    float gentleTwist = 0.0; 
-    
-    // Tỷ lệ mới: Tăng mạnh độ gồ ghề (bump) và phình (swell)
-    float irregularity = swell * 0.50 + bump * 0.50 + gentleTwist;
-    
-    float dampen = smoothstep(0.02, 0.15, t) * smoothstep(0.98, 0.85, t);
-    
-    // Lực đẩy
-    float displacement = irregularity * dampen * 4.0;
+    float blob1 =
+        sin(
+            p.x * 1.2 +
+            p.y * 0.9 +
+            u_timeVS * 2.5);
 
-    vec3 displacedPos = vertexPosition + vertexNormal * displacement;
-    
-    fragPosition = vec3(matModel * vec4(displacedPos, 1.0));
-    fragNormal = normalize(vec3(matModel * vec4(vertexNormal, 0.0)));
-    fragTexCoord = vertexTexCoord;
-    
-    gl_Position = mvp * vec4(displacedPos, 1.0);
+    float blob2 =
+        sin(
+            p.z * 1.4 -
+            p.x * 1.1 -
+            u_timeVS * 3.5);
+
+    float blob3 =
+        sin(
+            p.y * 1.8 +
+            p.z * 0.7 +
+            u_timeVS * 2.0);
+
+    blob1 = max(0.0, blob1);
+    blob2 = max(0.0, blob2);
+    blob3 = max(0.0, blob3);
+
+    float macroBlob =
+          blob1 * 0.55
+        + blob2 * 0.30
+        + blob3 * 0.15;
+
+    float ripple =
+        sin(
+            p.x * 8.0 +
+            p.z * 7.0 +
+            u_timeVS * 10.0)
+        * 0.15;
+
+    float equator =
+        1.0 -
+        abs(vertexNormal.y);
+
+    equator =
+        pow(equator, 0.6);
+
+    float displacement =
+        (
+            macroBlob * 1.8 +
+            ripple
+        )
+        * equator;
+
+    float pulse =
+        sin(u_timeVS * 5.0) * 0.20;
+
+    vec3 displacedPos =
+        vertexPosition +
+        vertexNormal *
+        (displacement + pulse);
+
+    fragPosition =
+        vec3(
+            matModel *
+            vec4(displacedPos, 1.0));
+
+    fragNormal =
+        normalize(
+            mat3(matModel) *
+            vertexNormal);
+
+    fragTexCoord =
+        vertexTexCoord;
+
+    gl_Position =
+        mvp *
+        vec4(displacedPos, 1.0);
 }

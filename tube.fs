@@ -40,13 +40,46 @@ void main() {
     vec3 viewDir = normalize(viewPos - fragPosition);
     vec3 lightDir = normalize(vec3(0.5, 0.8, 0.5));
     float NdotV = max(dot(normal, viewDir), 0.0);
-float fresnel = pow(1.0 - NdotV, 5.0); // Tăng từ 3.0 lên 5.0 làm viền mỏng đi rõ rệt
+float fresnel =
+    pow(
+        1.0 - NdotV,
+        3.0);
 
     // Bảng màu: Xanh Biển Sâu (Deep Ocean Blue)
-    vec3 waterCore = vec3(0.02, 0.30, 0.70); // Xanh biển đậm
-    vec3 waterEdge = vec3(0.30, 0.70, 0.95); // Xanh biển sáng
-    
-    vec3 baseColor = mix(waterCore, waterEdge, fresnel);
+float upFactor =
+    clamp(normal.y * 0.5 + 0.5,
+          0.0,
+          1.0);
+
+vec3 topColor =
+    vec3(
+        0.75,
+        0.92,
+        1.00);
+
+vec3 midColor =
+    vec3(
+        0.18,
+        0.55,
+        0.95);
+
+vec3 bottomColor =
+    vec3(
+        0.01,
+        0.08,
+        0.28);
+
+vec3 baseColor =
+    mix(
+        bottomColor,
+        midColor,
+        pow(upFactor, 1.2));
+
+baseColor =
+    mix(
+        baseColor,
+        topColor,
+        pow(upFactor, 4.0));
 
     // Vân nước chạy dọc dịu nhẹ
     vec2 scroll1 = fragTexCoord * vec2(1.0, 0.5) - vec2(0.0, u_time * 4.0);
@@ -55,7 +88,14 @@ float fresnel = pow(1.0 - NdotV, 5.0); // Tăng từ 3.0 lên 5.0 làm viền m�
 
     vec3 halfVector = normalize(lightDir + viewDir);
     float NdotH = max(dot(normal, halfVector), 0.0);
-float specular = pow(NdotH, 256.0) * 5.0; // Tăng từ 128.0 lên 256.0
+    baseColor +=
+    vec3(
+        0.4,
+        0.8,
+        1.0)
+    * fresnel
+    * 0.1;
+float specular = pow(NdotH, 128.0) * 5.0; 
 
     vec3 finalRGB = baseColor + vec3(specular);
     float alpha = mix(0.3, 0.9, fresnel);
