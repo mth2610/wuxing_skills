@@ -67,10 +67,21 @@ static void TriggerFluidImpact(Vector3 pos, float sizeScale) {
   }
 }
 
+static inline float WaterBlobOffset(float theta, float phi) {
+  float macro1 = sinf(theta * 2.0f + phi * 1.5f);
+
+  float macro2 = sinf(phi * 3.0f - theta * 1.2f);
+
+  float macro3 = sinf(theta * 4.0f + phi * 2.0f);
+
+  return macro1 * 0.18f + macro2 * 0.10f + macro3 * 0.06f;
+}
+
 // HÀM VẼ KHỐI CẦU 3D QUA TẦNG RLGL
 // TỐI ƯU: Pre-compute toàn bộ sin/cos một lần trước vòng lặp vẽ.
 // Từ 40*40*4*2 = 12.800 lần gọi trig/frame xuống còn (41+41)*2 = 164 lần.
-static void RenderCustom3DSphere(Vector3 center, float radius) {
+static void RenderCustom3DSphere(Vector3 center, float radius,
+                                 float blobAmount) {
   // Bảng góc pre-computed — stack alloc an toàn ở kích thước này
   float sinTheta[SPHERE_RINGS + 1], cosTheta[SPHERE_RINGS + 1];
   float sinPhi[SPHERE_COLUMNS + 1], cosPhi[SPHERE_COLUMNS + 1];
@@ -93,34 +104,47 @@ static void RenderCustom3DSphere(Vector3 center, float radius) {
   for (int i = 0; i < SPHERE_RINGS; i++) {
     float st1 = sinTheta[i], ct1 = cosTheta[i];
     float st2 = sinTheta[i + 1], ct2 = cosTheta[i + 1];
+
+    float theta1 = (float)i * PI / (float)SPHERE_RINGS;
+    float theta2 = (float)(i + 1) * PI / (float)SPHERE_RINGS;
+
     float vt1 = (float)i / (float)SPHERE_RINGS;
     float vt2 = (float)(i + 1) / (float)SPHERE_RINGS;
 
     for (int j = 0; j < SPHERE_COLUMNS; j++) {
       float cp1 = cosPhi[j], sp1 = sinPhi[j];
       float cp2 = cosPhi[j + 1], sp2 = sinPhi[j + 1];
+      float phi1 = (float)j * (2.0f * PI) / (float)SPHERE_COLUMNS;
+
+      float phi2 = (float)(j + 1) * (2.0f * PI) / (float)SPHERE_COLUMNS;
+
       float u1 = (float)j / (float)SPHERE_COLUMNS;
       float u2 = (float)(j + 1) / (float)SPHERE_COLUMNS;
+
+      float r1 = radius * (1.0f + WaterBlobOffset(theta1, phi1) * blobAmount);
+      float r2 = radius * (1.0f + WaterBlobOffset(theta1, phi2) * blobAmount);
+      float r3 = radius * (1.0f + WaterBlobOffset(theta2, phi2) * blobAmount);
+      float r4 = radius * (1.0f + WaterBlobOffset(theta2, phi1) * blobAmount);
 
       // Đỉnh 1 (theta1, phi1)
       rlNormal3f(st1 * cp1, ct1, st1 * sp1);
       rlTexCoord2f(u1, vt1);
-      rlVertex3f(st1 * cp1 * radius, ct1 * radius, st1 * sp1 * radius);
+      rlVertex3f(st1 * cp1 * r1, ct1 * r1, st1 * sp1 * r1);
 
       // Đỉnh 2 (theta1, phi2)
       rlNormal3f(st1 * cp2, ct1, st1 * sp2);
       rlTexCoord2f(u2, vt1);
-      rlVertex3f(st1 * cp2 * radius, ct1 * radius, st1 * sp2 * radius);
+      rlVertex3f(st1 * cp2 * r2, ct1 * r2, st1 * sp2 * r2);
 
       // Đỉnh 3 (theta2, phi2)
       rlNormal3f(st2 * cp2, ct2, st2 * sp2);
       rlTexCoord2f(u2, vt2);
-      rlVertex3f(st2 * cp2 * radius, ct2 * radius, st2 * sp2 * radius);
+      rlVertex3f(st2 * cp2 * r3, ct2 * r3, st2 * sp2 * r3);
 
       // Đỉnh 4 (theta2, phi1)
       rlNormal3f(st2 * cp1, ct2, st2 * sp1);
       rlTexCoord2f(u1, vt2);
-      rlVertex3f(st2 * cp1 * radius, ct2 * radius, st2 * sp1 * radius);
+      rlVertex3f(st2 * cp1 * r4, ct2 * r4, st2 * sp1 * r4);
     }
   }
 
@@ -261,7 +285,7 @@ void DrawFluidSkill(void) {
     if (!emitters[e].active)
       continue;
     float radius = WATER_BASE_RADIUS * emitters[e].sizeScale;
-    RenderCustom3DSphere(emitters[e].currentPos, radius);
+    RenderCustom3DSphere(emitters[e].currentPos, radius, 0.65f);
   }
 
   EndShaderMode();
