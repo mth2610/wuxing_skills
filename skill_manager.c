@@ -159,7 +159,7 @@ static void EnsureBuiltInRegistered(void) {
 
     // Đăng ký các hệ còn lại
     RegisterSkill("METAL", GOLD, InitMetalSkill, CastMetalWrapper,
-                  UpdateMetalSkillWrapper, DrawMetalSkill, UnloadMetalSkill);
+                  UpdateMetalSkillWrapper, NULL, UnloadMetalSkill);
 
     RegisterSkill("FIRE", ORANGE, InitFireSkill, CastFireWrapper,
                   UpdateFireSkillWrapper, NULL, UnloadFireSkill);
@@ -171,7 +171,7 @@ static void EnsureBuiltInRegistered(void) {
                   UpdateElectricSkillWrapper, NULL, UnloadElectricSkill);
 
     RegisterSkill("WIND", LIGHTGRAY, InitWindSkill, CastWindWrapper,
-                  UpdateWindWrapper, DrawWindSkill, UnloadWindSkill);
+                  UpdateWindWrapper, NULL, UnloadWindSkill);
   }
 }
 
@@ -352,6 +352,8 @@ void DrawSkillManagerWorld3D(void) {
   DrawTubeSkill();
   DrawWoodSkill();
   DrawElectricSkill();
+  DrawMetalSkill();
+  DrawWindSkill();
 }
 
 void DrawSkillManagerOverlay(void) {
@@ -481,8 +483,7 @@ static void CastTubeWrapper(Vector3 startPos, Vector3 target,
 
 static void CastMetalWrapper(Vector3 startPos, Vector3 target,
                              SkillParams params) {
-  CastMetalSkill(startPos, target, params.quantity > 0 ? params.quantity : 3,
-                 params.sizeScale);
+  CastMetalSkill(startPos, target, params);
 }
 
 static void CastFireWrapper(Vector3 startPos, Vector3 target,
@@ -520,7 +521,7 @@ static void CastElectricWrapper(Vector3 startPos, Vector3 target,
 
 static void CastWindWrapper(Vector3 startPos, Vector3 target,
                             SkillParams params) {
-  CastWindSkill(startPos, target, params.sizeScale);
+  CastWindSkill(startPos, target, params);
 }
 
 static void UpdateFluidSkillWrapper(float dt, Vector3 enemyPos,

@@ -4,7 +4,7 @@
 #include "raylib.h"
 #include "skill_manager.h"
 
-// DÙNG LẠI KIẾN TRÚC GỐC CỦA BẠN: Macro chống định nghĩa lại
+// BẢO BỐI CHỐNG TRÙNG LẶP KIỂU DỮ LIỆU
 #ifndef SKILL_PROJECTILE_DEF
 #define SKILL_PROJECTILE_DEF
 typedef struct {
@@ -21,8 +21,6 @@ void DrawWoodSkill(void);
 void UnloadWoodSkill(void);
 
 bool IsWoodSkillCoiling(void);
-
-// Trả lại hàm gốc, không cần dùng void*
 int GetWoodSkillProjectiles(SkillProjectile *outProjectiles,
                             int maxProjectiles);
 void DeactivateWoodProjectile(int index);

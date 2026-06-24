@@ -2,26 +2,29 @@
 #define METAL_SKILL_H
 
 #include "raylib.h"
+#include "skill_manager.h"
 
+// Dùng chung macro chống định nghĩa lại của bạn
 #ifndef SKILL_PROJECTILE_DEF
 #define SKILL_PROJECTILE_DEF
 typedef struct {
-    Vector3 position;
-    float radius;
-    bool active;
+  Vector3 position;
+  float radius;
+  bool active;
 } SkillProjectile;
 #endif
 
 void InitMetalSkill(int screenWidth, int screenHeight);
 
-// Gọi chiêu: Bắn 'count' luồng kiếm khí từ startPos về phía target
-void CastMetalSkill(Vector3 startPos, Vector3 target, int count, float sizeScale);
+// Đã cập nhật thành SkillParams
+void CastMetalSkill(Vector3 startPos, Vector3 target, SkillParams params);
 
 void UpdateMetalSkill(float dt);
 void DrawMetalSkill(void);
 void UnloadMetalSkill(void);
 
-int GetMetalSkillProjectiles(SkillProjectile* outProjectiles, int maxProjectiles);
+int GetMetalSkillProjectiles(SkillProjectile *outProjectiles,
+                             int maxProjectiles);
 void DeactivateMetalProjectile(int index);
 
 #endif // METAL_SKILL_H

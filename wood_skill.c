@@ -70,7 +70,19 @@ static float Random01(void) {
 
 static Vector3 GetWoodPointAt(const WoodEmitter *em, float t, int branchIndex) {
   if (t <= 1.0f) {
-    return GetBezierPoint(em->startPos, em->p1, em->p2, em->contactPos, t);
+    Vector3 pos =
+        GetBezierPoint(em->startPos, em->p1, em->p2, em->contactPos, t);
+
+    Vector3 dir =
+        Vector3Normalize(Vector3Subtract(em->targetPos, em->startPos));
+
+    Vector3 perp = (Vector3){-dir.z, 0, dir.x};
+
+    float wiggle = sinf(t * 18.0f) + sinf(t * 31.0f) * 0.4f;
+
+    pos = Vector3Add(pos, Vector3Scale(perp, wiggle * 6.0f));
+
+    return pos;
   } else {
     float t_spiral = t - 1.0f;
     float ratio = t_spiral / 0.8f;
@@ -80,7 +92,10 @@ static Vector3 GetWoodPointAt(const WoodEmitter *em, float t, int branchIndex) {
     float contactAngle = atan2f(em->contactPos.z - em->targetPos.z,
                                 em->contactPos.x - em->targetPos.x);
     float coilDir = (branchIndex % 2 == 0) ? 1.0f : -1.0f;
-    float theta = ratio * 3.0f * (2.0f * PI) * coilDir;
+    float theta = ratio * 2.2f * (2.0f * PI) * coilDir +
+                  sinf(ratio * 8.0f) * 0.8f + sinf(ratio * 19.0f) * 0.25f;
+
+    theta += sinf(ratio * 15.0f) * 0.25f;
 
     float phiOffset = 0.0f;
     if (em->branchCount > 1) {
@@ -88,18 +103,33 @@ static Vector3 GetWoodPointAt(const WoodEmitter *em, float t, int branchIndex) {
     }
     float phi = contactAngle + phiOffset;
 
-    float r_a = 28.0f * em->sizeScale;
-    float r_b = 28.0f * em->sizeScale;
+    float r_a = 45.0f * em->sizeScale;
+    float r_b = 45.0f * em->sizeScale;
+
     float wobbleScale = ratio > 0.1f ? 1.0f : ratio / 0.1f;
     float wobble =
         (sinf(theta * 6.0f) * 4.0f + cosf(theta * 11.0f) * 1.5f) * wobbleScale;
 
-    float curr_ra = r_a + wobble;
-    float curr_rb = r_b + wobble;
+    float tighten = 1.0f - ratio * 0.45f;
+    float curr_ra = (r_a + wobble) * tighten;
+    float curr_rb = (r_b + wobble) * tighten;
+    float wrapFactor = 0.75f + 0.25f * sinf(ratio * 10.0f);
+
+    curr_ra *= wrapFactor;
+    curr_rb *= wrapFactor;
+
+    float radiusNoise = 1.0f + sinf(theta * 3.0f) * 0.08f;
+
+    curr_ra *= radiusNoise;
+    curr_rb *= radiusNoise;
+
+    float height = 80.0f * em->sizeScale;
+
+    float y = em->targetPos.y - height * 0.5f + ratio * height;
 
     return (Vector3){em->targetPos.x + curr_ra * cosf(theta) * cosf(phi) -
                          curr_rb * sinf(theta) * sinf(phi),
-                     em->targetPos.y + wobble * 0.1f,
+                     y + wobble * 0.1f,
                      em->targetPos.z + curr_ra * cosf(theta) * sinf(phi) +
                          curr_rb * sinf(theta) * cosf(phi)};
   }
@@ -149,7 +179,11 @@ void UpdateWoodSkill(float dt) {
         emitters[e].sproutAccumulator = 0.0f;
 
         ParticleConfig cfgLeaf = {0};
-        cfgLeaf.position = headPos;
+
+        int idx = GetRandomValue(0, emitters[e].sampledCount - 1);
+
+        cfgLeaf.position = emitters[e].sampledPath[idx];
+
         cfgLeaf.velocity = (Vector3){(Random01() - 0.5f) * 40.0f,
                                      Math_Mix(20.0f, 60.0f, Random01()),
                                      (Random01() - 0.5f) * 40.0f};
@@ -251,8 +285,7 @@ void DrawWoodSkill(void) {
       float taper = powf(1.0f - normDist, 0.6f);
 
       ribbonBuffer[i].position = emitters[e].sampledPath[i];
-      ribbonBuffer[i].halfWidth =
-          Math_Mix(2.0f, 8.0f, taper) * emitters[e].sizeScale * 0.5f;
+      ribbonBuffer[i].halfWidth = 6.0f * emitters[e].sizeScale;
       ribbonBuffer[i].v = normDist;
 
       ribbonBuffer[i].tint =
@@ -264,8 +297,13 @@ void DrawWoodSkill(void) {
                                                : 0.0f)))};
     }
 
-    DrawRibbonStrip(ribbonBuffer, emitters[e].sampledCount, (Texture2D){0},
-                    camera);
+    int visibleCount = (int)((float)emitters[e].sampledCount *
+                             Clamp(emitters[e].progress, 0.0f, 1.0f));
+
+    if (visibleCount < 2)
+      visibleCount = 2;
+
+    DrawRibbonStrip(ribbonBuffer, visibleCount, (Texture2D){0}, camera);
   }
   EndShaderMode();
 

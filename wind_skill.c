@@ -1,203 +1,261 @@
 #include "wind_skill.h"
-#include "skill_manager.h"
+#include "particle_system.h"
 #include "raymath.h"
+#include "ribbon_strip.h"
 #include "rlgl.h"
+#include "skill_manager.h"
 #include <math.h>
 #include <stddef.h>
 
-#define MAX_WIND_PARTICLES 2000
 #define MAX_EMITTERS 5
+#define TORNADO_RIBBONS 5
+#define RIBBON_SEGMENTS 40
 
 typedef struct {
-    bool active;
-    Vector3 position;
-    float radius;
-    float maxLifetime;
-    float lifetime;
-    float pullStrength;
-    float sizeScale;
-    float spawnAccumulator;
+  bool active;
+  Vector3 position;
+  float radius;
+  float maxLifetime;
+  float lifetime;
+  float pullStrength;
+  float sizeScale;
+  float spawnAccumulator;
+  float angleOffsets[TORNADO_RIBBONS];
 } WindEmitter;
 
-typedef struct {
-    bool active;
-    Vector3 position;
-    Vector3 velocity;
-    float radius;
-    float lifetime;
-    float maxLifetime;
-    float angle;
-    float speed;
-    float distFromCenter;
-    float heightOffset;
-    WindEmitter* parent;
-} WindParticle;
-
-static WindParticle particlePool[MAX_WIND_PARTICLES];
 static WindEmitter emitters[MAX_EMITTERS];
-static int lastUsedParticle = 0;
 
-static RenderTexture2D canvasTexture;
 static Shader windShader;
 static int timeLoc;
 
 extern Camera3D camera;
 
 static float Random01(void) {
-    return (float)GetRandomValue(0, 10000) / 10000.0f;
+  return (float)GetRandomValue(0, 10000) / 10000.0f;
 }
 
-static void SpawnParticle(Vector3 pos, float dist, float speed, float angle, float height, float radius, float life, WindEmitter* parent) {
-    for (int i = 0; i < MAX_WIND_PARTICLES; i++) {
-        int index = (lastUsedParticle + i) % MAX_WIND_PARTICLES;
-        if (!particlePool[index].active) {
-            particlePool[index].active = true;
-            particlePool[index].position = pos;
-            particlePool[index].distFromCenter = dist;
-            particlePool[index].speed = speed;
-            particlePool[index].angle = angle;
-            particlePool[index].heightOffset = height;
-            particlePool[index].radius = radius;
-            particlePool[index].maxLifetime = life;
-            particlePool[index].lifetime = life;
-            particlePool[index].parent = parent;
-            lastUsedParticle = (index + 1) % MAX_WIND_PARTICLES;
-            break;
-        }
-    }
+static float smoothstep(float edge0, float edge1, float x) {
+  float t = Clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+  return t * t * (3.0f - 2.0f * t);
 }
 
 void InitWindSkill(int screenWidth, int screenHeight) {
-    canvasTexture = LoadRenderTexture(screenWidth, screenHeight);
-    windShader = LoadShader(0, "wind.fs");
-    timeLoc = GetShaderLocation(windShader, "u_time");
+  windShader = LoadShader(0, "wind.fs");
+  timeLoc = GetShaderLocation(windShader, "u_time");
 
-    for (int i = 0; i < MAX_WIND_PARTICLES; i++)
-        particlePool[i].active = false;
-    for (int i = 0; i < MAX_EMITTERS; i++)
-        emitters[i].active = false;
+  for (int i = 0; i < MAX_EMITTERS; i++) {
+    emitters[i].active = false;
+  }
 }
 
-void CastWindSkill(Vector3 startPos, Vector3 target, float sizeScale) {
-    for (int i = 0; i < MAX_EMITTERS; i++) {
-        if (!emitters[i].active) {
-            emitters[i].active = true;
-            emitters[i].position = target;
-            emitters[i].position.y = 0.1f; // Flat on the floor
-            emitters[i].radius = 240.0f * sizeScale;
-            emitters[i].maxLifetime = 4.0f;
-            emitters[i].lifetime = 4.0f;
-            emitters[i].pullStrength = 300.0f;
-            emitters[i].sizeScale = sizeScale;
-            emitters[i].spawnAccumulator = 0.0f;
-            break;
-        }
+void CastWindSkill(Vector3 startPos, Vector3 target, SkillParams params) {
+  float sizeScale = params.sizeScale;
+
+  for (int i = 0; i < MAX_EMITTERS; i++) {
+    if (!emitters[i].active) {
+      emitters[i].active = true;
+      emitters[i].position = target;
+      emitters[i].position.y = 0.1f;
+      emitters[i].radius = 100.0f * sizeScale;
+      emitters[i].maxLifetime = 4.0f;
+      emitters[i].lifetime = 4.0f;
+      emitters[i].pullStrength = 300.0f;
+      emitters[i].sizeScale = sizeScale;
+      emitters[i].spawnAccumulator = 0.0f;
+
+      for (int r = 0; r < TORNADO_RIBBONS; r++) {
+        emitters[i].angleOffsets[r] =
+            (float)r * ((2.0f * PI) / TORNADO_RIBBONS);
+      }
+
+      for (int s = 0; s < 20; s++) {
+        float angle = Random01() * 2.0f * PI;
+        float speed = 150.0f * sizeScale;
+        ParticleConfig p = {0};
+        p.position = target;
+        p.position.y += 5.0f;
+        p.velocity = (Vector3){cosf(angle) * speed, 10.0f, sinf(angle) * speed};
+        p.radius = (5.0f + Random01() * 8.0f) * sizeScale;
+        p.lifetime = 0.4f;
+        p.drag = 2.5f;
+        p.colorStart = (Color){150, 200, 255, 180}; // Giảm độ gắt của hạt
+        p.colorEnd = (Color){50, 100, 200, 0};
+        p.physicsFlags = P_PHYSICS_DRAG;
+        SpawnParticle(p);
+      }
+      break;
     }
+  }
 }
 
 void UpdateWindSkill(float dt) {
-    float time = GetTime();
+  float time = (float)GetTime();
 
-    // 1. Update emitters
-    for (int e = 0; e < MAX_EMITTERS; e++) {
-        if (!emitters[e].active) continue;
+  for (int e = 0; e < MAX_EMITTERS; e++) {
+    if (!emitters[e].active)
+      continue;
 
-        emitters[e].lifetime -= dt;
-        if (emitters[e].lifetime <= 0.0f) {
-            emitters[e].active = false;
-            continue;
-        }
+    emitters[e].lifetime -= dt;
+    if (emitters[e].lifetime <= 0.0f) {
+      emitters[e].active = false;
 
-        // Spawn swirling dust/wind particles
-        emitters[e].spawnAccumulator += dt;
-        float spawnRate = 0.008f; // Very fast spawning
-        while (emitters[e].spawnAccumulator >= spawnRate) {
-            float dist = (10.0f + Random01() * emitters[e].radius);
-            float speed = 3.0f + Random01() * 4.0f;
-            float angle = Random01() * 2.0f * PI;
-            float height = Random01() * 150.0f * emitters[e].sizeScale;
-            float rad = 4.0f + Random01() * 8.0f;
-            float life = 0.8f + Random01() * 0.8f;
-            
-            SpawnParticle(emitters[e].position, dist, speed, angle, height, rad, life, &emitters[e]);
-            emitters[e].spawnAccumulator -= spawnRate;
-        }
+      for (int s = 0; s < 20; s++) {
+        float angle = Random01() * 2.0f * PI;
+        float pitch = (Random01() - 0.5f) * PI;
+        float speed = 200.0f * emitters[e].sizeScale;
+        ParticleConfig p = {0};
+        p.position = emitters[e].position;
+        p.position.y += Random01() * 100.0f * emitters[e].sizeScale;
+        p.velocity =
+            (Vector3){cosf(angle) * speed * cosf(pitch), sinf(pitch) * speed,
+                      sinf(angle) * speed * cosf(pitch)};
+        p.radius = (8.0f + Random01() * 12.0f) * emitters[e].sizeScale;
+        p.lifetime = 0.5f;
+        p.drag = 3.0f;
+        p.turbulence = 50.0f;
+        p.colorStart = (Color){180, 220, 255, 120};
+        p.colorEnd = (Color){50, 100, 200, 0};
+        p.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_TURBULENCE;
+        SpawnParticle(p);
+      }
+      continue;
     }
 
-    // 2. Update particles
-    for (int i = 0; i < MAX_WIND_PARTICLES; i++) {
-        if (!particlePool[i].active) continue;
-
-        particlePool[i].lifetime -= dt;
-        if (particlePool[i].lifetime <= 0.0f || (particlePool[i].parent && !particlePool[i].parent->active)) {
-            particlePool[i].active = false;
-            continue;
-        }
-
-        // Spiral inward and upward
-        particlePool[i].angle += particlePool[i].speed * dt;
-        particlePool[i].distFromCenter -= (particlePool[i].distFromCenter * 0.7f) * dt; // Spiral inward
-        if (particlePool[i].distFromCenter < 2.0f) particlePool[i].distFromCenter = 2.0f;
-        
-        particlePool[i].heightOffset += (25.0f * dt); // Rise slowly
-
-        Vector3 center = particlePool[i].parent ? particlePool[i].parent->position : (Vector3){0};
-        particlePool[i].position.x = center.x + cosf(particlePool[i].angle) * particlePool[i].distFromCenter;
-        particlePool[i].position.y = center.y + particlePool[i].heightOffset;
-        particlePool[i].position.z = center.z + sinf(particlePool[i].angle) * particlePool[i].distFromCenter;
+    for (int r = 0; r < TORNADO_RIBBONS; r++) {
+      // CẢI TIẾN: Thêm nhiễu sóng sin vào tốc độ xoay để lốc giật từng cơn
+      emitters[e].angleOffsets[r] +=
+          (10.0f + sinf(time * 6.0f + r) * 4.0f) * dt;
     }
+
+    emitters[e].spawnAccumulator += dt;
+    float spawnRate = 0.015f;
+    while (emitters[e].spawnAccumulator >= spawnRate) {
+      float spawnRadius = GetRandomValue(15, 90) * emitters[e].sizeScale;
+      float spawnAngle = Random01() * 2.0f * PI;
+      Vector3 pos = emitters[e].position;
+      pos.x += cosf(spawnAngle) * spawnRadius;
+      pos.y += Random01() * 15.0f;
+      pos.z += sinf(spawnAngle) * spawnRadius;
+
+      Vector3 toCenter = Vector3Subtract(emitters[e].position, pos);
+      Vector3 perpDir = Vector3Normalize((Vector3){-toCenter.z, 0, toCenter.x});
+
+      float speedXY = 180.0f * emitters[e].sizeScale;
+      float speedUp = (80.0f + Random01() * 150.0f) * emitters[e].sizeScale;
+      Vector3 vel =
+          Vector3Add(Vector3Scale(perpDir, speedXY), (Vector3){0, speedUp, 0});
+
+      Vector3 suckForce = Vector3Scale(Vector3Normalize(toCenter), 400.0f);
+
+      ParticleConfig p = {0};
+      p.position = pos;
+      p.velocity = vel;
+      p.force = suckForce;
+      p.radius = (2.0f + Random01() * 5.0f) * emitters[e].sizeScale;
+      p.lifetime = 0.6f + Random01() * 0.6f;
+      p.drag = 0.5f;
+      p.turbulence = 40.0f;
+
+      if (GetRandomValue(1, 10) <= 3) {
+        p.colorStart = (Color){180, 180, 160, 150};
+        p.colorEnd = (Color){80, 80, 60, 0};
+      } else {
+        p.colorStart = (Color){150, 200, 255, 80};
+        p.colorEnd = (Color){50, 100, 200, 0};
+      }
+
+      p.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE | P_PHYSICS_TURBULENCE;
+      SpawnParticle(p);
+
+      emitters[e].spawnAccumulator -= spawnRate;
+    }
+  }
 }
 
 void DrawWindSkill(void) {
-    bool active = false;
-    for (int i = 0; i < MAX_EMITTERS; i++) {
-        if (emitters[i].active) { active = true; break; }
+  bool active = false;
+  for (int i = 0; i < MAX_EMITTERS; i++) {
+    if (emitters[i].active) {
+      active = true;
+      break;
     }
-    if (!active) return;
+  }
+  if (!active)
+    return;
 
-    float time = GetTime();
+  float time = (float)GetTime();
 
-    BeginTextureMode(canvasTexture);
-        ClearBackground(BLANK);
-        BeginBlendMode(BLEND_ALPHA);
+  rlDisableDepthMask();
+  BeginBlendMode(BLEND_ADDITIVE);
 
-            for (int i = 0; i < MAX_WIND_PARTICLES; i++) {
-                if (!particlePool[i].active) continue;
+  SetShaderValue(windShader, timeLoc, &time, SHADER_UNIFORM_FLOAT);
+  BeginShaderMode(windShader);
 
-                float lifeRatio = particlePool[i].lifetime / particlePool[i].maxLifetime;
-                ProjectedPoint pt = ProjectPointCached(particlePool[i].position, camera);
-                if (pt.behindCamera) continue;
-                Vector2 screenPos = pt.screenPos;
-                float depthFactor = pt.depthFactor;
+  for (int e = 0; e < MAX_EMITTERS; e++) {
+    if (!emitters[e].active)
+      continue;
 
-                float r = particlePool[i].radius * lifeRatio * depthFactor;
-                // Swirling particles drawn in pale blue/cyan/white gradients
-                Color col = ColorAlpha(WHITE, lifeRatio * 0.4f);
-                DrawCircleGradient((int)screenPos.x, (int)screenPos.y, r * 1.5f, col, BLANK);
-                DrawCircleGradient((int)screenPos.x, (int)screenPos.y, r * 0.7f, ColorAlpha(SKYBLUE, lifeRatio * 0.6f), BLANK);
-            }
+    float fadeOut = smoothstep(0.0f, 0.4f, emitters[e].lifetime);
+    float fadeIn =
+        smoothstep(emitters[e].maxLifetime, emitters[e].maxLifetime - 0.2f,
+                   emitters[e].lifetime);
+    float alphaMult = fadeOut * fadeIn;
 
-        EndBlendMode();
-    EndTextureMode();
+    for (int r = 0; r < TORNADO_RIBBONS; r++) {
+      RibbonPoint strip[RIBBON_SEGMENTS];
+      float baseAngle = emitters[e].angleOffsets[r];
 
-    SetShaderValue(windShader, timeLoc, &time, SHADER_UNIFORM_FLOAT);
-    BeginShaderMode(windShader);
-        DrawTextureRec(canvasTexture.texture, (Rectangle){ 0, 0, (float)canvasTexture.texture.width, (float)-canvasTexture.texture.height }, (Vector2){ 0, 0 }, WHITE);
-    EndShaderMode();
+      for (int i = 0; i < RIBBON_SEGMENTS; i++) {
+        float t = (float)i / (float)(RIBBON_SEGMENTS - 1);
+
+        float height = t * 220.0f * emitters[e].sizeScale;
+
+        // CẢI TIẾN 1: Bán kính nhấp nhô không đều (Pulse)
+        float pulse =
+            sinf(t * 15.0f - time * 12.0f) * 6.0f * emitters[e].sizeScale;
+        float currentRad = (8.0f + t * 80.0f + pulse) * emitters[e].sizeScale;
+
+        // CẢI TIẾN 2: Giảm số vòng xoắn xuống để dải lốc thoáng hơn
+        float angle = baseAngle + t * PI * 4.5f;
+
+        // CẢI TIẾN 3: Tạo độ uốn éo (Wobble/Bending) cho thân lốc xoáy
+        float bendX =
+            sinf(t * 6.0f + time * 4.0f) * 25.0f * t * emitters[e].sizeScale;
+        float bendZ =
+            cosf(t * 5.0f + time * 3.5f) * 25.0f * t * emitters[e].sizeScale;
+
+        Vector3 pos = emitters[e].position;
+        pos.x += cosf(angle) * currentRad + bendX;
+        pos.y += height;
+        pos.z += sinf(angle) * currentRad + bendZ;
+
+        strip[i].position = pos;
+        strip[i].halfWidth = (8.0f + t * 20.0f) * emitters[e].sizeScale;
+        strip[i].v = t;
+
+        // CẢI TIẾN 4: Giảm Alpha từ 255 xuống 110 để bớt cháy sáng (Blow-out)
+        strip[i].tint = (Color){(unsigned char)(t * 255.0f), 128, 80,
+                                (unsigned char)(110.0f * alphaMult)};
+      }
+
+      DrawRibbonStrip(strip, RIBBON_SEGMENTS, (Texture2D){0}, camera);
+    }
+  }
+
+  EndShaderMode();
+  EndBlendMode();
+  rlEnableDepthMask();
 }
 
-void UnloadWindSkill(void) {
-    UnloadShader(windShader);
-    UnloadRenderTexture(canvasTexture);
-}
+void UnloadWindSkill(void) { UnloadShader(windShader); }
 
-bool GetWindPullForce(Vector3* outPullCenter, float* outPullStrength) {
-    for (int i = 0; i < MAX_EMITTERS; i++) {
-        if (emitters[i].active) {
-            *outPullCenter = emitters[i].position;
-            *outPullStrength = emitters[i].pullStrength * emitters[i].sizeScale;
-            return true;
-        }
+bool GetWindPullForce(Vector3 *outPullCenter, float *outPullStrength) {
+  for (int i = 0; i < MAX_EMITTERS; i++) {
+    if (emitters[i].active) {
+      *outPullCenter = emitters[i].position;
+      *outPullStrength = emitters[i].pullStrength * emitters[i].sizeScale;
+      return true;
     }
-    return false;
+  }
+  return false;
 }
