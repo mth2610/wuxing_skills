@@ -10,7 +10,7 @@
 #define MAX_METAL_PARTICLES                                                    \
   200 // Giảm xuống cực thấp vì đã ủy thác mảnh vỡ/tia lửa cho GPU
 #define MAX_EMITTERS 10
-#define PARTICLE_HISTORY_COUNT 8
+#define PARTICLE_HISTORY_COUNT 10
 
 extern Camera3D camera;
 
@@ -274,8 +274,8 @@ void UpdateMetalSkill(float dt) {
               Vector3Scale(launchDir, (float)GetRandomValue(650, 950));
 
           SpawnMetal(PARTICLE_SWORD, portalPos, vel,
-                     (float)GetRandomValue(52, 72) * sizeFactor,
-                     (float)GetRandomValue(10, 14) * sizeFactor, 2.0f,
+                     (float)GetRandomValue(100, 140) * sizeFactor,
+                     (float)GetRandomValue(12, 16) * sizeFactor, 2.0f,
                      emitters[e].targetPos, 0.0f,
                      (float)GetRandomValue(0, 100) * 0.1f, sizeFactor);
         }
@@ -298,11 +298,17 @@ void UpdateMetalSkill(float dt) {
     if (metalPool[i].type == PARTICLE_SWORD) {
       for (int h = PARTICLE_HISTORY_COUNT - 1; h > 0; h--)
         metalPool[i].history[h] = metalPool[i].history[h - 1];
-      metalPool[i].history[0] = metalPool[i].position;
+
+      Vector3 dir = Vector3Normalize(metalPool[i].velocity);
+
+      metalPool[i].history[0] =
+          Vector3Subtract(metalPool[i].position,
+                          Vector3Scale(dir, metalPool[i].length * 0.45f));
+
       if (metalPool[i].historyCount < PARTICLE_HISTORY_COUNT)
         metalPool[i].historyCount++;
 
-      metalPool[i].wobblePhase += dt * 16.0f;
+      metalPool[i].wobblePhase += dt * 8.0f;
       metalPool[i].position = Vector3Add(
           metalPool[i].position, Vector3Scale(metalPool[i].velocity, dt));
 
@@ -313,10 +319,11 @@ void UpdateMetalSkill(float dt) {
       if (distToTarget > 20.0f) {
         Vector3 desiredDir = Vector3Normalize(toTarget);
         float newSpeed =
-            fminf(Vector3Length(metalPool[i].velocity) + 550.0f * dt, 1350.0f);
+            fminf(Vector3Length(metalPool[i].velocity) + 250.0f * dt, 1100.0f);
         Vector3 perpDir = {-desiredDir.z, 0.0f, desiredDir.x};
-        float wobble = sinf(metalPool[i].wobblePhase) * 110.0f * dt;
-
+        float curveStrength = fminf(distToTarget / 250.0f, 1.0f);
+        float wobble =
+            sinf(metalPool[i].wobblePhase) * 350.0f * curveStrength * dt;
         Vector3 desiredVel = Vector3Add(Vector3Scale(desiredDir, newSpeed),
                                         Vector3Scale(perpDir, wobble));
         metalPool[i].velocity =
@@ -440,8 +447,11 @@ void DrawMetalSkill(void) {
           strip[h].position = metalPool[i].history[h];
           float segRatio =
               1.0f - (float)h / (float)(metalPool[i].historyCount - 1);
+          float taper = segRatio * segRatio * segRatio;
+
           strip[h].halfWidth =
-              metalPool[i].thickness * 1.5f * segRatio * lifeRatio;
+              metalPool[i].thickness * 0.35f * taper * lifeRatio;
+
           strip[h].v = segRatio;
           // Tint R chứa LocalU, B định danh Ribbon, A là baseAlpha
           strip[h].tint = (Color){(unsigned char)(segRatio * 255.0f), 128, 45,
@@ -457,13 +467,12 @@ void DrawMetalSkill(void) {
       Vector3 up = {matView.m1, matView.m5, matView.m9};
       Vector3 vDir = Vector3Normalize(metalPool[i].velocity);
       float rotation =
-          atan2f(Vector3DotProduct(vDir, up), Vector3DotProduct(vDir, right)) -
-          PI / 2.0f;
+          atan2f(Vector3DotProduct(vDir, up), Vector3DotProduct(vDir, right));
 
       Color spriteTint =
           (Color){128, 128, 128, (unsigned char)(255.0f * lifeRatio)};
-      DrawCameraFacingQuad(metalPool[i].position, metalPool[i].thickness * 2.5f,
-                           metalPool[i].length * 1.8f, rotation, spriteTint,
+      DrawCameraFacingQuad(metalPool[i].position, metalPool[i].thickness * 4.0f,
+                           metalPool[i].length * 2.2f, rotation, spriteTint,
                            swordSprite);
     } else if (metalPool[i].type == PARTICLE_PORTAL) {
       // Draw Portal Disc (Channel B = 220 -> Portal)
