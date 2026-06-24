@@ -67,12 +67,11 @@ static void TriggerFluidImpact(Vector3 pos, float sizeScale) {
   }
 }
 
-static inline float WaterBlobOffset(float theta, float phi) {
-  float macro1 = sinf(theta * 2.0f + phi * 1.5f);
-
-  float macro2 = sinf(phi * 3.0f - theta * 1.2f);
-
-  float macro3 = sinf(theta * 4.0f + phi * 2.0f);
+static inline float WaterBlobOffset(float theta, float phi, float time) {
+  // Thêm time vào các pha dao động để đỉnh biến dạng liên tục
+  float macro1 = sinf(theta * 2.0f + phi * 1.5f + time * 6.0f);
+  float macro2 = sinf(phi * 3.0f - theta * 1.2f - time * 4.5f);
+  float macro3 = sinf(theta * 4.0f + phi * 2.0f + time * 3.0f);
 
   return macro1 * 0.18f + macro2 * 0.10f + macro3 * 0.06f;
 }
@@ -80,9 +79,9 @@ static inline float WaterBlobOffset(float theta, float phi) {
 // HÀM VẼ KHỐI CẦU 3D QUA TẦNG RLGL
 // TỐI ƯU: Pre-compute toàn bộ sin/cos một lần trước vòng lặp vẽ.
 // Từ 40*40*4*2 = 12.800 lần gọi trig/frame xuống còn (41+41)*2 = 164 lần.
-static void RenderCustom3DSphere(Vector3 center, float radius,
-                                 float blobAmount) {
-  // Bảng góc pre-computed — stack alloc an toàn ở kích thước này
+static void RenderCustom3DSphere(Vector3 center, float radius, float blobAmount,
+                                 float time) {
+  // Bảng góc pre-computed — giữ nguyên của bạn
   float sinTheta[SPHERE_RINGS + 1], cosTheta[SPHERE_RINGS + 1];
   float sinPhi[SPHERE_COLUMNS + 1], cosPhi[SPHERE_COLUMNS + 1];
 
@@ -114,24 +113,35 @@ static void RenderCustom3DSphere(Vector3 center, float radius,
     for (int j = 0; j < SPHERE_COLUMNS; j++) {
       float cp1 = cosPhi[j], sp1 = sinPhi[j];
       float cp2 = cosPhi[j + 1], sp2 = sinPhi[j + 1];
+
+      // Tọa độ góc dùng để tính toán nhiễu sóng
       float phi1 = (float)j * (2.0f * PI) / (float)SPHERE_COLUMNS;
 
-      float phi2 = (float)(j + 1) * (2.0f * PI) / (float)SPHERE_COLUMNS;
+      // SỬA TẠI ĐÂY: Nếu cột kế tiếp là cột cuối cùng (khép góc),
+      // ta ép góc phi2 về 0 để đồng bộ hoàn hảo với cột đầu tiên.
+      float phi2 = (j + 1 == SPHERE_COLUMNS)
+                       ? 0.0f
+                       : (float)(j + 1) * (2.0f * PI) / (float)SPHERE_COLUMNS;
 
       float u1 = (float)j / (float)SPHERE_COLUMNS;
       float u2 = (float)(j + 1) / (float)SPHERE_COLUMNS;
 
-      float r1 = radius * (1.0f + WaterBlobOffset(theta1, phi1) * blobAmount);
-      float r2 = radius * (1.0f + WaterBlobOffset(theta1, phi2) * blobAmount);
-      float r3 = radius * (1.0f + WaterBlobOffset(theta2, phi2) * blobAmount);
-      float r4 = radius * (1.0f + WaterBlobOffset(theta2, phi1) * blobAmount);
+      // Tính bán kính biến dạng dựa trên góc đã đồng bộ biên
+      float r1 =
+          radius * (1.0f + WaterBlobOffset(theta1, phi1, time) * blobAmount);
+      float r2 =
+          radius * (1.0f + WaterBlobOffset(theta1, phi2, time) * blobAmount);
+      float r3 =
+          radius * (1.0f + WaterBlobOffset(theta2, phi2, time) * blobAmount);
+      float r4 =
+          radius * (1.0f + WaterBlobOffset(theta2, phi1, time) * blobAmount);
 
       // Đỉnh 1 (theta1, phi1)
       rlNormal3f(st1 * cp1, ct1, st1 * sp1);
       rlTexCoord2f(u1, vt1);
       rlVertex3f(st1 * cp1 * r1, ct1 * r1, st1 * sp1 * r1);
 
-      // Đỉnh 2 (theta1, phi2)
+      // Đỉnh 2 (theta1, phi2) - Vị trí hình học vẫn dùng cp2, sp2 để khép vòng
       rlNormal3f(st1 * cp2, ct1, st1 * sp2);
       rlTexCoord2f(u2, vt1);
       rlVertex3f(st1 * cp2 * r2, ct1 * r2, st1 * sp2 * r2);
@@ -151,7 +161,6 @@ static void RenderCustom3DSphere(Vector3 center, float radius,
   rlEnd();
   rlPopMatrix();
 }
-
 void InitFluidSkill(int screenWidth, int screenHeight) {
   (void)screenWidth;
   (void)screenHeight;
@@ -234,26 +243,27 @@ void UpdateFluidSkill(float dt) {
     int dropToSpawn = (int)emitters[e].spawnAccumulator;
     emitters[e].spawnAccumulator -= dropToSpawn;
 
-    for (int k = 0; k < dropToSpawn; k++) {
-      Vector3 randomDir = Vector3Normalize(
-          (Vector3){Random01() - 0.5f, Random01() - 0.5f, Random01() - 0.5f});
-      ParticleConfig cfgMist = {0};
-      cfgMist.position =
-          Vector3Add(emitters[e].currentPos,
-                     Vector3Scale(randomDir, 6.0f * emitters[e].sizeScale));
-      cfgMist.velocity =
-          Vector3Scale(randomDir, Math_Mix(20.0f, 60.0f, Random01()) *
-                                      emitters[e].sizeScale);
-      cfgMist.force = (Vector3){0.0f, GRAVITY_Y * 0.8f, 0.0f};
-      cfgMist.drag = FLUID_DRAG_MIST;
-      cfgMist.radius =
-          Math_Mix(1.5f, 4.0f, Random01()) * emitters[e].sizeScale * 2.5f;
-      cfgMist.lifetime = Math_Mix(0.3f, 0.6f, Random01());
-      cfgMist.colorStart = (Color){200, 245, 255, 180};
-      cfgMist.colorEnd = (Color){100, 150, 200, 0};
-      cfgMist.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE;
-      SpawnParticle(cfgMist);
-    }
+    // for (int k = 0; k < dropToSpawn; k++) {
+    //   Vector3 randomDir = Vector3Normalize(
+    //       (Vector3){Random01() - 0.5f, Random01() - 0.5f, Random01() -
+    //       0.5f});
+    //   ParticleConfig cfgMist = {0};
+    //   cfgMist.position =
+    //       Vector3Add(emitters[e].currentPos,
+    //                  Vector3Scale(randomDir, 6.0f * emitters[e].sizeScale));
+    //   cfgMist.velocity =
+    //       Vector3Scale(randomDir, Math_Mix(20.0f, 60.0f, Random01()) *
+    //                                   emitters[e].sizeScale);
+    //   cfgMist.force = (Vector3){0.0f, GRAVITY_Y * 0.8f, 0.0f};
+    //   cfgMist.drag = FLUID_DRAG_MIST;
+    //   cfgMist.radius =
+    //       Math_Mix(1.5f, 4.0f, Random01()) * emitters[e].sizeScale * 2.5f;
+    //   cfgMist.lifetime = Math_Mix(0.3f, 0.6f, Random01());
+    //   cfgMist.colorStart = (Color){200, 245, 255, 180};
+    //   cfgMist.colorEnd = (Color){100, 150, 200, 0};
+    //   cfgMist.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE;
+    //   SpawnParticle(cfgMist);
+    // }
   }
 }
 
@@ -285,7 +295,7 @@ void DrawFluidSkill(void) {
     if (!emitters[e].active)
       continue;
     float radius = WATER_BASE_RADIUS * emitters[e].sizeScale;
-    RenderCustom3DSphere(emitters[e].currentPos, radius, 0.65f);
+    RenderCustom3DSphere(emitters[e].currentPos, radius, 0.65f, time);
   }
 
   EndShaderMode();

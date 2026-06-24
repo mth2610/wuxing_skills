@@ -8,9 +8,9 @@
 #include <stddef.h>
 
 #define MAX_METAL_PARTICLES                                                    \
-  200 // Giảm xuống cực thấp vì đã ủy thác mảnh vỡ/tia lửa cho GPU
+  200 // Giữ nguyên mức thấp vì đã ủy thác mảnh vỡ cho GPU
 #define MAX_EMITTERS 10
-#define PARTICLE_HISTORY_COUNT 10
+#define PARTICLE_HISTORY_COUNT 20 // Ribbon dài mượt
 
 extern Camera3D camera;
 
@@ -55,7 +55,7 @@ static Shader metalShader;
 static int timeLocMetal;
 static Texture2D swordSprite;
 
-// Helper vẽ Billboard 3D xoay tự do (Dành cho kiếm và cổng dịch chuyển)
+// Helper vẽ Billboard 3D xoay tự do
 static void DrawCameraFacingQuad(Vector3 center, float width, float height,
                                  float rotation, Color tint, Texture2D tex) {
   Matrix matView = GetCameraMatrix(camera);
@@ -178,28 +178,28 @@ void CastMetalSkill(Vector3 startPos, Vector3 target, SkillParams params) {
 
     float distFromCenter = fabsf(offsetFactor);
     if (distFromCenter < 0.1f)
-      em->portalSizes[j] = 0.55f * sizeScale;
+      em->portalSizes[j] = 0.80f * sizeScale;
     else if (distFromCenter < 1.1f)
-      em->portalSizes[j] = 0.38f * sizeScale;
+      em->portalSizes[j] = 0.56f * sizeScale;
     else
-      em->portalSizes[j] = 0.28f * sizeScale;
+      em->portalSizes[j] = 0.42f * sizeScale;
   }
 
-  // Nổ tia lửa lúc Cast uỷ thác cho GPU
-  for (int i = 0; i < 12; i++) {
+  // Nổ tia lửa lúc Cast (Đổi sang dải màu vàng cam hệ Kim)
+  for (int i = 0; i < 22; i++) {
     Vector3 flashVel = {
-        dir.x * GetRandomValue(200, 400) + GetRandomValue(-80, 80),
-        dir.y * GetRandomValue(200, 400) + GetRandomValue(-80, 80),
-        dir.z * GetRandomValue(200, 400) + GetRandomValue(-80, 80)};
+        dir.x * GetRandomValue(250, 500) + GetRandomValue(-120, 120),
+        dir.y * GetRandomValue(250, 500) + GetRandomValue(-120, 120),
+        dir.z * GetRandomValue(250, 500) + GetRandomValue(-120, 120)};
     ParticleConfig p = {0};
     p.position = startPos;
     p.velocity = flashVel;
-    p.radius = (float)GetRandomValue(5, 12);
-    p.lifetime = 0.25f;
+    p.radius = (float)GetRandomValue(10, 22);
+    p.lifetime = 0.35f;
     p.drag = 1.0f;
-    p.turbulence = 20.0f;
-    p.colorStart = (Color){255, 230, 100, 255};
-    p.colorEnd = (Color){200, 100, 0, 0};
+    p.turbulence = 40.0f;
+    p.colorStart = (Color){255, 230, 100, 255}; // Vàng kim chói
+    p.colorEnd = (Color){255, 100, 0, 0};       // Cam đỏ fade
     p.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_TURBULENCE;
     SpawnParticle(p);
   }
@@ -251,8 +251,8 @@ void UpdateMetalSkill(float dt) {
             p.velocity = sparkVel;
             p.radius = (float)GetRandomValue(5, 10);
             p.lifetime = spawnDist / Vector3Length(sparkVel);
-            p.colorStart = (Color){255, 200, 50, 255};
-            p.colorEnd = (Color){255, 100, 0, 0};
+            p.colorStart = (Color){255, 220, 80, 255}; // Tia lửa vàng
+            p.colorEnd = (Color){200, 80, 0, 0};
             SpawnParticle(p);
           }
         }
@@ -270,8 +270,9 @@ void UpdateMetalSkill(float dt) {
               baseDir.y,
               baseDir.x * sinf(spreadAngle) + baseDir.z * cosf(spreadAngle)};
           launchDir = Vector3Normalize(launchDir);
+
           Vector3 vel =
-              Vector3Scale(launchDir, (float)GetRandomValue(650, 950));
+              Vector3Scale(launchDir, (float)GetRandomValue(300, 500));
 
           SpawnMetal(PARTICLE_SWORD, portalPos, vel,
                      (float)GetRandomValue(100, 140) * sizeFactor,
@@ -299,8 +300,9 @@ void UpdateMetalSkill(float dt) {
       for (int h = PARTICLE_HISTORY_COUNT - 1; h > 0; h--)
         metalPool[i].history[h] = metalPool[i].history[h - 1];
 
+      // Đã sửa: Dời điểm ghim kiếm khí lùi về phía chuôi kiếm (tránh bị hở
+      // đuôi)
       Vector3 dir = Vector3Normalize(metalPool[i].velocity);
-
       metalPool[i].history[0] =
           Vector3Subtract(metalPool[i].position,
                           Vector3Scale(dir, metalPool[i].length * 0.45f));
@@ -319,7 +321,7 @@ void UpdateMetalSkill(float dt) {
       if (distToTarget > 20.0f) {
         Vector3 desiredDir = Vector3Normalize(toTarget);
         float newSpeed =
-            fminf(Vector3Length(metalPool[i].velocity) + 250.0f * dt, 1100.0f);
+            fminf(Vector3Length(metalPool[i].velocity) + 150.0f * dt, 600.0f);
         Vector3 perpDir = {-desiredDir.z, 0.0f, desiredDir.x};
         float curveStrength = fminf(distToTarget / 250.0f, 1.0f);
         float wobble =
@@ -330,64 +332,43 @@ void UpdateMetalSkill(float dt) {
             Vector3Lerp(metalPool[i].velocity, desiredVel, dt * 3.2f);
       }
 
-      if (GetRandomValue(1, 100) <= 55) {
-        Vector3 backDir =
-            Vector3Scale(Vector3Normalize(metalPool[i].velocity), -0.2f);
-        Vector3 sparkVel = {
-            backDir.x * GetRandomValue(200, 500) + GetRandomValue(-100, 100),
-            backDir.y * GetRandomValue(200, 500) + GetRandomValue(-100, 100),
-            backDir.z * GetRandomValue(200, 500) + GetRandomValue(-100, 100)};
-
-        ParticleConfig p = {0};
-        p.position = metalPool[i].position;
-        p.velocity = sparkVel;
-        p.drag = 1.0f;
-        p.radius = (float)GetRandomValue(8, 20);
-        p.lifetime = 0.2f;
-        p.colorStart = (Color){255, 230, 100, 255};
-        p.colorEnd = (Color){150, 50, 0, 0};
-        p.physicsFlags = P_PHYSICS_DRAG;
-        SpawnParticle(p);
-      }
-
       // Impact Trigger
       if (distToTarget < 30.0f || metalPool[i].lifetime < 0.1f) {
         metalPool[i].active = false;
         float scale = fmaxf(metalPool[i].scale, 0.5f);
 
-        // Mảnh vỡ, tia lửa, mạt bụi vàng phó thác hoàn toàn cho GPU
-        for (int s = 0; s < GetRandomValue(8, 14); s++) {
+        for (int s = 0; s < GetRandomValue(10, 16); s++) {
           float sAngle = (float)GetRandomValue(0, 360) * DEG2RAD;
           float pAngle = (float)GetRandomValue(15, 75) * DEG2RAD;
-          float sp = (float)GetRandomValue(250, 600) * scale;
+          float sp = (float)GetRandomValue(280, 650) * scale;
           ParticleConfig shard = {0};
           shard.position = metalPool[i].position;
           shard.velocity = (Vector3){cosf(sAngle) * sp * cosf(pAngle),
                                      sinf(pAngle) * sp + 100.0f,
                                      sinf(sAngle) * sp * cosf(pAngle)};
           shard.force = (Vector3){0, -800.0f, 0};
-          shard.radius = (float)GetRandomValue(8, 16) * scale;
-          shard.lifetime = 0.55f;
-          shard.colorStart = (Color){255, 230, 100, 255};
-          shard.colorEnd = (Color){50, 20, 0, 0};
+          shard.radius = (float)GetRandomValue(8, 18) * scale;
+          shard.lifetime = 0.60f;
+          shard.colorStart = (Color){255, 220, 100, 255}; // Mảnh vỡ vàng
+          shard.colorEnd = (Color){180, 60, 0, 0};
           shard.physicsFlags = P_PHYSICS_FORCE;
           SpawnParticle(shard);
         }
 
-        for (int s = 0; s < GetRandomValue(12, 18); s++) {
+        for (int s = 0; s < GetRandomValue(14, 22); s++) {
           float sAngle = (float)GetRandomValue(0, 360) * DEG2RAD;
           float pAngle = (float)GetRandomValue(-45, 45) * DEG2RAD;
-          float sp = (float)GetRandomValue(350, 750) * scale;
+          float sp = (float)GetRandomValue(400, 850) * scale;
           ParticleConfig spark = {0};
           spark.position = metalPool[i].position;
           spark.velocity =
               (Vector3){cosf(sAngle) * sp * cosf(pAngle), sinf(pAngle) * sp,
                         sinf(sAngle) * sp * cosf(pAngle)};
           spark.drag = 1.5f;
-          spark.radius = (float)GetRandomValue(6, 15);
-          spark.lifetime = 0.3f;
-          spark.colorStart = (Color){255, 255, 200, 255};
-          spark.colorEnd = (Color){200, 50, 0, 0};
+          spark.radius = (float)GetRandomValue(6, 16);
+          spark.lifetime = 0.35f;
+          spark.colorStart = (Color){255, 245, 180, 255}; // Tia nổ sáng chói
+          spark.colorEnd = (Color){255, 120, 0, 0};
           spark.physicsFlags = P_PHYSICS_DRAG;
           SpawnParticle(spark);
         }
@@ -395,10 +376,10 @@ void UpdateMetalSkill(float dt) {
         ParticleConfig shockwave = {0};
         shockwave.position = metalPool[i].position;
         shockwave.velocity = (Vector3){0, 0, 0};
-        shockwave.radius = 45.0f * scale;
-        shockwave.lifetime = 0.25f;
-        shockwave.colorStart = (Color){255, 255, 255, 255};
-        shockwave.colorEnd = (Color){200, 150, 20, 0};
+        shockwave.radius = 55.0f * scale;
+        shockwave.lifetime = 0.28f;
+        shockwave.colorStart = (Color){255, 230, 150, 255};
+        shockwave.colorEnd = (Color){255, 100, 0, 0};
         SpawnParticle(shockwave);
       }
     } else if (metalPool[i].type == PARTICLE_PORTAL) {
@@ -440,28 +421,31 @@ void DrawMetalSkill(void) {
     float lifeRatio = metalPool[i].lifetime / metalPool[i].maxLifetime;
 
     if (metalPool[i].type == PARTICLE_SWORD) {
-      // Draw Ribbon Trail (Channel B = 45 -> Ribbon)
+      // Draw Ribbon Trail
       if (metalPool[i].historyCount > 1) {
         RibbonPoint strip[PARTICLE_HISTORY_COUNT];
         for (int h = 0; h < metalPool[i].historyCount; h++) {
           strip[h].position = metalPool[i].history[h];
           float segRatio =
               1.0f - (float)h / (float)(metalPool[i].historyCount - 1);
+
           float taper = segRatio * segRatio * segRatio;
 
-          strip[h].halfWidth =
-              metalPool[i].thickness * 0.35f * taper * lifeRatio;
+          // Làm kiếm khí bành ra một chút để bao bọc lưỡi kiếm
+          strip[h].halfWidth = metalPool[i].thickness * 0.55f * taper;
 
           strip[h].v = segRatio;
-          // Tint R chứa LocalU, B định danh Ribbon, A là baseAlpha
-          strip[h].tint = (Color){(unsigned char)(segRatio * 255.0f), 128, 45,
-                                  (unsigned char)(255.0f * lifeRatio)};
+
+          unsigned char glowByte = (unsigned char)(lifeRatio * 255.0f);
+          strip[h].tint = (Color){(unsigned char)(segRatio * 255.0f), glowByte,
+                                  45, (unsigned char)(220.0f * lifeRatio)};
         }
         DrawRibbonStrip(strip, metalPool[i].historyCount, (Texture2D){0},
                         camera);
       }
 
-      // Draw Sword Sprite (Channel B = 128 -> Sprite)
+      // Draw Sword Sprite
+      // Draw Sword Sprite
       Matrix matView = GetCameraMatrix(camera);
       Vector3 right = {matView.m0, matView.m4, matView.m8};
       Vector3 up = {matView.m1, matView.m5, matView.m9};
@@ -471,11 +455,16 @@ void DrawMetalSkill(void) {
 
       Color spriteTint =
           (Color){128, 128, 128, (unsigned char)(255.0f * lifeRatio)};
-      DrawCameraFacingQuad(metalPool[i].position, metalPool[i].thickness * 4.0f,
-                           metalPool[i].length * 2.2f, rotation, spriteTint,
-                           swordSprite);
+
+      // Đã sửa: Đảo lại đúng trục (width = length, height = thickness)
+      // Chỉnh lại tỷ lệ cho cân đối (không quá dài, không quá mập)
+      DrawCameraFacingQuad(metalPool[i].position,
+                           metalPool[i].length * 1.1f, // Thu ngắn lại
+                           metalPool[i].thickness * 2.0f, // Bề ngang vừa phải
+                           rotation, spriteTint, swordSprite);
+
     } else if (metalPool[i].type == PARTICLE_PORTAL) {
-      // Draw Portal Disc (Channel B = 220 -> Portal)
+      // Draw Portal Disc
       float radius = metalPool[i].length;
       float age = metalPool[i].maxLifetime - metalPool[i].lifetime;
       if (age < 0.12f)
@@ -483,7 +472,7 @@ void DrawMetalSkill(void) {
 
       Color portalTint =
           (Color){128, 128, 220, (unsigned char)(255.0f * lifeRatio)};
-      DrawCameraFacingQuad(metalPool[i].position, radius * 2.0f, radius * 2.0f,
+      DrawCameraFacingQuad(metalPool[i].position, radius * 2.6f, radius * 2.6f,
                            metalPool[i].angle * DEG2RAD, portalTint,
                            (Texture2D){0});
     }
@@ -520,7 +509,6 @@ void DeactivateMetalProjectile(int index) {
     if (metalPool[i].active && metalPool[i].type == PARTICLE_SWORD) {
       if (count == index) {
         metalPool[i].lifetime = 0.0f;
-        // Force UpdateMetalSkill to handle the explosion logically
         break;
       }
       count++;
