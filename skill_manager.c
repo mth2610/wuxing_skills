@@ -165,11 +165,10 @@ static void EnsureBuiltInRegistered(void) {
                   UpdateFireSkillWrapper, NULL, UnloadFireSkill);
 
     RegisterSkill("WOOD", LIME, InitWoodSkill, CastWoodWrapper,
-                  UpdateWoodSkillWrapper, DrawWoodSkill, UnloadWoodSkill);
+                  UpdateWoodSkillWrapper, NULL, UnloadWoodSkill);
 
     RegisterSkill("ELECTRIC", PURPLE, InitElectricSkill, CastElectricWrapper,
-                  UpdateElectricSkillWrapper, DrawElectricSkill,
-                  UnloadElectricSkill);
+                  UpdateElectricSkillWrapper, NULL, UnloadElectricSkill);
 
     RegisterSkill("WIND", LIGHTGRAY, InitWindSkill, CastWindWrapper,
                   UpdateWindWrapper, DrawWindSkill, UnloadWindSkill);
@@ -350,7 +349,9 @@ void DrawSkillManagerWorld3D(void) {
 
   DrawFireSkill();
   DrawFluidSkill();
-  DrawTubeSkill(); // Đã chốt dấu chấm phẩy chuẩn xác ở đây
+  DrawTubeSkill();
+  DrawWoodSkill();
+  DrawElectricSkill();
 }
 
 void DrawSkillManagerOverlay(void) {
@@ -498,8 +499,8 @@ static void CastFireWrapper(Vector3 startPos, Vector3 target,
 
 static void CastWoodWrapper(Vector3 startPos, Vector3 target,
                             SkillParams params) {
-  CastWoodSkill(startPos, target, params.quantity > 0 ? params.quantity : 3,
-                params.sizeScale);
+  // Mới: Chỉ truyền 3 tham số
+  CastWoodSkill(startPos, target, params);
 }
 
 static void CastElectricWrapper(Vector3 startPos, Vector3 target,

@@ -6,9 +6,9 @@
 #ifndef SKILL_PROJECTILE_DEF
 #define SKILL_PROJECTILE_DEF
 typedef struct {
-    Vector3 position;
-    float radius;
-    bool active;
+  Vector3 position;
+  float radius;
+  bool active;
 } SkillProjectile;
 #endif
 
@@ -19,7 +19,8 @@ void DrawElectricSkill(void);
 void UnloadElectricSkill(void);
 bool IsElectricSkillShocking(void);
 
-int GetElectricSkillProjectiles(SkillProjectile* outProjectiles, int maxProjectiles);
+int GetElectricSkillProjectiles(SkillProjectile *outProjectiles,
+                                int maxProjectiles);
 void DeactivateElectricProjectile(int index);
 
 #endif // ELECTRIC_SKILL_H

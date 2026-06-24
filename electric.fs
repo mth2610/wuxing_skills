@@ -3,12 +3,10 @@
 in vec2 fragTexCoord;
 in vec4 fragColor;
 
-uniform sampler2D texture0;
 uniform float u_time; 
 
 out vec4 finalColor;
 
-// 2D Pseudo-Random Noise
 float hash(vec2 p) {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
 }
@@ -35,18 +33,25 @@ float fbm(vec2 p) {
 }
 
 void main() {
-    // 1. Dynamic coordinate distortion to simulate plasma energy flowing and crackling
+    // Trích xuất tọa độ uốn lượn trực tiếp từ dải Ribbon 3D
+    float localU = fragColor.r;    // Dọc chiều dài tia sét
+    float localV = fragTexCoord.x; // Ngang bề rộng tia sét (0.0 -> 1.0)
+    float baseAlpha = fragColor.a;
+
     vec2 flow = vec2(u_time * 12.0, -u_time * 16.0);
-    vec2 warpUV = fragTexCoord;
+    vec2 warpUV = vec2(localU, localV);
     
     // Add multi-scale noise warping
-    float n1 = fbm(fragTexCoord * 12.0 + flow);
-    float n2 = fbm(fragTexCoord * 24.0 - flow * 0.4);
-    warpUV.x += (n1 - 0.5) * 0.015 + (n2 - 0.5) * 0.005;
-    warpUV.y += (n1 - 0.5) * 0.015 + (n2 - 0.5) * 0.005;
+    float n1 = fbm(vec2(localU, localV) * 12.0 + flow);
+    float n2 = fbm(vec2(localU, localV) * 24.0 - flow * 0.4);
     
-    vec4 texColor = texture(texture0, warpUV);
-    float density = texColor.a;
+    warpUV.x += (n1 - 0.5) * 0.05;
+    warpUV.y += (n2 - 0.5) * 0.05;
+    
+    // Tính toán mật độ Plasma (Sáng trắng ở lõi, nhạt dần ra viền)
+    float distToCenter = abs(warpUV.y - 0.5) * 2.0;
+    float shape = smoothstep(1.0, 0.2, distToCenter);
+    float density = shape * baseAlpha;
     
     if (density < 0.015) {
         discard;
@@ -76,21 +81,20 @@ void main() {
         mixedColor = whiteCore;
     }
     
-    // 2. High-frequency amplitude flickering representing unstable voltage/current
-    float flicker = noise(vec2(u_time * 50.0, 0.0)) * 0.15 + 0.92;
+    // High-frequency amplitude flickering (Chớp giật điện áp liên tục)
+    float flicker = noise(vec2(u_time * 50.0, localU * 10.0)) * 0.15 + 0.92;
     mixedColor *= flicker;
     
-    // 3. Crackling filament lines within dense plasma regions (e.g. plasma orb center)
+    // Nứt hồ quang nhỏ (Crackling filaments) nằm sâu trong lõi Plasma
     if (density > 0.25) {
         float filament = sin((warpUV.x * 60.0 + u_time * 8.0)) * cos((warpUV.y * 60.0 - u_time * 12.0));
         filament = pow(clamp(filament, 0.0, 1.0), 4.0);
-        // Add crackling sparks inside the core
         mixedColor += vec3(filament * 0.45) * cyanGlow * flicker;
     }
     
-    // 4. Soft halo glow around plasma filaments
+    // Hào quang mềm tỏa ra quanh lõi sét
     float glow = smoothstep(0.0, 0.4, density) * 0.45;
-    mixedColor += vec3(glow * 0.8, glow * 1.5, glow * 2.2); // bloom cyan/blue light bleeding
+    mixedColor += vec3(glow * 0.8, glow * 1.5, glow * 2.2);
     alphaOut += glow * 0.5;
     
     finalColor = vec4(mixedColor, clamp(alphaOut, 0.0, 1.0));
