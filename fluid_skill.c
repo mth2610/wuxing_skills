@@ -68,12 +68,19 @@ static void TriggerFluidImpact(Vector3 pos, float sizeScale) {
 }
 
 static inline float WaterBlobOffset(float theta, float phi, float time) {
-  // Thêm time vào các pha dao động để đỉnh biến dạng liên tục
-  float macro1 = sinf(theta * 2.0f + phi * 1.5f + time * 6.0f);
-  float macro2 = sinf(phi * 3.0f - theta * 1.2f - time * 4.5f);
-  float macro3 = sinf(theta * 4.0f + phi * 2.0f + time * 3.0f);
+  // Thành phần 1: Tạo các múi phình ra xẹp vào theo cả chiều dọc và ngang
+  // Nhân hàm không gian (theta, phi) với hàm thời gian (time) để tạo sóng dừng
+  float wave1 = sinf(theta * 3.0f) * cosf(phi * 2.0f) * sinf(time * 5.0f);
 
-  return macro1 * 0.18f + macro2 * 0.10f + macro3 * 0.06f;
+  // Thành phần 2: Thêm chi tiết bất đối xứng để khối nước trông tự nhiên hơn
+  float wave2 = sinf(theta * 4.0f + phi * 3.0f) * cosf(time * 4.2f);
+
+  // Thành phần 3: Nhịp đập tổng thể nhỏ và nhanh hơn (tạo độ rung nhẹ trên bề
+  // mặt)
+  float wave3 = cosf(theta * 2.0f - phi * 4.0f) * sinf(time * 6.5f);
+
+  // Tổng hợp lại với các trọng số biên độ khác nhau
+  return wave1 * 0.12f + wave2 * 0.08f + wave3 * 0.05f;
 }
 
 // HÀM VẼ KHỐI CẦU 3D QUA TẦNG RLGL
