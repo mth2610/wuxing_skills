@@ -7,29 +7,29 @@
 #include <math.h>
 #include <stddef.h>
 
-#define MAX_METAL_PARTICLES 200
+// Hàm nội suy mượt (Smoothstep) tự viết cho C
+static float SmoothStepC(float edge0, float edge1, float x) {
+  float t = (x - edge0) / (edge1 - edge0);
+  if (t < 0.0f)
+    t = 0.0f;
+  if (t > 1.0f)
+    t = 1.0f;
+  return t * t * (3.0f - 2.0f * t);
+}
+
+#define MAX_METAL_PARTICLES 350
 #define MAX_EMITTERS 10
 #define PARTICLE_HISTORY_COUNT 20
 
-// Tỉ lệ rớt kim sa vàng lấp lánh dọc đường
 #define SPARKLE_SPAWN_CHANCE_PERCENT 30
 
 extern Camera3D camera;
 
-typedef enum { PARTICLE_SWORD = 0, PARTICLE_PORTAL = 1 } MetalParticleType;
-
-typedef struct {
-  bool active;
-  Vector3 startPos;
-  Vector3 targetPos;
-  Vector3 portalPositions[5];
-  float spawnDelay[5];
-  bool spawned[5];
-  bool portalSpawned[5];
-  float portalSizes[5];
-  int count;
-  float timer;
-} MetalEmitter;
+typedef enum {
+  PARTICLE_SWORD = 0,
+  PARTICLE_PORTAL = 1,
+  PARTICLE_WISP = 2
+} MetalParticleType;
 
 typedef struct {
   Vector3 position;
@@ -48,6 +48,19 @@ typedef struct {
   float wobblePhase;
   float scale;
 } MetalParticle;
+
+typedef struct {
+  bool active;
+  Vector3 startPos;
+  Vector3 targetPos;
+  Vector3 portalPositions[5];
+  float spawnDelay[5];
+  bool spawned[5];
+  bool portalSpawned[5];
+  float portalSizes[5];
+  int count;
+  float timer;
+} MetalEmitter;
 
 static MetalParticle metalPool[MAX_METAL_PARTICLES];
 static MetalEmitter emitters[MAX_EMITTERS];
@@ -113,13 +126,37 @@ static void SpawnMetal(int type, Vector3 pos, Vector3 vel, float len,
       metalPool[index].lifetime = life;
       metalPool[index].maxLifetime = life;
       metalPool[index].active = true;
-      metalPool[index].historyCount = 0;
       metalPool[index].angle = initialAngle;
       metalPool[index].wobblePhase = wobblePhase;
       metalPool[index].scale = scale;
 
-      for (int h = 0; h < PARTICLE_HISTORY_COUNT; h++) {
-        metalPool[index].history[h] = pos;
+      // KỸ THUẬT: TẠO DẢI KHÍ TỨC THÌ CHO WISP
+      if (type == PARTICLE_WISP) {
+        metalPool[index].historyCount = PARTICLE_HISTORY_COUNT;
+        Vector3 strandDir = target;
+
+        float waveFreq = (float)GetRandomValue(10, 20);
+        float waveAmp = (float)GetRandomValue(5, 18) * scale;
+
+        for (int h = 0; h < PARTICLE_HISTORY_COUNT; h++) {
+          float t = (float)h / (PARTICLE_HISTORY_COUNT - 1);
+          Vector3 basePos = Vector3Add(pos, Vector3Scale(strandDir, t * len));
+
+          Vector3 wUp = (Vector3){0.0f, 1.0f, 0.0f};
+          if (fabsf(strandDir.y) > 0.99f)
+            wUp = (Vector3){1.0f, 0.0f, 0.0f};
+          Vector3 wRight =
+              Vector3Normalize(Vector3CrossProduct(strandDir, wUp));
+
+          float wave = sinf(t * waveFreq + wobblePhase) * waveAmp * t;
+          metalPool[index].history[h] =
+              Vector3Add(basePos, Vector3Scale(wRight, wave));
+        }
+      } else {
+        metalPool[index].historyCount = 0;
+        for (int h = 0; h < PARTICLE_HISTORY_COUNT; h++) {
+          metalPool[index].history[h] = pos;
+        }
       }
 
       lastUsedIndex = (index + 1) % MAX_METAL_PARTICLES;
@@ -186,7 +223,6 @@ void CastMetalSkill(Vector3 startPos, Vector3 target, SkillParams params) {
       em->portalSizes[j] = 0.42f * sizeScale;
   }
 
-  // Chuyển tia lửa sang vàng kim sáng (Gold)
   for (int i = 0; i < 22; i++) {
     Vector3 flashVel = {
         dir.x * GetRandomValue(250, 500) + GetRandomValue(-120, 120),
@@ -199,8 +235,8 @@ void CastMetalSkill(Vector3 startPos, Vector3 target, SkillParams params) {
     p.lifetime = 0.35f;
     p.drag = 1.0f;
     p.turbulence = 40.0f;
-    p.colorStart = (Color){255, 230, 100, 255}; // Vàng kim chói
-    p.colorEnd = (Color){255, 180, 0, 0};       // Vàng đậm
+    p.colorStart = (Color){255, 230, 100, 255};
+    p.colorEnd = (Color){255, 180, 0, 0};
     p.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_TURBULENCE;
     SpawnParticle(p);
   }
@@ -313,20 +349,21 @@ void UpdateMetalSkill(float dt) {
       metalPool[i].position = Vector3Add(
           metalPool[i].position, Vector3Scale(metalPool[i].velocity, dt));
 
-      // --------------------------------------------------------------------------------
-      // KỸ THUẬT RẢI "KIẾM KHÍ" (AURA WISPS) DỌC THEO LƯỠI KIẾM
-      // --------------------------------------------------------------------------------
-      int wispCount = 3;
+      // -----------------------------------------------------------------------
+      // SPAWN: DẢI CHÂN KHÍ BÁM DỌC THANH KIẾM
+      // -----------------------------------------------------------------------
+      int wispCount = GetRandomValue(1, 2);
       for (int w = 0; w < wispCount; w++) {
-        float randOffset = (float)GetRandomValue(0, 100) / 100.0f;
-        Vector3 pointOnBlade = Vector3Subtract(
+        // 1. Phân bố đều 100% dọc theo sống kiếm (-100 đến 100 = từ mũi tới
+        // chuôi)
+        float randOffset = (float)GetRandomValue(-100, 100) / 100.0f;
+        Vector3 pointOnBlade = Vector3Add(
             metalPool[i].position,
-            Vector3Scale(dir, metalPool[i].length * 0.9f * randOffset));
+            Vector3Scale(dir, metalPool[i].length * 0.45f * randOffset));
 
         Vector3 upVec = (Vector3){0.0f, 1.0f, 0.0f};
         if (fabsf(dir.y) > 0.99f)
           upVec = (Vector3){1.0f, 0.0f, 0.0f};
-
         Vector3 rightVec = Vector3Normalize(Vector3CrossProduct(dir, upVec));
         Vector3 realUp = Vector3Normalize(Vector3CrossProduct(rightVec, dir));
 
@@ -334,48 +371,25 @@ void UpdateMetalSkill(float dt) {
         Vector3 perpOut = Vector3Add(Vector3Scale(rightVec, cosf(angle)),
                                      Vector3Scale(realUp, sinf(angle)));
 
-        Vector3 wispVel =
-            Vector3Add(Vector3Scale(perpOut, (float)GetRandomValue(15, 50)),
-                       Vector3Scale(dir, (float)GetRandomValue(-120, -40)));
-        wispVel.y += (float)GetRandomValue(10, 30);
+        Vector3 strandDir = Vector3Normalize(
+            Vector3Add(Vector3Scale(perpOut, 0.15f), Vector3Scale(dir, -1.0f)));
 
-        ParticleConfig wisp = {0};
-        wisp.position = pointOnBlade;
-        wisp.velocity = wispVel;
-        wisp.radius = (float)GetRandomValue(10, 22) * metalPool[i].scale;
-        wisp.lifetime = (float)GetRandomValue(20, 45) * 0.01f;
+        // 2. Vận tốc bốc hơi: Bay THEO kiếm (metalPool[i].velocity), chỉ trượt
+        // lùi về sau 1 chút (-120 đến -50)
+        Vector3 slideVel =
+            Vector3Add(Vector3Scale(perpOut, (float)GetRandomValue(10, 30)),
+                       Vector3Scale(dir, (float)GetRandomValue(-120, -50)));
+        Vector3 wispVel = Vector3Add(metalPool[i].velocity, slideVel);
 
-        wisp.colorStart =
-            (Color){255, 240, 160, (unsigned char)GetRandomValue(15, 40)};
-        wisp.colorEnd = (Color){255, 180, 50, 0};
+        float wispLen = (float)GetRandomValue(40, 90) * metalPool[i].scale;
+        float wispThick = (float)GetRandomValue(4, 12) * metalPool[i].scale;
+        float wispLife = (float)GetRandomValue(15, 30) *
+                         0.01f; // Sống ngắn để tan ngay khi trượt ra khỏi kiếm
+        float wispPhase = (float)GetRandomValue(0, 314) * 0.01f;
 
-        wisp.drag = 3.5f;
-        wisp.turbulence = 25.0f;
-        wisp.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_TURBULENCE;
-
-        SpawnParticle(wisp);
+        SpawnMetal(PARTICLE_WISP, pointOnBlade, wispVel, wispLen, wispThick,
+                   wispLife, strandDir, 0.0f, wispPhase, metalPool[i].scale);
       }
-
-      if (GetRandomValue(1, 100) <= SPARKLE_SPAWN_CHANCE_PERCENT) {
-        float spAngle = (float)GetRandomValue(0, 360) * DEG2RAD;
-        Vector3 backDir = Vector3Scale(dir, -1.0f);
-        Vector3 randomOffset = {cosf(spAngle) * 5.0f,
-                                (float)GetRandomValue(-5, 5),
-                                sinf(spAngle) * 5.0f};
-
-        ParticleConfig sp = {0};
-        sp.position = metalPool[i].position;
-        sp.velocity = Vector3Scale(Vector3Add(backDir, randomOffset),
-                                   (float)GetRandomValue(50, 150));
-        sp.radius = (float)GetRandomValue(4, 8) * metalPool[i].scale;
-        sp.lifetime = 0.25f;
-        sp.colorStart = (Color){255, 255, 200, 200};
-        sp.colorEnd = (Color){255, 200, 0, 0};
-        sp.drag = 1.2f;
-        sp.physicsFlags = P_PHYSICS_DRAG;
-        SpawnParticle(sp);
-      }
-      // --------------------------------------------------------------------------------
 
       Vector3 toTarget =
           Vector3Subtract(metalPool[i].target, metalPool[i].position);
@@ -444,6 +458,30 @@ void UpdateMetalSkill(float dt) {
         shockwave.colorEnd = (Color){255, 180, 0, 0};
         SpawnParticle(shockwave);
       }
+    } else if (metalPool[i].type == PARTICLE_WISP) {
+      // Giảm lực cản cực thấp để luồng khí trôi THEO kiếm, chứ không bị tuột
+      // lại tít mù phía sau
+      metalPool[i].velocity =
+          Vector3Scale(metalPool[i].velocity, 1.0f - (dt * 0.8f));
+      Vector3 drift = Vector3Scale(metalPool[i].velocity, dt);
+
+      metalPool[i].wobblePhase += dt * 15.0f;
+
+      Vector3 sDir = metalPool[i].target;
+      Vector3 wUp = (Vector3){0.0f, 1.0f, 0.0f};
+      if (fabsf(sDir.y) > 0.99f)
+        wUp = (Vector3){1.0f, 0.0f, 0.0f};
+      Vector3 wRight = Vector3Normalize(Vector3CrossProduct(sDir, wUp));
+
+      for (int h = 0; h < metalPool[i].historyCount; h++) {
+        float t = (float)h / (PARTICLE_HISTORY_COUNT - 1);
+        // Cập nhật vị trí bằng cách cộng Vector drift (mang vận tốc của kiếm)
+        metalPool[i].history[h] = Vector3Add(metalPool[i].history[h], drift);
+        float wriggle =
+            cosf(t * 15.0f + metalPool[i].wobblePhase) * 12.0f * t * dt;
+        metalPool[i].history[h] =
+            Vector3Add(metalPool[i].history[h], Vector3Scale(wRight, wriggle));
+      }
     } else if (metalPool[i].type == PARTICLE_PORTAL) {
       metalPool[i].angle += 140.0f * dt;
     }
@@ -483,7 +521,6 @@ void DrawMetalSkill(void) {
     float lifeRatio = metalPool[i].lifetime / metalPool[i].maxLifetime;
 
     if (metalPool[i].type == PARTICLE_SWORD) {
-      // 1. Draw 2-Layer Ribbon Trail
       if (metalPool[i].historyCount > 1) {
         RibbonPoint outerStrip[PARTICLE_HISTORY_COUNT];
         RibbonPoint innerStrip[PARTICLE_HISTORY_COUNT];
@@ -518,14 +555,33 @@ void DrawMetalSkill(void) {
       float rotation =
           atan2f(Vector3DotProduct(vDir, up), Vector3DotProduct(vDir, right));
 
-      // 2. CHỈ VẼ 1 THANH KIẾM DUY NHẤT (Bỏ hoàn toàn vòng lặp Afterimage/Tàn
-      // ảnh)
       Color spriteTint =
           (Color){128, 128, 128, (unsigned char)(255.0f * lifeRatio)};
       DrawCameraFacingQuad(metalPool[i].position, metalPool[i].length * 1.1f,
                            metalPool[i].thickness * 2.0f, rotation, spriteTint,
                            swordSprite);
 
+    } else if (metalPool[i].type == PARTICLE_WISP) {
+      if (metalPool[i].historyCount > 1) {
+        RibbonPoint wispStrip[PARTICLE_HISTORY_COUNT];
+        for (int h = 0; h < metalPool[i].historyCount; h++) {
+          float segRatio =
+              1.0f - (float)h / (float)(metalPool[i].historyCount - 1);
+
+          float taper = SmoothStepC(0.0f, 0.2f, segRatio) *
+                        SmoothStepC(1.0f, 0.5f, 1.0f - segRatio);
+
+          wispStrip[h].position = metalPool[i].history[h];
+          wispStrip[h].halfWidth = metalPool[i].thickness * 0.8f * taper;
+          wispStrip[h].v = segRatio;
+
+          unsigned char finalAlpha =
+              (unsigned char)(255.0f * lifeRatio * taper);
+          wispStrip[h].tint = (Color){255, 45, 45, finalAlpha};
+        }
+        DrawRibbonStrip(wispStrip, metalPool[i].historyCount, (Texture2D){0},
+                        camera);
+      }
     } else if (metalPool[i].type == PARTICLE_PORTAL) {
       float radius = metalPool[i].length;
       float age = metalPool[i].maxLifetime - metalPool[i].lifetime;
