@@ -1,4 +1,5 @@
 #include "fluid_skill.h"
+#include "force_field.h"
 #include "particle_system.h"
 #include "path_spline.h"
 #include "raymath.h"
@@ -8,6 +9,10 @@
 #include <math.h>
 
 #define MAX_EMITTERS 10
+
+// --- Force Fields của Fluid Skill ---
+// Mưa nước rơi: trọng lực mạnh + Value noise nhỏ bắt chước sức căng bề mặt
+static ForceField s_fluidSplashField;
 
 #define WATER_TRAVEL_SPEED 1.6f
 #define WATER_BASE_RADIUS 16.0f
@@ -86,6 +91,7 @@ static void TriggerFluidImpact(Vector3 pos, float sizeScale) {
     cfg.colorStart = (Color){180, 230, 255, 240};
     cfg.colorEnd = (Color){50, 130, 200, 0};
     cfg.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE;
+    cfg.forceField = &s_fluidSplashField;
 
     SpawnParticle(cfg);
   }
@@ -204,6 +210,16 @@ void InitFluidSkill(int screenWidth, int screenHeight) {
 
   for (int i = 0; i < MAX_EMITTERS; i++)
     emitters[i].active = false;
+
+  // Giọt nước splash: trọng lực mạnh + Value noise bắt chước căng bề mặt
+  ForceField_Clear(&s_fluidSplashField);
+  ForceField_AddLayer(&s_fluidSplashField, (ForceLayer){
+    .type = FORCE_GRAVITY_DIR, .direction = {0,-1,0}, .strength = 845.0f
+  });
+  ForceField_AddLayer(&s_fluidSplashField, (ForceLayer){
+    .type = FORCE_NOISE_PERLIN, .strength = 20.0f,  // nhiễu nhẹ, không phá vỡ quỹ đạo
+    .noiseScale = 0.008f, .noiseSpeed = 0.3f
+  });
 }
 
 void CastFluidSkill(Vector3 startPos, Vector3 target, float twistPhase,

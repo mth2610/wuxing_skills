@@ -1,4 +1,5 @@
 #include "tube_skill.h"
+#include "force_field.h"
 #include "particle_system.h"
 #include "raymath.h"
 #include "rlgl.h"
@@ -6,6 +7,10 @@
 #include <math.h>
 
 #define MAX_TUBE_EMITTERS 5
+
+// --- Force Fields của Tube Skill ---
+static ForceField s_tubeSplashField; // nước va chạm: trọng lực + Perlin gợn sóng
+static ForceField s_tubeMistField;   // sương đầu ống: trọng lực nhẹ + drift
 
 #define TUBE_TRAVEL_SPEED 1.2f
 #define TUBE_BASE_RADIUS 12.0f
@@ -97,6 +102,7 @@ static void TriggerWaterBurst(Vector3 pos, float sizeScale) {
     cfg.colorStart = (Color){220, 245, 255, 240};
     cfg.colorEnd = (Color){80, 160, 230, 0};
     cfg.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE;
+    cfg.forceField = &s_tubeSplashField;
     SpawnParticle(cfg);
   }
 }
@@ -289,6 +295,26 @@ void InitTubeSkill(int screenWidth, int screenHeight) {
   for (int i = 0; i < MAX_TUBE_EMITTERS; i++) {
     emitters[i].active = false;
   }
+
+  // Nước va chạm: trọng lực mạnh + Perlin gợn sóng lan
+  ForceField_Clear(&s_tubeSplashField);
+  ForceField_AddLayer(&s_tubeSplashField, (ForceLayer){
+    .type = FORCE_GRAVITY_DIR, .direction = {0,-1,0}, .strength = 650.0f
+  });
+  ForceField_AddLayer(&s_tubeSplashField, (ForceLayer){
+    .type = FORCE_NOISE_PERLIN, .strength = 25.0f,
+    .noiseScale = 0.010f, .noiseSpeed = 0.5f
+  });
+
+  // Sương đầu ống: trọng lực nhẹ + drift theo Perlin
+  ForceField_Clear(&s_tubeMistField);
+  ForceField_AddLayer(&s_tubeMistField, (ForceLayer){
+    .type = FORCE_GRAVITY_DIR, .direction = {0,-1,0}, .strength = 325.0f
+  });
+  ForceField_AddLayer(&s_tubeMistField, (ForceLayer){
+    .type = FORCE_NOISE_PERLIN, .strength = 15.0f,
+    .noiseScale = 0.008f, .noiseSpeed = 0.3f
+  });
 }
 
 void CastTubeSkill(Vector3 startPos, Vector3 target, float twistPhase,
@@ -352,6 +378,7 @@ void UpdateTubeSkill(float dt) {
       cfgMist.colorStart = (Color){200, 245, 255, 180};
       cfgMist.colorEnd = (Color){100, 150, 200, 0};
       cfgMist.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE;
+      cfgMist.forceField = &s_tubeMistField;
       SpawnParticle(cfgMist);
     }
   }

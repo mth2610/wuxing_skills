@@ -47,7 +47,9 @@ add_executable(wuxing
     # --- Các file Core Systems mới được thêm vào ---
     utils_math.c
     path_spline.c
+    force_field.c
     particle_system.c
+    trail_system.c
 )
 
 # Tự động copy file Shader và Texture vào thư mục build để game không bị lỗi load

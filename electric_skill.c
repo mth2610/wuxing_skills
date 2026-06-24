@@ -1,4 +1,5 @@
 #include "electric_skill.h"
+#include "force_field.h"
 #include "particle_system.h"
 #include "raymath.h"
 #include "ribbon_strip.h"
@@ -9,6 +10,10 @@
 #include <stddef.h>
 
 #define MAX_EMITTERS 10
+
+// --- Force Fields của Electric Skill ---
+static ForceField s_electricSparkField; // tia lửa nổ: Perlin jấy giật mạnh
+static ForceField s_electricArcField;   // tia điện bốc lên: Perlin + gravity nhẹ
 
 // ---- Electric Skill Travel Settings ----
 #define ELECTRIC_TRAVEL_SPEED 1.6f
@@ -94,6 +99,23 @@ void InitElectricSkill(int screenWidth, int screenHeight) {
 
   for (int i = 0; i < MAX_EMITTERS; i++)
     emitters[i].active = false;
+
+  // Spark jấy giật mạnh: Perlin noise nhanh + không trọng lực
+  ForceField_Clear(&s_electricSparkField);
+  ForceField_AddLayer(&s_electricSparkField, (ForceLayer){
+    .type = FORCE_NOISE_PERLIN, .strength = 80.0f,
+    .noiseScale = 0.025f, .noiseSpeed = 3.0f   // speed cao = jấy giật nhanh
+  });
+
+  // Tia điện bốc lên sau va chạm: Perlin + trọng lực nhẹ kéo xuống
+  ForceField_Clear(&s_electricArcField);
+  ForceField_AddLayer(&s_electricArcField, (ForceLayer){
+    .type = FORCE_NOISE_PERLIN, .strength = 60.0f,
+    .noiseScale = 0.020f, .noiseSpeed = 2.5f
+  });
+  ForceField_AddLayer(&s_electricArcField, (ForceLayer){
+    .type = FORCE_GRAVITY_DIR, .direction = {0,-1,0}, .strength = 100.0f
+  });
 }
 
 void CastElectricSkill(Vector3 startPos, Vector3 target, float sizeScale) {
@@ -136,6 +158,7 @@ void CastElectricSkill(Vector3 startPos, Vector3 target, float sizeScale) {
     p.colorStart = (Color){150, 200, 255, 255};
     p.colorEnd = (Color){20, 50, 255, 0};
     p.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_TURBULENCE;
+    p.forceField = &s_electricSparkField;
     SpawnParticle(p);
   }
 }
@@ -207,6 +230,7 @@ void UpdateElectricSkill(float dt) {
           p.physicsFlags =
               P_PHYSICS_DRAG | P_PHYSICS_TURBULENCE | P_PHYSICS_FORCE;
           p.force = (Vector3){0, -100.0f, 0};
+          p.forceField = &s_electricArcField;
           SpawnParticle(p);
         }
 

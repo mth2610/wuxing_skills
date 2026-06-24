@@ -1,4 +1,5 @@
 #include "wind_skill.h"
+#include "force_field.h"
 #include "particle_system.h"
 #include "raymath.h"
 #include "ribbon_strip.h"
@@ -10,6 +11,10 @@
 #define MAX_EMITTERS 5
 #define TORNADO_RIBBONS 5
 #define RIBBON_SEGMENTS 40
+
+// --- Force Fields của Wind Skill ---
+static ForceField s_tornadoField;  // lốc: vortex quanh trục Y + curl noise
+static ForceField s_disperseField; // tán nước: Perlin loạn xạ khi tan
 
 typedef struct {
   bool active;
@@ -46,6 +51,26 @@ void InitWindSkill(int screenWidth, int screenHeight) {
   for (int i = 0; i < MAX_EMITTERS; i++) {
     emitters[i].active = false;
   }
+
+  // Lốc xoáy: vortex quanh trục Y + curl đẩy hạt theo làn sóng gió
+  ForceField_Clear(&s_tornadoField);
+  ForceField_AddLayer(&s_tornadoField, (ForceLayer){
+    .type      = FORCE_VORTEX,
+    .origin    = {0,0,0},          // cập nhật dynamic khi spawn
+    .direction = {0,1,0},          // trục Y
+    .strength  = 400.0f,
+  });
+  ForceField_AddLayer(&s_tornadoField, (ForceLayer){
+    .type = FORCE_NOISE_CURL, .strength = 40.0f,
+    .noiseScale = 0.012f, .noiseSpeed = 1.0f
+  });
+
+  // Hạt tán khi lốc kết thúc: Perlin loạn xạ
+  ForceField_Clear(&s_disperseField);
+  ForceField_AddLayer(&s_disperseField, (ForceLayer){
+    .type = FORCE_NOISE_PERLIN, .strength = 50.0f,
+    .noiseScale = 0.010f, .noiseSpeed = 0.8f
+  });
 }
 
 void CastWindSkill(Vector3 startPos, Vector3 target, SkillParams params) {
@@ -116,6 +141,7 @@ void UpdateWindSkill(float dt) {
         p.colorStart = (Color){180, 220, 255, 120};
         p.colorEnd = (Color){50, 100, 200, 0};
         p.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_TURBULENCE;
+        p.forceField = &s_disperseField;
         SpawnParticle(p);
       }
       continue;
@@ -147,6 +173,9 @@ void UpdateWindSkill(float dt) {
 
       Vector3 suckForce = Vector3Scale(Vector3Normalize(toCenter), 400.0f);
 
+      // Cập nhật origin của vortex layer theo vị trí emitter hiện tại
+      s_tornadoField.layers[0].origin = emitters[e].position;
+
       ParticleConfig p = {0};
       p.position = pos;
       p.velocity = vel;
@@ -165,6 +194,7 @@ void UpdateWindSkill(float dt) {
       }
 
       p.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE | P_PHYSICS_TURBULENCE;
+      p.forceField = &s_tornadoField;
       SpawnParticle(p);
 
       emitters[e].spawnAccumulator -= spawnRate;

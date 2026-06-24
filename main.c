@@ -1,10 +1,11 @@
-#include "particle_system.h" // MỚI: Thêm thư viện quản lý hạt toàn cục
+#include "particle_system.h" // Thư viện quản lý hạt toàn cục (Compute Shader)
 #include "raylib.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include "sandbox_core.h"
 #include "skill_manager.h"
 #include "sword_rain_skill.h"
+#include "trail_system.h" // MỚI: Thư viện quản lý dải khí, kiếm bay (Smart Projectiles)
 #include "ui_panel.h"
 #include <math.h>
 #include <stdio.h>
@@ -54,13 +55,14 @@ int main(void) {
   rlSetClipPlanes(0.1f, 15000.0f);
 
   // -----------------------------------------------------------------
-  // KHỞI TẠO HỆ THỐNG HẠT TOÀN CỤC & TẠO TEXTURE DÙNG CHUNG
+  // KHỞI TẠO HỆ THỐNG VFX (HẠT VÀ DẢI NĂNG LƯỢNG)
   // -----------------------------------------------------------------
   InitParticleSystem();
+  InitTrailSystem(); // MỚI: Khởi tạo hệ thống Trail System
+
   Image img = GenImageGradientRadial(64, 64, 0.0f, WHITE, BLACK);
   Texture2D globalParticleTex = LoadTextureFromImage(img);
-  UnloadImage(img); // Giải phóng bộ nhớ RAM của Image sau khi đã chuyển lên
-                    // VRAM thành Texture
+  UnloadImage(img);
 
   InitSkillManager(screenWidth, screenHeight);
   RegisterStaticOccluder((Vector3){400.0f, 0.0f, 320.0f}, 25.0f, 62.5f);
@@ -101,9 +103,11 @@ int main(void) {
 
     UpdateSkillManager(dt, enemy.position, 35.0f);
 
-    // MỚI: Cập nhật vật lý (Trọng lực, lực cản, nhiễu loạn) cho TOÀN BỘ hạt
-    // đang bay
+    // Cập nhật hệ thống Hạt (Tia lửa, vụ nổ)
     UpdateParticles(dt);
+
+    // MỚI: Cập nhật hệ thống Trail (Kiếm bay, dải khí, cổng phép thuật)
+    UpdateTrailSystem(dt);
 
     BeginDrawing();
     ClearBackground(GetColor(0x111111FF));
@@ -113,8 +117,13 @@ int main(void) {
     DrawSkillManagerWorld3D();
 
     // -------------------------------------------------------------
-    // VẼ TẬP TRUNG TOÀN BỘ HẠT HIỆU ỨNG (BATCHED DRAWING PASS)
+    // VẼ TẬP TRUNG TOÀN BỘ VFX HIỆU ỨNG (BATCHED DRAWING PASS)
     // -------------------------------------------------------------
+    // 1. Vẽ Trail System (Do Trail System tự vô hiệu hóa Depth Mask và bật
+    // Additive Blend bên trong nó)
+    DrawTrailEntities(camera);
+
+    // 2. Vẽ Particle System (Hạt)
     rlDisableDepthMask();
     BeginBlendMode(BLEND_ADDITIVE);
 
@@ -143,9 +152,9 @@ int main(void) {
   }
 
   // Giải phóng tài nguyên hệ thống
-  UnloadTexture(
-      globalParticleTex); // MỚI: Giải phóng texture dùng chung toàn cục
-  UnloadParticleSystem(); // Giải phóng particle system (CPU array hoặc GPU SSBO)
+  UnloadTexture(globalParticleTex);
+  UnloadParticleSystem();
+  UnloadTrailSystem(); // MỚI: Giải phóng Trail System
   UnloadSkillManager();
   CloseWindow();
 

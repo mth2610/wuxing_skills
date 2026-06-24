@@ -1,4 +1,5 @@
 #include "particle_system.h"
+#include "force_field.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include "utils_math.h"
@@ -29,6 +30,7 @@ static int lastUsedIndex = 0;
 #ifdef __APPLE__
 
 static ParticleGPU *cpuParticles = NULL;
+static const ForceField **cpuForceFields = NULL; // mảng con trỏ ForceField song song
 static int activeParticleCount = 0;
 static Shader cpuRenderShader;
 static Mesh cpuMesh;
@@ -38,6 +40,8 @@ void InitParticleSystem(void) {
   cpuRenderShader = LoadShader("particles_cpu.vs", "particles_cpu.fs");
   cpuParticles =
       (ParticleGPU *)calloc(MAX_GLOBAL_PARTICLES, sizeof(ParticleGPU));
+  cpuForceFields =
+      (const ForceField **)calloc(MAX_GLOBAL_PARTICLES, sizeof(ForceField *));
   activeParticleCount = 0;
 
   int totalVertices = MAX_GLOBAL_PARTICLES * 4;
@@ -105,6 +109,9 @@ void SpawnParticle(ParticleConfig config) {
   p->lifeData = (Vector4){config.lifetime, config.lifetime,
                           Random01() * PI * 2.0f, config.viscosity};
 
+  // Lưu con trỏ ForceField của particle này (NULL nếu không dùng)
+  cpuForceFields[activeParticleCount] = config.forceField;
+
   activeParticleCount++;
 }
 
@@ -119,7 +126,9 @@ void UpdateParticles(float dt) {
 
     p->lifeData.x -= dt;
     if (p->lifeData.x <= 0.0f) {
-      cpuParticles[i] = cpuParticles[activeParticleCount - 1];
+      // Dense-array compact: ghi đè bằng phần tử cuối, hoán đổi cả FF pointer
+      cpuParticles[i]    = cpuParticles[activeParticleCount - 1];
+      cpuForceFields[i]  = cpuForceFields[activeParticleCount - 1];
       activeParticleCount--;
       continue;
     }
@@ -174,6 +183,16 @@ void UpdateParticles(float dt) {
       velX *= viscosityFactor;
       velY *= viscosityFactor;
       velZ *= viscosityFactor;
+    }
+
+    // ÁP DỤNG FORCE FIELD (nếu particle này có gán ForceField)
+    if (cpuForceFields[i]) {
+      Vector3 curPos = {p->pos_radius.x, p->pos_radius.y, p->pos_radius.z};
+      Vector3 curVel = {velX, velY, velZ};
+      Vector3 acc    = ForceField_Evaluate(cpuForceFields[i], curPos, curVel, time);
+      velX += acc.x * dt;
+      velY += acc.y * dt;
+      velZ += acc.z * dt;
     }
 
     p->vel_drag.x = velX;
@@ -277,7 +296,9 @@ void UnloadParticleSystem(void) {
   UnloadShader(cpuRenderShader);
   UnloadMesh(cpuMesh);
   free(cpuParticles);
-  cpuParticles = NULL;
+  free(cpuForceFields);
+  cpuParticles    = NULL;
+  cpuForceFields  = NULL;
   activeParticleCount = 0;
 }
 

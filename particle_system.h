@@ -1,6 +1,7 @@
 #ifndef PARTICLE_SYSTEM_H
 #define PARTICLE_SYSTEM_H
 
+#include "force_field.h"
 #include "raylib.h"
 #include <stdbool.h>
 
@@ -22,8 +23,12 @@ typedef struct {
   float lifetime;
   float drag;
   float turbulence;
-  float viscosity; // <-- BẠN THÊM DÒNG NÀY VÀO ĐÂY
+  float viscosity;
   int physicsFlags;
+
+  // ForceField tùy chọn: NULL = không dùng; non-NULL = apply force field mỗi frame
+  // Caller sở hữu bộ nhớ — particle_system chỉ giữ con trỏ, không copy
+  const ForceField *forceField;
 } ParticleConfig;
 
 void InitParticleSystem(void);

@@ -7,6 +7,7 @@
 #include "rlgl.h"
 #include "skill_manager.h"
 #include "wood_skill.h"
+#include "force_field.h"
 #include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -17,6 +18,9 @@
 
 #define WOOD_TRAVEL_SPEED 0.95f
 #define WOOD_PROGRESS_MAX 2.4f
+
+static ForceField s_woodLeafField;
+static ForceField s_woodShardField;
 
 typedef struct {
   bool active;
@@ -190,6 +194,7 @@ void UpdateWoodSkill(float dt) {
         cfgLeaf.force = (Vector3){0, -65.0f, 0};
         cfgLeaf.drag = 1.5f;
         cfgLeaf.turbulence = 30.0f;
+        cfgLeaf.forceField = &s_woodLeafField;
         cfgLeaf.radius =
             Math_Mix(2.5f, 5.0f, Random01()) * emitters[e].sizeScale;
         cfgLeaf.lifetime = Math_Mix(1.0f, 1.8f, Random01());
@@ -230,6 +235,7 @@ void UpdateWoodSkill(float dt) {
                                       sinf(angle) * speed};
         cfgShard.force = (Vector3){0, -750.0f, 0};
         cfgShard.drag = 0.5f;
+        cfgShard.forceField = &s_woodShardField;
         cfgShard.radius =
             Math_Mix(2.0f, 5.0f, Random01()) * emitters[e].sizeScale;
         cfgShard.lifetime = Math_Mix(0.6f, 1.1f, Random01());
@@ -335,6 +341,22 @@ void InitWoodSkill(int screenWidth, int screenHeight) {
     emitters[i].active = false;
     emitters[i].pathCount = 0;
   }
+
+  // Lá rơi: curl noise nhẹ = tạo cảm giác lá bay lướt không phải rơi thẳng
+  ForceField_Clear(&s_woodLeafField);
+  ForceField_AddLayer(&s_woodLeafField, (ForceLayer){
+    .type = FORCE_NOISE_CURL, .strength = 25.0f,
+    .noiseScale = 0.012f, .noiseSpeed = 0.4f
+  });
+  ForceField_AddLayer(&s_woodLeafField, (ForceLayer){
+    .type = FORCE_GRAVITY_DIR, .direction = {0,-1,0}, .strength = 65.0f
+  });
+
+  // Mảnh gỗ vỡ: trọng lực mạnh, không nhiễu — rơi nặng nề
+  ForceField_Clear(&s_woodShardField);
+  ForceField_AddLayer(&s_woodShardField, (ForceLayer){
+    .type = FORCE_GRAVITY_DIR, .direction = {0,-1,0}, .strength = 750.0f
+  });
 }
 
 void CastWoodSkill(Vector3 startPos, Vector3 target, SkillParams params) {
