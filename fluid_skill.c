@@ -45,24 +45,48 @@ static inline float ClampSizeScale(float scale) {
 }
 
 static void TriggerFluidImpact(Vector3 pos, float sizeScale) {
-  int splashCount = GetRandomValue(15, 25) * sizeScale;
+  // Tăng số lượng hạt splash để tia nước nhìn dày dặn, rõ nét hơn
+  int splashCount = GetRandomValue(30, 45) * sizeScale;
+
   for (int s = 0; s < splashCount; s++) {
+    // 1. Hướng dạt ngang (vòng tròn 360 độ quanh điểm va chạm)
     float angle = Random01() * PI * 2.0f;
-    float pitch = (Random01() - 0.5f) * PI;
-    float speed = Math_Mix(200.0f, 500.0f, Random01()) * sizeScale;
+
+    // 2. SỬA TẠI ĐÂY: Thay vì góc pitch tự do từ -90 đến 90 độ,
+    // ta ép góc pitch chỉ từ 15 đến 65 độ (0.26 rad đến 1.14 rad) hướng lên
+    // trên.
+    float pitch = Math_Mix(15.0f * DEG2RAD, 65.0f * DEG2RAD, Random01());
+
+    // 3. Tốc độ văng mạnh mẽ hơn khi va chạm
+    float speed = Math_Mix(350.0f, 700.0f, Random01()) * sizeScale;
 
     ParticleConfig cfg = {0};
     cfg.position = pos;
-    cfg.velocity = (Vector3){cosf(angle) * speed * cosf(pitch),
-                             sinf(pitch) * speed + (250.0f * sizeScale),
-                             sinf(angle) * speed * cosf(pitch)};
-    cfg.force = (Vector3){0.0f, GRAVITY_Y, 0.0f};
-    cfg.drag = FLUID_DRAG_SPLASH;
-    cfg.radius = Math_Mix(2.5f, 7.0f, Random01()) * sizeScale * 3.5f;
-    cfg.lifetime = Math_Mix(0.4f, 1.2f, Random01());
-    cfg.colorStart = (Color){200, 240, 255, 230};
-    cfg.colorEnd = (Color){60, 150, 220, 0};
+
+    // Tính toán lại Vector vận tốc dựa trên góc pitch đã ép hướng lên trên
+    cfg.velocity = (Vector3){
+        cosf(angle) * speed * cosf(pitch), // Lực văng dạt ngang trục X
+        sinf(pitch) * speed, // Lực hất ngược lên trên trục Y (luôn dương)
+        sinf(angle) * speed * cosf(pitch) // Lực văng dạt ngang trục Z
+    };
+
+    // Trọng lực kéo nước rơi xuống lại tạo hình vòng cung splash
+    cfg.viscosity = 1.2f; // Độ nhớt càng cao, tia nước văng ra sẽ gom cụm, đặc
+                          // quánh mượt mà hơn (Thử trong khoảng 0.2f đến 3.0f)
+    cfg.force = (Vector3){0.0f, GRAVITY_Y * 1.3f, 0.0f};
+    cfg.drag = FLUID_DRAG_SPLASH * 0.7f; // Giảm bớt drag để giọt nước văng đi
+                                         // xa hơn thay vì khựng lại thành sương
+
+    // Kích thước hạt ngẫu nhiên từ nhỏ đến lớn để tạo các tia nước bắn ra sinh
+    // động
+    cfg.radius = Math_Mix(1.5f, 5.0f, Random01()) * sizeScale * 3.5f;
+    cfg.lifetime = Math_Mix(0.3f, 0.9f, Random01());
+
+    // Màu sắc: Giữ màu nước xanh trong suốt
+    cfg.colorStart = (Color){180, 230, 255, 240};
+    cfg.colorEnd = (Color){50, 130, 200, 0};
     cfg.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE;
+
     SpawnParticle(cfg);
   }
 }

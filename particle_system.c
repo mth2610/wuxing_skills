@@ -17,7 +17,8 @@ typedef struct {
   Vector4 force_turb;
   Vector4 colorStart;
   Vector4 colorEnd;
-  Vector4 lifeData;
+  Vector4 lifeData; // x: lifetime còn lại, y: tổng lifetime, z: phase nhiễu, w:
+                    // VISCOSITY (ĐỘ NHỚT)
 } ParticleGPU;
 
 static int lastUsedIndex = 0;
@@ -28,7 +29,7 @@ static int lastUsedIndex = 0;
 #ifdef __APPLE__
 
 static ParticleGPU *cpuParticles = NULL;
-static int activeParticleCount = 0; // TỐI ƯU: Quản lý mật độ hạt sống
+static int activeParticleCount = 0;
 static Shader cpuRenderShader;
 static Mesh cpuMesh;
 static Material cpuMaterial;
@@ -52,7 +53,6 @@ void InitParticleSystem(void) {
   cpuMesh.indices =
       (unsigned short *)calloc(totalIndices, sizeof(unsigned short));
 
-  // Cấu hình Indices cố định 1 lần duy nhất
   for (int i = 0; i < MAX_GLOBAL_PARTICLES; i++) {
     int vi = i * 4;
     int ii = i * 6;
@@ -64,7 +64,6 @@ void InitParticleSystem(void) {
     cpuMesh.indices[ii + 5] = (unsigned short)(vi + 3);
   }
 
-  // Cấu hình UV cố định 1 lần duy nhất
   for (int i = 0; i < MAX_GLOBAL_PARTICLES; i++) {
     int vi = i * 4;
     cpuMesh.texcoords[(vi + 0) * 2 + 0] = 0.0f;
@@ -84,11 +83,9 @@ void InitParticleSystem(void) {
 }
 
 void SpawnParticle(ParticleConfig config) {
-  // Nếu mảng đầy, không sinh nữa để bảo vệ bộ nhớ
   if (activeParticleCount >= MAX_GLOBAL_PARTICLES)
     return;
 
-  // Luôn sinh hạt mới ở cuối phân vùng active (Cực nhanh, tốn O(1))
   ParticleGPU *p = &cpuParticles[activeParticleCount];
 
   p->pos_radius = (Vector4){config.position.x, config.position.y,
@@ -103,8 +100,10 @@ void SpawnParticle(ParticleConfig config) {
   p->colorEnd =
       (Vector4){config.colorEnd.r / 255.0f, config.colorEnd.g / 255.0f,
                 config.colorEnd.b / 255.0f, config.colorEnd.a / 255.0f};
-  p->lifeData =
-      (Vector4){config.lifetime, config.lifetime, Random01() * PI * 2.0f, 1.0f};
+
+  // TÍCH HỢP ĐỘ NHỚT: Đưa config.viscosity vào thành phần W của lifeData
+  p->lifeData = (Vector4){config.lifetime, config.lifetime,
+                          Random01() * PI * 2.0f, config.viscosity};
 
   activeParticleCount++;
 }
@@ -115,14 +114,11 @@ void UpdateParticles(float dt) {
 
   float time = (float)GetTime();
 
-  // TỐI ƯU CHÌA KHÓA: Duyệt ngược từ đuôi vùng sống về đầu để Swap-and-Pop an
-  // toàn
   for (int i = activeParticleCount - 1; i >= 0; i--) {
     ParticleGPU *p = &cpuParticles[i];
 
     p->lifeData.x -= dt;
     if (p->lifeData.x <= 0.0f) {
-      // SWAP-AND-POP: Bốc hạt cuối cùng đang sống trám vào ô của hạt vừa chết
       cpuParticles[i] = cpuParticles[activeParticleCount - 1];
       activeParticleCount--;
       continue;
@@ -130,7 +126,6 @@ void UpdateParticles(float dt) {
 
     float lifeRatio = p->lifeData.x / p->lifeData.y;
 
-    // Cache các biến ra thanh ghi (Registers) tránh truy xuất mảng liên tục
     float velX = p->vel_drag.x;
     float velY = p->vel_drag.y;
     float velZ = p->vel_drag.z;
@@ -139,7 +134,9 @@ void UpdateParticles(float dt) {
     float forceY = p->force_turb.y;
     float forceZ = p->force_turb.z;
     float turb = p->force_turb.w;
+    float viscosity = p->lifeData.w; // Cache độ nhớt từ thanh ghi
 
+    // Tính toán Drag nguyên bản
     if (drag > 0.0f) {
       float factor = 1.0f - drag * dt;
       velX *= factor;
@@ -147,18 +144,36 @@ void UpdateParticles(float dt) {
       velZ *= factor;
     }
 
+    // Áp dụng gia tốc lực
     velX += forceX * dt;
     velY += forceY * dt;
     velZ += forceZ * dt;
 
+    // Tính toán độ hỗn loạn (Turbulence) chịu ảnh hưởng giảm chấn bởi Độ Nhớt
+    // (Viscosity)
     if (turb > 0.0f) {
       float t = time * 18.0f + p->lifeData.z;
-      float turbStrength = turb * lifeRatio;
+
+      // Độ nhớt càng cao thì lực hỗn loạn tác động lên hạt càng bị suy hao
+      // (mượt hóa chuyển động nước)
+      float viscosityDamp = 1.0f / (1.0f + viscosity * 2.5f);
+      float turbStrength = turb * lifeRatio * viscosityDamp;
+
       float sinT = sinf(t);
       float cosT = cosf(t * 0.8f);
       velX += sinT * turbStrength * dt;
       velY += cosT * turbStrength * dt;
       velZ += (sinT * cosT) * turbStrength * dt;
+    }
+
+    // TÍCH HỢP ĐỘ NHỚT VÀO VẬN TỐC TỔNG THỂ:
+    // Độ nhớt làm mượt vận tốc theo thời gian, ngăn các hạt nước bắn lẻ tẻ mất
+    // kiểm soát
+    if (viscosity > 0.0f) {
+      float viscosityFactor = expf(-viscosity * dt * 4.0f);
+      velX *= viscosityFactor;
+      velY *= viscosityFactor;
+      velZ *= viscosityFactor;
     }
 
     p->vel_drag.x = velX;
@@ -178,7 +193,6 @@ static void BuildParticleMeshData(Camera3D camera) {
   Vector3 camRight = {matView.m0, matView.m4, matView.m8};
   Vector3 camUp = {matView.m1, matView.m5, matView.m9};
 
-  // TỐI ƯU: Chỉ xử lý và tính toán toán học cho các hạt ĐANG SỐNG
   for (int i = 0; i < activeParticleCount; i++) {
     ParticleGPU *p = &cpuParticles[i];
     int vi = i * 4;
@@ -207,7 +221,6 @@ static void BuildParticleMeshData(Camera3D camera) {
     float ryU = camUp.y * radius;
     float rzU = camUp.z * radius;
 
-    // Trích xuất góc hình vuông toán học thẳng về camera
     cpuMesh.vertices[(vi + 0) * 3 + 0] = px - rxR - rxU;
     cpuMesh.vertices[(vi + 0) * 3 + 1] = py - ryR - ryU;
     cpuMesh.vertices[(vi + 0) * 3 + 2] = pz - rzR - rzU;
@@ -232,8 +245,6 @@ static void BuildParticleMeshData(Camera3D camera) {
     }
   }
 
-  // TỐI ƯU SIÊU TỐC: Chỉ nạp đúng số lượng Byte của hạt sống lên VRAM, bỏ mặc
-  // vùng đuôi thừa
   UpdateMeshBuffer(cpuMesh, 0, cpuMesh.vertices,
                    activeParticleCount * 4 * 3 * sizeof(float), 0);
   UpdateMeshBuffer(cpuMesh, 3, cpuMesh.colors,
@@ -251,7 +262,6 @@ void DrawParticles(Camera3D camera, Texture2D texture) {
 
   cpuMaterial.maps[MATERIAL_MAP_ALBEDO].texture = texture;
 
-  // TỐI ƯU: Điều chỉnh số lượng tam giác vẽ thực tế dựa trên số hạt sống
   cpuMesh.vertexCount = activeParticleCount * 4;
   cpuMesh.triangleCount = activeParticleCount * 2;
 
@@ -272,7 +282,7 @@ void UnloadParticleSystem(void) {
 }
 
 // =============================================================================
-// Linux/Windows/Android: GPU COMPUTE SHADER MODE (GIỮ NGUYÊN KIẾN TRÚC GỐC)
+// Linux/Windows/Android: GPU COMPUTE SHADER MODE
 // =============================================================================
 #else
 
@@ -332,8 +342,10 @@ void SpawnParticle(ParticleConfig config) {
   gpuPart.colorEnd =
       (Vector4){config.colorEnd.r / 255.0f, config.colorEnd.g / 255.0f,
                 config.colorEnd.b / 255.0f, config.colorEnd.a / 255.0f};
-  gpuPart.lifeData =
-      (Vector4){config.lifetime, config.lifetime, Random01() * PI * 2.0f, 1.0f};
+
+  // TÍCH HỢP ĐỘ NHỚT CHO GPU: Gán config.viscosity vào thành phần .w
+  gpuPart.lifeData = (Vector4){config.lifetime, config.lifetime,
+                               Random01() * PI * 2.0f, config.viscosity};
 
   int offset = lastUsedIndex * sizeof(ParticleGPU);
   rlUpdateShaderBuffer(ssboParticleId, &gpuPart, sizeof(ParticleGPU), offset);

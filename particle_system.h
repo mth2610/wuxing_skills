@@ -16,13 +16,14 @@ typedef struct {
   Vector3 position;
   Vector3 velocity;
   Vector3 force;
-  float drag;
-  float turbulence;
-  float radius;
-  float lifetime;
   Color colorStart;
   Color colorEnd;
-  unsigned int physicsFlags;
+  float radius;
+  float lifetime;
+  float drag;
+  float turbulence;
+  float viscosity; // <-- BẠN THÊM DÒNG NÀY VÀO ĐÂY
+  int physicsFlags;
 } ParticleConfig;
 
 void InitParticleSystem(void);
