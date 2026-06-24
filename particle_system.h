@@ -4,8 +4,6 @@
 #include "raylib.h"
 #include <stdbool.h>
 
-#define MAX_GLOBAL_PARTICLES 4000
-
 // Định nghĩa các cờ bật/tắt tính năng vật lý bằng Bitmask
 typedef enum {
   P_PHYSICS_NONE = 0,
@@ -31,6 +29,7 @@ void InitParticleSystem(void);
 void SpawnParticle(ParticleConfig config);
 void UpdateParticles(float dt);
 void DrawParticles(Camera3D camera, Texture2D texture);
+void UnloadParticleSystem(void);
 bool IsParticleSystemActive(void);
 
 #endif // PARTICLE_SYSTEM_H

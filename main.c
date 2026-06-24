@@ -145,6 +145,7 @@ int main(void) {
   // Giải phóng tài nguyên hệ thống
   UnloadTexture(
       globalParticleTex); // MỚI: Giải phóng texture dùng chung toàn cục
+  UnloadParticleSystem(); // Giải phóng particle system (CPU array hoặc GPU SSBO)
   UnloadSkillManager();
   CloseWindow();
 

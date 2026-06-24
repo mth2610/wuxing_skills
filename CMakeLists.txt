@@ -62,7 +62,14 @@ configure_file(electric.fs ${CMAKE_CURRENT_BINARY_DIR}/electric.fs COPYONLY)
 configure_file(wind.fs ${CMAKE_CURRENT_BINARY_DIR}/wind.fs COPYONLY)
 configure_file(taiji.fs ${CMAKE_CURRENT_BINARY_DIR}/taiji.fs COPYONLY)
 
-
+# --- Copy Shaders của hệ thống hạt mới ---
+# GPU mode (Linux/Windows - OpenGL 4.3+): Compute Shader + SSBO
+configure_file(particles.comp ${CMAKE_CURRENT_BINARY_DIR}/particles.comp COPYONLY)
+configure_file(particles.vs ${CMAKE_CURRENT_BINARY_DIR}/particles.vs COPYONLY)
+configure_file(particles.fs ${CMAKE_CURRENT_BINARY_DIR}/particles.fs COPYONLY)
+# CPU mode (macOS - OpenGL 4.1): Vertex attributes thay SSBO
+configure_file(particles_cpu.vs ${CMAKE_CURRENT_BINARY_DIR}/particles_cpu.vs COPYONLY)
+configure_file(particles_cpu.fs ${CMAKE_CURRENT_BINARY_DIR}/particles_cpu.fs COPYONLY)
 
 # --- Copy thêm Texture đầu rồng của chiêu Lửa ---
 configure_file(dragon_head.png ${CMAKE_CURRENT_BINARY_DIR}/dragon_head.png COPYONLY)

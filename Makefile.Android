@@ -1,0 +1,305 @@
+#**************************************************************************************************
+#
+#   Wuxing Skills - Makefile for Android APK building
+#   Adapted from raylib Makefile.Android template
+#
+#**************************************************************************************************
+
+# Define required raylib variables
+PLATFORM               ?= PLATFORM_ANDROID
+RAYLIB_PATH             = build/_deps/raylib-src
+
+# Android architecture and API version
+ANDROID_ARCH           ?= ARM64
+ANDROID_API_VERSION     = 31
+
+# Android SDK/NDK paths (macOS)
+ANDROID_HOME           ?= $(HOME)/Library/Android/sdk
+ANDROID_NDK            ?= $(ANDROID_HOME)/ndk/28.2.13676358
+ANDROID_TOOLCHAIN       = $(ANDROID_NDK)/toolchains/llvm/prebuilt/darwin-x86_64
+ANDROID_BUILD_TOOLS    ?= $(ANDROID_HOME)/build-tools/35.0.0
+ANDROID_PLATFORM_TOOLS  = $(ANDROID_HOME)/platform-tools
+
+# Java
+JAVA_HOME              ?= /usr/local/opt/openjdk@17
+
+ifeq ($(ANDROID_ARCH),ARM)
+    ANDROID_ARCH_NAME   = armeabi-v7a
+endif
+ifeq ($(ANDROID_ARCH),ARM64)
+    ANDROID_ARCH_NAME   = arm64-v8a
+endif
+
+# Project configuration
+PROJECT_NAME           ?= wuxing_skills
+PROJECT_LIBRARY_NAME   ?= main
+PROJECT_BUILD_ID       ?= android
+PROJECT_BUILD_PATH     ?= $(PROJECT_BUILD_ID).$(PROJECT_NAME)
+PROJECT_RESOURCES_PATH ?= resources
+PROJECT_SOURCE_FILES   ?= main.c \
+                          fluid_skill.c \
+                          tube_skill.c \
+                          metal_skill.c \
+                          fire_skill.c \
+                          wood_skill.c \
+                          electric_skill.c \
+                          wind_skill.c \
+                          skill_manager.c \
+                          sword_rain_skill.c \
+                          ui_panel.c \
+                          sandbox_core.c \
+                          ribbon_strip.c \
+                          utils_math.c \
+                          path_spline.c \
+                          particle_system.c
+
+NATIVE_APP_GLUE_PATH    = $(ANDROID_NDK)/sources/android/native_app_glue
+
+# App configuration
+APP_LABEL_NAME         ?= WuxingSkills
+APP_COMPANY_NAME       ?= mth2610
+APP_PRODUCT_NAME       ?= wuxing
+APP_VERSION_CODE       ?= 1
+APP_VERSION_NAME       ?= 1.0
+APP_ICON_LDPI          ?= $(RAYLIB_PATH)/logo/raylib_36x36.png
+APP_ICON_MDPI          ?= $(RAYLIB_PATH)/logo/raylib_48x48.png
+APP_ICON_HDPI          ?= $(RAYLIB_PATH)/logo/raylib_72x72.png
+APP_SCREEN_ORIENTATION ?= landscape
+APP_KEYSTORE_PASS      ?= wuxing123
+
+# Library type: STATIC
+RAYLIB_LIBTYPE         ?= STATIC
+RAYLIB_LIB_PATH         = $(RAYLIB_PATH)/src
+
+# Compiler and archiver
+ifeq ($(ANDROID_ARCH),ARM)
+    CC = $(ANDROID_TOOLCHAIN)/bin/armv7a-linux-androideabi$(ANDROID_API_VERSION)-clang
+    AR = $(ANDROID_TOOLCHAIN)/bin/arm-linux-androideabi-ar
+endif
+ifeq ($(ANDROID_ARCH),ARM64)
+    CC = $(ANDROID_TOOLCHAIN)/bin/aarch64-linux-android$(ANDROID_API_VERSION)-clang
+    AR = $(ANDROID_TOOLCHAIN)/bin/aarch64-linux-android-ar
+endif
+
+# Compiler flags
+ifeq ($(ANDROID_ARCH),ARM)
+    CFLAGS = -std=c99 -march=armv7-a -mfloat-abi=softfp -mfpu=vfpv3-d16
+endif
+ifeq ($(ANDROID_ARCH),ARM64)
+    CFLAGS = -std=c99 -mfix-cortex-a53-835769
+endif
+CFLAGS += -ffunction-sections -funwind-tables -fstack-protector-strong -fPIC
+CFLAGS += -Wall -Wa,--noexecstack -Wformat -Werror=format-security -no-canonical-prefixes
+CFLAGS += -DANDROID -DPLATFORM_ANDROID -D__ANDROID_API__=$(ANDROID_API_VERSION)
+CFLAGS += -O2
+
+# Include paths
+INCLUDE_PATHS = -I. -I$(RAYLIB_PATH)/src -I$(NATIVE_APP_GLUE_PATH)
+
+# Linker flags
+LDFLAGS = -Wl,-soname,lib$(PROJECT_LIBRARY_NAME).so -Wl,--exclude-libs,libatomic.a
+LDFLAGS += -Wl,--build-id -Wl,--no-undefined -Wl,-z,noexecstack -Wl,-z,relro -Wl,-z,now -Wl,--warn-shared-textrel -Wl,--fatal-warnings
+LDFLAGS += -u ANativeActivity_onCreate
+LDFLAGS += -L. -L$(PROJECT_BUILD_PATH)/obj -L$(PROJECT_BUILD_PATH)/lib/$(ANDROID_ARCH_NAME)
+
+# Libraries
+LDLIBS = -lm -lc -lraylib -llog -landroid -lEGL -lGLESv2 -lOpenSLES -ldl
+
+# Object files
+OBJS = $(patsubst %.c, $(PROJECT_BUILD_PATH)/obj/%.o, $(PROJECT_SOURCE_FILES))
+
+# Source directories
+PROJECT_SOURCE_DIRS = $(sort $(dir $(PROJECT_SOURCE_FILES)))
+
+# =============================================================================
+# BUILD TARGETS
+# =============================================================================
+all: create_temp_project_dirs \
+     compile_raylib_android \
+     copy_project_required_libs \
+     copy_project_resources \
+     generate_loader_script \
+     generate_android_manifest \
+     generate_apk_keystore \
+     config_project_package \
+     compile_project_code \
+     compile_project_class \
+     compile_project_class_dex \
+     create_project_apk_package \
+     sign_project_apk_package \
+     zipalign_project_apk_package
+
+create_temp_project_dirs:
+	mkdir -p $(PROJECT_BUILD_PATH)
+	mkdir -p $(PROJECT_BUILD_PATH)/obj
+	mkdir -p $(PROJECT_BUILD_PATH)/obj/src
+	mkdir -p $(PROJECT_BUILD_PATH)/src
+	mkdir -p $(PROJECT_BUILD_PATH)/src/com
+	mkdir -p $(PROJECT_BUILD_PATH)/src/com/$(APP_COMPANY_NAME)
+	mkdir -p $(PROJECT_BUILD_PATH)/src/com/$(APP_COMPANY_NAME)/$(APP_PRODUCT_NAME)
+	mkdir -p $(PROJECT_BUILD_PATH)/lib
+	mkdir -p $(PROJECT_BUILD_PATH)/lib/$(ANDROID_ARCH_NAME)
+	mkdir -p $(PROJECT_BUILD_PATH)/bin
+	mkdir -p $(PROJECT_BUILD_PATH)/res
+	mkdir -p $(PROJECT_BUILD_PATH)/res/drawable-ldpi
+	mkdir -p $(PROJECT_BUILD_PATH)/res/drawable-mdpi
+	mkdir -p $(PROJECT_BUILD_PATH)/res/drawable-hdpi
+	mkdir -p $(PROJECT_BUILD_PATH)/res/values
+	mkdir -p $(PROJECT_BUILD_PATH)/assets
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/$(PROJECT_RESOURCES_PATH)
+
+# Compile raylib for Android using CMake + NDK toolchain
+compile_raylib_android:
+	@if [ ! -f "$(PROJECT_BUILD_PATH)/lib/$(ANDROID_ARCH_NAME)/libraylib.a" ]; then \
+		echo "=== Building raylib for Android ($(ANDROID_ARCH_NAME)) ===" && \
+		mkdir -p $(PROJECT_BUILD_PATH)/raylib_build && \
+		cd $(PROJECT_BUILD_PATH)/raylib_build && \
+		cmake $(CURDIR)/$(RAYLIB_PATH) \
+			-DCMAKE_TOOLCHAIN_FILE=$(ANDROID_NDK)/build/cmake/android.toolchain.cmake \
+			-DANDROID_ABI=$(ANDROID_ARCH_NAME) \
+			-DANDROID_NATIVE_API_LEVEL=$(ANDROID_API_VERSION) \
+			-DANDROID_PLATFORM=android-$(ANDROID_API_VERSION) \
+			-DCMAKE_BUILD_TYPE=Release \
+			-DBUILD_EXAMPLES=OFF \
+			-DBUILD_GAMES=OFF \
+			-DCUSTOMIZE_BUILD=ON \
+			-DPLATFORM=Android \
+			-DGRAPHICS=GRAPHICS_API_OPENGL_ES2 && \
+		cmake --build . --config Release -j8 && \
+		cp -f raylib/libraylib.a $(CURDIR)/$(PROJECT_BUILD_PATH)/lib/$(ANDROID_ARCH_NAME)/libraylib.a; \
+	else \
+		echo "=== raylib for Android already built, skipping ==="; \
+	fi
+
+copy_project_required_libs:
+	@echo "=== Copying libs ==="
+
+# Copy project resources: icons, strings.xml, shader/texture assets
+copy_project_resources:
+	cp -f $(APP_ICON_LDPI) $(PROJECT_BUILD_PATH)/res/drawable-ldpi/icon.png
+	cp -f $(APP_ICON_MDPI) $(PROJECT_BUILD_PATH)/res/drawable-mdpi/icon.png
+	cp -f $(APP_ICON_HDPI) $(PROJECT_BUILD_PATH)/res/drawable-hdpi/icon.png
+	@echo "<?xml version=\"1.0\" encoding=\"utf-8\"?>" > $(PROJECT_BUILD_PATH)/res/values/strings.xml
+	@echo "<resources><string name=\"app_name\">$(APP_LABEL_NAME)</string></resources>" >> $(PROJECT_BUILD_PATH)/res/values/strings.xml
+	@# Copy shader files vào assets
+	cp -f particles.comp $(PROJECT_BUILD_PATH)/assets/particles.comp
+	cp -f particles.vs $(PROJECT_BUILD_PATH)/assets/particles.vs
+	cp -f particles.fs $(PROJECT_BUILD_PATH)/assets/particles.fs
+	cp -f particles_cpu.vs $(PROJECT_BUILD_PATH)/assets/particles_cpu.vs
+	cp -f particles_cpu.fs $(PROJECT_BUILD_PATH)/assets/particles_cpu.fs
+	cp -f fluid.fs $(PROJECT_BUILD_PATH)/assets/fluid.fs
+	cp -f fluid.vs $(PROJECT_BUILD_PATH)/assets/fluid.vs
+	cp -f tube.fs $(PROJECT_BUILD_PATH)/assets/tube.fs
+	cp -f tube.vs $(PROJECT_BUILD_PATH)/assets/tube.vs
+	cp -f fire.fs $(PROJECT_BUILD_PATH)/assets/fire.fs
+	cp -f metal.fs $(PROJECT_BUILD_PATH)/assets/metal.fs
+	cp -f wood.fs $(PROJECT_BUILD_PATH)/assets/wood.fs
+	cp -f electric.fs $(PROJECT_BUILD_PATH)/assets/electric.fs
+	cp -f wind.fs $(PROJECT_BUILD_PATH)/assets/wind.fs
+	cp -f taiji.fs $(PROJECT_BUILD_PATH)/assets/taiji.fs
+	cp -f dragon_head.png $(PROJECT_BUILD_PATH)/assets/dragon_head.png
+	cp -f sword.png $(PROJECT_BUILD_PATH)/assets/sword.png
+
+generate_loader_script:
+	@echo "package com.$(APP_COMPANY_NAME).$(APP_PRODUCT_NAME);" > $(PROJECT_BUILD_PATH)/src/com/$(APP_COMPANY_NAME)/$(APP_PRODUCT_NAME)/NativeLoader.java
+	@echo "" >> $(PROJECT_BUILD_PATH)/src/com/$(APP_COMPANY_NAME)/$(APP_PRODUCT_NAME)/NativeLoader.java
+	@echo "public class NativeLoader extends android.app.NativeActivity {" >> $(PROJECT_BUILD_PATH)/src/com/$(APP_COMPANY_NAME)/$(APP_PRODUCT_NAME)/NativeLoader.java
+	@echo "    static {" >> $(PROJECT_BUILD_PATH)/src/com/$(APP_COMPANY_NAME)/$(APP_PRODUCT_NAME)/NativeLoader.java
+	@echo "        System.loadLibrary(\"$(PROJECT_LIBRARY_NAME)\");" >> $(PROJECT_BUILD_PATH)/src/com/$(APP_COMPANY_NAME)/$(APP_PRODUCT_NAME)/NativeLoader.java
+	@echo "    }" >> $(PROJECT_BUILD_PATH)/src/com/$(APP_COMPANY_NAME)/$(APP_PRODUCT_NAME)/NativeLoader.java
+	@echo "}" >> $(PROJECT_BUILD_PATH)/src/com/$(APP_COMPANY_NAME)/$(APP_PRODUCT_NAME)/NativeLoader.java
+
+generate_android_manifest:
+	@echo "<?xml version=\"1.0\" encoding=\"utf-8\"?>" > $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\"" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "        package=\"com.$(APP_COMPANY_NAME).$(APP_PRODUCT_NAME)\" " >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "        android:versionCode=\"$(APP_VERSION_CODE)\" android:versionName=\"$(APP_VERSION_NAME)\" >" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "    <uses-sdk android:minSdkVersion=\"$(ANDROID_API_VERSION)\" />" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "    <uses-feature android:glEsVersion=\"0x00030001\" android:required=\"true\" />" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "    <application android:allowBackup=\"false\" android:label=\"@string/app_name\" android:icon=\"@drawable/icon\" >" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "        <activity android:name=\"com.$(APP_COMPANY_NAME).$(APP_PRODUCT_NAME).NativeLoader\"" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "            android:theme=\"@android:style/Theme.NoTitleBar.Fullscreen\"" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "             android:configChanges=\"orientation|keyboardHidden|screenSize\"" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "            android:screenOrientation=\"$(APP_SCREEN_ORIENTATION)\" android:launchMode=\"singleTask\"" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "            android:clearTaskOnLaunch=\"true\">" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "            <meta-data android:name=\"android.app.lib_name\" android:value=\"$(PROJECT_LIBRARY_NAME)\" />" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "            <intent-filter>" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "                <action android:name=\"android.intent.action.MAIN\" />" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "                <category android:name=\"android.intent.category.LAUNCHER\" />" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "            </intent-filter>" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "        </activity>" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "    </application>" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "</manifest>" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+
+generate_apk_keystore:
+	@[ -f "$(PROJECT_BUILD_PATH)/$(PROJECT_NAME).keystore" ] || \
+		$(JAVA_HOME)/bin/keytool -genkeypair -validity 10000 \
+		-dname "CN=$(APP_COMPANY_NAME),O=Android,C=VN" \
+		-keystore $(PROJECT_BUILD_PATH)/$(PROJECT_NAME).keystore \
+		-storepass $(APP_KEYSTORE_PASS) -keypass $(APP_KEYSTORE_PASS) \
+		-alias $(PROJECT_NAME)Key -keyalg RSA
+
+config_project_package:
+	$(ANDROID_BUILD_TOOLS)/aapt package -f -m \
+		-S $(PROJECT_BUILD_PATH)/res \
+		-J $(PROJECT_BUILD_PATH)/src \
+		-M $(PROJECT_BUILD_PATH)/AndroidManifest.xml \
+		-I $(ANDROID_HOME)/platforms/android-$(ANDROID_API_VERSION)/android.jar
+
+compile_project_code: $(OBJS)
+	$(CC) -o $(PROJECT_BUILD_PATH)/lib/$(ANDROID_ARCH_NAME)/lib$(PROJECT_LIBRARY_NAME).so \
+		$(OBJS) -shared $(INCLUDE_PATHS) $(LDFLAGS) $(LDLIBS)
+
+$(PROJECT_BUILD_PATH)/obj/%.o:%.c
+	$(CC) -c $^ -o $@ $(INCLUDE_PATHS) $(CFLAGS)
+
+compile_project_class:
+	$(JAVA_HOME)/bin/javac -verbose -source 1.8 -target 1.8 \
+		-d $(PROJECT_BUILD_PATH)/obj \
+		-classpath $(ANDROID_HOME)/platforms/android-$(ANDROID_API_VERSION)/android.jar \
+		-d $(PROJECT_BUILD_PATH)/obj \
+		$(PROJECT_BUILD_PATH)/src/com/$(APP_COMPANY_NAME)/$(APP_PRODUCT_NAME)/R.java \
+		$(PROJECT_BUILD_PATH)/src/com/$(APP_COMPANY_NAME)/$(APP_PRODUCT_NAME)/NativeLoader.java
+
+compile_project_class_dex:
+	$(ANDROID_BUILD_TOOLS)/d8 --output $(PROJECT_BUILD_PATH)/bin/ \
+		$(PROJECT_BUILD_PATH)/obj/com/$(APP_COMPANY_NAME)/$(APP_PRODUCT_NAME)/*.class
+
+create_project_apk_package:
+	$(ANDROID_BUILD_TOOLS)/aapt package -f \
+		-M $(PROJECT_BUILD_PATH)/AndroidManifest.xml \
+		-S $(PROJECT_BUILD_PATH)/res \
+		-A $(PROJECT_BUILD_PATH)/assets \
+		-I $(ANDROID_HOME)/platforms/android-$(ANDROID_API_VERSION)/android.jar \
+		-F $(PROJECT_BUILD_PATH)/bin/$(PROJECT_NAME).unsigned.apk $(PROJECT_BUILD_PATH)/bin
+	cd $(PROJECT_BUILD_PATH) && $(ANDROID_BUILD_TOOLS)/aapt add \
+		bin/$(PROJECT_NAME).unsigned.apk lib/$(ANDROID_ARCH_NAME)/lib$(PROJECT_LIBRARY_NAME).so
+
+sign_project_apk_package:
+	$(ANDROID_BUILD_TOOLS)/apksigner sign --ks $(PROJECT_BUILD_PATH)/$(PROJECT_NAME).keystore \
+		--ks-pass pass:$(APP_KEYSTORE_PASS) --key-pass pass:$(APP_KEYSTORE_PASS) \
+		--ks-key-alias $(PROJECT_NAME)Key \
+		--out $(PROJECT_BUILD_PATH)/bin/$(PROJECT_NAME).signed.apk \
+		$(PROJECT_BUILD_PATH)/bin/$(PROJECT_NAME).unsigned.apk
+
+zipalign_project_apk_package:
+	$(ANDROID_BUILD_TOOLS)/zipalign -f 4 \
+		$(PROJECT_BUILD_PATH)/bin/$(PROJECT_NAME).signed.apk $(PROJECT_NAME).apk
+	@echo "=== APK đã sẵn sàng: $(PROJECT_NAME).apk ==="
+
+install:
+	$(ANDROID_PLATFORM_TOOLS)/adb install $(PROJECT_NAME).apk
+
+logcat:
+	$(ANDROID_PLATFORM_TOOLS)/adb logcat -c
+	$(ANDROID_PLATFORM_TOOLS)/adb logcat raylib:V *:S
+
+deploy:
+	$(ANDROID_PLATFORM_TOOLS)/adb install $(PROJECT_NAME).apk
+	$(ANDROID_PLATFORM_TOOLS)/adb logcat -c
+	$(ANDROID_PLATFORM_TOOLS)/adb logcat raylib:V *:S
+
+clean:
+	rm -rf $(PROJECT_BUILD_PATH)
+	rm -f $(PROJECT_NAME).apk
+	@echo Cleaning done
