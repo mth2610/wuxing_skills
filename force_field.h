@@ -31,6 +31,7 @@ typedef enum {
     FORCE_NOISE_PERLIN,   // trường nhiễu Perlin — đẩy hạt theo vector ngẫu nhiên
     FORCE_NOISE_CURL,     // trường Curl noise — không phân kỳ, swirling đẹp
     FORCE_DRAG,           // lực cản tỉ lệ vận tốc (cần truyền vel khi evaluate)
+    FORCE_VISCOSITY,      // giảm chấn mũ: vel *= exp(-strength * dt) — dùng cho chất lỏng
 } ForceType;
 
 // Mô tả một lớp lực đơn lẻ
@@ -72,5 +73,10 @@ bool ForceField_AddLayer(ForceField *ff, ForceLayer layer);
 // Tính gia tốc tổng tại vị trí pos với vận tốc vel (cần cho FORCE_DRAG), tại thời điểm time
 // Có thể gọi mỗi frame cho từng particle, từng trail, v.v.
 Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel, float time);
+
+// Tính hệ số giảm chấn nhân lên velocity từ tất cả layer FORCE_VISCOSITY trong field.
+// Trả về [0, 1]: 1.0 = không giảm, ~0 = dừng hoàn toàn.
+// Phải gọi SAU ForceField_Evaluate và nhân trực tiếp vào velocity.
+float ForceField_GetViscosityDamping(const ForceField *ff, float dt);
 
 #endif // FORCE_FIELD_H

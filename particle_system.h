@@ -19,7 +19,6 @@ typedef struct {
   float radius;
   float lifetime;
   float drag;
-  float viscosity;
   int physicsFlags;
 
   // ForceField tùy chọn: NULL = không dùng; non-NULL = apply force field mỗi frame

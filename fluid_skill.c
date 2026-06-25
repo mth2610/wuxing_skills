@@ -75,7 +75,6 @@ static void TriggerFluidImpact(Vector3 pos, float sizeScale) {
         sinf(angle) * speed * cosf(pitch) // Lực văng dạt ngang trục Z
     };
 
-    cfg.viscosity = 1.2f;
     cfg.drag = FLUID_DRAG_SPLASH * 0.7f;
     cfg.radius = Math_Mix(1.5f, 5.0f, Random01()) * sizeScale * 3.5f;
     cfg.lifetime = Math_Mix(0.3f, 0.9f, Random01());
@@ -207,8 +206,13 @@ void InitFluidSkill(int screenWidth, int screenHeight) {
     .type = FORCE_GRAVITY_DIR, .direction = {0,-1,0}, .strength = 845.0f
   });
   ForceField_AddLayer(&s_fluidSplashField, (ForceLayer){
-    .type = FORCE_NOISE_PERLIN, .strength = 20.0f,  // nhiễu nhẹ, không phá vỡ quỹ đạo
+    .type = FORCE_NOISE_PERLIN, .strength = 20.0f,
     .noiseScale = 0.008f, .noiseSpeed = 0.3f
+  });
+  // Viscosity: giảm chấn mũ — hạt nước gom cụm, đặc quánh thay vì vỡ vụn
+  // Tương đương viscosity=1.2f cũ (strength = 1.2 * 4 = 4.8)
+  ForceField_AddLayer(&s_fluidSplashField, (ForceLayer){
+    .type = FORCE_VISCOSITY, .strength = 4.8f
   });
 }
 

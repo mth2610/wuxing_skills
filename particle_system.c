@@ -104,9 +104,9 @@ void SpawnParticle(ParticleConfig config) {
       (Vector4){config.colorEnd.r / 255.0f, config.colorEnd.g / 255.0f,
                 config.colorEnd.b / 255.0f, config.colorEnd.a / 255.0f};
 
-  // TÍCH HỢP ĐỘ NHỚT: Đưa config.viscosity vào thành phần W của lifeData
+  // lifeData.w đã không còn dùng cho viscosity — zero ra
   p->lifeData = (Vector4){config.lifetime, config.lifetime,
-                          Random01() * PI * 2.0f, config.viscosity};
+                          Random01() * PI * 2.0f, 0.0f};
 
   // Lưu con trỏ ForceField của particle này (NULL nếu không dùng)
   cpuForceFields[activeParticleCount] = config.forceField;
@@ -132,13 +132,10 @@ void UpdateParticles(float dt) {
       continue;
     }
 
-    float lifeRatio = p->lifeData.x / p->lifeData.y;
-
     float velX = p->vel_drag.x;
     float velY = p->vel_drag.y;
     float velZ = p->vel_drag.z;
     float drag = p->vel_drag.w;
-    float viscosity = p->lifeData.w;
 
     // Drag
     if (drag > 0.0f) {
@@ -148,24 +145,20 @@ void UpdateParticles(float dt) {
       velZ *= factor;
     }
 
-    // TÍCH HỢP ĐỘ NHỚT VÀO VẬN TỐC TỔNG THỂ:
-    // Độ nhớt làm mượt vận tốc theo thời gian, ngăn các hạt nước bắn lẻ tẻ mất
-    // kiểm soát
-    if (viscosity > 0.0f) {
-      float viscosityFactor = expf(-viscosity * dt * 4.0f);
-      velX *= viscosityFactor;
-      velY *= viscosityFactor;
-      velZ *= viscosityFactor;
-    }
-
     // ÁP DỤNG FORCE FIELD (nếu particle này có gán ForceField)
     if (cpuForceFields[i]) {
       Vector3 curPos = {p->pos_radius.x, p->pos_radius.y, p->pos_radius.z};
       Vector3 curVel = {velX, velY, velZ};
-      Vector3 acc    = ForceField_Evaluate(cpuForceFields[i], curPos, curVel, time);
+      // Acceleration từ gravity / noise / vortex / ...
+      Vector3 acc = ForceField_Evaluate(cpuForceFields[i], curPos, curVel, time);
       velX += acc.x * dt;
       velY += acc.y * dt;
       velZ += acc.z * dt;
+      // Viscosity damping từ FORCE_VISCOSITY layer (multiplicative, sau acceleration)
+      float damp = ForceField_GetViscosityDamping(cpuForceFields[i], dt);
+      velX *= damp;
+      velY *= damp;
+      velZ *= damp;
     }
 
     p->vel_drag.x = velX;
@@ -336,9 +329,9 @@ void SpawnParticle(ParticleConfig config) {
       (Vector4){config.colorEnd.r / 255.0f, config.colorEnd.g / 255.0f,
                 config.colorEnd.b / 255.0f, config.colorEnd.a / 255.0f};
 
-  // TÍCH HỢP ĐỘ NHỚT CHO GPU: Gán config.viscosity vào thành phần .w
+  // lifeData.w không còn dùng cho viscosity — zero ra
   gpuPart.lifeData = (Vector4){config.lifetime, config.lifetime,
-                               Random01() * PI * 2.0f, config.viscosity};
+                               Random01() * PI * 2.0f, 0.0f};
 
   int offset = lastUsedIndex * sizeof(ParticleGPU);
   rlUpdateShaderBuffer(ssboParticleId, &gpuPart, sizeof(ParticleGPU), offset);

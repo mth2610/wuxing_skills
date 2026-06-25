@@ -292,10 +292,28 @@ Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel, floa
             case FORCE_DRAG: {
                 acc = Vector3Scale(vel, -L->strength);
             } break;
-        }
+
+            // FORCE_VISCOSITY không sinh gia tốc — chỉ xử lý qua GetViscosityDamping
+            case FORCE_VISCOSITY:
+            default: break;
+        } // end switch
 
         totalAcc = Vector3Add(totalAcc, Vector3Scale(acc, atten));
     }
 
     return totalAcc;
+}
+
+// Tính hệ số giảm chấn tổng hợp từ tất cả layer FORCE_VISCOSITY
+// vel *= result  (nhân sau khi đã apply ForceField_Evaluate)
+float ForceField_GetViscosityDamping(const ForceField *ff, float dt) {
+    float factor = 1.0f;
+    for (int i = 0; i < ff->layerCount; i++) {
+        const ForceLayer *L = &ff->layers[i];
+        if (L->type == FORCE_VISCOSITY) {
+            // Giảm chấn mũ: exp(-strength * dt) — strength = hằng số giảm chấn
+            factor *= expf(-L->strength * dt);
+        }
+    }
+    return factor;
 }
