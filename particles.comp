@@ -4,13 +4,14 @@
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 // Cấu trúc dữ liệu hạt khớp hoàn toàn với struct ParticleGPU trên CPU
+// force_turb giữ lại để struct layout không thay đổi, nhưng luôn bằng 0
 struct ParticleGPU {
     vec4 pos_radius;
     vec4 vel_drag;
-    vec4 force_turb;
+    vec4 force_turb; // reserved — không còn dùng, giữ để đúng layout
     vec4 colorStart;
     vec4 colorEnd;
-    vec4 lifeData; // x: lifetime còn lại, y: tổng lifetime, z: phase nhiễu, w: viscosity (độ nhớt)
+    vec4 lifeData; // x: lifetime còn lại, y: tổng lifetime, z: phase nhiễu, w: viscosity
 };
 
 // Shader Storage Buffer Object (SSBO) chứa mảng hạt
@@ -22,72 +23,38 @@ uniform float u_dt;
 uniform float u_time;
 
 void main() {
-    // Lấy chỉ số (index) của luồng (thread) hiện tại
     uint index = gl_GlobalInvocationID.x;
-    
-    // Bảo vệ tràn mảng (trường hợp số lượng thread sinh ra dư so với số hạt)
     if (index >= particles.length()) return;
 
     ParticleGPU p = particles[index];
-
-    // Nếu hạt đã chết thì bỏ qua để tiết kiệm tài nguyên GPU
     if (p.lifeData.x <= 0.0) return;
 
-    // Trừ dần thời gian sống
     p.lifeData.x -= u_dt;
 
-    // Nếu vừa chết trong frame này, lưu trạng thái và dừng tính toán vật lý
     if (p.lifeData.x <= 0.0) {
         particles[index] = p;
         return;
     }
 
-    // Tính tỷ lệ vòng đời (từ 1.0 giảm về 0.0)
-    float lifeRatio = p.lifeData.x / p.lifeData.y;
+    vec3 vel      = p.vel_drag.xyz;
+    float drag    = p.vel_drag.w;
+    float viscosity = p.lifeData.w;
 
-    // Trích xuất các tham số từ struct (sử dụng thanh ghi nội bộ để tính toán nhanh)
-    vec3 vel = p.vel_drag.xyz;
-    float drag = p.vel_drag.w;
-    vec3 force = p.force_turb.xyz;
-    float turb = p.force_turb.w;
-    float viscosity = p.lifeData.w; // Trích xuất độ nhớt
-
-    // 1. Áp dụng Lực cản (Drag)
+    // 1. Drag
     if (drag > 0.0) {
-        float dragFactor = max(1.0 - drag * u_dt, 0.0);
-        vel *= dragFactor;
+        vel *= max(1.0 - drag * u_dt, 0.0);
     }
 
-    // 2. Áp dụng Gia tốc / Trọng lực (Force)
-    vel += force * u_dt;
-
-    // 3. Áp dụng Lực hỗn loạn (Turbulence) kết hợp giảm chấn bởi Độ Nhớt
-    if (turb > 0.0) {
-        float t = u_time * 18.0 + p.lifeData.z;
-        
-        // Độ nhớt càng cao thì lực hỗn loạn càng bị triệt tiêu
-        float viscosityDamp = 1.0 / (1.0 + viscosity * 2.5);
-        float turbStrength = turb * lifeRatio * viscosityDamp;
-        
-        float sinT = sin(t);
-        float cosT = cos(t * 0.8);
-        
-        vel.x += sinT * turbStrength * u_dt;
-        vel.y += cosT * turbStrength * u_dt;
-        vel.z += (sinT * cosT) * turbStrength * u_dt;
-    }
-
-    // 4. Áp dụng Độ Nhớt (Viscosity) lên tổng vận tốc
-    // Làm mượt vận tốc, giúp hạt gom lại thành cụm/tia dẻo hơn thay vì vỡ vụn
+    // 2. Viscosity — làm mượt vận tốc, hạt gom cụm thay vì vỡ vụn
     if (viscosity > 0.0) {
-        float viscosityFactor = exp(-viscosity * u_dt * 4.0);
-        vel *= viscosityFactor;
+        vel *= exp(-viscosity * u_dt * 4.0);
     }
 
-    // 5. Cập nhật trạng thái cuối cùng
-    p.vel_drag.xyz = vel;
+    // Force/Turbulence đã chuyển hoàn toàn sang ForceField (CPU-side).
+    // GPU mode chỉ dùng drag + viscosity + initial velocity.
+
+    p.vel_drag.xyz  = vel;
     p.pos_radius.xyz += vel * u_dt;
 
-    // Ghi dữ liệu đã tính toán xong trở lại SSBO trên VRAM
     particles[index] = p;
 }

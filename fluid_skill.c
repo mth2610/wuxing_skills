@@ -75,24 +75,14 @@ static void TriggerFluidImpact(Vector3 pos, float sizeScale) {
         sinf(angle) * speed * cosf(pitch) // Lực văng dạt ngang trục Z
     };
 
-    // Trọng lực kéo nước rơi xuống lại tạo hình vòng cung splash
-    cfg.viscosity = 1.2f; // Độ nhớt càng cao, tia nước văng ra sẽ gom cụm, đặc
-                          // quánh mượt mà hơn (Thử trong khoảng 0.2f đến 3.0f)
-    cfg.force = (Vector3){0.0f, GRAVITY_Y * 1.3f, 0.0f};
-    cfg.drag = FLUID_DRAG_SPLASH * 0.7f; // Giảm bớt drag để giọt nước văng đi
-                                         // xa hơn thay vì khựng lại thành sương
-
-    // Kích thước hạt ngẫu nhiên từ nhỏ đến lớn để tạo các tia nước bắn ra sinh
-    // động
+    cfg.viscosity = 1.2f;
+    cfg.drag = FLUID_DRAG_SPLASH * 0.7f;
     cfg.radius = Math_Mix(1.5f, 5.0f, Random01()) * sizeScale * 3.5f;
     cfg.lifetime = Math_Mix(0.3f, 0.9f, Random01());
-
-    // Màu sắc: Giữ màu nước xanh trong suốt
     cfg.colorStart = (Color){180, 230, 255, 240};
     cfg.colorEnd = (Color){50, 130, 200, 0};
-    cfg.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE;
+    cfg.physicsFlags = P_PHYSICS_DRAG;
     cfg.forceField = &s_fluidSplashField;
-
     SpawnParticle(cfg);
   }
 }
@@ -257,13 +247,13 @@ void CastFluidSkill(Vector3 startPos, Vector3 target, float twistPhase,
         (Vector3){Math_Mix(-150.0f, 250.0f, Random01()) * clampedScale,
                   Math_Mix(0.0f, 300.0f, Random01()) * clampedScale,
                   Math_Mix(-150.0f, 250.0f, Random01()) * clampedScale};
-    cfg.force = (Vector3){0.0f, GRAVITY_Y, 0.0f};
     cfg.drag = FLUID_DRAG_SPLASH;
     cfg.radius = Math_Mix(3.0f, 8.0f, Random01()) * clampedScale * 3.5f;
     cfg.lifetime = Math_Mix(0.3f, 0.8f, Random01());
     cfg.colorStart = (Color){190, 235, 255, 220};
     cfg.colorEnd = (Color){40, 120, 200, 0};
-    cfg.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE;
+    cfg.physicsFlags = P_PHYSICS_DRAG;
+    cfg.forceField = &s_fluidSplashField;
     SpawnParticle(cfg);
   }
 }

@@ -152,12 +152,11 @@ void CastElectricSkill(Vector3 startPos, Vector3 target, float sizeScale) {
     p.position = startPos;
     p.velocity = vel;
     p.drag = 1.2f;
-    p.turbulence = 60.0f; // Bật cờ nhiễu loạn cho tia lửa giật liên tục
     p.radius = (3.0f + Random01() * 4.0f) * sizeScale;
     p.lifetime = 0.4f + Random01() * 0.4f;
     p.colorStart = (Color){150, 200, 255, 255};
     p.colorEnd = (Color){20, 50, 255, 0};
-    p.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_TURBULENCE;
+    p.physicsFlags = P_PHYSICS_DRAG;
     p.forceField = &s_electricSparkField;
     SpawnParticle(p);
   }
@@ -222,14 +221,11 @@ void UpdateElectricSkill(float dt) {
           p.position = emitters[e].targetPos;
           p.velocity = vel;
           p.drag = 1.0f;
-          p.turbulence = 50.0f;
           p.radius = (2.5f + Random01() * 3.5f) * scale;
           p.lifetime = 0.5f + Random01() * 0.5f;
           p.colorStart = (Color){150, 220, 255, 255};
           p.colorEnd = (Color){10, 30, 255, 0};
-          p.physicsFlags =
-              P_PHYSICS_DRAG | P_PHYSICS_TURBULENCE | P_PHYSICS_FORCE;
-          p.force = (Vector3){0, -100.0f, 0};
+          p.physicsFlags = P_PHYSICS_DRAG;
           p.forceField = &s_electricArcField;
           SpawnParticle(p);
         }
@@ -296,12 +292,12 @@ void UpdateElectricSkill(float dt) {
           trail.position = emitters[e].currentPos;
           trail.velocity = Vector3Add(backVel, spreadVel);
           trail.drag = 1.0f;
-          trail.turbulence = 40.0f;
           trail.radius = (3.0f + Random01() * 3.0f) * emitters[e].sizeScale;
           trail.lifetime = 0.3f + Random01() * 0.3f;
           trail.colorStart = (Color){150, 200, 255, 255};
           trail.colorEnd = (Color){20, 50, 255, 0};
-          trail.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_TURBULENCE;
+          trail.physicsFlags = P_PHYSICS_DRAG;
+          trail.forceField = &s_electricSparkField;
           SpawnParticle(trail);
 
           emitters[e].spawnAccumulator = 0.0f;
@@ -355,12 +351,12 @@ void UpdateElectricSkill(float dt) {
             (Vector3){cosf(angle) * speed * cosf(pitch), sinf(pitch) * speed,
                       sinf(angle) * speed * cosf(pitch)};
         p.drag = 1.0f;
-        p.turbulence = 60.0f;
         p.radius = 2.0f + Random01() * 3.0f;
         p.lifetime = 0.2f + Random01() * 0.3f;
         p.colorStart = (Color){200, 255, 255, 255};
         p.colorEnd = (Color){20, 50, 255, 0};
-        p.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_TURBULENCE;
+        p.physicsFlags = P_PHYSICS_DRAG;
+        p.forceField = &s_electricSparkField;
         SpawnParticle(p);
       }
     }
@@ -512,12 +508,12 @@ void DeactivateElectricProjectile(int index) {
           p.position = emitters[i].currentPos;
           p.velocity = vel;
           p.drag = 1.0f;
-          p.turbulence = 50.0f;
           p.radius = (2.5f + Random01() * 3.5f) * scale;
           p.lifetime = 0.5f + Random01() * 0.5f;
           p.colorStart = (Color){150, 200, 255, 255};
           p.colorEnd = (Color){20, 50, 255, 0};
-          p.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_TURBULENCE;
+          p.physicsFlags = P_PHYSICS_DRAG;
+          p.forceField = &s_electricArcField;
           SpawnParticle(p);
         }
 

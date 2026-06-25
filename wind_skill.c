@@ -137,10 +137,9 @@ void UpdateWindSkill(float dt) {
         p.radius = (8.0f + Random01() * 12.0f) * emitters[e].sizeScale;
         p.lifetime = 0.5f;
         p.drag = 3.0f;
-        p.turbulence = 50.0f;
         p.colorStart = (Color){180, 220, 255, 120};
         p.colorEnd = (Color){50, 100, 200, 0};
-        p.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_TURBULENCE;
+        p.physicsFlags = P_PHYSICS_DRAG;
         p.forceField = &s_disperseField;
         SpawnParticle(p);
       }
@@ -179,11 +178,9 @@ void UpdateWindSkill(float dt) {
       ParticleConfig p = {0};
       p.position = pos;
       p.velocity = vel;
-      p.force = suckForce;
       p.radius = (2.0f + Random01() * 5.0f) * emitters[e].sizeScale;
       p.lifetime = 0.6f + Random01() * 0.6f;
       p.drag = 0.5f;
-      p.turbulence = 40.0f;
 
       if (GetRandomValue(1, 10) <= 3) {
         p.colorStart = (Color){180, 180, 160, 150};
@@ -193,7 +190,7 @@ void UpdateWindSkill(float dt) {
         p.colorEnd = (Color){50, 100, 200, 0};
       }
 
-      p.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE | P_PHYSICS_TURBULENCE;
+      p.physicsFlags = P_PHYSICS_DRAG;
       p.forceField = &s_tornadoField;
       SpawnParticle(p);
 

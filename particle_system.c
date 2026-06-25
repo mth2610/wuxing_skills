@@ -96,8 +96,7 @@ void SpawnParticle(ParticleConfig config) {
                             config.position.z, config.radius};
   p->vel_drag = (Vector4){config.velocity.x, config.velocity.y,
                           config.velocity.z, config.drag};
-  p->force_turb = (Vector4){config.force.x, config.force.y, config.force.z,
-                            config.turbulence};
+  p->force_turb = (Vector4){0}; // force/turbulence đã chuyển qua ForceField
   p->colorStart =
       (Vector4){config.colorStart.r / 255.0f, config.colorStart.g / 255.0f,
                 config.colorStart.b / 255.0f, config.colorStart.a / 255.0f};
@@ -139,40 +138,14 @@ void UpdateParticles(float dt) {
     float velY = p->vel_drag.y;
     float velZ = p->vel_drag.z;
     float drag = p->vel_drag.w;
-    float forceX = p->force_turb.x;
-    float forceY = p->force_turb.y;
-    float forceZ = p->force_turb.z;
-    float turb = p->force_turb.w;
-    float viscosity = p->lifeData.w; // Cache độ nhớt từ thanh ghi
+    float viscosity = p->lifeData.w;
 
-    // Tính toán Drag nguyên bản
+    // Drag
     if (drag > 0.0f) {
       float factor = 1.0f - drag * dt;
       velX *= factor;
       velY *= factor;
       velZ *= factor;
-    }
-
-    // Áp dụng gia tốc lực
-    velX += forceX * dt;
-    velY += forceY * dt;
-    velZ += forceZ * dt;
-
-    // Tính toán độ hỗn loạn (Turbulence) chịu ảnh hưởng giảm chấn bởi Độ Nhớt
-    // (Viscosity)
-    if (turb > 0.0f) {
-      float t = time * 18.0f + p->lifeData.z;
-
-      // Độ nhớt càng cao thì lực hỗn loạn tác động lên hạt càng bị suy hao
-      // (mượt hóa chuyển động nước)
-      float viscosityDamp = 1.0f / (1.0f + viscosity * 2.5f);
-      float turbStrength = turb * lifeRatio * viscosityDamp;
-
-      float sinT = sinf(t);
-      float cosT = cosf(t * 0.8f);
-      velX += sinT * turbStrength * dt;
-      velY += cosT * turbStrength * dt;
-      velZ += (sinT * cosT) * turbStrength * dt;
     }
 
     // TÍCH HỢP ĐỘ NHỚT VÀO VẬN TỐC TỔNG THỂ:
@@ -355,8 +328,7 @@ void SpawnParticle(ParticleConfig config) {
                                  config.position.z, config.radius};
   gpuPart.vel_drag = (Vector4){config.velocity.x, config.velocity.y,
                                config.velocity.z, config.drag};
-  gpuPart.force_turb = (Vector4){config.force.x, config.force.y, config.force.z,
-                                 config.turbulence};
+  gpuPart.force_turb = (Vector4){0}; // force/turbulence đã chuyển qua ForceField
   gpuPart.colorStart =
       (Vector4){config.colorStart.r / 255.0f, config.colorStart.g / 255.0f,
                 config.colorStart.b / 255.0f, config.colorStart.a / 255.0f};

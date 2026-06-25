@@ -5,24 +5,20 @@
 #include "raylib.h"
 #include <stdbool.h>
 
-// Định nghĩa các cờ bật/tắt tính năng vật lý bằng Bitmask
+// Cờ vật lý — chỉ giữ Drag vì Force/Turbulence đã chuyển hoàn toàn qua ForceField
 typedef enum {
   P_PHYSICS_NONE = 0,
-  P_PHYSICS_DRAG = 1 << 0,      // 0001
-  P_PHYSICS_FORCE = 1 << 1,     // 0010
-  P_PHYSICS_TURBULENCE = 1 << 2 // 0100
+  P_PHYSICS_DRAG = 1 << 0,
 } ParticlePhysicsFlags;
 
 typedef struct {
   Vector3 position;
   Vector3 velocity;
-  Vector3 force;
   Color colorStart;
   Color colorEnd;
   float radius;
   float lifetime;
   float drag;
-  float turbulence;
   float viscosity;
   int physicsFlags;
 

@@ -45,12 +45,11 @@ static void SwordDeathCallback(Vector3 pos, float scale) {
     shard.velocity =
         (Vector3){cosf(sAngle) * sp * cosf(pAngle), sinf(pAngle) * sp + 100.0f,
                   sinf(sAngle) * sp * cosf(pAngle)};
-    shard.force = (Vector3){0, -800.0f, 0};
     shard.radius = (float)GetRandomValue(8, 18) * scale;
     shard.lifetime = 0.60f;
     shard.colorStart = (Color){255, 230, 100, 255};
     shard.colorEnd = (Color){255, 180, 0, 0};
-    shard.physicsFlags = P_PHYSICS_FORCE;
+    shard.physicsFlags = P_PHYSICS_NONE;
     shard.forceField = &s_metalShardField;
     SpawnParticle(shard);
   }
@@ -210,11 +209,11 @@ void CastMetalSkill(Vector3 startPos, Vector3 target, SkillParams params) {
     p.radius = (float)GetRandomValue(10, 22);
     p.lifetime = 0.35f;
     p.drag = 1.0f;
-    p.turbulence = 40.0f;
     p.colorStart = (Color){255, 230, 100, 255};
     p.colorEnd = (Color){255, 180, 0, 0};
-    p.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_TURBULENCE;
-    SpawnParticle(p); // Gọi hệ thống Hạt Vô Tri (Compute Shader)
+    p.physicsFlags = P_PHYSICS_DRAG;
+    p.forceField = &s_metalSparkField;
+    SpawnParticle(p);
   }
 }
 

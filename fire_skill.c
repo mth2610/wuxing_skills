@@ -133,13 +133,12 @@ static void TriggerFireImpact(Vector3 pos, float sizeScale) {
     cfg.velocity =
         (Vector3){cosf(angle) * speed * cosf(pitch), sinf(pitch) * speed,
                   sinf(angle) * speed * cosf(pitch)};
-    cfg.force = (Vector3){0, -180.0f, 0};
     cfg.drag = 2.5f;
     cfg.radius = Math_Mix(0.8f, 2.2f, Random01()) * sizeScale * 4.0f;
     cfg.lifetime = Math_Mix(0.3f, 0.7f, Random01());
     cfg.colorStart = (Color){255, 200, 40, 230};
     cfg.colorEnd = (Color){200, 20, 0, 0};
-    cfg.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE;
+    cfg.physicsFlags = P_PHYSICS_DRAG;
     cfg.forceField = &s_fireImpactField;
     SpawnParticle(cfg);
   }
@@ -155,14 +154,12 @@ static void TriggerFireImpact(Vector3 pos, float sizeScale) {
         (Vector3){cosf(angle) * speed,
                   (Math_Mix(80.0f, 260.0f, Random01()) + 80.0f) * sizeScale,
                   sinf(angle) * speed};
-    cfg.force = (Vector3){0, 260.0f, 0};
     cfg.drag = 3.5f;
-    cfg.turbulence = 50.0f;
     cfg.radius = Math_Mix(2.5f, 6.5f, Random01()) * sizeScale * 4.0f;
     cfg.lifetime = Math_Mix(0.6f, 1.3f, Random01());
     cfg.colorStart = (Color){255, 120, 20, 200};
     cfg.colorEnd = (Color){120, 10, 0, 0};
-    cfg.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE | P_PHYSICS_TURBULENCE;
+    cfg.physicsFlags = P_PHYSICS_DRAG;
     cfg.forceField = &s_fireDisperseField;
     SpawnParticle(cfg);
   }
@@ -267,7 +264,6 @@ void CastFireSkill(Vector3 startPos, Vector3 target, float twistPhase,
     cfg.velocity = (Vector3){(float)GetRandomValue(-200, 300) * sizeScale,
                              (float)GetRandomValue(100, 400) * sizeScale,
                              (float)GetRandomValue(-200, 300) * sizeScale};
-    cfg.force = (Vector3){0, -180.0f, 0};
     cfg.drag = 2.5f;
     cfg.radius =
         Math_Mix(CAST_BURST_RADIUS_MIN, CAST_BURST_RADIUS_MAX, Random01()) *
@@ -276,7 +272,7 @@ void CastFireSkill(Vector3 startPos, Vector3 target, float twistPhase,
         Math_Mix(CAST_BURST_LIFETIME_MIN, CAST_BURST_LIFETIME_MAX, Random01());
     cfg.colorStart = (Color){255, 90, 10, 200};
     cfg.colorEnd = (Color){0, 0, 0, 0};
-    cfg.physicsFlags = P_PHYSICS_DRAG | P_PHYSICS_FORCE;
+    cfg.physicsFlags = P_PHYSICS_DRAG;
     SpawnParticle(cfg);
   }
 }
@@ -389,15 +385,12 @@ void UpdateFireSkill(float dt) {
         ParticleConfig cfgCore = {0};
         cfgCore.position = spawnPos;
         cfgCore.velocity = vel;
-        cfgCore.force = (Vector3){0, 40.0f, 0};
         cfgCore.drag = 9.5f;
-        cfgCore.turbulence = 60.0f;
         cfgCore.radius = rad * 1.8f;
         cfgCore.lifetime = Math_Mix(0.2f, 0.4f, Random01());
         cfgCore.colorStart = (Color){255, 230, 100, 255};
         cfgCore.colorEnd = (Color){255, 60, 0, 0};
-        cfgCore.physicsFlags =
-            P_PHYSICS_DRAG | P_PHYSICS_FORCE | P_PHYSICS_TURBULENCE;
+        cfgCore.physicsFlags = P_PHYSICS_DRAG;
         cfgCore.forceField = &s_flameBodyField;
         SpawnParticle(cfgCore);
 
@@ -406,16 +399,13 @@ void UpdateFireSkill(float dt) {
                                      spawnPos.y + (Random01() - 0.5f) * 3.0f,
                                      spawnPos.z + (Random01() - 0.5f) * 3.0f};
         cfgAura.velocity = Vector3Scale(vel, 0.75f);
-        cfgAura.force = (Vector3){0, 160.0f, 0};
         cfgAura.drag = 5.2f;
-        cfgAura.turbulence = 260.0f;
         cfgAura.radius = rad * 4.8f;
         cfgAura.lifetime = Math_Mix(0.35f, 0.65f, Random01());
         cfgAura.colorStart = (Color){255, 90, 15, 140};
         cfgAura.colorEnd = (Color){100, 5, 0, 0};
-        cfgAura.physicsFlags =
-            P_PHYSICS_DRAG | P_PHYSICS_FORCE | P_PHYSICS_TURBULENCE;
-        cfgAura.forceField = &s_flameBodyField; // aura cùng field với core
+        cfgAura.physicsFlags = P_PHYSICS_DRAG;
+        cfgAura.forceField = &s_flameBodyField;
         SpawnParticle(cfgAura);
       }
     }
