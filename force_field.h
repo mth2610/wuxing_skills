@@ -24,32 +24,38 @@ Vector3 Noise_Curl3D(float x, float y, float z, float scale);
 // ============================================================
 
 typedef enum {
-    FORCE_GRAVITY_DIR,    // gia tốc cố định theo hướng (vd: -Y = trọng lực)
-    FORCE_GRAVITY_POINT,  // hút (hoặc đẩy nếu strength < 0) vào một điểm
-    FORCE_VORTEX,         // xoáy quanh trục (origin + direction = trục)
-    FORCE_WIND,           // gió theo hướng + nhiễu Perlin làm gió rung
-    FORCE_NOISE_PERLIN,   // trường nhiễu Perlin — đẩy hạt theo vector ngẫu nhiên
-    FORCE_NOISE_CURL,     // trường Curl noise — không phân kỳ, swirling đẹp
-    FORCE_DRAG,           // lực cản tỉ lệ vận tốc (cần truyền vel khi evaluate)
-    FORCE_VISCOSITY,      // giảm chấn mũ: vel *= exp(-strength * dt) — dùng cho chất lỏng
+  FORCE_GRAVITY_DIR, // gia tốc cố định theo hướng (vd: -Y = trọng lực)
+  FORCE_GRAVITY_POINT, // hút (hoặc đẩy nếu strength < 0) vào một điểm
+  FORCE_VORTEX,        // xoáy quanh trục (origin + direction = trục)
+  FORCE_WIND,          // gió theo hướng + nhiễu Perlin làm gió rung
+  FORCE_NOISE_PERLIN, // trường nhiễu Perlin — đẩy hạt theo vector ngẫu nhiên
+  FORCE_NOISE_CURL, // trường Curl noise — không phân kỳ, swirling đẹp
+  FORCE_DRAG, // lực cản tỉ lệ vận tốc (cần truyền vel khi evaluate)
+  FORCE_VISCOSITY, // giảm chấn mũ: vel *= exp(-strength * dt) — dùng cho chất
+                   // lỏng
+  // LƯU Ý: thứ tự enum này PHẢI khớp với các #define FT_* trong particles.comp
+  // (GLSL không include được header C, nên phải giữ đồng bộ thủ công).
 } ForceType;
 
 // Mô tả một lớp lực đơn lẻ
 typedef struct {
-    ForceType type;
+  ForceType type;
 
-    // Vị trí / hướng
-    Vector3 origin;     // điểm gốc: tâm hút/vortex/... (không dùng cho GRAVITY_DIR, DRAG)
-    Vector3 direction;  // hướng lực / trục vortex (nên normalize sẵn)
+  // Vị trí / hướng
+  Vector3
+      origin; // điểm gốc: tâm hút/vortex/... (không dùng cho GRAVITY_DIR, DRAG)
+  Vector3 direction; // hướng lực / trục vortex (nên normalize sẵn)
 
-    // Cường độ & suy giảm
-    float strength;  // cường độ gia tốc (m/s²)
-    float radius;    // 0.0 = tác dụng vô cực; > 0 = chỉ trong vùng sphere bán kính này
-    float falloff;   // 0.0 = hằng số; 1.0 = tuyến tính; 2.0 = bình phương (chỉ khi radius > 0)
+  // Cường độ & suy giảm
+  float strength; // cường độ gia tốc (m/s²)
+  float
+      radius; // 0.0 = tác dụng vô cực; > 0 = chỉ trong vùng sphere bán kính này
+  float falloff; // 0.0 = hằng số; 1.0 = tuyến tính; 2.0 = bình phương (chỉ khi
+                 // radius > 0)
 
-    // Tham số noise (dùng cho WIND, NOISE_PERLIN, NOISE_CURL)
-    float noiseScale;  // tần số không gian (lớn hơn = nhiễu chi tiết hơn)
-    float noiseSpeed;  // tốc độ cuộn noise theo thời gian
+  // Tham số noise (dùng cho WIND, NOISE_PERLIN, NOISE_CURL)
+  float noiseScale; // tần số không gian (lớn hơn = nhiễu chi tiết hơn)
+  float noiseSpeed; // tốc độ cuộn noise theo thời gian
 } ForceLayer;
 
 // ============================================================
@@ -60,23 +66,51 @@ typedef struct {
 #define FORCE_FIELD_MAX_LAYERS 8
 
 typedef struct {
-    ForceLayer layers[FORCE_FIELD_MAX_LAYERS];
-    int        layerCount;
+  ForceLayer layers[FORCE_FIELD_MAX_LAYERS];
+  int layerCount;
 } ForceField;
 
 // Xóa toàn bộ layer, trả về ForceField rỗng
 void ForceField_Clear(ForceField *ff);
 
-// Thêm một ForceLayer vào ForceField. Trả về false nếu đã đầy (>= FORCE_FIELD_MAX_LAYERS)
+// Thêm một ForceLayer vào ForceField. Trả về false nếu đã đầy (>=
+// FORCE_FIELD_MAX_LAYERS)
 bool ForceField_AddLayer(ForceField *ff, ForceLayer layer);
 
-// Tính gia tốc tổng tại vị trí pos với vận tốc vel (cần cho FORCE_DRAG), tại thời điểm time
-// Có thể gọi mỗi frame cho từng particle, từng trail, v.v.
-Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel, float time);
+// Tính gia tốc tổng tại vị trí pos với vận tốc vel (cần cho FORCE_DRAG), tại
+// thời điểm time Có thể gọi mỗi frame cho từng particle, từng trail, v.v.
+Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel,
+                            float time);
 
-// Tính hệ số giảm chấn nhân lên velocity từ tất cả layer FORCE_VISCOSITY trong field.
-// Trả về [0, 1]: 1.0 = không giảm, ~0 = dừng hoàn toàn.
-// Phải gọi SAU ForceField_Evaluate và nhân trực tiếp vào velocity.
+// Tính hệ số giảm chấn nhân lên velocity từ tất cả layer FORCE_VISCOSITY trong
+// field. Trả về [0, 1]: 1.0 = không giảm, ~0 = dừng hoàn toàn. Phải gọi SAU
+// ForceField_Evaluate và nhân trực tiếp vào velocity.
 float ForceField_GetViscosityDamping(const ForceField *ff, float dt);
+
+// ============================================================
+// GPU LAYOUT  — dùng khi cần upload ForceField lên SSBO cho compute shader
+//
+// vec3 origin/direction được đệm thành vec4 (w không dùng) để tránh lỗi
+// packing vec3 trong std430 trên driver GLES mobile (Mali/Adreno đời cũ nổi
+// tiếng có bug ở chỗ này). PHẢI khớp byte-for-byte với struct
+// ForceLayerGPU / ForceFieldGPU bên particles.comp — sửa 1 bên thì sửa cả 2.
+// ============================================================
+
+typedef struct {
+  Vector4 origin;    // xyz dùng, w đệm
+  Vector4 direction; // xyz dùng, w đệm
+  Vector4 params0;   // x: strength, y: radius, z: falloff, w: (float)type
+  Vector4 params1;   // x: noiseScale, y: noiseSpeed, z/w: dự trữ
+} ForceLayerGPU;
+
+typedef struct {
+  ForceLayerGPU layers[FORCE_FIELD_MAX_LAYERS];
+  int layerCount;
+  int _pad[3]; // đệm cho đủ multiple-of-16-byte, khớp ivec4 meta trong GLSL
+} ForceFieldGPU;
+
+// Chuyển ForceField (CPU) sang layout phẳng để memcpy thẳng lên SSBO.
+// out phải trỏ tới vùng nhớ đã alloc sẵn (không alloc trong hàm này).
+void ForceField_PackGPU(const ForceField *ff, ForceFieldGPU *out);
 
 #endif // FORCE_FIELD_H

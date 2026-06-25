@@ -4,7 +4,9 @@
 #include "rlgl.h"
 #include "utils_math.h"
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #ifdef __APPLE__
 #define MAX_GLOBAL_PARTICLES 4000
@@ -15,14 +17,41 @@
 typedef struct {
   Vector4 pos_radius;
   Vector4 vel_drag;
+  // GPU mode (xem dưới): x = forceFieldSlot (float, -1 = không dùng), yzw đệm.
+  // CPU mode (__APPLE__) KHÔNG dùng field này — particle giữ con trỏ
+  // ForceField riêng trong cpuForceFields[], field này luôn = -1/0 cho an toàn.
   Vector4 force_turb;
   Vector4 colorStart;
   Vector4 colorEnd;
   Vector4 lifeData; // x: lifetime còn lại, y: tổng lifetime, z: phase nhiễu, w:
-                    // VISCOSITY (ĐỘ NHỚT)
+                    // dự trữ (không còn dùng cho viscosity)
 } ParticleGPU;
 
 static int lastUsedIndex = 0;
+
+// Build phần dữ liệu CHUNG cho CPU/GPU từ ParticleConfig (tránh duplicate
+// logic màu/lifetime giữa 2 nhánh #ifdef — trước đây 2 bên copy gần như
+// y nguyên nhau, dễ desync khi sửa 1 bên mà quên bên kia).
+static ParticleGPU BuildParticleGPUCommon(ParticleConfig config) {
+  ParticleGPU p = {0};
+
+  p.pos_radius = (Vector4){config.position.x, config.position.y,
+                           config.position.z, config.radius};
+  p.vel_drag = (Vector4){config.velocity.x, config.velocity.y,
+                         config.velocity.z, config.drag};
+  p.force_turb =
+      (Vector4){-1.0f, 0.0f, 0.0f, 0.0f}; // -1 = chưa gán force field slot
+  p.colorStart =
+      (Vector4){config.colorStart.r / 255.0f, config.colorStart.g / 255.0f,
+                config.colorStart.b / 255.0f, config.colorStart.a / 255.0f};
+  p.colorEnd =
+      (Vector4){config.colorEnd.r / 255.0f, config.colorEnd.g / 255.0f,
+                config.colorEnd.b / 255.0f, config.colorEnd.a / 255.0f};
+  p.lifeData =
+      (Vector4){config.lifetime, config.lifetime, Random01() * PI * 2.0f, 0.0f};
+
+  return p;
+}
 
 // =============================================================================
 // macOS: CPU MODE (SIÊU TỐI ƯU CƠ CHẾ DENSE ARRAY)
@@ -30,7 +59,8 @@ static int lastUsedIndex = 0;
 #ifdef __APPLE__
 
 static ParticleGPU *cpuParticles = NULL;
-static const ForceField **cpuForceFields = NULL; // mảng con trỏ ForceField song song
+static const ForceField **cpuForceFields =
+    NULL; // mảng con trỏ ForceField song song
 static int activeParticleCount = 0;
 static Shader cpuRenderShader;
 static Mesh cpuMesh;
@@ -90,23 +120,7 @@ void SpawnParticle(ParticleConfig config) {
   if (activeParticleCount >= MAX_GLOBAL_PARTICLES)
     return;
 
-  ParticleGPU *p = &cpuParticles[activeParticleCount];
-
-  p->pos_radius = (Vector4){config.position.x, config.position.y,
-                            config.position.z, config.radius};
-  p->vel_drag = (Vector4){config.velocity.x, config.velocity.y,
-                          config.velocity.z, config.drag};
-  p->force_turb = (Vector4){0}; // force/turbulence đã chuyển qua ForceField
-  p->colorStart =
-      (Vector4){config.colorStart.r / 255.0f, config.colorStart.g / 255.0f,
-                config.colorStart.b / 255.0f, config.colorStart.a / 255.0f};
-  p->colorEnd =
-      (Vector4){config.colorEnd.r / 255.0f, config.colorEnd.g / 255.0f,
-                config.colorEnd.b / 255.0f, config.colorEnd.a / 255.0f};
-
-  // lifeData.w đã không còn dùng cho viscosity — zero ra
-  p->lifeData = (Vector4){config.lifetime, config.lifetime,
-                          Random01() * PI * 2.0f, 0.0f};
+  cpuParticles[activeParticleCount] = BuildParticleGPUCommon(config);
 
   // Lưu con trỏ ForceField của particle này (NULL nếu không dùng)
   cpuForceFields[activeParticleCount] = config.forceField;
@@ -126,8 +140,8 @@ void UpdateParticles(float dt) {
     p->lifeData.x -= dt;
     if (p->lifeData.x <= 0.0f) {
       // Dense-array compact: ghi đè bằng phần tử cuối, hoán đổi cả FF pointer
-      cpuParticles[i]    = cpuParticles[activeParticleCount - 1];
-      cpuForceFields[i]  = cpuForceFields[activeParticleCount - 1];
+      cpuParticles[i] = cpuParticles[activeParticleCount - 1];
+      cpuForceFields[i] = cpuForceFields[activeParticleCount - 1];
       activeParticleCount--;
       continue;
     }
@@ -150,11 +164,13 @@ void UpdateParticles(float dt) {
       Vector3 curPos = {p->pos_radius.x, p->pos_radius.y, p->pos_radius.z};
       Vector3 curVel = {velX, velY, velZ};
       // Acceleration từ gravity / noise / vortex / ...
-      Vector3 acc = ForceField_Evaluate(cpuForceFields[i], curPos, curVel, time);
+      Vector3 acc =
+          ForceField_Evaluate(cpuForceFields[i], curPos, curVel, time);
       velX += acc.x * dt;
       velY += acc.y * dt;
       velZ += acc.z * dt;
-      // Viscosity damping từ FORCE_VISCOSITY layer (multiplicative, sau acceleration)
+      // Viscosity damping từ FORCE_VISCOSITY layer (multiplicative, sau
+      // acceleration)
       float damp = ForceField_GetViscosityDamping(cpuForceFields[i], dt);
       velX *= damp;
       velY *= damp;
@@ -263,9 +279,15 @@ void UnloadParticleSystem(void) {
   UnloadMesh(cpuMesh);
   free(cpuParticles);
   free(cpuForceFields);
-  cpuParticles    = NULL;
-  cpuForceFields  = NULL;
+  cpuParticles = NULL;
+  cpuForceFields = NULL;
   activeParticleCount = 0;
+}
+
+// CPU mode không có registry/slot — particle giữ trực tiếp con trỏ ForceField,
+// không có giới hạn MAX_GPU_FORCE_FIELDS nào để mà reset.
+void ParticleSystem_ResetForceFieldRegistry(void) {
+  // no-op trên CPU mode
 }
 
 // =============================================================================
@@ -273,27 +295,127 @@ void UnloadParticleSystem(void) {
 // =============================================================================
 #else
 
+// Local size của compute shader (PHẢI khớp `local_size_x` trong
+// particles.comp). Dùng 128 thay vì 256: 128 là giá trị
+// MAX_COMPUTE_WORK_GROUP_INVOCATIONS tối thiểu được OpenGL ES 3.1 BẢO ĐẢM hỗ
+// trợ trên mọi thiết bị compute-capable. 256 có thể fail link/dispatch trên một
+// số GPU Android tầm trung/thấp.
+#define COMPUTE_LOCAL_SIZE 128
+
+// Số ForceField khác nhau đang active trên GPU, song song với
+// registeredFields[]
+#define _MAX_GPU_FF MAX_GPU_FORCE_FIELDS
+
 static unsigned int ssboParticleId = 0;
+static unsigned int ssboForceFieldId = 0;
 static unsigned int computeProgramId = 0;
 static int computeDtLoc;
 static int computeTimeLoc;
+static int computeCountLoc;
 
 static Shader renderShader;
 static Mesh quadMesh;
 static Material particleMaterial;
 static Matrix *dummyInstancedTransforms;
 
+// Tổng số particle đã từng spawn, bão hòa ở MAX_GLOBAL_PARTICLES sau khi
+// ring buffer wrap lần đầu. Dùng để KHÔNG dispatch/draw toàn bộ
+// MAX_GLOBAL_PARTICLES mỗi frame khi thực tế chỉ có vài chục hạt đang sống —
+// quan trọng cho mobile vì DrawMeshInstanced/dispatch trước đây luôn full
+// budget (20000 quad mỗi frame) bất kể có bao nhiêu hạt thật sự "sống".
+static int totalSpawned = 0;
+
+// Registry ForceField đang được particle GPU tham chiếu tới (qua con trỏ),
+// dùng để biết slot nào ứng với ForceField nào khi serialize lên SSBO thứ 2.
+static const ForceField *registeredFields[MAX_GPU_FORCE_FIELDS];
+static int registeredFieldCount = 0;
+
+// Tìm hoặc đăng ký slot GPU cho 1 ForceField. Trả -1 nếu ff NULL hoặc hết slot
+// (particle vẫn spawn bình thường, chỉ là sẽ không có force field trên GPU).
+static int RegisterForceFieldGPU(const ForceField *ff) {
+  if (!ff)
+    return -1;
+
+  for (int i = 0; i < registeredFieldCount; i++) {
+    if (registeredFields[i] == ff)
+      return i;
+  }
+
+  if (registeredFieldCount >= MAX_GPU_FORCE_FIELDS) {
+    TraceLog(LOG_WARNING,
+             "ParticleSystem: vuot qua MAX_GPU_FORCE_FIELDS (%d) - particle "
+             "nay se khong co force field tren GPU. Goi "
+             "ParticleSystem_ResetForceFieldRegistry() giua cac man/round neu "
+             "can giai phong slot cu.",
+             MAX_GPU_FORCE_FIELDS);
+    return -1;
+  }
+
+  int slot = registeredFieldCount++;
+  registeredFields[slot] = ff;
+  return slot;
+}
+
+void ParticleSystem_ResetForceFieldRegistry(void) {
+  registeredFieldCount = 0;
+  memset(registeredFields, 0, sizeof(registeredFields));
+}
+
+// particles.comp được viết với "#version 430 core" làm placeholder để mở
+// trực tiếp bằng editor/desktop preview cho dễ — nhưng GLSL ES (Android)
+// KHÔNG hiểu cú pháp "core" và compute shader yêu cầu tối thiểu
+// "#version 310 es". Hàm này bóc dòng #version gốc ra rồi chèn lại version +
+// precision đúng theo platform thực tế tại runtime (rlGetVersion()), để 1 file
+// .comp duy nhất chạy được trên cả desktop GL và GLES Android.
+//
+// LƯU Ý: tên enum OPENGL_ES_20/OPENGL_ES_30 có thể có tiền tố RL_ tuỳ phiên
+// bản raylib (rlgl.h). Macro bên dưới tự chọn theo cái nào tồn tại — nhưng
+// nên double-check lại với rlgl.h đang dùng nếu compile lỗi ở đây.
+#if defined(RL_OPENGL_ES_20)
+#define PS_GL_ES_20 RL_OPENGL_ES_20
+#define PS_GL_ES_30 RL_OPENGL_ES_30
+#else
+#define PS_GL_ES_20 OPENGL_ES_20
+#define PS_GL_ES_30 OPENGL_ES_30
+#endif
+
+static char *PreprocessComputeShaderVersion(const char *src) {
+  const char *body = src;
+  if (strncmp(src, "#version", 8) == 0) {
+    const char *nl = strchr(src, '\n');
+    if (nl)
+      body = nl + 1;
+  }
+
+  int glVersion = rlGetVersion();
+  bool isES = (glVersion == PS_GL_ES_20) || (glVersion == PS_GL_ES_30);
+
+  const char *header =
+      isES ? "#version 310 es\nprecision highp float;\nprecision highp int;\n"
+           : "#version 430 core\n";
+
+  size_t len = strlen(header) + strlen(body) + 1;
+  char *out = (char *)malloc(len);
+  if (out)
+    snprintf(out, len, "%s%s", header, body);
+  return out;
+}
+
 void InitParticleSystem(void) {
   renderShader = LoadShader("particles.vs", "particles.fs");
 
-  char *computeCode = LoadFileText("particles.comp");
+  char *rawCode = LoadFileText("particles.comp");
+  char *computeCode = PreprocessComputeShaderVersion(rawCode);
+  UnloadFileText(rawCode);
+
   unsigned int computeShaderId =
       rlCompileShader(computeCode, RL_COMPUTE_SHADER);
   computeProgramId = rlLoadComputeShaderProgram(computeShaderId);
-  UnloadFileText(computeCode);
+  free(computeCode);
 
   computeDtLoc = rlGetLocationUniform(computeProgramId, "u_dt");
   computeTimeLoc = rlGetLocationUniform(computeProgramId, "u_time");
+  computeCountLoc = rlGetLocationUniform(computeProgramId, "u_particleCount");
 
   int bufferSize = MAX_GLOBAL_PARTICLES * sizeof(ParticleGPU);
   ssboParticleId = rlLoadShaderBuffer(bufferSize, NULL, RL_DYNAMIC_COPY);
@@ -301,6 +423,14 @@ void InitParticleSystem(void) {
   ParticleGPU *emptyData = calloc(MAX_GLOBAL_PARTICLES, sizeof(ParticleGPU));
   rlUpdateShaderBuffer(ssboParticleId, emptyData, bufferSize, 0);
   free(emptyData);
+
+  // SSBO thứ 2: layer của các ForceField đang active, binding = 1 trong compute
+  // shader
+  int ffBufferSize = MAX_GPU_FORCE_FIELDS * sizeof(ForceFieldGPU);
+  ssboForceFieldId = rlLoadShaderBuffer(ffBufferSize, NULL, RL_DYNAMIC_COPY);
+  ForceFieldGPU *emptyFF = calloc(MAX_GPU_FORCE_FIELDS, sizeof(ForceFieldGPU));
+  rlUpdateShaderBuffer(ssboForceFieldId, emptyFF, ffBufferSize, 0);
+  free(emptyFF);
 
   quadMesh = GenMeshPlane(2.0f, 2.0f, 1, 1);
 
@@ -312,46 +442,68 @@ void InitParticleSystem(void) {
   particleMaterial = LoadMaterialDefault();
   particleMaterial.shader = renderShader;
   lastUsedIndex = 0;
+  totalSpawned = 0;
+  ParticleSystem_ResetForceFieldRegistry();
 }
 
 void SpawnParticle(ParticleConfig config) {
-  ParticleGPU gpuPart = {0};
-
-  gpuPart.pos_radius = (Vector4){config.position.x, config.position.y,
-                                 config.position.z, config.radius};
-  gpuPart.vel_drag = (Vector4){config.velocity.x, config.velocity.y,
-                               config.velocity.z, config.drag};
-  gpuPart.force_turb = (Vector4){0}; // force/turbulence đã chuyển qua ForceField
-  gpuPart.colorStart =
-      (Vector4){config.colorStart.r / 255.0f, config.colorStart.g / 255.0f,
-                config.colorStart.b / 255.0f, config.colorStart.a / 255.0f};
-  gpuPart.colorEnd =
-      (Vector4){config.colorEnd.r / 255.0f, config.colorEnd.g / 255.0f,
-                config.colorEnd.b / 255.0f, config.colorEnd.a / 255.0f};
-
-  // lifeData.w không còn dùng cho viscosity — zero ra
-  gpuPart.lifeData = (Vector4){config.lifetime, config.lifetime,
-                               Random01() * PI * 2.0f, 0.0f};
+  ParticleGPU gpuPart = BuildParticleGPUCommon(config);
+  gpuPart.force_turb.x = (float)RegisterForceFieldGPU(config.forceField);
 
   int offset = lastUsedIndex * sizeof(ParticleGPU);
   rlUpdateShaderBuffer(ssboParticleId, &gpuPart, sizeof(ParticleGPU), offset);
 
+  // RING BUFFER: ghi đè slot tiếp theo bất kể hạt ở đó còn sống hay không.
+  // Nếu spawn rate > tốc độ chết tự nhiên (nhiều skill VFX chồng lên nhau),
+  // có thể "giết" sớm một hạt đang sống -> pop nhẹ. Đổi lại là O(1) spawn,
+  // không cần GPU readback để biết slot nào đang free. Nếu sau này thấy pop
+  // rõ ràng trong combat nhiều hiệu ứng, đây là nơi cần nâng cấp đầu tiên.
   lastUsedIndex = (lastUsedIndex + 1) % MAX_GLOBAL_PARTICLES;
+  if (totalSpawned < MAX_GLOBAL_PARTICLES)
+    totalSpawned++;
 }
 
 void UpdateParticles(float dt) {
+  if (totalSpawned == 0)
+    return; // chưa từng spawn gì, khỏi cần re-upload/dispatch
+
+  // Re-pack & re-upload TẤT CẢ ForceField đang đăng ký mỗi frame — vì nội
+  // dung layer (strength gió, vortex, v.v.) có thể đổi runtime, và compute
+  // shader cần thấy giá trị mới nhất, giống cách CPU path luôn đọc trực tiếp
+  // từ con trỏ ForceField mỗi frame.
+  if (registeredFieldCount > 0) {
+    static ForceFieldGPU packed[MAX_GPU_FORCE_FIELDS];
+    for (int i = 0; i < registeredFieldCount; i++) {
+      ForceField_PackGPU(registeredFields[i], &packed[i]);
+    }
+    rlUpdateShaderBuffer(ssboForceFieldId, packed,
+                         registeredFieldCount * sizeof(ForceFieldGPU), 0);
+  }
+
+  float time = (float)GetTime();
+
   rlEnableShader(computeProgramId);
   rlSetUniform(computeDtLoc, &dt, SHADER_UNIFORM_FLOAT, 1);
-  rlSetUniform(computeTimeLoc, &(float){(float)GetTime()}, SHADER_UNIFORM_FLOAT,
-               1);
+  rlSetUniform(computeTimeLoc, &time, SHADER_UNIFORM_FLOAT, 1);
+  rlSetUniform(computeCountLoc, &totalSpawned, SHADER_UNIFORM_INT, 1);
   rlBindShaderBuffer(ssboParticleId, 0);
+  rlBindShaderBuffer(ssboForceFieldId, 1);
 
-  int workGroupsX = (MAX_GLOBAL_PARTICLES / 256) + 1;
+  // Chỉ dispatch đủ workgroup cho số particle ĐÃ TỪNG spawn, không phải toàn
+  // bộ MAX_GLOBAL_PARTICLES — tiết kiệm đáng kể compute trên mobile khi scene
+  // chỉ có vài chục/trăm hạt thay vì full 20000 budget.
+  int workGroupsX =
+      (totalSpawned + COMPUTE_LOCAL_SIZE - 1) / COMPUTE_LOCAL_SIZE;
+  if (workGroupsX < 1)
+    workGroupsX = 1;
   rlComputeShaderDispatch(workGroupsX, 1, 1);
   rlDisableShader();
 }
 
 void DrawParticles(Camera3D camera, Texture2D texture) {
+  if (totalSpawned == 0)
+    return;
+
   rlDisableDepthMask();
   BeginBlendMode(BLEND_ADDITIVE);
 
@@ -362,21 +514,34 @@ void DrawParticles(Camera3D camera, Texture2D texture) {
   SetShaderValueMatrix(renderShader, matViewLoc, matView);
 
   rlBindShaderBuffer(ssboParticleId, 0);
+  // Vẽ đúng totalSpawned instance thay vì luôn full MAX_GLOBAL_PARTICLES —
+  // hạt "chết" (lifeData.x <= 0) bên trong range này vẫn được vertex/fragment
+  // shader xử lý (nên particles.vs/fs cần tự thu nhỏ/discard hạt chết), nhưng
+  // ít nhất ta không transform/issue cả 20000 quad khi chỉ có vài chục hạt.
   DrawMeshInstanced(quadMesh, particleMaterial, dummyInstancedTransforms,
-                    MAX_GLOBAL_PARTICLES);
+                    totalSpawned);
 
   EndBlendMode();
   rlEnableDepthMask();
 }
 
-bool IsParticleSystemActive(void) { return true; }
+// Vẫn chỉ là xấp xỉ: true nếu đã từng spawn ít nhất 1 hạt. Không biết chính
+// xác có hạt nào ĐANG sống hay không vì không readback GPU buffer (tốn hiệu
+// năng, gây stall). Đủ dùng cho mục đích "có cần update/draw hệ thống này
+// không" ở cấp game loop.
+bool IsParticleSystemActive(void) { return totalSpawned > 0; }
 
 void UnloadParticleSystem(void) {
   UnloadShader(renderShader);
   rlUnloadShaderProgram(computeProgramId);
   rlUnloadShaderBuffer(ssboParticleId);
+  rlUnloadShaderBuffer(ssboForceFieldId);
   UnloadMesh(quadMesh);
   free(dummyInstancedTransforms);
+
+  lastUsedIndex = 0;
+  totalSpawned = 0;
+  ParticleSystem_ResetForceFieldRegistry();
 }
 
 #endif // __APPLE__
