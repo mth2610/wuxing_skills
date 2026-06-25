@@ -14,9 +14,9 @@ static int timeLocTrail;
 static float SmoothStepC(float edge0, float edge1, float x) {
   float t = (x - edge0) / (edge1 - edge0);
   if (t < 0.0f)
-    t = 0.0f;
+    return 0.0f;
   if (t > 1.0f)
-    t = 1.0f;
+    return 1.0f;
   return t * t * (3.0f - 2.0f * t);
 }
 
@@ -65,10 +65,8 @@ static void DrawCameraFacingQuad(Camera3D camera, Vector3 center, float width,
 void InitTrailSystem(void) {
   trailShader = LoadShader(0, "metal.fs");
   timeLocTrail = GetShaderLocation(trailShader, "u_time");
-
-  for (int i = 0; i < MAX_TRAIL_PARTICLES; i++) {
+  for (int i = 0; i < MAX_TRAIL_PARTICLES; i++)
     trailPool[i].active = false;
-  }
 }
 
 TrailEntity *GetTrail(int id) {
@@ -83,57 +81,53 @@ void KillTrail(int id) {
   }
 }
 
-int SpawnTrailEntity(TrailType type, Vector3 pos, Vector3 vel, float len,
-                     float thick, float life, Vector3 target,
-                     float initialAngle, float wobblePhase, float scale,
-                     Texture2D tex, Color tint, TrailUpdateCallback onUpdate,
-                     TrailDeathCallback onDeath, int ownerTag) {
+int SpawnTrailEntity(TrailConfig config) {
   for (int i = 0; i < MAX_TRAIL_PARTICLES; i++) {
     int index = (lastUsedIndex + i) % MAX_TRAIL_PARTICLES;
     if (!trailPool[index].active) {
-      trailPool[index].type = type;
-      trailPool[index].position = pos;
-      trailPool[index].velocity = vel;
-      trailPool[index].target = target;
-      trailPool[index].length = len;
-      trailPool[index].thickness = thick;
-      trailPool[index].lifetime = life;
-      trailPool[index].maxLifetime = life;
+      trailPool[index].type = config.type;
+      trailPool[index].position = config.pos;
+      trailPool[index].velocity = config.vel;
+      trailPool[index].target = config.target;
+      trailPool[index].length = config.len;
+      trailPool[index].thickness = config.thick;
+      trailPool[index].lifetime = config.life;
+      trailPool[index].maxLifetime = config.life;
       trailPool[index].active = true;
-      trailPool[index].angle = initialAngle;
-      trailPool[index].wobblePhase = wobblePhase;
-      trailPool[index].scale = scale;
-      trailPool[index].sprite = tex;
-      trailPool[index].tint = tint;
-      trailPool[index].onUpdate = onUpdate;
-      trailPool[index].onDeath = onDeath;
-      trailPool[index].ownerTag = ownerTag;
-      trailPool[index].forceField = NULL; // khởi tạo NULL; caller tự gán sau nếu cần
+      trailPool[index].angle = config.initialAngle;
+      trailPool[index].wobblePhase = config.wobblePhase;
+      trailPool[index].scale = config.scale;
+      trailPool[index].sprite = config.tex;
+      trailPool[index].tint = config.tint;
+      trailPool[index].onUpdate = config.onUpdate;
+      trailPool[index].onDeath = config.onDeath;
+      trailPool[index].ownerTag = config.ownerTag;
+      trailPool[index].forceField = NULL;
+      trailPool[index].historyHead = 0;
 
-      trailPool[index].historyHead = 0; // MỚI: Khởi tạo Head của Ring Buffer
-
-      if (type == TRAIL_TYPE_WISP) {
+      if (config.type == TRAIL_TYPE_WISP) {
         trailPool[index].historyCount = TRAIL_HISTORY_COUNT;
-        Vector3 strandDir = target;
+        Vector3 strandDir = config.target;
         float waveFreq = (float)GetRandomValue(10, 20);
-        float waveAmp = (float)GetRandomValue(5, 18) * scale;
+        float waveAmp = (float)GetRandomValue(5, 18) * config.scale;
 
         for (int h = 0; h < TRAIL_HISTORY_COUNT; h++) {
           float t = (float)h / (TRAIL_HISTORY_COUNT - 1);
-          Vector3 basePos = Vector3Add(pos, Vector3Scale(strandDir, t * len));
+          Vector3 basePos =
+              Vector3Add(config.pos, Vector3Scale(strandDir, t * config.len));
           Vector3 wUp = (fabsf(strandDir.y) > 0.99f)
                             ? (Vector3){1.0f, 0.0f, 0.0f}
                             : (Vector3){0.0f, 1.0f, 0.0f};
           Vector3 wRight =
               Vector3Normalize(Vector3CrossProduct(strandDir, wUp));
-          float wave = sinf(t * waveFreq + wobblePhase) * waveAmp * t;
+          float wave = sinf(t * waveFreq + config.wobblePhase) * waveAmp * t;
           trailPool[index].history[h] =
               Vector3Add(basePos, Vector3Scale(wRight, wave));
         }
       } else {
         trailPool[index].historyCount = 0;
         for (int h = 0; h < TRAIL_HISTORY_COUNT; h++) {
-          trailPool[index].history[h] = pos;
+          trailPool[index].history[h] = config.pos;
         }
       }
 
@@ -157,15 +151,12 @@ void UpdateTrailSystem(float dt) {
       continue;
     }
 
-    if (trailPool[i].onUpdate) {
+    if (trailPool[i].onUpdate)
       trailPool[i].onUpdate(i, dt);
-    }
 
     if (trailPool[i].type == TRAIL_TYPE_PROJECTILE) {
-      // TỐI ƯU O(1): Xoay vòng Ring Buffer thay vì dịch mảng
       trailPool[i].historyHead =
           (trailPool[i].historyHead + 1) % TRAIL_HISTORY_COUNT;
-
       Vector3 dir = Vector3Normalize(trailPool[i].velocity);
       trailPool[i].history[trailPool[i].historyHead] =
           Vector3Subtract(trailPool[i].position,
@@ -178,17 +169,14 @@ void UpdateTrailSystem(float dt) {
       trailPool[i].position = Vector3Add(
           trailPool[i].position, Vector3Scale(trailPool[i].velocity, dt));
 
-      // TỐI ƯU TOÁN HỌC: Sử dụng bình phương khoảng cách để tránh sqrtf()
       Vector3 toTarget =
           Vector3Subtract(trailPool[i].target, trailPool[i].position);
       float distSqr = Vector3LengthSqr(toTarget);
 
-      if (distSqr > 400.0f) { // 20.0f ^ 2
+      if (distSqr > 400.0f) {
         Vector3 desiredDir = Vector3Normalize(toTarget);
         float currentSpeed = Vector3Length(trailPool[i].velocity);
         float newSpeed = fminf(currentSpeed + 150.0f * dt, 600.0f);
-
-        // Chỉ gọi sqrtf() để nội suy khi thực sự cần thiết (tính curveStrength)
         float distToTarget = sqrtf(distSqr);
         float curveStrength = fminf(distToTarget / 250.0f, 1.0f);
 
@@ -201,12 +189,11 @@ void UpdateTrailSystem(float dt) {
             Vector3Lerp(trailPool[i].velocity, desiredVel, dt * 3.2f);
       }
 
-      if (distSqr < 900.0f) { // 30.0f ^ 2
+      if (distSqr < 900.0f) {
         if (trailPool[i].onDeath)
           trailPool[i].onDeath(trailPool[i].position, trailPool[i].scale);
         trailPool[i].active = false;
       }
-
     } else if (trailPool[i].type == TRAIL_TYPE_WISP) {
       trailPool[i].velocity =
           Vector3Scale(trailPool[i].velocity, 1.0f - (dt * 0.8f));
@@ -230,15 +217,12 @@ void UpdateTrailSystem(float dt) {
       trailPool[i].angle += 140.0f * dt;
     }
 
-    // ÁP DỤNG FORCE FIELD (nếu trail này có gán ForceField)
     if (trailPool[i].forceField) {
-      Vector3 acc = ForceField_Evaluate(
-          trailPool[i].forceField,
-          trailPool[i].position,
-          trailPool[i].velocity,
-          (float)GetTime());
-      trailPool[i].velocity = Vector3Add(
-          trailPool[i].velocity, Vector3Scale(acc, dt));
+      Vector3 acc =
+          ForceField_Evaluate(trailPool[i].forceField, trailPool[i].position,
+                              trailPool[i].velocity, (float)GetTime());
+      trailPool[i].velocity =
+          Vector3Add(trailPool[i].velocity, Vector3Scale(acc, dt));
     }
   }
 }
@@ -252,13 +236,11 @@ void DrawTrailEntities(Camera3D camera) {
     }
   }
   if (!active)
-    return; // Vẫn giữ chốt chặn sớm
+    return;
 
   float time = (float)GetTime();
-
   rlDisableDepthMask();
   BeginBlendMode(BLEND_ADDITIVE);
-
   SetShaderValue(trailShader, timeLocTrail, &time, SHADER_UNIFORM_FLOAT);
   BeginShaderMode(trailShader);
 
@@ -272,27 +254,21 @@ void DrawTrailEntities(Camera3D camera) {
       if (trailPool[i].historyCount > 1) {
         RibbonPoint outerStrip[TRAIL_HISTORY_COUNT];
         RibbonPoint innerStrip[TRAIL_HISTORY_COUNT];
-
         for (int h = 0; h < trailPool[i].historyCount; h++) {
-          // MỚI: Tính vị trí thực trong Ring Buffer (h=0 là Head, h lớn hơn sẽ
-          // lùi về quá khứ)
           int idx = (trailPool[i].historyHead - h + TRAIL_HISTORY_COUNT) %
                     TRAIL_HISTORY_COUNT;
-
           float segRatio =
               1.0f - (float)h / (float)(trailPool[i].historyCount - 1);
           float taper = powf(segRatio, 1.2f);
 
-          outerStrip[h].position =
-              trailPool[i].history[idx]; // Đọc theo Index vòng tròn
+          outerStrip[h].position = trailPool[i].history[idx];
           outerStrip[h].halfWidth = trailPool[i].thickness * 1.3f * taper;
           outerStrip[h].v = segRatio;
           outerStrip[h].tint =
               (Color){(unsigned char)(segRatio * c.r), c.g, c.b,
                       (unsigned char)((c.a / 255.0f) * 80.0f * lifeRatio)};
 
-          innerStrip[h].position =
-              trailPool[i].history[idx]; // Đọc theo Index vòng tròn
+          innerStrip[h].position = trailPool[i].history[idx];
           innerStrip[h].halfWidth = trailPool[i].thickness * 0.65f * taper;
           innerStrip[h].v = segRatio;
           innerStrip[h].tint = (Color){(unsigned char)(segRatio * c.r), c.g,
@@ -310,7 +286,6 @@ void DrawTrailEntities(Camera3D camera) {
       Vector3 vDir = Vector3Normalize(trailPool[i].velocity);
       float rotation =
           atan2f(Vector3DotProduct(vDir, up), Vector3DotProduct(vDir, right));
-
       Color spriteTint =
           (Color){128, 128, 128, (unsigned char)(255.0f * lifeRatio)};
       DrawCameraFacingQuad(camera, trailPool[i].position,
@@ -327,12 +302,9 @@ void DrawTrailEntities(Camera3D camera) {
           float taper = SmoothStepC(0.0f, 0.2f, segRatio) *
                         SmoothStepC(1.0f, 0.5f, 1.0f - segRatio);
 
-          wispStrip[h].position =
-              trailPool[i].history[h]; // Wisp được cập nhật tuần tự tại chỗ,
-                                       // không dùng Ring Buffer
+          wispStrip[h].position = trailPool[i].history[h];
           wispStrip[h].halfWidth = trailPool[i].thickness * 0.8f * taper;
           wispStrip[h].v = segRatio;
-
           unsigned char finalAlpha = (unsigned char)(c.a * lifeRatio * taper);
           wispStrip[h].tint = (Color){c.r, c.g, c.b, finalAlpha};
         }
@@ -344,7 +316,6 @@ void DrawTrailEntities(Camera3D camera) {
       float age = trailPool[i].maxLifetime - trailPool[i].lifetime;
       if (age < 0.12f)
         radius *= (age / 0.12f);
-
       Color portalTint =
           (Color){c.r, c.g, c.b, (unsigned char)(c.a * lifeRatio)};
       DrawCameraFacingQuad(camera, trailPool[i].position, radius * 2.6f,
@@ -352,7 +323,6 @@ void DrawTrailEntities(Camera3D camera) {
                            portalTint, (Texture2D){0});
     }
   }
-
   EndShaderMode();
   EndBlendMode();
   rlEnableDepthMask();

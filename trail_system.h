@@ -17,12 +17,31 @@ typedef enum {
 typedef void (*TrailUpdateCallback)(int trailId, float dt);
 typedef void (*TrailDeathCallback)(Vector3 pos, float scale);
 
+// STRUCT CẤU HÌNH: Giải quyết triệt để lỗi đếm tham số của Compiler
+typedef struct {
+  TrailType type;
+  Vector3 pos;
+  Vector3 vel;
+  float len;
+  float thick;
+  float life;
+  Vector3 target;
+  float initialAngle;
+  float wobblePhase;
+  float scale;
+  Texture2D tex;
+  Color tint;
+  TrailUpdateCallback onUpdate;
+  TrailDeathCallback onDeath;
+  int ownerTag;
+} TrailConfig;
+
 // Đã tối ưu Struct Padding: Sắp xếp theo kích thước dữ liệu giảm dần
 typedef struct {
   // 1. Con trỏ (Pointers) - 8 bytes mỗi biến
   TrailUpdateCallback onUpdate;
-  TrailDeathCallback  onDeath;
-  const ForceField   *forceField; // NULL = không dùng; set sau khi spawn qua GetTrail()
+  TrailDeathCallback onDeath;
+  const ForceField *forceField;
 
   // 2. Mảng và Struct lớn (Vectors)
   Vector3 history[TRAIL_HISTORY_COUNT];
@@ -46,21 +65,15 @@ typedef struct {
   // 5. Số nguyên và Enum (Int/Enum) - 4 bytes
   TrailType type;
   int historyCount;
-  int historyHead; // MỚI: Con trỏ trỏ đến phần tử mới nhất (dùng cho Ring
-                   // Buffer)
+  int historyHead;
   int ownerTag;
 
-  // 6. Kiểu Boolean - 1 byte (Đặt cuối để tránh lỗ hổng bộ nhớ - Memory
-  // Padding)
+  // 6. Kiểu Boolean - 1 byte
   bool active;
 } TrailEntity;
 
 void InitTrailSystem(void);
-int SpawnTrailEntity(TrailType type, Vector3 pos, Vector3 vel, float len,
-                     float thick, float life, Vector3 target,
-                     float initialAngle, float wobblePhase, float scale,
-                     Texture2D tex, Color tint, TrailUpdateCallback onUpdate,
-                     TrailDeathCallback onDeath, int ownerTag);
+int SpawnTrailEntity(TrailConfig config); // LUÔN LUÔN CHỈ CÓ 1 THAM SỐ
 TrailEntity *GetTrail(int id);
 void KillTrail(int id);
 void UpdateTrailSystem(float dt);

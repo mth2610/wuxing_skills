@@ -5,14 +5,13 @@
 #include "skill_manager.h"
 #include "trail_system.h"
 #include <math.h>
-#include <stddef.h> // Thêm dòng này vào
+#include <stddef.h>
 
 #define MAX_EMITTERS 10
-#define METAL_SKILL_TAG 1 // ID độc nhất cho hệ kim
+#define METAL_SKILL_TAG 1
 
-// --- Force Fields của Metal Skill ---
-static ForceField s_metalSparkField; // spark trinh hiện: Perlin kim loại bung tỏa
-static ForceField s_metalShardField; // mảnh kiếm vỡ: trọng lực mạnh rơi nặng
+static ForceField s_metalSparkField;
+static ForceField s_metalShardField;
 
 typedef struct {
   bool active;
@@ -30,12 +29,7 @@ typedef struct {
 static MetalEmitter emitters[MAX_EMITTERS];
 static Texture2D swordSprite;
 
-// =========================================================================
-// CALLBACKS (Được gọi tự động bởi TrailSystem)
-// =========================================================================
-
 static void SwordDeathCallback(Vector3 pos, float scale) {
-  // Kiếm nổ -> tạo Shard (mảnh vỡ)
   for (int s = 0; s < GetRandomValue(10, 16); s++) {
     float sAngle = (float)GetRandomValue(0, 360) * DEG2RAD;
     float pAngle = (float)GetRandomValue(15, 75) * DEG2RAD;
@@ -54,7 +48,6 @@ static void SwordDeathCallback(Vector3 pos, float scale) {
     SpawnParticle(shard);
   }
 
-  // Kiếm nổ -> tạo Spark (tia lửa)
   for (int s = 0; s < GetRandomValue(14, 22); s++) {
     float sAngle = (float)GetRandomValue(0, 360) * DEG2RAD;
     float pAngle = (float)GetRandomValue(-45, 45) * DEG2RAD;
@@ -74,7 +67,6 @@ static void SwordDeathCallback(Vector3 pos, float scale) {
     SpawnParticle(spark);
   }
 
-  // Kiếm nổ -> tạo Shockwave
   ParticleConfig shockwave = {0};
   shockwave.position = pos;
   shockwave.velocity = (Vector3){0, 0, 0};
@@ -119,36 +111,42 @@ static void SwordUpdateCallback(int trailId, float dt) {
     float wispLife = (float)GetRandomValue(15, 30) * 0.01f;
     float wispPhase = (float)GetRandomValue(0, 314) * 0.01f;
 
-    // Sinh dải khí Wisp bay kèm thanh kiếm. Gán Callback NULL vì Wisp không cần
-    // xử lý thêm logic riêng.
-    SpawnTrailEntity(TRAIL_TYPE_WISP, pointOnBlade, wispVel, wispLen, wispThick,
-                     wispLife, strandDir, 0.0f, wispPhase, sword->scale,
-                     (Texture2D){0}, (Color){255, 45, 45, 255}, NULL, NULL,
-                     METAL_SKILL_TAG);
+    // LỜI GỌI 1: Đã chuyển sang Struct
+    SpawnTrailEntity((TrailConfig){.type = TRAIL_TYPE_WISP,
+                                   .pos = pointOnBlade,
+                                   .vel = wispVel,
+                                   .len = wispLen,
+                                   .thick = wispThick,
+                                   .life = wispLife,
+                                   .target = strandDir,
+                                   .initialAngle = 0.0f,
+                                   .wobblePhase = wispPhase,
+                                   .scale = sword->scale,
+                                   .tex = (Texture2D){0},
+                                   .tint = (Color){255, 45, 45, 255},
+                                   .onUpdate = NULL,
+                                   .onDeath = NULL,
+                                   .ownerTag = METAL_SKILL_TAG});
   }
 }
-
-// =========================================================================
-// MAIN SKILL LOGIC
-// =========================================================================
 
 void InitMetalSkill(int screenWidth, int screenHeight) {
   swordSprite = LoadTexture("sword.png");
   for (int i = 0; i < MAX_EMITTERS; i++)
     emitters[i].active = false;
 
-  // Spark trinh hiện: Perlin noise + không trọng lực = bắn tía ra bốn phía
   ForceField_Clear(&s_metalSparkField);
-  ForceField_AddLayer(&s_metalSparkField, (ForceLayer){
-    .type = FORCE_NOISE_PERLIN, .strength = 60.0f,
-    .noiseScale = 0.020f, .noiseSpeed = 2.0f
-  });
+  ForceField_AddLayer(&s_metalSparkField,
+                      (ForceLayer){.type = FORCE_NOISE_PERLIN,
+                                   .strength = 60.0f,
+                                   .noiseScale = 0.020f,
+                                   .noiseSpeed = 2.0f});
 
-  // Mảnh kiếm vỡ: trọng lực kim loại nặng nề
   ForceField_Clear(&s_metalShardField);
-  ForceField_AddLayer(&s_metalShardField, (ForceLayer){
-    .type = FORCE_GRAVITY_DIR, .direction = {0,-1,0}, .strength = 800.0f
-  });
+  ForceField_AddLayer(&s_metalShardField,
+                      (ForceLayer){.type = FORCE_GRAVITY_DIR,
+                                   .direction = {0, -1, 0},
+                                   .strength = 800.0f});
 }
 
 void CastMetalSkill(Vector3 startPos, Vector3 target, SkillParams params) {
@@ -242,11 +240,22 @@ void UpdateMetalSkill(float dt) {
           if (portalLife < 0.25f)
             portalLife = 0.25f;
 
-          SpawnTrailEntity(TRAIL_TYPE_PORTAL, portalPos, (Vector3){0, 0, 0},
-                           45.0f * sizeFactor, 0.0f, portalLife,
-                           (Vector3){0, 0, 0}, 0.0f, 0.0f, sizeFactor,
-                           (Texture2D){0}, (Color){128, 128, 220, 255}, NULL,
-                           NULL, METAL_SKILL_TAG);
+          // LỜI GỌI 2: Đã chuyển sang Struct
+          SpawnTrailEntity((TrailConfig){.type = TRAIL_TYPE_PORTAL,
+                                         .pos = portalPos,
+                                         .vel = (Vector3){0, 0, 0},
+                                         .len = 45.0f * sizeFactor,
+                                         .thick = 0.0f,
+                                         .life = portalLife,
+                                         .target = (Vector3){0, 0, 0},
+                                         .initialAngle = 0.0f,
+                                         .wobblePhase = 0.0f,
+                                         .scale = sizeFactor,
+                                         .tex = (Texture2D){0},
+                                         .tint = (Color){128, 128, 220, 255},
+                                         .onUpdate = NULL,
+                                         .onDeath = NULL,
+                                         .ownerTag = METAL_SKILL_TAG});
         }
 
         if (emitters[e].portalSpawned[j] &&
@@ -268,7 +277,7 @@ void UpdateMetalSkill(float dt) {
             p.lifetime = spawnDist / Vector3Length(sparkVel);
             p.colorStart = (Color){255, 240, 120, 255};
             p.colorEnd = (Color){255, 150, 0, 0};
-            SpawnParticle(p); // Spark từ cổng
+            SpawnParticle(p);
           }
         }
 
@@ -285,19 +294,26 @@ void UpdateMetalSkill(float dt) {
               baseDir.y,
               baseDir.x * sinf(spreadAngle) + baseDir.z * cosf(spreadAngle)};
           launchDir = Vector3Normalize(launchDir);
-
           Vector3 vel =
               Vector3Scale(launchDir, (float)GetRandomValue(300, 500));
 
-          // Gọi hệ thống Thực thể Thông Minh sinh Kiếm. Gắn Callback Update và
-          // Callback Death vào.
+          // LỜI GỌI 3: Đã chuyển sang Struct
           SpawnTrailEntity(
-              TRAIL_TYPE_PROJECTILE, portalPos, vel,
-              (float)GetRandomValue(100, 140) * sizeFactor,
-              (float)GetRandomValue(12, 16) * sizeFactor, 2.0f,
-              emitters[e].targetPos, 0.0f, (float)GetRandomValue(0, 100) * 0.1f,
-              sizeFactor, swordSprite, (Color){255, 45, 45, 255},
-              SwordUpdateCallback, SwordDeathCallback, METAL_SKILL_TAG);
+              (TrailConfig){.type = TRAIL_TYPE_PROJECTILE,
+                            .pos = portalPos,
+                            .vel = vel,
+                            .len = (float)GetRandomValue(100, 140) * sizeFactor,
+                            .thick = (float)GetRandomValue(12, 16) * sizeFactor,
+                            .life = 2.0f,
+                            .target = emitters[e].targetPos,
+                            .initialAngle = 0.0f,
+                            .wobblePhase = (float)GetRandomValue(0, 100) * 0.1f,
+                            .scale = sizeFactor,
+                            .tex = swordSprite,
+                            .tint = (Color){255, 45, 45, 255},
+                            .onUpdate = SwordUpdateCallback,
+                            .onDeath = SwordDeathCallback,
+                            .ownerTag = METAL_SKILL_TAG});
         }
       }
     }
@@ -306,18 +322,13 @@ void UpdateMetalSkill(float dt) {
   }
 }
 
-void DrawMetalSkill(void) {
-  // Trống. Bạn nên gọi `DrawTrailEntities(camera)` một lần duy nhất trong hàm
-  // Render chính của game loop, bên cạnh `DrawParticles(...)`.
-}
+void DrawMetalSkill(void) {}
 
 void UnloadMetalSkill(void) { UnloadTexture(swordSprite); }
 
 int GetMetalSkillProjectiles(SkillProjectile *outProjectiles,
                              int maxProjectiles) {
   int count = 0;
-  // Tìm trong Global Trail Pool những hạt là Kiếm (PROJECTILE) do MetalSkill
-  // (Tag 1) tạo ra
   for (int i = 0; i < MAX_TRAIL_PARTICLES; i++) {
     TrailEntity *t = GetTrail(i);
     if (t && t->active && t->type == TRAIL_TYPE_PROJECTILE &&
@@ -338,7 +349,7 @@ void DeactivateMetalProjectile(int index) {
     if (t && t->active && t->type == TRAIL_TYPE_PROJECTILE &&
         t->ownerTag == METAL_SKILL_TAG) {
       if (count == index) {
-        KillTrail(i); // Tiêu diệt thông qua API
+        KillTrail(i);
         break;
       }
       count++;
