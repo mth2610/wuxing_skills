@@ -5,23 +5,12 @@
 #include <math.h>
 #include <stddef.h>
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// POOL & FREE-LIST
-// ═══════════════════════════════════════════════════════════════════════════════
 static void KillTrailInternal(int id);
 static TrailEntity trailPool[MAX_TRAIL_PARTICLES];
-static int freeListHead = 0; // đầu free-list, O(1) thay cho quét tuyến tính
+static int freeListHead = 0;
 static int activeCount = 0;
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// SHADER CACHE
-// Cache location "u_time" theo từng shader id khác nhau - vì mỗi shader
-// program có location riêng cho cùng tên uniform (driver tự gán, không cố
-// định). Static array nhỏ, no-malloc, đủ cho số shader khác nhau thực tế
-// dùng cùng lúc trong 1 hệ thống chiêu thức.
-// ═══════════════════════════════════════════════════════════════════════════════
-
-static Shader defaultShader; // dùng khi TrailConfig.shader.id == 0
+static Shader defaultShader;
 
 #define TRAIL_SHADER_CACHE_SIZE 16
 static unsigned int shaderCacheIds[TRAIL_SHADER_CACHE_SIZE];
@@ -42,27 +31,11 @@ static int GetCachedTimeLoc(Shader shader) {
   return loc;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// SCRATCH BUFFERS  (single-threaded, reused every frame, no heap alloc)
-// ═══════════════════════════════════════════════════════════════════════════════
-
 static RibbonPoint scratchOuter[TRAIL_HISTORY_COUNT];
 static RibbonPoint scratchInner[TRAIL_HISTORY_COUNT];
-
-// Lưu vị trí node TRƯỚC khi constraint projection để tái tính velocity sau
-// khi constraint đã dịch các node (bước C trong chuỗi tích phân WISP).
 static Vector3 scratchNodePrevPos[TRAIL_HISTORY_COUNT];
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// PHYSICS CONSTANTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-// Số lần lặp Gauss-Seidel cho constraint khoảng cách ribbon (WISP).
 #define WISP_CONSTRAINT_ITERS 2
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// INTERNAL UTILITIES
-// ═══════════════════════════════════════════════════════════════════════════════
 
 static inline Shader ResolveShader(const TrailEntity *t) {
   return (t->shader.id != 0) ? t->shader : defaultShader;
@@ -77,7 +50,11 @@ static float SmoothStepC(float edge0, float edge1, float x) {
   return t * t * (3.0f - 2.0f * t);
 }
 
-// ─── Camera-facing quad draw ─────────────────────
+static inline float ComputeWispStyleTaper(float segRatio) {
+  return SmoothStepC(0.0f, TRAIL_WISP_HEAD_TAPER_EDGE, segRatio) *
+         SmoothStepC(1.0f, TRAIL_WISP_TAIL_TAPER_EDGE, 1.0f - segRatio);
+}
+
 static void DrawCameraFacingQuad(Camera3D camera, Vector3 center, float width,
                                  float height, float rotation, Color tint,
                                  Texture2D tex) {
@@ -120,12 +97,11 @@ static void DrawCameraFacingQuad(Camera3D camera, Vector3 center, float width,
     rlSetTexture(0);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// PHYSICS HELPERS
-// ═══════════════════════════════════════════════════════════════════════════════
-
 static inline void ConstrainRibbonSegment(Vector3 *a, Vector3 *b, float restLen,
                                           bool pinnedA) {
+  if (restLen <= 1e-6f)
+    return;
+
   Vector3 delta = Vector3Subtract(*b, *a);
   float dist2 = Vector3LengthSqr(delta);
 
@@ -148,24 +124,7 @@ static inline void ConstrainRibbonSegment(Vector3 *a, Vector3 *b, float restLen,
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// PHYSICS: PROJECTILE
-// ═══════════════════════════════════════════════════════════════════════════════
-static bool UpdateProjectilePhysics(int i, float dt, float time) {
-  TrailEntity *t = &trailPool[i];
-
-  // ── 1. Ghi vị trí vào lịch sử TRƯỚC khi di chuyển ───────────────────────
-  t->historyHead = (t->historyHead + 1) % TRAIL_HISTORY_COUNT;
-  {
-    float velLen = Vector3Length(t->velocity);
-    Vector3 dir = (velLen > 1e-6f) ? Vector3Scale(t->velocity, 1.0f / velLen)
-                                   : (Vector3){0.0f, 0.0f, 1.0f};
-    t->history[t->historyHead] = Vector3Subtract(
-        t->position,
-        Vector3Scale(dir, t->length * TRAIL_PROJECTILE_SPAWN_OFFSET_MUL));
-  }
-
-  // Áp dụng giới hạn độ dài đuôi linh hoạt dựa trên trailLength thiết lập
+static inline void GrowHistoryTowardMaxNodes(TrailEntity *t) {
   int maxNodes =
       (t->trailLength > 0.0f) ? (int)t->trailLength : TRAIL_HISTORY_COUNT;
   if (maxNodes > TRAIL_HISTORY_COUNT)
@@ -178,9 +137,25 @@ static bool UpdateProjectilePhysics(int i, float dt, float time) {
   } else if (t->historyCount > maxNodes) {
     t->historyCount = maxNodes;
   }
+}
 
-  // ── 2. Steering: lerp velocity về hướng target ───────────────────────────
+static void UpdateProjectilePhysics(int i, float dt, float time) {
+  TrailEntity *t = &trailPool[i];
+
+  t->historyHead = (t->historyHead + 1) % TRAIL_HISTORY_COUNT;
+  {
+    float velLen = Vector3Length(t->velocity);
+    Vector3 dir = (velLen > 1e-6f) ? Vector3Scale(t->velocity, 1.0f / velLen)
+                                   : (Vector3){0.0f, 0.0f, 1.0f};
+    t->history[t->historyHead] = Vector3Subtract(
+        t->position,
+        Vector3Scale(dir, t->length * TRAIL_PROJECTILE_SPAWN_OFFSET_MUL));
+  }
+
+  GrowHistoryTowardMaxNodes(t);
+
   t->wobblePhase += dt * TRAIL_PROJECTILE_WOBBLE_FREQ;
+  Vector3 posBeforeMove = t->position;
 
   Vector3 toTarget = Vector3Subtract(t->target, t->position);
   float distSqr = Vector3LengthSqr(toTarget);
@@ -202,30 +177,42 @@ static bool UpdateProjectilePhysics(int i, float dt, float time) {
                               dt * TRAIL_PROJECTILE_STEER_LERP_RATE);
   }
 
-  // ── 3 & 4. ForceField → velocity (semi-implicit Euler) + viscosity ────────
   if (t->forceField) {
-    Vector3 acc =
-        ForceField_Evaluate(t->forceField, t->position, t->velocity, time);
+    Vector3 acc = ForceField_Evaluate(t->forceField, t->position, t->velocity,
+                                      time, (Vector3){0}, (Vector3){0});
     t->velocity = Vector3Add(t->velocity, Vector3Scale(acc, dt));
 
     float viscDamp = ForceField_GetViscosityDamping(t->forceField, dt);
     t->velocity = Vector3Scale(t->velocity, viscDamp);
   }
 
-  // ── 5. Tích phân position ────────────────────────────────────────────────
   t->position = Vector3Add(t->position, Vector3Scale(t->velocity, dt));
 
-  // ── 6. Hit-check ──────────────────────────────────────────────────────────
-  if (distSqr < TRAIL_PROJECTILE_HIT_DIST_SQR) {
-    KillTrailInternal(i);
-    return true;
+  {
+    Vector3 moveDelta = Vector3Subtract(t->position, posBeforeMove);
+    float moveLenSqr = Vector3LengthSqr(moveDelta);
+    Vector3 toTargetFromStart = Vector3Subtract(t->target, posBeforeMove);
+
+    float closestDistSqr;
+    if (moveLenSqr < 1e-8f) {
+      closestDistSqr =
+          Vector3LengthSqr(Vector3Subtract(t->target, t->position));
+    } else {
+      float proj = Vector3DotProduct(toTargetFromStart, moveDelta) / moveLenSqr;
+      proj = fmaxf(0.0f, fminf(1.0f, proj));
+      Vector3 closestPoint =
+          Vector3Add(posBeforeMove, Vector3Scale(moveDelta, proj));
+      closestDistSqr =
+          Vector3LengthSqr(Vector3Subtract(t->target, closestPoint));
+    }
+
+    if (closestDistSqr < TRAIL_PROJECTILE_HIT_DIST_SQR) {
+      KillTrailInternal(i);
+      return;
+    }
   }
-  return false;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// PHYSICS: WISP
-// ═══════════════════════════════════════════════════════════════════════════════
 static void UpdateWispPhysics(int i, float dt, float time) {
   TrailEntity *t = &trailPool[i];
   if (!t->forceField || t->historyCount < 2 || t->nodeRestLen <= 0.0f)
@@ -234,10 +221,10 @@ static void UpdateWispPhysics(int i, float dt, float time) {
   float viscDamp = ForceField_GetViscosityDamping(t->forceField, dt);
   float restLen = t->nodeRestLen;
 
-  // ── Bước A: Semi-implicit Euler — velocity rồi predict position ──────────
   for (int h = 0; h < t->historyCount; h++) {
-    Vector3 acc = ForceField_Evaluate(t->forceField, t->history[h],
-                                      t->nodeVelocity[h], time);
+    Vector3 acc =
+        ForceField_Evaluate(t->forceField, t->history[h], t->nodeVelocity[h],
+                            time, (Vector3){0}, (Vector3){0});
 
     t->nodeVelocity[h] = Vector3Scale(
         Vector3Add(t->nodeVelocity[h], Vector3Scale(acc, dt)), viscDamp);
@@ -247,7 +234,6 @@ static void UpdateWispPhysics(int i, float dt, float time) {
         Vector3Add(t->history[h], Vector3Scale(t->nodeVelocity[h], dt));
   }
 
-  // ── Bước B: Constraint khoảng cách Gauss-Seidel ──────────────────────────
   for (int iter = 0; iter < WISP_CONSTRAINT_ITERS; iter++) {
     for (int h = 1; h < t->historyCount; h++) {
       ConstrainRibbonSegment(&t->history[h - 1], &t->history[h], restLen,
@@ -255,7 +241,6 @@ static void UpdateWispPhysics(int i, float dt, float time) {
     }
   }
 
-  // ── Bước C: Tái tính velocity từ độ dịch thực tế sau constraint ──────────
   if (dt > 1e-7f) {
     float invDt = 1.0f / dt;
     for (int h = 0; h < t->historyCount; h++) {
@@ -267,13 +252,9 @@ static void UpdateWispPhysics(int i, float dt, float time) {
   t->position = t->history[0];
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// PHYSICS: FOLLOWER
-// ═══════════════════════════════════════════════════════════════════════════════
-static bool UpdateFollowerPhysics(int i, float dt, float time) {
+static void UpdateFollowerPhysics(int i, float dt, float time) {
   TrailEntity *t = &trailPool[i];
 
-  // ── Idle-fade: tự rút ngắn ribbon khi không được UpdateFollowerPosition ───
   t->timeSinceLastFollowerUpdate += dt;
   if (t->timeSinceLastFollowerUpdate > TRAIL_FOLLOWER_IDLE_FADE_TIME) {
     t->fadeAccumulator += TRAIL_FOLLOWER_FADE_RATE_PER_SEC * dt;
@@ -284,34 +265,28 @@ static bool UpdateFollowerPhysics(int i, float dt, float time) {
     }
     if (t->historyCount <= 0) {
       KillTrailInternal(i);
-      return true;
+      return;
     }
   }
 
   if (!t->forceField || t->historyCount < 2)
-    return false;
+    return;
 
   float viscDamp = ForceField_GetViscosityDamping(t->forceField, dt);
 
-  // ── Per-node semi-implicit Euler ─────────────────────────────────────────
   for (int h = 1; h < t->historyCount; h++) {
     int idx = (t->historyHead - h + TRAIL_HISTORY_COUNT) % TRAIL_HISTORY_COUNT;
 
     Vector3 acc = ForceField_Evaluate(t->forceField, t->history[idx],
-                                      t->nodeVelocity[idx], time);
+                                      t->nodeVelocity[idx], time, t->axisOrigin,
+                                      t->axisDir);
 
     t->nodeVelocity[idx] = Vector3Scale(
         Vector3Add(t->nodeVelocity[idx], Vector3Scale(acc, dt)), viscDamp);
     t->history[idx] =
         Vector3Add(t->history[idx], Vector3Scale(t->nodeVelocity[idx], dt));
   }
-
-  return false;
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// PUBLIC API
-// ═══════════════════════════════════════════════════════════════════════════════
 
 void InitTrailSystem(Shader defaultShaderIn) {
   defaultShader = defaultShaderIn;
@@ -361,7 +336,7 @@ int SpawnTrailEntity(TrailConfig config) {
   t->target = config.target;
   t->length = config.len;
   t->thickness = config.thick;
-  t->trailLength = config.trailLength; // Ghi nhận biến độ dài đuôi mới vào pool
+  t->trailLength = config.trailLength;
   t->lifetime = config.life;
   t->maxLifetime = config.life;
   t->active = true;
@@ -380,6 +355,8 @@ int SpawnTrailEntity(TrailConfig config) {
   t->fadeAccumulator = 0.0f;
   t->historyHead = 0;
   t->driftVelocity = (Vector3){0.0f, 0.0f, 0.0f};
+  t->axisOrigin = (Vector3){0.0f, 0.0f, 0.0f};
+  t->axisDir = (Vector3){0.0f, 0.0f, 0.0f};
 
   for (int h = 0; h < TRAIL_HISTORY_COUNT; h++) {
     t->nodeVelocity[h] = (Vector3){0.0f, 0.0f, 0.0f};
@@ -391,7 +368,9 @@ int SpawnTrailEntity(TrailConfig config) {
                          ? config.len / (float)(TRAIL_HISTORY_COUNT - 1)
                          : 0.0f;
 
-    Vector3 strandDir = config.target;
+    Vector3 strandDir = (Vector3LengthSqr(config.target) > 1e-8f)
+                            ? Vector3Normalize(config.target)
+                            : (Vector3){0.0f, 0.0f, 1.0f};
     for (int h = 0; h < TRAIL_HISTORY_COUNT; h++) {
       float u = (float)h / (float)(TRAIL_HISTORY_COUNT - 1);
       t->history[h] =
@@ -426,22 +405,21 @@ void UpdateFollowerPosition(int id, Vector3 newTipPos) {
   t->nodeVelocity[t->historyHead] = (Vector3){0.0f, 0.0f, 0.0f};
   t->position = newTipPos;
 
-  // Áp dụng giới hạn độ dài đuôi khi mọc node lụa follower
-  int maxNodes =
-      (t->trailLength > 0.0f) ? (int)t->trailLength : TRAIL_HISTORY_COUNT;
-  if (maxNodes > TRAIL_HISTORY_COUNT)
-    maxNodes = TRAIL_HISTORY_COUNT;
-  if (maxNodes < 1)
-    maxNodes = 1;
-
-  if (t->historyCount < maxNodes) {
-    t->historyCount++;
-  } else if (t->historyCount > maxNodes) {
-    t->historyCount = maxNodes;
-  }
+  GrowHistoryTowardMaxNodes(t);
 
   t->timeSinceLastFollowerUpdate = 0.0f;
   t->fadeAccumulator = 0.0f;
+}
+
+void SetFollowerAxis(int id, Vector3 axisOrigin, Vector3 axisDir) {
+  if (id < 0 || id >= MAX_TRAIL_PARTICLES || !trailPool[id].active)
+    return;
+  if (trailPool[id].type != TRAIL_TYPE_FOLLOWER)
+    return;
+
+  TrailEntity *t = &trailPool[id];
+  t->axisOrigin = axisOrigin;
+  t->axisDir = axisDir;
 }
 
 void UpdateTrailSystem(float dt) {
@@ -457,13 +435,9 @@ void UpdateTrailSystem(float dt) {
       continue;
     }
 
-    if (trailPool[i].onUpdate)
-      trailPool[i].onUpdate(i, dt);
-
-    bool killed = false;
     switch (trailPool[i].type) {
     case TRAIL_TYPE_PROJECTILE:
-      killed = UpdateProjectilePhysics(i, dt, time);
+      UpdateProjectilePhysics(i, dt, time);
       break;
     case TRAIL_TYPE_WISP:
       UpdateWispPhysics(i, dt, time);
@@ -472,18 +446,18 @@ void UpdateTrailSystem(float dt) {
       trailPool[i].angle += TRAIL_PORTAL_SPIN_DEG_PER_SEC * dt;
       break;
     case TRAIL_TYPE_FOLLOWER:
-      killed = UpdateFollowerPhysics(i, dt, time);
+      UpdateFollowerPhysics(i, dt, time);
       break;
     }
+  }
 
-    if (killed)
+  for (int i = 0; i < MAX_TRAIL_PARTICLES; i++) {
+    if (!trailPool[i].active)
       continue;
+    if (trailPool[i].onUpdate)
+      trailPool[i].onUpdate(i, dt);
   }
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// DRAW
-// ═══════════════════════════════════════════════════════════════════════════════
 
 static void DrawTrailGeometry(int i, Camera3D camera) {
   float lifeRatio = trailPool[i].lifetime / trailPool[i].maxLifetime;
@@ -539,9 +513,7 @@ static void DrawTrailGeometry(int i, Camera3D camera) {
       for (int h = 0; h < trailPool[i].historyCount; h++) {
         float segRatio =
             1.0f - (float)h / (float)(trailPool[i].historyCount - 1);
-        float taper =
-            SmoothStepC(0.0f, TRAIL_WISP_HEAD_TAPER_EDGE, segRatio) *
-            SmoothStepC(1.0f, TRAIL_WISP_TAIL_TAPER_EDGE, 1.0f - segRatio);
+        float taper = ComputeWispStyleTaper(segRatio);
 
         scratchOuter[h].position = trailPool[i].history[h];
         scratchOuter[h].halfWidth = trailPool[i].thickness * 0.8f * taper;
@@ -571,9 +543,7 @@ static void DrawTrailGeometry(int i, Camera3D camera) {
                   TRAIL_HISTORY_COUNT;
         float segRatio =
             1.0f - (float)h / (float)(trailPool[i].historyCount - 1);
-        float taper =
-            SmoothStepC(0.0f, TRAIL_WISP_HEAD_TAPER_EDGE, segRatio) *
-            SmoothStepC(1.0f, TRAIL_WISP_TAIL_TAPER_EDGE, 1.0f - segRatio);
+        float taper = ComputeWispStyleTaper(segRatio);
 
         scratchOuter[h].position = trailPool[i].history[idx];
         scratchOuter[h].halfWidth = trailPool[i].thickness * 0.8f * taper;
@@ -587,7 +557,8 @@ static void DrawTrailGeometry(int i, Camera3D camera) {
   }
 }
 
-static unsigned int activeShaderIds[TRAIL_SHADER_CACHE_SIZE];
+static unsigned int frameActiveShaderIds[TRAIL_SHADER_CACHE_SIZE];
+static Shader frameActiveShaders[TRAIL_SHADER_CACHE_SIZE];
 
 void DrawTrailEntities(Camera3D camera) {
   if (activeCount == 0)
@@ -597,32 +568,27 @@ void DrawTrailEntities(Camera3D camera) {
   rlDisableDepthMask();
   BeginBlendMode(BLEND_ADDITIVE);
 
-  int activeShaderCount = 0;
+  int frameActiveShaderCount = 0;
   for (int i = 0; i < MAX_TRAIL_PARTICLES; i++) {
     if (!trailPool[i].active)
       continue;
-    unsigned int sid = ResolveShader(&trailPool[i]).id;
+    Shader sh = ResolveShader(&trailPool[i]);
     bool found = false;
-    for (int s = 0; s < activeShaderCount; s++) {
-      if (activeShaderIds[s] == sid) {
+    for (int s = 0; s < frameActiveShaderCount; s++) {
+      if (frameActiveShaderIds[s] == sh.id) {
         found = true;
         break;
       }
     }
-    if (!found && activeShaderCount < TRAIL_SHADER_CACHE_SIZE) {
-      activeShaderIds[activeShaderCount++] = sid;
+    if (!found && frameActiveShaderCount < TRAIL_SHADER_CACHE_SIZE) {
+      frameActiveShaderIds[frameActiveShaderCount] = sh.id;
+      frameActiveShaders[frameActiveShaderCount] = sh;
+      frameActiveShaderCount++;
     }
   }
 
-  for (int s = 0; s < activeShaderCount; s++) {
-    Shader fullShader = defaultShader;
-    for (int i = 0; i < MAX_TRAIL_PARTICLES; i++) {
-      if (trailPool[i].active &&
-          ResolveShader(&trailPool[i]).id == activeShaderIds[s]) {
-        fullShader = ResolveShader(&trailPool[i]);
-        break;
-      }
-    }
+  for (int s = 0; s < frameActiveShaderCount; s++) {
+    Shader fullShader = frameActiveShaders[s];
 
     int timeLoc = GetCachedTimeLoc(fullShader);
     if (timeLoc >= 0)
@@ -632,7 +598,7 @@ void DrawTrailEntities(Camera3D camera) {
     for (int i = 0; i < MAX_TRAIL_PARTICLES; i++) {
       if (!trailPool[i].active)
         continue;
-      if (ResolveShader(&trailPool[i]).id != activeShaderIds[s])
+      if (ResolveShader(&trailPool[i]).id != frameActiveShaderIds[s])
         continue;
       DrawTrailGeometry(i, camera);
     }

@@ -164,8 +164,8 @@ void UpdateParticles(float dt) {
       Vector3 curPos = {p->pos_radius.x, p->pos_radius.y, p->pos_radius.z};
       Vector3 curVel = {velX, velY, velZ};
       // Acceleration từ gravity / noise / vortex / ...
-      Vector3 acc =
-          ForceField_Evaluate(cpuForceFields[i], curPos, curVel, time);
+      Vector3 acc = ForceField_Evaluate(cpuForceFields[i], curPos, curVel, time,
+                                        (Vector3){0}, (Vector3){0});
       velX += acc.x * dt;
       velY += acc.y * dt;
       velZ += acc.z * dt;

@@ -33,6 +33,9 @@ typedef enum {
   FORCE_DRAG, // lực cản tỉ lệ vận tốc (cần truyền vel khi evaluate)
   FORCE_VISCOSITY, // giảm chấn mũ: vel *= exp(-strength * dt) — dùng cho chất
                    // lỏng
+  FORCE_RADIAL_AXIS, // Lực hướng tâm/li tâm theo TRỤC ĐỘNG (axisOrigin, axisDir
+                     // cấp lúc evaluate).
+  FORCE_VORTEX_AXIS,
   // LƯU Ý: thứ tự enum này PHẢI khớp với các #define FT_* trong particles.comp
   // (GLSL không include được header C, nên phải giữ đồng bộ thủ công).
 } ForceType;
@@ -42,14 +45,17 @@ typedef struct {
   ForceType type;
 
   // Vị trí / hướng
-  Vector3
-      origin; // điểm gốc: tâm hút/vortex/... (không dùng cho GRAVITY_DIR, DRAG)
+  Vector3 origin; // điểm gốc: tâm hút/vortex/... (không dùng cho GRAVITY_DIR,
+                  // DRAG, RADIAL_AXIS)
   Vector3 direction; // hướng lực / trục vortex (nên normalize sẵn)
 
   // Cường độ & suy giảm
+  // Với FORCE_RADIAL_AXIS: strength dương = hút vào trục; âm = đẩy ra khỏi
+  // trục. radius = vùng tác dụng (tính theo khoảng cách vuông góc tới trục).
+  // falloff = suy giảm theo khoảng cách vuông góc tới trục.
   float strength; // cường độ gia tốc (m/s²)
-  float
-      radius; // 0.0 = tác dụng vô cực; > 0 = chỉ trong vùng sphere bán kính này
+  float radius; // 0.0 = tác dụng vô cực; > 0 = chỉ trong vùng sphere/cylinder
+                // bán kính này
   float falloff; // 0.0 = hằng số; 1.0 = tuyến tính; 2.0 = bình phương (chỉ khi
                  // radius > 0)
 
@@ -78,22 +84,27 @@ void ForceField_Clear(ForceField *ff);
 bool ForceField_AddLayer(ForceField *ff, ForceLayer layer);
 
 // Tính gia tốc tổng tại vị trí pos với vận tốc vel (cần cho FORCE_DRAG), tại
-// thời điểm time Có thể gọi mỗi frame cho từng particle, từng trail, v.v.
+// thời điểm time.
+//
+// LƯU Ý (BREAKING CHANGE): Tất cả các lời gọi hàm này phải kèm theo 2 tham số
+// axisOrigin và axisDir. axisOrigin, axisDir: định nghĩa TRỤC ĐỘNG dùng cho mọi
+// layer kiểu FORCE_RADIAL_AXIS. (axisDir PHẢI được normalize trước khi truyền
+// vào). Nếu field không chứa FORCE_RADIAL_AXIS hoặc không cần trục động, truyền
+// (Vector3){0} cho cả hai.
 Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel,
-                            float time);
+                            float time, Vector3 axisOrigin, Vector3 axisDir);
 
 // Tính hệ số giảm chấn nhân lên velocity từ tất cả layer FORCE_VISCOSITY trong
-// field. Trả về [0, 1]: 1.0 = không giảm, ~0 = dừng hoàn toàn. Phải gọi SAU
-// ForceField_Evaluate và nhân trực tiếp vào velocity.
+// field.
 float ForceField_GetViscosityDamping(const ForceField *ff, float dt);
 
 // ============================================================
-// GPU LAYOUT  — dùng khi cần upload ForceField lên SSBO cho compute shader
+// GPU LAYOUT
 //
-// vec3 origin/direction được đệm thành vec4 (w không dùng) để tránh lỗi
-// packing vec3 trong std430 trên driver GLES mobile (Mali/Adreno đời cũ nổi
-// tiếng có bug ở chỗ này). PHẢI khớp byte-for-byte với struct
-// ForceLayerGPU / ForceFieldGPU bên particles.comp — sửa 1 bên thì sửa cả 2.
+// LƯU Ý FORCE_RADIAL_AXIS: Tái sử dụng strength/radius/falloff từ params0.
+// AxisOrigin/AxisDir là trục động truyền vào lúc evaluate, KHÔNG lữu trữ trong
+// cấu trúc ForceLayerGPU. Khi ánh xạ sang compute shader, shader cần nhận trục
+// qua uniform/push_constant riêng nếu muốn tính FORCE_RADIAL_AXIS trên GPU.
 // ============================================================
 
 typedef struct {
@@ -110,7 +121,6 @@ typedef struct {
 } ForceFieldGPU;
 
 // Chuyển ForceField (CPU) sang layout phẳng để memcpy thẳng lên SSBO.
-// out phải trỏ tới vùng nhớ đã alloc sẵn (không alloc trong hàm này).
 void ForceField_PackGPU(const ForceField *ff, ForceFieldGPU *out);
 
 #endif // FORCE_FIELD_H

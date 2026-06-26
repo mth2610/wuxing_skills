@@ -6,18 +6,16 @@
 #include "ribbon_strip.h"
 
 #define MAX_TRAIL_PARTICLES 500
-// Nâng trần bộ nhớ đệm lịch sử lên 60 để có thể chỉnh đuôi siêu dài nếu muốn
 #define TRAIL_HISTORY_COUNT 60
 
-// --- Named constants (thay magic numbers theo SKILL_STANDARD.md) ---
 #define TRAIL_PROJECTILE_TAPER_POWER 1.2f
 #define TRAIL_PROJECTILE_OUTER_WIDTH_MUL 1.3f
 #define TRAIL_PROJECTILE_INNER_WIDTH_MUL 0.65f
 #define TRAIL_PROJECTILE_OUTER_ALPHA_MAX 80.0f
 #define TRAIL_PROJECTILE_SPAWN_OFFSET_MUL 0.45f
 #define TRAIL_PROJECTILE_WOBBLE_FREQ 8.0f
-#define TRAIL_PROJECTILE_RETARGET_DIST_SQR 400.0f // sqrt = 20 units
-#define TRAIL_PROJECTILE_HIT_DIST_SQR 900.0f      // sqrt = 30 units
+#define TRAIL_PROJECTILE_RETARGET_DIST_SQR 400.0f
+#define TRAIL_PROJECTILE_HIT_DIST_SQR 900.0f
 #define TRAIL_PROJECTILE_ACCEL_RATE 150.0f
 #define TRAIL_PROJECTILE_MAX_SPEED 600.0f
 #define TRAIL_PROJECTILE_CURVE_RANGE 250.0f
@@ -41,7 +39,6 @@
 #define TRAIL_PORTAL_SPAWN_GROW_TIME 0.12f
 #define TRAIL_PORTAL_QUAD_SIZE_MUL 2.6f
 
-// Các constant cho TRAIL_TYPE_FOLLOWER
 #define TRAIL_FOLLOWER_IDLE_FADE_TIME 0.15f
 #define TRAIL_FOLLOWER_FADE_RATE_PER_SEC 40.0f
 
@@ -55,15 +52,13 @@ typedef enum {
 typedef void (*TrailUpdateCallback)(int trailId, float dt);
 typedef void (*TrailDeathCallback)(Vector3 pos, float scale);
 
-// STRUCT CẤU HÌNH: Giải quyết triệt để lỗi đếm tham số của Compiler
 typedef struct {
   TrailType type;
   Vector3 pos;
   Vector3 vel;
   float len;
   float thick;
-  float trailLength; // Trường mới bổ sung: Quy định độ dài đuôi (số node tối đa
-                     // từ 1-60)
+  float trailLength;
   float life;
   Vector3 target;
   float initialAngle;
@@ -71,17 +66,11 @@ typedef struct {
   float scale;
   Texture2D tex;
   Color tint;
-  Shader shader; // Shader riêng cho entity này (vd: shader sword khác shader
-                 // lửa). Truyền (Shader){0} (id=0) để dùng shader mặc định
-                 // của hệ thống (xem InitTrailSystem). Người gọi (skill)
-                 // tự LoadShader() một lần lúc init skill, KHÔNG load lại
-                 // mỗi lần spawn - trail_system chỉ giữ tham chiếu, không
-                 // sở hữu lifetime của shader này.
+  Shader shader;
   TrailUpdateCallback onUpdate;
   TrailDeathCallback onDeath;
   int ownerTag;
-  const ForceField *forceField; // NULL = path thẳng đuột theo input ngoài.
-                                // Khác NULL = path bị lệch thêm theo force.
+  const ForceField *forceField;
 } TrailConfig;
 
 // Đã tối ưu Struct Padding: Sắp xếp theo kích thước dữ liệu giảm dần
@@ -92,35 +81,28 @@ typedef struct {
   const ForceField *forceField;
 
   // 2. Mảng và Struct lớn (Vectors)
-  Vector3 history[TRAIL_HISTORY_COUNT];      // vị trí từng node ribbon
-  Vector3 nodeVelocity[TRAIL_HISTORY_COUNT]; // vận tốc từng node ribbon.
-  // nodeVelocity[i] ánh xạ sang cùng index với history[i] — kể cả khi
-  // dùng ring-buffer (PROJECTILE, FOLLOWER): cùng historyHead, cùng modulo.
-  // Cần thiết để DRAG/VISCOSITY tính đúng lực cản (cần truyền vel vào
-  // ForceField_Evaluate), và để semi-implicit Euler tích phân đúng thứ tự:
-  //   vel += acc * dt  →  vel *= viscDamp  →  pos += vel * dt.
-  // WISP khởi tạo toàn bộ array bằng config.vel.
-  // FOLLOWER zero nodeVelocity tại historyHead mỗi khi UpdateFollowerPosition
-  // được gọi (node đó bị ghim, không cần velocity vật lý).
-  // PROJECTILE chỉ dùng entity velocity (trường velocity bên dưới), không
-  // dùng nodeVelocity.
+  Vector3 history[TRAIL_HISTORY_COUNT];
+  Vector3 nodeVelocity[TRAIL_HISTORY_COUNT];
 
   Vector3 position;
   Vector3 velocity;
   Vector3 target;
-  Vector3 driftVelocity; // Dùng riêng cho TRAIL_TYPE_FOLLOWER (Cách A)
+  Vector3 driftVelocity;
+  Vector3 axisOrigin; // CHỈ có ý nghĩa khi type == TRAIL_TYPE_FOLLOWER và
+                      // forceField chứa layer FORCE_RADIAL_AXIS. Set bởi
+                      // SetFollowerAxis().
+  Vector3 axisDir; // Hướng trục, PHẢI là vector đơn vị khi truyền vào
+                   // SetFollowerAxis().
 
   // 3. Texture và Color
   Texture2D sprite;
   Color tint;
-  Shader shader; // Copy từ TrailConfig.shader lúc spawn. (Shader){0} nghĩa
-                 // là "dùng default shader của hệ thống".
+  Shader shader;
 
   // 4. Các biến thực (Floats) - 4 bytes
   float length;
   float thickness;
-  float trailLength; // Trường mới bổ sung: Lưu trữ cấu hình độ dài đuôi trong
-                     // Pool
+  float trailLength;
   float lifetime;
   float maxLifetime;
   float angle;
@@ -128,56 +110,33 @@ typedef struct {
   float scale;
   float timeSinceLastFollowerUpdate;
   float fadeAccumulator;
-  float nodeRestLen; // Độ dài nghỉ giữa 2 node liền kề của WISP (m).
-  // = length / (TRAIL_HISTORY_COUNT - 1), tính sẵn lúc spawn để tránh
-  // chia lại mỗi frame. Chỉ dùng cho TRAIL_TYPE_WISP.
+  float nodeRestLen;
 
   // 5. Số nguyên và Enum (Int/Enum) - 4 bytes
   TrailType type;
   int historyCount;
   int historyHead;
   int ownerTag;
-  int nextFree; // Free-list O(1): index slot trống kế tiếp khi !active.
-                // Khi active=true, giá trị này không có ý nghĩa (đừng đọc).
+  int nextFree;
 
   // 6. Kiểu Boolean - 1 byte
   bool active;
 } TrailEntity;
 
-// defaultShader: shader dùng cho mọi trail KHÔNG chỉ định shader riêng
-// (TrailConfig.shader.id == 0). Mỗi skill có thể tự LoadShader() shader
-// riêng của mình (vd metalSwordShader, fireTrailShader) và truyền vào
-// TrailConfig.shader lúc gọi SpawnTrailEntity - trail_system không tự
-// load/unload các shader đó, người gọi tự quản lý lifetime.
-// Truyền (Shader){0} nếu chưa có default, miễn mọi entity sau đó đều tự
-// cấp shader riêng qua TrailConfig.shader.
 void InitTrailSystem(Shader defaultShader);
-int SpawnTrailEntity(TrailConfig config); // LUÔN LUÔN CHỈ CÓ 1 THAM SỐ
+int SpawnTrailEntity(TrailConfig config);
 TrailEntity *GetTrail(int id);
-
-// KillTrail: đánh dấu chết NGAY (active=false, trả slot về free-list tức
-// thì) và gọi onDeath ngay tại đây. Không còn kiểu "chết trễ 1 frame" như
-// bản cũ (set lifetime=0 rồi chờ UpdateTrailSystem dọn) - tránh trường hợp
-// code gọi GetTrail(id)->active ngay sau KillTrail mà vẫn thấy true.
 void KillTrail(int id);
-
 void UpdateTrailSystem(float dt);
 void DrawTrailEntities(Camera3D camera);
-
-// UnloadTrailSystem: KHÔNG unload defaultShader hay bất kỳ shader nào
-// được truyền qua TrailConfig.shader - người gọi (skill) tự chịu trách
-// nhiệm UnloadShader() shader của mình trong UnloadXSkill() của họ.
 void UnloadTrailSystem(void);
-
-// Số trail đang active hiện tại - dùng để debug/HUD, O(1) (không quét pool).
 int GetActiveTrailCount(void);
 
-// Cập nhật vị trí tip cho 1 FOLLOWER entity - PHẢI gọi mỗi frame TRƯỚC
-// UpdateTrailSystem() nếu muốn ribbon tiếp tục mọc dài theo vị trí mới.
-// Không gọi trong 1 frame nào đó -> entity coi như "idle" frame đó, sau
-// TRAIL_FOLLOWER_IDLE_FADE_TIME giây liên tục không được gọi sẽ bắt đầu
-// rút ngắn ribbon dần (xem UpdateTrailSystem). Không có hiệu lực / no-op
-// nếu id không tồn tại hoặc không phải TRAIL_TYPE_FOLLOWER.
 void UpdateFollowerPosition(int id, Vector3 newTipPos);
+
+// Set trục động (axisOrigin + axisDir, axisDir PHẢI normalize trước khi
+// gọi) dùng cho lực FORCE_RADIAL_AXIS trong forceField của entity FOLLOWER
+// này. PHẢI gọi mỗi frame TRƯỚC UpdateTrailSystem() nếu trục di chuyển.
+void SetFollowerAxis(int id, Vector3 axisOrigin, Vector3 axisDir);
 
 #endif // TRAIL_SYSTEM_H
