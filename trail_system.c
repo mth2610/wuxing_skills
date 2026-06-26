@@ -6,10 +6,41 @@
 #include <stddef.h>
 
 static TrailEntity trailPool[MAX_TRAIL_PARTICLES];
-static int lastUsedIndex = 0;
+static int freeListHead = 0; // Đầu free-list, O(1) thay cho quét tuyến tính
+static int activeCount = 0;
 
-static Shader trailShader;
-static int timeLocTrail;
+static Shader defaultShader; // Dùng khi TrailConfig.shader.id == 0
+
+// Cache location "u_time" theo từng shader id khác nhau - vì mỗi shader
+// program có location riêng cho cùng tên uniform (driver tự gán, không cố
+// định). Static array nhỏ, no-malloc, đủ cho số shader khác nhau thực tế
+// dùng cùng lúc trong 1 hệ thống chiêu thức (kim, hỏa, thổ, thủy, mộc +
+// vài shader phụ).
+#define TRAIL_SHADER_CACHE_SIZE 16
+static unsigned int shaderCacheIds[TRAIL_SHADER_CACHE_SIZE];
+static int shaderCacheTimeLocs[TRAIL_SHADER_CACHE_SIZE];
+static int shaderCacheCount = 0;
+
+static int GetCachedTimeLoc(Shader shader) {
+  for (int i = 0; i < shaderCacheCount; i++) {
+    if (shaderCacheIds[i] == shader.id)
+      return shaderCacheTimeLocs[i];
+  }
+  int loc = GetShaderLocation(shader, "u_time");
+  if (shaderCacheCount < TRAIL_SHADER_CACHE_SIZE) {
+    shaderCacheIds[shaderCacheCount] = shader.id;
+    shaderCacheTimeLocs[shaderCacheCount] = loc;
+    shaderCacheCount++;
+  }
+  return loc;
+}
+
+static RibbonPoint scratchOuter[TRAIL_HISTORY_COUNT];
+static RibbonPoint scratchInner[TRAIL_HISTORY_COUNT];
+
+static Shader ResolveShader(const TrailEntity *t) {
+  return (t->shader.id != 0) ? t->shader : defaultShader;
+}
 
 static float SmoothStepC(float edge0, float edge1, float x) {
   float t = (x - edge0) / (edge1 - edge0);
@@ -62,11 +93,15 @@ static void DrawCameraFacingQuad(Camera3D camera, Vector3 center, float width,
     rlSetTexture(0);
 }
 
-void InitTrailSystem(void) {
-  trailShader = LoadShader(0, "metal.fs");
-  timeLocTrail = GetShaderLocation(trailShader, "u_time");
-  for (int i = 0; i < MAX_TRAIL_PARTICLES; i++)
+void InitTrailSystem(Shader defaultShaderIn) {
+  defaultShader = defaultShaderIn;
+  shaderCacheCount = 0;
+  for (int i = 0; i < MAX_TRAIL_PARTICLES; i++) {
     trailPool[i].active = false;
+    trailPool[i].nextFree = i + 1;
+  }
+  freeListHead = 0;
+  activeCount = 0;
 }
 
 TrailEntity *GetTrail(int id) {
@@ -75,67 +110,93 @@ TrailEntity *GetTrail(int id) {
   return &trailPool[id];
 }
 
-void KillTrail(int id) {
-  if (id >= 0 && id < MAX_TRAIL_PARTICLES && trailPool[id].active) {
-    trailPool[id].lifetime = 0.0f;
-  }
+static void KillTrailInternal(int id) {
+  if (trailPool[id].onDeath)
+    trailPool[id].onDeath(trailPool[id].position, trailPool[id].scale);
+  trailPool[id].active = false;
+  trailPool[id].nextFree = freeListHead;
+  freeListHead = id;
+  activeCount--;
 }
 
+void KillTrail(int id) {
+  if (id < 0 || id >= MAX_TRAIL_PARTICLES || !trailPool[id].active)
+    return;
+  KillTrailInternal(id);
+}
+
+int GetActiveTrailCount(void) { return activeCount; }
+
 int SpawnTrailEntity(TrailConfig config) {
-  for (int i = 0; i < MAX_TRAIL_PARTICLES; i++) {
-    int index = (lastUsedIndex + i) % MAX_TRAIL_PARTICLES;
-    if (!trailPool[index].active) {
-      trailPool[index].type = config.type;
-      trailPool[index].position = config.pos;
-      trailPool[index].velocity = config.vel;
-      trailPool[index].target = config.target;
-      trailPool[index].length = config.len;
-      trailPool[index].thickness = config.thick;
-      trailPool[index].lifetime = config.life;
-      trailPool[index].maxLifetime = config.life;
-      trailPool[index].active = true;
-      trailPool[index].angle = config.initialAngle;
-      trailPool[index].wobblePhase = config.wobblePhase;
-      trailPool[index].scale = config.scale;
-      trailPool[index].sprite = config.tex;
-      trailPool[index].tint = config.tint;
-      trailPool[index].onUpdate = config.onUpdate;
-      trailPool[index].onDeath = config.onDeath;
-      trailPool[index].ownerTag = config.ownerTag;
-      trailPool[index].forceField = NULL;
-      trailPool[index].historyHead = 0;
+  if (freeListHead >= MAX_TRAIL_PARTICLES)
+    return -1;
 
-      if (config.type == TRAIL_TYPE_WISP) {
-        trailPool[index].historyCount = TRAIL_HISTORY_COUNT;
-        Vector3 strandDir = config.target;
-        float waveFreq = (float)GetRandomValue(10, 20);
-        float waveAmp = (float)GetRandomValue(5, 18) * config.scale;
+  int index = freeListHead;
+  freeListHead = trailPool[index].nextFree;
 
-        for (int h = 0; h < TRAIL_HISTORY_COUNT; h++) {
-          float t = (float)h / (TRAIL_HISTORY_COUNT - 1);
-          Vector3 basePos =
-              Vector3Add(config.pos, Vector3Scale(strandDir, t * config.len));
-          Vector3 wUp = (fabsf(strandDir.y) > 0.99f)
-                            ? (Vector3){1.0f, 0.0f, 0.0f}
-                            : (Vector3){0.0f, 1.0f, 0.0f};
-          Vector3 wRight =
-              Vector3Normalize(Vector3CrossProduct(strandDir, wUp));
-          float wave = sinf(t * waveFreq + config.wobblePhase) * waveAmp * t;
-          trailPool[index].history[h] =
-              Vector3Add(basePos, Vector3Scale(wRight, wave));
-        }
-      } else {
-        trailPool[index].historyCount = 0;
-        for (int h = 0; h < TRAIL_HISTORY_COUNT; h++) {
-          trailPool[index].history[h] = config.pos;
-        }
-      }
+  trailPool[index].type = config.type;
+  trailPool[index].position = config.pos;
+  trailPool[index].velocity = config.vel;
+  trailPool[index].target = config.target;
+  trailPool[index].length = config.len;
+  trailPool[index].thickness = config.thick;
+  trailPool[index].lifetime = config.life;
+  trailPool[index].maxLifetime = config.life;
+  trailPool[index].active = true;
+  trailPool[index].angle = config.initialAngle;
+  trailPool[index].wobblePhase = config.wobblePhase;
+  trailPool[index].scale = config.scale;
+  trailPool[index].sprite = config.tex;
+  trailPool[index].shader = config.shader;
+  trailPool[index].tint = config.tint;
+  trailPool[index].onUpdate = config.onUpdate;
+  trailPool[index].onDeath = config.onDeath;
+  trailPool[index].ownerTag = config.ownerTag;
+  trailPool[index].forceField = config.forceField;
 
-      lastUsedIndex = (index + 1) % MAX_TRAIL_PARTICLES;
-      return index;
+  trailPool[index].timeSinceLastFollowerUpdate = 0.0f;
+  trailPool[index].fadeAccumulator = 0.0f;
+  trailPool[index].historyHead = 0;
+
+  if (config.type == TRAIL_TYPE_WISP) {
+    trailPool[index].historyCount = TRAIL_HISTORY_COUNT;
+    Vector3 strandDir = config.target;
+    for (int h = 0; h < TRAIL_HISTORY_COUNT; h++) {
+      float t = (float)h / (TRAIL_HISTORY_COUNT - 1);
+      trailPool[index].history[h] =
+          Vector3Add(config.pos, Vector3Scale(strandDir, t * config.len));
+    }
+  } else if (config.type == TRAIL_TYPE_FOLLOWER) {
+    trailPool[index].historyCount = 0;
+  } else {
+    trailPool[index].historyCount = 0;
+    for (int h = 0; h < TRAIL_HISTORY_COUNT; h++) {
+      trailPool[index].history[h] = config.pos;
     }
   }
-  return -1;
+
+  activeCount++;
+  return index;
+}
+
+void UpdateFollowerPosition(int id, Vector3 newTipPos) {
+  if (id < 0 || id >= MAX_TRAIL_PARTICLES || !trailPool[id].active)
+    return;
+  if (trailPool[id].type != TRAIL_TYPE_FOLLOWER)
+    return;
+
+  trailPool[id].historyHead =
+      (trailPool[id].historyHead + 1) % TRAIL_HISTORY_COUNT;
+  trailPool[id].history[trailPool[id].historyHead] = newTipPos;
+  trailPool[id].position = newTipPos;
+
+  if (trailPool[id].historyCount < TRAIL_HISTORY_COUNT) {
+    trailPool[id].historyCount++;
+  }
+
+  // Reset timer idle do vừa được cập nhật vị trí mới
+  trailPool[id].timeSinceLastFollowerUpdate = 0.0f;
+  trailPool[id].fadeAccumulator = 0.0f;
 }
 
 void UpdateTrailSystem(float dt) {
@@ -145,9 +206,7 @@ void UpdateTrailSystem(float dt) {
 
     trailPool[i].lifetime -= dt;
     if (trailPool[i].lifetime <= 0.0f) {
-      if (trailPool[i].onDeath)
-        trailPool[i].onDeath(trailPool[i].position, trailPool[i].scale);
-      trailPool[i].active = false;
+      KillTrailInternal(i);
       continue;
     }
 
@@ -158,14 +217,15 @@ void UpdateTrailSystem(float dt) {
       trailPool[i].historyHead =
           (trailPool[i].historyHead + 1) % TRAIL_HISTORY_COUNT;
       Vector3 dir = Vector3Normalize(trailPool[i].velocity);
-      trailPool[i].history[trailPool[i].historyHead] =
-          Vector3Subtract(trailPool[i].position,
-                          Vector3Scale(dir, trailPool[i].length * 0.45f));
+      trailPool[i].history[trailPool[i].historyHead] = Vector3Subtract(
+          trailPool[i].position,
+          Vector3Scale(dir, trailPool[i].length *
+                                TRAIL_PROJECTILE_SPAWN_OFFSET_MUL));
 
       if (trailPool[i].historyCount < TRAIL_HISTORY_COUNT)
         trailPool[i].historyCount++;
 
-      trailPool[i].wobblePhase += dt * 8.0f;
+      trailPool[i].wobblePhase += dt * TRAIL_PROJECTILE_WOBBLE_FREQ;
       trailPool[i].position = Vector3Add(
           trailPool[i].position, Vector3Scale(trailPool[i].velocity, dt));
 
@@ -173,51 +233,71 @@ void UpdateTrailSystem(float dt) {
           Vector3Subtract(trailPool[i].target, trailPool[i].position);
       float distSqr = Vector3LengthSqr(toTarget);
 
-      if (distSqr > 400.0f) {
+      if (distSqr > TRAIL_PROJECTILE_RETARGET_DIST_SQR) {
         Vector3 desiredDir = Vector3Normalize(toTarget);
         float currentSpeed = Vector3Length(trailPool[i].velocity);
-        float newSpeed = fminf(currentSpeed + 150.0f * dt, 600.0f);
+        float newSpeed = fminf(currentSpeed + TRAIL_PROJECTILE_ACCEL_RATE * dt,
+                               TRAIL_PROJECTILE_MAX_SPEED);
         float distToTarget = sqrtf(distSqr);
-        float curveStrength = fminf(distToTarget / 250.0f, 1.0f);
+        float curveStrength =
+            fminf(distToTarget / TRAIL_PROJECTILE_CURVE_RANGE, 1.0f);
 
         Vector3 perpDir = (Vector3){-desiredDir.z, 0.0f, desiredDir.x};
-        float wobble =
-            sinf(trailPool[i].wobblePhase) * 350.0f * curveStrength * dt;
+        float wobble = sinf(trailPool[i].wobblePhase) *
+                       TRAIL_PROJECTILE_WOBBLE_AMPLITUDE * curveStrength * dt;
         Vector3 desiredVel = Vector3Add(Vector3Scale(desiredDir, newSpeed),
                                         Vector3Scale(perpDir, wobble));
         trailPool[i].velocity =
-            Vector3Lerp(trailPool[i].velocity, desiredVel, dt * 3.2f);
+            Vector3Lerp(trailPool[i].velocity, desiredVel,
+                        dt * TRAIL_PROJECTILE_STEER_LERP_RATE);
       }
 
-      if (distSqr < 900.0f) {
-        if (trailPool[i].onDeath)
-          trailPool[i].onDeath(trailPool[i].position, trailPool[i].scale);
-        trailPool[i].active = false;
+      if (distSqr < TRAIL_PROJECTILE_HIT_DIST_SQR) {
+        KillTrailInternal(i);
+        continue;
       }
     } else if (trailPool[i].type == TRAIL_TYPE_WISP) {
-      trailPool[i].velocity =
-          Vector3Scale(trailPool[i].velocity, 1.0f - (dt * 0.8f));
-      Vector3 drift = Vector3Scale(trailPool[i].velocity, dt);
-      trailPool[i].wobblePhase += dt * 15.0f;
-
-      Vector3 sDir = trailPool[i].target;
-      Vector3 wUp = (fabsf(sDir.y) > 0.99f) ? (Vector3){1.0f, 0.0f, 0.0f}
-                                            : (Vector3){0.0f, 1.0f, 0.0f};
-      Vector3 wRight = Vector3Normalize(Vector3CrossProduct(sDir, wUp));
-
-      for (int h = 0; h < trailPool[i].historyCount; h++) {
-        float t = (float)h / (TRAIL_HISTORY_COUNT - 1);
-        trailPool[i].history[h] = Vector3Add(trailPool[i].history[h], drift);
-        float wriggle =
-            cosf(t * 15.0f + trailPool[i].wobblePhase) * 12.0f * t * dt;
-        trailPool[i].history[h] =
-            Vector3Add(trailPool[i].history[h], Vector3Scale(wRight, wriggle));
-      }
+      // WISP đã được gọt sạch chuyển động mặc định (sin/cos/drag/drift)
+      // Giờ WISP chỉ phụ thuộc vào ForceField giống FOLLOWER.
     } else if (trailPool[i].type == TRAIL_TYPE_PORTAL) {
-      trailPool[i].angle += 140.0f * dt;
+      trailPool[i].angle += TRAIL_PORTAL_SPIN_DEG_PER_SEC * dt;
+    } else if (trailPool[i].type == TRAIL_TYPE_FOLLOWER) {
+      // 1. Tự rút ngắn/chết khi không được cập nhật (ví dụ kiếm biến mất)
+      trailPool[i].timeSinceLastFollowerUpdate += dt;
+      if (trailPool[i].timeSinceLastFollowerUpdate >
+          TRAIL_FOLLOWER_IDLE_FADE_TIME) {
+        trailPool[i].fadeAccumulator += TRAIL_FOLLOWER_FADE_RATE_PER_SEC * dt;
+        int fadeCount = (int)trailPool[i].fadeAccumulator;
+
+        if (fadeCount > 0) {
+          trailPool[i].historyCount -= fadeCount;
+          trailPool[i].fadeAccumulator -= (float)fadeCount;
+        }
+
+        if (trailPool[i].historyCount <= 0) {
+          KillTrailInternal(i);
+          continue;
+        }
+      }
+
+      // 2. Tác động ngoại lực xoáy 3D vào đuôi dải lụa
+      if (trailPool[i].forceField && trailPool[i].historyCount > 1) {
+        // LUÔN BỎ QUA ĐIỂM GỐC h=0 ĐỂ ĐẢM BẢO MỎ NEO DÍNH CHẶT VÀO KIẾM
+        for (int h = 1; h < trailPool[i].historyCount; h++) {
+          int idx = (trailPool[i].historyHead - h + TRAIL_HISTORY_COUNT) %
+                    TRAIL_HISTORY_COUNT;
+          Vector3 pt = trailPool[i].history[idx];
+
+          Vector3 acc =
+              ForceField_Evaluate(trailPool[i].forceField, pt,
+                                  (Vector3){0, 0, 0}, (float)GetTime());
+          trailPool[i].history[idx] =
+              Vector3Add(pt, Vector3Scale(acc, dt * 0.05f));
+        }
+      }
     }
 
-    if (trailPool[i].forceField) {
+    if (trailPool[i].forceField && trailPool[i].type != TRAIL_TYPE_FOLLOWER) {
       Vector3 acc =
           ForceField_Evaluate(trailPool[i].forceField, trailPool[i].position,
                               trailPool[i].velocity, (float)GetTime());
@@ -227,105 +307,165 @@ void UpdateTrailSystem(float dt) {
   }
 }
 
-void DrawTrailEntities(Camera3D camera) {
-  bool active = false;
-  for (int i = 0; i < MAX_TRAIL_PARTICLES; i++) {
-    if (trailPool[i].active) {
-      active = true;
-      break;
+static void DrawTrailGeometry(int i, Camera3D camera) {
+  float lifeRatio = trailPool[i].lifetime / trailPool[i].maxLifetime;
+  Color c = trailPool[i].tint;
+
+  if (trailPool[i].type == TRAIL_TYPE_PROJECTILE) {
+    if (trailPool[i].historyCount > 1) {
+      for (int h = 0; h < trailPool[i].historyCount; h++) {
+        int idx = (trailPool[i].historyHead - h + TRAIL_HISTORY_COUNT) %
+                  TRAIL_HISTORY_COUNT;
+        float segRatio =
+            1.0f - (float)h / (float)(trailPool[i].historyCount - 1);
+        float taper = powf(segRatio, TRAIL_PROJECTILE_TAPER_POWER);
+
+        scratchOuter[h].position = trailPool[i].history[idx];
+        scratchOuter[h].halfWidth =
+            trailPool[i].thickness * TRAIL_PROJECTILE_OUTER_WIDTH_MUL * taper;
+        scratchOuter[h].v = segRatio;
+        scratchOuter[h].tint = (Color){
+            (unsigned char)(segRatio * c.r), c.g, c.b,
+            (unsigned char)((c.a / 255.0f) * TRAIL_PROJECTILE_OUTER_ALPHA_MAX *
+                            lifeRatio)};
+
+        scratchInner[h].position = trailPool[i].history[idx];
+        scratchInner[h].halfWidth =
+            trailPool[i].thickness * TRAIL_PROJECTILE_INNER_WIDTH_MUL * taper;
+        scratchInner[h].v = segRatio;
+        scratchInner[h].tint = (Color){(unsigned char)(segRatio * c.r), c.g,
+                                       c.b, (unsigned char)(c.a * lifeRatio)};
+      }
+      DrawRibbonStrip(scratchOuter, trailPool[i].historyCount, (Texture2D){0},
+                      camera);
+      DrawRibbonStrip(scratchInner, trailPool[i].historyCount, (Texture2D){0},
+                      camera);
+    }
+
+    Matrix matView = GetCameraMatrix(camera);
+    Vector3 right = {matView.m0, matView.m4, matView.m8};
+    Vector3 up = {matView.m1, matView.m5, matView.m9};
+    Vector3 vDir = Vector3Normalize(trailPool[i].velocity);
+    float rotation =
+        atan2f(Vector3DotProduct(vDir, up), Vector3DotProduct(vDir, right));
+    Color spriteTint =
+        (Color){128, 128, 128, (unsigned char)(255.0f * lifeRatio)};
+    DrawCameraFacingQuad(camera, trailPool[i].position,
+                         trailPool[i].length * TRAIL_PROJECTILE_QUAD_LENGTH_MUL,
+                         trailPool[i].thickness *
+                             TRAIL_PROJECTILE_QUAD_THICK_MUL,
+                         rotation, spriteTint, trailPool[i].sprite);
+
+  } else if (trailPool[i].type == TRAIL_TYPE_WISP) {
+    if (trailPool[i].historyCount > 1) {
+      for (int h = 0; h < trailPool[i].historyCount; h++) {
+        float segRatio =
+            1.0f - (float)h / (float)(trailPool[i].historyCount - 1);
+        float taper =
+            SmoothStepC(0.0f, TRAIL_WISP_HEAD_TAPER_EDGE, segRatio) *
+            SmoothStepC(1.0f, TRAIL_WISP_TAIL_TAPER_EDGE, 1.0f - segRatio);
+
+        scratchOuter[h].position = trailPool[i].history[h];
+        scratchOuter[h].halfWidth = trailPool[i].thickness * 0.8f * taper;
+        scratchOuter[h].v = segRatio;
+        unsigned char finalAlpha = (unsigned char)(c.a * lifeRatio * taper);
+        scratchOuter[h].tint = (Color){c.r, c.g, c.b, finalAlpha};
+      }
+      DrawRibbonStrip(scratchOuter, trailPool[i].historyCount, (Texture2D){0},
+                      camera);
+    }
+  } else if (trailPool[i].type == TRAIL_TYPE_PORTAL) {
+    float radius = trailPool[i].length;
+    float age = trailPool[i].maxLifetime - trailPool[i].lifetime;
+    if (age < TRAIL_PORTAL_SPAWN_GROW_TIME)
+      radius *= (age / TRAIL_PORTAL_SPAWN_GROW_TIME);
+    Color portalTint = (Color){c.r, c.g, c.b, (unsigned char)(c.a * lifeRatio)};
+    DrawCameraFacingQuad(
+        camera, trailPool[i].position, radius * TRAIL_PORTAL_QUAD_SIZE_MUL,
+        radius * TRAIL_PORTAL_QUAD_SIZE_MUL, trailPool[i].angle * DEG2RAD,
+        portalTint, (Texture2D){0});
+  } else if (trailPool[i].type == TRAIL_TYPE_FOLLOWER) {
+    if (trailPool[i].historyCount > 1) {
+      for (int h = 0; h < trailPool[i].historyCount; h++) {
+        int idx = (trailPool[i].historyHead - h + TRAIL_HISTORY_COUNT) %
+                  TRAIL_HISTORY_COUNT;
+        float segRatio =
+            1.0f - (float)h / (float)(trailPool[i].historyCount - 1);
+
+        float taper =
+            SmoothStepC(0.0f, TRAIL_WISP_HEAD_TAPER_EDGE, segRatio) *
+            SmoothStepC(1.0f, TRAIL_WISP_TAIL_TAPER_EDGE, 1.0f - segRatio);
+
+        scratchOuter[h].position = trailPool[i].history[idx];
+        scratchOuter[h].halfWidth = trailPool[i].thickness * 0.8f * taper;
+        scratchOuter[h].v = segRatio;
+        unsigned char finalAlpha = (unsigned char)(c.a * lifeRatio * taper);
+        scratchOuter[h].tint = (Color){c.r, c.g, c.b, finalAlpha};
+      }
+      DrawRibbonStrip(scratchOuter, trailPool[i].historyCount, (Texture2D){0},
+                      camera);
     }
   }
-  if (!active)
+}
+
+static unsigned int activeShaderIds[TRAIL_SHADER_CACHE_SIZE];
+
+void DrawTrailEntities(Camera3D camera) {
+  if (activeCount == 0)
     return;
 
   float time = (float)GetTime();
   rlDisableDepthMask();
   BeginBlendMode(BLEND_ADDITIVE);
-  SetShaderValue(trailShader, timeLocTrail, &time, SHADER_UNIFORM_FLOAT);
-  BeginShaderMode(trailShader);
 
+  int activeShaderCount = 0;
   for (int i = 0; i < MAX_TRAIL_PARTICLES; i++) {
     if (!trailPool[i].active)
       continue;
-    float lifeRatio = trailPool[i].lifetime / trailPool[i].maxLifetime;
-    Color c = trailPool[i].tint;
-
-    if (trailPool[i].type == TRAIL_TYPE_PROJECTILE) {
-      if (trailPool[i].historyCount > 1) {
-        RibbonPoint outerStrip[TRAIL_HISTORY_COUNT];
-        RibbonPoint innerStrip[TRAIL_HISTORY_COUNT];
-        for (int h = 0; h < trailPool[i].historyCount; h++) {
-          int idx = (trailPool[i].historyHead - h + TRAIL_HISTORY_COUNT) %
-                    TRAIL_HISTORY_COUNT;
-          float segRatio =
-              1.0f - (float)h / (float)(trailPool[i].historyCount - 1);
-          float taper = powf(segRatio, 1.2f);
-
-          outerStrip[h].position = trailPool[i].history[idx];
-          outerStrip[h].halfWidth = trailPool[i].thickness * 1.3f * taper;
-          outerStrip[h].v = segRatio;
-          outerStrip[h].tint =
-              (Color){(unsigned char)(segRatio * c.r), c.g, c.b,
-                      (unsigned char)((c.a / 255.0f) * 80.0f * lifeRatio)};
-
-          innerStrip[h].position = trailPool[i].history[idx];
-          innerStrip[h].halfWidth = trailPool[i].thickness * 0.65f * taper;
-          innerStrip[h].v = segRatio;
-          innerStrip[h].tint = (Color){(unsigned char)(segRatio * c.r), c.g,
-                                       c.b, (unsigned char)(c.a * lifeRatio)};
-        }
-        DrawRibbonStrip(outerStrip, trailPool[i].historyCount, (Texture2D){0},
-                        camera);
-        DrawRibbonStrip(innerStrip, trailPool[i].historyCount, (Texture2D){0},
-                        camera);
+    unsigned int sid = ResolveShader(&trailPool[i]).id;
+    bool found = false;
+    for (int s = 0; s < activeShaderCount; s++) {
+      if (activeShaderIds[s] == sid) {
+        found = true;
+        break;
       }
-
-      Matrix matView = GetCameraMatrix(camera);
-      Vector3 right = {matView.m0, matView.m4, matView.m8};
-      Vector3 up = {matView.m1, matView.m5, matView.m9};
-      Vector3 vDir = Vector3Normalize(trailPool[i].velocity);
-      float rotation =
-          atan2f(Vector3DotProduct(vDir, up), Vector3DotProduct(vDir, right));
-      Color spriteTint =
-          (Color){128, 128, 128, (unsigned char)(255.0f * lifeRatio)};
-      DrawCameraFacingQuad(camera, trailPool[i].position,
-                           trailPool[i].length * 1.1f,
-                           trailPool[i].thickness * 2.0f, rotation, spriteTint,
-                           trailPool[i].sprite);
-
-    } else if (trailPool[i].type == TRAIL_TYPE_WISP) {
-      if (trailPool[i].historyCount > 1) {
-        RibbonPoint wispStrip[TRAIL_HISTORY_COUNT];
-        for (int h = 0; h < trailPool[i].historyCount; h++) {
-          float segRatio =
-              1.0f - (float)h / (float)(trailPool[i].historyCount - 1);
-          float taper = SmoothStepC(0.0f, 0.2f, segRatio) *
-                        SmoothStepC(1.0f, 0.5f, 1.0f - segRatio);
-
-          wispStrip[h].position = trailPool[i].history[h];
-          wispStrip[h].halfWidth = trailPool[i].thickness * 0.8f * taper;
-          wispStrip[h].v = segRatio;
-          unsigned char finalAlpha = (unsigned char)(c.a * lifeRatio * taper);
-          wispStrip[h].tint = (Color){c.r, c.g, c.b, finalAlpha};
-        }
-        DrawRibbonStrip(wispStrip, trailPool[i].historyCount, (Texture2D){0},
-                        camera);
-      }
-    } else if (trailPool[i].type == TRAIL_TYPE_PORTAL) {
-      float radius = trailPool[i].length;
-      float age = trailPool[i].maxLifetime - trailPool[i].lifetime;
-      if (age < 0.12f)
-        radius *= (age / 0.12f);
-      Color portalTint =
-          (Color){c.r, c.g, c.b, (unsigned char)(c.a * lifeRatio)};
-      DrawCameraFacingQuad(camera, trailPool[i].position, radius * 2.6f,
-                           radius * 2.6f, trailPool[i].angle * DEG2RAD,
-                           portalTint, (Texture2D){0});
+    }
+    if (!found && activeShaderCount < TRAIL_SHADER_CACHE_SIZE) {
+      activeShaderIds[activeShaderCount++] = sid;
     }
   }
-  EndShaderMode();
+
+  for (int s = 0; s < activeShaderCount; s++) {
+    Shader shader = {0};
+    shader.id = activeShaderIds[s];
+
+    Shader fullShader = defaultShader;
+    for (int i = 0; i < MAX_TRAIL_PARTICLES; i++) {
+      if (trailPool[i].active &&
+          ResolveShader(&trailPool[i]).id == activeShaderIds[s]) {
+        fullShader = ResolveShader(&trailPool[i]);
+        break;
+      }
+    }
+
+    int timeLoc = GetCachedTimeLoc(fullShader);
+    if (timeLoc >= 0)
+      SetShaderValue(fullShader, timeLoc, &time, SHADER_UNIFORM_FLOAT);
+    BeginShaderMode(fullShader);
+
+    for (int i = 0; i < MAX_TRAIL_PARTICLES; i++) {
+      if (!trailPool[i].active)
+        continue;
+      if (ResolveShader(&trailPool[i]).id != shader.id)
+        continue;
+      DrawTrailGeometry(i, camera);
+    }
+
+    EndShaderMode();
+  }
+
   EndBlendMode();
   rlEnableDepthMask();
 }
 
-void UnloadTrailSystem(void) { UnloadShader(trailShader); }
+void UnloadTrailSystem(void) {}

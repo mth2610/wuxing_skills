@@ -58,7 +58,9 @@ int main(void) {
   // KHỞI TẠO HỆ THỐNG VFX (HẠT VÀ DẢI NĂNG LƯỢNG)
   // -----------------------------------------------------------------
   InitParticleSystem();
-  InitTrailSystem(); // MỚI: Khởi tạo hệ thống Trail System
+  Shader defaultTrailShader =
+      LoadShader(0, "metal.fs"); // shader fallback chung
+  InitTrailSystem(defaultTrailShader); // MỚI: Khởi tạo hệ thống Trail System
 
   Image img = GenImageGradientRadial(64, 64, 0.0f, WHITE, BLACK);
   Texture2D globalParticleTex = LoadTextureFromImage(img);

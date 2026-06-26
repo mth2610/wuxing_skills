@@ -12,24 +12,29 @@
 
 static ForceField s_metalSparkField;
 static ForceField s_metalShardField;
+static ForceField s_metalWispField;
 
 typedef struct {
   bool active;
   Vector3 startPos;
   Vector3 targetPos;
-  Vector3 portalPositions[5];
+  Vector3 spawnPositions[5];
   float spawnDelay[5];
   bool spawned[5];
-  bool portalSpawned[5];
-  float portalSizes[5];
+  float projectileSizes[5];
   int count;
   float timer;
 } MetalEmitter;
 
 static MetalEmitter emitters[MAX_EMITTERS];
 static Texture2D swordSprite;
+static Shader swordShader;
+
+// Mảng chứa 10 dải lụa cho mỗi thanh kiếm
+static int swordFollowers[MAX_TRAIL_PARTICLES][10];
 
 static void SwordDeathCallback(Vector3 pos, float scale) {
+
   for (int s = 0; s < GetRandomValue(10, 16); s++) {
     float sAngle = (float)GetRandomValue(0, 360) * DEG2RAD;
     float pAngle = (float)GetRandomValue(15, 75) * DEG2RAD;
@@ -78,62 +83,46 @@ static void SwordDeathCallback(Vector3 pos, float scale) {
 }
 
 static void SwordUpdateCallback(int trailId, float dt) {
+  (void)dt;
   TrailEntity *sword = GetTrail(trailId);
   if (!sword)
     return;
 
   Vector3 dir = Vector3Normalize(sword->velocity);
-  int wispCount = GetRandomValue(1, 2);
 
-  for (int w = 0; w < wispCount; w++) {
-    float randOffset = (float)GetRandomValue(-100, 100) / 100.0f;
-    Vector3 pointOnBlade = Vector3Add(
-        sword->position, Vector3Scale(dir, sword->length * 0.45f * randOffset));
+  for (int k = 0; k < 10; k++) {
+    int followerId = swordFollowers[trailId][k];
+    if (followerId >= 0) {
+      // fraction chạy từ 0.0 (mũi kiếm) đến 1.0 (chuôi kiếm)
+      float fraction = (float)k / 9.0f;
 
-    Vector3 upVec = (fabsf(dir.y) > 0.99f) ? (Vector3){1.0f, 0.0f, 0.0f}
-                                           : (Vector3){0.0f, 1.0f, 0.0f};
-    Vector3 rightVec = Vector3Normalize(Vector3CrossProduct(dir, upVec));
-    Vector3 realUp = Vector3Normalize(Vector3CrossProduct(rightVec, dir));
+      // Mũi kiếm là +0.5, chuôi kiếm là -0.5 (vì vị trí gốc là trọng tâm)
+      float lengthOffset = sword->length * (0.5f - fraction);
 
-    float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
-    Vector3 perpOut = Vector3Add(Vector3Scale(rightVec, cosf(angle)),
-                                 Vector3Scale(realUp, sinf(angle)));
-    Vector3 strandDir = Vector3Normalize(
-        Vector3Add(Vector3Scale(perpOut, 0.15f), Vector3Scale(dir, -1.0f)));
+      // Điểm neo hoàn toàn nằm trên đường thẳng trục giữa của thanh kiếm
+      Vector3 attachPoint = sword->position;
+      attachPoint = Vector3Add(attachPoint, Vector3Scale(dir, lengthOffset));
 
-    Vector3 slideVel =
-        Vector3Add(Vector3Scale(perpOut, (float)GetRandomValue(10, 30)),
-                   Vector3Scale(dir, (float)GetRandomValue(-120, -50)));
-    Vector3 wispVel = Vector3Add(sword->velocity, slideVel);
-
-    float wispLen = (float)GetRandomValue(40, 90) * sword->scale;
-    float wispThick = (float)GetRandomValue(4, 12) * sword->scale;
-    float wispLife = (float)GetRandomValue(15, 30) * 0.01f;
-    float wispPhase = (float)GetRandomValue(0, 314) * 0.01f;
-
-    // LỜI GỌI 1: Đã chuyển sang Struct
-    SpawnTrailEntity((TrailConfig){.type = TRAIL_TYPE_WISP,
-                                   .pos = pointOnBlade,
-                                   .vel = wispVel,
-                                   .len = wispLen,
-                                   .thick = wispThick,
-                                   .life = wispLife,
-                                   .target = strandDir,
-                                   .initialAngle = 0.0f,
-                                   .wobblePhase = wispPhase,
-                                   .scale = sword->scale,
-                                   .tex = (Texture2D){0},
-                                   .tint = (Color){255, 45, 45, 255},
-                                   .onUpdate = NULL,
-                                   .onDeath = NULL,
-                                   .ownerTag = METAL_SKILL_TAG});
+      UpdateFollowerPosition(followerId, attachPoint);
+    }
   }
 }
 
 void InitMetalSkill(int screenWidth, int screenHeight) {
+  (void)screenWidth;
+  (void)screenHeight;
+
   swordSprite = LoadTexture("sword.png");
+  swordShader = LoadShader(0, "metal.fs");
   for (int i = 0; i < MAX_EMITTERS; i++)
     emitters[i].active = false;
+
+  for (int i = 0; i < MAX_TRAIL_PARTICLES; i++) {
+    // Khởi tạo mảng 10 sợi bằng -1
+    for (int k = 0; k < 10; k++) {
+      swordFollowers[i][k] = -1;
+    }
+  }
 
   ForceField_Clear(&s_metalSparkField);
   ForceField_AddLayer(&s_metalSparkField,
@@ -147,6 +136,13 @@ void InitMetalSkill(int screenWidth, int screenHeight) {
                       (ForceLayer){.type = FORCE_GRAVITY_DIR,
                                    .direction = {0, -1, 0},
                                    .strength = 800.0f});
+
+  // Lực cuộn xoáy mạnh nhưng scale nhỏ để tạo nhiều gợn sóng liti
+  ForceField_Clear(&s_metalWispField);
+  ForceField_AddLayer(&s_metalWispField, (ForceLayer){.type = FORCE_NOISE_CURL,
+                                                      .strength = 850.0f,
+                                                      .noiseScale = 0.015f,
+                                                      .noiseSpeed = 3.5f});
 }
 
 void CastMetalSkill(Vector3 startPos, Vector3 target, SkillParams params) {
@@ -180,20 +176,19 @@ void CastMetalSkill(Vector3 startPos, Vector3 target, SkillParams params) {
 
   for (int j = 0; j < count; j++) {
     em->spawned[j] = false;
-    em->portalSpawned[j] = false;
     em->spawnDelay[j] = (float)j * 0.15f;
 
     float offsetFactor = (float)j - (float)(count - 1) / 2.0f;
-    em->portalPositions[j] = Vector3Add(
+    em->spawnPositions[j] = Vector3Add(
         startPos, Vector3Scale(perp, offsetFactor * 40.0f * sizeScale));
 
     float distFromCenter = fabsf(offsetFactor);
     if (distFromCenter < 0.1f)
-      em->portalSizes[j] = 0.80f * sizeScale;
+      em->projectileSizes[j] = 0.80f * sizeScale;
     else if (distFromCenter < 1.1f)
-      em->portalSizes[j] = 0.56f * sizeScale;
+      em->projectileSizes[j] = 0.56f * sizeScale;
     else
-      em->portalSizes[j] = 0.42f * sizeScale;
+      em->projectileSizes[j] = 0.42f * sizeScale;
   }
 
   for (int i = 0; i < 22; i++) {
@@ -225,66 +220,14 @@ void UpdateMetalSkill(float dt) {
     for (int j = 0; j < emitters[e].count; j++) {
       if (!emitters[e].spawned[j]) {
         allSpawned = false;
-        Vector3 portalPos = emitters[e].portalPositions[j];
-        float sizeFactor = emitters[e].portalSizes[j];
-
-        float portalAppearTime = emitters[e].spawnDelay[j] - 0.25f;
-        if (portalAppearTime < 0.0f)
-          portalAppearTime = 0.0f;
-
-        if (emitters[e].timer >= portalAppearTime &&
-            !emitters[e].portalSpawned[j]) {
-          emitters[e].portalSpawned[j] = true;
-          float portalLife =
-              emitters[e].spawnDelay[j] - emitters[e].timer + 0.25f;
-          if (portalLife < 0.25f)
-            portalLife = 0.25f;
-
-          // LỜI GỌI 2: Đã chuyển sang Struct
-          SpawnTrailEntity((TrailConfig){.type = TRAIL_TYPE_PORTAL,
-                                         .pos = portalPos,
-                                         .vel = (Vector3){0, 0, 0},
-                                         .len = 45.0f * sizeFactor,
-                                         .thick = 0.0f,
-                                         .life = portalLife,
-                                         .target = (Vector3){0, 0, 0},
-                                         .initialAngle = 0.0f,
-                                         .wobblePhase = 0.0f,
-                                         .scale = sizeFactor,
-                                         .tex = (Texture2D){0},
-                                         .tint = (Color){128, 128, 220, 255},
-                                         .onUpdate = NULL,
-                                         .onDeath = NULL,
-                                         .ownerTag = METAL_SKILL_TAG});
-        }
-
-        if (emitters[e].portalSpawned[j] &&
-            emitters[e].timer < emitters[e].spawnDelay[j]) {
-          if (GetRandomValue(1, 100) <= 25) {
-            float spawnAngle = (float)GetRandomValue(0, 360) * DEG2RAD;
-            float spawnDist = (float)GetRandomValue(25, 45) * sizeFactor;
-            Vector3 sparkPos = {portalPos.x + cosf(spawnAngle) * spawnDist,
-                                portalPos.y + GetRandomValue(-10, 10),
-                                portalPos.z + sinf(spawnAngle) * spawnDist};
-            Vector3 sparkVel = Vector3Scale(
-                Vector3Normalize(Vector3Subtract(portalPos, sparkPos)),
-                (float)GetRandomValue(140, 240));
-
-            ParticleConfig p = {0};
-            p.position = sparkPos;
-            p.velocity = sparkVel;
-            p.radius = (float)GetRandomValue(5, 10);
-            p.lifetime = spawnDist / Vector3Length(sparkVel);
-            p.colorStart = (Color){255, 240, 120, 255};
-            p.colorEnd = (Color){255, 150, 0, 0};
-            SpawnParticle(p);
-          }
-        }
 
         if (emitters[e].timer >= emitters[e].spawnDelay[j]) {
           emitters[e].spawned[j] = true;
+          Vector3 spawnPos = emitters[e].spawnPositions[j];
+          float sizeFactor = emitters[e].projectileSizes[j];
+
           Vector3 baseDir = Vector3Normalize(
-              Vector3Subtract(emitters[e].targetPos, portalPos));
+              Vector3Subtract(emitters[e].targetPos, spawnPos));
           float spreadAngle =
               (((float)j - (float)(emitters[e].count - 1) / 2.0f) * 16.0f) *
               DEG2RAD;
@@ -297,10 +240,9 @@ void UpdateMetalSkill(float dt) {
           Vector3 vel =
               Vector3Scale(launchDir, (float)GetRandomValue(300, 500));
 
-          // LỜI GỌI 3: Đã chuyển sang Struct
-          SpawnTrailEntity(
+          int swordId = SpawnTrailEntity(
               (TrailConfig){.type = TRAIL_TYPE_PROJECTILE,
-                            .pos = portalPos,
+                            .pos = spawnPos,
                             .vel = vel,
                             .len = (float)GetRandomValue(100, 140) * sizeFactor,
                             .thick = (float)GetRandomValue(12, 16) * sizeFactor,
@@ -310,10 +252,28 @@ void UpdateMetalSkill(float dt) {
                             .wobblePhase = (float)GetRandomValue(0, 100) * 0.1f,
                             .scale = sizeFactor,
                             .tex = swordSprite,
+                            .shader = swordShader,
                             .tint = (Color){255, 45, 45, 255},
                             .onUpdate = SwordUpdateCallback,
                             .onDeath = SwordDeathCallback,
                             .ownerTag = METAL_SKILL_TAG});
+
+          if (swordId >= 0 && swordId < MAX_TRAIL_PARTICLES) {
+            // Sinh ra 10 sợi lụa mỏng manh bao bọc thanh kiếm
+            for (int k = 0; k < 10; k++) {
+              swordFollowers[swordId][k] = SpawnTrailEntity((TrailConfig){
+                  .type = TRAIL_TYPE_FOLLOWER,
+                  .pos = spawnPos,
+                  .thick = (float)GetRandomValue(2, 4) * sizeFactor, // Rất mỏng
+                  .scale = sizeFactor,
+                  .life = 99.0f,
+                  .tint = (Color){255, 60, 45,
+                                  200}, // Tông đỏ có pha chút trong suốt để đè
+                                        // lên nhau sinh ra khí chất
+                  .forceField = &s_metalWispField,
+                  .ownerTag = METAL_SKILL_TAG});
+            }
+          }
         }
       }
     }
@@ -324,7 +284,10 @@ void UpdateMetalSkill(float dt) {
 
 void DrawMetalSkill(void) {}
 
-void UnloadMetalSkill(void) { UnloadTexture(swordSprite); }
+void UnloadMetalSkill(void) {
+  UnloadTexture(swordSprite);
+  UnloadShader(swordShader);
+}
 
 int GetMetalSkillProjectiles(SkillProjectile *outProjectiles,
                              int maxProjectiles) {

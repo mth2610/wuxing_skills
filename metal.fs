@@ -116,53 +116,6 @@ void main() {
 
         col = baseColor + finalAura + finalThreads + finalSurge + finalEdge + (silverFlash * sweep * 0.7);
     }
-    // ═══════════════════════════════════════════════════════════════
-    // 3.  PORTAL  —  CỔNG VÀNG KIM
-    // ═══════════════════════════════════════════════════════════════
-    else {
-        vec2  uv  = fragTexCoord - vec2(0.5);
-        float r   = length(uv);
-        float ang = atan(uv.y, uv.x);
-
-        float innerVoid = smoothstep(0.07, 0.17, r);
-        float ring0 = exp(-pow((r - 0.11) * 45.0, 2.0));
-        float ring1 = exp(-pow((r - 0.28) * 24.0, 2.0));
-        float ring2 = exp(-pow((r - 0.43) * 15.0, 2.0));
-        
-        float sp1 = sin(ang * 7.0 - r * 22.0 - u_time * 14.0) * 0.5 + 0.5;
-        float sp2 = sin(ang * 5.0 + r * 15.0 + u_time * 9.0) * 0.5 + 0.5;
-        float spiralZone = smoothstep(0.08, 0.46, r) * smoothstep(0.50, 0.28, r);
-        
-        float blades = pow(max(0.0, sin(ang * 6.0 - u_time * 8.5)), 10.0);
-        float bladeMask = smoothstep(0.10, 0.38, r) * smoothstep(0.48, 0.26, r);
-        float aura = exp(-r * r * 7.0) * smoothstep(0.50, 0.18, r);
-        
-        vec2 noiseUV = uv * 6.5 + vec2(cos(u_time * 0.85) * 0.4, sin(u_time * 1.15) * 0.4);
-        float shimmer = fbm(noiseUV);
-
-        density = alpha * innerVoid * (
-            ring0 * 0.75
-          + ring1 * (0.65 + 0.35 * sp1 * shimmer)
-          + ring2 * (0.45 + 0.25 * sp2)
-          + blades * bladeMask * 0.95
-          + aura * 0.45
-        );
-        density = clamp(density, 0.0, 1.0);
-
-        vec3 voidCol  = vec3(0.10, 0.05, 0.00); 
-        vec3 platCol  = vec3(1.00, 0.90, 0.40); 
-        vec3 goldCol  = vec3(1.00, 0.75, 0.10); 
-        vec3 bladeCol = vec3(1.00, 0.95, 0.60); 
-        vec3 auraCol  = vec3(1.00, 0.80, 0.20); 
-
-        col  = voidCol;
-        col  = mix(col, platCol, ring0 * 0.90);
-        col  = mix(col, platCol, ring1 * (0.55 + 0.45 * sp1));
-        col  = mix(col, goldCol, ring2 * 0.85);
-        col += bladeCol * blades * bladeMask * 1.0;
-        col += auraCol  * aura  * 0.75;
-        col += platCol  * sp1   * ring1 * 0.35;
-    }
 
     if (density < 0.01) discard;
     finalColor = vec4(col, clamp(density, 0.0, 1.0));
