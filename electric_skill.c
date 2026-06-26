@@ -1,25 +1,33 @@
 #include "electric_skill.h"
+#include "color_gradient.h"
+#include "flow_map.h"
 #include "force_field.h"
 #include "particle_system.h"
 #include "raymath.h"
-#include "ribbon_strip.h"
+#include "ribbon_strip.h" // <--- THÊM DÒNG NÀY VÀO ĐÂY
 #include "rlgl.h"
-#include "skill_manager.h"
+#include "sprite_anim.h"
 #include <math.h>
-#include <stdbool.h>
-#include <stddef.h>
 
 #define MAX_EMITTERS 10
+#define LIGHTNING_MAX_POINTS 24
 
-// --- Force Fields của Electric Skill ---
-static ForceField s_electricSparkField; // tia lửa nổ: Perlin jấy giật mạnh
-static ForceField s_electricArcField;   // tia điện bốc lên: Perlin + gravity nhẹ
+static ForceField s_electricSparkField;
+static ForceField s_electricWispField; // Curl noise + Trục hút lôi xoáy
 
-// ---- Electric Skill Travel Settings ----
-#define ELECTRIC_TRAVEL_SPEED 1.6f
-#define ELECTRIC_SHOCK_DURATION 0.9f
+static ColorGradient s_electricGradient;
+static FlowMapConfig s_electricFlowCfg = {
+    .speed = 3.0f, .strength = 0.15f, .tiling = 4.0f};
 
-// ---- Emitter Structure ----
+// Hệ thống Shader chuyên dụng Phase 1
+static Shader s_additiveShader;
+static Shader s_rimGlowShader;
+static Shader s_flowShader;
+
+// Quản lý Procedural Textures tránh phụ thuộc Disk Asset
+static Texture2D s_proceduralMainTex;
+static Texture2D s_proceduralFlowTex;
+
 typedef struct {
   bool active;
   Vector3 startPos;
@@ -28,94 +36,118 @@ typedef struct {
   float progress;
   float durationTimer;
   float spawnAccumulator;
-  float erraticTimer;
   bool impacted;
-  float lightningFlashTimer;
-  Vector3 lightningPath[24];
-  int lightningPathCount;
-  Vector3 branchPath1[12];
-  int branchPath1Count;
-  Vector3 branchPath2[12];
-  int branchPath2Count;
+  float flashTimer;
+  Vector3 lightningPath[LIGHTNING_MAX_POINTS];
+  int pathCount;
   float sizeScale;
 } ElectricEmitter;
 
 static ElectricEmitter emitters[MAX_EMITTERS];
-
-static Shader electricShader;
-static int timeLoc;
-
 extern Camera3D camera;
 
-// ---- Math Helpers ----
-static float Random01(void) {
-  return (float)GetRandomValue(0, 10000) / 10000.0f;
+// --- Sinh hạt cấu trúc Procedural bên trong RAM ---
+static Texture2D GenerateElectricTexture(void) {
+  int w = 64, h = 16;
+  Image img = GenImageColor(w, h, BLANK);
+  for (int y = 0; y < h; y++) {
+    float dy = (float)y / (h - 1) - 0.5f;
+    float gaussian = expf(
+        -4.0f * dy * dy); // Phân phối chuẩn Gauss tạo lõi sáng ở trung tâm Y
+    for (int x = 0; x < w; x++) {
+      unsigned char alpha = (unsigned char)(255.0f * gaussian);
+      ImageDrawPixel(&img, x, y, (Color){255, 255, 255, alpha});
+    }
+  }
+  Texture2D tex = LoadTextureFromImage(img);
+  UnloadImage(img);
+  return tex;
 }
 
-// Thuật toán midpoint displacement 3D tạo đường sét ngoằn ngoèo
+static Texture2D GenerateFlowMapTexture(void) {
+  int w = 64, h = 64;
+  Image img = GenImageColor(w, h, BLANK);
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      unsigned char r =
+          (unsigned char)((float)x / w * 255.0f); // Dịch chuyển ngang sang phải
+      unsigned char g =
+          (unsigned char)((0.5f + 0.15f * sinf(((float)y / h) * PI * 2.0f)) *
+                          255.0f); // Tạo sóng gợn nhẹ trục dọc
+      ImageDrawPixel(&img, x, y, (Color){r, g, 0, 255});
+    }
+  }
+  Texture2D tex = LoadTextureFromImage(img);
+  UnloadImage(img);
+  return tex;
+}
+
 static void GenerateJaggedPath(Vector3 start, Vector3 end, Vector3 *outPoints,
                                int *outCount, int maxPoints,
                                float maxDisplacement) {
-  if (maxPoints < 2)
-    return;
   outPoints[0] = start;
   outPoints[maxPoints - 1] = end;
   *outCount = maxPoints;
-
   Vector3 dir = Vector3Subtract(end, start);
-  float length = Vector3Length(dir);
-  if (length < 1.0f) {
+  float len = Vector3Length(dir);
+  if (len < 1.0f) {
     *outCount = 2;
-    outPoints[0] = start;
     outPoints[1] = end;
     return;
   }
 
-  Vector3 perp = (Vector3){-dir.z / length, 0.0f, dir.x / length};
+  Vector3 perp = Vector3Normalize((Vector3){-dir.z, 0.0f, dir.x});
   if (Vector3Length(perp) == 0.0f)
-    perp = (Vector3){0.0f, 0.0f, 1.0f};
-  perp = Vector3Normalize(perp);
+    perp = (Vector3){0, 0, 1};
   Vector3 up = Vector3Normalize(Vector3CrossProduct(dir, perp));
 
   for (int i = 1; i < maxPoints - 1; i++) {
     float t = (float)i / (maxPoints - 1);
-    Vector3 basePos = Vector3Add(start, Vector3Scale(dir, t));
-    float envelope = sinf(t * 3.14159265f);
-
-    float dispVal = ((float)GetRandomValue(-1000, 1000) / 1000.0f) *
-                    maxDisplacement * envelope;
-    float dispVal2 = ((float)GetRandomValue(-1000, 1000) / 1000.0f) *
-                     maxDisplacement * envelope;
-
-    Vector3 offset =
-        Vector3Add(Vector3Scale(perp, dispVal), Vector3Scale(up, dispVal2));
-    outPoints[i] = Vector3Add(basePos, offset);
+    Vector3 base = Vector3Add(start, Vector3Scale(dir, t));
+    float envelope =
+        sinf(t * PI); // Triệt tiêu độ lệch ở 2 điểm đầu mút phóng sét
+    float disp0 = ((float)GetRandomValue(-1000, 1000) / 1000.0f) *
+                  maxDisplacement * envelope;
+    float disp1 = ((float)GetRandomValue(-1000, 1000) / 1000.0f) *
+                  maxDisplacement * envelope;
+    outPoints[i] = Vector3Add(
+        base, Vector3Add(Vector3Scale(perp, disp0), Vector3Scale(up, disp1)));
   }
 }
 
 void InitElectricSkill(int screenWidth, int screenHeight) {
-  electricShader = LoadShader(0, "electric.fs");
-  timeLoc = GetShaderLocation(electricShader, "u_time");
+  s_additiveShader = LoadShader(0, "shaders/additive_soft.fs");
+  s_rimGlowShader = LoadShader(0, "shaders/rim_glow.fs");
+  s_flowShader = FlowMap_LoadShader("shaders/flow_map.fs");
+
+  s_proceduralMainTex = GenerateElectricTexture();
+  s_proceduralFlowTex = GenerateFlowMapTexture();
+  s_electricGradient = ColorGradient_MakeElectric();
 
   for (int i = 0; i < MAX_EMITTERS; i++)
     emitters[i].active = false;
 
-  // Spark jấy giật mạnh: Perlin noise nhanh + không trọng lực
+  // Lực hỗn loạn giật tia sét nổ (Perlin Noise tốc độ cao)
   ForceField_Clear(&s_electricSparkField);
-  ForceField_AddLayer(&s_electricSparkField, (ForceLayer){
-    .type = FORCE_NOISE_PERLIN, .strength = 80.0f,
-    .noiseScale = 0.025f, .noiseSpeed = 3.0f   // speed cao = jấy giật nhanh
-  });
+  ForceField_AddLayer(&s_electricSparkField,
+                      (ForceLayer){.type = FORCE_NOISE_PERLIN,
+                                   .strength = 120.0f,
+                                   .noiseScale = 0.04f,
+                                   .noiseSpeed = 5.0f});
 
-  // Tia điện bốc lên sau va chạm: Perlin + trọng lực nhẹ kéo xuống
-  ForceField_Clear(&s_electricArcField);
-  ForceField_AddLayer(&s_electricArcField, (ForceLayer){
-    .type = FORCE_NOISE_PERLIN, .strength = 60.0f,
-    .noiseScale = 0.020f, .noiseSpeed = 2.5f
-  });
-  ForceField_AddLayer(&s_electricArcField, (ForceLayer){
-    .type = FORCE_GRAVITY_DIR, .direction = {0,-1,0}, .strength = 100.0f
-  });
+  // Trường lực của Wisp luồng điện: Kết hợp Curl Noise chao đảo mạnh + Trục
+  // xoáy hướng tâm thu hẹp đường sét
+  ForceField_Clear(&s_electricWispField);
+  ForceField_AddLayer(&s_electricWispField,
+                      (ForceLayer){.type = FORCE_NOISE_CURL,
+                                   .strength = 200.0f,
+                                   .noiseScale = 0.08f,
+                                   .noiseSpeed = 150.0f});
+  ForceField_AddLayer(&s_electricWispField,
+                      (ForceLayer){.type = FORCE_RADIAL_AXIS,
+                                   .strength = -150.0f,
+                                   .radius = 30.0f,
+                                   .falloff = 1.0f});
 }
 
 void CastElectricSkill(Vector3 startPos, Vector3 target, float sizeScale) {
@@ -126,40 +158,55 @@ void CastElectricSkill(Vector3 startPos, Vector3 target, float sizeScale) {
       emitters[i].targetPos = target;
       emitters[i].currentPos = startPos;
       emitters[i].progress = 0.0f;
-      emitters[i].durationTimer = ELECTRIC_SHOCK_DURATION;
+      emitters[i].durationTimer =
+          0.6f; // Thời gian giật điện duy trì (Short lifetime)
       emitters[i].spawnAccumulator = 0.0f;
-      emitters[i].erraticTimer = 0.0f;
       emitters[i].impacted = false;
-      emitters[i].lightningFlashTimer = 0.0f;
-      emitters[i].lightningPathCount = 0;
-      emitters[i].branchPath1Count = 0;
-      emitters[i].branchPath2Count = 0;
+      emitters[i].flashTimer = 0.0f;
       emitters[i].sizeScale = sizeScale;
       break;
     }
   }
+}
 
-  // Nổ tia lửa điện tung tóe khi xuất chiêu
-  int burstCount = 15 * sizeScale;
-  for (int s = 0; s < burstCount; s++) {
-    float angle = Random01() * 2.0f * PI;
-    float pitch = (Random01() - 0.5f) * PI;
-    float speed = (100.0f + Random01() * 250.0f) * sizeScale;
+static void ElectricDeathCallback(Vector3 impactPos, float scale) {
+  // Thực thi 8-14 hạt tia lửa điện phân rã bằng dải màu gradient điện
+  int sparkCount = GetRandomValue(8, 14);
+  for (int i = 0; i < sparkCount; i++) {
+    float angle = ((float)GetRandomValue(0, 360) * DEG2RAD);
+    float pitch = ((float)GetRandomValue(-90, 90) * DEG2RAD);
+    float speed = (200.0f + (float)GetRandomValue(0, 200)) * scale;
+
     Vector3 vel = {cosf(angle) * speed * cosf(pitch), sinf(pitch) * speed,
                    sinf(angle) * speed * cosf(pitch)};
 
     ParticleConfig p = {0};
-    p.position = startPos;
+    p.position = impactPos;
     p.velocity = vel;
-    p.drag = 1.2f;
-    p.radius = (3.0f + Random01() * 4.0f) * sizeScale;
-    p.lifetime = 0.4f + Random01() * 0.4f;
-    p.colorStart = (Color){150, 200, 255, 255};
-    p.colorEnd = (Color){20, 50, 255, 0};
+    p.drag = 1.5f;
+    p.radius = (3.0f + (float)GetRandomValue(0, 40) / 10.0f) * scale;
+    p.lifetime = 0.3f + (float)GetRandomValue(0, 30) / 100.0f;
     p.physicsFlags = P_PHYSICS_DRAG;
     p.forceField = &s_electricSparkField;
+    // Chèn con trỏ mở rộng Phase 1 (Sử dụng hệ thống hạt hiện tại thông qua cơ
+    // chế nội suy mới)
+    p.colorStart = ColorGradient_Sample(&s_electricGradient, 0.0f);
+    p.colorEnd = ColorGradient_Sample(&s_electricGradient, 1.0f);
     SpawnParticle(p);
   }
+
+  // Tỏa sóng Plasma kích nổ (Flash Shockwave bán kính cực lớn, biến mất rất
+  // nhanh)
+  ParticleConfig flash = {0};
+  flash.position = impactPos;
+  flash.velocity = (Vector3){0, 0, 0};
+  flash.radius = 120.0f * scale;
+  flash.lifetime = 0.15f; // Thời gian chớp tắt siêu ngắn
+  flash.colorStart = (Color){255, 255, 255, 100};
+  flash.colorEnd = (Color){100, 180, 255, 0};
+  SpawnParticle(flash);
+
+  // TODO: CameraFX_Shake(0.4f); // Rung màn hình chấn động lôi kích thiên kiếp
 }
 
 void UpdateElectricSkill(float dt) {
@@ -167,303 +214,126 @@ void UpdateElectricSkill(float dt) {
     if (!emitters[e].active)
       continue;
 
-    emitters[e].erraticTimer += dt;
-
     if (!emitters[e].impacted) {
-      emitters[e].progress += dt * ELECTRIC_TRAVEL_SPEED;
+      // Đạn di chuyển tốc độ siêu cao (600 - 900 units/s)
+      emitters[e].progress +=
+          dt * (750.0f /
+                Vector3Distance(emitters[e].startPos, emitters[e].targetPos));
 
       if (emitters[e].progress >= 1.0f) {
         emitters[e].progress = 1.0f;
         emitters[e].impacted = true;
         emitters[e].currentPos = emitters[e].targetPos;
 
-        float scale = emitters[e].sizeScale;
-
-        // Sóng kích nổ mặt đất (Bắn các hạt plasma bay ngang dẹp)
-        for (int s = 0; s < 35 * scale; s++) {
-          float angle = Random01() * 2.0f * PI;
-          Vector3 vel = {cosf(angle) * 350.0f * scale, 0,
-                         sinf(angle) * 350.0f * scale};
-
-          ParticleConfig shock = {0};
-          shock.position = emitters[e].targetPos;
-          shock.velocity = vel;
-          shock.drag = 3.5f;
-          shock.radius = 8.0f * scale;
-          shock.lifetime = 0.5f;
-          shock.colorStart = (Color){200, 255, 255, 255};
-          shock.colorEnd = (Color){50, 100, 255, 0};
-          shock.physicsFlags = P_PHYSICS_DRAG;
-          SpawnParticle(shock);
-        }
-
-        // Cầu plasma nổ rực tại tâm
-        ParticleConfig core = {0};
-        core.position = emitters[e].targetPos;
-        core.velocity = (Vector3){0, 0, 0};
-        core.radius = 80.0f * scale;
-        core.lifetime = 0.3f;
-        core.colorStart = (Color){255, 255, 255, 255};
-        core.colorEnd = (Color){50, 150, 255, 0};
-        SpawnParticle(core);
-
-        // Tia điện nổ văng lên cao
-        int sparkCount = 35 * scale;
-        for (int s = 0; s < sparkCount; s++) {
-          float angle = Random01() * 2.0f * PI;
-          float pitch = (Random01() - 0.5f) * PI;
-          float speed = (150.0f + Random01() * 450.0f) * scale;
-          Vector3 vel = {cosf(angle) * speed * cosf(pitch),
-                         sinf(pitch) * speed + 100.0f,
-                         sinf(angle) * speed * cosf(pitch)};
-
-          ParticleConfig p = {0};
-          p.position = emitters[e].targetPos;
-          p.velocity = vel;
-          p.drag = 1.0f;
-          p.radius = (2.5f + Random01() * 3.5f) * scale;
-          p.lifetime = 0.5f + Random01() * 0.5f;
-          p.colorStart = (Color){150, 220, 255, 255};
-          p.colorEnd = (Color){10, 30, 255, 0};
-          p.physicsFlags = P_PHYSICS_DRAG;
-          p.forceField = &s_electricArcField;
-          SpawnParticle(p);
-        }
-
-        // Tạo đường sét thiên kiếp đánh từ trên cao
-        Vector3 skyPos = {
-            emitters[e].targetPos.x + (float)GetRandomValue(-80, 80) * scale,
-            emitters[e].targetPos.y + 600.0f,
-            emitters[e].targetPos.z + (float)GetRandomValue(-80, 80) * scale};
+        // Kích hoạt nổ dây chuyền từ trên không trung (Thiên kiếp đánh xuống)
+        Vector3 skyPos = {emitters[e].targetPos.x,
+                          emitters[e].targetPos.y + 500.0f,
+                          emitters[e].targetPos.z};
         GenerateJaggedPath(skyPos, emitters[e].targetPos,
-                           emitters[e].lightningPath,
-                           &emitters[e].lightningPathCount, 16, 35.0f * scale);
+                           emitters[e].lightningPath, &emitters[e].pathCount,
+                           LIGHTNING_MAX_POINTS, 40.0f * emitters[e].sizeScale);
 
-        if (emitters[e].lightningPathCount > 8) {
-          Vector3 bStart = emitters[e].lightningPath[8];
-          Vector3 bEnd = {bStart.x + (float)GetRandomValue(-150, 150) * scale,
-                          bStart.y - (float)GetRandomValue(50, 200) * scale,
-                          bStart.z + (float)GetRandomValue(-150, 150) * scale};
-          GenerateJaggedPath(bStart, bEnd, emitters[e].branchPath1,
-                             &emitters[e].branchPath1Count, 8, 15.0f * scale);
-        }
-        if (emitters[e].lightningPathCount > 12) {
-          Vector3 bStart = emitters[e].lightningPath[12];
-          Vector3 bEnd = {bStart.x + (float)GetRandomValue(-150, 150) * scale,
-                          bStart.y - (float)GetRandomValue(50, 200) * scale,
-                          bStart.z + (float)GetRandomValue(-150, 150) * scale};
-          GenerateJaggedPath(bStart, bEnd, emitters[e].branchPath2,
-                             &emitters[e].branchPath2Count, 8, 15.0f * scale);
-        }
+        ElectricDeathCallback(emitters[e].targetPos, emitters[e].sizeScale);
       } else {
-        // Đạn cầu sét bay tới mục tiêu
-        Vector3 basePos = Vector3Lerp(
+        emitters[e].currentPos = Vector3Lerp(
             emitters[e].startPos, emitters[e].targetPos, emitters[e].progress);
-        Vector3 dir = Vector3Normalize(
-            Vector3Subtract(emitters[e].targetPos, emitters[e].startPos));
-        Vector3 perp = (Vector3){-dir.z, 0.0f, dir.x};
-        if (Vector3Length(perp) == 0.0f)
-          perp = (Vector3){0, 0, 1};
-        perp = Vector3Normalize(perp);
 
-        float wobble = sinf(emitters[e].progress * 25.0f) * 20.0f *
-                       (1.0f - emitters[e].progress);
-        emitters[e].currentPos =
-            Vector3Add(basePos, Vector3Scale(perp, wobble));
-
-        // Sinh hạt plasma tạo ảo giác cầu điện liên tục
-        ParticleConfig orb = {0};
-        orb.position = emitters[e].currentPos;
-        orb.velocity = (Vector3){0, 0, 0};
-        orb.radius = 22.0f * emitters[e].sizeScale;
-        orb.lifetime = 0.12f;
-        orb.colorStart = (Color){200, 255, 255, 200};
-        orb.colorEnd = (Color){50, 100, 255, 0};
-        SpawnParticle(orb);
-
+        // Tạo chuỗi bụi hạt điện trường dọc đường đạn bay qua
         emitters[e].spawnAccumulator += dt;
-        if (emitters[e].spawnAccumulator >= 0.015f) {
-          Vector3 backVel = Vector3Scale(dir, -50.0f);
-          Vector3 spreadVel = {(float)GetRandomValue(-30, 30),
-                               (float)GetRandomValue(-30, 30),
-                               (float)GetRandomValue(-30, 30)};
-
+        if (emitters[e].spawnAccumulator >= 0.01f) {
           ParticleConfig trail = {0};
           trail.position = emitters[e].currentPos;
-          trail.velocity = Vector3Add(backVel, spreadVel);
-          trail.drag = 1.0f;
-          trail.radius = (3.0f + Random01() * 3.0f) * emitters[e].sizeScale;
-          trail.lifetime = 0.3f + Random01() * 0.3f;
-          trail.colorStart = (Color){150, 200, 255, 255};
-          trail.colorEnd = (Color){20, 50, 255, 0};
-          trail.physicsFlags = P_PHYSICS_DRAG;
-          trail.forceField = &s_electricSparkField;
+          trail.velocity = (Vector3){(float)GetRandomValue(-20, 20),
+                                     (float)GetRandomValue(-20, 20),
+                                     (float)GetRandomValue(-20, 20)};
+          trail.radius = 5.0f * emitters[e].sizeScale;
+          trail.lifetime = 0.2f;
+          trail.colorStart = (Color){200, 245, 255, 255};
+          trail.colorEnd = (Color){30, 80, 255, 0};
           SpawnParticle(trail);
-
           emitters[e].spawnAccumulator = 0.0f;
         }
       }
     } else {
-      // GIAI ĐOẠN ĐIỆN GIẬT TẠI CHỖ (SHOCK PHASE)
+      // Giai đoạn Shock liên tục tích điện tại điểm va chạm
       emitters[e].durationTimer -= dt;
       if (emitters[e].durationTimer <= 0.0f) {
         emitters[e].active = false;
         continue;
       }
 
-      emitters[e].lightningFlashTimer += dt;
-      if (emitters[e].lightningFlashTimer >= 0.05f) {
-        emitters[e].lightningFlashTimer = 0.0f;
-        Vector3 skyPos = {
-            emitters[e].targetPos.x + (float)GetRandomValue(-80, 80),
-            emitters[e].targetPos.y + 600.0f,
-            emitters[e].targetPos.z + (float)GetRandomValue(-80, 80)};
+      // Làm mới đường dẫn lôi kích ngẫu nhiên tạo độ giật chớp chớp liên tục
+      emitters[e].flashTimer += dt;
+      if (emitters[e].flashTimer >= 0.06f) {
+        Vector3 skyPos = {emitters[e].targetPos.x + GetRandomValue(-40, 40),
+                          emitters[e].targetPos.y + 500.0f,
+                          emitters[e].targetPos.z + GetRandomValue(-40, 40)};
         GenerateJaggedPath(skyPos, emitters[e].targetPos,
-                           emitters[e].lightningPath,
-                           &emitters[e].lightningPathCount, 16, 35.0f);
-
-        if (emitters[e].lightningPathCount > 8) {
-          Vector3 bStart = emitters[e].lightningPath[8];
-          Vector3 bEnd = {bStart.x + (float)GetRandomValue(-150, 150),
-                          bStart.y - (float)GetRandomValue(50, 200),
-                          bStart.z + (float)GetRandomValue(-150, 150)};
-          GenerateJaggedPath(bStart, bEnd, emitters[e].branchPath1,
-                             &emitters[e].branchPath1Count, 8, 15.0f);
-        }
-        if (emitters[e].lightningPathCount > 12) {
-          Vector3 bStart = emitters[e].lightningPath[12];
-          Vector3 bEnd = {bStart.x + (float)GetRandomValue(-150, 150),
-                          bStart.y - (float)GetRandomValue(50, 200),
-                          bStart.z + (float)GetRandomValue(-150, 150)};
-          GenerateJaggedPath(bStart, bEnd, emitters[e].branchPath2,
-                             &emitters[e].branchPath2Count, 8, 15.0f);
-        }
-      }
-
-      if (GetRandomValue(1, 10) <= 6) {
-        float angle = Random01() * 2.0f * PI;
-        float pitch = (Random01() - 0.5f) * PI;
-        float speed = 80.0f + Random01() * 250.0f;
-
-        ParticleConfig p = {0};
-        p.position = emitters[e].targetPos;
-        p.velocity =
-            (Vector3){cosf(angle) * speed * cosf(pitch), sinf(pitch) * speed,
-                      sinf(angle) * speed * cosf(pitch)};
-        p.drag = 1.0f;
-        p.radius = 2.0f + Random01() * 3.0f;
-        p.lifetime = 0.2f + Random01() * 0.3f;
-        p.colorStart = (Color){200, 255, 255, 255};
-        p.colorEnd = (Color){20, 50, 255, 0};
-        p.physicsFlags = P_PHYSICS_DRAG;
-        p.forceField = &s_electricSparkField;
-        SpawnParticle(p);
+                           emitters[e].lightningPath, &emitters[e].pathCount,
+                           LIGHTNING_MAX_POINTS, 35.0f * emitters[e].sizeScale);
+        emitters[e].flashTimer = 0.0f;
       }
     }
   }
 }
 
 void DrawElectricSkill(void) {
-  bool active = false;
-  for (int i = 0; i < MAX_EMITTERS; i++) {
-    if (emitters[i].active && emitters[i].impacted) {
-      active = true;
-      break;
-    }
-  }
-  if (!active)
-    return;
-
-  float time = (float)GetTime();
-
   rlDisableDepthMask();
   BeginBlendMode(BLEND_ADDITIVE);
 
-  SetShaderValue(electricShader, timeLoc, &time, SHADER_UNIFORM_FLOAT);
-  BeginShaderMode(electricShader);
+  float time = (float)GetTime();
+
+  // Áp dụng kỹ thuật Flow Map để đẩy dòng năng lượng chuyển động chạy cuộn dọc
+  // thân tia sét
+  BeginShaderMode(s_flowShader);
+  FlowMap_Apply(s_flowShader, &s_electricFlowCfg, s_proceduralFlowTex, time);
 
   for (int e = 0; e < MAX_EMITTERS; e++) {
     if (!emitters[e].active || !emitters[e].impacted)
       continue;
 
-    float lifeRatio = emitters[e].durationTimer / ELECTRIC_SHOCK_DURATION;
-    if (lifeRatio > 0.3f) {
-      float boltFade = Clamp((lifeRatio - 0.3f) / 0.7f, 0.0f, 1.0f);
+    float fade = emitters[e].durationTimer / 0.6f;
+    if (emitters[e].pathCount > 1) {
+      RibbonPoint strip[LIGHTNING_MAX_POINTS];
+      float w = 25.0f * fade * emitters[e].sizeScale;
 
-      // Vẽ dải 3D Ribbon cho tia sét chính
-      if (emitters[e].lightningPathCount > 1) {
-        RibbonPoint strip[24];
-        float width = 22.0f * boltFade * emitters[e].sizeScale;
-        for (int i = 0; i < emitters[e].lightningPathCount; i++) {
-          strip[i].position = emitters[e].lightningPath[i];
-          strip[i].halfWidth = width * 0.5f;
-          float v = (float)i / (emitters[e].lightningPathCount - 1);
-          strip[i].v = v;
-          strip[i].tint = (Color){(unsigned char)(v * 255.0f), 128, 255,
-                                  (unsigned char)(255.0f * boltFade)};
-        }
-        DrawRibbonStrip(strip, emitters[e].lightningPathCount, (Texture2D){0},
-                        camera);
+      for (int i = 0; i < emitters[e].pathCount; i++) {
+        strip[i].position = emitters[e].lightningPath[i];
+        strip[i].halfWidth = w * 0.5f;
+        strip[i].v = (float)i / (emitters[e].pathCount - 1);
+
+        // Phối hòa dải màu sắc Cyan cực đại pha trộn Electric Blue vùng rìa
+        // biên nhờ shader rim_glow phối hợp
+        strip[i].tint = (Color){100, 180, 255, (unsigned char)(200.0f * fade)};
       }
 
-      // Vẽ nhánh rẽ 1
-      if (emitters[e].branchPath1Count > 1) {
-        RibbonPoint strip[12];
-        float width = 10.0f * boltFade * emitters[e].sizeScale;
-        for (int i = 0; i < emitters[e].branchPath1Count; i++) {
-          strip[i].position = emitters[e].branchPath1[i];
-          strip[i].halfWidth = width * 0.5f;
-          float v = (float)i / (emitters[e].branchPath1Count - 1);
-          strip[i].v = v;
-          strip[i].tint = (Color){(unsigned char)(v * 255.0f), 128, 255,
-                                  (unsigned char)(255.0f * boltFade)};
-        }
-        DrawRibbonStrip(strip, emitters[e].branchPath1Count, (Texture2D){0},
-                        camera);
-      }
-
-      // Vẽ nhánh rẽ 2
-      if (emitters[e].branchPath2Count > 1) {
-        RibbonPoint strip[12];
-        float width = 10.0f * boltFade * emitters[e].sizeScale;
-        for (int i = 0; i < emitters[e].branchPath2Count; i++) {
-          strip[i].position = emitters[e].branchPath2[i];
-          strip[i].halfWidth = width * 0.5f;
-          float v = (float)i / (emitters[e].branchPath2Count - 1);
-          strip[i].v = v;
-          strip[i].tint = (Color){(unsigned char)(v * 255.0f), 128, 255,
-                                  (unsigned char)(255.0f * boltFade)};
-        }
-        DrawRibbonStrip(strip, emitters[e].branchPath2Count, (Texture2D){0},
-                        camera);
-      }
+      // Thực hiện vẽ dải ribbon đối diện máy ảnh thông qua module dùng chung
+      // nền tảng
+      DrawRibbonStrip(strip, emitters[e].pathCount, s_proceduralMainTex,
+                      camera);
     }
   }
-
   EndShaderMode();
+
   EndBlendMode();
   rlEnableDepthMask();
 }
 
-void UnloadElectricSkill(void) { UnloadShader(electricShader); }
-
-bool IsElectricSkillShocking(void) {
-  for (int e = 0; e < MAX_EMITTERS; e++) {
-    if (emitters[e].active && emitters[e].impacted) {
-      return true;
-    }
-  }
-  return false;
+void UnloadElectricSkill(void) {
+  UnloadShader(s_additiveShader);
+  UnloadShader(s_rimGlowShader);
+  UnloadShader(s_flowShader);
+  UnloadTexture(s_proceduralMainTex);
+  UnloadTexture(s_proceduralFlowTex);
 }
 
-int GetElectricSkillProjectiles(SkillProjectile *outProjectiles,
-                                int maxProjectiles) {
+int GetElectricSkillProjectiles(SkillProjectile *out, int maxProjectiles) {
   int count = 0;
   for (int i = 0; i < MAX_EMITTERS; i++) {
     if (emitters[i].active && !emitters[i].impacted && count < maxProjectiles) {
-      outProjectiles[count].position = emitters[i].currentPos;
-      outProjectiles[count].radius = 18.0f * emitters[i].sizeScale;
-      outProjectiles[count].active = true;
+      out[count].position = emitters[i].currentPos;
+      out[count].radius = 15.0f * emitters[i].sizeScale;
+      out[count].active = true;
       count++;
     }
   }
@@ -477,75 +347,26 @@ void DeactivateElectricProjectile(int index) {
       if (count == index) {
         emitters[i].progress = 1.0f;
         emitters[i].impacted = true;
-
-        float scale = emitters[i].sizeScale;
-
-        for (int s = 0; s < 35 * scale; s++) {
-          float angle = Random01() * 2.0f * PI;
-          Vector3 vel = {cosf(angle) * 350.0f * scale, 0,
-                         sinf(angle) * 350.0f * scale};
-          ParticleConfig shock = {0};
-          shock.position = emitters[i].currentPos;
-          shock.velocity = vel;
-          shock.drag = 3.5f;
-          shock.radius = 8.0f * scale;
-          shock.lifetime = 0.5f;
-          shock.colorStart = (Color){200, 255, 255, 255};
-          shock.colorEnd = (Color){50, 100, 255, 0};
-          shock.physicsFlags = P_PHYSICS_DRAG;
-          SpawnParticle(shock);
-        }
-
-        int sparkCount = 35 * scale;
-        for (int s = 0; s < sparkCount; s++) {
-          float angle = Random01() * 2.0f * PI;
-          float pitch = (Random01() - 0.5f) * PI;
-          float speed = (150.0f + Random01() * 450.0f) * scale;
-          Vector3 vel = {cosf(angle) * speed * cosf(pitch), sinf(pitch) * speed,
-                         sinf(angle) * speed * cosf(pitch)};
-
-          ParticleConfig p = {0};
-          p.position = emitters[i].currentPos;
-          p.velocity = vel;
-          p.drag = 1.0f;
-          p.radius = (2.5f + Random01() * 3.5f) * scale;
-          p.lifetime = 0.5f + Random01() * 0.5f;
-          p.colorStart = (Color){150, 200, 255, 255};
-          p.colorEnd = (Color){20, 50, 255, 0};
-          p.physicsFlags = P_PHYSICS_DRAG;
-          p.forceField = &s_electricArcField;
-          SpawnParticle(p);
-        }
-
-        Vector3 skyPos = {
-            emitters[i].currentPos.x + (float)GetRandomValue(-80, 80) * scale,
-            emitters[i].currentPos.y + 600.0f,
-            emitters[i].currentPos.z + (float)GetRandomValue(-80, 80) * scale};
-        GenerateJaggedPath(skyPos, emitters[i].currentPos,
-                           emitters[i].lightningPath,
-                           &emitters[i].lightningPathCount, 16, 35.0f * scale);
-
-        if (emitters[i].lightningPathCount > 8) {
-          Vector3 bStart = emitters[i].lightningPath[8];
-          Vector3 bEnd = {bStart.x + (float)GetRandomValue(-150, 150) * scale,
-                          bStart.y - (float)GetRandomValue(50, 200) * scale,
-                          bStart.z + (float)GetRandomValue(-150, 150) * scale};
-          GenerateJaggedPath(bStart, bEnd, emitters[i].branchPath1,
-                             &emitters[i].branchPath1Count, 8, 15.0f * scale);
-        }
-        if (emitters[i].lightningPathCount > 12) {
-          Vector3 bStart = emitters[i].lightningPath[12];
-          Vector3 bEnd = {bStart.x + (float)GetRandomValue(-150, 150) * scale,
-                          bStart.y - (float)GetRandomValue(50, 200) * scale,
-                          bStart.z + (float)GetRandomValue(-150, 150) * scale};
-          GenerateJaggedPath(bStart, bEnd, emitters[i].branchPath2,
-                             &emitters[i].branchPath2Count, 8, 15.0f * scale);
-        }
-
-        emitters[i].targetPos = emitters[i].currentPos;
+        emitters[i].currentPos = emitters[i].targetPos;
+        Vector3 skyPos = {emitters[i].targetPos.x,
+                          emitters[i].targetPos.y + 500.0f,
+                          emitters[i].targetPos.z};
+        GenerateJaggedPath(skyPos, emitters[i].targetPos,
+                           emitters[i].lightningPath, &emitters[i].pathCount,
+                           LIGHTNING_MAX_POINTS, 40.0f * emitters[i].sizeScale);
+        ElectricDeathCallback(emitters[i].targetPos, emitters[i].sizeScale);
         break;
       }
       count++;
     }
   }
+}
+
+bool IsElectricSkillShocking(void) {
+  for (int e = 0; e < MAX_EMITTERS; e++) {
+    if (emitters[e].active && emitters[e].impacted) {
+      return true;
+    }
+  }
+  return false;
 }

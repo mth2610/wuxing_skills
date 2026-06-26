@@ -44,12 +44,16 @@ add_executable(wuxing
     ui_panel.c 
     sandbox_core.c 
     ribbon_strip.c
-    # --- Các file Core Systems mới được thêm vào ---
+    # --- Các file Core Systems cũ ---
     utils_math.c
     path_spline.c
     force_field.c
     particle_system.c
     trail_system.c
+    # --- Cập nhật: Thêm mã nguồn Phase 1 VFX Engine mới ---
+    color_gradient.c
+    sprite_anim.c
+    flow_map.c
 )
 
 # Tự động copy file Shader và Texture vào thư mục build để game không bị lỗi load
@@ -64,7 +68,7 @@ configure_file(electric.fs ${CMAKE_CURRENT_BINARY_DIR}/electric.fs COPYONLY)
 configure_file(wind.fs ${CMAKE_CURRENT_BINARY_DIR}/wind.fs COPYONLY)
 configure_file(taiji.fs ${CMAKE_CURRENT_BINARY_DIR}/taiji.fs COPYONLY)
 
-# --- Copy Shaders của hệ thống hạt mới ---
+# --- Copy Shaders của hệ thống hạt cũ ---
 # GPU mode (Linux/Windows - OpenGL 4.3+): Compute Shader + SSBO
 configure_file(particles.comp ${CMAKE_CURRENT_BINARY_DIR}/particles.comp COPYONLY)
 configure_file(particles.vs ${CMAKE_CURRENT_BINARY_DIR}/particles.vs COPYONLY)
@@ -72,6 +76,12 @@ configure_file(particles.fs ${CMAKE_CURRENT_BINARY_DIR}/particles.fs COPYONLY)
 # CPU mode (macOS - OpenGL 4.1): Vertex attributes thay SSBO
 configure_file(particles_cpu.vs ${CMAKE_CURRENT_BINARY_DIR}/particles_cpu.vs COPYONLY)
 configure_file(particles_cpu.fs ${CMAKE_CURRENT_BINARY_DIR}/particles_cpu.fs COPYONLY)
+
+# --- Cập nhật: Sao chép thư viện Shaders chuyên dụng Phase 1 vào thư mục shaders/ ---
+configure_file(shaders/additive_soft.fs ${CMAKE_CURRENT_BINARY_DIR}/shaders/additive_soft.fs COPYONLY)
+configure_file(shaders/rim_glow.fs ${CMAKE_CURRENT_BINARY_DIR}/shaders/rim_glow.fs COPYONLY)
+configure_file(shaders/dissolve.fs ${CMAKE_CURRENT_BINARY_DIR}/shaders/dissolve.fs COPYONLY)
+configure_file(shaders/flow_map.fs ${CMAKE_CURRENT_BINARY_DIR}/shaders/flow_map.fs COPYONLY)
 
 # --- Copy thêm Texture đầu rồng của chiêu Lửa ---
 configure_file(dragon_head.png ${CMAKE_CURRENT_BINARY_DIR}/dragon_head.png COPYONLY)
