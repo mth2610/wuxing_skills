@@ -127,27 +127,65 @@ float Noise_Value3D(float x, float y, float z) {
   return y0 + uz * (y1 - y0);
 }
 
+// ============================================================
+//  FIX #3: Curl Noise 3D — divergence-free đúng chuẩn
+//
+//  Phiên bản cũ (SAI):
+//    curl.x = -∂A/∂z        ← đúng (từ ψ=(0,A,0))
+//    curl.y = +∂B/∂y        ← SAI: ∂B/∂y không phải thành phần curl nào cả
+//    curl.z = +∂A/∂x        ← đúng (từ ψ=(0,A,0))
+//  → div ≠ 0 vì ∂(curl.y)/∂y = ∂²B/∂y² ≠ 0
+//
+//  Phiên bản mới (ĐÚNG):
+//    Dùng vector potential ψ = (ψ₁, ψ₂, ψ₃) — 3 noise field độc lập.
+//    curl(ψ)_x = ∂ψ₃/∂y − ∂ψ₂/∂z
+//    curl(ψ)_y = ∂ψ₁/∂z − ∂ψ₃/∂x
+//    curl(ψ)_z = ∂ψ₂/∂x − ∂ψ₁/∂y
+//    div(curl(ψ)) = 0 theo định lý (curl luôn divergence-free).
+//  → 12 sample thay vì 6, nhưng đảm bảo tính đúng của trường.
+// ============================================================
+
 Vector3 Noise_Curl3D(float x, float y, float z, float scale) {
   const float EPS = 0.1f;
   const float RINV = 1.0f / (2.0f * EPS);
-  const float OFF = 31.416f;
+
+  // Hai offset lớn để 3 noise field ψ₁, ψ₂, ψ₃ decorrelated với nhau
+  const float OFF1 = 31.416f;
+  const float OFF2 = 67.234f;
 
   float sx = x * scale;
   float sy = y * scale;
   float sz = z * scale;
 
-  float Apx = Noise_Perlin3D(sx + EPS, sy, sz);
-  float Amx = Noise_Perlin3D(sx - EPS, sy, sz);
-  float Apz = Noise_Perlin3D(sx, sy, sz + EPS);
-  float Amz = Noise_Perlin3D(sx, sy, sz - EPS);
+  // ψ₁ tại (sx, sy, sz) — cần ∂/∂z và ∂/∂y
+  float psi1_pz = Noise_Perlin3D(sx, sy, sz + EPS);
+  float psi1_mz = Noise_Perlin3D(sx, sy, sz - EPS);
+  float psi1_py = Noise_Perlin3D(sx, sy + EPS, sz);
+  float psi1_my = Noise_Perlin3D(sx, sy - EPS, sz);
 
-  float Bpy = Noise_Perlin3D(sx + OFF, sy + EPS, sz + OFF);
-  float Bmy = Noise_Perlin3D(sx + OFF, sy - EPS, sz + OFF);
+  // ψ₂ tại (sx+OFF1, sy+OFF1, sz+OFF1) — cần ∂/∂x và ∂/∂z
+  float psi2_px = Noise_Perlin3D(sx + OFF1 + EPS, sy + OFF1, sz + OFF1);
+  float psi2_mx = Noise_Perlin3D(sx + OFF1 - EPS, sy + OFF1, sz + OFF1);
+  float psi2_pz = Noise_Perlin3D(sx + OFF1, sy + OFF1, sz + OFF1 + EPS);
+  float psi2_mz = Noise_Perlin3D(sx + OFF1, sy + OFF1, sz + OFF1 - EPS);
+
+  // ψ₃ tại (sx+OFF2, sy+OFF2, sz+OFF2) — cần ∂/∂y và ∂/∂x
+  float psi3_py = Noise_Perlin3D(sx + OFF2, sy + OFF2 + EPS, sz + OFF2);
+  float psi3_my = Noise_Perlin3D(sx + OFF2, sy + OFF2 - EPS, sz + OFF2);
+  float psi3_px = Noise_Perlin3D(sx + OFF2 + EPS, sy + OFF2, sz + OFF2);
+  float psi3_mx = Noise_Perlin3D(sx + OFF2 - EPS, sy + OFF2, sz + OFF2);
+
+  float dpsi3_dy = (psi3_py - psi3_my) * RINV;
+  float dpsi2_dz = (psi2_pz - psi2_mz) * RINV;
+  float dpsi1_dz = (psi1_pz - psi1_mz) * RINV;
+  float dpsi3_dx = (psi3_px - psi3_mx) * RINV;
+  float dpsi2_dx = (psi2_px - psi2_mx) * RINV;
+  float dpsi1_dy = (psi1_py - psi1_my) * RINV;
 
   return (Vector3){
-      -(Apz - Amz) * RINV,
-      (Bpy - Bmy) * RINV,
-      (Apx - Amx) * RINV,
+      dpsi3_dy - dpsi2_dz, // curl_x = ∂ψ₃/∂y − ∂ψ₂/∂z
+      dpsi1_dz - dpsi3_dx, // curl_y = ∂ψ₁/∂z − ∂ψ₃/∂x
+      dpsi2_dx - dpsi1_dy, // curl_z = ∂ψ₂/∂x − ∂ψ₁/∂y
   };
 }
 
@@ -184,7 +222,19 @@ Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel,
     const ForceLayer *L = &ff->layers[i];
 
     float atten = 1.0f;
-    if (L->type != FORCE_RADIAL_AXIS) {
+
+    // =====================================================================
+    // FIX #2: FORCE_VORTEX_AXIS phải được exclude khỏi CalcAttenuation
+    // cùng với FORCE_RADIAL_AXIS.
+    //
+    // Lý do: Cả hai kiểu này đều dùng axisOrigin/axisDir (hình trụ),
+    // KHÔNG dùng L->origin (hình cầu). CalcAttenuation tính khoảng cách
+    // Euclid từ L->origin — nếu áp dụng cho axis-type, một particle nằm
+    // đúng trong vùng trụ nhưng xa L->origin (theo đường thẳng) sẽ bị
+    // continue và bỏ qua hoàn toàn trước khi vào switch.
+    // Hai kiểu axis-type tự tính attenuation theo perpDist bên trong case.
+    // =====================================================================
+    if (L->type != FORCE_RADIAL_AXIS && L->type != FORCE_VORTEX_AXIS) {
       atten = CalcAttenuation(L, pos);
       if (atten <= 0.0f)
         continue;
@@ -264,7 +314,7 @@ Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel,
 
     case FORCE_RADIAL_AXIS: {
       if (Vector3LengthSqr(axisDir) < 1e-6f)
-        break; // Trục suy biến, fallback an toàn
+        break;
 
       Vector3 toPoint = Vector3Subtract(pos, axisOrigin);
       float alongAxis = Vector3DotProduct(toPoint, axisDir);
@@ -273,18 +323,14 @@ Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel,
       Vector3 radialVec = Vector3Subtract(pos, closestOnAxis);
       float perpDistSq = Vector3LengthSqr(radialVec);
 
-      // Early exit nếu ngoài vùng radius
-      if (L->radius > 0.0f && perpDistSq >= L->radius * L->radius) {
-        atten = 0.0f;
+      if (L->radius > 0.0f && perpDistSq >= L->radius * L->radius)
         break;
-      }
 
       if (perpDistSq < 1e-6f)
-        break; // Điểm nằm ngay trên trục
+        break;
 
       float perpDist = sqrtf(perpDistSq);
 
-      // Tính suy giảm (falloff) giống hệt RADIAL_AXIS
       if (L->radius <= 0.0f) {
         atten = 1.0f;
       } else {
@@ -297,17 +343,28 @@ Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel,
           atten = (1.0f - t) * (1.0f - t);
       }
 
-      Vector3 tangent =
-          Vector3Normalize(Vector3CrossProduct(axisDir, radialVec));
-
-      // SỬA Ở ĐÂY: Bỏ phép chia cho khoảng cách.
-      // Để lực xoáy (tangent) duy trì ổn định giúp cuộn dải lụa lại!
-      acc = Vector3Scale(tangent, L->strength);
+      // ==================================================================
+      // FIX #1: Dấu ngược chiều — hướng tâm (centripetal) vs li tâm
+      //
+      // radialVec trỏ TỪ trục → hạt (hướng ra ngoài = li tâm).
+      // Phiên bản cũ (SAI):
+      //   radialDir = radialVec / perpDist   (trỏ ra ngoài)
+      //   acc = radialDir * strength
+      //   → strength > 0 = đẩy ra xa trục (li tâm) — TRÁI với .h
+      //
+      // Phiên bản mới (ĐÚNG, khớp với header):
+      //   centripetal = -radialVec / perpDist (trỏ vào trong, về phía trục)
+      //   acc = centripetal * strength
+      //   → strength > 0 = hút vào trục (hướng tâm) ✓
+      //   → strength < 0 = đẩy ra khỏi trục (li tâm)
+      // ==================================================================
+      Vector3 centripetal = Vector3Scale(radialVec, -1.0f / perpDist);
+      acc = Vector3Scale(centripetal, L->strength);
     } break;
 
     case FORCE_VORTEX_AXIS: {
       if (Vector3LengthSqr(axisDir) < 1e-6f)
-        break; // Trục suy biến, fallback an toàn
+        break;
 
       Vector3 toPoint = Vector3Subtract(pos, axisOrigin);
       float alongAxis = Vector3DotProduct(toPoint, axisDir);
@@ -316,18 +373,16 @@ Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel,
       Vector3 radialVec = Vector3Subtract(pos, closestOnAxis);
       float perpDistSq = Vector3LengthSqr(radialVec);
 
-      // Early exit nếu ngoài vùng radius
       if (L->radius > 0.0f && perpDistSq >= L->radius * L->radius) {
         atten = 0.0f;
         break;
       }
 
       if (perpDistSq < 1e-6f)
-        break; // Trùng ngay tâm trục, không có vector tiếp tuyến
+        break;
 
       float perpDist = sqrtf(perpDistSq);
 
-      // Tính suy giảm (falloff) giống hệt RADIAL_AXIS
       if (L->radius <= 0.0f) {
         atten = 1.0f;
       } else {
@@ -340,16 +395,13 @@ Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel,
           atten = (1.0f - t) * (1.0f - t);
       }
 
-      // Tích có hướng giữa Trục và Vector Bán kính -> Vector Tiếp tuyến (Vuông
-      // góc với cả 2)
       Vector3 tangent =
           Vector3Normalize(Vector3CrossProduct(axisDir, radialVec));
 
-      // Chia cho (perpDist + 1.0f) để lực xoáy gắt ở tâm và dịu dần khi văng ra
-      // xa (giống VORTEX cũ)
       float s = L->strength / (perpDist + 1.0f);
       acc = Vector3Scale(tangent, s);
     } break;
+
     case FORCE_VISCOSITY:
     default:
       break;

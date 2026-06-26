@@ -90,7 +90,8 @@ static void SwordUpdateCallback(int trailId, float dt) {
     return;
 
   Vector3 dir = Vector3Normalize(sword->velocity);
-  const float frontBias = 0.15f;
+
+  // Đã XÓA frontBias vì không cần thiết nữa
 
   for (int k = 0; k < METAL_SWORD_WISP_COUNT; k++) {
     int followerId = swordFollowers[trailId][k];
@@ -99,14 +100,17 @@ static void SwordUpdateCallback(int trailId, float dt) {
 
     float fraction = (float)k / (float)(METAL_SWORD_WISP_COUNT - 1);
 
-    // ── 1. Điểm neo CHUẨN XÁC trên trục thanh kiếm (bỏ các offset cứng) ──
-    float lengthOffset = sword->length * (0.5f + frontBias - fraction);
+    // SỬA Ở ĐÂY: Rải điểm neo an toàn lọt thỏm trong thân kiếm.
+    // fraction chạy từ 0 -> 1.
+    // offsetMultiplier sẽ chạy từ +0.45f (gần mũi kiếm) lùi dần về -0.45f (gần
+    // chuôi).
+    float offsetMultiplier = 0.45f - (fraction * 0.90f);
+
+    float lengthOffset = sword->length * offsetMultiplier;
     Vector3 anchorPoint =
         Vector3Add(sword->position, Vector3Scale(dir, lengthOffset));
 
     UpdateFollowerPosition(followerId, anchorPoint);
-
-    // ── 2. Đẩy trục động vào FOLLOWER để tính lực FORCE_RADIAL_AXIS ──────
     SetFollowerAxis(followerId, sword->position, dir);
   }
 }
@@ -141,39 +145,36 @@ void InitMetalSkill(int screenWidth, int screenHeight) {
 
   // 1. VISCOSITY (Ma sát/Độ nhớt) - CHÌA KHÓA LÀM MƯỢT
   // Kìm hãm vận tốc văng, ép dải lụa phải đi theo đúng biên độ của Force Field
-  ForceField_AddLayer(
-      &s_metalWispField,
-      (ForceLayer){
-          .type = FORCE_VISCOSITY,
-          .strength =
-              12.0f // Hãm cực mạnh (giống như lụa bay trong nước/mật ong)
-      });
+  // ForceField_AddLayer(&s_metalWispField,
+  //                     (ForceLayer){.type = FORCE_VISCOSITY, .strength =
+  //                     0.0f});
+  ForceField_Clear(&s_metalWispField);
 
-  // 2. LI TÂM (Radial Out) - Đẩy bung ra tạo hình nón
-  ForceField_AddLayer(
-      &s_metalWispField,
-      (ForceLayer){.type = FORCE_RADIAL_AXIS,
-                   .strength = -3000.0f, // Nhờ có Viscosity hãm lại, ta có thể
-                                         // tự tin tăng số này cực to
-                   .radius =
-                       35.0f, // Khóa đuôi nón không cho bè ra quá 35 units
-                   .falloff = 1.0f});
+  // Ma sát cực nhỏ để hạt giữ quán tính xoay mượt, không bị khựng giật cục
+  // ForceField_AddLayer(&s_metalWispField,
+  //                     (ForceLayer){.type = FORCE_VISCOSITY, .strength
+  //                     = 1.5f});
 
-  // 3. XOÁY (Vortex) - Cuộn tròn quanh trục
-  ForceField_AddLayer(
-      &s_metalWispField,
-      (ForceLayer){
-          .type = FORCE_VORTEX_AXIS,
-          .strength =
-              1800.0f, // Lực xoáy phải nhỉnh hơn Li Tâm để nhìn rõ độ cuộn
-          .radius = 35.0f,
-          .falloff = 1.0f});
+  // LI TÂM: Đẩy hạt xòe rộng ra tối đa 60 units, nhưng giảm cực nhanh theo bình
+  // phương (falloff = 2.0)
+  ForceField_AddLayer(&s_metalWispField, (ForceLayer){.type = FORCE_RADIAL_AXIS,
+                                                      .strength = -400.0f,
+                                                      .radius = 60.0f,
+                                                      .falloff = 1.0f});
+
+  // XOÁY: Giữ ở mức vừa phải để cuốn hạt bo tròn theo thành ống rộng 60 units
+  // đó
+  // ForceField_AddLayer(&s_metalWispField, (ForceLayer){.type =
+  // FORCE_VORTEX_AXIS,
+  //                                                     .strength = 100.0f,
+  //                                                     .radius = 60.0f,
+  //                                                     .falloff = 0.0f});
 
   // 4. NHIỄU (Curl Noise) - Phá vỡ sự hoàn hảo, làm rung rinh
   ForceField_AddLayer(&s_metalWispField, (ForceLayer){.type = FORCE_NOISE_CURL,
-                                                      .strength = 800.0f,
+                                                      .strength = 100.0f,
                                                       .noiseScale = 0.05f,
-                                                      .noiseSpeed = 15.0f});
+                                                      .noiseSpeed = 100.0f});
 }
 
 void CastMetalSkill(Vector3 startPos, Vector3 target, SkillParams params) {
@@ -275,9 +276,9 @@ void UpdateMetalSkill(float dt) {
               .type = TRAIL_TYPE_PROJECTILE,
               .pos = spawnPos,
               .vel = vel,
-              .len = (float)GetRandomValue(50, 100) * sizeFactor,
+              .len = (float)GetRandomValue(100, 100) * sizeFactor,
               .thick = (float)GetRandomValue(12, 16) * sizeFactor,
-              .trailLength = (float)GetRandomValue(25, 40) *
+              .trailLength = (float)GetRandomValue(10, 15) *
                              sizeFactor, // Độ dài trail của thanh kiếm chính
               .life = 2.0f,
               .target = emitters[e].targetPos,
@@ -296,9 +297,9 @@ void UpdateMetalSkill(float dt) {
               swordFollowers[swordId][k] = SpawnTrailEntity((TrailConfig){
                   .type = TRAIL_TYPE_FOLLOWER,
                   .pos = spawnPos,
-                  .thick = (float)GetRandomValue(2, 4) * sizeFactor,
+                  .thick = (float)GetRandomValue(4, 6) * sizeFactor,
                   .trailLength =
-                      (float)GetRandomValue(20, 30) *
+                      (float)GetRandomValue(30, 50) *
                       sizeFactor, // Độ dài trail của dải lụa khí chất
                   .scale = sizeFactor,
                   .life = 99.0f,
