@@ -6,7 +6,8 @@
 #include "ribbon_strip.h"
 
 #define MAX_TRAIL_PARTICLES 500
-#define TRAIL_HISTORY_COUNT 20
+// Nâng trần bộ nhớ đệm lịch sử lên 60 để có thể chỉnh đuôi siêu dài nếu muốn
+#define TRAIL_HISTORY_COUNT 60
 
 // --- Named constants (thay magic numbers theo SKILL_STANDARD.md) ---
 #define TRAIL_PROJECTILE_TAPER_POWER 1.2f
@@ -61,6 +62,8 @@ typedef struct {
   Vector3 vel;
   float len;
   float thick;
+  float trailLength; // Trường mới bổ sung: Quy định độ dài đuôi (số node tối đa
+                     // từ 1-60)
   float life;
   Vector3 target;
   float initialAngle;
@@ -89,7 +92,19 @@ typedef struct {
   const ForceField *forceField;
 
   // 2. Mảng và Struct lớn (Vectors)
-  Vector3 history[TRAIL_HISTORY_COUNT];
+  Vector3 history[TRAIL_HISTORY_COUNT];      // vị trí từng node ribbon
+  Vector3 nodeVelocity[TRAIL_HISTORY_COUNT]; // vận tốc từng node ribbon.
+  // nodeVelocity[i] ánh xạ sang cùng index với history[i] — kể cả khi
+  // dùng ring-buffer (PROJECTILE, FOLLOWER): cùng historyHead, cùng modulo.
+  // Cần thiết để DRAG/VISCOSITY tính đúng lực cản (cần truyền vel vào
+  // ForceField_Evaluate), và để semi-implicit Euler tích phân đúng thứ tự:
+  //   vel += acc * dt  →  vel *= viscDamp  →  pos += vel * dt.
+  // WISP khởi tạo toàn bộ array bằng config.vel.
+  // FOLLOWER zero nodeVelocity tại historyHead mỗi khi UpdateFollowerPosition
+  // được gọi (node đó bị ghim, không cần velocity vật lý).
+  // PROJECTILE chỉ dùng entity velocity (trường velocity bên dưới), không
+  // dùng nodeVelocity.
+
   Vector3 position;
   Vector3 velocity;
   Vector3 target;
@@ -104,6 +119,8 @@ typedef struct {
   // 4. Các biến thực (Floats) - 4 bytes
   float length;
   float thickness;
+  float trailLength; // Trường mới bổ sung: Lưu trữ cấu hình độ dài đuôi trong
+                     // Pool
   float lifetime;
   float maxLifetime;
   float angle;
@@ -111,6 +128,9 @@ typedef struct {
   float scale;
   float timeSinceLastFollowerUpdate;
   float fadeAccumulator;
+  float nodeRestLen; // Độ dài nghỉ giữa 2 node liền kề của WISP (m).
+  // = length / (TRAIL_HISTORY_COUNT - 1), tính sẵn lúc spawn để tránh
+  // chia lại mỗi frame. Chỉ dùng cho TRAIL_TYPE_WISP.
 
   // 5. Số nguyên và Enum (Int/Enum) - 4 bytes
   TrailType type;
