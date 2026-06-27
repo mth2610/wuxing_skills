@@ -1,10 +1,20 @@
 #include "skills/water/water_stream/tube_skill.h"
+#include "core/skill_manager.h"
+#include "core/resource_manager.h"
 #include "core/force_field.h"
 #include "core/particle_system.h"
+#include "core/color_gradient.h"
+#include "core/decal_system.h"
+#include "core/screen_distort.h"
+#include "core/vfx_light.h"
+#include "core/camera_fx.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include "core/utils_math.h"
 #include <math.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <stdio.h>
 
 #define MAX_TUBE_EMITTERS 5
 
@@ -83,23 +93,38 @@ static Vector3 GetBezierPoint(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3,
   return p;
 }
 
+static Texture2D s_causticsTex;
+static ColorGradient s_splashGrad;
+
 static void TriggerWaterBurst(Vector3 pos, float sizeScale) {
-  int splashCount = GetRandomValue(20, 35) * sizeScale;
+  ScreenDistort_AddSource(pos, 85.0f, 0.7f, 0.6f, 150.0f);
+  Decal_Spawn(
+      pos,
+      (float)GetRandomValue(0, 360),
+      TUBE_BASE_RADIUS * sizeScale * 0.25f,
+      s_causticsTex,
+      4.0f,
+      ColorAlpha(ELEMENT_COLOR_WATER, 0.7f)
+  );
+  VFXLight_Spawn(pos, ELEMENT_COLOR_WATER, 55.0f * sizeScale, 0.5f);
+
+  int splashCount = GetRandomValue(25, 40) * sizeScale;
   for (int s = 0; s < splashCount; s++) {
     float angle = Random01() * PI * 2.0f;
     float pitch = (Random01() - 0.5f) * PI;
-    float speed = Math_Mix(300.0f, 600.0f, Random01()) * sizeScale;
+    float speed = Math_Mix(120.0f, 250.0f, Random01()) * sizeScale;
 
     ParticleConfig cfg = {0};
     cfg.position = pos;
     cfg.velocity = (Vector3){cosf(angle) * speed * cosf(pitch),
-                             sinf(pitch) * speed + (300.0f * sizeScale),
+                             sinf(pitch) * speed + (100.0f * sizeScale),
                              sinf(angle) * speed * cosf(pitch)};
-    cfg.radius = Math_Mix(3.0f, 9.0f, Random01()) * sizeScale * 3.5f;
-    cfg.lifetime = Math_Mix(0.4f, 1.0f, Random01());
-    cfg.colorStart = (Color){220, 245, 255, 240};
-    cfg.colorEnd = (Color){80, 160, 230, 0};
+    cfg.radius = Math_Mix(3.0f, 8.0f, Random01()) * sizeScale;
+    cfg.lifetime = Math_Mix(0.6f, 1.2f, Random01());
+    cfg.colorStart = ELEMENT_COLOR_WATER;
+    cfg.colorEnd = ColorAlpha(ColorLerp(ELEMENT_COLOR_WATER, WHITE, 0.3f), 0.0f);
     cfg.forceField = &s_tubeSplashField;
+    cfg.gradient = &s_splashGrad;
     SpawnParticle(cfg);
   }
 }
@@ -284,7 +309,7 @@ static void RenderCustom3DTube(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3,
 void InitTubeSkill(int screenWidth, int screenHeight) {
   (void)screenWidth;
   (void)screenHeight;
-  tubeShader = LoadShader("skills/water/water_stream/tube.vs", "skills/water/water_stream/tube.fs");
+  tubeShader = ResourceManager_LoadShader("skills/water/water_stream/tube.vs", "skills/water/water_stream/tube.fs");
   timeLoc = GetShaderLocation(tubeShader, "u_time");
   viewPosLoc = GetShaderLocation(tubeShader, "viewPos");
   uvLengthLoc =
@@ -292,6 +317,13 @@ void InitTubeSkill(int screenWidth, int screenHeight) {
   for (int i = 0; i < MAX_TUBE_EMITTERS; i++) {
     emitters[i].active = false;
   }
+
+  s_causticsTex = ResourceManager_LoadTexture("assets/textures/water_caustics.png");
+
+  s_splashGrad.count = 0;
+  ColorGradient_AddStop(&s_splashGrad, 0.00f, ELEMENT_COLOR_WATER);
+  ColorGradient_AddStop(&s_splashGrad, 0.40f, ColorLerp(ELEMENT_COLOR_WATER, WHITE, 0.2f));
+  ColorGradient_AddStop(&s_splashGrad, 1.00f, (Color){ 0, 0, 0, 0 });
 
   // Nước va chạm: trọng lực mạnh + Perlin gợn sóng lan + drag 3.0
   ForceField_Clear(&s_tubeSplashField);
@@ -376,9 +408,10 @@ void UpdateTubeSkill(float dt) {
                     (Random01() - 0.5f) * 40.0f};
       cfgMist.radius = Math_Mix(2.0f, 5.0f, Random01()) * emitters[e].sizeScale;
       cfgMist.lifetime = Math_Mix(0.2f, 0.5f, Random01());
-      cfgMist.colorStart = (Color){200, 245, 255, 180};
-      cfgMist.colorEnd = (Color){100, 150, 200, 0};
+      cfgMist.colorStart = ColorAlpha(ELEMENT_COLOR_WATER, 0.7f);
+      cfgMist.colorEnd = (Color){255, 255, 255, 0};
       cfgMist.forceField = &s_tubeMistField;
+      cfgMist.gradient = &s_splashGrad;
       SpawnParticle(cfgMist);
     }
   }
@@ -420,7 +453,9 @@ void DrawTubeSkill(void) {
   rlEnableDepthMask();
 }
 
-void UnloadTubeSkill(void) { UnloadShader(tubeShader); }
+void UnloadTubeSkill(void) {
+  /* Assets are cached and managed globally by the Resource Manager */
+}
 
 int GetTubeSkillProjectiles(SkillProjectile *outProjectiles,
                             int maxProjectiles) {
