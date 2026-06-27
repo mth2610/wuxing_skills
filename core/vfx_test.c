@@ -104,6 +104,9 @@ void VFXTest_DrawDebugLights3D(void) {
 }
 
 void VFXTest_DrawHUD(void) {
-  DrawText(TextFormat("Active VFX Lights: %d / 8", g_activeCountCache), 10, 610,
+  VFXLightData activeLights[MAX_VFX_LIGHTS];
+  int activeCount = 0;
+  VFXLight_GetActive(activeLights, &activeCount, MAX_VFX_LIGHTS);
+  DrawText(TextFormat("Active VFX Lights: %d / 8", activeCount), 10, 610,
            20, ORANGE);
 }

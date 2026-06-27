@@ -71,6 +71,7 @@ static Texture2D     s_crackTex;
 static Shader        s_shader;
 static int           s_uDissolveLoc;
 static int           s_uTimeLoc;
+static int           s_uCamPosLoc;
 static ColorGradient s_dustGrad;
 
 /* ================================================================
@@ -150,9 +151,10 @@ void InitWoodThornsSkill(int screenWidth, int screenHeight)
     }
 
     s_crackTex = ResourceManager_LoadTexture("assets/textures/crack.png");
-    s_shader = ResourceManager_LoadShader(NULL, "skills/wood/wood_thorns/wood_thorns.fs");
+    s_shader = ResourceManager_LoadShader("skills/wood/wood_thorns/wood_thorns.vs", "skills/wood/wood_thorns/wood_thorns.fs");
     s_uDissolveLoc = GetShaderLocation(s_shader, "u_dissolve");
     s_uTimeLoc     = GetShaderLocation(s_shader, "u_time");
+    s_uCamPosLoc   = GetShaderLocation(s_shader, "u_camPos");
 
     // Green/Brown foliage gradient
     ColorGradient_AddStop(&s_dustGrad, 0.00f, ELEMENT_COLOR_WOOD);
@@ -390,6 +392,9 @@ void DrawWoodThornsSkill(void)
         BeginShaderMode(s_shader);
         SetShaderValue(s_shader, s_uDissolveLoc, &dissolveAmt, SHADER_UNIFORM_FLOAT);
         SetShaderValue(s_shader, s_uTimeLoc, &currentTime, SHADER_UNIFORM_FLOAT);
+        
+        extern Camera3D camera;
+        SetShaderValue(s_shader, s_uCamPosLoc, &camera.position, SHADER_UNIFORM_VEC3);
 
         // Precompute mesh rings with noise perturbation for organic bark/thorn structure
         Vector3 rings[HEIGHT_SEGS + 1][RADIAL_SEGS];
@@ -428,8 +433,9 @@ void DrawWoodThornsSkill(void)
             }
         }
 
-        // Draw the organic thorn mesh using low-level rlgl (PROHIBITED flat primitives check passed!)
+        // Draw the organic thorn mesh using low-level rlgl
         rlPushMatrix();
+        rlColor4ub(255, 255, 255, 255); // CRITICAL FIX: Reset vertex color to white
         rlBegin(RL_QUADS);
         for (int h = 0; h < HEIGHT_SEGS; h++) {
             float v1 = (float)h / HEIGHT_SEGS;

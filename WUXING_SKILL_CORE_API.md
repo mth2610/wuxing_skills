@@ -767,3 +767,29 @@ void DeactivateWaterStreamProjectile(int index) {
     }
 }
 ```
+
+---
+
+## 9. 3D RENDERING & SHADER BEST PRACTICES (CRITICAL LESSONS)
+
+When rendering custom 3D primitives (like tubes, pillars, or crystals) using `rlgl` and custom shaders, you MUST follow these crucial rules to avoid visual bugs (e.g., flat 2D look, TV static noise, random colored tints):
+
+### 9.1 Vertex Color Initialization (`rlColor4ub`)
+When drawing raw geometry via `rlBegin(RL_QUADS)` / `rlVertex3f`, the `fragColor` in the shader inherits the **last active color state** set by Raylib. If a UI element or another skill drew something green just before your skill, your 3D mesh will be tinted green!
+* **Rule:** ALWAYS call `rlColor4ub(255, 255, 255, 255);` (White, full alpha) immediately before `rlBegin()` for 3D meshes that use custom shader textures/colors, to reset the vertex color state.
+
+### 9.2 Avoiding "TV Static" in Procedural Noise
+When generating procedural textures (like magma veins, ice cracks) in shaders using `noise` or `fbm` (Fractional Brownian Motion):
+* **Do NOT use high frequencies on World UVs:** If `worldUV` is calculated from `fragPosition` (e.g., `fragPosition.xz * 4.0`), the noise will sample extremely high frequencies and turn into random noisy dots (TV static).
+* **Rule:** Use very small multipliers for world coordinates (e.g., `fragPosition.xz * 0.05`) to create large, organic, continuous patterns. Stretch the noise on specific axes (e.g., multiplying X by 0.1 but Y by 0.01) to create directional fissures (like vertical magma cracks).
+
+### 9.3 Custom Vertex Shader Requirement for 3D Lighting
+Raylib's default vertex shader (loaded when passing `NULL` as the vs path) **does NOT pass `fragNormal` or `fragPosition`** to the fragment shader.
+* **The Trap:** If you try to calculate 3D lighting (like `NdotL`, `NdotV`, `normalize(fragNormal)`) in your fragment shader while using the default vertex shader, the uninitialized variables will cause a `NaN` (Not a Number) chain reaction. Your beautiful 3D mesh will instantly break into flat, black, broken triangles.
+* **Rule:** If your fragment shader needs `fragNormal` or `fragPosition` for 3D lighting, you **MUST** create and load a custom vertex shader (e.g., `my_skill.vs`) that explicitly passes them using `matModel`. Do not pass `NULL` to `ResourceManager_LoadShader()`.
+
+### 9.4 Preserving 3D Volume (Avoiding the "Flat 2D" look)
+If a glowing emissive color covers too much of the object (e.g., > 60% coverage) without any shading, the object will lose all its dark/shadow areas and appear as a flat 2D sprite.
+* **Rule 1 - Sparse Emissive Masks:** Use `smoothstep` (e.g., `smoothstep(0.6, 0.8, noiseValue)`) to tightly restrict glowing areas (like magma/cracks) to only 20-30% of the surface area. The remaining 70% must be the base shaded material.
+* **Rule 2 - Wrap Lighting & Fresnel:** For the non-emissive base material, always calculate `NdotL` (Lambertian diffuse) and `NdotV` (Fresnel). Use Fresnel (`pow(1.0 - NdotV, 3.0)`) to add Rim Lighting to the edges of the 3D volume, emphasizing its curvature.
+* **Rule 3 - Emissive Order:** Always add your `emissive` color **AFTER** multiplying the base color by textures/shadows, otherwise the glow will be incorrectly darkened by the shadow/texture.

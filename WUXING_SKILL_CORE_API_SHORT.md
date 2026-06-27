@@ -295,3 +295,12 @@ void DeactivateWaterStreamProjectile(int idx) {
     if(idx>=0 && idx<MAX_STREAMS && s_streams[idx].active){ TriggerImpactVFX(s_streams[idx].headPos, s_streams[idx].scale); s_streams[idx].active=false; }
 }
 ```
+
+---
+
+## 7. 3D RENDERING & SHADERS (CRITICAL)
+
+* **Reset Vertex Colors:** ALWAYS call `rlColor4ub(255,255,255,255)` before `rlBegin()` for 3D meshes to prevent inheriting random color tints from prior UI/skills.
+* **Custom Vertex Shader for 3D Lighting:** Raylib's default vertex shader (`NULL`) does NOT pass `fragNormal` or `fragPosition`. Using them for 3D lighting without a custom vertex shader will cause `NaN` errors, breaking the mesh into flat/black triangles! You MUST write and load a custom `.vs` (e.g. `ResourceManager_LoadShader("skill.vs", "skill.fs")`).
+* **World UV Noise:** Don't use high multipliers on World UVs (`fragPosition.xz * 4.0`), it creates TV static. Use low multipliers (`0.05`) and stretch axes for organic fissures.
+* **Preserve 3D Volume:** Don't let Emissive colors cover >60% of an object without shading (makes it look flat). Use `smoothstep` to restrict glow to 20-30%, and apply Wrap Lighting (`NdotL`) + Fresnel (`NdotV`) to the base rock/material to emphasize 3D curvature.

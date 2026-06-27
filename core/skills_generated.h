@@ -5,12 +5,12 @@
 #include "core/skill_manager.h"
 
 #include "skills/wood/wood_thorns/wood_thorns_skill.h"
-#include "skills/taiji/whirlwind_skill/whirlwind_skill.h"
+#include "skills/earth/stone_prison_skill/stone_prison_skill.h"
 #include "skills/earth/earth_shatter_skill/earth_shatter_skill.h"
 
 static inline void RegisterGeneratedSkills(void) {
     RegisterSkill("WOOD_THORNS", ELEMENT_COLOR_WOOD, InitWoodThornsSkill, CastWoodThornsSkill, UpdateWoodThornsSkill, DrawWoodThornsSkill, UnloadWoodThornsSkill);
-    RegisterSkill("WHIRLWIND", ELEMENT_COLOR_TAIJI, InitWhirlwindSkill, CastWhirlwindSkill, UpdateWhirlwindSkill, DrawWhirlwindSkill, UnloadWhirlwindSkill);
+    RegisterSkill("STONE_PRISON", ELEMENT_COLOR_EARTH, InitStonePrisonSkill, CastStonePrisonSkill, UpdateStonePrisonSkill, DrawStonePrisonSkill, UnloadStonePrisonSkill);
     RegisterSkill("EARTH_SHATTER", ELEMENT_COLOR_EARTH, InitEarthShatterSkill, CastEarthShatterSkill, UpdateEarthShatterSkill, DrawEarthShatterSkill, UnloadEarthShatterSkill);
 }
 
