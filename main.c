@@ -76,6 +76,11 @@ int main(void) {
       ExportImage(crackImg, "assets/textures/crack.png");
       UnloadImage(crackImg);
   }
+  if (!FileExists("assets/textures/water_caustics.png")) {
+      Image causticsImg = GenImageCellular(256, 256, 16);
+      ExportImage(causticsImg, "assets/textures/water_caustics.png");
+      UnloadImage(causticsImg);
+  }
 
   // -----------------------------------------------------------------
   // KHỞI TẠO CÁC HỆ THỐNG ĐỒ HỌA VFX

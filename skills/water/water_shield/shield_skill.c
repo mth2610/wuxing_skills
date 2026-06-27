@@ -98,7 +98,7 @@ void InitShieldSkill(int screenWidth, int screenHeight) {
   uViewPosLoc = GetShaderLocation(s_shieldShader, "viewPos");
   uCausticsTexLoc = GetShaderLocation(s_shieldShader, "causticsTex");
 
-  s_waterCausticsTex = LoadTexture("skills/water/water_shield/water_caustics.png");
+  s_waterCausticsTex = LoadTexture("assets/textures/water_caustics.png");
   SetTextureFilter(s_waterCausticsTex, TEXTURE_FILTER_BILINEAR);
   SetTextureWrap(s_waterCausticsTex, TEXTURE_WRAP_REPEAT);
 
