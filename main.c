@@ -1,12 +1,12 @@
-#include "particle_system.h" // Thư viện quản lý hạt toàn cục (Compute Shader)
+#include "core/particle_system.h" // Thư viện quản lý hạt toàn cục (Compute Shader)
 #include "raylib.h"
 #include "raymath.h"
 #include "rlgl.h"
-#include "sandbox_core.h"
-#include "skill_manager.h"
-#include "sword_rain_skill.h"
-#include "trail_system.h" // MỚI: Thư viện quản lý dải khí, kiếm bay (Smart Projectiles)
-#include "ui_panel.h"
+#include "core/sandbox_core.h"
+#include "core/skill_manager.h"
+#include "skills/metal/sword_rain/sword_rain_skill.h"
+#include "core/trail_system.h" // MỚI: Thư viện quản lý dải khí, kiếm bay (Smart Projectiles)
+#include "core/ui_panel.h"
 #include <math.h>
 #include <stdio.h>
 
@@ -60,7 +60,7 @@ int main(void) {
   // -----------------------------------------------------------------
   InitParticleSystem();
   Shader defaultTrailShader =
-      LoadShader(0, "metal.fs"); // shader fallback chung
+      LoadShader(0, "skills/metal/metal_projectile/metal.fs"); // shader fallback chung
   InitTrailSystem(defaultTrailShader); // MỚI: Khởi tạo hệ thống Trail System
 
   Image img = GenImageGradientRadial(64, 64, 0.0f, WHITE, BLACK);

@@ -32,63 +32,78 @@ FetchContent_MakeAvailable(raylib)
 # Khai báo mục tiêu build ứng dụng chạy trực tiếp trên máy tính
 add_executable(wuxing 
     main.c 
-    fluid_skill.c 
-    tube_skill.c
-    metal_skill.c 
-    fire_skill.c 
-    wood_skill.c 
-    electric_skill.c 
-    wind_skill.c 
-    skill_manager.c 
-    sword_rain_skill.c 
-    shield_skill.c
-    ui_panel.c 
-    sandbox_core.c 
-    ribbon_strip.c
-    # --- Các file Core Systems cũ ---
-    utils_math.c
-    path_spline.c
-    force_field.c
-    particle_system.c
-    trail_system.c
-    # --- Cập nhật: Thêm mã nguồn Phase 1 VFX Engine mới ---
-    color_gradient.c
-    sprite_anim.c
-    flow_map.c
+    # --- Core Systems ---
+    core/color_gradient.c
+    core/emitter_system.c
+    core/flow_map.c
+    core/force_field.c
+    core/particle_system.c
+    core/path_spline.c
+    core/ribbon_strip.c
+    core/sandbox_core.c
+    core/skill_manager.c
+    core/sprite_anim.c
+    core/trail_system.c
+    core/ui_panel.c
+    core/utils_math.c
 
+    # --- Skills ---
+    # Metal (Kim)
+    skills/metal/metal_projectile/metal_skill.c
+    skills/metal/sword_rain/sword_rain_skill.c
+    
+    # Wood (Mộc)
+    skills/wood/wood_roots/wood_skill.c
+    
+    # Water (Thủy)
+    skills/water/water_projectile/fluid_skill.c
+    skills/water/water_stream/tube_skill.c
+    skills/water/water_shield/shield_skill.c
+    
+    # Fire (Hỏa)
+    skills/fire/fire_ball/fire_skill.c
+    
+    # Taiji (Thái Cực)
+    skills/taiji/wind_storm/wind_skill.c
+    skills/taiji/lightning/electric_skill.c
 )
 
+# Thêm root path để resolve includes có tiền tố core/ và skills/
+target_include_directories(wuxing PRIVATE .)
+
 # Tự động copy file Shader và Texture vào thư mục build để game không bị lỗi load
-configure_file(fluid.fs ${CMAKE_CURRENT_BINARY_DIR}/fluid.fs COPYONLY)
-configure_file(fluid.vs ${CMAKE_CURRENT_BINARY_DIR}/fluid.vs COPYONLY)
-configure_file(tube.fs ${CMAKE_CURRENT_BINARY_DIR}/tube.fs COPYONLY)
-configure_file(tube.vs ${CMAKE_CURRENT_BINARY_DIR}/tube.vs COPYONLY)
-configure_file(fire.fs ${CMAKE_CURRENT_BINARY_DIR}/fire.fs COPYONLY)
-configure_file(metal.fs ${CMAKE_CURRENT_BINARY_DIR}/metal.fs COPYONLY)
-configure_file(wood.fs ${CMAKE_CURRENT_BINARY_DIR}/wood.fs COPYONLY)
-configure_file(electric.fs ${CMAKE_CURRENT_BINARY_DIR}/electric.fs COPYONLY)
-configure_file(wind.fs ${CMAKE_CURRENT_BINARY_DIR}/wind.fs COPYONLY)
-configure_file(taiji.fs ${CMAKE_CURRENT_BINARY_DIR}/taiji.fs COPYONLY)
-configure_file(shield.fs ${CMAKE_CURRENT_BINARY_DIR}/shield.fs COPYONLY)
-configure_file(shield.vs ${CMAKE_CURRENT_BINARY_DIR}/shield.vs COPYONLY)
+configure_file(skills/water/water_projectile/fluid.fs ${CMAKE_CURRENT_BINARY_DIR}/skills/water/water_projectile/fluid.fs COPYONLY)
+configure_file(skills/water/water_projectile/fluid.vs ${CMAKE_CURRENT_BINARY_DIR}/skills/water/water_projectile/fluid.vs COPYONLY)
+configure_file(skills/water/water_stream/tube.fs ${CMAKE_CURRENT_BINARY_DIR}/skills/water/water_stream/tube.fs COPYONLY)
+configure_file(skills/water/water_stream/tube.vs ${CMAKE_CURRENT_BINARY_DIR}/skills/water/water_stream/tube.vs COPYONLY)
+configure_file(skills/fire/fire_ball/fire.fs ${CMAKE_CURRENT_BINARY_DIR}/skills/fire/fire_ball/fire.fs COPYONLY)
+configure_file(skills/metal/metal_projectile/metal.fs ${CMAKE_CURRENT_BINARY_DIR}/skills/metal/metal_projectile/metal.fs COPYONLY)
+configure_file(skills/wood/wood_roots/wood.fs ${CMAKE_CURRENT_BINARY_DIR}/skills/wood/wood_roots/wood.fs COPYONLY)
+configure_file(skills/taiji/lightning/electric.fs ${CMAKE_CURRENT_BINARY_DIR}/skills/taiji/lightning/electric.fs COPYONLY)
+configure_file(skills/taiji/wind_storm/wind.fs ${CMAKE_CURRENT_BINARY_DIR}/skills/taiji/wind_storm/wind.fs COPYONLY)
+configure_file(skills/water/water_shield/shield.fs ${CMAKE_CURRENT_BINARY_DIR}/skills/water/water_shield/shield.fs COPYONLY)
+configure_file(skills/water/water_shield/shield.vs ${CMAKE_CURRENT_BINARY_DIR}/skills/water/water_shield/shield.vs COPYONLY)
 
 # --- Copy Shaders của hệ thống hạt cũ ---
 # GPU mode (Linux/Windows - OpenGL 4.3+): Compute Shader + SSBO
-configure_file(particles.comp ${CMAKE_CURRENT_BINARY_DIR}/particles.comp COPYONLY)
-configure_file(particles.vs ${CMAKE_CURRENT_BINARY_DIR}/particles.vs COPYONLY)
-configure_file(particles.fs ${CMAKE_CURRENT_BINARY_DIR}/particles.fs COPYONLY)
+configure_file(core/shaders/particles.comp ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/particles.comp COPYONLY)
+configure_file(core/shaders/particles.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/particles.vs COPYONLY)
+configure_file(core/shaders/particles.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/particles.fs COPYONLY)
 # CPU mode (macOS - OpenGL 4.1): Vertex attributes thay SSBO
-configure_file(particles_cpu.vs ${CMAKE_CURRENT_BINARY_DIR}/particles_cpu.vs COPYONLY)
-configure_file(particles_cpu.fs ${CMAKE_CURRENT_BINARY_DIR}/particles_cpu.fs COPYONLY)
+configure_file(core/shaders/particles_cpu.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/particles_cpu.vs COPYONLY)
+configure_file(core/shaders/particles_cpu.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/particles_cpu.fs COPYONLY)
+configure_file(core/shaders/taiji.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/taiji.fs COPYONLY)
 
 # --- Cập nhật: Sao chép thư viện Shaders chuyên dụng Phase 1 vào thư mục shaders/ ---
-configure_file(shaders/additive_soft.fs ${CMAKE_CURRENT_BINARY_DIR}/shaders/additive_soft.fs COPYONLY)
-configure_file(shaders/rim_glow.fs ${CMAKE_CURRENT_BINARY_DIR}/shaders/rim_glow.fs COPYONLY)
-configure_file(shaders/dissolve.fs ${CMAKE_CURRENT_BINARY_DIR}/shaders/dissolve.fs COPYONLY)
-configure_file(shaders/flow_map.fs ${CMAKE_CURRENT_BINARY_DIR}/shaders/flow_map.fs COPYONLY)
+configure_file(core/shaders/additive_soft.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/additive_soft.fs COPYONLY)
+configure_file(core/shaders/rim_glow.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/rim_glow.fs COPYONLY)
+configure_file(core/shaders/dissolve.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/dissolve.fs COPYONLY)
+configure_file(core/shaders/flow_map.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/flow_map.fs COPYONLY)
 
-# --- Copy thêm Texture đầu rồng của chiêu Lửa ---
-configure_file(dragon_head.png ${CMAKE_CURRENT_BINARY_DIR}/dragon_head.png COPYONLY)
+# --- Copy thêm Texture của skill ---
+configure_file(skills/fire/fire_ball/dragon_head.png ${CMAKE_CURRENT_BINARY_DIR}/skills/fire/fire_ball/dragon_head.png COPYONLY)
+configure_file(skills/metal/metal_projectile/sword.png ${CMAKE_CURRENT_BINARY_DIR}/skills/metal/metal_projectile/sword.png COPYONLY)
+configure_file(skills/water/water_shield/water_caustics.png ${CMAKE_CURRENT_BINARY_DIR}/skills/water/water_shield/water_caustics.png COPYONLY)
 
 
 # Liên kết tĩnh với thư viện Raylib vừa tải về

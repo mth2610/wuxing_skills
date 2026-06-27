@@ -37,21 +37,28 @@ PROJECT_BUILD_ID       ?= android
 PROJECT_BUILD_PATH     ?= $(PROJECT_BUILD_ID).$(PROJECT_NAME)
 PROJECT_RESOURCES_PATH ?= resources
 PROJECT_SOURCE_FILES   ?= main.c \
-                          fluid_skill.c \
-                          tube_skill.c \
-                          metal_skill.c \
-                          fire_skill.c \
-                          wood_skill.c \
-                          electric_skill.c \
-                          wind_skill.c \
-                          skill_manager.c \
-                          sword_rain_skill.c \
-                          ui_panel.c \
-                          sandbox_core.c \
-                          ribbon_strip.c \
-                          utils_math.c \
-                          path_spline.c \
-                          particle_system.c
+                          core/color_gradient.c \
+                          core/emitter_system.c \
+                          core/flow_map.c \
+                          core/force_field.c \
+                          core/particle_system.c \
+                          core/path_spline.c \
+                          core/ribbon_strip.c \
+                          core/sandbox_core.c \
+                          core/skill_manager.c \
+                          core/sprite_anim.c \
+                          core/trail_system.c \
+                          core/ui_panel.c \
+                          core/utils_math.c \
+                          skills/metal/metal_projectile/metal_skill.c \
+                          skills/metal/sword_rain/sword_rain_skill.c \
+                          skills/wood/wood_roots/wood_skill.c \
+                          skills/water/water_projectile/fluid_skill.c \
+                          skills/water/water_stream/tube_skill.c \
+                          skills/water/water_shield/shield_skill.c \
+                          skills/fire/fire_ball/fire_skill.c \
+                          skills/taiji/wind_storm/wind_skill.c \
+                          skills/taiji/lightning/electric_skill.c
 
 NATIVE_APP_GLUE_PATH    = $(ANDROID_NDK)/sources/android/native_app_glue
 
@@ -133,6 +140,7 @@ create_temp_project_dirs:
 	mkdir -p $(PROJECT_BUILD_PATH)
 	mkdir -p $(PROJECT_BUILD_PATH)/obj
 	mkdir -p $(PROJECT_BUILD_PATH)/obj/src
+	for dir in $(PROJECT_SOURCE_DIRS); do mkdir -p $(PROJECT_BUILD_PATH)/obj/$$dir; done
 	mkdir -p $(PROJECT_BUILD_PATH)/src
 	mkdir -p $(PROJECT_BUILD_PATH)/src/com
 	mkdir -p $(PROJECT_BUILD_PATH)/src/com/$(APP_COMPANY_NAME)
@@ -146,6 +154,7 @@ create_temp_project_dirs:
 	mkdir -p $(PROJECT_BUILD_PATH)/res/drawable-hdpi
 	mkdir -p $(PROJECT_BUILD_PATH)/res/values
 	mkdir -p $(PROJECT_BUILD_PATH)/assets
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/textures
 	mkdir -p $(PROJECT_BUILD_PATH)/assets/$(PROJECT_RESOURCES_PATH)
 
 # Compile raylib for Android using CMake + NDK toolchain
@@ -181,24 +190,45 @@ copy_project_resources:
 	cp -f $(APP_ICON_HDPI) $(PROJECT_BUILD_PATH)/res/drawable-hdpi/icon.png
 	@echo "<?xml version=\"1.0\" encoding=\"utf-8\"?>" > $(PROJECT_BUILD_PATH)/res/values/strings.xml
 	@echo "<resources><string name=\"app_name\">$(APP_LABEL_NAME)</string></resources>" >> $(PROJECT_BUILD_PATH)/res/values/strings.xml
-	@# Copy shader files vào assets
-	cp -f particles.comp $(PROJECT_BUILD_PATH)/assets/particles.comp
-	cp -f particles.vs $(PROJECT_BUILD_PATH)/assets/particles.vs
-	cp -f particles.fs $(PROJECT_BUILD_PATH)/assets/particles.fs
-	cp -f particles_cpu.vs $(PROJECT_BUILD_PATH)/assets/particles_cpu.vs
-	cp -f particles_cpu.fs $(PROJECT_BUILD_PATH)/assets/particles_cpu.fs
-	cp -f fluid.fs $(PROJECT_BUILD_PATH)/assets/fluid.fs
-	cp -f fluid.vs $(PROJECT_BUILD_PATH)/assets/fluid.vs
-	cp -f tube.fs $(PROJECT_BUILD_PATH)/assets/tube.fs
-	cp -f tube.vs $(PROJECT_BUILD_PATH)/assets/tube.vs
-	cp -f fire.fs $(PROJECT_BUILD_PATH)/assets/fire.fs
-	cp -f metal.fs $(PROJECT_BUILD_PATH)/assets/metal.fs
-	cp -f wood.fs $(PROJECT_BUILD_PATH)/assets/wood.fs
-	cp -f electric.fs $(PROJECT_BUILD_PATH)/assets/electric.fs
-	cp -f wind.fs $(PROJECT_BUILD_PATH)/assets/wind.fs
-	cp -f taiji.fs $(PROJECT_BUILD_PATH)/assets/taiji.fs
-	cp -f dragon_head.png $(PROJECT_BUILD_PATH)/assets/dragon_head.png
-	cp -f sword.png $(PROJECT_BUILD_PATH)/assets/sword.png
+	@# Copy shader files và texture vào assets với đúng thư mục tương ứng
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/core/shaders
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/skills/water/water_projectile
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/skills/water/water_stream
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/skills/water/water_shield
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/skills/fire/fire_ball
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/skills/metal/metal_projectile
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/skills/wood/wood_roots
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/skills/taiji/wind_storm
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/skills/taiji/lightning
+	
+	cp -f core/shaders/particles.comp $(PROJECT_BUILD_PATH)/assets/core/shaders/particles.comp
+	cp -f core/shaders/particles.vs $(PROJECT_BUILD_PATH)/assets/core/shaders/particles.vs
+	cp -f core/shaders/particles.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/particles.fs
+	cp -f core/shaders/particles_cpu.vs $(PROJECT_BUILD_PATH)/assets/core/shaders/particles_cpu.vs
+	cp -f core/shaders/particles_cpu.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/particles_cpu.fs
+	cp -f core/shaders/taiji.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/taiji.fs
+	cp -f core/shaders/additive_soft.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/additive_soft.fs
+	cp -f core/shaders/rim_glow.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/rim_glow.fs
+	cp -f core/shaders/dissolve.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/dissolve.fs
+	cp -f core/shaders/flow_map.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/flow_map.fs
+	
+	cp -f skills/water/water_projectile/fluid.fs $(PROJECT_BUILD_PATH)/assets/skills/water/water_projectile/fluid.fs
+	cp -f skills/water/water_projectile/fluid.vs $(PROJECT_BUILD_PATH)/assets/skills/water/water_projectile/fluid.vs
+	cp -f skills/water/water_stream/tube.fs $(PROJECT_BUILD_PATH)/assets/skills/water/water_stream/tube.fs
+	cp -f skills/water/water_stream/tube.vs $(PROJECT_BUILD_PATH)/assets/skills/water/water_stream/tube.vs
+	cp -f skills/water/water_shield/shield.fs $(PROJECT_BUILD_PATH)/assets/skills/water/water_shield/shield.fs
+	cp -f skills/water/water_shield/shield.vs $(PROJECT_BUILD_PATH)/assets/skills/water/water_shield/shield.vs
+	cp -f skills/water/water_shield/water_caustics.png $(PROJECT_BUILD_PATH)/assets/skills/water/water_shield/water_caustics.png
+	
+	cp -f skills/fire/fire_ball/fire.fs $(PROJECT_BUILD_PATH)/assets/skills/fire/fire_ball/fire.fs
+	cp -f skills/fire/fire_ball/dragon_head.png $(PROJECT_BUILD_PATH)/assets/skills/fire/fire_ball/dragon_head.png
+	
+	cp -f skills/metal/metal_projectile/metal.fs $(PROJECT_BUILD_PATH)/assets/skills/metal/metal_projectile/metal.fs
+	cp -f skills/metal/metal_projectile/sword.png $(PROJECT_BUILD_PATH)/assets/skills/metal/metal_projectile/sword.png
+	
+	cp -f skills/wood/wood_roots/wood.fs $(PROJECT_BUILD_PATH)/assets/skills/wood/wood_roots/wood.fs
+	cp -f skills/taiji/lightning/electric.fs $(PROJECT_BUILD_PATH)/assets/skills/taiji/lightning/electric.fs
+	cp -f skills/taiji/wind_storm/wind.fs $(PROJECT_BUILD_PATH)/assets/skills/taiji/wind_storm/wind.fs
 
 generate_loader_script:
 	@echo "package com.$(APP_COMPANY_NAME).$(APP_PRODUCT_NAME);" > $(PROJECT_BUILD_PATH)/src/com/$(APP_COMPANY_NAME)/$(APP_PRODUCT_NAME)/NativeLoader.java
