@@ -9,6 +9,7 @@
 #include "skills/taiji/wind_storm/wind_skill.h"
 #include "skills/wood/wood_roots/wood_skill.h"
 #include "core/sandbox_core.h"
+#include "core/skills_generated.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -189,6 +190,9 @@ static void EnsureBuiltInRegistered(void) {
     // Đăng ký Hộ Thuẫn (Index 8) - Đã đồng nhất hàm Init không cần wrapper
     RegisterSkill("SHIELD", SKYBLUE, InitShieldSkill, CastShieldWrapper,
                   UpdateShieldSkillWrapper, NULL, UnloadShieldSkill);
+
+    // MỚI: Đăng ký các kỹ năng tự động quét từ thư mục
+    RegisterGeneratedSkills();
   }
 }
 

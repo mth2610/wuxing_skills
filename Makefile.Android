@@ -36,7 +36,7 @@ PROJECT_LIBRARY_NAME   ?= main
 PROJECT_BUILD_ID       ?= android
 PROJECT_BUILD_PATH     ?= $(PROJECT_BUILD_ID).$(PROJECT_NAME)
 PROJECT_RESOURCES_PATH ?= resources
-PROJECT_SOURCE_FILES   ?= main.c \
+PROJECT_SOURCE_FILES   := main.c \
                           core/camera_fx.c \
                           core/color_gradient.c \
                           core/emitter_system.c \
@@ -61,7 +61,10 @@ PROJECT_SOURCE_FILES   ?= main.c \
                           skills/water/water_shield/shield_skill.c \
                           skills/fire/fire_ball/fire_skill.c \
                           skills/taiji/wind_storm/wind_skill.c \
-                          skills/taiji/lightning/electric_skill.c
+                          skills/taiji/lightning/electric_skill.c \
+                          $(wildcard skills/*/*/*.c) \
+                          $(wildcard skills/*/*/*/*.c)
+PROJECT_SOURCE_FILES   := $(sort $(PROJECT_SOURCE_FILES))
 
 NATIVE_APP_GLUE_PATH    = $(ANDROID_NDK)/sources/android/native_app_glue
 
@@ -140,6 +143,7 @@ all: create_temp_project_dirs \
      zipalign_project_apk_package
 
 create_temp_project_dirs:
+	python3 scripts/generate_registry.py
 	mkdir -p $(PROJECT_BUILD_PATH)
 	mkdir -p $(PROJECT_BUILD_PATH)/obj
 	mkdir -p $(PROJECT_BUILD_PATH)/obj/src
@@ -195,47 +199,14 @@ copy_project_resources:
 	@echo "<resources><string name=\"app_name\">$(APP_LABEL_NAME)</string></resources>" >> $(PROJECT_BUILD_PATH)/res/values/strings.xml
 	@# Copy shader files và texture vào assets với đúng thư mục tương ứng
 	mkdir -p $(PROJECT_BUILD_PATH)/assets/core/shaders
-	mkdir -p $(PROJECT_BUILD_PATH)/assets/skills/water/water_projectile
-	mkdir -p $(PROJECT_BUILD_PATH)/assets/skills/water/water_stream
-	mkdir -p $(PROJECT_BUILD_PATH)/assets/skills/water/water_shield
-	mkdir -p $(PROJECT_BUILD_PATH)/assets/skills/fire/fire_ball
-	mkdir -p $(PROJECT_BUILD_PATH)/assets/skills/metal/metal_projectile
-	mkdir -p $(PROJECT_BUILD_PATH)/assets/skills/wood/wood_roots
-	mkdir -p $(PROJECT_BUILD_PATH)/assets/skills/taiji/wind_storm
-	mkdir -p $(PROJECT_BUILD_PATH)/assets/skills/taiji/lightning
+	cp -f core/shaders/*.comp $(PROJECT_BUILD_PATH)/assets/core/shaders/ 2>/dev/null || true
+	cp -f core/shaders/*.vs $(PROJECT_BUILD_PATH)/assets/core/shaders/ 2>/dev/null || true
+	cp -f core/shaders/*.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/ 2>/dev/null || true
 	
-	cp -f core/shaders/particles.comp $(PROJECT_BUILD_PATH)/assets/core/shaders/particles.comp
-	cp -f core/shaders/particles.vs $(PROJECT_BUILD_PATH)/assets/core/shaders/particles.vs
-	cp -f core/shaders/particles.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/particles.fs
-	cp -f core/shaders/particles_cpu.vs $(PROJECT_BUILD_PATH)/assets/core/shaders/particles_cpu.vs
-	cp -f core/shaders/particles_cpu.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/particles_cpu.fs
-	cp -f core/shaders/taiji.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/taiji.fs
-	cp -f core/shaders/additive_soft.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/additive_soft.fs
-	cp -f core/shaders/rim_glow.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/rim_glow.fs
-	cp -f core/shaders/dissolve.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/dissolve.fs
-	cp -f core/shaders/flow_map.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/flow_map.fs
-	cp -f core/shaders/distortion.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/distortion.fs
-	cp -f core/shaders/bloom_bright.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/bloom_bright.fs
-	cp -f core/shaders/bloom_blur.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/bloom_blur.fs
-	cp -f core/shaders/post_process.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/post_process.fs
-	
-	cp -f skills/water/water_projectile/fluid.fs $(PROJECT_BUILD_PATH)/assets/skills/water/water_projectile/fluid.fs
-	cp -f skills/water/water_projectile/fluid.vs $(PROJECT_BUILD_PATH)/assets/skills/water/water_projectile/fluid.vs
-	cp -f skills/water/water_stream/tube.fs $(PROJECT_BUILD_PATH)/assets/skills/water/water_stream/tube.fs
-	cp -f skills/water/water_stream/tube.vs $(PROJECT_BUILD_PATH)/assets/skills/water/water_stream/tube.vs
-	cp -f skills/water/water_shield/shield.fs $(PROJECT_BUILD_PATH)/assets/skills/water/water_shield/shield.fs
-	cp -f skills/water/water_shield/shield.vs $(PROJECT_BUILD_PATH)/assets/skills/water/water_shield/shield.vs
-	cp -f skills/water/water_shield/water_caustics.png $(PROJECT_BUILD_PATH)/assets/skills/water/water_shield/water_caustics.png
-	
-	cp -f skills/fire/fire_ball/fire.fs $(PROJECT_BUILD_PATH)/assets/skills/fire/fire_ball/fire.fs
-	cp -f skills/fire/fire_ball/dragon_head.png $(PROJECT_BUILD_PATH)/assets/skills/fire/fire_ball/dragon_head.png
-	
-	cp -f skills/metal/metal_projectile/metal.fs $(PROJECT_BUILD_PATH)/assets/skills/metal/metal_projectile/metal.fs
-	cp -f skills/metal/metal_projectile/sword.png $(PROJECT_BUILD_PATH)/assets/skills/metal/metal_projectile/sword.png
-	
-	cp -f skills/wood/wood_roots/wood.fs $(PROJECT_BUILD_PATH)/assets/skills/wood/wood_roots/wood.fs
-	cp -f skills/taiji/lightning/electric.fs $(PROJECT_BUILD_PATH)/assets/skills/taiji/lightning/electric.fs
-	cp -f skills/taiji/wind_storm/wind.fs $(PROJECT_BUILD_PATH)/assets/skills/taiji/wind_storm/wind.fs
+	@# Tự động quét và sao chép cấu trúc thư mục của skills/ cùng các asset liên quan (.fs, .vs, .png)
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/skills
+	cd skills && find . -type d -exec mkdir -p ../$(PROJECT_BUILD_PATH)/assets/skills/{} \;
+	cd skills && find . -type f \( -name "*.fs" -o -name "*.png" -o -name "*.vs" \) -exec cp -f {} ../$(PROJECT_BUILD_PATH)/assets/skills/{} \;
 
 generate_loader_script:
 	@echo "package com.$(APP_COMPANY_NAME).$(APP_PRODUCT_NAME);" > $(PROJECT_BUILD_PATH)/src/com/$(APP_COMPANY_NAME)/$(APP_PRODUCT_NAME)/NativeLoader.java

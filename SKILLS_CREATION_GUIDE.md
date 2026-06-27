@@ -7,21 +7,25 @@
 * **Includes:** Use relative paths from root: `#include "core/particle_system.h"`, etc.
 
 ## 2. DIRECTORY STRUCTURE
+Simply copy your skill files into a subfolder under `skills/`:
 ```
 skills/[element]/[skill_name]/
-    ├── [skill_name].h  # Lifecycle prototypes
-    ├── [skill_name].c  # Physics & VFX
-    ├── [shader].fs     # Custom shader (optional)
-    └── [texture].png   # Sprite texture (optional)
+    ├── [skill_name].h  # Lifecycle prototypes (Matches standard convention)
+    ├── [skill_name].c  # Physics & VFX (Matches standard convention)
+    ├── [shader].fs     # Custom shader (optional, auto-copied)
+    └── [texture].png   # Sprite texture (optional, auto-copied)
 ```
+*(Everything compiles, registers, and populates the Debug UI dynamically! No manual setup required!)*
 
-## 3. LIFECYCLE API (`[skill_name].h`)
+## 3. STANDARD LIFECYCLE API (`[skill_name].h`)
+Any new skill MUST follow this naming convention for automatic detection & registration:
 ```c
 #ifndef SKILL_[NAME]_H
 #define SKILL_[NAME]_H
 #include "raylib.h"
 #include "core/skill_manager.h" // For SkillParams struct
 
+// Lifecycle functions must be named exactly like this (replace [Name] with your Skill Prefix):
 void Init[Name]Skill(int screenWidth, int screenHeight);
 void Cast[Name]Skill(Vector3 startPos, Vector3 target, SkillParams params);
 void Update[Name]Skill(float dt, Vector3 enemyPos, float enemyRadius);
@@ -50,14 +54,13 @@ struct ParticleConfig {
 ```
 * **Emitter System (`#include "core/emitter_system.h"`)**: 
   `int CreateEmitter(EmitterConfig cfg, Vector3 start);` `void UpdateEmitterTarget(int id, Vector3 pos, float dt);` `void StopEmitter(int id);` `void KillEmitter(int id);`
-  * *EmitterConfig fields:* `ParticleConfig baseParticle; float spawnDistance; float spawnRate; float randomPosOffset;`
 
 ### Trail/Ribbon System (`#include "core/trail_system.h"`)
 `void SpawnTrailEntity(TrailConfig config);`
 * *TrailConfig fields:* `TrailType type (TRAIL_TYPE_PROJECTILE/TRAIL_TYPE_RIBBON); Vector3 pos, vel; float len, thick, trailLength, life; const ColorGradient *gradient; const SpriteAnim *spriteAnim; Texture2D tex;`
 
 ### Ground Marks (`#include "core/decal_system.h"`)
-`void Decal_Spawn(Vector3 pos, float rot, float scale, Texture2D tex, float life, Color tint);` (Auto handles `y + 0.02f` offset to prevent Z-fighting).
+`void Decal_Spawn(Vector3 pos, float rot, float scale, Texture2D tex, float life, Color tint);` (Auto-offset to prevent Z-fighting).
 
 ### Post-Processing & Screen Effects
 * **Distortion (`#include "core/screen_distort.h"`)**: `void ScreenDistort_AddSource(Vector3 pos, float rad, float str, float life, float speed);`
@@ -224,10 +227,3 @@ void DrawElementStreamSkill(void) {
 }
 void UnloadElementStreamSkill(void) { UnloadShader(streamShader); }
 ```
-
-## 8. REGISTRATION STEPS
-Explain to user how to edit `skill_manager.c` to register the new skill:
-1. Add include: `#include "skills/[element]/[skill_name]/[skill_name].h"`
-2. Define static wrappers for `Cast` and `Update` matching registering prototype.
-3. Call `RegisterSkill` inside `EnsureBuiltInRegistered()`.
-4. Append `.c` paths to `CMakeLists.txt` and `Makefile.Android`.

@@ -46,18 +46,19 @@ void UpdateUIPanel(Vector2 mousePos, UIPanelState *state) {
   state->clickedOnUI = false;
   hoverSkillIndex = -1;
 
-  // Danh sách khả dụng tăng lên 9 kỹ năng (bao gồm Index 8 là SHIELD)
-  int availableSkills[] = {0, 1, 2, 3, 4, 5, 6, 7, 8};
-  int availableCount = 9;
+  // Tự động sử dụng số lượng kỹ năng đã đăng ký thực tế
+  int availableCount = GetRegisteredSkillCount();
+  if (availableCount > 32) availableCount = 32;
+
   bool activeValid = false;
   for (int i = 0; i < availableCount; i++) {
-    if (state->activeSkillIndex == availableSkills[i]) {
+    if (state->activeSkillIndex == i) {
       activeValid = true;
       break;
     }
   }
-  if (!activeValid) {
-    state->activeSkillIndex = availableSkills[0];
+  if (!activeValid && availableCount > 0) {
+    state->activeSkillIndex = 0;
   }
 
   // Kiểm tra hover nút chiêu thức
@@ -117,7 +118,7 @@ void UpdateUIPanel(Vector2 mousePos, UIPanelState *state) {
       state->currentParams.showPortal = !state->currentParams.showPortal;
     }
     if (hoverSkillIndex != -1) {
-      state->activeSkillIndex = availableSkills[hoverSkillIndex];
+      state->activeSkillIndex = hoverSkillIndex;
     }
   }
 }
@@ -136,15 +137,15 @@ void DrawUIPanel(const UIPanelState *state) {
   rlLoadIdentity();
   rlSetTexture(0);
 
-  // Đồng bộ danh sách hiển thị với 9 chiêu thức
-  int availableSkills[] = {0, 1, 2, 3, 4, 5, 6, 7, 8};
-  int availableCount = 9;
+  // Đồng bộ danh sách hiển thị với các chiêu thức thực tế
+  int availableCount = GetRegisteredSkillCount();
+  if (availableCount > 32) availableCount = 32;
 
   Vector2 mousePos = GetMousePosition();
 
   // Vẽ nút chiêu thức
   for (int i = 0; i < availableCount; i++) {
-    int skillIdx = availableSkills[i];
+    int skillIdx = i;
     bool isSelected = (state->activeSkillIndex == skillIdx);
     bool isHover = (hoverSkillIndex == i);
     Color baseColor = GetRegisteredSkillColor(skillIdx);

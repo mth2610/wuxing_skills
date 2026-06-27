@@ -29,6 +29,12 @@ FetchContent_MakeAvailable(raylib)
 # BIÊN DỊCH TRỰC TIẾP FILE MAIN.C Ở THƯ MỤC GỐC
 # -----------------------------------------------------------------
 
+# Tự động quét và sinh registry cho skill mới trước khi build
+execute_process(COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_registry.py)
+
+# Tự động quét toàn bộ mã nguồn của kỹ năng trong thư mục skills/
+file(GLOB_RECURSE SKILL_SOURCES CONFIGURE_DEPENDS "skills/**/*.c")
+
 # Khai báo mục tiêu build ứng dụng chạy trực tiếp trên máy tính
 add_executable(wuxing 
     main.c 
@@ -54,41 +60,22 @@ add_executable(wuxing
     core/vfx_test.c
 
     # --- Skills ---
-    # Metal (Kim)
-    skills/metal/metal_projectile/metal_skill.c
-    skills/metal/sword_rain/sword_rain_skill.c
-    
-    # Wood (Mộc)
-    skills/wood/wood_roots/wood_skill.c
-    
-    # Water (Thủy)
-    skills/water/water_projectile/fluid_skill.c
-    skills/water/water_stream/tube_skill.c
-    skills/water/water_shield/shield_skill.c
-    
-    # Fire (Hỏa)
-    skills/fire/fire_ball/fire_skill.c
-    
-    # Taiji (Thái Cực)
-    skills/taiji/wind_storm/wind_skill.c
-    skills/taiji/lightning/electric_skill.c
+    ${SKILL_SOURCES}
 )
 
 # Thêm root path để resolve includes có tiền tố core/ và skills/
 target_include_directories(wuxing PRIVATE .)
 
-# Tự động copy file Shader và Texture vào thư mục build để game không bị lỗi load
-configure_file(skills/water/water_projectile/fluid.fs ${CMAKE_CURRENT_BINARY_DIR}/skills/water/water_projectile/fluid.fs COPYONLY)
-configure_file(skills/water/water_projectile/fluid.vs ${CMAKE_CURRENT_BINARY_DIR}/skills/water/water_projectile/fluid.vs COPYONLY)
-configure_file(skills/water/water_stream/tube.fs ${CMAKE_CURRENT_BINARY_DIR}/skills/water/water_stream/tube.fs COPYONLY)
-configure_file(skills/water/water_stream/tube.vs ${CMAKE_CURRENT_BINARY_DIR}/skills/water/water_stream/tube.vs COPYONLY)
-configure_file(skills/fire/fire_ball/fire.fs ${CMAKE_CURRENT_BINARY_DIR}/skills/fire/fire_ball/fire.fs COPYONLY)
-configure_file(skills/metal/metal_projectile/metal.fs ${CMAKE_CURRENT_BINARY_DIR}/skills/metal/metal_projectile/metal.fs COPYONLY)
-configure_file(skills/wood/wood_roots/wood.fs ${CMAKE_CURRENT_BINARY_DIR}/skills/wood/wood_roots/wood.fs COPYONLY)
-configure_file(skills/taiji/lightning/electric.fs ${CMAKE_CURRENT_BINARY_DIR}/skills/taiji/lightning/electric.fs COPYONLY)
-configure_file(skills/taiji/wind_storm/wind.fs ${CMAKE_CURRENT_BINARY_DIR}/skills/taiji/wind_storm/wind.fs COPYONLY)
-configure_file(skills/water/water_shield/shield.fs ${CMAKE_CURRENT_BINARY_DIR}/skills/water/water_shield/shield.fs COPYONLY)
-configure_file(skills/water/water_shield/shield.vs ${CMAKE_CURRENT_BINARY_DIR}/skills/water/water_shield/shield.vs COPYONLY)
+# Tự động quét toàn bộ tài nguyên (Shaders/Textures) của kỹ năng và copy vào thư mục build
+file(GLOB_RECURSE SKILL_ASSETS CONFIGURE_DEPENDS 
+    "skills/**/*.fs"
+    "skills/**/*.vs"
+    "skills/**/*.png"
+)
+foreach(asset_path ${SKILL_ASSETS})
+    file(RELATIVE_PATH rel_path ${CMAKE_CURRENT_SOURCE_DIR} ${asset_path})
+    configure_file(${asset_path} ${CMAKE_CURRENT_BINARY_DIR}/${rel_path} COPYONLY)
+endforeach()
 
 # --- Copy Shaders của hệ thống hạt cũ ---
 # GPU mode (Linux/Windows - OpenGL 4.3+): Compute Shader + SSBO
