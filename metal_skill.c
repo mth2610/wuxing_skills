@@ -11,8 +11,9 @@
 #define METAL_SKILL_TAG 1
 #define METAL_SWORD_WISP_COUNT 10
 
-static ForceField s_metalSparkField;
-static ForceField s_metalShardField;
+static ForceField s_metalSparkField;     // tia lửa khi kiếm bể: Perlin + drag 1.5
+static ForceField s_metalCastSparkField; // tia lửa khi cast kiếm: Perlin + drag 1.0
+static ForceField s_metalShardField;     // mảnh vỡ kiếm: gravity
 static ForceField s_metalWispField;
 
 typedef struct {
@@ -49,7 +50,6 @@ static void SwordDeathCallback(Vector3 pos, float scale) {
     shard.lifetime = 0.60f;
     shard.colorStart = (Color){255, 230, 100, 255};
     shard.colorEnd = (Color){255, 180, 0, 0};
-    shard.physicsFlags = P_PHYSICS_NONE;
     shard.forceField = &s_metalShardField;
     SpawnParticle(shard);
   }
@@ -63,12 +63,10 @@ static void SwordDeathCallback(Vector3 pos, float scale) {
     spark.velocity =
         (Vector3){cosf(sAngle) * sp * cosf(pAngle), sinf(pAngle) * sp,
                   sinf(sAngle) * sp * cosf(pAngle)};
-    spark.drag = 1.5f;
     spark.radius = (float)GetRandomValue(6, 16);
     spark.lifetime = 0.35f;
     spark.colorStart = (Color){255, 255, 200, 255};
     spark.colorEnd = (Color){255, 150, 0, 0};
-    spark.physicsFlags = P_PHYSICS_DRAG;
     spark.forceField = &s_metalSparkField;
     SpawnParticle(spark);
   }
@@ -130,13 +128,27 @@ void InitMetalSkill(int screenWidth, int screenHeight) {
     }
   }
 
+  // Tia lửa khi kiếm bể: Perlin + drag 1.5
   ForceField_Clear(&s_metalSparkField);
   ForceField_AddLayer(&s_metalSparkField,
                       (ForceLayer){.type = FORCE_NOISE_PERLIN,
                                    .strength = 60.0f,
                                    .noiseScale = 0.020f,
                                    .noiseSpeed = 2.0f});
+  ForceField_AddLayer(&s_metalSparkField,
+                      (ForceLayer){.type = FORCE_DRAG, .strength = 1.5f});
 
+  // Tia lửa khi cast kiếm: giống spark bể nhưng cản ít hơn (drag 1.0)
+  ForceField_Clear(&s_metalCastSparkField);
+  ForceField_AddLayer(&s_metalCastSparkField,
+                      (ForceLayer){.type = FORCE_NOISE_PERLIN,
+                                   .strength = 60.0f,
+                                   .noiseScale = 0.020f,
+                                   .noiseSpeed = 2.0f});
+  ForceField_AddLayer(&s_metalCastSparkField,
+                      (ForceLayer){.type = FORCE_DRAG, .strength = 1.0f});
+
+  // Mảnh vỡ kiếm rơi xuống
   ForceField_Clear(&s_metalShardField);
   ForceField_AddLayer(&s_metalShardField,
                       (ForceLayer){.type = FORCE_GRAVITY_DIR,
@@ -233,11 +245,9 @@ void CastMetalSkill(Vector3 startPos, Vector3 target, SkillParams params) {
     p.velocity = flashVel;
     p.radius = (float)GetRandomValue(10, 22);
     p.lifetime = 0.35f;
-    p.drag = 1.0f;
     p.colorStart = (Color){255, 230, 100, 255};
     p.colorEnd = (Color){255, 180, 0, 0};
-    p.physicsFlags = P_PHYSICS_DRAG;
-    p.forceField = &s_metalSparkField;
+    p.forceField = &s_metalCastSparkField;
     SpawnParticle(p);
   }
 }

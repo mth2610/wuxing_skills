@@ -13,10 +13,12 @@
 #define MAX_EMITTERS 10
 
 // --- Force Fields của Fire Skill ---
-// 3 field, mỗi loại particle có "cá tính" riêng
-static ForceField s_fireImpactField;   // tia lửa va chạm: rơi xuống
-static ForceField s_fireDisperseField; // quầng lửa bốc: curl + bốc lên
-static ForceField s_flameBodyField;    // thân rồng lửa: curl nhẹ + bốc lên
+// Mỗi loại particle có "cá tính" riêng, đã được hợp nhất lực drag vào ForceField
+static ForceField s_fireImpactField;   // tia lửa va chạm: rơi xuống + drag 2.5
+static ForceField s_fireDisperseField; // quầng lửa bốc: curl + bốc lên + drag 3.5
+static ForceField s_flameBodyField;    // thân rồng lửa (core): curl nhẹ + bốc lên + drag 9.5
+static ForceField s_flameAuraField;    // thân rồng lửa (aura): curl nhẹ + bốc lên + drag 5.2
+static ForceField s_fireBurstField;    // tia lửa bắn khi cast: chỉ drag 2.5
 
 #define FIRE_TRAVEL_SPEED 1.8f
 #define FIRE_PROGRESS_MAX 2.5f
@@ -133,12 +135,10 @@ static void TriggerFireImpact(Vector3 pos, float sizeScale) {
     cfg.velocity =
         (Vector3){cosf(angle) * speed * cosf(pitch), sinf(pitch) * speed,
                   sinf(angle) * speed * cosf(pitch)};
-    cfg.drag = 2.5f;
     cfg.radius = Math_Mix(0.8f, 2.2f, Random01()) * sizeScale * 4.0f;
     cfg.lifetime = Math_Mix(0.3f, 0.7f, Random01());
     cfg.colorStart = (Color){255, 200, 40, 230};
     cfg.colorEnd = (Color){200, 20, 0, 0};
-    cfg.physicsFlags = P_PHYSICS_DRAG;
     cfg.forceField = &s_fireImpactField;
     SpawnParticle(cfg);
   }
@@ -154,12 +154,10 @@ static void TriggerFireImpact(Vector3 pos, float sizeScale) {
         (Vector3){cosf(angle) * speed,
                   (Math_Mix(80.0f, 260.0f, Random01()) + 80.0f) * sizeScale,
                   sinf(angle) * speed};
-    cfg.drag = 3.5f;
     cfg.radius = Math_Mix(2.5f, 6.5f, Random01()) * sizeScale * 4.0f;
     cfg.lifetime = Math_Mix(0.6f, 1.3f, Random01());
     cfg.colorStart = (Color){255, 120, 20, 200};
     cfg.colorEnd = (Color){120, 10, 0, 0};
-    cfg.physicsFlags = P_PHYSICS_DRAG;
     cfg.forceField = &s_fireDisperseField;
     SpawnParticle(cfg);
   }
@@ -170,7 +168,6 @@ static void TriggerFireImpact(Vector3 pos, float sizeScale) {
   staticCore1.lifetime = 0.40f;
   staticCore1.colorStart = (Color){255, 100, 10, 180};
   staticCore1.colorEnd = (Color){0, 0, 0, 0};
-  staticCore1.physicsFlags = P_PHYSICS_NONE;
   SpawnParticle(staticCore1);
 
   ParticleConfig staticCore2 = {0};
@@ -179,7 +176,6 @@ static void TriggerFireImpact(Vector3 pos, float sizeScale) {
   staticCore2.lifetime = 0.25f;
   staticCore2.colorStart = (Color){255, 230, 80, 255};
   staticCore2.colorEnd = (Color){100, 0, 0, 0};
-  staticCore2.physicsFlags = P_PHYSICS_NONE;
   SpawnParticle(staticCore2);
 }
 
@@ -197,13 +193,16 @@ void InitFireSkill(int screenWidth, int screenHeight) {
 
   // --- Khởi tạo ForceField ---
 
-  // Tia lửa va chạm: rơi xuống như than đỏ
+  // Tia lửa va chạm: rơi xuống như than đỏ + cản 2.5
   ForceField_Clear(&s_fireImpactField);
   ForceField_AddLayer(&s_fireImpactField, (ForceLayer){
     .type = FORCE_GRAVITY_DIR, .direction = {0,-1,0}, .strength = 180.0f
   });
+  ForceField_AddLayer(&s_fireImpactField, (ForceLayer){
+    .type = FORCE_DRAG, .strength = 2.5f
+  });
 
-  // Quầng lửa bốc: cuộn theo curl + lực bốc lên
+  // Quầng lửa bốc: cuộn theo curl + lực bốc lên + cản 3.5
   ForceField_Clear(&s_fireDisperseField);
   ForceField_AddLayer(&s_fireDisperseField, (ForceLayer){
     .type = FORCE_GRAVITY_DIR, .direction = {0,1,0}, .strength = 260.0f
@@ -212,8 +211,11 @@ void InitFireSkill(int screenWidth, int screenHeight) {
     .type = FORCE_NOISE_CURL, .strength = 50.0f,
     .noiseScale = 0.015f, .noiseSpeed = 0.6f
   });
+  ForceField_AddLayer(&s_fireDisperseField, (ForceLayer){
+    .type = FORCE_DRAG, .strength = 3.5f
+  });
 
-  // Thân rồng: curl mạnh làm ngọn lửa uốn lượn + bốc nhẹ
+  // Thân rồng (core): curl mạnh làm ngọn lửa uốn lượn + bốc nhẹ + cản 9.5
   ForceField_Clear(&s_flameBodyField);
   ForceField_AddLayer(&s_flameBodyField, (ForceLayer){
     .type = FORCE_NOISE_CURL, .strength = 120.0f,
@@ -221,6 +223,28 @@ void InitFireSkill(int screenWidth, int screenHeight) {
   });
   ForceField_AddLayer(&s_flameBodyField, (ForceLayer){
     .type = FORCE_GRAVITY_DIR, .direction = {0,1,0}, .strength = 80.0f
+  });
+  ForceField_AddLayer(&s_flameBodyField, (ForceLayer){
+    .type = FORCE_DRAG, .strength = 9.5f
+  });
+
+  // Thân rồng (aura): curl mạnh làm ngọn lửa uốn lượn + bốc nhẹ + cản 5.2
+  ForceField_Clear(&s_flameAuraField);
+  ForceField_AddLayer(&s_flameAuraField, (ForceLayer){
+    .type = FORCE_NOISE_CURL, .strength = 120.0f,
+    .noiseScale = 0.018f, .noiseSpeed = 0.8f
+  });
+  ForceField_AddLayer(&s_flameAuraField, (ForceLayer){
+    .type = FORCE_GRAVITY_DIR, .direction = {0,1,0}, .strength = 80.0f
+  });
+  ForceField_AddLayer(&s_flameAuraField, (ForceLayer){
+    .type = FORCE_DRAG, .strength = 5.2f
+  });
+
+  // Burst khi cast: chỉ cản 2.5
+  ForceField_Clear(&s_fireBurstField);
+  ForceField_AddLayer(&s_fireBurstField, (ForceLayer){
+    .type = FORCE_DRAG, .strength = 2.5f
   });
 }
 
@@ -254,7 +278,6 @@ void CastFireSkill(Vector3 startPos, Vector3 target, float twistPhase,
   flash.lifetime = 0.25f;
   flash.colorStart = (Color){255, 140, 20, 255};
   flash.colorEnd = (Color){0, 0, 0, 0};
-  flash.physicsFlags = P_PHYSICS_NONE;
   SpawnParticle(flash);
 
   int burstCount = GetRandomValue(8, 14) * sizeScale;
@@ -264,7 +287,6 @@ void CastFireSkill(Vector3 startPos, Vector3 target, float twistPhase,
     cfg.velocity = (Vector3){(float)GetRandomValue(-200, 300) * sizeScale,
                              (float)GetRandomValue(100, 400) * sizeScale,
                              (float)GetRandomValue(-200, 300) * sizeScale};
-    cfg.drag = 2.5f;
     cfg.radius =
         Math_Mix(CAST_BURST_RADIUS_MIN, CAST_BURST_RADIUS_MAX, Random01()) *
         sizeScale * 4.0f;
@@ -272,7 +294,7 @@ void CastFireSkill(Vector3 startPos, Vector3 target, float twistPhase,
         Math_Mix(CAST_BURST_LIFETIME_MIN, CAST_BURST_LIFETIME_MAX, Random01());
     cfg.colorStart = (Color){255, 90, 10, 200};
     cfg.colorEnd = (Color){0, 0, 0, 0};
-    cfg.physicsFlags = P_PHYSICS_DRAG;
+    cfg.forceField = &s_fireBurstField;
     SpawnParticle(cfg);
   }
 }
@@ -385,12 +407,10 @@ void UpdateFireSkill(float dt) {
         ParticleConfig cfgCore = {0};
         cfgCore.position = spawnPos;
         cfgCore.velocity = vel;
-        cfgCore.drag = 9.5f;
         cfgCore.radius = rad * 1.8f;
         cfgCore.lifetime = Math_Mix(0.2f, 0.4f, Random01());
         cfgCore.colorStart = (Color){255, 230, 100, 255};
         cfgCore.colorEnd = (Color){255, 60, 0, 0};
-        cfgCore.physicsFlags = P_PHYSICS_DRAG;
         cfgCore.forceField = &s_flameBodyField;
         SpawnParticle(cfgCore);
 
@@ -399,13 +419,11 @@ void UpdateFireSkill(float dt) {
                                      spawnPos.y + (Random01() - 0.5f) * 3.0f,
                                      spawnPos.z + (Random01() - 0.5f) * 3.0f};
         cfgAura.velocity = Vector3Scale(vel, 0.75f);
-        cfgAura.drag = 5.2f;
         cfgAura.radius = rad * 4.8f;
         cfgAura.lifetime = Math_Mix(0.35f, 0.65f, Random01());
         cfgAura.colorStart = (Color){255, 90, 15, 140};
         cfgAura.colorEnd = (Color){100, 5, 0, 0};
-        cfgAura.physicsFlags = P_PHYSICS_DRAG;
-        cfgAura.forceField = &s_flameBodyField;
+        cfgAura.forceField = &s_flameAuraField;
         SpawnParticle(cfgAura);
       }
     }

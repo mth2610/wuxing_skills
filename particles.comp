@@ -33,16 +33,10 @@ void main() {
         return;
     }
 
-    vec3 vel   = p.vel_drag.xyz;
-    float drag = p.vel_drag.w;
+    vec3 vel = p.vel_drag.xyz;
 
-    // Drag (linear)
-    if (drag > 0.0) {
-        vel *= max(1.0 - drag * u_dt, 0.0);
-    }
-
-    // Force, Turbulence, Viscosity đã chuyển hoàn toàn sang ForceField (CPU-side).
-    // GPU mode chỉ dùng drag + initial velocity.
+    // Force, Turbulence, Viscosity, Drag đã chuyển hoàn toàn sang ForceField.
+    // Đối với GPU mode, các lực này được đánh giá qua SSBO ForceField (nếu có shader hỗ trợ).
 
     p.vel_drag.xyz   = vel;
     p.pos_radius.xyz += vel * u_dt;

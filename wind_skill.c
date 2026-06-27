@@ -13,8 +13,9 @@
 #define RIBBON_SEGMENTS 40
 
 // --- Force Fields của Wind Skill ---
-static ForceField s_tornadoField;  // lốc: vortex quanh trục Y + curl noise
-static ForceField s_disperseField; // tán nước: Perlin loạn xạ khi tan
+static ForceField s_tornadoField;   // lốc: vortex quanh trục Y + curl noise + drag 0.5
+static ForceField s_disperseField;  // tán nước: Perlin loạn xạ khi tan + drag 3.0
+static ForceField s_castBurstField; // hạt tạo ban đầu: chỉ drag 2.5
 
 typedef struct {
   bool active;
@@ -52,7 +53,7 @@ void InitWindSkill(int screenWidth, int screenHeight) {
     emitters[i].active = false;
   }
 
-  // Lốc xoáy: vortex quanh trục Y + curl đẩy hạt theo làn sóng gió
+  // Lốc xoáy: vortex quanh trục Y + curl đẩy hạt theo làn sóng gió + drag 0.5
   ForceField_Clear(&s_tornadoField);
   ForceField_AddLayer(&s_tornadoField, (ForceLayer){
     .type      = FORCE_VORTEX,
@@ -64,12 +65,24 @@ void InitWindSkill(int screenWidth, int screenHeight) {
     .type = FORCE_NOISE_CURL, .strength = 40.0f,
     .noiseScale = 0.012f, .noiseSpeed = 1.0f
   });
+  ForceField_AddLayer(&s_tornadoField, (ForceLayer){
+    .type = FORCE_DRAG, .strength = 0.5f
+  });
 
-  // Hạt tán khi lốc kết thúc: Perlin loạn xạ
+  // Gió tán khi lốc kết thúc: Perlin loạn xạ + drag 3.0
   ForceField_Clear(&s_disperseField);
   ForceField_AddLayer(&s_disperseField, (ForceLayer){
     .type = FORCE_NOISE_PERLIN, .strength = 50.0f,
     .noiseScale = 0.010f, .noiseSpeed = 0.8f
+  });
+  ForceField_AddLayer(&s_disperseField, (ForceLayer){
+    .type = FORCE_DRAG, .strength = 3.0f
+  });
+
+  // Hạt tạo ban đầu: chỉ drag 2.5
+  ForceField_Clear(&s_castBurstField);
+  ForceField_AddLayer(&s_castBurstField, (ForceLayer){
+    .type = FORCE_DRAG, .strength = 2.5f
   });
 }
 
@@ -102,10 +115,9 @@ void CastWindSkill(Vector3 startPos, Vector3 target, SkillParams params) {
         p.velocity = (Vector3){cosf(angle) * speed, 10.0f, sinf(angle) * speed};
         p.radius = (5.0f + Random01() * 8.0f) * sizeScale;
         p.lifetime = 0.4f;
-        p.drag = 2.5f;
         p.colorStart = (Color){150, 200, 255, 180}; // Giảm độ gắt của hạt
         p.colorEnd = (Color){50, 100, 200, 0};
-        p.physicsFlags = P_PHYSICS_DRAG;
+        p.forceField = &s_castBurstField;
         SpawnParticle(p);
       }
       break;
@@ -136,10 +148,8 @@ void UpdateWindSkill(float dt) {
                       sinf(angle) * speed * cosf(pitch)};
         p.radius = (8.0f + Random01() * 12.0f) * emitters[e].sizeScale;
         p.lifetime = 0.5f;
-        p.drag = 3.0f;
         p.colorStart = (Color){180, 220, 255, 120};
         p.colorEnd = (Color){50, 100, 200, 0};
-        p.physicsFlags = P_PHYSICS_DRAG;
         p.forceField = &s_disperseField;
         SpawnParticle(p);
       }
@@ -180,7 +190,6 @@ void UpdateWindSkill(float dt) {
       p.velocity = vel;
       p.radius = (2.0f + Random01() * 5.0f) * emitters[e].sizeScale;
       p.lifetime = 0.6f + Random01() * 0.6f;
-      p.drag = 0.5f;
 
       if (GetRandomValue(1, 10) <= 3) {
         p.colorStart = (Color){180, 180, 160, 150};
@@ -190,7 +199,6 @@ void UpdateWindSkill(float dt) {
         p.colorEnd = (Color){50, 100, 200, 0};
       }
 
-      p.physicsFlags = P_PHYSICS_DRAG;
       p.forceField = &s_tornadoField;
       SpawnParticle(p);
 

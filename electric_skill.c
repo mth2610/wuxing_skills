@@ -12,8 +12,10 @@
 #define MAX_EMITTERS 10
 
 // --- Force Fields của Electric Skill ---
-static ForceField s_electricSparkField; // tia lửa nổ: Perlin jấy giật mạnh
-static ForceField s_electricArcField; // tia điện bốc lên: Perlin + gravity nhẹ
+static ForceField s_electricSparkField; // tia lửa nổ: Perlin giật mạnh + drag 1.2
+static ForceField s_electricShockField; // tia giật sét: Perlin giật mạnh + drag 3.5
+static ForceField s_electricArcField;   // tia điện bốc lên: Perlin + gravity nhẹ + drag 1.0
+static ForceField s_electricTrailField; // hạt trail điện: chỉ drag 1.0
 
 // ---- Electric Skill Travel Settings ----
 #define ELECTRIC_TRAVEL_SPEED 1.6f
@@ -100,7 +102,7 @@ void InitElectricSkill(int screenWidth, int screenHeight) {
   for (int i = 0; i < MAX_EMITTERS; i++)
     emitters[i].active = false;
 
-  // Spark jấy giật mạnh: Perlin noise nhanh + không trọng lực
+  // Spark jấy giật mạnh: Perlin noise nhanh + không trọng lực + drag 1.2
   ForceField_Clear(&s_electricSparkField);
   ForceField_AddLayer(&s_electricSparkField,
                       (ForceLayer){
@@ -109,8 +111,22 @@ void InitElectricSkill(int screenWidth, int screenHeight) {
                           .noiseScale = 0.025f,
                           .noiseSpeed = 3.0f // speed cao = jấy giật nhanh
                       });
+  ForceField_AddLayer(&s_electricSparkField,
+                      (ForceLayer){.type = FORCE_DRAG, .strength = 1.2f});
 
-  // Tia điện bốc lên sau va chạm: Perlin + trọng lực nhẹ kéo xuống
+  // Shock giật sét: giống spark nhưng cản mạnh hơn (drag 3.5) để hạt tụ lại
+  ForceField_Clear(&s_electricShockField);
+  ForceField_AddLayer(&s_electricShockField,
+                      (ForceLayer){
+                          .type = FORCE_NOISE_PERLIN,
+                          .strength = 80.0f,
+                          .noiseScale = 0.025f,
+                          .noiseSpeed = 3.0f
+                      });
+  ForceField_AddLayer(&s_electricShockField,
+                      (ForceLayer){.type = FORCE_DRAG, .strength = 3.5f});
+
+  // Tia điện bốc lên sau va chạm: Perlin + trọng lực nhẹ kéo xuống + drag 1.0
   ForceField_Clear(&s_electricArcField);
   ForceField_AddLayer(&s_electricArcField,
                       (ForceLayer){.type = FORCE_NOISE_PERLIN,
@@ -121,6 +137,13 @@ void InitElectricSkill(int screenWidth, int screenHeight) {
                       (ForceLayer){.type = FORCE_GRAVITY_DIR,
                                    .direction = {0, -1, 0},
                                    .strength = 100.0f});
+  ForceField_AddLayer(&s_electricArcField,
+                      (ForceLayer){.type = FORCE_DRAG, .strength = 1.0f});
+
+  // Hạt trail điện: chỉ cản 1.0
+  ForceField_Clear(&s_electricTrailField);
+  ForceField_AddLayer(&s_electricTrailField,
+                      (ForceLayer){.type = FORCE_DRAG, .strength = 1.0f});
 }
 
 void CastElectricSkill(Vector3 startPos, Vector3 target, float sizeScale) {
@@ -156,12 +179,10 @@ void CastElectricSkill(Vector3 startPos, Vector3 target, float sizeScale) {
     ParticleConfig p = {0};
     p.position = startPos;
     p.velocity = vel;
-    p.drag = 1.2f;
     p.radius = (3.0f + Random01() * 4.0f) * sizeScale;
     p.lifetime = 0.4f + Random01() * 0.4f;
     p.colorStart = (Color){150, 200, 255, 255};
     p.colorEnd = (Color){20, 50, 255, 0};
-    p.physicsFlags = P_PHYSICS_DRAG;
     p.forceField = &s_electricSparkField;
     SpawnParticle(p);
   }
@@ -193,12 +214,11 @@ void UpdateElectricSkill(float dt) {
           ParticleConfig shock = {0};
           shock.position = emitters[e].targetPos;
           shock.velocity = vel;
-          shock.drag = 3.5f;
           shock.radius = 8.0f * scale;
           shock.lifetime = 0.5f;
           shock.colorStart = (Color){200, 255, 255, 255};
           shock.colorEnd = (Color){50, 100, 255, 0};
-          shock.physicsFlags = P_PHYSICS_DRAG;
+          shock.forceField = &s_electricShockField;
           SpawnParticle(shock);
         }
 
@@ -225,12 +245,10 @@ void UpdateElectricSkill(float dt) {
           ParticleConfig p = {0};
           p.position = emitters[e].targetPos;
           p.velocity = vel;
-          p.drag = 1.0f;
           p.radius = (2.5f + Random01() * 3.5f) * scale;
           p.lifetime = 0.5f + Random01() * 0.5f;
           p.colorStart = (Color){150, 220, 255, 255};
           p.colorEnd = (Color){10, 30, 255, 0};
-          p.physicsFlags = P_PHYSICS_DRAG;
           p.forceField = &s_electricArcField;
           SpawnParticle(p);
         }
@@ -296,13 +314,11 @@ void UpdateElectricSkill(float dt) {
           ParticleConfig trail = {0};
           trail.position = emitters[e].currentPos;
           trail.velocity = Vector3Add(backVel, spreadVel);
-          trail.drag = 1.0f;
           trail.radius = (3.0f + Random01() * 3.0f) * emitters[e].sizeScale;
           trail.lifetime = 0.3f + Random01() * 0.3f;
           trail.colorStart = (Color){150, 200, 255, 255};
           trail.colorEnd = (Color){20, 50, 255, 0};
-          trail.physicsFlags = P_PHYSICS_DRAG;
-          trail.forceField = &s_electricSparkField;
+          trail.forceField = &s_electricTrailField;
           SpawnParticle(trail);
 
           emitters[e].spawnAccumulator = 0.0f;
@@ -355,13 +371,11 @@ void UpdateElectricSkill(float dt) {
         p.velocity =
             (Vector3){cosf(angle) * speed * cosf(pitch), sinf(pitch) * speed,
                       sinf(angle) * speed * cosf(pitch)};
-        p.drag = 1.0f;
         p.radius = 2.0f + Random01() * 3.0f;
         p.lifetime = 0.2f + Random01() * 0.3f;
         p.colorStart = (Color){200, 255, 255, 255};
         p.colorEnd = (Color){20, 50, 255, 0};
-        p.physicsFlags = P_PHYSICS_DRAG;
-        p.forceField = &s_electricSparkField;
+        p.forceField = &s_electricTrailField;
         SpawnParticle(p);
       }
     }
@@ -492,12 +506,11 @@ void DeactivateElectricProjectile(int index) {
           ParticleConfig shock = {0};
           shock.position = emitters[i].currentPos;
           shock.velocity = vel;
-          shock.drag = 3.5f;
           shock.radius = 8.0f * scale;
           shock.lifetime = 0.5f;
           shock.colorStart = (Color){200, 255, 255, 255};
           shock.colorEnd = (Color){50, 100, 255, 0};
-          shock.physicsFlags = P_PHYSICS_DRAG;
+          shock.forceField = &s_electricShockField;
           SpawnParticle(shock);
         }
 
@@ -512,12 +525,10 @@ void DeactivateElectricProjectile(int index) {
           ParticleConfig p = {0};
           p.position = emitters[i].currentPos;
           p.velocity = vel;
-          p.drag = 1.0f;
           p.radius = (2.5f + Random01() * 3.5f) * scale;
           p.lifetime = 0.5f + Random01() * 0.5f;
           p.colorStart = (Color){150, 200, 255, 255};
           p.colorEnd = (Color){20, 50, 255, 0};
-          p.physicsFlags = P_PHYSICS_DRAG;
           p.forceField = &s_electricArcField;
           SpawnParticle(p);
         }

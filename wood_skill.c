@@ -21,6 +21,7 @@
 
 static ForceField s_woodLeafField;
 static ForceField s_woodShardField;
+static ForceField s_woodPollenField;
 
 typedef struct {
   bool active;
@@ -191,14 +192,12 @@ void UpdateWoodSkill(float dt) {
         cfgLeaf.velocity = (Vector3){(Random01() - 0.5f) * 40.0f,
                                      Math_Mix(20.0f, 60.0f, Random01()),
                                      (Random01() - 0.5f) * 40.0f};
-        cfgLeaf.drag = 1.5f;
         cfgLeaf.forceField = &s_woodLeafField;
         cfgLeaf.radius =
             Math_Mix(2.5f, 5.0f, Random01()) * emitters[e].sizeScale;
         cfgLeaf.lifetime = Math_Mix(1.0f, 1.8f, Random01());
         cfgLeaf.colorStart = (Color){60, 180, 80, 255};
         cfgLeaf.colorEnd = (Color){20, 60, 30, 0};
-        cfgLeaf.physicsFlags = P_PHYSICS_DRAG;
         SpawnParticle(cfgLeaf);
 
         ParticleConfig cfgPollen = {0};
@@ -206,13 +205,12 @@ void UpdateWoodSkill(float dt) {
         cfgPollen.velocity = (Vector3){(Random01() - 0.5f) * 20.0f,
                                        Math_Mix(40.0f, 90.0f, Random01()),
                                        (Random01() - 0.5f) * 20.0f};
-        cfgPollen.drag = 0.8f;
         cfgPollen.radius =
             Math_Mix(1.0f, 2.0f, Random01()) * emitters[e].sizeScale;
         cfgPollen.lifetime = Math_Mix(0.8f, 1.5f, Random01());
         cfgPollen.colorStart = (Color){220, 255, 120, 200};
         cfgPollen.colorEnd = (Color){100, 180, 40, 0};
-        cfgPollen.physicsFlags = P_PHYSICS_DRAG;
+        cfgPollen.forceField = &s_woodPollenField;
         SpawnParticle(cfgPollen);
       }
     }
@@ -230,14 +228,12 @@ void UpdateWoodSkill(float dt) {
                                       Math_Mix(100.0f, 300.0f, Random01()) *
                                           emitters[e].sizeScale,
                                       sinf(angle) * speed};
-        cfgShard.drag = 0.5f;
         cfgShard.forceField = &s_woodShardField;
         cfgShard.radius =
             Math_Mix(2.0f, 5.0f, Random01()) * emitters[e].sizeScale;
         cfgShard.lifetime = Math_Mix(0.6f, 1.1f, Random01());
         cfgShard.colorStart = (Color){140, 90, 50, 255};
         cfgShard.colorEnd = (Color){60, 40, 20, 0};
-        cfgShard.physicsFlags = P_PHYSICS_DRAG;
         SpawnParticle(cfgShard);
       }
     }
@@ -338,7 +334,7 @@ void InitWoodSkill(int screenWidth, int screenHeight) {
     emitters[i].pathCount = 0;
   }
 
-  // Lá rơi: curl noise nhẹ = tạo cảm giác lá bay lướt không phải rơi thẳng
+  // Lá rơi: curl noise nhẹ = tạo cảm giác lá bay lướt không phải rơi thẳng + drag 1.5
   ForceField_Clear(&s_woodLeafField);
   ForceField_AddLayer(&s_woodLeafField, (ForceLayer){
     .type = FORCE_NOISE_CURL, .strength = 25.0f,
@@ -347,11 +343,23 @@ void InitWoodSkill(int screenWidth, int screenHeight) {
   ForceField_AddLayer(&s_woodLeafField, (ForceLayer){
     .type = FORCE_GRAVITY_DIR, .direction = {0,-1,0}, .strength = 65.0f
   });
+  ForceField_AddLayer(&s_woodLeafField, (ForceLayer){
+    .type = FORCE_DRAG, .strength = 1.5f
+  });
 
-  // Mảnh gỗ vỡ: trọng lực mạnh, không nhiễu — rơi nặng nề
+  // Mảnh gỗ vỡ: trọng lực mạnh, không nhiễu — rơi nặng nề + drag 0.5
   ForceField_Clear(&s_woodShardField);
   ForceField_AddLayer(&s_woodShardField, (ForceLayer){
     .type = FORCE_GRAVITY_DIR, .direction = {0,-1,0}, .strength = 750.0f
+  });
+  ForceField_AddLayer(&s_woodShardField, (ForceLayer){
+    .type = FORCE_DRAG, .strength = 0.5f
+  });
+
+  // Hạt phấn hoa: chỉ drag 0.8
+  ForceField_Clear(&s_woodPollenField);
+  ForceField_AddLayer(&s_woodPollenField, (ForceLayer){
+    .type = FORCE_DRAG, .strength = 0.8f
   });
 }
 
@@ -492,14 +500,12 @@ void DeactivateWoodProjectile(int index) {
           cfgShard.velocity =
               (Vector3){cosf(angle) * speed * cosf(pitch), sinf(pitch) * speed,
                         sinf(angle) * speed * cosf(pitch)};
-          cfgShard.drag = 0.5f;
           cfgShard.forceField = &s_woodShardField;
           cfgShard.radius =
               Math_Mix(5.0f, 12.0f, Random01()) * emitters[i].sizeScale;
           cfgShard.lifetime = Math_Mix(0.4f, 0.8f, Random01());
           cfgShard.colorStart = (Color){140, 90, 50, 255};
           cfgShard.colorEnd = (Color){60, 40, 20, 0};
-          cfgShard.physicsFlags = P_PHYSICS_DRAG;
           SpawnParticle(cfgShard);
         }
         break;

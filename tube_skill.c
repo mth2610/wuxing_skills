@@ -95,12 +95,10 @@ static void TriggerWaterBurst(Vector3 pos, float sizeScale) {
     cfg.velocity = (Vector3){cosf(angle) * speed * cosf(pitch),
                              sinf(pitch) * speed + (300.0f * sizeScale),
                              sinf(angle) * speed * cosf(pitch)};
-    cfg.drag = FLUID_DRAG_SPLASH;
     cfg.radius = Math_Mix(3.0f, 9.0f, Random01()) * sizeScale * 3.5f;
     cfg.lifetime = Math_Mix(0.4f, 1.0f, Random01());
     cfg.colorStart = (Color){220, 245, 255, 240};
     cfg.colorEnd = (Color){80, 160, 230, 0};
-    cfg.physicsFlags = P_PHYSICS_DRAG;
     cfg.forceField = &s_tubeSplashField;
     SpawnParticle(cfg);
   }
@@ -295,7 +293,7 @@ void InitTubeSkill(int screenWidth, int screenHeight) {
     emitters[i].active = false;
   }
 
-  // Nước va chạm: trọng lực mạnh + Perlin gợn sóng lan
+  // Nước va chạm: trọng lực mạnh + Perlin gợn sóng lan + drag 3.0
   ForceField_Clear(&s_tubeSplashField);
   ForceField_AddLayer(&s_tubeSplashField, (ForceLayer){
     .type = FORCE_GRAVITY_DIR, .direction = {0,-1,0}, .strength = 650.0f
@@ -304,8 +302,11 @@ void InitTubeSkill(int screenWidth, int screenHeight) {
     .type = FORCE_NOISE_PERLIN, .strength = 25.0f,
     .noiseScale = 0.010f, .noiseSpeed = 0.5f
   });
+  ForceField_AddLayer(&s_tubeSplashField, (ForceLayer){
+    .type = FORCE_DRAG, .strength = FLUID_DRAG_SPLASH
+  });
 
-  // Sương đầu ống: trọng lực nhẹ + drift theo Perlin
+  // Sương đầu ống: trọng lực nhẹ + drift theo Perlin + drag 2.0
   ForceField_Clear(&s_tubeMistField);
   ForceField_AddLayer(&s_tubeMistField, (ForceLayer){
     .type = FORCE_GRAVITY_DIR, .direction = {0,-1,0}, .strength = 325.0f
@@ -313,6 +314,9 @@ void InitTubeSkill(int screenWidth, int screenHeight) {
   ForceField_AddLayer(&s_tubeMistField, (ForceLayer){
     .type = FORCE_NOISE_PERLIN, .strength = 15.0f,
     .noiseScale = 0.008f, .noiseSpeed = 0.3f
+  });
+  ForceField_AddLayer(&s_tubeMistField, (ForceLayer){
+    .type = FORCE_DRAG, .strength = 2.0f
   });
 }
 
@@ -370,12 +374,10 @@ void UpdateTubeSkill(float dt) {
       cfgMist.velocity =
           (Vector3){(Random01() - 0.5f) * 40.0f, Random01() * 50.0f,
                     (Random01() - 0.5f) * 40.0f};
-      cfgMist.drag = 2.0f;
       cfgMist.radius = Math_Mix(2.0f, 5.0f, Random01()) * emitters[e].sizeScale;
       cfgMist.lifetime = Math_Mix(0.2f, 0.5f, Random01());
       cfgMist.colorStart = (Color){200, 245, 255, 180};
       cfgMist.colorEnd = (Color){100, 150, 200, 0};
-      cfgMist.physicsFlags = P_PHYSICS_DRAG;
       cfgMist.forceField = &s_tubeMistField;
       SpawnParticle(cfgMist);
     }

@@ -107,13 +107,11 @@ void InitMySkill(...) {
 ParticleConfig cfg = {0};
 cfg.position     = spawnPos;
 cfg.velocity     = vel;
-cfg.drag         = 2.0f;
 cfg.radius       = 5.0f;
 cfg.lifetime     = 1.0f;
 cfg.colorStart   = RED;
 cfg.colorEnd     = (Color){0, 0, 0, 0};
-cfg.physicsFlags = P_PHYSICS_DRAG;
-cfg.forceField   = &s_myField;   // ← gắn ở đây
+cfg.forceField   = &s_myField;   // ← gắn ở đây (chứa FORCE_DRAG layer)
 SpawnParticle(cfg);
 ```
 
@@ -167,7 +165,7 @@ s_myField.layers[0].origin = emitters[e].currentPos;
 | Layer tối đa / ForceField | **8** | Đủ cho hầu hết hiệu ứng |
 | Số ForceField | Không giới hạn | Mỗi skill tự quản lý |
 | Nhiều particle dùng chung 1 field | ✅ | Trỏ cùng con trỏ |
-| ForceField trên GPU (compute shader) | ❌ | GPU chỉ dùng drag + velocity |
+| ForceField trên GPU (compute shader) | ❌ | GPU chỉ dùng velocity tích phân |
 | FORCE_VISCOSITY cần forceField != NULL | ✅ | Không có field = không có viscosity |
 
 **Curl vs Perlin:**
@@ -193,10 +191,9 @@ UpdateParticles(dt)
 │
 └─ for each particle i:
     ├─ lifetime -= dt  →  chết thì xoá khỏi mảng
-    ├─ drag:  vel *= (1 - drag*dt)
     │
     └─ if forceField != NULL:
-        ├─ acc  = ForceField_Evaluate(ff, pos, vel, time)
+        ├─ acc  = ForceField_Evaluate(ff, pos, vel, time, axisOrigin, axisDir)
         │         └─ tổng tất cả layer additive (gravity/noise/vortex/wind/drag)
         ├─ vel += acc * dt
         │

@@ -38,7 +38,7 @@ static ParticleGPU BuildParticleGPUCommon(ParticleConfig config) {
   p.pos_radius = (Vector4){config.position.x, config.position.y,
                            config.position.z, config.radius};
   p.vel_drag = (Vector4){config.velocity.x, config.velocity.y,
-                         config.velocity.z, config.drag};
+                         config.velocity.z, 0.0f}; // drag đã được chuyển hoàn toàn vào ForceField
   p.force_turb =
       (Vector4){-1.0f, 0.0f, 0.0f, 0.0f}; // -1 = chưa gán force field slot
   p.colorStart =
@@ -149,15 +149,6 @@ void UpdateParticles(float dt) {
     float velX = p->vel_drag.x;
     float velY = p->vel_drag.y;
     float velZ = p->vel_drag.z;
-    float drag = p->vel_drag.w;
-
-    // Drag
-    if (drag > 0.0f) {
-      float factor = 1.0f - drag * dt;
-      velX *= factor;
-      velY *= factor;
-      velZ *= factor;
-    }
 
     // ÁP DỤNG FORCE FIELD (nếu particle này có gán ForceField)
     if (cpuForceFields[i]) {

@@ -11,8 +11,9 @@
 #define MAX_EMITTERS 10
 
 // --- Force Fields của Fluid Skill ---
-// Mưa nước rơi: trọng lực mạnh + Value noise nhỏ bắt chước sức căng bề mặt
-static ForceField s_fluidSplashField;
+// Mưa nước rơi: trọng lực mạnh + Value noise nhỏ bắt chước sức căng bề mặt + drag + viscosity
+static ForceField s_fluidSplashField; // dùng cho hạt va chạm (drag = 2.1)
+static ForceField s_fluidCastField;   // dùng cho hạt xuất chiêu (drag = 3.0)
 
 #define WATER_TRAVEL_SPEED 1.6f
 #define WATER_BASE_RADIUS 16.0f
@@ -75,12 +76,10 @@ static void TriggerFluidImpact(Vector3 pos, float sizeScale) {
         sinf(angle) * speed * cosf(pitch) // Lực văng dạt ngang trục Z
     };
 
-    cfg.drag = FLUID_DRAG_SPLASH * 0.7f;
     cfg.radius = Math_Mix(1.5f, 5.0f, Random01()) * sizeScale * 3.5f;
     cfg.lifetime = Math_Mix(0.3f, 0.9f, Random01());
     cfg.colorStart = (Color){180, 230, 255, 240};
     cfg.colorEnd = (Color){50, 130, 200, 0};
-    cfg.physicsFlags = P_PHYSICS_DRAG;
     cfg.forceField = &s_fluidSplashField;
     SpawnParticle(cfg);
   }
@@ -200,7 +199,7 @@ void InitFluidSkill(int screenWidth, int screenHeight) {
   for (int i = 0; i < MAX_EMITTERS; i++)
     emitters[i].active = false;
 
-  // Giọt nước splash: trọng lực mạnh + Value noise bắt chước căng bề mặt
+  // Giọt nước splash va chạm: trọng lực mạnh + Perlin noise + Viscosity + Drag 2.1
   ForceField_Clear(&s_fluidSplashField);
   ForceField_AddLayer(&s_fluidSplashField, (ForceLayer){
     .type = FORCE_GRAVITY_DIR, .direction = {0,-1,0}, .strength = 845.0f
@@ -209,10 +208,27 @@ void InitFluidSkill(int screenWidth, int screenHeight) {
     .type = FORCE_NOISE_PERLIN, .strength = 20.0f,
     .noiseScale = 0.008f, .noiseSpeed = 0.3f
   });
-  // Viscosity: giảm chấn mũ — hạt nước gom cụm, đặc quánh thay vì vỡ vụn
-  // Tương đương viscosity=1.2f cũ (strength = 1.2 * 4 = 4.8)
   ForceField_AddLayer(&s_fluidSplashField, (ForceLayer){
     .type = FORCE_VISCOSITY, .strength = 4.8f
+  });
+  ForceField_AddLayer(&s_fluidSplashField, (ForceLayer){
+    .type = FORCE_DRAG, .strength = FLUID_DRAG_SPLASH * 0.7f
+  });
+
+  // Hạt xuất chiêu: giống splash nhưng Drag 3.0
+  ForceField_Clear(&s_fluidCastField);
+  ForceField_AddLayer(&s_fluidCastField, (ForceLayer){
+    .type = FORCE_GRAVITY_DIR, .direction = {0,-1,0}, .strength = 845.0f
+  });
+  ForceField_AddLayer(&s_fluidCastField, (ForceLayer){
+    .type = FORCE_NOISE_PERLIN, .strength = 20.0f,
+    .noiseScale = 0.008f, .noiseSpeed = 0.3f
+  });
+  ForceField_AddLayer(&s_fluidCastField, (ForceLayer){
+    .type = FORCE_VISCOSITY, .strength = 4.8f
+  });
+  ForceField_AddLayer(&s_fluidCastField, (ForceLayer){
+    .type = FORCE_DRAG, .strength = FLUID_DRAG_SPLASH
   });
 }
 
@@ -251,13 +267,11 @@ void CastFluidSkill(Vector3 startPos, Vector3 target, float twistPhase,
         (Vector3){Math_Mix(-150.0f, 250.0f, Random01()) * clampedScale,
                   Math_Mix(0.0f, 300.0f, Random01()) * clampedScale,
                   Math_Mix(-150.0f, 250.0f, Random01()) * clampedScale};
-    cfg.drag = FLUID_DRAG_SPLASH;
     cfg.radius = Math_Mix(3.0f, 8.0f, Random01()) * clampedScale * 3.5f;
     cfg.lifetime = Math_Mix(0.3f, 0.8f, Random01());
     cfg.colorStart = (Color){190, 235, 255, 220};
     cfg.colorEnd = (Color){40, 120, 200, 0};
-    cfg.physicsFlags = P_PHYSICS_DRAG;
-    cfg.forceField = &s_fluidSplashField;
+    cfg.forceField = &s_fluidCastField;
     SpawnParticle(cfg);
   }
 }
