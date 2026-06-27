@@ -570,6 +570,10 @@ static void UpdateFluidSkillWrapper(float dt, Vector3 enemyPos,
       AddFloatingText(tempProjectiles[i].position, "15", BLUE, 22.0f, 0.7f);
       AddFloatingText(tempProjectiles[i].position, "SLOW!", SKYBLUE, 16.0f,
                       0.8f);
+      
+      Vector3 pushDir = Vector3Normalize(Vector3Subtract(enemyPos, tempProjectiles[i].position));
+      pushDir.y = 0.0f;
+      AddKnockbackToEnemy(Vector3Scale(pushDir, 100.0f));
     }
   }
 }
@@ -587,6 +591,10 @@ static void UpdateTubeSkillWrapper(float dt, Vector3 enemyPos,
       AddFloatingText(tempProjectiles[i].position, "35", BLUE, 24.0f, 0.7f);
       AddFloatingText(tempProjectiles[i].position, "PIERCE!", SKYBLUE, 18.0f,
                       0.8f);
+      
+      Vector3 pushDir = Vector3Normalize(Vector3Subtract(enemyPos, tempProjectiles[i].position));
+      pushDir.y = 0.0f;
+      AddKnockbackToEnemy(Vector3Scale(pushDir, 180.0f));
     }
   }
 }
@@ -606,6 +614,10 @@ static void UpdateMetalSkillWrapper(float dt, Vector3 enemyPos,
                         1.0f);
       else
         AddFloatingText(tempProjectiles[i].position, "45", GOLD, 22.0f, 0.7f);
+      
+      Vector3 pushDir = Vector3Normalize(Vector3Subtract(enemyPos, tempProjectiles[i].position));
+      pushDir.y = 0.0f;
+      AddKnockbackToEnemy(Vector3Scale(pushDir, 250.0f));
     }
   }
 }
@@ -624,6 +636,10 @@ static void UpdateFireSkillWrapper(float dt, Vector3 enemyPos,
       AddFloatingText(tempProjectiles[i].position, "80", RED, 25.0f, 0.8f);
       AddFloatingText(tempProjectiles[i].position, "BURN!", ORANGE, 18.0f,
                       0.9f);
+      
+      Vector3 pushDir = Vector3Normalize(Vector3Subtract(enemyPos, tempProjectiles[i].position));
+      pushDir.y = 0.0f;
+      AddKnockbackToEnemy(Vector3Scale(pushDir, 80.0f));
     }
   }
 }
@@ -657,6 +673,10 @@ static void UpdateElectricSkillWrapper(float dt, Vector3 enemyPos,
       AddFloatingText(tempProjectiles[i].position, "120", MAGENTA, 26.0f, 0.9f);
       AddFloatingText(tempProjectiles[i].position, "SHOCK!", PURPLE, 19.0f,
                       0.9f);
+      
+      Vector3 pushDir = Vector3Normalize(Vector3Subtract(enemyPos, tempProjectiles[i].position));
+      pushDir.y = 0.0f;
+      AddKnockbackToEnemy(Vector3Scale(pushDir, 40.0f));
     }
   }
 }
@@ -733,4 +753,77 @@ float GetLineOfSightVisibility(Vector3 viewPoint, Vector3 targetPoint) {
     }
   }
   return 1.0f;
+}
+
+float Skill_CalculateDamage(SkillCategory cat, SkillParams params) {
+  float base = 50.0f + params.level * 10.0f;
+  switch (cat) {
+    case SKILL_CAT_MELEE:          return base * 2.5f * params.sizeScale;
+    case SKILL_CAT_PROJECTILE:     return base * 0.8f * params.sizeScale;
+    case SKILL_CAT_AOE_CONTROL:    return base * 1.3f * params.sizeScale;
+    case SKILL_CAT_TRAP_UTILITY:   return base * 0.5f * params.sizeScale;
+    case SKILL_CAT_BUFF_SUPPORT:   return 0.0f;
+  }
+  return base;
+}
+
+float Skill_CalculateCooldown(SkillCategory cat, SkillParams params) {
+  (void)params;
+  switch (cat) {
+    case SKILL_CAT_PROJECTILE:     return 0.15f; // Tầm xa: Spam liên hoàn như đạn bắn (Võ Lâm style)
+    case SKILL_CAT_MELEE:          return 0.25f; // Cận chiến: Chém liên hồi tốc độ cao
+    case SKILL_CAT_AOE_CONTROL:    return 1.50f; // Khống chế tầm trung: Hồi trung bình để tránh spam khống chế cứng
+    case SKILL_CAT_TRAP_UTILITY:   return 5.00f; // Bùa chú/Trận pháp bá đạo kiểm soát không gian: Hồi lâu
+    case SKILL_CAT_BUFF_SUPPORT:   return 8.00f; // Hộ thuẫn/Hồi phục: Hồi rất lâu để tránh bất tử
+  }
+  return 1.0f;
+}
+
+float Skill_CalculateManaCost(SkillCategory cat, SkillParams params) {
+  float base = 10.0f + params.level * 2.0f;
+  switch (cat) {
+    case SKILL_CAT_PROJECTILE:     return base * 0.4f * params.quantity; // Đạn bắn lẻ tốn ít mana (ví dụ 4-6 mana)
+    case SKILL_CAT_MELEE:          return base * 0.8f;                   // Cận chiến tốn mana vừa phải (8-12)
+    case SKILL_CAT_AOE_CONTROL:    return base * 3.0f;                   // AoE/Khống chế tốn nhiều mana (30-45)
+    case SKILL_CAT_TRAP_UTILITY:   return base * 6.0f;                   // Bùa trận tốn lượng mana cực lớn (60-80)
+    case SKILL_CAT_BUFF_SUPPORT:   return base * 8.0f;                   // Khiên/Buff tốn gần cạn cột mana (80-100)
+  }
+  return base;
+}
+
+float Skill_CalculateKnockback(SkillCategory cat, SkillParams params) {
+  float base = 150.0f;
+  switch (cat) {
+    case SKILL_CAT_MELEE:          return base * 1.6f * params.sizeScale;
+    case SKILL_CAT_PROJECTILE:     return base * 0.5f * params.sizeScale;
+    case SKILL_CAT_AOE_CONTROL:    return base * 1.0f * params.sizeScale;
+    case SKILL_CAT_TRAP_UTILITY:   return base * 0.8f * params.sizeScale;
+    case SKILL_CAT_BUFF_SUPPORT:   return 0.0f;
+  }
+  return base;
+}
+
+const char* Skill_GetCategoryName(SkillCategory cat) {
+  switch (cat) {
+    case SKILL_CAT_PROJECTILE:     return "PROJECTILE";
+    case SKILL_CAT_AOE_CONTROL:    return "AOE_CONTROL";
+    case SKILL_CAT_MELEE:          return "MELEE";
+    case SKILL_CAT_TRAP_UTILITY:   return "TRAP_UTILITY";
+    case SKILL_CAT_BUFF_SUPPORT:   return "BUFF_SUPPORT";
+  }
+  return "UNKNOWN";
+}
+
+static Vector3 accumulatedKnockback = {0};
+
+void AddKnockbackToEnemy(Vector3 force) {
+  accumulatedKnockback = Vector3Add(accumulatedKnockback, force);
+}
+
+Vector3 GetAccumulatedKnockback(void) {
+  return accumulatedKnockback;
+}
+
+void ClearAccumulatedKnockback(void) {
+  accumulatedKnockback = (Vector3){0};
 }

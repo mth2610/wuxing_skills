@@ -23,7 +23,23 @@ Any new skill MUST follow this naming convention for automatic detection & regis
 #ifndef SKILL_[NAME]_H
 #define SKILL_[NAME]_H
 #include "raylib.h"
-#include "core/skill_manager.h" // For SkillParams struct
+#include "core/skill_manager.h" // For SkillParams and SkillCategory structs
+
+// Skill Category Classification
+typedef enum {
+    SKILL_CAT_PROJECTILE = 0, // Long-range: Low damage, high speed, high safety
+    SKILL_CAT_AOE_CONTROL,    // Mid-range: Med damage, crowd control (Slow/Root), wide area
+    SKILL_CAT_MELEE,          // Close-range: Ultra damage, high knockback, shield pierce
+    SKILL_CAT_TRAP_UTILITY,   // Deployable/Trap: Ground buffers, summonings, special effects
+    SKILL_CAT_BUFF_SUPPORT    // Support: Shields, speed/mana buffs, no direct damage
+} SkillCategory;
+
+// Automatic gameplay balance modifiers (Use these instead of hardcoded numbers!)
+float Skill_CalculateDamage(SkillCategory cat, SkillParams params);
+float Skill_CalculateCooldown(SkillCategory cat, SkillParams params);
+float Skill_CalculateKnockback(SkillCategory cat, SkillParams params);
+float Skill_CalculateManaCost(SkillCategory cat, SkillParams params);
+const char* Skill_GetCategoryName(SkillCategory cat);
 
 // Lifecycle functions must be named exactly like this (replace [Name] with your Skill Prefix):
 void Init[Name]Skill(int screenWidth, int screenHeight);

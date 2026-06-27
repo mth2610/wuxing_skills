@@ -22,6 +22,14 @@ typedef enum {
     CAST_PATH_SKY
 } CastPathType;
 
+typedef enum {
+    SKILL_CAT_PROJECTILE = 0, // Tầm xa: Sát thương thấp, bay nhanh, an toàn cao
+    SKILL_CAT_AOE_CONTROL,    // Tầm trung: Sát thương vừa, khống chế mạnh (Slow/Root), diện rộng, hồi lâu
+    SKILL_CAT_MELEE,          // Cận chiến: Sát thương cực cao, phá giáp, đẩy lùi mạnh, tầm ngắn
+    SKILL_CAT_TRAP_UTILITY,   // Bùa chú / Trận pháp: Ném cắm cọc, hiệu ứng dị biệt, hồi rất lâu
+    SKILL_CAT_BUFF_SUPPORT    // Hỗ trợ / Hộ thuẫn: Tạo khiên chặn đạn, tăng tốc, mana, không gây dame
+} SkillCategory;
+
 typedef struct {
     int level;
     int milestone;
@@ -32,6 +40,12 @@ typedef struct {
     CastPathType pathType;
     bool showPortal;
 } SkillParams;
+
+float Skill_CalculateDamage(SkillCategory cat, SkillParams params);
+float Skill_CalculateCooldown(SkillCategory cat, SkillParams params);
+float Skill_CalculateKnockback(SkillCategory cat, SkillParams params);
+float Skill_CalculateManaCost(SkillCategory cat, SkillParams params);
+const char* Skill_GetCategoryName(SkillCategory cat);
 
 void InitSkillManager(int screenWidth, int screenHeight);
 void UpdateSkillManager(float dt, Vector3 enemyPos, float enemyRadius);
@@ -67,5 +81,9 @@ bool IsAnySkillCoiling(void);
 bool IsAnySkillShocking(void);
 bool IsEnemySlowed(void);
 bool IsEnemyBurning(void);
+
+Vector3 GetAccumulatedKnockback(void);
+void ClearAccumulatedKnockback(void);
+void AddKnockbackToEnemy(Vector3 force);
 
 #endif // SKILL_MANAGER_H

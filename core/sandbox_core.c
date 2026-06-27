@@ -118,6 +118,7 @@ void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
     enemy->speed = 120.0f;
     enemy->patrolAngle = 0.0f;
     enemy->oscillationScale = 1.0f;
+    enemy->knockbackVelocity = (Vector3){ 0 };
 }
 
 void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelState* uiState, Vector3* outMouseTarget) {
@@ -230,48 +231,93 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     if (IsEnemySlowed()) currentEnemySpeed *= 0.4f; 
     if (IsAnySkillCoiling()) currentEnemySpeed = 0.0f; 
 
+    // Tính toán target di chuyển và cập nhật hướng đi tùy theo mode
+    Vector3 targetPos = enemy->position;
+
     if (enemy->mode == ENEMY_STATIC) {
         if (IsAnySkillCoiling()) {
             enemy->oscillationScale += (0.0f - enemy->oscillationScale) * 9.0f * dt;
         } else {
             enemy->oscillationScale += (1.0f - enemy->oscillationScale) * 2.0f * dt;
         }
-        enemy->position.x = 900.0f;
         float oscillationFreq = IsEnemySlowed() ? 0.8f : 2.5f;
-        enemy->position.z = 350.0f + sinf(GetTime() * oscillationFreq) * 100.0f * enemy->oscillationScale;
-        enemy->position.y = 0.0f;
+        targetPos = (Vector3){
+            900.0f, 
+            0.0f, 
+            350.0f + sinf(GetTime() * oscillationFreq) * 100.0f * enemy->oscillationScale
+        };
     } else if (enemy->mode == ENEMY_CHASE) {
-        if (currentEnemySpeed > 0.0f) {
-            Vector3 toPlayer = Vector3Subtract(player->position, enemy->position);
-            toPlayer.y = 0.0f;
-            float dist = Vector3Length(toPlayer);
-            if (dist > 15.0f) {
-                Vector3 dir = Vector3Scale(Vector3Normalize(toPlayer), currentEnemySpeed * dt);
-                enemy->position = Vector3Add(enemy->position, dir);
-            }
-        }
+        targetPos = player->position;
+        targetPos.y = 0.0f;
     } else if (enemy->mode == ENEMY_PATROL) {
         if (currentEnemySpeed > 0.0f) {
             float rotSpeed = (currentEnemySpeed / 200.0f);
             enemy->patrolAngle += rotSpeed * dt;
         }
         Vector3 patrolCenter = { 600.0f, 0.0f, 440.0f };
-        enemy->position.x = patrolCenter.x + cosf(enemy->patrolAngle) * 250.0f;
-        enemy->position.z = patrolCenter.z + sinf(enemy->patrolAngle) * 200.0f;
-        enemy->position.y = 0.0f;
+        targetPos = (Vector3){
+            patrolCenter.x + cosf(enemy->patrolAngle) * 250.0f,
+            0.0f,
+            patrolCenter.z + sinf(enemy->patrolAngle) * 200.0f
+        };
     }
 
+    // Di chuyển lái hướng (Steer/Move) về phía vị trí mục tiêu (giúp các lực đẩy/hút hoạt động tự nhiên)
+    if (currentEnemySpeed > 0.0f && enemy->mode != ENEMY_STATIC) {
+        Vector3 toTarget = Vector3Subtract(targetPos, enemy->position);
+        toTarget.y = 0.0f;
+        float dist = Vector3Length(toTarget);
+        if (dist > 15.0f) {
+            Vector3 dir = Vector3Scale(Vector3Normalize(toTarget), currentEnemySpeed * dt);
+            enemy->position = Vector3Add(enemy->position, dir);
+        }
+    } else if (enemy->mode == ENEMY_STATIC) {
+        // Mode Static vẫn tự trôi nhẹ về điểm tĩnh gốc để giữ nhịp dao động
+        Vector3 toTarget = Vector3Subtract(targetPos, enemy->position);
+        toTarget.y = 0.0f;
+        float dist = Vector3Length(toTarget);
+        if (dist > 1.0f) {
+            Vector3 step = Vector3Scale(Vector3Normalize(toTarget), 150.0f * dt);
+            if (Vector3Length(step) > dist) step = toTarget;
+            enemy->position = Vector3Add(enemy->position, step);
+        } else {
+            enemy->position = targetPos;
+        }
+    }
+
+    // Tích lũy và cập nhật lực Hất Văng (Knockback)
+    Vector3 kbForce = GetAccumulatedKnockback();
+    if (Vector3Length(kbForce) > 0.01f) {
+        enemy->knockbackVelocity = Vector3Add(enemy->knockbackVelocity, kbForce);
+        ClearAccumulatedKnockback();
+    }
+
+    // Cập nhật vị trí dựa theo vận tốc hất văng knockback
+    if (Vector3Length(enemy->knockbackVelocity) > 0.01f) {
+        enemy->position = Vector3Add(enemy->position, Vector3Scale(enemy->knockbackVelocity, dt));
+        // Ma sát nội tại làm giảm dần tốc độ giật lùi
+        enemy->knockbackVelocity = Vector3Subtract(enemy->knockbackVelocity, Vector3Scale(enemy->knockbackVelocity, 8.0f * dt));
+        if (Vector3Length(enemy->knockbackVelocity) < 2.0f) {
+            enemy->knockbackVelocity = (Vector3){0};
+        }
+    }
+
+    // Cập nhật lực Hút Lại (Pull Force) từ lốc xoáy
     Vector3 windPullCenter = { 0 };
     float windPullStrength = 0.0f;
     if (GetWindPullForce(&windPullCenter, &windPullStrength)) {
         Vector3 pullDir = Vector3Subtract(windPullCenter, enemy->position);
         pullDir.y = 0.0f;
-        if (Vector3Length(pullDir) > 10.0f) {
-            Vector3 pullForce = Vector3Scale(Vector3Normalize(pullDir), windPullStrength * dt);
+        float dist = Vector3Length(pullDir);
+        if (dist > 10.0f) {
+            // Càng gần tâm lực hút càng tăng để hút dính quái
+            float pullFactor = Clamp(400.0f / dist, 0.5f, 3.0f);
+            Vector3 pullForce = Vector3Scale(Vector3Normalize(pullDir), windPullStrength * pullFactor * dt);
             enemy->position = Vector3Add(enemy->position, pullForce);
         }
     }
 
+    // Giới hạn quái vật không văng ra khỏi võ đài
     Vector3 toEnemy = Vector3Subtract(enemy->position, arenaCenter);
     toEnemy.y = 0.0f;
     if (Vector3Length(toEnemy) > arenaRadius - enemy->radius) {

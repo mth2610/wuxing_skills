@@ -31,6 +31,7 @@ typedef struct {
     float speed;
     float patrolAngle;
     float oscillationScale;
+    Vector3 knockbackVelocity; // MỚI: Vận tốc hất văng tích lũy
 } EnemyEntity;
 
 // Khởi tạo các thực thể và môi trường 3D
