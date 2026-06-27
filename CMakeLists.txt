@@ -49,6 +49,7 @@ add_executable(wuxing
     core/trail_system.c
     core/ui_panel.c
     core/utils_math.c
+    core/vfx_light.c
 
     # --- Skills ---
     # Metal (Kim)

@@ -1,13 +1,16 @@
 #ifndef PARTICLE_SYSTEM_H
 #define PARTICLE_SYSTEM_H
 
-#include "core/force_field.h"
 #include "core/color_gradient.h"
+#include "core/force_field.h"
 #include "core/sprite_anim.h"
 #include "raylib.h"
 #include <stdbool.h>
 
-typedef struct {
+// Forward Declaration để cấu trúc có thể tự tham chiếu chính nó cho Sub-Emitter
+typedef struct ParticleConfig ParticleConfig;
+
+struct ParticleConfig {
   Vector3 position;
   Vector3 velocity;
   Color colorStart;
@@ -16,13 +19,25 @@ typedef struct {
   float lifetime;
 
   // ForceField tùy chọn: NULL = không dùng; non-NULL = apply force field mỗi
-  // frame Caller sở hữu bộ nhớ — particle_system chỉ giữ con trỏ, không copy
+  // frame
   const ForceField *forceField;
-  
+
   // Tùy chọn chuyển màu dải stop và ảnh hoạt cảnh atlas
   const ColorGradient *gradient;
   const SpriteAnim *spriteAnim;
-} ParticleConfig;
+
+  // ============================================================
+  // 3.1 SUB-EMITTER SYSTEM — MỞ RỘNG[cite: 4]
+  // ============================================================
+  const ParticleConfig
+      *onDeathEmit; // NULL = không dùng, hạt con nổ ra khi hạt mẹ chết[cite: 4]
+  int onDeathEmitCount; // Số lượng hạt con bùng nổ khi chết[cite: 4]
+
+  const ParticleConfig
+      *onLiveEmit; // Phát liên tục (tạo vệt đuôi bụi) khi còn sống[cite: 4]
+  float onLiveEmitRate; // Số lượng hạt con sinh ra trên mỗi giây
+                        // (particles/sec)[cite: 4]
+};
 
 void InitParticleSystem(void);
 void SpawnParticle(ParticleConfig config);
@@ -32,19 +47,9 @@ void UnloadParticleSystem(void);
 bool IsParticleSystemActive(void);
 
 // ============================================================
-// CHỈ CÓ Ý NGHĨA Ở GPU COMPUTE MODE (Linux/Windows/Android).
-// Trên CPU mode (macOS) đây là no-op vì particle giữ trực tiếp con trỏ
-// ForceField, không qua registry/slot nào cả.
+// CHỈ CÓ Ý NGHĨA Ở GPU COMPUTE MODE
 // ============================================================
-
-// Số ForceField KHÁC NHAU tối đa có thể active đồng thời trên GPU mode.
-// Particle nào dùng ForceField vượt quá số này sẽ chạy như không có force
-// field (chỉ còn drag) + log cảnh báo, KHÔNG crash.
 #define MAX_GPU_FORCE_FIELDS 8
-
-// Xoá toàn bộ đăng ký ForceField trên GPU. Nên gọi giữa các màn/round/scene
-// (ví dụ lúc load lại trận trong "Ngũ Hành Tỷ Võ") để giải phóng slot bị
-// chiếm bởi ForceField cũ không còn particle nào tham chiếu tới nữa.
 void ParticleSystem_ResetForceFieldRegistry(void);
 
 #endif // PARTICLE_SYSTEM_H
