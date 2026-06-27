@@ -40,6 +40,7 @@ add_executable(wuxing
     core/camera_fx.c
     core/particle_system.c
     core/path_spline.c
+    core/post_fx.c
     core/ribbon_strip.c
     core/sandbox_core.c
     core/screen_distort.c
@@ -102,6 +103,9 @@ configure_file(core/shaders/rim_glow.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders
 configure_file(core/shaders/dissolve.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/dissolve.fs COPYONLY)
 configure_file(core/shaders/flow_map.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/flow_map.fs COPYONLY)
 configure_file(core/shaders/distortion.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/distortion.fs COPYONLY)
+configure_file(core/shaders/bloom_bright.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/bloom_bright.fs COPYONLY)
+configure_file(core/shaders/bloom_blur.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/bloom_blur.fs COPYONLY)
+configure_file(core/shaders/post_process.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/post_process.fs COPYONLY)
 
 # --- Copy thêm Texture của skill ---
 configure_file(skills/fire/fire_ball/dragon_head.png ${CMAKE_CURRENT_BINARY_DIR}/skills/fire/fire_ball/dragon_head.png COPYONLY)

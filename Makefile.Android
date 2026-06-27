@@ -44,6 +44,7 @@ PROJECT_SOURCE_FILES   ?= main.c \
                           core/force_field.c \
                           core/particle_system.c \
                           core/path_spline.c \
+                          core/post_fx.c \
                           core/ribbon_strip.c \
                           core/sandbox_core.c \
                           core/screen_distort.c \
@@ -214,6 +215,9 @@ copy_project_resources:
 	cp -f core/shaders/dissolve.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/dissolve.fs
 	cp -f core/shaders/flow_map.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/flow_map.fs
 	cp -f core/shaders/distortion.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/distortion.fs
+	cp -f core/shaders/bloom_bright.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/bloom_bright.fs
+	cp -f core/shaders/bloom_blur.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/bloom_blur.fs
+	cp -f core/shaders/post_process.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/post_process.fs
 	
 	cp -f skills/water/water_projectile/fluid.fs $(PROJECT_BUILD_PATH)/assets/skills/water/water_projectile/fluid.fs
 	cp -f skills/water/water_projectile/fluid.vs $(PROJECT_BUILD_PATH)/assets/skills/water/water_projectile/fluid.vs
