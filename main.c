@@ -67,6 +67,15 @@ int main(void) {
   Texture2D globalParticleTex = LoadTextureFromImage(img);
   UnloadImage(img);
 
+  // Tạo texture atlas 2x2 cho việc test hoạt cảnh (SpriteAnim) với các hình thù khác nhau
+  Image atlasImg = GenImageColor(128, 128, BLANK);
+  ImageDrawCircle(&atlasImg, 32, 32, 20, WHITE);                   // Frame 0: Hình tròn lớn
+  ImageDrawRectangle(&atlasImg, 64 + 12, 12, 40, 40, WHITE);       // Frame 1: Hình vuông lớn
+  ImageDrawCircle(&atlasImg, 32, 96, 12, WHITE);                   // Frame 2: Hình tròn nhỏ
+  ImageDrawRectangle(&atlasImg, 64 + 16, 64 + 16, 32, 32, WHITE);   // Frame 3: Hình vuông nhỏ
+  Texture2D testAtlasTex = LoadTextureFromImage(atlasImg);
+  UnloadImage(atlasImg);
+
   InitSkillManager(screenWidth, screenHeight);
   RegisterStaticOccluder((Vector3){400.0f, 0.0f, 320.0f}, 25.0f, 62.5f);
   RegisterStaticOccluder((Vector3){800.0f, 0.0f, 520.0f}, 30.0f, 75.0f);
@@ -101,6 +110,53 @@ int main(void) {
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !uiState.clickedOnUI) {
       CastSkill(uiState.activeSkillIndex, player.position, mouseTarget3D,
                 uiState.currentParams);
+    }
+
+    // TEST FEATURE: Nhấn phím T để test dải màu (ColorGradient) và hoạt cảnh hạt (SpriteAnim)
+    if (IsKeyPressed(KEY_T)) {
+      // 1. Khởi tạo dải màu Gradient: Đỏ -> Cam -> Vàng -> Xanh lá -> Xanh dương
+      static ColorGradient g;
+      static bool gradientInit = false;
+      if (!gradientInit) {
+        ColorGradient_AddStop(&g, 0.0f, RED);
+        ColorGradient_AddStop(&g, 0.25f, ORANGE);
+        ColorGradient_AddStop(&g, 0.5f, YELLOW);
+        ColorGradient_AddStop(&g, 0.75f, GREEN);
+        ColorGradient_AddStop(&g, 1.0f, BLUE);
+        gradientInit = true;
+      }
+
+      // 2. Khởi tạo SpriteAnim giả lập lưới 2x2
+      static SpriteAnim anim;
+      static bool animInit = false;
+      if (!animInit) {
+        SpriteAnim_Init(&anim, 2, 2, 4, 8.0f, ANIM_LOOP);
+        animInit = true;
+      }
+
+      // Spawn một hạt dùng gradient ở phía BÊN TRÁI player, bắn sang trái
+      ParticleConfig pConfig = {0};
+      pConfig.position = Vector3Add(player.position, (Vector3){ -75.0f, 30.0f, 0.0f });
+      pConfig.velocity = (Vector3){ -30.0f, 50.0f, 0.0f };
+      pConfig.radius = 45.0f;
+      pConfig.lifetime = 4.0f;
+      pConfig.gradient = &g;
+      SpawnParticle(pConfig);
+      
+      // Spawn một trail dùng gradient và anim ở phía BÊN PHẢI player, bắn sang phải
+      // Gán texture là testAtlasTex để đầu đạn thay đổi hình dạng (Circle -> Square -> Circle -> Square)
+      TrailConfig tConfig = {0};
+      tConfig.type = TRAIL_TYPE_PROJECTILE;
+      tConfig.pos = Vector3Add(player.position, (Vector3){ 75.0f, 30.0f, 0.0f });
+      tConfig.vel = (Vector3){ 220.0f, 0.0f, 0.0f }; // bay nhanh hơn để kéo dãn các node lịch sử
+      tConfig.len = 50.0f;                          // chiều dài đầu đạn
+      tConfig.thick = 6.0f;                         // độ dày của đuôi (giảm xuống để tránh giao nhau tự thân tạo hình bướm)
+      tConfig.trailLength = 80.0f;
+      tConfig.life = 4.0f;
+      tConfig.gradient = &g;
+      tConfig.spriteAnim = &anim; // dùng anim cho đầu quad
+      tConfig.tex = testAtlasTex; // dùng atlas có các hình dạng tròn/vuông để thấy rõ hoạt cảnh
+      SpawnTrailEntity(tConfig);
     }
 
     UpdateSkillManager(dt, enemy.position, 35.0f);
@@ -148,13 +204,14 @@ int main(void) {
     DrawUIPanel(&uiState);
 
     DrawText(TextFormat("FPS: %d", GetFPS()), 10, 640, 20, GREEN);
-    DrawText("Phím P: Đổi chế độ quái | Click trái: Tung chiêu | X: Khinh công",
+    DrawText("Phím P: Đổi chế độ quái | Click trái: Tung chiêu | X: Khinh công | Phím T: Test Gradient/Anim",
              10, 670, 20, LIGHTGRAY);
     EndDrawing();
   }
 
   // Giải phóng tài nguyên hệ thống
   UnloadTexture(globalParticleTex);
+  UnloadTexture(testAtlasTex);
   UnloadParticleSystem();
   UnloadTrailSystem(); // MỚI: Giải phóng Trail System
   UnloadSkillManager();

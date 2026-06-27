@@ -2,6 +2,8 @@
 #define PARTICLE_SYSTEM_H
 
 #include "core/force_field.h"
+#include "core/color_gradient.h"
+#include "core/sprite_anim.h"
 #include "raylib.h"
 #include <stdbool.h>
 
@@ -16,6 +18,10 @@ typedef struct {
   // ForceField tùy chọn: NULL = không dùng; non-NULL = apply force field mỗi
   // frame Caller sở hữu bộ nhớ — particle_system chỉ giữ con trỏ, không copy
   const ForceField *forceField;
+  
+  // Tùy chọn chuyển màu dải stop và ảnh hoạt cảnh atlas
+  const ColorGradient *gradient;
+  const SpriteAnim *spriteAnim;
 } ParticleConfig;
 
 void InitParticleSystem(void);

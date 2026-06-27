@@ -1,0 +1,26 @@
+# Aider Ignore File
+
+# Raylib external dependencies
+_deps/
+
+# Desktop build folder
+build/
+bin/
+obj/
+CMakeFiles/
+CMakeCache.txt
+Makefile
+
+# Android build outputs and intermediate files
+android.wuxing_skills/bin/
+android.wuxing_skills/obj/
+android.wuxing_skills/lib/
+android.wuxing_skills/assets/
+android.wuxing_skills/raylib_build/
+android.wuxing_skills/src/
+android.wuxing_skills/*.keystore
+
+# Built executables and APK packages
+wuxing
+*.apk
+wuxing_skills.apk

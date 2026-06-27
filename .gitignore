@@ -49,3 +49,18 @@ Thumbs.db
 *.njsproj
 *.sln
 *.swp
+
+# CMake FetchContent dependencies
+_deps/
+
+# Android build outputs and intermediate files
+android.wuxing_skills/bin/
+android.wuxing_skills/obj/
+android.wuxing_skills/lib/
+android.wuxing_skills/assets/
+android.wuxing_skills/raylib_build/
+android.wuxing_skills/src/
+android.wuxing_skills/*.keystore
+
+# APK files
+*.apk

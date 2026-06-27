@@ -59,8 +59,9 @@ static ParticleGPU BuildParticleGPUCommon(ParticleConfig config) {
 #ifdef __APPLE__
 
 static ParticleGPU *cpuParticles = NULL;
-static const ForceField **cpuForceFields =
-    NULL; // mảng con trỏ ForceField song song
+static const ForceField **cpuForceFields = NULL; // mảng con trỏ ForceField song song
+static const ColorGradient **cpuGradients = NULL; // mảng con trỏ ColorGradient song song
+static const SpriteAnim **cpuSpriteAnims = NULL;  // mảng con trỏ SpriteAnim song song
 static int activeParticleCount = 0;
 static Shader cpuRenderShader;
 static Mesh cpuMesh;
@@ -72,6 +73,10 @@ void InitParticleSystem(void) {
       (ParticleGPU *)calloc(MAX_GLOBAL_PARTICLES, sizeof(ParticleGPU));
   cpuForceFields =
       (const ForceField **)calloc(MAX_GLOBAL_PARTICLES, sizeof(ForceField *));
+  cpuGradients =
+      (const ColorGradient **)calloc(MAX_GLOBAL_PARTICLES, sizeof(ColorGradient *));
+  cpuSpriteAnims =
+      (const SpriteAnim **)calloc(MAX_GLOBAL_PARTICLES, sizeof(SpriteAnim *));
   activeParticleCount = 0;
 
   int totalVertices = MAX_GLOBAL_PARTICLES * 4;
@@ -122,8 +127,10 @@ void SpawnParticle(ParticleConfig config) {
 
   cpuParticles[activeParticleCount] = BuildParticleGPUCommon(config);
 
-  // Lưu con trỏ ForceField của particle này (NULL nếu không dùng)
+  // Lưu con trỏ ForceField, Gradient, SpriteAnim của particle này
   cpuForceFields[activeParticleCount] = config.forceField;
+  cpuGradients[activeParticleCount] = config.gradient;
+  cpuSpriteAnims[activeParticleCount] = config.spriteAnim;
 
   activeParticleCount++;
 }
@@ -139,9 +146,11 @@ void UpdateParticles(float dt) {
 
     p->lifeData.x -= dt;
     if (p->lifeData.x <= 0.0f) {
-      // Dense-array compact: ghi đè bằng phần tử cuối, hoán đổi cả FF pointer
+      // Dense-array compact: ghi đè bằng phần tử cuối, hoán đổi cả các con trỏ song song
       cpuParticles[i] = cpuParticles[activeParticleCount - 1];
       cpuForceFields[i] = cpuForceFields[activeParticleCount - 1];
+      cpuGradients[i] = cpuGradients[activeParticleCount - 1];
+      cpuSpriteAnims[i] = cpuSpriteAnims[activeParticleCount - 1];
       activeParticleCount--;
       continue;
     }
@@ -190,16 +199,43 @@ static void BuildParticleMeshData(Camera3D camera) {
     int vi = i * 4;
 
     float lifeRatio = p->lifeData.x / p->lifeData.y;
-    float r = p->colorEnd.x + (p->colorStart.x - p->colorEnd.x) * lifeRatio;
-    float g = p->colorEnd.y + (p->colorStart.y - p->colorEnd.y) * lifeRatio;
-    float b = p->colorEnd.z + (p->colorStart.z - p->colorEnd.z) * lifeRatio;
-    float a = p->colorEnd.w +
-              (p->colorStart.w - p->colorEnd.w) * lifeRatio * lifeRatio;
+    float age = p->lifeData.y - p->lifeData.x;
+    float t = 1.0f - lifeRatio;
 
-    unsigned char cr = (unsigned char)(r * 255.0f);
-    unsigned char cg = (unsigned char)(g * 255.0f);
-    unsigned char cb = (unsigned char)(b * 255.0f);
-    unsigned char ca = (unsigned char)(a * 255.0f);
+    unsigned char cr, cg, cb, ca;
+    if (cpuGradients[i]) {
+      Color gradColor = ColorGradient_Sample(cpuGradients[i], t);
+      cr = gradColor.r;
+      cg = gradColor.g;
+      cb = gradColor.b;
+      ca = gradColor.a;
+    } else {
+      float r = p->colorEnd.x + (p->colorStart.x - p->colorEnd.x) * lifeRatio;
+      float g = p->colorEnd.y + (p->colorStart.y - p->colorEnd.y) * lifeRatio;
+      float b = p->colorEnd.z + (p->colorStart.z - p->colorEnd.z) * lifeRatio;
+      float a = p->colorEnd.w +
+                (p->colorStart.w - p->colorEnd.w) * lifeRatio * lifeRatio;
+      cr = (unsigned char)(r * 255.0f);
+      cg = (unsigned char)(g * 255.0f);
+      cb = (unsigned char)(b * 255.0f);
+      ca = (unsigned char)(a * 255.0f);
+    }
+
+    Rectangle uvRect;
+    if (cpuSpriteAnims[i]) {
+      uvRect = SpriteAnim_CalculateUV(cpuSpriteAnims[i], age, NULL);
+    } else {
+      uvRect = (Rectangle){0.0f, 0.0f, 1.0f, 1.0f};
+    }
+
+    cpuMesh.texcoords[(vi + 0) * 2 + 0] = uvRect.x;
+    cpuMesh.texcoords[(vi + 0) * 2 + 1] = uvRect.y + uvRect.height;
+    cpuMesh.texcoords[(vi + 1) * 2 + 0] = uvRect.x + uvRect.width;
+    cpuMesh.texcoords[(vi + 1) * 2 + 1] = uvRect.y + uvRect.height;
+    cpuMesh.texcoords[(vi + 2) * 2 + 0] = uvRect.x + uvRect.width;
+    cpuMesh.texcoords[(vi + 2) * 2 + 1] = uvRect.y;
+    cpuMesh.texcoords[(vi + 3) * 2 + 0] = uvRect.x;
+    cpuMesh.texcoords[(vi + 3) * 2 + 1] = uvRect.y;
 
     float radius = p->pos_radius.w;
     float px = p->pos_radius.x;
@@ -239,6 +275,8 @@ static void BuildParticleMeshData(Camera3D camera) {
 
   UpdateMeshBuffer(cpuMesh, 0, cpuMesh.vertices,
                    activeParticleCount * 4 * 3 * sizeof(float), 0);
+  UpdateMeshBuffer(cpuMesh, 1, cpuMesh.texcoords,
+                   activeParticleCount * 4 * 2 * sizeof(float), 0);
   UpdateMeshBuffer(cpuMesh, 3, cpuMesh.colors,
                    activeParticleCount * 4 * 4 * sizeof(unsigned char), 0);
 }

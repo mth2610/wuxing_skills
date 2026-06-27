@@ -57,7 +57,7 @@ static inline float ComputeWispStyleTaper(float segRatio) {
 
 static void DrawCameraFacingQuad(Camera3D camera, Vector3 center, float width,
                                  float height, float rotation, Color tint,
-                                 Texture2D tex) {
+                                 Texture2D tex, Rectangle uvRect) {
   Matrix matView = GetCameraMatrix(camera);
   Vector3 right = {matView.m0, matView.m4, matView.m8};
   Vector3 up = {matView.m1, matView.m5, matView.m9};
@@ -84,13 +84,13 @@ static void DrawCameraFacingQuad(Camera3D camera, Vector3 center, float width,
     rlSetTexture(tex.id);
   rlBegin(RL_QUADS);
   rlColor4ub(tint.r, tint.g, tint.b, tint.a);
-  rlTexCoord2f(0.0f, 0.0f);
+  rlTexCoord2f(uvRect.x, uvRect.y);
   rlVertex3f(tl.x, tl.y, tl.z);
-  rlTexCoord2f(0.0f, 1.0f);
+  rlTexCoord2f(uvRect.x, uvRect.y + uvRect.height);
   rlVertex3f(bl.x, bl.y, bl.z);
-  rlTexCoord2f(1.0f, 1.0f);
+  rlTexCoord2f(uvRect.x + uvRect.width, uvRect.y + uvRect.height);
   rlVertex3f(br.x, br.y, br.z);
-  rlTexCoord2f(1.0f, 0.0f);
+  rlTexCoord2f(uvRect.x + uvRect.width, uvRect.y);
   rlVertex3f(tr.x, tr.y, tr.z);
   rlEnd();
   if (tex.id > 0)
@@ -350,6 +350,8 @@ int SpawnTrailEntity(TrailConfig config) {
   t->onDeath = config.onDeath;
   t->ownerTag = config.ownerTag;
   t->forceField = config.forceField;
+  t->gradient = config.gradient;
+  t->spriteAnim = config.spriteAnim;
 
   t->timeSinceLastFollowerUpdate = 0.0f;
   t->fadeAccumulator = 0.0f;
@@ -472,21 +474,26 @@ static void DrawTrailGeometry(int i, Camera3D camera) {
             1.0f - (float)h / (float)(trailPool[i].historyCount - 1);
         float taper = powf(segRatio, TRAIL_PROJECTILE_TAPER_POWER);
 
+        Color nodeColor = c;
+        if (trailPool[i].gradient) {
+          nodeColor = ColorGradient_Sample(trailPool[i].gradient, segRatio);
+        }
+
         scratchOuter[h].position = trailPool[i].history[idx];
         scratchOuter[h].halfWidth =
             trailPool[i].thickness * TRAIL_PROJECTILE_OUTER_WIDTH_MUL * taper;
         scratchOuter[h].v = segRatio;
         scratchOuter[h].tint = (Color){
-            (unsigned char)(segRatio * c.r), c.g, c.b,
-            (unsigned char)((c.a / 255.0f) * TRAIL_PROJECTILE_OUTER_ALPHA_MAX *
+            (unsigned char)(segRatio * nodeColor.r), nodeColor.g, nodeColor.b,
+            (unsigned char)((nodeColor.a / 255.0f) * TRAIL_PROJECTILE_OUTER_ALPHA_MAX *
                             lifeRatio)};
 
         scratchInner[h].position = trailPool[i].history[idx];
         scratchInner[h].halfWidth =
             trailPool[i].thickness * TRAIL_PROJECTILE_INNER_WIDTH_MUL * taper;
         scratchInner[h].v = segRatio;
-        scratchInner[h].tint = (Color){(unsigned char)(segRatio * c.r), c.g,
-                                       c.b, (unsigned char)(c.a * lifeRatio)};
+        scratchInner[h].tint = (Color){(unsigned char)(segRatio * nodeColor.r), nodeColor.g,
+                                       nodeColor.b, (unsigned char)(nodeColor.a * lifeRatio)};
       }
       DrawRibbonStrip(scratchOuter, trailPool[i].historyCount, (Texture2D){0},
                       camera);
@@ -502,11 +509,23 @@ static void DrawTrailGeometry(int i, Camera3D camera) {
         atan2f(Vector3DotProduct(vDir, up), Vector3DotProduct(vDir, right));
     Color spriteTint =
         (Color){128, 128, 128, (unsigned char)(255.0f * lifeRatio)};
+
+    Rectangle uvRect = (Rectangle){0.0f, 0.0f, 1.0f, 1.0f};
+    if (trailPool[i].spriteAnim) {
+      float age = trailPool[i].maxLifetime - trailPool[i].lifetime;
+      uvRect = SpriteAnim_CalculateUV(trailPool[i].spriteAnim, age, NULL);
+    }
+
+    float quadHeight = trailPool[i].thickness * TRAIL_PROJECTILE_QUAD_THICK_MUL;
+    if (trailPool[i].spriteAnim) {
+      // Nếu đạn sử dụng SpriteAnim (atlas), giữ tỉ lệ 1:1 hình vuông để hình ảnh không bị bóp méo
+      quadHeight = trailPool[i].length * TRAIL_PROJECTILE_QUAD_LENGTH_MUL;
+    }
+
     DrawCameraFacingQuad(camera, trailPool[i].position,
                          trailPool[i].length * TRAIL_PROJECTILE_QUAD_LENGTH_MUL,
-                         trailPool[i].thickness *
-                             TRAIL_PROJECTILE_QUAD_THICK_MUL,
-                         rotation, spriteTint, trailPool[i].sprite);
+                         quadHeight,
+                         rotation, spriteTint, trailPool[i].sprite, uvRect);
 
   } else if (trailPool[i].type == TRAIL_TYPE_WISP) {
     if (trailPool[i].historyCount > 1) {
@@ -515,11 +534,16 @@ static void DrawTrailGeometry(int i, Camera3D camera) {
             1.0f - (float)h / (float)(trailPool[i].historyCount - 1);
         float taper = ComputeWispStyleTaper(segRatio);
 
+        Color nodeColor = c;
+        if (trailPool[i].gradient) {
+          nodeColor = ColorGradient_Sample(trailPool[i].gradient, segRatio);
+        }
+
         scratchOuter[h].position = trailPool[i].history[h];
         scratchOuter[h].halfWidth = trailPool[i].thickness * 0.8f * taper;
         scratchOuter[h].v = segRatio;
         scratchOuter[h].tint =
-            (Color){c.r, c.g, c.b, (unsigned char)(c.a * lifeRatio * taper)};
+            (Color){nodeColor.r, nodeColor.g, nodeColor.b, (unsigned char)(nodeColor.a * lifeRatio * taper)};
       }
       DrawRibbonStrip(scratchOuter, trailPool[i].historyCount, (Texture2D){0},
                       camera);
@@ -531,10 +555,16 @@ static void DrawTrailGeometry(int i, Camera3D camera) {
     if (age < TRAIL_PORTAL_SPAWN_GROW_TIME)
       radius *= (age / TRAIL_PORTAL_SPAWN_GROW_TIME);
     Color portalTint = (Color){c.r, c.g, c.b, (unsigned char)(c.a * lifeRatio)};
+
+    Rectangle uvRect = (Rectangle){0.0f, 0.0f, 1.0f, 1.0f};
+    if (trailPool[i].spriteAnim) {
+      uvRect = SpriteAnim_CalculateUV(trailPool[i].spriteAnim, age, NULL);
+    }
+
     DrawCameraFacingQuad(
         camera, trailPool[i].position, radius * TRAIL_PORTAL_QUAD_SIZE_MUL,
         radius * TRAIL_PORTAL_QUAD_SIZE_MUL, trailPool[i].angle * DEG2RAD,
-        portalTint, (Texture2D){0});
+        portalTint, (Texture2D){0}, uvRect);
 
   } else if (trailPool[i].type == TRAIL_TYPE_FOLLOWER) {
     if (trailPool[i].historyCount > 1) {
@@ -545,11 +575,16 @@ static void DrawTrailGeometry(int i, Camera3D camera) {
             1.0f - (float)h / (float)(trailPool[i].historyCount - 1);
         float taper = ComputeWispStyleTaper(segRatio);
 
+        Color nodeColor = c;
+        if (trailPool[i].gradient) {
+          nodeColor = ColorGradient_Sample(trailPool[i].gradient, segRatio);
+        }
+
         scratchOuter[h].position = trailPool[i].history[idx];
         scratchOuter[h].halfWidth = trailPool[i].thickness * 0.8f * taper;
         scratchOuter[h].v = segRatio;
         scratchOuter[h].tint =
-            (Color){c.r, c.g, c.b, (unsigned char)(c.a * lifeRatio * taper)};
+            (Color){nodeColor.r, nodeColor.g, nodeColor.b, (unsigned char)(nodeColor.a * lifeRatio * taper)};
       }
       DrawRibbonStrip(scratchOuter, trailPool[i].historyCount, (Texture2D){0},
                       camera);

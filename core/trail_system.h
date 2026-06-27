@@ -2,6 +2,8 @@
 #define TRAIL_SYSTEM_H
 
 #include "core/force_field.h"
+#include "core/color_gradient.h"
+#include "core/sprite_anim.h"
 #include "raylib.h"
 #include "core/ribbon_strip.h"
 
@@ -71,6 +73,8 @@ typedef struct {
   TrailDeathCallback onDeath;
   int ownerTag;
   const ForceField *forceField;
+  const ColorGradient *gradient;
+  const SpriteAnim *spriteAnim;
 } TrailConfig;
 
 // Đã tối ưu Struct Padding: Sắp xếp theo kích thước dữ liệu giảm dần
@@ -79,6 +83,8 @@ typedef struct {
   TrailUpdateCallback onUpdate;
   TrailDeathCallback onDeath;
   const ForceField *forceField;
+  const ColorGradient *gradient;
+  const SpriteAnim *spriteAnim;
 
   // 2. Mảng và Struct lớn (Vectors)
   Vector3 history[TRAIL_HISTORY_COUNT];
