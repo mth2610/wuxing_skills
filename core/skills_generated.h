@@ -5,11 +5,9 @@
 #include "core/skill_manager.h"
 
 #include "skills/wood/wood_thorns/wood_thorns_skill.h"
-#include "skills/wood/jade_burst_skill/jade_burst_skill.h"
 
 static inline void RegisterGeneratedSkills(void) {
     RegisterSkill("WOOD_THORNS", ELEMENT_COLOR_WOOD, InitWoodThornsSkill, CastWoodThornsSkill, UpdateWoodThornsSkill, DrawWoodThornsSkill, UnloadWoodThornsSkill);
-    RegisterSkill("JADE_BURST", ELEMENT_COLOR_WOOD, InitJadeBurstSkill, CastJadeBurstSkill, UpdateJadeBurstSkill, DrawJadeBurstSkill, UnloadJadeBurstSkill);
 }
 
 #endif // SKILLS_GENERATED_H

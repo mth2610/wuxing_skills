@@ -197,6 +197,14 @@ typedef struct {
 ### Ground Decals (`#include "core/decal_system.h"`)
 * `void Decal_Spawn(Vector3 pos, float rot, float scale, Texture2D tex, float life, Color tint);`
   - Renders a ground decal (like cracked earth, water pools, or ash marks). The engine automatically resolves depth offset to prevent Z-fighting.
+  - **Circular Shader Masking:** Ground decals automatically render using a custom fragment shader (`decal.fs`) that multiplies texture transparency with a smooth radial distance falloff. This mathematically masks off corners, guaranteeing that decals are rounded and never exhibit sharp square boundaries.
+  - **Drawing Order Rule:** Decals **MUST** be drawn in the render loop *before* opaque 3D skill/projectile meshes (e.g. `DecalSystem_Draw()` runs *before* `DrawSkillManagerWorld3D()`). This guarantees that emerging structures or characters naturally overlap the decals rather than drawing over them.
+  - **Aesthetic Scale Rule:** Never make ground decals tiny or exactly the same size as the structure's base. Decals must look impactful. Always scale the decal size to **`4.0x` to `5.5x`** the base radius of the emerging structure (e.g. `baseRadius * scale * 5.2f`).
+
+### VFX & Emission Standards (Critical Quality Rules)
+* **Emissive Shading Contrast:** To make meshes pop in the night arena without looking flat/artificial, keep organic dark textures (e.g. deep forest green, gnarled bark brown) and multiply the diffuse output by an animated breathing light multiplier (e.g. `diffuse.rgb * (1.35f + 0.1f * sin(u_time * 3.5f))`). Avoid flat bright neon colors.
+* **Continuous Particle Aura:** Do not only spawn particles at birth or impact. During the active holding phase of a skill (e.g. `THORN_HOLDING`), continuously spawn themed particles (like rising poison gas, drifting steam, or floating sparks) along the height and radius of the mesh at a controlled rate (e.g. 20-30% chance per frame) to make the skill look alive.
+* **Persistent Lights:** Source point lights spawned during emergence should match the active holding phase's lifetime (e.g. rise + hold time = `1.4f` seconds) so the scene remains illuminated while the skill is active.
 
 ### Screen Distortion (`#include "core/screen_distort.h"`)
 * `void ScreenDistort_AddSource(Vector3 pos, float rad, float str, float life, float speed);`

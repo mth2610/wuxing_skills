@@ -180,10 +180,11 @@ int main(void) {
 
     MyBeginMode3D(camera);
     DrawSandbox3D(&player, &enemy, mouseTarget3D, &uiState);
-    DrawSkillManagerWorld3D();
 
     // Vẽ Decal hệ thống sát sàn đấu
     DecalSystem_Draw();
+
+    DrawSkillManagerWorld3D();
 
     // =========================================================================
     // MỚI: TOÀN BỘ PHẦN TRUY XUẤT VÀ VẼ KHỐI CẦU DEBUG LIGHT ĐÃ ĐƯỢC BỐC SANG

@@ -1,14 +1,17 @@
 #include "decal_system.h"
 #include "rlgl.h"
 #include "raymath.h"
+#include <stddef.h>
 
 static DecalEntity g_DecalPool[MAX_DECALS];
 static int g_LastSpawnedIndex = 0;
+static Shader g_DecalShader;
 
 void DecalSystem_Init(void) {
     for (int i = 0; i < MAX_DECALS; i++) {
         g_DecalPool[i].active = false;
     }
+    g_DecalShader = LoadShader(NULL, "core/shaders/decal.fs");
 }
 
 void Decal_Spawn(Vector3 pos, float rotation, float scale, Texture2D texture, float lifetime, Color tint) {
@@ -67,6 +70,8 @@ void DecalSystem_Draw(void) {
     // Tắt ghi Depth Buffer nhưng vẫn giữ Depth Test để decal không bị nhìn xuyên qua tường/cột đá
     rlDisableDepthMask(); 
 
+    BeginShaderMode(g_DecalShader);
+
     for (int i = 0; i < MAX_DECALS; i++) {
         if (!g_DecalPool[i].active) continue;
 
@@ -108,10 +113,15 @@ void DecalSystem_Draw(void) {
         rlPopMatrix();
     }
 
+    EndShaderMode();
+
     rlEnableDepthMask();
     EndBlendMode();
 }
 
 void DecalSystem_Unload(void) {
-    DecalSystem_Init();
+    UnloadShader(g_DecalShader);
+    for (int i = 0; i < MAX_DECALS; i++) {
+        g_DecalPool[i].active = false;
+    }
 }

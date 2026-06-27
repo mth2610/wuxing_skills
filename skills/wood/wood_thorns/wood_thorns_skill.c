@@ -248,12 +248,12 @@ void UpdateWoodThornsSkill(float dt, Vector3 enemyPos, float enemyRadius)
         case THORN_RISING:
             th->riseTimer += dt;
             
-            // Decal emergence stamp
+            // Decal emergence stamp (Large ground-rupturing crack!)
             if (!th->spawnedDecal) {
                 Decal_Spawn(
                     th->pos,
                     (float)GetRandomValue(0, 360),
-                    THORN_BASE_RADIUS * th->scale * 2.2f,
+                    THORN_BASE_RADIUS * th->scale * 5.2f,
                     s_crackTex,
                     5.0f,
                     ColorAlpha(ColorLerp(ELEMENT_COLOR_WOOD, BLACK, 0.4f), 0.8f) /* green-tinted cracks */
@@ -261,9 +261,9 @@ void UpdateWoodThornsSkill(float dt, Vector3 enemyPos, float enemyRadius)
                 th->spawnedDecal = true;
             }
 
-            // VFX Light emergence flare
+            // VFX Light emergence flare (lasts throughout active hold duration)
             if (!th->spawnedLight) {
-                VFXLight_Spawn(th->pos, ELEMENT_COLOR_WOOD, 40.0f * th->scale, 0.6f);
+                VFXLight_Spawn(th->pos, ELEMENT_COLOR_WOOD, 55.0f * th->scale, 1.4f);
                 th->spawnedLight = true;
             }
 
@@ -303,6 +303,43 @@ void UpdateWoodThornsSkill(float dt, Vector3 enemyPos, float enemyRadius)
 
         case THORN_HOLDING:
             th->holdTimer -= dt;
+            
+            // Emit glowing poison gas/mist seeping out from the body of the thorn mesh
+            if (GetRandomValue(0, 100) < 25) {
+                float hRatio = (float)GetRandomValue(0, 100) / 100.0f;
+                float currentHeight = THORN_MAX_HEIGHT * th->scale;
+                float currentRadius = THORN_BASE_RADIUS * th->scale * (1.0f - hRatio);
+                float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
+                
+                Vector3 particlePos = {
+                    th->pos.x + cosf(angle) * currentRadius * 0.8f,
+                    th->pos.y + hRatio * currentHeight,
+                    th->pos.z + sinf(angle) * currentRadius * 0.8f
+                };
+                
+                Vector3 vel = {
+                    cosf(angle) * (float)GetRandomValue(5, 15),
+                    (float)GetRandomValue(15, 35),
+                    sinf(angle) * (float)GetRandomValue(5, 15)
+                };
+                
+                SpawnParticle((ParticleConfig){
+                    .position         = particlePos,
+                    .velocity         = vel,
+                    .colorStart       = ColorAlpha(ColorLerp(ELEMENT_COLOR_WOOD, YELLOW, 0.15f), 0.9f),
+                    .colorEnd         = ColorAlpha(ColorLerp(ELEMENT_COLOR_WOOD, BLACK, 0.6f), 0.0f),
+                    .radius           = (float)GetRandomValue(12, 28) / 10.0f,
+                    .lifetime         = (float)GetRandomValue(8, 16) / 10.0f,
+                    .forceField       = NULL,
+                    .gradient         = &s_dustGrad,
+                    .spriteAnim       = NULL,
+                    .onDeathEmit      = NULL,
+                    .onDeathEmitCount = 0,
+                    .onLiveEmit       = NULL,
+                    .onLiveEmitRate   = 0.0f
+                });
+            }
+
             if (th->holdTimer <= 0.0f) {
                 th->state         = THORN_DISSOLVING;
                 th->dissolveTimer = 0.0f;

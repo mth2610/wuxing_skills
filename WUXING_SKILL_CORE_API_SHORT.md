@@ -68,6 +68,13 @@ Up to 8 active layers, evaluated internally by the engine:
 * **Emitters (`core/emitter_system.h`):** `int CreateEmitter(EmitterConfig cfg, Vector3 start);` `UpdateEmitterTarget`, `StopEmitter`, `KillEmitter`.
 * **Trails (`core/trail_system.h`):** `int SpawnTrailEntity(TrailConfig cfg);` `KillTrail`. Types: `TRAIL_TYPE_PROJECTILE`, `TRAIL_TYPE_WISP`, `TRAIL_TYPE_PORTAL`, `TRAIL_TYPE_FOLLOWER`.
 * **Decals (`core/decal_system.h`):** `void Decal_Spawn(Vector3 pos, float rot, float scale, Texture2D tex, float life, Color tint);`
+  - Shaded automatically via `decal.fs` radial mask (eliminates square edges).
+  - **Draw order:** Render decals *before* 3D opaque meshes (underfoot sorting).
+  - **Aesthetic Scale:** Set scale to `4.0x - 5.5x` of structure base radius (e.g. `baseRadius * scale * 5.2f`).
+* **VFX Quality Standards:**
+  - **Emissive Shading:** Keep dark organic textures; multiply diffuse by breathing multiplier: `diffuse.rgb * (1.35f + 0.1f * sin(u_time * 3.5f))`. No flat neon colors.
+  - **Continuous Aura:** During holding/active phases, continuously emit theme-specific particles along the height/radius of the mesh.
+  - **Persistent Lights:** Match dynamic light lifetime to active phase duration (e.g. rise + hold time = `1.4f`s).
 * **Distortion (`core/screen_distort.h`):** `void ScreenDistort_AddSource(Vector3 pos, float rad, float str, float life, float speed);`
 * **Lights (`core/vfx_light.h`):** `void VFXLight_Spawn(Vector3 pos, Color col, float rad, float life);`
 * **Camera Shake (`core/camera_fx.h`):** `void CameraFX_Shake(float trauma);`

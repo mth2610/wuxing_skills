@@ -48,7 +48,7 @@ float fbm(vec2 p)
 
 void main()
 {
-    /* Wood Base Color (deep jungle forest green / mossy tones) */
+    /* Wood Base Color (deep jungle forest green & gnarled wood brown) */
     vec3 woodBrown = vec3(0.35, 0.28, 0.18);
     vec3 leafGreen = vec3(0.12, 0.52, 0.16);
     
@@ -57,7 +57,7 @@ void main()
     
     // Add vertical wood grain stripes using coordinate noise
     float grain = valueNoise(vec2(fragTexCoord.x * 24.0, fragTexCoord.y * 3.0));
-    baseColor = mix(baseColor, baseColor * 0.78, step(0.68, grain));
+    baseColor = mix(baseColor, baseColor * 0.75, step(0.68, grain));
 
     vec4 texColor = texture(texture0, fragTexCoord);
     vec4 diffuse = vec4(baseColor, 1.0) * colDiffuse * fragColor * texColor;
@@ -65,8 +65,8 @@ void main()
     /* Continuous shader rendering when intact */
     if (u_dissolve < 0.001)
     {
-        // Add a gentle organic breathing glow to the edges of the green thorn
-        float edgeGlow = sin(u_time * 3.5) * 0.07 + 0.93;
+        // Add a gentle organic breathing glow to the edges of the green thorn and boost brightness
+        float edgeGlow = sin(u_time * 3.5) * 0.1f + 1.35f;
         finalColor = vec4(diffuse.rgb * edgeGlow, diffuse.a);
         return;
     }
