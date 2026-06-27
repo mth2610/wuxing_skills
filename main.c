@@ -12,7 +12,6 @@
 #include "raylib.h"
 #include "raymath.h"
 #include "rlgl.h"
-#include "skills/metal/sword_rain/sword_rain_skill.h"
 #include <math.h>
 #include <stdio.h>
 
@@ -61,12 +60,29 @@ int main(void) {
   InitWindow(screenWidth, screenHeight, "Avatar: True 3D Element Testbed");
   rlSetClipPlanes(0.1f, 15000.0f);
 
+  // Tự động sinh các texture cơ bản nếu thiếu trong thư mục assets/textures
+  if (!FileExists("assets/textures/noise.png")) {
+      Image noiseImg = GenImagePerlinNoise(256, 256, 0, 0, 16.0f);
+      ExportImage(noiseImg, "assets/textures/noise.png");
+      UnloadImage(noiseImg);
+  }
+  if (!FileExists("assets/textures/flare.png")) {
+      Image flareImg = GenImageGradientRadial(128, 128, 0.0f, WHITE, BLANK);
+      ExportImage(flareImg, "assets/textures/flare.png");
+      UnloadImage(flareImg);
+  }
+  if (!FileExists("assets/textures/crack.png")) {
+      Image crackImg = GenImageCellular(256, 256, 32);
+      ExportImage(crackImg, "assets/textures/crack.png");
+      UnloadImage(crackImg);
+  }
+
   // -----------------------------------------------------------------
   // KHỞI TẠO CÁC HỆ THỐNG ĐỒ HỌA VFX
   // -----------------------------------------------------------------
   InitParticleSystem();
   Shader defaultTrailShader =
-      LoadShader(0, "skills/metal/metal_projectile/metal.fs");
+      LoadShader(0, FileExists("skills/metal/metal_projectile/metal.fs") ? "skills/metal/metal_projectile/metal.fs" : NULL);
   InitTrailSystem(defaultTrailShader);
   VFXLight_Init();
   DecalSystem_Init();
@@ -89,7 +105,6 @@ int main(void) {
   RegisterStaticOccluder((Vector3){400.0f, 0.0f, 320.0f}, 25.0f, 62.5f);
   RegisterStaticOccluder((Vector3){800.0f, 0.0f, 520.0f}, 30.0f, 75.0f);
   RegisterStaticOccluder((Vector3){600.0f, 0.0f, 260.0f}, 20.0f, 50.0f);
-  InitSwordRainSkill();
   InitUIPanel();
 
   EnemyEntity enemy;

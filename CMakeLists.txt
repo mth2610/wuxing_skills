@@ -97,10 +97,6 @@ configure_file(core/shaders/bloom_bright.fs ${CMAKE_CURRENT_BINARY_DIR}/core/sha
 configure_file(core/shaders/bloom_blur.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/bloom_blur.fs COPYONLY)
 configure_file(core/shaders/post_process.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/post_process.fs COPYONLY)
 
-# --- Copy thêm Texture của skill ---
-configure_file(skills/fire/fire_ball/dragon_head.png ${CMAKE_CURRENT_BINARY_DIR}/skills/fire/fire_ball/dragon_head.png COPYONLY)
-configure_file(skills/metal/metal_projectile/sword.png ${CMAKE_CURRENT_BINARY_DIR}/skills/metal/metal_projectile/sword.png COPYONLY)
-configure_file(skills/water/water_shield/water_caustics.png ${CMAKE_CURRENT_BINARY_DIR}/skills/water/water_shield/water_caustics.png COPYONLY)
 
 
 # Liên kết tĩnh với thư viện Raylib vừa tải về

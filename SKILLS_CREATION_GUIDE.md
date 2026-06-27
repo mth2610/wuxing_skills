@@ -103,7 +103,7 @@ static Rock rocks[MAX_ROCKS];
 
 void InitEarthRockSkill(int w, int h) {
     (void)w; (void)h;
-    crackTex = LoadTexture("assets/particles/crack.png");
+    crackTex = LoadTexture("assets/textures/crack.png");
     ColorGradient_AddStop(&earthGrad, 0.0f, (Color){139, 69, 19, 255});
     ColorGradient_AddStop(&earthGrad, 1.0f, (Color){50, 50, 50, 0});
     for(int i=0; i<MAX_ROCKS; i++) rocks[i].active = false;

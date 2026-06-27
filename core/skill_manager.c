@@ -1,13 +1,31 @@
 #include "core/skill_manager.h"
+#include "core/skills_config.h"
+
+#if HAS_SKILL_ELECTRIC
 #include "skills/taiji/lightning/electric_skill.h"
+#endif
+#if HAS_SKILL_FIRE
 #include "skills/fire/fire_ball/fire_skill.h"
+#endif
+#if HAS_SKILL_FLUID
 #include "skills/water/water_projectile/fluid_skill.h"
+#endif
+#if HAS_SKILL_METAL
 #include "skills/metal/metal_projectile/metal_skill.h"
+#endif
 #include "raymath.h"
+#if HAS_SKILL_SHIELD
 #include "skills/water/water_shield/shield_skill.h"
+#endif
+#if HAS_SKILL_TUBE
 #include "skills/water/water_stream/tube_skill.h"
+#endif
+#if HAS_SKILL_WIND
 #include "skills/taiji/wind_storm/wind_skill.h"
+#endif
+#if HAS_SKILL_WOOD
 #include "skills/wood/wood_roots/wood_skill.h"
+#endif
 #include "core/sandbox_core.h"
 #include "core/skills_generated.h"
 #include <math.h>
@@ -72,43 +90,49 @@ static int registeredSkillCount = 0;
 static bool builtInRegistered = false;
 
 // --- PROTOTYPES CỦA SKILL WRAPPERS ---
-static void CastWaterWrapper(Vector3 startPos, Vector3 target,
-                             SkillParams params);
-static void CastTubeWrapper(Vector3 startPos, Vector3 target,
-                            SkillParams params);
-static void CastMetalWrapper(Vector3 startPos, Vector3 target,
-                             SkillParams params);
-static void CastFireWrapper(Vector3 startPos, Vector3 target,
-                            SkillParams params);
-static void CastWoodWrapper(Vector3 startPos, Vector3 target,
-                            SkillParams params);
-static void CastElectricWrapper(Vector3 startPos, Vector3 target,
-                                SkillParams params);
-static void CastWindWrapper(Vector3 startPos, Vector3 target,
-                            SkillParams params);
-static void CastShieldWrapper(Vector3 startPos, Vector3 target,
-                              SkillParams params);
+#if HAS_SKILL_FLUID
+static void CastWaterWrapper(Vector3 startPos, Vector3 target, SkillParams params);
+static void UpdateFluidSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius);
+#endif
 
-static void UpdateFluidSkillWrapper(float dt, Vector3 enemyPos,
-                                    float enemyRadius);
-static void UpdateTubeSkillWrapper(float dt, Vector3 enemyPos,
-                                   float enemyRadius);
-static void UpdateMetalSkillWrapper(float dt, Vector3 enemyPos,
-                                    float enemyRadius);
-static void UpdateFireSkillWrapper(float dt, Vector3 enemyPos,
-                                   float enemyRadius);
-static void UpdateWoodSkillWrapper(float dt, Vector3 enemyPos,
-                                   float enemyRadius);
-static void UpdateElectricSkillWrapper(float dt, Vector3 enemyPos,
-                                       float enemyRadius);
+#if HAS_SKILL_TUBE
+static void CastTubeWrapper(Vector3 startPos, Vector3 target, SkillParams params);
+static void UpdateTubeSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius);
+#endif
+
+#if HAS_SKILL_METAL
+static void CastMetalWrapper(Vector3 startPos, Vector3 target, SkillParams params);
+static void UpdateMetalSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius);
+#endif
+
+#if HAS_SKILL_FIRE
+static void CastFireWrapper(Vector3 startPos, Vector3 target, SkillParams params);
+static void UpdateFireSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius);
+#endif
+
+#if HAS_SKILL_WOOD
+static void CastWoodWrapper(Vector3 startPos, Vector3 target, SkillParams params);
+static void UpdateWoodSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius);
+#endif
+
+#if HAS_SKILL_ELECTRIC
+static void CastElectricWrapper(Vector3 startPos, Vector3 target, SkillParams params);
+static void UpdateElectricSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius);
+#endif
+
+#if HAS_SKILL_WIND
+static void CastWindWrapper(Vector3 startPos, Vector3 target, SkillParams params);
 static void UpdateWindWrapper(float dt, Vector3 enemyPos, float enemyRadius);
-static void UpdateShieldSkillWrapper(float dt, Vector3 enemyPos,
-                                     float enemyRadius) {
+#endif
+
+#if HAS_SKILL_SHIELD
+static void CastShieldWrapper(Vector3 startPos, Vector3 target, SkillParams params);
+static void UpdateShieldSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius) {
   (void)enemyPos;
   (void)enemyRadius;
-  // Khóa chặt vị trí khiên nước di chuyển bám sát theo player.position có sẵn
   UpdateShieldSkill(dt, player.position);
 }
+#endif
 
 static void DrawCircleLines3D(Vector3 center, float radius, Color color) {
   const int segments = 24;
@@ -163,33 +187,45 @@ static void EnsureBuiltInRegistered(void) {
   if (!builtInRegistered) {
     builtInRegistered = true;
 
-    // Đăng ký Quả cầu nước (Index 0)
+#if HAS_SKILL_FLUID
     RegisterSkill("WATER", SKYBLUE, InitFluidSkill, CastWaterWrapper,
                   UpdateFluidSkillWrapper, NULL, UnloadFluidSkill);
+#endif
 
-    // Đăng ký Ống nước Thủy Long Ngâm (Index 1)
+#if HAS_SKILL_TUBE
     RegisterSkill("TUBE", BLUE, InitTubeSkill, CastTubeWrapper,
                   UpdateTubeSkillWrapper, NULL, UnloadTubeSkill);
+#endif
 
-    // Đăng ký các hệ còn lại
+#if HAS_SKILL_METAL
     RegisterSkill("METAL", GOLD, InitMetalSkill, CastMetalWrapper,
                   UpdateMetalSkillWrapper, NULL, UnloadMetalSkill);
+#endif
 
+#if HAS_SKILL_FIRE
     RegisterSkill("FIRE", ORANGE, InitFireSkill, CastFireWrapper,
                   UpdateFireSkillWrapper, NULL, UnloadFireSkill);
+#endif
 
+#if HAS_SKILL_WOOD
     RegisterSkill("WOOD", LIME, InitWoodSkill, CastWoodWrapper,
                   UpdateWoodSkillWrapper, NULL, UnloadWoodSkill);
+#endif
 
+#if HAS_SKILL_ELECTRIC
     RegisterSkill("ELECTRIC", PURPLE, InitElectricSkill, CastElectricWrapper,
                   UpdateElectricSkillWrapper, NULL, UnloadElectricSkill);
+#endif
 
+#if HAS_SKILL_WIND
     RegisterSkill("WIND", LIGHTGRAY, InitWindSkill, CastWindWrapper,
                   UpdateWindWrapper, NULL, UnloadWindSkill);
+#endif
 
-    // Đăng ký Hộ Thuẫn (Index 8) - Đã đồng nhất hàm Init không cần wrapper
+#if HAS_SKILL_SHIELD
     RegisterSkill("SHIELD", SKYBLUE, InitShieldSkill, CastShieldWrapper,
                   UpdateShieldSkillWrapper, NULL, UnloadShieldSkill);
+#endif
 
     // MỚI: Đăng ký các kỹ năng tự động quét từ thư mục
     RegisterGeneratedSkills();
@@ -368,14 +404,30 @@ void DrawSkillManagerWorld3D(void) {
     }
   }
 
+#if HAS_SKILL_FIRE
   DrawFireSkill();
+#endif
+#if HAS_SKILL_FLUID
   DrawFluidSkill();
+#endif
+#if HAS_SKILL_TUBE
   DrawTubeSkill();
+#endif
+#if HAS_SKILL_WOOD
   DrawWoodSkill();
+#endif
+#if HAS_SKILL_ELECTRIC
   DrawElectricSkill();
+#endif
+#if HAS_SKILL_METAL
   DrawMetalSkill();
+#endif
+#if HAS_SKILL_WIND
   DrawWindSkill();
+#endif
+#if HAS_SKILL_SHIELD
   DrawShieldSkill(); // Vẽ khối cầu khiên nước
+#endif
 }
 
 void DrawSkillManagerOverlay(void) {
@@ -474,11 +526,24 @@ void CastSkill(int skillIndex, Vector3 startPos, Vector3 target,
 
 bool IsEnemySlowed(void) { return slowTimer > 0.0f; }
 bool IsEnemyBurning(void) { return burnTimer > 0.0f; }
-bool IsAnySkillCoiling(void) { return IsWoodSkillCoiling(); }
-bool IsAnySkillShocking(void) { return IsElectricSkillShocking(); }
+bool IsAnySkillCoiling(void) {
+#if HAS_SKILL_WOOD
+  return IsWoodSkillCoiling();
+#else
+  return false;
+#endif
+}
+bool IsAnySkillShocking(void) {
+#if HAS_SKILL_ELECTRIC
+  return IsElectricSkillShocking();
+#else
+  return false;
+#endif
+}
 
 // --- IMPLEMENTATION CỦA CÁC SKILL WRAPPERS ---
 
+#if HAS_SKILL_FLUID
 static void CastWaterWrapper(Vector3 startPos, Vector3 target,
                              SkillParams params) {
   int qty = params.quantity > 0 ? params.quantity : 1;
@@ -490,9 +555,11 @@ static void CastWaterWrapper(Vector3 startPos, Vector3 target,
   } else
     CastFluidSkill(startPos, target, -0.4f, params.sizeScale);
 }
+#endif
 
+#if HAS_SKILL_TUBE
 static void CastTubeWrapper(Vector3 startPos, Vector3 target,
-                            SkillParams params) {
+                             SkillParams params) {
   int qty = params.quantity > 0 ? params.quantity : 1;
   if (qty > 1) {
     for (int i = 0; i < qty; i++)
@@ -502,12 +569,16 @@ static void CastTubeWrapper(Vector3 startPos, Vector3 target,
   } else
     CastTubeSkill(startPos, target, 0.0f, params.sizeScale);
 }
+#endif
 
+#if HAS_SKILL_METAL
 static void CastMetalWrapper(Vector3 startPos, Vector3 target,
                              SkillParams params) {
   CastMetalSkill(startPos, target, params);
 }
+#endif
 
+#if HAS_SKILL_FIRE
 static void CastFireWrapper(Vector3 startPos, Vector3 target,
                             SkillParams params) {
   int qty = params.quantity > 0 ? params.quantity : 1;
@@ -519,12 +590,16 @@ static void CastFireWrapper(Vector3 startPos, Vector3 target,
   } else
     CastFireSkill(startPos, target, -0.4f, params.sizeScale);
 }
+#endif
 
+#if HAS_SKILL_WOOD
 static void CastWoodWrapper(Vector3 startPos, Vector3 target,
                             SkillParams params) {
   CastWoodSkill(startPos, target, params);
 }
+#endif
 
+#if HAS_SKILL_ELECTRIC
 static void CastElectricWrapper(Vector3 startPos, Vector3 target,
                                 SkillParams params) {
   int qty = params.quantity > 0 ? params.quantity : 1;
@@ -539,15 +614,19 @@ static void CastElectricWrapper(Vector3 startPos, Vector3 target,
   } else
     CastElectricSkill(startPos, target, params.sizeScale);
 }
+#endif
 
+#if HAS_SKILL_WIND
 static void CastWindWrapper(Vector3 startPos, Vector3 target,
                             SkillParams params) {
   CastWindSkill(startPos, target, params);
 }
+#endif
 
+#if HAS_SKILL_SHIELD
 static void CastShieldWrapper(Vector3 startPos, Vector3 target,
                               SkillParams params) {
-  (void)target; // Chiêu tự buff lên bản thân nên bỏ qua hướng target
+  (void)target;
   float baseRadius = 30.0f;
   float duration = 5.0f;
   CastShieldSkill(startPos,
@@ -555,7 +634,9 @@ static void CastShieldWrapper(Vector3 startPos, Vector3 target,
                       (params.sizeScale > 0.0f ? params.sizeScale : 1.0f),
                   duration);
 }
+#endif
 
+#if HAS_SKILL_FLUID
 static void UpdateFluidSkillWrapper(float dt, Vector3 enemyPos,
                                     float enemyRadius) {
   UpdateFluidSkill(dt);
@@ -577,7 +658,9 @@ static void UpdateFluidSkillWrapper(float dt, Vector3 enemyPos,
     }
   }
 }
+#endif
 
+#if HAS_SKILL_TUBE
 static void UpdateTubeSkillWrapper(float dt, Vector3 enemyPos,
                                    float enemyRadius) {
   UpdateTubeSkill(dt);
@@ -598,7 +681,9 @@ static void UpdateTubeSkillWrapper(float dt, Vector3 enemyPos,
     }
   }
 }
+#endif
 
+#if HAS_SKILL_METAL
 static void UpdateMetalSkillWrapper(float dt, Vector3 enemyPos,
                                     float enemyRadius) {
   UpdateMetalSkill(dt);
@@ -621,7 +706,9 @@ static void UpdateMetalSkillWrapper(float dt, Vector3 enemyPos,
     }
   }
 }
+#endif
 
+#if HAS_SKILL_FIRE
 static void UpdateFireSkillWrapper(float dt, Vector3 enemyPos,
                                    float enemyRadius) {
   UpdateFireSkill(dt);
@@ -643,7 +730,9 @@ static void UpdateFireSkillWrapper(float dt, Vector3 enemyPos,
     }
   }
 }
+#endif
 
+#if HAS_SKILL_WOOD
 static void UpdateWoodSkillWrapper(float dt, Vector3 enemyPos,
                                    float enemyRadius) {
   UpdateWoodSkill(dt);
@@ -659,7 +748,9 @@ static void UpdateWoodSkillWrapper(float dt, Vector3 enemyPos,
     }
   }
 }
+#endif
 
+#if HAS_SKILL_ELECTRIC
 static void UpdateElectricSkillWrapper(float dt, Vector3 enemyPos,
                                        float enemyRadius) {
   UpdateElectricSkill(dt);
@@ -680,12 +771,15 @@ static void UpdateElectricSkillWrapper(float dt, Vector3 enemyPos,
     }
   }
 }
+#endif
 
+#if HAS_SKILL_WIND
 static void UpdateWindWrapper(float dt, Vector3 enemyPos, float enemyRadius) {
   (void)enemyPos;
   (void)enemyRadius;
   UpdateWindSkill(dt);
 }
+#endif
 
 
 ProjectedPoint ProjectPointCached(Vector3 worldPos, Camera3D cam) {
