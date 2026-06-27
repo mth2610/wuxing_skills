@@ -139,6 +139,4 @@ Vector3 SplinePath_Tangent(const SplinePath *s, float t);
 Dùng cho: rồng mộc uốn lượn, tia điện dẫn đường, nước chảy theo địa hình.
 
 ---
-
-
 ```
