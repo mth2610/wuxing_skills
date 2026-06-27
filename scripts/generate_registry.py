@@ -7,12 +7,12 @@ LEGACY_HEADERS = {
 }
 
 ELEMENT_COLORS = {
-    "water": "SKYBLUE",
-    "fire": "ORANGE",
-    "metal": "GOLD",
-    "wood": "LIME",
-    "earth": "BROWN",
-    "taiji": "PURPLE"
+    "water": "ELEMENT_COLOR_WATER",
+    "fire": "ELEMENT_COLOR_FIRE",
+    "metal": "ELEMENT_COLOR_METAL",
+    "wood": "ELEMENT_COLOR_WOOD",
+    "earth": "ELEMENT_COLOR_EARTH",
+    "taiji": "ELEMENT_COLOR_TAIJI"
 }
 
 def to_upper_snake(name):

@@ -1,4 +1,5 @@
 #include "skills/wood/wood_thorns/wood_thorns_skill.h"
+#include "core/resource_manager.h"
 #include "core/particle_system.h"
 #include "core/color_gradient.h"
 #include "core/decal_system.h"
@@ -122,8 +123,8 @@ static void SpawnDustBurst(Vector3 pos, float scale)
         SpawnParticle((ParticleConfig){
             .position         = particlePos,
             .velocity         = vel,
-            .colorStart       = (Color){ 34, 139, 34, 255 },  /* Forest Green */
-            .colorEnd         = (Color){ 90, 75, 45, 0 },
+            .colorStart       = ELEMENT_COLOR_WOOD,
+            .colorEnd         = ColorAlpha(ColorLerp(ELEMENT_COLOR_WOOD, BLACK, 0.5f), 0.0f),
             .radius           = (float)GetRandomValue(30, 60) / 10.0f,
             .lifetime         = (float)GetRandomValue(6, 12) / 10.0f,
             .forceField       = NULL,
@@ -148,15 +149,15 @@ void InitWoodThornsSkill(int screenWidth, int screenHeight)
         s_thorns[i].state = THORN_INACTIVE;
     }
 
-    s_crackTex = LoadTexture("assets/textures/crack.png");
-    s_shader = LoadShader(NULL, "skills/wood/wood_thorns/wood_thorns.fs");
+    s_crackTex = ResourceManager_LoadTexture("assets/textures/crack.png");
+    s_shader = ResourceManager_LoadShader(NULL, "skills/wood/wood_thorns/wood_thorns.fs");
     s_uDissolveLoc = GetShaderLocation(s_shader, "u_dissolve");
     s_uTimeLoc     = GetShaderLocation(s_shader, "u_time");
 
     // Green/Brown foliage gradient
-    ColorGradient_AddStop(&s_dustGrad, 0.00f, (Color){ 34, 139, 34, 255 });
-    ColorGradient_AddStop(&s_dustGrad, 0.50f, (Color){ 107, 142, 35, 180 });
-    ColorGradient_AddStop(&s_dustGrad, 1.00f, (Color){ 90, 75, 45, 0 });
+    ColorGradient_AddStop(&s_dustGrad, 0.00f, ELEMENT_COLOR_WOOD);
+    ColorGradient_AddStop(&s_dustGrad, 0.50f, ColorAlpha(ColorLerp(ELEMENT_COLOR_WOOD, BLACK, 0.3f), 0.7f));
+    ColorGradient_AddStop(&s_dustGrad, 1.00f, (Color){ 0, 0, 0, 0 });
 }
 
 /* ================================================================
@@ -255,14 +256,14 @@ void UpdateWoodThornsSkill(float dt, Vector3 enemyPos, float enemyRadius)
                     THORN_BASE_RADIUS * th->scale * 2.2f,
                     s_crackTex,
                     5.0f,
-                    (Color){ 100, 140, 90, 255 } /* green-tinted cracks */
+                    ColorAlpha(ColorLerp(ELEMENT_COLOR_WOOD, BLACK, 0.4f), 0.8f) /* green-tinted cracks */
                 );
                 th->spawnedDecal = true;
             }
 
             // VFX Light emergence flare
             if (!th->spawnedLight) {
-                VFXLight_Spawn(th->pos, (Color){ 60, 200, 80, 255 }, 40.0f * th->scale, 0.6f);
+                VFXLight_Spawn(th->pos, ELEMENT_COLOR_WOOD, 40.0f * th->scale, 0.6f);
                 th->spawnedLight = true;
             }
 
@@ -276,7 +277,7 @@ void UpdateWoodThornsSkill(float dt, Vector3 enemyPos, float enemyRadius)
                 if (distSq <= hitRad * hitRad) {
                     char dmgStr[16];
                     snprintf(dmgStr, sizeof(dmgStr), "%d", (int)th->damage);
-                    AddFloatingText(th->pos, dmgStr, (Color){ 34, 139, 34, 255 }, 24.0f, 0.7f);
+                    AddFloatingText(th->pos, dmgStr, ELEMENT_COLOR_WOOD, 24.0f, 0.7f);
                     AddFloatingText(th->pos, "ROOTED!", LIME, 16.0f, 0.8f);
 
                     // Root the enemy
@@ -432,8 +433,7 @@ void DrawWoodThornsSkill(void)
  * ================================================================ */
 void UnloadWoodThornsSkill(void)
 {
-    UnloadTexture(s_crackTex);
-    UnloadShader(s_shader);
+    /* Cached assets are freed by the global Resource Manager */
 }
 
 /* ================================================================

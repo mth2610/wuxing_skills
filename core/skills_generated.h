@@ -7,7 +7,7 @@
 #include "skills/wood/wood_thorns/wood_thorns_skill.h"
 
 static inline void RegisterGeneratedSkills(void) {
-    RegisterSkill("WOOD_THORNS", LIME, InitWoodThornsSkill, CastWoodThornsSkill, UpdateWoodThornsSkill, DrawWoodThornsSkill, UnloadWoodThornsSkill);
+    RegisterSkill("WOOD_THORNS", ELEMENT_COLOR_WOOD, InitWoodThornsSkill, CastWoodThornsSkill, UpdateWoodThornsSkill, DrawWoodThornsSkill, UnloadWoodThornsSkill);
 }
 
 #endif // SKILLS_GENERATED_H
