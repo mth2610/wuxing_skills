@@ -50,6 +50,8 @@ add_executable(wuxing
     core/ui_panel.c
     core/utils_math.c
     core/vfx_light.c
+    core/decal_system.c
+    core/vfx_test.c
 
     # --- Skills ---
     # Metal (Kim)

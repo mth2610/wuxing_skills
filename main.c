@@ -1,12 +1,14 @@
 #include "core/camera_fx.h"
-#include "core/particle_system.h" // Thư viện quản lý hạt toàn cục (Compute Shader)
+#include "core/decal_system.h"
+#include "core/particle_system.h"
 #include "core/post_fx.h"
 #include "core/sandbox_core.h"
 #include "core/screen_distort.h"
 #include "core/skill_manager.h"
-#include "core/trail_system.h" // MỚI: Thư viện quản lý dải khí, kiếm bay (Smart Projectiles)
+#include "core/trail_system.h"
 #include "core/ui_panel.h"
-#include "core/vfx_light.h" // MỚI: Tích hợp hệ thống Dynamic Point Light
+#include "core/vfx_light.h"
+#include "core/vfx_test.h" // MỚI: Chỉ giữ duy nhất file test này để điều phối
 #include "raylib.h"
 #include "raymath.h"
 #include "rlgl.h"
@@ -53,95 +55,6 @@ static void MyEndMode3D(void) {
   rlDisableDepthTest();
 }
 
-// =============================================================================
-// ĐẶT HÀM TEST ĐỊNH NGHĨA TRƯỚC MAIN ĐỂ TRÁNH LỖI IMPLICIT DECLARATION
-// =============================================================================
-static void Test_VFX_AllFeatures(Vector3 playerPos, Texture2D testAtlasTex) {
-  // 1. Kích hoạt hiệu ứng môi trường/camera
-  CameraFX_Shake(0.5f);
-  ScreenDistort_AddSource(playerPos, 120.0f, 0.8f, 1.2f, 250.0f);
-
-  // 2. Spawn Dynamic Point Light ảo tại vị trí người chơi để quản lý
-  VFXLight_Spawn(playerPos, (Color){255, 180, 50, 255}, 200.0f, 1.5f);
-
-  // 3. Khởi tạo dải màu Gradient dùng chung (Tĩnh - Tạo 1 lần)
-  static ColorGradient g;
-  static bool gradientInit = false;
-  if (!gradientInit) {
-    ColorGradient_AddStop(&g, 0.0f, RED);
-    ColorGradient_AddStop(&g, 0.25f, ORANGE);
-    ColorGradient_AddStop(&g, 0.5f, YELLOW);
-    ColorGradient_AddStop(&g, 0.75f, GREEN);
-    ColorGradient_AddStop(&g, 1.0f, BLUE);
-    gradientInit = true;
-  }
-
-  // 4. Khởi tạo SpriteAnim cho Trail (Tĩnh - Tạo 1 lần)
-  static SpriteAnim anim;
-  static bool animInit = false;
-  if (!animInit) {
-    SpriteAnim_Init(&anim, 2, 2, 4, 8.0f, ANIM_LOOP);
-    animInit = true;
-  }
-
-  // 5. CẤU HÌNH SUB-EMITTER
-  // Hạt con sinh ra khi mẹ chết
-  static ParticleConfig deathChildConfig;
-  deathChildConfig.velocity = (Vector3){0.0f, 10.0f, 0.0f};
-  deathChildConfig.colorStart = BLUE;
-  deathChildConfig.colorEnd = BLACK;
-  deathChildConfig.radius = 8.0f;
-  deathChildConfig.lifetime = 1.0f;
-  deathChildConfig.gradient = &g;
-  deathChildConfig.forceField = NULL;
-  deathChildConfig.spriteAnim = NULL;
-  deathChildConfig.onLiveEmit = NULL;
-  deathChildConfig.onDeathEmit = NULL;
-
-  // Hạt con nhả vệt đuôi khi mẹ đang bay
-  static ParticleConfig liveChildConfig;
-  liveChildConfig.velocity = (Vector3){0.0f, -5.0f, 0.0f};
-  liveChildConfig.colorStart = ORANGE;
-  liveChildConfig.colorEnd = RED;
-  liveChildConfig.radius = 2.0f;
-  liveChildConfig.lifetime = 0.5f;
-  liveChildConfig.gradient = &g;
-  liveChildConfig.forceField = NULL;
-  liveChildConfig.spriteAnim = NULL;
-  liveChildConfig.onLiveEmit = NULL;
-  liveChildConfig.onDeathEmit = NULL;
-
-  // Hạt mẹ chính bắn lên trời
-  ParticleConfig motherConfig = {0};
-  motherConfig.position = Vector3Add(playerPos, (Vector3){-50.0f, 10.0f, 0.0f});
-  motherConfig.velocity = (Vector3){0.0f, 180.0f, 0.0f};
-  motherConfig.radius = 25.0f;
-  motherConfig.lifetime = 1.2f;
-  motherConfig.colorStart = WHITE;
-  motherConfig.colorEnd = YELLOW;
-  motherConfig.gradient = &g;
-  motherConfig.onLiveEmit = &liveChildConfig;
-  motherConfig.onLiveEmitRate = 40.0f;
-  motherConfig.onDeathEmit = &deathChildConfig;
-  motherConfig.onDeathEmitCount = 15;
-
-  SpawnParticle(motherConfig);
-
-  // 6. BẮN TRAIL PROJECTILE (Bên phải player)
-  TrailConfig tConfig = {0};
-  tConfig.type = TRAIL_TYPE_PROJECTILE;
-  tConfig.pos = Vector3Add(playerPos, (Vector3){75.0f, 30.0f, 0.0f});
-  tConfig.vel = (Vector3){220.0f, 0.0f, 0.0f};
-  tConfig.len = 50.0f;
-  tConfig.thick = 6.0f;
-  tConfig.trailLength = 80.0f;
-  tConfig.life = 4.0f;
-  tConfig.gradient = &g;
-  tConfig.spriteAnim = &anim;
-  tConfig.tex = testAtlasTex;
-  SpawnTrailEntity(tConfig);
-}
-
 int main(void) {
   const int screenWidth = 1200;
   const int screenHeight = 700;
@@ -149,13 +62,14 @@ int main(void) {
   rlSetClipPlanes(0.1f, 15000.0f);
 
   // -----------------------------------------------------------------
-  // KHỞI TẠO HỆ THỐNG VFX
+  // KHỞI TẠO CÁC HỆ THỐNG ĐỒ HỌA VFX
   // -----------------------------------------------------------------
   InitParticleSystem();
   Shader defaultTrailShader =
       LoadShader(0, "skills/metal/metal_projectile/metal.fs");
   InitTrailSystem(defaultTrailShader);
-  VFXLight_Init(); // Khởi tạo hệ thống Dynamic Point Light
+  VFXLight_Init();
+  DecalSystem_Init();
   ScreenDistort_Init(screenWidth, screenHeight);
   PostFX_Init(screenWidth, screenHeight);
 
@@ -207,11 +121,6 @@ int main(void) {
 
   SetTargetFPS(60);
 
-  // Đưa biến quản lý đếm light ra phạm vi hàm main() để dùng được cả trong pass
-  // 3D và HUD 2D
-  VFXLightData activeLights[MAX_VFX_LIGHTS];
-  int activeLightCount = 0;
-
   while (!WindowShouldClose()) {
     float dt = GetFrameTime();
 
@@ -227,15 +136,18 @@ int main(void) {
                 uiState.currentParams);
     }
 
-    // TEST FEATURE: Gọi hàm tổng bốc tách gọn gàng ngoài main
-    if (IsKeyPressed(KEY_T)) {
-      Test_VFX_AllFeatures(player.position, testAtlasTex);
-    }
+    // =========================================================================
+    // MỚI: TOÀN BỘ LOGIC NHẬN PHÍM T ĐỂ CHẠY HIỆU ỨNG TEST ĐÃ ĐƯỢC ĐẨY VÀO HÀM
+    // NÀY[cite: 11]
+    // =========================================================================
+    VFXTest_UpdateAndHandleInput(player.position, testAtlasTex,
+                                 globalParticleTex);
 
     UpdateSkillManager(dt, enemy.position, 35.0f);
     UpdateParticles(dt);
     UpdateTrailSystem(dt);
-    VFXLight_Update(dt); // Cập nhật trạng thái đếm ngược của các Light
+    VFXLight_Update(dt);
+    DecalSystem_Update(dt);
     ScreenDistort_Update(dt);
 
     BeginDrawing();
@@ -247,13 +159,14 @@ int main(void) {
     DrawSandbox3D(&player, &enemy, mouseTarget3D, &uiState);
     DrawSkillManagerWorld3D();
 
-    // Thu thập danh sách light phục vụ render debug trong không gian 3D
-    VFXLight_GetActive(activeLights, &activeLightCount, MAX_VFX_LIGHTS);
-    for (int i = 0; i < activeLightCount; i++) {
-      DrawSphereWires(activeLights[i].position, activeLights[i].radius, 8, 8,
-                      ColorAlpha(activeLights[i].color, 0.2f));
-      DrawSphere(activeLights[i].position, 5.0f, activeLights[i].color);
-    }
+    // Vẽ Decal hệ thống sát sàn đấu
+    DecalSystem_Draw();
+
+    // =========================================================================
+    // MỚI: TOÀN BỘ PHẦN TRUY XUẤT VÀ VẼ KHỐI CẦU DEBUG LIGHT ĐÃ ĐƯỢC BỐC SANG
+    // ĐÂY
+    // =========================================================================
+    VFXTest_DrawDebugLights3D();
 
     DrawTrailEntities(camera);
 
@@ -286,10 +199,10 @@ int main(void) {
 
     DrawText(TextFormat("FPS: %d", GetFPS()), 10, 640, 20, GREEN);
 
-    // In trạng thái đếm số lượng Light hoạt động lên HUD (Đã có biến
-    // activeLightCount hợp lệ)
-    DrawText(TextFormat("Active VFX Lights: %d / 8", activeLightCount), 10, 610,
-             20, ORANGE);
+    // =========================================================================
+    // MỚI: IN THÔNG TIN TEXT DEBUG LÊN HUD CŨNG ĐƯỢC QUẢN LÝ TẬP TRUNG
+    // =========================================================================
+    VFXTest_DrawHUD();
 
     DrawText("Phím P: Đổi chế độ quái | Click trái: Tung chiêu | X: Khinh công "
              "| Phím T: Test Light/Gradient/Anim",
@@ -301,6 +214,7 @@ int main(void) {
   UnloadTexture(testAtlasTex);
   UnloadParticleSystem();
   UnloadTrailSystem();
+  DecalSystem_Unload();
   ScreenDistort_Unload();
   UnloadSkillManager();
   CloseWindow();
