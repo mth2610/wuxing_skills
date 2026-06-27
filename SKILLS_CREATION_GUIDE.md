@@ -4,6 +4,7 @@
 ## 1. PROJECT SPECIFICATION
 * **Tech:** C99, Raylib 5.5, OpenGL 3.3, 3D Isometric Night-time Arena.
 * **Memory constraint:** **Strictly NO dynamic allocation (`malloc`, `free`)**. Use static pools/arrays, stack variables.
+* **Standard Headers:** Every `.c` file **MUST** explicitly `#include <stddef.h>`, `#include <stdlib.h>`, and `#include <stdio.h>` to avoid compilation errors regarding `NULL` and `snprintf`. Do not assume they are implicitly included.
 * **Includes:** Use relative paths from root: `#include "core/particle_system.h"`, etc.
 
 ## 2. DIRECTORY STRUCTURE
@@ -25,21 +26,14 @@ Any new skill MUST follow this naming convention for automatic detection & regis
 #include "raylib.h"
 #include "core/skill_manager.h" // For SkillParams and SkillCategory structs
 
-// Skill Category Classification
-typedef enum {
-    SKILL_CAT_PROJECTILE = 0, // Long-range: Low damage, high speed, high safety
-    SKILL_CAT_AOE_CONTROL,    // Mid-range: Med damage, crowd control (Slow/Root), wide area
-    SKILL_CAT_MELEE,          // Close-range: Ultra damage, high knockback, shield pierce
-    SKILL_CAT_TRAP_UTILITY,   // Deployable/Trap: Ground buffers, summonings, special effects
-    SKILL_CAT_BUFF_SUPPORT    // Support: Shields, speed/mana buffs, no direct damage
-} SkillCategory;
-
-// Automatic gameplay balance modifiers (Use these instead of hardcoded numbers!)
-float Skill_CalculateDamage(SkillCategory cat, SkillParams params);
-float Skill_CalculateCooldown(SkillCategory cat, SkillParams params);
-float Skill_CalculateKnockback(SkillCategory cat, SkillParams params);
-float Skill_CalculateManaCost(SkillCategory cat, SkillParams params);
-const char* Skill_GetCategoryName(SkillCategory cat);
+#ifndef SKILL_PROJECTILE_DEF
+#define SKILL_PROJECTILE_DEF
+typedef struct {
+    Vector3 position;
+    float radius;
+    bool active;
+} SkillProjectile;
+#endif
 
 // Lifecycle functions must be named exactly like this (replace [Name] with your Skill Prefix):
 void Init[Name]Skill(int screenWidth, int screenHeight);
@@ -47,6 +41,11 @@ void Cast[Name]Skill(Vector3 startPos, Vector3 target, SkillParams params);
 void Update[Name]Skill(float dt, Vector3 enemyPos, float enemyRadius);
 void Draw[Name]Skill(void);
 void Unload[Name]Skill(void);
+
+// For Engine-to-Skill communication (decoupled from direct enemy entity references):
+bool Is[Name]SkillCoiling(void); // Returns true if skill is currently pinning/rooting the enemy
+int Get[Name]SkillProjectiles(SkillProjectile *outProjectiles, int maxProjectiles);
+void Deactivate[Name]Projectile(int index);
 #endif
 ```
 
@@ -61,13 +60,16 @@ struct ParticleConfig {
     const ForceField *forceField;   // NULL if unused
     const ColorGradient *gradient;  // NULL if unused
     const SpriteAnim *spriteAnim;   // NULL if unused
-    const ParticleConfig *onDeathEmit; // [Sub-Emitter]
+    const ParticleConfig *onDeathEmit; // [Sub-Emitter] (NULL for child emitter)
     int onDeathEmitCount;
-    const ParticleConfig *onLiveEmit;  // [Trail-Emitter]
+    const ParticleConfig *onLiveEmit;  // [Trail-Emitter] (NULL for child emitter)
     float onLiveEmitRate;
 };
-// Recursion Prevention Lock: For child configs, onLiveEmit & onDeathEmit MUST be NULL.
 ```
+* **Color Gradient (`#include "core/color_gradient.h"`)**:
+  `bool ColorGradient_AddStop(ColorGradient *g, float t, Color color);`
+  `Color ColorGradient_Sample(const ColorGradient *g, float t);`
+
 * **Emitter System (`#include "core/emitter_system.h"`)**: 
   `int CreateEmitter(EmitterConfig cfg, Vector3 start);` `void UpdateEmitterTarget(int id, Vector3 pos, float dt);` `void StopEmitter(int id);` `void KillEmitter(int id);`
 
@@ -82,6 +84,7 @@ struct ParticleConfig {
 * **Distortion (`#include "core/screen_distort.h"`)**: `void ScreenDistort_AddSource(Vector3 pos, float rad, float str, float life, float speed);`
 * **VFX Light (`#include "core/vfx_light.h"`)**: `void VFXLight_Spawn(Vector3 pos, Color col, float rad, float life);`
 * **Camera Shake (`#include "core/camera_fx.h"`)**: `void CameraFX_Shake(float trauma);`
+
 
 ---
 
@@ -243,3 +246,97 @@ void DrawElementStreamSkill(void) {
 }
 void UnloadElementStreamSkill(void) { UnloadShader(streamShader); }
 ```
+
+---
+
+## 7. CRITICAL GRAPHICS & PERFORMANCE RULES
+* **STRICTLY PROHIBITED: High-level Raylib primitives (such as `DrawCylinder()`, `DrawCone()`, `DrawCube()`, `DrawSphere()`, or their `Wires` counterparts)** for rendering core skill visuals or projectiles.
+  - *Rationale:* Primitives lack proper UV texture mapping and vertex normal control required for custom shaders, and drawing `Wires` generates generic grid-like overlapping "cages" (debug line tunnels) which ruin the night-time aesthetic.
+  - *Requirement:* You must procedurally generate your vertex meshes using `rlgl` low-level drawing calls (`rlBegin(RL_TRIANGLES)` or `rlBegin(RL_QUADS)`). Each vertex must specify its texture coordinate (`rlTexCoord2f`), surface normal (`rlNormal3f`), and position (`rlVertex3f`).
+
+## 8. AESTHETICS & ORGANIC POLISH (ANTI-ROBOTIC DESIGN)
+To keep the wuxing world immersive and natural, you must apply the following anti-robotic visual rules:
+1. **No Perfect Lines (Perpendicular Jitter):**
+   - When spawning sequential elements (like earth spikes, lightning strikes, or trail nodes), DO NOT align them in a mathematically straight line.
+   - Add a small perpendicular displacement: `jitter = Perpendicular(dir) * GetRandomValue(-maxJitter, maxJitter)`.
+2. **Randomization of Angle, Rotation, and Scale:**
+   - **Rotation:** Always apply random rotation to each spawned entity (e.g. rotate ground spikes randomly around the Y-axis: `rotation = GetRandomValue(0, 360)`).
+   - **Scale:** Randomly vary the scale of each individual instance (e.g. `scale = sizeScale * GetRandomValue(85, 115) / 100.0f`).
+   - **Angle:** Add minor pitch/roll tilts to vertical elements so they emerge pointing in slightly organic angles.
+3. **Organic Meshes via Perturbation:**
+   - When drawing procedurally (using `rlgl`), add noise or trigonometric perturbation to the radius (e.g. `radius * (1.0f + 0.15f * sinf(height * frequency + angle * 3.0f))`) to create rough, jagged, rocky, or flowing organic shapes rather than perfect cylinders/hexagons.
+4. **Continuous Shader Application (No Visual Popping):**
+   - Bind the skill shader (`BeginShaderMode`) during **all active phases** (e.g. rising, holding, flying, and dissolving), not just during the final phase.
+   - Set the uniform `u_dissolve = 0.0f` when the skill is fully intact. This ensures consistent lighting, outlines, and color blending, preventing a jarring graphical pop when the dissolve phase starts.
+
+## 9. ADVANCED PROCEDURAL 3D MESH TECHNIQUES (THE TUBE SKILL METHODOLOGY)
+To create premium, flowing 3D organic skills (such as curving water streams, energy tubes, or twisting branches), use the mathematical framework of the **Tube Skill**:
+
+### 1. Bezier Curve Path & Tangents
+Generate a smooth curving path from `p0` (start) to `p3` (target) using a cubic Bezier curve. To move the mesh, scale the evaluation parameter `currentT = t * progress` (where `t` is segment percentage `0..1`, and `progress` is cast progress `0..1`).
+```c
+Vector3 GetBezierPoint(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t) {
+    float u = 1.0f - t;
+    return Vector3Add(
+        Vector3Scale(p0, u * u * u),
+        Vector3Add(
+            Vector3Scale(p1, 3.0f * u * u * t),
+            Vector3Add(Vector3Scale(p2, 3.0f * u * t * t), Vector3Scale(p3, t * t * t))
+        )
+    );
+}
+// Tangent (first derivative) is required to orient the rings forward:
+Vector3 GetBezierDerivative(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t) {
+    float u = 1.0f - t;
+    return Vector3Add(
+        Vector3Scale(Vector3Subtract(p1, p0), 3.0f * u * u),
+        Vector3Add(
+            Vector3Scale(Vector3Subtract(p2, p1), 6.0f * u * t),
+            Vector3Scale(Vector3Subtract(p3, p2), 3.0f * t * t)
+        )
+    );
+}
+```
+
+### 2. Local Frenet / Parallel Transport Frame
+To extrude circles along the curve, construct a local orthogonal coordinate frame (`Right`, `Up`, `Tangent`) at each point:
+```c
+Vector3 tangent = Vector3Normalize(GetBezierDerivative(p0, p1, p2, p3, currentT));
+Vector3 up = (fabsf(tangent.y) > 0.99f) ? (Vector3){1.0f, 0.0f, 0.0f} : (Vector3){0.0f, 1.0f, 0.0f};
+Vector3 right = Vector3Normalize(Vector3CrossProduct(up, tangent));
+up = Vector3CrossProduct(tangent, right);
+```
+
+### 3. Twisting Wobble (Trigonometric Rotation)
+To simulate swirling liquid or twisting vines, rotate the local coordinate frame along the length `t` and time:
+```c
+float wobble = wobbleAmplitude * sinf(t * PI * wobbleFrequency + time * wobbleSpeed);
+Vector3 twistedUp = Vector3Add(Vector3Scale(up, cosf(wobble)), Vector3Scale(right, sinf(wobble)));
+Vector3 twistedRight = Vector3Normalize(Vector3CrossProduct(twistedUp, tangent));
+```
+
+### 4. Tapering & Capsule Shaping (Ends control)
+Avoid blocky cut-off ends by tapering the radius towards the tail (`t = 0`) and the head (`t = 1`):
+```c
+float baseCapsule = 0.3f + 0.7f * sqrtf(fmaxf(0.0f, sinf(t * PI))); // Tapers both ends smoothly
+float tailTaper = 0.15f + 0.85f * t; // Specifically narrows the tail to 15%
+float finalRadius = baseRadius * baseCapsule * tailTaper;
+```
+
+### 5. Circumferential Wave Deformation
+Add multi-frequency ripples around the circumference to prevent rigid, robotic cylinders:
+```c
+float deform1 = sinf(t * 18.0f + radialAngle * 3.0f + time * 10.0f);
+float deform2 = sinf(t * 9.0f - radialAngle * 5.0f - time * 6.0f);
+float deformFactor = 1.0f + deform1 * 0.12f + deform2 * 0.08f;
+float perturbedRadius = finalRadius * deformFactor;
+```
+
+### 6. Solid End-Capping (No Hollow Shells)
+Always cap the start and end rings of the tube with a vertex fan using `RL_TRIANGLES`. A hollow cylinder looks cheap when viewed from high angles:
+- **Tail Cap:** Fan vertices from a shifted center apex point `tailCenter - tailTangent * radius * 0.25f` to the vertices of the `t = 0` ring.
+- **Head Cap:** Fan vertices from `headCenter + headTangent * radius * 0.25f` to the vertices of the `t = 1` ring.
+- **UV Coordinates:** Set V coordinate of the apex slightly negative (e.g. `-0.1f`) so the flow map wraps around the closed tips seamlessly.
+
+
+

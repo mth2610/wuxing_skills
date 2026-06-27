@@ -8,6 +8,7 @@ typedef struct {
     int activeSkillIndex;
     bool clickedOnUI;
     SkillParams currentParams;
+    bool isPanelOpen;
 } UIPanelState;
 
 // Khởi tạo bảng điều khiển (định nghĩa các tọa độ nút bấm)

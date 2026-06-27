@@ -9,11 +9,14 @@ static float sizes[3] = {1.0f, 1.5f, 2.0f};
 static Rectangle rectAnchor[2];
 static Rectangle rectPath[3];
 static Rectangle rectPortalToggle;
-static Rectangle skillButtons[32];
+static Rectangle skillButtons[64];
+static Rectangle togglePanelBtn;
 
 static int hoverSkillIndex = -1;
 
 void InitUIPanel(void) {
+  togglePanelBtn = (Rectangle){20, 15, 180, 32};
+
   for (int i = 0; i < 5; i++) {
     rectQty[i] = (Rectangle){870 + i * 60, 20, 50, 35};
   }
@@ -29,16 +32,25 @@ void InitUIPanel(void) {
   rectPortalToggle = (Rectangle){870, 220, 200, 35};
 
   int skillCount = GetRegisteredSkillCount();
-  if (skillCount > 32)
-    skillCount = 32;
+  if (skillCount > 64)
+    skillCount = 64;
 
-  // Tự động tính toán lại độ rộng và khoảng cách nút bấm dựa trên số lượng
-  // skill thực tế để không bị tràn
-  float buttonWidth = 90.0f;
-  float spacing = 8.0f;
+  // Sắp xếp lưới nút bấm cho tối đa 64 kỹ năng (6 cột) để tránh tràn màn hình
+  float buttonWidth = 110.0f;
+  float buttonHeight = 35.0f;
+  float spacingX = 8.0f;
+  float spacingY = 8.0f;
+  int columns = 6;
+
   for (int i = 0; i < skillCount; i++) {
-    skillButtons[i] =
-        (Rectangle){20 + i * (buttonWidth + spacing), 20, buttonWidth, 45};
+    int col = i % columns;
+    int row = i / columns;
+    skillButtons[i] = (Rectangle){
+        20.0f + col * (buttonWidth + spacingX),
+        60.0f + row * (buttonHeight + spacingY),
+        buttonWidth,
+        buttonHeight
+    };
   }
 }
 
@@ -46,9 +58,24 @@ void UpdateUIPanel(Vector2 mousePos, UIPanelState *state) {
   state->clickedOnUI = false;
   hoverSkillIndex = -1;
 
-  // Tự động sử dụng số lượng kỹ năng đã đăng ký thực tế
+  // Kiểm tra click vào nút Ẩn/Hiện Bảng Điều Khiển đầu tiên
+  bool isOverToggleBtn = CheckCollisionPointRec(mousePos, togglePanelBtn);
+  if (isOverToggleBtn) {
+    state->clickedOnUI = true;
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+      state->isPanelOpen = !state->isPanelOpen;
+      return;
+    }
+  }
+
+  // Nếu bảng điều khiển đang đóng, dừng xử lý các nút bấm khác để click xuyên qua đất
+  if (!state->isPanelOpen) {
+    return;
+  }
+
+  // Tự động sử dụng số lượng kỹ năng đã đăng ký thực tế (tối đa 64)
   int availableCount = GetRegisteredSkillCount();
-  if (availableCount > 32) availableCount = 32;
+  if (availableCount > 64) availableCount = 64;
 
   bool activeValid = false;
   for (int i = 0; i < availableCount; i++) {
@@ -92,7 +119,7 @@ void UpdateUIPanel(Vector2 mousePos, UIPanelState *state) {
     state->clickedOnUI = true;
   }
 
-  // Xử lý click chuột trái
+  // Xử lý click chuột trái vào các bảng thông số
   if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
     for (int i = 0; i < 5; i++) {
       if (CheckCollisionPointRec(mousePos, rectQty[i])) {
@@ -137,11 +164,27 @@ void DrawUIPanel(const UIPanelState *state) {
   rlLoadIdentity();
   rlSetTexture(0);
 
-  // Đồng bộ danh sách hiển thị với các chiêu thức thực tế
-  int availableCount = GetRegisteredSkillCount();
-  if (availableCount > 32) availableCount = 32;
-
   Vector2 mousePos = GetMousePosition();
+
+  // Vẽ nút Ẩn/Hiện Bảng Điều Khiển
+  bool isOverToggle = CheckCollisionPointRec(mousePos, togglePanelBtn);
+  Color toggleCol = state->isPanelOpen ? (isOverToggle ? RED : MAROON) : (isOverToggle ? LIME : DARKGREEN);
+  DrawRectangleRounded(togglePanelBtn, 0.2f, 10, toggleCol);
+  DrawRectangleRoundedLines(togglePanelBtn, 0.2f, 10, WHITE);
+  
+  const char *toggleText = state->isPanelOpen ? "[X] AN BANG DIEU KHIEN" : "[+] HIEN BANG DIEU KHIEN";
+  int toggleTextW = MeasureText(toggleText, 11);
+  DrawText(toggleText, (int)(togglePanelBtn.x + (togglePanelBtn.width - toggleTextW) / 2), (int)togglePanelBtn.y + 10, 11, WHITE);
+
+  // Nếu bảng điều khiển đang đóng, không vẽ gì thêm
+  if (!state->isPanelOpen) {
+    EndBlendMode();
+    return;
+  }
+
+  // Đồng bộ danh sách hiển thị với các chiêu thức thực tế (tối đa 64)
+  int availableCount = GetRegisteredSkillCount();
+  if (availableCount > 64) availableCount = 64;
 
   // Vẽ nút chiêu thức
   for (int i = 0; i < availableCount; i++) {
@@ -159,13 +202,12 @@ void DrawUIPanel(const UIPanelState *state) {
 
     const char *skillName = GetRegisteredSkillName(skillIdx);
     char btnText[64];
-    snprintf(btnText, sizeof(btnText), "%s SKILL", skillName);
+    snprintf(btnText, sizeof(btnText), "%s", skillName);
 
-    int textWidth = MeasureText(
-        btnText, 9); // Size chữ để 9 để hiển thị vừa vặn trong khung hẹp
+    int textWidth = MeasureText(btnText, 9);
     DrawText(btnText,
              (int)(skillButtons[i].x + (skillButtons[i].width - textWidth) / 2),
-             (int)(skillButtons[i].y + 18), 9, WHITE);
+             (int)(skillButtons[i].y + 13), 9, WHITE);
   }
 
   // Quantity
@@ -233,4 +275,6 @@ void DrawUIPanel(const UIPanelState *state) {
   DrawText(state->currentParams.showPortal ? "PORTALS: ON" : "PORTALS: OFF",
            (int)rectPortalToggle.x + 40, (int)rectPortalToggle.y + 10, 16,
            WHITE);
+
+  EndBlendMode();
 }

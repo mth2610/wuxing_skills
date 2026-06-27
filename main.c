@@ -125,6 +125,7 @@ int main(void) {
   uiState.currentParams.pathType = CAST_PATH_PROJECTILE;
   uiState.currentParams.showPortal = true;
   uiState.currentParams.damage = 100.0f;
+  uiState.isPanelOpen = true;
 
   PostFXConfig postFXConfig = {.bloomEnabled = true,
                                .bloomThreshold = 0.65f,
@@ -186,7 +187,7 @@ int main(void) {
     // MỚI: TOÀN BỘ PHẦN TRUY XUẤT VÀ VẼ KHỐI CẦU DEBUG LIGHT ĐÃ ĐƯỢC BỐC SANG
     // ĐÂY
     // =========================================================================
-    VFXTest_DrawDebugLights3D();
+    // VFXTest_DrawDebugLights3D();
 
     DrawTrailEntities(camera);
 

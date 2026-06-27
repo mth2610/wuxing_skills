@@ -81,6 +81,10 @@ bool IsAnySkillCoiling(void);
 bool IsAnySkillShocking(void);
 bool IsEnemySlowed(void);
 bool IsEnemyBurning(void);
+bool IsEnemyRooted(void);
+
+void AddRootToEnemy(float duration);
+void AddFloatingText(Vector3 pos, const char *text, Color color, float size, float lifetime);
 
 Vector3 GetAccumulatedKnockback(void);
 void ClearAccumulatedKnockback(void);

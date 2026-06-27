@@ -54,6 +54,7 @@ static SkillProjectile tempProjectiles[MAX_TEMP_PROJECTILES];
 static float slowTimer = 0.0f;
 static float burnTimer = 0.0f;
 static float burnTickAccumulator = 0.0f;
+static float rootTimer = 0.0f;
 
 #define MAX_ACTIVE_PORTALS 16
 
@@ -164,7 +165,7 @@ static void AddCastPortal(Vector3 pos, Color portalColor, CastPathType pathType,
   }
 }
 
-static void AddFloatingText(Vector3 pos, const char *text, Color color,
+void AddFloatingText(Vector3 pos, const char *text, Color color,
                             float size, float maxLife) {
   for (int i = 0; i < MAX_FLOATING_TEXTS; i++) {
     if (!floatingTexts[i].active) {
@@ -300,6 +301,7 @@ void InitSkillManager(int screenWidth, int screenHeight) {
   slowTimer = 0.0f;
   burnTimer = 0.0f;
   burnTickAccumulator = 0.0f;
+  rootTimer = 0.0f;
   for (int i = 0; i < MAX_FLOATING_TEXTS; i++)
     floatingTexts[i].active = false;
   for (int i = 0; i < MAX_ACTIVE_PORTALS; i++)
@@ -310,6 +312,8 @@ void UpdateSkillManager(float dt, Vector3 enemyPos, float enemyRadius) {
   EnsureBuiltInRegistered();
   if (slowTimer > 0.0f)
     slowTimer -= dt;
+  if (rootTimer > 0.0f)
+    rootTimer -= dt;
   if (burnTimer > 0.0f) {
     burnTimer -= dt;
     burnTickAccumulator += dt;
@@ -428,14 +432,17 @@ void DrawSkillManagerWorld3D(void) {
 #if HAS_SKILL_SHIELD
   DrawShieldSkill(); // Vẽ khối cầu khiên nước
 #endif
+
+  // Draw any custom registered 3D skills in the 3D pass
+  for (int i = 0; i < registeredSkillCount; i++) {
+    if (skillRegistry[i].draw) {
+      skillRegistry[i].draw();
+    }
+  }
 }
 
 void DrawSkillManagerOverlay(void) {
   EnsureBuiltInRegistered();
-  for (int i = 0; i < registeredSkillCount; i++) {
-    if (skillRegistry[i].draw)
-      skillRegistry[i].draw();
-  }
   for (int i = 0; i < MAX_FLOATING_TEXTS; i++) {
     if (floatingTexts[i].active) {
       float alpha = floatingTexts[i].lifetime / floatingTexts[i].maxLifetime;
@@ -526,7 +533,9 @@ void CastSkill(int skillIndex, Vector3 startPos, Vector3 target,
 
 bool IsEnemySlowed(void) { return slowTimer > 0.0f; }
 bool IsEnemyBurning(void) { return burnTimer > 0.0f; }
+bool IsEnemyRooted(void) { return rootTimer > 0.0f; }
 bool IsAnySkillCoiling(void) {
+  if (rootTimer > 0.0f) return true;
 #if HAS_SKILL_WOOD
   return IsWoodSkillCoiling();
 #else
@@ -539,6 +548,12 @@ bool IsAnySkillShocking(void) {
 #else
   return false;
 #endif
+}
+
+void AddRootToEnemy(float duration) {
+  if (duration > rootTimer) {
+    rootTimer = duration;
+  }
 }
 
 // --- IMPLEMENTATION CỦA CÁC SKILL WRAPPERS ---
