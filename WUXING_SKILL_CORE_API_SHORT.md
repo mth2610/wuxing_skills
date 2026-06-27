@@ -41,6 +41,10 @@
 typedef struct { Vector3 position; float radius; bool active; } SkillProjectile;
 #endif
 
+// WARNING: When calling Skill_CalculateDamage or Skill_CalculateKnockback,
+// ONLY use exact enum values from `core/skill_manager.h` (e.g. SKILL_CAT_AOE_CONTROL).
+// DO NOT hallucinate category names like SKILL_CAT_AOE_BURST or compilation will fail!
+
 void Init[Name]Skill(int w, int h);
 void Cast[Name]Skill(Vector3 start, Vector3 target, SkillParams p);
 void Update[Name]Skill(float dt, Vector3 enemyPos, float enemyRadius);
@@ -58,6 +62,9 @@ void Deactivate[Name]Projectile(int index);
 Up to 8 active layers, evaluated internally by the engine:
 * Types: `FORCE_GRAVITY_DIR`, `FORCE_GRAVITY_POINT`, `FORCE_VORTEX`, `FORCE_WIND`, `FORCE_NOISE_PERLIN`, `FORCE_NOISE_CURL`, `FORCE_DRAG`, `FORCE_VISCOSITY`, `FORCE_RADIAL_AXIS`, `FORCE_VORTEX_AXIS`.
 * Falloff: `0` = Constant, `1` = Linear drop-off to 0 at radius, `2` = Quadratic.
+
+**WARNING:** `ForceField` is a container, NOT a layer! To modify it: `myField.layers[0].type = FORCE_VORTEX;`, `myField.layers[0].direction = (Vector3){0,1,0};`, `myField.layers[0].noiseScale = 0.05f;`, `myField.layerCount = 1;`. DO NOT use non-existent fields like `.frequency` or `.axisDir`.
+**WARNING:** DO NOT hallucinate global functions like `ApplyDamage()`, `ApplyKnockback()`, or `GetVfxActiveCameraPosition()`. Use `AddFloatingText()` and `AddKnockbackToEnemy()` instead, and `extern Camera3D camera` if you need camera position.
 
 ---
 

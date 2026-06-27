@@ -253,7 +253,7 @@ void UpdateWoodThornsSkill(float dt, Vector3 enemyPos, float enemyRadius)
                 Decal_Spawn(
                     th->pos,
                     (float)GetRandomValue(0, 360),
-                    THORN_BASE_RADIUS * th->scale * 5.2f,
+                    THORN_BASE_RADIUS * th->scale * 12.0f,
                     s_crackTex,
                     5.0f,
                     ColorAlpha(ColorLerp(ELEMENT_COLOR_WOOD, BLACK, 0.4f), 0.8f) /* green-tinted cracks */
@@ -263,7 +263,7 @@ void UpdateWoodThornsSkill(float dt, Vector3 enemyPos, float enemyRadius)
 
             // VFX Light emergence flare (lasts throughout active hold duration)
             if (!th->spawnedLight) {
-                VFXLight_Spawn(th->pos, ELEMENT_COLOR_WOOD, 55.0f * th->scale, 1.4f);
+                VFXLight_Spawn(th->pos, LIME, 70.0f * th->scale, 2.5f);
                 th->spawnedLight = true;
             }
 
@@ -326,8 +326,8 @@ void UpdateWoodThornsSkill(float dt, Vector3 enemyPos, float enemyRadius)
                 SpawnParticle((ParticleConfig){
                     .position         = particlePos,
                     .velocity         = vel,
-                    .colorStart       = ColorAlpha(ColorLerp(ELEMENT_COLOR_WOOD, YELLOW, 0.15f), 0.9f),
-                    .colorEnd         = ColorAlpha(ColorLerp(ELEMENT_COLOR_WOOD, BLACK, 0.6f), 0.0f),
+                    .colorStart       = ColorAlpha(LIME, 0.95f),
+                    .colorEnd         = ColorAlpha(GREEN, 0.0f),
                     .radius           = (float)GetRandomValue(12, 28) / 10.0f,
                     .lifetime         = (float)GetRandomValue(8, 16) / 10.0f,
                     .forceField       = NULL,

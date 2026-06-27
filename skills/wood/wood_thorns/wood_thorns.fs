@@ -54,6 +54,7 @@ void main()
     
     // Mix green and brown based on height to make it look like a sprouting plant/vine
     vec3 baseColor = mix(woodBrown, leafGreen, fragTexCoord.y);
+    baseColor *= 1.5; // Brighten the base color
     
     // Add vertical wood grain stripes using coordinate noise
     float grain = valueNoise(vec2(fragTexCoord.x * 24.0, fragTexCoord.y * 3.0));
@@ -66,7 +67,7 @@ void main()
     if (u_dissolve < 0.001)
     {
         // Add a gentle organic breathing glow to the edges of the green thorn and boost brightness
-        float edgeGlow = sin(u_time * 3.5) * 0.1f + 1.35f;
+        float edgeGlow = sin(u_time * 3.5) * 0.15 + 1.8;
         finalColor = vec4(diffuse.rgb * edgeGlow, diffuse.a);
         return;
     }
