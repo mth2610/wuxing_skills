@@ -7,6 +7,8 @@
 #include "skills/metal/sword_rain/sword_rain_skill.h"
 #include "core/trail_system.h" // MỚI: Thư viện quản lý dải khí, kiếm bay (Smart Projectiles)
 #include "core/ui_panel.h"
+#include "core/camera_fx.h"
+#include "core/screen_distort.h"
 #include <math.h>
 #include <stdio.h>
 
@@ -62,6 +64,7 @@ int main(void) {
   Shader defaultTrailShader =
       LoadShader(0, "skills/metal/metal_projectile/metal.fs"); // shader fallback chung
   InitTrailSystem(defaultTrailShader); // MỚI: Khởi tạo hệ thống Trail System
+  ScreenDistort_Init(screenWidth, screenHeight); // MỚI: Khởi tạo Screen Distortion pass
 
   Image img = GenImageGradientRadial(64, 64, 0.0f, WHITE, BLACK);
   Texture2D globalParticleTex = LoadTextureFromImage(img);
@@ -107,6 +110,9 @@ int main(void) {
     Vector3 mouseTarget3D = {0};
     UpdateSandbox(&player, &enemy, dt, &uiState, &mouseTarget3D);
 
+    // Cập nhật rung chấn camera
+    CameraFX_Update(&camera, dt);
+
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !uiState.clickedOnUI) {
       CastSkill(uiState.activeSkillIndex, player.position, mouseTarget3D,
                 uiState.currentParams);
@@ -114,6 +120,8 @@ int main(void) {
 
     // TEST FEATURE: Nhấn phím T để test dải màu (ColorGradient) và hoạt cảnh hạt (SpriteAnim)
     if (IsKeyPressed(KEY_T)) {
+      CameraFX_Shake(0.5f); // Kích hoạt rung lắc camera test với lực vừa phải (0.5)
+      ScreenDistort_AddSource(player.position, 120.0f, 0.8f, 1.2f, 250.0f); // MỚI: Thêm sóng kích nổ test tại vị trí người chơi
       // 1. Khởi tạo dải màu Gradient: Đỏ -> Cam -> Vàng -> Xanh lá -> Xanh dương
       static ColorGradient g;
       static bool gradientInit = false;
@@ -167,31 +175,34 @@ int main(void) {
     // MỚI: Cập nhật hệ thống Trail (Kiếm bay, dải khí, cổng phép thuật)
     UpdateTrailSystem(dt);
 
-    BeginDrawing();
+    // MỚI: Cập nhật các nguồn chấn động sóng kích biến dạng màn hình
+    ScreenDistort_Update(dt);
+
+    // 1. Vẽ toàn bộ thế giới 3D và các hiệu ứng hạt/dải khí vào RenderTexture phụ
+    ScreenDistort_Begin();
     ClearBackground(GetColor(0x111111FF));
 
     MyBeginMode3D(camera);
     DrawSandbox3D(&player, &enemy, mouseTarget3D, &uiState);
     DrawSkillManagerWorld3D();
 
-    // -------------------------------------------------------------
     // VẼ TẬP TRUNG TOÀN BỘ VFX HIỆU ỨNG (BATCHED DRAWING PASS)
-    // -------------------------------------------------------------
-    // 1. Vẽ Trail System (Do Trail System tự vô hiệu hóa Depth Mask và bật
-    // Additive Blend bên trong nó)
     DrawTrailEntities(camera);
 
-    // 2. Vẽ Particle System (Hạt)
     rlDisableDepthMask();
     BeginBlendMode(BLEND_ADDITIVE);
-
     DrawParticles(camera, globalParticleTex);
-
     EndBlendMode();
     rlEnableDepthMask();
-    // -------------------------------------------------------------
 
     MyEndMode3D();
+    ScreenDistort_End();
+
+    // 2. Vẽ trực tiếp lên màn hình chính với Shader biến dạng khúc xạ
+    BeginDrawing();
+    ClearBackground(BLACK);
+
+    ScreenDistort_Draw(camera); // Vẽ tấm bình phong 3D đã méo hình
 
     DrawSkillManagerOverlay();
 
@@ -214,6 +225,7 @@ int main(void) {
   UnloadTexture(testAtlasTex);
   UnloadParticleSystem();
   UnloadTrailSystem(); // MỚI: Giải phóng Trail System
+  ScreenDistort_Unload(); // MỚI: Giải phóng tài nguyên biến dạng màn hình
   UnloadSkillManager();
   CloseWindow();
 

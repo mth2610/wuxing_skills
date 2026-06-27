@@ -37,10 +37,12 @@ add_executable(wuxing
     core/emitter_system.c
     core/flow_map.c
     core/force_field.c
+    core/camera_fx.c
     core/particle_system.c
     core/path_spline.c
     core/ribbon_strip.c
     core/sandbox_core.c
+    core/screen_distort.c
     core/skill_manager.c
     core/sprite_anim.c
     core/trail_system.c
@@ -94,11 +96,12 @@ configure_file(core/shaders/particles_cpu.vs ${CMAKE_CURRENT_BINARY_DIR}/core/sh
 configure_file(core/shaders/particles_cpu.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/particles_cpu.fs COPYONLY)
 configure_file(core/shaders/taiji.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/taiji.fs COPYONLY)
 
-# --- Cập nhật: Sao chép thư viện Shaders chuyên dụng Phase 1 vào thư mục shaders/ ---
+# --- Cập nhật: Sao chép thư viện Shaders chuyên dụng Phase 1 và 2 vào thư mục shaders/ ---
 configure_file(core/shaders/additive_soft.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/additive_soft.fs COPYONLY)
 configure_file(core/shaders/rim_glow.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/rim_glow.fs COPYONLY)
 configure_file(core/shaders/dissolve.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/dissolve.fs COPYONLY)
 configure_file(core/shaders/flow_map.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/flow_map.fs COPYONLY)
+configure_file(core/shaders/distortion.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/distortion.fs COPYONLY)
 
 # --- Copy thêm Texture của skill ---
 configure_file(skills/fire/fire_ball/dragon_head.png ${CMAKE_CURRENT_BINARY_DIR}/skills/fire/fire_ball/dragon_head.png COPYONLY)
