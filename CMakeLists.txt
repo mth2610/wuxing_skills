@@ -39,6 +39,7 @@ file(GLOB_RECURSE SKILL_SOURCES CONFIGURE_DEPENDS "skills/**/*.c")
 add_executable(wuxing 
     main.c 
     # --- Core Systems ---
+    core/resource_manager.c
     core/color_gradient.c
     core/emitter_system.c
     core/flow_map.c

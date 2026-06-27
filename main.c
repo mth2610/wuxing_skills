@@ -9,6 +9,7 @@
 #include "core/ui_panel.h"
 #include "core/vfx_light.h"
 #include "core/vfx_test.h" // MỚI: Chỉ giữ duy nhất file test này để điều phối
+#include "core/resource_manager.h"
 #include "raylib.h"
 #include "raymath.h"
 #include "rlgl.h"
@@ -106,6 +107,7 @@ int main(void) {
   Texture2D testAtlasTex = LoadTextureFromImage(atlasImg);
   UnloadImage(atlasImg);
 
+  ResourceManager_Init();
   InitSkillManager(screenWidth, screenHeight);
   RegisterStaticOccluder((Vector3){400.0f, 0.0f, 320.0f}, 25.0f, 62.5f);
   RegisterStaticOccluder((Vector3){800.0f, 0.0f, 520.0f}, 30.0f, 75.0f);
@@ -238,6 +240,7 @@ int main(void) {
   DecalSystem_Unload();
   ScreenDistort_Unload();
   UnloadSkillManager();
+  ResourceManager_Unload();
   CloseWindow();
 
   return 0;

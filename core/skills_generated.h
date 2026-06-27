@@ -5,13 +5,9 @@
 #include "core/skill_manager.h"
 
 #include "skills/wood/wood_thorns/wood_thorns_skill.h"
-#include "skills/earth/stone_spear/stone_spear_skill.h"
-#include "skills/earth/earth_spikes/earth_spikes_skill.h"
 
 static inline void RegisterGeneratedSkills(void) {
     RegisterSkill("WOOD_THORNS", LIME, InitWoodThornsSkill, CastWoodThornsSkill, UpdateWoodThornsSkill, DrawWoodThornsSkill, UnloadWoodThornsSkill);
-    RegisterSkill("STONE_SPEAR", BROWN, InitStoneSpearSkill, CastStoneSpearSkill, UpdateStoneSpearSkill, DrawStoneSpearSkill, UnloadStoneSpearSkill);
-    RegisterSkill("EARTH_SPIKES", BROWN, InitEarthSpikesSkill, CastEarthSpikesSkill, UpdateEarthSpikesSkill, DrawEarthSpikesSkill, UnloadEarthSpikesSkill);
 }
 
 #endif // SKILLS_GENERATED_H

@@ -3,6 +3,14 @@
 
 #include "raylib.h"
 
+// Base colors for Wuxing and Taiji elements
+#define ELEMENT_COLOR_WATER (Color){ 41, 128, 185, 255 }  // Cyan-Blue
+#define ELEMENT_COLOR_WOOD  (Color){ 46, 204, 113, 255 }  // Vibrant Green
+#define ELEMENT_COLOR_FIRE  (Color){ 231, 76, 60, 255 }   // Crimson Red
+#define ELEMENT_COLOR_EARTH (Color){ 230, 126, 34, 255 }  // Ochre Brown / Orange
+#define ELEMENT_COLOR_METAL (Color){ 149, 165, 166, 255 } // Silver Gray
+#define ELEMENT_COLOR_TAIJI (Color){ 155, 89, 182, 255 } // Purple
+
 typedef enum {
     SKILL_WATER = 0,
     SKILL_METAL,
