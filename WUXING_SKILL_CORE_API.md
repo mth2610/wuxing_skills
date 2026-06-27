@@ -17,14 +17,17 @@
 * **Stack Allocations:** Standard stack variables and structs are allowed.
 
 ### 1.3 Automatic Directory Scanning & Registry
-New skills are automatically scanned and registered on compilation by `scripts/generate_registry.py`. Simply place your files in:
+New skills are automatically scanned and registered on compilation by `scripts/generate_registry.py`. Place your files in:
 ```
-skills/[element]/[skill_name]/
+skills/[element]/[skill_name]_skill/
     ├── [skill_name]_skill.h  # Lifecycle prototypes
     ├── [skill_name]_skill.c  # Physics, logic & rlgl rendering
     ├── [skill_name].fs        # Fragment shader (Optional, automatically copied)
     └── [texture].png          # Texture assets (Optional, automatically copied)
 ```
+
+> [!IMPORTANT]
+> **Include Path Folder Matching Rule:** When including your skill's own header file within its `.c` source file, the path **MUST EXACTLY match** the directory structure where it is saved. For example, if you place your files in `skills/wood/jade_burst_skill/`, you MUST include it as `#include "skills/wood/jade_burst_skill/jade_burst_skill.h"`. Beware of typo errors or omitting suffix markers like `_skill` from the folder name.
 
 ---
 
