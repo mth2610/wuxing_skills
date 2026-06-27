@@ -41,6 +41,7 @@ add_executable(wuxing
     wind_skill.c 
     skill_manager.c 
     sword_rain_skill.c 
+    shield_skill.c
     ui_panel.c 
     sandbox_core.c 
     ribbon_strip.c
@@ -54,6 +55,7 @@ add_executable(wuxing
     color_gradient.c
     sprite_anim.c
     flow_map.c
+
 )
 
 # Tự động copy file Shader và Texture vào thư mục build để game không bị lỗi load
@@ -67,6 +69,8 @@ configure_file(wood.fs ${CMAKE_CURRENT_BINARY_DIR}/wood.fs COPYONLY)
 configure_file(electric.fs ${CMAKE_CURRENT_BINARY_DIR}/electric.fs COPYONLY)
 configure_file(wind.fs ${CMAKE_CURRENT_BINARY_DIR}/wind.fs COPYONLY)
 configure_file(taiji.fs ${CMAKE_CURRENT_BINARY_DIR}/taiji.fs COPYONLY)
+configure_file(shield.fs ${CMAKE_CURRENT_BINARY_DIR}/shield.fs COPYONLY)
+configure_file(shield.vs ${CMAKE_CURRENT_BINARY_DIR}/shield.vs COPYONLY)
 
 # --- Copy Shaders của hệ thống hạt cũ ---
 # GPU mode (Linux/Windows - OpenGL 4.3+): Compute Shader + SSBO

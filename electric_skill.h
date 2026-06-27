@@ -13,7 +13,6 @@ typedef struct {
 #endif
 
 void InitElectricSkill(int screenWidth, int screenHeight);
-// Đổi lại thành float sizeScale ở đây
 void CastElectricSkill(Vector3 startPos, Vector3 target, float sizeScale);
 void UpdateElectricSkill(float dt);
 void DrawElectricSkill(void);

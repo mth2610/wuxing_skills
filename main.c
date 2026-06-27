@@ -12,6 +12,7 @@
 
 // Biến camera toàn cục
 Camera3D camera = {0};
+PlayerEntity player = {0};
 
 static void MyBeginMode3D(Camera3D camera) {
   rlDrawRenderBatchActive();
@@ -73,7 +74,6 @@ int main(void) {
   InitSwordRainSkill();
   InitUIPanel();
 
-  PlayerEntity player;
   EnemyEntity enemy;
   InitSandbox(&player, &enemy);
 

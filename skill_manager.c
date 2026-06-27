@@ -4,12 +4,16 @@
 #include "fluid_skill.h"
 #include "metal_skill.h"
 #include "raymath.h"
+#include "shield_skill.h"
 #include "tube_skill.h"
 #include "wind_skill.h"
 #include "wood_skill.h"
+#include "sandbox_core.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+
+extern PlayerEntity player;
 
 #define MAX_FLOATING_TEXTS 64
 #define MAX_TEMP_PROJECTILES 128
@@ -81,6 +85,8 @@ static void CastElectricWrapper(Vector3 startPos, Vector3 target,
                                 SkillParams params);
 static void CastWindWrapper(Vector3 startPos, Vector3 target,
                             SkillParams params);
+static void CastShieldWrapper(Vector3 startPos, Vector3 target,
+                              SkillParams params);
 
 static void UpdateFluidSkillWrapper(float dt, Vector3 enemyPos,
                                     float enemyRadius);
@@ -95,6 +101,13 @@ static void UpdateWoodSkillWrapper(float dt, Vector3 enemyPos,
 static void UpdateElectricSkillWrapper(float dt, Vector3 enemyPos,
                                        float enemyRadius);
 static void UpdateWindWrapper(float dt, Vector3 enemyPos, float enemyRadius);
+static void UpdateShieldSkillWrapper(float dt, Vector3 enemyPos,
+                                     float enemyRadius) {
+  (void)enemyPos;
+  (void)enemyRadius;
+  // Khóa chặt vị trí khiên nước di chuyển bám sát theo player.position có sẵn
+  UpdateShieldSkill(dt, player.position);
+}
 
 static void DrawCircleLines3D(Vector3 center, float radius, Color color) {
   const int segments = 24;
@@ -172,6 +185,10 @@ static void EnsureBuiltInRegistered(void) {
 
     RegisterSkill("WIND", LIGHTGRAY, InitWindSkill, CastWindWrapper,
                   UpdateWindWrapper, NULL, UnloadWindSkill);
+
+    // Đăng ký Hộ Thuẫn (Index 8) - Đã đồng nhất hàm Init không cần wrapper
+    RegisterSkill("SHIELD", SKYBLUE, InitShieldSkill, CastShieldWrapper,
+                  UpdateShieldSkillWrapper, NULL, UnloadShieldSkill);
   }
 }
 
@@ -354,6 +371,7 @@ void DrawSkillManagerWorld3D(void) {
   DrawElectricSkill();
   DrawMetalSkill();
   DrawWindSkill();
+  DrawShieldSkill(); // Vẽ khối cầu khiên nước
 }
 
 void DrawSkillManagerOverlay(void) {
@@ -500,7 +518,6 @@ static void CastFireWrapper(Vector3 startPos, Vector3 target,
 
 static void CastWoodWrapper(Vector3 startPos, Vector3 target,
                             SkillParams params) {
-  // Mới: Chỉ truyền 3 tham số
   CastWoodSkill(startPos, target, params);
 }
 
@@ -522,6 +539,17 @@ static void CastElectricWrapper(Vector3 startPos, Vector3 target,
 static void CastWindWrapper(Vector3 startPos, Vector3 target,
                             SkillParams params) {
   CastWindSkill(startPos, target, params);
+}
+
+static void CastShieldWrapper(Vector3 startPos, Vector3 target,
+                              SkillParams params) {
+  (void)target; // Chiêu tự buff lên bản thân nên bỏ qua hướng target
+  float baseRadius = 30.0f;
+  float duration = 5.0f;
+  CastShieldSkill(startPos,
+                  baseRadius *
+                      (params.sizeScale > 0.0f ? params.sizeScale : 1.0f),
+                  duration);
 }
 
 static void UpdateFluidSkillWrapper(float dt, Vector3 enemyPos,
@@ -603,8 +631,7 @@ static void UpdateWoodSkillWrapper(float dt, Vector3 enemyPos,
   for (int i = numWood - 1; i >= 0; i--) {
     if (tempProjectiles[i].active &&
         Vector3Distance(tempProjectiles[i].position, enemyPos) <
-            (numWood +
-             enemyRadius)) { // Giữ nguyên logic tính va chạm gốc của bạn
+            (numWood + enemyRadius)) {
       DeactivateWoodProjectile(i);
       AddFloatingText(tempProjectiles[i].position, "30", LIME, 22.0f, 0.7f);
       AddFloatingText(tempProjectiles[i].position, "ROOTED!", GREEN, 18.0f,
@@ -631,8 +658,11 @@ static void UpdateElectricSkillWrapper(float dt, Vector3 enemyPos,
 }
 
 static void UpdateWindWrapper(float dt, Vector3 enemyPos, float enemyRadius) {
+  (void)enemyPos;
+  (void)enemyRadius;
   UpdateWindSkill(dt);
 }
+
 
 ProjectedPoint ProjectPointCached(Vector3 worldPos, Camera3D cam) {
   ProjectedPoint pt;

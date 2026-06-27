@@ -32,10 +32,13 @@ void InitUIPanel(void) {
   if (skillCount > 32)
     skillCount = 32;
 
-  // Đã căn chỉnh lại khoảng cách và kích thước nút bấm để vừa vặn 8 chiêu trên
-  // màn hình
+  // Tự động tính toán lại độ rộng và khoảng cách nút bấm dựa trên số lượng
+  // skill thực tế để không bị tràn
+  float buttonWidth = 90.0f;
+  float spacing = 8.0f;
   for (int i = 0; i < skillCount; i++) {
-    skillButtons[i] = (Rectangle){20 + i * 105, 20, 95, 45};
+    skillButtons[i] =
+        (Rectangle){20 + i * (buttonWidth + spacing), 20, buttonWidth, 45};
   }
 }
 
@@ -43,9 +46,9 @@ void UpdateUIPanel(Vector2 mousePos, UIPanelState *state) {
   state->clickedOnUI = false;
   hoverSkillIndex = -1;
 
-  // Cập nhật: Thêm chỉ số 1 (TUBE) vào mảng và tăng tổng số lên 8
-  int availableSkills[] = {0, 1, 2, 3, 4, 5, 6, 7};
-  int availableCount = 8;
+  // Danh sách khả dụng tăng lên 9 kỹ năng (bao gồm Index 8 là SHIELD)
+  int availableSkills[] = {0, 1, 2, 3, 4, 5, 6, 7, 8};
+  int availableCount = 9;
   bool activeValid = false;
   for (int i = 0; i < availableCount; i++) {
     if (state->activeSkillIndex == availableSkills[i]) {
@@ -133,9 +136,9 @@ void DrawUIPanel(const UIPanelState *state) {
   rlLoadIdentity();
   rlSetTexture(0);
 
-  // Cập nhật: Tương thích với danh sách 8 chiêu thức
-  int availableSkills[] = {0, 1, 2, 3, 4, 5, 6, 7};
-  int availableCount = 8;
+  // Đồng bộ danh sách hiển thị với 9 chiêu thức
+  int availableSkills[] = {0, 1, 2, 3, 4, 5, 6, 7, 8};
+  int availableCount = 9;
 
   Vector2 mousePos = GetMousePosition();
 
@@ -158,10 +161,10 @@ void DrawUIPanel(const UIPanelState *state) {
     snprintf(btnText, sizeof(btnText), "%s SKILL", skillName);
 
     int textWidth = MeasureText(
-        btnText, 10); // Đổi size chữ xuống 10 để nhét vừa nút hẹp hơn
+        btnText, 9); // Size chữ để 9 để hiển thị vừa vặn trong khung hẹp
     DrawText(btnText,
              (int)(skillButtons[i].x + (skillButtons[i].width - textWidth) / 2),
-             (int)(skillButtons[i].y + 16), 10, WHITE);
+             (int)(skillButtons[i].y + 18), 9, WHITE);
   }
 
   // Quantity
