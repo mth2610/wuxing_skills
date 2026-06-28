@@ -126,8 +126,10 @@ ForceField_AddLayer(&s_forceField, (ForceLayer){
 | `FORCE_NOISE_CURL` | Offset seed | Unused | Noise amplitude | Unused | Unused | Frequency of noise | Speed of animation |
 | `FORCE_DRAG` | Unused | Unused | Linear drag coefficient (0..1) | Unused | Unused | Unused | Unused |
 | `FORCE_VISCOSITY` | Unused | Unused | Viscous damping coefficient | Unused | Unused | Unused | Unused |
-| `FORCE_RADIAL_AXIS` | Point on axis | Axis line (normalized) | Positive = push, Negative = pull | Active range | 1=Linear | Unused | Unused |
-| `FORCE_VORTEX_AXIS` | Point on axis | Axis line (normalized) | Rotation speed around axis | Active range | 1=Linear | Unused | Unused |
+| `FORCE_RADIAL_AXIS` | Unused (Dynamic) | Unused (Dynamic) | Positive = push, Negative = pull | Active range | 1=Linear | Unused | Unused |
+| `FORCE_VORTEX_AXIS` | Unused (Dynamic) | Unused (Dynamic) | Rotation speed around axis | Active range | 1=Linear | Unused | Unused |
+
+* **Dynamic Axis (RADIAL_AXIS / VORTEX_AXIS):** These forces ignore the `origin` and `direction` in the `ForceLayer` struct. Instead, they dynamically use the `axisOrigin` and `axisDir` passed each frame during evaluation (e.g. via `SetFollowerAxis()` for trails).
 
 * **Falloff Semantic:** `0.0` = constant force throughout, `1.0` = linear decrease to zero at radius boundary, `2.0` = quadratic decrease (natural gravitational/magnetic falloff).
 * **Viscosity Damping:** Use `ForceField_GetViscosityDamping(&s_forceField, dt)` inside manual update loops to damp velocity: `myVel = Vector3Scale(myVel, dampFactor);`.
@@ -187,7 +189,7 @@ typedef struct {
 ```
 * **Follower Trails:** For sword swings or aura attachments, set type to `TRAIL_TYPE_FOLLOWER`. Every frame, you must call:
   - `SetFollowerAxis(trailId, basePos, normalizedDir);` (Sets orientation)
-  - `UpdateFollowerPosition(trailId, tipPos, dt);` (Updates head position)
+  - `UpdateFollowerPosition(trailId, tipPos);` (Updates head position)
 * **Lifecycle:** Free active trails when complete by calling `KillTrail(trailId);`.
 
 ---

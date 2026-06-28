@@ -59,6 +59,7 @@ add_executable(wuxing
     core/vfx_light.c
     core/decal_system.c
     core/vfx_test.c
+    core/skill_debugger.c
 
     # --- Skills ---
     ${SKILL_SOURCES}

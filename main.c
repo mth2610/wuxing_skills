@@ -4,6 +4,7 @@
 #include "core/post_fx.h"
 #include "core/sandbox_core.h"
 #include "core/screen_distort.h"
+#include "core/skill_debugger.h"
 #include "core/skill_manager.h"
 #include "core/trail_system.h"
 #include "core/ui_panel.h"
@@ -113,6 +114,7 @@ int main(void) {
   RegisterStaticOccluder((Vector3){800.0f, 0.0f, 520.0f}, 30.0f, 75.0f);
   RegisterStaticOccluder((Vector3){600.0f, 0.0f, 260.0f}, 20.0f, 50.0f);
   InitUIPanel();
+  SkillDebugger_Init();
 
   EnemyEntity enemy;
   InitSandbox(&player, &enemy);
@@ -144,8 +146,35 @@ int main(void) {
 
   SetTargetFPS(60);
 
+  bool g_gamePaused = false;
+  bool g_stepNextFrame = false;
+  bool g_slowMotion = false;
+
   while (!WindowShouldClose()) {
     float dt = GetFrameTime();
+
+    // -------------------------------------------------------------------------
+    // TIME CONTROL FOR DEBUGGING / SCREENSHOTTING
+    // -------------------------------------------------------------------------
+    if (IsKeyPressed(KEY_V)) g_gamePaused = !g_gamePaused;
+    if (IsKeyPressed(KEY_B)) g_stepNextFrame = true;
+    if (IsKeyPressed(KEY_M)) g_slowMotion = !g_slowMotion;
+
+    if (g_gamePaused) {
+        if (g_stepNextFrame) {
+            dt = 1.0f / 60.0f; // Force exactly 1 frame of time
+            g_stepNextFrame = false;
+        } else {
+            dt = 0.0f;
+        }
+    } else if (g_slowMotion) {
+        dt *= 0.1f; // Slow motion 10% speed
+    }
+    
+    SkillDebugger_CheckInput();
+    if (g_isDebuggerCapturing) {
+        dt = 0.0f; // Freeze time during automated screenshot capture
+    }
 
     UpdateUIPanel(GetMousePosition(), &uiState);
 
@@ -173,18 +202,30 @@ int main(void) {
     DecalSystem_Update(dt);
     ScreenDistort_Update(dt);
 
+    SkillDebugger_PreRender();
+
     BeginDrawing();
 
     ScreenDistort_Begin();
-    ClearBackground(GetColor(0x111111FF));
+    if (g_isDebuggerCapturing) {
+        ClearBackground(BLACK);
+    } else {
+        ClearBackground(GetColor(0x111111FF));
+    }
 
     MyBeginMode3D(camera);
-    DrawSandbox3D(&player, &enemy, mouseTarget3D, &uiState);
+    if (!g_isDebuggerCapturing) {
+        DrawSandbox3D(&player, &enemy, mouseTarget3D, &uiState);
+    }
 
     // Vẽ Decal hệ thống sát sàn đấu
-    DecalSystem_Draw();
+    if (!g_debugHideDecals) {
+        DecalSystem_Draw();
+    }
 
-    DrawSkillManagerWorld3D();
+    if (!g_debugHideMeshes) {
+        DrawSkillManagerWorld3D();
+    }
 
     // =========================================================================
     // MỚI: TOÀN BỘ PHẦN TRUY XUẤT VÀ VẼ KHỐI CẦU DEBUG LIGHT ĐÃ ĐƯỢC BỐC SANG
@@ -192,13 +233,17 @@ int main(void) {
     // =========================================================================
     // VFXTest_DrawDebugLights3D();
 
-    DrawTrailEntities(camera);
+    if (!g_debugHideTrails) {
+        DrawTrailEntities(camera);
+    }
 
-    rlDisableDepthMask();
-    BeginBlendMode(BLEND_ADDITIVE);
-    DrawParticles(camera, globalParticleTex);
-    EndBlendMode();
-    rlEnableDepthMask();
+    if (!g_debugHideParticles) {
+        rlDisableDepthMask();
+        BeginBlendMode(BLEND_ADDITIVE);
+        DrawParticles(camera, globalParticleTex);
+        EndBlendMode();
+        rlEnableDepthMask();
+    }
 
     MyEndMode3D();
     ScreenDistort_End();
@@ -219,18 +264,22 @@ int main(void) {
     DrawText("ENEMY", (int)enemyScreenHead.x - 22, (int)enemyScreenHead.y, 12,
              WHITE);
 
-    DrawUIPanel(&uiState);
+    if (!g_isDebuggerCapturing) {
+        DrawUIPanel(&uiState);
 
-    DrawText(TextFormat("FPS: %d", GetFPS()), 10, 640, 20, GREEN);
+        DrawText(TextFormat("FPS: %d", GetFPS()), 10, 640, 20, GREEN);
 
-    // =========================================================================
-    // MỚI: IN THÔNG TIN TEXT DEBUG LÊN HUD CŨNG ĐƯỢC QUẢN LÝ TẬP TRUNG
-    // =========================================================================
-    VFXTest_DrawHUD();
+        // =========================================================================
+        // MỚI: IN THÔNG TIN TEXT DEBUG LÊN HUD CŨNG ĐƯỢC QUẢN LÝ TẬP TRUNG
+        // =========================================================================
+        VFXTest_DrawHUD();
 
-    DrawText("Phím P: Đổi chế độ quái | Click trái: Tung chiêu | X: Khinh công "
-             "| Phím T: Test Light/Gradient/Anim",
-             10, 670, 20, LIGHTGRAY);
+        DrawText("Phím P: Đổi chế độ quái | Click trái: Tung chiêu | X: Khinh công", 10, 650, 20, LIGHTGRAY);
+        DrawText("V: Pause | B: Step Forward | N: Screenshot | M: Slow Motion (10%)", 10, 675, 20, ORANGE);
+    }
+             
+    SkillDebugger_PostRender(uiState.activeSkillIndex, player.position, mouseTarget3D);
+
     EndDrawing();
   }
 
