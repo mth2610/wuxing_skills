@@ -37,7 +37,7 @@ void Environment_DrawSmartShadow(Vector3 pos, EnvShadowShapeType shape, float wi
     
     rlSetTexture(0);
     rlDisableDepthTest();
-    rlDisableDepthMask();
+    rlDisableDepthMask(); rlDisableBackfaceCulling();
     
     if (shape == ENV_SHAPE_SPHERE) {
         // Chiều cao hiện tại so với mặt đất (pos.y)
@@ -54,9 +54,9 @@ void Environment_DrawSmartShadow(Vector3 pos, EnvShadowShapeType shape, float wi
         };
         
         Color centerColor = { s_shadowColor.r, s_shadowColor.g, s_shadowColor.b, (unsigned char)(s_shadowColor.a * shadowAlpha) };
-        Color outerColor = { s_shadowColor.r, s_shadowColor.g, s_shadowColor.b, 0 };
         
         int segments = 16;
+        rlColor4ub(centerColor.r, centerColor.g, centerColor.b, centerColor.a);
         rlBegin(RL_TRIANGLES);
         for (int i = 0; i < segments; i++) {
             float angle1 = ((float)i / segments) * 2.0f * PI;
@@ -67,12 +67,9 @@ void Environment_DrawSmartShadow(Vector3 pos, EnvShadowShapeType shape, float wi
             float rx2 = cosf(angle2) * width * shadowScale;
             float rz2 = sinf(angle2) * width * shadowScale;
             
-            rlColor4ub(centerColor.r, centerColor.g, centerColor.b, centerColor.a);
             rlVertex3f(shadowCenter.x, yGround, shadowCenter.z);
-            
-            rlColor4ub(outerColor.r, outerColor.g, outerColor.b, 0);
-            rlVertex3f(shadowCenter.x + rx1, yGround, shadowCenter.z + rz1);
             rlVertex3f(shadowCenter.x + rx2, yGround, shadowCenter.z + rz2);
+            rlVertex3f(shadowCenter.x + rx1, yGround, shadowCenter.z + rz1);
         }
         rlEnd();
     }
@@ -109,30 +106,28 @@ void Environment_DrawSmartShadow(Vector3 pos, EnvShadowShapeType shape, float wi
         rlEnd();
         
         // 2. Đầu bóng (mờ và tròn)
+        rlColor4ub(s_shadowColor.r, s_shadowColor.g, s_shadowColor.b, (unsigned char)(s_shadowColor.a * 0.25f));
         rlBegin(RL_TRIANGLES);
-        for (int i = 0; i < 12; i++) {
-            float angle1 = ((float)i / 12.0f) * 2.0f * PI;
-            float angle2 = ((float)(i + 1) / 12.0f) * 2.0f * PI;
+        for (int i = 0; i < 16; i++) {
+            float angle1 = ((float)i / 16.0f) * 2.0f * PI;
+            float angle2 = ((float)(i + 1) / 16.0f) * 2.0f * PI;
             
-            rlColor4ub(s_shadowColor.r, s_shadowColor.g, s_shadowColor.b, (unsigned char)(s_shadowColor.a * 0.25f));
             rlVertex3f(topCenter.x, yGround, topCenter.z);
-            rlColor4ub(s_shadowColor.r, s_shadowColor.g, s_shadowColor.b, 0);
-            rlVertex3f(topCenter.x + cosf(angle1) * tipWidth, yGround, topCenter.z + sinf(angle1) * tipWidth);
             rlVertex3f(topCenter.x + cosf(angle2) * tipWidth, yGround, topCenter.z + sinf(angle2) * tipWidth);
+            rlVertex3f(topCenter.x + cosf(angle1) * tipWidth, yGround, topCenter.z + sinf(angle1) * tipWidth);
         }
         rlEnd();
         
         // 3. Chân bóng (đậm)
+        rlColor4ub(s_shadowColor.r, s_shadowColor.g, s_shadowColor.b, s_shadowColor.a);
         rlBegin(RL_TRIANGLES);
-        for (int i = 0; i < 12; i++) {
-            float angle1 = ((float)i / 12.0f) * 2.0f * PI;
-            float angle2 = ((float)(i + 1) / 12.0f) * 2.0f * PI;
+        for (int i = 0; i < 16; i++) {
+            float angle1 = ((float)i / 16.0f) * 2.0f * PI;
+            float angle2 = ((float)(i + 1) / 16.0f) * 2.0f * PI;
             
-            rlColor4ub(s_shadowColor.r, s_shadowColor.g, s_shadowColor.b, s_shadowColor.a);
             rlVertex3f(baseCenter.x, yGround, baseCenter.z);
-            rlColor4ub(s_shadowColor.r, s_shadowColor.g, s_shadowColor.b, 0);
-            rlVertex3f(baseCenter.x + cosf(angle1) * width, yGround, baseCenter.z + sinf(angle1) * width);
             rlVertex3f(baseCenter.x + cosf(angle2) * width, yGround, baseCenter.z + sinf(angle2) * width);
+            rlVertex3f(baseCenter.x + cosf(angle1) * width, yGround, baseCenter.z + sinf(angle1) * width);
         }
         rlEnd();
     }
@@ -200,7 +195,7 @@ void Environment_DrawSmartShadow(Vector3 pos, EnvShadowShapeType shape, float wi
         rlEnd();
     }
     
-    rlEnableDepthMask();
+    rlEnableDepthMask(); rlEnableBackfaceCulling();
     rlEnableDepthTest();
 }
 
