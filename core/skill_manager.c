@@ -26,7 +26,7 @@
 #if HAS_SKILL_WOOD
 #include "skills/wood/wood_roots/wood_skill.h"
 #endif
-#include "core/sandbox_core.h"
+#include "sandbox/sandbox_core.h"
 #include "core/skills_generated.h"
 #include <math.h>
 #include <stdio.h>

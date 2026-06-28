@@ -9,7 +9,7 @@
 #include "core/skill_manager.h"
 #include "core/resource_manager.h"
 #include "core/procedural_mesh_utils.h"
-#include "core/sandbox_core.h"
+#include "sandbox/sandbox_core.h"
 #include "rlgl.h"
 #include "raymath.h"
 #include <math.h>

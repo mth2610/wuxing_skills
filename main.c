@@ -2,20 +2,22 @@
 #include "core/decal_system.h"
 #include "core/particle_system.h"
 #include "core/post_fx.h"
-#include "core/sandbox_core.h"
+#include "sandbox/sandbox_core.h"
 #include "core/screen_distort.h"
-#include "core/skill_debugger.h"
+#include "sandbox/skill_debugger.h"
 #include "core/skill_manager.h"
 #include "core/trail_system.h"
-#include "core/ui_panel.h"
+#include "sandbox/ui_panel.h"
 #include "core/vfx_light.h"
-#include "core/vfx_test.h" // MỚI: Chỉ giữ duy nhất file test này để điều phối
+#include "sandbox/vfx_test.h" // MỚI: Chỉ giữ duy nhất file test này để điều phối
 #include "core/resource_manager.h"
 #include "core/skill_helper.h"
 #include "raylib.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <math.h>
+#include "environment/environment_system.h"
+#include "core/map_manager.h"
 #include <stdio.h>
 
 // Biến camera toàn cục
@@ -118,6 +120,8 @@ int main(void) {
   RegisterStaticOccluder((Vector3){600.0f, 0.0f, 260.0f}, 20.0f, 50.0f);
   InitUIPanel();
   SkillDebugger_Init();
+  Environment_Init();
+  MapManager_Init();
 
   EnemyEntity enemy;
   InitSandbox(&player, &enemy);
@@ -162,6 +166,10 @@ int main(void) {
     if (IsKeyPressed(KEY_V)) g_gamePaused = !g_gamePaused;
     if (IsKeyPressed(KEY_B)) g_stepNextFrame = true;
     if (IsKeyPressed(KEY_M)) g_slowMotion = !g_slowMotion;
+    if (IsKeyPressed(KEY_K)) {
+        int nextMap = (MapManager_GetActiveIndex() + 1) % MapManager_GetCount();
+        MapManager_SetActiveIndex(nextMap);
+    }
 
     if (g_gamePaused) {
         if (g_stepNextFrame) {
@@ -186,9 +194,38 @@ int main(void) {
 
     CameraFX_Update(&camera, dt);
 
+    static bool isDragging = false;
+    static int pathCount = 0;
+    static Vector3 pathPoints[32];
+
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !uiState.clickedOnUI) {
-      CastSkill(uiState.activeSkillIndex, player.position, mouseTarget3D,
-                uiState.currentParams);
+      isDragging = true;
+      pathCount = 1;
+      pathPoints[0] = mouseTarget3D;
+    }
+
+    if (isDragging) {
+      // Add points if distance > 5.0f
+      if (pathCount < 32) {
+        if (Vector3Distance(mouseTarget3D, pathPoints[pathCount - 1]) > 5.0f) {
+          pathPoints[pathCount++] = mouseTarget3D;
+        }
+      }
+
+      // Draw the drag path for visual feedback
+      for (int i = 0; i < pathCount - 1; i++) {
+        DrawLine3D(pathPoints[i], pathPoints[i + 1], GREEN);
+      }
+
+      if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+        isDragging = false;
+        uiState.currentParams.pathPointCount = pathCount;
+        for (int i = 0; i < pathCount; i++) {
+          uiState.currentParams.pathPoints[i] = pathPoints[i];
+        }
+        CastSkill(uiState.activeSkillIndex, player.position, mouseTarget3D,
+                  uiState.currentParams);
+      }
     }
 
     // =========================================================================
@@ -206,6 +243,8 @@ int main(void) {
     VFXLight_Update(dt);
     DecalSystem_Update(dt);
     ScreenDistort_Update(dt);
+    Environment_Update(dt);
+    MapManager_Update(dt);
 
     SkillDebugger_PreRender();
 
@@ -219,6 +258,7 @@ int main(void) {
     }
 
     MyBeginMode3D(camera);
+    MapManager_DrawActive();
     if (!g_isDebuggerCapturing) {
         DrawSandbox3D(&player, &enemy, mouseTarget3D, &uiState);
     }
@@ -280,7 +320,7 @@ int main(void) {
         VFXTest_DrawHUD();
 
         DrawText("Phím P: Đổi chế độ quái | Click trái: Tung chiêu | X: Khinh công", 10, 650, 20, LIGHTGRAY);
-        DrawText("V: Pause | B: Step Forward | N: Screenshot | M: Slow Motion (10%)", 10, 675, 20, ORANGE);
+        DrawText("V: Pause | B: Step Forward | N: Screenshot | M: Slow Motion (10%) | K: Đổi Map", 10, 675, 20, ORANGE);
     }
              
     SkillDebugger_PostRender(uiState.activeSkillIndex, player.position, mouseTarget3D);
@@ -298,6 +338,7 @@ int main(void) {
   DamageVolume_Unload();
   EmitterSystem_Unload();
   ResourceManager_Unload();
+  MapManager_Unload();
   CloseWindow();
 
   return 0;

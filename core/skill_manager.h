@@ -47,6 +47,10 @@ typedef struct {
     CastAnchorType anchorType;
     CastPathType pathType;
     bool showPortal;
+    
+    // Path Drawing Data
+    int pathPointCount;
+    Vector3 pathPoints[32]; // Max 32 points for a drag-to-cast path
 } SkillParams;
 
 float Skill_CalculateDamage(SkillCategory cat, SkillParams params);

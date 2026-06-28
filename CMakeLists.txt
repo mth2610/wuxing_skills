@@ -31,14 +31,20 @@ FetchContent_MakeAvailable(raylib)
 
 # Tự động quét và sinh registry cho skill mới trước khi build
 execute_process(COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_registry.py)
+execute_process(COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_map_registry.py)
 
 # Tự động quét toàn bộ mã nguồn của kỹ năng trong thư mục skills/
 file(GLOB_RECURSE SKILL_SOURCES CONFIGURE_DEPENDS "skills/**/*.c")
+# Tự động quét toàn bộ mã nguồn của map trong thư mục maps/
+file(GLOB_RECURSE MAP_SOURCES CONFIGURE_DEPENDS "maps/**/*.c")
 
 # Khai báo mục tiêu build ứng dụng chạy trực tiếp trên máy tính
 add_executable(wuxing 
     main.c 
+    # --- Environment System ---
+    environment/environment_system.c
     # --- Core Systems ---
+    core/map_manager.c
     core/resource_manager.c
     core/color_gradient.c
     core/emitter_system.c
@@ -49,22 +55,26 @@ add_executable(wuxing
     core/path_spline.c
     core/post_fx.c
     core/ribbon_strip.c
-    core/sandbox_core.c
     core/screen_distort.c
     core/skill_manager.c
     core/sprite_anim.c
     core/trail_system.c
-    core/ui_panel.c
     core/utils_math.c
     core/vfx_light.c
     core/decal_system.c
     core/procedural_mesh_utils.c
-    core/vfx_test.c
-    core/skill_debugger.c
     core/skill_helper.c
+
+    # --- Sandbox & Test Simulator ---
+    sandbox/sandbox_core.c
+    sandbox/ui_panel.c
+    sandbox/vfx_test.c
+    sandbox/skill_debugger.c
 
     # --- Skills ---
     ${SKILL_SOURCES}
+    # --- Maps ---
+    ${MAP_SOURCES}
 )
 
 # Thêm root path để resolve includes có tiền tố core/ và skills/
@@ -77,6 +87,17 @@ file(GLOB_RECURSE SKILL_ASSETS CONFIGURE_DEPENDS
     "skills/**/*.png"
 )
 foreach(asset_path ${SKILL_ASSETS})
+    file(RELATIVE_PATH rel_path ${CMAKE_CURRENT_SOURCE_DIR} ${asset_path})
+    configure_file(${asset_path} ${CMAKE_CURRENT_BINARY_DIR}/${rel_path} COPYONLY)
+endforeach()
+
+# Tự động quét toàn bộ tài nguyên (Shaders/Textures) của map và copy vào thư mục build
+file(GLOB_RECURSE MAP_ASSETS CONFIGURE_DEPENDS 
+    "maps/**/*.fs"
+    "maps/**/*.vs"
+    "maps/**/*.png"
+)
+foreach(asset_path ${MAP_ASSETS})
     file(RELATIVE_PATH rel_path ${CMAKE_CURRENT_SOURCE_DIR} ${asset_path})
     configure_file(${asset_path} ${CMAKE_CURRENT_BINARY_DIR}/${rel_path} COPYONLY)
 endforeach()

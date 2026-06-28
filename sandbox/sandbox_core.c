@@ -1,6 +1,7 @@
-#include "core/sandbox_core.h"
+#include "sandbox/sandbox_core.h"
 #include "core/skill_manager.h"
 #include "skills/taiji/wind_storm/wind_skill.h"
+#include "environment/environment_system.h"
 #include "raymath.h"
 #include "rlgl.h"
 
@@ -349,16 +350,6 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
 }
 
 void DrawSandbox3D(const PlayerEntity* player, const EnemyEntity* enemy, Vector3 mouseTarget, UIPanelState* uiState) {
-    DrawCircleSolid3D((Vector3){ 600.0f, -0.05f, 440.0f }, 1805.0f, GetColor(0x1B1B1FFF));
-    DrawCircleSolid3D((Vector3){ 600.0f, 0.0f, 440.0f }, 1800.0f, GetColor(0x222228FF));
-    
-    DrawCircleOutline3D((Vector3){ 600.0f, 0.08f, 440.0f }, 1600.0f, GetColor(0x5A5A6FFF));
-    DrawCircleOutline3D((Vector3){ 600.0f, 0.08f, 440.0f }, 1200.0f, GetColor(0x4F4F5FFF));
-    DrawCircleOutline3D((Vector3){ 600.0f, 0.08f, 440.0f }, 400.0f, GetColor(0x444455FF));
-    
-    DrawLine3D((Vector3){ 600.0f - 1800.0f, 0.08f, 440.0f }, (Vector3){ 600.0f + 1800.0f, 0.08f, 440.0f }, GetColor(0x40404FFF));
-    DrawLine3D((Vector3){ 600.0f, 0.08f, 440.0f - 1800.0f }, (Vector3){ 600.0f, 0.08f, 440.0f + 1800.0f }, GetColor(0x40404FFF));
-
     if (player->position.y > 5.0f) {
         DrawLine3D((Vector3){ player->position.x, 0.0f, player->position.z }, player->position, ColorAlpha(GRAY, 0.5f));
     }
@@ -371,10 +362,15 @@ void DrawSandbox3D(const PlayerEntity* player, const EnemyEntity* enemy, Vector3
         Vector3 center = { pillars[i].position.x, pillars[i].position.y + pillarHeight * 0.5f, pillars[i].position.z };
         Color pCol = (i == 0) ? GetColor(0xDAA520FF) : GetColor(0x3B3B42FF);
         Color pLineCol = (i == 0) ? YELLOW : GetColor(0x73737CFF);
+        
+        Environment_DrawSmartShadow(pillars[i].position, ENV_SHAPE_CYLINDER, pillars[i].radius, pillarHeight);
         DrawCylinder(center, pillars[i].radius, pillars[i].radius, pillarHeight, 16, pCol);
         DrawCylinderWires(center, pillars[i].radius, pillars[i].radius, pillarHeight, 16, pLineCol);
     }
 
+    Environment_DrawSmartShadow(enemy->position, ENV_SHAPE_SPHERE, 30.0f, 30.0f);
     DrawCharacter3D(enemy->position, 30.0f, GetColor(0xFFC0CBFF), IsEnemySlowed() ? GetColor(0x1B4F72FF) : (IsEnemyBurning() ? RED : GetColor(0x8B2500FF)), IsEnemySlowed() ? SKYBLUE : (IsEnemyBurning() ? YELLOW : GetColor(0xFF5500FF)), false, (Vector3){0});
+    
+    Environment_DrawSmartShadow(player->position, ENV_SHAPE_SPHERE, 25.0f, 25.0f);
     DrawCharacter3D(player->position, 25.0f, GetColor(0xFFD39BFF), GetColor(0x3B5998FF), player->isDashing ? GetRegisteredSkillColor(uiState->activeSkillIndex) : GetColor(0xCCCCCCFF), true, mouseTarget);
 }

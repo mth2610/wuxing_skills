@@ -158,33 +158,55 @@ void CastSeismicPillarsSkill(Vector3 startPos, Vector3 target, SkillParams param
     float baseDmg = Skill_CalculateDamage(SKILL_CAT_AOE_CONTROL, params);
     float baseKb = Skill_CalculateKnockback(SKILL_CAT_AOE_CONTROL, params);
 
-    Vector3 dir = Vector3Subtract(target, startPos);
-    dir.y = 0.0f;
-    float totalDist = Vector3Length(dir);
-    if (totalDist < 1.0f) {
-        dir = (Vector3){ 0.0f, 0.0f, 1.0f };
-        totalDist = 1.0f;
+    float totalDist = 0.0f;
+    float cumDist[32] = {0};
+    
+    if (params.pathPointCount > 1) {
+        for (int k = 0; k < params.pathPointCount - 1; k++) {
+            float d = Vector3Distance(params.pathPoints[k], params.pathPoints[k+1]);
+            totalDist += d;
+            cumDist[k+1] = totalDist;
+        }
     } else {
-        dir = Vector3Normalize(dir);
+        Vector3 toTarget = { target.x - startPos.x, 0.0f, target.z - startPos.z };
+        totalDist = Vector3Length(toTarget);
+        if (totalDist < 1.0f) totalDist = 1.0f;
     }
 
-    // Spawn pillars sequentially along the line from startPos to target
     float step = 15.0f * spawnScale;
     int count = (int)(totalDist / step) + 1;
     if (count < 4) count = 4;
     if (count > PILLARS_PER_CAST) count = PILLARS_PER_CAST;
+    
+    // Recalculate step if count is capped
+    if (count == PILLARS_PER_CAST && totalDist > step * PILLARS_PER_CAST) {
+        step = totalDist / (float)(count - 1);
+    }
 
     for (int i = 0; i < count; i++) {
         int slot = FindFreeSlot();
         if (slot < 0) break;
 
-        // Position along the path
         float offset = (float)i * step;
-        Vector3 pillarPos = {
-            startPos.x + dir.x * offset,
-            0.0f,
-            startPos.z + dir.z * offset
-        };
+        Vector3 pillarPos = startPos;
+        Vector3 dir = {0, 0, 1};
+
+        if (params.pathPointCount > 1) {
+            for (int k = 0; k < params.pathPointCount - 1; k++) {
+                if (offset >= cumDist[k] && (offset <= cumDist[k+1] || k == params.pathPointCount - 2)) {
+                    float segmentLen = cumDist[k+1] - cumDist[k];
+                    float t = (segmentLen > 0.001f) ? ((offset - cumDist[k]) / segmentLen) : 0.0f;
+                    pillarPos = Vector3Lerp(params.pathPoints[k], params.pathPoints[k+1], t);
+                    Vector3 diff = Vector3Subtract(params.pathPoints[k+1], params.pathPoints[k]);
+                    if (segmentLen > 0.001f) dir = Vector3Scale(diff, 1.0f / segmentLen);
+                    break;
+                }
+            }
+        } else {
+            Vector3 toTarget = { target.x - startPos.x, 0.0f, target.z - startPos.z };
+            if (Vector3Length(toTarget) > 0.001f) dir = Vector3Normalize(toTarget);
+            pillarPos = (Vector3){ startPos.x + dir.x * offset, 0.0f, startPos.z + dir.z * offset };
+        }
 
         // Delay increases based on distance index to create sequential wave eruption
         float delay = i * 0.08f;

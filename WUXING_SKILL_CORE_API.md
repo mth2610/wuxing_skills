@@ -88,6 +88,14 @@ void Update[Name]Skill(float dt, Vector3 enemyPos, float enemyRadius);
 void Draw[Name]Skill(void);
 void Unload[Name]Skill(void);
 
+// Drag-to-Cast Input Parameters
+// The `params` struct passed to `Cast` contains path drawing data:
+// typedef struct {
+//     ...
+//     int pathPointCount;     // Number of points the user dragged (0 or 1 for simple click)
+//     Vector3 pathPoints[32]; // The 3D coordinates of the drawn path
+// } SkillParams;
+
 // Engine-to-Skill communication APIs
 bool Is[Name]SkillCoiling(void);
 int Get[Name]SkillProjectiles(SkillProjectile *outProjectiles, int maxProjectiles);

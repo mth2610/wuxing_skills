@@ -1,4 +1,4 @@
-#include "core/skill_debugger.h"
+#include "sandbox/skill_debugger.h"
 #include <stdio.h>
 #include <sys/stat.h>
 #include <sys/types.h>

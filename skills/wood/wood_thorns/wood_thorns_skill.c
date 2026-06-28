@@ -167,33 +167,64 @@ void InitWoodThornsSkill(int screenWidth, int screenHeight)
  * ================================================================ */
 void CastWoodThornsSkill(Vector3 startPos, Vector3 target, SkillParams params)
 {
-    Vector3 toTarget = { target.x - startPos.x, 0.0f, target.z - startPos.z };
-    float dist = Vector3Length(toTarget);
-    if (dist < 1.0f) return;
-
-    Vector3 dir = Vector3Scale(toTarget, 1.0f / dist);
-    Vector3 perp = { -dir.z, 0.0f, dir.x }; // Perpendicular direction for spatial jitter
-
-    float maxLine = (float)(THORNS_PER_CAST - 1) * THORN_SPACING;
-    float lineLen = (dist < maxLine) ? dist : maxLine;
-    float stepSize = (THORNS_PER_CAST > 1) ? (lineLen / (float)(THORNS_PER_CAST - 1)) : 0.0f;
-
     float spawnScale = (params.sizeScale > 0.0f) ? params.sizeScale : 1.0f;
     float baseDmg = Skill_CalculateDamage(SKILL_CAT_AOE_CONTROL, params);
     float baseKb = Skill_CalculateKnockback(SKILL_CAT_AOE_CONTROL, params);
+
+    // Calculate total path length for drag-to-cast
+    float totalDist = 0.0f;
+    float cumDist[32] = {0};
+    
+    if (params.pathPointCount > 1) {
+        for (int k = 0; k < params.pathPointCount - 1; k++) {
+            float d = Vector3Distance(params.pathPoints[k], params.pathPoints[k+1]);
+            totalDist += d;
+            cumDist[k+1] = totalDist;
+        }
+    } else {
+        Vector3 toTarget = { target.x - startPos.x, 0.0f, target.z - startPos.z };
+        totalDist = Vector3Length(toTarget);
+        if (totalDist < 1.0f) return;
+    }
+
+    float maxLine = (float)(THORNS_PER_CAST - 1) * THORN_SPACING;
+    float lineLen = (totalDist < maxLine) ? totalDist : maxLine;
+    float stepSize = (THORNS_PER_CAST > 1) ? (lineLen / (float)(THORNS_PER_CAST - 1)) : 0.0f;
 
     for (int i = 0; i < THORNS_PER_CAST; i++) {
         int slot = FindFreeSlot();
         if (slot < 0) break;
 
         float offset = (float)i * stepSize;
-        
-        // Aesthetic Rule 1: Perpendicular spatial jitter (12 units max offset left/right)
+        Vector3 basePoint = startPos;
+        Vector3 dir = {0, 0, 1};
+
+        if (params.pathPointCount > 1) {
+            // Find segment
+            for (int k = 0; k < params.pathPointCount - 1; k++) {
+                if (offset >= cumDist[k] && (offset <= cumDist[k+1] || k == params.pathPointCount - 2)) {
+                    float segmentLen = cumDist[k+1] - cumDist[k];
+                    float t = (segmentLen > 0.001f) ? ((offset - cumDist[k]) / segmentLen) : 0.0f;
+                    basePoint = Vector3Lerp(params.pathPoints[k], params.pathPoints[k+1], t);
+                    Vector3 diff = Vector3Subtract(params.pathPoints[k+1], params.pathPoints[k]);
+                    if (segmentLen > 0.001f) dir = Vector3Scale(diff, 1.0f / segmentLen);
+                    break;
+                }
+            }
+        } else {
+            Vector3 toTarget = { target.x - startPos.x, 0.0f, target.z - startPos.z };
+            dir = Vector3Scale(toTarget, 1.0f / totalDist);
+            basePoint = (Vector3){ startPos.x + dir.x * offset, 0.0f, startPos.z + dir.z * offset };
+        }
+
+        Vector3 perp = { -dir.z, 0.0f, dir.x }; // Perpendicular for jitter
+
+        // Aesthetic Rule 1: Perpendicular spatial jitter
         float sideJitter = (float)GetRandomValue(-120, 120) / 10.0f;
         Vector3 thornPos = {
-            startPos.x + dir.x * offset + perp.x * sideJitter,
+            basePoint.x + perp.x * sideJitter,
             0.0f,
-            startPos.z + dir.z * offset + perp.z * sideJitter
+            basePoint.z + perp.z * sideJitter
         };
 
         // Aesthetic Rule 2: Random angle, rotation, and pitch/roll tilt
@@ -201,7 +232,7 @@ void CastWoodThornsSkill(Vector3 startPos, Vector3 target, SkillParams params)
         float randomTiltX = (float)GetRandomValue(-10, 10) * (PI / 180.0f);
         float randomTiltZ = (float)GetRandomValue(-10, 10) * (PI / 180.0f);
         
-        // Random scale variation (85% to 115%)
+        // Random scale variation
         float sizeJitter = (float)GetRandomValue(85, 115) / 100.0f;
 
         s_thorns[slot] = (Thorn){

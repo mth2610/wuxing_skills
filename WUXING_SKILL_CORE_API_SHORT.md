@@ -356,6 +356,11 @@ typedef struct {
     bool hasDecal; DecalPresetType decalType; float decalRadius; float decalDuration;
     bool hasDamageVolume; float damageRadius; float damageDps; float damageDuration;
 } SkillBuildContext;
+
+// Drag-to-cast Input parameters
+// SkillParams (passed to CastSkill) contains:
+// int pathPointCount;
+// Vector3 pathPoints[32];
 ```
 
 ### 8.2 API Functions Prototypes

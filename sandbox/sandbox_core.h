@@ -2,7 +2,7 @@
 #define SANDBOX_CORE_H
 
 #include "raylib.h"
-#include "core/ui_panel.h"
+#include "sandbox/ui_panel.h"
 
 // Biến camera toàn cục
 extern Camera3D camera;

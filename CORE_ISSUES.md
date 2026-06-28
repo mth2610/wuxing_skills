@@ -19,8 +19,9 @@ Nhiều hàm được thiết kế và ghi chú trong tài liệu hoặc đượ
 - **Khắc phục lỗi Taper quá đà:** Tránh việc thu hẹp đầu cột đá quá mạnh (Taper) khiến chúng biến thành hình nón cụt nhọn hoắt trông nhân tạo và giống viên pin xếp hàng. Trụ đá tròn Cylinder cần giữ nguyên bán kính đáy lên đỉnh và bịt hai nắp phẳng (Flat Capped) để đảm bảo độ dày vững chãi.
 - **Mở rộng Mesh Preset:** Đã tích hợp `MESH_PRESET_PYRAMID` (Chóp tứ giác) và `MESH_PRESET_TETRAHEDRON` (Chóp tam giác) vào thư viện `DrawEffectMesh` của lõi để phục vụ việc tạo hình gai đá/gai gỗ nhanh chóng.
 
-## 4. [Ý TƯỞNG MỚI] Cơ chế Cast Chiêu vẽ đường dẫn (Drag-to-Cast / Path Drawing)
-- **Mô tả:** Đối với các kỹ năng tầm gần và trung bình (Short & Mid range) có tính chất mọc tuần tự hoặc dựng tường (như tường lửa, tường băng, gai đất mọc lan truyền), thay vì chỉ click chuột tức thời vào một vị trí mục tiêu đơn lẻ (Instant Click-to-Cast), đề xuất bổ sung cơ chế **nhấn giữ chuột và vẽ/kéo một đường dẫn** ngắn trên mặt đất. Kỹ năng sau đó sẽ mọc và phát tác chính xác men theo đường vẽ uốn lượn đó.
-- **Đề xuất nâng cấp Core API:**
-  - Bổ sung trạng thái vẽ đường dẫn cho chuột khi ở trạng thái chuẩn bị cast chiêu.
-  - Cung cấp một mảng tọa độ các điểm vẽ `Vector3 pathPoints[MAX_POINTS]` và truyền mảng này vào hàm `CastSkill` để kỹ năng sinh vật thể dọc theo đường dẫn thay vì chỉ đi theo đường thẳng caster -> target.
+## 4. [ĐÃ GIẢI QUYẾT] Cơ chế Cast Chiêu vẽ đường dẫn (Drag-to-Cast / Path Drawing)
+- **Mô tả:** Đối với các kỹ năng tầm gần và trung bình (Short & Mid range) có tính chất mọc tuần tự hoặc dựng tường (như tường lửa, tường băng, gai đất mọc lan truyền), thay vì chỉ click chuột tức thời vào một vị trí mục tiêu đơn lẻ (Instant Click-to-Cast), hệ thống đã bổ sung cơ chế **nhấn giữ chuột (hoặc chạm cảm ứng trên di động) và vẽ/kéo một đường dẫn** ngắn trên mặt đất. Kỹ năng sau đó sẽ mọc và phát tác chính xác men theo đường vẽ uốn lượn đó.
+- **Nâng cấp Core API:**
+  - Hệ thống Input (`main.c`) đã được nâng cấp thành cơ chế Vector Targeting. Khi người chơi nhả chuột/ngón tay (Release), chiêu thức mới được kích hoạt.
+  - `SkillParams` đã được bổ sung thêm mảng tọa độ các điểm vẽ `Vector3 pathPoints[32]` và `int pathPointCount`.
+  - Hai kỹ năng `wood_thorns` và `seismic_pillars` đã được áp dụng cơ chế nội suy tuyến tính đường cong để rải gai/cột dọc theo quỹ đạo vẽ tay.
