@@ -24,9 +24,11 @@ def convert_to_gles(filepath):
         # Change 'in ' to 'varying '
         content = re.sub(r'^\s*in\s+', 'varying ', content, flags=re.MULTILINE)
         
-        # Add precision if missing
-        if 'precision mediump float;' not in content and 'precision highp float;' not in content:
-            content = content.replace('#version 100', '#version 100\nprecision mediump float;')
+        # Thêm precision highp float cho Android để tránh lỗi bể khối (water deformed)
+        if 'precision mediump float;' in content:
+            content = content.replace('precision mediump float;', 'precision highp float;')
+        elif 'precision highp float;' not in content:
+            content = content.replace('#version 100', '#version 100\nprecision highp float;')
             
         # Handle 'out vec4 fragColor' or similar
         out_match = re.search(r'^\s*out\s+vec4\s+([a-zA-Z0-9_]+)\s*;', content, re.MULTILINE)
@@ -35,6 +37,10 @@ def convert_to_gles(filepath):
             content = content[:out_match.start()] + content[out_match.end():]
             content = re.sub(r'\b' + out_var + r'\b', 'gl_FragColor', content)
             
+    # XÓA khởi tạo giá trị mặc định của uniform (VD: uniform float a = 1.0; -> uniform float a;)
+    # GLSL 100 không hỗ trợ khởi tạo uniform lúc khai báo.
+    content = re.sub(r'(^\s*uniform\s+[\w\s]+\s+[a-zA-Z0-9_]+)\s*=[^;]+;', r'\1;', content, flags=re.MULTILINE)
+
     # Replace 'texture(' with 'texture2D('
     content = re.sub(r'\btexture\(', 'texture2D(', content)
 
