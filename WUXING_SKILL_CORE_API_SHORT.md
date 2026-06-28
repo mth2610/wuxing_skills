@@ -74,7 +74,7 @@ Up to 8 active layers, evaluated internally by the engine:
 * **Gradients (`core/color_gradient.h`):** `bool ColorGradient_AddStop(ColorGradient *g, float t, Color col);` (gradient overrides colorStart/colorEnd).
 * **Emitters (`core/emitter_system.h`):** `int CreateEmitter(EmitterConfig cfg, Vector3 start);` `UpdateEmitterTarget`, `StopEmitter`, `KillEmitter`.
 * **Trails (`core/trail_system.h`):** `int SpawnTrailEntity(TrailConfig cfg);` `KillTrail`. Types: `TRAIL_TYPE_PROJECTILE`, `TRAIL_TYPE_WISP`, `TRAIL_TYPE_PORTAL`, `TRAIL_TYPE_FOLLOWER`.
-* **Decals (`core/decal_system.h`):** `void Decal_Spawn(Vector3 pos, float rot, float scale, Texture2D tex, float life, Color tint);`
+* **Decals (`core/decal_system.h`):** `void DecalSystem_Add(Vector3 pos, float rot, float scale, Texture2D tex, float life, Color tint);` (Must have Y offset small, e.g., +0.02f)
   - Shaded automatically via `decal.fs` radial mask (eliminates square edges).
   - **Draw order:** Render decals *before* 3D opaque meshes (underfoot sorting).
   - **Aesthetic Scale:** Set scale to `4.0x - 5.5x` of structure base radius (e.g. `baseRadius * scale * 5.2f`).
@@ -82,14 +82,17 @@ Up to 8 active layers, evaluated internally by the engine:
   - **Emissive Shading:** Keep dark organic textures; multiply diffuse by breathing multiplier: `diffuse.rgb * (1.35f + 0.1f * sin(u_time * 3.5f))`. No flat neon colors.
   - **Continuous Aura:** During holding/active phases, continuously emit theme-specific particles along the height/radius of the mesh.
   - **Persistent Lights:** Match dynamic light lifetime to active phase duration (e.g. rise + hold time = `1.4f`s).
-* **Distortion (`core/screen_distort.h`):** `void ScreenDistort_AddSource(Vector3 pos, float rad, float str, float life, float speed);`
+* **Distortion (`core/screen_distort.h`):** `void ScreenDistort_Add(Vector3 pos, float rad, float str, float life, float speed);`
 * **Lights (`core/vfx_light.h`):** `void VFXLight_Spawn(Vector3 pos, Color col, float rad, float life);`
 * **Camera Shake (`core/camera_fx.h`):** `void CameraFX_Shake(float trauma);`
+* **Combat API (`core/skill_manager.h`):** `void ApplyAoEDamage(Vector3 position, float radius, float damage, float knockback);` (automatic internal enemy tracking, spawns damage texts and hurls targets).
+* **Shader Binding (`core/skill_manager.h`):** `void SkillManager_BeginShader(Shader shader);` and `void SkillManager_EndShader(void);` (auto-binds `u_time`, `u_viewPos`, `u_resolution`).
+* **Procedural Helpers (`core/procedural_mesh_utils.h`):** `DrawCoreSphere`, `DrawCoreCylinder`, `DrawCoreCone`, `DrawCorePlaneRect`, `DrawCorePlanePolygon`, `DrawCoreCube`, `DrawCoreTorus`, `DrawCorePrism` (safe raw `rlgl`-based drawing).
 
 ---
 
 ## 7. PROHIBITED PROCEDURES & ANTI-ROBOTIC LAWS
-1. **No Standard Primitives:** High-level calls (`DrawCylinder`, `DrawSphere`, etc.) and `Wires` renderers are strictly **PROHIBITED**. Render procedural meshes using `rlgl` low-level buffers.
+1. **No Standard Primitives:** High-level calls (`DrawCylinder`, `DrawSphere`, etc.) and `Wires` renderers are strictly **PROHIBITED**. Render procedural meshes using the Core System's `core/procedural_mesh_utils.h` helpers or custom low-level `rlgl` buffers.
 2. **Jitter:** Add random spatial offsets perpendicular to movement line directions.
 3. **Variation:** Apply `scale = baseScale * GetRandomValue(85, 115) / 100.f` and `rotation = GetRandomValue(0, 360) * DEG2RAD`.
 4. **Dissolve Transitions:** Run custom shaders continuously. Set uniform `u_dissolve = 0.0f` during the active phase, then sweep `0.0f -> 1.0f` on fade/death. Do not toggle shaders abruptly.

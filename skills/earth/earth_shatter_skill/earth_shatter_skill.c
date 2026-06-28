@@ -225,17 +225,17 @@ void CastEarthShatterSkill(Vector3 startPos, Vector3 target, SkillParams params)
     }
     
     // Add central big decal
-    Decal_Spawn(
+    DecalSystem_Add(
         target,
         (float)GetRandomValue(0, 360),
-        AOE_RADIUS * spawnScale * 3.5f,
+        70.0f * spawnScale,
         s_crackTex,
-        6.0f,
-        ColorAlpha(DARKBROWN, 0.9f)
+        3.0f,
+        ColorAlpha(ELEMENT_COLOR_EARTH, 0.8f)
     );
     
     SpawnGoldDustBurst(target, spawnScale * 1.5f);
-    ScreenDistort_AddSource(target, 120.0f * spawnScale, 0.5f, 0.4f, 250.0f);
+    ScreenDistort_Add(target, 120.0f * spawnScale, 0.5f, 0.4f, 250.0f);
     CameraFX_Shake(0.35f);
 }
 
@@ -261,13 +261,13 @@ void UpdateEarthShatterSkill(float dt, Vector3 enemyPos, float enemyRadius)
             c->riseTimer += dt;
             
             if (!c->spawnedDecal) {
-                Decal_Spawn(
+                DecalSystem_Add(
                     c->pos,
                     (float)GetRandomValue(0, 360),
-                    CRYSTAL_BASE_RADIUS * c->scale * 8.0f,
+                    25.0f * c->scale,
                     s_crackTex,
-                    4.0f,
-                    ColorAlpha(GOLD, 0.6f)
+                    1.5f,
+                    ColorAlpha(ELEMENT_COLOR_EARTH, 0.6f)
                 );
                 c->spawnedDecal = true;
             }

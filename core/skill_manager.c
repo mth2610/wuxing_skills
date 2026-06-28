@@ -34,6 +34,10 @@
 
 extern PlayerEntity player;
 
+static Vector3 g_currentEnemyPos = { 0 };
+static float g_currentEnemyRadius = 0.0f;
+static float g_skillManagerTime = 0.0f;
+
 #define MAX_FLOATING_TEXTS 64
 #define MAX_TEMP_PROJECTILES 128
 #define MAX_SKILLS 32
@@ -310,6 +314,10 @@ void InitSkillManager(int screenWidth, int screenHeight) {
 
 void UpdateSkillManager(float dt, Vector3 enemyPos, float enemyRadius) {
   EnsureBuiltInRegistered();
+  g_currentEnemyPos = enemyPos;
+  g_currentEnemyRadius = enemyRadius;
+  g_skillManagerTime += dt;
+
   if (slowTimer > 0.0f)
     slowTimer -= dt;
   if (rootTimer > 0.0f)
@@ -935,4 +943,50 @@ Vector3 GetAccumulatedKnockback(void) {
 
 void ClearAccumulatedKnockback(void) {
   accumulatedKnockback = (Vector3){0};
+}
+
+void ApplyAoEDamage(Vector3 position, float radius, float damage, float knockback) {
+  float dx = g_currentEnemyPos.x - position.x;
+  float dz = g_currentEnemyPos.z - position.z;
+  float distSq = dx * dx + dz * dz;
+  float hitRad = radius + g_currentEnemyRadius;
+
+  if (distSq <= hitRad * hitRad) {
+    char dmgStr[32];
+    snprintf(dmgStr, sizeof(dmgStr), "%d", (int)damage);
+    AddFloatingText(g_currentEnemyPos, dmgStr, RED, 26.0f, 0.7f);
+    AddFloatingText(g_currentEnemyPos, "HIT!", ORANGE, 18.0f, 0.8f);
+
+    Vector3 pushDir = { dx, 1.5f, dz };
+    if (dx == 0.0f && dz == 0.0f) {
+      pushDir.x = 1.0f;
+    }
+    pushDir = Vector3Normalize(pushDir);
+    AddKnockbackToEnemy(Vector3Scale(pushDir, knockback));
+  }
+}
+
+void SkillManager_BeginShader(Shader shader) {
+  int timeLoc = GetShaderLocation(shader, "u_time");
+  if (timeLoc >= 0) {
+    SetShaderValue(shader, timeLoc, &g_skillManagerTime, SHADER_UNIFORM_FLOAT);
+  }
+
+  int viewPosLoc = GetShaderLocation(shader, "u_viewPos");
+  if (viewPosLoc >= 0) {
+    Vector3 viewPos = camera.position;
+    SetShaderValue(shader, viewPosLoc, &viewPos, SHADER_UNIFORM_VEC3);
+  }
+
+  int resLoc = GetShaderLocation(shader, "u_resolution");
+  if (resLoc >= 0) {
+    Vector2 res = { (float)GetScreenWidth(), (float)GetScreenHeight() };
+    SetShaderValue(shader, resLoc, &res, SHADER_UNIFORM_VEC2);
+  }
+
+  BeginShaderMode(shader);
+}
+
+void SkillManager_EndShader(void) {
+  EndShaderMode();
 }

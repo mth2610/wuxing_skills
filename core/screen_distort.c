@@ -43,7 +43,7 @@ void ScreenDistort_End(void) {
   EndTextureMode();
 }
 
-void ScreenDistort_AddSource(Vector3 worldPos, float radius, float strength, float lifetime, float speed) {
+void ScreenDistort_Add(Vector3 worldPos, float radius, float strength, float lifetime, float speed) {
   if (activeSourcesCount >= MAX_DISTORTION_SOURCES) {
     // Tìm phần tử có lifetime thấp nhất để ghi đè lên nếu hết slot tự do
     int minIdx = 0;

@@ -58,6 +58,7 @@ add_executable(wuxing
     core/utils_math.c
     core/vfx_light.c
     core/decal_system.c
+    core/procedural_mesh_utils.c
     core/vfx_test.c
     core/skill_debugger.c
 

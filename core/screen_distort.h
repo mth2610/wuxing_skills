@@ -27,7 +27,7 @@ void ScreenDistort_Begin(void);
 void ScreenDistort_End(void);
 
 // Thêm một nguồn biến dạng màn hình (sóng xung kích) tại toạ độ World 3D
-void ScreenDistort_AddSource(Vector3 worldPos, float radius, float strength, float lifetime, float speed);
+void ScreenDistort_Add(Vector3 worldPos, float radius, float strength, float lifetime, float speed);
 
 // Cập nhật thời gian sống của các nguồn biến dạng
 void ScreenDistort_Update(float dt);

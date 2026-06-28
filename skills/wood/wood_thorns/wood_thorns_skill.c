@@ -242,7 +242,7 @@ void UpdateWoodThornsSkill(float dt, Vector3 enemyPos, float enemyRadius)
                 th->riseTimer = 0.0f;
 
                 SpawnDustBurst(th->pos, th->scale);
-                ScreenDistort_AddSource(th->pos, 60.0f, 0.25f, 0.25f, 150.0f);
+                ScreenDistort_Add(th->pos, 60.0f, 0.25f, 0.25f, 150.0f);
                 CameraFX_Shake(SHAKE_TRAUMA);
             }
             break;
@@ -252,7 +252,7 @@ void UpdateWoodThornsSkill(float dt, Vector3 enemyPos, float enemyRadius)
             
             // Decal emergence stamp (Large ground-rupturing crack!)
             if (!th->spawnedDecal) {
-                Decal_Spawn(
+                DecalSystem_Add(
                     th->pos,
                     (float)GetRandomValue(0, 360),
                     THORN_BASE_RADIUS * th->scale * 12.0f,

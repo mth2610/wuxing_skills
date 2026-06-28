@@ -146,14 +146,14 @@ void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
                 p->timer = 0.0f;
                 
                 CameraFX_Shake(0.32f);
-                ScreenDistort_AddSource(p->pos, 90.0f * p->scale, 0.4f, 0.3f, 180.0f);
+                ScreenDistort_Add(p->pos, 90.0f * p->scale, 0.4f, 0.3f, 180.0f);
             }
             break;
         }
 
         case STATE_RISING: {
             if (!p->spawnedDecal) {
-                Decal_Spawn(p->pos, p->yaw, PILLAR_RADIUS * p->scale * 15.0f, s_crackTex, 4.0f, ColorAlpha(ELEMENT_COLOR_EARTH, 0.9f));
+                DecalSystem_Add(p->pos, p->yaw, PILLAR_RADIUS * p->scale * 15.0f, s_crackTex, 4.0f, ColorAlpha(ELEMENT_COLOR_EARTH, 0.9f));
                 VFXLight_Spawn(p->pos, ORANGE, 130.0f * p->scale, HOLD_TIME);
                 
                 // Spawn a small crack decal at the base of each of the 6 pillars
@@ -165,13 +165,13 @@ void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
                         p->pos.y,
                         p->pos.z + sinf(angle) * distToCenter
                     };
-                    Decal_Spawn(
-                        pillarPos,
-                        (float)GetRandomValue(0, 360) * DEG2RAD,
-                        PILLAR_RADIUS * p->scale * 6.5f,
+                    DecalSystem_Add(
+                        p->pos,
+                        (float)GetRandomValue(0, 360),
+                        PILLAR_RADIUS * p->scale * 8.0f,
                         s_crackTex,
-                        4.0f,
-                        ColorAlpha(ELEMENT_COLOR_EARTH, 0.85f)
+                        2.5f,
+                        ColorAlpha(ELEMENT_COLOR_EARTH, 0.7f)
                     );
                 }
 
@@ -249,7 +249,7 @@ void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
                     AddKnockbackToEnemy(Vector3Scale(pushDir, p->knockback * 1.6f));
                 }
 
-                ScreenDistort_AddSource(p->pos, 130.0f * p->scale, 0.8f, 0.45f, 250.0f);
+                ScreenDistort_Add(p->pos, 130.0f * p->scale, 0.8f, 0.45f, 250.0f);
                 CameraFX_Shake(0.42f);
                 VFXLight_Spawn(p->pos, RED, 140.0f * p->scale, 0.5f);
 

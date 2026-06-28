@@ -97,8 +97,8 @@ static Texture2D s_causticsTex;
 static ColorGradient s_splashGrad;
 
 static void TriggerWaterBurst(Vector3 pos, float sizeScale) {
-  ScreenDistort_AddSource(pos, 85.0f, 0.7f, 0.6f, 150.0f);
-  Decal_Spawn(
+  ScreenDistort_Add(pos, 85.0f, 0.7f, 0.6f, 150.0f);
+  DecalSystem_Add(
       pos,
       (float)GetRandomValue(0, 360),
       TUBE_BASE_RADIUS * sizeScale * 0.25f,

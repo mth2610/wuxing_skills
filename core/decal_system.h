@@ -22,7 +22,7 @@ void DecalSystem_Init(void);
 
 // Spawn một vết sẹo/vòng sáng trên mặt đất
 // Thường set Y offset nhỏ (ví dụ +0.02f) để tránh hiện tượng Z-fighting (nhấp nháy với mesh đất)
-void Decal_Spawn(Vector3 pos, float rotation, float scale, Texture2D texture, float lifetime, Color tint);
+void DecalSystem_Add(Vector3 pos, float rotation, float scale, Texture2D texture, float lifetime, Color tint);
 
 // Cập nhật thời gian sống của các Decal
 void DecalSystem_Update(float dt);

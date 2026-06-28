@@ -197,20 +197,43 @@ typedef struct {
 ## 8. GRAPHICS, SOUND & POST-PROCESSING APIs
 
 ### Ground Decals (`#include "core/decal_system.h"`)
-* `void Decal_Spawn(Vector3 pos, float rot, float scale, Texture2D tex, float life, Color tint);`
-  - Renders a ground decal (like cracked earth, water pools, or ash marks). The engine automatically resolves depth offset to prevent Z-fighting.
+* `void DecalSystem_Add(Vector3 pos, float rot, float scale, Texture2D tex, float life, Color tint);`
+  - Renders a ground decal (like cracked earth, water pools, or ash marks). `DecalSystem_Add` is the preferred unified prefix wrapper. The engine automatically resolves depth offset to prevent Z-fighting.
   - **Circular Shader Masking:** Ground decals automatically render using a custom fragment shader (`decal.fs`) that multiplies texture transparency with a smooth radial distance falloff. This mathematically masks off corners, guaranteeing that decals are rounded and never exhibit sharp square boundaries.
   - **Drawing Order Rule:** Decals **MUST** be drawn in the render loop *before* opaque 3D skill/projectile meshes (e.g. `DecalSystem_Draw()` runs *before* `DrawSkillManagerWorld3D()`). This guarantees that emerging structures or characters naturally overlap the decals rather than drawing over them.
   - **Aesthetic Scale Rule:** Never make ground decals tiny or exactly the same size as the structure's base. Decals must look impactful. Always scale the decal size to **`4.0x` to `5.5x`** the base radius of the emerging structure (e.g. `baseRadius * scale * 5.2f`).
+
+### Screen Distortion (`#include "core/screen_distort.h"`)
+* `void ScreenDistort_AddSource(Vector3 pos, float rad, float str, float life, float speed);`
+* `void ScreenDistort_Add(Vector3 pos, float rad, float str, float life, float speed);`
+  - Triggers a radial shockwave/heat-refraction distortion on screen. `ScreenDistort_Add` is the preferred unified prefix wrapper. Best used at collision/impact points.
+
+### Standardized Combat API (`#include "core/skill_manager.h"`)
+* `void ApplyAoEDamage(Vector3 position, float radius, float damage, float knockback);`
+  - Applies area-of-effect damage and knockback to the enemy character.
+  - The Core System automatically tracks the enemy's coordinates and radius internally, eliminating the need to pass `enemyPos` or `enemyRadius` manually.
+  - Shows floating text displays (damage value and action text) automatically and adds a localized 3D knockback vector to the target.
+
+### Automatic Shader Uniform Binding (`#include "core/skill_manager.h"`)
+* `void SkillManager_BeginShader(Shader shader);`
+* `void SkillManager_EndShader(void);`
+  - Wraps Raylib's `BeginShaderMode` and `EndShaderMode` but automatically binds essential environment uniforms (`u_time` as a float, `u_viewPos` as a Vector3 representing the camera position, and `u_resolution` as a Vector2 of the screen size) to prevent boilerplate code in individual skills.
 
 ### VFX & Emission Standards (Critical Quality Rules)
 * **Emissive Shading Contrast:** To make meshes pop in the night arena without looking flat/artificial, keep organic dark textures (e.g. deep forest green, gnarled bark brown) and multiply the diffuse output by an animated breathing light multiplier (e.g. `diffuse.rgb * (1.35f + 0.1f * sin(u_time * 3.5f))`). Avoid flat bright neon colors.
 * **Continuous Particle Aura:** Do not only spawn particles at birth or impact. During the active holding phase of a skill (e.g. `THORN_HOLDING`), continuously spawn themed particles (like rising poison gas, drifting steam, or floating sparks) along the height and radius of the mesh at a controlled rate (e.g. 20-30% chance per frame) to make the skill look alive.
 * **Persistent Lights:** Source point lights spawned during emergence should match the active holding phase's lifetime (e.g. rise + hold time = `1.4f` seconds) so the scene remains illuminated while the skill is active.
 
-### Screen Distortion (`#include "core/screen_distort.h"`)
-* `void ScreenDistort_AddSource(Vector3 pos, float rad, float str, float life, float speed);`
-  - Triggers a radial shockwave/heat-refraction distortion on screen. Best used at collision/impact points.
+### Procedural Mesh Utilities (`#include "core/procedural_mesh_utils.h"`)
+Avoid raw Raylib primitives (which are strictly prohibited). Use these raw `rlgl`-based procedural helpers to draw standard primitives with correct normal mapping and texture coordinates:
+* `void DrawCoreSphere(Vector3 center, float radius, int rings, int slices, Color color);`
+* `void DrawCoreCylinder(Vector3 bottom, Vector3 top, float radiusBottom, float radiusTop, int slices, Color color);`
+* `void DrawCoreCone(Vector3 bottom, float radius, float height, int slices, Color color);`
+* `void DrawCorePlaneRect(Vector3 center, Vector2 size, Color color);`
+* `void DrawCorePlanePolygon(Vector3 center, float radius, int sides, Color color);`
+* `void DrawCoreCube(Vector3 position, float width, float height, float length, Color color);`
+* `void DrawCoreTorus(Vector3 center, float innerRadius, float outerRadius, int sides, int rings, Color color);`
+* `void DrawCorePrism(Vector3 bottom, Vector3 top, float radius, int sides, Color color);`
 
 ### Post-Processing & Bloom (`#include "core/post_fx.h"`)
 Adjust screen bloom, vignette, or chromatic aberration dynamically during casting:

@@ -5,13 +5,13 @@
 #include "core/skill_manager.h"
 
 #include "skills/wood/wood_thorns/wood_thorns_skill.h"
-
+#include "skills/taiji/core_test/core_test_skill.h"
 #include "skills/earth/stone_prison_skill/stone_prison_skill.h"
 #include "skills/earth/earth_shatter_skill/earth_shatter_skill.h"
 
 static inline void RegisterGeneratedSkills(void) {
     RegisterSkill("WOOD_THORNS", ELEMENT_COLOR_WOOD, InitWoodThornsSkill, CastWoodThornsSkill, UpdateWoodThornsSkill, DrawWoodThornsSkill, UnloadWoodThornsSkill);
-
+    RegisterSkill("CORE_TEST", ELEMENT_COLOR_TAIJI, InitCoreTestSkill, CastCoreTestSkill, UpdateCoreTestSkill, DrawCoreTestSkill, UnloadCoreTestSkill);
     RegisterSkill("STONE_PRISON", ELEMENT_COLOR_EARTH, InitStonePrisonSkill, CastStonePrisonSkill, UpdateStonePrisonSkill, DrawStonePrisonSkill, UnloadStonePrisonSkill);
     RegisterSkill("EARTH_SHATTER", ELEMENT_COLOR_EARTH, InitEarthShatterSkill, CastEarthShatterSkill, UpdateEarthShatterSkill, DrawEarthShatterSkill, UnloadEarthShatterSkill);
 }

@@ -98,4 +98,9 @@ Vector3 GetAccumulatedKnockback(void);
 void ClearAccumulatedKnockback(void);
 void AddKnockbackToEnemy(Vector3 force);
 
+// New Combat and Shader API functions for Core API test
+void ApplyAoEDamage(Vector3 position, float radius, float damage, float knockback);
+void SkillManager_BeginShader(Shader shader);
+void SkillManager_EndShader(void);
+
 #endif // SKILL_MANAGER_H
