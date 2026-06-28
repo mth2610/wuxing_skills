@@ -37,33 +37,34 @@ PROJECT_BUILD_ID       ?= android
 PROJECT_BUILD_PATH     ?= $(PROJECT_BUILD_ID).$(PROJECT_NAME)
 PROJECT_RESOURCES_PATH ?= resources
 PROJECT_SOURCE_FILES   := main.c \
-                          core/camera_fx.c \
+                          environment/environment_system.c \
+                          core/map_manager.c \
+                          core/resource_manager.c \
                           core/color_gradient.c \
                           core/emitter_system.c \
                           core/flow_map.c \
                           core/force_field.c \
+                          core/camera_fx.c \
                           core/particle_system.c \
                           core/path_spline.c \
                           core/post_fx.c \
                           core/ribbon_strip.c \
-                          core/sandbox_core.c \
                           core/screen_distort.c \
                           core/skill_manager.c \
                           core/sprite_anim.c \
                           core/trail_system.c \
-                          core/ui_panel.c \
                           core/utils_math.c \
-                          skills/metal/metal_projectile/metal_skill.c \
-                          skills/metal/sword_rain/sword_rain_skill.c \
-                          skills/wood/wood_roots/wood_skill.c \
-                          skills/water/water_projectile/fluid_skill.c \
-                          skills/water/water_stream/tube_skill.c \
-                          skills/water/water_shield/shield_skill.c \
-                          skills/fire/fire_ball/fire_skill.c \
-                          skills/taiji/wind_storm/wind_skill.c \
-                          skills/taiji/lightning/electric_skill.c \
+                          core/vfx_light.c \
+                          core/decal_system.c \
+                          core/procedural_mesh_utils.c \
+                          core/skill_helper.c \
+                          sandbox/sandbox_core.c \
+                          sandbox/ui_panel.c \
+                          sandbox/vfx_test.c \
+                          sandbox/skill_debugger.c \
                           $(wildcard skills/*/*/*.c) \
-                          $(wildcard skills/*/*/*/*.c)
+                          $(wildcard skills/*/*/*/*.c) \
+                          $(wildcard maps/*/*.c)
 PROJECT_SOURCE_FILES   := $(sort $(PROJECT_SOURCE_FILES))
 
 NATIVE_APP_GLUE_PATH    = $(ANDROID_NDK)/sources/android/native_app_glue
@@ -131,16 +132,13 @@ all: create_temp_project_dirs \
      compile_raylib_android \
      copy_project_required_libs \
      copy_project_resources \
-     generate_loader_script \
      generate_android_manifest \
      generate_apk_keystore \
      config_project_package \
      compile_project_code \
-     compile_project_class \
-     compile_project_class_dex \
      create_project_apk_package \
-     sign_project_apk_package \
-     zipalign_project_apk_package
+     zipalign_project_apk_package \
+     sign_project_apk_package
 
 create_temp_project_dirs:
 	python3 scripts/generate_registry.py
@@ -208,24 +206,30 @@ copy_project_resources:
 	cd skills && find . -type d -exec mkdir -p ../$(PROJECT_BUILD_PATH)/assets/skills/{} \;
 	cd skills && find . -type f \( -name "*.fs" -o -name "*.png" -o -name "*.vs" \) -exec cp -f {} ../$(PROJECT_BUILD_PATH)/assets/skills/{} \;
 
-generate_loader_script:
-	@echo "package com.$(APP_COMPANY_NAME).$(APP_PRODUCT_NAME);" > $(PROJECT_BUILD_PATH)/src/com/$(APP_COMPANY_NAME)/$(APP_PRODUCT_NAME)/NativeLoader.java
-	@echo "" >> $(PROJECT_BUILD_PATH)/src/com/$(APP_COMPANY_NAME)/$(APP_PRODUCT_NAME)/NativeLoader.java
-	@echo "public class NativeLoader extends android.app.NativeActivity {" >> $(PROJECT_BUILD_PATH)/src/com/$(APP_COMPANY_NAME)/$(APP_PRODUCT_NAME)/NativeLoader.java
-	@echo "    static {" >> $(PROJECT_BUILD_PATH)/src/com/$(APP_COMPANY_NAME)/$(APP_PRODUCT_NAME)/NativeLoader.java
-	@echo "        System.loadLibrary(\"$(PROJECT_LIBRARY_NAME)\");" >> $(PROJECT_BUILD_PATH)/src/com/$(APP_COMPANY_NAME)/$(APP_PRODUCT_NAME)/NativeLoader.java
-	@echo "    }" >> $(PROJECT_BUILD_PATH)/src/com/$(APP_COMPANY_NAME)/$(APP_PRODUCT_NAME)/NativeLoader.java
-	@echo "}" >> $(PROJECT_BUILD_PATH)/src/com/$(APP_COMPANY_NAME)/$(APP_PRODUCT_NAME)/NativeLoader.java
+	@# Copy thư mục textures và models vào assets/assets để AssetManager đọc được chuỗi "assets/textures/..."
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/assets/textures
+	cp -f assets/textures/* $(PROJECT_BUILD_PATH)/assets/assets/textures/ 2>/dev/null || true
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/assets/models
+	cp -f assets/models/* $(PROJECT_BUILD_PATH)/assets/assets/models/ 2>/dev/null || true
+
+	@# Tự động sao chép các tệp tài nguyên của maps/ (như shader bamboo_alpha.fs) vào assets của APK
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/maps
+	cd maps && find . -type d -exec mkdir -p ../$(PROJECT_BUILD_PATH)/assets/maps/{} \;
+	cd maps && find . -type f \( -name "*.fs" -o -name "*.png" -o -name "*.vs" \) -exec cp -f {} ../$(PROJECT_BUILD_PATH)/assets/maps/{} \;
+	
+	@# Chạy script Python để convert Shader từ GLSL 330 sang GLES 100/300 es
+	python3 $(CURDIR)/scripts/convert_shaders_to_gles.py $(PROJECT_BUILD_PATH)/assets
 
 generate_android_manifest:
 	@echo "<?xml version=\"1.0\" encoding=\"utf-8\"?>" > $(PROJECT_BUILD_PATH)/AndroidManifest.xml
 	@echo "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\"" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
 	@echo "        package=\"com.$(APP_COMPANY_NAME).$(APP_PRODUCT_NAME)\" " >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
 	@echo "        android:versionCode=\"$(APP_VERSION_CODE)\" android:versionName=\"$(APP_VERSION_NAME)\" >" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
-	@echo "    <uses-sdk android:minSdkVersion=\"$(ANDROID_API_VERSION)\" />" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
-	@echo "    <uses-feature android:glEsVersion=\"0x00030001\" android:required=\"true\" />" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
-	@echo "    <application android:allowBackup=\"false\" android:label=\"@string/app_name\" android:icon=\"@drawable/icon\" >" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
-	@echo "        <activity android:name=\"com.$(APP_COMPANY_NAME).$(APP_PRODUCT_NAME).NativeLoader\"" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "    <uses-sdk android:minSdkVersion=\"24\" android:targetSdkVersion=\"$(ANDROID_API_VERSION)\" />" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "    <uses-feature android:glEsVersion=\"0x00020000\" android:required=\"true\" />" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "    <application android:allowBackup=\"false\" android:hasCode=\"false\" android:extractNativeLibs=\"true\" android:label=\"@string/app_name\" android:icon=\"@drawable/icon\" >" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "        <activity android:name=\"android.app.NativeActivity\"" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
+	@echo "            android:exported=\"true\"" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
 	@echo "            android:theme=\"@android:style/Theme.NoTitleBar.Fullscreen\"" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
 	@echo "             android:configChanges=\"orientation|keyboardHidden|screenSize\"" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
 	@echo "            android:screenOrientation=\"$(APP_SCREEN_ORIENTATION)\" android:launchMode=\"singleTask\"" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
@@ -250,7 +254,6 @@ generate_apk_keystore:
 config_project_package:
 	$(ANDROID_BUILD_TOOLS)/aapt package -f -m \
 		-S $(PROJECT_BUILD_PATH)/res \
-		-J $(PROJECT_BUILD_PATH)/src \
 		-M $(PROJECT_BUILD_PATH)/AndroidManifest.xml \
 		-I $(ANDROID_HOME)/platforms/android-$(ANDROID_API_VERSION)/android.jar
 
@@ -261,38 +264,26 @@ compile_project_code: $(OBJS)
 $(PROJECT_BUILD_PATH)/obj/%.o:%.c
 	$(CC) -c $^ -o $@ $(INCLUDE_PATHS) $(CFLAGS)
 
-compile_project_class:
-	$(JAVA_HOME)/bin/javac -verbose -source 1.8 -target 1.8 \
-		-d $(PROJECT_BUILD_PATH)/obj \
-		-classpath $(ANDROID_HOME)/platforms/android-$(ANDROID_API_VERSION)/android.jar \
-		-d $(PROJECT_BUILD_PATH)/obj \
-		$(PROJECT_BUILD_PATH)/src/com/$(APP_COMPANY_NAME)/$(APP_PRODUCT_NAME)/R.java \
-		$(PROJECT_BUILD_PATH)/src/com/$(APP_COMPANY_NAME)/$(APP_PRODUCT_NAME)/NativeLoader.java
-
-compile_project_class_dex:
-	$(ANDROID_BUILD_TOOLS)/d8 --output $(PROJECT_BUILD_PATH)/bin/ \
-		$(PROJECT_BUILD_PATH)/obj/com/$(APP_COMPANY_NAME)/$(APP_PRODUCT_NAME)/*.class
-
 create_project_apk_package:
 	$(ANDROID_BUILD_TOOLS)/aapt package -f \
 		-M $(PROJECT_BUILD_PATH)/AndroidManifest.xml \
 		-S $(PROJECT_BUILD_PATH)/res \
 		-A $(PROJECT_BUILD_PATH)/assets \
 		-I $(ANDROID_HOME)/platforms/android-$(ANDROID_API_VERSION)/android.jar \
-		-F $(PROJECT_BUILD_PATH)/bin/$(PROJECT_NAME).unsigned.apk $(PROJECT_BUILD_PATH)/bin
+		-F $(PROJECT_BUILD_PATH)/$(PROJECT_NAME).unsigned.apk $(PROJECT_BUILD_PATH)/bin
 	cd $(PROJECT_BUILD_PATH) && $(ANDROID_BUILD_TOOLS)/aapt add \
-		bin/$(PROJECT_NAME).unsigned.apk lib/$(ANDROID_ARCH_NAME)/lib$(PROJECT_LIBRARY_NAME).so
+		$(PROJECT_NAME).unsigned.apk lib/$(ANDROID_ARCH_NAME)/lib$(PROJECT_LIBRARY_NAME).so
+
+zipalign_project_apk_package:
+	$(ANDROID_BUILD_TOOLS)/zipalign -p -f 4 \
+		$(PROJECT_BUILD_PATH)/$(PROJECT_NAME).unsigned.apk $(PROJECT_BUILD_PATH)/$(PROJECT_NAME).aligned.apk
 
 sign_project_apk_package:
 	$(ANDROID_BUILD_TOOLS)/apksigner sign --ks $(PROJECT_BUILD_PATH)/$(PROJECT_NAME).keystore \
 		--ks-pass pass:$(APP_KEYSTORE_PASS) --key-pass pass:$(APP_KEYSTORE_PASS) \
 		--ks-key-alias $(PROJECT_NAME)Key \
-		--out $(PROJECT_BUILD_PATH)/bin/$(PROJECT_NAME).signed.apk \
-		$(PROJECT_BUILD_PATH)/bin/$(PROJECT_NAME).unsigned.apk
-
-zipalign_project_apk_package:
-	$(ANDROID_BUILD_TOOLS)/zipalign -f 4 \
-		$(PROJECT_BUILD_PATH)/bin/$(PROJECT_NAME).signed.apk $(PROJECT_NAME).apk
+		--out $(PROJECT_NAME).apk \
+		$(PROJECT_BUILD_PATH)/$(PROJECT_NAME).aligned.apk
 	@echo "=== APK đã sẵn sàng: $(PROJECT_NAME).apk ==="
 
 install:
