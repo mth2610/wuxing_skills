@@ -311,6 +311,7 @@ int main(void) {
 
     if (!g_isDebuggerCapturing) {
         DrawUIPanel(&uiState);
+        DrawSandboxTouchControls(&player);
 
         DrawText(TextFormat("FPS: %d", GetFPS()), 10, 640, 20, GREEN);
 

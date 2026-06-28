@@ -15,9 +15,19 @@ void MapManager_Init(void) {
     
     RegisterGeneratedMaps();
 
-    // Khởi tạo map mặc định
-    if (s_mapCount > 0 && s_maps[0].Init) {
-        s_maps[0].Init();
+    // Khởi tạo map mặc định là BAMBOO_VALLEY
+    if (s_mapCount > 0) {
+        // Tìm map tre
+        for (int i = 0; i < s_mapCount; i++) {
+            if (strcmp(s_maps[i].name, "BAMBOO_VALLEY") == 0) {
+                s_activeMapIndex = i;
+                break;
+            }
+        }
+        
+        if (s_maps[s_activeMapIndex].Init) {
+            s_maps[s_activeMapIndex].Init();
+        }
     }
 }
 

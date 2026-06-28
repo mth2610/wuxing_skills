@@ -5,10 +5,28 @@
 #include "raymath.h"
 #include "rlgl.h"
 
+// Biến toàn cục hiển thị phím ảo cảm ứng
+#if defined(PLATFORM_ANDROID)
+bool g_showTouchControls = true;
+#else
+bool g_showTouchControls = false;
+#endif
+
 // Biến môi trường
 static const Vector3 arenaCenter = { 600.0f, 0.0f, 440.0f };
 static const float arenaRadius = 1800.0f;
 static const float gravity = 1500.0f;
+
+static Vector2 g_joystickKnobOffset = { 0, 0 };
+static bool g_joystickActive = false;
+
+static bool g_touchJumpActive = false;
+static bool g_touchDashActive = false;
+static bool g_touchFlyToggleActive = false;
+static bool g_touchFlyUpActive = false;
+static bool g_touchFlyDownActive = false;
+static bool g_touchCamLeftActive = false;
+static bool g_touchCamRightActive = false;
 
 typedef struct {
     Vector3 position;
@@ -111,6 +129,7 @@ void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
     player->isDashing = false;
     player->zVelocity = 0.0f;
     player->jumpCount = 0;
+    player->isFlying = false;
 
     // Cấu hình Enemy
     enemy->position = (Vector3){ 900.0f, 0.0f, 350.0f };
@@ -129,22 +148,230 @@ static float g_camHeight = 450.0f;
 void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelState* uiState, Vector3* outMouseTarget) {
     Vector2 mousePos = GetMousePosition();
 
-    // 1. NGẮM BẮN CHUỘT 3D
-    Ray mouseRay = GetScreenToWorldRay(mousePos, camera);
-    if (mouseRay.direction.y != 0.0f) {
-        float t = -mouseRay.position.y / mouseRay.direction.y;
-        *outMouseTarget = Vector3Add(mouseRay.position, Vector3Scale(mouseRay.direction, t));
+    // TAB để bật/tắt phím ảo trên PC (tiện cho việc test chuột)
+    if (IsKeyPressed(KEY_TAB)) {
+        g_showTouchControls = !g_showTouchControls;
+    }
+
+    // Tải và tính toán phím ảo (Touch HUD)
+    float screenWidth = (float)GetScreenWidth();
+    float screenHeight = (float)GetScreenHeight();
+    float touchScale = screenHeight / 700.0f;
+
+    // Joystick ảo
+    Vector2 joystickCenter = { 150.0f * touchScale, screenHeight - 150.0f * touchScale };
+    float joystickBaseRadius = 65.0f * touchScale;
+
+    // Các phím chức năng
+    Vector2 dashBtnCenter = { screenWidth - 210.0f * touchScale, screenHeight - 100.0f * touchScale };
+    float dashBtnRadius = 35.0f * touchScale;
+
+    Vector2 jumpBtnCenter = { screenWidth - 100.0f * touchScale, screenHeight - 100.0f * touchScale };
+    float jumpBtnRadius = 45.0f * touchScale;
+
+    Vector2 flyToggleBtnCenter = { screenWidth - 100.0f * touchScale, screenHeight - 210.0f * touchScale };
+    float flyToggleBtnRadius = 35.0f * touchScale;
+
+    Vector2 flyUpBtnCenter = { screenWidth - 100.0f * touchScale, screenHeight - 310.0f * touchScale };
+    float flyUpBtnRadius = 30.0f * touchScale;
+
+    Vector2 flyDownBtnCenter = { screenWidth - 210.0f * touchScale, screenHeight - 210.0f * touchScale };
+    float flyDownBtnRadius = 30.0f * touchScale;
+
+    // Phím xoay camera
+    Vector2 camLeftCenter = { screenWidth - 320.0f * touchScale, screenHeight - 100.0f * touchScale };
+    float camLeftRadius = 25.0f * touchScale;
+
+    Vector2 camRightCenter = { screenWidth - 320.0f * touchScale, screenHeight - 170.0f * touchScale };
+    float camRightRadius = 25.0f * touchScale;
+
+    // Cập nhật trạng thái kéo Joystick bằng biến static
+    static bool s_joystickDragging = false;
+    static int s_joystickTouchId = -1;
+
+    // Thu thập các điểm chạm/click
+    int inputPointCount = GetTouchPointCount();
+    Vector2 inputPoints[10];
+    for (int i = 0; i < inputPointCount && i < 10; i++) {
+        inputPoints[i] = GetTouchPosition(i);
+    }
+    // Giả lập click chuột thành 1 chạm trên PC khi bật phím ảo
+    if (inputPointCount == 0 && g_showTouchControls && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+        inputPoints[0] = GetMousePosition();
+        inputPointCount = 1;
+    }
+
+    // Kiểm tra xem ngón tay kéo joystick ở frame trước có còn chạm không
+    if (s_joystickDragging) {
+        if (s_joystickTouchId < 0 || s_joystickTouchId >= inputPointCount) {
+            s_joystickDragging = false;
+            s_joystickTouchId = -1;
+        }
+    }
+
+    // Reset trạng thái joystick ảo hàng frame
+    g_joystickActive = false;
+    g_joystickKnobOffset = (Vector2){ 0, 0 };
+
+    float joyX = 0.0f;
+    float joyZ = 0.0f;
+    bool touchJump = false;
+    bool touchDash = false;
+    bool touchFlyToggle = false;
+    bool touchFlyUp = false;
+    bool touchFlyDown = false;
+    bool touchCamLeft = false;
+    bool touchCamRight = false;
+
+    // Xử lý va chạm vùng nút ảo cảm ứng
+    for (int i = 0; i < inputPointCount; i++) {
+        Vector2 pt = inputPoints[i];
+
+        // Mặc định bất kỳ điểm chạm nào ở nửa bên trái màn hình đều tính là click vào UI (tránh cast chiêu khi di chuyển)
+        if (pt.x < screenWidth * 0.45f) {
+            uiState->clickedOnUI = true;
+        }
+        
+        // 1. Xử lý Joystick kéo giữ khóa mục tiêu
+        if (s_joystickDragging && i == s_joystickTouchId) {
+            g_joystickActive = true;
+            Vector2 joyVec = Vector2Subtract(pt, joystickCenter);
+            float len = Vector2Length(joyVec);
+            if (len > joystickBaseRadius) {
+                joyVec = Vector2Scale(Vector2Normalize(joyVec), joystickBaseRadius);
+            }
+            g_joystickKnobOffset = joyVec;
+            joyX = joyVec.x / joystickBaseRadius;
+            joyZ = joyVec.y / joystickBaseRadius;
+            uiState->clickedOnUI = true;
+            continue;
+        }
+
+        // Nếu chưa kéo, phát hiện xem có chạm vào vùng joystick để bắt đầu kéo không
+        if (!s_joystickDragging) {
+            float distToJoy = Vector2Distance(pt, joystickCenter);
+            if (distToJoy <= joystickBaseRadius * 2.0f) { // Vùng chạm bắt đầu rộng rãi
+                s_joystickDragging = true;
+                s_joystickTouchId = i;
+                g_joystickActive = true;
+                Vector2 joyVec = Vector2Subtract(pt, joystickCenter);
+                float len = Vector2Length(joyVec);
+                if (len > joystickBaseRadius) {
+                    joyVec = Vector2Scale(Vector2Normalize(joyVec), joystickBaseRadius);
+                }
+                g_joystickKnobOffset = joyVec;
+                joyX = joyVec.x / joystickBaseRadius;
+                joyZ = joyVec.y / joystickBaseRadius;
+                uiState->clickedOnUI = true;
+                continue;
+            }
+        }
+
+        // 2. Kiểm tra các phím chức năng với vùng chạm rộng rãi (radius * 1.4f)
+        // Phím Dash
+        if (Vector2Distance(pt, dashBtnCenter) <= dashBtnRadius * 1.4f) {
+            touchDash = true;
+            uiState->clickedOnUI = true;
+            continue;
+        }
+
+        // Phím Jump
+        if (Vector2Distance(pt, jumpBtnCenter) <= jumpBtnRadius * 1.4f) {
+            touchJump = true;
+            uiState->clickedOnUI = true;
+            continue;
+        }
+
+        // Phím Fly Toggle
+        if (Vector2Distance(pt, flyToggleBtnCenter) <= flyToggleBtnRadius * 1.4f) {
+            touchFlyToggle = true;
+            uiState->clickedOnUI = true;
+            continue;
+        }
+
+        // Phím Fly Up
+        if (player->isFlying && Vector2Distance(pt, flyUpBtnCenter) <= flyUpBtnRadius * 1.4f) {
+            touchFlyUp = true;
+            uiState->clickedOnUI = true;
+            continue;
+        }
+
+        // Phím Fly Down
+        if (player->isFlying && Vector2Distance(pt, flyDownBtnCenter) <= flyDownBtnRadius * 1.4f) {
+            touchFlyDown = true;
+            uiState->clickedOnUI = true;
+            continue;
+        }
+
+        // Phím Cam Left
+        if (Vector2Distance(pt, camLeftCenter) <= camLeftRadius * 1.4f) {
+            touchCamLeft = true;
+            uiState->clickedOnUI = true;
+            continue;
+        }
+
+        // Phím Cam Right
+        if (Vector2Distance(pt, camRightCenter) <= camRightRadius * 1.4f) {
+            touchCamRight = true;
+            uiState->clickedOnUI = true;
+            continue;
+        }
+    }
+
+    // Theo dõi trạng thái sườn lên để kích hoạt nhấn một lần
+    static bool prevTouchJump = false;
+    static bool prevTouchDash = false;
+    static bool prevTouchFlyToggle = false;
+
+    bool jumpPressed = IsKeyPressed(KEY_SPACE) || (touchJump && !prevTouchJump);
+    bool dashPressed = (IsKeyPressed(KEY_X) && player->dashCooldown <= 0.0f) || (touchDash && !prevTouchDash && player->dashCooldown <= 0.0f);
+    bool flyTogglePressed = IsKeyPressed(KEY_G) || (touchFlyToggle && !prevTouchFlyToggle);
+
+    prevTouchJump = touchJump;
+    prevTouchDash = touchDash;
+    prevTouchFlyToggle = touchFlyToggle;
+
+    g_touchJumpActive = touchJump;
+    g_touchDashActive = touchDash;
+    g_touchFlyToggleActive = touchFlyToggle;
+    g_touchFlyUpActive = touchFlyUp;
+    g_touchFlyDownActive = touchFlyDown;
+    g_touchCamLeftActive = touchCamLeft;
+    g_touchCamRightActive = touchCamRight;
+
+    if (flyTogglePressed) {
+        player->isFlying = !player->isFlying;
+        if (!player->isFlying) {
+            player->zVelocity = 0.0f; // Triệt tiêu gia tốc khi đáp đất
+        }
+    }
+
+    // 1. NGẮM BẮN CHUỘT 3D (Chỉ thực hiện ngắm nếu không tương tác với phím ảo)
+    if (!uiState->clickedOnUI) {
+        Ray mouseRay = GetScreenToWorldRay(mousePos, camera);
+        if (mouseRay.direction.y != 0.0f) {
+            float t = -mouseRay.position.y / mouseRay.direction.y;
+            *outMouseTarget = Vector3Add(mouseRay.position, Vector3Scale(mouseRay.direction, t));
+        } else {
+            *outMouseTarget = (Vector3){0};
+        }
     } else {
         *outMouseTarget = (Vector3){0};
     }
 
-    // 2. DI CHUYỂN PLAYER (DASH & JUMP)
+    // 2. DI CHUYỂN PLAYER (WASD & KEYBOARD / JOYSTICK)
     float inputX = 0.0f;
     float inputZ = 0.0f;
     if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) inputZ -= 1.0f; 
     if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) inputZ += 1.0f; 
     if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) inputX -= 1.0f; 
     if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) inputX += 1.0f; 
+
+    // Gộp input từ phím ảo nếu có hoạt động
+    if (g_joystickActive) {
+        inputX = joyX;
+        inputZ = joyZ;
+    }
 
     // Chuyển đổi di chuyển theo hướng camera thực tế trên mặt phẳng XZ
     Vector3 moveDir = { 0.0f, 0.0f, 0.0f };
@@ -166,6 +393,7 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
 
     if (player->dashCooldown > 0.0f) player->dashCooldown -= dt;
 
+    // Tính toán chiều cao địa hình bên dưới người chơi (Pillars & Ground)
     float currentGroundY = 0.0f;
     for (int i = 0; i < NUM_PILLARS; i++) {
         Vector3 diff = Vector3Subtract(player->position, pillars[i].position);
@@ -175,39 +403,67 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         float checkRadius = player->radius + pillars[i].radius;
         
         if (dist < checkRadius) {
-            if (i == 0 && player->position.y >= pillarHeight - 15.0f && player->zVelocity <= 0.0f) {
-                currentGroundY = pillarHeight;
+            // Chỉ đẩy lùi nếu người chơi ở độ cao thấp hơn đỉnh cột
+            if (player->position.y < pillarHeight) {
+                if (i == 0 && player->position.y >= pillarHeight - 15.0f && player->zVelocity <= 0.0f) {
+                    currentGroundY = pillarHeight;
+                } else {
+                    Vector3 pushDir = Vector3Normalize(diff);
+                    player->position.x = pillars[i].position.x + pushDir.x * checkRadius;
+                    player->position.z = pillars[i].position.z + pushDir.z * checkRadius;
+                }
             } else {
-                Vector3 pushDir = Vector3Normalize(diff);
-                player->position.x = pillars[i].position.x + pushDir.x * checkRadius;
-                player->position.z = pillars[i].position.z + pushDir.z * checkRadius;
+                // Đứng vững trên mặt cột đá
+                if (player->zVelocity <= 0.0f) {
+                    currentGroundY = pillarHeight;
+                }
             }
         }
     }
 
-    bool isOnSolid = (player->position.y <= currentGroundY);
-    if (!isOnSolid || player->zVelocity > 0.0f) {
-        player->zVelocity -= gravity * dt;
-        player->position.y += player->zVelocity * dt;
-        if (player->position.y <= currentGroundY) {
-            player->position.y = currentGroundY;
-            player->zVelocity = 0.0f;
-            player->jumpCount = 0;
+    // 3. VẬT LÝ DI CHUYỂN / BAY (FLIGHT VS JUMP PHYSICS)
+    if (player->isFlying) {
+        player->zVelocity = 0.0f;
+        player->jumpCount = 0;
+        float flySpeed = 350.0f;
+        if (IsKeyDown(KEY_SPACE) || touchFlyUp) {
+            player->position.y += flySpeed * dt;
+        }
+        if (IsKeyDown(KEY_LEFT_SHIFT) || touchFlyDown) {
+            player->position.y -= flySpeed * dt;
+            if (player->position.y <= currentGroundY) {
+                player->position.y = currentGroundY;
+                player->isFlying = false; // Tự đáp đất khi chạm sàn
+            }
         }
     } else {
-        player->zVelocity = 0.0f;
-    }
+        // Áp dụng trọng lực thông thường khi không bay
+        bool isOnSolid = (player->position.y <= currentGroundY);
+        if (!isOnSolid || player->zVelocity > 0.0f) {
+            player->zVelocity -= gravity * dt;
+            player->position.y += player->zVelocity * dt;
+            if (player->position.y <= currentGroundY) {
+                player->position.y = currentGroundY;
+                player->zVelocity = 0.0f;
+                player->jumpCount = 0;
+            }
+        } else {
+            player->zVelocity = 0.0f;
+        }
 
-    if (IsKeyPressed(KEY_SPACE)) {
-        if (player->position.y <= currentGroundY + 1.0f) {
-            player->zVelocity = 550.0f;
-            player->jumpCount = 1;
-        } else if (player->jumpCount < 2) {
-            player->zVelocity = 500.0f;
-            player->jumpCount = 2;
+        // Nhẩy / Nhẩy kép
+        if (jumpPressed) {
+            if (player->position.y <= currentGroundY + 1.0f) {
+                player->zVelocity = 550.0f;
+                player->jumpCount = 1;
+            } else if (player->jumpCount < 2) {
+                player->zVelocity = 500.0f;
+                player->jumpCount = 2;
+            }
         }
     }
 
+    // Dash lướt nhanh
     if (player->isDashing) {
         player->dashTimer -= dt;
         float dashSpeed = 1200.0f;
@@ -222,11 +478,12 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         player->position.x += moveDir.x * moveSpeed * dt;
         player->position.z += moveDir.z * moveSpeed * dt;
 
-        if (IsKeyPressed(KEY_X) && player->dashCooldown <= 0.0f) {
+        if (dashPressed) {
             player->isDashing = true;
             player->dashTimer = 0.15f;
             player->dashCooldown = 0.8f;
             if (Vector3Length(moveDir) == 0.0f) {
+                // Dash theo hướng nhắm chuột nếu đang đứng yên
                 Vector3 diff = Vector3Subtract(*outMouseTarget, player->position);
                 diff.y = 0.0f;
                 player->dashDir = Vector3Normalize(diff);
@@ -236,6 +493,7 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         }
     }
 
+    // Giới hạn trong võ đài
     Vector3 toChar = Vector3Subtract(player->position, arenaCenter);
     toChar.y = 0.0f;
     if (Vector3Length(toChar) > arenaRadius - player->radius) {
@@ -244,7 +502,7 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         player->position.z = arenaCenter.z + normal.z * (arenaRadius - player->radius);
     }
 
-    // 3. CẬP NHẬT ENEMY
+    // 4. CẬP NHẬT ENEMY
     if (IsKeyPressed(KEY_P)) enemy->mode = (enemy->mode + 1) % 3;
 
     float currentEnemySpeed = enemy->speed;
@@ -282,7 +540,7 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         };
     }
 
-    // Di chuyển lái hướng (Steer/Move) về phía vị trí mục tiêu (giúp các lực đẩy/hút hoạt động tự nhiên)
+    // Di chuyển lái hướng (Steer/Move) về phía vị trí mục tiêu
     if (currentEnemySpeed > 0.0f && enemy->mode != ENEMY_STATIC) {
         Vector3 toTarget = Vector3Subtract(targetPos, enemy->position);
         toTarget.y = 0.0f;
@@ -292,7 +550,6 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
             enemy->position = Vector3Add(enemy->position, dir);
         }
     } else if (enemy->mode == ENEMY_STATIC) {
-        // Mode Static vẫn tự trôi nhẹ về điểm tĩnh gốc để giữ nhịp dao động
         Vector3 toTarget = Vector3Subtract(targetPos, enemy->position);
         toTarget.y = 0.0f;
         float dist = Vector3Length(toTarget);
@@ -315,7 +572,6 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     // Cập nhật vị trí dựa theo vận tốc hất văng knockback
     if (Vector3Length(enemy->knockbackVelocity) > 0.01f) {
         enemy->position = Vector3Add(enemy->position, Vector3Scale(enemy->knockbackVelocity, dt));
-        // Ma sát nội tại làm giảm dần tốc độ giật lùi
         enemy->knockbackVelocity = Vector3Subtract(enemy->knockbackVelocity, Vector3Scale(enemy->knockbackVelocity, 8.0f * dt));
         if (Vector3Length(enemy->knockbackVelocity) < 2.0f) {
             enemy->knockbackVelocity = (Vector3){0};
@@ -330,7 +586,6 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         pullDir.y = 0.0f;
         float dist = Vector3Length(pullDir);
         if (dist > 10.0f) {
-            // Càng gần tâm lực hút càng tăng để hút dính quái
             float pullFactor = Clamp(400.0f / dist, 0.5f, 3.0f);
             Vector3 pullForce = Vector3Scale(Vector3Normalize(pullDir), windPullStrength * pullFactor * dt);
             enemy->position = Vector3Add(enemy->position, pullForce);
@@ -363,9 +618,9 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         enemy->position.z += (float)GetRandomValue(-6, 6);
     }
 
-    // Xoay camera bằng phím Q và E
-    if (IsKeyDown(KEY_Q)) g_cameraAngle -= 2.5f * dt;
-    if (IsKeyDown(KEY_E)) g_cameraAngle += 2.5f * dt;
+    // Xoay camera bằng phím Q/E hoặc phím ảo
+    if (IsKeyDown(KEY_Q) || touchCamLeft) g_cameraAngle -= 2.5f * dt;
+    if (IsKeyDown(KEY_E) || touchCamRight) g_cameraAngle += 2.5f * dt;
 
     // Zoom camera bằng phím R và F, hoặc Mouse Wheel
     float wheel = GetMouseWheelMove();
@@ -378,7 +633,6 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     if (g_camDist < 100.0f) g_camDist = 100.0f;
     if (g_camDist > 1500.0f) g_camDist = 1500.0f;
     
-    // Tỉ lệ thuận chiều cao theo độ zoom (giữ góc nhìn ~36.8 độ: height/dist = 0.75)
     g_camHeight = g_camDist * 0.75f;
 
     // Cập nhật Camera góc nhìn thứ 3 (MMORPG)
@@ -455,3 +709,104 @@ void DrawSandboxHUD(void) {
     DrawTextEx(defaultFont, "- K Key / P Key  : Switch Map / Cycle Enemy AI Mode", (Vector2){ hudX + 25, hudY + 173 }, 10, 1.0f, LIGHTGRAY);
     DrawTextEx(defaultFont, "- Left Mouse     : Cast Selected Element Skill", (Vector2){ hudX + 25, hudY + 188 }, 10, 1.0f, LIGHTGRAY);
 }
+
+static void DrawTouchButton(Vector2 center, float radius, const char* label, bool active, Color activeColor) {
+    Color btnColor = active ? activeColor : ColorAlpha(DARKGRAY, 0.4f);
+    Color outlineColor = active ? WHITE : ColorAlpha(WHITE, 0.5f);
+    DrawCircleV(center, radius, btnColor);
+    DrawCircleLines(center.x, center.y, radius, outlineColor);
+    
+    // Vẽ text căn giữa
+    int fontSize = (int)(radius * 0.4f);
+    if (fontSize < 10) fontSize = 10;
+    int textW = MeasureText(label, fontSize);
+    DrawText(label, (int)(center.x - textW / 2.0f), (int)(center.y - fontSize / 2.0f), fontSize, WHITE);
+}
+
+void DrawSandboxTouchControls(const PlayerEntity* player) {
+    if (!g_showTouchControls) return;
+
+    // Thiết lập chế độ vẽ 2D overlay
+    rlDrawRenderBatchActive();
+    EndShaderMode();
+    BeginBlendMode(BLEND_ALPHA);
+
+    rlMatrixMode(RL_PROJECTION);
+    rlPushMatrix();
+    rlLoadIdentity();
+    rlOrtho(0.0, (double)GetScreenWidth(), (double)GetScreenHeight(), 0.0, -1.0, 1.0);
+
+    rlMatrixMode(RL_MODELVIEW);
+    rlPushMatrix();
+    rlLoadIdentity();
+    rlSetTexture(0);
+
+    float screenWidth = (float)GetScreenWidth();
+    float screenHeight = (float)GetScreenHeight();
+    float touchScale = screenHeight / 700.0f;
+
+    // Vị trí/kích thước phím ảo tương ứng với tỷ lệ màn hình
+    Vector2 joystickCenter = { 150.0f * touchScale, screenHeight - 150.0f * touchScale };
+    float joystickBaseRadius = 65.0f * touchScale;
+    float joystickKnobRadius = 30.0f * touchScale;
+
+    Vector2 dashBtnCenter = { screenWidth - 210.0f * touchScale, screenHeight - 100.0f * touchScale };
+    float dashBtnRadius = 35.0f * touchScale;
+
+    Vector2 jumpBtnCenter = { screenWidth - 100.0f * touchScale, screenHeight - 100.0f * touchScale };
+    float jumpBtnRadius = 45.0f * touchScale;
+
+    Vector2 flyToggleBtnCenter = { screenWidth - 100.0f * touchScale, screenHeight - 210.0f * touchScale };
+    float flyToggleBtnRadius = 35.0f * touchScale;
+
+    Vector2 flyUpBtnCenter = { screenWidth - 100.0f * touchScale, screenHeight - 310.0f * touchScale };
+    float flyUpBtnRadius = 30.0f * touchScale;
+
+    Vector2 flyDownBtnCenter = { screenWidth - 210.0f * touchScale, screenHeight - 210.0f * touchScale };
+    float flyDownBtnRadius = 30.0f * touchScale;
+
+    Vector2 camLeftCenter = { screenWidth - 320.0f * touchScale, screenHeight - 100.0f * touchScale };
+    float camLeftRadius = 25.0f * touchScale;
+
+    Vector2 camRightCenter = { screenWidth - 320.0f * touchScale, screenHeight - 170.0f * touchScale };
+    float camRightRadius = 25.0f * touchScale;
+
+    // 1. Vẽ Joystick ảo
+    DrawCircleV(joystickCenter, joystickBaseRadius, ColorAlpha(DARKGRAY, 0.3f));
+    DrawCircleLines(joystickCenter.x, joystickCenter.y, joystickBaseRadius, ColorAlpha(WHITE, 0.4f));
+    
+    Vector2 knobPos = Vector2Add(joystickCenter, g_joystickKnobOffset);
+    Color knobColor = g_joystickActive ? ColorAlpha(SKYBLUE, 0.8f) : ColorAlpha(LIGHTGRAY, 0.6f);
+    DrawCircleV(knobPos, joystickKnobRadius, knobColor);
+    DrawCircleLines(knobPos.x, knobPos.y, joystickKnobRadius, ColorAlpha(WHITE, 0.7f));
+
+    // 2. Vẽ các phím chức năng
+    DrawTouchButton(dashBtnCenter, dashBtnRadius, "DASH", g_touchDashActive, ColorAlpha(ORANGE, 0.8f));
+    DrawTouchButton(jumpBtnCenter, jumpBtnRadius, "JUMP", g_touchJumpActive, ColorAlpha(LIME, 0.8f));
+    
+    if (player->isFlying) {
+        DrawTouchButton(flyToggleBtnCenter, flyToggleBtnRadius, "LAND", g_touchFlyToggleActive, ColorAlpha(RED, 0.8f));
+        DrawTouchButton(flyUpBtnCenter, flyUpBtnRadius, "UP", g_touchFlyUpActive, ColorAlpha(GOLD, 0.8f));
+        DrawTouchButton(flyDownBtnCenter, flyDownBtnRadius, "DOWN", g_touchFlyDownActive, ColorAlpha(PURPLE, 0.8f));
+    } else {
+        DrawTouchButton(flyToggleBtnCenter, flyToggleBtnRadius, "FLY", g_touchFlyToggleActive, ColorAlpha(SKYBLUE, 0.8f));
+    }
+
+    // 3. Vẽ phím xoay camera
+    DrawTouchButton(camLeftCenter, camLeftRadius, "CAM <", g_touchCamLeftActive, ColorAlpha(BLUE, 0.7f));
+    DrawTouchButton(camRightCenter, camRightRadius, "CAM >", g_touchCamRightActive, ColorAlpha(BLUE, 0.7f));
+
+    // Nhãn hướng dẫn bật/tắt phím ảo ở trên PC
+#if !defined(PLATFORM_ANDROID)
+    DrawText("Press TAB to toggle Touch UI", 10, 10, 15, ColorAlpha(RAYWHITE, 0.7f));
+#endif
+
+    // Khôi phục ma trận chiếu và ma trận modelview
+    rlMatrixMode(RL_PROJECTION);
+    rlPopMatrix();
+    rlMatrixMode(RL_MODELVIEW);
+    rlPopMatrix();
+
+    EndBlendMode();
+}
+

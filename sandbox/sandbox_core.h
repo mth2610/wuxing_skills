@@ -16,7 +16,9 @@ typedef struct {
     bool isDashing;
     float zVelocity;
     int jumpCount;
+    bool isFlying;
 } PlayerEntity;
+
 
 typedef enum {
     ENEMY_STATIC = 0,
@@ -45,5 +47,9 @@ void DrawSandbox3D(const PlayerEntity* player, const EnemyEntity* enemy, Vector3
 
 // Vẽ HUD thông tin debug Sandbox (camera parameters, instructions)
 void DrawSandboxHUD(void);
+
+// Hệ thống phím cảm ứng & Bay trên Android
+extern bool g_showTouchControls;
+void DrawSandboxTouchControls(const PlayerEntity* player);
 
 #endif // SANDBOX_CORE_H

@@ -15,7 +15,7 @@ Thực thi các lệnh sau tại thư mục gốc của dự án:
 make -f Makefile.Android clean
 
 # Biên dịch toàn bộ mã nguồn (.c) thành libmain.so, đóng gói tài nguyên, và xuất file .apk
-make -f Makefile.Android build
+make -f Makefile.Android
 ```
 *(Ghi chú: Makefile tự động lo việc tạo thư mục, sao chép assets, chuyển đổi shader, biên dịch liên kết thư viện động, và ký APK với keystore cục bộ).*
 
