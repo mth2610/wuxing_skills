@@ -587,9 +587,13 @@ void UpdateWaterStreamSkill(float dt, Vector3 enemyPos, float enemyRadius) {
             float hitRad = (BASE_RADIUS * s->scale) + enemyRadius;
             if (distSq <= hitRad * hitRad) {
                 TriggerImpactVFX(s->headPos, s->scale);
-                ApplyDamage(s->damage);
-                ApplySlow(2.5f, 0.4f); // 40% slow for 2.5 seconds
-                ApplyKnockback(Vector3Normalize(Vector3Subtract(enemyPos, s->pos)), s->knockback);
+                
+                char dmgText[32];
+                snprintf(dmgText, sizeof(dmgText), "-%.0f", s->damage);
+                AddFloatingText(enemyPos, dmgText, RED, 3.0f, 1.0f);
+                
+                // ApplySlow(2.5f, 0.4f); // Not available in engine yet
+                AddKnockbackToEnemy(Vector3Scale(Vector3Normalize(Vector3Subtract(enemyPos, s->pos)), s->knockback));
                 s->impactTriggered = true;
             }
         }
