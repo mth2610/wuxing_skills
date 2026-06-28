@@ -318,6 +318,7 @@ int main(void) {
         // MỚI: IN THÔNG TIN TEXT DEBUG LÊN HUD CŨNG ĐƯỢC QUẢN LÝ TẬP TRUNG
         // =========================================================================
         VFXTest_DrawHUD();
+        DrawSandboxHUD();
 
         DrawText("Phím P: Đổi chế độ quái | Click trái: Tung chiêu | X: Khinh công", 10, 650, 20, LIGHTGRAY);
         DrawText("V: Pause | B: Step Forward | N: Screenshot | M: Slow Motion (10%) | K: Đổi Map", 10, 675, 20, ORANGE);

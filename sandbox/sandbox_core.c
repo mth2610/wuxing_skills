@@ -121,6 +121,10 @@ void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
     enemy->oscillationScale = 1.0f;
     enemy->knockbackVelocity = (Vector3){ 0 };
 }
+// Biến toàn cục để điều khiển camera
+static float g_cameraAngle = 0.0f;
+static float g_camDist = 600.0f;
+static float g_camHeight = 450.0f;
 
 void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelState* uiState, Vector3* outMouseTarget) {
     Vector2 mousePos = GetMousePosition();
@@ -135,14 +139,29 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     }
 
     // 2. DI CHUYỂN PLAYER (DASH & JUMP)
-    Vector3 moveDir = { 0.0f, 0.0f, 0.0f };
-    if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) moveDir.z -= 1.0f; 
-    if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) moveDir.z += 1.0f; 
-    if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) moveDir.x -= 1.0f; 
-    if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) moveDir.x += 1.0f; 
+    float inputX = 0.0f;
+    float inputZ = 0.0f;
+    if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) inputZ -= 1.0f; 
+    if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) inputZ += 1.0f; 
+    if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) inputX -= 1.0f; 
+    if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) inputX += 1.0f; 
 
-    if (Vector3Length(moveDir) > 0.0f) {
-        moveDir = Vector3Scale(moveDir, 1.0f / Vector3Length(moveDir));
+    // Chuyển đổi di chuyển theo hướng camera thực tế trên mặt phẳng XZ
+    Vector3 moveDir = { 0.0f, 0.0f, 0.0f };
+    if (inputX != 0.0f || inputZ != 0.0f) {
+        Vector3 camForward = Vector3Subtract(camera.target, camera.position);
+        camForward.y = 0.0f;
+        camForward = Vector3Normalize(camForward);
+
+        Vector3 camRight = Vector3CrossProduct(camForward, camera.up);
+        camRight.y = 0.0f;
+        camRight = Vector3Normalize(camRight);
+
+        // inputZ: -1.0f (W) -> đi tới (camForward), 1.0f (S) -> đi lùi (-camForward)
+        // inputX: -1.0f (A) -> đi trái (-camRight), 1.0f (D) -> đi phải (camRight)
+        moveDir.x = camForward.x * -inputZ + camRight.x * inputX;
+        moveDir.z = camForward.z * -inputZ + camRight.z * inputX;
+        moveDir = Vector3Normalize(moveDir);
     }
 
     if (player->dashCooldown > 0.0f) player->dashCooldown -= dt;
@@ -344,9 +363,32 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         enemy->position.z += (float)GetRandomValue(-6, 6);
     }
 
-    // Cập nhật Camera theo chân nhân vật
-    camera.target = player->position;
-    camera.position = (Vector3){ player->position.x, player->position.y + 500.0f, player->position.z + 400.0f };
+    // Xoay camera bằng phím Q và E
+    if (IsKeyDown(KEY_Q)) g_cameraAngle -= 2.5f * dt;
+    if (IsKeyDown(KEY_E)) g_cameraAngle += 2.5f * dt;
+
+    // Zoom camera bằng phím R và F, hoặc Mouse Wheel
+    float wheel = GetMouseWheelMove();
+    if (wheel != 0.0f) {
+        g_camDist -= wheel * 50.0f;
+    }
+    if (IsKeyDown(KEY_R)) g_camDist -= 300.0f * dt;
+    if (IsKeyDown(KEY_F)) g_camDist += 300.0f * dt;
+    
+    if (g_camDist < 100.0f) g_camDist = 100.0f;
+    if (g_camDist > 1500.0f) g_camDist = 1500.0f;
+    
+    // Tỉ lệ thuận chiều cao theo độ zoom (giữ góc nhìn ~36.8 độ: height/dist = 0.75)
+    g_camHeight = g_camDist * 0.75f;
+
+    // Cập nhật Camera góc nhìn thứ 3 (MMORPG)
+    camera.target = (Vector3){ player->position.x, player->position.y + 20.0f, player->position.z };
+    
+    camera.position = (Vector3){ 
+        player->position.x + sinf(g_cameraAngle) * g_camDist, 
+        player->position.y + g_camHeight, 
+        player->position.z + cosf(g_cameraAngle) * g_camDist 
+    };
 }
 
 void DrawSandbox3D(const PlayerEntity* player, const EnemyEntity* enemy, Vector3 mouseTarget, UIPanelState* uiState) {
@@ -373,4 +415,18 @@ void DrawSandbox3D(const PlayerEntity* player, const EnemyEntity* enemy, Vector3
     
     Environment_DrawSmartShadow(player->position, ENV_SHAPE_SPHERE, 25.0f, 25.0f);
     DrawCharacter3D(player->position, 25.0f, GetColor(0xFFD39BFF), GetColor(0x3B5998FF), player->isDashing ? GetRegisteredSkillColor(uiState->activeSkillIndex) : GetColor(0xCCCCCCFF), true, mouseTarget);
+}
+
+void DrawSandboxHUD(void) {
+    float angleDegrees = g_cameraAngle * 180.0f / 3.1415926535f;
+    // Đưa góc về khoảng [0, 360)
+    while (angleDegrees < 0.0f) angleDegrees += 360.0f;
+    while (angleDegrees >= 360.0f) angleDegrees -= 360.0f;
+
+    // Vẽ nền đen trong suốt phía sau HUD thông số
+    DrawRectangle(10, 80, 520, 80, ColorAlpha(BLACK, 0.6f));
+    
+    DrawText(TextFormat("[CAMERA HUD] Angle: %.1f deg (%.3f rad)", angleDegrees, g_cameraAngle), 20, 90, 16, GREEN);
+    DrawText(TextFormat("Dist (Zoom): %.1f | Height: %.1f (Ratio: %.2f)", g_camDist, g_camHeight, g_camHeight / g_camDist), 20, 110, 16, SKYBLUE);
+    DrawText("Q/E: Xoay | R/F hoặc Cuộn chuột: Zoom | WASD di chuyển chuẩn camera", 20, 135, 14, LIGHTGRAY);
 }

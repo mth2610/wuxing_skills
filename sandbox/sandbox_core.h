@@ -43,4 +43,7 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
 // Vẽ toàn bộ cảnh 3D (võ đài, người chơi, quái vật, cột đá)
 void DrawSandbox3D(const PlayerEntity* player, const EnemyEntity* enemy, Vector3 mouseTarget, UIPanelState* uiState);
 
+// Vẽ HUD thông tin debug Sandbox (camera parameters, instructions)
+void DrawSandboxHUD(void);
+
 #endif // SANDBOX_CORE_H

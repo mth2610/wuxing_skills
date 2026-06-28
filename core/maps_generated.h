@@ -4,9 +4,11 @@
 
 #include "core/map_manager.h"
 
+#include "maps/meadow_night/meadow_night.h"
 #include "maps/default_arena/default_arena.h"
 
 static inline void RegisterGeneratedMaps(void) {
+    MapManager_Register("MEADOW_NIGHT", InitMeadowNightMap, UpdateMeadowNightMap, DrawMeadowNightMap, UnloadMeadowNightMap);
     MapManager_Register("DEFAULT_ARENA", InitDefaultArenaMap, NULL, DrawDefaultArenaMap, NULL);
 }
 
