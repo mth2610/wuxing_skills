@@ -5,13 +5,19 @@
 #include "core/skill_manager.h"
 
 #include "skills/wood/wood_thorns/wood_thorns_skill.h"
+#include "skills/water/frost_blossom_rain_skill/frost_blossom_rain_skill.h"
 #include "skills/taiji/core_test/core_test_skill.h"
+#include "skills/fire/hoa_long_phong_ba_skill/hoa_long_phong_ba_skill.h"
+#include "skills/earth/seismic_pillars_skill/seismic_pillars_skill.h"
 #include "skills/earth/stone_prison_skill/stone_prison_skill.h"
 #include "skills/earth/earth_shatter_skill/earth_shatter_skill.h"
 
 static inline void RegisterGeneratedSkills(void) {
     RegisterSkill("WOOD_THORNS", ELEMENT_COLOR_WOOD, InitWoodThornsSkill, CastWoodThornsSkill, UpdateWoodThornsSkill, DrawWoodThornsSkill, UnloadWoodThornsSkill);
+    RegisterSkill("FROST_BLOSSOM_RAIN", ELEMENT_COLOR_WATER, InitFrostBlossomRainSkill, CastFrostBlossomRainSkill, UpdateFrostBlossomRainSkill, DrawFrostBlossomRainSkill, UnloadFrostBlossomRainSkill);
     RegisterSkill("CORE_TEST", ELEMENT_COLOR_TAIJI, InitCoreTestSkill, CastCoreTestSkill, UpdateCoreTestSkill, DrawCoreTestSkill, UnloadCoreTestSkill);
+    RegisterSkill("HOA_LONG_PHONG_BA", ELEMENT_COLOR_FIRE, InitHoaLongPhongBaSkill, CastHoaLongPhongBaSkill, UpdateHoaLongPhongBaSkill, DrawHoaLongPhongBaSkill, UnloadHoaLongPhongBaSkill);
+    RegisterSkill("SEISMIC_PILLARS", ELEMENT_COLOR_EARTH, InitSeismicPillarsSkill, CastSeismicPillarsSkill, UpdateSeismicPillarsSkill, DrawSeismicPillarsSkill, UnloadSeismicPillarsSkill);
     RegisterSkill("STONE_PRISON", ELEMENT_COLOR_EARTH, InitStonePrisonSkill, CastStonePrisonSkill, UpdateStonePrisonSkill, DrawStonePrisonSkill, UnloadStonePrisonSkill);
     RegisterSkill("EARTH_SHATTER", ELEMENT_COLOR_EARTH, InitEarthShatterSkill, CastEarthShatterSkill, UpdateEarthShatterSkill, DrawEarthShatterSkill, UnloadEarthShatterSkill);
 }

@@ -564,6 +564,12 @@ void AddRootToEnemy(float duration) {
   }
 }
 
+void AddSlowToEnemy(float duration) {
+  if (duration > slowTimer) {
+    slowTimer = duration;
+  }
+}
+
 // --- IMPLEMENTATION CỦA CÁC SKILL WRAPPERS ---
 
 #if HAS_SKILL_FLUID

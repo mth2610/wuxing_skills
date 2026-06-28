@@ -61,6 +61,7 @@ add_executable(wuxing
     core/procedural_mesh_utils.c
     core/vfx_test.c
     core/skill_debugger.c
+    core/skill_helper.c
 
     # --- Skills ---
     ${SKILL_SOURCES}

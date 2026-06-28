@@ -87,7 +87,12 @@ Up to 8 active layers, evaluated internally by the engine:
 * **Camera Shake (`core/camera_fx.h`):** `void CameraFX_Shake(float trauma);`
 * **Combat API (`core/skill_manager.h`):** `void ApplyAoEDamage(Vector3 position, float radius, float damage, float knockback);` (automatic internal enemy tracking, spawns damage texts and hurls targets).
 * **Shader Binding (`core/skill_manager.h`):** `void SkillManager_BeginShader(Shader shader);` and `void SkillManager_EndShader(void);` (auto-binds `u_time`, `u_viewPos`, `u_resolution`).
-* **Procedural Helpers (`core/procedural_mesh_utils.h`):** `DrawCoreSphere`, `DrawCoreCylinder`, `DrawCoreCone`, `DrawCorePlaneRect`, `DrawCorePlanePolygon`, `DrawCoreCube`, `DrawCoreTorus`, `DrawCorePrism` (safe raw `rlgl`-based drawing).
+* **Procedural Helpers (`core/procedural_mesh_utils.h`):** (Dùng `rlgl` nguyên bản cực nhẹ).
+  - `DrawCoreSphere`, `DrawCoreCylinder`, `DrawCoreCone`, `DrawCoreCube`.
+  - `DrawCorePlanePolygon(..., sides)`: `sides=3` (Tam giác), `sides=6` (Lục giác), `sides=32` (Hình tròn) -> Dùng làm khiên/trận pháp.
+  - `DrawCorePrism(..., sides)`: `sides=6` ra khối lục giác đá/băng.
+  - `DrawCoreTorus(...)`: Vòng đai quang luân/lốc xoáy 3D.
+  - `DrawCorePlaneRect(...)`: Mặt phẳng vuông/chữ nhật.
 
 ---
 
@@ -155,8 +160,8 @@ static Vector3 GetBezierDerivative(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p
 }
 
 static void TriggerImpactVFX(Vector3 pos, float scale) {
-    ScreenDistort_AddSource(pos, 85.0f, 0.7f, 0.6f, 150.0f);
-    Decal_Spawn(pos, (float)GetRandomValue(0,360), BASE_RADIUS*scale*2.5f, s_causticsTex, 4.f, ColorAlpha(ELEMENT_COLOR_WATER, 0.7f));
+    ScreenDistort_Add(pos, 85.0f, 0.7f, 0.6f, 150.0f);
+    DecalSystem_Add(pos, (float)GetRandomValue(0,360), BASE_RADIUS*scale*2.5f, s_causticsTex, 4.f, ColorAlpha(ELEMENT_COLOR_WATER, 0.7f));
     VFXLight_Spawn(pos, ELEMENT_COLOR_WATER, 55.f*scale, 0.5f);
     for (int i = 0; i < 15; i++) {
         float a = (float)i / 15.0f * 2.0f * 3.14159f;
@@ -307,3 +312,91 @@ void DeactivateWaterStreamProjectile(int idx) {
 * **Custom Vertex Shader for 3D Lighting:** Raylib's default vertex shader (`NULL`) does NOT pass `fragNormal` or `fragPosition`. Using them for 3D lighting without a custom vertex shader will cause `NaN` errors, breaking the mesh into flat/black triangles! You MUST write and load a custom `.vs` (e.g. `ResourceManager_LoadShader("skill.vs", "skill.fs")`).
 * **World UV Noise:** Don't use high multipliers on World UVs (`fragPosition.xz * 4.0`), it creates TV static. Use low multipliers (`0.05`) and stretch axes for organic fissures.
 * **Preserve 3D Volume:** Don't let Emissive colors cover >60% of an object without shading (makes it look flat). Use `smoothstep` to restrict glow to 20-30%, and apply Wrap Lighting (`NdotL`) + Fresnel (`NdotV`) to the base rock/material to emphasize 3D curvature.
+
+---
+
+## 8. HIGH-LEVEL SKILL HELPER API (`#include "core/skill_helper.h"`)
+
+A wrapper library to eliminate boilerplate and synchronize visual and physics events.
+
+### 8.1 Structs & Enums Reference
+```c
+typedef enum {
+    EFFECT_PRESET_FIRE_EXPLOSION, EFFECT_PRESET_ICE_SHATTER,
+    EFFECT_PRESET_WATER_SPLASH, EFFECT_PRESET_LIGHTNING_IMPACT, EFFECT_PRESET_EARTH_CRACK
+} EffectPresetType;
+
+typedef enum { SHAPE_CIRCLE, SHAPE_BOX, SHAPE_CONE } ShapeType;
+typedef struct {
+    ShapeType shape; Vector3 center; float radius;
+    float damagePerSecond; float tickInterval; float duration;
+} DamageVolume;
+
+typedef struct { float current; float duration; } SkillTimeline;
+
+typedef enum { EMITTER_FIRE, EMITTER_SNOW, EMITTER_WATER_SPURT, EMITTER_SHOCKED_SPARKS } EmitterPreset;
+
+typedef enum {
+    MESH_PRESET_DISC, MESH_PRESET_RING, MESH_PRESET_CONE, MESH_PRESET_TORNADO,
+    MESH_PRESET_CYLINDER, MESH_PRESET_SPHERE, MESH_PRESET_SHOCKWAVE
+} MeshPresetType;
+
+typedef enum { MATERIAL_FIRE, MATERIAL_ICE, MATERIAL_WATER, MATERIAL_PORTAL } MaterialPreset;
+typedef struct { Shader shader; MaterialPreset preset; int uTimeLoc; int uDissolveLoc; } EffectMaterial;
+
+typedef enum { DECAL_PRESET_BURN, DECAL_PRESET_CRACK, DECAL_PRESET_ICE, DECAL_PRESET_WATER } DecalPresetType;
+
+typedef struct { float magnitude; float duration; float frequency; float falloff; } CameraImpulse;
+
+typedef enum { FORCE_PRESET_FIRE_UPDRAFT, FORCE_PRESET_SNOW_BLIZZARD, FORCE_PRESET_WATER_VORTEX } ForceFieldPreset;
+
+typedef struct {
+    Vector3 target; float scale;
+    bool hasExplosion; EffectPresetType explosionEffect;
+    bool hasDecal; DecalPresetType decalType; float decalRadius; float decalDuration;
+    bool hasDamageVolume; float damageRadius; float damageDps; float damageDuration;
+} SkillBuildContext;
+```
+
+### 8.2 API Functions Prototypes
+```c
+// VFX impact: screen distort + shake + light + particle burst
+void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale);
+
+// AoE Damage-over-Time: auto-ticks and auto-cleans
+int SpawnDamageVolume(DamageVolume config);
+
+// Timeline: Timeline_Event return true exactly when crossing triggerTime
+void Timeline_Start(SkillTimeline *t, float duration);
+bool Timeline_Event(SkillTimeline *t, float triggerTime, float dt);
+bool Timeline_Finished(SkillTimeline *t);
+
+// Emitters: continuous particle spawning
+int Emitter_AttachToPoint(EmitterPreset type, Vector3 pos, float ratePerSecond, float duration);
+void Emitter_Stop(int emitterId);
+
+// Drawing: draws shape and automatically resets vertex color state
+void DrawEffectMesh(MeshPresetType type, Vector3 pos, Vector3 scale, Color color);
+
+// Material: loads and applies shaders, automatically handles global time uniforms
+EffectMaterial Material_Load(MaterialPreset preset);
+void Material_SetFloat(EffectMaterial *mat, const char *uniformName, float val);
+void Material_Begin(EffectMaterial mat);
+void Material_End(void);
+
+// Decals: ground scorches and caustics
+void SpawnGroundDecal(DecalPresetType type, Vector3 pos, float radius, float duration);
+
+// Camera Shake: physical camera shake that attenuates with distance
+void CameraFX_AddImpulse(Vector3 origin, CameraImpulse impulse);
+
+// Force Field: preset force fields
+ForceField ForceField_CreatePreset(ForceFieldPreset preset);
+
+// Skill Builder: build a standard skill in one go
+void SkillBuilder_Start(SkillBuildContext *ctx, Vector3 target, float scale);
+void SkillBuilder_AddExplosion(SkillBuildContext *ctx, EffectPresetType vfx);
+void SkillBuilder_AddDecal(SkillBuildContext *ctx, DecalPresetType decal, float radius, float duration);
+void SkillBuilder_AddDamageVolume(SkillBuildContext *ctx, float radius, float dps, float duration);
+void SkillBuilder_Build(SkillBuildContext *ctx);
+```

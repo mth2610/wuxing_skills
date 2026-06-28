@@ -204,7 +204,6 @@ typedef struct {
   - **Aesthetic Scale Rule:** Never make ground decals tiny or exactly the same size as the structure's base. Decals must look impactful. Always scale the decal size to **`4.0x` to `5.5x`** the base radius of the emerging structure (e.g. `baseRadius * scale * 5.2f`).
 
 ### Screen Distortion (`#include "core/screen_distort.h"`)
-* `void ScreenDistort_AddSource(Vector3 pos, float rad, float str, float life, float speed);`
 * `void ScreenDistort_Add(Vector3 pos, float rad, float str, float life, float speed);`
   - Triggers a radial shockwave/heat-refraction distortion on screen. `ScreenDistort_Add` is the preferred unified prefix wrapper. Best used at collision/impact points.
 
@@ -230,10 +229,14 @@ Avoid raw Raylib primitives (which are strictly prohibited). Use these raw `rlgl
 * `void DrawCoreCylinder(Vector3 bottom, Vector3 top, float radiusBottom, float radiusTop, int slices, Color color);`
 * `void DrawCoreCone(Vector3 bottom, float radius, float height, int slices, Color color);`
 * `void DrawCorePlaneRect(Vector3 center, Vector2 size, Color color);`
+  - Vẽ mặt phẳng chữ nhật/vuông (thường dùng làm bệ đứng, bẫy đất).
 * `void DrawCorePlanePolygon(Vector3 center, float radius, int sides, Color color);`
+  - Vẽ mặt phẳng đa giác. Mẹo: Truyền `sides=3` cho tam giác, `sides=6` cho lục giác, `sides=32` cho hình tròn. (Rất hợp làm khiên năng lượng, vòng tròn pháp thuật).
 * `void DrawCoreCube(Vector3 position, float width, float height, float length, Color color);`
 * `void DrawCoreTorus(Vector3 center, float innerRadius, float outerRadius, int sides, int rings, Color color);`
+  - Vẽ vòng đai 3D (nhẫn/quang luân). Mẹo: Rất hợp với các chiêu thức của hệ Kim hoặc lốc xoáy hệ Phong.
 * `void DrawCorePrism(Vector3 bottom, Vector3 top, float radius, int sides, Color color);`
+  - Vẽ khối lăng trụ. Mẹo: Truyền `sides=6` sẽ ra khối lục giác (thường dùng làm cột băng hoặc khối đá).
 
 ### Post-Processing & Bloom (`#include "core/post_fx.h"`)
 Adjust screen bloom, vignette, or chromatic aberration dynamically during casting:
@@ -491,8 +494,8 @@ static Vector3 GetBezierDerivative(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p
 }
 
 static void TriggerImpactVFX(Vector3 pos, float scale) {
-    ScreenDistort_AddSource(pos, 85.0f, 0.7f, 0.6f, 150.0f);
-    Decal_Spawn(
+    ScreenDistort_Add(pos, 85.0f, 0.7f, 0.6f, 150.0f);
+    DecalSystem_Add(
         pos, 
         (float)GetRandomValue(0, 360), 
         BASE_RADIUS * scale * 2.5f, 
@@ -799,26 +802,224 @@ void DeactivateWaterStreamProjectile(int index) {
 
 ---
 
-## 9. 3D RENDERING & SHADER BEST PRACTICES (CRITICAL LESSONS)
+## 12. 3D RENDERING & SHADER BEST PRACTICES (CRITICAL LESSONS)
 
 When rendering custom 3D primitives (like tubes, pillars, or crystals) using `rlgl` and custom shaders, you MUST follow these crucial rules to avoid visual bugs (e.g., flat 2D look, TV static noise, random colored tints):
 
-### 9.1 Vertex Color Initialization (`rlColor4ub`)
+### 12.1 Vertex Color Initialization (`rlColor4ub`)
 When drawing raw geometry via `rlBegin(RL_QUADS)` / `rlVertex3f`, the `fragColor` in the shader inherits the **last active color state** set by Raylib. If a UI element or another skill drew something green just before your skill, your 3D mesh will be tinted green!
 * **Rule:** ALWAYS call `rlColor4ub(255, 255, 255, 255);` (White, full alpha) immediately before `rlBegin()` for 3D meshes that use custom shader textures/colors, to reset the vertex color state.
 
-### 9.2 Avoiding "TV Static" in Procedural Noise
+### 12.2 Avoiding "TV Static" in Procedural Noise
 When generating procedural textures (like magma veins, ice cracks) in shaders using `noise` or `fbm` (Fractional Brownian Motion):
 * **Do NOT use high frequencies on World UVs:** If `worldUV` is calculated from `fragPosition` (e.g., `fragPosition.xz * 4.0`), the noise will sample extremely high frequencies and turn into random noisy dots (TV static).
 * **Rule:** Use very small multipliers for world coordinates (e.g., `fragPosition.xz * 0.05`) to create large, organic, continuous patterns. Stretch the noise on specific axes (e.g., multiplying X by 0.1 but Y by 0.01) to create directional fissures (like vertical magma cracks).
 
-### 9.3 Custom Vertex Shader Requirement for 3D Lighting
+### 12.3 Custom Vertex Shader Requirement for 3D Lighting
 Raylib's default vertex shader (loaded when passing `NULL` as the vs path) **does NOT pass `fragNormal` or `fragPosition`** to the fragment shader.
 * **The Trap:** If you try to calculate 3D lighting (like `NdotL`, `NdotV`, `normalize(fragNormal)`) in your fragment shader while using the default vertex shader, the uninitialized variables will cause a `NaN` (Not a Number) chain reaction. Your beautiful 3D mesh will instantly break into flat, black, broken triangles.
 * **Rule:** If your fragment shader needs `fragNormal` or `fragPosition` for 3D lighting, you **MUST** create and load a custom vertex shader (e.g., `my_skill.vs`) that explicitly passes them using `matModel`. Do not pass `NULL` to `ResourceManager_LoadShader()`.
 
-### 9.4 Preserving 3D Volume (Avoiding the "Flat 2D" look)
+### 12.4 Preserving 3D Volume (Avoiding the "Flat 2D" look)
 If a glowing emissive color covers too much of the object (e.g., > 60% coverage) without any shading, the object will lose all its dark/shadow areas and appear as a flat 2D sprite.
 * **Rule 1 - Sparse Emissive Masks:** Use `smoothstep` (e.g., `smoothstep(0.6, 0.8, noiseValue)`) to tightly restrict glowing areas (like magma/cracks) to only 20-30% of the surface area. The remaining 70% must be the base shaded material.
 * **Rule 2 - Wrap Lighting & Fresnel:** For the non-emissive base material, always calculate `NdotL` (Lambertian diffuse) and `NdotV` (Fresnel). Use Fresnel (`pow(1.0 - NdotV, 3.0)`) to add Rim Lighting to the edges of the 3D volume, emphasizing its curvature.
 * **Rule 3 - Emissive Order:** Always add your `emissive` color **AFTER** multiplying the base color by textures/shadows, otherwise the glow will be incorrectly darkened by the shadow/texture.
+
+---
+
+## 13. HIGH-LEVEL SKILL HELPER API (`#include "core/skill_helper.h"`)
+
+The engine provides a high-level helper layer designed to drastically reduce boilerplate code, prevent timer/state synchronization bugs, and standardize aesthetic presets across all skills.
+
+### 13.1 Effect Preset (`SpawnImpactEffect`)
+Combines screen distortion, camera shake, point lights, and elemental particles into a single call.
+* **Prototype:** `void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale);`
+* **Supported Presets:**
+  - `EFFECT_PRESET_FIRE_EXPLOSION`: Creates fiery blast, ground scorch, heavy shake, and orange point light.
+  - `EFFECT_PRESET_ICE_SHATTER`: Creates ice shard explosion, white point light, and frost sương ground decal.
+  - `EFFECT_PRESET_WATER_SPLASH`: Creates water droplet splash, cyan-blue point light.
+  - `EFFECT_PRESET_LIGHTNING_IMPACT`: Creates electric spark explosion, purple-white point light, and crack decal.
+  - `EFFECT_PRESET_EARTH_CRACK`: Creates dust wave, heavy camera shake, and large dirt cracks.
+
+### 13.2 Damage Volume (`SpawnDamageVolume`)
+Manages custom continuous Area-of-Effect (AoE) damage over time (DoT) fields. The volume runs as an engine entity, automatically ticking damage and self-cleaning when finished.
+* **Configuration Struct:**
+```c
+typedef enum { SHAPE_CIRCLE, SHAPE_BOX, SHAPE_CONE } ShapeType;
+typedef struct {
+    ShapeType shape;
+    Vector3 center;
+    float radius;
+    float damagePerSecond;
+    float tickInterval;
+    float duration;
+} DamageVolume;
+```
+* **Prototype:** `int SpawnDamageVolume(DamageVolume config);`
+* **Note:** The volume applies damage every `tickInterval` using `ApplyAoEDamage` under the hood.
+
+### 13.3 Skill Timeline (`SkillTimeline`)
+Eliminates manual timer tracking by providing standard delta crossing checks.
+* **Configuration Struct:**
+```c
+typedef struct {
+    float current;
+    float duration;
+} SkillTimeline;
+```
+* **APIs:**
+  - `void Timeline_Start(SkillTimeline *t, float duration);` -> Resets current timer to 0.0 and sets total duration.
+  - `bool Timeline_Event(SkillTimeline *t, float triggerTime, float dt);` -> Returns `true` exactly during the frame that the timeline crosses `triggerTime`.
+  - `bool Timeline_Finished(SkillTimeline *t);` -> Returns `true` if current time exceeds duration.
+
+### 13.4 Particle Emitter (`Emitter_AttachToPoint`)
+Spawns particles continuously at a target position.
+* **Supported Presets:** `EMITTER_FIRE`, `EMITTER_SNOW`, `EMITTER_WATER_SPURT`, `EMITTER_SHOCKED_SPARKS`.
+* **APIs:**
+  - `int Emitter_AttachToPoint(EmitterPreset type, Vector3 pos, float ratePerSecond, float duration);`
+  - `void Emitter_Stop(int emitterId);`
+
+### 13.5 Mesh Preset (`DrawEffectMesh`)
+Standardizes rendering of raw 3D mesh effects. It automatically resets raylib's active color state (`rlColor4ub`).
+* **Supported Presets:** `MESH_PRESET_DISC`, `MESH_PRESET_RING`, `MESH_PRESET_CONE`, `MESH_PRESET_TORNADO`, `MESH_PRESET_CYLINDER`, `MESH_PRESET_SPHERE`, `MESH_PRESET_SHOCKWAVE`.
+* **Prototype:** `void DrawEffectMesh(MeshPresetType type, Vector3 pos, Vector3 scale, Color color);`
+
+### 13.6 Shader Material System (`EffectMaterial`)
+Decouples raw raylib shader loading and uniform location fetching from individual skill code.
+* **APIs:**
+  - `EffectMaterial Material_Load(MaterialPreset preset);` (Supports `MATERIAL_FIRE`, `MATERIAL_ICE`, `MATERIAL_WATER`, `MATERIAL_PORTAL`)
+  - `void Material_SetFloat(EffectMaterial *mat, const char *uniformName, float val);`
+  - `void Material_Begin(EffectMaterial mat);` -> Binds shader and automatically uploads global `u_time`.
+  - `void Material_End(void);` -> Unbinds shader.
+
+### 13.7 Ground Decal Preset (`SpawnGroundDecal`)
+Quickly spawns ground-hugging decals.
+* **Prototype:** `void SpawnGroundDecal(DecalPresetType type, Vector3 pos, float radius, float duration);`
+* **Supported Presets:** `DECAL_PRESET_BURN` (scorch mark), `DECAL_PRESET_CRACK` (dirt cracks), `DECAL_PRESET_ICE` (frost dust), `DECAL_PRESET_WATER` (water caustics).
+
+### 13.8 Camera Impulse (`CameraFX_AddImpulse`)
+Generates realistic distance-attenuated camera shake.
+* **Configuration Struct:**
+```c
+typedef struct {
+    float magnitude;
+    float duration;
+    float frequency;
+    float falloff; // Speed of distance attenuation
+} CameraImpulse;
+```
+* **Prototype:** `void CameraFX_AddImpulse(Vector3 origin, CameraImpulse impulse);`
+
+### 13.9 ForceField Preset (`ForceField_CreatePreset`)
+Generates configured force fields for particle steering.
+* **Prototype:** `ForceField ForceField_CreatePreset(ForceFieldPreset preset);`
+* **Supported Presets:** `FORCE_PRESET_FIRE_UPDRAFT`, `FORCE_PRESET_SNOW_BLIZZARD`, `FORCE_PRESET_WATER_VORTEX`.
+
+### 13.10 Skill Builder (`SkillBuilder`)
+An extremely powerful structural template that allows building a standard AoE impact, DoT, or decal skill with zero custom logic.
+* **Configuration Struct:**
+```c
+typedef struct {
+    Vector3 target;
+    float scale;
+    bool hasExplosion;
+    EffectPresetType explosionEffect;
+    bool hasDecal;
+    DecalPresetType decalType;
+    float decalRadius;
+    float decalDuration;
+    bool hasDamageVolume;
+    float damageRadius;
+    float damageDps;
+    float damageDuration;
+} SkillBuildContext;
+```
+* **APIs:**
+  - `void SkillBuilder_Start(SkillBuildContext *ctx, Vector3 target, float scale);`
+  - `void SkillBuilder_AddExplosion(SkillBuildContext *ctx, EffectPresetType vfx);`
+  - `void SkillBuilder_AddDecal(SkillBuildContext *ctx, DecalPresetType decal, float radius, float duration);`
+  - `void SkillBuilder_AddDamageVolume(SkillBuildContext *ctx, float radius, float dps, float duration);`
+  - `void SkillBuilder_Build(SkillBuildContext *ctx);`
+
+### 13.11 High-Level Implementation Example: Solar Flare (Fire AoE Skill)
+Below is a complete, compilation-ready example of how a skill can be written in under 60 lines of C code using the high-level Helper API:
+
+```c
+#include <stddef.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include "skills/fire/solar_flare_skill/solar_flare_skill.h" // Hypothetical path matching folder
+#include "core/skill_helper.h"
+#include "core/resource_manager.h"
+#include "core/skill_manager.h"
+
+static SkillTimeline s_timeline;
+static Vector3 s_castPos;
+static float s_scale;
+static bool s_active = false;
+
+void InitSolarFlareSkill(int screenWidth, int screenHeight) {
+    (void)screenWidth; (void)screenHeight;
+    // Resources preloaded automatically via global caching
+}
+
+void CastSolarFlareSkill(Vector3 startPos, Vector3 target, SkillParams params) {
+    s_castPos = target;
+    s_scale = params.sizeScale > 0.0f ? params.sizeScale : 1.0f;
+    s_active = true;
+    
+    Timeline_Start(&s_timeline, 4.0f); // Skill lasts 4 seconds
+}
+
+void UpdateSolarFlareSkill(float dt, Vector3 enemyPos, float enemyRadius) {
+    if (!s_active) return;
+    
+    s_timeline.current += dt;
+    
+    // At t = 0.1s, trigger impact and damage volume
+    if (Timeline_Event(&s_timeline, 0.1f, dt)) {
+        SkillBuildContext builder;
+        SkillBuilder_Start(&builder, s_castPos, s_scale);
+        SkillBuilder_AddExplosion(&builder, EFFECT_PRESET_FIRE_EXPLOSION);
+        SkillBuilder_AddDecal(&builder, DECAL_PRESET_BURN, 24.0f, 4.0f);
+        SkillBuilder_AddDamageVolume(&builder, 25.0f, 35.0f, 3.8f);
+        SkillBuilder_Build(&builder);
+    }
+    
+    if (Timeline_Finished(&s_timeline)) {
+        s_active = false;
+    }
+}
+
+void DrawSolarFlareSkill(void) {
+    if (!s_active) return;
+    
+    // Draw a pulsating fire dome at the cast location using mesh presets
+    float pulse = 1.0f + 0.05f * sinf(s_timeline.current * 8.0f);
+    DrawEffectMesh(MESH_PRESET_SPHERE, s_castPos, (Vector3){12.0f * s_scale * pulse, 0.0f, 0.0f}, ColorAlpha(ELEMENT_COLOR_FIRE, 0.4f));
+}
+
+void UnloadSolarFlareSkill(void) {
+    // Left empty: resources managed globally
+}
+
+bool IsSolarFlareSkillCoiling(void) {
+    return false;
+}
+
+int GetSolarFlareSkillProjectiles(SkillProjectile *out, int max) {
+    if (s_active && max > 0) {
+        out[0].position = s_castPos;
+        out[0].radius = 25.0f * s_scale;
+        out[0].active = true;
+        return 1;
+    }
+    return 0;
+}
+
+void DeactivateSolarFlareProjectile(int index) {
+    (void)index;
+    s_active = false;
+}
+```

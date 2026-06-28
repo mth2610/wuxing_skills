@@ -11,6 +11,7 @@
 #include "core/vfx_light.h"
 #include "core/vfx_test.h" // MỚI: Chỉ giữ duy nhất file test này để điều phối
 #include "core/resource_manager.h"
+#include "core/skill_helper.h"
 #include "raylib.h"
 #include "raymath.h"
 #include "rlgl.h"
@@ -110,6 +111,8 @@ int main(void) {
 
   ResourceManager_Init();
   InitSkillManager(screenWidth, screenHeight);
+  DamageVolume_Init();
+  EmitterSystem_Init();
   RegisterStaticOccluder((Vector3){400.0f, 0.0f, 320.0f}, 25.0f, 62.5f);
   RegisterStaticOccluder((Vector3){800.0f, 0.0f, 520.0f}, 30.0f, 75.0f);
   RegisterStaticOccluder((Vector3){600.0f, 0.0f, 260.0f}, 20.0f, 50.0f);
@@ -196,6 +199,8 @@ int main(void) {
                                  globalParticleTex);
 
     UpdateSkillManager(dt, enemy.position, 35.0f);
+    DamageVolume_Update(dt);
+    EmitterSystem_Update(dt);
     UpdateParticles(dt);
     UpdateTrailSystem(dt);
     VFXLight_Update(dt);
@@ -290,6 +295,8 @@ int main(void) {
   DecalSystem_Unload();
   ScreenDistort_Unload();
   UnloadSkillManager();
+  DamageVolume_Unload();
+  EmitterSystem_Unload();
   ResourceManager_Unload();
   CloseWindow();
 

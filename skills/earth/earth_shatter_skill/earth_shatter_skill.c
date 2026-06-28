@@ -6,6 +6,7 @@
 #include "core/screen_distort.h"
 #include "core/vfx_light.h"
 #include "core/camera_fx.h"
+#include "core/skill_helper.h"
 #include "rlgl.h"
 #include "raymath.h"
 #include <math.h>
@@ -25,9 +26,10 @@
 #define CRYSTAL_HOLD_TIME    1.40f
 #define CRYSTAL_DISSOLVE_TIME 0.50f
 
-#define CRYSTAL_MAX_HEIGHT   28.0f
-#define CRYSTAL_BASE_RADIUS  8.0f
+#define CRYSTAL_MAX_HEIGHT   24.0f
+#define CRYSTAL_BASE_RADIUS  11.0f
 #define RADIAL_SEGS          5  // Pentagonal sharp crystals
+#define HEIGHT_SEGS          4  // Height segments for organic rocky look
 
 #define AOE_RADIUS           40.0f
 #define DUST_PARTICLES       30
@@ -67,6 +69,7 @@ static Texture2D     s_crackTex;
 static Shader        s_shader;
 static int           s_uDissolveLoc;
 static int           s_uTimeLoc;
+static int           s_uCamPosLoc;
 static ColorGradient s_dustGrad;
 static Vector3       s_lastCastCenter;
 
@@ -144,9 +147,10 @@ void InitEarthShatterSkill(int screenWidth, int screenHeight)
     }
 
     s_crackTex = ResourceManager_LoadTexture("assets/textures/crack.png");
-    s_shader = ResourceManager_LoadShader(NULL, "skills/earth/earth_shatter_skill/earth_shatter.fs");
+    s_shader = ResourceManager_LoadShader("skills/earth/earth_shatter_skill/earth_shatter.vs", "skills/earth/earth_shatter_skill/earth_shatter.fs");
     s_uDissolveLoc = GetShaderLocation(s_shader, "u_dissolve");
     s_uTimeLoc     = GetShaderLocation(s_shader, "u_time");
+    s_uCamPosLoc   = GetShaderLocation(s_shader, "u_camPos");
 
     // Earth/Gold gradient for dust
     ColorGradient_AddStop(&s_dustGrad, 0.00f, WHITE);
@@ -225,18 +229,10 @@ void CastEarthShatterSkill(Vector3 startPos, Vector3 target, SkillParams params)
     }
     
     // Add central big decal
-    DecalSystem_Add(
-        target,
-        (float)GetRandomValue(0, 360),
-        70.0f * spawnScale,
-        s_crackTex,
-        3.0f,
-        ColorAlpha(ELEMENT_COLOR_EARTH, 0.8f)
-    );
+    SpawnGroundDecal(DECAL_PRESET_CRACK, target, 70.0f * spawnScale, 3.0f);
     
     SpawnGoldDustBurst(target, spawnScale * 1.5f);
-    ScreenDistort_Add(target, 120.0f * spawnScale, 0.5f, 0.4f, 250.0f);
-    CameraFX_Shake(0.35f);
+    SpawnImpactEffect(target, EFFECT_PRESET_EARTH_CRACK, spawnScale);
 }
 
 /* ================================================================
@@ -261,14 +257,7 @@ void UpdateEarthShatterSkill(float dt, Vector3 enemyPos, float enemyRadius)
             c->riseTimer += dt;
             
             if (!c->spawnedDecal) {
-                DecalSystem_Add(
-                    c->pos,
-                    (float)GetRandomValue(0, 360),
-                    25.0f * c->scale,
-                    s_crackTex,
-                    1.5f,
-                    ColorAlpha(ELEMENT_COLOR_EARTH, 0.6f)
-                );
+                SpawnGroundDecal(DECAL_PRESET_CRACK, c->pos, 25.0f * c->scale, 1.5f);
                 c->spawnedDecal = true;
             }
 
@@ -351,6 +340,22 @@ void DrawEarthShatterSkill(void)
 {
     float currentTime = (float)GetTime();
 
+    // CRITICAL: Bật lại Depth Test và Depth Mask tường minh để ngăn hiện tượng vẽ đè xuyên thấu do kỹ năng trước tắt
+    rlEnableDepthTest();
+    rlEnableDepthMask();
+
+    // Bắt đầu Shader Mode và Bind Texture đá một lần ngoài vòng lặp để tối ưu hiệu năng cực đại
+    BeginShaderMode(s_shader);
+    
+    // Truyền toạ độ camera cho Shading 3D ánh sáng
+    extern Camera3D camera;
+    float camPos[3] = { camera.position.x, camera.position.y, camera.position.z };
+    SetShaderValue(s_shader, s_uCamPosLoc, camPos, SHADER_UNIFORM_VEC3);
+    SetShaderValue(s_shader, s_uTimeLoc, &currentTime, SHADER_UNIFORM_FLOAT);
+
+    rlActiveTextureSlot(0);
+    rlEnableTexture(s_crackTex.id);
+
     for (int idx = 0; idx < MAX_CRYSTALS; idx++) {
         const GeoCrystal *c = &s_crystals[idx];
         if (c->state == CRYSTAL_INACTIVE || c->state == CRYSTAL_WAITING) continue;
@@ -372,74 +377,96 @@ void DrawEarthShatterSkill(void)
         float baseRad = CRYSTAL_BASE_RADIUS * c->scale;
         if (currentHeight < 0.5f) continue;
 
-        BeginShaderMode(s_shader);
         SetShaderValue(s_shader, s_uDissolveLoc, &dissolveAmt, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(s_shader, s_uTimeLoc, &currentTime, SHADER_UNIFORM_FLOAT);
 
-        // Precompute sharp crystal vertices
-        Vector3 bottom[RADIAL_SEGS];
-        Vector3 top[RADIAL_SEGS];
-        Vector3 bottomNormals[RADIAL_SEGS];
+        // Khai báo mảng chứa các vòng tầng đỉnh giống wood_thorns
+        Vector3 rings[HEIGHT_SEGS + 1][RADIAL_SEGS];
 
-        for (int r = 0; r < RADIAL_SEGS; r++) {
-            float angle = (float)r / RADIAL_SEGS * 2.0f * PI;
+        for (int h = 0; h <= HEIGHT_SEGS; h++) {
+            float hRatio = (float)h / HEIGHT_SEGS;
             
-            // Randomize radius slightly per vertex for jagged look
-            float rRad = baseRad * (1.0f + 0.2f * sinf(r * 133.7f));
-            
-            Vector3 locBottom = { rRad * cosf(angle), 0.0f, rRad * sinf(angle) };
-            
-            // Top vertices taper inward and vary in height
-            float tRad = baseRad * 0.1f; 
-            float hOff = currentHeight * (0.8f + 0.2f * cosf(r * 77.3f));
-            Vector3 locTop = { tRad * cosf(angle), hOff, tRad * sinf(angle) };
+            // Taper: thuôn dần lên trên, giữ lại 26% bán kính ở đỉnh để đá có khối cụt dẹt
+            float rad = baseRad * (1.0f - hRatio * 0.74f);
 
-            Vector3 norm = { cosf(angle), 0.2f, sinf(angle) };
-            norm = Vector3Normalize(norm);
+            for (int r = 0; r < RADIAL_SEGS; r++) {
+                float angle = (float)r / RADIAL_SEGS * 2.0f * PI;
 
-            bottom[r] = Vector3Add(c->pos, RotateAndTilt(locBottom, c->yaw, c->tiltX, c->tiltZ));
-            top[r] = Vector3Add(c->pos, RotateAndTilt(locTop, c->yaw, c->tiltX, c->tiltZ));
-            bottomNormals[r] = RotateAndTilt(norm, c->yaw, c->tiltX, c->tiltZ);
+                // Tạo nếp đá gập ghềnh nhẹ (nhám tinh thể) tránh làm méo vặn tự cắt nhau của mesh
+                float noiseAmt = 0.08f * sinf(hRatio * 6.0f + angle * 2.0f + idx * 1.3f);
+                float rRad = rad * (1.0f + noiseAmt);
+
+                // Gai đá mọc thẳng đứng sừng sững, không dịch tâm xiên vẹo kỳ dị
+                Vector3 locPos = {
+                    rRad * cosf(angle),
+                    hRatio * currentHeight,
+                    rRad * sinf(angle)
+                };
+
+                rings[h][r] = Vector3Add(c->pos, RotateAndTilt(locPos, c->yaw, c->tiltX, c->tiltZ));
+            }
         }
 
-        // Draw Geo Crystal Quads
+        // ĐẶT LẠI MÀU ĐỈNH LÀM SẠCH (Reset Vertex Colors)
+        rlColor4ub(255, 255, 255, 255);
+
+        // Vẽ các mặt xung quanh bằng Quads đa tầng nối tiếp (Áp dụng FLAT SHADING để lộ rõ góc cạnh)
         rlPushMatrix();
         rlBegin(RL_QUADS);
-        for (int r = 0; r < RADIAL_SEGS; r++) {
-            int nextR = (r + 1) % RADIAL_SEGS;
-            float u1 = (float)r / RADIAL_SEGS;
-            float u2 = (float)(r + 1) / RADIAL_SEGS;
+        for (int h = 0; h < HEIGHT_SEGS; h++) {
+            float v1 = (float)h / HEIGHT_SEGS;
+            float v2 = (float)(h + 1) / HEIGHT_SEGS;
 
-            rlNormal3f(bottomNormals[r].x, bottomNormals[r].y, bottomNormals[r].z);
-            rlTexCoord2f(u1, 0.0f);
-            rlVertex3f(bottom[r].x, bottom[r].y, bottom[r].z);
+            for (int r = 0; r < RADIAL_SEGS; r++) {
+                int nextR = (r + 1) % RADIAL_SEGS;
+                float u1 = (float)r / RADIAL_SEGS;
+                float u2 = (float)(r + 1) / RADIAL_SEGS;
 
-            rlNormal3f(bottomNormals[nextR].x, bottomNormals[nextR].y, bottomNormals[nextR].z);
-            rlTexCoord2f(u2, 0.0f);
-            rlVertex3f(bottom[nextR].x, bottom[nextR].y, bottom[nextR].z);
+                // Tính Face Normal cho mặt Quad phẳng
+                Vector3 v0 = rings[h][r];
+                Vector3 v1_pos = rings[h][nextR];
+                Vector3 v2_pos = rings[h + 1][nextR];
+                Vector3 edge1 = Vector3Subtract(v1_pos, v0);
+                Vector3 edge2 = Vector3Subtract(v2_pos, v0);
+                Vector3 faceNormal = Vector3Normalize(Vector3CrossProduct(edge1, edge2));
 
-            rlNormal3f(bottomNormals[nextR].x, bottomNormals[nextR].y, bottomNormals[nextR].z);
-            rlTexCoord2f(u2, 1.0f);
-            rlVertex3f(top[nextR].x, top[nextR].y, top[nextR].z);
+                rlNormal3f(faceNormal.x, faceNormal.y, faceNormal.z);
 
-            rlNormal3f(bottomNormals[r].x, bottomNormals[r].y, bottomNormals[r].z);
-            rlTexCoord2f(u1, 1.0f);
-            rlVertex3f(top[r].x, top[r].y, top[r].z);
+                rlTexCoord2f(u1, v1);
+                rlVertex3f(rings[h][r].x, rings[h][r].y, rings[h][r].z);
+
+                rlTexCoord2f(u2, v1);
+                rlVertex3f(rings[h][nextR].x, rings[h][nextR].y, rings[h][nextR].z);
+
+                rlTexCoord2f(u2, v2);
+                rlVertex3f(rings[h + 1][nextR].x, rings[h + 1][nextR].y, rings[h + 1][nextR].z);
+
+                rlTexCoord2f(u1, v2);
+                rlVertex3f(rings[h + 1][r].x, rings[h + 1][r].y, rings[h + 1][r].z);
+            }
         }
         rlEnd();
         
-        // Draw crystal flat roof to seal the shape
+        // Vẽ nắp chóp nhọn trên cùng (bịt đầu đá tảng - Áp dụng FLAT SHADING đồng tâm tuyệt đối)
         rlBegin(RL_TRIANGLES);
         Vector3 peak = Vector3Add(c->pos, RotateAndTilt((Vector3){0, currentHeight, 0}, c->yaw, c->tiltX, c->tiltZ));
         for (int r = 0; r < RADIAL_SEGS; r++) {
             int nextR = (r + 1) % RADIAL_SEGS;
-            rlNormal3f(0.0f, 1.0f, 0.0f);
+
+            // Tính Face Normal cho mặt tam giác
+            Vector3 vt0 = rings[HEIGHT_SEGS][r];
+            Vector3 vt1 = rings[HEIGHT_SEGS][nextR];
+            Vector3 vt2 = peak;
+            Vector3 et1 = Vector3Subtract(vt1, vt0);
+            Vector3 et2 = Vector3Subtract(vt2, vt0);
+            Vector3 topFaceNormal = Vector3Normalize(Vector3CrossProduct(et1, et2));
+
+            rlNormal3f(topFaceNormal.x, topFaceNormal.y, topFaceNormal.z);
             
             rlTexCoord2f((float)r/RADIAL_SEGS, 1.0f);
-            rlVertex3f(top[r].x, top[r].y, top[r].z);
+            rlVertex3f(rings[HEIGHT_SEGS][r].x, rings[HEIGHT_SEGS][r].y, rings[HEIGHT_SEGS][r].z);
             
             rlTexCoord2f((float)nextR/RADIAL_SEGS, 1.0f);
-            rlVertex3f(top[nextR].x, top[nextR].y, top[nextR].z);
+            rlVertex3f(rings[HEIGHT_SEGS][nextR].x, rings[HEIGHT_SEGS][nextR].y, rings[HEIGHT_SEGS][nextR].z);
             
             rlTexCoord2f(0.5f, 1.0f);
             rlVertex3f(peak.x, peak.y, peak.z);
@@ -447,8 +474,10 @@ void DrawEarthShatterSkill(void)
         rlEnd();
         
         rlPopMatrix();
-        EndShaderMode();
     }
+
+    EndShaderMode();
+    rlDisableTexture();
 }
 
 /* ================================================================
