@@ -423,10 +423,35 @@ void DrawSandboxHUD(void) {
     while (angleDegrees < 0.0f) angleDegrees += 360.0f;
     while (angleDegrees >= 360.0f) angleDegrees -= 360.0f;
 
-    // Vẽ nền đen trong suốt phía sau HUD thông số
-    DrawRectangle(10, 80, 520, 80, ColorAlpha(BLACK, 0.6f));
+    // Vị trí HUD góc dưới bên trái (chồng lên chỗ chữ cũ của main.c)
+    int hudX = 10;
+    int hudY = 475;
+    int hudW = 560;
+    int hudH = 215;
+
+    // Vẽ panel nền tối sang trọng
+    DrawRectangle(hudX, hudY, hudW, hudH, ColorAlpha(GetColor(0x15151CFF), 0.85f));
+    DrawRectangleLines(hudX, hudY, hudW, hudH, ColorAlpha(GetColor(0x353545FF), 0.9f));
     
-    DrawText(TextFormat("[CAMERA HUD] Angle: %.1f deg (%.3f rad)", angleDegrees, g_cameraAngle), 20, 90, 16, GREEN);
-    DrawText(TextFormat("Dist (Zoom): %.1f | Height: %.1f (Ratio: %.2f)", g_camDist, g_camHeight, g_camHeight / g_camDist), 20, 110, 16, SKYBLUE);
-    DrawText("Q/E: Xoay | R/F hoặc Cuộn chuột: Zoom | WASD di chuyển chuẩn camera", 20, 135, 14, LIGHTGRAY);
+    Font defaultFont = GetFontDefault();
+    
+    // Tiêu đề (Size 20 để nổi bật, spacing = 2.0f cho giãn chữ thoáng đãng)
+    DrawTextEx(defaultFont, "[ SYSTEM & CAMERA STATUS ]", (Vector2){ hudX + 15, hudY + 12 }, 20, 2.0f, YELLOW);
+    
+    // Thông số Camera (Size 10 pixel-perfect cực nét của Raylib)
+    DrawTextEx(defaultFont, TextFormat("Angle: %.1f deg (%.3f rad)", angleDegrees, g_cameraAngle), (Vector2){ hudX + 15, hudY + 38 }, 10, 1.0f, GREEN);
+    DrawTextEx(defaultFont, TextFormat("Dist : %.1f | Height: %.1f", g_camDist, g_camHeight), (Vector2){ hudX + 15, hudY + 53 }, 10, 1.0f, SKYBLUE);
+    DrawTextEx(defaultFont, TextFormat("Ratio: %.3f (Height/Distance)", g_camHeight / g_camDist), (Vector2){ hudX + 15, hudY + 68 }, 10, 1.0f, MAGENTA);
+
+    // Dòng kẻ phân cách
+    DrawLine(hudX + 15, hudY + 88, hudX + hudW - 15, hudY + 88, ColorAlpha(GetColor(0x353545FF), 0.5f));
+
+    // Phím tắt điều khiển (Size 10 pixel-perfect)
+    DrawTextEx(defaultFont, "CONTROLS & HOTKEYS:", (Vector2){ hudX + 15, hudY + 98 }, 10, 1.0f, GOLD);
+    DrawTextEx(defaultFont, "- Q/E Key        : Rotate Camera around Player", (Vector2){ hudX + 25, hudY + 113 }, 10, 1.0f, LIGHTGRAY);
+    DrawTextEx(defaultFont, "- R/F or Scroll  : Zoom Camera (Adjust Dist & Height)", (Vector2){ hudX + 25, hudY + 128 }, 10, 1.0f, LIGHTGRAY);
+    DrawTextEx(defaultFont, "- WASD / Arrows  : Move Player (Relative to Camera View)", (Vector2){ hudX + 25, hudY + 143 }, 10, 1.0f, LIGHTGRAY);
+    DrawTextEx(defaultFont, "- Space / X Key  : Jump / Dash character", (Vector2){ hudX + 25, hudY + 158 }, 10, 1.0f, LIGHTGRAY);
+    DrawTextEx(defaultFont, "- K Key / P Key  : Switch Map / Cycle Enemy AI Mode", (Vector2){ hudX + 25, hudY + 173 }, 10, 1.0f, LIGHTGRAY);
+    DrawTextEx(defaultFont, "- Left Mouse     : Cast Selected Element Skill", (Vector2){ hudX + 25, hudY + 188 }, 10, 1.0f, LIGHTGRAY);
 }

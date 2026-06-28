@@ -319,9 +319,6 @@ int main(void) {
         // =========================================================================
         VFXTest_DrawHUD();
         DrawSandboxHUD();
-
-        DrawText("Phím P: Đổi chế độ quái | Click trái: Tung chiêu | X: Khinh công", 10, 650, 20, LIGHTGRAY);
-        DrawText("V: Pause | B: Step Forward | N: Screenshot | M: Slow Motion (10%) | K: Đổi Map", 10, 675, 20, ORANGE);
     }
              
     SkillDebugger_PostRender(uiState.activeSkillIndex, player.position, mouseTarget3D);

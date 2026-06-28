@@ -5,10 +5,12 @@
 #include "core/map_manager.h"
 
 #include "maps/meadow_night/meadow_night.h"
+#include "maps/bamboo_valley/bamboo_valley.h"
 #include "maps/default_arena/default_arena.h"
 
 static inline void RegisterGeneratedMaps(void) {
     MapManager_Register("MEADOW_NIGHT", InitMeadowNightMap, UpdateMeadowNightMap, DrawMeadowNightMap, UnloadMeadowNightMap);
+    MapManager_Register("BAMBOO_VALLEY", InitBambooValleyMap, UpdateBambooValleyMap, DrawBambooValleyMap, UnloadBambooValleyMap);
     MapManager_Register("DEFAULT_ARENA", InitDefaultArenaMap, NULL, DrawDefaultArenaMap, NULL);
 }
 
