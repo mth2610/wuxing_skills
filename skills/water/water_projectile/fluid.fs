@@ -30,8 +30,9 @@ void main() {
     vec3 dNormal = vec3(dL - dR, dD - dU, 0.0); // [cite: 9]
     
     // Tạo hệ tọa độ cục bộ (TBN) để áp độ méo vào Normal gốc của khối cầu
-    vec3 tangent = normalize(cross(vec3(0.0, 1.0, 0.0), fragNormal));
-    if (length(tangent) < 0.1) tangent = normalize(cross(vec3(1.0, 0.0, 0.0), fragNormal)); // [cite: 10]
+    vec3 tangent = cross(vec3(0.0, 1.0, 0.0), fragNormal);
+    if (length(tangent) < 0.1) tangent = cross(vec3(1.0, 0.0, 0.0), fragNormal); // [cite: 10]
+    tangent = normalize(tangent);
     vec3 bitangent = cross(fragNormal, tangent);
     
     // Lực biến dạng Normal (Tăng hệ số từ 0.5 lên 1.2 để quả cầu méo dẻo rõ rệt hơn)

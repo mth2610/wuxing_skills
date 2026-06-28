@@ -411,6 +411,7 @@ void DrawEarthShatterSkill(void)
 
         // Vẽ các mặt xung quanh bằng Quads đa tầng nối tiếp (Áp dụng FLAT SHADING để lộ rõ góc cạnh)
         rlPushMatrix();
+        rlCheckRenderBatchLimit(HEIGHT_SEGS * RADIAL_SEGS * 4);
         rlBegin(RL_QUADS);
         for (int h = 0; h < HEIGHT_SEGS; h++) {
             float v1 = (float)h / HEIGHT_SEGS;
@@ -447,6 +448,7 @@ void DrawEarthShatterSkill(void)
         rlEnd();
         
         // Vẽ nắp chóp nhọn trên cùng (bịt đầu đá tảng - Áp dụng FLAT SHADING đồng tâm tuyệt đối)
+        rlCheckRenderBatchLimit(RADIAL_SEGS * 3);
         rlBegin(RL_TRIANGLES);
         Vector3 peak = Vector3Add(c->pos, RotateAndTilt((Vector3){0, currentHeight, 0}, c->yaw, c->tiltX, c->tiltZ));
         for (int r = 0; r < RADIAL_SEGS; r++) {

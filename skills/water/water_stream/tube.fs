@@ -32,8 +32,9 @@ void main() {
     float dU = getIrregularity(fragTexCoord + vec2(eps, 0.0));
     
     vec3 dNormal = vec3(dL - dR, dD - dU, 0.0);
-    vec3 tangent = normalize(cross(vec3(0.0, 1.0, 0.0), fragNormal));
-    if (length(tangent) < 0.1) tangent = normalize(cross(vec3(1.0, 0.0, 0.0), fragNormal));
+    vec3 tangent = cross(vec3(0.0, 1.0, 0.0), fragNormal);
+    if (length(tangent) < 0.1) tangent = cross(vec3(1.0, 0.0, 0.0), fragNormal);
+    tangent = normalize(tangent);
     vec3 bitangent = cross(fragNormal, tangent);
     vec3 normal = normalize(fragNormal + (tangent * dNormal.x + bitangent * dNormal.y) * 0.5);
 

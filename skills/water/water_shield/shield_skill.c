@@ -33,6 +33,7 @@ static void RenderShieldSphere(Vector3 center, float radius) {
   int rings = 32;
   int slices = 32;
 
+  rlCheckRenderBatchLimit(rings * slices * 4);
   rlBegin(RL_QUADS);
   for (int i = 0; i < rings; i++) {
     float theta1 = (float)i * PI / rings;

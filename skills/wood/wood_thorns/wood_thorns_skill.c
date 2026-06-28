@@ -467,6 +467,7 @@ void DrawWoodThornsSkill(void)
         // Draw the organic thorn mesh using low-level rlgl
         rlPushMatrix();
         rlColor4ub(255, 255, 255, 255); // CRITICAL FIX: Reset vertex color to white
+        rlCheckRenderBatchLimit(HEIGHT_SEGS * RADIAL_SEGS * 4);
         rlBegin(RL_QUADS);
         for (int h = 0; h < HEIGHT_SEGS; h++) {
             float v1 = (float)h / HEIGHT_SEGS;

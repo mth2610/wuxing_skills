@@ -34,6 +34,15 @@ void main() {
     float density = 0.0;
     vec3  col     = vec3(0.0);
 
+    // Kéo các lệnh texture lookup ra ngoài nhánh if để tránh lỗi compiler trên Android (Implicit LOD in non-uniform control flow)
+    vec2 uv = fragTexCoord;
+    vec2 offset = vec2(0.015, 0.015);
+    vec4 tex = texture(texture0, uv);
+    float maskU = texture(texture0, uv + vec2(0.0, offset.y)).a;
+    float maskD = texture(texture0, uv - vec2(0.0, offset.y)).a;
+    float maskL = texture(texture0, uv - vec2(offset.x, 0.0)).a;
+    float maskR = texture(texture0, uv + vec2(offset.x, 0.0)).a;
+
     // ═══════════════════════════════════════════════════════════════
     // 1.  RIBBON TRAIL & WISPS (Đuôi chính & Các luồng khí mờ)
     // ═══════════════════════════════════════════════════════════════
@@ -63,17 +72,9 @@ void main() {
     // 2.  SWORD SPRITE  —  1 THANH KIẾM VÀNG KIM CUỘN TRÀO
     // ═══════════════════════════════════════════════════════════════
     else if (typeB < 0.70) {
-        vec2 uv = fragTexCoord;
-        vec4 tex = texture(texture0, uv);
         float mask = tex.a;
 
         if (mask < 0.01) discard;
-        
-        vec2 offset = vec2(0.015, 0.015);
-        float maskU = texture(texture0, uv + vec2(0.0, offset.y)).a;
-        float maskD = texture(texture0, uv - vec2(0.0, offset.y)).a;
-        float maskL = texture(texture0, uv - vec2(offset.x, 0.0)).a;
-        float maskR = texture(texture0, uv + vec2(offset.x, 0.0)).a;
         
         float edge = abs(mask - maskU) + abs(mask - maskD) + abs(mask - maskL) + abs(mask - maskR);
         edge = smoothstep(0.1, 0.6, edge) * mask; 

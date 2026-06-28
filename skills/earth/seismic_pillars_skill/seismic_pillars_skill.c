@@ -431,6 +431,7 @@ void DrawSeismicPillarsSkill(void)
         rlPushMatrix();
 
         // 1. Vẽ các mặt xung quanh bằng Quads đa phân đoạn (FLAT SHADING)
+        rlCheckRenderBatchLimit(HEIGHT_SEGS * RADIAL_SEGS * 4);
         rlBegin(RL_QUADS);
         for (int h = 0; h < HEIGHT_SEGS; h++) {
             float v1 = (float)h / HEIGHT_SEGS;
@@ -467,6 +468,7 @@ void DrawSeismicPillarsSkill(void)
         rlEnd();
         
         // 2. Vẽ nắp phẳng trên cùng (FLAT SHADING bịt kín đầu tảng đá hình trụ)
+        rlCheckRenderBatchLimit(RADIAL_SEGS * 3);
         rlBegin(RL_TRIANGLES);
         Vector3 topCenter = Vector3Add(c->pos, RotateAndTilt((Vector3){0, currentHeight, 0}, c->yaw, c->tiltX, c->tiltZ));
         for (int r = 0; r < RADIAL_SEGS; r++) {
@@ -493,6 +495,7 @@ void DrawSeismicPillarsSkill(void)
         rlEnd();
 
         // 3. Vẽ nắp phẳng đáy dưới cùng (FLAT SHADING bịt kín chân tảng đá hình trụ)
+        rlCheckRenderBatchLimit(RADIAL_SEGS * 3);
         rlBegin(RL_TRIANGLES);
         Vector3 bottomCenter = Vector3Add(c->pos, RotateAndTilt((Vector3){0, 0, 0}, c->yaw, c->tiltX, c->tiltZ));
         for (int r = 0; r < RADIAL_SEGS; r++) {

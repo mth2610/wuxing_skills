@@ -326,6 +326,7 @@ static void DrawPerturbedPillar(Vector3 pillarPos, float currentHeight, float ba
 
     rlPushMatrix();
     rlColor4ub(255, 255, 255, 255); // CRITICAL FIX: Reset vertex color to white!
+    rlCheckRenderBatchLimit(HEIGHT_SEGS * RADIAL_SEGS * 4);
     rlBegin(RL_QUADS);
     for (int h = 0; h < HEIGHT_SEGS; h++) {
         float v1 = (float)h / HEIGHT_SEGS;
@@ -354,6 +355,7 @@ static void DrawPerturbedPillar(Vector3 pillarPos, float currentHeight, float ba
     }
     rlEnd();
     
+    rlCheckRenderBatchLimit(RADIAL_SEGS * 3);
     rlBegin(RL_TRIANGLES);
     float finalShift = currentHeight * sinf(tiltAngle);
     Vector3 peak = { pillarPos.x + dirInX * finalShift, pillarPos.y + currentHeight, pillarPos.z + dirInZ * finalShift };

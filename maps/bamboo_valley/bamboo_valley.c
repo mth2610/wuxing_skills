@@ -139,6 +139,7 @@ void DrawBambooValleyMap(void) {
 
     // --- BƯỚC 3: VẼ HỒ NƯỚC VÀ VIỀN ĐÁ XUNG QUANH (BẬT CHÈN VIỀN ĐÁ TRÁNH GÓC HỐ) ---
     // Vẽ mặt nước phẳng trước
+    rlCheckRenderBatchLimit(segments * 3);
     rlBegin(RL_TRIANGLES);
     Color cLakeCenter = GetColor(0x112729ff); // Màu nước xanh ngọc thẫm tối
     Color cLakeEdge = GetColor(0x060f10ff);

@@ -123,6 +123,7 @@ static void RenderCustom3DSphere(Vector3 center, float radius, float blobAmount,
 
   rlPushMatrix();
   rlTranslatef(center.x, center.y, center.z);
+  rlCheckRenderBatchLimit(SPHERE_RINGS * SPHERE_COLUMNS * 4);
   rlBegin(RL_QUADS);
 
   for (int i = 0; i < SPHERE_RINGS; i++) {

@@ -220,6 +220,7 @@ static void RenderCustom3DTube(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3,
   }
 
   rlPushMatrix();
+  rlCheckRenderBatchLimit(TUBE_SEGMENTS * TUBE_RADIAL_SEGMENTS * 4);
   rlBegin(RL_QUADS);
   for (int i = 0; i < TUBE_SEGMENTS; i++) {
     float v1 = (float)i / (float)TUBE_SEGMENTS * TUBE_UV_LENGTH_SCALE;
@@ -248,6 +249,7 @@ static void RenderCustom3DTube(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3,
   }
   rlEnd();
 
+  rlCheckRenderBatchLimit(TUBE_RADIAL_SEGMENTS * 6);
   rlBegin(RL_TRIANGLES);
 
   // Đuôi nhỏ, vát tù mượt mà

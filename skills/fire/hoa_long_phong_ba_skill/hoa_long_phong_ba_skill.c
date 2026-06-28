@@ -589,6 +589,7 @@ void DrawHoaLongPhongBaSkill(void) {
 
     // 6. Vẽ các tia lửa kéo dài dạng vệt chói sáng bằng QUADS hướng camera (Motion Stretched Billboard)
     rlDisableDepthMask();
+    rlCheckRenderBatchLimit(MAX_SPARKS * 4);
     rlBegin(RL_QUADS);
     for (int i = 0; i < MAX_SPARKS; i++) {
         if (!s_sparks[i].active) continue;
