@@ -1,42 +1,32 @@
 #version 330
+#include "core/shaders/common/vs_header.glsl"
 
-in vec3 vertexPosition;
-in vec2 vertexTexCoord;
-in vec3 vertexNormal;
+// ============================================================
+// Water Stream Skill — Vertex Shader
+//
+// Đặc trưng của skill:
+//   - Displacement "phình-thắt" mô phỏng luồng nước chạy dọc ống
+//   - Hai lớp sóng sin chồng nhau: swell (dài, chậm) + bump (ngắn, nhanh)
+//   - Dampen tại 2 đầu ống để tránh gờ cứng
+// ============================================================
 
-uniform mat4 mvp;
-uniform mat4 matModel;
-uniform float u_time;
-uniform float u_uvLength; 
+uniform float u_uvLength; // chiều dài UV thực tế dọc đường Bezier (set từ C-side)
 
-out vec3 fragPosition;
-out vec2 fragTexCoord;
-out vec3 fragNormal;
+// Hàm displacement đặc trưng của Water Stream.
+// t   — vị trí dọc ống [0..1], tính từ vertexTexCoord.y / u_uvLength
+// phi — góc quanh ống [0..2π], tính từ vertexTexCoord.x * 2π
+float getDisplacement(float t, float phi) {
+    float swell = sin(t * 4.0  - u_time * 12.0);              // phình/thắt dài, chậm
+    float bump  = sin(t * 8.0  - u_time * 20.0) * cos(phi * 2.0); // múi nhỏ, trượt nhanh
+    float irregularity = swell * 0.5 + bump * 0.5;
+    float dampen = smoothstep(0.02, 0.15, t) * smoothstep(0.98, 0.85, t); // bo mềm 2 đầu
+    return irregularity * dampen * 4.0;
+}
 
 void main() {
-    float t = vertexTexCoord.y / u_uvLength; 
+    float t   = vertexTexCoord.y / u_uvLength;
     float phi = vertexTexCoord.x * 6.28318;
 
-    // 1. Phình/Thắt: Kéo giãn nhịp (t * 4.0 thay vì 12.0) để tạo luồng nước dài
-    float swell = sin(t * 4.0 - u_time * 12.0);
-    
-    // 2. Múi nước (Bump): Kéo dài múi nước ra (t * 8.0 thay vì 24.0)
-    // Tốc độ trượt cực nhanh (u_time * 20.0)
-    float bump = sin(t * 8.0 - u_time * 20.0) * cos(phi * 2.0);
-    
-    // Trộn 50/50 để các múi nước hòa quyện êm ái
-    float irregularity = swell * 0.5 + bump * 0.5;
-    
-    float dampen = smoothstep(0.02, 0.15, t) * smoothstep(0.98, 0.85, t);
-    
-    // Cường độ đẩy gồ ghề (4.0 là đủ vì múi giờ đã rất to)
-    float displacement = irregularity * dampen * 4.0; 
-
-    vec3 displacedPos = vertexPosition + vertexNormal * displacement;
-    
-    fragPosition = vec3(matModel * vec4(displacedPos, 1.0));
-    fragNormal = normalize(vec3(matModel * vec4(vertexNormal, 0.0)));
-    fragTexCoord = vertexTexCoord;
-    
-    gl_Position = mvp * vec4(displacedPos, 1.0);
+    vec3 displacedPos = vertexPosition + vertexNormal * getDisplacement(t, phi);
+    VS_FinalOutput(displacedPos);
 }

@@ -66,6 +66,7 @@ add_executable(wuxing
     core/skill_helper.c
     core/particle_radial_burst.c
     core/impact_burst.c
+    core/shader_preprocessor.c
 
     # --- Sandbox & Test Simulator ---
     sandbox/sandbox_core.c
@@ -124,6 +125,10 @@ configure_file(core/shaders/bloom_bright.fs ${CMAKE_CURRENT_BINARY_DIR}/core/sha
 configure_file(core/shaders/bloom_blur.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/bloom_blur.fs COPYONLY)
 configure_file(core/shaders/post_process.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/post_process.fs COPYONLY)
 
+
+configure_file(core/shaders/common/vs_header.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/vs_header.glsl COPYONLY)
+configure_file(core/shaders/common/fs_header.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/fs_header.glsl COPYONLY)
+configure_file(core/shaders/common/lighting.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/lighting.glsl COPYONLY)
 
 
 # Liên kết tĩnh với thư viện Raylib vừa tải về
