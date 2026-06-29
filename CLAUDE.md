@@ -4,6 +4,7 @@ Dự án game C/Raylib 5.5 / OpenGL 3.3. Isometric Night-time Arena. 6 nguyên t
 
 ## Tài liệu tham chiếu
 - `CORE_API.md` — API đầy đủ của engine (particle, trail, force field, shader, mesh...)
+- `COMPUTE_API.md` — GPU compute particle system (dùng chung cho skills + environment)
 - `ENVIRONMENT_API.md` — Hệ thống ánh sáng, shadow, fog
 - `MAP_API.md` — Tạo và quản lý bản đồ
 - `VFX_ARCHITECTURE.md` — Kiến trúc VFX tổng thể
@@ -14,9 +15,10 @@ Dự án game C/Raylib 5.5 / OpenGL 3.3. Isometric Night-time Arena. 6 nguyên t
 | Agent | Thư mục sở hữu | Được đọc thêm |
 |---|---|---|
 | **Core Agent** | `core/` | headers `.h` của skills, maps, environment |
-| **Skills Agent** | `skills/` | `core/*.h`, `environment/environment_system.h`, `assets/` |
+| **Compute Agent** | `compute/` | `COMPUTE_API.md`, `core/resource_manager.h` |
+| **Skills Agent** | `skills/` | `core/*.h`, `compute/gpu_particle_system.h`, `environment/environment_system.h`, `assets/` |
 | **Map Agent** | `maps/` | `environment/environment_system.h`, `core/skill_manager.h`, `assets/` |
-| **Environment Agent** | `environment/` | `core/decal_system.h`, `core/skill_manager.h` |
+| **Environment Agent** | `environment/` | `core/decal_system.h`, `core/skill_manager.h`, `compute/gpu_particle_system.h` |
 
 ## Thư mục CẤM với MỌI agent
 ```

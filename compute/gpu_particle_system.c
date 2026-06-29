@@ -1,5 +1,5 @@
 #include "gpu_particle_system.h"
-#include "resource_manager.h"
+#include "core/resource_manager.h"
 #include "rlgl.h"
 #include "raymath.h"
 #include <stddef.h>
@@ -48,12 +48,10 @@ typedef void     (*pfn_DeleteShader)(unsigned int shader);
 typedef int      (*pfn_GetUniformLoc)(unsigned int prog, const char *name);
 typedef void     (*pfn_Uniform1f)   (int loc, float v);
 typedef void     (*pfn_Uniform1i)   (int loc, int v);
-// GL 1.5 buffer ops — proc-loaded để tránh phụ thuộc header platform
 typedef void     (*pfn_GenBuffers)  (int n, unsigned int *buffers);
 typedef void     (*pfn_BindBuffer)  (unsigned int target, unsigned int buffer);
 typedef void     (*pfn_BufData)     (unsigned int target, ptrdiff_t size, const void *data, unsigned int usage);
 typedef void     (*pfn_BufSubData)  (unsigned int target, ptrdiff_t offset, ptrdiff_t size, const void *data);
-// Optional for logging
 typedef const unsigned char *(*pfn_GetString)(unsigned int name);
 
 #define GL_SHADER_STORAGE_BUFFER           0x90D2
@@ -88,8 +86,6 @@ static pfn_BufSubData    s_glBufferSubData        = NULL;
 
 #define LOAD_PROC(type, name) s_##name = (type)s_LoadProc(#name)
 
-// Returns true nếu compute procs load thành công.
-// macOS: s_LoadProc luôn NULL → false → CPU path.
 static bool LoadComputeProcs(void) {
     LOAD_PROC(pfn_Dispatch,      glDispatchCompute);
     LOAD_PROC(pfn_MemBarrier,    glMemoryBarrier);
@@ -109,7 +105,6 @@ static bool LoadComputeProcs(void) {
     LOAD_PROC(pfn_GetUniformLoc, glGetUniformLocation);
     LOAD_PROC(pfn_Uniform1f,     glUniform1f);
     LOAD_PROC(pfn_Uniform1i,     glUniform1i);
-    // Buffer ops (GL 1.5 core) — cần cho SSBO setup/update
     LOAD_PROC(pfn_GenBuffers,    glGenBuffers);
     LOAD_PROC(pfn_BindBuffer,    glBindBuffer);
     LOAD_PROC(pfn_BufData,       glBufferData);
@@ -148,6 +143,8 @@ static int             s_spawn_cursor    = 0;
 
 // ---------------------------------------------------------------------------
 // Compute shader loader
+// Source dùng #version 310 es (GLES 3.1).
+// Desktop GL 4.3: runtime patch lên #version 430 core.
 // ---------------------------------------------------------------------------
 static unsigned int CompileComputeShader(const char *path) {
     char *src = LoadFileText(path);
@@ -156,9 +153,31 @@ static unsigned int CompileComputeShader(const char *path) {
         return 0;
     }
 
+    char *patched = NULL;
+#if !defined(__ANDROID__)
+    {
+        const char *from = "#version 310 es";
+        const char *to   = "#version 430 core";
+        char *hit = strstr(src, from);
+        if (hit) {
+            int from_len = (int)strlen(from);
+            int to_len   = (int)strlen(to);
+            int src_len  = (int)strlen(src);
+            int prefix   = (int)(hit - src);
+            int suffix   = src_len - prefix - from_len;
+            patched = (char *)RL_MALLOC(src_len - from_len + to_len + 1);
+            memcpy(patched, src, prefix);
+            memcpy(patched + prefix, to, to_len);
+            memcpy(patched + prefix + to_len, hit + from_len, suffix + 1);
+        }
+    }
+#endif
+    const char *final_src = patched ? patched : src;
+
     unsigned int shader = s_glCreateShader(GL_COMPUTE_SHADER);
-    s_glShaderSource(shader, 1, (const char **)&src, NULL);
+    s_glShaderSource(shader, 1, &final_src, NULL);
     s_glCompileShader(shader);
+    if (patched) RL_FREE(patched);
     UnloadFileText(src);
 
     int ok = 0;
@@ -194,20 +213,18 @@ static unsigned int CompileComputeShader(const char *path) {
 #define CPU_VERTS_PER_PARTICLE 6
 #define CPU_VBO_SIZE (MAX_GPU_PARTICLES * CPU_VERTS_PER_PARTICLE * CPU_VERT_STRIDE)
 
-// Dùng rlgl wrappers — không cần GL headers platform-specific
 static void SetupCpuVAO(void) {
     s_vao = rlLoadVertexArray();
     rlEnableVertexArray(s_vao);
 
     s_vbo = rlLoadVertexBuffer(NULL, CPU_VBO_SIZE, true);
 
-    // Attrib 0: position vec3, offset 0
     rlEnableVertexAttribute(0);
     rlSetVertexAttribute(0, 3, RL_FLOAT, 0, CPU_VERT_STRIDE, 0);
-    // Attrib 1: texcoord vec2, offset 12
+
     rlEnableVertexAttribute(1);
     rlSetVertexAttribute(1, 2, RL_FLOAT, 0, CPU_VERT_STRIDE, 12);
-    // Attrib 2: color vec4, offset 20
+
     rlEnableVertexAttribute(2);
     rlSetVertexAttribute(2, 4, RL_FLOAT, 0, CPU_VERT_STRIDE, 20);
 
@@ -223,10 +240,8 @@ void GpuParticleSystem_Init(void) {
     memset(s_cpu_pool, 0, sizeof(s_cpu_pool));
     s_spawn_cursor = 0;
 
-    // Thử load compute procs — nếu thành công → hardware hỗ trợ GL 4.3 / GLES 3.1
     bool gl43 = LoadComputeProcs();
 
-    // Optional GL_VERSION logging (macOS s_LoadProc = NULL → bỏ qua)
     pfn_GetString p_GetStr = (pfn_GetString)s_LoadProc("glGetString");
     if (p_GetStr) {
         const char *ver = (const char *)p_GetStr(0x1F02); // GL_VERSION
@@ -235,9 +250,9 @@ void GpuParticleSystem_Init(void) {
 
     if (gl43) {
         // ----- COMPUTE PATH -----
-        const char *comp_path    = "core/shaders/gpu_particles.comp";
-        const char *ssbo_vs_path = "core/shaders/gpu_particles_ssbo.vs";
-        const char *fs_path      = "core/shaders/gpu_particles.fs";
+        const char *comp_path    = "compute/shaders/gpu_particles.comp";
+        const char *ssbo_vs_path = "compute/shaders/gpu_particles_ssbo.vs";
+        const char *fs_path      = "compute/shaders/gpu_particles.fs";
 
         s_compute_prog = CompileComputeShader(comp_path);
         if (!s_compute_prog) {
@@ -245,7 +260,6 @@ void GpuParticleSystem_Init(void) {
             goto cpu_path;
         }
 
-        // SSBO — dùng proc-loaded buffer ops, không cần raw GL headers
         unsigned int ssbo_buf[1];
         s_glGenBuffers(1, ssbo_buf);
         s_ssbo = ssbo_buf[0];
@@ -256,7 +270,6 @@ void GpuParticleSystem_Init(void) {
                        NULL, RL_DYNAMIC_DRAW);
         s_glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
-        // Empty VAO — vertex shader tự tính từ gl_VertexID
         s_draw_vao = rlLoadVertexArray();
 
         s_draw_shader_gpu = ResourceManager_LoadShader(ssbo_vs_path, fs_path);
@@ -267,8 +280,8 @@ void GpuParticleSystem_Init(void) {
         // ----- CPU/VBO PATH -----
         SetupCpuVAO();
         s_draw_shader_cpu = ResourceManager_LoadShader(
-            "core/shaders/gpu_particles_vbo.vs",
-            "core/shaders/gpu_particles.fs"
+            "compute/shaders/gpu_particles_vbo.vs",
+            "compute/shaders/gpu_particles.fs"
         );
         s_use_compute = false;
         TraceLog(LOG_INFO, "GPU_PARTICLES: CPU/VBO path active (%d particles)", MAX_GPU_PARTICLES);
@@ -454,6 +467,9 @@ int GpuParticleSystem_ActiveCount(void) {
     return count;
 }
 
+// ---------------------------------------------------------------------------
+// Debug overlay
+// ---------------------------------------------------------------------------
 void GpuParticleSystem_DrawDebug(int x, int y) {
     if (!s_initialized) {
         DrawText("GpuParticles: NOT INIT", x, y, 18, RED);

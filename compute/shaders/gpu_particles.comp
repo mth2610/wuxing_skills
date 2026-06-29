@@ -1,6 +1,10 @@
-#version 430 core
-// Compute shader — cập nhật vật lý particle trên GPU
-// Chạy được khi GL >= 4.3 (Windows/Linux). macOS dùng cpu path.
+#version 310 es
+// Compute shader — cập nhật vật lý particle trên GPU.
+// Source giữ ở GLES 3.1 syntax (#version 310 es).
+// Desktop GL 4.3: CompileComputeShader() tự nâng lên #version 430 core lúc runtime.
+
+precision highp float;
+precision highp int;
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
@@ -21,7 +25,7 @@ uniform float u_dt;
 
 void main() {
     uint idx = gl_GlobalInvocationID.x;
-    if (idx >= particles.length()) return;
+    if (idx >= uint(particles.length())) return;
 
     GpuParticleData p = particles[idx];
 

@@ -1,5 +1,5 @@
 #include "sandbox/ui_panel.h"
-#include "core/gpu_particle_system.h"
+#include "compute/gpu_particle_system.h"
 #include "rlgl.h"
 #include <stdio.h>
 

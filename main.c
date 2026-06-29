@@ -1,6 +1,7 @@
 #include "core/camera_fx.h"
 #include "core/decal_system.h"
 #include "core/particle_system.h"
+#include "compute/gpu_particle_system.h"
 #include "core/post_fx.h"
 #include "sandbox/sandbox_core.h"
 #include "core/screen_distort.h"
@@ -91,6 +92,7 @@ int main(void) {
   // KHỞI TẠO CÁC HỆ THỐNG ĐỒ HỌA VFX
   // -----------------------------------------------------------------
   InitParticleSystem();
+  GpuParticleSystem_Init();
   Shader defaultTrailShader =
       LoadShader(0, FileExists("skills/metal/metal_projectile/metal.fs") ? "skills/metal/metal_projectile/metal.fs" : NULL);
   InitTrailSystem(defaultTrailShader);
@@ -239,6 +241,7 @@ int main(void) {
     DamageVolume_Update(dt);
     EmitterSystem_Update(dt);
     UpdateParticles(dt);
+    GpuParticleSystem_Update(dt);
     UpdateTrailSystem(dt);
     VFXLight_Update(dt);
     DecalSystem_Update(dt);
@@ -287,6 +290,7 @@ int main(void) {
         rlDisableDepthMask();
         BeginBlendMode(BLEND_ADDITIVE);
         DrawParticles(camera, globalParticleTex);
+        GpuParticleSystem_Draw(camera, globalParticleTex);
         EndBlendMode();
         rlEnableDepthMask();
     }
@@ -331,6 +335,7 @@ int main(void) {
   UnloadTexture(globalParticleTex);
   UnloadTexture(testAtlasTex);
   UnloadParticleSystem();
+  GpuParticleSystem_Unload();
   UnloadTrailSystem();
   DecalSystem_Unload();
   ScreenDistort_Unload();
