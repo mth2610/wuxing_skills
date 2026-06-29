@@ -3,6 +3,8 @@
 #include "core/color_gradient.h"
 #include "core/decal_system.h"
 #include "core/force_field.h"
+#include "core/impact_burst.h"
+#include "core/particle_radial_burst.h"
 #include "core/particle_system.h"
 #include "core/procedural_mesh_utils.h"
 #include "core/resource_manager.h"
@@ -19,10 +21,10 @@
 
 #define MAX_TUBE_EMITTERS 5
 
-// --- Force Fields của Tube Skill ---
+// --- Force Fields cua Tube Skill ---
 static ForceField
-    s_tubeSplashField; // nước va chạm: trọng lực + Perlin gợn sóng
-static ForceField s_tubeMistField; // sương đầu ống: trọng lực nhẹ + drift
+    s_tubeSplashField;             // nuoc va cham: trong luc + Perlin gon song
+static ForceField s_tubeMistField; // suong dau ong: trong luc nhe + drift
 
 #define TUBE_TRAVEL_SPEED 1.2f
 #define TUBE_BASE_RADIUS 12.0f
@@ -49,10 +51,15 @@ static int timeLoc;
 static int viewPosLoc;
 static int uvLengthLoc;
 
-// Cấu hình biến đổi mesh hữu cơ riêng của Water Stream.
-// Đây là TOÀN BỘ phần "chữ ký nước" còn lại trong skill — mọi toán Bezier/
-// Frenet-frame/wobble/deform/end-cap đã chuyển vào core/procedural_mesh_utils.
+// Cau hinh bien doi mesh huu co rieng cua Water Stream.
+// Day la TOAN BO phan "chu ky nuoc" con lai trong skill - moi toan Bezier/
+// Frenet-frame/wobble/deform/end-cap da chuyen vao core/procedural_mesh_utils.
 static TubeMeshConfig s_waterTubeConfig;
+
+// Cau hinh combo VFX va cham (distort + decal + light + particle burst),
+// gop lai tu TriggerWaterBurst() ban goc. Day la phan "chu ky nuoc" con lai
+// cho hieu ung va cham - moi logic orchestrate da chuyen vao core/impact_burst.
+static ImpactBurstConfig s_waterImpactConfig;
 
 static inline float ClampSizeScale(float scale) {
   return Clamp(scale, 0.2f, 3.0f);
@@ -60,35 +67,6 @@ static inline float ClampSizeScale(float scale) {
 
 static Texture2D s_causticsTex;
 static ColorGradient s_splashGrad;
-
-static void TriggerWaterBurst(Vector3 pos, float sizeScale) {
-  ScreenDistort_Add(pos, 85.0f, 0.7f, 0.6f, 150.0f);
-  DecalSystem_Add(pos, (float)GetRandomValue(0, 360),
-                  TUBE_BASE_RADIUS * sizeScale * 0.25f, s_causticsTex, 4.0f,
-                  ColorAlpha(ELEMENT_COLOR_WATER, 0.7f));
-  VFXLight_Spawn(pos, ELEMENT_COLOR_WATER, 55.0f * sizeScale, 0.5f);
-
-  int splashCount = GetRandomValue(25, 40) * sizeScale;
-  for (int s = 0; s < splashCount; s++) {
-    float angle = Random01() * PI * 2.0f;
-    float pitch = (Random01() - 0.5f) * PI;
-    float speed = Math_Mix(120.0f, 250.0f, Random01()) * sizeScale;
-
-    ParticleConfig cfg = {0};
-    cfg.position = pos;
-    cfg.velocity = (Vector3){cosf(angle) * speed * cosf(pitch),
-                             sinf(pitch) * speed + (100.0f * sizeScale),
-                             sinf(angle) * speed * cosf(pitch)};
-    cfg.radius = Math_Mix(3.0f, 8.0f, Random01()) * sizeScale;
-    cfg.lifetime = Math_Mix(0.6f, 1.2f, Random01());
-    cfg.colorStart = ELEMENT_COLOR_WATER;
-    cfg.colorEnd =
-        ColorAlpha(ColorLerp(ELEMENT_COLOR_WATER, WHITE, 0.3f), 0.0f);
-    cfg.forceField = &s_tubeSplashField;
-    cfg.gradient = &s_splashGrad;
-    SpawnParticle(cfg);
-  }
-}
 
 void InitTubeSkill(int screenWidth, int screenHeight) {
   (void)screenWidth;
@@ -98,7 +76,7 @@ void InitTubeSkill(int screenWidth, int screenHeight) {
   timeLoc = GetShaderLocation(tubeShader, "u_time");
   viewPosLoc = GetShaderLocation(tubeShader, "viewPos");
   uvLengthLoc =
-      GetShaderLocation(tubeShader, "u_uvLength"); // Lấy chung cho cả VS và FS
+      GetShaderLocation(tubeShader, "u_uvLength"); // Lay chung cho ca VS va FS
   for (int i = 0; i < MAX_TUBE_EMITTERS; i++) {
     emitters[i].active = false;
   }
@@ -106,13 +84,11 @@ void InitTubeSkill(int screenWidth, int screenHeight) {
   s_causticsTex =
       ResourceManager_LoadTexture("assets/textures/water_caustics.png");
 
-  s_splashGrad.count = 0;
-  ColorGradient_AddStop(&s_splashGrad, 0.00f, ELEMENT_COLOR_WATER);
-  ColorGradient_AddStop(&s_splashGrad, 0.40f,
-                        ColorLerp(ELEMENT_COLOR_WATER, WHITE, 0.2f));
-  ColorGradient_AddStop(&s_splashGrad, 1.00f, (Color){0, 0, 0, 0});
+  // Gradient "sinh ra tu mau nuoc -> sang hon chut -> mo dan ve trong suot".
+  // Thay 3 dong ColorGradient_AddStop bang 1 lan goi duy nhat.
+  ColorGradient_StandardFade(&s_splashGrad, ELEMENT_COLOR_WATER, 0.40f, 0.2f);
 
-  // Nước va chạm: trọng lực mạnh + Perlin gợn sóng lan + drag 3.0
+  // Nuoc va cham: trong luc manh + Perlin gon song lan + drag 3.0
   ForceField_Clear(&s_tubeSplashField);
   ForceField_AddLayer(&s_tubeSplashField,
                       (ForceLayer){.type = FORCE_GRAVITY_DIR,
@@ -127,7 +103,7 @@ void InitTubeSkill(int screenWidth, int screenHeight) {
       &s_tubeSplashField,
       (ForceLayer){.type = FORCE_DRAG, .strength = FLUID_DRAG_SPLASH});
 
-  // Sương đầu ống: trọng lực nhẹ + drift theo Perlin + drag 2.0
+  // Suong dau ong: trong luc nhe + drift theo Perlin + drag 2.0
   ForceField_Clear(&s_tubeMistField);
   ForceField_AddLayer(&s_tubeMistField, (ForceLayer){.type = FORCE_GRAVITY_DIR,
                                                      .direction = {0, -1, 0},
@@ -139,9 +115,46 @@ void InitTubeSkill(int screenWidth, int screenHeight) {
   ForceField_AddLayer(&s_tubeMistField,
                       (ForceLayer){.type = FORCE_DRAG, .strength = 2.0f});
 
-  // Mesh config: dùng default (đúng hành vi gốc của Water Stream), apex
-  // đuôi nhọn vừa (0.25) / đầu bo tròn đầy (0.8) như bản gốc bạn đã ưng ý.
+  // Mesh config: dung default (dung hanh vi goc cua Water Stream).
   s_waterTubeConfig = ProceduralMesh_DefaultTubeConfig();
+
+  // Impact burst config: gop lai dung 4 buoc trong TriggerWaterBurst() ban goc.
+  s_waterImpactConfig.distortEnabled = true;
+  s_waterImpactConfig.distortRadius = 85.0f;
+  s_waterImpactConfig.distortStrength = 0.7f;
+  s_waterImpactConfig.distortLife = 0.6f;
+  s_waterImpactConfig.distortSpeed = 150.0f;
+
+  s_waterImpactConfig.decalEnabled = true;
+  s_waterImpactConfig.decalTex = s_causticsTex;
+  s_waterImpactConfig.decalScale =
+      TUBE_BASE_RADIUS * 0.25f; // nhan sizeScale luc goi
+  s_waterImpactConfig.decalLife = 4.0f;
+  s_waterImpactConfig.decalTint = ColorAlpha(ELEMENT_COLOR_WATER, 0.7f);
+  s_waterImpactConfig.decalRandomRotation = true;
+
+  s_waterImpactConfig.lightEnabled = true;
+  s_waterImpactConfig.lightColor = ELEMENT_COLOR_WATER;
+  s_waterImpactConfig.lightRadius = 55.0f; // nhan sizeScale luc goi
+  s_waterImpactConfig.lightLife = 0.5f;
+
+  s_waterImpactConfig.particlesEnabled = true;
+  s_waterImpactConfig.particles.countMin = 25;
+  s_waterImpactConfig.particles.countMax = 40;
+  s_waterImpactConfig.particles.speedMin = 120.0f;
+  s_waterImpactConfig.particles.speedMax = 250.0f;
+  s_waterImpactConfig.particles.radiusMin = 3.0f;
+  s_waterImpactConfig.particles.radiusMax = 8.0f;
+  s_waterImpactConfig.particles.lifetimeMin = 0.6f;
+  s_waterImpactConfig.particles.lifetimeMax = 1.2f;
+  s_waterImpactConfig.particles.pitchRange =
+      PI; // spherical splash, giong ban goc
+  s_waterImpactConfig.particles.upwardBias = 100.0f;
+  s_waterImpactConfig.particles.colorStart = ELEMENT_COLOR_WATER;
+  s_waterImpactConfig.particles.colorEnd =
+      ColorAlpha(ColorLerp(ELEMENT_COLOR_WATER, WHITE, 0.3f), 0.0f);
+  s_waterImpactConfig.particles.forceField = &s_tubeSplashField;
+  s_waterImpactConfig.particles.gradient = &s_splashGrad;
 }
 
 void CastTubeSkill(Vector3 startPos, Vector3 target, float twistPhase,
@@ -185,7 +198,8 @@ void UpdateTubeSkill(float dt) {
     emitters[e].progress += dt * TUBE_TRAVEL_SPEED;
     if (emitters[e].progress >= 1.0f) {
       emitters[e].active = false;
-      TriggerWaterBurst(emitters[e].p3, emitters[e].sizeScale);
+      VFX_TriggerImpactBurst(emitters[e].p3, emitters[e].sizeScale,
+                             &s_waterImpactConfig);
       continue;
     }
     emitters[e].headPos = ProceduralMesh_BezierPoint(
@@ -231,8 +245,8 @@ void DrawTubeSkill(void) {
   float uvLength = TUBE_UV_LENGTH_SCALE;
   SetShaderValue(tubeShader, uvLengthLoc, &uvLength, SHADER_UNIFORM_FLOAT);
 
-  // Quy tắc 9.1: reset vertex color trước khi vẽ mesh dùng shader màu/texture
-  // riêng
+  // Quy tac 9.1: reset vertex color truoc khi ve mesh dung shader mau/texture
+  // rieng
   rlColor4ub(255, 255, 255, 255);
 
   for (int e = 0; e < MAX_TUBE_EMITTERS; e++) {
@@ -240,8 +254,6 @@ void DrawTubeSkill(void) {
       continue;
     float radius = TUBE_BASE_RADIUS * emitters[e].sizeScale;
 
-    // Toàn bộ toán Bezier/Frenet-frame/wobble/deform/taper/end-cap giờ nằm
-    // trong core/procedural_mesh_utils — skill chỉ còn Build + Draw.
     TubeMeshData mesh;
     ProceduralMesh_BuildTube(&mesh, emitters[e].p0, emitters[e].p1,
                              emitters[e].p2, emitters[e].p3, radius,
@@ -281,7 +293,8 @@ void DeactivateTubeProjectile(int index) {
     if (emitters[i].active) {
       if (count == index) {
         emitters[i].active = false;
-        TriggerWaterBurst(emitters[i].headPos, emitters[i].sizeScale);
+        VFX_TriggerImpactBurst(emitters[i].headPos, emitters[i].sizeScale,
+                               &s_waterImpactConfig);
         return;
       }
       count++;

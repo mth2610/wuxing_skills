@@ -215,6 +215,65 @@ typedef struct {
 * `void ScreenDistort_Add(Vector3 pos, float rad, float str, float life, float speed);`
   - Triggers a radial shockwave/heat-refraction distortion on screen. `ScreenDistort_Add` is the preferred unified prefix wrapper. Best used at collision/impact points.
 
+### Standard Color Gradient Fade (`#include "core/color_gradient_ext.h"`)
+The recurring 3-stop "born from element color, fades to nothing" gradient (seen across Water Stream and other impact VFX) is available as one call instead of three `ColorGradient_AddStop` lines:
+```c
+void ColorGradient_StandardFade(ColorGradient *grad, Color baseColor, float midT, float brightenAmount);
+```
+* Fills `grad` with: `t=0.00 -> baseColor`, `t=midT -> ColorLerp(baseColor, WHITE, brightenAmount)`, `t=1.00 -> fully transparent`.
+* Resets `grad->count = 0` internally — safe to call directly in `Init[Name]Skill` without manually clearing first.
+* Pass `midT=0.4f, brightenAmount=0.2f` to reproduce the original Water Stream look exactly.
+
+### Particle Radial Burst (`#include "core/particle_radial_burst.h"`)
+Spawns N particles flying outward from a point — the loop pattern used by every impact/explosion VFX:
+```c
+typedef struct {
+    int   countMin, countMax;
+    float speedMin, speedMax;
+    float radiusMin, radiusMax;
+    float lifetimeMin, lifetimeMax;
+    float pitchRange;     // 0 = flat/ring burst (horizontal only). PI = full spherical burst.
+    float upwardBias;     // added to vertical velocity, e.g. 100.0f for a splash "kick"
+    Color colorStart, colorEnd;       // used only if gradient == NULL
+    const ColorGradient *gradient;    // preferred — overrides colorStart/colorEnd
+    const ForceField *forceField;
+} ParticleRadialBurstConfig;
+
+void ParticleSystem_SpawnRadialBurst(Vector3 origin, float sizeScale, const ParticleRadialBurstConfig *cfg);
+```
+* `sizeScale` scales `countMax`, speed, and radius together, matching the convention used by `TriggerWaterBurst` in the original Water Stream skill.
+* `pitchRange = PI` gives a full spherical splash (water-style); `pitchRange = 0.0f` gives a flat ring burst (useful for ground-impact debris that shouldn't fly upward as much).
+
+### Impact Burst Combo (`#include "core/impact_burst.h"`)
+Almost every projectile/skill impact runs the same 4-step VFX combo: screen distortion -> ground decal -> point light flash -> radial particle burst. Instead of hand-writing this each time (as in the original `TriggerWaterBurst`), declare one static config per impact "flavor" and call:
+```c
+typedef struct {
+    bool  distortEnabled;
+    float distortRadius, distortStrength, distortLife, distortSpeed;
+
+    bool      decalEnabled;
+    Texture2D decalTex;
+    float     decalScale;    // multiplied by sizeScale at call time
+    float     decalLife;
+    Color     decalTint;
+    bool      decalRandomRotation;
+    float     decalFixedRotation;
+
+    bool  lightEnabled;
+    Color lightColor;
+    float lightRadius;       // multiplied by sizeScale at call time
+    float lightLife;
+
+    bool particlesEnabled;
+    ParticleRadialBurstConfig particles;
+} ImpactBurstConfig;
+
+void VFX_TriggerImpactBurst(Vector3 pos, float sizeScale, const ImpactBurstConfig *cfg);
+```
+* Any step can be disabled via its `*Enabled` flag (e.g. a silent particle-only burst with no decal).
+* `decalScale` and `lightRadius` are multiplied by `sizeScale` internally — pass the *base* radius (matching the convention in `ImpactBurstConfig`, not the pre-scaled value).
+* **Usage pattern:** build the config once in `Init[Name]Skill` (it is pure data, safe as a `static` struct), then call `VFX_TriggerImpactBurst(impactPos, sizeScale, &s_myImpactConfig);` at every collision/expiry point instead of re-deriving the 4-step sequence.
+
 ### Standardized Combat API (`#include "core/skill_manager.h"`)
 * `void ApplyAoEDamage(Vector3 position, float radius, float damage, float knockback);`
   - Applies area-of-effect damage and knockback to the enemy character.

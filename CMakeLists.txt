@@ -64,6 +64,8 @@ add_executable(wuxing
     core/decal_system.c
     core/procedural_mesh_utils.c
     core/skill_helper.c
+    core/particle_radial_burst.c
+    core/impact_burst.c
 
     # --- Sandbox & Test Simulator ---
     sandbox/sandbox_core.c

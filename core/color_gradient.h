@@ -7,7 +7,7 @@
 #define COLOR_GRADIENT_MAX_STOPS 8
 
 typedef struct {
-  float t;    // [0.0 .. 1.0]
+  float t; // [0.0 .. 1.0]
   Color color;
 } GradientStop;
 
@@ -24,5 +24,8 @@ Color ColorGradient_Sample(const ColorGradient *g, float t);
 
 // Khởi tạo nhanh gradient dành riêng cho hệ Điện
 ColorGradient ColorGradient_MakeElectric(void);
+
+void ColorGradient_StandardFade(ColorGradient *grad, Color baseColor,
+                                float midT, float brightenAmount);
 
 #endif // COLOR_GRADIENT_H
