@@ -1,40 +1,34 @@
 #include "skills/water/water_stream/tube_skill.h"
-#include "core/skill_manager.h"
-#include "core/resource_manager.h"
-#include "core/force_field.h"
-#include "core/particle_system.h"
+#include "core/camera_fx.h"
 #include "core/color_gradient.h"
 #include "core/decal_system.h"
+#include "core/force_field.h"
+#include "core/particle_system.h"
+#include "core/procedural_mesh_utils.h"
+#include "core/resource_manager.h"
 #include "core/screen_distort.h"
+#include "core/skill_manager.h"
+#include "core/utils_math.h"
 #include "core/vfx_light.h"
-#include "core/camera_fx.h"
 #include "raymath.h"
 #include "rlgl.h"
-#include "core/utils_math.h"
 #include <math.h>
 #include <stddef.h>
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #define MAX_TUBE_EMITTERS 5
 
 // --- Force Fields của Tube Skill ---
-static ForceField s_tubeSplashField; // nước va chạm: trọng lực + Perlin gợn sóng
-static ForceField s_tubeMistField;   // sương đầu ống: trọng lực nhẹ + drift
+static ForceField
+    s_tubeSplashField; // nước va chạm: trọng lực + Perlin gợn sóng
+static ForceField s_tubeMistField; // sương đầu ống: trọng lực nhẹ + drift
 
 #define TUBE_TRAVEL_SPEED 1.2f
 #define TUBE_BASE_RADIUS 12.0f
 #define TUBE_SEGMENTS 30
 #define TUBE_RADIAL_SEGMENTS 20
 #define TUBE_UV_LENGTH_SCALE 3.0f
-
-#define WATER_BODY_PULSE_AMPLITUDE 0.15f
-#define WATER_BODY_PULSE_FREQUENCY 4.0f
-#define WATER_BODY_PULSE_SPEED 5.0f
-
-#define WATER_BODY_WOBBLE_AMPLITUDE 0.1f
-#define WATER_BODY_WOBBLE_FREQUENCY 4.0f
-#define WATER_BODY_WOBBLE_SPEED 8.0f
 
 #define GRAVITY_Y -650.0f
 #define FLUID_DRAG_SPLASH 3.0f
@@ -55,42 +49,13 @@ static int timeLoc;
 static int viewPosLoc;
 static int uvLengthLoc;
 
-// Hàm nội suy mượt thay thế cho smoothstep của GLSL
-static float Math_Smoothstep(float edge0, float edge1, float x) {
-  float t = Clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
-  return t * t * (3.0f - 2.0f * t);
-}
+// Cấu hình biến đổi mesh hữu cơ riêng của Water Stream.
+// Đây là TOÀN BỘ phần "chữ ký nước" còn lại trong skill — mọi toán Bezier/
+// Frenet-frame/wobble/deform/end-cap đã chuyển vào core/procedural_mesh_utils.
+static TubeMeshConfig s_waterTubeConfig;
 
 static inline float ClampSizeScale(float scale) {
   return Clamp(scale, 0.2f, 3.0f);
-}
-
-static Vector3 GetBezierDerivative(Vector3 p0, Vector3 p1, Vector3 p2,
-                                   Vector3 p3, float t) {
-  float u = 1.0f - t;
-  Vector3 d = {0};
-  d.x = 3.0f * u * u * (p1.x - p0.x) + 6.0f * u * t * (p2.x - p1.x) +
-        3.0f * t * t * (p3.x - p2.x);
-  d.y = 3.0f * u * u * (p1.y - p0.y) + 6.0f * u * t * (p2.y - p1.y) +
-        3.0f * t * t * (p3.y - p2.y);
-  d.z = 3.0f * u * u * (p1.z - p0.z) + 6.0f * u * t * (p2.z - p1.z) +
-        3.0f * t * t * (p3.z - p2.z);
-  return d;
-}
-
-static Vector3 GetBezierPoint(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3,
-                              float t) {
-  float u = 1.0f - t;
-  float tt = t * t;
-  float uu = u * u;
-  float uuu = uu * u;
-  float ttt = tt * t;
-
-  Vector3 p = Vector3Scale(p0, uuu);
-  p = Vector3Add(p, Vector3Scale(p1, 3.0f * uu * t));
-  p = Vector3Add(p, Vector3Scale(p2, 3.0f * u * tt));
-  p = Vector3Add(p, Vector3Scale(p3, ttt));
-  return p;
 }
 
 static Texture2D s_causticsTex;
@@ -98,14 +63,9 @@ static ColorGradient s_splashGrad;
 
 static void TriggerWaterBurst(Vector3 pos, float sizeScale) {
   ScreenDistort_Add(pos, 85.0f, 0.7f, 0.6f, 150.0f);
-  DecalSystem_Add(
-      pos,
-      (float)GetRandomValue(0, 360),
-      TUBE_BASE_RADIUS * sizeScale * 0.25f,
-      s_causticsTex,
-      4.0f,
-      ColorAlpha(ELEMENT_COLOR_WATER, 0.7f)
-  );
+  DecalSystem_Add(pos, (float)GetRandomValue(0, 360),
+                  TUBE_BASE_RADIUS * sizeScale * 0.25f, s_causticsTex, 4.0f,
+                  ColorAlpha(ELEMENT_COLOR_WATER, 0.7f));
   VFXLight_Spawn(pos, ELEMENT_COLOR_WATER, 55.0f * sizeScale, 0.5f);
 
   int splashCount = GetRandomValue(25, 40) * sizeScale;
@@ -122,196 +82,19 @@ static void TriggerWaterBurst(Vector3 pos, float sizeScale) {
     cfg.radius = Math_Mix(3.0f, 8.0f, Random01()) * sizeScale;
     cfg.lifetime = Math_Mix(0.6f, 1.2f, Random01());
     cfg.colorStart = ELEMENT_COLOR_WATER;
-    cfg.colorEnd = ColorAlpha(ColorLerp(ELEMENT_COLOR_WATER, WHITE, 0.3f), 0.0f);
+    cfg.colorEnd =
+        ColorAlpha(ColorLerp(ELEMENT_COLOR_WATER, WHITE, 0.3f), 0.0f);
     cfg.forceField = &s_tubeSplashField;
     cfg.gradient = &s_splashGrad;
     SpawnParticle(cfg);
   }
 }
 
-static void RenderCustom3DTube(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3,
-                               float radius, float flowProgress) {
-  Vector3 rings[TUBE_SEGMENTS + 1][TUBE_RADIAL_SEGMENTS];
-  Vector3 normals[TUBE_SEGMENTS + 1][TUBE_RADIAL_SEGMENTS];
-
-  float sinPhi[TUBE_RADIAL_SEGMENTS];
-  float cosPhi[TUBE_RADIAL_SEGMENTS];
-  for (int j = 0; j < TUBE_RADIAL_SEGMENTS; j++) {
-    float phi = (float)j * (2.0f * PI) / (float)TUBE_RADIAL_SEGMENTS;
-    sinPhi[j] = sinf(phi);
-    cosPhi[j] = cosf(phi);
-  }
-
-  Vector3 tailTangent = {0}, headTangent = {0};
-  Vector3 tailCenter = {0}, headCenter = {0};
-  float tailRadius = 0.0f, headRadius = 0.0f;
-  float time = GetTime();
-
-  for (int i = 0; i <= TUBE_SEGMENTS; i++) {
-    float t = (float)i / (float)TUBE_SEGMENTS;
-    float currentT = t * flowProgress;
-
-    Vector3 pos = GetBezierPoint(p0, p1, p2, p3, currentT);
-    Vector3 tangent =
-        Vector3Normalize(GetBezierDerivative(p0, p1, p2, p3, currentT));
-
-    Vector3 up = (Vector3){0.0f, 1.0f, 0.0f};
-    if (fabsf(tangent.y) > 0.99f)
-      up = (Vector3){1.0f, 0.0f, 0.0f};
-
-    Vector3 right = Vector3Normalize(Vector3CrossProduct(up, tangent));
-    up = Vector3CrossProduct(tangent, right);
-
-    // --- CHỈNH LẠI HÌNH DÁNG THEO Ý BẠN ---
-    // 1. Giữ nguyên form bo tròn 2 đầu mà bạn ưng ý ở bản trước
-    float baseCapsule = 0.3f + 0.7f * sqrtf(fmaxf(0.0f, sinf(t * PI)));
-
-    // 2. Vuốt nhỏ dần về phía đuôi (t=0 là đuôi chỉ còn 15% kích thước, t=1 là
-    // đầu giữ nguyên 100%)
-    float tailTaper = 0.15f + 0.85f * t;
-
-    float capsuleCurve = baseCapsule * tailTaper;
-    float bodyNoise = 1.0f + 0.18f * sinf(t * 22.0f + time * 7.0f) +
-                      0.08f * sinf(t * 55.0f - time * 13.0f);
-
-    capsuleCurve *= bodyNoise;
-
-    float headWeight = 1.0f + 0.2f * t;
-
-    if (i == 0) {
-      tailTangent = tangent;
-      tailCenter = pos;
-    }
-    if (i == TUBE_SEGMENTS) {
-      headTangent = tangent;
-      headCenter = pos;
-    }
-
-    float wobble = WATER_BODY_WOBBLE_AMPLITUDE *
-                   sinf(t * PI * WATER_BODY_WOBBLE_FREQUENCY +
-                        time * WATER_BODY_WOBBLE_SPEED);
-
-    Vector3 twistedUp = Vector3Add(Vector3Scale(up, cosf(wobble)),
-                                   Vector3Scale(right, sinf(wobble)));
-
-    Vector3 twistedRight =
-        Vector3Normalize(Vector3CrossProduct(twistedUp, tangent));
-
-    for (int j = 0; j < TUBE_RADIAL_SEGMENTS; j++) {
-      Vector3 normal = Vector3Add(Vector3Scale(twistedRight, cosPhi[j]),
-                                  Vector3Scale(twistedUp, sinPhi[j]));
-      normals[i][j] = normal;
-      float phi = (float)j * (2.0f * PI) / (float)TUBE_RADIAL_SEGMENTS;
-      float deform1 = sinf(t * 18.0f + phi * 3.0f + time * 10.0f);
-
-      float deform2 = sinf(t * 9.0f - phi * 5.0f - time * 6.0f);
-
-      float deform = 1.0f + deform1 * 0.12f + deform2 * 0.08f;
-
-      rings[i][j] =
-          Vector3Add(pos, Vector3Scale(normal, radius * capsuleCurve *
-                                                   headWeight * deform));
-    }
-
-    if (i == 0)
-      tailRadius = radius * capsuleCurve * headWeight;
-    if (i == TUBE_SEGMENTS)
-      headRadius = radius * capsuleCurve * headWeight;
-  }
-
-  rlPushMatrix();
-  rlCheckRenderBatchLimit(TUBE_SEGMENTS * TUBE_RADIAL_SEGMENTS * 4);
-  rlBegin(RL_QUADS);
-  for (int i = 0; i < TUBE_SEGMENTS; i++) {
-    float v1 = (float)i / (float)TUBE_SEGMENTS * TUBE_UV_LENGTH_SCALE;
-    float v2 = (float)(i + 1) / (float)TUBE_SEGMENTS * TUBE_UV_LENGTH_SCALE;
-
-    for (int j = 0; j < TUBE_RADIAL_SEGMENTS; j++) {
-      int nextJ = (j + 1) % TUBE_RADIAL_SEGMENTS;
-      float u1 = (float)j / (float)TUBE_RADIAL_SEGMENTS;
-      float u2 = (float)(j + 1) / (float)TUBE_RADIAL_SEGMENTS;
-
-      rlNormal3f(normals[i][j].x, normals[i][j].y, normals[i][j].z);
-      rlTexCoord2f(u1, v1);
-      rlVertex3f(rings[i][j].x, rings[i][j].y, rings[i][j].z);
-      rlNormal3f(normals[i][nextJ].x, normals[i][nextJ].y, normals[i][nextJ].z);
-      rlTexCoord2f(u2, v1);
-      rlVertex3f(rings[i][nextJ].x, rings[i][nextJ].y, rings[i][nextJ].z);
-      rlNormal3f(normals[i + 1][nextJ].x, normals[i + 1][nextJ].y,
-                 normals[i + 1][nextJ].z);
-      rlTexCoord2f(u2, v2);
-      rlVertex3f(rings[i + 1][nextJ].x, rings[i + 1][nextJ].y,
-                 rings[i + 1][nextJ].z);
-      rlNormal3f(normals[i + 1][j].x, normals[i + 1][j].y, normals[i + 1][j].z);
-      rlTexCoord2f(u1, v2);
-      rlVertex3f(rings[i + 1][j].x, rings[i + 1][j].y, rings[i + 1][j].z);
-    }
-  }
-  rlEnd();
-
-  rlCheckRenderBatchLimit(TUBE_RADIAL_SEGMENTS * 6);
-  rlBegin(RL_TRIANGLES);
-
-  // Đuôi nhỏ, vát tù mượt mà
-  Vector3 tailApex = Vector3Subtract(
-      tailCenter, Vector3Scale(tailTangent, tailRadius * 0.25f));
-  float tailV_apex = -0.1f;
-  float tailV_ring = 0.0f;
-  for (int j = 0; j < TUBE_RADIAL_SEGMENTS; j++) {
-    int nextJ = (j + 1) % TUBE_RADIAL_SEGMENTS;
-    float u1 = (float)j / (float)TUBE_RADIAL_SEGMENTS;
-    float u2 = (float)(nextJ) / (float)TUBE_RADIAL_SEGMENTS;
-    float uCenter = (u1 + u2) * 0.5f;
-
-    rlNormal3f(-tailTangent.x, -tailTangent.y, -tailTangent.z);
-    rlTexCoord2f(uCenter, tailV_apex);
-    rlVertex3f(tailApex.x, tailApex.y, tailApex.z);
-    rlNormal3f(normals[0][j].x, normals[0][j].y, normals[0][j].z);
-    rlTexCoord2f(u1, tailV_ring);
-    rlVertex3f(rings[0][j].x, rings[0][j].y, rings[0][j].z);
-    rlNormal3f(normals[0][nextJ].x, normals[0][nextJ].y, normals[0][nextJ].z);
-    rlTexCoord2f(u2, tailV_ring);
-    rlVertex3f(rings[0][nextJ].x, rings[0][nextJ].y, rings[0][nextJ].z);
-  }
-
-  // Đầu giữ nguyên độ bo tròn ưng ý
-  Vector3 headApex =
-      Vector3Add(headCenter, Vector3Scale(headTangent, headRadius * 0.8f));
-
-  float headV_ring = TUBE_UV_LENGTH_SCALE;
-  float headV_apex = TUBE_UV_LENGTH_SCALE + 0.1f;
-  for (int j = 0; j < TUBE_RADIAL_SEGMENTS; j++) {
-    int nextJ = (j + 1) % TUBE_RADIAL_SEGMENTS;
-    float u1 = (float)j / (float)TUBE_RADIAL_SEGMENTS;
-    float u2 = (float)(nextJ) / (float)TUBE_RADIAL_SEGMENTS;
-    float uCenter = (u1 + u2) * 0.5f;
-
-    Vector3 avgNormal1 =
-        Vector3Normalize(Vector3Add(normals[TUBE_SEGMENTS][j], headTangent));
-    Vector3 avgNormal2 = Vector3Normalize(
-        Vector3Add(normals[TUBE_SEGMENTS][nextJ], headTangent));
-
-    rlNormal3f(headTangent.x, headTangent.y, headTangent.z);
-    rlTexCoord2f(uCenter, headV_apex);
-    rlVertex3f(headApex.x, headApex.y, headApex.z);
-    rlNormal3f(avgNormal1.x, avgNormal1.y, avgNormal1.z);
-    rlTexCoord2f(u1, headV_ring);
-    rlVertex3f(rings[TUBE_SEGMENTS][j].x, rings[TUBE_SEGMENTS][j].y,
-               rings[TUBE_SEGMENTS][j].z);
-    rlNormal3f(avgNormal2.x, avgNormal2.y, avgNormal2.z);
-    rlTexCoord2f(u2, headV_ring);
-    rlVertex3f(rings[TUBE_SEGMENTS][nextJ].x, rings[TUBE_SEGMENTS][nextJ].y,
-               rings[TUBE_SEGMENTS][nextJ].z);
-  }
-
-  rlEnd();
-  rlPopMatrix();
-}
-
 void InitTubeSkill(int screenWidth, int screenHeight) {
   (void)screenWidth;
   (void)screenHeight;
-  tubeShader = ResourceManager_LoadShader("skills/water/water_stream/tube.vs", "skills/water/water_stream/tube.fs");
+  tubeShader = ResourceManager_LoadShader("skills/water/water_stream/tube.vs",
+                                          "skills/water/water_stream/tube.fs");
   timeLoc = GetShaderLocation(tubeShader, "u_time");
   viewPosLoc = GetShaderLocation(tubeShader, "viewPos");
   uvLengthLoc =
@@ -320,38 +103,45 @@ void InitTubeSkill(int screenWidth, int screenHeight) {
     emitters[i].active = false;
   }
 
-  s_causticsTex = ResourceManager_LoadTexture("assets/textures/water_caustics.png");
+  s_causticsTex =
+      ResourceManager_LoadTexture("assets/textures/water_caustics.png");
 
   s_splashGrad.count = 0;
   ColorGradient_AddStop(&s_splashGrad, 0.00f, ELEMENT_COLOR_WATER);
-  ColorGradient_AddStop(&s_splashGrad, 0.40f, ColorLerp(ELEMENT_COLOR_WATER, WHITE, 0.2f));
-  ColorGradient_AddStop(&s_splashGrad, 1.00f, (Color){ 0, 0, 0, 0 });
+  ColorGradient_AddStop(&s_splashGrad, 0.40f,
+                        ColorLerp(ELEMENT_COLOR_WATER, WHITE, 0.2f));
+  ColorGradient_AddStop(&s_splashGrad, 1.00f, (Color){0, 0, 0, 0});
 
   // Nước va chạm: trọng lực mạnh + Perlin gợn sóng lan + drag 3.0
   ForceField_Clear(&s_tubeSplashField);
-  ForceField_AddLayer(&s_tubeSplashField, (ForceLayer){
-    .type = FORCE_GRAVITY_DIR, .direction = {0,-1,0}, .strength = 650.0f
-  });
-  ForceField_AddLayer(&s_tubeSplashField, (ForceLayer){
-    .type = FORCE_NOISE_PERLIN, .strength = 25.0f,
-    .noiseScale = 0.010f, .noiseSpeed = 0.5f
-  });
-  ForceField_AddLayer(&s_tubeSplashField, (ForceLayer){
-    .type = FORCE_DRAG, .strength = FLUID_DRAG_SPLASH
-  });
+  ForceField_AddLayer(&s_tubeSplashField,
+                      (ForceLayer){.type = FORCE_GRAVITY_DIR,
+                                   .direction = {0, -1, 0},
+                                   .strength = 650.0f});
+  ForceField_AddLayer(&s_tubeSplashField,
+                      (ForceLayer){.type = FORCE_NOISE_PERLIN,
+                                   .strength = 25.0f,
+                                   .noiseScale = 0.010f,
+                                   .noiseSpeed = 0.5f});
+  ForceField_AddLayer(
+      &s_tubeSplashField,
+      (ForceLayer){.type = FORCE_DRAG, .strength = FLUID_DRAG_SPLASH});
 
   // Sương đầu ống: trọng lực nhẹ + drift theo Perlin + drag 2.0
   ForceField_Clear(&s_tubeMistField);
-  ForceField_AddLayer(&s_tubeMistField, (ForceLayer){
-    .type = FORCE_GRAVITY_DIR, .direction = {0,-1,0}, .strength = 325.0f
-  });
-  ForceField_AddLayer(&s_tubeMistField, (ForceLayer){
-    .type = FORCE_NOISE_PERLIN, .strength = 15.0f,
-    .noiseScale = 0.008f, .noiseSpeed = 0.3f
-  });
-  ForceField_AddLayer(&s_tubeMistField, (ForceLayer){
-    .type = FORCE_DRAG, .strength = 2.0f
-  });
+  ForceField_AddLayer(&s_tubeMistField, (ForceLayer){.type = FORCE_GRAVITY_DIR,
+                                                     .direction = {0, -1, 0},
+                                                     .strength = 325.0f});
+  ForceField_AddLayer(&s_tubeMistField, (ForceLayer){.type = FORCE_NOISE_PERLIN,
+                                                     .strength = 15.0f,
+                                                     .noiseScale = 0.008f,
+                                                     .noiseSpeed = 0.3f});
+  ForceField_AddLayer(&s_tubeMistField,
+                      (ForceLayer){.type = FORCE_DRAG, .strength = 2.0f});
+
+  // Mesh config: dùng default (đúng hành vi gốc của Water Stream), apex
+  // đuôi nhọn vừa (0.25) / đầu bo tròn đầy (0.8) như bản gốc bạn đã ưng ý.
+  s_waterTubeConfig = ProceduralMesh_DefaultTubeConfig();
 }
 
 void CastTubeSkill(Vector3 startPos, Vector3 target, float twistPhase,
@@ -398,9 +188,9 @@ void UpdateTubeSkill(float dt) {
       TriggerWaterBurst(emitters[e].p3, emitters[e].sizeScale);
       continue;
     }
-    emitters[e].headPos =
-        GetBezierPoint(emitters[e].p0, emitters[e].p1, emitters[e].p2,
-                       emitters[e].p3, emitters[e].progress);
+    emitters[e].headPos = ProceduralMesh_BezierPoint(
+        emitters[e].p0, emitters[e].p1, emitters[e].p2, emitters[e].p3,
+        emitters[e].progress);
 
     if (GetRandomValue(0, 100) < 60) {
       ParticleConfig cfgMist = {0};
@@ -441,12 +231,23 @@ void DrawTubeSkill(void) {
   float uvLength = TUBE_UV_LENGTH_SCALE;
   SetShaderValue(tubeShader, uvLengthLoc, &uvLength, SHADER_UNIFORM_FLOAT);
 
+  // Quy tắc 9.1: reset vertex color trước khi vẽ mesh dùng shader màu/texture
+  // riêng
+  rlColor4ub(255, 255, 255, 255);
+
   for (int e = 0; e < MAX_TUBE_EMITTERS; e++) {
     if (!emitters[e].active)
       continue;
     float radius = TUBE_BASE_RADIUS * emitters[e].sizeScale;
-    RenderCustom3DTube(emitters[e].p0, emitters[e].p1, emitters[e].p2,
-                       emitters[e].p3, radius, emitters[e].progress);
+
+    // Toàn bộ toán Bezier/Frenet-frame/wobble/deform/taper/end-cap giờ nằm
+    // trong core/procedural_mesh_utils — skill chỉ còn Build + Draw.
+    TubeMeshData mesh;
+    ProceduralMesh_BuildTube(&mesh, emitters[e].p0, emitters[e].p1,
+                             emitters[e].p2, emitters[e].p3, radius,
+                             emitters[e].progress, time, TUBE_SEGMENTS,
+                             TUBE_RADIAL_SEGMENTS, &s_waterTubeConfig);
+    ProceduralMesh_DrawTube(&mesh, TUBE_UV_LENGTH_SCALE);
   }
 
   EndShaderMode();

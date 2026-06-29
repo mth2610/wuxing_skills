@@ -13,6 +13,9 @@ static Rectangle skillButtons[64];
 static Rectangle togglePanelBtn;
 
 static int hoverSkillIndex = -1;
+static int skillOrder[64];
+static int draggedSkillSlot = -1;
+static Vector2 dragOffset = { 0, 0 };
 
 void InitUIPanel(void) {
   togglePanelBtn = (Rectangle){20, 15, 180, 32};
@@ -52,6 +55,10 @@ void InitUIPanel(void) {
         buttonHeight
     };
   }
+
+  for (int i = 0; i < 64; i++) {
+    skillOrder[i] = i;
+  }
 }
 
 void UpdateUIPanel(Vector2 mousePos, UIPanelState *state) {
@@ -79,13 +86,13 @@ void UpdateUIPanel(Vector2 mousePos, UIPanelState *state) {
 
   bool activeValid = false;
   for (int i = 0; i < availableCount; i++) {
-    if (state->activeSkillIndex == i) {
+    if (state->activeSkillIndex == skillOrder[i]) {
       activeValid = true;
       break;
     }
   }
   if (!activeValid && availableCount > 0) {
-    state->activeSkillIndex = 0;
+    state->activeSkillIndex = skillOrder[0];
   }
 
   // Kiểm tra hover nút chiêu thức
@@ -115,37 +122,64 @@ void UpdateUIPanel(Vector2 mousePos, UIPanelState *state) {
   if (CheckCollisionPointRec(mousePos, rectPortalToggle))
     isMouseOverAnyUI = true;
 
-  if (isMouseOverAnyUI) {
+  if (isMouseOverAnyUI || draggedSkillSlot != -1) {
     state->clickedOnUI = true;
   }
 
-  // Xử lý click chuột trái vào các bảng thông số
-  if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-    for (int i = 0; i < 5; i++) {
-      if (CheckCollisionPointRec(mousePos, rectQty[i])) {
-        state->currentParams.quantity = i + 1;
+  // Xử lý kéo thả và click chuột
+  if (draggedSkillSlot != -1) {
+    state->clickedOnUI = true;
+    if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+      int targetSlot = -1;
+      for (int i = 0; i < availableCount; i++) {
+        if (CheckCollisionPointRec(mousePos, skillButtons[i])) {
+          targetSlot = i;
+          break;
+        }
       }
-    }
-    for (int i = 0; i < 3; i++) {
-      if (CheckCollisionPointRec(mousePos, rectSize[i])) {
-        state->currentParams.sizeScale = sizes[i];
+      if (targetSlot != -1 && targetSlot != draggedSkillSlot) {
+        // Hoán đổi vị trí trong danh sách sắp xếp
+        int temp = skillOrder[draggedSkillSlot];
+        skillOrder[draggedSkillSlot] = skillOrder[targetSlot];
+        skillOrder[targetSlot] = temp;
+        state->activeSkillIndex = skillOrder[targetSlot];
       }
+      draggedSkillSlot = -1;
     }
-    for (int i = 0; i < 2; i++) {
-      if (CheckCollisionPointRec(mousePos, rectAnchor[i])) {
-        state->currentParams.anchorType = (CastAnchorType)i;
+  } else {
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+      // Click vào phím kỹ năng -> Bắt đầu kéo thả và chọn làm chiêu active
+      if (hoverSkillIndex != -1) {
+        draggedSkillSlot = hoverSkillIndex;
+        dragOffset = (Vector2){ mousePos.x - skillButtons[hoverSkillIndex].x, mousePos.y - skillButtons[hoverSkillIndex].y };
+        state->activeSkillIndex = skillOrder[hoverSkillIndex];
+        state->clickedOnUI = true;
       }
-    }
-    for (int i = 0; i < 3; i++) {
-      if (CheckCollisionPointRec(mousePos, rectPath[i])) {
-        state->currentParams.pathType = (CastPathType)i;
+
+      // Các nút thông số khác
+      for (int i = 0; i < 5; i++) {
+        if (CheckCollisionPointRec(mousePos, rectQty[i])) {
+          state->currentParams.quantity = i + 1;
+        }
       }
-    }
-    if (CheckCollisionPointRec(mousePos, rectPortalToggle)) {
-      state->currentParams.showPortal = !state->currentParams.showPortal;
-    }
-    if (hoverSkillIndex != -1) {
-      state->activeSkillIndex = hoverSkillIndex;
+      for (int i = 0; i < 3; i++) {
+        if (CheckCollisionPointRec(mousePos, rectSize[i])) {
+          state->currentParams.sizeScale = sizes[i];
+        }
+      }
+      for (int i = 0; i < 2; i++) {
+        if (CheckCollisionPointRec(mousePos, rectAnchor[i])) {
+          state->currentParams.anchorType = (CastAnchorType)i;
+        }
+      }
+      for (int i = 0; i < 3; i++) {
+        if (CheckCollisionPointRec(mousePos, rectPath[i])) {
+          state->currentParams.pathType = (CastPathType)i;
+        }
+      }
+      if (CheckCollisionPointRec(mousePos, rectPortalToggle)) {
+        state->currentParams.showPortal = !state->currentParams.showPortal;
+      }
     }
   }
 }
@@ -188,10 +222,17 @@ void DrawUIPanel(const UIPanelState *state) {
 
   // Vẽ nút chiêu thức
   for (int i = 0; i < availableCount; i++) {
-    int skillIdx = i;
+    int skillIdx = skillOrder[i];
     bool isSelected = (state->activeSkillIndex == skillIdx);
     bool isHover = (hoverSkillIndex == i);
     Color baseColor = GetRegisteredSkillColor(skillIdx);
+
+    // Nếu đang bị kéo thả, vẽ placeholder trống mờ ảo tại ô gốc
+    if (draggedSkillSlot == i) {
+      DrawRectangleRounded(skillButtons[i], 0.3f, 10, ColorAlpha(DARKGRAY, 0.15f));
+      DrawRectangleRoundedLines(skillButtons[i], 0.3f, 10, ColorAlpha(WHITE, 0.3f));
+      continue;
+    }
 
     Color btnColor = isSelected ? baseColor
                                 : (isHover ? ColorAlpha(baseColor, 0.6f)
@@ -208,6 +249,27 @@ void DrawUIPanel(const UIPanelState *state) {
     DrawText(btnText,
              (int)(skillButtons[i].x + (skillButtons[i].width - textWidth) / 2),
              (int)(skillButtons[i].y + 13), 9, WHITE);
+  }
+
+  // Vẽ nút đang bị kéo lơ lửng theo chuột
+  if (draggedSkillSlot != -1 && draggedSkillSlot < availableCount) {
+    int skillIdx = skillOrder[draggedSkillSlot];
+    Color baseColor = GetRegisteredSkillColor(skillIdx);
+    Rectangle dragRect = {
+      mousePos.x - dragOffset.x,
+      mousePos.y - dragOffset.y,
+      skillButtons[draggedSkillSlot].width,
+      skillButtons[draggedSkillSlot].height
+    };
+    Color btnColor = ColorAlpha(baseColor, 0.8f);
+    DrawRectangleRounded(dragRect, 0.3f, 10, btnColor);
+    DrawRectangleRoundedLines(dragRect, 0.3f, 10, YELLOW); // Highlight màu vàng lấp lánh khi kéo
+    
+    const char *skillName = GetRegisteredSkillName(skillIdx);
+    int textWidth = MeasureText(skillName, 9);
+    DrawText(skillName,
+             (int)(dragRect.x + (dragRect.width - textWidth) / 2),
+             (int)(dragRect.y + 13), 9, WHITE);
   }
 
   // Quantity
@@ -277,4 +339,12 @@ void DrawUIPanel(const UIPanelState *state) {
            WHITE);
 
   EndBlendMode();
+}
+
+int GetSkillAtOrderIndex(int orderIndex) {
+  int skillCount = GetRegisteredSkillCount();
+  if (orderIndex < 0 || orderIndex >= skillCount || orderIndex >= 64) {
+    return -1;
+  }
+  return skillOrder[orderIndex];
 }

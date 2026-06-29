@@ -20,4 +20,7 @@ void UpdateUIPanel(Vector2 mousePos, UIPanelState *state);
 // Vẽ bảng điều khiển lên màn hình 2D
 void DrawUIPanel(const UIPanelState *state);
 
+// Lấy chỉ số kỹ năng đã đăng ký thực tế tại vị trí sắp xếp thứ orderIndex
+int GetSkillAtOrderIndex(int orderIndex);
+
 #endif // UI_PANEL_H

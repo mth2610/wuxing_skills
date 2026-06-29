@@ -28,6 +28,9 @@ static bool g_touchFlyDownActive = false;
 static bool g_touchCamLeftActive = false;
 static bool g_touchCamRightActive = false;
 
+static bool g_touchSkillActive[5] = { false };
+static bool g_touchAttackActive = false;
+
 typedef struct {
     Vector3 position;
     float radius;
@@ -162,27 +165,43 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     Vector2 joystickCenter = { 150.0f * touchScale, screenHeight - 150.0f * touchScale };
     float joystickBaseRadius = 65.0f * touchScale;
 
-    // Các phím chức năng
-    Vector2 dashBtnCenter = { screenWidth - 210.0f * touchScale, screenHeight - 100.0f * touchScale };
-    float dashBtnRadius = 35.0f * touchScale;
+    // Các phím chức năng theo sơ đồ MMORPG Action mới
+    Vector2 attackBtnCenter = { screenWidth - 120.0f * touchScale, screenHeight - 120.0f * touchScale };
+    float attackBtnRadius = 52.0f * touchScale;
 
-    Vector2 jumpBtnCenter = { screenWidth - 100.0f * touchScale, screenHeight - 100.0f * touchScale };
-    float jumpBtnRadius = 45.0f * touchScale;
+    Vector2 skillBtnsCenter[5];
+    float skillBtnsRadius = 25.0f * touchScale;
+    float arcRadius = 135.0f * touchScale;
+    for (int k = 0; k < 5; k++) {
+        float angle = PI - (k * (PI / 6.0f)); // 180, 150, 120, 90, 60 độ xung quanh nút đánh thường
+        skillBtnsCenter[k].x = attackBtnCenter.x + cosf(angle) * arcRadius;
+        skillBtnsCenter[k].y = attackBtnCenter.y - sinf(angle) * arcRadius;
+    }
 
-    Vector2 flyToggleBtnCenter = { screenWidth - 100.0f * touchScale, screenHeight - 210.0f * touchScale };
-    float flyToggleBtnRadius = 35.0f * touchScale;
+    // Nút nhảy (nút nhỏ ở góc trên bên phải nút đánh thường)
+    Vector2 jumpBtnCenter = { screenWidth - 50.0f * touchScale, screenHeight - 230.0f * touchScale };
+    float jumpBtnRadius = 28.0f * touchScale;
 
-    Vector2 flyUpBtnCenter = { screenWidth - 100.0f * touchScale, screenHeight - 310.0f * touchScale };
-    float flyUpBtnRadius = 30.0f * touchScale;
+    // Nút lướt (Dash) ở góc dưới bên trái nút đánh thường
+    Vector2 dashBtnCenter = { screenWidth - 240.0f * touchScale, screenHeight - 70.0f * touchScale };
+    float dashBtnRadius = 28.0f * touchScale;
 
-    Vector2 flyDownBtnCenter = { screenWidth - 210.0f * touchScale, screenHeight - 210.0f * touchScale };
-    float flyDownBtnRadius = 30.0f * touchScale;
+    // Nút Bay / Đáp đất (Fly Toggle)
+    Vector2 flyToggleBtnCenter = { screenWidth - 50.0f * touchScale, screenHeight - 330.0f * touchScale };
+    float flyToggleBtnRadius = 28.0f * touchScale;
 
-    // Phím xoay camera
-    Vector2 camLeftCenter = { screenWidth - 320.0f * touchScale, screenHeight - 100.0f * touchScale };
+    // Nút bay lên và bay xuống (chỉ dùng khi bay)
+    Vector2 flyUpBtnCenter = { screenWidth - 120.0f * touchScale, screenHeight - 280.0f * touchScale };
+    float flyUpBtnRadius = 28.0f * touchScale;
+
+    Vector2 flyDownBtnCenter = { screenWidth - 200.0f * touchScale, screenHeight - 240.0f * touchScale };
+    float flyDownBtnRadius = 28.0f * touchScale;
+
+    // Phím xoay camera di chuyển lên góc trên bên phải (để trống góc dưới cho tay di chuyển)
+    Vector2 camLeftCenter = { screenWidth - 120.0f * touchScale, 150.0f * touchScale };
     float camLeftRadius = 25.0f * touchScale;
 
-    Vector2 camRightCenter = { screenWidth - 320.0f * touchScale, screenHeight - 170.0f * touchScale };
+    Vector2 camRightCenter = { screenWidth - 50.0f * touchScale, 150.0f * touchScale };
     float camRightRadius = 25.0f * touchScale;
 
     // Cập nhật trạng thái kéo Joystick bằng biến static
@@ -222,6 +241,8 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     bool touchFlyDown = false;
     bool touchCamLeft = false;
     bool touchCamRight = false;
+    bool touchSkill[5] = { false };
+    bool touchAttack = false;
 
     // Xử lý va chạm vùng nút ảo cảm ứng
     for (int i = 0; i < inputPointCount; i++) {
@@ -316,12 +337,33 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
             uiState->clickedOnUI = true;
             continue;
         }
+
+        // 3. Phím đánh thường (lớn)
+        if (Vector2Distance(pt, attackBtnCenter) <= attackBtnRadius * 1.3f) {
+            touchAttack = true;
+            uiState->clickedOnUI = true;
+            continue;
+        }
+
+        // 4. 5 phím kỹ năng nhỏ xung quanh nút đánh thường
+        bool hitSkill = false;
+        for (int k = 0; k < 5; k++) {
+            if (GetSkillAtOrderIndex(k) != -1 && Vector2Distance(pt, skillBtnsCenter[k]) <= skillBtnsRadius * 1.4f) {
+                touchSkill[k] = true;
+                uiState->clickedOnUI = true;
+                hitSkill = true;
+                break;
+            }
+        }
+        if (hitSkill) continue;
     }
 
     // Theo dõi trạng thái sườn lên để kích hoạt nhấn một lần
     static bool prevTouchJump = false;
     static bool prevTouchDash = false;
     static bool prevTouchFlyToggle = false;
+    static bool prevTouchSkill[5] = { false };
+    static bool prevTouchAttack = false;
 
     bool jumpPressed = IsKeyPressed(KEY_SPACE) || (touchJump && !prevTouchJump);
     bool dashPressed = (IsKeyPressed(KEY_X) && player->dashCooldown <= 0.0f) || (touchDash && !prevTouchDash && player->dashCooldown <= 0.0f);
@@ -338,6 +380,26 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     g_touchFlyDownActive = touchFlyDown;
     g_touchCamLeftActive = touchCamLeft;
     g_touchCamRightActive = touchCamRight;
+
+    // Xuất chiêu khi chạm phím cảm ứng (aim thẳng vào enemy)
+    for (int k = 0; k < 5; k++) {
+        bool skillPressed = touchSkill[k] && !prevTouchSkill[k];
+        if (skillPressed) {
+            int skillIdx = GetSkillAtOrderIndex(k);
+            if (skillIdx != -1) {
+                CastSkill(skillIdx, player->position, enemy->position, uiState->currentParams);
+            }
+        }
+        prevTouchSkill[k] = touchSkill[k];
+        g_touchSkillActive[k] = touchSkill[k];
+    }
+
+    bool attackPressed = touchAttack && !prevTouchAttack;
+    if (attackPressed) {
+        CastSkill(uiState->activeSkillIndex, player->position, enemy->position, uiState->currentParams);
+    }
+    prevTouchAttack = touchAttack;
+    g_touchAttackActive = touchAttack;
 
     if (flyTogglePressed) {
         player->isFlying = !player->isFlying;

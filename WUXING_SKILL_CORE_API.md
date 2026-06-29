@@ -10,6 +10,13 @@
 * **Environment:** Raylib 5.5, OpenGL 3.3 (Core Profile), 3D Isometric Night-time Arena.
 * **Standard Headers:** Every `.c` skill file **MUST** explicitly `#include <stddef.h>`, `#include <stdlib.h>`, and `#include <stdio.h>` to avoid compilation errors regarding `NULL` and `snprintf`. Do not assume they are implicitly included.
 * **Include Paths:** Use relative paths from root: `#include "core/particle_system.h"`, etc.
+* **`PI` Macro Guard:** `raylib.h` already defines `PI` as `3.14159265358979323846f`. **Never** write a bare `#define PI`. Always guard with:
+  ```c
+  #ifndef PI
+  #define PI 3.1415926535f
+  #endif
+  ```
+  A bare redefinition triggers `-Wmacro-redefined` on Clang and is treated as a hard error in strict project builds.
 
 ### 1.2 Memory Constraints (Crucial)
 * **Strictly NO Dynamic Allocation:** Calling `malloc`, `calloc`, `realloc`, or `free` is **PROHIBITED** inside skill code.
@@ -87,14 +94,6 @@ void Cast[Name]Skill(Vector3 startPos, Vector3 target, SkillParams params);
 void Update[Name]Skill(float dt, Vector3 enemyPos, float enemyRadius);
 void Draw[Name]Skill(void);
 void Unload[Name]Skill(void);
-
-// Drag-to-Cast Input Parameters
-// The `params` struct passed to `Cast` contains path drawing data:
-// typedef struct {
-//     ...
-//     int pathPointCount;     // Number of points the user dragged (0 or 1 for simple click)
-//     Vector3 pathPoints[32]; // The 3D coordinates of the drawn path
-// } SkillParams;
 
 // Engine-to-Skill communication APIs
 bool Is[Name]SkillCoiling(void);
@@ -212,6 +211,7 @@ typedef struct {
   - **Aesthetic Scale Rule:** Never make ground decals tiny or exactly the same size as the structure's base. Decals must look impactful. Always scale the decal size to **`4.0x` to `5.5x`** the base radius of the emerging structure (e.g. `baseRadius * scale * 5.2f`).
 
 ### Screen Distortion (`#include "core/screen_distort.h"`)
+* `void ScreenDistort_AddSource(Vector3 pos, float rad, float str, float life, float speed);`
 * `void ScreenDistort_Add(Vector3 pos, float rad, float str, float life, float speed);`
   - Triggers a radial shockwave/heat-refraction distortion on screen. `ScreenDistort_Add` is the preferred unified prefix wrapper. Best used at collision/impact points.
 
@@ -237,14 +237,83 @@ Avoid raw Raylib primitives (which are strictly prohibited). Use these raw `rlgl
 * `void DrawCoreCylinder(Vector3 bottom, Vector3 top, float radiusBottom, float radiusTop, int slices, Color color);`
 * `void DrawCoreCone(Vector3 bottom, float radius, float height, int slices, Color color);`
 * `void DrawCorePlaneRect(Vector3 center, Vector2 size, Color color);`
-  - Vẽ mặt phẳng chữ nhật/vuông (thường dùng làm bệ đứng, bẫy đất).
 * `void DrawCorePlanePolygon(Vector3 center, float radius, int sides, Color color);`
-  - Vẽ mặt phẳng đa giác. Mẹo: Truyền `sides=3` cho tam giác, `sides=6` cho lục giác, `sides=32` cho hình tròn. (Rất hợp làm khiên năng lượng, vòng tròn pháp thuật).
 * `void DrawCoreCube(Vector3 position, float width, float height, float length, Color color);`
 * `void DrawCoreTorus(Vector3 center, float innerRadius, float outerRadius, int sides, int rings, Color color);`
-  - Vẽ vòng đai 3D (nhẫn/quang luân). Mẹo: Rất hợp với các chiêu thức của hệ Kim hoặc lốc xoáy hệ Phong.
 * `void DrawCorePrism(Vector3 bottom, Vector3 top, float radius, int sides, Color color);`
-  - Vẽ khối lăng trụ. Mẹo: Truyền `sides=6` sẽ ra khối lục giác (thường dùng làm cột băng hoặc khối đá).
+
+#### Tube Mesh API (Bezier-driven organic tube generation)
+For organic flowing geometry along a curve (water streams, fire jets, wind tendrils, wood vines, metal lashes), use the Tube Mesh API instead of re-deriving Bezier/Frenet-frame math inside each skill. This is the parametrized, reusable form of the same pipeline documented in §10 (Tube Methodology) — the skill only supplies a `TubeMeshConfig` (its element's visual "signature") and calls Build + Draw each frame.
+
+```c
+#define TUBE_MESH_MAX_SEGMENTS 48   // tăng nếu skill cần nhiều lát dọc hơn
+#define TUBE_MESH_MAX_RADIAL   24   // tăng nếu skill cần nhiều lát quanh hơn
+
+// Path math dùng chung — không cần khai báo GetBezierPoint/Derivative riêng trong skill nữa
+Vector3 ProceduralMesh_BezierPoint(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t);
+Vector3 ProceduralMesh_BezierTangent(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t);
+
+typedef struct {
+    float capsuleTailExp;   // hệ số mũ trong sqrtf(sin(t*PI)) bo đuôi (mặc định 1.0)
+    float tailTaperMin;     // tỉ lệ bán kính tối thiểu ở đuôi t=0 (mặc định 0.15)
+    float tailTaperMax;     // tỉ lệ bán kính ở đầu khi taper áp dụng hết, t=1 (mặc định 1.0)
+    float headGrowth;       // headWeight = 1 + headGrowth * t (mặc định 0.2, 0 = không phình đầu)
+
+    float wobbleAmplitude;  // biên độ xoay frame quanh trục tangent (radian)
+    float wobbleFrequency;  // tần số dao động dọc theo path (theo t)
+    float wobbleSpeed;      // tốc độ animate theo thời gian
+
+    float deform1Amp, deform1FreqT, deform1FreqPhi, deform1Speed; // lớp sóng sin 1
+    float deform2Amp, deform2FreqT, deform2FreqPhi, deform2Speed; // lớp sóng sin 2 (chồng lên lớp 1)
+
+    float tailApexFactor;   // % bán kính đẩy ra của chóp đuôi (mặc định 0.25 = đuôi nhọn vừa)
+    float headApexFactor;   // % bán kính đẩy ra của chóp đầu (mặc định 0.80 = đầu bo tròn đầy)
+} TubeMeshConfig;
+
+// Trả về config mặc định khớp hành vi gốc của Water Stream (capsule mượt, wobble nhẹ, 2 lớp gợn sóng)
+TubeMeshConfig ProceduralMesh_DefaultTubeConfig(void);
+
+typedef struct {
+    Vector3 rings[TUBE_MESH_MAX_SEGMENTS + 1][TUBE_MESH_MAX_RADIAL];
+    Vector3 normals[TUBE_MESH_MAX_SEGMENTS + 1][TUBE_MESH_MAX_RADIAL];
+    Vector3 tailCenter, headCenter, tailTangent, headTangent;
+    float   tailRadius, headRadius;
+    int     segments, radialSegs;
+    float   tailApexFactor, headApexFactor; // copy từ config lúc Build
+} TubeMeshData;
+
+// Build ring/normal dọc theo path Bezier p0..p3, áp dụng toàn bộ biến đổi hữu cơ trong cfg.
+// flowProgress: 0..1 phần đường đã "chảy" tới. cfg = NULL để dùng default.
+void ProceduralMesh_BuildTube(TubeMeshData *out,
+                              Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3,
+                              float baseRadius, float flowProgress, float time,
+                              int segments, int radialSegs,
+                              const TubeMeshConfig *cfg);
+
+// Vẽ tube đã build: quad strip thân + 2 end-cap. Gọi giữa BeginShaderMode()/EndShaderMode(),
+// sau khi đã rlColor4ub(255,255,255,255) theo quy tắc §9.1.
+void ProceduralMesh_DrawTube(const TubeMeshData *data, float uvLengthScale);
+```
+
+**Cách dùng tối thiểu trong skill:**
+```c
+static TubeMeshConfig s_myTubeCfg; // set 1 lần trong Init[Name]Skill, chỉnh vài hệ số đặc trưng element
+
+// Trong Init:
+s_myTubeCfg = ProceduralMesh_DefaultTubeConfig();
+s_myTubeCfg.wobbleAmplitude = 0.18f; // VD: lửa rung mạnh hơn nước
+
+// Trong Draw, mỗi emitter đang active:
+TubeMeshData mesh;
+ProceduralMesh_BuildTube(&mesh, p0, p1, p2, p3, baseRadius, flowProgress, GetTime(),
+                         TUBE_SEGMENTS, TUBE_RADIAL_SEGMENTS, &s_myTubeCfg);
+ProceduralMesh_DrawTube(&mesh, uvLengthScale);
+```
+
+* **Khi nào KHÔNG dùng Tube Mesh API:** Nếu skill cần hình dạng mặt cắt khác hình tròn (VD lục giác như Thạch Tiễn) hoặc topology khác hẳn (ribbon strip, billboard chain), dùng `ribbon_strip` hoặc tự dựng mesh riêng — Tube Mesh API chỉ phù hợp cho mặt cắt tròn dọc theo 1 đường Bezier.
+* **Giới hạn mảng tĩnh:** `segments`/`radialSegs` truyền vào sẽ tự động bị clamp về `TUBE_MESH_MAX_SEGMENTS`/`TUBE_MESH_MAX_RADIAL` nếu vượt quá — tăng 2 macro này trong header nếu cần độ chi tiết cao hơn cho toàn engine.
+
+
 
 ### Post-Processing & Bloom (`#include "core/post_fx.h"`)
 Adjust screen bloom, vignette, or chromatic aberration dynamically during casting:
@@ -259,6 +328,12 @@ PostFXConfig cfg = {
 // Update engine config
 // (Engine reads active skill state and composites via post_process.fs)
 ```
+
+### Camera Effects (`#include "core/camera_fx.h"`)
+* `void CameraFX_Shake(float trauma);`
+  - Triggers a screen-shake effect. `trauma` is a **single float in the range `0.0..1.0`** representing shake intensity (not duration — the engine derives duration and magnitude internally from the trauma value).
+  - **Common values:** `0.25f` = light rumble (skill activation), `0.5f` = medium hit, `0.75f–1.0f` = heavy impact / explosion.
+  - **Common Mistake:** Do **NOT** pass two arguments `(duration, magnitude)`. The function signature is exactly `void CameraFX_Shake(float trauma)` — one argument only.
 
 ### Audio Triggers
 Play sound effects using standard Raylib audio APIs:
@@ -285,10 +360,10 @@ Skills must strictly adhere to these visual guidelines to ensure organic, fluid 
 ---
 
 ## 10. PROCEDURAL 3D MESH GENERATION (THE TUBE METHODOLOGY)
-To construct organic elements (water tubes, branches, fire streams, rocky pillars) along a path, use the mathematical pipeline of the **Tube Skill**:
+To construct organic elements (water tubes, branches, fire streams, rocky pillars) along a path, this engine uses the mathematical pipeline below. **As of this version, the entire pipeline is implemented in the Tube Mesh API (`core/procedural_mesh_utils.h`, see §8) — skills should call `ProceduralMesh_BuildTube()` / `ProceduralMesh_DrawTube()` directly instead of re-deriving these steps.** The breakdown below documents *what the API does internally* and is the reference for tuning a `TubeMeshConfig`, not a template to copy into skill code.
 
 ### Step 1: Evaluate Path Coordinates (Cubic Bezier)
-Evaluate coordinates along the trajectory from `p0` to `p3` using a parametric percentage `t (0.0..1.0)`:
+`ProceduralMesh_BezierPoint()` / `ProceduralMesh_BezierTangent()` evaluate coordinates and tangent along the trajectory from `p0` to `p3` using a parametric percentage `t (0.0..1.0)`. Internally:
 ```c
 Vector3 GetBezierPoint(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t) {
     float u = 1.0f - t;
@@ -300,22 +375,10 @@ Vector3 GetBezierPoint(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t) 
         )
     );
 }
-
-// Calculate the first derivative (tangent) to align rings:
-Vector3 GetBezierDerivative(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t) {
-    float u = 1.0f - t;
-    return Vector3Add(
-        Vector3Scale(Vector3Subtract(p1, p0), 3.0f * u * u),
-        Vector3Add(
-            Vector3Scale(Vector3Subtract(p2, p1), 6.0f * u * t),
-            Vector3Scale(Vector3Subtract(p3, p2), 3.0f * t * t)
-        )
-    );
-}
 ```
 
 ### Step 2: Establish the Local Frenet Frame
-Compute orthogonal `Right` and `Up` orientation vectors relative to the curve's direction at each point:
+`ProceduralMesh_BuildTube()` computes orthogonal `Right` and `Up` orientation vectors relative to the curve's direction at each ring, internally:
 ```c
 Vector3 tangent = Vector3Normalize(GetBezierDerivative(p0, p1, p2, p3, t));
 Vector3 upTemp = (fabsf(tangent.y) > 0.99f) ? (Vector3){1.0f, 0.0f, 0.0f} : (Vector3){0.0f, 1.0f, 0.0f};
@@ -324,37 +387,28 @@ Vector3 up = Vector3CrossProduct(tangent, right);
 ```
 
 ### Step 3: Apply Spiral Twist & Wobble
-To animate flowing liquid or twist wooden bark, rotate the local coordinate frame axes along the path over time:
+Controlled by `TubeMeshConfig.wobbleAmplitude/wobbleFrequency/wobbleSpeed` — rotates the local coordinate frame axes along the path over time to animate flowing liquid or twisting bark:
 ```c
-float wobble = wobbleAmplitude * sinf(t * PI * wobbleFrequency + time * wobbleSpeed);
+float wobble = cfg->wobbleAmplitude * sinf(t * PI * cfg->wobbleFrequency + time * cfg->wobbleSpeed);
 Vector3 twistedUp = Vector3Add(Vector3Scale(up, cosf(wobble)), Vector3Scale(right, sinf(wobble)));
 Vector3 twistedRight = Vector3Normalize(Vector3CrossProduct(twistedUp, tangent));
 ```
 
 ### Step 4: Taper & Perturb Ring Vertices
-Calculate final ring vertex positions, adjusting the radius to taper at the ends and adding noise waves:
+Controlled by `capsuleTailExp`, `tailTaperMin/Max`, `headGrowth`, and the two `deform1*`/`deform2*` wave layers — tapers the radius at the ends and adds organic noise waves around the circumference:
 ```c
-float baseCapsule = 0.3f + 0.7f * sqrtf(fmaxf(0.0f, sinf(t * PI))); // Taper ends
-float finalRadius = baseRadius * baseCapsule * scale;
-
-for (int j = 0; j < RADIAL_SEGS; j++) {
-    float phi = (float)j * (2.0f * PI) / RADIAL_SEGS;
-    Vector3 normal = Vector3Add(Vector3Scale(twistedRight, cosf(phi)), Vector3Scale(twistedUp, sinf(phi)));
-    
-    // Wave perturbation (overlapping sine waves)
-    float wave1 = sinf(t * 18.0f + phi * 3.0f + time * 10.0f);
-    float wave2 = sinf(t * 9.0f - phi * 5.0f - time * 6.0f);
-    float deform = 1.0f + wave1 * 0.12f + wave2 * 0.08f;
-    
-    Vector3 vertexPos = Vector3Add(pathPos, Vector3Scale(normal, finalRadius * deform));
-}
+float baseCapsule = 0.3f + 0.7f * sqrtf(fmaxf(0.0f, sinf(t * PI))) * cfg->capsuleTailExp;
+float tailTaper = cfg->tailTaperMin + (cfg->tailTaperMax - cfg->tailTaperMin) * t;
+float finalRadius = baseRadius * baseCapsule * tailTaper * headWeight * deform;
 ```
 
 ### Step 5: Render Quads and Closed End-Caps
-1. **Quad Strip:** Render faces using a quad loop, calculating vertex normals (`rlNormal3f`) and mapping UV texture coordinates (`rlTexCoord2f`). Set U based on the radial angle `phi / (2 * PI)` and V based on the path progress `t * tiling + time * speed` to animate flow.
-2. **Solid Capping:** To prevent hollow openings, close both ends of the tube using triangle fans (`rlBegin(RL_TRIANGLES)`):
-   - **Tail Cap:** Connect the vertices of the first ring (`t = 0`) to a center apex point: `apex = tailCenter - tangent * radius * 0.25f`.
-   - **Head Cap:** Connect the vertices of the last ring (`t = 1`) to a center apex point: `apex = headCenter + tangent * radius * 0.25f`.
+`ProceduralMesh_DrawTube()` renders the quad strip (`rlNormal3f`/`rlTexCoord2f`/`rlVertex3f`, U from radial angle, V from path progress × `uvLengthScale`) and closes both ends with triangle fans, using `tailApexFactor`/`headApexFactor` to control how far each apex point is pushed out:
+- **Tail Cap:** `apex = tailCenter - tangent * tailRadius * cfg->tailApexFactor`
+- **Head Cap:** `apex = headCenter + tangent * headRadius * cfg->headApexFactor`
+
+> [!NOTE]
+> Mặt cắt tròn cố định: API này chỉ phù hợp cho mesh có profile hình tròn dọc theo 1 đường Bezian. Với mặt cắt khác (lục giác, dải ribbon phẳng) hoặc topology khác, dùng `ribbon_strip` hoặc dựng mesh riêng theo cùng phương pháp luận (Bezier path + Frenet frame) nhưng tự viết bước dựng vertex.
 
 ---
 
@@ -502,8 +556,8 @@ static Vector3 GetBezierDerivative(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p
 }
 
 static void TriggerImpactVFX(Vector3 pos, float scale) {
-    ScreenDistort_Add(pos, 85.0f, 0.7f, 0.6f, 150.0f);
-    DecalSystem_Add(
+    ScreenDistort_AddSource(pos, 85.0f, 0.7f, 0.6f, 150.0f);
+    Decal_Spawn(
         pos, 
         (float)GetRandomValue(0, 360), 
         BASE_RADIUS * scale * 2.5f, 
@@ -810,224 +864,26 @@ void DeactivateWaterStreamProjectile(int index) {
 
 ---
 
-## 12. 3D RENDERING & SHADER BEST PRACTICES (CRITICAL LESSONS)
+## 9. 3D RENDERING & SHADER BEST PRACTICES (CRITICAL LESSONS)
 
 When rendering custom 3D primitives (like tubes, pillars, or crystals) using `rlgl` and custom shaders, you MUST follow these crucial rules to avoid visual bugs (e.g., flat 2D look, TV static noise, random colored tints):
 
-### 12.1 Vertex Color Initialization (`rlColor4ub`)
+### 9.1 Vertex Color Initialization (`rlColor4ub`)
 When drawing raw geometry via `rlBegin(RL_QUADS)` / `rlVertex3f`, the `fragColor` in the shader inherits the **last active color state** set by Raylib. If a UI element or another skill drew something green just before your skill, your 3D mesh will be tinted green!
 * **Rule:** ALWAYS call `rlColor4ub(255, 255, 255, 255);` (White, full alpha) immediately before `rlBegin()` for 3D meshes that use custom shader textures/colors, to reset the vertex color state.
 
-### 12.2 Avoiding "TV Static" in Procedural Noise
+### 9.2 Avoiding "TV Static" in Procedural Noise
 When generating procedural textures (like magma veins, ice cracks) in shaders using `noise` or `fbm` (Fractional Brownian Motion):
 * **Do NOT use high frequencies on World UVs:** If `worldUV` is calculated from `fragPosition` (e.g., `fragPosition.xz * 4.0`), the noise will sample extremely high frequencies and turn into random noisy dots (TV static).
 * **Rule:** Use very small multipliers for world coordinates (e.g., `fragPosition.xz * 0.05`) to create large, organic, continuous patterns. Stretch the noise on specific axes (e.g., multiplying X by 0.1 but Y by 0.01) to create directional fissures (like vertical magma cracks).
 
-### 12.3 Custom Vertex Shader Requirement for 3D Lighting
+### 9.3 Custom Vertex Shader Requirement for 3D Lighting
 Raylib's default vertex shader (loaded when passing `NULL` as the vs path) **does NOT pass `fragNormal` or `fragPosition`** to the fragment shader.
 * **The Trap:** If you try to calculate 3D lighting (like `NdotL`, `NdotV`, `normalize(fragNormal)`) in your fragment shader while using the default vertex shader, the uninitialized variables will cause a `NaN` (Not a Number) chain reaction. Your beautiful 3D mesh will instantly break into flat, black, broken triangles.
 * **Rule:** If your fragment shader needs `fragNormal` or `fragPosition` for 3D lighting, you **MUST** create and load a custom vertex shader (e.g., `my_skill.vs`) that explicitly passes them using `matModel`. Do not pass `NULL` to `ResourceManager_LoadShader()`.
 
-### 12.4 Preserving 3D Volume (Avoiding the "Flat 2D" look)
+### 9.4 Preserving 3D Volume (Avoiding the "Flat 2D" look)
 If a glowing emissive color covers too much of the object (e.g., > 60% coverage) without any shading, the object will lose all its dark/shadow areas and appear as a flat 2D sprite.
 * **Rule 1 - Sparse Emissive Masks:** Use `smoothstep` (e.g., `smoothstep(0.6, 0.8, noiseValue)`) to tightly restrict glowing areas (like magma/cracks) to only 20-30% of the surface area. The remaining 70% must be the base shaded material.
 * **Rule 2 - Wrap Lighting & Fresnel:** For the non-emissive base material, always calculate `NdotL` (Lambertian diffuse) and `NdotV` (Fresnel). Use Fresnel (`pow(1.0 - NdotV, 3.0)`) to add Rim Lighting to the edges of the 3D volume, emphasizing its curvature.
 * **Rule 3 - Emissive Order:** Always add your `emissive` color **AFTER** multiplying the base color by textures/shadows, otherwise the glow will be incorrectly darkened by the shadow/texture.
-
----
-
-## 13. HIGH-LEVEL SKILL HELPER API (`#include "core/skill_helper.h"`)
-
-The engine provides a high-level helper layer designed to drastically reduce boilerplate code, prevent timer/state synchronization bugs, and standardize aesthetic presets across all skills.
-
-### 13.1 Effect Preset (`SpawnImpactEffect`)
-Combines screen distortion, camera shake, point lights, and elemental particles into a single call.
-* **Prototype:** `void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale);`
-* **Supported Presets:**
-  - `EFFECT_PRESET_FIRE_EXPLOSION`: Creates fiery blast, ground scorch, heavy shake, and orange point light.
-  - `EFFECT_PRESET_ICE_SHATTER`: Creates ice shard explosion, white point light, and frost sương ground decal.
-  - `EFFECT_PRESET_WATER_SPLASH`: Creates water droplet splash, cyan-blue point light.
-  - `EFFECT_PRESET_LIGHTNING_IMPACT`: Creates electric spark explosion, purple-white point light, and crack decal.
-  - `EFFECT_PRESET_EARTH_CRACK`: Creates dust wave, heavy camera shake, and large dirt cracks.
-
-### 13.2 Damage Volume (`SpawnDamageVolume`)
-Manages custom continuous Area-of-Effect (AoE) damage over time (DoT) fields. The volume runs as an engine entity, automatically ticking damage and self-cleaning when finished.
-* **Configuration Struct:**
-```c
-typedef enum { SHAPE_CIRCLE, SHAPE_BOX, SHAPE_CONE } ShapeType;
-typedef struct {
-    ShapeType shape;
-    Vector3 center;
-    float radius;
-    float damagePerSecond;
-    float tickInterval;
-    float duration;
-} DamageVolume;
-```
-* **Prototype:** `int SpawnDamageVolume(DamageVolume config);`
-* **Note:** The volume applies damage every `tickInterval` using `ApplyAoEDamage` under the hood.
-
-### 13.3 Skill Timeline (`SkillTimeline`)
-Eliminates manual timer tracking by providing standard delta crossing checks.
-* **Configuration Struct:**
-```c
-typedef struct {
-    float current;
-    float duration;
-} SkillTimeline;
-```
-* **APIs:**
-  - `void Timeline_Start(SkillTimeline *t, float duration);` -> Resets current timer to 0.0 and sets total duration.
-  - `bool Timeline_Event(SkillTimeline *t, float triggerTime, float dt);` -> Returns `true` exactly during the frame that the timeline crosses `triggerTime`.
-  - `bool Timeline_Finished(SkillTimeline *t);` -> Returns `true` if current time exceeds duration.
-
-### 13.4 Particle Emitter (`Emitter_AttachToPoint`)
-Spawns particles continuously at a target position.
-* **Supported Presets:** `EMITTER_FIRE`, `EMITTER_SNOW`, `EMITTER_WATER_SPURT`, `EMITTER_SHOCKED_SPARKS`.
-* **APIs:**
-  - `int Emitter_AttachToPoint(EmitterPreset type, Vector3 pos, float ratePerSecond, float duration);`
-  - `void Emitter_Stop(int emitterId);`
-
-### 13.5 Mesh Preset (`DrawEffectMesh`)
-Standardizes rendering of raw 3D mesh effects. It automatically resets raylib's active color state (`rlColor4ub`).
-* **Supported Presets:** `MESH_PRESET_DISC`, `MESH_PRESET_RING`, `MESH_PRESET_CONE`, `MESH_PRESET_TORNADO`, `MESH_PRESET_CYLINDER`, `MESH_PRESET_SPHERE`, `MESH_PRESET_SHOCKWAVE`.
-* **Prototype:** `void DrawEffectMesh(MeshPresetType type, Vector3 pos, Vector3 scale, Color color);`
-
-### 13.6 Shader Material System (`EffectMaterial`)
-Decouples raw raylib shader loading and uniform location fetching from individual skill code.
-* **APIs:**
-  - `EffectMaterial Material_Load(MaterialPreset preset);` (Supports `MATERIAL_FIRE`, `MATERIAL_ICE`, `MATERIAL_WATER`, `MATERIAL_PORTAL`)
-  - `void Material_SetFloat(EffectMaterial *mat, const char *uniformName, float val);`
-  - `void Material_Begin(EffectMaterial mat);` -> Binds shader and automatically uploads global `u_time`.
-  - `void Material_End(void);` -> Unbinds shader.
-
-### 13.7 Ground Decal Preset (`SpawnGroundDecal`)
-Quickly spawns ground-hugging decals.
-* **Prototype:** `void SpawnGroundDecal(DecalPresetType type, Vector3 pos, float radius, float duration);`
-* **Supported Presets:** `DECAL_PRESET_BURN` (scorch mark), `DECAL_PRESET_CRACK` (dirt cracks), `DECAL_PRESET_ICE` (frost dust), `DECAL_PRESET_WATER` (water caustics).
-
-### 13.8 Camera Impulse (`CameraFX_AddImpulse`)
-Generates realistic distance-attenuated camera shake.
-* **Configuration Struct:**
-```c
-typedef struct {
-    float magnitude;
-    float duration;
-    float frequency;
-    float falloff; // Speed of distance attenuation
-} CameraImpulse;
-```
-* **Prototype:** `void CameraFX_AddImpulse(Vector3 origin, CameraImpulse impulse);`
-
-### 13.9 ForceField Preset (`ForceField_CreatePreset`)
-Generates configured force fields for particle steering.
-* **Prototype:** `ForceField ForceField_CreatePreset(ForceFieldPreset preset);`
-* **Supported Presets:** `FORCE_PRESET_FIRE_UPDRAFT`, `FORCE_PRESET_SNOW_BLIZZARD`, `FORCE_PRESET_WATER_VORTEX`.
-
-### 13.10 Skill Builder (`SkillBuilder`)
-An extremely powerful structural template that allows building a standard AoE impact, DoT, or decal skill with zero custom logic.
-* **Configuration Struct:**
-```c
-typedef struct {
-    Vector3 target;
-    float scale;
-    bool hasExplosion;
-    EffectPresetType explosionEffect;
-    bool hasDecal;
-    DecalPresetType decalType;
-    float decalRadius;
-    float decalDuration;
-    bool hasDamageVolume;
-    float damageRadius;
-    float damageDps;
-    float damageDuration;
-} SkillBuildContext;
-```
-* **APIs:**
-  - `void SkillBuilder_Start(SkillBuildContext *ctx, Vector3 target, float scale);`
-  - `void SkillBuilder_AddExplosion(SkillBuildContext *ctx, EffectPresetType vfx);`
-  - `void SkillBuilder_AddDecal(SkillBuildContext *ctx, DecalPresetType decal, float radius, float duration);`
-  - `void SkillBuilder_AddDamageVolume(SkillBuildContext *ctx, float radius, float dps, float duration);`
-  - `void SkillBuilder_Build(SkillBuildContext *ctx);`
-
-### 13.11 High-Level Implementation Example: Solar Flare (Fire AoE Skill)
-Below is a complete, compilation-ready example of how a skill can be written in under 60 lines of C code using the high-level Helper API:
-
-```c
-#include <stddef.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include "skills/fire/solar_flare_skill/solar_flare_skill.h" // Hypothetical path matching folder
-#include "core/skill_helper.h"
-#include "core/resource_manager.h"
-#include "core/skill_manager.h"
-
-static SkillTimeline s_timeline;
-static Vector3 s_castPos;
-static float s_scale;
-static bool s_active = false;
-
-void InitSolarFlareSkill(int screenWidth, int screenHeight) {
-    (void)screenWidth; (void)screenHeight;
-    // Resources preloaded automatically via global caching
-}
-
-void CastSolarFlareSkill(Vector3 startPos, Vector3 target, SkillParams params) {
-    s_castPos = target;
-    s_scale = params.sizeScale > 0.0f ? params.sizeScale : 1.0f;
-    s_active = true;
-    
-    Timeline_Start(&s_timeline, 4.0f); // Skill lasts 4 seconds
-}
-
-void UpdateSolarFlareSkill(float dt, Vector3 enemyPos, float enemyRadius) {
-    if (!s_active) return;
-    
-    s_timeline.current += dt;
-    
-    // At t = 0.1s, trigger impact and damage volume
-    if (Timeline_Event(&s_timeline, 0.1f, dt)) {
-        SkillBuildContext builder;
-        SkillBuilder_Start(&builder, s_castPos, s_scale);
-        SkillBuilder_AddExplosion(&builder, EFFECT_PRESET_FIRE_EXPLOSION);
-        SkillBuilder_AddDecal(&builder, DECAL_PRESET_BURN, 24.0f, 4.0f);
-        SkillBuilder_AddDamageVolume(&builder, 25.0f, 35.0f, 3.8f);
-        SkillBuilder_Build(&builder);
-    }
-    
-    if (Timeline_Finished(&s_timeline)) {
-        s_active = false;
-    }
-}
-
-void DrawSolarFlareSkill(void) {
-    if (!s_active) return;
-    
-    // Draw a pulsating fire dome at the cast location using mesh presets
-    float pulse = 1.0f + 0.05f * sinf(s_timeline.current * 8.0f);
-    DrawEffectMesh(MESH_PRESET_SPHERE, s_castPos, (Vector3){12.0f * s_scale * pulse, 0.0f, 0.0f}, ColorAlpha(ELEMENT_COLOR_FIRE, 0.4f));
-}
-
-void UnloadSolarFlareSkill(void) {
-    // Left empty: resources managed globally
-}
-
-bool IsSolarFlareSkillCoiling(void) {
-    return false;
-}
-
-int GetSolarFlareSkillProjectiles(SkillProjectile *out, int max) {
-    if (s_active && max > 0) {
-        out[0].position = s_castPos;
-        out[0].radius = 25.0f * s_scale;
-        out[0].active = true;
-        return 1;
-    }
-    return 0;
-}
-
-void DeactivateSolarFlareProjectile(int index) {
-    (void)index;
-    s_active = false;
-}
-```
