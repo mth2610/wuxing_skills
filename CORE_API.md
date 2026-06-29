@@ -1004,7 +1004,7 @@ Build script **BỎ QUA** — các file này giữ nguyên `#version 330` trong 
 2. `RewriteVersionForGLES()` đổi `#version 330` → `#version 300 es`
 3. Kết quả: source GLES 3.0 với `in`/`out`/`texture()` — hợp lệ
 
-Common headers (`vs_header.glsl`, `fs_header.glsl`, `lighting.glsl`, `noise.glsl`, `fx.glsl`) **đã có** `#ifdef GL_ES precision` — không cần khai báo thêm trong skill shader.
+Common headers (`vs_header.glsl`, `fs_header.glsl`, `lighting.glsl`, `noise.glsl`, `fx.glsl`) **đã có** `#ifdef GL_ES precision highp float; #endif` — không cần khai báo thêm trong skill shader. Cả VS lẫn FS đều dùng `highp float` (quan trọng — xem Rule E).
 
 > Yêu cầu GLES 3.0+ (Android 4.3+, toàn bộ thiết bị hiện đại).
 
@@ -1046,8 +1046,42 @@ SHADER: compile failed, not caching (vs=... fs=...)
 
 Khi thấy chiêu render trắng toát trên Android: kiểm tra logcat dòng trên, sửa theo Rule A/B, rebuild APK.
 
+**Rule D — `matModel` phải được set thủ công khi dùng rlgl immediate mode:**
+
+`VS_FinalOutput()` trong `vs_header.glsl` tính `fragNormal = normalize(matModel * vertexNormal)`. Raylib chỉ upload `matModel` khi dùng `DrawMesh`/`DrawModel` — **không** upload khi dùng rlgl immediate mode (`rlBegin`/`rlEnd`/`ProceduralMesh_DrawTube`...).
+
+Trên Android GLES 3.0, `matModel` giữ giá trị **all-zeros** → `normalize(vec3(0,0,0))` = undefined (NaN trên Adreno/Mali) → `fragNormal = NaN` → `clamp(NaN, 0, 1) = 1.0` → màu trắng. Trên Mac desktop, OpenGL driver xử lý normalize(zero) khác (trả về identity-ish) nên không thấy lỗi.
+
+**`SkillManager_BeginShader` tự động set `matModel = identity` trước `BeginShaderMode`.** Skill code không cần làm gì thêm nếu dùng `SkillManager_BeginShader`.
+
+Nếu skill gọi `BeginShaderMode` trực tiếp (bypass `SkillManager_BeginShader`), PHẢI set matModel thủ công:
+
+```c
+// Trước draw call, sau BeginShaderMode():
+if (s_shader.locs[SHADER_LOC_MATRIX_MODEL] >= 0) {
+    Matrix identity = MatrixIdentity();
+    SetShaderValueMatrix(s_shader, s_shader.locs[SHADER_LOC_MATRIX_MODEL], identity);
+}
+```
+
+**Rule E — VS và FS phải dùng cùng precision cho mọi shared uniform (GLES 3.x strict):**
+
+Trên GLES 3.x strict implementations (Mali-G68, GLES 3.2), nếu một uniform xuất hiện ở cả VS lẫn FS, cả hai phải có **cùng precision qualifier**. Nếu không khớp → link failure → `shader.id = 0` → màu trắng.
+
+```
+// Lỗi điển hình trong logcat:
+// SHADER: [ID 14] Link error: L0001 The fragment floating-point variable u_time
+//         does not match the vertex variable u_time. The precision does not match.
+```
+
+Common headers đã xử lý vấn đề này: cả `vs_header.glsl` và `fs_header.glsl` đều dùng `precision highp float` — do đó `u_time`, `viewPos`, `u_resolution` và mọi uniform khai báo theo default đều là `highp` ở cả hai stage.
+
+Nếu skill tự khai báo uniform riêng (ví dụ `uniform float u_uvLength;`) trong cả `.vs` lẫn `.fs`, uniform đó sẽ inherit default precision — `highp` từ `vs_header.glsl` cho VS và `highp` từ `fs_header.glsl` cho FS → khớp, không có vấn đề.
+
+Nếu skill tự khai báo precision mặc định thấp hơn (vd `precision mediump float;`) ở FS standalone, phải đảm bảo VS cũng dùng `mediump` — hoặc tốt hơn là dùng `highp` nhất quán ở cả hai.
+
 > [!NOTE]
-> Desktop OpenGL driver thường compile thành công kể cả khi có `f` suffix hay thiếu precision — lỗi chỉ xuất hiện khi test trên thiết bị Android thật (GLES strict mode).
+> Desktop OpenGL driver thường compile thành công kể cả khi có `f` suffix hay thiếu precision, và xử lý `normalize(zero)` khác mobile — lỗi thường chỉ xuất hiện khi test trên thiết bị Android thật (GLES strict mode).
 
 ---
 

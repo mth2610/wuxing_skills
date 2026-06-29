@@ -16,6 +16,7 @@ adb connect <IP>:<Port_chính>b
 adb install -r wuxing_skills.apk
 
 # log crash
+adb logcat raylib:V "*:S"
 adb logcat -b crash | ~/Library/Android/sdk/ndk/28.2.13676358/ndk-stack -sym android.wuxing_skills/obj
 
 Tài liệu này ghi chú lại toàn bộ quy trình, cấu hình và các lỗi phần cứng/trình điều khiển đặc thù đã gặp phải trong quá trình port dự án C/Raylib này sang nền tảng Android.

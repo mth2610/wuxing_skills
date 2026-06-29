@@ -2,7 +2,7 @@
 #ifndef SKILLS_CONFIG_H
 #define SKILLS_CONFIG_H
 
-#define HAS_SKILL_FLUID 1
+#define HAS_SKILL_FLUID 0
 #define HAS_SKILL_TUBE 1
 #define HAS_SKILL_SHIELD 1
 #define HAS_SKILL_METAL 1

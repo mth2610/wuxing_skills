@@ -979,7 +979,7 @@ void SkillManager_BeginShader(Shader shader) {
     SetShaderValue(shader, timeLoc, &g_skillManagerTime, SHADER_UNIFORM_FLOAT);
   }
 
-  int viewPosLoc = GetShaderLocation(shader, "u_viewPos");
+  int viewPosLoc = GetShaderLocation(shader, "viewPos");
   if (viewPosLoc >= 0) {
     Vector3 viewPos = camera.position;
     SetShaderValue(shader, viewPosLoc, &viewPos, SHADER_UNIFORM_VEC3);
@@ -989,6 +989,15 @@ void SkillManager_BeginShader(Shader shader) {
   if (resLoc >= 0) {
     Vector2 res = { (float)GetScreenWidth(), (float)GetScreenHeight() };
     SetShaderValue(shader, resLoc, &res, SHADER_UNIFORM_VEC2);
+  }
+
+  // matModel: Raylib chỉ upload matModel khi dùng DrawMesh/DrawModel.
+  // Khi skill dùng rlgl immediate mode, matModel giữ giá trị 0 trên Android GLES 3.0
+  // → normalize(mat4(0) * normal) = normalize(vec3(0)) = NaN → toàn màu trắng.
+  // Đặt identity làm default an toàn; DrawMesh/DrawModel sẽ override sau nếu cần.
+  if (shader.locs[SHADER_LOC_MATRIX_MODEL] >= 0) {
+    Matrix identity = MatrixIdentity();
+    SetShaderValueMatrix(shader, shader.locs[SHADER_LOC_MATRIX_MODEL], identity);
   }
 
   BeginShaderMode(shader);

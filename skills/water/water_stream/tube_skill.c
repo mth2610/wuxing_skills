@@ -247,6 +247,14 @@ void DrawTubeSkill(void) {
   float uvLength = TUBE_UV_LENGTH_SCALE;
   SetShaderValue(tubeShader, uvLengthLoc, &uvLength, SHADER_UNIFORM_FLOAT);
 
+  // ProceduralMesh_BuildTube tạo geometry trong world-space → matModel là identity.
+  // Raylib không tự upload matModel khi dùng rlgl immediate mode trên Android GLES 3.0
+  // → normalize(mat4(0) * normal) = NaN → màu trắng. Phải set thủ công.
+  if (tubeShader.locs[SHADER_LOC_MATRIX_MODEL] >= 0) {
+    Matrix identity = MatrixIdentity();
+    SetShaderValueMatrix(tubeShader, tubeShader.locs[SHADER_LOC_MATRIX_MODEL], identity);
+  }
+
   // Quy tac 9.1: reset vertex color truoc khi ve mesh dung shader mau/texture
   // rieng
   rlColor4ub(255, 255, 255, 255);
