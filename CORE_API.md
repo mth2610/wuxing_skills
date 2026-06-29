@@ -236,7 +236,7 @@ void DecalSystem_Draw(void);
 void DecalSystem_Unload(void);
 ```
 * `rot`: yaw around Y axis (degrees). Alpha fades internally as `lifetime / maxLifetime` decays to 0.
-* Static pool, `MAX_DECALS = 32`, no malloc.
+* Static pool, `MAX_DECALS = 64`, no malloc.
 
 Rules:
 - Call `DecalSystem_Init()` once at startup, `DecalSystem_Update(dt)` every frame to age out decals.
@@ -246,9 +246,26 @@ Rules:
 - Do not call `DecalSystem_Unload()` from skill code — global system, owned by the engine shutdown sequence only.
 
 ### Screen Distortion (`core/screen_distort.h`)
+Static pool of radial shockwave/heatwave distortions. `MAX_DISTORTION_SOURCES = 16`.
+
+**Lifecycle (global — skill code chỉ gọi Add):**
 ```c
-void ScreenDistort_Add(Vector3 pos, float radius, float strength, float life, float speed);
+void ScreenDistort_Init(int width, int height);  // Gọi một lần lúc khởi động
+void ScreenDistort_Begin(void);                  // Bắt đầu render cảnh 3D vào buffer phụ
+void ScreenDistort_End(void);                    // Kết thúc render cảnh 3D
+void ScreenDistort_Update(float dt);             // Cập nhật lifetime các nguồn
+void ScreenDistort_Draw(Camera3D camera);        // Vẽ kết quả kèm distortion lên màn hình
+void ScreenDistort_Unload(void);                 // Giải phóng (engine shutdown, không gọi từ skill)
 ```
+
+**Skill API — chỉ cần gọi Add:**
+```c
+void ScreenDistort_Add(Vector3 worldPos, float radius, float strength, float lifetime, float speed);
+```
+* `radius`: bán kính sóng xung kích tối đa (world units).
+* `strength`: biên độ méo UV (0.01–0.05 cho heatwave nhẹ, 0.1–0.3 cho shockwave mạnh).
+* `speed`: tốc độ lan tỏa sóng ra ngoài.
+* Distortion tự tắt sau `lifetime` giây — không cần kill thủ công.
 
 ### Color Gradient (`core/color_gradient.h`)
 ```c
@@ -408,7 +425,7 @@ float Random01(void);                       // Random float in [0.0 .. 1.0]
 ### VFX Lights (`core/vfx_light.h`)
 Static pool of dynamic point lights (explosion flash, lightning, skill auras), fed into the lighting shader's uniform array.
 ```c
-#define MAX_VFX_LIGHTS 8
+#define MAX_VFX_LIGHTS 16
 
 typedef struct {
     Vector3 position;
@@ -423,7 +440,7 @@ void VFXLight_Update(float dt);
 void VFXLight_GetActive(VFXLightData *out, int *count, int maxCount);
 ```
 * **`Spawn`:** Light expires automatically after `lifetime` seconds via `Update` — no manual kill needed.
-* **`GetActive`:** Call every frame before drawing a lit skill, to fetch the active list and upload it via `SetShaderValueV`. `maxCount` should be ≤ `MAX_VFX_LIGHTS` (8).
+* **`GetActive`:** Call every frame before drawing a lit skill, to fetch the active list and upload it via `SetShaderValueV`. `maxCount` should be ≤ `MAX_VFX_LIGHTS` (16).
 * Rule: VFX lights supplement, not replace, scene lighting — keep them alive for the skill's full active phase rather than spawning and killing within one frame.
 
 ### Combat (`core/skill_manager.h`)
@@ -610,15 +627,145 @@ Rules:
 
 ### Camera FX (`core/camera_fx.h`)
 ```c
-void CameraFX_Shake(float trauma);
+void CameraFX_Shake(float trauma);          // Thêm chấn động rung lắc (tích lũy, giới hạn 1.0)
+void CameraFX_Update(Camera3D *camera, float dt); // Cập nhật + áp dụng offset vào camera — gọi mỗi frame
 ```
-`0.25` = Light, `0.5` = Medium, `0.75–1.0` = Heavy.
+* `trauma`: `0.25` = nhẹ, `0.5` = trung bình, `0.75–1.0` = nặng. Giá trị cộng dồn và tự giảm dần theo thời gian.
+* `CameraFX_Update` phải được gọi sau khi update game logic, trước khi `BeginMode3D`. Skill code chỉ gọi `CameraFX_Shake`; `Update` thuộc engine loop.
+
+**Skill Helper impulse (tuỳ chọn — `core/skill_helper.h`):**
+```c
+typedef struct { float magnitude; float duration; float frequency; float falloff; } CameraImpulse;
+void CameraFX_AddImpulse(Vector3 origin, CameraImpulse impulse);
+```
 
 ### Audio
 ```c
 PlaySound(Sound sound);
 ```
 Load sounds in `InitSkill()`.
+
+---
+
+## 9. Wind Zone Global (`core/force_field.h`)
+
+`WindZone` là một `ForceField` toàn cục tự động áp dụng cho **mọi particle** trong `UpdateParticles()` — skill code không cần gán per-`ParticleConfig`. Dùng để mô phỏng gió môi trường, bão, hoặc lực nền suốt trận đấu.
+
+```c
+void    WindZone_Set(Vector3 direction, float strength, float noiseAmp, float noiseFreq);
+void    WindZone_Clear(void);
+bool    WindZone_IsActive(void);
+// WindZone_Evaluate() chỉ dùng nội bộ bởi particle_system — skill code không gọi trực tiếp.
+```
+
+**Tham số:**
+| Param | Ý nghĩa | Giá trị gợi ý |
+|---|---|---|
+| `direction` | Hướng gió chính (sẽ normalize tự động) | `(Vector3){1,0,0}` = gió đông |
+| `strength` | Gia tốc cơ bản (m/s²) | `80–250` cho gió nhẹ–bão |
+| `noiseAmp` | Biên độ nhiễu Curl chồng (0 = gió thẳng) | `30–80` |
+| `noiseFreq` | Tần số không gian của nhiễu | `0.005–0.03` |
+
+**Ví dụ:**
+```c
+// Thiết lập gió đông bắc nhẹ có nhiễu — gọi khi bắt đầu map hoặc thời tiết thay đổi
+WindZone_Set((Vector3){0.7f, 0.0f, 0.3f}, 120.0f, 40.0f, 0.015f);
+
+// Tắt khi vào vùng trong nhà hoặc kết thúc hiệu ứng thời tiết
+WindZone_Clear();
+```
+
+---
+
+## 9b. Skill Helper (`core/skill_helper.h`)
+
+Các wrapper tiện ích cao cấp — dùng để giảm boilerplate. Không bắt buộc; skill phức tạp thường gọi thẳng core API.
+
+### Impact Effect Preset
+```c
+typedef enum { EFFECT_PRESET_FIRE_EXPLOSION, EFFECT_PRESET_ICE_SHATTER,
+               EFFECT_PRESET_WATER_SPLASH, EFFECT_PRESET_LIGHTNING_IMPACT,
+               EFFECT_PRESET_EARTH_CRACK } EffectPresetType;
+void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale);
+```
+
+### Damage Volume
+```c
+typedef enum { SHAPE_CIRCLE, SHAPE_BOX, SHAPE_CONE } ShapeType;
+typedef struct {
+    ShapeType shape; Vector3 center; float radius;
+    float damagePerSecond; float tickInterval; float duration;
+    bool active; float timer; float tickTimer;
+} DamageVolume;
+
+void DamageVolume_Init(void);
+void DamageVolume_Update(float dt);
+int  SpawnDamageVolume(DamageVolume config); // Trả về ID
+void DamageVolume_Unload(void);
+```
+
+### Skill Timeline
+```c
+typedef struct { float current; float duration; } SkillTimeline;
+void Timeline_Start(SkillTimeline *t, float duration);
+bool Timeline_Event(SkillTimeline *t, float triggerTime, float dt); // true đúng 1 frame khi đến giờ
+bool Timeline_Finished(SkillTimeline *t);
+```
+Dùng để orchestrate chuỗi sự kiện nhiều bước mà không cần state machine thủ công.
+
+### Particle Emitter Preset
+```c
+typedef enum { EMITTER_FIRE, EMITTER_SNOW, EMITTER_WATER_SPURT, EMITTER_SHOCKED_SPARKS } EmitterPreset;
+void EmitterSystem_Init(void);
+void EmitterSystem_Update(float dt);
+int  Emitter_AttachToPoint(EmitterPreset type, Vector3 pos, float ratePerSecond, float duration);
+void Emitter_Stop(int emitterId);
+void EmitterSystem_Unload(void);
+```
+
+### Mesh Preset
+```c
+typedef enum { MESH_PRESET_DISC, MESH_PRESET_RING, MESH_PRESET_CONE, MESH_PRESET_TORNADO,
+               MESH_PRESET_CYLINDER, MESH_PRESET_SPHERE, MESH_PRESET_SHOCKWAVE,
+               MESH_PRESET_PYRAMID, MESH_PRESET_TETRAHEDRON } MeshPresetType;
+void DrawEffectMesh(MeshPresetType type, Vector3 pos, Vector3 scale, Color color);
+```
+
+### Shader Material Preset
+```c
+typedef enum { MATERIAL_FIRE, MATERIAL_ICE, MATERIAL_WATER, MATERIAL_PORTAL } MaterialPreset;
+typedef struct { Shader shader; MaterialPreset preset; int uTimeLoc; int uDissolveLoc; } EffectMaterial;
+EffectMaterial Material_Load(MaterialPreset preset);
+void Material_SetFloat(EffectMaterial *mat, const char *uniformName, float val);
+void Material_Begin(EffectMaterial mat);
+void Material_End(void);
+```
+
+### Ground Decal Preset
+```c
+typedef enum { DECAL_PRESET_BURN, DECAL_PRESET_CRACK, DECAL_PRESET_ICE, DECAL_PRESET_WATER } DecalPresetType;
+void SpawnGroundDecal(DecalPresetType type, Vector3 pos, float radius, float duration);
+```
+
+### ForceField Preset
+```c
+typedef enum { FORCE_PRESET_FIRE_UPDRAFT, FORCE_PRESET_SNOW_BLIZZARD, FORCE_PRESET_WATER_VORTEX } ForceFieldPreset;
+ForceField ForceField_CreatePreset(ForceFieldPreset preset);
+```
+
+### Skill Builder (chainable context)
+```c
+typedef struct { Vector3 target; float scale; bool hasExplosion; EffectPresetType explosionEffect;
+                 bool hasDecal; DecalPresetType decalType; float decalRadius; float decalDuration;
+                 bool hasDamageVolume; float damageRadius; float damageDps; float damageDuration; } SkillBuildContext;
+void SkillBuilder_Start(SkillBuildContext *ctx, Vector3 target, float scale);
+void SkillBuilder_AddExplosion(SkillBuildContext *ctx, EffectPresetType vfx);
+void SkillBuilder_AddDecal(SkillBuildContext *ctx, DecalPresetType decal, float radius, float duration);
+void SkillBuilder_AddDamageVolume(SkillBuildContext *ctx, float radius, float dps, float duration);
+void SkillBuilder_Build(SkillBuildContext *ctx); // Gọi cuối để kích hoạt tất cả
+```
+
+---
 
 ## 10. GLSL Shader Guidelines
 

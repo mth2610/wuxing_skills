@@ -3,7 +3,7 @@
 
 #include "raylib.h"
 
-#define MAX_DISTORTION_SOURCES 8
+#define MAX_DISTORTION_SOURCES 16
 
 typedef struct {
   Vector3 worldPos;     // Vị trí 3D trong không gian game

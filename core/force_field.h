@@ -123,4 +123,28 @@ typedef struct {
 // Chuyển ForceField (CPU) sang layout phẳng để memcpy thẳng lên SSBO.
 void ForceField_PackGPU(const ForceField *ff, ForceFieldGPU *out);
 
+// ============================================================
+// WIND ZONE GLOBAL
+// Một ForceField toàn cục tự động áp dụng cho MỌI particle trong
+// UpdateParticles() — không cần gán per-ParticleConfig.
+// Dùng để mô phỏng gió môi trường, bão, hoặc các lực nền xuyên suốt.
+// ============================================================
+
+// Thiết lập wind zone toàn cục.
+//   direction  : hướng gió chính (sẽ được normalize nội bộ)
+//   strength   : gia tốc gió cơ bản (đơn vị giống ForceLayer.strength)
+//   noiseAmp   : biên độ nhiễu Curl chồng lên (0 = gió thẳng)
+//   noiseFreq  : tần số không gian của nhiễu (0.005 – 0.05 thường tốt)
+void    WindZone_Set(Vector3 direction, float strength, float noiseAmp, float noiseFreq);
+
+// Tắt wind zone, dừng áp dụng lên particle.
+void    WindZone_Clear(void);
+
+// Trả về true nếu wind zone đang hoạt động.
+bool    WindZone_IsActive(void);
+
+// Tính gia tốc wind tại vị trí pos. Gọi nội bộ bởi particle_system.
+// Skill code thông thường KHÔNG gọi hàm này trực tiếp.
+Vector3 WindZone_Evaluate(Vector3 pos, Vector3 vel, float time);
+
 #endif // FORCE_FIELD_H

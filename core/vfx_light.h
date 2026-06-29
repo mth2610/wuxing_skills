@@ -4,7 +4,7 @@
 #include "raylib.h"
 #include <stdbool.h>
 
-#define MAX_VFX_LIGHTS 8
+#define MAX_VFX_LIGHTS 16
 
 // Cấu trúc phẳng truyền trực tiếp sang Shader qua Uniform Array
 typedef struct {

@@ -34,6 +34,7 @@ typedef struct {
 
 // Quản lý mảng tĩnh toàn cục
 static ParticleInternal g_Particles[MAX_PARTICLES];
+static float s_particleTime = 0.0f; // Thời gian tích lũy dùng cho WindZone noise
 
 void InitParticleSystem(void) {
   for (int i = 0; i < MAX_PARTICLES; i++) {
@@ -96,6 +97,7 @@ void SpawnParticle(ParticleConfig config) {
 }
 
 void UpdateParticles(float dt) {
+  s_particleTime += dt;
   for (int i = 0; i < MAX_PARTICLES; i++) {
     if (!g_Particles[i].active)
       continue;
@@ -128,6 +130,11 @@ void UpdateParticles(float dt) {
           ForceField_Evaluate(p->forceField, p->position, p->velocity,
                               p->lifetime, (Vector3){0}, (Vector3){0});
       p->velocity = Vector3Add(p->velocity, Vector3Scale(force, dt));
+    }
+    // Áp dụng WindZone toàn cục (auto, không cần set per-particle)
+    if (WindZone_IsActive()) {
+      Vector3 windForce = WindZone_Evaluate(p->position, p->velocity, s_particleTime);
+      p->velocity = Vector3Add(p->velocity, Vector3Scale(windForce, dt));
     }
     p->position = Vector3Add(p->position, Vector3Scale(p->velocity, dt));
 

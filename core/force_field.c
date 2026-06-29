@@ -424,6 +424,47 @@ float ForceField_GetViscosityDamping(const ForceField *ff, float dt) {
   return factor;
 }
 
+// ============================================================
+// WIND ZONE GLOBAL
+// ============================================================
+
+static ForceField g_windZone;
+static bool       g_windZoneActive = false;
+
+void WindZone_Set(Vector3 direction, float strength, float noiseAmp, float noiseFreq) {
+  ForceField_Clear(&g_windZone);
+  float len = sqrtf(direction.x*direction.x + direction.y*direction.y + direction.z*direction.z);
+  if (len > 0.0001f) {
+    direction.x /= len; direction.y /= len; direction.z /= len;
+  }
+  ForceField_AddLayer(&g_windZone, (ForceLayer){
+    .type      = FORCE_WIND,
+    .direction = direction,
+    .strength  = strength
+  });
+  if (noiseAmp > 0.0f) {
+    ForceField_AddLayer(&g_windZone, (ForceLayer){
+      .type       = FORCE_NOISE_CURL,
+      .strength   = noiseAmp,
+      .noiseScale = noiseFreq,
+      .noiseSpeed = 0.4f
+    });
+  }
+  g_windZoneActive = true;
+}
+
+void WindZone_Clear(void) {
+  ForceField_Clear(&g_windZone);
+  g_windZoneActive = false;
+}
+
+bool WindZone_IsActive(void) { return g_windZoneActive; }
+
+Vector3 WindZone_Evaluate(Vector3 pos, Vector3 vel, float time) {
+  if (!g_windZoneActive) return (Vector3){0};
+  return ForceField_Evaluate(&g_windZone, pos, vel, time, (Vector3){0}, (Vector3){0});
+}
+
 void ForceField_PackGPU(const ForceField *ff, ForceFieldGPU *out) {
   memset(out, 0, sizeof(*out));
   out->layerCount = ff->layerCount;

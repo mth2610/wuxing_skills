@@ -4,7 +4,7 @@
 #include "raylib.h"
 #include <stdbool.h>
 
-#define MAX_DECALS 32
+#define MAX_DECALS 64
 
 typedef struct {
     Vector3 position;
