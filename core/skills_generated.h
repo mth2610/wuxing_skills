@@ -6,6 +6,7 @@
 
 #include "skills/wood/wood_thorns/wood_thorns_skill.h"
 #include "skills/wood/emerald_thorns_skill/emerald_thorns_skill.h"
+#include "skills/water/gleaming_orb_skill/gleaming_orb_skill.h"
 #include "skills/water/hydro_maelstrom_skill/hydro_maelstrom_skill.h"
 #include "skills/water/cloud_dragon_skill/cloud_dragon_skill.h"
 #include "skills/water/frost_blossom_rain_skill/frost_blossom_rain_skill.h"
@@ -18,6 +19,7 @@
 static inline void RegisterGeneratedSkills(void) {
     RegisterSkill("WOOD_THORNS", ELEMENT_COLOR_WOOD, InitWoodThornsSkill, CastWoodThornsSkill, UpdateWoodThornsSkill, DrawWoodThornsSkill, UnloadWoodThornsSkill);
     RegisterSkill("EMERALD_THORNS", ELEMENT_COLOR_WOOD, InitEmeraldThornsSkill, CastEmeraldThornsSkill, UpdateEmeraldThornsSkill, DrawEmeraldThornsSkill, UnloadEmeraldThornsSkill);
+    RegisterSkill("GLEAMING_ORB", ELEMENT_COLOR_WATER, InitGleamingOrbSkill, CastGleamingOrbSkill, UpdateGleamingOrbSkill, DrawGleamingOrbSkill, UnloadGleamingOrbSkill);
     RegisterSkill("HYDRO_MAELSTROM", ELEMENT_COLOR_WATER, InitHydroMaelstromSkill, CastHydroMaelstromSkill, UpdateHydroMaelstromSkill, DrawHydroMaelstromSkill, UnloadHydroMaelstromSkill);
     RegisterSkill("CLOUD_DRAGON", ELEMENT_COLOR_WATER, InitCloudDragonSkill, CastCloudDragonSkill, UpdateCloudDragonSkill, DrawCloudDragonSkill, UnloadCloudDragonSkill);
     RegisterSkill("FROST_BLOSSOM_RAIN", ELEMENT_COLOR_WATER, InitFrostBlossomRainSkill, CastFrostBlossomRainSkill, UpdateFrostBlossomRainSkill, DrawFrostBlossomRainSkill, UnloadFrostBlossomRainSkill);
