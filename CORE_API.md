@@ -973,6 +973,82 @@ Skill-specific uniforms (anything not in the built-in tables above) are **not** 
 - Declare only skill-specific uniforms.
 - Keep shader logic focused on the visual behavior of the element.
 - Strict Parameter Requirement: The core engine's final vertex output function MUST receive exactly one vec3 argument representing the final processed or displaced vertex position.
+
+### Android / GLES Compatibility Rules
+
+Build Android chạy trên OpenGL ES. Pipeline dùng **hai path** tùy shader có dùng `#include` hay không.
+
+#### Path 1 — Standalone shaders (không có `#include`)
+
+`scripts/convert_shaders_to_gles.py` chạy lúc build APK, convert sang **GLES 1.00 (`#version 100`)**:
+
+| Desktop GLSL 3.3 | GLES 1.00 (sau build script) |
+|---|---|
+| `in vec3 pos` (VS) | `attribute vec3 pos` |
+| `out vec3 vary` (VS) | `varying vec3 vary` |
+| `in vec3 vary` (FS) | `varying vec3 vary` |
+| `out vec4 finalColor` + mọi dùng `finalColor` | xóa khai báo + đổi thành `gl_FragColor` |
+| `texture(sampler, uv)` | `texture2D(sampler, uv)` |
+| precision (FS) | tự inject `precision highp float;` nếu chưa có |
+
+Build script **KHÔNG** tự sửa: `f` suffix trên float literal, precision cho `.vs`, nội dung `#include`.
+
+> Yêu cầu GLES 2.0+ (Android 2.2+, tất cả thiết bị target).
+
+#### Path 2 — Shaders dùng `#include` common headers
+
+Build script **BỎ QUA** — các file này giữ nguyên `#version 330` trong APK.
+
+Ở runtime, `ResourceManager_LoadShader` → `ShaderPreprocessor_Load`:
+1. Mở rộng đệ quy mọi `#include "..."` (ví dụ `vs_header.glsl`, `lighting.glsl`)
+2. `RewriteVersionForGLES()` đổi `#version 330` → `#version 300 es`
+3. Kết quả: source GLES 3.0 với `in`/`out`/`texture()` — hợp lệ
+
+Common headers (`vs_header.glsl`, `fs_header.glsl`, `lighting.glsl`, `noise.glsl`, `fx.glsl`) **đã có** `#ifdef GL_ES precision` — không cần khai báo thêm trong skill shader.
+
+> Yêu cầu GLES 3.0+ (Android 4.3+, toàn bộ thiết bị hiện đại).
+
+---
+
+**Rule A — Không dùng `f` suffix trên float literal (áp dụng cho CẢ HAI path):**
+
+```glsl
+// SAI — Android GLES compiler từ chối, build script KHÔNG tự sửa:
+float breathe = 1.25f + 0.12f * sin(u_time * 5.5);
+
+// ĐÚNG:
+float breathe = 1.25 + 0.12 * sin(u_time * 5.5);
+```
+
+`f` suffix là cú pháp C. Desktop driver bỏ qua; Android GLES strict compiler từ chối → `shader.id = 0`.
+
+**Rule B — Standalone VS phải tự khai báo precision:**
+
+Build script tự inject precision cho standalone `.fs`, nhưng **không** làm với `.vs`. Mọi standalone vertex shader (không có `#include "core/shaders/common/vs_header.glsl"`) phải thêm:
+
+```glsl
+#version 330
+
+#ifdef GL_ES
+precision highp float;
+#endif
+```
+
+Shader dùng common headers → precision đã có trong `vs_header.glsl`/`fs_header.glsl`, không cần khai báo lại.
+
+**Rule C — Behavior khi shader compile thất bại trên Android:**
+
+`ResourceManager_LoadShader` **không crash** khi shader compile fail — trả về `shader.id = 0` và log:
+```
+SHADER: compile failed, not caching (vs=... fs=...)
+```
+`SkillManager_BeginShader` guard `id == 0` → no-op (bỏ qua `BeginShaderMode`). Skill vẫn chạy nhưng render với default flat shader → mesh trông **trắng toát / không có hiệu ứng**.
+
+Khi thấy chiêu render trắng toát trên Android: kiểm tra logcat dòng trên, sửa theo Rule A/B, rebuild APK.
+
+> [!NOTE]
+> Desktop OpenGL driver thường compile thành công kể cả khi có `f` suffix hay thiếu precision — lỗi chỉ xuất hiện khi test trên thiết bị Android thật (GLES strict mode).
+
 ---
 
 ---

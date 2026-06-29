@@ -10,7 +10,7 @@ make -f Makefile.Android
 adb pair <IP>:<Port_ghép_nối>
 
 # connect 
-adb connect <IP>:<Port_chính>
+adb connect <IP>:<Port_chính>b 
 
 # intasll
 adb install -r wuxing_skills.apk

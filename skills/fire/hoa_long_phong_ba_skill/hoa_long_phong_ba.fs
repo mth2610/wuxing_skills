@@ -1,5 +1,9 @@
 #version 330
 
+#ifdef GL_ES
+precision highp float;
+#endif
+
 in vec3 fragPosition;
 in vec2 fragTexCoord;
 in vec3 fragNormal;
@@ -108,7 +112,7 @@ void main() {
     fireColor += deepRed * fresnel * 1.4;
 
     // Hơi thở ngọn lửa dao động nhẹ theo thời gian
-    float breathe = 1.25f + 0.12f * sin(u_time * 5.5);
+    float breathe = 1.25 + 0.12 * sin(u_time * 5.5);
     fireColor *= breathe;
 
     // Độ trong suốt mượt mà ở biên đục lỗ

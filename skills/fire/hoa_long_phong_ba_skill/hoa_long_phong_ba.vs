@@ -1,5 +1,9 @@
 #version 330
 
+#ifdef GL_ES
+precision highp float;
+#endif
+
 in vec3 vertexPosition;
 in vec2 vertexTexCoord;
 in vec3 vertexNormal;

@@ -80,6 +80,19 @@ def needs_es31(content):
     return False
 
 
+def has_include_directives(content):
+    """Phát hiện shader dùng #include common headers.
+
+    Những shader này phải ĐI QUA runtime path:
+      ShaderPreprocessor_Load → expand #include → RewriteVersionForGLES
+                                                   (#version 330 → #version 300 es)
+    Common headers (vs_header.glsl, fs_header.glsl, ...) tương thích GLES 3.0
+    nhưng KHÔNG tương thích GLES 1.00 (#version 100 + in/out → lỗi compile).
+    Vì vậy build-time conversion sang ES 1.00 phải được BỎ QUA với nhóm này.
+    """
+    return bool(re.search(r'^\s*#include\s*"', content, re.MULTILINE))
+
+
 # ---------------------------------------------------------------------------
 # Chuyen sang GLSL ES 3.1 (#version 310 es)
 # Danh cho: compute shader, vertex shader dung SSBO / gl_VertexID
@@ -205,9 +218,15 @@ def convert_to_gles(filepath, dry_run=False, make_backup=True):
     is_comp = filepath.endswith('.comp')
 
     # ---------------------------------------------------------------------------
-    # Phan loai target: ES 3.1 hay ES 1.00
+    # Phan loai target: ES 3.1 | runtime GLES 3.0 | ES 1.00
     # ---------------------------------------------------------------------------
     use_es31 = is_comp or needs_es31(content)
+
+    # Shader co #include common headers → de runtime xu ly (GLES 3.0 path).
+    # Build-time conversion sang ES 1.00 se gay xung dot: #version 100 +
+    # "in vec3 ..." (tu included header) = loi compile tren Android.
+    if not use_es31 and has_include_directives(content):
+        return False, [], "GLES 3.0 via runtime (has #include — skipped)"
 
     if use_es31:
         content  = convert_to_gles31(content, is_comp)
