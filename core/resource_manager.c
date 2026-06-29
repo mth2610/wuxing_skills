@@ -119,6 +119,12 @@ Shader ResourceManager_LoadShader(const char *vsFilePath,
   for (int i = 0; i < MAX_CACHED_SHADERS; i++) {
     if (!s_shaders[i].active) {
       s_shaders[i].shader = LoadShaderProcessed(vsFilePath, fsFilePath);
+      // raylib 5.5 returns {id=0, locs=NULL} on compile failure — do NOT cache
+      // an invalid shader; callers guard via SkillManager_BeginShader.
+      if (s_shaders[i].shader.id == 0 || s_shaders[i].shader.locs == NULL) {
+        TraceLog(LOG_WARNING, "SHADER: compile failed, not caching (vs=%s fs=%s)", vs, fs);
+        return s_shaders[i].shader;
+      }
       snprintf(s_shaders[i].vsPath, sizeof(s_shaders[i].vsPath), "%s", vs);
       snprintf(s_shaders[i].fsPath, sizeof(s_shaders[i].fsPath), "%s", fs);
       s_shaders[i].active = true;
@@ -127,8 +133,6 @@ Shader ResourceManager_LoadShader(const char *vsFilePath,
   }
 
   // Fallback if cache is full
-  printf("WARNING: Resource Manager shader cache is full! Loading un-cached: "
-         "vs=%s, fs=%s\n",
-         vs, fs);
+  TraceLog(LOG_WARNING, "SHADER: cache full, loading un-cached: vs=%s fs=%s", vs, fs);
   return LoadShaderProcessed(vsFilePath, fsFilePath);
 }

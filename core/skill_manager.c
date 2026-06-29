@@ -973,6 +973,7 @@ void ApplyAoEDamage(Vector3 position, float radius, float damage, float knockbac
 }
 
 void SkillManager_BeginShader(Shader shader) {
+  if (shader.id == 0 || shader.locs == NULL) return;  // guard: invalid shader → no-op
   int timeLoc = GetShaderLocation(shader, "u_time");
   if (timeLoc >= 0) {
     SetShaderValue(shader, timeLoc, &g_skillManagerTime, SHADER_UNIFORM_FLOAT);

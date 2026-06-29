@@ -1,5 +1,22 @@
 # Android Build & Porting Notices (Wuxing Skills)
-# adb install -r wuxing_skills.apk && adb shell am start -n com.example.wuxing/com.wuxing.myapp.MainActivity
+
+# clean android
+make -f Makefile.Android clean
+
+# build android 
+make -f Makefile.Android
+
+# pair
+adb pair <IP>:<Port_ghép_nối>
+
+# connect 
+adb connect <IP>:<Port_chính>
+
+# intasll
+adb install -r wuxing_skills.apk
+
+# log crash
+adb logcat -b crash | ~/Library/Android/sdk/ndk/28.2.13676358/ndk-stack -sym android.wuxing_skills/obj
 
 Tài liệu này ghi chú lại toàn bộ quy trình, cấu hình và các lỗi phần cứng/trình điều khiển đặc thù đã gặp phải trong quá trình port dự án C/Raylib này sang nền tảng Android.
 
