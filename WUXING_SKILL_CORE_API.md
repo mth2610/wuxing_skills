@@ -34,6 +34,12 @@ skills/[element]/[skill_name]_skill/
     └── [texture].png          # Texture assets (Optional, automatically copied)
 ```
 
+### CRITICAL SCALING RULES FOR AI:
+This engine uses a large coordinate scale. DO NOT use physical defaults (1.0 or 9.8).
+Radii: Base mesh/tube radii should be around 10.0f to 20.0f. Impact bursts/lights should range from 50.0f to 100.0f.
+Gravity/Force: Typical gravity or strong directional forces MUST be strictly between 300.0f and 700.0f.
+Velocity/Speed: Particle speeds for bursts should range from 100.0f to 300.0f.
+
 > [!IMPORTANT]
 > **Include Path Folder Matching Rule:** When including your skill's own header file within its `.c` source file, the path **MUST EXACTLY match** the directory structure where it is saved. For example, if you place your files in `skills/wood/jade_burst_skill/`, you MUST include it as `#include "skills/wood/jade_burst_skill/jade_burst_skill.h"`. Beware of typo errors or omitting suffix markers like `_skill` from the folder name.
 
@@ -223,22 +229,127 @@ typedef struct {
 
 ### Ground Decals (`core/decal_system.h`)
 ```c
+void DecalSystem_Init(void);
 void DecalSystem_Add(Vector3 pos, float rot, float scale, Texture2D tex, float life, Color tint);
+void DecalSystem_Update(float dt);
+void DecalSystem_Draw(void);
+void DecalSystem_Unload(void);
 ```
+* `rot`: yaw around Y axis (degrees). Alpha fades internally as `lifetime / maxLifetime` decays to 0.
+* Static pool, `MAX_DECALS = 32`, no malloc.
+
 Rules:
-- Prevents Z-fighting automatically.
-- Draw before 3D meshes.
+- Call `DecalSystem_Init()` once at startup, `DecalSystem_Update(dt)` every frame to age out decals.
+- Prevents Z-fighting automatically (internal Y offset, do not add your own).
+- Draw before 3D meshes, using `BLEND_ALPHA`.
 - Recommended scale: 4–5.5× structure radius.
+- Do not call `DecalSystem_Unload()` from skill code — global system, owned by the engine shutdown sequence only.
 
 ### Screen Distortion (`core/screen_distort.h`)
 ```c
 void ScreenDistort_Add(Vector3 pos, float radius, float strength, float life, float speed);
 ```
 
-### Standard Gradient (`core/color_gradient_ext.h`)
+### Color Gradient (`core/color_gradient.h`)
 ```c
-void ColorGradient_StandardFade(ColorGradient *grad, Color baseColor, float midT, float brightenAmount);
+typedef struct {
+    float t;       // [0.0 .. 1.0]
+    Color color;
+} GradientStop;
+
+typedef struct {
+    GradientStop stops[COLOR_GRADIENT_MAX_STOPS]; // max 8
+    int count;
+} ColorGradient;
+
+bool  ColorGradient_AddStop(ColorGradient *g, float t, Color color);
+Color ColorGradient_Sample(const ColorGradient *g, float t);
+ColorGradient ColorGradient_MakeElectric(void);
+void  ColorGradient_StandardFade(ColorGradient *grad, Color baseColor, float midT, float brightenAmount);
 ```
+* **`AddStop`:** Caller must add stops in increasing `t` order (no internal sort).
+* **`Sample`:** Linear interpolation (LERP) between adjacent stops. Prefer `ColorGradient` over `colorStart/colorEnd` for multi-stage color shifts (e.g. fire core white → orange → ash gray).
+* **`MakeElectric`:** Built-in preset for the Lightning element.
+* **`StandardFade`:** Quick 3-stop gradient (dark → `baseColor` → brighter via `brightenAmount` blended toward `WHITE`); `midT` sets the middle stop position.
+
+### Ribbon Strip (`core/ribbon_strip.h`)
+Standard geometry for any continuous long body (dragon, vine, lightning bolt, water stream), replacing stacked billboard chains (heavy overdraw, wrong silhouette when viewed along the path). Technique: **camera-facing ribbon** — at each path point, offset left/right by a vector perpendicular to both the path tangent and the camera view direction, forming a continuous triangle strip (rlgl immediate-mode, no VBO, no malloc).
+```c
+typedef struct {
+    Vector3 position;  // World-space point on the path
+    float   halfWidth; // Half-width of the body at this point
+    Color   tint;       // Color + alpha at this point
+    float   v;          // UV along strip length, caller-computed (e.g. normDist 0..1)
+} RibbonPoint;
+
+void DrawRibbonStrip(const RibbonPoint *points, int count, Texture2D texture, Camera3D camera);
+```
+Rules:
+- Module does not manage memory — caller supplies a static `RibbonPoint` array; `count >= 2` required.
+- Submits geometry only — does **not** change shader/blend state; `BeginShaderMode()`/`BeginBlendMode()` must be set from outside, so calls interleave with `DrawBillboard` in the same batch.
+- Mandatory for any long-body mesh in the project — do not hand-roll a billboard chain (see `SKILL_STANDARD.md`).
+
+### Flow Map (`core/flow_map.h`)
+Shared module for UV flow effects (shield, fire, water, tornado...). Each skill owns its own `FlowMap` instance (location cache + config + texture) — no global state, so multiple skills can use flow maps concurrently with different shaders/textures.
+```c
+typedef struct {
+    float speed;    // UV scroll speed over time
+    float strength; // UV distortion amplitude
+    float tiling;   // Tiling of main/caustics texture
+} FlowMapConfig;
+
+typedef struct {
+    FlowMapConfig cfg; // plus internal per-instance uniform location cache + texture
+} FlowMap;
+
+FlowMap FlowMap_Create(Shader shader, Texture2D flowTex, const char *timeUniformName);
+FlowMap FlowMap_CreateWithVortexTexture(Shader shader, int texSize, const char *timeUniformName);
+void    FlowMap_Apply(const FlowMap *fm, Shader shader, float time);
+void    FlowMap_Unload(FlowMap *fm);
+```
+* **`Create`:** Binds to one already-loaded shader. `flowTex` (RG = flow direction) is **not** owned by `FlowMap` — caller must `UnloadTexture` it. Pass `NULL` for `timeUniformName` if the skill sets time another way.
+* **`CreateWithVortexTexture`:** Generates a procedural vortex flow texture; `FlowMap` **owns** it and frees it in `FlowMap_Unload`.
+* **`Apply`:** Call **after** `BeginShaderMode(shader)`, with the same `shader` used in `Create` (raylib needs the matching `shader.id`). Only sets its own flow-texture uniform via `SetShaderValueTexture` — does not bind texture slots manually, so other textures (caustics, main tex...) stay unaffected.
+
+### Path Spline (`core/path_spline.h`)
+```c
+Vector3 GetBezierPoint(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t);
+Vector3 GetBezierTangent(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 target, float t);
+int     SamplePath(const Vector3 *path, int pathCount, float spacing, Vector3 *outSegments, int maxSegments);
+```
+* **`GetBezierPoint`/`GetBezierTangent`:** Standard cubic Bezier — use for cast paths, curved projectile flight, ribbon/tube spline generation.
+* **`SamplePath`:** Resamples any `Vector3` chain at even `spacing` (world units), e.g. to feed `RibbonPoint[]` or tube meshes. Returns actual point count (≤ `maxSegments`).
+- **Rule:** Never hand-roll Bezier interpolation or point sampling in skill code — use this module.
+
+### Sprite Animation (`core/sprite_anim.h`)
+```c
+typedef enum {
+    ANIM_ONCE = 0,
+    ANIM_LOOP,
+    ANIM_RANDOM_START,
+    ANIM_PING_PONG,
+} AnimPlayMode;
+
+typedef struct {
+    int rows, cols;       // Atlas grid layout
+    int frameCount;       // Valid frame count (<= rows * cols)
+    float fps;
+    AnimPlayMode playMode;
+    // Remaining fields are internal playback state
+} SpriteAnim;
+
+void      SpriteAnim_Init(SpriteAnim *anim, int rows, int cols, int frameCount, float fps, AnimPlayMode mode);
+void      SpriteAnim_Update(SpriteAnim *anim, float dt);
+Rectangle SpriteAnim_GetUVRect(const SpriteAnim *anim);
+bool      SpriteAnim_IsFinished(const SpriteAnim *anim);
+void      SpriteAnim_Reset(SpriteAnim *anim);
+
+// Stateless UV lookup by age, for particles that don't keep their own playback state
+Rectangle SpriteAnim_CalculateUV(const SpriteAnim *template, float age, int *outFrame);
+```
+* **Stateless (particles):** Particle/Trail structs hold only `const SpriteAnim *spriteAnim` (a shared template), then call `SpriteAnim_CalculateUV(template, particle->age, &frame)` each frame — avoids bloating the per-particle struct (see `spriteAnim` field in `ParticleConfig`/`TrailConfig`, sections 6–7).
+* **Stateful (instances):** For standalone UI/decal/billboard, call `SpriteAnim_Init` then `Update` every frame, read UV via `GetUVRect`.
+* `ANIM_RANDOM_START`: starts at a random frame, useful so particles sharing one atlas don't animate in visible lockstep.
 
 ### Particle Radial Burst (`core/particle_radial_burst.h`)
 ```c
@@ -285,6 +396,35 @@ typedef struct {
 
 void VFX_TriggerImpactBurst(Vector3 pos, float sizeScale, const ImpactBurstConfig *cfg);
 ```
+
+### Math Utils (`core/utils_math.h`)
+```c
+float Math_Mix(float x, float y, float a);  // LERP: x + (y - x) * a
+float SmoothStep01(float x);                // Standard smoothstep, clamps input to [0,1]
+float Random01(void);                       // Random float in [0.0 .. 1.0]
+```
+- Use `Math_Mix`/`SmoothStep01` instead of re-implementing lerp/smoothstep in skill code.
+
+### VFX Lights (`core/vfx_light.h`)
+Static pool of dynamic point lights (explosion flash, lightning, skill auras), fed into the lighting shader's uniform array.
+```c
+#define MAX_VFX_LIGHTS 8
+
+typedef struct {
+    Vector3 position;
+    float   radius;
+    Color   color;
+} VFXLightData;
+
+void VFXLight_Init(void);
+void VFXLight_Reset(void);
+void VFXLight_Spawn(Vector3 pos, Color color, float radius, float lifetime);
+void VFXLight_Update(float dt);
+void VFXLight_GetActive(VFXLightData *out, int *count, int maxCount);
+```
+* **`Spawn`:** Light expires automatically after `lifetime` seconds via `Update` — no manual kill needed.
+* **`GetActive`:** Call every frame before drawing a lit skill, to fetch the active list and upload it via `SetShaderValueV`. `maxCount` should be ≤ `MAX_VFX_LIGHTS` (8).
+* Rule: VFX lights supplement, not replace, scene lighting — keep them alive for the skill's full active phase rather than spawning and killing within one frame.
 
 ### Combat (`core/skill_manager.h`)
 ```c
@@ -428,10 +568,20 @@ Rules:
 - Use for circular Bezier tubes.
 - Never implement Bezier, Frenet frame or tube generation inside skills.
 - Start from ProceduralMesh_DefaultTubeConfig() and override only the fields you need.
+- **Submits geometry only** — like `DrawRibbonStrip`, `ProceduralMesh_DrawTube` does not change shader or blend state. `BeginShaderMode()` and, if the shader outputs alpha < 1 (e.g. for translucent water/energy tubes), `BeginBlendMode(BLEND_ALPHA)` or `BLEND_ADDITIVE` must be set by the calling skill before the draw call.
+
+> [!NOTE]
+> **UV convention (inferred — confirm against `procedural_mesh_utils.c` source):** Based on how `tube.vs`/`tube.fs` consume `vertexTexCoord`, the tube mesh appears to map `vertexTexCoord.x ∈ [0, 1]` around the **radial/circumferential** direction (so `phi = vertexTexCoord.x * 2π` sweeps once around the tube's cross-section) and `vertexTexCoord.y` along the **length** of the tube in world units, normalized by dividing by `u_uvLength` (set from C-side to the tube's actual Bezier arc length) to get `t ∈ [0, 1]` along the spline. This document doesn't yet have a confirmed, authoritative statement of this convention from the mesh-generation source itself — treat the above as the working assumption validated by the Water Stream sample, and update this note if `procedural_mesh_utils.c` defines it differently (e.g. if `uvLengthScale` in `ProceduralMesh_DrawTube` already pre-divides UVs, in which case skill shaders should *not* divide by `u_uvLength` again).
 
 ### Post FX (`core/post_fx.h`)
 
 ```c
+void PostFX_Init(int width, int height);
+void PostFX_Unload(void);
+void PostFX_Begin(void);   // Begin rendering the main 3D scene into the PostFX buffer
+void PostFX_End(void);     // End main scene rendering
+void PostFX_Draw(const PostFXConfig *config); // Runs Bloom -> CA -> Grade -> Vignette, draws to screen
+
 typedef struct {
     /* Bloom */
     bool bloomEnabled;
@@ -454,6 +604,9 @@ typedef struct {
     Vector3 colorTint;
 } PostFXConfig;
 ```
+Rules:
+- Call order each frame: `PostFX_Begin()` → draw 3D scene → `PostFX_End()` → `PostFX_Draw(&config)`.
+- `Init`/`Unload` belong to the application lifecycle (global) — skill code does not call them.
 
 ### Camera FX (`core/camera_fx.h`)
 ```c
@@ -468,6 +621,13 @@ PlaySound(Sound sound);
 Load sounds in `InitSkill()`.
 
 ## 10. GLSL Shader Guidelines
+
+### `#include` Is an Engine Preprocessing Step, Not Native GLSL
+
+> [!IMPORTANT]
+> GLSL has no native `#include` directive. The `#include "core/shaders/common/..."` lines below are resolved by **`shader_preprocessor.h/.c`** (`ShaderPreprocessor_Load()`), which is wired into `ResourceManager_LoadShader()`. It recursively reads the file, textually substitutes every `#include "..."` line with the target file's contents (up to `MAX_INCLUDE_DEPTH`), and only then hands the fully-expanded source to `LoadShaderFromMemory()`. The resulting buffer is heap-allocated with `RL_MALLOC`/freed with `RL_FREE` internally — skill code never touches this buffer and never calls `ShaderPreprocessor_Load()` directly; it is invoked automatically by `ResourceManager_LoadShader()`.
+>
+> Practical implication: a raw `glCompileShader` call (or any tool that lints `.vs`/`.fs` files standalone, e.g. an online GLSL validator) will fail on the `#include` line because it isn't valid core GLSL — this is expected and not a project bug. Only `ResourceManager_LoadShader()` produces compilable output.
 
 ### Required Includes
 
@@ -503,30 +663,72 @@ Do not use `NULL` as the vertex shader when using lighting.
 
 ### Built-in Variables
 
-Provided automatically by the common headers.
+Provided automatically by the common headers — **do not redeclare** any of these in a skill `.vs`/`.fs`.
 
-Do not redeclare:
+**From `vs_header.glsl` (vertex shader only):**
 
-- `u_time`
-- `viewPos`
-- `u_resolution`
-- `fragPosition`
-- `fragNormal`
-- `fragTexCoord`
-- `finalColor`
+| Variable | Direction | Type | Space / Notes |
+|---|---|---|---|
+| `vertexPosition` | `in` (attribute) | `vec3` | Object/local space — raw mesh vertex |
+| `vertexTexCoord` | `in` (attribute) | `vec2` | Raw mesh UV |
+| `vertexNormal` | `in` (attribute) | `vec3` | Object/local space — raw mesh normal, **not yet normalized or transformed** |
+| `mvp` | `uniform` | `mat4` | Model-View-Projection — used internally by `VS_FinalOutput()` |
+| `matModel` | `uniform` | `mat4` | Model matrix — used internally by `VS_FinalOutput()` |
+| `u_time` | `uniform` | `float` | Auto-bound by `SkillManager_BeginShader()` — do not set manually |
+| `viewPos` | `uniform` | `vec3` | Camera world-space position — auto-bound |
+| `u_resolution` | `uniform` | `vec2` | Screen resolution — auto-bound |
+| `fragPosition` | `out` (varying) | `vec3` | **World-space.** Written only by `VS_FinalOutput()` |
+| `fragTexCoord` | `out` (varying) | `vec2` | Passthrough of `vertexTexCoord`, written by `VS_FinalOutput()` |
+| `fragNormal` | `out` (varying) | `vec3` | **World-space, normalized.** Written by `VS_FinalOutput()` |
+
+**From `fs_header.glsl` (fragment shader only):**
+
+| Variable | Direction | Type | Space / Notes |
+|---|---|---|---|
+| `fragPosition` | `in` (varying) | `vec3` | **World-space** — matches VS output exactly |
+| `fragTexCoord` | `in` (varying) | `vec2` | UV, passed through unchanged from VS |
+| `fragNormal` | `in` (varying) | `vec3` | **World-space, normalized** |
+| `u_time` | `uniform` | `float` | Auto-bound — do not set manually |
+| `viewPos` | `uniform` | `vec3` | Camera world-space position — auto-bound |
+| `u_resolution` | `uniform` | `vec2` | Auto-bound |
+| `finalColor` | `out` | `vec4` | Final pixel output — write exactly once per `main()` |
+
+> [!NOTE]
+> **`fragNormal` caveat:** `VS_FinalOutput()` computes `fragNormal` from the **original** `vertexNormal` (`normalize(matModel * vec4(vertexNormal, 0.0))`) — it does **not** recompute the normal from a displaced surface. If your vertex shader displaces position (e.g. `tube.vs`'s `getDisplacement()`), the outgoing `fragNormal` will *not* reflect that displacement. This is why skills like the Water Stream tube re-derive a perturbed normal in the **fragment** shader via `perturbNormal()` using a matching height-field gradient, rather than relying on a geometrically displaced normal from the VS. If a skill needs a true displaced-geometry normal, it must compute it manually in the VS (e.g. via finite-difference neighboring vertices) — `VS_FinalOutput()` will not do this automatically.
 
 ### Built-in Functions
 
-Provided by the engine:
+Provided by `lighting.glsl` (fragment shader only — include after `fs_header.glsl`):
 
 ```glsl
-VS_FinalOutput(...)
-perturbNormal(...)
-calcFresnel(...)
-calcSpecular(...)
+vec3  perturbNormal(vec3 baseNormal, vec2 heightDelta, float strength);
+float calcFresnel(vec3 normal, vec3 viewDir, float power);
+float calcSpecular(vec3 normal, vec3 lightDir, vec3 viewDir, float shininess);
 ```
 
+* **`perturbNormal(baseNormal, heightDelta, strength)`** — Perturbs a base normal using the gradient of a skill-supplied height field, to fake surface roughness (water ripples, lava bubbling, bark texture...) without extra geometry.
+  - `baseNormal`: the mesh normal to perturb — typically `fragNormal` (already world-space, normalized).
+  - `heightDelta`: `vec2(h(u-eps) - h(u+eps), h(v-eps) - h(v+eps))` — the **gradient** of your own height function, sampled at `±eps` around the current `fragTexCoord` in U and V respectively. The skill must implement its own height function (e.g. `tube.fs`'s `getIrregularity()`) and **must reuse the exact same formula as the vertex shader's displacement function**, or lighting and physical displacement will visually mismatch.
+  - `strength`: deformation intensity, **typical range 0.3 – 0.8**.
+  - Internally builds a tangent/bitangent basis from `baseNormal` (defaulting to world-up, falling back to world-X if `baseNormal` is near-parallel to up) and offsets `baseNormal` along that basis by `heightDelta * strength`.
+* **`calcFresnel(normal, viewDir, power)`** — Schlick-approximated rim term, returns `[0..1]` (`0` = surface viewed face-on, `1` = viewed edge-on).
+  - `power`: higher = thinner, sharper rim. **Typical range 2.0 – 5.0.**
+* **`calcSpecular(normal, lightDir, viewDir, shininess)`** — Blinn-Phong specular highlight, returns `[0..1]` (caller scales by an intensity multiplier afterward, e.g. `* 5.0`).
+  - `shininess`: higher = smaller, tighter highlight. **Typical range 32 – 512.**
+
 Do not reimplement these functions.
+
+> [!NOTE]
+> **`lightDir` is not provided by the engine.** Both `lighting.glsl` functions take `lightDir` as a plain parameter — there is no auto-bound global light direction uniform. Existing skills (e.g. `tube.fs`) hard-code a fixed directional light as `normalize(vec3(0.5, 0.8, 0.5))` to match the project's single static "Isometric Night-time Arena" key light. **New skills should reuse this exact vector** rather than inventing a different light direction, to keep lighting consistent across all elements in the same scene. If the engine later exposes a shared `u_lightDir` uniform, this section will be updated — until then, hard-coding this specific vector is the project convention.
+
+### Custom Per-Skill Uniforms (e.g. `u_uvLength`, `u_dissolve`)
+
+Skill-specific uniforms (anything not in the built-in tables above) are **not** handled by `SkillManager_BeginShader()` — the skill's own C code is responsible for sending them.
+
+* **Lookup:** Cache the uniform location once, typically as a `static int` next to the shader, fetched in `Init[Name]Skill()` via `GetShaderLocation(shader, "u_uvLength")`. Do not call `GetShaderLocation` every frame — it's a string-hash lookup the engine does not cache for you.
+* **Set timing:** Call `SetShaderValue()` for skill-specific uniforms **after** `SkillManager_BeginShader(shader)` (so the shader is bound) and **before** the draw call that uses them, every frame the value changes (e.g. `u_dissolve` ramping toward `1.0`) or once if constant for the skill's lifetime (e.g. `u_uvLength`, fixed at cast-time from the Bezier path length).
+* **VS/FS synchronization:** If the same uniform name (e.g. `u_uvLength`) is declared in **both** `.vs` and `.fs` (as in the Water Stream sample), `SetShaderValue()` must be called **once** with that uniform's location for the shader program as a whole — raylib's `Shader.id` is one linked GL program covering both stages, so one `SetShaderValue()` call updates the value for both VS and FS reads of the same uniform name. There is no need (and no mechanism) to set it "twice, once per stage."
+* **Declaration:** Declare these uniforms only in the `.vs`/`.fs` file(s) that read them — e.g. `u_uvLength` appears in both `tube.vs` and `tube.fs` because both need it; `u_dissolve` appears only in `tube.fs` because only the fragment shader uses it for fade-out.
 
 ### Rules
 
@@ -535,7 +737,7 @@ Do not reimplement these functions.
 - Call `VS_FinalOutput()` as the final step of every vertex shader.
 - Declare only skill-specific uniforms.
 - Keep shader logic focused on the visual behavior of the element.
-
+- Strict Parameter Requirement: The core engine's final vertex output function MUST receive exactly one vec3 argument representing the final processed or displaced vertex position.
 ---
 
 ---
