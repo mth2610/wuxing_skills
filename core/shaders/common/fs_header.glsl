@@ -11,6 +11,10 @@
 // SkillManager_BeginShader() — không cần set thủ công.
 // ============================================================
 
+#ifdef GL_ES
+precision mediump float;
+#endif
+
 in vec3 fragPosition;
 in vec2 fragTexCoord;
 in vec3 fragNormal;

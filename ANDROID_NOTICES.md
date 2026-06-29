@@ -1,4 +1,5 @@
 # Android Build & Porting Notices (Wuxing Skills)
+# adb install -r wuxing_skills.apk && adb shell am start -n com.example.wuxing/com.wuxing.myapp.MainActivity
 
 Tài liệu này ghi chú lại toàn bộ quy trình, cấu hình và các lỗi phần cứng/trình điều khiển đặc thù đã gặp phải trong quá trình port dự án C/Raylib này sang nền tảng Android.
 

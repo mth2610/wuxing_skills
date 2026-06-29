@@ -1,4 +1,5 @@
 #include "sandbox/ui_panel.h"
+#include "core/gpu_particle_system.h"
 #include "rlgl.h"
 #include <stdio.h>
 
@@ -337,6 +338,22 @@ void DrawUIPanel(const UIPanelState *state) {
   DrawText(state->currentParams.showPortal ? "PORTALS: ON" : "PORTALS: OFF",
            (int)rectPortalToggle.x + 40, (int)rectPortalToggle.y + 10, 16,
            WHITE);
+
+  // GPU Particle status
+  {
+    int bx = (int)rectPortalToggle.x;
+    int by = (int)rectPortalToggle.y + 48;
+    bool compute = GpuParticleSystem_IsComputeActive();
+    int  active  = GpuParticleSystem_ActiveCount();
+
+    Color modeColor = compute ? (Color){80, 220, 80, 255} : (Color){220, 180, 60, 255};
+    const char *modeText = compute ? "GPU: COMPUTE" : "GPU: CPU/VBO";
+    DrawRectangleRounded((Rectangle){bx, by, 200, 32}, 0.2f, 8, (Color){20, 20, 20, 180});
+    DrawRectangleRoundedLines((Rectangle){bx, by, 200, 32}, 0.2f, 8, modeColor);
+    DrawText(modeText, bx + 10, by + 8, 13, modeColor);
+    DrawText(TextFormat("particles: %d/%d", active, MAX_GPU_PARTICLES),
+             bx, by + 36, 11, LIGHTGRAY);
+  }
 
   EndBlendMode();
 }

@@ -5,6 +5,7 @@
 #include "raymath.h"
 #include "rlgl.h"
 #include "core/skill_manager.h"
+#include "core/resource_manager.h"
 #include "core/utils_math.h"
 #include <math.h>
 
@@ -190,7 +191,7 @@ static void RenderCustom3DSphere(Vector3 center, float radius, float blobAmount,
 void InitFluidSkill(int screenWidth, int screenHeight) {
   (void)screenWidth;
   (void)screenHeight;
-  fluidShader = LoadShader("skills/water/water_projectile/fluid.vs", "skills/water/water_projectile/fluid.fs");
+  fluidShader = ResourceManager_LoadShader("skills/water/water_projectile/fluid.vs", "skills/water/water_projectile/fluid.fs");
 
   // u_time là uniform dùng chung cho VS và FS — một location, một lần
   // SetShaderValue
@@ -360,7 +361,7 @@ void DrawFluidSkill(void) {
   rlEnableDepthMask();
 }
 
-void UnloadFluidSkill(void) { UnloadShader(fluidShader); }
+void UnloadFluidSkill(void) { /* ResourceManager handles shader cleanup */ }
 
 int GetFluidSkillProjectiles(SkillProjectile *outProjectiles,
                              int maxProjectiles) {

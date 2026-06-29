@@ -234,6 +234,8 @@ void DrawTubeSkill(void) {
   if (!anyActive)
     return;
 
+  if (tubeShader.locs == NULL) return;
+
   float time = GetTime();
   rlDisableDepthMask();
   rlEnableBackfaceCulling();

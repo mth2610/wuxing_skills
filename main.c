@@ -265,6 +265,7 @@ int main(void) {
 
     // Vẽ Decal hệ thống sát sàn đấu
     if (!g_debugHideDecals) {
+        DecalSystem_SetCamera(camera);
         DecalSystem_Draw();
     }
 

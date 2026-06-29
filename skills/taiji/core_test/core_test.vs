@@ -1,21 +1,16 @@
 #version 330
+#include "core/shaders/common/vs_header.glsl"
 
-in vec3 vertexPosition;
-in vec2 vertexTexCoord;
-in vec3 vertexNormal;
-in vec4 vertexColor;
+// Test: noise.glsl có thể include trong VS
+#include "core/shaders/common/noise.glsl"
 
-uniform mat4 mvp;
-
-out vec2 fragTexCoord;
-out vec4 fragColor;
-out vec3 fragPosition;
-out vec3 fragNormal;
+uniform float u_phase;   // [0..1] tiến trình skill — dùng để animate spawn
 
 void main() {
-    fragTexCoord = vertexTexCoord;
-    fragColor = vertexColor;
-    fragPosition = vertexPosition;
-    fragNormal = normalize(vertexNormal);
-    gl_Position = mvp * vec4(vertexPosition, 1.0);
+    // Nhẹ warp vertex theo FBM tạo cảm giác orb không phải hình cầu hoàn hảo
+    // Test fbm2() từ noise.glsl trực tiếp trong VS
+    float warp = fbm2(vertexPosition.xz * 0.08 + u_time * 0.2) - 0.5;
+    vec3 displaced = vertexPosition + vertexNormal * warp * 1.8 * u_phase;
+
+    VS_FinalOutput(displaced);
 }

@@ -2,8 +2,16 @@
 """
 convert_shaders_to_gles.py
 
-Chuyen shader GLSL (#version 330/430, dung cho desktop OpenGL) sang
-GLSL ES 1.00 (dung cho OpenGL ES 2.0 / Android, tuong thich Raylib rlgl).
+Chuyen shader GLSL desktop sang GLSL ES cho Android. Hai target:
+
+  ES 1.00  (#version 100)  — .vs / .fs thong thuong, OpenGL ES 2.0+
+  ES 3.10  (#version 310 es) — .comp, hoac .vs / .fs dung SSBO / gl_VertexID
+                               (OpenGL ES 3.1+, can thiet cho compute path)
+
+Script tu phan loai dua tren noi dung file:
+  - Co SSBO layout / gl_VertexID  → target ES 3.1
+  - La .comp                       → target ES 3.1
+  - Cac truong hop con lai          → target ES 1.00
 
 Cach dung:
     python convert_shaders_to_gles.py <assets_dir> [--dry-run] [--no-backup]
@@ -50,6 +58,53 @@ WARNING_PATTERNS_FS_ONLY = [
      "can tach logic hoac gop lai thanh 1 vec4 duy nhat."),
     (r'\bgl_FragData\s*\[', "gl_FragData[] (MRT) khong ho tro o GLSL ES 100. Can gop ve 1 gl_FragColor."),
 ]
+
+
+SUPPORTED_EXTS = {'.vs', '.fs', '.comp'}
+
+# ---------------------------------------------------------------------------
+# Detect xem shader co can ES 3.1 khong (SSBO, gl_VertexID, compute layout)
+# ---------------------------------------------------------------------------
+ES31_INDICATORS = [
+    r'layout\s*\(\s*std430',           # SSBO
+    r'layout\s*\(\s*binding\s*=.*\)\s*buffer',  # shader storage block
+    r'\bgl_VertexID\b',
+    r'\bgl_InstanceID\b.*layout',
+    r'layout\s*\(\s*local_size_x',     # compute
+]
+
+def needs_es31(content):
+    for pattern in ES31_INDICATORS:
+        if re.search(pattern, content):
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Chuyen sang GLSL ES 3.1 (#version 310 es)
+# Danh cho: compute shader, vertex shader dung SSBO / gl_VertexID
+# ---------------------------------------------------------------------------
+def convert_to_gles31(content, is_comp):
+    # Version header
+    content = re.sub(r'#version\s+\d+.*', '#version 310 es', content)
+
+    # Them precision neu chua co
+    if 'precision' not in content:
+        content = content.replace(
+            '#version 310 es',
+            '#version 310 es\nprecision highp float;\nprecision highp int;'
+        )
+
+    if is_comp:
+        # Compute shader: layout(std430) va layout(local_size_x) giu nguyen —
+        # ES 3.1 ho tro day du. Chi can xoa version comment cu neu co.
+        content = re.sub(r'//\s*version\s+430.*\n', '', content)
+    else:
+        # Vertex shader ES 3.1: in/out giu nguyen (ES 3.0+ dung in/out, khong
+        # dung attribute/varying nua). Xoa layout(location) vi khong bat buoc.
+        content = re.sub(r'layout\s*\(\s*location\s*=\s*\d+\s*\)\s*', '', content)
+
+    return content
 
 
 def find_warnings(content, is_fs):
@@ -145,48 +200,61 @@ def convert_to_gles(filepath, dry_run=False, make_backup=True):
         original = f.read()
 
     content = original
-    is_vs = filepath.endswith('.vs')
-    is_fs = filepath.endswith('.fs')
+    is_vs   = filepath.endswith('.vs')
+    is_fs   = filepath.endswith('.fs')
+    is_comp = filepath.endswith('.comp')
 
-    # 1) #version 330/430 -> #version 100
-    content = re.sub(r'#version\s+\d+.*', '#version 100', content)
+    # ---------------------------------------------------------------------------
+    # Phan loai target: ES 3.1 hay ES 1.00
+    # ---------------------------------------------------------------------------
+    use_es31 = is_comp or needs_es31(content)
 
-    # 2) in/out -> attribute/varying (truoc khi xu ly precision/fragColor)
-    content = convert_in_out(content, is_vs)
+    if use_es31:
+        content  = convert_to_gles31(content, is_comp)
+        warnings = []  # ES 3.1 ho tro SSBO / gl_VertexID — khong canh bao
+        target_label = "GLES 3.1 (#version 310 es)"
+    else:
+        # ES 1.00 path (logic cu giu nguyen)
+        # 1) #version 330/430 -> #version 100
+        content = re.sub(r'#version\s+\d+.*', '#version 100', content)
 
-    mrt_warning = None
-    if is_fs:
-        # 3) precision: uu tien highp de tranh artifact tren mobile (vd: water/tornado bi "be khoi")
-        if 'precision mediump float;' in content:
-            content = content.replace('precision mediump float;', 'precision highp float;')
-        elif 'precision highp float;' not in content:
-            content = content.replace('#version 100', '#version 100\nprecision highp float;')
+        # 2) in/out -> attribute/varying
+        content = convert_in_out(content, is_vs)
 
-        # 4) out vec4 fragColor -> gl_FragColor (chi khi DUY NHAT 1 bien out vec4)
-        content, mrt_warning = convert_fs_output(content)
+        mrt_warning = None
+        if is_fs:
+            # 3) precision highp
+            if 'precision mediump float;' in content:
+                content = content.replace('precision mediump float;', 'precision highp float;')
+            elif 'precision highp float;' not in content:
+                content = content.replace('#version 100', '#version 100\nprecision highp float;')
 
-    # 5) Xoa initializer cua uniform (ho tro multiline)
-    content = strip_uniform_initializers(content)
+            # 4) out vec4 -> gl_FragColor
+            content, mrt_warning = convert_fs_output(content)
 
-    # 6) texture(...) -> texture2D(...)
-    content = convert_texture_calls(content)
+        # 5) Xoa uniform initializers
+        content = strip_uniform_initializers(content)
 
-    # 7) Tim cac pattern nguy hiem de canh bao (khong tu sua)
-    warnings = find_warnings(original, is_fs)  # quet tren ban GOC de bao chinh xac vi tri/nguyen nhan
-    if mrt_warning:
-        warnings.append(("Phat hien nhieu 'out vec4' trong fragment shader (MRT) - "
-                          "KHONG tu dong gop thanh gl_FragColor vi co the sai logic. Can sua tay.", 1))
+        # 6) texture() -> texture2D()
+        content = convert_texture_calls(content)
+
+        # 7) Canh bao pattern nguy hiem
+        warnings = find_warnings(original, is_fs)
+        if mrt_warning:
+            warnings.append(("Phat hien nhieu 'out vec4' trong fragment shader (MRT) - "
+                              "KHONG tu dong gop thanh gl_FragColor vi co the sai logic. Can sua tay.", 1))
+
+        target_label = "GLES 1.00 (#version 100)"
 
     changed = content != original
 
     if not dry_run and changed:
         if make_backup:
-            backup_path = filepath + '.bak'
-            shutil.copy2(filepath, backup_path)
+            shutil.copy2(filepath, filepath + '.bak')
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(content)
 
-    return changed, warnings
+    return changed, warnings, target_label
 
 
 def main():
@@ -209,21 +277,25 @@ def main():
 
     for root, dirs, files in os.walk(assets_dir):
         for file in files:
-            if file.endswith('.fs') or file.endswith('.vs'):
-                filepath = os.path.join(root, file)
-                total_files += 1
-                changed, warnings = convert_to_gles(filepath, dry_run=dry_run, make_backup=make_backup)
+            ext = os.path.splitext(file)[1]
+            if ext not in SUPPORTED_EXTS:
+                continue
+            filepath = os.path.join(root, file)
+            total_files += 1
+            changed, warnings, target_label = convert_to_gles(
+                filepath, dry_run=dry_run, make_backup=make_backup
+            )
 
-                if changed:
-                    total_changed += 1
-                    tag = "[DRY-RUN] Se chuyen:" if dry_run else "Converted to GLES:"
-                    print(f"{tag} {filepath}")
-                else:
-                    print(f"[Khong doi] {filepath} (da la ES 100 hoac khong khop pattern nao)")
+            if changed:
+                total_changed += 1
+                tag = "[DRY-RUN] Se chuyen:" if dry_run else "Converted:"
+                print(f"{tag} {filepath}  →  {target_label}")
+            else:
+                print(f"[Khong doi] {filepath}")
 
-                for desc, count in warnings:
-                    total_warnings += 1
-                    print(f"   CANH BAO ({count}x): {desc}")
+            for desc, count in warnings:
+                total_warnings += 1
+                print(f"   CANH BAO ({count}x): {desc}")
 
     print()
     print(f"Tong: {total_files} file, {total_changed} file duoc chuyen, {total_warnings} canh bao can xem tay.")

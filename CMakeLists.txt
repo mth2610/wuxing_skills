@@ -52,6 +52,7 @@ add_executable(wuxing
     core/force_field.c
     core/camera_fx.c
     core/particle_system.c
+    core/gpu_particle_system.c
     core/path_spline.c
     core/post_fx.c
     core/ribbon_strip.c
@@ -105,14 +106,11 @@ foreach(asset_path ${MAP_ASSETS})
     configure_file(${asset_path} ${CMAKE_CURRENT_BINARY_DIR}/${rel_path} COPYONLY)
 endforeach()
 
-# --- Copy Shaders của hệ thống hạt cũ ---
-# GPU mode (Linux/Windows - OpenGL 4.3+): Compute Shader + SSBO
-configure_file(core/shaders/particles.comp ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/particles.comp COPYONLY)
-configure_file(core/shaders/particles.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/particles.vs COPYONLY)
-configure_file(core/shaders/particles.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/particles.fs COPYONLY)
-# CPU mode (macOS - OpenGL 4.1): Vertex attributes thay SSBO
-configure_file(core/shaders/particles_cpu.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/particles_cpu.vs COPYONLY)
-configure_file(core/shaders/particles_cpu.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/particles_cpu.fs COPYONLY)
+# --- gpu_particle_system shaders ---
+configure_file(core/shaders/gpu_particles.comp     ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/gpu_particles.comp     COPYONLY)
+configure_file(core/shaders/gpu_particles_ssbo.vs  ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/gpu_particles_ssbo.vs  COPYONLY)
+configure_file(core/shaders/gpu_particles_vbo.vs   ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/gpu_particles_vbo.vs   COPYONLY)
+configure_file(core/shaders/gpu_particles.fs       ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/gpu_particles.fs       COPYONLY)
 configure_file(core/shaders/taiji.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/taiji.fs COPYONLY)
 
 # --- Cập nhật: Sao chép thư viện Shaders chuyên dụng Phase 1 và 2 vào thư mục shaders/ ---

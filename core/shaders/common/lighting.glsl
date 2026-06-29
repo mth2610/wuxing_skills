@@ -2,12 +2,14 @@
 // WUXING — Lighting Utilities
 // Include sau fs_header.glsl trong .fs của skill.
 //
-// Cung cấp 3 hàm dùng chung:
+// Cung cấp:
 //   perturbNormal()  — Normal perturbation qua gradient height field
 //   calcFresnel()    — Fresnel rim effect (Schlick)
 //   calcSpecular()   — Specular Blinn-Phong
+//   calcDiffuse()    — Lambertian diffuse với ambient floor
 //
 // Không phụ thuộc vào bất kỳ uniform skill-specific nào.
+// lightDir chuẩn của project: normalize(vec3(0.5, 0.8, 0.5))
 // ============================================================
 
 // Tính normal bị nhiễu từ gradient của một height field.
@@ -46,4 +48,16 @@ float calcFresnel(vec3 normal, vec3 viewDir, float power) {
 float calcSpecular(vec3 normal, vec3 lightDir, vec3 viewDir, float shininess) {
     vec3 halfVec = normalize(lightDir + viewDir);
     return pow(max(dot(normal, halfVec), 0.0), shininess);
+}
+
+// Lambertian diffuse với ambient floor.
+// Trả về [ambient..1.0] — cộng trực tiếp vào baseColor như hệ số nhân sáng.
+//   ambient — ánh sáng nền tối thiểu (thường 0.10 – 0.25)
+//
+// Ví dụ:
+//   vec3 lightDir = normalize(vec3(0.5, 0.8, 0.5));   // hướng đèn chuẩn
+//   float diff = calcDiffuse(normal, lightDir, 0.15);
+//   baseColor *= diff;
+float calcDiffuse(vec3 normal, vec3 lightDir, float ambient) {
+    return max(dot(normalize(normal), normalize(lightDir)), ambient);
 }

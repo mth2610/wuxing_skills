@@ -94,8 +94,33 @@ static char *ProcessIncludes(const char *filePath, int depth) {
   return output;
 }
 
+#ifdef __ANDROID__
+// Rewrites "#version 330" (desktop GL 3.3) to "#version 300 es" (GLES 3.0).
+// Also handles 310 es → 300 es so include files that mention 310 don't break.
+// Called only on Android after include expansion.
+static void RewriteVersionForGLES(char *buf, int maxLen) {
+    // Replace "#version 330" (12 chars) with "#version 300 es" (15 chars)
+    char *p = strstr(buf, "#version 330");
+    if (p) {
+        int pos = (int)(p - buf);
+        int tail = (int)strlen(p + 12) + 1;
+        if (pos + 15 + tail <= maxLen) {
+            memmove(p + 15, p + 12, tail);
+            memcpy(p, "#version 300 es", 15);
+        }
+    }
+    // Replace "#version 310 es" if accidentally included from a compute header
+    p = strstr(buf, "#version 310 es");
+    if (p) memcpy(p, "#version 300 es", 15);
+}
+#endif
+
 char *ShaderPreprocessor_Load(const char *filePath) {
-  return ProcessIncludes(filePath, 0);
+    char *result = ProcessIncludes(filePath, 0);
+#ifdef __ANDROID__
+    if (result) RewriteVersionForGLES(result, MAX_SHADER_SIZE);
+#endif
+    return result;
 }
 
 // ── Thay đổi cần thiết trong resource_manager.c ──────────────────────────────

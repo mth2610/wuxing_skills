@@ -10,6 +10,10 @@
 // SkillManager_BeginShader() — không cần set thủ công.
 // ============================================================
 
+#ifdef GL_ES
+precision highp float;
+#endif
+
 in vec3 vertexPosition;
 in vec2 vertexTexCoord;
 in vec3 vertexNormal;

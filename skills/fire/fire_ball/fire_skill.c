@@ -6,6 +6,7 @@
 #include "core/ribbon_strip.h"
 #include "rlgl.h"
 #include "core/skill_manager.h"
+#include "core/resource_manager.h"
 #include "core/utils_math.h"
 #include <math.h>
 #include <string.h>
@@ -180,7 +181,7 @@ static void TriggerFireImpact(Vector3 pos, float sizeScale) {
 }
 
 void InitFireSkill(int screenWidth, int screenHeight) {
-  fireShader = LoadShader(0, "skills/fire/fire_ball/fire.fs");
+  fireShader = ResourceManager_LoadShader(NULL, "skills/fire/fire_ball/fire.fs");
   timeLoc = GetShaderLocation(fireShader, "u_time");
   dragonHeadTex = LoadTexture("skills/fire/fire_ball/dragon_head.png");
 
@@ -523,7 +524,7 @@ void DrawFireSkill(void) {
 }
 
 void UnloadFireSkill(void) {
-  UnloadShader(fireShader);
+  /* ResourceManager handles shader cleanup */
   UnloadTexture(dragonHeadTex);
   UnloadTexture(particleTex);
 }

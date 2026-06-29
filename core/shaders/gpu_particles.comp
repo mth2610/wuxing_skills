@@ -1,0 +1,48 @@
+#version 430 core
+// Compute shader — cập nhật vật lý particle trên GPU
+// Chạy được khi GL >= 4.3 (Windows/Linux). macOS dùng cpu path.
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+// Phải khớp byte-for-byte với GpuParticleData trong gpu_particle_system.c
+struct GpuParticleData {
+    vec4 pos_radius;     // xyz = position, w = radius
+    vec4 vel_drag;       // xyz = velocity, w = drag coefficient
+    vec4 color_start;    // rgba normalized (0..1)
+    vec4 color_end;      // rgba normalized (0..1)
+    vec4 life_data;      // x = life_remaining, y = life_max, z = phase, w = active (0/1)
+};
+
+layout(std430, binding = 0) buffer ParticleBuffer {
+    GpuParticleData particles[];
+};
+
+uniform float u_dt;
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= particles.length()) return;
+
+    GpuParticleData p = particles[idx];
+
+    // Skip inactive
+    if (p.life_data.w < 0.5) return;
+
+    // Decrement lifetime
+    p.life_data.x -= u_dt;
+    if (p.life_data.x <= 0.0) {
+        p.life_data.w = 0.0; // deactivate
+        particles[idx] = p;
+        return;
+    }
+
+    // Drag — giảm vận tốc mỗi frame
+    float drag_factor = 1.0 - p.vel_drag.w * u_dt;
+    drag_factor = max(drag_factor, 0.0);
+    p.vel_drag.xyz *= drag_factor;
+
+    // Integrate position
+    p.pos_radius.xyz += p.vel_drag.xyz * u_dt;
+
+    particles[idx] = p;
+}
