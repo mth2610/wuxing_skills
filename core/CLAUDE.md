@@ -47,6 +47,10 @@ Manages the entire **Core Engine** module of the Wuxing Skills project. Owns the
 4. Only touch the file for **public API surface** changes (signature, struct field, enum value, parameter semantics) or confirmed usage notes — not internal `.c` refactors.
 5. If Skills Agent's edit conflicts with or corrects a Core-authored section, flag it explicitly in the edit (e.g. resolve `[!NOTE]` "treat as working assumption" markers once confirmed) rather than silently overwriting.
 
+## `CORE_API_SHORT.md` — manual-only, NOT auto-synced
+
+`CORE_API_SHORT.md` is a maximally compact, lossless-but-terse condensation of `CORE_API.md`, written for AI consumption (dense signatures/tables, minimal prose). **Do NOT update it as part of routine `CORE_API.md` edits, resolved-issue passes, or any other task — only regenerate it when the user explicitly asks.** Treating it as auto-synced would double the cost of every future `CORE_API.md` change for no benefit between explicit requests. If you notice it's drifted from `CORE_API.md`, mention it in your report; don't fix it unprompted.
+
 ---
 
 ## Token-efficiency rules (MANDATORY)

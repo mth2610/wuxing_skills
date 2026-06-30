@@ -687,7 +687,9 @@ void UnloadExampleAttachedSkill(void) {
 }
 ```
 > [!NOTE]
-> Requires `#include "entities/entities.h"` to call `Entity_ApplyAoEBuff`. As of this writing, `skills/CLAUDE.md`'s allowed read list covers `core/` headers and `environment/environment_system.h` only — `entities/` is **not** listed. Skills Agent: confirm with whoever owns `skills/CLAUDE.md` whether `entities/entities.h` should be added to that list before shipping a real Buff skill against this skeleton.
+> Requires `#include "entities/entities.h"` to call `Entity_ApplyAoEBuff`. `skills/CLAUDE.md`'s allowed read list now includes `entities/entities.h` (for `Entity_ApplyAoEDamage`/`Entity_ApplyAoEBuff`/`Entity_GetNearbyTargets`) — this is resolved, no further confirmation needed.
+>
+> **Any skill calling `Entity_ApplyAoEDamage` or `Entity_ApplyAoEBuff`** (not just this skeleton) must `#include "entities/entities.h"` — this is easy to miss since these functions live in `entities/`, not `core/`, unlike everything else a skill normally includes. A missing include here fails with `implicit declaration of function` at compile time, not a clear error pointing at the missing header.
 
 ---
 
@@ -1185,6 +1187,228 @@ Rules:
 
 > [!NOTE]
 > **UV convention (inferred — confirm against `procedural_mesh_utils.c` source):** Based on how `tube.vs`/`tube.fs` consume `vertexTexCoord`, the tube mesh appears to map `vertexTexCoord.x ∈ [0, 1]` around the **radial/circumferential** direction (so `phi = vertexTexCoord.x * 2π` sweeps once around the tube's cross-section) and `vertexTexCoord.y` along the **length** of the tube in world units, normalized by dividing by `u_uvLength` (set from C-side to the tube's actual Bezier arc length) to get `t ∈ [0, 1]` along the spline. This document doesn't yet have a confirmed, authoritative statement of this convention from the mesh-generation source itself — treat the above as the working assumption validated by the Water Stream sample, and update this note if `procedural_mesh_utils.c` defines it differently (e.g. if `uvLengthScale` in `ProceduralMesh_DrawTube` already pre-divides UVs, in which case skill shaders should *not* divide by `u_uvLength` again).
+
+#### Wave Plane (rippling water surface)
+
+```c
+#define WAVE_PLANE_MAX_SEGMENTS_X 24
+#define WAVE_PLANE_MAX_SEGMENTS_Z 24
+
+typedef struct {
+    float wavelength;
+    float amplitude;
+    Vector3 direction;     // propagation direction, XZ-plane, normalized internally
+    float crestSharpness;  // 0 = smooth sine, higher = sharper peaked crests
+} WavePlaneConfig;
+
+typedef struct {
+    Vector3 verts[WAVE_PLANE_MAX_SEGMENTS_X + 1][WAVE_PLANE_MAX_SEGMENTS_Z + 1];
+    Vector3 normals[WAVE_PLANE_MAX_SEGMENTS_X + 1][WAVE_PLANE_MAX_SEGMENTS_Z + 1];
+    int segmentsX;
+    int segmentsZ;
+} WavePlaneMeshData;
+
+WavePlaneConfig ProceduralMesh_DefaultWavePlaneConfig(void);
+
+void ProceduralMesh_BuildWavePlane(
+    WavePlaneMeshData *out,
+    Vector3 center,
+    float width, float length,
+    int segmentsX, int segmentsZ,
+    float time,
+    const WavePlaneConfig *cfg
+);
+
+void ProceduralMesh_DrawWavePlane(const WavePlaneMeshData *data, Color color);
+```
+Rules:
+- Flat-ish rippling water surface — a subdivided grid with per-vertex Y displacement from 3 layered sine waves (main directional + secondary cross-direction at ~2.3x freq + slow low-frequency) plus a deterministic per-vertex hash-noise term, all computed CPU-side at Build time (geometry, not GPU shader displacement) — same CPU/GPU split as `BuildTube`.
+- `crestSharpness` reshapes the main wave via `sign(s) * |s|^(1/(1+sharpness))` — 0 leaves it a plain sine, higher values peak the crests.
+- Moderate segment counts only (`WAVE_PLANE_MAX_SEGMENTS_X/Z` = 24) — low-poly per mobile/Android performance discipline, not a dense smooth mesh.
+- Build every frame like `BuildTube` (animates via `time`), then `Draw`. `Draw*` takes an explicit `Color` (unlike `DrawTube`, which gets color from a dedicated shader) to support plain vertex-color rendering too.
+- Normals computed via finite-difference between neighboring displaced verts (not analytic).
+
+#### Curling Wave (cresting/curling wave wall — tsunami silhouette)
+
+```c
+#define CURLING_WAVE_MAX_WIDTH_SEGS 32
+#define CURLING_WAVE_MAX_PROFILE_SEGS 16
+
+typedef struct {
+    float curlAmount;  // 0 = flat wall, higher = more overhang at the top lip
+    float height;
+    float archWidth;   // total width of the wave wall along widthDirection
+} CurlingWaveConfig;
+
+typedef struct {
+    // verts[w][p]: w = slice along width, p = point along the "C" profile (0=base, profileSegs=outer lip)
+    Vector3 verts[CURLING_WAVE_MAX_WIDTH_SEGS + 1][CURLING_WAVE_MAX_PROFILE_SEGS + 1];
+    Vector3 normals[CURLING_WAVE_MAX_WIDTH_SEGS + 1][CURLING_WAVE_MAX_PROFILE_SEGS + 1];
+    int widthSegs;
+    int profileSegs;
+} CurlingWaveMeshData;
+
+CurlingWaveConfig ProceduralMesh_DefaultCurlingWaveConfig(void);
+
+void ProceduralMesh_BuildCurlingWave(
+    CurlingWaveMeshData *out,
+    Vector3 baseCenter,
+    Vector3 widthDirection,
+    const CurlingWaveConfig *cfg,
+    int profileSegs, int widthSegs
+);
+
+void ProceduralMesh_DrawCurlingWave(const CurlingWaveMeshData *data, Color color);
+```
+Rules:
+- Distinct from Wave Plane — this is the actual cresting/curling wave wall, not a flat rippling surface. Sweeps an **open "C"-shaped cross-section** (base → rising face → overhanging lip) sideways along `widthDirection`, reusing `BuildTube`'s sweep-along-path technique (Frenet-style `up`/`depth` frame) adapted to an open arc instead of a closed circle.
+- Profile arc: starts at -90° (base), smoothstep-eased sweep up to `90° + 90°*curlAmount` (lip). `curlAmount = 0` → flat wall; higher → more overhang.
+- Small deterministic per-vertex jitter applied near the lip to avoid a perfectly smooth "cast mold" look.
+- Same Build-every-frame-then-Draw convention as `BuildTube`/`BuildWavePlane`.
+
+#### Rock (low-poly faceted rock — prominent/large rocks only)
+
+```c
+#define ROCK_MESH_MAX_VERTS 162
+#define ROCK_MESH_MAX_FACES 320
+
+typedef struct {
+    Vector3 verts[ROCK_MESH_MAX_VERTS];
+    Vector3 faceNormals[ROCK_MESH_MAX_FACES];  // flat-shaded: 1 normal per face
+    int faceVertIdx[ROCK_MESH_MAX_FACES][3];
+    int vertCount;
+    int faceCount;
+} RockMeshData;
+
+void ProceduralMesh_BuildRock(
+    RockMeshData *out,
+    Vector3 center, float radius,
+    float jitterAmount,
+    int seed,
+    int subdivisions
+);
+
+void ProceduralMesh_DrawRock(const RockMeshData *data, Color color);
+```
+Rules:
+- For **prominent/large rocks only**. Small background rubble should keep using squished `DrawCoreCube`/`DrawCoreSphere` with per-instance randomization (§12.3) — don't switch those over to this function.
+- Built from a base icosahedron (12 verts/20 faces), recursively subdivided (`subdivisions`, clamped to 0-2 — level 2 ≈ 162 verts, at the `ROCK_MESH_MAX_VERTS` ceiling), then each vertex's radial distance from `center` is jittered within `±jitterAmount` via a deterministic hash PRNG keyed on `seed` + vertex index. Same `seed` always produces the same rock shape.
+- Flat-shaded (per-face normals, not per-vertex averaged) so facets read as angular/natural, not as a smoothed sphere — this is the key difference from squishing `DrawCoreSphere`.
+- **Build once at cast time and cache in the skill's instance struct** — unlike `BuildTube`/`BuildWavePlane`, rocks don't animate their shape, so there's no reason to rebuild every frame.
+
+#### Shard Cluster (radiating crystal/shard cluster)
+
+```c
+#define SHARD_CLUSTER_MAX_SHARDS 16
+#define SHARD_MAX_SIDES 6
+
+typedef struct {
+    float spreadAngle;       // half-angle of the cone shards radiate within (radians)
+    float thicknessMin, thicknessMax; // cross-section radius as a ratio of each shard's own length
+    float tipSharpness;      // 0 = flat-cut tip (full cross-section), 1 = sharp point
+    int   sides;              // polygon sides per shard cross-section, <= SHARD_MAX_SIDES
+} ShardClusterConfig;
+
+typedef struct {
+    Vector3 baseRing[SHARD_CLUSTER_MAX_SHARDS][SHARD_MAX_SIDES];
+    Vector3 tipRing[SHARD_CLUSTER_MAX_SHARDS][SHARD_MAX_SIDES];
+    Vector3 baseNormal[SHARD_CLUSTER_MAX_SHARDS][SHARD_MAX_SIDES];
+    Vector3 tipCenter[SHARD_CLUSTER_MAX_SHARDS];
+    Vector3 baseCenter[SHARD_CLUSTER_MAX_SHARDS];
+    int sides;
+    int shardCount;
+} ShardClusterMeshData;
+
+ShardClusterConfig ProceduralMesh_DefaultShardClusterConfig(void);
+
+void ProceduralMesh_BuildShardCluster(
+    ShardClusterMeshData *out,
+    Vector3 origin,
+    Vector3 mainDirection,
+    int shardCount,
+    float minLength, float maxLength,
+    int seed,
+    const ShardClusterConfig *cfg
+);
+
+void ProceduralMesh_DrawShardCluster(const ShardClusterMeshData *data, Color color);
+```
+Rules:
+- Each shard is a tapered prism (low-poly polygon cross-section, `cfg->sides`) radiating from `origin`, tilted off `mainDirection` by a random angle within `cfg->spreadAngle` (cone spread), with randomized length (`minLength..maxLength`), thickness ratio (`thicknessMin..thicknessMax`), and cross-section twist — all deterministic per `seed` (same PRNG helper as `BuildRock`'s jitter). Shards are never evenly spaced/sized — same anti-robotic discipline as Rock/CurlingWave jitter.
+- Use case: Metal sword-qi/shard skills, Water ice-shard skills.
+- `tipSharpness` controls `tipRadius = baseRadius * (1 - tipSharpness)` — 1.0 gives a near-point tip, 0.0 a flat-cut prism end.
+- **Build once at cast time and cache** — shards don't animate shape, same convention as Rock.
+
+#### Vortex Funnel (tapered, twisting wind/tornado funnel)
+
+```c
+#define VORTEX_FUNNEL_MAX_HEIGHT_SEGS 32
+#define VORTEX_FUNNEL_MAX_RADIAL_SEGS 24
+
+typedef struct {
+    float topRadius;
+    float bottomRadius;
+    float height;
+    float twistAmount;  // total rotation in degrees from bottom to top
+    int   ridgeCount;   // number of visible spiral ridges
+    float ridgeAmount;  // ridge protrusion, as a ratio of local radius (0 = no ridge, ~0.15 = moderate)
+} VortexFunnelConfig;
+
+typedef struct {
+    // rings[i][j]: i = along height (0=bottom, heightSegs=top), j = around circumference
+    Vector3 rings[VORTEX_FUNNEL_MAX_HEIGHT_SEGS + 1][VORTEX_FUNNEL_MAX_RADIAL_SEGS];
+    Vector3 normals[VORTEX_FUNNEL_MAX_HEIGHT_SEGS + 1][VORTEX_FUNNEL_MAX_RADIAL_SEGS];
+    int heightSegs;
+    int radialSegs;
+} VortexFunnelMeshData;
+
+VortexFunnelConfig ProceduralMesh_DefaultVortexFunnelConfig(void);
+
+void ProceduralMesh_BuildVortexFunnel(
+    VortexFunnelMeshData *out,
+    Vector3 center,
+    const VortexFunnelConfig *cfg,
+    int heightSegs, int radialSegs,
+    float time
+);
+
+void ProceduralMesh_DrawVortexFunnel(const VortexFunnelMeshData *data, Color color);
+```
+Rules:
+- For Phong (wind) skills, tornado/cyclone visuals, the Taiji ultimate.
+- Conceptually the same sweep-along-path technique `BuildTube`/`BuildCurlingWave` use, specialized for a **straight vertical path**: instead of a Bezier + Frenet frame, the path is fixed +Y, so the function builds rings directly rather than calling `BuildTube` — but the `rings[height][radial]`/`normals[height][radial]` data layout and the two-level (height, then radial) build loop intentionally mirror `TubeMeshData`/`BuildTube`'s convention.
+- Cross-section radius lerps `bottomRadius -> topRadius` over height, rotates by `twistAmount` degrees total (plus continuous `time`-based spin for an animated vortex — pass `time=0` for a static/cached funnel), and gets a `cos(phi * ridgeCount)` bump (`ridgeAmount`) that follows the twist angle so ridges read as spiraling along the surface, not static rings.
+- **No end caps** — the funnel is open at both ends (tornado silhouette shows through), unlike Tube's capped ends.
+- Animated (spinning) funnels should rebuild every frame like `BuildTube`/`BuildWavePlane`; static use can build once and cache with `time=0`.
+
+#### Fissure (raised/sunken jagged 3D ground crack)
+
+```c
+#define FISSURE_MAX_SEGMENTS 48
+#define FISSURE_CROSS_VERTS 5  // left edge, left shoulder, bottom, right shoulder, right edge
+
+typedef struct {
+    Vector3 verts[FISSURE_MAX_SEGMENTS + 1][FISSURE_CROSS_VERTS];
+    Vector3 normals[FISSURE_MAX_SEGMENTS + 1][FISSURE_CROSS_VERTS];
+    int segments;
+} FissureMeshData;
+
+void ProceduralMesh_BuildFissure(
+    FissureMeshData *out,
+    const Vector3 *pathPoints, int pathPointCount,
+    float width, float depth,
+    float jaggedness,
+    int seed
+);
+
+void ProceduralMesh_DrawFissure(const FissureMeshData *data, Color color);
+```
+Rules:
+- Distinct from the existing **flat 2D crack decals** — this is real 3D geometry, for Earth skills (Địa chấn, Thạch shatter-type effects) needing more presence than a decal.
+- Centerline is rasterized from `pathPoints` (a polyline, not Bezier control points) via `SamplePath` (`core/path_spline.h`) — reuses the same path-sampling function the Anchored-Along-Path skill skeleton already uses, no hand-rolled sampling. `spacing` passed to `SamplePath` is `max(width*0.5, 1.0)`, clamped to `FISSURE_MAX_SEGMENTS` samples.
+- Each cross-section is a 5-vertex jagged "V" (left edge at y=0 → left shoulder → bottom at y=-depth → right shoulder → right edge at y=0), with `jaggedness` (0..1) scaling deterministic per-segment jitter (seed-keyed, same PRNG helper as Rock) on edge width, shoulder depth, bottom depth, and lateral centerline offset — avoids a perfectly straight/regular crack.
+- Pass a negative `depth` for a raised crack instead of a sunken one.
+- **Build once at cast time and cache** — fissures don't animate shape, same convention as Rock/ShardCluster.
 
 ### Post FX (`core/post_fx.h`)
 
@@ -1739,9 +1963,11 @@ Nếu skill tự khai báo precision mặc định thấp hơn (vd `precision me
 
 Before drawing custom geometry with `rlBegin()`, always reset the vertex color:
 ```c
+#include "rlgl.h"   // required for rlBegin/rlColor4ub/rlVertex3f/rlEnd — not implicitly pulled in by raylib.h
+// ...
 rlColor4ub(255, 255, 255, 255);
 ```
-Otherwise the mesh may inherit colors from previous draw calls.
+Otherwise the mesh may inherit colors from previous draw calls. `rlColor4ub` (and the rest of the `rl*` immediate-mode API) lives in `rlgl.h`, a separate header from `raylib.h` — a skill that only includes `raylib.h` will fail with `implicit declaration of function` at compile time, not an obvious "missing header" error.
 
 ### 11.2 Procedural Noise
 When using world-space procedural noise:
