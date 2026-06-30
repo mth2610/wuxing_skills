@@ -140,7 +140,7 @@ int main(void) {
   uiState.currentParams.pathType = CAST_PATH_PROJECTILE;
   uiState.currentParams.showPortal = true;
   uiState.currentParams.damage = 100.0f;
-  uiState.isPanelOpen = true;
+  uiState.isPanelOpen = false;
 
   PostFXConfig postFXConfig = {.bloomEnabled = true,
                                .bloomThreshold = 0.65f,
@@ -299,6 +299,7 @@ int main(void) {
 
     MyEndMode3D();
     ScreenDistort_End();
+    ScreenDistort_SnapshotDepth(); // soft particles: snapshot this frame's depth for next frame's sampling
 
     PostFX_Begin();
     ClearBackground(BLACK);
@@ -331,7 +332,9 @@ int main(void) {
         // MỚI: IN THÔNG TIN TEXT DEBUG LÊN HUD CŨNG ĐƯỢC QUẢN LÝ TẬP TRUNG
         // =========================================================================
         VFXTest_DrawHUD();
-        DrawSandboxHUD();
+        if (uiState.isPanelOpen) {
+            DrawSandboxHUD();
+        }
     }
              
     SkillDebugger_PostRender(uiState.activeSkillIndex, player.position, mouseTarget3D);

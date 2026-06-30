@@ -1718,11 +1718,31 @@ void SkillBuilder_AddCastEffect(SkillBuildContext *ctx, EffectPresetType preset)
 | `lighting.glsl` | `.fs` cần chiếu sáng | `perturbNormal`, `calcFresnel`, `calcSpecular`, `calcDiffuse` |
 | `noise.glsl` | `.vs` / `.fs` cần nhiễu | `hash2`, `hash3`, `vnoise`, `fbm2`, `fbm2N` |
 | `fx.glsl` | `.fs` cần hiệu ứng | `dissolveCalc`, `flowBlend`, `emissiveMask` |
+| `triplanar.glsl` | `.fs` cho mesh không có UV ổn định | `triplanarWeights`, `triplanarNoise`, `triplanarSample` |
 
 **Quy tắc include:**
-- Luôn include theo thứ tự: `fs_header.glsl` → `noise.glsl` (nếu cần) → `lighting.glsl` → `fx.glsl`
+- Luôn include theo thứ tự: `fs_header.glsl` → `noise.glsl` (nếu cần) → `lighting.glsl` → `fx.glsl` → `triplanar.glsl` (nếu cần, phụ thuộc `noise.glsl` cho `triplanarNoise`)
 - `fx.glsl` không phụ thuộc `noise.glsl` — có thể include riêng lẻ hoặc cùng nhau
-- Không tái implement hash/noise/fbm/dissolve/flow blend trong skill code
+- Không tái implement hash/noise/fbm/dissolve/flow blend/triplanar trong skill code
+
+### Triplanar Mapping (`core/shaders/common/triplanar.glsl`)
+
+Giải quyết Item 4a (`CORE_ISSUES.md`): các `ProceduralMesh_Draw*` (Rock, ShardCluster, Fissure, VortexFunnel) vẽ qua `rlBegin`/`rlEnd` immediate-mode — chỉ có position + normal, **không có texcoord** — nên UV-based texturing sẽ stretch/streak trên facet jagged. Triplanar chiếu texture/pattern từ 3 mặt phẳng trục world-space (X/Y/Z) và blend theo world normal thay vì dùng UV.
+
+```glsl
+vec3 triplanarWeights(vec3 worldNormal, float sharpness);              // sharpness 2.0-6.0
+float triplanarNoise(vec3 worldPos, vec3 weights, float scale);        // procedural, không cần texture asset
+vec4 triplanarSample(sampler2D tex, vec3 worldPos, vec3 weights, float scale); // texture asset thật
+```
+
+Pattern dùng trong `main()`:
+```glsl
+vec3 w = triplanarWeights(fragNormal, 4.0);
+float pattern = triplanarNoise(fragPosition, w, 0.05); // hoặc triplanarSample(myTex, fragPosition, w, 0.02)
+```
+
+> [!NOTE]
+> `scale` là tần số chiếu world-space (không phải UV [0,1]) — giá trị nhỏ (0.01-0.05) cho mesh lớn, lớn hơn (0.05-0.1) cho mesh nhỏ/chi tiết. Tune bằng mắt theo kích thước thực tế của mesh.
 
 ### Required Includes
 

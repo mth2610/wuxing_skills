@@ -125,7 +125,7 @@ void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
     camera.projection = CAMERA_PERSPECTIVE;
 
     // Cấu hình Player
-    player->position = (Vector3){ 130.0f, 0.0f, 350.0f };
+    player->position = (Vector3){ -1100.0f, 0.0f, 440.0f };
     player->radius = 30.0f;
     player->dashCooldown = 0.0f;
     player->dashTimer = 0.0f;

@@ -6,99 +6,147 @@ the API surface that IS shipped and documented.
 
 ---
 
-## Item 3 — Soft Particles (REVERTED, unresolved)
+## Item 3 — Soft Particles (REBUILD IN PROGRESS, paused — 3 real bugs fixed, 1 open question)
 
-**Status: removed from the codebase.** Multiple debugging passes failed to
-get a translucent particle correctly fading at geometry intersections. The
-dissolve edge glow and metaballs parts of Item 3 **are** done and kept (see
-`CORE_API.md` — Metaballs section, and `fx.glsl`'s `dissolveCalc`).
+**Status: `core/screen_distort.c/.h` infrastructure is still in the tree and
+untouched.** Builds clean, no regressions. Paused mid-verification because
+the debugging loop was taking too long — picking this up again should be
+much faster than starting over, since 3 of probably ~4 real bugs are now
+confirmed fixed.
 
-### What was attempted
+> [!NOTE]
+> **Test harness removed.** `core_test` (`skills/taiji/core_test/`) was
+> repurposed as a single-purpose test skill for Item 4a (triplanar mapping)
+> — `core_test_soft.vs/.fs` and `core_test_skill.c`'s `DrawSoftParticleShape()`
+> described below were deleted, along with the dissolve/metaball test shapes.
+> Whoever resumes Item 3 needs to re-add a soft-particle test shape (sphere +
+> `ScreenDistort_BindDepthForSoftParticles`/`UnbindSoftParticleDepth` call
+> sites, depth-test/mask disable pattern) before re-verifying — the engine
+> side (`core/screen_distort.c/.h`, `core/shaders/depth_copy.fs`,
+> `core/shaders/common/soft_particle.glsl`) is unaffected and still in place.
+> The dissolve edge glow (`fx.glsl`'s `dissolveCalc`) and metaballs
+> (`core/metaball_fx.h`) APIs themselves are also unaffected — only their
+> `core_test` demo call sites were removed.
 
-A scene-depth-texture system in `core/screen_distort.c` (the module owning
-the real 3D-pass render target) to let particle shaders fade their alpha
-near intersections instead of hard-clipping:
-- `renderTex` rebuilt with a sampleable depth **texture** attachment
-  (instead of raylib's default depth renderbuffer).
-- A "snapshot" pass each frame copying that depth into a second texture
-  (`prevDepthTex`), to avoid sampling a texture that's still bound as the
-  active render target (an OpenGL feedback-loop hazard).
-- A skill-side helper (`ScreenDistort_BindDepthForSoftParticles`) to bind
-  that snapshot to a shader's custom sampler + push near/far/resolution
-  uniforms.
-- A `soft_particle.glsl` opt-in include with the fade-factor math.
+### What's implemented (same architecture as the first attempt)
+- `core/screen_distort.c/.h`: `renderTex` rebuilt with a sampleable depth
+  **texture** attachment (`LoadRenderTextureWithDepthTexture`, via manual
+  `rlLoadFramebuffer`/`rlLoadTextureDepth`), a `prevDepthTex` R32F snapshot
+  target (`LoadLinearDepthTarget`), `ScreenDistort_SnapshotDepth()` (copies
+  + linearizes scene depth once/frame, called from `main.c` right after
+  `ScreenDistort_End()`), `ScreenDistort_BindDepthForSoftParticles`/
+  `UnbindSoftParticleDepth`.
+- `core/shaders/depth_copy.fs`, `core/shaders/common/soft_particle.glsl`:
+  unchanged in spirit from the first attempt (linearize NDC depth; expose
+  `SoftParticle_LinearDepth`/`SoftParticle_Factor`).
 
-### Why it was reverted
+### Three confirmed, fixed root causes (none of these were identified last time)
 
-The fade factor (`SoftParticle_Factor`) kept evaluating to exactly `0.0`
-(particle invisible) in real on-screen testing, despite several rounds of
-fixes that each looked correct in isolation but didn't hold up:
+1. **GL depth TEST was never disabled, only depth WRITE.** The draw call
+   only had `rlDisableDepthMask()`. With `GL_DEPTH_TEST` still enabled, the
+   buried half of the sphere fails the hardware depth test against the
+   ground plane and never reaches the fragment shader at all — no shader
+   fix can matter if the fragment is discarded before it runs. **Fix:**
+   wrap the draw in `rlDisableDepthTest()`/`rlEnableDepthTest()` too, not
+   just the depth-mask pair. Confirmed via an isolated flat-shader test
+   (Step 0): the full sphere, including the buried portion, became visible.
 
-1. **First suspected cause:** stale/uncleared depth buffer in the snapshot
-   target failing the depth test during the copy write. Fixed
-   (`rlDisableDepthTest()` around the copy) — did not resolve visibility.
-2. **Second suspected cause:** `DrawCoreSphere`'s immediate-mode `rlgl`
-   batch draw not honoring a manually-bound texture unit. Switched to
-   `DrawMesh` + a baked `Mesh` — a CPU-readback test "confirmed" this fixed
-   it, but that test was methodologically flawed (it scanned the *whole
-   screen*, not the particle's own pixels, so it was dominated by unrelated
-   scene geometry and gave a false positive).
-3. **Third suspected cause:** `DrawMesh`'s automatic `Material`-map texture
-   binding (slots 0–11) clobbering a custom sampler bound to a low texture
-   slot. Moved the depth-texture bind to slot 12. A *properly isolated*
-   marker-color readback test then showed correct results — but **only at
-   one specific world position** (arena center). At the actual player
-   position, a real screenshot showed the particle rendering as solid
-   black again (factor still `0.0`).
-4. **Fourth suspected cause:** 8-bit RGBA precision in the depth snapshot
-   crushing all real scene distances to `255` given the project's
-   near/far planes (`0.1` / `15000` — a 150000:1 ratio), making
-   scene-depth and particle-depth indistinguishable. Switched the snapshot
-   target to a single-channel `R32F` float texture with linearized depth
-   stored directly. Also turned out `R32F` needs explicit `TEXTURE_FILTER_POINT`
-   (linear filtering on float textures is undefined on many GL3.3 drivers) —
-   fixed that too. **Still read back black** in the final screenshot test
-   before the decision was made to cut losses and revert.
+2. **Near-plane mismatch in the depth linearization.** `ScreenDistort_SnapshotDepth()`
+   (and `BindDepthForSoftParticles`) used `rlGetCullDistanceNear()`/`Far()`
+   (reflects `rlSetClipPlanes(0.1f, 15000.0f)` in `main.c`) to linearize
+   depth — but the ACTUAL projection matrix used during rendering
+   (`MyBeginMode3D`'s `rlFrustum(...)` in `main.c`) hardcodes **near=10.0**,
+   not 0.1. These are two different, unrelated globals. Using the wrong
+   near value silently crushed every real depth sample to near-zero
+   (confirmed numerically: a CPU readback of the snapshot texture showed
+   `0.17`–`4.4` world units for content that was actually 17–426 units
+   away once the correct near value was used). **Fix:** added explicit
+   `SOFT_PARTICLE_SCENE_NEAR`/`_FAR` constants in `core/screen_distort.c`
+   matching `MyBeginMode3D`'s real values, with a comment cross-referencing
+   `main.c` so they don't drift apart silently again. This coupling is
+   fragile — if `MyBeginMode3D`'s near/far ever changes, these must be
+   updated too; there's no shared single source of truth for it currently.
 
-### Honest assessment for whoever picks this up
+3. **Manual `rlActiveTextureSlot()`/`rlEnableTexture()` binding silently
+   didn't reach the shader**, regardless of which slot (tried 1 and 8) or
+   texture format (tried both the R32F depth snapshot and a normal RGBA8
+   texture) — `texture(u_cameraDepthTex, ...)` read back as 0 every time.
+   `core/flow_map.c` already hit and documented this **exact** class of bug
+   for its own multi-texture shader (`FlowMap_Apply`'s "bug cũ" comment) and
+   fixed it by switching to `SetShaderValueTexture()` instead, which lets
+   raylib manage the texture unit itself. Applied the same fix to
+   `ScreenDistort_BindDepthForSoftParticles` — confirmed via an unclamped
+   debug-output test (sampled value let through raw instead of divided down
+   for display, so it visibly clamped to solid red instead of being an
+   indistinguishable near-black sliver) that texture sampling then worked
+   correctly, for both a fixed UV and the real per-pixel computed UV.
 
-Four plausible root causes were found and fixed in sequence, and the bug
-survived all four. That pattern suggests either (a) there's a fifth, still
-unidentified cause, or (b) one of the earlier "fixes" was never actually
-verified correctly and the original cause is still present. The debugging
-method (CPU pixel-readback scans of screenshots) repeatedly produced false
-positives that looked like confirmation — **don't trust a readback test
-that isn't scanning the exact pixels of the shape in question, at the
-exact world position the bug was reported at.**
+### Open question — not yet confirmed (where to pick this back up)
 
-Before retrying: get a way to inspect actual GPU state directly (a real
-graphics debugger / RenderDoc-style capture) rather than inferring
-correctness from rendered pixel colors — that was the main source of the
-repeated false "fixed" conclusions here.
+With all three bugs above fixed, the test sphere was *still* fully
+invisible at the original test camera position. Investigation (numeric,
+not screenshot-color-guessing) showed why: `SoftParticle_Factor`'s
+`diff = sceneLinear - fragLinear` was strongly **negative** — the
+previous-frame scene depth behind the sphere (read at screen-center) was
+only `~17` world units, much *closer* than the sphere itself (`~175` units
+away from that test camera). That means some opaque geometry (almost
+certainly a bamboo stalk in the test map, given how dense/close they are
+around the chosen test position) sat directly between the camera and the
+sphere, in front of it, in the previous frame's depth buffer. The formula,
+as written, correctly fades to 0 when the recorded "scene" is closer than
+the particle — which is arguably correct behavior for an occluder *in
+front*, just not the demo this test position was meant to show. Repositioning the camera to a steep top-down angle (avoiding the bamboo
+line-of-sight) got as far as confirming non-black output before this task
+was paused — **not yet confirmed as a clean, fully-faded-gradient pass.**
 
-### Files affected by the revert
-- Deleted: `core/shaders/common/soft_particle.glsl`, `core/shaders/depth_copy.fs`,
-  `skills/taiji/core_test/core_test_soft.vs`/`.fs`
-- Reverted to pre-Item-3 state: `core/screen_distort.c`/`.h`,
-  `core/procedural_mesh_utils.c`/`.h` (the `ProceduralMesh_CreateBaseSphere`
-  addition was soft-particle-only and removed with it)
-- `main.c`: removed the `ScreenDistort_SnapshotDepth()` call
-- `skills/taiji/core_test/`: kept only the dissolve-quad and metaball shapes
+**Next steps for whoever resumes:**
+1. Find/confirm a test camera + sphere position with clear open
+   background behind the unburied top of the sphere (no intervening
+   geometry), and verify visually that the top stays opaque while the
+   buried bottom fades smoothly — the actual feature pass/fail criterion.
+2. Decide intentionally whether "fade to 0 when occluded by something in
+   front" (current formula behavior) is the desired semantic, or whether
+   particles in front of closer occluders should hard-discard/clip instead
+   of fade — currently accidental-by-formula, not a deliberate design call.
+3. Once visually confirmed: re-add the "Soft Particles" section to
+   `CORE_API.md` (removed in the original revert, commit `54a9c4c`),
+   tune `CORE_TEST_SOFT_FADE_DISTANCE` (currently `30.0f`, unvalidated) to
+   a sensible default, and flip `core_test_skill.c` back to a real
+   `Cast`-triggered demo if useful for future regression checks.
+
+### Process note for next time
+A numeric CPU readback of the actual texture/uniform values (`LoadImageFromTexture`
++ inspect specific pixels, or log resolved `GetShaderLocation` results) caught
+two of the three bugs above almost immediately, where screenshot-color
+guessing previously produced repeated false "it's broken" / false "it's
+fixed" conclusions (this session included — see bug #3's writeup; an early
+attempt to verify the texture read via a `/500`-divided color swatch looked
+like solid failure, but the real value was just too small to see against a
+dominant channel, not actually zero). **Prefer an unclamped/raw numeric
+check over a manually-scaled color visualization when verifying a shader
+value is non-zero or correct** — scaling for human visibility and
+correctness-checking are different goals and conflating them produced
+exactly the kind of false reading this rebuild was meant to avoid.
 
 ---
 
-## Item 4 — Material/Trail/Decal/Bloom upgrades (NOT STARTED)
+## Item 4 — Material/Trail/Decal/Bloom upgrades (4a DONE, 4b–4d NOT STARTED)
 
 From the original Core API update request. Assessed as legitimate, real
-gaps (not redundant with existing code) but no implementation work has
-begun. Four independent sub-items — can be picked up in any order or split
-across sessions:
+gaps (not redundant with existing code). Four independent sub-items — can
+be picked up in any order or split across sessions:
 
-### 4a. Triplanar mapping (Earth/Metal shaders or `lighting.glsl`)
-No existing implementation. Goal: texture large procedural rock/metal
-surfaces by world-space position + normal instead of UV, so jagged
-ProceduralMesh shapes (Rock, ShardCluster, Fissure) don't show
-stretching/streaking on faces with extreme UV distortion.
+### 4a. Triplanar mapping — DONE
+`core/shaders/common/triplanar.glsl` (`triplanarWeights`, `triplanarNoise`,
+`triplanarSample`) — see `CORE_API.md` § GLSL Shader Guidelines →
+"Triplanar Mapping". Blends 3 world-space axis projections by world normal,
+so jagged `ProceduralMesh_Draw*` shapes (Rock, ShardCluster, Fissure — all
+rlBegin immediate-mode, position+normal only, no UV) don't stretch/streak.
+Tested via `skills/taiji/core_test` (`core_test_triplanar.vs/.fs`): a
+`ProceduralMesh_BuildRock` shape shaded with `triplanarNoise` + diffuse/
+specular/Fresnel. `triplanarSample(sampler2D, ...)` is the texture-asset
+variant for real Earth/Metal materials — not yet wired into a shipping
+skill, only the procedural-noise path is exercised by the test.
 
 ### 4b. Flow-mapped decals (`core/decal_system.h`)
 `DecalSystem_Add`/`AddEx`/`AddStreak` exist but have no flow/scroll concept
@@ -122,6 +170,6 @@ a simple separable Gaussian (`bloom_blur.fs`), not a dual-filter
 for a wider, cheaper glow more suitable for mobile — this is a quality/perf
 upgrade to an already-working system, lowest priority of the four.
 
-**None of 4a–4d have any code written yet.** Recommend treating each as its
+**4b–4d have no code written yet.** Recommend treating each as its
 own scoped task with a visual test (sandbox skill or similar) before
 merging, given the Item 3 experience above.
