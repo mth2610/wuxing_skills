@@ -451,13 +451,6 @@ Mesh ProceduralMesh_CreateBaseGrid(float width, float length, int segmentsX,
  * `t` cho DisplaceVertex_AlongPath/TwistAndTaper. Build 1 lần lúc cast. */
 Mesh ProceduralMesh_CreateBaseCylinder(int radialSegs, int heightSegs);
 
-/* Cầu UV-sphere tĩnh, tâm tại gốc, bán kính THẬT (không phải local 1 — khác
- * CreateBaseCylinder, vì hình cầu thường không cần GPU displacement, chỉ cần
- * 1 mesh DrawMesh-compatible để dùng cùng các hệ thống yêu cầu DrawMesh/
- * Material thay vì draw immediate-mode, vd Soft Particles — xem
- * core/screen_distort.h). Build 1 lần lúc cast, dịch chuyển qua matModel. */
-Mesh ProceduralMesh_CreateBaseSphere(float radius, int rings, int slices);
-
 /* Tham số displacement, set mỗi frame rồi đẩy lên shader qua
  * ProceduralMesh_SetDisplacementUniforms(). pathP0..P3 (world space) chỉ
  * được DisplaceVertex_AlongPath dùng. */

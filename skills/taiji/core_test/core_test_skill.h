@@ -13,11 +13,11 @@ typedef struct {
 } SkillProjectile;
 #endif
 
-// Internal test/sandbox skill (Taiji) — exercises item 3 of the Core API
-// update: soft particles (core/screen_distort.h + soft_particle.glsl),
-// dissolve edge glow (core/shaders/common/fx.glsl's dissolveCalc, already
-// existed — confirmed here), and metaballs/screen-space fluid
-// (core/metaball_fx.h). Not a gameplay skill.
+// Internal test/sandbox skill (Taiji) — exercises the working parts of the
+// Core API "Item 3" update: dissolve edge glow (core/shaders/common/fx.glsl's
+// dissolveCalc, already existed — confirmed here) and metaballs/screen-space
+// fluid (core/metaball_fx.h). The soft-particle part of Item 3 was removed as
+// unresolved — see CORE_ISSUES.md. Not a gameplay skill.
 
 void InitCoreTestSkill(int screenWidth, int screenHeight);
 void CastCoreTestSkill(Vector3 startPos, Vector3 target, SkillParams params);

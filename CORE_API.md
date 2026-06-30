@@ -865,29 +865,6 @@ void ScreenDistort_Add(Vector3 worldPos, float radius, float strength, float lif
 * `speed`: tốc độ lan tỏa sóng ra ngoài.
 * Distortion tự tắt sau `lifetime` giây — không cần kill thủ công.
 
-### Soft Particles (`core/screen_distort.h` + `core/shaders/common/soft_particle.glsl`)
-> [!NOTE] Root cause found and fixed — **the texture slot matters, the draw method doesn't.**
->
-> `ScreenDistort_BindDepthForSoftParticles`'s `textureSlot` param must be **`>= 12` (`MAX_MATERIAL_MAPS`)**. Low slots (this system originally used 3) get silently clobbered before the actual draw executes — confirmed empirically via two A/B tests (isolated marker-color CPU readback, not a whole-screen scan, which gives a false "looks fine" reading): slot 3 → `0.0` everywhere regardless of real scene depth; slot 12 → `avgSoftFactorG≈249/255` (correct). This was true for **both** `DrawCoreSphere` (`core/procedural_mesh_utils.h`'s normal immediate-mode primitive — the proven pattern used by `water_sphere_skill` etc.) **and** `DrawMesh`+`Material`, so use whichever drawing approach the skill already needs; no special mesh-baking required just for soft particles. (One plausible mechanism for low slots failing under `DrawMesh` specifically: it rebinds every `MaterialMap` slot 0–11 from the `Material`, and `LoadMaterialDefault()` leaves most of them empty — i.e. `rlEnableTexture(0)`, unbinding anything manually bound there. Why immediate-mode primitives *also* failed at slot 3 is unconfirmed; not worth chasing further now that slot 12 is verified to work for both.)
->
-> **Rule: always pass `textureSlot >= 12` to `ScreenDistort_BindDepthForSoftParticles`.**
-```c
-void ScreenDistort_SnapshotDepth(void);   // engine-internal, gọi 1 lần/frame từ main.c sau ScreenDistort_End()
-Texture2D ScreenDistort_GetDepthTexture(void);
-void ScreenDistort_BindDepthForSoftParticles(Shader shader, int textureSlot);
-void ScreenDistort_UnbindSoftParticleDepth(int textureSlot);
-```
-```glsl
-// core/shaders/common/soft_particle.glsl — include trong .fs, opt-in
-float SoftParticle_LinearDepth(float depthSample);
-float SoftParticle_Factor(float fadeDistance); // [0..1], nhân vào finalColor.a
-```
-Rules:
-- Particle/decal tự fade alpha thay vì bị cắt cứng (hard clip) khi đâm vào địa hình/thực thể khác.
-- **Depth trễ 1 frame** — `renderTex` (buffer 3D thật của `screen_distort.c`) không thể tự sample chính nó cùng frame đang ghi (feedback loop, undefined behavior theo OpenGL spec). `ScreenDistort_SnapshotDepth()` copy depth của frame vừa render xong sang 1 texture riêng ngay sau `ScreenDistort_End()` — particle frame N sample depth frame N-1. Đã wire sẵn trong `main.c`, skill không cần gọi.
-- Trong skill `.fs`: include `soft_particle.glsl`, gọi `ScreenDistort_BindDepthForSoftParticles(shader, slot)` sau `BeginShaderMode`/trước Draw, rồi nhân `SoftParticle_Factor(fadeDistance)` vào alpha cuối, rồi `ScreenDistort_UnbindSoftParticleDepth(slot)` ngay sau khi vẽ xong. `fadeDistance` ~5–30 world units cho hạt nhỏ.
-- **KHÔNG phải** `PostFX`'s `mainRenderTex` — buffer đó chỉ nhận lại 1 quad màu 2D đã distort xong, không có depth hình học thật.
-
 ### Metaballs / Screen-Space Fluid (`core/metaball_fx.h`)
 ```c
 void MetaballFX_Init(int width, int height);   // engine-internal
@@ -1453,7 +1430,6 @@ Rules:
 ```c
 Mesh ProceduralMesh_CreateBaseGrid(float width, float length, int segmentsX, int segmentsZ);
 Mesh ProceduralMesh_CreateBaseCylinder(int radialSegs, int heightSegs);
-Mesh ProceduralMesh_CreateBaseSphere(float radius, int rings, int slices); // real radius (not local 1) — center at origin, no displacement use case, just a DrawMesh-compatible baked primitive when a skill specifically needs DrawMesh (NOT required for Soft Particles — see "Soft Particles" section, DrawCoreSphere works fine there)
 
 typedef struct {
     float amplitude;   // DisplaceVertex_Noise normal-offset magnitude

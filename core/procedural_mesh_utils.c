@@ -1776,67 +1776,6 @@ Mesh ProceduralMesh_CreateBaseCylinder(int radialSegs, int heightSegs) {
   return mesh;
 }
 
-Mesh ProceduralMesh_CreateBaseSphere(float radius, int rings, int slices) {
-  if (rings < 3) rings = 3;
-  if (slices < 3) slices = 3;
-
-  int vertCountLat = rings + 1;  // pole to pole
-  int vertCountLon = slices + 1; // seam vertex duplicated for UV wrap
-  int vertCount = vertCountLat * vertCountLon;
-  int triCount = rings * slices * 2;
-
-  Mesh mesh = { 0 };
-  mesh.vertexCount = vertCount;
-  mesh.triangleCount = triCount;
-  mesh.vertices = (float *)MemAlloc(vertCount * 3 * sizeof(float));
-  mesh.texcoords = (float *)MemAlloc(vertCount * 2 * sizeof(float));
-  mesh.normals = (float *)MemAlloc(vertCount * 3 * sizeof(float));
-  mesh.indices = (unsigned short *)MemAlloc(triCount * 3 * sizeof(unsigned short));
-
-  for (int i = 0; i < vertCountLat; i++) {
-    float v = (float)i / (float)rings;
-    float theta = v * PI;
-    float sinTheta = sinf(theta);
-    float cosTheta = cosf(theta);
-
-    for (int j = 0; j < vertCountLon; j++) {
-      float u = (float)j / (float)slices;
-      float phi = u * 2.0f * PI;
-      float nx = sinTheta * cosf(phi);
-      float ny = cosTheta;
-      float nz = sinTheta * sinf(phi);
-      int idx = i * vertCountLon + j;
-
-      mesh.vertices[idx * 3 + 0] = nx * radius;
-      mesh.vertices[idx * 3 + 1] = ny * radius;
-      mesh.vertices[idx * 3 + 2] = nz * radius;
-
-      mesh.normals[idx * 3 + 0] = nx;
-      mesh.normals[idx * 3 + 1] = ny;
-      mesh.normals[idx * 3 + 2] = nz;
-
-      mesh.texcoords[idx * 2 + 0] = u;
-      mesh.texcoords[idx * 2 + 1] = v;
-    }
-  }
-
-  int t = 0;
-  for (int i = 0; i < rings; i++) {
-    for (int j = 0; j < slices; j++) {
-      unsigned short a = (unsigned short)(i * vertCountLon + j);
-      unsigned short b = (unsigned short)(a + 1);
-      unsigned short c = (unsigned short)(a + vertCountLon);
-      unsigned short d = (unsigned short)(c + 1);
-
-      mesh.indices[t++] = a; mesh.indices[t++] = c; mesh.indices[t++] = b;
-      mesh.indices[t++] = b; mesh.indices[t++] = c; mesh.indices[t++] = d;
-    }
-  }
-
-  UploadMesh(&mesh, false);
-  return mesh;
-}
-
 MeshDisplacementParams ProceduralMesh_DefaultDisplacementParams(void) {
   MeshDisplacementParams p = { 0 };
   p.amplitude = 10.0f;

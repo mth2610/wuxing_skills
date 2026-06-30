@@ -35,48 +35,4 @@ void ScreenDistort_Update(float dt);
 // Vẽ kết quả màn hình kèm theo biến dạng bằng Shader
 void ScreenDistort_Draw(Camera3D camera);
 
-/* ============================================================================
- * SOFT PARTICLES — scene depth texture (MỚI)
- * --------------------------------------------------------------------------
- * `renderTex` (RenderTexture nội bộ của module này) là buffer THỰC SỰ chứa
- * toàn cảnh 3D mỗi frame (ScreenDistort_Begin/End bọc quanh MyBeginMode3D/
- * MyEndMode3D trong main.c) — đây là nguồn depth per-pixel thật, KHÁC với
- * PostFX's mainRenderTex (chỉ nhận lại 1 quad màu 2D đã distort xong từ
- * ScreenDistort_Draw, không có depth hình học thật).
- *
- * Không thể sample trực tiếp renderTex.depth trong CÙNG frame đang ghi vào
- * nó (feedback loop — đọc/ghi cùng 1 framebuffer attachment là undefined
- * behavior theo spec OpenGL). Giải pháp: snapshot depth của frame TRƯỚC vào
- * 1 texture riêng (`prevDepthTex`) ngay sau ScreenDistort_End() mỗi frame —
- * particle vẽ trong frame N sample depth của frame N-1 (trễ 1 frame, không
- * đáng kể với soft-particle fade).
- *
- * Quy trình dùng (gọi từ main.c — đã wire sẵn):
- *   ScreenDistort_Begin(); ... vẽ scene 3D ...; ScreenDistort_End();
- *   ScreenDistort_SnapshotDepth();   // ngay sau End(), 1 lần/frame
- *
- * Trong skill: gọi ScreenDistort_BindDepthForSoftParticles(shader, slot)
- * sau BeginShaderMode(shader), trước Draw; rồi
- * core/shaders/common/soft_particle.glsl trong .fs để tính fade factor;
- * gọi ScreenDistort_UnbindSoftParticleDepth(slot) ngay sau khi vẽ xong.
- * ==========================================================================*/
-
-// Gọi đúng 1 lần/frame, ngay sau ScreenDistort_End() — copy renderTex.depth
-// (frame vừa render xong) sang prevDepthTex để frame KẾ TIẾP particle sample
-// an toàn (không feedback loop).
-void ScreenDistort_SnapshotDepth(void);
-
-// Texture độ sâu của frame TRƯỚC (trễ 1 frame) — sample được. Giá trị [0..1]
-// non-linear, dùng SoftParticle_LinearDepth() (soft_particle.glsl) để
-// tuyến tính hoá.
-Texture2D ScreenDistort_GetDepthTexture(void);
-
-// Bind depth texture vào textureSlot + set u_cameraDepthTex/u_cameraNear/
-// u_cameraFar/u_resolution lên shader (bỏ qua an toàn nếu shader không khai
-// báo, cùng pattern SkillManager_BeginShader). Gọi sau BeginShaderMode(shader),
-// trước Draw. Bắt buộc gọi ScreenDistort_UnbindSoftParticleDepth() cùng slot
-// sau khi vẽ xong để giải phóng texture unit.
-void ScreenDistort_BindDepthForSoftParticles(Shader shader, int textureSlot);
-void ScreenDistort_UnbindSoftParticleDepth(int textureSlot);
-
 #endif // SCREEN_DISTORT_H

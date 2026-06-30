@@ -299,7 +299,6 @@ int main(void) {
 
     MyEndMode3D();
     ScreenDistort_End();
-    ScreenDistort_SnapshotDepth(); // soft particles: snapshot this frame's depth for next frame's sampling
 
     PostFX_Begin();
     ClearBackground(BLACK);
@@ -338,15 +337,6 @@ int main(void) {
     SkillDebugger_PostRender(uiState.activeSkillIndex, player.position, mouseTarget3D);
 
     EndDrawing();
-
-    // TEMP DEBUG: one-shot self-screenshot of the final frame
-    {
-      static int s_shotFrame = 0;
-      s_shotFrame++;
-      if (s_shotFrame == 60) {
-        TakeScreenshot("coretest_frame.png");
-      }
-    }
   }
 
   UnloadTexture(globalParticleTex);
