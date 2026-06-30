@@ -1412,6 +1412,52 @@ Rules:
 - Pass a negative `depth` for a raised crack instead of a sunken one.
 - **Build once at cast time and cache** — fissures don't animate shape, same convention as Rock/ShardCluster.
 
+### GPU Vertex Displacement (`core/procedural_mesh_utils.h` + `core/shaders/common/displacement.glsl`)
+```c
+Mesh ProceduralMesh_CreateBaseGrid(float width, float length, int segmentsX, int segmentsZ);
+Mesh ProceduralMesh_CreateBaseCylinder(int radialSegs, int heightSegs);
+
+typedef struct {
+    float amplitude;   // DisplaceVertex_Noise normal-offset magnitude
+    float frequency;
+    float speed;
+    float twistAmount; // radians, t=0..1 — AlongPath/TwistAndTaper
+    float taperStart;
+    float taperEnd;
+    Vector3 pathP0, pathP1, pathP2, pathP3; // world space, AlongPath only
+} MeshDisplacementParams;
+
+MeshDisplacementParams ProceduralMesh_DefaultDisplacementParams(void);
+void ProceduralMesh_SetDisplacementUniforms(Shader shader, const MeshDisplacementParams *params);
+void ProceduralMesh_UnloadBase(Mesh *mesh);
+```
+```glsl
+// core/shaders/common/displacement.glsl — include AFTER vs_header.glsl, opt-in
+vec3 DisplaceVertex_Noise(vec3 localPos, vec3 localNormal, float noiseVal);
+vec3 DisplaceVertex_AlongPath(vec3 localPos, vec2 texCoord);
+vec3 DisplaceVertex_TwistAndTaper(vec3 localPos);
+
+// Normal counterparts — REQUIRED alongside AlongPath/TwistAndTaper (see rules below)
+vec3 DisplaceVertex_AlongPathNormal(vec3 localNormal, vec2 texCoord);
+vec3 DisplaceVertex_TwistAndTaperNormal(vec3 localPos, vec3 localNormal);
+```
+Rules:
+- **`AlongPath`/`TwistAndTaper` REQUIRE the matching `*Normal()` call, or lighting will be visibly wrong** (spiral banding artifacts, confirmed in testing). `VS_FinalOutput()` (in `vs_header.glsl`) sets `fragNormal` from the **un-rotated** `vertexNormal` — it has no idea the position function just rotated the vertex into a new frame (path frame, or twist angle). Always call the displacement function, then `VS_FinalOutput(displaced)`, then **override `fragNormal`** with the `*Normal()` counterpart, e.g.:
+  ```glsl
+  vec3 displaced = DisplaceVertex_TwistAndTaper(vertexPosition);
+  VS_FinalOutput(displaced);
+  fragNormal = normalize(vec3(matModel * vec4(
+      DisplaceVertex_TwistAndTaperNormal(vertexPosition, vertexNormal), 0.0)));
+  ```
+- `DisplaceVertex_Noise` has no normal counterpart — its displacement amplitude is assumed small enough that the un-rotated normal is an acceptable approximation. For higher-fidelity ripples, perturb the normal in the fragment shader instead (see `lighting.glsl`'s `perturbNormal()`).
+- **Additive, not a replacement** for the CPU builders above (Tube/WavePlane/CurlingWave/Rock/ShardCluster/VortexFunnel/Fissure). Those rebuild CPU-side every frame and let skill code read back vertex positions (e.g. for raycast/anchoring). This system bakes ONE static mesh on the GPU at cast time and lets the vertex shader displace it every frame via uniforms — CPU never sees the displaced positions. **Only use this for pure-visual effects that need no raycast/collision against the displaced shape.**
+- Cast-time only: call `ProceduralMesh_CreateBaseGrid`/`CreateBaseCylinder` once, cache the returned `Mesh` in the skill's instance struct. Do **not** call it per frame.
+- `ProceduralMesh_CreateBaseCylinder` returns a 2-end-open tube (no caps), local axis +Y in `[0,1]`, local radius 1 — `vertexTexCoord.y` is the `t` parameter consumed by `DisplaceVertex_AlongPath`/`TwistAndTaper`.
+- `displacement.glsl` does **not** depend on `noise.glsl` (same independence convention as `fx.glsl`'s `dissolveCalc`) — `DisplaceVertex_Noise` takes a precomputed `noiseVal`; compute it with `fbm2`/`vnoise` from `noise.glsl` if needed, include `noise.glsl` before `displacement.glsl` in that case.
+- `ProceduralMesh_SetDisplacementUniforms` silently skips uniforms the shader doesn't declare (same safe pattern as `SkillManager_BeginShader`) — call every frame after `BeginShaderMode(shader)`, before `DrawMesh`/`DrawModel`.
+- `DrawMesh`/`DrawModel` (unlike rlgl immediate-mode draws used by the CPU builders above) auto-populate `matModel` correctly via raylib — no need for the `SkillManager_BeginShader` identity-matModel workaround documented for immediate-mode skills.
+- Call `ProceduralMesh_UnloadBase` exactly once at skill unload — not per frame.
+
 ### Post FX (`core/post_fx.h`)
 
 ```c

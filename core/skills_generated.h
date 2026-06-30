@@ -4,18 +4,16 @@
 
 #include "core/skill_manager.h"
 
-#include "skills/wood/living_vine_skill/living_vine_skill.h"
 #include "skills/wood/wood_thorns/wood_thorns_skill.h"
-#include "skills/water/tsunami_skill/tsunami_skill.h"
 #include "skills/water/water_sphere_skill/water_sphere_skill.h"
+#include "skills/taiji/core_test/core_test_skill.h"
 #include "skills/fire/hoa_long_phong_ba_skill/hoa_long_phong_ba_skill.h"
 #include "skills/earth/stone_prison_skill/stone_prison_skill.h"
 
 static inline void RegisterGeneratedSkills(void) {
-    RegisterSkill("LIVING_VINE", ELEMENT_COLOR_WOOD, InitLivingVineSkill, CastLivingVineSkill, UpdateLivingVineSkill, DrawLivingVineSkill, UnloadLivingVineSkill);
     RegisterSkill("WOOD_THORNS", ELEMENT_COLOR_WOOD, InitWoodThornsSkill, CastWoodThornsSkill, UpdateWoodThornsSkill, DrawWoodThornsSkill, UnloadWoodThornsSkill);
-    RegisterSkill("TSUNAMI", ELEMENT_COLOR_WATER, InitTsunamiSkill, CastTsunamiSkill, UpdateTsunamiSkill, DrawTsunamiSkill, UnloadTsunamiSkill);
     RegisterSkill("WATER_SPHERE", ELEMENT_COLOR_WATER, InitWaterSphereSkill, CastWaterSphereSkill, UpdateWaterSphereSkill, DrawWaterSphereSkill, UnloadWaterSphereSkill);
+    RegisterSkill("CORE_TEST", ELEMENT_COLOR_TAIJI, InitCoreTestSkill, CastCoreTestSkill, UpdateCoreTestSkill, DrawCoreTestSkill, UnloadCoreTestSkill);
     RegisterSkill("HOA_LONG_PHONG_BA", ELEMENT_COLOR_FIRE, InitHoaLongPhongBaSkill, CastHoaLongPhongBaSkill, UpdateHoaLongPhongBaSkill, DrawHoaLongPhongBaSkill, UnloadHoaLongPhongBaSkill);
     RegisterSkill("STONE_PRISON", ELEMENT_COLOR_EARTH, InitStonePrisonSkill, CastStonePrisonSkill, UpdateStonePrisonSkill, DrawStonePrisonSkill, UnloadStonePrisonSkill);
 }

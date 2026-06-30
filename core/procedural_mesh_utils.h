@@ -414,4 +414,66 @@ void ProceduralMesh_BuildFissure(FissureMeshData *out, const Vector3 *pathPoints
  * centerline. */
 void ProceduralMesh_DrawFissure(const FissureMeshData *data, Color color);
 
+/* ============================================================================
+ * GPU VERTEX DISPLACEMENT MESH SYSTEM (MỚI — additive, KHÔNG thay builder CPU
+ * ở trên)
+ * --------------------------------------------------------------------------
+ * Khác với Tube/WavePlane/CurlingWave/Rock/ShardCluster/VortexFunnel/Fissure
+ * (build lại CPU mỗi frame, CPU đọc được vị trí đỉnh để raycast/anchor), hệ
+ * này bake 1 mesh tĩnh DUY NHẤT lên GPU lúc cast/khởi tạo rồi để Vertex
+ * Shader tự uốn/gợn sóng mỗi frame qua uniform — CPU không tính lại hình học
+ * và KHÔNG đọc lại được vị trí đỉnh sau displacement.
+ *
+ * Chỉ dùng cho hiệu ứng thuần hình ảnh, không cần raycast/collision theo
+ * hình dạng đã uốn. Nếu skill cần đọc vị trí đỉnh (raycast theo ring, anchor
+ * theo bề mặt...), dùng hệ CPU build ở trên thay vì hệ này.
+ *
+ * Quy trình dùng:
+ *   1) Cast-time (1 lần): ProceduralMesh_CreateBaseGrid/CreateBaseCylinder,
+ *      cache Mesh trả về trong struct instance của skill.
+ *   2) Mỗi frame, sau BeginShaderMode(shader) và trước DrawMesh: set
+ *      MeshDisplacementParams rồi gọi ProceduralMesh_SetDisplacementUniforms().
+ *   3) Vertex shader của skill include core/shaders/common/displacement.glsl
+ *      (sau vs_header.glsl) và gọi DisplaceVertex_Noise/AlongPath/TwistAndTaper
+ *      trong main() trước khi gọi VS_FinalOutput().
+ *   4) Lúc unload skill (không phải mỗi frame): ProceduralMesh_UnloadBase().
+ * ==========================================================================*/
+
+/* Lưới phẳng tĩnh, mặt phẳng local XZ, tâm tại gốc, normal +Y, UV phủ
+ * [0,1]x[0,1]. Build 1 lần lúc cast — KHÔNG rebuild mỗi frame, displacement
+ * hoàn toàn do vertex shader đảm nhiệm. Giữ segmentsX/Z <= 32 cho mobile. */
+Mesh ProceduralMesh_CreateBaseGrid(float width, float length, int segmentsX,
+                                   int segmentsZ);
+
+/* Trụ tròn rỗng 2 đầu (không cap), trục local +Y trong [0,1], bán kính local
+ * 1 (skill tự scale bán kính thật qua matModel hoặc trong shader). UV.x =
+ * góc quanh chu vi [0,1], UV.y = vị trí dọc trục [0,1] — dùng làm tham số
+ * `t` cho DisplaceVertex_AlongPath/TwistAndTaper. Build 1 lần lúc cast. */
+Mesh ProceduralMesh_CreateBaseCylinder(int radialSegs, int heightSegs);
+
+/* Tham số displacement, set mỗi frame rồi đẩy lên shader qua
+ * ProceduralMesh_SetDisplacementUniforms(). pathP0..P3 (world space) chỉ
+ * được DisplaceVertex_AlongPath dùng. */
+typedef struct {
+  float amplitude;   /* biên độ đẩy theo normal — DisplaceVertex_Noise */
+  float frequency;   /* tần số noise/sóng (world units^-1) */
+  float speed;       /* tốc độ animate theo u_time */
+  float twistAmount; /* tổng góc xoắn t=0..1, radian — AlongPath/TwistAndTaper */
+  float taperStart;  /* hệ số bán kính tại t=0 */
+  float taperEnd;    /* hệ số bán kính tại t=1 */
+  Vector3 pathP0, pathP1, pathP2, pathP3; /* Bezier control points, world space */
+} MeshDisplacementParams;
+
+MeshDisplacementParams ProceduralMesh_DefaultDisplacementParams(void);
+
+/* Set uniform displacement lên shader, bỏ qua an toàn uniform không tồn tại
+ * (cùng pattern với SkillManager_BeginShader). Gọi mỗi frame, sau
+ * BeginShaderMode(shader), trước DrawMesh/DrawModel. */
+void ProceduralMesh_SetDisplacementUniforms(Shader shader,
+                                            const MeshDisplacementParams *params);
+
+/* Giải phóng mesh đã bake. Gọi đúng 1 lần lúc unload skill — KHÔNG gọi mỗi
+ * frame (mesh cache theo instance, không phải pool động). */
+void ProceduralMesh_UnloadBase(Mesh *mesh);
+
 #endif // PROCEDURAL_MESH_UTILS_H
