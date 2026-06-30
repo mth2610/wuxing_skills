@@ -37,8 +37,11 @@ skills/[element]/[skill_name]_skill/
 ### CRITICAL SCALING RULES FOR AI:
 This engine uses a large coordinate scale. DO NOT use physical defaults (1.0 or 9.8).
 Radii: Base mesh/tube radii should be around 10.0f to 20.0f. Impact bursts/lights should range from 50.0f to 100.0f.
-Gravity/Force: Typical gravity or strong directional forces MUST be strictly between 300.0f and 700.0f.
 Velocity/Speed: Particle speeds for bursts should range from 100.0f to 300.0f.
+
+Gravity/Force splits into two regimes depending on the particle's lifetime/travel distance — pick the one that matches the case, don't apply one blanket number everywhere:
+- **Sustained/flight force** (long-lived, far-traveling particles — e.g. a projectile trail): MUST be strictly between 300.0f and 700.0f. Real precedent: `skills/water/water_stream/tube_skill.c` uses `FORCE_GRAVITY_DIR strength = 650.0f`/`325.0f`.
+- **Ambient/burst force** (short-lived particles that stay near their spawn point — e.g. Cast/Impact preset particles): 5.0f to 60.0f. Using 300-700f here flings burst particles off-screen instantly. Real precedent: the Cast/Impact preset `ForceField`s in `core/skill_helper.c`.
 
 > [!IMPORTANT]
 > **Include Path Folder Matching Rule:** When including your skill's own header file within its `.c` source file, the path **MUST EXACTLY match** the directory structure where it is saved. For example, if you place your files in `skills/wood/jade_burst_skill/`, you MUST include it as `#include "skills/wood/jade_burst_skill/jade_burst_skill.h"`. Beware of typo errors or omitting suffix markers like `_skill` from the folder name.
@@ -126,6 +129,534 @@ void Deactivate[Name]Projectile(int index);
 
 #endif // SKILL_[NAME]_H
 ```
+
+### Minimal Complete `.c` Skeleton (Generic Projectile Skill)
+
+A minimal, generic skill `.c` showing the full state machine (`CASTING → FLYING → IMPACT → DISSOLVE`), a static fixed-size array of instances (no malloc), and correct lifecycle wiring. Copy and adapt — not tied to any element.
+
+```c
+#include "skill_example.h"
+#include "core/particle_system.h"
+#include "core/skill_helper.h"
+#include "core/skill_manager.h"
+#include "raymath.h"
+#include <math.h>
+
+#define MAX_INSTANCES 16
+
+typedef enum {
+    STATE_CASTING,
+    STATE_FLYING,
+    STATE_IMPACT,
+    STATE_DISSOLVE
+} SkillState;
+
+typedef struct {
+    SkillState state;
+    Vector3 position;
+    Vector3 target;
+    Vector3 velocity;
+    float stateTimer;
+    float radius;
+    bool active;
+} SkillInstance;
+
+static SkillInstance s_instances[MAX_INSTANCES];
+
+void InitExampleSkill(int screenWidth, int screenHeight) {
+    for (int i = 0; i < MAX_INSTANCES; i++) s_instances[i].active = false;
+}
+
+void CastExampleSkill(Vector3 startPos, Vector3 target, SkillParams params) {
+    for (int i = 0; i < MAX_INSTANCES; i++) {
+        if (s_instances[i].active) continue;
+        s_instances[i] = (SkillInstance){
+            .state = STATE_CASTING,
+            .position = startPos,
+            .target = target,
+            .velocity = (Vector3){0},
+            .stateTimer = 0.0f,
+            .radius = 8.0f * params.sizeScale,
+            .active = true
+        };
+        SpawnCastEffect(startPos, EFFECT_PRESET_FIRE_EXPLOSION, params.sizeScale * 0.6f);
+        return;
+    }
+}
+
+void UpdateExampleSkill(float dt, Vector3 enemyPos, float enemyRadius) {
+    for (int i = 0; i < MAX_INSTANCES; i++) {
+        SkillInstance *s = &s_instances[i];
+        if (!s->active) continue;
+        s->stateTimer += dt;
+
+        switch (s->state) {
+            case STATE_CASTING:
+                if (s->stateTimer >= 0.35f) {
+                    s->state = STATE_FLYING;
+                    s->stateTimer = 0.0f;
+                    s->velocity = Vector3Scale(Vector3Normalize(Vector3Subtract(s->target, s->position)), 220.0f);
+                }
+                break;
+
+            case STATE_FLYING:
+                s->position = Vector3Add(s->position, Vector3Scale(s->velocity, dt));
+                if (Vector3Distance(s->position, s->target) < s->radius + enemyRadius) {
+                    s->state = STATE_IMPACT;
+                    s->stateTimer = 0.0f;
+                    SpawnImpactEffect(s->position, EFFECT_PRESET_FIRE_EXPLOSION, 1.0f);
+                    ApplyAoEDamage(s->position, 30.0f, 25.0f, 0.0f);
+                }
+                break;
+
+            case STATE_IMPACT:
+                if (s->stateTimer >= 0.2f) {
+                    s->state = STATE_DISSOLVE;
+                    s->stateTimer = 0.0f;
+                }
+                break;
+
+            case STATE_DISSOLVE:
+                if (s->stateTimer >= 0.5f) {
+                    s->active = false;
+                }
+                break;
+        }
+    }
+}
+
+void DrawExampleSkill(void) {
+    for (int i = 0; i < MAX_INSTANCES; i++) {
+        SkillInstance *s = &s_instances[i];
+        if (!s->active) continue;
+        if (s->state != STATE_FLYING) continue; // only draw the flying projectile body
+        DrawEffectMesh(MESH_PRESET_SPHERE, s->position, (Vector3){ s->radius, s->radius, s->radius }, ELEMENT_COLOR_FIRE);
+    }
+}
+
+void UnloadExampleSkill(void) {
+    // No-op: textures/shaders are owned by ResourceManager, never unload here.
+}
+
+bool IsExampleSkillCoiling(void) {
+    return false; // override if this skill has a charge-up/coiling phase
+}
+
+int GetExampleSkillProjectiles(SkillProjectile *outProjectiles, int maxProjectiles) {
+    int count = 0;
+    for (int i = 0; i < MAX_INSTANCES && count < maxProjectiles; i++) {
+        if (!s_instances[i].active || s_instances[i].state != STATE_FLYING) continue;
+        outProjectiles[count].position = s_instances[i].position;
+        outProjectiles[count].radius = s_instances[i].radius;
+        outProjectiles[count].active = true;
+        count++;
+    }
+    return count;
+}
+
+void DeactivateExampleProjectile(int index) {
+    if (index < 0 || index >= MAX_INSTANCES) return;
+    s_instances[index].active = false;
+}
+```
+
+### Minimal Complete `.c` Skeleton (Non-Projectile / Ground-Rising Skill)
+
+For skills with no flight stage — the effect happens at a fixed spawn point instead of traveling there (e.g. a stone spike rising from the ground). State machine: `CASTING → RISING (mesh height animates 0→full via SmoothStep01) → ACTIVE → DISSOLVE`. Static instance array keyed by spawn position, not velocity/target — nothing flies, so no `ProceduralMesh_BuildTube`/path-spline is needed; draw a simple procedural primitive (`DrawCoreCylinder`/`DrawCorePrism`) whose height is animated directly.
+
+```c
+#include "skill_example_rising.h"
+#include "core/skill_helper.h"
+#include "core/skill_manager.h"
+#include "core/procedural_mesh_utils.h"
+#include "core/utils_math.h"
+#include "raymath.h"
+
+#define MAX_INSTANCES 16
+
+typedef enum {
+    STATE_CASTING,
+    STATE_RISING,
+    STATE_ACTIVE,
+    STATE_DISSOLVE
+} SkillState;
+
+typedef struct {
+    SkillState state;
+    Vector3 position; // fixed spawn point — nothing flies, no velocity/target
+    float stateTimer;
+    float radius;
+    float maxHeight;
+    float currentHeight; // animated 0 -> maxHeight during RISING
+    bool active;
+} SkillInstance;
+
+static SkillInstance s_instances[MAX_INSTANCES];
+
+#define RISING_DURATION 0.4f
+#define ACTIVE_DURATION 2.0f
+#define DISSOLVE_DURATION 0.5f
+
+void InitExampleRisingSkill(int screenWidth, int screenHeight) {
+    for (int i = 0; i < MAX_INSTANCES; i++) s_instances[i].active = false;
+}
+
+void CastExampleRisingSkill(Vector3 spawnPos, SkillParams params) {
+    for (int i = 0; i < MAX_INSTANCES; i++) {
+        if (s_instances[i].active) continue;
+        s_instances[i] = (SkillInstance){
+            .state = STATE_CASTING,
+            .position = spawnPos,
+            .stateTimer = 0.0f,
+            .radius = 14.0f * params.sizeScale,
+            .maxHeight = 80.0f * params.sizeScale,
+            .currentHeight = 0.0f,
+            .active = true
+        };
+        SpawnCastEffect(spawnPos, EFFECT_PRESET_EARTH_CRACK, params.sizeScale * 0.6f);
+        return;
+    }
+}
+
+void UpdateExampleRisingSkill(float dt, Vector3 enemyPos, float enemyRadius) {
+    for (int i = 0; i < MAX_INSTANCES; i++) {
+        SkillInstance *s = &s_instances[i];
+        if (!s->active) continue;
+        s->stateTimer += dt;
+
+        switch (s->state) {
+            case STATE_CASTING:
+                if (s->stateTimer >= 0.3f) {
+                    s->state = STATE_RISING;
+                    s->stateTimer = 0.0f;
+                }
+                break;
+
+            case STATE_RISING: {
+                float t = SmoothStep01(s->stateTimer / RISING_DURATION);
+                s->currentHeight = Math_Mix(0.0f, s->maxHeight, t);
+                if (s->stateTimer >= RISING_DURATION) {
+                    s->state = STATE_ACTIVE;
+                    s->stateTimer = 0.0f;
+                    s->currentHeight = s->maxHeight;
+                    SpawnImpactEffect(s->position, EFFECT_PRESET_EARTH_CRACK, 1.0f);
+                    ApplyAoEDamage(s->position, s->radius * 1.5f, 25.0f, 0.0f);
+                }
+                break;
+            }
+
+            case STATE_ACTIVE:
+                if (s->stateTimer >= ACTIVE_DURATION) {
+                    s->state = STATE_DISSOLVE;
+                    s->stateTimer = 0.0f;
+                }
+                break;
+
+            case STATE_DISSOLVE: {
+                float t = SmoothStep01(s->stateTimer / DISSOLVE_DURATION);
+                s->currentHeight = Math_Mix(s->maxHeight, 0.0f, t);
+                if (s->stateTimer >= DISSOLVE_DURATION) {
+                    s->active = false;
+                }
+                break;
+            }
+        }
+    }
+}
+
+void DrawExampleRisingSkill(void) {
+    for (int i = 0; i < MAX_INSTANCES; i++) {
+        SkillInstance *s = &s_instances[i];
+        if (!s->active || s->currentHeight <= 0.01f) continue;
+        Vector3 top = { s->position.x, s->position.y + s->currentHeight, s->position.z };
+        DrawCoreCylinder(s->position, top, s->radius, s->radius * 0.6f, 12, ELEMENT_COLOR_EARTH);
+    }
+}
+
+void UnloadExampleRisingSkill(void) {
+    // No-op: textures/shaders are owned by ResourceManager, never unload here.
+}
+```
+
+### Minimal Complete `.c` Skeleton (Anchored-Along-Path Skill)
+
+For skills that spawn **multiple anchored instances along a drawn path** (`SkillParams.pathPoints[]`), rather than one instance at a single point. This is a technical/structural pattern, independent of range tier (Tầm xa/Trung/Cận) — range is just a max-distance check at cast time and has no bearing on which skeleton a skill uses; do not name or theme this skeleton around "melee" or any specific range. State machine per instance: `CASTING → WAITING (staggered) → RISING → ACTIVE/HOLDING → DISSOLVE`. Use `SamplePath()` from `core/path_spline.h` to resample the cast path at even spacing instead of hand-rolling cumulative-distance math.
+
+```c
+#include "skill_example_pathanchor.h"
+#include "core/skill_helper.h"
+#include "core/skill_manager.h"
+#include "core/path_spline.h"
+#include "core/procedural_mesh_utils.h"
+#include "core/utils_math.h"
+#include "raymath.h"
+
+#define MAX_INSTANCES 16
+#define INSTANCE_SPACING 35.0f   // world units between sampled points
+#define STAGGER_DURATION 0.5f    // total time for the last instance to start rising
+
+typedef enum {
+    STATE_CASTING,
+    STATE_WAITING,   // staggered delay before this instance starts rising
+    STATE_RISING,
+    STATE_ACTIVE,
+    STATE_DISSOLVE
+} SkillState;
+
+typedef struct {
+    SkillState state;
+    Vector3 position;   // sampled along SkillParams.pathPoints[] via SamplePath()
+    float stateTimer;
+    float waitTime;     // per-instance stagger, set at cast time
+    float radius;
+    float maxHeight;
+    float currentHeight; // animated 0 -> maxHeight during RISING
+    bool active;
+} SkillInstance;
+
+static SkillInstance s_instances[MAX_INSTANCES];
+
+#define RISING_DURATION 0.25f
+#define ACTIVE_DURATION 1.5f
+#define DISSOLVE_DURATION 0.4f
+
+void InitExamplePathAnchorSkill(int screenWidth, int screenHeight) {
+    for (int i = 0; i < MAX_INSTANCES; i++) s_instances[i].active = false;
+}
+
+void CastExamplePathAnchorSkill(Vector3 startPos, Vector3 target, SkillParams params) {
+    // Resample the drawn path at even spacing — never hand-roll cumulative-distance
+    // sampling in skill code (see core/path_spline.h). Falls back to a straight
+    // startPos->target line if the caller didn't draw a multi-point path.
+    Vector3 rawPath[33];
+    int rawCount = 0;
+    if (params.pathPointCount > 1) {
+        for (int i = 0; i < params.pathPointCount && i < 32; i++) rawPath[rawCount++] = params.pathPoints[i];
+    } else {
+        rawPath[rawCount++] = startPos;
+        rawPath[rawCount++] = target;
+    }
+
+    Vector3 sampled[MAX_INSTANCES];
+    int sampledCount = SamplePath(rawPath, rawCount, INSTANCE_SPACING, sampled, MAX_INSTANCES);
+    if (sampledCount <= 0) return;
+
+    for (int p = 0; p < sampledCount; p++) {
+        int slot = -1;
+        for (int i = 0; i < MAX_INSTANCES; i++) {
+            if (!s_instances[i].active) { slot = i; break; }
+        }
+        if (slot < 0) break;
+
+        s_instances[slot] = (SkillInstance){
+            .state = STATE_CASTING,
+            .position = sampled[p],
+            .stateTimer = 0.0f,
+            // Stagger so instances rise in sequence along the line instead of all at once.
+            .waitTime = (float)p / (float)sampledCount * STAGGER_DURATION,
+            .radius = 12.0f * params.sizeScale,
+            .maxHeight = 70.0f * params.sizeScale,
+            .currentHeight = 0.0f,
+            .active = true
+        };
+    }
+    SpawnCastEffect(startPos, EFFECT_PRESET_WOOD_BLOOM, params.sizeScale * 0.6f);
+}
+
+void UpdateExamplePathAnchorSkill(float dt, Vector3 enemyPos, float enemyRadius) {
+    for (int i = 0; i < MAX_INSTANCES; i++) {
+        SkillInstance *s = &s_instances[i];
+        if (!s->active) continue;
+        s->stateTimer += dt;
+
+        switch (s->state) {
+            case STATE_CASTING:
+                if (s->stateTimer >= 0.05f) {
+                    s->state = STATE_WAITING;
+                    s->stateTimer = 0.0f;
+                }
+                break;
+
+            case STATE_WAITING:
+                if (s->stateTimer >= s->waitTime) {
+                    s->state = STATE_RISING;
+                    s->stateTimer = 0.0f;
+                }
+                break;
+
+            case STATE_RISING: {
+                float t = SmoothStep01(s->stateTimer / RISING_DURATION);
+                s->currentHeight = Math_Mix(0.0f, s->maxHeight, t);
+                if (s->stateTimer >= RISING_DURATION) {
+                    s->state = STATE_ACTIVE;
+                    s->stateTimer = 0.0f;
+                    s->currentHeight = s->maxHeight;
+                    ApplyAoEDamage(s->position, s->radius * 1.3f, 18.0f, 0.0f);
+                }
+                break;
+            }
+
+            case STATE_ACTIVE:
+                if (s->stateTimer >= ACTIVE_DURATION) {
+                    s->state = STATE_DISSOLVE;
+                    s->stateTimer = 0.0f;
+                }
+                break;
+
+            case STATE_DISSOLVE: {
+                float t = SmoothStep01(s->stateTimer / DISSOLVE_DURATION);
+                s->currentHeight = Math_Mix(s->maxHeight, 0.0f, t);
+                if (s->stateTimer >= DISSOLVE_DURATION) {
+                    s->active = false;
+                }
+                break;
+            }
+        }
+    }
+}
+
+void DrawExamplePathAnchorSkill(void) {
+    for (int i = 0; i < MAX_INSTANCES; i++) {
+        SkillInstance *s = &s_instances[i];
+        if (!s->active || s->currentHeight <= 0.01f) continue;
+        Vector3 top = { s->position.x, s->position.y + s->currentHeight, s->position.z };
+        DrawCoreCylinder(s->position, top, s->radius, s->radius * 0.5f, 10, ELEMENT_COLOR_WOOD);
+    }
+}
+
+void UnloadExamplePathAnchorSkill(void) {
+    // No-op: textures/shaders are owned by ResourceManager, never unload here.
+}
+```
+> [!NOTE]
+> `skills/wood/wood_thorns/wood_thorns_skill.c` implements this same pattern today with a hand-rolled cumulative-distance loop (predates `SamplePath`). It could be refactored to call `SamplePath()` directly — out of scope here, left for the Skills Agent.
+
+---
+
+### Minimal Complete `.c` Skeleton (Entity-Attached Skill)
+
+For skills whose visual must follow a *moving* `Agent` rather than stay at a fixed world position or path — primarily **Buff** skills (and future khinh công dash afterimages). State machine: `STATE_CASTING → STATE_ATTACHED (visual follows the tracked position every frame, buff active on the target) → STATE_DISSOLVE`.
+
+The documented Skill lifecycle (`Cast[Name]Skill(Vector3 startPos, Vector3 target, SkillParams params)` / `Update[Name]Skill(float dt, Vector3 enemyPos, float enemyRadius)`) doesn't pass an `agentId` — don't invent a new parameter or change `Update[Name]Skill`'s signature to get one (that's a bigger cross-module lifecycle decision, tracked separately). Instead the skill caches the owner's `Vector3` position at cast time (`startPos`) and re-applies the buff via the radius-based `Entity_ApplyAoEBuff(casterPos, smallRadius, speedMult, duration)` entry point — no `agentId` needed. Visually following the *exact* agent (not just its cast-time position) requires `entities/entities.h`'s `Agent` array, which Skills doesn't currently have read access to (see note below); this skeleton instead re-centers on `casterPos` once at cast time, consistent with what `Entity_ApplyAoEBuff` itself can target without an agent ID.
+
+Two options for the attached visual: (1) re-spawn a small particle burst and/or `VFXLight_Spawn` at the tracked position once per frame while `ATTACHED` — simplest, no persistent trail object to manage; (2) drive a `core/trail_system.h` `TRAIL_TYPE_FOLLOWER` trail with `SetFollowerAxis`/`UpdateFollowerPosition` every frame — better when the buff needs ribbon/aura geometry, not just a glow. The skeleton below uses option (1); reach for `TRAIL_TYPE_FOLLOWER` only if the visual genuinely needs ribbon geometry.
+
+`DISSOLVE` fires when the skill's own local timer reaches the `duration` it requested from `Entity_ApplyAoEBuff` — the skill does not query `entities/` for the live modifier state (Core/Skills never read `entities/` internals); it just times its visual to roughly match the buff duration it asked for.
+
+```c
+#include "skill_example_attached.h"
+#include "core/skill_helper.h"
+#include "core/vfx_light.h"
+#include "core/particle_radial_burst.h"
+#include "core/utils_math.h"
+#include "entities/entities.h"   // for Entity_ApplyAoEBuff — see note below
+#include "raymath.h"
+
+#define MAX_INSTANCES 4
+
+typedef enum {
+    STATE_CASTING,
+    STATE_ATTACHED,
+    STATE_DISSOLVE
+} SkillState;
+
+typedef struct {
+    SkillState state;
+    Vector3 casterPos;   // cached owner position, re-used as the visual anchor each frame
+    float stateTimer;
+    float buffDuration;  // mirrors the duration passed to Entity_ApplyAoEBuff
+    float buffRadius;
+    bool active;
+} SkillInstance;
+
+static SkillInstance s_instances[MAX_INSTANCES];
+
+#define CASTING_DURATION 0.15f
+#define DISSOLVE_DURATION 0.3f
+#define VISUAL_TICK_INTERVAL 0.1f  // re-spawn particle/light every N seconds, not every frame
+
+void InitExampleAttachedSkill(int screenWidth, int screenHeight) {
+    for (int i = 0; i < MAX_INSTANCES; i++) s_instances[i].active = false;
+}
+
+void CastExampleAttachedSkill(Vector3 startPos, Vector3 target, SkillParams params) {
+    int slot = -1;
+    for (int i = 0; i < MAX_INSTANCES; i++) {
+        if (!s_instances[i].active) { slot = i; break; }
+    }
+    if (slot < 0) return;
+
+    float duration = 5.0f * params.sizeScale;
+    float radius = 40.0f * params.sizeScale;
+
+    s_instances[slot] = (SkillInstance){
+        .state = STATE_CASTING,
+        .casterPos = startPos,
+        .stateTimer = 0.0f,
+        .buffDuration = duration,
+        .buffRadius = radius,
+        .active = true
+    };
+
+    // Radius-based — no agentId required. NOTE: buffs every agent currently inside
+    // buffRadius of casterPos, ally or enemy (Entity_ApplyAoEBuff has no team
+    // filtering yet, see ENTITIES_API.md §9).
+    Entity_ApplyAoEBuff(startPos, radius, 1.5f /* speedMult */, duration);
+
+    SpawnCastEffect(startPos, EFFECT_PRESET_WOOD_BLOOM, params.sizeScale * 0.5f);
+}
+
+void UpdateExampleAttachedSkill(float dt, Vector3 enemyPos, float enemyRadius) {
+    for (int i = 0; i < MAX_INSTANCES; i++) {
+        SkillInstance *s = &s_instances[i];
+        if (!s->active) continue;
+        s->stateTimer += dt;
+
+        switch (s->state) {
+            case STATE_CASTING:
+                if (s->stateTimer >= CASTING_DURATION) {
+                    s->state = STATE_ATTACHED;
+                    s->stateTimer = 0.0f;
+                }
+                break;
+
+            case STATE_ATTACHED: {
+                // Re-spawn a light/particle pulse at the tracked position on an
+                // interval, rather than every single frame, to avoid flooding the
+                // VFXLight/particle pools. The position itself is only as fresh as
+                // casterPos (cached at cast time) — see note above re: agentId.
+                static float tickAccum = 0.0f; // illustrative; real code keys this per-instance
+                if (fmodf(s->stateTimer, VISUAL_TICK_INTERVAL) < dt) {
+                    VFXLight_Spawn(s->casterPos, ELEMENT_COLOR_WOOD, 60.0f, VISUAL_TICK_INTERVAL * 1.5f);
+                }
+                if (s->stateTimer >= s->buffDuration) {
+                    s->state = STATE_DISSOLVE;
+                    s->stateTimer = 0.0f;
+                }
+                break;
+            }
+
+            case STATE_DISSOLVE:
+                if (s->stateTimer >= DISSOLVE_DURATION) {
+                    s->active = false;
+                }
+                break;
+        }
+    }
+}
+
+void DrawExampleAttachedSkill(void) {
+    // VFXLight/particle draws are handled by their owning systems each frame
+    // (VFXLight_GetActive, etc.) — nothing to draw here directly in this skeleton.
+}
+
+void UnloadExampleAttachedSkill(void) {
+    // No-op: textures/shaders are owned by ResourceManager, never unload here.
+}
+```
+> [!NOTE]
+> Requires `#include "entities/entities.h"` to call `Entity_ApplyAoEBuff`. As of this writing, `skills/CLAUDE.md`'s allowed read list covers `core/` headers and `environment/environment_system.h` only — `entities/` is **not** listed. Skills Agent: confirm with whoever owns `skills/CLAUDE.md` whether `entities/entities.h` should be added to that list before shipping a real Buff skill against this skeleton.
+
 ---
 
 ## 5. DYNAMIC FORCE FIELD SYSTEM (`#include "core/force_field.h"`)
@@ -193,6 +724,8 @@ typedef struct {
 TrailConfig should be initialized with {0}.
 `int SpawnTrailEntity(TrailConfig config);` spawns ribbon-based trail components.
 
+> **Pool budget:** `MAX_TRAIL_PARTICLES = 500` is a single static pool shared across **all active trails project-wide**, not per-skill. Several concurrent heavy-trail skills (e.g. multiple wisp/projectile-heavy casts at once) can exhaust it — `SpawnTrailEntity` returns `-1` if the pool is full. Same pattern as `MAX_DECALS` in §8.
+
 ### Configurations
 ```c
 typedef enum {
@@ -202,6 +735,9 @@ typedef enum {
     TRAIL_TYPE_FOLLOWER     // Manually driven. Follows coordinates bound by skill code
 } TrailType;
 
+typedef void (*TrailUpdateCallback)(int trailId, float dt);
+typedef void (*TrailDeathCallback)(Vector3 pos, float scale);
+
 typedef struct {
     TrailType type;
     Vector3 pos, vel, target;
@@ -209,10 +745,17 @@ typedef struct {
     float thick;            // Thickness of ribbon at head
     float trailLength;      // Absolute trail decay length (world units)
     float life;             // Total duration in seconds (0 = persistent until KillTrail)
+    float initialAngle;     // Starting rotation (degrees), mainly for TRAIL_TYPE_PORTAL spin start
+    float wobblePhase;      // Starting phase offset for TRAIL_TYPE_PROJECTILE's sine wobble
     float scale;
     Texture2D tex;
     Color tint;
     Shader shader;
+    TrailUpdateCallback onUpdate;   // Called every UpdateTrailSystem() frame for this trail, while active
+    TrailDeathCallback onDeath;     // Called once when the trail dies (KillTrail or auto hit-detect)
+    int ownerTag;            // Caller-defined ID (e.g. caster entity ID); not read by trail_system itself
+    float wobbleAmplitudeOverride; // >0: overrides TRAIL_PROJECTILE_WOBBLE_AMPLITUDE for this trail. <=0 (default): use global
+    float curveRangeOverride;      // >0: overrides TRAIL_PROJECTILE_CURVE_RANGE for this trail. <=0 (default): use global
     const ForceField *forceField;
     const ColorGradient *gradient;
     const SpriteAnim *spriteAnim;
@@ -222,6 +765,25 @@ typedef struct {
   - `SetFollowerAxis(trailId, basePos, normalizedDir);` (Sets orientation)
   - `UpdateFollowerPosition(trailId, tipPos);` (Updates head position)
 * **Lifecycle:** Free active trails when complete by calling `KillTrail(trailId);`.
+* **`onDeath`:** Fired once when a trail dies — either its `life` timer expires, or (for `TRAIL_TYPE_PROJECTILE`) it auto-detects a hit on `target`. Use it to spawn an impact effect exactly at the trail's last position without separately tracking when the projectile arrived:
+  ```c
+  static void OnQiBladeDeath(Vector3 pos, float scale) {
+      SpawnImpactEffect(pos, PRESET_METAL, scale);
+  }
+  // ...
+  TrailConfig cfg = {0};
+  cfg.onDeath = OnQiBladeDeath;
+  ```
+* **`onUpdate`:** Fired every frame the trail is active, after physics update — use for custom per-trail logic (e.g. periodic sub-emits) that doesn't fit the built-in `forceField`/`gradient` model. Receives the trail's own ID, so call `GetTrail(trailId)` inside to read live position/velocity.
+* **`ownerTag`:** Caller-defined integer, stored but never interpreted by `trail_system.c` itself — use it to tag which caster/skill instance owns a trail (e.g. for multi-caster scenarios where you need to distinguish "my projectile" from another player's via `GetTrail(id)->ownerTag`).
+* **Per-instance `TRAIL_TYPE_PROJECTILE` overrides:** `wobbleAmplitudeOverride` and `curveRangeOverride` let a single trail opt out of the global homing/wobble macros without affecting other skills. Example — a dead-straight "sword qi" trail:
+  ```c
+  TrailConfig cfg = {0};
+  cfg.type = TRAIL_TYPE_PROJECTILE;
+  cfg.wobbleAmplitudeOverride = 0.001f; // near-zero wobble
+  cfg.curveRangeOverride = 1.0f;        // snaps to target direction almost immediately
+  ```
+  Leave both at `0` (default from `{0}` zero-init) to keep the existing global-macro behavior — fully backward compatible.
 
 ---
 
@@ -231,12 +793,14 @@ typedef struct {
 ```c
 void DecalSystem_Init(void);
 void DecalSystem_Add(Vector3 pos, float rot, float scale, Texture2D tex, float life, Color tint);
+void DecalSystem_AddStreak(const Vector3 *points, int count, float rot, float scale, Texture2D tex, float life, Color tint);
 void DecalSystem_Update(float dt);
 void DecalSystem_Draw(void);
 void DecalSystem_Unload(void);
 ```
 * `rot`: yaw around Y axis (degrees). Alpha fades internally as `lifetime / maxLifetime` decays to 0.
 * Static pool, `MAX_DECALS = 64`, no malloc.
+* `DecalSystem_AddStreak`: thin wrapper that calls `DecalSystem_Add` once per point in `points[0..count-1]` — for path-shaped effects (thorn lines, scorch trails) instead of hand-rolling a loop. Caller's responsibility to pass a reasonable `count` (e.g. up to 32, matching `SkillParams.pathPoints[32]`); not auto-clamped against `MAX_DECALS` headroom, same convention as `SamplePath`'s `maxSegments` in `core/path_spline.h`.
 
 Rules:
 - Call `DecalSystem_Init()` once at startup, `DecalSystem_Update(dt)` every frame to age out decals.
@@ -640,10 +1204,23 @@ void CameraFX_AddImpulse(Vector3 origin, CameraImpulse impulse);
 ```
 
 ### Audio
+
+**Centralized presets (`core/skill_helper.h`, `core/resource_manager.h`) — use these for Cast/Impact:**
+```c
+Sound ResourceManager_LoadSound(const char *filePath); // cached, same dedup-by-path pattern as LoadTexture/LoadShader
+
+void PlayCastSound(EffectPresetType preset);
+void PlayImpactSound(EffectPresetType preset);
+```
+Reuse the same `EffectPresetType` enum as `SpawnCastEffect`/`SpawnImpactEffect`, so a skill calls one enum value for both image and sound. Each preset loads (via `ResourceManager_LoadSound`, cached) and plays a per-element `Sound` on first use, then just `PlaySound()`s the cached handle on subsequent calls — callers don't need their own cache layer. No Flight-stage sound preset yet (looping/ambient audio during flight is a different mechanism than one-shot `PlaySound`).
+
+> [!NOTE] As of 2026-06-30 no per-element SFX assets exist under `assets/` (no `.wav`/`.ogg` files anywhere in the repo). `PlayCastSound`/`PlayImpactSound` currently `TraceLog(LOG_WARNING, ...)` once per missing preset and return without playing or crashing — this is a content gap, not a stub Core Agent will silently fix. Once real asset files land (e.g. `assets/sounds/fire_cast.wav`), wire the paths into the switch in `skill_helper.c`.
+
+**Skill-owned one-off sound (still valid):**
 ```c
 PlaySound(Sound sound);
 ```
-Load sounds in `InitSkill()`.
+For a skill's own *unique* one-off sound not covered by an element preset, load via `ResourceManager_LoadSound()` in `InitSkill()` (cached, don't `LoadSound`/`UnloadSound` directly) and `PlaySound()` it yourself. Cast/Impact sounds that map to an element should go through `PlayCastSound`/`PlayImpactSound` instead, not be hand-rolled per skill.
 
 ---
 
@@ -685,9 +1262,25 @@ Các wrapper tiện ích cao cấp — dùng để giảm boilerplate. Không b�
 ```c
 typedef enum { EFFECT_PRESET_FIRE_EXPLOSION, EFFECT_PRESET_ICE_SHATTER,
                EFFECT_PRESET_WATER_SPLASH, EFFECT_PRESET_LIGHTNING_IMPACT,
-               EFFECT_PRESET_EARTH_CRACK } EffectPresetType;
+               EFFECT_PRESET_EARTH_CRACK, EFFECT_PRESET_WOOD_BLOOM,
+               EFFECT_PRESET_METAL_SHARD, EFFECT_PRESET_TAIJI_BURST } EffectPresetType;
 void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale);
 ```
+All 6 elements now covered: `WOOD_BLOOM` (leaf/vine burst, upward-biased, `ELEMENT_COLOR_WOOD`, `DECAL_PRESET_WOOD_MOSS`), `METAL_SHARD` (sharp shards, high pitch range, `ELEMENT_COLOR_METAL`, `DECAL_PRESET_METAL_SLASH`), `TAIJI_BURST` (amethyst-purple radial burst + stronger light flash for the "no-element" ultimate state, `ELEMENT_COLOR_TAIJI`, `DECAL_PRESET_TAIJI_RING`).
+
+### Cast Effect Preset (windup/energy-gathering)
+```c
+void SpawnCastEffect(Vector3 pos, EffectPresetType preset, float scale);
+```
+Reuses `EffectPresetType` — the cast/windup equivalent of `SpawnImpactEffect`. No knockback, no ground decal. Particles spawn on a ring around `pos` and get pulled inward via a `FORCE_GRAVITY_POINT` field (reads as "energy gathering" rather than an outward explosion), plus a light flash (`VFXLight_Spawn`). Call at the start of a cast/windup phase, e.g. inside `Cast[Name]Skill` or the `STATE_CASTING` branch of `Update[Name]Skill`. Internally backed by an 8-slot static `ForceField` pool (`MAX_CONCURRENT_CAST_EFFECTS`), claimed round-robin per call, so concurrent casts at different positions (multi-player) pull correctly without interfering with each other.
+
+### Flight Effect Preset (projectile trail)
+```c
+int SpawnProjectileTrail(Vector3 start, Vector3 target, EffectPresetType preset, float scale, float speed);
+```
+Reuses `EffectPresetType` — the flight-stage equivalent of Cast/Impact, for the middle of a skill's lifecycle (while it's traveling from `start` to `target`). Spawns a `TRAIL_TYPE_PROJECTILE` `TrailConfig` (per-element tint/gradient from the same static `ColorGradient`s Cast/Impact use) plus a head `ParticleConfig` with an `onLiveEmit` sub-emitter for continuous tail dust. Returns the trail ID — **caller MUST call `KillTrail(id)` on impact**, typically right before calling `SpawnImpactEffect` at the target.
+
+**Force regime differs from Cast/Impact**: uses the sustained/flight range (300-650f primary directional pull via `FORCE_GRAVITY_DIR`, ~20f `FORCE_NOISE_PERLIN` wobble on top) per CORE_API.md §1 and the `water_stream/tube_skill.c` precedent — NOT the 5-60f ambient/burst range used by `SpawnCastEffect`/`SpawnImpactEffect`. Internally backed by an 8-slot static `ForceField` pool (`MAX_CONCURRENT_PROJECTILE_TRAILS`), claimed round-robin per call, same pattern as `SpawnCastEffect`'s pool, so concurrent flying projectiles don't interfere with each other's direction.
 
 ### Damage Volume
 ```c
@@ -715,7 +1308,8 @@ Dùng để orchestrate chuỗi sự kiện nhiều bước mà không cần sta
 
 ### Particle Emitter Preset
 ```c
-typedef enum { EMITTER_FIRE, EMITTER_SNOW, EMITTER_WATER_SPURT, EMITTER_SHOCKED_SPARKS } EmitterPreset;
+typedef enum { EMITTER_FIRE, EMITTER_SNOW, EMITTER_WATER_SPURT, EMITTER_SHOCKED_SPARKS,
+               EMITTER_WOOD_LEAVES, EMITTER_EARTH_DUST, EMITTER_METAL_SPARKS, EMITTER_TAIJI_MOTES } EmitterPreset;
 void EmitterSystem_Init(void);
 void EmitterSystem_Update(float dt);
 int  Emitter_AttachToPoint(EmitterPreset type, Vector3 pos, float ratePerSecond, float duration);
@@ -781,7 +1375,10 @@ void SkillBuilder_AddExplosion(SkillBuildContext *ctx, EffectPresetType vfx);
 void SkillBuilder_AddDecal(SkillBuildContext *ctx, DecalPresetType decal, float radius, float duration);
 void SkillBuilder_AddDamageVolume(SkillBuildContext *ctx, float radius, float dps, float duration);
 void SkillBuilder_Build(SkillBuildContext *ctx); // Gọi cuối để kích hoạt tất cả
+
+void SkillBuilder_AddCastEffect(SkillBuildContext *ctx, EffectPresetType preset); // Cast-stage hook, own trigger point
 ```
+`SkillBuilder_AddCastEffect` has its own trigger point — call it at **cast time** (after `SkillBuilder_Start`, which sets `ctx->target`/`ctx->scale`), separately from `SkillBuilder_Build()` which fires at **impact time**. It fires `SpawnCastEffect` immediately rather than deferring into `ctx`, since cast and impact happen at different points in a skill's lifecycle and the builder's other `Add*` calls all defer to `Build()`.
 
 ---
 

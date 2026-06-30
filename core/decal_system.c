@@ -87,6 +87,14 @@ void DecalSystem_Add(Vector3 pos, float rotation, float scale,
                       texture, lifetime, tint, BLEND_ALPHA, 0.02f);
 }
 
+void DecalSystem_AddStreak(const Vector3 *points, int count, float rotation,
+                           float scale, Texture2D texture, float lifetime, Color tint) {
+    if (points == NULL) return;
+    for (int i = 0; i < count; i++) {
+        DecalSystem_Add(points[i], rotation, scale, texture, lifetime, tint);
+    }
+}
+
 void DecalSystem_Update(float dt) {
     for (int i = 0; i < MAX_DECALS; i++) {
         DecalEntity *d = &g_DecalPool[i];

@@ -21,6 +21,14 @@ typedef enum {
     AGENT_RING_OUT_FALLING
 } AgentVerticalState;
 
+#define MAX_AGENT_MODIFIERS 4
+
+// Minimal duration-based modifier slot (e.g. Buff speed multiplier).
+typedef struct {
+    float speedMult;   // 1.0 = normal speed; multiplicative; <=0 or unset slot ignored
+    float duration;     // seconds remaining; <=0 means inactive/empty slot
+} AgentModifier;
+
 typedef struct {
     Vector3 position;
     Vector3 velocity;
@@ -31,6 +39,7 @@ typedef struct {
     float   dashCooldown;        // seconds remaining, independent from skill Mana
     bool    isStealthed;         // true when motionless — reserved for future Auto-Targeting/Boss AI, not yet consumed anywhere
     bool    active;
+    AgentModifier modifiers[MAX_AGENT_MODIFIERS]; // generic buff/debuff slots, see §8
 } Agent;
 
 #define MAX_AGENTS 8
@@ -39,6 +48,7 @@ static Agent agentPool[MAX_AGENTS]; // 4 ally + 4 enemy AI
 
 * **`currentElement`** is not chosen at creation — it's recomputed whenever the agent's 4 equipped skills change (Vô Hệ mechanic, see design doc §II). Recompute logic is NOT part of this minimal version; field exists, update logic comes later.
 * **`isStealthed`** and **`dashCooldown`** are reserved fields — no system reads/writes them meaningfully yet in this version. They exist so the struct doesn't need a breaking change when khinh công/auto-targeting are implemented.
+* **`modifiers[MAX_AGENT_MODIFIERS]`** — see §8. Data structure + tick-down only; `speedMult` is NOT wired into any movement code yet (no movement system exists to wire it into).
 
 ---
 
@@ -94,7 +104,56 @@ void Entity_OnDash(int agentId); // currently empty body — reserved hook
 
 ---
 
-## 7. Explicitly NOT in this version
+## 7. Nearby Target Query
+
+```c
+// Returns the number of active agents found within radius of center, writing
+// their indices into outIds (caller-supplied buffer, size maxIds).
+int Entity_GetNearbyTargets(Vector3 center, float radius, int *outIds, int maxIds);
+```
+
+* Pure read query — no side effects, no damage application (use `Entity_ApplyDamage` separately).
+* XZ-plane distance check (ignore Y), matching the same distance-check pattern used by `Entity_CheckRingOut` (§5).
+* Iterates `agentPool[MAX_AGENTS]`, skips inactive agents (`active == false`).
+* No team/faction filtering in this version — `Agent` has no team field yet. Known near-term follow-up, not implemented.
+* Backing use cases: multi-target skills, trap trigger zones, persistent AoE/control zones, and (later) Map Virtual Trigger Zones — all share this one query instead of reimplementing per-module.
+
+---
+
+## 8. Buff Modifier Slot
+
+```c
+void Entity_AddModifier(int agentId, float speedMult, float duration);
+```
+
+* Finds the first empty/expired slot (`duration <= 0`) in `agentPool[agentId].modifiers[]` and writes `speedMult`/`duration` into it.
+* Simple find-first-empty — no priority/stacking logic. If no empty slot exists, the call is silently dropped (no eviction policy in this minimal version).
+* `Entity_Update(dt)` ticks down `duration` on all active slots every frame; when a slot's `duration` reaches `<= 0` it is cleared (`duration = 0`, `speedMult = 0`).
+* **Limitation:** this is data-only. `speedMult` is NOT applied to any movement/velocity code — there is no movement system in this minimal version to wire it into. A future iteration (once khinh công/movement exists) will need to read these slots and apply the multiplier; that wiring is explicitly out of scope here.
+* Intended consumer: Buff-type skills (Core Agent's future "Entity-Attached" skeleton, `CORE_API.md` §4 — not yet documented) write into this slot; this module only stores and ticks it down.
+
+---
+
+## 9. AoE Composition — Damage & Buff over a Radius
+
+```c
+void Entity_ApplyAoEDamage(Vector3 center, float radius, float damage, float knockbackStrength);
+void Entity_ApplyAoEBuff(Vector3 center, float radius, float speedMult, float duration);
+```
+
+These compose existing primitives rather than reimplementing radius logic — both call `Entity_GetNearbyTargets` (§7) internally, then loop:
+
+* **`Entity_ApplyAoEDamage`**: for each found agent, computes a knockback direction as the normalized XZ-plane vector from `center` to `agentPool[id].position` (Y ignored, same plane convention as §7's distance check), scales it by `knockbackStrength`, and calls `Entity_ApplyDamage` (§4) per agent.
+* **`Entity_ApplyAoEBuff`**: for each found agent, calls `Entity_AddModifier` (§8) with `speedMult`/`duration`.
+* Small radius ≈ single-target (projectile impact, melee swing). Large radius = true AoE (Tầm trung skills, buff aura). Same two calls cover both — only the radius and call frequency (once at impact vs. ticking every frame) differ.
+
+> **KNOWN LIMITATION — NO TEAM FILTERING.** `Agent` has no team/faction field yet (same gap as §7). `Entity_ApplyAoEBuff` buffs **every active agent inside the radius, ally or enemy** — there is currently no way to scope a buff aura to allies only. Skills Agent: a buff radius will also strengthen enemies standing inside it. This is acceptable for this minimal version but is a known near-term follow-up once `Agent` gains a team field — not implemented here.
+
+> **Supersedes `core/skill_manager.h`'s `ApplyAoEDamage()` for agent-targeted damage.** That function still exists (raw AoE math, no HP bookkeeping, may still be used for non-agent targets like destructible scenery later), but skills dealing damage to `agentPool` should call `Entity_ApplyAoEDamage` instead — it owns the actual HP mutation via `Entity_ApplyDamage` (§4), which `core/skill_manager.h` does not. (Core Agent: `CORE_API.md` should be updated to point skill authors here — not done in this pass, out of scope for Entities Agent.)
+
+---
+
+## 10. Explicitly NOT in this version
 
 - Clash Matrix (Skill↔Skill projectile collision resolution)
 - Formation Pool / Trận Pháp

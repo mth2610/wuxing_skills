@@ -161,15 +161,20 @@ static void UpdateProjectilePhysics(int i, float dt, float time) {
   float distSqr = Vector3LengthSqr(toTarget);
 
   if (distSqr > TRAIL_PROJECTILE_RETARGET_DIST_SQR) {
+    float curveRange = (t->curveRangeOverride > 0.0f) ? t->curveRangeOverride
+                                                       : TRAIL_PROJECTILE_CURVE_RANGE;
+    float wobbleAmplitude = (t->wobbleAmplitudeOverride > 0.0f)
+                                 ? t->wobbleAmplitudeOverride
+                                 : TRAIL_PROJECTILE_WOBBLE_AMPLITUDE;
     Vector3 desiredDir = Vector3Normalize(toTarget);
     float currentSpeed = Vector3Length(t->velocity);
     float newSpeed = fminf(currentSpeed + TRAIL_PROJECTILE_ACCEL_RATE * dt,
                            TRAIL_PROJECTILE_MAX_SPEED);
     float distToTarget = sqrtf(distSqr);
     float curveStrength =
-        fminf(distToTarget / TRAIL_PROJECTILE_CURVE_RANGE, 1.0f);
+        fminf(distToTarget / curveRange, 1.0f);
     Vector3 perpDir = (Vector3){-desiredDir.z, 0.0f, desiredDir.x};
-    float wobble = sinf(t->wobblePhase) * TRAIL_PROJECTILE_WOBBLE_AMPLITUDE *
+    float wobble = sinf(t->wobblePhase) * wobbleAmplitude *
                    curveStrength * dt;
     Vector3 desiredVel = Vector3Add(Vector3Scale(desiredDir, newSpeed),
                                     Vector3Scale(perpDir, wobble));
@@ -349,6 +354,8 @@ int SpawnTrailEntity(TrailConfig config) {
   t->onUpdate = config.onUpdate;
   t->onDeath = config.onDeath;
   t->ownerTag = config.ownerTag;
+  t->wobbleAmplitudeOverride = config.wobbleAmplitudeOverride;
+  t->curveRangeOverride = config.curveRangeOverride;
   t->forceField = config.forceField;
   t->gradient = config.gradient;
   t->spriteAnim = config.spriteAnim;

@@ -69,6 +69,9 @@ add_executable(wuxing
     core/impact_burst.c
     core/shader_preprocessor.c
 
+    # --- Entities ---
+    entities/entities.c
+
     # --- Sandbox & Test Simulator ---
     sandbox/sandbox_core.c
     sandbox/ui_panel.c

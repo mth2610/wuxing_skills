@@ -7,8 +7,8 @@ Manages the entire **Skills** module of the Wuxing Skills project. Responsible f
 - **Read/write:** The entire `skills/` directory (all elements: `water/`, `wood/`, `fire/`, `earth/`, `metal/`, `taiji/`)
 - **Read/write (shared doc):** `CORE_API.md` — Skills Agent may edit it directly to document usage notes/conventions discovered while building skills (e.g. confirming a `[!NOTE]` assumption); see "Updating CORE_API.md" below. Still never edit `core/*.c`/`*.h` themselves.
 - **Read (required when working):** `CORE_API_SHORT.md`, `VFX_ARCHITECTURE.md`, `WUXING_ART_DIRECTION.md`
-- **Read (interface only):** `core/` headers `.h` (for API knowledge), `environment/environment_system.h`
-- **DO NOT read:** `core/*.c`, `maps/*.c`, `environment/*.c`
+- **Read (interface only):** `core/` headers `.h` (for API knowledge), `environment/environment_system.h`, `entities/entities.h` (for `Entity_ApplyAoEDamage`/`Entity_ApplyAoEBuff`/`Entity_GetNearbyTargets` — see `ENTITIES_API.md` §4/§7/§8/§9)
+- **DO NOT read:** `core/*.c`, `maps/*.c`, `environment/*.c`, `entities/*.c`
 
 ## Directories FULLY FORBIDDEN
 - `build/`
@@ -20,6 +20,7 @@ Manages the entire **Skills** module of the Wuxing Skills project. Responsible f
 - `sandbox/`
 - `environment/` (`.h` only, never `.c`)
 - `core/` (`.h` only, never `.c`)
+- `entities/` (`.h` only, never `.c`)
 
 ## Required skill directory structure
 ```
@@ -64,7 +65,8 @@ void Deactivate[Name]Projectile(int index);
 - Need to document a usage note/convention for an existing API: edit `CORE_API.md` directly (see below), no need to ask Core Agent
 - Need environment info (sun direction, shadow): use the `environment/environment_system.h` API
 - Need to spawn a GPU particle: use `compute/gpu_particle_system.h` — don't edit `compute/` directly
-- Never edit `core/` or `environment/` directly
+- Need to deal damage or apply a buff to agents: use `entities/entities.h`'s `Entity_ApplyAoEDamage`/`Entity_ApplyAoEBuff` (radius-based, works for single-target via small radius or true AoE via large radius — see `ENTITIES_API.md` §9). Do NOT call `core/skill_manager.h`'s `ApplyAoEDamage()` for agent-targeted damage — superseded, no HP bookkeeping.
+- Never edit `core/`, `environment/`, or `entities/` directly
 
 ## Updating `CORE_API.md` (shared with Core Agent — MANDATORY workflow)
 `CORE_API.md` is jointly maintained: **Core Agent** writes it when a `core/*.h` signature/struct/enum changes; **Skills Agent** writes it when it confirms a usage convention, gotcha, or behavior worth documenting (e.g. resolving an `[!NOTE]`-tagged assumption after validating it in real skill code). Never rewrite the whole file:

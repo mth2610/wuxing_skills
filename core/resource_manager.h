@@ -15,4 +15,7 @@ Texture2D ResourceManager_LoadTexture(const char *filePath);
 // Load shader (returns cached instance if already loaded)
 Shader ResourceManager_LoadShader(const char *vsFilePath, const char *fsFilePath);
 
+// Load sound (returns cached instance if already loaded)
+Sound ResourceManager_LoadSound(const char *filePath);
+
 #endif // RESOURCE_MANAGER_H
