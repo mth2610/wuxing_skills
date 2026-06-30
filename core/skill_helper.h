@@ -110,10 +110,39 @@ void Material_End(void);
 
 // 7. Ground Decal
 typedef enum {
-    DECAL_PRESET_BURN,
-    DECAL_PRESET_CRACK,
-    DECAL_PRESET_ICE,
-    DECAL_PRESET_WATER
+    // Earth
+    DECAL_PRESET_CRACK,            // crack.png
+    DECAL_PRESET_EARTH_SHATTER,    // decals/decal_stone_shatter.png
+    DECAL_PRESET_EARTH_RUNE,       // decals/decal_earth_rune.png
+
+    // Fire
+    DECAL_PRESET_BURN,             // scorch_mark.png
+    DECAL_PRESET_FIRE_LAVA,        // decals/decal_lava_crack.png
+
+    // Water
+    DECAL_PRESET_WATER,            // water_caustics.png
+    DECAL_PRESET_WATER_SPLASH,     // decals/decal_splash_ring.png
+    DECAL_PRESET_WATER_RIPPLE,     // decals/decal_water_ripple.png
+    DECAL_PRESET_ICE,              // decals/decal_frost_ring.png
+
+    // Wood
+    DECAL_PRESET_WOOD_ROOT,        // decals/decal_root_mark.png
+    DECAL_PRESET_WOOD_MOSS,        // decals/decal_moss_stain.png
+
+    // Metal
+    DECAL_PRESET_METAL_SLASH,      // decals/decal_slash_mark.png
+    DECAL_PRESET_METAL_CRATER,     // decals/decal_impact_crater.png
+    DECAL_PRESET_METAL_RUNE,       // decals/decal_metal_rune.png
+
+    // Taiji
+    DECAL_PRESET_TAIJI_RING,       // decals/decal_taiji_ring.png
+    DECAL_PRESET_TAIJI_LIGHTNING,  // decals/decal_lightning_char.png
+    DECAL_PRESET_TAIJI_WIND,       // decals/decal_wind_groove.png
+
+    // Generic (no element tint baked in — caller sets tint to taste)
+    DECAL_PRESET_GENERIC_IMPACT_RING, // generic/impact_ring.png
+    DECAL_PRESET_GENERIC_GLOW,        // generic/glow_circle.png
+    DECAL_PRESET_GENERIC_SHADOW       // generic/shadow_blob.png
 } DecalPresetType;
 
 void SpawnGroundDecal(DecalPresetType type, Vector3 pos, float radius, float duration);

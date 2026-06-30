@@ -1,6 +1,5 @@
 #include "sandbox/sandbox_core.h"
 #include "core/skill_manager.h"
-#include "skills/taiji/wind_storm/wind_skill.h"
 #include "environment/environment_system.h"
 #include "raymath.h"
 #include "rlgl.h"
@@ -637,20 +636,6 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         enemy->knockbackVelocity = Vector3Subtract(enemy->knockbackVelocity, Vector3Scale(enemy->knockbackVelocity, 8.0f * dt));
         if (Vector3Length(enemy->knockbackVelocity) < 2.0f) {
             enemy->knockbackVelocity = (Vector3){0};
-        }
-    }
-
-    // Cập nhật lực Hút Lại (Pull Force) từ lốc xoáy
-    Vector3 windPullCenter = { 0 };
-    float windPullStrength = 0.0f;
-    if (GetWindPullForce(&windPullCenter, &windPullStrength)) {
-        Vector3 pullDir = Vector3Subtract(windPullCenter, enemy->position);
-        pullDir.y = 0.0f;
-        float dist = Vector3Length(pullDir);
-        if (dist > 10.0f) {
-            float pullFactor = Clamp(400.0f / dist, 0.5f, 3.0f);
-            Vector3 pullForce = Vector3Scale(Vector3Normalize(pullDir), windPullStrength * pullFactor * dt);
-            enemy->position = Vector3Add(enemy->position, pullForce);
         }
     }
 

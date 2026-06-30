@@ -743,9 +743,27 @@ void Material_End(void);
 
 ### Ground Decal Preset
 ```c
-typedef enum { DECAL_PRESET_BURN, DECAL_PRESET_CRACK, DECAL_PRESET_ICE, DECAL_PRESET_WATER } DecalPresetType;
+typedef enum {
+    // Earth
+    DECAL_PRESET_CRACK, DECAL_PRESET_EARTH_SHATTER, DECAL_PRESET_EARTH_RUNE,
+    // Fire
+    DECAL_PRESET_BURN, DECAL_PRESET_FIRE_LAVA,
+    // Water
+    DECAL_PRESET_WATER, DECAL_PRESET_WATER_SPLASH, DECAL_PRESET_WATER_RIPPLE, DECAL_PRESET_ICE,
+    // Wood
+    DECAL_PRESET_WOOD_ROOT, DECAL_PRESET_WOOD_MOSS,
+    // Metal
+    DECAL_PRESET_METAL_SLASH, DECAL_PRESET_METAL_CRATER, DECAL_PRESET_METAL_RUNE,
+    // Taiji
+    DECAL_PRESET_TAIJI_RING, DECAL_PRESET_TAIJI_LIGHTNING, DECAL_PRESET_TAIJI_WIND,
+    // Generic — untinted, caller may apply its own Color
+    DECAL_PRESET_GENERIC_IMPACT_RING, DECAL_PRESET_GENERIC_GLOW, DECAL_PRESET_GENERIC_SHADOW
+} DecalPresetType;
 void SpawnGroundDecal(DecalPresetType type, Vector3 pos, float radius, float duration);
 ```
+* All 6 elements now have at least 2 ground-mark presets; each (except GENERIC_*) is pre-tinted via its `ELEMENT_COLOR_*` macro inside `SpawnGroundDecal` — caller does not pass a `Color`.
+* Backing textures live under `assets/textures/decals/` (per-element marks) and `assets/textures/generic/` (untinted, reusable across elements: `impact_ring.png`, `glow_circle.png`, `shadow_blob.png`).
+* `DECAL_PRESET_CRACK`/`BURN`/`ICE`/`WATER` are the original 4 presets, kept for call-site compatibility with existing skills — `ICE` now points to a real frost texture (`decal_frost_ring.png`) instead of the old `dust_wind.png` placeholder.
 
 ### ForceField Preset
 ```c
