@@ -17,6 +17,7 @@ typedef struct {
     float zVelocity;
     int jumpCount;
     bool isFlying;
+    int agentId; // Entities module agentPool slot (see entities/entities.h)
 } PlayerEntity;
 
 
@@ -34,6 +35,7 @@ typedef struct {
     float patrolAngle;
     float oscillationScale;
     Vector3 knockbackVelocity; // MỚI: Vận tốc hất văng tích lũy
+    int agentId; // Entities module agentPool slot (see entities/entities.h)
 } EnemyEntity;
 
 // Khởi tạo các thực thể và môi trường 3D

@@ -4,12 +4,14 @@
 
 #include "core/skill_manager.h"
 
+#include "skills/wood/vine_snare_skill/vine_snare_skill.h"
 #include "skills/wood/wood_thorns/wood_thorns_skill.h"
 #include "skills/water/water_sphere_skill/water_sphere_skill.h"
 #include "skills/fire/hoa_long_phong_ba_skill/hoa_long_phong_ba_skill.h"
 #include "skills/earth/stone_prison_skill/stone_prison_skill.h"
 
 static inline void RegisterGeneratedSkills(void) {
+    RegisterSkill("VINE_SNARE", ELEMENT_COLOR_WOOD, InitVineSnareSkill, CastVineSnareSkill, UpdateVineSnareSkill, DrawVineSnareSkill, UnloadVineSnareSkill);
     RegisterSkill("WOOD_THORNS", ELEMENT_COLOR_WOOD, InitWoodThornsSkill, CastWoodThornsSkill, UpdateWoodThornsSkill, DrawWoodThornsSkill, UnloadWoodThornsSkill);
     RegisterSkill("WATER_SPHERE", ELEMENT_COLOR_WATER, InitWaterSphereSkill, CastWaterSphereSkill, UpdateWaterSphereSkill, DrawWaterSphereSkill, UnloadWaterSphereSkill);
     RegisterSkill("HOA_LONG_PHONG_BA", ELEMENT_COLOR_FIRE, InitHoaLongPhongBaSkill, CastHoaLongPhongBaSkill, UpdateHoaLongPhongBaSkill, DrawHoaLongPhongBaSkill, UnloadHoaLongPhongBaSkill);

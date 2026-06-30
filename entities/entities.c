@@ -190,3 +190,37 @@ void Entity_ApplyAoEBuff(Vector3 center, float radius, float speedMult, float du
         Entity_AddModifier(ids[i], speedMult, duration);
     }
 }
+
+int Entity_SpawnAgent(Vector3 position, float maxHealth, int element) {
+    for (int i = 0; i < MAX_AGENTS; i++) {
+        if (!agentPool[i].active) {
+            Agent *a = &agentPool[i];
+            a->position = position;
+            a->velocity = (Vector3){ 0 };
+            a->health = maxHealth;
+            a->maxHealth = maxHealth;
+            a->currentElement = element;
+            a->vState = AGENT_GROUNDED;
+            a->dashCooldown = 0.0f;
+            a->isStealthed = false;
+            a->active = true;
+            for (int m = 0; m < MAX_AGENT_MODIFIERS; m++) {
+                a->modifiers[m] = (AgentModifier){ 0 };
+            }
+            return i;
+        }
+    }
+    return -1;
+}
+
+void Entity_SetPosition(int agentId, Vector3 position) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return;
+    if (!agentPool[agentId].active) return;
+    agentPool[agentId].position = position;
+}
+
+const Agent *Entity_GetAgent(int agentId) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return NULL;
+    if (!agentPool[agentId].active) return NULL;
+    return &agentPool[agentId];
+}

@@ -264,6 +264,8 @@ void DeactivateExampleProjectile(int index) {
 
 For skills with no flight stage — the effect happens at a fixed spawn point instead of traveling there (e.g. a stone spike rising from the ground). State machine: `CASTING → RISING (mesh height animates 0→full via SmoothStep01) → ACTIVE → DISSOLVE`. Static instance array keyed by spawn position, not velocity/target — nothing flies, so no `ProceduralMesh_BuildTube`/path-spline is needed; draw a simple procedural primitive (`DrawCoreCylinder`/`DrawCorePrism`) whose height is animated directly.
 
+The mesh is drawn as several short, jittered `DrawCoreCylinder` segments instead of one straight tapered shape, per §12.2 (Perpendicular Jitter) and §12.3 (Instance Randomization) below — a single undecorated frustum reads as robotic even though `DrawCoreCylinder` itself is an approved procedural mesh function.
+
 ```c
 #include "skill_example_rising.h"
 #include "core/skill_helper.h"
@@ -288,6 +290,8 @@ typedef struct {
     float radius;
     float maxHeight;
     float currentHeight; // animated 0 -> maxHeight during RISING
+    float yawOffset;     // per-instance random yaw (§12.3), applied to the jitter axis
+    float scaleVariance; // per-instance 85-115% scale (§12.3)
     bool active;
 } SkillInstance;
 
@@ -296,24 +300,27 @@ static SkillInstance s_instances[MAX_INSTANCES];
 #define RISING_DURATION 0.4f
 #define ACTIVE_DURATION 2.0f
 #define DISSOLVE_DURATION 0.5f
+#define MESH_SEGMENTS 5 // stacked segments forming the rising shape, see §12.2
 
 void InitExampleRisingSkill(int screenWidth, int screenHeight) {
     for (int i = 0; i < MAX_INSTANCES; i++) s_instances[i].active = false;
 }
 
-void CastExampleRisingSkill(Vector3 spawnPos, SkillParams params) {
+void CastExampleRisingSkill(Vector3 startPos, Vector3 target, SkillParams params) {
     for (int i = 0; i < MAX_INSTANCES; i++) {
         if (s_instances[i].active) continue;
         s_instances[i] = (SkillInstance){
             .state = STATE_CASTING,
-            .position = spawnPos,
+            .position = target, // ground-rising mesh spawns at the target, not the caster
             .stateTimer = 0.0f,
             .radius = 14.0f * params.sizeScale,
             .maxHeight = 80.0f * params.sizeScale,
             .currentHeight = 0.0f,
+            .yawOffset = (float)GetRandomValue(0, 360), // §12.3 instance randomization
+            .scaleVariance = (float)GetRandomValue(85, 115) / 100.0f,
             .active = true
         };
-        SpawnCastEffect(spawnPos, EFFECT_PRESET_EARTH_CRACK, params.sizeScale * 0.6f);
+        SpawnCastEffect(startPos, EFFECT_PRESET_EARTH_CRACK, params.sizeScale * 0.6f); // windup plays at the caster
         return;
     }
 }
@@ -368,8 +375,33 @@ void DrawExampleRisingSkill(void) {
     for (int i = 0; i < MAX_INSTANCES; i++) {
         SkillInstance *s = &s_instances[i];
         if (!s->active || s->currentHeight <= 0.01f) continue;
-        Vector3 top = { s->position.x, s->position.y + s->currentHeight, s->position.z };
-        DrawCoreCylinder(s->position, top, s->radius, s->radius * 0.6f, 12, ELEMENT_COLOR_EARTH);
+
+        // §12.2/§12.3: build the rising shape out of several short jittered
+        // segments + per-instance scale, instead of one straight tapered cylinder.
+        float dirYaw = s->yawOffset * DEG2RAD;
+        Vector3 dir = { cosf(dirYaw), 0.0f, sinf(dirYaw) };       // per-instance random jitter axis
+        Vector3 perp = { -dir.z, 0.0f, dir.x };
+        float segHeight = (s->currentHeight / MESH_SEGMENTS) * s->scaleVariance;
+        float baseRadius = s->radius * s->scaleVariance;
+
+        Vector3 segBottom = s->position;
+        for (int seg = 0; seg < MESH_SEGMENTS; seg++) {
+            float segT = (float)seg / (float)(MESH_SEGMENTS - 1); // 0 at base, 1 at tip
+            // Smaller-scale jitter than the §12.2 reference (tuned for a ~80f tall mesh,
+            // not a long path layout): +-3.0f instead of +-12.0f.
+            float jitter = (float)GetRandomValue(-30, 30) / 10.0f;
+            Vector3 jitteredBottom = Vector3Add(segBottom, Vector3Scale(perp, jitter));
+
+            Vector3 segTop = { jitteredBottom.x, segBottom.y + segHeight, jitteredBottom.z };
+            float jitterTop = (float)GetRandomValue(-30, 30) / 10.0f;
+            segTop = Vector3Add(segTop, Vector3Scale(perp, jitterTop - jitter));
+
+            float radiusBottom = Math_Mix(baseRadius, baseRadius * 0.6f, segT);
+            float radiusTop = Math_Mix(baseRadius, baseRadius * 0.6f, segT + 1.0f / MESH_SEGMENTS);
+            DrawCoreCylinder(jitteredBottom, segTop, radiusBottom, radiusTop, 12, ELEMENT_COLOR_EARTH);
+
+            segBottom = segTop;
+        }
     }
 }
 

@@ -153,7 +153,31 @@ These compose existing primitives rather than reimplementing radius logic — bo
 
 ---
 
-## 10. Explicitly NOT in this version
+## 10. Spawn & Read-Only Access
+
+```c
+int Entity_SpawnAgent(Vector3 position, float maxHealth, int element);
+const Agent *Entity_GetAgent(int agentId);
+```
+
+* **`Entity_SpawnAgent`**: scans `agentPool` for the first `!active` slot, initializes it (`position`, `health = maxHealth`, `maxHealth`, `currentElement = element`, `vState = AGENT_GROUNDED`, `active = true`, zeroed `velocity`/`dashCooldown`/`isStealthed`/`modifiers[]`), returns its index `0..MAX_AGENTS-1`. Returns `-1` if the pool is full — caller must check.
+* **`Entity_GetAgent`**: returns `&agentPool[agentId]` cast to `const Agent *` if `agentId` is in range `[0, MAX_AGENTS)` and the slot is `active`; otherwise returns `NULL`. **Caller must NULL-check** — do not assume a valid pointer.
+* This is **the only sanctioned way for other modules to read agent state** (position, health, vState, etc.). There is no mutable `Agent *` getter, and none should be added — all mutation goes through the existing `Entity_*` setters (`Entity_ApplyDamage`, `Entity_AddModifier`, `Entity_Jump`, `Entity_Dash`, etc.).
+* Unblocks: `sandbox/` migrating its duplicate `PlayerEntity`/`EnemyEntity` structs onto `agentPool` (separate Sandbox Agent task, not done here), future HUD/UI reading agent HP/position, and Map's planned Virtual Trigger Zone consumption.
+
+### Position sync setter
+
+```c
+void Entity_SetPosition(int agentId, Vector3 position);
+```
+
+* Overwrites `agentPool[agentId].position` directly. Entities owns **no horizontal movement system** — callers that compute their own X/Z movement (e.g. sandbox WASD/AI logic) must push the result here each frame so `Entity_GetNearbyTargets` and other position-based queries stay accurate.
+* Bounds-checks `agentId` and requires `active`, same pattern as `Entity_ApplyDamage`. No-op otherwise.
+* Pure overwrite — no velocity computation, no movement logic added.
+
+---
+
+## 11. Explicitly NOT in this version
 
 - Clash Matrix (Skill↔Skill projectile collision resolution)
 - Formation Pool / Trận Pháp

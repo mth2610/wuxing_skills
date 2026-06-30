@@ -1,8 +1,10 @@
 #include "sandbox/sandbox_core.h"
 #include "core/skill_manager.h"
 #include "environment/environment_system.h"
+#include "entities/entities.h"
 #include "raymath.h"
 #include "rlgl.h"
+#include <stddef.h>
 
 // Biến toàn cục hiển thị phím ảo cảm ứng
 #if defined(PLATFORM_ANDROID)
@@ -141,6 +143,15 @@ void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
     enemy->patrolAngle = 0.0f;
     enemy->oscillationScale = 1.0f;
     enemy->knockbackVelocity = (Vector3){ 0 };
+
+    // Register player/enemy as real agents in the Entities module agentPool
+    // so skills can drive their HP via Entity_ApplyAoEDamage(). Note: legacy
+    // skill damage (core/skill_manager.h ApplyAoEDamage/knockback) is NOT
+    // bridged to this HP system in this pass — only a skill calling
+    // Entity_ApplyAoEDamage directly will move these HP values.
+    Entity_Init();
+    player->agentId = Entity_SpawnAgent(player->position, 100.0f, 0);
+    enemy->agentId = Entity_SpawnAgent(enemy->position, 100.0f, 0);
 }
 // Biến toàn cục để điều khiển camera
 static float g_cameraAngle = 0.0f;
@@ -688,8 +699,39 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     camera.position = (Vector3){ 
         player->position.x + sinf(g_cameraAngle) * g_camDist, 
         player->position.y + g_camHeight, 
-        player->position.z + cosf(g_cameraAngle) * g_camDist 
+        player->position.z + cosf(g_cameraAngle) * g_camDist
     };
+
+    // Push computed positions into the Entities agentPool (Entities owns no
+    // horizontal movement system) and tick the module's own state (cooldowns,
+    // modifiers, ring-out).
+    Entity_SetPosition(player->agentId, player->position);
+    Entity_SetPosition(enemy->agentId, enemy->position);
+    Entity_Update(dt);
+}
+
+// Simple in-world HP bar drawn as a billboard-less flat quad above the head.
+static void DrawAgentHealthBar3D(Vector3 worldPos, float yOffset, int agentId, Color fillColor) {
+    const Agent* agent = Entity_GetAgent(agentId);
+    if (agent == NULL) return;
+
+    float ratio = (agent->maxHealth > 0.0f) ? (agent->health / agent->maxHealth) : 0.0f;
+    if (ratio < 0.0f) ratio = 0.0f;
+    if (ratio > 1.0f) ratio = 1.0f;
+
+    float barWidth = 40.0f;
+    float barHeight = 5.0f;
+    Vector3 barCenter = { worldPos.x, worldPos.y + yOffset, worldPos.z };
+
+    Vector3 bgMin = { barCenter.x - barWidth * 0.5f, barCenter.y, barCenter.z };
+    Vector3 bgMax = { barCenter.x + barWidth * 0.5f, barCenter.y + barHeight, barCenter.z };
+    DrawCube((Vector3){ (bgMin.x + bgMax.x) * 0.5f, (bgMin.y + bgMax.y) * 0.5f, barCenter.z }, barWidth, barHeight, 1.0f, ColorAlpha(BLACK, 0.6f));
+
+    if (ratio > 0.0f) {
+        float fillWidth = barWidth * ratio;
+        Vector3 fillCenter = { bgMin.x + fillWidth * 0.5f, (bgMin.y + bgMax.y) * 0.5f, barCenter.z };
+        DrawCube(fillCenter, fillWidth, barHeight, 1.2f, fillColor);
+    }
 }
 
 void DrawSandbox3D(const PlayerEntity* player, const EnemyEntity* enemy, Vector3 mouseTarget, UIPanelState* uiState) {
@@ -716,6 +758,11 @@ void DrawSandbox3D(const PlayerEntity* player, const EnemyEntity* enemy, Vector3
     
     Environment_DrawSmartShadow(player->position, ENV_SHAPE_SPHERE, 25.0f, 25.0f);
     DrawCharacter3D(player->position, 25.0f, GetColor(0xFFD39BFF), GetColor(0x3B5998FF), player->isDashing ? GetRegisteredSkillColor(uiState->activeSkillIndex) : GetColor(0xCCCCCCFF), true, mouseTarget);
+
+    // HP bars sourced from the Entities agentPool (Entity_GetAgent), not the
+    // legacy PlayerEntity/EnemyEntity structs (which have no HP field).
+    DrawAgentHealthBar3D(enemy->position, 50.0f, enemy->agentId, RED);
+    DrawAgentHealthBar3D(player->position, 46.0f, player->agentId, LIME);
 }
 
 void DrawSandboxHUD(void) {

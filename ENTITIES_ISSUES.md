@@ -73,5 +73,30 @@ The underlying need — "Buff = a duration-based modifier living on the `Agent` 
 
 Low priority — this is the least urgent of the open skeleton gaps since no Buff skill exists yet (current 6 skills are all Flying or Anchored).
 
+## 4. No way to spawn an agent or read one back — `agentPool` is fully internal
+
+`agentPool[MAX_AGENTS]` is `static` inside `entities.c`. Every existing function either mutates an agent by ID (`Entity_ApplyDamage`, `Entity_AddModifier`, `Entity_Jump`/`Dash`) or returns IDs only (`Entity_GetNearbyTargets`) — there is no way for any other module to:
+- Create/register a new agent (no `Entity_SpawnAgent` — nothing puts the first entry into the pool)
+- Read an agent's current `position`/`health`/`vState`/etc back out (no getter at all)
+
+This blocks `sandbox/` from migrating its own duplicate `PlayerEntity`/`EnemyEntity` structs (flagged as tech debt in `sandbox/CLAUDE.md`) onto `agentPool` — sandbox can't register its test player/enemy, and even if it could, it can't read position/HP back to draw them or show a HUD. It would also block any future HUD/UI work and Map's planned Virtual Trigger Zone consumption, both of which need to read agent state, not just mutate it.
+
+~~### Action
+
+Add to `entities/entities.h`/`.c`:
+```c
+// Finds the first inactive slot in agentPool, initializes it, returns its id
+// (0..MAX_AGENTS-1), or -1 if the pool is full.
+int Entity_SpawnAgent(Vector3 position, float maxHealth, int element);
+
+// Read-only accessor. Returns NULL if agentId is out of range or the slot is
+// inactive — caller must NULL-check, do not assume a valid pointer.
+const Agent *Entity_GetAgent(int agentId);
+```
+- `Entity_SpawnAgent`: sets `position`, `health = maxHealth`, `maxHealth`, `currentElement = element`, `vState = AGENT_GROUNDED`, `active = true`, zeroes `velocity`/`dashCooldown`/`isStealthed`/`modifiers[]`.
+- `Entity_GetAgent`: returns `&agentPool[agentId]` (const) if `active`, else `NULL`. This is the only sanctioned way for other modules to read agent state — don't expose a mutable pointer, mutation must go through the existing `Entity_*` setter functions.~~
+
+**RESOLVED 2026-06-30** — `Entity_SpawnAgent` and `Entity_GetAgent` implemented in `entities/entities.c`/`entities/entities.h`, documented in `ENTITIES_API.md` §10. `Entity_GetAgent` returns a `const Agent *` only (NULL if out-of-range or inactive) — no mutable getter added; mutation still goes through existing `Entity_*` setters. Unblocks `sandbox/`'s planned `PlayerEntity`/`EnemyEntity` migration (separate follow-up task, not done here).
+
 ---
 *Logged from skill-pipeline review, 2026-06-30.*

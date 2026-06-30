@@ -77,4 +77,23 @@ void Entity_ApplyAoEDamage(Vector3 center, float radius, float damage, float kno
 // radius, friend or foe alike. See ENTITIES_API.md for details.
 void Entity_ApplyAoEBuff(Vector3 center, float radius, float speedMult, float duration);
 
+// --- Spawn / read-only access ---
+// Finds the first inactive slot in agentPool, initializes it, returns its id
+// (0..MAX_AGENTS-1), or -1 if the pool is full.
+int Entity_SpawnAgent(Vector3 position, float maxHealth, int element);
+
+// Read-only accessor. Returns NULL if agentId is out of range or the slot is
+// inactive — caller must NULL-check, do not assume a valid pointer. This is
+// the only sanctioned way for other modules to read agent state; mutation
+// must go through the existing Entity_* setter functions.
+const Agent *Entity_GetAgent(int agentId);
+
+// --- Position sync (for external movement systems) ---
+// Overwrites agentId's position directly. Entities module owns no horizontal
+// movement system — callers (e.g. sandbox/skills) that compute their own
+// X/Z movement must push the result here each frame so Entity_GetNearbyTargets
+// and other position-based queries stay accurate. Does nothing if agentId is
+// out of range or inactive.
+void Entity_SetPosition(int agentId, Vector3 position);
+
 #endif // ENTITIES_H
