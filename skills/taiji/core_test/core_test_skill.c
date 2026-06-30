@@ -1,8 +1,11 @@
 #include "skills/taiji/core_test/core_test_skill.h"
+#include "core/metaball_fx.h"
 #include "core/procedural_mesh_utils.h"
 #include "core/resource_manager.h"
+#include "core/screen_distort.h"
 #include "core/skill_manager.h"
 #include "raymath.h"
+#include "rlgl.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -13,77 +16,62 @@
 #define PI 3.1415926535f
 #endif
 
-#define CORE_TEST_DURATION 2.5f
+#define CORE_TEST_DURATION 3.0f
 
-// --- Shape 1: AlongPath (tube bending between cast start/target) ---
-#define CORE_TEST_RADIUS_START 14.0f
-#define CORE_TEST_RADIUS_END 6.0f
-#define CORE_TEST_WOBBLE_AMOUNT 60.0f
-#define CORE_TEST_WOBBLE_SPEED 3.0f
+// --- Shape 1: Soft particle sphere, half-buried in the ground plane ---
+#define CORE_TEST_SOFT_OFFSET ((Vector3){-60.0f, 10.0f, 0.0f})
+#define CORE_TEST_SOFT_RADIUS 28.0f
+#define CORE_TEST_SOFT_FADE_DISTANCE 14.0f
+// Must be >= MAX_MATERIAL_MAPS (12): DrawMesh() rebinds slots 0..11 itself
+// from the Material's map array (texture id 0 for any unused map), which
+// silently unbinds/clobbers a custom sampler bound to any of those slots
+// right before the draw call actually executes.
+#define CORE_TEST_SOFT_TEXTURE_SLOT 12
 
-// --- Shape 2: Noise (rippling grid plane), offset to one side ---
-#define CORE_TEST_GRID_SIZE 100.0f
-#define CORE_TEST_GRID_OFFSET ((Vector3){-140.0f, 0.0f, 0.0f})
-#define CORE_TEST_NOISE_AMPLITUDE 8.0f
-#define CORE_TEST_NOISE_FREQUENCY 0.04f
-#define CORE_TEST_NOISE_SPEED 0.6f
+// --- Shape 2: Dissolve quad with edge burn glow ---
+#define CORE_TEST_DISSOLVE_OFFSET ((Vector3){0.0f, 35.0f, 0.0f})
+#define CORE_TEST_DISSOLVE_SIZE ((Vector2){80.0f, 80.0f})
 
-// --- Shape 3: TwistAndTaper (stationary swirling column), offset opposite ---
-#define CORE_TEST_TWIST_OFFSET ((Vector3){140.0f, 0.0f, 0.0f})
-#define CORE_TEST_TWIST_HEIGHT 70.0f
-#define CORE_TEST_TWIST_RADIUS_START 16.0f
-#define CORE_TEST_TWIST_RADIUS_END 4.0f
-#define CORE_TEST_TWIST_SPEED 1.2f
-#define CORE_TEST_TWIST_MAX_ANGLE (PI * 2.0f) // 1 full turn top-to-bottom, oscillating
+// --- Shape 3: Metaball cluster (3 blobs orbiting -> merge/separate) ---
+#define CORE_TEST_METABALL_OFFSET ((Vector3){60.0f, 35.0f, 0.0f})
+#define CORE_TEST_METABALL_RADIUS 22.0f
+#define CORE_TEST_METABALL_ORBIT 20.0f
+#define CORE_TEST_METABALL_SPEED 1.4f
 
 static bool s_active = false;
 static float s_timer = 0.0f;
 static Vector3 s_startPos = {0};
-static Vector3 s_target = {0};
 
-static Shader s_pathShader, s_gridShader, s_twistShader;
-static int s_pathColorLoc, s_gridColorLoc, s_twistColorLoc;
-static Mesh s_cylinderMesh; // shared by path-bend + twist shapes
-static Mesh s_gridMesh;
-static Material s_pathMaterial, s_gridMaterial, s_twistMaterial;
+static Shader s_softShader, s_dissolveShader;
+static int s_softColorLoc, s_softFadeLoc;
+static int s_dissolveColorLoc, s_dissolveEdgeColorLoc, s_dissolveAmountLoc;
 
 void InitCoreTestSkill(int screenWidth, int screenHeight) {
   (void)screenWidth;
   (void)screenHeight;
 
-  s_pathShader = ResourceManager_LoadShader(
-      "skills/taiji/core_test/core_test.vs",
-      "skills/taiji/core_test/core_test.fs");
-  s_gridShader = ResourceManager_LoadShader(
-      "skills/taiji/core_test/core_test_grid.vs",
-      "skills/taiji/core_test/core_test.fs");
-  s_twistShader = ResourceManager_LoadShader(
-      "skills/taiji/core_test/core_test_twist.vs",
-      "skills/taiji/core_test/core_test.fs");
+  s_softShader = ResourceManager_LoadShader(
+      "skills/taiji/core_test/core_test_soft.vs",
+      "skills/taiji/core_test/core_test_soft.fs");
+  s_dissolveShader = ResourceManager_LoadShader(
+      "skills/taiji/core_test/core_test_dissolve.vs",
+      "skills/taiji/core_test/core_test_dissolve.fs");
 
-  s_pathColorLoc = GetShaderLocation(s_pathShader, "u_color");
-  s_gridColorLoc = GetShaderLocation(s_gridShader, "u_color");
-  s_twistColorLoc = GetShaderLocation(s_twistShader, "u_color");
+  s_softColorLoc = GetShaderLocation(s_softShader, "u_color");
+  s_softFadeLoc = GetShaderLocation(s_softShader, "u_fadeDistance");
 
-  // Cast-time-equivalent bake: built once here, never rebuilt per frame.
-  s_cylinderMesh = ProceduralMesh_CreateBaseCylinder(12, 24);
-  s_gridMesh = ProceduralMesh_CreateBaseGrid(CORE_TEST_GRID_SIZE,
-                                             CORE_TEST_GRID_SIZE, 16, 16);
+  s_dissolveColorLoc = GetShaderLocation(s_dissolveShader, "u_color");
+  s_dissolveEdgeColorLoc = GetShaderLocation(s_dissolveShader, "u_edgeColor");
+  s_dissolveAmountLoc = GetShaderLocation(s_dissolveShader, "u_dissolve");
 
-  s_pathMaterial = LoadMaterialDefault();
-  s_pathMaterial.shader = s_pathShader;
-  s_gridMaterial = LoadMaterialDefault();
-  s_gridMaterial.shader = s_gridShader;
-  s_twistMaterial = LoadMaterialDefault();
-  s_twistMaterial.shader = s_twistShader;
-
-  s_active = false;
+  s_active = true; // TEMP DEBUG: auto-cast + player spawn position for self-screenshot
+  s_startPos = (Vector3){130.0f, 0.0f, 350.0f};
 }
 
 void CastCoreTestSkill(Vector3 startPos, Vector3 target, SkillParams params) {
+  (void)target;
   (void)params;
   s_startPos = startPos;
-  s_target = target;
   s_timer = 0.0f;
   s_active = true;
 }
@@ -100,88 +88,78 @@ void UpdateCoreTestSkill(float dt, Vector3 enemyPos, float enemyRadius) {
   }
 }
 
-static void DrawPathShape(float time, Vector4 color) {
-  // DisplaceVertex_AlongPath: world-space path control points + wobble
-  // offset perpendicular to the path, recomputed every frame.
-  Vector3 pathDir = Vector3Subtract(s_target, s_startPos);
-  Vector3 up = (fabsf(pathDir.y) > 0.99f * Vector3Length(pathDir))
-                  ? (Vector3){1.0f, 0.0f, 0.0f}
-                  : (Vector3){0.0f, 1.0f, 0.0f};
-  Vector3 wobbleAxis = Vector3Normalize(Vector3CrossProduct(pathDir, up));
-  float wobble = sinf(time * CORE_TEST_WOBBLE_SPEED) * CORE_TEST_WOBBLE_AMOUNT;
-  Vector3 wobbleOffset = Vector3Scale(wobbleAxis, wobble);
+static void DrawSoftParticleShape(void) {
+  Vector3 pos = Vector3Add(s_startPos, CORE_TEST_SOFT_OFFSET);
+  Vector4 color = ColorNormalize(ELEMENT_COLOR_TAIJI);
+  color.w = 0.55f; // translucent — soft fade should be visible against the floor
 
-  MeshDisplacementParams disp = ProceduralMesh_DefaultDisplacementParams();
-  disp.pathP0 = s_startPos;
-  disp.pathP1 = Vector3Add(Vector3Lerp(s_startPos, s_target, 0.33f), wobbleOffset);
-  disp.pathP2 = Vector3Add(Vector3Lerp(s_startPos, s_target, 0.66f), wobbleOffset);
-  disp.pathP3 = s_target;
-  disp.taperStart = CORE_TEST_RADIUS_START;
-  disp.taperEnd = CORE_TEST_RADIUS_END;
-  disp.twistAmount = sinf(time * 1.5f) * PI * 0.3f;
+  SkillManager_BeginShader(s_softShader);
+  ScreenDistort_BindDepthForSoftParticles(s_softShader, CORE_TEST_SOFT_TEXTURE_SLOT);
+  SetShaderValue(s_softShader, s_softColorLoc, &color, SHADER_UNIFORM_VEC4);
+  SetShaderValue(s_softShader, s_softFadeLoc, (float[]){CORE_TEST_SOFT_FADE_DISTANCE},
+                 SHADER_UNIFORM_FLOAT);
 
-  SkillManager_BeginShader(s_pathShader);
-  ProceduralMesh_SetDisplacementUniforms(s_pathShader, &disp);
-  SetShaderValue(s_pathShader, s_pathColorLoc, &color, SHADER_UNIFORM_VEC4);
+  rlDisableDepthMask();
+  BeginBlendMode(BLEND_ALPHA);
+  BeginShaderMode(s_softShader);
+  rlColor4ub(255, 255, 255, 255);
+  DrawCoreSphere(pos, CORE_TEST_SOFT_RADIUS, 24, 24, WHITE);
+  EndShaderMode();
+  EndBlendMode();
+  rlEnableDepthMask();
 
-  // matModel stays identity: AlongPath already outputs world-space
-  // positions from world-space path control points.
-  DrawMesh(s_cylinderMesh, s_pathMaterial, MatrixIdentity());
+  ScreenDistort_UnbindSoftParticleDepth(CORE_TEST_SOFT_TEXTURE_SLOT);
 }
 
-static void DrawGridShape(float time, Vector4 color) {
-  (void)time; // noise driven by u_time directly in core_test_grid.vs
-  // DisplaceVertex_Noise: ripples the flat grid by `amplitude` along its
-  // normal, using fbm2-driven noise computed in core_test_grid.vs.
-  MeshDisplacementParams disp = ProceduralMesh_DefaultDisplacementParams();
-  disp.amplitude = CORE_TEST_NOISE_AMPLITUDE;
-  disp.frequency = CORE_TEST_NOISE_FREQUENCY;
-  disp.speed = CORE_TEST_NOISE_SPEED;
+static void DrawDissolveShape(void) {
+  Vector3 pos = Vector3Add(s_startPos, CORE_TEST_DISSOLVE_OFFSET);
+  float dissolve = Clamp(s_timer / CORE_TEST_DURATION, 0.0f, 1.0f);
+  Vector4 color = ColorNormalize(ELEMENT_COLOR_TAIJI);
+  Vector3 edgeColor = {ELEMENT_COLOR_FIRE.r / 255.0f, ELEMENT_COLOR_FIRE.g / 255.0f,
+                       ELEMENT_COLOR_FIRE.b / 255.0f};
 
-  SkillManager_BeginShader(s_gridShader);
-  ProceduralMesh_SetDisplacementUniforms(s_gridShader, &disp);
-  SetShaderValue(s_gridShader, s_gridColorLoc, &color, SHADER_UNIFORM_VEC4);
+  SkillManager_BeginShader(s_dissolveShader);
+  SetShaderValue(s_dissolveShader, s_dissolveColorLoc, &color, SHADER_UNIFORM_VEC4);
+  SetShaderValue(s_dissolveShader, s_dissolveEdgeColorLoc, &edgeColor,
+                 SHADER_UNIFORM_VEC3);
+  SetShaderValue(s_dissolveShader, s_dissolveAmountLoc, &dissolve,
+                 SHADER_UNIFORM_FLOAT);
 
-  // Local-space displacement (no path baked in) -> matModel places it.
-  Vector3 pos = Vector3Add(s_startPos, CORE_TEST_GRID_OFFSET);
-  Matrix matModel = MatrixTranslate(pos.x, pos.y, pos.z);
-  DrawMesh(s_gridMesh, s_gridMaterial, matModel);
+  BeginShaderMode(s_dissolveShader);
+  rlColor4ub(255, 255, 255, 255);
+  DrawCorePlaneRect(pos, CORE_TEST_DISSOLVE_SIZE, WHITE);
+  EndShaderMode();
 }
 
-static void DrawTwistShape(float time, Vector4 color) {
-  // DisplaceVertex_TwistAndTaper: stationary swirling column, no path bend.
-  MeshDisplacementParams disp = ProceduralMesh_DefaultDisplacementParams();
-  disp.taperStart = CORE_TEST_TWIST_RADIUS_START;
-  disp.taperEnd = CORE_TEST_TWIST_RADIUS_END;
-  disp.twistAmount = sinf(time * CORE_TEST_TWIST_SPEED) * CORE_TEST_TWIST_MAX_ANGLE;
+static void RegisterMetaballShape(void) {
+  Vector3 center = Vector3Add(s_startPos, CORE_TEST_METABALL_OFFSET);
+  float time = (float)GetTime();
 
-  SkillManager_BeginShader(s_twistShader);
-  ProceduralMesh_SetDisplacementUniforms(s_twistShader, &disp);
-  SetShaderValue(s_twistShader, s_twistColorLoc, &color, SHADER_UNIFORM_VEC4);
-
-  // Local-space displacement: matModel scales local height [0,1] -> real
-  // height and translates to the column's world position. Radius is
-  // already in world units via taperStart/End (see displacement.glsl).
-  Vector3 pos = Vector3Add(s_startPos, CORE_TEST_TWIST_OFFSET);
-  Matrix matModel = MatrixMultiply(MatrixScale(1.0f, CORE_TEST_TWIST_HEIGHT, 1.0f),
-                                   MatrixTranslate(pos.x, pos.y, pos.z));
-  DrawMesh(s_cylinderMesh, s_twistMaterial, matModel);
+  // 3 blobs orbiting the center at varying phase — orbit radius breathes
+  // in/out over time so they visibly merge into one mass and separate again.
+  float orbit = CORE_TEST_METABALL_ORBIT * (0.5f + 0.5f * sinf(time * 0.7f));
+  for (int i = 0; i < 3; i++) {
+    float angle = time * CORE_TEST_METABALL_SPEED + (float)i * (2.0f * PI / 3.0f);
+    Vector3 blobPos = {
+        center.x + cosf(angle) * orbit,
+        center.y,
+        center.z + sinf(angle) * orbit,
+    };
+    MetaballFX_RegisterBlob(blobPos, CORE_TEST_METABALL_RADIUS);
+  }
 }
 
 void DrawCoreTestSkill(void) {
   if (!s_active)
     return;
 
-  float time = (float)GetTime();
-  Vector4 color = ColorNormalize(ELEMENT_COLOR_TAIJI);
-
-  DrawPathShape(time, color);
-  DrawGridShape(time, color);
-  DrawTwistShape(time, color);
+  DrawSoftParticleShape();
+  DrawDissolveShape();
+  RegisterMetaballShape();
 }
 
 void UnloadCoreTestSkill(void) {
-  // Shader/mesh tài nguyên tồn tại theo vòng đời app — không Unload ở đây.
+  // Shader tài nguyên tồn tại theo vòng đời app — không Unload ở đây.
 }
 
 bool IsCoreTestSkillCoiling(void) { return false; }
@@ -191,8 +169,8 @@ int GetCoreTestSkillProjectiles(SkillProjectile *outProjectiles,
   if (!s_active || maxProjectiles < 1)
     return 0;
 
-  outProjectiles[0].position = s_target;
-  outProjectiles[0].radius = CORE_TEST_RADIUS_END;
+  outProjectiles[0].position = s_startPos;
+  outProjectiles[0].radius = CORE_TEST_SOFT_RADIUS;
   outProjectiles[0].active = true;
   return 1;
 }

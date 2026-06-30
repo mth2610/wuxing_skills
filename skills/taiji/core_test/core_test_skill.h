@@ -13,12 +13,11 @@ typedef struct {
 } SkillProjectile;
 #endif
 
-// Internal test/sandbox skill (Taiji) — exercises the GPU vertex
-// displacement system (core/procedural_mesh_utils.h's
-// ProceduralMesh_CreateBaseCylinder + displacement.glsl's
-// DisplaceVertex_AlongPath): one static cylinder mesh baked once at Init,
-// bent every frame by the vertex shader between cast start/target with no
-// CPU-side rebuild. Not a gameplay skill.
+// Internal test/sandbox skill (Taiji) — exercises item 3 of the Core API
+// update: soft particles (core/screen_distort.h + soft_particle.glsl),
+// dissolve edge glow (core/shaders/common/fx.glsl's dissolveCalc, already
+// existed — confirmed here), and metaballs/screen-space fluid
+// (core/metaball_fx.h). Not a gameplay skill.
 
 void InitCoreTestSkill(int screenWidth, int screenHeight);
 void CastCoreTestSkill(Vector3 startPos, Vector3 target, SkillParams params);

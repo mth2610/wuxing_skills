@@ -1,5 +1,6 @@
 #include "core/camera_fx.h"
 #include "core/decal_system.h"
+#include "core/metaball_fx.h"
 #include "core/particle_system.h"
 #include "compute/gpu_particle_system.h"
 #include "core/post_fx.h"
@@ -100,6 +101,7 @@ int main(void) {
   DecalSystem_Init();
   ScreenDistort_Init(screenWidth, screenHeight);
   PostFX_Init(screenWidth, screenHeight);
+  MetaballFX_Init(screenWidth, screenHeight);
 
   Image img = GenImageGradientRadial(64, 64, 0.0f, WHITE, BLACK);
   Texture2D globalParticleTex = LoadTextureFromImage(img);
@@ -297,6 +299,7 @@ int main(void) {
 
     MyEndMode3D();
     ScreenDistort_End();
+    ScreenDistort_SnapshotDepth(); // soft particles: snapshot this frame's depth for next frame's sampling
 
     PostFX_Begin();
     ClearBackground(BLACK);
@@ -305,6 +308,11 @@ int main(void) {
 
     ClearBackground(BLACK);
     PostFX_Draw(&postFXConfig);
+
+    // Metaballs: composite directly onto the screen, after post-process —
+    // must run outside PostFX_Begin/End (BeginTextureMode can't nest) and
+    // after PostFX_Draw (which would otherwise overwrite it).
+    MetaballFX_DrawRegistered(camera, ELEMENT_COLOR_WATER, 0.3f, 0.12f);
 
     DrawSkillManagerOverlay();
 
@@ -330,6 +338,15 @@ int main(void) {
     SkillDebugger_PostRender(uiState.activeSkillIndex, player.position, mouseTarget3D);
 
     EndDrawing();
+
+    // TEMP DEBUG: one-shot self-screenshot of the final frame
+    {
+      static int s_shotFrame = 0;
+      s_shotFrame++;
+      if (s_shotFrame == 60) {
+        TakeScreenshot("coretest_frame.png");
+      }
+    }
   }
 
   UnloadTexture(globalParticleTex);
@@ -339,6 +356,7 @@ int main(void) {
   UnloadTrailSystem();
   DecalSystem_Unload();
   ScreenDistort_Unload();
+  MetaballFX_Unload();
   UnloadSkillManager();
   DamageVolume_Unload();
   EmitterSystem_Unload();

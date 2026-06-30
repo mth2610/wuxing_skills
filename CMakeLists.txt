@@ -68,6 +68,7 @@ add_executable(wuxing
     core/particle_radial_burst.c
     core/impact_burst.c
     core/shader_preprocessor.c
+    core/metaball_fx.c
 
     # --- Entities ---
     entities/entities.c
