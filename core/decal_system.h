@@ -35,6 +35,13 @@ void DecalSystem_AddEx(Vector3 pos, float rotation, float rotSpeed,
                        Texture2D texture, float lifetime,
                        Color tint, BlendMode blendMode, float yOffset);
 
+// Batch helper — đặt 1 decal tại mỗi điểm trong points[0..count-1], dùng cho hiệu ứng
+// theo đường đi (vd. gai mọc dọc đường, vệt cháy). Wrap quanh DecalSystem_Add, không
+// dup logic. Caller chịu trách nhiệm truyền count hợp lý — không tự clamp theo MAX_DECALS
+// (giống convention của SamplePath trong path_spline.h dùng maxSegments do caller kiểm soát).
+void DecalSystem_AddStreak(const Vector3 *points, int count, float rotation,
+                           float scale, Texture2D texture, float lifetime, Color tint);
+
 // Cập nhật thời gian sống, scale nội suy, rotation
 void DecalSystem_Update(float dt);
 

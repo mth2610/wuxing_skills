@@ -72,6 +72,11 @@ typedef struct {
   TrailUpdateCallback onUpdate;
   TrailDeathCallback onDeath;
   int ownerTag;
+  // Per-instance TRAIL_TYPE_PROJECTILE overrides. >0 = override the global
+  // TRAIL_PROJECTILE_* default; <=0 (default when TrailConfig is {0}) = use
+  // the global macro default. Does NOT change the global macros themselves.
+  float wobbleAmplitudeOverride;
+  float curveRangeOverride;
   const ForceField *forceField;
   const ColorGradient *gradient;
   const SpriteAnim *spriteAnim;
@@ -114,6 +119,8 @@ typedef struct {
   float angle;
   float wobblePhase;
   float scale;
+  float wobbleAmplitudeOverride;
+  float curveRangeOverride;
   float timeSinceLastFollowerUpdate;
   float fadeAccumulator;
   float nodeRestLen;

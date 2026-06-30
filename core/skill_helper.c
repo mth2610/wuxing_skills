@@ -8,6 +8,7 @@
 #include "core/force_field.h"
 #include "core/procedural_mesh_utils.h"
 #include "core/resource_manager.h"
+#include "core/trail_system.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <stdlib.h>
@@ -23,11 +24,34 @@ static ColorGradient s_fireGrad;
 static ColorGradient s_snowGrad;
 static ColorGradient s_waterGrad;
 static ColorGradient s_lightningGrad;
+static ColorGradient s_woodGrad;
+static ColorGradient s_earthGrad;
+static ColorGradient s_metalGrad;
+static ColorGradient s_taijiGrad;
 
 static ForceField s_fireFld;
 static ForceField s_snowFld;
 static ForceField s_waterFld;
 static ForceField s_lightningFld;
+static ForceField s_woodFld;
+static ForceField s_earthFld;
+static ForceField s_metalFld;
+static ForceField s_taijiFld;
+
+// Pool of "energy gathering" pull fields for SpawnCastEffect. Each call takes
+// the next slot round-robin, so concurrent casts at different positions (e.g.
+// 4vs4 PvP) don't fight over a single shared field. Particles store a pointer
+// to their slot, so slots must be static (no malloc).
+#define MAX_CONCURRENT_CAST_EFFECTS 8
+static ForceField s_castPullFlds[MAX_CONCURRENT_CAST_EFFECTS];
+static int s_castPullFldNextSlot = 0;
+
+// Pool of directional flight forces for SpawnProjectileTrail, same
+// round-robin-slot pattern as s_castPullFlds (particles/trails store a
+// pointer to the slot, so it must be static).
+#define MAX_CONCURRENT_PROJECTILE_TRAILS 8
+static ForceField s_flightFlds[MAX_CONCURRENT_PROJECTILE_TRAILS];
+static int s_flightFldNextSlot = 0;
 
 static bool s_helpersInitialized = false;
 
@@ -79,6 +103,50 @@ static void InitHelperResources(void) {
 
     ForceField_Clear(&s_lightningFld);
     ForceField_AddLayer(&s_lightningFld, (ForceLayer){ .type = FORCE_NOISE_CURL, .strength = 45.0f, .noiseScale = 0.2f, .noiseSpeed = 5.0f });
+
+    // 5. Wood Resources
+    s_woodGrad.count = 0;
+    ColorGradient_AddStop(&s_woodGrad, 0.0f, (Color){ 220, 255, 200, 255 });
+    ColorGradient_AddStop(&s_woodGrad, 0.4f, ELEMENT_COLOR_WOOD);
+    ColorGradient_AddStop(&s_woodGrad, 1.0f, (Color){ 20, 80, 30, 0 });
+
+    ForceField_Clear(&s_woodFld);
+    ForceField_AddLayer(&s_woodFld, (ForceLayer){ .type = FORCE_WIND, .direction = {0.0f, 1.0f, 0.0f}, .strength = 10.0f });
+    ForceField_AddLayer(&s_woodFld, (ForceLayer){ .type = FORCE_NOISE_CURL, .strength = 8.0f, .noiseScale = 0.07f, .noiseSpeed = 1.0f });
+
+    // 6. Earth Resources
+    s_earthGrad.count = 0;
+    ColorGradient_AddStop(&s_earthGrad, 0.0f, (Color){ 230, 200, 160, 255 });
+    ColorGradient_AddStop(&s_earthGrad, 0.5f, ELEMENT_COLOR_EARTH);
+    ColorGradient_AddStop(&s_earthGrad, 1.0f, (Color){ 60, 40, 20, 0 });
+
+    ForceField_Clear(&s_earthFld);
+    ForceField_AddLayer(&s_earthFld, (ForceLayer){ .type = FORCE_GRAVITY_DIR, .direction = {0.0f, -1.0f, 0.0f}, .strength = 40.0f });
+    ForceField_AddLayer(&s_earthFld, (ForceLayer){ .type = FORCE_NOISE_CURL, .strength = 6.0f, .noiseScale = 0.05f, .noiseSpeed = 0.6f });
+
+    // 7. Metal Resources
+    s_metalGrad.count = 0;
+    ColorGradient_AddStop(&s_metalGrad, 0.0f, WHITE);
+    ColorGradient_AddStop(&s_metalGrad, 0.3f, ELEMENT_COLOR_METAL);
+    ColorGradient_AddStop(&s_metalGrad, 1.0f, (Color){ 60, 60, 65, 0 });
+
+    ForceField_Clear(&s_metalFld);
+    ForceField_AddLayer(&s_metalFld, (ForceLayer){ .type = FORCE_GRAVITY_DIR, .direction = {0.0f, -1.0f, 0.0f}, .strength = 25.0f });
+    ForceField_AddLayer(&s_metalFld, (ForceLayer){ .type = FORCE_DRAG, .strength = 0.5f });
+
+    // 8. Taiji Resources
+    s_taijiGrad.count = 0;
+    ColorGradient_AddStop(&s_taijiGrad, 0.0f, WHITE);
+    ColorGradient_AddStop(&s_taijiGrad, 0.35f, ELEMENT_COLOR_TAIJI);
+    ColorGradient_AddStop(&s_taijiGrad, 1.0f, (Color){ 40, 10, 60, 0 });
+
+    // NOTE: FORCE_VORTEX needs .origin = the actual effect position (it
+    // defaults to world origin {0,0,0} otherwise), but this field is shared
+    // across all spawn positions — so vortex swirl is centered on world
+    // origin, not pos. Using NOISE_CURL only here keeps behavior position-
+    // independent and visually correct regardless of where Taiji effects spawn.
+    ForceField_Clear(&s_taijiFld);
+    ForceField_AddLayer(&s_taijiFld, (ForceLayer){ .type = FORCE_NOISE_CURL, .strength = 18.0f, .noiseScale = 0.12f, .noiseSpeed = 2.5f });
 
     s_helpersInitialized = true;
 }
@@ -182,7 +250,255 @@ void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale) {
             SpawnGroundDecal(DECAL_PRESET_CRACK, pos, 25.0f * scale, 5.5f);
             break;
         }
+        case EFFECT_PRESET_WOOD_BLOOM: {
+            VFXLight_Spawn(pos, ELEMENT_COLOR_WOOD, 35.0f * scale, 0.45f);
+            SpawnGroundDecal(DECAL_PRESET_WOOD_MOSS, pos, 18.0f * scale, 5.0f);
+
+            // Leaf/vine burst, upward-biased
+            int count = (int)(30 * scale);
+            for (int i = 0; i < count; i++) {
+                float a = (float)i / count * 2.0f * PI;
+                float speed = (float)(rand() % 20 + 8) * scale;
+                Vector3 vel = { cosf(a) * speed, (float)(rand() % 55 + 25) * scale, sinf(a) * speed };
+                SpawnParticle((ParticleConfig){
+                    .position = pos,
+                    .velocity = vel,
+                    .radius = ((float)rand() / (float)RAND_MAX * 1.6f + 0.6f) * scale,
+                    .lifetime = (float)rand() / (float)RAND_MAX * 1.0f + 0.5f,
+                    .gradient = &s_woodGrad,
+                    .forceField = &s_woodFld
+                });
+            }
+            break;
+        }
+        case EFFECT_PRESET_METAL_SHARD: {
+            ScreenDistort_Add(pos, 25.0f * scale, 0.18f, 0.15f, 130.0f);
+            CameraFX_Shake(0.22f);
+            VFXLight_Spawn(pos, ELEMENT_COLOR_METAL, 30.0f * scale, 0.2f);
+            SpawnGroundDecal(DECAL_PRESET_METAL_SLASH, pos, 16.0f * scale, 4.0f);
+
+            // Sharp shard particles, high pitch range, metallic
+            int count = (int)(28 * scale);
+            for (int i = 0; i < count; i++) {
+                float a = (float)i / count * 2.0f * PI;
+                float speed = (float)(rand() % 60 + 35) * scale;
+                float pitch = ((float)rand() / (float)RAND_MAX - 0.5f) * 80.0f * scale;
+                Vector3 vel = { cosf(a) * speed, pitch, sinf(a) * speed };
+                SpawnParticle((ParticleConfig){
+                    .position = pos,
+                    .velocity = vel,
+                    .radius = ((float)rand() / (float)RAND_MAX * 1.0f + 0.3f) * scale,
+                    .lifetime = (float)rand() / (float)RAND_MAX * 0.4f + 0.2f,
+                    .gradient = &s_metalGrad,
+                    .forceField = &s_metalFld
+                });
+            }
+            break;
+        }
+        case EFFECT_PRESET_TAIJI_BURST: {
+            ScreenDistort_Add(pos, 50.0f * scale, 0.3f, 0.3f, 90.0f);
+            CameraFX_Shake(0.3f);
+            VFXLight_Spawn(pos, ELEMENT_COLOR_TAIJI, 70.0f * scale, 0.55f);
+            SpawnGroundDecal(DECAL_PRESET_TAIJI_RING, pos, 22.0f * scale, 5.0f);
+
+            // Amethyst-purple radial burst
+            int count = (int)(40 * scale);
+            for (int i = 0; i < count; i++) {
+                float a = (float)i / count * 2.0f * PI;
+                float speed = (float)(rand() % 40 + 20) * scale;
+                Vector3 vel = { cosf(a) * speed, (float)(rand() % 40 + 15) * scale, sinf(a) * speed };
+                SpawnParticle((ParticleConfig){
+                    .position = pos,
+                    .velocity = vel,
+                    .radius = ((float)rand() / (float)RAND_MAX * 1.8f + 0.7f) * scale,
+                    .lifetime = (float)rand() / (float)RAND_MAX * 0.9f + 0.4f,
+                    .gradient = &s_taijiGrad,
+                    .forceField = &s_taijiFld
+                });
+            }
+            break;
+        }
     }
+}
+
+// Cast/windup Implementation — sustained "energy gathering" at the caster.
+// No knockback, no ground decal. Inward-pulling particles via a localized
+// gravity-point force field, plus a brief light flash.
+void SpawnCastEffect(Vector3 pos, EffectPresetType preset, float scale) {
+    InitHelperResources();
+
+    Color flashColor = WHITE;
+    ColorGradient *grad = NULL;
+    float lightRadius = 40.0f * scale;
+    float lightLifetime = 0.5f;
+    int count = (int)(20 * scale);
+    float spawnRadius = 18.0f * scale;
+    float pullStrength = 60.0f * scale;
+
+    switch (preset) {
+        case EFFECT_PRESET_FIRE_EXPLOSION:
+            flashColor = (Color){ 255, 120, 20, 255 };
+            grad = &s_fireGrad;
+            break;
+        case EFFECT_PRESET_ICE_SHATTER:
+            flashColor = (Color){ 140, 210, 255, 255 };
+            grad = &s_snowGrad;
+            break;
+        case EFFECT_PRESET_WATER_SPLASH:
+            flashColor = (Color){ 80, 180, 255, 255 };
+            grad = &s_waterGrad;
+            break;
+        case EFFECT_PRESET_LIGHTNING_IMPACT:
+            flashColor = (Color){ 200, 150, 255, 255 };
+            grad = &s_lightningGrad;
+            break;
+        case EFFECT_PRESET_EARTH_CRACK:
+            flashColor = ELEMENT_COLOR_EARTH;
+            grad = &s_earthGrad;
+            break;
+        case EFFECT_PRESET_WOOD_BLOOM:
+            flashColor = ELEMENT_COLOR_WOOD;
+            grad = &s_woodGrad;
+            break;
+        case EFFECT_PRESET_METAL_SHARD:
+            flashColor = ELEMENT_COLOR_METAL;
+            grad = &s_metalGrad;
+            break;
+        case EFFECT_PRESET_TAIJI_BURST:
+            flashColor = ELEMENT_COLOR_TAIJI;
+            grad = &s_taijiGrad;
+            lightRadius = 55.0f * scale; // stronger flash for the "no-element" ultimate state
+            lightLifetime = 0.65f;
+            break;
+    }
+
+    VFXLight_Spawn(pos, flashColor, lightRadius, lightLifetime);
+
+    // Localized inward-pulling force field — particles spawn at a ring around
+    // pos and get sucked back toward it, reading as "energy gathering".
+    // Each call claims the next pool slot round-robin (particles store a
+    // pointer to it, so it can't be stack-local) so concurrent casts at
+    // different positions don't interfere with each other.
+    ForceField *castPullFld = &s_castPullFlds[s_castPullFldNextSlot];
+    s_castPullFldNextSlot = (s_castPullFldNextSlot + 1) % MAX_CONCURRENT_CAST_EFFECTS;
+    ForceField_Clear(castPullFld);
+    ForceField_AddLayer(castPullFld, (ForceLayer){ .type = FORCE_GRAVITY_POINT, .origin = pos, .strength = pullStrength, .radius = spawnRadius * 1.5f, .falloff = 1.0f });
+
+    for (int i = 0; i < count; i++) {
+        float a = (float)i / count * 2.0f * PI;
+        float r = spawnRadius * (0.6f + 0.4f * ((float)rand() / (float)RAND_MAX));
+        Vector3 spawnPos = { pos.x + cosf(a) * r, pos.y + ((float)rand() / (float)RAND_MAX) * spawnRadius * 0.5f, pos.z + sinf(a) * r };
+        SpawnParticle((ParticleConfig){
+            .position = spawnPos,
+            .velocity = (Vector3){ 0.0f, 0.0f, 0.0f },
+            .radius = ((float)rand() / (float)RAND_MAX * 1.2f + 0.5f) * scale,
+            .lifetime = (float)rand() / (float)RAND_MAX * 0.5f + 0.4f,
+            .gradient = grad,
+            .forceField = castPullFld
+        });
+    }
+}
+
+// Flight-stage implementation — projectile trail + continuous tail dust
+// while a skill flies from start to target. Force magnitude here is the
+// sustained/flight regime (300-650f), NOT the ambient/burst regime used by
+// Cast/Impact above — see CORE_API.md §1. Matches the water_stream
+// tube_skill.c precedent: FORCE_GRAVITY_DIR strength ~300-650f primary pull,
+// FORCE_NOISE_PERLIN/CURL ~15-25f secondary wobble.
+int SpawnProjectileTrail(Vector3 start, Vector3 target, EffectPresetType preset, float scale, float speed) {
+    InitHelperResources();
+
+    ColorGradient *grad = NULL;
+    Color tint = WHITE;
+
+    switch (preset) {
+        case EFFECT_PRESET_FIRE_EXPLOSION:   grad = &s_fireGrad;      tint = (Color){ 255, 120, 20, 255 };  break;
+        case EFFECT_PRESET_ICE_SHATTER:      grad = &s_snowGrad;      tint = (Color){ 140, 210, 255, 255 }; break;
+        case EFFECT_PRESET_WATER_SPLASH:     grad = &s_waterGrad;     tint = (Color){ 80, 180, 255, 255 };  break;
+        case EFFECT_PRESET_LIGHTNING_IMPACT: grad = &s_lightningGrad; tint = (Color){ 200, 150, 255, 255 }; break;
+        case EFFECT_PRESET_EARTH_CRACK:      grad = &s_earthGrad;     tint = ELEMENT_COLOR_EARTH;           break;
+        case EFFECT_PRESET_WOOD_BLOOM:       grad = &s_woodGrad;      tint = ELEMENT_COLOR_WOOD;            break;
+        case EFFECT_PRESET_METAL_SHARD:      grad = &s_metalGrad;     tint = ELEMENT_COLOR_METAL;           break;
+        case EFFECT_PRESET_TAIJI_BURST:      grad = &s_taijiGrad;     tint = ELEMENT_COLOR_TAIJI;           break;
+    }
+
+    // Directional flight force: primary pull toward target (sustained
+    // regime, 300-650f) + a smaller curl-noise wobble layer (~15-25f) for
+    // visual flutter, matching tube_skill.c.
+    ForceField *flightFld = &s_flightFlds[s_flightFldNextSlot];
+    s_flightFldNextSlot = (s_flightFldNextSlot + 1) % MAX_CONCURRENT_PROJECTILE_TRAILS;
+    ForceField_Clear(flightFld);
+    Vector3 dir = Vector3Normalize(Vector3Subtract(target, start));
+    ForceField_AddLayer(flightFld, (ForceLayer){ .type = FORCE_GRAVITY_DIR, .direction = dir, .strength = 325.0f });
+    ForceField_AddLayer(flightFld, (ForceLayer){ .type = FORCE_NOISE_PERLIN, .strength = 20.0f, .noiseScale = 0.08f, .noiseSpeed = 2.0f });
+
+    // Tail-dust sub-emitter: spawned once on the head particle, continuously
+    // emits trailing particles for as long as the head particle lives.
+    static ParticleConfig s_tailEmit;
+    s_tailEmit = (ParticleConfig){
+        .radius = 1.0f * scale,
+        .lifetime = 0.4f,
+        .gradient = grad,
+        .forceField = flightFld
+    };
+
+    SpawnParticle((ParticleConfig){
+        .position = start,
+        .velocity = Vector3Scale(dir, speed),
+        .colorStart = tint,
+        .colorEnd = tint,
+        .radius = 1.6f * scale,
+        .lifetime = Vector3Distance(start, target) / fmaxf(speed, 1.0f) + 0.5f,
+        .gradient = grad,
+        .forceField = flightFld,
+        .onLiveEmit = &s_tailEmit,
+        .onLiveEmitRate = 40.0f
+    });
+
+    TrailConfig cfg = {
+        .type = TRAIL_TYPE_PROJECTILE,
+        .pos = start,
+        .vel = Vector3Scale(dir, speed),
+        .len = 14.0f * scale,
+        .thick = 3.0f * scale,
+        .trailLength = 60.0f * scale,
+        .life = Vector3Distance(start, target) / fmaxf(speed, 1.0f) + 0.5f,
+        .target = target,
+        .scale = scale,
+        .tint = tint,
+        .forceField = flightFld,
+        .gradient = grad
+    };
+    return SpawnTrailEntity(cfg);
+}
+
+// Audio Preset Implementation — no real per-element SFX assets exist under
+// assets/ yet (verified: no .wav/.ogg files anywhere in assets/), so these
+// are stub/warning-only for now. Each preset warns once (not every call) via
+// a static "already warned" flag, then returns without playing or crashing.
+// Once real asset files land (e.g. assets/sounds/fire_cast.wav), replace the
+// TraceLog branch below with ResourceManager_LoadSound(path) + PlaySound().
+static bool s_castSoundWarned[8] = { false };
+static bool s_impactSoundWarned[8] = { false };
+
+void PlayCastSound(EffectPresetType preset) {
+    if (preset < 0 || preset >= 8) return;
+    if (!s_castSoundWarned[preset]) {
+        s_castSoundWarned[preset] = true;
+        TraceLog(LOG_WARNING, "AUDIO: no cast SFX asset for EffectPresetType %d yet (stub, not crashing)", preset);
+    }
+    // TODO: once assets/sounds/*.wav exist per element, load via
+    // ResourceManager_LoadSound(path) and PlaySound() here.
+}
+
+void PlayImpactSound(EffectPresetType preset) {
+    if (preset < 0 || preset >= 8) return;
+    if (!s_impactSoundWarned[preset]) {
+        s_impactSoundWarned[preset] = true;
+        TraceLog(LOG_WARNING, "AUDIO: no impact SFX asset for EffectPresetType %d yet (stub, not crashing)", preset);
+    }
+    // TODO: once assets/sounds/*.wav exist per element, load via
+    // ResourceManager_LoadSound(path) and PlaySound() here.
 }
 
 // 2. Damage Volume Implementation
@@ -272,6 +588,10 @@ void EmitterSystem_Update(float dt) {
             case EMITTER_SNOW: grad = &s_snowGrad; fld = &s_snowFld; break;
             case EMITTER_WATER_SPURT: grad = &s_waterGrad; fld = &s_waterFld; break;
             case EMITTER_SHOCKED_SPARKS: grad = &s_lightningGrad; fld = &s_lightningFld; break;
+            case EMITTER_WOOD_LEAVES: grad = &s_woodGrad; fld = &s_woodFld; break;
+            case EMITTER_EARTH_DUST: grad = &s_earthGrad; fld = &s_earthFld; break;
+            case EMITTER_METAL_SPARKS: grad = &s_metalGrad; fld = &s_metalFld; break;
+            case EMITTER_TAIJI_MOTES: grad = &s_taijiGrad; fld = &s_taijiFld; break;
         }
 
         for (int k = 0; k < count; k++) {
@@ -652,6 +972,15 @@ void SkillBuilder_AddDamageVolume(SkillBuildContext *ctx, float radius, float dp
     ctx->damageRadius = radius;
     ctx->damageDps = dps;
     ctx->damageDuration = duration;
+}
+
+// Cast-stage hook — its own trigger point, separate from SkillBuilder_Build()
+// which fires at impact. Call after SkillBuilder_Start() (needs ctx->target/
+// ctx->scale already set) at cast time; fires SpawnCastEffect immediately
+// rather than deferring it, since cast happens earlier in the skill
+// lifecycle than the impact-time Build() call.
+void SkillBuilder_AddCastEffect(SkillBuildContext *ctx, EffectPresetType preset) {
+    SpawnCastEffect(ctx->target, preset, ctx->scale);
 }
 
 void SkillBuilder_Build(SkillBuildContext *ctx) {

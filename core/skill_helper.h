@@ -10,10 +10,38 @@ typedef enum {
     EFFECT_PRESET_ICE_SHATTER,
     EFFECT_PRESET_WATER_SPLASH,
     EFFECT_PRESET_LIGHTNING_IMPACT,
-    EFFECT_PRESET_EARTH_CRACK
+    EFFECT_PRESET_EARTH_CRACK,
+    EFFECT_PRESET_WOOD_BLOOM,
+    EFFECT_PRESET_METAL_SHARD,
+    EFFECT_PRESET_TAIJI_BURST
 } EffectPresetType;
 
 void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale);
+
+// Cast/windup variant — sustained "energy gathering" effect at the caster,
+// no knockback/decal. Reuses EffectPresetType.
+void SpawnCastEffect(Vector3 pos, EffectPresetType preset, float scale);
+
+// Flight-stage variant — projectile trail + tail particles while a skill
+// is flying from start to target. Reuses EffectPresetType. Returns the
+// trail ID; caller MUST call KillTrail(id) on impact (e.g. right before
+// SpawnImpactEffect at the target).
+int SpawnProjectileTrail(Vector3 start, Vector3 target, EffectPresetType preset, float scale, float speed);
+
+// Audio presets — reuse EffectPresetType so skill authors call the same enum
+// value for both image and sound. Each loads (via ResourceManager_LoadSound,
+// cached) and plays a per-element Sound on first use, then just PlaySound()s
+// the cached handle on subsequent calls. No Flight-stage preset (looping/
+// ambient audio during flight is a different mechanism than one-shot
+// PlaySound; out of scope here).
+//
+// NOTE: as of this writing no per-element SFX assets exist under assets/ yet
+// (content gap, not a Core Agent decision) — these currently TraceLog a
+// one-time LOG_WARNING per missing preset and return without playing
+// anything or crashing. Once real .wav/.ogg assets are added under
+// assets/sounds/, wire the paths into the switch in skill_helper.c.
+void PlayCastSound(EffectPresetType preset);
+void PlayImpactSound(EffectPresetType preset);
 
 // 2. Damage Volume
 typedef enum {
@@ -54,7 +82,11 @@ typedef enum {
     EMITTER_FIRE,
     EMITTER_SNOW,
     EMITTER_WATER_SPURT,
-    EMITTER_SHOCKED_SPARKS
+    EMITTER_SHOCKED_SPARKS,
+    EMITTER_WOOD_LEAVES,
+    EMITTER_EARTH_DUST,
+    EMITTER_METAL_SPARKS,
+    EMITTER_TAIJI_MOTES
 } EmitterPreset;
 
 typedef struct {
@@ -188,5 +220,12 @@ void SkillBuilder_AddExplosion(SkillBuildContext *ctx, EffectPresetType vfx);
 void SkillBuilder_AddDecal(SkillBuildContext *ctx, DecalPresetType decal, float radius, float duration);
 void SkillBuilder_AddDamageVolume(SkillBuildContext *ctx, float radius, float dps, float duration);
 void SkillBuilder_Build(SkillBuildContext *ctx);
+
+// Cast-stage hook for the builder pattern. Has its own trigger point — call
+// this at cast time (e.g. inside Cast[Name]Skill), separately from
+// SkillBuilder_Build() which fires at impact. Fires SpawnCastEffect
+// immediately rather than deferring into ctx, since cast and impact happen
+// at different points in the skill's lifecycle.
+void SkillBuilder_AddCastEffect(SkillBuildContext *ctx, EffectPresetType preset);
 
 #endif // SKILL_HELPER_H
