@@ -926,6 +926,8 @@ void    FlowMap_Unload(FlowMap *fm);
 * **`CreateWithVortexTexture`:** Generates a procedural vortex flow texture; `FlowMap` **owns** it and frees it in `FlowMap_Unload`.
 * **`Apply`:** Call **after** `BeginShaderMode(shader)`, with the same `shader` used in `Create` (raylib needs the matching `shader.id`). Only sets its own flow-texture uniform via `SetShaderValueTexture` — does not bind texture slots manually, so other textures (caustics, main tex...) stay unaffected.
 
+> [!IMPORTANT] **The skill's `.fs` MUST declare the flow texture sampler with the exact name `flowTex`** (i.e. `uniform sampler2D flowTex;`), since `FlowMap_Create`/`FlowMap_CreateWithVortexTexture` resolve their internal `flowTexLoc` via `GetShaderLocation(shader, "flowTex")`. If the `.fs` instead declares it under a different name (e.g. `texture0`), `flowTexLoc == -1` and `FlowMap_Apply` silently no-ops on the texture bind — **no error, no warning**. The sampler then reads raylib's default fallback texture (solid white), and any `flowBlend(...)` call using it returns ~1.0 luminance everywhere, typically blowing out the shader's lighting math to solid white. Confirmed root cause of a real bug in `tsunami_skill` (2026-06-30) — see also §10 Rule D for the related `matModel` silent-no-op gotcha (same failure shape: wrong/unbound uniform → washed-out white render with correct geometry).
+
 ### Path Spline (`core/path_spline.h`)
 ```c
 Vector3 GetBezierPoint(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t);
@@ -1925,13 +1927,16 @@ Trên Android GLES 3.0, `matModel` giữ giá trị **all-zeros** → `normalize
 
 **`SkillManager_BeginShader` tự động set `matModel = identity` trước `BeginShaderMode`.** Skill code không cần làm gì thêm nếu dùng `SkillManager_BeginShader`.
 
-Nếu skill gọi `BeginShaderMode` trực tiếp (bypass `SkillManager_BeginShader`), PHẢI set matModel thủ công:
+> [!IMPORTANT] **Bug đã sửa (2026-06-30):** bản fix trước đây dùng `shader.locs[SHADER_LOC_MATRIX_MODEL] >= 0` để kiểm tra location hợp lệ — đây là cách kiểm tra SAI. Raylib's `LoadShaderFromMemory` chỉ auto-bind một danh sách uniform mặc định cố định (`mvp`, `colDiffuse`, `texture0`, vertex attribs...); `matModel` không nằm trong danh sách đó, nên slot `shader.locs[SHADER_LOC_MATRIX_MODEL]` không bao giờ được ghi và giữ giá trị `0` từ `RL_CALLOC` ban đầu. `0` vẫn pass `>= 0` dù **không phải vị trí thật của `matModel`** → `SetShaderValueMatrix` ghi đè nhầm vào bất kỳ uniform nào khác thực sự nằm ở location 0 trong chương trình GLSL đã link (ví dụ một `sampler2D texture0` khai báo riêng) → vỡ texture binding / giá trị uniform đó → mesh có thể hiện toàn màu trắng dù hình dạng vẫn đúng. Đã xác nhận qua `tsunami_skill` (FlowMap's `texture0` bị ghi đè bởi identity matrix). `core/skill_manager.c`'s `SkillManager_BeginShader` đã được sửa để dùng `GetShaderLocation(shader, "matModel")` (tra theo tên, trả về `-1` thật nếu không tồn tại) thay vì đọc `shader.locs[SHADER_LOC_MATRIX_MODEL]`.
+
+Nếu skill gọi `BeginShaderMode` trực tiếp (bypass `SkillManager_BeginShader`), PHẢI set matModel thủ công — và PHẢI tra location bằng tên, không dùng `shader.locs[SHADER_LOC_MATRIX_MODEL]`:
 
 ```c
 // Trước draw call, sau BeginShaderMode():
-if (s_shader.locs[SHADER_LOC_MATRIX_MODEL] >= 0) {
+int matModelLoc = GetShaderLocation(s_shader, "matModel");
+if (matModelLoc >= 0) {
     Matrix identity = MatrixIdentity();
-    SetShaderValueMatrix(s_shader, s_shader.locs[SHADER_LOC_MATRIX_MODEL], identity);
+    SetShaderValueMatrix(s_shader, matModelLoc, identity);
 }
 ```
 

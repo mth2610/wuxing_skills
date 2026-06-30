@@ -995,9 +995,21 @@ void SkillManager_BeginShader(Shader shader) {
   // Khi skill dùng rlgl immediate mode, matModel giữ giá trị 0 trên Android GLES 3.0
   // → normalize(mat4(0) * normal) = normalize(vec3(0)) = NaN → toàn màu trắng.
   // Đặt identity làm default an toàn; DrawMesh/DrawModel sẽ override sau nếu cần.
-  if (shader.locs[SHADER_LOC_MATRIX_MODEL] >= 0) {
+  //
+  // shader.locs[SHADER_LOC_MATRIX_MODEL] KHÔNG được dùng trực tiếp: raylib's
+  // LoadShaderFromMemory chỉ auto-bind 1 danh sách uniform mặc định cố định
+  // (mvp, colDiffuse, texture0, vertex attribs...) — "matModel" không nằm
+  // trong danh sách đó, nên slot này không bao giờ được ghi và vẫn giữ giá
+  // trị 0 từ RL_CALLOC ban đầu. 0 vẫn pass điều kiện ">= 0" dù KHÔNG phải vị
+  // trí thật của matModel → SetShaderValueMatrix ghi đè nhầm vào uniform khác
+  // đang thực sự nằm ở location 0 (ví dụ texture0 sampler trong tsunami.fs,
+  // gây vỡ FlowMap/texture binding → toàn bộ mesh hiện trắng dù vẫn đúng hình
+  // dạng). Phải tra location bằng tên qua GetShaderLocation() để lấy -1 thật
+  // khi uniform không tồn tại, thay vì tin vào slot mặc định chưa từng ghi.
+  int matModelLoc = GetShaderLocation(shader, "matModel");
+  if (matModelLoc >= 0) {
     Matrix identity = MatrixIdentity();
-    SetShaderValueMatrix(shader, shader.locs[SHADER_LOC_MATRIX_MODEL], identity);
+    SetShaderValueMatrix(shader, matModelLoc, identity);
   }
 
   BeginShaderMode(shader);
