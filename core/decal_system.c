@@ -8,6 +8,8 @@
 static DecalEntity g_DecalPool[MAX_DECALS];
 static int g_LastSpawnedIndex = 0;
 static Shader g_DecalShader;
+static Shader g_DecalFlowShader;
+static int g_flowTimeLoc, g_flowSpeedLoc, g_flowStrengthLoc;
 
 // Camera compensation — bù foreshortening khi camera nhìn từ góc nghiêng
 static float g_cam_yaw     = 0.0f;   // góc xoay camera quanh Y (độ)
@@ -40,6 +42,10 @@ void DecalSystem_Init(void) {
         g_DecalPool[i].active = false;
     }
     g_DecalShader = ResourceManager_LoadShader(NULL, "core/shaders/decal.fs");
+    g_DecalFlowShader = ResourceManager_LoadShader(NULL, "core/shaders/decal_flow.fs");
+    g_flowTimeLoc = GetShaderLocation(g_DecalFlowShader, "u_time");
+    g_flowSpeedLoc = GetShaderLocation(g_DecalFlowShader, "u_flowSpeed");
+    g_flowStrengthLoc = GetShaderLocation(g_DecalFlowShader, "u_flowStrength");
 }
 
 static int FindSlot(void) {
@@ -59,26 +65,50 @@ static int FindSlot(void) {
     return target;
 }
 
+static int SpawnDecalCommon(Vector3 pos, float rotation, float rotSpeed,
+                            float scaleStart, float scaleEnd,
+                            Texture2D texture, float lifetime,
+                            Color tint, BlendMode blendMode, float yOffset) {
+    int idx = FindSlot();
+    DecalEntity *d = &g_DecalPool[idx];
+    d->position     = (Vector3){ pos.x, pos.y + yOffset, pos.z };
+    d->rotation     = rotation;
+    d->rotSpeed     = rotSpeed;
+    d->scale        = scaleStart;
+    d->scaleStart   = scaleStart;
+    d->scaleEnd     = scaleEnd;
+    d->yOffset      = yOffset;
+    d->texture      = texture;
+    d->lifetime     = lifetime;
+    d->maxLifetime  = lifetime;
+    d->tint         = tint;
+    d->blendMode    = blendMode;
+    d->active       = true;
+    d->flowScroll   = false;
+    d->flowSpeed    = 0.0f;
+    d->flowStrength = 0.0f;
+    g_LastSpawnedIndex = (idx + 1) % MAX_DECALS;
+    return idx;
+}
+
 void DecalSystem_AddEx(Vector3 pos, float rotation, float rotSpeed,
                        float scaleStart, float scaleEnd,
                        Texture2D texture, float lifetime,
                        Color tint, BlendMode blendMode, float yOffset) {
-    int idx = FindSlot();
-    DecalEntity *d = &g_DecalPool[idx];
-    d->position    = (Vector3){ pos.x, pos.y + yOffset, pos.z };
-    d->rotation    = rotation;
-    d->rotSpeed    = rotSpeed;
-    d->scale       = scaleStart;
-    d->scaleStart  = scaleStart;
-    d->scaleEnd    = scaleEnd;
-    d->yOffset     = yOffset;
-    d->texture     = texture;
-    d->lifetime    = lifetime;
-    d->maxLifetime = lifetime;
-    d->tint        = tint;
-    d->blendMode   = blendMode;
-    d->active      = true;
-    g_LastSpawnedIndex = (idx + 1) % MAX_DECALS;
+    SpawnDecalCommon(pos, rotation, rotSpeed, scaleStart, scaleEnd, texture,
+                     lifetime, tint, blendMode, yOffset);
+}
+
+void DecalSystem_AddFlowEx(Vector3 pos, float rotation, float rotSpeed,
+                           float scaleStart, float scaleEnd,
+                           Texture2D texture, float lifetime,
+                           Color tint, BlendMode blendMode, float yOffset,
+                           float flowSpeed, float flowStrength) {
+    int idx = SpawnDecalCommon(pos, rotation, rotSpeed, scaleStart, scaleEnd,
+                               texture, lifetime, tint, blendMode, yOffset);
+    g_DecalPool[idx].flowScroll = true;
+    g_DecalPool[idx].flowSpeed = flowSpeed;
+    g_DecalPool[idx].flowStrength = flowStrength;
 }
 
 void DecalSystem_Add(Vector3 pos, float rotation, float scale,
@@ -112,28 +142,41 @@ void DecalSystem_Update(float dt) {
     }
 }
 
-// Vẽ tất cả decal có blendMode chỉ định, gọi lần lượt từ Draw()
-static void DrawGroup(BlendMode mode) {
+// Vẽ tất cả decal có blendMode + flowScroll chỉ định, gọi lần lượt từ Draw().
+// flowOnly tách riêng decal cuộn (dùng g_DecalFlowShader, cần set u_time/
+// u_flowSpeed/u_flowStrength mỗi decal) khỏi decal tĩnh (g_DecalShader,
+// không đổi gì so với trước) — không có decal flow nào thì pass này no-op.
+static void DrawGroup(BlendMode mode, bool flowOnly) {
     bool hasAny = false;
     for (int i = 0; i < MAX_DECALS; i++) {
-        if (g_DecalPool[i].active && g_DecalPool[i].blendMode == mode) {
+        if (g_DecalPool[i].active && g_DecalPool[i].blendMode == mode &&
+            g_DecalPool[i].flowScroll == flowOnly) {
             hasAny = true;
             break;
         }
     }
     if (!hasAny) return;
 
+    Shader shader = flowOnly ? g_DecalFlowShader : g_DecalShader;
+
     BeginBlendMode(mode);
     rlDisableDepthMask();
-    BeginShaderMode(g_DecalShader);
+    BeginShaderMode(shader);
 
     for (int i = 0; i < MAX_DECALS; i++) {
         DecalEntity *d = &g_DecalPool[i];
-        if (!d->active || d->blendMode != mode) continue;
+        if (!d->active || d->blendMode != mode || d->flowScroll != flowOnly) continue;
 
         float alphaRatio = d->lifetime / d->maxLifetime;
         Color c = d->tint;
         c.a = (unsigned char)(d->tint.a * alphaRatio);
+
+        if (flowOnly) {
+            float elapsed = d->maxLifetime - d->lifetime;
+            SetShaderValue(shader, g_flowTimeLoc, &elapsed, SHADER_UNIFORM_FLOAT);
+            SetShaderValue(shader, g_flowSpeedLoc, &d->flowSpeed, SHADER_UNIFORM_FLOAT);
+            SetShaderValue(shader, g_flowStrengthLoc, &d->flowStrength, SHADER_UNIFORM_FLOAT);
+        }
 
         rlPushMatrix();
             rlTranslatef(d->position.x, d->position.y, d->position.z);
@@ -162,10 +205,15 @@ static void DrawGroup(BlendMode mode) {
 }
 
 void DecalSystem_Draw(void) {
-    // Alpha trước (vết đất, puddle, scorch) → Additive sau (glow, rune sáng)
-    DrawGroup(BLEND_ALPHA);
-    DrawGroup(BLEND_ADDITIVE);
-    DrawGroup(BLEND_MULTIPLIED);
+    // Alpha trước (vết đất, puddle, scorch) → Additive sau (glow, rune sáng).
+    // Trong mỗi blend mode: decal tĩnh trước, decal flow sau (cùng thứ tự
+    // tổng thể như trước, chỉ thêm 1 pass shader riêng cho flow).
+    DrawGroup(BLEND_ALPHA, false);
+    DrawGroup(BLEND_ALPHA, true);
+    DrawGroup(BLEND_ADDITIVE, false);
+    DrawGroup(BLEND_ADDITIVE, true);
+    DrawGroup(BLEND_MULTIPLIED, false);
+    DrawGroup(BLEND_MULTIPLIED, true);
 }
 
 void DecalSystem_Unload(void) {

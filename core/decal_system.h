@@ -20,6 +20,9 @@ typedef struct {
     Color tint;
     BlendMode blendMode;  // BLEND_ALPHA | BLEND_ADDITIVE | BLEND_MULTIPLIED
     bool active;
+    bool flowScroll;      // true: vẽ bằng decal_flow.fs, cuộn ra ngoài tâm theo thời gian
+    float flowSpeed;      // tốc độ cuộn radial, thường 0.3-1.0
+    float flowStrength;   // trộn flow vs texture gốc [0,1], thường 0.5-1.0
 } DecalEntity;
 
 // Khởi tạo hệ thống Decal
@@ -34,6 +37,16 @@ void DecalSystem_AddEx(Vector3 pos, float rotation, float rotSpeed,
                        float scaleStart, float scaleEnd,
                        Texture2D texture, float lifetime,
                        Color tint, BlendMode blendMode, float yOffset);
+
+// Như AddEx nhưng texture cuộn radial ra ngoài tâm theo thời gian (lava
+// crawl, ripple spreading) thay vì đứng yên — dùng decal_flow.fs riêng,
+// không ảnh hưởng decal tĩnh (AddEx/Add). flowSpeed/flowStrength xem comment
+// DecalEntity.
+void DecalSystem_AddFlowEx(Vector3 pos, float rotation, float rotSpeed,
+                           float scaleStart, float scaleEnd,
+                           Texture2D texture, float lifetime,
+                           Color tint, BlendMode blendMode, float yOffset,
+                           float flowSpeed, float flowStrength);
 
 // Batch helper — đặt 1 decal tại mỗi điểm trong points[0..count-1], dùng cho hiệu ứng
 // theo đường đi (vd. gai mọc dọc đường, vệt cháy). Wrap quanh DecalSystem_Add, không

@@ -130,7 +130,7 @@ exactly the kind of false reading this rebuild was meant to avoid.
 
 ---
 
-## Item 4 — Material/Trail/Decal/Bloom upgrades (4a DONE, 4b–4d NOT STARTED)
+## Item 4 — Material/Trail/Decal/Bloom upgrades (4a/4b DONE, 4c–4d NOT STARTED)
 
 From the original Core API update request. Assessed as legitimate, real
 gaps (not redundant with existing code). Four independent sub-items — can
@@ -148,11 +148,18 @@ specular/Fresnel. `triplanarSample(sampler2D, ...)` is the texture-asset
 variant for real Earth/Metal materials — not yet wired into a shipping
 skill, only the procedural-noise path is exercised by the test.
 
-### 4b. Flow-mapped decals (`core/decal_system.h`)
-`DecalSystem_Add`/`AddEx`/`AddStreak` exist but have no flow/scroll concept
-— decals are static images. Goal: let `DECAL_PRESET_FIRE_LAVA` /
-`DECAL_PRESET_WATER_RIPPLE`-style decals sample a flow map and scroll
-outward from center over time instead of being a static stamped texture.
+### 4b. Flow-mapped decals — DONE
+`DecalSystem_AddFlowEx` (`core/decal_system.h/.c`) + `core/shaders/decal_flow.fs`
+— see `CORE_API.md` "Ground Decals" section. Radially scrolls the decal
+texture outward from center over time (`fract(dist - u_time*flowSpeed)`)
+instead of a static stamped image; renders via a separate shader pass per
+blend-mode group so it doesn't touch `Add`/`AddEx`'s existing behavior or
+cost for any other decal. Wired into `SpawnGroundDecal` (`core/skill_helper.c`)
+for `DECAL_PRESET_FIRE_LAVA` and `DECAL_PRESET_WATER_RIPPLE`
+(`flowSpeed=0.6, flowStrength=0.8`) — every other preset is unaffected
+(still static). Tested via `skills/taiji/core_test`: casting spawns a
+`DECAL_PRESET_FIRE_LAVA` decal under the triplanar rock; confirmed visually
+— concentric rings scrolling outward from center, not a static stamp.
 
 ### 4c. Dynamic trail attachment (`core/trail_system.h`)
 Existing API (`UpdateFollowerPosition`, `SetFollowerAxis`) supports a
@@ -170,6 +177,6 @@ a simple separable Gaussian (`bloom_blur.fs`), not a dual-filter
 for a wider, cheaper glow more suitable for mobile — this is a quality/perf
 upgrade to an already-working system, lowest priority of the four.
 
-**4b–4d have no code written yet.** Recommend treating each as its
+**4c–4d have no code written yet.** Recommend treating each as its
 own scoped task with a visual test (sandbox skill or similar) before
 merging, given the Item 3 experience above.

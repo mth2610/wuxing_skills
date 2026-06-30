@@ -911,7 +911,17 @@ void SpawnGroundDecal(DecalPresetType type, Vector3 pos, float radius, float dur
     }
 
     Vector3 decalPos = { pos.x, pos.y + 0.02f, pos.z };
-    DecalSystem_Add(decalPos, (float)GetRandomValue(0, 360), radius, tex, duration, tint);
+    float rotation = (float)GetRandomValue(0, 360);
+
+    // CORE_ISSUES.md Item 4b — lava crack / ripple decal cuộn ra ngoài tâm
+    // theo thời gian (decal_flow.fs) thay vì texture đứng yên như mọi preset
+    // khác.
+    if (type == DECAL_PRESET_FIRE_LAVA || type == DECAL_PRESET_WATER_RIPPLE) {
+        DecalSystem_AddFlowEx(decalPos, rotation, 0.0f, radius, radius, tex,
+                              duration, tint, BLEND_ALPHA, 0.02f, 0.6f, 0.8f);
+    } else {
+        DecalSystem_Add(decalPos, rotation, radius, tex, duration, tint);
+    }
 }
 
 // 8. Camera Impulse Implementation

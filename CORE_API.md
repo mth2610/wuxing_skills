@@ -827,6 +827,8 @@ typedef struct {
 ```c
 void DecalSystem_Init(void);
 void DecalSystem_Add(Vector3 pos, float rot, float scale, Texture2D tex, float life, Color tint);
+void DecalSystem_AddEx(Vector3 pos, float rot, float rotSpeed, float scaleStart, float scaleEnd, Texture2D tex, float life, Color tint, BlendMode blendMode, float yOffset);
+void DecalSystem_AddFlowEx(Vector3 pos, float rot, float rotSpeed, float scaleStart, float scaleEnd, Texture2D tex, float life, Color tint, BlendMode blendMode, float yOffset, float flowSpeed, float flowStrength);
 void DecalSystem_AddStreak(const Vector3 *points, int count, float rot, float scale, Texture2D tex, float life, Color tint);
 void DecalSystem_Update(float dt);
 void DecalSystem_Draw(void);
@@ -835,6 +837,7 @@ void DecalSystem_Unload(void);
 * `rot`: yaw around Y axis (degrees). Alpha fades internally as `lifetime / maxLifetime` decays to 0.
 * Static pool, `MAX_DECALS = 64`, no malloc.
 * `DecalSystem_AddStreak`: thin wrapper that calls `DecalSystem_Add` once per point in `points[0..count-1]` — for path-shaped effects (thorn lines, scorch trails) instead of hand-rolling a loop. Caller's responsibility to pass a reasonable `count` (e.g. up to 32, matching `SkillParams.pathPoints[32]`); not auto-clamped against `MAX_DECALS` headroom, same convention as `SamplePath`'s `maxSegments` in `core/path_spline.h`.
+* **`DecalSystem_AddFlowEx`** (CORE_ISSUES.md Item 4b): same params as `AddEx` plus `flowSpeed`/`flowStrength`. Texture radially scrolls outward from the decal center over time (`core/shaders/decal_flow.fs`) instead of staying static — for lava-crack-crawl / ripple-spreading visuals. `flowSpeed` ~0.3–1.0 (radial units/sec), `flowStrength` ~0.5–1.0 (0 = looks identical to a static decal, 1 = fully replaced by the scrolled sample). Draws via a separate shader pass from static decals — does not affect `Add`/`AddEx` behavior or performance. Already wired into `SpawnGroundDecal` for `DECAL_PRESET_FIRE_LAVA`/`DECAL_PRESET_WATER_RIPPLE` (see Ground Decal Preset section); every other preset is unaffected (static).
 
 Rules:
 - Call `DecalSystem_Init()` once at startup, `DecalSystem_Update(dt)` every frame to age out decals.
@@ -1676,6 +1679,7 @@ void SpawnGroundDecal(DecalPresetType type, Vector3 pos, float radius, float dur
 * All 6 elements now have at least 2 ground-mark presets; each (except GENERIC_*) is pre-tinted via its `ELEMENT_COLOR_*` macro inside `SpawnGroundDecal` — caller does not pass a `Color`.
 * Backing textures live under `assets/textures/decals/` (per-element marks) and `assets/textures/generic/` (untinted, reusable across elements: `impact_ring.png`, `glow_circle.png`, `shadow_blob.png`).
 * `DECAL_PRESET_CRACK`/`BURN`/`ICE`/`WATER` are the original 4 presets, kept for call-site compatibility with existing skills — `ICE` now points to a real frost texture (`decal_frost_ring.png`) instead of the old `dust_wind.png` placeholder.
+* `DECAL_PRESET_FIRE_LAVA` and `DECAL_PRESET_WATER_RIPPLE` use `DecalSystem_AddFlowEx` internally (radial outward scroll, `flowSpeed=0.6, flowStrength=0.8`) — see "Ground Decals" section above. Every other preset still calls plain `DecalSystem_Add` (static).
 
 ### ForceField Preset
 ```c

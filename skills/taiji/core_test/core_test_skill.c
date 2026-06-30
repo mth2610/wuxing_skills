@@ -1,6 +1,7 @@
 #include "skills/taiji/core_test/core_test_skill.h"
 #include "core/procedural_mesh_utils.h"
 #include "core/resource_manager.h"
+#include "core/skill_helper.h"
 #include "core/skill_manager.h"
 #include "raymath.h"
 #include "rlgl.h"
@@ -26,6 +27,13 @@
 #define CORE_TEST_ROCK_SEED 7
 #define CORE_TEST_TRIPLANAR_SCALE 0.025f
 #define CORE_TEST_TRIPLANAR_SHARPNESS 4.0f
+
+// --- Shape: flow-mapped ground decal ---
+// CORE_ISSUES.md Item 4b — DecalSystem_AddFlowEx (wired into SpawnGroundDecal
+// for DECAL_PRESET_FIRE_LAVA) scrolls the lava-crack texture outward from
+// center over time instead of sitting static like every other decal preset.
+#define CORE_TEST_DECAL_RADIUS 50.0f
+#define CORE_TEST_DECAL_DURATION 4.0f
 
 static bool s_active = false;
 static float s_timer = 0.0f;
@@ -71,6 +79,10 @@ void CastCoreTestSkill(Vector3 startPos, Vector3 target, SkillParams params) {
   ProceduralMesh_BuildRock(&s_rockData, rockCenter, CORE_TEST_ROCK_RADIUS,
                            CORE_TEST_ROCK_JITTER, CORE_TEST_ROCK_SEED,
                            CORE_TEST_ROCK_SUBDIV);
+
+  Vector3 decalPos = {rockCenter.x, 0.0f, rockCenter.z};
+  SpawnGroundDecal(DECAL_PRESET_FIRE_LAVA, decalPos, CORE_TEST_DECAL_RADIUS,
+                   CORE_TEST_DECAL_DURATION);
 }
 
 void UpdateCoreTestSkill(float dt, Vector3 enemyPos, float enemyRadius) {
