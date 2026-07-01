@@ -4,18 +4,26 @@
 
 #include <stddef.h>
 
-// core_test is a minimal harness — no active test currently running.
-// See CORE_ISSUES.md for the next item to test here.
+// Test: dual-filter bloom (Item 4d).
+// Cast places a bright white sphere at the caster's feet — produces bright
+// pixels that the bloom bright-pass extracts. A wide, soft glow halo should
+// be visible around the sphere; compare radius vs the old Gaussian bloom.
+#define CORE_TEST_SPHERE_RADIUS 12.0f
+
+static bool    s_active   = false;
+static Vector3 s_pos      = {0};
 
 void InitCoreTestSkill(int screenWidth, int screenHeight) {
   (void)screenWidth;
   (void)screenHeight;
+  s_active = false;
 }
 
 void CastCoreTestSkill(Vector3 startPos, Vector3 target, SkillParams params) {
-  (void)startPos;
   (void)target;
   (void)params;
+  s_pos    = startPos;
+  s_active = true;
 }
 
 void UpdateCoreTestSkill(float dt, Vector3 enemyPos, float enemyRadius) {
@@ -24,9 +32,12 @@ void UpdateCoreTestSkill(float dt, Vector3 enemyPos, float enemyRadius) {
   (void)enemyRadius;
 }
 
-void DrawCoreTestSkill(void) {}
+void DrawCoreTestSkill(void) {
+  if (!s_active) return;
+  DrawSphere(s_pos, CORE_TEST_SPHERE_RADIUS, WHITE);
+}
 
-void UnloadCoreTestSkill(void) {}
+void UnloadCoreTestSkill(void) { s_active = false; }
 
 bool IsCoreTestSkillCoiling(void) { return false; }
 

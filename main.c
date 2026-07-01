@@ -143,8 +143,8 @@ int main(void) {
   uiState.isPanelOpen = false;
 
   PostFXConfig postFXConfig = {.bloomEnabled = true,
-                               .bloomThreshold = 0.65f,
-                               .bloomIntensity = 0.8f,
+                               .bloomThreshold = 0.5f,
+                               .bloomIntensity = 2.0f,
                                .chromaticEnabled = true,
                                .chromaticStrength = 0.15f,
                                .vignetteEnabled = true,
