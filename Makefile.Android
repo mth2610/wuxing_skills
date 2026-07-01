@@ -62,6 +62,8 @@ PROJECT_SOURCE_FILES   := main.c \
                           core/particle_radial_burst.c \
                           core/impact_burst.c \
                           core/shader_preprocessor.c \
+                          core/metaball_fx.c \
+                          entities/entities.c \
                           sandbox/sandbox_core.c \
                           sandbox/ui_panel.c \
                           sandbox/vfx_test.c \
@@ -257,7 +259,7 @@ generate_apk_keystore:
 		-dname "CN=$(APP_COMPANY_NAME),O=Android,C=VN" \
 		-keystore $(PROJECT_BUILD_PATH)/$(PROJECT_NAME).keystore \
 		-storepass $(APP_KEYSTORE_PASS) -keypass $(APP_KEYSTORE_PASS) \
-		-alias $(PROJECT_NAME)Key -keyalg RSA
+		-alias $(PROJECT_NAME)Key -keyalg RSA -storetype JKS
 
 config_project_package:
 	$(ANDROID_BUILD_TOOLS)/aapt package -f -m \

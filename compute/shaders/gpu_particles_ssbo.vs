@@ -9,6 +9,7 @@ struct GpuParticleData {
     vec4 color_start;
     vec4 color_end;
     vec4 life_data;
+    vec4 ff_data; // không dùng ở VS, chỉ giữ để khớp stride với ParticleBuffer
 };
 
 layout(std430, binding = 0) readonly buffer ParticleBuffer {

@@ -21,6 +21,7 @@
  */
 
 #include "raylib.h"
+#include "core/force_field.h"
 #include <stdbool.h>
 
 #define MAX_GPU_PARTICLES 8192
@@ -33,6 +34,22 @@ typedef struct {
     float   radius;
     float   lifetime;  // giây
     float   drag;      // 0.0 = không cản, 0.98 = cản nhẹ, 1.0 = dừng ngay
+
+    // Force field áp dụng cho particle này (chỉ có hiệu lực ở COMPUTE path —
+    // CPU/VBO fallback bỏ qua field này). NULL = không có force field.
+    // Con trỏ được đăng ký vào registry nội bộ và re-pack MỖI FRAME, nên
+    // ForceField phải sống ít nhất bằng đời particle dài nhất dùng nó
+    // (dùng static/pool, không dùng biến local trên stack).
+    const ForceField *forceField;
+
+    // Trục động cho layer FORCE_RADIAL_AXIS/FORCE_VORTEX_AXIS bên trong
+    // forceField (giống tham số axisOrigin/axisDir của ForceField_Evaluate).
+    // Bỏ qua nếu forceField không chứa layer axis-type nào. Registry lưu trục
+    // theo slot (keyed theo con trỏ forceField) và cập nhật lại mỗi lần một
+    // particle mới đăng ký cùng con trỏ đó — tất cả particle spawn cùng
+    // frame với cùng forceField sẽ dùng chung trục mới nhất.
+    Vector3 axisOrigin;
+    Vector3 axisDir;
 } GpuParticleConfig;
 
 // Khởi tạo — detect compute capability, tạo buffer/shader

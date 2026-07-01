@@ -3,7 +3,7 @@
 # No other meaning or use of this file is supported.
 
 method=git
-command=/usr/local/bin/cmake;-DCMAKE_MESSAGE_LOG_LEVEL=VERBOSE;-P;/Users/mth2610/Desktop/c_games/wuxing_skills/_deps/raylib-subbuild/raylib-populate-prefix/tmp/raylib-populate-gitclone.cmake
+command=/usr/local/Cellar/cmake/4.1.2/bin/cmake;-DCMAKE_MESSAGE_LOG_LEVEL=VERBOSE;-P;/Users/mth2610/Desktop/c_games/wuxing_skills/_deps/raylib-subbuild/raylib-populate-prefix/tmp/raylib-populate-gitclone.cmake
 source_dir=/Users/mth2610/Desktop/c_games/wuxing_skills/_deps/raylib-src
 work_dir=/Users/mth2610/Desktop/c_games/wuxing_skills/_deps
 repository=https://github.com/raysan5/raylib.git

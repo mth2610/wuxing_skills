@@ -101,10 +101,14 @@ float ForceField_GetViscosityDamping(const ForceField *ff, float dt);
 // ============================================================
 // GPU LAYOUT
 //
-// LƯU Ý FORCE_RADIAL_AXIS: Tái sử dụng strength/radius/falloff từ params0.
-// AxisOrigin/AxisDir là trục động truyền vào lúc evaluate, KHÔNG lữu trữ trong
-// cấu trúc ForceLayerGPU. Khi ánh xạ sang compute shader, shader cần nhận trục
-// qua uniform/push_constant riêng nếu muốn tính FORCE_RADIAL_AXIS trên GPU.
+// LƯU Ý FORCE_RADIAL_AXIS / FORCE_VORTEX_AXIS: axisOrigin/axisDir là trục
+// động (giống tham số truyền vào ForceField_Evaluate) được BAKE vào
+// layers[i].origin/direction NGAY LÚC PACK (xem ForceField_PackGPU) — vì
+// GPU không có khái niệm "truyền thêm tham số lúc evaluate" mỗi layer.
+// Do đó nếu ForceField có nhiều layer AXIS-type dùng axis khác nhau, phải
+// gọi ForceField_PackGPU riêng cho từng nhóm (hoặc tách field) — một lần
+// pack chỉ áp dụng MỘT cặp axisOrigin/axisDir cho toàn bộ layer AXIS-type
+// trong field đó.
 // ============================================================
 
 typedef struct {
@@ -121,7 +125,15 @@ typedef struct {
 } ForceFieldGPU;
 
 // Chuyển ForceField (CPU) sang layout phẳng để memcpy thẳng lên SSBO.
-void ForceField_PackGPU(const ForceField *ff, ForceFieldGPU *out);
+// axisOrigin/axisDir: giống tham số cùng tên trong ForceField_Evaluate — trục
+// động dùng cho layer FORCE_RADIAL_AXIS/FORCE_VORTEX_AXIS. Truyền (Vector3){0}
+// cho cả hai nếu field không chứa layer axis-type nào.
+//
+// BREAKING CHANGE (so với bản trước chỉ nhận 2 tham số): mọi call site phải
+// cập nhật thêm 2 tham số này. Tại thời điểm đổi, hàm này chưa có caller nào
+// trong repo (unused) nên không có call site cần sửa.
+void ForceField_PackGPU(const ForceField *ff, Vector3 axisOrigin,
+                        Vector3 axisDir, ForceFieldGPU *out);
 
 // ============================================================
 // WIND ZONE GLOBAL

@@ -820,19 +820,21 @@ static void DrawTouchButton(Vector2 center, float radius, const char* label, boo
 void DrawSandboxTouchControls(const PlayerEntity* player) {
     if (!g_showTouchControls) return;
 
-    // Thiết lập chế độ vẽ 2D overlay
+    // Thiết lập chế độ vẽ 2D overlay — dùng BeginMode2D() chuẩn của raylib
+    // thay vì tự đẩy rlPushMatrix/rlOrtho: kỹ thuật thủ công từng khiến
+    // joystick/dash/jump vô hình trên GLES di động (nghi ngờ rlgl matrix
+    // stack bị lệch push/pop từ chỗ khác trong frame trên driver Mali).
+    // BeginMode2D là API được raylib test kỹ trên mọi backend kể cả GLES.
     rlDrawRenderBatchActive();
     EndShaderMode();
     BeginBlendMode(BLEND_ALPHA);
 
-    rlMatrixMode(RL_PROJECTION);
-    rlPushMatrix();
-    rlLoadIdentity();
-    rlOrtho(0.0, (double)GetScreenWidth(), (double)GetScreenHeight(), 0.0, -1.0, 1.0);
-
-    rlMatrixMode(RL_MODELVIEW);
-    rlPushMatrix();
-    rlLoadIdentity();
+    Camera2D screenOverlayCamera = { 0 };
+    screenOverlayCamera.offset = (Vector2){ 0.0f, 0.0f };
+    screenOverlayCamera.target = (Vector2){ 0.0f, 0.0f };
+    screenOverlayCamera.rotation = 0.0f;
+    screenOverlayCamera.zoom = 1.0f;
+    BeginMode2D(screenOverlayCamera);
     rlSetTexture(0);
 
     float screenWidth = (float)GetScreenWidth();
@@ -895,12 +897,7 @@ void DrawSandboxTouchControls(const PlayerEntity* player) {
     DrawText("Press TAB to toggle Touch UI", 10, 10, 15, ColorAlpha(RAYWHITE, 0.7f));
 #endif
 
-    // Khôi phục ma trận chiếu và ma trận modelview
-    rlMatrixMode(RL_PROJECTION);
-    rlPopMatrix();
-    rlMatrixMode(RL_MODELVIEW);
-    rlPopMatrix();
-
+    EndMode2D();
     EndBlendMode();
 }
 

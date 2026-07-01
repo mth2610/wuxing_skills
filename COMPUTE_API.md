@@ -55,8 +55,25 @@ typedef struct {
     float   radius;
     float   lifetime;  // giây
     float   drag;      // 0.0 = không cản | 0.98 = cản nhẹ | 1.0 = dừng ngay
+
+    // ForceField tùy chọn — CHỈ có hiệu lực ở COMPUTE path. Fallback CPU/VBO
+    // (macOS, hoặc thiết bị compute-shader compile fail) bỏ qua field này,
+    // particle chạy drag-only. axisOrigin/axisDir: trục động cho layer
+    // FORCE_RADIAL_AXIS/FORCE_VORTEX_AXIS bên trong forceField (bỏ qua nếu
+    // không dùng loại layer đó).
+    const ForceField *forceField;
+    Vector3 axisOrigin;
+    Vector3 axisDir;
 } GpuParticleConfig;
 ```
+
+> [!NOTE]
+> Con trỏ `forceField` được đăng ký vào registry nội bộ và re-pack MỖI FRAME
+> — phải trỏ tới bộ nhớ sống lâu (static/pool), không dùng biến local trên
+> stack. Xem `CORE_ISSUES.md` Item 5 nếu path COMPUTE không compile được
+> trên thiết bị (giới hạn driver phổ biến trên GPU mobile: SSBO không được
+> hỗ trợ ở vertex-shader stage) — hệ thống tự fallback về CPU/VBO, nhưng khi
+> đó `forceField` không có tác dụng gì.
 
 **Ví dụ spawn mưa:**
 ```c

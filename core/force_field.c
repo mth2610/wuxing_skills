@@ -465,7 +465,8 @@ Vector3 WindZone_Evaluate(Vector3 pos, Vector3 vel, float time) {
   return ForceField_Evaluate(&g_windZone, pos, vel, time, (Vector3){0}, (Vector3){0});
 }
 
-void ForceField_PackGPU(const ForceField *ff, ForceFieldGPU *out) {
+void ForceField_PackGPU(const ForceField *ff, Vector3 axisOrigin,
+                        Vector3 axisDir, ForceFieldGPU *out) {
   memset(out, 0, sizeof(*out));
   out->layerCount = ff->layerCount;
 
@@ -473,9 +474,18 @@ void ForceField_PackGPU(const ForceField *ff, ForceFieldGPU *out) {
     const ForceLayer *L = &ff->layers[i];
     ForceLayerGPU *G = &out->layers[i];
 
-    G->origin = (Vector4){L->origin.x, L->origin.y, L->origin.z, 0.0f};
-    G->direction =
-        (Vector4){L->direction.x, L->direction.y, L->direction.z, 0.0f};
+    // FORCE_RADIAL_AXIS/FORCE_VORTEX_AXIS dùng trục động (axisOrigin/axisDir)
+    // thay vì L->origin/L->direction — bake vào đây để GLSL đọc origin/
+    // direction đồng nhất cho mọi layer type, không cần case riêng.
+    Vector3 o = L->origin;
+    Vector3 d = L->direction;
+    if (L->type == FORCE_RADIAL_AXIS || L->type == FORCE_VORTEX_AXIS) {
+      o = axisOrigin;
+      d = axisDir;
+    }
+
+    G->origin = (Vector4){o.x, o.y, o.z, 0.0f};
+    G->direction = (Vector4){d.x, d.y, d.z, 0.0f};
     G->params0 = (Vector4){L->strength, L->radius, L->falloff, (float)L->type};
     G->params1 = (Vector4){L->noiseScale, L->noiseSpeed, 0.0f, 0.0f};
   }

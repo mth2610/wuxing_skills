@@ -121,7 +121,43 @@ typedef struct {
     float csr, csg, csb, csa;
     float cer, ceg, ceb, cea;
     float life_rem, life_max, phase, active;
+    float ff_index, ff_pad0, ff_pad1, ff_pad2; // ff_index: slot vào ForceFieldBuffer, -1 = none
 } GpuParticleData;
+
+// ---------------------------------------------------------------------------
+// Force field registry — map con trỏ ForceField (CPU) -> slot GPU.
+// Chỉ có hiệu lực ở COMPUTE path; CPU/VBO fallback bỏ qua force field.
+// Không sửa core/force_field.h — dùng nguyên ForceFieldGPU/ForceField_PackGPU
+// đã khai báo sẵn ở đó.
+// ---------------------------------------------------------------------------
+#define MAX_GPU_FORCE_FIELDS 8
+
+static const ForceField *s_fieldRegistry[MAX_GPU_FORCE_FIELDS];
+static Vector3             s_fieldAxisOrigin[MAX_GPU_FORCE_FIELDS];
+static Vector3             s_fieldAxisDir[MAX_GPU_FORCE_FIELDS];
+static int                 s_fieldCount = 0;
+
+static int RegisterField(const ForceField *ff, Vector3 axisOrigin, Vector3 axisDir) {
+    if (!ff) return -1;
+    for (int i = 0; i < s_fieldCount; i++) {
+        if (s_fieldRegistry[i] == ff) {
+            // Refresh trục — particle mới nhất spawn cùng field quyết định
+            // trục dùng cho slot này ở lần pack tiếp theo.
+            s_fieldAxisOrigin[i] = axisOrigin;
+            s_fieldAxisDir[i]    = axisDir;
+            return i;
+        }
+    }
+    if (s_fieldCount >= MAX_GPU_FORCE_FIELDS) {
+        TraceLog(LOG_WARNING, "GPU_PARTICLES: force field registry full (%d), ignoring", MAX_GPU_FORCE_FIELDS);
+        return -1;
+    }
+    int idx = s_fieldCount++;
+    s_fieldRegistry[idx]   = ff;
+    s_fieldAxisOrigin[idx] = axisOrigin;
+    s_fieldAxisDir[idx]    = axisDir;
+    return idx;
+}
 
 // ---------------------------------------------------------------------------
 // State
@@ -130,14 +166,13 @@ static bool            s_initialized     = false;
 static bool            s_use_compute     = false;
 
 static unsigned int    s_ssbo            = 0;
+static unsigned int    s_ff_ssbo         = 0; // ForceFieldBuffer, binding = 1
 static unsigned int    s_compute_prog    = 0;
 static unsigned int    s_draw_vao        = 0;
 static Shader          s_draw_shader_gpu = {0};
+static float           s_elapsed_time    = 0.0f;
 
 static GpuParticleData s_cpu_pool[MAX_GPU_PARTICLES];
-static unsigned int    s_vbo             = 0;
-static unsigned int    s_vao             = 0;
-static Shader          s_draw_shader_cpu = {0};
 
 static int             s_spawn_cursor    = 0;
 
@@ -207,31 +242,6 @@ static unsigned int CompileComputeShader(const char *path) {
 }
 
 // ---------------------------------------------------------------------------
-// VBO layout: position(3f) + texcoord(2f) + color(4f) = 36 bytes/vert
-// ---------------------------------------------------------------------------
-#define CPU_VERT_STRIDE       36
-#define CPU_VERTS_PER_PARTICLE 6
-#define CPU_VBO_SIZE (MAX_GPU_PARTICLES * CPU_VERTS_PER_PARTICLE * CPU_VERT_STRIDE)
-
-static void SetupCpuVAO(void) {
-    s_vao = rlLoadVertexArray();
-    rlEnableVertexArray(s_vao);
-
-    s_vbo = rlLoadVertexBuffer(NULL, CPU_VBO_SIZE, true);
-
-    rlEnableVertexAttribute(0);
-    rlSetVertexAttribute(0, 3, RL_FLOAT, 0, CPU_VERT_STRIDE, 0);
-
-    rlEnableVertexAttribute(1);
-    rlSetVertexAttribute(1, 2, RL_FLOAT, 0, CPU_VERT_STRIDE, 12);
-
-    rlEnableVertexAttribute(2);
-    rlSetVertexAttribute(2, 4, RL_FLOAT, 0, CPU_VERT_STRIDE, 20);
-
-    rlDisableVertexArray();
-}
-
-// ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
 void GpuParticleSystem_Init(void) {
@@ -239,6 +249,8 @@ void GpuParticleSystem_Init(void) {
 
     memset(s_cpu_pool, 0, sizeof(s_cpu_pool));
     s_spawn_cursor = 0;
+    s_fieldCount = 0;
+    s_elapsed_time = 0.0f;
 
     bool gl43 = LoadComputeProcs();
 
@@ -270,19 +282,45 @@ void GpuParticleSystem_Init(void) {
                        NULL, RL_DYNAMIC_DRAW);
         s_glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
+        unsigned int ff_ssbo_buf[1];
+        s_glGenBuffers(1, ff_ssbo_buf);
+        s_ff_ssbo = ff_ssbo_buf[0];
+        s_glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, s_ff_ssbo);
+        s_glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_ff_ssbo);
+        s_glBufferData(GL_SHADER_STORAGE_BUFFER,
+                       MAX_GPU_FORCE_FIELDS * (ptrdiff_t)sizeof(ForceFieldGPU),
+                       NULL, RL_DYNAMIC_DRAW);
+        s_glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
         s_draw_vao = rlLoadVertexArray();
 
         s_draw_shader_gpu = ResourceManager_LoadShader(ssbo_vs_path, fs_path);
+        if (s_draw_shader_gpu.id == 0) {
+            // Một số driver mobile (vd Mali) không hỗ trợ SSBO ở vertex-shader
+            // stage dù compute-shader compile được bình thường — dispatch vẫn
+            // chạy (particle count vẫn tăng) nhưng không có gì để vẽ ra màn
+            // hình. Fallback CPU/VBO thay vì giữ COMPUTE với draw shader hỏng.
+            TraceLog(LOG_WARNING, "GPU_PARTICLES: draw shader compile failed, fallback CPU");
+            rlUnloadVertexArray(s_draw_vao);
+            s_draw_vao = 0;
+            s_glUseProgram(0);
+            rlUnloadShaderProgram(s_compute_prog);
+            s_compute_prog = 0;
+            rlUnloadVertexBuffer(s_ssbo);
+            s_ssbo = 0;
+            rlUnloadVertexBuffer(s_ff_ssbo);
+            s_ff_ssbo = 0;
+            goto cpu_path;
+        }
         s_use_compute = true;
         TraceLog(LOG_INFO, "GPU_PARTICLES: COMPUTE path active (%d particles)", MAX_GPU_PARTICLES);
     } else {
         cpu_path:
         // ----- CPU/VBO PATH -----
-        SetupCpuVAO();
-        s_draw_shader_cpu = ResourceManager_LoadShader(
-            "compute/shaders/gpu_particles_vbo.vs",
-            "compute/shaders/gpu_particles.fs"
-        );
+        // Vẽ qua rlBegin(RL_QUADS) immediate-mode (xem GpuParticleSystem_Draw)
+        // — cùng kỹ thuật DrawParticles() trong core/particle_system.c đã
+        // dùng, đi qua render-batch pipeline chuẩn của raylib (tự động lo mvp,
+        // attribute binding...) nên không cần shader/VAO/VBO riêng nữa.
         s_use_compute = false;
         TraceLog(LOG_INFO, "GPU_PARTICLES: CPU/VBO path active (%d particles)", MAX_GPU_PARTICLES);
     }
@@ -312,6 +350,8 @@ void GpuParticleSystem_Spawn(GpuParticleConfig cfg) {
     d.life_max = cfg.lifetime;
     d.phase = (float)GetRandomValue(0, 10000) / 10000.0f;
     d.active = 1.0f;
+    d.ff_index = (float)RegisterField(cfg.forceField, cfg.axisOrigin, cfg.axisDir);
+    d.ff_pad0 = d.ff_pad1 = d.ff_pad2 = 0.0f;
 
     if (s_use_compute) {
         s_glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_ssbo);
@@ -331,11 +371,30 @@ void GpuParticleSystem_Update(float dt) {
     if (!s_initialized) return;
 
     if (s_use_compute) {
+        s_elapsed_time += dt;
+
+        // Re-pack mọi force field đã đăng ký — cho phép field di chuyển/đổi
+        // giá trị mỗi frame (vd: vortex bám theo caster) phản ánh đúng trên GPU.
+        if (s_fieldCount > 0) {
+            ForceFieldGPU packed[MAX_GPU_FORCE_FIELDS];
+            for (int i = 0; i < s_fieldCount; i++) {
+                ForceField_PackGPU(s_fieldRegistry[i], s_fieldAxisOrigin[i],
+                                   s_fieldAxisDir[i], &packed[i]);
+            }
+            s_glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_ff_ssbo);
+            s_glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                              s_fieldCount * (ptrdiff_t)sizeof(ForceFieldGPU), packed);
+            s_glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        }
+
         s_glUseProgram(s_compute_prog);
         int loc_dt = s_glGetUniformLocation(s_compute_prog, "u_dt");
         if (loc_dt >= 0) s_glUniform1f(loc_dt, dt);
+        int loc_time = s_glGetUniformLocation(s_compute_prog, "u_time");
+        if (loc_time >= 0) s_glUniform1f(loc_time, s_elapsed_time);
 
         s_glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, s_ssbo);
+        s_glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, s_ff_ssbo);
         unsigned int groups = (MAX_GPU_PARTICLES + 255) / 256;
         s_glDispatchCompute(groups, 1, 1);
         s_glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
@@ -364,13 +423,23 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture) {
     Vector3 right   = Vector3Normalize(Vector3CrossProduct(camera.up, viewDir));
     Vector3 up      = Vector3CrossProduct(viewDir, right);
 
+    // rlDrawVertexArray() ở dưới KHÔNG đi qua render-batch pipeline chuẩn của
+    // raylib (DrawMesh/DrawTriangle...) — nơi "mvp" thường được tự động tính
+    // và nạp vào shader. Gọi rlDrawVertexArray() thủ công thì "mvp" giữ giá
+    // trị mặc định (0) nếu không tự set -> mọi vertex biến thành (0,0,0,0) ->
+    // vô hình hoàn toàn dù mọi tham số khác đều hợp lệ. Phải tự tính khớp với
+    // ma trận camera hiện tại (đang active từ MyBeginMode3D ở main.c).
+    Matrix matMVP = MatrixMultiply(rlGetMatrixModelview(), rlGetMatrixProjection());
+
     if (s_use_compute) {
         BeginShaderMode(s_draw_shader_gpu);
 
         int loc_right = GetShaderLocation(s_draw_shader_gpu, "u_right");
         int loc_up    = GetShaderLocation(s_draw_shader_gpu, "u_up");
+        int loc_mvp   = GetShaderLocation(s_draw_shader_gpu, "mvp");
         if (loc_right >= 0) SetShaderValue(s_draw_shader_gpu, loc_right, &right, SHADER_UNIFORM_VEC3);
         if (loc_up    >= 0) SetShaderValue(s_draw_shader_gpu, loc_up,    &up,    SHADER_UNIFORM_VEC3);
+        if (loc_mvp   >= 0) SetShaderValueMatrix(s_draw_shader_gpu, loc_mvp, matMVP);
 
         s_glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, s_ssbo);
         rlSetTexture(texture.id);
@@ -383,9 +452,13 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture) {
         EndShaderMode();
 
     } else {
-        static float vbo_data[MAX_GPU_PARTICLES * CPU_VERTS_PER_PARTICLE * 9];
-        int vert_count = 0;
-
+        // Immediate-mode qua rlgl — GIỐNG HỆT DrawParticles() trong
+        // core/particle_system.c: rlBegin()/rlEnd() PER-PARTICLE (không bọc
+        // ngoài cả vòng lặp). Xem ANDROID_NOTICES.md mục A "Lỗi Tràn Bộ Đệm
+        // Hình Học": buffer batch mặc định 8192 đỉnh, trên GPU mobile driver
+        // sẽ cắt nát/vứt bỏ toàn bộ buffer nếu tràn giữa chừng một draw call
+        // dài — PC thì "xề xòa" chấp nhận nên không lộ ra. Bọc rlBegin/rlEnd
+        // theo từng quad nhỏ (4 đỉnh) như DrawParticles() né hẳn giới hạn này.
         for (int i = 0; i < MAX_GPU_PARTICLES; i++) {
             GpuParticleData *p = &s_cpu_pool[i];
             if (p->active < 0.5f) continue;
@@ -393,41 +466,30 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture) {
             float t = 1.0f - (p->life_rem / p->life_max);
             if (t < 0.0f) t = 0.0f;
             if (t > 1.0f) t = 1.0f;
-            float cr = p->csr + (p->cer - p->csr) * t;
-            float cg = p->csg + (p->ceg - p->csg) * t;
-            float cb = p->csb + (p->ceb - p->csb) * t;
-            float ca = p->csa + (p->cea - p->csa) * t;
+            unsigned char cr = (unsigned char)((p->csr + (p->cer - p->csr) * t) * 255.0f);
+            unsigned char cg = (unsigned char)((p->csg + (p->ceg - p->csg) * t) * 255.0f);
+            unsigned char cb = (unsigned char)((p->csb + (p->ceb - p->csb) * t) * 255.0f);
+            unsigned char ca = (unsigned char)((p->csa + (p->cea - p->csa) * t) * 255.0f);
             float cx = p->px, cy = p->py, cz = p->pz, r = p->radius;
 
-            float tl[3] = { cx + (-right.x - up.x)*r, cy + (-right.y - up.y)*r, cz + (-right.z - up.z)*r };
-            float tr[3] = { cx + ( right.x - up.x)*r, cy + ( right.y - up.y)*r, cz + ( right.z - up.z)*r };
-            float bl[3] = { cx + (-right.x + up.x)*r, cy + (-right.y + up.y)*r, cz + (-right.z + up.z)*r };
-            float br[3] = { cx + ( right.x + up.x)*r, cy + ( right.y + up.y)*r, cz + ( right.z + up.z)*r };
+            rlSetTexture(texture.id);
+            rlBegin(RL_QUADS);
+            rlColor4ub(cr, cg, cb, ca);
 
-            if (vert_count + 6 > MAX_GPU_PARTICLES * CPU_VERTS_PER_PARTICLE) break;
+            rlTexCoord2f(0.0f, 0.0f);
+            rlVertex3f(cx + (-right.x - up.x) * r, cy + (-right.y - up.y) * r, cz + (-right.z - up.z) * r);
 
-            float *v = &vbo_data[vert_count * 9];
-            v[0]=tl[0];v[1]=tl[1];v[2]=tl[2];v[3]=0.f;v[4]=0.f;v[5]=cr;v[6]=cg;v[7]=cb;v[8]=ca;v+=9;
-            v[0]=bl[0];v[1]=bl[1];v[2]=bl[2];v[3]=0.f;v[4]=1.f;v[5]=cr;v[6]=cg;v[7]=cb;v[8]=ca;v+=9;
-            v[0]=br[0];v[1]=br[1];v[2]=br[2];v[3]=1.f;v[4]=1.f;v[5]=cr;v[6]=cg;v[7]=cb;v[8]=ca;v+=9;
-            v[0]=tl[0];v[1]=tl[1];v[2]=tl[2];v[3]=0.f;v[4]=0.f;v[5]=cr;v[6]=cg;v[7]=cb;v[8]=ca;v+=9;
-            v[0]=br[0];v[1]=br[1];v[2]=br[2];v[3]=1.f;v[4]=1.f;v[5]=cr;v[6]=cg;v[7]=cb;v[8]=ca;v+=9;
-            v[0]=tr[0];v[1]=tr[1];v[2]=tr[2];v[3]=1.f;v[4]=0.f;v[5]=cr;v[6]=cg;v[7]=cb;v[8]=ca;
+            rlTexCoord2f(0.0f, 1.0f);
+            rlVertex3f(cx + (-right.x + up.x) * r, cy + (-right.y + up.y) * r, cz + (-right.z + up.z) * r);
 
-            vert_count += 6;
+            rlTexCoord2f(1.0f, 1.0f);
+            rlVertex3f(cx + (right.x + up.x) * r, cy + (right.y + up.y) * r, cz + (right.z + up.z) * r);
+
+            rlTexCoord2f(1.0f, 0.0f);
+            rlVertex3f(cx + (right.x - up.x) * r, cy + (right.y - up.y) * r, cz + (right.z - up.z) * r);
+
+            rlEnd();
         }
-
-        if (vert_count == 0) return;
-
-        rlUpdateVertexBuffer(s_vbo, vbo_data, vert_count * 9 * (int)sizeof(float), 0);
-
-        BeginShaderMode(s_draw_shader_cpu);
-        rlSetTexture(texture.id);
-        rlEnableVertexArray(s_vao);
-        rlDrawVertexArray(0, vert_count);
-        rlDisableVertexArray();
-        rlSetTexture(0);
-        EndShaderMode();
     }
 }
 
@@ -438,16 +500,16 @@ void GpuParticleSystem_Unload(void) {
     if (!s_initialized) return;
     if (s_use_compute) {
         if (s_ssbo)     { rlUnloadVertexBuffer(s_ssbo); s_ssbo = 0; }
+        if (s_ff_ssbo)  { rlUnloadVertexBuffer(s_ff_ssbo); s_ff_ssbo = 0; }
         if (s_draw_vao) { rlUnloadVertexArray(s_draw_vao); s_draw_vao = 0; }
         if (s_compute_prog && s_glUseProgram) {
             s_glUseProgram(0);
             rlUnloadShaderProgram(s_compute_prog);
             s_compute_prog = 0;
         }
-    } else {
-        if (s_vbo) { rlUnloadVertexBuffer(s_vbo); s_vbo = 0; }
-        if (s_vao) { rlUnloadVertexArray(s_vao); s_vao = 0; }
     }
+    // CPU/VBO path vẽ qua rlBegin immediate-mode — không có tài nguyên GPU
+    // riêng cần giải phóng.
     s_initialized = false;
     s_use_compute = false;
 }

@@ -15,13 +15,218 @@ struct GpuParticleData {
     vec4 color_start;    // rgba normalized (0..1)
     vec4 color_end;      // rgba normalized (0..1)
     vec4 life_data;      // x = life_remaining, y = life_max, z = phase, w = active (0/1)
+    vec4 ff_data;        // x = force field slot (-1 = none), yzw = reserved
 };
 
 layout(std430, binding = 0) buffer ParticleBuffer {
     GpuParticleData particles[];
 };
 
+// ---------------------------------------------------------------------------
+// Force field — phải khớp byte-for-byte với ForceLayerGPU/ForceFieldGPU
+// trong core/force_field.h (không sửa header đó, chỉ mirror layout ở đây,
+// giống cách GpuParticleData đã được mirror thủ công giữa .comp/.c/.vs).
+// ---------------------------------------------------------------------------
+struct ForceLayerGPU {
+    vec4 origin;    // xyz dùng, w đệm
+    vec4 direction; // xyz dùng, w đệm
+    vec4 params0;   // x: strength, y: radius, z: falloff, w: (float)type
+    vec4 params1;   // x: noiseScale, y: noiseSpeed, zw: dự trữ
+};
+
+#define FF_MAX_LAYERS 8
+
+struct ForceFieldGPU {
+    ForceLayerGPU layers[FF_MAX_LAYERS];
+    ivec4 meta; // x = layerCount
+};
+
+layout(std430, binding = 1) readonly buffer ForceFieldBuffer {
+    ForceFieldGPU uFields[];
+};
+
+// Phải khớp thứ tự enum ForceType trong core/force_field.h
+#define FT_GRAVITY_DIR   0
+#define FT_GRAVITY_POINT 1
+#define FT_VORTEX        2
+#define FT_WIND          3
+#define FT_NOISE_PERLIN  4
+#define FT_NOISE_CURL    5
+#define FT_DRAG          6
+#define FT_VISCOSITY     7
+#define FT_RADIAL_AXIS   8
+#define FT_VORTEX_AXIS   9
+
 uniform float u_dt;
+uniform float u_time;
+
+// Value noise 3D rẻ, portable — không dùng permutation table. Thay thế
+// Noise_Perlin3D/Noise_Curl3D CPU-side: không khớp bit-exact, chỉ cần cùng
+// "cảm giác" chuyển động (đã dùng cùng offset toạ độ với bản CPU).
+vec3 hash3(vec3 p) {
+    p = vec3(dot(p, vec3(127.1, 311.7, 74.7)),
+              dot(p, vec3(269.5, 183.3, 246.1)),
+              dot(p, vec3(113.5, 271.9, 124.6)));
+    return fract(sin(p) * 43758.5453123) * 2.0 - 1.0;
+}
+
+float noiseScalar(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    vec3 u = f * f * (3.0 - 2.0 * f);
+    float n000 = dot(hash3(i + vec3(0,0,0)), f - vec3(0,0,0));
+    float n100 = dot(hash3(i + vec3(1,0,0)), f - vec3(1,0,0));
+    float n010 = dot(hash3(i + vec3(0,1,0)), f - vec3(0,1,0));
+    float n110 = dot(hash3(i + vec3(1,1,0)), f - vec3(1,1,0));
+    float n001 = dot(hash3(i + vec3(0,0,1)), f - vec3(0,0,1));
+    float n101 = dot(hash3(i + vec3(1,0,1)), f - vec3(1,0,1));
+    float n011 = dot(hash3(i + vec3(0,1,1)), f - vec3(0,1,1));
+    float n111 = dot(hash3(i + vec3(1,1,1)), f - vec3(1,1,1));
+    float nx00 = mix(n000, n100, u.x);
+    float nx10 = mix(n010, n110, u.x);
+    float nx01 = mix(n001, n101, u.x);
+    float nx11 = mix(n011, n111, u.x);
+    float nxy0 = mix(nx00, nx10, u.y);
+    float nxy1 = mix(nx01, nx11, u.y);
+    return mix(nxy0, nxy1, u.z); // ~[-1, 1]
+}
+
+// Curl xấp xỉ bằng finite-difference trên noiseScalar (đồng dạng
+// Noise_Curl3D CPU-side, không cần khớp bit-exact).
+vec3 curlNoise3(vec3 p) {
+    const float e = 0.1;
+    float dx  = noiseScalar(p + vec3(e,0,0)) - noiseScalar(p - vec3(e,0,0));
+    float dy  = noiseScalar(p + vec3(0,e,0)) - noiseScalar(p - vec3(0,e,0));
+    float dz  = noiseScalar(p + vec3(0,0,e)) - noiseScalar(p - vec3(0,0,e));
+    float dx2 = noiseScalar(p + vec3(e,0,0) + vec3(31.4,0,0)) - noiseScalar(p - vec3(e,0,0) + vec3(31.4,0,0));
+    float dy2 = noiseScalar(p + vec3(0,e,0) + vec3(0,47.7,0)) - noiseScalar(p - vec3(0,e,0) + vec3(0,47.7,0));
+    float dz2 = noiseScalar(p + vec3(0,0,e) + vec3(0,0,58.9)) - noiseScalar(p - vec3(0,0,e) + vec3(0,0,58.9));
+    return vec3(dy2 - dz, dz2 - dx, dx2 - dy) / (2.0 * e);
+}
+
+// Phải khớp CalcAttenuation() trong core/force_field.c
+float calcAttenuation(vec3 origin, float radius, float falloff, vec3 pos) {
+    if (radius <= 0.0) return 1.0;
+    vec3 diff = pos - origin;
+    float distSq = dot(diff, diff);
+    if (distSq >= radius * radius) return 0.0;
+    float t = sqrt(distSq) / radius;
+    if (falloff <= 0.0) return 1.0;
+    if (falloff <= 1.0) return 1.0 - t;
+    return (1.0 - t) * (1.0 - t);
+}
+
+// Phải khớp ForceField_Evaluate() trong core/force_field.c — cùng công thức,
+// cùng thứ tự atten/acc, để particle không "nhảy" khi đổi giữa CPU/GPU path.
+// vel: vận tốc TRƯỚC khi cộng gia tốc frame này (dùng cho FT_DRAG).
+vec3 evalForceField(int idx, vec3 pos, vec3 vel, float time) {
+    vec3 totalAcc = vec3(0.0);
+    if (idx < 0) return totalAcc;
+
+    ForceFieldGPU ff = uFields[idx];
+    int n = ff.meta.x;
+    for (int i = 0; i < n; i++) {
+        ForceLayerGPU L = ff.layers[i];
+        int   type     = int(L.params0.w);
+        vec3  o        = L.origin.xyz;
+        vec3  dir      = L.direction.xyz;
+        float strength = L.params0.x;
+        float radius   = L.params0.y;
+        float falloff  = L.params0.z;
+        float nScale   = L.params1.x;
+        float nSpeed   = L.params1.y;
+
+        float atten = 1.0;
+        vec3  acc   = vec3(0.0);
+
+        // FT_RADIAL_AXIS/FT_VORTEX_AXIS tự tính atten theo perpDist tới trục
+        // (origin/direction ở đây đã được bake = axisOrigin/axisDir lúc pack),
+        // KHÔNG dùng calcAttenuation theo khoảng cách Euclid tới origin.
+        if (type != FT_RADIAL_AXIS && type != FT_VORTEX_AXIS) {
+            atten = calcAttenuation(o, radius, falloff, pos);
+            if (atten <= 0.0) continue;
+        }
+
+        if (type == FT_GRAVITY_DIR) {
+            acc = dir * strength;
+
+        } else if (type == FT_GRAVITY_POINT) {
+            vec3 toOrigin = o - pos;
+            float distSq = dot(toOrigin, toOrigin);
+            if (distSq >= 1e-4) {
+                float dist = sqrt(distSq);
+                acc = (toOrigin / dist) * (strength / (dist + 1.0));
+            }
+
+        } else if (type == FT_VORTEX) {
+            vec3 axis = normalize(dir);
+            vec3 toPos = pos - o;
+            vec3 radial = toPos - axis * dot(toPos, axis);
+            float dist = length(radial);
+            if (dist >= 1e-3) {
+                vec3 tangent = normalize(cross(axis, radial));
+                acc = tangent * (strength / (dist + 1.0));
+            }
+
+        } else if (type == FT_WIND) {
+            float t = time * nSpeed;
+            float nx = noiseScalar(vec3(pos.x * nScale + t, pos.y * nScale, pos.z * nScale));
+            float nz = noiseScalar(vec3(pos.x * nScale + 53.9, pos.y * nScale, pos.z * nScale + t));
+            acc = dir * strength + vec3(nx, 0.0, nz) * strength * 0.35;
+
+        } else if (type == FT_NOISE_PERLIN) {
+            float t = time * nSpeed;
+            float nx = noiseScalar(vec3(pos.x * nScale + t,    pos.y * nScale + 17.7, pos.z * nScale + 17.7));
+            float ny = noiseScalar(vec3(pos.x * nScale + 37.3, pos.y * nScale + t,    pos.z * nScale + 37.3));
+            float nz = noiseScalar(vec3(pos.x * nScale + 73.1, pos.y * nScale + 73.1, pos.z * nScale + t));
+            acc = vec3(nx, ny, nz) * strength;
+
+        } else if (type == FT_NOISE_CURL) {
+            float t = time * nSpeed;
+            vec3 p = vec3(pos.x * nScale + t, pos.y * nScale, pos.z * nScale + t);
+            acc = curlNoise3(p) * strength;
+
+        } else if (type == FT_DRAG) {
+            acc = -strength * vel;
+
+        } else if (type == FT_VISCOSITY) {
+            // Không áp dụng ở đường particle-pool: core/particle_system.c cũng
+            // không gọi ForceField_GetViscosityDamping cho ParticleConfig
+            // (chỉ trail_system.c dùng) — giữ parity, no-op có chủ đích.
+
+        } else if (type == FT_RADIAL_AXIS || type == FT_VORTEX_AXIS) {
+            if (dot(dir, dir) >= 1e-6) {
+                vec3 toPoint = pos - o;
+                float alongAxis = dot(toPoint, dir);
+                vec3 closestOnAxis = o + dir * alongAxis;
+                vec3 radialVec = pos - closestOnAxis;
+                float perpDistSq = dot(radialVec, radialVec);
+                bool outOfRadius = (radius > 0.0 && perpDistSq >= radius * radius);
+                if (!outOfRadius && perpDistSq >= 1e-6) {
+                    float perpDist = sqrt(perpDistSq);
+                    if (radius <= 0.0) {
+                        atten = 1.0;
+                    } else {
+                        float tt = perpDist / radius;
+                        if (falloff <= 0.0) atten = 1.0;
+                        else if (falloff <= 1.0) atten = 1.0 - tt;
+                        else atten = (1.0 - tt) * (1.0 - tt);
+                    }
+                    if (type == FT_RADIAL_AXIS) {
+                        // centripetal: strength > 0 hút vào trục (khớp header)
+                        acc = (radialVec * (-1.0 / perpDist)) * strength;
+                    } else {
+                        vec3 tangent = normalize(cross(dir, radialVec));
+                        acc = tangent * (strength / (perpDist + 1.0));
+                    }
+                }
+            }
+        }
+
+        totalAcc += acc * atten;
+    }
+    return totalAcc;
+}
 
 void main() {
     uint idx = gl_GlobalInvocationID.x;
@@ -40,7 +245,13 @@ void main() {
         return;
     }
 
-    // Drag — giảm vận tốc mỗi frame
+    // Force field — cộng gia tốc vào velocity (giống cách particle_system.c
+    // CPU làm: velocity += ForceField_Evaluate(...) * dt)
+    vec3 ffAccel = evalForceField(int(p.ff_data.x), p.pos_radius.xyz, p.vel_drag.xyz, u_time);
+    p.vel_drag.xyz += ffAccel * u_dt;
+
+    // Drag — giảm vận tốc mỗi frame (field riêng của GpuParticleConfig,
+    // độc lập với force field, không có tương đương ở CPU ParticleConfig)
     float drag_factor = 1.0 - p.vel_drag.w * u_dt;
     drag_factor = max(drag_factor, 0.0);
     p.vel_drag.xyz *= drag_factor;

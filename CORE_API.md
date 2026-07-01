@@ -1511,6 +1511,9 @@ typedef struct {
 Rules:
 - Call order each frame: `PostFX_Begin()` → draw 3D scene → `PostFX_End()` → `PostFX_Draw(&config)`.
 - `Init`/`Unload` belong to the application lifecycle (global) — skill code does not call them.
+- **Bloom uses dual-filter pyramid** (downsample 1/4→1/8→1/16 + upsample back), replaced the old separable Gaussian. Produces a wider, softer glow at the same pass count. Recommended values for a dark arena scene: `bloomThreshold=0.5f`, `bloomIntensity=2.0f`.
+- **Skills do not control bloom parameters.** Skills control emissive brightness of their own particles/shaders — the global bloom picks up whatever exceeds `bloomThreshold` automatically. Brighter emissive = more bloom, no per-skill config needed.
+- **Multi-texture binding:** `u_bloomTex` uses `SetShaderValueTexture` (called inside `BeginShaderMode`). Do not use `rlActiveTextureSlot`/`rlEnableTexture` for extra textures in post-FX passes — confirmed silently broken (same root cause as Item 3 soft-particle depth tex).
 
 ### Camera FX (`core/camera_fx.h`)
 ```c
