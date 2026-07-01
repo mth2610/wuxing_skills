@@ -3,6 +3,7 @@
 #include "core/color_gradient.h"
 #include "core/decal_system.h"
 #include "core/force_field.h"
+#include "environment/environment_system.h"
 #include "core/impact_burst.h"
 #include "core/particle_radial_burst.h"
 #include "core/particle_system.h"
@@ -49,6 +50,7 @@ static TubeEmitter emitters[MAX_TUBE_EMITTERS];
 static Shader tubeShader;
 static int timeLoc;
 static int viewPosLoc;
+static int lightDirLoc;
 static int uvLengthLoc;
 
 // Cau hinh bien doi mesh huu co rieng cua Water Stream.
@@ -75,6 +77,7 @@ void InitTubeSkill(int screenWidth, int screenHeight) {
                                           "skills/water/water_stream/tube.fs");
   timeLoc = GetShaderLocation(tubeShader, "u_time");
   viewPosLoc = GetShaderLocation(tubeShader, "viewPos");
+  lightDirLoc = GetShaderLocation(tubeShader, "u_lightDir");
   uvLengthLoc =
       GetShaderLocation(tubeShader, "u_uvLength"); // Lay chung cho ca VS va FS
   for (int i = 0; i < MAX_TUBE_EMITTERS; i++) {
@@ -244,6 +247,11 @@ void DrawTubeSkill(void) {
 
   SetShaderValue(tubeShader, timeLoc, &time, SHADER_UNIFORM_FLOAT);
   SetShaderValue(tubeShader, viewPosLoc, &camera.position, SHADER_UNIFORM_VEC3);
+  // This skill uses raw BeginShaderMode(), not SkillManager_BeginShader(),
+  // so u_lightDir isn't auto-bound (CORE_ISSUES.md Item 10) — set it here
+  // the same way viewPos already is.
+  Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
+  SetShaderValue(tubeShader, lightDirLoc, &lightDir, SHADER_UNIFORM_VEC3);
   float uvLength = TUBE_UV_LENGTH_SCALE;
   SetShaderValue(tubeShader, uvLengthLoc, &uvLength, SHADER_UNIFORM_FLOAT);
 

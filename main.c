@@ -14,6 +14,7 @@
 #include "sandbox/vfx_test.h" // MỚI: Chỉ giữ duy nhất file test này để điều phối
 #include "core/resource_manager.h"
 #include "core/skill_helper.h"
+#include "core/tuning.h"
 #include "raylib.h"
 #include "raymath.h"
 #include "rlgl.h"
@@ -116,6 +117,7 @@ int main(void) {
   UnloadImage(atlasImg);
 
   ResourceManager_Init();
+  Tuning_Init("tuning.cfg");
   InitSkillManager(screenWidth, screenHeight);
   DamageVolume_Init();
   EmitterSystem_Init();
@@ -239,6 +241,7 @@ int main(void) {
     VFXTest_UpdateAndHandleInput(player.position, testAtlasTex,
                                  globalParticleTex);
 
+    Tuning_Update();
     UpdateSkillManager(dt, enemy.position, 35.0f);
     DamageVolume_Update(dt);
     EmitterSystem_Update(dt);

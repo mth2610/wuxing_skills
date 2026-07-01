@@ -11,6 +11,7 @@ uniform sampler2D texture0;
 uniform float     u_dissolve;
 uniform float     u_time;
 uniform vec3      u_camPos;
+uniform vec3      u_lightDir; // real environment sun direction, set from stone_prison_skill.c
 
 /* Output */
 out vec4 finalColor;
@@ -73,7 +74,7 @@ void main()
 
     // Dynamic 3D lighting calculation for the non-emissive rock surface
     vec3 V = normalize(u_camPos - fragPosition);
-    vec3 L = normalize(vec3(0.5, 0.8, 0.5)); // Directional light
+    vec3 L = normalize(u_lightDir); // Directional light (real environment sun direction)
     
     float NdotL = max(dot(N, L), 0.0);
     float NdotV = max(dot(N, V), 0.0);

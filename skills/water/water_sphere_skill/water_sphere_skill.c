@@ -3,6 +3,7 @@
 #include "core/color_gradient.h"
 #include "core/decal_system.h"
 #include "core/force_field.h"
+#include "environment/environment_system.h"
 #include "core/impact_burst.h"
 #include "core/particle_radial_burst.h"
 #include "core/particle_system.h"
@@ -40,6 +41,7 @@ static WaterSphere s_spheres[MAX_WATER_SPHERES];
 static Shader s_sphereShader;
 static int s_timeLoc;
 static int s_viewPosLoc;
+static int s_lightDirLoc;
 static int s_dissolveLoc;
 
 static Texture2D s_causticsTex;
@@ -56,6 +58,7 @@ void InitWaterSphereSkill(int screenWidth, int screenHeight) {
       "skills/water/water_sphere_skill/water_sphere.fs");
   s_timeLoc = GetShaderLocation(s_sphereShader, "u_time");
   s_viewPosLoc = GetShaderLocation(s_sphereShader, "viewPos");
+  s_lightDirLoc = GetShaderLocation(s_sphereShader, "u_lightDir");
   s_dissolveLoc = GetShaderLocation(s_sphereShader, "u_dissolve");
 
   for (int i = 0; i < MAX_WATER_SPHERES; i++) {
@@ -201,6 +204,11 @@ void DrawWaterSphereSkill(void) {
   SetShaderValue(s_sphereShader, s_timeLoc, &time, SHADER_UNIFORM_FLOAT);
   SetShaderValue(s_sphereShader, s_viewPosLoc, &camera.position,
                  SHADER_UNIFORM_VEC3);
+  // This skill uses raw BeginShaderMode(), not SkillManager_BeginShader(),
+  // so u_lightDir isn't auto-bound (CORE_ISSUES.md Item 10) — set it here
+  // the same way viewPos already is.
+  Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
+  SetShaderValue(s_sphereShader, s_lightDirLoc, &lightDir, SHADER_UNIFORM_VEC3);
   float dissolve = 0.0f; // Trạng thái sống chưa dissolve
   SetShaderValue(s_sphereShader, s_dissolveLoc, &dissolve,
                  SHADER_UNIFORM_FLOAT);

@@ -14,6 +14,7 @@
 #include "skills/metal/metal_projectile/metal_skill.h"
 #endif
 #include "raymath.h"
+#include "environment/environment_system.h"
 #if HAS_SKILL_SHIELD
 #include "skills/water/water_shield/shield_skill.h"
 #endif
@@ -989,6 +990,17 @@ void SkillManager_BeginShader(Shader shader) {
   if (resLoc >= 0) {
     Vector2 res = { (float)GetScreenWidth(), (float)GetScreenHeight() };
     SetShaderValue(shader, resLoc, &res, SHADER_UNIFORM_VEC2);
+  }
+
+  // u_lightDir: CORE_ISSUES.md Item 10. Environment_GetSunDirection() is the
+  // direction light TRAVELS (used for shadow-skew math, Y is negative —
+  // pointing down from sky to ground). Shaders' dot(normal, lightDir)
+  // convention needs the opposite: direction FROM the surface TOWARD the
+  // light (Y positive). Negate here once so no shader has to remember to.
+  int lightDirLoc = GetShaderLocation(shader, "u_lightDir");
+  if (lightDirLoc >= 0) {
+    Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
+    SetShaderValue(shader, lightDirLoc, &lightDir, SHADER_UNIFORM_VEC3);
   }
 
   // matModel: Raylib chỉ upload matModel khi dùng DrawMesh/DrawModel.

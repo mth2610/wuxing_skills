@@ -78,6 +78,21 @@ To optimize VRAM and prevent duplicate file loadings, skills must load textures 
 
 ---
 
+## 3b. Data-Driven Tuning (`#include "core/tuning.h"`)
+Lets a skill register a `float` as tunable via a plain-text config file (`tuning.cfg` at the project root) instead of hardcoding it — edit the file while the game is running and see it change with no rebuild/restart.
+```c
+void Tuning_Init(const char *configPath);                                // main.c calls this once at startup
+bool Tuning_RegisterFloat(const char *key, float *value, float defaultValue);
+void Tuning_Update(void);                                                // main.c calls this once per frame
+void Tuning_Reload(void);                                                // force an immediate reload (e.g. a debug hotkey)
+```
+* **Where to call from a skill:** register in `Init[Name]Skill` (`Tuning_RegisterFloat("my_skill_radius", &s_radius, 40.0f)`) — `*value` is set to `defaultValue` immediately, then overwritten if the key is already in `tuning.cfg`. `main.c` already calls `Tuning_Init`/`Tuning_Update` globally; a skill only ever calls `Tuning_RegisterFloat`.
+* **Config format:** `key = value` per line in `tuning.cfg`, `#` for comments, blank lines OK. Only floats. A key not listed in the file simply keeps whatever value the registering code already set (its default, or whatever it was before) — hot-reload never resets a value back to default just because its line is temporarily missing or malformed.
+* **Read live values fresh, don't bake them once.** `Tuning_Update()` (mtime poll, no filesystem-watch dependency) overwrites the registered `float` in place, but has no way to retroactively fix anything a skill already copied that value into (e.g. a `ParticleConfig` baked at `Cast` time). If a value needs to react to a live edit while an effect is on screen, re-read the registered float each frame/draw and re-apply it — see `core_test`'s `EffectMaterial.params.rimStrength/fresnelPower` for the pattern.
+* **Desktop dev-tool, not shipped Android hot-reload:** `tuning.cfg` is copied into the Android asset bundle (`Makefile.Android`) so the packaged defaults still apply, but editing a file inside an installed APK isn't meaningful, so there's no live-reload story on Android — only on desktop.
+
+---
+
 ## 4. STANDARD LIFECYCLE API (`[skill_name]_skill.h`)
 
 For automatic detection, your header file must declare these exact prototypes (replace `[Name]` with your unique CamelCase skill name):
@@ -1905,6 +1920,7 @@ Provided automatically by the common headers — **do not redeclare** any of the
 | `u_time` | `uniform` | `float` | Auto-bound — do not set manually |
 | `viewPos` | `uniform` | `vec3` | Camera world-space position — auto-bound |
 | `u_resolution` | `uniform` | `vec2` | Auto-bound |
+| `u_lightDir` | `uniform` | `vec3` | Real environment sun direction, pre-negated to point *toward* the light — auto-bound **only if the skill uses `SkillManager_BeginShader()`**; skills calling raw `BeginShaderMode()` must set it manually (see note below) |
 | `finalColor` | `out` | `vec4` | Final pixel output — write exactly once per `main()` |
 
 > [!NOTE]
@@ -1994,8 +2010,26 @@ float emissiveMask(vec3 worldPos, float freq, float threshold);
 
 Do not reimplement these functions.
 
-> [!NOTE]
-> **`lightDir` is not provided by the engine.** Both `lighting.glsl` functions take `lightDir` as a plain parameter — there is no auto-bound global light direction uniform. Existing skills (e.g. `tube.fs`) hard-code a fixed directional light as `normalize(vec3(0.5, 0.8, 0.5))` to match the project's single static "Isometric Night-time Arena" key light. **New skills should reuse this exact vector** rather than inventing a different light direction, to keep lighting consistent across all elements in the same scene. If the engine later exposes a shared `u_lightDir` uniform, this section will be updated — until then, hard-coding this specific vector is the project convention.
+> [!NOTE] **Resolved (CORE_ISSUES.md Item 10).** `u_lightDir` is now a real
+> auto-bound uniform (added to `fs_header.glsl`, table above) —
+> `SkillManager_BeginShader()` sets it to `-Environment_GetSunDirection()`
+> (negated: the environment API returns the direction light *travels*, Y
+> negative; shaders' `dot(normal, lightDir)` convention needs the direction
+> *toward* the light, Y positive). **Do not hard-code
+> `normalize(vec3(0.5, 0.8, 0.5))` in new skills** — use `normalize(u_lightDir)`
+> instead so rim/diffuse lighting actually matches the environment's real
+> sun direction (confirmed previously mismatched by comparing against a
+> character's cast shadow). `tube.fs`, `stone_prison.fs`, `water_sphere.fs`,
+> and `effect_material.fs` were migrated as part of this fix.
+>
+> **If your skill calls raw `BeginShaderMode()` instead of
+> `SkillManager_BeginShader()`** (check your skill's `Draw` function —
+> several existing skills do, e.g. `tube_skill.c`, `stone_prison_skill.c`),
+> the auto-bind does **not** reach your shader. You must fetch
+> `GetShaderLocation(shader, "u_lightDir")` yourself in `Init[Name]Skill`
+> and call `SetShaderValue(shader, loc, &lightDir, SHADER_UNIFORM_VEC3)`
+> with `lightDir = Vector3Negate(Environment_GetSunDirection())` each frame
+> you draw — same pattern as `viewPos`/`u_camPos` in those two files.
 
 ### Custom Per-Skill Uniforms (e.g. `u_uvLength`, `u_dissolve`)
 

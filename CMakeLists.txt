@@ -48,6 +48,7 @@ add_executable(wuxing
     core/resource_manager.c
     core/color_gradient.c
     core/float_curve.c
+    core/tuning.c
     core/emitter_system.c
     core/flow_map.c
     core/force_field.c

@@ -382,19 +382,206 @@ material (would make it inconsistent with every other skill) — see Item
 
 ---
 
-## Item 9 — Data-driven tuning (lower priority, higher effort — do separately) — NOT STARTED
+## Item 9 — Data-driven tuning — DONE
 
 Every tunable VFX number (radius, speed, color-gradient stops, curve
-stops once Item 6 exists, etc.) is currently a C literal — changing one
-requires a full rebuild. A simple key-value config file, loaded once at
-startup and hot-reloaded on file-change (mtime poll, no filesystem-watch
-dependency needed for a single dev machine), would let a skill author
-iterate on feel without recompiling. Real win for iteration speed, but
-meaningfully more effort than Items 6–8 (needs a parser, a registry of
-"tunable" values skills opt into, and a reload path that doesn't
-clobber runtime state) — **don't bundle with Items 6–8**, pick up as
-its own pass once those land and their new knobs (curve stops, layer
-timings, material params) are stable enough to be worth exposing.
+stops once Item 6 exists, etc.) was a C literal — changing one required
+a full rebuild.
+
+**Implemented:** `core/tuning.h/.c` — `Tuning_Init(configPath)` (called
+once in `main.c`), `Tuning_RegisterFloat(key, float *value, defaultValue)`
+(called by a skill/core module's `Init` function), `Tuning_Update(void)`
+(called once per frame in `main.c`, polls `GetFileModTime` and only
+re-parses/re-applies on an actual mtime change — no filesystem-watch
+dependency), `Tuning_Reload(void)` (force an immediate reload). Static
+array registry (`TUNING_MAX_VALUES 128`), no malloc. Config format is
+plain `key = value` lines in `tuning.cfg` (project root) — parser is a
+single `strstr`-based line-start match (`FindKeyValue` in `tuning.c`),
+no tokenizer/grammar needed for something this simple.
+
+**"Doesn't clobber runtime state"** (the original open concern):
+`FindKeyValue` only overwrites a registered value when the key is
+actually found in the file — a key missing or temporarily malformed
+during a mid-edit leaves the existing value alone rather than resetting
+to `defaultValue`. `defaultValue` is applied exactly once, at
+registration time.
+
+**Real caveat found during verification (documented in `CORE_API.md`,
+not a bug — a usage note):** `Tuning_Update()` only updates the
+registered `float` itself. If a skill copies that value into other
+state once (e.g. bakes it into a `ParticleConfig` at `Cast` time), a
+later hot-reload has no way to reach back and fix the already-baked
+copy. A skill wanting true live-editing while an effect is on screen
+must re-read the registered float and re-apply it each frame — this is
+exactly the pattern used in `core_test`'s verification below, not an
+automatic property of `Tuning_RegisterFloat` alone.
+
+**Verified via `core_test`:** reused the existing Item 8 verification
+sphere (`Material_LoadCustom`) — `rimStrength`/`fresnelPower` are now
+registered via `Tuning_RegisterFloat("core_test_material_rim_strength", ...)`
+/ `"core_test_material_fresnel_power"` in `InitCoreTestSkill`, matching
+keys already present in `tuning.cfg`, and re-applied to
+`s_material.params` every `DrawCoreTestSkill` call (not just at Cast) so
+a live edit to `tuning.cfg` while the sphere is on screen takes effect
+immediately, confirming the reload path actually works end-to-end
+against a real consumer rather than a synthetic test.
+
+**Android:** `tuning.cfg` is copied into the asset bundle
+(`Makefile.Android`) so packaged defaults still apply, but there's no
+live-reload story there by design — editing a file inside an installed
+APK isn't meaningful; this is a desktop dev-iteration tool.
+
+---
+
+## Item 10 — Skill shaders use a hardcoded fake light direction instead of the real environment sun direction — DONE
+
+Found while verifying Item 8's `Material_LoadCustom` in `core_test`:
+comparing the rim glow on a test sphere against the test character's
+actual cast shadow showed the rim's apparent light direction didn't
+match the environment's real sun direction at all.
+
+**Actual scope was much smaller than first estimated.** The original
+write-up assumed this affected "every skill shader in the codebase" —
+a repo-wide grep instead found only **4 files** using this hardcoded
+convention: `skills/water/water_stream/tube.fs`,
+`skills/water/water_sphere_skill/water_sphere.fs`,
+`skills/earth/stone_prison_skill/stone_prison.fs`, and the new
+`core/shaders/effect_material.fs` from Item 8.
+
+**Sign convention caught before it caused a silent bug:**
+`Environment_GetSunDirection()` returns `{-0.4, -1.0, 0.6}` (Y
+negative) — the direction light *travels* (used for shadow-skew math in
+`environment_system.c`). Shaders' `dot(normal, lightDir)` convention
+needs the opposite: direction *toward* the light (Y positive). Feeding
+the raw sun direction into shaders unnegated would have silently
+inverted every surface's lighting (everything shaded as if lit from
+below). Fixed by negating once, centrally, rather than trusting every
+call site to remember to.
+
+**Implemented:**
+- `core/skill_manager.c`'s `SkillManager_BeginShader()` now also
+  auto-binds `u_lightDir = Vector3Negate(Environment_GetSunDirection())`,
+  following the exact precedent already established for `viewPos`.
+- `core/shaders/common/fs_header.glsl` declares `uniform vec3 u_lightDir;`
+  alongside `u_time`/`viewPos`/`u_resolution` so any `#include`-based
+  shader gets it for free.
+- **Real gotcha found while wiring this up:** `tube_skill.c`,
+  `stone_prison_skill.c`, **and `water_sphere_skill.c`** all call raw
+  `BeginShaderMode()` directly, bypassing `SkillManager_BeginShader()`
+  entirely (they manage their own uniforms — `viewPos`/`u_camPos` — by
+  hand). The auto-bind above never reaches them. All three needed a
+  manual fix mirroring their existing `viewPos`/`u_camPos` pattern: fetch
+  `GetShaderLocation(shader, "u_lightDir")` once in `Init[Name]Skill`,
+  `SetShaderValue` it each frame with
+  `Vector3Negate(Environment_GetSunDirection())`. Skipping this for any
+  of the three would have left `u_lightDir` at its GLSL default of
+  `vec3(0,0,0)` — `normalize(vec3(0))` is the exact NaN/white-render bug
+  already documented elsewhere in this file (Android shader pipeline
+  Rule D) — so this wasn't a shortcut that happened to still work, it
+  would have been a real regression on any shader using the shared
+  `.fs` declaration without a real value behind it.
+  **`water_sphere_skill.c` was actually missed in the first pass** (only
+  `tube_skill.c`/`stone_prison_skill.c` were grepped for raw
+  `BeginShaderMode()` at the time) — caught later when the user tested
+  in-game and the lighting still looked wrong; fixed once found. Worth
+  remembering: when auditing "does every raw-`BeginShaderMode()` skill
+  set uniform X", grep for the call pattern itself
+  (`grep -rn "BeginShaderMode" skills/`), don't rely on a partial list
+  built ad hoc while looking at 1-2 files.
+- `water_sphere.fs` (standalone Path 1 shader) and `stone_prison.fs`
+  (standalone) each got `uniform vec3 u_lightDir;` declared directly
+  (they don't `#include fs_header.glsl`) plus their hardcoded
+  `normalize(vec3(0.5, 0.8, 0.5))` line replaced with
+  `normalize(u_lightDir)` / `normalize(u_camPos)`-style read.
+  `tube.fs`/`effect_material.fs` (both `#include`-based) got the same
+  one-line swap.
+- `CORE_API.md`'s pre-existing `[!NOTE]` explicitly flagging "lightDir is
+  not provided by the engine... if the engine later exposes a shared
+  `u_lightDir` uniform, this section will be updated" is now resolved
+  with the real auto-bind table entry and the raw-`BeginShaderMode()`
+  caveat spelled out for future skills.
+
+**Follow-up real bug found via testing, fixed:** casting `water_sphere.fs`
+in-game and comparing against the test character's shadow still looked
+wrong even after the `u_lightDir` fix above. Root cause: this shader
+never actually computed `dot(normal, lightDir)` anywhere — `lightDir`
+was only read inside the Blinn-Phong `halfVec` term for a tiny, sharp
+specular dot (`pow(NdotH, 256.0)`). The large glow everyone actually
+sees (`mix(coreColor, edgeColor, fresnel)` + rim tint) was purely
+`fresnel`/view-angle-driven and structurally could never respond to
+light direction, correct `u_lightDir` value or not. Fixed by adding a
+real `diffuse = max(dot(normal, lightDir), 0.2)` term (ambient floor
+0.2 matches `lighting.glsl`'s `calcDiffuse()` convention) and
+multiplying it into `baseColor`.
+
+**Same gap exists in `tube.fs`, NOT fixed** (out of scope — user asked
+specifically about `water_sphere.fs`): it also only uses `lightDir` for
+`calcSpecular()`'s highlight, with no `calcDiffuse()` call anywhere in
+its `main()`. Its base color (`mix(bottomColor, midColor, topColor)` by
+world-space height) is far less fresnel-dominated than
+`water_sphere.fs`'s was, so the symptom is much less visible there —
+but the same "doesn't actually respond to light direction" gap applies
+structurally. Revisit if this material's lighting is ever scrutinized
+the same way.
+
+**Not investigated further:** whether `Environment_GetSunDirection()`
+ever actually changes at runtime (day/night cycle) or is a fixed
+constant today — doesn't change this fix either way, since the wiring
+reads it live regardless.
+
+---
+
+## Item 11 — `water_sphere_skill.c` never sets `matModel`, unlike its sibling raw-`BeginShaderMode()` skills — NOT STARTED (skill-specific, stopped per user request)
+
+Found while chasing Item 10's `water_sphere.fs` follow-up: even after
+fixing `u_lightDir` wiring and adding real diffuse, the user still saw
+the sphere's bottom brighter than its top (opposite of what a
+downward-pointing sun should produce). Investigating the actual draw
+call (`DrawWaterSphereSkill` in `water_sphere_skill.c`) found this
+skill **never sets `matModel` at all** — no `SetShaderValueMatrix` call
+anywhere, no `GetShaderLocation(shader, "matModel")` fetch.
+
+**Why this matters:** `water_sphere.vs` computes `fragNormal =
+normalize(vec3(matModel * vec4(vertexNormal, 0.0)))` directly (not via
+`VS_FinalOutput()`, but the same math). `DrawCoreSphere()` draws via raw
+rlgl immediate mode, which Raylib does **not** auto-upload `matModel`
+for (only `DrawMesh`/`DrawModel` get that automatically) — so the GLSL
+uniform sits at its zero-initialized default, a zero matrix, and
+`normalize(vec3(0))` is NaN. This is the exact Rule D pattern already
+documented in this file's Android shader pipeline notes, and exactly
+what `SkillManager_BeginShader()` auto-fixes for skills that use it —
+but this skill bypasses that entirely via raw `BeginShaderMode()`.
+
+**Inconsistent with its sibling skills:**
+- `tube_skill.c` *does* attempt a `matModel` fix, but via
+  `tubeShader.locs[SHADER_LOC_MATRIX_MODEL] >= 0`, which `CORE_API.md`'s
+  own bug note already flags as the **wrong** check (raylib never
+  populates that array slot for a name not in its fixed default-uniform
+  list, so it stays `0` from `RL_CALLOC` — `0` passes `>= 0` but isn't a
+  real location, risking silently overwriting whatever uniform actually
+  lives at GL location 0, e.g. a `sampler2D texture0`). Whether this
+  produces a *visible* bug in `tube.fs` specifically hasn't been
+  checked.
+- `stone_prison_skill.c` also never sets `matModel` — same gap as
+  `water_sphere_skill.c`, not yet confirmed whether it's visible there
+  too.
+
+**Not fixed — stopped here per explicit user request** ("nếu đây là
+vấn đề riêng skill thì ngừng, note lại" — if this is a skill-specific
+issue then stop, note it down), since this is a per-skill C-side bug
+unrelated to Item 10's `u_lightDir` wiring itself, not something to fix
+opportunistically mid-Item-10. Whoever picks this up should:
+1. Confirm with a numeric check (not another screenshot) whether
+   `fragNormal` is actually NaN/garbage in `water_sphere.fs` — e.g. a
+   debug `finalColor = vec4(fragNormal, 1.0)` swap to visualize the raw
+   normal, or a CPU-side readback.
+2. If confirmed, fix using the *correct* pattern from
+   `core/skill_manager.c`'s already-fixed `SkillManager_BeginShader()`:
+   `GetShaderLocation(shader, "matModel")` (by name, gives a real `-1`
+   when absent) — not `shader.locs[SHADER_LOC_MATRIX_MODEL]`.
+3. Check `stone_prison_skill.c` for the same gap while in there, and
+   audit whether `tube_skill.c`'s existing (wrong-pattern) check has
+   ever caused a real visible bug or has just been harmless so far.
 
 ---
 

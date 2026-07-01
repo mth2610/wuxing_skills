@@ -25,7 +25,7 @@ uniform float u_distortionStrength; // 0..1, VS-side wobble amount (unused here)
 void main() {
     vec3 normal   = normalize(fragNormal);
     vec3 viewDir  = normalize(viewPos - fragPosition);
-    vec3 lightDir = normalize(vec3(0.5, 0.8, 0.5));
+    vec3 lightDir = normalize(u_lightDir);
 
     float diffuse = calcDiffuse(normal, lightDir, 0.2);
     float fresnel = calcFresnel(normal, viewDir, u_fresnelPower);

@@ -42,6 +42,7 @@ PROJECT_SOURCE_FILES   := main.c \
                           core/resource_manager.c \
                           core/color_gradient.c \
                           core/float_curve.c \
+                          core/tuning.c \
                           core/emitter_system.c \
                           core/flow_map.c \
                           core/force_field.c \
@@ -202,6 +203,8 @@ copy_project_resources:
 	cp -f $(APP_ICON_HDPI) $(PROJECT_BUILD_PATH)/res/drawable-hdpi/icon.png
 	@echo "<?xml version=\"1.0\" encoding=\"utf-8\"?>" > $(PROJECT_BUILD_PATH)/res/values/strings.xml
 	@echo "<resources><string name=\"app_name\">$(APP_LABEL_NAME)</string></resources>" >> $(PROJECT_BUILD_PATH)/res/values/strings.xml
+	@# Copy tuning.cfg (Item 9 data-driven tuning) — read-only on Android, no hot-reload there
+	cp -f tuning.cfg $(PROJECT_BUILD_PATH)/assets/tuning.cfg 2>/dev/null || true
 	@# Copy shader files và texture vào assets với đúng thư mục tương ứng
 	mkdir -p $(PROJECT_BUILD_PATH)/assets/core/shaders/common
 	cp -f core/shaders/*.vs $(PROJECT_BUILD_PATH)/assets/core/shaders/ 2>/dev/null || true

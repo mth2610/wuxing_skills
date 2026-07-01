@@ -7,6 +7,7 @@
 #include "core/vfx_light.h"
 #include "core/camera_fx.h"
 #include "core/force_field.h"
+#include "environment/environment_system.h"
 #include "rlgl.h"
 #include "raymath.h"
 #include <math.h>
@@ -55,7 +56,7 @@ static Texture2D     s_crackTex;
 static Texture2D     s_noiseTex;
 static Shader        s_shader;
 static Shader        s_crackShader;
-static int           s_uTimeLoc, s_uDissolveLoc, s_uCamPosLoc;
+static int           s_uTimeLoc, s_uDissolveLoc, s_uCamPosLoc, s_uLightDirLoc;
 static int           s_uProgressLoc, s_uCrackTimeLoc;
 static ColorGradient s_dustGrad;
 
@@ -74,6 +75,7 @@ void InitStonePrisonSkill(int screenWidth, int screenHeight)
     s_uDissolveLoc = GetShaderLocation(s_shader, "u_dissolve");
     s_uTimeLoc     = GetShaderLocation(s_shader, "u_time");
     s_uCamPosLoc   = GetShaderLocation(s_shader, "u_camPos");
+    s_uLightDirLoc = GetShaderLocation(s_shader, "u_lightDir");
 
     s_crackShader = ResourceManager_LoadShader(NULL, "skills/earth/stone_prison_skill/stone_crack.fs");
     s_uProgressLoc   = GetShaderLocation(s_crackShader, "u_progress");
@@ -429,6 +431,11 @@ void DrawStonePrisonSkill(void)
         SetShaderValue(s_shader, s_uDissolveLoc, &dissolveAmt, SHADER_UNIFORM_FLOAT);
         SetShaderValue(s_shader, s_uTimeLoc, &currentTime, SHADER_UNIFORM_FLOAT);
         SetShaderValue(s_shader, s_uCamPosLoc, &camPos, SHADER_UNIFORM_VEC3);
+        // This skill uses raw BeginShaderMode(), not SkillManager_BeginShader(),
+        // so u_lightDir isn't auto-bound (CORE_ISSUES.md Item 10) — set it here
+        // the same way u_camPos already is.
+        Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
+        SetShaderValue(s_shader, s_uLightDirLoc, &lightDir, SHADER_UNIFORM_VEC3);
 
         // Bind noise texture to give rocky surface pattern details
         rlSetTexture(s_noiseTex.id);

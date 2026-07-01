@@ -42,7 +42,7 @@ void main() {
 
     // 2. Lighting vectors & terms (dùng hàm từ lighting.glsl)
     vec3  viewDir  = normalize(viewPos - fragPosition);
-    vec3  lightDir = normalize(vec3(0.5, 0.8, 0.5));
+    vec3  lightDir = normalize(u_lightDir);
     float fresnel  = calcFresnel(normal, viewDir, 3.0);
     float specular = calcSpecular(normal, lightDir, viewDir, 128.0) * 5.0;
 
