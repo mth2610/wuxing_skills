@@ -77,6 +77,27 @@ void Timeline_Start(SkillTimeline *t, float duration);
 bool Timeline_Event(SkillTimeline *t, float triggerTime, float dt);
 bool Timeline_Finished(SkillTimeline *t);
 
+// 3b. Layered Timeline (staggered multi-layer schedule)
+#define TIMELINE_MAX_LAYERS 8
+
+typedef struct {
+    const char *tag;
+    float start;
+    float duration; // >0: continuous window (IsLayerActive/LayerProgress). ~0: one-shot event (LayerEvent)
+} TimelineLayer;
+
+typedef struct {
+    float current;
+    TimelineLayer layers[TIMELINE_MAX_LAYERS];
+    int layerCount;
+} LayeredTimeline;
+
+void Timeline_LayeredStart(LayeredTimeline *t);
+bool Timeline_AddLayer(LayeredTimeline *t, const char *tag, float start, float duration);
+bool Timeline_IsLayerActive(const LayeredTimeline *t, int layerIndex);
+float Timeline_LayerProgress(const LayeredTimeline *t, int layerIndex);
+bool Timeline_LayerEvent(const LayeredTimeline *t, int layerIndex, float dt);
+
 // 4. Particle Emitter System
 typedef enum {
     EMITTER_FIRE,
@@ -125,17 +146,41 @@ typedef enum {
     MATERIAL_FIRE,
     MATERIAL_ICE,
     MATERIAL_WATER,
-    MATERIAL_PORTAL
+    MATERIAL_PORTAL,
+    MATERIAL_CUSTOM // set by Material_LoadCustom() — parametrized shared shader
 } MaterialPreset;
+
+typedef struct {
+    Color baseColor;          // primary tint; also drives rim glow + dissolve edge glow color
+    float rimStrength;        // 0..~2, rim/edge glow brightness (Fresnel-weighted)
+    float fresnelPower;       // 1..8, rim sharpness (higher = thinner edge)
+    float emissiveIntensity;  // 0..~3, self-illumination boost added to base color
+    float distortionStrength; // 0..1, vertex wobble amount
+    float translucency;       // 0..1: 0 = opaque (alpha = baseColor.a), 1 = glass/tube-style
+                               // fresnel-driven alpha (center see-through, edges more solid,
+                               // same formula as tube.fs). Draw call must use BLEND_ALPHA
+                               // (BeginBlendMode/EndBlendMode) for this to actually blend.
+    Texture2D texture1;       // optional secondary detail/mask texture; id==0 = unused
+} EffectMaterialParams;
 
 typedef struct {
     Shader shader;
     MaterialPreset preset;
     int uTimeLoc;
     int uDissolveLoc;
+    int uBaseColorLoc;
+    int uTranslucencyLoc;
+    int uRimStrengthLoc;
+    int uFresnelPowerLoc;
+    int uEmissiveIntensityLoc;
+    int uDistortionStrengthLoc;
+    int uHasTexture1Loc;
+    int uTexture1Loc;
+    EffectMaterialParams params;
 } EffectMaterial;
 
 EffectMaterial Material_Load(MaterialPreset preset);
+EffectMaterial Material_LoadCustom(EffectMaterialParams params);
 void Material_SetFloat(EffectMaterial *mat, const char *uniformName, float val);
 void Material_Begin(EffectMaterial mat);
 void Material_End(void);

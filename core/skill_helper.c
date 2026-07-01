@@ -558,6 +558,45 @@ bool Timeline_Finished(SkillTimeline *t) {
     return t->current >= t->duration;
 }
 
+// 3b. Layered Timeline Implementation
+void Timeline_LayeredStart(LayeredTimeline *t) {
+    t->current = 0.0f;
+    t->layerCount = 0;
+}
+
+bool Timeline_AddLayer(LayeredTimeline *t, const char *tag, float start, float duration) {
+    if (t->layerCount >= TIMELINE_MAX_LAYERS)
+        return false;
+    t->layers[t->layerCount].tag = tag;
+    t->layers[t->layerCount].start = start;
+    t->layers[t->layerCount].duration = duration;
+    t->layerCount++;
+    return true;
+}
+
+bool Timeline_IsLayerActive(const LayeredTimeline *t, int layerIndex) {
+    if (layerIndex < 0 || layerIndex >= t->layerCount)
+        return false;
+    const TimelineLayer *layer = &t->layers[layerIndex];
+    return (t->current >= layer->start) && (t->current < layer->start + layer->duration);
+}
+
+float Timeline_LayerProgress(const LayeredTimeline *t, int layerIndex) {
+    if (layerIndex < 0 || layerIndex >= t->layerCount)
+        return 0.0f;
+    const TimelineLayer *layer = &t->layers[layerIndex];
+    if (layer->duration <= 0.0f)
+        return (t->current >= layer->start) ? 1.0f : 0.0f;
+    return Clamp((t->current - layer->start) / layer->duration, 0.0f, 1.0f);
+}
+
+bool Timeline_LayerEvent(const LayeredTimeline *t, int layerIndex, float dt) {
+    if (layerIndex < 0 || layerIndex >= t->layerCount)
+        return false;
+    float triggerTime = t->layers[layerIndex].start;
+    return (t->current - dt < triggerTime) && (t->current >= triggerTime);
+}
+
 // 4. Particle Emitter System Implementation
 void EmitterSystem_Init(void) {
     InitHelperResources();
@@ -762,6 +801,19 @@ void DrawEffectMesh(MeshPresetType type, Vector3 pos, Vector3 scale, Color color
 }
 
 // 6. Shader Material System Implementation
+static void Material_FetchLocs(EffectMaterial *mat) {
+    mat->uTimeLoc = GetShaderLocation(mat->shader, "u_time");
+    mat->uDissolveLoc = GetShaderLocation(mat->shader, "u_dissolve");
+    mat->uBaseColorLoc = GetShaderLocation(mat->shader, "u_baseColor");
+    mat->uTranslucencyLoc = GetShaderLocation(mat->shader, "u_translucency");
+    mat->uRimStrengthLoc = GetShaderLocation(mat->shader, "u_rimStrength");
+    mat->uFresnelPowerLoc = GetShaderLocation(mat->shader, "u_fresnelPower");
+    mat->uEmissiveIntensityLoc = GetShaderLocation(mat->shader, "u_emissiveIntensity");
+    mat->uDistortionStrengthLoc = GetShaderLocation(mat->shader, "u_distortionStrength");
+    mat->uHasTexture1Loc = GetShaderLocation(mat->shader, "u_hasTexture1");
+    mat->uTexture1Loc = GetShaderLocation(mat->shader, "texture1");
+}
+
 EffectMaterial Material_Load(MaterialPreset preset) {
     EffectMaterial mat = {0};
     mat.preset = preset;
@@ -783,10 +835,25 @@ EffectMaterial Material_Load(MaterialPreset preset) {
             mat.shader = ResourceManager_LoadShader("skills/taiji/yin_yang_orb/yin_yang_orb.vs",
                                                    "skills/taiji/yin_yang_orb/yin_yang_orb.fs");
             break;
+        case MATERIAL_CUSTOM:
+            // Legal but not the intended entry point — Material_LoadCustom() is how a
+            // skill actually configures this preset. Falls back to all-zero params.
+            mat.shader = ResourceManager_LoadShader("core/shaders/effect_material.vs",
+                                                   "core/shaders/effect_material.fs");
+            break;
     }
 
-    mat.uTimeLoc = GetShaderLocation(mat.shader, "u_time");
-    mat.uDissolveLoc = GetShaderLocation(mat.shader, "u_dissolve");
+    Material_FetchLocs(&mat);
+    return mat;
+}
+
+EffectMaterial Material_LoadCustom(EffectMaterialParams params) {
+    EffectMaterial mat = {0};
+    mat.preset = MATERIAL_CUSTOM;
+    mat.shader = ResourceManager_LoadShader("core/shaders/effect_material.vs",
+                                           "core/shaders/effect_material.fs");
+    Material_FetchLocs(&mat);
+    mat.params = params;
     return mat;
 }
 
@@ -802,6 +869,27 @@ void Material_Begin(EffectMaterial mat) {
     float time = (float)GetTime();
     if (mat.uTimeLoc >= 0) {
         SetShaderValue(mat.shader, mat.uTimeLoc, &time, SHADER_UNIFORM_FLOAT);
+    }
+    if (mat.uBaseColorLoc >= 0) {
+        Vector4 baseColorVec = ColorNormalize(mat.params.baseColor);
+        SetShaderValue(mat.shader, mat.uBaseColorLoc, &baseColorVec, SHADER_UNIFORM_VEC4);
+    }
+    if (mat.uTranslucencyLoc >= 0)
+        SetShaderValue(mat.shader, mat.uTranslucencyLoc, &mat.params.translucency, SHADER_UNIFORM_FLOAT);
+    if (mat.uRimStrengthLoc >= 0)
+        SetShaderValue(mat.shader, mat.uRimStrengthLoc, &mat.params.rimStrength, SHADER_UNIFORM_FLOAT);
+    if (mat.uFresnelPowerLoc >= 0)
+        SetShaderValue(mat.shader, mat.uFresnelPowerLoc, &mat.params.fresnelPower, SHADER_UNIFORM_FLOAT);
+    if (mat.uEmissiveIntensityLoc >= 0)
+        SetShaderValue(mat.shader, mat.uEmissiveIntensityLoc, &mat.params.emissiveIntensity, SHADER_UNIFORM_FLOAT);
+    if (mat.uDistortionStrengthLoc >= 0)
+        SetShaderValue(mat.shader, mat.uDistortionStrengthLoc, &mat.params.distortionStrength, SHADER_UNIFORM_FLOAT);
+    if (mat.uHasTexture1Loc >= 0) {
+        int hasTexture1 = mat.params.texture1.id != 0;
+        SetShaderValue(mat.shader, mat.uHasTexture1Loc, &hasTexture1, SHADER_UNIFORM_INT);
+    }
+    if (mat.uTexture1Loc >= 0 && mat.params.texture1.id != 0) {
+        SetShaderValueTexture(mat.shader, mat.uTexture1Loc, mat.params.texture1);
     }
 }
 

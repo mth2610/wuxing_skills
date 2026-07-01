@@ -1654,6 +1654,34 @@ bool Timeline_Finished(SkillTimeline *t);
 ```
 Dùng để orchestrate chuỗi sự kiện nhiều bước mà không cần state machine thủ công.
 
+### Layered Timeline (staggered multi-layer schedule)
+```c
+#define TIMELINE_MAX_LAYERS 8
+
+typedef struct {
+    const char *tag;
+    float start;
+    float duration; // >0: continuous window. ~0: one-shot event.
+} TimelineLayer;
+
+typedef struct {
+    float current;
+    TimelineLayer layers[TIMELINE_MAX_LAYERS];
+    int layerCount;
+} LayeredTimeline;
+
+void  Timeline_LayeredStart(LayeredTimeline *t);
+bool  Timeline_AddLayer(LayeredTimeline *t, const char *tag, float start, float duration);
+bool  Timeline_IsLayerActive(const LayeredTimeline *t, int layerIndex);
+float Timeline_LayerProgress(const LayeredTimeline *t, int layerIndex);
+bool  Timeline_LayerEvent(const LayeredTimeline *t, int layerIndex, float dt);
+```
+One declarative `{tag, start, duration}` table for staggering N visual layers (Trail/Light/Smoke/Decal/...) instead of hand-written `if (t > X && t < Y)` blocks per layer — see `WUXING_ART_DIRECTION.md` Chapter 4.4 ("Layer Activation Timeline").
+* **Same convention as `SkillTimeline`:** caller advances `t->current += dt` themselves each frame — nothing here ticks time internally.
+* **Continuous windows** (`duration > 0`): `Timeline_IsLayerActive` returns true while `current` is inside `[start, start+duration)`; `Timeline_LayerProgress` returns 0..1 progress within that window (feeds into `FloatCurve_Sample` for that layer's own envelope). Clamped outside the window (0 before start, 1 after end).
+* **One-shot events** (`duration ~0`): use `Timeline_LayerEvent` instead — fires true for exactly one frame when `current` crosses `start`, same edge-detection as `Timeline_Event(t, triggerTime, dt)`.
+* **`AddLayer`:** returns `false` past `TIMELINE_MAX_LAYERS` (same fixed-cap pattern as `ColorGradient_AddStop`/`FloatCurve_AddStop`). No malloc, static array.
+
 ### Particle Emitter Preset
 ```c
 typedef enum { EMITTER_FIRE, EMITTER_SNOW, EMITTER_WATER_SPURT, EMITTER_SHOCKED_SPARKS,
@@ -1675,13 +1703,42 @@ void DrawEffectMesh(MeshPresetType type, Vector3 pos, Vector3 scale, Color color
 
 ### Shader Material Preset
 ```c
-typedef enum { MATERIAL_FIRE, MATERIAL_ICE, MATERIAL_WATER, MATERIAL_PORTAL } MaterialPreset;
-typedef struct { Shader shader; MaterialPreset preset; int uTimeLoc; int uDissolveLoc; } EffectMaterial;
-EffectMaterial Material_Load(MaterialPreset preset);
+typedef enum { MATERIAL_FIRE, MATERIAL_ICE, MATERIAL_WATER, MATERIAL_PORTAL,
+               MATERIAL_CUSTOM } MaterialPreset; // MATERIAL_CUSTOM set by Material_LoadCustom()
+
+typedef struct {
+    Color    baseColor;          // primary tint; also drives rim glow + dissolve edge glow
+    float    rimStrength;        // 0..~2, rim/edge glow brightness (Fresnel-weighted, light-facing biased)
+    float    fresnelPower;       // 1..8, rim sharpness (higher = thinner edge)
+    float    emissiveIntensity;  // 0..~3, self-illumination boost added to base color
+    float    distortionStrength; // 0..1, vertex wobble amount
+    float    translucency;       // 0..1: 0 = opaque (alpha = baseColor.a), 1 = glass/tube-style
+                                  // fresnel-driven alpha (center see-through, edges more solid)
+    Texture2D texture1;          // optional secondary detail/mask texture; id==0 = unused
+} EffectMaterialParams;
+
+typedef struct {
+    Shader shader;
+    MaterialPreset preset;
+    int uTimeLoc, uDissolveLoc, uBaseColorLoc, uTranslucencyLoc, uRimStrengthLoc,
+        uFresnelPowerLoc, uEmissiveIntensityLoc, uDistortionStrengthLoc, uHasTexture1Loc, uTexture1Loc;
+    EffectMaterialParams params;
+} EffectMaterial;
+
+EffectMaterial Material_Load(MaterialPreset preset);       // 4 hardcoded presets, unchanged behavior
+EffectMaterial Material_LoadCustom(EffectMaterialParams params); // parametrized shared shader
 void Material_SetFloat(EffectMaterial *mat, const char *uniformName, float val);
 void Material_Begin(EffectMaterial mat);
 void Material_End(void);
 ```
+* **`Material_Load` (4 presets):** unchanged signature/behavior — each borrows an existing skill's shader (`fire_wildfire`, `frost_blossom_rain`, `water_stream/tube`, `yin_yang_orb`), fixed 2 uniform slots (`u_time`, `u_dissolve`).
+* **`Material_LoadCustom` (new):** always backed by the shared `core/shaders/effect_material.vs/.fs` — one shader, look configured entirely via `EffectMaterialParams` uniforms (`u_baseColor`, `u_rimStrength`, `u_fresnelPower`, `u_emissiveIntensity`, `u_distortionStrength`, `u_translucency`, optional `texture1`). No new GLSL needed per combination.
+* **Rim glow is weighted by light-facing direction**, not view angle alone: plain Fresnel glows evenly around the whole silhouette regardless of where the light is, which reads as "rim doesn't match the light". `rim = fresnel * mix(0.3, 1.0, max(dot(normal, lightDir), 0.0))` — dimmed (not zeroed) on the backlit side.
+* **`translucency`** (default 0 = opaque, unchanged from initial implementation): set to `1.0` for the same "center see-through, edges more solid" look as `tube.fs` (`alpha = mix(0.3, 0.9, fresnel)`), driven by the same fresnel term as the rim. **Caller must wrap the draw in `BeginBlendMode(BLEND_ALPHA)`/`EndBlendMode()`** for alpha < 1 to actually blend — `Material_Begin`/`Material_End` do not manage blend mode themselves.
+* **This shader ignores per-vertex color** (`vs_header.glsl`/`fs_header.glsl`'s 3D-lighting convention doesn't carry a `fragColor` varying) — tint comes only from `u_baseColor`. The `Color` argument passed to whatever mesh-draw call you use inside `Material_Begin`/`Material_End` has no visual effect with this material.
+* **`texture1` is optional** — `EffectMaterialParams.texture1.id == 0` skips the sample entirely (guarded by `u_hasTexture1` in the shader) rather than sampling an unbound/stale texture unit. Sampled as a luminance mask (`.r` channel only, not `.rgb`) — importing the texture's own hue directly onto a mesh with very different UV density than what it was authored for (e.g. a flat ground-decal crack texture on a sphere, which pinches hard at the poles) produces visible color noise.
+* **`Material_SetFloat`** still works unmodified on `Material_LoadCustom` materials for any uniform name, including animating `u_dissolve` frame-to-frame (see `core_test`'s usage: solid hold, then dissolve out over the last second). Dissolve's edge-glow only evaluates once `u_dissolve > 0.0` — `fx.glsl`'s `dissolveCalc()` computes a nonzero `edgeFactor` for ~8% of fragments even at `dissolve == 0.0`, which would otherwise show as speckle the instant the material appears.
+* **Known pre-existing issue (not fixed, out of scope for this item):** the 4 hardcoded presets' shader paths (`skills/fire/fire_wildfire/...`, `skills/water/frost_blossom_rain_skill/...`, `skills/taiji/yin_yang_orb/...`) reference files that no longer exist in the repo — `Material_Load` has zero callers anywhere currently, so this was never hit at runtime. `ResourceManager_LoadShader` will return `shader.id == 0` for these (Rule C guard, no crash, just invisible). Fix when/if a skill actually adopts `Material_Load` with one of these presets.
 
 ### Ground Decal Preset
 ```c

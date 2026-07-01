@@ -222,7 +222,7 @@ per-curve when replacing a hand-rolled lerp.
 
 ---
 
-## Item 7 — Multi-layer Timeline (stagger schedule) — NOT STARTED
+## Item 7 — Multi-layer Timeline (stagger schedule) — DONE
 
 Identified against `WUXING_ART_DIRECTION.md` Chapter 4.4 ("Layer
 Activation Timeline") — an explicit per-layer start/duration Gantt
@@ -237,33 +237,37 @@ start/duration in one place. Skills currently hand-write scattered
 4.6's "all particles disappear together — artificial" mistake happens
 in practice.
 
-**Proposed shape:** extend `SkillTimeline` (or add a sibling
-`LayeredTimeline`) with a small fixed-size table of
-`{name/tag, start, duration}` entries, plus
-`Timeline_IsLayerActive(t, layerIndex)` /
-`Timeline_LayerProgress(t, layerIndex)` (returns 0..1 within that
-layer's own window, for feeding into Item 6's `FloatCurve_Sample`).
-Static array, no malloc — consistent with existing Core rules.
+**Implemented:** a sibling `LayeredTimeline` in `core/skill_helper.h/.c`
+(kept separate from `SkillTimeline` rather than extending it — different
+struct shape, and no existing call site to migrate) with a fixed-size
+table of `{tag, start, duration}` entries (`TIMELINE_MAX_LAYERS 8`,
+`Timeline_AddLayer`), plus `Timeline_IsLayerActive(t, layerIndex)` /
+`Timeline_LayerProgress(t, layerIndex)` (0..1 within that layer's own
+window, feeds directly into Item 6's `FloatCurve_Sample`). Static array,
+no malloc. Same "caller advances `current += dt`" convention as
+`SkillTimeline` — nothing ticks time internally.
 
-Covers two related but distinct authoring needs with the same table:
+Covers both authoring needs with the same table:
 - **Continuous windows** (Chapter 4.4's Gantt layers — Trail/Light/Smoke
   each active over a span): `duration > 0`, sampled via
   `Timeline_IsLayerActive`/`Timeline_LayerProgress`.
 - **Discrete tagged events** (Chapter 4.1's phase transitions — windup →
   cast → travel → impact → aftermath, each a one-shot fire): `duration`
-  ~0, fired once via edge-detection identical to the existing
-  `Timeline_Event`'s crossing check. Note `Timeline_Event(t, triggerTime, dt)`
-  *already* supports calling it with N different literal `triggerTime`
-  values per skill today — the actual gap isn't "can't have multiple
-  events," it's that those N calls are hand-written `if` literals per
-  skill instead of one declarative `{tag, time}` table a skill can loop
-  over (optionally with a registered function-pointer callback per tag,
-  mirroring `RegisterSkill`'s existing callback-pointer pattern in
-  `core/skill_manager.h`).
+  ~0, fired once via `Timeline_LayerEvent`, same edge-detection as the
+  existing `Timeline_Event`'s crossing check.
+
+Not implemented: the optional function-pointer callback per tag
+(mirroring `RegisterSkill`'s callback pointer) — no skill has needed it
+yet; `Timeline_IsLayerActive`/`Timeline_LayerEvent` polled per-frame in
+`Update[Name]Skill` covers every case seen so far. Add it later if a
+real skill's call-site pattern justifies it. Builds clean (desktop),
+documented in `CORE_API.md` next to Skill Timeline. Not yet wired into
+any shipping skill or `core_test` — adoption is a per-skill choice when
+replacing hand-written `if (t > X && t < Y)` staggering.
 
 ---
 
-## Item 8 — Material system: parametrize `EffectMaterial` beyond 4 hardcoded presets — NOT STARTED
+## Item 8 — Material system: parametrize `EffectMaterial` beyond 4 hardcoded presets — DONE
 
 `core/skill_helper.h`'s `EffectMaterial`/`Material_Load`/`Material_SetFloat`/
 `Material_Begin`/`Material_End` currently only cover 4 hardcoded presets
@@ -277,15 +281,104 @@ intensity, distortion amount, a second texture slot) has to bypass
 etc.), and this is the module the codebase is objectively strongest at
 (shader support) without a matching authoring struct.
 
-**Proposed shape:** generalize `EffectMaterial` into a parametrized
-struct — e.g. `rimStrength`, `fresnelPower`, `emissiveIntensity`,
-`distortionStrength`, plus a generic secondary texture slot — with the
-4 existing presets becoming named default configs (`Material_Load`
-keeps its current signature/behavior for existing call sites; add
-`Material_LoadCustom(EffectMaterialParams)` alongside it). Requires a
-shared shader (or small shader family) that actually exposes those
-uniforms — coordinate with whichever skill needs the first non-preset
-material before generalizing blind.
+**Implemented:** `EffectMaterialParams` (`core/skill_helper.h`) —
+`baseColor`, `rimStrength`, `fresnelPower`, `emissiveIntensity`,
+`distortionStrength`, plus a generic `texture1` secondary-texture slot
+(`id==0` = unused, guarded in-shader via `u_hasTexture1` rather than
+sampling an unbound unit). `Material_Load` keeps its exact original
+signature/behavior for the 4 hardcoded presets — zero call sites to
+break, confirmed none exist (see note below). Added
+`Material_LoadCustom(EffectMaterialParams)` alongside it, backed by one
+new shared shader family: `core/shaders/effect_material.vs/.fs`
+(`#include`-based, GLES 3.0 runtime path per the Android two-path
+shader architecture — no build-script changes needed). `Material_Begin`
+re-uploads all param uniforms every call (not just once at Load), since
+the shared shader is a single cached `Shader` object — if it were set
+once at Load time, two different `Material_LoadCustom` instances using
+the same shader would silently stomp each other's uniform values the
+next time either one draws. `baseColor` uses the same
+`ColorNormalize()` → `SHADER_UNIFORM_VEC4` pattern already established
+in `core/metaball_fx.c`.
+
+**Note — this shader ignores per-vertex color.** The existing
+`vs_header.glsl`/`fs_header.glsl` 3D-lighting convention (used by
+`tube.fs` etc.) never carries a `fragColor` varying from VS to FS — so
+whatever `Color` you pass to the mesh-draw call between
+`Material_Begin`/`Material_End` has no effect; tint comes only from
+`EffectMaterialParams.baseColor`. Documented in `CORE_API.md` so a
+future skill author doesn't lose time debugging why their mesh color
+argument is ignored.
+
+**Verified via `core_test`, 4 real bugs found and fixed during that
+verification (not guessed — each traced to a specific line):**
+1. **VS wobble used raw world-space `vertexPosition`** (`sin(vertexPosition.x * 3.0 + ...)`)
+   instead of `vertexNormal` — immediate-mode draws bake world coordinates
+   directly into `vertexPosition` (matModel is identity per Rule D), and the
+   arena is centered around `(600, 0, 440)`, so `sin()`/`cos()` of an
+   argument around 1800+ loses precision on GPU, producing noisy/unstable
+   displacement instead of a smooth wobble. Fixed: phase now driven by
+   `vertexNormal` (always `[-1..1]`), position-independent.
+2. **Dissolve edge-glow noise used `hash3(floor(fragPosition * 6.0))`** —
+   same world-position-magnitude problem feeding into `hash3`'s internal
+   `sin(dot(p, largeWeights))`. Fixed: uses `normal` instead, also making
+   the dissolve pattern identical regardless of where in the arena the
+   material is drawn.
+3. **`fx.glsl`'s `dissolveCalc()` computes a nonzero `edgeFactor` for ~8%
+   of fragments even at `u_dissolve == 0.0`** (its check is `noiseVal <
+   dissolve + edgeWidth`, not gated on `dissolve > 0`) — this showed up as
+   scattered bright speckle across the whole surface the instant the
+   material appeared, well before anything was meant to be dissolving.
+   Fixed by gating the whole dissolve/edge-glow block on `u_dissolve > 0.0`
+   in `effect_material.fs` (not touching the shared `dissolveCalc()` itself,
+   since other callers may rely on its exact current signature/behavior).
+4. **`texture1` sampled as full `detail.rgb` at 2x UV tiling** —
+   `assets/textures/crack.png` was authored for a flat ground-decal quad,
+   not a sphere (whose UV pinches hard at the poles); tiling it 2x and
+   importing its own hue produced visible rainbow-ish color noise. Fixed:
+   sampled as a luminance-only mask (`.r` channel, 1x UV, no `* 2.0`
+   brightness boost).
+
+Also added (not in the original proposed param list, but needed once a
+real reference — the existing `tube.fs`/`MATERIAL_WATER` preset — was
+used as the visual bar to match): **`translucency`** param + fresnel-driven
+alpha (`mix(0.3, 0.9, fresnel)`, same formula as `tube.fs`), since the
+initial all-opaque-alpha implementation had no way to reproduce a
+glass/water "see-through center, more solid edges" look at all. Default
+`0.0` keeps existing opaque behavior; caller must additionally wrap the
+draw in `BeginBlendMode(BLEND_ALPHA)`/`EndBlendMode()`. Rim glow was also
+reweighted by light-facing direction (`mix(0.3, 1.0, dot(normal, lightDir))`)
+since pure view-angle Fresnel glowed evenly around the whole silhouette
+regardless of actual light position, which read as "wrong direction".
+
+Final verified test: a sphere using `Material_LoadCustom` (Taiji tint,
+`rimStrength=0.7`, `fresnelPower=4.0`, `emissiveIntensity=0.15`,
+`distortionStrength=0.4`, `translucency=1.0`, `texture1` =
+`assets/textures/crack.png`) holds solid 1.5s then dissolves out over 1s
+via `Material_SetFloat(&mat, "u_dissolve", t)` — confirming the existing
+generic name-based uniform setter still works unmodified against the new
+parametrized shader.
+
+**Found in passing, NOT fixed (out of scope for this item):** the 4
+existing `MaterialPreset` shader paths
+(`skills/fire/fire_wildfire/...`, `skills/water/frost_blossom_rain_skill/...`,
+`skills/taiji/yin_yang_orb/...`) reference files that no longer exist
+anywhere in the repo. `Material_Load` has zero callers currently, so
+this was never exercised/noticed at runtime — `ResourceManager_LoadShader`
+just returns `shader.id == 0` (Rule C guard: silently renders nothing,
+no crash). Whoever first actually wires up `Material_Load` with one of
+these 4 presets needs to fix/repoint the shader paths first.
+
+**Found in passing, NOT fixed (bigger than this item — see Item 10):**
+comparing the rim glow against the test character's actual shadow showed
+the rim's light direction doesn't match the environment's real sun
+direction. Root cause: `lightDir` is hardcoded as `vec3(0.5, 0.8, 0.5)` in
+`effect_material.fs`, matching `lighting.glsl`'s documented project-wide
+convention — every other skill shader using `calcFresnel`/`calcDiffuse`
+(e.g. `tube.fs`) hardcodes the same fake value. `Environment_GetSunDirection()`
+exists but is never actually wired into any shader uniform anywhere in
+the codebase. User explicitly chose not to special-case this one
+material (would make it inconsistent with every other skill) — see Item
+10 for the real, engine-wide fix.
 
 ---
 
