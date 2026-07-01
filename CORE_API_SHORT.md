@@ -176,7 +176,7 @@ typedef void (*TrailDeathCallback)(Vector3 pos, float scale);
 typedef struct {
     TrailType type;
     Vector3 pos, vel, target;
-    float len, thick, trailLength, life;       // life=0 → persistent until KillTrail
+    float len, thick, trailLength, life;       // total duration in seconds; MUST be > 0 (life<=0 dies on the next UpdateTrailSystem tick, does NOT persist)
     float initialAngle, wobblePhase, scale;
     Texture2D tex; Color tint; Shader shader;
     TrailUpdateCallback onUpdate; TrailDeathCallback onDeath;
