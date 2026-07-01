@@ -26,6 +26,11 @@
 
 #define MAX_GPU_PARTICLES 8192
 
+// Số slot texture "vector field" đồng thời hỗ trợ cho FORCE_VECTOR_TEXTURE
+// (xem core/force_field.h) — PHẢI khớp uVectorField0/uVectorField1 trong
+// compute/shaders/gpu_particles.comp.
+#define GPU_VECTOR_FIELD_SLOTS 2
+
 typedef struct {
     Vector3 position;
     Vector3 velocity;
@@ -66,6 +71,15 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture);
 
 // Cleanup
 void GpuParticleSystem_Unload(void);
+
+// Gán texture "vector field" (kênh RG = hướng flow XZ remap [-1,1] -> [0,1],
+// giống flow_map.h) vào slot (0..GPU_VECTOR_FIELD_SLOTS-1). Dùng chung slot
+// index này trong ForceLayer.noiseScale khi tạo layer FORCE_VECTOR_TEXTURE.
+// CHỈ có hiệu lực ở COMPUTE path. Truyền tex = {0} (id == 0) để tắt slot.
+// Texture phải sống ít nhất bằng đời mọi ForceField dùng slot đó (static/pool,
+// không load rồi Unload ngay trong frame) — không được sở hữu/free bởi module
+// này.
+void GpuParticleSystem_SetVectorFieldTexture(int slot, Texture2D tex);
 
 // Query trạng thái
 bool GpuParticleSystem_IsComputeActive(void);  // true = GPU compute, false = CPU/VBO

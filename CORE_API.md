@@ -723,11 +723,13 @@ ForceField_AddLayer(&s_forceField, (ForceLayer){
 | `FORCE_VISCOSITY` | Unused | Unused | Viscous damping coefficient | Unused | Unused | Unused | Unused |
 | `FORCE_RADIAL_AXIS` | Unused (Dynamic) | Unused (Dynamic) | Positive = push, Negative = pull | Active range | 1=Linear | Unused | Unused |
 | `FORCE_VORTEX_AXIS` | Unused (Dynamic) | Unused (Dynamic) | Rotation speed around axis | Active range | 1=Linear | Unused | Unused |
+| `FORCE_VECTOR_TEXTURE` | Box center (xz) | Box half-extent (xz) | Multiplier on sampled vector | Unused (must be 0) | Unused (must be 0) | (int) texture slot 0/1 | Unused (must be 0) |
 
 * **Dynamic Axis (RADIAL_AXIS / VORTEX_AXIS):** These forces ignore the `origin` and `direction` in the `ForceLayer` struct. Instead, they dynamically use the `axisOrigin` and `axisDir` passed each frame during evaluation (e.g. via `SetFollowerAxis()` for trails).
 
 * **Falloff Semantic:** `0.0` = constant force throughout, `1.0` = linear decrease to zero at radius boundary, `2.0` = quadratic decrease (natural gravitational/magnetic falloff).
 * **Viscosity Damping:** Use `ForceField_GetViscosityDamping(&s_forceField, dt)` inside manual update loops to damp velocity: `myVel = Vector3Scale(myVel, dampFactor);`.
+* **`FORCE_VECTOR_TEXTURE` (GPU-only):** Samples a world-space flow texture instead of a procedural formula — for geometry-authored vector fields (smoke hugging a wall, fire wrapping a body) that noise/vortex layers can't express. `origin.xz`/`direction.xz` define a world-space sample box (`direction.xz` = half-extent, `origin.y`/`direction.y` ignored). Texture RG channels = XZ flow direction remapped `[-1,1] -> [0,1]`. Particles outside the box get zero acceleration (hard cutoff, no edge-clamp). **CPU path (`ForceField_Evaluate`, `particle_system.c`, `trail_system.c`) treats this as a no-op** — only `GpuParticleSystem` (COMPUTE path) actually samples the texture, via `GpuParticleSystem_SetVectorFieldTexture()` (see COMPUTE_API.md §3). Not yet verified on real GPU hardware (macOS caps at GL 4.1 and never exercises the COMPUTE path) — treat as unverified until confirmed on an Android/GL4.3+ device.
 
 ---
 
@@ -905,6 +907,26 @@ void  ColorGradient_StandardFade(ColorGradient *grad, Color baseColor, float mid
 * **`Sample`:** Linear interpolation (LERP) between adjacent stops. Prefer `ColorGradient` over `colorStart/colorEnd` for multi-stage color shifts (e.g. fire core white → orange → ash gray).
 * **`MakeElectric`:** Built-in preset for the Lightning element.
 * **`StandardFade`:** Quick 3-stop gradient (dark → `baseColor` → brighter via `brightenAmount` blended toward `WHITE`); `midT` sets the middle stop position.
+
+### Float Curve (`core/float_curve.h`)
+```c
+typedef struct {
+    float t;       // [0.0 .. 1.0]
+    float value;
+} FloatCurveStop;
+
+typedef struct {
+    FloatCurveStop stops[FLOAT_CURVE_MAX_STOPS]; // max 8
+    int count;
+} FloatCurve;
+
+bool  FloatCurve_AddStop(FloatCurve *c, float t, float value);
+float FloatCurve_Sample(const FloatCurve *c, float t);
+```
+* Scalar-value equivalent of `ColorGradient` — same API shape (`AddStop`/`Sample`, same stop cap, same LERP-between-adjacent-stops semantics), for any plain `float` that needs to shape itself over a skill's lifetime (particle emission rate, light intensity, motion speed, etc.) instead of a hand-rolled per-skill lerp/easing.
+* **`AddStop`:** Caller must add stops in increasing `t` order (no internal sort), same as `ColorGradient_AddStop`.
+* **`Sample`:** Linear interpolation between adjacent stops; clamps to the first/last stop's value outside the registered `t` range.
+* Maps directly onto `WUXING_ART_DIRECTION.md` Chapter 4.3's "Four Curves" (Intensity/Density/Motion/Lighting) — declare one `FloatCurve` per curve at cast time, sample it each frame in `Update[Name]Skill` instead of scattering manual lerp math.
 
 ### Ribbon Strip (`core/ribbon_strip.h`)
 Standard geometry for any continuous long body (dragon, vine, lightning bolt, water stream), replacing stacked billboard chains (heavy overdraw, wrong silhouette when viewed along the path). Technique: **camera-facing ribbon** — at each path point, offset left/right by a vector perpendicular to both the path tangent and the camera view direction, forming a continuous triangle strip (rlgl immediate-mode, no VBO, no malloc).

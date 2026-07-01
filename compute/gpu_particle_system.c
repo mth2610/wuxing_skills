@@ -176,6 +176,10 @@ static GpuParticleData s_cpu_pool[MAX_GPU_PARTICLES];
 
 static int             s_spawn_cursor    = 0;
 
+// Vector field textures cho FORCE_VECTOR_TEXTURE — không sở hữu (không Unload
+// ở đây), chỉ bind vào texture unit trước mỗi dispatch khi slot đang set.
+static Texture2D       s_vectorFieldTex[GPU_VECTOR_FIELD_SLOTS] = {0};
+
 // ---------------------------------------------------------------------------
 // Compute shader loader
 // Source dùng #version 310 es (GLES 3.1).
@@ -248,6 +252,7 @@ void GpuParticleSystem_Init(void) {
     if (s_initialized) return;
 
     memset(s_cpu_pool, 0, sizeof(s_cpu_pool));
+    memset(s_vectorFieldTex, 0, sizeof(s_vectorFieldTex));
     s_spawn_cursor = 0;
     s_fieldCount = 0;
     s_elapsed_time = 0.0f;
@@ -365,6 +370,14 @@ void GpuParticleSystem_Spawn(GpuParticleConfig cfg) {
 }
 
 // ---------------------------------------------------------------------------
+// Vector field texture registration
+// ---------------------------------------------------------------------------
+void GpuParticleSystem_SetVectorFieldTexture(int slot, Texture2D tex) {
+    if (slot < 0 || slot >= GPU_VECTOR_FIELD_SLOTS) return;
+    s_vectorFieldTex[slot] = tex;
+}
+
+// ---------------------------------------------------------------------------
 // Update
 // ---------------------------------------------------------------------------
 void GpuParticleSystem_Update(float dt) {
@@ -392,6 +405,20 @@ void GpuParticleSystem_Update(float dt) {
         if (loc_dt >= 0) s_glUniform1f(loc_dt, dt);
         int loc_time = s_glGetUniformLocation(s_compute_prog, "u_time");
         if (loc_time >= 0) s_glUniform1f(loc_time, s_elapsed_time);
+
+        // Vector field textures (FORCE_VECTOR_TEXTURE) — bind vào texture
+        // unit == slot index, khớp uVectorFieldN trong gpu_particles.comp.
+        // texture() trong compute shader đọc qua unit binding thường, giống
+        // fragment shader — không cần glBindImageTexture.
+        for (int slot = 0; slot < GPU_VECTOR_FIELD_SLOTS; slot++) {
+            if (s_vectorFieldTex[slot].id == 0) continue;
+            rlActiveTextureSlot(slot);
+            rlEnableTexture(s_vectorFieldTex[slot].id);
+            char uname[24];
+            snprintf(uname, sizeof(uname), "uVectorField%d", slot);
+            int loc_tex = s_glGetUniformLocation(s_compute_prog, uname);
+            if (loc_tex >= 0) s_glUniform1i(loc_tex, slot);
+        }
 
         s_glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, s_ssbo);
         s_glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, s_ff_ssbo);

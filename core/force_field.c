@@ -403,6 +403,14 @@ Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel,
     } break;
 
     case FORCE_VISCOSITY:
+      break;
+
+    case FORCE_VECTOR_TEXTURE:
+      // GPU-only (GpuParticleSystem COMPUTE path sample texture trong
+      // particles.comp) — không có Texture2D sampling trên CPU path, no-op
+      // có chủ đích, giống FORCE_VISCOSITY trên particle pool.
+      break;
+
     default:
       break;
     } // end switch

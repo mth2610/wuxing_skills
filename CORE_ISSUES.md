@@ -196,7 +196,116 @@ Produces a wider, softer glow. Recommended scene values: `bloomThreshold=0.5f`,
 
 ---
 
-## Item 5 — GPU Particle Force Field Integration (`compute/gpu_particle_system.*`, `core/force_field.*`) — PAUSED: CPU/VBO draw invisible on Android only
+## Item 6 — Generic FloatCurve (envelope) primitive — DONE
+
+Identified while cross-checking `WUXING_ART_DIRECTION.md` Chapter 4.3
+("The Four Curves": Intensity/Density/Motion/Lighting, each shaped
+low → build → peak → fall → zero over a skill's lifetime) against the
+actual Core API surface. `core/color_gradient.h`'s `ColorGradient`
+already provides stops + `ColorGradient_Sample(t)` for **color**, but
+there is no equivalent for a plain scalar float — every skill hand-rolls
+its own lerp/easing for particle rate, light intensity, motion speed,
+etc. This is the direct cause of the anti-patterns Chapter 4.6 warns
+about ("constant particle emission — no rhythm", "maximum brightness
+lasts too long — impact feels weak").
+
+**Implemented:** `FloatCurve` in `core/float_curve.h/.c`, mirroring
+`ColorGradient`'s API 1:1 — `FloatCurve_AddStop(t, value)`,
+`FloatCurve_Sample(t)`, `FLOAT_CURVE_MAX_STOPS 8` (same cap style as
+`COLOR_GRADIENT_MAX_STOPS`), linear interpolation matching
+`ColorGradient`'s existing behavior — no extra easing-curve machinery,
+since no real skill has needed it yet. Registered in `CMakeLists.txt`
+and `Makefile.Android` (both platforms build clean, no regressions).
+Documented in `CORE_API.md` § Color Gradient's neighboring section. Not
+yet wired into any shipping skill — that's for a skill author to adopt
+per-curve when replacing a hand-rolled lerp.
+
+---
+
+## Item 7 — Multi-layer Timeline (stagger schedule) — NOT STARTED
+
+Identified against `WUXING_ART_DIRECTION.md` Chapter 4.4 ("Layer
+Activation Timeline") — an explicit per-layer start/duration Gantt
+(Core Body / Energy / Trail / Flash / Light / Smoke / Dust / Decal /
+Distortion) that staggers when each visual layer turns on/off — plus
+the "Fade" rule in 4.2 (every layer must fade independently, never all
+at once). `core/skill_helper.h`'s `SkillTimeline` only exposes
+`current/duration` plus a single-shot `Timeline_Event(triggerTime)`
+boolean check — there's no way to declare N named layers with their own
+start/duration in one place. Skills currently hand-write scattered
+`if (t > X && t < Y)` blocks per layer, which is exactly how Chapter
+4.6's "all particles disappear together — artificial" mistake happens
+in practice.
+
+**Proposed shape:** extend `SkillTimeline` (or add a sibling
+`LayeredTimeline`) with a small fixed-size table of
+`{name/tag, start, duration}` entries, plus
+`Timeline_IsLayerActive(t, layerIndex)` /
+`Timeline_LayerProgress(t, layerIndex)` (returns 0..1 within that
+layer's own window, for feeding into Item 6's `FloatCurve_Sample`).
+Static array, no malloc — consistent with existing Core rules.
+
+Covers two related but distinct authoring needs with the same table:
+- **Continuous windows** (Chapter 4.4's Gantt layers — Trail/Light/Smoke
+  each active over a span): `duration > 0`, sampled via
+  `Timeline_IsLayerActive`/`Timeline_LayerProgress`.
+- **Discrete tagged events** (Chapter 4.1's phase transitions — windup →
+  cast → travel → impact → aftermath, each a one-shot fire): `duration`
+  ~0, fired once via edge-detection identical to the existing
+  `Timeline_Event`'s crossing check. Note `Timeline_Event(t, triggerTime, dt)`
+  *already* supports calling it with N different literal `triggerTime`
+  values per skill today — the actual gap isn't "can't have multiple
+  events," it's that those N calls are hand-written `if` literals per
+  skill instead of one declarative `{tag, time}` table a skill can loop
+  over (optionally with a registered function-pointer callback per tag,
+  mirroring `RegisterSkill`'s existing callback-pointer pattern in
+  `core/skill_manager.h`).
+
+---
+
+## Item 8 — Material system: parametrize `EffectMaterial` beyond 4 hardcoded presets — NOT STARTED
+
+`core/skill_helper.h`'s `EffectMaterial`/`Material_Load`/`Material_SetFloat`/
+`Material_Begin`/`Material_End` currently only cover 4 hardcoded presets
+(`MATERIAL_FIRE`/`ICE`/`WATER`/`PORTAL`), each backed by 1 shader with 2
+fixed uniform slots (`uTimeLoc`, `uDissolveLoc`). Any skill wanting a
+different combination of surface effects (rim/fresnel strength, emissive
+intensity, distortion amount, a second texture slot) has to bypass
+`EffectMaterial` entirely and hand-roll `BeginShaderMode`/
+`SetShaderValue` calls itself — inconsistent with the rest of Core's
+"orchestrate via one struct" pattern (`TubeMeshConfig`, `ColorGradient`,
+etc.), and this is the module the codebase is objectively strongest at
+(shader support) without a matching authoring struct.
+
+**Proposed shape:** generalize `EffectMaterial` into a parametrized
+struct — e.g. `rimStrength`, `fresnelPower`, `emissiveIntensity`,
+`distortionStrength`, plus a generic secondary texture slot — with the
+4 existing presets becoming named default configs (`Material_Load`
+keeps its current signature/behavior for existing call sites; add
+`Material_LoadCustom(EffectMaterialParams)` alongside it). Requires a
+shared shader (or small shader family) that actually exposes those
+uniforms — coordinate with whichever skill needs the first non-preset
+material before generalizing blind.
+
+---
+
+## Item 9 — Data-driven tuning (lower priority, higher effort — do separately) — NOT STARTED
+
+Every tunable VFX number (radius, speed, color-gradient stops, curve
+stops once Item 6 exists, etc.) is currently a C literal — changing one
+requires a full rebuild. A simple key-value config file, loaded once at
+startup and hot-reloaded on file-change (mtime poll, no filesystem-watch
+dependency needed for a single dev machine), would let a skill author
+iterate on feel without recompiling. Real win for iteration speed, but
+meaningfully more effort than Items 6–8 (needs a parser, a registry of
+"tunable" values skills opt into, and a reload path that doesn't
+clobber runtime state) — **don't bundle with Items 6–8**, pick up as
+its own pass once those land and their new knobs (curve stops, layer
+timings, material params) are stable enough to be worth exposing.
+
+---
+
+## Item 5 — GPU Particle Force Field Integration (`compute/gpu_particle_system.*`, `core/force_field.*`) — PAUSED: particles invisible on Android on BOTH draw paths (CPU/VBO and COMPUTE), root cause still unknown
 
 **Status:** Force field math + GPU registry/pack code is implemented and
 believed correct (verified via desktop logic/build, and a passing visual
@@ -266,6 +375,14 @@ almost exactly. Root cause of the remaining Android-only invisibility is
    in `GpuParticleSystem_Init()`: if `s_draw_shader_gpu.id == 0` after load,
    tear down the compute-path GL resources and fall through to `cpu_path:`
    instead of leaving `s_use_compute=true` with a broken shader.
+   **CORRECTION (see "Session 2" below): this hypothesis was wrong.** The
+   packaged asset file was correctly `#version 310 es`, but a *separate*
+   runtime step (`ShaderPreprocessor_Load()` → `RewriteVersionForGLES()` in
+   `core/shader_preprocessor.c`, which every `ResourceManager_LoadShader()`
+   call goes through) unconditionally rewrote `#version 310 es` down to
+   `#version 300 es` **after** the file was read from disk/APK — invisible to
+   a byte-compare of the packaged asset, which is why it wasn't caught then.
+   Not a hardware/driver limitation at all. Fixed in Session 2.
 3. **CPU/VBO path's original hand-rolled VAO/VBO/shader draw
    (`SetupCpuVAO` + `gpu_particles_vbo.vs` + `rlDrawVertexArray`) never
    rendered anything, on any platform** — this code path had never been
@@ -348,3 +465,76 @@ logcat (none present).
 `compute/shaders/gpu_particles_ssbo.vs`, `sandbox/vfx_test.c`,
 `sandbox/sandbox_core.c`, `Makefile.Android`. All build clean (desktop +
 Android), no regressions in existing skills/systems observed.
+
+---
+
+### Session 2 — added `FORCE_VECTOR_TEXTURE`, fixed the COMPUTE-path-never-compiles bug, hit the SAME invisibility bug on COMPUTE too — paused again per user request
+
+**New feature (unrelated to the bug below, implemented cleanly):** added
+`FORCE_VECTOR_TEXTURE` — particles sample a world-space flow texture instead
+of a procedural formula (for geometry-authored fields: smoke hugging a wall,
+fire wrapping a body). No `ForceLayer`/SSBO layout change — reuses existing
+fields (`origin.xz`/`direction.xz` = sample-box center/half-extent,
+`noiseScale` = texture slot 0/1). CPU path (`ForceField_Evaluate`) treats it
+as a documented no-op, same precedent as `FORCE_VISCOSITY` — GPU-only by
+design. New `GpuParticleSystem_SetVectorFieldTexture(slot, tex)` binds the
+texture to a unit right before compute dispatch via raw
+`rlActiveTextureSlot`/`rlEnableTexture` (not `SetShaderValueTexture`, since
+the compute program isn't a raylib `Shader` struct — this is a self-contained
+raw-GL block with no raylib draw call interleaved, so the slot-conflict class
+of bug documented elsewhere in this file for that API pair shouldn't apply,
+but this was **not** confirmed on real hardware — see below). Full design in
+`CORE_API.md` §5 and `COMPUTE_API.md` §3. Added a `sandbox/vfx_test.c` "VF
+TEST" touch button to test it, following the existing "FF TEST" pattern.
+
+**Bug #1 — found and FIXED:** the `RewriteVersionForGLES` hypothesis
+correction noted above (root cause item 2). `core/shader_preprocessor.c`
+unconditionally downgraded any `#version 310 es` to `#version 300 es` at
+runtime load, breaking `gpu_particles_ssbo.vs`'s SSBO syntax (`std430`,
+`binding`, `readonly` are ES-3.1-only, invalid in 300 es). Fix: only
+downgrade when the shader does **not** contain `std430` (i.e. genuinely
+"accidentally included" 310 header text, the scenario the rewrite was
+originally meant for — real SSBO shaders keep 310 es). **Confirmed fixed on
+device via logcat**: `gpu_particles_ssbo.vs` now compiles, `GPU_PARTICLES:
+COMPUTE path active (8192 particles)` — the fallback to CPU/VBO in
+`GpuParticleSystem_Init()` (root cause item 2's workaround) no longer
+triggers on this device at all.
+
+**Bug #2 — hit immediately after, NOT fixed, PAUSED again:** with COMPUTE
+path now genuinely active (not falling back), particles are **still
+completely invisible** on the same Android device (Mali, `GL_VERSION`
+`OpenGL ES 3.2 v1.r32p1-...` — same device as the original CPU/VBO
+investigation above). Confirmed via the "VF TEST"/"FF TEST" buttons: `Pool:
+N/8192` count increments correctly on every press (spawn + touch input both
+verified working, including a real UI bug found and fixed along the way —
+"VF TEST" button's Y position landed inside the virtual joystick's activation
+radius on-device despite looking clear in the desktop preview; moved above
+"FF TEST" instead of below), draw path is reached, but zero visible particles
+on screen — for **both** buttons, i.e. both `FORCE_VECTOR_TEXTURE` (new) and
+plain `FORCE_VORTEX` (pre-existing, previously never actually confirmed
+visible on this device either, only assumed once compute path was expected
+to activate).
+
+**Why this matters for root-causing:** this is a genuinely new data point
+the original investigation (root cause item 4 / "Open question" above) did
+not have — it only ever tested CPU/VBO immediate-mode draw. Now that the
+*entirely different* COMPUTE draw path (SSBO + vertex-shader billboard
+construction via `gl_VertexID`, no `rlBegin`/`rlEnd` at all) exhibits the
+**same symptom**, whatever is hiding the particles is almost certainly
+**not** specific to either draw method (rules out anything about
+immediate-mode batching, VAO/VBO attribute binding, or the SSBO vertex-stage
+support question) — it's something common to both: camera/projection,
+depth/culling state, or particle world position ending up somewhere
+off-screen/occluded for both paths alike. Points more strongly at "Not been
+ruled out" items 1–2 in the original investigation (numeric
+`GetWorldToScreen` / depth-test-vs-depth-mask check) than at anything
+draw-method-specific.
+
+**Stopped here per explicit user instruction** ("thử sửa 1 lần, không được
+thì ngưng" — try one fix attempt, stop if it doesn't work) rather than
+continuing to guess. `FORCE_VECTOR_TEXTURE` itself is implemented, documented,
+and builds clean on both desktop and Android — but is **unverified on real
+hardware** and will remain so until this pre-existing invisibility bug is
+resolved. Do not re-attempt blindly; needs the numeric/GPU-tooling
+verification already prescribed in the original "what's NOT been ruled out"
+list.

@@ -107,12 +107,42 @@ Số particle đang sống.
 ### `GpuParticleSystem_DrawDebug(int x, int y)`
 Hiển thị debug overlay (path, GL version, particle count).
 
+### `GpuParticleSystem_SetVectorFieldTexture(int slot, Texture2D tex)`
+Gán texture "vector field" vào slot (`0` hoặc `1`, xem `GPU_VECTOR_FIELD_SLOTS`)
+để particle dùng `ForceLayer.type = FORCE_VECTOR_TEXTURE` (xem `CORE_API.md`
+§5) sample velocity từ đó thay vì công thức procedural. CHỈ có hiệu lực ở
+COMPUTE path. Texture format: kênh RG = hướng flow XZ remap `[-1,1] -> [0,1]`.
+
+```c
+Texture2D smokeFlow = LoadTexture("assets/flow/smoke_wall_hug.png");
+GpuParticleSystem_SetVectorFieldTexture(0, smokeFlow);
+
+static ForceField s_smokeField; // static — sống cùng đời particle
+ForceField_Clear(&s_smokeField);
+ForceField_AddLayer(&s_smokeField, (ForceLayer){
+    .type      = FORCE_VECTOR_TEXTURE,
+    .origin    = (Vector3){600.0f, 0.0f, 440.0f}, // box center (y bỏ qua)
+    .direction = (Vector3){400.0f, 0.0f, 400.0f}, // box half-extent (xz)
+    .strength  = 120.0f,
+    .noiseScale = 0.0f, // slot 0
+});
+```
+
+> [!NOTE]
+> Texture không được sở hữu bởi module này — caller tự `UnloadTexture` khi
+> không cần nữa (sau khi clear slot bằng `tex.id == 0` hoặc sau khi mọi
+> `ForceField` dùng slot đó ngừng hoạt động). Chưa được xác nhận trên GPU
+> thật — macOS giới hạn GL 4.1 nên luôn fallback CPU/VBO, không bao giờ chạy
+> qua nhánh COMPUTE path này trên máy dev. Cần kiểm chứng trên thiết bị
+> Android/GL4.3+ trước khi coi là hoạt động ổn định.
+
 ---
 
 ## 4. Giới hạn
 
 ```c
 #define MAX_GPU_PARTICLES 8192  // Ring-buffer size
+#define GPU_VECTOR_FIELD_SLOTS 2  // Số vector field texture đồng thời
 ```
 
 Mỗi particle chiếm 80 bytes trong SSBO. Pool fixed-size, không malloc.
@@ -154,6 +184,9 @@ Uniform xuất hiện ở cả VS lẫn FS phải cùng precision. Shader comput
 ```glsl
 precision highp float;
 precision highp int;
+precision highp sampler2D;  // bắt buộc nếu compute shader có uniform sampler2D
+                             // (vd uVectorField0/1) — sampler không có default
+                             // precision trong GLES như float/int.
 ```
 
 ---

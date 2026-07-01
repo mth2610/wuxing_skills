@@ -36,8 +36,15 @@ typedef enum {
   FORCE_RADIAL_AXIS, // Lực hướng tâm/li tâm theo TRỤC ĐỘNG (axisOrigin, axisDir
                      // cấp lúc evaluate).
   FORCE_VORTEX_AXIS,
+  FORCE_VECTOR_TEXTURE, // Sample velocity từ texture động (baked flow/fluid-sim)
+                        // thay vì công thức procedural — xem block "VECTOR
+                        // TEXTURE FIELD" bên dưới. CHỈ có hiệu lực ở COMPUTE
+                        // path (GpuParticleSystem); CPU evaluate là no-op,
+                        // giống FORCE_VISCOSITY trên particle pool.
   // LƯU Ý: thứ tự enum này PHẢI khớp với các #define FT_* trong particles.comp
   // (GLSL không include được header C, nên phải giữ đồng bộ thủ công).
+  // Thêm type mới PHẢI append ở cuối — không chèn giữa hay đổi số thứ tự,
+  // vì (float)type được ghi thẳng vào params0.w trong ForceFieldGPU.
 } ForceType;
 
 // Mô tả một lớp lực đơn lẻ
@@ -63,6 +70,26 @@ typedef struct {
   float noiseScale; // tần số không gian (lớn hơn = nhiễu chi tiết hơn)
   float noiseSpeed; // tốc độ cuộn noise theo thời gian
 } ForceLayer;
+
+// ============================================================
+// VECTOR TEXTURE FIELD (FORCE_VECTOR_TEXTURE)
+//
+// Không thêm field mới vào ForceLayer (giữ nguyên layout/SSBO) — tái dùng các
+// field sẵn có với ngữ nghĩa khác cho type này:
+//   origin.xz    = tâm world-space của vùng sample hình chữ nhật (origin.y bỏ qua)
+//   direction.xz = nửa-kích-thước (half-extent) vùng sample theo X/Z
+//                  (direction.y bỏ qua)
+//   strength     = hệ số nhân lên vector đọc được từ texture
+//   noiseScale   = (float)texture slot index — cast sang int, xem
+//                  GPU_VECTOR_FIELD_SLOTS trong compute/gpu_particle_system.h
+//   radius, falloff, noiseSpeed = KHÔNG dùng, PHẢI để 0 (radius > 0 sẽ áp
+//                  thêm attenuation hình cầu quanh origin đè lên box-cutoff)
+//
+// Texture format kỳ vọng: kênh RG = hướng flow XZ đã remap [-1,1] -> [0,1]
+// (giống flow_map.h). Particle ngoài vùng half-extent nhận gia tốc = 0 (hard
+// box cutoff), không edge-clamp — tự author texture với biên mượt nếu cần
+// blend liền mạch.
+// ============================================================
 
 // ============================================================
 // FORCE FIELD  =  tổ hợp nhiều ForceLayer

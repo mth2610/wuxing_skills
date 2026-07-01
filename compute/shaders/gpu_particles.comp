@@ -5,6 +5,7 @@
 
 precision highp float;
 precision highp int;
+precision highp sampler2D;
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
@@ -54,11 +55,17 @@ layout(std430, binding = 1) readonly buffer ForceFieldBuffer {
 #define FT_NOISE_CURL    5
 #define FT_DRAG          6
 #define FT_VISCOSITY     7
-#define FT_RADIAL_AXIS   8
-#define FT_VORTEX_AXIS   9
+#define FT_RADIAL_AXIS     8
+#define FT_VORTEX_AXIS     9
+#define FT_VECTOR_TEXTURE  10
 
 uniform float u_dt;
 uniform float u_time;
+
+// Vector field textures — RG = hướng flow XZ remap [-1,1] -> [0,1].
+// Slot index chọn qua ForceLayer.noiseScale (xem core/force_field.h).
+uniform sampler2D uVectorField0;
+uniform sampler2D uVectorField1;
 
 // Value noise 3D rẻ, portable — không dùng permutation table. Thay thế
 // Noise_Perlin3D/Noise_Curl3D CPU-side: không khớp bit-exact, chỉ cần cùng
@@ -219,6 +226,22 @@ vec3 evalForceField(int idx, vec3 pos, vec3 vel, float time) {
                         vec3 tangent = normalize(cross(dir, radialVec));
                         acc = tangent * (strength / (perpDist + 1.0));
                     }
+                }
+            }
+
+        } else if (type == FT_VECTOR_TEXTURE) {
+            // origin.xz = box center, dir.xz = half-extent (xem
+            // core/force_field.h block "VECTOR TEXTURE FIELD"). Hard box
+            // cutoff — không clamp UV, particle ngoài vùng nhận acc = 0.
+            vec2 halfExtent = dir.xz;
+            if (halfExtent.x > 1e-4 && halfExtent.y > 1e-4) {
+                vec2 uv = (pos.xz - o.xz) / (2.0 * halfExtent) + 0.5;
+                if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0) {
+                    int slot = int(nScale + 0.5);
+                    vec4 texel = (slot == 1) ? texture(uVectorField1, uv)
+                                              : texture(uVectorField0, uv);
+                    vec2 flow = texel.rg * 2.0 - 1.0;
+                    acc = vec3(flow.x, 0.0, flow.y) * strength;
                 }
             }
         }

@@ -22,6 +22,14 @@ static int g_activeCountCache = 0;
 #define FF_TEST_BTN_Y      400.0f
 #define FF_TEST_BTN_RADIUS 45.0f
 
+// Nút test FORCE_VECTOR_TEXTURE — đặt ngay TRÊN nút FF TEST, cùng cột X (khu
+// vực đã xác nhận an toàn). KHÔNG đặt phía dưới — trên thiết bị thật, vùng đó
+// lấn vào bán kính kích hoạt joystick ảo (xem joystickCenter/joystickBaseRadius
+// trong sandbox_core.c, neo theo % chiều cao màn hình nên khác trên từng máy).
+#define VF_TEST_BTN_X      70.0f
+#define VF_TEST_BTN_Y      300.0f
+#define VF_TEST_BTN_RADIUS 45.0f
+
 void VFXTest_UpdateAndHandleInput(Vector3 playerPos, Texture2D testAtlasTex,
                                   Texture2D globalParticleTex) {
   if (IsKeyPressed(KEY_T)) {
@@ -148,6 +156,65 @@ void VFXTest_UpdateAndHandleInput(Vector3 playerPos, Texture2D testAtlasTex,
       GpuParticleSystem_Spawn(cfg);
     }
   }
+
+  // ---------------------------------------------------------------------
+  // Test FORCE_VECTOR_TEXTURE — hạt spawn đứng yên (velocity=0, drag=0) ở
+  // mép trái một "box" flow texture thuần +X, KỲ VỌNG bị đẩy trôi sang phải
+  // suốt bề rộng box rồi văng ra ngoài giữ nguyên vận tốc cuối (ngoài box =
+  // gia tốc 0, không phải drag).
+  // Cách đọc kết quả (KHÔNG đoán màu — nhìn chuyển động thô):
+  //   - COMPUTE path + field hoạt động đúng: hạt trôi mượt sang +X ngay khi
+  //     xuất hiện.
+  //   - COMPUTE path nhưng field/texture sai (registry, UV, slot...): hạt
+  //     đứng yên tại chỗ (vì velocity=0, drag=0, không lực nào khác).
+  //   - CPU/VBO fallback (luôn đúng trên macOS — xem GpuParticleSystem_Draw-
+  //     Debug HUD): hạt LUÔN đứng yên, vì FORCE_VECTOR_TEXTURE là no-op trên
+  //     CPU path theo thiết kế (không phải bug).
+  // Trigger bằng KEY_Y (desktop) hoặc nút "VF TEST" chạm (Android).
+  // ---------------------------------------------------------------------
+  bool vfTestTouched =
+      IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+      CheckCollisionPointCircle(GetMousePosition(),
+                                (Vector2){VF_TEST_BTN_X, VF_TEST_BTN_Y},
+                                VF_TEST_BTN_RADIUS);
+  if (IsKeyPressed(KEY_Y) || vfTestTouched) {
+    static Texture2D s_flowTex = {0};
+    static ForceField s_flowField;
+    static bool       s_flowInit = false;
+    if (!s_flowInit) {
+      // R=255 -> +X thuần (texel.r*2-1 = 1.0), G=128 -> ~0 theo Z.
+      Image img = GenImageColor(4, 4, (Color){255, 128, 0, 255});
+      s_flowTex = LoadTextureFromImage(img);
+      UnloadImage(img);
+      GpuParticleSystem_SetVectorFieldTexture(0, s_flowTex);
+
+      ForceField_Clear(&s_flowField);
+      ForceLayer vf = {0};
+      vf.type      = FORCE_VECTOR_TEXTURE;
+      vf.origin    = Vector3Add(playerPos, (Vector3){0.0f, 40.0f, 0.0f});
+      vf.direction = (Vector3){300.0f, 0.0f, 300.0f}; // half-extent box (xz)
+      vf.strength  = 250.0f;
+      vf.noiseScale = 0.0f; // slot 0
+      ForceField_AddLayer(&s_flowField, vf);
+      s_flowInit = true;
+    }
+
+    Vector3 spawnPos =
+        Vector3Add(playerPos, (Vector3){-250.0f, 40.0f, 0.0f}); // mép trái box
+    for (int i = 0; i < 20; i++) {
+      GpuParticleConfig cfg = {0};
+      cfg.position = Vector3Add(
+          spawnPos, (Vector3){0.0f, 0.0f, (float)GetRandomValue(-80, 80)});
+      cfg.velocity = (Vector3){0.0f, 0.0f, 0.0f};
+      cfg.colorStart = (Color){255, 220, 100, 255};
+      cfg.colorEnd = (Color){255, 220, 100, 0};
+      cfg.radius = 8.0f;
+      cfg.lifetime = 3.0f;
+      cfg.drag = 0.0f;
+      cfg.forceField = &s_flowField;
+      GpuParticleSystem_Spawn(cfg);
+    }
+  }
 }
 
 void VFXTest_DrawDebugLights3D(void) {
@@ -175,4 +242,12 @@ void VFXTest_DrawHUD(void) {
                   SKYBLUE);
   DrawText("FF", (int)FF_TEST_BTN_X - 14, (int)FF_TEST_BTN_Y - 12, 20, WHITE);
   DrawText("TEST", (int)FF_TEST_BTN_X - 22, (int)FF_TEST_BTN_Y + 10, 14, WHITE);
+
+  // Nút chạm test FORCE_VECTOR_TEXTURE (xem VFXTest_UpdateAndHandleInput)
+  DrawCircle((int)VF_TEST_BTN_X, (int)VF_TEST_BTN_Y, VF_TEST_BTN_RADIUS,
+             ColorAlpha(GOLD, 0.5f));
+  DrawCircleLines((int)VF_TEST_BTN_X, (int)VF_TEST_BTN_Y, VF_TEST_BTN_RADIUS,
+                  GOLD);
+  DrawText("VF", (int)VF_TEST_BTN_X - 14, (int)VF_TEST_BTN_Y - 12, 20, WHITE);
+  DrawText("TEST", (int)VF_TEST_BTN_X - 22, (int)VF_TEST_BTN_Y + 10, 14, WHITE);
 }
