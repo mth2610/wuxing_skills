@@ -915,10 +915,14 @@ void SpawnGroundDecal(DecalPresetType type, Vector3 pos, float radius, float dur
 
     // CORE_ISSUES.md Item 4b — lava crack / ripple decal cuộn ra ngoài tâm
     // theo thời gian (decal_flow.fs) thay vì texture đứng yên như mọi preset
-    // khác.
-    if (type == DECAL_PRESET_FIRE_LAVA || type == DECAL_PRESET_WATER_RIPPLE) {
+    // khác. Glow chỉ bật cho FIRE_LAVA (khe nứt phát sáng) — WATER_RIPPLE
+    // cuộn nhưng không cần glow.
+    if (type == DECAL_PRESET_FIRE_LAVA) {
         DecalSystem_AddFlowEx(decalPos, rotation, 0.0f, radius, radius, tex,
-                              duration, tint, BLEND_ALPHA, 0.02f, 0.6f, 0.8f);
+                              duration, tint, BLEND_ALPHA, 0.02f, 0.6f, 0.8f, 1.5f);
+    } else if (type == DECAL_PRESET_WATER_RIPPLE) {
+        DecalSystem_AddFlowEx(decalPos, rotation, 0.0f, radius, radius, tex,
+                              duration, tint, BLEND_ALPHA, 0.02f, 0.6f, 0.8f, 0.0f);
     } else {
         DecalSystem_Add(decalPos, rotation, radius, tex, duration, tint);
     }

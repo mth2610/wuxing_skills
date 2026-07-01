@@ -90,6 +90,9 @@ typedef struct {
   const ForceField *forceField;
   const ColorGradient *gradient;
   const SpriteAnim *spriteAnim;
+  // Non-NULL: tip position driven each frame by Vector3Transform(attachLocalOffset, *attachedTransform).
+  // Caller owns the Matrix and must keep it valid for the trail's lifetime.
+  const Matrix *attachedTransform;
 
   // 2. Mảng và Struct lớn (Vectors)
   Vector3 history[TRAIL_HISTORY_COUNT];
@@ -104,6 +107,7 @@ typedef struct {
                       // SetFollowerAxis().
   Vector3 axisDir; // Hướng trục, PHẢI là vector đơn vị khi truyền vào
                    // SetFollowerAxis().
+  Vector3 attachLocalOffset; // Local-space offset transformed by attachedTransform each frame.
 
   // 3. Texture và Color
   Texture2D sprite;
@@ -146,6 +150,15 @@ void UnloadTrailSystem(void);
 int GetActiveTrailCount(void);
 
 void UpdateFollowerPosition(int id, Vector3 newTipPos);
+
+// Attach a TRAIL_TYPE_FOLLOWER trail to an external Matrix (e.g. a bone
+// transform). Each frame in UpdateTrailSystem the tip is recomputed as
+// Vector3Transform(localOffset, *targetTransform). Pass localOffset={0,0,0}
+// to track the matrix origin directly. The Matrix must stay valid for the
+// trail's lifetime — typically a static field on the owning skill.
+// Pass targetTransform=NULL to detach.
+void Trail_AttachToTransform(int id, const Matrix *targetTransform,
+                             Vector3 localOffset);
 
 // Set trục động (axisOrigin + axisDir, axisDir PHẢI normalize trước khi
 // gọi) dùng cho lực FORCE_RADIAL_AXIS trong forceField của entity FOLLOWER

@@ -366,6 +366,8 @@ int SpawnTrailEntity(TrailConfig config) {
   t->driftVelocity = (Vector3){0.0f, 0.0f, 0.0f};
   t->axisOrigin = (Vector3){0.0f, 0.0f, 0.0f};
   t->axisDir = (Vector3){0.0f, 0.0f, 0.0f};
+  t->attachedTransform = NULL;
+  t->attachLocalOffset = (Vector3){0.0f, 0.0f, 0.0f};
 
   for (int h = 0; h < TRAIL_HISTORY_COUNT; h++) {
     t->nodeVelocity[h] = (Vector3){0.0f, 0.0f, 0.0f};
@@ -431,6 +433,16 @@ void SetFollowerAxis(int id, Vector3 axisOrigin, Vector3 axisDir) {
   t->axisDir = axisDir;
 }
 
+void Trail_AttachToTransform(int id, const Matrix *targetTransform,
+                             Vector3 localOffset) {
+  if (id < 0 || id >= MAX_TRAIL_PARTICLES || !trailPool[id].active)
+    return;
+  if (trailPool[id].type != TRAIL_TYPE_FOLLOWER)
+    return;
+  trailPool[id].attachedTransform = targetTransform;
+  trailPool[id].attachLocalOffset = localOffset;
+}
+
 void UpdateTrailSystem(float dt) {
   float time = (float)GetTime();
 
@@ -442,6 +454,13 @@ void UpdateTrailSystem(float dt) {
     if (trailPool[i].lifetime <= 0.0f) {
       KillTrailInternal(i);
       continue;
+    }
+
+    if (trailPool[i].type == TRAIL_TYPE_FOLLOWER &&
+        trailPool[i].attachedTransform != NULL) {
+      Vector3 tip = Vector3Transform(trailPool[i].attachLocalOffset,
+                                     *trailPool[i].attachedTransform);
+      UpdateFollowerPosition(i, tip);
     }
 
     switch (trailPool[i].type) {

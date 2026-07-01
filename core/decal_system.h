@@ -23,6 +23,7 @@ typedef struct {
     bool flowScroll;      // true: vẽ bằng decal_flow.fs, cuộn ra ngoài tâm theo thời gian
     float flowSpeed;      // tốc độ cuộn radial, thường 0.3-1.0
     float flowStrength;   // trộn flow vs texture gốc [0,1], thường 0.5-1.0
+    float glowIntensity;  // boost HDR cho texel sáng (khe nứt) để bloom bắt được; 0 = tắt glow
 } DecalEntity;
 
 // Khởi tạo hệ thống Decal
@@ -41,12 +42,16 @@ void DecalSystem_AddEx(Vector3 pos, float rotation, float rotSpeed,
 // Như AddEx nhưng texture cuộn radial ra ngoài tâm theo thời gian (lava
 // crawl, ripple spreading) thay vì đứng yên — dùng decal_flow.fs riêng,
 // không ảnh hưởng decal tĩnh (AddEx/Add). flowSpeed/flowStrength xem comment
-// DecalEntity.
+// DecalEntity. glowIntensity: 0 = không glow (mặc định cho mọi preset khác
+// FIRE_LAVA); >0 = boost HDR vùng sáng nhất trong texture (khe nứt) để
+// pipeline bloom hiện có (PostFX_Draw) tự động phát sáng đúng chỗ đó — không
+// phải lúc nào flow decal cũng cần glow (vd. WATER_RIPPLE không cần).
 void DecalSystem_AddFlowEx(Vector3 pos, float rotation, float rotSpeed,
                            float scaleStart, float scaleEnd,
                            Texture2D texture, float lifetime,
                            Color tint, BlendMode blendMode, float yOffset,
-                           float flowSpeed, float flowStrength);
+                           float flowSpeed, float flowStrength,
+                           float glowIntensity);
 
 // Batch helper — đặt 1 decal tại mỗi điểm trong points[0..count-1], dùng cho hiệu ứng
 // theo đường đi (vd. gai mọc dọc đường, vệt cháy). Wrap quanh DecalSystem_Add, không

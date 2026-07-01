@@ -9,7 +9,7 @@ static DecalEntity g_DecalPool[MAX_DECALS];
 static int g_LastSpawnedIndex = 0;
 static Shader g_DecalShader;
 static Shader g_DecalFlowShader;
-static int g_flowTimeLoc, g_flowSpeedLoc, g_flowStrengthLoc;
+static int g_flowTimeLoc, g_flowSpeedLoc, g_flowStrengthLoc, g_flowGlowLoc;
 
 // Camera compensation — bù foreshortening khi camera nhìn từ góc nghiêng
 static float g_cam_yaw     = 0.0f;   // góc xoay camera quanh Y (độ)
@@ -46,6 +46,7 @@ void DecalSystem_Init(void) {
     g_flowTimeLoc = GetShaderLocation(g_DecalFlowShader, "u_time");
     g_flowSpeedLoc = GetShaderLocation(g_DecalFlowShader, "u_flowSpeed");
     g_flowStrengthLoc = GetShaderLocation(g_DecalFlowShader, "u_flowStrength");
+    g_flowGlowLoc = GetShaderLocation(g_DecalFlowShader, "u_glowIntensity");
 }
 
 static int FindSlot(void) {
@@ -84,9 +85,10 @@ static int SpawnDecalCommon(Vector3 pos, float rotation, float rotSpeed,
     d->tint         = tint;
     d->blendMode    = blendMode;
     d->active       = true;
-    d->flowScroll   = false;
-    d->flowSpeed    = 0.0f;
-    d->flowStrength = 0.0f;
+    d->flowScroll    = false;
+    d->flowSpeed     = 0.0f;
+    d->flowStrength  = 0.0f;
+    d->glowIntensity = 0.0f;
     g_LastSpawnedIndex = (idx + 1) % MAX_DECALS;
     return idx;
 }
@@ -103,12 +105,14 @@ void DecalSystem_AddFlowEx(Vector3 pos, float rotation, float rotSpeed,
                            float scaleStart, float scaleEnd,
                            Texture2D texture, float lifetime,
                            Color tint, BlendMode blendMode, float yOffset,
-                           float flowSpeed, float flowStrength) {
+                           float flowSpeed, float flowStrength,
+                           float glowIntensity) {
     int idx = SpawnDecalCommon(pos, rotation, rotSpeed, scaleStart, scaleEnd,
                                texture, lifetime, tint, blendMode, yOffset);
     g_DecalPool[idx].flowScroll = true;
     g_DecalPool[idx].flowSpeed = flowSpeed;
     g_DecalPool[idx].flowStrength = flowStrength;
+    g_DecalPool[idx].glowIntensity = glowIntensity;
 }
 
 void DecalSystem_Add(Vector3 pos, float rotation, float scale,
@@ -176,6 +180,7 @@ static void DrawGroup(BlendMode mode, bool flowOnly) {
             SetShaderValue(shader, g_flowTimeLoc, &elapsed, SHADER_UNIFORM_FLOAT);
             SetShaderValue(shader, g_flowSpeedLoc, &d->flowSpeed, SHADER_UNIFORM_FLOAT);
             SetShaderValue(shader, g_flowStrengthLoc, &d->flowStrength, SHADER_UNIFORM_FLOAT);
+            SetShaderValue(shader, g_flowGlowLoc, &d->glowIntensity, SHADER_UNIFORM_FLOAT);
         }
 
         rlPushMatrix();

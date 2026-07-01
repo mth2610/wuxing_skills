@@ -795,9 +795,11 @@ typedef struct {
     const SpriteAnim *spriteAnim;
 } TrailConfig;
 ```
-* **Follower Trails:** For sword swings or aura attachments, set type to `TRAIL_TYPE_FOLLOWER`. Every frame, you must call:
-  - `SetFollowerAxis(trailId, basePos, normalizedDir);` (Sets orientation)
-  - `UpdateFollowerPosition(trailId, tipPos);` (Updates head position)
+* **Follower Trails:** For sword swings or aura attachments, set type to `TRAIL_TYPE_FOLLOWER`. Two ways to drive the tip:
+  - **Manual (per-frame):** call `UpdateFollowerPosition(trailId, tipPos);` each frame before `UpdateTrailSystem`.
+  - **Matrix attachment:** call `Trail_AttachToTransform(trailId, &myMatrix, localOffset);` once — `UpdateTrailSystem` reads `*myMatrix` automatically each frame and computes `tip = Vector3Transform(localOffset, *myMatrix)`. Pass `localOffset={0,0,0}` to track the matrix origin. The `Matrix` must stay valid for the trail's lifetime (typically a `static Matrix` field on the owning skill). Detach with `Trail_AttachToTransform(id, NULL, (Vector3){0})`.
+  - `SetFollowerAxis(trailId, basePos, normalizedDir);` sets the optional radial-axis orientation for `FORCE_RADIAL_AXIS` in `forceField` — unrelated to tip position.
+  - **`trailLength` for FOLLOWER = integer node count** (e.g. `20.0f` = 20 history nodes). Not a fractional ratio — `(int)trailLength` is taken directly. Trail only renders when `historyCount > 1`, so values < 2.0f result in no visible trail.
 * **Lifecycle:** Free active trails when complete by calling `KillTrail(trailId);`.
 * **`onDeath`:** Fired once when a trail dies — either its `life` timer expires, or (for `TRAIL_TYPE_PROJECTILE`) it auto-detects a hit on `target`. Use it to spawn an impact effect exactly at the trail's last position without separately tracking when the projectile arrived:
   ```c

@@ -130,7 +130,7 @@ exactly the kind of false reading this rebuild was meant to avoid.
 
 ---
 
-## Item 4 — Material/Trail/Decal/Bloom upgrades (4a/4b DONE, 4c–4d NOT STARTED)
+## Item 4 — Material/Trail/Decal/Bloom upgrades (4a/4b/4c DONE, 4d NOT STARTED)
 
 From the original Core API update request. Assessed as legitimate, real
 gaps (not redundant with existing code). Four independent sub-items — can
@@ -161,14 +161,20 @@ for `DECAL_PRESET_FIRE_LAVA` and `DECAL_PRESET_WATER_RIPPLE`
 `DECAL_PRESET_FIRE_LAVA` decal under the triplanar rock; confirmed visually
 — concentric rings scrolling outward from center, not a static stamp.
 
-### 4c. Dynamic trail attachment (`core/trail_system.h`)
-Existing API (`UpdateFollowerPosition`, `SetFollowerAxis`) supports a
-trail following a *point*, not a bone/joint on a skinned IQM model. Goal:
-`Trail_AttachToTransform(TrailConfig, const Matrix *targetTransform,
-Vector3 localOffset)` so a sword-light/afterimage trail can track an
-animated bone matrix. **Needs investigation first**: confirm bone matrices
-are actually exposed anywhere accessible to Core (entities/skills modules
-own the animated models) before committing to this signature.
+### 4c. Dynamic trail attachment (`core/trail_system.h`) — DONE
+`Trail_AttachToTransform(int id, const Matrix *targetTransform, Vector3 localOffset)`
+added to `core/trail_system.h/.c`. Stores the pointer on the `TrailEntity`
+(`attachedTransform` + `attachLocalOffset` fields); `UpdateTrailSystem` reads
+it each frame and drives tip position via `Vector3Transform(localOffset, *mat)`
+→ `UpdateFollowerPosition`. Caller (skill/sandbox) owns the `Matrix` and updates
+it each frame — same pattern as the existing `ForceField *` pointer on `TrailEntity`.
+**Investigation finding:** `entities/entities.h` has no bone/skeleton exposure
+(minimal gameplay module — position/velocity/health only). The pointer-based
+design is correct for any matrix source (manual orbit, bone from `ModelAnimation.framePoses`,
+procedural pivot, etc.) — Core stays decoupled from how the caller produces the matrix.
+Tested via `skills/taiji/core_test`: a `TRAIL_TYPE_FOLLOWER` trail orbiting the
+caster at radius 60 / Y 30 using `MatrixTranslate` updated each frame — trail
+follows the orbit visibly.
 
 ### 4d. Dual-filtering bloom (`core/post_fx.h`)
 Current bloom (`PostFX_Draw`'s bright/blur passes in `core/post_fx.c`) uses

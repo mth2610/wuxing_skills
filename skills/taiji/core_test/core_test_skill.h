@@ -13,10 +13,9 @@ typedef struct {
 } SkillProjectile;
 #endif
 
-// Internal test/sandbox skill (Taiji) — exercises Core API "Item 4a":
-// triplanar mapping (core/shaders/common/triplanar.glsl) on a low-poly
-// ProceduralMesh_Rock, which has no UV (rlBegin immediate-mode, position +
-// normal only). See CORE_ISSUES.md. Not a gameplay skill.
+// Internal test/sandbox skill (Taiji) — not a gameplay skill. Whatever Core
+// API item is currently being verified lives here; confirmed-done features
+// get removed once tested (see CORE_ISSUES.md), keep this file minimal.
 
 void InitCoreTestSkill(int screenWidth, int screenHeight);
 void CastCoreTestSkill(Vector3 startPos, Vector3 target, SkillParams params);
