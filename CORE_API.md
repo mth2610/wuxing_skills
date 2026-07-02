@@ -795,7 +795,7 @@ typedef struct {
     float len;              // Segment/blade length (perpendicular to movement direction)
     float thick;            // Thickness of ribbon at head
     float trailLength;      // Absolute trail decay length (world units)
-    float life;             // Total duration in seconds (0 = persistent until KillTrail)
+    float life;             // Total duration in seconds. MUST be > 0 — life<=0 dies on the very next UpdateTrailSystem tick, it does NOT persist until KillTrail
     float initialAngle;     // Starting rotation (degrees), mainly for TRAIL_TYPE_PORTAL spin start
     float wobblePhase;      // Starting phase offset for TRAIL_TYPE_PROJECTILE's sine wobble
     float scale;
