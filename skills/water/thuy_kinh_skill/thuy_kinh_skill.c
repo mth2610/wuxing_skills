@@ -1,0 +1,551 @@
+// Thủy Kính Hộ Thuẫn (Water Mirror Ward) — self-cast Water buff/shield.
+// Droplets gather at the caster, then a living water dome blooms up with a
+// splash ring that shoves enemies back. While the ward holds: flowing
+// caustic shader on the dome, three tilted water ribbons orbiting it,
+// mist swirling inside, a wet pool under it, and a speed blessing on
+// everyone sheltered within. When it expires the dome dissolves into rain.
+#include "skills/water/thuy_kinh_skill/thuy_kinh_skill.h"
+#include "core/particle_system.h"
+#include "core/trail_system.h"
+#include "core/force_field.h"
+#include "core/color_gradient.h"
+#include "core/skill_helper.h"
+#include "core/skill_manager.h"
+#include "core/procedural_mesh_utils.h"
+#include "core/resource_manager.h"
+#include "core/decal_system.h"
+#include "core/vfx_light.h"
+#include "core/screen_distort.h"
+#include "core/camera_fx.h"
+#include "core/utils_math.h"
+#include "environment/environment_system.h"
+#include "entities/entities.h"
+#include "rlgl.h"
+#include "raymath.h"
+#include <math.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <stdio.h>
+
+#ifndef PI
+#define PI 3.1415926535f
+#endif
+
+#define MAX_WARDS        4
+#define RIBBONS_PER_WARD 3
+
+#define SHIELD_RADIUS    55.0f
+#define GATHER_TIME      0.4f
+#define BLOOM_TIME       0.5f
+#define ACTIVE_TIME      6.0f
+#define DISSOLVE_TIME    0.8f
+#define MIST_RATE        12.0f   // mist particles per second per ward
+#define DRIP_INTERVAL    0.22f   // droplet cadence per orbiting ribbon
+#define BUFF_SPEED_MULT  1.35f
+
+typedef enum {
+    WARD_INACTIVE = 0,
+    WARD_GATHER,
+    WARD_BLOOM,
+    WARD_ACTIVE,
+    WARD_DISSOLVE
+} WardState;
+
+typedef struct {
+    WardState state;
+    float   timer;
+    float   scale;
+    float   radius;       // full dome radius
+    float   growth;       // 0..1 bloom progress (holds 1.0 while active)
+    float   dissolve;     // 0..1 shader dissolve
+    Vector3 center;       // ground point under the caster
+    int     ownerAgentId; // CORE_ISSUES.md Item 15
+
+    // Orbiting water ribbons — tilted circular orbits (§12.3: every ribbon
+    // gets its own plane, direction, speed and phase).
+    int     ribbonIds[RIBBONS_PER_WARD];
+    Vector3 orbitU[RIBBONS_PER_WARD], orbitV[RIBBONS_PER_WARD];
+    float   orbitAngle[RIBBONS_PER_WARD];
+    float   orbitSpeed[RIBBONS_PER_WARD]; // signed rad/s
+    float   bobPhase[RIBBONS_PER_WARD];
+    float   dripTimer[RIBBONS_PER_WARD];
+
+    float   mistAccum;
+    float   ringTimer;   // cadence of the soft additive ground-ring decals
+    ForceField swirl; // vortex + gentle pull that curls mist along the dome
+} WardInstance;
+
+static WardInstance  s_wards[MAX_WARDS];
+static ColorGradient s_mistGrad;
+static ColorGradient s_ribbonGrad;
+static ColorGradient s_rainGrad;
+static ForceField    s_rainFall;   // shared: dissolve-rain falls under gravity
+static Shader        s_shader;
+static Texture2D     s_flowTex;     // RG flow directions driving the caustics
+static Texture2D     s_causticsTex;
+static Texture2D     s_ringTex;     // generic impact ring for the base glow
+static int           s_dissolveLoc = -1;
+static int           s_lightDirLoc = -1;
+static int           s_flowTexLoc  = -1;
+static int           s_causticsLoc = -1;
+static int           s_skillIndex  = -1;
+
+static float DomeCenterY(const WardInstance *w) { return w->radius * 0.55f; }
+
+static void WardStartDissolve(WardInstance *w)
+{
+    if (w->state != WARD_BLOOM && w->state != WARD_ACTIVE) return;
+    w->state = WARD_DISSOLVE;
+    w->timer = 0.0f;
+
+    for (int r = 0; r < RIBBONS_PER_WARD; r++) {
+        if (w->ribbonIds[r] >= 0) {
+            KillTrail(w->ribbonIds[r]);
+            w->ribbonIds[r] = -1;
+        }
+    }
+
+    // The dome collapses into rain: one burst of droplets released from
+    // random points on the shell, falling under the shared gravity field.
+    Vector3 domeC = { w->center.x, DomeCenterY(w), w->center.z };
+    for (int i = 0; i < 34; i++) {
+        float a = (float)GetRandomValue(0, 3600) / 10.0f * DEG2RAD;
+        float p = (float)GetRandomValue(5, 90) / 100.0f * PI; // skip the buried cap
+        Vector3 n = { sinf(p) * cosf(a), cosf(p), sinf(p) * sinf(a) };
+        SpawnParticle((ParticleConfig){
+            .position   = Vector3Add(domeC, Vector3Scale(n, w->radius)),
+            .velocity   = { n.x * 22.0f, 8.0f, n.z * 22.0f },
+            .radius     = (float)GetRandomValue(12, 26) / 10.0f * w->scale,
+            .lifetime   = 1.1f,
+            .gradient   = &s_rainGrad,
+            .forceField = &s_rainFall
+        });
+    }
+    SpawnGroundDecal(DECAL_PRESET_WATER_RIPPLE, w->center, w->radius * 0.9f, 1.4f);
+}
+
+static bool ThuyKinhSkill_HasActiveInstance(int agentId)
+{
+    for (int i = 0; i < MAX_WARDS; i++) {
+        if (s_wards[i].state != WARD_INACTIVE && s_wards[i].ownerAgentId == agentId)
+            return true;
+    }
+    return false;
+}
+
+static void ThuyKinhSkill_Abort(int agentId)
+{
+    for (int i = 0; i < MAX_WARDS; i++) {
+        WardInstance *w = &s_wards[i];
+        if (w->state == WARD_INACTIVE || w->ownerAgentId != agentId) continue;
+        if (w->state == WARD_GATHER) { w->state = WARD_INACTIVE; continue; }
+        WardStartDissolve(w);
+    }
+}
+
+void InitThuyKinhSkill(int screenWidth, int screenHeight)
+{
+    (void)screenWidth; (void)screenHeight;
+
+    s_skillIndex = Skill_GetIndexByName("THUY_KINH");
+    RegisterSkillLifecycleQuery(s_skillIndex, ThuyKinhSkill_HasActiveInstance);
+    RegisterSkillAbort(s_skillIndex, ThuyKinhSkill_Abort);
+
+    s_shader = ResourceManager_LoadShader(
+        "skills/water/thuy_kinh_skill/thuy_kinh.vs",
+        "skills/water/thuy_kinh_skill/thuy_kinh.fs");
+    s_dissolveLoc = GetShaderLocation(s_shader, "u_dissolve");
+    s_lightDirLoc = GetShaderLocation(s_shader, "u_lightDir");
+    s_flowTexLoc  = GetShaderLocation(s_shader, "flowTex");
+    s_causticsLoc = GetShaderLocation(s_shader, "causticsTex");
+
+    s_flowTex     = ResourceManager_LoadTexture("assets/textures/water_flow.png");
+    s_causticsTex = ResourceManager_LoadTexture("assets/textures/water_caustics.png");
+    s_ringTex     = ResourceManager_LoadTexture("assets/textures/generic/impact_ring.png");
+    // Caustics scroll across UV seams — must wrap, and bilinear keeps the
+    // pattern soft instead of pixel-crunchy up close.
+    SetTextureWrap(s_causticsTex, TEXTURE_WRAP_REPEAT);
+    SetTextureFilter(s_causticsTex, TEXTURE_FILTER_BILINEAR);
+    SetTextureWrap(s_flowTex, TEXTURE_WRAP_REPEAT);
+    SetTextureFilter(s_flowTex, TEXTURE_FILTER_BILINEAR);
+
+    for (int i = 0; i < MAX_WARDS; i++) {
+        s_wards[i].state = WARD_INACTIVE;
+        for (int r = 0; r < RIBBONS_PER_WARD; r++) s_wards[i].ribbonIds[r] = -1;
+    }
+
+    // Mist inside the dome: pale foam -> element blue -> fades out dark.
+    ColorGradient_AddStop(&s_mistGrad, 0.00f, (Color){ 205, 240, 255, 170 });
+    ColorGradient_AddStop(&s_mistGrad, 0.45f, ColorAlpha(ELEMENT_COLOR_WATER, 0.55f));
+    ColorGradient_AddStop(&s_mistGrad, 1.00f, (Color){ 10, 30, 60, 0 });
+
+    // Orbiting ribbons: thin energy stream — white-hot head (above the
+    // bloom threshold so post-FX makes it glow) melting into element cyan.
+    ColorGradient_AddStop(&s_ribbonGrad, 0.00f, (Color){ 245, 253, 255, 255 });
+    ColorGradient_AddStop(&s_ribbonGrad, 0.25f, ColorAlpha(ColorLerp(ELEMENT_COLOR_WATER, WHITE, 0.6f), 0.9f));
+    ColorGradient_AddStop(&s_ribbonGrad, 0.65f, ColorAlpha(ColorLerp(ELEMENT_COLOR_WATER, WHITE, 0.2f), 0.45f));
+    ColorGradient_AddStop(&s_ribbonGrad, 1.00f, (Color){ 8, 28, 55, 0 });
+
+    // Dissolve rain: element blue thinning to nothing on the way down.
+    ColorGradient_AddStop(&s_rainGrad, 0.00f, ColorLerp(ELEMENT_COLOR_WATER, WHITE, 0.4f));
+    ColorGradient_AddStop(&s_rainGrad, 0.55f, ColorAlpha(ELEMENT_COLOR_WATER, 0.65f));
+    ColorGradient_AddStop(&s_rainGrad, 1.00f, (Color){ 12, 35, 70, 0 });
+
+    ForceField_Clear(&s_rainFall);
+    ForceField_AddLayer(&s_rainFall, (ForceLayer){
+        .type = FORCE_GRAVITY_DIR,
+        .direction = { 0.0f, -1.0f, 0.0f },
+        .strength = 420.0f // sustained regime — droplets fall a full dome height
+    });
+}
+
+void CastThuyKinhSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params)
+{
+    (void)target; // self-cast: the ward is anchored on the caster
+
+    if (!SkillManager_CanCast(s_skillIndex, agentId)) return;
+
+    WardInstance *w = NULL;
+    for (int i = 0; i < MAX_WARDS; i++) {
+        if (s_wards[i].state == WARD_INACTIVE) { w = &s_wards[i]; break; }
+    }
+    if (!w) return;
+
+    float scale = (params.sizeScale > 0.0f) ? params.sizeScale : 1.0f;
+
+    w->state        = WARD_GATHER;
+    w->timer        = 0.0f;
+    w->scale        = scale;
+    w->radius       = SHIELD_RADIUS * scale
+                    * ((float)GetRandomValue(95, 108) / 100.0f); // §12.3
+    w->growth       = 0.0f;
+    w->dissolve     = 0.0f;
+    w->center       = (Vector3){ startPos.x, 0.0f, startPos.z };
+    w->ownerAgentId = agentId;
+    w->mistAccum    = 0.0f;
+    w->ringTimer    = 0.0f;
+
+    for (int r = 0; r < RIBBONS_PER_WARD; r++) {
+        w->ribbonIds[r] = -1;
+        w->dripTimer[r] = (float)GetRandomValue(0, 20) / 100.0f;
+        w->bobPhase[r]  = (float)GetRandomValue(0, 628) / 100.0f;
+        w->orbitAngle[r] = (float)r / RIBBONS_PER_WARD * 2.0f * PI
+                         + (float)GetRandomValue(-40, 40) * DEG2RAD;
+        w->orbitSpeed[r] = (2.1f + 0.35f * r) * ((r % 2 == 0) ? 1.0f : -1.0f);
+
+        // Tilted orbit plane: normal leaned 18–38° off vertical, random yaw.
+        float yaw  = (float)GetRandomValue(0, 3600) / 10.0f * DEG2RAD;
+        float tilt = (float)GetRandomValue(18, 38) * DEG2RAD;
+        Vector3 n  = { sinf(tilt) * cosf(yaw), cosf(tilt), sinf(tilt) * sinf(yaw) };
+        w->orbitU[r] = Vector3Normalize(Vector3CrossProduct(n, (Vector3){ 0.0f, 0.0f, 1.0f }));
+        w->orbitV[r] = Vector3CrossProduct(n, w->orbitU[r]);
+    }
+
+    // Mist swirl: slow vortex around the dome axis + a gentle pull toward
+    // the dome heart + drag, so mist curls along the inner wall.
+    ForceField_Clear(&w->swirl);
+    ForceField_AddLayer(&w->swirl, (ForceLayer){
+        .type = FORCE_VORTEX,
+        .origin = { w->center.x, 0.0f, w->center.z },
+        .direction = { 0.0f, 1.0f, 0.0f },
+        .strength = 2.2f, .radius = w->radius * 1.5f, .falloff = 0.0f
+    });
+    ForceField_AddLayer(&w->swirl, (ForceLayer){
+        .type = FORCE_GRAVITY_POINT,
+        .origin = { w->center.x, DomeCenterY(w), w->center.z },
+        .strength = 28.0f, .radius = w->radius * 2.0f, .falloff = 1.0f
+    });
+    ForceField_AddLayer(&w->swirl, (ForceLayer){
+        .type = FORCE_DRAG, .strength = 0.3f
+    });
+
+    SpawnCastEffect(startPos, EFFECT_PRESET_WATER_SPLASH, scale * 0.7f);
+    PlayCastSound(EFFECT_PRESET_WATER_SPLASH);
+    VFXLight_Spawn((Vector3){ w->center.x, 20.0f, w->center.z },
+                   ELEMENT_COLOR_WATER, 70.0f * scale, GATHER_TIME + BLOOM_TIME,
+                   VFX_PRIORITY_LOW);
+
+    SkillManager_TriggerCooldown(s_skillIndex, agentId,
+                                 Skill_CalculateCooldown(SKILL_CAT_BUFF_SUPPORT, params));
+}
+
+static void SpawnRibbons(WardInstance *w)
+{
+    Vector3 domeC = { w->center.x, DomeCenterY(w), w->center.z };
+    for (int r = 0; r < RIBBONS_PER_WARD; r++) {
+        Vector3 offset = Vector3Add(
+            Vector3Scale(w->orbitU[r], cosf(w->orbitAngle[r]) * w->radius),
+            Vector3Scale(w->orbitV[r], sinf(w->orbitAngle[r]) * w->radius));
+
+        TrailConfig cfg = { 0 };
+        cfg.type        = TRAIL_TYPE_FOLLOWER;
+        cfg.pos         = Vector3Add(domeC, offset);
+        // No texture: a radial flare stretched along the ribbon reads as a
+        // chain of smeared blobs. Thin + near-white so post-FX bloom catches
+        // it and it reads as an energy stream, not a ribbon of cloth.
+        cfg.len         = 2.6f * w->scale;
+        cfg.thick       = 1.2f * w->scale;
+        cfg.trailLength = 40.0f; // FOLLOWER: integer history node count
+        cfg.life        = ACTIVE_TIME + 2.0f; // killed manually at dissolve
+        cfg.scale       = w->scale;
+        cfg.gradient    = &s_ribbonGrad;
+        cfg.tint        = ELEMENT_COLOR_WATER;
+        cfg.priority    = VFX_PRIORITY_LOW;
+        w->ribbonIds[r] = SpawnTrailEntity(cfg);
+    }
+}
+
+static void WardBloomBurst(WardInstance *w)
+{
+    Vector3 domeC = { w->center.x, DomeCenterY(w), w->center.z };
+
+    PlayImpactSound(EFFECT_PRESET_WATER_SPLASH);
+    SpawnGroundDecal(DECAL_PRESET_WATER_RIPPLE, w->center, w->radius * 1.4f, 2.2f);
+    SpawnGroundDecal(DECAL_PRESET_WATER, w->center, w->radius * 0.55f,
+                     ACTIVE_TIME + DISSOLVE_TIME); // wet pool under the ward
+    ScreenDistort_Add(domeC, w->radius * 1.5f, 0.07f, 0.45f, 190.0f);
+    CameraFX_Shake(0.12f);
+
+    // Splash crown along the rim as the dome surfaces.
+    for (int i = 0; i < 26; i++) {
+        float a = (float)i / 26.0f * 2.0f * PI
+                + (float)GetRandomValue(-12, 12) * DEG2RAD; // §12.2 jitter
+        SpawnParticle((ParticleConfig){
+            .position = { w->center.x + cosf(a) * w->radius * 0.95f, 3.0f,
+                          w->center.z + sinf(a) * w->radius * 0.95f },
+            .velocity = { cosf(a) * 55.0f,
+                          (float)GetRandomValue(70, 130),
+                          sinf(a) * 55.0f },
+            .radius   = (float)GetRandomValue(15, 32) / 10.0f * w->scale,
+            .lifetime = 0.9f,
+            .gradient = &s_rainGrad,
+            .forceField = &s_rainFall
+        });
+    }
+
+    // Protective surge: no damage, just shoves enemies out of the ward.
+    Entity_ApplyAoEDamage(w->center, w->radius * 1.25f, 0.0f, 110.0f);
+
+    // The blessing itself. NOTE: Entity_ApplyAoEBuff has no team filter yet
+    // (ENTITIES_API.md §9) — buffs anything inside, ally or enemy.
+    Entity_ApplyAoEBuff(w->center, w->radius, BUFF_SPEED_MULT, ACTIVE_TIME);
+
+    // One light held for the ward's whole life (VFX rule: keep lights alive
+    // through the active phase, don't strobe per frame).
+    VFXLight_Spawn(domeC, ELEMENT_COLOR_WATER, 130.0f * w->scale,
+                   ACTIVE_TIME + DISSOLVE_TIME, VFX_PRIORITY_LOW);
+}
+
+static void UpdateRibbons(WardInstance *w, float dt)
+{
+    Vector3 domeC = { w->center.x, DomeCenterY(w), w->center.z };
+    for (int r = 0; r < RIBBONS_PER_WARD; r++) {
+        if (w->ribbonIds[r] < 0) continue;
+        TrailEntity *tr = GetTrail(w->ribbonIds[r]);
+        if (!tr) { w->ribbonIds[r] = -1; continue; }
+
+        w->orbitAngle[r] += w->orbitSpeed[r] * dt;
+        // Orbit radius breathes and bobs so no ribbon traces a perfect circle.
+        float breathe = 1.05f + 0.06f * sinf(w->timer * 1.3f + w->bobPhase[r]);
+        float bob     = sinf(w->timer * 1.7f + w->bobPhase[r]) * w->radius * 0.10f;
+
+        Vector3 offset = Vector3Add(
+            Vector3Scale(w->orbitU[r], cosf(w->orbitAngle[r]) * w->radius * breathe),
+            Vector3Scale(w->orbitV[r], sinf(w->orbitAngle[r]) * w->radius * breathe));
+        Vector3 tip = Vector3Add(domeC, offset);
+        tip.y += bob;
+        if (tip.y < 4.0f) tip.y = 4.0f; // keep ribbons above the ground plane
+        UpdateFollowerPosition(w->ribbonIds[r], tip);
+
+        // Droplets shed from the ribbon crest, raining down the dome wall.
+        w->dripTimer[r] += dt;
+        if (w->dripTimer[r] >= DRIP_INTERVAL) {
+            w->dripTimer[r] = (float)GetRandomValue(-8, 6) / 100.0f;
+            SpawnParticle((ParticleConfig){
+                .position   = tip,
+                .velocity   = { (float)GetRandomValue(-15, 15), -10.0f,
+                                (float)GetRandomValue(-15, 15) },
+                .radius     = (float)GetRandomValue(10, 20) / 10.0f * w->scale,
+                .lifetime   = 0.9f,
+                .gradient   = &s_rainGrad,
+                .forceField = &s_rainFall
+            });
+        }
+    }
+}
+
+void UpdateThuyKinhSkill(float dt, Vector3 enemyPos, float enemyRadius)
+{
+    (void)enemyPos; (void)enemyRadius;
+
+    for (int i = 0; i < MAX_WARDS; i++) {
+        WardInstance *w = &s_wards[i];
+        if (w->state == WARD_INACTIVE) continue;
+        w->timer += dt;
+
+        switch (w->state) {
+        case WARD_GATHER: {
+            // Droplets converging on the caster from a collapsing ring.
+            for (int p = 0; p < 3; p++) {
+                float a = (float)GetRandomValue(0, 3600) / 10.0f * DEG2RAD;
+                float r = w->radius * (1.3f - w->timer / GATHER_TIME);
+                Vector3 pos = { w->center.x + cosf(a) * r,
+                                (float)GetRandomValue(2, 30),
+                                w->center.z + sinf(a) * r };
+                Vector3 toC = Vector3Subtract(
+                    (Vector3){ w->center.x, 18.0f, w->center.z }, pos);
+                SpawnParticle((ParticleConfig){
+                    .position = pos,
+                    .velocity = Vector3Scale(Vector3Normalize(toC), 130.0f),
+                    .radius   = (float)GetRandomValue(10, 22) / 10.0f * w->scale,
+                    .lifetime = 0.45f,
+                    .gradient = &s_mistGrad
+                });
+            }
+            if (w->timer >= GATHER_TIME) {
+                w->state = WARD_BLOOM;
+                w->timer = 0.0f;
+            }
+            break;
+        }
+
+        case WARD_BLOOM: {
+            float t = w->timer / BLOOM_TIME;
+            float e = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t); // easeOutCubic
+            w->growth = e;
+            if (w->timer >= BLOOM_TIME) {
+                w->state  = WARD_ACTIVE;
+                w->timer  = 0.0f;
+                w->growth = 1.0f;
+                WardBloomBurst(w);
+                SpawnRibbons(w);
+            }
+            break;
+        }
+
+        case WARD_ACTIVE: {
+            UpdateRibbons(w, dt);
+
+            // Soft additive ring pulses at the waterline — overlapping decals
+            // that each fade out give a breathing glow with feathered edges
+            // (the old 3D torus read as a hard plastic hoop).
+            w->ringTimer += dt;
+            if (w->ringTimer >= 0.55f) {
+                w->ringTimer = 0.0f;
+                DecalSystem_AddEx(w->center,
+                                  (float)GetRandomValue(0, 360), 9.0f,
+                                  w->radius * 1.00f, w->radius * 1.08f,
+                                  s_ringTex, 1.0f,
+                                  ColorAlpha(ELEMENT_COLOR_WATER, 0.30f),
+                                  BLEND_ADDITIVE, 0.0f);
+            }
+
+            // Mist curling up the inside of the dome.
+            w->mistAccum += dt * MIST_RATE;
+            while (w->mistAccum >= 1.0f) {
+                w->mistAccum -= 1.0f;
+                float a = (float)GetRandomValue(0, 3600) / 10.0f * DEG2RAD;
+                float r = w->radius * (float)GetRandomValue(30, 92) / 100.0f;
+                SpawnParticle((ParticleConfig){
+                    .position   = { w->center.x + cosf(a) * r,
+                                    (float)GetRandomValue(2, 12),
+                                    w->center.z + sinf(a) * r },
+                    .velocity   = { -sinf(a) * 18.0f,
+                                    (float)GetRandomValue(24, 50),
+                                    cosf(a) * 18.0f },
+                    .radius     = (float)GetRandomValue(16, 34) / 10.0f * w->scale,
+                    .lifetime   = 1.5f,
+                    .gradient   = &s_mistGrad,
+                    .forceField = &w->swirl
+                });
+            }
+
+            if (w->timer >= ACTIVE_TIME) WardStartDissolve(w);
+            break;
+        }
+
+        case WARD_DISSOLVE: {
+            w->dissolve = SmoothStep01(w->timer / DISSOLVE_TIME);
+            if (w->timer >= DISSOLVE_TIME) {
+                w->state    = WARD_INACTIVE;
+                w->dissolve = 0.0f;
+            }
+            break;
+        }
+
+        default: break;
+        }
+    }
+}
+
+void DrawThuyKinhSkill(void)
+{
+    bool anyDome = false;
+    for (int i = 0; i < MAX_WARDS; i++) {
+        WardState st = s_wards[i].state;
+        if (st == WARD_BLOOM || st == WARD_ACTIVE || st == WARD_DISSOLVE) {
+            anyDome = true;
+            break;
+        }
+    }
+    if (!anyDome) return;
+
+    rlDisableDepthMask();
+
+    // The water dome (translucent custom shader). Base ring is decal-based
+    // (see WARD_ACTIVE update), not a 3D mesh — nothing else to draw here.
+    BeginBlendMode(BLEND_ALPHA);
+    BeginShaderMode(s_shader);
+    // Immediate-mode draw below: SkillManager_BeginShader fixes matModel to
+    // identity and binds u_time/viewPos/u_resolution (CORE_API.md Rule D).
+    SkillManager_BeginShader(s_shader);
+
+    Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
+    SetShaderValue(s_shader, s_lightDirLoc, &lightDir, SHADER_UNIFORM_VEC3);
+    // Flow-map textures: bound via SetShaderValueTexture inside the active
+    // shader mode (rlActiveTextureSlot binding is silently broken — CORE_API).
+    SetShaderValueTexture(s_shader, s_flowTexLoc, s_flowTex);
+    SetShaderValueTexture(s_shader, s_causticsLoc, s_causticsTex);
+    rlColor4ub(255, 255, 255, 255); // Rule 11.1: reset vertex color
+
+    for (int i = 0; i < MAX_WARDS; i++) {
+        const WardInstance *w = &s_wards[i];
+        if (w->state != WARD_BLOOM && w->state != WARD_ACTIVE &&
+            w->state != WARD_DISSOLVE) continue;
+
+        float r = w->radius * (0.15f + 0.85f * w->growth);
+        SetShaderValue(s_shader, s_dissolveLoc, &w->dissolve, SHADER_UNIFORM_FLOAT);
+        DrawCoreSphere((Vector3){ w->center.x, r * 0.55f, w->center.z },
+                       r, 36, 48, WHITE);
+    }
+
+    SkillManager_EndShader();
+    EndShaderMode();
+    EndBlendMode();
+    rlEnableDepthMask();
+}
+
+void UnloadThuyKinhSkill(void)
+{
+    // No-op: shader is owned by ResourceManager; trails die via state machine.
+}
+
+bool IsThuyKinhSkillCoiling(void)
+{
+    for (int i = 0; i < MAX_WARDS; i++) {
+        if (s_wards[i].state == WARD_GATHER || s_wards[i].state == WARD_BLOOM)
+            return true;
+    }
+    return false;
+}
+
+int GetThuyKinhSkillProjectiles(SkillProjectile *outProjectiles, int maxProjectiles)
+{
+    (void)outProjectiles; (void)maxProjectiles;
+    return 0; // pure buff/ward — nothing flies, nothing to intercept
+}
+
+void DeactivateThuyKinhProjectile(int index)
+{
+    (void)index;
+}

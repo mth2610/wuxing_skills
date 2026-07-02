@@ -1121,23 +1121,28 @@ typedef struct {
     float thickness;       // ribbon half-width in world units (1–3)
     float envelopePow;     // displacement = t^envelopePow (0.7=fast bloom, 1.5=slow whip)
     bool  sharpKinks;      // true=linear (jagged lightning), false=Catmull-Rom (smooth)
+    float taperTip;        // width mult at far end: 0.1=needle tip, 1.0=uniform; <=0 → 1.0
+    int   branchCount;     // bolts only: forks off main channel (0–4), regenerated per flicker
+    float branchScale;     // branch width/alpha vs main channel (0.4–0.6)
 } ProcRayConfig;
 
 // Named presets
-ProcRayConfig ProcRay_LightningConfig(void);      // violet/white, high jitter, envelopePow=0.7
-ProcRayConfig ProcRay_BoltLightningConfig(void);  // same colors, amplitudeRatio=0.10 — sky→ground bolts
+ProcRayConfig ProcRay_LightningConfig(void);      // violet/white, high jitter, taperTip=0.12 needle tendrils
+ProcRayConfig ProcRay_BoltLightningConfig(void);  // amplitudeRatio=0.10, branchCount=3 — sky→ground bolts
 ProcRayConfig ProcRay_EnergyConfig(void);         // cyan/gold, smooth Catmull-Rom
 ProcRayConfig ProcRay_WindConfig(void);           // white/teal, very low amplitude
 
 // Free-end ray — origin fixed, free end whips via traveling wave. Pool: 32 slots.
 int  SpawnProcRay(ProcRayConfig config, float scale);
 void ProcRay_SetPhase(int id, float phase);   // offset concurrent rays so they differ
+void ProcRay_SetBrightness(int id, float b);  // alpha mult, 1=normal, >1 saturates to flash
 void ProcRay_Update(int id, Vector3 origin, Vector3 dir, float length, float scale, float dt);
 void ProcRay_Draw(int id, Camera3D cam);
 void ProcRay_Kill(int id);
 
-// Fixed bolt — both endpoints clamped, jagged middle flickers at 50ms interval. Pool: 16 slots.
+// Fixed bolt — both endpoints clamped, jagged middle flickers at 50ms interval. Pool: 32 slots.
 int  SpawnProcBolt(ProcRayConfig config, float scale);
+void ProcBolt_SetBrightness(int id, float b); // drive strike flash→afterglow lifecycle
 void ProcBolt_Update(int id, Vector3 from, Vector3 to, float scale, float dt);
 void ProcBolt_Draw(int id, Camera3D cam);
 void ProcBolt_Kill(int id);
@@ -1169,6 +1174,9 @@ ProcBolt_Kill(id);
 * Call `ProcRay_SetPhase` on each ray after spawn when spawning N concurrent rays — without it, all rays share phase=0 and look identical.
 * `SpawnProcRay` assigns a random `refHint` per slot to prevent all horizontal rays from sharing the same perpendicular plane.
 * `waveSpeed = 0.0f` is correct for bolts (both endpoints fixed, no traveling wave needed).
+* Rendering is 3-pass per channel (outer haze 2.4× → glow → hot core); branches render thinner (`branchScale`) and at 0.7× brightness.
+* A freshly spawned bolt has no waypoints until its first `ProcBolt_Update` — call `ProcBolt_Update(id, from, to, scale, 0.0f)` right after `SpawnProcBolt` if you draw it the same frame (the first Update always regenerates immediately).
+* Strike lifecycle pattern: `ProcBolt_SetBrightness(id, 1.9f)` for the first ~70 ms (leader flash), then decay toward ~0.45 with small random flicker for the afterglow.
 
 ### Combat (`core/skill_manager.h`)
 ```c

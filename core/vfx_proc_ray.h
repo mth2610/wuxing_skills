@@ -27,6 +27,10 @@ typedef struct {
                            // lower = faster bloom (0.7=lightning diverges early, 1.5=slow whip)
     bool  sharpKinks;      // true=linear interp between waypoints (jagged, lightning-style)
                            // false=Catmull-Rom (smooth curves, energy/wind-style)
+    float taperTip;        // width multiplier at the far end (t=1). 0.1=needle tip,
+                           // 1.0=uniform. <=0 is treated as 1.0 (backward compat)
+    int   branchCount;     // bolts only: forks off the main channel (0–4). Rays ignore it.
+    float branchScale;     // branch width/alpha relative to main channel (try 0.4–0.6)
 } ProcRayConfig;
 
 // Named presets — call these to get a ready-to-use config, tweak fields if needed.
@@ -38,14 +42,17 @@ ProcRayConfig ProcRay_WindConfig(void);          // white/teal, very low amplitu
 // ── Free-end ray (one fixed origin, one whipping free end) ─────────────────
 int  SpawnProcRay(ProcRayConfig config, float scale);
 void ProcRay_SetPhase(int id, float phase);  // offset concurrent rays so they differ
+void ProcRay_SetBrightness(int id, float b); // alpha multiplier, 1=normal. >1 saturates toward flash
 void ProcRay_Update(int id, Vector3 origin, Vector3 dir, float length, float scale, float dt);
 void ProcRay_Draw(int id, Camera3D cam);
 void ProcRay_Kill(int id);
 
 // ── Fixed bolt (both endpoints clamped, jagged middle flickers) ────────────
 // Use for sky→ground lightning, A→B energy beams — anywhere both ends are pinned.
-// Pool: 16 simultaneous bolts.
+// Supports child branches (config.branchCount) regenerated on each flicker.
+// Pool: 32 simultaneous bolts.
 int  SpawnProcBolt(ProcRayConfig config, float scale);
+void ProcBolt_SetBrightness(int id, float b); // alpha multiplier — drive strike flash→afterglow
 void ProcBolt_Update(int id, Vector3 from, Vector3 to, float scale, float dt);
 void ProcBolt_Draw(int id, Camera3D cam);
 void ProcBolt_Kill(int id);

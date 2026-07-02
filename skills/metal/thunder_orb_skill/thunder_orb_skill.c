@@ -22,11 +22,14 @@ extern Camera3D camera;
 
 #define THUNDER_ORB_FLIGHT_SPEED     380.0f
 #define THUNDER_ORB_ORB_RADIUS        12.0f
-#define THUNDER_ORB_FLIGHT_RAYS       10
-#define THUNDER_ORB_RAY_LEN_MIN       22.0f
-#define THUNDER_ORB_RAY_LEN_MAX       80.0f
-#define THUNDER_ORB_RAY_SCALE_MIN      0.5f
-#define THUNDER_ORB_RAY_SCALE_MAX      1.4f
+#define THUNDER_ORB_FLIGHT_RAYS        7
+#define THUNDER_ORB_RAY_LEN_MIN       24.0f
+#define THUNDER_ORB_RAY_LEN_MAX       55.0f
+#define THUNDER_ORB_RAY_SCALE_MIN      0.55f
+#define THUNDER_ORB_RAY_SCALE_MAX      1.0f
+#define THUNDER_ORB_SURFACE_ARCS       3
+#define THUNDER_ORB_SURF_ARC_LIFE_MIN  0.06f
+#define THUNDER_ORB_SURF_ARC_LIFE_MAX  0.14f
 
 #define THUNDER_ORB_ARC_PER_STRIKE    3
 #define THUNDER_ORB_ARC_LIFE          0.12f
@@ -59,10 +62,19 @@ typedef struct {
     int     rayId;
     bool    active;
     float   aliveTimer;
+    float   lifeInit;    // initial aliveTimer — for the flash→afterglow envelope
     float   gapTimer;
     Vector3 skyOrigin;   // top endpoint (fixed)
     Vector3 groundPoint; // bottom endpoint (fixed)
 } RainSlot;
+
+// Short-lived arc crawling across the orb surface (ball-lightning texture)
+typedef struct {
+    int     rayId;
+    bool    active;
+    float   lifeLeft;
+    Vector3 dirA, dirB;  // unit dirs from orb center — endpoints follow the orb
+} SurfaceArc;
 
 typedef enum { PHASE_INACTIVE = 0, PHASE_FLIGHT, PHASE_RAIN } ThunderOrbPhase;
 
@@ -78,6 +90,7 @@ typedef struct {
     Vector3 flightRayDirs[THUNDER_ORB_FLIGHT_RAYS];
     float   flightRayLengths[THUNDER_ORB_FLIGHT_RAYS];
     float   flightRayScales[THUNDER_ORB_FLIGHT_RAYS];
+    SurfaceArc surfArcs[THUNDER_ORB_SURFACE_ARCS];
 
     // rain
     Vector3   impactPos;
@@ -119,8 +132,54 @@ static void EmitOrbParticles(Vector3 pos) {
     }
 }
 
+// Layered hot core: small white-hot center + wide violet halo, refreshed each
+// frame with very short lifetimes so the orb reads as a solid ball of plasma.
+static void EmitOrbCore(Vector3 pos) {
+    ParticleConfig p = { 0 };
+    p.position = pos;
+    p.velocity = (Vector3){ 0 };
+
+    p.colorStart = (Color){ 255, 255, 255, 255 };
+    p.colorEnd   = (Color){ 210, 190, 255,   0 };
+    p.radius     = THUNDER_ORB_ORB_RADIUS * 0.7f;
+    p.lifetime   = 0.09f;
+    SpawnParticle(p);
+
+    p.colorStart = (Color){ 150, 110, 255, 110 };
+    p.colorEnd   = (Color){  70,  30, 200,   0 };
+    p.radius     = THUNDER_ORB_ORB_RADIUS * 1.6f;
+    p.lifetime   = 0.13f;
+    SpawnParticle(p);
+}
+
+static ProcRayConfig SurfArcConfig(void) {
+    ProcRayConfig c = ProcRay_BoltLightningConfig();
+    c.thickness      = 0.6f;
+    c.amplitudeRatio = 0.30f; // wander off the chord — reads as crawling on the surface
+    c.branchCount    = 0;
+    c.taperTip       = 1.0f;
+    return c;
+}
+
+static Vector3 RandUnitDir(void) {
+    float a = RandRange(0.0f, 2.0f * PI);
+    float c = RandRange(-1.0f, 1.0f);
+    float sq = sqrtf(1.0f - c * c);
+    return (Vector3){ sq * cosf(a), c, sq * sinf(a) };
+}
+
+static void RespawnSurfaceArc(SurfaceArc *arc) {
+    arc->dirA     = RandUnitDir();
+    arc->dirB     = RandUnitDir();
+    arc->lifeLeft = RandRange(THUNDER_ORB_SURF_ARC_LIFE_MIN, THUNDER_ORB_SURF_ARC_LIFE_MAX);
+    arc->rayId    = SpawnProcBolt(SurfArcConfig(), 0.5f);
+    arc->active   = arc->rayId >= 0;
+}
+
 static void KillAllFlightRays(void) {
     for (int i = 0; i < THUNDER_ORB_FLIGHT_RAYS; i++) ProcRay_Kill(s.flightRayIds[i]);
+    for (int i = 0; i < THUNDER_ORB_SURFACE_ARCS; i++)
+        if (s.surfArcs[i].active) { ProcBolt_Kill(s.surfArcs[i].rayId); s.surfArcs[i].active = false; }
 }
 
 static void KillAllRainBolts(void) {
@@ -134,6 +193,8 @@ static void SpawnArcBurst(Vector3 groundPoint) {
     ProcRayConfig arcCfg = ProcRay_BoltLightningConfig();
     arcCfg.thickness      = 0.8f;
     arcCfg.amplitudeRatio = 0.25f; // more wandering for the short arcs
+    arcCfg.branchCount    = 0;     // ground crawlers stay simple strands
+    arcCfg.taperTip       = 0.3f;  // die out into the ground
 
     for (int k = 0; k < THUNDER_ORB_ARC_PER_STRIKE; k++) {
         // find a free arc slot
@@ -152,10 +213,27 @@ static void SpawnArcBurst(Vector3 groundPoint) {
         s.arcBolts[slot].lifeLeft = THUNDER_ORB_ARC_LIFE;
         s.arcBolts[slot].rayId    = SpawnProcBolt(arcCfg, 0.6f);
         s.arcBolts[slot].active   = true;
+        ProcBolt_Update(s.arcBolts[slot].rayId, groundPoint, tip, 0.6f, 0.0f);
     }
 }
 
 // ── rain bolt ─────────────────────────────────────────────────────────────
+
+// Fast upward sparks where the bolt hits the ground — sells the impact energy
+static void EmitStrikeSparks(Vector3 groundPoint) {
+    ParticleConfig p = { 0 };
+    p.colorStart = (Color){ 255, 250, 255, 255 };
+    p.colorEnd   = (Color){ 140,  90, 255,   0 };
+    p.radius     = 2.2f;
+    for (int i = 0; i < 10; i++) {
+        float a   = RandRange(0.0f, 2.0f * PI);
+        float out = RandRange(30.0f, 130.0f);
+        p.position = groundPoint;
+        p.velocity = (Vector3){ cosf(a) * out, RandRange(140.0f, 320.0f), sinf(a) * out };
+        p.lifetime = RandRange(0.25f, 0.5f);
+        SpawnParticle(p);
+    }
+}
 
 static void SpawnRainBolt(RainSlot *slot) {
     float angle = RandRange(0.0f, 2.0f * PI);
@@ -163,12 +241,21 @@ static void SpawnRainBolt(RainSlot *slot) {
     float px    = s.impactPos.x + cosf(angle) * dist;
     float pz    = s.impactPos.z + sinf(angle) * dist;
 
-    slot->skyOrigin   = (Vector3){ px, THUNDER_ORB_RAIN_Y_ORIGIN, pz };
+    // sky entry offset sideways so channels slant like real strikes
+    slot->skyOrigin   = (Vector3){ px + RandRange(-45.0f, 45.0f),
+                                   THUNDER_ORB_RAIN_Y_ORIGIN,
+                                   pz + RandRange(-45.0f, 45.0f) };
     slot->groundPoint = (Vector3){ px, 0.0f, pz };
-    slot->aliveTimer  = RandRange(0.25f, 0.45f);
+    slot->lifeInit    = RandRange(0.28f, 0.5f);
+    slot->aliveTimer  = slot->lifeInit;
     slot->active      = true;
 
     slot->rayId = SpawnProcBolt(ProcRay_BoltLightningConfig(), THUNDER_ORB_BOLT_SCALE);
+    // generate waypoints now — the bolt is drawn this same frame
+    ProcBolt_Update(slot->rayId, slot->skyOrigin, slot->groundPoint,
+                    THUNDER_ORB_BOLT_SCALE, 0.0f);
+    ProcBolt_SetBrightness(slot->rayId, 1.9f); // leader flash frame
+    EmitStrikeSparks(slot->groundPoint);
 
     // damage enemy if bolt lands nearby
     if (Vector3Distance(slot->groundPoint, s.lastEnemyPos) < s.lastEnemyRadius + 60.0f) {
@@ -230,7 +317,7 @@ void CastThunderOrbSkill(int agentId, Vector3 startPos, Vector3 target, SkillPar
     s.orbPos       = startPos;
     s.orbTarget    = target;
 
-    // 10 rays spread evenly in 3D (Fibonacci sphere), each with random length+scale
+    // Rays spread evenly in 3D (Fibonacci sphere), each with random length+scale
     for (int i = 0; i < THUNDER_ORB_FLIGHT_RAYS; i++) {
         s.flightRayDirs[i]    = FibSphereDir(i, THUNDER_ORB_FLIGHT_RAYS);
         s.flightRayLengths[i] = RandRange(THUNDER_ORB_RAY_LEN_MIN, THUNDER_ORB_RAY_LEN_MAX);
@@ -238,6 +325,7 @@ void CastThunderOrbSkill(int agentId, Vector3 startPos, Vector3 target, SkillPar
         s.flightRayIds[i]     = SpawnProcRay(ProcRay_LightningConfig(), s.flightRayScales[i]);
         ProcRay_SetPhase(s.flightRayIds[i], (float)i * (2.0f * PI / (float)THUNDER_ORB_FLIGHT_RAYS));
     }
+    for (int i = 0; i < THUNDER_ORB_SURFACE_ARCS; i++) RespawnSurfaceArc(&s.surfArcs[i]);
 }
 
 void UpdateThunderOrbSkill(float dt, Vector3 enemyPos, float enemyRadius) {
@@ -267,13 +355,36 @@ void UpdateThunderOrbSkill(float dt, Vector3 enemyPos, float enemyRadius) {
         s.orbPos.y += dir.y * inv * THUNDER_ORB_FLIGHT_SPEED * dt;
         s.orbPos.z += dir.z * inv * THUNDER_ORB_FLIGHT_SPEED * dt;
 
-        VFXLight_Spawn(s.orbPos, (Color){ 220, 230, 255, 200 }, 80.0f, 0.07f, VFX_PRIORITY_LOW);
+        // flickering light — plasma is never steady
+        VFXLight_Spawn(s.orbPos, (Color){ 220, 230, 255, 200 },
+                       RandRange(70.0f, 110.0f), 0.07f, VFX_PRIORITY_LOW);
+        EmitOrbCore(s.orbPos);
         EmitOrbParticles(s.orbPos);
 
         for (int i = 0; i < THUNDER_ORB_FLIGHT_RAYS; i++) {
             ProcRay_Update(s.flightRayIds[i], s.orbPos,
                            s.flightRayDirs[i], s.flightRayLengths[i],
                            s.flightRayScales[i], dt);
+            ProcRay_SetBrightness(s.flightRayIds[i], RandRange(0.65f, 1.15f));
+        }
+
+        // surface arcs crawl on the orb shell, respawning at new spots
+        for (int i = 0; i < THUNDER_ORB_SURFACE_ARCS; i++) {
+            SurfaceArc *arc = &s.surfArcs[i];
+            if (arc->active) {
+                arc->lifeLeft -= dt;
+                if (arc->lifeLeft <= 0.0f) {
+                    ProcBolt_Kill(arc->rayId);
+                    arc->active = false;
+                }
+            }
+            if (!arc->active) RespawnSurfaceArc(arc);
+            if (arc->active) {
+                float r = THUNDER_ORB_ORB_RADIUS * 0.95f;
+                Vector3 a = Vector3Add(s.orbPos, Vector3Scale(arc->dirA, r));
+                Vector3 b = Vector3Add(s.orbPos, Vector3Scale(arc->dirB, r));
+                ProcBolt_Update(arc->rayId, a, b, 0.5f, dt);
+            }
         }
 
     } else if (s.phase == PHASE_RAIN) {
@@ -301,6 +412,13 @@ void UpdateThunderOrbSkill(float dt, Vector3 enemyPos, float enemyRadius) {
                 } else {
                     ProcBolt_Update(slot->rayId, slot->skyOrigin, slot->groundPoint,
                                     THUNDER_ORB_BOLT_SCALE, dt);
+                    // strike lifecycle: blinding flash ~70ms, then flickering afterglow decay
+                    float age = slot->lifeInit - slot->aliveTimer;
+                    float b   = (age < 0.07f)
+                                    ? 1.9f
+                                    : (0.45f + 0.75f * (slot->aliveTimer / slot->lifeInit))
+                                          * RandRange(0.8f, 1.1f);
+                    ProcBolt_SetBrightness(slot->rayId, b);
                 }
             } else {
                 slot->gapTimer -= dt;
@@ -317,6 +435,7 @@ void UpdateThunderOrbSkill(float dt, Vector3 enemyPos, float enemyRadius) {
                 arc->active = false;
             } else {
                 ProcBolt_Update(arc->rayId, arc->from, arc->to, 0.6f, dt);
+                ProcBolt_SetBrightness(arc->rayId, arc->lifeLeft / THUNDER_ORB_ARC_LIFE);
             }
         }
     }
@@ -326,6 +445,9 @@ void DrawThunderOrbSkill(void) {
     if (s.phase == PHASE_FLIGHT) {
         for (int i = 0; i < THUNDER_ORB_FLIGHT_RAYS; i++)
             ProcRay_Draw(s.flightRayIds[i], camera);
+        for (int i = 0; i < THUNDER_ORB_SURFACE_ARCS; i++)
+            if (s.surfArcs[i].active)
+                ProcBolt_Draw(s.surfArcs[i].rayId, camera);
     } else if (s.phase == PHASE_RAIN) {
         for (int i = 0; i < THUNDER_ORB_RAIN_SLOTS; i++)
             if (s.rainSlots[i].active)
