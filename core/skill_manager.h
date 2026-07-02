@@ -147,4 +147,16 @@ void SkillManager_TriggerCooldown(int skillIndex, int agentId, float cooldownSec
 void RegisterSkillAbort(int skillIndex, void (*abort)(int agentId));
 void AbortSkill(int skillIndex, int agentId);
 
+// Optional lifecycle-end query registration (CORE_ISSUES.md Item 13). A
+// skill may call this in addition to RegisterSkill() if it wants gameplay
+// code to be able to ask "is there still an active instance of this skill
+// owned by agentId X" — e.g. an Earth wall / Wood root-zone effect that
+// gameplay logic needs to know is truly gone before releasing whatever it's
+// blocking. Purely additive, does not change the required lifecycle
+// contract. Skills that never call this report "not active" unconditionally
+// (safe default — a caller never waits forever on a skill that never opted
+// in).
+void RegisterSkillLifecycleQuery(int skillIndex, bool (*hasActiveInstance)(int agentId));
+bool Skill_HasActiveInstance(int skillIndex, int agentId);
+
 #endif // SKILL_MANAGER_H

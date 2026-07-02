@@ -65,11 +65,23 @@ static ColorGradient s_dustGrad;
 // CORE_ISSUES.md Item 16 — cooldown gating state, cached once in Init
 static int s_skillIndex = -1;
 
+// CORE_ISSUES.md Item 13 — lets gameplay code (e.g. a future movement-block
+// release) know when this caster's prison is truly gone.
+static bool StonePrisonSkill_HasActiveInstance(int agentId)
+{
+    for (int i = 0; i < MAX_PRISONS; i++) {
+        if (s_prisons[i].state != STATE_INACTIVE && s_prisons[i].ownerAgentId == agentId)
+            return true;
+    }
+    return false;
+}
+
 void InitStonePrisonSkill(int screenWidth, int screenHeight)
 {
     (void)screenWidth; (void)screenHeight;
 
     s_skillIndex = Skill_GetIndexByName("STONE_PRISON");
+    RegisterSkillLifecycleQuery(s_skillIndex, StonePrisonSkill_HasActiveInstance);
 
     for (int i = 0; i < MAX_PRISONS; i++) {
         s_prisons[i].state = STATE_INACTIVE;

@@ -111,6 +111,8 @@ static float skillCooldownRemaining[MAX_SKILLS][SKILL_MANAGER_MAX_AGENTS];
 // RegisterSkill() so it stays backward compatible. Receives the agentId
 // AbortSkill() was called with.
 static void (*skillAbortCallback[MAX_SKILLS])(int agentId);
+// Item 13: optional lifecycle-end query, mirrors skillAbortCallback's shape.
+static bool (*skillLifecycleQuery[MAX_SKILLS])(int agentId);
 
 // --- PROTOTYPES CỦA SKILL WRAPPERS ---
 #if HAS_SKILL_FLUID
@@ -1108,4 +1110,20 @@ void AbortSkill(int skillIndex, int agentId) {
     return;
   }
   skillAbortCallback[skillIndex](agentId);
+}
+
+// --- Item 13: optional lifecycle-end query registration ---
+
+void RegisterSkillLifecycleQuery(int skillIndex, bool (*hasActiveInstance)(int agentId)) {
+  if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
+    return;
+  skillLifecycleQuery[skillIndex] = hasActiveInstance;
+}
+
+bool Skill_HasActiveInstance(int skillIndex, int agentId) {
+  if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
+    return false;
+  if (skillLifecycleQuery[skillIndex] == NULL)
+    return false;
+  return skillLifecycleQuery[skillIndex](agentId);
 }

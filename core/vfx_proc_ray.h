@@ -1,0 +1,53 @@
+#ifndef VFX_PROC_RAY_H
+#define VFX_PROC_RAY_H
+
+#include "raylib.h"
+
+// Procedural Ray VFX — managed free-end wave ray.
+// One end is fixed (origin), the other whips freely via a traveling wave.
+// Supports multiple visual flavors through ProcRayConfig.
+//
+// Usage pattern:
+//   int id = SpawnProcRay(ProcRay_LightningConfig(), scale);   // Init / Cast
+//   ProcRay_Update(id, origin, dir, length, scale, dt);        // Update each frame
+//   ProcRay_Draw(id, cam);                                      // Draw each frame
+//   ProcRay_Kill(id);                                           // on expire / impact
+//
+// Pool: 32 simultaneous rays.
+
+typedef struct {
+    Color colorCore;       // inner ribbon color
+    Color colorGlow;       // outer glow pass color
+    float glowWidthMult;   // glow width = thickness * glowWidthMult (try 1.4–2.0)
+    float waveSpeed;       // rad/s phase advance (try 3–6)
+    float amplitudeRatio;  // max displacement = length * amplitudeRatio (try 0.25–0.45)
+    float jitterStrength;  // random per-frame crackle — 0=smooth, 1=full electric jitter
+    float thickness;       // ribbon half-width in world units (try 1–3 for thin bolts)
+    float envelopePow;     // displacement envelope = t^envelopePow (t=0 at origin, 1 at free end)
+                           // lower = faster bloom (0.7=lightning diverges early, 1.5=slow whip)
+    bool  sharpKinks;      // true=linear interp between waypoints (jagged, lightning-style)
+                           // false=Catmull-Rom (smooth curves, energy/wind-style)
+} ProcRayConfig;
+
+// Named presets — call these to get a ready-to-use config, tweak fields if needed.
+ProcRayConfig ProcRay_LightningConfig(void);     // violet/white, high jitter, fast wave — free-end rays
+ProcRayConfig ProcRay_BoltLightningConfig(void); // same colors, low amplitude — for fixed sky→ground bolts
+ProcRayConfig ProcRay_EnergyConfig(void);        // cyan/gold, smooth, medium wave
+ProcRayConfig ProcRay_WindConfig(void);          // white/teal, very low amplitude, slow wave
+
+// ── Free-end ray (one fixed origin, one whipping free end) ─────────────────
+int  SpawnProcRay(ProcRayConfig config, float scale);
+void ProcRay_SetPhase(int id, float phase);  // offset concurrent rays so they differ
+void ProcRay_Update(int id, Vector3 origin, Vector3 dir, float length, float scale, float dt);
+void ProcRay_Draw(int id, Camera3D cam);
+void ProcRay_Kill(int id);
+
+// ── Fixed bolt (both endpoints clamped, jagged middle flickers) ────────────
+// Use for sky→ground lightning, A→B energy beams — anywhere both ends are pinned.
+// Pool: 16 simultaneous bolts.
+int  SpawnProcBolt(ProcRayConfig config, float scale);
+void ProcBolt_Update(int id, Vector3 from, Vector3 to, float scale, float dt);
+void ProcBolt_Draw(int id, Camera3D cam);
+void ProcBolt_Kill(int id);
+
+#endif // VFX_PROC_RAY_H

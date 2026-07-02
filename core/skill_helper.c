@@ -9,6 +9,7 @@
 #include "core/procedural_mesh_utils.h"
 #include "core/resource_manager.h"
 #include "core/trail_system.h"
+#include "core/ribbon_strip.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <stdlib.h>
@@ -24,6 +25,7 @@ static ColorGradient s_fireGrad;
 static ColorGradient s_snowGrad;
 static ColorGradient s_waterGrad;
 static ColorGradient s_lightningGrad;
+static ColorGradient s_lightningFollowerGrad; // reversed: bright at head (current), fade at tail
 static ColorGradient s_woodGrad;
 static ColorGradient s_earthGrad;
 static ColorGradient s_metalGrad;
@@ -52,6 +54,196 @@ static int s_castPullFldNextSlot = 0;
 #define MAX_CONCURRENT_PROJECTILE_TRAILS 8
 static ForceField s_flightFlds[MAX_CONCURRENT_PROJECTILE_TRAILS];
 static int s_flightFldNextSlot = 0;
+
+// Pools for SpawnLightningTrail / SpawnLightningFollowerTrail, same
+// round-robin-slot pattern as s_flightFlds. Separate from s_lightningFld
+// (used by particle emitter presets) because trail zigzag needs a much
+// sharper/faster noise profile than particle spark jitter.
+#define MAX_CONCURRENT_LIGHTNING_TRAILS 8
+static ForceField s_lightningFollowerFlds[MAX_CONCURRENT_LIGHTNING_TRAILS];
+static int s_lightningFollowerFldNextSlot = 0;
+
+// SpawnLightningTrail's path is NOT physics/noise-driven — two prior passes
+// (TRAIL_TYPE_PROJECTILE with noise+overrides, then TRAIL_TYPE_WISP) were
+// both tried and confirmed visually to smooth the path out: PROJECTILE's
+// built-in homing steer damps deviation back toward straight every frame,
+// and WISP's ConstrainRibbonSegment distance-solver (needed to keep it
+// rope-coherent) low-pass-filters any per-node jaggedness into a flowing
+// "silk ribbon" sag. Neither can hold a real sharp-angle zigzag, because
+// both are built to stay smooth/coherent by design.
+//
+// Instead: precompute a jagged polyline once at spawn (alternating
+// perpendicular offsets, pinned exactly at both ends, no forceField
+// involved at all — so no gravity-like sag is possible), then advance a
+// TRAIL_TYPE_FOLLOWER's tip along it frame-by-frame from inside its
+// onUpdate callback via UpdateFollowerPosition. This is pure geometry, so
+// travel speed and shape are both fully caller-controlled.
+#define LIGHTNING_BOLT_WAYPOINTS 9
+#define LIGHTNING_BOLT_PUSH_COUNT 50 // stays under TRAIL_HISTORY_COUNT (60) so no early point gets evicted
+typedef struct {
+    bool active;
+    int trailId;
+    Vector3 waypoints[LIGHTNING_BOLT_WAYPOINTS];
+    float travelDuration;
+    float elapsed;
+    int pushedCount;
+} LightningBoltState;
+static LightningBoltState s_lightningBolts[MAX_CONCURRENT_LIGHTNING_TRAILS];
+static int s_lightningBoltNextSlot = 0;
+
+// Classic zigzag: alternating perpendicular offset sign per interior
+// waypoint (real kinks, not a smooth sine wave), magnitude tapered to zero
+// at both endpoints so the bolt starts/ends exactly on start/target. Offset
+// is split across two perpendicular axes (not just one) for a bit of true
+// 3D irregularity instead of a flat zigzag confined to one plane.
+static void GenerateLightningWaypoints(Vector3 *out, int count, Vector3 start, Vector3 target, float jaggedAmount) {
+    Vector3 dir = Vector3Normalize(Vector3Subtract(target, start));
+    Vector3 refUp = (fabsf(dir.y) > 0.95f) ? (Vector3){1.0f, 0.0f, 0.0f} : (Vector3){0.0f, 1.0f, 0.0f};
+    Vector3 perp1 = Vector3Normalize(Vector3CrossProduct(dir, refUp));
+    Vector3 perp2 = Vector3Normalize(Vector3CrossProduct(dir, perp1));
+
+    for (int i = 0; i < count; i++) {
+        float t = (count > 1) ? (float)i / (float)(count - 1) : 0.0f;
+        Vector3 base = Vector3Lerp(start, target, t);
+        if (i == 0 || i == count - 1) {
+            out[i] = base;
+            continue;
+        }
+        float sign = (i % 2 == 0) ? 1.0f : -1.0f;
+        float jitter1 = (float)GetRandomValue(-100, 100) * 0.01f;
+        float jitter2 = (float)GetRandomValue(-100, 100) * 0.01f;
+        Vector3 offset = Vector3Add(
+            Vector3Scale(perp1, sign * jaggedAmount * (0.7f + 0.3f * jitter1)),
+            Vector3Scale(perp2, jitter2 * jaggedAmount * 0.5f));
+        out[i] = Vector3Add(base, offset);
+    }
+}
+
+// Interpolates a point along the precomputed waypoint polyline at fraction
+// f in [0,1] — segment index + local blend, same idea as sampling a spline.
+static Vector3 SampleLightningPath(const Vector3 *waypoints, int count, float f) {
+    if (f <= 0.0f) return waypoints[0];
+    if (f >= 1.0f) return waypoints[count - 1];
+    float seg = f * (float)(count - 1);
+    int idx = (int)seg;
+    float u = seg - (float)idx;
+    int next = idx + 1;
+    if (next >= count) next = count - 1;
+    return Vector3Lerp(waypoints[idx], waypoints[next], u);
+}
+
+static void LightningBoltAdvance(int trailId, float dt) {
+    LightningBoltState *bolt = NULL;
+    for (int i = 0; i < MAX_CONCURRENT_LIGHTNING_TRAILS; i++) {
+        if (s_lightningBolts[i].active && s_lightningBolts[i].trailId == trailId) {
+            bolt = &s_lightningBolts[i];
+            break;
+        }
+    }
+    if (!bolt) return;
+
+    TrailEntity *t = GetTrail(trailId);
+    if (!t || !t->active) { bolt->active = false; return; }
+
+    bolt->elapsed += dt;
+    float f = bolt->elapsed / bolt->travelDuration;
+    if (f > 1.0f) f = 1.0f;
+
+    int targetPushed = (int)(f * (float)LIGHTNING_BOLT_PUSH_COUNT);
+    if (targetPushed > LIGHTNING_BOLT_PUSH_COUNT) targetPushed = LIGHTNING_BOLT_PUSH_COUNT;
+
+    // Bright "hạt" riding the tip — a continuously-refreshed short-lived
+    // particle exactly at the current path position (not a separately
+    // physics-simulated dot, so it can never drift off the precomputed
+    // path the way the old forceField-driven head did).
+    Vector3 tip = bolt->waypoints[0];
+    while (bolt->pushedCount < targetPushed) {
+        bolt->pushedCount++;
+        float pushF = (float)bolt->pushedCount / (float)LIGHTNING_BOLT_PUSH_COUNT;
+        tip = SampleLightningPath(bolt->waypoints, LIGHTNING_BOLT_WAYPOINTS, pushF);
+        UpdateFollowerPosition(trailId, tip);
+        SpawnParticle((ParticleConfig){
+            .position = tip,
+            .colorStart = t->tint,
+            .colorEnd = t->tint,
+            .radius = 2.2f * t->scale,
+            .lifetime = 0.15f,
+            .gradient = &s_lightningGrad
+        });
+    }
+
+    if ((float)rand() / (float)RAND_MAX < dt * 10.0f) {
+        VFXLight_Spawn(tip, t->tint, 35.0f * t->scale, 0.08f, VFX_PRIORITY_LOW);
+    }
+
+    if (f >= 1.0f) {
+        bolt->active = false;
+        KillTrail(trailId);
+    }
+}
+
+// Sparse-zigzag filter for SpawnLightningFollowerTrail — feeding a smooth
+// per-frame path (e.g. an anchor orbiting/sweeping every frame) straight
+// into UpdateFollowerPosition records one history node per frame, which is
+// a DENSE, smooth curve: visually a wiggly worm, not lightning. Real
+// lightning is a handful of long, sharply-angled segments, not many short
+// smooth ones. Lightning_UpdateFollowerTip only accepts a new point once the
+// caller's real position has moved LIGHTNING_FOLLOWER_MIN_SEGMENT away from
+// the last recorded one (few, far-apart points), and inserts one kinked
+// midpoint per accepted segment (an actual geometric angle, not physics
+// noise) — same "real displacement, not force" philosophy as
+// GenerateLightningWaypoints above, just applied incrementally to a caller
+// -driven path instead of a precomputed start->target one.
+#define LIGHTNING_FOLLOWER_MIN_SEGMENT 45.0f
+typedef struct {
+    bool active;
+    int trailId;
+    bool hasLastRecordedPos;
+    Vector3 lastRecordedPos;
+    float sign;
+} LightningFollowerState;
+static LightningFollowerState s_lightningFollowers[MAX_CONCURRENT_LIGHTNING_TRAILS];
+
+void Lightning_UpdateFollowerTip(int id, Vector3 tipPos, float scale) {
+    LightningFollowerState *st = NULL;
+    for (int i = 0; i < MAX_CONCURRENT_LIGHTNING_TRAILS; i++) {
+        if (s_lightningFollowers[i].active && s_lightningFollowers[i].trailId == id) {
+            st = &s_lightningFollowers[i];
+            break;
+        }
+    }
+    if (!st) return;
+
+    if (!st->hasLastRecordedPos) {
+        st->hasLastRecordedPos = true;
+        st->lastRecordedPos = tipPos;
+        UpdateFollowerPosition(id, tipPos);
+        return;
+    }
+
+    float minSeg = LIGHTNING_FOLLOWER_MIN_SEGMENT * fmaxf(scale, 0.01f);
+    if (Vector3DistanceSqr(tipPos, st->lastRecordedPos) < minSeg * minSeg) {
+        // Below displacement threshold — no new node, but reset the idle timer so
+        // UpdateFollowerPhysics doesn't erase our history while we're waiting for
+        // the emitter to travel far enough. Without this, orbital speed ~168 u/s
+        // triggers every ~0.21s which exceeds TRAIL_FOLLOWER_IDLE_FADE_TIME (0.15s),
+        // causing the trail to be erased faster than it builds.
+        TrailEntity *ent = GetTrail(id);
+        if (ent) ent->timeSinceLastFollowerUpdate = 0.0f;
+        return;
+    }
+
+    Vector3 dir = Vector3Normalize(Vector3Subtract(tipPos, st->lastRecordedPos));
+    Vector3 refUp = (fabsf(dir.y) > 0.95f) ? (Vector3){1.0f, 0.0f, 0.0f} : (Vector3){0.0f, 1.0f, 0.0f};
+    Vector3 perp = Vector3Normalize(Vector3CrossProduct(dir, refUp));
+    st->sign = -st->sign;
+    Vector3 mid = Vector3Lerp(st->lastRecordedPos, tipPos, 0.5f);
+    Vector3 kink = Vector3Add(mid, Vector3Scale(perp, st->sign * minSeg * 0.4f));
+
+    UpdateFollowerPosition(id, kink);
+    UpdateFollowerPosition(id, tipPos);
+    st->lastRecordedPos = tipPos;
+}
 
 static bool s_helpersInitialized = false;
 
@@ -99,6 +291,17 @@ static void InitHelperResources(void) {
     ColorGradient_AddStop(&s_lightningGrad, 0.0f, WHITE);
     ColorGradient_AddStop(&s_lightningGrad, 0.3f, (Color){ 220, 200, 255, 255 });
     ColorGradient_AddStop(&s_lightningGrad, 0.7f, (Color){ 140, 50, 255, 255 });
+
+    // Follower gradient: head=bright (newest node = current emitter pos), tail=transparent.
+    // s_lightningGrad has alpha=0 at segRatio=1 (head) which is correct for the
+    // SpawnLightningTrail bolt (advancing tip should look ephemeral), but wrong for
+    // SpawnLightningFollowerTrail (the emitter's current position should be the
+    // brightest point, with the historical wake fading behind it).
+    s_lightningFollowerGrad.count = 0;
+    ColorGradient_AddStop(&s_lightningFollowerGrad, 0.0f, (Color){ 80, 10, 200, 0 });     // tail: transparent violet
+    ColorGradient_AddStop(&s_lightningFollowerGrad, 0.25f, (Color){ 140, 50, 255, 180 }); // mid-tail: violet
+    ColorGradient_AddStop(&s_lightningFollowerGrad, 0.6f, (Color){ 220, 200, 255, 255 }); // mid-head: bright purple
+    ColorGradient_AddStop(&s_lightningFollowerGrad, 1.0f, WHITE);                          // head: white core
     ColorGradient_AddStop(&s_lightningGrad, 1.0f, (Color){ 80, 10, 200, 0 });
 
     ForceField_Clear(&s_lightningFld);
@@ -470,6 +673,181 @@ int SpawnProjectileTrail(Vector3 start, Vector3 target, EffectPresetType preset,
         .gradient = grad
     };
     return SpawnTrailEntity(cfg);
+}
+
+// onUpdate callback shared by both lightning presets — reads live
+// position/scale/tint off the trail itself (TrailEntity, not captured
+// state), so one function pointer works for every concurrent bolt. Spawns a
+// short-lived point light at ~10/sec average, framerate-independent via
+// dt-scaled probability, for the characteristic electric flicker.
+static void LightningTrailFlicker(int trailId, float dt) {
+    TrailEntity *t = GetTrail(trailId);
+    if (!t || !t->active) return;
+    if ((float)rand() / (float)RAND_MAX < dt * 10.0f) {
+        VFXLight_Spawn(t->position, t->tint, 35.0f * t->scale, 0.08f, VFX_PRIORITY_LOW);
+    }
+}
+
+int SpawnLightningTrail(Vector3 start, Vector3 target, float scale, float speed) {
+    InitHelperResources();
+
+    float boltLen = Vector3Distance(start, target);
+    float jaggedAmount = fmaxf(30.0f, boltLen * 0.08f) * scale;
+    float travelDuration = boltLen / fmaxf(speed, 1.0f);
+    Color tint = (Color){ 220, 200, 255, 255 };
+
+    TrailConfig cfg = {
+        .type = TRAIL_TYPE_FOLLOWER,
+        .pos = start,
+        .thick = 2.2f * scale,
+        .life = travelDuration + 0.3f,
+        .scale = scale,
+        .tint = tint,
+        .gradient = &s_lightningGrad,
+        .onUpdate = LightningBoltAdvance
+    };
+    int trailId = SpawnTrailEntity(cfg);
+    if (trailId < 0) return trailId;
+
+    LightningBoltState *bolt = &s_lightningBolts[s_lightningBoltNextSlot];
+    s_lightningBoltNextSlot = (s_lightningBoltNextSlot + 1) % MAX_CONCURRENT_LIGHTNING_TRAILS;
+    bolt->active = true;
+    bolt->trailId = trailId;
+    bolt->travelDuration = travelDuration;
+    bolt->elapsed = 0.0f;
+    bolt->pushedCount = 0;
+    GenerateLightningWaypoints(bolt->waypoints, LIGHTNING_BOLT_WAYPOINTS, start, target, jaggedAmount);
+    UpdateFollowerPosition(trailId, bolt->waypoints[0]);
+
+    return trailId;
+}
+
+int SpawnLightningFollowerTrail(Vector3 startPos, float scale, float life) {
+    InitHelperResources();
+
+    // Light noise for a subtle crackle on top of whatever real path the
+    // caller feeds via Lightning_UpdateFollowerTip — that function (not raw
+    // UpdateFollowerPosition) is what supplies the actual sparse zigzag
+    // shape now (see its comment above), so this forceField no longer has
+    // to invent jaggedness from scratch.
+    int slot = s_lightningFollowerFldNextSlot;
+    s_lightningFollowerFldNextSlot = (s_lightningFollowerFldNextSlot + 1) % MAX_CONCURRENT_LIGHTNING_TRAILS;
+    ForceField *followerFld = &s_lightningFollowerFlds[slot];
+    ForceField_Clear(followerFld);
+    ForceField_AddLayer(followerFld, (ForceLayer){ .type = FORCE_NOISE_PERLIN, .strength = 100.0f, .noiseScale = 0.6f, .noiseSpeed = 14.0f });
+    ForceField_AddLayer(followerFld, (ForceLayer){ .type = FORCE_VISCOSITY, .strength = 4.0f });
+
+    LightningFollowerState *st = &s_lightningFollowers[slot];
+    st->active = true;
+    st->hasLastRecordedPos = false;
+    st->sign = 1.0f;
+
+    TrailConfig cfg = {
+        .type = TRAIL_TYPE_FOLLOWER,
+        .pos = startPos,
+        .len = 8.0f * scale,
+        .thick = 3.5f * scale,
+        .trailLength = 55.0f, // FOLLOWER: integer history-node count, not a fractional ratio. Room for many sparse kink+endpoint pairs before the TRAIL_HISTORY_COUNT(60) cap.
+        .life = life,
+        .scale = scale,
+        .tint = (Color){ 220, 200, 255, 255 },
+        .forceField = followerFld,
+        .gradient = &s_lightningFollowerGrad,
+        .onUpdate = LightningTrailFlicker
+    };
+    int trailId = SpawnTrailEntity(cfg);
+    st->trailId = trailId; // slot was claimed above (round-robin with followerFld), stays valid whether or not the spawn itself succeeded (-1 just means Lightning_UpdateFollowerTip's lookup never matches)
+    return trailId;
+}
+
+// Stateless immediate-mode lightning bolt renderer -------------------------
+// Generates a jagged bolt shape (9 waypoints) from `from` to `to`. Call
+// periodically (every 0.04–0.07 s) and the changing random waypoints produce
+// the characteristic lightning flicker without any trail pool overhead.
+void RegenerateLightningWaypoints(Vector3 *waypoints9, Vector3 from, Vector3 to, float scale) {
+    InitHelperResources();
+    float boltLen = Vector3Distance(from, to);
+    float jaggedAmount = boltLen * 0.14f * fmaxf(scale, 0.1f);
+    GenerateLightningWaypoints(waypoints9, 9, from, to, jaggedAmount);
+}
+
+#ifndef PI
+#define PI 3.1415926535f
+#endif
+
+void RegenerateLightningRay(Vector3 *waypoints9, Vector3 origin, Vector3 direction,
+                             float length, float phase, float amplitude, float scale) {
+    InitHelperResources();
+
+    // Build perpendicular basis from direction
+    Vector3 dir = Vector3Normalize(direction);
+    Vector3 refUp = (fabsf(dir.y) > 0.95f) ? (Vector3){1.0f, 0.0f, 0.0f} : (Vector3){0.0f, 1.0f, 0.0f};
+    Vector3 perp1 = Vector3Normalize(Vector3CrossProduct(dir, refUp));
+    Vector3 perp2 = Vector3Normalize(Vector3CrossProduct(dir, perp1));
+
+    float amp = amplitude * fmaxf(scale, 0.1f);
+
+    for (int i = 0; i < 9; i++) {
+        float t = (float)i / 8.0f; // 0 at origin, 1 at free end
+        Vector3 base = Vector3Add(origin, Vector3Scale(dir, t * length));
+
+        if (i == 0) {
+            // Origin is the only fixed point
+            waypoints9[0] = origin;
+            continue;
+        }
+
+        // Envelope: 0 at start, grows to 1 at free end — power controls how fast it blooms
+        float envelope = powf(t, 1.5f);
+
+        // Two traveling waves for 3D whip motion — 1 cycle keeps free end from wrapping back
+        float wR = sinf(phase + t * PI * 2.0f);
+        float wU = cosf(phase * 0.7f + t * PI * 1.5f);
+
+        // Small per-frame random jitter for the electric crackle on top of the wave
+        float jR = (float)GetRandomValue(-100, 100) * 0.004f;
+        float jU = (float)GetRandomValue(-100, 100) * 0.003f;
+
+        Vector3 offset = Vector3Add(
+            Vector3Scale(perp1, (wR + jR) * amp * envelope),
+            Vector3Scale(perp2, (wU + jU) * amp * envelope * 0.65f));
+
+        waypoints9[i] = Vector3Add(base, offset);
+    }
+}
+
+#define LIGHTNING_BOLT_RIBBON_PTS 36
+static RibbonPoint s_boltRibbon[LIGHTNING_BOLT_RIBBON_PTS];
+
+// Draw two-pass bolt (glow + core) via DrawRibbonStrip.
+// Caller must wrap in BeginBlendMode(BLEND_ADDITIVE) / EndBlendMode.
+void DrawLightningBolt(const Vector3 *waypoints9, float thickness, Camera3D cam) {
+    for (int pass = 0; pass < 2; pass++) {
+        float w       = (pass == 0) ? thickness * 1.6f : thickness;
+        unsigned char r = (pass == 0) ? 100 : 230;
+        unsigned char g = (pass == 0) ?  20 : 210;
+        unsigned char b = (pass == 0) ? 255 : 255;
+        unsigned char a = (pass == 0) ? 130 : 255;
+
+        for (int k = 0; k < LIGHTNING_BOLT_RIBBON_PTS; k++) {
+            float f = (float)k / (float)(LIGHTNING_BOLT_RIBBON_PTS - 1);
+            Vector3 pt = SampleLightningPath(waypoints9, 9, f);
+
+            // Symmetric smoothstep taper — both endpoints fade to 0
+            float edge = 0.08f;
+            float taper;
+            if      (f < edge)         taper = f / edge;
+            else if (f > 1.0f - edge)  taper = (1.0f - f) / edge;
+            else                       taper = 1.0f;
+            taper = taper * taper * (3.0f - 2.0f * taper);
+
+            s_boltRibbon[k].position  = pt;
+            s_boltRibbon[k].halfWidth = w * taper;
+            s_boltRibbon[k].v         = f;
+            s_boltRibbon[k].tint      = (Color){ r, g, b, (unsigned char)(a * taper) };
+        }
+        DrawRibbonStrip(s_boltRibbon, LIGHTNING_BOLT_RIBBON_PTS, (Texture2D){0}, cam);
+    }
 }
 
 // Audio Preset Implementation — no real per-element SFX assets exist under

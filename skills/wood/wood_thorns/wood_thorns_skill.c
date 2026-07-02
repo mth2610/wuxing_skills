@@ -145,11 +145,23 @@ static void SpawnDustBurst(Vector3 pos, float scale)
 /* ================================================================
  * § 4  LIFECYCLE — INIT
  * ================================================================ */
+// CORE_ISSUES.md Item 13 — lets gameplay code know when this caster's
+// root-zone thorns are truly gone.
+static bool WoodThornsSkill_HasActiveInstance(int agentId)
+{
+    for (int i = 0; i < MAX_THORNS; i++) {
+        if (s_thorns[i].state != THORN_INACTIVE && s_thorns[i].ownerAgentId == agentId)
+            return true;
+    }
+    return false;
+}
+
 void InitWoodThornsSkill(int screenWidth, int screenHeight)
 {
     (void)screenWidth; (void)screenHeight;
 
     s_skillIndex = Skill_GetIndexByName("WOOD_THORNS");
+    RegisterSkillLifecycleQuery(s_skillIndex, WoodThornsSkill_HasActiveInstance);
 
     for (int i = 0; i < MAX_THORNS; i++) {
         s_thorns[i].state = THORN_INACTIVE;

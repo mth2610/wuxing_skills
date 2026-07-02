@@ -6,7 +6,11 @@
 #include "core/vfx_light.h"
 #include "core/trail_system.h"
 #include "core/debug_draw.h"
+#include "core/skill_helper.h"
+#include "core/vfx_proc_ray.h"
+#include "core/particle_system.h"
 #include "sandbox/auto_test.h"
+#include "entities/entities.h"
 #include "raymath.h"
 #include "rlgl.h"
 
@@ -33,6 +37,7 @@ static int s_fadeDistLoc = -1;
 static int s_debugShowFadeLoc = -1;
 static bool s_shaderLoaded = false;
 static bool s_testActive = false;
+static bool s_showSoftParticleSphere = false; // only true via ForceActivate (autotest), not the interactive Cast path
 // CORE_ISSUES.md Item 15 — owner identity, set from Cast's agentId param.
 static int s_ownerAgentId = -1;
 // 0 = normal shaded, 1 = clamped SoftParticle_Factor grayscale, 2 = raw
@@ -40,6 +45,30 @@ static int s_ownerAgentId = -1;
 static int s_debugMode = 0;
 static Vector3 s_spherePos = {0};
 static float s_sphereRadius = 40.0f;
+
+// Lightning-sphere projectile test — click anywhere on the ground, a sphere
+// flies from s_spherePos to the clicked point with 3 free-end wave lightning
+// rays attached (via SpawnLightningRay managed handle).
+#define LIGHTNING_SPHERE_TRAIL_COUNT    3
+#define CORE_TEST_LIGHTNING_BALL_RADIUS 12.0f
+#define CORE_TEST_LIGHTNING_SPOKE_LENGTH 65.0f
+#define CORE_TEST_LIGHTNING_SPHERE_SPEED 90.0f
+#define CORE_TEST_LIGHTNING_HOMING_RADIUS   250.0f
+#define CORE_TEST_LIGHTNING_HOMING_STRENGTH   2.5f
+typedef struct {
+  bool active;
+  Vector3 start;
+  Vector3 target;
+  Vector3 currentPos;
+  float elapsed;
+  float duration;
+  int   rayIds[LIGHTNING_SPHERE_TRAIL_COUNT];    // managed lightning ray handles
+  Vector3 boltDir[LIGHTNING_SPHERE_TRAIL_COUNT]; // direction per bolt (homing blends this)
+  float vfxTimer;
+  Vector3 perp1;
+  Vector3 perp2;
+} LightningSphereTest;
+static LightningSphereTest s_lightningSphere = {0};
 
 #define CORE_TEST_SOFT_SAMPLE_COUNT 3
 static struct {
@@ -255,6 +284,99 @@ static AutoTestResult CoreTestSkill_AbortRegistrationStep(int frameInCase, char 
   return AUTOTEST_RUNNING;
 }
 
+// CORE_ISSUES.md Item 13 (lifecycle-end query) autotest: cast STONE_PRISON
+// for agentId=0 through the real CastSkill() dispatch, verify
+// Skill_HasActiveInstance reports true for that caster and false for an
+// unrelated agentId — proves per-caster isolation (registered before the
+// STONE_PRISON smoke test below so MAX_PRISONS still has a free slot).
+static AutoTestResult CoreTestSkill_LifecycleQueryStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase == 0) {
+    int idx = Skill_GetIndexByName("STONE_PRISON");
+    if (idx < 0) {
+      snprintf(outReason, outReasonSize, "STONE_PRISON not found via Skill_GetIndexByName");
+      return AUTOTEST_FAIL;
+    }
+    SkillParams params = {0};
+    params.level = 1;
+    params.sizeScale = 1.0f;
+    params.quantity = 1;
+    params.damage = 10.0f;
+    CastSkill(idx, 0, (Vector3){600.0f, 0.0f, 440.0f}, (Vector3){650.0f, 0.0f, 440.0f}, params);
+    if (!AutoTest_ExpectTrue(Skill_HasActiveInstance(idx, 0), "Skill_HasActiveInstance(idx,0) should be true right after that agent casts STONE_PRISON",
+                             outReason, outReasonSize)) {
+      return AUTOTEST_FAIL;
+    }
+    return AutoTest_ExpectTrue(!Skill_HasActiveInstance(idx, 1), "Skill_HasActiveInstance(idx,1) should stay false — another agent's instance must not leak",
+                               outReason, outReasonSize)
+               ? AUTOTEST_PASS
+               : AUTOTEST_FAIL;
+  }
+  return AUTOTEST_RUNNING;
+}
+
+// CORE_ISSUES.md Item 17 (debug draw) autotest: DebugDraw_Sphere runs inside
+// the real 3D draw pass (DrawCoreTestSkill), not from this step function
+// (which executes after EndDrawing()) — bridge via a static flag toggled
+// here and read back by DrawCoreTestSkill, verified via a numeric pixel
+// count (not a screenshot eyeball — see Item 3's false-positive history for
+// why numeric-only). Drawn at camera.target so it always projects near
+// screen center regardless of camera-follow behavior.
+static bool    s_debugDrawTestActive = false;
+static Vector3 s_debugDrawTestPos = {0};
+#define CORE_TEST_DEBUG_DRAW_RADIUS 60.0f
+#define CORE_TEST_DEBUG_DRAW_COLOR MAGENTA
+
+static void CoreTestSkill_SetDebugDrawTest(bool active, Vector3 pos) {
+  s_debugDrawTestActive = active;
+  s_debugDrawTestPos = pos;
+}
+
+static int CoreTestSkill_CountMagentaPixels(Vector2 center) {
+  Image screenImg = LoadImageFromScreen();
+  int count = 0;
+  int half = 70;
+  int x0 = (int)center.x - half; if (x0 < 0) x0 = 0;
+  int x1 = (int)center.x + half; if (x1 > screenImg.width) x1 = screenImg.width;
+  int y0 = (int)center.y - half; if (y0 < 0) y0 = 0;
+  int y1 = (int)center.y + half; if (y1 > screenImg.height) y1 = screenImg.height;
+  for (int y = y0; y < y1; y++) {
+    for (int x = x0; x < x1; x++) {
+      Color c = GetImageColor(screenImg, x, y);
+      if (c.r > 200 && c.b > 200 && c.g < 60) count++;
+    }
+  }
+  UnloadImage(screenImg);
+  return count;
+}
+
+static int s_debugDrawDisabledCount = -1;
+static AutoTestResult CoreTestSkill_DebugDrawStep(int frameInCase, char *outReason, int outReasonSize) {
+  Vector2 screenPos = GetWorldToScreen(camera.target, camera);
+  if (frameInCase == 0) {
+    DebugDraw_SetEnabled(false);
+    CoreTestSkill_SetDebugDrawTest(true, camera.target);
+    return AUTOTEST_RUNNING;
+  }
+  if (frameInCase == 2) {
+    s_debugDrawDisabledCount = CoreTestSkill_CountMagentaPixels(screenPos);
+    DebugDraw_SetEnabled(true);
+    return AUTOTEST_RUNNING;
+  }
+  if (frameInCase == 4) {
+    int enabledCount = CoreTestSkill_CountMagentaPixels(screenPos);
+    DebugDraw_SetEnabled(false);
+    CoreTestSkill_SetDebugDrawTest(false, (Vector3){0});
+    if (!AutoTest_ExpectTrue(s_debugDrawDisabledCount < 3, "DebugDraw_Sphere should draw nothing while disabled", outReason, outReasonSize)) {
+      return AUTOTEST_FAIL;
+    }
+    if (!AutoTest_ExpectTrue(enabledCount > s_debugDrawDisabledCount + 10, "DebugDraw_Sphere should draw visible magenta pixels once enabled", outReason, outReasonSize)) {
+      return AUTOTEST_FAIL;
+    }
+    return AUTOTEST_PASS;
+  }
+  return AUTOTEST_RUNNING;
+}
+
 // Real-skill smoke test: casts an actual gameplay skill through the exact
 // same CastSkill() dispatch main.c/sandbox_core.c use (not a synthetic
 // scratch index), then confirms two things numerically: (1) the skill is
@@ -294,6 +416,295 @@ static AutoTestResult SkillSmokeTest_WoodThorns(int f, char *r, int rs) { return
 static AutoTestResult SkillSmokeTest_StonePrison(int f, char *r, int rs) { return SkillSmokeTestStep("STONE_PRISON", f, r, rs); }
 static AutoTestResult SkillSmokeTest_HoaLongPhongBa(int f, char *r, int rs) { return SkillSmokeTestStep("HOA_LONG_PHONG_BA", f, r, rs); }
 
+// ============================================================================
+// Procedural mesh geometry autotests (user request: re-verify
+// core/procedural_mesh_utils's Build*() functions produce correct shapes).
+// Pure CPU math against the Build output structs directly — no screen
+// readback, no camera dependency at all, sidestepping the whole class of
+// GetWorldToScreen/camera bugs that plagued Item 3. Each runs entirely in
+// frame 0.
+// ============================================================================
+
+static AutoTestResult CoreTestSkill_ProceduralTubeStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase != 0) return AUTOTEST_RUNNING;
+
+  Vector3 p0 = {0, 0, 0}, p1 = {100, 0, 0}, p2 = {200, 0, 0}, p3 = {300, 0, 0};
+  float baseRadius = 20.0f;
+  int segments = 8, radialSegs = 12;
+  TubeMeshData data;
+  ProceduralMesh_BuildTube(&data, p0, p1, p2, p3, baseRadius, 1.0f, 0.0f, segments, radialSegs, NULL);
+
+  if (!AutoTest_ExpectFloatNear(Vector3Distance(data.tailCenter, p0), 0.0f, 0.5f,
+                                 "tailCenter should equal p0 (straight line, t=0)", outReason, outReasonSize))
+    return AUTOTEST_FAIL;
+  if (!AutoTest_ExpectFloatNear(Vector3Distance(data.headCenter, p3), 0.0f, 0.5f,
+                                 "headCenter should equal p3 (straight line, t=1)", outReason, outReasonSize))
+    return AUTOTEST_FAIL;
+
+  float maxPerp = 0.0f, minRadius = 1e9f, maxRadius = 0.0f;
+  for (int i = 0; i <= segments; i++) {
+    float t = (float)i / (float)segments;
+    Vector3 pos = ProceduralMesh_BezierPoint(p0, p1, p2, p3, t);
+    Vector3 tangent = Vector3Normalize(ProceduralMesh_BezierTangent(p0, p1, p2, p3, t));
+    for (int j = 0; j < radialSegs; j++) {
+      Vector3 diff = Vector3Subtract(data.rings[i][j], pos);
+      float perp = fabsf(Vector3DotProduct(diff, tangent));
+      if (perp > maxPerp) maxPerp = perp;
+      float r = Vector3Length(diff);
+      if (r < minRadius) minRadius = r;
+      if (r > maxRadius) maxRadius = r;
+    }
+  }
+  if (!AutoTest_ExpectTrue(maxPerp < 1.0f,
+                            "ring vertices should sit in the plane perpendicular to the path tangent, not drift along it",
+                            outReason, outReasonSize))
+    return AUTOTEST_FAIL;
+  if (!AutoTest_ExpectTrue(minRadius > 0.1f && maxRadius < baseRadius * 2.0f,
+                            "ring radius should stay within a sane envelope of baseRadius", outReason, outReasonSize))
+    return AUTOTEST_FAIL;
+  return AUTOTEST_PASS;
+}
+
+static AutoTestResult CoreTestSkill_ProceduralWavePlaneStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase != 0) return AUTOTEST_RUNNING;
+
+  Vector3 center = {0, 0, 0};
+  float width = 200.0f, length = 150.0f;
+  int segX = 10, segZ = 8;
+  WavePlaneMeshData data;
+  ProceduralMesh_BuildWavePlane(&data, center, width, length, segX, segZ, 0.0f, NULL);
+  float amplitude = ProceduralMesh_DefaultWavePlaneConfig().amplitude;
+
+  if (!AutoTest_ExpectFloatNear(data.verts[0][0].x, center.x - width * 0.5f, 0.1f,
+                                 "grid corner (0,0) should sit at -width/2 on X", outReason, outReasonSize))
+    return AUTOTEST_FAIL;
+  if (!AutoTest_ExpectFloatNear(data.verts[segX][segZ].x, center.x + width * 0.5f, 0.1f,
+                                 "grid corner (segX,segZ) should sit at +width/2 on X", outReason, outReasonSize))
+    return AUTOTEST_FAIL;
+  if (!AutoTest_ExpectFloatNear(data.verts[0][0].z, center.z - length * 0.5f, 0.1f,
+                                 "grid corner (0,0) should sit at -length/2 on Z", outReason, outReasonSize))
+    return AUTOTEST_FAIL;
+  if (!AutoTest_ExpectFloatNear(data.verts[segX][segZ].z, center.z + length * 0.5f, 0.1f,
+                                 "grid corner (segX,segZ) should sit at +length/2 on Z", outReason, outReasonSize))
+    return AUTOTEST_FAIL;
+
+  float minY = 1e9f, maxY = -1e9f;
+  for (int i = 0; i <= segX; i++)
+    for (int j = 0; j <= segZ; j++) {
+      float y = data.verts[i][j].y;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  if (!AutoTest_ExpectTrue(minY >= center.y - amplitude * 1.3f && maxY <= center.y + amplitude * 1.3f,
+                            "wave Y displacement should stay within the amplitude envelope", outReason, outReasonSize))
+    return AUTOTEST_FAIL;
+  if (!AutoTest_ExpectTrue((maxY - minY) > 1.0f,
+                            "wave should actually vary in Y, not sit perfectly flat", outReason, outReasonSize))
+    return AUTOTEST_FAIL;
+  return AUTOTEST_PASS;
+}
+
+static AutoTestResult CoreTestSkill_ProceduralCurlingWaveStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase != 0) return AUTOTEST_RUNNING;
+
+  Vector3 baseCenter = {0, 0, 0};
+  Vector3 widthDir = {1, 0, 0};
+  int profileSegs = 8, widthSegs = 8;
+  CurlingWaveMeshData data;
+  ProceduralMesh_BuildCurlingWave(&data, baseCenter, widthDir, NULL, profileSegs, widthSegs);
+  CurlingWaveConfig cfg = ProceduralMesh_DefaultCurlingWaveConfig();
+
+  if (!AutoTest_ExpectFloatNear(data.verts[widthSegs / 2][0].y, 0.0f, 3.0f,
+                                 "curling wave base (p=0) should sit near y=0", outReason, outReasonSize))
+    return AUTOTEST_FAIL;
+
+  float sweepAngle = PI * 0.5f + PI * 0.5f * cfg.curlAmount;
+  float expectedTopY = sinf(-PI * 0.5f + sweepAngle) * cfg.height + cfg.height;
+  if (!AutoTest_ExpectFloatNear(data.verts[widthSegs / 2][profileSegs].y, expectedTopY, 4.0f,
+                                 "curling wave top (p=profileSegs) should reach the curl-adjusted arch height",
+                                 outReason, outReasonSize))
+    return AUTOTEST_FAIL;
+
+  if (!AutoTest_ExpectFloatNear(data.verts[0][profileSegs / 2].x, -cfg.archWidth * 0.5f, 0.1f,
+                                 "left edge should sit at -archWidth/2", outReason, outReasonSize))
+    return AUTOTEST_FAIL;
+  if (!AutoTest_ExpectFloatNear(data.verts[widthSegs][profileSegs / 2].x, cfg.archWidth * 0.5f, 0.1f,
+                                 "right edge should sit at +archWidth/2", outReason, outReasonSize))
+    return AUTOTEST_FAIL;
+  return AUTOTEST_PASS;
+}
+
+static AutoTestResult CoreTestSkill_ProceduralRockStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase != 0) return AUTOTEST_RUNNING;
+
+  Vector3 center = {0, 0, 0};
+  float radius = 50.0f, jitter = 0.2f;
+  RockMeshData data;
+  ProceduralMesh_BuildRock(&data, center, radius, jitter, 123, 1);
+
+  if (!AutoTest_ExpectTrue(data.vertCount >= 12 && data.vertCount <= ROCK_MESH_MAX_VERTS,
+                            "rock vertex count should be a valid icosphere subdivision result", outReason, outReasonSize))
+    return AUTOTEST_FAIL;
+  if (!AutoTest_ExpectTrue(data.faceCount >= 20 && data.faceCount <= ROCK_MESH_MAX_FACES,
+                            "rock face count should be a valid icosphere subdivision result", outReason, outReasonSize))
+    return AUTOTEST_FAIL;
+
+  float minDist = 1e9f, maxDist = 0.0f;
+  for (int i = 0; i < data.vertCount; i++) {
+    float d = Vector3Distance(data.verts[i], center);
+    if (d < minDist) minDist = d;
+    if (d > maxDist) maxDist = d;
+  }
+  float lo = radius * (1.0f - jitter) - 0.5f;
+  float hi = radius * (1.0f + jitter) + 0.5f;
+  if (!AutoTest_ExpectTrue(minDist >= lo && maxDist <= hi,
+                            "every rock vertex should stay within radius*(1 +/- jitter)", outReason, outReasonSize))
+    return AUTOTEST_FAIL;
+  if (!AutoTest_ExpectTrue((maxDist - minDist) > 2.0f,
+                            "jitter should actually vary vertex distance, not collapse to a perfect sphere", outReason, outReasonSize))
+    return AUTOTEST_FAIL;
+  return AUTOTEST_PASS;
+}
+
+static AutoTestResult CoreTestSkill_ProceduralShardClusterStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase != 0) return AUTOTEST_RUNNING;
+
+  Vector3 origin = {0, 0, 0};
+  Vector3 mainDir = {0, 1, 0};
+  int shardCount = 8;
+  float minLength = 20.0f, maxLength = 60.0f;
+  ShardClusterMeshData data;
+  ProceduralMesh_BuildShardCluster(&data, origin, mainDir, shardCount, minLength, maxLength, 7, NULL);
+  ShardClusterConfig cfg = ProceduralMesh_DefaultShardClusterConfig();
+  Vector3 dirN = Vector3Normalize(mainDir);
+
+  for (int s = 0; s < data.shardCount; s++) {
+    if (!AutoTest_ExpectFloatNear(Vector3Distance(data.baseCenter[s], origin), 0.0f, 0.1f,
+                                   "every shard should originate exactly at origin", outReason, outReasonSize))
+      return AUTOTEST_FAIL;
+
+    float length = Vector3Distance(data.tipCenter[s], data.baseCenter[s]);
+    if (!AutoTest_ExpectTrue(length >= minLength - 0.5f && length <= maxLength + 0.5f,
+                              "shard length should stay within [minLength, maxLength]", outReason, outReasonSize))
+      return AUTOTEST_FAIL;
+
+    Vector3 shardDir = Vector3Normalize(Vector3Subtract(data.tipCenter[s], data.baseCenter[s]));
+    float cosAngle = Vector3DotProduct(shardDir, dirN);
+    float cosLimit = cosf(cfg.spreadAngle) - 0.01f;
+    if (!AutoTest_ExpectTrue(cosAngle >= cosLimit,
+                              "shard direction should stay within spreadAngle of mainDirection", outReason, outReasonSize))
+      return AUTOTEST_FAIL;
+  }
+  return AUTOTEST_PASS;
+}
+
+static AutoTestResult CoreTestSkill_ProceduralVortexFunnelStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase != 0) return AUTOTEST_RUNNING;
+
+  Vector3 center = {0, 0, 0};
+  // radialSegs=20 chosen so ridgeCount(5) mod radialSegs != 0 -- the ridge
+  // cosine term then sums to exactly 0 over a full ring (root-of-unity
+  // identity), letting the average radius check below be exact rather than
+  // needing to model the ridge wave itself.
+  int heightSegs = 10, radialSegs = 20;
+  VortexFunnelMeshData data;
+  ProceduralMesh_BuildVortexFunnel(&data, center, NULL, heightSegs, radialSegs, 0.0f);
+  VortexFunnelConfig cfg = ProceduralMesh_DefaultVortexFunnelConfig();
+
+  float sumBottom = 0.0f, sumTop = 0.0f;
+  for (int j = 0; j < radialSegs; j++) {
+    Vector3 b = data.rings[0][j];
+    Vector3 t = data.rings[heightSegs][j];
+    sumBottom += sqrtf((b.x - center.x) * (b.x - center.x) + (b.z - center.z) * (b.z - center.z));
+    sumTop += sqrtf((t.x - center.x) * (t.x - center.x) + (t.z - center.z) * (t.z - center.z));
+
+    if (!AutoTest_ExpectFloatNear(b.y, center.y, 0.1f, "bottom ring should sit at y=0", outReason, outReasonSize))
+      return AUTOTEST_FAIL;
+    if (!AutoTest_ExpectFloatNear(t.y, center.y + cfg.height, 0.1f, "top ring should sit at y=height", outReason, outReasonSize))
+      return AUTOTEST_FAIL;
+  }
+  float avgBottom = sumBottom / (float)radialSegs;
+  float avgTop = sumTop / (float)radialSegs;
+  if (!AutoTest_ExpectFloatNear(avgBottom, cfg.bottomRadius, 1.0f,
+                                 "bottom ring average radius should match bottomRadius", outReason, outReasonSize))
+    return AUTOTEST_FAIL;
+  if (!AutoTest_ExpectFloatNear(avgTop, cfg.topRadius, 1.0f,
+                                 "top ring average radius should match topRadius", outReason, outReasonSize))
+    return AUTOTEST_FAIL;
+  return AUTOTEST_PASS;
+}
+
+static AutoTestResult CoreTestSkill_ProceduralFissureStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase != 0) return AUTOTEST_RUNNING;
+
+  Vector3 pathPoints[2] = {{0, 0, 0}, {300, 0, 0}};
+  float width = 40.0f, depth = 15.0f, jaggedness = 0.3f;
+  FissureMeshData data;
+  ProceduralMesh_BuildFissure(&data, pathPoints, 2, width, depth, jaggedness, 99);
+
+  if (!AutoTest_ExpectTrue(data.segments > 0, "fissure should produce at least one segment along the path",
+                            outReason, outReasonSize))
+    return AUTOTEST_FAIL;
+
+  for (int i = 0; i <= data.segments; i++) {
+    float edgeL_y = data.verts[i][0].y;
+    float bottom_y = data.verts[i][2].y;
+    float edgeR_y = data.verts[i][4].y;
+    if (!AutoTest_ExpectTrue(bottom_y < edgeL_y && bottom_y < edgeR_y,
+                              "cross-section bottom vertex should be the deepest point (V-shape)", outReason, outReasonSize))
+      return AUTOTEST_FAIL;
+    if (!AutoTest_ExpectFloatNear(bottom_y, -depth, depth * 0.5f,
+                                   "trench bottom should sit close to -depth", outReason, outReasonSize))
+      return AUTOTEST_FAIL;
+
+    float span = Vector3Distance(data.verts[i][0], data.verts[i][4]);
+    if (!AutoTest_ExpectFloatNear(span, width, width * 0.3f,
+                                   "fissure edge-to-edge span should be close to width", outReason, outReasonSize))
+      return AUTOTEST_FAIL;
+  }
+  return AUTOTEST_PASS;
+}
+
+static AutoTestResult CoreTestSkill_ProceduralBaseMeshStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase != 0) return AUTOTEST_RUNNING;
+
+  float width = 100.0f, length = 80.0f;
+  int segX = 4, segZ = 3;
+  Mesh grid = ProceduralMesh_CreateBaseGrid(width, length, segX, segZ);
+
+  int expectedVerts = (segX + 1) * (segZ + 1);
+  int expectedTris = segX * segZ * 2;
+  bool ok = AutoTest_ExpectTrue(grid.vertexCount == expectedVerts && grid.triangleCount == expectedTris,
+                                 "base grid vertex/triangle count should match segmentsX/Z", outReason, outReasonSize);
+  if (ok) {
+    int lastIdx = expectedVerts - 1;
+    float x0 = grid.vertices[0], xLast = grid.vertices[lastIdx * 3 + 0], zLast = grid.vertices[lastIdx * 3 + 2];
+    ok = AutoTest_ExpectFloatNear(x0, -width * 0.5f, 0.1f, "grid vertex 0 should sit at -width/2", outReason, outReasonSize)
+      && AutoTest_ExpectFloatNear(xLast, width * 0.5f, 0.1f, "grid last vertex should sit at +width/2", outReason, outReasonSize)
+      && AutoTest_ExpectFloatNear(zLast, length * 0.5f, 0.1f, "grid last vertex should sit at +length/2", outReason, outReasonSize);
+  }
+  ProceduralMesh_UnloadBase(&grid);
+  if (!ok) return AUTOTEST_FAIL;
+
+  int radialSegs = 8, heightSegs = 4;
+  Mesh cyl = ProceduralMesh_CreateBaseCylinder(radialSegs, heightSegs);
+  int expectedCylVerts = (radialSegs + 1) * (heightSegs + 1);
+  int expectedCylTris = radialSegs * heightSegs * 2;
+  ok = AutoTest_ExpectTrue(cyl.vertexCount == expectedCylVerts && cyl.triangleCount == expectedCylTris,
+                            "base cylinder vertex/triangle count should match radialSegs/heightSegs", outReason, outReasonSize);
+  if (ok) {
+    int idx = (heightSegs / 2) * (radialSegs + 1) + 1;
+    float x = cyl.vertices[idx * 3 + 0];
+    float y = cyl.vertices[idx * 3 + 1];
+    float z = cyl.vertices[idx * 3 + 2];
+    float r = sqrtf(x * x + z * z);
+    ok = AutoTest_ExpectFloatNear(r, 1.0f, 0.05f, "base cylinder vertices should sit at unit local radius", outReason, outReasonSize)
+      && AutoTest_ExpectTrue(y >= 0.0f && y <= 1.0f, "base cylinder local height should stay within [0,1]", outReason, outReasonSize);
+  }
+  ProceduralMesh_UnloadBase(&cyl);
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
 void InitCoreTestSkill(int screenWidth, int screenHeight) {
   (void)screenWidth;
   (void)screenHeight;
@@ -309,12 +720,22 @@ void InitCoreTestSkill(int screenWidth, int screenHeight) {
       AutoTest_Register("trail_priority_eviction", CoreTestSkill_TrailEvictionStep, 5);
       AutoTest_Register("skill_cooldown_gating", CoreTestSkill_CooldownGatingStep, 5);
       AutoTest_Register("skill_abort_registration", CoreTestSkill_AbortRegistrationStep, 5);
+      AutoTest_Register("skill_lifecycle_query", CoreTestSkill_LifecycleQueryStep, 5);
+      AutoTest_Register("debug_draw_pixel_check", CoreTestSkill_DebugDrawStep, 10);
       AutoTest_Register("skill_smoke_fire", SkillSmokeTest_Fire, 10);
       AutoTest_Register("skill_smoke_tube", SkillSmokeTest_Tube, 10);
       AutoTest_Register("skill_smoke_water_sphere", SkillSmokeTest_WaterSphere, 10);
       AutoTest_Register("skill_smoke_wood_thorns", SkillSmokeTest_WoodThorns, 10);
       AutoTest_Register("skill_smoke_stone_prison", SkillSmokeTest_StonePrison, 10);
       AutoTest_Register("skill_smoke_hoa_long_phong_ba", SkillSmokeTest_HoaLongPhongBa, 10);
+      AutoTest_Register("procedural_mesh_tube", CoreTestSkill_ProceduralTubeStep, 5);
+      AutoTest_Register("procedural_mesh_wave_plane", CoreTestSkill_ProceduralWavePlaneStep, 5);
+      AutoTest_Register("procedural_mesh_curling_wave", CoreTestSkill_ProceduralCurlingWaveStep, 5);
+      AutoTest_Register("procedural_mesh_rock", CoreTestSkill_ProceduralRockStep, 5);
+      AutoTest_Register("procedural_mesh_shard_cluster", CoreTestSkill_ProceduralShardClusterStep, 5);
+      AutoTest_Register("procedural_mesh_vortex_funnel", CoreTestSkill_ProceduralVortexFunnelStep, 5);
+      AutoTest_Register("procedural_mesh_fissure", CoreTestSkill_ProceduralFissureStep, 5);
+      AutoTest_Register("procedural_mesh_base_grid_cylinder", CoreTestSkill_ProceduralBaseMeshStep, 5);
   }
 }
 
@@ -324,6 +745,7 @@ void InitCoreTestSkill(int screenWidth, int screenHeight) {
 void CoreTestSkill_ForceActivate(int agentId, Vector3 spherePos) {
   s_spherePos = spherePos;
   s_testActive = true;
+  s_showSoftParticleSphere = true;
   s_ownerAgentId = agentId;
 }
 
@@ -339,11 +761,15 @@ bool CoreTestSkill_GetReadback(int sampleIndex, float *outSceneLinear, float *ou
 void CastCoreTestSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params) {
   (void)target;
   (void)params;
-  CoreTestSkill_ForceActivate(agentId, (Vector3){ startPos.x, 0.0f, startPos.z });
+  // Interactive cast: enables click-to-fire lightning testing without the
+  // Item 3 soft-particle sphere/shader — that only shows up via
+  // CoreTestSkill_ForceActivate, which the autotest still calls directly.
+  s_spherePos = (Vector3){ startPos.x, 0.0f, startPos.z };
+  s_testActive = true;
+  s_ownerAgentId = agentId;
 }
 
 void UpdateCoreTestSkill(float dt, Vector3 enemyPos, float enemyRadius) {
-  (void)dt;
   (void)enemyPos;
   (void)enemyRadius;
   if (s_testActive && IsKeyPressed(KEY_L)) {
@@ -355,10 +781,120 @@ void UpdateCoreTestSkill(float dt, Vector3 enemyPos, float enemyRadius) {
   if (s_testActive && IsKeyPressed(KEY_H)) {
     s_debugMode = (s_debugMode + 1) % 3;
   }
+  // Lightning-sphere projectile test — click the ground, a sphere flies from
+  // s_spherePos to the clicked point; 3 lightning emission points stay
+  // 3 orbit points form a spinning triangle cage. Arc bolts between adjacent
+  // orbit points are regenerated every CORE_TEST_LIGHTNING_FLICKER_BASE seconds
+  // (stateless, no trail pool). DrawCoreTestSkill reads arcWaypoints each frame.
+  // 3 lightning wires: fixed end = sphere center, free end has spring+noise physics.
+  if (s_testActive && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !s_lightningSphere.active) {
+    Ray mouseRay = GetScreenToWorldRay(GetMousePosition(), camera);
+    if (fabsf(mouseRay.direction.y) > 1e-5f) {
+      float groundT = (s_spherePos.y - mouseRay.position.y) / mouseRay.direction.y;
+      if (groundT > 0.0f) {
+        Vector3 clickPos = Vector3Add(mouseRay.position, Vector3Scale(mouseRay.direction, groundT));
+        s_lightningSphere.active       = true;
+        s_lightningSphere.start        = s_spherePos;
+        s_lightningSphere.target       = clickPos;
+        s_lightningSphere.currentPos   = s_lightningSphere.start;
+        s_lightningSphere.elapsed      = 0.0f;
+        s_lightningSphere.vfxTimer     = 0.0f;
+        s_lightningSphere.duration     = fmaxf(Vector3Distance(s_lightningSphere.start, clickPos) / CORE_TEST_LIGHTNING_SPHERE_SPEED, 0.2f);
+
+        // Build orbit frame once from travel direction
+        Vector3 d = Vector3Normalize(Vector3Subtract(clickPos, s_spherePos));
+        Vector3 up = (fabsf(d.y) > 0.95f) ? (Vector3){1,0,0} : (Vector3){0,1,0};
+        s_lightningSphere.perp1 = Vector3Normalize(Vector3CrossProduct(d, up));
+        s_lightningSphere.perp2 = Vector3Normalize(Vector3CrossProduct(d, s_lightningSphere.perp1));
+
+        for (int i = 0; i < LIGHTNING_SPHERE_TRAIL_COUNT; i++) {
+          float ang = i * (2.0f * PI / (float)LIGHTNING_SPHERE_TRAIL_COUNT);
+          s_lightningSphere.boltDir[i] = Vector3Normalize(Vector3Add(
+            Vector3Scale(s_lightningSphere.perp1, cosf(ang)),
+            Vector3Scale(s_lightningSphere.perp2, sinf(ang))));
+          s_lightningSphere.rayIds[i] = SpawnProcRay(ProcRay_LightningConfig(), 1.0f);
+          ProcRay_SetPhase(s_lightningSphere.rayIds[i],
+                           i * (2.0f * PI / (float)LIGHTNING_SPHERE_TRAIL_COUNT));
+        }
+      }
+    }
+  }
+  if (s_lightningSphere.active) {
+    s_lightningSphere.elapsed += dt;
+    float t = s_lightningSphere.elapsed / s_lightningSphere.duration;
+    if (t > 1.0f) t = 1.0f;
+    s_lightningSphere.currentPos = Vector3Lerp(s_lightningSphere.start, s_lightningSphere.target, t);
+
+    // Homing: each bolt homes toward enemy from a different 120° angle — spread cone, not same point
+    int nearbyIds[8];
+    int nearbyCount = Entity_GetNearbyTargets(s_lightningSphere.currentPos,
+                                              CORE_TEST_LIGHTNING_HOMING_RADIUS, nearbyIds, 8);
+    if (nearbyCount > 0) {
+      const Agent *homingTarget = Entity_GetAgent(nearbyIds[0]);
+      if (homingTarget) {
+        Vector3 toEnemy = Vector3Normalize(Vector3Subtract(homingTarget->position,
+                                                           s_lightningSphere.currentPos));
+        // Build a perp basis around toEnemy for the cone spread
+        Vector3 eUp = (fabsf(toEnemy.y) > 0.95f) ? (Vector3){1,0,0} : (Vector3){0,1,0};
+        Vector3 eSide = Vector3Normalize(Vector3CrossProduct(toEnemy, eUp));
+        Vector3 eFwd  = Vector3Normalize(Vector3CrossProduct(toEnemy, eSide));
+        for (int i = 0; i < LIGHTNING_SPHERE_TRAIL_COUNT; i++) {
+          float spreadAng = i * (2.0f * PI / (float)LIGHTNING_SPHERE_TRAIL_COUNT);
+          // 85% toward enemy, 15% spread — bolts spiral around target, not stack on it
+          Vector3 homeDir = Vector3Normalize(Vector3Add(
+            Vector3Scale(toEnemy, 0.85f),
+            Vector3Add(Vector3Scale(eSide, 0.15f * cosf(spreadAng)),
+                       Vector3Scale(eFwd,  0.15f * sinf(spreadAng)))));
+          s_lightningSphere.boltDir[i] = Vector3Normalize(
+            Vector3Lerp(s_lightningSphere.boltDir[i], homeDir,
+                        CORE_TEST_LIGHTNING_HOMING_STRENGTH * dt));
+        }
+      }
+    }
+
+    for (int i = 0; i < LIGHTNING_SPHERE_TRAIL_COUNT; i++) {
+      ProcRay_Update(s_lightningSphere.rayIds[i],
+        s_lightningSphere.currentPos,
+        s_lightningSphere.boltDir[i],
+        CORE_TEST_LIGHTNING_SPOKE_LENGTH, 1.0f, dt);
+    }
+
+    s_lightningSphere.vfxTimer -= dt;
+    if (s_lightningSphere.vfxTimer <= 0.0f) {
+      s_lightningSphere.vfxTimer = 0.09f;
+      VFXLight_Spawn(s_lightningSphere.currentPos, (Color){ 180, 140, 255, 255 }, 28.0f, 0.10f, VFX_PRIORITY_LOW);
+    }
+
+    // Ball glow — orange/gold so it reads differently from the violet lightning
+    SpawnParticle((ParticleConfig){
+      .position   = s_lightningSphere.currentPos,
+      .colorStart = (Color){ 255, 220, 120, 255 },
+      .colorEnd   = (Color){ 255, 140,  20, 255 },
+      .radius     = CORE_TEST_LIGHTNING_BALL_RADIUS,
+      .lifetime   = 0.12f
+    });
+    VFXLight_Spawn(s_lightningSphere.currentPos, (Color){ 255, 220, 120, 255 }, 50.0f, 0.1f, VFX_PRIORITY_LOW);
+
+    if (t >= 1.0f) {
+      s_lightningSphere.active = false;
+      for (int i = 0; i < LIGHTNING_SPHERE_TRAIL_COUNT; i++)
+        ProcRay_Kill(s_lightningSphere.rayIds[i]);
+    }
+  }
 }
 
 void DrawCoreTestSkill(void) {
-  if (!s_testActive || !s_shaderLoaded) return;
+  if (s_debugDrawTestActive) {
+    DebugDraw_Sphere(s_debugDrawTestPos, CORE_TEST_DEBUG_DRAW_RADIUS, CORE_TEST_DEBUG_DRAW_COLOR);
+  }
+
+  // Lightning cage — 3 free-end wave rays around the sphere
+  if (s_testActive && s_lightningSphere.active) {
+    for (int i = 0; i < LIGHTNING_SPHERE_TRAIL_COUNT; i++)
+      ProcRay_Draw(s_lightningSphere.rayIds[i], camera);
+  }
+
+  if (!s_testActive || !s_shaderLoaded || !s_showSoftParticleSphere) return;
 
   BeginShaderMode(s_softShader);
   SkillManager_BeginShader(s_softShader);
@@ -401,6 +937,13 @@ void DrawCoreTestSkillDebugHUD(void) {
   if (!s_testActive) return;
 
   int x = 650, y = 10;
+
+  if (!s_showSoftParticleSphere) {
+    DrawRectangle(x - 6, y - 4, 380, 30, ColorAlpha(BLACK, 0.55f));
+    DrawText("CORE_TEST - Click ground: fire lightning sphere", x, y, 16, YELLOW);
+    return;
+  }
+
   DrawRectangle(x - 6, y - 4, 540, 160, ColorAlpha(BLACK, 0.55f));
   DrawText("CORE_TEST SOFT PARTICLE (Item 3) - L: sample  H: cycle debug mode", x, y, 16, YELLOW);
   y += 22;

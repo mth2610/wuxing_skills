@@ -1108,6 +1108,68 @@ void VFXLight_GetActive(VFXLightData *out, int *count, int maxCount);
 * **`GetActive`:** Call every frame before drawing a lit skill, to fetch the active list and upload it via `SetShaderValueV`. `maxCount` should be ≤ `MAX_VFX_LIGHTS` (16).
 * Rule: VFX lights supplement, not replace, scene lighting — keep them alive for the skill's full active phase rather than spawning and killing within one frame.
 
+### Procedural Ray VFX (`core/vfx_proc_ray.h`)
+Managed pools for lightning-style rays and fixed sky→ground bolts. Skills call Spawn/Update/Draw/Kill — the module owns waypoint generation, multi-harmonic wave math, and glow ribbon drawing.
+
+```c
+typedef struct {
+    Color colorCore, colorGlow;
+    float glowWidthMult;   // glow width = thickness * glowWidthMult (1.4–2.0)
+    float waveSpeed;       // rad/s phase advance (3–6; 0 for bolts)
+    float amplitudeRatio;  // max disp = length * amplitudeRatio (0.25–0.45)
+    float jitterStrength;  // 0=smooth, 1=full electric crackle
+    float thickness;       // ribbon half-width in world units (1–3)
+    float envelopePow;     // displacement = t^envelopePow (0.7=fast bloom, 1.5=slow whip)
+    bool  sharpKinks;      // true=linear (jagged lightning), false=Catmull-Rom (smooth)
+} ProcRayConfig;
+
+// Named presets
+ProcRayConfig ProcRay_LightningConfig(void);      // violet/white, high jitter, envelopePow=0.7
+ProcRayConfig ProcRay_BoltLightningConfig(void);  // same colors, amplitudeRatio=0.10 — sky→ground bolts
+ProcRayConfig ProcRay_EnergyConfig(void);         // cyan/gold, smooth Catmull-Rom
+ProcRayConfig ProcRay_WindConfig(void);           // white/teal, very low amplitude
+
+// Free-end ray — origin fixed, free end whips via traveling wave. Pool: 32 slots.
+int  SpawnProcRay(ProcRayConfig config, float scale);
+void ProcRay_SetPhase(int id, float phase);   // offset concurrent rays so they differ
+void ProcRay_Update(int id, Vector3 origin, Vector3 dir, float length, float scale, float dt);
+void ProcRay_Draw(int id, Camera3D cam);
+void ProcRay_Kill(int id);
+
+// Fixed bolt — both endpoints clamped, jagged middle flickers at 50ms interval. Pool: 16 slots.
+int  SpawnProcBolt(ProcRayConfig config, float scale);
+void ProcBolt_Update(int id, Vector3 from, Vector3 to, float scale, float dt);
+void ProcBolt_Draw(int id, Camera3D cam);
+void ProcBolt_Kill(int id);
+```
+
+**Usage pattern (free-end ray):**
+```c
+int id = SpawnProcRay(ProcRay_LightningConfig(), 1.0f);
+ProcRay_SetPhase(id, i * 2.0f * PI / N);  // offset when spawning N concurrent rays
+// each frame:
+ProcRay_Update(id, origin, dir, length, scale, dt);
+ProcRay_Draw(id, camera);
+// on expire:
+ProcRay_Kill(id);
+```
+
+**Usage pattern (sky→ground bolt):**
+```c
+int id = SpawnProcBolt(ProcRay_BoltLightningConfig(), 1.2f);
+// each frame:
+ProcBolt_Update(id, skyOrigin, groundPoint, scale, dt);
+ProcBolt_Draw(id, camera);
+// on expire:
+ProcBolt_Kill(id);
+```
+
+**Key rules:**
+* Always call `ProcRay_Kill`/`ProcBolt_Kill` on deactivate — IDs are pool slots, not auto-freed.
+* Call `ProcRay_SetPhase` on each ray after spawn when spawning N concurrent rays — without it, all rays share phase=0 and look identical.
+* `SpawnProcRay` assigns a random `refHint` per slot to prevent all horizontal rays from sharing the same perpendicular plane.
+* `waveSpeed = 0.0f` is correct for bolts (both endpoints fixed, no traveling wave needed).
+
 ### Combat (`core/skill_manager.h`)
 ```c
 void ApplyAoEDamage(Vector3 position, float radius, float damage, float knockback);
@@ -1132,6 +1194,16 @@ void AbortSkill(int skillIndex, int agentId);
 ```
 * A skill calls `RegisterSkillAbort(index, MyAbortFn)` in addition to `RegisterSkill()` if it wants to support being force-aborted (e.g. future crowd-control). Skills that never call this simply can't be force-aborted.
 * `AbortSkill(index, agentId)` invokes the registered callback with that `agentId` if present; otherwise logs `LOG_WARNING` and no-ops. Safe to call unconditionally. A skill that tracks per-caster instance ownership (opt-in, not required) can use the `agentId` to abort only that caster's instance instead of every active instance of the skill type; a skill that ignores the parameter aborts everything, same as before.
+
+### Lifecycle-End Query (`core/skill_manager.h`)
+CORE_ISSUES.md Item 13. Optional, additive — does **not** change the mandatory skill lifecycle contract in `skills/CLAUDE.md`:
+```c
+void RegisterSkillLifecycleQuery(int skillIndex, bool (*hasActiveInstance)(int agentId));
+bool Skill_HasActiveInstance(int skillIndex, int agentId);
+```
+* Lets gameplay code ask "is there still an active instance of this skill owned by agentId X" — e.g. an Earth wall / Wood root-zone effect that gameplay logic needs to know is truly gone before releasing whatever it's blocking.
+* Skills that never call `RegisterSkillLifecycleQuery` report `false` unconditionally (safe default — a caller never waits forever on a skill that never opted in; unlike `AbortSkill`, this doesn't `LOG_WARNING` since it's a harmless query, not a command).
+* Adopted by `STONE_PRISON` (`StonePrisonSkill_HasActiveInstance`) and `WOOD_THORNS` (`WoodThornsSkill_HasActiveInstance`) — both scan their instance pool for `ownerAgentId == agentId && state != INACTIVE`. Projectile/vortex-style skills (fire_ball, tube, water_sphere, hoa_long_phong_ba) don't need this — they're transient, not "zones" gameplay code needs to track.
 
 ### Shader Binding (`core/skill_manager.h`)
 ```c
@@ -1685,6 +1757,18 @@ int SpawnProjectileTrail(Vector3 start, Vector3 target, EffectPresetType preset,
 Reuses `EffectPresetType` — the flight-stage equivalent of Cast/Impact, for the middle of a skill's lifecycle (while it's traveling from `start` to `target`). Spawns a `TRAIL_TYPE_PROJECTILE` `TrailConfig` (per-element tint/gradient from the same static `ColorGradient`s Cast/Impact use) plus a head `ParticleConfig` with an `onLiveEmit` sub-emitter for continuous tail dust. Returns the trail ID — **caller MUST call `KillTrail(id)` on impact**, typically right before calling `SpawnImpactEffect` at the target.
 
 **Force regime differs from Cast/Impact**: uses the sustained/flight range (300-650f primary directional pull via `FORCE_GRAVITY_DIR`, ~20f `FORCE_NOISE_PERLIN` wobble on top) per CORE_API.md §1 and the `water_stream/tube_skill.c` precedent — NOT the 5-60f ambient/burst range used by `SpawnCastEffect`/`SpawnImpactEffect`. Internally backed by an 8-slot static `ForceField` pool (`MAX_CONCURRENT_PROJECTILE_TRAILS`), claimed round-robin per call, same pattern as `SpawnCastEffect`'s pool, so concurrent flying projectiles don't interfere with each other's direction.
+
+### Lightning Trail Presets
+```c
+int SpawnLightningTrail(Vector3 start, Vector3 target, float scale, float speed);
+int SpawnLightningFollowerTrail(Vector3 startPos, float scale, float life);
+```
+Dedicated jagged/flicker profile for electric visuals (bolts, electric blades, electric projectiles, teleport streaks) — `SpawnProjectileTrail`'s `EffectPresetType` path only swaps color/gradient, it can't reproduce lightning's signature zigzag because its flight wobble (20f/0.08f `FORCE_NOISE_PERLIN`) is tuned for a smooth arc, not a jagged bolt.
+
+* **`SpawnLightningTrail`**: flight-stage bolt (tia điện / đạn điện / teleport streak) that travels from `start` to `target` along a **precomputed jagged polyline**, not a physics/noise-driven path. Two earlier passes tried physics instead — `TRAIL_TYPE_PROJECTILE` (with and without `FORCE_GRAVITY_DIR`, with `wobbleAmplitudeOverride` cranked up) rendered as a visually straight line because its built-in homing steer damps any deviation back toward straight every frame; `TRAIL_TYPE_WISP` with a strong noise `forceField` rendered as a smooth "silk ribbon" sag because `ConstrainRibbonSegment`'s distance-solver (needed to keep the strand rope-coherent) low-pass-filters per-node jaggedness into a flowing curve. Neither can hold a real sharp-angle zigzag — both are built to stay smooth by design. The fix: `GenerateLightningWaypoints` (internal to `skill_helper.c`) builds `LIGHTNING_BOLT_WAYPOINTS` (9) points along `start`→`target`, offsetting each interior point sideways (alternating sign, two perpendicular axes relative to the travel direction) by `jaggedAmount` — a real geometric kink, with no `forceField` involved at all, so no gravity-like sag is possible. A `TRAIL_TYPE_FOLLOWER` trail is spawned with `onUpdate = LightningBoltAdvance`, which each frame advances progress along the waypoint polyline (`SampleLightningPath`) and pushes the interpolated point via `UpdateFollowerPosition` — `LIGHTNING_BOLT_PUSH_COUNT` (50) total pushes spread proportionally over the travel duration (`boltLen / speed`), staying under `TRAIL_HISTORY_COUNT` (60) so no earlier point of the bolt gets evicted from history — the whole bolt stays visible from start to current tip, not just a trailing window. `LightningBoltAdvance` also spawns a small short-lived particle (the visible "hạt") at the tip on every push (exactly on the path, not a separately physics-simulated dot that could diverge) and an occasional `VFXLight_Spawn` flicker. Progress reaching 1.0 self-terminates via `KillTrail` — the caller does **not** need to call `KillTrail(id)` itself for the normal flow (only if cancelling early). Per-bolt state (waypoints, elapsed time, push count) lives in a `MAX_CONCURRENT_LIGHTNING_TRAILS`-slot round-robin pool (`s_lightningBolts`) keyed by trail ID, looked up inside the callback since `TrailUpdateCallback` carries no userdata pointer.
+* **`SpawnLightningFollowerTrail`** + **`Lightning_UpdateFollowerTip`**: manually-driven variant for an electric aura/bolt **attached to a moving object at a fixed local point** (kiếm điện, a spark pinned to a point on a moving object) — `TRAIL_TYPE_FOLLOWER`, thin (`thick = 1.0f*scale`). Drive the tip with **`Lightning_UpdateFollowerTip(id, tipPos, scale)`, not the raw `UpdateFollowerPosition`**: feeding a smooth per-frame path straight into `UpdateFollowerPosition` records one history node per frame — a dense, smooth curve that reads as a wiggly worm, not lightning (confirmed visually testing an orbiting anchor this way). `Lightning_UpdateFollowerTip` only accepts a new point once the caller's real position has moved `LIGHTNING_FOLLOWER_MIN_SEGMENT` (45f, scaled) away from the last recorded one — few, far-apart points — and inserts one perpendicular-offset kink at the midpoint of each accepted segment (real geometric displacement, same philosophy as `GenerateLightningWaypoints`, just applied incrementally instead of precomputed). This turns *any* caller-driven path into a sparse zigzag automatically, regardless of how often the caller calls it (e.g. every frame). Per-trail filter state (last recorded position, alternating kink sign) lives in a small round-robin pool keyed by trail ID, same lookup-by-ID pattern as `SpawnLightningTrail`'s bolt state. The trail's own `forceField` (`FORCE_NOISE_PERLIN` 100f/0.6/14 + `FORCE_VISCOSITY` 4.0f — lighter than before, since it now only adds crackle texture on top of the filter's real kinks instead of having to invent jaggedness from scratch) is unrelated to gravity, so dragging behind a moving anchor comes purely from the trail's own history-lag. Caller **MUST call `KillTrail(id)`** when the effect ends. `Trail_AttachToTransform()` still works for a smooth (non-electric) FOLLOWER use if the zigzag filtering isn't wanted.
+* Both share a `LightningTrailFlicker` `onUpdate` callback — reads live `position`/`scale`/`tint` off the `TrailEntity` itself (not captured per-call state, so one function pointer serves every concurrent bolt) and spawns a short `VFXLight_Spawn` burst (`35f * scale` radius, 0.08s life, `VFX_PRIORITY_LOW`) at ~10/sec average, framerate-independent via `dt`-scaled probability, for the flicker.
+* Both use the existing `s_lightningGrad` (white → violet → dark purple fade-out), same gradient `SpawnProjectileTrail(EFFECT_PRESET_LIGHTNING_IMPACT, ...)` uses, so cast/impact/flight-stage lightning colors stay consistent across a skill's lifecycle.
 
 ### Damage Volume
 ```c

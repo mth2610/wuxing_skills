@@ -517,25 +517,6 @@ list.
 
 ---
 
-## Item 13 — No lifecycle-end signal for gameplay code that depends on a skill's dissolve finishing — NOT STARTED (external review finding, confirmed valid)
-
-Confirmed: `core/skill_manager.h` has no callback/event/`IsExpired`-style API.
-A skill's own `active = false;` on dissolve-complete is entirely internal to
-its `.c` file — nothing external (`main.c`, `entities/entities.h`) can
-currently learn that a specific cast has actually finished dissolving.
-
-**Why it matters:** any gameplay effect that needs to persist exactly as long
-as a skill's visual is on screen (e.g. an Earth wall blocking movement, a Wood
-root-zone) has no way to know when to release itself except by duplicating
-that skill's own timer at the gameplay layer.
-
-**Needs a design decision before implementation**, not just a straight
-build — options include (a) a generic `bool Skill_IsInstanceExpired(...)`
-poll, or (b) a callback registered at cast time. Core Agent should propose
-the shape; flagging here rather than committing to one now.
-
----
-
 **Not filed (reviewed and rejected):**
 - *"`PathSpline_CalculateLength` helper missing"* — premise doesn't hold
   against current code. Checked both real `u_uvLength` call sites

@@ -28,6 +28,42 @@ void SpawnCastEffect(Vector3 pos, EffectPresetType preset, float scale);
 // SpawnImpactEffect at the target).
 int SpawnProjectileTrail(Vector3 start, Vector3 target, EffectPresetType preset, float scale, float speed);
 
+// Lightning Trail Presets — dedicated jagged/flicker profile for electric
+// visuals (bolts, electric blades, electric projectiles, teleport streaks).
+// Unlike SpawnProjectileTrail's EffectPresetType color-swap, lightning needs
+// its own high-frequency zigzag jitter + periodic glow flicker, which the
+// generic preset's smooth flight wobble can't reproduce.
+
+// Flight-stage variant — electric bolt flying start->target (tia điện, đạn
+// điện, teleport streak). Returns trail ID; caller MUST call KillTrail(id)
+// on impact, e.g. right before SpawnImpactEffect(EFFECT_PRESET_LIGHTNING_IMPACT).
+int SpawnLightningTrail(Vector3 start, Vector3 target, float scale, float speed);
+
+// Manually-driven variant — for weapon-attached lightning (kiếm điện,
+// electric aura) where the caller drives the tip every frame. Returns
+// trail ID; caller MUST call KillTrail(id) when the effect ends.
+//
+// Drive the tip with Lightning_UpdateFollowerTip(id, tipPos, scale) below,
+// NOT the raw UpdateFollowerPosition() — feeding a smooth per-frame path
+// straight into UpdateFollowerPosition records one history node per frame
+// (a dense smooth curve — looks like a wiggly worm, not lightning).
+// Lightning_UpdateFollowerTip only records a new point once the caller's
+// position has moved a real distance from the last one (few, far-apart
+// points) and inserts one kinked midpoint per accepted segment, so it stays
+// a proper sparse zigzag no matter how often you call it. Falls back to
+// Trail_AttachToTransform() only if you don't need the zigzag filtering
+// (e.g. a smooth non-electric FOLLOWER use).
+int SpawnLightningFollowerTrail(Vector3 startPos, float scale, float life);
+void Lightning_UpdateFollowerTip(int id, Vector3 tipPos, float scale);
+
+// ── Low-level lightning building blocks (use vfx_proc_ray.h for the managed API) ──
+// Stateless per-frame bolt renderer. waypoints9 is a caller-owned Vector3[9].
+// Must be called inside BeginBlendMode(BLEND_ADDITIVE) / EndBlendMode.
+void RegenerateLightningWaypoints(Vector3 *waypoints9, Vector3 from, Vector3 to, float scale);
+void RegenerateLightningRay(Vector3 *waypoints9, Vector3 origin, Vector3 direction,
+                             float length, float phase, float amplitude, float scale);
+void DrawLightningBolt(const Vector3 *waypoints9, float thickness, Camera3D cam);
+
 // Audio presets — reuse EffectPresetType so skill authors call the same enum
 // value for both image and sound. Each loads (via ResourceManager_LoadSound,
 // cached) and plays a per-element Sound on first use, then just PlaySound()s
