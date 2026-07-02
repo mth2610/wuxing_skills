@@ -14,7 +14,7 @@ typedef struct {
 #endif
 
 void InitWaterSphereSkill(int screenWidth, int screenHeight);
-void CastWaterSphereSkill(Vector3 startPos, Vector3 target, SkillParams params);
+void CastWaterSphereSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params);
 void UpdateWaterSphereSkill(float dt, Vector3 enemyPos, float enemyRadius);
 void DrawWaterSphereSkill(void);
 void UnloadWaterSphereSkill(void);

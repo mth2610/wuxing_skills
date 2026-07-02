@@ -39,7 +39,7 @@ void VFX_TriggerImpactBurst(Vector3 pos, float sizeScale, const ImpactBurstConfi
 
     /* Step 3: point light flash */
     if (cfg->lightEnabled) {
-        VFXLight_Spawn(pos, cfg->lightColor, cfg->lightRadius * sizeScale, cfg->lightLife);
+        VFXLight_Spawn(pos, cfg->lightColor, cfg->lightRadius * sizeScale, cfg->lightLife, VFX_PRIORITY_LOW);
     }
 
     /* Step 4: radial particle burst */

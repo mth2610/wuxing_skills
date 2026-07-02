@@ -21,6 +21,8 @@
 #include <math.h>
 #include "environment/environment_system.h"
 #include "core/map_manager.h"
+#include "skills/taiji/core_test/core_test_skill.h"
+#include "sandbox/auto_test.h"
 #include <stdio.h>
 
 // Biến camera toàn cục
@@ -62,9 +64,31 @@ static void MyEndMode3D(void) {
   rlDisableDepthTest();
 }
 
+// Smoke test for the autotest harness itself (sandbox/auto_test.h) — proves
+// the whole pipeline (env var -> headless window -> fixed-dt frames ->
+// registration -> step -> log -> summary -> exit code) works end to end.
+static AutoTestResult AutoTest_SmokeStep(int frameInCase, char *outReason, int outReasonSize) {
+  (void)frameInCase;
+  return AutoTest_ExpectTrue(GetRegisteredSkillCount() > 0,
+                             "skill manager has registered skills",
+                             outReason, outReasonSize)
+             ? AUTOTEST_PASS
+             : AUTOTEST_FAIL;
+}
+
 int main(void) {
   const int screenWidth = 1200;
   const int screenHeight = 700;
+
+  bool autoTestMode = AutoTest_IsEnabled();
+  if (autoTestMode) {
+      // Off-screen SetWindowPosition was tried first, but produced the exact
+      // same GetWorldToScreen() output as FLAG_WINDOW_HIDDEN below (proving
+      // the odd coordinates aren't a window-position artifact) — kept
+      // FLAG_WINDOW_HIDDEN since it doesn't touch window placement at all,
+      // closer to normal interactive behavior.
+      SetConfigFlags(FLAG_WINDOW_HIDDEN);
+  }
   InitWindow(screenWidth, screenHeight, "Avatar: True 3D Element Testbed");
   rlSetClipPlanes(0.1f, 15000.0f);
 
@@ -119,6 +143,9 @@ int main(void) {
   ResourceManager_Init();
   Tuning_Init("tuning.cfg");
   InitSkillManager(screenWidth, screenHeight);
+  if (autoTestMode) {
+      AutoTest_Register("smoke_skill_manager_init", AutoTest_SmokeStep, 5);
+  }
   DamageVolume_Init();
   EmitterSystem_Init();
   RegisterStaticOccluder((Vector3){400.0f, 0.0f, 320.0f}, 25.0f, 62.5f);
@@ -157,14 +184,14 @@ int main(void) {
                                .saturation = 1.15f,
                                .colorTint = {1.0f, 1.0f, 1.0f}};
 
-  SetTargetFPS(60);
+  if (!autoTestMode) SetTargetFPS(60);
 
   bool g_gamePaused = false;
   bool g_stepNextFrame = false;
   bool g_slowMotion = false;
 
-  while (!WindowShouldClose()) {
-    float dt = GetFrameTime();
+  while (autoTestMode ? !AutoTest_IsFinished() : !WindowShouldClose()) {
+    float dt = autoTestMode ? (1.0f / 60.0f) : GetFrameTime();
 
     // -------------------------------------------------------------------------
     // TIME CONTROL FOR DEBUGGING / SCREENSHOTTING
@@ -229,8 +256,8 @@ int main(void) {
         for (int i = 0; i < pathCount; i++) {
           uiState.currentParams.pathPoints[i] = pathPoints[i];
         }
-        CastSkill(uiState.activeSkillIndex, player.position, mouseTarget3D,
-                  uiState.currentParams);
+        CastSkill(uiState.activeSkillIndex, player.agentId, player.position,
+                  mouseTarget3D, uiState.currentParams);
       }
     }
 
@@ -318,6 +345,7 @@ int main(void) {
     MetaballFX_DrawRegistered(camera, ELEMENT_COLOR_WATER, 0.3f, 0.12f);
 
     DrawSkillManagerOverlay();
+    DrawCoreTestSkillDebugHUD(); // CORE_ISSUES.md Item 3 test — on-screen depth readback (press L)
 
     Vector2 enemyScreenHead = GetWorldToScreen(
         (Vector3){enemy.position.x, enemy.position.y + 55.0f, enemy.position.z},
@@ -343,6 +371,14 @@ int main(void) {
     SkillDebugger_PostRender(uiState.activeSkillIndex, player.position, mouseTarget3D);
 
     EndDrawing();
+
+    if (autoTestMode) AutoTest_RunFrame();
+  }
+
+  int exitCode = 0;
+  if (autoTestMode) {
+      AutoTest_PrintSummary();
+      exitCode = AutoTest_GetExitCode();
   }
 
   UnloadTexture(globalParticleTex);
@@ -360,5 +396,5 @@ int main(void) {
   MapManager_Unload();
   CloseWindow();
 
-  return 0;
+  return exitCode;
 }

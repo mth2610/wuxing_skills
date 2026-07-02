@@ -19,6 +19,52 @@ Manages `sandbox/` — the **dev/test integration harness** for the Wuxing Skill
 - `ui_panel.c/h` — debug panel to pick which skill/element to test, `SkillParams` input
 - `skill_debugger.c/h` — F12 capture tool: hides decals/meshes/trails/particles selectively, screenshots with metadata
 - `vfx_test.c/h` — standalone VFX testing entry point
+- `auto_test.c/h` — automated self-test harness, see below
+
+## Automated self-test harness (`sandbox/auto_test.h`)
+
+Runs the real game loop headlessly (no human input, no visual inspection
+needed) so numeric test cases can be batch-verified in one `Bash` call
+instead of testing each feature interactively. Set `WUXING_AUTOTEST=1` when
+launching `./wuxing` to activate it — `main.c` then: creates the window with
+`FLAG_WINDOW_HIDDEN` (confirmed to behave identically to a normal visible
+window for `GetWorldToScreen`/readback purposes — an off-screen-positioned
+visible window was tried first and rejected, see `main.c`'s comment at the
+top of `main()`), runs with a fixed `1/60` `dt` instead of real time (fast,
+deterministic), and exits automatically once all registered cases resolve.
+
+**Registering a case**: call `AutoTest_Register(name, step, maxFrames)` from
+inside your module's own existing `Init*()` function, guarded by
+`if (AutoTest_IsEnabled())` — no central registry file to touch. `step` is a
+single function matching the codebase's existing `Update(dt)`-with-internal-
+state-machine idiom (e.g. `ThornState` in `wood_thorns_skill.c`):
+
+```c
+typedef AutoTestResult (*AutoTestStepFn)(int frameInCase, char *outReason, int outReasonSize);
+```
+
+`frameInCase == 0` means "just activated this frame" — do your trigger/setup
+there and return `AUTOTEST_RUNNING`. Every later frame, check whatever you're
+waiting on; return `AUTOTEST_RUNNING` to keep polling, or `AUTOTEST_PASS`/
+`AUTOTEST_FAIL` (with a short reason written into `outReason` on fail) to
+finish. If a case never resolves within `maxFrames`, the harness fails it
+automatically with a timeout reason. Use `AutoTest_ExpectTrue`/
+`AutoTest_ExpectFloatNear` to cut boilerplate, and `AutoTest_SaveScreenshot`
+if a case wants a PNG artifact to inspect afterward.
+
+**Log convention**: `[AUTOTEST] <name>: PASS` / `FAIL - <reason>` per case,
+then `[AUTOTEST] SUMMARY: X/Y passed` and `[AUTOTEST] RESULT: PASS|FAIL` at
+the end. Process exit code is `0` if all cases passed, `1` otherwise — safe
+to grep/check from a script:
+
+```bash
+WUXING_AUTOTEST=1 ./wuxing 2>&1 | grep '\[AUTOTEST\]'
+```
+
+**Working example**: `skills/taiji/core_test/core_test_skill.c`'s
+`soft_particle_ground_fade` case ports the existing manual "press L" CPU
+depth-readback (`CoreTestSkill_TriggerReadback`) into an autotest case —
+copy this pattern for new cases rather than inventing a new one.
 
 ## IMPORTANT — known duplication with `entities/` (do not let this drift further)
 

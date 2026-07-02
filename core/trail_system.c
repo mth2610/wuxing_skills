@@ -327,9 +327,41 @@ void KillTrail(int id) {
 
 int GetActiveTrailCount(void) { return activeCount; }
 
+// CORE_ISSUES.md Item 12: pool-full eviction. Scans all active trails for the
+// lowest-priority one (ties broken by shortest remaining lifetime) and kills
+// it, freeing a slot for a same-or-higher-priority incoming spawn. Returns
+// false (no-op) if every active trail already has strictly higher priority
+// than incoming, preserving the old "reject the new spawn" behavior for that
+// case.
+static bool EvictLowestPriorityTrail(VFXPriority incomingPriority) {
+  int evictIdx = -1;
+  VFXPriority evictPriority = VFX_PRIORITY_HIGH_ULTIMATE;
+  float evictLifetime = 999999.0f;
+
+  for (int i = 0; i < MAX_TRAIL_PARTICLES; i++) {
+    if (!trailPool[i].active)
+      continue;
+    if (evictIdx == -1 || trailPool[i].priority < evictPriority ||
+        (trailPool[i].priority == evictPriority &&
+         trailPool[i].lifetime < evictLifetime)) {
+      evictIdx = i;
+      evictPriority = trailPool[i].priority;
+      evictLifetime = trailPool[i].lifetime;
+    }
+  }
+
+  if (evictIdx == -1 || evictPriority > incomingPriority)
+    return false;
+
+  KillTrailInternal(evictIdx);
+  return true;
+}
+
 int SpawnTrailEntity(TrailConfig config) {
-  if (freeListHead >= MAX_TRAIL_PARTICLES)
-    return -1;
+  if (freeListHead >= MAX_TRAIL_PARTICLES) {
+    if (!EvictLowestPriorityTrail(config.priority))
+      return -1;
+  }
 
   int index = freeListHead;
   freeListHead = trailPool[index].nextFree;
@@ -359,6 +391,7 @@ int SpawnTrailEntity(TrailConfig config) {
   t->forceField = config.forceField;
   t->gradient = config.gradient;
   t->spriteAnim = config.spriteAnim;
+  t->priority = config.priority;
 
   t->timeSinceLastFollowerUpdate = 0.0f;
   t->fadeAccumulator = 0.0f;

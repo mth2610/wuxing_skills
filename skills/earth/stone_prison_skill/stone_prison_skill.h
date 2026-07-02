@@ -15,7 +15,7 @@ typedef struct {
 
 // Standard Wuxing lifecycle API
 void InitStonePrisonSkill(int screenWidth, int screenHeight);
-void CastStonePrisonSkill(Vector3 startPos, Vector3 target, SkillParams params);
+void CastStonePrisonSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params);
 void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius);
 void DrawStonePrisonSkill(void);
 void UnloadStonePrisonSkill(void);

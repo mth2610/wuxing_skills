@@ -159,7 +159,7 @@ void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale) {
         case EFFECT_PRESET_FIRE_EXPLOSION: {
             ScreenDistort_Add(pos, 55.0f * scale, 0.35f, 0.35f, 100.0f);
             CameraFX_Shake(0.38f);
-            VFXLight_Spawn(pos, (Color){ 255, 120, 20, 255 }, 65.0f * scale, 0.5f);
+            VFXLight_Spawn(pos, (Color){ 255, 120, 20, 255 }, 65.0f * scale, 0.5f, VFX_PRIORITY_LOW);
             SpawnGroundDecal(DECAL_PRESET_BURN, pos, 22.0f * scale, 5.0f);
 
             // Sinh hạt lửa tung tóe
@@ -182,7 +182,7 @@ void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale) {
         case EFFECT_PRESET_ICE_SHATTER: {
             ScreenDistort_Add(pos, 35.0f * scale, 0.22f, 0.25f, 60.0f);
             CameraFX_Shake(0.20f);
-            VFXLight_Spawn(pos, (Color){ 140, 210, 255, 255 }, 45.0f * scale, 0.4f);
+            VFXLight_Spawn(pos, (Color){ 140, 210, 255, 255 }, 45.0f * scale, 0.4f, VFX_PRIORITY_LOW);
             SpawnGroundDecal(DECAL_PRESET_ICE, pos, 18.0f * scale, 4.0f);
 
             int count = (int)(30 * scale);
@@ -202,7 +202,7 @@ void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale) {
             break;
         }
         case EFFECT_PRESET_WATER_SPLASH: {
-            VFXLight_Spawn(pos, (Color){ 80, 180, 255, 255 }, 40.0f * scale, 0.45f);
+            VFXLight_Spawn(pos, (Color){ 80, 180, 255, 255 }, 40.0f * scale, 0.45f, VFX_PRIORITY_LOW);
             SpawnGroundDecal(DECAL_PRESET_WATER, pos, 15.0f * scale, 3.5f);
 
             int count = (int)(35 * scale);
@@ -224,7 +224,7 @@ void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale) {
         case EFFECT_PRESET_LIGHTNING_IMPACT: {
             ScreenDistort_Add(pos, 45.0f * scale, 0.4f, 0.2f, 150.0f);
             CameraFX_Shake(0.35f);
-            VFXLight_Spawn(pos, (Color){ 200, 150, 255, 255 }, 55.0f * scale, 0.35f);
+            VFXLight_Spawn(pos, (Color){ 200, 150, 255, 255 }, 55.0f * scale, 0.35f, VFX_PRIORITY_LOW);
             SpawnGroundDecal(DECAL_PRESET_TAIJI_LIGHTNING, pos, 14.0f * scale, 3.0f);
 
             int count = (int)(25 * scale);
@@ -246,12 +246,12 @@ void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale) {
         case EFFECT_PRESET_EARTH_CRACK: {
             ScreenDistort_Add(pos, 30.0f * scale, 0.25f, 0.4f, 50.0f);
             CameraFX_Shake(0.42f);
-            VFXLight_Spawn(pos, (Color){ 180, 140, 100, 255 }, 35.0f * scale, 0.6f);
+            VFXLight_Spawn(pos, (Color){ 180, 140, 100, 255 }, 35.0f * scale, 0.6f, VFX_PRIORITY_LOW);
             SpawnGroundDecal(DECAL_PRESET_CRACK, pos, 25.0f * scale, 5.5f);
             break;
         }
         case EFFECT_PRESET_WOOD_BLOOM: {
-            VFXLight_Spawn(pos, ELEMENT_COLOR_WOOD, 35.0f * scale, 0.45f);
+            VFXLight_Spawn(pos, ELEMENT_COLOR_WOOD, 35.0f * scale, 0.45f, VFX_PRIORITY_LOW);
             SpawnGroundDecal(DECAL_PRESET_WOOD_MOSS, pos, 18.0f * scale, 5.0f);
 
             // Leaf/vine burst, upward-biased
@@ -274,7 +274,7 @@ void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale) {
         case EFFECT_PRESET_METAL_SHARD: {
             ScreenDistort_Add(pos, 25.0f * scale, 0.18f, 0.15f, 130.0f);
             CameraFX_Shake(0.22f);
-            VFXLight_Spawn(pos, ELEMENT_COLOR_METAL, 30.0f * scale, 0.2f);
+            VFXLight_Spawn(pos, ELEMENT_COLOR_METAL, 30.0f * scale, 0.2f, VFX_PRIORITY_LOW);
             SpawnGroundDecal(DECAL_PRESET_METAL_SLASH, pos, 16.0f * scale, 4.0f);
 
             // Sharp shard particles, high pitch range, metallic
@@ -298,7 +298,7 @@ void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale) {
         case EFFECT_PRESET_TAIJI_BURST: {
             ScreenDistort_Add(pos, 50.0f * scale, 0.3f, 0.3f, 90.0f);
             CameraFX_Shake(0.3f);
-            VFXLight_Spawn(pos, ELEMENT_COLOR_TAIJI, 70.0f * scale, 0.55f);
+            VFXLight_Spawn(pos, ELEMENT_COLOR_TAIJI, 70.0f * scale, 0.55f, VFX_PRIORITY_LOW);
             SpawnGroundDecal(DECAL_PRESET_TAIJI_RING, pos, 22.0f * scale, 5.0f);
 
             // Amethyst-purple radial burst
@@ -372,7 +372,7 @@ void SpawnCastEffect(Vector3 pos, EffectPresetType preset, float scale) {
             break;
     }
 
-    VFXLight_Spawn(pos, flashColor, lightRadius, lightLifetime);
+    VFXLight_Spawn(pos, flashColor, lightRadius, lightLifetime, VFX_PRIORITY_LOW);
 
     // Localized inward-pulling force field — particles spawn at a ring around
     // pos and get sucked back toward it, reading as "energy gathering".

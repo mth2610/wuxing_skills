@@ -6,6 +6,7 @@
 #include "core/screen_distort.h"
 #include "core/vfx_light.h"
 #include "core/camera_fx.h"
+#include "core/path_spline.h"
 #include "rlgl.h"
 #include "raymath.h"
 #include <math.h>
@@ -61,6 +62,7 @@ typedef struct {
     bool       spawnedLight;
     float      damage;
     float      knockback;
+    int        ownerAgentId; // CORE_ISSUES.md Item 15 — caster's agent pool slot
 } Thorn;
 
 /* ================================================================
@@ -73,6 +75,7 @@ static int           s_uDissolveLoc;
 static int           s_uTimeLoc;
 static int           s_uCamPosLoc;
 static ColorGradient s_dustGrad;
+static int           s_skillIndex = -1;
 
 /* ================================================================
  * § 3  INTERNAL HELPERS
@@ -146,6 +149,8 @@ void InitWoodThornsSkill(int screenWidth, int screenHeight)
 {
     (void)screenWidth; (void)screenHeight;
 
+    s_skillIndex = Skill_GetIndexByName("WOOD_THORNS");
+
     for (int i = 0; i < MAX_THORNS; i++) {
         s_thorns[i].state = THORN_INACTIVE;
     }
@@ -165,57 +170,46 @@ void InitWoodThornsSkill(int screenWidth, int screenHeight)
 /* ================================================================
  * § 5  LIFECYCLE — CAST
  * ================================================================ */
-void CastWoodThornsSkill(Vector3 startPos, Vector3 target, SkillParams params)
+void CastWoodThornsSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params)
 {
+    if (!SkillManager_CanCast(s_skillIndex, agentId)) return;
+
     float spawnScale = (params.sizeScale > 0.0f) ? params.sizeScale : 1.0f;
     float baseDmg = Skill_CalculateDamage(SKILL_CAT_AOE_CONTROL, params);
     float baseKb = Skill_CalculateKnockback(SKILL_CAT_AOE_CONTROL, params);
 
-    // Calculate total path length for drag-to-cast
-    float totalDist = 0.0f;
-    float cumDist[32] = {0};
-    
+    // Build the raw drag-cast path, falling back to a straight startPos->target
+    // line if the caller didn't draw a multi-point path (CORE_API.md's
+    // "Minimal Complete .c Skeleton (Anchored-Along-Path Skill)" pattern).
+    Vector3 rawPath[33];
+    int rawCount = 0;
     if (params.pathPointCount > 1) {
-        for (int k = 0; k < params.pathPointCount - 1; k++) {
-            float d = Vector3Distance(params.pathPoints[k], params.pathPoints[k+1]);
-            totalDist += d;
-            cumDist[k+1] = totalDist;
-        }
+        for (int i = 0; i < params.pathPointCount && i < 32; i++) rawPath[rawCount++] = params.pathPoints[i];
     } else {
         Vector3 toTarget = { target.x - startPos.x, 0.0f, target.z - startPos.z };
-        totalDist = Vector3Length(toTarget);
-        if (totalDist < 1.0f) return;
+        if (Vector3Length(toTarget) < 1.0f) return;
+        rawPath[rawCount++] = startPos;
+        rawPath[rawCount++] = target;
     }
 
-    float maxLine = (float)(THORNS_PER_CAST - 1) * THORN_SPACING;
-    float lineLen = (totalDist < maxLine) ? totalDist : maxLine;
-    float stepSize = (THORNS_PER_CAST > 1) ? (lineLen / (float)(THORNS_PER_CAST - 1)) : 0.0f;
+    // Resample at fixed THORN_SPACING instead of hand-rolling cumulative-
+    // distance math (CORE_API.md flags this exact spot for the SamplePath()
+    // refactor). Total thorns placed is now however many fit at THORN_SPACING
+    // along the actual drawn path, capped at THORNS_PER_CAST — see report for
+    // how this differs from the old fixed-6-thorns/compressed-spacing behavior.
+    Vector3 sampled[THORNS_PER_CAST];
+    int sampledCount = SamplePath(rawPath, rawCount, THORN_SPACING, sampled, THORNS_PER_CAST);
+    if (sampledCount <= 0) return;
 
-    for (int i = 0; i < THORNS_PER_CAST; i++) {
+    for (int i = 0; i < sampledCount; i++) {
         int slot = FindFreeSlot();
         if (slot < 0) break;
 
-        float offset = (float)i * stepSize;
-        Vector3 basePoint = startPos;
-        Vector3 dir = {0, 0, 1};
-
-        if (params.pathPointCount > 1) {
-            // Find segment
-            for (int k = 0; k < params.pathPointCount - 1; k++) {
-                if (offset >= cumDist[k] && (offset <= cumDist[k+1] || k == params.pathPointCount - 2)) {
-                    float segmentLen = cumDist[k+1] - cumDist[k];
-                    float t = (segmentLen > 0.001f) ? ((offset - cumDist[k]) / segmentLen) : 0.0f;
-                    basePoint = Vector3Lerp(params.pathPoints[k], params.pathPoints[k+1], t);
-                    Vector3 diff = Vector3Subtract(params.pathPoints[k+1], params.pathPoints[k]);
-                    if (segmentLen > 0.001f) dir = Vector3Scale(diff, 1.0f / segmentLen);
-                    break;
-                }
-            }
-        } else {
-            Vector3 toTarget = { target.x - startPos.x, 0.0f, target.z - startPos.z };
-            dir = Vector3Scale(toTarget, 1.0f / totalDist);
-            basePoint = (Vector3){ startPos.x + dir.x * offset, 0.0f, startPos.z + dir.z * offset };
-        }
+        Vector3 basePoint = sampled[i];
+        Vector3 dir = (i + 1 < sampledCount)
+            ? Vector3Normalize(Vector3Subtract(sampled[i + 1], sampled[i]))
+            : ((i > 0) ? Vector3Normalize(Vector3Subtract(sampled[i], sampled[i - 1]))
+                       : (Vector3){0, 0, 1});
 
         Vector3 perp = { -dir.z, 0.0f, dir.x }; // Perpendicular for jitter
 
@@ -251,9 +245,14 @@ void CastWoodThornsSkill(Vector3 startPos, Vector3 target, SkillParams params)
             .spawnedDecal  = false,
             .spawnedLight  = false,
             .damage        = baseDmg,
-            .knockback     = baseKb
+            .knockback     = baseKb,
+            .ownerAgentId  = agentId
         };
     }
+
+    SkillManager_TriggerCooldown(
+        s_skillIndex, agentId,
+        Skill_CalculateCooldown(SKILL_CAT_AOE_CONTROL, params));
 }
 
 /* ================================================================
@@ -296,7 +295,7 @@ void UpdateWoodThornsSkill(float dt, Vector3 enemyPos, float enemyRadius)
 
             // VFX Light emergence flare (lasts throughout active hold duration)
             if (!th->spawnedLight) {
-                VFXLight_Spawn(th->pos, LIME, 70.0f * th->scale, 2.5f);
+                VFXLight_Spawn(th->pos, LIME, 70.0f * th->scale, 2.5f, VFX_PRIORITY_LOW);
                 th->spawnedLight = true;
             }
 
@@ -421,9 +420,15 @@ void DrawWoodThornsSkill(void)
 
         // Aesthetic Rule 4: Bind shader during all active phases to prevent visual popping
         BeginShaderMode(s_shader);
+        // CORE_ISSUES.md Item 11: raw BeginShaderMode() before an immediate-mode
+        // rlgl draw never auto-uploads matModel like DrawMesh/DrawModel does.
+        // Without this, a vertex shader normalizing (matModel * normal) reads a
+        // zero-initialized matModel -> NaN normal. SkillManager_BeginShader()
+        // fixes matModel (identity) + also binds u_time/viewPos/u_resolution.
+        SkillManager_BeginShader(s_shader);
         SetShaderValue(s_shader, s_uDissolveLoc, &dissolveAmt, SHADER_UNIFORM_FLOAT);
         SetShaderValue(s_shader, s_uTimeLoc, &currentTime, SHADER_UNIFORM_FLOAT);
-        
+
         extern Camera3D camera;
         SetShaderValue(s_shader, s_uCamPosLoc, &camera.position, SHADER_UNIFORM_VEC3);
 
@@ -499,6 +504,7 @@ void DrawWoodThornsSkill(void)
         rlEnd();
         rlPopMatrix();
 
+        SkillManager_EndShader();
         EndShaderMode();
     }
 }

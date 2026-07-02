@@ -4,6 +4,8 @@
 precision highp float;
 #endif
 
+#include "core/shaders/common/lighting.glsl"
+
 in vec3 fragPosition;
 in vec2 fragTexCoord;
 in vec3 fragNormal;
@@ -58,8 +60,7 @@ void main() {
 
     // 2. Tính toán hướng nhìn và Fresnel
     vec3 viewDir = normalize(viewPos - fragPosition);
-    float NdotV = max(dot(normal, viewDir), 0.0);
-    float fresnel = pow(1.0 - NdotV, 3.5);
+    float fresnel = calcFresnel(normal, viewDir, 3.5);
 
     // 3. Đọc mẫu nhiễu để định hình luồng lửa cuộn
     float nVal = getNoiseValue(fragTexCoord);

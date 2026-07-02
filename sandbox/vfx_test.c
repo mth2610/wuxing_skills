@@ -36,7 +36,7 @@ void VFXTest_UpdateAndHandleInput(Vector3 playerPos, Texture2D testAtlasTex,
     CameraFX_Shake(0.5f);
     ScreenDistort_Add(playerPos, 120.0f, 0.8f, 1.2f, 250.0f);
 
-    VFXLight_Spawn(playerPos, (Color){255, 180, 50, 255}, 150.0f, 9999.0f);
+    VFXLight_Spawn(playerPos, (Color){255, 180, 50, 255}, 150.0f, 9999.0f, VFX_PRIORITY_LOW);
     DecalSystem_Add(playerPos, (float)GetRandomValue(0, 360), 40.0f,
                 globalParticleTex, 3.0f, ORANGE);
 

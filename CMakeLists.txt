@@ -80,6 +80,7 @@ add_executable(wuxing
     sandbox/ui_panel.c
     sandbox/vfx_test.c
     sandbox/skill_debugger.c
+    sandbox/auto_test.c
 
     # --- Skills ---
     ${SKILL_SOURCES}

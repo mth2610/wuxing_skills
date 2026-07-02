@@ -6,6 +6,7 @@ typedef struct {
     float radius;
     float lifetime;
     float maxLifetime;
+    VFXPriority priority;
     bool active;
 } VFXLightInternal;
 
@@ -22,20 +23,36 @@ void VFXLight_Reset(void) {
     }
 }
 
-void VFXLight_Spawn(Vector3 pos, Color color, float radius, float lifetime) {
-    int targetIdx = -1;
-    float minLifetime = 999999.0f;
+void VFXLight_Spawn(Vector3 pos, Color color, float radius, float lifetime,
+                    VFXPriority priority) {
+    int freeIdx = -1;
+    int evictIdx = -1;
+    VFXPriority evictPriority = VFX_PRIORITY_HIGH_ULTIMATE;
+    float evictLifetime = 999999.0f;
 
-    // Tìm slot trống hoặc slot có light sắp hết hạn nhất để ghi đè (Tránh crash nếu quá tải vfx)
     for (int i = 0; i < MAX_VFX_LIGHTS; i++) {
         if (!g_VFXLights[i].active) {
-            targetIdx = i;
+            freeIdx = i;
             break;
         }
-        if (g_VFXLights[i].lifetime < minLifetime) {
-            minLifetime = g_VFXLights[i].lifetime;
-            targetIdx = i;
+        // Track the lowest-priority slot; among equal priority, the one with
+        // the shortest remaining lifetime (about to expire anyway).
+        if (evictIdx == -1 || g_VFXLights[i].priority < evictPriority ||
+            (g_VFXLights[i].priority == evictPriority &&
+             g_VFXLights[i].lifetime < evictLifetime)) {
+            evictIdx = i;
+            evictPriority = g_VFXLights[i].priority;
+            evictLifetime = g_VFXLights[i].lifetime;
         }
+    }
+
+    int targetIdx = -1;
+    if (freeIdx != -1) {
+        targetIdx = freeIdx;
+    } else if (evictIdx != -1 && evictPriority <= priority) {
+        // Only evict a slot whose priority is <= the incoming spawn's — a
+        // low-priority spawn must not evict an existing higher-priority one.
+        targetIdx = evictIdx;
     }
 
     if (targetIdx != -1) {
@@ -44,6 +61,7 @@ void VFXLight_Spawn(Vector3 pos, Color color, float radius, float lifetime) {
         g_VFXLights[targetIdx].radius = radius;
         g_VFXLights[targetIdx].lifetime = lifetime;
         g_VFXLights[targetIdx].maxLifetime = lifetime;
+        g_VFXLights[targetIdx].priority = priority;
         g_VFXLights[targetIdx].active = true;
     }
 }

@@ -1,7 +1,6 @@
 #version 330
 #include "core/shaders/common/vs_header.glsl"
 
-void main()
-{
+void main() {
     VS_FinalOutput(vertexPosition);
 }

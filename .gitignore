@@ -3,6 +3,9 @@ build/
 bin/
 obj/
 
+# Auto-test harness output (screenshots saved by AutoTest_SaveScreenshot)
+autotest_output/
+
 # CMake temporary files (if built outside build directory)
 CMakeCache.txt
 CMakeFiles/

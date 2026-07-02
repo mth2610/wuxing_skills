@@ -46,6 +46,7 @@ extern Camera3D camera;
 
 typedef struct {
   bool active;
+  int ownerAgentId;
   Vector3 startPos;
   Vector3 targetPos;
   Vector3 p1, p2;
@@ -62,6 +63,7 @@ typedef struct {
 
 static FireEmitter emitters[MAX_EMITTERS];
 static RibbonPoint ribbonBuffer[MAX_SAMPLED_SEGMENTS];
+static int s_skillIndex = -1;
 
 static Texture2D particleTex;
 static Shader fireShader;
@@ -247,13 +249,19 @@ void InitFireSkill(int screenWidth, int screenHeight) {
   ForceField_AddLayer(&s_fireBurstField, (ForceLayer){
     .type = FORCE_DRAG, .strength = 2.5f
   });
+
+  s_skillIndex = Skill_GetIndexByName("FIRE");
 }
 
-void CastFireSkill(Vector3 startPos, Vector3 target, float twistPhase,
+void CastFireSkill(int agentId, Vector3 startPos, Vector3 target, float twistPhase,
                    float sizeScale) {
+  if (!SkillManager_CanCast(s_skillIndex, agentId))
+    return;
+
   for (int i = 0; i < MAX_EMITTERS; i++) {
     if (!emitters[i].active) {
       emitters[i].active = true;
+      emitters[i].ownerAgentId = agentId;
       emitters[i].startPos = startPos;
       emitters[i].targetPos = target;
       emitters[i].headProgress = 0.0f;
@@ -298,6 +306,11 @@ void CastFireSkill(Vector3 startPos, Vector3 target, float twistPhase,
     cfg.forceField = &s_fireBurstField;
     SpawnParticle(cfg);
   }
+
+  SkillParams cdParams = {0};
+  cdParams.sizeScale = sizeScale;
+  SkillManager_TriggerCooldown(s_skillIndex, agentId,
+                               Skill_CalculateCooldown(SKILL_CAT_PROJECTILE, cdParams));
 }
 
 void UpdateFireSkill(float dt) {

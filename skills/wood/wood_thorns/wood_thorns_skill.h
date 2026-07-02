@@ -15,7 +15,7 @@ typedef struct {
 
 // Standard wuxing lifecycle API
 void InitWoodThornsSkill(int screenWidth, int screenHeight);
-void CastWoodThornsSkill(Vector3 startPos, Vector3 target, SkillParams params);
+void CastWoodThornsSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params);
 void UpdateWoodThornsSkill(float dt, Vector3 enemyPos, float enemyRadius);
 void DrawWoodThornsSkill(void);
 void UnloadWoodThornsSkill(void);

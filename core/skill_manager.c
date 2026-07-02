@@ -85,7 +85,7 @@ typedef struct {
   int forceQuantity;
   float forceSizeScale;
   void (*init)(int screenWidth, int screenHeight);
-  void (*cast)(Vector3 startPos, Vector3 target, SkillParams params);
+  void (*cast)(int agentId, Vector3 startPos, Vector3 target, SkillParams params);
   void (*update)(float dt, Vector3 enemyPos, float enemyRadius);
   void (*draw)(void);
   void (*unload)(void);
@@ -95,44 +95,61 @@ static SkillRegistryEntry skillRegistry[MAX_SKILLS];
 static int registeredSkillCount = 0;
 static bool builtInRegistered = false;
 
+// Keep in sync with entities/entities.h's MAX_AGENTS (256) — core/ must not
+// #include entities/ (wrong dependency direction, entities sits above core),
+// so this is a private, duplicated cap rather than a shared constant. Same
+// class of fragile coupling as CORE_ISSUES.md Item 3's
+// SOFT_PARTICLE_SCENE_NEAR/_FAR; if entities/entities.h's MAX_AGENTS ever
+// changes, update this too.
+#define SKILL_MANAGER_MAX_AGENTS 256
+
+// Item 16: cooldown gating state, keyed by (skillIndex, agentId) — each
+// caster gets an independent cooldown per skill. 0.0f = ready to cast.
+static float skillCooldownRemaining[MAX_SKILLS][SKILL_MANAGER_MAX_AGENTS];
+
+// Item 14: optional per-skill abort callback, registered separately from
+// RegisterSkill() so it stays backward compatible. Receives the agentId
+// AbortSkill() was called with.
+static void (*skillAbortCallback[MAX_SKILLS])(int agentId);
+
 // --- PROTOTYPES CỦA SKILL WRAPPERS ---
 #if HAS_SKILL_FLUID
-static void CastWaterWrapper(Vector3 startPos, Vector3 target, SkillParams params);
+static void CastWaterWrapper(int agentId, Vector3 startPos, Vector3 target, SkillParams params);
 static void UpdateFluidSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius);
 #endif
 
 #if HAS_SKILL_TUBE
-static void CastTubeWrapper(Vector3 startPos, Vector3 target, SkillParams params);
+static void CastTubeWrapper(int agentId, Vector3 startPos, Vector3 target, SkillParams params);
 static void UpdateTubeSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius);
 #endif
 
 #if HAS_SKILL_METAL
-static void CastMetalWrapper(Vector3 startPos, Vector3 target, SkillParams params);
+static void CastMetalWrapper(int agentId, Vector3 startPos, Vector3 target, SkillParams params);
 static void UpdateMetalSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius);
 #endif
 
 #if HAS_SKILL_FIRE
-static void CastFireWrapper(Vector3 startPos, Vector3 target, SkillParams params);
+static void CastFireWrapper(int agentId, Vector3 startPos, Vector3 target, SkillParams params);
 static void UpdateFireSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius);
 #endif
 
 #if HAS_SKILL_WOOD
-static void CastWoodWrapper(Vector3 startPos, Vector3 target, SkillParams params);
+static void CastWoodWrapper(int agentId, Vector3 startPos, Vector3 target, SkillParams params);
 static void UpdateWoodSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius);
 #endif
 
 #if HAS_SKILL_ELECTRIC
-static void CastElectricWrapper(Vector3 startPos, Vector3 target, SkillParams params);
+static void CastElectricWrapper(int agentId, Vector3 startPos, Vector3 target, SkillParams params);
 static void UpdateElectricSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius);
 #endif
 
 #if HAS_SKILL_WIND
-static void CastWindWrapper(Vector3 startPos, Vector3 target, SkillParams params);
+static void CastWindWrapper(int agentId, Vector3 startPos, Vector3 target, SkillParams params);
 static void UpdateWindWrapper(float dt, Vector3 enemyPos, float enemyRadius);
 #endif
 
 #if HAS_SKILL_SHIELD
-static void CastShieldWrapper(Vector3 startPos, Vector3 target, SkillParams params);
+static void CastShieldWrapper(int agentId, Vector3 startPos, Vector3 target, SkillParams params);
 static void UpdateShieldSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius) {
   (void)enemyPos;
   (void)enemyRadius;
@@ -240,7 +257,7 @@ static void EnsureBuiltInRegistered(void) {
 
 int RegisterSkill(const char *name, Color color,
                   void (*init)(int screenWidth, int screenHeight),
-                  void (*cast)(Vector3 startPos, Vector3 target,
+                  void (*cast)(int agentId, Vector3 startPos, Vector3 target,
                                SkillParams params),
                   void (*update)(float dt, Vector3 enemyPos, float enemyRadius),
                   void (*draw)(void), void (*unload)(void)) {
@@ -297,6 +314,17 @@ Color GetRegisteredSkillColor(int index) {
   return skillRegistry[index].color;
 }
 
+int Skill_GetIndexByName(const char *name) {
+  EnsureBuiltInRegistered();
+  if (name == NULL)
+    return -1;
+  for (int i = 0; i < registeredSkillCount; i++) {
+    if (strcmp(skillRegistry[i].name, name) == 0)
+      return i;
+  }
+  return -1;
+}
+
 void InitSkillManager(int screenWidth, int screenHeight) {
   EnsureBuiltInRegistered();
   for (int i = 0; i < registeredSkillCount; i++) {
@@ -318,6 +346,16 @@ void UpdateSkillManager(float dt, Vector3 enemyPos, float enemyRadius) {
   g_currentEnemyPos = enemyPos;
   g_currentEnemyRadius = enemyRadius;
   g_skillManagerTime += dt;
+
+  for (int i = 0; i < registeredSkillCount; i++) {
+    for (int a = 0; a < SKILL_MANAGER_MAX_AGENTS; a++) {
+      if (skillCooldownRemaining[i][a] > 0.0f) {
+        skillCooldownRemaining[i][a] -= dt;
+        if (skillCooldownRemaining[i][a] < 0.0f)
+          skillCooldownRemaining[i][a] = 0.0f;
+      }
+    }
+  }
 
   if (slowTimer > 0.0f)
     slowTimer -= dt;
@@ -474,7 +512,7 @@ void UnloadSkillManager(void) {
   }
 }
 
-void CastSkill(int skillIndex, Vector3 startPos, Vector3 target,
+void CastSkill(int skillIndex, int agentId, Vector3 startPos, Vector3 target,
                SkillParams params) {
   EnsureBuiltInRegistered();
   if (skillIndex < 0 || skillIndex >= registeredSkillCount)
@@ -537,7 +575,7 @@ void CastSkill(int skillIndex, Vector3 startPos, Vector3 target,
     break;
   }
   if (skillRegistry[skillIndex].cast)
-    skillRegistry[skillIndex].cast(adjustedStartPos, adjustedTarget, params);
+    skillRegistry[skillIndex].cast(agentId, adjustedStartPos, adjustedTarget, params);
 }
 
 bool IsEnemySlowed(void) { return slowTimer > 0.0f; }
@@ -574,7 +612,7 @@ void AddSlowToEnemy(float duration) {
 // --- IMPLEMENTATION CỦA CÁC SKILL WRAPPERS ---
 
 #if HAS_SKILL_FLUID
-static void CastWaterWrapper(Vector3 startPos, Vector3 target,
+static void CastWaterWrapper(int agentId, Vector3 startPos, Vector3 target,
                              SkillParams params) {
   int qty = params.quantity > 0 ? params.quantity : 1;
   if (qty > 1) {
@@ -588,49 +626,49 @@ static void CastWaterWrapper(Vector3 startPos, Vector3 target,
 #endif
 
 #if HAS_SKILL_TUBE
-static void CastTubeWrapper(Vector3 startPos, Vector3 target,
+static void CastTubeWrapper(int agentId, Vector3 startPos, Vector3 target,
                              SkillParams params) {
   int qty = params.quantity > 0 ? params.quantity : 1;
   if (qty > 1) {
     for (int i = 0; i < qty; i++)
-      CastTubeSkill(startPos, target,
+      CastTubeSkill(agentId, startPos, target,
                     ((float)i / (float)(qty - 1) - 0.5f) * (PI * 0.6f),
                     params.sizeScale);
   } else
-    CastTubeSkill(startPos, target, 0.0f, params.sizeScale);
+    CastTubeSkill(agentId, startPos, target, 0.0f, params.sizeScale);
 }
 #endif
 
 #if HAS_SKILL_METAL
-static void CastMetalWrapper(Vector3 startPos, Vector3 target,
+static void CastMetalWrapper(int agentId, Vector3 startPos, Vector3 target,
                              SkillParams params) {
   CastMetalSkill(startPos, target, params);
 }
 #endif
 
 #if HAS_SKILL_FIRE
-static void CastFireWrapper(Vector3 startPos, Vector3 target,
+static void CastFireWrapper(int agentId, Vector3 startPos, Vector3 target,
                             SkillParams params) {
   int qty = params.quantity > 0 ? params.quantity : 1;
   if (qty > 1) {
     for (int i = 0; i < qty; i++)
-      CastFireSkill(startPos, target,
+      CastFireSkill(agentId, startPos, target,
                     ((float)i / (float)(qty - 1) - 0.5f) * (PI * 0.5f),
                     params.sizeScale);
   } else
-    CastFireSkill(startPos, target, -0.4f, params.sizeScale);
+    CastFireSkill(agentId, startPos, target, -0.4f, params.sizeScale);
 }
 #endif
 
 #if HAS_SKILL_WOOD
-static void CastWoodWrapper(Vector3 startPos, Vector3 target,
+static void CastWoodWrapper(int agentId, Vector3 startPos, Vector3 target,
                             SkillParams params) {
   CastWoodSkill(startPos, target, params);
 }
 #endif
 
 #if HAS_SKILL_ELECTRIC
-static void CastElectricWrapper(Vector3 startPos, Vector3 target,
+static void CastElectricWrapper(int agentId, Vector3 startPos, Vector3 target,
                                 SkillParams params) {
   int qty = params.quantity > 0 ? params.quantity : 1;
   if (qty > 1) {
@@ -647,14 +685,14 @@ static void CastElectricWrapper(Vector3 startPos, Vector3 target,
 #endif
 
 #if HAS_SKILL_WIND
-static void CastWindWrapper(Vector3 startPos, Vector3 target,
+static void CastWindWrapper(int agentId, Vector3 startPos, Vector3 target,
                             SkillParams params) {
   CastWindSkill(startPos, target, params);
 }
 #endif
 
 #if HAS_SKILL_SHIELD
-static void CastShieldWrapper(Vector3 startPos, Vector3 target,
+static void CastShieldWrapper(int agentId, Vector3 startPos, Vector3 target,
                               SkillParams params) {
   (void)target;
   float baseRadius = 30.0f;
@@ -1029,4 +1067,45 @@ void SkillManager_BeginShader(Shader shader) {
 
 void SkillManager_EndShader(void) {
   EndShaderMode();
+}
+
+// --- Item 16: cooldown/resource GATING STATE ---
+
+bool SkillManager_CanCast(int skillIndex, int agentId) {
+  if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
+    return false;
+  if (agentId < 0 || agentId >= SKILL_MANAGER_MAX_AGENTS)
+    return false;
+  return skillCooldownRemaining[skillIndex][agentId] <= 0.0f;
+}
+
+void SkillManager_TriggerCooldown(int skillIndex, int agentId, float cooldownSeconds) {
+  if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
+    return;
+  if (agentId < 0 || agentId >= SKILL_MANAGER_MAX_AGENTS)
+    return;
+  if (cooldownSeconds < 0.0f)
+    cooldownSeconds = 0.0f;
+  skillCooldownRemaining[skillIndex][agentId] = cooldownSeconds;
+}
+
+// --- Item 14: optional abort/interrupt registration ---
+
+void RegisterSkillAbort(int skillIndex, void (*abort)(int agentId)) {
+  if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
+    return;
+  skillAbortCallback[skillIndex] = abort;
+}
+
+void AbortSkill(int skillIndex, int agentId) {
+  if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
+    return;
+  if (skillAbortCallback[skillIndex] == NULL) {
+    TraceLog(LOG_WARNING,
+             "[SkillManager] AbortSkill(%d) called but no abort callback "
+             "registered for this skill (RegisterSkillAbort not called)",
+             skillIndex);
+    return;
+  }
+  skillAbortCallback[skillIndex](agentId);
 }

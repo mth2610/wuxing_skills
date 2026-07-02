@@ -6,6 +6,7 @@
 #include "core/sprite_anim.h"
 #include "raylib.h"
 #include "core/ribbon_strip.h"
+#include "core/vfx_light.h"
 
 #define MAX_TRAIL_PARTICLES 500
 #define TRAIL_HISTORY_COUNT 60
@@ -80,6 +81,12 @@ typedef struct {
   const ForceField *forceField;
   const ColorGradient *gradient;
   const SpriteAnim *spriteAnim;
+  // Pool-eviction priority (CORE_ISSUES.md Item 12). Defaults to
+  // VFX_PRIORITY_LOW (0) when TrailConfig is zero-initialized with {0} —
+  // fully backward compatible. When the MAX_TRAIL_PARTICLES pool is full,
+  // SpawnTrailEntity() evicts the lowest-priority active trail (ties broken
+  // by shortest remaining lifetime) instead of rejecting the new spawn.
+  VFXPriority priority;
 } TrailConfig;
 
 // Đã tối ưu Struct Padding: Sắp xếp theo kích thước dữ liệu giảm dần
@@ -131,6 +138,7 @@ typedef struct {
 
   // 5. Số nguyên và Enum (Int/Enum) - 4 bytes
   TrailType type;
+  VFXPriority priority;
   int historyCount;
   int historyHead;
   int ownerTag;

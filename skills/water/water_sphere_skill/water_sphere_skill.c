@@ -35,6 +35,7 @@ typedef struct {
   Vector3 target;
   Vector3 direction;
   float sizeScale;
+  int ownerAgentId; // CORE_ISSUES.md Item 15 — caster's agent pool slot
 } WaterSphere;
 
 static WaterSphere s_spheres[MAX_WATER_SPHERES];
@@ -48,10 +49,13 @@ static Texture2D s_causticsTex;
 static ForceField s_splashField;
 static ColorGradient s_splashGrad;
 static ImpactBurstConfig s_waterImpactConfig;
+static int s_skillIndex = -1;
 
 void InitWaterSphereSkill(int screenWidth, int screenHeight) {
   (void)screenWidth;
   (void)screenHeight;
+
+  s_skillIndex = Skill_GetIndexByName("WATER_SPHERE");
 
   s_sphereShader = ResourceManager_LoadShader(
       "skills/water/water_sphere_skill/water_sphere.vs",
@@ -117,11 +121,14 @@ void InitWaterSphereSkill(int screenWidth, int screenHeight) {
   s_waterImpactConfig.particles.gradient = &s_splashGrad;
 }
 
-void CastWaterSphereSkill(Vector3 startPos, Vector3 target,
+void CastWaterSphereSkill(int agentId, Vector3 startPos, Vector3 target,
                           SkillParams params) {
+  if (!SkillManager_CanCast(s_skillIndex, agentId)) return;
+
   for (int i = 0; i < MAX_WATER_SPHERES; i++) {
     if (!s_spheres[i].active) {
       s_spheres[i].active = true;
+      s_spheres[i].ownerAgentId = agentId;
 
       // Jitter chống đơ cứng (Rule 12.2)
       Vector3 rawDir = Vector3Normalize(Vector3Subtract(target, startPos));
@@ -139,7 +146,11 @@ void CastWaterSphereSkill(Vector3 startPos, Vector3 target,
 
       // Spawn ánh sáng đi kèm quả cầu
       VFXLight_Spawn(s_spheres[i].position, ELEMENT_COLOR_WATER,
-                     SPHERE_BASE_RADIUS * 4.0f, 2.0f);
+                     SPHERE_BASE_RADIUS * 4.0f, 2.0f, VFX_PRIORITY_LOW);
+
+      SkillManager_TriggerCooldown(
+          s_skillIndex, agentId,
+          Skill_CalculateCooldown(SKILL_CAT_PROJECTILE, params));
       break;
     }
   }
@@ -200,13 +211,19 @@ void DrawWaterSphereSkill(void) {
   rlDisableDepthMask();
   BeginBlendMode(BLEND_ALPHA);
   BeginShaderMode(s_sphereShader);
+  // Rule 11: raw BeginShaderMode() (immediate-mode rlgl draw below) never
+  // auto-uploads matModel like DrawMesh/DrawModel does. Without this,
+  // water_sphere.vs's fragNormal = normalize(matModel * vertexNormal) reads
+  // a zero-initialized matModel -> normalize(vec3(0)) -> NaN normal.
+  // SkillManager_BeginShader() fixes matModel (identity) + also binds
+  // u_time/viewPos/u_resolution (CORE_API.md).
+  SkillManager_BeginShader(s_sphereShader);
 
   SetShaderValue(s_sphereShader, s_timeLoc, &time, SHADER_UNIFORM_FLOAT);
   SetShaderValue(s_sphereShader, s_viewPosLoc, &camera.position,
                  SHADER_UNIFORM_VEC3);
-  // This skill uses raw BeginShaderMode(), not SkillManager_BeginShader(),
-  // so u_lightDir isn't auto-bound (CORE_ISSUES.md Item 10) — set it here
-  // the same way viewPos already is.
+  // u_lightDir is a custom uniform SkillManager_BeginShader() doesn't bind
+  // (it only auto-binds u_time/viewPos/u_resolution) — set it manually.
   Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
   SetShaderValue(s_sphereShader, s_lightDirLoc, &lightDir, SHADER_UNIFORM_VEC3);
   float dissolve = 0.0f; // Trạng thái sống chưa dissolve
@@ -226,6 +243,7 @@ void DrawWaterSphereSkill(void) {
     DrawCoreSphere(s_spheres[i].position, currentRadius, 24, 24, WHITE);
   }
 
+  SkillManager_EndShader();
   EndShaderMode();
   EndBlendMode();
   rlEnableDepthMask();

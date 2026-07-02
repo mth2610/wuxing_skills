@@ -69,6 +69,21 @@ Sound     ResourceManager_LoadSound(const char *filePath);    // cached
 
 ---
 
+## 3b. DATA-DRIVEN TUNING (`core/tuning.h`)
+Register a `float` as tunable via `tuning.cfg` (project root) — edit while game runs, no rebuild.
+```c
+void Tuning_Init(const char *configPath);   // main.c only, once at startup
+bool Tuning_RegisterFloat(const char *key, float *value, float defaultValue);
+void Tuning_Update(void);                   // main.c only, once per frame
+void Tuning_Reload(void);                   // force immediate reload (debug hotkey)
+```
+- Skill only ever calls `Tuning_RegisterFloat` in `Init[Name]Skill` — sets `*value=defaultValue` immediately, then overwrites if key exists in `tuning.cfg`.
+- Format: `key = value` per line, `#` comments, floats only. Missing key keeps current value (no reset-to-default).
+- `Tuning_Update()` overwrites the registered float in place but can't fix values already copied elsewhere (e.g. baked into a `ParticleConfig` at Cast time) — re-read the float each frame if a live edit must reach an on-screen effect.
+- Desktop-only hot-reload; `tuning.cfg` ships in the Android bundle but no live-reload story there.
+
+---
+
 ## 4. STANDARD LIFECYCLE API (`[skill_name]_skill.h`)
 
 ```c
@@ -138,10 +153,12 @@ ForceField_AddLayer(&s_forceField, (ForceLayer){ .type=FORCE_VORTEX, .origin=p, 
 | `FORCE_VISCOSITY` | — | — | viscous damping | — | — | — | — |
 | `FORCE_RADIAL_AXIS` | dynamic | dynamic | +push/-pull | range | 1=lin | — | — |
 | `FORCE_VORTEX_AXIS` | dynamic | dynamic | rotation speed | range | 1=lin | — | — |
+| `FORCE_VECTOR_TEXTURE` | box center (xz) | box half-extent (xz) | multiplier | 0 (must be) | 0 (must be) | tex slot 0/1 (int) | 0 (must be) |
 
 - `RADIAL_AXIS`/`VORTEX_AXIS` ignore struct `origin`/`direction` — use per-frame `axisOrigin`/`axisDir` (e.g. via `SetFollowerAxis()`).
 - Falloff: 0=constant, 1=linear-to-zero at radius, 2=quadratic.
 - `ForceField_GetViscosityDamping(&s_forceField, dt)` → scale velocity manually in custom update loops.
+- `FORCE_VECTOR_TEXTURE` (GPU-only): samples a world-space flow texture for geometry-authored vector fields. RG channels = XZ flow dir remapped `[-1,1]→[0,1]`. **CPU path (`particle_system.c`/`trail_system.c`) treats this as a no-op** — only `GpuParticleSystem` (COMPUTE path) samples it via `GpuParticleSystem_SetVectorFieldTexture()`. Unverified on real GPU hardware (macOS caps at GL 4.1, never exercises COMPUTE path).
 
 ---
 
@@ -185,7 +202,7 @@ typedef struct {
     const ForceField *forceField; const ColorGradient *gradient; const SpriteAnim *spriteAnim;
 } TrailConfig;
 ```
-- `TRAIL_TYPE_FOLLOWER`: every frame call `SetFollowerAxis(trailId, basePos, normalizedDir)` + `UpdateFollowerPosition(trailId, tipPos)`.
+- `TRAIL_TYPE_FOLLOWER`: two ways to drive the tip — (1) manual: call `UpdateFollowerPosition(trailId, tipPos)` each frame before `UpdateTrailSystem`; (2) matrix attachment: call `Trail_AttachToTransform(trailId, &myMatrix, localOffset)` once — `UpdateTrailSystem` reads `*myMatrix` each frame and computes `tip = Vector3Transform(localOffset, *myMatrix)`; `Matrix` must stay valid for the trail's lifetime (typically a `static Matrix` on the owning skill); detach with `Trail_AttachToTransform(id, NULL, (Vector3){0})`. `SetFollowerAxis(trailId, basePos, normalizedDir)` sets the optional radial-axis orientation for `FORCE_RADIAL_AXIS`, unrelated to tip position.
 - `KillTrail(trailId)` to free when complete.
 - `onDeath` fires once on `life` expiry OR (PROJECTILE only) auto hit-detect on `target` — use to spawn impact VFX at exact last position.
 - `onUpdate` fires every frame post-physics; call `GetTrail(trailId)` inside for live pos/vel.
@@ -200,6 +217,8 @@ typedef struct {
 ```c
 void DecalSystem_Init(void);
 void DecalSystem_Add(Vector3 pos, float rot, float scale, Texture2D tex, float life, Color tint);
+void DecalSystem_AddEx(Vector3 pos, float rot, float rotSpeed, float scaleStart, float scaleEnd, Texture2D tex, float life, Color tint, BlendMode blendMode, float yOffset);
+void DecalSystem_AddFlowEx(Vector3 pos, float rot, float rotSpeed, float scaleStart, float scaleEnd, Texture2D tex, float life, Color tint, BlendMode blendMode, float yOffset, float flowSpeed, float flowStrength);
 void DecalSystem_AddStreak(const Vector3 *points, int count, float rot, float scale, Texture2D tex, float life, Color tint); // wraps Add per-point
 void DecalSystem_Update(float dt);
 void DecalSystem_Draw(void);
@@ -212,6 +231,7 @@ void DecalSystem_Unload(void); // engine-only, never from skill code
 - Draw before 3D meshes, `BLEND_ALPHA`.
 - Recommended scale: 4–5.5× structure radius.
 - `AddStreak` count not auto-clamped to `MAX_DECALS` headroom — caller's responsibility (typically ≤32).
+- `AddFlowEx`: texture radially scrolls outward from decal center over time (`core/shaders/decal_flow.fs`) instead of static — lava-crack-crawl/ripple-spreading visuals. `flowSpeed` ~0.3–1.0 (radial units/sec), `flowStrength` ~0.5–1.0 (0=identical to static, 1=fully scrolled). Separate shader pass, doesn't affect `Add`/`AddEx`. Already wired into `SpawnGroundDecal` for `DECAL_PRESET_FIRE_LAVA`/`DECAL_PRESET_WATER_RIPPLE` — every other preset stays static.
 
 ### Screen Distortion (`core/screen_distort.h`)
 `MAX_DISTORTION_SOURCES = 16`. Lifecycle (engine-only, skill only calls `Add`):
@@ -225,6 +245,17 @@ void ScreenDistort_Add(Vector3 worldPos, float radius, float strength, float lif
 ```
 - `strength`: 0.01–0.05 light heatwave, 0.1–0.3 strong shockwave. Auto-expires after `lifetime` — no manual kill.
 
+### Metaballs / Screen-Space Fluid (`core/metaball_fx.h`)
+```c
+void MetaballFX_RegisterBlob(Vector3 worldPos, float radius); // skill API — only this one
+// Init/Unload/DrawRegistered are engine-internal (main.c), never call from skill code
+```
+- Register every frame per blob (projectile head, lava droplet...) — blob lives exactly 1 frame, must re-register continuously. `MAX = 32` shared engine-wide (not per-skill).
+- **Never call `MetaballFX_DrawRegistered`** — runs raw GL (BeginTextureMode/EndTextureMode) and must run outside `BeginMode3D`/`EndMode3D`; already wired in `main.c` after `PostFX_Draw()`.
+- Pure screen-space 2D — always draws on top, no depth-test vs 3D scene.
+- Tint is one engine-wide fixed color (`main.c` passes `ELEMENT_COLOR_WATER` for every blob of every skill) — not per-skill/per-element yet.
+- `threshold`/`smoothness`: lower threshold + higher smoothness = blobs merge more easily.
+
 ### Color Gradient (`core/color_gradient.h`)
 ```c
 typedef struct { float t; Color color; } GradientStop;            // t in [0,1]
@@ -235,6 +266,16 @@ ColorGradient ColorGradient_MakeElectric(void);
 void  ColorGradient_StandardFade(ColorGradient *grad, Color baseColor, float midT, float brightenAmount);
 ```
 Prefer `ColorGradient` over `colorStart/colorEnd` for multi-stage shifts (fire white→orange→ash).
+
+### Float Curve (`core/float_curve.h`)
+Scalar equivalent of `ColorGradient` — same shape (`AddStop`/`Sample`, same 8-stop cap, LERP-between-adjacent-stops).
+```c
+typedef struct { float t, value; } FloatCurveStop;                                  // t in [0,1]
+typedef struct { FloatCurveStop stops[FLOAT_CURVE_MAX_STOPS]; int count; } FloatCurve; // max 8 stops
+bool  FloatCurve_AddStop(FloatCurve *c, float t, float value);  // caller must add in increasing t order
+float FloatCurve_Sample(const FloatCurve *c, float t);          // clamps outside registered range
+```
+Use for any plain `float` that shapes itself over a skill's lifetime (emission rate, light intensity, motion speed) instead of hand-rolled lerp/easing. Maps to `WUXING_ART_DIRECTION.md` §4.3 "Four Curves" (Intensity/Density/Motion/Lighting) — one `FloatCurve` per curve, declared at cast time, sampled each frame in `Update[Name]Skill`.
 
 ### Ribbon Strip (`core/ribbon_strip.h`)
 Camera-facing ribbon for any continuous long body (dragon/vine/lightning/water stream) — replaces billboard chains.
@@ -446,6 +487,39 @@ void ProceduralMesh_DrawFissure(const FissureMeshData *data, Color color);
 ```
 - Distinct from flat 2D crack decals — real 3D geometry. Centerline via `SamplePath` (polyline, not Bezier ctrl points), `spacing=max(width*0.5,1.0)`, clamped to `FISSURE_MAX_SEGMENTS`. Each cross-section: 5-vert jagged "V" with seeded jitter on width/depth/offset. Negative `depth` = raised crack. **Build once at cast time, cache.**
 
+### GPU Vertex Displacement (`core/procedural_mesh_utils.h` + `core/shaders/common/displacement.glsl`)
+```c
+Mesh ProceduralMesh_CreateBaseGrid(float width, float length, int segmentsX, int segmentsZ);
+Mesh ProceduralMesh_CreateBaseCylinder(int radialSegs, int heightSegs); // 2-end-open tube, local axis +Y in [0,1], local radius 1
+typedef struct {
+    float amplitude, frequency, speed;      // DisplaceVertex_Noise
+    float twistAmount, taperStart, taperEnd; // radians/t=0..1, AlongPath/TwistAndTaper
+    Vector3 pathP0, pathP1, pathP2, pathP3;  // world space, AlongPath only
+} MeshDisplacementParams;
+MeshDisplacementParams ProceduralMesh_DefaultDisplacementParams(void);
+void ProceduralMesh_SetDisplacementUniforms(Shader shader, const MeshDisplacementParams *params); // call every frame after BeginShaderMode, before Draw
+void ProceduralMesh_UnloadBase(Mesh *mesh); // call once at skill unload
+```
+```glsl
+// displacement.glsl — include AFTER vs_header.glsl, opt-in, independent of noise.glsl
+vec3 DisplaceVertex_Noise(vec3 localPos, vec3 localNormal, float noiseVal);
+vec3 DisplaceVertex_AlongPath(vec3 localPos, vec2 texCoord);
+vec3 DisplaceVertex_TwistAndTaper(vec3 localPos);
+vec3 DisplaceVertex_AlongPathNormal(vec3 localNormal, vec2 texCoord);        // REQUIRED alongside AlongPath
+vec3 DisplaceVertex_TwistAndTaperNormal(vec3 localPos, vec3 localNormal);   // REQUIRED alongside TwistAndTaper
+```
+- **`AlongPath`/`TwistAndTaper` REQUIRE their `*Normal()` counterpart** or lighting shows spiral banding — `VS_FinalOutput()` sets `fragNormal` from the un-rotated `vertexNormal`, unaware position was just rotated into a new frame:
+  ```glsl
+  vec3 displaced = DisplaceVertex_TwistAndTaper(vertexPosition);
+  VS_FinalOutput(displaced);
+  fragNormal = normalize(vec3(matModel * vec4(DisplaceVertex_TwistAndTaperNormal(vertexPosition, vertexNormal), 0.0)));
+  ```
+- `DisplaceVertex_Noise` has no normal counterpart (assumed small amplitude) — for higher-fidelity ripples perturb the normal in FS instead (`lighting.glsl`'s `perturbNormal()`).
+- **Additive, not a replacement** for the CPU builders above (Tube/WavePlane/CurlingWave/Rock/ShardCluster/VortexFunnel/Fissure) — those rebuild CPU-side and let skill code read back positions (raycast/anchoring). This bakes ONE static mesh at cast time, displaces every frame via uniforms on GPU only — CPU never sees displaced positions. **Only for pure-visual effects needing no raycast/collision against the displaced shape.**
+- Create base mesh once at cast time, cache in instance struct — never per frame.
+- `ProceduralMesh_SetDisplacementUniforms` silently skips uniforms the shader doesn't declare (same safe pattern as `SkillManager_BeginShader`).
+- `DrawMesh`/`DrawModel` auto-populate `matModel` via raylib — no identity-matModel workaround needed (unlike rlgl immediate-mode CPU builders, see §10 Rule D).
+
 ### Post FX (`core/post_fx.h`)
 ```c
 void PostFX_Init(int width, int height); void PostFX_Unload(void); // app lifecycle only
@@ -534,6 +608,17 @@ bool Timeline_Event(SkillTimeline *t, float triggerTime, float dt); // true exac
 bool Timeline_Finished(SkillTimeline *t);
 // orchestrate multi-step event sequences w/o manual state machine
 
+typedef struct { const char *tag; float start, duration; } TimelineLayer; // duration>0: continuous window; ~0: one-shot event
+typedef struct { float current; TimelineLayer layers[TIMELINE_MAX_LAYERS /*=8*/]; int layerCount; } LayeredTimeline;
+void  Timeline_LayeredStart(LayeredTimeline *t);
+bool  Timeline_AddLayer(LayeredTimeline *t, const char *tag, float start, float duration); // false past TIMELINE_MAX_LAYERS
+bool  Timeline_IsLayerActive(const LayeredTimeline *t, int layerIndex);
+float Timeline_LayerProgress(const LayeredTimeline *t, int layerIndex); // 0..1 within window, clamped outside
+bool  Timeline_LayerEvent(const LayeredTimeline *t, int layerIndex, float dt); // one-shot, same edge-detect as Timeline_Event
+```
+One declarative `{tag, start, duration}` table for staggering N visual layers (Trail/Light/Smoke/Decal) instead of hand-written `if (t>X && t<Y)` per layer — see `WUXING_ART_DIRECTION.md` §4.4 "Layer Activation Timeline". Caller advances `t->current += dt` itself, same convention as `SkillTimeline`. `LayerProgress` feeds `FloatCurve_Sample` for that layer's envelope.
+
+```c
 typedef enum { EMITTER_FIRE, EMITTER_SNOW, EMITTER_WATER_SPURT, EMITTER_SHOCKED_SPARKS,
   EMITTER_WOOD_LEAVES, EMITTER_EARTH_DUST, EMITTER_METAL_SPARKS, EMITTER_TAIJI_MOTES } EmitterPreset;
 void EmitterSystem_Init(void); void EmitterSystem_Update(float dt);
@@ -544,12 +629,36 @@ typedef enum { MESH_PRESET_DISC, MESH_PRESET_RING, MESH_PRESET_CONE, MESH_PRESET
   MESH_PRESET_CYLINDER, MESH_PRESET_SPHERE, MESH_PRESET_SHOCKWAVE, MESH_PRESET_PYRAMID, MESH_PRESET_TETRAHEDRON } MeshPresetType;
 void DrawEffectMesh(MeshPresetType type, Vector3 pos, Vector3 scale, Color color);
 
-typedef enum { MATERIAL_FIRE, MATERIAL_ICE, MATERIAL_WATER, MATERIAL_PORTAL } MaterialPreset;
-typedef struct { Shader shader; MaterialPreset preset; int uTimeLoc, uDissolveLoc; } EffectMaterial;
-EffectMaterial Material_Load(MaterialPreset preset);
+typedef enum { MATERIAL_FIRE, MATERIAL_ICE, MATERIAL_WATER, MATERIAL_PORTAL, MATERIAL_CUSTOM } MaterialPreset; // CUSTOM set by Material_LoadCustom()
+typedef struct {
+    Color    baseColor;          // primary tint; also drives rim glow + dissolve edge glow
+    float    rimStrength;        // 0..~2, rim/edge glow brightness (Fresnel-weighted, light-facing biased)
+    float    fresnelPower;       // 1..8, rim sharpness (higher = thinner edge)
+    float    emissiveIntensity;  // 0..~3, self-illumination boost added to base color
+    float    distortionStrength; // 0..1, vertex wobble amount
+    float    translucency;       // 0=opaque (alpha=baseColor.a), 1=glass/tube-style fresnel-driven alpha
+    Texture2D texture1;          // optional secondary detail/mask texture; id==0 = unused
+} EffectMaterialParams;
+typedef struct {
+    Shader shader; MaterialPreset preset;
+    int uTimeLoc, uDissolveLoc, uBaseColorLoc, uTranslucencyLoc, uRimStrengthLoc,
+        uFresnelPowerLoc, uEmissiveIntensityLoc, uDistortionStrengthLoc, uHasTexture1Loc, uTexture1Loc;
+    EffectMaterialParams params;
+} EffectMaterial;
+EffectMaterial Material_Load(MaterialPreset preset);              // 4 hardcoded presets, unchanged
+EffectMaterial Material_LoadCustom(EffectMaterialParams params);  // parametrized shared shader, no new GLSL needed
 void Material_SetFloat(EffectMaterial *mat, const char *uniformName, float val);
 void Material_Begin(EffectMaterial mat); void Material_End(void);
+```
+- `Material_Load` (4 presets): unchanged, each borrows an existing skill's shader — **known broken**: their shader paths reference files that no longer exist in the repo (zero callers currently, so never hit at runtime); `ResourceManager_LoadShader` silently returns `shader.id==0` (Rule C guard). Fix only if a skill actually adopts one of these presets.
+- `Material_LoadCustom`: always backed by shared `core/shaders/effect_material.vs/.fs` — look fully configured via `EffectMaterialParams` uniforms (`u_baseColor`, `u_rimStrength`, `u_fresnelPower`, `u_emissiveIntensity`, `u_distortionStrength`, `u_translucency`, optional `texture1`).
+- Rim glow weighted by light-facing direction, not view angle alone: `rim = fresnel * mix(0.3, 1.0, max(dot(normal, lightDir), 0.0))` — dimmed not zeroed on backlit side.
+- `translucency=1.0` for "center see-through, edges more solid" (`tube.fs` look) — **caller must wrap draw in `BeginBlendMode(BLEND_ALPHA)`/`EndBlendMode()`**, `Material_Begin`/`End` don't manage blend mode.
+- Shader ignores per-vertex `Color` passed to the mesh-draw call — tint comes only from `u_baseColor`.
+- `texture1.id==0` skips the sample (guarded by `u_hasTexture1`) rather than sampling unbound/stale texture. Sampled as luminance mask (`.r` only).
+- `Material_SetFloat` still works on `Material_LoadCustom` materials for any uniform, e.g. animating `u_dissolve`. `fx.glsl`'s `dissolveCalc()` gives nonzero `edgeFactor` for ~8% of fragments even at `dissolve==0.0` — avoids speckle the instant material appears.
 
+```c
 typedef enum {
   DECAL_PRESET_CRACK, DECAL_PRESET_EARTH_SHATTER, DECAL_PRESET_EARTH_RUNE,
   DECAL_PRESET_BURN, DECAL_PRESET_FIRE_LAVA,
@@ -564,6 +673,7 @@ void SpawnGroundDecal(DecalPresetType type, Vector3 pos, float radius, float dur
 - All 6 elements have ≥2 ground-mark presets, pre-tinted via `ELEMENT_COLOR_*` (except GENERIC_*) — no Color param needed.
 - Textures: `assets/textures/decals/` (per-element), `assets/textures/generic/` (untinted reusable).
 - `CRACK`/`BURN`/`ICE`/`WATER` = original 4, kept for compat. `ICE` now uses real frost texture (was `dust_wind.png` placeholder).
+- `FIRE_LAVA`/`WATER_RIPPLE` use `DecalSystem_AddFlowEx` internally (radial outward scroll, `flowSpeed=0.6, flowStrength=0.8`). Every other preset still calls plain `DecalSystem_Add` (static).
 
 ```c
 typedef enum { FORCE_PRESET_FIRE_UPDRAFT, FORCE_PRESET_SNOW_BLIZZARD, FORCE_PRESET_WATER_VORTEX } ForceFieldPreset;
@@ -599,8 +709,22 @@ void SkillBuilder_AddCastEffect(SkillBuildContext *ctx, EffectPresetType preset)
 | `lighting.glsl` | `.fs` needing lighting | `perturbNormal`, `calcFresnel`, `calcSpecular`, `calcDiffuse` |
 | `noise.glsl` | `.vs`/`.fs` needing noise | `hash2`, `hash3`, `vnoise`, `fbm2`, `fbm2N` |
 | `fx.glsl` | `.fs` needing effects | `dissolveCalc`, `flowBlend`, `emissiveMask` |
+| `triplanar.glsl` | `.fs` for meshes with no stable UV | `triplanarWeights`, `triplanarNoise`, `triplanarSample` |
 
-Include order: `fs_header.glsl` → `noise.glsl` (if needed) → `lighting.glsl` → `fx.glsl`. `fx.glsl` doesn't depend on `noise.glsl`. **Never reimplement hash/noise/fbm/dissolve/flowblend in skill code.**
+Include order: `fs_header.glsl` → `noise.glsl` (if needed) → `lighting.glsl` → `fx.glsl` → `triplanar.glsl` (if needed, depends on `noise.glsl` for `triplanarNoise`). `fx.glsl` doesn't depend on `noise.glsl`. **Never reimplement hash/noise/fbm/dissolve/flowblend/triplanar in skill code.**
+
+### Triplanar Mapping (`core/shaders/common/triplanar.glsl`)
+`ProceduralMesh_Draw*` (Rock, ShardCluster, Fissure, VortexFunnel) draw via `rlBegin`/`rlEnd` immediate-mode — position+normal only, **no texcoord** — so UV-based texturing stretches/streaks on jagged facets. Triplanar projects texture/pattern from 3 world-space axis planes (X/Y/Z), blended by world normal instead of UV.
+```glsl
+vec3 triplanarWeights(vec3 worldNormal, float sharpness);              // sharpness 2.0-6.0
+float triplanarNoise(vec3 worldPos, vec3 weights, float scale);        // procedural, no texture asset needed
+vec4 triplanarSample(sampler2D tex, vec3 worldPos, vec3 weights, float scale); // real texture asset
+```
+```glsl
+vec3 w = triplanarWeights(fragNormal, 4.0);
+float pattern = triplanarNoise(fragPosition, w, 0.05); // or triplanarSample(myTex, fragPosition, w, 0.02)
+```
+`scale` is a world-space projection frequency (not UV [0,1]) — small (0.01-0.05) for large meshes, larger (0.05-0.1) for small/detailed meshes.
 
 Required includes:
 ```glsl
@@ -649,6 +773,7 @@ Required includes:
 | `u_time` | uniform | float | auto-bound, never set manually |
 | `viewPos` | uniform | vec3 | auto-bound |
 | `u_resolution` | uniform | vec2 | auto-bound |
+| `u_lightDir` | uniform | vec3 | real env sun direction, pre-negated toward light; auto-bound **only via `SkillManager_BeginShader()`** — raw `BeginShaderMode()` callers must set it manually |
 | `finalColor` | out | vec4 | write exactly once per `main()` |
 
 > [!NOTE] **`fragNormal` caveat**: computed from original `vertexNormal` only — NOT recomputed from displaced surface. If VS displaces position, `fragNormal` won't reflect it. Pattern: re-derive perturbed normal in FS via `perturbNormal()` with matching height-field gradient (see `tube.fs`/`getDisplacement()`). True displaced-geometry normal requires manual VS finite-difference — not automatic.
@@ -663,10 +788,7 @@ float calcSpecular(vec3 normal, vec3 lightDir, vec3 viewDir, float shininess); /
 float calcDiffuse(vec3 normal, vec3 lightDir, float ambient);           // ambient typical 0.10-0.25
 ```
 - `perturbNormal`: `heightDelta = vec2(h(u-eps)-h(u+eps), h(v-eps)-h(v+eps))`, gradient of skill's own height fn — MUST reuse exact same formula as VS displacement, else lighting/displacement mismatch visually.
-- Project-standard `lightDir` (hard-code in every skill, no auto-bound uniform exists):
-```glsl
-vec3 lightDir = normalize(vec3(0.5, 0.8, 0.5));
-```
+- **`lightDir`: use `normalize(u_lightDir)`, NOT hardcoded** (resolved, `u_lightDir` is a real auto-bound uniform matching the environment's actual sun direction — see table above). Do not hard-code `normalize(vec3(0.5,0.8,0.5))` in new skills; that value previously mismatched the environment's real cast-shadow direction. If the skill calls raw `BeginShaderMode()` instead of `SkillManager_BeginShader()` (check your `Draw` function — some existing skills do, e.g. `tube_skill.c`, `stone_prison_skill.c`), the auto-bind doesn't reach it — fetch `GetShaderLocation(shader, "u_lightDir")` yourself in `Init[Name]Skill` and set it each frame with `Vector3Negate(Environment_GetSunDirection())`, same pattern as `viewPos`.
 
 **`noise.glsl`:**
 ```glsl
@@ -684,8 +806,6 @@ float flowBlend(sampler2D tex, vec2 uv, vec2 flowDir, float speed, float strengt
 float emissiveMask(vec3 worldPos, float freq, float threshold); // sine-based on world pos, not UV-distorted
 ```
 Do not reimplement these.
-
-> [!NOTE] No auto-bound `lightDir` uniform exists — both lighting fns take it as a param. Reuse `normalize(vec3(0.5,0.8,0.5))` for consistency (project's fixed key light). Update this section if engine later exposes shared `u_lightDir`.
 
 ### Custom per-skill uniforms (e.g. `u_uvLength`, `u_dissolve`)
 Not handled by `SkillManager_BeginShader()` — skill C code responsible.
@@ -739,11 +859,13 @@ Shaders using common headers already have this — no redeclaration.
 **Rule D — `matModel` must be set manually with rlgl immediate mode:**
 `VS_FinalOutput()` computes `fragNormal = normalize(matModel * vertexNormal)`. Raylib only uploads `matModel` via `DrawMesh`/`DrawModel` — NOT via rlgl immediate mode (`rlBegin`/`rlEnd`/`ProceduralMesh_DrawTube`...). On Android GLES 3.0, unset `matModel` = all-zeros → `normalize(vec3(0,0,0))` = NaN on Adreno/Mali → `fragNormal=NaN` → `clamp(NaN,0,1)=1.0` → solid white. Desktop GL driver handles `normalize(zero)` differently — bug invisible on Mac.
 **`SkillManager_BeginShader` auto-sets `matModel=identity`** before `BeginShaderMode` — no action needed if using it.
-If calling `BeginShaderMode` directly (bypassing `SkillManager_BeginShader`), MUST set manually:
+> [!IMPORTANT] **Bug fixed 2026-06-30**: the old fix pattern checked `shader.locs[SHADER_LOC_MATRIX_MODEL] >= 0` — **this check is WRONG**. Raylib's `LoadShaderFromMemory` only auto-binds a fixed default uniform set (`mvp`, `colDiffuse`, `texture0`, vertex attribs); `matModel` isn't in it, so that slot is never written and stays `0` from `RL_CALLOC`. `0` passes `>= 0` despite **not being `matModel`'s real location** → `SetShaderValueMatrix` overwrites whatever uniform actually sits at location 0 in the linked program (e.g. a `sampler2D texture0`) → broken texture binding/uniform value → mesh can render solid white despite correct geometry. Confirmed root cause in `tsunami_skill` (FlowMap's `texture0` overwritten by an identity matrix). `SkillManager_BeginShader` now uses `GetShaderLocation(shader, "matModel")` (name-based lookup, real `-1` if absent) instead.
+If calling `BeginShaderMode` directly (bypassing `SkillManager_BeginShader`), MUST set manually — **look up by name, never `shader.locs[SHADER_LOC_MATRIX_MODEL]`**:
 ```c
-if (s_shader.locs[SHADER_LOC_MATRIX_MODEL] >= 0) {
+int matModelLoc = GetShaderLocation(s_shader, "matModel");
+if (matModelLoc >= 0) {
     Matrix identity = MatrixIdentity();
-    SetShaderValueMatrix(s_shader, s_shader.locs[SHADER_LOC_MATRIX_MODEL], identity);
+    SetShaderValueMatrix(s_shader, matModelLoc, identity);
 }
 ```
 

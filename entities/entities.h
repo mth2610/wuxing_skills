@@ -38,7 +38,12 @@ typedef struct {
     AgentModifier modifiers[MAX_AGENT_MODIFIERS];
 } Agent;
 
-#define MAX_AGENTS 8
+// Sized for the real target scale (up to 6 real players + a mixed pool of
+// minions/mid-tier monsters/2 bosses), not just the original 4v4 test
+// scaffolding — static array, cost is ~20KB total, negligible. Bump further
+// if a future design ever needs more; this is a compile-time ceiling only,
+// actual live agent count still varies freely under it at runtime.
+#define MAX_AGENTS 256
 
 // --- Lifecycle ---
 void Entity_Init(void);

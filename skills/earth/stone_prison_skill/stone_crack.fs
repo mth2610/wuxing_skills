@@ -1,4 +1,5 @@
 #version 330
+#include "core/shaders/common/noise.glsl"
 
 /* Varyings */
 in vec2 fragTexCoord;
@@ -12,22 +13,6 @@ uniform float     u_time;
 /* Output */
 out vec4 finalColor;
 
-/* Cheap value noise */
-float hash(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-}
-
-float noise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    float a = hash(i);
-    float b = hash(i + vec2(1.0, 0.0));
-    float c = hash(i + vec2(0.0, 1.0));
-    float d = hash(i + vec2(1.0, 1.0));
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
-}
-
 void main() {
     vec2 uv = fragTexCoord;
     vec4 tex = texture(texture0, uv);
@@ -37,10 +22,16 @@ void main() {
     float d = length(p);
 
     // Add noise to the edge of the crack reveal to make it look jagged and organic
-    float edgeNoise = noise(uv * 8.0) * 0.06;
+    float edgeNoise = vnoise(uv * 8.0) * 0.06;
     float revealRadius = u_progress * 0.5 + edgeNoise;
 
-    // Discard pixels outside the crawling fracture front
+    // Discard pixels outside the crawling fracture front.
+    // NOTE: kept local, not fx.glsl's dissolveCalc() — this is a radial
+    // "grow outward" reveal (discards d > revealRadius, glows fading IN as d
+    // approaches the boundary from inside), the opposite polarity of
+    // dissolveCalc's "discard below threshold, glow fading out past it".
+    // Reusing dissolveCalc here would require negating noiseVal/dissolve,
+    // which is more fragile/obscure than this direct radial math.
     if (d > revealRadius) {
         discard;
     }

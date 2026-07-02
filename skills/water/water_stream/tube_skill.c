@@ -40,6 +40,7 @@ extern Camera3D camera;
 
 typedef struct {
   bool active;
+  int ownerAgentId;
   Vector3 p0, p1, p2, p3;
   float progress;
   float sizeScale;
@@ -47,6 +48,7 @@ typedef struct {
 } TubeEmitter;
 
 static TubeEmitter emitters[MAX_TUBE_EMITTERS];
+static int s_skillIndex = -1;
 static Shader tubeShader;
 static int timeLoc;
 static int viewPosLoc;
@@ -158,14 +160,20 @@ void InitTubeSkill(int screenWidth, int screenHeight) {
       ColorAlpha(ColorLerp(ELEMENT_COLOR_WATER, WHITE, 0.3f), 0.0f);
   s_waterImpactConfig.particles.forceField = &s_tubeSplashField;
   s_waterImpactConfig.particles.gradient = &s_splashGrad;
+
+  s_skillIndex = Skill_GetIndexByName("TUBE");
 }
 
-void CastTubeSkill(Vector3 startPos, Vector3 target, float twistPhase,
+void CastTubeSkill(int agentId, Vector3 startPos, Vector3 target, float twistPhase,
                    float sizeScale) {
+  if (!SkillManager_CanCast(s_skillIndex, agentId))
+    return;
+
   float clampedScale = ClampSizeScale(sizeScale);
   for (int i = 0; i < MAX_TUBE_EMITTERS; i++) {
     if (!emitters[i].active) {
       emitters[i].active = true;
+      emitters[i].ownerAgentId = agentId;
       emitters[i].p0 = startPos;
       emitters[i].p3 = target;
       emitters[i].progress = 0.0f;
@@ -192,6 +200,11 @@ void CastTubeSkill(Vector3 startPos, Vector3 target, float twistPhase,
       break;
     }
   }
+
+  SkillParams cdParams = {0};
+  cdParams.sizeScale = clampedScale;
+  SkillManager_TriggerCooldown(s_skillIndex, agentId,
+                               Skill_CalculateCooldown(SKILL_CAT_PROJECTILE, cdParams));
 }
 
 void UpdateTubeSkill(float dt) {
@@ -244,24 +257,29 @@ void DrawTubeSkill(void) {
   rlEnableBackfaceCulling();
   BeginBlendMode(BLEND_ALPHA);
   BeginShaderMode(tubeShader);
+  // ProceduralMesh_BuildTube tạo geometry trong world-space → matModel là identity.
+  // Raylib không tự upload matModel khi dùng rlgl immediate mode trên Android GLES 3.0
+  // → normalize(mat4(0) * normal) = NaN → màu trắng. Phải set thủ công.
+  // Rule 11 fix: `tubeShader.locs[SHADER_LOC_MATRIX_MODEL] >= 0` was the WRONG
+  // check (CORE_API.md) — raylib never populates that array slot for a name
+  // outside its fixed default-uniform list, so it stays 0 from RL_CALLOC and
+  // `0 >= 0` always passes even though it isn't matModel's real location,
+  // risking a silent overwrite of whatever uniform actually lives at GL
+  // location 0. Use SkillManager_BeginShader() instead — it looks up
+  // "matModel" by name (GetShaderLocation, real -1 when absent), sets it to
+  // identity, and also auto-binds u_time/viewPos/u_resolution (called first,
+  // right after BeginShaderMode, so later manual SetShaderValue calls for
+  // time/viewPos below still take effect/stay authoritative).
+  SkillManager_BeginShader(tubeShader);
 
   SetShaderValue(tubeShader, timeLoc, &time, SHADER_UNIFORM_FLOAT);
   SetShaderValue(tubeShader, viewPosLoc, &camera.position, SHADER_UNIFORM_VEC3);
-  // This skill uses raw BeginShaderMode(), not SkillManager_BeginShader(),
-  // so u_lightDir isn't auto-bound (CORE_ISSUES.md Item 10) — set it here
-  // the same way viewPos already is.
+  // u_lightDir is a custom uniform SkillManager_BeginShader() doesn't bind
+  // (it only auto-binds u_time/viewPos/u_resolution) — set it manually.
   Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
   SetShaderValue(tubeShader, lightDirLoc, &lightDir, SHADER_UNIFORM_VEC3);
   float uvLength = TUBE_UV_LENGTH_SCALE;
   SetShaderValue(tubeShader, uvLengthLoc, &uvLength, SHADER_UNIFORM_FLOAT);
-
-  // ProceduralMesh_BuildTube tạo geometry trong world-space → matModel là identity.
-  // Raylib không tự upload matModel khi dùng rlgl immediate mode trên Android GLES 3.0
-  // → normalize(mat4(0) * normal) = NaN → màu trắng. Phải set thủ công.
-  if (tubeShader.locs[SHADER_LOC_MATRIX_MODEL] >= 0) {
-    Matrix identity = MatrixIdentity();
-    SetShaderValueMatrix(tubeShader, tubeShader.locs[SHADER_LOC_MATRIX_MODEL], identity);
-  }
 
   // Quy tac 9.1: reset vertex color truoc khi ve mesh dung shader mau/texture
   // rieng
@@ -280,6 +298,7 @@ void DrawTubeSkill(void) {
     ProceduralMesh_DrawTube(&mesh, TUBE_UV_LENGTH_SCALE);
   }
 
+  SkillManager_EndShader();
   EndShaderMode();
   EndBlendMode();
   rlDisableBackfaceCulling();

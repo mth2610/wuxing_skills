@@ -17,7 +17,7 @@ void InitTubeSkill(int screenWidth, int screenHeight);
 
 // Tung chiêu. 
 // twistPhase có thể dùng để đẩy control point lệch sang hai bên, tạo đường uốn lượn khác nhau.
-void CastTubeSkill(Vector3 startPos, Vector3 target, float twistPhase, float sizeScale);
+void CastTubeSkill(int agentId, Vector3 startPos, Vector3 target, float twistPhase, float sizeScale);
 
 // Cập nhật logic (tiến độ dòng chảy, sinh hạt nước văng ra)
 void UpdateTubeSkill(float dt);

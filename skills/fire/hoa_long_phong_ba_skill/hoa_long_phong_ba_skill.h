@@ -14,7 +14,7 @@ typedef struct {
 #endif
 
 void InitHoaLongPhongBaSkill(int w, int h);
-void CastHoaLongPhongBaSkill(Vector3 start, Vector3 target, SkillParams p);
+void CastHoaLongPhongBaSkill(int agentId, Vector3 start, Vector3 target, SkillParams p);
 void UpdateHoaLongPhongBaSkill(float dt, Vector3 enemyPos, float enemyRadius);
 void DrawHoaLongPhongBaSkill(void);
 void UnloadHoaLongPhongBaSkill(void);

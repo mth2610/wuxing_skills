@@ -35,7 +35,7 @@ skills/[element]/[skill_name]_skill/
 ## Required lifecycle API (in the header)
 ```c
 void Init[Name]Skill(int screenWidth, int screenHeight);
-void Cast[Name]Skill(Vector3 startPos, Vector3 target, SkillParams params);
+void Cast[Name]Skill(int agentId, Vector3 startPos, Vector3 target, SkillParams params);
 void Update[Name]Skill(float dt, Vector3 enemyPos, float enemyRadius);
 void Draw[Name]Skill(void);
 void Unload[Name]Skill(void);
@@ -43,6 +43,15 @@ bool Is[Name]SkillCoiling(void);
 int Get[Name]SkillProjectiles(SkillProjectile *outProjectiles, int maxProjectiles);
 void Deactivate[Name]Projectile(int index);
 ```
+
+**`agentId` (CORE_ISSUES.md Item 15)**: the caster's `entities/entities.h` agent
+pool slot (0..255), forwarded automatically by `CastSkill()`. Store it in your
+per-instance struct as `int ownerAgentId;` when a new instance is allocated
+(cast time) — this is what lets `AbortSkill(skillIndex, agentId)` (Item 14)
+target only the caster's own instance instead of every active instance of
+that skill type, and is a prerequisite for any future per-caster gameplay
+logic. Do not use `agentId` for anything else (rendering, damage) unless a
+real need comes up — this field's only job right now is ownership tracking.
 
 ## Hard rules
 - Strict C99. Explicitly include `<stddef.h>`, `<stdlib.h>`, `<stdio.h>`.

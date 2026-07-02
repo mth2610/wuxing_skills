@@ -6,27 +6,23 @@ the API surface that IS shipped and documented.
 
 ---
 
-## Item 3 — Soft Particles (REBUILD IN PROGRESS, paused — 3 real bugs fixed, 1 open question)
+## Item 3 — Soft Particles (REBUILD IN PROGRESS, paused — 3 real bugs fixed, ground occlusion confirmed still broken in isolation)
 
 **Status: `core/screen_distort.c/.h` infrastructure is still in the tree and
-untouched.** Builds clean, no regressions. Paused mid-verification because
-the debugging loop was taking too long — picking this up again should be
-much faster than starting over, since 3 of probably ~4 real bugs are now
-confirmed fixed.
+untouched.** Builds clean, no regressions. Paused again this session after a
+long screenshot-driven debugging loop — see "Session 2 findings" below for
+what's now confirmed vs. still open. Picking this up again should be faster
+than starting over: 3 real bugs are fixed, real test infrastructure now
+exists, and the remaining problem is characterized much more precisely than
+before (isolated to ground-plane occlusion specifically, not "some occluder
+somewhere").
 
 > [!NOTE]
-> **Test harness removed.** `core_test` (`skills/taiji/core_test/`) was
-> repurposed as a single-purpose test skill for Item 4a (triplanar mapping)
-> — `core_test_soft.vs/.fs` and `core_test_skill.c`'s `DrawSoftParticleShape()`
-> described below were deleted, along with the dissolve/metaball test shapes.
-> Whoever resumes Item 3 needs to re-add a soft-particle test shape (sphere +
-> `ScreenDistort_BindDepthForSoftParticles`/`UnbindSoftParticleDepth` call
-> sites, depth-test/mask disable pattern) before re-verifying — the engine
-> side (`core/screen_distort.c/.h`, `core/shaders/depth_copy.fs`,
-> `core/shaders/common/soft_particle.glsl`) is unaffected and still in place.
-> The dissolve edge glow (`fx.glsl`'s `dissolveCalc`) and metaballs
-> (`core/metaball_fx.h`) APIs themselves are also unaffected — only their
-> `core_test` demo call sites were removed.
+> **Test harness re-added this session, present and working.**
+> `core_test` (`skills/taiji/core_test/`) currently hosts the soft-particle
+> test shape again — see "Test infrastructure now in place" below for exact
+> file list and controls. Whoever resumes does NOT need to re-add anything;
+> start by reading that section and re-running the existing test.
 
 ### What's implemented (same architecture as the first attempt)
 - `core/screen_distort.c/.h`: `renderTex` rebuilt with a sampleable depth
@@ -81,457 +77,211 @@ confirmed fixed.
    indistinguishable near-black sliver) that texture sampling then worked
    correctly, for both a fixed UV and the real per-pixel computed UV.
 
-### Open question — not yet confirmed (where to pick this back up)
+### Session 2 findings — occlusion from real props works; ground occlusion does not, even in total isolation
 
-With all three bugs above fixed, the test sphere was *still* fully
-invisible at the original test camera position. Investigation (numeric,
-not screenshot-color-guessing) showed why: `SoftParticle_Factor`'s
-`diff = sceneLinear - fragLinear` was strongly **negative** — the
-previous-frame scene depth behind the sphere (read at screen-center) was
-only `~17` world units, much *closer* than the sphere itself (`~175` units
-away from that test camera). That means some opaque geometry (almost
-certainly a bamboo stalk in the test map, given how dense/close they are
-around the chosen test position) sat directly between the camera and the
-sphere, in front of it, in the previous frame's depth buffer. The formula,
-as written, correctly fades to 0 when the recorded "scene" is closer than
-the particle — which is arguably correct behavior for an occluder *in
-front*, just not the demo this test position was meant to show. Repositioning the camera to a steep top-down angle (avoiding the bamboo
-line-of-sight) got as far as confirming non-black output before this task
-was paused — **not yet confirmed as a clean, fully-faded-gradient pass.**
+**Confirmed working (positive result):** in `maps/bamboo_valley`, with the
+test sphere near bamboo stalks and the player character, the fade correctly
+and precisely traces the **silhouette** of whichever opaque object (bamboo
+leaves, player model) sat between the camera and the sphere in the previous
+frame — pixel-accurate cutout shapes, not noise. This reconfirms bugs #1–3
+above are genuinely fixed and the mechanism works for ordinary opaque props.
+
+**Confirmed broken (the real remaining problem):** built a brand new,
+deliberately empty test map (`maps/soft_test_ground/` — see below) with
+*only* one flat opaque floor at exactly `Y = 0.0f`, nothing else in the
+scene, camera unobstructed. Test sphere (radius 40) centered at `Y = 0.0f`,
+so genuinely half-buried, half-exposed. Even with `CORE_TEST_SOFT_FADE_DISTANCE`
+raised from `30.0f` to `200.0f` (5–6× the sphere's radius) as a diagnostic:
+- Debug Mode 1 (`SoftParticle_Factor` as grayscale) shows **uniform 1.0
+  (fully opaque) across the entire visible sphere**, including its
+  lowest/most-buried visible pixels.
+- Debug Mode 2 (raw, **unclamped** `diff = sceneLinear - fragLinear`,
+  sign-coded, with an explicit yellow flag for any `|diff| < 10` pixel)
+  confirms this isn't a clamping artifact: `diff` reads strongly positive
+  (≥ ~120 world units) everywhere, and **not a single pixel** anywhere on
+  the sphere's surface ever lit up the near-zero yellow flag.
+
+So: the exact same mechanism that correctly detects a bamboo stalk or the
+player model as an occluder **never once detects the ground plane itself**,
+even when the test sphere is unambiguously, geometrically buried inside it.
+This is a materially more precise problem statement than the original "open
+question" above (which blamed an occluder-in-front, i.e. bamboo) — this
+time there is categorically nothing else in the scene, and the fade still
+never triggers, not even a thin sliver.
+
+**Leading hypothesis, NOT yet confirmed:** everything that correctly
+registers occlusion (bamboo, player) is drawn via `DrawModelEx`/normal mesh
+draws. The one thing that never registers (the floor, in both
+`maps/default_arena` and the new `maps/soft_test_ground`) is drawn via raw
+`rlBegin(RL_TRIANGLES)`/`rlVertex3f`/`rlColor4ub` immediate mode with no
+explicit shader bound. Worth testing directly whether this immediate-mode
+path actually writes real depth into the framebuffer `ScreenDistort`
+snapshots from — has NOT been confirmed either way this session, just
+flagged as the most concrete remaining lead given the clean A/B result
+(mesh-drawn props: works: raw-immediate floor: never works, in every test
+location tried, on two different maps).
 
 **Next steps for whoever resumes:**
-1. Find/confirm a test camera + sphere position with clear open
-   background behind the unburied top of the sphere (no intervening
-   geometry), and verify visually that the top stays opaque while the
-   buried bottom fades smoothly — the actual feature pass/fail criterion.
-2. Decide intentionally whether "fade to 0 when occluded by something in
-   front" (current formula behavior) is the desired semantic, or whether
-   particles in front of closer occluders should hard-discard/clip instead
-   of fade — currently accidental-by-formula, not a deliberate design call.
-3. Once visually confirmed: re-add the "Soft Particles" section to
-   `CORE_API.md` (removed in the original revert, commit `54a9c4c`),
-   tune `CORE_TEST_SOFT_FADE_DISTANCE` (currently `30.0f`, unvalidated) to
-   a sensible default, and flip `core_test_skill.c` back to a real
-   `Cast`-triggered demo if useful for future regression checks.
+1. Confirm or rule out the immediate-mode-floor hypothesis above — the
+   fastest way is probably a GPU frame capture (RenderDoc or similar; same
+   tooling gap already flagged in Item 5 below) inspecting the actual FBO
+   depth attachment right after the floor draw call, rather than more
+   screenshot/shader-color inference.
+2. If confirmed: either switch floor drawing to a real mesh
+   (`DrawMesh`/`DrawModel`) across the affected maps, or find whatever
+   depth-state difference immediate-mode triangles have vs. mesh draws in
+   this specific rlgl/GL setup and fix it at the source.
+3. Re-verify `SOFT_PARTICLE_SCENE_NEAR`/`_FAR` (`core/screen_distort.c`)
+   still match `MyBeginMode3D`'s real `rlFrustum` near/far in `main.c` —
+   flagged as a fragile coupling when bug #2 was fixed, not re-checked
+   this session.
+4. Once truly fixed and visually confirmed (top of sphere opaque, buried
+   bottom fades smoothly, on the clean `SOFT_TEST_GROUND` map): re-add the
+   "Soft Particles" section to `CORE_API.md` (removed in the original
+   revert, commit `54a9c4c`), re-tune `CORE_TEST_SOFT_FADE_DISTANCE` back
+   down from the `200.0f` diagnostic value to a sane default, and decide
+   intentionally (not by formula-accident) whether "fade when occluded by
+   something in front" is the desired semantic for a hard occluder vs. a
+   hard clip/discard.
+
+### Test infrastructure now in place (for whoever resumes — nothing needs re-adding)
+
+- `skills/taiji/core_test/core_test_skill.c` + `.h`: `CastCoreTestSkill`
+  spawns a radius-40 sphere centered at `Y=0` (startPos X/Z) using
+  `SkillManager_BeginShader` (auto `matModel`/`u_lightDir`, sidesteps Item
+  11's bug), `ScreenDistort_BindDepthForSoftParticles`, and
+  `rlDisableDepthTest()`/`rlDisableDepthMask()` around the draw.
+  - **L** — CPU-side 3-point (top/mid/bottom) numeric depth readback,
+    logged via `TraceLog` AND drawn on-screen (`DrawCoreTestSkillDebugHUD`,
+    wired into `main.c`'s 2D pass). **Turned out to be unreliable/misleading**
+    — the sample points are literal world-space positions on the sphere's
+    vertical center axis, which do NOT correspond to the actual visible
+    front-surface fragment at that screen pixel from an oblique camera
+    angle, so its `diff` values run substantially more negative than the
+    real per-pixel GPU value (Mode 2 below). Trust the shader-side debug
+    modes over this readback; consider removing or reworking it before
+    reusing this harness for anything else.
+  - **H** — cycles 3 shader debug modes (`u_debugShowFade` uniform in
+    `core_test_soft.fs`): 0 = normal shaded look, 1 = `SoftParticle_Factor()`
+    as grayscale (max luma 0.35, kept under `main.c`'s `bloomThreshold=0.5f`
+    so PostFX bloom can't add a false glow halo), 2 = raw unclamped `diff`
+    (green=positive/unoccluded, red=negative/occluded, explicit yellow flag
+    for any `|diff| < 10` pixel so a thin transition band can't hide inside
+    an over-coarse color scale).
+  - **`CORE_TEST_SOFT_FADE_DISTANCE`** currently `200.0f` (bumped up from
+    `30.0f` as a diagnostic — see findings above). Reset this once the real
+    bug is found and fixed.
+  - **IMPORTANT key-binding gotcha hit this session:** `KEY_K` is already
+    bound globally in `main.c` to cycle maps. An earlier version of this
+    harness also bound `KEY_K` to toggle the debug view — raylib doesn't
+    give one system exclusive ownership of a key, so every debug-view
+    toggle silently ALSO cycled the map, which looked exactly like "the
+    fade result depends on the player's position" for several test rounds
+    before the real cause (wrong map, not player position) was found.
+    Debug view is now on `KEY_H` specifically to avoid this. Grep
+    `IsKeyPressed(KEY_` across `main.c`/`sandbox/*.c` before binding any
+    new key in a test harness.
+- `skills/taiji/core_test/core_test_soft.vs`/`.fs`: minimal shader,
+  `#include`s `vs_header.glsl`/`fs_header.glsl`/`soft_particle.glsl`.
+- `maps/soft_test_ground/` (new): registered as map name `SOFT_TEST_GROUND`
+  — a single flat opaque floor at exactly `Y=0.0f`, nothing else at all.
+  Built because neither existing map was clean enough to isolate this bug:
+  `maps/bamboo_valley` draws no floor of its own at all (the visible ground
+  there comes from elsewhere, likely fog/background, not a real depth-writing
+  mesh), and `maps/default_arena`'s floor sits at `Y=-0.05f` and is drawn
+  alongside grid lines that added noise to the comparison. Default active
+  map at startup is still `BAMBOO_VALLEY` (`core/map_manager.c`'s
+  `MapManager_Init`); cycle to `SOFT_TEST_GROUND` with **K** (currently 3
+  presses from the default map — check `core/maps_generated.h`'s
+  registration order if this ever changes).
 
 ### Process note for next time
 A numeric CPU readback of the actual texture/uniform values (`LoadImageFromTexture`
 + inspect specific pixels, or log resolved `GetShaderLocation` results) caught
 two of the three bugs above almost immediately, where screenshot-color
 guessing previously produced repeated false "it's broken" / false "it's
-fixed" conclusions (this session included — see bug #3's writeup; an early
-attempt to verify the texture read via a `/500`-divided color swatch looked
-like solid failure, but the real value was just too small to see against a
-dominant channel, not actually zero). **Prefer an unclamped/raw numeric
-check over a manually-scaled color visualization when verifying a shader
-value is non-zero or correct** — scaling for human visibility and
-correctness-checking are different goals and conflating them produced
-exactly the kind of false reading this rebuild was meant to avoid.
+fixed" conclusions. **But "numeric" alone isn't sufficient** — this
+session's CPU 3-point readback (see "L" above) was itself numeric yet still
+misleading, because the sample points didn't correspond to the real visible
+fragment. A numeric check is only as good as whether it queries the actual
+thing being rendered; prefer a shader-side debug view (computes the real
+per-fragment value directly) over a CPU-side approximation whenever
+possible. Also: an already-**clamped** debug view (Mode 1's `[0,1]` factor,
+or the original `/500`-divided color swatch from bug #3's investigation)
+can hide a real but narrow signal just as easily as guessing from an
+unprocessed color — Mode 2's fix (explicit near-zero flag color instead of
+a wider linear scale) was needed specifically because a `diff/300` scale
+saturated long before revealing whether anything ever approached zero.
+
+### Session 3 (Map Agent) — immediate-mode-floor hypothesis CONFIRMED and fixed; blocked on verification by an unrelated build break
+
+**Hypothesis confirmed.** Read `maps/soft_test_ground/soft_test_ground.c`
+directly: `DrawSoftTestGroundMap()` was exactly as suspected — no mesh, no
+shader, just `rlDisableBackfaceCulling()` + `rlBegin(RL_TRIANGLES)` +
+per-vertex `rlColor4ub`/`rlVertex3f` + `rlEnd()`, building a 64-segment
+triangle fan by hand. Zero `DrawModel`/`DrawMesh` calls anywhere in the
+file. This matches the "raw immediate mode, no explicit shader bound"
+description exactly.
+
+**Fix applied** (`maps/soft_test_ground/soft_test_ground.c`,
+`maps/soft_test_ground/soft_test_ground.h`): replaced the immediate-mode
+fan with a real mesh draw.
+- `InitSoftTestGroundMap()` now calls `GenMeshPlane(3610.0f, 3610.0f, 4, 4)`
+  + `LoadModelFromMesh()` once, stored in a file-static `Model floorModel`
+  (per the Map Agent's "load once in Init" rule). 3610×3610 is a square
+  superset of the old radius-1805 circular fan — same footprint, nothing
+  near the edges in this deliberately empty test map.
+- `DrawSoftTestGroundMap()` now just calls
+  `DrawModel(floorModel, center, 1.0f, GetColor(0x22331FFF))` — same
+  center `(600, 0, 440)`, same flat color `0x22331F`, same `Y=0.0f`
+  elevation.
+- Added `UnloadSoftTestGroundMap()` (new, optional per the map lifecycle
+  API) that calls `UnloadModel(floorModel)`; not wired into a central
+  unload call anywhere else in the engine as of this session, but present
+  and correct for whenever map unload hooks are invoked.
+
+**Verification BLOCKED — could not run the autotest this session.** `make`
+fails before reaching link, in `core/skill_helper.c`, unrelated to any
+`maps/` file:
+```
+core/skill_helper.c:162:82: error: too few arguments to function call, expected 5, have 4
+            VFXLight_Spawn(pos, (Color){ 255, 120, 20, 255 }, 65.0f * scale, 0.5f);
+./core/vfx_light.h:34:6: note: 'VFXLight_Spawn' declared here
+void VFXLight_Spawn(Vector3 pos, Color color, float radius, float lifetime,
+```
+(9 identical-shape errors, all in `core/skill_helper.c`.) `git status`
+shows `core/vfx_light.c`/`core/vfx_light.h` modified but uncommitted —
+another agent's in-flight signature change to `VFXLight_Spawn` (added a
+5th parameter) that `core/skill_helper.c`'s call sites haven't been
+updated for yet. Confirmed this is not a transient/shared-object-file
+race: retried `make` twice, several seconds apart, identical error both
+times, and `core/vfx_light.*`'s modified state never changed in between.
+Compiled `maps/soft_test_ground/soft_test_ground.c` in isolation via
+`make -f CMakeFiles/wuxing.dir/build.make CMakeFiles/wuxing.dir/maps/soft_test_ground/soft_test_ground.c.o`
+to confirm the new code itself is not the problem — it compiles clean on
+its own. This is squarely a `core/` module concern (Core Agent's
+`VFXLight_Spawn` call-site migration), out of Map Agent scope to fix.
+
+**Net status:** hypothesis confirmed, fix applied and compiles cleanly in
+isolation, but **not yet verified end-to-end** — no `[CORE_TEST SOFT]`
+numeric readback or `[AUTOTEST]` result was obtained this session because
+the full binary wouldn't link. Whoever resumes: once `core/skill_helper.c`'s
+`VFXLight_Spawn` call sites are updated to match the new 5-arg signature
+(Core Agent's job), rebuild and run
+`WUXING_AUTOTEST=1 ./wuxing 2>&1 | grep -E "\[AUTOTEST\]|CORE_TEST SOFT"`
+— watch for real `scene=X frag=Y diff=Z` numbers on the "bottom" sample
+(not "off-screen or invalid"; that's a separate, still-unresolved
+projection/`GetWorldToScreen` bug in the autotest harness itself, flagged
+in an earlier session, NOT fixed by this floor change and NOT expected to
+be fixed by it — don't conflate the two). If the bottom sample still comes
+back off-screen even after this fix, that confounder is still blocking
+the autotest signal and a real PASS/FAIL there says nothing either way;
+check the raw `[CORE_TEST SOFT]` log lines directly as instructed in
+Item 3's test infrastructure section above.
 
 ---
 
-## Item 4 — Material/Trail/Decal/Bloom upgrades (ALL DONE: 4a/4b/4c/4d)
-
-From the original Core API update request. Assessed as legitimate, real
-gaps (not redundant with existing code). Four independent sub-items — can
-be picked up in any order or split across sessions:
-
-### 4a. Triplanar mapping — DONE
-`core/shaders/common/triplanar.glsl` (`triplanarWeights`, `triplanarNoise`,
-`triplanarSample`) — see `CORE_API.md` § GLSL Shader Guidelines →
-"Triplanar Mapping". Blends 3 world-space axis projections by world normal,
-so jagged `ProceduralMesh_Draw*` shapes (Rock, ShardCluster, Fissure — all
-rlBegin immediate-mode, position+normal only, no UV) don't stretch/streak.
-Tested via `skills/taiji/core_test` (`core_test_triplanar.vs/.fs`): a
-`ProceduralMesh_BuildRock` shape shaded with `triplanarNoise` + diffuse/
-specular/Fresnel. `triplanarSample(sampler2D, ...)` is the texture-asset
-variant for real Earth/Metal materials — not yet wired into a shipping
-skill, only the procedural-noise path is exercised by the test.
-
-### 4b. Flow-mapped decals — DONE
-`DecalSystem_AddFlowEx` (`core/decal_system.h/.c`) + `core/shaders/decal_flow.fs`
-— see `CORE_API.md` "Ground Decals" section. Radially scrolls the decal
-texture outward from center over time (`fract(dist - u_time*flowSpeed)`)
-instead of a static stamped image; renders via a separate shader pass per
-blend-mode group so it doesn't touch `Add`/`AddEx`'s existing behavior or
-cost for any other decal. Wired into `SpawnGroundDecal` (`core/skill_helper.c`)
-for `DECAL_PRESET_FIRE_LAVA` and `DECAL_PRESET_WATER_RIPPLE`
-(`flowSpeed=0.6, flowStrength=0.8`) — every other preset is unaffected
-(still static). Tested via `skills/taiji/core_test`: casting spawns a
-`DECAL_PRESET_FIRE_LAVA` decal under the triplanar rock; confirmed visually
-— concentric rings scrolling outward from center, not a static stamp.
-
-### 4c. Dynamic trail attachment (`core/trail_system.h`) — DONE
-`Trail_AttachToTransform(int id, const Matrix *targetTransform, Vector3 localOffset)`
-added to `core/trail_system.h/.c`. Stores the pointer on the `TrailEntity`
-(`attachedTransform` + `attachLocalOffset` fields); `UpdateTrailSystem` reads
-it each frame and drives tip position via `Vector3Transform(localOffset, *mat)`
-→ `UpdateFollowerPosition`. Caller (skill/sandbox) owns the `Matrix` and updates
-it each frame — same pattern as the existing `ForceField *` pointer on `TrailEntity`.
-**Investigation finding:** `entities/entities.h` has no bone/skeleton exposure
-(minimal gameplay module — position/velocity/health only). The pointer-based
-design is correct for any matrix source (manual orbit, bone from `ModelAnimation.framePoses`,
-procedural pivot, etc.) — Core stays decoupled from how the caller produces the matrix.
-Tested via `skills/taiji/core_test`: a `TRAIL_TYPE_FOLLOWER` trail orbiting the
-caster at radius 60 / Y 30 using `MatrixTranslate` updated each frame — trail
-follows the orbit visibly.
-
-### 4d. Dual-filtering bloom (`core/post_fx.h`) — DONE
-Replaced separable Gaussian (`bloom_blur.fs` H+V passes) with a dual-filter
-pyramid: bright pass (full→1/4) + downsample chain (1/4→1/8→1/16,
-`bloom_downsample.fs`) + upsample chain (1/16→1/8→1/4, `bloom_upsample.fs`).
-Produces a wider, softer glow. Recommended scene values: `bloomThreshold=0.5f`,
-`bloomIntensity=2.0f` (dark arena).
-
-**Three root-cause bugs fixed in the process (bloom was never working):**
-1. **Bright pass used `DrawTextureRec` (1:1 scale)** into a 1/4-size target — only
-   captured the top-left quarter of the scene; content anywhere else never triggered
-   bloom. Fix: `DrawTexturePro` with explicit src→dst scaling.
-2. **Bright pass missing Y-flip** (`-height`) — bloom appeared at the vertically-mirrored
-   position of each bright pixel (looked like a shadow below the source). Fix: match
-   the composite pass's `{0,0,w,-h}` source rect convention.
-3. **`u_bloomTex` bound via `rlActiveTextureSlot`/`rlEnableTexture`** — silently never
-   reached the shader (same root cause as Item 3 soft-particle depth tex). Fix:
-   `SetShaderValueTexture` called inside `BeginShaderMode`.
-
----
-
-## Item 6 — Generic FloatCurve (envelope) primitive — DONE
-
-Identified while cross-checking `WUXING_ART_DIRECTION.md` Chapter 4.3
-("The Four Curves": Intensity/Density/Motion/Lighting, each shaped
-low → build → peak → fall → zero over a skill's lifetime) against the
-actual Core API surface. `core/color_gradient.h`'s `ColorGradient`
-already provides stops + `ColorGradient_Sample(t)` for **color**, but
-there is no equivalent for a plain scalar float — every skill hand-rolls
-its own lerp/easing for particle rate, light intensity, motion speed,
-etc. This is the direct cause of the anti-patterns Chapter 4.6 warns
-about ("constant particle emission — no rhythm", "maximum brightness
-lasts too long — impact feels weak").
-
-**Implemented:** `FloatCurve` in `core/float_curve.h/.c`, mirroring
-`ColorGradient`'s API 1:1 — `FloatCurve_AddStop(t, value)`,
-`FloatCurve_Sample(t)`, `FLOAT_CURVE_MAX_STOPS 8` (same cap style as
-`COLOR_GRADIENT_MAX_STOPS`), linear interpolation matching
-`ColorGradient`'s existing behavior — no extra easing-curve machinery,
-since no real skill has needed it yet. Registered in `CMakeLists.txt`
-and `Makefile.Android` (both platforms build clean, no regressions).
-Documented in `CORE_API.md` § Color Gradient's neighboring section. Not
-yet wired into any shipping skill — that's for a skill author to adopt
-per-curve when replacing a hand-rolled lerp.
-
----
-
-## Item 7 — Multi-layer Timeline (stagger schedule) — DONE
-
-Identified against `WUXING_ART_DIRECTION.md` Chapter 4.4 ("Layer
-Activation Timeline") — an explicit per-layer start/duration Gantt
-(Core Body / Energy / Trail / Flash / Light / Smoke / Dust / Decal /
-Distortion) that staggers when each visual layer turns on/off — plus
-the "Fade" rule in 4.2 (every layer must fade independently, never all
-at once). `core/skill_helper.h`'s `SkillTimeline` only exposes
-`current/duration` plus a single-shot `Timeline_Event(triggerTime)`
-boolean check — there's no way to declare N named layers with their own
-start/duration in one place. Skills currently hand-write scattered
-`if (t > X && t < Y)` blocks per layer, which is exactly how Chapter
-4.6's "all particles disappear together — artificial" mistake happens
-in practice.
-
-**Implemented:** a sibling `LayeredTimeline` in `core/skill_helper.h/.c`
-(kept separate from `SkillTimeline` rather than extending it — different
-struct shape, and no existing call site to migrate) with a fixed-size
-table of `{tag, start, duration}` entries (`TIMELINE_MAX_LAYERS 8`,
-`Timeline_AddLayer`), plus `Timeline_IsLayerActive(t, layerIndex)` /
-`Timeline_LayerProgress(t, layerIndex)` (0..1 within that layer's own
-window, feeds directly into Item 6's `FloatCurve_Sample`). Static array,
-no malloc. Same "caller advances `current += dt`" convention as
-`SkillTimeline` — nothing ticks time internally.
-
-Covers both authoring needs with the same table:
-- **Continuous windows** (Chapter 4.4's Gantt layers — Trail/Light/Smoke
-  each active over a span): `duration > 0`, sampled via
-  `Timeline_IsLayerActive`/`Timeline_LayerProgress`.
-- **Discrete tagged events** (Chapter 4.1's phase transitions — windup →
-  cast → travel → impact → aftermath, each a one-shot fire): `duration`
-  ~0, fired once via `Timeline_LayerEvent`, same edge-detection as the
-  existing `Timeline_Event`'s crossing check.
-
-Not implemented: the optional function-pointer callback per tag
-(mirroring `RegisterSkill`'s callback pointer) — no skill has needed it
-yet; `Timeline_IsLayerActive`/`Timeline_LayerEvent` polled per-frame in
-`Update[Name]Skill` covers every case seen so far. Add it later if a
-real skill's call-site pattern justifies it. Builds clean (desktop),
-documented in `CORE_API.md` next to Skill Timeline. Not yet wired into
-any shipping skill or `core_test` — adoption is a per-skill choice when
-replacing hand-written `if (t > X && t < Y)` staggering.
-
----
-
-## Item 8 — Material system: parametrize `EffectMaterial` beyond 4 hardcoded presets — DONE
-
-`core/skill_helper.h`'s `EffectMaterial`/`Material_Load`/`Material_SetFloat`/
-`Material_Begin`/`Material_End` currently only cover 4 hardcoded presets
-(`MATERIAL_FIRE`/`ICE`/`WATER`/`PORTAL`), each backed by 1 shader with 2
-fixed uniform slots (`uTimeLoc`, `uDissolveLoc`). Any skill wanting a
-different combination of surface effects (rim/fresnel strength, emissive
-intensity, distortion amount, a second texture slot) has to bypass
-`EffectMaterial` entirely and hand-roll `BeginShaderMode`/
-`SetShaderValue` calls itself — inconsistent with the rest of Core's
-"orchestrate via one struct" pattern (`TubeMeshConfig`, `ColorGradient`,
-etc.), and this is the module the codebase is objectively strongest at
-(shader support) without a matching authoring struct.
-
-**Implemented:** `EffectMaterialParams` (`core/skill_helper.h`) —
-`baseColor`, `rimStrength`, `fresnelPower`, `emissiveIntensity`,
-`distortionStrength`, plus a generic `texture1` secondary-texture slot
-(`id==0` = unused, guarded in-shader via `u_hasTexture1` rather than
-sampling an unbound unit). `Material_Load` keeps its exact original
-signature/behavior for the 4 hardcoded presets — zero call sites to
-break, confirmed none exist (see note below). Added
-`Material_LoadCustom(EffectMaterialParams)` alongside it, backed by one
-new shared shader family: `core/shaders/effect_material.vs/.fs`
-(`#include`-based, GLES 3.0 runtime path per the Android two-path
-shader architecture — no build-script changes needed). `Material_Begin`
-re-uploads all param uniforms every call (not just once at Load), since
-the shared shader is a single cached `Shader` object — if it were set
-once at Load time, two different `Material_LoadCustom` instances using
-the same shader would silently stomp each other's uniform values the
-next time either one draws. `baseColor` uses the same
-`ColorNormalize()` → `SHADER_UNIFORM_VEC4` pattern already established
-in `core/metaball_fx.c`.
-
-**Note — this shader ignores per-vertex color.** The existing
-`vs_header.glsl`/`fs_header.glsl` 3D-lighting convention (used by
-`tube.fs` etc.) never carries a `fragColor` varying from VS to FS — so
-whatever `Color` you pass to the mesh-draw call between
-`Material_Begin`/`Material_End` has no effect; tint comes only from
-`EffectMaterialParams.baseColor`. Documented in `CORE_API.md` so a
-future skill author doesn't lose time debugging why their mesh color
-argument is ignored.
-
-**Verified via `core_test`, 4 real bugs found and fixed during that
-verification (not guessed — each traced to a specific line):**
-1. **VS wobble used raw world-space `vertexPosition`** (`sin(vertexPosition.x * 3.0 + ...)`)
-   instead of `vertexNormal` — immediate-mode draws bake world coordinates
-   directly into `vertexPosition` (matModel is identity per Rule D), and the
-   arena is centered around `(600, 0, 440)`, so `sin()`/`cos()` of an
-   argument around 1800+ loses precision on GPU, producing noisy/unstable
-   displacement instead of a smooth wobble. Fixed: phase now driven by
-   `vertexNormal` (always `[-1..1]`), position-independent.
-2. **Dissolve edge-glow noise used `hash3(floor(fragPosition * 6.0))`** —
-   same world-position-magnitude problem feeding into `hash3`'s internal
-   `sin(dot(p, largeWeights))`. Fixed: uses `normal` instead, also making
-   the dissolve pattern identical regardless of where in the arena the
-   material is drawn.
-3. **`fx.glsl`'s `dissolveCalc()` computes a nonzero `edgeFactor` for ~8%
-   of fragments even at `u_dissolve == 0.0`** (its check is `noiseVal <
-   dissolve + edgeWidth`, not gated on `dissolve > 0`) — this showed up as
-   scattered bright speckle across the whole surface the instant the
-   material appeared, well before anything was meant to be dissolving.
-   Fixed by gating the whole dissolve/edge-glow block on `u_dissolve > 0.0`
-   in `effect_material.fs` (not touching the shared `dissolveCalc()` itself,
-   since other callers may rely on its exact current signature/behavior).
-4. **`texture1` sampled as full `detail.rgb` at 2x UV tiling** —
-   `assets/textures/crack.png` was authored for a flat ground-decal quad,
-   not a sphere (whose UV pinches hard at the poles); tiling it 2x and
-   importing its own hue produced visible rainbow-ish color noise. Fixed:
-   sampled as a luminance-only mask (`.r` channel, 1x UV, no `* 2.0`
-   brightness boost).
-
-Also added (not in the original proposed param list, but needed once a
-real reference — the existing `tube.fs`/`MATERIAL_WATER` preset — was
-used as the visual bar to match): **`translucency`** param + fresnel-driven
-alpha (`mix(0.3, 0.9, fresnel)`, same formula as `tube.fs`), since the
-initial all-opaque-alpha implementation had no way to reproduce a
-glass/water "see-through center, more solid edges" look at all. Default
-`0.0` keeps existing opaque behavior; caller must additionally wrap the
-draw in `BeginBlendMode(BLEND_ALPHA)`/`EndBlendMode()`. Rim glow was also
-reweighted by light-facing direction (`mix(0.3, 1.0, dot(normal, lightDir))`)
-since pure view-angle Fresnel glowed evenly around the whole silhouette
-regardless of actual light position, which read as "wrong direction".
-
-Final verified test: a sphere using `Material_LoadCustom` (Taiji tint,
-`rimStrength=0.7`, `fresnelPower=4.0`, `emissiveIntensity=0.15`,
-`distortionStrength=0.4`, `translucency=1.0`, `texture1` =
-`assets/textures/crack.png`) holds solid 1.5s then dissolves out over 1s
-via `Material_SetFloat(&mat, "u_dissolve", t)` — confirming the existing
-generic name-based uniform setter still works unmodified against the new
-parametrized shader.
-
-**Found in passing, NOT fixed (out of scope for this item):** the 4
-existing `MaterialPreset` shader paths
-(`skills/fire/fire_wildfire/...`, `skills/water/frost_blossom_rain_skill/...`,
-`skills/taiji/yin_yang_orb/...`) reference files that no longer exist
-anywhere in the repo. `Material_Load` has zero callers currently, so
-this was never exercised/noticed at runtime — `ResourceManager_LoadShader`
-just returns `shader.id == 0` (Rule C guard: silently renders nothing,
-no crash). Whoever first actually wires up `Material_Load` with one of
-these 4 presets needs to fix/repoint the shader paths first.
-
-**Found in passing, NOT fixed (bigger than this item — see Item 10):**
-comparing the rim glow against the test character's actual shadow showed
-the rim's light direction doesn't match the environment's real sun
-direction. Root cause: `lightDir` is hardcoded as `vec3(0.5, 0.8, 0.5)` in
-`effect_material.fs`, matching `lighting.glsl`'s documented project-wide
-convention — every other skill shader using `calcFresnel`/`calcDiffuse`
-(e.g. `tube.fs`) hardcodes the same fake value. `Environment_GetSunDirection()`
-exists but is never actually wired into any shader uniform anywhere in
-the codebase. User explicitly chose not to special-case this one
-material (would make it inconsistent with every other skill) — see Item
-10 for the real, engine-wide fix.
-
----
-
-## Item 9 — Data-driven tuning — DONE
-
-Every tunable VFX number (radius, speed, color-gradient stops, curve
-stops once Item 6 exists, etc.) was a C literal — changing one required
-a full rebuild.
-
-**Implemented:** `core/tuning.h/.c` — `Tuning_Init(configPath)` (called
-once in `main.c`), `Tuning_RegisterFloat(key, float *value, defaultValue)`
-(called by a skill/core module's `Init` function), `Tuning_Update(void)`
-(called once per frame in `main.c`, polls `GetFileModTime` and only
-re-parses/re-applies on an actual mtime change — no filesystem-watch
-dependency), `Tuning_Reload(void)` (force an immediate reload). Static
-array registry (`TUNING_MAX_VALUES 128`), no malloc. Config format is
-plain `key = value` lines in `tuning.cfg` (project root) — parser is a
-single `strstr`-based line-start match (`FindKeyValue` in `tuning.c`),
-no tokenizer/grammar needed for something this simple.
-
-**"Doesn't clobber runtime state"** (the original open concern):
-`FindKeyValue` only overwrites a registered value when the key is
-actually found in the file — a key missing or temporarily malformed
-during a mid-edit leaves the existing value alone rather than resetting
-to `defaultValue`. `defaultValue` is applied exactly once, at
-registration time.
-
-**Real caveat found during verification (documented in `CORE_API.md`,
-not a bug — a usage note):** `Tuning_Update()` only updates the
-registered `float` itself. If a skill copies that value into other
-state once (e.g. bakes it into a `ParticleConfig` at `Cast` time), a
-later hot-reload has no way to reach back and fix the already-baked
-copy. A skill wanting true live-editing while an effect is on screen
-must re-read the registered float and re-apply it each frame — this is
-exactly the pattern used in `core_test`'s verification below, not an
-automatic property of `Tuning_RegisterFloat` alone.
-
-**Verified via `core_test`:** reused the existing Item 8 verification
-sphere (`Material_LoadCustom`) — `rimStrength`/`fresnelPower` are now
-registered via `Tuning_RegisterFloat("core_test_material_rim_strength", ...)`
-/ `"core_test_material_fresnel_power"` in `InitCoreTestSkill`, matching
-keys already present in `tuning.cfg`, and re-applied to
-`s_material.params` every `DrawCoreTestSkill` call (not just at Cast) so
-a live edit to `tuning.cfg` while the sphere is on screen takes effect
-immediately, confirming the reload path actually works end-to-end
-against a real consumer rather than a synthetic test.
-
-**Android:** `tuning.cfg` is copied into the asset bundle
-(`Makefile.Android`) so packaged defaults still apply, but there's no
-live-reload story there by design — editing a file inside an installed
-APK isn't meaningful; this is a desktop dev-iteration tool.
-
----
-
-## Item 10 — Skill shaders use a hardcoded fake light direction instead of the real environment sun direction — DONE
-
-Found while verifying Item 8's `Material_LoadCustom` in `core_test`:
-comparing the rim glow on a test sphere against the test character's
-actual cast shadow showed the rim's apparent light direction didn't
-match the environment's real sun direction at all.
-
-**Actual scope was much smaller than first estimated.** The original
-write-up assumed this affected "every skill shader in the codebase" —
-a repo-wide grep instead found only **4 files** using this hardcoded
-convention: `skills/water/water_stream/tube.fs`,
-`skills/water/water_sphere_skill/water_sphere.fs`,
-`skills/earth/stone_prison_skill/stone_prison.fs`, and the new
-`core/shaders/effect_material.fs` from Item 8.
-
-**Sign convention caught before it caused a silent bug:**
-`Environment_GetSunDirection()` returns `{-0.4, -1.0, 0.6}` (Y
-negative) — the direction light *travels* (used for shadow-skew math in
-`environment_system.c`). Shaders' `dot(normal, lightDir)` convention
-needs the opposite: direction *toward* the light (Y positive). Feeding
-the raw sun direction into shaders unnegated would have silently
-inverted every surface's lighting (everything shaded as if lit from
-below). Fixed by negating once, centrally, rather than trusting every
-call site to remember to.
-
-**Implemented:**
-- `core/skill_manager.c`'s `SkillManager_BeginShader()` now also
-  auto-binds `u_lightDir = Vector3Negate(Environment_GetSunDirection())`,
-  following the exact precedent already established for `viewPos`.
-- `core/shaders/common/fs_header.glsl` declares `uniform vec3 u_lightDir;`
-  alongside `u_time`/`viewPos`/`u_resolution` so any `#include`-based
-  shader gets it for free.
-- **Real gotcha found while wiring this up:** `tube_skill.c`,
-  `stone_prison_skill.c`, **and `water_sphere_skill.c`** all call raw
-  `BeginShaderMode()` directly, bypassing `SkillManager_BeginShader()`
-  entirely (they manage their own uniforms — `viewPos`/`u_camPos` — by
-  hand). The auto-bind above never reaches them. All three needed a
-  manual fix mirroring their existing `viewPos`/`u_camPos` pattern: fetch
-  `GetShaderLocation(shader, "u_lightDir")` once in `Init[Name]Skill`,
-  `SetShaderValue` it each frame with
-  `Vector3Negate(Environment_GetSunDirection())`. Skipping this for any
-  of the three would have left `u_lightDir` at its GLSL default of
-  `vec3(0,0,0)` — `normalize(vec3(0))` is the exact NaN/white-render bug
-  already documented elsewhere in this file (Android shader pipeline
-  Rule D) — so this wasn't a shortcut that happened to still work, it
-  would have been a real regression on any shader using the shared
-  `.fs` declaration without a real value behind it.
-  **`water_sphere_skill.c` was actually missed in the first pass** (only
-  `tube_skill.c`/`stone_prison_skill.c` were grepped for raw
-  `BeginShaderMode()` at the time) — caught later when the user tested
-  in-game and the lighting still looked wrong; fixed once found. Worth
-  remembering: when auditing "does every raw-`BeginShaderMode()` skill
-  set uniform X", grep for the call pattern itself
-  (`grep -rn "BeginShaderMode" skills/`), don't rely on a partial list
-  built ad hoc while looking at 1-2 files.
-- `water_sphere.fs` (standalone Path 1 shader) and `stone_prison.fs`
-  (standalone) each got `uniform vec3 u_lightDir;` declared directly
-  (they don't `#include fs_header.glsl`) plus their hardcoded
-  `normalize(vec3(0.5, 0.8, 0.5))` line replaced with
-  `normalize(u_lightDir)` / `normalize(u_camPos)`-style read.
-  `tube.fs`/`effect_material.fs` (both `#include`-based) got the same
-  one-line swap.
-- `CORE_API.md`'s pre-existing `[!NOTE]` explicitly flagging "lightDir is
-  not provided by the engine... if the engine later exposes a shared
-  `u_lightDir` uniform, this section will be updated" is now resolved
-  with the real auto-bind table entry and the raw-`BeginShaderMode()`
-  caveat spelled out for future skills.
-
-**Follow-up real bug found via testing, fixed:** casting `water_sphere.fs`
-in-game and comparing against the test character's shadow still looked
-wrong even after the `u_lightDir` fix above. Root cause: this shader
-never actually computed `dot(normal, lightDir)` anywhere — `lightDir`
-was only read inside the Blinn-Phong `halfVec` term for a tiny, sharp
-specular dot (`pow(NdotH, 256.0)`). The large glow everyone actually
-sees (`mix(coreColor, edgeColor, fresnel)` + rim tint) was purely
-`fresnel`/view-angle-driven and structurally could never respond to
-light direction, correct `u_lightDir` value or not. Fixed by adding a
-real `diffuse = max(dot(normal, lightDir), 0.2)` term (ambient floor
-0.2 matches `lighting.glsl`'s `calcDiffuse()` convention) and
-multiplying it into `baseColor`.
-
-**Same gap exists in `tube.fs`, NOT fixed** (out of scope — user asked
-specifically about `water_sphere.fs`): it also only uses `lightDir` for
-`calcSpecular()`'s highlight, with no `calcDiffuse()` call anywhere in
-its `main()`. Its base color (`mix(bottomColor, midColor, topColor)` by
-world-space height) is far less fresnel-dominated than
-`water_sphere.fs`'s was, so the symptom is much less visible there —
-but the same "doesn't actually respond to light direction" gap applies
-structurally. Revisit if this material's lighting is ever scrutinized
-the same way.
-
-**Not investigated further:** whether `Environment_GetSunDirection()`
-ever actually changes at runtime (day/night cycle) or is a fixed
-constant today — doesn't change this fix either way, since the wiring
-reads it live regardless.
-
----
-
-## Item 11 — `water_sphere_skill.c` never sets `matModel`, unlike its sibling raw-`BeginShaderMode()` skills — NOT STARTED (skill-specific, stopped per user request)
+## Item 11 — `water_sphere_skill.c` never sets `matModel`, unlike its sibling raw-`BeginShaderMode()` skills — RESOLVED (Skills Agent)
 
 Found while chasing Item 10's `water_sphere.fs` follow-up: even after
 fixing `u_lightDir` wiring and adding real diffuse, the user still saw
@@ -566,22 +316,77 @@ but this skill bypasses that entirely via raw `BeginShaderMode()`.
   `water_sphere_skill.c`, not yet confirmed whether it's visible there
   too.
 
-**Not fixed — stopped here per explicit user request** ("nếu đây là
-vấn đề riêng skill thì ngừng, note lại" — if this is a skill-specific
-issue then stop, note it down), since this is a per-skill C-side bug
-unrelated to Item 10's `u_lightDir` wiring itself, not something to fix
-opportunistically mid-Item-10. Whoever picks this up should:
-1. Confirm with a numeric check (not another screenshot) whether
-   `fragNormal` is actually NaN/garbage in `water_sphere.fs` — e.g. a
-   debug `finalColor = vec4(fragNormal, 1.0)` swap to visualize the raw
-   normal, or a CPU-side readback.
-2. If confirmed, fix using the *correct* pattern from
-   `core/skill_manager.c`'s already-fixed `SkillManager_BeginShader()`:
-   `GetShaderLocation(shader, "matModel")` (by name, gives a real `-1`
-   when absent) — not `shader.locs[SHADER_LOC_MATRIX_MODEL]`.
-3. Check `stone_prison_skill.c` for the same gap while in there, and
-   audit whether `tube_skill.c`'s existing (wrong-pattern) check has
-   ever caused a real visible bug or has just been harmless so far.
+### Session 4 (Skills Agent) — confirmed via shader-math reasoning, fixed in all 3 affected skills
+
+**Root cause confirmed per-file (no build/visual access used — reasoned
+directly from the GLSL):**
+- `skills/water/water_sphere_skill/water_sphere.vs:26` —
+  `fragNormal = normalize(vec3(matModel * vec4(vertexNormal, 0.0)))`.
+  `matModel` is declared as a plain `uniform mat4` (not routed through
+  `VS_FinalOutput()`), and `DrawWaterSphereSkill()` drew via raw
+  `BeginShaderMode()` + `DrawCoreSphere()` (rlgl immediate mode) with zero
+  `matModel` upload anywhere. Raylib only auto-uploads `matModel` for
+  `DrawMesh`/`DrawModel`, so the uniform sat at its zero-initialized
+  default (`RL_CALLOC`'d zero matrix) → `vec3(mat4(0) * vec4(n,0))` = zero
+  vector → `normalize(vec3(0))` = `0/0` = NaN for every fragment's normal.
+  Confirmed real, not speculative.
+- `skills/earth/stone_prison_skill/stone_prison.vs:28` — identical pattern,
+  identical bug: `fragNormal = normalize(vec3(matModel * vec4(vertexNormal,
+  0.0)))`, drawn via raw `BeginShaderMode(s_shader)` +
+  `rlBegin(RL_QUADS)`/`DrawPerturbedPillar()` (rlgl immediate mode), no
+  `matModel` upload anywhere in `stone_prison_skill.c`. Same NaN-normal
+  risk, now confirmed present (was previously only suspected).
+- `skills/water/water_stream/tube_skill.c` — `tube.vs` uses
+  `VS_FinalOutput()` (`core/shaders/common/vs_header.glsl`), which also
+  computes `fragNormal` from `matModel` the same way, so `matModel`
+  *does* matter for this skill's lighting (not a case where it's unused).
+  The existing guard `tubeShader.locs[SHADER_LOC_MATRIX_MODEL] >= 0` is
+  confirmed **broken**, per `CORE_API.md`'s own documented bug (fixed
+  2026-06-30, root-caused via `tsunami_skill`): raylib's `locs[]` array
+  only gets populated for its fixed default-uniform names; `matModel` is
+  not one of them, so that slot stays `0` from `RL_CALLOC` — `0 >= 0`
+  always passes even though `0` isn't `matModel`'s real GL location. Two
+  compounding effects: (1) the real `matModel` uniform is never written,
+  same NaN-normal risk as the other two skills; (2) `SetShaderValueMatrix`
+  writes an identity matrix into whatever uniform actually happens to link
+  to GL location `0` in `tube`'s program — `tube.fs` declares no
+  `sampler2D`/`texture0` (so no texture-binding corruption like
+  `tsunami_skill`'s confirmed case), but location 0 is still some other
+  real uniform (e.g. `u_time`/`u_uvLength`, whichever the GLSL linker
+  assigned first) that gets silently stomped every frame. Not "harmless by
+  luck" — actively wrong on both ends, just with cosmetic-looking rather
+  than texture-breaking symptoms so far.
+
+**Fix applied (same pattern in all 3 files) — replaced/added
+`SkillManager_BeginShader(shader)` right after `BeginShaderMode(shader)`,
+and `SkillManager_EndShader()` right before/after the matching
+`EndShaderMode()`, per the proven pattern already in
+`skills/taiji/core_test/core_test_skill.c`:**
+- `skills/water/water_sphere_skill/water_sphere_skill.c`:
+  `DrawWaterSphereSkill()` — added `SkillManager_BeginShader(s_sphereShader)`
+  after `BeginShaderMode(s_sphereShader)`, added
+  `SkillManager_EndShader()` before `EndShaderMode()`. `core/skill_manager.h`
+  was already included.
+- `skills/earth/stone_prison_skill/stone_prison_skill.c`: added
+  `#include "core/skill_manager.h"`; `DrawStonePrisonSkill()` — added
+  `SkillManager_BeginShader(s_shader)` after `BeginShaderMode(s_shader)`,
+  added `SkillManager_EndShader()` before `EndShaderMode()` (only for the
+  main pillar-shader block; the separate crack-decal shader block
+  (`s_crackShader`) doesn't use `matModel`-based normals, left untouched).
+- `skills/water/water_stream/tube_skill.c`: replaced the
+  `tubeShader.locs[SHADER_LOC_MATRIX_MODEL] >= 0` / manual
+  `SetShaderValueMatrix` block with `SkillManager_BeginShader(tubeShader)`;
+  added matching `SkillManager_EndShader()` before `EndShaderMode()`.
+
+`SkillManager_BeginShader()` (per `CORE_API.md`) looks up `matModel` via
+`GetShaderLocation(shader, "matModel")` (real `-1` when absent, safe) and
+sets it to identity, plus auto-binds `u_time`/`viewPos`/`u_resolution` —
+strictly more correct than, and a superset of, all 3 skills' prior manual
+uniform wiring, so nothing regresses.
+
+Not build-verified this session (per task instructions — another process
+builds/verifies centrally to avoid a race with parallel work elsewhere in
+the repo).
 
 ---
 
@@ -818,3 +623,317 @@ hardware** and will remain so until this pre-existing invisibility bug is
 resolved. Do not re-attempt blindly; needs the numeric/GPU-tooling
 verification already prescribed in the original "what's NOT been ruled out"
 list.
+
+---
+
+## Item 12 — VFX Light / Trail pools have no priority-based eviction — RESOLVED
+
+Built: `VFXPriority` enum (`VFX_PRIORITY_LOW` / `VFX_PRIORITY_HIGH_ULTIMATE`)
+in `core/vfx_light.h`. `VFXLight_Spawn()` gained a required `priority` param
+(**breaking signature change** — 7 existing call sites in
+`skills/water/water_sphere_skill/water_sphere_skill.c`,
+`skills/wood/wood_thorns/wood_thorns_skill.c`,
+`skills/fire/hoa_long_phong_ba_skill/hoa_long_phong_ba_skill.c`,
+`skills/earth/stone_prison_skill/stone_prison_skill.c` need a Skills-Agent
+follow-up to add the new arg). `core/trail_system.h`'s `TrailConfig` gained
+an additive `priority` field (backward compatible, defaults to
+`VFX_PRIORITY_LOW` via `{0}` init — no existing `TrailConfig` call site
+found in `skills/` at the time of this change). Both `VFXLight_Spawn` and
+`SpawnTrailEntity` now scan the full-pool case for the lowest-priority slot
+(ties broken by shortest remaining lifetime) and evict it instead of
+rejecting the new spawn, as long as the victim's priority is `<=` the
+incoming one — an equal-or-lower priority spawn can still lose to a fully
+saturated higher-priority pool, same as the old silent-reject behavior in
+that case. See `CORE_API.md`'s "VFX Lights" and "Trail & Ribbon" sections.
+
+Raised by an external code review of `CORE_API.md`, verified against the actual
+headers before filing. Confirmed: `core/vfx_light.h:7`
+(`MAX_VFX_LIGHTS 16`) and `core/trail_system.h:10`
+(`MAX_TRAIL_PARTICLES 500`) are flat static pools shared by every skill/caster
+in the scene, with no priority field and no eviction logic anywhere in either
+header. `VFXLight_Spawn()`/`SpawnTrailEntity()` simply no-op/return `-1` once
+full.
+
+**Why it matters:** `nguhanhtyvo_kehoach.md` (§XI, the PvP MVP phase) confirms
+this project is headed toward concurrent multi-caster PvP (1v1 now, 2v2/3v3
+planned). An Ultimate-tier skill cast can land on a pool already saturated by
+smaller concurrent skills and silently lose its entire VFX presentation — no
+crash, just missing lights/trails, which undercuts `WUXING_ART_DIRECTION.md`'s
+intent for Ultimates to read as impactful.
+
+**Suggested API surface (not yet designed/built):**
+- Add a priority param/field (e.g. `VFXPriority`: `PRIORITY_LOW` /
+  `PRIORITY_HIGH_ULTIMATE`) to `VFXLight_Spawn()` and `TrailConfig`.
+- When the pool is full, evict the lowest-priority (or shortest-remaining-life)
+  slot instead of rejecting the new spawn outright.
+
+---
+
+## Item 13 — No lifecycle-end signal for gameplay code that depends on a skill's dissolve finishing — NOT STARTED (external review finding, confirmed valid)
+
+Confirmed: `core/skill_manager.h` has no callback/event/`IsExpired`-style API.
+A skill's own `active = false;` on dissolve-complete is entirely internal to
+its `.c` file — nothing external (`main.c`, `entities/entities.h`) can
+currently learn that a specific cast has actually finished dissolving.
+
+**Why it matters:** any gameplay effect that needs to persist exactly as long
+as a skill's visual is on screen (e.g. an Earth wall blocking movement, a Wood
+root-zone) has no way to know when to release itself except by duplicating
+that skill's own timer at the gameplay layer.
+
+**Needs a design decision before implementation**, not just a straight
+build — options include (a) a generic `bool Skill_IsInstanceExpired(...)`
+poll, or (b) a callback registered at cast time. Core Agent should propose
+the shape; flagging here rather than committing to one now.
+
+---
+
+## Item 14 — No interrupt/abort path for a coiling or in-flight skill — RESOLVED (Core-only scope)
+
+Built the Core-only half explicitly, per instruction to avoid the
+cross-module lifecycle-contract change: `void RegisterSkillAbort(int
+skillIndex, void (*abort)(int agentId));` — an **optional**, additive
+registration separate from `RegisterSkill()` (backward compatible; skills
+that don't call it simply can't be force-aborted) — and `void
+AbortSkill(int skillIndex, int agentId);` which invokes the registered
+callback with that `agentId` if present, otherwise logs `LOG_WARNING` and
+no-ops. `skills/CLAUDE.md`'s mandatory lifecycle contract
+(`Init/Cast/Update/Draw/Unload/IsCoiling/GetProjectiles/DeactivateProjectile`)
+is untouched. **Not done, deliberately out of scope:** no skill anywhere
+actually calls `RegisterSkillAbort()` yet — that's a per-skill adoption task
+for the Skills Agent, one skill at a time, wherever an abort makes gameplay
+sense. See `CORE_API.md`'s "Abort / Interrupt" section.
+
+**Session update (confirmed real target scale is 6 players + a mixed
+minion/mid-tier/2-boss monster pool, not single-attacker):** upgraded the
+callback shape from `void (*abort)(void)` to `void (*abort)(int agentId)` —
+done at zero migration cost since there were still zero adopters at the
+time (confirmed via grep). A skill that later wants caster-specific abort
+(only abort the instance owned by the stunned caster, not every instance of
+that skill type) can filter on the `agentId` it receives once it tracks
+per-instance ownership internally (still opt-in, still deferred — see Item
+15). A skill that ignores the parameter aborts everything, identical to the
+original behavior — no forced changes to any existing skill file.
+
+Confirmed via `grep -rn "Abort" skills/ core/ entities/` → zero hits, and
+`entities/entities.h` has no stun/interrupt entry point either. Note the
+original review claim that cooldown management is "completely empty" is
+**wrong** — `Skill_CalculateCooldown()` already exists at
+`core/skill_manager.h:57` — but the **interrupt** half of the claim holds: if
+a caster is crowd-controlled while `Is[Name]SkillCoiling()` is `true`, nothing
+can force that instance to skip straight to its dissolve state; it always
+finishes charging and fires.
+
+**Suggested API surface (not yet designed/built):** a generic
+`Skill_AbortInstance(...)` in `core/skill_manager.h`, or a per-skill
+`Abort[Name]Skill(void)` added to the required lifecycle contract in
+`skills/CLAUDE.md`. The latter is **cross-module** — it changes the mandatory
+signature every skill file implements, so it needs Skills Agent sign-off, not
+just a Core-side change.
+
+---
+
+## Item 15 — No caster/owner identity on skill instances (multiplayer state) — RESOLVED
+
+**Session update:** confirmed real target scale is 6 real players (peer-hosted
+networking, separate ceiling from anything below) + a mixed monster pool
+(minions + a few mid-tier + 2 bosses) — not a hypothetical. Also confirmed
+`entities/entities.h` already has the caster-identity primitive this item was
+asking for (`agentId`, `Entity_SpawnAgent`/`Entity_GetAgent`), and
+`PlayerEntity`/`EnemyEntity` (`sandbox/sandbox_core.h`) already carry an
+`agentId` field. `entities/entities.h`'s `MAX_AGENTS` bumped `8 -> 256` to
+actually fit the target scale (static array, ~20KB, negligible cost).
+
+`CastSkill()` takes `agentId` as its 2nd parameter (all 3 call sites —
+`main.c:259`, `sandbox_core.c:400,409` — updated to pass
+`player`/`enemy .agentId`), and Item 14/16's APIs are keyed by
+`(skillIndex, agentId)` — see their sections above.
+
+**Full per-instance completion (this session, follow-up pass):**
+`skills/CLAUDE.md`'s required lifecycle contract changed —
+`Cast[Name]Skill` now takes a leading `int agentId`, forwarded all the way
+from `CastSkill()` through `RegisterSkill()`'s `cast` function-pointer type.
+Every skill in the repo migrated to the new contract and now stores
+`int ownerAgentId;` on its own per-instance struct, set at cast/allocation
+time:
+- `skills/taiji/core_test/core_test_skill.c` (`s_ownerAgentId`, single-instance)
+- `skills/fire/fire_ball/fire_skill.c` (`FireEmitter.ownerAgentId`) +
+  `skills/water/water_stream/tube_skill.c` (`TubeEmitter.ownerAgentId`) — the
+  2 legacy skills, threaded through `core/skill_manager.c`'s
+  `CastFireWrapper`/`CastTubeWrapper` adapters (orchestrator-edited, Core's
+  file, not Skills')
+- `skills/earth/stone_prison_skill/stone_prison_skill.c` (`EarthPrison.ownerAgentId`)
+- `skills/fire/hoa_long_phong_ba_skill/hoa_long_phong_ba_skill.c` (`HoaLongPhongBaVortex.ownerAgentId`)
+- `skills/water/water_sphere_skill/water_sphere_skill.c` (`WaterSphere.ownerAgentId`)
+- `skills/wood/wood_thorns/wood_thorns_skill.c` (`Thorn.ownerAgentId`)
+
+Done as one coordinated pass (core contract change + 3 parallel Skills Agent
+sessions, 2 skills each) rather than the earlier-considered "hide all
+skills, migrate later" approach — turned out unnecessary once the actual
+technical requirement was understood precisely; zero skills were ever
+excluded from the build. Verified via `make` (clean, first try, no
+patch-up needed) and `WUXING_AUTOTEST=1 ./wuxing` (no regressions in
+Item 12/14/16/17's autotest cases).
+
+**Bonus finds during the pass:** `wood_thorns_skill.c` and
+`hoa_long_phong_ba_skill.c` both had the *exact same* NaN-normal `matModel`
+bug as Item 11 (raw `BeginShaderMode()` immediate-mode draw, never uploads
+`matModel`) — neither was in Item 11's original fix batch. Both fixed the
+same way (`SkillManager_BeginShader`/`EndShader`).
+
+**Minor gap surfaced during the pass — FIXED:** all 3 migration sessions
+independently found the same thing — no skill had any way to learn its own
+registered `skillIndex` (`RegisterSkill()`'s return value wasn't captured
+anywhere), which is why none of the 6 migrated skills adopted Item 16's
+`SkillManager_CanCast`/`TriggerCooldown` in that pass. Added
+`int Skill_GetIndexByName(const char *name)` to `core/skill_manager.h`/`.c`
+(reverse lookup by name, `-1` if not found) — a skill can now call this once
+in `Init[Name]Skill`, cache the result, and use it to actually call
+`SkillManager_CanCast`/`TriggerCooldown` about itself. See `CORE_API.md`'s
+"Cooldown / Resource Gating State" section. **Still not done:** no skill
+actually calls it yet — real cooldown adoption across the 7 skills remains
+a separate follow-up task, now technically unblocked.
+
+---
+
+<details>
+<summary>Original filing (before the session update above)</summary>
+
+
+External review correctly flagged that no skill instance struct anywhere
+carries a caster/owner id (spot-checked `Thorn` in
+`skills/wood/wood_thorns/wood_thorns_skill.c`) and that `nguhanhtyvo_kehoach.md`
+(§XI) confirms this is a genuine peer-hosted PvP project (1v1 now, 2v2/3v3
+planned) — so this is a real architectural question, not a hypothetical.
+
+**However, the review's specific failure mechanism is wrong**: static pool
+slots don't cross-contaminate between casters (each `FindFreeSlot()`-style
+allocation is independent) — the actual risk when the pool is shared and
+fills up is silent pool **exhaustion**, i.e. the same root issue already
+filed as Item 12, not state overwrite.
+
+**Why this isn't filed as a normal to-do:** the proposed fix (adding
+`casterId`/`CasterContext` to every skill instance) implies changing the
+mandatory `Update[Name]Skill(float dt, Vector3 enemyPos, float enemyRadius)`
+signature that **every** skill file must implement per `skills/CLAUDE.md` —
+a cross-module contract change with the widest blast radius of anything in
+this review, not something Core Agent can decide or build alone. Recording it
+here as an open question for a Core+Skills design discussion, not a
+ready-to-implement item.
+
+</details>
+
+---
+
+## Item 16 — No cooldown/resource *gating* state, only calculation — RESOLVED (per-agent scope)
+
+Built `bool SkillManager_CanCast(int skillIndex, int agentId)` and `void
+SkillManager_TriggerCooldown(int skillIndex, int agentId, float
+cooldownSeconds)` in `core/skill_manager.h`/`.c`. Ticks down automatically
+inside `UpdateSkillManager(dt, ...)`, same idiom as the existing `slowTimer`/
+`rootTimer` fields. **Session update:** originally keyed only by
+`skillIndex` (single-caster scope, see below) — upgraded to key by
+`(skillIndex, agentId)` once the real target scale (6 players + a mixed
+monster pool, not one attacker) was confirmed and `entities/entities.h`'s
+existing `agentId` primitive was found (see Item 15). Internal storage is
+now a static `float[MAX_SKILLS][256]` table (256 duplicated from
+`entities/entities.h`'s `MAX_AGENTS`, since core/ must not `#include
+entities/` — same fragile-coupling pattern as Item 3's
+`SOFT_PARTICLE_SCENE_NEAR`/`_FAR`, flag if `MAX_AGENTS` ever changes).
+Verified via `skills/taiji/core_test/core_test_skill.c`'s
+`skill_cooldown_gating` autotest case, which now specifically asserts that
+triggering agent 0's cooldown does **not** affect agent 1's `CanCast` result
+— the actual bug this upgrade fixes. **Still not done:**
+`SkillManager_TriggerCooldown` is not wired into any skill's
+`Cast[Name]Skill` call site — nobody calls it yet, that's a Skills Agent
+call-site adoption task, unchanged from before. See `CORE_API.md`'s
+"Cooldown / Resource Gating State" section.
+
+<details>
+<summary>Original filing (single-caster scope, before the session update above)</summary>
+
+Deliberately keyed only by `skillIndex`, NOT per-caster — per instruction,
+since there was no caster/owner identity concept anywhere in this engine yet
+(that was Item 15, an open cross-module design question, explicitly out of
+scope at the time). This meant it was one global cooldown timer per skill
+slot shared by whoever cast it — correct for the assumed single-attacker
+setup at the time, needing a caster-keyed table once Item 15 was resolved
+(now done, see above).
+
+`core/skill_manager.h:57-59` already has `Skill_CalculateCooldown()` and
+`Skill_CalculateManaCost()` — so the review's claim that cooldown/mana is
+"completely absent" is **wrong**. What's actually missing, confirmed by
+grep, is any function that holds or checks *state*: no `SkillManager_CanCast()`,
+no `SkillManager_TriggerCooldown()`, nothing that remembers "this caster used
+this skill N seconds ago." The Calculate* functions return a value; nothing
+persists or enforces it. A skill can currently be cast back-to-back with zero
+gating even though the numbers to prevent that already exist.
+
+**Suggested API surface (not yet designed/built):** something like
+`bool SkillManager_CanCast(int skillIndex, int casterId)` /
+`void SkillManager_TriggerCooldown(int skillIndex, int casterId, float cooldown)`.
+Note this likely wants a caster/owner identity to key the cooldown table per
+caster — ties into the open design question in Item 15, not fully independent
+of it.
+
+</details>
+
+---
+
+## Item 17 — No debug-draw API for tuning hitboxes/AoE radii visually — RESOLVED
+
+Built new `core/debug_draw.h`/`.c`: `DebugDraw_Sphere(Vector3 pos, float
+radius, Color color)` and `DebugDraw_Circle(Vector3 center, float radius,
+Color color)` (ground-plane, for AoE shapes), wireframe only, backed by
+raylib's `DrawSphereWires`/`DrawCircle3D` directly (exempt from skills'
+"no raylib primitives" rule — this is core-internal dev tooling, not a
+shipped VFX mesh). Gated behind `DebugDraw_SetEnabled(bool)` /
+`DebugDraw_IsEnabled(void)`, default **disabled** — all `Draw*` calls no-op
+when disabled so call sites can leave them in unconditionally. No
+`core/procedural_mesh_utils.h` wireframe helpers existed to reuse (checked
+first, confirmed only solid-mesh draws there). See `CORE_API.md`'s "Debug
+Draw" section.
+
+---
+
+**Not filed (reviewed and rejected):**
+- *"`PathSpline_CalculateLength` helper missing"* — premise doesn't hold
+  against current code. Checked both real `u_uvLength` call sites
+  (`skills/water/water_stream/tube_skill.c:255`,
+  `skills/fire/hoa_long_phong_ba_skill/hoa_long_phong_ba_skill.c:578`) — both
+  use a fixed constant, neither has the manual arc-length loop the review
+  describes. No actual duplication to fix.
+- *"`GetRandomValue` called inside `Draw()`"* — false. Checked every
+  `Draw*()` function body across all skills with a `GetRandomValue` call
+  (46 call sites total); none are inside a `Draw` function. Jitter is
+  already generated once at cast/spawn time and stored on the instance
+  struct, per `WUXING_ART_DIRECTION.md`'s anti-robotic rule. Already correct,
+  no action needed.
+- *"Cancel/Interrupt API missing"* — same gap as Item 14 above (missing
+  `Abort[Name]Skill`/interrupt path); not filed twice.
+- *"`Entity_GetNearbyTargets` undocumented — only a comment mention"* — false.
+  Full signature, semantics, and usage are documented in `ENTITIES_API.md:112`
+  §7 (and its AoE-composition callers in §8/§9). Correctly owned/documented by
+  the Entities Agent, not a `CORE_API.md` gap — the reviewer only checked
+  `CORE_API.md`.
+- *"No terrain-height query API / flat-ground assumption undocumented"* —
+  false. `MAP_API.md:294` explicitly documents the default arena as flat at
+  `Y = 0.0f`, and `MAP_API.md:450` already ships a `GetHeightmapHeight()`
+  helper for non-flat terrain. Map Agent's territory, already handled.
+- *"No consolidated performance-budget table"* — minor point, not filed as an
+  issue. Every individual pool already documents its own limit and overflow
+  behavior inline (e.g. `CORE_API.md:778` trail pool, `:857` `MAX_DECALS`) —
+  behavior is consistent (silent no-op / return `-1`) and already spelled out
+  per system, just not tabulated in one place. Cosmetic, low value; not worth
+  a tracked item unless requested.
+- *"Self-acknowledged gaps (SFX assets, `Material_Load` broken preset paths,
+  `Entity_ApplyAoEBuff` no team filter) should be tracked as TODOs"* — they
+  already are, inline: `CORE_API.md:1580` (SFX), `CORE_API.md:1756` (`Material_Load`
+  paths, explicitly marked "known pre-existing issue, out of scope"), and
+  `CORE_API.md:649`/`ENTITIES_API.md` §9 (AoEBuff team filter). Nothing new to
+  add; the last one is Entities Agent's territory, not Core's.
+- *"Skill metadata registry for UI (name/icon/description/unlock)"* — false
+  premise. `nguhanhtyvo_kehoach.md:12` explicitly states the game is designed
+  to need **no UI or text at all** — wuxing interactions are read entirely
+  through in-world visual cues. Building this would contradict the design
+  doc, not fill a gap in it.

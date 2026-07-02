@@ -1,24 +1,13 @@
 #version 330
+#include "core/shaders/common/noise.glsl"
 
 in vec2 fragTexCoord;
-in vec4 fragColor; 
+in vec4 fragColor;
 
 uniform sampler2D texture0;
-uniform float u_time; 
+uniform float u_time;
 
 out vec4 finalColor;
-
-float hash(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
-}
-
-float noise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    return mix(mix(hash(i + vec2(0.0,0.0)), hash(i + vec2(1.0,0.0)), u.x),
-               mix(hash(i + vec2(0.0,1.0)), hash(i + vec2(1.0,1.0)), u.x), u.y);
-}
 
 void main() {
     float circleAlpha = texture(texture0, fragTexCoord).r;
@@ -30,8 +19,8 @@ void main() {
     // Cuộn UV từ dưới lên trên tạo hiệu ứng lửa bốc
     vec2 flow = vec2(0.0, -u_time * 3.5);
     
-    float n = noise(warpUV * 4.0 + flow);
-    n += noise(warpUV * 8.0 - flow * 0.5) * 0.5;
+    float n = vnoise(warpUV * 4.0 + flow);
+    n += vnoise(warpUV * 8.0 - flow * 0.5) * 0.5;
     
     float density = circleAlpha * n * fragColor.r * 2.5;
     

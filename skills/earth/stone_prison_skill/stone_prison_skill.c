@@ -7,6 +7,7 @@
 #include "core/vfx_light.h"
 #include "core/camera_fx.h"
 #include "core/force_field.h"
+#include "core/skill_manager.h"
 #include "environment/environment_system.h"
 #include "rlgl.h"
 #include "raymath.h"
@@ -49,6 +50,7 @@ typedef struct {
     float       damage;
     float       knockback;
     float       particleAccum;
+    int         ownerAgentId; // CORE_ISSUES.md Item 15 — set from Cast's agentId param
 } EarthPrison;
 
 static EarthPrison   s_prisons[MAX_PRISONS];
@@ -60,9 +62,14 @@ static int           s_uTimeLoc, s_uDissolveLoc, s_uCamPosLoc, s_uLightDirLoc;
 static int           s_uProgressLoc, s_uCrackTimeLoc;
 static ColorGradient s_dustGrad;
 
+// CORE_ISSUES.md Item 16 — cooldown gating state, cached once in Init
+static int s_skillIndex = -1;
+
 void InitStonePrisonSkill(int screenWidth, int screenHeight)
 {
     (void)screenWidth; (void)screenHeight;
+
+    s_skillIndex = Skill_GetIndexByName("STONE_PRISON");
 
     for (int i = 0; i < MAX_PRISONS; i++) {
         s_prisons[i].state = STATE_INACTIVE;
@@ -87,12 +94,14 @@ void InitStonePrisonSkill(int screenWidth, int screenHeight)
     ColorGradient_AddStop(&s_dustGrad, 1.00f, (Color){0, 0, 0, 0});
 }
 
-void CastStonePrisonSkill(Vector3 startPos, Vector3 target, SkillParams params)
+void CastStonePrisonSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params)
 {
     (void)startPos;
+    if (!SkillManager_CanCast(s_skillIndex, agentId)) return;
+
     for (int i = 0; i < MAX_PRISONS; i++) {
         if (s_prisons[i].state != STATE_INACTIVE) continue;
-        
+
         float sizeScale = (params.sizeScale > 0.0f) ? params.sizeScale : 1.0f;
         s_prisons[i] = (EarthPrison){
             .pos          = target,
@@ -103,10 +112,13 @@ void CastStonePrisonSkill(Vector3 startPos, Vector3 target, SkillParams params)
             .dealtDamage  = false,
             .spawnedDecal = false,
             .damage       = Skill_CalculateDamage(SKILL_CAT_AOE_CONTROL, params),
-            .knockback    = Skill_CalculateKnockback(SKILL_CAT_AOE_CONTROL, params)
+            .knockback    = Skill_CalculateKnockback(SKILL_CAT_AOE_CONTROL, params),
+            .ownerAgentId = agentId
         };
         // Spawn casting light that glows during warning phase
-        VFXLight_Spawn(target, ORANGE, 65.0f * sizeScale, CAST_TIME);
+        VFXLight_Spawn(target, ORANGE, 65.0f * sizeScale, CAST_TIME, VFX_PRIORITY_LOW);
+
+        SkillManager_TriggerCooldown(s_skillIndex, agentId, Skill_CalculateCooldown(SKILL_CAT_AOE_CONTROL, params));
         break;
     }
 }
@@ -156,7 +168,7 @@ void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
         case STATE_RISING: {
             if (!p->spawnedDecal) {
                 DecalSystem_Add(p->pos, p->yaw, PILLAR_RADIUS * p->scale * 15.0f, s_crackTex, 4.0f, ColorAlpha(ELEMENT_COLOR_EARTH, 0.9f));
-                VFXLight_Spawn(p->pos, ORANGE, 130.0f * p->scale, HOLD_TIME);
+                VFXLight_Spawn(p->pos, ORANGE, 130.0f * p->scale, HOLD_TIME, VFX_PRIORITY_LOW);
                 
                 // Spawn a small crack decal at the base of each of the 6 pillars
                 float distToCenter = PILLAR_RADIUS * p->scale * 3.4f;
@@ -253,7 +265,7 @@ void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
 
                 ScreenDistort_Add(p->pos, 130.0f * p->scale, 0.8f, 0.45f, 250.0f);
                 CameraFX_Shake(0.42f);
-                VFXLight_Spawn(p->pos, RED, 140.0f * p->scale, 0.5f);
+                VFXLight_Spawn(p->pos, RED, 140.0f * p->scale, 0.5f, VFX_PRIORITY_LOW);
 
                 for (int i = 0; i < 36; i++) {
                     float a = (float)i / 36.0f * 2.0f * PI;
@@ -428,12 +440,18 @@ void DrawStonePrisonSkill(void)
         }
 
         BeginShaderMode(s_shader);
+        // Rule 11: raw BeginShaderMode() + rlBegin(RL_QUADS) immediate-mode
+        // draw below (DrawPerturbedPillar) never auto-uploads matModel like
+        // DrawMesh/DrawModel does. stone_prison.vs's fragNormal =
+        // normalize(matModel * vertexNormal) would read a zero-initialized
+        // matModel -> normalize(vec3(0)) -> NaN normal without this.
+        SkillManager_BeginShader(s_shader);
         SetShaderValue(s_shader, s_uDissolveLoc, &dissolveAmt, SHADER_UNIFORM_FLOAT);
         SetShaderValue(s_shader, s_uTimeLoc, &currentTime, SHADER_UNIFORM_FLOAT);
         SetShaderValue(s_shader, s_uCamPosLoc, &camPos, SHADER_UNIFORM_VEC3);
-        // This skill uses raw BeginShaderMode(), not SkillManager_BeginShader(),
-        // so u_lightDir isn't auto-bound (CORE_ISSUES.md Item 10) — set it here
-        // the same way u_camPos already is.
+        // u_lightDir is a custom uniform SkillManager_BeginShader() doesn't
+        // bind (it only auto-binds u_time/viewPos/u_resolution) — set it
+        // manually, same as u_camPos above.
         Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
         SetShaderValue(s_shader, s_uLightDirLoc, &lightDir, SHADER_UNIFORM_VEC3);
 
@@ -464,6 +482,7 @@ void DrawStonePrisonSkill(void)
         }
 
         rlSetTexture(0);
+        SkillManager_EndShader();
         EndShaderMode();
     }
 }

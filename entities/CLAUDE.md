@@ -21,7 +21,9 @@ This module is new and intentionally minimal. It is the foundational layer that 
 
 ## Current scope (minimal foundation — DO NOT add beyond this without explicit instruction)
 
-1. **Agent Pool** — `agentPool[8]` (4 ally + 4 enemy AI), static array, no malloc
+1. **Agent Pool** — `agentPool[MAX_AGENTS]` (`MAX_AGENTS = 256`, sized for the real
+   target: up to 6 real players + a mixed pool of minions/mid-tier
+   monsters/2 bosses, not just a 4v4 test scaffold), static array, no malloc
 2. **Vertical physics state machine** — shared between normal jump/dash (khinh công) and ring-out (death fall). One state machine, not two separate systems:
    ```c
    typedef enum { AGENT_GROUNDED, AGENT_JUMPING, AGENT_RING_OUT_FALLING } AgentVerticalState;

@@ -13,7 +13,7 @@ typedef struct {
 #endif
 
 void InitFireSkill(int screenWidth, int screenHeight);
-void CastFireSkill(Vector3 startPos, Vector3 target, float twistPhase, float sizeScale);
+void CastFireSkill(int agentId, Vector3 startPos, Vector3 target, float twistPhase, float sizeScale);
 void UpdateFireSkill(float dt);
 void DrawFireSkill(void);
 void UnloadFireSkill(void);

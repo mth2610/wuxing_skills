@@ -1,21 +1,8 @@
 #version 330
 
-#ifdef GL_ES
-precision highp float;
-#endif
+#include "core/shaders/common/vs_header.glsl"
 
-in vec3 vertexPosition;
-in vec2 vertexTexCoord;
-in vec3 vertexNormal;
-
-uniform mat4 mvp;
-uniform mat4 matModel;
-uniform float u_time;
-uniform float u_uvLength; 
-
-out vec3 fragPosition;
-out vec2 fragTexCoord;
-out vec3 fragNormal;
+uniform float u_uvLength;
 
 void main() {
     float t = vertexTexCoord.y / u_uvLength; 
@@ -37,10 +24,6 @@ void main() {
     float displacement = irregularity * dampen * 4.5; 
 
     vec3 displacedPos = vertexPosition + vertexNormal * displacement;
-    
-    fragPosition = vec3(matModel * vec4(displacedPos, 1.0));
-    fragNormal = normalize(vec3(matModel * vec4(vertexNormal, 0.0)));
-    fragTexCoord = vertexTexCoord;
-    
-    gl_Position = mvp * vec4(displacedPos, 1.0);
+
+    VS_FinalOutput(displacedPos);
 }

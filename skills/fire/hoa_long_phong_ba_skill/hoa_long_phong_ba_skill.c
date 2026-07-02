@@ -9,6 +9,7 @@
 #include "core/skill_manager.h"
 #include "core/resource_manager.h"
 #include "core/procedural_mesh_utils.h"
+#include "core/path_spline.h"
 #include "sandbox/sandbox_core.h"
 #include "rlgl.h"
 #include "raymath.h"
@@ -38,6 +39,7 @@ typedef struct {
     float damage;
     float knockback;
     float twistPhase;
+    int ownerAgentId; // CORE_ISSUES.md Item 15 — set from Cast's agentId param
 } HoaLongPhongBaVortex;
 
 static HoaLongPhongBaVortex s_vortices[MAX_VORTICES];
@@ -94,31 +96,19 @@ static ColorGradient s_fireGrad;
 // Caster toàn cục lấy từ sandbox
 extern PlayerEntity player;
 
-// Toán học Bezier
-static Vector3 GetBezierPoint(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t) {
-    float u = 1.0f - t;
-    float tt = t * t;
-    float uu = u * u;
-    float uuu = uu * u;
-    float ttt = tt * t;
+// Toán học Bezier: dùng chung core/path_spline.h (GetBezierPoint/GetBezierTangent)
+// thay vì hand-roll — xem CORE_API.md "Path Spline". GetBezierTangent trả về
+// tangent (chưa normalize) tương đương hệt local GetBezierDerivative cũ, chỉ
+// khác tên tham số thứ 4 (target thay vì p3), cùng công thức đạo hàm Bezier
+// bậc 3 chuẩn.
 
-    Vector3 p = Vector3Scale(p0, uuu);
-    p = Vector3Add(p, Vector3Scale(p1, 3.0f * uu * t));
-    p = Vector3Add(p, Vector3Scale(p2, 3.0f * u * tt));
-    p = Vector3Add(p, Vector3Scale(p3, ttt));
-    return p;
-}
-
-static Vector3 GetBezierDerivative(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t) {
-    float u = 1.0f - t;
-    Vector3 d0 = Vector3Scale(Vector3Subtract(p1, p0), 3.0f * u * u);
-    Vector3 d1 = Vector3Scale(Vector3Subtract(p2, p1), 6.0f * u * t);
-    Vector3 d2 = Vector3Scale(Vector3Subtract(p3, p2), 3.0f * t * t);
-    return Vector3Add(d0, Vector3Add(d1, d2));
-}
+// CORE_ISSUES.md Item 16 — cooldown gating state, cached once in Init
+static int s_skillIndex = -1;
 
 // Khởi tạo tài nguyên kỹ năng
 void InitHoaLongPhongBaSkill(int w, int h) {
+    s_skillIndex = Skill_GetIndexByName("HOA_LONG_PHONG_BA");
+
     // Tải texture qua ResourceManager để tự động lưu đệm và quản lý vòng đời
     s_noiseTex = ResourceManager_LoadTexture("assets/textures/noise.png");
     s_crackTex = ResourceManager_LoadTexture("assets/textures/crack.png");
@@ -208,7 +198,9 @@ void InitHoaLongPhongBaSkill(int w, int h) {
 }
 
 // Bắt đầu thi triển chiêu thức
-void CastHoaLongPhongBaSkill(Vector3 startPos, Vector3 target, SkillParams params) {
+void CastHoaLongPhongBaSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params) {
+    if (!SkillManager_CanCast(s_skillIndex, agentId)) return;
+
     for (int i = 0; i < MAX_VORTICES; i++) {
         if (!s_vortices[i].active) {
             float sizeScale = (params.sizeScale > 0.0f) ? params.sizeScale : 1.0f;
@@ -249,11 +241,14 @@ void CastHoaLongPhongBaSkill(Vector3 startPos, Vector3 target, SkillParams param
                 .impactTriggered = false,
                 .damage = Skill_CalculateDamage(SKILL_CAT_AOE_CONTROL, params),
                 .knockback = Skill_CalculateKnockback(SKILL_CAT_AOE_CONTROL, params),
-                .twistPhase = twistPhase
+                .twistPhase = twistPhase,
+                .ownerAgentId = agentId
             };
 
             // Spawn một chớp sáng nhẹ báo hiệu tụ chiêu
-            VFXLight_Spawn(startPos, ELEMENT_COLOR_FIRE, 40.0f * sizeScale, 0.4f);
+            VFXLight_Spawn(startPos, ELEMENT_COLOR_FIRE, 40.0f * sizeScale, 0.4f, VFX_PRIORITY_LOW);
+
+            SkillManager_TriggerCooldown(s_skillIndex, agentId, Skill_CalculateCooldown(SKILL_CAT_AOE_CONTROL, params));
             break;
         }
     }
@@ -262,7 +257,7 @@ void CastHoaLongPhongBaSkill(Vector3 startPos, Vector3 target, SkillParams param
 // Xử lý nổ lốc lửa khổng lồ khi va chạm
 static void TriggerVortexImpact(Vector3 pos, float scale, float damage, float knockback) {
     // 1. Ánh sáng rực rỡ (Bỏ hiệu ứng rung camera và sóng sung kích màn hình theo yêu cầu)
-    VFXLight_Spawn(pos, ELEMENT_COLOR_FIRE, 90.0f * scale, 1.8f);
+    VFXLight_Spawn(pos, ELEMENT_COLOR_FIRE, 90.0f * scale, 1.8f, VFX_PRIORITY_LOW);
 
     // 2. Tạo Decal nứt đất rực lửa cỡ lớn
     // Y dịch nhẹ lên +0.02f chống Z-fighting nhấp nháy lưới đất
@@ -433,7 +428,7 @@ void UpdateHoaLongPhongBaSkill(float dt, Vector3 enemyPos, float enemyRadius) {
             v->headPos = GetBezierPoint(v->startPos, dynamicP1, dynamicP2, v->targetPos, v->progress);
 
             // Sinh hạt vệt lửa dọc đường bay (Travel particles)
-            Vector3 tangent = Vector3Normalize(GetBezierDerivative(v->startPos, dynamicP1, dynamicP2, v->targetPos, v->progress));
+            Vector3 tangent = Vector3Normalize(GetBezierTangent(v->startPos, dynamicP1, dynamicP2, v->targetPos, v->progress));
             // Hạt phun tạt ra đằng sau đạn
             Vector3 backVel = Vector3Scale(Vector3Negate(tangent), 30.0f * v->scale);
 
@@ -551,6 +546,12 @@ void DrawHoaLongPhongBaSkill(void) {
 
     rlDisableDepthMask();
     BeginShaderMode(s_shader);
+    // CORE_ISSUES.md Item 11: hoa_long_phong_ba.vs computes fragNormal =
+    // normalize(matModel * vertexNormal) directly. DrawCoreSphere() below
+    // draws via raw rlgl immediate mode, which never auto-uploads matModel
+    // (only DrawMesh/DrawModel do) — without this call matModel stays a
+    // zero-initialized matrix -> normalize(vec3(0)) -> NaN normal.
+    SkillManager_BeginShader(s_shader);
 
     // Truyền các Uniforms toàn cục
     SetShaderValue(s_shader, s_uTimeLoc, &time, SHADER_UNIFORM_FLOAT);
@@ -585,6 +586,7 @@ void DrawHoaLongPhongBaSkill(void) {
         DrawCoreSphere(v->headPos, BASE_RADIUS * v->scale * 1.25f, 24, 24, WHITE);
     }
 
+    SkillManager_EndShader();
     EndShaderMode();
 
     // 6. Vẽ các tia lửa kéo dài dạng vệt chói sáng bằng QUADS hướng camera (Motion Stretched Billboard)

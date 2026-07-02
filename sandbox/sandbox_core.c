@@ -397,7 +397,7 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         if (skillPressed) {
             int skillIdx = GetSkillAtOrderIndex(k);
             if (skillIdx != -1) {
-                CastSkill(skillIdx, player->position, enemy->position, uiState->currentParams);
+                CastSkill(skillIdx, player->agentId, player->position, enemy->position, uiState->currentParams);
             }
         }
         prevTouchSkill[k] = touchSkill[k];
@@ -406,7 +406,7 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
 
     bool attackPressed = touchAttack && !prevTouchAttack;
     if (attackPressed) {
-        CastSkill(uiState->activeSkillIndex, player->position, enemy->position, uiState->currentParams);
+        CastSkill(uiState->activeSkillIndex, player->agentId, player->position, enemy->position, uiState->currentParams);
     }
     prevTouchAttack = touchAttack;
     g_touchAttackActive = touchAttack;

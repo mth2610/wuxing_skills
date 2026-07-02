@@ -775,7 +775,7 @@ typedef struct {
 TrailConfig should be initialized with {0}.
 `int SpawnTrailEntity(TrailConfig config);` spawns ribbon-based trail components.
 
-> **Pool budget:** `MAX_TRAIL_PARTICLES = 500` is a single static pool shared across **all active trails project-wide**, not per-skill. Several concurrent heavy-trail skills (e.g. multiple wisp/projectile-heavy casts at once) can exhaust it — `SpawnTrailEntity` returns `-1` if the pool is full. Same pattern as `MAX_DECALS` in §8.
+> **Pool budget:** `MAX_TRAIL_PARTICLES = 500` is a single static pool shared across **all active trails project-wide**, not per-skill. Several concurrent heavy-trail skills (e.g. multiple wisp/projectile-heavy casts at once) can exhaust it. (CORE_ISSUES.md Item 12) When full, `SpawnTrailEntity` now scans for the lowest-`priority` active trail (ties broken by shortest remaining lifetime) and evicts it instead of rejecting outright — it only returns `-1` if every active trail already has strictly higher priority than the incoming `config.priority`. Same eviction pattern as `core/vfx_light.h`'s `VFXLight_Spawn`.
 
 ### Configurations
 ```c
@@ -810,8 +810,10 @@ typedef struct {
     const ForceField *forceField;
     const ColorGradient *gradient;
     const SpriteAnim *spriteAnim;
+    VFXPriority priority;   // core/vfx_light.h enum. Default 0 (VFX_PRIORITY_LOW) from {0} init.
 } TrailConfig;
 ```
+* **`priority` (CORE_ISSUES.md Item 12):** additive field — `TrailConfig cfg = {0};` still compiles and defaults to `VFX_PRIORITY_LOW`, so this is backward compatible (unlike `VFXLight_Spawn`'s signature change above). Set `cfg.priority = VFX_PRIORITY_HIGH_ULTIMATE;` for a cast that must not silently lose its trail to pool pressure.
 * **Follower Trails:** For sword swings or aura attachments, set type to `TRAIL_TYPE_FOLLOWER`. Two ways to drive the tip:
   - **Manual (per-frame):** call `UpdateFollowerPosition(trailId, tipPos);` each frame before `UpdateTrailSystem`.
   - **Matrix attachment:** call `Trail_AttachToTransform(trailId, &myMatrix, localOffset);` once — `UpdateTrailSystem` reads `*myMatrix` automatically each frame and computes `tip = Vector3Transform(localOffset, *myMatrix)`. Pass `localOffset={0,0,0}` to track the matrix origin. The `Matrix` must stay valid for the trail's lifetime (typically a `static Matrix` field on the owning skill). Detach with `Trail_AttachToTransform(id, NULL, (Vector3){0})`.
@@ -1089,13 +1091,20 @@ typedef struct {
     Color   color;
 } VFXLightData;
 
+typedef enum {
+    VFX_PRIORITY_LOW = 0,
+    VFX_PRIORITY_HIGH_ULTIMATE
+} VFXPriority;
+
 void VFXLight_Init(void);
 void VFXLight_Reset(void);
-void VFXLight_Spawn(Vector3 pos, Color color, float radius, float lifetime);
+void VFXLight_Spawn(Vector3 pos, Color color, float radius, float lifetime,
+                    VFXPriority priority);
 void VFXLight_Update(float dt);
 void VFXLight_GetActive(VFXLightData *out, int *count, int maxCount);
 ```
 * **`Spawn`:** Light expires automatically after `lifetime` seconds via `Update` — no manual kill needed.
+* **`priority` (CORE_ISSUES.md Item 12):** `[!NOTE]` **breaking signature change** — `VFXLight_Spawn` gained a required `VFXPriority` parameter. When `MAX_VFX_LIGHTS` (16) is full, spawn no longer silently rejects: it scans for the lowest-priority active light (ties broken by shortest remaining lifetime) and evicts it, as long as that slot's priority is `<=` the incoming one. Only if every active slot is strictly higher priority does the new spawn get dropped (same as the old full-pool behavior). Existing call sites must add a priority arg (e.g. `VFX_PRIORITY_LOW` for routine VFX, `VFX_PRIORITY_HIGH_ULTIMATE` for Ultimate-tier casts).
 * **`GetActive`:** Call every frame before drawing a lit skill, to fetch the active list and upload it via `SetShaderValueV`. `maxCount` should be ≤ `MAX_VFX_LIGHTS` (16).
 * Rule: VFX lights supplement, not replace, scene lighting — keep them alive for the skill's full active phase rather than spawning and killing within one frame.
 
@@ -1104,12 +1113,44 @@ void VFXLight_GetActive(VFXLightData *out, int *count, int maxCount);
 void ApplyAoEDamage(Vector3 position, float radius, float damage, float knockback);
 ```
 
+### Cooldown / Resource Gating State (`core/skill_manager.h`)
+CORE_ISSUES.md Item 16. `Skill_CalculateCooldown()`/`Skill_CalculateManaCost()` only compute numbers — these two hold and check actual elapsed-time state:
+```c
+bool SkillManager_CanCast(int skillIndex, int agentId);
+void SkillManager_TriggerCooldown(int skillIndex, int agentId, float cooldownSeconds);
+```
+* Keyed by **`(skillIndex, agentId)`** — `agentId` is the caster's `entities/entities.h` agent pool slot (see `PlayerEntity`/`EnemyEntity`'s `agentId` field). Each caster gets an independent cooldown per skill; one caster's Fireball cooldown never blocks another caster's Fireball. Internally a static `float[MAX_SKILLS][256]` table (256 must stay in sync with `entities/entities.h`'s `MAX_AGENTS` — duplicated constant, core/ must not `#include entities/`).
+* `SkillManager_TriggerCooldown` ticks down automatically via `UpdateSkillManager(dt, ...)`. Call it yourself at the point a skill actually casts (not wired into any skill's `Cast[Name]Skill` automatically — call-sites need to adopt it).
+* `SkillManager_CanCast` returns `true` when remaining cooldown is `<= 0`. Out-of-range `skillIndex`/`agentId` returns `false`.
+* **`int Skill_GetIndexByName(const char *name)`** — reverse lookup so a skill can learn its own `skillIndex` (the `RegisterSkill()` return value isn't captured anywhere by convention) in order to actually call `SkillManager_CanCast`/`TriggerCooldown` about itself. Call once in `Init[Name]Skill` (the full registry is already populated by the time any skill's `Init` runs — `InitSkillManager()` registers everything before looping over `init()` callbacks) and cache the result in a `static int s_skillIndex`. Returns `-1` if `name` doesn't exactly match any registered skill's name string (the same string passed to your own `RegisterSkill()` call).
+
+### Abort / Interrupt (`core/skill_manager.h`)
+CORE_ISSUES.md Item 14. Optional, additive — does **not** change the mandatory skill lifecycle contract in `skills/CLAUDE.md`:
+```c
+void RegisterSkillAbort(int skillIndex, void (*abort)(int agentId));
+void AbortSkill(int skillIndex, int agentId);
+```
+* A skill calls `RegisterSkillAbort(index, MyAbortFn)` in addition to `RegisterSkill()` if it wants to support being force-aborted (e.g. future crowd-control). Skills that never call this simply can't be force-aborted.
+* `AbortSkill(index, agentId)` invokes the registered callback with that `agentId` if present; otherwise logs `LOG_WARNING` and no-ops. Safe to call unconditionally. A skill that tracks per-caster instance ownership (opt-in, not required) can use the `agentId` to abort only that caster's instance instead of every active instance of the skill type; a skill that ignores the parameter aborts everything, same as before.
+
 ### Shader Binding (`core/skill_manager.h`)
 ```c
 void SkillManager_BeginShader(Shader shader);
 void SkillManager_EndShader(void);
 ```
 Automatically binds `u_time`, `viewPos`, `u_resolution`.
+
+### Debug Draw (`core/debug_draw.h`)
+CORE_ISSUES.md Item 17. Thin wireframe overlay for visually tuning hitbox/AoE radii — no equivalent existed before (`core/tuning.h`'s hot-reload let you edit a radius number but not see it in-world).
+```c
+void DebugDraw_SetEnabled(bool enabled);
+bool DebugDraw_IsEnabled(void);
+void DebugDraw_Sphere(Vector3 pos, float radius, Color color);
+void DebugDraw_Circle(Vector3 center, float radius, Color color);
+```
+* Gated behind a single global toggle, **default disabled** — all `Draw*` calls no-op when disabled, so call sites can be left in unconditionally.
+* `DebugDraw_Circle` draws on the ground plane at `center.y` (for AoE/ground-target shapes).
+* Wireframe only, built on raylib's `DrawSphereWires`/`DrawCircle3D` directly — exempt from skills' "no raylib primitives" rule since this is internal core dev tooling, not a shipped VFX mesh.
 
 ### VFX Standards
 - Keep dark diffuse materials; avoid fully emissive meshes.

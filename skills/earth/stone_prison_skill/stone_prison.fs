@@ -1,4 +1,5 @@
 #version 330
+#include "core/shaders/common/noise.glsl"
 
 /* Varyings */
 in vec2 fragTexCoord;
@@ -16,26 +17,14 @@ uniform vec3      u_lightDir; // real environment sun direction, set from stone_
 /* Output */
 out vec4 finalColor;
 
-/* Value noise */
-float hash(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-}
-
-float noise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    float a = hash(i);
-    float b = hash(i + vec2(1.0, 0.0));
-    float c = hash(i + vec2(0.0, 1.0));
-    float d = hash(i + vec2(1.0, 1.0));
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
-}
-
+/* Local 2-octave time-animated FBM (domain-shifts 2nd octave by u_time —
+   NOT equivalent to common fbm2/fbm2N, which have no time-based domain
+   shift and use a fixed-rotation 3-octave sum; kept local on purpose for
+   the crawling lava-crevice look). Built on shared vnoise(). */
 float fbm(vec2 p) {
     float v = 0.0;
-    v += 0.60 * noise(p);
-    v += 0.40 * noise(p * 2.5 + vec2(u_time * 0.5, 0.0));
+    v += 0.60 * vnoise(p);
+    v += 0.40 * vnoise(p * 2.5 + vec2(u_time * 0.5, 0.0));
     return v;
 }
 
@@ -90,7 +79,10 @@ void main()
     vec3 litColor = (baseCol * diff) * texColor.rgb + vec3(0.2, 0.15, 0.1) * fresnel * (1.0 - veinMask) + emissive + vec3(spec);
     vec4 diffuse = vec4(litColor, 1.0) * fragColor;
 
-    // Dissolve sweep
+    // Dissolve sweep (kept local, not fx.glsl's dissolveCalc(): edge glow here
+    // is an unbounded exp() falloff over the whole non-discarded domain, not
+    // a smoothstep band clamped to [0,1] within a fixed edgeWidth — different
+    // curve shape/intensity, would visibly change the burning-edge look)
     if (u_dissolve > 0.001) {
         float dNoise = fbm(fragTexCoord * 14.0);
         float threshold = dNoise - u_dissolve;
