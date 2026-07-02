@@ -255,6 +255,45 @@ static AutoTestResult CoreTestSkill_AbortRegistrationStep(int frameInCase, char 
   return AUTOTEST_RUNNING;
 }
 
+// Real-skill smoke test: casts an actual gameplay skill through the exact
+// same CastSkill() dispatch main.c/sandbox_core.c use (not a synthetic
+// scratch index), then confirms two things numerically: (1) the skill is
+// actually registered (Skill_GetIndexByName found it — regresses if a skill
+// gets renamed/dropped from the registry), and (2) this session's cooldown
+// adoption (CORE_ISSUES.md Item 16 "Fix D") actually fires for real skills,
+// not just the synthetic core_test case above. Uses agentId=5, distinct
+// from any real player/enemy agentId, purely as a scratch caster identity.
+static AutoTestResult SkillSmokeTestStep(const char *skillName, int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase == 0) {
+    int idx = Skill_GetIndexByName(skillName);
+    if (idx < 0) {
+      snprintf(outReason, outReasonSize, "%s not found via Skill_GetIndexByName (not registered)", skillName);
+      return AUTOTEST_FAIL;
+    }
+    int testAgentId = 5;
+    SkillParams params = {0};
+    params.level = 1;
+    params.sizeScale = 1.0f;
+    params.quantity = 1;
+    params.damage = 10.0f;
+    CastSkill(idx, testAgentId, (Vector3){600.0f, 0.0f, 440.0f}, (Vector3){650.0f, 0.0f, 440.0f}, params);
+    if (SkillManager_CanCast(idx, testAgentId)) {
+      snprintf(outReason, outReasonSize, "%s: cooldown gate did not trigger after cast", skillName);
+      return AUTOTEST_FAIL;
+    }
+    return AUTOTEST_RUNNING; // let a few real Update/Draw frames run without crashing
+  }
+  if (frameInCase >= 5) return AUTOTEST_PASS;
+  return AUTOTEST_RUNNING;
+}
+
+static AutoTestResult SkillSmokeTest_Fire(int f, char *r, int rs) { return SkillSmokeTestStep("FIRE", f, r, rs); }
+static AutoTestResult SkillSmokeTest_Tube(int f, char *r, int rs) { return SkillSmokeTestStep("TUBE", f, r, rs); }
+static AutoTestResult SkillSmokeTest_WaterSphere(int f, char *r, int rs) { return SkillSmokeTestStep("WATER_SPHERE", f, r, rs); }
+static AutoTestResult SkillSmokeTest_WoodThorns(int f, char *r, int rs) { return SkillSmokeTestStep("WOOD_THORNS", f, r, rs); }
+static AutoTestResult SkillSmokeTest_StonePrison(int f, char *r, int rs) { return SkillSmokeTestStep("STONE_PRISON", f, r, rs); }
+static AutoTestResult SkillSmokeTest_HoaLongPhongBa(int f, char *r, int rs) { return SkillSmokeTestStep("HOA_LONG_PHONG_BA", f, r, rs); }
+
 void InitCoreTestSkill(int screenWidth, int screenHeight) {
   (void)screenWidth;
   (void)screenHeight;
@@ -270,6 +309,12 @@ void InitCoreTestSkill(int screenWidth, int screenHeight) {
       AutoTest_Register("trail_priority_eviction", CoreTestSkill_TrailEvictionStep, 5);
       AutoTest_Register("skill_cooldown_gating", CoreTestSkill_CooldownGatingStep, 5);
       AutoTest_Register("skill_abort_registration", CoreTestSkill_AbortRegistrationStep, 5);
+      AutoTest_Register("skill_smoke_fire", SkillSmokeTest_Fire, 10);
+      AutoTest_Register("skill_smoke_tube", SkillSmokeTest_Tube, 10);
+      AutoTest_Register("skill_smoke_water_sphere", SkillSmokeTest_WaterSphere, 10);
+      AutoTest_Register("skill_smoke_wood_thorns", SkillSmokeTest_WoodThorns, 10);
+      AutoTest_Register("skill_smoke_stone_prison", SkillSmokeTest_StonePrison, 10);
+      AutoTest_Register("skill_smoke_hoa_long_phong_ba", SkillSmokeTest_HoaLongPhongBa, 10);
   }
 }
 
