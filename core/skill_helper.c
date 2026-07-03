@@ -1520,6 +1520,41 @@ void SpawnGroundDecal(DecalPresetType type, Vector3 pos, float radius, float dur
     }
 }
 
+void SpawnGroundDecalEx(DecalPresetType type, Vector3 pos,
+                        float scaleStart, float scaleEnd, float lifetime,
+                        float rotSpeed, float yOffset) {
+    Texture2D tex = {0};
+    Color tint = WHITE;
+
+    switch (type) {
+        case DECAL_PRESET_CRACK:          tex = ResourceManager_LoadTexture("assets/textures/crack.png"); tint = ColorAlpha(ELEMENT_COLOR_EARTH, 0.7f); break;
+        case DECAL_PRESET_EARTH_SHATTER:  tex = ResourceManager_LoadTexture("assets/textures/decals/decal_stone_shatter.png"); tint = ColorAlpha(ELEMENT_COLOR_EARTH, 0.75f); break;
+        case DECAL_PRESET_EARTH_RUNE:     tex = ResourceManager_LoadTexture("assets/textures/decals/decal_earth_rune.png"); tint = ColorAlpha(ELEMENT_COLOR_EARTH, 0.85f); break;
+        case DECAL_PRESET_BURN:           tex = ResourceManager_LoadTexture("assets/textures/scorch_mark.png"); tint = ColorAlpha(ELEMENT_COLOR_FIRE, 0.65f); break;
+        case DECAL_PRESET_FIRE_LAVA:      tex = ResourceManager_LoadTexture("assets/textures/decals/decal_lava_crack.png"); tint = ColorAlpha(ELEMENT_COLOR_FIRE, 0.8f); break;
+        case DECAL_PRESET_WATER:          tex = ResourceManager_LoadTexture("assets/textures/water_caustics.png"); tint = ColorAlpha(ELEMENT_COLOR_WATER, 0.5f); break;
+        case DECAL_PRESET_WATER_SPLASH:   tex = ResourceManager_LoadTexture("assets/textures/decals/decal_splash_ring.png"); tint = ColorAlpha(ELEMENT_COLOR_WATER, 0.6f); break;
+        case DECAL_PRESET_WATER_RIPPLE:   tex = ResourceManager_LoadTexture("assets/textures/decals/decal_water_ripple.png"); tint = ColorAlpha(ELEMENT_COLOR_WATER, 0.5f); break;
+        case DECAL_PRESET_ICE:            tex = ResourceManager_LoadTexture("assets/textures/decals/decal_frost_ring.png"); tint = ColorAlpha(WHITE, 0.55f); break;
+        case DECAL_PRESET_WOOD_ROOT:      tex = ResourceManager_LoadTexture("assets/textures/decals/decal_root_mark.png"); tint = ColorAlpha(ELEMENT_COLOR_WOOD, 0.75f); break;
+        case DECAL_PRESET_WOOD_MOSS:      tex = ResourceManager_LoadTexture("assets/textures/decals/decal_moss_stain.png"); tint = ColorAlpha(ELEMENT_COLOR_WOOD, 0.6f); break;
+        case DECAL_PRESET_METAL_SLASH:    tex = ResourceManager_LoadTexture("assets/textures/decals/decal_slash_mark.png"); tint = ColorAlpha(ELEMENT_COLOR_METAL, 0.8f); break;
+        case DECAL_PRESET_METAL_CRATER:   tex = ResourceManager_LoadTexture("assets/textures/decals/decal_impact_crater.png"); tint = ColorAlpha(ELEMENT_COLOR_METAL, 0.75f); break;
+        case DECAL_PRESET_METAL_RUNE:     tex = ResourceManager_LoadTexture("assets/textures/decals/decal_metal_rune.png"); tint = ColorAlpha(ELEMENT_COLOR_METAL, 0.85f); break;
+        case DECAL_PRESET_TAIJI_RING:     tex = ResourceManager_LoadTexture("assets/textures/decals/decal_taiji_ring.png"); tint = ColorAlpha(ELEMENT_COLOR_TAIJI, 0.8f); break;
+        case DECAL_PRESET_TAIJI_LIGHTNING: tex = ResourceManager_LoadTexture("assets/textures/decals/decal_lightning_char.png"); tint = ColorAlpha(ELEMENT_COLOR_TAIJI, 0.85f); break;
+        case DECAL_PRESET_TAIJI_WIND:     tex = ResourceManager_LoadTexture("assets/textures/decals/decal_wind_groove.png"); tint = ColorAlpha(ELEMENT_COLOR_TAIJI, 0.5f); break;
+        case DECAL_PRESET_GENERIC_IMPACT_RING: tex = ResourceManager_LoadTexture("assets/textures/generic/impact_ring.png"); tint = ColorAlpha(WHITE, 0.7f); break;
+        case DECAL_PRESET_GENERIC_GLOW:   tex = ResourceManager_LoadTexture("assets/textures/generic/glow_circle.png"); tint = ColorAlpha(WHITE, 0.4f); break;
+        case DECAL_PRESET_GENERIC_SHADOW: tex = ResourceManager_LoadTexture("assets/textures/generic/shadow_blob.png"); tint = ColorAlpha(BLACK, 0.5f); break;
+    }
+
+    Vector3 decalPos = { pos.x, pos.y + yOffset, pos.z };
+    float rotation = (float)GetRandomValue(0, 360);
+    DecalSystem_AddEx(decalPos, rotation, rotSpeed, scaleStart, scaleEnd, tex,
+                      lifetime, tint, BLEND_ALPHA, yOffset);
+}
+
 // 8. Camera Impulse Implementation
 void CameraFX_AddImpulse(Vector3 origin, CameraImpulse impulse) {
     float dist = Vector3Distance(origin, camera.target);

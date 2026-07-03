@@ -15,116 +15,12 @@
 
 #define MAX_EMITTERS 10
 
-// --- Force Fields của Fire Skill ---
-// Mỗi loại particle có "cá tính" riêng, đã được hợp nhất lực drag vào ForceField
-static ForceField s_fireImpactField;   // tia lửa va chạm: rơi xuống + drag 2.5
-static ForceField s_fireDisperseField; // quầng lửa bốc: curl + bốc lên + drag 3.5
-static ForceField s_flameBodyField;    // thân rồng lửa (core): curl nhẹ + bốc lên + drag 9.5
-static ForceField s_flameAuraField;    // thân rồng lửa (aura): curl nhẹ + bốc lên + drag 5.2
-static ForceField s_fireBurstField;    // tia lửa bắn khi cast: chỉ drag 2.5
-
-// Sandbox-tunable physics knobs (see RegisterSkillTunables in
-// core/skill_manager.h). All acceleration values are m/s² — compare against
-// real gravity (9.81f) when dialing these in the sandbox UI. Loaded from
-// skills/fire/fire_ball/fire_ball.tuning on init if present, else these
-// defaults (already real-world-scaled: 1 unit = 1 meter) apply.
-static float s_fireImpactGravity = 1.8f;   // embers falling accel (m/s²)
-static float s_fireImpactDrag = 2.5f;      // drag rate (1/s), not spatial
-static float s_fireDisperseRise = 2.6f;    // outward flare buoyancy accel (m/s²)
-static float s_fireDisperseCurl = 0.5f;    // curl swirl accel (m/s²)
-static float s_flameBodyCurl = 1.2f;       // dragon-body curl accel (m/s²)
-static float s_flameBodyRise = 0.8f;       // dragon-body buoyancy accel (m/s²)
-// Dragon head travel speed (progress units/s) is a SkillCurve sampled at the
-// emitter's own headProgress (already normalized [0,1] over the flight, not
-// real-world distance) — never re-derived from cast distance. See
-// s_fireFlightMaxDuration below for the hard time cap.
-static SkillCurve s_fireTravelSpeedCurve;
-static float s_fireFlightMaxDuration = 3.0f; // hard cap on time-to-reach headProgress==1.0 (s)
-static float s_flameSpawnRate = 750.0f;    // flame particles spawned/s along body
-
-// Size/radius knobs (meters, before the *sizeScale multiplier applied at
-// each spawn site) — added after the initial force-only tunable pass showed
-// the effect reads far larger than the character at these defaults; expose
-// them so the sandbox can dial the whole effect down without a rebuild.
-static float s_castFlashRadius = 0.8f;      // flash at cast origin
-static float s_burstRadiusMax = 0.065f;     // cast burst spark radius (upper bound)
-static float s_impactFlash1Radius = 0.6f;   // impact static-core flash, primary
-static float s_impactFlash2Radius = 0.33f;  // impact static-core flash, secondary
-static float s_impactSparkRadiusMax = 0.022f; // falling-ember spark radius (upper bound)
-static float s_disperseRadiusMax = 0.065f;  // outward flare ember radius (upper bound)
-static float s_ribbonWidthMax = 0.4f;       // dragon-body ribbon width at its widest (tail)
-static float s_dragonHeadScale = 0.0012f;   // pixel-to-world-meters ratio for the head billboard
-
-// Per-phase opacity multiplier (0..1) applied to that phase's spawned
-// particle alpha, and one fully-configurable, always-additive tunable
-// "extra force" mix per phase (core/skill_helper.h's SkillForceMix — all 8
-// force types simultaneously available, each with its own strength; 0 =
-// that type contributes nothing) composed on top of that phase's existing
-// ForceField. Every component defaults to 0 strength (no behavior change)
-// until dialed up. See RebuildFire*Field() below, which rebuilds each field
-// from current tunable values right before it's used each time (not just
-// once at Init) so these new knobs AND the pre-existing curl/rise/gravity/
-// drag tunables actually respond live in the sandbox instead of being baked in.
-// Per-phase over-lifetime curves (core/skill_curve.h + core/particle_system.h's
-// radiusCurve/speedCurve/alphaCurve) — how a particle's size/velocity/opacity
-// evolve across its OWN lifetime (t=0 at spawn, t=1 at death), not just a
-// flat multiplier. Seeded flat at 1.0 (radius/speed: no change from today's
-// behavior; alpha: same as the old plain s_XAlpha multiplier) so these are
-// no-ops until shaped in the sandbox — e.g. dragging the radius curve's
-// middle keys up and the last key to 0 makes particles balloon then pop
-// instead of holding a constant size.
-static SkillCurve s_castRadiusCurve, s_castSpeedCurve, s_castAlphaCurve;
-static SkillCurve s_flyRadiusCurve, s_flySpeedCurve, s_flyAlphaCurve;
-static SkillCurve s_impactRadiusCurve, s_impactSpeedCurve, s_impactAlphaCurve;
-static SkillCurve s_disperseRadiusCurve, s_disperseSpeedCurve, s_disperseAlphaCurve;
-static SkillForceMix s_castForce;
-static SkillForceMix s_flyForce;
-static SkillForceMix s_impactForce;
-static SkillForceMix s_disperseForce;
-
-// Remaining per-spawn-site shape/feel knobs (count/speed/lifetime/radius-min
-// ranges) — everything that visibly changes how dense, fast, or long-lived
-// an effect reads, at every phase. Pure implementation-detail constants
-// (path sub-step size, ring-buffer limits) are intentionally left as #define
-// — they don't change how the effect looks or feels, only how it's computed.
-static float s_castBurstCountMin = 8.0f, s_castBurstCountMax = 14.0f;
-static float s_castBurstSpeedXZMin = -2.0f, s_castBurstSpeedXZMax = 3.0f; // m/s
-static float s_castBurstSpeedYMin = 1.0f, s_castBurstSpeedYMax = 4.0f;   // m/s
-static float s_castBurstRadiusMin = 0.025f;
-static float s_castBurstLifetimeMin = 0.3f, s_castBurstLifetimeMax = 0.8f;
-static float s_castFlashLifetime = 0.25f;
-
-static float s_flyCoreRadiusMin = 0.03f, s_flyCoreRadiusMax = 0.06f;
-static float s_flyCoreRadiusRandMin = 0.8f, s_flyCoreRadiusRandMax = 1.2f;
-static float s_flyCoreLifetimeMin = 0.2f, s_flyCoreLifetimeMax = 0.4f;
-static float s_flyCoreRadiusMult = 1.8f;   // core particle radius = taper-rad * this
-static float s_flyAuraRadiusMult = 4.8f;   // aura particle radius = taper-rad * this
-static float s_flyAuraLifetimeMin = 0.35f, s_flyAuraLifetimeMax = 0.65f;
-static float s_flyOutwardSpeedMin = 0.1f, s_flyOutwardSpeedMax = 0.4f;     // m/s, before *sizeScale
-static float s_flyBackwardSpeedMin = 1.6f, s_flyBackwardSpeedMax = 3.4f;  // m/s, before *sizeScale
-
-static float s_impactSparkCountMin = 12.0f, s_impactSparkCountMax = 18.0f;
-static float s_impactSparkSpeedMin = 1.6f, s_impactSparkSpeedMax = 4.2f; // m/s
-static float s_impactSparkRadiusMin = 0.008f;
-static float s_impactSparkLifetimeMin = 0.3f, s_impactSparkLifetimeMax = 0.7f;
-static float s_impactFlash1Lifetime = 0.40f;
-static float s_impactFlash2Lifetime = 0.25f;
-
-static float s_disperseCountMin = 14.0f, s_disperseCountMax = 22.0f;
-static float s_disperseSpeedMin = 0.8f, s_disperseSpeedMax = 2.6f;   // m/s, horizontal
-static float s_disperseRadiusMin = 0.025f;
-static float s_disperseLifetimeMin = 0.6f, s_disperseLifetimeMax = 1.3f;
+#include "fire_skill_params.inl"
 
 static void RebuildFireImpactField(void);
 static void RebuildFireDisperseField(void);
 static void RebuildFireBodyFields(void);
 static void RebuildFireBurstField(void);
-
-// 21 original named tunables + 40 shape/feel-range tunables (count/speed/
-// lifetime/radius-min per spawn site) - 4 old single-float alpha entries
-// + 4 phases x 3 over-lifetime curves (radius/speed/alpha) + 4 phases x 1
-// force mix x SKILL_FORCE_MIX_TUNABLE_COUNT(29) = 21 + 40 - 4 + 12 + 116 = 185
-#define FIRE_SKILL_TUNABLE_COUNT 185
 
 #define FIRE_PROGRESS_MAX 2.5f
 
@@ -359,82 +255,7 @@ void InitFireSkill(int screenWidth, int screenHeight) {
   static SkillTunableEntry s_fireTunables[FIRE_SKILL_TUNABLE_COUNT];
   int fn = 0;
 
-  s_fireTunables[fn++] = (SkillTunableEntry){"cast_flash_radius", &s_castFlashRadius, 0.0f, 1.0f, 0.8f, "cast"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"cast_flash_lifetime", &s_castFlashLifetime, 0.05f, 2.0f, 0.25f, "cast"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"burst_radius_min", &s_castBurstRadiusMin, 0.0f, 0.3f, 0.025f, "cast"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"burst_radius_max", &s_burstRadiusMax, 0.0f, 0.3f, 0.065f, "cast"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"burst_count_min", &s_castBurstCountMin, 0.0f, 50.0f, 8.0f, "cast"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"burst_count_max", &s_castBurstCountMax, 0.0f, 50.0f, 14.0f, "cast"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"burst_speed_xz_min", &s_castBurstSpeedXZMin, -10.0f, 10.0f, -2.0f, "cast"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"burst_speed_xz_max", &s_castBurstSpeedXZMax, -10.0f, 10.0f, 3.0f, "cast"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"burst_speed_y_min", &s_castBurstSpeedYMin, -10.0f, 10.0f, 1.0f, "cast"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"burst_speed_y_max", &s_castBurstSpeedYMax, -10.0f, 10.0f, 4.0f, "cast"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"burst_lifetime_min", &s_castBurstLifetimeMin, 0.05f, 3.0f, 0.3f, "cast"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"burst_lifetime_max", &s_castBurstLifetimeMax, 0.05f, 3.0f, 0.8f, "cast"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"cast_radius_curve", NULL, 0.0f, 3.0f, 1.0f, "cast", &s_castRadiusCurve};
-  s_fireTunables[fn++] = (SkillTunableEntry){"cast_speed_curve", NULL, 0.0f, 3.0f, 1.0f, "cast", &s_castSpeedCurve};
-  s_fireTunables[fn++] = (SkillTunableEntry){"cast_alpha_curve", NULL, 0.0f, 1.0f, 1.0f, "cast", &s_castAlphaCurve};
-  fn += SkillForceMix_MakeTunables(&s_castForce, "cast_force_", "cast", &s_fireTunables[fn]);
-
-  s_fireTunables[fn++] = (SkillTunableEntry){"flame_body_curl", &s_flameBodyCurl, 0.0f, 5.0f, 1.2f, "fly"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"flame_body_rise", &s_flameBodyRise, 0.0f, 19.62f, 0.8f, "fly"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"fire_travel_speed", NULL, 0.5f, 5.0f, 1.8f, "fly", &s_fireTravelSpeedCurve};
-  s_fireTunables[fn++] = (SkillTunableEntry){"fire_flight_max_duration", &s_fireFlightMaxDuration, 0.3f, 10.0f, 3.0f, "fly"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"flame_spawn_rate", &s_flameSpawnRate, 0.0f, 2000.0f, 750.0f, "fly"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"ribbon_width_max", &s_ribbonWidthMax, 0.0f, 1.0f, 0.4f, "fly"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"dragon_head_scale", &s_dragonHeadScale, 0.0f, 0.01f, 0.0012f, "fly"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"fly_core_radius_min", &s_flyCoreRadiusMin, 0.0f, 0.3f, 0.03f, "fly"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"fly_core_radius_max", &s_flyCoreRadiusMax, 0.0f, 0.3f, 0.06f, "fly"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"fly_core_radius_rand_min", &s_flyCoreRadiusRandMin, 0.0f, 2.0f, 0.8f, "fly"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"fly_core_radius_rand_max", &s_flyCoreRadiusRandMax, 0.0f, 2.0f, 1.2f, "fly"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"fly_core_radius_mult", &s_flyCoreRadiusMult, 0.0f, 10.0f, 1.8f, "fly"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"fly_aura_radius_mult", &s_flyAuraRadiusMult, 0.0f, 10.0f, 4.8f, "fly"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"fly_core_lifetime_min", &s_flyCoreLifetimeMin, 0.02f, 2.0f, 0.2f, "fly"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"fly_core_lifetime_max", &s_flyCoreLifetimeMax, 0.02f, 2.0f, 0.4f, "fly"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"fly_aura_lifetime_min", &s_flyAuraLifetimeMin, 0.02f, 2.0f, 0.35f, "fly"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"fly_aura_lifetime_max", &s_flyAuraLifetimeMax, 0.02f, 2.0f, 0.65f, "fly"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"fly_outward_speed_min", &s_flyOutwardSpeedMin, 0.0f, 5.0f, 0.1f, "fly"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"fly_outward_speed_max", &s_flyOutwardSpeedMax, 0.0f, 5.0f, 0.4f, "fly"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"fly_backward_speed_min", &s_flyBackwardSpeedMin, 0.0f, 10.0f, 1.6f, "fly"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"fly_backward_speed_max", &s_flyBackwardSpeedMax, 0.0f, 10.0f, 3.4f, "fly"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"fly_radius_curve", NULL, 0.0f, 3.0f, 1.0f, "fly", &s_flyRadiusCurve};
-  s_fireTunables[fn++] = (SkillTunableEntry){"fly_speed_curve", NULL, 0.0f, 3.0f, 1.0f, "fly", &s_flySpeedCurve};
-  s_fireTunables[fn++] = (SkillTunableEntry){"fly_alpha_curve", NULL, 0.0f, 1.0f, 1.0f, "fly", &s_flyAlphaCurve};
-  fn += SkillForceMix_MakeTunables(&s_flyForce, "fly_force_", "fly", &s_fireTunables[fn]);
-
-  s_fireTunables[fn++] = (SkillTunableEntry){"fire_impact_gravity", &s_fireImpactGravity, 0.0f, 19.62f, 1.8f, "impact"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"fire_impact_drag", &s_fireImpactDrag, 0.0f, 20.0f, 2.5f, "impact"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"impact_flash1_radius", &s_impactFlash1Radius, 0.0f, 1.0f, 0.6f, "impact"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"impact_flash1_lifetime", &s_impactFlash1Lifetime, 0.02f, 2.0f, 0.40f, "impact"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"impact_flash2_radius", &s_impactFlash2Radius, 0.0f, 1.0f, 0.33f, "impact"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"impact_flash2_lifetime", &s_impactFlash2Lifetime, 0.02f, 2.0f, 0.25f, "impact"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"impact_spark_radius_min", &s_impactSparkRadiusMin, 0.0f, 0.1f, 0.008f, "impact"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"impact_spark_radius_max", &s_impactSparkRadiusMax, 0.0f, 0.1f, 0.022f, "impact"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"impact_spark_count_min", &s_impactSparkCountMin, 0.0f, 60.0f, 12.0f, "impact"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"impact_spark_count_max", &s_impactSparkCountMax, 0.0f, 60.0f, 18.0f, "impact"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"impact_spark_speed_min", &s_impactSparkSpeedMin, 0.0f, 10.0f, 1.6f, "impact"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"impact_spark_speed_max", &s_impactSparkSpeedMax, 0.0f, 10.0f, 4.2f, "impact"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"impact_spark_lifetime_min", &s_impactSparkLifetimeMin, 0.02f, 3.0f, 0.3f, "impact"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"impact_spark_lifetime_max", &s_impactSparkLifetimeMax, 0.02f, 3.0f, 0.7f, "impact"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"impact_radius_curve", NULL, 0.0f, 3.0f, 1.0f, "impact", &s_impactRadiusCurve};
-  s_fireTunables[fn++] = (SkillTunableEntry){"impact_speed_curve", NULL, 0.0f, 3.0f, 1.0f, "impact", &s_impactSpeedCurve};
-  s_fireTunables[fn++] = (SkillTunableEntry){"impact_alpha_curve", NULL, 0.0f, 1.0f, 1.0f, "impact", &s_impactAlphaCurve};
-  fn += SkillForceMix_MakeTunables(&s_impactForce, "impact_force_", "impact", &s_fireTunables[fn]);
-
-  s_fireTunables[fn++] = (SkillTunableEntry){"fire_disperse_rise", &s_fireDisperseRise, 0.0f, 19.62f, 2.6f, "disperse"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"fire_disperse_curl", &s_fireDisperseCurl, 0.0f, 5.0f, 0.5f, "disperse"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_radius_min", &s_disperseRadiusMin, 0.0f, 0.3f, 0.025f, "disperse"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_radius_max", &s_disperseRadiusMax, 0.0f, 0.3f, 0.065f, "disperse"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_count_min", &s_disperseCountMin, 0.0f, 60.0f, 14.0f, "disperse"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_count_max", &s_disperseCountMax, 0.0f, 60.0f, 22.0f, "disperse"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_speed_min", &s_disperseSpeedMin, 0.0f, 10.0f, 0.8f, "disperse"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_speed_max", &s_disperseSpeedMax, 0.0f, 10.0f, 2.6f, "disperse"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_lifetime_min", &s_disperseLifetimeMin, 0.02f, 3.0f, 0.6f, "disperse"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_lifetime_max", &s_disperseLifetimeMax, 0.02f, 3.0f, 1.3f, "disperse"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_radius_curve", NULL, 0.0f, 3.0f, 1.0f, "disperse", &s_disperseRadiusCurve};
-  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_speed_curve", NULL, 0.0f, 3.0f, 1.0f, "disperse", &s_disperseSpeedCurve};
-  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_alpha_curve", NULL, 0.0f, 1.0f, 1.0f, "disperse", &s_disperseAlphaCurve};
-  fn += SkillForceMix_MakeTunables(&s_disperseForce, "disperse_force_", "disperse", &s_fireTunables[fn]);
+  #include "fire_skill_tunables.inl"
 
   SkillTunables_LoadPersisted("skills/fire/fire_ball/fire_ball.tuning",
                                s_fireTunables, fn);

@@ -102,11 +102,23 @@ static float s_sparkLifetimeMin = 0.25f, s_sparkLifetimeMax = 0.5f;
 static float s_arcLife = 0.12f;
 static float s_arcRadiusMin = 0.15f, s_arcRadiusMax = 0.45f;
 
+// Decal params — impact (orb hits ground) and rain-strike (each bolt hits ground)
+static float s_impactDecalScaleStart = 0.35f, s_impactDecalScaleEnd = 0.35f;
+static float s_impactDecalLifetime   = 3.5f;
+static float s_impactDecalRotSpeed   = 0.0f;
+static float s_impactDecalYOffset    = 0.02f;
+
+static float s_rainDecalScaleStart   = 1.2f,  s_rainDecalScaleEnd   = 1.2f;
+static float s_rainDecalLifetime     = 6.0f;
+static float s_rainDecalRotSpeed     = 0.0f;
+static float s_rainDecalYOffset      = 0.02f;
+
 // 12 original named tunables + 30 shape/feel-range tunables - 2 old
 // single-float alpha entries + 2 phases x 3 over-lifetime curves
 // (radius/speed/alpha) + 2 phases x 1 force mix x
-// SKILL_FORCE_MIX_TUNABLE_COUNT(29) = 12 + 30 - 2 + 6 + 58 = 104
-#define THUNDER_ORB_TUNABLE_COUNT 104
+// SKILL_FORCE_MIX_TUNABLE_COUNT(29) + 10 decal tunables
+// = 12 + 30 - 2 + 6 + 58 + 10 = 114
+#define THUNDER_ORB_TUNABLE_COUNT 114
 
 // ── types ──────────────────────────────────────────────────────────────────
 
@@ -364,7 +376,9 @@ static void SpawnRainBolt(RainSlot *slot) {
     VFXLight_Spawn(slot->skyOrigin, (Color){ 200, 200, 255, 255 },
                    1.2f, 0.08f, VFX_PRIORITY_HIGH_ULTIMATE);
     // decal + light at ground strike point (no SpawnImpactEffect — avoids CameraFX_Shake)
-    SpawnGroundDecal(DECAL_PRESET_TAIJI_LIGHTNING, slot->groundPoint, 0.35f, 3.5f);
+    SpawnGroundDecalEx(DECAL_PRESET_TAIJI_LIGHTNING, slot->groundPoint,
+                       s_impactDecalScaleStart, s_impactDecalScaleEnd,
+                       s_impactDecalLifetime, s_impactDecalRotSpeed, s_impactDecalYOffset);
     VFXLight_Spawn(slot->groundPoint, ELEMENT_COLOR_METAL,
                    s_rainLightRadius, slot->aliveTimer, VFX_PRIORITY_LOW);
 
@@ -378,7 +392,9 @@ static void TriggerImpact(Vector3 pos) {
     float impactDmg = s.params.damage > 0.0f ? s.params.damage : THUNDER_ORB_BASE_IMPACT_DMG;
     Entity_ApplyAoEDamage(pos, s_rainRadius * 0.5f, impactDmg, 2.2f);
     SpawnImpactEffect(pos, EFFECT_PRESET_LIGHTNING_IMPACT, 1.5f);
-    SpawnGroundDecal(DECAL_PRESET_TAIJI_LIGHTNING, pos, 1.2f, 6.0f);
+    SpawnGroundDecalEx(DECAL_PRESET_TAIJI_LIGHTNING, pos,
+                       s_rainDecalScaleStart, s_rainDecalScaleEnd,
+                       s_rainDecalLifetime, s_rainDecalRotSpeed, s_rainDecalYOffset);
     VFXLight_Spawn(pos, (Color){ 200, 200, 255, 255 },
                    s_impactFlashRadius, s_impactFlashLifetime,
                    VFX_PRIORITY_HIGH_ULTIMATE);
@@ -429,56 +445,7 @@ void InitThunderOrbSkill(int screenWidth, int screenHeight) {
     static SkillTunableEntry s_thunderOrbTunables[THUNDER_ORB_TUNABLE_COUNT];
     int tn = 0;
 
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"flight_max_duration", &s_flightMaxDuration, 0.3f, 8.0f, 3.0f, "flight"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"flight_max_range", &s_flightMaxRange, 1.0f, 30.0f, 15.0f, "flight"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"flight_speed", NULL, 0.5f, 15.0f, 3.8f, "flight", &s_flightSpeedCurve};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"orb_radius", &s_orbRadius, 0.01f, 0.5f, 0.12f, "flight"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"ray_len_min", &s_rayLenMin, 0.02f, 2.0f, 0.24f, "flight"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"ray_len_max", &s_rayLenMax, 0.05f, 2.0f, 0.55f, "flight"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"ray_scale_min", &s_rayScaleMin, 0.0f, 2.0f, 0.55f, "flight"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"ray_scale_max", &s_rayScaleMax, 0.0f, 2.0f, 1.0f, "flight"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"surf_arc_life_min", &s_surfArcLifeMin, 0.01f, 1.0f, 0.06f, "flight"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"surf_arc_life_max", &s_surfArcLifeMax, 0.01f, 1.0f, 0.14f, "flight"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"orb_particle_radius", &s_orbParticleRadius, 0.0f, 0.3f, 0.035f, "flight"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"orb_particle_lifetime", &s_orbParticleLifetime, 0.02f, 1.0f, 0.18f, "flight"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"orb_particle_speed_min", &s_orbParticleSpeedMin, 0.0f, 5.0f, 0.6f, "flight"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"orb_particle_speed_max", &s_orbParticleSpeedMax, 0.0f, 5.0f, 1.4f, "flight"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"orb_core1_radius_mult", &s_orbCore1RadiusMult, 0.0f, 5.0f, 0.7f, "flight"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"orb_core1_lifetime", &s_orbCore1Lifetime, 0.02f, 1.0f, 0.09f, "flight"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"orb_core2_radius_mult", &s_orbCore2RadiusMult, 0.0f, 5.0f, 1.6f, "flight"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"orb_core2_lifetime", &s_orbCore2Lifetime, 0.02f, 1.0f, 0.13f, "flight"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"flight_radius_curve", NULL, 0.0f, 3.0f, 1.0f, "flight", &s_flightRadiusCurve};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"flight_speed_curve", NULL, 0.0f, 3.0f, 1.0f, "flight", &s_flightSpeedParticleCurve};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"flight_alpha_curve", NULL, 0.0f, 1.0f, 1.0f, "flight", &s_flightAlphaCurve};
-    tn += SkillForceMix_MakeTunables(&s_flightForce, "flight_force_", "flight", &s_thunderOrbTunables[tn]);
-
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"impact_knockback", &s_impactKnockback, 0.0f, 10.0f, 2.8f, "impact"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"impact_flash_radius", &s_impactFlashRadius, 0.1f, 5.0f, 1.8f, "impact"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"impact_flash_lifetime", &s_impactFlashLifetime, 0.02f, 2.0f, 0.15f, "impact"};
-
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_duration", &s_rainDuration, 0.5f, 15.0f, 5.0f, "rain"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_y_origin", &s_rainYOrigin, 0.5f, 10.0f, 4.2f, "rain"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_bolt_scale", &s_rainBoltScale, 0.1f, 5.0f, 1.2f, "rain"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_bolt_lifetime_min", &s_rainBoltLifetimeMin, 0.02f, 2.0f, 0.28f, "rain"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_bolt_lifetime_max", &s_rainBoltLifetimeMax, 0.02f, 2.0f, 0.5f, "rain"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_strike_knockback", &s_rainStrikeKnockback, 0.0f, 10.0f, 0.8f, "rain"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_radius", &s_rainRadius, 0.1f, 5.0f, 1.3f, "rain"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_light_radius", &s_rainLightRadius, 0.05f, 3.0f, 0.8f, "rain"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"spark_radius", &s_sparkRadius, 0.0f, 0.2f, 0.022f, "rain"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"spark_count", &s_sparkCount, 0.0f, 40.0f, 10.0f, "rain"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"spark_out_speed_min", &s_sparkOutSpeedMin, 0.0f, 5.0f, 0.3f, "rain"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"spark_out_speed_max", &s_sparkOutSpeedMax, 0.0f, 5.0f, 1.3f, "rain"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"spark_up_speed_min", &s_sparkUpSpeedMin, 0.0f, 8.0f, 1.4f, "rain"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"spark_up_speed_max", &s_sparkUpSpeedMax, 0.0f, 8.0f, 3.2f, "rain"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"spark_lifetime_min", &s_sparkLifetimeMin, 0.02f, 2.0f, 0.25f, "rain"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"spark_lifetime_max", &s_sparkLifetimeMax, 0.02f, 2.0f, 0.5f, "rain"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"arc_life", &s_arcLife, 0.02f, 2.0f, 0.12f, "rain"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"arc_radius_min", &s_arcRadiusMin, 0.0f, 2.0f, 0.15f, "rain"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"arc_radius_max", &s_arcRadiusMax, 0.0f, 2.0f, 0.45f, "rain"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_radius_curve", NULL, 0.0f, 3.0f, 1.0f, "rain", &s_rainRadiusCurve};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_speed_curve", NULL, 0.0f, 3.0f, 1.0f, "rain", &s_rainSpeedCurve};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_alpha_curve", NULL, 0.0f, 1.0f, 1.0f, "rain", &s_rainAlphaCurve};
-    tn += SkillForceMix_MakeTunables(&s_rainForce, "rain_force_", "rain", &s_thunderOrbTunables[tn]);
+    #include "thunder_orb_skill_tunables.inl"
 
     SkillTunables_LoadPersisted(
         "skills/metal/thunder_orb_skill/thunder_orb_skill.tuning",

@@ -335,6 +335,12 @@ typedef enum {
 } DecalPresetType;
 
 void SpawnGroundDecal(DecalPresetType type, Vector3 pos, float radius, float duration);
+// Full-control variant — exposes all AddEx params. scaleStart/scaleEnd let the decal
+// grow or shrink over its lifetime; rotSpeed spins continuously (deg/s); yOffset lifts
+// the decal off the ground plane (use ~0.02f to avoid z-fighting).
+void SpawnGroundDecalEx(DecalPresetType type, Vector3 pos,
+                        float scaleStart, float scaleEnd, float lifetime,
+                        float rotSpeed, float yOffset);
 
 // 8. Camera Impulse
 typedef struct {

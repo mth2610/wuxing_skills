@@ -221,6 +221,9 @@ Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel,
   for (int i = 0; i < ff->layerCount; i++) {
     const ForceLayer *L = &ff->layers[i];
 
+    if (fabsf(L->strength) < 1e-4f)
+      continue;
+
     float atten = 1.0f;
 
     // =====================================================================
@@ -476,11 +479,13 @@ Vector3 WindZone_Evaluate(Vector3 pos, Vector3 vel, float time) {
 void ForceField_PackGPU(const ForceField *ff, Vector3 axisOrigin,
                         Vector3 axisDir, ForceFieldGPU *out) {
   memset(out, 0, sizeof(*out));
-  out->layerCount = ff->layerCount;
 
+  int packed = 0;
   for (int i = 0; i < ff->layerCount; i++) {
     const ForceLayer *L = &ff->layers[i];
-    ForceLayerGPU *G = &out->layers[i];
+    if (fabsf(L->strength) < 1e-4f)
+      continue;
+    ForceLayerGPU *G = &out->layers[packed++];
 
     // FORCE_RADIAL_AXIS/FORCE_VORTEX_AXIS dùng trục động (axisOrigin/axisDir)
     // thay vì L->origin/L->direction — bake vào đây để GLSL đọc origin/
@@ -497,4 +502,5 @@ void ForceField_PackGPU(const ForceField *ff, Vector3 axisOrigin,
     G->params0 = (Vector4){L->strength, L->radius, L->falloff, (float)L->type};
     G->params1 = (Vector4){L->noiseScale, L->noiseSpeed, 0.0f, 0.0f};
   }
+  out->layerCount = packed;
 }
