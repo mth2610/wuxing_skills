@@ -2,6 +2,9 @@
 #define SKILL_HELPER_H
 
 #include "raylib.h"
+#include "core/skill_curve.h"
+#include "core/force_field.h"
+#include "core/skill_manager.h"
 #include <stdbool.h>
 
 // 1. Effect Preset
@@ -133,6 +136,79 @@ bool Timeline_AddLayer(LayeredTimeline *t, const char *tag, float start, float d
 bool Timeline_IsLayerActive(const LayeredTimeline *t, int layerIndex);
 float Timeline_LayerProgress(const LayeredTimeline *t, int layerIndex);
 bool Timeline_LayerEvent(const LayeredTimeline *t, int layerIndex, float dt);
+
+// 3c. Curve-driven flight (CORE_ISSUES.md Item 34 follow-up: sandbox-tunable
+// system upgrade). One frame's advance for a projectile whose speed follows
+// a SkillCurve over time — NOT over fraction-of-distance-to-target. This
+// matters: indexing a speed curve by distance-progress makes a far-away
+// target silently stretch the whole curve over a longer path, and leaves
+// nothing capping how far a cast can travel. Here, t01 = clamp(elapsed /
+// maxDuration, 0, 1) indexes speedCurve; *traveled accumulates
+// SkillCurve_Eval(speedCurve, t01) * dt and is clamped to maxRange.
+// *arrived becomes true the moment *traveled reaches min(targetDistance,
+// maxRange), or elapsed + dt >= maxDuration — whichever happens first. This
+// guarantees a cast can never fly farther than maxRange or longer than
+// maxDuration regardless of target distance or the curve's shape.
+// maxDuration/maxRange are meant to be ordinary sandbox tunables themselves
+// (phase = the flight phase's tag), so both the ramp shape and the hard cap
+// are adjustable.
+void SkillHelper_StepCurveFlight(const SkillCurve *speedCurve, float elapsed, float dt,
+                                  float maxDuration, float maxRange, float targetDistance,
+                                  float *traveled, bool *arrived);
+
+// 3d. Single-force-layer evaluation. Evaluates one ForceLayer (core/force_field.h)
+// without needing to build a whole ForceField container just to hold it — for
+// a skill's tunable "extra force" applied only during one phase (register the
+// layer's own float fields, e.g. .strength, as ordinary phase-tagged
+// SkillTunableEntry rows). axisOrigin/axisDir only matter for
+// FORCE_RADIAL_AXIS/FORCE_VORTEX_AXIS layers — pass (Vector3){0} for
+// anything else, same convention as ForceField_Evaluate.
+Vector3 SkillHelper_EvaluateForceLayer(const ForceLayer *layer, Vector3 pos, Vector3 vel,
+                                        float time, Vector3 axisOrigin, Vector3 axisDir);
+
+// 3e. Fully-configurable, always-additive tunable force mix. All 8 curated
+// ForceTypes are simultaneously available — each with its own strength
+// (0 = that type contributes nothing) AND its own full relevant parameter
+// set (direction/origin/noise as applicable), not just a shared strength
+// number. There's no "select one type" step: dial up as many types as you
+// want at once (e.g. curl + gravity-point together), and they all compose
+// into the same ForceField. A skill wanting an independent mix per phase
+// declares one static SkillForceMix per phase and calls
+// SkillForceMix_MakeTunables once. Excludes FORCE_RADIAL_AXIS/
+// FORCE_VORTEX_AXIS/FORCE_VECTOR_TEXTURE (need axis/GPU context a generic
+// per-phase mix doesn't have).
+typedef struct {
+    float windStrength, windDirX, windDirY, windDirZ, windNoiseScale, windNoiseSpeed;
+    float perlinStrength, perlinNoiseScale, perlinNoiseSpeed;
+    float curlStrength, curlNoiseScale, curlNoiseSpeed;
+    float gravDirStrength, gravDirX, gravDirY, gravDirZ;
+    float gravPtStrength, gravPtOriginX, gravPtOriginY, gravPtOriginZ;
+    float vortexStrength, vortexOriginX, vortexOriginY, vortexOriginZ, vortexDirX, vortexDirY, vortexDirZ;
+    float dragStrength;
+    float viscosityStrength;
+} SkillForceMix;
+
+// Adds one ForceLayer per component whose strength != 0 (skips the rest —
+// keeps ForceField's layer budget, FORCE_FIELD_MAX_LAYERS in
+// core/force_field.h, from being spent on inactive components). Call this
+// fresh right before each use (not just once at Init) so live sandbox edits
+// take effect immediately, same as any other tunable-driven ForceField.
+// NOTE: if a phase's own base physics already uses several layers AND the
+// user dials up many of the 8 mix components at once, the total can exceed
+// FORCE_FIELD_MAX_LAYERS (8) — ForceField_AddLayer silently drops layers
+// past that cap rather than crashing, so the least-recently-added mix
+// components would stop applying in that (unlikely) all-8-at-once case.
+void SkillForceMix_AddLayers(const SkillForceMix *mix, ForceField *ff);
+
+// Fills outEntries[0..28] (29 entries, one per field above) with this mix's
+// tunables, all tagged with `phase` and labeled "<labelPrefix><fieldName>"
+// (e.g. labelPrefix "cast_force_" -> "cast_force_wind_strength",
+// "cast_force_curl_noise_scale", ...). Caller appends these into its own
+// combined SkillTunableEntry array and calls RegisterSkillTunables itself —
+// this only fills entries, doesn't register. Returns 29.
+#define SKILL_FORCE_MIX_TUNABLE_COUNT 29
+int SkillForceMix_MakeTunables(SkillForceMix *mix, const char *labelPrefix,
+                                const char *phase, SkillTunableEntry *outEntries);
 
 // 4. Particle Emitter System
 typedef enum {

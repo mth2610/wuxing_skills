@@ -86,8 +86,11 @@ static AutoTestResult AutoTest_SmokeStep(int frameInCase, char *outReason, int o
 }
 
 int main(void) {
-  const int screenWidth = 1200;
-  const int screenHeight = 700;
+  // Widened/heightened from 1200x700 so the sandbox tuning panel
+  // (sandbox/ui_panel.c) has room for multi-column tunable layouts as skills
+  // gain more sandbox-tunable parameters (CORE_ISSUES.md Item 34 follow-up).
+  const int screenWidth = 1600;
+  const int screenHeight = 900;
 
   bool autoTestMode = AutoTest_IsEnabled();
   if (autoTestMode) {

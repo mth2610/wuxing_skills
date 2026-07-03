@@ -73,6 +73,8 @@ To optimize VRAM and prevent duplicate file loadings, skills must load textures 
   - Loads a texture or retrieves it from cache if already loaded (e.g. sharing `crack.png` across skills).
 * `Shader ResourceManager_LoadShader(const char *vsFilePath, const char *fsFilePath);`
   - Loads/compiles custom vertex and fragment shaders. Pass `NULL` for `vsFilePath` only for shaders that do not require custom vertex processing. Skills using 3D lighting must always provide both `.vs` and `.fs`.
+* `Font ResourceManager_LoadFont(const char *filePath, int baseSize);`
+  - Loads a TTF/OTF font at `baseSize`, cached by (path, baseSize) — a different `baseSize` for the same file builds a separate atlas, matching raw `LoadFontEx`. Bilinear-filtered so it scales smoothly at other draw sizes via `DrawTextEx`. Falls back to `GetFontDefault()` if `filePath` doesn't exist yet — never fails outright, safe to call before an asset is provided (logs a `LOG_WARNING`). Used by `sandbox/ui_panel.c` for its debug-UI text; `assets/fonts/` is the convention for where a UI font file should live.
 ### Mandatory Teardown Rule
 * **DO NOT** call Raylib's `UnloadTexture` or `UnloadShader` inside your skill's `Unload[Name]Skill` callback. Leave the callback empty or commented; the global Resource Manager automatically unloads and frees all cached resources when the application shuts down.
 
@@ -953,6 +955,7 @@ float FloatCurve_Sample(const FloatCurve *c, float t);
 * **`AddStop`:** Caller must add stops in increasing `t` order (no internal sort), same as `ColorGradient_AddStop`.
 * **`Sample`:** Linear interpolation between adjacent stops; clamps to the first/last stop's value outside the registered `t` range.
 * Maps directly onto `WUXING_ART_DIRECTION.md` Chapter 4.3's "Four Curves" (Intensity/Density/Motion/Lighting) — declare one `FloatCurve` per curve at cast time, sample it each frame in `Update[Name]Skill` instead of scattering manual lerp math.
+* **`core/skill_curve.h`'s `SkillCurve`** (`typedef FloatCurve SkillCurve`) is the sandbox-tunable-wired specialization of this same type — a fixed 5-stop convention (`SKILL_CURVE_KEYS`, t = 0/25/50/75/100%) so it renders as 5 plain sliders instead of a free-form stop editor. Use `SkillCurve` (not a raw `FloatCurve`) for anything registered via `SkillTunableEntry.curve` (see "Tunable Parameters" below); reach for a raw `FloatCurve` directly only for curves that stay internal to a skill and are never sandbox-exposed.
 
 ### Ribbon Strip (`core/ribbon_strip.h`)
 Standard geometry for any continuous long body (dragon, vine, lightning bolt, water stream), replacing stacked billboard chains (heavy overdraw, wrong silhouette when viewed along the path). Technique: **camera-facing ribbon** — at each path point, offset left/right by a vector perpendicular to both the path tangent and the camera view direction, forming a continuous triangle strip (rlgl immediate-mode, no VBO, no malloc).
@@ -1225,19 +1228,80 @@ bool Skill_HasActiveInstance(int skillIndex, int agentId);
 ### Tunable Parameters (`core/skill_manager.h`)
 Optional, additive — lets a skill expose its physics/visual magic numbers as named, min/max-bounded sliders in the sandbox UI (`sandbox/ui_panel.c`) instead of only being editable by recompiling. Not part of the mandatory skill lifecycle contract.
 ```c
-#define MAX_SKILL_TUNABLES 16
+#define MAX_SKILL_TUNABLES 200
 typedef struct {
     char label[32]; // slider label AND the key= name in the skill's .tuning file
     float *value;
     float min, max, defaultValue;
+
+    // Optional, appended after defaultValue — existing positional-init call
+    // sites ({"label", &val, min, max, def}) keep compiling unchanged, these
+    // trailing fields zero-init to NULL/0 (today's legacy behavior).
+    const char *phase; // NULL = ungrouped. Free-form tag for sandbox grouping,
+                        // e.g. "cast"/"fly"/"impact"/"rain" — by convention
+                        // matches a LayeredTimeline layer's tag when the skill
+                        // uses one (core/skill_helper.h), not enforced.
+    SkillCurve *curve;  // NULL = plain constant via `value`. Non-NULL =
+                         // curve-kind entry; `value` must be NULL in this
+                         // case — the curve's 5 keyframes are the storage,
+                         // sandbox draws 5 sliders (one per keyframe: t =
+                         // 0/25/50/75/100%) instead of 1.
 } SkillTunableEntry;
 
 void RegisterSkillTunables(int skillIndex, const SkillTunableEntry *entries, int count);
 int  Skill_GetTunables(int skillIndex, SkillTunableEntry *outEntries, int maxEntries);
+
+// Flatten/unflatten a possibly-curve-kind entry list to/from core/tuning.c's
+// plain "key = value" text format — a curve entry labeled "foo" becomes 5
+// ordinary keys "foo_t0".."foo_t4"; a constant entry stays a single "foo"
+// key. No changes to tuning.c's format/parser.
+#define SKILL_TUNABLES_MAX_FLAT_KEYS (MAX_SKILL_TUNABLES * SKILL_CURVE_KEYS)
+int  SkillTunables_Flatten(const SkillTunableEntry *entries, int count,
+                            char outKeys[][TUNING_MAX_KEY_LEN], float *outValues, int maxKeys);
+void SkillTunables_Unflatten(const SkillTunableEntry *entries, int count,
+                              const char *const *keys, const float *values, int keyCount);
+bool SkillTunables_LoadPersisted(const char *path, SkillTunableEntry *entries, int count);
 ```
-* Call `RegisterSkillTunables` in `Init[Name]Skill`, after `Skill_GetIndexByName` resolves your own `skillIndex`. `entries` must point at storage you keep alive for your skill's lifetime — a `static SkillTunableEntry s_tunables[N]` whose `.value` fields point at your own `static float` state — the registry copies the entries (including the `value` pointer) by value, so your static floats stay the single source of truth; the sandbox UI writes through `value` directly when a slider moves.
-* Load persisted values at the same point via `Tuning_LoadFloatsFromPath("skills/<element>/<skill>/<skill>.tuning", keys, values, count)` (see §3b) before registering, so a previous sandbox Save is restored on next launch.
-* `Skill_GetTunables` is how `sandbox/ui_panel.c` discovers what to draw for the currently-selected skill — returns 0 for any skill that never called `RegisterSkillTunables`.
+* Call `RegisterSkillTunables` in `Init[Name]Skill`, after `Skill_GetIndexByName` resolves your own `skillIndex`. `entries` must point at storage you keep alive for your skill's lifetime — a `static SkillTunableEntry s_tunables[N]` whose `.value`/`.curve` fields point at your own `static float`/`static SkillCurve` state — the registry copies the entries (including the pointers) by value, so your static storage stays the single source of truth; the sandbox UI writes through `value` (or `curve->stops[k].value`) directly when a slider moves.
+* **Grouping by phase**: set `.phase` on entries that belong to a specific stage of the skill (cast/fly/impact/...) — the sandbox draws a section header per distinct tag, in registration order. Entries with `phase == NULL` render ungrouped at the top (no header) — the legacy/default look.
+* **Curve-kind entries**: set `.curve = &s_myCurve` (a `static SkillCurve`, seeded via `SkillCurve_SetConstant(&s_myCurve, defaultValue)` before first use) and leave `.value = NULL`. Read it fresh each frame via `SkillCurve_Eval(&s_myCurve, t01)` at the point of use — `t01` is always caller-defined progress (e.g. a `LayeredTimeline`'s `Timeline_LayerProgress`, or a skill's own normalized progress), **never** "fraction of distance already traveled toward a target" — see `SkillHelper_StepCurveFlight` below for why that specific indexing is wrong for a flight-speed curve.
+* **Persisting curve-kind entries**: call `SkillTunables_LoadPersisted("skills/<element>/<skill>/<skill>.tuning", entries, count)` in `Init[Name]Skill` right before `RegisterSkillTunables` — it flattens the entry list (curve entries become 5 keys), loads any persisted values from the file (missing keys leave the entry's current value untouched, same semantics as `Tuning_LoadFloatsFromPath`), and unflattens back into `value`/`curve->stops[k].value`. This is a drop-in replacement for the old "build a flat key/value array by hand, call `Tuning_LoadFloatsFromPath`" pattern — needed once any entry is curve-kind, but safe to use even for all-constant entry lists.
+* `Skill_GetTunables` is how `sandbox/ui_panel.c` discovers what to draw for the currently-selected skill — returns 0 for any skill that never called `RegisterSkillTunables`. Its Save button uses `SkillTunables_Flatten` + `Tuning_SaveFloats` to persist, mirroring `SkillTunables_LoadPersisted`.
+
+### Curve-Driven Flight & Extra Force (`core/skill_helper.h`)
+```c
+void SkillHelper_StepCurveFlight(const SkillCurve *speedCurve, float elapsed, float dt,
+                                  float maxDuration, float maxRange, float targetDistance,
+                                  float *traveled, bool *arrived);
+
+Vector3 SkillHelper_EvaluateForceLayer(const ForceLayer *layer, Vector3 pos, Vector3 vel,
+                                        float time, Vector3 axisOrigin, Vector3 axisDir);
+```
+* **`SkillHelper_StepCurveFlight`** — one frame's advance for a projectile whose speed follows a `SkillCurve` over **elapsed time**, not over fraction-of-distance-to-target. Indexing a speed curve by distance-progress makes a far-away target silently stretch the whole curve over a longer path, and leaves nothing capping how far a cast can travel — a skill must always have a hard cap on how far/long it can fly, independent of where the target is. `t01 = clamp(elapsed / maxDuration, 0, 1)` indexes `speedCurve`; `*traveled` accumulates `SkillCurve_Eval(speedCurve, t01) * dt` and is clamped to `maxRange`; `*arrived` becomes true the moment `*traveled` reaches `min(targetDistance, maxRange)`, or `elapsed + dt >= maxDuration` — whichever happens first, treated as impact-at-that-point (not vanish), same as reaching the real target early. `maxDuration`/`maxRange` are meant to be ordinary `SkillTunableEntry` rows themselves (tag them with the flight phase), so both the ramp shape and the hard cap are sandbox-adjustable. Fits a straight-line/fixed-direction Euclidean projectile (position = `startPos + dir * *traveled`); a skill whose "flight" is a normalized path-parameter (e.g. a Bezier-curve path already anchored between start/target, inherently bounded) should sample `SkillCurve_Eval` directly at its own progress instead and add its own `maxDuration`-only safety cap — see `fire_skill.c`'s `UpdateFireSkill` for that variant.
+* **`SkillHelper_EvaluateForceLayer`** — evaluates a single `ForceLayer` (`core/force_field.h`) without building a whole `ForceField` container just to hold it. Useful for a one-off, author-fixed-shape extra force. If several force types should be simultaneously tunable together, use `SkillForceMix` below instead. `axisOrigin`/`axisDir` only matter for `FORCE_RADIAL_AXIS`/`FORCE_VORTEX_AXIS` layers — pass `(Vector3){0}` for anything else, same convention as `ForceField_Evaluate`.
+
+### Configurable, Always-Additive Force Mix (`core/skill_helper.h`)
+```c
+typedef struct {
+    float windStrength, windDirX, windDirY, windDirZ, windNoiseScale, windNoiseSpeed;
+    float perlinStrength, perlinNoiseScale, perlinNoiseSpeed;
+    float curlStrength, curlNoiseScale, curlNoiseSpeed;
+    float gravDirStrength, gravDirX, gravDirY, gravDirZ;
+    float gravPtStrength, gravPtOriginX, gravPtOriginY, gravPtOriginZ;
+    float vortexStrength, vortexOriginX, vortexOriginY, vortexOriginZ, vortexDirX, vortexDirY, vortexDirZ;
+    float dragStrength;
+    float viscosityStrength;
+} SkillForceMix;
+
+void SkillForceMix_AddLayers(const SkillForceMix *mix, ForceField *ff);
+
+#define SKILL_FORCE_MIX_TUNABLE_COUNT 29
+int SkillForceMix_MakeTunables(SkillForceMix *mix, const char *labelPrefix,
+                                const char *phase, SkillTunableEntry *outEntries);
+```
+* All 8 curated `ForceType`s (excludes `FORCE_RADIAL_AXIS`/`FORCE_VORTEX_AXIS`/`FORCE_VECTOR_TEXTURE`, which need axis/GPU context a generic per-phase mix doesn't have) are **simultaneously available** — each with its own strength (0 = that type contributes nothing) AND its own full relevant parameter set (direction/origin/noise as applicable), not a shared number reused across types. There's no "pick one type" step: dial up as many as you want at once (e.g. curl + gravity-point together) and they all compose into the same `ForceField`. An earlier design let the sandbox switch between types one at a time on a shared field set — that turned out to be confusing (the same displayed number meant different, unrelated things depending on which type was selected) and didn't let two types run together, so it was replaced with this always-additive mix.
+* A skill wanting an independent mix per phase declares one `static SkillForceMix` per phase and calls `SkillForceMix_MakeTunables` once at `Init` time, appending the 29 returned entries into its own combined `SkillTunableEntry` array (right after that phase's other tunables, so the phase group stays contiguous — see `fire_skill.c`'s `InitFireSkill` for the pattern of building the array as a sequence of assignments rather than one static literal, needed once any per-phase block mixes fixed named entries with a variable-count helper call).
+* Call `SkillForceMix_AddLayers(&mix, &yourForceField)` right before each real use (same "rebuild from current tunable values, don't bake once at Init" rule as any other tunable-driven `ForceField`) — it adds one `ForceLayer` per component whose strength is nonzero, skipping the rest. If a phase's base physics already uses several layers AND the user dials up many mix components at once, the total can exceed `FORCE_FIELD_MAX_LAYERS` (8, `core/force_field.h`) — `ForceField_AddLayer` silently drops layers past that cap rather than crashing, so in that unlikely all-at-once case the least-recently-added mix components stop applying.
 
 ### Shader Binding (`core/skill_manager.h`)
 ```c

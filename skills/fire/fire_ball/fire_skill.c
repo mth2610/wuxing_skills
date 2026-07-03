@@ -6,6 +6,7 @@
 #include "core/ribbon_strip.h"
 #include "rlgl.h"
 #include "core/skill_manager.h"
+#include "core/skill_helper.h"
 #include "core/resource_manager.h"
 #include "core/tuning.h"
 #include "core/utils_math.h"
@@ -33,7 +34,12 @@ static float s_fireDisperseRise = 2.6f;    // outward flare buoyancy accel (m/s�
 static float s_fireDisperseCurl = 0.5f;    // curl swirl accel (m/s²)
 static float s_flameBodyCurl = 1.2f;       // dragon-body curl accel (m/s²)
 static float s_flameBodyRise = 0.8f;       // dragon-body buoyancy accel (m/s²)
-static float s_fireTravelSpeed = 1.8f;     // dragon head travel (progress units/s)
+// Dragon head travel speed (progress units/s) is a SkillCurve sampled at the
+// emitter's own headProgress (already normalized [0,1] over the flight, not
+// real-world distance) — never re-derived from cast distance. See
+// s_fireFlightMaxDuration below for the hard time cap.
+static SkillCurve s_fireTravelSpeedCurve;
+static float s_fireFlightMaxDuration = 3.0f; // hard cap on time-to-reach headProgress==1.0 (s)
 static float s_flameSpawnRate = 750.0f;    // flame particles spawned/s along body
 
 // Size/radius knobs (meters, before the *sizeScale multiplier applied at
@@ -49,23 +55,76 @@ static float s_disperseRadiusMax = 0.065f;  // outward flare ember radius (upper
 static float s_ribbonWidthMax = 0.4f;       // dragon-body ribbon width at its widest (tail)
 static float s_dragonHeadScale = 0.0012f;   // pixel-to-world-meters ratio for the head billboard
 
-#define FIRE_SKILL_TUNABLE_COUNT 16
-static const char *const s_fireTunableKeys[FIRE_SKILL_TUNABLE_COUNT] = {
-    "fire_impact_gravity",   "fire_impact_drag",       "fire_disperse_rise",
-    "fire_disperse_curl",    "flame_body_curl",        "flame_body_rise",
-    "fire_travel_speed",     "flame_spawn_rate",       "cast_flash_radius",
-    "burst_radius_max",      "impact_flash1_radius",   "impact_flash2_radius",
-    "impact_spark_radius_max", "disperse_radius_max",  "ribbon_width_max",
-    "dragon_head_scale",
-};
+// Per-phase opacity multiplier (0..1) applied to that phase's spawned
+// particle alpha, and one fully-configurable, always-additive tunable
+// "extra force" mix per phase (core/skill_helper.h's SkillForceMix — all 8
+// force types simultaneously available, each with its own strength; 0 =
+// that type contributes nothing) composed on top of that phase's existing
+// ForceField. Every component defaults to 0 strength (no behavior change)
+// until dialed up. See RebuildFire*Field() below, which rebuilds each field
+// from current tunable values right before it's used each time (not just
+// once at Init) so these new knobs AND the pre-existing curl/rise/gravity/
+// drag tunables actually respond live in the sandbox instead of being baked in.
+static float s_castAlpha = 1.0f;
+static float s_flyAlpha = 1.0f;
+static float s_impactAlpha = 1.0f;
+static float s_disperseAlpha = 1.0f;
+static SkillForceMix s_castForce;
+static SkillForceMix s_flyForce;
+static SkillForceMix s_impactForce;
+static SkillForceMix s_disperseForce;
+
+// Remaining per-spawn-site shape/feel knobs (count/speed/lifetime/radius-min
+// ranges) — everything that visibly changes how dense, fast, or long-lived
+// an effect reads, at every phase. Pure implementation-detail constants
+// (path sub-step size, ring-buffer limits) are intentionally left as #define
+// — they don't change how the effect looks or feels, only how it's computed.
+static float s_castBurstCountMin = 8.0f, s_castBurstCountMax = 14.0f;
+static float s_castBurstSpeedXZMin = -2.0f, s_castBurstSpeedXZMax = 3.0f; // m/s
+static float s_castBurstSpeedYMin = 1.0f, s_castBurstSpeedYMax = 4.0f;   // m/s
+static float s_castBurstRadiusMin = 0.025f;
+static float s_castBurstLifetimeMin = 0.3f, s_castBurstLifetimeMax = 0.8f;
+static float s_castFlashLifetime = 0.25f;
+
+static float s_flyCoreRadiusMin = 0.03f, s_flyCoreRadiusMax = 0.06f;
+static float s_flyCoreRadiusRandMin = 0.8f, s_flyCoreRadiusRandMax = 1.2f;
+static float s_flyCoreLifetimeMin = 0.2f, s_flyCoreLifetimeMax = 0.4f;
+static float s_flyCoreRadiusMult = 1.8f;   // core particle radius = taper-rad * this
+static float s_flyAuraRadiusMult = 4.8f;   // aura particle radius = taper-rad * this
+static float s_flyAuraLifetimeMin = 0.35f, s_flyAuraLifetimeMax = 0.65f;
+static float s_flyOutwardSpeedMin = 0.1f, s_flyOutwardSpeedMax = 0.4f;     // m/s, before *sizeScale
+static float s_flyBackwardSpeedMin = 1.6f, s_flyBackwardSpeedMax = 3.4f;  // m/s, before *sizeScale
+
+static float s_impactSparkCountMin = 12.0f, s_impactSparkCountMax = 18.0f;
+static float s_impactSparkSpeedMin = 1.6f, s_impactSparkSpeedMax = 4.2f; // m/s
+static float s_impactSparkRadiusMin = 0.008f;
+static float s_impactSparkLifetimeMin = 0.3f, s_impactSparkLifetimeMax = 0.7f;
+static float s_impactFlash1Lifetime = 0.40f;
+static float s_impactFlash2Lifetime = 0.25f;
+
+static float s_disperseCountMin = 14.0f, s_disperseCountMax = 22.0f;
+static float s_disperseSpeedMin = 0.8f, s_disperseSpeedMax = 2.6f;   // m/s, horizontal
+static float s_disperseRadiusMin = 0.025f;
+static float s_disperseLifetimeMin = 0.6f, s_disperseLifetimeMax = 1.3f;
+
+static unsigned char ScaleAlpha(unsigned char a, float mul) {
+  float v = (float)a * mul;
+  if (v < 0.0f) v = 0.0f;
+  if (v > 255.0f) v = 255.0f;
+  return (unsigned char)v;
+}
+
+static void RebuildFireImpactField(void);
+static void RebuildFireDisperseField(void);
+static void RebuildFireBodyFields(void);
+static void RebuildFireBurstField(void);
+
+// 21 original named tunables + 40 shape/feel-range tunables (count/speed/
+// lifetime/radius-min per spawn site) + 4 phases x 2 force slots x
+// SKILL_FORCE_MIX_TUNABLE_COUNT(29) = 21 + 40 + 116 = 177
+#define FIRE_SKILL_TUNABLE_COUNT 177
 
 #define FIRE_PROGRESS_MAX 2.5f
-
-// Particle radii before the *sizeScale*4.0f visual multiplier applied at
-// each spawn site — real-world-scaled (meters).
-#define CAST_BURST_RADIUS_MIN 0.025f
-#define CAST_BURST_LIFETIME_MIN 0.3f
-#define CAST_BURST_LIFETIME_MAX 0.8f
 
 #define DRAGON_JAW_OSCILLATION_SPEED 30.0f
 #define DRAGON_JAW_OSCILLATION_AMP 0.15f
@@ -88,6 +147,7 @@ typedef struct {
   Vector3 targetPos;
   Vector3 p1, p2;
   float headProgress;
+  float flightElapsed; // wall-clock time since Cast — safety cap alongside FIRE_PROGRESS_MAX
   float twistPhase;
   float sizeScale;
   Vector3 path[EMITTER_PATH_MAX];
@@ -96,6 +156,8 @@ typedef struct {
   Vector3 sampledPath[MAX_SAMPLED_SEGMENTS];
   int sampledCount;
   float spawnAccum;
+  Vector3 forceOffset; // accumulated deflection from the tunable "fly" extra-force slots
+  Vector3 forceVel;    // damped velocity driving forceOffset — see UpdateFireSkill
 } FireEmitter;
 
 static FireEmitter emitters[MAX_EMITTERS];
@@ -143,8 +205,9 @@ static Vector3 GetDragonPathPos(FireEmitter *emitter, float t) {
         Vector3Add(emitter->p2, Vector3Scale(perpX, -waveAmp * 0.8f));
     dynamicP2 = Vector3Add(dynamicP2, Vector3Scale(perpY, -waveAmpVert * 0.8f));
 
-    return GetBezierPoint(emitter->startPos, dynamicP1, dynamicP2,
-                          emitter->targetPos, t);
+    return Vector3Add(GetBezierPoint(emitter->startPos, dynamicP1, dynamicP2,
+                                      emitter->targetPos, t),
+                       emitter->forceOffset);
   }
 
   float over = t - 1.0f;
@@ -167,9 +230,10 @@ static Vector3 GetDragonPathPos(FireEmitter *emitter, float t) {
 
   float blend = fminf(over * 3.5f, 1.0f);
   blend = blend * blend * (3.0f - 2.0f * blend);
-  return (Vector3){Math_Mix(inertiaPos.x, idealUpPos.x, blend),
-                   Math_Mix(inertiaPos.y, idealUpPos.y, blend),
-                   Math_Mix(inertiaPos.z, idealUpPos.z, blend)};
+  return Vector3Add((Vector3){Math_Mix(inertiaPos.x, idealUpPos.x, blend),
+                              Math_Mix(inertiaPos.y, idealUpPos.y, blend),
+                              Math_Mix(inertiaPos.z, idealUpPos.z, blend)},
+                     emitter->forceOffset);
 }
 
 static Vector3 GetDragonPathTangent(FireEmitter *emitter, float t) {
@@ -181,39 +245,42 @@ static Vector3 GetDragonPathTangent(FireEmitter *emitter, float t) {
 }
 
 static void TriggerFireImpact(Vector3 pos, float sizeScale) {
-  int sparkCount = GetRandomValue(12, 18) * sizeScale;
+  RebuildFireImpactField();
+  RebuildFireDisperseField();
+
+  int sparkCount = (int)Math_Mix(s_impactSparkCountMin, s_impactSparkCountMax, Random01()) * sizeScale;
   for (int s = 0; s < sparkCount; s++) {
     float angle = Random01() * PI * 2.0f;
     float pitch = (Random01() - 0.5f) * PI;
-    float speed = Math_Mix(1.6f, 4.2f, Random01()) * sizeScale;
+    float speed = Math_Mix(s_impactSparkSpeedMin, s_impactSparkSpeedMax, Random01()) * sizeScale;
 
     ParticleConfig cfg = {0};
     cfg.position = pos;
     cfg.velocity =
         (Vector3){cosf(angle) * speed * cosf(pitch), sinf(pitch) * speed,
                   sinf(angle) * speed * cosf(pitch)};
-    cfg.radius = Math_Mix(0.008f, s_impactSparkRadiusMax, Random01()) * sizeScale * 4.0f;
-    cfg.lifetime = Math_Mix(0.3f, 0.7f, Random01());
-    cfg.colorStart = (Color){255, 200, 40, 230};
+    cfg.radius = Math_Mix(s_impactSparkRadiusMin, s_impactSparkRadiusMax, Random01()) * sizeScale * 4.0f;
+    cfg.lifetime = Math_Mix(s_impactSparkLifetimeMin, s_impactSparkLifetimeMax, Random01());
+    cfg.colorStart = (Color){255, 200, 40, ScaleAlpha(230, s_impactAlpha)};
     cfg.colorEnd = (Color){200, 20, 0, 0};
     cfg.forceField = &s_fireImpactField;
     SpawnParticle(cfg);
   }
 
-  int disperseCount = GetRandomValue(14, 22) * sizeScale;
+  int disperseCount = (int)Math_Mix(s_disperseCountMin, s_disperseCountMax, Random01()) * sizeScale;
   for (int v = 0; v < disperseCount; v++) {
     float angle = Random01() * PI * 2.0f;
-    float speed = Math_Mix(0.8f, 2.6f, Random01()) * sizeScale;
+    float speed = Math_Mix(s_disperseSpeedMin, s_disperseSpeedMax, Random01()) * sizeScale;
 
     ParticleConfig cfg = {0};
     cfg.position = pos;
     cfg.velocity =
         (Vector3){cosf(angle) * speed,
-                  (Math_Mix(0.8f, 2.6f, Random01()) + 0.8f) * sizeScale,
+                  (Math_Mix(s_disperseSpeedMin, s_disperseSpeedMax, Random01()) + 0.8f) * sizeScale,
                   sinf(angle) * speed};
-    cfg.radius = Math_Mix(0.025f, s_disperseRadiusMax, Random01()) * sizeScale * 4.0f;
-    cfg.lifetime = Math_Mix(0.6f, 1.3f, Random01());
-    cfg.colorStart = (Color){255, 120, 20, 200};
+    cfg.radius = Math_Mix(s_disperseRadiusMin, s_disperseRadiusMax, Random01()) * sizeScale * 4.0f;
+    cfg.lifetime = Math_Mix(s_disperseLifetimeMin, s_disperseLifetimeMax, Random01());
+    cfg.colorStart = (Color){255, 120, 20, ScaleAlpha(200, s_disperseAlpha)};
     cfg.colorEnd = (Color){120, 10, 0, 0};
     cfg.forceField = &s_fireDisperseField;
     SpawnParticle(cfg);
@@ -222,16 +289,16 @@ static void TriggerFireImpact(Vector3 pos, float sizeScale) {
   ParticleConfig staticCore1 = {0};
   staticCore1.position = pos;
   staticCore1.radius = s_impactFlash1Radius * sizeScale * 4.0f;
-  staticCore1.lifetime = 0.40f;
-  staticCore1.colorStart = (Color){255, 100, 10, 180};
+  staticCore1.lifetime = s_impactFlash1Lifetime;
+  staticCore1.colorStart = (Color){255, 100, 10, ScaleAlpha(180, s_impactAlpha)};
   staticCore1.colorEnd = (Color){0, 0, 0, 0};
   SpawnParticle(staticCore1);
 
   ParticleConfig staticCore2 = {0};
   staticCore2.position = pos;
   staticCore2.radius = s_impactFlash2Radius * sizeScale * 4.0f;
-  staticCore2.lifetime = 0.25f;
-  staticCore2.colorStart = (Color){255, 230, 80, 255};
+  staticCore2.lifetime = s_impactFlash2Lifetime;
+  staticCore2.colorStart = (Color){255, 230, 80, ScaleAlpha(255, s_impactAlpha)};
   staticCore2.colorEnd = (Color){100, 0, 0, 0};
   SpawnParticle(staticCore2);
 }
@@ -249,38 +316,113 @@ void InitFireSkill(int screenWidth, int screenHeight) {
     emitters[i].active = false;
 
   // --- Tunable physics knobs: load any sandbox-saved values, then build
-  // the ForceFields from them (see struct decls above) ---
-  float tunableValues[FIRE_SKILL_TUNABLE_COUNT] = {
-      s_fireImpactGravity,  s_fireImpactDrag,      s_fireDisperseRise,
-      s_fireDisperseCurl,   s_flameBodyCurl,       s_flameBodyRise,
-      s_fireTravelSpeed,    s_flameSpawnRate,      s_castFlashRadius,
-      s_burstRadiusMax,     s_impactFlash1Radius,  s_impactFlash2Radius,
-      s_impactSparkRadiusMax, s_disperseRadiusMax, s_ribbonWidthMax,
-      s_dragonHeadScale,
-  };
-  Tuning_LoadFloatsFromPath("skills/fire/fire_ball/fire_ball.tuning",
-                             s_fireTunableKeys, tunableValues,
-                             FIRE_SKILL_TUNABLE_COUNT);
-  s_fireImpactGravity = tunableValues[0];
-  s_fireImpactDrag = tunableValues[1];
-  s_fireDisperseRise = tunableValues[2];
-  s_fireDisperseCurl = tunableValues[3];
-  s_flameBodyCurl = tunableValues[4];
-  s_flameBodyRise = tunableValues[5];
-  s_fireTravelSpeed = tunableValues[6];
-  s_flameSpawnRate = tunableValues[7];
-  s_castFlashRadius = tunableValues[8];
-  s_burstRadiusMax = tunableValues[9];
-  s_impactFlash1Radius = tunableValues[10];
-  s_impactFlash2Radius = tunableValues[11];
-  s_impactSparkRadiusMax = tunableValues[12];
-  s_disperseRadiusMax = tunableValues[13];
-  s_ribbonWidthMax = tunableValues[14];
-  s_dragonHeadScale = tunableValues[15];
+  // the ForceFields from them (see struct decls above). Entries are built
+  // first (grouped by phase: cast/fly/impact/disperse) and loaded via
+  // SkillTunables_LoadPersisted so the ForceField setup below sees the final,
+  // persisted values — same order the old flat-array load used. ---
+  SkillCurve_SetConstant(&s_fireTravelSpeedCurve, 1.8f); // seed flat at the old constant speed
 
-  // --- Khởi tạo ForceField ---
+  s_skillIndex = Skill_GetIndexByName("FIRE");
 
-  // Tia lửa va chạm: rơi xuống như than đỏ + cản
+  // Built as a sequence of assignments (not a single literal) so each
+  // phase's named entries stay contiguous with that phase's force slots —
+  // the sandbox draws one "-- phase --" header per contiguous run, so
+  // interleaving keeps each phase's group together instead of splitting
+  // named/force entries into two separate blocks.
+  static SkillTunableEntry s_fireTunables[FIRE_SKILL_TUNABLE_COUNT];
+  int fn = 0;
+
+  s_fireTunables[fn++] = (SkillTunableEntry){"cast_flash_radius", &s_castFlashRadius, 0.0f, 1.0f, 0.8f, "cast"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"cast_flash_lifetime", &s_castFlashLifetime, 0.05f, 2.0f, 0.25f, "cast"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"burst_radius_min", &s_castBurstRadiusMin, 0.0f, 0.3f, 0.025f, "cast"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"burst_radius_max", &s_burstRadiusMax, 0.0f, 0.3f, 0.065f, "cast"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"burst_count_min", &s_castBurstCountMin, 0.0f, 50.0f, 8.0f, "cast"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"burst_count_max", &s_castBurstCountMax, 0.0f, 50.0f, 14.0f, "cast"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"burst_speed_xz_min", &s_castBurstSpeedXZMin, -10.0f, 10.0f, -2.0f, "cast"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"burst_speed_xz_max", &s_castBurstSpeedXZMax, -10.0f, 10.0f, 3.0f, "cast"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"burst_speed_y_min", &s_castBurstSpeedYMin, -10.0f, 10.0f, 1.0f, "cast"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"burst_speed_y_max", &s_castBurstSpeedYMax, -10.0f, 10.0f, 4.0f, "cast"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"burst_lifetime_min", &s_castBurstLifetimeMin, 0.05f, 3.0f, 0.3f, "cast"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"burst_lifetime_max", &s_castBurstLifetimeMax, 0.05f, 3.0f, 0.8f, "cast"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"cast_alpha", &s_castAlpha, 0.0f, 1.0f, 1.0f, "cast"};
+  fn += SkillForceMix_MakeTunables(&s_castForce, "cast_force_", "cast", &s_fireTunables[fn]);
+
+  s_fireTunables[fn++] = (SkillTunableEntry){"flame_body_curl", &s_flameBodyCurl, 0.0f, 5.0f, 1.2f, "fly"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"flame_body_rise", &s_flameBodyRise, 0.0f, 19.62f, 0.8f, "fly"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"fire_travel_speed", NULL, 0.5f, 5.0f, 1.8f, "fly", &s_fireTravelSpeedCurve};
+  s_fireTunables[fn++] = (SkillTunableEntry){"fire_flight_max_duration", &s_fireFlightMaxDuration, 0.3f, 10.0f, 3.0f, "fly"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"flame_spawn_rate", &s_flameSpawnRate, 0.0f, 2000.0f, 750.0f, "fly"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"ribbon_width_max", &s_ribbonWidthMax, 0.0f, 1.0f, 0.4f, "fly"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"dragon_head_scale", &s_dragonHeadScale, 0.0f, 0.01f, 0.0012f, "fly"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"fly_core_radius_min", &s_flyCoreRadiusMin, 0.0f, 0.3f, 0.03f, "fly"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"fly_core_radius_max", &s_flyCoreRadiusMax, 0.0f, 0.3f, 0.06f, "fly"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"fly_core_radius_rand_min", &s_flyCoreRadiusRandMin, 0.0f, 2.0f, 0.8f, "fly"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"fly_core_radius_rand_max", &s_flyCoreRadiusRandMax, 0.0f, 2.0f, 1.2f, "fly"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"fly_core_radius_mult", &s_flyCoreRadiusMult, 0.0f, 10.0f, 1.8f, "fly"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"fly_aura_radius_mult", &s_flyAuraRadiusMult, 0.0f, 10.0f, 4.8f, "fly"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"fly_core_lifetime_min", &s_flyCoreLifetimeMin, 0.02f, 2.0f, 0.2f, "fly"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"fly_core_lifetime_max", &s_flyCoreLifetimeMax, 0.02f, 2.0f, 0.4f, "fly"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"fly_aura_lifetime_min", &s_flyAuraLifetimeMin, 0.02f, 2.0f, 0.35f, "fly"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"fly_aura_lifetime_max", &s_flyAuraLifetimeMax, 0.02f, 2.0f, 0.65f, "fly"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"fly_outward_speed_min", &s_flyOutwardSpeedMin, 0.0f, 5.0f, 0.1f, "fly"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"fly_outward_speed_max", &s_flyOutwardSpeedMax, 0.0f, 5.0f, 0.4f, "fly"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"fly_backward_speed_min", &s_flyBackwardSpeedMin, 0.0f, 10.0f, 1.6f, "fly"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"fly_backward_speed_max", &s_flyBackwardSpeedMax, 0.0f, 10.0f, 3.4f, "fly"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"fly_alpha", &s_flyAlpha, 0.0f, 1.0f, 1.0f, "fly"};
+  fn += SkillForceMix_MakeTunables(&s_flyForce, "fly_force_", "fly", &s_fireTunables[fn]);
+
+  s_fireTunables[fn++] = (SkillTunableEntry){"fire_impact_gravity", &s_fireImpactGravity, 0.0f, 19.62f, 1.8f, "impact"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"fire_impact_drag", &s_fireImpactDrag, 0.0f, 20.0f, 2.5f, "impact"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"impact_flash1_radius", &s_impactFlash1Radius, 0.0f, 1.0f, 0.6f, "impact"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"impact_flash1_lifetime", &s_impactFlash1Lifetime, 0.02f, 2.0f, 0.40f, "impact"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"impact_flash2_radius", &s_impactFlash2Radius, 0.0f, 1.0f, 0.33f, "impact"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"impact_flash2_lifetime", &s_impactFlash2Lifetime, 0.02f, 2.0f, 0.25f, "impact"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"impact_spark_radius_min", &s_impactSparkRadiusMin, 0.0f, 0.1f, 0.008f, "impact"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"impact_spark_radius_max", &s_impactSparkRadiusMax, 0.0f, 0.1f, 0.022f, "impact"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"impact_spark_count_min", &s_impactSparkCountMin, 0.0f, 60.0f, 12.0f, "impact"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"impact_spark_count_max", &s_impactSparkCountMax, 0.0f, 60.0f, 18.0f, "impact"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"impact_spark_speed_min", &s_impactSparkSpeedMin, 0.0f, 10.0f, 1.6f, "impact"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"impact_spark_speed_max", &s_impactSparkSpeedMax, 0.0f, 10.0f, 4.2f, "impact"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"impact_spark_lifetime_min", &s_impactSparkLifetimeMin, 0.02f, 3.0f, 0.3f, "impact"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"impact_spark_lifetime_max", &s_impactSparkLifetimeMax, 0.02f, 3.0f, 0.7f, "impact"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"impact_alpha", &s_impactAlpha, 0.0f, 1.0f, 1.0f, "impact"};
+  fn += SkillForceMix_MakeTunables(&s_impactForce, "impact_force_", "impact", &s_fireTunables[fn]);
+
+  s_fireTunables[fn++] = (SkillTunableEntry){"fire_disperse_rise", &s_fireDisperseRise, 0.0f, 19.62f, 2.6f, "disperse"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"fire_disperse_curl", &s_fireDisperseCurl, 0.0f, 5.0f, 0.5f, "disperse"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_radius_min", &s_disperseRadiusMin, 0.0f, 0.3f, 0.025f, "disperse"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_radius_max", &s_disperseRadiusMax, 0.0f, 0.3f, 0.065f, "disperse"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_count_min", &s_disperseCountMin, 0.0f, 60.0f, 14.0f, "disperse"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_count_max", &s_disperseCountMax, 0.0f, 60.0f, 22.0f, "disperse"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_speed_min", &s_disperseSpeedMin, 0.0f, 10.0f, 0.8f, "disperse"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_speed_max", &s_disperseSpeedMax, 0.0f, 10.0f, 2.6f, "disperse"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_lifetime_min", &s_disperseLifetimeMin, 0.02f, 3.0f, 0.6f, "disperse"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_lifetime_max", &s_disperseLifetimeMax, 0.02f, 3.0f, 1.3f, "disperse"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_alpha", &s_disperseAlpha, 0.0f, 1.0f, 1.0f, "disperse"};
+  fn += SkillForceMix_MakeTunables(&s_disperseForce, "disperse_force_", "disperse", &s_fireTunables[fn]);
+
+  SkillTunables_LoadPersisted("skills/fire/fire_ball/fire_ball.tuning",
+                               s_fireTunables, fn);
+
+  // Fields are (re)built from current tunable values at each real use site
+  // (RebuildFire*Field(), defined below Init) rather than only once here —
+  // this call just seeds a valid initial state before any Cast happens.
+  RebuildFireImpactField();
+  RebuildFireDisperseField();
+  RebuildFireBodyFields();
+  RebuildFireBurstField();
+
+  RegisterSkillTunables(s_skillIndex, s_fireTunables, fn);
+}
+
+// Rebuilds each phase's ForceField from CURRENT tunable values (including
+// the tunable extra-force layer) — called once at Init for a valid initial
+// state, and again right before each real use, so dragging a sandbox slider
+// (existing curl/rise/gravity/drag knobs, or the new extra-force ones)
+// actually changes behavior immediately instead of only taking effect after
+// a restart (the previous build-once-at-Init pattern silently ignored any
+// post-Init edit to these particular tunables).
+static void RebuildFireImpactField(void) {
   ForceField_Clear(&s_fireImpactField);
   ForceField_AddLayer(&s_fireImpactField, (ForceLayer){
     .type = FORCE_GRAVITY_DIR, .direction = {0,-1,0}, .strength = s_fireImpactGravity
@@ -288,8 +430,10 @@ void InitFireSkill(int screenWidth, int screenHeight) {
   ForceField_AddLayer(&s_fireImpactField, (ForceLayer){
     .type = FORCE_DRAG, .strength = s_fireImpactDrag
   });
+  SkillForceMix_AddLayers(&s_impactForce, &s_fireImpactField);
+}
 
-  // Quầng lửa bốc: cuộn theo curl + lực bốc lên + cản 3.5
+static void RebuildFireDisperseField(void) {
   ForceField_Clear(&s_fireDisperseField);
   ForceField_AddLayer(&s_fireDisperseField, (ForceLayer){
     .type = FORCE_GRAVITY_DIR, .direction = {0,1,0}, .strength = s_fireDisperseRise
@@ -301,8 +445,10 @@ void InitFireSkill(int screenWidth, int screenHeight) {
   ForceField_AddLayer(&s_fireDisperseField, (ForceLayer){
     .type = FORCE_DRAG, .strength = 3.5f
   });
+  SkillForceMix_AddLayers(&s_disperseForce, &s_fireDisperseField);
+}
 
-  // Thân rồng (core): curl mạnh làm ngọn lửa uốn lượn + bốc nhẹ + cản 9.5
+static void RebuildFireBodyFields(void) {
   ForceField_Clear(&s_flameBodyField);
   ForceField_AddLayer(&s_flameBodyField, (ForceLayer){
     .type = FORCE_NOISE_CURL, .strength = s_flameBodyCurl,
@@ -314,8 +460,8 @@ void InitFireSkill(int screenWidth, int screenHeight) {
   ForceField_AddLayer(&s_flameBodyField, (ForceLayer){
     .type = FORCE_DRAG, .strength = 9.5f
   });
+  SkillForceMix_AddLayers(&s_flyForce, &s_flameBodyField);
 
-  // Thân rồng (aura): curl mạnh làm ngọn lửa uốn lượn + bốc nhẹ + cản 5.2
   ForceField_Clear(&s_flameAuraField);
   ForceField_AddLayer(&s_flameAuraField, (ForceLayer){
     .type = FORCE_NOISE_CURL, .strength = s_flameBodyCurl,
@@ -327,34 +473,15 @@ void InitFireSkill(int screenWidth, int screenHeight) {
   ForceField_AddLayer(&s_flameAuraField, (ForceLayer){
     .type = FORCE_DRAG, .strength = 5.2f
   });
+  SkillForceMix_AddLayers(&s_flyForce, &s_flameAuraField);
+}
 
-  // Burst khi cast: chỉ cản 2.5
+static void RebuildFireBurstField(void) {
   ForceField_Clear(&s_fireBurstField);
   ForceField_AddLayer(&s_fireBurstField, (ForceLayer){
     .type = FORCE_DRAG, .strength = 2.5f
   });
-
-  s_skillIndex = Skill_GetIndexByName("FIRE");
-
-  static SkillTunableEntry s_fireTunables[FIRE_SKILL_TUNABLE_COUNT] = {
-      {"fire_impact_gravity", &s_fireImpactGravity, 0.0f, 19.62f, 1.8f},
-      {"fire_impact_drag", &s_fireImpactDrag, 0.0f, 20.0f, 2.5f},
-      {"fire_disperse_rise", &s_fireDisperseRise, 0.0f, 19.62f, 2.6f},
-      {"fire_disperse_curl", &s_fireDisperseCurl, 0.0f, 5.0f, 0.5f},
-      {"flame_body_curl", &s_flameBodyCurl, 0.0f, 5.0f, 1.2f},
-      {"flame_body_rise", &s_flameBodyRise, 0.0f, 19.62f, 0.8f},
-      {"fire_travel_speed", &s_fireTravelSpeed, 0.5f, 5.0f, 1.8f},
-      {"flame_spawn_rate", &s_flameSpawnRate, 0.0f, 2000.0f, 750.0f},
-      {"cast_flash_radius", &s_castFlashRadius, 0.0f, 1.0f, 0.8f},
-      {"burst_radius_max", &s_burstRadiusMax, 0.0f, 0.3f, 0.065f},
-      {"impact_flash1_radius", &s_impactFlash1Radius, 0.0f, 1.0f, 0.6f},
-      {"impact_flash2_radius", &s_impactFlash2Radius, 0.0f, 1.0f, 0.33f},
-      {"impact_spark_radius_max", &s_impactSparkRadiusMax, 0.0f, 0.1f, 0.022f},
-      {"disperse_radius_max", &s_disperseRadiusMax, 0.0f, 0.3f, 0.065f},
-      {"ribbon_width_max", &s_ribbonWidthMax, 0.0f, 1.0f, 0.4f},
-      {"dragon_head_scale", &s_dragonHeadScale, 0.0f, 0.01f, 0.0012f},
-  };
-  RegisterSkillTunables(s_skillIndex, s_fireTunables, FIRE_SKILL_TUNABLE_COUNT);
+  SkillForceMix_AddLayers(&s_castForce, &s_fireBurstField);
 }
 
 void CastFireSkill(int agentId, Vector3 startPos, Vector3 target, float twistPhase,
@@ -369,12 +496,15 @@ void CastFireSkill(int agentId, Vector3 startPos, Vector3 target, float twistPha
       emitters[i].startPos = startPos;
       emitters[i].targetPos = target;
       emitters[i].headProgress = 0.0f;
+      emitters[i].flightElapsed = 0.0f;
       emitters[i].twistPhase = twistPhase;
       emitters[i].sizeScale = sizeScale;
       emitters[i].pathCount = 1;
       emitters[i].pathHead = 0;
       emitters[i].path[0] = startPos;
       emitters[i].spawnAccum = 0.0f;
+      emitters[i].forceOffset = (Vector3){0};
+      emitters[i].forceVel = (Vector3){0};
 
       float dist = Vector3Distance(startPos, target);
       Vector3 dir = Vector3Normalize(Vector3Subtract(target, startPos));
@@ -385,27 +515,29 @@ void CastFireSkill(int agentId, Vector3 startPos, Vector3 target, float twistPha
     }
   }
 
+  RebuildFireBurstField();
+
   ParticleConfig flash = {0};
   flash.position = startPos;
   flash.radius = s_castFlashRadius * sizeScale;
-  flash.lifetime = 0.25f;
-  flash.colorStart = (Color){255, 140, 20, 255};
+  flash.lifetime = s_castFlashLifetime;
+  flash.colorStart = (Color){255, 140, 20, ScaleAlpha(255, s_castAlpha)};
   flash.colorEnd = (Color){0, 0, 0, 0};
   SpawnParticle(flash);
 
-  int burstCount = GetRandomValue(8, 14) * sizeScale;
+  int burstCount = (int)Math_Mix(s_castBurstCountMin, s_castBurstCountMax, Random01()) * sizeScale;
   for (int s = 0; s < burstCount; s++) {
     ParticleConfig cfg = {0};
     cfg.position = startPos;
-    cfg.velocity = (Vector3){(float)GetRandomValue(-200, 300) * 0.01f * sizeScale,
-                             (float)GetRandomValue(100, 400) * 0.01f * sizeScale,
-                             (float)GetRandomValue(-200, 300) * 0.01f * sizeScale};
+    cfg.velocity = (Vector3){Math_Mix(s_castBurstSpeedXZMin, s_castBurstSpeedXZMax, Random01()) * sizeScale,
+                             Math_Mix(s_castBurstSpeedYMin, s_castBurstSpeedYMax, Random01()) * sizeScale,
+                             Math_Mix(s_castBurstSpeedXZMin, s_castBurstSpeedXZMax, Random01()) * sizeScale};
     cfg.radius =
-        Math_Mix(CAST_BURST_RADIUS_MIN, s_burstRadiusMax, Random01()) *
+        Math_Mix(s_castBurstRadiusMin, s_burstRadiusMax, Random01()) *
         sizeScale * 4.0f;
     cfg.lifetime =
-        Math_Mix(CAST_BURST_LIFETIME_MIN, CAST_BURST_LIFETIME_MAX, Random01());
-    cfg.colorStart = (Color){255, 90, 10, 200};
+        Math_Mix(s_castBurstLifetimeMin, s_castBurstLifetimeMax, Random01());
+    cfg.colorStart = (Color){255, 90, 10, ScaleAlpha(200, s_castAlpha)};
     cfg.colorEnd = (Color){0, 0, 0, 0};
     cfg.forceField = &s_fireBurstField;
     SpawnParticle(cfg);
@@ -422,9 +554,41 @@ void UpdateFireSkill(float dt) {
     if (!emitters[e].active)
       continue;
 
-    float targetProgress = emitters[e].headProgress + dt * s_fireTravelSpeed;
+    float prevProgress = emitters[e].headProgress;
+    emitters[e].flightElapsed += dt;
+
+    // Speed comes from the curve sampled at the emitter's OWN progress
+    // (already normalized [0,1] over the flight path) — never re-derived
+    // from real-world cast distance (that only shapes the path's wobble via
+    // GetDragonPathPos, not how fast it's traversed).
+    float speedNow = SkillCurve_Eval(&s_fireTravelSpeedCurve, prevProgress);
+    float targetProgress = prevProgress + dt * speedNow;
+
+    // Safety cap: if a badly-tuned curve stalls near 0 for too long, force
+    // completion once flightElapsed exceeds the hard duration cap — a skill
+    // must always have a bounded lifetime regardless of its speed curve.
+    if (emitters[e].flightElapsed >= s_fireFlightMaxDuration && prevProgress < FIRE_PROGRESS_MAX)
+      targetProgress = FIRE_PROGRESS_MAX;
+
     if (targetProgress >= FIRE_PROGRESS_MAX)
       targetProgress = FIRE_PROGRESS_MAX;
+
+    // Tunable "fly" extra-force mix (every component defaults to 0 strength
+    // = no effect) deflects the dragon's actual path/head, not just the
+    // decorative ember/aura trail particles below — those have too short a
+    // lifetime (0.2-0.4s) for a force to visibly curve them, so without this
+    // the sliders would silently do (almost) nothing.
+    {
+      ForceField flyField = {0};
+      SkillForceMix_AddLayers(&s_flyForce, &flyField);
+      if (flyField.layerCount > 0) {
+        Vector3 headNow = GetDragonPathPos(&emitters[e], prevProgress);
+        Vector3 accel = ForceField_Evaluate(&flyField, headNow, emitters[e].forceVel,
+                                             emitters[e].flightElapsed, (Vector3){0}, (Vector3){0});
+        emitters[e].forceVel = Vector3Scale(Vector3Add(emitters[e].forceVel, Vector3Scale(accel, dt)), 0.92f);
+        emitters[e].forceOffset = Vector3Add(emitters[e].forceOffset, Vector3Scale(emitters[e].forceVel, dt));
+      }
+    }
 
     float step = 0.008f;
     float currentProgress = emitters[e].headProgress;
@@ -477,8 +641,7 @@ void UpdateFireSkill(float dt) {
         SamplePath(linearPath, emitters[e].pathCount, 0.045f,
                    emitters[e].sampledPath, MAX_SAMPLED_SEGMENTS);
 
-    if (emitters[e].headProgress > 1.0f &&
-        (emitters[e].headProgress - dt * s_fireTravelSpeed) <= 1.0f) {
+    if (emitters[e].headProgress > 1.0f && prevProgress <= 1.0f) {
       Vector3 impactPos = (emitters[e].sampledCount > 0)
                               ? emitters[e].sampledPath[0]
                               : emitters[e].targetPos;
@@ -486,6 +649,7 @@ void UpdateFireSkill(float dt) {
     }
 
     if (emitters[e].sampledCount > 1) {
+      RebuildFireBodyFields();
       emitters[e].spawnAccum += s_flameSpawnRate * emitters[e].sizeScale * dt;
       int flamesToSpawn = (int)emitters[e].spawnAccum;
       emitters[e].spawnAccum -= flamesToSpawn;
@@ -499,8 +663,8 @@ void UpdateFireSkill(float dt) {
         // caster was too thin to read as a continuous trail (reported: the
         // dragon "just appears" at the target with nothing visibly
         // connecting back to the character).
-        float rad = Math_Mix(0.03f, 0.06f, sizeTaper) * emitters[e].sizeScale *
-                    Math_Mix(0.8f, 1.2f, Random01());
+        float rad = Math_Mix(s_flyCoreRadiusMin, s_flyCoreRadiusMax, sizeTaper) * emitters[e].sizeScale *
+                    Math_Mix(s_flyCoreRadiusRandMin, s_flyCoreRadiusRandMax, Random01());
 
         Vector3 pureTangent =
             (idx < emitters[e].sampledCount - 1)
@@ -516,10 +680,10 @@ void UpdateFireSkill(float dt) {
         randomDir = Vector3Normalize(randomDir);
 
         float outwardSpeed =
-            Math_Mix(0.1f, 0.4f, Random01()) * emitters[e].sizeScale;
+            Math_Mix(s_flyOutwardSpeedMin, s_flyOutwardSpeedMax, Random01()) * emitters[e].sizeScale;
         Vector3 vel = Vector3Scale(randomDir, outwardSpeed);
         float backwardSpeed =
-            Math_Mix(1.6f, 3.4f, Random01()) * emitters[e].sizeScale;
+            Math_Mix(s_flyBackwardSpeedMin, s_flyBackwardSpeedMax, Random01()) * emitters[e].sizeScale;
         vel = Vector3Add(vel, Vector3Scale(pureTangent, -backwardSpeed));
 
         Vector3 spawnPos = {purePos.x + randomDir.x * 0.012f * sizeTaper,
@@ -529,9 +693,9 @@ void UpdateFireSkill(float dt) {
         ParticleConfig cfgCore = {0};
         cfgCore.position = spawnPos;
         cfgCore.velocity = vel;
-        cfgCore.radius = rad * 1.8f;
-        cfgCore.lifetime = Math_Mix(0.2f, 0.4f, Random01());
-        cfgCore.colorStart = (Color){255, 230, 100, 255};
+        cfgCore.radius = rad * s_flyCoreRadiusMult;
+        cfgCore.lifetime = Math_Mix(s_flyCoreLifetimeMin, s_flyCoreLifetimeMax, Random01());
+        cfgCore.colorStart = (Color){255, 230, 100, ScaleAlpha(255, s_flyAlpha)};
         cfgCore.colorEnd = (Color){255, 60, 0, 0};
         cfgCore.forceField = &s_flameBodyField;
         SpawnParticle(cfgCore);
@@ -541,9 +705,9 @@ void UpdateFireSkill(float dt) {
                                      spawnPos.y + (Random01() - 0.5f) * 0.03f,
                                      spawnPos.z + (Random01() - 0.5f) * 0.03f};
         cfgAura.velocity = Vector3Scale(vel, 0.75f);
-        cfgAura.radius = rad * 4.8f;
-        cfgAura.lifetime = Math_Mix(0.35f, 0.65f, Random01());
-        cfgAura.colorStart = (Color){255, 90, 15, 140};
+        cfgAura.radius = rad * s_flyAuraRadiusMult;
+        cfgAura.lifetime = Math_Mix(s_flyAuraLifetimeMin, s_flyAuraLifetimeMax, Random01());
+        cfgAura.colorStart = (Color){255, 90, 15, ScaleAlpha(140, s_flyAlpha)};
         cfgAura.colorEnd = (Color){100, 5, 0, 0};
         cfgAura.forceField = &s_flameAuraField;
         SpawnParticle(cfgAura);

@@ -21,33 +21,27 @@ extern Camera3D camera;
 
 // ── constants (real-world-scaled: 1 unit = 1 meter) ──────────────────────
 
+// Pool-size constants (size static arrays) — stay #define, not tunable.
 #define THUNDER_ORB_FLIGHT_RAYS        7
-#define THUNDER_ORB_RAY_LEN_MIN       0.24f
-#define THUNDER_ORB_RAY_SCALE_MIN      0.55f
-#define THUNDER_ORB_RAY_SCALE_MAX      1.0f
 #define THUNDER_ORB_SURFACE_ARCS       3
-#define THUNDER_ORB_SURF_ARC_LIFE_MIN  0.06f
-#define THUNDER_ORB_SURF_ARC_LIFE_MAX  0.14f
-
 #define THUNDER_ORB_ARC_PER_STRIKE    3
-#define THUNDER_ORB_ARC_LIFE          0.12f
-#define THUNDER_ORB_ARC_RADIUS_MIN   0.15f
-#define THUNDER_ORB_ARC_RADIUS_MAX   0.45f
 #define THUNDER_ORB_ARC_SLOTS        (THUNDER_ORB_RAIN_SLOTS * THUNDER_ORB_ARC_PER_STRIKE)
-
 #define THUNDER_ORB_RAIN_SLOTS        8
-#define THUNDER_ORB_RAIN_DURATION     5.0f
-#define THUNDER_ORB_RAIN_Y_ORIGIN   4.2f
-#define THUNDER_ORB_BOLT_SCALE        1.2f
-#define THUNDER_ORB_IMPACT_FLASH_LIFE   0.15f
+// Balance constants (damage), not visual shape/feel — left as #define.
 #define THUNDER_ORB_BASE_IMPACT_DMG    45.0f
 #define THUNDER_ORB_BASE_RAIN_DMG      12.0f
 
 // Sandbox-tunable physics + size knobs (see RegisterSkillTunables in
-// core/skill_manager.h). Flight speed is m/s — compare against how fast a
-// real projectile should cross the (now real-meter) arena. Loaded from
+// core/skill_manager.h). Grouped by phase ("flight"/"impact"/"rain") in the
+// sandbox UI. Flight speed is now a SkillCurve (core/skill_curve.h) sampled
+// over elapsed flight TIME (never over fraction-of-distance-to-target — see
+// SkillHelper_StepCurveFlight's contract in core/skill_helper.h), capped by
+// flight_max_duration/flight_max_range so a cast can never fly farther/longer
+// than its own limit regardless of how far the target is. Loaded from
 // skills/metal/thunder_orb_skill/thunder_orb_skill.tuning on init if present.
-static float s_flightSpeed = 3.8f;        // orb travel speed (m/s)
+static SkillCurve s_flightSpeedCurve;     // orb travel speed over flight time (m/s)
+static float s_flightMaxDuration = 3.0f;  // hard cap on flight time (s)
+static float s_flightMaxRange = 15.0f;    // hard cap on flight distance (m)
 static float s_impactKnockback = 2.8f;    // melee-hit knockback impulse (m/s)
 static float s_rainStrikeKnockback = 0.8f; // rain-bolt knockback impulse (m/s)
 static float s_orbRadius = 0.12f;         // orb core collision/visual radius (m)
@@ -56,12 +50,65 @@ static float s_rainRadius = 1.3f;         // rain-strike scatter radius around i
 static float s_impactFlashRadius = 1.8f;  // impact light-flash radius (m)
 static float s_rainLightRadius = 0.8f;    // per-rain-bolt ground light radius (m)
 
-#define THUNDER_ORB_TUNABLE_COUNT 8
-static const char *const s_thunderOrbTunableKeys[THUNDER_ORB_TUNABLE_COUNT] = {
-    "flight_speed",       "impact_knockback", "rain_strike_knockback",
-    "orb_radius",         "ray_len_max",      "rain_radius",
-    "impact_flash_radius", "rain_light_radius",
-};
+// One fully-configurable, always-additive tunable "extra force" mix per
+// phase (core/skill_helper.h's SkillForceMix — all 8 force types
+// simultaneously available, each with its own strength; 0 = that type
+// contributes nothing). Flight's affects the orb's own path AND (via
+// s_flightParticleField) its trailing plasma particles. Rain's affects
+// ground-strike sparks, which have no other force applied today (raw
+// ballistic velocity), so it's purely additive there. Every component
+// defaults to 0 strength (no behavior change) until dialed up.
+static SkillForceMix s_flightForce;
+static SkillForceMix s_rainForce;
+static ForceField s_flightParticleField; // rebuilt each frame from s_flightForce
+static ForceField s_rainSparkField;      // rebuilt each strike from s_rainForce
+
+// Per-phase opacity multiplier (0..1) applied to that phase's spawned
+// particle alpha. No impact-phase alpha/force here — TriggerImpact() has no
+// local particle spawn of its own (delegates entirely to the shared
+// SpawnImpactEffect preset), so there's nothing local to scale.
+static float s_flightAlpha = 1.0f;
+static float s_rainAlpha = 1.0f;
+
+static unsigned char ScaleAlpha(unsigned char a, float mul) {
+  float v = (float)a * mul;
+  if (v < 0.0f) v = 0.0f;
+  if (v > 255.0f) v = 255.0f;
+  return (unsigned char)v;
+}
+
+// Remaining per-spawn-site shape/feel knobs — everything that visibly
+// changes how dense, fast, or long-lived an effect reads. Pool-size
+// constants that size a static array (THUNDER_ORB_FLIGHT_RAYS,
+// THUNDER_ORB_RAIN_SLOTS, ...) stay #define — making those runtime-tunable
+// would need dynamic allocation, which this project's static-array
+// convention doesn't use.
+static float s_rayLenMin = 0.24f;
+static float s_rayScaleMin = 0.55f, s_rayScaleMax = 1.0f;
+static float s_surfArcLifeMin = 0.06f, s_surfArcLifeMax = 0.14f;
+static float s_orbParticleRadius = 0.035f;
+static float s_orbParticleLifetime = 0.18f;
+static float s_orbParticleSpeedMin = 0.6f, s_orbParticleSpeedMax = 1.4f;
+static float s_orbCore1RadiusMult = 0.7f, s_orbCore1Lifetime = 0.09f;
+static float s_orbCore2RadiusMult = 1.6f, s_orbCore2Lifetime = 0.13f;
+
+static float s_impactFlashLifetime = 0.15f;
+
+static float s_rainDuration = 5.0f;
+static float s_rainYOrigin = 4.2f;
+static float s_rainBoltScale = 1.2f;
+static float s_rainBoltLifetimeMin = 0.28f, s_rainBoltLifetimeMax = 0.5f;
+static float s_sparkRadius = 0.022f;
+static float s_sparkCount = 10.0f;
+static float s_sparkOutSpeedMin = 0.3f, s_sparkOutSpeedMax = 1.3f;
+static float s_sparkUpSpeedMin = 1.4f, s_sparkUpSpeedMax = 3.2f;
+static float s_sparkLifetimeMin = 0.25f, s_sparkLifetimeMax = 0.5f;
+static float s_arcLife = 0.12f;
+static float s_arcRadiusMin = 0.15f, s_arcRadiusMax = 0.45f;
+
+// 12 original named tunables + 30 shape/feel-range tunables + 2 phases x 2
+// force mixes x SKILL_FORCE_MIX_TUNABLE_COUNT(29) = 12 + 30 + 58 = 100
+#define THUNDER_ORB_TUNABLE_COUNT 100
 
 // ── types ──────────────────────────────────────────────────────────────────
 
@@ -101,6 +148,12 @@ typedef struct {
     // flight
     Vector3 orbPos;
     Vector3 orbTarget;
+    Vector3 flightStartPos;
+    Vector3 flightDir;        // unit direction, fixed at cast time
+    float   flightTargetDist; // distance from flightStartPos to orbTarget
+    float   flightElapsed;
+    float   flightTraveled;   // distance covered so far along flightDir
+    Vector3 flightWindVel;    // damped velocity accumulated from the tunable wind ForceLayer
     int     flightRayIds[THUNDER_ORB_FLIGHT_RAYS];
     Vector3 flightRayDirs[THUNDER_ORB_FLIGHT_RAYS];
     float   flightRayLengths[THUNDER_ORB_FLIGHT_RAYS];
@@ -124,6 +177,19 @@ static float RandRange(float lo, float hi) {
     return lo + (GetRandomValue(0, 10000) / 10000.0f) * (hi - lo);
 }
 
+// Rebuilds a phase's tiny ForceField from its current tunable ForceLayer
+// values right before use, so dragging flight_extra_curl/lift or
+// rain_extra_curl/lift in the sandbox takes effect immediately (not baked in
+// once at Init).
+static void RebuildFlightParticleField(void) {
+    ForceField_Clear(&s_flightParticleField);
+    SkillForceMix_AddLayers(&s_flightForce, &s_flightParticleField);
+}
+static void RebuildRainSparkField(void) {
+    ForceField_Clear(&s_rainSparkField);
+    SkillForceMix_AddLayers(&s_rainForce, &s_rainSparkField);
+}
+
 // Fibonacci sphere — evenly distributes n points across the unit sphere
 static Vector3 FibSphereDir(int i, int n) {
     float phi   = acosf(1.0f - 2.0f * (i + 0.5f) / (float)n);
@@ -132,15 +198,17 @@ static Vector3 FibSphereDir(int i, int n) {
 }
 
 static void EmitOrbParticles(Vector3 pos) {
+    RebuildFlightParticleField();
     ParticleConfig p = { 0 };
-    p.colorStart = (Color){ 255, 240, 180, 220 };
+    p.colorStart = (Color){ 255, 240, 180, ScaleAlpha(220, s_flightAlpha) };
     p.colorEnd   = (Color){ 180, 220, 255,   0 };
-    p.radius     = 0.035f;
-    p.lifetime   = 0.18f;
+    p.radius     = s_orbParticleRadius;
+    p.lifetime   = s_orbParticleLifetime;
+    p.forceField = &s_flightParticleField;
     for (int i = 0; i < 3; i++) {
         float a = RandRange(0.0f, 2.0f * PI);
         float b = RandRange(-PI * 0.5f, PI * 0.5f);
-        float spd = RandRange(0.6f, 1.4f);
+        float spd = RandRange(s_orbParticleSpeedMin, s_orbParticleSpeedMax);
         p.position = pos;
         p.velocity = (Vector3){ cosf(b)*cosf(a)*spd, cosf(b)*sinf(a)*spd*0.4f, sinf(b)*spd };
         SpawnParticle(p);
@@ -150,20 +218,22 @@ static void EmitOrbParticles(Vector3 pos) {
 // Layered hot core: small white-hot center + wide violet halo, refreshed each
 // frame with very short lifetimes so the orb reads as a solid ball of plasma.
 static void EmitOrbCore(Vector3 pos) {
+    RebuildFlightParticleField();
     ParticleConfig p = { 0 };
     p.position = pos;
     p.velocity = (Vector3){ 0 };
+    p.forceField = &s_flightParticleField;
 
-    p.colorStart = (Color){ 255, 255, 255, 255 };
+    p.colorStart = (Color){ 255, 255, 255, ScaleAlpha(255, s_flightAlpha) };
     p.colorEnd   = (Color){ 210, 190, 255,   0 };
-    p.radius     = s_orbRadius * 0.7f;
-    p.lifetime   = 0.09f;
+    p.radius     = s_orbRadius * s_orbCore1RadiusMult;
+    p.lifetime   = s_orbCore1Lifetime;
     SpawnParticle(p);
 
-    p.colorStart = (Color){ 150, 110, 255, 110 };
+    p.colorStart = (Color){ 150, 110, 255, ScaleAlpha(110, s_flightAlpha) };
     p.colorEnd   = (Color){  70,  30, 200,   0 };
-    p.radius     = s_orbRadius * 1.6f;
-    p.lifetime   = 0.13f;
+    p.radius     = s_orbRadius * s_orbCore2RadiusMult;
+    p.lifetime   = s_orbCore2Lifetime;
     SpawnParticle(p);
 }
 
@@ -186,7 +256,7 @@ static Vector3 RandUnitDir(void) {
 static void RespawnSurfaceArc(SurfaceArc *arc) {
     arc->dirA     = RandUnitDir();
     arc->dirB     = RandUnitDir();
-    arc->lifeLeft = RandRange(THUNDER_ORB_SURF_ARC_LIFE_MIN, THUNDER_ORB_SURF_ARC_LIFE_MAX);
+    arc->lifeLeft = RandRange(s_surfArcLifeMin, s_surfArcLifeMax);
     arc->rayId    = SpawnProcBolt(SurfArcConfig(), 0.5f);
     arc->active   = arc->rayId >= 0;
 }
@@ -220,12 +290,12 @@ static void SpawnArcBurst(Vector3 groundPoint) {
         if (slot < 0) break;
 
         float angle = RandRange(0.0f, 2.0f * PI);
-        float dist  = RandRange(THUNDER_ORB_ARC_RADIUS_MIN, THUNDER_ORB_ARC_RADIUS_MAX);
+        float dist  = RandRange(s_arcRadiusMin, s_arcRadiusMax);
         Vector3 tip = { groundPoint.x + cosf(angle)*dist, 0.0f, groundPoint.z + sinf(angle)*dist };
 
         s.arcBolts[slot].from     = groundPoint;
         s.arcBolts[slot].to       = tip;
-        s.arcBolts[slot].lifeLeft = THUNDER_ORB_ARC_LIFE;
+        s.arcBolts[slot].lifeLeft = s_arcLife;
         s.arcBolts[slot].rayId    = SpawnProcBolt(arcCfg, 0.6f);
         s.arcBolts[slot].active   = true;
         ProcBolt_Update(s.arcBolts[slot].rayId, groundPoint, tip, 0.6f, 0.0f);
@@ -236,16 +306,19 @@ static void SpawnArcBurst(Vector3 groundPoint) {
 
 // Fast upward sparks where the bolt hits the ground — sells the impact energy
 static void EmitStrikeSparks(Vector3 groundPoint) {
+    RebuildRainSparkField();
     ParticleConfig p = { 0 };
-    p.colorStart = (Color){ 255, 250, 255, 255 };
+    p.colorStart = (Color){ 255, 250, 255, ScaleAlpha(255, s_rainAlpha) };
     p.colorEnd   = (Color){ 140,  90, 255,   0 };
-    p.radius     = 0.022f;
-    for (int i = 0; i < 10; i++) {
+    p.radius     = s_sparkRadius;
+    p.forceField = &s_rainSparkField;
+    int count = (int)s_sparkCount;
+    for (int i = 0; i < count; i++) {
         float a   = RandRange(0.0f, 2.0f * PI);
-        float out = RandRange(0.3f, 1.3f);
+        float out = RandRange(s_sparkOutSpeedMin, s_sparkOutSpeedMax);
         p.position = groundPoint;
-        p.velocity = (Vector3){ cosf(a) * out, RandRange(1.4f, 3.2f), sinf(a) * out };
-        p.lifetime = RandRange(0.25f, 0.5f);
+        p.velocity = (Vector3){ cosf(a) * out, RandRange(s_sparkUpSpeedMin, s_sparkUpSpeedMax), sinf(a) * out };
+        p.lifetime = RandRange(s_sparkLifetimeMin, s_sparkLifetimeMax);
         SpawnParticle(p);
     }
 }
@@ -258,17 +331,17 @@ static void SpawnRainBolt(RainSlot *slot) {
 
     // sky entry offset sideways so channels slant like real strikes
     slot->skyOrigin   = (Vector3){ px + RandRange(-0.45f, 0.45f),
-                                   THUNDER_ORB_RAIN_Y_ORIGIN,
+                                   s_rainYOrigin,
                                    pz + RandRange(-0.45f, 0.45f) };
     slot->groundPoint = (Vector3){ px, 0.0f, pz };
-    slot->lifeInit    = RandRange(0.28f, 0.5f);
+    slot->lifeInit    = RandRange(s_rainBoltLifetimeMin, s_rainBoltLifetimeMax);
     slot->aliveTimer  = slot->lifeInit;
     slot->active      = true;
 
-    slot->rayId = SpawnProcBolt(ProcRay_BoltLightningConfig(), THUNDER_ORB_BOLT_SCALE);
+    slot->rayId = SpawnProcBolt(ProcRay_BoltLightningConfig(), s_rainBoltScale);
     // generate waypoints now — the bolt is drawn this same frame
     ProcBolt_Update(slot->rayId, slot->skyOrigin, slot->groundPoint,
-                    THUNDER_ORB_BOLT_SCALE, 0.0f);
+                    s_rainBoltScale, 0.0f);
     ProcBolt_SetBrightness(slot->rayId, 1.9f); // leader flash frame
     EmitStrikeSparks(slot->groundPoint);
 
@@ -300,7 +373,7 @@ static void TriggerImpact(Vector3 pos) {
     SpawnImpactEffect(pos, EFFECT_PRESET_LIGHTNING_IMPACT, 1.5f);
     SpawnGroundDecal(DECAL_PRESET_TAIJI_LIGHTNING, pos, 1.2f, 6.0f);
     VFXLight_Spawn(pos, (Color){ 200, 200, 255, 255 },
-                   s_impactFlashRadius, THUNDER_ORB_IMPACT_FLASH_LIFE,
+                   s_impactFlashRadius, s_impactFlashLifetime,
                    VFX_PRIORITY_HIGH_ULTIMATE);
 
     KillAllFlightRays();
@@ -320,35 +393,77 @@ void InitThunderOrbSkill(int screenWidth, int screenHeight) {
     (void)screenWidth; (void)screenHeight;
     s = (ThunderOrbState){ 0 };
 
-    float tunableValues[THUNDER_ORB_TUNABLE_COUNT] = {
-        s_flightSpeed,   s_impactKnockback,    s_rainStrikeKnockback,
-        s_orbRadius,     s_rayLenMax,          s_rainRadius,
-        s_impactFlashRadius, s_rainLightRadius,
-    };
-    Tuning_LoadFloatsFromPath(
-        "skills/metal/thunder_orb_skill/thunder_orb_skill.tuning",
-        s_thunderOrbTunableKeys, tunableValues, THUNDER_ORB_TUNABLE_COUNT);
-    s_flightSpeed          = tunableValues[0];
-    s_impactKnockback      = tunableValues[1];
-    s_rainStrikeKnockback  = tunableValues[2];
-    s_orbRadius            = tunableValues[3];
-    s_rayLenMax            = tunableValues[4];
-    s_rainRadius           = tunableValues[5];
-    s_impactFlashRadius    = tunableValues[6];
-    s_rainLightRadius      = tunableValues[7];
+    // One-time migration: the old scheme persisted a single "flight_speed"
+    // key; the new curve scheme persists "flight_speed_t0".."_t4" instead, so
+    // an existing .tuning file's old key would otherwise be silently ignored
+    // and any prior sandbox tuning lost. Seed the curve flat at whatever the
+    // legacy key says (falls back to the original 3.8 default if absent).
+    float legacyFlightSpeed = 3.8f;
+    {
+        const char *legacyKey = "flight_speed";
+        Tuning_LoadFloatsFromPath("skills/metal/thunder_orb_skill/thunder_orb_skill.tuning",
+                                   &legacyKey, &legacyFlightSpeed, 1);
+    }
+    SkillCurve_SetConstant(&s_flightSpeedCurve, legacyFlightSpeed);
 
     int skillIndex = Skill_GetIndexByName("THUNDER_ORB");
-    static SkillTunableEntry s_thunderOrbTunables[THUNDER_ORB_TUNABLE_COUNT] = {
-        {"flight_speed", &s_flightSpeed, 0.5f, 15.0f, 3.8f},
-        {"impact_knockback", &s_impactKnockback, 0.0f, 10.0f, 2.8f},
-        {"rain_strike_knockback", &s_rainStrikeKnockback, 0.0f, 10.0f, 0.8f},
-        {"orb_radius", &s_orbRadius, 0.01f, 0.5f, 0.12f},
-        {"ray_len_max", &s_rayLenMax, 0.05f, 2.0f, 0.55f},
-        {"rain_radius", &s_rainRadius, 0.1f, 5.0f, 1.3f},
-        {"impact_flash_radius", &s_impactFlashRadius, 0.1f, 5.0f, 1.8f},
-        {"rain_light_radius", &s_rainLightRadius, 0.05f, 3.0f, 0.8f},
-    };
-    RegisterSkillTunables(skillIndex, s_thunderOrbTunables, THUNDER_ORB_TUNABLE_COUNT);
+    // Built as a sequence of assignments (not a single literal) so each
+    // phase's named entries stay contiguous with that phase's force slots —
+    // see the identical pattern/rationale in fire_skill.c's InitFireSkill.
+    static SkillTunableEntry s_thunderOrbTunables[THUNDER_ORB_TUNABLE_COUNT];
+    int tn = 0;
+
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"flight_max_duration", &s_flightMaxDuration, 0.3f, 8.0f, 3.0f, "flight"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"flight_max_range", &s_flightMaxRange, 1.0f, 30.0f, 15.0f, "flight"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"flight_speed", NULL, 0.5f, 15.0f, 3.8f, "flight", &s_flightSpeedCurve};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"orb_radius", &s_orbRadius, 0.01f, 0.5f, 0.12f, "flight"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"ray_len_min", &s_rayLenMin, 0.02f, 2.0f, 0.24f, "flight"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"ray_len_max", &s_rayLenMax, 0.05f, 2.0f, 0.55f, "flight"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"ray_scale_min", &s_rayScaleMin, 0.0f, 2.0f, 0.55f, "flight"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"ray_scale_max", &s_rayScaleMax, 0.0f, 2.0f, 1.0f, "flight"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"surf_arc_life_min", &s_surfArcLifeMin, 0.01f, 1.0f, 0.06f, "flight"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"surf_arc_life_max", &s_surfArcLifeMax, 0.01f, 1.0f, 0.14f, "flight"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"orb_particle_radius", &s_orbParticleRadius, 0.0f, 0.3f, 0.035f, "flight"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"orb_particle_lifetime", &s_orbParticleLifetime, 0.02f, 1.0f, 0.18f, "flight"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"orb_particle_speed_min", &s_orbParticleSpeedMin, 0.0f, 5.0f, 0.6f, "flight"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"orb_particle_speed_max", &s_orbParticleSpeedMax, 0.0f, 5.0f, 1.4f, "flight"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"orb_core1_radius_mult", &s_orbCore1RadiusMult, 0.0f, 5.0f, 0.7f, "flight"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"orb_core1_lifetime", &s_orbCore1Lifetime, 0.02f, 1.0f, 0.09f, "flight"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"orb_core2_radius_mult", &s_orbCore2RadiusMult, 0.0f, 5.0f, 1.6f, "flight"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"orb_core2_lifetime", &s_orbCore2Lifetime, 0.02f, 1.0f, 0.13f, "flight"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"flight_alpha", &s_flightAlpha, 0.0f, 1.0f, 1.0f, "flight"};
+    tn += SkillForceMix_MakeTunables(&s_flightForce, "flight_force_", "flight", &s_thunderOrbTunables[tn]);
+
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"impact_knockback", &s_impactKnockback, 0.0f, 10.0f, 2.8f, "impact"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"impact_flash_radius", &s_impactFlashRadius, 0.1f, 5.0f, 1.8f, "impact"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"impact_flash_lifetime", &s_impactFlashLifetime, 0.02f, 2.0f, 0.15f, "impact"};
+
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_duration", &s_rainDuration, 0.5f, 15.0f, 5.0f, "rain"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_y_origin", &s_rainYOrigin, 0.5f, 10.0f, 4.2f, "rain"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_bolt_scale", &s_rainBoltScale, 0.1f, 5.0f, 1.2f, "rain"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_bolt_lifetime_min", &s_rainBoltLifetimeMin, 0.02f, 2.0f, 0.28f, "rain"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_bolt_lifetime_max", &s_rainBoltLifetimeMax, 0.02f, 2.0f, 0.5f, "rain"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_strike_knockback", &s_rainStrikeKnockback, 0.0f, 10.0f, 0.8f, "rain"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_radius", &s_rainRadius, 0.1f, 5.0f, 1.3f, "rain"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_light_radius", &s_rainLightRadius, 0.05f, 3.0f, 0.8f, "rain"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"spark_radius", &s_sparkRadius, 0.0f, 0.2f, 0.022f, "rain"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"spark_count", &s_sparkCount, 0.0f, 40.0f, 10.0f, "rain"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"spark_out_speed_min", &s_sparkOutSpeedMin, 0.0f, 5.0f, 0.3f, "rain"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"spark_out_speed_max", &s_sparkOutSpeedMax, 0.0f, 5.0f, 1.3f, "rain"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"spark_up_speed_min", &s_sparkUpSpeedMin, 0.0f, 8.0f, 1.4f, "rain"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"spark_up_speed_max", &s_sparkUpSpeedMax, 0.0f, 8.0f, 3.2f, "rain"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"spark_lifetime_min", &s_sparkLifetimeMin, 0.02f, 2.0f, 0.25f, "rain"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"spark_lifetime_max", &s_sparkLifetimeMax, 0.02f, 2.0f, 0.5f, "rain"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"arc_life", &s_arcLife, 0.02f, 2.0f, 0.12f, "rain"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"arc_radius_min", &s_arcRadiusMin, 0.0f, 2.0f, 0.15f, "rain"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"arc_radius_max", &s_arcRadiusMax, 0.0f, 2.0f, 0.45f, "rain"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_alpha", &s_rainAlpha, 0.0f, 1.0f, 1.0f, "rain"};
+    tn += SkillForceMix_MakeTunables(&s_rainForce, "rain_force_", "rain", &s_thunderOrbTunables[tn]);
+
+    SkillTunables_LoadPersisted(
+        "skills/metal/thunder_orb_skill/thunder_orb_skill.tuning",
+        s_thunderOrbTunables, tn);
+    RegisterSkillTunables(skillIndex, s_thunderOrbTunables, tn);
 }
 
 void CastThunderOrbSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params) {
@@ -362,11 +477,23 @@ void CastThunderOrbSkill(int agentId, Vector3 startPos, Vector3 target, SkillPar
     s.orbPos       = startPos;
     s.orbTarget    = target;
 
+    // Fixed direction/target-distance at cast time — flight speed is driven
+    // by SkillHelper_StepCurveFlight over elapsed TIME (s_flightSpeedCurve),
+    // never over fraction-of-distance-to-target, and is hard-capped by
+    // s_flightMaxDuration/s_flightMaxRange so a far-away target can't make
+    // the orb fly farther than its own limit.
+    s.flightStartPos   = startPos;
+    Vector3 toTarget    = Vector3Subtract(target, startPos);
+    s.flightTargetDist = Vector3Length(toTarget);
+    s.flightDir = (s.flightTargetDist > 0.0001f)
+                      ? Vector3Scale(toTarget, 1.0f / s.flightTargetDist)
+                      : (Vector3){ 0, 0, 1 };
+
     // Rays spread evenly in 3D (Fibonacci sphere), each with random length+scale
     for (int i = 0; i < THUNDER_ORB_FLIGHT_RAYS; i++) {
         s.flightRayDirs[i]    = FibSphereDir(i, THUNDER_ORB_FLIGHT_RAYS);
-        s.flightRayLengths[i] = RandRange(THUNDER_ORB_RAY_LEN_MIN, s_rayLenMax);
-        s.flightRayScales[i]  = RandRange(THUNDER_ORB_RAY_SCALE_MIN, THUNDER_ORB_RAY_SCALE_MAX);
+        s.flightRayLengths[i] = RandRange(s_rayLenMin, s_rayLenMax);
+        s.flightRayScales[i]  = RandRange(s_rayScaleMin, s_rayScaleMax);
         s.flightRayIds[i]     = SpawnProcRay(ProcRay_LightningConfig(), s.flightRayScales[i]);
         ProcRay_SetPhase(s.flightRayIds[i], (float)i * (2.0f * PI / (float)THUNDER_ORB_FLIGHT_RAYS));
     }
@@ -387,18 +514,27 @@ void UpdateThunderOrbSkill(float dt, Vector3 enemyPos, float enemyRadius) {
             return;
         }
 
-        Vector3 dir  = { s.orbTarget.x-s.orbPos.x, s.orbTarget.y-s.orbPos.y, s.orbTarget.z-s.orbPos.z };
-        float dist   = sqrtf(dir.x*dir.x + dir.y*dir.y + dir.z*dir.z);
+        bool arrived = false;
+        SkillHelper_StepCurveFlight(&s_flightSpeedCurve, s.flightElapsed, dt,
+                                     s_flightMaxDuration, s_flightMaxRange, s.flightTargetDist,
+                                     &s.flightTraveled, &arrived);
+        s.flightElapsed += dt;
+        s.orbPos = Vector3Add(s.flightStartPos, Vector3Scale(s.flightDir, s.flightTraveled));
 
-        if (dist <= s_flightSpeed * dt + 0.01f) {
-            TriggerImpact(s.orbTarget);
-            return;
+        // Optional tunable extra-force mix (every component defaults to 0
+        // strength = no effect) — nudges the orb off its straight path.
+        RebuildFlightParticleField();
+        if (s_flightParticleField.layerCount > 0) {
+            Vector3 accel = ForceField_Evaluate(&s_flightParticleField, s.orbPos, s.flightWindVel,
+                                                 s.flightElapsed, (Vector3){ 0 }, (Vector3){ 0 });
+            s.flightWindVel = Vector3Scale(Vector3Add(s.flightWindVel, Vector3Scale(accel, dt)), 0.9f);
+            s.orbPos = Vector3Add(s.orbPos, Vector3Scale(s.flightWindVel, dt));
         }
 
-        float inv = 1.0f / dist;
-        s.orbPos.x += dir.x * inv * s_flightSpeed * dt;
-        s.orbPos.y += dir.y * inv * s_flightSpeed * dt;
-        s.orbPos.z += dir.z * inv * s_flightSpeed * dt;
+        if (arrived) {
+            TriggerImpact(s.orbPos);
+            return;
+        }
 
         // flickering light — plasma is never steady. Radius cut ~4x from a
         // straight ÷100 (was 0.7-1.1) — at this light's continuous
@@ -440,7 +576,7 @@ void UpdateThunderOrbSkill(float dt, Vector3 enemyPos, float enemyRadius) {
         s.lastEnemyPos    = enemyPos;
         s.lastEnemyRadius = enemyRadius;
         s.rainTimer += dt;
-        if (s.rainTimer >= THUNDER_ORB_RAIN_DURATION) {
+        if (s.rainTimer >= s_rainDuration) {
             KillAllRainBolts();
             s.phase = PHASE_INACTIVE;
             return;
@@ -460,7 +596,7 @@ void UpdateThunderOrbSkill(float dt, Vector3 enemyPos, float enemyRadius) {
                     slot->gapTimer = RandRange(0.05f, 0.15f);
                 } else {
                     ProcBolt_Update(slot->rayId, slot->skyOrigin, slot->groundPoint,
-                                    THUNDER_ORB_BOLT_SCALE, dt);
+                                    s_rainBoltScale, dt);
                     // strike lifecycle: blinding flash ~70ms, then flickering afterglow decay
                     float age = slot->lifeInit - slot->aliveTimer;
                     float b   = (age < 0.07f)
@@ -484,7 +620,7 @@ void UpdateThunderOrbSkill(float dt, Vector3 enemyPos, float enemyRadius) {
                 arc->active = false;
             } else {
                 ProcBolt_Update(arc->rayId, arc->from, arc->to, 0.6f, dt);
-                ProcBolt_SetBrightness(arc->rayId, arc->lifeLeft / THUNDER_ORB_ARC_LIFE);
+                ProcBolt_SetBrightness(arc->rayId, arc->lifeLeft / s_arcLife);
             }
         }
     }

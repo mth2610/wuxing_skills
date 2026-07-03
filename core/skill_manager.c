@@ -1167,3 +1167,71 @@ int Skill_GetTunables(int skillIndex, SkillTunableEntry *outEntries, int maxEntr
     outEntries[i] = skillTunables[skillIndex][i];
   return count;
 }
+
+// --- Curve-capable flatten/unflatten (SkillTunableEntry <-> plain key=value) ---
+
+int SkillTunables_Flatten(const SkillTunableEntry *entries, int count,
+                           char outKeys[][TUNING_MAX_KEY_LEN], float *outValues,
+                           int maxKeys) {
+  int n = 0;
+  for (int i = 0; i < count; i++) {
+    const SkillTunableEntry *e = &entries[i];
+    if (e->curve != NULL) {
+      for (int k = 0; k < SKILL_CURVE_KEYS; k++) {
+        if (n >= maxKeys)
+          return n;
+        snprintf(outKeys[n], TUNING_MAX_KEY_LEN, "%s_t%d", e->label, k);
+        outValues[n] = e->curve->stops[k].value;
+        n++;
+      }
+    } else {
+      if (n >= maxKeys)
+        return n;
+      snprintf(outKeys[n], TUNING_MAX_KEY_LEN, "%s", e->label);
+      outValues[n] = (e->value != NULL) ? *e->value : e->defaultValue;
+      n++;
+    }
+  }
+  return n;
+}
+
+void SkillTunables_Unflatten(const SkillTunableEntry *entries, int count,
+                              const char *const *keys, const float *values,
+                              int keyCount) {
+  for (int i = 0; i < count; i++) {
+    const SkillTunableEntry *e = &entries[i];
+    if (e->curve != NULL) {
+      for (int k = 0; k < SKILL_CURVE_KEYS; k++) {
+        char wantKey[TUNING_MAX_KEY_LEN];
+        snprintf(wantKey, TUNING_MAX_KEY_LEN, "%s_t%d", e->label, k);
+        for (int j = 0; j < keyCount; j++) {
+          if (strcmp(keys[j], wantKey) == 0) {
+            e->curve->stops[k].value = values[j];
+            break;
+          }
+        }
+      }
+    } else if (e->value != NULL) {
+      for (int j = 0; j < keyCount; j++) {
+        if (strcmp(keys[j], e->label) == 0) {
+          *e->value = values[j];
+          break;
+        }
+      }
+    }
+  }
+}
+
+bool SkillTunables_LoadPersisted(const char *path, SkillTunableEntry *entries, int count) {
+  static char flatKeys[SKILL_TUNABLES_MAX_FLAT_KEYS][TUNING_MAX_KEY_LEN];
+  static float flatValues[SKILL_TUNABLES_MAX_FLAT_KEYS];
+  static const char *flatKeyPtrs[SKILL_TUNABLES_MAX_FLAT_KEYS];
+
+  int n = SkillTunables_Flatten(entries, count, flatKeys, flatValues, SKILL_TUNABLES_MAX_FLAT_KEYS);
+  for (int i = 0; i < n; i++)
+    flatKeyPtrs[i] = flatKeys[i];
+
+  bool ok = Tuning_LoadFloatsFromPath(path, flatKeyPtrs, flatValues, n);
+  SkillTunables_Unflatten(entries, count, flatKeyPtrs, flatValues, n);
+  return ok;
+}

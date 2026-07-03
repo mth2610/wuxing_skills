@@ -2,6 +2,9 @@
 #define SKILL_MANAGER_H
 
 #include "raylib.h"
+#include "core/tuning.h"
+#include "core/skill_curve.h"
+#include <stdbool.h>
 
 // Base colors for Wuxing and Taiji elements
 #define ELEMENT_COLOR_WATER (Color){ 41, 128, 185, 255 }  // Cyan-Blue
@@ -170,15 +173,60 @@ bool Skill_HasActiveInstance(int skillIndex, int agentId);
 // single source of truth; sandbox writes through `value` directly when a
 // slider is dragged. Purely additive — skills that never call this simply
 // have no tunables exposed (Skill_GetTunables returns 0 for them).
-#define MAX_SKILL_TUNABLES 16
+#define MAX_SKILL_TUNABLES 200
 typedef struct {
     char label[32]; // key used both as the sandbox slider label and the
                      // key= name written to/read from the skill's .tuning file
     float *value;
     float min, max, defaultValue;
+
+    // Optional, appended (existing positional-init call sites like
+    // {"label", &val, min, max, def} keep compiling unchanged — these
+    // trailing fields zero-init to NULL/0, i.e. today's exact behavior).
+    const char *phase; // NULL = ungrouped (legacy). Free-form tag for sandbox
+                        // grouping, e.g. "cast"/"fly"/"impact"/"rain" — by
+                        // convention matches a LayeredTimeline layer's tag
+                        // (Timeline_AddLayer in core/skill_helper.h) when the
+                        // skill uses one, but not enforced.
+    SkillCurve *curve;  // NULL = plain constant via `value` (legacy). Non-NULL
+                         // = curve-kind entry; `value` must be NULL in this
+                         // case. The curve's 5 keys are the storage; sandbox
+                         // draws 5 sliders (one per keyframe) instead of 1.
+                         // Skill reads it fresh each frame via
+                         // SkillCurve_Eval(curve, t01) — t01 is caller-defined
+                         // progress, never distance-to-target (see
+                         // SkillHelper_StepCurveFlight for flight speed).
 } SkillTunableEntry;
 
 void RegisterSkillTunables(int skillIndex, const SkillTunableEntry *entries, int count);
 int  Skill_GetTunables(int skillIndex, SkillTunableEntry *outEntries, int maxEntries);
+
+// Flatten/unflatten a possibly-curve-kind entry list to/from the plain
+// "key = value" text format core/tuning.c already parses — a curve entry
+// labeled "foo" becomes 5 ordinary keys "foo_t0".."foo_t4"; a constant entry
+// stays a single "foo" key. No changes to tuning.c's format/parser needed.
+#define SKILL_TUNABLES_MAX_FLAT_KEYS (MAX_SKILL_TUNABLES * SKILL_CURVE_KEYS)
+
+// Expands entries into outKeys/outValues, pre-filled from each entry's
+// CURRENT value(s) — suitable directly as Tuning_SaveFloats's input, or as
+// the pre-filled outValues for Tuning_LoadFloatsFromPath (whose missing-key
+// semantics require defaults to already be present). Returns the number of
+// flat keys written (<= maxKeys).
+int SkillTunables_Flatten(const SkillTunableEntry *entries, int count,
+                           char outKeys[][TUNING_MAX_KEY_LEN], float *outValues,
+                           int maxKeys);
+
+// Inverse of Flatten: scatters a flat key/value list (same "label"/"label_tN"
+// key scheme) back into each entry's `value`/`curve->v` storage.
+void SkillTunables_Unflatten(const SkillTunableEntry *entries, int count,
+                              const char *const *keys, const float *values,
+                              int keyCount);
+
+// Convenience: Flatten -> Tuning_LoadFloatsFromPath -> Unflatten in one call,
+// so a skill's Init function doesn't need to hand-build a flattened key
+// array itself. Call before RegisterSkillTunables, same call-site shape
+// skills already use today for Tuning_LoadFloatsFromPath. Returns false if
+// the file doesn't exist (entries left at their current/default values).
+bool SkillTunables_LoadPersisted(const char *path, SkillTunableEntry *entries, int count);
 
 #endif // SKILL_MANAGER_H

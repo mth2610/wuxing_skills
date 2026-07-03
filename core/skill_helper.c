@@ -14,6 +14,7 @@
 #include "rlgl.h"
 #include <stdlib.h>
 #include <math.h>
+#include <stdio.h>
 
 #define MAX_VOLUMES 32
 #define MAX_EMITTERS 32
@@ -981,6 +982,123 @@ bool Timeline_LayerEvent(const LayeredTimeline *t, int layerIndex, float dt) {
         return false;
     float triggerTime = t->layers[layerIndex].start;
     return (t->current - dt < triggerTime) && (t->current >= triggerTime);
+}
+
+// 3c. Curve-driven flight implementation
+void SkillHelper_StepCurveFlight(const SkillCurve *speedCurve, float elapsed, float dt,
+                                  float maxDuration, float maxRange, float targetDistance,
+                                  float *traveled, bool *arrived) {
+    float capDistance = fminf(targetDistance, maxRange);
+    float t01 = (maxDuration > 0.0f) ? Clamp(elapsed / maxDuration, 0.0f, 1.0f) : 1.0f;
+    float speed = SkillCurve_Eval(speedCurve, t01);
+
+    *traveled += speed * dt;
+    if (*traveled > maxRange)
+        *traveled = maxRange;
+
+    bool timeUp = (elapsed + dt) >= maxDuration;
+    *arrived = (*traveled >= capDistance) || timeUp;
+    if (*arrived && *traveled > capDistance)
+        *traveled = capDistance;
+}
+
+// 3d. Single-force-layer evaluation
+Vector3 SkillHelper_EvaluateForceLayer(const ForceLayer *layer, Vector3 pos, Vector3 vel,
+                                        float time, Vector3 axisOrigin, Vector3 axisDir) {
+    ForceField ff = {0};
+    ForceField_AddLayer(&ff, *layer);
+    return ForceField_Evaluate(&ff, pos, vel, time, axisOrigin, axisDir);
+}
+
+// 3e. Configurable, always-additive tunable force mix
+void SkillForceMix_AddLayers(const SkillForceMix *mix, ForceField *ff) {
+    if (mix->windStrength != 0.0f)
+        ForceField_AddLayer(ff, (ForceLayer){
+            .type = FORCE_WIND, .strength = mix->windStrength,
+            .direction = { mix->windDirX, mix->windDirY, mix->windDirZ },
+            .noiseScale = mix->windNoiseScale, .noiseSpeed = mix->windNoiseSpeed });
+    if (mix->perlinStrength != 0.0f)
+        ForceField_AddLayer(ff, (ForceLayer){
+            .type = FORCE_NOISE_PERLIN, .strength = mix->perlinStrength,
+            .noiseScale = mix->perlinNoiseScale, .noiseSpeed = mix->perlinNoiseSpeed });
+    if (mix->curlStrength != 0.0f)
+        ForceField_AddLayer(ff, (ForceLayer){
+            .type = FORCE_NOISE_CURL, .strength = mix->curlStrength,
+            .noiseScale = mix->curlNoiseScale, .noiseSpeed = mix->curlNoiseSpeed });
+    if (mix->gravDirStrength != 0.0f)
+        ForceField_AddLayer(ff, (ForceLayer){
+            .type = FORCE_GRAVITY_DIR, .strength = mix->gravDirStrength,
+            .direction = { mix->gravDirX, mix->gravDirY, mix->gravDirZ } });
+    if (mix->gravPtStrength != 0.0f)
+        ForceField_AddLayer(ff, (ForceLayer){
+            .type = FORCE_GRAVITY_POINT, .strength = mix->gravPtStrength,
+            .origin = { mix->gravPtOriginX, mix->gravPtOriginY, mix->gravPtOriginZ } });
+    if (mix->vortexStrength != 0.0f)
+        ForceField_AddLayer(ff, (ForceLayer){
+            .type = FORCE_VORTEX, .strength = mix->vortexStrength,
+            .origin = { mix->vortexOriginX, mix->vortexOriginY, mix->vortexOriginZ },
+            .direction = { mix->vortexDirX, mix->vortexDirY, mix->vortexDirZ } });
+    if (mix->dragStrength != 0.0f)
+        ForceField_AddLayer(ff, (ForceLayer){ .type = FORCE_DRAG, .strength = mix->dragStrength });
+    if (mix->viscosityStrength != 0.0f)
+        ForceField_AddLayer(ff, (ForceLayer){ .type = FORCE_VISCOSITY, .strength = mix->viscosityStrength });
+}
+
+int SkillForceMix_MakeTunables(SkillForceMix *mix, const char *labelPrefix,
+                                const char *phase, SkillTunableEntry *outEntries) {
+    int n = 0;
+    // dir_y-type fields default to 1.0 (not 0) — FORCE_WIND/FORCE_GRAVITY_DIR
+    // compute their base force as direction*strength (core/force_field.c),
+    // so an all-zero direction would silently make strength alone do ~nothing
+    // even at max value. A default "mostly upward" direction means dialing
+    // up just that type's strength already produces a visible push.
+    struct { const char *suffix; float *field; float min, max, def; } fields[] = {
+        {"wind_strength",     &mix->windStrength,     -8.0f, 8.0f, 0.0f},
+        {"wind_dir_x",        &mix->windDirX,         -1.0f, 1.0f, 0.0f},
+        {"wind_dir_y",        &mix->windDirY,         -1.0f, 1.0f, 1.0f},
+        {"wind_dir_z",        &mix->windDirZ,         -1.0f, 1.0f, 0.0f},
+        {"wind_noise_scale",  &mix->windNoiseScale,    0.0f, 5.0f, 1.5f},
+        {"wind_noise_speed",  &mix->windNoiseSpeed,    0.0f, 5.0f, 0.6f},
+        {"perlin_strength",   &mix->perlinStrength,   -8.0f, 8.0f, 0.0f},
+        {"perlin_noise_scale",&mix->perlinNoiseScale,  0.0f, 5.0f, 1.5f},
+        {"perlin_noise_speed",&mix->perlinNoiseSpeed,  0.0f, 5.0f, 0.6f},
+        {"curl_strength",     &mix->curlStrength,     -8.0f, 8.0f, 0.0f},
+        {"curl_noise_scale",  &mix->curlNoiseScale,    0.0f, 5.0f, 2.0f},
+        {"curl_noise_speed",  &mix->curlNoiseSpeed,    0.0f, 5.0f, 1.0f},
+        {"gravdir_strength",  &mix->gravDirStrength,  -8.0f, 8.0f, 0.0f},
+        {"gravdir_x",         &mix->gravDirX,         -1.0f, 1.0f, 0.0f},
+        {"gravdir_y",         &mix->gravDirY,         -1.0f, 1.0f, 1.0f},
+        {"gravdir_z",         &mix->gravDirZ,         -1.0f, 1.0f, 0.0f},
+        {"gravpt_strength",   &mix->gravPtStrength,   -8.0f, 8.0f, 0.0f},
+        {"gravpt_origin_x",   &mix->gravPtOriginX,    -5.0f, 5.0f, 0.0f},
+        {"gravpt_origin_y",   &mix->gravPtOriginY,    -5.0f, 5.0f, 0.0f},
+        {"gravpt_origin_z",   &mix->gravPtOriginZ,    -5.0f, 5.0f, 0.0f},
+        {"vortex_strength",   &mix->vortexStrength,   -8.0f, 8.0f, 0.0f},
+        {"vortex_origin_x",   &mix->vortexOriginX,    -5.0f, 5.0f, 0.0f},
+        {"vortex_origin_y",   &mix->vortexOriginY,    -5.0f, 5.0f, 0.0f},
+        {"vortex_origin_z",   &mix->vortexOriginZ,    -5.0f, 5.0f, 0.0f},
+        {"vortex_dir_x",      &mix->vortexDirX,       -1.0f, 1.0f, 0.0f},
+        {"vortex_dir_y",      &mix->vortexDirY,       -1.0f, 1.0f, 1.0f},
+        {"vortex_dir_z",      &mix->vortexDirZ,       -1.0f, 1.0f, 0.0f},
+        {"drag_strength",     &mix->dragStrength,      0.0f, 20.0f, 0.0f},
+        {"viscosity_strength",&mix->viscosityStrength, 0.0f, 20.0f, 0.0f},
+    };
+    for (int i = 0; i < SKILL_FORCE_MIX_TUNABLE_COUNT; i++) {
+        *fields[i].field = fields[i].def; // seed the struct field itself — RegisterSkillTunables
+                                           // never applies defaultValue on its own (unlike
+                                           // Tuning_RegisterFloat); SkillTunables_LoadPersisted,
+                                           // called right after this, overwrites from a saved
+                                           // .tuning file if present, same ordering as SkillCurve_SetConstant.
+        snprintf(outEntries[n].label, sizeof(outEntries[n].label), "%s%s", labelPrefix, fields[i].suffix);
+        outEntries[n].value = fields[i].field;
+        outEntries[n].min = fields[i].min;
+        outEntries[n].max = fields[i].max;
+        outEntries[n].defaultValue = fields[i].def;
+        outEntries[n].phase = phase;
+        outEntries[n].curve = NULL;
+        n++;
+    }
+    return n;
 }
 
 // 4. Particle Emitter System Implementation

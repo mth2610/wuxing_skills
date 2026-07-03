@@ -7,6 +7,7 @@
 #define MAX_CACHED_TEXTURES 32
 #define MAX_CACHED_SHADERS 32
 #define MAX_CACHED_SOUNDS 32
+#define MAX_CACHED_FONTS 8
 
 typedef struct {
   char path[128];
@@ -27,9 +28,17 @@ typedef struct {
   bool active;
 } CachedSound;
 
+typedef struct {
+  char path[128];
+  int baseSize;
+  Font font;
+  bool active;
+} CachedFont;
+
 static CachedTexture s_textures[MAX_CACHED_TEXTURES];
 static CachedShader s_shaders[MAX_CACHED_SHADERS];
 static CachedSound s_sounds[MAX_CACHED_SOUNDS];
+static CachedFont s_fonts[MAX_CACHED_FONTS];
 
 // Nạp shader có xử lý #include. Dùng thay cho LoadShader() ở mọi nơi trong file
 // này.
@@ -63,6 +72,10 @@ void ResourceManager_Init(void) {
     s_sounds[i].active = false;
     s_sounds[i].path[0] = '\0';
   }
+  for (int i = 0; i < MAX_CACHED_FONTS; i++) {
+    s_fonts[i].active = false;
+    s_fonts[i].path[0] = '\0';
+  }
 }
 
 void ResourceManager_Unload(void) {
@@ -89,6 +102,15 @@ void ResourceManager_Unload(void) {
       UnloadSound(s_sounds[i].sound);
       s_sounds[i].active = false;
       s_sounds[i].path[0] = '\0';
+    }
+  }
+  // Unload all fonts (default font is never cached here, so this never
+  // touches GetFontDefault()'s own texture)
+  for (int i = 0; i < MAX_CACHED_FONTS; i++) {
+    if (s_fonts[i].active) {
+      UnloadFont(s_fonts[i].font);
+      s_fonts[i].active = false;
+      s_fonts[i].path[0] = '\0';
     }
   }
 }
@@ -182,4 +204,41 @@ Sound ResourceManager_LoadSound(const char *filePath) {
   // Fallback if cache is full: load and return un-cached
   TraceLog(LOG_WARNING, "SOUND: cache full, loading un-cached: %s", filePath);
   return LoadSound(filePath);
+}
+
+Font ResourceManager_LoadFont(const char *filePath, int baseSize) {
+  if (filePath == NULL || filePath[0] == '\0')
+    return GetFontDefault();
+
+  // 1. Search in cache (path + baseSize both must match — a different
+  // baseSize needs its own atlas, same as raw LoadFontEx)
+  for (int i = 0; i < MAX_CACHED_FONTS; i++) {
+    if (s_fonts[i].active && s_fonts[i].baseSize == baseSize &&
+        strcmp(s_fonts[i].path, filePath) == 0) {
+      return s_fonts[i].font;
+    }
+  }
+
+  if (!FileExists(filePath)) {
+    TraceLog(LOG_WARNING, "FONT: %s not found, falling back to default font", filePath);
+    return GetFontDefault();
+  }
+
+  Font font = LoadFontEx(filePath, baseSize, NULL, 0);
+  SetTextureFilter(font.texture, TEXTURE_FILTER_BILINEAR);
+
+  // 2. Add to cache
+  for (int i = 0; i < MAX_CACHED_FONTS; i++) {
+    if (!s_fonts[i].active) {
+      s_fonts[i].font = font;
+      s_fonts[i].baseSize = baseSize;
+      snprintf(s_fonts[i].path, sizeof(s_fonts[i].path), "%s", filePath);
+      s_fonts[i].active = true;
+      return font;
+    }
+  }
+
+  // Fallback if cache is full: return un-cached (caller must not Unload it)
+  TraceLog(LOG_WARNING, "FONT: cache full, returning un-cached: %s", filePath);
+  return font;
 }
