@@ -425,20 +425,28 @@ void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale) {
             break;
         }
         case EFFECT_PRESET_LIGHTNING_IMPACT: {
-            ScreenDistort_Add(pos, 45.0f * scale, 0.4f, 0.2f, 150.0f);
+            // Real-world-scaled ÷100 (root CLAUDE.md "Standard coordinates &
+            // scale") — was 45.0f/150.0f/55.0f/14.0f/65.0f/75.0f/1.4f/0.4f.
+            // Shared preset used by any skill calling
+            // SpawnImpactEffect(..., EFFECT_PRESET_LIGHTNING_IMPACT, ...) —
+            // this is what was producing an oversized ground decal for
+            // thunder_orb_skill's impact even after that skill's own
+            // internal constants were already rescaled: this decal is
+            // spawned by core/skill_helper.c, not by thunder_orb_skill.c.
+            ScreenDistort_Add(pos, 0.45f * scale, 0.4f, 0.2f, 1.5f);
             CameraFX_Shake(0.35f);
-            VFXLight_Spawn(pos, (Color){ 200, 150, 255, 255 }, 55.0f * scale, 0.35f, VFX_PRIORITY_LOW);
-            SpawnGroundDecal(DECAL_PRESET_TAIJI_LIGHTNING, pos, 14.0f * scale, 3.0f);
+            VFXLight_Spawn(pos, (Color){ 200, 150, 255, 255 }, 0.55f * scale, 0.35f, VFX_PRIORITY_LOW);
+            SpawnGroundDecal(DECAL_PRESET_TAIJI_LIGHTNING, pos, 0.14f * scale, 3.0f);
 
             int count = (int)(25 * scale);
             for (int i = 0; i < count; i++) {
-                Vector3 vel = { ((float)rand() / (float)RAND_MAX - 0.5f) * 65.0f * scale,
-                                ((float)rand() / (float)RAND_MAX) * 75.0f * scale,
-                                ((float)rand() / (float)RAND_MAX - 0.5f) * 65.0f * scale };
+                Vector3 vel = { ((float)rand() / (float)RAND_MAX - 0.5f) * 0.65f * scale,
+                                ((float)rand() / (float)RAND_MAX) * 0.75f * scale,
+                                ((float)rand() / (float)RAND_MAX - 0.5f) * 0.65f * scale };
                 SpawnParticle((ParticleConfig){
                     .position = pos,
                     .velocity = vel,
-                    .radius = ((float)rand() / (float)RAND_MAX * 1.4f + 0.4f) * scale,
+                    .radius = ((float)rand() / (float)RAND_MAX * 0.014f + 0.004f) * scale,
                     .lifetime = (float)rand() / (float)RAND_MAX * 0.5f + 0.25f,
                     .gradient = &s_lightningGrad,
                     .forceField = &s_lightningFld

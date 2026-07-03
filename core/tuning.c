@@ -98,3 +98,32 @@ void Tuning_Reload(void) {
     s_lastModTime = FileExists(s_configPath) ? GetFileModTime(s_configPath) : 0;
     ApplyConfigToAll();
 }
+
+bool Tuning_LoadFloatsFromPath(const char *path, const char *const *keys,
+                                float *outValues, int count) {
+    if (!FileExists(path))
+        return false;
+    char *text = LoadFileText(path);
+    if (text == NULL)
+        return false;
+    for (int i = 0; i < count; i++) {
+        float parsed;
+        if (FindKeyValue(text, keys[i], &parsed))
+            outValues[i] = parsed;
+    }
+    UnloadFileText(text);
+    return true;
+}
+
+bool Tuning_SaveFloats(const char *path, const char *const *keys,
+                        const float *values, int count) {
+    char buf[8192];
+    int written = snprintf(buf, sizeof(buf),
+        "# Wuxing Skills — saved skill tuning (sandbox UI)\n"
+        "# Format: key = value  (one per line)\n\n");
+    for (int i = 0; i < count && written < (int)sizeof(buf); i++) {
+        written += snprintf(buf + written, sizeof(buf) - written,
+                             "%s = %g\n", keys[i], (double)values[i]);
+    }
+    return SaveFileText(path, buf);
+}

@@ -9,6 +9,12 @@
 #endif
 
 // ── Presets ────────────────────────────────────────────────────────────────
+// thickness fields real-world-scaled ÷100 (root CLAUDE.md "Standard
+// coordinates & scale") — were 1.1f/1.6f/1.5f/1.8f, a 1-2 *meter* ribbon
+// half-width at the new scale. This shared preset is what was producing a
+// screen-covering bloom blob for thunder_orb_skill's 7 flight-phase
+// lightning rays (each individually 2+ meters thick) even at correct
+// position — a size bug, not the earlier CastSkill()-position bug.
 
 ProcRayConfig ProcRay_LightningConfig(void) {
     return (ProcRayConfig){
@@ -18,7 +24,7 @@ ProcRayConfig ProcRay_LightningConfig(void) {
         .waveSpeed      = 4.5f,
         .amplitudeRatio = 0.38f,
         .jitterStrength = 1.0f,
-        .thickness      = 1.1f,
+        .thickness      = 0.011f,
         .envelopePow    = 0.7f,  // fast bloom — bolts diverge early, not just at free end
         .sharpKinks     = true,
         .taperTip       = 0.12f, // tendrils end in a needle point
@@ -35,7 +41,7 @@ ProcRayConfig ProcRay_BoltLightningConfig(void) {
         .waveSpeed      = 0.0f,   // unused for bolts
         .amplitudeRatio = 0.10f,  // straighter — stays close to the vertical axis
         .jitterStrength = 1.0f,
-        .thickness      = 1.6f,
+        .thickness      = 0.016f,
         .envelopePow    = 1.0f,
         .sharpKinks     = true,
         .taperTip       = 0.75f,
@@ -52,7 +58,7 @@ ProcRayConfig ProcRay_EnergyConfig(void) {
         .waveSpeed      = 3.0f,
         .amplitudeRatio = 0.30f,
         .jitterStrength = 0.3f,
-        .thickness      = 1.5f,
+        .thickness      = 0.015f,
         .envelopePow    = 1.0f,
         .sharpKinks     = false,
         .taperTip       = 1.0f,
@@ -69,7 +75,7 @@ ProcRayConfig ProcRay_WindConfig(void) {
         .waveSpeed      = 2.0f,
         .amplitudeRatio = 0.20f,
         .jitterStrength = 0.05f,
-        .thickness      = 1.8f,
+        .thickness      = 0.018f,
         .envelopePow    = 1.5f,
         .sharpKinks     = false,
         .taperTip       = 1.0f,

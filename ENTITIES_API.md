@@ -85,10 +85,10 @@ void Entity_Dash(int agentId, Vector3 direction, float speed); // sets dashCoold
 bool Entity_CheckRingOut(int agentId); // called every Entity_Update tick
 ```
 
-* **Arena constants** (must match `MAP_API.md` §3 exactly — do not redefine elsewhere):
-  - Center: `(600.0f, 0.0f, 440.0f)`
-  - Radius: `1800.0f`
-* `Entity_CheckRingOut`: if `agentPool[id].position` is outside `arenaRadius` (XZ distance from `arenaCenter`), transition `vState → AGENT_RING_OUT_FALLING`. Once in this state, gravity pulls `velocity.y` down every frame (`GRAVITY` strictly 300–700f per project scale rules) until the agent is deactivated (falls below a kill-Y threshold).
+* **Arena constants** (real-world-scaled, 1 unit = 1 meter — must match `MAP_API.md` §3 exactly — do not redefine elsewhere):
+  - Center: `(6.0f, 0.0f, 4.4f)`
+  - Radius: `18.0f`
+* `Entity_CheckRingOut`: if `agentPool[id].position` is outside `arenaRadius` (XZ distance from `arenaCenter`), transition `vState → AGENT_RING_OUT_FALLING`. Once in this state, gravity pulls `velocity.y` down every frame (`GRAVITY = 5.0f`, below real 9.81 m/s² by design for a floatier fall) until the agent is deactivated (falls below a kill-Y threshold).
 * `Entity_Dash` is a **stub in this version** — only sets `dashCooldown`, does not move the agent yet. Real dash movement + afterimage VFX hook come in a later iteration.
 
 ---

@@ -46,7 +46,7 @@ This module is new and intentionally minimal. It is the foundational layer that 
 - Strict C99. Static arrays only — no malloc/free.
 - Entities module is **pure gameplay logic** — no rendering, no shader, no particle calls. If a hook needs to trigger VFX (e.g. dash afterimage), expose a stub/callback; do not `#include` core VFX headers here beyond `skill_manager.h` for damage.
 - Vertical physics (jump, dash, ring-out) must share one state machine — do not implement ring-out and jump as separate ad-hoc checks.
-- Arena constants (`center = (600.0f, 0.0f, 440.0f)`, `radius = 1800.0f`) must match `MAP_API.md` exactly — do not hardcode a second copy elsewhere.
+- Arena constants (`center = (6.0f, 0.0f, 4.4f)`, `radius = 18.0f` — real-world-scaled, 1 unit = 1 meter, see root `CLAUDE.md`) must match `MAP_API.md` exactly — do not hardcode a second copy elsewhere.
 
 ## Cross-agent communication
 - Need to apply damage from a skill: Skills Agent calls into `Entity_ApplyDamage()` (once implemented) — Entities Agent defines this contract in `ENTITIES_API.md`

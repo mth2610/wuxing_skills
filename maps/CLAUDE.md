@@ -37,8 +37,9 @@ void Unload{Prefix}Map(void);    // Optional — engine auto-calls if present
 ```
 
 ## Arena coordinates (MUST follow)
-- Center: `(600.0f, 0.0f, 440.0f)`
-- Active radius: `1800.0f`
+Real-world-scaled: 1 unit = 1 meter (see root `CLAUDE.md` "Standard coordinates & scale").
+- Center: `(6.0f, 0.0f, 4.4f)`
+- Active radius: `18.0f`
 - Ground elevation: `Y = 0.0f`
 
 ## Graphics rules

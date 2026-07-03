@@ -9,6 +9,7 @@
 #include "core/skill_helper.h"
 #include "core/vfx_proc_ray.h"
 #include "core/particle_system.h"
+#include "core/tuning.h"
 #include "sandbox/auto_test.h"
 #include "entities/entities.h"
 #include "raymath.h"
@@ -46,29 +47,35 @@ static int s_debugMode = 0;
 static Vector3 s_spherePos = {0};
 static float s_sphereRadius = 40.0f;
 
-// Lightning-sphere projectile test — click anywhere on the ground, a sphere
-// flies from s_spherePos to the clicked point with 3 free-end wave lightning
-// rays attached (via SpawnLightningRay managed handle).
-#define LIGHTNING_SPHERE_TRAIL_COUNT    3
-#define CORE_TEST_LIGHTNING_BALL_RADIUS 12.0f
-#define CORE_TEST_LIGHTNING_SPOKE_LENGTH 65.0f
-#define CORE_TEST_LIGHTNING_SPHERE_SPEED 90.0f
-#define CORE_TEST_LIGHTNING_HOMING_RADIUS   250.0f
-#define CORE_TEST_LIGHTNING_HOMING_STRENGTH   2.5f
+// Minimal from-scratch flight test (replaces the old lightning-sphere test
+// — see conversation: built to isolate whether CastSkill()'s start/target
+// positioning and basic rendering work correctly, independent of
+// fire_ball's bezier/wave complexity, which is the thing actually in
+// question). Deliberately as simple as possible: straight Vector3Lerp, no
+// bezier, no wobble, no force fields, no custom shader/particle billboard
+// rendering — drawn with plain DrawSphere/DrawLine3D (raylib built-ins),
+// the same functions already proven to render correctly for the player
+// character rig. If this is ALSO invisible/disconnected in real play, the
+// bug is in the shared cast/camera/render pipeline, not fire_ball's own
+// code. Real-world-scaled (1 unit = 1 meter) from the start — no legacy
+// 1cm-scale numbers anywhere in this test.
 typedef struct {
   bool active;
   Vector3 start;
   Vector3 target;
-  Vector3 currentPos;
   float elapsed;
   float duration;
-  int   rayIds[LIGHTNING_SPHERE_TRAIL_COUNT];    // managed lightning ray handles
-  Vector3 boltDir[LIGHTNING_SPHERE_TRAIL_COUNT]; // direction per bolt (homing blends this)
-  float vfxTimer;
-  Vector3 perp1;
-  Vector3 perp2;
-} LightningSphereTest;
-static LightningSphereTest s_lightningSphere = {0};
+} SimpleFlightTest;
+static SimpleFlightTest s_simpleFlight = {0};
+
+static float s_simpleFlightSpeed = 4.0f;   // m/s
+static float s_simpleFlightRadius = 0.3f;  // m — deliberately large & unmissable
+
+#define CORE_TEST_SIMPLE_TUNABLE_COUNT 2
+static const char *const s_coreTestTunableKeys[CORE_TEST_SIMPLE_TUNABLE_COUNT] = {
+    "simple_flight_speed", "simple_flight_radius",
+};
+static int s_coreTestSkillIndex = -1;
 
 #define CORE_TEST_SOFT_SAMPLE_COUNT 3
 static struct {
@@ -139,7 +146,12 @@ void CoreTestSkill_TriggerReadback(void) {
 // automatically once that bug is actually fixed.
 static AutoTestResult CoreTestSkill_AutoTestStep(int frameInCase, char *outReason, int outReasonSize) {
   if (frameInCase == 0) {
-    CoreTestSkill_ForceActivate(0, (Vector3){600.0f, 0.0f, 440.0f});
+    // Arena center is now (6.0f, 0.0f, 4.4f) post real-world-meter rescale
+    // (root CLAUDE.md "Standard coordinates & scale") — this skill itself
+    // hasn't been converted (s_sphereRadius etc. still old-scale), but this
+    // one activation position must track the camera's new location or the
+    // sphere spawns off-screen and the test fails for the wrong reason.
+    CoreTestSkill_ForceActivate(0, (Vector3){6.0f, 0.0f, 4.4f});
     return AUTOTEST_RUNNING;
   }
   if (frameInCase == 3) {
@@ -323,7 +335,11 @@ static AutoTestResult CoreTestSkill_LifecycleQueryStep(int frameInCase, char *ou
 // screen center regardless of camera-follow behavior.
 static bool    s_debugDrawTestActive = false;
 static Vector3 s_debugDrawTestPos = {0};
-#define CORE_TEST_DEBUG_DRAW_RADIUS 60.0f
+// Real-world-scaled (÷100, see root CLAUDE.md) — must stay well under the
+// current camera-to-target distance (g_camDist in sandbox_core.c, ~6-15
+// units post-rescale) or the camera sits inside the sphere and it renders
+// as nothing (backface-culled), which reads as a false test failure.
+#define CORE_TEST_DEBUG_DRAW_RADIUS 0.6f
 #define CORE_TEST_DEBUG_DRAW_COLOR MAGENTA
 
 static void CoreTestSkill_SetDebugDrawTest(bool active, Vector3 pos) {
@@ -377,6 +393,7 @@ static AutoTestResult CoreTestSkill_DebugDrawStep(int frameInCase, char *outReas
   return AUTOTEST_RUNNING;
 }
 
+
 // Real-skill smoke test: casts an actual gameplay skill through the exact
 // same CastSkill() dispatch main.c/sandbox_core.c use (not a synthetic
 // scratch index), then confirms two things numerically: (1) the skill is
@@ -408,6 +425,9 @@ static AutoTestResult SkillSmokeTestStep(const char *skillName, int frameInCase,
   if (frameInCase >= 5) return AUTOTEST_PASS;
   return AUTOTEST_RUNNING;
 }
+
+
+
 
 static AutoTestResult SkillSmokeTest_Fire(int f, char *r, int rs) { return SkillSmokeTestStep("FIRE", f, r, rs); }
 static AutoTestResult SkillSmokeTest_Tube(int f, char *r, int rs) { return SkillSmokeTestStep("TUBE", f, r, rs); }
@@ -714,6 +734,23 @@ void InitCoreTestSkill(int screenWidth, int screenHeight) {
   s_fadeDistLoc = GetShaderLocation(s_softShader, "u_fadeDistance");
   s_debugShowFadeLoc = GetShaderLocation(s_softShader, "u_debugShowFade");
   s_shaderLoaded = (s_softShader.id != 0);
+
+  float tunableValues[CORE_TEST_SIMPLE_TUNABLE_COUNT] = {
+      s_simpleFlightSpeed, s_simpleFlightRadius,
+  };
+  Tuning_LoadFloatsFromPath("skills/taiji/core_test/core_test.tuning",
+                             s_coreTestTunableKeys, tunableValues,
+                             CORE_TEST_SIMPLE_TUNABLE_COUNT);
+  s_simpleFlightSpeed = tunableValues[0];
+  s_simpleFlightRadius = tunableValues[1];
+
+  s_coreTestSkillIndex = Skill_GetIndexByName("CORE_TEST");
+  static SkillTunableEntry s_coreTestTunables[CORE_TEST_SIMPLE_TUNABLE_COUNT] = {
+      {"simple_flight_speed", &s_simpleFlightSpeed, 0.5f, 15.0f, 4.0f},
+      {"simple_flight_radius", &s_simpleFlightRadius, 0.05f, 1.0f, 0.3f},
+  };
+  RegisterSkillTunables(s_coreTestSkillIndex, s_coreTestTunables, CORE_TEST_SIMPLE_TUNABLE_COUNT);
+
   if (AutoTest_IsEnabled()) {
       AutoTest_Register("soft_particle_ground_fade", CoreTestSkill_AutoTestStep, 10);
       AutoTest_Register("vfx_light_priority_eviction", CoreTestSkill_VFXLightEvictionStep, 5);
@@ -759,14 +796,24 @@ bool CoreTestSkill_GetReadback(int sampleIndex, float *outSceneLinear, float *ou
 }
 
 void CastCoreTestSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params) {
-  (void)target;
   (void)params;
-  // Interactive cast: enables click-to-fire lightning testing without the
-  // Item 3 soft-particle sphere/shader — that only shows up via
+  // Interactive cast: enables the L-key soft-particle readback debug view
+  // without the Item 3 sphere/shader itself — that only shows up via
   // CoreTestSkill_ForceActivate, which the autotest still calls directly.
   s_spherePos = (Vector3){ startPos.x, 0.0f, startPos.z };
   s_testActive = true;
   s_ownerAgentId = agentId;
+
+  // Minimal flight test — uses the EXACT same startPos/target this function
+  // receives from CastSkill() (the real click-to-cast pipeline, not an
+  // independent raycast), so it's a direct test of the same call chain
+  // fire_ball/thunder_orb_skill go through.
+  s_simpleFlight.active = true;
+  s_simpleFlight.start = startPos;
+  s_simpleFlight.target = target;
+  s_simpleFlight.elapsed = 0.0f;
+  float dist = Vector3Distance(startPos, target);
+  s_simpleFlight.duration = fmaxf(dist / s_simpleFlightSpeed, 0.1f);
 }
 
 void UpdateCoreTestSkill(float dt, Vector3 enemyPos, float enemyRadius) {
@@ -781,104 +828,18 @@ void UpdateCoreTestSkill(float dt, Vector3 enemyPos, float enemyRadius) {
   if (s_testActive && IsKeyPressed(KEY_H)) {
     s_debugMode = (s_debugMode + 1) % 3;
   }
-  // Lightning-sphere projectile test — click the ground, a sphere flies from
-  // s_spherePos to the clicked point; 3 lightning emission points stay
-  // 3 orbit points form a spinning triangle cage. Arc bolts between adjacent
-  // orbit points are regenerated every CORE_TEST_LIGHTNING_FLICKER_BASE seconds
-  // (stateless, no trail pool). DrawCoreTestSkill reads arcWaypoints each frame.
-  // 3 lightning wires: fixed end = sphere center, free end has spring+noise physics.
-  if (s_testActive && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !s_lightningSphere.active) {
-    Ray mouseRay = GetScreenToWorldRay(GetMousePosition(), camera);
-    if (fabsf(mouseRay.direction.y) > 1e-5f) {
-      float groundT = (s_spherePos.y - mouseRay.position.y) / mouseRay.direction.y;
-      if (groundT > 0.0f) {
-        Vector3 clickPos = Vector3Add(mouseRay.position, Vector3Scale(mouseRay.direction, groundT));
-        s_lightningSphere.active       = true;
-        s_lightningSphere.start        = s_spherePos;
-        s_lightningSphere.target       = clickPos;
-        s_lightningSphere.currentPos   = s_lightningSphere.start;
-        s_lightningSphere.elapsed      = 0.0f;
-        s_lightningSphere.vfxTimer     = 0.0f;
-        s_lightningSphere.duration     = fmaxf(Vector3Distance(s_lightningSphere.start, clickPos) / CORE_TEST_LIGHTNING_SPHERE_SPEED, 0.2f);
-
-        // Build orbit frame once from travel direction
-        Vector3 d = Vector3Normalize(Vector3Subtract(clickPos, s_spherePos));
-        Vector3 up = (fabsf(d.y) > 0.95f) ? (Vector3){1,0,0} : (Vector3){0,1,0};
-        s_lightningSphere.perp1 = Vector3Normalize(Vector3CrossProduct(d, up));
-        s_lightningSphere.perp2 = Vector3Normalize(Vector3CrossProduct(d, s_lightningSphere.perp1));
-
-        for (int i = 0; i < LIGHTNING_SPHERE_TRAIL_COUNT; i++) {
-          float ang = i * (2.0f * PI / (float)LIGHTNING_SPHERE_TRAIL_COUNT);
-          s_lightningSphere.boltDir[i] = Vector3Normalize(Vector3Add(
-            Vector3Scale(s_lightningSphere.perp1, cosf(ang)),
-            Vector3Scale(s_lightningSphere.perp2, sinf(ang))));
-          s_lightningSphere.rayIds[i] = SpawnProcRay(ProcRay_LightningConfig(), 1.0f);
-          ProcRay_SetPhase(s_lightningSphere.rayIds[i],
-                           i * (2.0f * PI / (float)LIGHTNING_SPHERE_TRAIL_COUNT));
-        }
-      }
-    }
-  }
-  if (s_lightningSphere.active) {
-    s_lightningSphere.elapsed += dt;
-    float t = s_lightningSphere.elapsed / s_lightningSphere.duration;
-    if (t > 1.0f) t = 1.0f;
-    s_lightningSphere.currentPos = Vector3Lerp(s_lightningSphere.start, s_lightningSphere.target, t);
-
-    // Homing: each bolt homes toward enemy from a different 120° angle — spread cone, not same point
-    int nearbyIds[8];
-    int nearbyCount = Entity_GetNearbyTargets(s_lightningSphere.currentPos,
-                                              CORE_TEST_LIGHTNING_HOMING_RADIUS, nearbyIds, 8);
-    if (nearbyCount > 0) {
-      const Agent *homingTarget = Entity_GetAgent(nearbyIds[0]);
-      if (homingTarget) {
-        Vector3 toEnemy = Vector3Normalize(Vector3Subtract(homingTarget->position,
-                                                           s_lightningSphere.currentPos));
-        // Build a perp basis around toEnemy for the cone spread
-        Vector3 eUp = (fabsf(toEnemy.y) > 0.95f) ? (Vector3){1,0,0} : (Vector3){0,1,0};
-        Vector3 eSide = Vector3Normalize(Vector3CrossProduct(toEnemy, eUp));
-        Vector3 eFwd  = Vector3Normalize(Vector3CrossProduct(toEnemy, eSide));
-        for (int i = 0; i < LIGHTNING_SPHERE_TRAIL_COUNT; i++) {
-          float spreadAng = i * (2.0f * PI / (float)LIGHTNING_SPHERE_TRAIL_COUNT);
-          // 85% toward enemy, 15% spread — bolts spiral around target, not stack on it
-          Vector3 homeDir = Vector3Normalize(Vector3Add(
-            Vector3Scale(toEnemy, 0.85f),
-            Vector3Add(Vector3Scale(eSide, 0.15f * cosf(spreadAng)),
-                       Vector3Scale(eFwd,  0.15f * sinf(spreadAng)))));
-          s_lightningSphere.boltDir[i] = Vector3Normalize(
-            Vector3Lerp(s_lightningSphere.boltDir[i], homeDir,
-                        CORE_TEST_LIGHTNING_HOMING_STRENGTH * dt));
-        }
-      }
-    }
-
-    for (int i = 0; i < LIGHTNING_SPHERE_TRAIL_COUNT; i++) {
-      ProcRay_Update(s_lightningSphere.rayIds[i],
-        s_lightningSphere.currentPos,
-        s_lightningSphere.boltDir[i],
-        CORE_TEST_LIGHTNING_SPOKE_LENGTH, 1.0f, dt);
-    }
-
-    s_lightningSphere.vfxTimer -= dt;
-    if (s_lightningSphere.vfxTimer <= 0.0f) {
-      s_lightningSphere.vfxTimer = 0.09f;
-      VFXLight_Spawn(s_lightningSphere.currentPos, (Color){ 180, 140, 255, 255 }, 28.0f, 0.10f, VFX_PRIORITY_LOW);
-    }
-
-    // Ball glow — orange/gold so it reads differently from the violet lightning
-    SpawnParticle((ParticleConfig){
-      .position   = s_lightningSphere.currentPos,
-      .colorStart = (Color){ 255, 220, 120, 255 },
-      .colorEnd   = (Color){ 255, 140,  20, 255 },
-      .radius     = CORE_TEST_LIGHTNING_BALL_RADIUS,
-      .lifetime   = 0.12f
-    });
-    VFXLight_Spawn(s_lightningSphere.currentPos, (Color){ 255, 220, 120, 255 }, 50.0f, 0.1f, VFX_PRIORITY_LOW);
-
+  // Minimal flight test — straight-line lerp, advanced by CastSkill()'s
+  // real startPos/target (set in CastCoreTestSkill above). No independent
+  // click detection — this deliberately goes through the same call chain
+  // as fire_ball/thunder_orb_skill so it's a valid A/B comparison.
+  if (s_simpleFlight.active) {
+    s_simpleFlight.elapsed += dt;
+    float t = s_simpleFlight.elapsed / s_simpleFlight.duration;
     if (t >= 1.0f) {
-      s_lightningSphere.active = false;
-      for (int i = 0; i < LIGHTNING_SPHERE_TRAIL_COUNT; i++)
-        ProcRay_Kill(s_lightningSphere.rayIds[i]);
+      t = 1.0f;
+      s_simpleFlight.active = false;
+      Vector3 impactPos = Vector3Lerp(s_simpleFlight.start, s_simpleFlight.target, t);
+      VFXLight_Spawn(impactPos, WHITE, 1.5f, 0.2f, VFX_PRIORITY_LOW);
     }
   }
 }
@@ -888,10 +849,20 @@ void DrawCoreTestSkill(void) {
     DebugDraw_Sphere(s_debugDrawTestPos, CORE_TEST_DEBUG_DRAW_RADIUS, CORE_TEST_DEBUG_DRAW_COLOR);
   }
 
-  // Lightning cage — 3 free-end wave rays around the sphere
-  if (s_testActive && s_lightningSphere.active) {
-    for (int i = 0; i < LIGHTNING_SPHERE_TRAIL_COUNT; i++)
-      ProcRay_Draw(s_lightningSphere.rayIds[i], camera);
+  // Minimal flight test visual — plain raylib primitives only (no custom
+  // shader/particle billboard, deliberately), same DrawSphere/DrawLine3D
+  // functions already proven to render correctly for the player/enemy rig.
+  // Green = start (as passed to CastSkill), red = target, magenta = the
+  // moving projectile, yellow line = the traveled path so far.
+  if (s_simpleFlight.active) {
+    float t = s_simpleFlight.elapsed / s_simpleFlight.duration;
+    if (t > 1.0f) t = 1.0f;
+    Vector3 currentPos = Vector3Lerp(s_simpleFlight.start, s_simpleFlight.target, t);
+    DrawSphere(s_simpleFlight.start, 0.12f, GREEN);
+    DrawSphere(s_simpleFlight.target, 0.12f, RED);
+    DrawLine3D(s_simpleFlight.start, currentPos, YELLOW);
+    DrawSphere(currentPos, s_simpleFlightRadius, ORANGE);
+    DrawSphereWires(currentPos, s_simpleFlightRadius * 1.1f, 8, 8, WHITE);
   }
 
   if (!s_testActive || !s_shaderLoaded || !s_showSoftParticleSphere) return;

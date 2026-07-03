@@ -159,4 +159,26 @@ void AbortSkill(int skillIndex, int agentId);
 void RegisterSkillLifecycleQuery(int skillIndex, bool (*hasActiveInstance)(int agentId));
 bool Skill_HasActiveInstance(int skillIndex, int agentId);
 
+// Optional per-skill tunable-parameter registration. A skill may call this
+// in addition to RegisterSkill() to expose its physics/visual magic numbers
+// (force strength, speed, radius, lifetime...) as named, min/max-bounded
+// sliders in the sandbox UI (sandbox/ui_panel.c) instead of only being
+// editable by recompiling. `entries` must point at storage the skill keeps
+// alive for its own lifetime (a static array is the usual choice) — the
+// registry stores the array by value (copies each entry, including the
+// `value` pointer), so the skill's own static float fields keep being the
+// single source of truth; sandbox writes through `value` directly when a
+// slider is dragged. Purely additive — skills that never call this simply
+// have no tunables exposed (Skill_GetTunables returns 0 for them).
+#define MAX_SKILL_TUNABLES 16
+typedef struct {
+    char label[32]; // key used both as the sandbox slider label and the
+                     // key= name written to/read from the skill's .tuning file
+    float *value;
+    float min, max, defaultValue;
+} SkillTunableEntry;
+
+void RegisterSkillTunables(int skillIndex, const SkillTunableEntry *entries, int count);
+int  Skill_GetTunables(int skillIndex, SkillTunableEntry *outEntries, int maxEntries);
+
 #endif // SKILL_MANAGER_H

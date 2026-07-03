@@ -57,7 +57,7 @@ real need comes up — this field's only job right now is ownership tracking.
 - Strict C99. Explicitly include `<stddef.h>`, `<stdlib.h>`, `<stdio.h>`.
 - **No malloc/free.** Static arrays only.
 - Colors: MUST use `ELEMENT_COLOR_*` macros from `core/skill_manager.h`. Never hardcode raw colors.
-- Scale: radii ~10–20f, force 300–700f, speed 100–300f
+- Scale (real-world-scaled, 1 unit = 1 meter — see root `CLAUDE.md` "Standard coordinates & scale"): radii ~0.10–0.20f, force 3.0–7.0f (compare against real gravity 9.81f), speed 1.0–3.0f. Only `fire_ball` and `thunder_orb_skill` have been converted so far as a pilot — every other skill still uses the old 1cm-scale numbers (100x larger). Don't mix scales within one skill: check whether a skill you're editing has already been converted before adding new magic numbers.
 - Shaders: always use both `.vs` + `.fs` for 3D lighting. Load via `ResourceManager_LoadShader()`.
 - Never call `UnloadTexture`/`UnloadShader` inside `Unload[Name]Skill`.
 - Don't use raylib primitives (`DrawCylinder`, `DrawSphere`, `DrawCube`) for core meshes. Use `core/procedural_mesh_utils.h`.

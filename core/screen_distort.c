@@ -4,15 +4,21 @@
 
 // CORE_ISSUES.md Item 3 rebuild — root cause #2: the soft-particle depth
 // linearization must use the SAME near/far the scene was actually rendered
-// with. rlGetCullDistanceNear/Far() reflects rlSetClipPlanes() (main.c,
-// called once at startup with 0.1/15000), which is a DIFFERENT, unrelated
-// global from the near plane MyBeginMode3D's rlFrustum() actually uses for
-// perspective projection (hardcoded 10.0, see main.c). Using 0.1 there
-// instead of 10.0 silently produced near-zero linear depth for all real
-// scene content. Keep these in sync with MyBeginMode3D's rlFrustum() call
-// if that ever changes.
-#define SOFT_PARTICLE_SCENE_NEAR 10.0f
-#define SOFT_PARTICLE_SCENE_FAR 15000.0f
+// with. rlGetCullDistanceNear/Far() reflects rlSetClipPlanes() (main.c),
+// which is a DIFFERENT, unrelated global from the near plane
+// MyBeginMode3D's rlFrustum() actually uses for perspective projection (see
+// main.c). Using the wrong one silently produces near-zero linear depth for
+// all real scene content. Keep these in sync with MyBeginMode3D's
+// rlFrustum() call if that ever changes.
+// Real-world-scaled (root CLAUDE.md "Standard coordinates & scale") — was
+// 10.0f/15000.0f pre-rescale. NOTE: not a straight ÷100 of the old values —
+// near values below ~1.0 produced a fully blank render in this project's
+// rlFrustum()/GL setup (empirically bisected; root cause not identified,
+// suspected precision issue with very small near-plane/frustum-extent
+// values), so these track MyBeginMode3D's near=1.0f/far=1000.0f rather than
+// the exact ÷100 scale used everywhere else in this rescale.
+#define SOFT_PARTICLE_SCENE_NEAR 1.0f
+#define SOFT_PARTICLE_SCENE_FAR 1000.0f
 
 static RenderTexture2D renderTex;
 static Shader distortShader;

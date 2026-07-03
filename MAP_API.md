@@ -46,9 +46,11 @@ void UnloadDesertLavaMap(void);
 
 Các map được vẽ dưới dạng một "hòn đảo lơ lửng" để hỗ trợ cơ chế rơi vực (Ring Out) theo trục Z. Khi vẽ map, hãy sử dụng các hằng số tọa độ sau để đồng bộ với logic di chuyển và va chạm của người chơi/quái vật:
 
-* **Tâm Đấu Trường:** `(600.0f, 0.0f, 440.0f)` (Hằng số `arenaCenter`).
-* **Bán Kính Hoạt Động:** `1800.0f` (Hằng số `arenaRadius`). Toàn bộ mặt đất chơi được nên nằm trong bán kính này.
-* **Cao Độ Mặc Định (Y):** Mặt đất chính nằm ở cao độ `Y = 0.0f` (hoặc chênh lệch rất nhỏ như `-0.05f`).
+Real-world-scaled: 1 unit = 1 meter (rescaled from the old 1cm-scale — see root `CLAUDE.md` "Standard coordinates & scale"). Code samples further below in this doc (§ examples using `600.0f`/`440.0f`/`1800.0f`) predate the rescale — use the constants below, not the old sample literals, when writing a new map.
+
+* **Tâm Đấu Trường:** `(6.0f, 0.0f, 4.4f)` (Hằng số `arenaCenter`).
+* **Bán Kính Hoạt Động:** `18.0f` (Hằng số `arenaRadius`). Toàn bộ mặt đất chơi được nên nằm trong bán kính này.
+* **Cao Độ Mặc Định (Y):** Mặt đất chính nằm ở cao độ `Y = 0.0f` (hoặc chênh lệch rất nhỏ như `-0.0005f`).
 
 ---
 

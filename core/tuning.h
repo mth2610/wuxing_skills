@@ -41,4 +41,18 @@ void Tuning_Update(void);
 // Force an immediate reload regardless of mtime (e.g. a debug hotkey).
 void Tuning_Reload(void);
 
+// One-shot load from an arbitrary path (not the registered hot-reload file,
+// no per-frame polling). For each keys[i] found in the file, outValues[i] is
+// overwritten; keys not found are left untouched (caller should pre-fill
+// outValues with defaults before calling). Returns false if the file doesn't
+// exist — outValues are left entirely untouched in that case.
+bool Tuning_LoadFloatsFromPath(const char *path, const char *const *keys,
+                                float *outValues, int count);
+
+// Writes `path` fresh (overwriting any existing file) as a "key = value"
+// list, one per line, with the same comment format as tuning.cfg. Returns
+// false if the write failed.
+bool Tuning_SaveFloats(const char *path, const char *const *keys,
+                        const float *values, int count);
+
 #endif // TUNING_H

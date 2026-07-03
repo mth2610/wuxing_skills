@@ -91,6 +91,15 @@ void Tuning_Reload(void);                                                // forc
 * **Read live values fresh, don't bake them once.** `Tuning_Update()` (mtime poll, no filesystem-watch dependency) overwrites the registered `float` in place, but has no way to retroactively fix anything a skill already copied that value into (e.g. a `ParticleConfig` baked at `Cast` time). If a value needs to react to a live edit while an effect is on screen, re-read the registered float each frame/draw and re-apply it — see `core_test`'s `EffectMaterial.params.rimStrength/fresnelPower` for the pattern.
 * **Desktop dev-tool, not shipped Android hot-reload:** `tuning.cfg` is copied into the Android asset bundle (`Makefile.Android`) so the packaged defaults still apply, but editing a file inside an installed APK isn't meaningful, so there's no live-reload story on Android — only on desktop.
 
+**Per-path save/load (sandbox live-tuning UI, separate from the `tuning.cfg` hot-reload path above):**
+```c
+bool Tuning_LoadFloatsFromPath(const char *path, const char *const *keys, float *outValues, int count);
+bool Tuning_SaveFloats(const char *path, const char *const *keys, const float *values, int count);
+```
+* One-shot, not registered into the per-frame hot-reload table — for a UI-driven flow (pick a skill in sandbox → edit sliders → click Save) rather than hand-editing a file while the game runs.
+* `Tuning_LoadFloatsFromPath`: like `Tuning_RegisterFloat`, a key missing from the file leaves that `outValues[i]` untouched — pre-fill `outValues` with your defaults before calling. Returns `false` if the file doesn't exist (nothing touched).
+* `Tuning_SaveFloats`: overwrites `path` fresh with a `key = value` list (same textual format as `tuning.cfg`). Used by `RegisterSkillTunables` consumers (below) to persist to a skill's co-located `.tuning` file, e.g. `skills/fire/fire_ball/fire_ball.tuning`.
+
 ---
 
 ## 4. STANDARD LIFECYCLE API (`[skill_name]_skill.h`)
@@ -1212,6 +1221,23 @@ bool Skill_HasActiveInstance(int skillIndex, int agentId);
 * Lets gameplay code ask "is there still an active instance of this skill owned by agentId X" — e.g. an Earth wall / Wood root-zone effect that gameplay logic needs to know is truly gone before releasing whatever it's blocking.
 * Skills that never call `RegisterSkillLifecycleQuery` report `false` unconditionally (safe default — a caller never waits forever on a skill that never opted in; unlike `AbortSkill`, this doesn't `LOG_WARNING` since it's a harmless query, not a command).
 * Adopted by `STONE_PRISON` (`StonePrisonSkill_HasActiveInstance`) and `WOOD_THORNS` (`WoodThornsSkill_HasActiveInstance`) — both scan their instance pool for `ownerAgentId == agentId && state != INACTIVE`. Projectile/vortex-style skills (fire_ball, tube, water_sphere, hoa_long_phong_ba) don't need this — they're transient, not "zones" gameplay code needs to track.
+
+### Tunable Parameters (`core/skill_manager.h`)
+Optional, additive — lets a skill expose its physics/visual magic numbers as named, min/max-bounded sliders in the sandbox UI (`sandbox/ui_panel.c`) instead of only being editable by recompiling. Not part of the mandatory skill lifecycle contract.
+```c
+#define MAX_SKILL_TUNABLES 16
+typedef struct {
+    char label[32]; // slider label AND the key= name in the skill's .tuning file
+    float *value;
+    float min, max, defaultValue;
+} SkillTunableEntry;
+
+void RegisterSkillTunables(int skillIndex, const SkillTunableEntry *entries, int count);
+int  Skill_GetTunables(int skillIndex, SkillTunableEntry *outEntries, int maxEntries);
+```
+* Call `RegisterSkillTunables` in `Init[Name]Skill`, after `Skill_GetIndexByName` resolves your own `skillIndex`. `entries` must point at storage you keep alive for your skill's lifetime — a `static SkillTunableEntry s_tunables[N]` whose `.value` fields point at your own `static float` state — the registry copies the entries (including the `value` pointer) by value, so your static floats stay the single source of truth; the sandbox UI writes through `value` directly when a slider moves.
+* Load persisted values at the same point via `Tuning_LoadFloatsFromPath("skills/<element>/<skill>/<skill>.tuning", keys, values, count)` (see §3b) before registering, so a previous sandbox Save is restored on next launch.
+* `Skill_GetTunables` is how `sandbox/ui_panel.c` discovers what to draw for the currently-selected skill — returns 0 for any skill that never called `RegisterSkillTunables`.
 
 ### Shader Binding (`core/skill_manager.h`)
 ```c

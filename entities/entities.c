@@ -6,10 +6,11 @@
 static Agent agentPool[MAX_AGENTS]; // 4 ally + 4 enemy AI
 
 // Arena constants — must match MAP_API.md §3 exactly.
-static const Vector3 ARENA_CENTER = { 600.0f, 0.0f, 440.0f };
-static const float   ARENA_RADIUS = 1800.0f;
-static const float   GRAVITY = 500.0f;
-static const float   RING_OUT_KILL_Y = -200.0f;
+// Real-world-scaled: 1 unit = 1 meter (was 1 unit = 1cm before the rescale).
+static const Vector3 ARENA_CENTER = { 6.0f, 0.0f, 4.4f };
+static const float   ARENA_RADIUS = 18.0f;
+static const float   GRAVITY = 5.0f; // below real 9.81 m/s² by design (floatier game feel)
+static const float   RING_OUT_KILL_Y = -2.0f;
 
 void Entity_Init(void) {
     for (int i = 0; i < MAX_AGENTS; i++) {

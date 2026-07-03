@@ -18,8 +18,8 @@ void DrawDefaultArenaMap(void) {
     rlBegin(RL_TRIANGLES);
     Color cCenter = GetColor(0x3B3D4DFF); // Lighter blue-grey for center highlight (spotlight effect)
     Color cEdge = GetColor(0x131317FF);   // Darker tone at the edge of the arena
-    float radius = 1805.0f;
-    Vector3 center = { 600.0f, -0.05f, 440.0f };
+    float radius = 18.05f;
+    Vector3 center = { 6.0f, -0.0005f, 4.4f };
     int segments = 128;
     for (int i = 0; i < segments; i++) {
         float a1 = ((float)i / segments) * 2.0f * PI;

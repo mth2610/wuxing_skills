@@ -1160,6 +1160,108 @@ impact; no click; missing-asset path silent after one warning.
 
 ---
 
+## Item 34 — Real-world-meter rescale: shared-infrastructure sweep + per-skill refactor checklist (P0, Core + Skills)
+
+**Background.** 2026-07-03: the project moved from a de facto 1 unit = 1cm
+scale to 1 unit = 1 meter (see root `CLAUDE.md` "Standard coordinates &
+scale"). Arena center `(6.0f, 0.0f, 4.4f)`, radius `18.0f`, real gravity
+`9.81f m/s²` is now the reference every force should be judged against. Two
+pilot skills (`skills/fire/fire_ball`, `skills/metal/thunder_orb_skill`) were
+converted and a sandbox live-tuning UI was built (`RegisterSkillTunables`/
+`Skill_GetTunables` in `core/skill_manager.h`, `Tuning_SaveFloats`/
+`Tuning_LoadFloatsFromPath` in `core/tuning.h` — pick a skill in the sandbox,
+drag sliders, Save writes a per-skill `.tuning` file).
+
+**Problem — it's not just the two pilot skills' own files.** Every
+"disconnected from character" / "huge" bug reported after the two pilots were
+converted turned out to live in **shared core infrastructure** the pilots
+call into, not in the pilots' own code:
+- `core/skill_manager.c`'s `CastSkill()` dispatcher applies a position offset
+  (`CAST_PATH_PROJECTILE`: `startPos.y + 25.0f` then `+ aimDir*22.0f` —
+  "cast from shoulder height, slightly forward") *before* any skill's own
+  Cast function runs. Un-rescaled, this was a 25m/22m displacement instead
+  of 25cm/22cm. Same file: `main.c`'s `UpdateSkillManager(dt, enemy.position,
+  35.0f)` passed an un-rescaled `enemyRadius` (should be `0.35f`), making the
+  generic per-frame projectile-vs-enemy hit check trigger on frame 1 for
+  every skill (fire/wood/electric/metal all share this code path) regardless
+  of real distance. Also un-rescaled in the same file: 5 `AddKnockbackToEnemy`
+  strengths, `Skill_CalculateKnockback`'s base, `AddFloatingText`'s position
+  jitter, `AddCastPortal`'s size.
+- `core/vfx_proc_ray.c`'s shared lightning-bolt presets
+  (`ProcRay_LightningConfig`/`BoltLightningConfig`/`EnergyConfig`/
+  `WindConfig`) had a `thickness` field (1.1–1.8, meant as meters) never
+  rescaled — a 1-2 *meter* thick ray. Any skill using these presets inherits
+  the bug.
+- `core/skill_helper.c`'s `SpawnImpactEffect()` — a single function with 8
+  `EFFECT_PRESET_*` cases shared across all 6 elements — has the same
+  un-rescaled-constants pattern. Only `EFFECT_PRESET_LIGHTNING_IMPACT` has
+  been fixed so far (ground decal radius, screen-distort radius/speed, VFX
+  light radius, particle velocity/radius — all were old-scale). **The other
+  7 cases (`FIRE_EXPLOSION`, `ICE_SHATTER`, `WATER_SPLASH`, `EARTH_CRACK`,
+  `WOOD_BLOOM`, `METAL_SHARD`, `TAIJI_BURST`) were spot-checked and confirmed
+  to have the identical pattern (e.g. `FIRE_EXPLOSION`'s `ScreenDistort_Add`
+  radius 55.0f, decal radius 22.0f, particle speed `rand()%35+20`) but are
+  **not yet fixed** — any skill that calls `SpawnImpactEffect()` with one of
+  these 7 presets will show the same oversized-decal/light/particle symptom
+  once converted.
+
+**Why this was missed the first time**: the original rescale pass (and every
+debugging round after it) read individual skill files (`fire_skill.c`,
+`thunder_orb_skill.c`) end to end, but never traced *into* the shared
+functions those files call (`CastSkill`, `SpawnImpactEffect`,
+`ProcRay_LightningConfig`) to check whether those functions' own internals
+were rescaled. A skill file can be 100% correctly converted and still
+produce wrong-scale visuals if it calls into un-converted shared code.
+
+**Refactor checklist for converting the next skill** (do all four passes,
+not just the first):
+1. **The skill's own file**: grep for spatial magic numbers (radii, speeds,
+   forces, position offsets — anything in the tens-to-hundreds range is
+   almost certainly old-scale) and ÷100. Non-spatial values (particle
+   counts, colors, alpha, time/lifetime, unitless ratios/multipliers) do
+   NOT get scaled — see the "what NOT to scale" examples throughout Item 34's
+   sibling commits (`fire_skill.c`, `thunder_orb_skill.c` diffs) for the
+   distinction in practice.
+2. **Every shared function it calls into** — trace `SpawnImpactEffect`,
+   `ProcRay_*Config`, `SpawnGroundDecal` call sites, `ScreenDistort_Add`,
+   `VFXLight_Spawn`, any `core/skill_helper.h` convenience wrapper — and
+   check whether *that function's own internals* (not just the skill's call
+   site arguments) have already been rescaled. Don't assume a shared
+   function is safe just because its signature looks normal.
+3. **The dispatch path**: confirm `CastSkill()`'s `pathType` switch (now
+   fixed for all 3 branches) and `UpdateSkillManager`'s collision-check
+   `enemyRadius` (now fixed) actually apply — these are global fixes, should
+   already be correct for every skill, but verify once per new skill as a
+   sanity check (cast near the character, confirm the effect visibly
+   originates there, not from a corner).
+4. **Distance-proportional VFX parameters**: anything computed as
+   `distance * ratio` (wave wobble, spread cones, etc.) needs a floor/cap —
+   see `fire_skill.c`'s `GetDragonPathPos` wave-amplitude fix
+   (`fminf(fmaxf(dist*0.18f, 0.2f), dist*0.6f)`) as the pattern. Short-range
+   casts are now the norm at 1/100th scale; a pure ratio silently produces
+   an imperceptible effect instead of an obviously-broken one, which is
+   harder to notice and debug.
+
+**Verification technique that worked reliably** (headless, no interactive
+screen access needed): temporarily register an `AutoTest_*` case in
+`skills/taiji/core_test/core_test_skill.c` that calls `CastSkill()` with
+`camera.target` as start and `camera.target + small offset (1.5–2.5 units)`
+as target — this exercises the exact same dispatch path a real click does.
+Screenshot at a frame timed to the skill's own travel duration (cast
+distance ÷ known speed) via `AutoTest_SaveScreenshot`, `Read` the PNG
+directly. Remove the temp case once confirmed — don't leave debug
+scaffolding in `core_test_skill.c`.
+
+**Acceptance**: the remaining 11 unconverted skills each get the 4-pass
+checklist above when they're next touched; the 7 remaining
+`SpawnImpactEffect` presets get rescaled either as a dedicated `core/`
+sweep (fixes all 7 at once, benefits every skill that uses them) or
+incrementally as each skill that calls them gets converted — either is
+fine, just don't convert a skill's own file and assume the shared presets
+it calls are already safe.
+
+---
+
 **Not filed (reviewed and rejected):**
 - *"`PathSpline_CalculateLength` helper missing"* — premise doesn't hold
   against current code. Checked both real `u_uvLength` call sites

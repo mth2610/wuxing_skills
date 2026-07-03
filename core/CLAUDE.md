@@ -32,7 +32,7 @@ Manages the entire **Core Engine** module of the Wuxing Skills project. Owns the
 - Guard the PI macro: `#ifndef PI #define PI 3.1415926535f #endif`
 - No `malloc`/`calloc`/`realloc`/`free`
 - Use `ResourceManager_LoadShader()` — never call `UnloadShader`/`UnloadTexture` in skill code
-- Scale: radii ~10–20f, force 300–700f, speed 100–300f
+- Scale (real-world-scaled, 1 unit = 1 meter — see root `CLAUDE.md` "Standard coordinates & scale"): radii ~0.10–0.20f, force 3.0–7.0f (compare against real gravity 9.81f), speed 1.0–3.0f. Only `entities/`, `sandbox/`, `main.c`, and the pilot skills (`fire_ball`, `thunder_orb_skill`) have been converted — most skills still use the old 1cm-scale numbers 100x larger.
 
 ## Cross-agent communication
 - If the Skills Agent asks about an API: answer from the `.h` headers in `core/`

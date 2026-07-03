@@ -1,0 +1,6 @@
+# Wuxing Skills — saved skill tuning (sandbox UI)
+# Format: key = value  (one per line)
+
+flight_speed = 11.0224
+impact_knockback = 1.3327
+rain_strike_knockback = 7.40351

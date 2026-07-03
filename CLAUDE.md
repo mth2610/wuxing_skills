@@ -45,9 +45,12 @@ make          # Build the whole project
 ```
 
 ## Standard coordinates & scale
-- Arena center: `(600.0f, 0.0f, 440.0f)`, radius: `1800.0f`
+Real-world-scaled: **1 unit = 1 meter** (rescaled from the old de facto 1 unit = 1cm — see `entities/entities.c`, `sandbox/sandbox_core.c`, `maps/*/`, `main.c` camera clip planes). `PHYSICS_GRAVITY_MPS2 = 9.81f` is the real-world reference every force/gravity value should be judged against when tuning a skill (see `core/tuning.h` §3b and `RegisterSkillTunables` in `core/skill_manager.h` for the sandbox live-tuning UI that makes this practical).
+- Arena center: `(6.0f, 0.0f, 4.4f)`, radius: `18.0f`
 - Y = 0.0f: ground level
-- Mesh radii: 10–20f | Force/gravity: 300–700f | Particle speed: 100–300f
+- Mesh radii: 0.10–0.20f | Force/gravity: 3.0–7.0f (compare against real gravity 9.81f) | Particle speed: 1.0–3.0f
+
+Only `entities/entities.c`, `sandbox/sandbox_core.c`, `main.c`, `maps/*/` (arena-matching footprint only), and the pilot skills (`skills/fire/fire_ball`, `skills/metal/thunder_orb_skill`) have been converted to this scale so far. Every other skill still uses the old 1cm-scale numbers — check a skill's own magic numbers before assuming they're real-meter-scaled, and convert a skill fully (not partially) before relying on it interacting correctly with rescaled positions.
 
 ## Token-efficiency rules for every agent (MANDATORY)
 

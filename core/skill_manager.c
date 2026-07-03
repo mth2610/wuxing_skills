@@ -114,6 +114,10 @@ static void (*skillAbortCallback[MAX_SKILLS])(int agentId);
 // Item 13: optional lifecycle-end query, mirrors skillAbortCallback's shape.
 static bool (*skillLifecycleQuery[MAX_SKILLS])(int agentId);
 
+// Optional per-skill tunable-parameter registration (sandbox live-tuning UI).
+static SkillTunableEntry skillTunables[MAX_SKILLS][MAX_SKILL_TUNABLES];
+static int skillTunableCount[MAX_SKILLS];
+
 // --- PROTOTYPES CỦA SKILL WRAPPERS ---
 #if HAS_SKILL_FLUID
 static void CastWaterWrapper(int agentId, Vector3 startPos, Vector3 target, SkillParams params);
@@ -180,7 +184,7 @@ static void AddCastPortal(Vector3 pos, Color portalColor, CastPathType pathType,
       activePortals[i].color = ColorAlpha(portalColor, 0.8f);
       activePortals[i].maxLifetime = 0.8f;
       activePortals[i].lifetime = 0.8f;
-      activePortals[i].size = 70.0f * sizeScale;
+      activePortals[i].size = 0.7f * sizeScale;
       activePortals[i].active = true;
       activePortals[i].angle = 0.0f;
       activePortals[i].isGround = (pathType == CAST_PATH_UNDERGROUND);
@@ -194,8 +198,8 @@ void AddFloatingText(Vector3 pos, const char *text, Color color,
   for (int i = 0; i < MAX_FLOATING_TEXTS; i++) {
     if (!floatingTexts[i].active) {
       floatingTexts[i].position = pos;
-      floatingTexts[i].position.x += GetRandomValue(-25, 25);
-      floatingTexts[i].position.y += GetRandomValue(-15, 5);
+      floatingTexts[i].position.x += (float)GetRandomValue(-25, 25) * 0.01f;
+      floatingTexts[i].position.y += (float)GetRandomValue(-15, 5) * 0.01f;
       snprintf(floatingTexts[i].text, sizeof(floatingTexts[i].text), "%s",
                text);
       floatingTexts[i].color = color;
@@ -533,18 +537,31 @@ void CastSkill(int skillIndex, int agentId, Vector3 startPos, Vector3 target,
   Vector3 adjustedTarget = target;
   Color skillColor = skillRegistry[skillIndex].color;
 
+  // Real-world-scaled ÷100 (root CLAUDE.md "Standard coordinates & scale")
+  // — was 25.0f/22.0f/35.0f/100.0f/348.0f pre-rescale. THIS is the actual
+  // root cause of the whole "skill appears disconnected from the
+  // character" investigation: this shared dispatcher (not any individual
+  // skill) offsets every CAST_PATH_PROJECTILE cast's start position by a
+  // "shoulder height" + "forward from shoulder" amount before handing off
+  // to the skill's own Cast function — these two constants were missed in
+  // the original rescale pass because they live here, not in a skill file.
+  // At the old 1cm scale, +25/+22 units meant a reasonable ~25cm/22cm
+  // adjustment; at the new 1-meter scale the same numbers meant a 25m/22m
+  // displacement, which is why fire_ball, thunder_orb_skill, and a
+  // brand-new from-scratch test skill ALL showed the identical symptom —
+  // it was never in any of them.
   switch (params.pathType) {
   case CAST_PATH_PROJECTILE: {
-    Vector3 shoulderPos = (Vector3){startPos.x, startPos.y + 25.0f, startPos.z};
+    Vector3 shoulderPos = (Vector3){startPos.x, startPos.y + 0.25f, startPos.z};
     Vector3 aimDir = Vector3Normalize(Vector3Subtract(target, shoulderPos));
-    adjustedStartPos = Vector3Add(shoulderPos, Vector3Scale(aimDir, 22.0f));
+    adjustedStartPos = Vector3Add(shoulderPos, Vector3Scale(aimDir, 0.22f));
     adjustedTarget = target;
     break;
   }
   case CAST_PATH_UNDERGROUND: {
     if (params.anchorType == CAST_ANCHOR_CASTER) {
       Vector3 dir = Vector3Normalize(Vector3Subtract(target, startPos));
-      adjustedStartPos = Vector3Add(startPos, Vector3Scale(dir, 35.0f));
+      adjustedStartPos = Vector3Add(startPos, Vector3Scale(dir, 0.35f));
       adjustedStartPos.y = 0.02f;
       adjustedTarget = target;
       if (params.showPortal)
@@ -553,7 +570,7 @@ void CastSkill(int skillIndex, int agentId, Vector3 startPos, Vector3 target,
     } else {
       adjustedStartPos = target;
       adjustedStartPos.y = 0.02f;
-      adjustedTarget = (Vector3){target.x, target.y + 100.0f, target.z};
+      adjustedTarget = (Vector3){target.x, target.y + 1.0f, target.z};
       if (params.showPortal)
         AddCastPortal(adjustedStartPos, skillColor, CAST_PATH_UNDERGROUND,
                       params.sizeScale, adjustedTarget);
@@ -562,10 +579,10 @@ void CastSkill(int skillIndex, int agentId, Vector3 startPos, Vector3 target,
   }
   case CAST_PATH_SKY: {
     if (params.anchorType == CAST_ANCHOR_CASTER) {
-      adjustedStartPos = (Vector3){startPos.x, startPos.y + 348.0f, startPos.z};
+      adjustedStartPos = (Vector3){startPos.x, startPos.y + 3.48f, startPos.z};
       adjustedTarget = target;
     } else {
-      adjustedStartPos = (Vector3){target.x, target.y + 348.0f, target.z};
+      adjustedStartPos = (Vector3){target.x, target.y + 3.48f, target.z};
       adjustedTarget = target;
     }
     if (params.showPortal)
@@ -724,7 +741,7 @@ static void UpdateFluidSkillWrapper(float dt, Vector3 enemyPos,
       
       Vector3 pushDir = Vector3Normalize(Vector3Subtract(enemyPos, tempProjectiles[i].position));
       pushDir.y = 0.0f;
-      AddKnockbackToEnemy(Vector3Scale(pushDir, 100.0f));
+      AddKnockbackToEnemy(Vector3Scale(pushDir, 1.0f));
     }
   }
 }
@@ -747,7 +764,7 @@ static void UpdateTubeSkillWrapper(float dt, Vector3 enemyPos,
       
       Vector3 pushDir = Vector3Normalize(Vector3Subtract(enemyPos, tempProjectiles[i].position));
       pushDir.y = 0.0f;
-      AddKnockbackToEnemy(Vector3Scale(pushDir, 180.0f));
+      AddKnockbackToEnemy(Vector3Scale(pushDir, 1.8f));
     }
   }
 }
@@ -772,7 +789,7 @@ static void UpdateMetalSkillWrapper(float dt, Vector3 enemyPos,
       
       Vector3 pushDir = Vector3Normalize(Vector3Subtract(enemyPos, tempProjectiles[i].position));
       pushDir.y = 0.0f;
-      AddKnockbackToEnemy(Vector3Scale(pushDir, 250.0f));
+      AddKnockbackToEnemy(Vector3Scale(pushDir, 2.5f));
     }
   }
 }
@@ -796,7 +813,7 @@ static void UpdateFireSkillWrapper(float dt, Vector3 enemyPos,
       
       Vector3 pushDir = Vector3Normalize(Vector3Subtract(enemyPos, tempProjectiles[i].position));
       pushDir.y = 0.0f;
-      AddKnockbackToEnemy(Vector3Scale(pushDir, 80.0f));
+      AddKnockbackToEnemy(Vector3Scale(pushDir, 0.8f));
     }
   }
 }
@@ -837,7 +854,7 @@ static void UpdateElectricSkillWrapper(float dt, Vector3 enemyPos,
       
       Vector3 pushDir = Vector3Normalize(Vector3Subtract(enemyPos, tempProjectiles[i].position));
       pushDir.y = 0.0f;
-      AddKnockbackToEnemy(Vector3Scale(pushDir, 40.0f));
+      AddKnockbackToEnemy(Vector3Scale(pushDir, 0.4f));
     }
   }
 }
@@ -956,7 +973,7 @@ float Skill_CalculateManaCost(SkillCategory cat, SkillParams params) {
 }
 
 float Skill_CalculateKnockback(SkillCategory cat, SkillParams params) {
-  float base = 150.0f;
+  float base = 1.5f; // m/s knockback impulse — real-world-scaled (was 150.0f)
   switch (cat) {
     case SKILL_CAT_MELEE:          return base * 1.6f * params.sizeScale;
     case SKILL_CAT_PROJECTILE:     return base * 0.5f * params.sizeScale;
@@ -1126,4 +1143,27 @@ bool Skill_HasActiveInstance(int skillIndex, int agentId) {
   if (skillLifecycleQuery[skillIndex] == NULL)
     return false;
   return skillLifecycleQuery[skillIndex](agentId);
+}
+
+// --- Optional per-skill tunable-parameter registration ---
+
+void RegisterSkillTunables(int skillIndex, const SkillTunableEntry *entries, int count) {
+  if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
+    return;
+  if (count > MAX_SKILL_TUNABLES)
+    count = MAX_SKILL_TUNABLES;
+  for (int i = 0; i < count; i++)
+    skillTunables[skillIndex][i] = entries[i];
+  skillTunableCount[skillIndex] = count;
+}
+
+int Skill_GetTunables(int skillIndex, SkillTunableEntry *outEntries, int maxEntries) {
+  if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
+    return 0;
+  int count = skillTunableCount[skillIndex];
+  if (count > maxEntries)
+    count = maxEntries;
+  for (int i = 0; i < count; i++)
+    outEntries[i] = skillTunables[skillIndex][i];
+  return count;
 }

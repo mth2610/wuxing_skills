@@ -37,13 +37,22 @@ static void MyBeginMode3D(Camera3D camera) {
   float aspect = (float)GetScreenWidth() / (float)GetScreenHeight();
 
   if (camera.projection == CAMERA_PERSPECTIVE) {
-    double top = 10.0 * tan(camera.fovy * 0.5 * DEG2RAD);
+    // near/far real-world-scaled (root CLAUDE.md "Standard coordinates &
+    // scale") — NOT a straight ÷100 of the old 10.0/15000.0. Empirically,
+    // near values below ~1.0 render a fully blank scene in this project's
+    // rlFrustum() setup (bisected via autotest screenshots; root cause not
+    // identified — suspected precision issue at very small frustum extents,
+    // not a near/far *ratio* problem since the same ratio at 0.1/150 also
+    // failed). sandbox_core.c's g_camDist is clamped with margin above this
+    // near plane — keep core/screen_distort.c's SOFT_PARTICLE_SCENE_NEAR/FAR
+    // in sync if this ever changes.
+    double top = 1.0 * tan(camera.fovy * 0.5 * DEG2RAD);
     double right = top * aspect;
-    rlFrustum(-right, right, -top, top, 10.0, 15000.0);
+    rlFrustum(-right, right, -top, top, 1.0, 1000.0);
   } else if (camera.projection == CAMERA_ORTHOGRAPHIC) {
     double top = camera.fovy / 2.0;
     double right = top * aspect;
-    rlOrtho(-right, right, -top, top, 0.01, 15000.0);
+    rlOrtho(-right, right, -top, top, 0.0001, 150.0);
   }
 
   rlMatrixMode(RL_MODELVIEW);
@@ -90,7 +99,7 @@ int main(void) {
       SetConfigFlags(FLAG_WINDOW_HIDDEN);
   }
   InitWindow(screenWidth, screenHeight, "Avatar: True 3D Element Testbed");
-  rlSetClipPlanes(0.1f, 15000.0f);
+  rlSetClipPlanes(0.001f, 150.0f);
 
   // Tự động sinh các texture cơ bản nếu thiếu trong thư mục assets/textures
   if (!FileExists("assets/textures/noise.png")) {
@@ -148,9 +157,9 @@ int main(void) {
   }
   DamageVolume_Init();
   EmitterSystem_Init();
-  RegisterStaticOccluder((Vector3){400.0f, 0.0f, 320.0f}, 25.0f, 62.5f);
-  RegisterStaticOccluder((Vector3){800.0f, 0.0f, 520.0f}, 30.0f, 75.0f);
-  RegisterStaticOccluder((Vector3){600.0f, 0.0f, 260.0f}, 20.0f, 50.0f);
+  RegisterStaticOccluder((Vector3){4.0f, 0.0f, 3.2f}, 0.25f, 0.625f);
+  RegisterStaticOccluder((Vector3){8.0f, 0.0f, 5.2f}, 0.3f, 0.75f);
+  RegisterStaticOccluder((Vector3){6.0f, 0.0f, 2.6f}, 0.2f, 0.5f);
   InitUIPanel();
   SkillDebugger_Init();
   Environment_Init();
@@ -269,7 +278,7 @@ int main(void) {
                                  globalParticleTex);
 
     Tuning_Update();
-    UpdateSkillManager(dt, enemy.position, 35.0f);
+    UpdateSkillManager(dt, enemy.position, 0.35f);
     DamageVolume_Update(dt);
     EmitterSystem_Update(dt);
     UpdateParticles(dt);
@@ -348,7 +357,7 @@ int main(void) {
     DrawCoreTestSkillDebugHUD(); // CORE_ISSUES.md Item 3 test — on-screen depth readback (press L)
 
     Vector2 enemyScreenHead = GetWorldToScreen(
-        (Vector3){enemy.position.x, enemy.position.y + 55.0f, enemy.position.z},
+        (Vector3){enemy.position.x, enemy.position.y + 0.55f, enemy.position.z},
         camera);
     DrawText("ENEMY", (int)enemyScreenHead.x - 22, (int)enemyScreenHead.y, 12,
              WHITE);

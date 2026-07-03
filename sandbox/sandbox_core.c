@@ -13,10 +13,10 @@ bool g_showTouchControls = true;
 bool g_showTouchControls = false;
 #endif
 
-// Biến môi trường
-static const Vector3 arenaCenter = { 600.0f, 0.0f, 440.0f };
-static const float arenaRadius = 1800.0f;
-static const float gravity = 1500.0f;
+// Biến môi trường (real-world-scaled: 1 unit = 1 meter)
+static const Vector3 arenaCenter = { 6.0f, 0.0f, 4.4f };
+static const float arenaRadius = 18.0f;
+static const float gravity = 15.0f;
 
 static Vector2 g_joystickKnobOffset = { 0, 0 };
 static bool g_joystickActive = false;
@@ -39,9 +39,9 @@ typedef struct {
 
 #define NUM_PILLARS 3
 static StonePillar pillars[NUM_PILLARS] = {
-    { { 400.0f, 0.0f, 320.0f }, 25.0f },
-    { { 800.0f, 0.0f, 520.0f }, 30.0f },
-    { { 600.0f, 0.0f, 260.0f }, 20.0f }
+    { { 4.0f, 0.0f, 3.2f }, 0.25f },
+    { { 8.0f, 0.0f, 5.2f }, 0.3f },
+    { { 6.0f, 0.0f, 2.6f }, 0.2f }
 };
 
 // Hàm vẽ helper
@@ -79,54 +79,54 @@ static void DrawCircleOutline3D(Vector3 center, float radius, Color color) {
 }
 
 static void DrawCharacter3D(Vector3 position, float radius, Color skinCol, Color clothesCol, Color outlineCol, bool isPlayer, Vector3 targetPos) {
-    Vector3 leftFoot = { position.x - 8.0f, position.y, position.z };
-    Vector3 rightFoot = { position.x + 8.0f, position.y, position.z };
-    DrawSphere(leftFoot, 4.0f, outlineCol);
-    DrawSphere(rightFoot, 4.0f, outlineCol);
+    Vector3 leftFoot = { position.x - 0.08f, position.y, position.z };
+    Vector3 rightFoot = { position.x + 0.08f, position.y, position.z };
+    DrawSphere(leftFoot, 0.04f, outlineCol);
+    DrawSphere(rightFoot, 0.04f, outlineCol);
 
-    Vector3 bodyPos = { position.x, position.y + 18.0f, position.z };
-    DrawCylinder(bodyPos, 12.0f, 12.0f, 30.0f, 8, clothesCol);
-    DrawCylinderWires(bodyPos, 12.0f, 12.0f, 30.0f, 8, outlineCol);
+    Vector3 bodyPos = { position.x, position.y + 0.18f, position.z };
+    DrawCylinder(bodyPos, 0.12f, 0.12f, 0.3f, 8, clothesCol);
+    DrawCylinderWires(bodyPos, 0.12f, 0.12f, 0.3f, 8, outlineCol);
 
-    Vector3 headPos = { position.x, position.y + 38.0f, position.z };
-    DrawSphere(headPos, 9.0f, skinCol);
-    DrawSphereWires(headPos, 9.0f, 6, 6, outlineCol);
+    Vector3 headPos = { position.x, position.y + 0.38f, position.z };
+    DrawSphere(headPos, 0.09f, skinCol);
+    DrawSphereWires(headPos, 0.09f, 6, 6, outlineCol);
 
     if (isPlayer) {
-        Vector3 armOrigin = { position.x, position.y + 25.0f, position.z };
+        Vector3 armOrigin = { position.x, position.y + 0.25f, position.z };
         Vector3 dir = Vector3Normalize(Vector3Subtract(targetPos, armOrigin));
-        Vector3 handPos = Vector3Add(armOrigin, Vector3Scale(dir, 22.0f));
+        Vector3 handPos = Vector3Add(armOrigin, Vector3Scale(dir, 0.22f));
         DrawLine3D(armOrigin, handPos, clothesCol);
-        DrawSphere(handPos, 4.0f, skinCol);
-        DrawSphereWires(handPos, 4.0f, 4, 4, outlineCol);
+        DrawSphere(handPos, 0.04f, skinCol);
+        DrawSphereWires(handPos, 0.04f, 4, 4, outlineCol);
 
-        Vector3 restHand = { position.x - 14.0f, position.y + 14.0f, position.z };
-        DrawLine3D((Vector3){ position.x - 12.0f, position.y + 24.0f, position.z }, restHand, clothesCol);
-        DrawSphere(restHand, 3.5f, skinCol);
-        DrawSphereWires(restHand, 3.5f, 4, 4, outlineCol);
+        Vector3 restHand = { position.x - 0.14f, position.y + 0.14f, position.z };
+        DrawLine3D((Vector3){ position.x - 0.12f, position.y + 0.24f, position.z }, restHand, clothesCol);
+        DrawSphere(restHand, 0.035f, skinCol);
+        DrawSphereWires(restHand, 0.035f, 4, 4, outlineCol);
     } else {
-        Vector3 leftHand = { position.x - 14.0f, position.y + 14.0f, position.z };
-        Vector3 rightHand = { position.x + 14.0f, position.y + 14.0f, position.z };
-        DrawLine3D((Vector3){ position.x - 12.0f, position.y + 24.0f, position.z }, leftHand, clothesCol);
-        DrawLine3D((Vector3){ position.x + 12.0f, position.y + 24.0f, position.z }, rightHand, clothesCol);
-        DrawSphere(leftHand, 3.5f, skinCol);
-        DrawSphere(rightHand, 3.5f, skinCol);
-        DrawSphereWires(leftHand, 3.5f, 4, 4, outlineCol);
-        DrawSphereWires(rightHand, 3.5f, 4, 4, outlineCol);
+        Vector3 leftHand = { position.x - 0.14f, position.y + 0.14f, position.z };
+        Vector3 rightHand = { position.x + 0.14f, position.y + 0.14f, position.z };
+        DrawLine3D((Vector3){ position.x - 0.12f, position.y + 0.24f, position.z }, leftHand, clothesCol);
+        DrawLine3D((Vector3){ position.x + 0.12f, position.y + 0.24f, position.z }, rightHand, clothesCol);
+        DrawSphere(leftHand, 0.035f, skinCol);
+        DrawSphere(rightHand, 0.035f, skinCol);
+        DrawSphereWires(leftHand, 0.035f, 4, 4, outlineCol);
+        DrawSphereWires(rightHand, 0.035f, 4, 4, outlineCol);
     }
 }
 
 void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
-    // Camera
-    camera.position = (Vector3){ 600.0f, 500.0f, 840.0f }; 
-    camera.target = (Vector3){ 600.0f, 0.0f, 440.0f };    
+    // Camera (real-world-scaled: 1 unit = 1 meter)
+    camera.position = (Vector3){ 6.0f, 5.0f, 8.4f };
+    camera.target = (Vector3){ 6.0f, 0.0f, 4.4f };
     camera.up = (Vector3){ 0.0f, 1.0f, 0.0f };
     camera.fovy = 45.0f;
     camera.projection = CAMERA_PERSPECTIVE;
 
     // Cấu hình Player
-    player->position = (Vector3){ -1100.0f, 0.0f, 440.0f };
-    player->radius = 30.0f;
+    player->position = (Vector3){ -11.0f, 0.0f, 4.4f };
+    player->radius = 0.3f;
     player->dashCooldown = 0.0f;
     player->dashTimer = 0.0f;
     player->dashDir = (Vector3){ 0 };
@@ -136,10 +136,10 @@ void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
     player->isFlying = false;
 
     // Cấu hình Enemy
-    enemy->position = (Vector3){ 900.0f, 0.0f, 350.0f };
-    enemy->radius = 35.0f;
+    enemy->position = (Vector3){ 9.0f, 0.0f, 3.5f };
+    enemy->radius = 0.35f;
     enemy->mode = ENEMY_STATIC;
-    enemy->speed = 120.0f;
+    enemy->speed = 1.2f;
     enemy->patrolAngle = 0.0f;
     enemy->oscillationScale = 1.0f;
     enemy->knockbackVelocity = (Vector3){ 0 };
@@ -155,8 +155,8 @@ void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
 }
 // Biến toàn cục để điều khiển camera
 static float g_cameraAngle = 0.0f;
-static float g_camDist = 600.0f;
-static float g_camHeight = 450.0f;
+static float g_camDist = 6.0f;
+static float g_camHeight = 4.5f;
 
 void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelState* uiState, Vector3* outMouseTarget) {
     Vector2 mousePos = GetMousePosition();
@@ -477,7 +477,7 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         if (dist < checkRadius) {
             // Chỉ đẩy lùi nếu người chơi ở độ cao thấp hơn đỉnh cột
             if (player->position.y < pillarHeight) {
-                if (i == 0 && player->position.y >= pillarHeight - 15.0f && player->zVelocity <= 0.0f) {
+                if (i == 0 && player->position.y >= pillarHeight - 0.15f && player->zVelocity <= 0.0f) {
                     currentGroundY = pillarHeight;
                 } else {
                     Vector3 pushDir = Vector3Normalize(diff);
@@ -497,7 +497,7 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     if (player->isFlying) {
         player->zVelocity = 0.0f;
         player->jumpCount = 0;
-        float flySpeed = 350.0f;
+        float flySpeed = 3.5f;
         if (IsKeyDown(KEY_SPACE) || touchFlyUp) {
             player->position.y += flySpeed * dt;
         }
@@ -525,11 +525,11 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
 
         // Nhẩy / Nhẩy kép
         if (jumpPressed) {
-            if (player->position.y <= currentGroundY + 1.0f) {
-                player->zVelocity = 550.0f;
+            if (player->position.y <= currentGroundY + 0.01f) {
+                player->zVelocity = 5.5f;
                 player->jumpCount = 1;
             } else if (player->jumpCount < 2) {
-                player->zVelocity = 500.0f;
+                player->zVelocity = 5.0f;
                 player->jumpCount = 2;
             }
         }
@@ -538,7 +538,7 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     // Dash lướt nhanh
     if (player->isDashing) {
         player->dashTimer -= dt;
-        float dashSpeed = 1200.0f;
+        float dashSpeed = 12.0f;
         player->position.x += player->dashDir.x * dashSpeed * dt;
         player->position.z += player->dashDir.z * dashSpeed * dt;
 
@@ -546,7 +546,7 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
             player->isDashing = false;
         }
     } else {
-        float moveSpeed = 300.0f;
+        float moveSpeed = 3.0f;
         player->position.x += moveDir.x * moveSpeed * dt;
         player->position.z += moveDir.z * moveSpeed * dt;
 
@@ -592,23 +592,23 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         }
         float oscillationFreq = IsEnemySlowed() ? 0.8f : 2.5f;
         targetPos = (Vector3){
-            900.0f, 
-            0.0f, 
-            350.0f + sinf(GetTime() * oscillationFreq) * 100.0f * enemy->oscillationScale
+            9.0f,
+            0.0f,
+            3.5f + sinf(GetTime() * oscillationFreq) * 1.0f * enemy->oscillationScale
         };
     } else if (enemy->mode == ENEMY_CHASE) {
         targetPos = player->position;
         targetPos.y = 0.0f;
     } else if (enemy->mode == ENEMY_PATROL) {
         if (currentEnemySpeed > 0.0f) {
-            float rotSpeed = (currentEnemySpeed / 200.0f);
+            float rotSpeed = (currentEnemySpeed / 2.0f);
             enemy->patrolAngle += rotSpeed * dt;
         }
-        Vector3 patrolCenter = { 600.0f, 0.0f, 440.0f };
+        Vector3 patrolCenter = { 6.0f, 0.0f, 4.4f };
         targetPos = (Vector3){
-            patrolCenter.x + cosf(enemy->patrolAngle) * 250.0f,
+            patrolCenter.x + cosf(enemy->patrolAngle) * 2.5f,
             0.0f,
-            patrolCenter.z + sinf(enemy->patrolAngle) * 200.0f
+            patrolCenter.z + sinf(enemy->patrolAngle) * 2.0f
         };
     }
 
@@ -617,7 +617,7 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         Vector3 toTarget = Vector3Subtract(targetPos, enemy->position);
         toTarget.y = 0.0f;
         float dist = Vector3Length(toTarget);
-        if (dist > 15.0f) {
+        if (dist > 0.15f) {
             Vector3 dir = Vector3Scale(Vector3Normalize(toTarget), currentEnemySpeed * dt);
             enemy->position = Vector3Add(enemy->position, dir);
         }
@@ -625,8 +625,8 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         Vector3 toTarget = Vector3Subtract(targetPos, enemy->position);
         toTarget.y = 0.0f;
         float dist = Vector3Length(toTarget);
-        if (dist > 1.0f) {
-            Vector3 step = Vector3Scale(Vector3Normalize(toTarget), 150.0f * dt);
+        if (dist > 0.01f) {
+            Vector3 step = Vector3Scale(Vector3Normalize(toTarget), 1.5f * dt);
             if (Vector3Length(step) > dist) step = toTarget;
             enemy->position = Vector3Add(enemy->position, step);
         } else {
@@ -645,7 +645,7 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     if (Vector3Length(enemy->knockbackVelocity) > 0.01f) {
         enemy->position = Vector3Add(enemy->position, Vector3Scale(enemy->knockbackVelocity, dt));
         enemy->knockbackVelocity = Vector3Subtract(enemy->knockbackVelocity, Vector3Scale(enemy->knockbackVelocity, 8.0f * dt));
-        if (Vector3Length(enemy->knockbackVelocity) < 2.0f) {
+        if (Vector3Length(enemy->knockbackVelocity) < 0.02f) {
             enemy->knockbackVelocity = (Vector3){0};
         }
     }
@@ -672,8 +672,8 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     }
 
     if (IsAnySkillShocking()) {
-        enemy->position.x += (float)GetRandomValue(-6, 6);
-        enemy->position.z += (float)GetRandomValue(-6, 6);
+        enemy->position.x += (float)GetRandomValue(-6, 6) * 0.01f;
+        enemy->position.z += (float)GetRandomValue(-6, 6) * 0.01f;
     }
 
     // Xoay camera bằng phím Q/E hoặc phím ảo
@@ -683,18 +683,21 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     // Zoom camera bằng phím R và F, hoặc Mouse Wheel
     float wheel = GetMouseWheelMove();
     if (wheel != 0.0f) {
-        g_camDist -= wheel * 50.0f;
+        g_camDist -= wheel * 0.5f;
     }
-    if (IsKeyDown(KEY_R)) g_camDist -= 300.0f * dt;
-    if (IsKeyDown(KEY_F)) g_camDist += 300.0f * dt;
-    
-    if (g_camDist < 100.0f) g_camDist = 100.0f;
-    if (g_camDist > 1500.0f) g_camDist = 1500.0f;
-    
+    if (IsKeyDown(KEY_R)) g_camDist -= 3.0f * dt;
+    if (IsKeyDown(KEY_F)) g_camDist += 3.0f * dt;
+
+    // Lower bound gives margin above main.c's MyBeginMode3D near plane
+    // (1.0f) — total camera-to-target distance is camDist*1.25 (see
+    // g_camHeight below), so a 2.0f floor keeps ~1.5x margin above near.
+    if (g_camDist < 2.0f) g_camDist = 2.0f;
+    if (g_camDist > 15.0f) g_camDist = 15.0f;
+
     g_camHeight = g_camDist * 0.75f;
 
     // Cập nhật Camera góc nhìn thứ 3 (MMORPG)
-    camera.target = (Vector3){ player->position.x, player->position.y + 20.0f, player->position.z };
+    camera.target = (Vector3){ player->position.x, player->position.y + 0.2f, player->position.z };
     
     camera.position = (Vector3){ 
         player->position.x + sinf(g_cameraAngle) * g_camDist, 
@@ -719,50 +722,50 @@ static void DrawAgentHealthBar3D(Vector3 worldPos, float yOffset, int agentId, C
     if (ratio < 0.0f) ratio = 0.0f;
     if (ratio > 1.0f) ratio = 1.0f;
 
-    float barWidth = 40.0f;
-    float barHeight = 5.0f;
+    float barWidth = 0.4f;
+    float barHeight = 0.05f;
     Vector3 barCenter = { worldPos.x, worldPos.y + yOffset, worldPos.z };
 
     Vector3 bgMin = { barCenter.x - barWidth * 0.5f, barCenter.y, barCenter.z };
     Vector3 bgMax = { barCenter.x + barWidth * 0.5f, barCenter.y + barHeight, barCenter.z };
-    DrawCube((Vector3){ (bgMin.x + bgMax.x) * 0.5f, (bgMin.y + bgMax.y) * 0.5f, barCenter.z }, barWidth, barHeight, 1.0f, ColorAlpha(BLACK, 0.6f));
+    DrawCube((Vector3){ (bgMin.x + bgMax.x) * 0.5f, (bgMin.y + bgMax.y) * 0.5f, barCenter.z }, barWidth, barHeight, 0.01f, ColorAlpha(BLACK, 0.6f));
 
     if (ratio > 0.0f) {
         float fillWidth = barWidth * ratio;
         Vector3 fillCenter = { bgMin.x + fillWidth * 0.5f, (bgMin.y + bgMax.y) * 0.5f, barCenter.z };
-        DrawCube(fillCenter, fillWidth, barHeight, 1.2f, fillColor);
+        DrawCube(fillCenter, fillWidth, barHeight, 0.012f, fillColor);
     }
 }
 
 void DrawSandbox3D(const PlayerEntity* player, const EnemyEntity* enemy, Vector3 mouseTarget, UIPanelState* uiState) {
-    if (player->position.y > 5.0f) {
+    if (player->position.y > 0.05f) {
         DrawLine3D((Vector3){ player->position.x, 0.0f, player->position.z }, player->position, ColorAlpha(GRAY, 0.5f));
     }
 
-    DrawCircleOutline3D((Vector3){ player->position.x, 0.08f, player->position.z }, 25.0f, ColorAlpha(LIME, 0.6f));
-    DrawCircleOutline3D((Vector3){ enemy->position.x, 0.08f, enemy->position.z }, 30.0f, ColorAlpha(RED, 0.6f));
+    DrawCircleOutline3D((Vector3){ player->position.x, 0.0008f, player->position.z }, 0.25f, ColorAlpha(LIME, 0.6f));
+    DrawCircleOutline3D((Vector3){ enemy->position.x, 0.0008f, enemy->position.z }, 0.3f, ColorAlpha(RED, 0.6f));
 
     for (int i = 0; i < NUM_PILLARS; i++) {
         float pillarHeight = pillars[i].radius * 2.5f;
         Vector3 center = { pillars[i].position.x, pillars[i].position.y + pillarHeight * 0.5f, pillars[i].position.z };
         Color pCol = (i == 0) ? GetColor(0xDAA520FF) : GetColor(0x3B3B42FF);
         Color pLineCol = (i == 0) ? YELLOW : GetColor(0x73737CFF);
-        
+
         Environment_DrawSmartShadow(pillars[i].position, ENV_SHAPE_CYLINDER, pillars[i].radius, pillarHeight);
         DrawCylinder(center, pillars[i].radius, pillars[i].radius, pillarHeight, 16, pCol);
         DrawCylinderWires(center, pillars[i].radius, pillars[i].radius, pillarHeight, 16, pLineCol);
     }
 
-    Environment_DrawSmartShadow(enemy->position, ENV_SHAPE_SPHERE, 30.0f, 30.0f);
-    DrawCharacter3D(enemy->position, 30.0f, GetColor(0xFFC0CBFF), IsEnemySlowed() ? GetColor(0x1B4F72FF) : (IsEnemyBurning() ? RED : GetColor(0x8B2500FF)), IsEnemySlowed() ? SKYBLUE : (IsEnemyBurning() ? YELLOW : GetColor(0xFF5500FF)), false, (Vector3){0});
-    
-    Environment_DrawSmartShadow(player->position, ENV_SHAPE_SPHERE, 25.0f, 25.0f);
-    DrawCharacter3D(player->position, 25.0f, GetColor(0xFFD39BFF), GetColor(0x3B5998FF), player->isDashing ? GetRegisteredSkillColor(uiState->activeSkillIndex) : GetColor(0xCCCCCCFF), true, mouseTarget);
+    Environment_DrawSmartShadow(enemy->position, ENV_SHAPE_SPHERE, 0.3f, 0.3f);
+    DrawCharacter3D(enemy->position, 0.3f, GetColor(0xFFC0CBFF), IsEnemySlowed() ? GetColor(0x1B4F72FF) : (IsEnemyBurning() ? RED : GetColor(0x8B2500FF)), IsEnemySlowed() ? SKYBLUE : (IsEnemyBurning() ? YELLOW : GetColor(0xFF5500FF)), false, (Vector3){0});
+
+    Environment_DrawSmartShadow(player->position, ENV_SHAPE_SPHERE, 0.25f, 0.25f);
+    DrawCharacter3D(player->position, 0.25f, GetColor(0xFFD39BFF), GetColor(0x3B5998FF), player->isDashing ? GetRegisteredSkillColor(uiState->activeSkillIndex) : GetColor(0xCCCCCCFF), true, mouseTarget);
 
     // HP bars sourced from the Entities agentPool (Entity_GetAgent), not the
     // legacy PlayerEntity/EnemyEntity structs (which have no HP field).
-    DrawAgentHealthBar3D(enemy->position, 50.0f, enemy->agentId, RED);
-    DrawAgentHealthBar3D(player->position, 46.0f, player->agentId, LIME);
+    DrawAgentHealthBar3D(enemy->position, 0.5f, enemy->agentId, RED);
+    DrawAgentHealthBar3D(player->position, 0.46f, player->agentId, LIME);
 }
 
 void DrawSandboxHUD(void) {

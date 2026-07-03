@@ -1,7 +1,9 @@
 #include "sandbox/ui_panel.h"
 #include "compute/gpu_particle_system.h"
+#include "core/tuning.h"
 #include "rlgl.h"
 #include <stdio.h>
+#include <string.h>
 
 static Rectangle rectQty[5];
 static Rectangle rectSize[3];
@@ -17,6 +19,37 @@ static int hoverSkillIndex = -1;
 static int skillOrder[64];
 static int draggedSkillSlot = -1;
 static Vector2 dragOffset = { 0, 0 };
+
+// --- Sandbox live-tuning panel (RegisterSkillTunables consumers only) ---
+// Refreshed whenever the selected skill changes; drag a slider to write
+// through SkillTunableEntry.value directly into the skill's own static
+// float, click Save to persist to that skill's .tuning file (core/tuning.h).
+static SkillTunableEntry currentTunables[MAX_SKILL_TUNABLES];
+static int currentTunableCount = 0;
+static int lastTunableSkillIndex = -2; // -2: "never synced" (distinct from -1 = no skill)
+static Rectangle rectTunableSlider[MAX_SKILL_TUNABLES];
+static Rectangle rectTunableSave;
+static int draggedTunableSlider = -1;
+
+// Pilot skills only (see plan: fire_ball, thunder_orb_skill) — extend this
+// list as more skills adopt RegisterSkillTunables.
+static const char *TunableConfigPathForSkill(int skillIndex) {
+  const char *name = GetRegisteredSkillName(skillIndex);
+  if (name == NULL) return NULL;
+  if (strcmp(name, "FIRE") == 0) return "skills/fire/fire_ball/fire_ball.tuning";
+  if (strcmp(name, "THUNDER_ORB") == 0) return "skills/metal/thunder_orb_skill/thunder_orb_skill.tuning";
+  return NULL;
+}
+
+static void RefreshTunableLayout(int skillIndex) {
+  currentTunableCount = Skill_GetTunables(skillIndex, currentTunables, MAX_SKILL_TUNABLES);
+  lastTunableSkillIndex = skillIndex;
+  draggedTunableSlider = -1;
+  for (int i = 0; i < currentTunableCount; i++) {
+    rectTunableSlider[i] = (Rectangle){870, 320.0f + i * 40.0f, 260, 24};
+  }
+  rectTunableSave = (Rectangle){870, 320.0f + currentTunableCount * 40.0f + 8.0f, 120, 32};
+}
 
 void InitUIPanel(void) {
   togglePanelBtn = (Rectangle){20, 15, 180, 32};
@@ -181,6 +214,49 @@ void UpdateUIPanel(Vector2 mousePos, UIPanelState *state) {
       if (CheckCollisionPointRec(mousePos, rectPortalToggle)) {
         state->currentParams.showPortal = !state->currentParams.showPortal;
       }
+    }
+  }
+
+  // --- Sandbox live-tuning panel ---
+  if (state->activeSkillIndex != lastTunableSkillIndex) {
+    RefreshTunableLayout(state->activeSkillIndex);
+  }
+
+  for (int i = 0; i < currentTunableCount; i++) {
+    if (CheckCollisionPointRec(mousePos, rectTunableSlider[i])) {
+      state->clickedOnUI = true;
+      if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) draggedTunableSlider = i;
+    }
+  }
+  if (currentTunableCount > 0 && CheckCollisionPointRec(mousePos, rectTunableSave)) {
+    state->clickedOnUI = true;
+  }
+
+  if (draggedTunableSlider != -1) {
+    state->clickedOnUI = true;
+    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+      SkillTunableEntry *e = &currentTunables[draggedTunableSlider];
+      Rectangle r = rectTunableSlider[draggedTunableSlider];
+      float t = (mousePos.x - r.x) / r.width;
+      if (t < 0.0f) t = 0.0f;
+      if (t > 1.0f) t = 1.0f;
+      *e->value = e->min + t * (e->max - e->min);
+    } else {
+      draggedTunableSlider = -1;
+    }
+  }
+
+  if (currentTunableCount > 0 && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+      CheckCollisionPointRec(mousePos, rectTunableSave)) {
+    const char *path = TunableConfigPathForSkill(state->activeSkillIndex);
+    if (path != NULL) {
+      const char *keys[MAX_SKILL_TUNABLES];
+      float values[MAX_SKILL_TUNABLES];
+      for (int i = 0; i < currentTunableCount; i++) {
+        keys[i] = currentTunables[i].label;
+        values[i] = *currentTunables[i].value;
+      }
+      Tuning_SaveFloats(path, keys, values, currentTunableCount);
     }
   }
 }
@@ -353,6 +429,30 @@ void DrawUIPanel(const UIPanelState *state) {
     DrawText(modeText, bx + 10, by + 8, 13, modeColor);
     DrawText(TextFormat("particles: %d/%d", active, MAX_GPU_PARTICLES),
              bx, by + 36, 11, LIGHTGRAY);
+  }
+
+  // Sandbox live-tuning sliders — only drawn for skills that called
+  // RegisterSkillTunables (core/skill_manager.h). Empty for every other skill.
+  if (currentTunableCount > 0) {
+    DrawText("Tuning (drag to adjust):", 770, 295, 16, LIGHTGRAY);
+    for (int i = 0; i < currentTunableCount; i++) {
+      const SkillTunableEntry *e = &currentTunables[i];
+      Rectangle r = rectTunableSlider[i];
+      float t = (e->max > e->min) ? (*e->value - e->min) / (e->max - e->min) : 0.0f;
+      if (t < 0.0f) t = 0.0f;
+      if (t > 1.0f) t = 1.0f;
+
+      DrawRectangleRounded(r, 0.3f, 6, ColorAlpha(DARKGRAY, 0.6f));
+      Rectangle fillRect = {r.x, r.y, r.width * t, r.height};
+      DrawRectangleRounded(fillRect, 0.3f, 6, (draggedTunableSlider == i) ? YELLOW : SKYBLUE);
+      DrawRectangleRoundedLines(r, 0.3f, 6, WHITE);
+      DrawText(TextFormat("%s: %.3f", e->label, *e->value), (int)r.x + 6, (int)r.y + 5, 11, WHITE);
+    }
+
+    bool saveHover = CheckCollisionPointRec(GetMousePosition(), rectTunableSave);
+    DrawRectangleRounded(rectTunableSave, 0.2f, 10, saveHover ? LIME : DARKGREEN);
+    DrawRectangleRoundedLines(rectTunableSave, 0.2f, 10, WHITE);
+    DrawText("SAVE", (int)rectTunableSave.x + 35, (int)rectTunableSave.y + 8, 16, WHITE);
   }
 
   EndBlendMode();
