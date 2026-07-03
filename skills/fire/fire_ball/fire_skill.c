@@ -65,10 +65,18 @@ static float s_dragonHeadScale = 0.0012f;   // pixel-to-world-meters ratio for t
 // from current tunable values right before it's used each time (not just
 // once at Init) so these new knobs AND the pre-existing curl/rise/gravity/
 // drag tunables actually respond live in the sandbox instead of being baked in.
-static float s_castAlpha = 1.0f;
-static float s_flyAlpha = 1.0f;
-static float s_impactAlpha = 1.0f;
-static float s_disperseAlpha = 1.0f;
+// Per-phase over-lifetime curves (core/skill_curve.h + core/particle_system.h's
+// radiusCurve/speedCurve/alphaCurve) — how a particle's size/velocity/opacity
+// evolve across its OWN lifetime (t=0 at spawn, t=1 at death), not just a
+// flat multiplier. Seeded flat at 1.0 (radius/speed: no change from today's
+// behavior; alpha: same as the old plain s_XAlpha multiplier) so these are
+// no-ops until shaped in the sandbox — e.g. dragging the radius curve's
+// middle keys up and the last key to 0 makes particles balloon then pop
+// instead of holding a constant size.
+static SkillCurve s_castRadiusCurve, s_castSpeedCurve, s_castAlphaCurve;
+static SkillCurve s_flyRadiusCurve, s_flySpeedCurve, s_flyAlphaCurve;
+static SkillCurve s_impactRadiusCurve, s_impactSpeedCurve, s_impactAlphaCurve;
+static SkillCurve s_disperseRadiusCurve, s_disperseSpeedCurve, s_disperseAlphaCurve;
 static SkillForceMix s_castForce;
 static SkillForceMix s_flyForce;
 static SkillForceMix s_impactForce;
@@ -107,22 +115,16 @@ static float s_disperseSpeedMin = 0.8f, s_disperseSpeedMax = 2.6f;   // m/s, hor
 static float s_disperseRadiusMin = 0.025f;
 static float s_disperseLifetimeMin = 0.6f, s_disperseLifetimeMax = 1.3f;
 
-static unsigned char ScaleAlpha(unsigned char a, float mul) {
-  float v = (float)a * mul;
-  if (v < 0.0f) v = 0.0f;
-  if (v > 255.0f) v = 255.0f;
-  return (unsigned char)v;
-}
-
 static void RebuildFireImpactField(void);
 static void RebuildFireDisperseField(void);
 static void RebuildFireBodyFields(void);
 static void RebuildFireBurstField(void);
 
 // 21 original named tunables + 40 shape/feel-range tunables (count/speed/
-// lifetime/radius-min per spawn site) + 4 phases x 2 force slots x
-// SKILL_FORCE_MIX_TUNABLE_COUNT(29) = 21 + 40 + 116 = 177
-#define FIRE_SKILL_TUNABLE_COUNT 177
+// lifetime/radius-min per spawn site) - 4 old single-float alpha entries
+// + 4 phases x 3 over-lifetime curves (radius/speed/alpha) + 4 phases x 1
+// force mix x SKILL_FORCE_MIX_TUNABLE_COUNT(29) = 21 + 40 - 4 + 12 + 116 = 185
+#define FIRE_SKILL_TUNABLE_COUNT 185
 
 #define FIRE_PROGRESS_MAX 2.5f
 
@@ -261,9 +263,12 @@ static void TriggerFireImpact(Vector3 pos, float sizeScale) {
                   sinf(angle) * speed * cosf(pitch)};
     cfg.radius = Math_Mix(s_impactSparkRadiusMin, s_impactSparkRadiusMax, Random01()) * sizeScale * 4.0f;
     cfg.lifetime = Math_Mix(s_impactSparkLifetimeMin, s_impactSparkLifetimeMax, Random01());
-    cfg.colorStart = (Color){255, 200, 40, ScaleAlpha(230, s_impactAlpha)};
+    cfg.colorStart = (Color){255, 200, 40, 230};
     cfg.colorEnd = (Color){200, 20, 0, 0};
     cfg.forceField = &s_fireImpactField;
+    cfg.radiusCurve = &s_impactRadiusCurve;
+    cfg.speedCurve = &s_impactSpeedCurve;
+    cfg.alphaCurve = &s_impactAlphaCurve;
     SpawnParticle(cfg);
   }
 
@@ -280,9 +285,12 @@ static void TriggerFireImpact(Vector3 pos, float sizeScale) {
                   sinf(angle) * speed};
     cfg.radius = Math_Mix(s_disperseRadiusMin, s_disperseRadiusMax, Random01()) * sizeScale * 4.0f;
     cfg.lifetime = Math_Mix(s_disperseLifetimeMin, s_disperseLifetimeMax, Random01());
-    cfg.colorStart = (Color){255, 120, 20, ScaleAlpha(200, s_disperseAlpha)};
+    cfg.colorStart = (Color){255, 120, 20, 200};
     cfg.colorEnd = (Color){120, 10, 0, 0};
     cfg.forceField = &s_fireDisperseField;
+    cfg.radiusCurve = &s_disperseRadiusCurve;
+    cfg.speedCurve = &s_disperseSpeedCurve;
+    cfg.alphaCurve = &s_disperseAlphaCurve;
     SpawnParticle(cfg);
   }
 
@@ -290,16 +298,20 @@ static void TriggerFireImpact(Vector3 pos, float sizeScale) {
   staticCore1.position = pos;
   staticCore1.radius = s_impactFlash1Radius * sizeScale * 4.0f;
   staticCore1.lifetime = s_impactFlash1Lifetime;
-  staticCore1.colorStart = (Color){255, 100, 10, ScaleAlpha(180, s_impactAlpha)};
+  staticCore1.colorStart = (Color){255, 100, 10, 180};
   staticCore1.colorEnd = (Color){0, 0, 0, 0};
+  staticCore1.radiusCurve = &s_impactRadiusCurve;
+  staticCore1.alphaCurve = &s_impactAlphaCurve;
   SpawnParticle(staticCore1);
 
   ParticleConfig staticCore2 = {0};
   staticCore2.position = pos;
   staticCore2.radius = s_impactFlash2Radius * sizeScale * 4.0f;
   staticCore2.lifetime = s_impactFlash2Lifetime;
-  staticCore2.colorStart = (Color){255, 230, 80, ScaleAlpha(255, s_impactAlpha)};
+  staticCore2.colorStart = (Color){255, 230, 80, 255};
   staticCore2.colorEnd = (Color){100, 0, 0, 0};
+  staticCore2.radiusCurve = &s_impactRadiusCurve;
+  staticCore2.alphaCurve = &s_impactAlphaCurve;
   SpawnParticle(staticCore2);
 }
 
@@ -321,6 +333,21 @@ void InitFireSkill(int screenWidth, int screenHeight) {
   // SkillTunables_LoadPersisted so the ForceField setup below sees the final,
   // persisted values — same order the old flat-array load used. ---
   SkillCurve_SetConstant(&s_fireTravelSpeedCurve, 1.8f); // seed flat at the old constant speed
+
+  // Seed every per-phase radius/speed/alpha curve flat at 1.0 (no change
+  // from today's behavior) before building tunable entries below.
+  SkillCurve_SetConstant(&s_castRadiusCurve, 1.0f);
+  SkillCurve_SetConstant(&s_castSpeedCurve, 1.0f);
+  SkillCurve_SetConstant(&s_castAlphaCurve, 1.0f);
+  SkillCurve_SetConstant(&s_flyRadiusCurve, 1.0f);
+  SkillCurve_SetConstant(&s_flySpeedCurve, 1.0f);
+  SkillCurve_SetConstant(&s_flyAlphaCurve, 1.0f);
+  SkillCurve_SetConstant(&s_impactRadiusCurve, 1.0f);
+  SkillCurve_SetConstant(&s_impactSpeedCurve, 1.0f);
+  SkillCurve_SetConstant(&s_impactAlphaCurve, 1.0f);
+  SkillCurve_SetConstant(&s_disperseRadiusCurve, 1.0f);
+  SkillCurve_SetConstant(&s_disperseSpeedCurve, 1.0f);
+  SkillCurve_SetConstant(&s_disperseAlphaCurve, 1.0f);
 
   s_skillIndex = Skill_GetIndexByName("FIRE");
 
@@ -344,7 +371,9 @@ void InitFireSkill(int screenWidth, int screenHeight) {
   s_fireTunables[fn++] = (SkillTunableEntry){"burst_speed_y_max", &s_castBurstSpeedYMax, -10.0f, 10.0f, 4.0f, "cast"};
   s_fireTunables[fn++] = (SkillTunableEntry){"burst_lifetime_min", &s_castBurstLifetimeMin, 0.05f, 3.0f, 0.3f, "cast"};
   s_fireTunables[fn++] = (SkillTunableEntry){"burst_lifetime_max", &s_castBurstLifetimeMax, 0.05f, 3.0f, 0.8f, "cast"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"cast_alpha", &s_castAlpha, 0.0f, 1.0f, 1.0f, "cast"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"cast_radius_curve", NULL, 0.0f, 3.0f, 1.0f, "cast", &s_castRadiusCurve};
+  s_fireTunables[fn++] = (SkillTunableEntry){"cast_speed_curve", NULL, 0.0f, 3.0f, 1.0f, "cast", &s_castSpeedCurve};
+  s_fireTunables[fn++] = (SkillTunableEntry){"cast_alpha_curve", NULL, 0.0f, 1.0f, 1.0f, "cast", &s_castAlphaCurve};
   fn += SkillForceMix_MakeTunables(&s_castForce, "cast_force_", "cast", &s_fireTunables[fn]);
 
   s_fireTunables[fn++] = (SkillTunableEntry){"flame_body_curl", &s_flameBodyCurl, 0.0f, 5.0f, 1.2f, "fly"};
@@ -368,7 +397,9 @@ void InitFireSkill(int screenWidth, int screenHeight) {
   s_fireTunables[fn++] = (SkillTunableEntry){"fly_outward_speed_max", &s_flyOutwardSpeedMax, 0.0f, 5.0f, 0.4f, "fly"};
   s_fireTunables[fn++] = (SkillTunableEntry){"fly_backward_speed_min", &s_flyBackwardSpeedMin, 0.0f, 10.0f, 1.6f, "fly"};
   s_fireTunables[fn++] = (SkillTunableEntry){"fly_backward_speed_max", &s_flyBackwardSpeedMax, 0.0f, 10.0f, 3.4f, "fly"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"fly_alpha", &s_flyAlpha, 0.0f, 1.0f, 1.0f, "fly"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"fly_radius_curve", NULL, 0.0f, 3.0f, 1.0f, "fly", &s_flyRadiusCurve};
+  s_fireTunables[fn++] = (SkillTunableEntry){"fly_speed_curve", NULL, 0.0f, 3.0f, 1.0f, "fly", &s_flySpeedCurve};
+  s_fireTunables[fn++] = (SkillTunableEntry){"fly_alpha_curve", NULL, 0.0f, 1.0f, 1.0f, "fly", &s_flyAlphaCurve};
   fn += SkillForceMix_MakeTunables(&s_flyForce, "fly_force_", "fly", &s_fireTunables[fn]);
 
   s_fireTunables[fn++] = (SkillTunableEntry){"fire_impact_gravity", &s_fireImpactGravity, 0.0f, 19.62f, 1.8f, "impact"};
@@ -385,7 +416,9 @@ void InitFireSkill(int screenWidth, int screenHeight) {
   s_fireTunables[fn++] = (SkillTunableEntry){"impact_spark_speed_max", &s_impactSparkSpeedMax, 0.0f, 10.0f, 4.2f, "impact"};
   s_fireTunables[fn++] = (SkillTunableEntry){"impact_spark_lifetime_min", &s_impactSparkLifetimeMin, 0.02f, 3.0f, 0.3f, "impact"};
   s_fireTunables[fn++] = (SkillTunableEntry){"impact_spark_lifetime_max", &s_impactSparkLifetimeMax, 0.02f, 3.0f, 0.7f, "impact"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"impact_alpha", &s_impactAlpha, 0.0f, 1.0f, 1.0f, "impact"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"impact_radius_curve", NULL, 0.0f, 3.0f, 1.0f, "impact", &s_impactRadiusCurve};
+  s_fireTunables[fn++] = (SkillTunableEntry){"impact_speed_curve", NULL, 0.0f, 3.0f, 1.0f, "impact", &s_impactSpeedCurve};
+  s_fireTunables[fn++] = (SkillTunableEntry){"impact_alpha_curve", NULL, 0.0f, 1.0f, 1.0f, "impact", &s_impactAlphaCurve};
   fn += SkillForceMix_MakeTunables(&s_impactForce, "impact_force_", "impact", &s_fireTunables[fn]);
 
   s_fireTunables[fn++] = (SkillTunableEntry){"fire_disperse_rise", &s_fireDisperseRise, 0.0f, 19.62f, 2.6f, "disperse"};
@@ -398,7 +431,9 @@ void InitFireSkill(int screenWidth, int screenHeight) {
   s_fireTunables[fn++] = (SkillTunableEntry){"disperse_speed_max", &s_disperseSpeedMax, 0.0f, 10.0f, 2.6f, "disperse"};
   s_fireTunables[fn++] = (SkillTunableEntry){"disperse_lifetime_min", &s_disperseLifetimeMin, 0.02f, 3.0f, 0.6f, "disperse"};
   s_fireTunables[fn++] = (SkillTunableEntry){"disperse_lifetime_max", &s_disperseLifetimeMax, 0.02f, 3.0f, 1.3f, "disperse"};
-  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_alpha", &s_disperseAlpha, 0.0f, 1.0f, 1.0f, "disperse"};
+  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_radius_curve", NULL, 0.0f, 3.0f, 1.0f, "disperse", &s_disperseRadiusCurve};
+  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_speed_curve", NULL, 0.0f, 3.0f, 1.0f, "disperse", &s_disperseSpeedCurve};
+  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_alpha_curve", NULL, 0.0f, 1.0f, 1.0f, "disperse", &s_disperseAlphaCurve};
   fn += SkillForceMix_MakeTunables(&s_disperseForce, "disperse_force_", "disperse", &s_fireTunables[fn]);
 
   SkillTunables_LoadPersisted("skills/fire/fire_ball/fire_ball.tuning",
@@ -521,8 +556,10 @@ void CastFireSkill(int agentId, Vector3 startPos, Vector3 target, float twistPha
   flash.position = startPos;
   flash.radius = s_castFlashRadius * sizeScale;
   flash.lifetime = s_castFlashLifetime;
-  flash.colorStart = (Color){255, 140, 20, ScaleAlpha(255, s_castAlpha)};
+  flash.colorStart = (Color){255, 140, 20, 255};
   flash.colorEnd = (Color){0, 0, 0, 0};
+  flash.radiusCurve = &s_castRadiusCurve;
+  flash.alphaCurve = &s_castAlphaCurve;
   SpawnParticle(flash);
 
   int burstCount = (int)Math_Mix(s_castBurstCountMin, s_castBurstCountMax, Random01()) * sizeScale;
@@ -537,9 +574,12 @@ void CastFireSkill(int agentId, Vector3 startPos, Vector3 target, float twistPha
         sizeScale * 4.0f;
     cfg.lifetime =
         Math_Mix(s_castBurstLifetimeMin, s_castBurstLifetimeMax, Random01());
-    cfg.colorStart = (Color){255, 90, 10, ScaleAlpha(200, s_castAlpha)};
+    cfg.colorStart = (Color){255, 90, 10, 200};
     cfg.colorEnd = (Color){0, 0, 0, 0};
     cfg.forceField = &s_fireBurstField;
+    cfg.radiusCurve = &s_castRadiusCurve;
+    cfg.speedCurve = &s_castSpeedCurve;
+    cfg.alphaCurve = &s_castAlphaCurve;
     SpawnParticle(cfg);
   }
 
@@ -695,9 +735,12 @@ void UpdateFireSkill(float dt) {
         cfgCore.velocity = vel;
         cfgCore.radius = rad * s_flyCoreRadiusMult;
         cfgCore.lifetime = Math_Mix(s_flyCoreLifetimeMin, s_flyCoreLifetimeMax, Random01());
-        cfgCore.colorStart = (Color){255, 230, 100, ScaleAlpha(255, s_flyAlpha)};
+        cfgCore.colorStart = (Color){255, 230, 100, 255};
         cfgCore.colorEnd = (Color){255, 60, 0, 0};
         cfgCore.forceField = &s_flameBodyField;
+        cfgCore.radiusCurve = &s_flyRadiusCurve;
+        cfgCore.speedCurve = &s_flySpeedCurve;
+        cfgCore.alphaCurve = &s_flyAlphaCurve;
         SpawnParticle(cfgCore);
 
         ParticleConfig cfgAura = {0};
@@ -707,9 +750,12 @@ void UpdateFireSkill(float dt) {
         cfgAura.velocity = Vector3Scale(vel, 0.75f);
         cfgAura.radius = rad * s_flyAuraRadiusMult;
         cfgAura.lifetime = Math_Mix(s_flyAuraLifetimeMin, s_flyAuraLifetimeMax, Random01());
-        cfgAura.colorStart = (Color){255, 90, 15, ScaleAlpha(140, s_flyAlpha)};
+        cfgAura.colorStart = (Color){255, 90, 15, 140};
         cfgAura.colorEnd = (Color){100, 5, 0, 0};
         cfgAura.forceField = &s_flameAuraField;
+        cfgAura.radiusCurve = &s_flyRadiusCurve;
+        cfgAura.speedCurve = &s_flySpeedCurve;
+        cfgAura.alphaCurve = &s_flyAlphaCurve;
         SpawnParticle(cfgAura);
       }
     }

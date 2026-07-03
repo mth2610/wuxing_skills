@@ -63,19 +63,15 @@ static SkillForceMix s_rainForce;
 static ForceField s_flightParticleField; // rebuilt each frame from s_flightForce
 static ForceField s_rainSparkField;      // rebuilt each strike from s_rainForce
 
-// Per-phase opacity multiplier (0..1) applied to that phase's spawned
-// particle alpha. No impact-phase alpha/force here — TriggerImpact() has no
-// local particle spawn of its own (delegates entirely to the shared
-// SpawnImpactEffect preset), so there's nothing local to scale.
-static float s_flightAlpha = 1.0f;
-static float s_rainAlpha = 1.0f;
-
-static unsigned char ScaleAlpha(unsigned char a, float mul) {
-  float v = (float)a * mul;
-  if (v < 0.0f) v = 0.0f;
-  if (v > 255.0f) v = 255.0f;
-  return (unsigned char)v;
-}
+// Per-phase over-lifetime curves (core/skill_curve.h + core/particle_system.h's
+// radiusCurve/speedCurve/alphaCurve) — how a particle's size/velocity/opacity
+// evolve across its OWN lifetime (t=0 at spawn, t=1 at death), seeded flat at
+// 1.0 (no change from today's behavior) so these are no-ops until shaped in
+// the sandbox. No impact-phase curves here — TriggerImpact() has no local
+// particle spawn of its own (delegates entirely to the shared
+// SpawnImpactEffect preset), so there's nothing local to shape.
+static SkillCurve s_flightRadiusCurve, s_flightSpeedParticleCurve, s_flightAlphaCurve;
+static SkillCurve s_rainRadiusCurve, s_rainSpeedCurve, s_rainAlphaCurve;
 
 // Remaining per-spawn-site shape/feel knobs — everything that visibly
 // changes how dense, fast, or long-lived an effect reads. Pool-size
@@ -106,9 +102,11 @@ static float s_sparkLifetimeMin = 0.25f, s_sparkLifetimeMax = 0.5f;
 static float s_arcLife = 0.12f;
 static float s_arcRadiusMin = 0.15f, s_arcRadiusMax = 0.45f;
 
-// 12 original named tunables + 30 shape/feel-range tunables + 2 phases x 2
-// force mixes x SKILL_FORCE_MIX_TUNABLE_COUNT(29) = 12 + 30 + 58 = 100
-#define THUNDER_ORB_TUNABLE_COUNT 100
+// 12 original named tunables + 30 shape/feel-range tunables - 2 old
+// single-float alpha entries + 2 phases x 3 over-lifetime curves
+// (radius/speed/alpha) + 2 phases x 1 force mix x
+// SKILL_FORCE_MIX_TUNABLE_COUNT(29) = 12 + 30 - 2 + 6 + 58 = 104
+#define THUNDER_ORB_TUNABLE_COUNT 104
 
 // ── types ──────────────────────────────────────────────────────────────────
 
@@ -200,11 +198,14 @@ static Vector3 FibSphereDir(int i, int n) {
 static void EmitOrbParticles(Vector3 pos) {
     RebuildFlightParticleField();
     ParticleConfig p = { 0 };
-    p.colorStart = (Color){ 255, 240, 180, ScaleAlpha(220, s_flightAlpha) };
+    p.colorStart = (Color){ 255, 240, 180, 220 };
     p.colorEnd   = (Color){ 180, 220, 255,   0 };
     p.radius     = s_orbParticleRadius;
     p.lifetime   = s_orbParticleLifetime;
     p.forceField = &s_flightParticleField;
+    p.radiusCurve = &s_flightRadiusCurve;
+    p.speedCurve = &s_flightSpeedParticleCurve;
+    p.alphaCurve = &s_flightAlphaCurve;
     for (int i = 0; i < 3; i++) {
         float a = RandRange(0.0f, 2.0f * PI);
         float b = RandRange(-PI * 0.5f, PI * 0.5f);
@@ -223,14 +224,17 @@ static void EmitOrbCore(Vector3 pos) {
     p.position = pos;
     p.velocity = (Vector3){ 0 };
     p.forceField = &s_flightParticleField;
+    p.radiusCurve = &s_flightRadiusCurve;
+    p.speedCurve = &s_flightSpeedParticleCurve;
+    p.alphaCurve = &s_flightAlphaCurve;
 
-    p.colorStart = (Color){ 255, 255, 255, ScaleAlpha(255, s_flightAlpha) };
+    p.colorStart = (Color){ 255, 255, 255, 255 };
     p.colorEnd   = (Color){ 210, 190, 255,   0 };
     p.radius     = s_orbRadius * s_orbCore1RadiusMult;
     p.lifetime   = s_orbCore1Lifetime;
     SpawnParticle(p);
 
-    p.colorStart = (Color){ 150, 110, 255, ScaleAlpha(110, s_flightAlpha) };
+    p.colorStart = (Color){ 150, 110, 255, 110 };
     p.colorEnd   = (Color){  70,  30, 200,   0 };
     p.radius     = s_orbRadius * s_orbCore2RadiusMult;
     p.lifetime   = s_orbCore2Lifetime;
@@ -308,10 +312,13 @@ static void SpawnArcBurst(Vector3 groundPoint) {
 static void EmitStrikeSparks(Vector3 groundPoint) {
     RebuildRainSparkField();
     ParticleConfig p = { 0 };
-    p.colorStart = (Color){ 255, 250, 255, ScaleAlpha(255, s_rainAlpha) };
+    p.colorStart = (Color){ 255, 250, 255, 255 };
     p.colorEnd   = (Color){ 140,  90, 255,   0 };
     p.radius     = s_sparkRadius;
     p.forceField = &s_rainSparkField;
+    p.radiusCurve = &s_rainRadiusCurve;
+    p.speedCurve = &s_rainSpeedCurve;
+    p.alphaCurve = &s_rainAlphaCurve;
     int count = (int)s_sparkCount;
     for (int i = 0; i < count; i++) {
         float a   = RandRange(0.0f, 2.0f * PI);
@@ -406,6 +413,15 @@ void InitThunderOrbSkill(int screenWidth, int screenHeight) {
     }
     SkillCurve_SetConstant(&s_flightSpeedCurve, legacyFlightSpeed);
 
+    // Seed every per-phase radius/speed/alpha curve flat at 1.0 (no change
+    // from today's behavior) before building tunable entries below.
+    SkillCurve_SetConstant(&s_flightRadiusCurve, 1.0f);
+    SkillCurve_SetConstant(&s_flightSpeedParticleCurve, 1.0f);
+    SkillCurve_SetConstant(&s_flightAlphaCurve, 1.0f);
+    SkillCurve_SetConstant(&s_rainRadiusCurve, 1.0f);
+    SkillCurve_SetConstant(&s_rainSpeedCurve, 1.0f);
+    SkillCurve_SetConstant(&s_rainAlphaCurve, 1.0f);
+
     int skillIndex = Skill_GetIndexByName("THUNDER_ORB");
     // Built as a sequence of assignments (not a single literal) so each
     // phase's named entries stay contiguous with that phase's force slots —
@@ -431,7 +447,9 @@ void InitThunderOrbSkill(int screenWidth, int screenHeight) {
     s_thunderOrbTunables[tn++] = (SkillTunableEntry){"orb_core1_lifetime", &s_orbCore1Lifetime, 0.02f, 1.0f, 0.09f, "flight"};
     s_thunderOrbTunables[tn++] = (SkillTunableEntry){"orb_core2_radius_mult", &s_orbCore2RadiusMult, 0.0f, 5.0f, 1.6f, "flight"};
     s_thunderOrbTunables[tn++] = (SkillTunableEntry){"orb_core2_lifetime", &s_orbCore2Lifetime, 0.02f, 1.0f, 0.13f, "flight"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"flight_alpha", &s_flightAlpha, 0.0f, 1.0f, 1.0f, "flight"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"flight_radius_curve", NULL, 0.0f, 3.0f, 1.0f, "flight", &s_flightRadiusCurve};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"flight_speed_curve", NULL, 0.0f, 3.0f, 1.0f, "flight", &s_flightSpeedParticleCurve};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"flight_alpha_curve", NULL, 0.0f, 1.0f, 1.0f, "flight", &s_flightAlphaCurve};
     tn += SkillForceMix_MakeTunables(&s_flightForce, "flight_force_", "flight", &s_thunderOrbTunables[tn]);
 
     s_thunderOrbTunables[tn++] = (SkillTunableEntry){"impact_knockback", &s_impactKnockback, 0.0f, 10.0f, 2.8f, "impact"};
@@ -457,7 +475,9 @@ void InitThunderOrbSkill(int screenWidth, int screenHeight) {
     s_thunderOrbTunables[tn++] = (SkillTunableEntry){"arc_life", &s_arcLife, 0.02f, 2.0f, 0.12f, "rain"};
     s_thunderOrbTunables[tn++] = (SkillTunableEntry){"arc_radius_min", &s_arcRadiusMin, 0.0f, 2.0f, 0.15f, "rain"};
     s_thunderOrbTunables[tn++] = (SkillTunableEntry){"arc_radius_max", &s_arcRadiusMax, 0.0f, 2.0f, 0.45f, "rain"};
-    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_alpha", &s_rainAlpha, 0.0f, 1.0f, 1.0f, "rain"};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_radius_curve", NULL, 0.0f, 3.0f, 1.0f, "rain", &s_rainRadiusCurve};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_speed_curve", NULL, 0.0f, 3.0f, 1.0f, "rain", &s_rainSpeedCurve};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_alpha_curve", NULL, 0.0f, 1.0f, 1.0f, "rain", &s_rainAlphaCurve};
     tn += SkillForceMix_MakeTunables(&s_rainForce, "rain_force_", "rain", &s_thunderOrbTunables[tn]);
 
     SkillTunables_LoadPersisted(

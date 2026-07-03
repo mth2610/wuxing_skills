@@ -62,21 +62,32 @@ static int tunableSlotCount = 0;
 static int draggedTunableSlot = -1;
 
 // Row-top Y per entry (content-space, i.e. BEFORE the scroll offset — see
-// tunableScrollY) and one header per phase-tag transition.
+// tunableScrollY), content-space here meaning relative to the CURRENT tab
+// only (see tab system below) — switching tabs rebuilds this from scratch.
 static float entryRowY[MAX_SKILL_TUNABLES];
-typedef struct { float y; const char *phase; } TunablePhaseHeader;
-static TunablePhaseHeader tunableHeaders[MAX_SKILL_TUNABLES];
-static int tunableHeaderCount = 0;
 
-// Tuning panel geometry — single column, vertically scrollable. A
-// column-wrapping layout was tried first but still ran off both the bottom
-// AND right edge on a real (smaller-than-assumed) window — a scrollbar is
-// the only approach that's correct regardless of window size or how many
-// tunables a skill ends up with (up to the MAX_SKILL_TUNABLES cap of 32).
+// One tab per distinct SkillTunableEntry.phase seen (in registration order);
+// entries with phase == NULL (legacy/ungrouped) share one "GENERAL" tab.
+// Replaces the old single-scroll-list-with-inline-headers layout — with
+// skills now carrying 100-185 tunables across 4+ phases, scrolling past
+// three other phases to reach the fourth was the opposite of "gọn gàng".
+#define TUNABLE_MAX_TABS 16
+static const char *tunableTabNames[TUNABLE_MAX_TABS]; // NULL entries render as "GENERAL"
+static int tunableTabCount = 0;
+static int activeTunableTab = 0;
+static Rectangle tunableTabRects[TUNABLE_MAX_TABS];
+
+// Tuning panel geometry — single column, vertically scrollable within the
+// active tab. A column-wrapping layout was tried first but still ran off
+// both the bottom AND right edge on a real (smaller-than-assumed) window —
+// a scrollbar is the only approach that's correct regardless of window size
+// or how many tunables a phase ends up with.
+// Top Y values tightened (was 340/380) to match the compacted control block
+// above (Quantity..GPU status now ends around y=240 instead of y=340).
 #define TUNABLE_PANEL_X 770.0f
-#define TUNABLE_PANEL_TOP 380.0f
-#define TUNABLE_SLIDER_WIDTH 380.0f
-#define TUNABLE_HEADER_ROW_H 30.0f
+#define TUNABLE_TAB_ROW_TOP 280.0f
+#define TUNABLE_TAB_ROW_H 30.0f
+#define TUNABLE_PANEL_TOP 320.0f
 #define TUNABLE_LABEL_ROW_H 22.0f
 #define TUNABLE_SLIDER_ROW_H 28.0f
 #define TUNABLE_ROW_GAP 14.0f
@@ -88,6 +99,14 @@ static float tunableContentH = 0.0f;  // total content height (content-space)
 static float TunableViewportH(void) {
   float h = (float)GetScreenHeight() - TUNABLE_PANEL_TOP - TUNABLE_BOTTOM_MARGIN;
   return (h > 0.0f) ? h : 0.0f;
+}
+// Slider width now fills most of the available window width (was a fixed
+// 380px) — "expand to the max of the box" for real drag room, instead of a
+// cramped fixed-width column. Leaves room for the scrollbar (~20px) and a
+// right margin; floors at 200px so a very narrow window doesn't invert.
+static float TunableSliderWidth(void) {
+  float w = (float)GetScreenWidth() - TUNABLE_PANEL_X - 60.0f;
+  return (w > 200.0f) ? w : 200.0f;
 }
 static float TunableMaxScroll(void) {
   float over = tunableContentH - TunableViewportH();
@@ -115,50 +134,77 @@ static bool TunableSamePhase(const char *a, const char *b) {
   return strcmp(a, b) == 0;
 }
 
-static void RefreshTunableLayout(int skillIndex) {
-  currentTunableCount = Skill_GetTunables(skillIndex, currentTunables, MAX_SKILL_TUNABLES);
-  lastTunableSkillIndex = skillIndex;
+// Lays out only the entries belonging to tunableTabNames[activeTunableTab]
+// (NULL = the "GENERAL" bucket for legacy ungrouped entries). Called on
+// skill change AND every tab click — cheap (at most MAX_SKILL_TUNABLES
+// entries to scan).
+static void RefreshTunableTabContent(void) {
   draggedTunableSlot = -1;
   tunableSlotCount = 0;
-  tunableHeaderCount = 0;
   tunableScrollY = 0.0f;
 
+  const char *tab = (tunableTabCount > 0) ? tunableTabNames[activeTunableTab] : NULL;
   float y = TUNABLE_PANEL_TOP;
-  const char *lastPhase = NULL;
 
   for (int i = 0; i < currentTunableCount; i++) {
     const SkillTunableEntry *e = &currentTunables[i];
-    bool phaseChanged = (i == 0) || !TunableSamePhase(e->phase, lastPhase);
-
-    if (phaseChanged) {
-      if (e->phase != NULL && tunableHeaderCount < MAX_SKILL_TUNABLES) {
-        tunableHeaders[tunableHeaderCount++] = (TunablePhaseHeader){y, e->phase};
-        y += TUNABLE_HEADER_ROW_H;
-      }
-      lastPhase = e->phase;
-    }
+    if (!TunableSamePhase(e->phase, tab)) continue;
 
     entryRowY[i] = y;
     y += TUNABLE_LABEL_ROW_H;
 
     if (e->curve != NULL) {
       float gap = 6.0f;
-      float slotW = (TUNABLE_SLIDER_WIDTH - gap * (SKILL_CURVE_KEYS - 1)) / SKILL_CURVE_KEYS;
+      float slotW = (TunableSliderWidth() - gap * (SKILL_CURVE_KEYS - 1)) / SKILL_CURVE_KEYS;
       for (int k = 0; k < SKILL_CURVE_KEYS; k++) {
         tunableSlots[tunableSlotCount++] = (TunableSliderSlot){
             i, k, (Rectangle){TUNABLE_PANEL_X + k * (slotW + gap), y, slotW, TUNABLE_SLIDER_ROW_H}};
       }
     } else {
       tunableSlots[tunableSlotCount++] = (TunableSliderSlot){
-          i, -1, (Rectangle){TUNABLE_PANEL_X, y, TUNABLE_SLIDER_WIDTH, TUNABLE_SLIDER_ROW_H}};
+          i, -1, (Rectangle){TUNABLE_PANEL_X, y, TunableSliderWidth(), TUNABLE_SLIDER_ROW_H}};
     }
     y += TUNABLE_SLIDER_ROW_H + TUNABLE_ROW_GAP;
   }
 
   tunableContentH = y - TUNABLE_PANEL_TOP;
+}
 
-  // Fixed position, doesn't scroll with content.
-  rectTunableSave = (Rectangle){TUNABLE_PANEL_X + 420.0f, TUNABLE_PANEL_TOP - 44.0f, 130, 34};
+static void RefreshTunableLayout(int skillIndex) {
+  currentTunableCount = Skill_GetTunables(skillIndex, currentTunables, MAX_SKILL_TUNABLES);
+  lastTunableSkillIndex = skillIndex;
+
+  // Build the tab list: one per distinct phase, in first-seen order.
+  tunableTabCount = 0;
+  const char *lastPhase = (const char *)1; // sentinel, never equals a real phase or NULL on the first iteration
+  for (int i = 0; i < currentTunableCount; i++) {
+    const char *phase = currentTunables[i].phase;
+    if (i == 0 || !TunableSamePhase(phase, lastPhase)) {
+      bool alreadyListed = false;
+      for (int t = 0; t < tunableTabCount; t++)
+        if (TunableSamePhase(tunableTabNames[t], phase)) { alreadyListed = true; break; }
+      if (!alreadyListed && tunableTabCount < TUNABLE_MAX_TABS)
+        tunableTabNames[tunableTabCount++] = phase;
+      lastPhase = phase;
+    }
+  }
+
+  // Lay out the tab bar buttons themselves (position only depends on tab
+  // count/labels, not on which tab is active).
+  float tabX = TUNABLE_PANEL_X;
+  for (int t = 0; t < tunableTabCount; t++) {
+    const char *label = tunableTabNames[t] != NULL ? tunableTabNames[t] : "GENERAL";
+    float w = UITextWidth(label, 14) + 24.0f;
+    tunableTabRects[t] = (Rectangle){tabX, TUNABLE_TAB_ROW_TOP, w, TUNABLE_TAB_ROW_H};
+    tabX += w + 8.0f;
+  }
+
+  activeTunableTab = 0;
+  RefreshTunableTabContent();
+
+  // Fixed position (on the title row, above the tab bar) — doesn't scroll
+  // with content or shift with however many tabs this skill has.
+  rectTunableSave = (Rectangle){TUNABLE_PANEL_X + 420.0f, TUNABLE_TAB_ROW_TOP - 44.0f, 130, 34};
 }
 
 void InitUIPanel(void) {
@@ -166,19 +212,22 @@ void InitUIPanel(void) {
 
   togglePanelBtn = (Rectangle){20, 15, 180, 32};
 
+  // Compacted row pitch (36px, was 50px) and button height (28px, was 35px)
+  // so this whole control block takes noticeably less vertical space,
+  // leaving more room for the (now wider) tuning panel below it.
   for (int i = 0; i < 5; i++) {
-    rectQty[i] = (Rectangle){870 + i * 60, 20, 50, 35};
+    rectQty[i] = (Rectangle){870 + i * 55, 20, 46, 28};
   }
   for (int i = 0; i < 3; i++) {
-    rectSize[i] = (Rectangle){870 + i * 100, 70, 90, 35};
+    rectSize[i] = (Rectangle){870 + i * 92, 56, 84, 28};
   }
   for (int i = 0; i < 2; i++) {
-    rectAnchor[i] = (Rectangle){870 + i * 150, 120, 140, 35};
+    rectAnchor[i] = (Rectangle){870 + i * 140, 92, 132, 28};
   }
   for (int i = 0; i < 3; i++) {
-    rectPath[i] = (Rectangle){870 + i * 100, 170, 95, 35};
+    rectPath[i] = (Rectangle){870 + i * 92, 128, 88, 28};
   }
-  rectPortalToggle = (Rectangle){870, 220, 200, 35};
+  rectPortalToggle = (Rectangle){870, 164, 190, 28};
 
   int skillCount = GetRegisteredSkillCount();
   if (skillCount > 64)
@@ -334,8 +383,18 @@ void UpdateUIPanel(Vector2 mousePos, UIPanelState *state) {
     RefreshTunableLayout(state->activeSkillIndex);
   }
 
+  for (int t = 0; t < tunableTabCount; t++) {
+    if (CheckCollisionPointRec(mousePos, tunableTabRects[t])) {
+      state->clickedOnUI = true;
+      if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && t != activeTunableTab) {
+        activeTunableTab = t;
+        RefreshTunableTabContent();
+      }
+    }
+  }
+
   Rectangle tunableViewport = {TUNABLE_PANEL_X - 10.0f, TUNABLE_PANEL_TOP - 10.0f,
-                                TUNABLE_SLIDER_WIDTH + 40.0f, TunableViewportH() + 20.0f};
+                                TunableSliderWidth() + 40.0f, TunableViewportH() + 20.0f};
   bool overTunablePanel = currentTunableCount > 0 && CheckCollisionPointRec(mousePos, tunableViewport);
   if (overTunablePanel) {
     float wheel = GetMouseWheelMove();
@@ -475,19 +534,33 @@ void DrawUIPanel(const UIPanelState *state) {
     UIText(skillName, dragRect.x + (dragRect.width - textWidth) / 2, dragRect.y + 11, 12, WHITE);
   }
 
+  // Single background card behind the whole right-side control column
+  // (Quantity/Size/Anchor/Path/Portals/GPU status AND the Tuning panel
+  // below it) so they read as one unified panel instead of two
+  // disconnected floating groups of widgets.
+  {
+    float panelBottom = (currentTunableCount > 0)
+                             ? TUNABLE_PANEL_TOP + TunableViewportH() + 10.0f
+                             : 250.0f;
+    float panelRight = TUNABLE_PANEL_X + TunableSliderWidth() + 40.0f; // + scrollbar/margin
+    Rectangle bg = {755.0f, 15.0f, panelRight - 755.0f, panelBottom - 15.0f};
+    DrawRectangleRounded(bg, 0.02f, 8, ColorAlpha(BLACK, 0.55f));
+    DrawRectangleRoundedLines(bg, 0.02f, 8, ColorAlpha(WHITE, 0.25f));
+  }
+
   // Quantity
-  UIText("Quantity:", 770, 30, 16, LIGHTGRAY);
+  UIText("Quantity:", 770, rectQty[0].y + 5, 14, LIGHTGRAY);
   for (int i = 0; i < 5; i++) {
     bool isSelected = (state->currentParams.quantity == (i + 1));
     bool isHover = CheckCollisionPointRec(mousePos, rectQty[i]);
     Color btnCol = isSelected ? PURPLE : (isHover ? DARKPURPLE : DARKGRAY);
     DrawRectangleRounded(rectQty[i], 0.2f, 10, btnCol);
     DrawRectangleRoundedLines(rectQty[i], 0.2f, 10, WHITE);
-    UIText(TextFormat("%d", i + 1), rectQty[i].x + 20, rectQty[i].y + 8, 15, WHITE);
+    UIText(TextFormat("%d", i + 1), rectQty[i].x + 18, rectQty[i].y + 5, 14, WHITE);
   }
 
   // Size
-  UIText("Size:", 770, 80, 16, LIGHTGRAY);
+  UIText("Size:", 770, rectSize[0].y + 5, 14, LIGHTGRAY);
   for (int i = 0; i < 3; i++) {
     bool isSelected = (state->currentParams.sizeScale == sizes[i]);
     bool isHover = CheckCollisionPointRec(mousePos, rectSize[i]);
@@ -496,11 +569,11 @@ void DrawUIPanel(const UIPanelState *state) {
     DrawRectangleRoundedLines(rectSize[i], 0.2f, 10, WHITE);
 
     const char *sizeText = (i == 0) ? "1.0x" : (i == 1) ? "1.5x" : "2.0x";
-    UIText(sizeText, rectSize[i].x + 22, rectSize[i].y + 8, 15, WHITE);
+    UIText(sizeText, rectSize[i].x + 20, rectSize[i].y + 5, 14, WHITE);
   }
 
   // Anchor
-  UIText("Anchor:", 770, 130, 16, LIGHTGRAY);
+  UIText("Anchor:", 770, rectAnchor[0].y + 5, 14, LIGHTGRAY);
   const char *anchorNames[] = {"CASTER (SELF)", "TARGET (ENEMY)"};
   for (int i = 0; i < 2; i++) {
     bool isSelected = (state->currentParams.anchorType == (CastAnchorType)i);
@@ -508,13 +581,13 @@ void DrawUIPanel(const UIPanelState *state) {
     Color btnCol = isSelected ? BLUE : (isHover ? DARKBLUE : DARKGRAY);
     DrawRectangleRounded(rectAnchor[i], 0.2f, 10, btnCol);
     DrawRectangleRoundedLines(rectAnchor[i], 0.2f, 10, WHITE);
-    float textW = UITextWidth(anchorNames[i], 13);
+    float textW = UITextWidth(anchorNames[i], 12);
     UIText(anchorNames[i], rectAnchor[i].x + (rectAnchor[i].width - textW) / 2,
-           rectAnchor[i].y + 11, 13, WHITE);
+           rectAnchor[i].y + 8, 12, WHITE);
   }
 
   // Path
-  UIText("Path:", 770, 180, 16, LIGHTGRAY);
+  UIText("Path:", 770, rectPath[0].y + 5, 14, LIGHTGRAY);
   const char *pathNames[] = {"PROJECTILE", "FALLING", "RISING"};
   for (int i = 0; i < 3; i++) {
     bool isSelected = (state->currentParams.pathType == (CastPathType)i);
@@ -522,9 +595,9 @@ void DrawUIPanel(const UIPanelState *state) {
     Color btnCol = isSelected ? MAROON : (isHover ? RED : DARKGRAY);
     DrawRectangleRounded(rectPath[i], 0.2f, 10, btnCol);
     DrawRectangleRoundedLines(rectPath[i], 0.2f, 10, WHITE);
-    float textW = UITextWidth(pathNames[i], 13);
+    float textW = UITextWidth(pathNames[i], 12);
     UIText(pathNames[i], rectPath[i].x + (rectPath[i].width - textW) / 2,
-           rectPath[i].y + 11, 13, WHITE);
+           rectPath[i].y + 8, 12, WHITE);
   }
 
   // Portals
@@ -534,21 +607,21 @@ void DrawUIPanel(const UIPanelState *state) {
   DrawRectangleRounded(rectPortalToggle, 0.2f, 10, ptCol);
   DrawRectangleRoundedLines(rectPortalToggle, 0.2f, 10, WHITE);
   UIText(state->currentParams.showPortal ? "PORTALS: ON" : "PORTALS: OFF",
-         rectPortalToggle.x + 40, rectPortalToggle.y + 9, 16, WHITE);
+         rectPortalToggle.x + 34, rectPortalToggle.y + 6, 14, WHITE);
 
   // GPU Particle status
   {
     float bx = rectPortalToggle.x;
-    float by = rectPortalToggle.y + 48;
+    float by = rectPortalToggle.y + 36;
     bool compute = GpuParticleSystem_IsComputeActive();
     int  active  = GpuParticleSystem_ActiveCount();
 
     Color modeColor = compute ? (Color){80, 220, 80, 255} : (Color){220, 180, 60, 255};
     const char *modeText = compute ? "GPU: COMPUTE" : "GPU: CPU/VBO";
-    DrawRectangleRounded((Rectangle){bx, by, 200, 32}, 0.2f, 8, (Color){20, 20, 20, 180});
-    DrawRectangleRoundedLines((Rectangle){bx, by, 200, 32}, 0.2f, 8, modeColor);
-    UIText(modeText, bx + 10, by + 7, 13, modeColor);
-    UIText(TextFormat("particles: %d/%d", active, MAX_GPU_PARTICLES), bx, by + 36, 12, LIGHTGRAY);
+    DrawRectangleRounded((Rectangle){bx, by, 190, 26}, 0.2f, 8, (Color){20, 20, 20, 180});
+    DrawRectangleRoundedLines((Rectangle){bx, by, 190, 26}, 0.2f, 8, modeColor);
+    UIText(modeText, bx + 8, by + 5, 12, modeColor);
+    UIText(TextFormat("particles: %d/%d", active, MAX_GPU_PARTICLES), bx, by + 28, 11, LIGHTGRAY);
   }
 
   // Sandbox live-tuning sliders — only drawn for skills that called
@@ -558,19 +631,28 @@ void DrawUIPanel(const UIPanelState *state) {
   // parameters (fire_ball: 25) stays fully reachable regardless of window
   // size instead of running off the bottom/side.
   if (currentTunableCount > 0) {
-    UIText("Tuning (drag to adjust, scroll for more):", TUNABLE_PANEL_X, TUNABLE_PANEL_TOP - 40.0f, 18, LIGHTGRAY);
+    UIText("Tuning (drag to adjust, scroll for more):", TUNABLE_PANEL_X, TUNABLE_TAB_ROW_TOP - 40.0f, 18, LIGHTGRAY);
+
+    // Tab bar — one button per phase (core/skill_manager.h's SkillTunableEntry.phase).
+    for (int t = 0; t < tunableTabCount; t++) {
+      const char *label = tunableTabNames[t] != NULL ? tunableTabNames[t] : "GENERAL";
+      Rectangle r = tunableTabRects[t];
+      bool active = (t == activeTunableTab);
+      DrawRectangleRounded(r, 0.3f, 8, active ? ORANGE : ColorAlpha(DARKGRAY, 0.7f));
+      DrawRectangleRoundedLines(r, 0.3f, 8, WHITE);
+      float tw = UITextWidth(label, 14);
+      UIText(label, r.x + (r.width - tw) / 2.0f, r.y + 7, 14, active ? BLACK : WHITE);
+    }
 
     float viewportH = TunableViewportH();
     BeginScissorMode((int)(TUNABLE_PANEL_X - 10.0f), (int)TUNABLE_PANEL_TOP,
-                      (int)(TUNABLE_SLIDER_WIDTH + 20.0f), (int)viewportH);
+                      (int)(TunableSliderWidth() + 20.0f), (int)viewportH);
 
-    for (int h = 0; h < tunableHeaderCount; h++) {
-      Rectangle r = TunableScrolled((Rectangle){TUNABLE_PANEL_X, tunableHeaders[h].y, 0, 0});
-      UIText(TextFormat("-- %s --", tunableHeaders[h].phase), r.x, r.y - 2, 16, ORANGE);
-    }
-    for (int i = 0; i < currentTunableCount; i++) {
-      Rectangle r = TunableScrolled((Rectangle){TUNABLE_PANEL_X, entryRowY[i], 0, 0});
-      UIText(currentTunables[i].label, r.x, r.y - 2, 14, LIGHTGRAY);
+    for (int s = 0; s < tunableSlotCount; s++) {
+      if (tunableSlots[s].keyIndex > 0) continue; // label drawn once per entry, not per curve key
+      int entryIdx = tunableSlots[s].entryIndex;
+      Rectangle r = TunableScrolled((Rectangle){TUNABLE_PANEL_X, entryRowY[entryIdx], 0, 0});
+      UIText(currentTunables[entryIdx].label, r.x, r.y - 2, 14, LIGHTGRAY);
     }
 
     for (int s = 0; s < tunableSlotCount; s++) {
@@ -599,7 +681,7 @@ void DrawUIPanel(const UIPanelState *state) {
     // Scrollbar indicator (only when content overflows the viewport).
     float maxScroll = TunableMaxScroll();
     if (maxScroll > 0.0f) {
-      float trackX = TUNABLE_PANEL_X + TUNABLE_SLIDER_WIDTH + 14.0f;
+      float trackX = TUNABLE_PANEL_X + TunableSliderWidth() + 14.0f;
       DrawRectangle((int)trackX, (int)TUNABLE_PANEL_TOP, 6, (int)viewportH, ColorAlpha(DARKGRAY, 0.5f));
       float thumbH = viewportH * (viewportH / tunableContentH);
       float thumbY = TUNABLE_PANEL_TOP + (viewportH - thumbH) * (tunableScrollY / maxScroll);

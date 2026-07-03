@@ -1252,13 +1252,119 @@ distance ÷ known speed) via `AutoTest_SaveScreenshot`, `Read` the PNG
 directly. Remove the temp case once confirmed — don't leave debug
 scaffolding in `core_test_skill.c`.
 
-**Acceptance**: the remaining 11 unconverted skills each get the 4-pass
-checklist above when they're next touched; the 7 remaining
-`SpawnImpactEffect` presets get rescaled either as a dedicated `core/`
-sweep (fixes all 7 at once, benefits every skill that uses them) or
-incrementally as each skill that calls them gets converted — either is
-fine, just don't convert a skill's own file and assume the shared presets
-it calls are already safe.
+---
+
+**Follow-up (2026-07-03 session) — comprehensive sandbox-tunable system now
+exists and is PART of the per-skill conversion pass, not a separate task.**
+Before sweeping the remaining 11 skills, the user asked to first make the
+sandbox-tunable system itself comprehensive: every parameter that affects
+look/feel (size, speed, opacity, force) adjustable at every phase, ideally
+as a value that changes *over time* rather than a flat constant, plus a
+general "add extra force" capability. That system is now built and proven
+end-to-end on both pilots (`fire_ball`, `thunder_orb_skill`). **Converting a
+skill for Item 34 is now a 5-pass job — passes 1-4 above are unchanged
+(meter-scale), pass 5 below is new (comprehensive tunability). Do both in
+the same pass; don't convert a skill's scale and leave it under-tunable for
+a later touch.**
+
+*What now exists (all documented in `CORE_API.md` — read there for full
+signatures, this is just a map of what to reach for):*
+- `core/skill_curve.h`'s `SkillCurve` — 5 fixed keyframes (t = 0/25/50/75/100%
+  of caller-defined progress), `SkillCurve_Eval`/`SkillCurve_SetConstant`.
+  Built on the pre-existing (previously unused anywhere) `core/float_curve.h`.
+- `core/skill_manager.h`'s `SkillTunableEntry` gained `.phase` (sandbox
+  groups entries into one **tab** per distinct tag — was inline scroll
+  headers, changed this session because a long scroll list across 4+ phases
+  wasn't navigable) and `.curve` (curve-kind entry: 5 sliders instead of 1).
+  `MAX_SKILL_TUNABLES` raised 16→200. `SkillTunables_Flatten/Unflatten/
+  LoadPersisted` persist curve entries through the same `.tuning` file
+  format, no format changes needed.
+- `core/skill_helper.h`'s `SkillHelper_StepCurveFlight` — curve-driven
+  flight speed indexed by **elapsed time, never distance-to-target** (the
+  original design mistake this fixed: indexing by distance-progress makes a
+  far cast silently stretch the whole speed ramp, and caps nothing). Hard-
+  capped by tunable `maxDuration`/`maxRange` so a cast can never fly
+  farther/longer than its own limit regardless of target distance. Fits a
+  straight-line projectile only — see thunder_orb_skill.c.
+- `core/skill_helper.h`'s `SkillForceMix` — all 8 curated `ForceType`s
+  simultaneously tunable (each with its own full param set: strength/
+  direction/origin/noise as applicable), always-additive — no "pick one
+  type" step, dial up as many at once as wanted. (An earlier per-slot
+  "pick a type from a button row, shared field storage" design was tried
+  and rejected mid-session — confusing, and couldn't run two types at
+  once; don't reintroduce it.) `SkillForceMix_MakeTunables` builds all 29
+  tunable entries for one phase in one call; `SkillForceMix_AddLayers`
+  composes the nonzero-strength ones into a `ForceField`, called fresh
+  right before each real use (same "read live, don't bake at Init" rule as
+  every other tunable-driven `ForceField` in this codebase).
+- `core/particle_system.h`'s `ParticleConfig` gained `radiusCurve`/
+  `speedCurve`/`alphaCurve` (all `const SkillCurve *`, default `NULL` =
+  today's exact legacy behavior) — a particle's size/velocity/opacity can
+  now genuinely change **over its own short lifetime** (multiplicative,
+  sampled at age-fraction 0→1), not just be randomized once at spawn.
+- `sandbox/ui_panel.c` — tuning panel is tabbed by phase, visually merged
+  into one panel with the cast-params controls above it, and slider width
+  is dynamic to the actual window size (was a cramped fixed 380px).
+
+*Pass 5 checklist — comprehensive tunability:*
+1. Identify the skill's own phases (reuse whatever state-machine names it
+   already has — cast/fly/impact/whatever — don't invent new ones).
+2. Tag every magic number that affects look/feel with `.phase = "<phase>"`:
+   existing physics constants, plus newly-exposed count/speed-min-max/
+   lifetime-min-max/radius-min-max for every particle spawn site in that
+   phase. Pure structural constants (array-sizing `#define`s) stay
+   `#define`, not tunable — making those runtime-adjustable would need
+   dynamic allocation, which this project's static-array convention
+   doesn't use. See `thunder_orb_skill.c`'s "Pool-size constants... stay
+   #define" comment for the exact line to draw.
+3. If the skill has projectile-style flight, add one `SkillCurve` for
+   speed — **match the curve-drive model to how the skill's motion
+   actually works**, don't force one pattern onto both: a straight-line
+   projectile uses `SkillHelper_StepCurveFlight` (thunder_orb_skill.c); a
+   path-parameter flight (e.g. a Bezier curve already anchored between
+   start/target, inherently spatially bounded) should sample
+   `SkillCurve_Eval` directly at the skill's own progress instead, plus add
+   its own `maxDuration`-only safety cap (fire_skill.c's `UpdateFireSkill`).
+4. Add one `SkillForceMix` per phase, rebuilt fresh before each real use.
+   **If a phase's motion isn't purely particle-velocity-driven** — e.g. a
+   Bezier-path dragon whose visible silhouette doesn't read particle
+   forces at all, only its short-lived decorative trail embers do — the
+   force must additionally perturb the actual visible path/position, not
+   just be attached to particles that die too fast to show it. This was a
+   real bug found and fixed this session, not a hypothetical: see
+   `fire_skill.c`'s `forceOffset`/`forceVel` accumulator on `FireEmitter`,
+   added to `GetDragonPathPos`'s return, driven by `s_flyForce` each frame.
+5. Add `radiusCurve`/`speedCurve`/`alphaCurve` per phase (3 `SkillCurve`s,
+   seeded flat at `1.0` via `SkillCurve_SetConstant` — a no-op multiplier
+   until shaped), pointed to by every `ParticleConfig` spawned in that phase.
+6. Seed every curve/force BEFORE building the `SkillTunableEntry` array.
+   Build the array as a **sequence of assignments**, not one static
+   literal — `SkillForceMix_MakeTunables` returns a variable count, so a
+   fixed-size positional initializer can't interleave it with a phase's
+   named entries while keeping the phase's tab contiguous. Call
+   `SkillTunables_LoadPersisted` right before `RegisterSkillTunables`. See
+   `fire_skill.c`'s `InitFireSkill` for the exact call order.
+7. Watch the `MAX_SKILL_TUNABLES` (200) budget: named entries + one
+   `SkillForceMix` (29) + 3 curves, per phase, adds up fast — fire_ball
+   landed at 185, thunder_orb at 104. A skill with 5+ phases may need to
+   skip the force mix for a phase with no meaningful local force to begin
+   with, rather than raising the cap further.
+
+**Reference implementations (both fully done — meter-scale AND
+comprehensive tunability):** `skills/fire/fire_ball/fire_skill.c`,
+`skills/metal/thunder_orb_skill/thunder_orb_skill.c`. Read these end-to-end
+before starting a new skill, not just `CORE_API.md` — the *pattern* (how
+phases/curves/force-mix compose, where they're seeded, how the
+`RebuildFire*Field`/`RebuildFlightParticleField`-style functions work)
+matters more than any single function signature.
+
+**Acceptance**: the remaining 11 unconverted skills each get the 5-pass
+checklist above (4 meter-scale + 1 comprehensive-tunability) when they're
+next touched; the 7 remaining `SpawnImpactEffect` presets get rescaled
+either as a dedicated `core/` sweep (fixes all 7 at once, benefits every
+skill that uses them) or incrementally as each skill that calls them gets
+converted — either is fine, just don't convert a skill's own file and
+assume the shared presets it calls are already safe.
 
 ---
 

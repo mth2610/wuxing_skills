@@ -3,6 +3,7 @@
 
 #include "core/color_gradient.h"
 #include "core/force_field.h"
+#include "core/skill_curve.h"
 #include "core/sprite_anim.h"
 #include "raylib.h"
 #include <stdbool.h>
@@ -25,6 +26,23 @@ struct ParticleConfig {
   // Tùy chọn chuyển màu dải stop và ảnh hoạt cảnh atlas
   const ColorGradient *gradient;
   const SpriteAnim *spriteAnim;
+
+  // Optional over-lifetime multiplier curves (t01 = 0 at spawn, 1 at death —
+  // same "age fraction" convention as `gradient` above). NULL = today's
+  // exact legacy behavior (fixed radius; velocity driven only by
+  // forceField/physics). Non-NULL: sampled fresh every frame, multiplying
+  // the base value — e.g. radiusCurve = {0,1,1,1,0} makes a particle fade
+  // in then shrink away instead of popping at a constant size.
+  const SkillCurve *radiusCurve; // multiplies `radius` when drawn
+  const SkillCurve *speedCurve;  // multiplies `velocity`'s contribution to
+                                  // position each Update frame (does not
+                                  // touch the stored velocity itself, so it
+                                  // composes cleanly with forceField physics)
+  const SkillCurve *alphaCurve;  // multiplies `colorStart.a` when drawn,
+                                  // overriding the colorStart/colorEnd (or
+                                  // gradient) alpha computation entirely for
+                                  // this particle — RGB is unaffected, still
+                                  // comes from colorStart/colorEnd/gradient
 
   // ============================================================
   // 3.1 SUB-EMITTER SYSTEM — MỞ RỘNG[cite: 4]

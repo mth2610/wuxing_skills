@@ -18,6 +18,9 @@ typedef struct {
   const ForceField *forceField;
   const ColorGradient *gradient;
   const SpriteAnim *spriteAnim;
+  const SkillCurve *radiusCurve;
+  const SkillCurve *speedCurve;
+  const SkillCurve *alphaCurve;
 
   // Bộ bộ nhớ phẳng lưu trữ cấu hình Sub-Emitter tránh cấp phát động
   ParticleConfig onDeathConfig;
@@ -66,6 +69,9 @@ void SpawnParticle(ParticleConfig config) {
   p->forceField = config.forceField;
   p->gradient = config.gradient;
   p->spriteAnim = config.spriteAnim;
+  p->radiusCurve = config.radiusCurve;
+  p->speedCurve = config.speedCurve;
+  p->alphaCurve = config.alphaCurve;
   p->active = true;
 
   // Trích xuất cấu hình Sub-Emitter khi hạt chết (onDeath)
@@ -136,7 +142,15 @@ void UpdateParticles(float dt) {
       Vector3 windForce = WindZone_Evaluate(p->position, p->velocity, s_particleTime);
       p->velocity = Vector3Add(p->velocity, Vector3Scale(windForce, dt));
     }
-    p->position = Vector3Add(p->position, Vector3Scale(p->velocity, dt));
+    // Optional over-lifetime speed multiplier — scales only this frame's
+    // position step, not the stored velocity itself, so it composes
+    // cleanly on top of forceField/WindZone physics instead of compounding.
+    float speedMul = 1.0f;
+    if (p->speedCurve) {
+      float ageT = 1.0f - Clamp(p->lifetime / p->maxLifetime, 0.0f, 1.0f);
+      speedMul = SkillCurve_Eval(p->speedCurve, ageT);
+    }
+    p->position = Vector3Add(p->position, Vector3Scale(p->velocity, dt * speedMul));
 
     // --------------------------------------------------------
     // 2. XỬ LÝ SUB-EMITTER: ON DEATH EMIT (Nổ tung hạt con khi chết)
@@ -201,6 +215,24 @@ void DrawParticles(Camera3D camera, Texture2D texture) {
       c.a = (unsigned char)(p->colorStart.a * lifeRatio +
                             p->colorEnd.a * (1.0f - lifeRatio));
     }
+    // Optional over-lifetime alpha curve — overrides whatever alpha the
+    // colorStart/colorEnd/gradient computation above produced (RGB from
+    // that computation is kept). Lets a phase's opacity ramp/pulse/fade in
+    // a shape richer than a 2-point start->end lerp.
+    if (p->alphaCurve) {
+      float mul = SkillCurve_Eval(p->alphaCurve, 1.0f - lifeRatio);
+      float a = (float)p->colorStart.a * mul;
+      if (a < 0.0f) a = 0.0f;
+      if (a > 255.0f) a = 255.0f;
+      c.a = (unsigned char)a;
+    }
+
+    // Optional over-lifetime radius multiplier (same "age fraction"
+    // convention as gradient/speedCurve — 0 at spawn, 1 at death).
+    float drawRadius = p->radius;
+    if (p->radiusCurve) {
+      drawRadius = p->radius * SkillCurve_Eval(p->radiusCurve, 1.0f - lifeRatio);
+    }
 
     // Tọa độ UV chuẩn (Bỏ qua tính toán SpriteAnim lỗi để giữ an toàn tuyệt
     // đối)
@@ -213,27 +245,27 @@ void DrawParticles(Camera3D camera, Texture2D texture) {
 
     // Top-Left
     rlTexCoord2f(uMin, vMin);
-    rlVertex3f(p->position.x + (right.x - up.x) * p->radius,
-               p->position.y + (right.y - up.y) * p->radius,
-               p->position.z + (right.z - up.z) * p->radius);
+    rlVertex3f(p->position.x + (right.x - up.x) * drawRadius,
+               p->position.y + (right.y - up.y) * drawRadius,
+               p->position.z + (right.z - up.z) * drawRadius);
 
     // Bottom-Left
     rlTexCoord2f(uMin, vMax);
-    rlVertex3f(p->position.x + (right.x + up.x) * p->radius,
-               p->position.y + (right.y + up.y) * p->radius,
-               p->position.z + (right.z + up.z) * p->radius);
+    rlVertex3f(p->position.x + (right.x + up.x) * drawRadius,
+               p->position.y + (right.y + up.y) * drawRadius,
+               p->position.z + (right.z + up.z) * drawRadius);
 
     // Bottom-Right
     rlTexCoord2f(uMax, vMax);
-    rlVertex3f(p->position.x + (-right.x + up.x) * p->radius,
-               p->position.y + (-right.y + up.y) * p->radius,
-               p->position.z + (-right.z + up.z) * p->radius);
+    rlVertex3f(p->position.x + (-right.x + up.x) * drawRadius,
+               p->position.y + (-right.y + up.y) * drawRadius,
+               p->position.z + (-right.z + up.z) * drawRadius);
 
     // Top-Right
     rlTexCoord2f(uMax, vMin);
-    rlVertex3f(p->position.x + (-right.x - up.x) * p->radius,
-               p->position.y + (-right.y - up.y) * p->radius,
-               p->position.z + (-right.z - up.z) * p->radius);
+    rlVertex3f(p->position.x + (-right.x - up.x) * drawRadius,
+               p->position.y + (-right.y - up.y) * drawRadius,
+               p->position.z + (-right.z - up.z) * drawRadius);
     rlEnd();
   }
   rlSetTexture(0);
