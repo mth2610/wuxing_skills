@@ -39,5 +39,6 @@ void VFXLight_Update(float dt);
 
 // Lấy danh sách các light đang hoạt động để nạp vào Uniform Array của Shader
 void VFXLight_GetActive(VFXLightData *out, int *count, int maxCount);
+void VFXLight_GetStats(int *active, int *max); // Item 32
 
 #endif // VFX_LIGHT_H

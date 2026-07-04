@@ -25,6 +25,7 @@ void Entity_Init(void) {
         agentPool[i] = (Agent){ 0 };
     }
     SkillManager_SetAgentPosProvider(Entity_ProvideAgentPos);
+    SkillManager_SetNearbyTargetsProvider(Entity_GetNearbyTargets);
 }
 
 void Entity_Update(float dt) {

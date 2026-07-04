@@ -97,3 +97,10 @@ void VFXLight_GetActive(VFXLightData *out, int *count, int maxCount) {
     }
     *count = activeCount;
 }
+void VFXLight_GetStats(int *active, int *max) {
+    int n = 0;
+    for (int i = 0; i < MAX_VFX_LIGHTS; i++)
+        if (g_VFXLights[i].active) n++;
+    *active = n;
+    *max = MAX_VFX_LIGHTS;
+}

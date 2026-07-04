@@ -98,3 +98,10 @@ void StopEmitter(int id) {
 void KillEmitter(int id) {
     if (id >= 0 && id < MAX_EMITTER_ENTITIES) emitterPool[id].active = false;
 }
+void EmitterSystem_GetStats(int *active, int *max) {
+    int n = 0;
+    for (int i = 0; i < MAX_EMITTER_ENTITIES; i++)
+        if (emitterPool[i].active) n++;
+    *active = n;
+    *max = MAX_EMITTER_ENTITIES;
+}

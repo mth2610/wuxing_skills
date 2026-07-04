@@ -750,6 +750,26 @@ void UnloadExampleAttachedSkill(void) {
 >
 > **Any skill calling `Entity_ApplyAoEDamage` or `Entity_ApplyAoEBuff`** (not just this skeleton) must `#include "entities/entities.h"` — this is easy to miss since these functions live in `entities/`, not `core/`, unlike everything else a skill normally includes. A missing include here fails with `implicit declaration of function` at compile time, not a clear error pointing at the missing header.
 
+### Agent Position & Nearby Targets Providers (`core/skill_manager.h`)
+
+Inversion-of-control callbacks — core queries agent positions without depending on `entities/`. Both registered automatically by `Entity_Init`; skills call them indirectly via `StatusVFX_Update` or `SkillHelper_ChainTargets`, never directly.
+
+```c
+typedef bool (*AgentPosProviderFn)(int agentId, Vector3 *outPos);
+void SkillManager_SetAgentPosProvider(AgentPosProviderFn fn);
+bool SkillManager_GetAgentPos(int agentId, Vector3 *outPos);
+// Returns false if agentId is invalid or no provider is registered.
+
+typedef int (*NearbyTargetsProviderFn)(Vector3 center, float radius,
+                                       int *outIds, int maxIds);
+void SkillManager_SetNearbyTargetsProvider(NearbyTargetsProviderFn fn);
+int  SkillManager_GetNearbyTargets(Vector3 center, float radius,
+                                   int *outIds, int maxIds);
+// Returns count of agents found (0 if no provider registered).
+```
+
+Full API documentation in §16 below.
+
 ---
 
 ## 5. DYNAMIC FORCE FIELD SYSTEM (`#include "core/force_field.h"`)
@@ -2065,6 +2085,60 @@ void SkillBuilder_AddCastEffect(SkillBuildContext *ctx, EffectPresetType preset)
 ```
 `SkillBuilder_AddCastEffect` has its own trigger point — call it at **cast time** (after `SkillBuilder_Start`, which sets `ctx->target`/`ctx->scale`), separately from `SkillBuilder_Build()` which fires at **impact time**. It fires `SpawnCastEffect` immediately rather than deferring into `ctx`, since cast and impact happen at different points in a skill's lifecycle and the builder's other `Add*` calls all defer to `Build()`.
 
+### SkillBuilder — One-line Archetype Spawns
+
+Immediate, duration-based, no malloc. Static internal pools — see §17 for pool sizes.
+
+```c
+// Beam: element-tinted managed ray + VFXLight at endpoints
+int  SkillBuilder_SpawnBeam(Vector3 from, Vector3 to, EffectPresetType element,
+                             float width, float duration);
+void SkillBuilder_KillBeam(int handle);  // early termination
+
+// GroundWave: expanding shockwave mesh + decal scroll emitter marching along dir
+// Static pool of 8.
+void SkillBuilder_SpawnGroundWave(Vector3 origin, Vector3 dir, EffectPresetType element,
+                                  float range, float speed);
+
+// Orbitals: N tetrahedra orbiting center with random phase/scale (anti-robotic law)
+// Static pool: 8 groups × 8 orbitals.
+int  SkillBuilder_SpawnOrbitals(Vector3 center, EffectPresetType element,
+                                int count, float radius, float duration);
+
+// AuraRing: looping emitter ring (K points on circle) + glow decal
+// Static pool of 8.
+int  SkillBuilder_SpawnAuraRing(Vector3 center, EffectPresetType element,
+                                float radius, float duration);
+void SkillBuilder_KillAuraRing(int handle);
+
+// Drive all internal pools — called by SkillHelper_Update, not directly by skills.
+void SkillBuilder_Update(float dt);
+void SkillBuilder_DrawWorld(Camera3D cam);
+```
+
+- Beams wrap `SpawnProcRay` + `VFXLight_Spawn` at endpoints.
+- `SkillBuilder_Update`/`DrawWorld` are driven by `SkillHelper_Update` (wired in `main.c`) — skills must **not** call them directly.
+
+### Chain-Targeting Helper
+
+```c
+// Returns count of chain points (0 = no targets in range).
+// outPoints[0] = origin, outPoints[1..] = jump targets (nearest not already hit).
+// Damage is the skill's job — this helper handles visuals only.
+int  SkillHelper_ChainTargets(Vector3 origin, float jumpRadius, int maxJumps,
+                               Vector3 *outPoints, int maxOut);
+
+// Fires SpawnLightningTrail per hop, staggered by hopDelay seconds.
+// Internal static queue (32 entries); driven by SkillHelper_Update.
+void SpawnChainLightning(const Vector3 *points, int count, float scale, float hopDelay);
+
+// Drives chain queue + SkillBuilder pools. Call once per frame in main update.
+// Already wired in main.c — skills do not call this directly.
+void SkillHelper_Update(float dt);
+```
+
+Depends on `SkillManager_SetNearbyTargetsProvider` being registered (done automatically by `Entity_Init`).
+
 ---
 
 ## 10. GLSL Shader Guidelines
@@ -2511,3 +2585,191 @@ To maintain solid 3D appearance:
 - Restrict emissive regions with `smoothstep()` (≈20–30% coverage).
 - Shade the remaining surface using diffuse lighting and Fresnel.
 - Add emissive after base lighting to preserve brightness.
+
+---
+
+## 13. Motion Controller (`#include "core/motion_controller.h"`)
+
+Stateless projectile kinematics — no alloc, no global pool. Caller owns a `MotionState` (stack or skill-struct field).
+
+```c
+typedef enum {
+    MOTION_LINEAR,     // constant velocity toward target
+    MOTION_HOMING,     // steers toward target each frame (turnRateRad)
+    MOTION_BALLISTIC,  // projectile arc with gravity
+    MOTION_SPIRAL,     // spirals around the origin→target axis
+    MOTION_ORBIT,      // circles a fixed orbitCenter point
+    MOTION_BOOMERANG   // flies out to boomerangRange then returns to origin
+} MotionType;
+
+typedef struct {
+    MotionType type;
+    float speed;             // m/s travel speed
+    float arrivalRadius;     // detonation threshold (m), default 0.2f
+    float turnRateRad;       // HOMING: max turn per second (rad/s), e.g. 2.5f
+    float gravity;           // BALLISTIC: downward accel (m/s²), e.g. 4.9f (half real gravity)
+    float spiralRadius;      // SPIRAL: lateral displacement (m)
+    float spiralFreq;        // SPIRAL: rotations per second
+    Vector3 orbitCenter;     // ORBIT: center point
+    float orbitRadiusXZ;     // ORBIT: radius in XZ plane (m)
+    float orbitAngularSpeed; // ORBIT: rad/s
+    float boomerangRange;    // BOOMERANG: outbound distance before return (m)
+} MotionParams;
+
+typedef struct {
+    MotionParams params;
+    Vector3 pos;       // current position — read each frame
+    Vector3 vel;       // current velocity
+    Vector3 target;    // destination
+    Vector3 origin;    // initial position
+    float elapsed;
+    float orbitAngle;
+    bool returning;    // BOOMERANG: true when heading back toward origin
+} MotionState;
+
+void Motion_Init(MotionState *s, MotionParams params, Vector3 startPos, Vector3 target);
+void Motion_Step(MotionState *s, float dt);
+bool Motion_Arrived(const MotionState *s);
+```
+
+> [!NOTE]
+> Scale: `speed` in m/s (typical projectile: 8–20 m/s), `gravity` in m/s² (real gravity = 9.81; use 4.9 for floaty arc). `arrivalRadius` 0.2f fits a 0.15–0.20f mesh radius per §1 scale rules.
+
+Typical usage pattern:
+```c
+// Skill struct:
+MotionState motion;
+// On cast:
+Motion_Init(&motion, (MotionParams){ .type = MOTION_HOMING, .speed = 12.0f,
+    .turnRateRad = 2.5f, .arrivalRadius = 0.3f }, startPos, target);
+// Each Update frame:
+Motion_Step(&motion, dt);
+if (Motion_Arrived(&motion)) { /* trigger impact */ }
+```
+
+---
+
+## 14. Status VFX & Afterimage (`#include "core/status_vfx.h"` / `#include "core/afterimage.h"`)
+
+### Status/Aura VFX (`core/status_vfx.h`)
+
+Looping element-tinted emitter + low-priority `VFXLight` that follow an agent each frame.
+
+```c
+#define MAX_STATUS_VFX 32
+int  StatusVFX_Attach(int agentId, EffectPresetType element, float duration);
+void StatusVFX_Detach(int handle);   // early removal (cleanse)
+void StatusVFX_Update(float dt);     // call in main update loop
+void StatusVFX_Draw(void);           // call in transparent draw pass
+void StatusVFX_GetStats(int *active, int *max);
+```
+
+- Agent position queried each frame via `SkillManager_GetAgentPos(agentId)` — no entity dependency.
+- Re-attaching the same element to the same agent **refreshes duration, does not stack**.
+- When agent dies (provider returns false) or duration expires → 0.5 s fade-out, then auto-free.
+
+> [!NOTE]
+> Wire `StatusVFX_Update(dt)` in the main update loop and `StatusVFX_Draw()` in the transparent draw pass. Both are already wired in `main.c`.
+
+### Mesh Afterimage (`core/afterimage.h`)
+
+Ghost dissolve of a model at a frozen transform — for dash/blade trails.
+
+```c
+#define MAX_AFTERIMAGES 64
+void Afterimage_Init(void);
+void Afterimage_Spawn(Model model, Matrix transform, Color tint, float life);
+void Afterimage_Update(float dt);
+void Afterimage_Draw(void);   // BLEND_ALPHA, depth-write off
+void Afterimage_GetStats(int *active, int *max);
+```
+
+- Stores a **reference** to `model` (not a copy) + frozen `Matrix` snapshot.
+- Dissolves via `u_dissolve` ramp 0→1 over `life` seconds using the `effect_material` shader.
+- Caller must **not** unload the model while any ghost referencing it is alive.
+- Typical spawn cadence: one ghost every 0.04 s while dash/blade is active (caller-side timer).
+
+---
+
+## 15. SkillBuilder Archetypes & Chain-Targeting
+
+Documented inline in §9b above. Quick-reference signatures:
+
+- `SkillBuilder_SpawnBeam` / `SkillBuilder_KillBeam`
+- `SkillBuilder_SpawnGroundWave`
+- `SkillBuilder_SpawnOrbitals`
+- `SkillBuilder_SpawnAuraRing` / `SkillBuilder_KillAuraRing`
+- `SkillHelper_ChainTargets` / `SpawnChainLightning`
+- `SkillHelper_Update` — already wired in `main.c`; **do not call from skills**.
+
+---
+
+## 16. Agent Providers (`#include "core/skill_manager.h"`)
+
+Inversion-of-control: core queries agent positions and nearby targets without depending on `entities/`.
+
+```c
+typedef bool (*AgentPosProviderFn)(int agentId, Vector3 *outPos);
+void SkillManager_SetAgentPosProvider(AgentPosProviderFn fn);
+bool SkillManager_GetAgentPos(int agentId, Vector3 *outPos);
+// Returns false if agentId invalid or no provider registered.
+
+typedef int (*NearbyTargetsProviderFn)(Vector3 center, float radius,
+                                       int *outIds, int maxIds);
+void SkillManager_SetNearbyTargetsProvider(NearbyTargetsProviderFn fn);
+int  SkillManager_GetNearbyTargets(Vector3 center, float radius,
+                                   int *outIds, int maxIds);
+// Returns count found. Returns 0 if no provider registered.
+```
+
+Both are registered automatically by `Entity_Init`. Skills call them **indirectly** via `StatusVFX_Update` or `SkillHelper_ChainTargets` — they should not call these functions directly.
+
+---
+
+## 17. Pool Stats & Sandbox Tools
+
+### Pool Stats `GetStats()` (`#include "core/*.h"` respective headers)
+
+Each core pool exposes active/max counts. Call once per frame in autotest scenarios to detect silent pool overflow.
+
+```c
+void ParticleSystem_GetStats(int *active, int *max);  // pool: 2000
+void TrailSystem_GetStats(int *active, int *max);      // pool: 500
+void DecalSystem_GetStats(int *active, int *max);      // pool: 64
+void VFXLight_GetStats(int *active, int *max);         // pool: 16
+void EmitterSystem_GetStats(int *active, int *max);    // pool: 256
+void DamageVolume_GetStats(int *active, int *max);     // pool: 32
+void StatusVFX_GetStats(int *active, int *max);        // pool: 32
+void Afterimage_GetStats(int *active, int *max);       // pool: 64
+```
+
+Displayed by `sandbox/pool_stats.h` — hold **F3** in-game. Row turns red when peak == max (pool overflow occurred this session). `TraceLog(LOG_WARNING)` fires once per pool per session on first drop.
+
+### Sandbox: Pool Stats Overlay (`#include "sandbox/pool_stats.h"`)
+
+```c
+void PoolStats_Init(void);
+void PoolStats_DrawOverlay(void);  // hold F3 in-game
+```
+
+Shows 8 pools: active/max + peak high-water mark. Red row = at least one item was silently dropped this session.
+
+### Sandbox: Visual Verify Harness (`#include "sandbox/visual_verify.h"`)
+
+Headless regression capture. Usage: `WUXING_VERIFY=<skill_name> ./wuxing`
+
+```c
+bool        VisualVerify_IsEnabled(void);
+const char *VisualVerify_GetSkillName(void);
+void        VisualVerify_Init(int skillIndex);
+void        VisualVerify_RunFrame(float elapsed);
+bool        VisualVerify_IsFinished(void);
+int         VisualVerify_GetExitCode(void);  // 0 = ok, 1 = unknown skill
+```
+
+- Casts the skill at a fixed position, saves 5 PNGs at 0.15 / 0.5 / 1.0 / 2.0 / 3.5 s into `autotest_output/verify_<skill>_<time>s.png`, then exits.
+- `FLAG_WINDOW_HIDDEN` — no display required.
+- Skill name must match registry exactly (e.g. `FIRE_BALL`).
+
+> [!NOTE]
+> When autotest reports PASS but visual output looks wrong, trust the screenshot over the numeric result — see memory entry "Trust Visual Over Numeric PASS".

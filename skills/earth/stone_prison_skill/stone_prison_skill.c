@@ -257,7 +257,7 @@ void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
                 p->timer = 0.0f;
 
                 if (s_shakeEnable > 0.5f) CameraFX_Shake(0.32f);
-                ScreenDistort_Add(p->pos, s_castDistortRadius * p->scale, 0.4f, 0.3f, 180.0f);
+                ScreenDistort_Add(p->pos, s_castDistortRadius * p->scale, 0.4f, 0.3f, 1.8f);
             }
             break;
         }
@@ -386,7 +386,7 @@ void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
                 float explodeRad = s_pillarRadius * p->scale * 4.2f;
                 float distortR = fminf(fmaxf(explodeRad * 0.18f, 0.2f), explodeRad * 0.6f);
                 (void)distortR; // override with tunable for direct control
-                ScreenDistort_Add(p->pos, s_explodeDistortRadius * p->scale, 0.8f, 0.45f, 250.0f);
+                ScreenDistort_Add(p->pos, s_explodeDistortRadius * p->scale, 0.8f, 0.45f, 2.5f);
                 if (s_shakeEnable > 0.5f) CameraFX_Shake(0.42f);
                 VFXLight_Spawn(p->pos, RED, s_explodeLightRadius * p->scale, 0.5f, VFX_PRIORITY_LOW);
 

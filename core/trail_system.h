@@ -166,6 +166,7 @@ void UpdateTrailSystem(float dt);
 void DrawTrailEntities(Camera3D camera);
 void UnloadTrailSystem(void);
 int GetActiveTrailCount(void);
+void TrailSystem_GetStats(int *active, int *max); // Item 32
 
 void UpdateFollowerPosition(int id, Vector3 newTipPos);
 

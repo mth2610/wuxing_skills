@@ -72,5 +72,6 @@ void DecalSystem_Draw(void);
 
 // Giải phóng hệ thống
 void DecalSystem_Unload(void);
+void DecalSystem_GetStats(int *active, int *max); // Item 32
 
 #endif // DECAL_SYSTEM_H

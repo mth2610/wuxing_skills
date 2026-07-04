@@ -63,6 +63,7 @@ struct ParticleConfig {
 
 void InitParticleSystem(void);
 void SpawnParticle(ParticleConfig config);
+void ParticleSystem_GetStats(int *active, int *max); // Item 32
 void UpdateParticles(float dt);
 void DrawParticles(Camera3D camera, Texture2D texture);
 void UnloadParticleSystem(void);

@@ -742,3 +742,7 @@ void DrawTrailEntities(Camera3D camera) {
 }
 
 void UnloadTrailSystem(void) {}
+void TrailSystem_GetStats(int *active, int *max) {
+    *active = GetActiveTrailCount();
+    *max = MAX_TRAIL_PARTICLES;
+}

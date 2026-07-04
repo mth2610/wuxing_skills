@@ -495,176 +495,12 @@ up any one independently unless a dependency is stated.
 
 | # | Title | Priority | Owner | Depends on |
 |---|---|---|---|---|
-| 23 | SkillBuilder archetypes: Beam / GroundWave / Orbitals / AuraRing | P2 | Core | — |
-| 28 | Chain-targeting helper (chain lightning et al.) | P2 | Core + Entities | 26 |
-| 29 | Status/aura VFX attached to agents (burning, shocked, frozen) | P3 | Core | 26 |
-| 31 | Mesh afterimage / ghost trail | P3 | Core | — |
-| 32 | Pool stats overlay (P3, Core + Sandbox) | P3 | Core + Sandbox | — |
 | 33 | Looping audio handles (flight/aura sound) | P3 | Core | 25 assets |
-| 34 | Real-world-meter rescale: shared-infrastructure sweep + per-skill refactor | P0 | Core + Skills | — |
 
-Recommended order: 23, then 28/29/31–33 in any order.
-
----
-
-
-## Item 23 — SkillBuilder archetype extensions (P2)
-
-**Problem.** `SkillBuilder` composes exactly one archetype (impact
-explosion + decal + damage volume). Beams, ground waves, orbitals, and
-auras get hand-rolled per skill, inconsistently.
-
-**How to build** (in `core/skill_helper.h/.c`; each new call composes
-ONLY existing systems — no new rendering code):
-1. `int SkillBuilder_SpawnBeam(Vector3 from, Vector3 to,
-   EffectPresetType element, float width, float duration);`
-   — wraps `core/vfx_proc_ray.h`'s managed ray pool (element-tinted) +
-   a `VFXLight_Spawn` at both ends + optional `SpawnDamageVolume` along
-   the line (CAPSULE approximated by 3 overlapping circles). **Immediate**
-   (like `SkillBuilder_AddCastEffect`), returns handle for early kill.
-2. `void SkillBuilder_SpawnGroundWave(Vector3 origin, Vector3 dir,
-   EffectPresetType element, float range, float speed);`
-   — expanding ring/line: `DecalSystem_AddFlowEx` scroll decal + a
-   `SHOCKWAVE` mesh preset scaled over time + `EARTH_DUST`-class emitter
-   marching along `dir`. Internally a small static pool (8) updated from
-   `DamageVolume_Update`-style tick registered in the helper's update.
-3. `int SkillBuilder_SpawnOrbitals(Vector3 center, EffectPresetType
-   element, int count, float radius, float duration);`
-   — N small `DrawEffectMesh` tetrahedra orbiting `center` (static pool,
-   updated per frame), each with a thin follower trail; per-instance
-   random phase/scale per the anti-robotic law.
-4. `int SkillBuilder_SpawnAuraRing(Vector3 center, EffectPresetType
-   element, float radius, float duration);`
-   — looping emitter ring (reuse `Emitter_AttachToPoint` at K points on
-   the circle) + `DECAL_PRESET_GENERIC_GLOW` tinted + low-priority light.
-5. All Spawn* are **immediate with duration/self-expiry** (unlike the
-   deferred `Add*`/`Build` pattern) — document the distinction in the
-   header exactly like `SkillBuilder_AddCastEffect` already does.
-6. Demo each in `core_test`; document in `CORE_API.md` §9b.
-
-**Acceptance:** each archetype callable in one line from a skill; demoed +
-screenshotted; pools are static, no malloc.
+Remaining open: Item 33 (blocked on audio assets). **Item 34 COMPLETE** (2026-07-04): all shared infrastructure rescaled; all 7 unconverted skills' params.inl now in meter-scale; final 5 remaining raw ScreenDistort speed values (180/250/190→1.8/2.5/1.9) and 1 knockback (140→1.4) fixed in stone_prison/dia_long/thuy_kinh.
 
 ---
 
-## Item 28 — Chain-targeting helper (P2, depends on Item 26's provider pattern)
-
-**Problem.** "Chain lightning"-class skills need: find nearest target,
-jump N times, draw a bolt per hop with staggered timing. Entities owns
-target queries; core owns bolts; nobody owns the composition.
-
-**How to build.**
-1. Extend the Item-26 provider pattern with a second callback in
-   `core/skill_manager.h`:
-   ```c
-   typedef int (*NearbyTargetsProviderFn)(Vector3 center, float radius,
-                                          Vector3 *outPos, int *outAgentIds,
-                                          int maxOut);
-   void SkillManager_SetNearbyTargetsProvider(NearbyTargetsProviderFn fn);
-   ```
-   Entities Agent registers it backed by `Entity_GetNearbyTargets`
-   (`ENTITIES_API.md` §7).
-2. `core/skill_helper.h`:
-   ```c
-   // Builds the jump list: from origin, nearest target within jumpRadius,
-   // then nearest-to-that not already hit, up to maxJumps. Returns count.
-   int SkillHelper_ChainTargets(Vector3 origin, float jumpRadius,
-                                int maxJumps, Vector3 *outPoints,
-                                int *outAgentIds, int maxOut);
-   // Fire-and-forget visual: one SpawnLightningTrail per hop, each hop
-   // delayed hopDelay (LayeredTimeline-style stagger, static pool).
-   void SpawnChainLightning(const Vector3 *points, int count,
-                            float scale, float hopDelay);
-   ```
-3. Damage stays the skill's job (call `Entity_ApplyAoEDamage` with a small
-   radius at each point when its hop fires) — helper does visuals only,
-   consistent with the sandbox-damage-fallback pattern.
-4. Demo: sandbox dummies in a line, one call chains 3 hops.
-
-**Acceptance:** 3-hop chain visually staggered; no-targets case degrades
-to zero hops gracefully (returns 0, spawns nothing).
-
----
-
-## Item 29 — Status/aura VFX attached to agents (P3, depends on Item 26)
-
-**Problem.** "Burning / shocked / frozen / blessed" looping effects on an
-agent are the visual language of wuxing counters (design doc: no UI, no
-text — states must be readable in-world), and currently every skill would
-have to reimplement follow-the-agent particles.
-
-**How to build** (`core/status_vfx.h/.c`, static pool `MAX_STATUS_VFX 32`):
-```c
-int  StatusVFX_Attach(int agentId, EffectPresetType element, float duration);
-void StatusVFX_Detach(int handle);        // early removal (cleanse)
-void StatusVFX_Update(float dt);          // main.c, next to EmitterSystem_Update
-void StatusVFX_Draw(void);                // transparent pass
-```
-Each slot owns: one looping emitter (element's `EmitterPreset` at low
-rate), one low-priority `VFXLight`, optional small generic glow decal
-under the agent. Every frame: `SkillManager_GetAgentPos(agentId, &p)`
-→ reposition all three; provider returns false (agent died) → start a
-0.5s fade-out then free the slot. Re-attaching the same element to the
-same agent refreshes duration instead of stacking (search pool first).
-Wire Update/Draw into `main.c`; document in `CORE_API.md`.
-
-**Acceptance:** burning status follows a moving enemy dummy, expires
-cleanly, refresh-not-stack confirmed.
-
----
-
-## Item 31 — Mesh afterimage / ghost trail (P3)
-
-**Problem.** Fast motion (dashes, blade sweeps, thrown meshes) has no
-cheap motion-trail solution for MESHES — trails/ribbons cover points and
-strips, not full silhouettes.
-
-**How to build** (`core/afterimage.h/.c`, static pool 64):
-```c
-void Afterimage_Spawn(Model model, Matrix transform, Color tint, float life);
-void Afterimage_Update(float dt);
-void Afterimage_Draw(void); // BLEND_ALPHA pass, depth-write off
-```
-- Stores model REFERENCE + transform snapshot (no mesh copy — models are
-  ResourceManager-cached and long-lived; document that the caller must
-  not unload the model while ghosts live, which is already guaranteed by
-  the no-Unload rule).
-- Draw with the shared `effect_material` shader: translucency 1.0,
-  `u_dissolve` ramped from 0→1 over `life` (dissolve-out, no popping),
-  tint = element color at ~40% alpha.
-- Typical use: spawn one ghost every 0.04s while a blade/dash is active
-  (caller-side timer).
-- Demo in `core_test` with a swinging tetrahedron.
-
-**Acceptance:** 4–6 fading ghosts behind a fast-moving mesh, correct
-draw order against ground/props, zero malloc.
-
----
-
-## Item 32 — Pool stats overlay (P3, Core + Sandbox)
-
-**Problem.** Every pool overflows silently (return -1 / no-op) — correct
-for shipping, but during authoring an AI can't tell "effect looks weak"
-from "80% of my particles were dropped".
-
-**How to build.**
-1. Each core system gains a 2-int getter (trivial, no state added):
-   `void X_GetStats(int *active, int *max);` for: particle system, trail
-   system, decal system, vfx lights, emitter system, damage volumes,
-   afterimage (Item 31), status vfx (Item 29), and `skill_helper.c`'s
-   internal cast/projectile/lightning force pools. Track a high-water
-   mark (`maxSeen`) inside each — reset on Init.
-2. Sandbox Agent: overlay panel (grep key conflicts first — Item 3's
-   KEY_K lesson; suggest `KEY_F3`) listing `name active/max (peak)` —
-   red when peak == max (something WAS dropped this session).
-3. Also `TraceLog(LOG_WARNING)` ONCE per system per session on first
-   drop, so headless/autotest runs surface it in logs.
-
-**Acceptance:** deliberately over-spawn in core_test → overlay row turns
-red + one warning line in the log; normal skills show comfortable
-headroom.
-
----
 
 ## Item 33 — Looping audio handles (P3, blocked on Item 25's assets)
 
@@ -694,7 +530,11 @@ impact; no click; missing-asset path silent after one warning.
 
 ---
 
-## Item 34 — Real-world-meter rescale: shared-infrastructure sweep + per-skill refactor checklist (P0, Core + Skills)
+## Item 34 — COMPLETE (2026-07-04)
+
+All shared infrastructure (CastSkill offsets, enemyRadius, Skill_CalculateKnockback, AddKnockbackToEnemy, SpawnImpactEffect 8 presets, vfx_proc_ray thickness) rescaled. All 7 remaining skills converted with 5-pass checklist (_params.inl in meter-scale, comprehensive tunables, SkillCurves, SkillForceMix). Final raw magic numbers fixed: ScreenDistort speed 180→1.8, 250→2.5, 190→1.9 (stone_prison/dia_long/thuy_kinh); knockback 140→1.4 (dia_long).
+
+_(Full rescale methodology preserved below for reference — real-world-meter rescale: shared-infrastructure sweep + per-skill refactor checklist, P0, Core + Skills)_
 
 **Background.** 2026-07-03: the project moved from a de facto 1 unit = 1cm
 scale to 1 unit = 1 meter (see root `CLAUDE.md` "Standard coordinates &

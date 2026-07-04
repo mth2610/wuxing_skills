@@ -366,7 +366,7 @@ static void VertebraErupt(DragonSpine *sp, Vertebra *vb)
     float aoeR = fminf(fmaxf(s_vertAoERadius * sp->scale,
                               vb->height * 0.3f),
                        vb->height * 1.5f);
-    Entity_ApplyAoEDamage(vb->pos, aoeR, sp->damage * 0.20f, 140.0f);
+    Entity_ApplyAoEDamage(vb->pos, aoeR, sp->damage * 0.20f, 1.4f);
 
     for (int i = 0; i < 10; i++) {
         float a = (float)i / 10.0f * 2.0f * PI;
@@ -403,7 +403,7 @@ static void HeadErupt(DragonSpine *sp)
     SpawnImpactEffect(sp->headPos, EFFECT_PRESET_EARTH_CRACK, 1.5f * sp->scale);
     PlayImpactSound(EFFECT_PRESET_EARTH_CRACK);
     // Pass 1: distort radius in meters; speed/strength are unitless screen params
-    ScreenDistort_Add(sp->headPos, s_distortRadius * sp->scale, 0.8f, 0.45f, 250.0f);
+    ScreenDistort_Add(sp->headPos, s_distortRadius * sp->scale, 0.8f, 0.45f, 2.5f);
     if (s_shakeEnable > 0.5f) CameraFX_Shake(0.5f);
     // Held for the whole active phase per VFX standards, ultimate priority.
     VFXLight_Spawn(sp->headPos, ORANGE, s_headLightRadius * sp->scale,

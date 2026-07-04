@@ -18,5 +18,6 @@ int CreateEmitter(EmitterConfig config, Vector3 startPos);
 void UpdateEmitterTarget(int id, Vector3 newPos, float dt);
 void StopEmitter(int id);
 void KillEmitter(int id);
+void EmitterSystem_GetStats(int *active, int *max); // Item 32
 
 #endif // EMITTER_SYSTEM_H

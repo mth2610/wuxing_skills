@@ -367,7 +367,7 @@ static void WardBloomBurst(WardInstance *w)
 
     // Pass 4 — distance-proportional distort radius: floor+cap
     float distortR = fminf(fmaxf(w->radius * 1.5f, 0.05f), w->radius * 2.0f);
-    ScreenDistort_Add(domeC, distortR, 0.07f, 0.45f, 190.0f);
+    ScreenDistort_Add(domeC, distortR, 0.07f, 0.45f, 1.9f);
     if (s_shakeEnable > 0.5f) CameraFX_Shake(0.12f);
 
     // Splash crown along the rim as the dome surfaces.

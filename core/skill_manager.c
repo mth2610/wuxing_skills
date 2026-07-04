@@ -1247,3 +1247,16 @@ bool SkillManager_GetAgentPos(int agentId, Vector3 *outPos) {
     if (!s_agentPosProvider || !outPos) return false;
     return s_agentPosProvider(agentId, outPos);
 }
+
+// Item 28: Nearby-targets provider
+static NearbyTargetsProviderFn s_nearbyTargetsProvider = NULL;
+
+void SkillManager_SetNearbyTargetsProvider(NearbyTargetsProviderFn fn) {
+    s_nearbyTargetsProvider = fn;
+}
+
+int SkillManager_GetNearbyTargets(Vector3 center, float radius,
+                                  int *outIds, int maxIds) {
+    if (!s_nearbyTargetsProvider || !outIds || maxIds <= 0) return 0;
+    return s_nearbyTargetsProvider(center, radius, outIds, maxIds);
+}

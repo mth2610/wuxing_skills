@@ -229,3 +229,11 @@ void DecalSystem_Unload(void) {
         g_DecalPool[i].active = false;
     }
 }
+
+void DecalSystem_GetStats(int *active, int *max) {
+    int n = 0;
+    for (int i = 0; i < MAX_DECALS; i++)
+        if (g_DecalPool[i].active) n++;
+    *active = n;
+    *max = MAX_DECALS;
+}

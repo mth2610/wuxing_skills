@@ -296,3 +296,10 @@ bool IsParticleSystemActive(void) {
 void ParticleSystem_ResetForceFieldRegistry(void) {
   // No-op ở CPU mode
 }
+void ParticleSystem_GetStats(int *active, int *max) {
+    int n = 0;
+    for (int i = 0; i < MAX_PARTICLES; i++)
+        if (g_Particles[i].active) n++;
+    *active = n;
+    *max = MAX_PARTICLES;
+}

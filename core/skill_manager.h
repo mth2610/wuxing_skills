@@ -235,4 +235,12 @@ typedef bool (*AgentPosProviderFn)(int agentId, Vector3 *outPos);
 void SkillManager_SetAgentPosProvider(AgentPosProviderFn fn);
 bool SkillManager_GetAgentPos(int agentId, Vector3 *outPos);
 
+// Nearby-targets provider — lets skill_helper build chain effects without
+// depending on entities.h. Register from Entity_Init.
+typedef int (*NearbyTargetsProviderFn)(Vector3 center, float radius,
+                                       int *outIds, int maxIds);
+void SkillManager_SetNearbyTargetsProvider(NearbyTargetsProviderFn fn);
+int  SkillManager_GetNearbyTargets(Vector3 center, float radius,
+                                   int *outIds, int maxIds);
+
 #endif // SKILL_MANAGER_H

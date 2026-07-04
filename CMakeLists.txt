@@ -71,6 +71,8 @@ add_executable(wuxing
     core/skill_helper.c
     core/time_fx.c
     core/motion_controller.c
+    core/status_vfx.c
+    core/afterimage.c
     core/particle_radial_burst.c
     core/impact_burst.c
     core/shader_preprocessor.c
@@ -87,6 +89,7 @@ add_executable(wuxing
     sandbox/skill_debugger.c
     sandbox/auto_test.c
     sandbox/visual_verify.c
+    sandbox/pool_stats.c
 
     # --- Skills ---
     ${SKILL_SOURCES}

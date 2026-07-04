@@ -25,6 +25,9 @@
 #include "skills/taiji/core_test/core_test_skill.h"
 #include "sandbox/auto_test.h"
 #include "sandbox/visual_verify.h"
+#include "sandbox/pool_stats.h"
+#include "core/status_vfx.h"
+#include "core/afterimage.h"
 #include <stdio.h>
 
 // Biến camera toàn cục
@@ -163,6 +166,8 @@ int main(void) {
   }
   DamageVolume_Init();
   EmitterSystem_Init();
+  Afterimage_Init();
+  PoolStats_Init();
   RegisterStaticOccluder((Vector3){4.0f, 0.0f, 3.2f}, 0.25f, 0.625f);
   RegisterStaticOccluder((Vector3){8.0f, 0.0f, 5.2f}, 0.3f, 0.75f);
   RegisterStaticOccluder((Vector3){6.0f, 0.0f, 2.6f}, 0.2f, 0.5f);
@@ -294,7 +299,10 @@ int main(void) {
     Tuning_Update();
     UpdateSkillManager(dt, enemy.position, 0.35f);
     DamageVolume_Update(dt);
+    SkillHelper_Update(dt);
     EmitterSystem_Update(dt);
+    StatusVFX_Update(dt);
+    Afterimage_Update(dt);
     UpdateParticles(dt);
     GpuParticleSystem_Update(dt);
     UpdateTrailSystem(dt);
@@ -337,6 +345,9 @@ int main(void) {
     // =========================================================================
     // VFXTest_DrawDebugLights3D();
 
+    SkillBuilder_DrawWorld(camera);
+    Afterimage_Draw();
+
     if (!g_debugHideTrails) {
         DrawTrailEntities(camera);
     }
@@ -370,7 +381,8 @@ int main(void) {
     MetaballFX_DrawRegistered(camera, ELEMENT_COLOR_WATER, 0.3f, 0.12f);
 
     DrawSkillManagerOverlay();
-    DrawCoreTestSkillDebugHUD(); // CORE_ISSUES.md Item 3 test — on-screen depth readback (press L)
+    DrawCoreTestSkillDebugHUD();
+    PoolStats_DrawOverlay(); // CORE_ISSUES.md Item 3 test — on-screen depth readback (press L)
 
     Vector2 enemyScreenHead = GetWorldToScreen(
         (Vector3){enemy.position.x, enemy.position.y + 0.55f, enemy.position.z},
