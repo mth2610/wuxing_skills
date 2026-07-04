@@ -3,6 +3,11 @@
 #include "raymath.h"
 #include "rlgl.h"
 #include <math.h>
+#include <stdlib.h>
+#include "core/presets/vfx_presets.h"
+#include "core/trail_system.h"
+#include "core/vfx_light.h"
+#include "core/particle_system.h"
 
 #ifndef PI
 #define PI 3.1415926535f
@@ -452,4 +457,298 @@ void ProcBolt_Draw(int id, Camera3D cam) {
 void ProcBolt_Kill(int id) {
     if (id < 0 || id >= MAX_PROC_BOLTS) return;
     s_bolts[id].active = false;
+}
+
+// ── Lightning Trail System (Hợp nhất từ skill_helper) ─────────────────────
+#define LIGHTNING_BOLT_WAYPOINTS 9
+#define LIGHTNING_BOLT_PUSH_COUNT 50
+#define MAX_CONCURRENT_LIGHTNING_TRAILS 16
+
+typedef struct {
+    bool active;
+    int trailId;
+    Vector3 waypoints[LIGHTNING_BOLT_WAYPOINTS];
+    float travelDuration;
+    float elapsed;
+    int pushedCount;
+} LightningBoltState;
+
+static LightningBoltState s_lightningBolts[MAX_CONCURRENT_LIGHTNING_TRAILS];
+static int s_lightningBoltNextSlot = 0;
+
+typedef struct {
+    bool active;
+    int trailId;
+    bool hasLastRecordedPos;
+    Vector3 lastRecordedPos;
+    float sign;
+} LightningFollowerState;
+
+static LightningFollowerState s_lightningFollowers[MAX_CONCURRENT_LIGHTNING_TRAILS];
+static int s_lightningFollowerFldNextSlot = 0;
+static ForceField s_lightningFollowerFlds[MAX_CONCURRENT_LIGHTNING_TRAILS];
+
+static void GenerateLightningWaypoints(Vector3 *out, int count, Vector3 start, Vector3 target, float jaggedAmount) {
+    Vector3 dir = Vector3Normalize(Vector3Subtract(target, start));
+    Vector3 refUp = (fabsf(dir.y) > 0.95f) ? (Vector3){1.0f, 0.0f, 0.0f} : (Vector3){0.0f, 1.0f, 0.0f};
+    Vector3 perp1 = Vector3Normalize(Vector3CrossProduct(dir, refUp));
+    Vector3 perp2 = Vector3Normalize(Vector3CrossProduct(dir, perp1));
+
+    for (int i = 0; i < count; i++) {
+        float t = (count > 1) ? (float)i / (float)(count - 1) : 0.0f;
+        Vector3 base = Vector3Lerp(start, target, t);
+        if (i == 0 || i == count - 1) {
+            out[i] = base;
+            continue;
+        }
+        float sign = (i % 2 == 0) ? 1.0f : -1.0f;
+        float jitter1 = (float)GetRandomValue(-100, 100) * 0.01f;
+        float jitter2 = (float)GetRandomValue(-100, 100) * 0.01f;
+        Vector3 offset = Vector3Add(
+            Vector3Scale(perp1, sign * jaggedAmount * (0.7f + 0.3f * jitter1)),
+            Vector3Scale(perp2, jitter2 * jaggedAmount * 0.5f));
+        out[i] = Vector3Add(base, offset);
+    }
+}
+
+static Vector3 SampleLightningPath(const Vector3 *waypoints, int count, float f) {
+    if (f <= 0.0f) return waypoints[0];
+    if (f >= 1.0f) return waypoints[count - 1];
+    float seg = f * (float)(count - 1);
+    int idx = (int)seg;
+    float u = seg - (float)idx;
+    int next = idx + 1;
+    if (next >= count) next = count - 1;
+    return Vector3Lerp(waypoints[idx], waypoints[next], u);
+}
+
+static void LightningBoltAdvance(int trailId, float dt) {
+    LightningBoltState *bolt = NULL;
+    for (int i = 0; i < MAX_CONCURRENT_LIGHTNING_TRAILS; i++) {
+        if (s_lightningBolts[i].active && s_lightningBolts[i].trailId == trailId) {
+            bolt = &s_lightningBolts[i];
+            break;
+        }
+    }
+    if (!bolt) return;
+
+    TrailEntity *t = GetTrail(trailId);
+    if (!t || !t->active) { bolt->active = false; return; }
+
+    bolt->elapsed += dt;
+    float f = bolt->elapsed / bolt->travelDuration;
+    if (f > 1.0f) f = 1.0f;
+
+    int targetPushed = (int)(f * (float)LIGHTNING_BOLT_PUSH_COUNT);
+    if (targetPushed > LIGHTNING_BOLT_PUSH_COUNT) targetPushed = LIGHTNING_BOLT_PUSH_COUNT;
+
+    Vector3 tip = bolt->waypoints[0];
+    while (bolt->pushedCount < targetPushed) {
+        bolt->pushedCount++;
+        float pushF = (float)bolt->pushedCount / (float)LIGHTNING_BOLT_PUSH_COUNT;
+        tip = SampleLightningPath(bolt->waypoints, LIGHTNING_BOLT_WAYPOINTS, pushF);
+        UpdateFollowerPosition(trailId, tip);
+        SpawnParticle((ParticleConfig){
+            .position = tip,
+            .colorStart = t->tint,
+            .colorEnd = t->tint,
+            .radius = 2.2f * t->scale,
+            .lifetime = 0.15f,
+            .gradient = &s_lightningGrad
+        });
+    }
+
+    if ((float)rand() / (float)RAND_MAX < dt * 10.0f) {
+        VFXLight_Spawn(tip, t->tint, 35.0f * t->scale, 0.08f, VFX_PRIORITY_LOW);
+    }
+
+    if (f >= 1.0f) {
+        bolt->active = false;
+        KillTrail(trailId);
+    }
+}
+
+#define LIGHTNING_FOLLOWER_MIN_SEGMENT 45.0f
+
+static void LightningTrailFlicker(int trailId, float dt) {
+    TrailEntity *t = GetTrail(trailId);
+    if (!t || !t->active) return;
+    if ((float)rand() / (float)RAND_MAX < dt * 10.0f) {
+        VFXLight_Spawn(t->position, t->tint, 35.0f * t->scale, 0.08f, VFX_PRIORITY_LOW);
+    }
+}
+
+int SpawnLightningTrail(Vector3 start, Vector3 target, float scale, float speed) {
+    VFX_Presets_Init();
+
+    float boltLen = Vector3Distance(start, target);
+    float jaggedAmount = fmaxf(0.5f, boltLen * 0.08f) * scale;
+    float travelDuration = boltLen / fmaxf(speed, 1.0f);
+    Color tint = (Color){ 220, 200, 255, 255 };
+
+    TrailConfig cfg = {
+        .type = TRAIL_TYPE_FOLLOWER,
+        .pos = start,
+        .thick = 2.2f * scale,
+        .life = travelDuration + 0.3f,
+        .scale = scale,
+        .tint = tint,
+        .gradient = &s_lightningGrad,
+        .onUpdate = LightningBoltAdvance
+    };
+    int trailId = SpawnTrailEntity(cfg);
+    if (trailId < 0) return trailId;
+
+    LightningBoltState *bolt = &s_lightningBolts[s_lightningBoltNextSlot];
+    s_lightningBoltNextSlot = (s_lightningBoltNextSlot + 1) % MAX_CONCURRENT_LIGHTNING_TRAILS;
+    bolt->active = true;
+    bolt->trailId = trailId;
+    bolt->travelDuration = travelDuration;
+    bolt->elapsed = 0.0f;
+    bolt->pushedCount = 0;
+    GenerateLightningWaypoints(bolt->waypoints, LIGHTNING_BOLT_WAYPOINTS, start, target, jaggedAmount);
+    UpdateFollowerPosition(trailId, bolt->waypoints[0]);
+
+    return trailId;
+}
+
+int SpawnLightningFollowerTrail(Vector3 startPos, float scale, float life) {
+    VFX_Presets_Init();
+
+    int slot = s_lightningFollowerFldNextSlot;
+    s_lightningFollowerFldNextSlot = (s_lightningFollowerFldNextSlot + 1) % MAX_CONCURRENT_LIGHTNING_TRAILS;
+    ForceField *followerFld = &s_lightningFollowerFlds[slot];
+    ForceField_Clear(followerFld);
+    ForceField_AddLayer(followerFld, (ForceLayer){ .type = FORCE_NOISE_PERLIN, .strength = 100.0f, .noiseScale = 0.6f, .noiseSpeed = 14.0f });
+    ForceField_AddLayer(followerFld, (ForceLayer){ .type = FORCE_VISCOSITY, .strength = 4.0f });
+
+    LightningFollowerState *st = &s_lightningFollowers[slot];
+    st->active = true;
+    st->hasLastRecordedPos = false;
+    st->sign = 1.0f;
+
+    TrailConfig cfg = {
+        .type = TRAIL_TYPE_FOLLOWER,
+        .pos = startPos,
+        .len = 8.0f * scale,
+        .thick = 3.5f * scale,
+        .trailLength = 55.0f,
+        .life = life,
+        .scale = scale,
+        .tint = (Color){ 220, 200, 255, 255 },
+        .forceField = followerFld,
+        .gradient = &s_lightningFollowerGrad,
+        .onUpdate = LightningTrailFlicker
+    };
+    int trailId = SpawnTrailEntity(cfg);
+    st->trailId = trailId;
+    return trailId;
+}
+
+void Lightning_UpdateFollowerTip(int id, Vector3 tipPos, float scale) {
+    LightningFollowerState *st = NULL;
+    for (int i = 0; i < MAX_CONCURRENT_LIGHTNING_TRAILS; i++) {
+        if (s_lightningFollowers[i].active && s_lightningFollowers[i].trailId == id) {
+            st = &s_lightningFollowers[i];
+            break;
+        }
+    }
+    if (!st) return;
+
+    if (!st->hasLastRecordedPos) {
+        st->hasLastRecordedPos = true;
+        st->lastRecordedPos = tipPos;
+        UpdateFollowerPosition(id, tipPos);
+        return;
+    }
+
+    float minSeg = LIGHTNING_FOLLOWER_MIN_SEGMENT * fmaxf(scale, 0.01f);
+    if (Vector3DistanceSqr(tipPos, st->lastRecordedPos) < minSeg * minSeg) {
+        TrailEntity *ent = GetTrail(id);
+        if (ent) ent->timeSinceLastFollowerUpdate = 0.0f;
+        return;
+    }
+
+    Vector3 dir = Vector3Normalize(Vector3Subtract(tipPos, st->lastRecordedPos));
+    Vector3 refUp = (fabsf(dir.y) > 0.95f) ? (Vector3){1.0f, 0.0f, 0.0f} : (Vector3){0.0f, 1.0f, 0.0f};
+    Vector3 perp = Vector3Normalize(Vector3CrossProduct(dir, refUp));
+    st->sign = -st->sign;
+    Vector3 mid = Vector3Lerp(st->lastRecordedPos, tipPos, 0.5f);
+    Vector3 kink = Vector3Add(mid, Vector3Scale(perp, st->sign * minSeg * 0.4f));
+
+    UpdateFollowerPosition(id, kink);
+    UpdateFollowerPosition(id, tipPos);
+    st->lastRecordedPos = tipPos;
+}
+
+void RegenerateLightningWaypoints(Vector3 *waypoints9, Vector3 from, Vector3 to, float scale) {
+    VFX_Presets_Init();
+    float boltLen = Vector3Distance(from, to);
+    float jaggedAmount = boltLen * 0.14f * fmaxf(scale, 0.1f);
+    GenerateLightningWaypoints(waypoints9, 9, from, to, jaggedAmount);
+}
+
+void RegenerateLightningRay(Vector3 *waypoints9, Vector3 origin, Vector3 direction,
+                             float length, float phase, float amplitude, float scale) {
+    VFX_Presets_Init();
+
+    Vector3 dir = Vector3Normalize(direction);
+    Vector3 refUp = (fabsf(dir.y) > 0.95f) ? (Vector3){1.0f, 0.0f, 0.0f} : (Vector3){0.0f, 1.0f, 0.0f};
+    Vector3 perp1 = Vector3Normalize(Vector3CrossProduct(dir, refUp));
+    Vector3 perp2 = Vector3Normalize(Vector3CrossProduct(dir, perp1));
+
+    float amp = amplitude * fmaxf(scale, 0.1f);
+
+    for (int i = 0; i < 9; i++) {
+        float t = (float)i / 8.0f;
+        Vector3 base = Vector3Add(origin, Vector3Scale(dir, t * length));
+
+        if (i == 0) {
+            waypoints9[0] = origin;
+            continue;
+        }
+
+        float envelope = powf(t, 1.5f);
+        float wR = sinf(phase + t * PI * 2.0f);
+        float wU = cosf(phase * 0.7f + t * PI * 1.5f);
+        float jR = (float)GetRandomValue(-100, 100) * 0.004f;
+        float jU = (float)GetRandomValue(-100, 100) * 0.003f;
+
+        Vector3 offset = Vector3Add(
+            Vector3Scale(perp1, (wR + jR) * amp * envelope),
+            Vector3Scale(perp2, (wU + jU) * amp * envelope * 0.65f));
+
+        waypoints9[i] = Vector3Add(base, offset);
+    }
+}
+
+#define LIGHTNING_BOLT_RIBBON_PTS 36
+static RibbonPoint s_boltRibbon[LIGHTNING_BOLT_RIBBON_PTS];
+
+void DrawLightningBolt(const Vector3 *waypoints9, float thickness, Camera3D cam) {
+    for (int pass = 0; pass < 2; pass++) {
+        float w       = (pass == 0) ? thickness * 1.6f : thickness;
+        unsigned char r = (pass == 0) ? 100 : 230;
+        unsigned char g = (pass == 0) ?  20 : 210;
+        unsigned char b = (pass == 0) ? 255 : 255;
+        unsigned char a = (pass == 0) ? 130 : 255;
+
+        for (int k = 0; k < LIGHTNING_BOLT_RIBBON_PTS; k++) {
+            float f = (float)k / (float)(LIGHTNING_BOLT_RIBBON_PTS - 1);
+            Vector3 pt = SampleLightningPath(waypoints9, 9, f);
+
+            float edge = 0.08f;
+            float taper;
+            if      (f < edge)         taper = f / edge;
+            else if (f > 1.0f - edge)  taper = (1.0f - f) / edge;
+            else                       taper = 1.0f;
+            taper = taper * taper * (3.0f - 2.0f * taper);
+
+            s_boltRibbon[k].position  = pt;
+            s_boltRibbon[k].halfWidth = w * taper;
+            s_boltRibbon[k].v         = f;
+            s_boltRibbon[k].tint      = (Color){ r, g, b, (unsigned char)(a * taper) };
+        }
+        DrawRibbonStrip(s_boltRibbon, LIGHTNING_BOLT_RIBBON_PTS, (Texture2D){0}, cam);
+    }
 }

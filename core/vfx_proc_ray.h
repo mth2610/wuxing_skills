@@ -57,4 +57,14 @@ void ProcBolt_Update(int id, Vector3 from, Vector3 to, float scale, float dt);
 void ProcBolt_Draw(int id, Camera3D cam);
 void ProcBolt_Kill(int id);
 
+// ── Lightning Trail System (Hợp nhất từ skill_helper) ─────────────────────
+int SpawnLightningTrail(Vector3 start, Vector3 target, float scale, float speed);
+int SpawnLightningFollowerTrail(Vector3 startPos, float scale, float life);
+void Lightning_UpdateFollowerTip(int id, Vector3 tipPos, float scale);
+
+void RegenerateLightningWaypoints(Vector3 *waypoints9, Vector3 from, Vector3 to, float scale);
+void RegenerateLightningRay(Vector3 *waypoints9, Vector3 origin, Vector3 direction,
+                             float length, float phase, float amplitude, float scale);
+void DrawLightningBolt(const Vector3 *waypoints9, float thickness, Camera3D cam);
+
 #endif // VFX_PROC_RAY_H

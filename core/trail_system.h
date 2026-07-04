@@ -4,6 +4,7 @@
 #include "core/force_field.h"
 #include "core/color_gradient.h"
 #include "core/sprite_anim.h"
+#include "core/vfx_config.h"
 #include "raylib.h"
 #include "core/ribbon_strip.h"
 #include "core/vfx_light.h"
@@ -93,7 +94,84 @@ typedef struct {
   float orbitSpeed;
   Vector3 orbitAxis;
   float orbitPhase;
+
+  // Unified Config representation (Phase 3)
+  VFX_GeneralConfig general;
+  VFX_GeometryConfig geometry;
+  VFX_PhysicsConfig physics;
+  VFX_AnimationConfig animation;
+  VFX_RenderConfig render;
 } TrailConfig;
+
+static inline void TrailConfig_Unify(TrailConfig *cfg) {
+  // 1. Populate unified from legacy flat fields if legacy is set and unified is empty
+  if (cfg->general.life == 0.0f && cfg->life != 0.0f) {
+    cfg->general.life = cfg->life;
+    cfg->general.priority = cfg->priority;
+    cfg->general.tag = cfg->ownerTag;
+  }
+  if (cfg->geometry.scale == 0.0f && cfg->scale != 0.0f) {
+    cfg->geometry.scale = cfg->scale;
+    cfg->geometry.radius = 0.0f;
+    cfg->geometry.width = cfg->thick;
+    cfg->geometry.length = cfg->len;
+  }
+  if (cfg->physics.position.x == 0.0f && cfg->physics.position.y == 0.0f && cfg->physics.position.z == 0.0f) {
+    cfg->physics.position = cfg->pos;
+    cfg->physics.velocity = cfg->vel;
+    cfg->physics.speed = 0.0f;
+    cfg->physics.forceField = cfg->forceField;
+  }
+  if (cfg->animation.spriteAnim == NULL && cfg->spriteAnim != NULL) {
+    cfg->animation.spriteAnim = cfg->spriteAnim;
+    cfg->animation.radiusCurve = NULL;
+    cfg->animation.speedCurve = NULL;
+    cfg->animation.alphaCurve = NULL;
+    cfg->animation.emissiveCurve = NULL;
+  }
+  if (cfg->render.gradient == NULL && cfg->gradient != NULL) {
+    cfg->render.gradient = cfg->gradient;
+    cfg->render.colorStart = cfg->tint;
+    cfg->render.colorEnd = cfg->tint;
+    cfg->render.tint = cfg->tint;
+    cfg->render.shader = cfg->shader;
+  } else if (cfg->render.tint.a == 0 && cfg->tint.a != 0) {
+    cfg->render.tint = cfg->tint;
+    cfg->render.colorStart = cfg->tint;
+    cfg->render.colorEnd = cfg->tint;
+    cfg->render.gradient = cfg->gradient;
+    cfg->render.shader = cfg->shader;
+  }
+
+  // 2. Populate legacy flat fields from unified if unified is set and legacy is empty
+  if (cfg->life == 0.0f && cfg->general.life != 0.0f) {
+    cfg->life = cfg->general.life;
+    cfg->priority = cfg->general.priority;
+    cfg->ownerTag = cfg->general.tag;
+  }
+  if (cfg->scale == 0.0f && cfg->geometry.scale != 0.0f) {
+    cfg->scale = cfg->geometry.scale;
+    cfg->thick = cfg->geometry.width;
+    cfg->len = cfg->geometry.length;
+  }
+  if (cfg->forceField == NULL && cfg->physics.forceField != NULL) {
+    cfg->forceField = cfg->physics.forceField;
+  }
+  if (cfg->pos.x == 0.0f && cfg->pos.y == 0.0f && cfg->pos.z == 0.0f) {
+    cfg->pos = cfg->physics.position;
+    cfg->vel = cfg->physics.velocity;
+  }
+  if (cfg->spriteAnim == NULL && cfg->animation.spriteAnim != NULL) {
+    cfg->spriteAnim = cfg->animation.spriteAnim;
+  }
+  if (cfg->gradient == NULL && cfg->render.gradient != NULL) {
+    cfg->gradient = cfg->render.gradient;
+  }
+  if (cfg->tint.a == 0 && cfg->render.tint.a != 0) {
+    cfg->tint = cfg->render.tint;
+    cfg->shader = cfg->render.shader;
+  }
+}
 
 // Đã tối ưu Struct Padding: Sắp xếp theo kích thước dữ liệu giảm dần
 typedef struct {

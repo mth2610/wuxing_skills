@@ -47,6 +47,7 @@ void InitParticleSystem(void) {
 }
 
 void SpawnParticle(ParticleConfig config) {
+  ParticleConfig_Unify(&config);
   int targetIdx = -1;
   for (int i = 0; i < MAX_PARTICLES; i++) {
     if (!g_Particles[i].active) {
@@ -302,4 +303,45 @@ void ParticleSystem_GetStats(int *active, int *max) {
         if (g_Particles[i].active) n++;
     *active = n;
     *max = MAX_PARTICLES;
+}
+
+#ifndef PI
+#define PI 3.1415926535f
+#endif
+
+#include "core/utils_math.h"
+#include <math.h>
+
+void ParticleSystem_SpawnRadialBurst(Vector3 origin, float sizeScale, const ParticleRadialBurstConfig *cfg) {
+    if (cfg == NULL) return;
+
+    ParticleRadialBurstConfig localCfg = *cfg;
+    ParticleRadialBurstConfig_Unify(&localCfg);
+    cfg = &localCfg;
+
+    int count = GetRandomValue(cfg->countMin, cfg->countMax);
+    count = (int)((float)count * sizeScale);
+
+    for (int s = 0; s < count; s++) {
+        float angle = Random01() * PI * 2.0f;
+        /* pitchRange = 0 -> always 0 (flat burst). pitchRange = PI -> full sphere. */
+        float pitch = (Random01() - 0.5f) * cfg->pitchRange;
+        float speed = Math_Mix(cfg->speedMin, cfg->speedMax, Random01()) * sizeScale;
+
+        ParticleConfig pcfg = {0};
+        pcfg.position = origin;
+        pcfg.velocity = (Vector3){
+            cosf(angle) * speed * cosf(pitch),
+            sinf(pitch) * speed + (cfg->upwardBias * sizeScale),
+            sinf(angle) * speed * cosf(pitch)
+        };
+        pcfg.radius = Math_Mix(cfg->radiusMin, cfg->radiusMax, Random01()) * sizeScale;
+        pcfg.lifetime = Math_Mix(cfg->lifetimeMin, cfg->lifetimeMax, Random01());
+        pcfg.colorStart = cfg->colorStart;
+        pcfg.colorEnd = cfg->colorEnd;
+        pcfg.forceField = cfg->forceField;
+        pcfg.gradient = cfg->gradient;
+
+        SpawnParticle(pcfg);
+    }
 }

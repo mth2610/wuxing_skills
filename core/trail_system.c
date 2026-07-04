@@ -358,6 +358,7 @@ static bool EvictLowestPriorityTrail(VFXPriority incomingPriority) {
 }
 
 int SpawnTrailEntity(TrailConfig config) {
+  TrailConfig_Unify(&config);
   if (freeListHead >= MAX_TRAIL_PARTICLES) {
     if (!EvictLowestPriorityTrail(config.priority))
       return -1;

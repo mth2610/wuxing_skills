@@ -67,15 +67,17 @@ add_executable(wuxing
     core/vfx_light.c
     core/vfx_proc_ray.c
     core/decal_system.c
-    core/procedural_mesh_utils.c
+    core/geometry/procedural_mesh_utils.c
+    core/geometry/mesh_cache.c
+    core/material/material_system.c
+    core/composition/visual_composer.c
+    core/presets/vfx_presets.c
     core/visual_prefabs.c
     core/skill_helper.c
     core/time_fx.c
     core/motion_controller.c
     core/status_vfx.c
     core/afterimage.c
-    core/particle_radial_burst.c
-    core/impact_burst.c
     core/shader_preprocessor.c
     core/metaball_fx.c
     core/debug_draw.c
@@ -99,7 +101,7 @@ add_executable(wuxing
 )
 
 # Thêm root path để resolve includes có tiền tố core/ và skills/
-target_include_directories(wuxing PRIVATE .)
+target_include_directories(wuxing PRIVATE . core/geometry core/material core/composition core/presets)
 
 # Tự động quét toàn bộ tài nguyên (Shaders/Textures) của kỹ năng và copy vào thư mục build
 file(GLOB_RECURSE SKILL_ASSETS CONFIGURE_DEPENDS 

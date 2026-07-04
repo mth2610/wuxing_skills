@@ -63,6 +63,8 @@ typedef struct {
  * to false is skipped, so a skill can use this for e.g. a silent particle
  * burst with no decal.
  */
-void VFX_TriggerImpactBurst(Vector3 pos, float sizeScale, const ImpactBurstConfig *cfg);
+#include "core/composition/visual_composer.h"
+
+#define VFX_TriggerImpactBurst VFX_ComposeTriggerImpactBurst
 
 #endif /* CORE_IMPACT_BURST_H */

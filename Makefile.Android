@@ -42,6 +42,7 @@ PROJECT_SOURCE_FILES   := main.c \
                           core/resource_manager.c \
                           core/color_gradient.c \
                           core/float_curve.c \
+                          core/skill_curve.c \
                           core/tuning.c \
                           core/emitter_system.c \
                           core/flow_map.c \
@@ -59,10 +60,18 @@ PROJECT_SOURCE_FILES   := main.c \
                           core/utils_math.c \
                           core/vfx_light.c \
                           core/decal_system.c \
-                          core/procedural_mesh_utils.c \
+                          core/geometry/procedural_mesh_utils.c \
+                          core/geometry/mesh_cache.c \
+                          core/material/material_system.c \
+                          core/composition/visual_composer.c \
+                          core/presets/vfx_presets.c \
+                          core/visual_prefabs.c \
+                          core/vfx_proc_ray.c \
+                          core/afterimage.c \
+                          core/time_fx.c \
+                          core/motion_controller.c \
+                          core/status_vfx.c \
                           core/skill_helper.c \
-                          core/particle_radial_burst.c \
-                          core/impact_burst.c \
                           core/shader_preprocessor.c \
                           core/metaball_fx.c \
                           entities/entities.c \
@@ -70,6 +79,9 @@ PROJECT_SOURCE_FILES   := main.c \
                           sandbox/ui_panel.c \
                           sandbox/vfx_test.c \
                           sandbox/skill_debugger.c \
+                          sandbox/auto_test.c \
+                          sandbox/visual_verify.c \
+                          sandbox/pool_stats.c \
                           $(wildcard skills/*/*/*.c) \
                           $(wildcard skills/*/*/*/*.c) \
                           $(wildcard maps/*/*.c)
@@ -116,7 +128,7 @@ CFLAGS += -DANDROID -DPLATFORM_ANDROID
 CFLAGS += -O2
 
 # Include paths
-INCLUDE_PATHS = -I. -I$(RAYLIB_PATH)/src -I$(NATIVE_APP_GLUE_PATH)
+INCLUDE_PATHS = -I. -Icore/geometry -Icore/material -Icore/composition -Icore/presets -I$(RAYLIB_PATH)/src -I$(NATIVE_APP_GLUE_PATH)
 
 # Linker flags
 LDFLAGS = -Wl,-soname,lib$(PROJECT_LIBRARY_NAME).so -Wl,--exclude-libs,libatomic.a

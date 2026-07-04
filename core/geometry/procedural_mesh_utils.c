@@ -1,4 +1,7 @@
-#include "core/procedural_mesh_utils.h"
+#include "core/geometry/procedural_mesh_utils.h"
+#include "core/geometry/mesh_cache.h"
+#include "core/material/material_system.h"
+#include "core/resource_manager.h"
 #include "core/path_spline.h"
 #include "raymath.h"
 #include "rlgl.h"
@@ -1826,4 +1829,249 @@ void ProceduralMesh_UnloadBase(Mesh *mesh) {
   if (mesh == NULL) return;
   UnloadMesh(*mesh);
   *mesh = (Mesh){ 0 };
+}
+
+static void DrawOrganicStonePillar(Vector3 pillarPos, float currentHeight, float baseRad, float topRad) {
+    #define HEIGHT_SEGS 8
+    #define RADIAL_SEGS 8
+    
+    Vector3 rings[HEIGHT_SEGS + 1][RADIAL_SEGS];
+    Vector3 normals[HEIGHT_SEGS + 1][RADIAL_SEGS];
+
+    // Cột cong nhẹ vào trong
+    float tiltAngle = 8.0f * DEG2RAD;
+    float dirInX = -0.5f;
+    float dirInZ = -0.5f;
+
+    for (int h = 0; h <= HEIGHT_SEGS; h++) {
+        float hRatio = (float)h / HEIGHT_SEGS;
+        float rad = Lerp(baseRad, topRad, hRatio);
+
+        float shiftDist = hRatio * currentHeight * sinf(tiltAngle);
+        Vector3 centerOffset = { dirInX * shiftDist, 0.0f, dirInZ * shiftDist };
+
+        for (int r = 0; r < RADIAL_SEGS; r++) {
+            float angle = (float)r / RADIAL_SEGS * 2.0f * PI;
+            float noiseWave = 1.0f + 0.15f * sinf(hRatio * 8.0f + angle * 3.0f);
+            float perturbedRad = rad * noiseWave;
+
+            Vector3 localPos = {
+                perturbedRad * cosf(angle),
+                hRatio * currentHeight,
+                perturbedRad * sinf(angle)
+            };
+
+            Vector3 localNormal = { cosf(angle), 0.1f, sinf(angle) };
+            localNormal = Vector3Normalize(localNormal);
+
+            rings[h][r] = Vector3Add(Vector3Add(pillarPos, localPos), centerOffset);
+            normals[h][r] = localNormal;
+        }
+    }
+
+    rlPushMatrix();
+    rlColor4ub(255, 255, 255, 255);
+    rlCheckRenderBatchLimit(HEIGHT_SEGS * RADIAL_SEGS * 4);
+    rlBegin(RL_QUADS);
+    for (int h = 0; h < HEIGHT_SEGS; h++) {
+        float v1 = (float)h / HEIGHT_SEGS;
+        float v2 = (float)(h + 1) / HEIGHT_SEGS;
+        for (int r = 0; r < RADIAL_SEGS; r++) {
+            int nextR = (r + 1) % RADIAL_SEGS;
+            float u1 = (float)r / RADIAL_SEGS;
+            float u2 = (float)(r + 1) / RADIAL_SEGS;
+
+            rlNormal3f(normals[h][nextR].x, normals[h][nextR].y, normals[h][nextR].z);
+            rlTexCoord2f(u2, v1);
+            rlVertex3f(rings[h][nextR].x, rings[h][nextR].y, rings[h][nextR].z);
+
+            rlNormal3f(normals[h][r].x, normals[h][r].y, normals[h][r].z);
+            rlTexCoord2f(u1, v1);
+            rlVertex3f(rings[h][r].x, rings[h][r].y, rings[h][r].z);
+
+            rlNormal3f(normals[h + 1][r].x, normals[h + 1][r].y, normals[h + 1][r].z);
+            rlTexCoord2f(u1, v2);
+            rlVertex3f(rings[h + 1][r].x, rings[h + 1][r].y, rings[h + 1][r].z);
+
+            rlNormal3f(normals[h + 1][nextR].x, normals[h + 1][nextR].y, normals[h + 1][nextR].z);
+            rlTexCoord2f(u2, v2);
+            rlVertex3f(rings[h + 1][nextR].x, rings[h + 1][nextR].y, rings[h + 1][nextR].z);
+        }
+    }
+    rlEnd();
+
+    rlCheckRenderBatchLimit(RADIAL_SEGS * 3);
+    rlBegin(RL_TRIANGLES);
+    float finalShift = currentHeight * sinf(tiltAngle);
+    Vector3 peak = { pillarPos.x + dirInX * finalShift, pillarPos.y + currentHeight, pillarPos.z + dirInZ * finalShift };
+    for (int r = 0; r < RADIAL_SEGS; r++) {
+        int nextR = (r + 1) % RADIAL_SEGS;
+        rlNormal3f(0.0f, 1.0f, 0.0f);
+        rlTexCoord2f((float)r/RADIAL_SEGS, 1.0f); rlVertex3f(rings[HEIGHT_SEGS][r].x, rings[HEIGHT_SEGS][r].y, rings[HEIGHT_SEGS][r].z);
+        rlTexCoord2f((float)nextR/RADIAL_SEGS, 1.0f); rlVertex3f(rings[HEIGHT_SEGS][nextR].x, rings[HEIGHT_SEGS][nextR].y, rings[HEIGHT_SEGS][nextR].z);
+        rlTexCoord2f(0.5f, 1.0f); rlVertex3f(peak.x, peak.y, peak.z);
+    }
+    rlEnd();
+
+    rlPopMatrix();
+    #undef HEIGHT_SEGS
+    #undef RADIAL_SEGS
+}
+
+void ProceduralMesh_DrawStonePillar(Vector3 basePos, float radius, float height, float sharpness, float progress) {
+    if (progress <= 0.0f) return;
+    
+    rlDisableBackfaceCulling();
+    float rise = progress * progress * (3.0f - 2.0f * progress);
+    float yOffset = -height * (1.0f - rise) - 0.2f;
+    Vector3 actualPos = Vector3Add(basePos, (Vector3){0, yOffset, 0});
+    float topRadius = radius * (1.0f - sharpness);
+    
+    EffectMaterial mat = Material_Get(MAT_ROCK);
+    Material_Begin(mat);
+    DrawOrganicStonePillar(actualPos, height + 0.2f, radius, topRadius);
+    Material_End();
+}
+
+void ProceduralMesh_DrawRoundBoulder(Vector3 pos, float radius) {
+    EffectMaterial mat = Material_Get(MAT_ROCK);
+    Material_Begin(mat);
+    DrawCoreSphere(pos, radius, 32, 32, WHITE);
+    Material_End();
+}
+
+void ProceduralMesh_DrawBoulder(Vector3 pos, float radius, float jaggedness, int seed) {
+    RockMeshData* data = MeshCache_GetRock(seed, jaggedness);
+    EffectMaterial mat = Material_Get(MAT_ROCK);
+    
+    rlDrawRenderBatchActive();
+    rlDisableBackfaceCulling();
+    Material_Begin(mat);
+    
+    rlPushMatrix();
+    rlTranslatef(pos.x, pos.y, pos.z);
+    rlScalef(radius, radius, radius);
+    ProceduralMesh_DrawRock(data, WHITE);
+    rlPopMatrix();
+    
+    Material_End();
+    rlDrawRenderBatchActive();
+    rlEnableBackfaceCulling();
+}
+
+void ProceduralMesh_DrawIceCrystal(Vector3 basePos, float radius, float height, float sharpness, int seed) {
+    ShardClusterMeshData* data = MeshCache_GetIce(seed, sharpness);
+    EffectMaterial mat = Material_Get(MAT_ICE);
+    
+    BeginBlendMode(BLEND_ALPHA);
+    rlDrawRenderBatchActive();
+    rlDisableDepthMask();
+    Material_Begin(mat);
+    
+    rlPushMatrix();
+    rlTranslatef(basePos.x, basePos.y, basePos.z);
+    rlScalef(radius, height, radius);
+    ProceduralMesh_DrawShardCluster(data, WHITE);
+    rlPopMatrix();
+    
+    Material_End();
+    rlDrawRenderBatchActive();
+    rlEnableDepthMask();
+    EndBlendMode();
+}
+
+static void DrawOrganicPuddle(Vector3 pos, float radius) {
+    int sides = 32;
+    float time = GetTime();
+    
+    rlCheckRenderBatchLimit(sides * 3);
+    rlBegin(RL_TRIANGLES);
+    for (int i = 0; i < sides; i++) {
+        float angle1 = (i / (float)sides) * 2.0f * PI;
+        float angle2 = ((i + 1) / (float)sides) * 2.0f * PI;
+        
+        float n1 = 1.0f + 0.15f * sinf(angle1 * 3.0f + time) + 0.1f * cosf(angle1 * 5.0f - time * 0.5f);
+        float n2 = 1.0f + 0.15f * sinf(angle2 * 3.0f + time) + 0.1f * cosf(angle2 * 5.0f - time * 0.5f);
+        
+        Vector3 v1 = {pos.x + radius * n1 * cosf(angle1), pos.y, pos.z + radius * n1 * sinf(angle1)};
+        Vector3 v2 = {pos.x + radius * n2 * cosf(angle2), pos.y, pos.z + radius * n2 * sinf(angle2)};
+        
+        rlColor4ub(0, 150, 255, 220);
+        
+        rlTexCoord2f(0.5f, 0.5f);
+        rlVertex3f(pos.x, pos.y, pos.z);
+        
+        rlTexCoord2f(0.5f + 0.5f * n2 * cosf(angle2), 0.5f + 0.5f * n2 * sinf(angle2));
+        rlVertex3f(v2.x, v2.y, v2.z);
+        
+        rlTexCoord2f(0.5f + 0.5f * n1 * cosf(angle1), 0.5f + 0.5f * n1 * sinf(angle1));
+        rlVertex3f(v1.x, v1.y, v1.z);
+    }
+    rlEnd();
+}
+
+void ProceduralMesh_DrawMagicPuddle(Vector3 pos, float radius) {
+    rlDrawRenderBatchActive();
+    BeginBlendMode(BLEND_ALPHA);
+    rlDisableDepthMask();
+    
+    rlPushMatrix();
+    rlTranslatef(pos.x, pos.y + 0.05f, pos.z);
+    
+    Shader flowShader = ResourceManager_LoadShader(0, "core/shaders/puddle.fs");
+    Texture2D tex = ResourceManager_LoadTexture("assets/textures/water_caustics.png");
+    Texture2D flowTex = ResourceManager_LoadTexture("assets/textures/water_flow.png");
+    
+    int timeLoc = GetShaderLocation(flowShader, "u_time");
+    int tex0Loc = GetShaderLocation(flowShader, "causticsTex");
+    int tex1Loc = GetShaderLocation(flowShader, "flowTex");
+    
+    float time = GetTime();
+    SetShaderValue(flowShader, timeLoc, &time, SHADER_UNIFORM_FLOAT);
+    
+    BeginShaderMode(flowShader);
+    SetShaderValueTexture(flowShader, tex0Loc, tex);
+    SetShaderValueTexture(flowShader, tex1Loc, flowTex);
+    
+    rlDrawRenderBatchActive(); 
+    rlSetTexture(tex.id);
+    
+    DrawOrganicPuddle((Vector3){0, 0, 0}, radius);
+    
+    rlSetTexture(0);
+    EndShaderMode();
+    
+    rlDrawRenderBatchActive();
+    rlEnableDepthMask();
+    EndBlendMode();
+    rlPopMatrix();
+    rlEnableBackfaceCulling();
+}
+
+void ProceduralMesh_DrawFireball(Vector3 pos, float radius, float time) {
+    BeginBlendMode(BLEND_ADDITIVE);
+    rlDisableDepthMask();
+    
+    EffectMaterialParams coreParams = {0};
+    coreParams.baseColor = (Color){255, 200, 100, 255};
+    coreParams.emissiveIntensity = 2.0f;
+    EffectMaterial coreMat = Material_LoadCustom(coreParams);
+    Material_Begin(coreMat);
+    DrawCoreSphere(pos, radius * 0.6f, 16, 16, WHITE);
+    Material_End();
+    
+    EffectMaterialParams auraParams = {0};
+    auraParams.baseColor = (Color){255, 100, 0, 150};
+    auraParams.rimStrength = 2.0f;
+    auraParams.fresnelPower = 2.0f;
+    auraParams.emissiveIntensity = 1.0f;
+    auraParams.distortionStrength = 0.8f;
+    auraParams.translucency = 1.0f;
+    EffectMaterial auraMat = Material_LoadCustom(auraParams);
+    Material_Begin(auraMat);
+    DrawCoreSphere(pos, radius, 16, 16, WHITE);
+    Material_End();
+    
+    rlEnableDepthMask();
+    EndBlendMode();
 }

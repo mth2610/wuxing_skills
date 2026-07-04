@@ -19,53 +19,14 @@ typedef enum {
     EFFECT_PRESET_TAIJI_BURST
 } EffectPresetType;
 
-void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale);
+#include "core/composition/visual_composer.h"
+#include "core/vfx_proc_ray.h"
 
-// Cast/windup variant — sustained "energy gathering" effect at the caster,
-// no knockback/decal. Reuses EffectPresetType.
-void SpawnCastEffect(Vector3 pos, EffectPresetType preset, float scale);
+#define SpawnImpactEffect VFX_ComposeImpact
+#define SpawnCastEffect VFX_ComposeCast
+#define SpawnProjectileTrail VFX_ComposeProjectileTrail
 
-// Flight-stage variant — projectile trail + tail particles while a skill
-// is flying from start to target. Reuses EffectPresetType. Returns the
-// trail ID; caller MUST call KillTrail(id) on impact (e.g. right before
-// SpawnImpactEffect at the target).
-int SpawnProjectileTrail(Vector3 start, Vector3 target, EffectPresetType preset, float scale, float speed);
 
-// Lightning Trail Presets — dedicated jagged/flicker profile for electric
-// visuals (bolts, electric blades, electric projectiles, teleport streaks).
-// Unlike SpawnProjectileTrail's EffectPresetType color-swap, lightning needs
-// its own high-frequency zigzag jitter + periodic glow flicker, which the
-// generic preset's smooth flight wobble can't reproduce.
-
-// Flight-stage variant — electric bolt flying start->target (tia điện, đạn
-// điện, teleport streak). Returns trail ID; caller MUST call KillTrail(id)
-// on impact, e.g. right before SpawnImpactEffect(EFFECT_PRESET_LIGHTNING_IMPACT).
-int SpawnLightningTrail(Vector3 start, Vector3 target, float scale, float speed);
-
-// Manually-driven variant — for weapon-attached lightning (kiếm điện,
-// electric aura) where the caller drives the tip every frame. Returns
-// trail ID; caller MUST call KillTrail(id) when the effect ends.
-//
-// Drive the tip with Lightning_UpdateFollowerTip(id, tipPos, scale) below,
-// NOT the raw UpdateFollowerPosition() — feeding a smooth per-frame path
-// straight into UpdateFollowerPosition records one history node per frame
-// (a dense smooth curve — looks like a wiggly worm, not lightning).
-// Lightning_UpdateFollowerTip only records a new point once the caller's
-// position has moved a real distance from the last one (few, far-apart
-// points) and inserts one kinked midpoint per accepted segment, so it stays
-// a proper sparse zigzag no matter how often you call it. Falls back to
-// Trail_AttachToTransform() only if you don't need the zigzag filtering
-// (e.g. a smooth non-electric FOLLOWER use).
-int SpawnLightningFollowerTrail(Vector3 startPos, float scale, float life);
-void Lightning_UpdateFollowerTip(int id, Vector3 tipPos, float scale);
-
-// ── Low-level lightning building blocks (use vfx_proc_ray.h for the managed API) ──
-// Stateless per-frame bolt renderer. waypoints9 is a caller-owned Vector3[9].
-// Must be called inside BeginBlendMode(BLEND_ADDITIVE) / EndBlendMode.
-void RegenerateLightningWaypoints(Vector3 *waypoints9, Vector3 from, Vector3 to, float scale);
-void RegenerateLightningRay(Vector3 *waypoints9, Vector3 origin, Vector3 direction,
-                             float length, float phase, float amplitude, float scale);
-void DrawLightningBolt(const Vector3 *waypoints9, float thickness, Camera3D cam);
 
 // Audio presets — reuse EffectPresetType so skill authors call the same enum
 // value for both image and sound. Each loads (via ResourceManager_LoadSound,
@@ -254,51 +215,9 @@ typedef enum {
 void DrawEffectMesh(MeshPresetType type, Vector3 pos, Vector3 scale, Color color);
 
 // 6. Shader Material System
-// All presets are backed by the shared core/shaders/effect_material.vs/.fs
-// (Item 17): Material_Load(preset) = Material_LoadCustom with hardcoded params.
-typedef enum {
-    MATERIAL_FIRE,
-    MATERIAL_ICE,
-    MATERIAL_WATER,
-    MATERIAL_PORTAL,
-    MATERIAL_CUSTOM // set by Material_LoadCustom() — parametrized shared shader
-} MaterialPreset;
+#include "core/material/material_system.h"
 
-typedef struct {
-    Color baseColor;          // primary tint; also drives rim glow + dissolve edge glow color
-    float rimStrength;        // 0..~2, rim/edge glow brightness (Fresnel-weighted)
-    float fresnelPower;       // 1..8, rim sharpness (higher = thinner edge)
-    float emissiveIntensity;  // 0..~3, self-illumination boost added to base color
-    float distortionStrength; // 0..1, vertex wobble amount
-    float translucency;       // 0..1: 0 = opaque (alpha = baseColor.a), 1 = glass/tube-style
-                               // fresnel-driven alpha (center see-through, edges more solid,
-                               // same formula as tube.fs). Draw call must use BLEND_ALPHA
-                               // (BeginBlendMode/EndBlendMode) for this to actually blend.
-    Texture2D texture1;       // optional secondary detail/mask texture; id==0 = unused
-} EffectMaterialParams;
-
-typedef struct {
-    Shader shader;
-    MaterialPreset preset;
-    int uTimeLoc;
-    int uDissolveLoc;
-    int uBaseColorLoc;
-    int uTranslucencyLoc;
-    int uRimStrengthLoc;
-    int uFresnelPowerLoc;
-    int uEmissiveIntensityLoc;
-    int uDistortionStrengthLoc;
-    int uHasTexture1Loc;
-    int uTexture1Loc;
-    EffectMaterialParams params;
-} EffectMaterial;
-
-EffectMaterial Material_Load(MaterialPreset preset);
 EffectMaterial Material_LoadElement(EffectPresetType element);
-EffectMaterial Material_LoadCustom(EffectMaterialParams params);
-void Material_SetFloat(EffectMaterial *mat, const char *uniformName, float val);
-void Material_Begin(EffectMaterial mat);
-void Material_End(void);
 
 // 7. Ground Decal
 typedef enum {
@@ -450,5 +369,7 @@ void SkillHelper_Update(float dt);
 
 // Pool stats (Item 32)
 void DamageVolume_GetStats(int *active, int *max);
+
+void InitHelperResources(void);
 
 #endif // SKILL_HELPER_H

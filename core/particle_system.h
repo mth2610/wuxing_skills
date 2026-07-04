@@ -5,6 +5,7 @@
 #include "core/force_field.h"
 #include "core/skill_curve.h"
 #include "core/sprite_anim.h"
+#include "core/vfx_config.h"
 #include "raylib.h"
 #include <stdbool.h>
 
@@ -59,7 +60,84 @@ struct ParticleConfig {
       *onLiveEmit; // Phát liên tục (tạo vệt đuôi bụi) khi còn sống[cite: 4]
   float onLiveEmitRate; // Số lượng hạt con sinh ra trên mỗi giây
                         // (particles/sec)[cite: 4]
+
+  // Unified Config representation (Phase 3)
+  VFX_GeneralConfig general;
+  VFX_GeometryConfig geometry;
+  VFX_PhysicsConfig physics;
+  VFX_AnimationConfig animation;
+  VFX_RenderConfig render;
 };
+
+static inline void ParticleConfig_Unify(ParticleConfig *cfg) {
+  // 1. Populate unified from legacy flat fields if legacy is set and unified is empty
+  if (cfg->general.life == 0.0f && cfg->lifetime != 0.0f) {
+    cfg->general.life = cfg->lifetime;
+    cfg->general.priority = 0;
+    cfg->general.tag = 0;
+  }
+  if (cfg->geometry.radius == 0.0f && cfg->radius != 0.0f) {
+    cfg->geometry.radius = cfg->radius;
+    cfg->geometry.scale = 1.0f;
+    cfg->geometry.width = 0.0f;
+    cfg->geometry.length = 0.0f;
+  }
+  if (cfg->physics.position.x == 0.0f && cfg->physics.position.y == 0.0f && cfg->physics.position.z == 0.0f) {
+    cfg->physics.position = cfg->position;
+    cfg->physics.velocity = cfg->velocity;
+    cfg->physics.speed = 0.0f;
+    cfg->physics.forceField = cfg->forceField;
+  }
+  if (cfg->animation.spriteAnim == NULL && cfg->spriteAnim != NULL) {
+    cfg->animation.spriteAnim = cfg->spriteAnim;
+    cfg->animation.radiusCurve = cfg->radiusCurve;
+    cfg->animation.speedCurve = cfg->speedCurve;
+    cfg->animation.alphaCurve = cfg->alphaCurve;
+    cfg->animation.emissiveCurve = cfg->emissiveCurve;
+  }
+  if (cfg->render.gradient == NULL && cfg->gradient != NULL) {
+    cfg->render.gradient = cfg->gradient;
+    cfg->render.colorStart = cfg->colorStart;
+    cfg->render.colorEnd = cfg->colorEnd;
+    cfg->render.tint = WHITE;
+  } else if (cfg->render.colorStart.a == 0 && cfg->colorStart.a != 0) {
+    cfg->render.colorStart = cfg->colorStart;
+    cfg->render.colorEnd = cfg->colorEnd;
+    cfg->render.gradient = cfg->gradient;
+    cfg->render.tint = WHITE;
+  }
+
+  // 2. Populate legacy flat fields from unified if unified is set and legacy is empty
+  if (cfg->lifetime == 0.0f && cfg->general.life != 0.0f) {
+    cfg->lifetime = cfg->general.life;
+  }
+  if (cfg->radius == 0.0f && cfg->geometry.radius != 0.0f) {
+    cfg->radius = cfg->geometry.radius;
+  }
+  if (cfg->forceField == NULL && cfg->physics.forceField != NULL) {
+    cfg->forceField = cfg->physics.forceField;
+  }
+  if (cfg->position.x == 0.0f && cfg->position.y == 0.0f && cfg->position.z == 0.0f) {
+    cfg->position = cfg->physics.position;
+    cfg->velocity = cfg->physics.velocity;
+  }
+  if (cfg->spriteAnim == NULL && cfg->animation.spriteAnim != NULL) {
+    cfg->spriteAnim = cfg->animation.spriteAnim;
+  }
+  if (cfg->radiusCurve == NULL && cfg->animation.radiusCurve != NULL) {
+    cfg->radiusCurve = cfg->animation.radiusCurve;
+    cfg->speedCurve = cfg->animation.speedCurve;
+    cfg->alphaCurve = cfg->animation.alphaCurve;
+    cfg->emissiveCurve = cfg->animation.emissiveCurve;
+  }
+  if (cfg->gradient == NULL && cfg->render.gradient != NULL) {
+    cfg->gradient = cfg->render.gradient;
+  }
+  if (cfg->colorStart.a == 0 && cfg->render.colorStart.a != 0) {
+    cfg->colorStart = cfg->render.colorStart;
+    cfg->colorEnd = cfg->render.colorEnd;
+  }
+}
 
 void InitParticleSystem(void);
 void SpawnParticle(ParticleConfig config);
@@ -68,6 +146,86 @@ void UpdateParticles(float dt);
 void DrawParticles(Camera3D camera, Texture2D texture);
 void UnloadParticleSystem(void);
 bool IsParticleSystemActive(void);
+
+// ============================================================
+// PARTICLE RADIAL BURST SYSTEM (Hợp nhất từ Phase 5)
+// ============================================================
+typedef struct ParticleRadialBurstConfig {
+    int   countMin, countMax;
+    float speedMin, speedMax;
+    float radiusMin, radiusMax;
+    float lifetimeMin, lifetimeMax;
+    float pitchRange;
+    float upwardBias;
+
+    Color colorStart, colorEnd;
+    const ColorGradient *gradient;
+    const ForceField *forceField;
+
+    // Unified Config representation (Phase 3)
+    VFX_GeneralConfig general;
+    VFX_GeometryConfig geometry;
+    VFX_PhysicsConfig physics;
+    VFX_AnimationConfig animation;
+    VFX_RenderConfig render;
+} ParticleRadialBurstConfig;
+
+static inline void ParticleRadialBurstConfig_Unify(ParticleRadialBurstConfig *cfg) {
+  // 1. Populate unified from legacy flat fields if legacy is set and unified is empty
+  if (cfg->general.life == 0.0f && cfg->lifetimeMax != 0.0f) {
+    cfg->general.life = (cfg->lifetimeMin + cfg->lifetimeMax) * 0.5f;
+    cfg->general.priority = 0;
+    cfg->general.tag = 0;
+  }
+  if (cfg->geometry.radius == 0.0f && cfg->radiusMax != 0.0f) {
+    cfg->geometry.radius = (cfg->radiusMin + cfg->radiusMax) * 0.5f;
+    cfg->geometry.scale = 1.0f;
+    cfg->geometry.width = 0.0f;
+    cfg->geometry.length = 0.0f;
+  }
+  if (cfg->physics.speed == 0.0f && cfg->speedMax != 0.0f) {
+    cfg->physics.speed = (cfg->speedMin + cfg->speedMax) * 0.5f;
+    cfg->physics.velocity = (Vector3){0.0f, cfg->upwardBias, 0.0f};
+    cfg->physics.forceField = cfg->forceField;
+  }
+  if (cfg->render.gradient == NULL && cfg->gradient != NULL) {
+    cfg->render.gradient = cfg->gradient;
+    cfg->render.colorStart = cfg->colorStart;
+    cfg->render.colorEnd = cfg->colorEnd;
+    cfg->render.tint = WHITE;
+  } else if (cfg->render.colorStart.a == 0 && cfg->colorStart.a != 0) {
+    cfg->render.colorStart = cfg->colorStart;
+    cfg->render.colorEnd = cfg->colorEnd;
+    cfg->render.gradient = cfg->gradient;
+    cfg->render.tint = WHITE;
+  }
+
+  // 2. Populate legacy flat fields from unified if unified is set and legacy is empty
+  if (cfg->lifetimeMax == 0.0f && cfg->general.life != 0.0f) {
+    cfg->lifetimeMin = cfg->general.life * 0.8f;
+    cfg->lifetimeMax = cfg->general.life * 1.2f;
+  }
+  if (cfg->radiusMax == 0.0f && cfg->geometry.radius != 0.0f) {
+    cfg->radiusMin = cfg->geometry.radius * 0.7f;
+    cfg->radiusMax = cfg->geometry.radius * 1.3f;
+  }
+  if (cfg->forceField == NULL && cfg->physics.forceField != NULL) {
+    cfg->forceField = cfg->physics.forceField;
+  }
+  if (cfg->speedMax == 0.0f && cfg->physics.speed != 0.0f) {
+    cfg->speedMin = cfg->physics.speed * 0.7f;
+    cfg->speedMax = cfg->physics.speed * 1.3f;
+  }
+  if (cfg->gradient == NULL && cfg->render.gradient != NULL) {
+    cfg->gradient = cfg->render.gradient;
+  }
+  if (cfg->colorStart.a == 0 && cfg->render.colorStart.a != 0) {
+    cfg->colorStart = cfg->render.colorStart;
+    cfg->colorEnd = cfg->render.colorEnd;
+  }
+}
+
+void ParticleSystem_SpawnRadialBurst(Vector3 origin, float sizeScale, const ParticleRadialBurstConfig *cfg);
 
 // ============================================================
 // CHỈ CÓ Ý NGHĨA Ở GPU COMPUTE MODE
