@@ -229,4 +229,10 @@ void SkillTunables_Unflatten(const SkillTunableEntry *entries, int count,
 // the file doesn't exist (entries left at their current/default values).
 bool SkillTunables_LoadPersisted(const char *path, SkillTunableEntry *entries, int count);
 
+// Agent position provider — lets skill_manager query agent positions without
+// depending on entities.h. Register from Entity_Init.
+typedef bool (*AgentPosProviderFn)(int agentId, Vector3 *outPos);
+void SkillManager_SetAgentPosProvider(AgentPosProviderFn fn);
+bool SkillManager_GetAgentPos(int agentId, Vector3 *outPos);
+
 #endif // SKILL_MANAGER_H

@@ -1235,3 +1235,15 @@ bool SkillTunables_LoadPersisted(const char *path, SkillTunableEntry *entries, i
   SkillTunables_Unflatten(entries, count, flatKeyPtrs, flatValues, n);
   return ok;
 }
+
+// Item 26: Agent position provider
+static AgentPosProviderFn s_agentPosProvider = NULL;
+
+void SkillManager_SetAgentPosProvider(AgentPosProviderFn fn) {
+    s_agentPosProvider = fn;
+}
+
+bool SkillManager_GetAgentPos(int agentId, Vector3 *outPos) {
+    if (!s_agentPosProvider || !outPos) return false;
+    return s_agentPosProvider(agentId, outPos);
+}

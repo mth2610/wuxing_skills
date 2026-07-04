@@ -294,6 +294,7 @@ typedef struct {
 } EffectMaterial;
 
 EffectMaterial Material_Load(MaterialPreset preset);
+EffectMaterial Material_LoadElement(EffectPresetType element);
 EffectMaterial Material_LoadCustom(EffectMaterialParams params);
 void Material_SetFloat(EffectMaterial *mat, const char *uniformName, float val);
 void Material_Begin(EffectMaterial mat);
@@ -358,7 +359,11 @@ void CameraFX_AddImpulse(Vector3 origin, CameraImpulse impulse);
 typedef enum {
     FORCE_PRESET_FIRE_UPDRAFT,
     FORCE_PRESET_SNOW_BLIZZARD,
-    FORCE_PRESET_WATER_VORTEX
+    FORCE_PRESET_WATER_VORTEX,
+    FORCE_PRESET_EARTH_RUMBLE,
+    FORCE_PRESET_WOOD_GROWTH,
+    FORCE_PRESET_METAL_IMPLOSION,
+    FORCE_PRESET_TAIJI_ORBIT
 } ForceFieldPreset;
 
 #include "core/force_field.h"

@@ -4,6 +4,7 @@ C/Raylib 5.5 / OpenGL 3.3 game project. Isometric Night-time Arena. 6 elements: 
 
 ## Reference docs
 - `CORE_API.md` — Full engine API (particle, trail, force field, shader, mesh...)
+- `SKILL_RECIPE.md` — **One-prompt skill creation guide** (archetype picker, command sequence, element presets, scale rules, aesthetic checklist)
 - `COMPUTE_API.md` — GPU compute particle system (shared by skills + environment)
 - `ENVIRONMENT_API.md` — Lighting, shadow, fog system
 - `MAP_API.md` — Map creation & management

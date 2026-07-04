@@ -24,6 +24,7 @@
 #include "core/map_manager.h"
 #include "skills/taiji/core_test/core_test_skill.h"
 #include "sandbox/auto_test.h"
+#include "sandbox/visual_verify.h"
 #include <stdio.h>
 
 // Biến camera toàn cục
@@ -93,8 +94,9 @@ int main(void) {
   const int screenWidth = 1600;
   const int screenHeight = 900;
 
-  bool autoTestMode = AutoTest_IsEnabled();
-  if (autoTestMode) {
+  bool autoTestMode     = AutoTest_IsEnabled();
+  bool visualVerifyMode = VisualVerify_IsEnabled();
+  if (autoTestMode || visualVerifyMode) {
       // Off-screen SetWindowPosition was tried first, but produced the exact
       // same GetWorldToScreen() output as FLAG_WINDOW_HIDDEN below (proving
       // the odd coordinates aren't a window-position artifact) — kept
@@ -197,14 +199,22 @@ int main(void) {
                                .saturation = 1.15f,
                                .colorTint = {1.0f, 1.0f, 1.0f}};
 
-  if (!autoTestMode) SetTargetFPS(60);
+  if (visualVerifyMode) {
+      VisualVerify_Init(Skill_GetIndexByName(VisualVerify_GetSkillName()));
+  }
+
+  if (!autoTestMode && !visualVerifyMode) SetTargetFPS(60);
 
   bool g_gamePaused = false;
   bool g_stepNextFrame = false;
   bool g_slowMotion = false;
 
-  while (autoTestMode ? !AutoTest_IsFinished() : !WindowShouldClose()) {
-    float dt = autoTestMode ? (1.0f / 60.0f) : TimeFX_Apply(GetFrameTime());
+  float g_totalElapsed = 0.0f;
+  while (autoTestMode     ? !AutoTest_IsFinished()      :
+         visualVerifyMode ? !VisualVerify_IsFinished()  :
+         !WindowShouldClose()) {
+    float dt = (autoTestMode || visualVerifyMode) ? (1.0f / 60.0f) : TimeFX_Apply(GetFrameTime());
+    g_totalElapsed += dt;
 
     // -------------------------------------------------------------------------
     // TIME CONTROL FOR DEBUGGING / SCREENSHOTTING
@@ -387,13 +397,17 @@ int main(void) {
 
     EndDrawing();
 
-    if (autoTestMode) AutoTest_RunFrame();
+    if (autoTestMode)     AutoTest_RunFrame();
+    if (visualVerifyMode) VisualVerify_RunFrame(g_totalElapsed);
   }
 
   int exitCode = 0;
   if (autoTestMode) {
       AutoTest_PrintSummary();
       exitCode = AutoTest_GetExitCode();
+  }
+  if (visualVerifyMode) {
+      exitCode = VisualVerify_GetExitCode();
   }
 
   UnloadTexture(globalParticleTex);

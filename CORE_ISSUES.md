@@ -495,127 +495,18 @@ up any one independently unless a dependency is stated.
 
 | # | Title | Priority | Owner | Depends on |
 |---|---|---|---|---|
-| 20 | Sandbox visual verification harness | P1 | Sandbox | — |
-| 21 | `SKILL_RECIPE.md` — single-entry doc for one-prompt generation | P1 | Skills + Core | 20 |
-| 22 | Preset symmetry: ForceField + Material for all 6 elements | P2 | Core | — |
 | 23 | SkillBuilder archetypes: Beam / GroundWave / Orbitals / AuraRing | P2 | Core | — |
-| 26 | Agent position provider — VFX that follows a moving caster/target | P2 | Core + Entities | — |
-| 27 | `core/motion_controller.h` — reusable projectile motion library | P2 | Core | — |
 | 28 | Chain-targeting helper (chain lightning et al.) | P2 | Core + Entities | 26 |
 | 29 | Status/aura VFX attached to agents (burning, shocked, frozen) | P3 | Core | 26 |
 | 31 | Mesh afterimage / ghost trail | P3 | Core | — |
 | 32 | Pool stats overlay (P3, Core + Sandbox) | P3 | Core + Sandbox | — |
 | 33 | Looping audio handles (flight/aura sound) | P3 | Core | 25 assets |
+| 34 | Real-world-meter rescale: shared-infrastructure sweep + per-skill refactor | P0 | Core + Skills | — |
 
-Recommended order: 20 → 21, then 22/23/26/27 in any order, then 28/29/31–33.
-
----
-
-
-## Item 20 — Sandbox visual verification harness (P1, Sandbox Agent)
-
-**Problem.** Numeric autotest PASS has produced false positives three
-times (Item 3 history: camera followed player, props occluded the test
-shape, character shadows read as the effect). The trustworthy check is a
-standardized set of screenshots a human/AI actually looks at — currently
-every session improvises this.
-
-**How to build** (in `sandbox/`, e.g. new `sandbox/visual_verify.c/.h`):
-1. Trigger: env var `WUXING_VERIFY=<skill_name>` (resolve via
-   `Skill_GetIndexByName`). On startup: switch to the empty flat map
-   `SOFT_TEST_GROUND` (already exists from Item 3), disable player/AI
-   movement, fixed camera at a documented offset from arena center
-   `(600, 0, 440)` — do NOT use the player-follow camera (that's exactly
-   what caused false positive #1).
-2. Cast the skill once from a fixed `startPos` toward a fixed `target`
-   (e.g. center → center + (200, 0, 0)) with default `SkillParams`
-   (`sizeScale = 1`).
-3. Capture screenshots at fixed wall-clock offsets after cast — 0.15s
-   (cast/windup), 0.5s, 1.0s (flight/mid), 2.0s (impact/active), 3.5s
-   (dissolve/end) — into the scratchpad or `verify_out/` as
-   `verify_<skill>_<t>.png` (reuse `AutoTest_SaveScreenshot`).
-4. Then exit with code 0. No numeric PASS/FAIL judgment — the output IS
-   the screenshots; judgment belongs to the user/AI reviewing them.
-5. Optional second camera angle (top-down) per timestamp if cheap.
-6. Grep `IsKeyPressed(KEY_` in `main.c`/`sandbox/*.c` before binding any
-   new debug key (Item 3's KEY_K collision lesson).
-
-**Acceptance:** `WUXING_VERIFY=FireBall ./wuxing` (exact name per registry)
-produces 5 comparable PNGs unattended in <15s.
+Recommended order: 23, then 28/29/31–33 in any order.
 
 ---
 
-## Item 21 — `SKILL_RECIPE.md`: the one document a generating AI reads (P1)
-
-**Problem.** Knowledge needed for one-prompt skill creation is spread
-across CORE_API.md (2373 lines), CORE_API_SHORT.md, WUXING_ART_DIRECTION
-(+SHORT), skills/CLAUDE.md, and folklore. Token cost and contradiction
-risk are both high.
-
-**How to write** (Skills Agent drafts, Core Agent reviews; ≤300 lines,
-root of repo):
-1. **Decision tree**: element (given by prompt) → archetype (projectile /
-   ground-rising / path-anchored / entity-attached — one line on when each
-   fits) → which §4 skeleton / `new_skill.py --archetype` flag.
-2. **Command sequence**: `new_skill.py` → edit the marked TODO blocks →
-   `make` → `make lint` → `WUXING_VERIFY=<Name> ./wuxing` → review PNGs.
-3. **Per-element preset table** (6 rows × columns): `ELEMENT_COLOR_*`,
-   `EFFECT_PRESET_*` (cast/flight/impact), `EMITTER_*`, best
-   `DECAL_PRESET_*` choices, `FORCE_PRESET_*` (after Item 22),
-   suggested gradient stops.
-4. **Aesthetic checklist** (10 checkboxes distilled from
-   `WUXING_ART_DIRECTION_SHORT.md`): perpendicular jitter, 85–115% scale
-   randomization, no popping (same shader across states), emissive ≤30%,
-   no raylib primitives, depth rules, scale bands (radii 10–20f, force
-   300–700f, speed 100–300f).
-5. **Signature lookups**: link to `CORE_API_SHORT.md` sections by heading —
-   do not duplicate signatures (single source of truth stays SHORT/LONG).
-6. Add a pointer to it from the root `CLAUDE.md` reference-docs list.
-
-**Acceptance:** a fresh AI session given ONLY `SKILL_RECIPE.md` plus a
-one-line prompt ("create a metal skill: spinning blade vortex") produces a
-compiling, registered, lint-clean, visually verified skill without reading
-any other doc except the linked SHORT sections.
-
----
-
-## Item 22 — Preset symmetry: ForceField + Material presets for all 6 elements (P2)
-
-**Problem.** `EffectPresetType`, `EmitterPreset`, decals cover all 6
-elements; `ForceFieldPreset` covers 3 (`FIRE_UPDRAFT`, `SNOW_BLIZZARD`,
-`WATER_VORTEX`) and there are no per-element materials. Wood/Earth/Metal/
-Taiji skills get systematically less "free beauty" from presets.
-
-**How to fix** (all in `core/skill_helper.h/.c`, mirroring the existing
-3 presets' construction pattern in `ForceField_CreatePreset`):
-1. Add enum values + layer recipes (magnitudes in the documented 300–700f
-   force regime; see `CORE_API.md` §5 for layer types):
-   - `FORCE_PRESET_EARTH_RUMBLE` — weak `FORCE_GRAVITY_POINT` pull +
-     low-frequency `FORCE_NOISE_PERLIN` (~40f, slow) for heavy dust drift,
-     plus mild downward `FORCE_GRAVITY_DIR` (~350f) so debris falls.
-   - `FORCE_PRESET_WOOD_GROWTH` — upward `FORCE_GRAVITY_DIR` (~400f) +
-     gentle `FORCE_VORTEX` around +Y (~300f) — spiraling rising leaves.
-   - `FORCE_PRESET_METAL_IMPLOSION` — strong inward `FORCE_GRAVITY_POINT`
-     (~650f) + `FORCE_DRAG` so shards gather sharply then hang.
-   - `FORCE_PRESET_TAIJI_ORBIT` — `FORCE_VORTEX_AXIS` around +Y (~450f) +
-     weak point gravity: stable circular orbit for motes.
-2. Add `EffectMaterial Material_LoadElement(EffectPresetType element);`
-   keyed by the same enum the sound presets reuse (one enum = one element
-   convention). Internally `Material_LoadCustom` with a tuned
-   per-element `EffectMaterialParams` table — baseColor from
-   `ELEMENT_COLOR_*`, emissive respecting the ≤30% coverage law
-   (emissiveIntensity ≤ ~1.0 except Taiji), water/taiji translucent,
-   earth/metal opaque with strong fresnel.
-3. Demo each new preset in `core_test` (one shape per material, one
-   emitter burst per force preset), screenshot, then remove per the
-   core_test cleanup rule (wait for user confirm).
-4. Document both tables in `CORE_API.md` §9b (surgical edit per the
-   shared-write workflow).
-
-**Acceptance:** every element has ≥1 force preset and exactly 1 material
-preset; screenshots reviewed.
-
----
 
 ## Item 23 — SkillBuilder archetype extensions (P2)
 
@@ -653,90 +544,6 @@ ONLY existing systems — no new rendering code):
 
 **Acceptance:** each archetype callable in one line from a skill; demoed +
 screenshotted; pools are static, no malloc.
-
----
-
-## Item 26 — Agent position provider: VFX that follows a moving caster/target (P2, Core + Entities)
-
-**Problem.** Skills cache the caster's position at cast time (see
-`CORE_API.md` ~587) — auras/buffs/attached effects cannot track a moving
-agent. Core must not `#include entities/` (documented constraint at
-`CORE_API.md:1184`), so direct access is off the table.
-
-**How to build** (inversion of control — same duplicated-constant pattern
-the cooldown table already uses):
-1. `core/skill_manager.h`:
-   ```c
-   typedef bool (*AgentPosProviderFn)(int agentId, Vector3 *outPos);
-   void SkillManager_SetAgentPosProvider(AgentPosProviderFn fn);
-   // false if no provider, id out of range, or agent inactive/dead.
-   bool SkillManager_GetAgentPos(int agentId, Vector3 *outPos);
-   ```
-   Implementation in `skill_manager.c`: one static fn pointer, NULL-safe.
-2. **Entities Agent:** in `Entities_Init`, register a provider that reads
-   the agent pool (active check + position). Document in
-   `ENTITIES_API.md`. This is the only entities-side change.
-3. Skill usage pattern (document in `CORE_API.md` §4 + fix the ~587
-   skeleton note per Item 16):
-   ```c
-   Vector3 p;
-   if (SkillManager_GetAgentPos(inst->ownerAgentId, &p)) inst->anchor = p;
-   // else: keep last known anchor (agent died) and start dissolve.
-   ```
-4. **Verify** in `core_test`: attach a glow ring to the player's agentId;
-   walk around; ring follows; kill/respawn doesn't crash.
-
-**Acceptance:** core builds without any entities include; ring-follow demo
-confirmed visually.
-
----
-
-## Item 27 — `core/motion_controller.h`: reusable projectile motion (P2)
-
-**Problem.** Every projectile skill hand-rolls velocity integration —
-harder for an AI to get right, and "creative motion" (spiral, boomerang,
-orbit) is where hand-rolled math usually breaks scale conventions.
-
-**How to build** (new `core/motion_controller.h/.c`; plain value struct
-embedded in the skill's instance — no pool, no malloc):
-```c
-typedef enum { MOTION_LINEAR, MOTION_HOMING, MOTION_BALLISTIC,
-               MOTION_SPIRAL, MOTION_ORBIT, MOTION_BOOMERANG } MotionType;
-typedef struct {
-    MotionType type;
-    Vector3 pos, vel, origin, target;
-    float speed;        // 100–300f per project scale rules
-    float turnRate;     // homing: max radians/s steer
-    float arcHeight;    // ballistic apex above the chord
-    float spiralRadius, spiralRate, phase;
-    float elapsed;
-} MotionController;
-
-void    Motion_Init(MotionController *m, MotionType type,
-                    Vector3 start, Vector3 target, float speed);
-Vector3 Motion_Step(MotionController *m, float dt, Vector3 liveTarget);
-bool    Motion_Arrived(const MotionController *m, float epsilon);
-```
-Per-type notes:
-- LINEAR: constant velocity toward target.
-- HOMING: steer `vel` toward `liveTarget` clamped by `turnRate`
-  (default ~3.0 rad/s); never overshoot-jitter — cap turn per frame.
-- BALLISTIC: solve initial vy from `arcHeight` (default 0.35 × chord
-  length) with gravity in the 300–700f regime; land exactly at target.
-- SPIRAL: advance along the chord + rotate a perpendicular offset
-  (`spiralRadius` default 25f, `spiralRate` ~6 rad/s, random `phase` at
-  init per the anti-robotic law).
-- ORBIT: circle `liveTarget` at `spiralRadius`, for orbital/satellite
-  skills; `Motion_Arrived` always false (caller uses duration).
-- BOOMERANG: fly to target, then re-target `origin`; arrived = returned.
-
-Then: update the Generic Projectile skeleton in `CORE_API.md` §4 to use
-`MotionController` instead of raw velocity math (one surgical edit), add
-§ to CORE_API.md, demo SPIRAL + BOOMERANG in `core_test`.
-
-**Acceptance:** fire_ball-style flight reproducible in ≤5 lines; spiral
-demo screenshot; no skill needs raymath integration code for standard
-motion.
 
 ---
 

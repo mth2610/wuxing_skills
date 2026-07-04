@@ -1,7 +1,15 @@
 // entities/entities.c
 #include "entities.h"
+#include "core/skill_manager.h"
 #include <math.h>
 #include <stddef.h>
+
+static bool Entity_ProvideAgentPos(int agentId, Vector3 *outPos) {
+    const Agent *a = Entity_GetAgent(agentId);
+    if (!a) return false;
+    *outPos = a->position;
+    return true;
+}
 
 static Agent agentPool[MAX_AGENTS]; // 4 ally + 4 enemy AI
 
@@ -16,6 +24,7 @@ void Entity_Init(void) {
     for (int i = 0; i < MAX_AGENTS; i++) {
         agentPool[i] = (Agent){ 0 };
     }
+    SkillManager_SetAgentPosProvider(Entity_ProvideAgentPos);
 }
 
 void Entity_Update(float dt) {

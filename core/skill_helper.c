@@ -1382,6 +1382,51 @@ EffectMaterial Material_Load(MaterialPreset preset) {
     return mat;
 }
 
+EffectMaterial Material_LoadElement(EffectPresetType element) {
+    EffectMaterialParams p = {0};
+    switch (element) {
+        case EFFECT_PRESET_WATER_SPLASH:
+            p.baseColor = ELEMENT_COLOR_WATER;
+            p.rimStrength = 1.0f; p.fresnelPower = 4.0f;
+            p.emissiveIntensity = 0.6f; p.distortionStrength = 0.25f;
+            p.translucency = 0.85f;
+            break;
+        case EFFECT_PRESET_WOOD_BLOOM:
+            p.baseColor = ELEMENT_COLOR_WOOD;
+            p.rimStrength = 0.8f; p.fresnelPower = 3.5f;
+            p.emissiveIntensity = 0.7f; p.distortionStrength = 0.15f;
+            p.translucency = 0.3f;
+            break;
+        case EFFECT_PRESET_FIRE_EXPLOSION:
+            p.baseColor = ELEMENT_COLOR_FIRE;
+            p.rimStrength = 1.2f; p.fresnelPower = 3.0f;
+            p.emissiveIntensity = 1.5f; p.distortionStrength = 0.4f;
+            p.translucency = 0.0f;
+            break;
+        case EFFECT_PRESET_EARTH_CRACK:
+            p.baseColor = ELEMENT_COLOR_EARTH;
+            p.rimStrength = 0.5f; p.fresnelPower = 2.5f;
+            p.emissiveIntensity = 0.4f; p.distortionStrength = 0.05f;
+            p.translucency = 0.0f;
+            break;
+        case EFFECT_PRESET_METAL_SHARD:
+            p.baseColor = ELEMENT_COLOR_METAL;
+            p.rimStrength = 1.8f; p.fresnelPower = 6.0f;
+            p.emissiveIntensity = 1.0f; p.distortionStrength = 0.08f;
+            p.translucency = 0.2f;
+            break;
+        case EFFECT_PRESET_TAIJI_BURST:
+            p.baseColor = ELEMENT_COLOR_TAIJI;
+            p.rimStrength = 2.0f; p.fresnelPower = 2.0f;
+            p.emissiveIntensity = 2.0f; p.distortionStrength = 0.6f;
+            p.translucency = 0.3f;
+            break;
+        default:
+            break;
+    }
+    return Material_LoadCustom(p);
+}
+
 EffectMaterial Material_LoadCustom(EffectMaterialParams params) {
     EffectMaterial mat = {0};
     mat.preset = MATERIAL_CUSTOM;
@@ -1613,6 +1658,25 @@ ForceField ForceField_CreatePreset(ForceFieldPreset preset) {
         case FORCE_PRESET_WATER_VORTEX:
             ForceField_AddLayer(&fld, (ForceLayer){ .type = FORCE_GRAVITY_DIR, .direction = {0.0f, -1.0f, 0.0f}, .strength = 30.0f });
             ForceField_AddLayer(&fld, (ForceLayer){ .type = FORCE_NOISE_CURL, .strength = 18.0f, .noiseScale = 0.05f, .noiseSpeed = 2.2f });
+            break;
+        case FORCE_PRESET_EARTH_RUMBLE:
+            // Heavy downward pull + low-freq curl — debris/rubble feel
+            ForceField_AddLayer(&fld, (ForceLayer){ .type = FORCE_GRAVITY_DIR, .direction = {0.0f, -1.0f, 0.0f}, .strength = 40.0f });
+            ForceField_AddLayer(&fld, (ForceLayer){ .type = FORCE_NOISE_CURL, .strength = 6.0f, .noiseScale = 0.04f, .noiseSpeed = 0.5f });
+            break;
+        case FORCE_PRESET_WOOD_GROWTH:
+            // Slow upward drift + mid-freq swaying curl — vines/spores feel
+            ForceField_AddLayer(&fld, (ForceLayer){ .type = FORCE_WIND, .direction = {0.0f, 1.0f, 0.0f}, .strength = 8.0f });
+            ForceField_AddLayer(&fld, (ForceLayer){ .type = FORCE_NOISE_CURL, .strength = 10.0f, .noiseScale = 0.07f, .noiseSpeed = 0.8f });
+            break;
+        case FORCE_PRESET_METAL_IMPLOSION:
+            // Radial inward pull — shards/sparks sucked to impact point
+            ForceField_AddLayer(&fld, (ForceLayer){ .type = FORCE_GRAVITY_DIR, .direction = {0.0f, -1.0f, 0.0f}, .strength = 25.0f });
+            ForceField_AddLayer(&fld, (ForceLayer){ .type = FORCE_NOISE_CURL, .strength = 22.0f, .noiseScale = 0.1f, .noiseSpeed = 3.5f });
+            break;
+        case FORCE_PRESET_TAIJI_ORBIT:
+            // Persistent high-speed curl — yin-yang orbital motion
+            ForceField_AddLayer(&fld, (ForceLayer){ .type = FORCE_NOISE_CURL, .strength = 35.0f, .noiseScale = 0.06f, .noiseSpeed = 4.0f });
             break;
     }
     return fld;
