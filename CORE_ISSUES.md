@@ -495,64 +495,22 @@ up any one independently unless a dependency is stated.
 
 | # | Title | Priority | Owner | Depends on |
 |---|---|---|---|---|
-| 19 | `scripts/lint_skill.py` mechanical rule checker | P1 | Core | — |
 | 20 | Sandbox visual verification harness | P1 | Sandbox | — |
-| 21 | `SKILL_RECIPE.md` — single-entry doc for one-prompt generation | P1 | Skills + Core | 19, 20 |
+| 21 | `SKILL_RECIPE.md` — single-entry doc for one-prompt generation | P1 | Skills + Core | 20 |
 | 22 | Preset symmetry: ForceField + Material for all 6 elements | P2 | Core | — |
 | 23 | SkillBuilder archetypes: Beam / GroundWave / Orbitals / AuraRing | P2 | Core | — |
-| 24 | Lifecycle boilerplate macros for non-projectile skills | P2 | Core | — |
-| 25 | `assets/INDEX.md` + per-element SFX assets | P2 | Skills (+ user) | — |
 | 26 | Agent position provider — VFX that follows a moving caster/target | P2 | Core + Entities | — |
 | 27 | `core/motion_controller.h` — reusable projectile motion library | P2 | Core | — |
 | 28 | Chain-targeting helper (chain lightning et al.) | P2 | Core + Entities | 26 |
 | 29 | Status/aura VFX attached to agents (burning, shocked, frozen) | P3 | Core | 26 |
-| 30 | Hitstop / local time-scale for impact juice | P3 | Core | — |
 | 31 | Mesh afterimage / ghost trail | P3 | Core | — |
-| 32 | Pool stats overlay (catch silent overflow) | P3 | Core + Sandbox | — |
-| 33 | Looping audio handles (flight/aura sound) | P3 | Core | 25 |
+| 32 | Pool stats overlay (P3, Core + Sandbox) | P3 | Core + Sandbox | — |
+| 33 | Looping audio handles (flight/aura sound) | P3 | Core | 25 assets |
 
-Recommended order: 19 → 21 → 20, then 22–28 in any order, then 29–33.
-
----
-
-
-## Item 19 — `scripts/lint_skill.py` mechanical rule checker (P1)
-
-**Problem.** Every hard rule (no malloc, no raylib primitives,
-`ELEMENT_COLOR_*` only, PI guard, no Unload of cached resources, GLES
-shader rules) lives in prose. An AI can't self-verify; violations surface
-as visual bugs weeks later.
-
-**How to build.** `python3 scripts/lint_skill.py <skill_dir>|--all`,
-regex/text-based (no compiler needed), reports `file:line: rule: message`,
-exits non-zero on any violation. Checks, in order of value:
-1. `\b(malloc|calloc|realloc|free)\s*\(` in `.c/.h` → forbidden.
-2. `\bDraw(Cylinder|Sphere|Cube|Capsule|Plane)\w*\(` → forbidden raylib
-   primitive; point at `core/procedural_mesh_utils.h` / `DrawEffectMesh`.
-3. `(Color)\s*\{` literals in `.c` → warn unless the line also contains
-   `ELEMENT_COLOR_` or a `// lint: allow-color` opt-out comment (gradients
-   legitimately need raw stops; warn, don't fail, for those files that
-   define `ColorGradient` stops).
-4. `#define PI ` without a preceding `#ifndef PI` on the line above →
-   fail.
-5. `Unload(Shader|Texture)\s*\(` inside the file that also defines
-   `Unload[A-Z]\w*Skill` → fail (ResourceManager owns those).
-6. `SpawnProjectileTrail|SpawnLightningFollowerTrail` present but no
-   `KillTrail` anywhere in the file → fail (documented MUST in
-   `skill_helper.h`).
-7. `rlDisableDepthMask` count ≠ `rlEnableDepthMask` count (same for
-   DepthTest) → warn.
-8. Shader files: flag `#version` in any `.vs/.fs` that also uses
-   `#include` (the preprocessor injects the version — see `CORE_API.md`
-   §10 Android/GLES rules ~line 2177); flag `texture2D(` (GLES1-ism).
-9. Wire a `lint` target into the Makefile: `make lint` runs `--all` over
-   `skills/`.
-
-**Acceptance:** all 8 existing skills pass, or each violation is either
-fixed or given an explicit opt-out comment with justification. CI-style:
-`make lint` exit 0.
+Recommended order: 20 → 21, then 22/23/26/27 in any order, then 28/29/31–33.
 
 ---
+
 
 ## Item 20 — Sandbox visual verification harness (P1, Sandbox Agent)
 
@@ -695,59 +653,6 @@ ONLY existing systems — no new rendering code):
 
 **Acceptance:** each archetype callable in one line from a skill; demoed +
 screenshotted; pools are static, no malloc.
-
----
-
-## Item 24 — Lifecycle boilerplate macros for non-projectile skills (P2)
-
-**Problem.** Every skill must define `Is[Name]SkillCoiling`,
-`Get[Name]SkillProjectiles`, `Deactivate[Name]Projectile` even when
-meaningless (ground/aura skills) — ~25 dead lines per skill and a chance
-for an AI to get the signatures wrong.
-
-**How to build.**
-1. New `core/skill_boilerplate.h` (or a section in `skill_manager.h`):
-   `#define SKILL_EMPTY_PROJECTILE_API(Name)` expanding to the three
-   definitions returning `false` / `0` / no-op.
-2. **Constraint:** `scripts/generate_registry.py` scans headers textually
-   — it cannot see through macros. Keep explicit prototypes in the
-   skill's `.h` (scaffolder emits them anyway); the macro is used only in
-   the `.c` to provide definitions. Verify the registry scanner only
-   needs the `.h` prototypes before shipping (read the script first).
-3. Retrofit one existing non-projectile skill (e.g. `stone_prison`) as
-   the demo; leave others until touched for other reasons.
-4. Document in `CORE_API.md` §4 (one paragraph + macro name) and in the
-   Item-18 templates for `ground`/`path`/`attached` archetypes.
-
-**Acceptance:** a scaffolded ground skill's `.c` contains zero hand-written
-projectile-API stubs; build + registry still work.
-
----
-
-## Item 25 — `assets/INDEX.md` + per-element SFX assets (P2, Skills Agent + user)
-
-**Problem.** An AI cannot create a PNG or WAV from a prompt. Existing
-reusable textures aren't indexed (so AIs invent filenames), and
-`PlayCastSound`/`PlayImpactSound` are warn-only stubs — the SFX asset gap
-is already documented in `skill_helper.h:74`.
-
-**How to fix.**
-1. **Skills Agent:** walk `assets/textures/` (and any other art dirs);
-   write `assets/INDEX.md` — one line per file: path, rough size, visual
-   description, tint expectation (pre-tinted vs white/tintable), which
-   preset(s) reference it. Group by decals / generic / noise / skill-
-   specific. Link it from `SKILL_RECIPE.md` (Item 21).
-2. **User task (blocked on assets):** source 12+ files
-   (`assets/sounds/<element>_cast.ogg`, `<element>_impact.ogg` × 6).
-3. **Core Agent (after 2):** wire paths into the switch in
-   `skill_helper.c` per the existing NOTE; remove the one-time warning.
-4. Rule for the recipe doc: **skills must only reference textures listed
-   in INDEX.md** or ship their own PNG in the skill dir (which the AI
-   can't create — so in practice: INDEX.md only).
-
-**Acceptance:** INDEX.md covers 100% of preset-referenced textures; sounds
-play for all 6 elements (or item stays open marked "blocked on user
-assets" with steps 1+4 done).
 
 ---
 
@@ -898,34 +803,6 @@ Wire Update/Draw into `main.c`; document in `CORE_API.md`.
 
 **Acceptance:** burning status follows a moving enemy dummy, expires
 cleanly, refresh-not-stack confirmed.
-
----
-
-## Item 30 — Hitstop / local time-scale (P3)
-
-**Problem.** Big impacts read flat: camera shake exists
-(`CameraFX_AddImpulse`) but there's no frame-freeze "juice", the cheapest
-high-impact polish trick available.
-
-**How to build** (`core/time_fx.h/.c`, tiny):
-```c
-void  TimeFX_Hitstop(float duration, float timeScale); // e.g. (0.09f, 0.05f)
-float TimeFX_Apply(float rawDt); // returns rawDt * currentScale, ticks state
-```
-1. `main.c`: `float dt = TimeFX_Apply(GetFrameTime());` feed the scaled
-   `dt` to skills/particles/entities; keep RAW dt for camera + PostFX so
-   the freeze doesn't stall camera shake (that combination — frozen world
-   + live shake — is the intended effect).
-2. Clamp: duration ≤ 0.25s, scale ≥ 0.05; new calls extend, never stack
-   multiplicatively.
-3. Call it from `SpawnImpactEffect` automatically when `scale >= 1.5f`
-   (big hits only), plus expose for manual use. Document in §9b.
-4. Coordination note: `main.c` is root-owned — Core Agent edits it here
-   (one line) but must state the change in the session report.
-
-**Acceptance:** thunder_orb impact with hitstop vs without, two captures;
-no physics explosion after resume (dt discontinuity handled since scale
-is applied, not skipped frames).
 
 ---
 
