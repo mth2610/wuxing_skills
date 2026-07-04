@@ -69,6 +69,7 @@ add_executable(wuxing
     core/decal_system.c
     core/procedural_mesh_utils.c
     core/skill_helper.c
+    core/time_fx.c
     core/particle_radial_burst.c
     core/impact_burst.c
     core/shader_preprocessor.c
@@ -151,3 +152,11 @@ if(APPLE)
         "-framework CoreVideo"
     )
 endif()
+
+# make lint — runs lint_skill.py over all skills (exit non-zero on any FAIL)
+add_custom_target(lint
+    COMMAND ${CMAKE_COMMAND} -E env python3
+        ${CMAKE_SOURCE_DIR}/scripts/lint_skill.py --all
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    COMMENT "Linting all skills..."
+)

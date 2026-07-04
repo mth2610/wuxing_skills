@@ -16,7 +16,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#ifndef PI
 #define PI 3.14159265358979323846f
+#endif
 
 /* ================================================================
  * § 1  CONFIGURATIONS  (real-world-scaled: 1 unit = 1 meter)

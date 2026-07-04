@@ -701,9 +701,7 @@ void DrawFireSkill(void) {
 }
 
 void UnloadFireSkill(void) {
-  /* ResourceManager handles shader cleanup */
-  UnloadTexture(dragonHeadTex);
-  UnloadTexture(particleTex);
+  // No-op: textures/shaders are owned by ResourceManager, never unload here.
 }
 
 int GetFireSkillProjectiles(SkillProjectile *outProjectiles,

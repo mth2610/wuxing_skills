@@ -14,6 +14,7 @@
 #include "sandbox/vfx_test.h" // MỚI: Chỉ giữ duy nhất file test này để điều phối
 #include "core/resource_manager.h"
 #include "core/skill_helper.h"
+#include "core/time_fx.h"
 #include "core/tuning.h"
 #include "raylib.h"
 #include "raymath.h"
@@ -203,7 +204,7 @@ int main(void) {
   bool g_slowMotion = false;
 
   while (autoTestMode ? !AutoTest_IsFinished() : !WindowShouldClose()) {
-    float dt = autoTestMode ? (1.0f / 60.0f) : GetFrameTime();
+    float dt = autoTestMode ? (1.0f / 60.0f) : TimeFX_Apply(GetFrameTime());
 
     // -------------------------------------------------------------------------
     // TIME CONTROL FOR DEBUGGING / SCREENSHOTTING

@@ -1,4 +1,5 @@
 #include "core/skill_helper.h"
+#include "core/time_fx.h"
 #include "core/skill_manager.h"
 #include "core/vfx_light.h"
 #include "core/decal_system.h"
@@ -358,6 +359,7 @@ static void InitHelperResources(void) {
 // 1. Effect Preset Implementation
 void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale) {
     InitHelperResources();
+    if (scale >= 1.5f) TimeFX_Hitstop(0.09f, 0.05f);
 
     switch (preset) {
         case EFFECT_PRESET_FIRE_EXPLOSION: {
