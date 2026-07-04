@@ -4,6 +4,7 @@
 
 #include "core/skill_manager.h"
 
+#include "skills/wood/wood_silk_skill/wood_silk_skill.h"
 #include "skills/wood/wood_thorns/wood_thorns_skill.h"
 #include "skills/water/thuy_kinh_skill/thuy_kinh_skill.h"
 #include "skills/water/water_sphere_skill/water_sphere_skill.h"
@@ -14,6 +15,7 @@
 #include "skills/earth/stone_prison_skill/stone_prison_skill.h"
 
 static inline void RegisterGeneratedSkills(void) {
+    RegisterSkill("WOOD_SILK", ELEMENT_COLOR_WOOD, InitWoodSilkSkill, CastWoodSilkSkill, UpdateWoodSilkSkill, DrawWoodSilkSkill, UnloadWoodSilkSkill);
     RegisterSkill("WOOD_THORNS", ELEMENT_COLOR_WOOD, InitWoodThornsSkill, CastWoodThornsSkill, UpdateWoodThornsSkill, DrawWoodThornsSkill, UnloadWoodThornsSkill);
     RegisterSkill("THUY_KINH", ELEMENT_COLOR_WATER, InitThuyKinhSkill, CastThuyKinhSkill, UpdateThuyKinhSkill, DrawThuyKinhSkill, UnloadThuyKinhSkill);
     RegisterSkill("WATER_SPHERE", ELEMENT_COLOR_WATER, InitWaterSphereSkill, CastWaterSphereSkill, UpdateWaterSphereSkill, DrawWaterSphereSkill, UnloadWaterSphereSkill);
