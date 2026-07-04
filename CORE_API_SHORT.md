@@ -103,7 +103,7 @@ typedef struct { Vector3 position; float radius; bool active; } SkillProjectile;
 #endif
 
 void Init[Name]Skill(int screenWidth, int screenHeight);
-void Cast[Name]Skill(Vector3 startPos, Vector3 target, SkillParams params);
+void Cast[Name]Skill(int agentId, Vector3 startPos, Vector3 target, SkillParams params);
 void Update[Name]Skill(float dt, Vector3 enemyPos, float enemyRadius);
 void Draw[Name]Skill(void);
 void Unload[Name]Skill(void);
@@ -111,7 +111,7 @@ bool Is[Name]SkillCoiling(void);
 int  Get[Name]SkillProjectiles(SkillProjectile *outProjectiles, int maxProjectiles);
 void Deactivate[Name]Projectile(int index);
 ```
-No `agentId` parameter exists anywhere in this lifecycle — don't invent one.
+`agentId` = caster's agent-pool slot (0..255), auto-forwarded by `CastSkill()` (Item 15). Store as `int ownerAgentId;` in the per-instance struct at cast time — ownership tracking for `AbortSkill(skillIndex, agentId)`, nothing else. `Update[Name]Skill` has NO agentId and skills can't read the live `Agent` array — don't invent a parameter (Item 26 = planned agent-position provider).
 
 ### 4 skill skeletons (state-machine shapes only — see `CORE_API.md` §4 for full code)
 
@@ -126,7 +126,7 @@ Mesh: NOT a single `DrawCoreCylinder` — build from several short jittered segm
 **(C) Anchored-Along-Path** — multiple instances spawned along `SkillParams.pathPoints[]`. Use `SamplePath()` (`core/path_spline.h`) to resample at even spacing — never hand-roll cumulative-distance math (existing offender: `wood_thorns_skill.c`, unrefactored).
 States: `CASTING` (brief, per-instance) → `WAITING` (staggered delay, `waitTime = p/sampledCount * STAGGER_DURATION`, so instances rise in sequence) → `RISING` → `ACTIVE`/`HOLDING` → `DISSOLVE`. Falls back to straight `startPos→target` line if `pathPointCount <= 1`.
 
-**(D) Entity-Attached** (Buff skills, dash afterimages) — visual follows a moving Agent. Lifecycle signature does NOT carry `agentId`; cache `casterPos = startPos` at cast time instead, re-apply via radius-based `Entity_ApplyAoEBuff(casterPos, radius, speedMult, duration)` (no team filtering yet — hits allies and enemies in radius).
+**(D) Entity-Attached** (Buff skills, dash afterimages) — visual follows a moving Agent. Cast receives `agentId` (store as `ownerAgentId`), but `Update` has no agentId and no live `Agent` read access, so a moving agent can't be tracked frame-to-frame yet (Item 26 = planned fix); cache `casterPos = startPos` at cast time instead, re-apply via radius-based `Entity_ApplyAoEBuff(casterPos, radius, speedMult, duration)` (no team filtering yet — hits allies and enemies in radius).
 States: `CASTING` → `ATTACHED` (re-spawn `VFXLight_Spawn`/particle pulse at `casterPos` on an interval, not every frame) → `DISSOLVE` (fires when local timer ≈ buff `duration`; skill doesn't query `entities/` for live buff state).
 Two visual options: (1) re-spawn particle/light each tick — simplest; (2) drive `TRAIL_TYPE_FOLLOWER` via `SetFollowerAxis`/`UpdateFollowerPosition` — only if ribbon/aura geometry is genuinely needed.
 **Requires `#include "entities/entities.h"`** for `Entity_ApplyAoEBuff`/`Entity_ApplyAoEDamage`/`Entity_GetNearbyTargets` — any skill calling these must include it (lives in `entities/`, not `core/`; missing include → `implicit declaration` error, not a clear missing-header error). Skills' allowed read list includes this header — resolved, no further confirmation needed.
@@ -645,12 +645,12 @@ typedef struct {
         uFresnelPowerLoc, uEmissiveIntensityLoc, uDistortionStrengthLoc, uHasTexture1Loc, uTexture1Loc;
     EffectMaterialParams params;
 } EffectMaterial;
-EffectMaterial Material_Load(MaterialPreset preset);              // 4 hardcoded presets, unchanged
+EffectMaterial Material_Load(MaterialPreset preset);              // 4 hardcoded presets, effect_material-backed
 EffectMaterial Material_LoadCustom(EffectMaterialParams params);  // parametrized shared shader, no new GLSL needed
 void Material_SetFloat(EffectMaterial *mat, const char *uniformName, float val);
 void Material_Begin(EffectMaterial mat); void Material_End(void);
 ```
-- `Material_Load` (4 presets): unchanged, each borrows an existing skill's shader — **known broken**: their shader paths reference files that no longer exist in the repo (zero callers currently, so never hit at runtime); `ResourceManager_LoadShader` silently returns `shader.id==0` (Rule C guard). Fix only if a skill actually adopts one of these presets.
+- `Material_Load` (4 presets): each builds a hardcoded `EffectMaterialParams` and routes through `Material_LoadCustom` (shared `core/shaders/effect_material.vs/.fs`), then overrides `mat.preset` — no per-skill shader files, no `shader.id==0` path (Item 17 fix).
 - `Material_LoadCustom`: always backed by shared `core/shaders/effect_material.vs/.fs` — look fully configured via `EffectMaterialParams` uniforms (`u_baseColor`, `u_rimStrength`, `u_fresnelPower`, `u_emissiveIntensity`, `u_distortionStrength`, `u_translucency`, optional `texture1`).
 - Rim glow weighted by light-facing direction, not view angle alone: `rim = fresnel * mix(0.3, 1.0, max(dot(normal, lightDir), 0.0))` — dimmed not zeroed on backlit side.
 - `translucency=1.0` for "center see-through, edges more solid" (`tube.fs` look) — **caller must wrap draw in `BeginBlendMode(BLEND_ALPHA)`/`EndBlendMode()`**, `Material_Begin`/`End` don't manage blend mode.

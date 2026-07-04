@@ -32,6 +32,8 @@
 #define PI 3.1415926535f
 #endif
 
+#include "thuy_kinh_skill_params.inl"
+
 #define MAX_WARDS        4
 #define RIBBONS_PER_WARD 3
 
@@ -42,86 +44,6 @@
 #define MIST_RATE        12.0f   // mist particles per second per ward (unitless rate)
 #define DRIP_INTERVAL    0.22f   // droplet cadence per orbiting ribbon (s)
 #define BUFF_SPEED_MULT  1.35f
-
-// Pass 1 — meter-rescaled tunables (÷100 from old 1cm-scale values).
-// Loaded from .tuning file on Init, so all defaults below are the canonical
-// source of truth — do NOT duplicate them inside the .inl file.
-static float s_shakeEnable        = 1.0f;    // 1=on, 0=off
-static float s_shieldRadius       = 0.55f;   // dome radius (m)
-
-// Dissolve rain burst
-static float s_rainVelOutward     = 0.22f;   // dissolve burst outward XZ speed (m/s)
-static float s_rainVelUp          = 0.08f;   // dissolve burst upward speed (m/s)
-static float s_rainRadiusMin      = 0.012f;  // dissolve droplet min radius (m)
-static float s_rainRadiusMax      = 0.026f;  // dissolve droplet max radius (m)
-
-// Gather phase
-static float s_gatherParticleYMin = 0.02f;   // gather particle spawn Y min (m)
-static float s_gatherParticleYMax = 0.30f;   // gather particle spawn Y max (m)
-static float s_gatherTargetY      = 0.18f;   // gather convergence Y (m)
-static float s_gatherSpeed        = 1.30f;   // gather particle inward speed (m/s)
-static float s_gatherRadiusMin    = 0.010f;  // gather particle min radius (m)
-static float s_gatherRadiusMax    = 0.022f;  // gather particle max radius (m)
-
-// Cast VFX
-static float s_castLightY         = 0.20f;   // VFXLight spawn Y (m)
-static float s_castLightRadius    = 0.70f;   // VFXLight radius at cast (m)
-
-// Ribbon
-static float s_ribbonLen          = 0.026f;  // trail length parameter (m)
-static float s_ribbonThick        = 0.012f;  // trail thickness (m)
-
-// Bloom burst
-static float s_bloomCrownY        = 0.03f;   // crown splash spawn Y (m)
-static float s_bloomVelOutward    = 0.55f;   // crown splash outward XZ speed (m/s)
-static float s_bloomVelUpMin      = 0.70f;   // crown splash Y vel min (m/s)
-static float s_bloomVelUpMax      = 1.30f;   // crown splash Y vel max (m/s)
-static float s_bloomCrownRadiusMin= 0.015f;  // crown splash droplet min radius (m)
-static float s_bloomCrownRadiusMax= 0.032f;  // crown splash droplet max radius (m)
-static float s_bloomLightRadius   = 1.30f;   // active ward VFXLight radius (m)
-static float s_bloomSurgeKnockback= 1.10f;   // protective surge knockback impulse (m/s)
-
-// Ribbon drip
-static float s_dripVelXZ          = 0.15f;   // drip lateral velocity half-range (m/s)
-static float s_dripVelY           = -0.10f;  // drip downward velocity (m/s)
-static float s_dripRadiusMin      = 0.010f;  // drip droplet min radius (m)
-static float s_dripRadiusMax      = 0.020f;  // drip droplet max radius (m)
-static float s_ribbonFloorY       = 0.04f;   // ribbon tip Y floor, keep above ground (m)
-
-// Mist
-static float s_mistYMin           = 0.02f;   // mist spawn Y min (m)
-static float s_mistYMax           = 0.12f;   // mist spawn Y max (m)
-static float s_mistVelXZ          = 0.18f;   // mist tangential speed (m/s)
-static float s_mistVelYMin        = 0.24f;   // mist upward speed min (m/s)
-static float s_mistVelYMax        = 0.50f;   // mist upward speed max (m/s)
-static float s_mistRadiusMin      = 0.016f;  // mist particle min radius (m)
-static float s_mistRadiusMax      = 0.034f;  // mist particle max radius (m)
-
-// Force fields
-static float s_rainGravity        = 4.20f;   // dissolve-rain downward gravity (m/s²)
-static float s_swirlVortex        = 2.20f;   // mist vortex strength (m/s²)
-static float s_swirlPull          = 0.28f;   // mist central pull strength (m/s²)
-static float s_swirlDrag          = 0.30f;   // mist drag coefficient (unitless)
-
-// Per-phase over-lifetime curves — flat 1.0 until shaped in sandbox
-static SkillCurve s_gatherRadiusCurve, s_gatherSpeedCurve, s_gatherAlphaCurve;
-static SkillCurve s_gatherEmissiveCurve;
-static SkillCurve s_mistRadiusCurve,   s_mistSpeedCurve,   s_mistAlphaCurve;
-static SkillCurve s_mistEmissiveCurve;
-static SkillCurve s_dissolveRadiusCurve, s_dissolveSpeedCurve, s_dissolveAlphaCurve;
-static SkillCurve s_dissolveEmissiveCurve;
-
-// Per-phase extra force mixes (sandbox-tunable)
-static SkillForceMix s_gatherForce;
-static ForceField    s_gatherFieldActive;
-static SkillForceMix s_mistForce;
-static ForceField    s_mistFieldActive;
-static SkillForceMix s_dissolveForce;
-static ForceField    s_dissolveFieldActive;
-
-// dome(1) + gather(6+3+1+29=39) + cast(2) + ribbon(3) + drip(4) + bloom(8)
-// + mist(7+3+1+29=40) + swirl(3) + dissolve(5+3+1+29=38) = 138
-#define THUY_KINH_TUNABLE_COUNT 139
 
 typedef enum {
     WARD_INACTIVE = 0,
@@ -182,6 +104,27 @@ static void RebuildRainFall(void)
     });
 }
 
+// Rebuild dissolve/rain force field from tunables + base gravity each frame
+// so sandbox changes take effect immediately (even mid-fall).
+static void RebuildDissolveField(void)
+{
+    ForceField_Clear(&s_dissolveFieldActive);
+    ForceField_AddLayer(&s_dissolveFieldActive, (ForceLayer){
+        .type      = FORCE_GRAVITY_DIR,
+        .direction = { 0.0f, -1.0f, 0.0f },
+        .strength  = s_rainGravity
+    });
+    SkillForceMix_AddLayers(&s_dissolveForce, &s_dissolveFieldActive);
+}
+
+// Rebuild gather force field from tunables each frame (pure tunable mix,
+// no per-ward data).
+static void RebuildGatherField(void)
+{
+    ForceField_Clear(&s_gatherFieldActive);
+    SkillForceMix_AddLayers(&s_gatherForce, &s_gatherFieldActive);
+}
+
 static void WardStartDissolve(WardInstance *w)
 {
     if (w->state != WARD_BLOOM && w->state != WARD_ACTIVE) return;
@@ -197,6 +140,9 @@ static void WardStartDissolve(WardInstance *w)
 
     // The dome collapses into rain: one burst of droplets released from
     // random points on the shell, falling under the shared gravity field.
+    // Rebuild once for the whole burst (may be reached via Abort outside
+    // the Update per-frame rebuild).
+    RebuildDissolveField();
     Vector3 domeC = { w->center.x, DomeCenterY(w), w->center.z };
     for (int i = 0; i < 34; i++) {
         float a = (float)GetRandomValue(0, 3600) / 10.0f * DEG2RAD;
@@ -206,15 +152,6 @@ static void WardStartDissolve(WardInstance *w)
         // Pass 4 — distance-proportional radius: floor+cap
         float baseRad = fminf(fmaxf(w->radius * 0.18f, s_rainRadiusMin), s_rainRadiusMax);
 
-        // Rebuild dissolve force field from tunables + base gravity
-        ForceField_Clear(&s_dissolveFieldActive);
-        ForceField_AddLayer(&s_dissolveFieldActive, (ForceLayer){
-            .type      = FORCE_GRAVITY_DIR,
-            .direction = { 0.0f, -1.0f, 0.0f },
-            .strength  = s_rainGravity
-        });
-        SkillForceMix_AddLayers(&s_dissolveForce, &s_dissolveFieldActive);
-
         SpawnParticle((ParticleConfig){
             .position      = Vector3Add(domeC, Vector3Scale(n, w->radius)),
             .velocity      = { n.x * s_rainVelOutward, s_rainVelUp, n.z * s_rainVelOutward },
@@ -222,6 +159,9 @@ static void WardStartDissolve(WardInstance *w)
             .lifetime      = 1.1f,
             .gradient      = &s_rainGrad,
             .forceField    = &s_dissolveFieldActive,
+            .radiusCurve   = &s_dissolveRadiusCurve,
+            .speedCurve    = &s_dissolveSpeedCurve,
+            .alphaCurve    = &s_dissolveAlphaCurve,
             .emissiveCurve = &s_dissolveEmissiveCurve
         });
     }
@@ -444,7 +384,11 @@ static void WardBloomBurst(WardInstance *w)
                          * (s_bloomCrownRadiusMax - s_bloomCrownRadiusMin)) * w->scale,
             .lifetime = 0.9f,
             .gradient = &s_rainGrad,
-            .forceField = &s_rainFall
+            .forceField = &s_rainFall,
+            .radiusCurve   = &s_dissolveRadiusCurve,
+            .speedCurve    = &s_dissolveSpeedCurve,
+            .alphaCurve    = &s_dissolveAlphaCurve,
+            .emissiveCurve = &s_dissolveEmissiveCurve
         });
     }
 
@@ -495,7 +439,11 @@ static void UpdateRibbons(WardInstance *w, float dt)
                                * (s_dripRadiusMax - s_dripRadiusMin)) * w->scale,
                 .lifetime   = 0.9f,
                 .gradient   = &s_rainGrad,
-                .forceField = &s_rainFall
+                .forceField = &s_rainFall,
+                .radiusCurve   = &s_dissolveRadiusCurve,
+                .speedCurve    = &s_dissolveSpeedCurve,
+                .alphaCurve    = &s_dissolveAlphaCurve,
+                .emissiveCurve = &s_dissolveEmissiveCurve
             });
         }
     }
@@ -505,7 +453,16 @@ void UpdateThuyKinhSkill(float dt, Vector3 enemyPos, float enemyRadius)
 {
     (void)enemyPos; (void)enemyRadius;
 
+    // Zero-instance early-out: skip the per-frame field rebuilds when idle.
+    bool anyActive = false;
+    for (int i = 0; i < MAX_WARDS; i++) {
+        if (s_wards[i].state != WARD_INACTIVE) { anyActive = true; break; }
+    }
+    if (!anyActive) return;
+
     RebuildRainFall();
+    RebuildGatherField();
+    RebuildDissolveField();
 
     for (int i = 0; i < MAX_WARDS; i++) {
         WardInstance *w = &s_wards[i];
@@ -514,11 +471,8 @@ void UpdateThuyKinhSkill(float dt, Vector3 enemyPos, float enemyRadius)
 
         switch (w->state) {
         case WARD_GATHER: {
-            // Rebuild gather field from tunables before emitting
-            ForceField_Clear(&s_gatherFieldActive);
-            SkillForceMix_AddLayers(&s_gatherForce, &s_gatherFieldActive);
-
             // Droplets converging on the caster from a collapsing ring.
+            // (gather field rebuilt once per frame at top of Update)
             for (int p = 0; p < 3; p++) {
                 float a = (float)GetRandomValue(0, 3600) / 10.0f * DEG2RAD;
                 float r = w->radius * (1.3f - w->timer / GATHER_TIME);
@@ -528,16 +482,17 @@ void UpdateThuyKinhSkill(float dt, Vector3 enemyPos, float enemyRadius)
                                 w->center.z + sinf(a) * r };
                 Vector3 toC = Vector3Subtract(
                     (Vector3){ w->center.x, s_gatherTargetY, w->center.z }, pos);
-                float speedMult = SkillCurve_Eval(&s_gatherSpeedCurve,
-                                                  w->timer / GATHER_TIME);
                 SpawnParticle((ParticleConfig){
                     .position     = pos,
-                    .velocity     = Vector3Scale(Vector3Normalize(toC), s_gatherSpeed * speedMult),
+                    .velocity     = Vector3Scale(Vector3Normalize(toC), s_gatherSpeed),
                     .radius       = (s_gatherRadiusMin + (float)GetRandomValue(0, 100) / 100.0f
                                      * (s_gatherRadiusMax - s_gatherRadiusMin)) * w->scale,
                     .lifetime     = 0.45f,
                     .gradient     = &s_mistGrad,
                     .forceField   = &s_gatherFieldActive,
+                    .radiusCurve   = &s_gatherRadiusCurve,
+                    .speedCurve    = &s_gatherSpeedCurve,
+                    .alphaCurve    = &s_gatherAlphaCurve,
                     .emissiveCurve = &s_gatherEmissiveCurve
                 });
             }
@@ -608,18 +563,18 @@ void UpdateThuyKinhSkill(float dt, Vector3 enemyPos, float enemyRadius)
                              * (s_mistYMax - s_mistYMin);
                 float velY = s_mistVelYMin + (float)GetRandomValue(0, 100) / 100.0f
                              * (s_mistVelYMax - s_mistVelYMin);
-                float tPhase = w->timer / ACTIVE_TIME;
-                float rMult  = SkillCurve_Eval(&s_mistRadiusCurve,  tPhase);
                 SpawnParticle((ParticleConfig){
                     .position      = { w->center.x + cosf(a) * r, posY,
                                        w->center.z + sinf(a) * r },
                     .velocity      = { -sinf(a) * s_mistVelXZ, velY, cosf(a) * s_mistVelXZ },
                     .radius        = (s_mistRadiusMin + (float)GetRandomValue(0, 100) / 100.0f
-                                      * (s_mistRadiusMax - s_mistRadiusMin))
-                                     * w->scale * rMult,
+                                      * (s_mistRadiusMax - s_mistRadiusMin)) * w->scale,
                     .lifetime      = 1.5f,
                     .gradient      = &s_mistGrad,
                     .forceField    = &s_mistFieldActive,
+                    .radiusCurve   = &s_mistRadiusCurve,
+                    .speedCurve    = &s_mistSpeedCurve,
+                    .alphaCurve    = &s_mistAlphaCurve,
                     .emissiveCurve = &s_mistEmissiveCurve
                 });
             }

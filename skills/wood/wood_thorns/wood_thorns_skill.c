@@ -33,54 +33,7 @@
 #define HEIGHT_SEGS          8
 #define RADIAL_SEGS          8
 
-// Sandbox-tunable spatial knobs (real-meter scale).
-// See RegisterSkillTunables below and wood_thorns_skill_tunables.inl.
-static float s_thornSpacing     = 0.35f;  // inter-thorn step along path (m)
-static float s_thornMaxHeight   = 0.46f;  // thorn tip height at full scale (m)
-static float s_thornBaseRadius  = 0.065f; // base radius at full scale (m)
-static float s_aoeRadius        = 0.25f;  // hit-test radius (m)
-static float s_decalScale       = 0.78f;  // crack decal half-size = base_radius * decalScale
-static float s_lightRadius      = 0.70f;  // VFXLight radius per thorn (m)
-static float s_shakeTrauma      = 0.28f;  // camera-shake magnitude (unitless 0..1)
-static float s_shakeEnable      = 1.0f;   // 1=on, 0=off (toggle in sandbox)
-static float s_distortRadius    = 0.60f;  // ScreenDistort world radius (m)
-static float s_sideJitterMax    = 0.12f;  // perpendicular spawn jitter half-range (m)
-
-// Dust burst
-static float s_dustSpeedOutMin  = 0.35f;  // outward speed range (m/s)
-static float s_dustSpeedOutMax  = 0.75f;
-static float s_dustSpeedUpMin   = 0.40f;
-static float s_dustSpeedUpMax   = 0.90f;
-static float s_dustRadiusMin    = 0.030f; // particle radius range (m)
-static float s_dustRadiusMax    = 0.060f;
-static float s_dustLifeMin      = 0.60f;
-static float s_dustLifeMax      = 1.20f;
-
-// Holding phase mist
-static float s_mistSpeedOutMin  = 0.05f;
-static float s_mistSpeedOutMax  = 0.15f;
-static float s_mistSpeedUpMin   = 0.15f;
-static float s_mistSpeedUpMax   = 0.35f;
-static float s_mistRadiusMin    = 0.12f;
-static float s_mistRadiusMax    = 0.28f;
-static float s_mistLifeMin      = 0.80f;
-static float s_mistLifeMax      = 1.60f;
-
-// Per-phase over-lifetime curves — default flat (no-op until shaped in sandbox).
-static SkillCurve s_castRadiusCurve, s_castSpeedCurve, s_castAlphaCurve;
-static SkillCurve s_castEmissiveCurve;
-static SkillCurve s_holdRadiusCurve, s_holdSpeedCurve, s_holdAlphaCurve;
-static SkillCurve s_holdEmissiveCurve;
-
-// Per-phase force mixes (all layers default to 0 strength — no behavior change).
-static SkillForceMix s_castForce;
-static SkillForceMix s_holdForce;
-static ForceField    s_castField;
-static ForceField    s_holdField;
-
-// 25 float tunables + 2 phases × 4 curves + 2 phases × SKILL_FORCE_MIX_TUNABLE_COUNT(29)
-// = 25 + 8 + 58 = 91
-#define WOOD_THORNS_TUNABLE_COUNT 96
+#include "wood_thorns_skill_params.inl"
 
 typedef enum {
     THORN_INACTIVE = 0,
@@ -165,7 +118,8 @@ static void RebuildHoldField(void) {
 
 static void SpawnDustBurst(Vector3 pos, float scale)
 {
-    RebuildCastField();
+    // s_castField is rebuilt at the top of UpdateWoodThornsSkill each frame
+    // (this is only ever called from Update, after that rebuild).
     float baseRad = s_thornBaseRadius * scale;
     for (int i = 0; i < DUST_PARTICLES; i++) {
         float angle = (float)i / DUST_PARTICLES * 2.0f * PI;
@@ -246,8 +200,15 @@ void InitWoodThornsSkill(int screenWidth, int screenHeight)
     ColorGradient_AddStop(&s_dustGrad, 0.50f, ColorAlpha(ColorLerp(ELEMENT_COLOR_WOOD, BLACK, 0.3f), 0.7f));
     ColorGradient_AddStop(&s_dustGrad, 1.00f, (Color){ 0, 0, 0, 0 });
 
-    // Seed curves flat (shaped in sandbox)
+    // Seed curves flat (shaped in sandbox). A zero-initialized SkillCurve has
+    // 0 stops and must be seeded before first use (core/skill_curve.h).
+    SkillCurve_SetConstant(&s_castRadiusCurve,   1.0f);
+    SkillCurve_SetConstant(&s_castSpeedCurve,    1.0f);
+    SkillCurve_SetConstant(&s_castAlphaCurve,    1.0f);
     SkillCurve_SetConstant(&s_castEmissiveCurve, 1.0f);
+    SkillCurve_SetConstant(&s_holdRadiusCurve,   1.0f);
+    SkillCurve_SetConstant(&s_holdSpeedCurve,    1.0f);
+    SkillCurve_SetConstant(&s_holdAlphaCurve,    1.0f);
     SkillCurve_SetConstant(&s_holdEmissiveCurve, 1.0f);
 
     // Register tunables (function-scope include sees s_tunables and tn).
@@ -255,6 +216,11 @@ void InitWoodThornsSkill(int screenWidth, int screenHeight)
 #include "wood_thorns_skill_tunables.inl"
     SkillTunables_LoadPersisted("skills/wood/wood_thorns/wood_thorns_skill.tuning", s_tunables, tn);
     RegisterSkillTunables(s_skillIndex, s_tunables, tn);
+
+    // Build force fields once from (possibly persisted) tunables; Update
+    // rebuilds them per frame while any thorn instance is live.
+    RebuildCastField();
+    RebuildHoldField();
 }
 
 /* ================================================================
@@ -349,6 +315,18 @@ void CastWoodThornsSkill(int agentId, Vector3 startPos, Vector3 target, SkillPar
  * ================================================================ */
 void UpdateWoodThornsSkill(float dt, Vector3 enemyPos, float enemyRadius)
 {
+    // Zero-instance early-out: skip per-frame field rebuilds when idle.
+    bool anyActive = false;
+    for (int i = 0; i < MAX_THORNS; i++) {
+        if (s_thorns[i].state != THORN_INACTIVE) { anyActive = true; break; }
+    }
+    if (!anyActive) return;
+
+    // Rebuild per-phase force fields from tunables each frame so sandbox
+    // force tuning applies live to already-spawned particles.
+    RebuildCastField();
+    RebuildHoldField();
+
     for (int i = 0; i < MAX_THORNS; i++) {
         Thorn *th = &s_thorns[i];
         if (th->state == THORN_INACTIVE) continue;
@@ -432,7 +410,6 @@ void UpdateWoodThornsSkill(float dt, Vector3 enemyPos, float enemyRadius)
 
             // Emit glowing poison mist seeping from the body of the thorn mesh
             if (GetRandomValue(0, 100) < 25) {
-                RebuildHoldField();
                 float hRatio = (float)GetRandomValue(0, 100) / 100.0f;
                 float currentHeight = s_thornMaxHeight * th->scale;
                 float currentRadius = s_thornBaseRadius * th->scale * (1.0f - hRatio);

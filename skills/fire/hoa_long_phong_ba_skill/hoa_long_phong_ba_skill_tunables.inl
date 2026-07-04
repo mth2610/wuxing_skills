@@ -52,6 +52,17 @@
     s_tunables[tn++] = (SkillTunableEntry){"aftermath_up_speed_max",    &s_aftermathUpSpeedMax,    0.0f, 5.0f,  s_aftermathUpSpeedMax,    "aftermath"};
     s_tunables[tn++] = (SkillTunableEntry){"aftermath_spin_min",        &s_aftermathSpinMin,       0.0f, 5.0f,  s_aftermathSpinMin,       "aftermath"};
     s_tunables[tn++] = (SkillTunableEntry){"aftermath_spin_max",        &s_aftermathSpinMax,       0.0f, 5.0f,  s_aftermathSpinMax,       "aftermath"};
-    s_tunables[tn++] = (SkillTunableEntry){"aftermath_r_dist",          &s_aftermathRDist,         0.0f, 0.5f,  s_aftermathRDist,         "aftermath"};
+    s_tunables[tn++] = (SkillTunableEntry){"aftermath_ring_radius",      &s_aftermathRingRadius,    0.0f, 0.5f,  s_aftermathRingRadius,    "aftermath"};
     s_tunables[tn++] = (SkillTunableEntry){"aftermath_y_jitter",        &s_aftermathYJitter,       0.0f, 0.2f,  s_aftermathYJitter,       "aftermath"};
     s_tunables[tn++] = (SkillTunableEntry){"aftermath_particle_radius", &s_aftermathParticleRadius,0.0f, 0.3f,  s_aftermathParticleRadius,"aftermath"};
+
+    // --- geyser field base layers ---
+    s_tunables[tn++] = (SkillTunableEntry){"geyser_vortex_strength",  &s_geyserVortexStrength, 0.0f, 30.0f, s_geyserVortexStrength, "geyser"};
+    s_tunables[tn++] = (SkillTunableEntry){"geyser_vortex_radius",    &s_geyserVortexRadius,   0.1f,  5.0f, s_geyserVortexRadius,   "geyser"};
+    s_tunables[tn++] = (SkillTunableEntry){"geyser_up_strength",      &s_geyserUpStrength,     0.0f, 15.0f, s_geyserUpStrength,     "geyser"};
+    s_tunables[tn++] = (SkillTunableEntry){"geyser_curl_strength",    &s_geyserCurlStrength,   0.0f, 10.0f, s_geyserCurlStrength,   "geyser"};
+    s_tunables[tn++] = (SkillTunableEntry){"geyser_drag",             &s_geyserDrag,           0.0f, 10.0f, s_geyserDrag,           "geyser"};
+
+    // --- travel field base layers ---
+    s_tunables[tn++] = (SkillTunableEntry){"travel_curl_strength",    &s_travelCurlStrength,   0.0f, 10.0f, s_travelCurlStrength,   "travel"};
+    s_tunables[tn++] = (SkillTunableEntry){"travel_drag",             &s_travelDrag,           0.0f, 10.0f, s_travelDrag,           "travel"};

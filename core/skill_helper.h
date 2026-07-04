@@ -254,6 +254,8 @@ typedef enum {
 void DrawEffectMesh(MeshPresetType type, Vector3 pos, Vector3 scale, Color color);
 
 // 6. Shader Material System
+// All presets are backed by the shared core/shaders/effect_material.vs/.fs
+// (Item 17): Material_Load(preset) = Material_LoadCustom with hardcoded params.
 typedef enum {
     MATERIAL_FIRE,
     MATERIAL_ICE,

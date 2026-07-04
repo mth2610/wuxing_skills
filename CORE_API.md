@@ -108,7 +108,7 @@ bool Tuning_SaveFloats(const char *path, const char *const *keys, const float *v
 
 For automatic detection, your header file must declare these exact prototypes (replace `[Name]` with your unique CamelCase skill name):
 
-## SkillParams;
+### SkillParams
 ```c
 typedef struct {
     int level;
@@ -124,6 +124,7 @@ typedef struct {
     int pathPointCount;
     Vector3 pathPoints[32]; // Max 32 points for a drag-to-cast path
 } SkillParams;
+```
 
 ```c
 #ifndef SKILL_[NAME]_H
@@ -143,7 +144,7 @@ typedef struct {
 
 // Main lifecycle
 void Init[Name]Skill(int screenWidth, int screenHeight);
-void Cast[Name]Skill(Vector3 startPos, Vector3 target, SkillParams params);
+void Cast[Name]Skill(int agentId, Vector3 startPos, Vector3 target, SkillParams params);
 void Update[Name]Skill(float dt, Vector3 enemyPos, float enemyRadius);
 void Draw[Name]Skill(void);
 void Unload[Name]Skill(void);
@@ -155,6 +156,8 @@ void Deactivate[Name]Projectile(int index);
 
 #endif // SKILL_[NAME]_H
 ```
+
+`agentId` is the caster's agent-pool slot (0..255), forwarded automatically by `CastSkill()` (CORE_ISSUES.md Item 15). Store it in your per-instance struct as `int ownerAgentId;` at cast time — it's what lets `AbortSkill(skillIndex, agentId)` target only the caster's own instances. Ownership tracking is its only job right now; see `skills/CLAUDE.md` for the full rule.
 
 ### Minimal Complete `.c` Skeleton (Generic Projectile Skill)
 
@@ -184,6 +187,7 @@ typedef struct {
     Vector3 velocity;
     float stateTimer;
     float radius;
+    int ownerAgentId;   // caster's agent slot, set at cast time (ownership tracking)
     bool active;
 } SkillInstance;
 
@@ -193,7 +197,7 @@ void InitExampleSkill(int screenWidth, int screenHeight) {
     for (int i = 0; i < MAX_INSTANCES; i++) s_instances[i].active = false;
 }
 
-void CastExampleSkill(Vector3 startPos, Vector3 target, SkillParams params) {
+void CastExampleSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params) {
     for (int i = 0; i < MAX_INSTANCES; i++) {
         if (s_instances[i].active) continue;
         s_instances[i] = (SkillInstance){
@@ -203,6 +207,7 @@ void CastExampleSkill(Vector3 startPos, Vector3 target, SkillParams params) {
             .velocity = (Vector3){0},
             .stateTimer = 0.0f,
             .radius = 8.0f * params.sizeScale,
+            .ownerAgentId = agentId,
             .active = true
         };
         SpawnCastEffect(startPos, EFFECT_PRESET_FIRE_EXPLOSION, params.sizeScale * 0.6f);
@@ -318,6 +323,7 @@ typedef struct {
     float currentHeight; // animated 0 -> maxHeight during RISING
     float yawOffset;     // per-instance random yaw (§12.3), applied to the jitter axis
     float scaleVariance; // per-instance 85-115% scale (§12.3)
+    int ownerAgentId;    // caster's agent slot, set at cast time (ownership tracking)
     bool active;
 } SkillInstance;
 
@@ -332,7 +338,7 @@ void InitExampleRisingSkill(int screenWidth, int screenHeight) {
     for (int i = 0; i < MAX_INSTANCES; i++) s_instances[i].active = false;
 }
 
-void CastExampleRisingSkill(Vector3 startPos, Vector3 target, SkillParams params) {
+void CastExampleRisingSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params) {
     for (int i = 0; i < MAX_INSTANCES; i++) {
         if (s_instances[i].active) continue;
         s_instances[i] = (SkillInstance){
@@ -344,6 +350,7 @@ void CastExampleRisingSkill(Vector3 startPos, Vector3 target, SkillParams params
             .currentHeight = 0.0f,
             .yawOffset = (float)GetRandomValue(0, 360), // §12.3 instance randomization
             .scaleVariance = (float)GetRandomValue(85, 115) / 100.0f,
+            .ownerAgentId = agentId,
             .active = true
         };
         SpawnCastEffect(startPos, EFFECT_PRESET_EARTH_CRACK, params.sizeScale * 0.6f); // windup plays at the caster
@@ -469,6 +476,7 @@ typedef struct {
     float radius;
     float maxHeight;
     float currentHeight; // animated 0 -> maxHeight during RISING
+    int ownerAgentId;    // caster's agent slot, set at cast time (ownership tracking)
     bool active;
 } SkillInstance;
 
@@ -482,7 +490,7 @@ void InitExamplePathAnchorSkill(int screenWidth, int screenHeight) {
     for (int i = 0; i < MAX_INSTANCES; i++) s_instances[i].active = false;
 }
 
-void CastExamplePathAnchorSkill(Vector3 startPos, Vector3 target, SkillParams params) {
+void CastExamplePathAnchorSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params) {
     // Resample the drawn path at even spacing — never hand-roll cumulative-distance
     // sampling in skill code (see core/path_spline.h). Falls back to a straight
     // startPos->target line if the caller didn't draw a multi-point path.
@@ -515,6 +523,7 @@ void CastExamplePathAnchorSkill(Vector3 startPos, Vector3 target, SkillParams pa
             .radius = 12.0f * params.sizeScale,
             .maxHeight = 70.0f * params.sizeScale,
             .currentHeight = 0.0f,
+            .ownerAgentId = agentId,
             .active = true
         };
     }
@@ -595,7 +604,7 @@ void UnloadExamplePathAnchorSkill(void) {
 
 For skills whose visual must follow a *moving* `Agent` rather than stay at a fixed world position or path — primarily **Buff** skills (and future khinh công dash afterimages). State machine: `STATE_CASTING → STATE_ATTACHED (visual follows the tracked position every frame, buff active on the target) → STATE_DISSOLVE`.
 
-The documented Skill lifecycle (`Cast[Name]Skill(Vector3 startPos, Vector3 target, SkillParams params)` / `Update[Name]Skill(float dt, Vector3 enemyPos, float enemyRadius)`) doesn't pass an `agentId` — don't invent a new parameter or change `Update[Name]Skill`'s signature to get one (that's a bigger cross-module lifecycle decision, tracked separately). Instead the skill caches the owner's `Vector3` position at cast time (`startPos`) and re-applies the buff via the radius-based `Entity_ApplyAoEBuff(casterPos, smallRadius, speedMult, duration)` entry point — no `agentId` needed. Visually following the *exact* agent (not just its cast-time position) requires `entities/entities.h`'s `Agent` array, which Skills doesn't currently have read access to (see note below); this skeleton instead re-centers on `casterPos` once at cast time, consistent with what `Entity_ApplyAoEBuff` itself can target without an agent ID.
+`Cast[Name]Skill` DOES receive the caster's `int agentId` (CORE_ISSUES.md Item 15) — store it as `ownerAgentId` like every skeleton. What the lifecycle still does NOT provide: `Update[Name]Skill(float dt, Vector3 enemyPos, float enemyRadius)` carries no agentId, and skills can't read the live `Agent` array (`entities/entities.h` internals are off-limits to Skills), so there is no way yet to track a *moving* agent's position frame-to-frame — don't invent a new Update parameter to get one (CORE_ISSUES.md Item 26 is the planned fix: an agent-position provider callback). Until then the skill caches the owner's `Vector3` position at cast time (`startPos`) and re-applies the buff via the radius-based `Entity_ApplyAoEBuff(casterPos, smallRadius, speedMult, duration)` entry point; this skeleton re-centers on `casterPos` once at cast time, consistent with what `Entity_ApplyAoEBuff` itself can target without live agent tracking.
 
 Two options for the attached visual: (1) re-spawn a small particle burst and/or `VFXLight_Spawn` at the tracked position once per frame while `ATTACHED` — simplest, no persistent trail object to manage; (2) drive a `core/trail_system.h` `TRAIL_TYPE_FOLLOWER` trail with `SetFollowerAxis`/`UpdateFollowerPosition` every frame — better when the buff needs ribbon/aura geometry, not just a glow. The skeleton below uses option (1); reach for `TRAIL_TYPE_FOLLOWER` only if the visual genuinely needs ribbon geometry.
 
@@ -624,6 +633,7 @@ typedef struct {
     float stateTimer;
     float buffDuration;  // mirrors the duration passed to Entity_ApplyAoEBuff
     float buffRadius;
+    int ownerAgentId;    // caster's agent slot, set at cast time (ownership tracking)
     bool active;
 } SkillInstance;
 
@@ -637,7 +647,7 @@ void InitExampleAttachedSkill(int screenWidth, int screenHeight) {
     for (int i = 0; i < MAX_INSTANCES; i++) s_instances[i].active = false;
 }
 
-void CastExampleAttachedSkill(Vector3 startPos, Vector3 target, SkillParams params) {
+void CastExampleAttachedSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params) {
     int slot = -1;
     for (int i = 0; i < MAX_INSTANCES; i++) {
         if (!s_instances[i].active) { slot = i; break; }
@@ -653,6 +663,7 @@ void CastExampleAttachedSkill(Vector3 startPos, Vector3 target, SkillParams para
         .stateTimer = 0.0f,
         .buffDuration = duration,
         .buffRadius = radius,
+        .ownerAgentId = agentId,
         .active = true
     };
 
@@ -1307,6 +1318,7 @@ int SkillForceMix_MakeTunables(SkillForceMix *mix, const char *labelPrefix,
 * All 8 curated `ForceType`s (excludes `FORCE_RADIAL_AXIS`/`FORCE_VORTEX_AXIS`/`FORCE_VECTOR_TEXTURE`, which need axis/GPU context a generic per-phase mix doesn't have) are **simultaneously available** — each with its own strength (0 = that type contributes nothing) AND its own full relevant parameter set (direction/origin/noise as applicable), not a shared number reused across types. There's no "pick one type" step: dial up as many as you want at once (e.g. curl + gravity-point together) and they all compose into the same `ForceField`. An earlier design let the sandbox switch between types one at a time on a shared field set — that turned out to be confusing (the same displayed number meant different, unrelated things depending on which type was selected) and didn't let two types run together, so it was replaced with this always-additive mix.
 * A skill wanting an independent mix per phase declares one `static SkillForceMix` per phase and calls `SkillForceMix_MakeTunables` once at `Init` time, appending the 29 returned entries into its own combined `SkillTunableEntry` array (right after that phase's other tunables, so the phase group stays contiguous — see `fire_skill.c`'s `InitFireSkill` for the pattern of building the array as a sequence of assignments rather than one static literal, needed once any per-phase block mixes fixed named entries with a variable-count helper call).
 * Call `SkillForceMix_AddLayers(&mix, &yourForceField)` right before each real use (same "rebuild from current tunable values, don't bake once at Init" rule as any other tunable-driven `ForceField`) — it adds one `ForceLayer` per component whose strength is nonzero, skipping the rest. If a phase's base physics already uses several layers AND the user dials up many mix components at once, the total can exceed `FORCE_FIELD_MAX_LAYERS` (8, `core/force_field.h`) — `ForceField_AddLayer` silently drops layers past that cap rather than crashing, so in that unlikely all-at-once case the least-recently-added mix components stop applying.
+* **Rebuild pattern when base field has hardcoded layers + a mix overlay**: create a `static void RebuildXxxField(void)` that (1) `ForceField_Clear`, (2) re-adds the base layers from tunable statics, (3) calls `SkillForceMix_AddLayers`. Call it once at Init AND at the top of every `UpdateXxxSkill` frame. Calling `SkillForceMix_AddLayers` only at Init bakes a snapshot — sandbox mix changes won't take effect until the next cast. Confirmed in `hoa_long_phong_ba_skill.c`'s `RebuildGeyserField`/`RebuildTravelField`.
 
 ### Shader Binding (`core/skill_manager.h`)
 ```c
@@ -1847,6 +1859,8 @@ void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale);
 ```
 All 6 elements now covered: `WOOD_BLOOM` (leaf/vine burst, upward-biased, `ELEMENT_COLOR_WOOD`, `DECAL_PRESET_WOOD_MOSS`), `METAL_SHARD` (sharp shards, high pitch range, `ELEMENT_COLOR_METAL`, `DECAL_PRESET_METAL_SLASH`), `TAIJI_BURST` (amethyst-purple radial burst + stronger light flash for the "no-element" ultimate state, `ELEMENT_COLOR_TAIJI`, `DECAL_PRESET_TAIJI_RING`).
 
+**`EFFECT_PRESET_EARTH_CRACK` does NOT call `CameraFX_Shake`** — it was removed from `SpawnImpactEffect` so that Earth skills with a per-skill `s_shakeEnable` toggle can control shake themselves. Any skill that uses `EARTH_CRACK` and wants shake must call `CameraFX_Shake(…)` explicitly, guarded by its own toggle.
+
 ### Cast Effect Preset (windup/energy-gathering)
 ```c
 void SpawnCastEffect(Vector3 pos, EffectPresetType preset, float scale);
@@ -1968,20 +1982,19 @@ typedef struct {
     EffectMaterialParams params;
 } EffectMaterial;
 
-EffectMaterial Material_Load(MaterialPreset preset);       // 4 hardcoded presets, unchanged behavior
+EffectMaterial Material_Load(MaterialPreset preset);       // 4 hardcoded presets, effect_material-backed
 EffectMaterial Material_LoadCustom(EffectMaterialParams params); // parametrized shared shader
 void Material_SetFloat(EffectMaterial *mat, const char *uniformName, float val);
 void Material_Begin(EffectMaterial mat);
 void Material_End(void);
 ```
-* **`Material_Load` (4 presets):** unchanged signature/behavior — each borrows an existing skill's shader (`fire_wildfire`, `frost_blossom_rain`, `water_stream/tube`, `yin_yang_orb`), fixed 2 uniform slots (`u_time`, `u_dissolve`).
+* **`Material_Load` (4 presets):** all presets are `effect_material`-backed (Item 17) — each is a hardcoded `EffectMaterialParams` over the same shared `core/shaders/effect_material.vs/.fs` that `Material_LoadCustom` uses (the old per-skill shaders these presets borrowed were deleted from the repo). Signature and enum unchanged. Preset params: FIRE = `ELEMENT_COLOR_FIRE`, rim 1.2/fresnel 3/emissive 1.5/distortion 0.4/translucency 0; ICE = pale blue `(170,220,255)`, rim 1.5/fresnel 5/emissive 0.5/distortion 0.05/translucency 0.6; WATER = `ELEMENT_COLOR_WATER`, rim 1.0/fresnel 4/emissive 0.6/distortion 0.25/translucency 0.85; PORTAL = `ELEMENT_COLOR_TAIJI`, rim 2.0/fresnel 2/emissive 2.0/distortion 0.6/translucency 0.3.
 * **`Material_LoadCustom` (new):** always backed by the shared `core/shaders/effect_material.vs/.fs` — one shader, look configured entirely via `EffectMaterialParams` uniforms (`u_baseColor`, `u_rimStrength`, `u_fresnelPower`, `u_emissiveIntensity`, `u_distortionStrength`, `u_translucency`, optional `texture1`). No new GLSL needed per combination.
 * **Rim glow is weighted by light-facing direction**, not view angle alone: plain Fresnel glows evenly around the whole silhouette regardless of where the light is, which reads as "rim doesn't match the light". `rim = fresnel * mix(0.3, 1.0, max(dot(normal, lightDir), 0.0))` — dimmed (not zeroed) on the backlit side.
 * **`translucency`** (default 0 = opaque, unchanged from initial implementation): set to `1.0` for the same "center see-through, edges more solid" look as `tube.fs` (`alpha = mix(0.3, 0.9, fresnel)`), driven by the same fresnel term as the rim. **Caller must wrap the draw in `BeginBlendMode(BLEND_ALPHA)`/`EndBlendMode()`** for alpha < 1 to actually blend — `Material_Begin`/`Material_End` do not manage blend mode themselves.
 * **This shader ignores per-vertex color** (`vs_header.glsl`/`fs_header.glsl`'s 3D-lighting convention doesn't carry a `fragColor` varying) — tint comes only from `u_baseColor`. The `Color` argument passed to whatever mesh-draw call you use inside `Material_Begin`/`Material_End` has no visual effect with this material.
 * **`texture1` is optional** — `EffectMaterialParams.texture1.id == 0` skips the sample entirely (guarded by `u_hasTexture1` in the shader) rather than sampling an unbound/stale texture unit. Sampled as a luminance mask (`.r` channel only, not `.rgb`) — importing the texture's own hue directly onto a mesh with very different UV density than what it was authored for (e.g. a flat ground-decal crack texture on a sphere, which pinches hard at the poles) produces visible color noise.
 * **`Material_SetFloat`** still works unmodified on `Material_LoadCustom` materials for any uniform name, including animating `u_dissolve` frame-to-frame (see `core_test`'s usage: solid hold, then dissolve out over the last second). Dissolve's edge-glow only evaluates once `u_dissolve > 0.0` — `fx.glsl`'s `dissolveCalc()` computes a nonzero `edgeFactor` for ~8% of fragments even at `dissolve == 0.0`, which would otherwise show as speckle the instant the material appears.
-* **Known pre-existing issue (not fixed, out of scope for this item):** the 4 hardcoded presets' shader paths (`skills/fire/fire_wildfire/...`, `skills/water/frost_blossom_rain_skill/...`, `skills/taiji/yin_yang_orb/...`) reference files that no longer exist in the repo — `Material_Load` has zero callers anywhere currently, so this was never hit at runtime. `ResourceManager_LoadShader` will return `shader.id == 0` for these (Rule C guard, no crash, just invisible). Fix when/if a skill actually adopts `Material_Load` with one of these presets.
 
 ### Ground Decal Preset
 ```c

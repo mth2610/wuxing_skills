@@ -1329,35 +1329,54 @@ static void Material_FetchLocs(EffectMaterial *mat) {
 }
 
 EffectMaterial Material_Load(MaterialPreset preset) {
-    EffectMaterial mat = {0};
-    mat.preset = preset;
+    // Item 17: every preset is effect_material-backed. The old per-skill shader
+    // files (fire_wildfire, frost_blossom_rain, yin_yang_orb) were deleted from
+    // the repo, so those presets silently rendered invisible (shader.id == 0,
+    // Rule C guard). Each preset is now a hardcoded EffectMaterialParams over the
+    // shared core/shaders/effect_material.vs/.fs — same path as Material_LoadCustom.
+    EffectMaterialParams p = {0};
 
     switch (preset) {
         case MATERIAL_FIRE:
-            mat.shader = ResourceManager_LoadShader("skills/fire/fire_wildfire/fire_wildfire.vs",
-                                                   "skills/fire/fire_wildfire/fire_wildfire.fs");
+            p.baseColor = ELEMENT_COLOR_FIRE;
+            p.rimStrength = 1.2f;
+            p.fresnelPower = 3.0f;
+            p.emissiveIntensity = 1.5f;
+            p.distortionStrength = 0.4f;
+            p.translucency = 0.0f;
             break;
         case MATERIAL_ICE:
-            mat.shader = ResourceManager_LoadShader("skills/water/frost_blossom_rain_skill/frost_blossom_rain.vs",
-                                                   "skills/water/frost_blossom_rain_skill/frost_blossom_rain.fs");
+            p.baseColor = (Color){170, 220, 255, 255}; // pale blue
+            p.rimStrength = 1.5f;
+            p.fresnelPower = 5.0f;
+            p.emissiveIntensity = 0.5f;
+            p.distortionStrength = 0.05f;
+            p.translucency = 0.6f;
             break;
         case MATERIAL_WATER:
-            mat.shader = ResourceManager_LoadShader("skills/water/water_stream/tube.vs",
-                                                   "skills/water/water_stream/tube.fs");
+            p.baseColor = ELEMENT_COLOR_WATER;
+            p.rimStrength = 1.0f;
+            p.fresnelPower = 4.0f;
+            p.emissiveIntensity = 0.6f;
+            p.distortionStrength = 0.25f;
+            p.translucency = 0.85f;
             break;
         case MATERIAL_PORTAL:
-            mat.shader = ResourceManager_LoadShader("skills/taiji/yin_yang_orb/yin_yang_orb.vs",
-                                                   "skills/taiji/yin_yang_orb/yin_yang_orb.fs");
+            p.baseColor = ELEMENT_COLOR_TAIJI;
+            p.rimStrength = 2.0f;
+            p.fresnelPower = 2.0f;
+            p.emissiveIntensity = 2.0f;
+            p.distortionStrength = 0.6f;
+            p.translucency = 0.3f;
             break;
         case MATERIAL_CUSTOM:
             // Legal but not the intended entry point — Material_LoadCustom() is how a
             // skill actually configures this preset. Falls back to all-zero params.
-            mat.shader = ResourceManager_LoadShader("core/shaders/effect_material.vs",
-                                                   "core/shaders/effect_material.fs");
             break;
     }
 
-    Material_FetchLocs(&mat);
+    EffectMaterial mat = Material_LoadCustom(p);
+    mat.preset = preset;
     return mat;
 }
 

@@ -421,6 +421,14 @@ void CastFireSkill(int agentId, Vector3 startPos, Vector3 target, float twistPha
 }
 
 void UpdateFireSkill(float dt) {
+  // Zero-instance early-out: nothing to advance when no emitter is active.
+  bool anyActive = false;
+  for (int e = 0; e < MAX_EMITTERS; e++) {
+    if (emitters[e].active) { anyActive = true; break; }
+  }
+  if (!anyActive)
+    return;
+
   for (int e = 0; e < MAX_EMITTERS; e++) {
     if (!emitters[e].active)
       continue;

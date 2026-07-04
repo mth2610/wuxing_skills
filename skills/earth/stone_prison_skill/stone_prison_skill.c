@@ -22,6 +22,8 @@
 #define PI 3.14159265358979323846f
 #endif
 
+#include "stone_prison_skill_params.inl"
+
 #define MAX_PRISONS         2
 #define PILLARS_COUNT       6
 #define HEIGHT_SEGS         8
@@ -31,70 +33,6 @@
 #define RISE_TIME           0.2f
 #define HOLD_TIME           1.5f
 #define DISSOLVE_TIME       0.4f
-
-// Pass 1 — meter-rescaled tunables (÷100 from old 1cm-scale values).
-// Loaded from .tuning file on Init; defaults below are the canonical source of truth.
-static float s_shakeEnable         = 1.0f;    // 1=on, 0=off
-static float s_pillarHeight        = 0.56f;   // pillar height (m)
-static float s_pillarRadius        = 0.085f;  // pillar base radius (m)
-
-// Casting dust
-static float s_castDustVelOutward  = 0.20f;   // dust inward velocity (m/s)
-static float s_castDustVelYMin     = 0.30f;   // dust upward vel min (m/s)
-static float s_castDustVelYMax     = 0.60f;   // dust upward vel max (m/s)
-static float s_castDustRadiusMin   = 0.015f;  // dust particle min radius (m)
-static float s_castDustRadiusMax   = 0.035f;  // dust particle max radius (m)
-static float s_castLightRadius     = 0.65f;   // cast warning VFXLight radius (m)
-
-// Rising burst
-static float s_riseVelOutward      = 0.60f;   // rising burst outward XZ (m/s)
-static float s_riseVelYMin         = 0.50f;   // rising burst Y min (m/s)
-static float s_riseVelYMax         = 0.90f;   // rising burst Y max (m/s)
-static float s_riseParticleRadiusMin = 0.020f; // rising burst particle min radius (m)
-static float s_riseParticleRadiusMax = 0.050f; // rising burst particle max radius (m)
-static float s_riseLightRadius     = 1.30f;   // rising VFXLight radius (m)
-static float s_risePillarYSink     = 0.15f;   // pillar Y sink-below-ground during rise (m)
-
-// ScreenDistort radii
-static float s_castDistortRadius   = 0.90f;   // cast ScreenDistort wave radius (m)
-static float s_explodeDistortRadius= 1.30f;   // explode ScreenDistort wave radius (m)
-
-// Holding sparks
-static float s_sparkYOffset        = 0.01f;   // spark spawn Y above ground (m)
-static float s_sparkVelYMin        = 0.20f;   // spark upward vel min (m/s)
-static float s_sparkVelYMax        = 0.45f;   // spark upward vel max (m/s)
-static float s_sparkRadiusMin      = 0.008f;  // spark min radius (m)
-static float s_sparkRadiusMax      = 0.018f;  // spark max radius (m)
-
-// Explosion
-static float s_explodeVelOutward   = 1.10f;   // explosion burst outward XZ (m/s)
-static float s_explodeVelYMin      = 0.40f;   // explosion burst Y min (m/s)
-static float s_explodeVelYMax      = 0.90f;   // explosion burst Y max (m/s)
-static float s_explodeParticleRadiusMin = 0.020f; // explosion particle min radius (m)
-static float s_explodeParticleRadiusMax = 0.050f; // explosion particle max radius (m)
-static float s_explodeLightRadius  = 1.40f;   // explosion VFXLight radius (m)
-
-// Per-phase over-lifetime curves — flat 1.0 until shaped in sandbox
-static SkillCurve s_castRadiusCurve,    s_castSpeedCurve,    s_castAlphaCurve,    s_castEmissiveCurve;
-static SkillCurve s_riseRadiusCurve,    s_riseSpeedCurve,    s_riseAlphaCurve,    s_riseEmissiveCurve;
-static SkillCurve s_holdRadiusCurve,    s_holdSpeedCurve,    s_holdAlphaCurve,    s_holdEmissiveCurve;
-static SkillCurve s_explodeRadiusCurve, s_explodeSpeedCurve, s_explodeAlphaCurve, s_explodeEmissiveCurve;
-
-// Per-phase extra force mixes
-static SkillForceMix s_castForce;
-static ForceField    s_castFieldActive;
-static SkillForceMix s_riseForce;
-static ForceField    s_riseFieldActive;
-static SkillForceMix s_holdForce;
-static ForceField    s_holdFieldActive;
-static SkillForceMix s_explodeForce;
-static ForceField    s_explodeFieldActive;
-
-// scalars: (1+6+1+5+2+5+1+1+5+1+5) = 33
-// curves:  4 phases × 4 = 16
-// force:   4 phases × 29 = 116
-// total = 33 + 16 + 116 = 165
-#define STONE_PRISON_TUNABLE_COUNT 166
 
 typedef enum {
     STATE_INACTIVE = 0,
@@ -130,6 +68,26 @@ static ColorGradient s_dustGrad;
 
 // CORE_ISSUES.md Item 16 — cooldown gating state, cached once in Init
 static int s_skillIndex = -1;
+
+// Rebuild per-phase force fields from tunable statics — called once in Init
+// and at the top of Update each frame so sandbox force tuning applies live
+// (same pattern as hoa_long_phong_ba_skill.c).
+static void RebuildCastField(void) {
+    ForceField_Clear(&s_castFieldActive);
+    SkillForceMix_AddLayers(&s_castForce, &s_castFieldActive);
+}
+static void RebuildRiseField(void) {
+    ForceField_Clear(&s_riseFieldActive);
+    SkillForceMix_AddLayers(&s_riseForce, &s_riseFieldActive);
+}
+static void RebuildHoldField(void) {
+    ForceField_Clear(&s_holdFieldActive);
+    SkillForceMix_AddLayers(&s_holdForce, &s_holdFieldActive);
+}
+static void RebuildExplodeField(void) {
+    ForceField_Clear(&s_explodeFieldActive);
+    SkillForceMix_AddLayers(&s_explodeForce, &s_explodeFieldActive);
+}
 
 // CORE_ISSUES.md Item 13 — lets gameplay code (e.g. a future movement-block
 // release) know when this caster's prison is truly gone.
@@ -196,6 +154,13 @@ void InitStonePrisonSkill(int screenWidth, int screenHeight)
     SkillTunables_LoadPersisted("skills/earth/stone_prison_skill/stone_prison_skill.tuning",
                                 s_tunables, tn);
     RegisterSkillTunables(s_skillIndex, s_tunables, tn);
+
+    // Build force fields once from (possibly persisted) tunables; Update
+    // rebuilds them per frame while any prison instance is live.
+    RebuildCastField();
+    RebuildRiseField();
+    RebuildHoldField();
+    RebuildExplodeField();
 }
 
 void CastStonePrisonSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params)
@@ -229,6 +194,20 @@ void CastStonePrisonSkill(int agentId, Vector3 startPos, Vector3 target, SkillPa
 
 void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
 {
+    // Zero-instance early-out: skip per-frame field rebuilds when idle.
+    bool anyActive = false;
+    for (int i = 0; i < MAX_PRISONS; i++) {
+        if (s_prisons[i].state != STATE_INACTIVE) { anyActive = true; break; }
+    }
+    if (!anyActive) return;
+
+    // Rebuild per-phase force fields from tunables each frame so sandbox
+    // force tuning applies live to already-spawned particles.
+    RebuildCastField();
+    RebuildRiseField();
+    RebuildHoldField();
+    RebuildExplodeField();
+
     for (int idx = 0; idx < MAX_PRISONS; idx++) {
         EarthPrison *p = &s_prisons[idx];
         if (p->state == STATE_INACTIVE) continue;
@@ -237,10 +216,6 @@ void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
 
         switch (p->state) {
         case STATE_CASTING: {
-            // Rebuild cast force field from tunables each frame
-            ForceField_Clear(&s_castFieldActive);
-            SkillForceMix_AddLayers(&s_castForce, &s_castFieldActive);
-
             p->particleAccum += dt;
             if (p->particleAccum >= 0.06f) {
                 p->particleAccum = 0.0f;
@@ -257,7 +232,6 @@ void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
                 };
                 float velY = s_castDustVelYMin + (float)GetRandomValue(0, 100) / 100.0f
                              * (s_castDustVelYMax - s_castDustVelYMin);
-                float rMult = SkillCurve_Eval(&s_castRadiusCurve, p->timer / CAST_TIME);
                 Vector3 vel = { -cosf(angle) * s_castDustVelOutward, velY,
                                 -sinf(angle) * s_castDustVelOutward };
                 SpawnParticle((ParticleConfig){
@@ -267,10 +241,13 @@ void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
                     .colorEnd      = ColorAlpha(ORANGE, 0.0f),
                     .radius        = (s_castDustRadiusMin + (float)GetRandomValue(0, 100) / 100.0f
                                       * (s_castDustRadiusMax - s_castDustRadiusMin))
-                                     * p->scale * rMult,
+                                     * p->scale,
                     .lifetime      = 1.0f,
                     .gradient      = &s_dustGrad,
                     .forceField    = &s_castFieldActive,
+                    .radiusCurve   = &s_castRadiusCurve,
+                    .speedCurve    = &s_castSpeedCurve,
+                    .alphaCurve    = &s_castAlphaCurve,
                     .emissiveCurve = &s_castEmissiveCurve
                 });
             }
@@ -310,15 +287,10 @@ void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
                     );
                 }
 
-                // Rebuild rise force field
-                ForceField_Clear(&s_riseFieldActive);
-                SkillForceMix_AddLayers(&s_riseForce, &s_riseFieldActive);
-
                 for (int i = 0; i < 24; i++) {
                     float a = (float)i / 24.0f * 2.0f * PI;
                     float velY = s_riseVelYMin + (float)GetRandomValue(0, 100) / 100.0f
                                  * (s_riseVelYMax - s_riseVelYMin);
-                    float rMult = SkillCurve_Eval(&s_riseRadiusCurve, 0.0f);
                     Vector3 vel = { cosf(a) * s_riseVelOutward * p->scale, velY,
                                     sinf(a) * s_riseVelOutward * p->scale };
                     SpawnParticle((ParticleConfig){
@@ -328,10 +300,13 @@ void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
                         .colorEnd      = ColorAlpha(ELEMENT_COLOR_EARTH, 0.0f),
                         .radius        = (s_riseParticleRadiusMin + (float)GetRandomValue(0, 100) / 100.0f
                                           * (s_riseParticleRadiusMax - s_riseParticleRadiusMin))
-                                         * p->scale * rMult,
+                                         * p->scale,
                         .lifetime      = 1.2f,
                         .gradient      = &s_dustGrad,
                         .forceField    = &s_riseFieldActive,
+                        .radiusCurve   = &s_riseRadiusCurve,
+                        .speedCurve    = &s_riseSpeedCurve,
+                        .alphaCurve    = &s_riseAlphaCurve,
                         .emissiveCurve = &s_riseEmissiveCurve
                     });
                 }
@@ -356,10 +331,6 @@ void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
             }
 
             if (GetRandomValue(0, 100) < 25) {
-                // Rebuild hold field each time a spark fires (cheap, infrequent)
-                ForceField_Clear(&s_holdFieldActive);
-                SkillForceMix_AddLayers(&s_holdForce, &s_holdFieldActive);
-
                 float a = (float)GetRandomValue(0, 360) * DEG2RAD;
                 float r = (float)GetRandomValue(0, 100) / 100.0f * s_pillarRadius * p->scale * 3.0f;
                 Vector3 sparkPos = { p->pos.x + cosf(a) * r,
@@ -367,7 +338,6 @@ void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
                                      p->pos.z + sinf(a) * r };
                 float velY = s_sparkVelYMin + (float)GetRandomValue(0, 100) / 100.0f
                              * (s_sparkVelYMax - s_sparkVelYMin);
-                float rMult = SkillCurve_Eval(&s_holdRadiusCurve, p->timer / HOLD_TIME);
                 SpawnParticle((ParticleConfig){
                     .position      = sparkPos,
                     .velocity      = (Vector3){0, velY, 0},
@@ -375,10 +345,13 @@ void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
                     .colorEnd      = ColorAlpha(ORANGE, 0.0f),
                     .radius        = (s_sparkRadiusMin + (float)GetRandomValue(0, 100) / 100.0f
                                       * (s_sparkRadiusMax - s_sparkRadiusMin))
-                                     * p->scale * rMult,
+                                     * p->scale,
                     .lifetime      = 0.8f,
                     .gradient      = &s_dustGrad,
                     .forceField    = &s_holdFieldActive,
+                    .radiusCurve   = &s_holdRadiusCurve,
+                    .speedCurve    = &s_holdSpeedCurve,
+                    .alphaCurve    = &s_holdAlphaCurve,
                     .emissiveCurve = &s_holdEmissiveCurve
                 });
             }
@@ -417,15 +390,10 @@ void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
                 if (s_shakeEnable > 0.5f) CameraFX_Shake(0.42f);
                 VFXLight_Spawn(p->pos, RED, s_explodeLightRadius * p->scale, 0.5f, VFX_PRIORITY_LOW);
 
-                // Rebuild explode field
-                ForceField_Clear(&s_explodeFieldActive);
-                SkillForceMix_AddLayers(&s_explodeForce, &s_explodeFieldActive);
-
                 for (int i = 0; i < 36; i++) {
                     float a = (float)i / 36.0f * 2.0f * PI;
                     float velY = s_explodeVelYMin + (float)GetRandomValue(0, 100) / 100.0f
                                  * (s_explodeVelYMax - s_explodeVelYMin);
-                    float rMult = SkillCurve_Eval(&s_explodeRadiusCurve, 0.0f);
                     Vector3 vel = { cosf(a) * s_explodeVelOutward * p->scale, velY,
                                     sinf(a) * s_explodeVelOutward * p->scale };
                     SpawnParticle((ParticleConfig){
@@ -435,10 +403,13 @@ void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
                         .colorEnd      = ColorAlpha(ELEMENT_COLOR_EARTH, 0.0f),
                         .radius        = (s_explodeParticleRadiusMin + (float)GetRandomValue(0, 100) / 100.0f
                                           * (s_explodeParticleRadiusMax - s_explodeParticleRadiusMin))
-                                         * p->scale * rMult,
+                                         * p->scale,
                         .lifetime      = 1.0f,
                         .gradient      = &s_dustGrad,
                         .forceField    = &s_explodeFieldActive,
+                        .radiusCurve   = &s_explodeRadiusCurve,
+                        .speedCurve    = &s_explodeSpeedCurve,
+                        .alphaCurve    = &s_explodeAlphaCurve,
                         .emissiveCurve = &s_explodeEmissiveCurve
                     });
                 }
