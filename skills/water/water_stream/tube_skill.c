@@ -292,6 +292,7 @@ void DrawTubeSkill(void) {
   if (tubeShader.locs == NULL) return;
 
   float time = GetTime();
+  rlDrawRenderBatchActive();
   rlDisableDepthMask();
   rlEnableBackfaceCulling();
   BeginBlendMode(BLEND_ALPHA);

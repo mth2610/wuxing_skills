@@ -609,6 +609,7 @@ void DrawThuyKinhSkill(void)
     }
     if (!anyDome) return;
 
+    rlDrawRenderBatchActive();
     rlDisableDepthMask();
 
     // The water dome (translucent custom shader). Base ring is decal-based
@@ -627,6 +628,8 @@ void DrawThuyKinhSkill(void)
     SetShaderValueTexture(s_shader, s_causticsLoc, s_causticsTex);
     rlColor4ub(255, 255, 255, 255); // Rule 11.1: reset vertex color
 
+    ScreenDistort_BindDepthForSoftParticles(s_shader, 3);
+
     for (int i = 0; i < MAX_WARDS; i++) {
         const WardInstance *w = &s_wards[i];
         if (w->state != WARD_BLOOM && w->state != WARD_ACTIVE &&
@@ -634,13 +637,16 @@ void DrawThuyKinhSkill(void)
 
         float r = w->radius * (0.15f + 0.85f * w->growth);
         SetShaderValue(s_shader, s_dissolveLoc, &w->dissolve, SHADER_UNIFORM_FLOAT);
-        DrawCoreSphere((Vector3){ w->center.x, r * 0.55f, w->center.z },
+        DrawCoreSphere((Vector3){ w->center.x, 0.0f, w->center.z },
                        r, 36, 48, WHITE);
     }
+    
+    ScreenDistort_UnbindSoftParticleDepth(3);
 
     SkillManager_EndShader();
     EndShaderMode();
     EndBlendMode();
+    rlDrawRenderBatchActive();
     rlEnableDepthMask();
 }
 

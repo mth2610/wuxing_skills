@@ -273,7 +273,7 @@ void ScreenDistort_SnapshotDepth(void) {
     SetShaderValue(depthCopyShader, depthCopyFarLoc, &farVal, SHADER_UNIFORM_FLOAT);
   DrawTextureRec(renderTex.depth,
                  (Rectangle){0, 0, (float)renderTex.texture.width,
-                             (float)renderTex.texture.height},
+                             -(float)renderTex.texture.height},
                  (Vector2){0, 0}, WHITE);
   EndShaderMode();
   EndTextureMode();
@@ -297,9 +297,10 @@ void ScreenDistort_BindDepthForSoftParticles(Shader shader, int textureSlot) {
   // (see its "bug cũ" comment) by switching to SetShaderValueTexture(),
   // which lets raylib manage the texture unit itself instead of doing it
   // by hand. (textureSlot param kept for API stability — unused now.)
-  (void)textureSlot;
   if (locs->depthLoc >= 0) {
-    SetShaderValueTexture(shader, locs->depthLoc, prevDepthTex.texture);
+    SetShaderValue(shader, locs->depthLoc, &textureSlot, SHADER_UNIFORM_INT);
+    rlActiveTextureSlot(textureSlot);
+    rlEnableTexture(prevDepthTex.texture.id);
   }
 
   if (locs->nearLoc >= 0 || locs->farLoc >= 0) {

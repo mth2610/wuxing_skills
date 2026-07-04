@@ -3,6 +3,7 @@
 #include "core/shaders/common/noise.glsl"
 #include "core/shaders/common/lighting.glsl"
 #include "core/shaders/common/fx.glsl"
+#include "core/shaders/common/soft_particle.glsl"
 
 uniform float u_dissolve;
 uniform sampler2D flowTex;      // RG = flow direction (water_flow.png)
@@ -64,6 +65,10 @@ void main() {
         if (dissolveCalc(n, u_dissolve, 0.10, edgeFactor) >= 1.0) discard;
         baseColor = mix(baseColor, vec3(0.7, 0.95, 1.0), edgeFactor);
     }
+
+    // Apply soft particle fade at intersections with ground/solid geometry
+    float softFactor = SoftParticle_Factor(0.3);
+    alpha *= softFactor;
 
     finalColor = vec4(baseColor + vec3(specular), alpha);
 }

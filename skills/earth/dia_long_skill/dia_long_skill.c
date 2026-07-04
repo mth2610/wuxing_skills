@@ -541,6 +541,7 @@ void UpdateDiaLongSkill(float dt, Vector3 enemyPos, float enemyRadius)
 void DrawDiaLongSkill(void)
 {
     // Solid rock meshes: full depth write + test (VFX_ARCHITECTURE rule 2).
+    rlDrawRenderBatchActive();
     rlEnableDepthMask();
     rlEnableDepthTest();
 

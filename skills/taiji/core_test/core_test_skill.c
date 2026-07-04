@@ -29,13 +29,14 @@
 // area) — testing whether 30 was just too small a window for this 40-radius
 // sphere's real depth range, or the fade mechanism itself isn't reaching
 // the shader (CORE_ISSUES.md Item 3).
-#define CORE_TEST_SOFT_FADE_DISTANCE 200.0f
+#define CORE_TEST_SOFT_FADE_DISTANCE 0.3f
 
 extern Camera3D camera;
 
 static Shader s_softShader;
 static int s_fadeDistLoc = -1;
 static int s_debugShowFadeLoc = -1;
+static int s_lightDirLoc = -1;
 static bool s_shaderLoaded = false;
 static bool s_testActive = false;
 static bool s_showSoftParticleSphere = false; // only true via ForceActivate (autotest), not the interactive Cast path
@@ -45,36 +46,8 @@ static int s_ownerAgentId = -1;
 // unclamped diff (green=positive/unoccluded, red=negative/occluded).
 static int s_debugMode = 0;
 static Vector3 s_spherePos = {0};
-static float s_sphereRadius = 40.0f;
+static float s_sphereRadius = 0.4f;
 
-// Minimal from-scratch flight test (replaces the old lightning-sphere test
-// — see conversation: built to isolate whether CastSkill()'s start/target
-// positioning and basic rendering work correctly, independent of
-// fire_ball's bezier/wave complexity, which is the thing actually in
-// question). Deliberately as simple as possible: straight Vector3Lerp, no
-// bezier, no wobble, no force fields, no custom shader/particle billboard
-// rendering — drawn with plain DrawSphere/DrawLine3D (raylib built-ins),
-// the same functions already proven to render correctly for the player
-// character rig. If this is ALSO invisible/disconnected in real play, the
-// bug is in the shared cast/camera/render pipeline, not fire_ball's own
-// code. Real-world-scaled (1 unit = 1 meter) from the start — no legacy
-// 1cm-scale numbers anywhere in this test.
-typedef struct {
-  bool active;
-  Vector3 start;
-  Vector3 target;
-  float elapsed;
-  float duration;
-} SimpleFlightTest;
-static SimpleFlightTest s_simpleFlight = {0};
-
-static float s_simpleFlightSpeed = 4.0f;   // m/s
-static float s_simpleFlightRadius = 0.3f;  // m — deliberately large & unmissable
-
-#define CORE_TEST_SIMPLE_TUNABLE_COUNT 2
-static const char *const s_coreTestTunableKeys[CORE_TEST_SIMPLE_TUNABLE_COUNT] = {
-    "simple_flight_speed", "simple_flight_radius",
-};
 static int s_coreTestSkillIndex = -1;
 
 #define CORE_TEST_SOFT_SAMPLE_COUNT 3
@@ -146,12 +119,8 @@ void CoreTestSkill_TriggerReadback(void) {
 // automatically once that bug is actually fixed.
 static AutoTestResult CoreTestSkill_AutoTestStep(int frameInCase, char *outReason, int outReasonSize) {
   if (frameInCase == 0) {
-    // Arena center is now (6.0f, 0.0f, 4.4f) post real-world-meter rescale
-    // (root CLAUDE.md "Standard coordinates & scale") — this skill itself
-    // hasn't been converted (s_sphereRadius etc. still old-scale), but this
-    // one activation position must track the camera's new location or the
-    // sphere spawns off-screen and the test fails for the wrong reason.
-    CoreTestSkill_ForceActivate(0, (Vector3){6.0f, 0.0f, 4.4f});
+    Vector3 spherePos = { camera.target.x + 2.0f, 0.0f, camera.target.z };
+    CoreTestSkill_ForceActivate(0, spherePos);
     return AUTOTEST_RUNNING;
   }
   if (frameInCase == 3) {
@@ -733,23 +702,10 @@ void InitCoreTestSkill(int screenWidth, int screenHeight) {
       "skills/taiji/core_test/core_test_soft.fs");
   s_fadeDistLoc = GetShaderLocation(s_softShader, "u_fadeDistance");
   s_debugShowFadeLoc = GetShaderLocation(s_softShader, "u_debugShowFade");
+  s_lightDirLoc = GetShaderLocation(s_softShader, "u_lightDir");
   s_shaderLoaded = (s_softShader.id != 0);
 
-  float tunableValues[CORE_TEST_SIMPLE_TUNABLE_COUNT] = {
-      s_simpleFlightSpeed, s_simpleFlightRadius,
-  };
-  Tuning_LoadFloatsFromPath("skills/taiji/core_test/core_test.tuning",
-                             s_coreTestTunableKeys, tunableValues,
-                             CORE_TEST_SIMPLE_TUNABLE_COUNT);
-  s_simpleFlightSpeed = tunableValues[0];
-  s_simpleFlightRadius = tunableValues[1];
-
   s_coreTestSkillIndex = Skill_GetIndexByName("CORE_TEST");
-  static SkillTunableEntry s_coreTestTunables[CORE_TEST_SIMPLE_TUNABLE_COUNT] = {
-      {"simple_flight_speed", &s_simpleFlightSpeed, 0.5f, 15.0f, 4.0f},
-      {"simple_flight_radius", &s_simpleFlightRadius, 0.05f, 1.0f, 0.3f},
-  };
-  RegisterSkillTunables(s_coreTestSkillIndex, s_coreTestTunables, CORE_TEST_SIMPLE_TUNABLE_COUNT);
 
   if (AutoTest_IsEnabled()) {
       AutoTest_Register("soft_particle_ground_fade", CoreTestSkill_AutoTestStep, 10);
@@ -797,72 +753,39 @@ bool CoreTestSkill_GetReadback(int sampleIndex, float *outSceneLinear, float *ou
 
 void CastCoreTestSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params) {
   (void)params;
-  // Interactive cast: enables the L-key soft-particle readback debug view
-  // without the Item 3 sphere/shader itself — that only shows up via
-  // CoreTestSkill_ForceActivate, which the autotest still calls directly.
-  s_spherePos = (Vector3){ startPos.x, 0.0f, startPos.z };
+  (void)startPos;
+  // Interactive cast: Spawns the Soft Particle Sphere at the clicked target position
+  // at ground level (Y=0) so that the user can visually inspect the soft fade on screen.
+  s_spherePos = target;
+  s_spherePos.y = 0.0f;
   s_testActive = true;
+  s_showSoftParticleSphere = true;
   s_ownerAgentId = agentId;
 
-  // Minimal flight test — uses the EXACT same startPos/target this function
-  // receives from CastSkill() (the real click-to-cast pipeline, not an
-  // independent raycast), so it's a direct test of the same call chain
-  // fire_ball/thunder_orb_skill go through.
-  s_simpleFlight.active = true;
-  s_simpleFlight.start = startPos;
-  s_simpleFlight.target = target;
-  s_simpleFlight.elapsed = 0.0f;
-  float dist = Vector3Distance(startPos, target);
-  s_simpleFlight.duration = fmaxf(dist / s_simpleFlightSpeed, 0.1f);
+  // Reset debug readback flag for a new cast
+  s_hasReadback = false;
 }
 
 void UpdateCoreTestSkill(float dt, Vector3 enemyPos, float enemyRadius) {
   (void)enemyPos;
   (void)enemyRadius;
-  if (s_testActive && IsKeyPressed(KEY_L)) {
-    CoreTestSkill_TriggerReadback();
-  }
-  // NOTE: KEY_K is already bound in main.c to cycle maps — using it here
-  // too silently switched the whole map on every debug-view toggle, which
-  // is what looked like the sphere's color depending on player position.
-  if (s_testActive && IsKeyPressed(KEY_H)) {
-    s_debugMode = (s_debugMode + 1) % 3;
-  }
-  // Minimal flight test — straight-line lerp, advanced by CastSkill()'s
-  // real startPos/target (set in CastCoreTestSkill above). No independent
-  // click detection — this deliberately goes through the same call chain
-  // as fire_ball/thunder_orb_skill so it's a valid A/B comparison.
-  if (s_simpleFlight.active) {
-    s_simpleFlight.elapsed += dt;
-    float t = s_simpleFlight.elapsed / s_simpleFlight.duration;
-    if (t >= 1.0f) {
-      t = 1.0f;
-      s_simpleFlight.active = false;
-      Vector3 impactPos = Vector3Lerp(s_simpleFlight.start, s_simpleFlight.target, t);
-      VFXLight_Spawn(impactPos, WHITE, 1.5f, 0.2f, VFX_PRIORITY_LOW);
+  if (s_testActive) {
+    if (IsKeyPressed(KEY_L)) {
+      CoreTestSkill_TriggerReadback();
     }
+    if (IsKeyPressed(KEY_H)) {
+      s_debugMode = (s_debugMode + 1) % 3;
+    }
+    // Oscillation to show the soft intersection dynamically
+    static float time = 0.0f;
+    time += dt;
+    s_spherePos.y = sinf(time * 2.0f) * s_sphereRadius * 0.8f;
   }
 }
 
 void DrawCoreTestSkill(void) {
   if (s_debugDrawTestActive) {
     DebugDraw_Sphere(s_debugDrawTestPos, CORE_TEST_DEBUG_DRAW_RADIUS, CORE_TEST_DEBUG_DRAW_COLOR);
-  }
-
-  // Minimal flight test visual — plain raylib primitives only (no custom
-  // shader/particle billboard, deliberately), same DrawSphere/DrawLine3D
-  // functions already proven to render correctly for the player/enemy rig.
-  // Green = start (as passed to CastSkill), red = target, magenta = the
-  // moving projectile, yellow line = the traveled path so far.
-  if (s_simpleFlight.active) {
-    float t = s_simpleFlight.elapsed / s_simpleFlight.duration;
-    if (t > 1.0f) t = 1.0f;
-    Vector3 currentPos = Vector3Lerp(s_simpleFlight.start, s_simpleFlight.target, t);
-    DrawSphere(s_simpleFlight.start, 0.12f, GREEN);
-    DrawSphere(s_simpleFlight.target, 0.12f, RED);
-    DrawLine3D(s_simpleFlight.start, currentPos, YELLOW);
-    DrawSphere(currentPos, s_simpleFlightRadius, ORANGE);
-    DrawSphereWires(currentPos, s_simpleFlightRadius * 1.1f, 8, 8, WHITE);
   }
 
   if (!s_testActive || !s_shaderLoaded || !s_showSoftParticleSphere) return;
@@ -873,6 +796,15 @@ void DrawCoreTestSkill(void) {
     float fade = CORE_TEST_SOFT_FADE_DISTANCE;
     SetShaderValue(s_softShader, s_fadeDistLoc, &fade, SHADER_UNIFORM_FLOAT);
   }
+  if (s_lightDirLoc >= 0) {
+    Vector3 lightDir = {0.0f, 1.0f, 0.0f}; // Default pointing up towards light
+    SetShaderValue(s_softShader, s_lightDirLoc, &lightDir, SHADER_UNIFORM_VEC3);
+  }
+  int matModelLoc = GetShaderLocation(s_softShader, "matModel");
+  if (matModelLoc >= 0) {
+    Matrix identity = MatrixIdentity();
+    SetShaderValueMatrix(s_softShader, matModelLoc, identity);
+  }
   if (s_debugShowFadeLoc >= 0) {
     float debugFlag = (float)s_debugMode;
     SetShaderValue(s_softShader, s_debugShowFadeLoc, &debugFlag, SHADER_UNIFORM_FLOAT);
@@ -880,9 +812,11 @@ void DrawCoreTestSkill(void) {
   ScreenDistort_BindDepthForSoftParticles(s_softShader, 3);
 
   BeginBlendMode(BLEND_ALPHA);
+  rlDrawRenderBatchActive();
   rlDisableDepthTest();
   rlDisableDepthMask();
   DrawCoreSphere(s_spherePos, s_sphereRadius, 24, 24, ELEMENT_COLOR_TAIJI);
+  rlDrawRenderBatchActive();
   rlEnableDepthMask();
   rlEnableDepthTest();
   EndBlendMode();
@@ -910,8 +844,8 @@ void DrawCoreTestSkillDebugHUD(void) {
   int x = 650, y = 10;
 
   if (!s_showSoftParticleSphere) {
-    DrawRectangle(x - 6, y - 4, 380, 30, ColorAlpha(BLACK, 0.55f));
-    DrawText("CORE_TEST - Click ground: fire lightning sphere", x, y, 16, YELLOW);
+    DrawRectangle(x - 6, y - 4, 450, 30, ColorAlpha(BLACK, 0.55f));
+    DrawText("CORE_TEST - Click ground: spawn soft sphere at target", x, y, 16, YELLOW);
     return;
   }
 

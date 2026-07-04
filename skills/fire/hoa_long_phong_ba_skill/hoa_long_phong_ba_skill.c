@@ -486,6 +486,7 @@ void UpdateHoaLongPhongBaSkill(float dt, Vector3 enemyPos, float enemyRadius) {
 void DrawHoaLongPhongBaSkill(void) {
     float time = (float)GetTime();
 
+    rlDrawRenderBatchActive();
     rlDisableDepthMask();
     BeginShaderMode(s_shader);
     // CORE_ISSUES.md Item 11: hoa_long_phong_ba.vs computes fragNormal =
@@ -531,6 +532,7 @@ void DrawHoaLongPhongBaSkill(void) {
     SkillManager_EndShader();
     EndShaderMode();
 
+    rlDrawRenderBatchActive();
     rlEnableDepthMask();
 }
 

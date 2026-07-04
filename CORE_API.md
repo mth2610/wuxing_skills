@@ -104,7 +104,29 @@ bool Tuning_SaveFloats(const char *path, const char *const *keys, const float *v
 
 ---
 
-## 4. STANDARD LIFECYCLE API (`[skill_name]_skill.h`)
+## 3c. Soft Particles (Depth Blending)
+The core engine provides a global linearized depth buffer for effects that need to smoothly fade when intersecting solid geometry (e.g., ground planes, walls, props) instead of clipping harshly.
+
+### How to use Soft Particles in a Skill:
+1. **Include the GLSL Header:** In your fragment shader (`.fs`), include `soft_particle.glsl`.
+2. **Access the Depth Uniform:** The engine provides a global `sampler2D u_cameraDepthTex`. You MUST manually define this uniform in your shader if you want to use it.
+3. **Calculate the Fade Factor:** Inside your `main()` fragment function, call `SoftParticle_Factor(u_cameraDepthTex, fragTexCoord, gl_FragCoord.z, fadeDistance)`. 
+   - `fadeDistance`: The distance in world units over which the object will fade out as it approaches an intersection.
+   - The returned factor is `0.0` (fully occluded/transparent) to `1.0` (unoccluded/opaque). Multiply your final output alpha by this factor.
+4. **Bind the Depth Texture in C:** In your `Draw[Name]Skill()` function, you must explicitly bind the depth texture **BEFORE** drawing your mesh, and unbind it after:
+```c
+   // Note: Bind to a texture unit that is NOT used by your other textures (e.g., unit 3)
+   ScreenDistort_BindDepthForSoftParticles(myShader, 3);
+   
+   // ... [Draw your mesh or particles here] ...
+   
+   ScreenDistort_UnbindSoftParticleDepth(3);
+```
+5. **State Management Warning:** If you disable depth writing/testing (e.g. `rlDisableDepthMask()`) for your soft particle pass, **you MUST flush the batch first** by calling `rlDrawRenderBatchActive();` right before the state change. Failure to do so will retroactively disable depth-writing for previously queued geometry (like the ground plane)!
+
+---
+
+## 4. SKILL LIFECYCLE & INTEGRATION (`[skill_name]_skill.h`)
 
 For automatic detection, your header file must declare these exact prototypes (replace `[Name]` with your unique CamelCase skill name):
 

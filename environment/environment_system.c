@@ -36,6 +36,7 @@ void Environment_DrawSmartShadow(Vector3 pos, EnvShadowShapeType shape, float wi
     float yGround = 0.09f; // Nâng nhẹ để tránh lỗi nhấp nháy Z-fighting và đè lên grid
     
     rlSetTexture(0);
+    rlDrawRenderBatchActive(); // Bắt buộc xả batch trước khi đổi state!
     rlDisableDepthTest();
     rlDisableDepthMask(); rlDisableBackfaceCulling();
     
@@ -182,6 +183,7 @@ void Environment_DrawSmartShadow(Vector3 pos, EnvShadowShapeType shape, float wi
         rlEnd();
     }
     
+    rlDrawRenderBatchActive(); // Bắt buộc xả batch của shadow trước khi đổi state!
     rlEnableDepthMask(); rlEnableBackfaceCulling();
     rlEnableDepthTest();
 }

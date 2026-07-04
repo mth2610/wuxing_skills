@@ -164,6 +164,7 @@ static void DrawGroup(BlendMode mode, bool flowOnly) {
     Shader shader = flowOnly ? g_DecalFlowShader : g_DecalShader;
 
     BeginBlendMode(mode);
+    rlDrawRenderBatchActive();
     rlDisableDepthMask();
     BeginShaderMode(shader);
 
@@ -205,6 +206,7 @@ static void DrawGroup(BlendMode mode, bool flowOnly) {
     }
 
     EndShaderMode();
+    rlDrawRenderBatchActive();
     rlEnableDepthMask();
     EndBlendMode();
 }

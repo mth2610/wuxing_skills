@@ -331,11 +331,13 @@ int main(void) {
     }
 
     if (!g_debugHideParticles) {
+        rlDrawRenderBatchActive();
         rlDisableDepthMask();
         BeginBlendMode(BLEND_ADDITIVE);
         DrawParticles(camera, globalParticleTex);
         GpuParticleSystem_Draw(camera, globalParticleTex);
         EndBlendMode();
+        rlDrawRenderBatchActive();
         rlEnableDepthMask();
     }
 

@@ -659,6 +659,7 @@ void DrawTrailEntities(Camera3D camera) {
     return;
 
   float time = (float)GetTime();
+  rlDrawRenderBatchActive();
   rlDisableDepthMask();
   BeginBlendMode(BLEND_ADDITIVE);
 
@@ -701,6 +702,7 @@ void DrawTrailEntities(Camera3D camera) {
   }
 
   EndBlendMode();
+  rlDrawRenderBatchActive();
   rlEnableDepthMask();
 }
 

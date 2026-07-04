@@ -268,6 +268,7 @@ void DrawWaterSphereSkill(void) {
 
   float time = GetTime();
 
+  rlDrawRenderBatchActive();
   rlDisableDepthMask();
   BeginBlendMode(BLEND_ALPHA);
   BeginShaderMode(s_sphereShader);
@@ -295,6 +296,7 @@ void DrawWaterSphereSkill(void) {
   SkillManager_EndShader();
   EndShaderMode();
   EndBlendMode();
+  rlDrawRenderBatchActive();
   rlEnableDepthMask();
 }
 

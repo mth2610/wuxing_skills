@@ -534,6 +534,7 @@ void DrawStonePrisonSkill(void)
             float progress = t;
             float radius = s_pillarRadius * p->scale * 15.0f * t;
 
+            rlDrawRenderBatchActive();
             rlDisableDepthMask();
             BeginShaderMode(s_crackShader);
             SetShaderValue(s_crackShader, s_uProgressLoc, &progress, SHADER_UNIFORM_FLOAT);
@@ -555,6 +556,7 @@ void DrawStonePrisonSkill(void)
             rlSetTexture(0);
 
             EndShaderMode();
+            rlDrawRenderBatchActive();
             rlEnableDepthMask();
             continue; // don't draw pillars yet
         }

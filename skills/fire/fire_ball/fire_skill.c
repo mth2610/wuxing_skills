@@ -613,6 +613,7 @@ void DrawFireSkill(void) {
     return;
 
   float time = GetTime();
+  rlDrawRenderBatchActive();
   rlDisableDepthMask();
 
   SetShaderValue(fireShader, timeLoc, &time, SHADER_UNIFORM_FLOAT);
@@ -695,6 +696,7 @@ void DrawFireSkill(void) {
                      origin, rotation, (Color){255, 180, 40, alpha});
   }
   EndBlendMode();
+  rlDrawRenderBatchActive();
   rlEnableDepthMask();
 }
 

@@ -271,11 +271,13 @@ void ProcRay_Update(int id, Vector3 origin, Vector3 dir, float length, float sca
 
 void ProcRay_Draw(int id, Camera3D cam) {
     if (id < 0 || id >= MAX_PROC_RAYS || !s_rays[id].active) return;
+    rlDrawRenderBatchActive();
     rlDisableDepthMask();
     BeginBlendMode(BLEND_ADDITIVE);
     DrawChannel(s_rays[id].waypoints, RAY_WAYPOINT_CNT, &s_rays[id].config,
                 1.0f, s_rays[id].brightness, cam);
     EndBlendMode();
+    rlDrawRenderBatchActive();
     rlEnableDepthMask();
 }
 
@@ -434,6 +436,7 @@ void ProcBolt_Update(int id, Vector3 from, Vector3 to, float scale, float dt) {
 void ProcBolt_Draw(int id, Camera3D cam) {
     if (id < 0 || id >= MAX_PROC_BOLTS || !s_bolts[id].active) return;
     ProcBoltSlot *b = &s_bolts[id];
+    rlDrawRenderBatchActive();
     rlDisableDepthMask();
     BeginBlendMode(BLEND_ADDITIVE);
     DrawChannel(b->waypoints, RAY_WAYPOINT_CNT, &b->config, 1.0f, b->brightness, cam);
@@ -442,6 +445,7 @@ void ProcBolt_Draw(int id, Camera3D cam) {
                     b->config.branchScale, b->brightness * 0.7f, cam);
     }
     EndBlendMode();
+    rlDrawRenderBatchActive();
     rlEnableDepthMask();
 }
 
