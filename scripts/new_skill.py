@@ -13,6 +13,8 @@ Generates:
     skills/<element>/<snake_name>_skill/
         <snake_name>_skill.h
         <snake_name>_skill.c
+        <snake_name>_skill_params.inl
+        <snake_name>_skill_tunables.inl
         [<snake_name>.vs]  (with --shader)
         [<snake_name>.fs]  (with --shader)
 
@@ -93,6 +95,7 @@ def main() -> int:
         "{{Name}}": camel,
         "{{name}}": snake,
         "{{NAME}}": screaming,
+        "{{element}}": element,
     }
 
     # Header (same for all archetypes)
@@ -108,6 +111,13 @@ def main() -> int:
     }
     c_src = os.path.join(TEMPLATES_DIR, c_template_map[args.archetype])
     write_file(os.path.join(skill_dir, f"{snake}_skill.c"), render(c_src, subs))
+
+    # .inl files
+    params_src = os.path.join(TEMPLATES_DIR, "skill_params.inl")
+    write_file(os.path.join(skill_dir, f"{snake}_skill_params.inl"), render(params_src, subs))
+
+    tunables_src = os.path.join(TEMPLATES_DIR, "skill_tunables.inl")
+    write_file(os.path.join(skill_dir, f"{snake}_skill_tunables.inl"), render(tunables_src, subs))
 
     # Optional shaders
     if args.shader:

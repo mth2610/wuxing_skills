@@ -68,6 +68,7 @@ add_executable(wuxing
     core/vfx_proc_ray.c
     core/decal_system.c
     core/procedural_mesh_utils.c
+    core/visual_prefabs.c
     core/skill_helper.c
     core/time_fx.c
     core/motion_controller.c

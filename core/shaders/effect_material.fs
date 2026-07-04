@@ -33,11 +33,20 @@ void main() {
     vec3 baseColor = u_baseColor.rgb * diffuse;
     if (u_hasTexture1 != 0) {
         // Luminance-only mask (not detail.rgb) — texture1 is meant to modulate
-        // brightness (e.g. a crack/detail map authored for a flat decal), not
-        // import its own hue onto a mesh with very different UV density
-        // (a sphere's UV pinches hard at the poles vs. a flat quad decal).
-        float detailMask = texture(texture1, fragTexCoord).r;
-        baseColor *= mix(1.0, detailMask, 0.5);
+        // brightness. Using Triplanar Mapping to avoid UV distortion on 
+        // procedural meshes (spheres, rocks) and ensure seamless tiling.
+        vec3 triBlend = abs(normal);
+        triBlend /= (triBlend.x + triBlend.y + triBlend.z + 0.0001);
+        
+        float texScale = 2.0; // Scale lặp lại texture nhiều hơn để dễ thấy
+        float maskX = texture(texture1, fragPosition.zy * texScale).r;
+        float maskY = texture(texture1, fragPosition.xz * texScale).r;
+        float maskZ = texture(texture1, fragPosition.xy * texScale).r;
+        
+        float detailMask = maskX * triBlend.x + maskY * triBlend.y + maskZ * triBlend.z;
+        
+        // Đảm bảo không bao giờ đen thui ngay cả khi detailMask = 0
+        baseColor = baseColor * mix(0.5, 2.0, detailMask);
     }
 
     baseColor += baseColor * u_emissiveIntensity;

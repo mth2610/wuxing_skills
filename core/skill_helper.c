@@ -365,7 +365,7 @@ void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale) {
         case EFFECT_PRESET_FIRE_EXPLOSION: {
             // Real-world-scaled ÷100 (root CLAUDE.md §scale).
             ScreenDistort_Add(pos, 0.55f * scale, 0.35f, 0.35f, 1.0f);
-            CameraFX_Shake(0.38f);
+            // CameraFX_Shake(0.38f); // Tắt mặc định theo rule CORE_API.md
             VFXLight_Spawn(pos, (Color){ 255, 120, 20, 255 }, 0.65f * scale, 0.5f, VFX_PRIORITY_LOW);
             SpawnGroundDecal(DECAL_PRESET_BURN, pos, 0.22f * scale, 5.0f);
 
@@ -389,7 +389,7 @@ void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale) {
         case EFFECT_PRESET_ICE_SHATTER: {
             // Real-world-scaled ÷100.
             ScreenDistort_Add(pos, 0.35f * scale, 0.22f, 0.25f, 0.60f);
-            CameraFX_Shake(0.20f);
+            // CameraFX_Shake(0.20f); // Tắt mặc định theo rule CORE_API.md
             VFXLight_Spawn(pos, (Color){ 140, 210, 255, 255 }, 0.45f * scale, 0.4f, VFX_PRIORITY_LOW);
             SpawnGroundDecal(DECAL_PRESET_ICE, pos, 0.18f * scale, 4.0f);
 
@@ -440,7 +440,7 @@ void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale) {
             // internal constants were already rescaled: this decal is
             // spawned by core/skill_helper.c, not by thunder_orb_skill.c.
             ScreenDistort_Add(pos, 0.45f * scale, 0.4f, 0.2f, 1.5f);
-            CameraFX_Shake(0.35f);
+            // CameraFX_Shake(0.35f); // Tắt mặc định theo rule CORE_API.md
             VFXLight_Spawn(pos, (Color){ 200, 150, 255, 255 }, 0.55f * scale, 0.35f, VFX_PRIORITY_LOW);
             SpawnGroundDecal(DECAL_PRESET_TAIJI_LIGHTNING, pos, 0.14f * scale, 3.0f);
 
@@ -494,7 +494,7 @@ void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale) {
         case EFFECT_PRESET_METAL_SHARD: {
             // Real-world-scaled ÷100.
             ScreenDistort_Add(pos, 0.25f * scale, 0.18f, 0.15f, 1.30f);
-            CameraFX_Shake(0.22f);
+            // CameraFX_Shake(0.22f); // Tắt mặc định theo rule CORE_API.md
             VFXLight_Spawn(pos, ELEMENT_COLOR_METAL, 0.30f * scale, 0.2f, VFX_PRIORITY_LOW);
             SpawnGroundDecal(DECAL_PRESET_METAL_SLASH, pos, 0.16f * scale, 4.0f);
 
@@ -519,7 +519,7 @@ void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale) {
         case EFFECT_PRESET_TAIJI_BURST: {
             // Real-world-scaled ÷100.
             ScreenDistort_Add(pos, 0.50f * scale, 0.3f, 0.3f, 0.90f);
-            CameraFX_Shake(0.3f);
+            // CameraFX_Shake(0.3f); // Tắt mặc định theo rule CORE_API.md
             VFXLight_Spawn(pos, ELEMENT_COLOR_TAIJI, 0.70f * scale, 0.55f, VFX_PRIORITY_LOW);
             SpawnGroundDecal(DECAL_PRESET_TAIJI_RING, pos, 0.22f * scale, 5.0f);
 
@@ -712,7 +712,7 @@ int SpawnLightningTrail(Vector3 start, Vector3 target, float scale, float speed)
     InitHelperResources();
 
     float boltLen = Vector3Distance(start, target);
-    float jaggedAmount = fmaxf(30.0f, boltLen * 0.08f) * scale;
+    float jaggedAmount = fmaxf(0.5f, boltLen * 0.08f) * scale;
     float travelDuration = boltLen / fmaxf(speed, 1.0f);
     Color tint = (Color){ 220, 200, 255, 255 };
 
@@ -1469,11 +1469,13 @@ void Material_Begin(EffectMaterial mat) {
         SetShaderValue(mat.shader, mat.uHasTexture1Loc, &hasTexture1, SHADER_UNIFORM_INT);
     }
     if (mat.uTexture1Loc >= 0 && mat.params.texture1.id != 0) {
+        rlSetTexture(mat.params.texture1.id);
         SetShaderValueTexture(mat.shader, mat.uTexture1Loc, mat.params.texture1);
     }
 }
 
 void Material_End(void) {
+    rlSetTexture(0);
     SkillManager_EndShader();
 }
 
@@ -1489,7 +1491,7 @@ void SpawnGroundDecal(DecalPresetType type, Vector3 pos, float radius, float dur
             tint = ColorAlpha(ELEMENT_COLOR_EARTH, 0.7f);
             break;
         case DECAL_PRESET_EARTH_SHATTER:
-            tex = ResourceManager_LoadTexture("assets/textures/decals/decal_stone_shatter.png");
+            tex = ResourceManager_LoadTexture("assets/textures/tex_crack_mask.png");
             tint = ColorAlpha(ELEMENT_COLOR_EARTH, 0.75f);
             break;
         case DECAL_PRESET_EARTH_RUNE:
@@ -1604,7 +1606,7 @@ void SpawnGroundDecalEx(DecalPresetType type, Vector3 pos,
 
     switch (type) {
         case DECAL_PRESET_CRACK:          tex = ResourceManager_LoadTexture("assets/textures/crack.png"); tint = ColorAlpha(ELEMENT_COLOR_EARTH, 0.7f); break;
-        case DECAL_PRESET_EARTH_SHATTER:  tex = ResourceManager_LoadTexture("assets/textures/decals/decal_stone_shatter.png"); tint = ColorAlpha(ELEMENT_COLOR_EARTH, 0.75f); break;
+        case DECAL_PRESET_EARTH_SHATTER:  tex = ResourceManager_LoadTexture("assets/textures/tex_crack_mask.png"); tint = ColorAlpha(ELEMENT_COLOR_EARTH, 0.75f); break;
         case DECAL_PRESET_EARTH_RUNE:     tex = ResourceManager_LoadTexture("assets/textures/decals/decal_earth_rune.png"); tint = ColorAlpha(ELEMENT_COLOR_EARTH, 0.85f); break;
         case DECAL_PRESET_BURN:           tex = ResourceManager_LoadTexture("assets/textures/scorch_mark.png"); tint = ColorAlpha(ELEMENT_COLOR_FIRE, 0.65f); break;
         case DECAL_PRESET_FIRE_LAVA:      tex = ResourceManager_LoadTexture("assets/textures/decals/decal_lava_crack.png"); tint = ColorAlpha(ELEMENT_COLOR_FIRE, 0.8f); break;

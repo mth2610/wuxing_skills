@@ -1180,9 +1180,17 @@ void ProceduralMesh_BuildRock(RockMeshData *out, Vector3 center, float radius,
   for (int s = 0; s < subdivisions; s++)
     ProceduralMesh__SubdivideIcosphere(unitVerts, faces, &vertCount, &faceCount);
 
-  /* Jitter bán kính từng đỉnh, xác định theo seed + chỉ số đỉnh. */
+  /* Jitter bán kính từng đỉnh, xác định theo seed + vị trí đỉnh.
+   * Để đảm bảo các đỉnh bị trùng lặp (do subdivide) giãn ra cùng một lượng,
+   * ta băm (hash) tọa độ hình học của đỉnh thành một số nguyên để làm index.
+   * Nếu dùng index 'i', các đỉnh trùng vị trí sẽ lệch nhau -> rách mesh (lỗi topo). */
   for (int i = 0; i < vertCount; i++) {
-    float n = ProceduralMesh__Noise2(i, 0, seed); /* [-1,1] */
+    int hx = (int)(unitVerts[i].x * 1000.0f);
+    int hy = (int)(unitVerts[i].y * 1000.0f);
+    int hz = (int)(unitVerts[i].z * 1000.0f);
+    int hash = (hx * 73856093) ^ (hy * 19349663) ^ (hz * 83492791);
+    
+    float n = ProceduralMesh__Noise2(hash, 0, seed); /* [-1,1] */
     float r = radius * (1.0f + n * jitterAmount);
     out->verts[i] = Vector3Add(center, Vector3Scale(unitVerts[i], r));
   }

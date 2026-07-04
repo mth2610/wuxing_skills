@@ -36,8 +36,18 @@ typedef struct {
 
 static SkillInstance s_instances[MAX_INSTANCES];
 
+#include "{{name}}_skill_params.inl"
+
 void Init{{Name}}Skill(int screenWidth, int screenHeight) {
     for (int i = 0; i < MAX_INSTANCES; i++) s_instances[i].active = false;
+
+#define {{NAME}}_TUNABLE_COUNT 2
+    static SkillTunableEntry s_tunables[{{NAME}}_TUNABLE_COUNT];
+    int tn = 0;
+#include "{{name}}_skill_tunables.inl"
+    int skillIndex = Skill_GetIndexByName("{{NAME}}");
+    SkillTunables_LoadPersisted("skills/{{element}}/{{name}}_skill/{{name}}_skill.tuning", s_tunables, tn);
+    RegisterSkillTunables(skillIndex, s_tunables, tn);
 }
 
 void Cast{{Name}}Skill(int agentId, Vector3 startPos, Vector3 target, SkillParams params) {

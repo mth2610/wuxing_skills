@@ -35,13 +35,10 @@ skills/[element]/[skill_name]_skill/
 ```
 
 ### CRITICAL SCALING RULES FOR AI:
-This engine uses a large coordinate scale. DO NOT use physical defaults (1.0 or 9.8).
-Radii: Base mesh/tube radii should be around 10.0f to 20.0f. Impact bursts/lights should range from 50.0f to 100.0f.
-Velocity/Speed: Particle speeds for bursts should range from 100.0f to 300.0f.
-
-Gravity/Force splits into two regimes depending on the particle's lifetime/travel distance — pick the one that matches the case, don't apply one blanket number everywhere:
-- **Sustained/flight force** (long-lived, far-traveling particles — e.g. a projectile trail): MUST be strictly between 300.0f and 700.0f. Real precedent: `skills/water/water_stream/tube_skill.c` uses `FORCE_GRAVITY_DIR strength = 650.0f`/`325.0f`.
-- **Ambient/burst force** (short-lived particles that stay near their spawn point — e.g. Cast/Impact preset particles): 5.0f to 60.0f. Using 300-700f here flings burst particles off-screen instantly. Real precedent: the Cast/Impact preset `ForceField`s in `core/skill_helper.c`.
+This engine is now fully meter-scaled (1 unit = 1 meter). DO NOT use the old 100x scale.
+Radii: Base mesh/tube radii should be around 0.10f to 0.20f (10-20 cm). Impact bursts/lights should range from 0.5f to 1.5f.
+Velocity/Speed: Particle speeds should be around 1.0f to 3.0f (m/s).
+Gravity/Force: Use realistic physical defaults (e.g. 3.0f - 9.8f for gravity). Do not use the old 300-700f ranges.
 
 > [!IMPORTANT]
 > **Include Path Folder Matching Rule:** When including your skill's own header file within its `.c` source file, the path **MUST EXACTLY match** the directory structure where it is saved. For example, if you place your files in `skills/wood/jade_burst_skill/`, you MUST include it as `#include "skills/wood/jade_burst_skill/jade_burst_skill.h"`. Beware of typo errors or omitting suffix markers like `_skill` from the folder name.
@@ -123,6 +120,12 @@ The core engine provides a global linearized depth buffer for effects that need 
    ScreenDistort_UnbindSoftParticleDepth(3);
 ```
 5. **State Management Warning:** If you disable depth writing/testing (e.g. `rlDisableDepthMask()`) for your soft particle pass, **you MUST flush the batch first** by calling `rlDrawRenderBatchActive();` right before the state change. Failure to do so will retroactively disable depth-writing for previously queued geometry (like the ground plane)!
+
+---
+
+## 3d. Camera Shake & Screen Distort
+* **Camera Shake (`CameraFX_Shake`):** Mặc định là KHÔNG RUNG (defaults to off/0.0f). Không bao giờ tự ý thêm hiệu ứng rung camera vào các chiêu thức mặc định nếu không có sự đồng ý của người dùng. Nếu chiêu thức có hiệu ứng rung, luôn phải biến nó thành một tham số có thể điều chỉnh (tunable) với giá trị mặc định là 0.0f để người dùng có thể tùy ý bật lên trong Sandbox nếu muốn.
+* **Screen Distort (`ScreenDistort_Add`):** Hạn chế lạm dụng gây rối mắt, chỉ dùng cho các chiêu hệ Thủy (Hydro Cleave) hoặc khi được yêu cầu.
 
 ---
 
@@ -1324,7 +1327,7 @@ bool SkillTunables_LoadPersisted(const char *path, SkillTunableEntry *entries, i
 * **Grouping by phase**: set `.phase` on entries that belong to a specific stage of the skill (cast/fly/impact/...) — the sandbox renders one **tab** per distinct tag (in registration order), showing only the active tab's entries at a time instead of one long scrolled list. Entries with `phase == NULL` share a single "GENERAL" tab — the legacy/default look for a skill that doesn't opt into phases at all.
 * **Curve-kind entries**: set `.curve = &s_myCurve` (a `static SkillCurve`, seeded via `SkillCurve_SetConstant(&s_myCurve, defaultValue)` before first use) and leave `.value = NULL`. Read it fresh each frame via `SkillCurve_Eval(&s_myCurve, t01)` at the point of use — `t01` is always caller-defined progress (e.g. a `LayeredTimeline`'s `Timeline_LayerProgress`, or a skill's own normalized progress), **never** "fraction of distance already traveled toward a target" — see `SkillHelper_StepCurveFlight` below for why that specific indexing is wrong for a flight-speed curve.
 * **Persisting curve-kind entries**: call `SkillTunables_LoadPersisted("skills/<element>/<skill>/<skill>.tuning", entries, count)` in `Init[Name]Skill` right before `RegisterSkillTunables` — it flattens the entry list (curve entries become 5 keys), loads any persisted values from the file (missing keys leave the entry's current value untouched, same semantics as `Tuning_LoadFloatsFromPath`), and unflattens back into `value`/`curve->stops[k].value`. This is a drop-in replacement for the old "build a flat key/value array by hand, call `Tuning_LoadFloatsFromPath`" pattern — needed once any entry is curve-kind, but safe to use even for all-constant entry lists.
-* **Separating large tables into `.inl` files**: when a skill's table grows large (100+ entries across 3+ phases), move the assignment block to a co-located `[skill]_tunables.inl` and `#include` it inside `Init[Name]Skill` right after the `static SkillTunableEntry` and counter declarations. The preprocessor pastes the file verbatim — it sees all the enclosing function's locals and file-statics without `extern`. Do **not** `#include` it at file scope; the `.inl` has no include guards and refers to local variables (`fn`/`tn`, the array name). See `fire_skill.c`/`thunder_orb_skill.c` for reference.
+* **Separating tables into `.inl` files**: Always separate a skill's parameters and tunable assignment block into co-located `[skill]_params.inl` and `[skill]_tunables.inl` files. `#include "[skill]_params.inl"` at file scope for static variables, and `#include "[skill]_tunables.inl"` inside `Init[Name]Skill` right after the `static SkillTunableEntry` and counter declarations. The preprocessor pastes the file verbatim — it sees all the enclosing function's locals and file-statics without `extern`. Do **not** `#include` the `_tunables.inl` at file scope; it refers to local variables (`tn`, the array name). See `hoa_long_phong_ba_skill.c` or `magma_fissure_skill.c` for reference.
 * `Skill_GetTunables` is how `sandbox/ui_panel.c` discovers what to draw for the currently-selected skill — returns 0 for any skill that never called `RegisterSkillTunables`. Its Save button uses `SkillTunables_Flatten` + `Tuning_SaveFloats` to persist, mirroring `SkillTunables_LoadPersisted`.
 
 ### Curve-Driven Flight & Extra Force (`core/skill_helper.h`)
@@ -2773,3 +2776,19 @@ int         VisualVerify_GetExitCode(void);  // 0 = ok, 1 = unknown skill
 
 > [!NOTE]
 > When autotest reports PASS but visual output looks wrong, trust the screenshot over the numeric result — see memory entry "Trust Visual Over Numeric PASS".
+## 19. Visual Prefabs (core/visual_prefabs.h)
+Cung cấp các hàm vẽ/sinh hiệu ứng 3D "chuẩn game AAA" đã được căn chỉnh sẵn độ cong, góc cạnh, và ánh sáng. Khác với các hàm ProceduralMesh thô, Prefab đảm bảo kết quả hình ảnh luôn đẹp và tự nhiên. Không yêu cầu Texture ngoài cho các hiệu ứng ánh sáng (Sét/Nước/Lửa).
+
+### Nhóm 1: Mesh & Hình khối tĩnh (Gọi liên tục trong Draw)
+- `Prefab_DrawStonePillar`: Vẽ một cột đá đâm từ dưới lên (có tham số độ nhọn `sharpness` và tiến trình `progress`).
+- `Prefab_DrawBoulder`: Vẽ tảng đá khối lởm chởm, hỗ trợ caching nội bộ bằng `seed`.
+- `Prefab_DrawIceCrystal`: Vẽ cụm tinh thể băng tủa ra (additive/alpha).
+- `Prefab_DrawMagicPuddle`: Vẽ một vũng nước sáng ma thuật dưới đất (hoàn toàn bằng procedural blend).
+- `Prefab_DrawFireball`: Vẽ quả cầu lửa biến dạng ngẫu nhiên.
+
+### Nhóm 2: Effect & Particle (Gọi 1 lần trong Cast/Update)
+- `Prefab_SpawnSmokePuff`: Bùng khói đặc tại một điểm bằng `ParticleSystem_SpawnRadialBurst`.
+- `Prefab_SpawnSmokeTrail`: Rải một đường hạt khói bay bay.
+- `Prefab_SpawnLongFissure`: Tạo decal nứt đất dọc theo đường thẳng + rung màn hình.
+- `Prefab_SpawnLightningBeam`: Rạch một đường sét thẳng, sử dụng cơ chế `SpawnLightningTrail` của trail system.
+
