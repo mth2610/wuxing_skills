@@ -495,13 +495,10 @@ up any one independently unless a dependency is stated.
 
 | # | Title | Priority | Owner | Depends on |
 |---|---|---|---|---|
-| 16 | CORE_API.md §4 lifecycle signature stale + broken markdown | **P0 bug** | Core | — |
-| 17 | `Material_Load` presets point at deleted shader files | **P0 bug** | Core | — |
-| 18 | `scripts/new_skill.py` skill scaffolder | P1 | Core | 16 |
 | 19 | `scripts/lint_skill.py` mechanical rule checker | P1 | Core | — |
 | 20 | Sandbox visual verification harness | P1 | Sandbox | — |
-| 21 | `SKILL_RECIPE.md` — single-entry doc for one-prompt generation | P1 | Skills + Core | 16, 18, 19, 20 |
-| 22 | Preset symmetry: ForceField + Material for all 6 elements | P2 | Core | 17 |
+| 21 | `SKILL_RECIPE.md` — single-entry doc for one-prompt generation | P1 | Skills + Core | 19, 20 |
+| 22 | Preset symmetry: ForceField + Material for all 6 elements | P2 | Core | — |
 | 23 | SkillBuilder archetypes: Beam / GroundWave / Orbitals / AuraRing | P2 | Core | — |
 | 24 | Lifecycle boilerplate macros for non-projectile skills | P2 | Core | — |
 | 25 | `assets/INDEX.md` + per-element SFX assets | P2 | Skills (+ user) | — |
@@ -514,125 +511,10 @@ up any one independently unless a dependency is stated.
 | 32 | Pool stats overlay (catch silent overflow) | P3 | Core + Sandbox | — |
 | 33 | Looping audio handles (flight/aura sound) | P3 | Core | 25 |
 
-Recommended order: 16 → 17 → 18 → 19 → 21 → 20, then 22–28 in any order,
-then 29–33. Items 16 + 18 + 21 alone deliver ~80% of the one-prompt goal.
+Recommended order: 19 → 21 → 20, then 22–28 in any order, then 29–33.
 
 ---
 
-## Item 16 — CORE_API.md §4 documents a lifecycle signature that no longer compiles (P0)
-
-**Problem.** `CORE_API.md` §4 (line ~135) and all 4 skeletons document
-`Cast[Name]Skill(Vector3 startPos, Vector3 target, SkillParams params)` —
-**without `int agentId`**. Reality: `core/skill_manager.h:76`'s
-`RegisterSkill` cast callback is `void (*cast)(int agentId, Vector3, Vector3,
-SkillParams)`, every real skill uses it (`thunder_orb_skill.h:18`,
-`fire_skill.h:16`), and `skills/CLAUDE.md:38` mandates it (Item 15
-migration). An AI reading §4 generates a skill whose cast fn fails the
-registry's function-pointer type → compile error. Prose at `CORE_API.md`
-~line 587 ("the documented lifecycle doesn't pass an agentId") is stale for
-the same reason. Additionally §4's markdown is corrupted: line ~100 has a
-heading typo `## SkillParams;` and the ` ```c ` fence opened at ~101 is
-never closed before the next fence at ~117, so the whole section renders
-scrambled.
-
-**How to fix.**
-1. `grep -n "Cast\[Name\]Skill(Vector3\|CastExampleSkill(Vector3\|Cast.*Skill(Vector3" CORE_API.md`
-   — find every stale signature in §4 and inside all 4 skeletons
-   (§4 headers ~line 96–147, skeletons at ~148, ~278, ~428, ~583).
-2. Update each to `void Cast[Name]Skill(int agentId, Vector3 startPos,
-   Vector3 target, SkillParams params)`. In each skeleton's instance struct
-   add `int ownerAgentId;`, set it at cast time, per `skills/CLAUDE.md`'s
-   ownership-tracking rule.
-3. Fix the ~line 587 prose: `agentId` IS now passed to Cast (Item 15);
-   what's still true is that `Update[Name]Skill` has no agentId and skills
-   can't read the live `Agent` array — keep that half, and cross-reference
-   Item 26 below as the planned fix for "follow a moving agent".
-4. Fix the markdown: `## SkillParams;` → `### SkillParams`, close the
-   SkillParams code fence properly before the header-template fence opens.
-5. **Verify:** copy the corrected Generic Projectile skeleton verbatim into
-   a scratch dir under `skills/taiji/`, run `python3
-   scripts/generate_registry.py && make` — must build with zero edits.
-   Delete the scratch skill afterwards.
-6. Regenerate the §4-equivalent part of `CORE_API_SHORT.md`. (Normally
-   SHORT is manual-only; regeneration is explicitly authorized as part of
-   this item — the filing session's user asked for the pipeline to be made
-   one-prompt-reliable, and a stale SHORT defeats that.)
-
-**Acceptance:** step 5 passes; `grep "Cast.*Skill(Vector3" CORE_API.md
-CORE_API_SHORT.md` returns nothing.
-
----
-
-## Item 17 — `Material_Load`'s 4 presets reference deleted shader files (P0)
-
-**Problem.** Documented at `CORE_API.md:1881`: `MATERIAL_FIRE/ICE/WATER/
-PORTAL` load shaders from `skills/fire/fire_wildfire/`,
-`skills/water/frost_blossom_rain_skill/`, `skills/taiji/yin_yang_orb/` —
-none exist anymore. `ResourceManager_LoadShader` returns `shader.id == 0`
-(Rule C guard) → mesh silently invisible, no error. Zero current callers,
-but any AI that picks a preset from the enum hits an invisible-mesh dead
-end with no diagnostic.
-
-**How to fix.**
-1. In `core/skill_helper.c`'s `Material_Load`, stop loading per-skill
-   shader files. Route all 4 presets through the same path as
-   `Material_LoadCustom` (shared `core/shaders/effect_material.vs/.fs`)
-   with a hardcoded `EffectMaterialParams` per preset. Suggested starting
-   values (tune visually in `core_test`):
-   - `MATERIAL_FIRE`:  baseColor `ELEMENT_COLOR_FIRE`, rim 1.2, fresnel 3,
-     emissive 1.5, distortion 0.4, translucency 0.
-   - `MATERIAL_ICE`:   baseColor pale blue `(170,220,255,255)`, rim 1.5,
-     fresnel 5, emissive 0.5, distortion 0.05, translucency 0.6.
-   - `MATERIAL_WATER`: baseColor `ELEMENT_COLOR_WATER`, rim 1.0, fresnel 4,
-     emissive 0.6, distortion 0.25, translucency 0.85.
-   - `MATERIAL_PORTAL`: baseColor `ELEMENT_COLOR_TAIJI`, rim 2.0, fresnel 2,
-     emissive 2.0, distortion 0.6, translucency 0.3.
-2. Keep signature and enum unchanged (no call sites to migrate).
-3. Update `CORE_API.md` "Shader Material Preset" section: delete the
-   "known pre-existing issue" paragraph (line ~1881), document that all
-   presets are now `effect_material`-backed.
-4. **Verify** in `core_test`: draw one sphere per preset, screenshot, all 4
-   visible.
-
-**Acceptance:** no `shader.id == 0` path reachable from `Material_Load`;
-4 visible spheres in core_test.
-
----
-
-## Item 18 — `scripts/new_skill.py` scaffolder (P1, depends on Item 16)
-
-**Problem.** `scripts/` only generates registries. The biggest one-prompt
-failure class is naming/signature errors in hand-written boilerplate
-(exact file naming for the registry scanner, exact lifecycle prototypes,
-PI guard, includes). A scaffolder makes those errors structurally
-impossible.
-
-**How to build.**
-1. CLI: `python3 scripts/new_skill.py <element> <snake_name>
-   --archetype projectile|ground|path|attached [--shader]`.
-   Validate `<element>` ∈ {water, wood, fire, earth, metal, taiji};
-   derive CamelCase `[Name]` from `<snake_name>`.
-2. Create `skills/<element>/<snake_name>_skill/` with:
-   - `<snake_name>_skill.h` — exact lifecycle prototypes from the
-     (Item-16-corrected) §4 header template, include guards filled in.
-   - `<snake_name>_skill.c` — the chosen archetype skeleton from §4 with
-     `[Name]`/`Example` substituted, `ownerAgentId` wiring included.
-   - With `--shader`: minimal `<snake_name>.vs/.fs` pair that `#include`s
-     `vs_header.glsl`/`fs_header.glsl` and compiles as-is (flat lit color),
-     plus the `ResourceManager_LoadShader` call pre-wired in `Init`.
-3. Template source: keep templates as separate files in
-   `scripts/templates/` (NOT embedded strings) so Core Agent can keep them
-   in sync with CORE_API.md §4 with a plain diff.
-4. After writing files, run `scripts/generate_registry.py` automatically
-   and print: skill index, how to cast it in sandbox, next steps
-   (`make && ./wuxing`).
-5. Refuse to overwrite an existing skill dir.
-
-**Acceptance:** `python3 scripts/new_skill.py fire test_scaffold
---archetype projectile && make` succeeds with zero manual edits and the
-skill is castable in the sandbox. (Delete the test skill after verifying.)
-
----
 
 ## Item 19 — `scripts/lint_skill.py` mechanical rule checker (P1)
 
