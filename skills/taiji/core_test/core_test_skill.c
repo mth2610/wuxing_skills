@@ -1,5 +1,6 @@
 #include "core_test_skill.h"
-#include "core/visual_prefabs.h"
+#include "core/composition/visual_composer.h"
+#include "core/geometry/procedural_mesh_utils.h"
 #include "core/decal_system.h"
 #include "raymath.h"
 #include "core/vfx_light.h"
@@ -52,15 +53,15 @@ void UpdateCoreTestSkill(float dt, Vector3 enemyPos, float enemyRadius) {
     // Test Group 2: Particle & Effect Spawning (Lặp lại mỗi 2 giây để dễ quan sát)
     if ((int)(s_time / 2.0f) < (int)((s_time + dt) / 2.0f)) {
         // Khói cuộn
-        Prefab_SpawnSmokePuff(Vector3Add(s_center, (Vector3){-3.5f, 0, 0}), 1.0f);
+        VFX_ComposeSmokePuff(Vector3Add(s_center, (Vector3){-3.5f, 0, 0}), 1.0f);
         // Vệt khói
-        Prefab_SpawnSmokeTrail(Vector3Add(s_center, (Vector3){-3.5f, 0, 0}), Vector3Add(s_center, (Vector3){-3.5f, 2.5f, 0}), 1.0f);
+        VFX_ComposeSmokeTrail(Vector3Add(s_center, (Vector3){-3.5f, 0, 0}), Vector3Add(s_center, (Vector3){-3.5f, 2.5f, 0}), 1.0f);
         // Vết nứt đất dài (đặt ngay trước mặt, chạy thẳng về trước)
-        Prefab_SpawnLongFissure(Vector3Add(s_center, (Vector3){-1.5f, 0, 2.0f}), Vector3Add(s_center, (Vector3){-1.5f, 0, 8.0f}), 0.6f);
+        VFX_ComposeFissure(Vector3Add(s_center, (Vector3){-1.5f, 0, 2.0f}), Vector3Add(s_center, (Vector3){-1.5f, 0, 8.0f}), 0.6f);
         
         // Vũng nước ma thuật
         // (Đã được sửa lại hệ thống shader để vân nước flow_map hoạt động đúng)
-        Prefab_DrawMagicPuddle(Vector3Add(s_center, (Vector3){0, 0, -2.5f}), 1.5f);
+        ProceduralMesh_DrawMagicPuddle(Vector3Add(s_center, (Vector3){0, 0, -2.5f}), 1.5f);
         
         // 1 tia sét duy nhất giáng xuống ở trung tâm
         s_bolts[0].active = true;
@@ -104,19 +105,19 @@ void DrawCoreTestSkill(void) {
     float progress = fminf(s_time / 1.0f, 1.0f);
     
     // 1. Cột đá (Giữ lại theo yêu cầu)
-    Prefab_DrawStonePillar(Vector3Add(s_center, (Vector3){-1.5f, 0, -2.0f}), 0.4f, 1.8f, 0.4f, progress);
+    ProceduralMesh_DrawStonePillar(Vector3Add(s_center, (Vector3){-1.5f, 0, -2.0f}), 0.4f, 1.8f, 0.4f, progress);
     
     // 6. Cục đá (tròn, không còn lỗi)
-    Prefab_DrawRoundBoulder(Vector3Add(s_center, (Vector3){3.5f, 0, -1.0f}), 0.5f);
+    ProceduralMesh_DrawRoundBoulder(Vector3Add(s_center, (Vector3){3.5f, 0, -1.0f}), 0.5f);
     
     // 3. Tinh thể băng
-    Prefab_DrawIceCrystal(Vector3Add(s_center, (Vector3){-3.5f, 0, 2.0f}), 0.3f, 1.5f, 0.2f, 1337);
+    ProceduralMesh_DrawIceCrystal(Vector3Add(s_center, (Vector3){-3.5f, 0, 2.0f}), 0.3f, 1.5f, 0.2f, 1337);
     
     // 4. Vũng nước ma thuật
-    Prefab_DrawMagicPuddle(Vector3Add(s_center, (Vector3){0, 0, -2.5f}), 1.5f);
+    ProceduralMesh_DrawMagicPuddle(Vector3Add(s_center, (Vector3){0, 0, -2.5f}), 1.5f);
     
     // 5. Quả cầu lửa (nhỏ hơn, thấp hơn)
-    Prefab_DrawFireball(Vector3Add(s_center, (Vector3){3.5f, 0.5f, 2.0f}), 0.3f, s_time);
+    ProceduralMesh_DrawFireball(Vector3Add(s_center, (Vector3){3.5f, 0.5f, 2.0f}), 0.3f, s_time);
     
     // Vẽ mưa sét
     for (int i = 0; i < MAX_TEST_BOLTS; i++) {

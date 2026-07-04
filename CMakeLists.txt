@@ -72,7 +72,6 @@ add_executable(wuxing
     core/material/material_system.c
     core/composition/visual_composer.c
     core/presets/vfx_presets.c
-    core/visual_prefabs.c
     core/skill_helper.c
     core/time_fx.c
     core/motion_controller.c

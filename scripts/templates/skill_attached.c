@@ -2,7 +2,7 @@
 #include "core/skill_boilerplate.h"
 #include "core/skill_helper.h"
 #include "core/vfx_light.h"
-#include "core/particle_radial_burst.h"
+#include "core/particle_system.h"
 #include "core/utils_math.h"
 #include "entities/entities.h"
 #include "raymath.h"

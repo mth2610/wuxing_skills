@@ -3,7 +3,34 @@
 
 #include "raylib.h"
 #include "core/skill_helper.h" // for EffectPresetType
-#include "core/impact_burst.h" // for ImpactBurstConfig
+#include "core/particle_system.h" // for ParticleRadialBurstConfig
+
+typedef struct {
+    /* --- Step 1: screen distortion --- */
+    bool  distortEnabled;
+    float distortRadius, distortStrength, distortLife, distortSpeed;
+
+    /* --- Step 2: ground decal --- */
+    bool     decalEnabled;
+    Texture2D decalTex;
+    float     decalScale;   /* multiplied by sizeScale at call time */
+    float     decalLife;
+    Color     decalTint;
+    bool      decalRandomRotation; /* true = GetRandomValue(0,360), false = use decalFixedRotation */
+    float     decalFixedRotation;
+
+    /* --- Step 3: point light flash --- */
+    bool  lightEnabled;
+    Color lightColor;
+    float lightRadius;  /* multiplied by sizeScale at call time */
+    float lightLife;
+
+    /* --- Step 4: radial particle burst --- */
+    bool particlesEnabled;
+    ParticleRadialBurstConfig particles;
+} ImpactBurstConfig;
+
+#define VFX_TriggerImpactBurst VFX_ComposeTriggerImpactBurst
 
 // 1. Spawning Smoke Puff
 void VFX_ComposeSmokePuff(Vector3 pos, float size);

@@ -4,7 +4,7 @@
 #include "raylib.h"
 #include "core/skill_helper.h" // for EffectPresetType
 #include "core/decal_system.h" // for DecalPresetType
-#include "core/particle_radial_burst.h" // for ParticleRadialBurstConfig
+#include "core/particle_system.h" // for ParticleRadialBurstConfig
 
 // 1. Cấu hình preset va chạm (Impact)
 typedef struct {

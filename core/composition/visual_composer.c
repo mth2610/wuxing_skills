@@ -1,7 +1,6 @@
 #include "visual_composer.h"
 #include "core/presets/vfx_presets.h"
 #include "core/particle_system.h"
-#include "core/particle_radial_burst.h"
 #include "core/decal_system.h"
 #include "core/vfx_light.h"
 #include "core/trail_system.h"

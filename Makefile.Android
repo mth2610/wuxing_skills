@@ -65,7 +65,6 @@ PROJECT_SOURCE_FILES   := main.c \
                           core/material/material_system.c \
                           core/composition/visual_composer.c \
                           core/presets/vfx_presets.c \
-                          core/visual_prefabs.c \
                           core/vfx_proc_ray.c \
                           core/afterimage.c \
                           core/time_fx.c \
