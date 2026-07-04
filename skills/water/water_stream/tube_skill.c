@@ -10,6 +10,7 @@
 #include "core/procedural_mesh_utils.h"
 #include "core/resource_manager.h"
 #include "core/screen_distort.h"
+#include "core/skill_helper.h"
 #include "core/skill_manager.h"
 #include "core/utils_math.h"
 #include "core/vfx_light.h"
@@ -20,21 +21,72 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+// Pool-size constant — sizes a static array, not tunable.
 #define MAX_TUBE_EMITTERS 5
 
-// --- Force Fields cua Tube Skill ---
-static ForceField
-    s_tubeSplashField;             // nuoc va cham: trong luc + Perlin gon song
-static ForceField s_tubeMistField; // suong dau ong: trong luc nhe + drift
+// Visual mesh constants — not spatial dimensions, unitless or UV.
+#define TUBE_SEGMENTS         30
+#define TUBE_RADIAL_SEGMENTS  20
+#define TUBE_UV_LENGTH_SCALE   3.0f
 
-#define TUBE_TRAVEL_SPEED 1.2f
-#define TUBE_BASE_RADIUS 12.0f
-#define TUBE_SEGMENTS 30
-#define TUBE_RADIAL_SEGMENTS 20
-#define TUBE_UV_LENGTH_SCALE 3.0f
+// TUBE_TRAVEL_SPEED: unitless Bezier progress per second (0..1), NOT a
+// spatial speed.  Keep as a constant since it governs animation pacing.
+#define TUBE_TRAVEL_SPEED      1.2f
 
-#define GRAVITY_Y -650.0f
-#define FLUID_DRAG_SPLASH 3.0f
+// Sandbox-tunable physics + size knobs. Real-world-scaled: 1 unit = 1 meter.
+// Loaded from skills/water/water_stream/tube_skill.tuning on init if present.
+static float s_tubeBaseRadius = 0.12f;   // tube visual/collision radius (m)
+
+// Splash force field (water hits surface)
+static float s_splashGravity  = 6.5f;   // downward gravity for splash particles (m/s²)
+static float s_splashNoise    = 0.25f;  // Perlin noise strength for splash turbulence
+static float s_splashDrag     = 3.0f;   // splash drag coefficient (unitless)
+
+// Mist force field (head-of-tube ambient spray)
+static float s_mistGravity    = 3.25f;  // downward gravity for mist particles (m/s²)
+static float s_mistNoise      = 0.15f;  // Perlin noise strength for mist drift
+static float s_mistDrag       = 2.0f;   // mist drag coefficient (unitless)
+
+// Impact VFX
+static float s_impactDistortRadius   = 0.85f;  // screen-distort wave radius (m)
+static float s_impactDistortStrength = 0.7f;   // distort intensity (unitless 0..1)
+static float s_impactDistortLife     = 0.6f;   // distort lifetime (s)
+static float s_impactDistortSpeed    = 1.5f;   // distort wave expand speed (m/s)
+
+static float s_impactDecalScale  = 0.03f;  // caustic decal radius (m)
+static float s_impactDecalLife   = 4.0f;   // decal lifetime (s)
+
+static float s_impactLightRadius = 0.55f;  // flash light radius (m)
+static float s_impactLightLife   = 0.5f;   // flash light lifetime (s)
+
+// Impact particle burst
+static float s_burstSpeedMin   = 1.2f;   // particle burst min speed (m/s)
+static float s_burstSpeedMax   = 2.5f;   // particle burst max speed (m/s)
+static float s_burstRadiusMin  = 0.03f;  // particle min radius (m)
+static float s_burstRadiusMax  = 0.08f;  // particle max radius (m)
+static float s_burstLifeMin    = 0.6f;   // particle min lifetime (s)
+static float s_burstLifeMax    = 1.2f;   // particle max lifetime (s)
+static float s_burstUpwardBias = 1.0f;   // upward velocity bias (m/s)
+
+// Head mist particles
+static float s_mistVelXZ       = 0.2f;   // mist XZ spread half-range (m/s)
+static float s_mistVelYMax     = 0.5f;   // mist upward velocity max (m/s)
+static float s_mistRadiusMin   = 0.02f;  // mist min radius (m)
+static float s_mistRadiusMax   = 0.05f;  // mist max radius (m)
+static float s_mistLifeMin     = 0.2f;   // mist min lifetime (s)
+static float s_mistLifeMax     = 0.5f;   // mist max lifetime (s)
+
+// Per-phase over-lifetime curves — flat 1.0 (no-op until shaped in sandbox)
+static SkillCurve s_mistRadiusCurve, s_mistSpeedCurve, s_mistAlphaCurve;
+static SkillCurve s_mistEmissiveCurve;
+
+// Tunable extra-force mix for the mist particles
+static SkillForceMix s_mistForce;
+static ForceField    s_mistFieldActive; // rebuilt from s_mistForce + mist gravity stack
+
+// mist scalars(11) + mist curves(3) + mist force mix(29)
+// + splash scalars(3) + impact scalars(15) = 61
+#define TUBE_TUNABLE_COUNT 62
 
 extern Camera3D camera;
 
@@ -55,14 +107,7 @@ static int viewPosLoc;
 static int lightDirLoc;
 static int uvLengthLoc;
 
-// Cau hinh bien doi mesh huu co rieng cua Water Stream.
-// Day la TOAN BO phan "chu ky nuoc" con lai trong skill - moi toan Bezier/
-// Frenet-frame/wobble/deform/end-cap da chuyen vao core/procedural_mesh_utils.
 static TubeMeshConfig s_waterTubeConfig;
-
-// Cau hinh combo VFX va cham (distort + decal + light + particle burst),
-// gop lai tu TriggerWaterBurst() ban goc. Day la phan "chu ky nuoc" con lai
-// cho hieu ung va cham - moi logic orchestrate da chuyen vao core/impact_burst.
 static ImpactBurstConfig s_waterImpactConfig;
 
 static inline float ClampSizeScale(float scale) {
@@ -71,97 +116,130 @@ static inline float ClampSizeScale(float scale) {
 
 static Texture2D s_causticsTex;
 static ColorGradient s_splashGrad;
+static ForceField s_tubeSplashField;  // used by impact burst (fixed layers)
+static ForceField s_tubeMistField;    // rebuilt each frame
+
+// Rebuild the static splash field (impact burst uses this — fixed layers,
+// rebuilt when gravity/noise tunables change).
+static void RebuildSplashField(void) {
+    ForceField_Clear(&s_tubeSplashField);
+    ForceField_AddLayer(&s_tubeSplashField, (ForceLayer){
+        .type      = FORCE_GRAVITY_DIR,
+        .direction = {0, -1.0f, 0},
+        .strength  = s_splashGravity
+    });
+    ForceField_AddLayer(&s_tubeSplashField, (ForceLayer){
+        .type       = FORCE_NOISE_PERLIN,
+        .strength   = s_splashNoise,
+        .noiseScale = 0.010f,
+        .noiseSpeed = 0.5f
+    });
+    ForceField_AddLayer(&s_tubeSplashField,
+        (ForceLayer){.type = FORCE_DRAG, .strength = s_splashDrag});
+}
+
+// Rebuild the mist force field from tunables before emitting mist particles
+// so sandbox changes take effect immediately.
+static void RebuildMistField(void) {
+    ForceField_Clear(&s_mistFieldActive);
+    ForceField_AddLayer(&s_mistFieldActive, (ForceLayer){
+        .type      = FORCE_GRAVITY_DIR,
+        .direction = {0, -1.0f, 0},
+        .strength  = s_mistGravity
+    });
+    ForceField_AddLayer(&s_mistFieldActive, (ForceLayer){
+        .type       = FORCE_NOISE_PERLIN,
+        .strength   = s_mistNoise,
+        .noiseScale = 0.008f,
+        .noiseSpeed = 0.3f
+    });
+    ForceField_AddLayer(&s_mistFieldActive,
+        (ForceLayer){.type = FORCE_DRAG, .strength = s_mistDrag});
+    SkillForceMix_AddLayers(&s_mistForce, &s_mistFieldActive);
+}
+
+// Rebuild the ImpactBurstConfig from current tunables.
+static void RebuildImpactConfig(void) {
+    s_waterImpactConfig.distortEnabled  = true;
+    s_waterImpactConfig.distortRadius   = s_impactDistortRadius;
+    s_waterImpactConfig.distortStrength = s_impactDistortStrength;
+    s_waterImpactConfig.distortLife     = s_impactDistortLife;
+    s_waterImpactConfig.distortSpeed    = s_impactDistortSpeed;
+
+    s_waterImpactConfig.decalEnabled        = true;
+    s_waterImpactConfig.decalTex            = s_causticsTex;
+    s_waterImpactConfig.decalScale          = s_impactDecalScale;
+    s_waterImpactConfig.decalLife           = s_impactDecalLife;
+    s_waterImpactConfig.decalTint           = ColorAlpha(ELEMENT_COLOR_WATER, 0.7f);
+    s_waterImpactConfig.decalRandomRotation = true;
+
+    s_waterImpactConfig.lightEnabled  = true;
+    s_waterImpactConfig.lightColor    = ELEMENT_COLOR_WATER;
+    s_waterImpactConfig.lightRadius   = s_impactLightRadius;
+    s_waterImpactConfig.lightLife     = s_impactLightLife;
+
+    s_waterImpactConfig.particlesEnabled         = true;
+    s_waterImpactConfig.particles.countMin       = 25;
+    s_waterImpactConfig.particles.countMax       = 40;
+    s_waterImpactConfig.particles.speedMin       = s_burstSpeedMin;
+    s_waterImpactConfig.particles.speedMax       = s_burstSpeedMax;
+    s_waterImpactConfig.particles.radiusMin      = s_burstRadiusMin;
+    s_waterImpactConfig.particles.radiusMax      = s_burstRadiusMax;
+    s_waterImpactConfig.particles.lifetimeMin    = s_burstLifeMin;
+    s_waterImpactConfig.particles.lifetimeMax    = s_burstLifeMax;
+    s_waterImpactConfig.particles.pitchRange     = PI;
+    s_waterImpactConfig.particles.upwardBias     = s_burstUpwardBias;
+    s_waterImpactConfig.particles.colorStart     = ELEMENT_COLOR_WATER;
+    s_waterImpactConfig.particles.colorEnd       =
+        ColorAlpha(ColorLerp(ELEMENT_COLOR_WATER, WHITE, 0.3f), 0.0f);
+    s_waterImpactConfig.particles.forceField     = &s_tubeSplashField;
+    s_waterImpactConfig.particles.gradient       = &s_splashGrad;
+}
 
 void InitTubeSkill(int screenWidth, int screenHeight) {
   (void)screenWidth;
   (void)screenHeight;
+
   tubeShader = ResourceManager_LoadShader("skills/water/water_stream/tube.vs",
                                           "skills/water/water_stream/tube.fs");
-  timeLoc = GetShaderLocation(tubeShader, "u_time");
-  viewPosLoc = GetShaderLocation(tubeShader, "viewPos");
+  timeLoc     = GetShaderLocation(tubeShader, "u_time");
+  viewPosLoc  = GetShaderLocation(tubeShader, "viewPos");
   lightDirLoc = GetShaderLocation(tubeShader, "u_lightDir");
-  uvLengthLoc =
-      GetShaderLocation(tubeShader, "u_uvLength"); // Lay chung cho ca VS va FS
+  uvLengthLoc = GetShaderLocation(tubeShader, "u_uvLength");
+
   for (int i = 0; i < MAX_TUBE_EMITTERS; i++) {
     emitters[i].active = false;
   }
 
-  s_causticsTex =
-      ResourceManager_LoadTexture("assets/textures/water_caustics.png");
+  s_causticsTex = ResourceManager_LoadTexture("assets/textures/water_caustics.png");
 
-  // Gradient "sinh ra tu mau nuoc -> sang hon chut -> mo dan ve trong suot".
-  // Thay 3 dong ColorGradient_AddStop bang 1 lan goi duy nhat.
   ColorGradient_StandardFade(&s_splashGrad, ELEMENT_COLOR_WATER, 0.40f, 0.2f);
 
-  // Nuoc va cham: trong luc manh + Perlin gon song lan + drag 3.0
-  ForceField_Clear(&s_tubeSplashField);
-  ForceField_AddLayer(&s_tubeSplashField,
-                      (ForceLayer){.type = FORCE_GRAVITY_DIR,
-                                   .direction = {0, -1, 0},
-                                   .strength = 650.0f});
-  ForceField_AddLayer(&s_tubeSplashField,
-                      (ForceLayer){.type = FORCE_NOISE_PERLIN,
-                                   .strength = 25.0f,
-                                   .noiseScale = 0.010f,
-                                   .noiseSpeed = 0.5f});
-  ForceField_AddLayer(
-      &s_tubeSplashField,
-      (ForceLayer){.type = FORCE_DRAG, .strength = FLUID_DRAG_SPLASH});
+  // Seed per-phase curves flat (no-op until shaped in sandbox)
+  SkillCurve_SetConstant(&s_mistRadiusCurve,   1.0f);
+  SkillCurve_SetConstant(&s_mistSpeedCurve,    1.0f);
+  SkillCurve_SetConstant(&s_mistAlphaCurve,    1.0f);
+  SkillCurve_SetConstant(&s_mistEmissiveCurve, 1.0f);
 
-  // Suong dau ong: trong luc nhe + drift theo Perlin + drag 2.0
-  ForceField_Clear(&s_tubeMistField);
-  ForceField_AddLayer(&s_tubeMistField, (ForceLayer){.type = FORCE_GRAVITY_DIR,
-                                                     .direction = {0, -1, 0},
-                                                     .strength = 325.0f});
-  ForceField_AddLayer(&s_tubeMistField, (ForceLayer){.type = FORCE_NOISE_PERLIN,
-                                                     .strength = 15.0f,
-                                                     .noiseScale = 0.008f,
-                                                     .noiseSpeed = 0.3f});
-  ForceField_AddLayer(&s_tubeMistField,
-                      (ForceLayer){.type = FORCE_DRAG, .strength = 2.0f});
-
-  // Mesh config: dung default (dung hanh vi goc cua Water Stream).
   s_waterTubeConfig = ProceduralMesh_DefaultTubeConfig();
 
-  // Impact burst config: gop lai dung 4 buoc trong TriggerWaterBurst() ban goc.
-  s_waterImpactConfig.distortEnabled = true;
-  s_waterImpactConfig.distortRadius = 85.0f;
-  s_waterImpactConfig.distortStrength = 0.7f;
-  s_waterImpactConfig.distortLife = 0.6f;
-  s_waterImpactConfig.distortSpeed = 150.0f;
+  RebuildSplashField();
+  // s_tubeMistField is kept for backward compat (not used in Update — we use
+  // s_mistFieldActive which is rebuilt each frame from tunables).
+  ForceField_Clear(&s_tubeMistField);
 
-  s_waterImpactConfig.decalEnabled = true;
-  s_waterImpactConfig.decalTex = s_causticsTex;
-  s_waterImpactConfig.decalScale =
-      TUBE_BASE_RADIUS * 0.25f; // nhan sizeScale luc goi
-  s_waterImpactConfig.decalLife = 4.0f;
-  s_waterImpactConfig.decalTint = ColorAlpha(ELEMENT_COLOR_WATER, 0.7f);
-  s_waterImpactConfig.decalRandomRotation = true;
-
-  s_waterImpactConfig.lightEnabled = true;
-  s_waterImpactConfig.lightColor = ELEMENT_COLOR_WATER;
-  s_waterImpactConfig.lightRadius = 55.0f; // nhan sizeScale luc goi
-  s_waterImpactConfig.lightLife = 0.5f;
-
-  s_waterImpactConfig.particlesEnabled = true;
-  s_waterImpactConfig.particles.countMin = 25;
-  s_waterImpactConfig.particles.countMax = 40;
-  s_waterImpactConfig.particles.speedMin = 120.0f;
-  s_waterImpactConfig.particles.speedMax = 250.0f;
-  s_waterImpactConfig.particles.radiusMin = 3.0f;
-  s_waterImpactConfig.particles.radiusMax = 8.0f;
-  s_waterImpactConfig.particles.lifetimeMin = 0.6f;
-  s_waterImpactConfig.particles.lifetimeMax = 1.2f;
-  s_waterImpactConfig.particles.pitchRange =
-      PI; // spherical splash, giong ban goc
-  s_waterImpactConfig.particles.upwardBias = 100.0f;
-  s_waterImpactConfig.particles.colorStart = ELEMENT_COLOR_WATER;
-  s_waterImpactConfig.particles.colorEnd =
-      ColorAlpha(ColorLerp(ELEMENT_COLOR_WATER, WHITE, 0.3f), 0.0f);
-  s_waterImpactConfig.particles.forceField = &s_tubeSplashField;
-  s_waterImpactConfig.particles.gradient = &s_splashGrad;
+  RebuildImpactConfig();
 
   s_skillIndex = Skill_GetIndexByName("TUBE");
+
+  static SkillTunableEntry s_tunables[TUBE_TUNABLE_COUNT];
+  int tn = 0;
+  #include "tube_skill_tunables.inl"
+
+  SkillTunables_LoadPersisted(
+      "skills/water/water_stream/tube_skill.tuning",
+      s_tunables, tn);
+  RegisterSkillTunables(s_skillIndex, s_tunables, tn);
 }
 
 void CastTubeSkill(int agentId, Vector3 startPos, Vector3 target, float twistPhase,
@@ -172,30 +250,29 @@ void CastTubeSkill(int agentId, Vector3 startPos, Vector3 target, float twistPha
   float clampedScale = ClampSizeScale(sizeScale);
   for (int i = 0; i < MAX_TUBE_EMITTERS; i++) {
     if (!emitters[i].active) {
-      emitters[i].active = true;
+      emitters[i].active       = true;
       emitters[i].ownerAgentId = agentId;
-      emitters[i].p0 = startPos;
-      emitters[i].p3 = target;
-      emitters[i].progress = 0.0f;
-      emitters[i].sizeScale = clampedScale;
-      emitters[i].headPos = startPos;
+      emitters[i].p0           = startPos;
+      emitters[i].p3           = target;
+      emitters[i].progress     = 0.0f;
+      emitters[i].sizeScale    = clampedScale;
+      emitters[i].headPos      = startPos;
 
-      float dist = Vector3Distance(startPos, target);
-      Vector3 dir = Vector3Normalize(Vector3Subtract(target, startPos));
-      Vector3 up = (Vector3){0.0f, 1.0f, 0.0f};
+      float dist   = Vector3Distance(startPos, target);
+      Vector3 dir  = Vector3Normalize(Vector3Subtract(target, startPos));
+      Vector3 up   = (Vector3){0.0f, 1.0f, 0.0f};
       Vector3 right = Vector3Normalize(Vector3CrossProduct(up, dir));
 
-      float lateralOffset = dist * 0.4f * cosf(twistPhase);
-      float heightOffset = dist * 0.3f;
+      // Distance-proportional lateral/height offsets — floor+cap (Pass 4)
+      float lateralOffset = fminf(fmaxf(dist * 0.4f * cosf(twistPhase), 0.2f), dist * 0.6f);
+      float heightOffset  = fminf(fmaxf(dist * 0.3f, 0.1f), dist * 0.5f);
 
       emitters[i].p1 = Vector3Add(startPos, Vector3Scale(dir, dist * 0.3f));
-      emitters[i].p1 =
-          Vector3Add(emitters[i].p1, Vector3Scale(right, lateralOffset));
+      emitters[i].p1 = Vector3Add(emitters[i].p1, Vector3Scale(right, lateralOffset));
       emitters[i].p1.y += heightOffset;
 
       emitters[i].p2 = Vector3Add(startPos, Vector3Scale(dir, dist * 0.7f));
-      emitters[i].p2 =
-          Vector3Add(emitters[i].p2, Vector3Scale(right, -lateralOffset));
+      emitters[i].p2 = Vector3Add(emitters[i].p2, Vector3Scale(right, -lateralOffset));
       emitters[i].p2.y += heightOffset * 0.5f;
       break;
     }
@@ -208,6 +285,9 @@ void CastTubeSkill(int agentId, Vector3 startPos, Vector3 target, float twistPha
 }
 
 void UpdateTubeSkill(float dt) {
+  RebuildSplashField();
+  RebuildImpactConfig();
+
   for (int e = 0; e < MAX_TUBE_EMITTERS; e++) {
     if (!emitters[e].active)
       continue;
@@ -223,17 +303,25 @@ void UpdateTubeSkill(float dt) {
         emitters[e].progress);
 
     if (GetRandomValue(0, 100) < 60) {
+      RebuildMistField();
       ParticleConfig cfgMist = {0};
-      cfgMist.position = emitters[e].headPos;
-      cfgMist.velocity =
-          (Vector3){(Random01() - 0.5f) * 40.0f, Random01() * 50.0f,
-                    (Random01() - 0.5f) * 40.0f};
-      cfgMist.radius = Math_Mix(2.0f, 5.0f, Random01()) * emitters[e].sizeScale;
-      cfgMist.lifetime = Math_Mix(0.2f, 0.5f, Random01());
+      cfgMist.position   = emitters[e].headPos;
+      cfgMist.velocity   = (Vector3){
+          (Random01() - 0.5f) * s_mistVelXZ * 2.0f,
+          Random01() * s_mistVelYMax,
+          (Random01() - 0.5f) * s_mistVelXZ * 2.0f
+      };
+      cfgMist.radius     = Math_Mix(s_mistRadiusMin, s_mistRadiusMax, Random01())
+                           * emitters[e].sizeScale;
+      cfgMist.lifetime   = Math_Mix(s_mistLifeMin, s_mistLifeMax, Random01());
       cfgMist.colorStart = ColorAlpha(ELEMENT_COLOR_WATER, 0.7f);
-      cfgMist.colorEnd = (Color){255, 255, 255, 0};
-      cfgMist.forceField = &s_tubeMistField;
-      cfgMist.gradient = &s_splashGrad;
+      cfgMist.colorEnd   = (Color){255, 255, 255, 0};
+      cfgMist.forceField = &s_mistFieldActive;
+      cfgMist.gradient   = &s_splashGrad;
+      cfgMist.radiusCurve   = &s_mistRadiusCurve;
+      cfgMist.speedCurve    = &s_mistSpeedCurve;
+      cfgMist.alphaCurve    = &s_mistAlphaCurve;
+      cfgMist.emissiveCurve = &s_mistEmissiveCurve;
       SpawnParticle(cfgMist);
     }
   }
@@ -242,13 +330,9 @@ void UpdateTubeSkill(float dt) {
 void DrawTubeSkill(void) {
   bool anyActive = false;
   for (int i = 0; i < MAX_TUBE_EMITTERS; i++) {
-    if (emitters[i].active) {
-      anyActive = true;
-      break;
-    }
+    if (emitters[i].active) { anyActive = true; break; }
   }
-  if (!anyActive)
-    return;
+  if (!anyActive) return;
 
   if (tubeShader.locs == NULL) return;
 
@@ -257,38 +341,25 @@ void DrawTubeSkill(void) {
   rlEnableBackfaceCulling();
   BeginBlendMode(BLEND_ALPHA);
   BeginShaderMode(tubeShader);
-  // ProceduralMesh_BuildTube tạo geometry trong world-space → matModel là identity.
-  // Raylib không tự upload matModel khi dùng rlgl immediate mode trên Android GLES 3.0
-  // → normalize(mat4(0) * normal) = NaN → màu trắng. Phải set thủ công.
-  // Rule 11 fix: `tubeShader.locs[SHADER_LOC_MATRIX_MODEL] >= 0` was the WRONG
-  // check (CORE_API.md) — raylib never populates that array slot for a name
-  // outside its fixed default-uniform list, so it stays 0 from RL_CALLOC and
-  // `0 >= 0` always passes even though it isn't matModel's real location,
-  // risking a silent overwrite of whatever uniform actually lives at GL
-  // location 0. Use SkillManager_BeginShader() instead — it looks up
-  // "matModel" by name (GetShaderLocation, real -1 when absent), sets it to
-  // identity, and also auto-binds u_time/viewPos/u_resolution (called first,
-  // right after BeginShaderMode, so later manual SetShaderValue calls for
-  // time/viewPos below still take effect/stay authoritative).
+  // ProceduralMesh_BuildTube produces world-space geometry → matModel is
+  // identity. Rule 11 fix: use SkillManager_BeginShader() (not the raw locs
+  // array) to set matModel and auto-bind u_time/viewPos/u_resolution.
   SkillManager_BeginShader(tubeShader);
 
   SetShaderValue(tubeShader, timeLoc, &time, SHADER_UNIFORM_FLOAT);
   SetShaderValue(tubeShader, viewPosLoc, &camera.position, SHADER_UNIFORM_VEC3);
-  // u_lightDir is a custom uniform SkillManager_BeginShader() doesn't bind
-  // (it only auto-binds u_time/viewPos/u_resolution) — set it manually.
+  // u_lightDir is a custom uniform not auto-bound by SkillManager_BeginShader()
   Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
   SetShaderValue(tubeShader, lightDirLoc, &lightDir, SHADER_UNIFORM_VEC3);
   float uvLength = TUBE_UV_LENGTH_SCALE;
   SetShaderValue(tubeShader, uvLengthLoc, &uvLength, SHADER_UNIFORM_FLOAT);
 
-  // Quy tac 9.1: reset vertex color truoc khi ve mesh dung shader mau/texture
-  // rieng
+  // Rule 9.1: reset vertex color before drawing mesh with custom color/texture shader
   rlColor4ub(255, 255, 255, 255);
 
   for (int e = 0; e < MAX_TUBE_EMITTERS; e++) {
-    if (!emitters[e].active)
-      continue;
-    float radius = TUBE_BASE_RADIUS * emitters[e].sizeScale;
+    if (!emitters[e].active) continue;
+    float radius = s_tubeBaseRadius * emitters[e].sizeScale;
 
     TubeMeshData mesh;
     ProceduralMesh_BuildTube(&mesh, emitters[e].p0, emitters[e].p1,
@@ -315,9 +386,8 @@ int GetTubeSkillProjectiles(SkillProjectile *outProjectiles,
   for (int i = 0; i < MAX_TUBE_EMITTERS; i++) {
     if (emitters[i].active && count < maxProjectiles) {
       outProjectiles[count].position = emitters[i].headPos;
-      outProjectiles[count].radius =
-          TUBE_BASE_RADIUS * emitters[i].sizeScale * 1.6f;
-      outProjectiles[count].active = true;
+      outProjectiles[count].radius   = s_tubeBaseRadius * emitters[i].sizeScale * 1.6f;
+      outProjectiles[count].active   = true;
       count++;
     }
   }

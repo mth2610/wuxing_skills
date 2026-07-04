@@ -31,7 +31,10 @@
 
 #define MAX_SPINES        2
 #define MAX_VERTS         10    // vertebra clusters along the path (head extra)
-#define VERT_SPACING      55.0f
+
+// Pass 1: VERT_SPACING rescaled 55.0 cm → 0.55 m
+static float s_vertSpacing = 0.55f;
+static float s_shakeEnable = 1.0f;   // 1=on, 0=off
 
 #define CAST_TIME         0.5f
 #define RISE_TIME         0.22f
@@ -40,6 +43,66 @@
 #define ACTIVE_TIME       2.2f
 #define COLLAPSE_TIME     0.9f
 #define DOT_TICK          0.5f
+
+// Pass 5: sandbox-tunable geometry knobs
+// Vertebra heights (meters): base + arc delta, randomised ±15% per vertebra
+static float s_vertHeightBase  = 0.44f;  // Pass 1: was 44.0f cm
+static float s_vertHeightArc   = 0.30f;  // Pass 1: was 30.0f cm (arc along path)
+// Head height (meters)
+static float s_headHeight      = 0.72f;  // Pass 1: was 72.0f cm
+// Fissure mesh dimensions (meters)
+static float s_fissureWidth    = 0.22f;  // Pass 1: was 22.0f cm
+static float s_fissureDepth    = 0.18f;  // Pass 1: was 18.0f cm
+// Decal radii (meters)
+static float s_crackDecalRadius    = 0.46f;  // Pass 1: was 46.0f cm (base, +0..14 cm jitter → 0..0.14)
+static float s_shatterDecalRadiusV = 0.34f;  // Pass 1: was 34.0f cm, vertebra aftermath
+static float s_shatterDecalRadiusH = 0.55f;  // Pass 1: was 55.0f cm, head aftermath
+static float s_runeDecalRadius     = 0.60f;  // Pass 1: was 60.0f cm, windup rune
+static float s_lavaDecalRadius     = 0.65f;  // Pass 1: was 65.0f cm, head lava
+// VFX light radii (meters)
+static float s_castLightRadius    = 0.70f;   // Pass 1: was 70.0f cm
+static float s_eruptLightRadius   = 0.60f;   // Pass 1: was 60.0f cm, per vertebra
+static float s_headLightRadius    = 1.50f;   // Pass 1: was 150.0f cm
+// AoE damage radii (meters)
+static float s_vertAoERadius      = 0.32f;   // Pass 1: was 32.0f cm
+static float s_headAoERadius      = 0.60f;   // Pass 1: was 60.0f cm
+static float s_dotAoERadius       = 0.55f;   // Pass 1: was 55.0f cm
+// Projectile query radius (meters)
+static float s_projectileRadius   = 0.45f;   // Pass 1: was 45.0f cm
+// Screen distort radius (meters)
+static float s_distortRadius      = 1.30f;   // Pass 1: was 130.0f cm
+// Emitter rate (not spatial — particles/sec, unchanged)
+static float s_headEmitterRate    = 24.0f;
+// Particle speeds (m/s): eruption burst outward / upward
+static float s_burstSpeedOut      = 0.70f;   // Pass 1: was 70.0f cm/s
+static float s_burstSpeedUpMin    = 0.60f;   // Pass 1: was 60 cm/s
+static float s_burstSpeedUpMax    = 1.30f;   // Pass 1: was 130 cm/s
+// Ember drift speeds (m/s): active-phase vertebra motes
+static float s_emberSpeedXZ       = 0.12f;   // Pass 1: was 12 cm/s
+static float s_emberSpeedUpMin    = 0.18f;   // Pass 1: was 18 cm/s
+static float s_emberSpeedUpMax    = 0.40f;   // Pass 1: was 40 cm/s
+// Particle radii (meters)
+static float s_burstRadiusMin     = 0.018f;  // Pass 1: was 1.8 cm (18/10 cm)
+static float s_burstRadiusMax     = 0.042f;  // Pass 1: was 4.2 cm (42/10 cm)
+static float s_emberRadiusMin     = 0.008f;  // Pass 1: was 0.8 cm  (8/10 cm)
+static float s_emberRadiusMax     = 0.016f;  // Pass 1: was 1.6 cm (16/10 cm)
+
+// Per-phase over-lifetime curves (flat → no-op until shaped in sandbox)
+static SkillCurve s_castRadiusCurve, s_castSpeedCurve, s_castAlphaCurve, s_castEmissiveCurve;
+static SkillCurve s_eruptRadiusCurve, s_eruptSpeedCurve, s_eruptAlphaCurve, s_eruptEmissiveCurve;
+static SkillCurve s_activeRadiusCurve, s_activeSpeedCurve, s_activeAlphaCurve, s_activeEmissiveCurve;
+
+// One tunable force mix per phase
+static SkillForceMix s_castForce;
+static SkillForceMix s_eruptForce;
+static SkillForceMix s_activeForce;
+static ForceField    s_castField;
+static ForceField    s_eruptField;
+static ForceField    s_activeField;
+
+// 3 phases × (3 curves + 1 ForceMix×29) + ~40 scalar tunables
+// = 3×32 + 40 = 136
+#define DIA_LONG_TUNABLE_COUNT 144
 
 typedef enum {
     SPINE_INACTIVE = 0,
@@ -124,9 +187,10 @@ static void SpineStartCollapse(DragonSpine *sp)
     // Aftermath: lasting shatter marks where the spine stood.
     for (int v = 0; v < sp->vertCount; v += 2) {
         SpawnGroundDecal(DECAL_PRESET_EARTH_SHATTER, sp->verts[v].pos,
-                         34.0f * sp->scale, 6.0f);
+                         s_shatterDecalRadiusV * sp->scale, 6.0f);
     }
-    SpawnGroundDecal(DECAL_PRESET_EARTH_SHATTER, sp->headPos, 55.0f * sp->scale, 6.0f);
+    SpawnGroundDecal(DECAL_PRESET_EARTH_SHATTER, sp->headPos,
+                     s_shatterDecalRadiusH * sp->scale, 6.0f);
 }
 
 // CORE_ISSUES.md Item 13 — zone skill: let gameplay code query "is my spine gone".
@@ -171,6 +235,28 @@ void InitDiaLongSkill(int screenWidth, int screenHeight)
     ColorGradient_AddStop(&s_dustGrad, 0.00f, ColorAlpha(ORANGE, 0.9f));
     ColorGradient_AddStop(&s_dustGrad, 0.35f, ColorAlpha(ELEMENT_COLOR_EARTH, 0.8f));
     ColorGradient_AddStop(&s_dustGrad, 1.00f, (Color){ 40, 28, 18, 0 });
+
+    // Pass 5 — per-phase curves initialised flat (no-op until shaped in sandbox)
+    SkillCurve_SetConstant(&s_castRadiusCurve,    1.0f);
+    SkillCurve_SetConstant(&s_castSpeedCurve,     1.0f);
+    SkillCurve_SetConstant(&s_castAlphaCurve,     1.0f);
+    SkillCurve_SetConstant(&s_castEmissiveCurve,  1.0f);
+    SkillCurve_SetConstant(&s_eruptRadiusCurve,   1.0f);
+    SkillCurve_SetConstant(&s_eruptSpeedCurve,    1.0f);
+    SkillCurve_SetConstant(&s_eruptAlphaCurve,    1.0f);
+    SkillCurve_SetConstant(&s_eruptEmissiveCurve, 1.0f);
+    SkillCurve_SetConstant(&s_activeRadiusCurve,  1.0f);
+    SkillCurve_SetConstant(&s_activeSpeedCurve,   1.0f);
+    SkillCurve_SetConstant(&s_activeAlphaCurve,   1.0f);
+    SkillCurve_SetConstant(&s_activeEmissiveCurve,1.0f);
+
+    // Pass 5 — register tunables
+    static SkillTunableEntry s_tunables[DIA_LONG_TUNABLE_COUNT];
+    int tn = 0;
+    #include "dia_long_skill_tunables.inl"
+    SkillTunables_LoadPersisted("skills/earth/dia_long_skill/dia_long.tuning",
+                                s_tunables, tn);
+    RegisterSkillTunables(s_skillIndex, s_tunables, tn);
 }
 
 void CastDiaLongSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params)
@@ -198,7 +284,7 @@ void CastDiaLongSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams
     for (int i = 0; i < rawCount; i++) rawPath[i].y = 0.0f;
 
     Vector3 sampled[MAX_VERTS + 1];
-    int sampledCount = SamplePath(rawPath, rawCount, VERT_SPACING * scale,
+    int sampledCount = SamplePath(rawPath, rawCount, s_vertSpacing * scale,
                                   sampled, MAX_VERTS + 1);
     if (sampledCount < 2) {
         sampled[0] = rawPath[0];
@@ -230,7 +316,8 @@ void CastDiaLongSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams
         vb->pos    = sampled[v];
         vb->delay  = (float)v * VERT_STAGGER;
         vb->riseT  = 0.0f;
-        vb->height = (44.0f + 30.0f * t) * scale
+        // Pass 1: height now in meters (was cm)
+        vb->height = (s_vertHeightBase + s_vertHeightArc * t) * scale
                    * ((float)GetRandomValue(85, 115) / 100.0f); // §12.3
         vb->erupted = false;
 
@@ -259,7 +346,7 @@ void CastDiaLongSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams
     if (Vector3Length(sp->headDir) < 0.001f) sp->headDir = (Vector3){ 1, 0, 0 };
     sp->headDir    = Vector3Normalize(sp->headDir);
     sp->headDelay  = (float)sp->vertCount * VERT_STAGGER + 0.15f;
-    sp->headHeight = 72.0f * scale;
+    sp->headHeight = s_headHeight * scale; // Pass 1: now in meters
     sp->headRiseT  = 0.0f;
     sp->headErupted = false;
 
@@ -279,7 +366,7 @@ void CastDiaLongSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams
     // The dragon vein itself: one jagged 3D crack following the whole drawn
     // path — wide and deep enough that the magma glow inside is clearly seen.
     ProceduralMesh_BuildFissure(&sp->fissure, sampled, sampledCount,
-                                22.0f * scale, 18.0f * scale, 0.85f,
+                                s_fissureWidth * scale, s_fissureDepth * scale, 0.85f,
                                 GetRandomValue(0, 99999));
 
     // Spider-crack telegraph: overlapping crack decals along the whole drawn
@@ -291,18 +378,21 @@ void CastDiaLongSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams
             : sp->headDir;
         float yawDeg = atan2f(segDir.z, segDir.x) * RAD2DEG
                      + (float)GetRandomValue(-25, 25); // §12.2 jitter
-        DecalSystem_Add(sampled[i], yawDeg,
-                        (46.0f + (float)GetRandomValue(0, 14)) * scale,
-                        s_crackTex, 6.5f,
+        // Pass 4: cap crack decal radius proportional to path spacing
+        float crackR = fminf(fmaxf((s_crackDecalRadius + (float)GetRandomValue(0, 14) * 0.01f) * scale,
+                                   s_vertSpacing * 0.18f),
+                             s_vertSpacing * scale * 0.6f);
+        DecalSystem_Add(sampled[i], yawDeg, crackR, s_crackTex, 6.5f,
                         ColorAlpha(ELEMENT_COLOR_EARTH, 0.85f));
     }
 
     // Telegraph: windup at the caster, rune warning where the head will erupt.
+    // CORE_ISSUES.md Item 34 — EARTH_CRACK internals not yet rescaled.
     SpawnCastEffect(startPos, EFFECT_PRESET_EARTH_CRACK, scale * 0.7f);
     PlayCastSound(EFFECT_PRESET_EARTH_CRACK);
-    SpawnGroundDecal(DECAL_PRESET_EARTH_RUNE, sp->headPos, 60.0f * scale,
+    SpawnGroundDecal(DECAL_PRESET_EARTH_RUNE, sp->headPos, s_runeDecalRadius * scale,
                      CAST_TIME + sp->headDelay + 1.0f);
-    VFXLight_Spawn(startPos, ORANGE, 70.0f * scale, CAST_TIME, VFX_PRIORITY_LOW);
+    VFXLight_Spawn(startPos, ORANGE, s_castLightRadius * scale, CAST_TIME, VFX_PRIORITY_LOW);
 
     SkillManager_TriggerCooldown(s_skillIndex, agentId,
                                  Skill_CalculateCooldown(SKILL_CAT_AOE_CONTROL, params));
@@ -311,22 +401,36 @@ void CastDiaLongSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams
 static void VertebraErupt(DragonSpine *sp, Vertebra *vb)
 {
     vb->erupted = true;
-    SpawnGroundDecal(DECAL_PRESET_EARTH_SHATTER, vb->pos, 30.0f * sp->scale, 3.0f);
-    VFXLight_Spawn(vb->pos, ORANGE, 60.0f * sp->scale, 0.35f, VFX_PRIORITY_LOW);
-    CameraFX_Shake(0.06f);
-    Entity_ApplyAoEDamage(vb->pos, 32.0f * sp->scale, sp->damage * 0.20f, 140.0f);
+    SpawnGroundDecal(DECAL_PRESET_EARTH_SHATTER, vb->pos,
+                     s_shatterDecalRadiusV * sp->scale, 3.0f);
+    VFXLight_Spawn(vb->pos, ORANGE, s_eruptLightRadius * sp->scale, 0.35f, VFX_PRIORITY_LOW);
+    if (s_shakeEnable > 0.5f) CameraFX_Shake(0.06f);
+    // Pass 4: clamp vertebra AoE radius to sensible proportion of height
+    float aoeR = fminf(fmaxf(s_vertAoERadius * sp->scale,
+                              vb->height * 0.3f),
+                       vb->height * 1.5f);
+    Entity_ApplyAoEDamage(vb->pos, aoeR, sp->damage * 0.20f, 140.0f);
 
     for (int i = 0; i < 10; i++) {
         float a = (float)i / 10.0f * 2.0f * PI;
-        Vector3 vel = { cosf(a) * 70.0f * sp->scale,
-                        (float)GetRandomValue(60, 130),
-                        sinf(a) * 70.0f * sp->scale };
+        // Pass 1: burst velocities now in m/s
+        float upSpeed = s_burstSpeedUpMin
+                      + (s_burstSpeedUpMax - s_burstSpeedUpMin)
+                        * ((float)GetRandomValue(0, 100) / 100.0f);
+        Vector3 vel = { cosf(a) * s_burstSpeedOut * sp->scale,
+                        upSpeed,
+                        sinf(a) * s_burstSpeedOut * sp->scale };
+        // Pass 1: particle radius now in meters
+        float r = s_burstRadiusMin
+                + (s_burstRadiusMax - s_burstRadiusMin)
+                  * ((float)GetRandomValue(0, 100) / 100.0f);
         SpawnParticle((ParticleConfig){
-            .position = vb->pos,
-            .velocity = vel,
-            .radius   = (float)GetRandomValue(18, 42) / 10.0f * sp->scale,
-            .lifetime = 0.9f,
-            .gradient = &s_dustGrad
+            .position      = vb->pos,
+            .velocity      = vel,
+            .radius        = r * sp->scale,
+            .lifetime      = 0.9f,
+            .gradient      = &s_dustGrad,
+            .emissiveCurve = &s_eruptEmissiveCurve
         });
     }
 }
@@ -334,24 +438,35 @@ static void VertebraErupt(DragonSpine *sp, Vertebra *vb)
 static void HeadErupt(DragonSpine *sp)
 {
     sp->headErupted = true;
+    // CORE_ISSUES.md Item 34 — EARTH_CRACK internals not yet rescaled.
     SpawnImpactEffect(sp->headPos, EFFECT_PRESET_EARTH_CRACK, 1.5f * sp->scale);
     PlayImpactSound(EFFECT_PRESET_EARTH_CRACK);
-    ScreenDistort_Add(sp->headPos, 130.0f * sp->scale, 0.8f, 0.45f, 250.0f);
-    CameraFX_Shake(0.5f);
+    // Pass 1: distort radius in meters; speed/strength are unitless screen params
+    ScreenDistort_Add(sp->headPos, s_distortRadius * sp->scale, 0.8f, 0.45f, 250.0f);
+    if (s_shakeEnable > 0.5f) CameraFX_Shake(0.5f);
     // Held for the whole active phase per VFX standards, ultimate priority.
-    VFXLight_Spawn(sp->headPos, ORANGE, 150.0f * sp->scale,
+    VFXLight_Spawn(sp->headPos, ORANGE, s_headLightRadius * sp->scale,
                    ACTIVE_TIME + HEAD_RISE_TIME, VFX_PRIORITY_HIGH_ULTIMATE);
-    Entity_ApplyAoEDamage(sp->headPos, 60.0f * sp->scale, sp->damage, sp->knockback * 1.4f);
+    // Pass 4: head AoE radius floored/capped proportional to head height
+    float headAoER = fminf(fmaxf(s_headAoERadius * sp->scale,
+                                  sp->headHeight * 0.5f),
+                           sp->headHeight * 2.0f);
+    Entity_ApplyAoEDamage(sp->headPos, headAoER, sp->damage, sp->knockback * 1.4f);
     sp->headEmitterId = Emitter_AttachToPoint(EMITTER_EARTH_DUST, sp->headPos,
-                                              24.0f, ACTIVE_TIME + HEAD_RISE_TIME);
+                                              s_headEmitterRate, ACTIVE_TIME + HEAD_RISE_TIME);
     // Crawling lava-crack decal (radial flow shader) under the head zone.
-    SpawnGroundDecal(DECAL_PRESET_FIRE_LAVA, sp->headPos, 65.0f * sp->scale,
-                     ACTIVE_TIME + COLLAPSE_TIME);
+    SpawnGroundDecal(DECAL_PRESET_FIRE_LAVA, sp->headPos,
+                     s_lavaDecalRadius * sp->scale, ACTIVE_TIME + COLLAPSE_TIME);
 }
 
 void UpdateDiaLongSkill(float dt, Vector3 enemyPos, float enemyRadius)
 {
     (void)enemyPos; (void)enemyRadius;
+
+    // Rebuild force fields from tunables each frame (cheap, matches thunder_orb pattern)
+    SkillForceMix_AddLayers(&s_castForce,   &s_castField);
+    SkillForceMix_AddLayers(&s_eruptForce,  &s_eruptField);
+    SkillForceMix_AddLayers(&s_activeForce, &s_activeField);
 
     for (int i = 0; i < MAX_SPINES; i++) {
         DragonSpine *sp = &s_spines[i];
@@ -363,9 +478,10 @@ void UpdateDiaLongSkill(float dt, Vector3 enemyPos, float enemyRadius)
             if (sp->timer >= CAST_TIME) {
                 sp->state = SPINE_ERUPTING;
                 sp->timer = 0.0f;
+                // CORE_ISSUES.md Item 34 — EARTH_CRACK internals not yet rescaled.
                 SpawnImpactEffect(sp->verts[0].pos, EFFECT_PRESET_EARTH_CRACK,
                                   0.7f * sp->scale);
-                CameraFX_Shake(0.25f);
+                if (s_shakeEnable > 0.5f) CameraFX_Shake(0.25f);
             }
             break;
         }
@@ -394,21 +510,34 @@ void UpdateDiaLongSkill(float dt, Vector3 enemyPos, float enemyRadius)
             sp->dotTimer += dt;
             if (sp->dotTimer >= DOT_TICK) {
                 sp->dotTimer -= DOT_TICK;
-                Entity_ApplyAoEDamage(sp->headPos, 55.0f * sp->scale,
-                                      sp->damage * 0.15f, 0.0f);
+                // Pass 4: dot AoE radius floored/capped around head height
+                float dotR = fminf(fmaxf(s_dotAoERadius * sp->scale,
+                                         sp->headHeight * 0.4f),
+                                   sp->headHeight * 2.0f);
+                Entity_ApplyAoEDamage(sp->headPos, dotR, sp->damage * 0.15f, 0.0f);
             }
             // Ember motes drifting off a random vertebra — continuous life
             // while active, per VFX standards.
             if (GetRandomValue(0, 100) < 30 && sp->vertCount > 0) {
                 const Vertebra *vb = &sp->verts[GetRandomValue(0, sp->vertCount - 1)];
+                // Pass 1: velocities in m/s, radius in meters
+                float xzSign = (GetRandomValue(0, 1) ? 1.0f : -1.0f);
+                float zSign  = (GetRandomValue(0, 1) ? 1.0f : -1.0f);
+                float upSpeed = s_emberSpeedUpMin
+                              + (s_emberSpeedUpMax - s_emberSpeedUpMin)
+                                * ((float)GetRandomValue(0, 100) / 100.0f);
+                float er = s_emberRadiusMin
+                         + (s_emberRadiusMax - s_emberRadiusMin)
+                           * ((float)GetRandomValue(0, 100) / 100.0f);
                 SpawnParticle((ParticleConfig){
-                    .position = { vb->pos.x, vb->pos.y + vb->height * 0.5f, vb->pos.z },
-                    .velocity = { (float)GetRandomValue(-12, 12),
-                                  (float)GetRandomValue(18, 40),
-                                  (float)GetRandomValue(-12, 12) },
-                    .radius   = (float)GetRandomValue(8, 16) / 10.0f * sp->scale,
-                    .lifetime = 1.1f,
-                    .gradient = &s_dustGrad
+                    .position      = { vb->pos.x, vb->pos.y + vb->height * 0.5f, vb->pos.z },
+                    .velocity      = { xzSign * s_emberSpeedXZ,
+                                       upSpeed,
+                                       zSign  * s_emberSpeedXZ },
+                    .radius        = er * sp->scale,
+                    .lifetime      = 1.1f,
+                    .gradient      = &s_dustGrad,
+                    .emissiveCurve = &s_activeEmissiveCurve
                 });
             }
             if (sp->timer >= ACTIVE_TIME) SpineStartCollapse(sp);
@@ -464,7 +593,8 @@ void DrawDiaLongSkill(void)
                        ? vb->riseT                    // plain sink, no overshoot
                        : EaseOutBack(vb->riseT);      // eruption punch
             rlPushMatrix();
-            rlTranslatef(0.0f, -(1.0f - rise) * (vb->height + 6.0f), 0.0f);
+            // Pass 1: underground offset in meters (6 cm = 0.06 m)
+            rlTranslatef(0.0f, -(1.0f - rise) * (vb->height + 0.06f), 0.0f);
             ProceduralMesh_DrawShardCluster(&vb->shards, ELEMENT_COLOR_EARTH);
             rlPopMatrix();
         }
@@ -474,7 +604,8 @@ void DrawDiaLongSkill(void)
                        ? sp->headRiseT
                        : EaseOutBack(sp->headRiseT);
             rlPushMatrix();
-            rlTranslatef(0.0f, -(1.0f - rise) * (sp->headHeight + 8.0f), 0.0f);
+            // Pass 1: underground offset in meters (8 cm = 0.08 m)
+            rlTranslatef(0.0f, -(1.0f - rise) * (sp->headHeight + 0.08f), 0.0f);
             ProceduralMesh_DrawShardCluster(&sp->headShards, ELEMENT_COLOR_EARTH);
             rlPopMatrix();
         }
@@ -505,7 +636,7 @@ int GetDiaLongSkillProjectiles(SkillProjectile *outProjectiles, int maxProjectil
         const DragonSpine *sp = &s_spines[i];
         if (sp->state != SPINE_ERUPTING && sp->state != SPINE_ACTIVE) continue;
         outProjectiles[count].position = sp->headPos;
-        outProjectiles[count].radius   = 45.0f * sp->scale;
+        outProjectiles[count].radius   = s_projectileRadius * sp->scale; // Pass 1: in meters
         outProjectiles[count].active   = true;
         count++;
     }

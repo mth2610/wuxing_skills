@@ -37,10 +37,10 @@ static float s_dragonHeadScale      = 0.0012f; // pixel-to-world-meters ratio fo
 // Curves: sampled at t=age/lifetime; multiplies radius/speed/alpha per particle per frame.
 // Seeded flat at 1.0 (no-op) — shape them in the sandbox to get bloom/pop/fade effects.
 // ForceMixes: all 8 ForceTypes simultaneously available, each defaults to 0 (no effect).
-static SkillCurve    s_castRadiusCurve,    s_castSpeedCurve,    s_castAlphaCurve;
-static SkillCurve    s_flyRadiusCurve,     s_flySpeedCurve,     s_flyAlphaCurve;
-static SkillCurve    s_impactRadiusCurve,  s_impactSpeedCurve,  s_impactAlphaCurve;
-static SkillCurve    s_disperseRadiusCurve, s_disperseSpeedCurve, s_disperseAlphaCurve;
+static SkillCurve    s_castRadiusCurve,    s_castSpeedCurve,    s_castAlphaCurve,    s_castEmissiveCurve;
+static SkillCurve    s_flyRadiusCurve,     s_flySpeedCurve,     s_flyAlphaCurve,     s_flyEmissiveCurve;
+static SkillCurve    s_impactRadiusCurve,  s_impactSpeedCurve,  s_impactAlphaCurve,  s_impactEmissiveCurve;
+static SkillCurve    s_disperseRadiusCurve, s_disperseSpeedCurve, s_disperseAlphaCurve, s_disperseEmissiveCurve;
 static SkillForceMix s_castForce, s_flyForce, s_impactForce, s_disperseForce;
 
 // --- Cast phase ---
@@ -78,5 +78,5 @@ static float s_disperseLifetimeMin = 0.6f,  s_disperseLifetimeMax = 1.3f;
 // 21 original named tunables + 40 shape/feel-range tunables (count/speed/
 // lifetime/radius-min per spawn site) - 4 old single-float alpha entries
 // + 4 phases x 3 over-lifetime curves (radius/speed/alpha) + 4 phases x 1
-// force mix x SKILL_FORCE_MIX_TUNABLE_COUNT(29) = 21 + 40 - 4 + 12 + 116 = 185
-#define FIRE_SKILL_TUNABLE_COUNT 185
+// force mix x SKILL_FORCE_MIX_TUNABLE_COUNT(29) + 4 emissive curves = 21 + 40 - 4 + 12 + 116 + 4 = 189
+#define FIRE_SKILL_TUNABLE_COUNT 189

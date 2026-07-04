@@ -21,6 +21,7 @@ typedef struct {
   const SkillCurve *radiusCurve;
   const SkillCurve *speedCurve;
   const SkillCurve *alphaCurve;
+  const SkillCurve *emissiveCurve;
 
   // Bộ bộ nhớ phẳng lưu trữ cấu hình Sub-Emitter tránh cấp phát động
   ParticleConfig onDeathConfig;
@@ -72,6 +73,7 @@ void SpawnParticle(ParticleConfig config) {
   p->radiusCurve = config.radiusCurve;
   p->speedCurve = config.speedCurve;
   p->alphaCurve = config.alphaCurve;
+  p->emissiveCurve = config.emissiveCurve;
   p->active = true;
 
   // Trích xuất cấu hình Sub-Emitter khi hạt chết (onDeath)
@@ -225,6 +227,16 @@ void DrawParticles(Camera3D camera, Texture2D texture) {
       if (a < 0.0f) a = 0.0f;
       if (a > 255.0f) a = 255.0f;
       c.a = (unsigned char)a;
+    }
+
+    if (p->emissiveCurve) {
+      float mul = SkillCurve_Eval(p->emissiveCurve, 1.0f - lifeRatio);
+      float r = (float)c.r * mul; if (r > 255.0f) r = 255.0f;
+      float g = (float)c.g * mul; if (g > 255.0f) g = 255.0f;
+      float b = (float)c.b * mul; if (b > 255.0f) b = 255.0f;
+      c.r = (unsigned char)r;
+      c.g = (unsigned char)g;
+      c.b = (unsigned char)b;
     }
 
     // Optional over-lifetime radius multiplier (same "age fraction"

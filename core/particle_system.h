@@ -43,6 +43,10 @@ struct ParticleConfig {
                                   // gradient) alpha computation entirely for
                                   // this particle — RGB is unaffected, still
                                   // comes from colorStart/colorEnd/gradient
+  const SkillCurve *emissiveCurve; // multiplies RGB brightness over lifetime
+                                   // (>1.0 pushes channels toward 255, making
+                                   // the particle brighter and more likely to
+                                   // exceed PostFX bloomThreshold). NULL = no-op.
 
   // ============================================================
   // 3.1 SUB-EMITTER SYSTEM — MỞ RỘNG[cite: 4]

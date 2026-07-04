@@ -7,6 +7,8 @@
 #include "core/vfx_light.h"
 #include "core/camera_fx.h"
 #include "core/path_spline.h"
+#include "core/skill_helper.h"
+#include "core/skill_manager.h"
 #include "rlgl.h"
 #include "raymath.h"
 #include <math.h>
@@ -17,25 +19,68 @@
 #define PI 3.14159265358979323846f
 
 /* ================================================================
- * § 1  CONFIGURATIONS
+ * § 1  CONFIGURATIONS  (real-world-scaled: 1 unit = 1 meter)
  * ================================================================ */
 #define MAX_THORNS           32
 #define THORNS_PER_CAST      6
-#define THORN_SPACING        35.0f
-#define THORN_DELAY          0.08f
 
+// Pool-size / timing constants — not spatial, stay #define.
+#define THORN_DELAY          0.08f
 #define THORN_RISE_TIME      0.20f
 #define THORN_HOLD_TIME      1.20f
 #define THORN_DISSOLVE_TIME  0.40f
-
-#define THORN_MAX_HEIGHT     46.0f
-#define THORN_BASE_RADIUS    6.5f
+#define DUST_PARTICLES       12
 #define HEIGHT_SEGS          8
 #define RADIAL_SEGS          8
 
-#define AOE_RADIUS           25.0f
-#define DUST_PARTICLES       12
-#define SHAKE_TRAUMA         0.28f
+// Sandbox-tunable spatial knobs (real-meter scale).
+// See RegisterSkillTunables below and wood_thorns_skill_tunables.inl.
+static float s_thornSpacing     = 0.35f;  // inter-thorn step along path (m)
+static float s_thornMaxHeight   = 0.46f;  // thorn tip height at full scale (m)
+static float s_thornBaseRadius  = 0.065f; // base radius at full scale (m)
+static float s_aoeRadius        = 0.25f;  // hit-test radius (m)
+static float s_decalScale       = 0.78f;  // crack decal half-size = base_radius * decalScale
+static float s_lightRadius      = 0.70f;  // VFXLight radius per thorn (m)
+static float s_shakeTrauma      = 0.28f;  // camera-shake magnitude (unitless 0..1)
+static float s_shakeEnable      = 1.0f;   // 1=on, 0=off (toggle in sandbox)
+static float s_distortRadius    = 0.60f;  // ScreenDistort world radius (m)
+static float s_sideJitterMax    = 0.12f;  // perpendicular spawn jitter half-range (m)
+
+// Dust burst
+static float s_dustSpeedOutMin  = 0.35f;  // outward speed range (m/s)
+static float s_dustSpeedOutMax  = 0.75f;
+static float s_dustSpeedUpMin   = 0.40f;
+static float s_dustSpeedUpMax   = 0.90f;
+static float s_dustRadiusMin    = 0.030f; // particle radius range (m)
+static float s_dustRadiusMax    = 0.060f;
+static float s_dustLifeMin      = 0.60f;
+static float s_dustLifeMax      = 1.20f;
+
+// Holding phase mist
+static float s_mistSpeedOutMin  = 0.05f;
+static float s_mistSpeedOutMax  = 0.15f;
+static float s_mistSpeedUpMin   = 0.15f;
+static float s_mistSpeedUpMax   = 0.35f;
+static float s_mistRadiusMin    = 0.12f;
+static float s_mistRadiusMax    = 0.28f;
+static float s_mistLifeMin      = 0.80f;
+static float s_mistLifeMax      = 1.60f;
+
+// Per-phase over-lifetime curves — default flat (no-op until shaped in sandbox).
+static SkillCurve s_castRadiusCurve, s_castSpeedCurve, s_castAlphaCurve;
+static SkillCurve s_castEmissiveCurve;
+static SkillCurve s_holdRadiusCurve, s_holdSpeedCurve, s_holdAlphaCurve;
+static SkillCurve s_holdEmissiveCurve;
+
+// Per-phase force mixes (all layers default to 0 strength — no behavior change).
+static SkillForceMix s_castForce;
+static SkillForceMix s_holdForce;
+static ForceField    s_castField;
+static ForceField    s_holdField;
+
+// 25 float tunables + 2 phases × 4 curves + 2 phases × SKILL_FORCE_MIX_TUNABLE_COUNT(29)
+// = 25 + 8 + 58 = 91
+#define WOOD_THORNS_TUNABLE_COUNT 96
 
 typedef enum {
     THORN_INACTIVE = 0,
@@ -76,6 +121,7 @@ static int           s_uTimeLoc;
 static int           s_uCamPosLoc;
 static ColorGradient s_dustGrad;
 static int           s_skillIndex = -1;
+static SkillTunableEntry s_tunables[WOOD_THORNS_TUNABLE_COUNT];
 
 /* ================================================================
  * § 3  INTERNAL HELPERS
@@ -108,31 +154,53 @@ static Vector3 RotateAndTilt(Vector3 local, float yaw, float tiltX, float tiltZ)
     return (Vector3){ x3, y2, z3 };
 }
 
+static void RebuildCastField(void) {
+    ForceField_Clear(&s_castField);
+    SkillForceMix_AddLayers(&s_castForce, &s_castField);
+}
+static void RebuildHoldField(void) {
+    ForceField_Clear(&s_holdField);
+    SkillForceMix_AddLayers(&s_holdForce, &s_holdField);
+}
+
 static void SpawnDustBurst(Vector3 pos, float scale)
 {
-    float baseRad = THORN_BASE_RADIUS * scale;
+    RebuildCastField();
+    float baseRad = s_thornBaseRadius * scale;
     for (int i = 0; i < DUST_PARTICLES; i++) {
         float angle = (float)i / DUST_PARTICLES * 2.0f * PI;
+        float outSpd = s_dustSpeedOutMin + (float)GetRandomValue(0, 10000) / 10000.0f *
+                       (s_dustSpeedOutMax - s_dustSpeedOutMin);
+        float upSpd  = s_dustSpeedUpMin  + (float)GetRandomValue(0, 10000) / 10000.0f *
+                       (s_dustSpeedUpMax  - s_dustSpeedUpMin);
         Vector3 vel = {
-            cosf(angle) * (float)GetRandomValue(35, 75),
-            (float)GetRandomValue(40, 90),
-            sinf(angle) * (float)GetRandomValue(35, 75)
+            cosf(angle) * outSpd,
+            upSpd,
+            sinf(angle) * outSpd
         };
         Vector3 particlePos = {
             pos.x + cosf(angle) * baseRad,
-            pos.y + 0.5f,
+            pos.y + 0.005f,
             pos.z + sinf(angle) * baseRad
         };
+        float life = s_dustLifeMin + (float)GetRandomValue(0, 10000) / 10000.0f *
+                     (s_dustLifeMax - s_dustLifeMin);
+        float rad  = s_dustRadiusMin + (float)GetRandomValue(0, 10000) / 10000.0f *
+                     (s_dustRadiusMax - s_dustRadiusMin);
 
         SpawnParticle((ParticleConfig){
             .position         = particlePos,
             .velocity         = vel,
             .colorStart       = ELEMENT_COLOR_WOOD,
             .colorEnd         = ColorAlpha(ColorLerp(ELEMENT_COLOR_WOOD, BLACK, 0.5f), 0.0f),
-            .radius           = (float)GetRandomValue(30, 60) / 10.0f,
-            .lifetime         = (float)GetRandomValue(6, 12) / 10.0f,
-            .forceField       = NULL,
+            .radius           = rad,
+            .lifetime         = life,
+            .forceField       = &s_castField,
             .gradient         = &s_dustGrad,
+            .radiusCurve      = &s_castRadiusCurve,
+            .speedCurve       = &s_castSpeedCurve,
+            .alphaCurve       = &s_castAlphaCurve,
+            .emissiveCurve    = &s_castEmissiveCurve,
             .spriteAnim       = NULL,
             .onDeathEmit      = NULL,
             .onDeathEmitCount = 0,
@@ -177,11 +245,23 @@ void InitWoodThornsSkill(int screenWidth, int screenHeight)
     ColorGradient_AddStop(&s_dustGrad, 0.00f, ELEMENT_COLOR_WOOD);
     ColorGradient_AddStop(&s_dustGrad, 0.50f, ColorAlpha(ColorLerp(ELEMENT_COLOR_WOOD, BLACK, 0.3f), 0.7f));
     ColorGradient_AddStop(&s_dustGrad, 1.00f, (Color){ 0, 0, 0, 0 });
+
+    // Seed curves flat (shaped in sandbox)
+    SkillCurve_SetConstant(&s_castEmissiveCurve, 1.0f);
+    SkillCurve_SetConstant(&s_holdEmissiveCurve, 1.0f);
+
+    // Register tunables (function-scope include sees s_tunables and tn).
+    int tn = 0;
+#include "wood_thorns_skill_tunables.inl"
+    SkillTunables_LoadPersisted("skills/wood/wood_thorns/wood_thorns_skill.tuning", s_tunables, tn);
+    RegisterSkillTunables(s_skillIndex, s_tunables, tn);
 }
 
 /* ================================================================
  * § 5  LIFECYCLE — CAST
  * ================================================================ */
+// Pass 3 — dispatch: this skill uses CAST_PATH_ANCHORED (multi-point drag path),
+// not CAST_PATH_PROJECTILE. No dispatch changes needed.
 void CastWoodThornsSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params)
 {
     if (!SkillManager_CanCast(s_skillIndex, agentId)) return;
@@ -204,13 +284,9 @@ void CastWoodThornsSkill(int agentId, Vector3 startPos, Vector3 target, SkillPar
         rawPath[rawCount++] = target;
     }
 
-    // Resample at fixed THORN_SPACING instead of hand-rolling cumulative-
-    // distance math (CORE_API.md flags this exact spot for the SamplePath()
-    // refactor). Total thorns placed is now however many fit at THORN_SPACING
-    // along the actual drawn path, capped at THORNS_PER_CAST — see report for
-    // how this differs from the old fixed-6-thorns/compressed-spacing behavior.
+    // Resample at tunable s_thornSpacing along the drawn path.
     Vector3 sampled[THORNS_PER_CAST];
-    int sampledCount = SamplePath(rawPath, rawCount, THORN_SPACING, sampled, THORNS_PER_CAST);
+    int sampledCount = SamplePath(rawPath, rawCount, s_thornSpacing, sampled, THORNS_PER_CAST);
     if (sampledCount <= 0) return;
 
     for (int i = 0; i < sampledCount; i++) {
@@ -226,7 +302,8 @@ void CastWoodThornsSkill(int agentId, Vector3 startPos, Vector3 target, SkillPar
         Vector3 perp = { -dir.z, 0.0f, dir.x }; // Perpendicular for jitter
 
         // Aesthetic Rule 1: Perpendicular spatial jitter
-        float sideJitter = (float)GetRandomValue(-120, 120) / 10.0f;
+        float sideJitter = (float)GetRandomValue(-(int)(s_sideJitterMax * 100.0f),
+                                                   (int)(s_sideJitterMax * 100.0f)) / 100.0f;
         Vector3 thornPos = {
             basePoint.x + perp.x * sideJitter,
             0.0f,
@@ -237,7 +314,7 @@ void CastWoodThornsSkill(int agentId, Vector3 startPos, Vector3 target, SkillPar
         float randomYaw = (float)GetRandomValue(0, 360) * (PI / 180.0f);
         float randomTiltX = (float)GetRandomValue(-10, 10) * (PI / 180.0f);
         float randomTiltZ = (float)GetRandomValue(-10, 10) * (PI / 180.0f);
-        
+
         // Random scale variation
         float sizeJitter = (float)GetRandomValue(85, 115) / 100.0f;
 
@@ -284,30 +361,32 @@ void UpdateWoodThornsSkill(float dt, Vector3 enemyPos, float enemyRadius)
                 th->riseTimer = 0.0f;
 
                 SpawnDustBurst(th->pos, th->scale);
-                ScreenDistort_Add(th->pos, 60.0f, 0.25f, 0.25f, 150.0f);
-                CameraFX_Shake(SHAKE_TRAUMA);
+                // Pass 2 — ScreenDistort_Add: radius arg now in meters.
+                ScreenDistort_Add(th->pos, s_distortRadius, 0.25f, 0.25f, 0.15f);
+                if (s_shakeEnable > 0.5f) CameraFX_Shake(s_shakeTrauma);
             }
             break;
 
         case THORN_RISING:
             th->riseTimer += dt;
-            
-            // Decal emergence stamp (Large ground-rupturing crack!)
+
+            // Decal emergence stamp (large ground-rupturing crack)
             if (!th->spawnedDecal) {
+                // Pass 2 — DecalSystem_Add: scale arg in meters.
                 DecalSystem_Add(
                     th->pos,
                     (float)GetRandomValue(0, 360),
-                    THORN_BASE_RADIUS * th->scale * 12.0f,
+                    s_thornBaseRadius * th->scale * s_decalScale,
                     s_crackTex,
                     5.0f,
-                    ColorAlpha(ColorLerp(ELEMENT_COLOR_WOOD, BLACK, 0.4f), 0.8f) /* green-tinted cracks */
+                    ColorAlpha(ColorLerp(ELEMENT_COLOR_WOOD, BLACK, 0.4f), 0.8f)
                 );
                 th->spawnedDecal = true;
             }
 
-            // VFX Light emergence flare (lasts throughout active hold duration)
+            // VFX Light emergence flare — Pass 2: radius in meters.
             if (!th->spawnedLight) {
-                VFXLight_Spawn(th->pos, LIME, 70.0f * th->scale, 2.5f, VFX_PRIORITY_LOW);
+                VFXLight_Spawn(th->pos, LIME, s_lightRadius * th->scale, 2.5f, VFX_PRIORITY_LOW);
                 th->spawnedLight = true;
             }
 
@@ -316,7 +395,10 @@ void UpdateWoodThornsSkill(float dt, Vector3 enemyPos, float enemyRadius)
                 float dx = enemyPos.x - th->pos.x;
                 float dz = enemyPos.z - th->pos.z;
                 float distSq = dx * dx + dz * dz;
-                float hitRad = (AOE_RADIUS + enemyRadius) * th->scale;
+                float dist   = sqrtf(distSq);
+                // Pass 4 — distance-proportional floor/cap on hit radius.
+                float hitRad = fminf(fmaxf(dist * 0.18f, s_aoeRadius * th->scale),
+                                     dist * 0.6f);
 
                 if (distSq <= hitRad * hitRad) {
                     char dmgStr[16];
@@ -347,35 +429,48 @@ void UpdateWoodThornsSkill(float dt, Vector3 enemyPos, float enemyRadius)
 
         case THORN_HOLDING:
             th->holdTimer -= dt;
-            
-            // Emit glowing poison gas/mist seeping out from the body of the thorn mesh
+
+            // Emit glowing poison mist seeping from the body of the thorn mesh
             if (GetRandomValue(0, 100) < 25) {
+                RebuildHoldField();
                 float hRatio = (float)GetRandomValue(0, 100) / 100.0f;
-                float currentHeight = THORN_MAX_HEIGHT * th->scale;
-                float currentRadius = THORN_BASE_RADIUS * th->scale * (1.0f - hRatio);
+                float currentHeight = s_thornMaxHeight * th->scale;
+                float currentRadius = s_thornBaseRadius * th->scale * (1.0f - hRatio);
                 float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
-                
+
                 Vector3 particlePos = {
                     th->pos.x + cosf(angle) * currentRadius * 0.8f,
                     th->pos.y + hRatio * currentHeight,
                     th->pos.z + sinf(angle) * currentRadius * 0.8f
                 };
-                
+
+                float outSpd = s_mistSpeedOutMin + (float)GetRandomValue(0, 10000) / 10000.0f *
+                               (s_mistSpeedOutMax - s_mistSpeedOutMin);
+                float upSpd  = s_mistSpeedUpMin  + (float)GetRandomValue(0, 10000) / 10000.0f *
+                               (s_mistSpeedUpMax  - s_mistSpeedUpMin);
                 Vector3 vel = {
-                    cosf(angle) * (float)GetRandomValue(5, 15),
-                    (float)GetRandomValue(15, 35),
-                    sinf(angle) * (float)GetRandomValue(5, 15)
+                    cosf(angle) * outSpd,
+                    upSpd,
+                    sinf(angle) * outSpd
                 };
-                
+                float life = s_mistLifeMin + (float)GetRandomValue(0, 10000) / 10000.0f *
+                             (s_mistLifeMax - s_mistLifeMin);
+                float rad  = s_mistRadiusMin + (float)GetRandomValue(0, 10000) / 10000.0f *
+                             (s_mistRadiusMax - s_mistRadiusMin);
+
                 SpawnParticle((ParticleConfig){
                     .position         = particlePos,
                     .velocity         = vel,
                     .colorStart       = ColorAlpha(LIME, 0.95f),
                     .colorEnd         = ColorAlpha(GREEN, 0.0f),
-                    .radius           = (float)GetRandomValue(12, 28) / 10.0f,
-                    .lifetime         = (float)GetRandomValue(8, 16) / 10.0f,
-                    .forceField       = NULL,
+                    .radius           = rad,
+                    .lifetime         = life,
+                    .forceField       = &s_holdField,
                     .gradient         = &s_dustGrad,
+                    .radiusCurve      = &s_holdRadiusCurve,
+                    .speedCurve       = &s_holdSpeedCurve,
+                    .alphaCurve       = &s_holdAlphaCurve,
+                    .emissiveCurve    = &s_holdEmissiveCurve,
                     .spriteAnim       = NULL,
                     .onDeathEmit      = NULL,
                     .onDeathEmitCount = 0,
@@ -426,9 +521,9 @@ void DrawWoodThornsSkill(void)
             dissolveAmt = th->dissolveTimer / THORN_DISSOLVE_TIME;
         }
 
-        float currentHeight = THORN_MAX_HEIGHT * th->scale * heightRatio;
-        float baseRad = THORN_BASE_RADIUS * th->scale;
-        if (currentHeight < 0.5f) continue;
+        float currentHeight = s_thornMaxHeight * th->scale * heightRatio;
+        float baseRad = s_thornBaseRadius * th->scale;
+        if (currentHeight < 0.005f) continue;
 
         // Aesthetic Rule 4: Bind shader during all active phases to prevent visual popping
         BeginShaderMode(s_shader);
@@ -450,7 +545,7 @@ void DrawWoodThornsSkill(void)
 
         for (int h = 0; h <= HEIGHT_SEGS; h++) {
             float hRatio = (float)h / HEIGHT_SEGS;
-            
+
             // Linear taper to tip
             float rad = baseRad * (1.0f - hRatio);
 
@@ -548,7 +643,7 @@ int GetWoodThornsSkillProjectiles(SkillProjectile *outProjectiles, int maxProjec
     for (int i = 0; i < MAX_THORNS; i++) {
         if (s_thorns[i].state != THORN_INACTIVE && s_thorns[i].state != THORN_WAITING) {
             outProjectiles[count].position = s_thorns[i].pos;
-            outProjectiles[count].radius = THORN_BASE_RADIUS * s_thorns[i].scale;
+            outProjectiles[count].radius = s_thornBaseRadius * s_thorns[i].scale;
             outProjectiles[count].active = true;
             count++;
             if (count >= maxProjectiles) break;

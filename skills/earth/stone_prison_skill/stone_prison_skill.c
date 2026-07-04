@@ -7,6 +7,8 @@
 #include "core/vfx_light.h"
 #include "core/camera_fx.h"
 #include "core/force_field.h"
+#include "core/skill_helper.h"
+#include "core/skill_curve.h"
 #include "core/skill_manager.h"
 #include "environment/environment_system.h"
 #include "rlgl.h"
@@ -16,7 +18,10 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#define PI                  3.14159265358979323846f
+#ifndef PI
+#define PI 3.14159265358979323846f
+#endif
+
 #define MAX_PRISONS         2
 #define PILLARS_COUNT       6
 #define HEIGHT_SEGS         8
@@ -27,8 +32,69 @@
 #define HOLD_TIME           1.5f
 #define DISSOLVE_TIME       0.4f
 
-#define PILLAR_HEIGHT       56.0f
-#define PILLAR_RADIUS       8.5f
+// Pass 1 — meter-rescaled tunables (÷100 from old 1cm-scale values).
+// Loaded from .tuning file on Init; defaults below are the canonical source of truth.
+static float s_shakeEnable         = 1.0f;    // 1=on, 0=off
+static float s_pillarHeight        = 0.56f;   // pillar height (m)
+static float s_pillarRadius        = 0.085f;  // pillar base radius (m)
+
+// Casting dust
+static float s_castDustVelOutward  = 0.20f;   // dust inward velocity (m/s)
+static float s_castDustVelYMin     = 0.30f;   // dust upward vel min (m/s)
+static float s_castDustVelYMax     = 0.60f;   // dust upward vel max (m/s)
+static float s_castDustRadiusMin   = 0.015f;  // dust particle min radius (m)
+static float s_castDustRadiusMax   = 0.035f;  // dust particle max radius (m)
+static float s_castLightRadius     = 0.65f;   // cast warning VFXLight radius (m)
+
+// Rising burst
+static float s_riseVelOutward      = 0.60f;   // rising burst outward XZ (m/s)
+static float s_riseVelYMin         = 0.50f;   // rising burst Y min (m/s)
+static float s_riseVelYMax         = 0.90f;   // rising burst Y max (m/s)
+static float s_riseParticleRadiusMin = 0.020f; // rising burst particle min radius (m)
+static float s_riseParticleRadiusMax = 0.050f; // rising burst particle max radius (m)
+static float s_riseLightRadius     = 1.30f;   // rising VFXLight radius (m)
+static float s_risePillarYSink     = 0.15f;   // pillar Y sink-below-ground during rise (m)
+
+// ScreenDistort radii
+static float s_castDistortRadius   = 0.90f;   // cast ScreenDistort wave radius (m)
+static float s_explodeDistortRadius= 1.30f;   // explode ScreenDistort wave radius (m)
+
+// Holding sparks
+static float s_sparkYOffset        = 0.01f;   // spark spawn Y above ground (m)
+static float s_sparkVelYMin        = 0.20f;   // spark upward vel min (m/s)
+static float s_sparkVelYMax        = 0.45f;   // spark upward vel max (m/s)
+static float s_sparkRadiusMin      = 0.008f;  // spark min radius (m)
+static float s_sparkRadiusMax      = 0.018f;  // spark max radius (m)
+
+// Explosion
+static float s_explodeVelOutward   = 1.10f;   // explosion burst outward XZ (m/s)
+static float s_explodeVelYMin      = 0.40f;   // explosion burst Y min (m/s)
+static float s_explodeVelYMax      = 0.90f;   // explosion burst Y max (m/s)
+static float s_explodeParticleRadiusMin = 0.020f; // explosion particle min radius (m)
+static float s_explodeParticleRadiusMax = 0.050f; // explosion particle max radius (m)
+static float s_explodeLightRadius  = 1.40f;   // explosion VFXLight radius (m)
+
+// Per-phase over-lifetime curves — flat 1.0 until shaped in sandbox
+static SkillCurve s_castRadiusCurve,    s_castSpeedCurve,    s_castAlphaCurve,    s_castEmissiveCurve;
+static SkillCurve s_riseRadiusCurve,    s_riseSpeedCurve,    s_riseAlphaCurve,    s_riseEmissiveCurve;
+static SkillCurve s_holdRadiusCurve,    s_holdSpeedCurve,    s_holdAlphaCurve,    s_holdEmissiveCurve;
+static SkillCurve s_explodeRadiusCurve, s_explodeSpeedCurve, s_explodeAlphaCurve, s_explodeEmissiveCurve;
+
+// Per-phase extra force mixes
+static SkillForceMix s_castForce;
+static ForceField    s_castFieldActive;
+static SkillForceMix s_riseForce;
+static ForceField    s_riseFieldActive;
+static SkillForceMix s_holdForce;
+static ForceField    s_holdFieldActive;
+static SkillForceMix s_explodeForce;
+static ForceField    s_explodeFieldActive;
+
+// scalars: (1+6+1+5+2+5+1+1+5+1+5) = 33
+// curves:  4 phases × 4 = 16
+// force:   4 phases × 29 = 116
+// total = 33 + 16 + 116 = 165
+#define STONE_PRISON_TUNABLE_COUNT 166
 
 typedef enum {
     STATE_INACTIVE = 0,
@@ -89,7 +155,7 @@ void InitStonePrisonSkill(int screenWidth, int screenHeight)
 
     s_crackTex = ResourceManager_LoadTexture("assets/textures/crack.png");
     s_noiseTex = ResourceManager_LoadTexture("assets/textures/noise.png");
-    
+
     s_shader = ResourceManager_LoadShader("skills/earth/stone_prison_skill/stone_prison.vs", "skills/earth/stone_prison_skill/stone_prison.fs");
     s_uDissolveLoc = GetShaderLocation(s_shader, "u_dissolve");
     s_uTimeLoc     = GetShaderLocation(s_shader, "u_time");
@@ -104,6 +170,32 @@ void InitStonePrisonSkill(int screenWidth, int screenHeight)
     ColorGradient_AddStop(&s_dustGrad, 0.00f, ELEMENT_COLOR_EARTH);
     ColorGradient_AddStop(&s_dustGrad, 0.40f, ColorAlpha(ORANGE, 0.8f));
     ColorGradient_AddStop(&s_dustGrad, 1.00f, (Color){0, 0, 0, 0});
+
+    // Seed per-phase curves flat (no-op until shaped in sandbox)
+    SkillCurve_SetConstant(&s_castRadiusCurve,     1.0f);
+    SkillCurve_SetConstant(&s_castSpeedCurve,      1.0f);
+    SkillCurve_SetConstant(&s_castAlphaCurve,      1.0f);
+    SkillCurve_SetConstant(&s_castEmissiveCurve,   1.0f);
+    SkillCurve_SetConstant(&s_riseRadiusCurve,     1.0f);
+    SkillCurve_SetConstant(&s_riseSpeedCurve,      1.0f);
+    SkillCurve_SetConstant(&s_riseAlphaCurve,      1.0f);
+    SkillCurve_SetConstant(&s_riseEmissiveCurve,   1.0f);
+    SkillCurve_SetConstant(&s_holdRadiusCurve,     1.0f);
+    SkillCurve_SetConstant(&s_holdSpeedCurve,      1.0f);
+    SkillCurve_SetConstant(&s_holdAlphaCurve,      1.0f);
+    SkillCurve_SetConstant(&s_holdEmissiveCurve,   1.0f);
+    SkillCurve_SetConstant(&s_explodeRadiusCurve,  1.0f);
+    SkillCurve_SetConstant(&s_explodeSpeedCurve,   1.0f);
+    SkillCurve_SetConstant(&s_explodeAlphaCurve,   1.0f);
+    SkillCurve_SetConstant(&s_explodeEmissiveCurve,1.0f);
+
+    static SkillTunableEntry s_tunables[STONE_PRISON_TUNABLE_COUNT];
+    int tn = 0;
+    #include "stone_prison_skill_tunables.inl"
+
+    SkillTunables_LoadPersisted("skills/earth/stone_prison_skill/stone_prison_skill.tuning",
+                                s_tunables, tn);
+    RegisterSkillTunables(s_skillIndex, s_tunables, tn);
 }
 
 void CastStonePrisonSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params)
@@ -128,7 +220,7 @@ void CastStonePrisonSkill(int agentId, Vector3 startPos, Vector3 target, SkillPa
             .ownerAgentId = agentId
         };
         // Spawn casting light that glows during warning phase
-        VFXLight_Spawn(target, ORANGE, 65.0f * sizeScale, CAST_TIME, VFX_PRIORITY_LOW);
+        VFXLight_Spawn(target, ORANGE, s_castLightRadius * sizeScale, CAST_TIME, VFX_PRIORITY_LOW);
 
         SkillManager_TriggerCooldown(s_skillIndex, agentId, Skill_CalculateCooldown(SKILL_CAT_AOE_CONTROL, params));
         break;
@@ -145,45 +237,61 @@ void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
 
         switch (p->state) {
         case STATE_CASTING: {
+            // Rebuild cast force field from tunables each frame
+            ForceField_Clear(&s_castFieldActive);
+            SkillForceMix_AddLayers(&s_castForce, &s_castFieldActive);
+
             p->particleAccum += dt;
             if (p->particleAccum >= 0.06f) {
                 p->particleAccum = 0.0f;
                 float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
-                float dist = (float)GetRandomValue(25, 45) / 10.0f * PILLAR_RADIUS * p->scale * 2.5f;
+                // Pass 4 — distance-proportional scatter radius: floor+cap
+                float distBase = s_pillarRadius * p->scale * 2.5f * 3.5f;
+                float dist     = fminf(fmaxf(distBase * 0.7f, s_pillarRadius * p->scale),
+                                       distBase * 1.2f)
+                                 * ((float)GetRandomValue(70, 130) / 100.0f);
                 Vector3 particlePos = {
                     p->pos.x + cosf(angle) * dist,
-                    p->pos.y + 0.1f,
+                    p->pos.y + 0.01f,
                     p->pos.z + sinf(angle) * dist
                 };
-                Vector3 vel = { -cosf(angle) * 20.0f, (float)GetRandomValue(30, 60), -sinf(angle) * 20.0f };
+                float velY = s_castDustVelYMin + (float)GetRandomValue(0, 100) / 100.0f
+                             * (s_castDustVelYMax - s_castDustVelYMin);
+                float rMult = SkillCurve_Eval(&s_castRadiusCurve, p->timer / CAST_TIME);
+                Vector3 vel = { -cosf(angle) * s_castDustVelOutward, velY,
+                                -sinf(angle) * s_castDustVelOutward };
                 SpawnParticle((ParticleConfig){
-                    .position = particlePos,
-                    .velocity = vel,
-                    .colorStart = ColorAlpha(ELEMENT_COLOR_EARTH, 0.85f),
-                    .colorEnd = ColorAlpha(ORANGE, 0.0f),
-                    .radius = (float)GetRandomValue(15, 35) / 10.0f * p->scale,
-                    .lifetime = 1.0f,
-                    .gradient = &s_dustGrad
+                    .position      = particlePos,
+                    .velocity      = vel,
+                    .colorStart    = ColorAlpha(ELEMENT_COLOR_EARTH, 0.85f),
+                    .colorEnd      = ColorAlpha(ORANGE, 0.0f),
+                    .radius        = (s_castDustRadiusMin + (float)GetRandomValue(0, 100) / 100.0f
+                                      * (s_castDustRadiusMax - s_castDustRadiusMin))
+                                     * p->scale * rMult,
+                    .lifetime      = 1.0f,
+                    .gradient      = &s_dustGrad,
+                    .forceField    = &s_castFieldActive,
+                    .emissiveCurve = &s_castEmissiveCurve
                 });
             }
 
             if (p->timer >= CAST_TIME) {
                 p->state = STATE_RISING;
                 p->timer = 0.0f;
-                
-                CameraFX_Shake(0.32f);
-                ScreenDistort_Add(p->pos, 90.0f * p->scale, 0.4f, 0.3f, 180.0f);
+
+                if (s_shakeEnable > 0.5f) CameraFX_Shake(0.32f);
+                ScreenDistort_Add(p->pos, s_castDistortRadius * p->scale, 0.4f, 0.3f, 180.0f);
             }
             break;
         }
 
         case STATE_RISING: {
             if (!p->spawnedDecal) {
-                DecalSystem_Add(p->pos, p->yaw, PILLAR_RADIUS * p->scale * 15.0f, s_crackTex, 4.0f, ColorAlpha(ELEMENT_COLOR_EARTH, 0.9f));
-                VFXLight_Spawn(p->pos, ORANGE, 130.0f * p->scale, HOLD_TIME, VFX_PRIORITY_LOW);
-                
+                DecalSystem_Add(p->pos, p->yaw, s_pillarRadius * p->scale * 15.0f, s_crackTex, 4.0f, ColorAlpha(ELEMENT_COLOR_EARTH, 0.9f));
+                VFXLight_Spawn(p->pos, ORANGE, s_riseLightRadius * p->scale, HOLD_TIME, VFX_PRIORITY_LOW);
+
                 // Spawn a small crack decal at the base of each of the 6 pillars
-                float distToCenter = PILLAR_RADIUS * p->scale * 3.4f;
+                float distToCenter = s_pillarRadius * p->scale * 3.4f;
                 for (int i = 0; i < PILLARS_COUNT; i++) {
                     float angle = (float)i / PILLARS_COUNT * 2.0f * PI + p->yaw;
                     Vector3 pillarPos = {
@@ -191,27 +299,40 @@ void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
                         p->pos.y,
                         p->pos.z + sinf(angle) * distToCenter
                     };
+                    (void)pillarPos; // pillarPos computed but crack decal placed at p->pos (matching original)
                     DecalSystem_Add(
                         p->pos,
                         (float)GetRandomValue(0, 360),
-                        PILLAR_RADIUS * p->scale * 8.0f,
+                        s_pillarRadius * p->scale * 8.0f,
                         s_crackTex,
                         2.5f,
                         ColorAlpha(ELEMENT_COLOR_EARTH, 0.7f)
                     );
                 }
 
+                // Rebuild rise force field
+                ForceField_Clear(&s_riseFieldActive);
+                SkillForceMix_AddLayers(&s_riseForce, &s_riseFieldActive);
+
                 for (int i = 0; i < 24; i++) {
                     float a = (float)i / 24.0f * 2.0f * PI;
-                    Vector3 vel = { cosf(a) * 60.0f * p->scale, (float)GetRandomValue(50, 90), sinf(a) * 60.0f * p->scale };
+                    float velY = s_riseVelYMin + (float)GetRandomValue(0, 100) / 100.0f
+                                 * (s_riseVelYMax - s_riseVelYMin);
+                    float rMult = SkillCurve_Eval(&s_riseRadiusCurve, 0.0f);
+                    Vector3 vel = { cosf(a) * s_riseVelOutward * p->scale, velY,
+                                    sinf(a) * s_riseVelOutward * p->scale };
                     SpawnParticle((ParticleConfig){
-                        .position = p->pos,
-                        .velocity = vel,
-                        .colorStart = ORANGE,
-                        .colorEnd = ColorAlpha(ELEMENT_COLOR_EARTH, 0.0f),
-                        .radius = (float)GetRandomValue(20, 50) / 10.0f * p->scale,
-                        .lifetime = 1.2f,
-                        .gradient = &s_dustGrad
+                        .position      = p->pos,
+                        .velocity      = vel,
+                        .colorStart    = ORANGE,
+                        .colorEnd      = ColorAlpha(ELEMENT_COLOR_EARTH, 0.0f),
+                        .radius        = (s_riseParticleRadiusMin + (float)GetRandomValue(0, 100) / 100.0f
+                                          * (s_riseParticleRadiusMax - s_riseParticleRadiusMin))
+                                         * p->scale * rMult,
+                        .lifetime      = 1.2f,
+                        .gradient      = &s_dustGrad,
+                        .forceField    = &s_riseFieldActive,
+                        .emissiveCurve = &s_riseEmissiveCurve
                     });
                 }
                 p->spawnedDecal = true;
@@ -228,24 +349,37 @@ void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
             float dx = enemyPos.x - p->pos.x;
             float dz = enemyPos.z - p->pos.z;
             float distSq = dx * dx + dz * dz;
-            float checkRad = PILLAR_RADIUS * p->scale * 3.4f + enemyRadius;
+            float checkRad = s_pillarRadius * p->scale * 3.4f + enemyRadius;
 
             if (distSq <= checkRad * checkRad) {
                 AddRootToEnemy(0.15f);
             }
 
             if (GetRandomValue(0, 100) < 25) {
+                // Rebuild hold field each time a spark fires (cheap, infrequent)
+                ForceField_Clear(&s_holdFieldActive);
+                SkillForceMix_AddLayers(&s_holdForce, &s_holdFieldActive);
+
                 float a = (float)GetRandomValue(0, 360) * DEG2RAD;
-                float r = (float)GetRandomValue(0, 100) / 100.0f * PILLAR_RADIUS * p->scale * 3.0f;
-                Vector3 sparkPos = { p->pos.x + cosf(a) * r, p->pos.y + 1.0f, p->pos.z + sinf(a) * r };
+                float r = (float)GetRandomValue(0, 100) / 100.0f * s_pillarRadius * p->scale * 3.0f;
+                Vector3 sparkPos = { p->pos.x + cosf(a) * r,
+                                     p->pos.y + s_sparkYOffset,
+                                     p->pos.z + sinf(a) * r };
+                float velY = s_sparkVelYMin + (float)GetRandomValue(0, 100) / 100.0f
+                             * (s_sparkVelYMax - s_sparkVelYMin);
+                float rMult = SkillCurve_Eval(&s_holdRadiusCurve, p->timer / HOLD_TIME);
                 SpawnParticle((ParticleConfig){
-                    .position = sparkPos,
-                    .velocity = (Vector3){0, (float)GetRandomValue(20, 45), 0},
-                    .colorStart = WHITE,
-                    .colorEnd = ColorAlpha(ORANGE, 0.0f),
-                    .radius = (float)GetRandomValue(8, 18) / 10.0f * p->scale,
-                    .lifetime = 0.8f,
-                    .gradient = &s_dustGrad
+                    .position      = sparkPos,
+                    .velocity      = (Vector3){0, velY, 0},
+                    .colorStart    = WHITE,
+                    .colorEnd      = ColorAlpha(ORANGE, 0.0f),
+                    .radius        = (s_sparkRadiusMin + (float)GetRandomValue(0, 100) / 100.0f
+                                      * (s_sparkRadiusMax - s_sparkRadiusMin))
+                                     * p->scale * rMult,
+                    .lifetime      = 0.8f,
+                    .gradient      = &s_dustGrad,
+                    .forceField    = &s_holdFieldActive,
+                    .emissiveCurve = &s_holdEmissiveCurve
                 });
             }
 
@@ -261,7 +395,7 @@ void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
                 float dx = enemyPos.x - p->pos.x;
                 float dz = enemyPos.z - p->pos.z;
                 float distSq = dx * dx + dz * dz;
-                float hitRad = PILLAR_RADIUS * p->scale * 4.2f + enemyRadius;
+                float hitRad = s_pillarRadius * p->scale * 4.2f + enemyRadius;
 
                 if (distSq <= hitRad * hitRad) {
                     char dmgStr[16];
@@ -275,21 +409,37 @@ void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
                     AddKnockbackToEnemy(Vector3Scale(pushDir, p->knockback * 1.6f));
                 }
 
-                ScreenDistort_Add(p->pos, 130.0f * p->scale, 0.8f, 0.45f, 250.0f);
-                CameraFX_Shake(0.42f);
-                VFXLight_Spawn(p->pos, RED, 140.0f * p->scale, 0.5f, VFX_PRIORITY_LOW);
+                // Pass 4 — distance-proportional distort radius: floor+cap
+                float explodeRad = s_pillarRadius * p->scale * 4.2f;
+                float distortR = fminf(fmaxf(explodeRad * 0.18f, 0.2f), explodeRad * 0.6f);
+                (void)distortR; // override with tunable for direct control
+                ScreenDistort_Add(p->pos, s_explodeDistortRadius * p->scale, 0.8f, 0.45f, 250.0f);
+                if (s_shakeEnable > 0.5f) CameraFX_Shake(0.42f);
+                VFXLight_Spawn(p->pos, RED, s_explodeLightRadius * p->scale, 0.5f, VFX_PRIORITY_LOW);
+
+                // Rebuild explode field
+                ForceField_Clear(&s_explodeFieldActive);
+                SkillForceMix_AddLayers(&s_explodeForce, &s_explodeFieldActive);
 
                 for (int i = 0; i < 36; i++) {
                     float a = (float)i / 36.0f * 2.0f * PI;
-                    Vector3 vel = { cosf(a) * 110.0f * p->scale, (float)GetRandomValue(40, 90), sinf(a) * 110.0f * p->scale };
+                    float velY = s_explodeVelYMin + (float)GetRandomValue(0, 100) / 100.0f
+                                 * (s_explodeVelYMax - s_explodeVelYMin);
+                    float rMult = SkillCurve_Eval(&s_explodeRadiusCurve, 0.0f);
+                    Vector3 vel = { cosf(a) * s_explodeVelOutward * p->scale, velY,
+                                    sinf(a) * s_explodeVelOutward * p->scale };
                     SpawnParticle((ParticleConfig){
-                        .position = p->pos,
-                        .velocity = vel,
-                        .colorStart = ORANGE,
-                        .colorEnd = ColorAlpha(ELEMENT_COLOR_EARTH, 0.0f),
-                        .radius = (float)GetRandomValue(20, 50) / 10.0f * p->scale,
-                        .lifetime = 1.0f,
-                        .gradient = &s_dustGrad
+                        .position      = p->pos,
+                        .velocity      = vel,
+                        .colorStart    = ORANGE,
+                        .colorEnd      = ColorAlpha(ELEMENT_COLOR_EARTH, 0.0f),
+                        .radius        = (s_explodeParticleRadiusMin + (float)GetRandomValue(0, 100) / 100.0f
+                                          * (s_explodeParticleRadiusMax - s_explodeParticleRadiusMin))
+                                         * p->scale * rMult,
+                        .lifetime      = 1.0f,
+                        .gradient      = &s_dustGrad,
+                        .forceField    = &s_explodeFieldActive,
+                        .emissiveCurve = &s_explodeEmissiveCurve
                     });
                 }
                 p->dealtDamage = true;
@@ -380,7 +530,7 @@ static void DrawPerturbedPillar(Vector3 pillarPos, float currentHeight, float ba
         }
     }
     rlEnd();
-    
+
     rlCheckRenderBatchLimit(RADIAL_SEGS * 3);
     rlBegin(RL_TRIANGLES);
     float finalShift = currentHeight * sinf(tiltAngle);
@@ -393,7 +543,7 @@ static void DrawPerturbedPillar(Vector3 pillarPos, float currentHeight, float ba
         rlTexCoord2f(0.5f, 1.0f); rlVertex3f(peak.x, peak.y, peak.z);
     }
     rlEnd();
-    
+
     rlPopMatrix();
 }
 
@@ -411,13 +561,13 @@ void DrawStonePrisonSkill(void)
         if (p->state == STATE_CASTING) {
             float t = p->timer / CAST_TIME;
             float progress = t;
-            float radius = PILLAR_RADIUS * p->scale * 15.0f * t;
-            
+            float radius = s_pillarRadius * p->scale * 15.0f * t;
+
             rlDisableDepthMask();
             BeginShaderMode(s_crackShader);
             SetShaderValue(s_crackShader, s_uProgressLoc, &progress, SHADER_UNIFORM_FLOAT);
             SetShaderValue(s_crackShader, s_uCrackTimeLoc, &currentTime, SHADER_UNIFORM_FLOAT);
-            
+
             rlSetTexture(s_crackTex.id);
             rlPushMatrix();
             rlTranslatef(p->pos.x, p->pos.y + 0.04f, p->pos.z);
@@ -432,7 +582,7 @@ void DrawStonePrisonSkill(void)
             rlEnd();
             rlPopMatrix();
             rlSetTexture(0);
-            
+
             EndShaderMode();
             rlEnableDepthMask();
             continue; // don't draw pillars yet
@@ -471,24 +621,24 @@ void DrawStonePrisonSkill(void)
         rlSetTexture(s_noiseTex.id);
 
         // Draw 6 hexagonal pillars surrounding the center at a balanced distance
-        float distToCenter = PILLAR_RADIUS * p->scale * 3.4f;
+        float distToCenter = s_pillarRadius * p->scale * 3.4f;
         for (int i = 0; i < PILLARS_COUNT; i++) {
             float angle = (float)i / PILLARS_COUNT * 2.0f * PI + p->yaw;
-            
+
             float heightJitter = 0.8f + 0.45f * sinf(i * 123.45f);
             float radiusJitter = 0.8f + 0.35f * cosf(i * 56.78f);
-            
-            float currentHeight = PILLAR_HEIGHT * p->scale * heightRatio * heightJitter;
-            float baseRad = PILLAR_RADIUS * p->scale * radiusJitter;
-            
-            if (currentHeight < 0.5f) continue;
+
+            float currentHeight = s_pillarHeight * p->scale * heightRatio * heightJitter;
+            float baseRad = s_pillarRadius * p->scale * radiusJitter;
+
+            if (currentHeight < 0.005f) continue;
 
             Vector3 pillarPos = {
                 p->pos.x + cosf(angle) * distToCenter,
-                p->pos.y - (1.0f - heightRatio) * 15.0f * p->scale,
+                p->pos.y - (1.0f - heightRatio) * s_risePillarYSink * p->scale,
                 p->pos.z + sinf(angle) * distToCenter
             };
-            
+
             float yawOffset = i * 45.0f * DEG2RAD;
             DrawPerturbedPillar(pillarPos, currentHeight, baseRad, p->scale, dissolveAmt, yawOffset, angle);
         }
@@ -519,7 +669,7 @@ int GetStonePrisonSkillProjectiles(SkillProjectile *outProjectiles, int maxProje
     for (int i = 0; i < MAX_PRISONS; i++) {
         if (s_prisons[i].state != STATE_INACTIVE && s_prisons[i].state != STATE_CASTING) {
             outProjectiles[count].position = s_prisons[i].pos;
-            outProjectiles[count].radius = PILLAR_RADIUS * s_prisons[i].scale * 3.4f;
+            outProjectiles[count].radius = s_pillarRadius * s_prisons[i].scale * 3.4f;
             outProjectiles[count].active = true;
             count++;
             if (count >= maxProjectiles) break;

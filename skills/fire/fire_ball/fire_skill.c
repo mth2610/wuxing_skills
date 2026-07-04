@@ -165,6 +165,7 @@ static void TriggerFireImpact(Vector3 pos, float sizeScale) {
     cfg.radiusCurve = &s_impactRadiusCurve;
     cfg.speedCurve = &s_impactSpeedCurve;
     cfg.alphaCurve = &s_impactAlphaCurve;
+    cfg.emissiveCurve = &s_impactEmissiveCurve;
     SpawnParticle(cfg);
   }
 
@@ -187,6 +188,7 @@ static void TriggerFireImpact(Vector3 pos, float sizeScale) {
     cfg.radiusCurve = &s_disperseRadiusCurve;
     cfg.speedCurve = &s_disperseSpeedCurve;
     cfg.alphaCurve = &s_disperseAlphaCurve;
+    cfg.emissiveCurve = &s_disperseEmissiveCurve;
     SpawnParticle(cfg);
   }
 
@@ -198,6 +200,7 @@ static void TriggerFireImpact(Vector3 pos, float sizeScale) {
   staticCore1.colorEnd = (Color){0, 0, 0, 0};
   staticCore1.radiusCurve = &s_impactRadiusCurve;
   staticCore1.alphaCurve = &s_impactAlphaCurve;
+  staticCore1.emissiveCurve = &s_impactEmissiveCurve;
   SpawnParticle(staticCore1);
 
   ParticleConfig staticCore2 = {0};
@@ -208,6 +211,7 @@ static void TriggerFireImpact(Vector3 pos, float sizeScale) {
   staticCore2.colorEnd = (Color){100, 0, 0, 0};
   staticCore2.radiusCurve = &s_impactRadiusCurve;
   staticCore2.alphaCurve = &s_impactAlphaCurve;
+  staticCore2.emissiveCurve = &s_impactEmissiveCurve;
   SpawnParticle(staticCore2);
 }
 
@@ -235,15 +239,19 @@ void InitFireSkill(int screenWidth, int screenHeight) {
   SkillCurve_SetConstant(&s_castRadiusCurve, 1.0f);
   SkillCurve_SetConstant(&s_castSpeedCurve, 1.0f);
   SkillCurve_SetConstant(&s_castAlphaCurve, 1.0f);
+  SkillCurve_SetConstant(&s_castEmissiveCurve, 1.0f);
   SkillCurve_SetConstant(&s_flyRadiusCurve, 1.0f);
   SkillCurve_SetConstant(&s_flySpeedCurve, 1.0f);
   SkillCurve_SetConstant(&s_flyAlphaCurve, 1.0f);
+  SkillCurve_SetConstant(&s_flyEmissiveCurve, 1.0f);
   SkillCurve_SetConstant(&s_impactRadiusCurve, 1.0f);
   SkillCurve_SetConstant(&s_impactSpeedCurve, 1.0f);
   SkillCurve_SetConstant(&s_impactAlphaCurve, 1.0f);
+  SkillCurve_SetConstant(&s_impactEmissiveCurve, 1.0f);
   SkillCurve_SetConstant(&s_disperseRadiusCurve, 1.0f);
   SkillCurve_SetConstant(&s_disperseSpeedCurve, 1.0f);
   SkillCurve_SetConstant(&s_disperseAlphaCurve, 1.0f);
+  SkillCurve_SetConstant(&s_disperseEmissiveCurve, 1.0f);
 
   s_skillIndex = Skill_GetIndexByName("FIRE");
 
@@ -381,6 +389,7 @@ void CastFireSkill(int agentId, Vector3 startPos, Vector3 target, float twistPha
   flash.colorEnd = (Color){0, 0, 0, 0};
   flash.radiusCurve = &s_castRadiusCurve;
   flash.alphaCurve = &s_castAlphaCurve;
+  flash.emissiveCurve = &s_castEmissiveCurve;
   SpawnParticle(flash);
 
   int burstCount = (int)Math_Mix(s_castBurstCountMin, s_castBurstCountMax, Random01()) * sizeScale;
@@ -401,6 +410,7 @@ void CastFireSkill(int agentId, Vector3 startPos, Vector3 target, float twistPha
     cfg.radiusCurve = &s_castRadiusCurve;
     cfg.speedCurve = &s_castSpeedCurve;
     cfg.alphaCurve = &s_castAlphaCurve;
+    cfg.emissiveCurve = &s_castEmissiveCurve;
     SpawnParticle(cfg);
   }
 
@@ -562,6 +572,7 @@ void UpdateFireSkill(float dt) {
         cfgCore.radiusCurve = &s_flyRadiusCurve;
         cfgCore.speedCurve = &s_flySpeedCurve;
         cfgCore.alphaCurve = &s_flyAlphaCurve;
+        cfgCore.emissiveCurve = &s_flyEmissiveCurve;
         SpawnParticle(cfgCore);
 
         ParticleConfig cfgAura = {0};
@@ -577,6 +588,7 @@ void UpdateFireSkill(float dt) {
         cfgAura.radiusCurve = &s_flyRadiusCurve;
         cfgAura.speedCurve = &s_flySpeedCurve;
         cfgAura.alphaCurve = &s_flyAlphaCurve;
+        cfgAura.emissiveCurve = &s_flyEmissiveCurve;
         SpawnParticle(cfgAura);
       }
     }

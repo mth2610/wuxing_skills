@@ -21,7 +21,7 @@ void main() {
     float dampen = smoothstep(0.01, 0.12, t) * smoothstep(0.99, 0.88, t);
     
     // Biên độ đẩy ngọn lửa gồ ghề
-    float displacement = irregularity * dampen * 4.5; 
+    float displacement = irregularity * dampen * 0.045;
 
     vec3 displacedPos = vertexPosition + vertexNormal * displacement;
 

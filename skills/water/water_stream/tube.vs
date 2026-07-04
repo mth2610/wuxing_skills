@@ -20,7 +20,7 @@ float getDisplacement(float t, float phi) {
     float bump  = sin(t * 8.0  - u_time * 20.0) * cos(phi * 2.0); // múi nhỏ, trượt nhanh
     float irregularity = swell * 0.5 + bump * 0.5;
     float dampen = smoothstep(0.02, 0.15, t) * smoothstep(0.98, 0.85, t); // bo mềm 2 đầu
-    return irregularity * dampen * 4.0;
+    return irregularity * dampen * 0.04;
 }
 
 void main() {

@@ -23,6 +23,7 @@
     s_thunderOrbTunables[tn++] = (SkillTunableEntry){"flight_radius_curve", NULL, 0.0f, 3.0f, 1.0f, "flight", &s_flightRadiusCurve};
     s_thunderOrbTunables[tn++] = (SkillTunableEntry){"flight_speed_curve", NULL, 0.0f, 3.0f, 1.0f, "flight", &s_flightSpeedParticleCurve};
     s_thunderOrbTunables[tn++] = (SkillTunableEntry){"flight_alpha_curve", NULL, 0.0f, 1.0f, 1.0f, "flight", &s_flightAlphaCurve};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"flight_emissive_curve", NULL, 0.0f, 3.0f, 1.0f, "flight", &s_flightEmissiveCurve};
     tn += SkillForceMix_MakeTunables(&s_flightForce, "flight_force_", "flight", &s_thunderOrbTunables[tn]);
 
     s_thunderOrbTunables[tn++] = (SkillTunableEntry){"impact_knockback", &s_impactKnockback, 0.0f, 10.0f, s_impactKnockback, "impact"};
@@ -51,6 +52,7 @@
     s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_radius_curve", NULL, 0.0f, 3.0f, 1.0f, "rain", &s_rainRadiusCurve};
     s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_speed_curve", NULL, 0.0f, 3.0f, 1.0f, "rain", &s_rainSpeedCurve};
     s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_alpha_curve", NULL, 0.0f, 1.0f, 1.0f, "rain", &s_rainAlphaCurve};
+    s_thunderOrbTunables[tn++] = (SkillTunableEntry){"rain_emissive_curve", NULL, 0.0f, 3.0f, 1.0f, "rain", &s_rainEmissiveCurve};
     tn += SkillForceMix_MakeTunables(&s_rainForce, "rain_force_", "rain", &s_thunderOrbTunables[tn]);
 
     s_thunderOrbTunables[tn++] = (SkillTunableEntry){"impact_decal_scale_start", &s_impactDecalScaleStart, 0.0f, 5.0f, s_impactDecalScaleStart, "impact"};

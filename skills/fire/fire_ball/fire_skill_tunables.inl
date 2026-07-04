@@ -17,6 +17,7 @@
   s_fireTunables[fn++] = (SkillTunableEntry){"cast_radius_curve", NULL, 0.0f, 3.0f, 1.0f, "cast", &s_castRadiusCurve};
   s_fireTunables[fn++] = (SkillTunableEntry){"cast_speed_curve", NULL, 0.0f, 3.0f, 1.0f, "cast", &s_castSpeedCurve};
   s_fireTunables[fn++] = (SkillTunableEntry){"cast_alpha_curve", NULL, 0.0f, 1.0f, 1.0f, "cast", &s_castAlphaCurve};
+  s_fireTunables[fn++] = (SkillTunableEntry){"cast_emissive_curve", NULL, 0.0f, 3.0f, 1.0f, "cast", &s_castEmissiveCurve};
   fn += SkillForceMix_MakeTunables(&s_castForce, "cast_force_", "cast", &s_fireTunables[fn]);
 
   s_fireTunables[fn++] = (SkillTunableEntry){"flame_body_curl", &s_flameBodyCurl, 0.0f, 5.0f, s_flameBodyCurl, "fly"};
@@ -43,6 +44,7 @@
   s_fireTunables[fn++] = (SkillTunableEntry){"fly_radius_curve", NULL, 0.0f, 3.0f, 1.0f, "fly", &s_flyRadiusCurve};
   s_fireTunables[fn++] = (SkillTunableEntry){"fly_speed_curve", NULL, 0.0f, 3.0f, 1.0f, "fly", &s_flySpeedCurve};
   s_fireTunables[fn++] = (SkillTunableEntry){"fly_alpha_curve", NULL, 0.0f, 1.0f, 1.0f, "fly", &s_flyAlphaCurve};
+  s_fireTunables[fn++] = (SkillTunableEntry){"fly_emissive_curve", NULL, 0.0f, 3.0f, 1.0f, "fly", &s_flyEmissiveCurve};
   fn += SkillForceMix_MakeTunables(&s_flyForce, "fly_force_", "fly", &s_fireTunables[fn]);
 
   s_fireTunables[fn++] = (SkillTunableEntry){"fire_impact_gravity", &s_fireImpactGravity, 0.0f, 19.62f, s_fireImpactGravity, "impact"};
@@ -62,6 +64,7 @@
   s_fireTunables[fn++] = (SkillTunableEntry){"impact_radius_curve", NULL, 0.0f, 3.0f, 1.0f, "impact", &s_impactRadiusCurve};
   s_fireTunables[fn++] = (SkillTunableEntry){"impact_speed_curve", NULL, 0.0f, 3.0f, 1.0f, "impact", &s_impactSpeedCurve};
   s_fireTunables[fn++] = (SkillTunableEntry){"impact_alpha_curve", NULL, 0.0f, 1.0f, 1.0f, "impact", &s_impactAlphaCurve};
+  s_fireTunables[fn++] = (SkillTunableEntry){"impact_emissive_curve", NULL, 0.0f, 3.0f, 1.0f, "impact", &s_impactEmissiveCurve};
   fn += SkillForceMix_MakeTunables(&s_impactForce, "impact_force_", "impact", &s_fireTunables[fn]);
 
   s_fireTunables[fn++] = (SkillTunableEntry){"fire_disperse_rise", &s_fireDisperseRise, 0.0f, 19.62f, s_fireDisperseRise, "disperse"};
@@ -77,4 +80,5 @@
   s_fireTunables[fn++] = (SkillTunableEntry){"disperse_radius_curve", NULL, 0.0f, 3.0f, 1.0f, "disperse", &s_disperseRadiusCurve};
   s_fireTunables[fn++] = (SkillTunableEntry){"disperse_speed_curve", NULL, 0.0f, 3.0f, 1.0f, "disperse", &s_disperseSpeedCurve};
   s_fireTunables[fn++] = (SkillTunableEntry){"disperse_alpha_curve", NULL, 0.0f, 1.0f, 1.0f, "disperse", &s_disperseAlphaCurve};
+  s_fireTunables[fn++] = (SkillTunableEntry){"disperse_emissive_curve", NULL, 0.0f, 3.0f, 1.0f, "disperse", &s_disperseEmissiveCurve};
   fn += SkillForceMix_MakeTunables(&s_disperseForce, "disperse_force_", "disperse", &s_fireTunables[fn]);

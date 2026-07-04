@@ -70,8 +70,8 @@ static ForceField s_rainSparkField;      // rebuilt each strike from s_rainForce
 // the sandbox. No impact-phase curves here — TriggerImpact() has no local
 // particle spawn of its own (delegates entirely to the shared
 // SpawnImpactEffect preset), so there's nothing local to shape.
-static SkillCurve s_flightRadiusCurve, s_flightSpeedParticleCurve, s_flightAlphaCurve;
-static SkillCurve s_rainRadiusCurve, s_rainSpeedCurve, s_rainAlphaCurve;
+static SkillCurve s_flightRadiusCurve, s_flightSpeedParticleCurve, s_flightAlphaCurve, s_flightEmissiveCurve;
+static SkillCurve s_rainRadiusCurve, s_rainSpeedCurve, s_rainAlphaCurve, s_rainEmissiveCurve;
 
 // Remaining per-spawn-site shape/feel knobs — everything that visibly
 // changes how dense, fast, or long-lived an effect reads. Pool-size
@@ -118,7 +118,7 @@ static float s_rainDecalYOffset      = 0.02f;
 // (radius/speed/alpha) + 2 phases x 1 force mix x
 // SKILL_FORCE_MIX_TUNABLE_COUNT(29) + 10 decal tunables
 // = 12 + 30 - 2 + 6 + 58 + 10 = 114
-#define THUNDER_ORB_TUNABLE_COUNT 114
+#define THUNDER_ORB_TUNABLE_COUNT 116
 
 // ── types ──────────────────────────────────────────────────────────────────
 
@@ -218,6 +218,7 @@ static void EmitOrbParticles(Vector3 pos) {
     p.radiusCurve = &s_flightRadiusCurve;
     p.speedCurve = &s_flightSpeedParticleCurve;
     p.alphaCurve = &s_flightAlphaCurve;
+    p.emissiveCurve = &s_flightEmissiveCurve;
     for (int i = 0; i < 3; i++) {
         float a = RandRange(0.0f, 2.0f * PI);
         float b = RandRange(-PI * 0.5f, PI * 0.5f);
@@ -239,6 +240,7 @@ static void EmitOrbCore(Vector3 pos) {
     p.radiusCurve = &s_flightRadiusCurve;
     p.speedCurve = &s_flightSpeedParticleCurve;
     p.alphaCurve = &s_flightAlphaCurve;
+    p.emissiveCurve = &s_flightEmissiveCurve;
 
     p.colorStart = (Color){ 255, 255, 255, 255 };
     p.colorEnd   = (Color){ 210, 190, 255,   0 };
@@ -331,6 +333,7 @@ static void EmitStrikeSparks(Vector3 groundPoint) {
     p.radiusCurve = &s_rainRadiusCurve;
     p.speedCurve = &s_rainSpeedCurve;
     p.alphaCurve = &s_rainAlphaCurve;
+    p.emissiveCurve = &s_rainEmissiveCurve;
     int count = (int)s_sparkCount;
     for (int i = 0; i < count; i++) {
         float a   = RandRange(0.0f, 2.0f * PI);
@@ -434,9 +437,11 @@ void InitThunderOrbSkill(int screenWidth, int screenHeight) {
     SkillCurve_SetConstant(&s_flightRadiusCurve, 1.0f);
     SkillCurve_SetConstant(&s_flightSpeedParticleCurve, 1.0f);
     SkillCurve_SetConstant(&s_flightAlphaCurve, 1.0f);
+    SkillCurve_SetConstant(&s_flightEmissiveCurve, 1.0f);
     SkillCurve_SetConstant(&s_rainRadiusCurve, 1.0f);
     SkillCurve_SetConstant(&s_rainSpeedCurve, 1.0f);
     SkillCurve_SetConstant(&s_rainAlphaCurve, 1.0f);
+    SkillCurve_SetConstant(&s_rainEmissiveCurve, 1.0f);
 
     int skillIndex = Skill_GetIndexByName("THUNDER_ORB");
     // Built as a sequence of assignments (not a single literal) so each

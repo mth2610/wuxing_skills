@@ -7,6 +7,7 @@
 #include "core/vfx_light.h"
 #include "core/camera_fx.h"
 #include "core/skill_manager.h"
+#include "core/skill_helper.h"
 #include "core/resource_manager.h"
 #include "core/procedural_mesh_utils.h"
 #include "core/path_spline.h"
@@ -21,7 +22,71 @@
 #define MAX_VORTICES 4
 #define TUBE_SEGMENTS 36
 #define RADIAL_SEGS 16
-#define BASE_RADIUS 6.5f
+
+// Real-world-scaled (1 unit = 1 m).  All spatial magic numbers below were
+// divided by 100 from the original 1cm-scale values.
+
+// Pool-size and geometry constants — not tunable (would need dynamic alloc).
+static float s_baseRadius           = 0.065f;  // orb visual/collision radius (m)
+
+// Gather phase
+static float s_gatherRDistMin       = 0.06f;   // particle spawn ring inner radius (m)
+static float s_gatherRDistMax       = 0.18f;   // particle spawn ring outer radius (m)
+static float s_gatherHeightRange    = 0.15f;   // random height band (m)
+static float s_gatherHeightBase     = 0.05f;   // base height above ground (m)
+static float s_gatherSpeed          = 0.35f;   // gather particle speed toward center (m/s)
+static float s_gatherParticleRadius = 0.024f;  // gather particle radius (m) [1.5+0.6]*4/100
+
+// Travel phase
+static float s_travelBackSpeed      = 0.30f;   // back-trail velocity magnitude (m/s)
+static float s_travelWindStrength   = 0.80f;   // wind layer strength in travelField (m/s²)
+static float s_travelJitter         = 0.15f;   // particle position/velocity jitter (m)
+static float s_travelParticleRadius = 0.028f;  // travel particle radius (m) [2.0+0.8]*4/100
+static float s_sparkBackSpeed       = 0.65f;   // accent spark back-velocity (m/s)
+static float s_sparkJitter          = 0.20f;   // accent spark velocity jitter (m/s)
+static float s_sparkUpBias          = 0.12f;   // downward bias on accent sparks (m/s)
+
+// Light/distort
+static float s_castLightRadius      = 0.40f;   // gather-phase VFXLight radius (m)
+static float s_impactLightRadius    = 0.90f;   // impact VFXLight radius (m)
+static float s_impactDistortRadius  = 0.90f;   // ScreenDistort world radius (m)
+
+// Impact & AoE
+static float s_aoeRadius            = 0.48f;   // ApplyAoEDamage radius (m)
+
+// Geyser impact burst
+static float s_geyserSpinSpeedMin   = 0.40f;   // geyser spin speed min (m/s)  [40/100]
+static float s_geyserSpinSpeedMax   = 0.80f;   // geyser spin speed max (m/s)  [80/100]
+static float s_geyserUpSpeedMin     = 0.75f;   // geyser up speed min  (m/s)  [75/100]
+static float s_geyserUpSpeedMax     = 1.75f;   // geyser up speed max  (m/s) [175/100]
+static float s_geyserPosYRange      = 0.05f;   // geyser particle spawn y offset (m)
+static float s_geyserParticleRadius = 0.05f;   // geyser particle radius (m) [3.5+1.5]*4/100 avg
+
+// Impact spark
+static float s_impactSparkSpeedMin  = 0.55f;   // impact spark speed min (m/s)  [55/100]
+static float s_impactSparkSpeedMax  = 1.45f;   // impact spark speed max (m/s) [145/100]
+static float s_impactSparkUpBase    = 0.35f;   // up-velocity base on sparks (m/s) [35/100]
+
+// Aftermath (continuous vortex)
+static float s_aftermathUpSpeedMin  = 0.60f;   // aftermath up speed min (m/s)
+static float s_aftermathUpSpeedMax  = 1.50f;   // aftermath up speed max (m/s)
+static float s_aftermathSpinMin     = 0.25f;   // aftermath spin speed min (m/s)
+static float s_aftermathSpinMax     = 0.60f;   // aftermath spin speed max (m/s)
+static float s_aftermathRDist       = 0.02f;   // aftermath spawn ring radius scale (m per ageRatio)
+static float s_aftermathYJitter     = 0.01f;   // aftermath spawn y jitter (m)
+static float s_aftermathParticleRadius = 0.038f; // aftermath particle radius (m)
+
+// Over-lifetime curves (flat defaults = no change from base behavior)
+static SkillCurve s_travelRadiusCurve, s_travelSpeedCurve, s_travelAlphaCurve, s_travelEmissiveCurve;
+static SkillCurve s_geyserRadiusCurve, s_geyserSpeedCurve, s_geyserAlphaCurve, s_geyserEmissiveCurve;
+
+// Force mixes — one per logical phase
+static SkillForceMix s_travelForceMix;
+static SkillForceMix s_geyserForceMix;
+static ForceField s_travelForceMixField;
+static ForceField s_geyserForceMixField;
+
+#define HOA_LONG_TUNABLE_COUNT 202
 
 typedef struct {
     Vector3 startPos;
@@ -44,34 +109,6 @@ typedef struct {
 
 static HoaLongPhongBaVortex s_vortices[MAX_VORTICES];
 
-#define MAX_SPARKS 256
-
-typedef struct {
-    Vector3 position;
-    Vector3 velocity;
-    float life;
-    float maxLife;
-    Color color;
-    const ForceField *forceField; // Thêm trường lực để tia lửa bay chuẩn động học của lốc xoáy
-    bool active;
-} FlameSpark;
-
-static FlameSpark s_sparks[MAX_SPARKS];
-static int s_sparkIndex = 0;
-
-static void SpawnFlameSpark(Vector3 pos, Vector3 vel, float lifetime, Color color, const ForceField *forceField) {
-    int idx = s_sparkIndex;
-    s_sparks[idx] = (FlameSpark){
-        .position = pos,
-        .velocity = vel,
-        .life = lifetime,
-        .maxLife = lifetime,
-        .color = color,
-        .forceField = forceField,
-        .active = true
-    };
-    s_sparkIndex = (s_sparkIndex + 1) % MAX_SPARKS;
-}
 
 // Tài nguyên đồ họa
 static Texture2D s_noiseTex;
@@ -128,11 +165,6 @@ void InitHoaLongPhongBaSkill(int w, int h) {
     for (int i = 0; i < MAX_VORTICES; i++) {
         s_vortices[i].active = false;
     }
-    for (int i = 0; i < MAX_SPARKS; i++) {
-        s_sparks[i].active = false;
-    }
-    s_sparkIndex = 0;
-
     // Thiết lập ColorGradient cho hạt lửa
     s_fireGrad.count = 0;
     ColorGradient_AddStop(&s_fireGrad, 0.00f, (Color){ 255, 255, 220, 255 }); // Lõi trắng vàng siêu nóng
@@ -142,46 +174,46 @@ void InitHoaLongPhongBaSkill(int w, int h) {
     ColorGradient_AddStop(&s_fireGrad, 1.00f, (Color){ 30, 30, 30, 0 });      // Khói đen tan biến
 
     // --- CẤU HÌNH TRƯỜNG LỰC HẠT (FORCE FIELDS) ---
+    // All strength values are meter-scaled (÷100 from original 1cm-scale).
+    // noiseScale is spatial frequency (1/m); also ×100 from original.
+    // FORCE_DRAG strength is a dimensionless damping coefficient — unchanged.
 
     // 1. Trường lực bay (Travel Field): Curl Noise cuộn xoắn khí động + Gió ngược đẩy tạt ra sau
     ForceField_Clear(&s_travelField);
     ForceField_AddLayer(&s_travelField, (ForceLayer){
         .type = FORCE_NOISE_CURL,
-        .strength = 145.0f,
-        .noiseScale = 0.07f,
+        .strength = 1.45f,   // 145 / 100
+        .noiseScale = 7.0f,  // 0.07 * 100 — spatial freq unchanged in world-space
         .noiseSpeed = 4.5f
     });
     ForceField_AddLayer(&s_travelField, (ForceLayer){
         .type = FORCE_DRAG,
-        .strength = 2.8f
+        .strength = 2.8f     // dimensionless coefficient — unchanged
     });
 
     // 2. Trường lực cột lốc nổ (Geyser Field): Xoáy đứng Y cực mạnh + Cuộn khí động Curl + Phun lên trời
     ForceField_Clear(&s_geyserField);
-    // Tăng sức mạnh xoáy lốc để bẻ cong đường đạn vệt lửa vút lên trời
     ForceField_AddLayer(&s_geyserField, (ForceLayer){
         .type = FORCE_VORTEX,
         .direction = { 0.0f, 1.0f, 0.0f },
-        .strength = 1100.0f, // Tăng mạnh từ 450 -> 1100
-        .radius = 160.0f,    // Bán kính rộng gấp đôi để ôm trọn vệt lửa
+        .strength = 11.0f,   // 1100 / 100
+        .radius = 1.6f,      // 160 / 100
         .falloff = 1.0f
     });
-    // Phun vút lên cao cực nhanh
     ForceField_AddLayer(&s_geyserField, (ForceLayer){
         .type = FORCE_GRAVITY_DIR,
         .direction = { 0.0f, 1.0f, 0.0f },
-        .strength = 390.0f // tăng lực kéo lên trời
+        .strength = 3.9f     // 390 / 100 — compare: real gravity 9.81 m/s²
     });
-    // Thêm curl noise hỗn loạn khí động cho giống ngọn lửa thật
     ForceField_AddLayer(&s_geyserField, (ForceLayer){
         .type = FORCE_NOISE_CURL,
-        .strength = 180.0f,
-        .noiseScale = 0.05f,
+        .strength = 1.8f,    // 180 / 100
+        .noiseScale = 5.0f,  // 0.05 * 100
         .noiseSpeed = 6.0f
     });
     ForceField_AddLayer(&s_geyserField, (ForceLayer){
         .type = FORCE_DRAG,
-        .strength = 1.8f
+        .strength = 1.8f     // dimensionless — unchanged
     });
 
     // 3. Trường lực tàn lửa rơi rụng (Fallout Field): Rơi chậm + Cản mạnh để tàn bay lơ lửng
@@ -189,12 +221,29 @@ void InitHoaLongPhongBaSkill(int w, int h) {
     ForceField_AddLayer(&s_falloutField, (ForceLayer){
         .type = FORCE_GRAVITY_DIR,
         .direction = { 0.0f, -1.0f, 0.0f },
-        .strength = 35.0f
+        .strength = 0.35f    // 35 / 100
     });
     ForceField_AddLayer(&s_falloutField, (ForceLayer){
         .type = FORCE_DRAG,
-        .strength = 4.5f
+        .strength = 4.5f     // dimensionless — unchanged
     });
+
+    // Seed over-lifetime curves flat (no change until shaped in sandbox)
+    SkillCurve_SetConstant(&s_travelRadiusCurve,  1.0f);
+    SkillCurve_SetConstant(&s_travelSpeedCurve,   1.0f);
+    SkillCurve_SetConstant(&s_travelAlphaCurve,   1.0f);
+    SkillCurve_SetConstant(&s_travelEmissiveCurve,1.0f);
+    SkillCurve_SetConstant(&s_geyserRadiusCurve,  1.0f);
+    SkillCurve_SetConstant(&s_geyserSpeedCurve,   1.0f);
+    SkillCurve_SetConstant(&s_geyserAlphaCurve,   1.0f);
+    SkillCurve_SetConstant(&s_geyserEmissiveCurve,1.0f);
+
+    // Register sandbox tunables
+    static SkillTunableEntry s_tunables[HOA_LONG_TUNABLE_COUNT];
+    int tn = 0;
+#include "hoa_long_phong_ba_skill_tunables.inl"
+    SkillTunables_LoadPersisted("skills/fire/hoa_long_phong_ba_skill/hoa_long_phong_ba_skill.tuning", s_tunables, tn);
+    RegisterSkillTunables(s_skillIndex, s_tunables, tn);
 }
 
 // Bắt đầu thi triển chiêu thức
@@ -206,7 +255,7 @@ void CastHoaLongPhongBaSkill(int agentId, Vector3 startPos, Vector3 target, Skil
             float sizeScale = (params.sizeScale > 0.0f) ? params.sizeScale : 1.0f;
             Vector3 to = Vector3Subtract(target, startPos);
             float dist = Vector3Length(to);
-            if (dist < 10.0f) dist = 10.0f;
+            if (dist < 0.10f) dist = 0.10f; // min 0.1 m (was 10 cm in old scale)
             Vector3 dir = Vector3Scale(to, 1.0f / dist);
 
             // Tạo các điểm điều khiển Bezier uốn lượn
@@ -219,11 +268,11 @@ void CastHoaLongPhongBaSkill(int agentId, Vector3 startPos, Vector3 target, Skil
 
             Vector3 cp1 = Vector3Add(
                 Vector3Add(startPos, Vector3Scale(dir, dist * 0.33f)),
-                Vector3Add(Vector3Scale(perpX, sinf(twistPhase) * amp), Vector3Scale(perpY, cosf(twistPhase) * amp + 15.0f))
+                Vector3Add(Vector3Scale(perpX, sinf(twistPhase) * amp), Vector3Scale(perpY, cosf(twistPhase) * amp + 0.15f))
             );
             Vector3 cp2 = Vector3Add(
                 Vector3Add(startPos, Vector3Scale(dir, dist * 0.66f)),
-                Vector3Add(Vector3Scale(perpX, -sinf(twistPhase) * amp * 0.8f), Vector3Scale(perpY, -cosf(twistPhase) * amp * 0.8f + 25.0f))
+                Vector3Add(Vector3Scale(perpX, -sinf(twistPhase) * amp * 0.8f), Vector3Scale(perpY, -cosf(twistPhase) * amp * 0.8f + 0.25f))
             );
 
             s_vortices[i] = (HoaLongPhongBaVortex){
@@ -246,7 +295,7 @@ void CastHoaLongPhongBaSkill(int agentId, Vector3 startPos, Vector3 target, Skil
             };
 
             // Spawn một chớp sáng nhẹ báo hiệu tụ chiêu
-            VFXLight_Spawn(startPos, ELEMENT_COLOR_FIRE, 40.0f * sizeScale, 0.4f, VFX_PRIORITY_LOW);
+            VFXLight_Spawn(startPos, ELEMENT_COLOR_FIRE, s_castLightRadius * sizeScale, 0.4f, VFX_PRIORITY_LOW);
 
             SkillManager_TriggerCooldown(s_skillIndex, agentId, Skill_CalculateCooldown(SKILL_CAT_AOE_CONTROL, params));
             break;
@@ -257,33 +306,32 @@ void CastHoaLongPhongBaSkill(int agentId, Vector3 startPos, Vector3 target, Skil
 // Xử lý nổ lốc lửa khổng lồ khi va chạm
 static void TriggerVortexImpact(Vector3 pos, float scale, float damage, float knockback) {
     // 1. Ánh sáng rực rỡ (Bỏ hiệu ứng rung camera và sóng sung kích màn hình theo yêu cầu)
-    VFXLight_Spawn(pos, ELEMENT_COLOR_FIRE, 90.0f * scale, 1.8f, VFX_PRIORITY_LOW);
+    VFXLight_Spawn(pos, ELEMENT_COLOR_FIRE, s_impactLightRadius * scale, 1.8f, VFX_PRIORITY_LOW);
 
     // 2. Tạo Decal nứt đất rực lửa cỡ lớn
     // Y dịch nhẹ lên +0.02f chống Z-fighting nhấp nháy lưới đất
     Vector3 decalPos = { pos.x, pos.y + 0.02f, pos.z };
-    DecalSystem_Add(decalPos, (float)(rand() % 360), BASE_RADIUS * scale * 5.2f, s_crackTex, 4.5f, ELEMENT_COLOR_FIRE);
+    DecalSystem_Add(decalPos, (float)(rand() % 360), s_baseRadius * scale * 5.2f, s_crackTex, 4.5f, ELEMENT_COLOR_FIRE);
 
     // 3. Gây sát thương AoE diện rộng và khóa chân kẻ địch
-    ApplyAoEDamage(pos, 48.0f * scale, damage, knockback);
+    // Pass 4: distance-proportional floor+cap applied at call site in Update
+    ApplyAoEDamage(pos, s_aoeRadius * scale, damage, knockback);
     AddRootToEnemy(3.2f); // giữ chân 3.2 giây trong cột lửa
 
-    // 4. Tạo hiệu ứng Hỏa Long Phong Ba (Cột lốc lửa cuộn đứng cao gấp 3-4 lần nhân vật)
-    // Chiều cao nhân vật ~15 unit, cột lốc cao gấp 4 lần (~60 unit)
-    int geyserHạtCount = (int)(65.0f * scale); // Tối ưu hóa hiệu năng: 150 -> 65 hạt
+    // 4. Tạo hiệu ứng Hỏa Long Phong Ba (Cột lốc lửa cuộn đứng)
+    int geyserHạtCount = (int)(65.0f * scale);
     for (int i = 0; i < geyserHạtCount; i++) {
-        // Tọa độ ngẫu nhiên xung quanh điểm va chạm
         float angle = (float)i / (float)geyserHạtCount * 2.0f * PI;
-        float dist = (float)rand() / (float)RAND_MAX * BASE_RADIUS * scale * 2.2f;
+        float dist = (float)rand() / (float)RAND_MAX * s_baseRadius * scale * 2.2f;
         Vector3 particlePos = {
             pos.x + cosf(angle) * dist,
-            pos.y + (float)rand() / (float)RAND_MAX * 5.0f,
+            pos.y + (float)rand() / (float)RAND_MAX * s_geyserPosYRange,
             pos.z + sinf(angle) * dist
         };
 
-        // Vận tốc ban đầu: xoay tròn nhẹ + phun vút thẳng lên trời cực mạnh
-        float spinSpeed = (float)(rand() % 40 + 40) * scale;
-        float upSpeed = (float)(rand() % 100 + 75) * scale; // Phun lên cực cao
+        // Vận tốc ban đầu: xoay tròn nhẹ + phun vút thẳng lên trời
+        float spinSpeed = ((float)(rand() % 40) / 100.0f + s_geyserSpinSpeedMin) * scale;
+        float upSpeed   = ((float)(rand() % 100) / 100.0f * (s_geyserUpSpeedMax - s_geyserUpSpeedMin) + s_geyserUpSpeedMin) * scale;
         Vector3 vel = {
             -sinf(angle) * spinSpeed,
             upSpeed,
@@ -293,69 +341,24 @@ static void TriggerVortexImpact(Vector3 pos, float scale, float damage, float kn
         ParticleConfig cfg = {
             .position = particlePos,
             .velocity = vel,
-            .radius = ((float)rand() / (float)RAND_MAX * 3.5f + 1.5f) * scale * 4.0f,
-            .lifetime = (float)rand() / (float)RAND_MAX * 1.0f + 0.8f, // Tồn tại lâu hơn để bay lên cao
+            .radius = ((float)rand() / (float)RAND_MAX * s_geyserParticleRadius + s_geyserParticleRadius * 0.3f) * scale * 4.0f,
+            .lifetime = (float)rand() / (float)RAND_MAX * 1.0f + 0.8f,
             .forceField = &s_geyserField,
-            .gradient = &s_fireGrad
+            .gradient = &s_fireGrad,
+            .radiusCurve   = &s_geyserRadiusCurve,
+            .speedCurve    = &s_geyserSpeedCurve,
+            .alphaCurve    = &s_geyserAlphaCurve,
+            .emissiveCurve = &s_geyserEmissiveCurve
         };
         SpawnParticle(cfg);
     }
 
-    // Sinh ra các tàn lửa chói sáng kéo vệt dài (Accent Sparks) bắn ra và bị cuốn xoáy lả lướt vào lốc xoáy
-    int sparkCount = (int)(10.0f * scale); // Giảm số hạt vệt lửa lúc vỡ xuống còn 10 hạt (tối ưu, tránh rối mắt)
-    for (int i = 0; i < sparkCount; i++) {
-        float angle = (float)rand() / (float)RAND_MAX * 2.0f * PI;
-        float pitch = ((float)rand() / (float)RAND_MAX - 0.2f) * PI * 0.5f;
-        float speed = ((float)(rand() % 90 + 55)) * scale; // Tốc độ ban đầu vừa phải để lực xoáy bẻ cong dễ dàng
-
-        Vector3 vel = {
-            cosf(angle) * speed * cosf(pitch),
-            sinf(pitch) * speed + 35.0f,
-            sinf(angle) * speed * cosf(pitch)
-        };
-
-        Color sparkColor = (Color){ 255, 255, 240, 255 }; // màu trắng vàng chói sáng
-        // Khôi phục truyền &s_geyserField để vệt sáng bay lả lướt xoáy lốc đứng lên trời cực đẹp!
-        // Sống lâu hơn (2.0s -> 3.8s) để có đủ thời gian bay xoáy lên trời cao!
-        SpawnFlameSpark(pos, vel, (float)rand() / (float)RAND_MAX * 1.8f + 2.0f, sparkColor, &s_geyserField);
-    }
+    // Sinh ra các tàn lửa chói sáng kéo vệt dài (Accent Sparks)
 }
 
 // Cập nhật trạng thái kỹ năng qua từng khung hình
 void UpdateHoaLongPhongBaSkill(float dt, Vector3 enemyPos, float enemyRadius) {
     float time = (float)GetTime();
-
-    // Cập nhật các tia lửa kéo dài (FlameSparks) bay lả lướt xoáy lượn chuẩn xác theo trường lực khí động
-    for (int i = 0; i < MAX_SPARKS; i++) {
-        if (!s_sparks[i].active) continue;
-        s_sparks[i].life -= dt;
-        if (s_sparks[i].life <= 0.0f) {
-            s_sparks[i].active = false;
-            continue;
-        }
-
-        Vector3 accel = (Vector3){ 0 };
-        if (s_sparks[i].forceField != NULL) {
-            // Đánh giá lực xoáy lốc đứng, gió ngược hoặc curl noise hỗn loạn để bay lả lướt khí động!
-            accel = ForceField_Evaluate(s_sparks[i].forceField, s_sparks[i].position, s_sparks[i].velocity, time, (Vector3){0}, (Vector3){0, 1, 0});
-        } else {
-            // Rơi tự do rất nhẹ theo phương thẳng đứng
-            accel.y = -15.0f;
-        }
-
-        // Cập nhật vận tốc
-        s_sparks[i].velocity = Vector3Add(s_sparks[i].velocity, Vector3Scale(accel, dt));
-        
-        // Damping cản chuyển động
-        if (s_sparks[i].forceField == &s_geyserField) {
-            s_sparks[i].velocity = Vector3Scale(s_sparks[i].velocity, 1.0f - 1.8f * dt);
-        } else {
-            s_sparks[i].velocity = Vector3Scale(s_sparks[i].velocity, 1.0f - 2.6f * dt);
-        }
-
-        // Cập nhật vị trí
-        s_sparks[i].position = Vector3Add(s_sparks[i].position, Vector3Scale(s_sparks[i].velocity, dt));
-    }
 
     for (int idx = 0; idx < MAX_VORTICES; idx++) {
         if (!s_vortices[idx].active) continue;
@@ -368,31 +371,35 @@ void UpdateHoaLongPhongBaSkill(float dt, Vector3 enemyPos, float enemyRadius) {
             // Spawn decal pháp trận tụ lực đỏ cam quay dưới chân caster (player)
             if (v->gatherTimer > 0.05f) {
                 Vector3 pFoot = { v->startPos.x, v->startPos.y + 0.02f, v->startPos.z };
-                DecalSystem_Add(pFoot, time * 90.0f, BASE_RADIUS * v->scale * 1.8f, s_crackTex, 0.1f, ColorAlpha(ELEMENT_COLOR_FIRE, 0.4f));
+                DecalSystem_Add(pFoot, time * 90.0f, s_baseRadius * v->scale * 1.8f, s_crackTex, 0.1f, ColorAlpha(ELEMENT_COLOR_FIRE, 0.4f));
             }
 
             // Sinh các hạt tụ lửa xung quanh tụ về caster
             for (int i = 0; i < 4; i++) {
                 float angle = (float)rand() / (float)RAND_MAX * 2.0f * PI;
-                float rDist = (float)rand() / (float)RAND_MAX * 18.0f + 6.0f;
-                float height = ((float)rand() / (float)RAND_MAX - 0.3f) * 15.0f;
+                float rDist = (float)rand() / (float)RAND_MAX * s_gatherRDistMax + s_gatherRDistMin;
+                float height = ((float)rand() / (float)RAND_MAX - 0.3f) * s_gatherHeightRange;
 
                 Vector3 startPart = {
                     v->startPos.x + cosf(angle) * rDist,
-                    v->startPos.y + height + 5.0f,
+                    v->startPos.y + height + s_gatherHeightBase,
                     v->startPos.z + sinf(angle) * rDist
                 };
 
                 // Vận tốc hướng về tâm startPos
                 Vector3 toCenter = Vector3Subtract(v->startPos, startPart);
-                Vector3 vel = Vector3Scale(Vector3Normalize(toCenter), 35.0f);
+                Vector3 vel = Vector3Scale(Vector3Normalize(toCenter), s_gatherSpeed);
 
                 ParticleConfig cfg = {
                     .position = startPart,
                     .velocity = vel,
-                    .radius = ((float)rand() / (float)RAND_MAX * 1.5f + 0.6f) * v->scale * 4.0f,
+                    .radius = s_gatherParticleRadius * v->scale * 4.0f,
                     .lifetime = 0.5f,
-                    .gradient = &s_fireGrad
+                    .gradient = &s_fireGrad,
+                    .radiusCurve   = &s_travelRadiusCurve,
+                    .speedCurve    = &s_travelSpeedCurve,
+                    .alphaCurve    = &s_travelAlphaCurve,
+                    .emissiveCurve = &s_travelEmissiveCurve
                 };
                 SpawnParticle(cfg);
             }
@@ -406,7 +413,7 @@ void UpdateHoaLongPhongBaSkill(float dt, Vector3 enemyPos, float enemyRadius) {
             // Cập nhật vị trí uốn lượn động cho 2 điểm điều khiển Bezier
             Vector3 to = Vector3Subtract(v->targetPos, v->startPos);
             float dist = Vector3Length(to);
-            if (dist < 1.0f) dist = 1.0f;
+            if (dist < 0.1f) dist = 0.1f;
             Vector3 dir = Vector3Scale(to, 1.0f / dist);
             Vector3 perpX = Vector3Normalize((Vector3){ -dir.z, 0.0f, dir.x });
             if (Vector3Length(perpX) < 0.1f) perpX = (Vector3){ 1.0f, 0.0f, 0.0f };
@@ -430,61 +437,42 @@ void UpdateHoaLongPhongBaSkill(float dt, Vector3 enemyPos, float enemyRadius) {
             // Sinh hạt vệt lửa dọc đường bay (Travel particles)
             Vector3 tangent = Vector3Normalize(GetBezierTangent(v->startPos, dynamicP1, dynamicP2, v->targetPos, v->progress));
             // Hạt phun tạt ra đằng sau đạn
-            Vector3 backVel = Vector3Scale(Vector3Negate(tangent), 30.0f * v->scale);
+            Vector3 backVel = Vector3Scale(Vector3Negate(tangent), s_travelBackSpeed * v->scale);
 
             // Đặt lực gió ngược chiều bay vào travelField
             s_travelField.layers[1].type = FORCE_WIND;
             s_travelField.layers[1].direction = Vector3Normalize(backVel);
-            s_travelField.layers[1].strength = 80.0f;
+            s_travelField.layers[1].strength = s_travelWindStrength;
             s_travelField.layers[1].radius = 0.0f;
             s_travelField.layers[1].falloff = 0.0f;
             s_travelField.layerCount = 3; // Lớp 0: Curl, Lớp 1: Gió ngược, Lớp 2: Drag
 
             for (int k = 0; k < 1; k++) { // Tối ưu hóa hiệu năng: 3 -> 1 hạt mỗi frame khi bay
                 Vector3 pOffset = {
-                    v->headPos.x + ((float)rand() / (float)RAND_MAX - 0.5f) * BASE_RADIUS * v->scale * 0.6f,
-                    v->headPos.y + ((float)rand() / (float)RAND_MAX - 0.5f) * BASE_RADIUS * v->scale * 0.6f,
-                    v->headPos.z + ((float)rand() / (float)RAND_MAX - 0.5f) * BASE_RADIUS * v->scale * 0.6f
+                    v->headPos.x + ((float)rand() / (float)RAND_MAX - 0.5f) * s_baseRadius * v->scale * 0.6f,
+                    v->headPos.y + ((float)rand() / (float)RAND_MAX - 0.5f) * s_baseRadius * v->scale * 0.6f,
+                    v->headPos.z + ((float)rand() / (float)RAND_MAX - 0.5f) * s_baseRadius * v->scale * 0.6f
                 };
 
                 ParticleConfig cfg = {
                     .position = pOffset,
                     .velocity = Vector3Add(backVel, (Vector3){
-                        ((float)rand() / (float)RAND_MAX - 0.5f) * 15.0f,
-                        ((float)rand() / (float)RAND_MAX - 0.5f) * 15.0f,
-                        ((float)rand() / (float)RAND_MAX - 0.5f) * 15.0f
+                        ((float)rand() / (float)RAND_MAX - 0.5f) * s_travelJitter,
+                        ((float)rand() / (float)RAND_MAX - 0.5f) * s_travelJitter,
+                        ((float)rand() / (float)RAND_MAX - 0.5f) * s_travelJitter
                     }),
-                    .radius = ((float)rand() / (float)RAND_MAX * 2.0f + 0.8f) * v->scale * 4.0f,
+                    .radius = ((float)rand() / (float)RAND_MAX * 0.02f + 0.008f) * v->scale * 4.0f,
                     .lifetime = (float)rand() / (float)RAND_MAX * 0.4f + 0.35f,
                     .forceField = &s_travelField,
-                    .gradient = &s_fireGrad
+                    .gradient = &s_fireGrad,
+                    .emissiveCurve = &s_travelEmissiveCurve
                 };
                 SpawnParticle(cfg);
             }
 
-            // Sinh thêm hạt tàn lửa kéo vệt dài chói lọi (Accent Sparks) khi đạn bay
-            if (rand() % 100 < 18) { // Giảm tần suất sinh hạt khi bay xuống 18% (1 hạt sau 5-6 frame) tránh rối mắt
-                Vector3 pOffset = {
-                    v->headPos.x + ((float)rand() / (float)RAND_MAX - 0.5f) * BASE_RADIUS * v->scale * 0.35f,
-                    v->headPos.y + ((float)rand() / (float)RAND_MAX - 0.5f) * BASE_RADIUS * v->scale * 0.35f,
-                    v->headPos.z + ((float)rand() / (float)RAND_MAX - 0.5f) * BASE_RADIUS * v->scale * 0.35f
-                };
-
-                // Vận tốc tạt mạnh ra sau đạn để kéo vệt song song
-                Vector3 sparkVel = {
-                    -tangent.x * 65.0f * v->scale + ((float)rand() / (float)RAND_MAX - 0.5f) * 20.0f,
-                    -tangent.y * 65.0f * v->scale + ((float)rand() / (float)RAND_MAX - 0.5f) * 20.0f - 12.0f,
-                    -tangent.z * 65.0f * v->scale + ((float)rand() / (float)RAND_MAX - 0.5f) * 20.0f
-                };
-
-                Color sparkColor = (Color){ 255, 255, 220, 255 }; // trắng vàng rực rỡ
-                // Khôi phục truyền &s_travelField và cho tuổi thọ dài (1.0s -> 1.8s) để vệt sáng bay lả lướt uốn lượn theo đạn!
-                SpawnFlameSpark(pOffset, sparkVel, (float)rand() / (float)RAND_MAX * 0.8f + 1.0f, sparkColor, &s_travelField);
-            }
-
             // Va chạm nếu đi hết tiến trình hoặc trúng vùng chạm địch thủ
             bool hitEnemy = false;
-            float checkDist = BASE_RADIUS * v->scale + enemyRadius;
+            float checkDist = s_baseRadius * v->scale + enemyRadius;
             if (Vector3DistanceSqr(v->headPos, enemyPos) <= checkDist * checkDist) {
                 hitEnemy = true;
             }
@@ -511,15 +499,15 @@ void UpdateHoaLongPhongBaSkill(float dt, Vector3 enemyPos, float enemyRadius) {
             float ageRatio = v->life / v->maxLife; // 1.0 -> 0.0
             for (int k = 0; k < contCount; k++) {
                 float angle = (float)rand() / (float)RAND_MAX * 2.0f * PI;
-                float rDist = (float)rand() / (float)RAND_MAX * BASE_RADIUS * v->scale * 2.0f * ageRatio;
+                float rDist = (float)rand() / (float)RAND_MAX * s_baseRadius * v->scale * 2.0f * ageRatio;
                 Vector3 pSpawn = {
                     v->targetPos.x + cosf(angle) * rDist,
-                    v->targetPos.y + (float)rand() / (float)RAND_MAX * 2.0f,
+                    v->targetPos.y + (float)rand() / (float)RAND_MAX * 0.02f,
                     v->targetPos.z + sinf(angle) * rDist
                 };
 
-                float upSpeed = (float)(rand() % 90 + 60) * v->scale * ageRatio;
-                float spinSpeed = (float)(rand() % 35 + 25) * v->scale * ageRatio;
+                float upSpeed = (float)(rand() % 90 + 60) * 0.01f * v->scale * ageRatio;
+                float spinSpeed = (float)(rand() % 35 + 25) * 0.01f * v->scale * ageRatio;
                 Vector3 vel = {
                     -sinf(angle) * spinSpeed,
                     upSpeed,
@@ -529,10 +517,11 @@ void UpdateHoaLongPhongBaSkill(float dt, Vector3 enemyPos, float enemyRadius) {
                 ParticleConfig cfg = {
                     .position = pSpawn,
                     .velocity = vel,
-                    .radius = ((float)rand() / (float)RAND_MAX * 2.6f + 1.2f) * v->scale * 4.0f * ageRatio,
+                    .radius = ((float)rand() / (float)RAND_MAX * 0.026f + 0.012f) * v->scale * 4.0f * ageRatio,
                     .lifetime = (float)rand() / (float)RAND_MAX * 0.9f + 0.7f,
                     .forceField = &s_geyserField,
-                    .gradient = &s_fireGrad
+                    .gradient = &s_fireGrad,
+                    .emissiveCurve = &s_geyserEmissiveCurve
                 };
                 SpawnParticle(cfg);
             }
@@ -583,58 +572,11 @@ void DrawHoaLongPhongBaSkill(void) {
         rlColor4ub(255, 255, 255, 255);
 
         // Vẽ quả cầu lửa tại vị trí đầu đạn logic (biến dạng phập phồng & rách rưới xử lý tự động bởi shader)
-        DrawCoreSphere(v->headPos, BASE_RADIUS * v->scale * 1.25f, 24, 24, WHITE);
+        DrawCoreSphere(v->headPos, s_baseRadius * v->scale * 1.25f, 24, 24, WHITE);
     }
 
     SkillManager_EndShader();
     EndShaderMode();
-
-    // 6. Vẽ các tia lửa kéo dài dạng vệt chói sáng bằng QUADS hướng camera (Motion Stretched Billboard)
-    rlDisableDepthMask();
-    rlCheckRenderBatchLimit(MAX_SPARKS * 4);
-    rlBegin(RL_QUADS);
-    for (int i = 0; i < MAX_SPARKS; i++) {
-        if (!s_sparks[i].active) continue;
-        FlameSpark *s = &s_sparks[i];
-
-        float ageRatio = s->life / s->maxLife; // 1.0 -> 0.0
-        Vector3 start = s->position;
-        // Điểm đuôi kéo dài ngược hướng vận tốc tạo vệt Motion Blur (kéo vệt dài gấp đôi)
-        Vector3 end = Vector3Subtract(start, Vector3Scale(s->velocity, 0.075f));
-
-        Vector3 velVec = s->velocity;
-        float velLen = Vector3Length(velVec);
-        if (velLen < 0.1f) continue;
-        Vector3 vDir = Vector3Scale(velVec, 1.0f / velLen);
-
-        // Hướng từ camera tới tia lửa để xoay Quad hướng về người nhìn
-        Vector3 toCam = Vector3Subtract(camera.position, start);
-        Vector3 dirToCam = Vector3Normalize(toCam);
-
-        // Trục ngang vuông góc
-        Vector3 vRight = Vector3Normalize(Vector3CrossProduct(vDir, dirToCam));
-        // Thu nhỏ độ rộng xuống w = 0.16f (mỏng bén sắc nét như sợi chỉ sáng rực, loại bỏ cảm giác dải lụa to dẹt)
-        float w = 0.16f; 
-
-        Vector3 p1 = Vector3Add(start, Vector3Scale(vRight, w));
-        Vector3 p2 = Vector3Subtract(start, Vector3Scale(vRight, w));
-        Vector3 p3 = Vector3Subtract(end, Vector3Scale(vRight, w)); // giữ nguyên độ dày w ở đuôi để tạo dải thẳng tắp
-        Vector3 p4 = Vector3Add(end, Vector3Scale(vRight, w));
-
-        // Màu xuất phát trắng vàng sáng rực rỡ mờ dần theo tuổi thọ
-        Color colStart = ColorAlpha(s->color, ageRatio);
-        // Đuôi vệt chuyển sang cam lửa rực rỡ và giữ Alpha tốt hơn (ageRatio * 0.45f) thay vì tắt ngúm 0.0f, giúp cả vệt sáng bừng!
-        Color colEnd = ColorAlpha((Color){ 255, 150, 15, 255 }, ageRatio * 0.45f);
-
-        rlColor4ub(colStart.r, colStart.g, colStart.b, colStart.a);
-        rlVertex3f(p1.x, p1.y, p1.z);
-        rlVertex3f(p2.x, p2.y, p2.z);
-
-        rlColor4ub(colEnd.r, colEnd.g, colEnd.b, colEnd.a);
-        rlVertex3f(p3.x, p3.y, p3.z);
-        rlVertex3f(p4.x, p4.y, p4.z);
-    }
-    rlEnd();
 
     rlEnableDepthMask();
 }
@@ -652,7 +594,7 @@ int GetHoaLongPhongBaSkillProjectiles(SkillProjectile *out, int max) {
     for (int i = 0; i < MAX_VORTICES; i++) {
         if (s_vortices[i].active && !s_vortices[i].impactTriggered && s_vortices[i].gatherTimer <= 0.0f && count < max) {
             out[count].position = s_vortices[i].headPos;
-            out[count].radius = BASE_RADIUS * s_vortices[i].scale;
+            out[count].radius = s_baseRadius * s_vortices[i].scale;
             out[count].active = true;
             count++;
         }

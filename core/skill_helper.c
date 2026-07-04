@@ -361,21 +361,22 @@ void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale) {
 
     switch (preset) {
         case EFFECT_PRESET_FIRE_EXPLOSION: {
-            ScreenDistort_Add(pos, 55.0f * scale, 0.35f, 0.35f, 100.0f);
+            // Real-world-scaled ÷100 (root CLAUDE.md §scale).
+            ScreenDistort_Add(pos, 0.55f * scale, 0.35f, 0.35f, 1.0f);
             CameraFX_Shake(0.38f);
-            VFXLight_Spawn(pos, (Color){ 255, 120, 20, 255 }, 65.0f * scale, 0.5f, VFX_PRIORITY_LOW);
-            SpawnGroundDecal(DECAL_PRESET_BURN, pos, 22.0f * scale, 5.0f);
+            VFXLight_Spawn(pos, (Color){ 255, 120, 20, 255 }, 0.65f * scale, 0.5f, VFX_PRIORITY_LOW);
+            SpawnGroundDecal(DECAL_PRESET_BURN, pos, 0.22f * scale, 5.0f);
 
             // Sinh hạt lửa tung tóe
             int count = (int)(45 * scale);
             for (int i = 0; i < count; i++) {
                 float a = (float)i / count * 2.0f * PI;
-                float speed = (float)(rand() % 35 + 20) * scale;
-                Vector3 vel = { cosf(a) * speed, (float)(rand() % 45 + 15) * scale, sinf(a) * speed };
+                float speed = (float)(rand() % 35 + 20) * 0.01f * scale;
+                Vector3 vel = { cosf(a) * speed, (float)(rand() % 45 + 15) * 0.01f * scale, sinf(a) * speed };
                 SpawnParticle((ParticleConfig){
                     .position = pos,
                     .velocity = vel,
-                    .radius = ((float)rand() / (float)RAND_MAX * 1.8f + 0.8f) * scale,
+                    .radius = ((float)rand() / (float)RAND_MAX * 0.018f + 0.008f) * scale,
                     .lifetime = (float)rand() / (float)RAND_MAX * 0.8f + 0.4f,
                     .gradient = &s_fireGrad,
                     .forceField = &s_fireFld
@@ -384,20 +385,21 @@ void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale) {
             break;
         }
         case EFFECT_PRESET_ICE_SHATTER: {
-            ScreenDistort_Add(pos, 35.0f * scale, 0.22f, 0.25f, 60.0f);
+            // Real-world-scaled ÷100.
+            ScreenDistort_Add(pos, 0.35f * scale, 0.22f, 0.25f, 0.60f);
             CameraFX_Shake(0.20f);
-            VFXLight_Spawn(pos, (Color){ 140, 210, 255, 255 }, 45.0f * scale, 0.4f, VFX_PRIORITY_LOW);
-            SpawnGroundDecal(DECAL_PRESET_ICE, pos, 18.0f * scale, 4.0f);
+            VFXLight_Spawn(pos, (Color){ 140, 210, 255, 255 }, 0.45f * scale, 0.4f, VFX_PRIORITY_LOW);
+            SpawnGroundDecal(DECAL_PRESET_ICE, pos, 0.18f * scale, 4.0f);
 
             int count = (int)(30 * scale);
             for (int i = 0; i < count; i++) {
                 float a = (float)i / count * 2.0f * PI;
-                float speed = (float)(rand() % 25 + 10) * scale;
-                Vector3 vel = { cosf(a) * speed, (float)(rand() % 30 + 10) * scale, sinf(a) * speed };
+                float speed = (float)(rand() % 25 + 10) * 0.01f * scale;
+                Vector3 vel = { cosf(a) * speed, (float)(rand() % 30 + 10) * 0.01f * scale, sinf(a) * speed };
                 SpawnParticle((ParticleConfig){
                     .position = pos,
                     .velocity = vel,
-                    .radius = ((float)rand() / (float)RAND_MAX * 1.5f + 0.5f) * scale,
+                    .radius = ((float)rand() / (float)RAND_MAX * 0.015f + 0.005f) * scale,
                     .lifetime = (float)rand() / (float)RAND_MAX * 0.7f + 0.3f,
                     .gradient = &s_snowGrad,
                     .forceField = &s_snowFld
@@ -406,18 +408,19 @@ void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale) {
             break;
         }
         case EFFECT_PRESET_WATER_SPLASH: {
-            VFXLight_Spawn(pos, (Color){ 80, 180, 255, 255 }, 40.0f * scale, 0.45f, VFX_PRIORITY_LOW);
-            SpawnGroundDecal(DECAL_PRESET_WATER, pos, 15.0f * scale, 3.5f);
+            // Real-world-scaled ÷100.
+            VFXLight_Spawn(pos, (Color){ 80, 180, 255, 255 }, 0.40f * scale, 0.45f, VFX_PRIORITY_LOW);
+            SpawnGroundDecal(DECAL_PRESET_WATER, pos, 0.15f * scale, 3.5f);
 
             int count = (int)(35 * scale);
             for (int i = 0; i < count; i++) {
                 float a = (float)i / count * 2.0f * PI;
-                float speed = (float)(rand() % 30 + 15) * scale;
-                Vector3 vel = { cosf(a) * speed * 0.7f, (float)(rand() % 50 + 20) * scale, sinf(a) * speed * 0.7f };
+                float speed = (float)(rand() % 30 + 15) * 0.01f * scale;
+                Vector3 vel = { cosf(a) * speed * 0.7f, (float)(rand() % 50 + 20) * 0.01f * scale, sinf(a) * speed * 0.7f };
                 SpawnParticle((ParticleConfig){
                     .position = pos,
                     .velocity = vel,
-                    .radius = ((float)rand() / (float)RAND_MAX * 2.0f + 0.6f) * scale,
+                    .radius = ((float)rand() / (float)RAND_MAX * 0.020f + 0.006f) * scale,
                     .lifetime = (float)rand() / (float)RAND_MAX * 0.9f + 0.3f,
                     .gradient = &s_waterGrad,
                     .forceField = &s_waterFld
@@ -456,26 +459,29 @@ void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale) {
             break;
         }
         case EFFECT_PRESET_EARTH_CRACK: {
-            ScreenDistort_Add(pos, 30.0f * scale, 0.25f, 0.4f, 50.0f);
-            CameraFX_Shake(0.42f);
-            VFXLight_Spawn(pos, (Color){ 180, 140, 100, 255 }, 35.0f * scale, 0.6f, VFX_PRIORITY_LOW);
-            SpawnGroundDecal(DECAL_PRESET_CRACK, pos, 25.0f * scale, 5.5f);
+            // Real-world-scaled ÷100.
+            // Shake omitted — skills using EARTH_CRACK (e.g. dia_long) handle
+            // their own guarded shake so it can be toggled per-skill.
+            ScreenDistort_Add(pos, 0.30f * scale, 0.25f, 0.4f, 0.50f);
+            VFXLight_Spawn(pos, (Color){ 180, 140, 100, 255 }, 0.35f * scale, 0.6f, VFX_PRIORITY_LOW);
+            SpawnGroundDecal(DECAL_PRESET_CRACK, pos, 0.25f * scale, 5.5f);
             break;
         }
         case EFFECT_PRESET_WOOD_BLOOM: {
-            VFXLight_Spawn(pos, ELEMENT_COLOR_WOOD, 35.0f * scale, 0.45f, VFX_PRIORITY_LOW);
-            SpawnGroundDecal(DECAL_PRESET_WOOD_MOSS, pos, 18.0f * scale, 5.0f);
+            // Real-world-scaled ÷100.
+            VFXLight_Spawn(pos, ELEMENT_COLOR_WOOD, 0.35f * scale, 0.45f, VFX_PRIORITY_LOW);
+            SpawnGroundDecal(DECAL_PRESET_WOOD_MOSS, pos, 0.18f * scale, 5.0f);
 
             // Leaf/vine burst, upward-biased
             int count = (int)(30 * scale);
             for (int i = 0; i < count; i++) {
                 float a = (float)i / count * 2.0f * PI;
-                float speed = (float)(rand() % 20 + 8) * scale;
-                Vector3 vel = { cosf(a) * speed, (float)(rand() % 55 + 25) * scale, sinf(a) * speed };
+                float speed = (float)(rand() % 20 + 8) * 0.01f * scale;
+                Vector3 vel = { cosf(a) * speed, (float)(rand() % 55 + 25) * 0.01f * scale, sinf(a) * speed };
                 SpawnParticle((ParticleConfig){
                     .position = pos,
                     .velocity = vel,
-                    .radius = ((float)rand() / (float)RAND_MAX * 1.6f + 0.6f) * scale,
+                    .radius = ((float)rand() / (float)RAND_MAX * 0.016f + 0.006f) * scale,
                     .lifetime = (float)rand() / (float)RAND_MAX * 1.0f + 0.5f,
                     .gradient = &s_woodGrad,
                     .forceField = &s_woodFld
@@ -484,22 +490,23 @@ void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale) {
             break;
         }
         case EFFECT_PRESET_METAL_SHARD: {
-            ScreenDistort_Add(pos, 25.0f * scale, 0.18f, 0.15f, 130.0f);
+            // Real-world-scaled ÷100.
+            ScreenDistort_Add(pos, 0.25f * scale, 0.18f, 0.15f, 1.30f);
             CameraFX_Shake(0.22f);
-            VFXLight_Spawn(pos, ELEMENT_COLOR_METAL, 30.0f * scale, 0.2f, VFX_PRIORITY_LOW);
-            SpawnGroundDecal(DECAL_PRESET_METAL_SLASH, pos, 16.0f * scale, 4.0f);
+            VFXLight_Spawn(pos, ELEMENT_COLOR_METAL, 0.30f * scale, 0.2f, VFX_PRIORITY_LOW);
+            SpawnGroundDecal(DECAL_PRESET_METAL_SLASH, pos, 0.16f * scale, 4.0f);
 
             // Sharp shard particles, high pitch range, metallic
             int count = (int)(28 * scale);
             for (int i = 0; i < count; i++) {
                 float a = (float)i / count * 2.0f * PI;
-                float speed = (float)(rand() % 60 + 35) * scale;
-                float pitch = ((float)rand() / (float)RAND_MAX - 0.5f) * 80.0f * scale;
+                float speed = (float)(rand() % 60 + 35) * 0.01f * scale;
+                float pitch = ((float)rand() / (float)RAND_MAX - 0.5f) * 0.80f * scale;
                 Vector3 vel = { cosf(a) * speed, pitch, sinf(a) * speed };
                 SpawnParticle((ParticleConfig){
                     .position = pos,
                     .velocity = vel,
-                    .radius = ((float)rand() / (float)RAND_MAX * 1.0f + 0.3f) * scale,
+                    .radius = ((float)rand() / (float)RAND_MAX * 0.010f + 0.003f) * scale,
                     .lifetime = (float)rand() / (float)RAND_MAX * 0.4f + 0.2f,
                     .gradient = &s_metalGrad,
                     .forceField = &s_metalFld
@@ -508,21 +515,22 @@ void SpawnImpactEffect(Vector3 pos, EffectPresetType preset, float scale) {
             break;
         }
         case EFFECT_PRESET_TAIJI_BURST: {
-            ScreenDistort_Add(pos, 50.0f * scale, 0.3f, 0.3f, 90.0f);
+            // Real-world-scaled ÷100.
+            ScreenDistort_Add(pos, 0.50f * scale, 0.3f, 0.3f, 0.90f);
             CameraFX_Shake(0.3f);
-            VFXLight_Spawn(pos, ELEMENT_COLOR_TAIJI, 70.0f * scale, 0.55f, VFX_PRIORITY_LOW);
-            SpawnGroundDecal(DECAL_PRESET_TAIJI_RING, pos, 22.0f * scale, 5.0f);
+            VFXLight_Spawn(pos, ELEMENT_COLOR_TAIJI, 0.70f * scale, 0.55f, VFX_PRIORITY_LOW);
+            SpawnGroundDecal(DECAL_PRESET_TAIJI_RING, pos, 0.22f * scale, 5.0f);
 
             // Amethyst-purple radial burst
             int count = (int)(40 * scale);
             for (int i = 0; i < count; i++) {
                 float a = (float)i / count * 2.0f * PI;
-                float speed = (float)(rand() % 40 + 20) * scale;
-                Vector3 vel = { cosf(a) * speed, (float)(rand() % 40 + 15) * scale, sinf(a) * speed };
+                float speed = (float)(rand() % 40 + 20) * 0.01f * scale;
+                Vector3 vel = { cosf(a) * speed, (float)(rand() % 40 + 15) * 0.01f * scale, sinf(a) * speed };
                 SpawnParticle((ParticleConfig){
                     .position = pos,
                     .velocity = vel,
-                    .radius = ((float)rand() / (float)RAND_MAX * 1.8f + 0.7f) * scale,
+                    .radius = ((float)rand() / (float)RAND_MAX * 0.018f + 0.007f) * scale,
                     .lifetime = (float)rand() / (float)RAND_MAX * 0.9f + 0.4f,
                     .gradient = &s_taijiGrad,
                     .forceField = &s_taijiFld
@@ -541,11 +549,12 @@ void SpawnCastEffect(Vector3 pos, EffectPresetType preset, float scale) {
 
     Color flashColor = WHITE;
     ColorGradient *grad = NULL;
-    float lightRadius = 40.0f * scale;
+    // Real-world-scaled ÷100 (root CLAUDE.md §scale).
+    float lightRadius = 0.40f * scale;
     float lightLifetime = 0.5f;
     int count = (int)(20 * scale);
-    float spawnRadius = 18.0f * scale;
-    float pullStrength = 60.0f * scale;
+    float spawnRadius = 0.18f * scale;
+    float pullStrength = 0.60f * scale;
 
     switch (preset) {
         case EFFECT_PRESET_FIRE_EXPLOSION:
@@ -579,7 +588,7 @@ void SpawnCastEffect(Vector3 pos, EffectPresetType preset, float scale) {
         case EFFECT_PRESET_TAIJI_BURST:
             flashColor = ELEMENT_COLOR_TAIJI;
             grad = &s_taijiGrad;
-            lightRadius = 55.0f * scale; // stronger flash for the "no-element" ultimate state
+            lightRadius = 0.55f * scale; // stronger flash for the "no-element" ultimate state
             lightLifetime = 0.65f;
             break;
     }
@@ -603,7 +612,7 @@ void SpawnCastEffect(Vector3 pos, EffectPresetType preset, float scale) {
         SpawnParticle((ParticleConfig){
             .position = spawnPos,
             .velocity = (Vector3){ 0.0f, 0.0f, 0.0f },
-            .radius = ((float)rand() / (float)RAND_MAX * 1.2f + 0.5f) * scale,
+            .radius = ((float)rand() / (float)RAND_MAX * 0.012f + 0.005f) * scale,
             .lifetime = (float)rand() / (float)RAND_MAX * 0.5f + 0.4f,
             .gradient = grad,
             .forceField = castPullFld
@@ -1138,22 +1147,23 @@ void EmitterSystem_Update(float dt) {
         }
 
         for (int k = 0; k < count; k++) {
+            // Real-world-scaled ÷100 (root CLAUDE.md §scale).
             Vector3 offset = {
-                ((float)rand() / (float)RAND_MAX - 0.5f) * 2.0f,
-                ((float)rand() / (float)RAND_MAX - 0.5f) * 2.0f,
-                ((float)rand() / (float)RAND_MAX - 0.5f) * 2.0f
+                ((float)rand() / (float)RAND_MAX - 0.5f) * 0.02f,
+                ((float)rand() / (float)RAND_MAX - 0.5f) * 0.02f,
+                ((float)rand() / (float)RAND_MAX - 0.5f) * 0.02f
             };
             Vector3 pos = Vector3Add(s_emitters[i].pos, offset);
             Vector3 vel = {
-                ((float)rand() / (float)RAND_MAX - 0.5f) * 10.0f,
-                ((float)rand() / (float)RAND_MAX * 15.0f + 10.0f),
-                ((float)rand() / (float)RAND_MAX - 0.5f) * 10.0f
+                ((float)rand() / (float)RAND_MAX - 0.5f) * 0.10f,
+                ((float)rand() / (float)RAND_MAX * 0.15f + 0.10f),
+                ((float)rand() / (float)RAND_MAX - 0.5f) * 0.10f
             };
 
             SpawnParticle((ParticleConfig){
                 .position = pos,
                 .velocity = vel,
-                .radius = (float)GetRandomValue(8, 20) / 10.0f,
+                .radius = (float)GetRandomValue(8, 20) / 1000.0f,
                 .lifetime = (float)GetRandomValue(5, 12) / 10.0f,
                 .gradient = grad,
                 .forceField = fld
