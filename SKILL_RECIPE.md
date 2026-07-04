@@ -61,9 +61,58 @@ ACTIVE / IMPACT
   SpawnImpactEffect(pos, preset, scale)   ← triggers TimeFX_Hitstop if scale≥1.5
   PlayImpactSound(preset)
   ForceField_CreatePreset(FORCE_PRESET_*)
+  SkillBuilder_SpawnBeam(from, to, preset, width, duration)
+  SkillBuilder_SpawnOrbitals(center, preset, count, r, dur)
+  SkillBuilder_SpawnAuraRing(center, preset, radius, dur)
+  SkillBuilder_SpawnGroundWave(origin, dir, preset, range, speed)
+
+CHAIN (on impact, for jump/chain skills)
+  n = SkillHelper_ChainTargets(origin, jumpRadius, maxJumps, points, maxOut)
+  SpawnChainLightning(points, n, scale, hopDelay)
+  Entity_ApplyAoEDamage(points[i], r, dmg, kb)   ← damage is the SKILL's job
 
 DISSOLVE (0 → dissolveTime)
   let particles/decals expire naturally — no early Unload calls
+```
+
+---
+
+## 3b. One-liner VFX builders
+
+For common multi-step patterns — one call instead of composing manually.
+All driven by `SkillHelper_Update(dt)` in `main.c` (skills don't call Update directly).
+**Damage is always the skill's responsibility** — these helpers do visuals only.
+
+| Call | What it does | Pool |
+|---|---|---|
+| `SkillBuilder_SpawnBeam(from, to, element, width, dur)` | ProcRay + VFXLight at endpoints | 8 |
+| `SkillBuilder_SpawnGroundWave(origin, dir, element, range, speed)` | Expanding shockwave + decal emitter | 8 |
+| `SkillBuilder_SpawnOrbitals(center, element, count, radius, dur)` | N orbiting tetrahedra, randomised phase/scale | 8 groups |
+| `SkillBuilder_SpawnAuraRing(center, element, radius, dur)` | Looping emitter ring + glow decal | 8 |
+| `SkillHelper_ChainTargets(origin, jumpR, maxJumps, pts, maxOut)` | Nearest-neighbour jump list (returns count) | — |
+| `SpawnChainLightning(points, count, scale, hopDelay)` | One staggered lightning bolt per hop | queue 32 |
+
+Kill handles: `SkillBuilder_KillBeam(h)` / `SkillBuilder_KillAuraRing(h)`.
+Orbitals and GroundWave are fire-and-forget (self-expiring, no kill handle).
+
+---
+
+## 3c. Attached / status effects
+
+For effects that must **follow a moving agent** across frames:
+
+```c
+// Looping element aura (burning, frozen, shocked, blessed)
+int h = StatusVFX_Attach(agentId, EFFECT_PRESET_FIRE_EXPLOSION, 3.0f);
+// Re-attaching same element+agent refreshes duration — does NOT stack.
+// Auto-detaches on agent death (0.5s fade-out). Wire nothing — main.c handles Update/Draw.
+StatusVFX_Detach(h);   // early removal (cleanse)
+
+// Mesh ghost trail for dashes / blade sweeps
+// Call every 0.04 s while the motion is active (use a caller-side timer):
+Afterimage_Spawn(model, currentTransform, ColorAlpha(ELEMENT_COLOR_METAL, 180), 0.3f);
+// model is a REFERENCE — do not unload while any ghost is alive.
+// Dissolves via u_dissolve over `life` seconds; depth-write off, BLEND_ALPHA pass.
 ```
 
 ---
@@ -90,9 +139,8 @@ DISSOLVE (0 → dissolveTime)
 | Particle speed | 1.0–3.0 m/s | Walking pace to sprint |
 | Impact `scale` ≥ 1.5 | triggers hitstop | intentional — keep large hits impactful |
 
-> Only `fire_ball` and `thunder_orb_skill` are already meter-scaled.
-> All other existing skills still use the old 1cm-scale numbers (100× larger).
-> Convert a skill **fully**, not partially, before relying on its positions.
+> All existing skills are now fully meter-scaled (Item 34 complete 2026-07-04).
+> Any **new** skill must use meter-scale from day one — never use the old 100× numbers.
 
 ---
 
@@ -147,5 +195,9 @@ WUXING_VERIFY=<skill_name> ./wuxing
 - [ ] Particles don't clip underground (check y-spawn ≥ 0.05 m)
 - [ ] No jarring pop-in or pop-out — use dissolve/fade phases
 - [ ] Night-time legibility: emissive intensity ≥ 0.5 for primary particles
+- [ ] Dash / swing motion → `Afterimage_Spawn` every 0.04 s while active
+- [ ] Status effect applied → `StatusVFX_Attach` (not just a one-time burst)
+- [ ] Chain skill → zero-targets case handled gracefully (`SkillHelper_ChainTargets` returns 0)
+- [ ] Pool overflow check: run with F3 overlay — no red rows after a full cast sequence
 
 See `WUXING_ART_DIRECTION.md` for full aesthetic law reference.

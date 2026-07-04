@@ -10,6 +10,7 @@
 #include "skills/metal/thunder_orb_skill/thunder_orb_skill.h"
 #include "skills/taiji/core_test/core_test_skill.h"
 #include "skills/fire/hoa_long_phong_ba_skill/hoa_long_phong_ba_skill.h"
+#include "skills/fire/inferno_eruption_skill/inferno_eruption_skill.h"
 #include "skills/earth/dia_long_skill/dia_long_skill.h"
 #include "skills/earth/stone_prison_skill/stone_prison_skill.h"
 
@@ -20,6 +21,7 @@ static inline void RegisterGeneratedSkills(void) {
     RegisterSkill("THUNDER_ORB", ELEMENT_COLOR_METAL, InitThunderOrbSkill, CastThunderOrbSkill, UpdateThunderOrbSkill, DrawThunderOrbSkill, UnloadThunderOrbSkill);
     RegisterSkill("CORE_TEST", ELEMENT_COLOR_TAIJI, InitCoreTestSkill, CastCoreTestSkill, UpdateCoreTestSkill, DrawCoreTestSkill, UnloadCoreTestSkill);
     RegisterSkill("HOA_LONG_PHONG_BA", ELEMENT_COLOR_FIRE, InitHoaLongPhongBaSkill, CastHoaLongPhongBaSkill, UpdateHoaLongPhongBaSkill, DrawHoaLongPhongBaSkill, UnloadHoaLongPhongBaSkill);
+    RegisterSkill("INFERNO_ERUPTION", ELEMENT_COLOR_FIRE, InitInfernoEruptionSkill, CastInfernoEruptionSkill, UpdateInfernoEruptionSkill, DrawInfernoEruptionSkill, UnloadInfernoEruptionSkill);
     RegisterSkill("DIA_LONG", ELEMENT_COLOR_EARTH, InitDiaLongSkill, CastDiaLongSkill, UpdateDiaLongSkill, DrawDiaLongSkill, UnloadDiaLongSkill);
     RegisterSkill("STONE_PRISON", ELEMENT_COLOR_EARTH, InitStonePrisonSkill, CastStonePrisonSkill, UpdateStonePrisonSkill, DrawStonePrisonSkill, UnloadStonePrisonSkill);
 }
