@@ -43,3 +43,26 @@ Ghi nhận lỗi rò rỉ Depth Mask (`rlDisableDepthMask` không bật lại g�
 - **Phát hiện 2 (Texture Binding trong Immediate Mode):** Trong chế độ vẽ immediate mode (`rlBegin`), việc gọi `SetShaderValueTexture` không tự động map texture. Phải gọi `rlActiveTextureSlot()` và `rlEnableTexture()` thủ công. Đã sửa trong `ScreenDistort_BindDepthForSoftParticles`.
 - **Phát hiện 3 (Lật chiều Texture):** Khi `ScreenDistort` sao chép Depth Texture, Raylib dựng hình bằng ma trận Ortho làm lật ngược trục Y. Đã sửa bằng cách truyền chiều cao âm vào `DrawTextureRec` để map đúng đỉnh/đáy.
 - **Kết quả:** Hiệu ứng Soft Particles đã hoàn thiện, mượt mà dính sát vào mặt đất và hoàn toàn "miễn nhiễm" với việc người chơi xuất các chiêu thức khác cùng lúc. Đã cập nhật tài liệu `CORE_API.md` cho phép các skill tương lai sử dụng.
+
+---
+
+## Session Summary (Phiên làm việc ngày 05/07/2026)
+
+### 1. Refactor Core VFX — Phase 5: Hợp nhất các Module chồng chéo
+* **Particle (Hạt bùng nổ):** Hợp nhất `ParticleRadialBurstConfig` và hàm `ParticleSystem_SpawnRadialBurst` vào [particle_system.h/c](file:///Users/mth2610/Desktop/c_games/wuxing_skills/core/particle_system.h), xóa bỏ `particle_radial_burst.c`.
+* **Beam / Lightning (Tia sáng / Sét):** Di chuyển toàn bộ cấu trúc dữ liệu sét (`LightningBoltState`, `LightningFollowerState`) và các hàm liên quan (`SpawnLightningTrail`...) từ `skill_helper.c` sang [vfx_proc_ray.c/h](file:///Users/mth2610/Desktop/c_games/wuxing_skills/core/vfx_proc_ray.h).
+* **Impact (Va chạm):** Xóa bỏ tệp `impact_burst.c` thừa.
+
+### 2. Dọn dẹp Legacy Wrappers & Refactor Kỹ năng (Skills)
+* **Refactor Kỹ năng:** Cập nhật các kỹ năng đang sử dụng các header cũ (`core_test_skill.c`, `water_sphere_skill.c`, `tube_skill.c`) để gọi trực tiếp các API Core mới.
+* **Xóa bỏ hoàn toàn các tệp wrapper chuyển tiếp:**
+  - `core/visual_prefabs.h` & `core/visual_prefabs.c`
+  - `core/impact_burst.h`
+  - `core/particle_radial_burst.h`
+* **Cập nhật Build:** Loại bỏ `visual_prefabs.c` khỏi [CMakeLists.txt](file:///Users/mth2610/Desktop/c_games/wuxing_skills/CMakeLists.txt) và [Makefile.Android](file:///Users/mth2610/Desktop/c_games/wuxing_skills/Makefile.Android).
+* **Đồng bộ hóa Tài liệu:** Cập nhật các tài liệu hướng dẫn và đặc tả kỹ thuật [CORE_API.md](file:///Users/mth2610/Desktop/c_games/wuxing_skills/CORE_API.md), [CORE_API_SHORT.md](file:///Users/mth2610/Desktop/c_games/wuxing_skills/CORE_API_SHORT.md), và [SKILL_RECIPE.md](file:///Users/mth2610/Desktop/c_games/wuxing_skills/SKILL_RECIPE.md) để phản ánh chính xác cấu trúc thư mục và tên API mới (VFX Composition, Procedural Meshes...).
+
+### 3. Kiểm thử & Xác minh
+* Đạt 0 Fail trên linter kỹ năng (`make lint`).
+* Biên dịch thành công 100% trên cả Desktop và Android, đóng gói thành công file signed APK `wuxing_skills.apk`.
+

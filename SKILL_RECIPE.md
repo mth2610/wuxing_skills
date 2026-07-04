@@ -46,7 +46,7 @@ The generator auto-updates `skills/skills_generated.h`.
 
 ## 3. Implement the state machine
 
-Typical phases and what to call in each:
+Typical phases and what to call in each (note: `SpawnCastEffect`, `SpawnImpactEffect`, and `SpawnProjectileTrail` are clean macro shorthands in `skill_helper.h` pointing directly to the unified `VFX_Compose...` APIs in `core/composition/visual_composer.h`):
 
 ```
 CASTING (0 → castDuration)

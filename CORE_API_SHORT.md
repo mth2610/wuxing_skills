@@ -321,7 +321,7 @@ Rectangle SpriteAnim_CalculateUV(const SpriteAnim *template, float age, int *out
 - Stateful instances (UI/decal/billboard): `Init` then `Update` per frame, read via `GetUVRect`.
 - `ANIM_RANDOM_START`: avoids visible lockstep across particles sharing an atlas.
 
-### Particle Radial Burst (`core/particle_radial_burst.h`)
+### Particle Radial Burst (`core/particle_system.h`)
 ```c
 typedef struct {
     int countMin, countMax; float speedMin, speedMax, radiusMin, radiusMax, lifetimeMin, lifetimeMax;
@@ -331,7 +331,7 @@ typedef struct {
 void ParticleSystem_SpawnRadialBurst(Vector3 origin, float sizeScale, const ParticleRadialBurstConfig *cfg);
 ```
 
-### Impact Burst (`core/impact_burst.h`)
+### Impact Burst (`core/composition/visual_composer.h`)
 ```c
 typedef struct {
     bool distortEnabled; float distortRadius, distortStrength, distortLife, distortSpeed;

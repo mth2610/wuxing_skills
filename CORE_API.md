@@ -639,7 +639,7 @@ Two options for the attached visual: (1) re-spawn a small particle burst and/or 
 #include "skill_example_attached.h"
 #include "core/skill_helper.h"
 #include "core/vfx_light.h"
-#include "core/particle_radial_burst.h"
+#include "core/particle_system.h"
 #include "core/utils_math.h"
 #include "entities/entities.h"   // for Entity_ApplyAoEBuff — see note below
 #include "raymath.h"
@@ -1099,7 +1099,7 @@ Rectangle SpriteAnim_CalculateUV(const SpriteAnim *template, float age, int *out
 * **Stateful (instances):** For standalone UI/decal/billboard, call `SpriteAnim_Init` then `Update` every frame, read UV via `GetUVRect`.
 * `ANIM_RANDOM_START`: starts at a random frame, useful so particles sharing one atlas don't animate in visible lockstep.
 
-### Particle Radial Burst (`core/particle_radial_burst.h`)
+### Particle Radial Burst (`core/particle_system.h`)
 ```c
 typedef struct {
     int countMin, countMax;
@@ -1115,7 +1115,7 @@ typedef struct {
 void ParticleSystem_SpawnRadialBurst(Vector3 origin, float sizeScale, const ParticleRadialBurstConfig *cfg);
 ```
 
-### Impact Burst (`core/impact_burst.h`)
+### Impact Burst (`core/composition/visual_composer.h`)
 ```c
 typedef struct {
     /* --- Step 1: screen distortion --- */
@@ -2776,19 +2776,24 @@ int         VisualVerify_GetExitCode(void);  // 0 = ok, 1 = unknown skill
 
 > [!NOTE]
 > When autotest reports PASS but visual output looks wrong, trust the screenshot over the numeric result — see memory entry "Trust Visual Over Numeric PASS".
-## 19. Visual Prefabs (core/visual_prefabs.h)
-Cung cấp các hàm vẽ/sinh hiệu ứng 3D "chuẩn game AAA" đã được căn chỉnh sẵn độ cong, góc cạnh, và ánh sáng. Khác với các hàm ProceduralMesh thô, Prefab đảm bảo kết quả hình ảnh luôn đẹp và tự nhiên. Không yêu cầu Texture ngoài cho các hiệu ứng ánh sáng (Sét/Nước/Lửa).
+## 19. Visual Composition & Procedural Meshes (core/composition/visual_composer.h & core/geometry/procedural_mesh_utils.h)
 
-### Nhóm 1: Mesh & Hình khối tĩnh (Gọi liên tục trong Draw)
-- `Prefab_DrawStonePillar`: Vẽ một cột đá đâm từ dưới lên (có tham số độ nhọn `sharpness` và tiến trình `progress`).
-- `Prefab_DrawBoulder`: Vẽ tảng đá khối lởm chởm, hỗ trợ caching nội bộ bằng `seed`.
-- `Prefab_DrawIceCrystal`: Vẽ cụm tinh thể băng tủa ra (additive/alpha).
-- `Prefab_DrawMagicPuddle`: Vẽ một vũng nước sáng ma thuật dưới đất (hoàn toàn bằng procedural blend).
-- `Prefab_DrawFireball`: Vẽ quả cầu lửa biến dạng ngẫu nhiên.
+Cung cấp các hàm vẽ/sinh hiệu ứng 3D "chuẩn game AAA" đã được căn chỉnh sẵn độ cong, góc cạnh, và ánh sáng. Nhóm vẽ hình khối tĩnh nằm trong `procedural_mesh_utils.h`, còn nhóm sinh hiệu ứng động nằm trong `visual_composer.h`.
 
-### Nhóm 2: Effect & Particle (Gọi 1 lần trong Cast/Update)
-- `Prefab_SpawnSmokePuff`: Bùng khói đặc tại một điểm bằng `ParticleSystem_SpawnRadialBurst`.
-- `Prefab_SpawnSmokeTrail`: Rải một đường hạt khói bay bay.
-- `Prefab_SpawnLongFissure`: Tạo decal nứt đất dọc theo đường thẳng + rung màn hình.
-- `Prefab_SpawnLightningBeam`: Rạch một đường sét thẳng, sử dụng cơ chế `SpawnLightningTrail` của trail system.
+### Nhóm 1: Mesh & Hình khối tĩnh (Trong core/geometry/procedural_mesh_utils.h, gọi trong Draw)
+- `ProceduralMesh_DrawStonePillar`: Vẽ một cột đá đâm từ dưới lên (có tham số độ nhọn `sharpness` và tiến trình `progress`).
+- `ProceduralMesh_DrawRoundBoulder`: Vẽ đá tròn phẳng.
+- `ProceduralMesh_DrawBoulder`: Vẽ tảng đá khối lởm chởm, hỗ trợ caching nội bộ bằng `seed`.
+- `ProceduralMesh_DrawIceCrystal`: Vẽ cụm tinh thể băng tủa ra (additive/alpha).
+- `ProceduralMesh_DrawMagicPuddle`: Vẽ một vũng nước sáng ma thuật dưới đất (hoàn toàn bằng procedural blend).
+- `ProceduralMesh_DrawFireball`: Vẽ quả cầu lửa biến dạng ngẫu nhiên.
+
+### Nhóm 2: Effect & Particle (Trong core/composition/visual_composer.h, gọi 1 lần trong Cast/Update)
+- `VFX_ComposeSmokePuff`: Bùng khói đặc tại một điểm bằng `ParticleSystem_SpawnRadialBurst`.
+- `VFX_ComposeSmokeTrail`: Rải một đường hạt khói bay bay.
+- `VFX_ComposeFissure`: Tạo decal nứt đất dọc theo đường thẳng + rung màn hình.
+- `VFX_ComposeLightningBeam`: Rạch một đường sét thẳng, sử dụng cơ chế `SpawnLightningTrail` của trail system.
+- `VFX_ComposeImpact`: Sinh hiệu ứng va chạm theo ElementPresetType.
+- `VFX_ComposeCast`: Sinh hiệu ứng tụ khí theo ElementPresetType.
+- `VFX_ComposeProjectileTrail`: Sinh vệt đạn bay theo ElementPresetType.
 
