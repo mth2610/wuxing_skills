@@ -126,6 +126,7 @@ static const char *TunableConfigPathForSkill(int skillIndex) {
   if (name == NULL) return NULL;
   if (strcmp(name, "FIRE") == 0) return "skills/fire/fire_ball/fire_ball.tuning";
   if (strcmp(name, "THUNDER_ORB") == 0) return "skills/metal/thunder_orb_skill/thunder_orb_skill.tuning";
+  if (strcmp(name, "METAL_WIRE_ORB") == 0) return "skills/metal/metal_wire_orb_skill/metal_wire_orb_skill.tuning";
   return NULL;
 }
 

@@ -392,6 +392,10 @@ int SpawnTrailEntity(TrailConfig config) {
   t->gradient = config.gradient;
   t->spriteAnim = config.spriteAnim;
   t->priority = config.priority;
+  t->orbitRadius = config.orbitRadius;
+  t->orbitSpeed = config.orbitSpeed;
+  t->orbitAxis = config.orbitAxis;
+  t->orbitPhase = config.orbitPhase;
 
   t->timeSinceLastFollowerUpdate = 0.0f;
   t->fadeAccumulator = 0.0f;
@@ -476,6 +480,17 @@ void Trail_AttachToTransform(int id, const Matrix *targetTransform,
   trailPool[id].attachLocalOffset = localOffset;
 }
 
+void Trail_SetFollowerOrbit(int id, float radius, float speed, Vector3 axis, float phase) {
+  if (id < 0 || id >= MAX_TRAIL_PARTICLES || !trailPool[id].active)
+    return;
+  if (trailPool[id].type != TRAIL_TYPE_FOLLOWER)
+    return;
+  trailPool[id].orbitRadius = radius;
+  trailPool[id].orbitSpeed = speed;
+  trailPool[id].orbitAxis = axis;
+  trailPool[id].orbitPhase = phase;
+}
+
 void UpdateTrailSystem(float dt) {
   float time = (float)GetTime();
 
@@ -491,7 +506,19 @@ void UpdateTrailSystem(float dt) {
 
     if (trailPool[i].type == TRAIL_TYPE_FOLLOWER &&
         trailPool[i].attachedTransform != NULL) {
-      Vector3 tip = Vector3Transform(trailPool[i].attachLocalOffset,
+      Vector3 localPos = trailPool[i].attachLocalOffset;
+      if (trailPool[i].orbitRadius > 0.0f) {
+        trailPool[i].orbitPhase += trailPool[i].orbitSpeed * dt;
+        Vector3 axis = Vector3Normalize(trailPool[i].orbitAxis);
+        if (Vector3LengthSqr(axis) > 0.0f) {
+            Quaternion q = QuaternionFromAxisAngle(axis, trailPool[i].orbitPhase);
+            Vector3 arbitrary = (fabsf(axis.x) > 0.9f) ? (Vector3){0.0f, 1.0f, 0.0f} : (Vector3){1.0f, 0.0f, 0.0f};
+            Vector3 ortho = Vector3Normalize(Vector3CrossProduct(axis, arbitrary));
+            Vector3 rotated = Vector3RotateByQuaternion(ortho, q);
+            localPos = Vector3Add(localPos, Vector3Scale(rotated, trailPool[i].orbitRadius));
+        }
+      }
+      Vector3 tip = Vector3Transform(localPos,
                                      *trailPool[i].attachedTransform);
       UpdateFollowerPosition(i, tip);
     }
@@ -639,14 +666,22 @@ static void DrawTrailGeometry(int i, Camera3D camera) {
           nodeColor = ColorGradient_Sample(trailPool[i].gradient, segRatio);
         }
 
+        // Outer glow
         scratchOuter[h].position = trailPool[i].history[idx];
-        scratchOuter[h].halfWidth = trailPool[i].thickness * 0.8f * taper;
+        scratchOuter[h].halfWidth = trailPool[i].thickness * 1.5f * taper;
         scratchOuter[h].v = segRatio;
         scratchOuter[h].tint =
-            (Color){nodeColor.r, nodeColor.g, nodeColor.b, (unsigned char)(nodeColor.a * lifeRatio * taper)};
+            (Color){nodeColor.r, nodeColor.g, nodeColor.b, (unsigned char)((nodeColor.a / 255.0f) * 180.0f * lifeRatio * taper)};
+            
+        // Inner white core
+        scratchInner[h].position = trailPool[i].history[idx];
+        scratchInner[h].halfWidth = trailPool[i].thickness * 0.4f * taper;
+        scratchInner[h].v = segRatio;
+        scratchInner[h].tint =
+            (Color){255, 255, 255, (unsigned char)(255.0f * lifeRatio * taper)};
       }
-      DrawRibbonStrip(scratchOuter, trailPool[i].historyCount, (Texture2D){0},
-                      camera);
+      DrawRibbonStrip(scratchOuter, trailPool[i].historyCount, (Texture2D){0}, camera);
+      DrawRibbonStrip(scratchInner, trailPool[i].historyCount, (Texture2D){0}, camera);
     }
   }
 }

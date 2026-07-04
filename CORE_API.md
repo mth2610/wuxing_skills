@@ -865,6 +865,7 @@ typedef struct {
 * **Follower Trails:** For sword swings or aura attachments, set type to `TRAIL_TYPE_FOLLOWER`. Two ways to drive the tip:
   - **Manual (per-frame):** call `UpdateFollowerPosition(trailId, tipPos);` each frame before `UpdateTrailSystem`.
   - **Matrix attachment:** call `Trail_AttachToTransform(trailId, &myMatrix, localOffset);` once — `UpdateTrailSystem` reads `*myMatrix` automatically each frame and computes `tip = Vector3Transform(localOffset, *myMatrix)`. Pass `localOffset={0,0,0}` to track the matrix origin. The `Matrix` must stay valid for the trail's lifetime (typically a `static Matrix` field on the owning skill). Detach with `Trail_AttachToTransform(id, NULL, (Vector3){0})`.
+  - **Dynamic Orbit:** call `Trail_SetFollowerOrbit(trailId, radius, speed, axis, phase);` to make a matrix-attached trail automatically orbit its `localOffset` point! Orbit rotates around `axis` (must be normalized) at distance `radius`, advancing `speed * dt` radians per frame. Starts at angle `phase`. Set `radius` or `speed` to `0.0f` to disable.
   - `SetFollowerAxis(trailId, basePos, normalizedDir);` sets the optional radial-axis orientation for `FORCE_RADIAL_AXIS` in `forceField` — unrelated to tip position.
   - **`trailLength` for FOLLOWER = integer node count** (e.g. `20.0f` = 20 history nodes). Not a fractional ratio — `(int)trailLength` is taken directly. Trail only renders when `historyCount > 1`, so values < 2.0f result in no visible trail.
 * **Lifecycle:** Free active trails when complete by calling `KillTrail(trailId);`.

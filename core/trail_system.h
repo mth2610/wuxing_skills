@@ -87,6 +87,12 @@ typedef struct {
   // SpawnTrailEntity() evicts the lowest-priority active trail (ties broken
   // by shortest remaining lifetime) instead of rejecting the new spawn.
   VFXPriority priority;
+  
+  // Orbit parameters for TRAIL_TYPE_FOLLOWER
+  float orbitRadius;
+  float orbitSpeed;
+  Vector3 orbitAxis;
+  float orbitPhase;
 } TrailConfig;
 
 // Đã tối ưu Struct Padding: Sắp xếp theo kích thước dữ liệu giảm dần
@@ -135,6 +141,10 @@ typedef struct {
   float timeSinceLastFollowerUpdate;
   float fadeAccumulator;
   float nodeRestLen;
+  float orbitRadius;
+  float orbitSpeed;
+  float orbitPhase;
+  Vector3 orbitAxis;
 
   // 5. Số nguyên và Enum (Int/Enum) - 4 bytes
   TrailType type;
@@ -167,6 +177,8 @@ void UpdateFollowerPosition(int id, Vector3 newTipPos);
 // Pass targetTransform=NULL to detach.
 void Trail_AttachToTransform(int id, const Matrix *targetTransform,
                              Vector3 localOffset);
+
+void Trail_SetFollowerOrbit(int id, float radius, float speed, Vector3 axis, float phase);
 
 // Set trục động (axisOrigin + axisDir, axisDir PHẢI normalize trước khi
 // gọi) dùng cho lực FORCE_RADIAL_AXIS trong forceField của entity FOLLOWER
