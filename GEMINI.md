@@ -62,7 +62,12 @@ Ghi nhận lỗi rò rỉ Depth Mask (`rlDisableDepthMask` không bật lại g�
 * **Cập nhật Build:** Loại bỏ `visual_prefabs.c` khỏi [CMakeLists.txt](file:///Users/mth2610/Desktop/c_games/wuxing_skills/CMakeLists.txt) và [Makefile.Android](file:///Users/mth2610/Desktop/c_games/wuxing_skills/Makefile.Android).
 * **Đồng bộ hóa Tài liệu:** Cập nhật các tài liệu hướng dẫn và đặc tả kỹ thuật [CORE_API.md](file:///Users/mth2610/Desktop/c_games/wuxing_skills/CORE_API.md), [CORE_API_SHORT.md](file:///Users/mth2610/Desktop/c_games/wuxing_skills/CORE_API_SHORT.md), và [SKILL_RECIPE.md](file:///Users/mth2610/Desktop/c_games/wuxing_skills/SKILL_RECIPE.md) để phản ánh chính xác cấu trúc thư mục và tên API mới (VFX Composition, Procedural Meshes...).
 
-### 3. Kiểm thử & Xác minh
+### 3. Triển khai Cải tiến Kiến trúc A, B, C
+* **Cải tiến A (Đồng bộ âm thanh):** Tích hợp tự động `PlayCastSound` và `PlayImpactSound` vào bộ phối cảnh `visual_composer.c` và loại bỏ các cuộc gọi thủ công dư thừa trong skills (`dia_long_skill.c`, `thuy_kinh_skill.c`).
+* **Cải tiến B (Camera Context):** Đóng gói biến camera toàn cục vào [core/camera_context.h](file:///Users/mth2610/Desktop/c_games/wuxing_skills/core/camera_context.h), phân phối tự động thông qua các header core chính, dọn sạch 9 chỗ khai báo `extern Camera3D camera;` cục bộ trong skills và lõi.
+* **Cải tiến C (Đồng bộ Viscosity):** Áp dụng lực cản Viscosity đầy đủ cho hạt CPU (`particle_system.c`) và hạt GPU Compute (`gpu_particles.comp`), đưa mô phỏng chuyển động hạt về trạng thái đồng bộ vật lý 100%.
+
+### 4. Kiểm thử & Xác minh
 * Đạt 0 Fail trên linter kỹ năng (`make lint`).
 * Biên dịch thành công 100% trên cả Desktop và Android, đóng gói thành công file signed APK `wuxing_skills.apk`.
 

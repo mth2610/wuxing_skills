@@ -34,7 +34,7 @@
 
 #include "tube_skill_params.inl"
 
-extern Camera3D camera;
+
 
 typedef struct {
   bool active;

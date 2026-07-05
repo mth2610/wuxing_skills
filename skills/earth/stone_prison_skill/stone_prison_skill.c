@@ -521,7 +521,6 @@ static void DrawPerturbedPillar(Vector3 pillarPos, float currentHeight, float ba
 void DrawStonePrisonSkill(void)
 {
     float currentTime = (float)GetTime();
-    extern Camera3D camera;
     Vector3 camPos = camera.position;
 
     for (int idx = 0; idx < MAX_PRISONS; idx++) {

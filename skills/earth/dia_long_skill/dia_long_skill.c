@@ -346,7 +346,6 @@ void CastDiaLongSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams
     // Telegraph: windup at the caster, rune warning where the head will erupt.
     // CORE_ISSUES.md Item 34 — EARTH_CRACK internals not yet rescaled.
     SpawnCastEffect(startPos, EFFECT_PRESET_EARTH_CRACK, scale * 0.7f);
-    PlayCastSound(EFFECT_PRESET_EARTH_CRACK);
     SpawnGroundDecal(DECAL_PRESET_EARTH_RUNE, sp->headPos, s_runeDecalRadius * scale,
                      CAST_TIME + sp->headDelay + 1.0f);
     VFXLight_Spawn(startPos, ORANGE, s_castLightRadius * scale, CAST_TIME, VFX_PRIORITY_LOW);
@@ -401,7 +400,6 @@ static void HeadErupt(DragonSpine *sp)
     sp->headErupted = true;
     // CORE_ISSUES.md Item 34 — EARTH_CRACK internals not yet rescaled.
     SpawnImpactEffect(sp->headPos, EFFECT_PRESET_EARTH_CRACK, 1.5f * sp->scale);
-    PlayImpactSound(EFFECT_PRESET_EARTH_CRACK);
     // Pass 1: distort radius in meters; speed/strength are unitless screen params
     ScreenDistort_Add(sp->headPos, s_distortRadius * sp->scale, 0.8f, 0.45f, 2.5f);
     if (s_shakeEnable > 0.5f) CameraFX_Shake(0.5f);

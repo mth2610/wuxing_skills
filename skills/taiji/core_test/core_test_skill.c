@@ -122,7 +122,6 @@ void DrawCoreTestSkill(void) {
     // Vẽ mưa sét
     for (int i = 0; i < MAX_TEST_BOLTS; i++) {
         if (s_bolts[i].active) {
-            extern Camera3D camera;
             ProcBolt_Draw(s_bolts[i].rayId, camera);
         }
     }

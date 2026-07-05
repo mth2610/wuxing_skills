@@ -13,7 +13,7 @@
 #include <stdlib.h>
 #include <math.h>
 
-extern Camera3D camera;
+
 
 #include "thunder_orb_skill_params.inl"
 

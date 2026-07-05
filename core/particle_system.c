@@ -139,6 +139,9 @@ void UpdateParticles(float dt) {
           ForceField_Evaluate(p->forceField, p->position, p->velocity,
                               p->lifetime, (Vector3){0}, (Vector3){0});
       p->velocity = Vector3Add(p->velocity, Vector3Scale(force, dt));
+
+      float viscDamp = ForceField_GetViscosityDamping(p->forceField, dt);
+      p->velocity = Vector3Scale(p->velocity, viscDamp);
     }
     // Áp dụng WindZone toàn cục (auto, không cần set per-particle)
     if (WindZone_IsActive()) {

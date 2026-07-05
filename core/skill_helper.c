@@ -29,7 +29,7 @@ static ParticleEmitter s_emitters[MAX_EMITTERS];
 // round-robin-slot pattern as s_flightFlds. Separate from s_lightningFld
 // (used by particle emitter presets) because trail zigzag needs a much
 // sharper/faster noise profile than particle spark jitter.
-extern Camera3D camera;
+
 
 static bool s_helpersInitialized = false;
 

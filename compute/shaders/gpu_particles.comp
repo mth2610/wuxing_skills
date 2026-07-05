@@ -123,6 +123,22 @@ float calcAttenuation(vec3 origin, float radius, float falloff, vec3 pos) {
     return (1.0 - t) * (1.0 - t);
 }
 
+float getViscosityDamping(int ffId, float dt) {
+    if (ffId < 0) return 1.0;
+    float totalVisc = 0.0;
+    int count = uFields[ffId].meta.x;
+    if (count > FF_MAX_LAYERS) count = FF_MAX_LAYERS;
+    for (int i = 0; i < count; i++) {
+        float typeVal = uFields[ffId].layers[i].params0.w;
+        int itype = int(typeVal + 0.5);
+        if (itype == FT_VISCOSITY) {
+            totalVisc += uFields[ffId].layers[i].params0.x;
+        }
+    }
+    if (totalVisc <= 0.0) return 1.0;
+    return exp(-totalVisc * dt);
+}
+
 // Phải khớp ForceField_Evaluate() trong core/force_field.c — cùng công thức,
 // cùng thứ tự atten/acc, để particle không "nhảy" khi đổi giữa CPU/GPU path.
 // vel: vận tốc TRƯỚC khi cộng gia tốc frame này (dùng cho FT_DRAG).
@@ -272,6 +288,10 @@ void main() {
     // CPU làm: velocity += ForceField_Evaluate(...) * dt)
     vec3 ffAccel = evalForceField(int(p.ff_data.x), p.pos_radius.xyz, p.vel_drag.xyz, u_time);
     p.vel_drag.xyz += ffAccel * u_dt;
+
+    // Viscosity damping — áp dụng giảm chấn mũ từ force field
+    float viscDamp = getViscosityDamping(int(p.ff_data.x), u_dt);
+    p.vel_drag.xyz *= viscDamp;
 
     // Drag — giảm vận tốc mỗi frame (field riêng của GpuParticleConfig,
     // độc lập với force field, không có tương đương ở CPU ParticleConfig)

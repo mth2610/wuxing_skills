@@ -515,7 +515,6 @@ void DrawWoodThornsSkill(void)
         SetShaderValue(s_shader, s_uDissolveLoc, &dissolveAmt, SHADER_UNIFORM_FLOAT);
         SetShaderValue(s_shader, s_uTimeLoc, &currentTime, SHADER_UNIFORM_FLOAT);
 
-        extern Camera3D camera;
         SetShaderValue(s_shader, s_uCamPosLoc, &camera.position, SHADER_UNIFORM_VEC3);
 
         // Precompute mesh rings with noise perturbation for organic bark/thorn structure

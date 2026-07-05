@@ -321,7 +321,6 @@ void CastThuyKinhSkill(int agentId, Vector3 startPos, Vector3 target, SkillParam
     });
 
     SpawnCastEffect(startPos, EFFECT_PRESET_WATER_SPLASH, scale * 0.7f);
-    PlayCastSound(EFFECT_PRESET_WATER_SPLASH);
     VFXLight_Spawn((Vector3){ w->center.x, s_castLightY, w->center.z },
                    ELEMENT_COLOR_WATER, s_castLightRadius * scale, GATHER_TIME + BLOOM_TIME,
                    VFX_PRIORITY_LOW);

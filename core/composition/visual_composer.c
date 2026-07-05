@@ -114,6 +114,8 @@ void VFX_ComposeImpact(Vector3 pos, EffectPresetType preset, float scale) {
     const VFX_ImpactPreset *p = VFX_Preset_GetImpact(preset);
     if (p == NULL) return;
 
+    PlayImpactSound(preset);
+
     if (scale >= 1.5f) TimeFX_Hitstop(0.09f, 0.05f);
 
     /* 1. Screen Distortion */
@@ -140,6 +142,8 @@ void VFX_ComposeImpact(Vector3 pos, EffectPresetType preset, float scale) {
 void VFX_ComposeCast(Vector3 pos, EffectPresetType preset, float scale) {
     const VFX_CastPreset *p = VFX_Preset_GetCast(preset);
     if (p == NULL) return;
+
+    PlayCastSound(preset);
 
     /* 1. Light Flash */
     VFXLight_Spawn(pos, p->flashColor, p->lightRadius * scale, p->lightLifetime, VFX_PRIORITY_LOW);

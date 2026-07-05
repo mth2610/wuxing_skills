@@ -6,6 +6,7 @@
 #include "core/force_field.h"
 #include "core/skill_manager.h"
 #include <stdbool.h>
+#include "core/camera_context.h"
 
 // 1. Effect Preset
 typedef enum {

@@ -36,7 +36,7 @@ static void RebuildFireBurstField(void);
 #define MAX_PATH_STEPS_PER_FRAME                                               \
   80 // TỐI ƯU: Chặn đứng tình trạng stall CPU do lag đột biến
 
-extern Camera3D camera;
+
 
 typedef struct {
   bool active;

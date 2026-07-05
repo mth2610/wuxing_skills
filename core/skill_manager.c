@@ -75,7 +75,7 @@ typedef struct {
 } CastPortal;
 
 static CastPortal activePortals[MAX_ACTIVE_PORTALS];
-extern Camera3D camera;
+
 
 typedef struct {
   char name[32];
