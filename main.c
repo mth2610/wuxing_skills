@@ -94,8 +94,8 @@ int main(void) {
   // Widened/heightened from 1200x700 so the sandbox tuning panel
   // (sandbox/ui_panel.c) has room for multi-column tunable layouts as skills
   // gain more sandbox-tunable parameters (CORE_ISSUES.md Item 34 follow-up).
-  const int screenWidth = 1600;
-  const int screenHeight = 900;
+  const int screenWidth = 1280;
+  const int screenHeight = 720;
 
   bool autoTestMode     = AutoTest_IsEnabled();
   bool visualVerifyMode = VisualVerify_IsEnabled();
@@ -148,6 +148,23 @@ int main(void) {
 
   Image img = GenImageGradientRadial(64, 64, 0.0f, WHITE, BLACK);
   Texture2D globalParticleTex = LoadTextureFromImage(img);
+  Image trailImg = {
+      .data = MemAlloc(64 * sizeof(Color)),
+      .width = 64,
+      .height = 1,
+      .mipmaps = 1,
+      .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8
+  };
+  Color *trailPixels = (Color *)trailImg.data;
+  for(int i=0; i<64; i++) {
+      float u = i / 63.0f;
+      float dist = fabsf(u - 0.5f) * 2.0f;
+      float alpha = 1.0f - dist;
+      trailPixels[i] = (Color){255, 255, 255, (unsigned char)(255 * alpha)};
+  }
+  Texture2D globalTrailTex = LoadTextureFromImage(trailImg);
+  UnloadImage(trailImg);
+  TrailSystem_SetGlobalTexture(globalTrailTex);
   UnloadImage(img);
 
   Image atlasImg = GenImageColor(128, 128, BLANK);
@@ -215,6 +232,13 @@ int main(void) {
   bool g_slowMotion = false;
 
   float g_totalElapsed = 0.0f;
+
+  typedef enum {
+      SCREEN_MAIN_MENU,
+      SCREEN_SKILL_SANDBOX,
+      SCREEN_VFX_TESTER
+  } GameScreen;
+  GameScreen currentScreen = SCREEN_MAIN_MENU;
   while (autoTestMode     ? !AutoTest_IsFinished()      :
          visualVerifyMode ? !VisualVerify_IsFinished()  :
          !WindowShouldClose()) {
@@ -248,18 +272,94 @@ int main(void) {
         dt = 0.0f; // Freeze time during automated screenshot capture
     }
 
-    UpdateUIPanel(GetMousePosition(), &uiState);
+    if (currentScreen == SCREEN_MAIN_MENU) {
+        Vector2 mousePos = GetMousePosition();
+        bool clicked = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+        
+        int sw = GetScreenWidth();
+        int sh = GetScreenHeight();
+        Rectangle btnSandbox = { sw/2 - 150, sh/2 - 60, 300, 50 };
+        Rectangle btnVFX = { sw/2 - 150, sh/2 + 20, 300, 50 };
+        
+        if (CheckCollisionPointRec(mousePos, btnSandbox) && clicked) {
+            currentScreen = SCREEN_SKILL_SANDBOX;
+        }
+        if (CheckCollisionPointRec(mousePos, btnVFX) && clicked) {
+            currentScreen = SCREEN_VFX_TESTER;
+        }
+        
+        BeginDrawing();
+        ClearBackground(DARKGRAY);
+        
+        const char* title = "WUXING SKILLS TESTBED";
+        int titleW = MeasureText(title, 30);
+        DrawText(title, sw/2 - titleW/2, sh/2 - 150, 30, WHITE);
+        
+        DrawRectangleRounded(btnSandbox, 0.2f, 10, CheckCollisionPointRec(mousePos, btnSandbox) ? GRAY : LIGHTGRAY);
+        DrawRectangleRoundedLines(btnSandbox, 0.2f, 10, WHITE);
+        DrawText("1. ENTER SKILL SANDBOX", (int)btnSandbox.x + 30, (int)btnSandbox.y + 15, 20, BLACK);
+        
+        DrawRectangleRounded(btnVFX, 0.2f, 10, CheckCollisionPointRec(mousePos, btnVFX) ? GRAY : LIGHTGRAY);
+        DrawRectangleRoundedLines(btnVFX, 0.2f, 10, WHITE);
+        DrawText("2. ENTER VFX PREFAB TESTER", (int)btnVFX.x + 10, (int)btnVFX.y + 15, 20, BLACK);
+        
+        EndDrawing();
+        continue;
+    }
 
     Vector3 mouseTarget3D = {0};
-    UpdateSandbox(&player, &enemy, dt, &uiState, &mouseTarget3D);
 
-    CameraFX_Update(&camera, dt);
+    if (currentScreen == SCREEN_SKILL_SANDBOX) {
+        UpdateUIPanel(GetMousePosition(), &uiState);
+        if (uiState.requestedBackToMenu) currentScreen = SCREEN_MAIN_MENU;
+
+        UpdateSandbox(&player, &enemy, dt, &uiState, &mouseTarget3D);
+        CameraFX_Update(&camera, dt);
+    } else if (currentScreen == SCREEN_VFX_TESTER) {
+        static float vfxCameraAngle = 0.0f;
+        float speed = 20.0f;
+        float s = sinf(vfxCameraAngle);
+        float c = cosf(vfxCameraAngle);
+
+        if (IsKeyDown(KEY_W)) { player.position.x -= s * speed * dt; player.position.z -= c * speed * dt; }
+        if (IsKeyDown(KEY_S)) { player.position.x += s * speed * dt; player.position.z += c * speed * dt; }
+        if (IsKeyDown(KEY_A)) { player.position.x -= c * speed * dt; player.position.z += s * speed * dt; }
+        if (IsKeyDown(KEY_D)) { player.position.x += c * speed * dt; player.position.z -= s * speed * dt; }
+
+        if (IsKeyDown(KEY_Q)) vfxCameraAngle -= 2.5f * dt;
+        if (IsKeyDown(KEY_E)) vfxCameraAngle += 2.5f * dt;
+
+        static float vfxCamDist = 8.4f;
+        vfxCamDist -= GetMouseWheelMove() * 0.5f;
+        if (vfxCamDist < 2.0f) vfxCamDist = 2.0f;
+        if (vfxCamDist > 30.0f) vfxCamDist = 30.0f;
+
+        camera.target = (Vector3){ player.position.x, player.position.y + 0.2f, player.position.z };
+        camera.position = (Vector3){ 
+            player.position.x + sinf(vfxCameraAngle) * vfxCamDist, 
+            player.position.y + vfxCamDist * 0.8f, 
+            player.position.z + cosf(vfxCameraAngle) * vfxCamDist
+        };
+
+        Ray mouseRay = GetScreenToWorldRay(GetMousePosition(), camera);
+        float t = -mouseRay.position.y / mouseRay.direction.y;
+        mouseTarget3D = (Vector3){
+            mouseRay.position.x + mouseRay.direction.x * t,
+            0.0f,
+            mouseRay.position.z + mouseRay.direction.z * t
+        };
+
+        if (VFXTest_UpdateAndHandleInput(player.position, mouseTarget3D, testAtlasTex, globalParticleTex)) {
+            currentScreen = SCREEN_MAIN_MENU;
+        }
+        CameraFX_Update(&camera, dt);
+    }
 
     static bool isDragging = false;
     static int pathCount = 0;
     static Vector3 pathPoints[32];
 
-    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !uiState.clickedOnUI) {
+    if (currentScreen == SCREEN_SKILL_SANDBOX && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !uiState.clickedOnUI) {
       isDragging = true;
       pathCount = 1;
       pathPoints[0] = mouseTarget3D;
@@ -288,13 +388,6 @@ int main(void) {
                   mouseTarget3D, uiState.currentParams);
       }
     }
-
-    // =========================================================================
-    // MỚI: TOÀN BỘ LOGIC NHẬN PHÍM T ĐỂ CHẠY HIỆU ỨNG TEST ĐÃ ĐƯỢC ĐẨY VÀO HÀM
-    // NÀY[cite: 11]
-    // =========================================================================
-    VFXTest_UpdateAndHandleInput(player.position, testAtlasTex,
-                                 globalParticleTex);
 
     Tuning_Update();
     UpdateSkillManager(dt, enemy.position, 0.35f);
@@ -325,7 +418,7 @@ int main(void) {
 
     MyBeginMode3D(camera);
     MapManager_DrawActive();
-    if (!g_isDebuggerCapturing) {
+    if (!g_isDebuggerCapturing && currentScreen == SCREEN_SKILL_SANDBOX) {
         DrawSandbox3D(&player, &enemy, mouseTarget3D, &uiState);
     }
 
@@ -340,12 +433,20 @@ int main(void) {
     }
 
     // =========================================================================
-    // MỚI: TOÀN BỘ PHẦN TRUY XUẤT VÀ VẼ KHỐI CẦU DEBUG LIGHT ĐÃ ĐƯỢC BỐC SANG
-    // ĐÂY
+    // MỚI: TOÀN BỘ PHẦN TRUY XUẤT VÀ VẼ KHỐI CẦU DEBUG LIGHT ĐÃ ĐƯỢC BỐC SANG ĐÂY
+    // + ĐƯỢC BỔ SUNG THÊM VIỆC VẼ MESH TỪ PREFAB TESTER
     // =========================================================================
-    // VFXTest_DrawDebugLights3D();
+    if (currentScreen == SCREEN_VFX_TESTER) {
+        VFXTest_Draw3D();
+        
+        // Draw player character (same as sandbox)
+        Environment_DrawSmartShadow(player.position, ENV_SHAPE_SPHERE, 0.25f, 0.25f);
+        DrawCharacter3D(player.position, 0.25f, GetColor(0xFFD39BFF), GetColor(0x3B5998FF), GetColor(0xCCCCCCFF), true, mouseTarget3D);
+    }
 
-    SkillBuilder_DrawWorld(camera);
+    if (currentScreen == SCREEN_SKILL_SANDBOX) {
+        SkillBuilder_DrawWorld(camera);
+    }
     Afterimage_Draw();
 
     if (!g_debugHideTrails) {
@@ -391,21 +492,22 @@ int main(void) {
              WHITE);
 
     if (!g_isDebuggerCapturing) {
-        DrawUIPanel(&uiState);
-        DrawSandboxTouchControls(&player);
+        if (currentScreen == SCREEN_SKILL_SANDBOX) {
+            DrawUIPanel(&uiState);
+            DrawSandboxTouchControls(&player);
+            if (uiState.isPanelOpen) {
+                DrawSandboxHUD();
+            }
+        } else if (currentScreen == SCREEN_VFX_TESTER) {
+            VFXTest_DrawHUD();
+        }
 
         DrawText(TextFormat("FPS: %d", GetFPS()), 10, 640, 20, GREEN);
-
-        // =========================================================================
-        // MỚI: IN THÔNG TIN TEXT DEBUG LÊN HUD CŨNG ĐƯỢC QUẢN LÝ TẬP TRUNG
-        // =========================================================================
-        VFXTest_DrawHUD();
-        if (uiState.isPanelOpen) {
-            DrawSandboxHUD();
-        }
     }
              
-    SkillDebugger_PostRender(uiState.activeSkillIndex, player.position, mouseTarget3D);
+    if (currentScreen == SCREEN_SKILL_SANDBOX) {
+        SkillDebugger_PostRender(uiState.activeSkillIndex, player.position, mouseTarget3D);
+    }
 
     EndDrawing();
 

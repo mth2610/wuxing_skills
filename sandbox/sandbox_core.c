@@ -78,7 +78,7 @@ static void DrawCircleOutline3D(Vector3 center, float radius, Color color) {
     }
 }
 
-static void DrawCharacter3D(Vector3 position, float radius, Color skinCol, Color clothesCol, Color outlineCol, bool isPlayer, Vector3 targetPos) {
+void DrawCharacter3D(Vector3 position, float radius, Color skinCol, Color clothesCol, Color outlineCol, bool isPlayer, Vector3 targetPos) {
     Vector3 leftFoot = { position.x - 0.08f, position.y, position.z };
     Vector3 rightFoot = { position.x + 0.08f, position.y, position.z };
     DrawSphere(leftFoot, 0.04f, outlineCol);

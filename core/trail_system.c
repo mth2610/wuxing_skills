@@ -10,6 +10,8 @@ static TrailEntity trailPool[MAX_TRAIL_PARTICLES];
 static int freeListHead = 0;
 static int activeCount = 0;
 
+static Texture2D s_globalTrailTex = {0};
+void TrailSystem_SetGlobalTexture(Texture2D tex) { s_globalTrailTex = tex; }
 static Shader defaultShader;
 
 #define TRAIL_SHADER_CACHE_SIZE 16
@@ -582,9 +584,10 @@ static void DrawTrailGeometry(int i, Camera3D camera) {
         scratchInner[h].tint = (Color){(unsigned char)(segRatio * nodeColor.r), nodeColor.g,
                                        nodeColor.b, (unsigned char)(nodeColor.a * lifeRatio)};
       }
-      DrawRibbonStrip(scratchOuter, trailPool[i].historyCount, (Texture2D){0},
+      Texture2D ribbonTex = trailPool[i].sprite.id > 0 ? trailPool[i].sprite : s_globalTrailTex;
+      DrawRibbonStrip(scratchOuter, trailPool[i].historyCount, ribbonTex,
                       camera);
-      DrawRibbonStrip(scratchInner, trailPool[i].historyCount, (Texture2D){0},
+      DrawRibbonStrip(scratchInner, trailPool[i].historyCount, ribbonTex,
                       camera);
     }
 
@@ -632,7 +635,8 @@ static void DrawTrailGeometry(int i, Camera3D camera) {
         scratchOuter[h].tint =
             (Color){nodeColor.r, nodeColor.g, nodeColor.b, (unsigned char)(nodeColor.a * lifeRatio * taper)};
       }
-      DrawRibbonStrip(scratchOuter, trailPool[i].historyCount, (Texture2D){0},
+      Texture2D ribbonTex = trailPool[i].sprite.id > 0 ? trailPool[i].sprite : s_globalTrailTex;
+      DrawRibbonStrip(scratchOuter, trailPool[i].historyCount, ribbonTex,
                       camera);
     }
 
@@ -681,8 +685,9 @@ static void DrawTrailGeometry(int i, Camera3D camera) {
         scratchInner[h].tint =
             (Color){255, 255, 255, (unsigned char)(255.0f * lifeRatio * taper)};
       }
-      DrawRibbonStrip(scratchOuter, trailPool[i].historyCount, (Texture2D){0}, camera);
-      DrawRibbonStrip(scratchInner, trailPool[i].historyCount, (Texture2D){0}, camera);
+      Texture2D ribbonTex = trailPool[i].sprite.id > 0 ? trailPool[i].sprite : s_globalTrailTex;
+      DrawRibbonStrip(scratchOuter, trailPool[i].historyCount, ribbonTex, camera);
+      DrawRibbonStrip(scratchInner, trailPool[i].historyCount, ribbonTex, camera);
     }
   }
 }

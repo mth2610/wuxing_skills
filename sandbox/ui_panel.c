@@ -29,6 +29,7 @@ static Rectangle rectPath[3];
 static Rectangle rectPortalToggle;
 static Rectangle skillButtons[64];
 static Rectangle togglePanelBtn;
+static Rectangle backBtn;
 
 static int hoverSkillIndex = -1;
 static int skillOrder[64];
@@ -212,6 +213,7 @@ void InitUIPanel(void) {
   s_uiFont = ResourceManager_LoadFont("assets/fonts/ui_font.ttf", 32);
 
   togglePanelBtn = (Rectangle){20, 15, 180, 32};
+  backBtn = (Rectangle){210, 15, 180, 32};
 
   // Compacted row pitch (36px, was 50px) and button height (28px, was 35px)
   // so this whole control block takes noticeably less vertical space,
@@ -259,6 +261,7 @@ void InitUIPanel(void) {
 
 void UpdateUIPanel(Vector2 mousePos, UIPanelState *state) {
   state->clickedOnUI = false;
+  state->requestedBackToMenu = false;
   hoverSkillIndex = -1;
 
   // Kiểm tra click vào nút Ẩn/Hiện Bảng Điều Khiển đầu tiên
@@ -267,6 +270,15 @@ void UpdateUIPanel(Vector2 mousePos, UIPanelState *state) {
     state->clickedOnUI = true;
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
       state->isPanelOpen = !state->isPanelOpen;
+      return;
+    }
+  }
+
+  bool isOverBackBtn = CheckCollisionPointRec(mousePos, backBtn);
+  if (isOverBackBtn) {
+    state->clickedOnUI = true;
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+      state->requestedBackToMenu = true;
       return;
     }
   }
@@ -475,6 +487,16 @@ void DrawUIPanel(const UIPanelState *state) {
   const char *toggleText = state->isPanelOpen ? "[X] AN BANG DIEU KHIEN" : "[+] HIEN BANG DIEU KHIEN";
   float toggleTextW = UITextWidth(toggleText, 13);
   UIText(toggleText, togglePanelBtn.x + (togglePanelBtn.width - toggleTextW) / 2, togglePanelBtn.y + 9, 13, WHITE);
+
+  // Vẽ nút Back
+  bool isOverBack = CheckCollisionPointRec(mousePos, backBtn);
+  Color backCol = isOverBack ? MAROON : DARKGRAY;
+  DrawRectangleRounded(backBtn, 0.2f, 10, backCol);
+  DrawRectangleRoundedLines(backBtn, 0.2f, 10, WHITE);
+
+  const char *backText = "[<] QUAY LAI MENU";
+  float backTextW = UITextWidth(backText, 13);
+  UIText(backText, backBtn.x + (backBtn.width - backTextW) / 2, backBtn.y + 9, 13, WHITE);
 
   // Nếu bảng điều khiển đang đóng, không vẽ gì thêm
   if (!state->isPanelOpen) {

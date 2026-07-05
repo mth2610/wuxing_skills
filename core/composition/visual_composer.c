@@ -193,13 +193,13 @@ int VFX_ComposeProjectileTrail(Vector3 start, Vector3 target, EffectPresetType p
     s_flightFldNextSlot = (s_flightFldNextSlot + 1) % MAX_CONCURRENT_PROJECTILE_TRAILS;
     ForceField_Clear(flightFld);
     Vector3 dir = Vector3Normalize(Vector3Subtract(target, start));
-    ForceField_AddLayer(flightFld, (ForceLayer){ .type = FORCE_GRAVITY_DIR, .direction = dir, .strength = 325.0f });
-    ForceField_AddLayer(flightFld, (ForceLayer){ .type = FORCE_NOISE_PERLIN, .strength = 20.0f, .noiseScale = 0.08f, .noiseSpeed = 2.0f });
+    ForceField_AddLayer(flightFld, (ForceLayer){ .type = FORCE_GRAVITY_DIR, .direction = dir, .strength = 3.25f });
+    ForceField_AddLayer(flightFld, (ForceLayer){ .type = FORCE_NOISE_PERLIN, .strength = 0.2f, .noiseScale = 0.08f, .noiseSpeed = 2.0f });
 
     /* 2. Setup tail dust config */
     static ParticleConfig s_tailEmit;
     s_tailEmit = (ParticleConfig){
-        .radius = 1.0f * scale,
+        .radius = 0.3f * scale,
         .lifetime = 0.4f,
         .gradient = p->gradient,
         .forceField = flightFld
@@ -211,12 +211,12 @@ int VFX_ComposeProjectileTrail(Vector3 start, Vector3 target, EffectPresetType p
         .velocity = Vector3Scale(dir, speed),
         .colorStart = p->tint,
         .colorEnd = p->tint,
-        .radius = 1.6f * scale,
+        .radius = 0.5f * scale,
         .lifetime = Vector3Distance(start, target) / fmaxf(speed, 1.0f) + 0.5f,
         .gradient = p->gradient,
         .forceField = flightFld,
         .onLiveEmit = &s_tailEmit,
-        .onLiveEmitRate = 40.0f
+        .onLiveEmitRate = 120.0f
     });
 
     /* 4. Spawn trail ribbon */
@@ -224,9 +224,9 @@ int VFX_ComposeProjectileTrail(Vector3 start, Vector3 target, EffectPresetType p
         .type = TRAIL_TYPE_PROJECTILE,
         .pos = start,
         .vel = Vector3Scale(dir, speed),
-        .len = 14.0f * scale,
-        .thick = 3.0f * scale,
-        .trailLength = 60.0f * scale,
+        .len = 4.0f * scale,
+        .thick = 0.8f * scale,
+        .trailLength = 20.0f * scale,
         .life = Vector3Distance(start, target) / fmaxf(speed, 1.0f) + 0.5f,
         .target = target,
         .scale = scale,

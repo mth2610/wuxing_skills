@@ -236,6 +236,7 @@ typedef struct {
   bool active;
 } TrailEntity;
 
+void TrailSystem_SetGlobalTexture(Texture2D tex);
 void InitTrailSystem(Shader defaultShader);
 int SpawnTrailEntity(TrailConfig config);
 TrailEntity *GetTrail(int id);

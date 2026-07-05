@@ -1,0 +1,125 @@
+diff --git a/sandbox/vfx_test.c b/sandbox/vfx_test.c
+index a8e3d8f..48e3f9a 100644
+--- a/sandbox/vfx_test.c
++++ b/sandbox/vfx_test.c
+@@ -27,6 +27,7 @@ typedef enum {
+     TEST_CAT_PROJECTILE,
+     TEST_CAT_COMPOSER,
+     TEST_CAT_MESH,
++    TEST_CAT_BURST,
+     TEST_CAT_COUNT
+ } PrefabTestCategory;
+ 
+@@ -304,7 +305,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
+   // Check buttons grid
+   int maxIdx = 1;
+   const char** names = NULL;
+-  if (s_testCategory == TEST_CAT_IMPACT || s_testCategory == TEST_CAT_CAST || s_testCategory == TEST_CAT_PROJECTILE) { maxIdx = 8; names = s_elementNames; }
++  if (s_testCategory == TEST_CAT_IMPACT || s_testCategory == TEST_CAT_CAST || s_testCategory == TEST_CAT_PROJECTILE || s_testCategory == TEST_CAT_BURST) { maxIdx = 8; names = s_elementNames; }
+   else if (s_testCategory == TEST_CAT_COMPOSER) { maxIdx = 4; names = s_composerNames; }
+   else if (s_testCategory == TEST_CAT_MESH) { maxIdx = 9; names = s_meshNames; }
+ 
+@@ -351,6 +352,65 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
+       } else if (s_testCategory == TEST_CAT_MESH) {
+           s_isPlayingMesh = true;
+           s_meshTime = 0.0f;
++      } else if (s_testCategory == TEST_CAT_BURST) {
++          ImpactBurstConfig cfg = {0};
++          Color burstColor = ORANGE;
++          const char* decalPath = "assets/textures/decals/decal_lava_crack.png";
++
++          // Map selected element index to colors and decal paths
++          switch (s_testIndex) {
++              case 0: // FIRE
++                  burstColor = (Color){ 231, 76, 60, 255 }; // Crimson Red
++                  decalPath = "assets/textures/decals/decal_lava_crack.png";
++                  break;
++              case 1: // ICE
++                  burstColor = SKYBLUE;
++                  decalPath = "assets/textures/decals/decal_frost_ring.png";
++                  break;
++              case 2: // WATER
++                  burstColor = (Color){ 41, 128, 185, 255 }; // Cyan-Blue
++                  decalPath = "assets/textures/decals/decal_water_ripple.png";
++                  break;
++              case 3: // LIGHTNING
++                  burstColor = YELLOW;
++                  decalPath = "assets/textures/decals/decal_lightning_char.png";
++                  break;
++              case 4: // EARTH
++                  burstColor = (Color){ 230, 126, 34, 255 }; // Ochre Brown / Orange
++                  decalPath = "assets/textures/decals/decal_earth_rune.png";
++                  break;
++              case 5: // WOOD
++                  burstColor = (Color){ 46, 204, 113, 255 }; // Vibrant Green
++                  decalPath = "assets/textures/decals/decal_root_mark.png";
++                  break;
++              case 6: // METAL
++                  burstColor = (Color){ 149, 165, 166, 255 }; // Silver Gray
++                  decalPath = "assets/textures/decals/decal_impact_crater.png";
++                  break;
++              case 7: // TAIJI
++                  burstColor = (Color){ 155, 89, 182, 255 }; // Purple
++                  decalPath = "assets/textures/decals/decal_taiji_ring.png";
++                  break;
++          }
++
++          cfg.distortEnabled = true;
++          cfg.distortRadius = 15.0f;
++          cfg.distortStrength = 0.5f;
++          cfg.distortLife = 0.6f;
++          cfg.distortSpeed = 25.0f;
++
++          cfg.decalEnabled = true;
++          cfg.decalTex = ResourceManager_LoadTexture(decalPath);
++          cfg.decalScale = 3.0f;
++          cfg.decalLife = 2.5f;
++          cfg.decalTint = ColorAlpha(burstColor, 0.8f);
++          cfg.decalRandomRotation = true;
++          cfg.decalFixedRotation = 0.0f;
++
++          cfg.lightEnabled = true;
++          cfg.lightColor = burstColor;
++          cfg.lightRadius = 8.0f;
++          cfg.lightLife = 0.5f;
++
++          cfg.particlesEnabled = true;
++          cfg.particles.countMin = 20;
++          cfg.particles.countMax = 30;
++          cfg.particles.speedMin = 4.0f;
++          cfg.particles.speedMax = 8.0f;
++          cfg.particles.radiusMin = 0.2f;
++          cfg.particles.radiusMax = 0.6f;
++          cfg.particles.lifetimeMin = 1.0f;
++          cfg.particles.lifetimeMax = 1.8f;
++          cfg.particles.pitchRange = 3.14159265f * 0.5f;
++          cfg.particles.upwardBias = 3.0f;
++          cfg.particles.colorStart = burstColor;
++          cfg.particles.colorEnd = ColorAlpha(burstColor, 0.0f);
++          cfg.particles.gradient = NULL;
++          cfg.particles.forceField = NULL;
++
++          VFX_ComposeTriggerImpactBurst(s_prefabStartPos, 1.0f, &cfg);
+       }
+   }
+   
+@@ -430,7 +490,7 @@ void VFXTest_DrawHUD(void) {
+   DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), ColorAlpha(BLACK, 0.4f)); // subtle screen dim
+   Rectangle bgBox = { startX - 10, startY - 10, (tabW + spacing) * TEST_CAT_COUNT + 10, 300 };
+   DrawRectangleRounded(bgBox, 0.05f, 10, ColorAlpha(BLACK, 0.6f));
+   DrawRectangleRoundedLines(bgBox, 0.05f, 10, ColorAlpha(WHITE, 0.3f));
+ 
+   // Draw Tabs
+-  const char* tabNames[] = { "IMPACT", "CAST", "PROJECTILE", "COMPOSER", "MESH" };
++  const char* tabNames[] = { "IMPACT", "CAST", "PROJECTILE", "COMPOSER", "MESH", "BURST" };
+   for (int i = 0; i < TEST_CAT_COUNT; i++) {
+       Rectangle tabRec = { startX + i * (tabW + spacing), startY, tabW, tabH };
+       bool isHover = CheckCollisionPointRec(mousePos, tabRec);
+@@ -447,7 +507,7 @@ void VFXTest_DrawHUD(void) {
+   // Draw Grid
+   int maxIdx = 1;
+   const char** names = NULL;
+-  if (s_testCategory == TEST_CAT_IMPACT || s_testCategory == TEST_CAT_CAST || s_testCategory == TEST_CAT_PROJECTILE) { maxIdx = 8; names = s_elementNames; }
++  if (s_testCategory == TEST_CAT_IMPACT || s_testCategory == TEST_CAT_CAST || s_testCategory == TEST_CAT_PROJECTILE || s_testCategory == TEST_CAT_BURST) { maxIdx = 8; names = s_elementNames; }
+   else if (s_testCategory == TEST_CAT_COMPOSER) { maxIdx = 4; names = s_composerNames; }
+   else if (s_testCategory == TEST_CAT_MESH) { maxIdx = 9; names = s_meshNames; }

@@ -9,6 +9,7 @@ typedef struct {
     bool clickedOnUI;
     SkillParams currentParams;
     bool isPanelOpen;
+    bool requestedBackToMenu;
 } UIPanelState;
 
 // Khởi tạo bảng điều khiển (định nghĩa các tọa độ nút bấm)

@@ -45,6 +45,7 @@ void InitSandbox(PlayerEntity* player, EnemyEntity* enemy);
 void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelState* uiState, Vector3* outMouseTarget);
 
 // Vẽ toàn bộ cảnh 3D (võ đài, người chơi, quái vật, cột đá)
+void DrawCharacter3D(Vector3 position, float radius, Color skinCol, Color clothesCol, Color outlineCol, bool isPlayer, Vector3 targetPos);
 void DrawSandbox3D(const PlayerEntity* player, const EnemyEntity* enemy, Vector3 mouseTarget, UIPanelState* uiState);
 
 // Vẽ HUD thông tin debug Sandbox (camera parameters, instructions)

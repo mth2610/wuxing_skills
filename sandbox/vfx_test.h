@@ -3,9 +3,9 @@
 
 #include "raylib.h"
 
-void VFXTest_UpdateAndHandleInput(Vector3 playerPos, Texture2D testAtlasTex,
+bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Texture2D testAtlasTex,
                                   Texture2D globalParticleTex);
-void VFXTest_DrawDebugLights3D(void);
+void VFXTest_Draw3D(void);
 void VFXTest_DrawHUD(void);
 
 #endif // VFX_TEST_H

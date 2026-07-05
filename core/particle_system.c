@@ -118,18 +118,29 @@ void UpdateParticles(float dt) {
     // 1. XỬ LÝ SUB-EMITTER: ON LIVE EMIT (Đẻ vệt đuôi khi đang sống)
     // --------------------------------------------------------
     if (p->lifetime > 0.0f && p->hasLiveEmit) {
+      float oldTimer = p->onLiveEmitTimer;
       p->onLiveEmitTimer += dt;
       float spawnInterval = 1.0f / p->onLiveEmitRate;
+      float timeProcessed = oldTimer;
 
       int safetyCounter = 0;
-      // Giới hạn vòng lặp nhả tối đa 5 hạt/frame để tránh lag đột biến kéo chết
+      // Giới hạn vòng lặp nhả tối đa 10 hạt/frame để tránh lag đột biến kéo chết
       // cụm hạt
-      while (p->onLiveEmitTimer >= spawnInterval && safetyCounter < 5) {
-        p->onLiveConfig.position =
-            p->position; // Hạt con lấy vị trí tức thời của hạt mẹ
+      while (p->onLiveEmitTimer >= spawnInterval && safetyCounter < 10) {
+        timeProcessed += spawnInterval;
+        float t = (dt > 0.0f) ? (timeProcessed / dt) : 1.0f;
+        if (t < 0.0f) t = 0.0f;
+        if (t > 1.0f) t = 1.0f;
+
+        Vector3 frameMove = Vector3Scale(p->velocity, dt);
+        p->onLiveConfig.position = Vector3Add(p->position, Vector3Scale(frameMove, t));
+
         SpawnParticle(p->onLiveConfig);
         p->onLiveEmitTimer -= spawnInterval;
         safetyCounter++;
+      }
+      if (p->onLiveEmitTimer >= spawnInterval) {
+         p->onLiveEmitTimer = fmodf(p->onLiveEmitTimer, spawnInterval); // clear backlog if cap reached
       }
     }
 
