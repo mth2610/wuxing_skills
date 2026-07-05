@@ -61,6 +61,7 @@ PROJECT_SOURCE_FILES   := main.c \
                           core/vfx_light.c \
                           core/decal_system.c \
                           core/geometry/procedural_mesh_utils.c \
+                          core/geometry/crystal_mesh_generator.c \
                           core/geometry/mesh_cache.c \
                           core/material/material_system.c \
                           core/composition/visual_composer.c \

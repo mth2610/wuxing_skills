@@ -1,5 +1,6 @@
 #include "core/trail_system.h"
 #include "core/force_field.h"
+#include "core/composition/visual_composer.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <math.h>
@@ -402,6 +403,7 @@ int SpawnTrailEntity(TrailConfig config) {
   t->orbitSpeed = config.orbitSpeed;
   t->orbitAxis = config.orbitAxis;
   t->orbitPhase = config.orbitPhase;
+  t->blendMode = config.blendMode;
 
   t->timeSinceLastFollowerUpdate = 0.0f;
   t->fadeAccumulator = 0.0f;
@@ -498,6 +500,7 @@ void Trail_SetFollowerOrbit(int id, float radius, float speed, Vector3 axis, flo
 }
 
 void UpdateTrailSystem(float dt) {
+  VFX_UpdateQiAuras(dt);
   float time = (float)GetTime();
 
   for (int i = 0; i < MAX_TRAIL_PARTICLES; i++) {
@@ -707,7 +710,9 @@ void DrawTrailEntities(Camera3D camera) {
   float time = (float)GetTime();
   rlDrawRenderBatchActive();
   rlDisableDepthMask();
-  BeginBlendMode(BLEND_ADDITIVE);
+
+  BlendMode currentBM = BLEND_ADDITIVE;
+  BeginBlendMode(currentBM);
 
   int frameActiveShaderCount = 0;
   for (int i = 0; i < MAX_TRAIL_PARTICLES; i++) {
@@ -741,6 +746,15 @@ void DrawTrailEntities(Camera3D camera) {
         continue;
       if (ResolveShader(&trailPool[i]).id != frameActiveShaderIds[s])
         continue;
+
+      BlendMode targetBM = (trailPool[i].blendMode > 0) ? trailPool[i].blendMode : BLEND_ADDITIVE;
+      if (targetBM != currentBM) {
+        rlDrawRenderBatchActive();
+        EndBlendMode();
+        currentBM = targetBM;
+        BeginBlendMode(currentBM);
+      }
+
       DrawTrailGeometry(i, camera);
     }
 

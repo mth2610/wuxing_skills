@@ -94,6 +94,7 @@ typedef struct {
   float orbitSpeed;
   Vector3 orbitAxis;
   float orbitPhase;
+  BlendMode blendMode;
 
   // Unified Config representation (Phase 3)
   VFX_GeneralConfig general;
@@ -231,6 +232,7 @@ typedef struct {
   int historyHead;
   int ownerTag;
   int nextFree;
+  BlendMode blendMode;
 
   // 6. Kiểu Boolean - 1 byte
   bool active;

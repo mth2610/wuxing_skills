@@ -88,4 +88,26 @@ Ghi nhận lỗi rò rỉ Depth Mask (`rlDisableDepthMask` không bật lại g�
 - **Va chạm & Sát thương:** Khi trúng đích hoặc chạm đất, đá nổ tung tạo xung chấn méo màn hình (`ScreenDistort_Add`), lóe sáng (`VFXLight_Spawn`), nổ bụi hạt đất cát (`ParticleSystem_SpawnRadialBurst`) và áp dụng sát thương AoE diện rộng (`Entity_ApplyAoEDamage`).
 - **Hoàn thành Linter & Compiler:** Vượt qua linter với kết quả tuyệt đối **0 Fail, 0 Warn** (`make lint` sạch sẽ) và biên dịch hoàn hảo.
 
+---
+
+## Session Summary (Phiên làm việc ngày 05/07/2026 - Tối)
+
+### 1. Kiến trúc Chân Khí Tiên Hiệp (QiAura Attach/Detach)
+- **Tích hợp API vào Lõi:** Thiết lập API quản lý vòng lặp đính kèm/gỡ bỏ chân khí động thay vì vẽ hardcode thủ công:
+  - `VFX_AttachQiAura(casterAgentId, anchorPos, bodyHeight, element, scale, wispCount)`
+  - `VFX_DetachQiAura(casterAgentId)`
+  - `VFX_UpdateQiAuras(dt)`
+- **Lớp 1 — Thân sương (Wisp Ribbon):** Sử dụng 4-6 dải `TRAIL_TYPE_FOLLOWER` có dải Gaussian Falloff mượt mà, gán opacity tối đa chỉ từ `0.15 - 0.28` (không bệt màu trắng) và blend mode `BLEND_ALPHA` (không dùng Additive chồng lấn).
+- **Lớp 2 — Curl Noise & Vortex Axis:** Tích hợp trường lực Curl Noise (`FORCE_NOISE_CURL`) tần số thấp giúp dải chân khí uốn lượn chậm rãi mềm mại, kết hợp `FORCE_VORTEX_AXIS` hướng trục dọc của caster để ôm gọn luồng khí cuốn theo một hướng chung.
+- **Lớp 3 — Lấp lánh (Sparkle):** Kích hoạt callback sinh hạt lấp lánh (sparkle) ngẫu nhiên theo thời gian thực tại đầu ngọn dải khí, sử dụng `BLEND_ADDITIVE`, màu sáng bão hòa cao và tuổi thọ cực ngắn (`0.15s`) kết hợp point light flash siêu nhỏ để tạo tương phản rõ rệt với thân sương.
+
+### 2. Tinh chỉnh Blend Mode trong Trail System
+- Mở rộng cấu trúc `TrailConfig` và `TrailEntity` hỗ trợ tham số `BlendMode blendMode` (tự động fallback về `BLEND_ADDITIVE` nếu không khai báo để tương thích ngược hoàn toàn).
+- Tối ưu hóa render loop `DrawTrailEntities` đổi blend mode động mà không vi phạm Raylib Batching Hazard (chỉ ép xả render batch `rlDrawRenderBatchActive()` khi thực sự thay đổi trạng thái Blend Mode giữa các dải).
+
+### 3. Đồng bộ hóa Glacial Cannon (Kiểu B)
+- Thay thế hoàn toàn cơ chế `VFX_AttachQiAura` cũ bằng cách gọi trực tiếp `VFX_ComposeAura(AURA_QI, s->startPos, s_aoeRadius * s->sizeScale, time)` tại hàm vẽ `DrawGlacialCannonSkill` khi kỹ năng đang ở trạng thái `STATE_CASTING`.
+- Điều này kích hoạt chính xác thuật toán chân khí dạng **Kiểu B** (các cột wisp lụa mờ ảo bốc lên từ mặt đất, uốn lượn bằng Curl Noise và lấp lánh sparkle ở đầu ngọn trước khi tan ở đỉnh) mà người dùng thiết kế trong `vc_aura.inl`.
+
+
 

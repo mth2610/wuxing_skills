@@ -2803,5 +2803,13 @@ Tự gán shader, texture, vật liệu và quản lý blend mode / Z-buffer ph�
 - `VFX_ComposeProjectileTrail`: Sinh vệt đạn bay theo ElementPresetType.
 - `VFX_ComposeWaterStream`: Dựng dòng nước cuộn trào dạng ống Bezier mềm mại uốn lượn sử dụng shader `tube.fs` và texture `water_caustics.png` trong chế độ `BLEND_ALPHA`.
 - `VFX_ComposeGlowingVine`: Dựng dải dây leo phát sáng ngọc bích tự động bò và xoắn ốc quấn chặt lấy mục tiêu. Thực hiện vẽ 2-pass (pass 1 ngọc bích trong suốt phát quang viền Fresnel qua `Material_LoadCustom`, pass 2 lõi sáng trắng tăng cường chế độ cộng màu `BLEND_ADDITIVE`).
+- `VFX_ComposeProjectile`: Vẽ một loại đạn bay (PROJECTILE_FIREBALL, PROJECTILE_ICE, PROJECTILE_LIGHTNING, PROJECTILE_WOOD_SEED, PROJECTILE_ROCK, PROJECTILE_YINYANG) với đầy đủ hiệu ứng tích hợp: lõi cầu, vệt đuôi hạt, ánh sáng tỏa và tự động xoay lật.
+- `VFX_GroundPattern`: Tạo hoa văn pháp trận trên mặt đất dạng Quad ngang tắt Culling (đất nứt, vòng ma thuật xoay, nham thạch sủi bọt, sương băng, gai mọc, chữ rune cổ).
+- `VFX_ComposeBeam`: Vẽ tia laser/chùm sáng 3D đa hướng (crossed-quads) cuốn chảy kết cấu (lửa, sét, băng, ánh sáng, hư không).
+- `VFX_PathWave`: Sinh đợt hiệu ứng mọc tuần tự dọc theo một danh sách điểm (cột đá nhô, gai băng mọc, gai mộc bò, lửa phun, sét truyền), phù hợp với kỹ năng vẽ đường casting kéo chuột.
+- `VFX_SummonCircle`: Tạo vòng tròn triệu hồi với hai lớp pháp trận xoay ngược chiều nhau, hút các luồng hạt năng lượng vào tâm.
+- `VFX_TriggerExplosion`: Kích nổ theo công thức chuẩn (lửa, băng, sét, đất, độc, thánh quang, hư không), tự động kết hợp Screen Distortion, Point Light flash, Decal, hạt nổ tỏa tròn và rung camera tùy chọn.
+- `VFX_ComposeAura`: Tạo hào quang/vòng buff lơ lửng quanh chân và tỏa các hạt năng lượng hướng lên trên (lửa, băng, gió, sét, thái cực).
+
 
 
