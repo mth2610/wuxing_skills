@@ -57,11 +57,8 @@ void UpdateCoreTestSkill(float dt, Vector3 enemyPos, float enemyRadius) {
         // Vệt khói
         VFX_ComposeSmokeTrail(Vector3Add(s_center, (Vector3){-3.5f, 0, 0}), Vector3Add(s_center, (Vector3){-3.5f, 2.5f, 0}), 1.0f);
         // Vết nứt đất dài (đặt ngay trước mặt, chạy thẳng về trước)
-        VFX_ComposeFissure(Vector3Add(s_center, (Vector3){-1.5f, 0, 2.0f}), Vector3Add(s_center, (Vector3){-1.5f, 0, 8.0f}), 0.6f);
+        VFX_ComposeFissureStreak(Vector3Add(s_center, (Vector3){-1.5f, 0, 2.0f}), Vector3Add(s_center, (Vector3){-1.5f, 0, 8.0f}), 0.6f);
         
-        // Vũng nước ma thuật
-        // (Đã được sửa lại hệ thống shader để vân nước flow_map hoạt động đúng)
-        ProceduralMesh_DrawMagicPuddle(Vector3Add(s_center, (Vector3){0, 0, -2.5f}), 1.5f);
         
         // 1 tia sét duy nhất giáng xuống ở trung tâm
         s_bolts[0].active = true;
@@ -105,19 +102,19 @@ void DrawCoreTestSkill(void) {
     float progress = fminf(s_time / 1.0f, 1.0f);
     
     // 1. Cột đá (Giữ lại theo yêu cầu)
-    ProceduralMesh_DrawStonePillar(Vector3Add(s_center, (Vector3){-1.5f, 0, -2.0f}), 0.4f, 1.8f, 0.4f, progress);
+    VFX_ComposeStonePillar(Vector3Add(s_center, (Vector3){-1.5f, 0, -2.0f}), progress);
     
     // 6. Cục đá (tròn, không còn lỗi)
-    ProceduralMesh_DrawRoundBoulder(Vector3Add(s_center, (Vector3){3.5f, 0, -1.0f}), 0.5f);
+    VFX_ComposeBoulder(Vector3Add(s_center, (Vector3){3.5f, 0, -1.0f}));
     
     // 3. Tinh thể băng
-    ProceduralMesh_DrawIceCrystal(Vector3Add(s_center, (Vector3){-3.5f, 0, 2.0f}), 0.3f, 1.5f, 0.2f, 1337);
+    VFX_ComposeIceCrystal(Vector3Add(s_center, (Vector3){-3.5f, 0, 2.0f}), 1337);
     
     // 4. Vũng nước ma thuật
-    ProceduralMesh_DrawMagicPuddle(Vector3Add(s_center, (Vector3){0, 0, -2.5f}), 1.5f);
+    VFX_ComposeMagicPuddle(Vector3Add(s_center, (Vector3){0, 0, -2.5f}));
     
     // 5. Quả cầu lửa (nhỏ hơn, thấp hơn)
-    ProceduralMesh_DrawFireball(Vector3Add(s_center, (Vector3){3.5f, 0.5f, 2.0f}), 0.3f, s_time);
+    VFX_ComposeFireball(Vector3Add(s_center, (Vector3){3.5f, 0.0f, 2.0f}), s_time);
     
     // Vẽ mưa sét
     for (int i = 0; i < MAX_TEST_BOLTS; i++) {

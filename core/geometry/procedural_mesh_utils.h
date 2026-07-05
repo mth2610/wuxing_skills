@@ -476,12 +476,8 @@ void ProceduralMesh_SetDisplacementUniforms(Shader shader,
  * frame (mesh cache theo instance, không phải pool động). */
 void ProceduralMesh_UnloadBase(Mesh *mesh);
 
-// --- High-Level Procedural Drawers (Transferred from visual_prefabs) ---
-void ProceduralMesh_DrawStonePillar(Vector3 basePos, float radius, float height, float sharpness, float progress);
-void ProceduralMesh_DrawRoundBoulder(Vector3 pos, float radius);
-void ProceduralMesh_DrawBoulder(Vector3 pos, float radius, float jaggedness, int seed);
-void ProceduralMesh_DrawIceCrystal(Vector3 basePos, float radius, float height, float sharpness, int seed);
-void ProceduralMesh_DrawMagicPuddle(Vector3 pos, float radius);
-void ProceduralMesh_DrawFireball(Vector3 pos, float radius, float time);
+// --- Raw Procedural Drawers ---
+void ProceduralMesh_DrawOrganicStonePillar(Vector3 pillarPos, float currentHeight, float baseRad, float topRad);
+void ProceduralMesh_DrawOrganicPuddle(Vector3 pos, float radius);
 
 #endif // PROCEDURAL_MESH_UTILS_H

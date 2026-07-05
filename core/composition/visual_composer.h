@@ -38,11 +38,11 @@ void VFX_ComposeSmokePuff(Vector3 pos, float size);
 // 2. Spawning Smoke Trail
 void VFX_ComposeSmokeTrail(Vector3 start, Vector3 end, float duration);
 
-// 3. Spawning Ground Fissure
-void VFX_ComposeFissure(Vector3 start, Vector3 end, float width);
+// 3. Spawning Ground Fissure Streak (instantly draws decals along path)
+void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width);
 
-// 4. Spawning Lightning Beam
-void VFX_ComposeLightningBeam(Vector3 start, Vector3 end, float duration);
+// 4. Spawning Lightning Bolt (procedural ray-based crackle)
+int VFX_ComposeLightningBolt(Vector3 start, Vector3 end, float scale);
 
 // 5. Spawning Impact Effect (elemental: water, fire, wood, earth, metal, taiji)
 void VFX_ComposeImpact(Vector3 pos, EffectPresetType preset, float scale);
@@ -55,5 +55,12 @@ int VFX_ComposeProjectileTrail(Vector3 start, Vector3 target, EffectPresetType p
 
 // 8. Triggering full generic 4-step Impact Burst (from impact_burst.h)
 void VFX_ComposeTriggerImpactBurst(Vector3 pos, float sizeScale, const ImpactBurstConfig *cfg);
+
+// 9. Procedural Visual Components (Mesh-based compositions)
+void VFX_ComposeStonePillar(Vector3 basePos, float progress);
+void VFX_ComposeBoulder(Vector3 pos);
+void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
+void VFX_ComposeMagicPuddle(Vector3 pos);
+void VFX_ComposeFireball(Vector3 pos, float time);
 
 #endif // VISUAL_COMPOSER_H

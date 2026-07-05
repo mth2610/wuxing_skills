@@ -214,7 +214,10 @@ static void UpdateProjectilePhysics(int i, float dt, float time) {
     }
 
     if (closestDistSqr < TRAIL_PROJECTILE_HIT_DIST_SQR) {
-      KillTrailInternal(i);
+      t->type = TRAIL_TYPE_FOLLOWER;
+      t->attachedTransform = NULL;
+      t->timeSinceLastFollowerUpdate = 0.0f;
+      t->fadeAccumulator = 0.0f;
       return;
     }
   }
@@ -612,10 +615,12 @@ static void DrawTrailGeometry(int i, Camera3D camera) {
       quadHeight = trailPool[i].length * TRAIL_PROJECTILE_QUAD_LENGTH_MUL;
     }
 
-    DrawCameraFacingQuad(camera, trailPool[i].position,
-                         trailPool[i].length * TRAIL_PROJECTILE_QUAD_LENGTH_MUL,
-                         quadHeight,
-                         rotation, spriteTint, trailPool[i].sprite, uvRect);
+    if (trailPool[i].sprite.id > 0) {
+      DrawCameraFacingQuad(camera, trailPool[i].position,
+                           trailPool[i].length * TRAIL_PROJECTILE_QUAD_LENGTH_MUL,
+                           quadHeight,
+                           rotation, spriteTint, trailPool[i].sprite, uvRect);
+    }
 
   } else if (trailPool[i].type == TRAIL_TYPE_WISP) {
     if (trailPool[i].historyCount > 1) {

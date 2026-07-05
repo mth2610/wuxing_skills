@@ -43,7 +43,7 @@ EffectMaterial Material_Get(MaterialPreset preset) {
             p.rimStrength = 1.5f;
             p.fresnelPower = 5.0f;
             p.emissiveIntensity = 0.5f;
-            p.distortionStrength = 0.05f;
+            p.distortionStrength = 0.0f;
             p.translucency = 0.6f;
             p.texture1 = ResourceManager_LoadTexture("assets/textures/tex_ice_crystal.png");
             break;

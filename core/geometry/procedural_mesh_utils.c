@@ -1,7 +1,5 @@
 #include "core/geometry/procedural_mesh_utils.h"
 #include "core/geometry/mesh_cache.h"
-#include "core/material/material_system.h"
-#include "core/resource_manager.h"
 #include "core/path_spline.h"
 #include "raymath.h"
 #include "rlgl.h"
@@ -1831,7 +1829,7 @@ void ProceduralMesh_UnloadBase(Mesh *mesh) {
   *mesh = (Mesh){ 0 };
 }
 
-static void DrawOrganicStonePillar(Vector3 pillarPos, float currentHeight, float baseRad, float topRad) {
+void ProceduralMesh_DrawOrganicStonePillar(Vector3 pillarPos, float currentHeight, float baseRad, float topRad) {
     #define HEIGHT_SEGS 8
     #define RADIAL_SEGS 8
     
@@ -1918,69 +1916,7 @@ static void DrawOrganicStonePillar(Vector3 pillarPos, float currentHeight, float
     #undef RADIAL_SEGS
 }
 
-void ProceduralMesh_DrawStonePillar(Vector3 basePos, float radius, float height, float sharpness, float progress) {
-    if (progress <= 0.0f) return;
-    
-    rlDisableBackfaceCulling();
-    float rise = progress * progress * (3.0f - 2.0f * progress);
-    float yOffset = -height * (1.0f - rise) - 0.2f;
-    Vector3 actualPos = Vector3Add(basePos, (Vector3){0, yOffset, 0});
-    float topRadius = radius * (1.0f - sharpness);
-    
-    EffectMaterial mat = Material_Get(MAT_ROCK);
-    Material_Begin(mat);
-    DrawOrganicStonePillar(actualPos, height + 0.2f, radius, topRadius);
-    Material_End();
-}
-
-void ProceduralMesh_DrawRoundBoulder(Vector3 pos, float radius) {
-    EffectMaterial mat = Material_Get(MAT_ROCK);
-    Material_Begin(mat);
-    DrawCoreSphere(pos, radius, 32, 32, WHITE);
-    Material_End();
-}
-
-void ProceduralMesh_DrawBoulder(Vector3 pos, float radius, float jaggedness, int seed) {
-    RockMeshData* data = MeshCache_GetRock(seed, jaggedness);
-    EffectMaterial mat = Material_Get(MAT_ROCK);
-    
-    rlDrawRenderBatchActive();
-    rlDisableBackfaceCulling();
-    Material_Begin(mat);
-    
-    rlPushMatrix();
-    rlTranslatef(pos.x, pos.y, pos.z);
-    rlScalef(radius, radius, radius);
-    ProceduralMesh_DrawRock(data, WHITE);
-    rlPopMatrix();
-    
-    Material_End();
-    rlDrawRenderBatchActive();
-    rlEnableBackfaceCulling();
-}
-
-void ProceduralMesh_DrawIceCrystal(Vector3 basePos, float radius, float height, float sharpness, int seed) {
-    ShardClusterMeshData* data = MeshCache_GetIce(seed, sharpness);
-    EffectMaterial mat = Material_Get(MAT_ICE);
-    
-    BeginBlendMode(BLEND_ALPHA);
-    rlDrawRenderBatchActive();
-    rlDisableDepthMask();
-    Material_Begin(mat);
-    
-    rlPushMatrix();
-    rlTranslatef(basePos.x, basePos.y, basePos.z);
-    rlScalef(radius, height, radius);
-    ProceduralMesh_DrawShardCluster(data, WHITE);
-    rlPopMatrix();
-    
-    Material_End();
-    rlDrawRenderBatchActive();
-    rlEnableDepthMask();
-    EndBlendMode();
-}
-
-static void DrawOrganicPuddle(Vector3 pos, float radius) {
+void ProceduralMesh_DrawOrganicPuddle(Vector3 pos, float radius) {
     int sides = 32;
     float time = GetTime();
     
@@ -2010,68 +1946,3 @@ static void DrawOrganicPuddle(Vector3 pos, float radius) {
     rlEnd();
 }
 
-void ProceduralMesh_DrawMagicPuddle(Vector3 pos, float radius) {
-    rlDrawRenderBatchActive();
-    BeginBlendMode(BLEND_ALPHA);
-    rlDisableDepthMask();
-    
-    rlPushMatrix();
-    rlTranslatef(pos.x, pos.y + 0.05f, pos.z);
-    
-    Shader flowShader = ResourceManager_LoadShader(0, "core/shaders/puddle.fs");
-    Texture2D tex = ResourceManager_LoadTexture("assets/textures/water_caustics.png");
-    Texture2D flowTex = ResourceManager_LoadTexture("assets/textures/water_flow.png");
-    
-    int timeLoc = GetShaderLocation(flowShader, "u_time");
-    int tex0Loc = GetShaderLocation(flowShader, "causticsTex");
-    int tex1Loc = GetShaderLocation(flowShader, "flowTex");
-    
-    float time = GetTime();
-    SetShaderValue(flowShader, timeLoc, &time, SHADER_UNIFORM_FLOAT);
-    
-    BeginShaderMode(flowShader);
-    SetShaderValueTexture(flowShader, tex0Loc, tex);
-    SetShaderValueTexture(flowShader, tex1Loc, flowTex);
-    
-    rlDrawRenderBatchActive(); 
-    rlSetTexture(tex.id);
-    
-    DrawOrganicPuddle((Vector3){0, 0, 0}, radius);
-    
-    rlSetTexture(0);
-    EndShaderMode();
-    
-    rlDrawRenderBatchActive();
-    rlEnableDepthMask();
-    EndBlendMode();
-    rlPopMatrix();
-    rlEnableBackfaceCulling();
-}
-
-void ProceduralMesh_DrawFireball(Vector3 pos, float radius, float time) {
-    BeginBlendMode(BLEND_ADDITIVE);
-    rlDisableDepthMask();
-    
-    EffectMaterialParams coreParams = {0};
-    coreParams.baseColor = (Color){255, 200, 100, 255};
-    coreParams.emissiveIntensity = 2.0f;
-    EffectMaterial coreMat = Material_LoadCustom(coreParams);
-    Material_Begin(coreMat);
-    DrawCoreSphere(pos, radius * 0.6f, 16, 16, WHITE);
-    Material_End();
-    
-    EffectMaterialParams auraParams = {0};
-    auraParams.baseColor = (Color){255, 100, 0, 150};
-    auraParams.rimStrength = 2.0f;
-    auraParams.fresnelPower = 2.0f;
-    auraParams.emissiveIntensity = 1.0f;
-    auraParams.distortionStrength = 0.8f;
-    auraParams.translucency = 1.0f;
-    EffectMaterial auraMat = Material_LoadCustom(auraParams);
-    Material_Begin(auraMat);
-    DrawCoreSphere(pos, radius, 16, 16, WHITE);
-    Material_End();
-    
-    rlEnableDepthMask();
-    EndBlendMode();
-}
