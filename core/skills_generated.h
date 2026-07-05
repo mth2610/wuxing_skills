@@ -4,22 +4,26 @@
 
 #include "core/skill_manager.h"
 
+#include "skills/wood/glowing_vines_skill/glowing_vines_skill.h"
 #include "skills/wood/wood_thorns/wood_thorns_skill.h"
 #include "skills/water/thuy_kinh_skill/thuy_kinh_skill.h"
 #include "skills/water/water_sphere_skill/water_sphere_skill.h"
 #include "skills/metal/thunder_orb_skill/thunder_orb_skill.h"
 #include "skills/taiji/core_test/core_test_skill.h"
 #include "skills/fire/hoa_long_phong_ba_skill/hoa_long_phong_ba_skill.h"
+#include "skills/earth/boulder_barrage_skill/boulder_barrage_skill.h"
 #include "skills/earth/dia_long_skill/dia_long_skill.h"
 #include "skills/earth/stone_prison_skill/stone_prison_skill.h"
 
 static inline void RegisterGeneratedSkills(void) {
+    RegisterSkill("GLOWING_VINES", ELEMENT_COLOR_WOOD, InitGlowingVinesSkill, CastGlowingVinesSkill, UpdateGlowingVinesSkill, DrawGlowingVinesSkill, UnloadGlowingVinesSkill);
     RegisterSkill("WOOD_THORNS", ELEMENT_COLOR_WOOD, InitWoodThornsSkill, CastWoodThornsSkill, UpdateWoodThornsSkill, DrawWoodThornsSkill, UnloadWoodThornsSkill);
     RegisterSkill("THUY_KINH", ELEMENT_COLOR_WATER, InitThuyKinhSkill, CastThuyKinhSkill, UpdateThuyKinhSkill, DrawThuyKinhSkill, UnloadThuyKinhSkill);
     RegisterSkill("WATER_SPHERE", ELEMENT_COLOR_WATER, InitWaterSphereSkill, CastWaterSphereSkill, UpdateWaterSphereSkill, DrawWaterSphereSkill, UnloadWaterSphereSkill);
     RegisterSkill("THUNDER_ORB", ELEMENT_COLOR_METAL, InitThunderOrbSkill, CastThunderOrbSkill, UpdateThunderOrbSkill, DrawThunderOrbSkill, UnloadThunderOrbSkill);
     RegisterSkill("CORE_TEST", ELEMENT_COLOR_TAIJI, InitCoreTestSkill, CastCoreTestSkill, UpdateCoreTestSkill, DrawCoreTestSkill, UnloadCoreTestSkill);
     RegisterSkill("HOA_LONG_PHONG_BA", ELEMENT_COLOR_FIRE, InitHoaLongPhongBaSkill, CastHoaLongPhongBaSkill, UpdateHoaLongPhongBaSkill, DrawHoaLongPhongBaSkill, UnloadHoaLongPhongBaSkill);
+    RegisterSkill("BOULDER_BARRAGE", ELEMENT_COLOR_EARTH, InitBoulderBarrageSkill, CastBoulderBarrageSkill, UpdateBoulderBarrageSkill, DrawBoulderBarrageSkill, UnloadBoulderBarrageSkill);
     RegisterSkill("DIA_LONG", ELEMENT_COLOR_EARTH, InitDiaLongSkill, CastDiaLongSkill, UpdateDiaLongSkill, DrawDiaLongSkill, UnloadDiaLongSkill);
     RegisterSkill("STONE_PRISON", ELEMENT_COLOR_EARTH, InitStonePrisonSkill, CastStonePrisonSkill, UpdateStonePrisonSkill, DrawStonePrisonSkill, UnloadStonePrisonSkill);
 }

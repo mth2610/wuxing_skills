@@ -2778,22 +2778,30 @@ int         VisualVerify_GetExitCode(void);  // 0 = ok, 1 = unknown skill
 > When autotest reports PASS but visual output looks wrong, trust the screenshot over the numeric result — see memory entry "Trust Visual Over Numeric PASS".
 ## 19. Visual Composition & Procedural Meshes (core/composition/visual_composer.h & core/geometry/procedural_mesh_utils.h)
 
-Cung cấp các hàm vẽ/sinh hiệu ứng 3D "chuẩn game AAA" đã được căn chỉnh sẵn độ cong, góc cạnh, và ánh sáng. Nhóm vẽ hình khối tĩnh nằm trong `procedural_mesh_utils.h`, còn nhóm sinh hiệu ứng động nằm trong `visual_composer.h`.
+Cung cấp các hàm dựng hình học thô tĩnh nằm trong `procedural_mesh_utils.h`, và các bộ phối cảnh hiệu ứng hoàn chỉnh (gắn vật liệu, shader, hoạt ảnh) nằm trong `visual_composer.h`.
 
 ### Nhóm 1: Mesh & Hình khối tĩnh (Trong core/geometry/procedural_mesh_utils.h, gọi trong Draw)
-- `ProceduralMesh_DrawStonePillar`: Vẽ một cột đá đâm từ dưới lên (có tham số độ nhọn `sharpness` và tiến trình `progress`).
-- `ProceduralMesh_DrawRoundBoulder`: Vẽ đá tròn phẳng.
-- `ProceduralMesh_DrawBoulder`: Vẽ tảng đá khối lởm chởm, hỗ trợ caching nội bộ bằng `seed`.
-- `ProceduralMesh_DrawIceCrystal`: Vẽ cụm tinh thể băng tủa ra (additive/alpha).
-- `ProceduralMesh_DrawMagicPuddle`: Vẽ một vũng nước sáng ma thuật dưới đất (hoàn toàn bằng procedural blend).
-- `ProceduralMesh_DrawFireball`: Vẽ quả cầu lửa biến dạng ngẫu nhiên.
+Tập hợp các hàm vẽ hình học thô ráp, không tự gán vật liệu hay blend mode:
+- `ProceduralMesh_DrawOrganicStonePillar`: Vẽ cột đá lăng trụ thô ráp với nắp phẳng ở đỉnh lăng trụ bát giác phẳng đầu.
+- `ProceduralMesh_DrawOrganicPuddle`: Vẽ vũng nước phẳng thô dạng đa giác nhấp nhô hữu cơ.
+- `ProceduralMesh_DrawRock`: Vẽ tảng đá răng cưa lởm chởm theo cấu trúc `RockMeshData`.
+- `ProceduralMesh_DrawShardCluster`: Vẽ chùm tinh thể nhọn nhấp nhô bát diện theo cấu trúc `ShardClusterMeshData`.
 
-### Nhóm 2: Effect & Particle (Trong core/composition/visual_composer.h, gọi 1 lần trong Cast/Update)
+### Nhóm 2: Bộ phối cảnh hiệu ứng hoàn chỉnh (Trong core/composition/visual_composer.h)
+Tự gán shader, texture, vật liệu và quản lý blend mode / Z-buffer phù hợp để tạo hiệu ứng hoàn chỉnh:
+- `VFX_ComposeStonePillar`: Dựng cột đá nhô lên theo `progress` sử dụng vật liệu `MAT_ROCK`.
+- `VFX_ComposeBoulder`: Dựng tảng đá răng cưa lởm chởm kết hợp tâm cầu trơn mịn sử dụng vật liệu `MAT_ROCK`.
+- `VFX_ComposeIceCrystal`: Dựng tinh thể băng lăng trụ kết chùm phát sáng trong suốt với vật liệu `MAT_ICE` (blend alpha + tắt ghi độ sâu).
+- `VFX_ComposeMagicPuddle`: Dựng vũng nước ma thuật cuộn chảy động (flow map) sử dụng shader `puddle.fs` kết nối slot đa cấu hình `water_caustics.png` (slot 0) và `water_flow.png` (slot 1) dạng lặp `REPEAT`.
+- `VFX_ComposeFireball`: Dựng quả cầu lửa hai lớp (lõi phát xạ mạnh sáng rực và lớp vỏ bập bùng biến dạng) vẽ qua blending cộng màu `BLEND_ADDITIVE`.
 - `VFX_ComposeSmokePuff`: Bùng khói đặc tại một điểm bằng `ParticleSystem_SpawnRadialBurst`.
 - `VFX_ComposeSmokeTrail`: Rải một đường hạt khói bay bay.
-- `VFX_ComposeFissure`: Tạo decal nứt đất dọc theo đường thẳng + rung màn hình.
-- `VFX_ComposeLightningBeam`: Rạch một đường sét thẳng, sử dụng cơ chế `SpawnLightningTrail` của trail system.
+- `VFX_ComposeFissureStreak`: Tạo vệt rạn nứt đất dài liền mạch dưới dạng Quad 3D phẳng được map kết cấu `tex_crack_mask.png` (đã loại bỏ culling để hiển thị ổn định trên mọi góc quay camera).
+- `VFX_ComposeLightningBolt`: Bắn một tia sét giật (proc bolt) từ điểm đầu đến điểm cuối, trả về ID thực thể tia sét để quản lý.
 - `VFX_ComposeImpact`: Sinh hiệu ứng va chạm theo ElementPresetType.
 - `VFX_ComposeCast`: Sinh hiệu ứng tụ khí theo ElementPresetType.
 - `VFX_ComposeProjectileTrail`: Sinh vệt đạn bay theo ElementPresetType.
+- `VFX_ComposeWaterStream`: Dựng dòng nước cuộn trào dạng ống Bezier mềm mại uốn lượn sử dụng shader `tube.fs` và texture `water_caustics.png` trong chế độ `BLEND_ALPHA`.
+- `VFX_ComposeGlowingVine`: Dựng dải dây leo phát sáng ngọc bích tự động bò và xoắn ốc quấn chặt lấy mục tiêu. Thực hiện vẽ 2-pass (pass 1 ngọc bích trong suốt phát quang viền Fresnel qua `Material_LoadCustom`, pass 2 lõi sáng trắng tăng cường chế độ cộng màu `BLEND_ADDITIVE`).
+
 

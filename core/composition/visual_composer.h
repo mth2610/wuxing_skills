@@ -62,5 +62,7 @@ void VFX_ComposeBoulder(Vector3 pos);
 void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
 void VFX_ComposeMagicPuddle(Vector3 pos);
 void VFX_ComposeFireball(Vector3 pos, float time);
+void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
+void VFX_ComposeGlowingVine(Vector3 startPos, Vector3 targetPos, Vector3 p1, Vector3 p2, Vector3 contactPos, float progress, float time, float sizeScale, int branchIndex, int branchCount);
 
 #endif // VISUAL_COMPOSER_H

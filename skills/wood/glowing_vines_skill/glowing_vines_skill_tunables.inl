@@ -1,0 +1,13 @@
+s_tunables[tn++] = (SkillTunableEntry){"Travel Speed", &s_travelSpeed, 0.1f, 5.0f, 0.95f, "timing"};
+s_tunables[tn++] = (SkillTunableEntry){"Max Progress", &s_maxProgress, 1.0f, 5.0f, 2.4f, "timing"};
+s_tunables[tn++] = (SkillTunableEntry){"Min Branches", &s_minBranches, 1.0f, 5.0f, 1.0f, "count"};
+s_tunables[tn++] = (SkillTunableEntry){"Max Branches", &s_maxBranches, 1.0f, 5.0f, 3.0f, "count"};
+s_tunables[tn++] = (SkillTunableEntry){"Wiggle Amp", &s_wiggleAmp, 0.0f, 0.3f, 0.06f, "geometry"};
+s_tunables[tn++] = (SkillTunableEntry){"Coil Radius", &s_coilRadius, 0.05f, 1.5f, 0.28f, "geometry"};
+s_tunables[tn++] = (SkillTunableEntry){"Coil Height", &s_coilHeight, 0.1f, 3.0f, 0.8f, "geometry"};
+s_tunables[tn++] = (SkillTunableEntry){"Taper Power", &s_taperPower, 0.1f, 2.0f, 0.6f, "geometry"};
+s_tunables[tn++] = (SkillTunableEntry){"Base Width", &s_baseWidth, 0.01f, 0.3f, 0.06f, "geometry"};
+s_tunables[tn++] = (SkillTunableEntry){"Emissive Intensity", &s_emissiveInt, 0.0f, 5.0f, 2.0f, "vfx"};
+s_tunables[tn++] = (SkillTunableEntry){"Glow Emissive", &s_glowEmissive, 0.0f, 8.0f, 3.5f, "vfx"};
+s_tunables[tn++] = (SkillTunableEntry){"Glow Width Mult", &s_glowWidthMult, 0.1f, 1.0f, 0.5f, "vfx"};
+s_tunables[tn++] = (SkillTunableEntry){"Damage", &s_damage, 0.0f, 100.0f, 15.0f, "gameplay"};

@@ -5,12 +5,17 @@
 #include "core/vfx_light.h"
 #include "core/trail_system.h"
 #include "core/camera_fx.h"
+#include "core/camera_context.h"
+#include "environment/environment_system.h"
+#include "core/ribbon_strip.h"
+#include "core/path_spline.h"
 #include "core/screen_distort.h"
 #include "core/time_fx.h"
 #include "core/geometry/procedural_mesh_utils.h"
 #include "core/geometry/mesh_cache.h"
 #include "core/material/material_system.h"
 #include "core/resource_manager.h"
+#include "core/skill_manager.h"
 #include "core/vfx_proc_ray.h"
 #include "rlgl.h"
 #include "raymath.h"
@@ -462,7 +467,177 @@ void VFX_ComposeFireball(Vector3 pos, float time) {
     Material_Begin(auraMat);
     DrawCoreSphere(actualPos, radius, 16, 16, WHITE);
     Material_End();
-    
     rlEnableDepthMask();
     EndBlendMode();
+}
+
+void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time) {
+    static Shader s_tubeShader = {0};
+    static int s_timeLoc = -1;
+    static int s_viewPosLoc = -1;
+    static int s_lightDirLoc = -1;
+    static int s_uvLengthLoc = -1;
+    
+    if (s_tubeShader.id == 0) {
+        s_tubeShader = ResourceManager_LoadShader("skills/water/water_stream/tube.vs", "skills/water/water_stream/tube.fs");
+        s_timeLoc     = GetShaderLocation(s_tubeShader, "u_time");
+        s_viewPosLoc  = GetShaderLocation(s_tubeShader, "viewPos");
+        s_lightDirLoc = GetShaderLocation(s_tubeShader, "u_lightDir");
+        s_uvLengthLoc = GetShaderLocation(s_tubeShader, "u_uvLength");
+    }
+    
+    if (s_tubeShader.locs == NULL) return;
+    
+    rlDrawRenderBatchActive();
+    rlDisableDepthMask();
+    rlEnableBackfaceCulling();
+    BeginBlendMode(BLEND_ALPHA);
+    BeginShaderMode(s_tubeShader);
+    
+    SkillManager_BeginShader(s_tubeShader);
+    
+    SetShaderValue(s_tubeShader, s_timeLoc, &time, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_tubeShader, s_viewPosLoc, &camera.position, SHADER_UNIFORM_VEC3);
+    Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
+    SetShaderValue(s_tubeShader, s_lightDirLoc, &lightDir, SHADER_UNIFORM_VEC3);
+    float uvLength = 3.0f; // TUBE_UV_LENGTH_SCALE
+    SetShaderValue(s_tubeShader, s_uvLengthLoc, &uvLength, SHADER_UNIFORM_FLOAT);
+    
+    rlColor4ub(255, 255, 255, 255);
+    
+    TubeMeshData mesh;
+    TubeMeshConfig config = ProceduralMesh_DefaultTubeConfig();
+    ProceduralMesh_BuildTube(&mesh, p0, p1, p2, p3, radius,
+                             progress, time, 30, 20, &config);
+    ProceduralMesh_DrawTube(&mesh, 3.0f);
+    
+    SkillManager_EndShader();
+    EndShaderMode();
+    EndBlendMode();
+    rlDisableBackfaceCulling();
+    rlEnableDepthMask();
+}
+
+static Vector3 GetWoodPointAt(Vector3 startPos, Vector3 p1, Vector3 p2, Vector3 contactPos, Vector3 targetPos, float t, float sizeScale, int branchIndex, int branchCount) {
+    if (t <= 1.0f) {
+        Vector3 pos = GetBezierPoint(startPos, p1, p2, contactPos, t);
+        Vector3 dir = Vector3Normalize(Vector3Subtract(targetPos, startPos));
+        Vector3 perp = (Vector3){-dir.z, 0, dir.x};
+        if (Vector3Length(perp) == 0.0f) perp = (Vector3){0, 0, 1};
+        perp = Vector3Normalize(perp);
+        
+        float wiggle = sinf(t * 18.0f) + sinf(t * 31.0f) * 0.4f;
+        pos = Vector3Add(pos, Vector3Scale(perp, wiggle * 0.06f * sizeScale));
+        return pos;
+    } else {
+        float t_spiral = t - 1.0f;
+        float ratio = t_spiral / 0.8f;
+        if (ratio > 1.0f) ratio = 1.0f;
+        
+        float contactAngle = atan2f(contactPos.z - targetPos.z, contactPos.x - targetPos.x);
+        float coilDir = (branchIndex % 2 == 0) ? 1.0f : -1.0f;
+        float theta = ratio * 2.2f * (2.0f * PI) * coilDir +
+                      sinf(ratio * 8.0f) * 0.8f + sinf(ratio * 19.0f) * 0.25f;
+        theta += sinf(ratio * 15.0f) * 0.25f;
+        
+        float phiOffset = 0.0f;
+        if (branchCount > 1) {
+            phiOffset = ((float)branchIndex / (float)branchCount) * PI;
+        }
+        float phi = contactAngle + phiOffset;
+        
+        float r_a = 0.28f * sizeScale;
+        float r_b = 0.28f * sizeScale;
+        
+        float wobbleScale = ratio > 0.1f ? 1.0f : ratio / 0.1f;
+        float wobble = (sinf(theta * 6.0f) * 0.04f + cosf(theta * 11.0f) * 0.015f) * wobbleScale;
+        
+        float tighten = 1.0f - ratio * 0.45f;
+        float curr_ra = (r_a + wobble) * tighten;
+        float curr_rb = (r_b + wobble) * tighten;
+        float wrapFactor = 0.75f + 0.25f * sinf(ratio * 10.0f);
+        
+        curr_ra *= wrapFactor;
+        curr_rb *= wrapFactor;
+        
+        float radiusNoise = 1.0f + sinf(theta * 3.0f) * 0.08f;
+        curr_ra *= radiusNoise;
+        curr_rb *= radiusNoise;
+        
+        float height = 0.8f * sizeScale;
+        float y = targetPos.y - height * 0.5f + ratio * height;
+        
+        return (Vector3){
+            targetPos.x + curr_ra * cosf(theta) * cosf(phi) - curr_rb * sinf(theta) * sinf(phi),
+            y + wobble * 0.1f,
+            targetPos.z + curr_ra * cosf(theta) * sinf(phi) + curr_rb * sinf(theta) * cosf(phi)
+        };
+    }
+}
+
+void VFX_ComposeGlowingVine(Vector3 startPos, Vector3 targetPos, Vector3 p1, Vector3 p2, Vector3 contactPos, float progress, float time, float sizeScale, int branchIndex, int branchCount) {
+    const int pointCount = 64;
+    static RibbonPoint ribbonPoints[64];
+    
+    float drawProgress = progress;
+    if (drawProgress > 1.8f) drawProgress = 1.8f;
+    
+    // Generate path points dynamically
+    for (int i = 0; i < pointCount; i++) {
+        float norm = (float)i / (float)(pointCount - 1);
+        float t = norm * drawProgress;
+        
+        Vector3 pt = GetWoodPointAt(startPos, p1, p2, contactPos, targetPos, t, sizeScale, branchIndex, branchCount);
+        float taper = powf(1.0f - norm, 0.6f);
+        
+        ribbonPoints[i].position = pt;
+        ribbonPoints[i].halfWidth = 0.06f * sizeScale * taper;
+        ribbonPoints[i].v = norm;
+        
+        float alpha = 1.0f;
+        if (progress > 1.8f) {
+            alpha = 1.0f - (progress - 1.8f) / (2.4f - 1.8f);
+            if (alpha < 0.0f) alpha = 0.0f;
+        }
+        ribbonPoints[i].tint = ColorAlpha(ELEMENT_COLOR_WOOD, alpha * 0.8f);
+    }
+    
+    // Custom Material presets for the glowing emerald wood
+    EffectMaterialParams matParams = {0};
+    matParams.baseColor = ColorAlpha(ELEMENT_COLOR_WOOD, 0.8f);
+    matParams.rimStrength = 2.5f;
+    matParams.fresnelPower = 2.0f;
+    matParams.emissiveIntensity = 2.0f;
+    matParams.distortionStrength = 0.0f;
+    matParams.translucency = 0.5f;
+    
+    EffectMaterial mat = Material_LoadCustom(matParams);
+    
+    rlDrawRenderBatchActive();
+    rlDisableDepthMask();
+    rlDisableBackfaceCulling();
+    BeginBlendMode(BLEND_ALPHA);
+    
+    Material_Begin(mat);
+    DrawRibbonStrip(ribbonPoints, pointCount, (Texture2D){0}, camera);
+    Material_End();
+    
+    // Additive glow pass for the bright inner core
+    BeginBlendMode(BLEND_ADDITIVE);
+    matParams.emissiveIntensity = 3.5f;
+    matParams.translucency = 0.0f;
+    EffectMaterial matGlow = Material_LoadCustom(matParams);
+    
+    Material_Begin(matGlow);
+    for (int i = 0; i < pointCount; i++) {
+        ribbonPoints[i].halfWidth *= 0.5f; // thinner core
+        float alpha = progress > 1.8f ? (1.0f - (progress - 1.8f)/(2.4f - 1.8f)) : 1.0f;
+        ribbonPoints[i].tint = ColorAlpha(WHITE, alpha * 0.4f);
+    }
+    DrawRibbonStrip(ribbonPoints, pointCount, (Texture2D){0}, camera);
+    Material_End();
+    
+    EndBlendMode();
+    rlEnableBackfaceCulling();
+    rlEnableDepthMask();
 }

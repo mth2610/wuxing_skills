@@ -71,3 +71,21 @@ Ghi nhận lỗi rò rỉ Depth Mask (`rlDisableDepthMask` không bật lại g�
 * Đạt 0 Fail trên linter kỹ năng (`make lint`).
 * Biên dịch thành công 100% trên cả Desktop và Android, đóng gói thành công file signed APK `wuxing_skills.apk`.
 
+---
+
+## Session Summary (Phiên làm việc ngày 05/07/2026 - Chiều)
+
+### 1. Nét đứt gãy Fissure Streak & Lightning Bolt
+- **Fissure Streak dạng đường dài 3D Quad:** Chuyển đổi hoàn toàn từ chuỗi decal tròn lặp sang vẽ đúng một 3D Quad phẳng đơn nhất được map texture `assets/textures/tex_crack_mask.png` (dạng vết nứt dài nét đứt gãy sắc sảo). Tắt Backface Culling khi vẽ để triệt tiêu lỗi góc nhìn camera nghiêng che khuất mặt phẳng. Hoạt ảnh unroll bằng cách dịch chuyển UV.u tịnh tiến theo `progress`.
+- **Lightning Bolt:** Căn chỉnh và sửa lại hàm vẽ `ProcBolt_Draw` bị mất trong tester giúp sấm sét từ tay nhân vật giáng xuống mục tiêu hoạt động hoàn hảo.
+
+### 2. Kỹ năng Thạch Loạn Đạn (`boulder_barrage_skill`)
+- **Tập hợp 5-8 viên đá ngẫu nhiên:** Khi cast kỹ năng (`skills/earth/boulder_barrage_skill/`), sinh ra ngẫu biến từ 5 đến 8 viên đá lớn nhỏ (`scale = 0.16m -> 0.34m`) lơ lửng xung quanh phía sau caster theo một hình cung chữ V định hướng.
+- **Quy trình hoạt ảnh 3 giai đoạn tinh tế:**
+  1. *Erupt (Trồi đất):* Đá mọc từ dưới đất trồi lên tuần tự (`delay = index * 0.08s`), phụt khói bụi đất tại vị trí nứt (`VFX_ComposeSmokePuff`).
+  2. *Hover (Lơ lửng):* Sau khi lên tới độ cao đích (`0.6m -> 1.0m`), đá bay lơ lửng giao động nhấp nhô nhẹ nhàng theo sóng sin tự nhiên.
+  3. *Launch (Bắn lệch pha):* Khi đếm đủ thời gian bay (`flightDelay = 1.0s + index * 0.16s`), đá bắn vụt đi sequentially về phía kẻ địch/mục tiêu chuột với tốc độ `15m/s`, để lại vệt bụi cát đằng sau.
+- **Va chạm & Sát thương:** Khi trúng đích hoặc chạm đất, đá nổ tung tạo xung chấn méo màn hình (`ScreenDistort_Add`), lóe sáng (`VFXLight_Spawn`), nổ bụi hạt đất cát (`ParticleSystem_SpawnRadialBurst`) và áp dụng sát thương AoE diện rộng (`Entity_ApplyAoEDamage`).
+- **Hoàn thành Linter & Compiler:** Vượt qua linter với kết quả tuyệt đối **0 Fail, 0 Warn** (`make lint` sạch sẽ) và biên dịch hoàn hảo.
+
+

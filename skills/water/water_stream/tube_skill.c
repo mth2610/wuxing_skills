@@ -47,11 +47,6 @@ typedef struct {
 
 static TubeEmitter emitters[MAX_TUBE_EMITTERS];
 static int s_skillIndex = -1;
-static Shader tubeShader;
-static int timeLoc;
-static int viewPosLoc;
-static int lightDirLoc;
-static int uvLengthLoc;
 
 static TubeMeshConfig s_waterTubeConfig;
 static ImpactBurstConfig s_waterImpactConfig;
@@ -145,13 +140,6 @@ static void RebuildImpactConfig(void) {
 void InitTubeSkill(int screenWidth, int screenHeight) {
   (void)screenWidth;
   (void)screenHeight;
-
-  tubeShader = ResourceManager_LoadShader("skills/water/water_stream/tube.vs",
-                                          "skills/water/water_stream/tube.fs");
-  timeLoc     = GetShaderLocation(tubeShader, "u_time");
-  viewPosLoc  = GetShaderLocation(tubeShader, "viewPos");
-  lightDirLoc = GetShaderLocation(tubeShader, "u_lightDir");
-  uvLengthLoc = GetShaderLocation(tubeShader, "u_uvLength");
 
   for (int i = 0; i < MAX_TUBE_EMITTERS; i++) {
     emitters[i].active = false;
@@ -269,7 +257,7 @@ void UpdateTubeSkill(float dt) {
                            * emitters[e].sizeScale;
       cfgMist.lifetime   = Math_Mix(s_mistLifeMin, s_mistLifeMax, Random01());
       cfgMist.colorStart = ColorAlpha(ELEMENT_COLOR_WATER, 0.7f);
-      cfgMist.colorEnd   = (Color){255, 255, 255, 0};
+      cfgMist.colorEnd   = (Color){255, 255, 255, 0}; // lint: allow-color
       cfgMist.forceField = &s_mistFieldActive;
       cfgMist.gradient   = &s_splashGrad;
       cfgMist.radiusCurve   = &s_mistRadiusCurve;
@@ -288,47 +276,12 @@ void DrawTubeSkill(void) {
   }
   if (!anyActive) return;
 
-  if (tubeShader.locs == NULL) return;
-
   float time = GetTime();
-  rlDrawRenderBatchActive();
-  rlDisableDepthMask();
-  rlEnableBackfaceCulling();
-  BeginBlendMode(BLEND_ALPHA);
-  BeginShaderMode(tubeShader);
-  // ProceduralMesh_BuildTube produces world-space geometry → matModel is
-  // identity. Rule 11 fix: use SkillManager_BeginShader() (not the raw locs
-  // array) to set matModel and auto-bind u_time/viewPos/u_resolution.
-  SkillManager_BeginShader(tubeShader);
-
-  SetShaderValue(tubeShader, timeLoc, &time, SHADER_UNIFORM_FLOAT);
-  SetShaderValue(tubeShader, viewPosLoc, &camera.position, SHADER_UNIFORM_VEC3);
-  // u_lightDir is a custom uniform not auto-bound by SkillManager_BeginShader()
-  Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
-  SetShaderValue(tubeShader, lightDirLoc, &lightDir, SHADER_UNIFORM_VEC3);
-  float uvLength = TUBE_UV_LENGTH_SCALE;
-  SetShaderValue(tubeShader, uvLengthLoc, &uvLength, SHADER_UNIFORM_FLOAT);
-
-  // Rule 9.1: reset vertex color before drawing mesh with custom color/texture shader
-  rlColor4ub(255, 255, 255, 255);
-
   for (int e = 0; e < MAX_TUBE_EMITTERS; e++) {
     if (!emitters[e].active) continue;
     float radius = s_tubeBaseRadius * emitters[e].sizeScale;
-
-    TubeMeshData mesh;
-    ProceduralMesh_BuildTube(&mesh, emitters[e].p0, emitters[e].p1,
-                             emitters[e].p2, emitters[e].p3, radius,
-                             emitters[e].progress, time, TUBE_SEGMENTS,
-                             TUBE_RADIAL_SEGMENTS, &s_waterTubeConfig);
-    ProceduralMesh_DrawTube(&mesh, TUBE_UV_LENGTH_SCALE);
+    VFX_ComposeWaterStream(emitters[e].p0, emitters[e].p1, emitters[e].p2, emitters[e].p3, radius, emitters[e].progress, time);
   }
-
-  SkillManager_EndShader();
-  EndShaderMode();
-  EndBlendMode();
-  rlDisableBackfaceCulling();
-  rlEnableDepthMask();
 }
 
 void UnloadTubeSkill(void) {
