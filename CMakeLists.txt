@@ -68,7 +68,6 @@ add_executable(wuxing
     core/vfx_proc_ray.c
     core/decal_system.c
     core/geometry/procedural_mesh_utils.c
-    core/geometry/crystal_mesh_generator.c
     core/geometry/mesh_cache.c
     core/material/material_system.c
     core/composition/visual_composer.c

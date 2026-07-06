@@ -36,7 +36,7 @@ void DrawCorePrism(Vector3 bottom, Vector3 top, float radius, int sides,
  * ==========================================================================*/
 
 #define TUBE_MESH_MAX_SEGMENTS 48 /* số lát dọc theo path (chiều dài ống) */
-#define TUBE_MESH_MAX_RADIAL 24 /* số lát quanh vòng tròn (chu vi ống)  */
+#define TUBE_MESH_MAX_RADIAL 24   /* số lát quanh vòng tròn (chu vi ống)  */
 
 /* --- Lớp 1: Path math (Cubic Bezier) — dùng chung, không khai báo lại ở skill
  * --- */
@@ -52,15 +52,16 @@ Vector3 ProceduralMesh_BezierTangent(Vector3 p0, Vector3 p1, Vector3 p2,
  * RenderCustom3DTube gốc, chỉ là được tham số hóa để mỗi skill có "chữ ký"
  * riêng.
  */
-typedef struct {
+typedef struct
+{
   /* --- Profile bán kính theo chiều dài ống (capsule + taper) --- */
   float capsuleTailExp; /* hệ số mũ trong sqrtf(sin(t*PI)) bo đuôi. 1.0 = mặc
                            định (nước) */
-  float tailTaperMin; /* tỉ lệ bán kính tối thiểu ở đuôi (t=0). VD 0.15 = đuôi
-                         còn 15% */
-  float tailTaperMax; /* tỉ lệ bán kính ở đầu khi taper áp dụng hết (t=1),
-                         thường 1.0 */
-  float headGrowth; /* headWeight = 1 + headGrowth * t. 0 = không phình đầu */
+  float tailTaperMin;   /* tỉ lệ bán kính tối thiểu ở đuôi (t=0). VD 0.15 = đuôi
+                           còn 15% */
+  float tailTaperMax;   /* tỉ lệ bán kính ở đầu khi taper áp dụng hết (t=1),
+                           thường 1.0 */
+  float headGrowth;     /* headWeight = 1 + headGrowth * t. 0 = không phình đầu */
 
   /* --- Wobble: xoay frame (Right/Up) quanh trục tangent dọc path + theo thời
    * gian --- */
@@ -91,13 +92,14 @@ TubeMeshConfig ProceduralMesh_DefaultTubeConfig(void);
  * tailApexFactor/headApexFactor được copy từ TubeMeshConfig lúc Build, nên
  * Draw không cần nhận lại cfg — mỗi skill vẫn giữ "hình dáng" apex riêng.
  */
-typedef struct {
+typedef struct
+{
   Vector3 rings[TUBE_MESH_MAX_SEGMENTS + 1][TUBE_MESH_MAX_RADIAL];
   Vector3 normals[TUBE_MESH_MAX_SEGMENTS + 1][TUBE_MESH_MAX_RADIAL];
   Vector3 tailCenter, headCenter;
   Vector3 tailTangent, headTangent;
   float tailRadius, headRadius;
-  int segments; /* số lát dọc thực tế dùng (<= TUBE_MESH_MAX_SEGMENTS) */
+  int segments;   /* số lát dọc thực tế dùng (<= TUBE_MESH_MAX_SEGMENTS) */
   int radialSegs; /* số lát quanh thực tế dùng (<= TUBE_MESH_MAX_RADIAL) */
 
   /* Lưu lại từ TubeMeshConfig lúc Build, để Draw dựng end-cap đúng "hình dáng"
@@ -147,7 +149,8 @@ void ProceduralMesh_DrawTube(const TubeMeshData *data, float uvLengthScale);
 #define WAVE_PLANE_MAX_SEGMENTS_X 24
 #define WAVE_PLANE_MAX_SEGMENTS_Z 24
 
-typedef struct {
+typedef struct
+{
   float wavelength;     /* bước sóng chính (world units) */
   float amplitude;      /* biên độ đẩy Y chính */
   Vector3 direction;    /* hướng lan truyền sóng, mặt phẳng XZ, sẽ normalize */
@@ -158,7 +161,8 @@ typedef struct {
  * 2 lớp sóng phụ + nhiễu trong Build, không cần khai báo riêng ở config). */
 WavePlaneConfig ProceduralMesh_DefaultWavePlaneConfig(void);
 
-typedef struct {
+typedef struct
+{
   Vector3 verts[WAVE_PLANE_MAX_SEGMENTS_X + 1][WAVE_PLANE_MAX_SEGMENTS_Z + 1];
   Vector3 normals[WAVE_PLANE_MAX_SEGMENTS_X + 1][WAVE_PLANE_MAX_SEGMENTS_Z + 1];
   int segmentsX; /* <= WAVE_PLANE_MAX_SEGMENTS_X */
@@ -192,7 +196,8 @@ void ProceduralMesh_DrawWavePlane(const WavePlaneMeshData *data, Color color);
 #define CURLING_WAVE_MAX_WIDTH_SEGS 32
 #define CURLING_WAVE_MAX_PROFILE_SEGS 16 /* số điểm dọc theo tiết diện "C" */
 
-typedef struct {
+typedef struct
+{
   float curlAmount; /* 0 = tường phẳng, càng lớn mép trên càng đổ cong ra
                         ngoài (overhang) */
   float height;     /* chiều cao tường tính từ đáy tới mép cuộn */
@@ -201,7 +206,8 @@ typedef struct {
 
 CurlingWaveConfig ProceduralMesh_DefaultCurlingWaveConfig(void);
 
-typedef struct {
+typedef struct
+{
   /* verts[i][p]: i = lát dọc theo width, p = điểm dọc theo profile "C"
    * (0 = đáy, profileSegs = mép cuộn ngoài cùng) */
   Vector3 verts[CURLING_WAVE_MAX_WIDTH_SEGS + 1][CURLING_WAVE_MAX_PROFILE_SEGS + 1];
@@ -236,10 +242,11 @@ void ProceduralMesh_DrawCurlingWave(const CurlingWaveMeshData *data,
  * `seed` cố định để cùng seed luôn ra cùng hình dạng (cho phép cache).
  * ==========================================================================*/
 
-#define ROCK_MESH_MAX_VERTS 162  /* icosphere subdivision level 2 (12 + 30*5) đủ dư */
+#define ROCK_MESH_MAX_VERTS 162 /* icosphere subdivision level 2 (12 + 30*5) đủ dư */
 #define ROCK_MESH_MAX_FACES 320
 
-typedef struct {
+typedef struct
+{
   Vector3 verts[ROCK_MESH_MAX_VERTS];
   Vector3 faceNormals[ROCK_MESH_MAX_FACES];
   int faceVertIdx[ROCK_MESH_MAX_FACES][3]; /* flat-shaded: 1 normal/face */
@@ -277,7 +284,8 @@ void ProceduralMesh_DrawRock(const RockMeshData *data, Color color);
 #define SHARD_CLUSTER_MAX_SHARDS 16
 #define SHARD_MAX_SIDES 6 /* tiết diện đa giác mỗi shard, low-poly */
 
-typedef struct {
+typedef struct
+{
   /* spreadAngle: nửa góc cone tỏa ra quanh hướng chính (radian). */
   float spreadAngle;
   /* thicknessMin/Max: tỉ lệ bán kính tiết diện so với length của shard đó. */
@@ -289,7 +297,8 @@ typedef struct {
 
 ShardClusterConfig ProceduralMesh_DefaultShardClusterConfig(void);
 
-typedef struct {
+typedef struct
+{
   /* Mỗi shard: tiết diện gốc (base) + đỉnh (tip), `sides` đỉnh mỗi vòng.
    * tipRadius có thể ~0 (nhọn) tuỳ tipSharpness lúc Build. */
   Vector3 baseRing[SHARD_CLUSTER_MAX_SHARDS][SHARD_MAX_SIDES];
@@ -338,19 +347,21 @@ void ProceduralMesh_DrawShardCluster(const ShardClusterMeshData *data,
 #define VORTEX_FUNNEL_MAX_HEIGHT_SEGS 32
 #define VORTEX_FUNNEL_MAX_RADIAL_SEGS 24
 
-typedef struct {
+typedef struct
+{
   float topRadius;
   float bottomRadius;
   float height;
   float twistAmount; /* tổng góc xoay từ đáy lên đỉnh, độ (degree) */
-  int ridgeCount;     /* số gờ xoắn ốc nổi trên bề mặt */
-  float ridgeAmount;  /* biên độ nhô ra của gờ, tỉ lệ theo bán kính tại lát đó
-                          (0 = không gờ, ~0.15 = gờ vừa) */
+  int ridgeCount;    /* số gờ xoắn ốc nổi trên bề mặt */
+  float ridgeAmount; /* biên độ nhô ra của gờ, tỉ lệ theo bán kính tại lát đó
+                         (0 = không gờ, ~0.15 = gờ vừa) */
 } VortexFunnelConfig;
 
 VortexFunnelConfig ProceduralMesh_DefaultVortexFunnelConfig(void);
 
-typedef struct {
+typedef struct
+{
   /* rings[i][j]: i dọc trục height (0 = đáy, heightSegs = đỉnh), j quanh
    * chu vi (radial). Cùng layout với TubeMeshData để skill code quen tay. */
   Vector3 rings[VORTEX_FUNNEL_MAX_HEIGHT_SEGS + 1][VORTEX_FUNNEL_MAX_RADIAL_SEGS];
@@ -387,10 +398,11 @@ void ProceduralMesh_DrawVortexFunnel(const VortexFunnelMeshData *data,
  * ==========================================================================*/
 
 #define FISSURE_MAX_SEGMENTS 48 /* số lát dọc theo path (sau khi SamplePath) */
-#define FISSURE_CROSS_VERTS 5 /* số đỉnh tiết diện ngang: mép trái, vai trái,
-                                  đáy, vai phải, mép phải */
+#define FISSURE_CROSS_VERTS 5   /* số đỉnh tiết diện ngang: mép trái, vai trái, \
+                                    đáy, vai phải, mép phải */
 
-typedef struct {
+typedef struct
+{
   Vector3 verts[FISSURE_MAX_SEGMENTS + 1][FISSURE_CROSS_VERTS];
   Vector3 normals[FISSURE_MAX_SEGMENTS + 1][FISSURE_CROSS_VERTS];
   int segments; /* <= FISSURE_MAX_SEGMENTS, số lát thực tế dùng */
@@ -454,13 +466,14 @@ Mesh ProceduralMesh_CreateBaseCylinder(int radialSegs, int heightSegs);
 /* Tham số displacement, set mỗi frame rồi đẩy lên shader qua
  * ProceduralMesh_SetDisplacementUniforms(). pathP0..P3 (world space) chỉ
  * được DisplaceVertex_AlongPath dùng. */
-typedef struct {
-  float amplitude;   /* biên độ đẩy theo normal — DisplaceVertex_Noise */
-  float frequency;   /* tần số noise/sóng (world units^-1) */
-  float speed;       /* tốc độ animate theo u_time */
-  float twistAmount; /* tổng góc xoắn t=0..1, radian — AlongPath/TwistAndTaper */
-  float taperStart;  /* hệ số bán kính tại t=0 */
-  float taperEnd;    /* hệ số bán kính tại t=1 */
+typedef struct
+{
+  float amplitude;                        /* biên độ đẩy theo normal — DisplaceVertex_Noise */
+  float frequency;                        /* tần số noise/sóng (world units^-1) */
+  float speed;                            /* tốc độ animate theo u_time */
+  float twistAmount;                      /* tổng góc xoắn t=0..1, radian — AlongPath/TwistAndTaper */
+  float taperStart;                       /* hệ số bán kính tại t=0 */
+  float taperEnd;                         /* hệ số bán kính tại t=1 */
   Vector3 pathP0, pathP1, pathP2, pathP3; /* Bezier control points, world space */
 } MeshDisplacementParams;
 
@@ -479,5 +492,23 @@ void ProceduralMesh_UnloadBase(Mesh *mesh);
 // --- Raw Procedural Drawers ---
 void ProceduralMesh_DrawOrganicStonePillar(Vector3 pillarPos, float currentHeight, float baseRad, float topRad);
 void ProceduralMesh_DrawOrganicPuddle(Vector3 pos, float radius);
+
+// Thêm vào procedural_mesh_utils.h
+typedef struct
+{
+  float height;
+  float radius;
+  float taper;
+  float twist;
+  float noise;
+  float bevel;
+  float split;
+  int sides;
+  int segments;
+} CrystalDesc;
+
+// Draw a single crystal at the given position with the specified description and progress (0.0 to 1.0)
+void ProceduralMesh_DrawCrystal(Vector3 pos, const CrystalDesc *desc, float progress, Color color);
+void ProceduralMesh_DrawCrystalCluster(Vector3 center, const CrystalDesc *desc, int count, int seed, float progress, Color color);
 
 #endif // PROCEDURAL_MESH_UTILS_H

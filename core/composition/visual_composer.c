@@ -14,7 +14,6 @@
 #include "core/geometry/procedural_mesh_utils.h"
 #include "core/geometry/mesh_cache.h"
 #include "core/material/material_system.h"
-#include "core/geometry/crystal_mesh_generator.h"
 #include "core/resource_manager.h"
 #include "core/skill_manager.h"
 #include "core/vfx_proc_ray.h"

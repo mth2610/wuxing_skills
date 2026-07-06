@@ -1,13 +1,3 @@
-#include "crystal_mesh_generator.h"
-#include "rlgl.h"
-#include "raymath.h"
-#include <math.h>
-#include <stddef.h>
-
-#ifndef PI
-#define PI 3.14159265358979323846f
-#endif
-
 // Simple deterministic hash to get pseudo-random float [0..1]
 static float HashDeterministic(int seed, int subIndex)
 {
