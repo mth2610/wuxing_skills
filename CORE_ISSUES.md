@@ -783,3 +783,75 @@ assume the shared presets it calls are already safe.
   to need **no UI or text at all** — wuxing interactions are read entirely
   through in-world visual cues. Building this would contradict the design
   doc, not fill a gap in it.
+
+---
+
+## Item 35 — Post-FX "premium glow" pass (bloom/HDR upgrade) — REVERTED, do not re-attempt without a fresh isolated test rig
+
+**Goal.** Trail/particle cores looked dim/flat compared to an Unreal-style
+"sparkle" look. Two attempts this session, both reverted; `core/post_fx.*`,
+`core/screen_distort.c`, `main.c`, `core/shaders/post_process.fs`,
+`core/shaders/bloom_bright.fs` are all back to their pre-session content
+(byte-identical, verified via `git diff`/`git checkout HEAD`).
+
+**Attempt 1 — genuine HDR via RGBA16F render targets.** Switched
+`post_fx.c`'s `mainRenderTex`/`bloomTex`/`dfTex[]` and
+`screen_distort.c`'s scene `renderTex` from `RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8`
+to `RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16` (half-float), so emissive
+values >1.0 (e.g. `trail_glow.fs`'s `vec3(3.6)` core) would survive into the
+bloom bright-pass uncapped, plus an ACES tonemap in the composite shader.
+**Result: broken rendering** — particles/trails rendered as solid black
+blobs with bright white edges.
+
+**Root cause, confirmed.** The test machine's GPU is an **Intel HD Graphics
+6000** (2015 Broadwell integrated GPU, OpenGL 4.1 via macOS's legacy GL
+driver — logged at `INFO: GL: Renderer: Intel(R) HD Graphics 6000` on
+startup). `RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16` was verified correct at
+the raylib level (fetched `raylib` `5.5` tag's `rlgl.h` directly:
+`RLGL.ExtSupported.texFloat16 = true` on `GRAPHICS_API_OPENGL_33`,
+`rlGetGlTextureFormats` resolves it to `GL_RGBA16F`/`GL_RGBA`/`GL_HALF_FLOAT`
+correctly) — so this is **not a raylib bug or a code logic bug**.
+`glCheckFramebufferStatus` reported the FBO complete, but blending
+(additive/alpha) into it was visibly corrupted — a documented class of
+float-framebuffer driver bug on old Intel integrated GPUs. Completeness
+checks cannot catch this; only an actual rendered-pixel comparison can.
+
+**Attempt 2 — LDR-safe compensating tricks (no float framebuffers).** Added
+a 3rd dual-filter bloom mip (1/32 res, for a wider soft halo) and a new
+4-direction anamorphic streak pass (`core/shaders/bloom_streak.fs`, new
+file, deleted on revert) reading the bright-pass output. **Result: also
+broken** — the 1/32 mip's box/tent filter aliased against pre-existing
+regularly-patterned VFX (water/ice ripple/sparkle dither), producing a
+visible checkerboard/moiré blob instead of a smooth glow; the streak pass
+(first tried at 1/8 res, intensity 0.5, stretch 4.0) was far too strong and
+too low-res, turning individual ice-spike tips into blown-out blocky
+starbursts that merged into one "quái đảng" (bizarre) mass. A toned-down
+retry (streak at 1/4 res, intensity 0.15, stretch 2.0, bloom back to 2
+levels) was prepared but the user asked to revert the whole session before
+it could be visually confirmed — so it's unverified, not merely rejected.
+
+**For whoever resumes this:**
+- **Do not retry RGBA16F/float framebuffers on this class of hardware**
+  (old Intel integrated GPUs) without a documented fallback that's verified
+  to actually *render correctly*, not just pass `glCheckFramebufferStatus`
+  — e.g. render one frame, read back a known pixel via `rlReadTexturePixels`
+  and assert its value, not just check completeness.
+- The self-verification loop this session used (`WUXING_VERIFY=<SKILL>
+  ./wuxing`, headless screenshot harness, `sandbox/visual_verify.h`) was
+  **unreliable in this environment** — the process hung/never produced
+  screenshots when launched from a background shell (likely window
+  focus/vsync throttling on an unfocused GLFW window on this machine). All
+  visual confirmation this session came from the user's own manually-run
+  `./build/wuxing` instance and screenshots they shared — budget for that
+  turnaround instead of assuming headless self-verification will work.
+- If retried, test the 3rd bloom mip and streak pass **separately and in
+  isolation** against a VFX that has regular per-pixel noise/dither (e.g.
+  `skills/water/glacial_cannon` or similar ice/water skill) specifically,
+  since that's what exposed the moiré aliasing — a test against a single
+  fireball wouldn't have caught it.
+- A more promising LDR-safe direction not yet tried: per-particle "glint"
+  sub-effects (tiny, high-contrast, short-lived additive highlights) rather
+  than tuning the shared post-process bloom/streak pipeline — concentrates
+  the "sparkle" in small screen areas instead of risking aliasing/blowout
+  across whole VFX silhouettes made of many overlapping thin shapes (ice
+  spikes, lightning bolts, etc.).

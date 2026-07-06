@@ -47,3 +47,10 @@
 #include "vc_summon.inl"
 #include "vc_explosion.inl"
 #include "vc_aura.inl"
+
+// Phase 3 archetypes
+#include "vc_shield.inl"
+#include "vc_chain.inl"
+#include "vc_zone.inl"
+#include "vc_slash.inl"
+#include "vc_charge.inl"

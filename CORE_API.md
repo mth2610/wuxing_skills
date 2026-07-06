@@ -2810,6 +2810,31 @@ Tự gán shader, texture, vật liệu và quản lý blend mode / Z-buffer ph�
 - `VFX_SummonCircle`: Tạo vòng tròn triệu hồi với hai lớp pháp trận xoay ngược chiều nhau, hút các luồng hạt năng lượng vào tâm.
 - `VFX_TriggerExplosion`: Kích nổ theo công thức chuẩn (lửa, băng, sét, đất, độc, thánh quang, hư không), tự động kết hợp Screen Distortion, Point Light flash, Decal, hạt nổ tỏa tròn và rung camera tùy chọn.
 - `VFX_ComposeAura`: Tạo hào quang/vòng buff lơ lửng quanh chân và tỏa các hạt năng lượng hướng lên trên (lửa, băng, gió, sét, thái cực).
+- `VFX_ComposeQiAura` / `VFX_AttachQiAura` / `VFX_DetachQiAura` / `VFX_UpdateQiAuras`: Hào quang khí công quấn quanh nhân vật theo `casterAgentId` (cột khí xoáy ngẫu nhiên bốc lên, sparkle rải rác) — `Attach` gắn/khởi tạo theo agent, `Update` chạy mỗi frame cho toàn bộ pool, `Detach` gỡ khi kết thúc.
+
+### Nhóm 3: Beauty Primitives (`core/composition/vc_common.inl`) — mảnh trang trí tái sử dụng
+Thuần particle/decal/light, **không đụng post-process pipeline** (xem `CORE_ISSUES.md` Item 35 — chỉnh sửa bloom/streak dùng chung rất dễ vỡ trên GPU cũ, tập trung "lấp lánh" vào các primitive nhỏ gọn/ngắn hạn như dưới đây mới an toàn):
+- `VFX_ComposeShockwaveRing(pos, radius, life, tint)`: Vòng sóng xung kích mặt đất — decal ring giãn nở (`assets/textures/generic/impact_ring.png`, `BLEND_ADDITIVE`) + flash light.
+- `VFX_ComposeGlintBurst(pos, count, spread, tint)`: Chùm tia lấp lánh nhỏ, bung nhanh rồi tắt (~0.12-0.22s/hạt) — dùng làm điểm nhấn "sparkle" cho bất kỳ hiệu ứng nào, kể cả gắn vào các archetype khác.
+- `VFX_ComposeEmberDrift(pos, radius, count, tint)`: Hạt tàn lửa/bụi trôi lơ lửng (noise-curl + trọng lực nhẹ hướng lên), lifetime dài (~1.2-2.2s) — dùng cho hào quang/môi trường liên tục.
+- `VFX_ComposeStreakFlare(pos, scale, tint)`: Chớp sáng bùng nổ tại điểm (particle tròn cực ngắn + flash light) — đọc là "flash" chứ không phải hình ngôi sao (particle hệ thống chỉ dùng chung 1 texture toàn cục, xem `core/particle_system.h`).
+
+### Nhóm 4: Element Parity Additions (Phase 1 — `vc_metal.inl` / `vc_fire.inl`)
+- `VFX_ComposeMetalShardCluster(basePos, seed)`: Cụm mảnh kim loại sắc nhọn dùng chung hệ crystal-mesh với băng nhưng đục/sáng bóng/không refract (`CrystalMaterialParams`: `refraction=0`, `crack=0`, `sparkle` cao).
+- `VFX_ComposeMetalOrb(pos, time)`: Quả cầu chrome + viền điện xanh, cùng khuôn 2 lớp (lõi phát xạ + vỏ Fresnel) với `VFX_ComposeFireball`; thỉnh thoảng tự bắn `VFX_ComposeGlintBurst` làm tia điện lẹt xẹt.
+- `VFX_ComposeBladeRing(pos, radius, bladeCount, rotationDeg)`: Vòng lưỡi kim loại chĩa ra ngoài quanh tâm, dùng vật liệu `MAT_METAL` có sẵn.
+- `VFX_ComposeFlameWisp(pos, time)`: Đốm lửa nhỏ lập lờ, lệch pha theo vị trí spawn để nhiều đốm không nhấp nháy đồng bộ.
+- `VFX_ComposeFirePillar(basePos, progress)`: Cột lửa trồi lên theo `progress`, cùng công thức smoothstep-rise với `VFX_ComposeStonePillar`.
+
+### Nhóm 5: Phase 3 Archetypes — shield/chain/zone/slash/charge
+Cùng quy ước tham số `(style, pos, ..., progress, time)` như các archetype ở Nhóm 2 (`VFX_ComposeBeam`, `VFX_GroundPattern`...), để AI dựng skill mới dễ đoán chữ ký hàm:
+- `VFX_ComposeShield(ShieldStyle, pos, radius, progress, time)` (`vc_shield.inl`): Khiên/vòm chắn — scale-in 0..0.3, giữ nguyên, fade-out ở 0.85..1.0 (gọi liên tục mỗi frame trong lúc khiên còn tồn tại). Sphere lõm nửa dưới đất tạo hiệu ứng dome mà không cần mesh hemisphere riêng, cộng vòng rune xoay ở chân + glint bề mặt ngẫu nhiên. Style: `SHIELD_METAL/WOOD/WATER/EARTH/TAIJI`.
+- `VFX_ComposeChain(ChainStyle, const Vector3 *targets, count, progress, time)` (`vc_chain.inl`): Nối tuần tự các điểm mục tiêu (bounce/jump targeting) — đoạn `i` chỉ hiện khi `progress` vượt qua `i/(count-1)` (giống `VFX_PathWave`); mỗi target mới chạm tới nổ `VFX_ComposeGlintBurst`. Style: `CHAIN_LIGHTNING/VINE/WATER/FIRE/TAIJI`.
+- `VFX_ComposeZone(ZoneStyle, pos, radius, progress, time)` (`vc_zone.inl`): Vùng AoE tồn tại lâu dài (lava/frost/poison/holy/void) — tái dùng `VFX_GroundPattern` cho nền + hạt/light rải theo xác suất mỗi lần gọi (không phải burst cố định), gọi mỗi frame suốt thời gian zone active. Style: `ZONE_LAVA/FROST/POISON/HOLY/VOID`.
+- `VFX_ComposeSlashArc(SlashStyle, pos, dir, radius, arcDegrees, progress, time)` (`vc_slash.inl`): Vệt chém cận chiến dạng ribbon cong, mỏng ở đuôi/dày ở đỉnh sweep, chỉ hiện phần cung đã quét tới `progress`; glint ở mép đang chém. Style: `SLASH_METAL/WOOD/FIRE/ICE/EARTH`.
+- `VFX_ComposeChargeUp(ChargeStyle, pos, radius, progress, time)` (`vc_charge.inl`): Hiệu ứng tích khí/kênh phép — lõi cầu lớn dần + hạt hội tụ từ vòng ngoài co lại theo `progress`, glint bùng khi gần release (`progress > 0.7`). Style: `CHARGE_FIRE/METAL/WATER/WOOD/EARTH/TAIJI`.
+
+Tất cả Nhóm 3-5 đã gắn sẵn vào tab **"NEW FX"** trong `sandbox/vfx_test.c` (14 mục) để xem trực quan — không cần viết skill thật mới xem được.
 
 
 

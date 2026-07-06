@@ -31,6 +31,7 @@ typedef enum {
     TEST_CAT_COMPOSER,
     TEST_CAT_MESH,
     TEST_CAT_BURST,
+    TEST_CAT_NEWFX, // Phase 1-3 additions, migrated in from skills/taiji/core_test
     TEST_CAT_COUNT
 } PrefabTestCategory;
 
@@ -57,6 +58,13 @@ static const char* s_meshNames[] = {
 };
 static const char* s_burstNames[] = {
     "FIRE", "ICE", "WATER", "LIGHTNING", "EARTH", "WOOD", "METAL", "TAIJI"
+};
+// NEWFX 0-4: continuous (mesh-style, needs s_isPlayingMesh), 5-8: one-shot burst,
+// 9-13: continuous archetype (progress-driven)
+static const char* s_newFxNames[] = {
+    "FLAME WISP", "FIRE PILLAR", "METAL SHARD", "METAL ORB", "BLADE RING",
+    "SHOCKWAVE", "GLINT BURST", "EMBER DRIFT", "STREAK FLARE",
+    "SHIELD", "CHAIN", "ZONE", "SLASH ARC", "CHARGE UP"
 };
 
 // State cho ProcBolt (dùng trong COMPOSER tab - BOLT SKY)
@@ -348,6 +356,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
   else if (s_testCategory == TEST_CAT_BURST) { maxIdx = 8; names = s_burstNames; }
   else if (s_testCategory == TEST_CAT_COMPOSER) { maxIdx = 9; names = s_composerNames; }
   else if (s_testCategory == TEST_CAT_MESH) { maxIdx = 9; names = s_meshNames; }
+  else if (s_testCategory == TEST_CAT_NEWFX) { maxIdx = 14; names = s_newFxNames; }
 
 
   float gridY = startY + tabH + 20.0f;
@@ -369,7 +378,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
   }
 
       // also mark clicked on UI if hovering over the whole UI background box
-      Rectangle bgBox = { startX - 10, startY - 10, (tabW + spacing) * TEST_CAT_COUNT + 10, 400 };
+      Rectangle bgBox = { startX - 10, startY - 10, (tabW + spacing) * TEST_CAT_COUNT + 10, 440 };
       if (CheckCollisionPointRec(mousePos, bgBox)) {
           s_clickedOnUI = true;
       }
@@ -535,9 +544,23 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               
               VFX_ComposeTriggerImpactBurst(s_prefabStartPos, 3.0f, &config);
           }
+      } else if (s_testCategory == TEST_CAT_NEWFX) {
+          if (s_testIndex <= 4 || s_testIndex >= 9) {
+              // Continuous: needs per-frame redraw, handled in VFXTest_Draw3D.
+              s_isPlayingMesh = true;
+              s_meshTime = 0.0f;
+          } else if (s_testIndex == 5) {
+              VFX_ComposeShockwaveRing(s_prefabStartPos, 1.5f, 0.6f, (Color){255, 200, 80, 255});
+          } else if (s_testIndex == 6) {
+              VFX_ComposeGlintBurst(s_prefabStartPos, 14, 0.4f, (Color){180, 230, 255, 255});
+          } else if (s_testIndex == 7) {
+              VFX_ComposeEmberDrift(s_prefabStartPos, 0.8f, 12, (Color){255, 140, 60, 255});
+          } else if (s_testIndex == 8) {
+              VFX_ComposeStreakFlare(s_prefabStartPos, 1.0f, (Color){255, 250, 220, 255});
+          }
       }
   }
-  
+
   return false;
 }
 
@@ -627,6 +650,30 @@ void VFXTest_Draw3D(void) {
           else if (idx == 2) VFX_ComposeIceCrystal(s_prefabStartPos, posSeed);
           else if (idx == 3) VFX_ComposeMagicPuddle(s_prefabStartPos);
           else if (idx == 4) VFX_ComposeFireball(s_prefabStartPos, s_meshTime);
+      } else if (s_testCategory == TEST_CAT_NEWFX) {
+          float progress = fminf(s_meshTime / 1.0f, 1.0f);
+          int posSeed = (int)(s_prefabStartPos.x * 17.0f + s_prefabStartPos.z * 31.0f) & 0xFFFF;
+          switch (s_testIndex) {
+              case 0: VFX_ComposeFlameWisp(s_prefabStartPos, s_meshTime); break;
+              case 1: VFX_ComposeFirePillar(s_prefabStartPos, progress); break;
+              case 2: VFX_ComposeMetalShardCluster(s_prefabStartPos, posSeed); break;
+              case 3: VFX_ComposeMetalOrb(s_prefabStartPos, s_meshTime); break;
+              case 4: VFX_ComposeBladeRing(s_prefabStartPos, 0.6f, 5, s_meshTime * 60.0f); break;
+              case 9: VFX_ComposeShield(SHIELD_METAL, s_prefabStartPos, 1.2f, fminf(progress, 0.5f), s_meshTime); break;
+              case 10: {
+                  Vector3 chainTargets[4] = {
+                      s_prefabStartPos,
+                      Vector3Add(s_prefabStartPos, (Vector3){2.0f, 0, 1.0f}),
+                      Vector3Add(s_prefabStartPos, (Vector3){3.5f, 0, -1.0f}),
+                      Vector3Add(s_prefabStartPos, (Vector3){5.5f, 0, 0.5f}),
+                  };
+                  VFX_ComposeChain(CHAIN_LIGHTNING, chainTargets, 4, progress, s_meshTime);
+                  break;
+              }
+              case 11: VFX_ComposeZone(ZONE_LAVA, s_prefabStartPos, 1.2f, fminf(progress, 0.5f), s_meshTime); break;
+              case 12: VFX_ComposeSlashArc(SLASH_METAL, s_prefabStartPos, (Vector3){1, 0, 0}, 1.0f, 120.0f, fminf(s_meshTime / 0.6f, 0.999f), s_meshTime); break;
+              case 13: VFX_ComposeChargeUp(CHARGE_FIRE, s_prefabStartPos, 1.0f, progress, s_meshTime); break;
+          }
       }
   }
 }
@@ -689,12 +736,12 @@ void VFXTest_DrawHUD(void) {
 
   // Draw background
   DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), ColorAlpha(BLACK, 0.4f)); // subtle screen dim
-  Rectangle bgBox = { startX - 10, startY - 10, (tabW + spacing) * TEST_CAT_COUNT + 10, 300 };
+  Rectangle bgBox = { startX - 10, startY - 10, (tabW + spacing) * TEST_CAT_COUNT + 10, 340 };
   DrawRectangleRounded(bgBox, 0.05f, 10, ColorAlpha(BLACK, 0.6f));
   DrawRectangleRoundedLines(bgBox, 0.05f, 10, ColorAlpha(WHITE, 0.3f));
 
   // Draw Tabs
-  const char* tabNames[] = { "IMPACT", "CAST", "PROJECTILE", "COMPOSER", "MESH", "BURST" };
+  const char* tabNames[] = { "IMPACT", "CAST", "PROJECTILE", "COMPOSER", "MESH", "BURST", "NEW FX" };
   for (int i = 0; i < TEST_CAT_COUNT; i++) {
       Rectangle tabRec = { startX + i * (tabW + spacing), startY, tabW, tabH };
       bool isHover = CheckCollisionPointRec(mousePos, tabRec);
@@ -715,6 +762,7 @@ void VFXTest_DrawHUD(void) {
   else if (s_testCategory == TEST_CAT_BURST) { maxIdx = 8; names = s_burstNames; }
   else if (s_testCategory == TEST_CAT_COMPOSER) { maxIdx = 9; names = s_composerNames; }
   else if (s_testCategory == TEST_CAT_MESH) { maxIdx = 9; names = s_meshNames; }
+  else if (s_testCategory == TEST_CAT_NEWFX) { maxIdx = 14; names = s_newFxNames; }
 
 
   float gridY = startY + tabH + 20.0f;

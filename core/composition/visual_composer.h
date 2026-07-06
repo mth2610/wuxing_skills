@@ -56,6 +56,13 @@ int VFX_ComposeProjectileTrail(Vector3 start, Vector3 target, EffectPresetType p
 // 8. Triggering full generic 4-step Impact Burst (from impact_burst.h)
 void VFX_ComposeTriggerImpactBurst(Vector3 pos, float sizeScale, const ImpactBurstConfig *cfg);
 
+// 8b. Beauty primitives — reusable "polish" pieces (particle/decal/light
+// only, no post-process pipeline — see CORE_ISSUES.md Item 35)
+void VFX_ComposeShockwaveRing(Vector3 pos, float radius, float life, Color tint);
+void VFX_ComposeGlintBurst(Vector3 pos, int count, float spread, Color tint);
+void VFX_ComposeEmberDrift(Vector3 pos, float radius, int count, Color tint);
+void VFX_ComposeStreakFlare(Vector3 pos, float scale, Color tint);
+
 // 9. Procedural Visual Components (Mesh-based compositions)
 void VFX_ComposeStonePillar(Vector3 basePos, float progress);
 void VFX_ComposeBoulder(Vector3 pos);
@@ -64,6 +71,11 @@ void VFX_ComposeMagicPuddle(Vector3 pos);
 void VFX_ComposeFireball(Vector3 pos, float time);
 void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
 void VFX_ComposeGlowingVine(Vector3 startPos, Vector3 targetPos, Vector3 p1, Vector3 p2, Vector3 contactPos, float progress, float time, float sizeScale, int branchIndex, int branchCount);
+void VFX_ComposeFlameWisp(Vector3 pos, float time);
+void VFX_ComposeFirePillar(Vector3 basePos, float progress);
+void VFX_ComposeMetalShardCluster(Vector3 basePos, int seed);
+void VFX_ComposeMetalOrb(Vector3 pos, float time);
+void VFX_ComposeBladeRing(Vector3 pos, float radius, int bladeCount, float rotationDeg);
 
 // 10. High-level Archetypes & Styles
 typedef enum {
@@ -128,6 +140,48 @@ typedef enum {
     QI_XIANXIA
 } QiStyle;
 
+// 11. Phase 3 archetypes — shield/chain/zone/slash/charge
+typedef enum {
+    SHIELD_METAL,
+    SHIELD_WOOD,
+    SHIELD_WATER,
+    SHIELD_EARTH,
+    SHIELD_TAIJI
+} ShieldStyle;
+
+typedef enum {
+    CHAIN_LIGHTNING,
+    CHAIN_VINE,
+    CHAIN_WATER,
+    CHAIN_FIRE,
+    CHAIN_TAIJI
+} ChainStyle;
+
+typedef enum {
+    ZONE_LAVA,
+    ZONE_FROST,
+    ZONE_POISON,
+    ZONE_HOLY,
+    ZONE_VOID
+} ZoneStyle;
+
+typedef enum {
+    SLASH_METAL,
+    SLASH_WOOD,
+    SLASH_FIRE,
+    SLASH_ICE,
+    SLASH_EARTH
+} SlashStyle;
+
+typedef enum {
+    CHARGE_FIRE,
+    CHARGE_METAL,
+    CHARGE_WATER,
+    CHARGE_WOOD,
+    CHARGE_EARTH,
+    CHARGE_TAIJI
+} ChargeStyle;
+
 void VFX_ComposeProjectile(ProjectileStyle style, Vector3 pos, Vector3 target, float progress, float scale, float time);
 void VFX_GroundPattern(GroundPatternStyle style, Vector3 pos, float radius, float progress, float time);
 void VFX_ComposeBeam(BeamStyle style, Vector3 start, Vector3 end, float width, float progress, float time);
@@ -135,6 +189,11 @@ void VFX_PathWave(PathStyle style, const Vector3 *points, int count, float scale
 void VFX_SummonCircle(Vector3 pos, float radius, float progress, float time, Color color);
 void VFX_TriggerExplosion(ExplosionStyle style, Vector3 pos, float scale, bool cameraShake);
 void VFX_ComposeAura(AuraStyle style, Vector3 pos, float radius, float time);
+void VFX_ComposeShield(ShieldStyle style, Vector3 pos, float radius, float progress, float time);
+void VFX_ComposeChain(ChainStyle style, const Vector3 *targets, int count, float progress, float time);
+void VFX_ComposeZone(ZoneStyle style, Vector3 pos, float radius, float progress, float time);
+void VFX_ComposeSlashArc(SlashStyle style, Vector3 pos, Vector3 dir, float radius, float arcDegrees, float progress, float time);
+void VFX_ComposeChargeUp(ChargeStyle style, Vector3 pos, float radius, float progress, float time);
 void VFX_ComposeQiAura(QiStyle style, Vector3 casterPos, float progress, float time, float radius);
 void VFX_AttachQiAura(int casterAgentId, Vector3 anchorPos, float bodyHeight, EffectPresetType element, float scale, int wispCount);
 void VFX_DetachQiAura(int casterAgentId);

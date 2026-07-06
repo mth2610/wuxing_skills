@@ -11,8 +11,8 @@ out vec4 finalColor;
 void main() {
     vec4 col = texture(texture0, fragTexCoord);
     
-    // 1. Tính toán độ sáng tương đối (Luma) chuẩn BT.709
-    float brightness = dot(col.rgb, vec3(0.2126, 0.7152, 0.0722));
+    // 1. Tính toán độ sáng dựa trên kênh màu lớn nhất (max-channel) để các màu bão hòa (lam, tím) cũng bloom rực rỡ
+    float brightness = max(col.r, max(col.g, col.b));
     
     // 2. Thuật toán chống ảo ảnh cho vật thể mảnh (Knee Anti-Aliasing)
     // Tạo một vùng đệm mượt mờ quanh ngưỡng threshold để triệt tiêu răng cưa
@@ -27,8 +27,9 @@ void main() {
     
     // 3. Chặn triệt để hiện tượng "Lóa điểm" (Fireflies) khi áp sát camera
     // Giới hạn không cho năng lượng pixel tăng đột biến quá mức kiểm soát của bộ Blur
-    vec3 brightColor = col.rgb * weight;
-    float maxEnergy = 3.0; // Ngưỡng năng lượng tối đa của một pixel bloom
+    // Boost bloom extraction weight slightly to offset clamping dilution
+    vec3 brightColor = col.rgb * weight * 2.2;
+    float maxEnergy = 4.0; // Ngưỡng năng lượng tối đa của một pixel bloom
     float currentEnergy = length(brightColor);
     if (currentEnergy > maxEnergy) {
         brightColor = (brightColor / currentEnergy) * maxEnergy;
