@@ -26,49 +26,31 @@ void VFX_ComposeBeam(BeamStyle style, Vector3 start, Vector3 end, float width, f
     rlDisableDepthMask();
     rlDisableBackfaceCulling();
 
-    Color col = WHITE;
     Texture2D tex = ResourceManager_LoadTexture("assets/textures/tex_crack_mask.png"); // scrolling mask or simple glow
     rlSetTexture(tex.id);
 
     float scroll = time * -2.0f;
 
+    const VFX_ElementMaterial *mat;
+    Color col;
     switch (style)
     {
-        case BEAM_FIRE:
-        {
-            BeginBlendMode(BLEND_ADDITIVE);
-            col = (Color){255, 100, 10, 230};
-            break;
-        }
-        case BEAM_LIGHTNING:
-        {
-            BeginBlendMode(BLEND_ADDITIVE);
-            col = (Color){0, 180, 255, 240};
-            // Add some jitter for electricity
-            float jitter = sinf(time * 80.0f) * 0.05f;
-            Vector3 offset = Vector3Scale(perp1, jitter);
-            p1 = Vector3Add(p1, offset); p2 = Vector3Add(p2, offset);
-            p3 = Vector3Add(p3, offset); p4 = Vector3Add(p4, offset);
-            break;
-        }
-        case BEAM_ICE:
-        {
-            BeginBlendMode(BLEND_ALPHA);
-            col = (Color){150, 220, 255, 180};
-            break;
-        }
-        case BEAM_HOLY:
-        {
-            BeginBlendMode(BLEND_ADDITIVE);
-            col = (Color){255, 220, 80, 255};
-            break;
-        }
-        case BEAM_VOID:
-        {
-            BeginBlendMode(BLEND_ALPHA);
-            col = (Color){120, 20, 200, 200};
-            break;
-        }
+        case BEAM_FIRE:      mat = VFX_Material(VC_MAT_FIRE);      col = VC_WithAlpha(mat->glow, 230); break;
+        case BEAM_LIGHTNING: mat = VFX_Material(VC_MAT_LIGHTNING); col = VC_WithAlpha(mat->glow, 240); break;
+        case BEAM_ICE:       mat = VFX_Material(VC_MAT_ICE);       col = VC_WithAlpha(mat->body, 180); break;
+        case BEAM_HOLY:      mat = VFX_Material(VC_MAT_HOLY);      col = VC_WithAlpha(mat->body, 255); break;
+        case BEAM_VOID:      mat = VFX_Material(VC_MAT_VOID);      col = VC_WithAlpha(mat->body, 200); break;
+        default:             mat = VFX_Material(VC_MAT_TAIJI);     col = VC_WithAlpha(mat->body, 230); break;
+    }
+    BeginBlendMode(mat->blendMode);
+
+    if (style == BEAM_LIGHTNING)
+    {
+        // Jitter for electricity
+        float jitter = sinf(time * 80.0f) * 0.05f;
+        Vector3 offset = Vector3Scale(perp1, jitter);
+        p1 = Vector3Add(p1, offset); p2 = Vector3Add(p2, offset);
+        p3 = Vector3Add(p3, offset); p4 = Vector3Add(p4, offset);
     }
 
     // Draw first plane

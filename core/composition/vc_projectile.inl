@@ -47,7 +47,7 @@ void VFX_ComposeProjectile(ProjectileStyle style, Vector3 pos, Vector3 target, f
                 });
             }
 
-            lightCol = (Color){255, 100, 20, 255};
+            lightCol = VFX_Material(VC_MAT_FIRE)->glow;
             lightRadius = 2.0f * scale;
             break;
         }
@@ -137,7 +137,7 @@ void VFX_ComposeProjectile(ProjectileStyle style, Vector3 pos, Vector3 target, f
                 });
             }
 
-            lightCol = ELEMENT_COLOR_WOOD;
+            lightCol = VFX_Material(VC_MAT_WOOD)->body;
             lightRadius = 1.2f * scale;
             break;
         }
@@ -179,9 +179,8 @@ void VFX_ComposeProjectile(ProjectileStyle style, Vector3 pos, Vector3 target, f
         {
             // Orbiting black and white motes
             float r_orbit = 0.18f * scale;
-            float angle = time * 12.0f;
-            Vector3 mote1 = { pos.x + cosf(angle) * r_orbit, pos.y, pos.z + sinf(angle) * r_orbit };
-            Vector3 mote2 = { pos.x - cosf(angle) * r_orbit, pos.y, pos.z - sinf(angle) * r_orbit };
+            Vector3 mote1 = VC_MotionOrbit(pos, r_orbit, 12.0f, time, 0.0f);
+            Vector3 mote2 = VC_MotionOrbit(pos, r_orbit, 12.0f, time, PI);
 
             // Render motes
             BeginBlendMode(BLEND_ALPHA);

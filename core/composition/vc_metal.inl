@@ -92,7 +92,7 @@ void VFX_ComposeMetalShardCluster(Vector3 basePos, int seed)
 
     // Highlight — a specular catch-glint winking off the tallest blade's tip.
     if (GetRandomValue(0, 100) < 7)
-        VFX_ComposeGlintBurst(tallestTip, 2, 0.05f, (Color){235, 245, 255, 255});
+        VFX_ComposeGlintBurst(tallestTip, 2, 0.05f, VFX_Material(VC_MAT_METAL)->soft);
 }
 
 void VFX_ComposeBladeRing(Vector3 pos, float radius, int bladeCount, float rotationDeg)
@@ -199,7 +199,7 @@ void VFX_ComposeBladeRing(Vector3 pos, float radius, int bladeCount, float rotat
         float ga = ((float)GetRandomValue(0, bladeCount - 1) / (float)bladeCount) * 360.0f + rotationDeg;
         Vector3 tip = {pos.x + cosf(ga * DEG2RAD) * liveRadius * 1.05f, pos.y,
                        pos.z - sinf(ga * DEG2RAD) * liveRadius * 1.05f};
-        VFX_ComposeGlintBurst(tip, 2, 0.04f, (Color){220, 240, 255, 255});
+        VFX_ComposeGlintBurst(tip, 2, 0.04f, VFX_Material(VC_MAT_METAL)->soft);
     }
 }
 
@@ -297,12 +297,12 @@ void VFX_ComposeBladeStorm(Vector3 pos, float radius, float time)
     // ── Highlight: catch-light winking off a random blade.
     if (GetRandomValue(0, 100) < 10)
         VFX_ComposeGlintBurst(tips[GetRandomValue(0, bladeCount - 1)], 2, 0.04f,
-                              (Color){230, 245, 255, 255});
+                              VFX_Material(VC_MAT_METAL)->soft);
 
     // ── Ambience: cold steel light, faint and flickering.
     if (GetRandomValue(0, 100) < 15)
         VFXLight_Spawn(Vector3Add(pos, (Vector3){0, radius * 0.5f, 0}),
-                       (Color){170, 200, 220, 255}, radius * 2.0f, 0.15f, VFX_PRIORITY_LOW);
+                       VFX_Material(VC_MAT_METAL)->soft, radius * 2.0f, 0.15f, VFX_PRIORITY_LOW);
 }
 
 void VFX_ComposeShrapnelBurst(Vector3 pos, float scale)
@@ -358,8 +358,8 @@ void VFX_ComposeShrapnelBurst(Vector3 pos, float scale)
     }
 
     // ② Hot flash + sparkle at the detonation point.
-    VFX_ComposeStreakFlare(pos, 0.9f * scale, (Color){235, 245, 255, 255});
-    VFX_ComposeGlintBurst(pos, 10, 0.25f * scale, (Color){220, 240, 255, 255});
+    VFX_ComposeStreakFlare(pos, 0.9f * scale, VFX_Material(VC_MAT_METAL)->soft);
+    VFX_ComposeGlintBurst(pos, 10, 0.25f * scale, VFX_Material(VC_MAT_METAL)->soft);
 
     // ③ Ground scar — impact crater stamp (only when the burst is near the
     // ground; an airburst leaves no crater).
@@ -372,7 +372,7 @@ void VFX_ComposeShrapnelBurst(Vector3 pos, float scale)
 
     // ④ Pressure pop — small distortion + cold light punch.
     ScreenDistort_Add(pos, 0.6f * scale, 0.22f, 0.25f, 2.5f);
-    VFXLight_Spawn(pos, (Color){200, 225, 245, 255}, 2.2f * scale, 0.2f, VFX_PRIORITY_LOW);
+    VFXLight_Spawn(pos, VFX_Material(VC_MAT_METAL)->soft, 2.2f * scale, 0.2f, VFX_PRIORITY_LOW);
 }
 
 void VFX_ComposeRicochetSpark(Vector3 pos, Vector3 dir, float scale)
@@ -422,5 +422,5 @@ void VFX_ComposeRicochetSpark(Vector3 pos, Vector3 dir, float scale)
         .radius = 0.05f * scale,
         .lifetime = 0.05f});
 
-    VFXLight_Spawn(pos, (Color){220, 240, 255, 255}, 0.9f * scale, 0.1f, VFX_PRIORITY_LOW);
+    VFXLight_Spawn(pos, VFX_Material(VC_MAT_METAL)->soft, 0.9f * scale, 0.1f, VFX_PRIORITY_LOW);
 }

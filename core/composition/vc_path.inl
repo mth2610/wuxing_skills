@@ -74,7 +74,7 @@ void VFX_PathWave(PathStyle style, const Vector3 *points, int count, float scale
                 if (localT > 0.0f && localT < 0.9f)
                 {
                     float fireHeight = localT * 1.5f * scale;
-                    VFXLight_Spawn(pos, (Color){255, 100, 10, 255}, 1.5f * scale, 0.1f, VFX_PRIORITY_LOW);
+                    VFXLight_Spawn(pos, VFX_Material(VC_MAT_FIRE)->soft, 1.5f * scale, 0.1f, VFX_PRIORITY_LOW);
 
                     if (GetRandomValue(0, 100) < 30)
                     {

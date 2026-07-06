@@ -342,7 +342,7 @@ void VFX_ComposeBloomBurst(Vector3 pos, float scale)
     SpawnParticle((ParticleConfig){
         .position = pos,
         .colorStart = (Color){210, 255, 220, 240},
-        .colorEnd = (Color){46, 204, 113, 0},
+        .colorEnd = VC_WithAlpha(VFX_Material(VC_MAT_WOOD)->body, 0),
         .radius = 0.14f * scale,
         .lifetime = 0.16f});
 
@@ -431,7 +431,7 @@ void VFX_ComposeLeafFall(Vector3 pos, float radius, float time)
     // Dappled canopy light — dimmer and slower than LeafSwirl's.
     if (GetRandomValue(0, 100) < 12)
         VFXLight_Spawn(Vector3Add(pos, (Vector3){0, canopyH * 0.5f, 0}),
-                       (Color){90, 220, 130, 255}, radius * 1.8f, 0.25f, VFX_PRIORITY_LOW);
+                       VFX_Material(VC_MAT_WOOD)->soft, radius * 1.8f, 0.25f, VFX_PRIORITY_LOW);
 
     (void)time;
 }

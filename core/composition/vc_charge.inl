@@ -17,18 +17,19 @@ static ForceField *ChargeGetPullField(ChargeStyle style, Vector3 pos, float pull
 
 void VFX_ComposeChargeUp(ChargeStyle style, Vector3 pos, float radius, float progress, float time)
 {
+    const VFX_ElementMaterial *mat;
     Color color;
-    const char *runePath;
     switch (style)
     {
-        case CHARGE_FIRE:  color = ELEMENT_COLOR_FIRE;  runePath = "assets/textures/decals/decal_lava_crack.png"; break;
-        case CHARGE_METAL: color = (Color){120, 200, 255, 255}; runePath = "assets/textures/decals/decal_metal_rune.png"; break; // electric blue-white
-        case CHARGE_WATER: color = ELEMENT_COLOR_WATER; runePath = "assets/textures/decals/decal_water_ripple.png"; break;
-        case CHARGE_WOOD:  color = ELEMENT_COLOR_WOOD;  runePath = "assets/textures/decals/decal_root_mark.png"; break;
-        case CHARGE_EARTH: color = ELEMENT_COLOR_EARTH; runePath = "assets/textures/decals/decal_earth_rune.png"; break;
-        case CHARGE_TAIJI: color = ELEMENT_COLOR_TAIJI; runePath = "assets/textures/decals/decal_taiji_ring.png"; break;
-        default:           color = ELEMENT_COLOR_TAIJI; runePath = "assets/textures/decals/decal_taiji_ring.png"; break;
+        case CHARGE_FIRE:  mat = VFX_Material(VC_MAT_FIRE);  color = mat->body; break;
+        case CHARGE_METAL: mat = VFX_Material(VC_MAT_METAL); color = mat->glow; break; // electric blue-white
+        case CHARGE_WATER: mat = VFX_Material(VC_MAT_WATER); color = mat->body; break;
+        case CHARGE_WOOD:  mat = VFX_Material(VC_MAT_WOOD);  color = mat->body; break;
+        case CHARGE_EARTH: mat = VFX_Material(VC_MAT_EARTH); color = mat->body; break;
+        case CHARGE_TAIJI:
+        default:           mat = VFX_Material(VC_MAT_TAIJI); color = mat->body; break;
     }
+    const char *runePath = mat->runeDecal;
 
     progress = fminf(fmaxf(progress, 0.0f), 1.0f);
     if (progress <= 0.0f)
@@ -37,14 +38,12 @@ void VFX_ComposeChargeUp(ChargeStyle style, Vector3 pos, float radius, float pro
     // Core orb grows with progress, pulses faster as it nears release.
     float coreRadius = radius * 0.18f * (0.3f + 0.7f * progress);
     float pulseSpeed = 3.0f + progress * 6.0f;
-    float pulse = 1.0f + 0.08f * sinf(time * pulseSpeed);
+    float pulse = VC_Breathe(time, pulseSpeed, 0.08f);
 
     // Shell tremble — the orb starts shaking as it struggles to contain the
     // energy (only past 60% so the early channel feels stable).
     float trembleAmt = fmaxf(progress - 0.6f, 0.0f) * 0.06f;
-    Vector3 orbPos = {pos.x + trembleAmt * sinf(time * 37.0f),
-                      pos.y + trembleAmt * 0.6f * sinf(time * 43.0f),
-                      pos.z + trembleAmt * cosf(time * 31.0f)};
+    Vector3 orbPos = VC_MotionJitter(pos, trembleAmt, 37.0f, time, 0.0f);
 
     // Ground rune — brightens and spins faster as the charge builds: the
     // caster's circle visibly "powering up" beneath the orb.
@@ -58,19 +57,8 @@ void VFX_ComposeChargeUp(ChargeStyle style, Vector3 pos, float radius, float pro
         unsigned char runeA = (unsigned char)(40 + 170 * progress * progress);
         // Rune sits on the ground (project convention: Y=0 = ground level),
         // regardless of how high the orb itself is being channeled.
-        rlPushMatrix();
-        rlTranslatef(pos.x, 0.015f, pos.z);
-        rlRotatef(time * (15.0f + 45.0f * progress), 0, 1, 0);
-        rlSetTexture(runeTex.id);
-        rlBegin(RL_QUADS);
-        rlColor4ub(color.r, color.g, color.b, runeA);
-        rlTexCoord2f(0.0f, 0.0f); rlVertex3f(-runeR, 0, -runeR);
-        rlTexCoord2f(1.0f, 0.0f); rlVertex3f(runeR, 0, -runeR);
-        rlTexCoord2f(1.0f, 1.0f); rlVertex3f(runeR, 0, runeR);
-        rlTexCoord2f(0.0f, 1.0f); rlVertex3f(-runeR, 0, runeR);
-        rlEnd();
-        rlSetTexture(0);
-        rlPopMatrix();
+        VC_DrawGroundRune(runeTex, (Vector3){pos.x, 0.015f, pos.z}, runeR,
+                          time * (15.0f + 45.0f * progress), VC_WithAlpha(color, runeA));
     }
     rlDrawRenderBatchActive();
     rlEnableBackfaceCulling();
@@ -107,9 +95,8 @@ void VFX_ComposeChargeUp(ChargeStyle style, Vector3 pos, float radius, float pro
     {
         float oa = time * (2.0f + progress * 4.0f) + (float)i * (2.0f * PI / (float)moteCount);
         float orbR = coreRadius * (2.6f - 0.8f * progress);
-        Vector3 op = {orbPos.x + cosf(oa) * orbR,
-                      orbPos.y + sinf(oa * 2.3f + i) * orbR * 0.3f,
-                      orbPos.z + sinf(oa) * orbR};
+        Vector3 op = VC_RingPointXZ(orbPos, orbR, oa);
+        op.y += sinf(oa * 2.3f + i) * orbR * 0.3f;
         DrawCoreSphere(op, coreRadius * 0.13f, 8, 8, WHITE);
     }
     Material_End();
@@ -160,8 +147,8 @@ void VFX_ComposeChargeUp(ChargeStyle style, Vector3 pos, float radius, float pro
     if (GetRandomValue(0, 100) < (int)(30 + 30 * progress))
     {
         float ringR = radius * (1.0f - 0.4f * progress);
-        float a = Random01() * 2.0f * PI;
-        Vector3 spawnPos = {pos.x + cosf(a) * ringR, pos.y + Random01() * radius * 0.3f, pos.z + sinf(a) * ringR};
+        Vector3 spawnPos = VC_RingPointXZ(pos, ringR, Random01() * 2.0f * PI);
+        spawnPos.y += Random01() * radius * 0.3f;
         Vector3 toCenter = Vector3Normalize(Vector3Subtract(pos, spawnPos));
 
         SpawnParticle((ParticleConfig){

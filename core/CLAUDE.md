@@ -32,6 +32,7 @@ Manages the entire **Core Engine** module of the Wuxing Skills project. Owns the
 - Guard the PI macro: `#ifndef PI #define PI 3.1415926535f #endif`
 - No `malloc`/`calloc`/`realloc`/`free`
 - Use `ResourceManager_LoadShader()` — never call `UnloadShader`/`UnloadTexture` in skill code
+- **Composition layer rule:** element colors/gradients/force fields come from `VFX_Material(VC_MAT_*)` (`core/presets/vfx_presets.h`), motion math (orbit/ring/jitter/breathe/flicker) from `core/composition/vc_motion.h`. New `VFX_Compose*` components must be assembled from material + motion + primitives (`vc_common.inl`); hard-coded colors only for deliberate identity breaks, with a comment. New motion formulas worth reusing go into `vc_motion.h`, not inline.
 - Scale (real-world-scaled, 1 unit = 1 meter — see root `CLAUDE.md` "Standard coordinates & scale"): radii ~0.10–0.20f, force 3.0–7.0f (compare against real gravity 9.81f), speed 1.0–3.0f. Only `entities/`, `sandbox/`, `main.c`, and the pilot skills (`fire_ball`, `thunder_orb_skill`) have been converted — most skills still use the old 1cm-scale numbers 100x larger.
 
 ## Cross-agent communication

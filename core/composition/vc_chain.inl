@@ -11,12 +11,12 @@ void VFX_ComposeChain(ChainStyle style, const Vector3 *targets, int count, float
     Color color;
     switch (style)
     {
-        case CHAIN_LIGHTNING: color = (Color){0, 190, 255, 255}; break;
-        case CHAIN_VINE:      color = ELEMENT_COLOR_WOOD; break;
-        case CHAIN_WATER:     color = ELEMENT_COLOR_WATER; break;
-        case CHAIN_FIRE:      color = ELEMENT_COLOR_FIRE; break;
-        case CHAIN_TAIJI:     color = ELEMENT_COLOR_TAIJI; break;
-        default:              color = ELEMENT_COLOR_TAIJI; break;
+        case CHAIN_LIGHTNING: color = VFX_Material(VC_MAT_LIGHTNING)->glow; break;
+        case CHAIN_VINE:      color = VFX_Material(VC_MAT_WOOD)->body; break;
+        case CHAIN_WATER:     color = VFX_Material(VC_MAT_WATER)->body; break;
+        case CHAIN_FIRE:      color = VFX_Material(VC_MAT_FIRE)->body; break;
+        case CHAIN_TAIJI:
+        default:              color = VFX_Material(VC_MAT_TAIJI)->body; break;
     }
 
     for (int i = 0; i < count - 1; i++)

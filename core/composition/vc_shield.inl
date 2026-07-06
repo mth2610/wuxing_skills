@@ -5,17 +5,18 @@
 
 void VFX_ComposeShield(ShieldStyle style, Vector3 pos, float radius, float progress, float time)
 {
-    Color color;
-    const char *runePath;
+    const VFX_ElementMaterial *elemMat;
     switch (style)
     {
-        case SHIELD_METAL: color = ELEMENT_COLOR_METAL; runePath = "assets/textures/decals/decal_metal_rune.png"; break;
-        case SHIELD_WOOD:  color = ELEMENT_COLOR_WOOD;  runePath = "assets/textures/decals/decal_root_mark.png";  break;
-        case SHIELD_WATER: color = ELEMENT_COLOR_WATER; runePath = "assets/textures/decals/decal_water_ripple.png"; break;
-        case SHIELD_EARTH: color = ELEMENT_COLOR_EARTH; runePath = "assets/textures/decals/decal_earth_rune.png"; break;
-        case SHIELD_TAIJI: color = ELEMENT_COLOR_TAIJI; runePath = "assets/textures/decals/decal_taiji_ring.png"; break;
-        default:           color = ELEMENT_COLOR_TAIJI; runePath = "assets/textures/decals/decal_taiji_ring.png"; break;
+        case SHIELD_METAL: elemMat = VFX_Material(VC_MAT_METAL); break;
+        case SHIELD_WOOD:  elemMat = VFX_Material(VC_MAT_WOOD);  break;
+        case SHIELD_WATER: elemMat = VFX_Material(VC_MAT_WATER); break;
+        case SHIELD_EARTH: elemMat = VFX_Material(VC_MAT_EARTH); break;
+        case SHIELD_TAIJI:
+        default:           elemMat = VFX_Material(VC_MAT_TAIJI); break;
     }
+    Color color = elemMat->body;
+    const char *runePath = elemMat->runeDecal;
 
     // Grow-in over the first 0.3 of progress, fade-out over the last 0.15 —
     // caller can hold at any progress in between for as long as the shield
@@ -38,7 +39,7 @@ void VFX_ComposeShield(ShieldStyle style, Vector3 pos, float radius, float progr
 
     // Subtle "impact breathe" — the barrier surface ripples gently as if
     // holding pressure, driven by time so it's never a dead static shell.
-    float breathe = 1.0f + 0.015f * sinf(time * 2.4f);
+    float breathe = VC_Breathe(time, 2.4f, 0.015f);
 
     // Outer Fresnel shell — mostly see-through in the centre, energy-bright
     // at the grazing edge (the classic force-field silhouette).
@@ -119,34 +120,10 @@ void VFX_ComposeShield(ShieldStyle style, Vector3 pos, float radius, float progr
     // Element rune ring — spins slowly, the "generator" the barrier projects
     // from. A second, larger, counter-rotating soft glow ring underneath adds
     // depth and keeps the base from looking like a single flat sticker.
-    rlPushMatrix();
-    rlTranslatef(pos.x, pos.y + 0.005f, pos.z);
-    rlRotatef(-time * 14.0f, 0, 1, 0);
-    rlSetTexture(glowTex.id);
-    float glowR = domeRadius * 1.15f;
-    rlBegin(RL_QUADS);
-    rlColor4ub(color.r, color.g, color.b, (unsigned char)(a * 0.5f));
-    rlTexCoord2f(0.0f, 0.0f); rlVertex3f(-glowR, 0, -glowR);
-    rlTexCoord2f(1.0f, 0.0f); rlVertex3f(glowR, 0, -glowR);
-    rlTexCoord2f(1.0f, 1.0f); rlVertex3f(glowR, 0, glowR);
-    rlTexCoord2f(0.0f, 1.0f); rlVertex3f(-glowR, 0, glowR);
-    rlEnd();
-    rlPopMatrix();
-
-    rlPushMatrix();
-    rlTranslatef(pos.x, pos.y + 0.012f, pos.z);
-    rlRotatef(time * 30.0f, 0, 1, 0);
-    rlSetTexture(runeTex.id);
-    float ringR = domeRadius * 0.95f;
-    rlBegin(RL_QUADS);
-    rlColor4ub(color.r, color.g, color.b, a);
-    rlTexCoord2f(0.0f, 0.0f); rlVertex3f(-ringR, 0, -ringR);
-    rlTexCoord2f(1.0f, 0.0f); rlVertex3f(ringR, 0, -ringR);
-    rlTexCoord2f(1.0f, 1.0f); rlVertex3f(ringR, 0, ringR);
-    rlTexCoord2f(0.0f, 1.0f); rlVertex3f(-ringR, 0, ringR);
-    rlEnd();
-    rlSetTexture(0);
-    rlPopMatrix();
+    VC_DrawGroundRune(glowTex, (Vector3){pos.x, pos.y + 0.005f, pos.z},
+                      domeRadius * 1.15f, -time * 14.0f, VC_WithAlpha(color, (unsigned char)(a * 0.5f)));
+    VC_DrawGroundRune(runeTex, (Vector3){pos.x, pos.y + 0.012f, pos.z},
+                      domeRadius * 0.95f, time * 30.0f, VC_WithAlpha(color, a));
 
     rlDrawRenderBatchActive();
     rlEnableBackfaceCulling();
@@ -159,10 +136,9 @@ void VFX_ComposeShield(ShieldStyle style, Vector3 pos, float radius, float progr
     {
         float oa = Random01() * 2.0f * PI;
         float orbR = domeRadius * (0.95f + Random01() * 0.15f);
-        Vector3 spawnPos = {pos.x + cosf(oa) * orbR,
-                            pos.y + 0.05f + Random01() * domeRadius * 0.25f,
-                            pos.z + sinf(oa) * orbR};
-        Vector3 tangent = {-sinf(oa), 0.08f, cosf(oa)};
+        Vector3 spawnPos = VC_RingPointXZ(pos, orbR, oa);
+        spawnPos.y += 0.05f + Random01() * domeRadius * 0.25f;
+        Vector3 tangent = VC_TangentXZ(oa, 0.08f);
         SpawnParticle((ParticleConfig){
             .position = spawnPos,
             .velocity = Vector3Scale(tangent, 0.35f + Random01() * 0.25f),

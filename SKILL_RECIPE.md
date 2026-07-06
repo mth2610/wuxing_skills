@@ -121,6 +121,14 @@ ones) or `Update`/impact site (one-shot ones). Full param docs: `CORE_API.md`
 "pop" — see `CORE_ISSUES.md` Item 35. Use `VFX_ComposeGlintBurst`/`StreakFlare`
 instead; they're LDR-safe and don't risk breaking on older GPUs.
 
+**Element look & motion come from shared libraries, not hard-code** (CORE_API.md
+§19 Nhóm 2b/2c): colors/gradients/force fields per element via
+`VFX_Material(VC_MAT_*)` (`body` = identity, `glow` = hot accent, plus
+`grad`/`fld`/`runeDecal`/`blendMode`), and orbits/spawn rings/tremble/breathe/
+flicker via the `VC_Motion*`/`VC_*01` helpers in `vc_motion.h` (auto-included by
+`visual_composer.h`). Only hard-code a color when deliberately breaking element
+identity — and comment why.
+
 ---
 
 ## 3c. Attached / status effects

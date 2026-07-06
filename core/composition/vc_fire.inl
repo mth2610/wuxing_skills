@@ -160,12 +160,12 @@ void VFX_ComposeFlameWisp(Vector3 pos, float time)
     // A stray ember snapping off the tip.
     if (GetRandomValue(0, 100) < 5)
         VFX_ComposeEmberDrift(Vector3Add(base, (Vector3){0, 0.15f, 0}), 0.04f, 1,
-                              (Color){255, 140, 45, 255});
+                              VFX_Material(VC_MAT_FIRE)->soft);
 
     // Warm light breathing with the flare.
     if (GetRandomValue(0, 100) < 25)
         VFXLight_Spawn(Vector3Add(base, (Vector3){0, 0.08f, 0}),
-                       (Color){255, 150, 60, 255}, 0.55f + 0.2f * flare, 0.15f, VFX_PRIORITY_LOW);
+                       VFX_Material(VC_MAT_FIRE)->soft, 0.55f + 0.2f * flare, 0.15f, VFX_PRIORITY_LOW);
 }
 
 void VFX_ComposeFirePillar(Vector3 basePos, float progress)
@@ -261,7 +261,7 @@ void VFX_ComposeFirePillar(Vector3 basePos, float progress)
         Vector3 emberPos = {basePos.x + cosf(a) * baseRadius * 0.5f,
                             basePos.y + Random01() * liveHeight * 0.6f,
                             basePos.z + sinf(a) * baseRadius * 0.5f};
-        VFX_ComposeEmberDrift(emberPos, baseRadius * 0.4f, 1, (Color){255, 130, 40, 255});
+        VFX_ComposeEmberDrift(emberPos, baseRadius * 0.4f, 1, VFX_Material(VC_MAT_FIRE)->soft);
     }
 
     // Ground glow — firelight pooling on the floor around the base.
@@ -270,7 +270,7 @@ void VFX_ComposeFirePillar(Vector3 basePos, float progress)
         Texture2D glowTex = ResourceManager_LoadTexture("assets/textures/generic/glow_circle.png");
         DecalSystem_AddEx(basePos, (float)GetRandomValue(0, 360), 15.0f,
                           baseRadius * 1.6f, baseRadius * 2.4f,
-                          glowTex, 0.6f, (Color){255, 110, 30, 140}, BLEND_ADDITIVE, 0.02f);
+                          glowTex, 0.6f, VC_WithAlpha(VFX_Material(VC_MAT_FIRE)->soft, 140), BLEND_ADDITIVE, 0.02f);
     }
 
     // Heat shimmer above the column.
@@ -281,6 +281,226 @@ void VFX_ComposeFirePillar(Vector3 basePos, float progress)
     // Firelight breathing with the gust.
     if (GetRandomValue(0, 100) < 20)
         VFXLight_Spawn(Vector3Add(basePos, (Vector3){0, liveHeight * 0.3f, 0}),
-                       (Color){255, 120, 40, 255}, baseRadius * (3.0f + 2.0f * gust) * rise,
+                       VFX_Material(VC_MAT_FIRE)->soft, baseRadius * (3.0f + 2.0f * gust) * rise,
                        0.2f, VFX_PRIORITY_LOW);
+}
+
+// --- Fire skill set (Phase 2) --------------------------------------------
+// Same philosophy as the flows above — fire is a crowd of burning-gas
+// packets, never geometry. Three pieces fire skills keep needing:
+//   FlameBreath   — continuous directional cone (flamethrower, dragon breath)
+//   BurningGround — continuous ignited patch (ignite DoT, fire zone)
+//   FireWhirl     — continuous fire tornado (ult centerpiece)
+
+void VFX_ComposeFlameBreath(Vector3 pos, Vector3 dir, float scale, float time)
+{
+    FireFlow_InitShared();
+
+    Vector3 n = Vector3Normalize(dir);
+    if (Vector3Length(dir) < 0.001f)
+        n = (Vector3){1.0f, 0.0f, 0.0f};
+    Vector3 up = fabsf(n.y) > 0.9f ? (Vector3){1, 0, 0} : (Vector3){0, 1, 0};
+    Vector3 side = Vector3Normalize(Vector3CrossProduct(n, up));
+    Vector3 side2 = Vector3CrossProduct(n, side);
+
+    // Throat flutter — the stream surges on a fast rhythm; a constant-rate
+    // jet reads as a gas burner, not breath.
+    float surge = 0.7f + 0.3f * sinf(time * 9.0f) * sinf(time * 5.3f + 1.7f);
+
+    // ── Stream body: packets blasted down a ~14° cone. The buoyancy in
+    // s_flameFld makes the far end of the stream curl UPWARD as the packets
+    // slow — the signature flamethrower arc, free of charge.
+    int jetCount = 2 + (int)(2.0f * surge);
+    for (int i = 0; i < jetCount; i++)
+    {
+        float spread = 0.25f * Random01();
+        float ring = Random01() * 2.0f * PI;
+        Vector3 d = Vector3Normalize(Vector3Add(n,
+                        Vector3Add(Vector3Scale(side, cosf(ring) * spread),
+                                   Vector3Scale(side2, sinf(ring) * spread))));
+        bool hot = GetRandomValue(0, 100) < 35; // white-hot core rides the axis
+        if (hot)
+            d = Vector3Normalize(Vector3Add(n, Vector3Scale(d, 0.15f)));
+        SpawnParticle((ParticleConfig){
+            .position = Vector3Add(pos, Vector3Scale(d, 0.06f * scale)),
+            .velocity = Vector3Scale(d, (2.6f + Random01() * 1.2f) * scale * surge),
+            .radius = (hot ? 0.030f : 0.048f) * scale * (0.8f + Random01() * 0.45f),
+            .lifetime = 0.30f + Random01() * 0.18f,
+            .gradient = hot ? &s_fireCoreGrad : &s_fireBodyGrad,
+            .radiusCurve = &s_flameShape,
+            .forceField = &s_flameFld});
+    }
+
+    // ── Combustion smoke where the stream dies (~1m out along dir).
+    if (GetRandomValue(0, 100) < 25)
+        SpawnParticle((ParticleConfig){
+            .position = Vector3Add(pos, Vector3Scale(n, (0.8f + Random01() * 0.4f) * scale)),
+            .velocity = (Vector3){(Random01() - 0.5f) * 0.2f, 0.3f + Random01() * 0.2f, (Random01() - 0.5f) * 0.2f},
+            .radius = 0.05f * scale,
+            .lifetime = 0.6f + Random01() * 0.4f,
+            .gradient = &s_fireSmokeGrad,
+            .radiusCurve = &s_smokeShape,
+            .forceField = &s_flameFld});
+
+    // ── Heat shimmer wrapping the stream, gated.
+    if (GetRandomValue(0, 100) < 10)
+        ScreenDistort_Add(Vector3Add(pos, Vector3Scale(n, 0.6f * scale)),
+                          0.5f * scale, 0.1f, 0.4f, 2.0f);
+
+    // ── Muzzle light — brightest at the throat, surging with the breath.
+    if (GetRandomValue(0, 100) < 30)
+        VFXLight_Spawn(Vector3Add(pos, Vector3Scale(n, 0.2f * scale)),
+                       VFX_Material(VC_MAT_FIRE)->soft, (1.4f + 0.6f * surge) * scale,
+                       0.12f, VFX_PRIORITY_LOW);
+}
+
+void VFX_ComposeBurningGround(Vector3 pos, float radius, float time)
+{
+    FireFlow_InitShared();
+
+    // ── Flame tongues at random points across the patch — clustered toward
+    // the center (sqrt-less r = center-biased), each a short FireFlow packet.
+    int tongues = 2 + GetRandomValue(0, 1);
+    for (int i = 0; i < tongues; i++)
+    {
+        float a = Random01() * 2.0f * PI;
+        float rr = radius * Random01() * Random01(); // center-biased
+        Vector3 spot = {pos.x + cosf(a) * rr, pos.y, pos.z + sinf(a) * rr};
+        FireFlow_EmitPacket(spot, 0.04f, 0.12f + 0.08f * Random01(), 0.8f,
+                            GetRandomValue(0, 100) < 20, 0.9f);
+    }
+
+    // ── The patch itself: lava-crack glow pulsing under the flames + a
+    // long-lived scorch accumulating at the rim. Both gated with matching
+    // lifetimes so per-frame calls keep one of each alive.
+    if (GetRandomValue(0, 100) < 3)
+    {
+        Texture2D lavaTex = ResourceManager_LoadTexture("assets/textures/decals/decal_lava_crack.png");
+        DecalSystem_AddEx(pos, (float)GetRandomValue(0, 360), 3.0f,
+                          radius * 0.95f, radius * 1.05f,
+                          lavaTex, 1.3f, ColorAlpha(VFX_Material(VC_MAT_FIRE)->soft, 0.7f),
+                          BLEND_ADDITIVE, 0.02f);
+    }
+    if (GetRandomValue(0, 100) < 2)
+    {
+        Texture2D scorchTex = ResourceManager_LoadTexture("assets/textures/scorch_mark.png");
+        DecalSystem_Add((Vector3){pos.x, 0.0f, pos.z}, (float)GetRandomValue(0, 360),
+                        radius * 1.15f, scorchTex, 3.0f, ColorAlpha(WHITE, 0.6f));
+    }
+
+    // ── Embers + smoke lifting off the patch.
+    if (GetRandomValue(0, 100) < 15)
+    {
+        float a = Random01() * 2.0f * PI;
+        VFX_ComposeEmberDrift((Vector3){pos.x + cosf(a) * radius * 0.5f, pos.y + 0.05f,
+                                        pos.z + sinf(a) * radius * 0.5f},
+                              radius * 0.3f, 1, VFX_Material(VC_MAT_FIRE)->soft);
+    }
+    if (GetRandomValue(0, 100) < 8)
+        SpawnParticle((ParticleConfig){
+            .position = (Vector3){pos.x + (Random01() - 0.5f) * radius,
+                                  pos.y + 0.25f,
+                                  pos.z + (Random01() - 0.5f) * radius},
+            .velocity = (Vector3){(Random01() - 0.5f) * 0.1f, 0.3f + Random01() * 0.15f, (Random01() - 0.5f) * 0.1f},
+            .radius = 0.045f + Random01() * 0.03f,
+            .lifetime = 0.8f + Random01() * 0.6f,
+            .gradient = &s_fireSmokeGrad,
+            .radiusCurve = &s_smokeShape,
+            .forceField = &s_flameFld});
+
+    // ── Firelight pooling over the patch, flickering.
+    if (GetRandomValue(0, 100) < 22)
+        VFXLight_Spawn(Vector3Add(pos, (Vector3){0, 0.2f, 0}),
+                       VFX_Material(VC_MAT_FIRE)->soft, radius * (2.0f + 0.6f * Random01()),
+                       0.15f, VFX_PRIORITY_LOW);
+}
+
+void VFX_ComposeFireWhirl(Vector3 pos, float radius, float time)
+{
+    FireFlow_InitShared();
+
+    float height = radius * 3.0f;
+
+    // Tight vortex + strong updraft — hotter and faster than the wind
+    // cyclone; origin tracks pos (single-static rebuild pattern).
+    static ForceField s_whirlFld;
+    ForceField_Clear(&s_whirlFld);
+    ForceField_AddLayer(&s_whirlFld, (ForceLayer){
+                                         .type = FORCE_VORTEX,
+                                         .origin = pos,
+                                         .direction = (Vector3){0.0f, 1.0f, 0.0f},
+                                         .strength = 7.0f,
+                                         .radius = radius * 2.5f,
+                                         .falloff = 1.0f});
+    ForceField_AddLayer(&s_whirlFld, (ForceLayer){
+                                         .type = FORCE_GRAVITY_DIR,
+                                         .direction = (Vector3){0.0f, 1.0f, 0.0f},
+                                         .strength = 3.0f});
+    ForceField_AddLayer(&s_whirlFld, (ForceLayer){
+                                         .type = FORCE_GRAVITY_POINT,
+                                         .origin = Vector3Add(pos, (Vector3){0, height * 0.6f, 0}),
+                                         .strength = 2.0f,
+                                         .radius = radius * 3.0f,
+                                         .falloff = 1.0f});
+
+    // ── Flame body: rotating spawn arm feeding tongues at the base — the
+    // packets spiral up the funnel in visible burning bands.
+    int arms = 3;
+    for (int i = 0; i < arms; i++)
+    {
+        float armA = time * 8.0f + (float)i * (2.0f * PI / (float)arms);
+        float rr = radius * (0.45f + 0.35f * Random01());
+        Vector3 spawn = {pos.x + cosf(armA) * rr, pos.y + Random01() * height * 0.1f,
+                         pos.z + sinf(armA) * rr};
+        Vector3 tangent = {-sinf(armA) * 1.0f, 0.5f, cosf(armA) * 1.0f};
+        SpawnParticle((ParticleConfig){
+            .position = spawn,
+            .velocity = tangent,
+            .radius = 0.05f * (0.75f + Random01() * 0.5f),
+            .lifetime = 0.5f + Random01() * 0.4f,
+            .gradient = &s_fireBodyGrad,
+            .radiusCurve = &s_flameShape,
+            .forceField = &s_whirlFld});
+    }
+
+    // ── White-hot core jet straight up the axis — the whirl's spine.
+    if (GetRandomValue(0, 100) < 70)
+        FireFlow_EmitPacket(pos, radius * 0.15f, height * 0.6f, 0.5f, true, 1.4f);
+
+    // ── Embers slung out of the funnel by centrifugal force.
+    if (GetRandomValue(0, 100) < 30)
+    {
+        float a = Random01() * 2.0f * PI;
+        Vector3 rim = {pos.x + cosf(a) * radius, pos.y + Random01() * height * 0.6f,
+                       pos.z + sinf(a) * radius};
+        SpawnParticle((ParticleConfig){
+            .position = rim,
+            .velocity = (Vector3){-sinf(a) * 1.8f, 0.4f, cosf(a) * 1.8f},
+            .radius = 0.010f + Random01() * 0.008f,
+            .lifetime = 0.5f + Random01() * 0.4f,
+            .gradient = &s_fireCoreGrad,
+            .forceField = &s_flameFld}); // hand off to plain buoyancy once flung
+    }
+
+    // ── Smoke crown above the funnel.
+    if (GetRandomValue(0, 100) < 20)
+        SpawnParticle((ParticleConfig){
+            .position = (Vector3){pos.x + (Random01() - 0.5f) * radius,
+                                  pos.y + height * (0.8f + Random01() * 0.25f),
+                                  pos.z + (Random01() - 0.5f) * radius},
+            .velocity = (Vector3){(Random01() - 0.5f) * 0.3f, 0.4f + Random01() * 0.3f, (Random01() - 0.5f) * 0.3f},
+            .radius = 0.07f + Random01() * 0.05f,
+            .lifetime = 1.0f + Random01() * 0.8f,
+            .gradient = &s_fireSmokeGrad,
+            .radiusCurve = &s_smokeShape,
+            .forceField = &s_flameFld});
+
+    // ── Heat column + strong pulsing light — this is an ult, it owns the room.
+    if (GetRandomValue(0, 100) < 12)
+        ScreenDistort_Add(Vector3Add(pos, (Vector3){0, height * 0.5f, 0}),
+                          radius * 2.0f, 0.12f, 0.7f, 1.5f);
+    if (GetRandomValue(0, 100) < 35)
+        VFXLight_Spawn(Vector3Add(pos, (Vector3){0, height * 0.4f, 0}),
+                       VFX_Material(VC_MAT_FIRE)->soft, radius * (4.0f + Random01()),
+                       0.15f, VFX_PRIORITY_LOW);
 }

@@ -110,27 +110,16 @@ void VFX_ComposeAura(AuraStyle style, Vector3 pos, float radius, float time)
 {
     QiAura_LazyInit();
 
-    Color color = {0, 165, 255, 255};
+    Color color;
     switch (style)
     {
-    case AURA_FIRE:
-        color = (Color){255, 60, 0, 255};
-        break;
-    case AURA_ICE:
-        color = (Color){0, 165, 255, 255};
-        break;
-    case AURA_WIND:
-        color = (Color){0, 230, 90, 255};
-        break;
-    case AURA_LIGHTNING:
-        color = (Color){175, 45, 255, 255};
-        break;
-    case AURA_TAIJI:
-        color = (Color){255, 180, 0, 255};
-        break;
+    case AURA_FIRE:      color = VFX_Material(VC_MAT_FIRE)->glow; break;
+    case AURA_ICE:       color = VFX_Material(VC_MAT_QI)->glow; break;   // aura băng = khí xanh lam, không phải băng nhạt
+    case AURA_WIND:      color = VFX_Material(VC_MAT_WOOD)->glow; break;
+    case AURA_LIGHTNING: color = VFX_Material(VC_MAT_LIGHTNING)->body; break;
+    case AURA_TAIJI:     color = VFX_Material(VC_MAT_TAIJI)->glow; break; // gold có chủ ý
     case AURA_QI:
-        color = (Color){0, 165, 255, 255};
-        break;
+    default:             color = VFX_Material(VC_MAT_QI)->glow; break;
     }
 
     if (GetRandomValue(0, 999) >= QI_SPAWN_CHANCE_PERMILLE)
@@ -142,13 +131,11 @@ void VFX_ComposeAura(AuraStyle style, Vector3 pos, float radius, float time)
     float baseAngle = time * 2.5f;
     float angle = baseAngle + RAND_RANGE_F(-QI_SWIRL_JITTER_RAD, QI_SWIRL_JITTER_RAD);
 
-    float pulsingRadius = radius * (0.85f + 0.10f * sinf(time * 3.0f));
+    float pulsingRadius = radius * 0.85f * VC_Breathe(time, 3.0f, 0.118f);
     float ring = pulsingRadius * RAND_RANGE_F(0.2f, 0.5f);
 
-    Vector3 spawnPos = {
-        pos.x + cosf(angle) * ring,
-        pos.y + 0.015f,
-        pos.z + sinf(angle) * ring};
+    Vector3 spawnPos = VC_RingPointXZ(pos, ring, angle);
+    spawnPos.y += 0.015f;
 
     TrailConfig cfg = {0};
 

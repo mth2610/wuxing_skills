@@ -12,13 +12,15 @@
 
 #define MAX_INSTANCES 4
 
-typedef enum {
+typedef enum
+{
     STATE_CASTING,
     STATE_CHANNELING,
     STATE_DONE
 } SkillState;
 
-typedef struct {
+typedef struct
+{
     bool active;
     SkillState state;
     int ownerAgentId;
@@ -27,7 +29,7 @@ typedef struct {
     float timer;
     float sizeScale;
     float damageAccumulator;
-    
+
     Vector3 pathPoints[32];
     int pathPointCount;
     int lastSpawnedIdx;
@@ -37,8 +39,10 @@ static SkillInstance s_instances[MAX_INSTANCES];
 
 #include "glacial_cannon_skill_params.inl"
 
-void InitGlacialCannonSkill(int screenWidth, int screenHeight) {
-    for (int i = 0; i < MAX_INSTANCES; i++) s_instances[i].active = false;
+void InitGlacialCannonSkill(int screenWidth, int screenHeight)
+{
+    for (int i = 0; i < MAX_INSTANCES; i++)
+        s_instances[i].active = false;
 
 #define GLACIAL_CANNON_TUNABLE_COUNT 5
     static SkillTunableEntry s_tunables[GLACIAL_CANNON_TUNABLE_COUNT];
@@ -49,11 +53,15 @@ void InitGlacialCannonSkill(int screenWidth, int screenHeight) {
     RegisterSkillTunables(skillIndex, s_tunables, tn);
 }
 
-void CastGlacialCannonSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params) {
-    if (!SkillManager_CanCast(Skill_GetIndexByName("GLACIAL_CANNON"), agentId)) return;
+void CastGlacialCannonSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params)
+{
+    if (!SkillManager_CanCast(Skill_GetIndexByName("GLACIAL_CANNON"), agentId))
+        return;
 
-    for (int i = 0; i < MAX_INSTANCES; i++) {
-        if (s_instances[i].active) continue;
+    for (int i = 0; i < MAX_INSTANCES; i++)
+    {
+        if (s_instances[i].active)
+            continue;
 
         SkillInstance *s = &s_instances[i];
         s->state = STATE_CASTING;
@@ -67,7 +75,8 @@ void CastGlacialCannonSkill(int agentId, Vector3 startPos, Vector3 target, Skill
 
         // Initialize path points (line from start to target)
         s->pathPointCount = 16;
-        for (int j = 0; j < s->pathPointCount; j++) {
+        for (int j = 0; j < s->pathPointCount; j++)
+        {
             float t = (float)j / (float)(s->pathPointCount - 1);
             s->pathPoints[j] = Vector3Lerp(startPos, target, t);
         }
@@ -83,30 +92,41 @@ void CastGlacialCannonSkill(int agentId, Vector3 startPos, Vector3 target, Skill
     }
 }
 
-void UpdateGlacialCannonSkill(float dt, Vector3 enemyPos, float enemyRadius) {
-    for (int i = 0; i < MAX_INSTANCES; i++) {
+void UpdateGlacialCannonSkill(float dt, Vector3 enemyPos, float enemyRadius)
+{
+    for (int i = 0; i < MAX_INSTANCES; i++)
+    {
         SkillInstance *s = &s_instances[i];
-        if (!s->active) continue;
+        if (!s->active)
+            continue;
 
         s->timer += dt;
 
-        if (s->state == STATE_CASTING) {
-            if (s->timer >= s_castDuration) {
+        if (s->state == STATE_CASTING)
+        {
+            if (s->timer >= s_castDuration)
+            {
                 s->state = STATE_CHANNELING;
                 s->timer = 0.0f;
             }
-        } else if (s->state == STATE_CHANNELING) {
+        }
+        else if (s->state == STATE_CHANNELING)
+        {
             float progress = s->timer / s_waveDuration;
-            if (progress > 1.0f) progress = 1.0f;
+            if (progress > 1.0f)
+                progress = 1.0f;
 
             int wavefrontIdx = (int)(progress * (s->pathPointCount - 1));
-            if (wavefrontIdx >= s->pathPointCount) wavefrontIdx = s->pathPointCount - 1;
+            if (wavefrontIdx >= s->pathPointCount)
+                wavefrontIdx = s->pathPointCount - 1;
 
             // Spawn decals and mist particles at newly reached path points (80/20 formula)
-            if (wavefrontIdx > s->lastSpawnedIdx) {
+            if (wavefrontIdx > s->lastSpawnedIdx)
+            {
                 Texture2D frostDecalTex = ResourceManager_LoadTexture("assets/textures/decals/decal_frost_ring.png");
 
-                for (int idx = s->lastSpawnedIdx + 1; idx <= wavefrontIdx; idx++) {
+                for (int idx = s->lastSpawnedIdx + 1; idx <= wavefrontIdx; idx++)
+                {
                     Vector3 pos = s->pathPoints[idx];
 
                     // 1. Spawn Frost Decal (Scale 0.3 -> 1.2, fades out)
@@ -116,46 +136,29 @@ void UpdateGlacialCannonSkill(float dt, Vector3 enemyPos, float enemyRadius) {
                     float lifetime = 3.0f;
                     Color tint = (Color){200, 240, 255, 255}; // lint: allow-color
                     DecalSystem_AddEx(pos, rotation, 0.0f, scaleStart, scaleEnd, frostDecalTex, lifetime, tint, BLEND_ALPHA, 0.02f);
-
-                    // 2. Spawn Mist Particles (faint, slow, ground-hugging)
-                    int pCount = GetRandomValue(8, 12);
-                    for (int p = 0; p < pCount; p++) {
-                        float speedX = ((float)GetRandomValue(-100, 100) / 100.0f) * 0.15f;
-                        float speedY = 0.02f + ((float)GetRandomValue(0, 100) / 100.0f) * 0.05f; // extremely slow rising
-                        float speedZ = ((float)GetRandomValue(-100, 100) / 100.0f) * 0.15f;
-
-                        ParticleConfig pCfg = {0};
-                        pCfg.position = (Vector3){
-                            pos.x + ((float)GetRandomValue(-50, 50) / 100.0f) * 0.3f,
-                            pos.y + 0.01f, // close to ground
-                            pos.z + ((float)GetRandomValue(-50, 50) / 100.0f) * 0.3f
-                        };
-                        pCfg.velocity = (Vector3){ speedX, speedY, speedZ };
-                        pCfg.radius = (0.2f + ((float)GetRandomValue(0, 100) / 100.0f) * 0.2f) * s->sizeScale;
-                        pCfg.lifetime = 1.0f + ((float)GetRandomValue(0, 100) / 100.0f) * 0.8f;
-                        pCfg.colorStart = (Color){220, 245, 255, 18}; // lint: allow-color // extremely faint (Alpha 18)
-                        pCfg.colorEnd = (Color){230, 248, 255, 0}; // lint: allow-color
-                        SpawnParticle(pCfg);
-                    }
+                    VFX_ComposeMistVeil(pos, s->sizeScale * 1.0f, lifetime);
                 }
                 s->lastSpawnedIdx = wavefrontIdx;
             }
 
             s->damageAccumulator += s_damagePerSecond * dt;
-            if (s->damageAccumulator >= 5.0f) {
+            if (s->damageAccumulator >= 5.0f)
+            {
                 Vector3 currentImpactPos = s->pathPoints[wavefrontIdx];
 
                 ApplyAoEDamage(currentImpactPos, s_aoeRadius * s->sizeScale, s->damageAccumulator, 0.0f);
                 s->damageAccumulator = 0.0f;
 
-                if (GetRandomValue(0, 100) < 40) {
-                    VFX_TriggerExplosion(EXP_ICE, currentImpactPos, s->sizeScale, false);
+                if (GetRandomValue(0, 100) < 40)
+                {
+                    // VFX_TriggerExplosion(EXP_ICE, currentImpactPos, s->sizeScale, false);
                     PlayImpactSound(EFFECT_PRESET_ICE_SHATTER);
                 }
             }
 
-            if (s->timer >= s_waveDuration) {
-                VFX_TriggerExplosion(EXP_ICE, s->targetPos, s->sizeScale * 1.5f, true);
+            if (s->timer >= s_waveDuration)
+            {
+                // VFX_TriggerExplosion(EXP_ICE, s->targetPos, s->sizeScale * 1.5f, true);
                 PlayImpactSound(EFFECT_PRESET_ICE_SHATTER);
                 ApplyAoEDamage(s->targetPos, s_aoeRadius * s->sizeScale * 1.8f, s_damagePerSecond * 0.5f, 1.5f);
 
@@ -166,18 +169,23 @@ void UpdateGlacialCannonSkill(float dt, Vector3 enemyPos, float enemyRadius) {
     }
 }
 
-void DrawGlacialCannonSkill(void) {
+void DrawGlacialCannonSkill(void)
+{
     float time = GetTime();
-    for (int i = 0; i < MAX_INSTANCES; i++) {
+    for (int i = 0; i < MAX_INSTANCES; i++)
+    {
         SkillInstance *s = &s_instances[i];
-        if (!s->active) continue;
+        if (!s->active)
+            continue;
 
         // Draw Aura Qi continuously from cast until the skill is complete
         VFX_ComposeAura(AURA_QI, s->startPos, s_aoeRadius * s->sizeScale, time);
 
-        if (s->state == STATE_CHANNELING) {
+        if (s->state == STATE_CHANNELING)
+        {
             float progress = s->timer / s_waveDuration;
-            if (progress > 1.0f) progress = 1.0f;
+            if (progress > 1.0f)
+                progress = 1.0f;
 
             // Draw sequential Ice Spikes along path (with updated deterministic non-wobbly mesh)
             VFX_PathWave(PATH_ICE_SPIKE, s->pathPoints, s->pathPointCount, s_spikeScale * s->sizeScale, progress, time);
@@ -185,7 +193,8 @@ void DrawGlacialCannonSkill(void) {
     }
 }
 
-void UnloadGlacialCannonSkill(void) {
+void UnloadGlacialCannonSkill(void)
+{
     // No-op
 }
 

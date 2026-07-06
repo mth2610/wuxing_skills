@@ -33,72 +33,53 @@ void VFX_TriggerExplosion(ExplosionStyle style, Vector3 pos, float scale, bool c
     p->pitchRange = PI * 0.8f;
     p->upwardBias = 0.3f;
 
+    // Per-style: material nguyên tố + decal + tầm sáng. Gradient/force field
+    // lấy thẳng từ material (POISON/HOLY/VOID giờ có gradient bản sắc riêng
+    // thay vì mượn wood/taiji như trước).
+    const VFX_ElementMaterial *mat;
+    const char *decalPath;
     switch (style)
     {
         case EXP_FIRE:
-        {
-            config.decalTex = ResourceManager_LoadTexture("assets/textures/decals/decal_burn.png");
-            config.lightColor = (Color){255, 120, 10, 255};
-            config.lightRadius = 3.5f;
-            p->gradient = &s_fireGrad;
-            p->forceField = &s_fireFld;
+            mat = VFX_Material(VC_MAT_FIRE);
+            decalPath = "assets/textures/decals/decal_burn.png";
+            config.lightColor = mat->glow; config.lightRadius = 3.5f;
             break;
-        }
         case EXP_ICE:
-        {
-            config.decalTex = ResourceManager_LoadTexture("assets/textures/decals/decal_crack.png");
-            config.lightColor = (Color){150, 220, 255, 255};
-            config.lightRadius = 3.0f;
-            p->gradient = &s_snowGrad;
-            p->forceField = &s_snowFld;
+            mat = VFX_Material(VC_MAT_ICE);
+            decalPath = "assets/textures/decals/decal_crack.png";
+            config.lightColor = mat->body; config.lightRadius = 3.0f;
             break;
-        }
         case EXP_LIGHTNING:
-        {
-            config.decalTex = ResourceManager_LoadTexture("assets/textures/decals/decal_crack.png");
-            config.lightColor = (Color){0, 180, 255, 255};
-            config.lightRadius = 4.0f;
-            p->gradient = &s_lightningGrad;
-            p->forceField = &s_lightningFld;
+            mat = VFX_Material(VC_MAT_LIGHTNING);
+            decalPath = "assets/textures/decals/decal_crack.png";
+            config.lightColor = mat->glow; config.lightRadius = 4.0f;
             break;
-        }
         case EXP_EARTH:
-        {
-            config.decalTex = ResourceManager_LoadTexture("assets/textures/decals/decal_crack.png");
-            config.lightColor = (Color){220, 160, 100, 255};
-            config.lightRadius = 3.0f;
-            p->gradient = &s_earthGrad;
-            p->forceField = &s_earthFld;
+            mat = VFX_Material(VC_MAT_EARTH);
+            decalPath = "assets/textures/decals/decal_crack.png";
+            config.lightColor = mat->glow; config.lightRadius = 3.0f;
             break;
-        }
         case EXP_POISON:
-        {
-            config.decalTex = ResourceManager_LoadTexture("assets/textures/decals/decal_burn.png");
-            config.lightColor = (Color){80, 255, 100, 255};
-            config.lightRadius = 3.2f;
-            p->gradient = &s_woodGrad; // green tint
-            p->forceField = &s_woodFld;
+            mat = VFX_Material(VC_MAT_POISON);
+            decalPath = "assets/textures/decals/decal_burn.png";
+            config.lightColor = mat->body; config.lightRadius = 3.2f;
             break;
-        }
         case EXP_HOLY:
-        {
-            config.decalTex = ResourceManager_LoadTexture("assets/textures/decals/decal_burn.png");
-            config.lightColor = (Color){255, 235, 150, 255};
-            config.lightRadius = 4.5f;
-            p->gradient = &s_taijiGrad; // golden/yinyang tint
-            p->forceField = &s_taijiFld;
+            mat = VFX_Material(VC_MAT_HOLY);
+            decalPath = "assets/textures/decals/decal_burn.png";
+            config.lightColor = mat->glow; config.lightRadius = 4.5f;
             break;
-        }
         case EXP_VOID:
-        {
-            config.decalTex = ResourceManager_LoadTexture("assets/textures/decals/decal_burn.png");
-            config.lightColor = (Color){160, 30, 220, 255};
-            config.lightRadius = 3.8f;
-            p->gradient = &s_taijiGrad; // purple/black tint
-            p->forceField = &s_taijiFld;
+        default:
+            mat = VFX_Material(VC_MAT_VOID);
+            decalPath = "assets/textures/decals/decal_burn.png";
+            config.lightColor = mat->glow; config.lightRadius = 3.8f;
             break;
-        }
     }
+    config.decalTex = ResourceManager_LoadTexture(decalPath);
+    p->gradient = mat->grad;
+    p->forceField = (ForceField *)mat->fld;
 
     VFX_ComposeTriggerImpactBurst(pos, scale, &config);
 

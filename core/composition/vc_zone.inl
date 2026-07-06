@@ -25,12 +25,12 @@ void VFX_ComposeZone(ZoneStyle style, Vector3 pos, float radius, float progress,
     GroundPatternStyle groundStyle;
     switch (style)
     {
-        case ZONE_LAVA:   color = (Color){255, 90, 20, 255};  groundStyle = GROUND_LAVA;  break;
-        case ZONE_FROST:  color = (Color){160, 225, 255, 255}; groundStyle = GROUND_FROST; break;
-        case ZONE_POISON: color = (Color){120, 220, 90, 255};  groundStyle = GROUND_CRACK_RADIAL; break;
-        case ZONE_HOLY:   color = (Color){255, 235, 150, 255}; groundStyle = GROUND_MAGIC_CIRCLE; break;
-        case ZONE_VOID:   color = (Color){140, 40, 200, 255};  groundStyle = GROUND_RUNE; break;
-        default:          color = ELEMENT_COLOR_TAIJI;         groundStyle = GROUND_MAGIC_CIRCLE; break;
+        case ZONE_LAVA:   color = VFX_Material(VC_MAT_FIRE)->glow;   groundStyle = GROUND_LAVA;  break;
+        case ZONE_FROST:  color = VFX_Material(VC_MAT_ICE)->glow;    groundStyle = GROUND_FROST; break;
+        case ZONE_POISON: color = VFX_Material(VC_MAT_POISON)->body; groundStyle = GROUND_CRACK_RADIAL; break;
+        case ZONE_HOLY:   color = VFX_Material(VC_MAT_HOLY)->glow;   groundStyle = GROUND_MAGIC_CIRCLE; break;
+        case ZONE_VOID:   color = VFX_Material(VC_MAT_VOID)->glow;   groundStyle = GROUND_RUNE; break;
+        default:          color = VFX_Material(VC_MAT_TAIJI)->body;  groundStyle = GROUND_MAGIC_CIRCLE; break;
     }
 
     // Ground field never fully "completes" — keep progress in the pattern's
@@ -53,9 +53,8 @@ void VFX_ComposeZone(ZoneStyle style, Vector3 pos, float radius, float progress,
     // callers invoke this once per frame while the zone is active.
     if (GetRandomValue(0, 100) < 25)
     {
-        float a = Random01() * 2.0f * PI;
-        float r = radius * Random01();
-        Vector3 spawnPos = {pos.x + cosf(a) * r, pos.y + 0.02f, pos.z + sinf(a) * r};
+        Vector3 spawnPos = VC_RingPointXZ(pos, radius * Random01(), Random01() * 2.0f * PI);
+        spawnPos.y += 0.02f;
 
         Vector3 vel = (style == ZONE_FROST) ? (Vector3){0.0f, 0.05f, 0.0f}
                     : (style == ZONE_VOID)  ? (Vector3){0.0f, 0.12f, 0.0f}
@@ -77,12 +76,12 @@ void VFX_ComposeZone(ZoneStyle style, Vector3 pos, float radius, float progress,
     // painted floor sticker. Desaturated so it doesn't compete with motes.
     if (GetRandomValue(0, 100) < 12)
     {
-        float ma = Random01() * 2.0f * PI;
-        float mr = radius * (0.3f + 0.7f * Random01());
+        Vector3 mistPos = VC_RingPointXZ(pos, radius * (0.3f + 0.7f * Random01()), Random01() * 2.0f * PI);
+        mistPos.y += 0.06f;
         Color mist = {(unsigned char)(color.r / 3 + 55), (unsigned char)(color.g / 3 + 55),
                       (unsigned char)(color.b / 3 + 55), 70};
         SpawnParticle((ParticleConfig){
-            .position = (Vector3){pos.x + cosf(ma) * mr, pos.y + 0.06f, pos.z + sinf(ma) * mr},
+            .position = mistPos,
             .velocity = (Vector3){(Random01() - 0.5f) * 0.08f, 0.02f + Random01() * 0.03f, (Random01() - 0.5f) * 0.08f},
             .colorStart = mist,
             .colorEnd = ColorAlpha(mist, 0.0f),
@@ -96,9 +95,8 @@ void VFX_ComposeZone(ZoneStyle style, Vector3 pos, float radius, float progress,
     // crackle, poison bubble...) that breaks the ambient loop's monotony.
     if (GetRandomValue(0, 1000) < 12)
     {
-        float ba = Random01() * 2.0f * PI;
-        float br = radius * Random01() * 0.8f;
-        Vector3 burstPos = {pos.x + cosf(ba) * br, pos.y + 0.05f, pos.z + sinf(ba) * br};
+        Vector3 burstPos = VC_RingPointXZ(pos, radius * Random01() * 0.8f, Random01() * 2.0f * PI);
+        burstPos.y += 0.05f;
         VFX_ComposeGlintBurst(burstPos, 5, 0.1f, color);
         VFXLight_Spawn(burstPos, color, 0.8f, 0.25f, VFX_PRIORITY_LOW);
     }

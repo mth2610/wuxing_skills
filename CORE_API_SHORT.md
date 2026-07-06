@@ -344,6 +344,97 @@ void VFX_TriggerImpactBurst(Vector3 pos, float sizeScale, const ImpactBurstConfi
 ```
 4-step pipeline: screen distort → ground decal → point light flash → radial particle burst.
 
+### Procedural Ray VFX (`core/vfx_proc_ray.h`)
+Managed pools (32 rays + 32 bolts) for lightning/energy strands. Spawn→Update+Draw each frame→Kill.
+```c
+typedef struct { Color colorCore, colorGlow; float glowWidthMult, waveSpeed, amplitudeRatio,
+  jitterStrength, thickness, envelopePow; bool sharpKinks; float taperTip; int branchCount; float branchScale; } ProcRayConfig;
+ProcRayConfig ProcRay_LightningConfig(void);     // violet/white, high jitter — free-end rays
+ProcRayConfig ProcRay_BoltLightningConfig(void); // low amplitude, branchCount=3 — fixed sky→ground bolts
+ProcRayConfig ProcRay_EnergyConfig(void);        // cyan/gold smooth   | ProcRay_WindConfig(): white/teal, low amp
+// Free-end ray (origin fixed, far end whips):
+int  SpawnProcRay(ProcRayConfig cfg, float scale);
+void ProcRay_SetPhase(int id, float phase); void ProcRay_SetBrightness(int id, float b);
+void ProcRay_Update(int id, Vector3 origin, Vector3 dir, float length, float scale, float dt);
+void ProcRay_Draw(int id, Camera3D cam); void ProcRay_Kill(int id);
+// Fixed bolt (both ends pinned, jagged middle re-flickers every 50ms):
+int  SpawnProcBolt(ProcRayConfig cfg, float scale);
+void ProcBolt_SetBrightness(int id, float b);
+void ProcBolt_Update(int id, Vector3 from, Vector3 to, float scale, float dt);
+void ProcBolt_Draw(int id, Camera3D cam); void ProcBolt_Kill(int id);
+// Unmanaged immediate-mode bolt (caller owns 9 waypoints, regenerate+draw per frame, wrap in BLEND_ADDITIVE):
+void RegenerateLightningWaypoints(Vector3 *waypoints9, Vector3 from, Vector3 to, float scale);
+void DrawLightningBolt(const Vector3 *waypoints9, float thickness, Camera3D cam); // legacy violet/white
+void DrawLightningBoltEx(const Vector3 *waypoints9, float thickness, Camera3D cam, Color colorGlow, Color colorCore);
+```
+
+### Visual Composer Catalog (`core/composition/visual_composer.h`)
+Self-contained composed effects — each manages its own shaders/materials/blend/depth state; just call it. Two call conventions: **continuous** = call once per frame with a running `time` (they probability-gate their own decals/lights, no stacking); **one-shot** = call exactly once. All world-space, meter scale.
+```c
+// Basics (one-shot unless noted):
+void VFX_ComposeSmokePuff(Vector3 pos, float size);
+void VFX_ComposeSmokeTrail(Vector3 start, Vector3 end, float duration);
+void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width);      // continuous while crack grows
+int  VFX_ComposeLightningBolt(Vector3 start, Vector3 end, float scale);      // spawns managed ProcBolt, returns id
+void VFX_ComposeImpact(Vector3 pos, EffectPresetType preset, float scale);   // element impact (sound+hitstop+burst)
+void VFX_ComposeCast(Vector3 pos, EffectPresetType preset, float scale);     // element cast/windup
+int  VFX_ComposeProjectileTrail(Vector3 start, Vector3 target, EffectPresetType preset, float scale, float speed);
+// Beauty primitives (garnish; one-shot, cheap enough to gate-call often):
+void VFX_ComposeShockwaveRing(Vector3 pos, float radius, float life, Color tint); // expanding ground ring + distort
+void VFX_ComposeGlintBurst(Vector3 pos, int count, float spread, Color tint);     // sparkle pop, 0.1-0.2s
+void VFX_ComposeEmberDrift(Vector3 pos, float radius, int count, Color tint);     // floating embers/dust, 1-2s
+void VFX_ComposeStreakFlare(Vector3 pos, float scale, Color tint);                // hot white flash + afterglow
+// Mesh compositions (continuous — call per frame):
+void VFX_ComposeStonePillar(Vector3 basePos, float progress); // rises 0→1
+void VFX_ComposeBoulder(Vector3 pos);
+void VFX_ComposeIceCrystal(Vector3 basePos, int seed);        // seed stable per cast → same crystals every frame
+void VFX_ComposeMagicPuddle(Vector3 pos);
+void VFX_ComposeFireball(Vector3 pos, float time);
+void VFX_ComposeMetalShardCluster(Vector3 basePos, int seed);
+void VFX_ComposeBladeRing(Vector3 pos, float radius, int bladeCount, float rotationDeg);
+void VFX_ComposeFlameWisp(Vector3 pos, float time);
+void VFX_ComposeFirePillar(Vector3 basePos, float progress);
+// Archetypes (continuous, style enums — see full CORE_API.md for style lists):
+void VFX_ComposeProjectile(ProjectileStyle, Vector3 pos, Vector3 target, float progress, float scale, float time);
+void VFX_GroundPattern(GroundPatternStyle, Vector3 pos, float radius, float progress, float time);
+void VFX_ComposeBeam(BeamStyle, Vector3 start, Vector3 end, float width, float progress, float time);
+void VFX_PathWave(PathStyle, const Vector3 *points, int count, float scale, float progress, float time);
+void VFX_SummonCircle(Vector3 pos, float radius, float progress, float time, Color color);
+void VFX_TriggerExplosion(ExplosionStyle, Vector3 pos, float scale, bool cameraShake); // one-shot
+void VFX_ComposeAura(AuraStyle, Vector3 pos, float radius, float time);
+void VFX_ComposeShield(ShieldStyle, Vector3 pos, float radius, float progress, float time);
+void VFX_ComposeChain(ChainStyle, const Vector3 *targets, int count, float progress, float time);
+void VFX_ComposeZone(ZoneStyle, Vector3 pos, float radius, float progress, float time);
+void VFX_ComposeSlashArc(SlashStyle, Vector3 pos, Vector3 dir, float radius, float arcDegrees, float progress, float time);
+void VFX_ComposeChargeUp(ChargeStyle, Vector3 pos, float radius, float progress, float time);
+void VFX_ComposeQiAura(QiStyle, Vector3 casterPos, float progress, float time, float radius);
+void VFX_AttachQiAura(int casterAgentId, Vector3 anchorPos, float bodyHeight, EffectPresetType element, float scale, int wispCount);
+void VFX_DetachQiAura(int casterAgentId); void VFX_UpdateQiAuras(float dt);
+// Element skill sets — `time` param = continuous, `scale`-only = one-shot:
+void VFX_ComposePlasmaOrb(Vector3 pos, float radius, float time);      // wispy membrane + cyan core + pink curl wisps
+void VFX_ComposeLeafSwirl(Vector3 pos, float radius, float time);      // WOOD: leaf vortex (buff/channel)
+void VFX_ComposeBloomBurst(Vector3 pos, float scale);                  // WOOD: petal blossom pop (heal proc)
+void VFX_ComposeLeafFall(Vector3 pos, float radius, float time);       // WOOD: fluttering canopy zone
+void VFX_ComposeBladeStorm(Vector3 pos, float radius, float time);     // METAL: 7 orbiting steel blades (aura)
+void VFX_ComposeShrapnelBurst(Vector3 pos, float scale);               // METAL: fragment explosion (crater only near ground)
+void VFX_ComposeRicochetSpark(Vector3 pos, Vector3 dir, float scale);  // METAL: ~35° parry spark fan along dir
+void VFX_ComposeSplashBurst(Vector3 pos, float scale);                 // WATER: crown splash + double ground ring
+void VFX_ComposeBubbleStream(Vector3 pos, float radius, float time);   // WATER: rising bubbles, pop on death
+void VFX_ComposeMistVeil(Vector3 pos, float radius, float time);       // WATER: low crawling fog bank
+void VFX_ComposeGustSlash(Vector3 pos, Vector3 dir, float scale);      // TAIJI: flat ~80° wind blade along dir
+void VFX_ComposeCyclone(Vector3 pos, float radius, float time);        // TAIJI: wind funnel + dust skirt
+void VFX_ComposeStaticField(Vector3 pos, float radius, float time);    // TAIJI: violet micro-arcs crawling a sphere
+void VFX_ComposeYinYangOrbit(Vector3 pos, float radius, float time);   // TAIJI: white/dark orb pair + taiji mandala
+void VFX_ComposeRockBurst(Vector3 pos, float scale);                   // EARTH: debris+dust+camera shake
+void VFX_ComposeFloatingStones(Vector3 pos, float radius, float time); // EARTH: 5 levitating rock meshes
+void VFX_ComposeQuakeRumble(Vector3 pos, float radius, float time);    // EARTH: hopping grit + dust + low shake
+void VFX_ComposeFlameBreath(Vector3 pos, Vector3 dir, float scale, float time); // FIRE: flamethrower cone (continuous)
+void VFX_ComposeBurningGround(Vector3 pos, float radius, float time);  // FIRE: ignited patch (DoT zone)
+void VFX_ComposeFireWhirl(Vector3 pos, float radius, float time);      // FIRE: fire tornado (ult)
+// Special-shape (continuous): GlowingVine (bezier vine coiling a target), WaterStream (bezier tube), GlowingVine/WaterStream signatures in CORE_API.md §19.
+```
+Budget note: CPU particle pool = 2000. Continuous composers are tuned to coexist (each keeps its standing population ≤ ~40 particles except PlasmaOrb ≈ 300–600); don't multiply their spawn rates/lifetimes without re-budgeting.
+
 ### Math Utils (`core/utils_math.h`)
 ```c
 float Math_Mix(float x, float y, float a);  // LERP
@@ -356,8 +447,9 @@ Use these instead of reimplementing lerp/smoothstep.
 `MAX_VFX_LIGHTS = 16`, static pool.
 ```c
 typedef struct { Vector3 position; float radius; Color color; } VFXLightData;
+typedef enum { VFX_PRIORITY_LOW = 0, VFX_PRIORITY_HIGH_ULTIMATE } VFXLightPriority; // pool-eviction priority when full
 void VFXLight_Init(void); void VFXLight_Reset(void);
-void VFXLight_Spawn(Vector3 pos, Color color, float radius, float lifetime); // auto-expires, no manual kill
+void VFXLight_Spawn(Vector3 pos, Color color, float radius, float lifetime, int priority); // auto-expires, no manual kill
 void VFXLight_Update(float dt);
 void VFXLight_GetActive(VFXLightData *out, int *count, int maxCount); // maxCount <= 16, call before drawing lit skill
 ```
@@ -629,7 +721,8 @@ typedef enum { MESH_PRESET_DISC, MESH_PRESET_RING, MESH_PRESET_CONE, MESH_PRESET
   MESH_PRESET_CYLINDER, MESH_PRESET_SPHERE, MESH_PRESET_SHOCKWAVE, MESH_PRESET_PYRAMID, MESH_PRESET_TETRAHEDRON } MeshPresetType;
 void DrawEffectMesh(MeshPresetType type, Vector3 pos, Vector3 scale, Color color);
 
-typedef enum { MATERIAL_FIRE, MATERIAL_ICE, MATERIAL_WATER, MATERIAL_PORTAL, MATERIAL_CUSTOM } MaterialPreset; // CUSTOM set by Material_LoadCustom()
+typedef enum { MAT_FIRE, MAT_ICE, MAT_WATER, MAT_PORTAL, MAT_ROCK, MAT_METAL, MAT_GLASS, MAT_CUSTOM } MaterialPreset;
+// Legacy aliases MATERIAL_FIRE/ICE/WATER/PORTAL/CUSTOM still #defined; Material_Load == Material_Get. CUSTOM set by Material_LoadCustom().
 typedef struct {
     Color    baseColor;          // primary tint; also drives rim glow + dissolve edge glow
     float    rimStrength;        // 0..~2, rim/edge glow brightness (Fresnel-weighted, light-facing biased)
@@ -657,6 +750,27 @@ void Material_Begin(EffectMaterial mat); void Material_End(void);
 - Shader ignores per-vertex `Color` passed to the mesh-draw call — tint comes only from `u_baseColor`.
 - `texture1.id==0` skips the sample (guarded by `u_hasTexture1`) rather than sampling unbound/stale texture. Sampled as luminance mask (`.r` only).
 - `Material_SetFloat` still works on `Material_LoadCustom` materials for any uniform, e.g. animating `u_dissolve`. `fx.glsl`'s `dissolveCalc()` gives nonzero `edgeFactor` for ~8% of fragments even at `dissolve==0.0` — avoids speckle the instant material appears.
+
+Crystal material — one shader for all crystals (ice/gem/quartz/metal shard): fresnel, fake refraction, thickness absorption, internal cracks, specular sparkle. Pair with `ProceduralMesh_DrawCrystal`/`DrawCrystalCluster`.
+```c
+typedef struct { Color baseColor, edgeColor; float roughness /*→fresnelPower mix(1,8)*/, fresnel /*→rimStrength*/,
+  refraction, sparkle, crack, emission, thickness, dissolve; Texture2D texture1 /*id==0 → water_caustics default*/; } CrystalMaterialParams;
+CrystalMaterial CrystalMaterial_Load(CrystalMaterialParams params);
+void CrystalMaterial_Begin(CrystalMaterial mat); void CrystalMaterial_End(void);
+// Recipes: ICE = base(0,110,230,200) edge(130,220,255) rough 0.35 refr 0.15 crack 0.35 thick 1.8
+//          METAL = base(108,120,130,255) edge(245,250,255) rough 0.82 fresnel 2.0 refr 0 sparkle 1.0 crack 0
+```
+
+Plasma material — wispy energy membrane (`plasma_shell.vs/.fs`): alpha = fresnel × animated fbm ⇒ **fully transparent center** (EffectMaterial translucency can't: it has a 0.3 alpha floor face-on). Draw spheres under `BLEND_ADDITIVE`; disable backface culling to get the far-side membrane layer free. VS undulates the surface itself.
+```c
+typedef struct { Color baseColor /*membrane body, alpha=master*/, wispColor /*bright crests*/;
+  float noiseScale /*2.5-4*/, noiseSpeed /*0.3-0.8, neg=reverse*/, fresnelPower /*higher=emptier center*/,
+  rimStrength, emissive, opacity, displaceAmp /*world units, ~8% of sphere radius*/; } PlasmaMaterialParams;
+PlasmaMaterial PlasmaMaterial_Load(PlasmaMaterialParams params);
+void PlasmaMaterial_Begin(PlasmaMaterial mat); // runtime changes: edit mat.params before Begin
+void PlasmaMaterial_End(void);
+// Reference use: VFX_ComposePlasmaOrb (vc_plasma.inl) — outer shell noiseScale 3.2/speed 0.45, inner 4.6/-0.6.
+```
 
 ```c
 typedef enum {

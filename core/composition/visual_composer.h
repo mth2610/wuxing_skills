@@ -2,27 +2,29 @@
 #define VISUAL_COMPOSER_H
 
 #include "raylib.h"
-#include "core/skill_helper.h" // for EffectPresetType
-#include "core/particle_system.h" // for ParticleRadialBurstConfig
+#include "core/skill_helper.h"          // for EffectPresetType
+#include "core/particle_system.h"       // for ParticleRadialBurstConfig
+#include "core/composition/vc_motion.h" // Motion Library (quỹ đạo/shaper thuần toán học)
 
-typedef struct {
+typedef struct
+{
     /* --- Step 1: screen distortion --- */
-    bool  distortEnabled;
+    bool distortEnabled;
     float distortRadius, distortStrength, distortLife, distortSpeed;
 
     /* --- Step 2: ground decal --- */
-    bool     decalEnabled;
+    bool decalEnabled;
     Texture2D decalTex;
-    float     decalScale;   /* multiplied by sizeScale at call time */
-    float     decalLife;
-    Color     decalTint;
-    bool      decalRandomRotation; /* true = GetRandomValue(0,360), false = use decalFixedRotation */
-    float     decalFixedRotation;
+    float decalScale; /* multiplied by sizeScale at call time */
+    float decalLife;
+    Color decalTint;
+    bool decalRandomRotation; /* true = GetRandomValue(0,360), false = use decalFixedRotation */
+    float decalFixedRotation;
 
     /* --- Step 3: point light flash --- */
-    bool  lightEnabled;
+    bool lightEnabled;
     Color lightColor;
-    float lightRadius;  /* multiplied by sizeScale at call time */
+    float lightRadius; /* multiplied by sizeScale at call time */
     float lightLife;
 
     /* --- Step 4: radial particle burst --- */
@@ -89,9 +91,35 @@ void VFX_ComposeLeafFall(Vector3 pos, float radius, float time);
 void VFX_ComposeBladeStorm(Vector3 pos, float radius, float time);
 void VFX_ComposeShrapnelBurst(Vector3 pos, float scale);
 void VFX_ComposeRicochetSpark(Vector3 pos, Vector3 dir, float scale);
+// Water skill set — SplashBurst is one-shot (crown splash + rings);
+// BubbleStream (rising bubbles that pop) and MistVeil (low fog bank) are
+// continuous.
+void VFX_ComposeSplashBurst(Vector3 pos, float scale);
+void VFX_ComposeBubbleStream(Vector3 pos, float radius, float time);
+void VFX_ComposeMistVeil(Vector3 pos, float radius, float time);
+// Taiji element set (wind/storm/static/yin-yang) — GustSlash is one-shot
+// (directional wind blade along `dir`); Cyclone, StaticField and YinYangOrbit
+// are continuous.
+void VFX_ComposeGustSlash(Vector3 pos, Vector3 dir, float scale);
+void VFX_ComposeCyclone(Vector3 pos, float radius, float time);
+void VFX_ComposeStaticField(Vector3 pos, float radius, float time);
+void VFX_ComposeYinYangOrbit(Vector3 pos, float radius, float time);
+// Earth skill set — RockBurst is one-shot (debris + dust + shake);
+// FloatingStones (levitating rocks around caster) and QuakeRumble (trembling
+// zone) are continuous.
+void VFX_ComposeRockBurst(Vector3 pos, float scale);
+void VFX_ComposeFloatingStones(Vector3 pos, float radius, float time);
+void VFX_ComposeQuakeRumble(Vector3 pos, float radius, float time);
+// Fire skill set (Phase 2) — all continuous: FlameBreath is a directional
+// flamethrower cone along `dir`; BurningGround an ignited patch; FireWhirl a
+// fire tornado.
+void VFX_ComposeFlameBreath(Vector3 pos, Vector3 dir, float scale, float time);
+void VFX_ComposeBurningGround(Vector3 pos, float radius, float time);
+void VFX_ComposeFireWhirl(Vector3 pos, float radius, float time);
 
 // 10. High-level Archetypes & Styles
-typedef enum {
+typedef enum
+{
     PROJECTILE_FIREBALL,
     PROJECTILE_ICE,
     PROJECTILE_LIGHTNING,
@@ -100,7 +128,8 @@ typedef enum {
     PROJECTILE_YINYANG
 } ProjectileStyle;
 
-typedef enum {
+typedef enum
+{
     GROUND_CRACK_RADIAL,
     GROUND_CRACK_LINE,
     GROUND_MAGIC_CIRCLE,
@@ -110,7 +139,8 @@ typedef enum {
     GROUND_RUNE
 } GroundPatternStyle;
 
-typedef enum {
+typedef enum
+{
     BEAM_FIRE,
     BEAM_LIGHTNING,
     BEAM_ICE,
@@ -118,7 +148,8 @@ typedef enum {
     BEAM_VOID
 } BeamStyle;
 
-typedef enum {
+typedef enum
+{
     PATH_THORNS,
     PATH_STONE_PILLAR,
     PATH_ICE_SPIKE,
@@ -126,7 +157,8 @@ typedef enum {
     PATH_LIGHTNING_CHAIN
 } PathStyle;
 
-typedef enum {
+typedef enum
+{
     EXP_FIRE,
     EXP_ICE,
     EXP_LIGHTNING,
@@ -136,7 +168,8 @@ typedef enum {
     EXP_VOID
 } ExplosionStyle;
 
-typedef enum {
+typedef enum
+{
     AURA_FIRE,
     AURA_ICE,
     AURA_WIND,
@@ -145,7 +178,8 @@ typedef enum {
     AURA_QI
 } AuraStyle;
 
-typedef enum {
+typedef enum
+{
     QI_ICE,
     QI_FIRE,
     QI_LIGHTNING,
@@ -154,7 +188,8 @@ typedef enum {
 } QiStyle;
 
 // 11. Phase 3 archetypes — shield/chain/zone/slash/charge
-typedef enum {
+typedef enum
+{
     SHIELD_METAL,
     SHIELD_WOOD,
     SHIELD_WATER,
@@ -162,7 +197,8 @@ typedef enum {
     SHIELD_TAIJI
 } ShieldStyle;
 
-typedef enum {
+typedef enum
+{
     CHAIN_LIGHTNING,
     CHAIN_VINE,
     CHAIN_WATER,
@@ -170,7 +206,8 @@ typedef enum {
     CHAIN_TAIJI
 } ChainStyle;
 
-typedef enum {
+typedef enum
+{
     ZONE_LAVA,
     ZONE_FROST,
     ZONE_POISON,
@@ -178,7 +215,8 @@ typedef enum {
     ZONE_VOID
 } ZoneStyle;
 
-typedef enum {
+typedef enum
+{
     SLASH_METAL,
     SLASH_WOOD,
     SLASH_FIRE,
@@ -186,7 +224,8 @@ typedef enum {
     SLASH_EARTH
 } SlashStyle;
 
-typedef enum {
+typedef enum
+{
     CHARGE_FIRE,
     CHARGE_METAL,
     CHARGE_WATER,

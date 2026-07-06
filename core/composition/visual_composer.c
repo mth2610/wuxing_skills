@@ -39,6 +39,7 @@
 #include "vc_fire.inl"
 #include "vc_earth.inl"
 #include "vc_plasma.inl"
+#include "vc_taiji.inl"
 
 // Include high-level general VFX system implementations
 #include "vc_projectile.inl"

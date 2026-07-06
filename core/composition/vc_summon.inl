@@ -2,9 +2,10 @@ static void DrawGroundNeonLine(Vector3 p1, Vector3 p2, float thickness, Color co
 {
     Vector3 dir = Vector3Subtract(p2, p1);
     float dist = Vector3Length(dir);
-    if (dist < 0.0001f) return;
+    if (dist < 0.0001f)
+        return;
     dir = Vector3Scale(dir, 1.0f / dist);
-    
+
     Vector3 right = {-dir.z, 0.0f, dir.x};
     float halfT = thickness * 0.5f;
 
@@ -27,8 +28,7 @@ static void DrawGroundNeonSquare(Vector3 center, float size, float angleRad, flo
         {-d, 0.0f, -d},
         {d, 0.0f, -d},
         {d, 0.0f, d},
-        {-d, 0.0f, d}
-    };
+        {-d, 0.0f, d}};
 
     float cosA = cosf(angleRad);
     float sinA = sinf(angleRad);
@@ -37,7 +37,7 @@ static void DrawGroundNeonSquare(Vector3 center, float size, float angleRad, flo
     {
         float rx = pts[i].x * cosA - pts[i].z * sinA;
         float rz = pts[i].x * sinA + pts[i].z * cosA;
-        pts[i] = (Vector3){ center.x + rx, center.y, center.z + rz };
+        pts[i] = (Vector3){center.x + rx, center.y, center.z + rz};
     }
 
     rlBegin(RL_QUADS);
@@ -50,9 +50,11 @@ static void DrawGroundNeonSquare(Vector3 center, float size, float angleRad, flo
 
 static void DrawGroundNeonCircle(Vector3 center, float radius, float thickness, Color col, int segments)
 {
-    if (segments < 4) segments = 4;
+    if (segments < 4)
+        segments = 4;
     Vector3 pts[64];
-    if (segments > 64) segments = 64;
+    if (segments > 64)
+        segments = 64;
 
     for (int i = 0; i < segments; i++)
     {
@@ -60,8 +62,7 @@ static void DrawGroundNeonCircle(Vector3 center, float radius, float thickness, 
         pts[i] = (Vector3){
             center.x + cosf(angle) * radius,
             center.y,
-            center.z + sinf(angle) * radius
-        };
+            center.z + sinf(angle) * radius};
     }
 
     rlBegin(RL_QUADS);
@@ -75,9 +76,11 @@ static void DrawGroundNeonCircle(Vector3 center, float radius, float thickness, 
 void VFX_SummonCircle(Vector3 pos, float radius, float progress, float time, Color color)
 {
     float alpha = 1.0f;
-    if (progress > 0.8f) {
+    if (progress > 0.8f)
+    {
         alpha = (1.0f - progress) / 0.2f;
-        if (alpha < 0.0f) alpha = 0.0f;
+        if (alpha < 0.0f)
+            alpha = 0.0f;
     }
 
     float currentRadius = radius * fminf(progress / 0.15f, 1.0f);
@@ -110,13 +113,12 @@ void VFX_SummonCircle(Vector3 pos, float radius, float progress, float time, Col
         {-d, 0.0f, -d},
         {d, 0.0f, -d},
         {d, 0.0f, d},
-        {-d, 0.0f, d}
-    };
+        {-d, 0.0f, d}};
     for (int i = 0; i < 4; i++)
     {
         float rx = corners[i].x * cosA - corners[i].z * sinA;
         float rz = corners[i].x * sinA + corners[i].z * cosA;
-        Vector3 cornerPos = (Vector3){ drawPos.x + rx, drawPos.y + 0.001f, drawPos.z + rz };
+        Vector3 cornerPos = (Vector3){drawPos.x + rx, drawPos.y + 0.001f, drawPos.z + rz};
         DrawGroundNeonSquare(cornerPos, currentRadius * 0.22f, time * -3.0f, 0.008f * currentRadius, col);
     }
 
@@ -133,8 +135,7 @@ void VFX_SummonCircle(Vector3 pos, float radius, float progress, float time, Col
         Vector3 spawnPos = {
             pos.x + cosf(angle) * dist,
             pos.y + 0.05f + ((float)rand() / (float)RAND_MAX) * 0.5f,
-            pos.z + sinf(angle) * dist
-        };
+            pos.z + sinf(angle) * dist};
         Vector3 toCenter = Vector3Subtract(pos, spawnPos);
         Vector3 vel = Vector3Scale(Vector3Normalize(toCenter), 1.2f);
 
@@ -144,8 +145,7 @@ void VFX_SummonCircle(Vector3 pos, float radius, float progress, float time, Col
             .radius = (0.015f + ((float)rand() / (float)RAND_MAX) * 0.025f) * radius,
             .lifetime = 0.5f,
             .colorStart = color,
-            .colorEnd = (Color){color.r, color.g, color.b, 0}
-        });
+            .colorEnd = (Color){color.r, color.g, color.b, 0}});
     }
 
     // 6. Center glow light
@@ -154,24 +154,39 @@ void VFX_SummonCircle(Vector3 pos, float radius, float progress, float time, Col
 
 void VFX_ComposeQiAura(QiStyle style, Vector3 casterPos, float progress, float time, float radius)
 {
-    Color color = {225, 245, 255, 255}; // default QI_XIANXIA
+    Color color;
     switch (style)
     {
-        case QI_ICE:       color = (Color){160, 225, 255, 255}; break; // lint: allow-color
-        case QI_FIRE:      color = (Color){255, 110, 30, 255};  break; // lint: allow-color
-        case QI_LIGHTNING: color = (Color){180, 110, 255, 255}; break; // lint: allow-color
-        case QI_WOOD:      color = (Color){100, 225, 140, 255}; break; // lint: allow-color
-        case QI_XIANXIA:   color = (Color){220, 240, 255, 255}; break; // lint: allow-color
+    case QI_ICE:
+        color = VFX_Material(VC_MAT_ICE)->soft;
+        break;
+    case QI_FIRE:
+        color = VFX_Material(VC_MAT_FIRE)->soft;
+        break;
+    case QI_LIGHTNING:
+        color = VFX_Material(VC_MAT_LIGHTNING)->soft;
+        break;
+    case QI_WOOD:
+        color = VFX_Material(VC_MAT_WOOD)->soft;
+        break;
+    case QI_XIANXIA:
+    default:
+        color = VFX_Material(VC_MAT_QI)->soft;
+        break;
     }
 
     // 1. Calculate breathing phase & alpha
     float fadeAlpha = 1.0f;
-    if (progress < 0.15f) {
+    if (progress < 0.15f)
+    {
         fadeAlpha = progress / 0.15f; // fade in
-    } else if (progress > 0.8f) {
+    }
+    else if (progress > 0.8f)
+    {
         fadeAlpha = (1.0f - progress) / 0.2f; // fade out
     }
-    if (fadeAlpha < 0.0f) fadeAlpha = 0.0f;
+    if (fadeAlpha < 0.0f)
+        fadeAlpha = 0.0f;
 
     float opacity = 0.22f; // thin wispy Xianxia feel
     float collapse = (progress > 0.8f) ? (1.0f - (progress - 0.8f) / 0.2f) : 1.0f;
@@ -183,7 +198,7 @@ void VFX_ComposeQiAura(QiStyle style, Vector3 casterPos, float progress, float t
 
     int ribbonCount = 5;
     float ribbonWidth = 0.018f;
-    Color ribbonCol = (Color){ color.r, color.g, color.b, (unsigned char)(255 * opacity * fadeAlpha) };
+    Color ribbonCol = (Color){color.r, color.g, color.b, (unsigned char)(255 * opacity * fadeAlpha)};
 
     for (int s = 0; s < ribbonCount; s++)
     {
@@ -193,31 +208,27 @@ void VFX_ComposeQiAura(QiStyle style, Vector3 casterPos, float progress, float t
         Vector3 p0 = {
             casterPos.x + cosf(baseAngle) * radius * 1.2f * collapse,
             casterPos.y + 0.05f,
-            casterPos.z + sinf(baseAngle) * radius * 1.2f * collapse
-        };
+            casterPos.z + sinf(baseAngle) * radius * 1.2f * collapse};
 
         // Convergence point at caster's chest/hand
         Vector3 p3 = {
             casterPos.x + cosf(baseAngle + PI * 2.0f) * 0.12f * collapse,
             casterPos.y + 0.75f,
-            casterPos.z + sinf(baseAngle + PI * 2.0f) * 0.12f * collapse
-        };
+            casterPos.z + sinf(baseAngle + PI * 2.0f) * 0.12f * collapse};
 
         // Mid-low swept wide
         float a1 = baseAngle + PI * 0.7f;
         Vector3 p1 = {
             casterPos.x + cosf(a1) * radius * 1.6f * collapse,
             casterPos.y + 0.3f,
-            casterPos.z + sinf(a1) * radius * 1.6f * collapse
-        };
+            casterPos.z + sinf(a1) * radius * 1.6f * collapse};
 
         // Mid-high closer
         float a2 = baseAngle + PI * 1.4f;
         Vector3 p2 = {
             casterPos.x + cosf(a2) * radius * 0.7f * collapse,
             casterPos.y + 0.6f,
-            casterPos.z + sinf(a2) * radius * 0.7f * collapse
-        };
+            casterPos.z + sinf(a2) * radius * 0.7f * collapse};
 
         rlBegin(RL_QUADS);
         rlColor4ub(ribbonCol.r, ribbonCol.g, ribbonCol.b, ribbonCol.a);
@@ -230,7 +241,8 @@ void VFX_ComposeQiAura(QiStyle style, Vector3 casterPos, float progress, float t
 
             // Grow along Bezier path based on casting progress
             float drawLimit = progress / 0.85f;
-            if (drawLimit > 1.0f) drawLimit = 1.0f;
+            if (drawLimit > 1.0f)
+                drawLimit = 1.0f;
             t1 *= drawLimit;
             t2 *= drawLimit;
 
@@ -241,17 +253,18 @@ void VFX_ComposeQiAura(QiStyle style, Vector3 casterPos, float progress, float t
             float wave1 = sinf(t1 * 12.0f - time * 6.0f) * 0.06f * collapse;
             float wave2 = sinf(t2 * 12.0f - time * 6.0f) * 0.06f * collapse;
 
-            Vector3 waveDir1 = Vector3Normalize((Vector3){ -pt1.z + casterPos.z, 0.0f, pt1.x - casterPos.x });
-            Vector3 waveDir2 = Vector3Normalize((Vector3){ -pt2.z + casterPos.z, 0.0f, pt2.x - casterPos.x });
+            Vector3 waveDir1 = Vector3Normalize((Vector3){-pt1.z + casterPos.z, 0.0f, pt1.x - casterPos.x});
+            Vector3 waveDir2 = Vector3Normalize((Vector3){-pt2.z + casterPos.z, 0.0f, pt2.x - casterPos.x});
 
             pt1 = Vector3Add(pt1, Vector3Scale(waveDir1, wave1));
             pt2 = Vector3Add(pt2, Vector3Scale(waveDir2, wave2));
 
             // Generate ribbon quads perpendicular to tangent
             Vector3 tangent = Vector3Subtract(pt2, pt1);
-            Vector3 normal = { -tangent.z, 0.0f, tangent.x };
+            Vector3 normal = {-tangent.z, 0.0f, tangent.x};
             float len = Vector3Length(normal);
-            if (len > 0.0001f) {
+            if (len > 0.0001f)
+            {
                 normal = Vector3Scale(normal, 1.0f / len);
             }
 
@@ -281,9 +294,8 @@ void VFX_ComposeQiAura(QiStyle style, Vector3 casterPos, float progress, float t
         Vector3 spawnPos = {
             casterPos.x + cosf(angle) * dist,
             casterPos.y + 0.1f + ((float)rand() / (float)RAND_MAX) * 1.2f,
-            casterPos.z + sinf(angle) * dist
-        };
-        Vector3 target = { casterPos.x, casterPos.y + 0.65f, casterPos.z };
+            casterPos.z + sinf(angle) * dist};
+        Vector3 target = {casterPos.x, casterPos.y + 0.65f, casterPos.z};
         Vector3 toChest = Vector3Subtract(target, spawnPos);
         Vector3 vel = Vector3Scale(Vector3Normalize(toChest), 0.7f);
 
@@ -293,14 +305,14 @@ void VFX_ComposeQiAura(QiStyle style, Vector3 casterPos, float progress, float t
             .radius = 0.02f + ((float)rand() / (float)RAND_MAX) * 0.03f,
             .lifetime = 0.6f,
             .colorStart = color,
-            .colorEnd = (Color){color.r, color.g, color.b, 0}
-        });
+            .colorEnd = (Color){color.r, color.g, color.b, 0}});
     }
 }
 
 #define MAX_ACTIVE_AURAS 16
 
-typedef struct {
+typedef struct
+{
     int casterAgentId;
     Vector3 staticPos;
     int trailIds[8];
@@ -317,8 +329,10 @@ static ActiveQiAura s_activeAuras[MAX_ACTIVE_AURAS];
 static ForceField s_wispForceField;
 static bool s_wispForceFieldInit = false;
 
-static void InitWispForceField(void) {
-    if (s_wispForceFieldInit) return;
+static void InitWispForceField(void)
+{
+    if (s_wispForceFieldInit)
+        return;
     ForceField_Clear(&s_wispForceField);
 
     // Layer 1: FORCE_NOISE_CURL (Curl noise for sweeping organic wisps!)
@@ -349,18 +363,23 @@ void VFX_AttachQiAura(int casterAgentId, Vector3 anchorPos, float bodyHeight, Ef
 {
     InitWispForceField();
 
-    if (wispCount < 1) wispCount = 4;
-    if (wispCount > 8) wispCount = 8;
+    if (wispCount < 1)
+        wispCount = 4;
+    if (wispCount > 8)
+        wispCount = 8;
 
     // Find a free slot in s_activeAuras
     int slot = -1;
-    for (int i = 0; i < MAX_ACTIVE_AURAS; i++) {
-        if (!s_activeAuras[i].active) {
+    for (int i = 0; i < MAX_ACTIVE_AURAS; i++)
+    {
+        if (!s_activeAuras[i].active)
+        {
             slot = i;
             break;
         }
     }
-    if (slot == -1) return; // Pool full
+    if (slot == -1)
+        return; // Pool full
 
     ActiveQiAura *aura = &s_activeAuras[slot];
     aura->casterAgentId = casterAgentId;
@@ -371,45 +390,34 @@ void VFX_AttachQiAura(int casterAgentId, Vector3 anchorPos, float bodyHeight, Ef
     aura->time = 0.0f;
     aura->active = true;
 
-    Color color = {220, 240, 255, 255}; // default xianxia
-    switch (element) {
-        case EFFECT_PRESET_ICE_SHATTER:
-        case EFFECT_PRESET_WATER_SPLASH:
-            color = (Color){160, 225, 255, 255}; break; // lint: allow-color
-        case EFFECT_PRESET_FIRE_EXPLOSION:
-            color = (Color){255, 110, 30, 255};  break; // lint: allow-color
-        case EFFECT_PRESET_LIGHTNING_IMPACT:
-            color = (Color){180, 110, 255, 255}; break; // lint: allow-color
-        case EFFECT_PRESET_WOOD_BLOOM:
-            color = (Color){100, 225, 140, 255}; break; // lint: allow-color
-        default:
-            break;
-    }
-    aura->color = color;
+    // Pastel aura theo nguyên tố — slot `soft` của material table.
+    aura->color = VFX_Material(VFX_MaterialFromPreset(element))->soft;
 
     Texture2D wispTex = ResourceManager_LoadTexture("assets/textures/tex_smoke_puff.png");
 
     Vector3 basePos = anchorPos;
-    if (casterAgentId >= 0) {
+    if (casterAgentId >= 0)
+    {
         SkillManager_GetAgentPos(casterAgentId, &basePos);
     }
 
-    for (int s = 0; s < wispCount; s++) {
+    for (int s = 0; s < wispCount; s++)
+    {
         TrailConfig cfg = {0};
         cfg.type = TRAIL_TYPE_FOLLOWER;
         cfg.pos = basePos;
         cfg.vel = (Vector3){0, 0, 0};
         cfg.len = 1.0f;
         cfg.thick = 0.038f * scale; // wisp ribbon thickness
-        cfg.trailLength = 40; // history count
-        cfg.life = 999.0f; // infinite until detached
+        cfg.trailLength = 40;       // history count
+        cfg.life = 999.0f;          // infinite until detached
         cfg.tex = wispTex;
         cfg.forceField = &s_wispForceField;
-        cfg.gradient = NULL; // use default wisp style taper based on tint
+        cfg.gradient = NULL;         // use default wisp style taper based on tint
         cfg.blendMode = BLEND_ALPHA; // Alpha blend! Not additive!
         cfg.ownerTag = casterAgentId;
         cfg.priority = VFX_PRIORITY_LOW;
-        cfg.tint = (Color){ color.r, color.g, color.b, 85 }; // Alpha 85 (~0.33 alpha)
+        cfg.tint = (Color){aura->color.r, aura->color.g, aura->color.b, 85}; // Alpha 85 (~0.33 alpha)
 
         int id = SpawnTrailEntity(cfg);
         aura->trailIds[s] = id;
@@ -418,9 +426,12 @@ void VFX_AttachQiAura(int casterAgentId, Vector3 anchorPos, float bodyHeight, Ef
 
 void VFX_DetachQiAura(int casterAgentId)
 {
-    for (int i = 0; i < MAX_ACTIVE_AURAS; i++) {
-        if (s_activeAuras[i].active && s_activeAuras[i].casterAgentId == casterAgentId) {
-            for (int s = 0; s < s_activeAuras[i].wispCount; s++) {
+    for (int i = 0; i < MAX_ACTIVE_AURAS; i++)
+    {
+        if (s_activeAuras[i].active && s_activeAuras[i].casterAgentId == casterAgentId)
+        {
+            for (int s = 0; s < s_activeAuras[i].wispCount; s++)
+            {
                 KillTrail(s_activeAuras[i].trailIds[s]);
             }
             s_activeAuras[i].active = false;
@@ -432,12 +443,15 @@ void VFX_DetachQiAura(int casterAgentId)
 void VFX_UpdateQiAuras(float dt)
 {
     float time = (float)GetTime();
-    for (int i = 0; i < MAX_ACTIVE_AURAS; i++) {
+    for (int i = 0; i < MAX_ACTIVE_AURAS; i++)
+    {
         ActiveQiAura *aura = &s_activeAuras[i];
-        if (!aura->active) continue;
+        if (!aura->active)
+            continue;
 
         Vector3 pos = aura->staticPos;
-        if (aura->casterAgentId >= 0) {
+        if (aura->casterAgentId >= 0)
+        {
             SkillManager_GetAgentPos(aura->casterAgentId, &pos);
         }
 
@@ -446,15 +460,15 @@ void VFX_UpdateQiAuras(float dt)
         float orbitRadius = 0.65f * aura->scale;
         float orbitSpeed = 1.6f;
 
-        for (int s = 0; s < aura->wispCount; s++) {
+        for (int s = 0; s < aura->wispCount; s++)
+        {
             float orbitHeight = 0.05f + ((float)s / aura->wispCount) * 0.9f * aura->bodyHeight;
             float orbitPhase = ((float)s / aura->wispCount) * 2.0f * PI + aura->time * orbitSpeed;
 
             Vector3 orbitOffset = {
                 cosf(orbitPhase) * orbitRadius,
                 orbitHeight,
-                sinf(orbitPhase) * orbitRadius
-            };
+                sinf(orbitPhase) * orbitRadius};
 
             Vector3 tipPos = Vector3Add(pos, orbitOffset);
             UpdateFollowerPosition(aura->trailIds[s], tipPos);
@@ -463,7 +477,8 @@ void VFX_UpdateQiAuras(float dt)
             SetFollowerAxis(aura->trailIds[s], pos, (Vector3){0.0f, 1.0f, 0.0f});
 
             // 3. Sparkles (Lớp 3) - 25% * dt chance per frame
-            if (((float)rand() / (float)RAND_MAX) < 0.25f * dt) {
+            if (((float)rand() / (float)RAND_MAX) < 0.25f * dt)
+            {
                 VFXLight_Spawn(tipPos, aura->color, 0.35f * aura->scale, 0.15f, VFX_PRIORITY_LOW);
 
                 float speedX = ((float)rand() / (float)RAND_MAX - 0.5f) * 0.25f;
@@ -472,7 +487,7 @@ void VFX_UpdateQiAuras(float dt)
 
                 ParticleConfig spark = {0};
                 spark.position = tipPos;
-                spark.velocity = (Vector3){ speedX, speedY, speedZ };
+                spark.velocity = (Vector3){speedX, speedY, speedZ};
                 spark.radius = 0.04f * aura->scale;
                 spark.lifetime = 0.15f;
                 spark.colorStart = (Color){255, 255, 255, 255};

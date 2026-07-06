@@ -16,110 +16,67 @@ void VFX_GroundPattern(GroundPatternStyle style, Vector3 pos, float radius, floa
     rlPushMatrix();
     rlTranslatef(pos.x, pos.y + 0.005f, pos.z);
 
+    unsigned char a255 = (unsigned char)(255 * alpha);
     switch (style)
     {
         case GROUND_CRACK_RADIAL:
         {
+            // Nâu đất trung tính có chủ ý — vết nứt vật lý, không mang màu nguyên tố.
             Texture2D tex = ResourceManager_LoadTexture("assets/textures/decals/decal_crack.png");
-            rlSetTexture(tex.id);
-            rlBegin(RL_QUADS);
-            rlColor4ub(120, 100, 80, (unsigned char)(255 * alpha));
-            rlTexCoord2f(0.0f, 0.0f); rlVertex3f(-currentRadius, 0, -currentRadius);
-            rlTexCoord2f(1.0f, 0.0f); rlVertex3f(currentRadius, 0, -currentRadius);
-            rlTexCoord2f(1.0f, 1.0f); rlVertex3f(currentRadius, 0, currentRadius);
-            rlTexCoord2f(0.0f, 1.0f); rlVertex3f(-currentRadius, 0, currentRadius);
-            rlEnd();
+            VC_DrawGroundQuadXZ(tex, currentRadius, currentRadius, (Color){120, 100, 80, a255});
             break;
         }
         case GROUND_CRACK_LINE:
         {
             Texture2D tex = ResourceManager_LoadTexture("assets/textures/tex_crack_mask.png");
-            rlSetTexture(tex.id);
-            rlBegin(RL_QUADS);
-            rlColor4ub(100, 90, 80, (unsigned char)(255 * alpha));
-            rlTexCoord2f(0.0f, 0.0f); rlVertex3f(-currentRadius * 0.2f, 0, -currentRadius);
-            rlTexCoord2f(1.0f, 0.0f); rlVertex3f(currentRadius * 0.2f, 0, -currentRadius);
-            rlTexCoord2f(1.0f, 1.0f); rlVertex3f(currentRadius * 0.2f, 0, currentRadius);
-            rlTexCoord2f(0.0f, 1.0f); rlVertex3f(-currentRadius * 0.2f, 0, currentRadius);
-            rlEnd();
+            VC_DrawGroundQuadXZ(tex, currentRadius * 0.2f, currentRadius, (Color){100, 90, 80, a255});
             break;
         }
         case GROUND_MAGIC_CIRCLE:
         {
             Texture2D tex = ResourceManager_LoadTexture("assets/textures/decals/decal_burn.png");
             rlRotatef(time * 40.0f, 0, 1, 0);
-            rlSetTexture(tex.id);
             BeginBlendMode(BLEND_ADDITIVE);
-            rlBegin(RL_QUADS);
-            rlColor4ub(0, 180, 255, (unsigned char)(200 * alpha));
-            rlTexCoord2f(0.0f, 0.0f); rlVertex3f(-currentRadius, 0, -currentRadius);
-            rlTexCoord2f(1.0f, 0.0f); rlVertex3f(currentRadius, 0, -currentRadius);
-            rlTexCoord2f(1.0f, 1.0f); rlVertex3f(currentRadius, 0, currentRadius);
-            rlTexCoord2f(0.0f, 1.0f); rlVertex3f(-currentRadius, 0, currentRadius);
-            rlEnd();
+            VC_DrawGroundQuadXZ(tex, currentRadius, currentRadius,
+                                VC_WithAlpha(VFX_Material(VC_MAT_QI)->glow, (unsigned char)(200 * alpha)));
             break;
         }
         case GROUND_LAVA:
         {
             Texture2D tex = ResourceManager_LoadTexture("assets/textures/decals/decal_burn.png");
-            float scalePulse = 1.0f + sinf(time * 5.0f) * 0.05f;
-            float rPulse = currentRadius * scalePulse;
-            rlSetTexture(tex.id);
+            float rPulse = currentRadius * VC_Breathe(time, 5.0f, 0.05f);
             BeginBlendMode(BLEND_ADDITIVE);
-            rlBegin(RL_QUADS);
-            rlColor4ub(255, 60, 0, (unsigned char)(220 * alpha));
-            rlTexCoord2f(0.0f, 0.0f); rlVertex3f(-rPulse, 0, -rPulse);
-            rlTexCoord2f(1.0f, 0.0f); rlVertex3f(rPulse, 0, -rPulse);
-            rlTexCoord2f(1.0f, 1.0f); rlVertex3f(rPulse, 0, rPulse);
-            rlTexCoord2f(0.0f, 1.0f); rlVertex3f(-rPulse, 0, rPulse);
-            rlEnd();
+            VC_DrawGroundQuadXZ(tex, rPulse, rPulse,
+                                VC_WithAlpha(VFX_Material(VC_MAT_FIRE)->glow, (unsigned char)(220 * alpha)));
             break;
         }
         case GROUND_FROST:
         {
             Texture2D tex = ResourceManager_LoadTexture("assets/textures/decals/decal_crack.png");
-            rlSetTexture(tex.id);
             BeginBlendMode(BLEND_ADDITIVE);
-            rlBegin(RL_QUADS);
-            rlColor4ub(160, 230, 255, (unsigned char)(180 * alpha));
-            rlTexCoord2f(0.0f, 0.0f); rlVertex3f(-currentRadius, 0, -currentRadius);
-            rlTexCoord2f(1.0f, 0.0f); rlVertex3f(currentRadius, 0, -currentRadius);
-            rlTexCoord2f(1.0f, 1.0f); rlVertex3f(currentRadius, 0, currentRadius);
-            rlTexCoord2f(0.0f, 1.0f); rlVertex3f(-currentRadius, 0, currentRadius);
-            rlEnd();
+            VC_DrawGroundQuadXZ(tex, currentRadius, currentRadius,
+                                VC_WithAlpha(VFX_Material(VC_MAT_ICE)->glow, (unsigned char)(180 * alpha)));
             break;
         }
         case GROUND_THORNS:
         {
+            // Xanh gai tối có chủ ý — tối hơn hẳn WOOD.body để đọc thành gai/rễ già.
             Texture2D tex = ResourceManager_LoadTexture("assets/textures/tex_crack_mask.png");
-            rlSetTexture(tex.id);
-            rlBegin(RL_QUADS);
-            rlColor4ub(40, 100, 50, (unsigned char)(230 * alpha));
-            rlTexCoord2f(0.0f, 0.0f); rlVertex3f(-currentRadius, 0, -currentRadius);
-            rlTexCoord2f(1.0f, 0.0f); rlVertex3f(currentRadius, 0, -currentRadius);
-            rlTexCoord2f(1.0f, 1.0f); rlVertex3f(currentRadius, 0, currentRadius);
-            rlTexCoord2f(0.0f, 1.0f); rlVertex3f(-currentRadius, 0, currentRadius);
-            rlEnd();
+            VC_DrawGroundQuadXZ(tex, currentRadius, currentRadius, (Color){40, 100, 50, (unsigned char)(230 * alpha)});
             break;
         }
         case GROUND_RUNE:
         {
+            // Tím arcane sáng có chủ ý — rực hơn VOID.glow để rune nổi trên nền tối.
             Texture2D tex = ResourceManager_LoadTexture("assets/textures/decals/decal_burn.png");
             rlRotatef(time * -25.0f, 0, 1, 0);
-            rlSetTexture(tex.id);
             BeginBlendMode(BLEND_ADDITIVE);
-            rlBegin(RL_QUADS);
-            rlColor4ub(180, 80, 255, (unsigned char)(240 * alpha));
-            rlTexCoord2f(0.0f, 0.0f); rlVertex3f(-currentRadius * 0.8f, 0, -currentRadius * 0.8f);
-            rlTexCoord2f(1.0f, 0.0f); rlVertex3f(currentRadius * 0.8f, 0, -currentRadius * 0.8f);
-            rlTexCoord2f(1.0f, 1.0f); rlVertex3f(currentRadius * 0.8f, 0, currentRadius * 0.8f);
-            rlTexCoord2f(0.0f, 1.0f); rlVertex3f(-currentRadius * 0.8f, 0, currentRadius * 0.8f);
-            rlEnd();
+            VC_DrawGroundQuadXZ(tex, currentRadius * 0.8f, currentRadius * 0.8f,
+                                (Color){180, 80, 255, (unsigned char)(240 * alpha)});
             break;
         }
     }
 
-    rlSetTexture(0);
     rlPopMatrix();
 
     rlDrawRenderBatchActive();

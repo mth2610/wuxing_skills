@@ -7,12 +7,12 @@ void VFX_ComposeSlashArc(SlashStyle style, Vector3 pos, Vector3 dir, float radiu
     Color color;
     switch (style)
     {
-        case SLASH_METAL: color = ELEMENT_COLOR_METAL; break;
-        case SLASH_WOOD:  color = ELEMENT_COLOR_WOOD;  break;
-        case SLASH_FIRE:  color = ELEMENT_COLOR_FIRE;  break;
-        case SLASH_ICE:   color = (Color){150, 220, 255, 255}; break;
-        case SLASH_EARTH: color = ELEMENT_COLOR_EARTH; break;
-        default:          color = ELEMENT_COLOR_METAL; break;
+        case SLASH_WOOD:  color = VFX_Material(VC_MAT_WOOD)->body;  break;
+        case SLASH_FIRE:  color = VFX_Material(VC_MAT_FIRE)->body;  break;
+        case SLASH_ICE:   color = VFX_Material(VC_MAT_ICE)->body;   break;
+        case SLASH_EARTH: color = VFX_Material(VC_MAT_EARTH)->body; break;
+        case SLASH_METAL:
+        default:          color = VFX_Material(VC_MAT_METAL)->body; break;
     }
 
     if (progress <= 0.0f || progress >= 1.0f)
@@ -126,7 +126,7 @@ void VFX_ComposeSlashArc(SlashStyle style, Vector3 pos, Vector3 dir, float radiu
     if (GetRandomValue(0, 100) < 60)
     {
         float tipAngle = startAngle + progress * arcDegrees * DEG2RAD;
-        Vector3 tangent = {-sinf(tipAngle), 0.15f, cosf(tipAngle)};
+        Vector3 tangent = VC_TangentXZ(tipAngle, 0.15f);
         SpawnParticle((ParticleConfig){
             .position = tip,
             .velocity = Vector3Scale(tangent, (1.2f + Random01() * 0.8f) * (arcDegrees >= 0 ? 1.0f : -1.0f)),

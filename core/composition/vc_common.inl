@@ -1,6 +1,31 @@
-#include "raymath.h"
-#include "rlgl.h"
-#include <stdlib.h>
+// --- Primitives: quad phẳng & vòng rune mặt đất ------------------------------
+// Hai khối vẽ nền tảng cho mọi hoa văn mặt đất (ground pattern, rune ring,
+// glow ring). Caller quản blend mode / depth mask; hàm chỉ vẽ.
+
+// Quad ngang tâm gốc tọa độ HIỆN HÀNH — gọi bên trong push/translate/rotate
+// của caller khi cần transform tùy biến.
+static void VC_DrawGroundQuadXZ(Texture2D tex, float halfX, float halfZ, Color tint)
+{
+    rlSetTexture(tex.id);
+    rlBegin(RL_QUADS);
+    rlColor4ub(tint.r, tint.g, tint.b, tint.a);
+    rlTexCoord2f(0.0f, 0.0f); rlVertex3f(-halfX, 0, -halfZ);
+    rlTexCoord2f(1.0f, 0.0f); rlVertex3f(halfX, 0, -halfZ);
+    rlTexCoord2f(1.0f, 1.0f); rlVertex3f(halfX, 0, halfZ);
+    rlTexCoord2f(0.0f, 1.0f); rlVertex3f(-halfX, 0, halfZ);
+    rlEnd();
+    rlSetTexture(0);
+}
+
+// Vòng rune/glow xoay quanh trục Y tại pos — tự push/pop matrix.
+static void VC_DrawGroundRune(Texture2D tex, Vector3 pos, float radius, float angleDeg, Color tint)
+{
+    rlPushMatrix();
+    rlTranslatef(pos.x, pos.y, pos.z);
+    rlRotatef(angleDeg, 0, 1, 0);
+    VC_DrawGroundQuadXZ(tex, radius, radius, tint);
+    rlPopMatrix();
+}
 
 #define MAX_CONCURRENT_CAST_EFFECTS 16
 static ForceField s_castPullFlds[MAX_CONCURRENT_CAST_EFFECTS];

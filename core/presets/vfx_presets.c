@@ -32,10 +32,17 @@ ForceField s_taijiFld;
 
 static bool s_presetsInitialized = false;
 
+// Gradient cho các material không thuộc 8 nguyên tố gameplay
+static ColorGradient s_holyGrad;
+static ColorGradient s_voidGrad;
+static ColorGradient s_poisonGrad;
+static ColorGradient s_qiGradMat;
+
 // Khai báo các mảng preset tĩnh lưu trữ cấu hình
 static VFX_ImpactPreset s_ImpactPresets[8];
 static VFX_CastPreset s_CastPresets[8];
 static VFX_ProjectilePreset s_ProjectilePresets[8];
+static VFX_ElementMaterial s_Materials[VC_MAT_COUNT];
 
 void VFX_Presets_Init(void) {
     if (s_presetsInitialized) return;
@@ -316,6 +323,114 @@ void VFX_Presets_Init(void) {
         .tint = ELEMENT_COLOR_TAIJI, .gradient = &s_taijiGrad
     };
 
+    // -------------------------------------------------------------
+    // Gradient cho các material ngoài 8 nguyên tố gameplay
+    // -------------------------------------------------------------
+
+    s_holyGrad.count = 0;
+    ColorGradient_AddStop(&s_holyGrad, 0.0f, WHITE);
+    ColorGradient_AddStop(&s_holyGrad, 0.35f, (Color){ 255, 235, 150, 255 });
+    ColorGradient_AddStop(&s_holyGrad, 1.0f, (Color){ 180, 140, 40, 0 });
+
+    s_voidGrad.count = 0;
+    ColorGradient_AddStop(&s_voidGrad, 0.0f, (Color){ 220, 180, 255, 255 });
+    ColorGradient_AddStop(&s_voidGrad, 0.4f, (Color){ 140, 40, 200, 255 });
+    ColorGradient_AddStop(&s_voidGrad, 1.0f, (Color){ 40, 5, 70, 0 });
+
+    s_poisonGrad.count = 0;
+    ColorGradient_AddStop(&s_poisonGrad, 0.0f, (Color){ 200, 255, 170, 255 });
+    ColorGradient_AddStop(&s_poisonGrad, 0.4f, (Color){ 120, 220, 90, 255 });
+    ColorGradient_AddStop(&s_poisonGrad, 1.0f, (Color){ 40, 90, 30, 0 });
+
+    s_qiGradMat.count = 0;
+    ColorGradient_AddStop(&s_qiGradMat, 0.0f, WHITE);
+    ColorGradient_AddStop(&s_qiGradMat, 0.4f, (Color){ 0, 165, 255, 255 });
+    ColorGradient_AddStop(&s_qiGradMat, 1.0f, (Color){ 10, 60, 140, 0 });
+
+    // -------------------------------------------------------------
+    // Bảng material nguyên tố — nguồn sự thật cho tầng composition.
+    // body = màu bản sắc (shell/ribbon/rune), glow = điểm nóng phát sáng.
+    // Giá trị hội tụ từ các switch arm cũ trong core/composition/*.inl.
+    // -------------------------------------------------------------
+
+    s_Materials[VC_MAT_FIRE] = (VFX_ElementMaterial){
+        .body = ELEMENT_COLOR_FIRE, .glow = (Color){ 255, 90, 20, 255 },
+        .soft = (Color){ 255, 110, 30, 255 },
+        .blendMode = BLEND_ADDITIVE, .grad = &s_fireGrad, .hotGrad = &s_fireGrad,
+        .fld = &s_fireFld, .runeDecal = "assets/textures/decals/decal_lava_crack.png"
+    };
+    s_Materials[VC_MAT_ICE] = (VFX_ElementMaterial){
+        .body = (Color){ 150, 220, 255, 255 }, .glow = (Color){ 160, 225, 255, 255 },
+        .soft = (Color){ 160, 225, 255, 255 },
+        .blendMode = BLEND_ALPHA, .grad = &s_snowGrad, .hotGrad = &s_snowGrad,
+        .fld = &s_snowFld, .runeDecal = "assets/textures/decals/decal_crack.png"
+    };
+    s_Materials[VC_MAT_WATER] = (VFX_ElementMaterial){
+        .body = ELEMENT_COLOR_WATER, .glow = (Color){ 80, 180, 255, 255 },
+        .soft = (Color){ 160, 225, 255, 255 },
+        .blendMode = BLEND_ADDITIVE, .grad = &s_waterGrad, .hotGrad = &s_waterGrad,
+        .fld = &s_waterFld, .runeDecal = "assets/textures/decals/decal_water_ripple.png"
+    };
+    // Lightning có hai bản sắc cùng tồn tại: glow cyan điện cho hồ quang/beam,
+    // body tím cho ambient (khớp s_lightningGrad + aura cũ).
+    s_Materials[VC_MAT_LIGHTNING] = (VFX_ElementMaterial){
+        .body = (Color){ 175, 45, 255, 255 }, .glow = (Color){ 0, 185, 255, 255 },
+        .soft = (Color){ 180, 110, 255, 255 },
+        .blendMode = BLEND_ADDITIVE, .grad = &s_lightningGrad, .hotGrad = &s_lightningFollowerGrad,
+        .fld = &s_lightningFld, .runeDecal = "assets/textures/decals/decal_metal_rune.png"
+    };
+    s_Materials[VC_MAT_EARTH] = (VFX_ElementMaterial){
+        .body = ELEMENT_COLOR_EARTH, .glow = (Color){ 180, 140, 100, 255 },
+        .soft = (Color){ 215, 170, 115, 255 },
+        .blendMode = BLEND_ADDITIVE, .grad = &s_earthGrad, .hotGrad = &s_earthGrad,
+        .fld = &s_earthFld, .runeDecal = "assets/textures/decals/decal_earth_rune.png"
+    };
+    s_Materials[VC_MAT_WOOD] = (VFX_ElementMaterial){
+        .body = ELEMENT_COLOR_WOOD, .glow = (Color){ 0, 230, 90, 255 },
+        .soft = (Color){ 100, 225, 140, 255 },
+        .blendMode = BLEND_ADDITIVE, .grad = &s_woodGrad, .hotGrad = &s_woodGrad,
+        .fld = &s_woodFld, .runeDecal = "assets/textures/decals/decal_root_mark.png"
+    };
+    // Metal trong wuxing mang hơi hướng lôi/điện: glow xanh điện trắng
+    // (giữ nguyên "electric blue-white" của CHARGE_METAL cũ).
+    s_Materials[VC_MAT_METAL] = (VFX_ElementMaterial){
+        .body = ELEMENT_COLOR_METAL, .glow = (Color){ 120, 200, 255, 255 },
+        .soft = (Color){ 225, 240, 255, 255 },
+        .blendMode = BLEND_ADDITIVE, .grad = &s_metalGrad, .hotGrad = &s_metalGrad,
+        .fld = &s_metalFld, .runeDecal = "assets/textures/decals/decal_metal_rune.png"
+    };
+    // Taiji: body tím, glow vàng gold (giữ aura gold có chủ ý của AURA_TAIJI cũ).
+    s_Materials[VC_MAT_TAIJI] = (VFX_ElementMaterial){
+        .body = ELEMENT_COLOR_TAIJI, .glow = (Color){ 255, 180, 0, 255 },
+        .soft = (Color){ 220, 240, 255, 255 },
+        .blendMode = BLEND_ADDITIVE, .grad = &s_taijiGrad, .hotGrad = &s_taijiGrad,
+        .fld = &s_taijiFld, .runeDecal = "assets/textures/decals/decal_taiji_ring.png"
+    };
+    s_Materials[VC_MAT_HOLY] = (VFX_ElementMaterial){
+        .body = (Color){ 255, 220, 80, 255 }, .glow = (Color){ 255, 235, 150, 255 },
+        .soft = (Color){ 255, 245, 200, 255 },
+        .blendMode = BLEND_ADDITIVE, .grad = &s_holyGrad, .hotGrad = &s_holyGrad,
+        .fld = &s_taijiFld, .runeDecal = "assets/textures/decals/decal_taiji_ring.png"
+    };
+    s_Materials[VC_MAT_VOID] = (VFX_ElementMaterial){
+        .body = (Color){ 120, 20, 200, 255 }, .glow = (Color){ 140, 40, 200, 255 },
+        .soft = (Color){ 190, 130, 255, 255 },
+        .blendMode = BLEND_ALPHA, .grad = &s_voidGrad, .hotGrad = &s_voidGrad,
+        .fld = &s_taijiFld, .runeDecal = "assets/textures/decals/decal_taiji_ring.png"
+    };
+    s_Materials[VC_MAT_POISON] = (VFX_ElementMaterial){
+        .body = (Color){ 120, 220, 90, 255 }, .glow = (Color){ 120, 220, 90, 255 },
+        .soft = (Color){ 180, 240, 150, 255 },
+        .blendMode = BLEND_ADDITIVE, .grad = &s_poisonGrad, .hotGrad = &s_poisonGrad,
+        .fld = &s_woodFld, .runeDecal = "assets/textures/decals/decal_root_mark.png"
+    };
+    s_Materials[VC_MAT_QI] = (VFX_ElementMaterial){
+        .body = (Color){ 0, 165, 255, 255 }, .glow = (Color){ 0, 165, 255, 255 },
+        .soft = (Color){ 220, 240, 255, 255 },
+        .blendMode = BLEND_ADDITIVE, .grad = &s_qiGradMat, .hotGrad = &s_qiGradMat,
+        .fld = &s_woodFld, .runeDecal = "assets/textures/decals/decal_taiji_ring.png"
+    };
+
     s_presetsInitialized = true;
 }
 
@@ -335,4 +450,24 @@ const VFX_ProjectilePreset* VFX_Preset_GetProjectile(EffectPresetType preset) {
     if (preset < 0 || preset >= 8) return NULL;
     VFX_Presets_Init();
     return &s_ProjectilePresets[preset];
+}
+
+const VFX_ElementMaterial* VFX_Material(VC_MaterialId id) {
+    VFX_Presets_Init();
+    if (id < 0 || id >= VC_MAT_COUNT) id = VC_MAT_TAIJI;
+    return &s_Materials[id];
+}
+
+VC_MaterialId VFX_MaterialFromPreset(EffectPresetType preset) {
+    switch (preset) {
+        case EFFECT_PRESET_FIRE_EXPLOSION:   return VC_MAT_FIRE;
+        case EFFECT_PRESET_ICE_SHATTER:      return VC_MAT_ICE;
+        case EFFECT_PRESET_WATER_SPLASH:     return VC_MAT_WATER;
+        case EFFECT_PRESET_LIGHTNING_IMPACT: return VC_MAT_LIGHTNING;
+        case EFFECT_PRESET_EARTH_CRACK:      return VC_MAT_EARTH;
+        case EFFECT_PRESET_WOOD_BLOOM:       return VC_MAT_WOOD;
+        case EFFECT_PRESET_METAL_SHARD:      return VC_MAT_METAL;
+        case EFFECT_PRESET_TAIJI_BURST:      return VC_MAT_TAIJI;
+        default:                             return VC_MAT_TAIJI;
+    }
 }

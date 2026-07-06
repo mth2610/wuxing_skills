@@ -2842,6 +2842,47 @@ Tự gán shader, texture, vật liệu và quản lý blend mode / Z-buffer ph�
 - `VFX_ComposeAura`: Tạo hào quang/vòng buff lơ lửng quanh chân và tỏa các hạt năng lượng hướng lên trên (lửa, băng, gió, sét, thái cực).
 - `VFX_ComposeQiAura` / `VFX_AttachQiAura` / `VFX_DetachQiAura` / `VFX_UpdateQiAuras`: Hào quang khí công quấn quanh nhân vật theo `casterAgentId` (cột khí xoáy ngẫu nhiên bốc lên, sparkle rải rác) — `Attach` gắn/khởi tạo theo agent, `Update` chạy mỗi frame cho toàn bộ pool, `Detach` gỡ khi kết thúc.
 
+### Nhóm 2b: Element Material Table (`core/presets/vfx_presets.h`) — nguồn sự thật màu/chất liệu nguyên tố
+```c
+typedef enum { VC_MAT_FIRE, VC_MAT_ICE, VC_MAT_WATER, VC_MAT_LIGHTNING,
+               VC_MAT_EARTH, VC_MAT_WOOD, VC_MAT_METAL, VC_MAT_TAIJI,
+               VC_MAT_HOLY, VC_MAT_VOID, VC_MAT_POISON, VC_MAT_QI, VC_MAT_COUNT } VC_MaterialId;
+typedef struct {
+    Color body;                   // màu bản sắc nguyên tố (shell, ribbon, rune)
+    Color glow;                   // màu điểm nóng phát sáng (beam, ember)
+    Color soft;                   // pastel nhạt cho aura/VFXLight/glint (bảng qi aura cũ)
+    int   blendMode;              // blend khuyến nghị cho layer sheet/beam (ICE/VOID = BLEND_ALPHA, còn lại ADDITIVE)
+    const ColorGradient *grad;    // gradient hạt chuẩn
+    const ColorGradient *hotGrad; // biến thể sáng hơn (chỉ LIGHTNING khác grad); không bao giờ NULL
+    const ForceField *fld;        // trường lực chuẩn
+    const char *runeDecal;        // texture vòng rune dưới đất (shield/charge)
+} VFX_ElementMaterial;
+const VFX_ElementMaterial* VFX_Material(VC_MaterialId id);       // luôn trả entry hợp lệ (id sai → TAIJI)
+VC_MaterialId VFX_MaterialFromPreset(EffectPresetType preset);   // map 8 element preset → material
+static inline Color VC_WithAlpha(Color c, unsigned char a);      // gắn alpha tại call site
+```
+Toàn bộ composition (`vc_beam/aura/shield/chain/zone/slash/charge/ground/explosion/summon.inl` + các điểm VFXLight/glint/ember trong `vc_fire/metal/water/earth/wood/path.inl`) đã tra bảng này thay vì hard-code màu — **đổi look một nguyên tố = sửa một entry trong `vfx_presets.c`**. Quy ước 3 slot: `body` = bản sắc (crimson lửa, bạc kim...), `glow` = điểm nóng (cam lửa, cyan điện...), `soft` = pastel cho aura/light/glint (cam nhạt lửa, trắng bạc kim...). Hai bản sắc có chủ ý được giữ: LIGHTNING glow cyan (hồ quang) vs body tím (ambient, khớp `s_lightningGrad`); TAIJI body tím vs glow vàng gold (aura). `VFX_TriggerExplosion` các style POISON/HOLY/VOID giờ dùng gradient bản sắc riêng (`s_poisonGrad/s_holyGrad/s_voidGrad`) thay vì mượn wood/taiji. Component mới **phải** lấy màu/gradient/force field từ bảng này, chỉ hard-code khi cố tình lệch bản sắc (kèm comment) — các ngoại lệ hiện có: `GROUND_CRACK_*` (nâu đất trung tính), `GROUND_THORNS` (xanh gai tối), `GROUND_RUNE` (tím arcane sáng), palette riêng của `vc_plasma`/`vc_taiji` (cyan-hồng plasma, duotone yin-yang), và các gradient shading nhiều stop cục bộ per-component (`s_fireBodyGrad`, `s_dropGrad`, `s_steelGrad`...).
+
+### Nhóm 2c: Motion Library (`core/composition/vc_motion.h`) — quỹ đạo & shaper thuần toán học
+Toàn bộ là `static inline`, stateless, không pool, không side effect — được include sẵn qua `visual_composer.h`. Quy ước: trục đứng Y, góc radian. Dùng thay cho sin/cos ad-hoc khi lắp chuyển động:
+```c
+// Vị trí
+Vector3 VC_RingPointXZ(Vector3 center, float radius, float angle);   // điểm trên vòng ngang (spawn ring/orbit — khối cơ bản nhất)
+Vector3 VC_MotionOrbit(Vector3 center, float radius, float speed, float time, float phase); // quỹ đạo tròn đều
+Vector3 VC_MotionHelix(Vector3 base, float radius, float riseSpeed, float spinSpeed, float t, float phase); // xoắn ốc dâng theo trục Y
+Vector3 VC_MotionSpiralIn(Vector3 center, float startRadius, float turns, float phase, float t01); // xoáy hút vào tâm (charge/absorb)
+Vector3 VC_MotionJitter(Vector3 pos, float amp, float freq, float time, float seed); // rung lắc 3 trục lệch pha (tremble)
+Vector3 VC_MotionBob(Vector3 base, float amp, float freq, float time, float phase);  // dập dềnh dọc Y (lơ lửng)
+// Hướng
+Vector3 VC_TangentXZ(float angle, float up);                        // tiếp tuyến vòng ngang (KHÔNG chuẩn hóa) — vận tốc hạt bay quanh vành
+Vector3 VC_DirCone(Vector3 dir, float coneRad, float u1, float u2); // hướng ngẫu nhiên trong nón quanh dir (u1,u2 = Random01())
+// Shaper vô hướng
+float VC_Pulse01(float time, float freq);            // sin chuẩn hóa 0..1 (alpha/emissive tuần hoàn)
+float VC_Breathe(float time, float freq, float amp); // hệ số 1±amp (nhân vào radius/scale)
+float VC_Flicker01(float time, float seed);          // nhiễu hash 0..1 đổi theo frame (lửa/điện; seed tách pha chống chớp đồng bộ)
+```
+Các archetype (`vc_charge/shield/aura/zone/slash.inl`) đã dùng các hàm này cho orbit mote, tremble, breathe, spawn ring, tangent spark. Component/skill mới nên lắp quỹ đạo từ đây trước, chỉ viết công thức riêng khi motion library không diễn tả được (và cân nhắc bổ sung hàm mới vào `vc_motion.h` thay vì viết inline một chỗ).
+
 ### Nhóm 3: Beauty Primitives (`core/composition/vc_common.inl`) — mảnh trang trí tái sử dụng
 Thuần particle/decal/light, **không đụng post-process pipeline** (xem `CORE_ISSUES.md` Item 35 — chỉnh sửa bloom/streak dùng chung rất dễ vỡ trên GPU cũ, tập trung "lấp lánh" vào các primitive nhỏ gọn/ngắn hạn như dưới đây mới an toàn):
 - `VFX_ComposeShockwaveRing(pos, radius, life, tint)`: Vòng sóng xung kích mặt đất — decal ring giãn nở (`assets/textures/generic/impact_ring.png`, `BLEND_ADDITIVE`) + flash light.
@@ -2849,20 +2890,38 @@ Thuần particle/decal/light, **không đụng post-process pipeline** (xem `COR
 - `VFX_ComposeEmberDrift(pos, radius, count, tint)`: Hạt tàn lửa/bụi trôi lơ lửng (noise-curl + trọng lực nhẹ hướng lên), lifetime dài (~1.2-2.2s) — dùng cho hào quang/môi trường liên tục.
 - `VFX_ComposeStreakFlare(pos, scale, tint)`: Chớp sáng bùng nổ tại điểm (particle tròn cực ngắn + flash light) — đọc là "flash" chứ không phải hình ngôi sao (particle hệ thống chỉ dùng chung 1 texture toàn cục, xem `core/particle_system.h`).
 
+Primitive nội bộ (static trong translation unit `visual_composer.c`, không public — mọi `.inl` đều gọi được):
+- `VC_DrawGroundQuadXZ(tex, halfX, halfZ, tint)`: Quad texture nằm ngang tâm gốc tọa độ hiện hành (gọi bên trong push/translate/rotate của caller). Caller quản blend/depth. Nền tảng của mọi `GROUND_*` pattern.
+- `VC_DrawGroundRune(tex, pos, radius, angleDeg, tint)`: Vòng rune/glow xoay quanh trục Y tại `pos`, tự push/pop matrix — dùng bởi shield (rune + glow ring đáy vòm) và charge (pháp trận chân).
+
 ### Nhóm 4: Element Parity Additions (Phase 1 — `vc_metal.inl` / `vc_fire.inl`)
 - `VFX_ComposeMetalShardCluster(basePos, seed)`: Cụm mảnh kim loại sắc nhọn dùng chung hệ crystal-mesh với băng nhưng đục/sáng bóng/không refract (`CrystalMaterialParams`: `refraction=0`, `crack=0`, `sparkle` cao).
 - `VFX_ComposeBladeRing(pos, radius, bladeCount, rotationDeg)`: Vòng lưỡi kim loại chĩa ra ngoài quanh tâm, dùng vật liệu `MAT_METAL` có sẵn.
 - `VFX_ComposeFlameWisp(pos, time)`: Đốm lửa nhỏ lập lờ, lệch pha theo vị trí spawn để nhiều đốm không nhấp nháy đồng bộ.
 - `VFX_ComposeFirePillar(basePos, progress)`: Cột lửa trồi lên theo `progress`, cùng công thức smoothstep-rise với `VFX_ComposeStonePillar`.
 
-### Nhóm 4b: Plasma Orb & Wood Ambience (`vc_plasma.inl` / `vc_wood.inl`)
-- `VFX_ComposePlasmaOrb(pos, radius, time)` (`vc_plasma.inl`): Quả cầu năng lượng plasma — 1 lõi bloom sphere cyan (EffectMaterial translucency), 2 lớp màng noise wispy (PlasmaMaterial, xem Shader Material System) counter-scroll + backface, và các wisp trail hồng (head particle + onLiveEmit tail, curl-noise mạnh) uốn éo bên trong. Continuous — gọi mỗi frame với `time` chạy dồn. Budget: ~15 strand sống, ~600 hạt (pool 2000 — đừng nhân đôi rate/lifetime mà không tính lại).
+### Nhóm 4b: Element Skill Sets — per-element one-shot & continuous pieces
+Mỗi hệ có một cụm hàm riêng trong `vc_<element>.inl`. Quy ước chung: hàm có tham số `time` = **continuous** (gọi mỗi frame với time chạy dồn, tự gate decal/light bằng xác suất — không stack); hàm chỉ có `scale` = **one-shot** (gọi đúng 1 lần). Mọi hàm tự quản blend mode/depth mask.
+- `VFX_ComposePlasmaOrb(pos, radius, time)` (`vc_plasma.inl`): Quả cầu năng lượng plasma — 1 lõi bloom sphere cyan (EffectMaterial translucency), 2 lớp màng noise wispy (PlasmaMaterial, xem Shader Material System) counter-scroll + backface, và các wisp trail hồng (head particle + onLiveEmit tail, curl-noise mạnh) uốn éo bên trong. Continuous. Spawn rate dt-based (~27 head/s, tail 80/s × 0.25s) — pool 2000, đừng nhân đôi rate/lifetime mà không tính lại budget.
 - `VFX_ComposeLeafSwirl(pos, radius, time)` (`vc_wood.inl`): Lốc lá xoáy quanh điểm (vortex + updraft + curl), lá = particle nhấp nháy size/emissive theo curve "flutter", kèm pollen + moss decal + light. Continuous.
 - `VFX_ComposeBloomBurst(pos, scale)` (`vc_wood.inl`): Nở hoa one-shot — vòng cánh hoa bung ra rơi lượn, pollen bay lên, flash trung tâm mềm, decal root ring, light. Gọi 1 lần.
 - `VFX_ComposeLeafFall(pos, radius, time)` (`vc_wood.inl`): Tán lá rơi lượn lờ trong vùng (gravity nhẹ + curl mạnh + viscosity chống rơi thẳng), spore lơ lửng, moss decal. Continuous.
 - `VFX_ComposeBladeStorm(pos, radius, time)` (`vc_metal.inl`): 7 lưỡi kim (cone `MAT_METAL`) quay quanh caster trên 2 băng đảo chiều, mỗi lưỡi tự có bán kính/độ cao/rake riêng theo hash; streak bạc văng khỏi mũi lưỡi + glint catch-light. Continuous.
 - `VFX_ComposeShrapnelBurst(pos, scale)` (`vc_metal.inl`): Nổ mảnh kim loại one-shot — quạt mảnh bay là sát đất (pitch -5°..45°, gravity 7), hero streak kéo đuôi, flash + glint tâm nổ, decal crater (chỉ khi `pos.y` gần đất), distort + light lạnh. Gọi 1 lần.
 - `VFX_ComposeRicochetSpark(pos, dir, scale)` (`vc_metal.inl`): Quạt tia lửa parry/deflect one-shot bắn theo `dir` (nón ~35°, chết trong ~0.3s) + micro-flash "ping". Gọi 1 lần khi chặn đòn/đạn nảy.
+- `VFX_ComposeSplashBurst(pos, scale)` (`vc_water.inl`): Vương miện nước one-shot — vòng giọt bắn dốc 55°-75° rơi lại dưới gravity thật 9.8, jet trung tâm, mist puff, 2 decal ring giãn nở lệch tốc độ (splash nhanh + ripple chậm), light + distort nhẹ. Gọi 1 lần khi đạn nước chạm/đáp đất.
+- `VFX_ComposeBubbleStream(pos, radius, time)` (`vc_water.inl`): Bọt khí nổi lên (buoyancy + curl wobble + viscosity), mỗi bọt chết nổ thành 3 micro-droplet (`onDeathEmit`), caustic light shimmer + ripple decal nền. Continuous.
+- `VFX_ComposeMistVeil(pos, radius, time)` (`vc_water.inl`): Màn sương thấp bò quanh vùng (vortex chậm + curl + viscosity mạnh — sương bò chứ không thổi), kèm giọt ngưng tụ rơi lác đác + sheen ánh trăng lạnh. Continuous.
+- `VFX_ComposeGustSlash(pos, dir, scale)` (`vc_taiji.inl`): Lưỡi gió one-shot chém theo `dir` — quạt streak dẹt ~80° (blade, không phải cone), bụi văng ngang, decal wind groove xoay đúng hướng chém, distort xé không khí. Gọi 1 lần.
+- `VFX_ComposeCyclone(pos, radius, time)` (`vc_taiji.inl`): Cột lốc — cánh tay spawn xoay quanh chân đế tạo dải xoắn ốc leo phễu (trick của FirePillar), vortex 6.0 + updraft + gravity-point giữ phễu chụm, váy bụi xám + mảnh vụn bay cao + cột distort. Continuous.
+- `VFX_ComposeStaticField(pos, radius, time)` (`vc_taiji.inl`): Trường tĩnh điện — 3-4 micro-arc tím/trắng bò trên mặt cầu bán kính `radius`, re-seed mỗi ~0.09s (nhịp crackle, không phải noise trắng per-frame), spark bắn khỏi điểm neo + light tím giật cục. Continuous. Dùng `DrawLightningBoltEx` + `camera` global.
+- `VFX_ComposeYinYangOrbit(pos, radius, time)` (`vc_taiji.inl`): Cặp cầu âm-dương đuổi nhau trên vành nghiêng bob ngược pha — dương additive trắng phát sáng, âm BLEND_ALPHA đen viền tím fresnel (additive không vẽ được bóng tối), trail mote đuổi chéo nhau, mandala taiji ring xoay dưới đất. Continuous.
+- `VFX_ComposeRockBurst(pos, scale)` (`vc_earth.inl`): Nổ đá vụn one-shot — chunk nâu văng 20°-70° rơi gravity thật 9.8, hạt cát sáng bắt sáng, mây bụi phình chậm sống lâu hơn chunk, decal stone shatter 3.5s, `CameraFX_Shake` + distort (thổ = cảm nhận, không phát sáng — light rất mờ). Gọi 1 lần.
+- `VFX_ComposeFloatingStones(pos, radius, time)` (`vc_earth.inl`): 5 rock mesh thật (`MeshCache_GetRock` seed cố định) lơ lửng quanh caster, orbit/bob/tumble chậm rãi (khối lượng đọc qua quán tính), bụi cát bay LÊN dưới mỗi hòn (dấu hiệu anti-gravity) + thỉnh thoảng 1 viên sỏi rơi thẳng xuống. Continuous.
+- `VFX_ComposeQuakeRumble(pos, radius, time)` (`vc_earth.inl`): Vùng địa chấn — sỏi nhảy khỏi mặt đất rồi rơi lại, bụi phụt lên ngẫu nhiên, vết nứt mới stamp dần trong lúc rung, `CameraFX_Shake(0.05)` liên tục xác suất thấp. Continuous.
+- `VFX_ComposeFlameBreath(pos, dir, scale, time)` (`vc_fire.inl`): Hơi thở lửa continuous phun theo `dir` — packet FireFlow bắn xuống nón ~14° với nhịp surge (không phải jet đều), buoyancy sẵn trong `s_flameFld` tự cong đuôi luồng lên trên, khói ở điểm tắt, shimmer + muzzle light.
+- `VFX_ComposeBurningGround(pos, radius, time)` (`vc_fire.inl`): Mảng đất cháy continuous — lưỡi lửa mọc ở điểm ngẫu nhiên thiên về tâm, decal lava-crack pulse dưới lửa + scorch tích tụ, ember + khói bốc, firelight nhấp nháy.
+- `VFX_ComposeFireWhirl(pos, radius, time)` (`vc_fire.inl`): Lốc lửa continuous — vortex 7.0 + updraft 3.0, cánh tay spawn xoay tạo dải lửa xoắn leo phễu, jet trắng nóng giữa trục, ember văng ly tâm, vương miện khói trên đỉnh, distort + light mạnh (ult).
 
 ### Nhóm 5: Phase 3 Archetypes — shield/chain/zone/slash/charge
 Cùng quy ước tham số `(style, pos, ..., progress, time)` như các archetype ở Nhóm 2 (`VFX_ComposeBeam`, `VFX_GroundPattern`...), để AI dựng skill mới dễ đoán chữ ký hàm:
