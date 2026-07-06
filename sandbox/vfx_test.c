@@ -62,7 +62,7 @@ static const char* s_burstNames[] = {
 // NEWFX 0-4: continuous (mesh-style, needs s_isPlayingMesh), 5-8: one-shot burst,
 // 9-13: continuous archetype (progress-driven)
 static const char* s_newFxNames[] = {
-    "FLAME WISP", "FIRE PILLAR", "METAL SHARD", "METAL ORB", "BLADE RING",
+    "FLAME WISP", "FIRE PILLAR", "METAL SHARD", "PLASMA ORB", "BLADE RING",
     "SHOCKWAVE", "GLINT BURST", "EMBER DRIFT", "STREAK FLARE",
     "SHIELD", "CHAIN", "ZONE", "SLASH ARC", "CHARGE UP"
 };
@@ -657,7 +657,7 @@ void VFXTest_Draw3D(void) {
               case 0: VFX_ComposeFlameWisp(s_prefabStartPos, s_meshTime); break;
               case 1: VFX_ComposeFirePillar(s_prefabStartPos, progress); break;
               case 2: VFX_ComposeMetalShardCluster(s_prefabStartPos, posSeed); break;
-              case 3: VFX_ComposeMetalOrb(s_prefabStartPos, s_meshTime); break;
+              case 3: VFX_ComposePlasmaOrb(Vector3Add(s_prefabStartPos, (Vector3){0, 0.9f, 0}), 0.5f, s_meshTime); break;
               case 4: VFX_ComposeBladeRing(s_prefabStartPos, 0.6f, 5, s_meshTime * 60.0f); break;
               case 9: VFX_ComposeShield(SHIELD_METAL, s_prefabStartPos, 1.2f, fminf(progress, 0.5f), s_meshTime); break;
               case 10: {

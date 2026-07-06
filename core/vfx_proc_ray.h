@@ -66,5 +66,9 @@ void RegenerateLightningWaypoints(Vector3 *waypoints9, Vector3 from, Vector3 to,
 void RegenerateLightningRay(Vector3 *waypoints9, Vector3 origin, Vector3 direction,
                              float length, float phase, float amplitude, float scale);
 void DrawLightningBolt(const Vector3 *waypoints9, float thickness, Camera3D cam);
+// Same two-pass ribbon draw with caller-chosen colors (glow = outer wide pass,
+// core = inner bright pass). DrawLightningBolt == Ex with the violet/white legacy palette.
+void DrawLightningBoltEx(const Vector3 *waypoints9, float thickness, Camera3D cam,
+                         Color colorGlow, Color colorCore);
 
 #endif // VFX_PROC_RAY_H

@@ -74,8 +74,10 @@ void VFX_ComposeGlowingVine(Vector3 startPos, Vector3 targetPos, Vector3 p1, Vec
 void VFX_ComposeFlameWisp(Vector3 pos, float time);
 void VFX_ComposeFirePillar(Vector3 basePos, float progress);
 void VFX_ComposeMetalShardCluster(Vector3 basePos, int seed);
-void VFX_ComposeMetalOrb(Vector3 pos, float time);
 void VFX_ComposeBladeRing(Vector3 pos, float radius, int bladeCount, float rotationDeg);
+// Plasma energy orb — wispy noise membrane + hot core + pink interior filament
+// arcs. Continuous: call once per frame with a running `time`.
+void VFX_ComposePlasmaOrb(Vector3 pos, float radius, float time);
 
 // 10. High-level Archetypes & Styles
 typedef enum {

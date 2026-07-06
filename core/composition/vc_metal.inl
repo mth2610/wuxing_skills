@@ -58,13 +58,17 @@ void VFX_ComposeMetalShardCluster(Vector3 basePos, int seed)
 
         rlPushMatrix();
         rlTranslatef(p.x, p.y, p.z);
-        rlRotatef(r02 * 360.0f, 0, 1, 0);              // random facing
-        rlRotatef((r01 - 0.5f) * 24.0f, 1, 0, 0);      // slight outward lean
+        rlRotatef(r02 * 360.0f, 0, 1, 0);         // random facing
+        rlRotatef((r01 - 0.5f) * 24.0f, 1, 0, 0); // slight outward lean
         rlRotatef((r03 - 0.5f) * 24.0f, 0, 0, 1);
         ProceduralMesh_DrawCrystal((Vector3){0, 0, 0}, &d, 1.0f, WHITE);
         rlPopMatrix();
 
-        if (d.height > tallestH) { tallestH = d.height; tallestTip = (Vector3){p.x, p.y + d.height, p.z}; }
+        if (d.height > tallestH)
+        {
+            tallestH = d.height;
+            tallestTip = (Vector3){p.x, p.y + d.height, p.z};
+        }
     }
 
     // Ambient detail — micro crystals scattered at the base: tiny stubs that
@@ -89,90 +93,6 @@ void VFX_ComposeMetalShardCluster(Vector3 basePos, int seed)
     // Highlight — a specular catch-glint winking off the tallest blade's tip.
     if (GetRandomValue(0, 100) < 7)
         VFX_ComposeGlintBurst(tallestTip, 2, 0.05f, (Color){235, 245, 255, 255});
-}
-
-void VFX_ComposeMetalOrb(Vector3 pos, float time)
-{
-    BeginBlendMode(BLEND_ADDITIVE);
-    rlDisableDepthMask();
-
-    float radius = 0.14f;
-    // Fast, jittery electric tremor on all 3 axes (vs fire's slow single-axis
-    // breathe) — the orb feels like it's being shaken by current, not
-    // breathing. High-frequency noise-ish beat from stacked sines.
-    float beat = sinf(time * 18.0f) * sinf(time * 11.3f);
-    float jx = 0.012f * sinf(time * 23.0f);
-    float jz = 0.012f * cosf(time * 19.0f);
-    float pulse = 0.02f * sinf(time * 8.0f);
-    Vector3 actualPos = Vector3Add(pos, (Vector3){jx, 0.25f + pulse, jz});
-    float coreGlow = 2.0f + 0.6f * beat;
-
-    // White-blue hot core.
-    EffectMaterialParams coreParams = {0};
-    coreParams.baseColor = (Color){225, 240, 255, 255};
-    coreParams.emissiveIntensity = coreGlow;
-    EffectMaterial coreMat = Material_LoadCustom(coreParams);
-    Material_Begin(coreMat);
-    DrawCoreSphere(actualPos, radius * (0.48f + 0.06f * beat), 16, 16, WHITE);
-    Material_End();
-
-    // Electric-blue Fresnel shell.
-    EffectMaterialParams auraParams = {0};
-    auraParams.baseColor = (Color){80, 200, 255, 160};
-    auraParams.rimStrength = 2.6f;
-    auraParams.fresnelPower = 3.2f;
-    auraParams.emissiveIntensity = 1.3f + 0.5f * beat;
-    auraParams.distortionStrength = 0.55f;
-    auraParams.translucency = 0.55f;
-    EffectMaterial auraMat = Material_LoadCustom(auraParams);
-    Material_Begin(auraMat);
-    DrawCoreSphere(actualPos, radius, 16, 16, WHITE);
-    Material_End();
-
-    // Secondary motion — 3 tiny sparks orbiting the shell on tilted, offset
-    // rings. Deterministic from `time`, no particle budget, and they give the
-    // eye something to track between discharges.
-    EffectMaterialParams orbitParams = {0};
-    orbitParams.baseColor = (Color){190, 235, 255, 255};
-    orbitParams.emissiveIntensity = 2.4f;
-    EffectMaterial orbitMat = Material_LoadCustom(orbitParams);
-    Material_Begin(orbitMat);
-    for (int i = 0; i < 3; i++)
-    {
-        float oa = time * (2.6f + 0.5f * i) + i * 2.094f; // staggered speed + 120° phase
-        float tilt = 0.5f + 0.45f * i;                     // each ring on its own plane
-        float orbR = radius * 1.45f;
-        Vector3 op = {cosf(oa) * orbR,
-                      sinf(oa * 1.7f + i) * orbR * tilt * 0.35f,
-                      sinf(oa) * orbR};
-        DrawCoreSphere(Vector3Add(actualPos, op), 0.012f + 0.004f * sinf(time * 15.0f + i * 2.0f), 8, 8, WHITE);
-    }
-    Material_End();
-
-    rlEnableDepthMask();
-    EndBlendMode();
-
-    // Highlight — occasional zap: a real jagged mini-arc leaping OFF the
-    // shell (immediate-mode bolt, no pool slot needed), plus spark scatter
-    // at the arc root. Reads as plasma discharging, not dots appearing.
-    if (GetRandomValue(0, 100) < 25)
-    {
-        float yaw = ((float)GetRandomValue(0, 3600)) / 10.0f * DEG2RAD;
-        float pitch = ((float)GetRandomValue(-900, 900)) / 10.0f * DEG2RAD;
-        Vector3 sdir = {cosf(pitch) * cosf(yaw), sinf(pitch), cosf(pitch) * sinf(yaw)};
-        Vector3 surfacePos = Vector3Add(actualPos, Vector3Scale(sdir, radius));
-        Vector3 arcEnd = Vector3Add(actualPos, Vector3Scale(sdir, radius + 0.12f + Random01() * 0.1f));
-
-        Vector3 waypoints[9];
-        RegenerateLightningWaypoints(waypoints, surfacePos, arcEnd, 0.15f);
-        rlDrawRenderBatchActive();
-        BeginBlendMode(BLEND_ADDITIVE);
-        DrawLightningBolt(waypoints, 0.008f, camera);
-        rlDrawRenderBatchActive();
-        EndBlendMode();
-
-        VFX_ComposeGlintBurst(surfacePos, 2, radius * 0.8f, (Color){150, 220, 255, 255});
-    }
 }
 
 void VFX_ComposeBladeRing(Vector3 pos, float radius, int bladeCount, float rotationDeg)
@@ -212,8 +132,8 @@ void VFX_ComposeBladeRing(Vector3 pos, float radius, int bladeCount, float rotat
         rlPushMatrix();
         rlRotatef(a, 0.0f, 1.0f, 0.0f);
         rlTranslatef(liveRadius * 0.78f, 0.0f, 0.0f);
-        rlRotatef(90.0f, 0.0f, 0.0f, 1.0f);  // tip points outward from the ring center
-        rlRotatef(12.0f, 1.0f, 0.0f, 0.0f);  // slight rake, like angled saw teeth
+        rlRotatef(90.0f, 0.0f, 0.0f, 1.0f); // tip points outward from the ring center
+        rlRotatef(12.0f, 1.0f, 0.0f, 0.0f); // slight rake, like angled saw teeth
         DrawCoreCone((Vector3){0, 0, 0}, 0.05f, liveRadius * 0.5f, 6, WHITE);
         rlPopMatrix();
     }

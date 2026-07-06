@@ -726,12 +726,17 @@ void RegenerateLightningRay(Vector3 *waypoints9, Vector3 origin, Vector3 directi
 static RibbonPoint s_boltRibbon[LIGHTNING_BOLT_RIBBON_PTS];
 
 void DrawLightningBolt(const Vector3 *waypoints9, float thickness, Camera3D cam) {
+    // Legacy fixed palette: violet glow, blue-white core.
+    DrawLightningBoltEx(waypoints9, thickness, cam,
+                        (Color){100, 20, 255, 130}, (Color){230, 210, 255, 255});
+}
+
+void DrawLightningBoltEx(const Vector3 *waypoints9, float thickness, Camera3D cam,
+                         Color colorGlow, Color colorCore) {
     for (int pass = 0; pass < 2; pass++) {
-        float w       = (pass == 0) ? thickness * 1.6f : thickness;
-        unsigned char r = (pass == 0) ? 100 : 230;
-        unsigned char g = (pass == 0) ?  20 : 210;
-        unsigned char b = (pass == 0) ? 255 : 255;
-        unsigned char a = (pass == 0) ? 130 : 255;
+        float w = (pass == 0) ? thickness * 1.6f : thickness;
+        Color c = (pass == 0) ? colorGlow : colorCore;
+        unsigned char r = c.r, g = c.g, b = c.b, a = c.a;
 
         for (int k = 0; k < LIGHTNING_BOLT_RIBBON_PTS; k++) {
             float f = (float)k / (float)(LIGHTNING_BOLT_RIBBON_PTS - 1);

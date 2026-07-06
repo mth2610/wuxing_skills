@@ -38,6 +38,7 @@
 #include "vc_water.inl"
 #include "vc_fire.inl"
 #include "vc_earth.inl"
+#include "vc_plasma.inl"
 
 // Include high-level general VFX system implementations
 #include "vc_projectile.inl"

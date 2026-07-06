@@ -2821,7 +2821,6 @@ Thuần particle/decal/light, **không đụng post-process pipeline** (xem `COR
 
 ### Nhóm 4: Element Parity Additions (Phase 1 — `vc_metal.inl` / `vc_fire.inl`)
 - `VFX_ComposeMetalShardCluster(basePos, seed)`: Cụm mảnh kim loại sắc nhọn dùng chung hệ crystal-mesh với băng nhưng đục/sáng bóng/không refract (`CrystalMaterialParams`: `refraction=0`, `crack=0`, `sparkle` cao).
-- `VFX_ComposeMetalOrb(pos, time)`: Quả cầu chrome + viền điện xanh, cùng khuôn 2 lớp (lõi phát xạ + vỏ Fresnel) với `VFX_ComposeFireball`; thỉnh thoảng tự bắn `VFX_ComposeGlintBurst` làm tia điện lẹt xẹt.
 - `VFX_ComposeBladeRing(pos, radius, bladeCount, rotationDeg)`: Vòng lưỡi kim loại chĩa ra ngoài quanh tâm, dùng vật liệu `MAT_METAL` có sẵn.
 - `VFX_ComposeFlameWisp(pos, time)`: Đốm lửa nhỏ lập lờ, lệch pha theo vị trí spawn để nhiều đốm không nhấp nháy đồng bộ.
 - `VFX_ComposeFirePillar(basePos, progress)`: Cột lửa trồi lên theo `progress`, cùng công thức smoothstep-rise với `VFX_ComposeStonePillar`.

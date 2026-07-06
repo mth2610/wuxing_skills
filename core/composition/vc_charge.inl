@@ -22,7 +22,7 @@ void VFX_ComposeChargeUp(ChargeStyle style, Vector3 pos, float radius, float pro
     switch (style)
     {
         case CHARGE_FIRE:  color = ELEMENT_COLOR_FIRE;  runePath = "assets/textures/decals/decal_lava_crack.png"; break;
-        case CHARGE_METAL: color = (Color){120, 200, 255, 255}; runePath = "assets/textures/decals/decal_metal_rune.png"; break; // electric blue-white, matches VFX_ComposeMetalOrb
+        case CHARGE_METAL: color = (Color){120, 200, 255, 255}; runePath = "assets/textures/decals/decal_metal_rune.png"; break; // electric blue-white
         case CHARGE_WATER: color = ELEMENT_COLOR_WATER; runePath = "assets/textures/decals/decal_water_ripple.png"; break;
         case CHARGE_WOOD:  color = ELEMENT_COLOR_WOOD;  runePath = "assets/textures/decals/decal_root_mark.png"; break;
         case CHARGE_EARTH: color = ELEMENT_COLOR_EARTH; runePath = "assets/textures/decals/decal_earth_rune.png"; break;

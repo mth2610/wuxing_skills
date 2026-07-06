@@ -243,3 +243,66 @@ void CrystalMaterial_End(void)
     rlSetTexture(0);
     SkillManager_EndShader();
 }
+
+PlasmaMaterial PlasmaMaterial_Load(PlasmaMaterialParams params)
+{
+    PlasmaMaterial mat = {0};
+    mat.shader = ResourceManager_LoadShader("core/shaders/plasma_shell.vs",
+                                            "core/shaders/plasma_shell.fs");
+    mat.params = params;
+
+    mat.uBaseColorLoc = GetShaderLocation(mat.shader, "u_baseColor");
+    mat.uWispColorLoc = GetShaderLocation(mat.shader, "u_wispColor");
+    mat.uNoiseScaleLoc = GetShaderLocation(mat.shader, "u_noiseScale");
+    mat.uNoiseSpeedLoc = GetShaderLocation(mat.shader, "u_noiseSpeed");
+    mat.uFresnelPowerLoc = GetShaderLocation(mat.shader, "u_fresnelPower");
+    mat.uRimStrengthLoc = GetShaderLocation(mat.shader, "u_rimStrength");
+    mat.uEmissiveLoc = GetShaderLocation(mat.shader, "u_emissive");
+    mat.uOpacityLoc = GetShaderLocation(mat.shader, "u_opacity");
+    mat.uDisplaceAmpLoc = GetShaderLocation(mat.shader, "u_displaceAmp");
+    mat.uTimeLoc = GetShaderLocation(mat.shader, "u_time");
+
+    return mat;
+}
+
+void PlasmaMaterial_Begin(PlasmaMaterial mat)
+{
+    rlDrawRenderBatchActive();
+    SkillManager_BeginShader(mat.shader);
+
+    float time = (float)GetTime();
+    if (mat.uTimeLoc >= 0)
+        SetShaderValue(mat.shader, mat.uTimeLoc, &time, SHADER_UNIFORM_FLOAT);
+
+    if (mat.uBaseColorLoc >= 0)
+    {
+        Vector4 c = ColorNormalize(mat.params.baseColor);
+        SetShaderValue(mat.shader, mat.uBaseColorLoc, &c, SHADER_UNIFORM_VEC4);
+    }
+    if (mat.uWispColorLoc >= 0)
+    {
+        Vector4 c = ColorNormalize(mat.params.wispColor);
+        SetShaderValue(mat.shader, mat.uWispColorLoc, &c, SHADER_UNIFORM_VEC4);
+    }
+    if (mat.uNoiseScaleLoc >= 0)
+        SetShaderValue(mat.shader, mat.uNoiseScaleLoc, &mat.params.noiseScale, SHADER_UNIFORM_FLOAT);
+    if (mat.uNoiseSpeedLoc >= 0)
+        SetShaderValue(mat.shader, mat.uNoiseSpeedLoc, &mat.params.noiseSpeed, SHADER_UNIFORM_FLOAT);
+    if (mat.uFresnelPowerLoc >= 0)
+        SetShaderValue(mat.shader, mat.uFresnelPowerLoc, &mat.params.fresnelPower, SHADER_UNIFORM_FLOAT);
+    if (mat.uRimStrengthLoc >= 0)
+        SetShaderValue(mat.shader, mat.uRimStrengthLoc, &mat.params.rimStrength, SHADER_UNIFORM_FLOAT);
+    if (mat.uEmissiveLoc >= 0)
+        SetShaderValue(mat.shader, mat.uEmissiveLoc, &mat.params.emissive, SHADER_UNIFORM_FLOAT);
+    if (mat.uOpacityLoc >= 0)
+        SetShaderValue(mat.shader, mat.uOpacityLoc, &mat.params.opacity, SHADER_UNIFORM_FLOAT);
+    if (mat.uDisplaceAmpLoc >= 0)
+        SetShaderValue(mat.shader, mat.uDisplaceAmpLoc, &mat.params.displaceAmp, SHADER_UNIFORM_FLOAT);
+}
+
+void PlasmaMaterial_End(void)
+{
+    rlDrawRenderBatchActive();
+    rlSetTexture(0);
+    SkillManager_EndShader();
+}
