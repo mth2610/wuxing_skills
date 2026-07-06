@@ -3,7 +3,8 @@
 
 #include "raylib.h"
 
-typedef enum {
+typedef enum
+{
     MAT_FIRE,
     MAT_ICE,
     MAT_WATER,
@@ -22,7 +23,8 @@ typedef enum {
 #define MATERIAL_CUSTOM MAT_CUSTOM
 #define Material_Load Material_Get
 
-typedef struct {
+typedef struct
+{
     Color baseColor;          // primary tint; also drives rim glow + dissolve edge glow color
     float rimStrength;        // 0..~2, rim/edge glow brightness (Fresnel-weighted)
     float fresnelPower;       // 1..8, rim sharpness (higher = thinner edge)
@@ -35,7 +37,8 @@ typedef struct {
     Texture2D texture1;       // optional secondary detail/mask texture; id==0 = unused
 } EffectMaterialParams;
 
-typedef struct {
+typedef struct
+{
     Shader shader;
     MaterialPreset preset;
     int uTimeLoc;
@@ -79,21 +82,23 @@ void Material_End(void);
  * hỗ trợ các tham số: Fresnel, fake refraction, thickness, sparkles, nứt...
  * ==========================================================================*/
 
-typedef struct {
+typedef struct
+{
     Color baseColor;
     Color edgeColor;
-    float roughness;           // mapped to u_fresnelPower (fresnelPower = mix(1.0, 8.0, roughness))
-    float fresnel;             // mapped to u_rimStrength
-    float refraction;          // mapped to u_refraction (distortion)
-    float sparkle;             // mapped to u_sparkle (specular sparkle)
-    float crack;               // mapped to u_crack (internal noise cracks)
-    float emission;            // mapped to u_emission (glow boost)
-    float thickness;           // mapped to u_thickness (light absorption)
-    float dissolve;            // mapped to u_dissolve (dissolve progress)
-    Texture2D texture1;        // detail caustics texture for fake refraction
+    float roughness;    // mapped to u_fresnelPower (fresnelPower = mix(1.0, 8.0, roughness))
+    float fresnel;      // mapped to u_rimStrength
+    float refraction;   // mapped to u_refraction (distortion)
+    float sparkle;      // mapped to u_sparkle (specular sparkle)
+    float crack;        // mapped to u_crack (internal noise cracks)
+    float emission;     // mapped to u_emission (glow boost)
+    float thickness;    // mapped to u_thickness (light absorption)
+    float dissolve;     // mapped to u_dissolve (dissolve progress)
+    Texture2D texture1; // detail caustics texture for fake refraction
 } CrystalMaterialParams;
 
-typedef struct {
+typedef struct
+{
     Shader shader;
     CrystalMaterialParams params;
     int uBaseColorLoc;
@@ -124,7 +129,8 @@ void CrystalMaterial_End(void);
  * membrane layer for free.
  * ==========================================================================*/
 
-typedef struct {
+typedef struct
+{
     Color baseColor;    // deep body tint of the membrane (alpha = master alpha)
     Color wispColor;    // bright filament-crest tint
     float noiseScale;   // wisp frequency over the sphere (try 2.5-4.0)
@@ -136,7 +142,8 @@ typedef struct {
     float displaceAmp;  // world-units vertex undulation amplitude
 } PlasmaMaterialParams;
 
-typedef struct {
+typedef struct
+{
     Shader shader;
     PlasmaMaterialParams params;
     int uBaseColorLoc;

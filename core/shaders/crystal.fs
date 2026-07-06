@@ -4,39 +4,39 @@
 #include "core/shaders/common/noise.glsl"
 
 // ============================================================
-// WUXING — Crystal Shader Material
+// WUXING — Crystal Shader Material (FIXED: Clear & Organic)
 // Backing shader for premium translucent/emissive crystals.
-// Handles Fresnel rim, height gradient, thickness absorption,
-// fake refraction, internal procedural cracks, and sparkling speculars.
 // ============================================================
 
 uniform vec4  u_baseColor;
-uniform vec4  u_edgeColor;          // Color at the tip and edges
-uniform float u_fresnelPower;       // default 4.0
-uniform float u_rimStrength;        // default 1.0
-uniform float u_refraction;         // default 0.15 (fake distortion)
-uniform float u_sparkle;            // default 0.8 (sparkle threshold/amount)
-uniform float u_crack;              // default 0.5 (crack noise strength)
-uniform float u_emission;           // default 0.3 (emissive glow)
-uniform float u_thickness;          // default 2.0 (absorption depth)
-uniform float u_dissolve;           // default 0.0 (dissolve progress)
+uniform vec4  u_edgeColor;
+uniform float u_fresnelPower;
+uniform float u_rimStrength;
+uniform float u_refraction;
+uniform float u_sparkle;
+uniform float u_crack;
+uniform float u_emission;
+uniform float u_thickness;
+uniform float u_dissolve;
 
-uniform sampler2D texture1;         // detail/caustics map for fake refraction
+uniform sampler2D texture1;
 
-// Local 3D Value Noise utilizing hash3 from noise.glsl
+// Hàm Value Noise 3D dùng chung cho hiệu ứng nứt và tan biến
 float vnoise3D(vec3 p) {
     vec3 i = floor(p);
     vec3 f = fract(p);
     f = f * f * (3.0 - 2.0 * f);
+    
+    vec2 d = vec2(0.0, 1.0);
     return mix(
         mix(
-            mix(hash3(i + vec3(0.0, 0.0, 0.0)), hash3(i + vec3(1.0, 0.0, 0.0)), f.x),
-            mix(hash3(i + vec3(0.0, 1.0, 0.0)), hash3(i + vec3(1.0, 1.0, 0.0)), f.x),
+            mix(hash3(i + d.xxx), hash3(i + d.yxx), f.x),
+            mix(hash3(i + d.xyx), hash3(i + d.yyx), f.x),
             f.y
         ),
         mix(
-            mix(hash3(i + vec3(0.0, 0.0, 1.0)), hash3(i + vec3(1.0, 0.0, 1.0)), f.x),
-            mix(hash3(i + vec3(0.0, 1.0, 1.0)), hash3(i + vec3(1.0, 1.0, 1.0)), f.x),
+            mix(hash3(i + d.xxy), hash3(i + d.yxy), f.x),
+            mix(hash3(i + d.xyy), hash3(i + d.yyy), f.x),
             f.y
         ),
         f.z
@@ -49,59 +49,66 @@ void main()
     vec3 viewDir = normalize(viewPos - fragPosition);
     vec3 lightDir = normalize(u_lightDir);
 
-    // 1. Height Gradient (derived from UV coordinate fragTexCoord.y passed from vertex shader)
-    float heightFactor = clamp(fragTexCoord.y, 0.0, 1.0);
-    vec3 crystalBase = mix(u_baseColor.rgb, u_edgeColor.rgb, heightFactor);
+    // 1. Height Gradient & Base
+    vec3 crystalBase = mix(u_baseColor.rgb, u_edgeColor.rgb, clamp(fragTexCoord.y, 0.0, 1.0));
 
-    // 2. Diffuse shading (flat faceted light)
-    float diffuse = calcDiffuse(normal, lightDir, 0.25);
-
-    // 3. Fresnel (rim glow on sharp edges)
+    // 2. Diffuse & Fresnel [FIX: ĐỘ TRONG]
+    // Dùng kỹ thuật Wrap Lighting: nâng mức sáng tối thiểu lên 0.4. 
+    // Ánh sáng sẽ "xuyên" qua mặt tối, loại bỏ bóng đen đặc ruột.
+    float diffuse = mix(0.4, 1.0, calcDiffuse(normal, lightDir, 0.25));
     float fresnel = calcFresnel(normal, viewDir, u_fresnelPower);
-    vec3 rimGlow = u_edgeColor.rgb * fresnel * u_rimStrength * 0.6;
+    
+    vec3 litBase = crystalBase * diffuse;
+    vec3 rimGlow = u_edgeColor.rgb * (fresnel * u_rimStrength * 0.6);
 
-    // 4. Fake Refraction using detail texture1 with normal-based distortion
+    // 3. Fake Refraction
     vec2 refractUV = fragPosition.xz * 1.5 + normal.xy * u_refraction;
     vec3 refractedColor = texture(texture1, refractUV).rgb;
-    // Blend refraction with base (refracted light gets colored by the crystal base to prevent washout)
-    vec3 finalColorRGB = mix(crystalBase * diffuse, refractedColor * crystalBase, u_refraction * 0.5);
+    vec3 finalColorRGB = mix(litBase, refractedColor * litBase, u_refraction * 0.5);
 
-    // 5. Thickness Absorption (attenuation in center, brighter on edges)
+    // 4. Thickness Absorption
     float thicknessFactor = mix(0.3, 1.0, fresnel);
-    float absorption = 1.0 - exp(-thicknessFactor * u_thickness);
+    float absorption = 1.0 - exp2(-1.442695 * thicknessFactor * u_thickness);
     finalColorRGB = mix(finalColorRGB * 0.25, finalColorRGB, absorption);
 
-    // 6. Internal Crack Noise (using local 3D value noise)
-    if (u_crack > 0.01)
+    // 5. Internal Crack Noise
+    if (u_crack > 0.001)
     {
         float cNoise = vnoise3D(fragPosition * 8.0);
-        float crackLine = smoothstep(0.3, 0.32, cNoise) * smoothstep(0.36, 0.34, cNoise);
-        finalColorRGB += u_edgeColor.rgb * crackLine * u_crack * 0.4;
+        float crackLine = smoothstep(0.3, 0.32, cNoise) * (1.0 - smoothstep(0.34, 0.36, cNoise));
+        finalColorRGB += u_edgeColor.rgb * (crackLine * u_crack * 0.4);
     }
 
-    // 7. Sparkling Highlights (moving speckles)
-    if (u_sparkle > 0.01)
+    // 6. Sparkling Highlights [FIX: HẠT VUÔNG]
+    // Bỏ hàm floor(). Dùng giao thoa sóng lượng giác (Sine interference) 
+    // để tạo ra các đốm sáng có hình dáng mũi nhọn tự nhiên, biến thiên theo thời gian.
+    if (u_sparkle > 0.001)
     {
-        float sparkNoise = vnoise3D(vec3(fragPosition.xy * 60.0, u_time * 2.5));
-        if (sparkNoise > 0.78)
-        {
-            float sparkleFactor = (sparkNoise - 0.78) / 0.22;
-            finalColorRGB += vec3(1.5) * sparkleFactor * u_sparkle;
-        }
+        vec3 p = fragPosition * 22.0;
+        float sparkVal = sin(p.x + u_time) * cos(p.y - u_time) * sin(p.z + u_time * 0.8);
+        
+        // Nâng số mũ lên số chẵn cực lớn (16.0) để triệt tiêu các dải sáng mờ,
+        // chỉ chừa lại các đỉnh (peaks) sắc lẹm lấp lánh như tinh thể.
+        sparkVal = pow(abs(sparkVal), 16.0); 
+        
+        finalColorRGB += vec3(2.0) * sparkVal * u_sparkle;
     }
 
-    // 8. Additive Rim and Emission Glow (calibrated to prevent color blowout to pure white)
-    finalColorRGB += rimGlow;
-    finalColorRGB += crystalBase * u_emission * 0.4;
+    // 7. Additive Rim and Emission Glow
+    finalColorRGB += rimGlow + (crystalBase * (u_emission * 0.4));
 
-    // 9. Dissolve Effect
-    float alpha = mix(u_baseColor.a, 1.0, fresnel);
-    if (u_dissolve > 0.0)
+    // 8. Dissolve Effect & Alpha [FIX: ĐỘ TRONG & HẠT VUÔNG]
+    // Không đẩy alpha lên mức 1.0 (đục hoàn toàn) ở phần viền nữa. 
+    // Alpha sẽ dao động tự nhiên quanh mức Alpha gốc của Color.
+    float alpha = clamp(u_baseColor.a + (fresnel * u_rimStrength * 0.35), 0.0, 1.0);
+
+    if (u_dissolve > 0.001)
     {
-        float dNoise = hash3(floor(normal * 30.0));
+        // Trả lại hàm Value Noise 3D hữu cơ cho vết vỡ, thay vì noise hạt cát
+        float dNoise = vnoise3D(fragPosition * 12.0); 
         if (dNoise < u_dissolve) discard;
-        // Edge glow during dissolve
-        float edge = smoothstep(u_dissolve, u_dissolve + 0.08, dNoise);
+        
+        float edge = smoothstep(u_dissolve, u_dissolve + 0.06, dNoise);
         finalColorRGB = mix(u_edgeColor.rgb * 2.5, finalColorRGB, edge);
     }
 
