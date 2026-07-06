@@ -1219,6 +1219,15 @@ void ProcBolt_SetBrightness(int id, float b); // drive strike flash→afterglow 
 void ProcBolt_Update(int id, Vector3 from, Vector3 to, float scale, float dt);
 void ProcBolt_Draw(int id, Camera3D cam);
 void ProcBolt_Kill(int id);
+
+// Unmanaged immediate-mode bolt draw (no pool) — caller owns the 9 waypoints,
+// regenerates + draws per frame. Ex = caller-chosen colors (glow = wide outer
+// pass, core = bright inner pass); DrawLightningBolt = Ex with the legacy
+// violet/white palette.
+void RegenerateLightningWaypoints(Vector3 *waypoints9, Vector3 from, Vector3 to, float scale);
+void DrawLightningBolt(const Vector3 *waypoints9, float thickness, Camera3D cam);
+void DrawLightningBoltEx(const Vector3 *waypoints9, float thickness, Camera3D cam,
+                         Color colorGlow, Color colorCore);
 ```
 
 **Usage pattern (free-end ray):**
@@ -2042,6 +2051,27 @@ void Material_End(void);
 * **`texture1` is optional** — `EffectMaterialParams.texture1.id == 0` skips the sample entirely (guarded by `u_hasTexture1` in the shader) rather than sampling an unbound/stale texture unit. Sampled as a luminance mask (`.r` channel only, not `.rgb`) — importing the texture's own hue directly onto a mesh with very different UV density than what it was authored for (e.g. a flat ground-decal crack texture on a sphere, which pinches hard at the poles) produces visible color noise.
 * **`Material_SetFloat`** still works unmodified on `Material_LoadCustom` materials for any uniform name, including animating `u_dissolve` frame-to-frame (see `core_test`'s usage: solid hold, then dissolve out over the last second). Dissolve's edge-glow only evaluates once `u_dissolve > 0.0` — `fx.glsl`'s `dissolveCalc()` computes a nonzero `edgeFactor` for ~8% of fragments even at `dissolve == 0.0`, which would otherwise show as speckle the instant the material appears.
 
+### Plasma Material (`core/material/material_system.h` — `plasma_shell.vs/.fs`)
+Màng năng lượng wispy: alpha = fresnel × fbm noise động → **tâm trong suốt hoàn toàn** (điều `EffectMaterialParams.translucency` không làm được — nó có sàn alpha 0.3 ở tâm). Vẽ sphere dưới `BLEND_ADDITIVE`; tắt backface culling để có thêm lớp màng phía sau miễn phí. VS tự uốn bề mặt (sines trên `vertexNormal` — an toàn immediate-mode/Android Rule D).
+```c
+typedef struct {
+    Color baseColor;    // tint thân màng (alpha = master alpha)
+    Color wispColor;    // tint đỉnh sợi wisp sáng
+    float noiseScale;   // tần số wisp trên mặt cầu (2.5-4.0)
+    float noiseSpeed;   // tốc độ trôi wisp (0.3-0.8, âm = đảo chiều)
+    float fresnelPower; // 1..8 — cao hơn = tâm rỗng hơn
+    float rimStrength;  // 0..~2 boost sáng viền
+    float emissive;     // 0..~2 tự phát sáng
+    float opacity;      // 0..1 master alpha
+    float displaceAmp;  // biên độ uốn bề mặt (world units, ~8% radius)
+} PlasmaMaterialParams;
+
+PlasmaMaterial PlasmaMaterial_Load(PlasmaMaterialParams params);
+void PlasmaMaterial_Begin(PlasmaMaterial mat); // đổi params runtime: sửa mat.params trước khi Begin
+void PlasmaMaterial_End(void);
+```
+Ví dụ sử dụng thực tế: `VFX_ComposePlasmaOrb` (`vc_plasma.inl`).
+
 ### Ground Decal Preset
 ```c
 typedef enum {
@@ -2824,6 +2854,15 @@ Thuần particle/decal/light, **không đụng post-process pipeline** (xem `COR
 - `VFX_ComposeBladeRing(pos, radius, bladeCount, rotationDeg)`: Vòng lưỡi kim loại chĩa ra ngoài quanh tâm, dùng vật liệu `MAT_METAL` có sẵn.
 - `VFX_ComposeFlameWisp(pos, time)`: Đốm lửa nhỏ lập lờ, lệch pha theo vị trí spawn để nhiều đốm không nhấp nháy đồng bộ.
 - `VFX_ComposeFirePillar(basePos, progress)`: Cột lửa trồi lên theo `progress`, cùng công thức smoothstep-rise với `VFX_ComposeStonePillar`.
+
+### Nhóm 4b: Plasma Orb & Wood Ambience (`vc_plasma.inl` / `vc_wood.inl`)
+- `VFX_ComposePlasmaOrb(pos, radius, time)` (`vc_plasma.inl`): Quả cầu năng lượng plasma — 1 lõi bloom sphere cyan (EffectMaterial translucency), 2 lớp màng noise wispy (PlasmaMaterial, xem Shader Material System) counter-scroll + backface, và các wisp trail hồng (head particle + onLiveEmit tail, curl-noise mạnh) uốn éo bên trong. Continuous — gọi mỗi frame với `time` chạy dồn. Budget: ~15 strand sống, ~600 hạt (pool 2000 — đừng nhân đôi rate/lifetime mà không tính lại).
+- `VFX_ComposeLeafSwirl(pos, radius, time)` (`vc_wood.inl`): Lốc lá xoáy quanh điểm (vortex + updraft + curl), lá = particle nhấp nháy size/emissive theo curve "flutter", kèm pollen + moss decal + light. Continuous.
+- `VFX_ComposeBloomBurst(pos, scale)` (`vc_wood.inl`): Nở hoa one-shot — vòng cánh hoa bung ra rơi lượn, pollen bay lên, flash trung tâm mềm, decal root ring, light. Gọi 1 lần.
+- `VFX_ComposeLeafFall(pos, radius, time)` (`vc_wood.inl`): Tán lá rơi lượn lờ trong vùng (gravity nhẹ + curl mạnh + viscosity chống rơi thẳng), spore lơ lửng, moss decal. Continuous.
+- `VFX_ComposeBladeStorm(pos, radius, time)` (`vc_metal.inl`): 7 lưỡi kim (cone `MAT_METAL`) quay quanh caster trên 2 băng đảo chiều, mỗi lưỡi tự có bán kính/độ cao/rake riêng theo hash; streak bạc văng khỏi mũi lưỡi + glint catch-light. Continuous.
+- `VFX_ComposeShrapnelBurst(pos, scale)` (`vc_metal.inl`): Nổ mảnh kim loại one-shot — quạt mảnh bay là sát đất (pitch -5°..45°, gravity 7), hero streak kéo đuôi, flash + glint tâm nổ, decal crater (chỉ khi `pos.y` gần đất), distort + light lạnh. Gọi 1 lần.
+- `VFX_ComposeRicochetSpark(pos, dir, scale)` (`vc_metal.inl`): Quạt tia lửa parry/deflect one-shot bắn theo `dir` (nón ~35°, chết trong ~0.3s) + micro-flash "ping". Gọi 1 lần khi chặn đòn/đạn nảy.
 
 ### Nhóm 5: Phase 3 Archetypes — shield/chain/zone/slash/charge
 Cùng quy ước tham số `(style, pos, ..., progress, time)` như các archetype ở Nhóm 2 (`VFX_ComposeBeam`, `VFX_GroundPattern`...), để AI dựng skill mới dễ đoán chữ ký hàm:

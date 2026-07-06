@@ -78,6 +78,17 @@ void VFX_ComposeBladeRing(Vector3 pos, float radius, int bladeCount, float rotat
 // Plasma energy orb — wispy noise membrane + hot core + pink interior filament
 // arcs. Continuous: call once per frame with a running `time`.
 void VFX_ComposePlasmaOrb(Vector3 pos, float radius, float time);
+// Wood ambience set — glowing leaves/petals/pollen as particle flows.
+// LeafSwirl/LeafFall are continuous (call per frame); BloomBurst is one-shot.
+void VFX_ComposeLeafSwirl(Vector3 pos, float radius, float time);
+void VFX_ComposeBloomBurst(Vector3 pos, float scale);
+void VFX_ComposeLeafFall(Vector3 pos, float radius, float time);
+// Metal skill set — BladeStorm is continuous (orbiting blades around caster);
+// ShrapnelBurst (fragment explosion) and RicochetSpark (directional parry/
+// deflect spark fan along `dir`) are one-shot.
+void VFX_ComposeBladeStorm(Vector3 pos, float radius, float time);
+void VFX_ComposeShrapnelBurst(Vector3 pos, float scale);
+void VFX_ComposeRicochetSpark(Vector3 pos, Vector3 dir, float scale);
 
 // 10. High-level Archetypes & Styles
 typedef enum {

@@ -59,12 +59,14 @@ static const char* s_meshNames[] = {
 static const char* s_burstNames[] = {
     "FIRE", "ICE", "WATER", "LIGHTNING", "EARTH", "WOOD", "METAL", "TAIJI"
 };
-// NEWFX 0-4: continuous (mesh-style, needs s_isPlayingMesh), 5-8: one-shot burst,
-// 9-13: continuous archetype (progress-driven)
+// NEWFX 0-4: continuous (mesh-style, needs s_isPlayingMesh), 5-8 + 15 + 18-19: one-shot burst,
+// 9-14, 16-17: continuous archetype (progress-driven)
 static const char* s_newFxNames[] = {
     "FLAME WISP", "FIRE PILLAR", "METAL SHARD", "PLASMA ORB", "BLADE RING",
     "SHOCKWAVE", "GLINT BURST", "EMBER DRIFT", "STREAK FLARE",
-    "SHIELD", "CHAIN", "ZONE", "SLASH ARC", "CHARGE UP"
+    "SHIELD", "CHAIN", "ZONE", "SLASH ARC", "CHARGE UP",
+    "LEAF SWIRL", "BLOOM BURST", "LEAF FALL",
+    "BLADE STORM", "SHRAPNEL", "RICOCHET"
 };
 
 // State cho ProcBolt (dùng trong COMPOSER tab - BOLT SKY)
@@ -356,7 +358,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
   else if (s_testCategory == TEST_CAT_BURST) { maxIdx = 8; names = s_burstNames; }
   else if (s_testCategory == TEST_CAT_COMPOSER) { maxIdx = 9; names = s_composerNames; }
   else if (s_testCategory == TEST_CAT_MESH) { maxIdx = 9; names = s_meshNames; }
-  else if (s_testCategory == TEST_CAT_NEWFX) { maxIdx = 14; names = s_newFxNames; }
+  else if (s_testCategory == TEST_CAT_NEWFX) { maxIdx = 20; names = s_newFxNames; }
 
 
   float gridY = startY + tabH + 20.0f;
@@ -545,7 +547,15 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_ComposeTriggerImpactBurst(s_prefabStartPos, 3.0f, &config);
           }
       } else if (s_testCategory == TEST_CAT_NEWFX) {
-          if (s_testIndex <= 4 || s_testIndex >= 9) {
+          if (s_testIndex == 15) {
+              VFX_ComposeBloomBurst(s_prefabStartPos, 1.0f);
+          } else if (s_testIndex == 18) {
+              VFX_ComposeShrapnelBurst(Vector3Add(s_prefabStartPos, (Vector3){0, 0.25f, 0}), 1.0f);
+          } else if (s_testIndex == 19) {
+              // Deflect direction: up + outward along +X so the fan is easy to read.
+              VFX_ComposeRicochetSpark(Vector3Add(s_prefabStartPos, (Vector3){0, 0.5f, 0}),
+                                       (Vector3){0.7f, 0.7f, 0.0f}, 1.0f);
+          } else if (s_testIndex <= 4 || s_testIndex >= 9) {
               // Continuous: needs per-frame redraw, handled in VFXTest_Draw3D.
               s_isPlayingMesh = true;
               s_meshTime = 0.0f;
@@ -673,6 +683,9 @@ void VFXTest_Draw3D(void) {
               case 11: VFX_ComposeZone(ZONE_LAVA, s_prefabStartPos, 1.2f, fminf(progress, 0.5f), s_meshTime); break;
               case 12: VFX_ComposeSlashArc(SLASH_METAL, s_prefabStartPos, (Vector3){1, 0, 0}, 1.0f, 120.0f, fminf(s_meshTime / 0.6f, 0.999f), s_meshTime); break;
               case 13: VFX_ComposeChargeUp(CHARGE_FIRE, s_prefabStartPos, 1.0f, progress, s_meshTime); break;
+              case 14: VFX_ComposeLeafSwirl(s_prefabStartPos, 0.8f, s_meshTime); break;
+              case 16: VFX_ComposeLeafFall(s_prefabStartPos, 1.2f, s_meshTime); break;
+              case 17: VFX_ComposeBladeStorm(s_prefabStartPos, 0.7f, s_meshTime); break;
           }
       }
   }
@@ -762,7 +775,7 @@ void VFXTest_DrawHUD(void) {
   else if (s_testCategory == TEST_CAT_BURST) { maxIdx = 8; names = s_burstNames; }
   else if (s_testCategory == TEST_CAT_COMPOSER) { maxIdx = 9; names = s_composerNames; }
   else if (s_testCategory == TEST_CAT_MESH) { maxIdx = 9; names = s_meshNames; }
-  else if (s_testCategory == TEST_CAT_NEWFX) { maxIdx = 14; names = s_newFxNames; }
+  else if (s_testCategory == TEST_CAT_NEWFX) { maxIdx = 20; names = s_newFxNames; }
 
 
   float gridY = startY + tabH + 20.0f;
