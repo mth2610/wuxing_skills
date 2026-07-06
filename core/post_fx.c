@@ -35,16 +35,36 @@ static int brightThresholdLoc;
 static int dsTexSizeLoc;
 static int usTexSizeLoc;
 
+static RenderTexture2D LoadRenderTextureWithFormat(int width, int height, int format) {
+  RenderTexture2D target = {0};
+  target.id = rlLoadFramebuffer();
+  if (target.id > 0) {
+    rlEnableFramebuffer(target.id);
+
+    target.texture.id = rlLoadTexture(NULL, width, height, format, 1);
+    target.texture.width = width;
+    target.texture.height = height;
+    target.texture.format = format;
+    target.texture.mipmaps = 1;
+
+    rlFramebufferAttach(target.id, target.texture.id, RL_ATTACHMENT_COLOR_CHANNEL0,
+                        RL_ATTACHMENT_TEXTURE2D, 0);
+
+    rlDisableFramebuffer();
+  }
+  return target;
+}
+
 void PostFX_Init(int width, int height) {
-  mainRenderTex = LoadRenderTexture(width, height);
-  bloomTex      = LoadRenderTexture(width / 4, height / 4);
+  mainRenderTex = LoadRenderTextureWithFormat(width, height, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+  bloomTex      = LoadRenderTextureWithFormat(width / 4, height / 4, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
   SetTextureFilter(bloomTex.texture, TEXTURE_FILTER_BILINEAR);
   SetTextureWrap(bloomTex.texture, TEXTURE_WRAP_CLAMP);
 
   int w = width / 4, h = height / 4;
   for (int i = 0; i < DUAL_FILTER_LEVELS; i++) {
     w /= 2; h /= 2;
-    dfTex[i] = LoadRenderTexture(w, h);
+    dfTex[i] = LoadRenderTextureWithFormat(w, h, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
     SetTextureFilter(dfTex[i].texture, TEXTURE_FILTER_BILINEAR);
     SetTextureWrap(dfTex[i].texture, TEXTURE_WRAP_CLAMP);
   }

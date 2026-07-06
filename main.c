@@ -137,8 +137,7 @@ int main(void) {
   // -----------------------------------------------------------------
   InitParticleSystem();
   GpuParticleSystem_Init();
-  Shader defaultTrailShader =
-      LoadShader(0, FileExists("skills/metal/metal_projectile/metal.fs") ? "skills/metal/metal_projectile/metal.fs" : NULL);
+  Shader defaultTrailShader = LoadShader(0, "core/shaders/trail_glow.fs");
   InitTrailSystem(defaultTrailShader);
   VFXLight_Init();
   DecalSystem_Init();

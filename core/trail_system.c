@@ -419,16 +419,20 @@ int SpawnTrailEntity(TrailConfig config) {
   }
 
   if (config.type == TRAIL_TYPE_WISP) {
-    t->historyCount = TRAIL_HISTORY_COUNT;
-    t->nodeRestLen = (TRAIL_HISTORY_COUNT > 1 && config.len > 0.0f)
-                         ? config.len / (float)(TRAIL_HISTORY_COUNT - 1)
+    int maxNodes = (config.trailLength > 0.0f) ? (int)config.trailLength : TRAIL_HISTORY_COUNT;
+    if (maxNodes > TRAIL_HISTORY_COUNT) maxNodes = TRAIL_HISTORY_COUNT;
+    if (maxNodes < 2) maxNodes = 2;
+
+    t->historyCount = maxNodes;
+    t->nodeRestLen = (maxNodes > 1 && config.len > 0.0f)
+                         ? config.len / (float)(maxNodes - 1)
                          : 0.0f;
 
     Vector3 strandDir = (Vector3LengthSqr(config.target) > 1e-8f)
                             ? Vector3Normalize(config.target)
                             : (Vector3){0.0f, 0.0f, 1.0f};
-    for (int h = 0; h < TRAIL_HISTORY_COUNT; h++) {
-      float u = (float)h / (float)(TRAIL_HISTORY_COUNT - 1);
+    for (int h = 0; h < maxNodes; h++) {
+      float u = (maxNodes > 1) ? (float)h / (float)(maxNodes - 1) : 0.0f;
       t->history[h] =
           Vector3Add(config.pos, Vector3Scale(strandDir, u * config.len));
       t->nodeVelocity[h] = config.vel;
@@ -634,18 +638,24 @@ static void DrawTrailGeometry(int i, Camera3D camera) {
 
         Color nodeColor = c;
         if (trailPool[i].gradient) {
-          nodeColor = ColorGradient_Sample(trailPool[i].gradient, segRatio);
+          Color gradCol = ColorGradient_Sample(trailPool[i].gradient, segRatio);
+          nodeColor = (Color){
+              (unsigned char)((gradCol.r / 255.0f) * c.r),
+              (unsigned char)((gradCol.g / 255.0f) * c.g),
+              (unsigned char)((gradCol.b / 255.0f) * c.b),
+              (unsigned char)((gradCol.a / 255.0f) * c.a)
+          };
         }
 
+        // Draw a single pass ribbon utilizing the full configured thickness
         scratchOuter[h].position = trailPool[i].history[h];
-        scratchOuter[h].halfWidth = trailPool[i].thickness * 0.8f * taper;
+        scratchOuter[h].halfWidth = trailPool[i].thickness * 1.0f * taper;
         scratchOuter[h].v = segRatio;
         scratchOuter[h].tint =
-            (Color){nodeColor.r, nodeColor.g, nodeColor.b, (unsigned char)(nodeColor.a * lifeRatio * taper)};
+            (Color){nodeColor.r, nodeColor.g, nodeColor.b, (unsigned char)((nodeColor.a / 255.0f) * 180.0f * lifeRatio * taper)};
       }
       Texture2D ribbonTex = trailPool[i].sprite.id > 0 ? trailPool[i].sprite : s_globalTrailTex;
-      DrawRibbonStrip(scratchOuter, trailPool[i].historyCount, ribbonTex,
-                      camera);
+      DrawRibbonStrip(scratchOuter, trailPool[i].historyCount, ribbonTex, camera);
     }
 
   } else if (trailPool[i].type == TRAIL_TYPE_PORTAL) {
@@ -676,7 +686,13 @@ static void DrawTrailGeometry(int i, Camera3D camera) {
 
         Color nodeColor = c;
         if (trailPool[i].gradient) {
-          nodeColor = ColorGradient_Sample(trailPool[i].gradient, segRatio);
+          Color gradCol = ColorGradient_Sample(trailPool[i].gradient, segRatio);
+          nodeColor = (Color){
+              (unsigned char)((gradCol.r / 255.0f) * c.r),
+              (unsigned char)((gradCol.g / 255.0f) * c.g),
+              (unsigned char)((gradCol.b / 255.0f) * c.b),
+              (unsigned char)((gradCol.a / 255.0f) * c.a)
+          };
         }
 
         // Outer glow

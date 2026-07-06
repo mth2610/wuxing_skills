@@ -172,9 +172,10 @@ void DrawGlacialCannonSkill(void) {
         SkillInstance *s = &s_instances[i];
         if (!s->active) continue;
 
-        if (s->state == STATE_CASTING) {
-            VFX_ComposeAura(AURA_QI, s->startPos, s_aoeRadius * s->sizeScale, time);
-        } else if (s->state == STATE_CHANNELING) {
+        // Draw Aura Qi continuously from cast until the skill is complete
+        VFX_ComposeAura(AURA_QI, s->startPos, s_aoeRadius * s->sizeScale, time);
+
+        if (s->state == STATE_CHANNELING) {
             float progress = s->timer / s_waveDuration;
             if (progress > 1.0f) progress = 1.0f;
 

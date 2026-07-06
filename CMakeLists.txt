@@ -141,6 +141,7 @@ configure_file(core/shaders/distortion.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shade
 configure_file(core/shaders/bloom_bright.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/bloom_bright.fs COPYONLY)
 configure_file(core/shaders/bloom_blur.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/bloom_blur.fs COPYONLY)
 configure_file(core/shaders/post_process.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/post_process.fs COPYONLY)
+configure_file(core/shaders/trail_glow.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/trail_glow.fs COPYONLY)
 
 
 configure_file(core/shaders/common/vs_header.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/vs_header.glsl COPYONLY)
