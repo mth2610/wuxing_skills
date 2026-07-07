@@ -103,10 +103,10 @@ void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width)
 //   FloatingStones — continuous levitating rocks around a caster (buff/charge)
 //   QuakeRumble    — continuous trembling zone (pebbles hop, dust pops)
 
-static ColorGradient s_earthDustGrad = {0};   // ochre-gray airborne dust
-static ColorGradient s_earthChunkGrad = {0};  // rock chip: lit brown → dark
-static ColorGradient s_earthGrainGrad = {0};  // bright sand grains (catchlight)
-static SkillCurve s_earthDustBillow = {0};    // dust grows while fading
+static ColorGradient s_earthDustGrad = {0};  // ochre-gray airborne dust
+static ColorGradient s_earthChunkGrad = {0}; // rock chip: lit brown → dark
+static ColorGradient s_earthGrainGrad = {0}; // bright sand grains (catchlight)
+static SkillCurve s_earthDustBillow = {0};   // dust grows while fading
 static bool s_earthFxInit = false;
 
 static void EarthFx_InitShared(void)
@@ -219,8 +219,7 @@ void VFX_ComposeFloatingStones(Vector3 pos, float radius, float time)
         float r01 = (float)(h >> 8 & 0xFFFF) / 65535.0f;
         float r02 = (float)(h >> 20 & 0xFFF) / 4095.0f;
 
-        float a = time * (0.5f + 0.25f * r01) * ((i % 2) ? 1.0f : -1.0f)
-                  + (float)i * (2.0f * PI / (float)stoneCount);
+        float a = time * (0.5f + 0.25f * r01) * ((i % 2) ? 1.0f : -1.0f) + (float)i * (2.0f * PI / (float)stoneCount);
         float orbR = radius * (0.75f + 0.4f * r01);
         float y = radius * (0.5f + 0.55f * r02) + radius * 0.1f * sinf(time * 1.3f + (float)i * 2.1f);
         Vector3 p = {pos.x + cosf(a) * orbR, pos.y + y, pos.z + sinf(a) * orbR};

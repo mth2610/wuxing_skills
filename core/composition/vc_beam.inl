@@ -1,4 +1,4 @@
-void VFX_ComposeBeam(BeamStyle style, Vector3 start, Vector3 end, float width, float progress, float time)
+void VFX_ComposeBeam(VC_MaterialId matId, Vector3 start, Vector3 end, float width, float progress, float time)
 {
     float beamLen = Vector3Distance(start, end);
     if (beamLen < 0.01f) return;
@@ -31,20 +31,13 @@ void VFX_ComposeBeam(BeamStyle style, Vector3 start, Vector3 end, float width, f
 
     float scroll = time * -2.0f;
 
-    const VFX_ElementMaterial *mat;
-    Color col;
-    switch (style)
-    {
-        case BEAM_FIRE:      mat = VFX_Material(VC_MAT_FIRE);      col = VC_WithAlpha(mat->glow, 230); break;
-        case BEAM_LIGHTNING: mat = VFX_Material(VC_MAT_LIGHTNING); col = VC_WithAlpha(mat->glow, 240); break;
-        case BEAM_ICE:       mat = VFX_Material(VC_MAT_ICE);       col = VC_WithAlpha(mat->body, 180); break;
-        case BEAM_HOLY:      mat = VFX_Material(VC_MAT_HOLY);      col = VC_WithAlpha(mat->body, 255); break;
-        case BEAM_VOID:      mat = VFX_Material(VC_MAT_VOID);      col = VC_WithAlpha(mat->body, 200); break;
-        default:             mat = VFX_Material(VC_MAT_TAIJI);     col = VC_WithAlpha(mat->body, 230); break;
-    }
+    const VFX_ElementMaterial *mat = VFX_Material(matId);
+    // Sheet ADDITIVE đọc bằng glow (nóng), sheet ALPHA đọc bằng body (đặc/mờ).
+    Color col = (mat->blendMode == BLEND_ALPHA) ? VC_WithAlpha(mat->body, 190)
+                                                : VC_WithAlpha(mat->glow, 235);
     BeginBlendMode(mat->blendMode);
 
-    if (style == BEAM_LIGHTNING)
+    if (matId == VC_MAT_LIGHTNING)
     {
         // Jitter for electricity
         float jitter = sinf(time * 80.0f) * 0.05f;

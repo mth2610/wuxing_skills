@@ -1,0 +1,261 @@
+{
+  "_comment": "Source of truth for NEWFX tab in sandbox/vfx_test.c. Edit here, then run: python3 scripts/sync_vfx_test.py",
+  "_placeholders": {
+    "$POS":  "s_prefabStartPos  (VFX spawn origin)",
+    "$TIME": "s_meshTime        (running time for continuous effects)",
+    "$PROG": "progress          (fminf(s_meshTime/1.0f, 1.0f), pre-computed in draw block)",
+    "$SEED": "posSeed           (position-derived int seed, pre-computed in draw block)"
+  },
+  "excluded": {
+    "_comment": "Functions intentionally NOT in NEWFX — covered by other tabs or lifecycle-only",
+    "other_tabs": [
+      "VFX_ComposeSmokePuff",
+      "VFX_ComposeSmokeTrail",
+      "VFX_ComposeFissureStreak",
+      "VFX_ComposeLightningBolt",
+      "VFX_ComposeImpact",
+      "VFX_ComposeCast",
+      "VFX_ComposeProjectileTrail",
+      "VFX_ComposeTriggerImpactBurst",
+      "VFX_ComposeStonePillar",
+      "VFX_ComposeBoulder",
+      "VFX_ComposeIceCrystal",
+      "VFX_ComposeMagicPuddle",
+      "VFX_ComposeFireball",
+      "VFX_ComposeProjectile"
+    ],
+    "lifecycle": [
+      "VFX_AttachQiAura",
+      "VFX_DetachQiAura",
+      "VFX_UpdateQiAuras"
+    ],
+    "deferred": {
+      "_comment": "In header but needs non-trivial test setup — add to entries when ready",
+      "VFX_ComposeWaterStream":  "needs 4 control points",
+      "VFX_ComposeGlowingVine":  "needs branch geometry",
+      "VFX_GroundPattern":       "needs GroundPatternStyle enum choice",
+      "VFX_PathWave":            "needs points array",
+      "VFX_SummonCircle":        "todo",
+      "VFX_TriggerExplosion":    "todo",
+      "VFX_ComposeAura":         "todo",
+      "VFX_ComposeBeam":         "todo",
+      "VFX_ComposeQiAura":       "todo"
+    }
+  },
+  "entries": [
+    {
+      "fn":       "VFX_ComposeFlameWisp",
+      "label":    "FLAME WISP",
+      "type":     "continuous",
+      "draw_call": "VFX_ComposeFlameWisp($POS, $TIME)"
+    },
+    {
+      "fn":       "VFX_ComposeFirePillar",
+      "label":    "FIRE PILLAR",
+      "type":     "continuous",
+      "draw_call": "VFX_ComposeFirePillar($POS, $PROG)"
+    },
+    {
+      "fn":       "VFX_ComposeMetalShardCluster",
+      "label":    "METAL SHARD",
+      "type":     "continuous",
+      "draw_call": "VFX_ComposeMetalShardCluster($POS, $SEED)"
+    },
+    {
+      "fn":       "VFX_ComposePlasmaOrb",
+      "label":    "PLASMA ORB",
+      "type":     "continuous",
+      "draw_call": "VFX_ComposePlasmaOrb(Vector3Add($POS, (Vector3){0, 0.9f, 0}), 0.5f, $TIME)"
+    },
+    {
+      "fn":       "VFX_ComposeBladeRing",
+      "label":    "BLADE RING",
+      "type":     "continuous",
+      "draw_call": "VFX_ComposeBladeRing($POS, 0.6f, 5, $TIME * 60.0f)"
+    },
+    {
+      "fn":           "VFX_ComposeShockwaveRing",
+      "label":        "SHOCKWAVE",
+      "type":         "oneshot",
+      "trigger_call": "VFX_ComposeShockwaveRing($POS, 1.5f, 0.6f, (Color){255, 200, 80, 255})"
+    },
+    {
+      "fn":           "VFX_ComposeGlintBurst",
+      "label":        "GLINT BURST",
+      "type":         "oneshot",
+      "trigger_call": "VFX_ComposeGlintBurst($POS, 14, 0.4f, (Color){180, 230, 255, 255})"
+    },
+    {
+      "fn":           "VFX_ComposeEmberDrift",
+      "label":        "EMBER DRIFT",
+      "type":         "oneshot",
+      "trigger_call": "VFX_ComposeEmberDrift($POS, 0.8f, 12, (Color){255, 140, 60, 255})"
+    },
+    {
+      "fn":           "VFX_ComposeStreakFlare",
+      "label":        "STREAK FLARE",
+      "type":         "oneshot",
+      "trigger_call": "VFX_ComposeStreakFlare($POS, 1.0f, (Color){255, 250, 220, 255})"
+    },
+    {
+      "fn":       "VFX_ComposeShield",
+      "label":    "SHIELD",
+      "type":     "continuous",
+      "draw_call": "VFX_ComposeShield(VC_MAT_METAL, $POS, 1.2f, fminf($PROG, 0.5f), $TIME)"
+    },
+    {
+      "fn":    "VFX_ComposeChain",
+      "label": "CHAIN",
+      "type":  "continuous",
+      "draw_block": [
+        "{",
+        "    Vector3 chainTargets[4] = {",
+        "        $POS,",
+        "        Vector3Add($POS, (Vector3){2.0f, 0, 1.0f}),",
+        "        Vector3Add($POS, (Vector3){3.5f, 0, -1.0f}),",
+        "        Vector3Add($POS, (Vector3){5.5f, 0, 0.5f}),",
+        "    };",
+        "    VFX_ComposeChain(VC_MAT_LIGHTNING, chainTargets, 4, $PROG, $TIME);",
+        "}"
+      ]
+    },
+    {
+      "fn":       "VFX_ComposeZone",
+      "label":    "ZONE",
+      "type":     "continuous",
+      "draw_call": "VFX_ComposeZone(VC_MAT_FIRE, $POS, 1.2f, fminf($PROG, 0.5f), $TIME)"
+    },
+    {
+      "fn":       "VFX_ComposeSlashArc",
+      "label":    "SLASH ARC",
+      "type":     "continuous",
+      "draw_call": "VFX_ComposeSlashArc(VC_MAT_METAL, $POS, (Vector3){1, 0, 0}, 1.0f, 120.0f, fminf($TIME / 0.6f, 0.999f), $TIME)"
+    },
+    {
+      "fn":       "VFX_ComposeChargeUp",
+      "label":    "CHARGE UP",
+      "type":     "continuous",
+      "draw_call": "VFX_ComposeChargeUp(VC_MAT_FIRE, $POS, 1.0f, $PROG, $TIME)"
+    },
+    {
+      "fn":       "VFX_ComposeLeafSwirl",
+      "label":    "LEAF SWIRL",
+      "type":     "continuous",
+      "draw_call": "VFX_ComposeLeafSwirl($POS, 0.8f, $TIME)"
+    },
+    {
+      "fn":           "VFX_ComposeBloomBurst",
+      "label":        "BLOOM BURST",
+      "type":         "oneshot",
+      "trigger_call": "VFX_ComposeBloomBurst($POS, 1.0f)"
+    },
+    {
+      "fn":       "VFX_ComposeLeafFall",
+      "label":    "LEAF FALL",
+      "type":     "continuous",
+      "draw_call": "VFX_ComposeLeafFall($POS, 1.2f, $TIME)"
+    },
+    {
+      "fn":       "VFX_ComposeBladeStorm",
+      "label":    "BLADE STORM",
+      "type":     "continuous",
+      "draw_call": "VFX_ComposeBladeStorm($POS, 0.7f, $TIME)"
+    },
+    {
+      "fn":           "VFX_ComposeShrapnelBurst",
+      "label":        "SHRAPNEL",
+      "type":         "oneshot",
+      "trigger_call": "VFX_ComposeShrapnelBurst(Vector3Add($POS, (Vector3){0, 0.25f, 0}), 1.0f)"
+    },
+    {
+      "fn":           "VFX_ComposeRicochetSpark",
+      "label":        "RICOCHET",
+      "type":         "oneshot",
+      "trigger_call": "VFX_ComposeRicochetSpark(Vector3Add($POS, (Vector3){0, 0.5f, 0}), (Vector3){0.7f, 0.7f, 0.0f}, 1.0f)"
+    },
+    {
+      "fn":           "VFX_ComposeSplashBurst",
+      "label":        "SPLASH",
+      "type":         "oneshot",
+      "trigger_call": "VFX_ComposeSplashBurst($POS, 1.0f)"
+    },
+    {
+      "fn":       "VFX_ComposeBubbleStream",
+      "label":    "BUBBLES",
+      "type":     "continuous",
+      "draw_call": "VFX_ComposeBubbleStream($POS, 0.8f, $TIME)"
+    },
+    {
+      "fn":       "VFX_ComposeMistVeil",
+      "label":    "MIST VEIL",
+      "type":     "continuous",
+      "draw_call": "VFX_ComposeMistVeil($POS, 1.2f, $TIME)"
+    },
+    {
+      "fn":           "VFX_ComposeGustSlash",
+      "label":        "GUST SLASH",
+      "type":         "oneshot",
+      "trigger_call": "VFX_ComposeGustSlash(Vector3Add($POS, (Vector3){0, 0.3f, 0}), (Vector3){1.0f, 0.0f, 0.0f}, 1.0f)"
+    },
+    {
+      "fn":       "VFX_ComposeCyclone",
+      "label":    "CYCLONE",
+      "type":     "continuous",
+      "draw_call": "VFX_ComposeCyclone($POS, 0.6f, $TIME)"
+    },
+    {
+      "fn":       "VFX_ComposeStaticField",
+      "label":    "STATIC FLD",
+      "type":     "continuous",
+      "draw_call": "VFX_ComposeStaticField(Vector3Add($POS, (Vector3){0, 0.7f, 0}), 0.5f, $TIME)"
+    },
+    {
+      "fn":       "VFX_ComposeYinYangOrbit",
+      "label":    "YIN YANG",
+      "type":     "continuous",
+      "draw_call": "VFX_ComposeYinYangOrbit(Vector3Add($POS, (Vector3){0, 0.8f, 0}), 0.45f, $TIME)"
+    },
+    {
+      "fn":           "VFX_ComposeRockBurst",
+      "label":        "ROCK BURST",
+      "type":         "oneshot",
+      "trigger_call": "VFX_ComposeRockBurst($POS, 1.0f)"
+    },
+    {
+      "fn":       "VFX_ComposeFloatingStones",
+      "label":    "FLOAT STONE",
+      "type":     "continuous",
+      "draw_call": "VFX_ComposeFloatingStones($POS, 0.7f, $TIME)"
+    },
+    {
+      "fn":       "VFX_ComposeQuakeRumble",
+      "label":    "QUAKE",
+      "type":     "continuous",
+      "draw_call": "VFX_ComposeQuakeRumble($POS, 1.3f, $TIME)"
+    },
+    {
+      "fn":       "VFX_ComposeFlameBreath",
+      "label":    "FIRE BREATH",
+      "type":     "continuous",
+      "draw_call": "VFX_ComposeFlameBreath(Vector3Add($POS, (Vector3){0, 0.5f, 0}), (Vector3){1.0f, 0.05f, 0.0f}, 1.0f, $TIME)"
+    },
+    {
+      "fn":       "VFX_ComposeBurningGround",
+      "label":    "BURN GROUND",
+      "type":     "continuous",
+      "draw_call": "VFX_ComposeBurningGround($POS, 0.9f, $TIME)"
+    },
+    {
+      "fn":       "VFX_ComposeFireWhirl",
+      "label":    "FIRE WHIRL",
+      "type":     "continuous",
+      "draw_call": "VFX_ComposeFireWhirl($POS, 0.5f, $TIME)"
+    },
+    {
+      "fn":       "VFX_ComposeElementalMist",
+      "label":    "ELEM MIST",
+      "type":     "continuous",
+      "draw_call": "VFX_ComposeElementalMist(VC_MAT_ICE, $POS, 1.0f, $TIME)"
+    }
+  ]
+}

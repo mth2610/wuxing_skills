@@ -106,21 +106,14 @@ static void QiWispSparkle(int trailId, float dt)
     });
 }
 
-void VFX_ComposeAura(AuraStyle style, Vector3 pos, float radius, float time)
+void VFX_ComposeAura(VC_MaterialId matId, Vector3 pos, float radius, float time)
 {
     QiAura_LazyInit();
 
-    Color color;
-    switch (style)
-    {
-    case AURA_FIRE:      color = VFX_Material(VC_MAT_FIRE)->glow; break;
-    case AURA_ICE:       color = VFX_Material(VC_MAT_QI)->glow; break;   // aura băng = khí xanh lam, không phải băng nhạt
-    case AURA_WIND:      color = VFX_Material(VC_MAT_WOOD)->glow; break;
-    case AURA_LIGHTNING: color = VFX_Material(VC_MAT_LIGHTNING)->body; break;
-    case AURA_TAIJI:     color = VFX_Material(VC_MAT_TAIJI)->glow; break; // gold có chủ ý
-    case AURA_QI:
-    default:             color = VFX_Material(VC_MAT_QI)->glow; break;
-    }
+    // Aura đọc bằng glow (taiji gold, lửa cam...); riêng lightning dùng body tím
+    // (ambient) vì glow cyan chỉ dành cho hồ quang. Aura khí thuần → VC_MAT_QI.
+    const VFX_ElementMaterial *m = VFX_Material(matId);
+    Color color = (matId == VC_MAT_LIGHTNING) ? m->body : m->glow;
 
     if (GetRandomValue(0, 999) >= QI_SPAWN_CHANCE_PERMILLE)
         return;

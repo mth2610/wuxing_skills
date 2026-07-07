@@ -2,33 +2,22 @@
 // inward toward `pos` while a core orb grows, for cast/channel phases
 // before a skill releases. `progress` 0..1 = windup, call once per frame.
 
-static ForceField s_chargePullFld[6]; // one per ChargeStyle, lazy-built
-static bool s_chargeFldInit[6] = {0};
+static ForceField s_chargePullFld[VC_MAT_COUNT]; // one per material, lazy-built
 
-static ForceField *ChargeGetPullField(ChargeStyle style, Vector3 pos, float pullStrength)
+static ForceField *ChargeGetPullField(VC_MaterialId matId, Vector3 pos, float pullStrength)
 {
-    ForceField *f = &s_chargePullFld[style];
+    ForceField *f = &s_chargePullFld[matId];
     ForceField_Clear(f);
     ForceField_AddLayer(f, (ForceLayer){.type = FORCE_GRAVITY_POINT, .origin = pos, .strength = pullStrength, .radius = 5.0f, .falloff = 1.0f});
     ForceField_AddLayer(f, (ForceLayer){.type = FORCE_VORTEX, .origin = pos, .direction = (Vector3){0, 1, 0}, .strength = pullStrength * 0.5f, .radius = 5.0f, .falloff = 1.0f});
-    s_chargeFldInit[style] = true;
     return f;
 }
 
-void VFX_ComposeChargeUp(ChargeStyle style, Vector3 pos, float radius, float progress, float time)
+void VFX_ComposeChargeUp(VC_MaterialId matId, Vector3 pos, float radius, float progress, float time)
 {
-    const VFX_ElementMaterial *mat;
-    Color color;
-    switch (style)
-    {
-        case CHARGE_FIRE:  mat = VFX_Material(VC_MAT_FIRE);  color = mat->body; break;
-        case CHARGE_METAL: mat = VFX_Material(VC_MAT_METAL); color = mat->glow; break; // electric blue-white
-        case CHARGE_WATER: mat = VFX_Material(VC_MAT_WATER); color = mat->body; break;
-        case CHARGE_WOOD:  mat = VFX_Material(VC_MAT_WOOD);  color = mat->body; break;
-        case CHARGE_EARTH: mat = VFX_Material(VC_MAT_EARTH); color = mat->body; break;
-        case CHARGE_TAIJI:
-        default:           mat = VFX_Material(VC_MAT_TAIJI); color = mat->body; break;
-    }
+    const VFX_ElementMaterial *mat = VFX_Material(matId);
+    // Metal charge đọc bằng glow xanh điện ("electric blue-white"), còn lại body.
+    Color color = (matId == VC_MAT_METAL) ? mat->glow : mat->body;
     const char *runePath = mat->runeDecal;
 
     progress = fminf(fmaxf(progress, 0.0f), 1.0f);
@@ -159,7 +148,7 @@ void VFX_ComposeChargeUp(ChargeStyle style, Vector3 pos, float radius, float pro
             .radius = 0.012f + Random01() * 0.01f,
             .lifetime = 0.3f + Random01() * 0.2f,
             .radiusCurve = &s_chargeMoteSize,
-            .forceField = ChargeGetPullField(style, pos, 2.0f + progress * 2.0f)});
+            .forceField = ChargeGetPullField(matId, pos, 2.0f + progress * 2.0f)});
     }
 
     // Energy peaking near release — occasional glint burst off the core.

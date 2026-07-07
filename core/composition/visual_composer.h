@@ -5,6 +5,7 @@
 #include "core/skill_helper.h"          // for EffectPresetType
 #include "core/particle_system.h"       // for ParticleRadialBurstConfig
 #include "core/composition/vc_motion.h" // Motion Library (quỹ đạo/shaper thuần toán học)
+#include "core/presets/vc_material.h"   // Element Material Table (VC_MaterialId — trục nguyên tố của mọi archetype)
 
 typedef struct
 {
@@ -116,18 +117,16 @@ void VFX_ComposeQuakeRumble(Vector3 pos, float radius, float time);
 void VFX_ComposeFlameBreath(Vector3 pos, Vector3 dir, float scale, float time);
 void VFX_ComposeBurningGround(Vector3 pos, float radius, float time);
 void VFX_ComposeFireWhirl(Vector3 pos, float radius, float time);
+// Elemental dry-ice mist — thin, cold, ground-hugging vapor that radiates
+// outward from a point (like dry ice sublimation). Continuous; call once per
+// frame. Colors and glow come from VFX_Material(matId) — available for all
+// elements, same structure different palette.
+void VFX_ComposeElementalMist(VC_MaterialId matId, Vector3 pos, float radius, float time);
+void VFX_ComposePathMistWave(VC_MaterialId matId, const Vector3 *pathPoints, int pathCount, float progress, float radius);
 
-// 10. High-level Archetypes & Styles
-typedef enum
-{
-    PROJECTILE_FIREBALL,
-    PROJECTILE_ICE,
-    PROJECTILE_LIGHTNING,
-    PROJECTILE_WOOD_SEED,
-    PROJECTILE_ROCK,
-    PROJECTILE_YINYANG
-} ProjectileStyle;
-
+// 10. High-level Archetypes
+// Trục nguyên tố của mọi archetype là VC_MaterialId (core/presets/vfx_presets.h).
+// Hai enum dưới đây là trục HÌNH DẠNG (không phải nguyên tố) nên giữ riêng.
 typedef enum
 {
     GROUND_CRACK_RADIAL,
@@ -141,15 +140,6 @@ typedef enum
 
 typedef enum
 {
-    BEAM_FIRE,
-    BEAM_LIGHTNING,
-    BEAM_ICE,
-    BEAM_HOLY,
-    BEAM_VOID
-} BeamStyle;
-
-typedef enum
-{
     PATH_THORNS,
     PATH_STONE_PILLAR,
     PATH_ICE_SPIKE,
@@ -157,96 +147,23 @@ typedef enum
     PATH_LIGHTNING_CHAIN
 } PathStyle;
 
-typedef enum
-{
-    EXP_FIRE,
-    EXP_ICE,
-    EXP_LIGHTNING,
-    EXP_EARTH,
-    EXP_POISON,
-    EXP_HOLY,
-    EXP_VOID
-} ExplosionStyle;
-
-typedef enum
-{
-    AURA_FIRE,
-    AURA_ICE,
-    AURA_WIND,
-    AURA_LIGHTNING,
-    AURA_TAIJI,
-    AURA_QI
-} AuraStyle;
-
-typedef enum
-{
-    QI_ICE,
-    QI_FIRE,
-    QI_LIGHTNING,
-    QI_WOOD,
-    QI_XIANXIA
-} QiStyle;
-
-// 11. Phase 3 archetypes — shield/chain/zone/slash/charge
-typedef enum
-{
-    SHIELD_METAL,
-    SHIELD_WOOD,
-    SHIELD_WATER,
-    SHIELD_EARTH,
-    SHIELD_TAIJI
-} ShieldStyle;
-
-typedef enum
-{
-    CHAIN_LIGHTNING,
-    CHAIN_VINE,
-    CHAIN_WATER,
-    CHAIN_FIRE,
-    CHAIN_TAIJI
-} ChainStyle;
-
-typedef enum
-{
-    ZONE_LAVA,
-    ZONE_FROST,
-    ZONE_POISON,
-    ZONE_HOLY,
-    ZONE_VOID
-} ZoneStyle;
-
-typedef enum
-{
-    SLASH_METAL,
-    SLASH_WOOD,
-    SLASH_FIRE,
-    SLASH_ICE,
-    SLASH_EARTH
-} SlashStyle;
-
-typedef enum
-{
-    CHARGE_FIRE,
-    CHARGE_METAL,
-    CHARGE_WATER,
-    CHARGE_WOOD,
-    CHARGE_EARTH,
-    CHARGE_TAIJI
-} ChargeStyle;
-
-void VFX_ComposeProjectile(ProjectileStyle style, Vector3 pos, Vector3 target, float progress, float scale, float time);
+// Mọi archetype nhận VC_MaterialId — 12 material dùng được cho tất cả
+// (material không có biến thể cấu trúc riêng rơi về nhánh generic).
+// Quy ước slot: body = shell/ribbon/rune, glow = beam/điểm nóng, soft = aura/light;
+// ngoại lệ nhỏ per-archetype (vd. lightning aura dùng body tím) có comment tại chỗ.
+void VFX_ComposeProjectile(VC_MaterialId matId, Vector3 pos, Vector3 target, float progress, float scale, float time);
 void VFX_GroundPattern(GroundPatternStyle style, Vector3 pos, float radius, float progress, float time);
-void VFX_ComposeBeam(BeamStyle style, Vector3 start, Vector3 end, float width, float progress, float time);
+void VFX_ComposeBeam(VC_MaterialId matId, Vector3 start, Vector3 end, float width, float progress, float time);
 void VFX_PathWave(PathStyle style, const Vector3 *points, int count, float scale, float progress, float time);
 void VFX_SummonCircle(Vector3 pos, float radius, float progress, float time, Color color);
-void VFX_TriggerExplosion(ExplosionStyle style, Vector3 pos, float scale, bool cameraShake);
-void VFX_ComposeAura(AuraStyle style, Vector3 pos, float radius, float time);
-void VFX_ComposeShield(ShieldStyle style, Vector3 pos, float radius, float progress, float time);
-void VFX_ComposeChain(ChainStyle style, const Vector3 *targets, int count, float progress, float time);
-void VFX_ComposeZone(ZoneStyle style, Vector3 pos, float radius, float progress, float time);
-void VFX_ComposeSlashArc(SlashStyle style, Vector3 pos, Vector3 dir, float radius, float arcDegrees, float progress, float time);
-void VFX_ComposeChargeUp(ChargeStyle style, Vector3 pos, float radius, float progress, float time);
-void VFX_ComposeQiAura(QiStyle style, Vector3 casterPos, float progress, float time, float radius);
+void VFX_TriggerExplosion(VC_MaterialId matId, Vector3 pos, float scale, bool cameraShake);
+void VFX_ComposeAura(VC_MaterialId matId, Vector3 pos, float radius, float time);
+void VFX_ComposeShield(VC_MaterialId matId, Vector3 pos, float radius, float progress, float time);
+void VFX_ComposeChain(VC_MaterialId matId, const Vector3 *targets, int count, float progress, float time);
+void VFX_ComposeZone(VC_MaterialId matId, Vector3 pos, float radius, float progress, float time);
+void VFX_ComposeSlashArc(VC_MaterialId matId, Vector3 pos, Vector3 dir, float radius, float arcDegrees, float progress, float time);
+void VFX_ComposeChargeUp(VC_MaterialId matId, Vector3 pos, float radius, float progress, float time);
+void VFX_ComposeQiAura(VC_MaterialId matId, Vector3 casterPos, float progress, float time, float radius);
 void VFX_AttachQiAura(int casterAgentId, Vector3 anchorPos, float bodyHeight, EffectPresetType element, float scale, int wispCount);
 void VFX_DetachQiAura(int casterAgentId);
 void VFX_UpdateQiAuras(float dt);

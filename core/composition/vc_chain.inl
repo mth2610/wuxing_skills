@@ -3,21 +3,14 @@
 // across the whole chain, same per-segment "wavefront" convention as
 // VFX_PathWave: segment i is revealed once progress crosses i/(count-1).
 
-void VFX_ComposeChain(ChainStyle style, const Vector3 *targets, int count, float progress, float time)
+void VFX_ComposeChain(VC_MaterialId matId, const Vector3 *targets, int count, float progress, float time)
 {
     if (targets == NULL || count < 2)
         return;
 
-    Color color;
-    switch (style)
-    {
-        case CHAIN_LIGHTNING: color = VFX_Material(VC_MAT_LIGHTNING)->glow; break;
-        case CHAIN_VINE:      color = VFX_Material(VC_MAT_WOOD)->body; break;
-        case CHAIN_WATER:     color = VFX_Material(VC_MAT_WATER)->body; break;
-        case CHAIN_FIRE:      color = VFX_Material(VC_MAT_FIRE)->body; break;
-        case CHAIN_TAIJI:
-        default:              color = VFX_Material(VC_MAT_TAIJI)->body; break;
-    }
+    // Lightning chain đọc bằng glow cyan (hồ quang), còn lại body.
+    const VFX_ElementMaterial *m = VFX_Material(matId);
+    Color color = (matId == VC_MAT_LIGHTNING) ? m->glow : m->body;
 
     for (int i = 0; i < count - 1; i++)
     {
@@ -30,9 +23,9 @@ void VFX_ComposeChain(ChainStyle style, const Vector3 *targets, int count, float
         Vector3 a = targets[i];
         Vector3 b = targets[i + 1];
 
-        switch (style)
+        switch (matId)
         {
-            case CHAIN_LIGHTNING:
+            case VC_MAT_LIGHTNING:
             {
                 // Flicker the link rather than draw it every frame — reads
                 // as an arcing current, not a static beam.
@@ -59,7 +52,7 @@ void VFX_ComposeChain(ChainStyle style, const Vector3 *targets, int count, float
                 }
                 break;
             }
-            case CHAIN_VINE:
+            case VC_MAT_WOOD:
             {
                 Vector3 mid = Vector3Lerp(a, b, 0.5f);
                 mid.y += Vector3Distance(a, b) * 0.15f; // slight arch so it doesn't look like a straight rod
@@ -67,16 +60,11 @@ void VFX_ComposeChain(ChainStyle style, const Vector3 *targets, int count, float
                                       fminf(segT * 1.2f, 1.0f), time, 0.6f, i, count - 1);
                 break;
             }
-            case CHAIN_WATER:
-            case CHAIN_FIRE:
-            case CHAIN_TAIJI:
             default:
             {
-                BeamStyle beamStyle = (style == CHAIN_WATER) ? BEAM_ICE
-                                     : (style == CHAIN_FIRE)  ? BEAM_FIRE
-                                                               : BEAM_HOLY;
+                // Mọi material khác: đoạn nối = beam cùng nguyên tố.
                 Vector3 head = Vector3Lerp(a, b, segT);
-                VFX_ComposeBeam(beamStyle, a, head, 0.12f, 1.0f, time);
+                VFX_ComposeBeam(matId, a, head, 0.12f, 1.0f, time);
                 break;
             }
         }

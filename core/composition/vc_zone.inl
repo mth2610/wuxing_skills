@@ -4,33 +4,40 @@
 // while the zone is active; ambient particles are probability-gated per
 // call (not a fixed count) since this isn't a single burst.
 
-static ForceField s_zoneDriftFld[5]; // one per ZoneStyle, lazy-built
-static bool s_zoneFldInit[5] = {0};
+static ForceField s_zoneDriftFld[VC_MAT_COUNT]; // one per material, lazy-built
+static bool s_zoneFldInit[VC_MAT_COUNT] = {0};
 
-static ForceField *ZoneGetDriftField(ZoneStyle style)
+static ForceField *ZoneGetDriftField(VC_MaterialId matId)
 {
-    ForceField *f = &s_zoneDriftFld[style];
-    if (!s_zoneFldInit[style])
+    ForceField *f = &s_zoneDriftFld[matId];
+    if (!s_zoneFldInit[matId])
     {
         ForceField_Clear(f);
         ForceField_AddLayer(f, (ForceLayer){.type = FORCE_NOISE_CURL, .strength = 0.25f, .noiseScale = 0.35f, .noiseSpeed = 0.5f});
-        s_zoneFldInit[style] = true;
+        s_zoneFldInit[matId] = true;
     }
     return f;
 }
 
-void VFX_ComposeZone(ZoneStyle style, Vector3 pos, float radius, float progress, float time)
+void VFX_ComposeZone(VC_MaterialId matId, Vector3 pos, float radius, float progress, float time)
 {
-    Color color;
+    Color color = VFX_Material(matId)->glow;
+
+    // Hoa văn nền theo nguyên tố — trục hình dạng (GroundPatternStyle) chọn từ trục material.
     GroundPatternStyle groundStyle;
-    switch (style)
+    switch (matId)
     {
-        case ZONE_LAVA:   color = VFX_Material(VC_MAT_FIRE)->glow;   groundStyle = GROUND_LAVA;  break;
-        case ZONE_FROST:  color = VFX_Material(VC_MAT_ICE)->glow;    groundStyle = GROUND_FROST; break;
-        case ZONE_POISON: color = VFX_Material(VC_MAT_POISON)->body; groundStyle = GROUND_CRACK_RADIAL; break;
-        case ZONE_HOLY:   color = VFX_Material(VC_MAT_HOLY)->glow;   groundStyle = GROUND_MAGIC_CIRCLE; break;
-        case ZONE_VOID:   color = VFX_Material(VC_MAT_VOID)->glow;   groundStyle = GROUND_RUNE; break;
-        default:          color = VFX_Material(VC_MAT_TAIJI)->body;  groundStyle = GROUND_MAGIC_CIRCLE; break;
+        case VC_MAT_FIRE:   groundStyle = GROUND_LAVA;  break;
+        case VC_MAT_ICE:    groundStyle = GROUND_FROST; break;
+        case VC_MAT_WOOD:   groundStyle = GROUND_THORNS; break;
+        case VC_MAT_EARTH:
+        case VC_MAT_METAL:
+        case VC_MAT_POISON: groundStyle = GROUND_CRACK_RADIAL; break;
+        case VC_MAT_VOID:   groundStyle = GROUND_RUNE; break;
+        case VC_MAT_HOLY:
+        case VC_MAT_TAIJI:
+        case VC_MAT_QI:
+        default:            groundStyle = GROUND_MAGIC_CIRCLE; break;
     }
 
     // Ground field never fully "completes" — keep progress in the pattern's
@@ -56,9 +63,9 @@ void VFX_ComposeZone(ZoneStyle style, Vector3 pos, float radius, float progress,
         Vector3 spawnPos = VC_RingPointXZ(pos, radius * Random01(), Random01() * 2.0f * PI);
         spawnPos.y += 0.02f;
 
-        Vector3 vel = (style == ZONE_FROST) ? (Vector3){0.0f, 0.05f, 0.0f}
-                    : (style == ZONE_VOID)  ? (Vector3){0.0f, 0.12f, 0.0f}
-                                             : (Vector3){0.0f, 0.2f + Random01() * 0.2f, 0.0f};
+        Vector3 vel = (matId == VC_MAT_ICE)  ? (Vector3){0.0f, 0.05f, 0.0f}
+                    : (matId == VC_MAT_VOID) ? (Vector3){0.0f, 0.12f, 0.0f}
+                                              : (Vector3){0.0f, 0.2f + Random01() * 0.2f, 0.0f};
 
         SpawnParticle((ParticleConfig){
             .position = spawnPos,
@@ -68,7 +75,7 @@ void VFX_ComposeZone(ZoneStyle style, Vector3 pos, float radius, float progress,
             .radius = 0.03f + Random01() * 0.03f,
             .lifetime = 0.8f + Random01() * 0.6f,
             .radiusCurve = &s_zoneMoteSize,
-            .forceField = ZoneGetDriftField(style)});
+            .forceField = ZoneGetDriftField(matId)});
     }
 
     // Mist blanket — big, slow, dim alpha puffs hugging the floor. This is
@@ -88,7 +95,7 @@ void VFX_ComposeZone(ZoneStyle style, Vector3 pos, float radius, float progress,
             .radius = 0.12f + Random01() * 0.1f,
             .lifetime = 1.8f + Random01() * 1.2f,
             .radiusCurve = &s_zoneMoteSize,
-            .forceField = ZoneGetDriftField(style)});
+            .forceField = ZoneGetDriftField(matId)});
     }
 
     // Occasional burst — a rare, localized event (lava bubble popping, ice
@@ -102,7 +109,7 @@ void VFX_ComposeZone(ZoneStyle style, Vector3 pos, float radius, float progress,
     }
 
     // Heat distortion for the hot/void zones — the air above the field warps.
-    if ((style == ZONE_LAVA || style == ZONE_VOID) && GetRandomValue(0, 100) < 3)
+    if ((matId == VC_MAT_FIRE || matId == VC_MAT_VOID) && GetRandomValue(0, 100) < 3)
         ScreenDistort_Add(Vector3Add(pos, (Vector3){0, 0.3f, 0}), radius * 0.8f, 0.07f, 1.0f, 0.9f);
 
     // Low-frequency ambient light so the zone reads even without particles

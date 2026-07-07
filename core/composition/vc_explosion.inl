@@ -1,6 +1,6 @@
 #include "core/presets/vfx_presets.h"
 
-void VFX_TriggerExplosion(ExplosionStyle style, Vector3 pos, float scale, bool cameraShake)
+void VFX_TriggerExplosion(VC_MaterialId matId, Vector3 pos, float scale, bool cameraShake)
 {
     ImpactBurstConfig config = {0};
     config.distortEnabled = true;
@@ -33,51 +33,24 @@ void VFX_TriggerExplosion(ExplosionStyle style, Vector3 pos, float scale, bool c
     p->pitchRange = PI * 0.8f;
     p->upwardBias = 0.3f;
 
-    // Per-style: material nguyên tố + decal + tầm sáng. Gradient/force field
-    // lấy thẳng từ material (POISON/HOLY/VOID giờ có gradient bản sắc riêng
-    // thay vì mượn wood/taiji như trước).
-    const VFX_ElementMaterial *mat;
-    const char *decalPath;
-    switch (style)
-    {
-        case EXP_FIRE:
-            mat = VFX_Material(VC_MAT_FIRE);
-            decalPath = "assets/textures/decals/decal_burn.png";
-            config.lightColor = mat->glow; config.lightRadius = 3.5f;
-            break;
-        case EXP_ICE:
-            mat = VFX_Material(VC_MAT_ICE);
-            decalPath = "assets/textures/decals/decal_crack.png";
-            config.lightColor = mat->body; config.lightRadius = 3.0f;
-            break;
-        case EXP_LIGHTNING:
-            mat = VFX_Material(VC_MAT_LIGHTNING);
-            decalPath = "assets/textures/decals/decal_crack.png";
-            config.lightColor = mat->glow; config.lightRadius = 4.0f;
-            break;
-        case EXP_EARTH:
-            mat = VFX_Material(VC_MAT_EARTH);
-            decalPath = "assets/textures/decals/decal_crack.png";
-            config.lightColor = mat->glow; config.lightRadius = 3.0f;
-            break;
-        case EXP_POISON:
-            mat = VFX_Material(VC_MAT_POISON);
-            decalPath = "assets/textures/decals/decal_burn.png";
-            config.lightColor = mat->body; config.lightRadius = 3.2f;
-            break;
-        case EXP_HOLY:
-            mat = VFX_Material(VC_MAT_HOLY);
-            decalPath = "assets/textures/decals/decal_burn.png";
-            config.lightColor = mat->glow; config.lightRadius = 4.5f;
-            break;
-        case EXP_VOID:
-        default:
-            mat = VFX_Material(VC_MAT_VOID);
-            decalPath = "assets/textures/decals/decal_burn.png";
-            config.lightColor = mat->glow; config.lightRadius = 3.8f;
-            break;
-    }
-    config.decalTex = ResourceManager_LoadTexture(decalPath);
+    // Material nguyên tố cấp màu sáng + gradient/force field cho hạt nổ.
+    // Decal: các hệ "vỡ/giòn" để lại vết nứt, các hệ "cháy/năng lượng" để lại vết cháy.
+    const VFX_ElementMaterial *mat = VFX_Material(matId);
+    bool crackDecal = (matId == VC_MAT_ICE || matId == VC_MAT_LIGHTNING ||
+                       matId == VC_MAT_EARTH || matId == VC_MAT_METAL);
+    config.decalTex = ResourceManager_LoadTexture(crackDecal ? "assets/textures/decals/decal_crack.png"
+                                                             : "assets/textures/decals/decal_burn.png");
+    config.lightColor = mat->glow;
+
+    // Tầm sáng: giữ accent cũ per-element (sét/thánh quang nổ chói hơn đất/băng).
+    float lightR = 3.5f;
+    if (matId == VC_MAT_LIGHTNING)   lightR = 4.0f;
+    else if (matId == VC_MAT_HOLY)   lightR = 4.5f;
+    else if (matId == VC_MAT_VOID)   lightR = 3.8f;
+    else if (matId == VC_MAT_POISON) lightR = 3.2f;
+    else if (matId == VC_MAT_ICE || matId == VC_MAT_EARTH) lightR = 3.0f;
+    config.lightRadius = lightR;
+
     p->gradient = mat->grad;
     p->forceField = (ForceField *)mat->fld;
 

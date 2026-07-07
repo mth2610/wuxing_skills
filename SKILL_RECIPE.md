@@ -97,7 +97,7 @@ Orbitals and GroundWave are fire-and-forget (self-expiring, no kill handle).
 
 **Chain effects — two options, pick by how much control you need:**
 - `SpawnChainLightning(points, count, scale, hopDelay)` — lightning-only, auto-staggered hops, queued/ticked by `SkillHelper_Update(dt)`. Use this when the chain is a METAL/lightning skill and you don't need per-frame control.
-- `VFX_ComposeChain(ChainStyle, points, count, progress, time)` (`core/composition/visual_composer.h`) — any element (`CHAIN_LIGHTNING/VINE/WATER/FIRE/TAIJI`), Draw-time call where the skill itself owns `progress` (same convention as `VFX_PathWave`/`VFX_ComposeBeam`). Use this for non-lightning chains, or when the skill's own state machine already tracks progress and staggered auto-queuing isn't wanted.
+- `VFX_ComposeChain(VC_MaterialId, points, count, progress, time)` (`core/composition/visual_composer.h`) — any element (all 12 `VC_MAT_*`; LIGHTNING = jagged bolts, WOOD = vine, others = element beam), Draw-time call where the skill itself owns `progress` (same convention as `VFX_PathWave`/`VFX_ComposeBeam`). Use this for non-lightning chains, or when the skill's own state machine already tracks progress and staggered auto-queuing isn't wanted.
 
 ---
 
@@ -110,10 +110,10 @@ ones) or `Update`/impact site (one-shot ones). Full param docs: `CORE_API.md`
 
 | Call | Kind | Use when |
 |---|---|---|
-| `VFX_ComposeShield(ShieldStyle, pos, radius, progress, time)` | continuous (grow/hold/fade via `progress`) | Barrier/dome buff |
-| `VFX_ComposeZone(ZoneStyle, pos, radius, progress, time)` | continuous, call every frame while active | Persistent AoE (lava/frost/poison/holy/void) |
-| `VFX_ComposeSlashArc(SlashStyle, pos, dir, radius, arcDeg, progress, time)` | continuous over swing duration, then done | Melee swing |
-| `VFX_ComposeChargeUp(ChargeStyle, pos, radius, progress, time)` | continuous during windup | Cast/channel buildup |
+| `VFX_ComposeShield(VC_MaterialId, pos, radius, progress, time)` | continuous (grow/hold/fade via `progress`) | Barrier/dome buff |
+| `VFX_ComposeZone(VC_MaterialId, pos, radius, progress, time)` | continuous, call every frame while active | Persistent AoE (any element; ground pattern picked per material) |
+| `VFX_ComposeSlashArc(VC_MaterialId, pos, dir, radius, arcDeg, progress, time)` | continuous over swing duration, then done | Melee swing |
+| `VFX_ComposeChargeUp(VC_MaterialId, pos, radius, progress, time)` | continuous during windup | Cast/channel buildup |
 | `VFX_ComposeShockwaveRing` / `GlintBurst` / `EmberDrift` / `StreakFlare` (`vc_common.inl`) | one-shot, no `progress` | Any impact/highlight accent — safe to sprinkle into other archetypes' impact moments |
 | `VFX_ComposeMetalShardCluster` / `MetalOrb` / `BladeRing` / `FlameWisp` / `FirePillar` | one-shot or continuous mesh | Metal/Fire element-specific set pieces (parity with `IceCrystal`/`Fireball`) |
 

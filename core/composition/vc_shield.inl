@@ -3,18 +3,9 @@
 // rising, hold as long as needed, >0.85 = fading out, same "grow/hold/fade"
 // convention as VFX_GroundPattern/VFX_ComposeAura).
 
-void VFX_ComposeShield(ShieldStyle style, Vector3 pos, float radius, float progress, float time)
+void VFX_ComposeShield(VC_MaterialId matId, Vector3 pos, float radius, float progress, float time)
 {
-    const VFX_ElementMaterial *elemMat;
-    switch (style)
-    {
-        case SHIELD_METAL: elemMat = VFX_Material(VC_MAT_METAL); break;
-        case SHIELD_WOOD:  elemMat = VFX_Material(VC_MAT_WOOD);  break;
-        case SHIELD_WATER: elemMat = VFX_Material(VC_MAT_WATER); break;
-        case SHIELD_EARTH: elemMat = VFX_Material(VC_MAT_EARTH); break;
-        case SHIELD_TAIJI:
-        default:           elemMat = VFX_Material(VC_MAT_TAIJI); break;
-    }
+    const VFX_ElementMaterial *elemMat = VFX_Material(matId);
     Color color = elemMat->body;
     const char *runePath = elemMat->runeDecal;
 

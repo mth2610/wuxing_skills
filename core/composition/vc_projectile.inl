@@ -1,14 +1,16 @@
 #include "core/presets/vfx_presets.h"
 
-void VFX_ComposeProjectile(ProjectileStyle style, Vector3 pos, Vector3 target, float progress, float scale, float time)
+void VFX_ComposeProjectile(VC_MaterialId matId, Vector3 pos, Vector3 target, float progress, float scale, float time)
 {
     // Point light flash on the projectile
     Color lightCol = WHITE;
     float lightRadius = 1.0f * scale;
 
-    switch (style)
+    // 6 material có biến thể cấu trúc riêng (cầu lửa/mảnh băng/tia sét/hạt mộc/
+    // đá xoay/lưỡng nghi); material khác rơi về orb generic ở default.
+    switch (matId)
     {
-        case PROJECTILE_FIREBALL:
+        case VC_MAT_FIRE:
         {
             // Core sphere (additive yellow/white)
             BeginBlendMode(BLEND_ADDITIVE);
@@ -51,7 +53,7 @@ void VFX_ComposeProjectile(ProjectileStyle style, Vector3 pos, Vector3 target, f
             lightRadius = 2.0f * scale;
             break;
         }
-        case PROJECTILE_ICE:
+        case VC_MAT_ICE:
         {
             // Rotating Ice shard
             rlDisableBackfaceCulling();
@@ -86,7 +88,7 @@ void VFX_ComposeProjectile(ProjectileStyle style, Vector3 pos, Vector3 target, f
             lightRadius = 1.5f * scale;
             break;
         }
-        case PROJECTILE_LIGHTNING:
+        case VC_MAT_LIGHTNING:
         {
             // Draw a mini electric procedural bolt centered at projectile
             Vector3 sparkEnd = Vector3Add(pos, (Vector3){((float)rand() / (float)RAND_MAX - 0.5f) * 0.3f, ((float)rand() / (float)RAND_MAX - 0.5f) * 0.3f, ((float)rand() / (float)RAND_MAX - 0.5f) * 0.3f});
@@ -109,7 +111,7 @@ void VFX_ComposeProjectile(ProjectileStyle style, Vector3 pos, Vector3 target, f
             lightRadius = 2.2f * scale;
             break;
         }
-        case PROJECTILE_WOOD_SEED:
+        case VC_MAT_WOOD:
         {
             // Organic glowing green seed core
             BeginBlendMode(BLEND_ADDITIVE);
@@ -141,7 +143,7 @@ void VFX_ComposeProjectile(ProjectileStyle style, Vector3 pos, Vector3 target, f
             lightRadius = 1.2f * scale;
             break;
         }
-        case PROJECTILE_ROCK:
+        case VC_MAT_EARTH:
         {
             // Rotating rock mesh
             float randScale = 0.8f + ((float)rand() / (float)RAND_MAX * 0.4f);
@@ -175,7 +177,7 @@ void VFX_ComposeProjectile(ProjectileStyle style, Vector3 pos, Vector3 target, f
             lightRadius = 1.0f * scale;
             break;
         }
-        case PROJECTILE_YINYANG:
+        case VC_MAT_TAIJI:
         {
             // Orbiting black and white motes
             float r_orbit = 0.18f * scale;
@@ -213,6 +215,48 @@ void VFX_ComposeProjectile(ProjectileStyle style, Vector3 pos, Vector3 target, f
 
             lightCol = (Color){200, 200, 200, 255};
             lightRadius = 1.8f * scale;
+            break;
+        }
+        default:
+        {
+            // Generic orb — material chưa có biến thể riêng vẫn có projectile hợp lệ:
+            // lõi soft sáng + vỏ body glow + hạt gradient + light.
+            const VFX_ElementMaterial *m = VFX_Material(matId);
+            BeginBlendMode(BLEND_ADDITIVE);
+            rlDisableDepthMask();
+            EffectMaterialParams coreParams = {0};
+            coreParams.baseColor = m->soft;
+            coreParams.emissiveIntensity = 2.5f;
+            EffectMaterial coreMat = Material_LoadCustom(coreParams);
+            Material_Begin(coreMat);
+            DrawCoreSphere(pos, 0.12f * scale, 12, 12, WHITE);
+            Material_End();
+
+            EffectMaterialParams auraParams = {0};
+            auraParams.baseColor = VC_WithAlpha(m->body, 120);
+            auraParams.rimStrength = 2.0f;
+            auraParams.fresnelPower = 2.0f;
+            auraParams.emissiveIntensity = 1.5f;
+            EffectMaterial auraMat = Material_LoadCustom(auraParams);
+            Material_Begin(auraMat);
+            DrawCoreSphere(pos, 0.22f * scale, 12, 12, WHITE);
+            Material_End();
+            rlEnableDepthMask();
+            EndBlendMode();
+
+            if (GetRandomValue(0, 100) < 35)
+            {
+                SpawnParticle((ParticleConfig){
+                    .position = pos,
+                    .velocity = (Vector3){(Random01() - 0.5f) * 0.2f, Random01() * 0.15f, (Random01() - 0.5f) * 0.2f},
+                    .radius = (0.03f + Random01() * 0.04f) * scale,
+                    .lifetime = 0.5f,
+                    .gradient = m->grad,
+                    .forceField = (ForceField *)m->fld});
+            }
+
+            lightCol = m->soft;
+            lightRadius = 1.5f * scale;
             break;
         }
     }

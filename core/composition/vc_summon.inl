@@ -152,28 +152,10 @@ void VFX_SummonCircle(Vector3 pos, float radius, float progress, float time, Col
     VFXLight_Spawn(pos, color, currentRadius * 1.5f, 0.05f, VFX_PRIORITY_LOW);
 }
 
-void VFX_ComposeQiAura(QiStyle style, Vector3 casterPos, float progress, float time, float radius)
+void VFX_ComposeQiAura(VC_MaterialId matId, Vector3 casterPos, float progress, float time, float radius)
 {
-    Color color;
-    switch (style)
-    {
-    case QI_ICE:
-        color = VFX_Material(VC_MAT_ICE)->soft;
-        break;
-    case QI_FIRE:
-        color = VFX_Material(VC_MAT_FIRE)->soft;
-        break;
-    case QI_LIGHTNING:
-        color = VFX_Material(VC_MAT_LIGHTNING)->soft;
-        break;
-    case QI_WOOD:
-        color = VFX_Material(VC_MAT_WOOD)->soft;
-        break;
-    case QI_XIANXIA:
-    default:
-        color = VFX_Material(VC_MAT_QI)->soft;
-        break;
-    }
+    // Khí công pastel theo nguyên tố; khí thuần (xianxia trắng-lam) → VC_MAT_QI.
+    Color color = VFX_Material(matId)->soft;
 
     // 1. Calculate breathing phase & alpha
     float fadeAlpha = 1.0f;

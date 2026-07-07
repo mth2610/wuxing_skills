@@ -31,7 +31,9 @@
 #endif
 
 // Include modular visual composer implementations (grouped by element/functionality)
-#include "vc_common.inl"
+#include "vc_common.inl" // render primitives (VC_DrawGroundQuadXZ, VC_DrawGroundRune)
+#include "vc_beauty.inl" // beauty primitives — must precede element .inl (vc_zone calls GlintBurst)
+#include "vc_preset.inl" // preset-driven compositions (Impact, Cast, Projectile, SmokePuff...)
 #include "vc_metal.inl"
 #include "vc_wood.inl"
 #include "vc_water.inl"
@@ -55,3 +57,4 @@
 #include "vc_zone.inl"
 #include "vc_slash.inl"
 #include "vc_charge.inl"
+#include "vc_elemental_mist.inl"

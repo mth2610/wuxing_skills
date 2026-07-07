@@ -2,18 +2,9 @@
 // and widest at the peak, sweeping through `arcDegrees` around `pos` as
 // `progress` goes 0..1. `dir` is the swing's starting facing (XZ-plane).
 
-void VFX_ComposeSlashArc(SlashStyle style, Vector3 pos, Vector3 dir, float radius, float arcDegrees, float progress, float time)
+void VFX_ComposeSlashArc(VC_MaterialId matId, Vector3 pos, Vector3 dir, float radius, float arcDegrees, float progress, float time)
 {
-    Color color;
-    switch (style)
-    {
-        case SLASH_WOOD:  color = VFX_Material(VC_MAT_WOOD)->body;  break;
-        case SLASH_FIRE:  color = VFX_Material(VC_MAT_FIRE)->body;  break;
-        case SLASH_ICE:   color = VFX_Material(VC_MAT_ICE)->body;   break;
-        case SLASH_EARTH: color = VFX_Material(VC_MAT_EARTH)->body; break;
-        case SLASH_METAL:
-        default:          color = VFX_Material(VC_MAT_METAL)->body; break;
-    }
+    Color color = VFX_Material(matId)->body;
 
     if (progress <= 0.0f || progress >= 1.0f)
         return;

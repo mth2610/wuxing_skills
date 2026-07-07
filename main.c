@@ -20,6 +20,8 @@
 #include "raymath.h"
 #include "rlgl.h"
 #include <math.h>
+#include <stdlib.h>
+#include <string.h>
 #include "environment/environment_system.h"
 #include "core/map_manager.h"
 #include "skills/taiji/core_test/core_test_skill.h"
@@ -90,16 +92,31 @@ static AutoTestResult AutoTest_SmokeStep(int frameInCase, char *outReason, int o
              : AUTOTEST_FAIL;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
   // Widened/heightened from 1200x700 so the sandbox tuning panel
   // (sandbox/ui_panel.c) has room for multi-column tunable layouts as skills
   // gain more sandbox-tunable parameters (CORE_ISSUES.md Item 34 follow-up).
   const int screenWidth = 1280;
   const int screenHeight = 720;
 
+  // --render-vfx <index> [--warmup <frames>] [--out <path>]
+  // Renders NEWFX tab entry <index> headlessly, saves PNG, exits.
+  bool        renderVFXMode   = false;
+  int         renderVFXIndex  = 0;
+  int         renderVFXWarmup = 90;
+  const char *renderVFXOut    = "autotest_output/vfx_eval.png";
+  for (int i = 1; i < argc; i++) {
+      if (strcmp(argv[i], "--render-vfx") == 0 && i + 1 < argc)
+          { renderVFXIndex = atoi(argv[++i]); renderVFXMode = true; }
+      else if (strcmp(argv[i], "--warmup") == 0 && i + 1 < argc)
+          renderVFXWarmup = atoi(argv[++i]);
+      else if (strcmp(argv[i], "--out") == 0 && i + 1 < argc)
+          renderVFXOut = argv[++i];
+  }
+
   bool autoTestMode     = AutoTest_IsEnabled();
   bool visualVerifyMode = VisualVerify_IsEnabled();
-  if (autoTestMode || visualVerifyMode) {
+  if (autoTestMode || visualVerifyMode || renderVFXMode) {
       // Off-screen SetWindowPosition was tried first, but produced the exact
       // same GetWorldToScreen() output as FLAG_WINDOW_HIDDEN below (proving
       // the odd coordinates aren't a window-position artifact) — kept
@@ -238,10 +255,17 @@ int main(void) {
       SCREEN_VFX_TESTER
   } GameScreen;
   GameScreen currentScreen = SCREEN_MAIN_MENU;
+  int renderVFXFrame = 0;
+  if (renderVFXMode) {
+      currentScreen    = SCREEN_VFX_TESTER;
+      player.position  = (Vector3){6.0f, 0.0f, 4.4f}; // arena center
+      VFXTest_SetRenderTarget(renderVFXIndex, player.position);
+  }
   while (autoTestMode     ? !AutoTest_IsFinished()      :
          visualVerifyMode ? !VisualVerify_IsFinished()  :
+         renderVFXMode    ? (renderVFXFrame <= renderVFXWarmup) :
          !WindowShouldClose()) {
-    float dt = (autoTestMode || visualVerifyMode) ? (1.0f / 60.0f) : TimeFX_Apply(GetFrameTime());
+    float dt = (autoTestMode || visualVerifyMode || renderVFXMode) ? (1.0f / 60.0f) : TimeFX_Apply(GetFrameTime());
     g_totalElapsed += dt;
 
     // -------------------------------------------------------------------------
@@ -512,6 +536,16 @@ int main(void) {
 
     if (autoTestMode)     AutoTest_RunFrame();
     if (visualVerifyMode) VisualVerify_RunFrame(g_totalElapsed);
+    if (renderVFXMode) {
+        renderVFXFrame++;
+        if (renderVFXFrame >= renderVFXWarmup) {
+            if (!DirectoryExists("autotest_output")) MakeDirectory("autotest_output");
+            Image img = LoadImageFromScreen();
+            ExportImage(img, renderVFXOut);
+            UnloadImage(img);
+            break;
+        }
+    }
   }
 
   int exitCode = 0;

@@ -120,27 +120,7 @@ void UpdateGlacialCannonSkill(float dt, Vector3 enemyPos, float enemyRadius)
             if (wavefrontIdx >= s->pathPointCount)
                 wavefrontIdx = s->pathPointCount - 1;
 
-            // Spawn decals and mist particles at newly reached path points (80/20 formula)
-            if (wavefrontIdx > s->lastSpawnedIdx)
-            {
-                Texture2D frostDecalTex = ResourceManager_LoadTexture("assets/textures/decals/decal_frost_ring.png");
-
-                for (int idx = s->lastSpawnedIdx + 1; idx <= wavefrontIdx; idx++)
-                {
-                    Vector3 pos = s->pathPoints[idx];
-
-                    // 1. Spawn Frost Decal (Scale 0.3 -> 1.2, fades out)
-                    float rotation = (float)GetRandomValue(0, 360);
-                    float scaleStart = 0.3f * s->sizeScale;
-                    float scaleEnd = 1.2f * s->sizeScale;
-                    float lifetime = 3.0f;
-                    Color tint = (Color){200, 240, 255, 255}; // lint: allow-color
-                    DecalSystem_AddEx(pos, rotation, 0.0f, scaleStart, scaleEnd, frostDecalTex, lifetime, tint, BLEND_ALPHA, 0.02f);
-                    VFX_ComposeMistVeil(pos, s->sizeScale * 1.0f, lifetime);
-                }
-                s->lastSpawnedIdx = wavefrontIdx;
-            }
-
+            VFX_ComposePathMistWave(VC_MAT_ICE, s->pathPoints, s->pathPointCount, progress, s->sizeScale * 0.8);
             s->damageAccumulator += s_damagePerSecond * dt;
             if (s->damageAccumulator >= 5.0f)
             {
@@ -151,14 +131,14 @@ void UpdateGlacialCannonSkill(float dt, Vector3 enemyPos, float enemyRadius)
 
                 if (GetRandomValue(0, 100) < 40)
                 {
-                    // VFX_TriggerExplosion(EXP_ICE, currentImpactPos, s->sizeScale, false);
+                    // VFX_TriggerExplosion(VC_MAT_ICE, currentImpactPos, s->sizeScale, false);
                     PlayImpactSound(EFFECT_PRESET_ICE_SHATTER);
                 }
             }
 
             if (s->timer >= s_waveDuration)
             {
-                // VFX_TriggerExplosion(EXP_ICE, s->targetPos, s->sizeScale * 1.5f, true);
+                // VFX_TriggerExplosion(VC_MAT_ICE, s->targetPos, s->sizeScale * 1.5f, true);
                 PlayImpactSound(EFFECT_PRESET_ICE_SHATTER);
                 ApplyAoEDamage(s->targetPos, s_aoeRadius * s->sizeScale * 1.8f, s_damagePerSecond * 0.5f, 1.5f);
 
@@ -179,7 +159,7 @@ void DrawGlacialCannonSkill(void)
             continue;
 
         // Draw Aura Qi continuously from cast until the skill is complete
-        VFX_ComposeAura(AURA_QI, s->startPos, s_aoeRadius * s->sizeScale, time);
+        VFX_ComposeAura(VC_MAT_QI, s->startPos, s_aoeRadius * s->sizeScale, time);
 
         if (s->state == STATE_CHANNELING)
         {
