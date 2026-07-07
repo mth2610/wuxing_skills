@@ -542,6 +542,14 @@
       "category": "util",
       "type": "continuous",
       "draw_call": "VFX_ComposeCylinderAura(VC_MAT_FIRE, $POS, 1.5f, fminf($PROG, 0.99f), $TIME)"
+    },
+    {
+      "fn": "VFX_ComposeGroundAura",
+      "label": "GROUND AURA",
+      "category": "util",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeGroundAura(VC_MAT_FIRE, $POS, 1.5f, 0.9f, $TIME)"
     }
   ],
   "overrides": {}

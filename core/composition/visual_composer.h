@@ -192,5 +192,7 @@ void VFX_ChainLightning(const Vector3 *points, int count, float scale, float hop
 // Phù hợp cho các chiêu thức buff giáp, hộ thể.
 void VFX_ComposeCylinderAura(VC_MaterialId matId, Vector3 pos, float radius, float progress, float time);
 // @gen:vc_declarations begin
+// scrollSpeed > 0 = outward, < 0 = inward.
+void VFX_ComposeGroundAura(VC_MaterialId matId, Vector3 pos, float radius, float scrollSpeed, float time);
 // @gen:vc_declarations end
 #endif // VISUAL_COMPOSER_H
