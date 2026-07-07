@@ -45,7 +45,6 @@ float fbm3(vec3 p) {
 void main() {
     vec3 nrm     = normalize(fragNormal);
     vec3 viewDir = normalize(viewPos - fragPosition);
-
     float fresnel = calcFresnel(nrm, viewDir, u_fresnelPower);
 
     float yScroll = fragPosition.y * u_heightScale - u_time * u_scrollSpeed;
@@ -56,13 +55,21 @@ void main() {
     float ridge = 1.0 - abs(2.0 * n1 - 1.0);
     float wisp  = ridge * (0.3 + 0.7 * n2);
     wisp = smoothstep(0.25, 0.75, wisp);
-
+    
     float scanRaw = 0.5 + 0.5 * sin(fragPosition.y * u_scanFreq - u_time * u_scanSpeed);
     float scan    = scanRaw * scanRaw * u_scanStrength;
-
     float filmAlpha = wisp * 0.75 + scan * 0.30 + fresnel * 0.20;
     filmAlpha = clamp(filmAlpha, 0.0, 1.0);
+    
+    // Alpha tổng ban đầu
     float alpha = filmAlpha * u_opacity * u_bodyColor.a;
+
+    // ----------------------------------------------------------------------
+    // ÉP MỜ TỪ DƯỚI LÊN TRÊN DÙNG CHUẨN HEADER MỚI XÁC NHẬN
+    // Tọa độ V (fragTexCoord.y) chạy từ 0.0 (đáy) lên 1.0 (đỉnh)
+    // Phép tính (1.0 - fragTexCoord.y) giữ nguyên 100% màu ở đáy và mờ dần về 0% ở đỉnh
+    // ----------------------------------------------------------------------
+    alpha *= (1.0 - fragTexCoord.y);
 
     float glowBlend = clamp(wisp * 0.5 + scan * 0.2, 0.0, 1.0);
     vec3  col       = mix(u_bodyColor.rgb, u_glowColor.rgb, glowBlend);

@@ -121,6 +121,7 @@ void UpdateGlacialCannonSkill(float dt, Vector3 enemyPos, float enemyRadius)
                 wavefrontIdx = s->pathPointCount - 1;
 
             VFX_ComposePathMistWave(VC_MAT_ICE, s->pathPoints, s->pathPointCount, progress, s->sizeScale * 0.8);
+
             s->damageAccumulator += s_damagePerSecond * dt;
             if (s->damageAccumulator >= 5.0f)
             {
@@ -159,11 +160,13 @@ void DrawGlacialCannonSkill(void)
             continue;
 
         // Draw Aura Qi continuously from cast until the skill is complete
-        VFX_ComposeAura(VC_MAT_QI, s->startPos, s_aoeRadius * s->sizeScale, time);
+        // VFX_ComposeAura(VC_MAT_QI, s->startPos, s_aoeRadius * s->sizeScale, time);
 
         if (s->state == STATE_CHANNELING)
         {
             float progress = s->timer / s_waveDuration;
+            // VFX_ComposeCylinderAura(VC_MAT_ICE, s->startPos, s_aoeRadius * s->sizeScale * 0.3, progress, time);
+
             if (progress > 1.0f)
                 progress = 1.0f;
 
