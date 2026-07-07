@@ -321,3 +321,80 @@ void PlasmaMaterial_End(void)
     rlSetTexture(0);
     SkillManager_EndShader();
 }
+
+// ── AuraShellMaterial ─────────────────────────────────────────────────────
+
+AuraShellMaterial AuraShellMaterial_Load(AuraShellMaterialParams params)
+{
+    AuraShellMaterial mat = {0};
+    mat.shader = ResourceManager_LoadShader("core/shaders/aura_shell.vs",
+                                            "core/shaders/aura_shell.fs");
+    mat.params = params;
+
+    mat.uBodyColorLoc    = GetShaderLocation(mat.shader, "u_bodyColor");
+    mat.uGlowColorLoc    = GetShaderLocation(mat.shader, "u_glowColor");
+    mat.uOpacityLoc      = GetShaderLocation(mat.shader, "u_opacity");
+    mat.uFresnelPowerLoc = GetShaderLocation(mat.shader, "u_fresnelPower");
+    mat.uRimStrengthLoc  = GetShaderLocation(mat.shader, "u_rimStrength");
+    mat.uScrollSpeedLoc  = GetShaderLocation(mat.shader, "u_scrollSpeed");
+    mat.uNoiseScaleLoc   = GetShaderLocation(mat.shader, "u_noiseScale");
+    mat.uHeightScaleLoc  = GetShaderLocation(mat.shader, "u_heightScale");
+    mat.uScanFreqLoc     = GetShaderLocation(mat.shader, "u_scanFreq");
+    mat.uScanSpeedLoc    = GetShaderLocation(mat.shader, "u_scanSpeed");
+    mat.uScanStrengthLoc = GetShaderLocation(mat.shader, "u_scanStrength");
+    mat.uDisplaceAmpLoc  = GetShaderLocation(mat.shader, "u_displaceAmp");
+    mat.uTopYLoc         = GetShaderLocation(mat.shader, "u_topY");
+    mat.uTimeLoc         = GetShaderLocation(mat.shader, "u_time");
+
+    return mat;
+}
+
+void AuraShellMaterial_Begin(AuraShellMaterial mat)
+{
+    rlDrawRenderBatchActive();
+    SkillManager_BeginShader(mat.shader);
+
+    float time = (float)GetTime();
+    if (mat.uTimeLoc >= 0)
+        SetShaderValue(mat.shader, mat.uTimeLoc, &time, SHADER_UNIFORM_FLOAT);
+
+    if (mat.uBodyColorLoc >= 0)
+    {
+        Vector4 c = ColorNormalize(mat.params.bodyColor);
+        SetShaderValue(mat.shader, mat.uBodyColorLoc, &c, SHADER_UNIFORM_VEC4);
+    }
+    if (mat.uGlowColorLoc >= 0)
+    {
+        Vector4 c = ColorNormalize(mat.params.glowColor);
+        SetShaderValue(mat.shader, mat.uGlowColorLoc, &c, SHADER_UNIFORM_VEC4);
+    }
+    if (mat.uOpacityLoc >= 0)
+        SetShaderValue(mat.shader, mat.uOpacityLoc, &mat.params.opacity, SHADER_UNIFORM_FLOAT);
+    if (mat.uFresnelPowerLoc >= 0)
+        SetShaderValue(mat.shader, mat.uFresnelPowerLoc, &mat.params.fresnelPower, SHADER_UNIFORM_FLOAT);
+    if (mat.uRimStrengthLoc >= 0)
+        SetShaderValue(mat.shader, mat.uRimStrengthLoc, &mat.params.rimStrength, SHADER_UNIFORM_FLOAT);
+    if (mat.uScrollSpeedLoc >= 0)
+        SetShaderValue(mat.shader, mat.uScrollSpeedLoc, &mat.params.scrollSpeed, SHADER_UNIFORM_FLOAT);
+    if (mat.uNoiseScaleLoc >= 0)
+        SetShaderValue(mat.shader, mat.uNoiseScaleLoc, &mat.params.noiseScale, SHADER_UNIFORM_FLOAT);
+    if (mat.uHeightScaleLoc >= 0)
+        SetShaderValue(mat.shader, mat.uHeightScaleLoc, &mat.params.heightScale, SHADER_UNIFORM_FLOAT);
+    if (mat.uScanFreqLoc >= 0)
+        SetShaderValue(mat.shader, mat.uScanFreqLoc, &mat.params.scanFreq, SHADER_UNIFORM_FLOAT);
+    if (mat.uScanSpeedLoc >= 0)
+        SetShaderValue(mat.shader, mat.uScanSpeedLoc, &mat.params.scanSpeed, SHADER_UNIFORM_FLOAT);
+    if (mat.uScanStrengthLoc >= 0)
+        SetShaderValue(mat.shader, mat.uScanStrengthLoc, &mat.params.scanStrength, SHADER_UNIFORM_FLOAT);
+    if (mat.uDisplaceAmpLoc >= 0)
+        SetShaderValue(mat.shader, mat.uDisplaceAmpLoc, &mat.params.displaceAmp, SHADER_UNIFORM_FLOAT);
+    if (mat.uTopYLoc >= 0)
+        SetShaderValue(mat.shader, mat.uTopYLoc, &mat.params.topY, SHADER_UNIFORM_FLOAT);
+}
+
+void AuraShellMaterial_End(void)
+{
+    rlDrawRenderBatchActive();
+    rlSetTexture(0);
+    SkillManager_EndShader();
+}

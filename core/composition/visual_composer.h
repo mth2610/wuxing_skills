@@ -163,10 +163,6 @@ void VFX_ComposeChain(VC_MaterialId matId, const Vector3 *targets, int count, fl
 void VFX_ComposeZone(VC_MaterialId matId, Vector3 pos, float radius, float progress, float time);
 void VFX_ComposeSlashArc(VC_MaterialId matId, Vector3 pos, Vector3 dir, float radius, float arcDegrees, float progress, float time);
 void VFX_ComposeChargeUp(VC_MaterialId matId, Vector3 pos, float radius, float progress, float time);
-void VFX_ComposeQiAura(VC_MaterialId matId, Vector3 casterPos, float progress, float time, float radius);
-void VFX_AttachQiAura(int casterAgentId, Vector3 anchorPos, float bodyHeight, EffectPresetType element, float scale, int wispCount);
-void VFX_DetachQiAura(int casterAgentId);
-void VFX_UpdateQiAuras(float dt);
 
 // ── Stateful archetype VFX (pools managed by VFX_Compose_Update / VFX_Compose_Draw3D) ──
 

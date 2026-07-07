@@ -162,4 +162,59 @@ PlasmaMaterial PlasmaMaterial_Load(PlasmaMaterialParams params);
 void PlasmaMaterial_Begin(PlasmaMaterial mat);
 void PlasmaMaterial_End(void);
 
+/* ============================================================================
+ * AURA SHELL MATERIAL SYSTEM
+ * --------------------------------------------------------------------------
+ * Cylinder aura shader (aura_shell.vs/.fs): element-tinted fresnel membrane
+ * with vertically-scrolling FBM filaments and pulsing horizontal scanline
+ * rings. Designed for open-cap cylinder meshes (buff/shield aura columns).
+ *
+ * bodyColor  = element body/base tint (VFX_Material->body)
+ * glowColor  = bright filament/crest color (VFX_Material->glow)
+ *
+ * Update bodyColor/glowColor each frame before AuraShellMaterial_Begin() so
+ * the aura responds to element changes at runtime.
+ * ==========================================================================*/
+
+typedef struct
+{
+    Color bodyColor;    // deep element body tint
+    Color glowColor;    // bright filament/crest tint
+    float opacity;      // master alpha 0..1
+    float fresnelPower; // rim sharpness 1..8 (higher = emptier center)
+    float rimStrength;  // extra rim brightness 0..~2
+    float scrollSpeed;  // vertical filament scroll speed (positive = up)
+    float noiseScale;   // filament horizontal frequency (try 3..6)
+    float heightScale;  // vertical stretch of filament pattern (try 1..3)
+    float scanFreq;     // horizontal ring pulse frequency (try 6..14)
+    float scanSpeed;    // ring upward travel speed (try 0.8..2.0)
+    float scanStrength; // ring contribution weight 0..1
+    float displaceAmp;  // vertex ripple world-units amplitude
+    float topY;         // world Y of cylinder top rim (for top-edge fade)
+} AuraShellMaterialParams;
+
+typedef struct
+{
+    Shader shader;
+    AuraShellMaterialParams params;
+    int uBodyColorLoc;
+    int uGlowColorLoc;
+    int uOpacityLoc;
+    int uFresnelPowerLoc;
+    int uRimStrengthLoc;
+    int uScrollSpeedLoc;
+    int uNoiseScaleLoc;
+    int uHeightScaleLoc;
+    int uScanFreqLoc;
+    int uScanSpeedLoc;
+    int uScanStrengthLoc;
+    int uDisplaceAmpLoc;
+    int uTopYLoc;
+    int uTimeLoc;
+} AuraShellMaterial;
+
+AuraShellMaterial AuraShellMaterial_Load(AuraShellMaterialParams params);
+void AuraShellMaterial_Begin(AuraShellMaterial mat);
+void AuraShellMaterial_End(void);
+
 #endif // MATERIAL_SYSTEM_H

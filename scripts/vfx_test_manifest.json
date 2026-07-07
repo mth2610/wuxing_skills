@@ -254,13 +254,6 @@
       "trigger_call": "VFX_ComposeRicochetSpark(Vector3Add($POS, (Vector3){0, 0.5f, 0}), (Vector3){0.7f, 0.7f, 0.0f}, 1.0f)"
     },
     {
-      "fn": "VFX_ComposeStaticField",
-      "label": "STATIC FLD",
-      "category": "metal",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeStaticField(Vector3Add($POS, (Vector3){0, 0.7f, 0}), 0.5f, $TIME)"
-    },
-    {
       "fn": "VFX_ComposeLightningBolt",
       "label": "BOLT",
       "category": "metal",
@@ -352,25 +345,11 @@
       "trigger_call": "VFX_ComposeCast($POS, EFFECT_PRESET_EARTH_CRACK, 1.5f)"
     },
     {
-      "fn": "VFX_ComposeYinYangOrbit",
-      "label": "YIN YANG",
-      "category": "taiji",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeYinYangOrbit(Vector3Add($POS, (Vector3){0, 0.8f, 0}), 0.45f, $TIME)"
-    },
-    {
       "fn": "VFX_ComposeElementalMist",
       "label": "ELEM MIST",
       "category": "taiji",
       "type": "continuous",
       "draw_call": "VFX_ComposeElementalMist(VC_MAT_ICE, $POS, 1.0f, $TIME)"
-    },
-    {
-      "fn": "VFX_ComposeQiAura",
-      "label": "QI AURA",
-      "category": "taiji",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeQiAura(VC_MAT_FIRE, Vector3Add($POS, (Vector3){0, 0.5f, 0}), $PROG, $TIME, 1.0f)"
     },
     {
       "fn": "VFX_SpawnAuraRing",

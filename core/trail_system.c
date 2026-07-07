@@ -20,13 +20,16 @@ static unsigned int shaderCacheIds[TRAIL_SHADER_CACHE_SIZE];
 static int shaderCacheTimeLocs[TRAIL_SHADER_CACHE_SIZE];
 static int shaderCacheCount = 0;
 
-static int GetCachedTimeLoc(Shader shader) {
-  for (int i = 0; i < shaderCacheCount; i++) {
+static int GetCachedTimeLoc(Shader shader)
+{
+  for (int i = 0; i < shaderCacheCount; i++)
+  {
     if (shaderCacheIds[i] == shader.id)
       return shaderCacheTimeLocs[i];
   }
   int loc = GetShaderLocation(shader, "u_time");
-  if (shaderCacheCount < TRAIL_SHADER_CACHE_SIZE) {
+  if (shaderCacheCount < TRAIL_SHADER_CACHE_SIZE)
+  {
     shaderCacheIds[shaderCacheCount] = shader.id;
     shaderCacheTimeLocs[shaderCacheCount] = loc;
     shaderCacheCount++;
@@ -40,11 +43,13 @@ static Vector3 scratchNodePrevPos[TRAIL_HISTORY_COUNT];
 
 #define WISP_CONSTRAINT_ITERS 2
 
-static inline Shader ResolveShader(const TrailEntity *t) {
+static inline Shader ResolveShader(const TrailEntity *t)
+{
   return (t->shader.id != 0) ? t->shader : defaultShader;
 }
 
-static float SmoothStepC(float edge0, float edge1, float x) {
+static float SmoothStepC(float edge0, float edge1, float x)
+{
   float t = (x - edge0) / (edge1 - edge0);
   if (t < 0.0f)
     return 0.0f;
@@ -53,14 +58,16 @@ static float SmoothStepC(float edge0, float edge1, float x) {
   return t * t * (3.0f - 2.0f * t);
 }
 
-static inline float ComputeWispStyleTaper(float segRatio) {
+static inline float ComputeWispStyleTaper(float segRatio)
+{
   return SmoothStepC(0.0f, TRAIL_WISP_HEAD_TAPER_EDGE, segRatio) *
          SmoothStepC(1.0f, TRAIL_WISP_TAIL_TAPER_EDGE, 1.0f - segRatio);
 }
 
 static void DrawCameraFacingQuad(Camera3D camera, Vector3 center, float width,
                                  float height, float rotation, Color tint,
-                                 Texture2D tex, Rectangle uvRect) {
+                                 Texture2D tex, Rectangle uvRect)
+{
   Matrix matView = GetCameraMatrix(camera);
   Vector3 right = {matView.m0, matView.m4, matView.m8};
   Vector3 up = {matView.m1, matView.m5, matView.m9};
@@ -101,7 +108,8 @@ static void DrawCameraFacingQuad(Camera3D camera, Vector3 center, float width,
 }
 
 static inline void ConstrainRibbonSegment(Vector3 *a, Vector3 *b, float restLen,
-                                          bool pinnedA) {
+                                          bool pinnedA)
+{
   if (restLen <= 1e-6f)
     return;
 
@@ -118,16 +126,20 @@ static inline void ConstrainRibbonSegment(Vector3 *a, Vector3 *b, float restLen,
   float err = dist - restLen;
   Vector3 dir = Vector3Scale(delta, 1.0f / dist);
 
-  if (pinnedA) {
+  if (pinnedA)
+  {
     *b = Vector3Subtract(*b, Vector3Scale(dir, err));
-  } else {
+  }
+  else
+  {
     Vector3 half = Vector3Scale(dir, err * 0.5f);
     *a = Vector3Add(*a, half);
     *b = Vector3Subtract(*b, half);
   }
 }
 
-static inline void GrowHistoryTowardMaxNodes(TrailEntity *t) {
+static inline void GrowHistoryTowardMaxNodes(TrailEntity *t)
+{
   int maxNodes =
       (t->trailLength > 0.0f) ? (int)t->trailLength : TRAIL_HISTORY_COUNT;
   if (maxNodes > TRAIL_HISTORY_COUNT)
@@ -135,14 +147,18 @@ static inline void GrowHistoryTowardMaxNodes(TrailEntity *t) {
   if (maxNodes < 1)
     maxNodes = 1;
 
-  if (t->historyCount < maxNodes) {
+  if (t->historyCount < maxNodes)
+  {
     t->historyCount++;
-  } else if (t->historyCount > maxNodes) {
+  }
+  else if (t->historyCount > maxNodes)
+  {
     t->historyCount = maxNodes;
   }
 }
 
-static void UpdateProjectilePhysics(int i, float dt, float time) {
+static void UpdateProjectilePhysics(int i, float dt, float time)
+{
   TrailEntity *t = &trailPool[i];
 
   t->historyHead = (t->historyHead + 1) % TRAIL_HISTORY_COUNT;
@@ -163,12 +179,13 @@ static void UpdateProjectilePhysics(int i, float dt, float time) {
   Vector3 toTarget = Vector3Subtract(t->target, t->position);
   float distSqr = Vector3LengthSqr(toTarget);
 
-  if (distSqr > TRAIL_PROJECTILE_RETARGET_DIST_SQR) {
+  if (distSqr > TRAIL_PROJECTILE_RETARGET_DIST_SQR)
+  {
     float curveRange = (t->curveRangeOverride > 0.0f) ? t->curveRangeOverride
-                                                       : TRAIL_PROJECTILE_CURVE_RANGE;
+                                                      : TRAIL_PROJECTILE_CURVE_RANGE;
     float wobbleAmplitude = (t->wobbleAmplitudeOverride > 0.0f)
-                                 ? t->wobbleAmplitudeOverride
-                                 : TRAIL_PROJECTILE_WOBBLE_AMPLITUDE;
+                                ? t->wobbleAmplitudeOverride
+                                : TRAIL_PROJECTILE_WOBBLE_AMPLITUDE;
     Vector3 desiredDir = Vector3Normalize(toTarget);
     float currentSpeed = Vector3Length(t->velocity);
     float newSpeed = fminf(currentSpeed + TRAIL_PROJECTILE_ACCEL_RATE * dt,
@@ -185,7 +202,8 @@ static void UpdateProjectilePhysics(int i, float dt, float time) {
                               dt * TRAIL_PROJECTILE_STEER_LERP_RATE);
   }
 
-  if (t->forceField) {
+  if (t->forceField)
+  {
     Vector3 acc = ForceField_Evaluate(t->forceField, t->position, t->velocity,
                                       time, (Vector3){0}, (Vector3){0});
     t->velocity = Vector3Add(t->velocity, Vector3Scale(acc, dt));
@@ -202,10 +220,13 @@ static void UpdateProjectilePhysics(int i, float dt, float time) {
     Vector3 toTargetFromStart = Vector3Subtract(t->target, posBeforeMove);
 
     float closestDistSqr;
-    if (moveLenSqr < 1e-8f) {
+    if (moveLenSqr < 1e-8f)
+    {
       closestDistSqr =
           Vector3LengthSqr(Vector3Subtract(t->target, t->position));
-    } else {
+    }
+    else
+    {
       float proj = Vector3DotProduct(toTargetFromStart, moveDelta) / moveLenSqr;
       proj = fmaxf(0.0f, fminf(1.0f, proj));
       Vector3 closestPoint =
@@ -214,7 +235,8 @@ static void UpdateProjectilePhysics(int i, float dt, float time) {
           Vector3LengthSqr(Vector3Subtract(t->target, closestPoint));
     }
 
-    if (closestDistSqr < TRAIL_PROJECTILE_HIT_DIST_SQR) {
+    if (closestDistSqr < TRAIL_PROJECTILE_HIT_DIST_SQR)
+    {
       t->type = TRAIL_TYPE_FOLLOWER;
       t->attachedTransform = NULL;
       t->timeSinceLastFollowerUpdate = 0.0f;
@@ -224,7 +246,8 @@ static void UpdateProjectilePhysics(int i, float dt, float time) {
   }
 }
 
-static void UpdateWispPhysics(int i, float dt, float time) {
+static void UpdateWispPhysics(int i, float dt, float time)
+{
   TrailEntity *t = &trailPool[i];
   if (!t->forceField || t->historyCount < 2 || t->nodeRestLen <= 0.0f)
     return;
@@ -232,7 +255,8 @@ static void UpdateWispPhysics(int i, float dt, float time) {
   float viscDamp = ForceField_GetViscosityDamping(t->forceField, dt);
   float restLen = t->nodeRestLen;
 
-  for (int h = 0; h < t->historyCount; h++) {
+  for (int h = 0; h < t->historyCount; h++)
+  {
     Vector3 acc =
         ForceField_Evaluate(t->forceField, t->history[h], t->nodeVelocity[h],
                             time, (Vector3){0}, (Vector3){0});
@@ -245,16 +269,20 @@ static void UpdateWispPhysics(int i, float dt, float time) {
         Vector3Add(t->history[h], Vector3Scale(t->nodeVelocity[h], dt));
   }
 
-  for (int iter = 0; iter < WISP_CONSTRAINT_ITERS; iter++) {
-    for (int h = 1; h < t->historyCount; h++) {
+  for (int iter = 0; iter < WISP_CONSTRAINT_ITERS; iter++)
+  {
+    for (int h = 1; h < t->historyCount; h++)
+    {
       ConstrainRibbonSegment(&t->history[h - 1], &t->history[h], restLen,
                              false);
     }
   }
 
-  if (dt > 1e-7f) {
+  if (dt > 1e-7f)
+  {
     float invDt = 1.0f / dt;
-    for (int h = 0; h < t->historyCount; h++) {
+    for (int h = 0; h < t->historyCount; h++)
+    {
       t->nodeVelocity[h] = Vector3Scale(
           Vector3Subtract(t->history[h], scratchNodePrevPos[h]), invDt);
     }
@@ -263,18 +291,22 @@ static void UpdateWispPhysics(int i, float dt, float time) {
   t->position = t->history[0];
 }
 
-static void UpdateFollowerPhysics(int i, float dt, float time) {
+static void UpdateFollowerPhysics(int i, float dt, float time)
+{
   TrailEntity *t = &trailPool[i];
 
   t->timeSinceLastFollowerUpdate += dt;
-  if (t->timeSinceLastFollowerUpdate > TRAIL_FOLLOWER_IDLE_FADE_TIME) {
+  if (t->timeSinceLastFollowerUpdate > TRAIL_FOLLOWER_IDLE_FADE_TIME)
+  {
     t->fadeAccumulator += TRAIL_FOLLOWER_FADE_RATE_PER_SEC * dt;
     int fadeCount = (int)t->fadeAccumulator;
-    if (fadeCount > 0) {
+    if (fadeCount > 0)
+    {
       t->historyCount -= fadeCount;
       t->fadeAccumulator -= (float)fadeCount;
     }
-    if (t->historyCount <= 0) {
+    if (t->historyCount <= 0)
+    {
       KillTrailInternal(i);
       return;
     }
@@ -285,7 +317,8 @@ static void UpdateFollowerPhysics(int i, float dt, float time) {
 
   float viscDamp = ForceField_GetViscosityDamping(t->forceField, dt);
 
-  for (int h = 1; h < t->historyCount; h++) {
+  for (int h = 1; h < t->historyCount; h++)
+  {
     int idx = (t->historyHead - h + TRAIL_HISTORY_COUNT) % TRAIL_HISTORY_COUNT;
 
     Vector3 acc = ForceField_Evaluate(t->forceField, t->history[idx],
@@ -299,10 +332,12 @@ static void UpdateFollowerPhysics(int i, float dt, float time) {
   }
 }
 
-void InitTrailSystem(Shader defaultShaderIn) {
+void InitTrailSystem(Shader defaultShaderIn)
+{
   defaultShader = defaultShaderIn;
   shaderCacheCount = 0;
-  for (int i = 0; i < MAX_TRAIL_PARTICLES; i++) {
+  for (int i = 0; i < MAX_TRAIL_PARTICLES; i++)
+  {
     trailPool[i].active = false;
     trailPool[i].nextFree = i + 1;
   }
@@ -310,13 +345,15 @@ void InitTrailSystem(Shader defaultShaderIn) {
   activeCount = 0;
 }
 
-TrailEntity *GetTrail(int id) {
+TrailEntity *GetTrail(int id)
+{
   if (id < 0 || id >= MAX_TRAIL_PARTICLES)
     return NULL;
   return &trailPool[id];
 }
 
-static void KillTrailInternal(int id) {
+static void KillTrailInternal(int id)
+{
   if (trailPool[id].onDeath)
     trailPool[id].onDeath(trailPool[id].position, trailPool[id].scale);
   trailPool[id].active = false;
@@ -325,7 +362,8 @@ static void KillTrailInternal(int id) {
   activeCount--;
 }
 
-void KillTrail(int id) {
+void KillTrail(int id)
+{
   if (id < 0 || id >= MAX_TRAIL_PARTICLES || !trailPool[id].active)
     return;
   KillTrailInternal(id);
@@ -339,17 +377,20 @@ int GetActiveTrailCount(void) { return activeCount; }
 // false (no-op) if every active trail already has strictly higher priority
 // than incoming, preserving the old "reject the new spawn" behavior for that
 // case.
-static bool EvictLowestPriorityTrail(VFXPriority incomingPriority) {
+static bool EvictLowestPriorityTrail(VFXPriority incomingPriority)
+{
   int evictIdx = -1;
   VFXPriority evictPriority = VFX_PRIORITY_HIGH_ULTIMATE;
   float evictLifetime = 999999.0f;
 
-  for (int i = 0; i < MAX_TRAIL_PARTICLES; i++) {
+  for (int i = 0; i < MAX_TRAIL_PARTICLES; i++)
+  {
     if (!trailPool[i].active)
       continue;
     if (evictIdx == -1 || trailPool[i].priority < evictPriority ||
         (trailPool[i].priority == evictPriority &&
-         trailPool[i].lifetime < evictLifetime)) {
+         trailPool[i].lifetime < evictLifetime))
+    {
       evictIdx = i;
       evictPriority = trailPool[i].priority;
       evictLifetime = trailPool[i].lifetime;
@@ -363,9 +404,11 @@ static bool EvictLowestPriorityTrail(VFXPriority incomingPriority) {
   return true;
 }
 
-int SpawnTrailEntity(TrailConfig config) {
+int SpawnTrailEntity(TrailConfig config)
+{
   TrailConfig_Unify(&config);
-  if (freeListHead >= MAX_TRAIL_PARTICLES) {
+  if (freeListHead >= MAX_TRAIL_PARTICLES)
+  {
     if (!EvictLowestPriorityTrail(config.priority))
       return -1;
   }
@@ -414,14 +457,18 @@ int SpawnTrailEntity(TrailConfig config) {
   t->attachedTransform = NULL;
   t->attachLocalOffset = (Vector3){0.0f, 0.0f, 0.0f};
 
-  for (int h = 0; h < TRAIL_HISTORY_COUNT; h++) {
+  for (int h = 0; h < TRAIL_HISTORY_COUNT; h++)
+  {
     t->nodeVelocity[h] = (Vector3){0.0f, 0.0f, 0.0f};
   }
 
-  if (config.type == TRAIL_TYPE_WISP) {
+  if (config.type == TRAIL_TYPE_WISP)
+  {
     int maxNodes = (config.trailLength > 0.0f) ? (int)config.trailLength : TRAIL_HISTORY_COUNT;
-    if (maxNodes > TRAIL_HISTORY_COUNT) maxNodes = TRAIL_HISTORY_COUNT;
-    if (maxNodes < 2) maxNodes = 2;
+    if (maxNodes > TRAIL_HISTORY_COUNT)
+      maxNodes = TRAIL_HISTORY_COUNT;
+    if (maxNodes < 2)
+      maxNodes = 2;
 
     t->historyCount = maxNodes;
     t->nodeRestLen = (maxNodes > 1 && config.len > 0.0f)
@@ -431,19 +478,25 @@ int SpawnTrailEntity(TrailConfig config) {
     Vector3 strandDir = (Vector3LengthSqr(config.target) > 1e-8f)
                             ? Vector3Normalize(config.target)
                             : (Vector3){0.0f, 0.0f, 1.0f};
-    for (int h = 0; h < maxNodes; h++) {
+    for (int h = 0; h < maxNodes; h++)
+    {
       float u = (maxNodes > 1) ? (float)h / (float)(maxNodes - 1) : 0.0f;
       t->history[h] =
           Vector3Add(config.pos, Vector3Scale(strandDir, u * config.len));
       t->nodeVelocity[h] = config.vel;
     }
-  } else if (config.type == TRAIL_TYPE_FOLLOWER) {
+  }
+  else if (config.type == TRAIL_TYPE_FOLLOWER)
+  {
     t->historyCount = 0;
     t->nodeRestLen = 0.0f;
-  } else {
+  }
+  else
+  {
     t->historyCount = 0;
     t->nodeRestLen = 0.0f;
-    for (int h = 0; h < TRAIL_HISTORY_COUNT; h++) {
+    for (int h = 0; h < TRAIL_HISTORY_COUNT; h++)
+    {
       t->history[h] = config.pos;
     }
   }
@@ -452,7 +505,8 @@ int SpawnTrailEntity(TrailConfig config) {
   return index;
 }
 
-void UpdateFollowerPosition(int id, Vector3 newTipPos) {
+void UpdateFollowerPosition(int id, Vector3 newTipPos)
+{
   if (id < 0 || id >= MAX_TRAIL_PARTICLES || !trailPool[id].active)
     return;
   if (trailPool[id].type != TRAIL_TYPE_FOLLOWER)
@@ -471,7 +525,8 @@ void UpdateFollowerPosition(int id, Vector3 newTipPos) {
   t->fadeAccumulator = 0.0f;
 }
 
-void SetFollowerAxis(int id, Vector3 axisOrigin, Vector3 axisDir) {
+void SetFollowerAxis(int id, Vector3 axisOrigin, Vector3 axisDir)
+{
   if (id < 0 || id >= MAX_TRAIL_PARTICLES || !trailPool[id].active)
     return;
   if (trailPool[id].type != TRAIL_TYPE_FOLLOWER)
@@ -483,7 +538,8 @@ void SetFollowerAxis(int id, Vector3 axisOrigin, Vector3 axisDir) {
 }
 
 void Trail_AttachToTransform(int id, const Matrix *targetTransform,
-                             Vector3 localOffset) {
+                             Vector3 localOffset)
+{
   if (id < 0 || id >= MAX_TRAIL_PARTICLES || !trailPool[id].active)
     return;
   if (trailPool[id].type != TRAIL_TYPE_FOLLOWER)
@@ -492,7 +548,8 @@ void Trail_AttachToTransform(int id, const Matrix *targetTransform,
   trailPool[id].attachLocalOffset = localOffset;
 }
 
-void Trail_SetFollowerOrbit(int id, float radius, float speed, Vector3 axis, float phase) {
+void Trail_SetFollowerOrbit(int id, float radius, float speed, Vector3 axis, float phase)
+{
   if (id < 0 || id >= MAX_TRAIL_PARTICLES || !trailPool[id].active)
     return;
   if (trailPool[id].type != TRAIL_TYPE_FOLLOWER)
@@ -503,32 +560,37 @@ void Trail_SetFollowerOrbit(int id, float radius, float speed, Vector3 axis, flo
   trailPool[id].orbitPhase = phase;
 }
 
-void UpdateTrailSystem(float dt) {
-  VFX_UpdateQiAuras(dt);
+void UpdateTrailSystem(float dt)
+{
   float time = (float)GetTime();
 
-  for (int i = 0; i < MAX_TRAIL_PARTICLES; i++) {
+  for (int i = 0; i < MAX_TRAIL_PARTICLES; i++)
+  {
     if (!trailPool[i].active)
       continue;
 
     trailPool[i].lifetime -= dt;
-    if (trailPool[i].lifetime <= 0.0f) {
+    if (trailPool[i].lifetime <= 0.0f)
+    {
       KillTrailInternal(i);
       continue;
     }
 
     if (trailPool[i].type == TRAIL_TYPE_FOLLOWER &&
-        trailPool[i].attachedTransform != NULL) {
+        trailPool[i].attachedTransform != NULL)
+    {
       Vector3 localPos = trailPool[i].attachLocalOffset;
-      if (trailPool[i].orbitRadius > 0.0f) {
+      if (trailPool[i].orbitRadius > 0.0f)
+      {
         trailPool[i].orbitPhase += trailPool[i].orbitSpeed * dt;
         Vector3 axis = Vector3Normalize(trailPool[i].orbitAxis);
-        if (Vector3LengthSqr(axis) > 0.0f) {
-            Quaternion q = QuaternionFromAxisAngle(axis, trailPool[i].orbitPhase);
-            Vector3 arbitrary = (fabsf(axis.x) > 0.9f) ? (Vector3){0.0f, 1.0f, 0.0f} : (Vector3){1.0f, 0.0f, 0.0f};
-            Vector3 ortho = Vector3Normalize(Vector3CrossProduct(axis, arbitrary));
-            Vector3 rotated = Vector3RotateByQuaternion(ortho, q);
-            localPos = Vector3Add(localPos, Vector3Scale(rotated, trailPool[i].orbitRadius));
+        if (Vector3LengthSqr(axis) > 0.0f)
+        {
+          Quaternion q = QuaternionFromAxisAngle(axis, trailPool[i].orbitPhase);
+          Vector3 arbitrary = (fabsf(axis.x) > 0.9f) ? (Vector3){0.0f, 1.0f, 0.0f} : (Vector3){1.0f, 0.0f, 0.0f};
+          Vector3 ortho = Vector3Normalize(Vector3CrossProduct(axis, arbitrary));
+          Vector3 rotated = Vector3RotateByQuaternion(ortho, q);
+          localPos = Vector3Add(localPos, Vector3Scale(rotated, trailPool[i].orbitRadius));
         }
       }
       Vector3 tip = Vector3Transform(localPos,
@@ -536,7 +598,8 @@ void UpdateTrailSystem(float dt) {
       UpdateFollowerPosition(i, tip);
     }
 
-    switch (trailPool[i].type) {
+    switch (trailPool[i].type)
+    {
     case TRAIL_TYPE_PROJECTILE:
       UpdateProjectilePhysics(i, dt, time);
       break;
@@ -552,7 +615,8 @@ void UpdateTrailSystem(float dt) {
     }
   }
 
-  for (int i = 0; i < MAX_TRAIL_PARTICLES; i++) {
+  for (int i = 0; i < MAX_TRAIL_PARTICLES; i++)
+  {
     if (!trailPool[i].active)
       continue;
     if (trailPool[i].onUpdate)
@@ -560,13 +624,17 @@ void UpdateTrailSystem(float dt) {
   }
 }
 
-static void DrawTrailGeometry(int i, Camera3D camera) {
+static void DrawTrailGeometry(int i, Camera3D camera)
+{
   float lifeRatio = trailPool[i].lifetime / trailPool[i].maxLifetime;
   Color c = trailPool[i].tint;
 
-  if (trailPool[i].type == TRAIL_TYPE_PROJECTILE) {
-    if (trailPool[i].historyCount > 1) {
-      for (int h = 0; h < trailPool[i].historyCount; h++) {
+  if (trailPool[i].type == TRAIL_TYPE_PROJECTILE)
+  {
+    if (trailPool[i].historyCount > 1)
+    {
+      for (int h = 0; h < trailPool[i].historyCount; h++)
+      {
         int idx = (trailPool[i].historyHead - h + TRAIL_HISTORY_COUNT) %
                   TRAIL_HISTORY_COUNT;
         float segRatio =
@@ -574,7 +642,8 @@ static void DrawTrailGeometry(int i, Camera3D camera) {
         float taper = powf(segRatio, TRAIL_PROJECTILE_TAPER_POWER);
 
         Color nodeColor = c;
-        if (trailPool[i].gradient) {
+        if (trailPool[i].gradient)
+        {
           nodeColor = ColorGradient_Sample(trailPool[i].gradient, segRatio);
         }
 
@@ -611,40 +680,46 @@ static void DrawTrailGeometry(int i, Camera3D camera) {
         (Color){128, 128, 128, (unsigned char)(255.0f * lifeRatio)};
 
     Rectangle uvRect = (Rectangle){0.0f, 0.0f, 1.0f, 1.0f};
-    if (trailPool[i].spriteAnim) {
+    if (trailPool[i].spriteAnim)
+    {
       float age = trailPool[i].maxLifetime - trailPool[i].lifetime;
       uvRect = SpriteAnim_CalculateUV(trailPool[i].spriteAnim, age, NULL);
     }
 
     float quadHeight = trailPool[i].thickness * TRAIL_PROJECTILE_QUAD_THICK_MUL;
-    if (trailPool[i].spriteAnim) {
+    if (trailPool[i].spriteAnim)
+    {
       // Nếu đạn sử dụng SpriteAnim (atlas), giữ tỉ lệ 1:1 hình vuông để hình ảnh không bị bóp méo
       quadHeight = trailPool[i].length * TRAIL_PROJECTILE_QUAD_LENGTH_MUL;
     }
 
-    if (trailPool[i].sprite.id > 0) {
+    if (trailPool[i].sprite.id > 0)
+    {
       DrawCameraFacingQuad(camera, trailPool[i].position,
                            trailPool[i].length * TRAIL_PROJECTILE_QUAD_LENGTH_MUL,
                            quadHeight,
                            rotation, spriteTint, trailPool[i].sprite, uvRect);
     }
-
-  } else if (trailPool[i].type == TRAIL_TYPE_WISP) {
-    if (trailPool[i].historyCount > 1) {
-      for (int h = 0; h < trailPool[i].historyCount; h++) {
+  }
+  else if (trailPool[i].type == TRAIL_TYPE_WISP)
+  {
+    if (trailPool[i].historyCount > 1)
+    {
+      for (int h = 0; h < trailPool[i].historyCount; h++)
+      {
         float segRatio =
             1.0f - (float)h / (float)(trailPool[i].historyCount - 1);
         float taper = ComputeWispStyleTaper(segRatio);
 
         Color nodeColor = c;
-        if (trailPool[i].gradient) {
+        if (trailPool[i].gradient)
+        {
           Color gradCol = ColorGradient_Sample(trailPool[i].gradient, segRatio);
           nodeColor = (Color){
               (unsigned char)((gradCol.r / 255.0f) * c.r),
               (unsigned char)((gradCol.g / 255.0f) * c.g),
               (unsigned char)((gradCol.b / 255.0f) * c.b),
-              (unsigned char)((gradCol.a / 255.0f) * c.a)
-          };
+              (unsigned char)((gradCol.a / 255.0f) * c.a)};
         }
 
         // Draw a single pass ribbon utilizing the full configured thickness
@@ -657,8 +732,9 @@ static void DrawTrailGeometry(int i, Camera3D camera) {
       Texture2D ribbonTex = trailPool[i].sprite.id > 0 ? trailPool[i].sprite : s_globalTrailTex;
       DrawRibbonStrip(scratchOuter, trailPool[i].historyCount, ribbonTex, camera);
     }
-
-  } else if (trailPool[i].type == TRAIL_TYPE_PORTAL) {
+  }
+  else if (trailPool[i].type == TRAIL_TYPE_PORTAL)
+  {
     float radius = trailPool[i].length;
     float age = trailPool[i].maxLifetime - trailPool[i].lifetime;
     if (age < TRAIL_PORTAL_SPAWN_GROW_TIME)
@@ -666,7 +742,8 @@ static void DrawTrailGeometry(int i, Camera3D camera) {
     Color portalTint = (Color){c.r, c.g, c.b, (unsigned char)(c.a * lifeRatio)};
 
     Rectangle uvRect = (Rectangle){0.0f, 0.0f, 1.0f, 1.0f};
-    if (trailPool[i].spriteAnim) {
+    if (trailPool[i].spriteAnim)
+    {
       uvRect = SpriteAnim_CalculateUV(trailPool[i].spriteAnim, age, NULL);
     }
 
@@ -674,10 +751,13 @@ static void DrawTrailGeometry(int i, Camera3D camera) {
         camera, trailPool[i].position, radius * TRAIL_PORTAL_QUAD_SIZE_MUL,
         radius * TRAIL_PORTAL_QUAD_SIZE_MUL, trailPool[i].angle * DEG2RAD,
         portalTint, (Texture2D){0}, uvRect);
-
-  } else if (trailPool[i].type == TRAIL_TYPE_FOLLOWER) {
-    if (trailPool[i].historyCount > 1) {
-      for (int h = 0; h < trailPool[i].historyCount; h++) {
+  }
+  else if (trailPool[i].type == TRAIL_TYPE_FOLLOWER)
+  {
+    if (trailPool[i].historyCount > 1)
+    {
+      for (int h = 0; h < trailPool[i].historyCount; h++)
+      {
         int idx = (trailPool[i].historyHead - h + TRAIL_HISTORY_COUNT) %
                   TRAIL_HISTORY_COUNT;
         float segRatio =
@@ -685,14 +765,14 @@ static void DrawTrailGeometry(int i, Camera3D camera) {
         float taper = ComputeWispStyleTaper(segRatio);
 
         Color nodeColor = c;
-        if (trailPool[i].gradient) {
+        if (trailPool[i].gradient)
+        {
           Color gradCol = ColorGradient_Sample(trailPool[i].gradient, segRatio);
           nodeColor = (Color){
               (unsigned char)((gradCol.r / 255.0f) * c.r),
               (unsigned char)((gradCol.g / 255.0f) * c.g),
               (unsigned char)((gradCol.b / 255.0f) * c.b),
-              (unsigned char)((gradCol.a / 255.0f) * c.a)
-          };
+              (unsigned char)((gradCol.a / 255.0f) * c.a)};
         }
 
         // Outer glow
@@ -701,7 +781,7 @@ static void DrawTrailGeometry(int i, Camera3D camera) {
         scratchOuter[h].v = segRatio;
         scratchOuter[h].tint =
             (Color){nodeColor.r, nodeColor.g, nodeColor.b, (unsigned char)((nodeColor.a / 255.0f) * 180.0f * lifeRatio * taper)};
-            
+
         // Inner white core
         scratchInner[h].position = trailPool[i].history[idx];
         scratchInner[h].halfWidth = trailPool[i].thickness * 0.4f * taper;
@@ -719,7 +799,8 @@ static void DrawTrailGeometry(int i, Camera3D camera) {
 static unsigned int frameActiveShaderIds[TRAIL_SHADER_CACHE_SIZE];
 static Shader frameActiveShaders[TRAIL_SHADER_CACHE_SIZE];
 
-void DrawTrailEntities(Camera3D camera) {
+void DrawTrailEntities(Camera3D camera)
+{
   if (activeCount == 0)
     return;
 
@@ -731,25 +812,30 @@ void DrawTrailEntities(Camera3D camera) {
   BeginBlendMode(currentBM);
 
   int frameActiveShaderCount = 0;
-  for (int i = 0; i < MAX_TRAIL_PARTICLES; i++) {
+  for (int i = 0; i < MAX_TRAIL_PARTICLES; i++)
+  {
     if (!trailPool[i].active)
       continue;
     Shader sh = ResolveShader(&trailPool[i]);
     bool found = false;
-    for (int s = 0; s < frameActiveShaderCount; s++) {
-      if (frameActiveShaderIds[s] == sh.id) {
+    for (int s = 0; s < frameActiveShaderCount; s++)
+    {
+      if (frameActiveShaderIds[s] == sh.id)
+      {
         found = true;
         break;
       }
     }
-    if (!found && frameActiveShaderCount < TRAIL_SHADER_CACHE_SIZE) {
+    if (!found && frameActiveShaderCount < TRAIL_SHADER_CACHE_SIZE)
+    {
       frameActiveShaderIds[frameActiveShaderCount] = sh.id;
       frameActiveShaders[frameActiveShaderCount] = sh;
       frameActiveShaderCount++;
     }
   }
 
-  for (int s = 0; s < frameActiveShaderCount; s++) {
+  for (int s = 0; s < frameActiveShaderCount; s++)
+  {
     Shader fullShader = frameActiveShaders[s];
 
     int timeLoc = GetCachedTimeLoc(fullShader);
@@ -757,14 +843,16 @@ void DrawTrailEntities(Camera3D camera) {
       SetShaderValue(fullShader, timeLoc, &time, SHADER_UNIFORM_FLOAT);
     BeginShaderMode(fullShader);
 
-    for (int i = 0; i < MAX_TRAIL_PARTICLES; i++) {
+    for (int i = 0; i < MAX_TRAIL_PARTICLES; i++)
+    {
       if (!trailPool[i].active)
         continue;
       if (ResolveShader(&trailPool[i]).id != frameActiveShaderIds[s])
         continue;
 
       BlendMode targetBM = (trailPool[i].blendMode > 0) ? trailPool[i].blendMode : BLEND_ADDITIVE;
-      if (targetBM != currentBM) {
+      if (targetBM != currentBM)
+      {
         rlDrawRenderBatchActive();
         EndBlendMode();
         currentBM = targetBM;
@@ -783,7 +871,8 @@ void DrawTrailEntities(Camera3D camera) {
 }
 
 void UnloadTrailSystem(void) {}
-void TrailSystem_GetStats(int *active, int *max) {
-    *active = GetActiveTrailCount();
-    *max = MAX_TRAIL_PARTICLES;
+void TrailSystem_GetStats(int *active, int *max)
+{
+  *active = GetActiveTrailCount();
+  *max = MAX_TRAIL_PARTICLES;
 }
