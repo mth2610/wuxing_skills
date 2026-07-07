@@ -32,8 +32,8 @@
 #endif
 
 // Include modular visual composer implementations (grouped by element/functionality)
-#include "vc_common.inl" // render primitives (VC_DrawGroundQuadXZ, VC_DrawGroundRune)
-#include "vc_beauty.inl" // beauty primitives — must precede element .inl (vc_zone calls GlintBurst)
+#include "vc_common.inl"       // render primitives (VC_DrawGroundQuadXZ, VC_DrawGroundRune)
+#include "vc_beauty.inl"       // beauty primitives — must precede element .inl (vc_zone calls GlintBurst)
 #include "vc_neutral.inl"      // SmokePuff, SmokeTrail, LightningBolt
 #include "vc_impact.inl"       // TriggerImpactBurst, ComposeImpact, TriggerExplosion
 #include "vc_cast_preset.inl"  // ComposeCast
@@ -53,6 +53,7 @@
 #include "vc_path.inl"
 #include "vc_summon.inl"
 #include "vc_aura.inl"
+#include "vc_cylinder_aura.inl"
 
 // Phase 3 archetypes
 #include "vc_shield.inl"
@@ -63,5 +64,8 @@
 #include "vc_elemental_mist.inl"
 #include "vc_archetype.inl" // stateful archetypes: Beam, GroundWave, Orbitals, AuraRing, ChainLightning
 
-void VFX_Compose_Update(float dt)   { VC_Archetype_Update(dt); }
+// @gen:vc_includes begin
+// @gen:vc_includes end
+
+void VFX_Compose_Update(float dt) { VC_Archetype_Update(dt); }
 void VFX_Compose_Draw3D(Camera3D cam) { VC_Archetype_Draw3D(cam); }

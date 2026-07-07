@@ -40,7 +40,9 @@ static void TaijiFx_InitShared(void)
 static Vector3 TaijiSphereDir(int index, int epoch)
 {
     unsigned int rng = (unsigned int)(index * 668265263 + epoch * 374761393) + 1013904223u;
-    rng ^= rng >> 13; rng *= 1274126177u; rng ^= rng >> 16;
+    rng ^= rng >> 13;
+    rng *= 1274126177u;
+    rng ^= rng >> 16;
     float u = (float)(rng & 0xFFFF) / 65535.0f;
     rng = rng * 1664525u + 1013904223u;
     float v = (float)(rng >> 8 & 0xFFFF) / 65535.0f;
