@@ -14,6 +14,7 @@
 #include "sandbox/vfx_test.h" // MỚI: Chỉ giữ duy nhất file test này để điều phối
 #include "core/resource_manager.h"
 #include "core/skill_helper.h"
+#include "core/composition/visual_composer.h"
 #include "core/time_fx.h"
 #include "core/tuning.h"
 #include "raylib.h"
@@ -415,7 +416,7 @@ int main(int argc, char **argv) {
     Tuning_Update();
     UpdateSkillManager(dt, enemy.position, 0.35f);
     DamageVolume_Update(dt);
-    SkillHelper_Update(dt);
+    VFX_Compose_Update(dt);
     EmitterSystem_Update(dt);
     StatusVFX_Update(dt);
     Afterimage_Update(dt);
@@ -468,7 +469,7 @@ int main(int argc, char **argv) {
     }
 
     if (currentScreen == SCREEN_SKILL_SANDBOX) {
-        SkillBuilder_DrawWorld(camera);
+        VFX_Compose_Draw3D(camera);
     }
     Afterimage_Draw();
 

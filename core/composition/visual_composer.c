@@ -17,6 +17,7 @@
 #include "core/resource_manager.h"
 #include "core/skill_manager.h"
 #include "core/vfx_proc_ray.h"
+#include "core/emitter_system.h"
 #include "core/color_gradient.h"
 #include "core/utils_math.h"
 #include "rlgl.h"
@@ -58,3 +59,7 @@
 #include "vc_slash.inl"
 #include "vc_charge.inl"
 #include "vc_elemental_mist.inl"
+#include "vc_archetype.inl" // stateful archetypes: Beam, GroundWave, Orbitals, AuraRing, ChainLightning
+
+void VFX_Compose_Update(float dt)   { VC_Archetype_Update(dt); }
+void VFX_Compose_Draw3D(Camera3D cam) { VC_Archetype_Draw3D(cam); }

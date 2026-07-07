@@ -318,55 +318,14 @@ void SkillBuilder_Build(SkillBuildContext *ctx);
 // at different points in the skill's lifecycle.
 void SkillBuilder_AddCastEffect(SkillBuildContext *ctx, EffectPresetType preset);
 
-// 11. SkillBuilder archetype extensions (Item 23)
-// All Spawn* are immediate with duration/self-expiry — unlike the deferred
-// Add*/Build pattern above. They drive their own internal static pools
-// updated by SkillBuilder_Update / drawn by SkillBuilder_DrawWorld.
-
-// Beam: proc-ray element-tinted line + VFXLight at both ends.
-// Returns beam handle (>=0) or -1 if pool full.
-int  SkillBuilder_SpawnBeam(Vector3 from, Vector3 to, EffectPresetType element,
-                            float width, float duration);
-void SkillBuilder_KillBeam(int handle);
-
-// Expanding ground shockwave + decal scroll + emitter burst.
-void SkillBuilder_SpawnGroundWave(Vector3 origin, Vector3 dir,
-                                  EffectPresetType element,
-                                  float range, float speed);
-
-// N tetrahedra orbiting a center point, each with a thin follower trail.
-// Returns orbital group handle (>=0) or -1 if pool full.
-int  SkillBuilder_SpawnOrbitals(Vector3 center, EffectPresetType element,
-                                int count, float radius, float duration);
-
-// Looping emitter ring (K=8 points) + glow decal + center VFXLight.
-// Returns aura handle (>=0) or -1 if pool full. Caller kills explicitly
-// or lets duration expire.
-int  SkillBuilder_SpawnAuraRing(Vector3 center, EffectPresetType element,
-                                float radius, float duration);
-void SkillBuilder_KillAuraRing(int handle);
-
-// Drive internal pools — call once per game loop frame.
-void SkillBuilder_Update(float dt);
-// Draw 3D elements (beams, orbitals, ground waves) — call inside BeginMode3D.
-void SkillBuilder_DrawWorld(Camera3D cam);
-
-// 12. Chain-targeting helper (Item 28)
+// 11. Chain-targeting helper (Item 28)
 // Builds the jump list: from origin, finds nearest target within jumpRadius,
 // then nearest-to-that not already hit, up to maxJumps.
 // Positions are filled via SkillManager_GetAgentPos; unreachable hops skipped.
 // Returns the number of hops found (0 if no provider / no targets).
+// Use VFX_ChainLightning() (visual_composer.h) to fire the resulting chain.
 int  SkillHelper_ChainTargets(Vector3 origin, float jumpRadius,
                               int maxJumps, Vector3 *outPoints, int maxOut);
-
-// Fires one SpawnLightningTrail per hop with staggered hopDelay seconds.
-// Internally queued — resolved by SkillHelper_Update(dt).
-void SpawnChainLightning(const Vector3 *points, int count,
-                         float scale, float hopDelay);
-
-// Update helper pools (chain lightning queue + SkillBuilder pools).
-// Wire into main.c alongside DamageVolume_Update.
-void SkillHelper_Update(float dt);
 
 // Pool stats (Item 32)
 void DamageVolume_GetStats(int *active, int *max);

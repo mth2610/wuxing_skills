@@ -1,0 +1,67 @@
+{
+  "overall": 3,
+  "pass": false,
+  "scores": {
+    "identity": 3,
+    "motion": 4,
+    "density": 3,
+    "coherence": 3
+  },
+  "issues": [
+    {
+      "aspect": "identity",
+      "severity": "high",
+      "description": "The current effect is a very basic, almost pixelated blob of orange, lacking the organic flicker and warm red tones expected of a flame wisp."
+    },
+    {
+      "aspect": "motion",
+      "severity": "medium",
+      "description": "The movement is too uniform and lacks the dynamic, dancing quality of a flame spirit."
+    },
+    {
+      "aspect": "density",
+      "severity": "medium",
+      "description": "The effect is too sparse and lacks visual weight, making it appear weak and indistinct."
+    },
+    {
+      "aspect": "coherence",
+      "severity": "high",
+      "description": "There are no discernible layers or elements that contribute to a unified effect; it appears as a single, unrefined shape."
+    }
+  ],
+  "hints": [
+    {
+      "param": "color palette",
+      "direction": "change to warm orange-red with subtle yellow and darker red accents",
+      "reason": "To better evoke the feeling of fire and add depth."
+    },
+    {
+      "param": "particle texture",
+      "direction": "change to a more organic, wispy texture with soft edges",
+      "reason": "To move away from the current blocky appearance and towards a more ethereal flame spirit."
+    },
+    {
+      "param": "motion",
+      "direction": "increase variation in speed and direction, add subtle pulsing",
+      "reason": "To create a more lively and organic 'dancing' motion."
+    },
+    {
+      "param": "density",
+      "direction": "increase particle count and size slightly",
+      "reason": "To give the wisp more visual presence and weight."
+    },
+    {
+      "param": "layers",
+      "direction": "add a subtle glow layer and a trailing particle layer",
+      "reason": "To add depth and a sense of movement, enhancing coherence."
+    }
+  ],
+  "summary": "The current Flame Wisp effect is too basic and lacks the visual fidelity to represent a 'flame wisp'. Its color, motion, and density are all underdeveloped, failing to convey the intended elemental and organic feel. Significant improvements are needed in particle texture, color variation, and motion dynamics to meet the criteria.",
+  "_meta": {
+    "vfx": "VFX_ComposeFlameWisp",
+    "material": "FIRE",
+    "image": "/tmp/vfx_iter_eval.png",
+    "model": "gemini-2.5-flash-lite",
+    "params_evaluated": {}
+  }
+}

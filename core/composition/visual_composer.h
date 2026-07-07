@@ -168,4 +168,28 @@ void VFX_AttachQiAura(int casterAgentId, Vector3 anchorPos, float bodyHeight, Ef
 void VFX_DetachQiAura(int casterAgentId);
 void VFX_UpdateQiAuras(float dt);
 
+// ── Stateful archetype VFX (pools managed by VFX_Compose_Update / VFX_Compose_Draw3D) ──
+
+// Drive all archetype pools — call once per frame (replaces SkillHelper_Update).
+void VFX_Compose_Update(float dt);
+// Draw 3D archetype elements — call inside BeginMode3D (replaces SkillBuilder_DrawWorld).
+void VFX_Compose_Draw3D(Camera3D cam);
+
+// ProcRay beam with element-tinted glow at both endpoints. Returns handle or -1.
+int  VFX_SpawnProcBeam(Vector3 from, Vector3 to, EffectPresetType element, float width, float duration);
+void VFX_KillProcBeam(int handle);
+
+// Expanding ground shockwave ring that travels outward at `speed` m/s up to `range` m.
+void VFX_SpawnGroundWave(Vector3 origin, Vector3 dir, EffectPresetType element, float range, float speed);
+
+// N glowing orbs orbiting `center` at `radius` for `duration` seconds. Returns handle or -1.
+int  VFX_SpawnOrbitals(Vector3 center, EffectPresetType element, int count, float radius, float duration);
+
+// Ring of 8 particle emitters + center VFXLight. Returns handle or -1. Kill explicitly or let duration expire.
+int  VFX_SpawnAuraRing(Vector3 center, EffectPresetType element, float radius, float duration);
+void VFX_KillAuraRing(int handle);
+
+// Staggered lightning bolts along a hop chain (use SkillHelper_ChainTargets to build `points`).
+void VFX_ChainLightning(const Vector3 *points, int count, float scale, float hopDelay);
+
 #endif // VISUAL_COMPOSER_H
