@@ -534,7 +534,13 @@ void ParticleSystem_SpawnRadialBurst(Vector3 origin, float sizeScale, const Part
 ```
 
 ### Impact Burst (`core/composition/visual_composer.h`)
-See [COMPOSITION_API.md](COMPOSITION_API.md) — `ImpactBurstConfig` struct + `VFX_TriggerImpactBurst`.
+See [COMPOSITION_API.md](COMPOSITION_API.md) — full `ImpactBurstConfig` struct, `VFX_ImpactPreset`, and `VFX_TriggerImpactBurst`.
+
+Key invariants (as of 2026-07-07 rewrite):
+- `particles.speedMin/Max` are **direct m/s** — no internal throttle factor. Old presets used a 0.3×/0.4× multiplier that has been removed.
+- `colorStart` is auto-resolved from `gradient` at t=0 inside `TriggerImpactBurst`, so gradient-only configs (colorStart.a==0) render correctly.
+- `VFX_ImpactPreset.decalTint` defaults to WHITE when `{0,0,0,0}`; set a dark color to avoid a bright decal competing with the particle cloud.
+- Keep `lightRadius` ≤ 0.4m (before sizeScale) so the flash doesn't bleach particles.
 
 ### Math Utils (`core/utils_math.h`)
 ```c

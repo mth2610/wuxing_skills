@@ -176,17 +176,17 @@ void VFX_Compose_Update(float dt);
 void VFX_Compose_Draw3D(Camera3D cam);
 
 // ProcRay beam with element-tinted glow at both endpoints. Returns handle or -1.
-int  VFX_SpawnProcBeam(Vector3 from, Vector3 to, EffectPresetType element, float width, float duration);
+int VFX_SpawnProcBeam(Vector3 from, Vector3 to, EffectPresetType element, float width, float duration);
 void VFX_KillProcBeam(int handle);
 
 // Expanding ground shockwave ring that travels outward at `speed` m/s up to `range` m.
 void VFX_SpawnGroundWave(Vector3 origin, Vector3 dir, EffectPresetType element, float range, float speed);
 
 // N glowing orbs orbiting `center` at `radius` for `duration` seconds. Returns handle or -1.
-int  VFX_SpawnOrbitals(Vector3 center, EffectPresetType element, int count, float radius, float duration);
+int VFX_SpawnOrbitals(Vector3 center, EffectPresetType element, int count, float radius, float duration);
 
 // Ring of 8 particle emitters + center VFXLight. Returns handle or -1. Kill explicitly or let duration expire.
-int  VFX_SpawnAuraRing(Vector3 center, EffectPresetType element, float radius, float duration);
+int VFX_SpawnAuraRing(Vector3 center, EffectPresetType element, float radius, float duration);
 void VFX_KillAuraRing(int handle);
 
 // Staggered lightning bolts along a hop chain (use SkillHelper_ChainTargets to build `points`).

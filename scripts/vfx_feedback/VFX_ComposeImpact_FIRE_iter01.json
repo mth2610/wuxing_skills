@@ -1,0 +1,71 @@
+{
+  "overall": 3,
+  "pass": false,
+  "scores": {
+    "identity": 2,
+    "motion": 4,
+    "density": 5,
+    "coherence": 2
+  },
+  "issues": [
+    {
+      "aspect": "identity",
+      "severity": "high",
+      "description": "The initial burst is pure white, lacking any fire-specific color or texture, making it indistinguishable from a generic light source."
+    },
+    {
+      "aspect": "identity",
+      "severity": "high",
+      "description": "The 'ember' particles are uniform, blurry circles without any dynamic fire texture or flickering, appearing as simple colored blobs."
+    },
+    {
+      "aspect": "coherence",
+      "severity": "high",
+      "description": "The bright white central core feels disconnected from the surrounding orange/red particles, preventing a unified fire explosion impression."
+    },
+    {
+      "aspect": "motion",
+      "severity": "medium",
+      "description": "Particle movement is too uniform and lacks the organic, chaotic, and fluid behavior expected from a fire impact."
+    }
+  ],
+  "hints": [
+    {
+      "param": "initial_color",
+      "direction": "change to X",
+      "reason": "Shift the initial burst color from pure white to a vibrant orange/yellow/red gradient to immediately establish fire identity."
+    },
+    {
+      "param": "particle_texture",
+      "direction": "change to X",
+      "reason": "Introduce dynamic, flickering textures for both the main burst and individual ember particles to convey heat and movement."
+    },
+    {
+      "param": "particle_motion_variance",
+      "direction": "increase",
+      "reason": "Vary the speed, size, and trajectory of ember particles to make their movement feel more organic and less robotic."
+    },
+    {
+      "param": "core_brightness",
+      "direction": "decrease",
+      "reason": "Reduce the intensity of the central core to allow the fire elements to become more visually dominant and integrated."
+    },
+    {
+      "param": "overall_shape",
+      "direction": "change to X",
+      "reason": "Ensure the initial burst has a more organic, less perfectly circular shape, and clearly show embers fanning 'upward' as described."
+    }
+  ],
+  "summary": "The effect currently presents as a generic bright flash with scattered, blurry orange circles, failing to convincingly portray a fire explosion. Its lack of fire-specific colors, textures, and organic motion makes it feel robotic and disconnected, requiring significant revisions to establish a clear elemental identity and cinematic feel.",
+  "_meta": {
+    "vfx": "VFX_ComposeImpact_FIRE",
+    "material": "FIRE",
+    "images": [
+      "/Users/mth2610/Desktop/c_games/wuxing_skills/scripts/vfx_feedback/VFX_ComposeImpact_FIRE_iter01_f005.png",
+      "/Users/mth2610/Desktop/c_games/wuxing_skills/scripts/vfx_feedback/VFX_ComposeImpact_FIRE_iter01_f015.png",
+      "/Users/mth2610/Desktop/c_games/wuxing_skills/scripts/vfx_feedback/VFX_ComposeImpact_FIRE_iter01_f035.png"
+    ],
+    "model": "gemini-2.5-flash",
+    "params_evaluated": {}
+  }
+}

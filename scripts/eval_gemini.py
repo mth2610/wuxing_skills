@@ -10,7 +10,7 @@ Usage:
         --description "cold dry-ice mist creeping from a point, heavy/slow, 3 layers" \\
         --params '{"fog_spawn_chance":0.6,"wisp_spawn_chance":0.28,"viscosity":2.8,"radial_push":-0.22}' \\
         [--api-key YOUR_KEY]  # or set GEMINI_API_KEY env var
-        [--model gemini-2.0-flash]
+        [--model gemini-3.5-flash]
         [--out scripts/vfx_feedback/result.json]
 
 Output (stdout + --out file):
@@ -27,6 +27,21 @@ import os
 import sys
 import urllib.request
 import urllib.error
+
+def _load_dotenv():
+    """Load .env from project root (two levels up from this script) if present."""
+    env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+    try:
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    os.environ.setdefault(k.strip(), v.strip())
+    except FileNotFoundError:
+        pass
+
+_load_dotenv()
 
 
 RUBRIC = """
@@ -78,17 +93,20 @@ def load_image_b64(path: str) -> str:
         return base64.standard_b64encode(f.read()).decode()
 
 
-def call_gemini(api_key: str, model: str, image_b64: str, prompt: str) -> dict:
+def call_gemini(api_key: str, model: str, images_b64: list, prompt: str) -> dict:
+    """images_b64: list of base64 strings (1 or more frames in sequence)."""
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
         f"{model}:generateContent?key={api_key}"
     )
+    image_parts = [{"inline_data": {"mime_type": "image/png", "data": b64}}
+                   for b64 in images_b64]
+    frame_note = (f"\n\nNOTE: {len(images_b64)} frames shown in chronological order "
+                  f"(left=early, right=late). Evaluate the full animation arc."
+                  if len(images_b64) > 1 else "")
     body = {
         "contents": [{
-            "parts": [
-                {"text": prompt},
-                {"inline_data": {"mime_type": "image/png", "data": image_b64}},
-            ]
+            "parts": [{"text": prompt + frame_note}] + image_parts
         }],
         "generationConfig": {
             "temperature": 0.2,
@@ -123,14 +141,15 @@ def call_gemini(api_key: str, model: str, image_b64: str, prompt: str) -> dict:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Evaluate VFX screenshot with Gemini")
-    ap.add_argument("--image",       required=True,  help="Path to PNG screenshot")
+    ap = argparse.ArgumentParser(description="Evaluate VFX screenshot(s) with Gemini")
+    ap.add_argument("--image",       action="append", dest="images",
+                    help="PNG frame path (repeat for multiple frames, sent in order)")
     ap.add_argument("--vfx",         required=True,  help="VFX function name")
     ap.add_argument("--material",    default="",     help="VC_MaterialId string (e.g. ICE)")
     ap.add_argument("--description", default="",     help="What this effect should look like")
     ap.add_argument("--params",      default="{}",   help="JSON string of current param values")
     ap.add_argument("--api-key",     default="",     help="Gemini API key (or GEMINI_API_KEY env)")
-    ap.add_argument("--model",       default="gemini-2.5-flash-lite", help="Gemini model id")
+    ap.add_argument("--model",       default="gemini-2.5-flash", help="Gemini model id")
     ap.add_argument("--out",         default="",     help="Optional path to write JSON result")
     args = ap.parse_args()
 
@@ -139,11 +158,15 @@ def main():
         print("ERROR: Gemini API key required (--api-key or GEMINI_API_KEY env)", file=sys.stderr)
         sys.exit(1)
 
-    if not os.path.isfile(args.image):
-        print(f"ERROR: image not found: {args.image}", file=sys.stderr)
+    images = args.images or []
+    if not images:
+        print("ERROR: at least one --image required", file=sys.stderr)
         sys.exit(1)
+    for p in images:
+        if not os.path.isfile(p):
+            print(f"ERROR: image not found: {p}", file=sys.stderr)
+            sys.exit(1)
 
-    # Validate params JSON
     try:
         params_obj = json.loads(args.params)
     except json.JSONDecodeError as e:
@@ -157,17 +180,16 @@ def main():
         params=json.dumps(params_obj, indent=2),
     )
 
-    print(f"[eval_gemini] Calling {args.model} for {args.vfx} ({args.material})...",
-          file=sys.stderr)
+    print(f"[eval_gemini] Calling {args.model} for {args.vfx} ({args.material}) "
+          f"[{len(images)} frame(s)]...", file=sys.stderr)
 
-    image_b64 = load_image_b64(args.image)
-    result = call_gemini(api_key, args.model, image_b64, prompt)
+    images_b64 = [load_image_b64(p) for p in images]
+    result = call_gemini(api_key, args.model, images_b64, prompt)
 
-    # Attach metadata
     result["_meta"] = {
         "vfx": args.vfx,
         "material": args.material,
-        "image": args.image,
+        "images": images,
         "model": args.model,
         "params_evaluated": params_obj,
     }

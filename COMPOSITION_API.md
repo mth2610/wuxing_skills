@@ -12,14 +12,15 @@ typedef struct {
     /* --- Step 1: screen distortion --- */
     bool  distortEnabled;
     float distortRadius, distortStrength, distortLife, distortSpeed;
+    // distortRadius multiplied by sizeScale inside TriggerImpactBurst
 
     /* --- Step 2: ground decal --- */
-    bool     decalEnabled;
+    bool      decalEnabled;
     Texture2D decalTex;
-    float     decalScale;   /* multiplied by sizeScale at call time */
+    float     decalScale;            /* multiplied by sizeScale at call time */
     float     decalLife;
     Color     decalTint;
-    bool      decalRandomRotation; /* true = GetRandomValue(0,360), false = use decalFixedRotation */
+    bool      decalRandomRotation;   /* true = GetRandomValue(0,360), false = decalFixedRotation */
     float     decalFixedRotation;
 
     /* --- Step 3: point light flash --- */
@@ -28,13 +29,43 @@ typedef struct {
     float lightRadius;  /* multiplied by sizeScale at call time */
     float lightLife;
 
-    /* --- Step 4: radial particle burst --- */
+    /* --- Step 4: particle burst --- */
     bool particlesEnabled;
     ParticleRadialBurstConfig particles;
+    // speedMin/speedMax are DIRECT m/s — no internal throttle factor applied.
+    // colorStart is auto-resolved from gradient at t=0 if gradient is set,
+    // so gradient-only presets (colorStart.a==0) work correctly.
 } ImpactBurstConfig;
 
 void VFX_TriggerImpactBurst(Vector3 pos, float sizeScale, const ImpactBurstConfig *cfg);
+// alias: #define VFX_ComposeTriggerImpactBurst VFX_TriggerImpactBurst (both names valid)
 ```
+
+**`VFX_ImpactPreset` (in `core/presets/vfx_presets.h`)** — used by `VFX_ComposeImpact`:
+```c
+typedef struct {
+    bool  distortEnabled;
+    float distortRadius, distortStrength, distortLife, distortSpeed;
+
+    bool            decalEnabled;
+    DecalPresetType decalPreset;
+    float           decalScale, decalLife;
+    Color           decalTint;  // {0,0,0,0} defaults to WHITE inside VFX_ComposeImpact
+
+    bool  lightEnabled;
+    Color lightColor;
+    float lightRadius, lightLife;
+
+    bool                      particlesEnabled;
+    ParticleRadialBurstConfig particles;
+    // particles.speedMin/Max: direct m/s (1m-scale). No throttle factor.
+    // particles.gradient: auto-drives colorStart; set colorStart.a>0 OR set gradient.
+} VFX_ImpactPreset;
+```
+
+> **Scale note (1m-scale presets):** `particles.speedMin/speedMax` are used as-is (m/s).
+> The old 0.3×/0.4× throttle factors have been removed — calibrate presets directly.
+> `lightRadius` should be ≤0.4m for a standard hit so it doesn't bleach the particle cloud.
 
 ---
 

@@ -34,6 +34,19 @@ PLACEHOLDERS = {
 
 INDENT = "          "  # 10 spaces — matches surrounding code in vfx_test.c
 
+# Category name → integer id (must match NewFXCategory enum in vfx_test.c)
+CATEGORY_IDS = {"fire": 0, "water": 1, "wood": 2, "metal": 3, "earth": 4, "taiji": 5, "util": 6}
+
+# Synthetic fn aliases: strip these suffixes when checking header coverage
+_ELEMENT_SUFFIXES = ("_FIRE", "_WATER", "_WOOD", "_METAL", "_EARTH", "_TAIJI")
+
+def base_fn(fn):
+    """Return the real header function name (strip element suffix from aliases)."""
+    for s in _ELEMENT_SUFFIXES:
+        if fn.endswith(s):
+            return fn[:-len(s)]
+    return fn
+
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -116,6 +129,51 @@ def gen_trigger_block(entries):
     return "\n".join(lines)
 
 
+def gen_categories_array(entries):
+    """Generate s_newFxCategories[] — parallel to s_newFxNames[]."""
+    ids = [CATEGORY_IDS.get(e.get("category", "util"), 6) for e in entries]
+    rows = []
+    for i in range(0, len(ids), 10):
+        chunk = ids[i:i+10]
+        rows.append("    " + ", ".join(str(x) for x in chunk) + ",")
+    lines = [
+        "// @gen:newfx_categories begin",
+        "// NEWFX_CAT_FIRE=0 WATER=1 WOOD=2 METAL=3 EARTH=4 TAIJI=5 UTIL=6 — edit manifest, re-run sync",
+        "static const int s_newFxCategories[] = {",
+    ] + rows + [
+        "};",
+        "// @gen:newfx_categories end",
+    ]
+    return "\n".join(lines)
+
+
+def gen_render_trigger_block(entries):
+    """Generate oneshot switch inside VFXTest_SetRenderTarget (uses pos param, not s_prefabStartPos)."""
+    RINDENT = "    "  # 4 spaces inside function body
+    POS_REMAP = {
+        "$POS":  "pos",
+        "$TIME": "0.0f",
+        "$PROG": "0.0f",
+        "$SEED": "0",
+    }
+    def rexpand(t):
+        for k, v in POS_REMAP.items():
+            t = t.replace(k, v)
+        return t
+
+    lines = ["// @gen:newfx_render_trigger begin"]
+    lines.append(f"{RINDENT}switch (newfxIndex) {{")
+    for idx, e in enumerate(entries):
+        if e["type"] != "oneshot":
+            continue
+        call = rexpand(e["trigger_call"])
+        lines.append(f"{RINDENT}case {idx}: {call}; break;")
+    lines.append(f"{RINDENT}default: break;")
+    lines.append(f"{RINDENT}}}")
+    lines.append("// @gen:newfx_render_trigger end")
+    return "\n".join(lines)
+
+
 def gen_draw_block(entries):
     """Generate the switch dispatch inside VFXTest_Draw3D's NEWFX branch."""
     lines = [
@@ -177,9 +235,12 @@ def update_count(content, count):
 # ── diff report ───────────────────────────────────────────────────────────────
 
 def report_diff(header_fns, entries, excluded_fns):
-    accounted = {e["fn"] for e in entries} | excluded_fns
+    # Resolve synthetic aliases (e.g. VFX_ComposeImpact_FIRE → VFX_ComposeImpact)
+    entry_base_fns = {base_fn(e["fn"]) for e in entries}
+    accounted = entry_base_fns | excluded_fns
     new_fns   = header_fns - accounted
-    removed   = {e["fn"] for e in entries} - header_fns
+    # Only flag real (non-synthetic) entries that vanished from the header
+    removed   = {e["fn"] for e in entries if base_fn(e["fn"]) not in header_fns and e["fn"] not in excluded_fns}
 
     ok = True
     if new_fns:
@@ -217,17 +278,21 @@ def main():
         sys.exit(0 if in_sync else 1)
 
     # Generate sections
-    names_block   = gen_names_array(entries)
-    trigger_block = gen_trigger_block(entries)
-    draw_block    = gen_draw_block(entries)
-    count         = len(entries)
+    names_block           = gen_names_array(entries)
+    categories_block      = gen_categories_array(entries)
+    trigger_block         = gen_trigger_block(entries)
+    render_trigger_block  = gen_render_trigger_block(entries)
+    draw_block            = gen_draw_block(entries)
+    count                 = len(entries)
 
     with open(VFX_TEST_PATH) as f:
         content = f.read()
 
-    content = replace_section(content, "newfx_names",   names_block)
-    content = replace_section(content, "newfx_trigger", trigger_block)
-    content = replace_section(content, "newfx_draw",    draw_block)
+    content = replace_section(content, "newfx_names",            names_block)
+    content = replace_section(content, "newfx_categories",       categories_block)
+    content = replace_section(content, "newfx_trigger",          trigger_block)
+    content = replace_section(content, "newfx_render_trigger",   render_trigger_block)
+    content = replace_section(content, "newfx_draw",             draw_block)
     content = update_count(content, count)
 
     with open(VFX_TEST_PATH, "w") as f:

@@ -32,6 +32,10 @@ ForceField s_taijiFld;
 
 static bool s_presetsInitialized = false;
 
+// Gradient dành riêng cho impact fire — khởi đầu orange thay vì white
+// để phân biệt với ánh sáng trắng của vfx light
+static ColorGradient s_fireImpactGrad;
+
 // Gradient cho các material không thuộc 8 nguyên tố gameplay
 static ColorGradient s_holyGrad;
 static ColorGradient s_voidGrad;
@@ -57,6 +61,13 @@ void VFX_Presets_Init(void) {
     ColorGradient_AddStop(&s_fireGrad, 0.2f, (Color){ 255, 180, 50, 255 });
     ColorGradient_AddStop(&s_fireGrad, 0.7f, (Color){ 230, 60, 10, 255 });
     ColorGradient_AddStop(&s_fireGrad, 1.0f, (Color){ 30, 30, 30, 0 });
+
+    // Fire impact gradient: starts orange-hot so particles contrast against the white vfx light
+    s_fireImpactGrad.count = 0;
+    ColorGradient_AddStop(&s_fireImpactGrad, 0.0f, (Color){ 255, 200, 60, 255 });
+    ColorGradient_AddStop(&s_fireImpactGrad, 0.3f, (Color){ 255, 100, 10, 255 });
+    ColorGradient_AddStop(&s_fireImpactGrad, 0.7f, (Color){ 180, 30,  5, 200 });
+    ColorGradient_AddStop(&s_fireImpactGrad, 1.0f, (Color){  20, 10,  5,   0 });
 
     ForceField_Clear(&s_fireFld);
     ForceField_AddLayer(&s_fireFld, (ForceLayer){ .type = FORCE_WIND, .direction = {0.0f, 1.0f, 0.0f}, .strength = 18.0f });
@@ -142,16 +153,19 @@ void VFX_Presets_Init(void) {
     // Khởi tạo các mảng Presets Va chạm (VFX_ImpactPreset)
     // -------------------------------------------------------------
 
-    // Fire Explosion
+    // Fire Explosion — 1m-scale. Speed values are direct m/s (no throttle factor).
+    // Light kept small (0.3m) and short (0.12s) so it doesn't bleach the particle cloud.
+    // Distort disabled — the screen-distort oval visually fights the particle cloud.
     s_ImpactPresets[EFFECT_PRESET_FIRE_EXPLOSION] = (VFX_ImpactPreset){
-        .distortEnabled = true, .distortRadius = 0.55f, .distortStrength = 0.35f, .distortLife = 0.35f, .distortSpeed = 1.0f,
-        .decalEnabled = true, .decalPreset = DECAL_PRESET_BURN, .decalScale = 0.22f, .decalLife = 5.0f,
-        .lightEnabled = true, .lightColor = (Color){ 255, 120, 20, 255 }, .lightRadius = 0.65f, .lightLife = 0.5f,
+        .distortEnabled = false,
+        .decalEnabled = true, .decalPreset = DECAL_PRESET_BURN, .decalScale = 0.6f, .decalLife = 4.0f,
+        .decalTint = (Color){ 60, 25, 5, 200 },
+        .lightEnabled = true, .lightColor = (Color){ 255, 140, 20, 255 }, .lightRadius = 0.25f, .lightLife = 0.12f,
         .particlesEnabled = true,
         .particles = {
-            .countMin = 45, .countMax = 45, .speedMin = 0.20f, .speedMax = 0.55f,
-            .radiusMin = 0.008f, .radiusMax = 0.026f, .lifetimeMin = 0.4f, .lifetimeMax = 1.2f,
-            .pitchRange = 0.5f, .upwardBias = 0.30f, .gradient = &s_fireGrad, .forceField = &s_fireFld
+            .countMin = 70, .countMax = 100, .speedMin = 1.5f, .speedMax = 4.0f,
+            .radiusMin = 0.07f, .radiusMax = 0.18f, .lifetimeMin = 0.4f, .lifetimeMax = 1.4f,
+            .pitchRange = 1.0f, .upwardBias = 0.8f, .gradient = &s_fireImpactGrad, .forceField = NULL
         }
     };
 

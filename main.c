@@ -462,10 +462,11 @@ int main(int argc, char **argv) {
     // =========================================================================
     if (currentScreen == SCREEN_VFX_TESTER) {
         VFXTest_Draw3D();
-        
-        // Draw player character (same as sandbox)
-        Environment_DrawSmartShadow(player.position, ENV_SHAPE_SPHERE, 0.25f, 0.25f);
-        DrawCharacter3D(player.position, 0.25f, GetColor(0xFFD39BFF), GetColor(0x3B5998FF), GetColor(0xCCCCCCFF), true, mouseTarget3D);
+
+        if (!renderVFXMode) {
+            Environment_DrawSmartShadow(player.position, ENV_SHAPE_SPHERE, 0.25f, 0.25f);
+            DrawCharacter3D(player.position, 0.25f, GetColor(0xFFD39BFF), GetColor(0x3B5998FF), GetColor(0xCCCCCCFF), true, mouseTarget3D);
+        }
     }
 
     if (currentScreen == SCREEN_SKILL_SANDBOX) {
@@ -509,20 +510,22 @@ int main(int argc, char **argv) {
     DrawCoreTestSkillDebugHUD();
     PoolStats_DrawOverlay(); // CORE_ISSUES.md Item 3 test — on-screen depth readback (press L)
 
-    Vector2 enemyScreenHead = GetWorldToScreen(
-        (Vector3){enemy.position.x, enemy.position.y + 0.55f, enemy.position.z},
-        camera);
-    DrawText("ENEMY", (int)enemyScreenHead.x - 22, (int)enemyScreenHead.y, 12,
-             WHITE);
+    if (!renderVFXMode) {
+        Vector2 enemyScreenHead = GetWorldToScreen(
+            (Vector3){enemy.position.x, enemy.position.y + 0.55f, enemy.position.z},
+            camera);
+        DrawText("ENEMY", (int)enemyScreenHead.x - 22, (int)enemyScreenHead.y, 12,
+                 WHITE);
+    }
 
-    if (!g_isDebuggerCapturing) {
+    if (!g_isDebuggerCapturing && !renderVFXMode) {
         if (currentScreen == SCREEN_SKILL_SANDBOX) {
             DrawUIPanel(&uiState);
             DrawSandboxTouchControls(&player);
             if (uiState.isPanelOpen) {
                 DrawSandboxHUD();
             }
-        } else if (currentScreen == SCREEN_VFX_TESTER) {
+        } else if (currentScreen == SCREEN_VFX_TESTER && !renderVFXMode) {
             VFXTest_DrawHUD();
         }
 

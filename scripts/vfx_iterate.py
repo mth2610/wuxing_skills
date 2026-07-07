@@ -33,6 +33,21 @@ import sys
 import textwrap
 from pathlib import Path
 
+def _load_dotenv():
+    """Load .env from project root if present."""
+    env_path = Path(__file__).parent.parent / ".env"
+    try:
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    os.environ.setdefault(k.strip(), v.strip())
+    except FileNotFoundError:
+        pass
+
+_load_dotenv()
+
 
 SCRIPT_DIR   = Path(__file__).parent
 PROJECT_DIR  = SCRIPT_DIR.parent
@@ -60,8 +75,6 @@ def build():
 
 
 def render(index: int, warmup: int, out_path: str):
-    print(f"[iterate] Rendering NEWFX index {index} ({warmup} warmup frames)...",
-          file=sys.stderr)
     run([
         str(PROJECT_DIR / "wuxing"),
         "--render-vfx", str(index),
@@ -70,17 +83,31 @@ def render(index: int, warmup: int, out_path: str):
     ], capture=True, timeout=60)
     if not os.path.isfile(out_path):
         raise RuntimeError(f"Render produced no output at {out_path}")
-    size_kb = os.path.getsize(out_path) // 1024
-    print(f"[iterate] Screenshot saved ({size_kb} KB): {out_path}", file=sys.stderr)
 
 
-def evaluate(image: str, vfx: str, material: str, description: str,
+def render_frames(index: int, frame_warmups: list, base_path: str) -> list:
+    """Render one PNG per warmup value; returns list of saved paths."""
+    paths = []
+    for w in frame_warmups:
+        stem = base_path.replace(".png", f"_f{w:03d}.png")
+        print(f"[iterate] Rendering index {index} warmup={w}...", file=sys.stderr)
+        render(index, w, stem)
+        size_kb = os.path.getsize(stem) // 1024
+        print(f"[iterate]   saved ({size_kb} KB): {stem}", file=sys.stderr)
+        paths.append(stem)
+    return paths
+
+
+def evaluate(images: list, vfx: str, material: str, description: str,
              params: str, api_key: str, model: str, out_path: str) -> dict:
-    print("[iterate] Calling Gemini eval...", file=sys.stderr)
+    print(f"[iterate] Calling Gemini eval ({len(images)} frame(s))...", file=sys.stderr)
+    image_args = []
+    for p in images:
+        image_args += ["--image", p]
     r = run([
         sys.executable,
         str(SCRIPT_DIR / "eval_gemini.py"),
-        "--image",       image,
+        *image_args,
         "--vfx",         vfx,
         "--material",    material,
         "--description", description,
@@ -88,7 +115,7 @@ def evaluate(image: str, vfx: str, material: str, description: str,
         "--api-key",     api_key,
         "--model",       model,
         "--out",         out_path,
-    ], capture=True, timeout=90)
+    ], capture=True, timeout=120)
     return json.loads(r.stdout.decode())
 
 
@@ -162,15 +189,35 @@ def main():
     ap.add_argument("--material",    default="",     help="Material name (e.g. ICE)")
     ap.add_argument("--description", default="",     help="Visual description of the effect")
     ap.add_argument("--params",      default="{}",   help="JSON of current param values")
-    ap.add_argument("--warmup",      default=90,     type=int)
+    ap.add_argument("--warmup",      default=-1,     type=int,
+                    help="Warmup frames before screenshot. Default: auto (20 for oneshot, 90 for continuous)")
     ap.add_argument("--iterations",  default=1,      type=int)
     ap.add_argument("--pass-threshold", default=7,   type=int)
     ap.add_argument("--inl",         default="",     help="Path to the .inl file (shown in compact output)")
     ap.add_argument("--no-build",    action="store_true")
     ap.add_argument("--compact",     action="store_true", help="Print terse edit-prompt instead of full JSON")
     ap.add_argument("--api-key",     default="")
-    ap.add_argument("--model",       default="gemini-2.5-flash-lite")
+    ap.add_argument("--model",       default="gemini-2.5-flash")
     args = ap.parse_args()
+
+    # Auto-detect frame schedule from manifest type
+    warmup = args.warmup
+    try:
+        manifest = json.load(open(SCRIPT_DIR / "vfx_test_manifest.json"))
+        entry = next((e for e in manifest["entries"] if e["fn"] == args.vfx), None)
+        is_oneshot = entry and entry.get("type") == "oneshot"
+    except Exception:
+        is_oneshot = False
+
+    if warmup >= 0:
+        # Single explicit warmup → single frame (backward compat)
+        frame_warmups = [warmup]
+    elif is_oneshot:
+        frame_warmups = [5, 15, 35]   # attack / peak / decay
+        print("[iterate] Auto multi-frame (oneshot): warmup 5, 15, 35", file=sys.stderr)
+    else:
+        frame_warmups = [20, 60, 120]  # ramp / mid / steady
+        print("[iterate] Auto multi-frame (continuous): warmup 20, 60, 120", file=sys.stderr)
 
     api_key = args.api_key or os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
@@ -188,18 +235,18 @@ def main():
         if not args.no_build:
             build()
 
-        png_path = str(FEEDBACK_DIR / f"{args.vfx}_iter{i:02d}.png")
-        render(args.index, args.warmup, png_path)
+        base_png = str(FEEDBACK_DIR / f"{args.vfx}_iter{i:02d}.png")
+        frame_paths = render_frames(args.index, frame_warmups, base_png)
 
         feedback_path = str(FEEDBACK_DIR / f"{args.vfx}_iter{i:02d}.json")
         result = evaluate(
-            png_path, args.vfx, args.material, args.description,
+            frame_paths, args.vfx, args.material, args.description,
             args.params, api_key, args.model, feedback_path,
         )
         last_result = result
 
         if args.compact:
-            print_compact(result, i, inl_file)
+            print_compact(result, i, inl_file or frame_paths[0])
         else:
             print_report(result, i)
 

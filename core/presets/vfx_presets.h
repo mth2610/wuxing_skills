@@ -15,6 +15,7 @@ typedef struct {
     bool            decalEnabled;
     DecalPresetType decalPreset;
     float           decalScale, decalLife;
+    Color           decalTint; /* {0,0,0,0} → default WHITE */
     
     bool  lightEnabled;
     Color lightColor;

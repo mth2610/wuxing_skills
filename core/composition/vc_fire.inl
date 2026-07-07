@@ -316,8 +316,8 @@ void VFX_ComposeFlameBreath(Vector3 pos, Vector3 dir, float scale, float time)
         float spread = 0.25f * Random01();
         float ring = Random01() * 2.0f * PI;
         Vector3 d = Vector3Normalize(Vector3Add(n,
-                        Vector3Add(Vector3Scale(side, cosf(ring) * spread),
-                                   Vector3Scale(side2, sinf(ring) * spread))));
+                                                Vector3Add(Vector3Scale(side, cosf(ring) * spread),
+                                                           Vector3Scale(side2, sinf(ring) * spread))));
         bool hot = GetRandomValue(0, 100) < 35; // white-hot core rides the axis
         if (hot)
             d = Vector3Normalize(Vector3Add(n, Vector3Scale(d, 0.15f)));
@@ -380,12 +380,6 @@ void VFX_ComposeBurningGround(Vector3 pos, float radius, float time)
                           radius * 0.95f, radius * 1.05f,
                           lavaTex, 1.3f, ColorAlpha(VFX_Material(VC_MAT_FIRE)->soft, 0.7f),
                           BLEND_ADDITIVE, 0.02f);
-    }
-    if (GetRandomValue(0, 100) < 2)
-    {
-        Texture2D scorchTex = ResourceManager_LoadTexture("assets/textures/scorch_mark.png");
-        DecalSystem_Add((Vector3){pos.x, 0.0f, pos.z}, (float)GetRandomValue(0, 360),
-                        radius * 1.15f, scorchTex, 3.0f, ColorAlpha(WHITE, 0.6f));
     }
 
     // ── Embers + smoke lifting off the patch.

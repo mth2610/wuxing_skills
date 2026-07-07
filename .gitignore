@@ -67,3 +67,4 @@ android.wuxing_skills/*.keystore
 
 # APK files
 *.apk
+.env
