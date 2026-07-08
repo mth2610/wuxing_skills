@@ -27,6 +27,14 @@ MapCloudSea MapProp_CreateCloudSea(float width, float depth, float tileSize)
 
     cloud.model.materials[0].shader = cloudShader;
 
+    // Tileable noise texture (scripts/generate_cloud_noise.py) — replaces
+    // per-pixel sin()-based FBM math in the shader, much cheaper for a plane
+    // that often covers most of the screen.
+    Texture2D noiseTex = ResourceManager_LoadTexture("assets/textures/cloud_noise.png");
+    SetTextureWrap(noiseTex, TEXTURE_WRAP_REPEAT);
+    SetTextureFilter(noiseTex, TEXTURE_FILTER_BILINEAR);
+    cloud.model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = noiseTex;
+
     float tiling[2] = {width / tileSize, depth / tileSize};
     int tilingLoc = GetShaderLocation(cloudShader, "tiling");
     SetShaderValue(cloudShader, tilingLoc, tiling, SHADER_UNIFORM_VEC2);

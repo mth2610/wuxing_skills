@@ -165,7 +165,7 @@ void DrawGlacialCannonSkill(void)
         if (s->state == STATE_CHANNELING)
         {
             float progress = s->timer / s_waveDuration;
-            VFX_ComposeCylinderAura(VC_MAT_ICE, s->startPos, s_aoeRadius * s->sizeScale * 0.3, progress, time);
+            // VFX_ComposeCylinderAura(VC_MAT_ICE, s->startPos, s_aoeRadius * s->sizeScale * 0.3, progress, time);
             VFX_ComposeGroundAura(VC_MAT_ICE, s->startPos, s_aoeRadius * s->sizeScale * 0.5, -0.9f, time);
 
             if (progress > 1.0f)

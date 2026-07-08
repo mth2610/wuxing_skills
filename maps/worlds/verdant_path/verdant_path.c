@@ -3,6 +3,7 @@
 #include "environment/environment_system.h"
 #include "maps/toolkit/prop_lit.h"
 #include "maps/toolkit/map_props.h"
+#include <stddef.h>
 
 // Rectangle sized so a corner-to-corner diagonal walk takes ~30-45s at the
 // game screen's 3.5 m/s walk speed (game/game_screen.c): 100m x 75m is a
@@ -51,13 +52,15 @@ static const MapRockPlacement kRocks[ROCK_COUNT] = {
 static MapGroundSurface s_ground;
 static MapStripSurface s_path;
 static MapRockSet s_rocks;
+static MapRockSet s_mountainRockSet; // separate, plain-textured (no prop_lit, no shadow) — see InitVerdantPathMap
 static MapCloudSea s_cloudSea;
 static bool s_ready = false;
 
 // Floating-island motif every map shares (kehoach/world direction): a ring
-// of giant mountain rocks bordering the playable ground, with a scrolling
-// sea of clouds far below. Reuses s_rocks' own model/texture at a much
-// bigger scale — no separate mountain texture set needed.
+// of mountain rocks bordering the playable ground, with a scrolling sea of
+// clouds far below. Same rock_diffuse.png texture as s_rocks, but its own
+// MapRockSet (s_mountainRockSet, plain material, no shadow) — see
+// InitVerdantPathMap.
 #define MOUNTAIN_ROCK_COUNT 36
 static MapRockPlacement s_mountainRocks[MOUNTAIN_ROCK_COUNT];
 
@@ -98,8 +101,13 @@ void InitVerdantPathMap(void)
                                   "assets/textures/rock_normal.png",
                                   "assets/textures/rock_roughness.png");
 
-    // Mountain ring: same rock model/texture as scattered rocks, bordering
-    // the map. Low profile on purpose — just a bit taller than ground level
+    // Mountain ring: its OWN plain-textured MapRockSet (NULL normal/roughness
+    // -> no prop_lit) — a border of dozens of rocks running the full PBR
+    // lighting shader per-pixel over a large chunk of the screen was a real,
+    // measured FPS cost, not just the scattered decorative rocks' concern.
+    s_mountainRockSet = MapProp_CreateRocks("assets/textures/rock_diffuse.png", NULL, NULL);
+
+    // Low profile on purpose — just a bit taller than ground level
     // (heightScale small), NOT towering peaks; the actual cliff drop comes
     // from the heightmap ground itself (CLIFF_DEPTH), these just mark the
     // edge. Fixed seed so the layout is reproducible across runs.
@@ -137,6 +145,6 @@ void DrawVerdantPathMap(void)
     MapProp_DrawCloudSea(&s_cloudSea, kMapCenter, CLOUD_SEA_Y);
     MapProp_DrawGround(&s_ground, kMapCenter);
     MapProp_DrawStrip(&s_path, kMapCenter, 0.01f);
-    MapProp_DrawRocks(&s_rocks, s_mountainRocks, MOUNTAIN_ROCK_COUNT);
-    MapProp_DrawRocks(&s_rocks, kRocks, ROCK_COUNT);
+    MapProp_DrawRocks(&s_mountainRockSet, s_mountainRocks, MOUNTAIN_ROCK_COUNT, false); // no shadow, plain material
+    MapProp_DrawRocks(&s_rocks, kRocks, ROCK_COUNT, true); // decorative — keep shadow + prop_lit
 }

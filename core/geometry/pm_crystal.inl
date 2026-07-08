@@ -2,181 +2,174 @@
 static float HashDeterministic(int seed, int subIndex)
 {
     unsigned int n = (unsigned int)(seed * 73856093 ^ subIndex * 19349663);
-    n = (n ^ 6179) * 31337;
-    return (float)(n % 1000) / 1000.0f;
+    n = (n ^ 6179) * 31337;            // [cite: 2]
+    return (float)(n % 1000) * 0.001f; // TỐI ƯU: Nhân 0.001f nhanh hơn chia 1000.0f
 }
 
 void ProceduralMesh_DrawCrystal(Vector3 pos, const CrystalDesc *desc, float progress, Color color)
 {
     if (desc == NULL || desc->sides < 3 || desc->segments < 2)
-        return;
+        return; // [cite: 3]
 
-    int sides = desc->sides;
-    if (sides > 16)
-        sides = 16;
-    int segments = desc->segments;
-    if (segments > 16)
-        segments = 16;
+    int sides = desc->sides > 16 ? 16 : desc->sides;          // [cite: 4]
+    int segments = desc->segments > 16 ? 16 : desc->segments; // [cite: 5]
 
-    // Tạo một seed duy nhất dựa trên đặc tính của crystal hiện tại để làm lệch tâm và vát góc
-    int crystalSeed = (int)(desc->height * 1000.0f) ^ (int)(desc->radius * 1000.0f);
+    // TỐI ƯU: Pre-calculate các phép chia thành phép nhân
+    float invSides = 1.0f / (float)sides;
+    float invSegsMinus1 = 1.0f / (float)(segments - 1);
 
-    // BƯỚC TỐI ƯU 1: Tính trước hình dáng đáy (Base Shape) - Mang lại vẻ bất đối xứng tự nhiên
-    float baseCos[16], baseSin[16], baseRadius[16];
+    int crystalSeed = (int)(desc->height * 1000.0f) ^ (int)(desc->radius * 1000.0f); // [cite: 6]
+
+    float baseCos[16], baseSin[16], baseRadius[16]; // [cite: 7]
+    float angleStep = PI * invSides;
+
     for (int j = 0; j < sides; j++)
     {
-        // Làm lệch góc các mặt phẳng một chút để ra hình dáng pha lê tự nhiên (ví dụ: lục giác không đều)
-        float angleOffset = (HashDeterministic(crystalSeed, j) - 0.5f) * (PI / sides * 0.35f);
-        float angle = (float)j / (float)sides * 2.0f * PI + angleOffset;
+        float angleOffset = (HashDeterministic(crystalSeed, j) - 0.5f) * (angleStep * 0.35f); // [cite: 8]
+        float angle = (float)j * 2.0f * angleStep + angleOffset;                              // [cite: 9]
 
-        // Làm mặt to mặt nhỏ ngẫu nhiên
-        float r_noise = 0.8f + 0.4f * HashDeterministic(crystalSeed + 1337, j);
-        baseRadius[j] = desc->radius * r_noise;
-
+        float r_noise = 0.8f + 0.4f * HashDeterministic(crystalSeed + 1337, j); // [cite: 10]
+        baseRadius[j] = desc->radius * r_noise;                                 //
         baseCos[j] = cosf(angle);
         baseSin[j] = sinf(angle);
     }
 
-    Vector3 verts[17][16];
+    // TỐI ƯU: Trải phẳng mảng 2D thành 1D (Cache-friendly)
+    // Kích thước tối đa: 16 segments * 16 sides = 256
+    Vector3 verts[256];
 
-    // Tạo các đỉnh của thân tinh thể
     for (int i = 0; i < segments; i++)
     {
-        float t = (float)i / (float)(segments - 1);
-        float currentH = desc->height * t * progress;
+        float t = (float)i * invSegsMinus1;           //
+        float currentH = desc->height * t * progress; // [cite: 13]
 
-        // Vát cạnh tuyến tính sắc nét hơn
         float taperFactor = 1.0f - (t * desc->taper);
         if (taperFactor < 0.0f)
-            taperFactor = 0.0f;
+            taperFactor = 0.0f; // [cite: 14]
 
-        // BƯỚC TỐI ƯU 2: Tính lượng giác Xoắn (Twist) ĐÚNG 1 LẦN cho mỗi phân đoạn
-        float twistAngle = t * desc->twist;
-        float cosTwist = cosf(twistAngle);
+        float twistAngle = t * desc->twist; // [cite: 15]
+        float cosTwist = cosf(twistAngle);  // [cite: 16]
         float sinTwist = sinf(twistAngle);
 
-        // Tạo các ngấn ngang nhẹ (Striations) đặc trưng của các cụm pha lê thạch anh
         float ridgeNoise = 1.0f + (HashDeterministic(crystalSeed, i * 19) - 0.5f) * desc->noise * 0.15f;
-        float segmentScale = taperFactor * ridgeNoise;
+        float segmentScale = taperFactor * ridgeNoise; // [cite: 17]
 
+        int rowOffset = i * sides;
         for (int j = 0; j < sides; j++)
         {
             float r = baseRadius[j] * segmentScale;
+            float xRot = baseCos[j] * cosTwist - baseSin[j] * sinTwist; //
+            float zRot = baseSin[j] * cosTwist + baseCos[j] * sinTwist; // [cite: 19]
 
-            // Dùng định lý cộng lượng giác: Tốc độ tăng phi mã do không gọi sin/cos ở vòng lặp trong
-            // x = r * cos(angle + twist) = r * (cos(A)cos(B) - sin(A)sin(B))
-            float xRot = baseCos[j] * cosTwist - baseSin[j] * sinTwist;
-            float zRot = baseSin[j] * cosTwist + baseCos[j] * sinTwist;
-
-            verts[i][j] = (Vector3){
+            verts[rowOffset + j] = (Vector3){
                 pos.x + xRot * r,
                 pos.y + currentH,
-                pos.z + zRot * r};
+                pos.z + zRot * r}; // [cite: 20]
         }
     }
 
-    // Đỉnh (Apex) hơi lệch tâm một cách có chủ đích (Offset Apex)
-    float apexOffsetX = (HashDeterministic(crystalSeed, 991) - 0.5f) * desc->radius * 0.4f;
-    float apexOffsetZ = (HashDeterministic(crystalSeed, 992) - 0.5f) * desc->radius * 0.4f;
+    float apexOffsetX = (HashDeterministic(crystalSeed, 991) - 0.5f) * desc->radius * 0.4f; // [cite: 21]
+    float apexOffsetZ = (HashDeterministic(crystalSeed, 992) - 0.5f) * desc->radius * 0.4f; // [cite: 22]
     Vector3 apex = {
         pos.x + apexOffsetX * (1.0f - desc->taper),
         pos.y + desc->height * progress,
-        pos.z + apexOffsetZ * (1.0f - desc->taper)};
+        pos.z + apexOffsetZ * (1.0f - desc->taper)}; // [cite: 23]
 
-    rlDrawRenderBatchActive();
+    rlDrawRenderBatchActive();                      // [cite: 24]
+    rlBegin(RL_TRIANGLES);                          //
+    rlColor4ub(color.r, color.g, color.b, color.a); // [cite: 26]
 
-    // BƯỚC THẨM MỸ: Dùng RL_TRIANGLES thay vì RL_QUADS cho thân.
-    // Điều này đảm bảo Flat Shading sắc lẹm tuyệt đối, tránh hiện tượng bóng lỗi khi bị Twist.
-    rlBegin(RL_TRIANGLES);
-    rlColor4ub(color.r, color.g, color.b, color.a);
-
-    // Vẽ thân tinh thể
+    // Vẽ thân
     for (int i = 0; i < segments - 1; i++)
     {
-        float t = (float)i / (float)(segments - 1);
-        float t_next = (float)(i + 1) / (float)(segments - 1);
+        float t = (float)i * invSegsMinus1;
+        float t_next = (float)(i + 1) * invSegsMinus1; // [cite: 27]
+        int rowCur = i * sides;
+        int rowNext = (i + 1) * sides;
 
-        for (int j = 0; j < sides; j++)
+        for (int j = 0; j < sides; j++) // [cite: 28]
         {
             int next_j = (j + 1) % sides;
-            Vector3 v1 = verts[i][j];          // Đáy-Trái
-            Vector3 v2 = verts[i][next_j];     // Đáy-Phải
-            Vector3 v3 = verts[i + 1][next_j]; // Đỉnh-Phải
-            Vector3 v4 = verts[i + 1][j];      // Đỉnh-Trái
+            Vector3 v1 = verts[rowCur + j];       // [cite: 29]
+            Vector3 v2 = verts[rowCur + next_j];  // [cite: 30]
+            Vector3 v3 = verts[rowNext + next_j]; // [cite: 31]
+            Vector3 v4 = verts[rowNext + j];      //
 
-            float u1 = (float)j / sides;
-            float u2 = (float)(j + 1) / sides;
+            float u1 = (float)j * invSides;
+            float u2 = (float)(j + 1) * invSides; // [cite: 33]
+
+            // TỐI ƯU TOÁN HỌC: Tái sử dụng vector đường chéo chung (v3 - v1)
+            // Thay vì tính 4 vectors[cite: 33, 34, 37, 38], ta chỉ tính 3.
+            Vector3 edge_v2_v1 = {v2.x - v1.x, v2.y - v1.y, v2.z - v1.z};
+            Vector3 edge_v3_v1 = {v3.x - v1.x, v3.y - v1.y, v3.z - v1.z}; // Dùng chung cho cả 2 tam giác
+            Vector3 edge_v4_v1 = {v4.x - v1.x, v4.y - v1.y, v4.z - v1.z};
 
             // Tam giác 1 (v1 -> v2 -> v3)
-            Vector3 edge1 = Vector3Subtract(v2, v1);
-            Vector3 edge2 = Vector3Subtract(v3, v1);
-            Vector3 normal1 = Vector3Normalize(Vector3CrossProduct(edge1, edge2));
+            Vector3 cross1 = Vector3CrossProduct(edge_v2_v1, edge_v3_v1);
+            Vector3 normal1 = Vector3Normalize(cross1);
 
-            rlCheckRenderBatchLimit(3); // An toàn chống Crash khi render cluster
+            rlCheckRenderBatchLimit(6); // Gộp batch check (tối ưu overhead) [cite: 35]
             rlNormal3f(normal1.x, normal1.y, normal1.z);
             rlTexCoord2f(u1, t);
-            rlVertex3f(v1.x, v1.y, v1.z);
+            rlVertex3f(v1.x, v1.y, v1.z); // [cite: 36]
             rlTexCoord2f(u2, t);
             rlVertex3f(v2.x, v2.y, v2.z);
             rlTexCoord2f(u2, t_next);
             rlVertex3f(v3.x, v3.y, v3.z);
 
             // Tam giác 2 (v1 -> v3 -> v4)
-            Vector3 edge3 = Vector3Subtract(v3, v1);
-            Vector3 edge4 = Vector3Subtract(v4, v1);
-            Vector3 normal2 = Vector3Normalize(Vector3CrossProduct(edge3, edge4));
+            Vector3 cross2 = Vector3CrossProduct(edge_v3_v1, edge_v4_v1);
+            Vector3 normal2 = Vector3Normalize(cross2);
 
-            rlCheckRenderBatchLimit(3);
             rlNormal3f(normal2.x, normal2.y, normal2.z);
             rlTexCoord2f(u1, t);
             rlVertex3f(v1.x, v1.y, v1.z);
             rlTexCoord2f(u2, t_next);
-            rlVertex3f(v3.x, v3.y, v3.z);
+            rlVertex3f(v3.x, v3.y, v3.z); // [cite: 39]
             rlTexCoord2f(u1, t_next);
             rlVertex3f(v4.x, v4.y, v4.z);
         }
     }
 
-    // Vẽ chóp đỉnh tinh thể (Pyramidal tip)
-    int topSlice = segments - 1;
-    for (int j = 0; j < sides; j++)
+    // Vẽ chóp đỉnh
+    int topRow = (segments - 1) * sides; // [cite: 40]
+    for (int j = 0; j < sides; j++)      // [cite: 41]
     {
         int next_j = (j + 1) % sides;
-        Vector3 v1 = verts[topSlice][j];
-        Vector3 v2 = verts[topSlice][next_j];
-        Vector3 v3 = apex;
+        Vector3 v1 = verts[topRow + j]; // [cite: 42]
+        Vector3 v2 = verts[topRow + next_j];
 
-        Vector3 edge1 = Vector3Subtract(v2, v1);
-        Vector3 edge2 = Vector3Subtract(v3, v1);
+        Vector3 edge1 = {v2.x - v1.x, v2.y - v1.y, v2.z - v1.z};
+        Vector3 edge2 = {apex.x - v1.x, apex.y - v1.y, apex.z - v1.z}; // [cite: 43]
         Vector3 normal = Vector3Normalize(Vector3CrossProduct(edge1, edge2));
 
         rlCheckRenderBatchLimit(3);
         rlNormal3f(normal.x, normal.y, normal.z);
-        rlTexCoord2f((float)j / sides, 1.0f);
-        rlVertex3f(v1.x, v1.y, v1.z);
-        rlTexCoord2f((float)(j + 1) / sides, 1.0f);
+        rlTexCoord2f((float)j * invSides, 1.0f);
+        rlVertex3f(v1.x, v1.y, v1.z); // [cite: 44]
+        rlTexCoord2f((float)(j + 1) * invSides, 1.0f);
         rlVertex3f(v2.x, v2.y, v2.z);
         rlTexCoord2f(0.5f, 1.05f);
-        rlVertex3f(v3.x, v3.y, v3.z);
+        rlVertex3f(apex.x, apex.y, apex.z); // [cite: 45]
     }
 
-    // Vẽ đáy (Bottom cap)
-    for (int j = 1; j < sides - 1; j++)
+    // Vẽ đáy
+    rlNormal3f(0.0f, -1.0f, 0.0f);      // Normal cho đáy luôn hướng xuống, đặt ra ngoài vòng lặp
+    for (int j = 1; j < sides - 1; j++) // [cite: 45]
     {
-        Vector3 v1 = verts[0][0];
-        Vector3 v2 = verts[0][j + 1];
-        Vector3 v3 = verts[0][j];
+        Vector3 v1 = verts[0];
+        Vector3 v2 = verts[j + 1]; // [cite: 46]
+        Vector3 v3 = verts[j];
 
         rlCheckRenderBatchLimit(3);
-        rlNormal3f(0.0f, -1.0f, 0.0f);
         rlTexCoord2f(0.5f, 0.5f);
-        rlVertex3f(v1.x, v1.y, v1.z);
+        rlVertex3f(v1.x, v1.y, v1.z); // [cite: 47]
         rlTexCoord2f(0.5f, 0.5f);
         rlVertex3f(v2.x, v2.y, v2.z);
         rlTexCoord2f(0.5f, 0.5f);
         rlVertex3f(v3.x, v3.y, v3.z);
     }
-    rlEnd();
+    rlEnd(); //
 }
 
 void ProceduralMesh_DrawCrystalCluster(Vector3 center, const CrystalDesc *desc, int count, int seed, float progress, Color color)

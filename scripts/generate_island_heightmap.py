@@ -6,14 +6,18 @@ border (not a big rounded/blobby falloff zone). Consumed by
 MapProp_CreateGroundHeightmap (maps/toolkit/).
 
 Usage: python3 scripts/generate_island_heightmap.py [out_path] [size] [seed]
-Defaults match verdant_path's current island: 128x128, seed 1337.
+Defaults match verdant_path's current island: 64x64, seed 1337. Keep size
+modest — GenMeshHeightmap is non-indexed ((size-1)^2 * 6 vertices), so 128
+already means ~97k vertices redrawn every frame; a mostly-flat plateau with
+only a thin edge slope doesn't need more than ~64 to look smooth (measured:
+this mattered for real FPS, not just theoretical GPU cost).
 """
 import sys
 import numpy as np
 from PIL import Image, ImageFilter
 
 out_path = sys.argv[1] if len(sys.argv) > 1 else "assets/heightmaps/verdant_path_island.png"
-size = int(sys.argv[2]) if len(sys.argv) > 2 else 128
+size = int(sys.argv[2]) if len(sys.argv) > 2 else 64
 seed = int(sys.argv[3]) if len(sys.argv) > 3 else 1337
 
 yy, xx = np.mgrid[0:size, 0:size]

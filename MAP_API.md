@@ -77,7 +77,7 @@ typedef struct {
 
 MapRockSet MapProp_CreateRocks(const char *diffusePath,
                                 const char *normalPath, const char *roughnessPath); // NULL/NULL = phẳng
-void MapProp_DrawRocks(const MapRockSet *rocks, const MapRockPlacement *placements, int count);
+void MapProp_DrawRocks(const MapRockSet *rocks, const MapRockPlacement *placements, int count, bool drawShadow);
 void MapProp_UnloadRocks(MapRockSet *rocks);
 
 // Sinh 1 vòng đá khổng lồ quanh viền map (mô-tuýp "đảo nổi giữa vách núi" mà
@@ -101,8 +101,9 @@ void MapProp_UnloadCloudSea(MapCloudSea *cloud);
 * `MapProp_CreateGroundHeightmap` (`map_props_ground.inl`): cùng shader/texture với `MapProp_CreateGround`, chỉ khác nguồn mesh — dùng `GenMeshHeightmap` thay vì `GenMeshPlane`, cho mặt đất lõm xuống thành vách ở viền thay vì phẳng lì. `heightmapPath` là ảnh grayscale: **trắng = cao nguyên phẳng đi được** (giữ ở local Y=0, đúng quy ước "mặt đất Y=0" của cả project), **đen = mép vách** (chìm xuống `cliffDepth` mét). Sinh ảnh heightmap bằng `python3 scripts/generate_island_heightmap.py <out.png> <size> <seed>` — mặc định script tạo **hình chữ nhật đơn giản, phẳng ở 90% diện tích giữa**, chỉ dải mỏng 10% ngoài viền mới lõm xuống thành vách (mildly jagged, không phải khối u lởm chởm to). Đừng chỉnh `plateau_edge`/`falloff_width` trong script quá thấp — mục tiêu là nội thất map phẳng, chỉ viền mới là vách. **`cliffDepth` phải nhỏ hơn (ít âm hơn) giá trị `yOffset` truyền cho `MapProp_DrawCloudSea`** — nếu không vách đá sẽ đâm xuyên qua mặt phẳng mây bên dưới. **Lưu ý implementation:** `GenMeshHeightmap` trả về mesh trải từ local `[0,width]x[0,depth]`, KHÔNG tự căn giữa như `GenMeshPlane` — việc căn giữa được làm bằng `MapGroundSurface.drawOffset` (cộng vào `worldCenter` lúc `DrawModel` trong `MapProp_DrawGround`), **không phải bằng cách sửa trực tiếp `mesh.vertices` sau khi tạo** — cách đó đã thử và chỉ render đúng 1/4 mesh (nguyên nhân gốc chưa rõ, không đáng để truy tiếp — offset-at-draw-time là cách né an toàn).
 * `MapProp_CreateStrip` (`map_props_strip.inl`): vẽ bằng `maps/toolkit/shaders/path_blend.fs` — texture lặp theo `tiling` + noise phá viền hình học (`discard` cho alpha thấp ở 25% mép hai bên) để mép đường không bị thẳng cứng. `normalPath`/`roughnessPath` hiện **chưa dùng** (giữ trong chữ ký cho một biến thể prop_lit tương lai) — truyền `NULL` cho cả hai là đủ.
 * `MapProp_CreateRocks` (`map_props_rocks.inl`): truyền `NULL` cho `normalPath`+`roughnessPath` để dùng texture phẳng đơn giản (không shader); truyền đủ cả 3 đường dẫn texture để dùng vật liệu `prop_lit` (có normal map + roughness, phản chiếu ánh sáng thật).
-* `MapProp_GenerateMountainRing` (`map_props_rocks.inl`): chỉ SINH vị trí (ghi vào mảng `MapRockPlacement` do bạn cấp) — không tự vẽ, không tự tạo model riêng. Vẽ bằng `MapProp_DrawRocks(&s_rocks, s_mountainRocks, count)` giống hệt đá rải rác, dùng lại đúng 1 model/texture đá đã load — không cần thêm bộ texture "đá núi" riêng. `min/maxRadiusScale`/`min/maxHeightScale` nên lớn hơn hẳn đá thường (ví dụ 6-14 và 18-30, so với đá rải rác thường ~0.5-1.1) để đọc ra dáng vách núi chứ không phải đá lẻ.
-* `MapProp_CreateCloudSea` (`map_props_cloud.inl`): thuần thủ tục (FBM noise cuộn theo thời gian qua `GetTime()`), **không cần texture**. Vẽ bằng `maps/toolkit/shaders/cloud_sea.fs` — dùng `discard` cho vùng mật độ thấp thay vì alpha-blend, vì `maps/CLAUDE.md` cấm alpha < 255 trong scene chính (vỡ particle). `width`/`depth` nên lớn hơn hẳn map để trông như biển mây vô tận, không phải 1 tấm bìa cắt cạnh lộ liễu. Chỉ thấy được khi đứng gần mép vách (`MapProp_CreateGroundHeightmap`) nhìn xuyên qua khe hở giữa các tảng đá viền — đứng giữa cao nguyên sẽ bị chính mặt đất che khuất, đúng như địa hình thật.
+* `MapProp_DrawRocks`'s `drawShadow`: **để `false` cho vòng đá viền/vách núi** — hàng chục cái `Environment_DrawSmartShadow` xếp sát/đè nhau là alpha overdraw thật (đã đo được là nguyên nhân tụt FPS, không phải lý thuyết suông), mà bóng đổ ở rìa map cũng không có ý nghĩa gì. Chỉ để `true` cho đá rải rác trang trí ít, thấy rõ bóng.
+* `MapProp_GenerateMountainRing` (`map_props_rocks.inl`): chỉ SINH vị trí (ghi vào mảng `MapRockPlacement` do bạn cấp) — không tự vẽ, không tự tạo model riêng. **Nên tạo riêng một `MapRockSet` khác cho vòng đá này** (cùng texture diffuse với đá rải rác nhưng `normalPath`/`roughnessPath` = `NULL` — vật liệu phẳng rẻ, không chạy `prop_lit` per-pixel trên cả một vòng lớn phủ nhiều diện tích màn hình) rồi vẽ bằng `MapProp_DrawRocks(&s_mountainRockSet, s_mountainRocks, count, false)`. `min/maxRadiusScale`/`min/maxHeightScale` nên lớn hơn hẳn đá thường (ví dụ 6-14 và 18-30 cho vách cao, hoặc nhỏ hơn nhiều như 3-6/1-2.5 nếu chỉ muốn viền thấp gần mặt đất — so với đá rải rác thường ~0.5-1.1) để đọc ra dáng vách núi/viền chứ không phải đá lẻ.
+* `MapProp_CreateCloudSea` (`map_props_cloud.inl`): mật độ mây lấy từ **texture** `assets/textures/cloud_noise.png` (grayscale, lặp được, sinh bằng `python3 scripts/generate_cloud_noise.py`) — KHÔNG tính bằng FBM/`sin()` per-pixel như bản đầu tiên nữa. Đổi vì mặt phẳng này thường phủ rất nhiều diện tích màn hình (fill-rate bound); FBM 2 lớp x nhiều octave tốn hàng chục lệnh `sin()` mỗi pixel và đã đo được là nguyên nhân gây tụt FPS thật (không phải lý thuyết) trên máy yếu — 1-2 lần đọc texture rẻ hơn nhiều. Vẽ bằng `maps/toolkit/shaders/cloud_sea.fs` — dùng `discard` cho vùng mật độ thấp thay vì alpha-blend, vì `maps/CLAUDE.md` cấm alpha < 255 trong scene chính (vỡ particle). `width`/`depth` nên lớn hơn hẳn map để trông như biển mây vô tận, không phải 1 tấm bìa cắt cạnh lộ liễu. Chỉ thấy được khi đứng gần mép vách (`MapProp_CreateGroundHeightmap`) nhìn xuyên qua khe hở giữa các tảng đá viền — đứng giữa cao nguyên sẽ bị chính mặt đất che khuất, đúng như địa hình thật.
 * Quy ước gọi: `Create*` gọi đúng 1 lần trong `Init{Prefix}Map`, `Draw*` gọi mỗi frame trong `Draw{Prefix}Map`, `Unload*` gọi trong `Unload{Prefix}Map` nếu map có khai báo hàm Unload. `MapProp_GenerateMountainRing` là ngoại lệ — nó không load tài nguyên gì, chỉ điền số vào mảng, nên gọi ở đâu trong `Init` cũng được, kể cả không có `Unload` tương ứng.
 * Rock dùng `prop_lit` (đủ 3 path) cần gọi `PropLit_UpdateLighting()` **một lần mỗi frame trước khi vẽ** (xem ví dụ đầy đủ ở mục 6). Ground/strip/cloud sea tự đẩy uniform ánh sáng riêng trong `Draw*` của chính nó, không cần gọi gì thêm.
 
@@ -241,7 +242,8 @@ static MapRockPlacement s_mountainRocks[MOUNTAIN_ROCK_COUNT];
 
 static MapGroundSurface s_ground;
 static MapStripSurface s_path;
-static MapRockSet s_rocks;
+static MapRockSet s_rocks;         // decorative scattered rocks — prop_lit, shadow on
+static MapRockSet s_mountainRockSet; // border ring — plain material, no shadow (perf)
 static MapCloudSea s_cloudSea;
 static bool s_ready = false;
 
@@ -261,8 +263,8 @@ void InitVerdantPathMap(void)
     fog.density = 1.0f;
     Environment_SetFogConfig(fog);
 
-    // 2. Nền đảo nổi — heightmap sinh bằng:
-    //    python3 scripts/generate_island_heightmap.py assets/heightmaps/<map_name>_island.png 128 <seed>
+    // 2. Nền đảo nổi — heightmap sinh bằng (giữ size nhỏ, xem script's docstring):
+    //    python3 scripts/generate_island_heightmap.py assets/heightmaps/<map_name>_island.png 64 <seed>
     s_ground = MapProp_CreateGroundHeightmap("assets/heightmaps/verdant_path_island.png",
                                     MAP_WIDTH, MAP_DEPTH, CLIFF_DEPTH, 12.0f,
                                     "assets/textures/grass_ground_diffuse.png",
@@ -279,7 +281,10 @@ void InitVerdantPathMap(void)
                                   "assets/textures/rock_normal.png",
                                   "assets/textures/rock_roughness.png");
 
-    // 5. Vách núi quanh viền — dùng lại đúng model đá ở bước 4, chỉ scale to hơn
+    // 5. Vách núi quanh viền — RIÊNG 1 MapRockSet khác, vật liệu phẳng (NULL,NULL)
+    //    thay vì prop_lit: cả vòng phủ nhiều diện tích màn hình, PBR per-pixel
+    //    trên toàn bộ vòng đó đo được là tốn FPS thật.
+    s_mountainRockSet = MapProp_CreateRocks("assets/textures/rock_diffuse.png", NULL, NULL);
     MapProp_GenerateMountainRing(s_mountainRocks, MOUNTAIN_ROCK_COUNT,
                                  MAP_WIDTH, MAP_DEPTH,
                                  6.0f, 14.0f, 18.0f, 30.0f, 1337);
@@ -299,8 +304,9 @@ void DrawVerdantPathMap(void)
     MapProp_DrawCloudSea(&s_cloudSea, kMapCenter, CLOUD_SEA_Y); // vẽ trước, ở xa/dưới nhất
     MapProp_DrawGround(&s_ground, kMapCenter);
     MapProp_DrawStrip(&s_path, kMapCenter, 0.01f); // yOffset nhỏ tránh z-fighting với nền
-    MapProp_DrawRocks(&s_rocks, s_mountainRocks, MOUNTAIN_ROCK_COUNT); // vách núi
-    MapProp_DrawRocks(&s_rocks, kRocks, ROCK_COUNT); // đá rải rác trên cao nguyên
+    // false = không đổ bóng cho vách núi (hàng chục cái chồng nhau tốn fill-rate, không cần thiết)
+    MapProp_DrawRocks(&s_mountainRockSet, s_mountainRocks, MOUNTAIN_ROCK_COUNT, false);
+    MapProp_DrawRocks(&s_rocks, kRocks, ROCK_COUNT, true); // đá rải rác trên cao nguyên — có bóng
 }
 ```
 

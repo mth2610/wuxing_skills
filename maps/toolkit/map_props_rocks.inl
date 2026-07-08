@@ -41,10 +41,20 @@ MapRockSet MapProp_CreateRocks(const char *diffusePath, const char *normalPath, 
     return rocks;
 }
 
-void MapProp_DrawRocks(const MapRockSet *rocks, const MapRockPlacement *placements, int count)
+void MapProp_DrawRocks(const MapRockSet *rocks, const MapRockPlacement *placements, int count, bool drawShadow)
 {
     if (!rocks->ready)
         return;
+
+    // Tried DrawMeshInstanced() here to collapse the no-shadow case (the
+    // mountain ring) into one draw call instead of `count` — reverted.
+    // raylib's plain default material/shader (what the NULL,NULL branch of
+    // MapProp_CreateRocks uses) isn't compiled with instancing support
+    // (no `instanceTransform` attribute), so instances silently failed to
+    // place/render correctly. Doing this properly needs a small dedicated
+    // instanced-unlit shader — worth adding later if draw-call count (not
+    // fill-rate/shadow overdraw, both already fixed) turns out to still
+    // matter; not done speculatively.
 
     Vector3 rotAxis = {0.0f, 1.0f, 0.0f};
     for (int i = 0; i < count; i++)
@@ -54,9 +64,14 @@ void MapProp_DrawRocks(const MapRockSet *rocks, const MapRockPlacement *placemen
         Vector3 pos = {p->position.x, -0.3f * p->heightScale, p->position.z};
         Vector3 scale = {p->radiusScale, p->heightScale, p->radiusScale};
 
-        // API Môi trường - Đổ bóng giả tự động tính góc sáng
-        Environment_DrawSmartShadow(p->position, ENV_SHAPE_SPHERE,
-                                    p->radiusScale * 2.0f, p->heightScale * 2.0f);
+        // API Môi trường - Đổ bóng giả tự động tính góc sáng. Bỏ qua cho
+        // dàn đá dùng làm vách núi/viền — hàng chục cái bóng lớn xếp sát
+        // nhau đè lên nhau (alpha overdraw) tốn fill-rate mà không thấy rõ
+        // tác dụng.
+        if (drawShadow) {
+            Environment_DrawSmartShadow(p->position, ENV_SHAPE_SPHERE,
+                                        p->radiusScale * 2.0f, p->heightScale * 2.0f);
+        }
 
         DrawModelEx(rocks->model, pos, rotAxis, p->rotationDeg, scale, WHITE);
     }
