@@ -16,9 +16,11 @@ void GameScreen_Init(PlayerEntity *player) {
     s_camDist    = 6.0f;
     s_backToMenu = false;
 
-    // Corner of maps/verdant_path (100m x 75m) — lets the player walk the
-    // ~125m diagonal to the far corner to gauge map size.
-    player->position = (Vector3){ 5.0f, 0.0f, 5.0f };
+    // Center of maps/worlds/verdant_path (100m x 75m, center at 50/37.5) —
+    // spawns on the path, clear of the cliff ring. (Previously the corner,
+    // to gauge the ~125m diagonal walk time — the island/cliff redesign
+    // makes the center the more useful default now.)
+    player->position = (Vector3){ 50.0f, 0.0f, 37.5f };
     Entity_SetPosition(player->agentId, player->position);
 }
 

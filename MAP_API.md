@@ -32,18 +32,26 @@ Engine sử dụng script quét tự động `generate_map_registry.py` — nó 
 
 **Đây là phần quan trọng nhất để AI có thể tạo map thành phẩm chỉ bằng cách đọc tài liệu này.** Trước khi tự tay viết `rlgl`/`DrawModel` cho nền đất, đường đi, hay đá rải rác — kiểm tra xem `maps/toolkit/map_props.h` đã có sẵn hàm cho việc đó chưa. Chỉ rơi xuống code thủ công (mục 9-12) cho những gì toolkit chưa có (địa hình đồi núi/heightmap, rừng cây từ model 3D, hồ dung nham...).
 
-Toolkit gồm 3 file, đều **Map Agent sở hữu** (không phải Core Agent, dù `prop_lit`/`grass_material` từng nằm ở `core/` — đã chuyển hẳn sang đây vì chỉ `maps/` dùng):
+Toolkit gồm nhiều file, đều **Map Agent sở hữu** (không phải Core Agent, dù `prop_lit`/`grass_material` từng nằm ở `core/` — đã chuyển hẳn sang đây vì chỉ `maps/` dùng). Implementation của `map_props.h` được chia 1 file `.inl` cho mỗi loại prop (`map_props_ground.inl`, `map_props_strip.inl`, `map_props_rocks.inl`), `#include` lại từ `map_props.c` — thêm loại prop mới thì thêm 1 `.inl` mới + `#include` nó vào `map_props.c`, không viết thẳng vào `map_props.c`.
 
 ### `maps/toolkit/map_props.h` — bộ hàm chính, ưu tiên dùng đầu tiên
 
 ```c
 // --- Ground plane (nền đất) ---
-typedef struct { Model model; bool ready; } MapGroundSurface;
+typedef struct { Model model; Vector3 drawOffset; bool ready; } MapGroundSurface;
 
 MapGroundSurface MapProp_CreateGround(float width, float depth, float tileSize,
                                        const char *splatMapPath,
                                        const char *grassTexPath,
                                        const char *pathTexPath);
+// Sloped-island variant: heightmapPath grayscale (WHITE=plateau, BLACK=cliff
+// edge), cliffDepth = meters the edge sinks below the plateau. Same
+// splat/grass/path textures + shader as MapProp_CreateGround.
+MapGroundSurface MapProp_CreateGroundHeightmap(const char *heightmapPath, float width, float depth,
+                                                float cliffDepth, float tileSize,
+                                                const char *splatMapPath,
+                                                const char *grassTexPath,
+                                                const char *pathTexPath);
 void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter);
 void MapProp_UnloadGround(MapGroundSurface *ground);
 
@@ -71,12 +79,32 @@ MapRockSet MapProp_CreateRocks(const char *diffusePath,
                                 const char *normalPath, const char *roughnessPath); // NULL/NULL = phẳng
 void MapProp_DrawRocks(const MapRockSet *rocks, const MapRockPlacement *placements, int count);
 void MapProp_UnloadRocks(MapRockSet *rocks);
+
+// Sinh 1 vòng đá khổng lồ quanh viền map (mô-tuýp "đảo nổi giữa vách núi" mà
+// mọi map dùng chung) — vẽ lại bằng CHÍNH MapProp_DrawRocks/MapRockSet ở
+// trên, chỉ là radiusScale/heightScale lớn hơn hẳn. seed cố định layout.
+int MapProp_GenerateMountainRing(MapRockPlacement *outPlacements, int maxCount,
+                                  float mapWidth, float mapDepth,
+                                  float minRadiusScale, float maxRadiusScale,
+                                  float minHeightScale, float maxHeightScale,
+                                  unsigned int seed);
+
+// --- Sea of clouds (đáy vực dưới đảo nổi) ---
+typedef struct { Model model; bool ready; } MapCloudSea;
+
+MapCloudSea MapProp_CreateCloudSea(float width, float depth, float tileSize);
+void MapProp_DrawCloudSea(const MapCloudSea *cloud, Vector3 worldCenter, float yOffset);
+void MapProp_UnloadCloudSea(MapCloudSea *cloud);
 ```
 
-* `MapProp_CreateGround`: `tileSize` = số mét thế giới cho mỗi lần texture lặp lại (ví dụ `12.0f`). Ground vẽ bằng shader riêng `maps/toolkit/shaders/ground_splat.fs` (splatmap trộn `grassTexPath`/`pathTexPath`) — **hiện tại (WIP) shader này ép mask = 1.0 (100% cỏ)**, `splatMapPath` được truyền vào nhưng chưa thực sự dùng để trộn; xem comment ngay trong `ground_splat.fs` trước khi coi splatmap là đã hoạt động đầy đủ.
-* `MapProp_CreateStrip`/`MapProp_CreateRocks`: truyền `NULL` cho `normalPath`+`roughnessPath` để dùng texture phẳng đơn giản (không shader); truyền đủ cả 3 đường dẫn texture để dùng vật liệu `prop_lit` (có normal map + roughness, phản chiếu ánh sáng thật).
-* Quy ước gọi: `Create*` gọi đúng 1 lần trong `Init{Prefix}Map`, `Draw*` gọi mỗi frame trong `Draw{Prefix}Map`, `Unload*` gọi trong `Unload{Prefix}Map` nếu map có khai báo hàm Unload.
-* Rock/strip dùng `prop_lit` cần gọi `PropLit_UpdateLighting()` **một lần mỗi frame trước khi vẽ** (xem ví dụ đầy đủ ở mục 6).
+* `MapProp_CreateGround` (`map_props_ground.inl`): `tileSize` = số mét thế giới cho mỗi lần `grassTexPath`/`pathTexPath` lặp lại. Vẽ bằng shader riêng `maps/toolkit/shaders/ground_splat.fs`: đọc kênh đỏ của `splatMapPath` làm mask (trắng = cỏ, đen = đất), trộn `grassTexPath`/`pathTexPath` theo mask đó, cộng thêm `grassDepth` để mép cỏ/đất hòa tự nhiên hơn. **Kiểm tra log khi thêm map mới** — đây là file đang được chỉnh tay thường xuyên, một lỗi cú pháp GLSL nhỏ (ví dụ ký tự lạc trước `#version`) khiến shader compile fail và raylib âm thầm rơi về shader mặc định (`WARNING: SHADER: ... Failed to compile fragment shader code` trong log) — ground vẫn vẽ được (không crash) nhưng nhìn sai hẳn so với ý đồ, không có thông báo nào khác ngoài log.
+* `MapProp_CreateGroundHeightmap` (`map_props_ground.inl`): cùng shader/texture với `MapProp_CreateGround`, chỉ khác nguồn mesh — dùng `GenMeshHeightmap` thay vì `GenMeshPlane`, cho mặt đất lõm xuống thành vách ở viền thay vì phẳng lì. `heightmapPath` là ảnh grayscale: **trắng = cao nguyên phẳng đi được** (giữ ở local Y=0, đúng quy ước "mặt đất Y=0" của cả project), **đen = mép vách** (chìm xuống `cliffDepth` mét). Sinh ảnh heightmap bằng `python3 scripts/generate_island_heightmap.py <out.png> <size> <seed>` — mặc định script tạo **hình chữ nhật đơn giản, phẳng ở 90% diện tích giữa**, chỉ dải mỏng 10% ngoài viền mới lõm xuống thành vách (mildly jagged, không phải khối u lởm chởm to). Đừng chỉnh `plateau_edge`/`falloff_width` trong script quá thấp — mục tiêu là nội thất map phẳng, chỉ viền mới là vách. **`cliffDepth` phải nhỏ hơn (ít âm hơn) giá trị `yOffset` truyền cho `MapProp_DrawCloudSea`** — nếu không vách đá sẽ đâm xuyên qua mặt phẳng mây bên dưới. **Lưu ý implementation:** `GenMeshHeightmap` trả về mesh trải từ local `[0,width]x[0,depth]`, KHÔNG tự căn giữa như `GenMeshPlane` — việc căn giữa được làm bằng `MapGroundSurface.drawOffset` (cộng vào `worldCenter` lúc `DrawModel` trong `MapProp_DrawGround`), **không phải bằng cách sửa trực tiếp `mesh.vertices` sau khi tạo** — cách đó đã thử và chỉ render đúng 1/4 mesh (nguyên nhân gốc chưa rõ, không đáng để truy tiếp — offset-at-draw-time là cách né an toàn).
+* `MapProp_CreateStrip` (`map_props_strip.inl`): vẽ bằng `maps/toolkit/shaders/path_blend.fs` — texture lặp theo `tiling` + noise phá viền hình học (`discard` cho alpha thấp ở 25% mép hai bên) để mép đường không bị thẳng cứng. `normalPath`/`roughnessPath` hiện **chưa dùng** (giữ trong chữ ký cho một biến thể prop_lit tương lai) — truyền `NULL` cho cả hai là đủ.
+* `MapProp_CreateRocks` (`map_props_rocks.inl`): truyền `NULL` cho `normalPath`+`roughnessPath` để dùng texture phẳng đơn giản (không shader); truyền đủ cả 3 đường dẫn texture để dùng vật liệu `prop_lit` (có normal map + roughness, phản chiếu ánh sáng thật).
+* `MapProp_GenerateMountainRing` (`map_props_rocks.inl`): chỉ SINH vị trí (ghi vào mảng `MapRockPlacement` do bạn cấp) — không tự vẽ, không tự tạo model riêng. Vẽ bằng `MapProp_DrawRocks(&s_rocks, s_mountainRocks, count)` giống hệt đá rải rác, dùng lại đúng 1 model/texture đá đã load — không cần thêm bộ texture "đá núi" riêng. `min/maxRadiusScale`/`min/maxHeightScale` nên lớn hơn hẳn đá thường (ví dụ 6-14 và 18-30, so với đá rải rác thường ~0.5-1.1) để đọc ra dáng vách núi chứ không phải đá lẻ.
+* `MapProp_CreateCloudSea` (`map_props_cloud.inl`): thuần thủ tục (FBM noise cuộn theo thời gian qua `GetTime()`), **không cần texture**. Vẽ bằng `maps/toolkit/shaders/cloud_sea.fs` — dùng `discard` cho vùng mật độ thấp thay vì alpha-blend, vì `maps/CLAUDE.md` cấm alpha < 255 trong scene chính (vỡ particle). `width`/`depth` nên lớn hơn hẳn map để trông như biển mây vô tận, không phải 1 tấm bìa cắt cạnh lộ liễu. Chỉ thấy được khi đứng gần mép vách (`MapProp_CreateGroundHeightmap`) nhìn xuyên qua khe hở giữa các tảng đá viền — đứng giữa cao nguyên sẽ bị chính mặt đất che khuất, đúng như địa hình thật.
+* Quy ước gọi: `Create*` gọi đúng 1 lần trong `Init{Prefix}Map`, `Draw*` gọi mỗi frame trong `Draw{Prefix}Map`, `Unload*` gọi trong `Unload{Prefix}Map` nếu map có khai báo hàm Unload. `MapProp_GenerateMountainRing` là ngoại lệ — nó không load tài nguyên gì, chỉ điền số vào mảng, nên gọi ở đâu trong `Init` cũng được, kể cả không có `Unload` tương ứng.
+* Rock dùng `prop_lit` (đủ 3 path) cần gọi `PropLit_UpdateLighting()` **một lần mỗi frame trước khi vẽ** (xem ví dụ đầy đủ ở mục 6). Ground/strip/cloud sea tự đẩy uniform ánh sáng riêng trong `Draw*` của chính nó, không cần gọi gì thêm.
 
 ### `maps/toolkit/prop_lit.h` — vật liệu có ánh sáng thật cho đá/đường đi
 
@@ -177,7 +205,7 @@ void Environment_DrawSmartShadow(Vector3 pos, EnvShadowShapeType shape, float wi
 
 ## 6. Khung File Source Mẫu — Dùng Toolkit (Khuyến Nghị, Bắt Đầu Từ Đây)
 
-Đây là cách nhanh nhất để tạo 1 map thành phẩm: nền + đường đi + đá rải rác, toàn bộ dùng `maps/toolkit/` (mục 1b), không cần tự viết `rlgl`. Copy khung này vào `maps/worlds/<map_name>/<map_name>.c`, đổi số liệu:
+Đây là cách nhanh nhất để tạo 1 map thành phẩm: đảo nổi (nền lõm xuống vách ở viền) + đường đi + đá rải rác + vách núi bao quanh + biển mây bên dưới, toàn bộ dùng `maps/toolkit/` (mục 1b), không cần tự viết `rlgl`. Copy khung này vào `maps/worlds/<map_name>/<map_name>.c`, đổi số liệu. **Mọi map trong project này đều theo mô-tuýp "đảo nổi giữa vách núi + biển mây" — đây là khung mặc định, không phải một lựa chọn.**
 
 ```c
 #include "verdant_path.h"           // đổi tên theo map của bạn
@@ -193,6 +221,11 @@ static const Vector3 kMapCenter = {MAP_WIDTH * 0.5f, 0.0f, MAP_DEPTH * 0.5f};
 #define PATH_LENGTH (MAP_WIDTH - 10.0f)
 #define PATH_WIDTH 4.0f
 
+// Vách đảo lõm xuống CLIFF_DEPTH mét; biển mây phải nằm SÂU HƠN (âm hơn)
+// mức này để vách không đâm xuyên mây — xem MapProp_CreateGroundHeightmap.
+#define CLIFF_DEPTH 8.0f
+#define CLOUD_SEA_Y -12.0f
+
 #define ROCK_COUNT 6
 static const MapRockPlacement kRocks[ROCK_COUNT] = {
     {{15.0f, 0.0f, 10.0f}, 0.6f, 0.5f, 20.0f},
@@ -203,9 +236,13 @@ static const MapRockPlacement kRocks[ROCK_COUNT] = {
     {{20.0f, 0.0f, 45.0f}, 0.8f, 0.6f, 150.0f},
 };
 
+#define MOUNTAIN_ROCK_COUNT 36
+static MapRockPlacement s_mountainRocks[MOUNTAIN_ROCK_COUNT];
+
 static MapGroundSurface s_ground;
 static MapStripSurface s_path;
 static MapRockSet s_rocks;
+static MapCloudSea s_cloudSea;
 static bool s_ready = false;
 
 void InitVerdantPathMap(void)
@@ -224,22 +261,31 @@ void InitVerdantPathMap(void)
     fog.density = 1.0f;
     Environment_SetFogConfig(fog);
 
-    // 2. Nền đất — mục 1b (tileSize lớn (>= chiều rộng map) hạn chế lặp pattern lộ liễu)
-    s_ground = MapProp_CreateGround(MAP_WIDTH, MAP_DEPTH, 12.0f,
+    // 2. Nền đảo nổi — heightmap sinh bằng:
+    //    python3 scripts/generate_island_heightmap.py assets/heightmaps/<map_name>_island.png 128 <seed>
+    s_ground = MapProp_CreateGroundHeightmap("assets/heightmaps/verdant_path_island.png",
+                                    MAP_WIDTH, MAP_DEPTH, CLIFF_DEPTH, 12.0f,
                                     "assets/textures/grass_ground_diffuse.png",
                                     "assets/textures/grass_ground_diffuse.png",
                                     "assets/textures/dirt_diffuse.png");
 
-    // 3. Đường đá — truyền đủ 3 path để dùng prop_lit (có normal/roughness)
+    // 3. Đường đá — path_blend.fs tự lo ánh sáng/viền, normal/roughness chưa dùng (NULL)
     s_path = MapProp_CreateStrip(PATH_LENGTH, PATH_WIDTH, 2.0f,
                                  "assets/textures/stone_path_diffuse.png",
-                                 "assets/textures/stone_path_normal.png",
-                                 "assets/textures/stone_path_roughness.png");
+                                 NULL, NULL);
 
     // 4. Đá rải rác — 1 model, nhiều vị trí (mục 11's nguyên tắc "1 model nhiều draw call")
     s_rocks = MapProp_CreateRocks("assets/textures/rock_diffuse.png",
                                   "assets/textures/rock_normal.png",
                                   "assets/textures/rock_roughness.png");
+
+    // 5. Vách núi quanh viền — dùng lại đúng model đá ở bước 4, chỉ scale to hơn
+    MapProp_GenerateMountainRing(s_mountainRocks, MOUNTAIN_ROCK_COUNT,
+                                 MAP_WIDTH, MAP_DEPTH,
+                                 6.0f, 14.0f, 18.0f, 30.0f, 1337);
+
+    // 6. Biển mây — rộng hơn map để trông vô tận, sâu hơn CLIFF_DEPTH
+    s_cloudSea = MapProp_CreateCloudSea(MAP_WIDTH + 300.0f, MAP_DEPTH + 300.0f, 50.0f);
 
     s_ready = true;
 }
@@ -248,11 +294,13 @@ void DrawVerdantPathMap(void)
 {
     if (!s_ready) return;
 
-    PropLit_UpdateLighting(); // bắt buộc mỗi frame — s_path/s_rocks dùng prop_lit
+    PropLit_UpdateLighting(); // bắt buộc mỗi frame — s_rocks dùng prop_lit (đủ 3 path)
 
+    MapProp_DrawCloudSea(&s_cloudSea, kMapCenter, CLOUD_SEA_Y); // vẽ trước, ở xa/dưới nhất
     MapProp_DrawGround(&s_ground, kMapCenter);
     MapProp_DrawStrip(&s_path, kMapCenter, 0.01f); // yOffset nhỏ tránh z-fighting với nền
-    MapProp_DrawRocks(&s_rocks, kRocks, ROCK_COUNT);
+    MapProp_DrawRocks(&s_rocks, s_mountainRocks, MOUNTAIN_ROCK_COUNT); // vách núi
+    MapProp_DrawRocks(&s_rocks, kRocks, ROCK_COUNT); // đá rải rác trên cao nguyên
 }
 ```
 

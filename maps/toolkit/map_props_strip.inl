@@ -1,0 +1,77 @@
+// Flat strip (stone path, road, bridge deck, ...) — noise-feathered edge blend
+// (maps/toolkit/shaders/path_blend.fs). #include'd once from map_props.c —
+// not a standalone translation unit.
+
+static Shader pathShader = {0};
+static bool pathShaderLoaded = false;
+static int locPathLightDir = -1, locPathLightCol = -1, locPathAmbCol = -1;
+
+MapStripSurface MapProp_CreateStrip(float length, float width, float tileSize,
+                                    const char *diffusePath, const char *normalPath, const char *roughnessPath)
+{
+    MapStripSurface strip = {0};
+    (void)normalPath;
+    (void)roughnessPath;
+
+    // 1. Tạo Mesh (KHÔNG GỌI TilePlaneUVs để giữ hệ trục tọa độ viền)
+    Mesh mesh = GenMeshPlane(length, width, 16, 4); // Tăng chia lưới để bóp méo viền đẹp hơn
+    strip.model = LoadModelFromMesh(mesh);
+
+    // 2. Load Shader Con đường
+    if (!pathShaderLoaded)
+    {
+        pathShader = LoadShader(0, "maps/toolkit/shaders/path_blend.fs");
+        locPathLightDir = GetShaderLocation(pathShader, "lightDir");
+        locPathLightCol = GetShaderLocation(pathShader, "lightColor");
+        locPathAmbCol = GetShaderLocation(pathShader, "ambientColor");
+        pathShaderLoaded = true;
+    }
+
+    // 3. Load Texture
+    Texture2D diffuse = ResourceManager_LoadTexture(diffusePath);
+    GenTextureMipmaps(&diffuse);
+    SetTextureFilter(diffuse, TEXTURE_FILTER_ANISOTROPIC_16X);
+    SetTextureWrap(diffuse, TEXTURE_WRAP_REPEAT);
+
+    // Tạm thời bỏ qua normal/roughness đối với đường mờ lề để tối ưu hiệu năng
+    strip.model.materials[0].shader = pathShader;
+    strip.model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = diffuse;
+
+    // 4. Truyền Tiling xuống shader để lặp texture
+    float tiling[2] = {length / tileSize, width / tileSize};
+    int tilingLoc = GetShaderLocation(pathShader, "tiling");
+    SetShaderValue(pathShader, tilingLoc, tiling, SHADER_UNIFORM_VEC2);
+
+    strip.ready = true;
+    return strip;
+}
+
+void MapProp_DrawStrip(const MapStripSurface *strip, Vector3 worldCenter, float yOffset)
+{
+    if (!strip->ready)
+        return;
+
+    // --- Cập nhật Ánh sáng Môi trường cho con đường ---
+    Vector3 lightDir = Environment_GetSunDirection();
+    Color sunCol = Environment_GetSunColor();
+    Color ambCol = Environment_GetAmbientColor();
+
+    float lightDirArr[3] = {lightDir.x, lightDir.y, lightDir.z};
+    float sunColArr[4] = {sunCol.r / 255.0f, sunCol.g / 255.0f, sunCol.b / 255.0f, sunCol.a / 255.0f};
+    float ambColArr[4] = {ambCol.r / 255.0f, ambCol.g / 255.0f, ambCol.b / 255.0f, ambCol.a / 255.0f};
+
+    SetShaderValue(strip->model.materials[0].shader, locPathLightDir, lightDirArr, SHADER_UNIFORM_VEC3);
+    SetShaderValue(strip->model.materials[0].shader, locPathLightCol, sunColArr, SHADER_UNIFORM_VEC4);
+    SetShaderValue(strip->model.materials[0].shader, locPathAmbCol, ambColArr, SHADER_UNIFORM_VEC4);
+
+    Vector3 pos = {worldCenter.x, worldCenter.y + yOffset, worldCenter.z};
+    DrawModel(strip->model, pos, 1.0f, WHITE);
+}
+
+void MapProp_UnloadStrip(MapStripSurface *strip)
+{
+    if (!strip->ready)
+        return;
+    UnloadModel(strip->model);
+    strip->ready = false;
+}
