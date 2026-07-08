@@ -496,6 +496,9 @@ up any one independently unless a dependency is stated.
 | # | Title | Priority | Owner | Depends on |
 |---|---|---|---|---|
 | 33 | Looping audio handles (flight/aura sound) | P3 | Core | 25 assets |
+| 36 | `prop_lit` shader — PBR-lite material for map terrain/props (Map Agent request) | P1 | Core | none |
+| 37 | `grass_material` shader — procedural noise-blended ground material (Map Agent request) — **SUPERSEDED by 38** | P1 | Core | none |
+| 38 | `grass_material` v2 — texture-blend hybrid, replacing Item 37's pure-procedural approach (Map Agent request) | P1 | Core | none |
 
 Remaining open: Item 33 (blocked on audio assets). **Item 34 COMPLETE** (2026-07-04): all shared infrastructure rescaled; all 7 unconverted skills' params.inl now in meter-scale; final 5 remaining raw ScreenDistort speed values (180/250/190→1.8/2.5/1.9) and 1 knockback (140→1.4) fixed in stone_prison/dia_long/thuy_kinh.
 
@@ -855,3 +858,301 @@ it could be visually confirmed — so it's unverified, not merely rejected.
   the "sparkle" in small screen areas instead of risking aliasing/blowout
   across whole VFX silhouettes made of many overlapping thin shapes (ice
   spikes, lightning bolts, etc.).
+
+---
+
+## Item 36 — `prop_lit` shader: PBR-lite material for map terrain/props (requested by Map Agent)
+
+**Problem.** Module 2 (Map Virtual Trigger Zones, see `MODULES_ROADMAP.md` §2)
+is moving map art direction from pure flat-shaded `rlgl` immediate-mode
+(current `maps/default_arena.c` — no shader, no normals at all) to
+"moderate realism" for terrain/props: diffuse+normal+roughness textures via
+raylib's `Material` map slots. Every existing shader under `core/shaders/`
+(`effect_material.fs`, `crystal.fs`, `plasma_shell.fs`, `aura_shell.fs`,
+`ground_aura.fs`) is VFX-only, bound exclusively via `skill_manager.c`'s
+shader dispatch — none of them are usable from a map's `DrawModel()` call,
+and there is currently **no lit material shader for static geometry at
+all**. Maps need one shared shader they can assign to a `Material` and
+reuse across every prop (ground mesh, rocks, tree trunks, bushes) — one
+asset, many draw calls, per the project's existing "load once, draw many"
+convention (`MAP_API.md` §11).
+
+**Assets already prepared and ready to consume** (Map Agent, this session):
+`assets/textures/{stone_path,grass_ground,rock}_{diffuse,normal,roughness}.png`
+— 3 full diffuse+normal+roughness sets, neutral tone (no baked lighting/mood,
+so the same texture reacts correctly to whatever `Environment_Set*` preset
+is active — see Item 3's design intent below), tileable, normal maps
+verified blue-dominant (correct tangent-space encoding, not accidentally a
+grayscale height map — see `scripts/generate_pbr_maps.py`, a new general
+utility script that derives normal+roughness from a diffuse/height source
+via seamless wrap-around Sobel gradients, added this session and reusable
+for future ground textures too).
+
+**Proposed API** (new files `core/shaders/prop_lit.vs` / `prop_lit.fs`,
+loaded once via the existing `ResourceManager_LoadShader()` cache):
+
+```c
+// Suggested helper in core/ (exact home — resource_manager.h or a new
+// small header — is Core's call):
+Shader   PropLit_GetShader(void);  // lazy-load via ResourceManager_LoadShader, cached
+Material PropLit_MakeMaterial(Texture2D diffuse, Texture2D normal, Texture2D roughness);
+```
+
+Fragment shader responsibilities:
+1. Sample diffuse (albedo), normal (decode tangent-space via TBN, standard
+   `rgb*2.0-1.0`), roughness (single channel) maps.
+2. Lambertian diffuse + a roughness-scaled Blinn-Phong specular term (reuse
+   `core/shaders/common/lighting.glsl`'s `calcDiffuse`/`calcSpecular` —
+   don't reimplement, this file already exists exactly for this).
+3. Light direction/color/ambient sourced from `Environment_GetSunDirection()`/
+   `GetSunColor()`/`GetAmbientColor()`, pushed in as uniforms the same way
+   `skill_manager.c:1060` already does for `u_lightDir` — same source of
+   truth `environment_system.h` already exposes, no new Environment API
+   needed for this part.
+4. Multiply final color by raylib's standard `colDiffuse` uniform (tint) —
+   this is what lets a single white/neutral texture (e.g. `petal_card.png`,
+   any future foliage card) be recolored per-instance via `DrawModelEx`'s
+   `tint` parameter, matching the project's existing white+tint convention
+   for decals (`assets/INDEX.md`).
+
+**Known raylib gotchas to check while implementing** (don't re-discover from
+scratch):
+- Normal mapping needs a `tangent` vertex attribute. Procedurally generated
+  meshes (`GenMeshCube`/`GenMeshCylinder`/`GenMeshHeightmap`/a hand-built
+  `rlgl` mesh converted to `Mesh`) do **not** have tangents populated by
+  default — call `GenMeshTangents(&mesh)` before `LoadModelFromMesh()`, or
+  the normal map will read as flat/zero. glTF-imported models usually ship
+  tangents already; verify, don't assume.
+- `skill_manager.c:1068`'s comment on `shader.locs[SHADER_LOC_MATRIX_MODEL]`
+  documents a raylib model-matrix gotcha already hit once in this codebase —
+  read it before wiring the model matrix uniform here.
+- `core/flow_map.c`'s "bug cũ" (documented inline) and `CORE_ISSUES.md` Item
+  3's root cause #3 both hit the same class of bug: manual
+  `rlActiveTextureSlot`/`rlEnableTexture` binding silently not reaching the
+  shader. Use `SetShaderValueTexture()` for the normal/roughness texture
+  units, not raw `rlgl` binding calls.
+
+**Related, NOT part of this item (flag only):** `EnvFogConfig` in
+`environment/environment_system.c` (`s_fogConfig`, `Environment_GetFogConfig`/
+`SetFogConfig`) is fully wired as data but **currently read by zero shaders
+in the codebase** — fog is effectively dead code today, `MAP_API.md` §4's
+`Environment_SetFogConfig` documentation notwithstanding. Whether `prop_lit`
+should be the first shader to actually apply it (simple per-fragment linear
+distance fog, reading camera position + `Environment_GetFogConfig()`) or
+whether fog belongs in a depth-aware post-process pass instead is an open
+design choice for whoever implements this — flagging so it isn't silently
+rediscovered as "wait, does fog even do anything?" mid-implementation.
+
+**Acceptance:** a map can call `PropLit_MakeMaterial(...)` once per prop
+type in `Init`, assign it to a `Model`'s material slot, and `DrawModel`/
+`DrawModelEx` it many times in `Draw` — diffuse+normal+roughness all
+visibly affect shading, lighting responds correctly when
+`Environment_SetSunColor`/`SetAmbientColor` change (verifies the "one asset,
+reused across any lighting preset" requirement driving Module 2's dynamic
+time-of-day plan), and `DrawModelEx`'s `tint` recolors a white/neutral
+texture (test with `petal_card.png` on a simple quad) without touching RGB
+elsewhere.
+
+---
+
+## Item 37 — `grass_material` shader: procedural noise-blended ground (requested by Map Agent)
+
+**Problem.** `maps/verdant_path`'s ground currently uses `prop_lit`
+(Item 36) with a photo-sourced `grass_ground_diffuse.png` tiled every 1.5m.
+Two rounds of visual review (user screenshots) found this fundamentally the
+wrong technique for this game's stylized look:
+1. The reference art direction (user-provided screenshot of a wuxia mobile
+   MMO) shows ground as a soft **blend of light green, dark green, and dirt
+   tones** — no individual blade detail at all, closer to a painterly wash
+   than a photo.
+2. The photo diffuse texture has strong directional lighting/shadow **baked
+   into its own pixels** (individual grass blades already show highlight/
+   shadow contrast from whatever lit the original photo). A normal map
+   derived from that texture's luminance (`scripts/generate_pbr_maps.py`,
+   Item 36's companion tool) then re-applies a **second** round of dynamic
+   lighting on top of the same baked pattern — the two compound into an
+   exaggerated, fake-looking bumpy/"thô" (coarse) result that no amount of
+   tile-size or normal-strength retuning fixed, because the root cause is
+   architectural (photo-diffuse + derived-normal is the wrong pairing for a
+   painterly, non-photoreal target look), not a tuning problem. Confirmed
+   fixed for now by replacing the ground's normal map with a flat neutral
+   (128,128,255) texture — but that's a stopgap, not the intended final
+   material.
+
+**Proposed fix: drop the photo texture entirely for ground colour, replace
+with a procedural noise-blended material.** No diffuse/normal/roughness
+textures at all — colour comes from world-space noise, so there is no
+tiling seam, no UV-tile-size decision, and no baked-lighting-vs-live-
+lighting conflict possible (nothing is baked; noise recomputes every
+fragment).
+
+**Proposed API** (new files `core/shaders/grass_material.vs`/`.fs` + a small
+`core/grass_material.h`/`.c`, mirroring `prop_lit`'s shape at Item 36):
+
+```c
+typedef struct {
+    Color colorDirt;        // low end of the noise blend
+    Color colorGrassDark;   // mid
+    Color colorGrassLight;  // high end / patch highlights
+    float noiseScale;       // world units per noise cell — controls patch size
+} GrassMaterialConfig;
+
+Shader   GrassMaterial_GetShader(void);            // lazy-load via ResourceManager_LoadShader, cached
+Material GrassMaterial_Make(GrassMaterialConfig config); // sets the 3 colors + noiseScale as shader uniforms ONCE at creation (they don't change per-frame, unlike lighting)
+void     GrassMaterial_UpdateLighting(void);        // same per-frame contract as PropLit_UpdateLighting — push Environment sun/ambient + camera pos
+```
+
+Fragment shader responsibilities:
+1. `#include "core/shaders/common/noise.glsl"` — reuse `fbm2(fragPosition.xz * noiseScale)` (world-space, NOT UV — this is what makes it seamless across any ground size with zero tiling decisions). Do not reimplement noise/hash functions; this file already exists exactly for this.
+2. Blend `colorDirt -> colorGrassDark -> colorGrassLight` across 2 noise thresholds (e.g. two `smoothstep` bands, or a second higher-frequency `fbm2` octave layered in for fine patch variation) — tune so it reads as soft irregular patches, not a sharp 3-color cutout.
+3. Light via Lambertian only (reuse `lighting.glsl`'s `calcDiffuse`, same `u_lightDir`/`u_lightColor`/`u_ambientColor` uniform names/convention as `prop_lit.fs` for consistency) — matte grass, no specular term needed (this is simpler than `prop_lit`, not a variant of it).
+4. Multiply by `colDiffuse` for the standard tint convention, same as every other material in this codebase.
+
+**Performance note (why this is reasonable, not a regression):** a single
+ground plane, one draw call, ~2-3 octaves of `fbm2` per fragment (a handful
+of hash+mix ops) — cheaper than `prop_lit`'s 3-texture-sample + tangent-
+space-decode path, since there's no texture bandwidth/cache cost at all.
+Standard technique, not exotic; safe for the mobile target.
+
+**Relationship to `prop_lit` (Item 36):** NOT a replacement — `prop_lit`
+stays the right tool for anything that should read as a distinct textured
+surface (rock, stone path, props). This item is specifically for organic
+ground-color blending where the reference art wants soft painterly variation
+instead of a legible material texture.
+
+**Acceptance:** `maps/verdant_path`'s ground swaps from
+`PropLit_MakeMaterial(grass...)` to `GrassMaterial_Make(...)`; visually
+reads as smooth blended green/dirt patches (matching the reference
+screenshot's ground), no repeating tile pattern visible at any camera
+distance, lighting responds to `Environment_SetSunColor`/`SetAmbientColor`
+changes same as `prop_lit` does.
+
+---
+
+## Item 38 — `grass_material` v2: texture-blend hybrid (supersedes Item 37)
+
+**Problem.** Item 37's pure-procedural approach (color blended purely via
+`fbm2` noise, no textures at all) shipped and was visually reviewed against
+a real screenshot. Two problems, both from the same root cause:
+1. **"Looks fake"** — smooth color-only blobs with no fine surface grain
+   read as an airbrushed gradient, not ground.
+2. **Perceived to move/slide when the camera pans** — near-certainly a
+   perceptual illusion (the shader math is world-space-anchored and
+   verified correct, no bug found), but a real one: a low-frequency,
+   feature-less color field gives the eye no fixed high-contrast reference
+   point, so camera motion parallax on it reads as "the pattern is
+   drifting." Both problems share one fix: the surface needs actual
+   fine-grained detail for the eye to anchor to.
+
+User feedback (an experienced walkthrough of how mobile MOBA/MMORPG ground
+is actually done) confirms the right ratio is **~80% texture, ~20%
+shader** — don't try to fake real surface detail with pure procedural
+noise; use real textures for anything that needs to read as a material,
+and use the shader only for blending layers together and adding broad
+color variation. This matches how `prop_lit` (Item 36) already treats rock/
+stone-path — Item 37 was the outlier in trying to go 100% shader for
+ground specifically, and that's what didn't work.
+
+**New design — replace `GrassMaterialConfig` entirely** (breaking change,
+fine — the only consumer, `maps/verdant_path`, will be updated by the Map
+Agent right after this lands):
+
+```c
+typedef struct {
+    Texture2D grassBase;     // real grass photo texture (assets/textures/grass_ground_diffuse.png already exists — reuse it)
+    Texture2D grassDetail;   // fine grayscale grain/speckle overlay, ~0.5-centered for symmetric multiply (assets/textures/grass_detail.png already exists — procedurally generated this session, tileable)
+    Texture2D dirt;          // dirt patch photo texture (NOT YET PROVIDED — Map Agent is sourcing assets/textures/dirt_diffuse.png; wire the sampler/uniform now, swap the actual file in later, no API change needed when it arrives)
+    float     baseTileSize;    // world meters per grassBase/dirt tile
+    float     detailTileSize;  // world meters per grassDetail tile — much smaller than baseTileSize (denser repeat) for fine grain
+    float     maskNoiseScale;  // world-space fbm2 frequency controlling where dirt shows through grass (procedural — NO separate mask texture)
+    float     colorVarScale;   // world-space fbm2 frequency for broad brightness/tint variation across the whole ground (procedural — NO separate noise texture)
+} GrassMaterialConfig;
+
+Shader   GrassMaterial_GetShader(void);           // unchanged shape
+Material GrassMaterial_Make(GrassMaterialConfig config);
+void     GrassMaterial_UpdateLighting(void);       // unchanged shape/contract
+```
+
+Keep the mask and color-variation as **procedural** `fbm2` calls in the
+fragment shader (reuse `noise.glsl`, do not add mask/noise texture files —
+this keeps the "shader = blend + variation only" principle without extra
+asset overhead, since a computed low-frequency noise value is visually
+equivalent to sampling a baked noise texture for this specific purpose).
+
+**Fragment shader logic** (`core/shaders/grass_material.fs` — rewrite, not
+patch):
+```glsl
+vec2 worldXZ  = fragPosition.xz;
+vec2 baseUV   = worldXZ / u_baseTileSize;
+vec2 detailUV = worldXZ / u_detailTileSize;
+
+vec3 grass  = texture(u_grassBase, baseUV).rgb;
+vec3 detail = texture(u_grassDetail, detailUV).rgb;   // ~0.5-centered grayscale
+vec3 dirt   = texture(u_dirtTex, baseUV).rgb;
+
+vec3 grassDetailed = grass * mix(0.85, 1.15, detail.r);   // fine grain modulates brightness only, doesn't shift hue
+
+float mask = smoothstep(0.35, 0.55, fbm2(worldXZ * u_maskNoiseScale));
+vec3 blended = mix(grassDetailed, dirt, mask);
+
+float colorVar = fbm2(worldXZ * u_colorVarScale);          // broad, sparse — large regions, not small speckle
+blended *= mix(0.85, 1.15, colorVar);
+
+// lighting: same Lambertian-only (calcDiffuse) + u_ambientColor/u_lightColor as Item 37 — no change here
+```
+Bind all 3 textures via `SetTextureWrap(tex, TEXTURE_WRAP_REPEAT)` (same
+convention `prop_lit.c`'s callers already use) — the Map Agent will do this
+at call time in `verdant_path.c`, but double-check `GrassMaterial_Make`
+doesn't need to do it internally (prop_lit doesn't, so match that
+precedent: wrap-mode is the caller's responsibility).
+
+Reuse the existing 3-texture material-map-slot pattern `prop_lit.c`
+established (`MATERIAL_MAP_DIFFUSE`/`MATERIAL_MAP_NORMAL`/
+`MATERIAL_MAP_ROUGHNESS` as generic texture-slot carriers, not for their
+raylib-semantic meaning) — same `shader.locs[]` fixup gotcha applies
+(`texture0`/`texture2`/`texture3` uniform names, or pick your own 3 sampler
+names consistently between `.fs` and the `.c` loc-fixup, just match
+whichever you choose).
+
+**Acceptance:** ground shows visible fine grain up close (not a flat
+color), dirt patches blend in softly via the procedural mask, broad color
+variation reads as gentle regional tint shift (not a repeating tile), no
+change to the lighting/tint contract vs Item 37.
+
+**Follow-up — found and worked around a suspected `fragPosition`/`matModel`
+bug, root cause NOT confirmed.** After shipping, user testing found the
+ground's dirt-patch pattern stayed at a **constant screen-relative offset
+from the player regardless of true distance traveled** (walked from right
+next to a rock to far away from it — rock correctly grew/shrank with
+distance as expected, dirt patch did not move at all relative to the
+player). Both `grass_material.fs` and `prop_lit.fs` compute
+`fragPosition = matModel * vertexPosition` identically in their vertex
+shaders; `prop_lit` only consumes `fragPosition` for a minor specular
+view-direction term (a bug there would be easy to miss), while
+`grass_material` used it as the PRIMARY color-driving coordinate (any bug
+there is immediately, obviously visible) — so this doesn't rule out the
+same issue silently affecting `prop_lit` too.
+
+**Workaround applied (Map Agent), not a root-cause fix:** switched
+`grass_material.fs`'s `worldXZ` from `fragPosition.xz` to `fragTexCoord`,
+with `maps/verdant_path.c` baking `fragTexCoord` = world meters at
+mesh-creation time (`TilePlaneUVs(&groundMesh, MAP_WIDTH, MAP_DEPTH,
+1.0f)`, reusing the same UV-baking helper the stone path already used
+successfully). `fragTexCoord` has zero per-frame matrix dependency, so it
+can't carry this bug regardless of cause. Confirmed working after the
+switch (not yet re-verified with a fresh user screenshot as of this
+writing, but the mechanism is sound either way).
+
+**Still open, for whoever picks this up:** the actual root cause of why
+`matModel`-derived `fragPosition` might be camera/player-coupled was never
+identified — static code review of `GrassMaterial_GetShader`'s
+`shader.locs[]` fixup, `grass_material.vs`, and raylib's expected
+`DrawMesh()`/`SHADER_LOC_MATRIX_MODEL` upload behavior all looked correct
+on paper, and the workaround above was chosen over continued guessing. If
+`prop_lit`'s specular highlight ever looks subtly wrong (e.g. doesn't track
+camera movement correctly), start here. A real diagnostic (not more static
+reading) would settle it: temporarily output `fragPosition` directly as
+`finalColor` in either shader and screenshot it from two different camera/
+player positions — if the color pattern shifts on screen by anything other
+than the expected camera-relative reprojection of a truly static world
+pattern, the bug is confirmed and localized.

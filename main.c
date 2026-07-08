@@ -31,6 +31,7 @@
 #include "sandbox/pool_stats.h"
 #include "core/status_vfx.h"
 #include "core/afterimage.h"
+#include "game/game_screen.h"
 #include <stdio.h>
 
 // Biến camera toàn cục
@@ -212,6 +213,7 @@ int main(int argc, char **argv) {
 
   EnemyEntity enemy;
   InitSandbox(&player, &enemy);
+  GameScreen_Init(&player);
 
   UIPanelState uiState = {0};
   uiState.activeSkillIndex = 0;
@@ -253,7 +255,8 @@ int main(int argc, char **argv) {
   typedef enum {
       SCREEN_MAIN_MENU,
       SCREEN_SKILL_SANDBOX,
-      SCREEN_VFX_TESTER
+      SCREEN_VFX_TESTER,
+      SCREEN_GAME
   } GameScreen;
   GameScreen currentScreen = SCREEN_MAIN_MENU;
   int renderVFXFrame = 0;
@@ -304,29 +307,37 @@ int main(int argc, char **argv) {
         int sh = GetScreenHeight();
         Rectangle btnSandbox = { sw/2 - 150, sh/2 - 60, 300, 50 };
         Rectangle btnVFX = { sw/2 - 150, sh/2 + 20, 300, 50 };
-        
+        Rectangle btnGame = { sw/2 - 150, sh/2 + 100, 300, 50 };
+
         if (CheckCollisionPointRec(mousePos, btnSandbox) && clicked) {
             currentScreen = SCREEN_SKILL_SANDBOX;
         }
         if (CheckCollisionPointRec(mousePos, btnVFX) && clicked) {
             currentScreen = SCREEN_VFX_TESTER;
         }
-        
+        if (CheckCollisionPointRec(mousePos, btnGame) && clicked) {
+            currentScreen = SCREEN_GAME;
+        }
+
         BeginDrawing();
         ClearBackground(DARKGRAY);
-        
+
         const char* title = "WUXING SKILLS TESTBED";
         int titleW = MeasureText(title, 30);
         DrawText(title, sw/2 - titleW/2, sh/2 - 150, 30, WHITE);
-        
+
         DrawRectangleRounded(btnSandbox, 0.2f, 10, CheckCollisionPointRec(mousePos, btnSandbox) ? GRAY : LIGHTGRAY);
         DrawRectangleRoundedLines(btnSandbox, 0.2f, 10, WHITE);
         DrawText("1. ENTER SKILL SANDBOX", (int)btnSandbox.x + 30, (int)btnSandbox.y + 15, 20, BLACK);
-        
+
         DrawRectangleRounded(btnVFX, 0.2f, 10, CheckCollisionPointRec(mousePos, btnVFX) ? GRAY : LIGHTGRAY);
         DrawRectangleRoundedLines(btnVFX, 0.2f, 10, WHITE);
         DrawText("2. ENTER VFX PREFAB TESTER", (int)btnVFX.x + 10, (int)btnVFX.y + 15, 20, BLACK);
-        
+
+        DrawRectangleRounded(btnGame, 0.2f, 10, CheckCollisionPointRec(mousePos, btnGame) ? GRAY : LIGHTGRAY);
+        DrawRectangleRoundedLines(btnGame, 0.2f, 10, WHITE);
+        DrawText("3. ENTER GAME", (int)btnGame.x + 90, (int)btnGame.y + 15, 20, BLACK);
+
         EndDrawing();
         continue;
     }
@@ -376,6 +387,10 @@ int main(int argc, char **argv) {
         if (VFXTest_UpdateAndHandleInput(player.position, mouseTarget3D, testAtlasTex, globalParticleTex)) {
             currentScreen = SCREEN_MAIN_MENU;
         }
+        CameraFX_Update(&camera, dt);
+    } else if (currentScreen == SCREEN_GAME) {
+        GameScreen_Update(&player, &camera, dt);
+        if (GameScreen_RequestedBackToMenu()) currentScreen = SCREEN_MAIN_MENU;
         CameraFX_Update(&camera, dt);
     }
 
@@ -472,6 +487,9 @@ int main(int argc, char **argv) {
     if (currentScreen == SCREEN_SKILL_SANDBOX) {
         VFX_Compose_Draw3D(camera);
     }
+    if (currentScreen == SCREEN_GAME) {
+        GameScreen_Draw3D(&player);
+    }
     Afterimage_Draw();
 
     if (!g_debugHideTrails) {
@@ -506,11 +524,16 @@ int main(int argc, char **argv) {
     // after PostFX_Draw (which would otherwise overwrite it).
     MetaballFX_DrawRegistered(camera, ELEMENT_COLOR_WATER, 0.3f, 0.12f);
 
-    DrawSkillManagerOverlay();
-    DrawCoreTestSkillDebugHUD();
-    PoolStats_DrawOverlay(); // CORE_ISSUES.md Item 3 test — on-screen depth readback (press L)
+    // These are dev/debug overlays — skip them entirely on SCREEN_GAME so it
+    // reads as a real production screen, not a test environment. Untouched
+    // for every other screen.
+    if (currentScreen != SCREEN_GAME) {
+        DrawSkillManagerOverlay();
+        DrawCoreTestSkillDebugHUD();
+        PoolStats_DrawOverlay(); // CORE_ISSUES.md Item 3 test — on-screen depth readback (press L)
+    }
 
-    if (!renderVFXMode) {
+    if (!renderVFXMode && currentScreen != SCREEN_GAME) {
         Vector2 enemyScreenHead = GetWorldToScreen(
             (Vector3){enemy.position.x, enemy.position.y + 0.55f, enemy.position.z},
             camera);
@@ -527,9 +550,13 @@ int main(int argc, char **argv) {
             }
         } else if (currentScreen == SCREEN_VFX_TESTER && !renderVFXMode) {
             VFXTest_DrawHUD();
+        } else if (currentScreen == SCREEN_GAME) {
+            GameScreen_DrawHUD(&player);
         }
 
-        DrawText(TextFormat("FPS: %d", GetFPS()), 10, 640, 20, GREEN);
+        if (currentScreen != SCREEN_GAME) {
+            DrawText(TextFormat("FPS: %d", GetFPS()), 10, 640, 20, GREEN);
+        }
     }
              
     if (currentScreen == SCREEN_SKILL_SANDBOX) {

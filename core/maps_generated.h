@@ -4,9 +4,11 @@
 
 #include "core/map_manager.h"
 
+#include "maps/verdant_path/verdant_path.h"
 #include "maps/default_arena/default_arena.h"
 
 static inline void RegisterGeneratedMaps(void) {
+    MapManager_Register("VERDANT_PATH", InitVerdantPathMap, NULL, DrawVerdantPathMap, NULL);
     MapManager_Register("DEFAULT_ARENA", InitDefaultArenaMap, NULL, DrawDefaultArenaMap, NULL);
 }
 

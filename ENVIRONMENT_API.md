@@ -96,3 +96,54 @@ void Environment_SetShadowColor(Color col);
 EnvFogConfig Environment_GetFogConfig(void);
 void Environment_SetFogConfig(EnvFogConfig config);
 ```
+
+---
+
+## 5. Chu kỳ ánh sáng ngày/đêm (Time-of-Day)
+
+Hệ thống blend keyframe theo thời gian, dùng để tạo map có ánh sáng chuyển động qua các mốc (bình minh → trưa → hoàng hôn → đêm) mà **không cần texture/geometry riêng cho ngày và đêm** — chỉ ánh sáng (ambient, sun color/direction, shadow color, fog) thay đổi.
+
+**Hoàn toàn opt-in / backward-compatible:** nếu không gọi `Environment_SetTimeOfDayPresets()` (hoặc gọi nhưng để speed = 0, mặc định), `Environment_Update()` không làm gì khác so với trước — các lời gọi `Environment_Set*()` tĩnh một-lần trong `Init()` của map vẫn có hiệu lực đầy đủ, không bị hệ thống này ghi đè.
+
+```c
+#define MAX_TIME_OF_DAY_PRESETS 8
+
+typedef struct {
+    Color        ambientColor;
+    Color        sunColor;
+    Vector3      sunDirection;
+    Color        shadowColor;
+    EnvFogConfig fog;
+} EnvLightingPreset;
+
+// Khai báo các keyframe (mốc thời gian) cho một chu kỳ ánh sáng đầy đủ.
+void  Environment_SetTimeOfDayPresets(const EnvLightingPreset *presets, const float *timePoints, int count);
+
+// Tốc độ chu kỳ, đơn vị: chu kỳ/giây. Mặc định 0 = tạm dừng/tắt.
+void  Environment_SetTimeOfDaySpeed(float cyclesPerSecond);
+
+// Nhảy thủ công tới một mốc thời gian trong chu kỳ.
+void  Environment_SetTimeOfDay(float t);
+float Environment_GetTimeOfDay(void);
+```
+
+**Tham số & ràng buộc:**
+*   `timePoints`: giá trị chuẩn hóa `[0,1)`, **phải sắp xếp tăng dần**, số lượng `<= MAX_TIME_OF_DAY_PRESETS` (8).
+*   **Chu kỳ khép vòng (wrap-around):** đoạn từ `timePoints[count-1]` qua mốc `1.0`/`0.0` rồi tới `timePoints[0]` cũng được nội suy mượt, **không phải là một cú cắt cứng** về preset đầu.
+*   Gọi `Environment_SetTimeOfDayPresets()` sẽ **ghi đè** toàn bộ preset đã set trước đó.
+*   `Environment_SetTimeOfDaySpeed(0)` (mặc định) hoặc chưa từng gọi `SetTimeOfDayPresets` → hệ thống hoàn toàn "trơ" (inert), `Environment_Update()` không đổi hành vi so với trước khi có tính năng này.
+*   **Ràng buộc `fog.enabled`:** đây là `bool`, không thể nội suy tuyến tính được. **Tất cả preset truyền vào cùng một lần `SetTimeOfDayPresets()` phải đồng nhất giá trị `fog.enabled`** (toàn bộ `true` hoặc toàn bộ `false`). Khi blend, hệ thống chỉ lấy `fog.enabled` từ một trong hai preset đang được nội suy — nếu bạn trộn `true`/`false` giữa các preset, hành vi bật/tắt sương mù sẽ nhảy tùy tiện giữa hai preset kề nhau thay vì mượt.
+*   Khi blend, `sunDirection` được nội suy tuyến tính theo từng thành phần rồi `Normalize()` lại (giống quy ước của `Environment_SetSunDirection`); các `Color` (bao gồm `fog.color`) được lerp theo từng kênh byte; `fog.start`/`fog.end`/`fog.density` lerp dạng float.
+*   Kết quả blend được ghi thẳng vào cùng state tĩnh mà `Environment_DrawSmartShadow()` và các Getter ở mục 4 đang đọc — không cần đổi gì ở nơi khác.
+
+**Ví dụ sử dụng (map muốn chu kỳ ngày/đêm 20 phút thực):**
+```c
+EnvLightingPreset presets[3] = {
+    { .ambientColor = {50,50,70,255}, .sunColor = {255,245,230,255}, .sunDirection = {0.5f,-0.8f,-0.3f}, .shadowColor = {8,8,12,180}, .fog = {.enabled = false} }, // noon
+    { .ambientColor = {30,20,40,255}, .sunColor = {255,140,80,255},  .sunDirection = {0.9f,-0.2f,-0.1f}, .shadowColor = {8,8,12,180}, .fog = {.enabled = false} }, // dusk
+    { .ambientColor = {10,10,25,255}, .sunColor = {60,70,120,255},   .sunDirection = {-0.3f,-0.6f,0.4f}, .shadowColor = {4,4,8,180},  .fog = {.enabled = false} }, // night
+};
+float times[3] = { 0.0f, 0.4f, 0.7f };
+Environment_SetTimeOfDayPresets(presets, times, 3);
+Environment_SetTimeOfDaySpeed(1.0f / 1200.0f); // 1 chu kỳ / 20 phút thực
+```

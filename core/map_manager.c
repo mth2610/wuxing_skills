@@ -15,11 +15,14 @@ void MapManager_Init(void) {
     
     RegisterGeneratedMaps();
 
-    // Khởi tạo map mặc định là BAMBOO_VALLEY
+    // Default map: DEFAULT_ARENA. (Previously searched for "BAMBOO_VALLEY",
+    // a map deleted in an earlier session — that left the default silently
+    // falling back to whatever map the registry-generator scanned first,
+    // which changes any time a new map/ directory is added. Pinning to a
+    // map that actually exists keeps the default stable across additions.)
     if (s_mapCount > 0) {
-        // Tìm map tre
         for (int i = 0; i < s_mapCount; i++) {
-            if (strcmp(s_maps[i].name, "BAMBOO_VALLEY") == 0) {
+            if (strcmp(s_maps[i].name, "DEFAULT_ARENA") == 0) {
                 s_activeMapIndex = i;
                 break;
             }

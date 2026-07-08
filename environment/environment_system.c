@@ -19,12 +19,87 @@ static EnvFogConfig s_fogConfig = {
     .enabled = false
 };
 
+// --- Time-of-Day dynamic lighting cycle state ---
+// Static storage only (project-wide no-malloc rule). Inert until a map/system
+// opts in via Environment_SetTimeOfDayPresets() + Environment_SetTimeOfDaySpeed().
+static EnvLightingPreset s_todPresets[MAX_TIME_OF_DAY_PRESETS];
+static float s_todTimePoints[MAX_TIME_OF_DAY_PRESETS];
+static int   s_todCount = 0;
+static float s_todCurrentTime = 0.0f; // normalized [0,1)
+static float s_todSpeed = 0.0f;       // cycles per second, 0 = paused
+
 void Environment_Init(void) {
     s_sunDirection = Vector3Normalize(s_sunDirection);
 }
 
+static inline unsigned char EnvLerpByte(unsigned char a, unsigned char b, float t) {
+    return (unsigned char)((float)a + ((float)b - (float)a) * t);
+}
+
+static inline Color EnvLerpColor(Color a, Color b, float t) {
+    Color out;
+    out.r = EnvLerpByte(a.r, b.r, t);
+    out.g = EnvLerpByte(a.g, b.g, t);
+    out.b = EnvLerpByte(a.b, b.b, t);
+    out.a = EnvLerpByte(a.a, b.a, t);
+    return out;
+}
+
+// Blends two lighting presets and writes the result directly into the
+// existing engine-wide statics that Environment_DrawSmartShadow() and the
+// Get* accessors read — no other function needs to know ToD exists.
+static void EnvApplyBlendedPreset(const EnvLightingPreset *a, const EnvLightingPreset *b, float t) {
+    s_ambientColor = EnvLerpColor(a->ambientColor, b->ambientColor, t);
+    s_sunColor     = EnvLerpColor(a->sunColor, b->sunColor, t);
+    s_shadowColor  = EnvLerpColor(a->shadowColor, b->shadowColor, t);
+
+    Vector3 dir = Vector3Lerp(a->sunDirection, b->sunDirection, t);
+    s_sunDirection = Vector3Normalize(dir);
+
+    s_fogConfig.color   = EnvLerpColor(a->fog.color, b->fog.color, t);
+    s_fogConfig.start   = a->fog.start + (b->fog.start - a->fog.start) * t;
+    s_fogConfig.end     = a->fog.end + (b->fog.end - a->fog.end) * t;
+    s_fogConfig.density = a->fog.density + (b->fog.density - a->fog.density) * t;
+    // fog.enabled can't be interpolated (bool) — see header comment: all
+    // presets passed together must agree on it, so either side is fine.
+    s_fogConfig.enabled = a->fog.enabled;
+}
+
 void Environment_Update(float dt) {
-    // Tương lai có thể xoay mặt trời hoặc cập nhật ánh sáng động ở đây
+    if (s_todSpeed == 0.0f || s_todCount <= 0) return; // fully inert: zero behavior change
+
+    s_todCurrentTime += s_todSpeed * dt;
+    s_todCurrentTime = fmodf(s_todCurrentTime, 1.0f);
+    if (s_todCurrentTime < 0.0f) s_todCurrentTime += 1.0f;
+
+    if (s_todCount == 1) {
+        // Nothing to interpolate between — just apply the single preset.
+        EnvApplyBlendedPreset(&s_todPresets[0], &s_todPresets[0], 0.0f);
+        return;
+    }
+
+    float t = s_todCurrentTime;
+
+    // Wrap-aware bracket search across sorted s_todTimePoints[0..count-1].
+    if (t < s_todTimePoints[0] || t >= s_todTimePoints[s_todCount - 1]) {
+        // Segment wraps from the last preset, through 1.0/0.0, to preset[0].
+        float segStart = s_todTimePoints[s_todCount - 1];
+        float segEnd   = s_todTimePoints[0] + 1.0f;
+        float tt = (t < s_todTimePoints[0]) ? (t + 1.0f) : t;
+        float span = segEnd - segStart;
+        float f = (span > 0.00001f) ? (tt - segStart) / span : 0.0f;
+        EnvApplyBlendedPreset(&s_todPresets[s_todCount - 1], &s_todPresets[0], f);
+        return;
+    }
+
+    for (int i = 0; i < s_todCount - 1; i++) {
+        if (t >= s_todTimePoints[i] && t < s_todTimePoints[i + 1]) {
+            float span = s_todTimePoints[i + 1] - s_todTimePoints[i];
+            float f = (span > 0.00001f) ? (t - s_todTimePoints[i]) / span : 0.0f;
+            EnvApplyBlendedPreset(&s_todPresets[i], &s_todPresets[i + 1], f);
+            return;
+        }
+    }
 }
 
 void Environment_DrawSmartShadow(Vector3 pos, EnvShadowShapeType shape, float width, float height) {
@@ -202,3 +277,27 @@ void Environment_SetShadowColor(Color col) { s_shadowColor = col; }
 
 EnvFogConfig Environment_GetFogConfig(void) { return s_fogConfig; }
 void Environment_SetFogConfig(EnvFogConfig config) { s_fogConfig = config; }
+
+void Environment_SetTimeOfDayPresets(const EnvLightingPreset *presets, const float *timePoints, int count) {
+    if (count < 0) count = 0;
+    if (count > MAX_TIME_OF_DAY_PRESETS) count = MAX_TIME_OF_DAY_PRESETS;
+
+    s_todCount = count;
+    for (int i = 0; i < count; i++) {
+        s_todPresets[i] = presets[i];
+        s_todPresets[i].sunDirection = Vector3Normalize(s_todPresets[i].sunDirection);
+        s_todTimePoints[i] = timePoints[i];
+    }
+}
+
+void Environment_SetTimeOfDaySpeed(float cyclesPerSecond) {
+    s_todSpeed = cyclesPerSecond;
+}
+
+void Environment_SetTimeOfDay(float t) {
+    t = fmodf(t, 1.0f);
+    if (t < 0.0f) t += 1.0f;
+    s_todCurrentTime = t;
+}
+
+float Environment_GetTimeOfDay(void) { return s_todCurrentTime; }

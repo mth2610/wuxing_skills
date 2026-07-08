@@ -100,8 +100,10 @@ Tự gán shader, texture, vật liệu và quản lý blend mode / Z-buffer ph�
 - `VFX_PathWave`: Sinh đợt hiệu ứng mọc tuần tự dọc theo một danh sách điểm (cột đá nhô, gai băng mọc, gai mộc bò, lửa phun, sét truyền), phù hợp với kỹ năng vẽ đường casting kéo chuột.
 - `VFX_SummonCircle`: Tạo vòng tròn triệu hồi với hai lớp pháp trận xoay ngược chiều nhau, hút các luồng hạt năng lượng vào tâm.
 - `VFX_TriggerExplosion(VC_MaterialId, ...)`: Kích nổ theo công thức chuẩn — mọi nguyên tố; gradient/force field/màu sáng từ material, decal nứt cho hệ giòn (ICE/LIGHTNING/EARTH/METAL) và decal cháy cho hệ còn lại, kèm Screen Distortion, Point Light flash, hạt nổ tỏa tròn và rung camera tùy chọn.
-- `VFX_ComposeAura(VC_MaterialId, ...)`: Tạo hào quang/vòng buff lơ lửng quanh chân và tỏa các hạt năng lượng hướng lên trên — mọi nguyên tố, màu = `glow` (riêng LIGHTNING = `body` tím ambient); khí thuần dùng `VC_MAT_QI`.
+- `VFX_ComposeAura(VC_MaterialId, pos, radius, time)`: Tạo hào quang/vòng buff lơ lửng quanh chân và tỏa các hạt năng lượng hướng lên trên — mọi nguyên tố, màu = `glow` (riêng LIGHTNING = `body` tím ambient); khí thuần dùng `VC_MAT_QI`.
 - `VFX_ComposeQiAura` / `VFX_AttachQiAura` / `VFX_DetachQiAura` / `VFX_UpdateQiAuras`: Hào quang khí công quấn quanh nhân vật theo `casterAgentId` (cột khí xoáy ngẫu nhiên bốc lên, sparkle rải rác) — `Attach` gắn/khởi tạo theo agent, `Update` chạy mỗi frame cho toàn bộ pool, `Detach` gỡ khi kết thúc.
+- `VFX_ComposeCylinderAura(VC_MaterialId, pos, radius, progress, time)` (`vc_cylinder_aura.inl`): Cột màng năng lượng hình trụ không nắp — phù hợp cho buff giáp/hộ thể. 4 layer: (1) lưới `VortexFunnel` với shader `AuraShellMaterial` (`aura_shell.vs/.fs`) — FBM filaments cuộn lên theo trục Y + scanline rings ngang + Fresnel rim boost; (2) wisp curl quanh thân trụ (ForceField: NOISE_CURL + VISCOSITY + GRAVITY_DIR lên); (3) rune xoay kép trên mặt đất (`mat->runeDecal`, outer 18°/s + inner ngược chiều 32°/s); (4) ember hạt nhỏ phun thẳng lên trong lòng trụ (phân bố đều `sqrtf` random trong disc). `progress` điều khiển scale-in (0..0.2) + guard early-exit. Màu body/glow cập nhật mỗi frame từ `VFX_Material(matId)`.
+- `VFX_ComposeGroundAura(VC_MaterialId, pos, radius, scrollSpeed, time)` (`vc_ground_aura.inl`): Đĩa năng lượng phát sáng trên mặt đất — shader `ground_aura.vs/.fs` vẽ quad UV-mapped, FS tính radial mask (edge fade 0.6→1.0, center hole 0→0.3) + FBM wisps tọa độ cực tỏa từ tâm. `scrollSpeed > 0` = năng lượng tỏa ra ngoài; `scrollSpeed < 0` = hút vào tâm. 3 layer: (1) ground disc shader + BLEND_ADDITIVE; (2) edge sparks hạt nhỏ ở vành ngoài; (3) ambient light pulse tại tâm. Màu từ `mat->body/glow`.
 
 ---
 
@@ -216,9 +218,10 @@ vc_common.inl     — render primitives (VC_DrawGroundQuadXZ, VC_DrawGroundRune)
 vc_beauty.inl     — beauty primitives — MUST precede element .inl (vc_zone calls GlintBurst)
 vc_preset.inl     — preset-driven: SmokePuff, SmokeTrail, LightningBolt, Impact, Cast, ProjectileTrail
 vc_metal.inl / vc_wood.inl / vc_water.inl / vc_fire.inl / vc_earth.inl / vc_plasma.inl / vc_taiji.inl
-vc_projectile.inl / vc_ground.inl / vc_beam.inl / vc_path.inl / vc_summon.inl / vc_explosion.inl / vc_aura.inl
+vc_projectile.inl / vc_ground.inl / vc_beam.inl / vc_path.inl / vc_summon.inl / vc_explosion.inl / vc_aura.inl / vc_cylinder_aura.inl
 vc_shield.inl / vc_chain.inl / vc_zone.inl / vc_slash.inl / vc_charge.inl
 vc_elemental_mist.inl
+vc_ground_aura.inl
 ```
 
 ## Sync script
