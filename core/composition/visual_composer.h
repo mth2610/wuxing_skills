@@ -69,7 +69,20 @@ void VFX_ComposeStreakFlare(Vector3 pos, float scale, Color tint);
 // 9. Procedural Visual Components (Mesh-based compositions)
 void VFX_ComposeStonePillar(Vector3 basePos, float progress);
 void VFX_ComposeBoulder(Vector3 pos);
-void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
+void VFX_ComposeIceCrystal(Vector3 basePos, int seed); // cụm nhỏ 3 viên, ambient — build lại + rlBegin mỗi frame, chỉ dùng cho chi tiết phụ
+
+// Cụm pha lê băng "hero burst" (nhiều viên, chi tiết cao — vd skill bắn ra
+// 10 viên pha lê cùng lúc, cast dồn dập/nhiều nhân vật cùng lúc). Dùng 1
+// mesh "viên mẫu" build đúng 1 lần duy nhất (vĩnh viễn, không build lại/
+// không unload) rồi vẽ N viên bằng N lần DrawMesh với transform khác nhau
+// (dịch/xoay/scale tính trên CPU) — KHÔNG gọi UploadMesh mỗi cast (tránh
+// giật khung hình khi nhiều cast dồn vào cùng lúc, xem CORE_API.md mục
+// "Crystal Cluster — GPU-resident mesh"). Không cần Build/Unload riêng ở
+// phía skill — gọi thẳng hàm này mỗi frame trong lúc VFX còn sống.
+// growProgress 0..1: 0 = chưa mọc, 1 = mọc đầy đủ (GPU shader lo, không tốn
+// CPU). `seed` khác nhau mỗi lần cast (vd trộn GetTime()) → cụm khác nhau;
+// cùng seed → cùng hình dạng (xác định, không phải bug).
+void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
 void VFX_ComposeMagicPuddle(Vector3 pos);
 void VFX_ComposeFireball(Vector3 pos, float time);
 void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);

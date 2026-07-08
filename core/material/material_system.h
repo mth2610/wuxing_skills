@@ -113,11 +113,18 @@ typedef struct
     int uDissolveLoc;
     int uTexture1Loc;
     int uTimeLoc;
+    int uGrowProgressLoc;
 } CrystalMaterial;
 
 CrystalMaterial CrystalMaterial_Load(CrystalMaterialParams params);
 void CrystalMaterial_Begin(CrystalMaterial mat);
 void CrystalMaterial_End(void);
+
+/* Set u_growProgress (0..1) cho hiệu ứng "mọc lên" của Mesh GPU-resident từ
+ * ProceduralMesh_BuildCrystalClusterMesh — gọi giữa Begin/End, trước
+ * DrawMesh/ProceduralMesh_DrawBakedCrystalCluster. CrystalMaterial_Begin luôn
+ * reset về 1.0 nên chỉ cần gọi hàm này khi thực sự đang animate mọc lên. */
+void CrystalMaterial_SetGrowProgress(CrystalMaterial mat, float progress);
 
 /* ============================================================================
  * PLASMA MATERIAL SYSTEM

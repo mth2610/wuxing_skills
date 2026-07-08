@@ -1077,6 +1077,81 @@ Rules:
 - `tipSharpness` controls `tipRadius = baseRadius * (1 - tipSharpness)` — 1.0 gives a near-point tip, 0.0 a flat-cut prism end.
 - **Build once at cast time and cache** — shards don't animate shape, same convention as Rock.
 
+#### Crystal / Crystal Cluster (faceted crystal spike + multi-crystal cluster)
+
+```c
+typedef struct {
+    float height, radius, taper, twist, noise, bevel, split;
+    int sides, segments;   // sides<3 or segments<2 => no-op
+} CrystalDesc;
+
+// Single crystal, immediate-mode draw (1 rlBegin/rlEnd per call).
+void ProceduralMesh_DrawCrystal(Vector3 pos, const CrystalDesc *desc, float progress, Color color);
+
+#define CRYSTAL_CLUSTER_MAX_CRYSTALS 8
+#define CRYSTAL_CLUSTER_MAX_TRIS 1024
+
+typedef struct {
+    Vector3 pos[CRYSTAL_CLUSTER_MAX_TRIS * 3];
+    Vector3 normal[CRYSTAL_CLUSTER_MAX_TRIS * 3];
+    Vector2 uv[CRYSTAL_CLUSTER_MAX_TRIS * 3];
+    int triCount;
+} CrystalClusterMeshData;
+
+void ProceduralMesh_BuildCrystalCluster(
+    CrystalClusterMeshData *out,
+    Vector3 center, const CrystalDesc *desc,
+    int count, int seed, float progress
+);
+void ProceduralMesh_DrawCrystalClusterMesh(const CrystalClusterMeshData *data, Color color);
+
+// Convenience build+draw wrapper — same signature as before the batching
+// rewrite, no call-site changes needed.
+void ProceduralMesh_DrawCrystalCluster(Vector3 center, const CrystalDesc *desc, int count, int seed, float progress, Color color);
+```
+Rules:
+- `ProceduralMesh_DrawCrystal` draws one faceted crystal spike (`sides`-gon cross-section, `segments` rings, taper/twist/noise/random-offset apex), clamped to `sides<=16`, `segments<=16`.
+- `ProceduralMesh_DrawCrystalCluster` used to `rlPushMatrix`+draw each crystal separately (N draw calls for N crystals). It now builds the whole cluster (children positioned/tilted per deterministic `seed`, same layout as before) into one flat `CrystalClusterMeshData` buffer — tilt applied via CPU `Vector3RotateByAxisAngle` instead of the GL matrix stack — then submits it with exactly **one** `rlBegin(RL_TRIANGLES)/rlEnd()`. The function signature is unchanged; existing call sites (`vc_metal.inl`, `vc_water.inl`) get the win with no changes.
+- Cluster children are LOD-capped to `sides<=8, segments<=8` regardless of the parent `desc` (cluster crystals are secondary/ambient detail, not the hero shape) — this bounds `CrystalClusterMeshData`'s static footprint. `count` is capped to `CRYSTAL_CLUSTER_MAX_CRYSTALS` (8).
+- If you need to animate `progress` (grow-in reveal) call `ProceduralMesh_BuildCrystalCluster` yourself each frame with the current `progress` and cache the `CrystalClusterMeshData` in the skill's instance struct — same idea as `BuildTube`/`BuildWavePlane`'s per-frame rebuild convention, just batched instead of one-crystal-at-a-time. If `progress` is always `1.0` for your use case, building once at cast time and reusing the cached buffer is cheaper (matches Rock/ShardCluster's build-once convention).
+- This immediate-mode path is for **small ambient clusters only** (3-8 low-detail crystals, e.g. micro-crystal debris at a skill's base). For a **hero burst** (e.g. 10 crystals at full `sides<=16, segments<=16` detail, spawned once and alive for several seconds) rebuilding + resubmitting thousands of vertices through `rlVertex3f` every frame is a measured CPU bottleneck (not a "draw call count" problem — `rlgl` already batches same-primitive submissions into one GL call; the cost is the sheer number of per-vertex function calls + trig/cross/normalize math redone every frame for geometry that isn't changing). Use the GPU-resident mesh API below instead.
+
+##### Crystal Cluster — GPU-resident mesh (hero bursts, e.g. 10-crystal cast)
+
+```c
+Mesh ProceduralMesh_BuildCrystalClusterMesh(const CrystalDesc *desc, int count, int seed);
+void ProceduralMesh_DrawBakedCrystalCluster(Mesh mesh, Material material, Matrix transform);
+Material ProceduralMesh_GetPassthroughMaterial(Shader shader);
+
+// core/material/material_system.h
+void CrystalMaterial_SetGrowProgress(CrystalMaterial mat, float progress); // 0..1, default 1.0
+```
+Two GPU-resident approaches exist — **prefer the template one** (see perf warning below):
+
+**`ProceduralMesh_BuildCrystalTemplateMesh` (recommended default for burst/repeated casts):**
+```c
+Mesh ProceduralMesh_BuildCrystalTemplateMesh(const CrystalDesc *desc);
+```
+- Builds **one** crystal (local space, centered at origin, upright — no position/tilt/scale jitter). Call **once ever** (lazy static, same lifetime convention as a loaded shader/texture) — never rebuild, never unload for the lifetime of the process.
+- Draw N crystals that all "look different" by looping `ProceduralMesh_DrawBakedCrystalCluster(templateMesh, material, transform)` with a **different `transform` per crystal** (translate/rotate/non-uniform-scale computed on the CPU from a per-instance deterministic hash) — no new `Mesh`, no `UploadMesh`, ever, after the first build. See `VFX_DrawIceCrystalBurst` (`core/composition/vc_water.inl`) for the full worked example (LCG hash → position/tilt/height-radius-scale → `MatrixScale`×`MatrixRotateY/Z`×`MatrixTranslate` composed the standard raylib TRS way).
+
+**`ProceduralMesh_BuildCrystalClusterMesh` (rare/static use only):**
+```c
+Mesh ProceduralMesh_BuildCrystalClusterMesh(const CrystalDesc *desc, int count, int seed);
+```
+- Bakes a **whole pre-scattered cluster** (position/tilt jitter baked into the geometry itself, driven by `seed`) into one `Mesh`.
+- **Perf trap:** this calls `UploadMesh` — a real GPU-driver synchronization point (`glGenBuffers`/`glBufferData`), not a cheap CPU operation. Building it once (e.g. a static decorative prop baked at level load) is fine. Building a **new** one on every cast (the first version of this API did this) is fine for a single character casting occasionally, but **stutters** the moment several casts complete in the same short window (multiple characters, or rapid repeated clicks) — several `UploadMesh` calls bunching up in one/few frames is the actual bottleneck, not `DrawMesh` (which is cheap even called 30+ times/frame). If you need each cast to look different, use the template approach above instead — it gets the same "no two casts look identical" result via per-instance transform, with zero `UploadMesh` after the first ever call.
+
+Shared rules for both:
+- Baked at `progress = 1.0` (fully grown) always — the "grow up from the ground" reveal animation is **not** baked into CPU vertices. `core/shaders/crystal.vs` has a `u_growProgress` uniform (`vertexPosition.y *= u_growProgress` before MVP) set via `CrystalMaterial_SetGrowProgress`. Per-frame CPU cost per crystal: one `DrawMesh` call (uniform is set once per `Begin`, shared across all crystals drawn in that block). `CrystalMaterial_Begin` always resets `u_growProgress` to `1.0` first (so old `ProceduralMesh_DrawCrystal`/`DrawCrystalCluster` immediate-mode call sites, which bake `progress` at the CPU level, are unaffected).
+- Draw between `CrystalMaterial_Begin`/`CrystalMaterial_End` (or any other `BeginShaderMode`-wrapped block): `DrawMesh`/`ProceduralMesh_DrawBakedCrystalCluster` set `mvp`/`matModel` correctly via `shader.locs[]` — see the `matModel` identity-default comment in `SkillManager_BeginShader` (`core/skill_manager.c`), which exists specifically so `DrawMesh` composes safely with a shader already bound via `BeginShader`. Get the `Material` via `ProceduralMesh_GetPassthroughMaterial(mat.shader)` — a cached `LoadMaterialDefault()` with `.shader` swapped in, used purely as a vehicle for `DrawMesh`; it never touches `u_baseColor`/texture1/etc, those stay owned by `CrystalMaterial_Begin`.
+- Mesh is built in **local space centered at the origin** — position/orient/scale via the `transform` matrix, not by baking world position into the geometry.
+- **Ready-made ice/water wrapper** (`core/composition/visual_composer.h`, `vc_water.inl`) — skills don't need to touch `ProceduralMesh_*`/`CrystalMaterial_*` directly for the ice-crystal case:
+  ```c
+  void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress); // call every frame, no Build/Unload needed
+  ```
+  Uses the template approach internally — no `Mesh` to cache or unload in the skill's instance struct, just call this once per frame while the VFX is alive. Pass a **different `seed` per cast** (e.g. derived from `GetTime()`, a per-agent cast counter, or `agentId` mixed with cast index) if you want each cast to look different — `seed` is the only source of shape variety. The same `seed` always reproduces the same layout (by design, for reproducibility/testing).
+
 #### Vortex Funnel (tapered, twisting wind/tornado funnel)
 
 ```c

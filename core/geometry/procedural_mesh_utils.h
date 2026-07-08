@@ -509,6 +509,105 @@ typedef struct
 
 // Draw a single crystal at the given position with the specified description and progress (0.0 to 1.0)
 void ProceduralMesh_DrawCrystal(Vector3 pos, const CrystalDesc *desc, float progress, Color color);
+
+/* TỐI ƯU: ProceduralMesh_DrawCrystalCluster trước đây gọi rlPushMatrix +
+ * rlBegin/rlEnd riêng cho từng viên (N draw call/state-push cho N viên).
+ * Giờ nó build toàn bộ cụm vào 1 buffer phẳng (xoay tiltDeg bằng toán vector
+ * CPU thay vì GL matrix stack) rồi vẽ bằng đúng 1 rlBegin/rlEnd — xem
+ * ProceduralMesh_BuildCrystalCluster/ProceduralMesh_DrawCrystalClusterMesh
+ * bên dưới nếu cần build 1 lần và cache (progress cố định) thay vì build lại
+ * mỗi frame. */
+#define CRYSTAL_CLUSTER_MAX_CRYSTALS 8
+#define CRYSTAL_CLUSTER_MAX_TRIS 1024 /* 8 viên * tối đa ~126 tam giác/viên (LOD con capped ở sides/segments<=8) */
+
+typedef struct
+{
+  Vector3 pos[CRYSTAL_CLUSTER_MAX_TRIS * 3];
+  Vector3 normal[CRYSTAL_CLUSTER_MAX_TRIS * 3];
+  Vector2 uv[CRYSTAL_CLUSTER_MAX_TRIS * 3];
+  int triCount;
+} CrystalClusterMeshData;
+
+/* Build cụm crystal quanh `center`: mỗi viên con lệch theo seed (giống hệt
+ * layout cũ), xoay tiltDeg bằng CPU vector math, ghi thẳng vào world-space
+ * buffer `out`. Sides/segments của viên con bị clamp <= 8 để giữ bộ nhớ tĩnh
+ * hợp lý (cluster dùng cho chi tiết phụ, không cần LOD cao như crystal chính). */
+void ProceduralMesh_BuildCrystalCluster(CrystalClusterMeshData *out, Vector3 center,
+                                        const CrystalDesc *desc, int count, int seed,
+                                        float progress);
+
+/* Vẽ cụm đã build: đúng 1 rlBegin(RL_TRIANGLES)/rlEnd() cho toàn bộ cụm. */
+void ProceduralMesh_DrawCrystalClusterMesh(const CrystalClusterMeshData *data, Color color);
+
+/* Tiện ích build+draw ngay trong 1 lệnh (dùng buffer scratch static nội bộ) —
+ * giữ nguyên chữ ký cũ nên các call site hiện có không cần sửa gì, vẫn nhận
+ * được lợi ích 1-draw-call thay vì N. */
 void ProceduralMesh_DrawCrystalCluster(Vector3 center, const CrystalDesc *desc, int count, int seed, float progress, Color color);
+
+/* ============================================================================
+ * CRYSTAL CLUSTER — GPU-RESIDENT MESH (cast-burst nhiều viên, vd 8-10 viên)
+ * --------------------------------------------------------------------------
+ * ProceduralMesh_DrawCrystalCluster ở trên vẫn build lại CPU + submit qua
+ * rlBegin/rlEnd MỖI FRAME — ổn cho cụm nhỏ (3-5 viên chi tiết thấp, vd
+ * micro-crystal ở chân skill). Với 1 cú cast tạo NHIỀU viên chi tiết cao (vd
+ * 10 viên x 16 sides x 16 segments ~ 15.000 đỉnh) và VFX sống nhiều frame,
+ * build lại + rlVertex3f từng đỉnh mỗi frame là nút thắt CPU thật sự (không
+ * phải "N draw call" — rlgl tự gộp — mà là N lệnh gọi hàm rời rạc + toán
+ * sin/cos/normalize lặp lại vô ích khi hình dạng không đổi).
+ *
+ * Hàm dưới đây build đúng 1 LẦN thành Mesh thật (VBO GPU, giống hệt convention
+ * của ProceduralMesh_CreateBaseGrid/CreateBaseCylinder ở khối "GPU VERTEX
+ * DISPLACEMENT" bên dưới): cast-time only, cache Mesh trong instance struct
+ * của skill, KHÔNG gọi lại mỗi frame. Hiệu ứng "mọc lên" (progress 0->1)
+ * không bake vào CPU nữa mà giao cho GPU qua uniform `u_growProgress` của
+ * CrystalMaterial (core/shaders/crystal.vs nhân progress vào trục Y trước
+ * MVP) — CPU mỗi frame chỉ còn đúng 1 dòng set uniform + 1 lệnh DrawMesh. */
+
+/* CẢNH BÁO HIỆU NĂNG: hàm này gọi UploadMesh (tạo VBO/VAO MỚI trên GPU) mỗi
+ * lần build — đó là 1 lệnh đồng bộ hoá GPU-driver thật sự tốn kém (khác hẳn
+ * DrawMesh, chỉ set uniform + draw call rất rẻ). Build 1 lần thì không sao,
+ * nhưng nếu skill build lại mỗi lần cast (VD 1 cụm mới mỗi lần bắn) và nhiều
+ * cast dồn vào cùng 1 khoảng ngắn (nhiều nhân vật/click liên tục), nhiều lần
+ * UploadMesh dồn dập SẼ gây giật khung hình dù per-frame draw đã rẻ.
+ * → Nếu skill cast liên tục/dồn dập: dùng ProceduralMesh_BuildCrystalTemplateMesh
+ *   (build 1 lần duy nhất, vĩnh viễn) + tự tính transform per-instance thay vì
+ *   gọi hàm này mỗi cast. Chỉ dùng hàm này cho mesh thật sự tĩnh, build hiếm
+ *   (VD 1 prop trang trí cố định trong map, build lúc load level).
+ *
+ * Build cụm crystal ở progress=1.0 (full-grown), local space quanh gốc
+ * (0,0,0) — dùng `transform` khi DrawMesh để đặt vào world position thật.
+ * Trả Mesh rỗng (vertexCount=0) nếu desc/count không hợp lệ.
+ * Cast-time only — gọi 1 lần lúc bắt đầu VFX, cache vào instance struct của
+ * skill, KHÔNG gọi mỗi frame. Nhớ gọi ProceduralMesh_UnloadBase() khi VFX kết
+ * thúc (cùng convention với CreateBaseGrid/CreateBaseCylinder). */
+Mesh ProceduralMesh_BuildCrystalClusterMesh(const CrystalDesc *desc, int count, int seed);
+
+/* Build ĐÚNG 1 viên pha lê "mẫu" (local space, tâm gốc (0,0,0), thẳng đứng —
+ * KHÔNG có jitter vị trí/tilt/scale của 1 viên con trong cluster). Gọi 1 LẦN
+ * DUY NHẤT (lười — lazy static, giống cách shader/texture chỉ Load 1 lần),
+ * KHÔNG BAO GIỜ build lại hay unload trong suốt vòng đời game. Dùng lại nhiều
+ * lần qua ProceduralMesh_DrawBakedCrystalCluster với `transform` khác nhau
+ * (dịch/xoay/scale tính trên CPU) để vẽ nhiều viên "trông khác nhau" mà
+ * không tốn UploadMesh nào thêm — đây là cách tối ưu đúng cho skill cast
+ * dồn dập nhiều viên/nhiều lần. Xem VFX_DrawIceCrystalBurst (core/composition/
+ * vc_water.inl) làm ví dụ đầy đủ (build template 1 lần + vòng lặp DrawMesh
+ * với transform ngẫu nhiên xác định theo seed). */
+Mesh ProceduralMesh_BuildCrystalTemplateMesh(const CrystalDesc *desc);
+
+/* Vẽ Mesh đã build ở trên. Gọi giữa CrystalMaterial_Begin/CrystalMaterial_End
+ * (hoặc bất kỳ block đã BeginShaderMode nào khác — DrawMesh tự set mvp/
+ * matModel qua shader.locs, không cần thao tác gì thêm, xem comment trong
+ * SkillManager_BeginShader). `material` nên lấy từ
+ * ProceduralMesh_GetPassthroughMaterial(shader) để không phải tự quản lý
+ * Material/texture maps. */
+void ProceduralMesh_DrawBakedCrystalCluster(Mesh mesh, Material material, Matrix transform);
+
+/* Material dùng chung, "trong suốt" về mặt texture/color (LoadMaterialDefault
+ * load 1 lần, cache) — chỉ để làm phương tiện gọi DrawMesh với shader tuỳ
+ * biến (crystal.vs/.fs qua CrystalMaterial, hoặc bất kỳ shader custom nào
+ * dùng tên uniform chuẩn "mvp"/"matModel"); mọi uniform khác (u_baseColor,
+ * u_growProgress...) do CrystalMaterial_Begin/SetGrowProgress set riêng, hàm
+ * này không đụng vào. Đổi `.shader` mỗi lần gọi theo shader đang active. */
+Material ProceduralMesh_GetPassthroughMaterial(Shader shader);
 
 #endif // PROCEDURAL_MESH_UTILS_H

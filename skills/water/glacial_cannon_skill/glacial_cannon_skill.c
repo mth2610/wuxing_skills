@@ -16,6 +16,7 @@ typedef enum
 {
     STATE_CASTING,
     STATE_CHANNELING,
+    STATE_IMPACT_BURST,
     STATE_DONE
 } SkillState;
 
@@ -33,6 +34,9 @@ typedef struct
     Vector3 pathPoints[32];
     int pathPointCount;
     int lastSpawnedIdx;
+
+    int burstSeed;
+    float burstProgress;
 } SkillInstance;
 
 static SkillInstance s_instances[MAX_INSTANCES];
@@ -44,7 +48,7 @@ void InitGlacialCannonSkill(int screenWidth, int screenHeight)
     for (int i = 0; i < MAX_INSTANCES; i++)
         s_instances[i].active = false;
 
-#define GLACIAL_CANNON_TUNABLE_COUNT 5
+#define GLACIAL_CANNON_TUNABLE_COUNT 6
     static SkillTunableEntry s_tunables[GLACIAL_CANNON_TUNABLE_COUNT];
     int tn = 0;
 #include "glacial_cannon_skill_tunables.inl"
@@ -72,6 +76,8 @@ void CastGlacialCannonSkill(int agentId, Vector3 startPos, Vector3 target, Skill
         s->damageAccumulator = 0.0f;
         s->ownerAgentId = agentId;
         s->lastSpawnedIdx = -1;
+        s->burstSeed = 0;
+        s->burstProgress = 0.0f;
 
         // Initialize path points (line from start to target)
         s->pathPointCount = 16;
@@ -139,10 +145,25 @@ void UpdateGlacialCannonSkill(float dt, Vector3 enemyPos, float enemyRadius)
 
             if (s->timer >= s_waveDuration)
             {
-                // VFX_TriggerExplosion(VC_MAT_ICE, s->targetPos, s->sizeScale * 1.5f, true);
                 PlayImpactSound(EFFECT_PRESET_ICE_SHATTER);
                 ApplyAoEDamage(s->targetPos, s_aoeRadius * s->sizeScale * 1.8f, s_damagePerSecond * 0.5f, 1.5f);
 
+                unsigned int seedBits = (unsigned int)(GetTime() * 1000.0f) ^ ((unsigned int)s->ownerAgentId * 747796405u) ^ ((unsigned int)i * 2891336453u);
+                s->burstSeed = (int)seedBits;
+                s->burstProgress = 0.0f;
+
+                s->state = STATE_IMPACT_BURST;
+                s->timer = 0.0f;
+            }
+        }
+        else if (s->state == STATE_IMPACT_BURST)
+        {
+            s->burstProgress = s->timer / s_burstDuration;
+            if (s->burstProgress > 1.0f)
+                s->burstProgress = 1.0f;
+
+            if (s->timer >= s_burstDuration)
+            {
                 s->state = STATE_DONE;
                 s->active = false;
             }
@@ -173,6 +194,10 @@ void DrawGlacialCannonSkill(void)
 
             // Draw sequential Ice Spikes along path (with updated deterministic non-wobbly mesh)
             VFX_PathWave(PATH_ICE_SPIKE, s->pathPoints, s->pathPointCount, s_spikeScale * s->sizeScale, progress, time);
+        }
+        else if (s->state == STATE_IMPACT_BURST)
+        {
+            VFX_DrawIceCrystalBurst(s->targetPos, GLACIAL_CANNON_BURST_CRYSTAL_COUNT, s->burstSeed, s->burstProgress);
         }
     }
 }

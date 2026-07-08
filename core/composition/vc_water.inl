@@ -105,7 +105,10 @@ void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, floa
     rlEnableDepthMask();
 }
 
-void VFX_ComposeIceCrystal(Vector3 basePos, int seed)
+// Chung cho cả VFX_ComposeIceCrystal (cụm nhỏ ambient) lẫn
+// VFX_BuildIceCrystalBurstMesh/DrawIceCrystalBurstMesh (hero burst GPU-mesh)
+// — load 1 lần, dùng chung shader/texture, tránh double-load.
+static CrystalMaterial GetIceCrystalMaterial(void)
 {
     static CrystalMaterial s_iceMat;
     static bool s_iceMatLoaded = false;
@@ -124,7 +127,13 @@ void VFX_ComposeIceCrystal(Vector3 basePos, int seed)
         s_iceMat = CrystalMaterial_Load(p);
         s_iceMatLoaded = true;
     }
+    return s_iceMat;
+}
 
+// Desc dùng chung cho ambient cluster lẫn hero burst — hình dạng 1 viên pha
+// lê băng gốc giống hệt nhau, chỉ khác số lượng/LOD giữa 2 đường vẽ.
+static CrystalDesc GetIceCrystalDesc(void)
+{
     CrystalDesc desc = {0};
     desc.height = 1.3f;
     desc.radius = 0.16f;
@@ -133,9 +142,113 @@ void VFX_ComposeIceCrystal(Vector3 basePos, int seed)
     desc.noise = 0.08f;
     desc.sides = 6;
     desc.segments = 6;
+    return desc;
+}
 
-    CrystalMaterial_Begin(s_iceMat);
+void VFX_ComposeIceCrystal(Vector3 basePos, int seed)
+{
+    CrystalMaterial iceMat = GetIceCrystalMaterial();
+    CrystalDesc desc = GetIceCrystalDesc();
+
+    CrystalMaterial_Begin(iceMat);
     ProceduralMesh_DrawCrystalCluster(basePos, &desc, 3, seed, 1.0f, WHITE);
+    CrystalMaterial_End();
+}
+
+// Mesh "viên pha lê mẫu" — build ĐÚNG 1 LẦN (lazy static), KHÔNG BAO GIỜ
+// build lại hay unload trong suốt vòng đời game (giống lifecycle shader/
+// texture qua GetIceCrystalMaterial). Đây là điểm mấu chốt tránh UploadMesh
+// lặp lại mỗi cast: build lại + UploadMesh mỗi lần cast (như thiết kế trước)
+// tạo VBO MỚI trên GPU mỗi lần — rẻ khi cast thưa, nhưng khi nhiều cast dồn
+// vào cùng khoảng ngắn (nhiều nhân vật/click liên tục) thì nhiều lần
+// UploadMesh dồn dập gây giật khung hình dù per-frame draw đã rẻ sẵn.
+static Mesh GetIceCrystalTemplateMesh(void)
+{
+    static Mesh s_template = {0};
+    static bool s_ready = false;
+    if (!s_ready)
+    {
+        CrystalDesc desc = GetIceCrystalDesc();
+        s_template = ProceduralMesh_BuildCrystalTemplateMesh(&desc);
+        s_ready = true;
+    }
+    return s_template;
+}
+
+// Vẽ 1 cụm `crystalCount` viên pha lê "trông khác nhau" mà KHÔNG build mesh
+// mới — mỗi viên chỉ là 1 DrawMesh với transform (dịch/xoay/scale) riêng,
+// tính trên CPU từ 1 LCG xác định theo `seed` (cùng công thức đơn giản với
+// VFX_ComposeMetalShardCluster ở vc_metal.inl, không cần khớp bit-for-bit
+// với HashDeterministic nội bộ của core/geometry/pm_crystal.inl — chỉ cần
+// xác định theo seed và trông tự nhiên). `seed` khác nhau mỗi lần cast (VD
+// trộn GetTime()) → cụm khác nhau; cùng seed → cùng cụm.
+// Gọi thay cho VFX_BuildIceCrystalBurstMesh/VFX_DrawIceCrystalBurstMesh/
+// VFX_UnloadIceCrystalBurstMesh cũ — không còn Mesh nào cần cache/unload ở
+// phía skill nữa, chỉ cần gọi hàm này mỗi frame trong lúc VFX còn sống.
+void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress)
+{
+    Mesh templateMesh = GetIceCrystalTemplateMesh();
+    if (templateMesh.vertexCount <= 0)
+        return;
+    if (crystalCount > 32)
+        crystalCount = 32; // chỉ là vòng lặp DrawMesh (rẻ) — chặn trần hợp lý, không phải giới hạn hiệu năng thật
+
+    CrystalDesc desc = GetIceCrystalDesc();
+    CrystalMaterial iceMat = GetIceCrystalMaterial();
+
+    CrystalMaterial_Begin(iceMat);
+    Material passthrough = ProceduralMesh_GetPassthroughMaterial(iceMat.shader);
+
+    unsigned int rng = (unsigned int)seed * 747796405u + 2891336453u;
+    for (int i = 0; i < crystalCount; i++)
+    {
+        rng = rng * 1664525u + 1013904223u;
+        float r01 = (float)(rng >> 8 & 0xFFFF) / 65535.0f; // góc quanh center
+        rng = rng * 1664525u + 1013904223u;
+        float r02 = (float)(rng >> 8 & 0xFFFF) / 65535.0f; // khoảng cách + radius scale
+        rng = rng * 1664525u + 1013904223u;
+        float r03 = (float)(rng >> 8 & 0xFFFF) / 65535.0f; // độ lún xuống đất
+        rng = rng * 1664525u + 1013904223u;
+        float r04 = (float)(rng >> 8 & 0xFFFF) / 65535.0f; // height scale
+        rng = rng * 1664525u + 1013904223u;
+        float r05 = (float)(rng >> 8 & 0xFFFF) / 65535.0f; // tilt
+        rng = rng * 1664525u + 1013904223u;
+        float r06 = (float)(rng >> 8 & 0xFFFF) / 65535.0f; // độ trễ lúc bắt đầu mọc (so le, tránh mọc đồng loạt)
+
+        // TỐI ƯU CẢM QUAN: nếu set chung 1 u_growProgress cho cả cụm, 10 viên
+        // luôn mọc lên đồng loạt cùng nhịp — nhìn "y hệt nhau" mỗi lần cast dù
+        // vị trí từng viên đã khác nhau (seed chỉ đổi layout, không đổi nhịp
+        // mọc). Cho mỗi viên "trễ" 1 khoảng random 0..staggerWindow trước khi
+        // bắt đầu mọc, rồi mọc nhanh hết phần còn lại — thứ tự/nhịp mọc cũng
+        // xác định theo seed như layout, khác nhau mỗi lần cast.
+        const float staggerWindow = 0.5f;
+        float startT = r06 * staggerWindow;
+        float localGrow = (growProgress - startT) / (1.0f - startT);
+        if (localGrow < 0.0f) localGrow = 0.0f;
+        if (localGrow > 1.0f) localGrow = 1.0f;
+        CrystalMaterial_SetGrowProgress(iceMat, localGrow);
+
+        float angle = r01 * 2.0f * PI;
+        float dist = r02 * desc.radius * 0.9f;
+        float yOffset = -desc.height * 0.15f * r03;
+        Vector3 pos = {
+            center.x + cosf(angle) * dist,
+            center.y + yOffset,
+            center.z + sinf(angle) * dist};
+
+        float heightScale = 0.4f + r04 * 0.8f;  // 0.4x..1.2x — cùng biên độ với bản cluster-mesh cũ
+        float radiusScale = 0.4f + r02 * 0.6f;  // 0.4x..1.0x
+        float tiltRad = (r05 * 45.0f) * DEG2RAD;
+
+        // Cùng thứ tự xoay Y(-angle)->Z(tilt)->Y(angle) như ProceduralMesh_BuildCrystalCluster
+        // (quy ước TRS chuẩn của raylib: MatrixMultiply(A,B) = áp A trước rồi B).
+        Matrix scale = MatrixScale(radiusScale, heightScale, radiusScale);
+        Matrix rot = MatrixMultiply(MatrixMultiply(MatrixRotateY(-angle), MatrixRotateZ(tiltRad)), MatrixRotateY(angle));
+        Matrix transform = MatrixMultiply(MatrixMultiply(scale, rot), MatrixTranslate(pos.x, pos.y, pos.z));
+
+        ProceduralMesh_DrawBakedCrystalCluster(templateMesh, passthrough, transform);
+    }
+
     CrystalMaterial_End();
 }
 

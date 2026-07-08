@@ -189,6 +189,7 @@ CrystalMaterial CrystalMaterial_Load(CrystalMaterialParams params)
     mat.uDissolveLoc = GetShaderLocation(mat.shader, "u_dissolve");
     mat.uTexture1Loc = GetShaderLocation(mat.shader, "texture1");
     mat.uTimeLoc = GetShaderLocation(mat.shader, "u_time");
+    mat.uGrowProgressLoc = GetShaderLocation(mat.shader, "u_growProgress");
 
     return mat;
 }
@@ -250,6 +251,21 @@ void CrystalMaterial_Begin(CrystalMaterial mat)
         rlSetTexture(mat.params.texture1.id);
         SetShaderValueTexture(mat.shader, mat.uTexture1Loc, mat.params.texture1);
     }
+
+    // Default an toàn: các lệnh vẽ crystal immediate-mode cũ (progress đã
+    // bake ở CPU) không được co lại theo trục Y lần nữa.
+    if (mat.uGrowProgressLoc >= 0)
+    {
+        float fullGrown = 1.0f;
+        SetShaderValue(mat.shader, mat.uGrowProgressLoc, &fullGrown, SHADER_UNIFORM_FLOAT);
+    }
+}
+
+void CrystalMaterial_SetGrowProgress(CrystalMaterial mat, float progress)
+{
+    if (mat.uGrowProgressLoc < 0)
+        return;
+    SetShaderValue(mat.shader, mat.uGrowProgressLoc, &progress, SHADER_UNIFORM_FLOAT);
 }
 
 void CrystalMaterial_End(void)
