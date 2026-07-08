@@ -1,6 +1,6 @@
-#include "map_props.h"
+#include "maps/toolkit/map_props.h"
 #include "core/resource_manager.h"
-#include "core/prop_lit.h"
+#include "maps/toolkit/prop_lit.h"
 #include "environment/environment_system.h"
 #include "rlgl.h"
 
@@ -59,7 +59,7 @@ MapGroundSurface MapProp_CreateGround(float width, float depth, float tileSize,
     // 2. Khởi tạo Shader một lần duy nhất
     if (!shaderLoaded)
     {
-        groundShader = LoadShader(0, "maps/common/ground_splat.fs");
+        groundShader = LoadShader(0, "maps/toolkit/shaders/ground_splat.fs");
 
         // Cache lại các vị trí uniform ánh sáng để dùng trong hàm Draw
         locLightDir = GetShaderLocation(groundShader, "lightDir");

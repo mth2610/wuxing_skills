@@ -1,4 +1,4 @@
-#include "core/prop_lit.h"
+#include "maps/toolkit/prop_lit.h"
 #include "core/resource_manager.h"
 #include "core/camera_context.h"
 #include "environment/environment_system.h"
@@ -6,8 +6,8 @@
 #include <stddef.h>
 
 Shader PropLit_GetShader(void) {
-  Shader shader = ResourceManager_LoadShader("core/shaders/prop_lit.vs",
-                                              "core/shaders/prop_lit.fs");
+  Shader shader = ResourceManager_LoadShader("maps/toolkit/shaders/prop_lit.vs",
+                                              "maps/toolkit/shaders/prop_lit.fs");
 
   // CORE_ISSUES.md Item 36 gotcha: LoadShaderFromMemory (what
   // ResourceManager_LoadShader wraps) only auto-binds a small fixed set of

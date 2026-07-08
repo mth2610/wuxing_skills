@@ -1,5 +1,5 @@
-#ifndef CORE_GRASS_MATERIAL_H
-#define CORE_GRASS_MATERIAL_H
+#ifndef MAP_TOOLKIT_GRASS_MATERIAL_H
+#define MAP_TOOLKIT_GRASS_MATERIAL_H
 
 #include "raylib.h"
 
@@ -94,4 +94,4 @@ Material GrassMaterial_Make(GrassMaterialConfig config);
 // cycle). Same contract as PropLit_UpdateLighting.
 void GrassMaterial_UpdateLighting(void);
 
-#endif // CORE_GRASS_MATERIAL_H
+#endif // MAP_TOOLKIT_GRASS_MATERIAL_H

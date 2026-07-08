@@ -8,12 +8,88 @@ Nếu bạn là một AI Agent hoặc Developer, bạn chỉ cần đọc kỹ t
 
 ## 1. Cấu Trúc Thư Mục & Đặt Tên (Bắt Buộc)
 
-Engine sử dụng script quét tự động `generate_map_registry.py`. Để được đăng ký thành công, mỗi map bắt buộc phải tuân theo quy tắc:
+`maps/` chia làm 2 phần:
 
-1. Phải nằm trong một thư mục con riêng dưới thư mục `maps/`.
+```
+maps/
+    toolkit/            # Code dùng lại được (KHÔNG phải là 1 map) — xem mục 1b
+    worlds/
+        <map_name>/     # Mỗi map thành phẩm là 1 thư mục con ở đây
+            <map_name>.h
+            <map_name>.c
+```
+
+Engine sử dụng script quét tự động `generate_map_registry.py` — nó quét đệ quy toàn bộ `maps/` (không quan tâm độ sâu thư mục) để tìm `.h` khai báo `Init{Prefix}Map`/`Draw{Prefix}Map`, nên **map mới luôn phải nằm dưới `maps/worlds/`**, không đặt trực tiếp dưới `maps/`. Không cần sửa CMakeLists.txt hay script khi thêm map mới.
+
+1. Phải nằm trong một thư mục con riêng dưới `maps/worlds/`.
 2. Tên thư mục con và tên file `.c`/`.h` phải trùng khớp với nhau.
-   - Định dạng: `maps/<map_name>/<map_name>.c` và `maps/<map_name>/<map_name>.h`
-   - Ví dụ: `maps/desert_lava/desert_lava.c` và `maps/desert_lava/desert_lava.h`
+   - Định dạng: `maps/worlds/<map_name>/<map_name>.c` và `maps/worlds/<map_name>/<map_name>.h`
+   - Ví dụ: `maps/worlds/desert_lava/desert_lava.c` và `maps/worlds/desert_lava/desert_lava.h`
+
+---
+
+## 1b. Map Toolkit (`maps/toolkit/`) — Đọc Trước Khi Tự Viết Code Vẽ Nền/Đá
+
+**Đây là phần quan trọng nhất để AI có thể tạo map thành phẩm chỉ bằng cách đọc tài liệu này.** Trước khi tự tay viết `rlgl`/`DrawModel` cho nền đất, đường đi, hay đá rải rác — kiểm tra xem `maps/toolkit/map_props.h` đã có sẵn hàm cho việc đó chưa. Chỉ rơi xuống code thủ công (mục 9-12) cho những gì toolkit chưa có (địa hình đồi núi/heightmap, rừng cây từ model 3D, hồ dung nham...).
+
+Toolkit gồm 3 file, đều **Map Agent sở hữu** (không phải Core Agent, dù `prop_lit`/`grass_material` từng nằm ở `core/` — đã chuyển hẳn sang đây vì chỉ `maps/` dùng):
+
+### `maps/toolkit/map_props.h` — bộ hàm chính, ưu tiên dùng đầu tiên
+
+```c
+// --- Ground plane (nền đất) ---
+typedef struct { Model model; bool ready; } MapGroundSurface;
+
+MapGroundSurface MapProp_CreateGround(float width, float depth, float tileSize,
+                                       const char *splatMapPath,
+                                       const char *grassTexPath,
+                                       const char *pathTexPath);
+void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter);
+void MapProp_UnloadGround(MapGroundSurface *ground);
+
+// --- Flat strip (đường đá, lối đi, cầu) ---
+typedef struct { Model model; bool ready; } MapStripSurface;
+
+MapStripSurface MapProp_CreateStrip(float length, float width, float tileSize,
+                                     const char *diffusePath,
+                                     const char *normalPath,   // NULL = texture phẳng, không shader
+                                     const char *roughnessPath); // truyền cả 3 path = dùng prop_lit
+void MapProp_DrawStrip(const MapStripSurface *strip, Vector3 worldCenter, float yOffset);
+void MapProp_UnloadStrip(MapStripSurface *strip);
+
+// --- Rock props (1 model đá, rải nhiều vị trí) ---
+typedef struct { Model model; bool ready; } MapRockSet;
+
+typedef struct {
+    Vector3 position;   // X/Z world; Y bị bỏ qua — đá tự chìm nửa xuống đất
+    float   radiusScale; // tỉ lệ XZ
+    float   heightScale; // tỉ lệ Y — dẹt xuống cho dáng tảng đá
+    float   rotationDeg;
+} MapRockPlacement;
+
+MapRockSet MapProp_CreateRocks(const char *diffusePath,
+                                const char *normalPath, const char *roughnessPath); // NULL/NULL = phẳng
+void MapProp_DrawRocks(const MapRockSet *rocks, const MapRockPlacement *placements, int count);
+void MapProp_UnloadRocks(MapRockSet *rocks);
+```
+
+* `MapProp_CreateGround`: `tileSize` = số mét thế giới cho mỗi lần texture lặp lại (ví dụ `12.0f`). Ground vẽ bằng shader riêng `maps/toolkit/shaders/ground_splat.fs` (splatmap trộn `grassTexPath`/`pathTexPath`) — **hiện tại (WIP) shader này ép mask = 1.0 (100% cỏ)**, `splatMapPath` được truyền vào nhưng chưa thực sự dùng để trộn; xem comment ngay trong `ground_splat.fs` trước khi coi splatmap là đã hoạt động đầy đủ.
+* `MapProp_CreateStrip`/`MapProp_CreateRocks`: truyền `NULL` cho `normalPath`+`roughnessPath` để dùng texture phẳng đơn giản (không shader); truyền đủ cả 3 đường dẫn texture để dùng vật liệu `prop_lit` (có normal map + roughness, phản chiếu ánh sáng thật).
+* Quy ước gọi: `Create*` gọi đúng 1 lần trong `Init{Prefix}Map`, `Draw*` gọi mỗi frame trong `Draw{Prefix}Map`, `Unload*` gọi trong `Unload{Prefix}Map` nếu map có khai báo hàm Unload.
+* Rock/strip dùng `prop_lit` cần gọi `PropLit_UpdateLighting()` **một lần mỗi frame trước khi vẽ** (xem ví dụ đầy đủ ở mục 6).
+
+### `maps/toolkit/prop_lit.h` — vật liệu có ánh sáng thật cho đá/đường đi
+
+```c
+Shader   PropLit_GetShader(void);
+Material PropLit_MakeMaterial(Texture2D diffuse, Texture2D normal, Texture2D roughness);
+void     PropLit_UpdateLighting(void);
+```
+`map_props.c` tự gọi các hàm này khi bạn truyền đủ 3 path cho `MapProp_CreateStrip`/`CreateRocks` — bạn thường không cần gọi trực tiếp, **trừ** `PropLit_UpdateLighting()` vẫn phải gọi 1 lần/frame trong `Draw{Prefix}Map` (không tự động chạy). Đọc ánh sáng qua `Environment_Get{SunDirection,SunColor,AmbientColor}()`, tự tắt/mở theo thời gian trong ngày nếu map dùng day/night cycle. Không bao giờ gọi `UnloadShader()`/`UnloadMaterial()` lên kết quả — shader dùng chung, cache qua `ResourceManager_LoadShader`.
+
+### `maps/toolkit/grass_material.h` — vật liệu nền thay thế (đang gác lại)
+
+Texture-blend hybrid ground material (grassBase + grassDetail + dirt, trộn qua `fbm2` noise) — từng được thử làm nền chính nhưng bị gác lại do vấn đề hình ảnh chưa giải quyết xong (xem `CORE_ISSUES.md` Item 38). Vẫn còn trong codebase để dùng lại sau; **không phải lựa chọn mặc định** — `MapProp_CreateGround` hiện dùng `ground_splat.fs` riêng, không dùng `grass_material`.
 
 ---
 
@@ -99,9 +175,96 @@ void Environment_DrawSmartShadow(Vector3 pos, EnvShadowShapeType shape, float wi
 
 ---
 
-## 6. Khung File Source Mẫu Hoàn Chỉnh (`desert_lava.c`)
+## 6. Khung File Source Mẫu — Dùng Toolkit (Khuyến Nghị, Bắt Đầu Từ Đây)
 
-Dưới đây là một ví dụ hoàn chỉnh về file `.c` của một map chủ đề Sa Mạc Dung Nham để bạn copy và tinh chỉnh:
+Đây là cách nhanh nhất để tạo 1 map thành phẩm: nền + đường đi + đá rải rác, toàn bộ dùng `maps/toolkit/` (mục 1b), không cần tự viết `rlgl`. Copy khung này vào `maps/worlds/<map_name>/<map_name>.c`, đổi số liệu:
+
+```c
+#include "verdant_path.h"           // đổi tên theo map của bạn
+#include "raylib.h"
+#include "environment/environment_system.h"
+#include "maps/toolkit/prop_lit.h"
+#include "maps/toolkit/map_props.h"
+
+#define MAP_WIDTH 100.0f
+#define MAP_DEPTH 75.0f
+static const Vector3 kMapCenter = {MAP_WIDTH * 0.5f, 0.0f, MAP_DEPTH * 0.5f};
+
+#define PATH_LENGTH (MAP_WIDTH - 10.0f)
+#define PATH_WIDTH 4.0f
+
+#define ROCK_COUNT 6
+static const MapRockPlacement kRocks[ROCK_COUNT] = {
+    {{15.0f, 0.0f, 10.0f}, 0.6f, 0.5f, 20.0f},
+    {{30.0f, 0.0f, 60.0f}, 0.9f, 0.7f, 100.0f},
+    {{70.0f, 0.0f, 15.0f}, 0.5f, 0.45f, 200.0f},
+    {{85.0f, 0.0f, 55.0f}, 1.1f, 0.8f, 60.0f},
+    {{45.0f, 0.0f, 65.0f}, 0.7f, 0.55f, 320.0f},
+    {{20.0f, 0.0f, 45.0f}, 0.8f, 0.6f, 150.0f},
+};
+
+static MapGroundSurface s_ground;
+static MapStripSurface s_path;
+static MapRockSet s_rocks;
+static bool s_ready = false;
+
+void InitVerdantPathMap(void)
+{
+    // 1. Ánh sáng/sương mù — mục 4
+    Environment_SetAmbientColor((Color){60, 65, 85, 255});
+    Environment_SetSunColor((Color){200, 205, 220, 255});
+    Environment_SetSunDirection((Vector3){0.5f, -0.8f, -0.3f});
+    Environment_SetShadowColor((Color){10, 10, 15, 150});
+
+    EnvFogConfig fog = {0};
+    fog.enabled = true;
+    fog.color = (Color){40, 45, 60, 255};
+    fog.start = 60.0f;
+    fog.end = 140.0f;
+    fog.density = 1.0f;
+    Environment_SetFogConfig(fog);
+
+    // 2. Nền đất — mục 1b (tileSize lớn (>= chiều rộng map) hạn chế lặp pattern lộ liễu)
+    s_ground = MapProp_CreateGround(MAP_WIDTH, MAP_DEPTH, 12.0f,
+                                    "assets/textures/grass_ground_diffuse.png",
+                                    "assets/textures/grass_ground_diffuse.png",
+                                    "assets/textures/dirt_diffuse.png");
+
+    // 3. Đường đá — truyền đủ 3 path để dùng prop_lit (có normal/roughness)
+    s_path = MapProp_CreateStrip(PATH_LENGTH, PATH_WIDTH, 2.0f,
+                                 "assets/textures/stone_path_diffuse.png",
+                                 "assets/textures/stone_path_normal.png",
+                                 "assets/textures/stone_path_roughness.png");
+
+    // 4. Đá rải rác — 1 model, nhiều vị trí (mục 11's nguyên tắc "1 model nhiều draw call")
+    s_rocks = MapProp_CreateRocks("assets/textures/rock_diffuse.png",
+                                  "assets/textures/rock_normal.png",
+                                  "assets/textures/rock_roughness.png");
+
+    s_ready = true;
+}
+
+void DrawVerdantPathMap(void)
+{
+    if (!s_ready) return;
+
+    PropLit_UpdateLighting(); // bắt buộc mỗi frame — s_path/s_rocks dùng prop_lit
+
+    MapProp_DrawGround(&s_ground, kMapCenter);
+    MapProp_DrawStrip(&s_path, kMapCenter, 0.01f); // yOffset nhỏ tránh z-fighting với nền
+    MapProp_DrawRocks(&s_rocks, kRocks, ROCK_COUNT);
+}
+```
+
+Map này không cần `Update{Prefix}Map`/`Unload{Prefix}Map` — không khai báo 2 hàm đó trong `.h` thì script đăng ký sẽ tự bỏ qua (mục 2), không sao cả.
+
+Nếu map cần thứ toolkit chưa có (bụi cây, thảm hoa, hồ nước, địa hình đồi núi...) — thêm hàm mới vào `maps/toolkit/map_props.h`/`.c` theo đúng khuôn `Create*`/`Draw*`/`Unload*` ở trên, hoặc rơi xuống code thủ công ở các mục 8-12 bên dưới cho phần map riêng đó.
+
+---
+
+## 6b. Khung File Source Mẫu — Tự Vẽ Bằng `rlgl` (Nâng Cao / Toolkit Chưa Hỗ Trợ)
+
+Dưới đây là một ví dụ hoàn chỉnh về file `.c` của một map chủ đề Sa Mạc Dung Nham, vẽ hoàn toàn thủ công bằng `rlgl` — dùng khi cần hiệu ứng toolkit chưa có (hồ dung nham cuộn sóng, mặt trăng nền...), không phải cách mặc định để tạo nền/đường/đá (đã có mục 6):
 
 ```c
 #include "desert_lava.h"
@@ -216,8 +379,8 @@ void UnloadDesertLavaMap(void) {
 
 Khi muốn thêm map mới, bạn chỉ cần thực hiện các bước sau:
 
-1. **Bước 1:** Tạo một thư mục mới trùng tên map dưới `maps/` (Ví dụ: `maps/desert_lava/`).
-2. **Bước 2:** Tạo file `.h` và `.c` trong thư mục đó theo mẫu ở mục 2 và mục 6.
+1. **Bước 1:** Tạo một thư mục mới trùng tên map dưới `maps/worlds/` (Ví dụ: `maps/worlds/desert_lava/`).
+2. **Bước 2:** Tạo file `.h` và `.c` trong thư mục đó — ưu tiên theo mẫu Toolkit ở mục 6; chỉ dùng mẫu `rlgl` thủ công ở mục 6b cho phần toolkit chưa hỗ trợ.
 3. **Bước 3:** Chạy lệnh `make` ở terminal gốc của project.
    - Trình biên dịch CMake sẽ tự động chạy script `generate_map_registry.py` để phát hiện map mới, sinh mã đăng ký vào `core/maps_generated.h` và biên dịch liên kết vào game.
 4. **Kiểm tra:** Mở game lên (`./wuxing`), bạn có thể nhấn phím **`K`** để chuyển đổi qua lại giữa các map để test xem map mới của bạn hiển thị như thế nào!
@@ -312,6 +475,8 @@ Nếu bạn chỉ muốn người chơi di chuyển bằng phẳng ở `Y = 0` n
 
 ## 10. Nạp Texture Cho Bản Đồ (Đá, Cát, Nước)
 
+> Nền/đường đi/đá đã có `MapProp_CreateGround`/`CreateStrip`/`CreateRocks` (mục 1b) tự lo việc nạp+gán texture — chỉ đọc mục này khi cần texture cho một loại prop khác (mục 8's model 3D tự do) mà toolkit chưa có hàm riêng.
+
 Khi bạn muốn phủ texture hình ảnh (ví dụ: texture đá `stone.png`, đất cỏ `grass.png`), bạn có hai cách áp dụng tùy theo cách bạn vẽ địa hình:
 
 ### A. Gán Texture vào Mô hình 3D (Model) tải từ ngoài
@@ -378,6 +543,8 @@ void DrawMap(void) {
 ---
 
 ## 11. Tối Ưu Hóa Bộ Nhớ: Vẽ Cả Rừng/Thảm Hoa Từ 1 Model Duy Nhất
+
+> Cho đá rải rác, `MapProp_CreateRocks`/`MapProp_DrawRocks` (mục 1b) đã làm đúng nguyên tắc này sẵn — chỉ cần đọc phần dưới đây khi rải một loại prop khác (bụi tre, thảm hoa...) chưa có hàm riêng trong toolkit.
 
 **Tuyệt đối KHÔNG** gọi hàm `LoadModel` nhiều lần cho từng cây tre hay từng bông hoa. Điều này sẽ làm tràn bộ nhớ VRAM và gây crash game.
 *   **Giải pháp:** Chỉ nạp model **đúng 1 lần** trong `Init` để lưu vào bộ nhớ đệm, sau đó trong hàm `Draw`, hãy dùng vòng lặp `for` để vẽ model đó ra nhiều vị trí khác nhau với tỉ lệ và góc xoay ngẫu nhiên để tạo thành rừng hoặc thảm hoa.

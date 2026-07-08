@@ -13,14 +13,14 @@
 // Add new prop kinds here as maps need them (bush, flower patch, tree,
 // water pool, ...) rather than inlining setup code in a map's own .c file.
 //
-// Ground/strip use raylib's plain default material (no custom shader) —
-// deliberately the simplest possible textured-surface path. Custom lit
-// materials (core/prop_lit.h, core/grass_material.h) are still available
-// and fine for props that need them (see MapRockSet, which uses prop_lit);
-// ground specifically defaults to plain texturing here after repeated
-// visual issues with shaded ground (see CORE_ISSUES.md Item 38) — swap in
-// a custom Material after MapProp_Create* returns if a specific map wants
-// something fancier once that's sorted out.
+// Ground uses a dedicated splatmap shader (maps/toolkit/shaders/ground_splat.fs,
+// see MapProp_CreateGround) blending a grass + path texture — WIP, splatmap
+// sampling is currently forced to all-grass, see the shader's own comments.
+// Strip/rocks use raylib's plain default material unless normal+roughness
+// paths are given, in which case they use prop_lit (maps/toolkit/prop_lit.h,
+// see MapRockSet). maps/toolkit/grass_material.h is a shelved alternative
+// ground material (CORE_ISSUES.md Item 38) — swap in a custom Material after
+// MapProp_Create* returns if a map wants something different.
 
 // --- Ground plane -------------------------------------------------------
 

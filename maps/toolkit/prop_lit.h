@@ -1,5 +1,5 @@
-#ifndef CORE_PROP_LIT_H
-#define CORE_PROP_LIT_H
+#ifndef MAP_TOOLKIT_PROP_LIT_H
+#define MAP_TOOLKIT_PROP_LIT_H
 
 #include "raylib.h"
 
@@ -53,4 +53,4 @@ Material PropLit_MakeMaterial(Texture2D diffuse, Texture2D normal, Texture2D rou
 // cycle).
 void PropLit_UpdateLighting(void);
 
-#endif // CORE_PROP_LIT_H
+#endif // MAP_TOOLKIT_PROP_LIT_H

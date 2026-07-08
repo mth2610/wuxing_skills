@@ -1469,72 +1469,8 @@ void PlasmaMaterial_End(void);
 ```
 Ví dụ sử dụng thực tế: `VFX_ComposePlasmaOrb` (`vc_plasma.inl`).
 
-### Prop Lit Material (`core/prop_lit.h` — `prop_lit.vs/.fs`)
-
-Shared lit-material shader for **map terrain/props** (CORE_ISSUES.md Item 36) —
-the first shader in this codebase designed to be assigned to a raylib
-`Material` and drawn via plain `DrawModel()`/`DrawModelEx()`, instead of the
-VFX-material pattern above (`EffectMaterial`/`CrystalMaterial`/`PlasmaMaterial`,
-all bound via `SkillManager_BeginShader` + immediate-mode draws). One
-`Material` per prop type, many draw calls (`MAP_API.md`'s "load once, draw
-many" convention) — not a per-frame `Begin`/`End` pair.
-
-```c
-Shader   PropLit_GetShader(void);
-Material PropLit_MakeMaterial(Texture2D diffuse, Texture2D normal, Texture2D roughness);
-void     PropLit_UpdateLighting(void);
-```
-
-* **`PropLit_GetShader`** — lazy-loads `core/shaders/prop_lit.vs/.fs` via `ResourceManager_LoadShader` (cached). Fragment shader: samples diffuse (`texture0`)/tangent-space normal (`texture2`, standard `rgb*2.0-1.0` decode via a per-fragment TBN built from `fragTangent`/`fragBitangent`/`fragNormal`)/roughness (`texture3`, `.r` channel, scales Blinn-Phong shininess+intensity), Lambertian diffuse + specular via `core/shaders/common/lighting.glsl`'s `calcDiffuse`/`calcSpecular` (not reimplemented), lit by `u_lightDir`/`u_lightColor`/`u_ambientColor`/`u_viewPos`. Final color is multiplied by raylib's standard `colDiffuse` uniform — this is what lets a white/neutral texture be recolored per-instance via `DrawModelEx`'s `tint` param (same white+tint convention as ground decals).
-* **matModel/texture-unit gotcha (read before touching this shader):** `LoadShaderFromMemory` (what `ResourceManager_LoadShader` wraps) does not reliably auto-bind `shader.locs[SHADER_LOC_MATRIX_MODEL]`/`SHADER_LOC_MAP_NORMAL`/`SHADER_LOC_MAP_ROUGHNESS` by name (see the `matModel` note in `SkillManager_BeginShader`, `core/skill_manager.c` ~line 1068) — and unlike every VFX material above, `prop_lit` actually needs these because raylib's own `DrawMesh()` (invoked internally by `DrawModel`/`DrawModelEx`) reads `shader.locs[]` directly to upload the model matrix and bind each material-map texture unit. `PropLit_GetShader` fixes up `SHADER_LOC_VERTEX_{POSITION,TEXCOORD01,NORMAL,TANGENT}`, `SHADER_LOC_MATRIX_{MVP,MODEL}`, `SHADER_LOC_COLOR_DIFFUSE`, and `SHADER_LOC_MAP_{DIFFUSE,NORMAL,ROUGHNESS}` explicitly by name (`GetShaderLocation`/`GetShaderLocationAttrib`) once, the first time the shader is loaded — callers don't need to do this themselves.
-* **`PropLit_MakeMaterial`** — builds a `Material` via raylib's `LoadMaterialDefault()` (gives a real allocated `maps[]` array), overrides `.shader` to the shared `prop_lit` shader, and assigns `diffuse`/`normal`/`roughness` to `MATERIAL_MAP_DIFFUSE`/`MATERIAL_MAP_NORMAL`/`MATERIAL_MAP_ROUGHNESS`. Never call `UnloadMaterial()`/`UnloadShader()` on the result — the shader is the shared cached instance (same rule as never calling `UnloadShader`/`UnloadTexture` on any `ResourceManager`-owned resource).
-* **`PropLit_UpdateLighting`** — pushes `Environment_GetSunDirection()` (negated, same surface→light convention as `SkillManager_BeginShader`'s `u_lightDir` — see Item 10)/`GetSunColor()`/`GetAmbientColor()` plus `camera.position` into the shared shader. **Must be called once per frame before drawing any `prop_lit` prop** — `DrawModel`/`DrawModelEx` don't auto-bind these (that's a `SkillManager_BeginShader`-only convention), so without this call lighting won't respond to `Environment_SetSunColor`/`SetAmbientColor` changes (e.g. a day/night cycle).
-* **Tangents required:** procedurally generated meshes (`GenMeshCube`/`GenMeshHeightmap`/hand-built `rlgl`→`Mesh` conversions) do not populate the `vertexTangent` attribute by default — call `GenMeshTangents(&mesh)` before `LoadModelFromMesh()`, or the normal map reads as flat/zero. glTF imports usually ship tangents already; verify, don't assume.
-* **Fog is NOT implemented** by this shader — `EnvFogConfig`/`Environment_GetFogConfig` is flagged in CORE_ISSUES.md Item 36 as currently unread by any shader in the engine; whether `prop_lit` should be the first to apply it (and how — per-fragment vs. depth-aware post-process) is an open design question, deliberately out of scope here.
-
-### Grass Material (`core/grass_material.h` — `grass_material.vs/.fs`)
-
-Texture-blend hybrid ground material (CORE_ISSUES.md Item 38, supersedes the
-pure-procedural Item 37 version). Item 37's 100%-shader approach (color
-blended purely via `fbm2` noise, no textures) was visually reviewed against a
-real reference screenshot and rejected: smooth color-only blobs read as fake
-and gave an illusion of drifting under camera motion (no fixed high-contrast
-detail for the eye to anchor to). The fix follows how mobile MOBA/MMORPG
-ground actually works (same precedent `prop_lit`/Item 36 already set for
-rock/stone-path): **~80% texture, ~20% shader** — real photo textures
-(`grassBase`, `grassDetail`, `dirt`) carry the actual surface detail; the
-shader only blends the layers together and adds broad procedural color
-variation via `core/shaders/common/noise.glsl`'s `fbm2()` — no baked mask/
-noise texture files. All texture lookups use **world-space `fragPosition.xz`**
-(not UV) divided by a tile size, same "no tiling-seam-decision, works at any
-mesh size" reasoning as Item 37. Same `Material` + `DrawModel()`/
-`DrawModelEx()` pipeline convention as `PropLit_MakeMaterial` above — one
-`Material` per ground mesh, many draw calls — not
-`SkillManager_BeginShader`/immediate-mode. Not a replacement for `prop_lit`:
-`prop_lit` remains the right tool for anything that should read as a distinct
-textured surface (rock, stone path, generic props); this is specifically for
-ground that blends a grass base, fine detail grain, and dirt patches together.
-
-```c
-typedef struct {
-    Texture2D grassBase;     // real grass photo texture
-    Texture2D grassDetail;   // fine grayscale grain/speckle overlay, ~0.5-centered, tileable
-    Texture2D dirt;          // dirt patch photo texture
-    float     baseTileSize;    // world meters per grassBase/dirt tile
-    float     detailTileSize;  // world meters per grassDetail tile — much smaller than baseTileSize (denser repeat)
-    float     maskNoiseScale;  // world-space fbm2 frequency controlling where dirt shows through grass (procedural, no mask texture)
-    float     colorVarScale;   // world-space fbm2 frequency for broad brightness/tint variation (procedural, no noise texture)
-} GrassMaterialConfig;
-
-Shader   GrassMaterial_GetShader(void);
-Material GrassMaterial_Make(GrassMaterialConfig config);
-void     GrassMaterial_UpdateLighting(void);
-```
-
-* **`GrassMaterial_GetShader`** — lazy-loads `core/shaders/grass_material.vs/.fs` via `ResourceManager_LoadShader` (cached). Fragment shader: `baseUV = fragPosition.xz / u_baseTileSize`, `detailUV = fragPosition.xz / u_detailTileSize`; samples `grassBase`/`dirt` at `baseUV` and `grassDetail` at `detailUV`. `grassDetail`'s red channel modulates `grassBase`'s brightness only via `mix(0.85, 1.15, detail.r)` (doesn't shift hue). A procedural mask — `smoothstep(0.35, 0.55, fbm2(fragPosition.xz * u_maskNoiseScale))` — blends the detailed grass into `dirt`. The result is multiplied by `mix(0.85, 1.15, fbm2(fragPosition.xz * u_colorVarScale))` for broad, sparse regional tint variation (large regions, not small speckle — that's already covered by `grassDetail`). Lit by Lambertian only (`core/shaders/common/lighting.glsl`'s `calcDiffuse`, no specular — matte grass, simpler than `prop_lit`, not built on top of it, unchanged from Item 37), via `u_lightDir`/`u_lightColor`/`u_ambientColor`. Final color is multiplied by raylib's standard `colDiffuse` uniform, same tint convention as every other material in this codebase.
-* **Same `shader.locs[]` gotcha as `prop_lit`** (see above): `GrassMaterial_GetShader` explicitly fixes up `SHADER_LOC_VERTEX_{POSITION,TEXCOORD01,NORMAL}` (no tangent attribute — `grassDetail` is a plain grayscale multiplier, not a tangent-space normal map), `SHADER_LOC_MATRIX_{MVP,MODEL}`, and `SHADER_LOC_COLOR_DIFFUSE` by name once, since this shader is also drawn via plain `DrawModel()`/`DrawModelEx()` and raylib's `DrawMesh()` reads `shader.locs[]` directly. Unlike Item 37, this material DOES have textures: `SHADER_LOC_MAP_{DIFFUSE,NORMAL,ROUGHNESS}` are fixed up to real uniform locations (`texture0`/`texture2`/`texture3`), reusing `prop_lit.c`'s same 3 material-map slots as generic texture-slot carriers (not for their raylib-semantic meaning) — `grassBase` → `MATERIAL_MAP_DIFFUSE`/`texture0`, `grassDetail` → `MATERIAL_MAP_NORMAL`/`texture2`, `dirt` → `MATERIAL_MAP_ROUGHNESS`/`texture3`.
-* **`GrassMaterial_Make`** — builds a `Material` via `LoadMaterialDefault()`, overrides `.shader` to the shared `grass_material` shader, binds `grassBase`/`grassDetail`/`dirt` into their map slots (see above), and sets `baseTileSize`/`detailTileSize`/`maskNoiseScale`/`colorVarScale` as shader uniforms **once at creation time** (`u_baseTileSize`/`u_detailTileSize`/`u_maskNoiseScale`/`u_colorVarScale`) — unlike lighting, these are static per-material, not pushed every frame. Caller is responsible for setting each texture's wrap mode to `TEXTURE_WRAP_REPEAT` before calling (same caller-responsibility convention as `prop_lit`'s callers — `GrassMaterial_Make` does not call `SetTextureWrap` itself). Never call `UnloadMaterial()`/`UnloadShader()` on the result — same shared-cached-shader rule as `PropLit_MakeMaterial`.
-* **`GrassMaterial_UpdateLighting`** — pushes `Environment_GetSunDirection()` (negated, same surface→light convention as `PropLit_UpdateLighting`/`SkillManager_BeginShader` — Item 10)/`GetSunColor()`/`GetAmbientColor()` into the shared shader. **Must be called once per frame before drawing any `grass_material` ground** — `DrawModel`/`DrawModelEx` don't auto-bind these, so without this call lighting won't respond to `Environment_SetSunColor`/`SetAmbientColor` changes (e.g. a day/night cycle). Same contract as `PropLit_UpdateLighting`, minus the camera-position push (no specular term needs `u_viewPos` here).
+> Prop Lit / Grass Material moved to `maps/toolkit/` (Map Agent-owned — only
+> `maps/` ever used them) — see `MAP_API.md`'s Toolkit API section, not here.
 
 ### Ground Decal Preset
 ```c

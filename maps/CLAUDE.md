@@ -4,7 +4,7 @@
 Manages the entire **Maps** module of the Wuxing Skills project. Responsible for creating, maintaining, and debugging map plugins for the engine.
 
 ## Scope
-- **Read/write:** The entire `maps/` directory (all subdirectories: `bamboo_valley/`, `default_arena/`, `meadow_night/`, and any new maps)
+- **Read/write:** The entire `maps/` directory — `maps/toolkit/` (reusable prop-kit source + shared shaders, includes `prop_lit`/`grass_material`, transferred from Core Agent since only maps/ ever used them) and `maps/worlds/<map_name>/` (finished, playable maps)
 - **Read (required):** `MAP_API.md`, `ENVIRONMENT_API.md`
 - **Read (interface only):** `environment/environment_system.h`, `core/skill_manager.h` (only the element colors and `ApplyAoEDamage` sections, if needed)
 - **Read:** `assets/` (to know what textures/models are available)
@@ -20,13 +20,25 @@ Manages the entire **Maps** module of the Wuxing Skills project. Responsible for
 - `environment/` (`.h` only)
 - `sandbox/`
 
-## Required map directory structure
+## Directory layout
+
 ```
-maps/<map_name>/
-    ├── <map_name>.h   # Declares Init, Draw, (Update, Unload optional)
-    └── <map_name>.c   # Implementation
+maps/
+    toolkit/            # reusable code, not a finished map itself
+        map_props.h/.c      # MapProp_Create/Draw/Unload for ground, strip, rocks
+        prop_lit.h/.c       # lit-material shader for props (rock, path, ...)
+        grass_material.h/.c # shelved texture-blend ground material (alt to map_props' ground)
+        shaders/            # prop_lit.vs/.fs, grass_material.vs/.fs, ground_splat.fs
+    worlds/
+        <map_name>/
+            ├── <map_name>.h   # Declares Init, Draw, (Update, Unload optional)
+            └── <map_name>.c   # Implementation — build it from maps/toolkit/ functions,
+                                # see MAP_API.md's Toolkit API section
 ```
-The directory name, `.h` filename, and `.c` filename MUST match exactly.
+The directory name, `.h` filename, and `.c` filename MUST match exactly. The
+map registry generator (`scripts/generate_map_registry.py`) walks `maps/`
+recursively looking for `Init{Prefix}Map`/`Draw{Prefix}Map` in any `.h` —
+nesting under `worlds/<name>/` needs no script/CMake changes.
 
 ## Required lifecycle API (in the header)
 ```c

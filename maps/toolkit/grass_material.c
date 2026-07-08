@@ -1,12 +1,12 @@
-#include "core/grass_material.h"
+#include "maps/toolkit/grass_material.h"
 #include "core/resource_manager.h"
 #include "environment/environment_system.h"
 #include "raymath.h"
 #include <stddef.h>
 
 Shader GrassMaterial_GetShader(void) {
-  Shader shader = ResourceManager_LoadShader("core/shaders/grass_material.vs",
-                                              "core/shaders/grass_material.fs");
+  Shader shader = ResourceManager_LoadShader("maps/toolkit/shaders/grass_material.vs",
+                                              "maps/toolkit/shaders/grass_material.fs");
 
   // Same shader.locs[] gotcha as PropLit_GetShader (CORE_ISSUES.md Item 36):
   // LoadShaderFromMemory only auto-binds a small fixed default set of

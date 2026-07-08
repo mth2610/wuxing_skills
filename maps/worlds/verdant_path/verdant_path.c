@@ -1,8 +1,8 @@
 #include "verdant_path.h"
 #include "raylib.h"
 #include "environment/environment_system.h"
-#include "core/prop_lit.h"
-#include "maps/common/map_props.h"
+#include "maps/toolkit/prop_lit.h"
+#include "maps/toolkit/map_props.h"
 
 // Rectangle sized so a corner-to-corner diagonal walk takes ~30-45s at the
 // game screen's 3.5 m/s walk speed (game/game_screen.c): 100m x 75m is a
