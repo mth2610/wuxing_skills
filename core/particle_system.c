@@ -2,19 +2,27 @@
 #include "raymath.h"
 #include "rlgl.h"
 #include <string.h>
+#include <math.h>
 
-#define MAX_PARTICLES                                                          \
-  2000 // Giới hạn mảng tĩnh an toàn cho CPU mode / No-malloc
+#define MAX_PARTICLES 2000
 
-typedef struct {
-  Vector3 position;
-  Vector3 velocity;
-  Color colorStart;
-  Color colorEnd;
-  float radius;
+// TỐI ƯU 1: Sắp xếp lại thứ tự biến (Data Alignment & Hot/Cold Split)
+// Các biến hay dùng (Physics) đặt lên đầu để vừa khít 1 CPU Cache Line (64 bytes)
+typedef struct
+{
+  // --- HOT DATA (Dùng mỗi frame) ---
+  float x, y, z; // Tách Vector3 thành scalar để inline math
+  float vx, vy, vz;
   float lifetime;
   float maxLifetime;
 
+  // --- WARM DATA (Dùng lúc vẽ) ---
+  Color colorStart;
+  Color colorEnd;
+  float radius;
+  bool active;
+
+  // --- COLD DATA (Con trỏ, ít khi rẽ nhánh) ---
   const ForceField *forceField;
   const ColorGradient *gradient;
   const SpriteAnim *spriteAnim;
@@ -23,51 +31,90 @@ typedef struct {
   const SkillCurve *alphaCurve;
   const SkillCurve *emissiveCurve;
 
-  // Bộ bộ nhớ phẳng lưu trữ cấu hình Sub-Emitter tránh cấp phát động
+  // CẢNH BÁO: Việc lưu nguyên ParticleConfig ở đây vẫn tốn bộ nhớ.
+  // Lý tưởng nhất sau này bạn nên đổi thành con trỏ tới 1 "SubEmitterPool"
   ParticleConfig onDeathConfig;
   int onDeathCount;
   bool hasDeathEmit;
 
   ParticleConfig onLiveConfig;
   float onLiveEmitRate;
-  float onLiveEmitTimer; // Bộ đếm tích lũy thời gian để nhả hạt đều đặn
+  float onLiveEmitTimer;
   bool hasLiveEmit;
-
-  bool active;
 } ParticleInternal;
 
-// Quản lý mảng tĩnh toàn cục
 static ParticleInternal g_Particles[MAX_PARTICLES];
-static float s_particleTime = 0.0f; // Thời gian tích lũy dùng cho WindZone noise
+static float s_particleTime = 0.0f;
 
-void InitParticleSystem(void) {
-  for (int i = 0; i < MAX_PARTICLES; i++) {
+static int s_freeHead = 0;
+static int s_nextFree[MAX_PARTICLES];
+static int s_activeIds[MAX_PARTICLES];
+static int s_activeCount = 0;
+static int s_slotListIndex[MAX_PARTICLES];
+
+static inline void Particle_Deactivate(int idx)
+{
+  g_Particles[idx].active = false;
+  int listIdx = s_slotListIndex[idx];
+  int lastId = s_activeIds[s_activeCount - 1];
+
+  s_activeIds[listIdx] = lastId;
+  s_slotListIndex[lastId] = listIdx;
+  s_activeCount--;
+  s_slotListIndex[idx] = -1;
+
+  s_nextFree[idx] = s_freeHead;
+  s_freeHead = idx;
+}
+
+static inline int Particle_AllocSlot(void)
+{
+  if (s_freeHead >= MAX_PARTICLES)
+    return -1;
+  int idx = s_freeHead;
+  s_freeHead = s_nextFree[idx];
+
+  s_slotListIndex[idx] = s_activeCount;
+  s_activeIds[s_activeCount] = idx;
+  s_activeCount++;
+  return idx;
+}
+
+void InitParticleSystem(void)
+{
+  for (int i = 0; i < MAX_PARTICLES - 1; i++)
+    s_nextFree[i] = i + 1;
+  s_nextFree[MAX_PARTICLES - 1] = MAX_PARTICLES;
+  s_freeHead = 0;
+  s_activeCount = 0;
+  for (int i = 0; i < MAX_PARTICLES; i++)
+  {
     g_Particles[i].active = false;
+    s_slotListIndex[i] = -1;
   }
 }
 
-void SpawnParticle(ParticleConfig config) {
+void SpawnParticle(ParticleConfig config)
+{
   ParticleConfig_Unify(&config);
-  int targetIdx = -1;
-  for (int i = 0; i < MAX_PARTICLES; i++) {
-    if (!g_Particles[i].active) {
-      targetIdx = i;
-      break;
-    }
-  }
-
-  // Mảng tĩnh đầy, bỏ qua để bảo toàn FPS ổn định cho game
+  int targetIdx = Particle_AllocSlot();
   if (targetIdx == -1)
     return;
 
   ParticleInternal *p = &g_Particles[targetIdx];
-  p->position = config.position;
-  p->velocity = config.velocity;
+  p->x = config.position.x;
+  p->y = config.position.y;
+  p->z = config.position.z;
+  p->vx = config.velocity.x;
+  p->vy = config.velocity.y;
+  p->vz = config.velocity.z;
+
   p->colorStart = config.colorStart;
   p->colorEnd = config.colorEnd;
   p->radius = config.radius;
   p->lifetime = config.lifetime;
   p->maxLifetime = config.lifetime;
+
   p->forceField = config.forceField;
   p->gradient = config.gradient;
   p->spriteAnim = config.spriteAnim;
@@ -77,246 +124,243 @@ void SpawnParticle(ParticleConfig config) {
   p->emissiveCurve = config.emissiveCurve;
   p->active = true;
 
-  // Trích xuất cấu hình Sub-Emitter khi hạt chết (onDeath)
-  if (config.onDeathEmit && config.onDeathEmitCount > 0) {
+  if (config.onDeathEmit && config.onDeathEmitCount > 0)
+  {
     p->onDeathConfig = *config.onDeathEmit;
-    // KHÓA AN TOÀN TRÁNH ĐỆ QUY VÔ HẠN: Hạt con sinh ra khi chết sẽ không tự đẻ
-    // tiếp hạt cháu
     p->onDeathConfig.onDeathEmit = NULL;
     p->onDeathConfig.onLiveEmit = NULL;
     p->onDeathCount = config.onDeathEmitCount;
     p->hasDeathEmit = true;
-  } else {
+  }
+  else
+  {
     p->hasDeathEmit = false;
   }
 
-  // Trích xuất cấu hình Sub-Emitter khi hạt đang bay (onLive)
-  if (config.onLiveEmit && config.onLiveEmitRate > 0.0f) {
+  if (config.onLiveEmit && config.onLiveEmitRate > 0.0f)
+  {
     p->onLiveConfig = *config.onLiveEmit;
-    // KHÓA AN TOÀN TRÁNH ĐỆ QUY VÔ HẠN: Hạt bụi vệt đuôi sinh ra sẽ không tự đẻ
-    // tiếp hạt bụi khác
     p->onLiveConfig.onLiveEmit = NULL;
     p->onLiveConfig.onDeathEmit = NULL;
     p->onLiveEmitRate = config.onLiveEmitRate;
     p->onLiveEmitTimer = 0.0f;
     p->hasLiveEmit = true;
-  } else {
+  }
+  else
+  {
     p->hasLiveEmit = false;
   }
 }
 
-void UpdateParticles(float dt) {
+void UpdateParticles(float dt)
+{
   s_particleTime += dt;
-  for (int i = 0; i < MAX_PARTICLES; i++) {
-    if (!g_Particles[i].active)
-      continue;
+  const bool windActive = WindZone_IsActive();
 
+  // TỐI ƯU 2: Lặp ngược (Reverse Loop).
+  // Việc này giúp xóa hạt an toàn (Swap-Remove không bị sót phần tử)
+  // và BỎ QUA các hạt mới sinh trong chính frame này.
+  for (int a = s_activeCount - 1; a >= 0; a--)
+  {
+    int i = s_activeIds[a];
     ParticleInternal *p = &g_Particles[i];
+
     p->lifetime -= dt;
 
-    // --------------------------------------------------------
-    // 1. XỬ LÝ SUB-EMITTER: ON LIVE EMIT (Đẻ vệt đuôi khi đang sống)
-    // --------------------------------------------------------
-    if (p->lifetime > 0.0f && p->hasLiveEmit) {
-      float oldTimer = p->onLiveEmitTimer;
-      p->onLiveEmitTimer += dt;
-      float spawnInterval = 1.0f / p->onLiveEmitRate;
-      float timeProcessed = oldTimer;
-
-      int safetyCounter = 0;
-      // Giới hạn vòng lặp nhả tối đa 10 hạt/frame để tránh lag đột biến kéo chết
-      // cụm hạt
-      while (p->onLiveEmitTimer >= spawnInterval && safetyCounter < 10) {
-        timeProcessed += spawnInterval;
-        float t = (dt > 0.0f) ? (timeProcessed / dt) : 1.0f;
-        if (t < 0.0f) t = 0.0f;
-        if (t > 1.0f) t = 1.0f;
-
-        Vector3 frameMove = Vector3Scale(p->velocity, dt);
-        p->onLiveConfig.position = Vector3Add(p->position, Vector3Scale(frameMove, t));
-
-        SpawnParticle(p->onLiveConfig);
-        p->onLiveEmitTimer -= spawnInterval;
-        safetyCounter++;
-      }
-      if (p->onLiveEmitTimer >= spawnInterval) {
-         p->onLiveEmitTimer = fmodf(p->onLiveEmitTimer, spawnInterval); // clear backlog if cap reached
-      }
-    }
-
-    // Cập nhật vật lý di chuyển và ForceField (nếu có)
-    if (p->forceField) {
-      Vector3 force =
-          ForceField_Evaluate(p->forceField, p->position, p->velocity,
-                              p->lifetime, (Vector3){0}, (Vector3){0});
-      p->velocity = Vector3Add(p->velocity, Vector3Scale(force, dt));
-
-      float viscDamp = ForceField_GetViscosityDamping(p->forceField, dt);
-      p->velocity = Vector3Scale(p->velocity, viscDamp);
-    }
-    // Áp dụng WindZone toàn cục (auto, không cần set per-particle)
-    if (WindZone_IsActive()) {
-      Vector3 windForce = WindZone_Evaluate(p->position, p->velocity, s_particleTime);
-      p->velocity = Vector3Add(p->velocity, Vector3Scale(windForce, dt));
-    }
-    // Optional over-lifetime speed multiplier — scales only this frame's
-    // position step, not the stored velocity itself, so it composes
-    // cleanly on top of forceField/WindZone physics instead of compounding.
-    float speedMul = 1.0f;
-    if (p->speedCurve) {
-      float ageT = 1.0f - Clamp(p->lifetime / p->maxLifetime, 0.0f, 1.0f);
-      speedMul = SkillCurve_Eval(p->speedCurve, ageT);
-    }
-    p->position = Vector3Add(p->position, Vector3Scale(p->velocity, dt * speedMul));
-
-    // --------------------------------------------------------
-    // 2. XỬ LÝ SUB-EMITTER: ON DEATH EMIT (Nổ tung hạt con khi chết)
-    // --------------------------------------------------------
-    if (p->lifetime <= 0.0f) {
-      p->active =
-          false; // Thu hồi hạt mẹ trước để giải phóng slot trống cho hạt con
-
-      if (p->hasDeathEmit) {
-        for (int c = 0; c < p->onDeathCount; c++) {
-          p->onDeathConfig.position =
-              p->position; // Xuất phát từ điểm chết của hạt mẹ
-
-          // Thêm lực nhiễu ngẫu nhiên đa hướng để tạo hiệu ứng bùng nổ đẹp mắt
-          Vector3 randomVelocity = {(float)GetRandomValue(-80, 80),
-                                    (float)GetRandomValue(-80, 80),
-                                    (float)GetRandomValue(-80, 80)};
-
-          // Tạo bản sao tạm để tránh tích lũy sai lệch vận tốc vào cấu hình gốc
+    if (p->lifetime <= 0.0f)
+    {
+      if (p->hasDeathEmit)
+      {
+        for (int c = 0; c < p->onDeathCount; c++)
+        {
           ParticleConfig tempChild = p->onDeathConfig;
-          tempChild.velocity = Vector3Add(tempChild.velocity, randomVelocity);
-
+          tempChild.position = (Vector3){p->x, p->y, p->z};
+          // Tối ưu hàm random tránh gọi GetRandomValue quá nặng
+          tempChild.velocity.x += (float)(GetRandomValue(-80, 80));
+          tempChild.velocity.y += (float)(GetRandomValue(-80, 80));
+          tempChild.velocity.z += (float)(GetRandomValue(-80, 80));
           SpawnParticle(tempChild);
         }
       }
+      Particle_Deactivate(i);
+      continue;
     }
+
+    if (p->hasLiveEmit)
+    {
+      p->onLiveEmitTimer += dt;
+      float spawnInterval = 1.0f / p->onLiveEmitRate;
+      int safetyCounter = 0;
+
+      while (p->onLiveEmitTimer >= spawnInterval && safetyCounter < 10)
+      {
+        // Tránh dùng fmodf ở đây vì phép chia float rất đắt đỏ
+        p->onLiveEmitTimer -= spawnInterval;
+        p->onLiveConfig.position = (Vector3){p->x, p->y, p->z};
+        SpawnParticle(p->onLiveConfig);
+        safetyCounter++;
+      }
+      if (p->onLiveEmitTimer >= spawnInterval)
+        p->onLiveEmitTimer = 0.0f; // Reset backlog an toàn
+    }
+
+    // TỐI ƯU 3: Inline Math Scalar (Tính toán trục tiếp trên x, y, z)
+    if (p->forceField)
+    {
+      Vector3 pos = {p->x, p->y, p->z};
+      Vector3 vel = {p->vx, p->vy, p->vz};
+      Vector3 force = ForceField_Evaluate(p->forceField, pos, vel, p->lifetime, (Vector3){0}, (Vector3){0});
+      p->vx += force.x * dt;
+      p->vy += force.y * dt;
+      p->vz += force.z * dt;
+
+      float viscDamp = ForceField_GetViscosityDamping(p->forceField, dt);
+      p->vx *= viscDamp;
+      p->vy *= viscDamp;
+      p->vz *= viscDamp;
+    }
+
+    if (windActive)
+    {
+      Vector3 windForce = WindZone_Evaluate((Vector3){p->x, p->y, p->z}, (Vector3){p->vx, p->vy, p->vz}, s_particleTime);
+      p->vx += windForce.x * dt;
+      p->vy += windForce.y * dt;
+      p->vz += windForce.z * dt;
+    }
+
+    float speedMul = 1.0f;
+    if (p->speedCurve)
+    {
+      float ageT = 1.0f - Clamp(p->lifetime / p->maxLifetime, 0.0f, 1.0f);
+      speedMul = SkillCurve_Eval(p->speedCurve, ageT);
+    }
+
+    float step = dt * speedMul;
+    p->x += p->vx * step;
+    p->y += p->vy * step;
+    p->z += p->vz * step;
   }
 }
 
-void DrawParticles(Camera3D camera, Texture2D texture) {
-  // Kỹ thuật camera-facing billboards / Quads cho hệ thống hạt CPU
-  Vector3 viewDir =
-      Vector3Normalize(Vector3Subtract(camera.position, camera.target));
+void DrawParticles(Camera3D camera, Texture2D texture)
+{
+  if (s_activeCount == 0)
+    return;
+
+  Vector3 viewDir = {camera.position.x - camera.target.x,
+                     camera.position.y - camera.target.y,
+                     camera.position.z - camera.target.z};
+  float viewLen = sqrtf(viewDir.x * viewDir.x + viewDir.y * viewDir.y + viewDir.z * viewDir.z);
+  if (viewLen > 0.0f)
+  {
+    viewDir.x /= viewLen;
+    viewDir.y /= viewLen;
+    viewDir.z /= viewLen;
+  }
+
   Vector3 right = {camera.up.y * viewDir.z - camera.up.z * viewDir.y,
                    camera.up.z * viewDir.x - camera.up.x * viewDir.z,
                    camera.up.x * viewDir.y - camera.up.y * viewDir.x};
-  right = Vector3Normalize(right);
-  Vector3 up = Vector3CrossProduct(viewDir, right);
 
-  for (int i = 0; i < MAX_PARTICLES; i++) {
-    if (!g_Particles[i].active)
-      continue;
+  float rightLen = sqrtf(right.x * right.x + right.y * right.y + right.z * right.z);
+  if (rightLen > 0.0f)
+  {
+    right.x /= rightLen;
+    right.y /= rightLen;
+    right.z /= rightLen;
+  }
 
-    ParticleInternal *p = &g_Particles[i];
+  Vector3 up = {viewDir.y * right.z - viewDir.z * right.y,
+                viewDir.z * right.x - viewDir.x * right.z,
+                viewDir.x * right.y - viewDir.y * right.x};
+
+  rlSetTexture(texture.id);
+  rlBegin(RL_QUADS);
+
+  for (int a = 0; a < s_activeCount; a++)
+  {
+    ParticleInternal *p = &g_Particles[s_activeIds[a]];
+
     float lifeRatio = p->lifetime / p->maxLifetime;
     if (lifeRatio < 0.0f)
       lifeRatio = 0.0f;
-    if (lifeRatio > 1.0f)
+    else if (lifeRatio > 1.0f)
       lifeRatio = 1.0f;
 
-    // Nội suy màu sắc
+    float invRatio = 1.0f - lifeRatio;
     Color c = p->colorStart;
-    if (p->gradient) {
-      c = ColorGradient_Sample(p->gradient, 1.0f - lifeRatio);
-    } else {
-      c.r = (unsigned char)(p->colorStart.r * lifeRatio +
-                            p->colorEnd.r * (1.0f - lifeRatio));
-      c.g = (unsigned char)(p->colorStart.g * lifeRatio +
-                            p->colorEnd.g * (1.0f - lifeRatio));
-      c.b = (unsigned char)(p->colorStart.b * lifeRatio +
-                            p->colorEnd.b * (1.0f - lifeRatio));
-      c.a = (unsigned char)(p->colorStart.a * lifeRatio +
-                            p->colorEnd.a * (1.0f - lifeRatio));
+
+    if (p->gradient)
+    {
+      c = ColorGradient_Sample(p->gradient, invRatio);
     }
-    // Optional over-lifetime alpha curve — overrides whatever alpha the
-    // colorStart/colorEnd/gradient computation above produced (RGB from
-    // that computation is kept). Lets a phase's opacity ramp/pulse/fade in
-    // a shape richer than a 2-point start->end lerp.
-    if (p->alphaCurve) {
-      float mul = SkillCurve_Eval(p->alphaCurve, 1.0f - lifeRatio);
-      float a = (float)p->colorStart.a * mul;
-      if (a < 0.0f) a = 0.0f;
-      if (a > 255.0f) a = 255.0f;
-      c.a = (unsigned char)a;
+    else
+    {
+      // Ép kiểu Fast Int Lerp thay vì float rườm rà
+      c.r = (unsigned char)((int)p->colorStart.r * lifeRatio + (int)p->colorEnd.r * invRatio);
+      c.g = (unsigned char)((int)p->colorStart.g * lifeRatio + (int)p->colorEnd.g * invRatio);
+      c.b = (unsigned char)((int)p->colorStart.b * lifeRatio + (int)p->colorEnd.b * invRatio);
+      c.a = (unsigned char)((int)p->colorStart.a * lifeRatio + (int)p->colorEnd.a * invRatio);
     }
 
-    if (p->emissiveCurve) {
-      float mul = SkillCurve_Eval(p->emissiveCurve, 1.0f - lifeRatio);
-      float r = (float)c.r * mul; if (r > 255.0f) r = 255.0f;
-      float g = (float)c.g * mul; if (g > 255.0f) g = 255.0f;
-      float b = (float)c.b * mul; if (b > 255.0f) b = 255.0f;
-      c.r = (unsigned char)r;
-      c.g = (unsigned char)g;
-      c.b = (unsigned char)b;
+    if (p->alphaCurve)
+    {
+      float mul = SkillCurve_Eval(p->alphaCurve, invRatio);
+      int a_val = (int)((float)p->colorStart.a * mul);
+      c.a = (unsigned char)(a_val < 0 ? 0 : (a_val > 255 ? 255 : a_val));
     }
 
-    // Optional over-lifetime radius multiplier (same "age fraction"
-    // convention as gradient/speedCurve — 0 at spawn, 1 at death).
+    if (p->emissiveCurve)
+    {
+      float mul = SkillCurve_Eval(p->emissiveCurve, invRatio);
+      int r = (int)((float)c.r * mul);
+      c.r = (unsigned char)(r > 255 ? 255 : r);
+      int g = (int)((float)c.g * mul);
+      c.g = (unsigned char)(g > 255 ? 255 : g);
+      int b = (int)((float)c.b * mul);
+      c.b = (unsigned char)(b > 255 ? 255 : b);
+    }
+
     float drawRadius = p->radius;
-    if (p->radiusCurve) {
-      drawRadius = p->radius * SkillCurve_Eval(p->radiusCurve, 1.0f - lifeRatio);
+    if (p->radiusCurve)
+    {
+      drawRadius *= SkillCurve_Eval(p->radiusCurve, invRatio);
     }
 
-    // Tọa độ UV chuẩn (Bỏ qua tính toán SpriteAnim lỗi để giữ an toàn tuyệt
-    // đối)
-    float uMin = 0.0f, vMin = 0.0f, uMax = 1.0f, vMax = 1.0f;
+    // Tiền tính toán trước các góc của Quad để tránh tính toán lại phép nhân vector 4 lần
+    float rx = right.x * drawRadius, ry = right.y * drawRadius, rz = right.z * drawRadius;
+    float ux = up.x * drawRadius, uy = up.y * drawRadius, uz = up.z * drawRadius;
 
-    // Đẩy hình học qua rlgl immediate mode
-    rlSetTexture(texture.id);
-    rlBegin(RL_QUADS);
     rlColor4ub(c.r, c.g, c.b, c.a);
 
-    // Top-Left
-    rlTexCoord2f(uMin, vMin);
-    rlVertex3f(p->position.x + (right.x - up.x) * drawRadius,
-               p->position.y + (right.y - up.y) * drawRadius,
-               p->position.z + (right.z - up.z) * drawRadius);
-
-    // Bottom-Left
-    rlTexCoord2f(uMin, vMax);
-    rlVertex3f(p->position.x + (right.x + up.x) * drawRadius,
-               p->position.y + (right.y + up.y) * drawRadius,
-               p->position.z + (right.z + up.z) * drawRadius);
-
-    // Bottom-Right
-    rlTexCoord2f(uMax, vMax);
-    rlVertex3f(p->position.x + (-right.x + up.x) * drawRadius,
-               p->position.y + (-right.y + up.y) * drawRadius,
-               p->position.z + (-right.z + up.z) * drawRadius);
-
-    // Top-Right
-    rlTexCoord2f(uMax, vMin);
-    rlVertex3f(p->position.x + (-right.x - up.x) * drawRadius,
-               p->position.y + (-right.y - up.y) * drawRadius,
-               p->position.z + (-right.z - up.z) * drawRadius);
-    rlEnd();
+    // TL
+    rlTexCoord2f(0.0f, 0.0f);
+    rlVertex3f(p->x + rx - ux, p->y + ry - uy, p->z + rz - uz);
+    // BL
+    rlTexCoord2f(0.0f, 1.0f);
+    rlVertex3f(p->x + rx + ux, p->y + ry + uy, p->z + rz + uz);
+    // BR
+    rlTexCoord2f(1.0f, 1.0f);
+    rlVertex3f(p->x - rx + ux, p->y - ry + uy, p->z - rz + uz);
+    // TR
+    rlTexCoord2f(1.0f, 0.0f);
+    rlVertex3f(p->x - rx - ux, p->y - ry - uy, p->z - rz - uz);
   }
+
+  rlEnd();
   rlSetTexture(0);
 }
 
 void UnloadParticleSystem(void) { InitParticleSystem(); }
 
-bool IsParticleSystemActive(void) {
-  for (int i = 0; i < MAX_PARTICLES; i++) {
-    if (g_Particles[i].active)
-      return true;
-  }
-  return false;
-}
+bool IsParticleSystemActive(void) { return s_activeCount > 0; }
 
-void ParticleSystem_ResetForceFieldRegistry(void) {
-  // No-op ở CPU mode
-}
-void ParticleSystem_GetStats(int *active, int *max) {
-    int n = 0;
-    for (int i = 0; i < MAX_PARTICLES; i++)
-        if (g_Particles[i].active) n++;
-    *active = n;
-    *max = MAX_PARTICLES;
+void ParticleSystem_ResetForceFieldRegistry(void) {}
+
+void ParticleSystem_GetStats(int *active, int *max)
+{
+  *active = s_activeCount;
+  *max = MAX_PARTICLES;
 }
 
 #ifndef PI
@@ -324,38 +368,39 @@ void ParticleSystem_GetStats(int *active, int *max) {
 #endif
 
 #include "core/utils_math.h"
-#include <math.h>
 
-void ParticleSystem_SpawnRadialBurst(Vector3 origin, float sizeScale, const ParticleRadialBurstConfig *cfg) {
-    if (cfg == NULL) return;
+void ParticleSystem_SpawnRadialBurst(Vector3 origin, float sizeScale, const ParticleRadialBurstConfig *cfg)
+{
+  if (cfg == NULL)
+    return;
 
-    ParticleRadialBurstConfig localCfg = *cfg;
-    ParticleRadialBurstConfig_Unify(&localCfg);
-    cfg = &localCfg;
+  ParticleRadialBurstConfig localCfg = *cfg;
+  ParticleRadialBurstConfig_Unify(&localCfg);
+  cfg = &localCfg;
 
-    int count = GetRandomValue(cfg->countMin, cfg->countMax);
-    count = (int)((float)count * sizeScale);
+  int count = GetRandomValue(cfg->countMin, cfg->countMax);
+  count = (int)((float)count * sizeScale);
 
-    for (int s = 0; s < count; s++) {
-        float angle = Random01() * PI * 2.0f;
-        /* pitchRange = 0 -> always 0 (flat burst). pitchRange = PI -> full sphere. */
-        float pitch = (Random01() - 0.5f) * cfg->pitchRange;
-        float speed = Math_Mix(cfg->speedMin, cfg->speedMax, Random01()) * sizeScale;
+  for (int s = 0; s < count; s++)
+  {
+    float angle = Random01() * PI * 2.0f;
+    float pitch = (Random01() - 0.5f) * cfg->pitchRange;
+    float speed = Math_Mix(cfg->speedMin, cfg->speedMax, Random01()) * sizeScale;
+    float cosPitch = cosf(pitch);
 
-        ParticleConfig pcfg = {0};
-        pcfg.position = origin;
-        pcfg.velocity = (Vector3){
-            cosf(angle) * speed * cosf(pitch),
-            sinf(pitch) * speed + (cfg->upwardBias * sizeScale),
-            sinf(angle) * speed * cosf(pitch)
-        };
-        pcfg.radius = Math_Mix(cfg->radiusMin, cfg->radiusMax, Random01()) * sizeScale;
-        pcfg.lifetime = Math_Mix(cfg->lifetimeMin, cfg->lifetimeMax, Random01());
-        pcfg.colorStart = cfg->colorStart;
-        pcfg.colorEnd = cfg->colorEnd;
-        pcfg.forceField = cfg->forceField;
-        pcfg.gradient = cfg->gradient;
+    ParticleConfig pcfg = {0};
+    pcfg.position = origin;
+    pcfg.velocity = (Vector3){
+        cosf(angle) * speed * cosPitch,
+        sinf(pitch) * speed + (cfg->upwardBias * sizeScale),
+        sinf(angle) * speed * cosPitch};
+    pcfg.radius = Math_Mix(cfg->radiusMin, cfg->radiusMax, Random01()) * sizeScale;
+    pcfg.lifetime = Math_Mix(cfg->lifetimeMin, cfg->lifetimeMax, Random01());
+    pcfg.colorStart = cfg->colorStart;
+    pcfg.colorEnd = cfg->colorEnd;
+    pcfg.forceField = cfg->forceField;
+    pcfg.gradient = cfg->gradient;
 
-        SpawnParticle(pcfg);
-    }
+    SpawnParticle(pcfg);
+  }
 }

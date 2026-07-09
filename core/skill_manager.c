@@ -106,6 +106,7 @@ static bool builtInRegistered = false;
 // Item 16: cooldown gating state, keyed by (skillIndex, agentId) — each
 // caster gets an independent cooldown per skill. 0.0f = ready to cast.
 static float skillCooldownRemaining[MAX_SKILLS][SKILL_MANAGER_MAX_AGENTS];
+static int skillCooldownPendingCount[MAX_SKILLS];
 
 // Item 14: optional per-skill abort callback, registered separately from
 // RegisterSkill() so it stays backward compatible. Receives the agentId
@@ -354,11 +355,19 @@ void UpdateSkillManager(float dt, Vector3 enemyPos, float enemyRadius) {
   g_skillManagerTime += dt;
 
   for (int i = 0; i < registeredSkillCount; i++) {
+    if (skillCooldownPendingCount[i] <= 0)
+      continue;
+    float *cd = skillCooldownRemaining[i];
     for (int a = 0; a < SKILL_MANAGER_MAX_AGENTS; a++) {
-      if (skillCooldownRemaining[i][a] > 0.0f) {
-        skillCooldownRemaining[i][a] -= dt;
-        if (skillCooldownRemaining[i][a] < 0.0f)
-          skillCooldownRemaining[i][a] = 0.0f;
+      float v = cd[a];
+      if (v <= 0.0f)
+        continue;
+      v -= dt;
+      if (v <= 0.0f) {
+        cd[a] = 0.0f;
+        skillCooldownPendingCount[i]--;
+      } else {
+        cd[a] = v;
       }
     }
   }
@@ -1105,6 +1114,8 @@ void SkillManager_TriggerCooldown(int skillIndex, int agentId, float cooldownSec
     return;
   if (cooldownSeconds < 0.0f)
     cooldownSeconds = 0.0f;
+  if (skillCooldownRemaining[skillIndex][agentId] <= 0.0f && cooldownSeconds > 0.0f)
+    skillCooldownPendingCount[skillIndex]++;
   skillCooldownRemaining[skillIndex][agentId] = cooldownSeconds;
 }
 
