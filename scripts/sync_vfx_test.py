@@ -400,6 +400,15 @@ def gen_trigger_block(entries):
         lines += [f"{INDENT}{{", f"{INDENT}    s_isPlayingMesh = true;",
                   f"{INDENT}    s_meshTime = 0.0f;", f"{INDENT}}}"]
     else:
+        # $SEED expands to the `posSeed` local — only declare it here (this
+        # block is a standalone if/else chain, not inside gen_draw_block's
+        # switch scope where posSeed is already declared) when at least one
+        # oneshot trigger_call actually references it, else it's an unused
+        # local. Bug found 2026-07: previously always expanded $SEED but
+        # never declared posSeed here, producing an undeclared-identifier
+        # compile error the moment any oneshot entry used $SEED.
+        if any("$SEED" in e["trigger_call"] for _, e in oneshots):
+            lines.append(f"{INDENT}int posSeed = (int)(s_prefabStartPos.x * 17.0f + s_prefabStartPos.z * 31.0f) & 0xFFFF;")
         first = True
         for idx, e in oneshots:
             kw = "if" if first else "} else if"
