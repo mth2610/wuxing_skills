@@ -550,6 +550,22 @@
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeGroundAura(VC_MAT_FIRE, $POS, 1.5f, 0.9f, $TIME)"
+    },
+    {
+      "fn": "VFX_ComposeSphericalAura",
+      "label": "SPHERICAL AURA",
+      "category": "util",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeSphericalAura(VC_MAT_FIRE, $POS, 1.5f, 2.0f)"
+    },
+    {
+      "fn": "VFX_DrawIceCrystalBurst",
+      "label": "DRAW ICE CRYSTAL BURST",
+      "category": "water",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_DrawIceCrystalBurst($POS, 5, $SEED, 1.0f)"
     }
   ],
   "overrides": {}

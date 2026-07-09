@@ -56,7 +56,7 @@ Real-world-scaled: **1 unit = 1 meter** (rescaled from the old de facto 1 unit =
 - Y = 0.0f: ground level
 - Mesh radii: 0.10–0.20f | Force/gravity: 3.0–7.0f (compare against real gravity 9.81f) | Particle speed: 1.0–3.0f
 
-Only `entities/entities.c`, `sandbox/sandbox_core.c`, `main.c`, `maps/*/` (arena-matching footprint only), and the pilot skills (`skills/fire/fire_ball`, `skills/metal/thunder_orb_skill`) have been converted to this scale so far. Every other skill still uses the old 1cm-scale numbers — check a skill's own magic numbers before assuming they're real-meter-scaled, and convert a skill fully (not partially) before relying on it interacting correctly with rescaled positions.
+Conversion complete engine-wide: `entities/entities.c`, `sandbox/sandbox_core.c`, `main.c`, `maps/*/`, and every skill under `skills/` are now on this 1-unit-1-meter scale. Any **new** skill must be authored meter-scaled from the start — never introduce 1cm-scale (old ×100) numbers.
 
 ## Token-efficiency rules for every agent (MANDATORY)
 

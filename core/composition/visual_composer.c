@@ -66,6 +66,7 @@
 
 // @gen:vc_includes begin
 #include "vc_ground_aura.inl"
+#include "vc_spherical_aura.inl"
 // @gen:vc_includes end
 
 void VFX_Compose_Update(float dt) { VC_Archetype_Update(dt); }

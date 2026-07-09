@@ -3,6 +3,16 @@
 Single reference for creating a new Wuxing skill from scratch in one session.
 See `CORE_API.md` for full API details; this document focuses on **decisions and sequence**.
 
+> [!IMPORTANT]
+> **Read [`WUXING_ART_DIRECTION.md`](WUXING_ART_DIRECTION.md) before step 1**,
+> not after step 10 — it's the aesthetic authority (design rules, per-element
+> visual language, timeline design, layer-recipe cookbook, 10-step workflow),
+> this file is the mechanical sequence/checklist. Skipping straight to
+> scaffolding without it reliably produces a skill that's mechanically
+> correct but visually flat. `COMPOSITION_API.md` §0 maps
+> WUXING_ART_DIRECTION.md's cookbook patterns (§6.1) directly to the
+> `VFX_Compose*` calls you'll actually write in step 3.
+
 ---
 
 ## 1. Pick your archetype

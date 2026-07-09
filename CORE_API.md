@@ -1937,3 +1937,13 @@ int         VisualVerify_GetExitCode(void);  // 0 = ok, 1 = unknown skill
 See **[COMPOSITION_API.md](COMPOSITION_API.md)** for the full composition reference:
 `VFX_Compose*`, `VFX_GroundPattern`, `VFX_PathWave`, `VFX_TriggerExplosion`, `VC_MaterialId` table, motion library, beauty primitives, archetype group 3–5, `.inl` include order, and sync script.
 
+> [!IMPORTANT]
+> Both this file and `COMPOSITION_API.md` are mechanical references (what
+> exists, what it's called, what parameters it takes) — neither teaches
+> what makes a composition look good. Before authoring a new skill/VFX,
+> read **[`WUXING_ART_DIRECTION.md`](WUXING_ART_DIRECTION.md)** (AI-oriented
+> design rules, per-element visual language, timeline design, a cookbook of
+> reusable layer recipes, and a 10-step workflow) — then use
+> `COMPOSITION_API.md` §0's table to translate the cookbook pattern you pick
+> into concrete function calls from this API.
+

@@ -4,6 +4,50 @@
 > Implementation: `core/composition/visual_composer.c` + modular `.inl` files
 > Cross-reference: [`CORE_API.md`](CORE_API.md) §7 (Particle), §19 stub
 
+> [!IMPORTANT]
+> **This document is the mechanical catalog — WHAT exists.** For WHY/HOW to
+> combine it into something that actually looks good, **read
+> [`WUXING_ART_DIRECTION.md`](WUXING_ART_DIRECTION.md) first** — it's the
+> aesthetic authority: Chapter 2 (Universal VFX Language), Chapter 5 (AI
+> Design Rules, mandatory), Chapter 6 (VFX Cookbook — reusable layer
+> recipes), Chapter 7 (10-step AI workflow + worked examples). Composing
+> directly from this catalog without that context reliably produces
+> mechanically-correct-but-flat effects (every function called, no
+> hierarchy, no silence, no "one idea"). Section 0 below is the bridge
+> between the two: it maps every Chapter 6.1 cookbook pattern to the actual
+> function calls cataloged in this file, so you can go from "I want a
+> Meteor" to a concrete call sequence without reading `.c`/`.inl` source.
+
+---
+
+## 0. Cookbook Pattern → Concrete API (read alongside WUXING_ART_DIRECTION.md §6.1)
+
+Each row translates one of Chapter 6.1's abstract layer recipes into the
+actual functions this file (and `CORE_API.md`'s primitive sections) already
+document. Layer order in the recipe = call/draw order. Not every layer is
+mandatory every time — see WUXING_ART_DIRECTION.md §5.4/§6.4 ("one purpose
+per layer", "remove lowest layers first, never remove Core Shape or
+Motion").
+
+| Cookbook pattern (§6.1) | Recipe | Concrete calls |
+|---|---|---|
+| **Projectile** | Projectile → Trail → Emitter → Light → Impact → Smoke | `VFX_ComposeProjectile(VC_MaterialId,...)` (bundles core+trail+light+spin) or `SpawnProjectileTrail`/`VFX_ComposeProjectileTrail` alone → `VFX_ComposeImpact`/`VFX_TriggerExplosion` on hit → `VFX_ComposeSmokePuff`/`SmokeTrail` |
+| **Beam** | Beam Core + Flow Map + Glow + Edge Sparks + Impact | `VFX_ComposeBeam(VC_MaterialId,...)` (core+glow+jitter already bundled) + `VFX_ComposeGlintBurst` (edge sparks) + `VFX_ComposeImpact` at the endpoint |
+| **Sword Slash** | Motion → Trail → Ribbon → Spark → Flash → Decal | Character motion (skill state machine) + `Afterimage_Spawn` (CORE_API.md §14, ghost trail) + `VFX_ComposeSlashArc(VC_MaterialId,...)` (ribbon core) + `VFX_ComposeGlintBurst` + `VFX_ComposeStreakFlare` + `DecalSystem_Add` (§8) |
+| **Explosion** | Flash → Shockwave → Explosion → Debris → Smoke → Residual Light | `VFX_TriggerExplosion(VC_MaterialId,...)` is already the full standard formula (flash/distort/light/particles/decal) — add `VFX_ComposeShockwaveRing` for an explicit ring and `VFX_ComposeEmberDrift` for lingering residue |
+| **Portal** | Circle → Flow Map → Ribbon → Orbit Particles → Distortion → Glow | `VFX_SummonCircle` (2-layer counter-rotating circle + inward particle pull) + `VFX_ComposeMagicPuddle`/`VFX_ComposeGroundAura` (flow-map glow) + `ScreenDistort_Add` (§8) |
+| **Aura** | Emitter → Orbit → Curl Noise → Ribbon → Soft Glow | `VFX_ComposeAura(VC_MaterialId,...)` (generic) — or `VFX_ComposeCylinderAura`/`VFX_ComposeQiAura` for a body-hugging column shape instead of a ground ring |
+| **Dragon** | Head → Body Motion → Ribbon Spine → Emitter → Glow → Trail → Impact | No dedicated primitive — compose by hand: `VFX_ComposeBeam` or a mesh head as the core, Ribbon Strip (§7) as the spine, `ForceField` orbit/curl (§5) for body motion, particle emitters (§6) along the spine. Follow §6.1's stated order; this is the one pattern still requiring original composition, not a single ready-made call. |
+| **Meteor** | Meteor → Long Trail → Smoke → Light → Impact → Debris → Shockwave → Dust | `VFX_ComposeProjectile`/`SpawnProjectileTrail` (long trail variant) + `VFX_ComposeSmokeTrail` + `VFX_TriggerExplosion` on impact + `VFX_ComposeShockwaveRing` |
+| **Tornado** | Vortex Motion → Ribbon Spiral → Particles → Debris → Mist → Leaves | Element-specific ready-made: `VFX_ComposeCyclone` (Taiji), `VFX_ComposeFireWhirl` (Fire). Other elements: compose from `ForceField` VORTEX+UPDRAFT (§5) + `VC_MotionHelix`/`VC_MotionSpiralIn` (Nhóm 2c motion library below) + `VFX_ComposeMistVeil` (Water) as reference |
+| **Summon** | Portal → Materialize → Glow → Shape Reveal → Idle Aura | `VFX_SummonCircle` (portal) → dissolve-in via `u_dissolve` (CORE_API.md §12.4 — animate 1.0→0.0, never pop) → `VFX_ComposeAura` (idle) |
+| **Shield** | Core Shape → Flow Map → Energy Edge → Ripple → Light Pulse | `VFX_ComposeShield(VC_MaterialId, pos, radius, progress, time)` — already the full bundled pattern |
+| **Chain Lightning** | Charge → Main Arc → Secondary Arcs → Ground Sparks → Residual | `VFX_ComposeChargeUp` (charge) → `SpawnChainLightning`/`VFX_ComposeChain` (arcs; LIGHTNING gets forks automatically) → `VFX_ComposeGlintBurst` (ground sparks) → `VFX_ComposeStaticField` (residual crackle) |
+| **Healing** | Soft Glow → Particles Rise → Leaves/Light → Pulse → Fade | `VFX_ComposeAura` (HOLY/WOOD material, soft glow + rising particles) + `VC_Pulse01` (motion library, §2c below) driving a slow emissive pulse + dissolve fade-out, never a burst |
+| **Charge (pre-ultimate)** | Weak Glow → Gather → Rotation → Compression → Flash → Release | `VFX_ComposeChargeUp(VC_MaterialId, pos, radius, progress, time)` — already exactly this pattern (glint bursts past `progress > 0.7`) |
+| **Dash** | Motion → Afterimage → Trail → Dust → Arrival Flash | `Afterimage_Spawn` every 0.04s while dashing (§14) + a trail (Ribbon Strip §7 or particle trail) + `VFX_ComposeStreakFlare` on arrival |
+| **Impact** | Hit → Flash → Light → Sparks → Shake → Distortion → Smoke | `VFX_ComposeImpact`/`VFX_TriggerImpactBurst` (already bundles flash/decal/light/particles/distort — `ImpactBurstConfig`'s 4 steps below) + `CameraFX_Shake` (§8) — not every impact needs every layer, see §6.5 |
+
 ---
 
 ## Impact Burst (`core/composition/visual_composer.h`)

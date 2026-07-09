@@ -69,8 +69,19 @@ void InitVerdantPathMap(void)
     // Cool, clear moonlight — bright enough to read the ground/rock
     // textures clearly, while staying within the project's always-night
     // identity (see nguhanhtyvo_kehoach.md §I).
-    Environment_SetAmbientColor((Color){60, 65, 85, 255});
-    Environment_SetSunColor((Color){200, 205, 220, 255});
+    //
+    // Dimmed from the original (60,65,85)/(200,205,220): bloom is a
+    // whole-screen effect (core/post_fx.c's bloomTex is shared, not
+    // per-object — see post_process.fs's `sceneCol.rgb += bloomTex`), and
+    // prop_lit.fs's `albedo * (ambient + diff*sunColor)` pushed sun-facing
+    // grass patches above the 0.5 bloom threshold at the old brightness.
+    // That made grass itself bloom and bleed into any nearby skill VFX's
+    // bloom halo, visibly tinting/washing out the VFX's own color compared
+    // to a map with a dark, non-blooming floor (default_arena). Reduced so
+    // lit grass stays under threshold; skill VFX bloom is unaffected since
+    // it comes from the VFX's own emissive shader, not this ambient/sun.
+    Environment_SetAmbientColor((Color){38, 42, 55, 255});
+    Environment_SetSunColor((Color){125, 130, 145, 255});
     Environment_SetSunDirection((Vector3){0.5f, -0.8f, -0.3f}); // project-standard direction
     Environment_SetShadowColor((Color){10, 10, 15, 150});
 
