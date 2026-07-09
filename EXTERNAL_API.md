@@ -9,7 +9,7 @@
 ## 1. Game Context
 
 ```
-Project:  Wuxing Skills (C / Raylib 5.5 / OpenGL 3.3, isometric night arena)
+Project:  Wuxing Skills (C / Raylib 6.0 / OpenGL 3.3, isometric night arena)
 Scale:    1 unit = 1 meter. Arena center (6.0f, 0.0f, 4.4f), radius 18m. Y=0 is ground.
 Gravity:  PHYSICS_GRAVITY_MPS2 = 9.81f  (reference for tuning force/gravity values)
 Elements: Water, Wood, Fire, Earth, Metal, Taiji

@@ -15,13 +15,18 @@ include(FetchContent)
 # Tối ưu hóa build Raylib bằng cách tắt các module không cần thiết
 set(BUILD_EXAMPLES OFF CACHE BOOL "Build raylib examples" FORCE)
 set(BUILD_GAMES OFF CACHE BOOL "Build raylib games" FORCE)
-set(CUSTOMIZE_BUILD ON CACHE BOOL "Customize raylib build features" FORCE)
+# CUSTOMIZE_BUILD đã BỊ BỎ (2026-07, CORE_ISSUES.md Item 41): trên raylib 6.0 +
+# macOS/Intel HD, build raylib với CUSTOMIZE_BUILD ON khiến cửa sổ init "thành
+# công" nhưng vô hình (Dock icon có, không có cửa sổ) — một SUPPORT_* mặc định
+# đổi giá trị so với 5.5. Dự án chưa từng set cờ SUPPORT_* tùy biến nào nên cờ
+# này vô dụng; bỏ đi để raylib build theo default chuẩn (đã kiểm chứng hiện
+# window bằng mini app cô lập). ĐỪNG bật lại mà không set kèm SUPPORT_* đúng.
 
-# Tải Raylib phiên bản 5.5
+# Tải Raylib phiên bản 6.0
 FetchContent_Declare(
   raylib
   GIT_REPOSITORY https://github.com/raysan5/raylib.git
-  GIT_TAG        5.5
+  GIT_TAG        6.0
 )
 FetchContent_MakeAvailable(raylib)
 

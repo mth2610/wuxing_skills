@@ -7,7 +7,7 @@
 
 ### 1.1 Language & Standards
 * **Dialect:** Strict C99.
-* **Environment:** Raylib 5.5, OpenGL 3.3 (Core Profile), 3D Isometric Night-time Arena.
+* **Environment:** Raylib 6.0, OpenGL 3.3 (Core Profile), 3D Isometric Night-time Arena.
 * **Standard Headers:** Every `.c` skill file **MUST** explicitly `#include <stddef.h>`, `#include <stdlib.h>`, and `#include <stdio.h>` to avoid compilation errors regarding `NULL` and `snprintf`. Do not assume they are implicitly included.
 * **Include Paths:** Use relative paths from root: `#include "core/particle_system.h"`, etc.
 * **`PI` Macro Guard:** `raylib.h` already defines `PI` as `3.14159265358979323846f`. **Never** write a bare `#define PI`. Always guard with:

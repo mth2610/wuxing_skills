@@ -1,6 +1,6 @@
 # Wuxing Skills — Root Agent Guide
 
-C/Raylib 5.5 / OpenGL 3.3 game project. Isometric Night-time Arena. 6 elements: Water, Wood, Fire, Earth, Metal, Taiji.
+C/Raylib 6.0 / OpenGL 3.3 game project. Isometric Night-time Arena. 6 elements: Water, Wood, Fire, Earth, Metal, Taiji.
 
 ## Reference docs
 - `CORE_API.md` — Full engine API (particle, trail, force field, shader, mesh...)
@@ -39,9 +39,14 @@ Never read, list, or touch any file under these.
 - Breaking API changes must be documented before being applied
 
 ## Build
+Out-of-source, everything (CMake cache, `_deps` incl. raylib checkout, object
+files, binary) lives under `build/` — keeps the repo root clean. `build/`
+(like `_deps/`, `android.wuxing_skills/`) is off-limits to agents to read/
+list/touch; only the human runs these commands directly.
 ```bash
-make          # Build the whole project
-./wuxing      # Run the game
+cmake -S . -B build         # Configure once (or after CMakeLists.txt changes)
+cmake --build build -j4     # Build the whole project
+./build/wuxing               # Run the game
 # Key K: cycle through maps
 ```
 

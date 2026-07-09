@@ -1323,3 +1323,33 @@ alongside `instanceTransform` (not covered by `DrawMeshInstanced`'s
 convenience wrapper, which only manages the transform buffer) — no existing
 code in this engine does this yet; whoever picks it up is establishing new
 precedent, not following one.
+
+---
+
+## Item 41 — Raylib 5.5 → 6.0 upgrade (DONE)
+
+**Status: RESOLVED.** `CMakeLists.txt`'s `FetchContent_Declare(raylib ...
+GIT_TAG 6.0)` (was `5.5`). Motivation: keep the dependency current while the
+codebase is still small enough that a version bump is cheap — deferred
+further gets more expensive as more code accumulates API-specific
+assumptions.
+
+**What was checked:** full clean rebuild (`_deps`/`build` cleared first —
+`FetchContent` does not re-fetch on a changed `GIT_TAG` alone if the old
+checkout is still present) compiled with **zero errors across every
+module** (`core/`, `compute/`, `environment/`, `entities/`, `game/`,
+`sandbox/`, `skills/`, `maps/`) — no breaking API changes from 5.5 hit any
+call site in this codebase. Binary launches, logs confirm `Initializing
+raylib 6.0`, no shader/texture/asset load errors in the startup log.
+
+**Not exhaustively re-verified:** this confirms *compiles and boots
+cleanly*, not full gameplay/visual regression across every skill/map — deep
+runtime behavior changes (if any exist between 5.5 and 6.0) wouldn't
+necessarily show up as a compile error or a boot-time log line. If anything
+looks visually different after this point that isn't explained by other
+changes in the same session, suspect this first.
+
+**Docs updated to match:** root `CLAUDE.md`, `core/CLAUDE.md`,
+`CORE_API.md`, `EXTERNAL_API.md`. **`CORE_API_SHORT.md` NOT updated** (still
+says 5.5 on its line 9) — per its own stated rule it's manual-only, not
+auto-synced with routine edits; regenerate it on request, not proactively.

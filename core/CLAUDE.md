@@ -28,7 +28,7 @@ Manages the entire **Core Engine** module of the Wuxing Skills project. Owns the
 5. **Docs:** Update `CORE_API.md` whenever public API is added/changed. `CORE_API.md` is **shared-write** with the Skills Agent (it documents usage notes/conventions Skills discovers too) — see "Updating CORE_API.md" below.
 
 ## Code rules (from CORE_API.md)
-- Strict C99, Raylib 5.5, OpenGL 3.3
+- Strict C99, Raylib 6.0, OpenGL 3.3
 - Guard the PI macro: `#ifndef PI #define PI 3.1415926535f #endif`
 - No `malloc`/`calloc`/`realloc`/`free`
 - Use `ResourceManager_LoadShader()` — never call `UnloadShader`/`UnloadTexture` in skill code

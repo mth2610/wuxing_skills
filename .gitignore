@@ -12,6 +12,9 @@ CMakeFiles/
 CMakeLists.txt.user
 cmake_install.cmake
 Makefile
+CTestTestfile.cmake
+CPackConfig.cmake
+CPackSourceConfig.cmake
 targets/
 
 # Compiled Object files

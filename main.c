@@ -118,15 +118,49 @@ int main(int argc, char **argv) {
 
   bool autoTestMode     = AutoTest_IsEnabled();
   bool visualVerifyMode = VisualVerify_IsEnabled();
-  if (autoTestMode || visualVerifyMode || renderVFXMode) {
+  bool headlessMode     = autoTestMode || visualVerifyMode || renderVFXMode;
+
+  unsigned int configFlags = 0;
+  if (headlessMode) {
       // Off-screen SetWindowPosition was tried first, but produced the exact
       // same GetWorldToScreen() output as FLAG_WINDOW_HIDDEN below (proving
       // the odd coordinates aren't a window-position artifact) — kept
       // FLAG_WINDOW_HIDDEN since it doesn't touch window placement at all,
       // closer to normal interactive behavior.
-      SetConfigFlags(FLAG_WINDOW_HIDDEN);
+      configFlags |= FLAG_WINDOW_HIDDEN;
   }
+  SetConfigFlags(configFlags);
   InitWindow(screenWidth, screenHeight, "Avatar: True 3D Element Testbed");
+
+  // Raylib 6.0 (CORE_ISSUES.md Item 41) rewrote the fullscreen/HiDPI/window
+  // path; on this macOS + Intel HD setup the window inits "successfully" but
+  // stays invisible (Dock icon present, no on-screen window) — the classic
+  // GLFW-on-Cocoa "blank/hidden until the window is nudged" bug (raylib
+  // issue #665). Nudge the window position by 1px and back right after init
+  // to force Cocoa to composite + show it. Skip in headless mode (window is
+  // deliberately hidden there).
+  if (!headlessMode) {
+      Vector2 wpos = GetWindowPosition();
+      SetWindowPosition((int)wpos.x + 1, (int)wpos.y);
+      SetWindowPosition((int)wpos.x, (int)wpos.y);
+  }
+
+  // === BISECT PROBE (tạm thời — xoá sau khi tìm ra lỗi window raylib 6.0) ===
+  // Vẽ 1 vòng lặp tối giản NGAY sau InitWindow, trước MỌI init khác. Nếu cửa
+  // sổ đỏ này HIỆN -> InitWindow ổn, lỗi nằm ở init phía sau. Nếu KHÔNG hiện
+  // -> lỗi ở chính InitWindow/config/link.
+  if (getenv("WX_PROBE")) {
+      while (!WindowShouldClose()) {
+          BeginDrawing();
+          ClearBackground(RED);
+          DrawText("PROBE: window OK ngay sau InitWindow", 40, 40, 24, WHITE);
+          EndDrawing();
+      }
+      CloseWindow();
+      return 0;
+  }
+  // === HẾT BISECT PROBE ===
+
   rlSetClipPlanes(0.001f, 150.0f);
 
   // Tự động sinh các texture cơ bản nếu thiếu trong thư mục assets/textures
