@@ -558,14 +558,6 @@
       "_auto": true,
       "type": "oneshot",
       "trigger_call": "VFX_DrawIceCrystalBurst($POS, 5, $SEED, 1.0f)"
-    },
-    {
-      "fn": "VFX_ComposeGravitySingularity",
-      "label": "GRAVITY SINGULARITY",
-      "category": "util",
-      "_auto": true,
-      "type": "continuous",
-      "draw_call": "VFX_ComposeGravitySingularity($POS, 1.5f, $TIME)"
     }
   ],
   "overrides": {}

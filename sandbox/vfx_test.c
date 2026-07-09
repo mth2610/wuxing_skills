@@ -59,7 +59,7 @@ static const char *s_meshNames[] = {
     "DISC", "RING", "CONE", "TORNADO", "CYLINDER", "SPHERE", "SHOCKWAVE", "PYRAMID", "TETRAHEDRON"};
 
 // @gen:newfx_names begin
-// 72 entries — auto-managed by sync_vfx_test.py
+// 71 entries — auto-managed by sync_vfx_test.py
 static const char* s_newFxNames[] = {
     "FLAME WISP", "FIRE PILLAR", "FIREBALL", "FIRE BREATH", "BURN GROUND", "FIRE WHIRL",
     "EMBER DRIFT", "IMPACT FIRE", "CAST FIRE", "SPLASH", "BUBBLES", "MIST VEIL",
@@ -72,7 +72,7 @@ static const char* s_newFxNames[] = {
     "STREAK FLARE", "GUST SLASH", "SMOKE PUFF", "SMOKE TRAIL", "SHIELD", "CHAIN",
     "ZONE", "SLASH ARC", "CHARGE UP", "CYCLONE", "BEAM", "PROJECTILE",
     "AURA", "GND PATTERN", "SUMMON RING", "EXPLOSION", "GROUND WAVE", "PROJ FIRE",
-    "PROJ WATER", "PROJ METAL", "CYLINDER AURA", "GROUND AURA", "DRAW ICE CRYSTAL BURST", "GRAVITY SINGULARITY",
+    "PROJ WATER", "PROJ METAL", "CYLINDER AURA", "GROUND AURA", "DRAW ICE CRYSTAL BURST",
 };
 // @gen:newfx_names end
 
@@ -86,7 +86,7 @@ static const int s_newFxCategories[] = {
     4, 4, 5, 5, 5, 5, 6, 6, 6, 6,
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-    1, 6,
+    1,
 };
 // @gen:newfx_categories end
 
@@ -397,7 +397,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             const char **names;
             int globalIdx;
             int visualIdx;
-            maxIdx = 72;
+            maxIdx = 71;
             names = s_newFxNames; // @gen:newfx_count
             visualIdx = 0;
             (void)names;
@@ -683,7 +683,6 @@ void VFXTest_Draw3D(void)
               case 62: VFX_SummonCircle(s_prefabStartPos, 1.5f, progress, s_meshTime, (Color){100, 200, 255, 255}); break;
               case 68: VFX_ComposeCylinderAura(VC_MAT_FIRE, s_prefabStartPos, 1.5f, fminf(progress, 0.99f), s_meshTime); break;
               case 69: VFX_ComposeGroundAura(VC_MAT_FIRE, s_prefabStartPos, 1.5f, 0.9f, s_meshTime); break;
-              case 71: VFX_ComposeGravitySingularity(s_prefabStartPos, 1.5f, s_meshTime); break;
           }
 // @gen:newfx_draw end
         }
@@ -828,7 +827,7 @@ void VFXTest_DrawHUD(void)
         const char **names;
         int gi;
         int vIdx;
-        maxIdx = 72;
+        maxIdx = 71;
         names = s_newFxNames; // @gen:newfx_count
         vIdx = 0;
         (void)names;
