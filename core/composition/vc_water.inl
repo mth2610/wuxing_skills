@@ -105,29 +105,51 @@ void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, floa
     rlEnableDepthMask();
 }
 
-// Chung cho cả VFX_ComposeIceCrystal (cụm nhỏ ambient) lẫn
-// VFX_BuildIceCrystalBurstMesh/DrawIceCrystalBurstMesh (hero burst GPU-mesh)
-// — load 1 lần, dùng chung shader/texture, tránh double-load.
+// Tham số vật liệu pha lê băng dùng chung cho cả 2 shader (thường +
+// instancing) — tách hàm riêng để không lặp lại y hệt 1 khối CrystalMaterialParams
+// ở 2 nơi.
+static CrystalMaterialParams GetIceCrystalMaterialParams(void)
+{
+    CrystalMaterialParams p = {0};
+    p.baseColor = (Color){0, 110, 230, 200};
+    p.edgeColor = (Color){130, 220, 255, 255};
+    p.roughness = 0.35f;
+    p.fresnel = 0.6f;
+    p.refraction = 0.15f;
+    p.sparkle = 0.2f;
+    p.crack = 0.2f;
+    p.emission = 0.0f;
+    p.thickness = 1.8f;
+    return p;
+}
+
+// Chung cho VFX_ComposeIceCrystal (cụm nhỏ ambient, immediate-mode) — load 1
+// lần, dùng chung shader/texture, tránh double-load.
 static CrystalMaterial GetIceCrystalMaterial(void)
 {
     static CrystalMaterial s_iceMat;
     static bool s_iceMatLoaded = false;
     if (!s_iceMatLoaded)
     {
-        CrystalMaterialParams p = {0};
-        p.baseColor = (Color){0, 110, 230, 200};
-        p.edgeColor = (Color){130, 220, 255, 255};
-        p.roughness = 0.35f;
-        p.fresnel = 0.6f;
-        p.refraction = 0.15f;
-        p.sparkle = 0.2f;
-        p.crack = 0.2f;
-        p.emission = 0.0f;
-        p.thickness = 1.8f;
-        s_iceMat = CrystalMaterial_Load(p);
+        s_iceMat = CrystalMaterial_Load(GetIceCrystalMaterialParams());
         s_iceMatLoaded = true;
     }
     return s_iceMat;
+}
+
+// Biến thể GPU-instancing (core/shaders/crystal_instanced.vs) — chỉ dùng bởi
+// VFX_DrawIceCrystalBurst. Shader program khác CrystalMaterial ở trên nên
+// phải Load riêng (xem comment CrystalMaterialInstanced trong material_system.h).
+static CrystalMaterialInstanced GetIceCrystalMaterialInstanced(void)
+{
+    static CrystalMaterialInstanced s_iceMatI;
+    static bool s_iceMatILoaded = false;
+    if (!s_iceMatILoaded)
+    {
+        s_iceMatI = CrystalMaterialInstanced_Load(GetIceCrystalMaterialParams());
+        s_iceMatILoaded = true;
+    }
+    return s_iceMatI;
 }
 
 // Desc dùng chung cho ambient cluster lẫn hero burst — hình dạng 1 viên pha
@@ -175,29 +197,35 @@ static Mesh GetIceCrystalTemplateMesh(void)
     return s_template;
 }
 
-// Vẽ 1 cụm `crystalCount` viên pha lê "trông khác nhau" mà KHÔNG build mesh
-// mới — mỗi viên chỉ là 1 DrawMesh với transform (dịch/xoay/scale) riêng,
-// tính trên CPU từ 1 LCG xác định theo `seed` (cùng công thức đơn giản với
-// VFX_ComposeMetalShardCluster ở vc_metal.inl, không cần khớp bit-for-bit
-// với HashDeterministic nội bộ của core/geometry/pm_crystal.inl — chỉ cần
-// xác định theo seed và trông tự nhiên). `seed` khác nhau mỗi lần cast (VD
+#define ICE_CRYSTAL_BURST_MAX 32 // chặn trần hợp lý cho mảng transform trên stack, không phải giới hạn hiệu năng thật
+
+// Vẽ 1 cụm `crystalCount` viên pha lê "trông khác nhau" bằng ĐÚNG 1 draw
+// call (GPU instancing — DrawMeshInstanced) thay vì N lệnh DrawMesh riêng:
+// tính transform (dịch/xoay/scale) từng viên trên CPU từ 1 LCG xác định theo
+// `seed` (cùng công thức đơn giản với VFX_ComposeMetalShardCluster ở
+// vc_metal.inl, không cần khớp bit-for-bit với HashDeterministic nội bộ của
+// core/geometry/pm_crystal.inl — chỉ cần xác định theo seed và trông tự
+// nhiên), gom vào 1 mảng rồi submit 1 lần. `seed` khác nhau mỗi lần cast (VD
 // trộn GetTime()) → cụm khác nhau; cùng seed → cùng cụm.
-// Gọi thay cho VFX_BuildIceCrystalBurstMesh/VFX_DrawIceCrystalBurstMesh/
-// VFX_UnloadIceCrystalBurstMesh cũ — không còn Mesh nào cần cache/unload ở
-// phía skill nữa, chỉ cần gọi hàm này mỗi frame trong lúc VFX còn sống.
+// ĐÁNH ĐỔI so với bản DrawMesh-per-instance trước: không còn "mọc so le"
+// per-viên nữa — instancing chỉ có 1 bộ uniform/draw call nên cả cụm mọc
+// đồng bộ theo `growProgress` chung. Vị trí/độ nghiêng/scale từng viên (thứ
+// chính khiến mỗi lần cast trông khác nhau) không đổi. Xem CORE_ISSUES.md
+// Item 40.
+// Không cần Build/Unload gì ở phía skill — gọi hàm này mỗi frame trong lúc
+// VFX còn sống.
 void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress)
 {
     Mesh templateMesh = GetIceCrystalTemplateMesh();
     if (templateMesh.vertexCount <= 0)
         return;
-    if (crystalCount > 32)
-        crystalCount = 32; // chỉ là vòng lặp DrawMesh (rẻ) — chặn trần hợp lý, không phải giới hạn hiệu năng thật
+    if (crystalCount > ICE_CRYSTAL_BURST_MAX)
+        crystalCount = ICE_CRYSTAL_BURST_MAX;
+    if (crystalCount <= 0)
+        return;
 
     CrystalDesc desc = GetIceCrystalDesc();
-    CrystalMaterial iceMat = GetIceCrystalMaterial();
-
-    CrystalMaterial_Begin(iceMat);
-    Material passthrough = ProceduralMesh_GetPassthroughMaterial(iceMat.shader);
+    Matrix transforms[ICE_CRYSTAL_BURST_MAX];
 
     unsigned int rng = (unsigned int)seed * 747796405u + 2891336453u;
     for (int i = 0; i < crystalCount; i++)
@@ -212,23 +240,6 @@ void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float g
         float r04 = (float)(rng >> 8 & 0xFFFF) / 65535.0f; // height scale
         rng = rng * 1664525u + 1013904223u;
         float r05 = (float)(rng >> 8 & 0xFFFF) / 65535.0f; // tilt
-        rng = rng * 1664525u + 1013904223u;
-        float r06 = (float)(rng >> 8 & 0xFFFF) / 65535.0f; // độ trễ lúc bắt đầu mọc (so le, tránh mọc đồng loạt)
-
-        // TỐI ƯU CẢM QUAN: nếu set chung 1 u_growProgress cho cả cụm, 10 viên
-        // luôn mọc lên đồng loạt cùng nhịp — nhìn "y hệt nhau" mỗi lần cast dù
-        // vị trí từng viên đã khác nhau (seed chỉ đổi layout, không đổi nhịp
-        // mọc). Cho mỗi viên "trễ" 1 khoảng random 0..staggerWindow trước khi
-        // bắt đầu mọc, rồi mọc nhanh hết phần còn lại — thứ tự/nhịp mọc cũng
-        // xác định theo seed như layout, khác nhau mỗi lần cast.
-        const float staggerWindow = 0.5f;
-        float startT = r06 * staggerWindow;
-        float localGrow = (growProgress - startT) / (1.0f - startT);
-        if (localGrow < 0.0f)
-            localGrow = 0.0f;
-        if (localGrow > 1.0f)
-            localGrow = 1.0f;
-        CrystalMaterial_SetGrowProgress(iceMat, localGrow);
 
         float angle = r01 * 2.0f * PI;
         float dist = r02 * desc.radius * 0.9f;
@@ -246,12 +257,15 @@ void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float g
         // (quy ước TRS chuẩn của raylib: MatrixMultiply(A,B) = áp A trước rồi B).
         Matrix scale = MatrixScale(radiusScale, heightScale, radiusScale);
         Matrix rot = MatrixMultiply(MatrixMultiply(MatrixRotateY(-angle), MatrixRotateZ(tiltRad)), MatrixRotateY(angle));
-        Matrix transform = MatrixMultiply(MatrixMultiply(scale, rot), MatrixTranslate(pos.x, pos.y, pos.z));
-
-        ProceduralMesh_DrawBakedCrystalCluster(templateMesh, passthrough, transform);
+        transforms[i] = MatrixMultiply(MatrixMultiply(scale, rot), MatrixTranslate(pos.x, pos.y, pos.z));
     }
 
-    CrystalMaterial_End();
+    CrystalMaterialInstanced iceMatI = GetIceCrystalMaterialInstanced();
+    CrystalMaterialInstanced_Begin(iceMatI);
+    CrystalMaterialInstanced_SetGrowProgress(iceMatI, growProgress);
+    Material passthrough = ProceduralMesh_GetPassthroughMaterial(iceMatI.shader);
+    DrawMeshInstanced(templateMesh, passthrough, transforms, crystalCount);
+    CrystalMaterialInstanced_End();
 }
 
 // --- Water skill set ---------------------------------------------------------

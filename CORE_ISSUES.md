@@ -1156,3 +1156,170 @@ reading) would settle it: temporarily output `fragPosition` directly as
 player positions — if the color pattern shifts on screen by anything other
 than the expected camera-relative reprojection of a truly static world
 pattern, the bug is confirmed and localized.
+
+---
+
+## Item 39 — Procedural geometry / VFX composition audit checklist (found via Crystal Cluster, not yet applied to the rest of `core/geometry`/`core/composition`)
+
+**Status: OPEN.** Four distinct, unrelated-looking bugs were found and fixed
+across one skill (`glacial_cannon_skill`'s ice-crystal effects) in the same
+session, and all four turned out to be **instances of two repeatable
+patterns** rather than one-off mistakes. Filed so the same two audits get
+run against every other procedural shape in `core/geometry/*.inl` and every
+`VFX_Compose*` in `core/composition/vc_*.inl` — most of them have never been
+looked at through this lens.
+
+### What actually happened (reference case)
+
+1. **`ProceduralMesh_DrawCrystalCluster`** looped `rlPushMatrix` +
+   `rlBegin`/`rlEnd` per crystal (N GL state pushes + N immediate-mode
+   submissions for N crystals, every frame) → merged into building the whole
+   cluster into one flat buffer, tilt applied via CPU `Vector3RotateByAxisAngle`
+   instead of the GL matrix stack, submitted with exactly one `rlBegin`/`rlEnd`.
+   (`core/geometry/pm_crystal.inl`)
+2. That still rebuilt + resubmitted thousands of vertices through
+   `rlVertex3f` every single frame for geometry that wasn't changing — for a
+   "hero burst" (10 crystals, cast repeatedly) this measurably dropped FPS to
+   ~30. First fix attempt: `ProceduralMesh_BuildCrystalClusterMesh` — bake
+   once into a real `Mesh`, `UploadMesh` once, `DrawMesh` every frame. Better,
+   but still wrong: it built (and `UploadMesh`'d) a **new** `Mesh` on every
+   single cast.
+3. `UploadMesh` (`glGenBuffers`/`glBufferData`) is a real GPU-driver
+   synchronization point, not a cheap CPU op like `DrawMesh`. Rebuilding one
+   per cast is fine for a single character casting occasionally, but
+   **stutters** the moment several casts land in the same short window
+   (rapid clicking, multiple casters) — several `UploadMesh` calls bunching
+   up in one/few frames, not the cheap per-frame `DrawMesh` cost. Fix:
+   `ProceduralMesh_BuildCrystalTemplateMesh` — build **one** crystal once,
+   ever (same lifetime as a loaded shader/texture — never rebuilt, never
+   unloaded), then draw N "different-looking" crystals via N `DrawMesh` calls
+   with a **different transform** (translate/rotate/non-uniform-scale,
+   computed cheaply on the CPU from a per-instance seeded hash) instead of N
+   different meshes. Zero `UploadMesh` after the first ever call, regardless
+   of cast frequency. (`VFX_DrawIceCrystalBurst`, `core/composition/vc_water.inl`)
+4. Even with variety fixed, the burst still looked identical every cast: all
+   N crystals shared one `growProgress` uniform, so they always grew in
+   perfect lockstep — the *timing* was deterministic-in-the-wrong-way even
+   though spatial layout wasn't. Fix: stagger each crystal's local grow
+   progress by a per-instance seeded delay (`localGrow = clamp((growProgress
+   - startT) / (1 - startT), 0, 1)` where `startT` comes from the same RNG
+   draw as position/tilt) so the *sequence* of growth also varies per cast.
+5. Separately, `VFX_PathWave`'s `PATH_ICE_SPIKE` case (the ice spikes drawn
+   along the projectile's flight path, a **different** code path from the
+   impact burst above) called `VFX_ComposeIceCrystal(pos, i)` — using the
+   **loop index over a fixed 16-point path** as the seed. Since the path
+   always has the same 16 points with the same indices every cast, this
+   looked pixel-identical on every single cast regardless of anything fixed
+   in items 1-4 above — a *different* function with the exact same seed-
+   misuse bug. Fixed by threading a real per-cast `seed` (`GetTime()*10000 ^
+   GetRandomValue(...)`, generated once in `CastGlacialCannonSkill`) through
+   `VFX_PathWave`'s new `seed` parameter, mixed with the point index via an
+   LCG (`rng = seed*747796405u + i*2891336453u; rng = (rng^(rng>>16))*1664525u
+   + 1013904223u`) into a per-point `pointSeed`.
+
+### The two audits to run against the rest of the codebase
+
+**A. Draw-cost audit** (`core/geometry/pm_*.inl` — Rock, ShardCluster, Tube,
+WavePlane, CurlingWave, VortexFunnel, Fissure all unaudited as of this
+writing):
+- Does the `Draw*` function loop `rlBegin`/`rlEnd` (or `rlPushMatrix`) per
+  sub-element (per rock, per shard, per segment)? If the underlying geometry
+  is static within one call, that should be one `rlBegin`/`rlEnd` for the
+  whole shape (pattern: item 1 above), not one per sub-element.
+- Is a `Build*`/`Draw*` pair (or a raw immediate-mode `Draw*`) getting
+  called **fresh every cast** for a VFX that (a) has many vertices and (b) is
+  redrawn every frame while alive, or (c) can be cast repeatedly/by multiple
+  casters in a short window? If (a)+(b): batch into one `Mesh`, build once
+  per VFX instance (existing `ProceduralMesh_CreateBaseGrid`-style
+  convention, already fine as long as it's really "build once per instance,
+  not per frame"). If (c) on top of that: don't build a **new** `Mesh` per
+  cast — build **one reusable template once, ever**, vary appearance via
+  per-instance `transform` (pattern: item 3 above). `ProceduralMesh_BuildCrystalClusterMesh`
+  is kept in the API specifically as the "wrong for bursty casts, fine for a
+  genuinely-static one-off prop" cautionary example — its doc comment in
+  `procedural_mesh_utils.h` spells out when each of the two approaches applies.
+- `vc_metal.inl`'s `VFX_ComposeMetalShardCluster` has its own hand-rolled
+  4-blade `rlPushMatrix`+`ProceduralMesh_DrawCrystal` loop (flagged, not yet
+  fixed — see prior session note) that has the exact same shape as pattern 1.
+
+**B. Seed/variety audit** (`core/composition/vc_*.inl` and every skill `.c`
+that calls a `VFX_Compose*`/`ProceduralMesh_Draw*`/`ProceduralMesh_Build*`
+taking a `seed`/`int` randomness parameter):
+- `grep -rn "seed" core/composition/*.inl skills/*/*/*.c` and eyeball every
+  call site's seed **expression**, not just whether a seed parameter exists.
+  Red flags: a raw loop/array index (`i`) used as the seed with a fixed-size
+  loop (same indices every call — item 5's exact bug); `agentId` alone with
+  no time/counter component (same caster always gets the same look);  a
+  hardcoded constant.
+- Any multi-object burst/cluster effect that shares **one** progress/grow
+  uniform across all sub-objects reads as mechanically synchronized even
+  once spatial variety is fixed (item 4's bug) — stagger per-instance using
+  the same seeded hash already driving position/tilt, don't add a second
+  unrelated RNG source.
+
+### Not yet touched, likely worth the same pass
+
+`vc_fire.inl`, `vc_wood.inl`, `vc_earth.inl`, `vc_taiji.inl` (composition
+layer — audit B), and Rock/ShardCluster/Tube/WavePlane/CurlingWave/
+VortexFunnel/Fissure (`core/geometry/pm_*.inl` — audit A). None of these were
+inspected this session; this item exists so the next pass through them
+starts from a checklist instead of rediscovering the same two bug shapes
+one skill at a time.
+
+---
+
+## Item 40 — Crystal Cluster GPU instancing (DONE, verified in-game — canonical reference implementation)
+
+**Status: RESOLVED.** Follow-up to Item 39: `VFX_DrawIceCrystalBurst` was
+looping `DrawMesh` once per crystal (N draw calls sharing one template mesh
+— fine, but not the ceiling). Converted to a single `DrawMeshInstanced` call
+per burst. User confirmed correct in-game rendering after the change.
+
+**This is now the canonical GPU-instancing reference implementation** — the
+full standard/checklist for applying this pattern elsewhere lives in
+`CORE_API.md` under "GPU Instancing — standard pattern for 'many copies of
+the same mesh, same frame'" (Procedural Mesh section, right after Crystal
+Cluster). Read that before instancing any other shape — don't re-derive the
+approach from scratch. Summary of what changed:
+
+- **`core/shaders/crystal_instanced.vs`** (new file, does not touch the
+  shared `vs_header.glsl`): declares `in mat4 instanceTransform;` (raylib's
+  reserved instancing attribute name, auto-bound by `LoadShader` — no extra
+  C-side setup needed) and manually computes `matModel * instanceTransform`
+  for `fragPosition`/`fragNormal` and `mvp * instanceTransform` for
+  `gl_Position`, instead of the shared `VS_FinalOutput()` helper (which only
+  knows about a single per-draw-call `matModel` uniform, not a per-instance
+  attribute). `crystal.fs` is reused completely unchanged — instancing is a
+  vertex/transform-only concern.
+- **`CrystalMaterialInstanced`** (`core/material/material_system.h/.c`) —
+  a duplicate of `CrystalMaterial`'s struct/`_Load`/`_Begin`/`_End` shape,
+  pointed at `crystal_instanced.vs` instead of `crystal.vs`. Necessary
+  duplication, not sloppiness: a separately-linked shader program can have
+  different uniform *locations* for the same-named uniform, so the loc-cache
+  fields have to be re-queried against the new program — they can't be
+  shared with the non-instanced `CrystalMaterial`.
+- **`VFX_DrawIceCrystalBurst`** (`core/composition/vc_water.inl`) — same
+  per-instance transform math as before (position/tilt/scale from a seeded
+  LCG), but now collects all `N` transforms into a `Matrix[]` array and
+  submits them with one `DrawMeshInstanced` call instead of `N` `DrawMesh`
+  calls.
+
+**Known trade-off, accepted:** the per-crystal grow-progress stagger added
+earlier in the same session (each crystal starting its "grow up" animation
+at a slightly different time, so a burst doesn't look mechanically
+synchronized) had to be **removed** — instancing gives the whole batch one
+shared set of uniforms per draw call, so `u_growProgress` can't vary
+per-instance without a second custom instance-attribute buffer (real extra
+engineering, not built here — nothing currently needs it enough to justify
+it; see the "bad fit" note in the CORE_API.md standard). All crystals in one
+burst now grow in lockstep again. Positional/shape variety (the thing that
+actually matters for "doesn't look identical every cast" — see Item 39) is
+untouched.
+
+**If a future shape needs true per-instance uniform variation** (not just
+transform): that's the actual scenario the standard's "bad fit" callout is
+for. It needs a second `rlLoadVertexBuffer`-backed instance attribute
+alongside `instanceTransform` (not covered by `DrawMeshInstanced`'s
+convenience wrapper, which only manages the transform buffer) — no existing
+code in this engine does this yet; whoever picks it up is establishing new
+precedent, not following one.

@@ -126,6 +126,40 @@ void CrystalMaterial_End(void);
  * reset về 1.0 nên chỉ cần gọi hàm này khi thực sự đang animate mọc lên. */
 void CrystalMaterial_SetGrowProgress(CrystalMaterial mat, float progress);
 
+/* Biến thể GPU-instancing của CrystalMaterial — dùng shader program RIÊNG
+ * (core/shaders/crystal_instanced.vs, cùng crystal.fs) nên cần cache uniform
+ * location riêng (location của cùng 1 tên uniform có thể khác nhau giữa 2
+ * program đã link khác nhau) — không thể tái dùng struct CrystalMaterial ở
+ * trên. Dùng với DrawMeshInstanced để vẽ N mesh giống nhau bằng ĐÚNG 1 draw
+ * call thay vì N lần DrawMesh — xem VFX_DrawIceCrystalBurst (vc_water.inl)
+ * và CORE_ISSUES.md Item 40.
+ * ĐÁNH ĐỔI: u_growProgress dùng chung cho cả batch (không per-instance được
+ * — instancing chỉ có 1 bộ uniform/draw call), nên không hỗ trợ "mọc so le"
+ * như bản CrystalMaterial thường. */
+typedef struct
+{
+    Shader shader;
+    CrystalMaterialParams params;
+    int uBaseColorLoc;
+    int uEdgeColorLoc;
+    int uFresnelPowerLoc;
+    int uRimStrengthLoc;
+    int uRefractionLoc;
+    int uSparkleLoc;
+    int uCrackLoc;
+    int uEmissionLoc;
+    int uThicknessLoc;
+    int uDissolveLoc;
+    int uTexture1Loc;
+    int uTimeLoc;
+    int uGrowProgressLoc;
+} CrystalMaterialInstanced;
+
+CrystalMaterialInstanced CrystalMaterialInstanced_Load(CrystalMaterialParams params);
+void CrystalMaterialInstanced_Begin(CrystalMaterialInstanced mat);
+void CrystalMaterialInstanced_SetGrowProgress(CrystalMaterialInstanced mat, float progress);
+void CrystalMaterialInstanced_End(void);
+
 /* ============================================================================
  * PLASMA MATERIAL SYSTEM
  * --------------------------------------------------------------------------

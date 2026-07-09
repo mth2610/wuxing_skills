@@ -275,6 +275,115 @@ void CrystalMaterial_End(void)
     SkillManager_EndShader();
 }
 
+// Y hệt CrystalMaterial_Load/Begin/End ở trên, chỉ khác shader program
+// (crystal_instanced.vs thay vì crystal.vs) — không tái dùng chung được vì 2
+// program đã link khác nhau có thể có location khác nhau cho cùng tên
+// uniform, phải GetShaderLocation() lại riêng cho từng cái.
+CrystalMaterialInstanced CrystalMaterialInstanced_Load(CrystalMaterialParams params)
+{
+    CrystalMaterialInstanced mat = {0};
+    mat.shader = ResourceManager_LoadShader("core/shaders/crystal_instanced.vs", "core/shaders/crystal.fs");
+    mat.params = params;
+
+    if (mat.params.texture1.id == 0)
+    {
+        mat.params.texture1 = ResourceManager_LoadTexture("assets/textures/tex_crystal.png");
+    }
+
+    mat.uBaseColorLoc = GetShaderLocation(mat.shader, "u_baseColor");
+    mat.uEdgeColorLoc = GetShaderLocation(mat.shader, "u_edgeColor");
+    mat.uFresnelPowerLoc = GetShaderLocation(mat.shader, "u_fresnelPower");
+    mat.uRimStrengthLoc = GetShaderLocation(mat.shader, "u_rimStrength");
+    mat.uRefractionLoc = GetShaderLocation(mat.shader, "u_refraction");
+    mat.uSparkleLoc = GetShaderLocation(mat.shader, "u_sparkle");
+    mat.uCrackLoc = GetShaderLocation(mat.shader, "u_crack");
+    mat.uEmissionLoc = GetShaderLocation(mat.shader, "u_emission");
+    mat.uThicknessLoc = GetShaderLocation(mat.shader, "u_thickness");
+    mat.uDissolveLoc = GetShaderLocation(mat.shader, "u_dissolve");
+    mat.uTexture1Loc = GetShaderLocation(mat.shader, "texture1");
+    mat.uTimeLoc = GetShaderLocation(mat.shader, "u_time");
+    mat.uGrowProgressLoc = GetShaderLocation(mat.shader, "u_growProgress");
+
+    return mat;
+}
+
+void CrystalMaterialInstanced_Begin(CrystalMaterialInstanced mat)
+{
+    rlDrawRenderBatchActive();
+    SkillManager_BeginShader(mat.shader);
+
+    float time = (float)GetTime();
+    if (mat.uTimeLoc >= 0)
+        SetShaderValue(mat.shader, mat.uTimeLoc, &time, SHADER_UNIFORM_FLOAT);
+
+    if (mat.uBaseColorLoc >= 0)
+    {
+        Vector4 baseColorVec = ColorNormalize(mat.params.baseColor);
+        SetShaderValue(mat.shader, mat.uBaseColorLoc, &baseColorVec, SHADER_UNIFORM_VEC4);
+    }
+
+    if (mat.uEdgeColorLoc >= 0)
+    {
+        Vector4 edgeColorVec = ColorNormalize(mat.params.edgeColor);
+        SetShaderValue(mat.shader, mat.uEdgeColorLoc, &edgeColorVec, SHADER_UNIFORM_VEC4);
+    }
+
+    if (mat.uFresnelPowerLoc >= 0)
+    {
+        float fresnelPower = 8.0f - mat.params.roughness * 7.0f;
+        if (fresnelPower < 1.0f)
+            fresnelPower = 1.0f;
+        SetShaderValue(mat.shader, mat.uFresnelPowerLoc, &fresnelPower, SHADER_UNIFORM_FLOAT);
+    }
+
+    if (mat.uRimStrengthLoc >= 0)
+        SetShaderValue(mat.shader, mat.uRimStrengthLoc, &mat.params.fresnel, SHADER_UNIFORM_FLOAT);
+
+    if (mat.uRefractionLoc >= 0)
+        SetShaderValue(mat.shader, mat.uRefractionLoc, &mat.params.refraction, SHADER_UNIFORM_FLOAT);
+
+    if (mat.uSparkleLoc >= 0)
+        SetShaderValue(mat.shader, mat.uSparkleLoc, &mat.params.sparkle, SHADER_UNIFORM_FLOAT);
+
+    if (mat.uCrackLoc >= 0)
+        SetShaderValue(mat.shader, mat.uCrackLoc, &mat.params.crack, SHADER_UNIFORM_FLOAT);
+
+    if (mat.uEmissionLoc >= 0)
+        SetShaderValue(mat.shader, mat.uEmissionLoc, &mat.params.emission, SHADER_UNIFORM_FLOAT);
+
+    if (mat.uThicknessLoc >= 0)
+        SetShaderValue(mat.shader, mat.uThicknessLoc, &mat.params.thickness, SHADER_UNIFORM_FLOAT);
+
+    if (mat.uDissolveLoc >= 0)
+        SetShaderValue(mat.shader, mat.uDissolveLoc, &mat.params.dissolve, SHADER_UNIFORM_FLOAT);
+
+    if (mat.uTexture1Loc >= 0 && mat.params.texture1.id != 0)
+    {
+        rlSetTexture(mat.params.texture1.id);
+        SetShaderValueTexture(mat.shader, mat.uTexture1Loc, mat.params.texture1);
+    }
+
+    if (mat.uGrowProgressLoc >= 0)
+    {
+        float fullGrown = 1.0f;
+        SetShaderValue(mat.shader, mat.uGrowProgressLoc, &fullGrown, SHADER_UNIFORM_FLOAT);
+    }
+}
+
+void CrystalMaterialInstanced_SetGrowProgress(CrystalMaterialInstanced mat, float progress)
+{
+    if (mat.uGrowProgressLoc < 0)
+        return;
+    SetShaderValue(mat.shader, mat.uGrowProgressLoc, &progress, SHADER_UNIFORM_FLOAT);
+}
+
+void CrystalMaterialInstanced_End(void)
+{
+    rlDrawRenderBatchActive();
+    rlSetTexture(0);
+    SkillManager_EndShader();
+}
+
 PlasmaMaterial PlasmaMaterial_Load(PlasmaMaterialParams params)
 {
     PlasmaMaterial mat = {0};
