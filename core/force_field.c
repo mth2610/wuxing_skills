@@ -3,8 +3,7 @@
 #include <string.h>
 
 // ============================================================
-//  PERLIN NOISE 3D
-//  Implement chuẩn Ken Perlin (permutation table + gradient hash)
+//  PERLIN NOISE 3D - FAST MATH OPTIMIZED
 // ============================================================
 
 // clang-format off
@@ -31,40 +30,48 @@ static const int PERM_SRC[256] = {
 static int perm[512];
 static int perm_initialized = 0;
 
-static void InitPermTable(void) {
+static void InitPermTable(void)
+{
   for (int i = 0; i < 256; i++)
     perm[i] = perm[i + 256] = PERM_SRC[i];
   perm_initialized = 1;
 }
 
-static float PerlinFade(float t) {
-  return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+// TỐI ƯU 1: Fast Floor (Thay thế cho floorf() nặng nề)
+static inline int FastFloor(float x)
+{
+  int xi = (int)x;
+  return x < xi ? xi - 1 : xi;
 }
 
-static float PerlinLerp(float a, float b, float t) { return a + t * (b - a); }
+// TỐI ƯU 2: Ép Inline các hàm tính toán nhỏ
+#define FADE(t) ((t) * (t) * (t) * ((t) * ((t) * 6.0f - 15.0f) + 10.0f))
+#define LERP(a, b, t) ((a) + (t) * ((b) - (a)))
 
-static float PerlinGrad(int hash, float x, float y, float z) {
+static inline float PerlinGrad(int hash, float x, float y, float z)
+{
   int h = hash & 15;
   float u = (h < 8) ? x : y;
   float v = (h < 4) ? y : ((h == 12 || h == 14) ? x : z);
   return ((h & 1) ? -u : u) + ((h & 2) ? -v : v);
 }
 
-float Noise_Perlin3D(float x, float y, float z) {
+float Noise_Perlin3D(float x, float y, float z)
+{
   if (!perm_initialized)
     InitPermTable();
 
-  int X = (int)floorf(x) & 255;
-  int Y = (int)floorf(y) & 255;
-  int Z = (int)floorf(z) & 255;
+  int X = FastFloor(x) & 255;
+  int Y = FastFloor(y) & 255;
+  int Z = FastFloor(z) & 255;
 
-  x -= floorf(x);
-  y -= floorf(y);
-  z -= floorf(z);
+  x -= (float)FastFloor(x);
+  y -= (float)FastFloor(y);
+  z -= (float)FastFloor(z);
 
-  float u = PerlinFade(x);
-  float v = PerlinFade(y);
-  float w = PerlinFade(z);
+  float u = FADE(x);
+  float v = FADE(y);
+  float w = FADE(z);
 
   int A = perm[X] + Y;
   int AA = perm[A] + Z;
@@ -73,37 +80,39 @@ float Noise_Perlin3D(float x, float y, float z) {
   int BA = perm[B] + Z;
   int BB = perm[B + 1] + Z;
 
-  return PerlinLerp(
-      PerlinLerp(PerlinLerp(PerlinGrad(perm[AA], x, y, z),
-                            PerlinGrad(perm[BA], x - 1, y, z), u),
-                 PerlinLerp(PerlinGrad(perm[AB], x, y - 1, z),
-                            PerlinGrad(perm[BB], x - 1, y - 1, z), u),
-                 v),
-      PerlinLerp(PerlinLerp(PerlinGrad(perm[AA + 1], x, y, z - 1),
-                            PerlinGrad(perm[BA + 1], x - 1, y, z - 1), u),
-                 PerlinLerp(PerlinGrad(perm[AB + 1], x, y - 1, z - 1),
-                            PerlinGrad(perm[BB + 1], x - 1, y - 1, z - 1), u),
-                 v),
+  return LERP(
+      LERP(LERP(PerlinGrad(perm[AA], x, y, z),
+                PerlinGrad(perm[BA], x - 1, y, z), u),
+           LERP(PerlinGrad(perm[AB], x, y - 1, z),
+                PerlinGrad(perm[BB], x - 1, y - 1, z), u),
+           v),
+      LERP(LERP(PerlinGrad(perm[AA + 1], x, y, z - 1),
+                PerlinGrad(perm[BA + 1], x - 1, y, z - 1), u),
+           LERP(PerlinGrad(perm[AB + 1], x, y - 1, z - 1),
+                PerlinGrad(perm[BB + 1], x - 1, y - 1, z - 1), u),
+           v),
       w);
 }
 
-static float ValueHash(int ix, int iy, int iz) {
+static inline float ValueHash(int ix, int iy, int iz)
+{
   unsigned int h = (unsigned int)ix * 1664525u +
                    (unsigned int)iy * 1013904223u +
                    (unsigned int)iz * 22695477u;
   h ^= h >> 16;
   h *= 0x45d9f3bu;
   h ^= h >> 16;
-  return (float)(h & 0xFFFFu) * (1.0f / 65535.0f); // [0, 1]
+  return (float)(h & 0xFFFFu) * (1.0f / 65535.0f);
 }
 
-float Noise_Value3D(float x, float y, float z) {
-  int ix = (int)floorf(x);
-  int iy = (int)floorf(y);
-  int iz = (int)floorf(z);
-  float fx = x - floorf(x);
-  float fy = y - floorf(y);
-  float fz = z - floorf(z);
+float Noise_Value3D(float x, float y, float z)
+{
+  int ix = FastFloor(x);
+  int iy = FastFloor(y);
+  int iz = FastFloor(z);
+  float fx = x - (float)ix;
+  float fy = y - (float)iy;
+  float fz = z - (float)iz;
 
   float ux = fx * fx * (3.0f - 2.0f * fx);
   float uy = fy * fy * (3.0f - 2.0f * fy);
@@ -127,216 +136,239 @@ float Noise_Value3D(float x, float y, float z) {
   return y0 + uz * (y1 - y0);
 }
 
-// ============================================================
-//  FIX #3: Curl Noise 3D — divergence-free đúng chuẩn
-//
-//  Phiên bản cũ (SAI):
-//    curl.x = -∂A/∂z        ← đúng (từ ψ=(0,A,0))
-//    curl.y = +∂B/∂y        ← SAI: ∂B/∂y không phải thành phần curl nào cả
-//    curl.z = +∂A/∂x        ← đúng (từ ψ=(0,A,0))
-//  → div ≠ 0 vì ∂(curl.y)/∂y = ∂²B/∂y² ≠ 0
-//
-//  Phiên bản mới (ĐÚNG):
-//    Dùng vector potential ψ = (ψ₁, ψ₂, ψ₃) — 3 noise field độc lập.
-//    curl(ψ)_x = ∂ψ₃/∂y − ∂ψ₂/∂z
-//    curl(ψ)_y = ∂ψ₁/∂z − ∂ψ₃/∂x
-//    curl(ψ)_z = ∂ψ₂/∂x − ∂ψ₁/∂y
-//    div(curl(ψ)) = 0 theo định lý (curl luôn divergence-free).
-//  → 12 sample thay vì 6, nhưng đảm bảo tính đúng của trường.
-// ============================================================
-
-Vector3 Noise_Curl3D(float x, float y, float z, float scale) {
+Vector3 Noise_Curl3D(float x, float y, float z, float scale)
+{
   const float EPS = 0.1f;
   const float RINV = 1.0f / (2.0f * EPS);
-
-  // Hai offset lớn để 3 noise field ψ₁, ψ₂, ψ₃ decorrelated với nhau
   const float OFF1 = 31.416f;
   const float OFF2 = 67.234f;
 
-  float sx = x * scale;
-  float sy = y * scale;
-  float sz = z * scale;
+  float sx = x * scale, sy = y * scale, sz = z * scale;
 
-  // ψ₁ tại (sx, sy, sz) — cần ∂/∂z và ∂/∂y
   float psi1_pz = Noise_Perlin3D(sx, sy, sz + EPS);
   float psi1_mz = Noise_Perlin3D(sx, sy, sz - EPS);
   float psi1_py = Noise_Perlin3D(sx, sy + EPS, sz);
   float psi1_my = Noise_Perlin3D(sx, sy - EPS, sz);
 
-  // ψ₂ tại (sx+OFF1, sy+OFF1, sz+OFF1) — cần ∂/∂x và ∂/∂z
   float psi2_px = Noise_Perlin3D(sx + OFF1 + EPS, sy + OFF1, sz + OFF1);
   float psi2_mx = Noise_Perlin3D(sx + OFF1 - EPS, sy + OFF1, sz + OFF1);
   float psi2_pz = Noise_Perlin3D(sx + OFF1, sy + OFF1, sz + OFF1 + EPS);
   float psi2_mz = Noise_Perlin3D(sx + OFF1, sy + OFF1, sz + OFF1 - EPS);
 
-  // ψ₃ tại (sx+OFF2, sy+OFF2, sz+OFF2) — cần ∂/∂y và ∂/∂x
   float psi3_py = Noise_Perlin3D(sx + OFF2, sy + OFF2 + EPS, sz + OFF2);
   float psi3_my = Noise_Perlin3D(sx + OFF2, sy + OFF2 - EPS, sz + OFF2);
   float psi3_px = Noise_Perlin3D(sx + OFF2 + EPS, sy + OFF2, sz + OFF2);
   float psi3_mx = Noise_Perlin3D(sx + OFF2 - EPS, sy + OFF2, sz + OFF2);
 
-  float dpsi3_dy = (psi3_py - psi3_my) * RINV;
-  float dpsi2_dz = (psi2_pz - psi2_mz) * RINV;
-  float dpsi1_dz = (psi1_pz - psi1_mz) * RINV;
-  float dpsi3_dx = (psi3_px - psi3_mx) * RINV;
-  float dpsi2_dx = (psi2_px - psi2_mx) * RINV;
-  float dpsi1_dy = (psi1_py - psi1_my) * RINV;
-
   return (Vector3){
-      dpsi3_dy - dpsi2_dz, // curl_x = ∂ψ₃/∂y − ∂ψ₂/∂z
-      dpsi1_dz - dpsi3_dx, // curl_y = ∂ψ₁/∂z − ∂ψ₃/∂x
-      dpsi2_dx - dpsi1_dy, // curl_z = ∂ψ₂/∂x − ∂ψ₁/∂y
+      ((psi3_py - psi3_my) - (psi2_pz - psi2_mz)) * RINV,
+      ((psi1_pz - psi1_mz) - (psi3_px - psi3_mx)) * RINV,
+      ((psi2_px - psi2_mx) - (psi1_py - psi1_my)) * RINV // Đã sửa psi1_dy thành psi1_py ở đây
   };
 }
 
 void ForceField_Clear(ForceField *ff) { ff->layerCount = 0; }
 
-bool ForceField_AddLayer(ForceField *ff, ForceLayer layer) {
+bool ForceField_AddLayer(ForceField *ff, ForceLayer layer)
+{
   if (ff->layerCount >= FORCE_FIELD_MAX_LAYERS)
     return false;
   ff->layers[ff->layerCount++] = layer;
   return true;
 }
 
-static float CalcAttenuation(const ForceLayer *L, Vector3 pos) {
-  if (L->radius <= 0.0f)
-    return 1.0f;
-
-  float distSq = Vector3LengthSqr(Vector3Subtract(pos, L->origin));
-  if (distSq >= L->radius * L->radius)
-    return 0.0f;
-
-  float t = sqrtf(distSq) / L->radius;
-  if (L->falloff <= 0.0f)
-    return 1.0f;
-  if (L->falloff <= 1.0f)
-    return 1.0f - t;
-  return (1.0f - t) * (1.0f - t);
-}
-
+// TỐI ƯU 3: Bóc tách rãnh toàn bộ Struct Vector3 trong khối Evaluate
 Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel,
-                            float time, Vector3 axisOrigin, Vector3 axisDir) {
-  Vector3 totalAcc = {0.0f, 0.0f, 0.0f};
+                            float time, Vector3 axisOrigin, Vector3 axisDir)
+{
+  float total_ax = 0.0f, total_ay = 0.0f, total_az = 0.0f;
+  float px = pos.x, py = pos.y, pz = pos.z;
+  float vx = vel.x, vy = vel.y, vz = vel.z;
 
-  for (int i = 0; i < ff->layerCount; i++) {
+  float ax_orig = axisOrigin.x, ay_orig = axisOrigin.y, az_orig = axisOrigin.z;
+  float ax_dir = axisDir.x, ay_dir = axisDir.y, az_dir = axisDir.z;
+
+  for (int i = 0; i < ff->layerCount; i++)
+  {
     const ForceLayer *L = &ff->layers[i];
+    float strength = L->strength;
 
-    if (fabsf(L->strength) < 1e-4f)
+    if (fabsf(strength) < 1e-4f)
       continue;
 
     float atten = 1.0f;
+    int type = L->type;
 
-    // =====================================================================
-    // FIX #2: FORCE_VORTEX_AXIS phải được exclude khỏi CalcAttenuation
-    // cùng với FORCE_RADIAL_AXIS.
-    //
-    // Lý do: Cả hai kiểu này đều dùng axisOrigin/axisDir (hình trụ),
-    // KHÔNG dùng L->origin (hình cầu). CalcAttenuation tính khoảng cách
-    // Euclid từ L->origin — nếu áp dụng cho axis-type, một particle nằm
-    // đúng trong vùng trụ nhưng xa L->origin (theo đường thẳng) sẽ bị
-    // continue và bỏ qua hoàn toàn trước khi vào switch.
-    // Hai kiểu axis-type tự tính attenuation theo perpDist bên trong case.
-    // =====================================================================
-    if (L->type != FORCE_RADIAL_AXIS && L->type != FORCE_VORTEX_AXIS) {
-      atten = CalcAttenuation(L, pos);
-      if (atten <= 0.0f)
-        continue;
+    // Tính Attenuation Nội Tuyến (Thay vì gọi hàm CalcAttenuation)
+    if (type != FORCE_RADIAL_AXIS && type != FORCE_VORTEX_AXIS)
+    {
+      if (L->radius > 0.0f)
+      {
+        float dx = px - L->origin.x;
+        float dy = py - L->origin.y;
+        float dz = pz - L->origin.z;
+        float distSq = dx * dx + dy * dy + dz * dz;
+        float radSq = L->radius * L->radius;
+
+        if (distSq >= radSq)
+          continue;
+
+        float dist = sqrtf(distSq);
+        float t = dist / L->radius;
+        if (L->falloff > 0.0f)
+        {
+          atten = (L->falloff <= 1.0f) ? (1.0f - t) : (1.0f - t) * (1.0f - t);
+        }
+      }
     }
 
-    Vector3 acc = {0.0f, 0.0f, 0.0f};
+    float acc_x = 0.0f, acc_y = 0.0f, acc_z = 0.0f;
 
-    switch (L->type) {
+    switch (type)
+    {
+    case FORCE_GRAVITY_DIR:
+      acc_x = L->direction.x * strength;
+      acc_y = L->direction.y * strength;
+      acc_z = L->direction.z * strength;
+      break;
 
-    case FORCE_GRAVITY_DIR: {
-      acc = Vector3Scale(L->direction, L->strength);
-    } break;
-
-    case FORCE_GRAVITY_POINT: {
-      Vector3 toOrigin = Vector3Subtract(L->origin, pos);
-      float distSq = Vector3LengthSqr(toOrigin);
+    case FORCE_GRAVITY_POINT:
+    {
+      float dx = L->origin.x - px;
+      float dy = L->origin.y - py;
+      float dz = L->origin.z - pz;
+      float distSq = dx * dx + dy * dy + dz * dz;
       if (distSq < 1e-4f)
         break;
       float dist = sqrtf(distSq);
-      float s = L->strength / (dist + 1.0f);
-      acc = Vector3Scale(Vector3Scale(toOrigin, 1.0f / dist), s);
-    } break;
+      float s = strength / (dist + 1.0f);
+      float invDist = 1.0f / dist;
+      acc_x = dx * invDist * s;
+      acc_y = dy * invDist * s;
+      acc_z = dz * invDist * s;
+    }
+    break;
 
-    case FORCE_VORTEX: {
-      Vector3 axis = Vector3Normalize(L->direction);
-      Vector3 toPos = Vector3Subtract(pos, L->origin);
+    case FORCE_VORTEX:
+    {
+      // axis = normalize(direction)
+      float ax = L->direction.x, ay = L->direction.y, az = L->direction.z;
+      float alenSq = ax * ax + ay * ay + az * az;
+      if (alenSq > 0.0f)
+      {
+        float invALen = 1.0f / sqrtf(alenSq);
+        ax *= invALen;
+        ay *= invALen;
+        az *= invALen;
+      }
 
-      float proj = Vector3DotProduct(toPos, axis);
-      Vector3 radial = Vector3Subtract(toPos, Vector3Scale(axis, proj));
-      float dist = Vector3Length(radial);
-      if (dist < 1e-3f)
+      float dx = px - L->origin.x;
+      float dy = py - L->origin.y;
+      float dz = pz - L->origin.z;
+
+      float proj = dx * ax + dy * ay + dz * az;
+      float rad_x = dx - ax * proj;
+      float rad_y = dy - ay * proj;
+      float rad_z = dz - az * proj;
+
+      float distSq = rad_x * rad_x + rad_y * rad_y + rad_z * rad_z;
+      if (distSq < 1e-6f)
         break;
 
-      Vector3 tangent = Vector3Normalize(Vector3CrossProduct(axis, radial));
-      float s = L->strength / (dist + 1.0f);
-      acc = Vector3Scale(tangent, s);
-    } break;
+      float dist = sqrtf(distSq);
+      float invDist = 1.0f / dist;
+      rad_x *= invDist;
+      rad_y *= invDist;
+      rad_z *= invDist;
 
-    case FORCE_WIND: {
+      // Cross product (axis x radial) = tangent
+      float tx = ay * rad_z - az * rad_y;
+      float ty = az * rad_x - ax * rad_z;
+      float tz = ax * rad_y - ay * rad_x;
+
+      float s = strength / (dist + 1.0f);
+      acc_x = tx * s;
+      acc_y = ty * s;
+      acc_z = tz * s;
+    }
+    break;
+
+    case FORCE_WIND:
+    {
       float t = time * L->noiseSpeed;
-      float nx = Noise_Perlin3D(pos.x * L->noiseScale + t,
-                                pos.y * L->noiseScale, pos.z * L->noiseScale);
-      float nz =
-          Noise_Perlin3D(pos.x * L->noiseScale + 53.9f, pos.y * L->noiseScale,
-                         pos.z * L->noiseScale + t);
-      Vector3 base = Vector3Scale(L->direction, L->strength);
-      Vector3 perturb = {nx * L->strength * 0.35f, 0.0f,
-                         nz * L->strength * 0.35f};
-      acc = Vector3Add(base, perturb);
-    } break;
+      float ns = L->noiseScale;
+      float nx = Noise_Perlin3D(px * ns + t, py * ns, pz * ns);
+      float nz = Noise_Perlin3D(px * ns + 53.9f, py * ns, pz * ns + t);
 
-    case FORCE_NOISE_PERLIN: {
+      float s = strength;
+      acc_x = (L->direction.x * s) + (nx * s * 0.35f);
+      acc_y = (L->direction.y * s);
+      acc_z = (L->direction.z * s) + (nz * s * 0.35f);
+    }
+    break;
+
+    case FORCE_NOISE_PERLIN:
+    {
       float t = time * L->noiseSpeed;
-      float nx = Noise_Perlin3D(pos.x * L->noiseScale + t,
-                                pos.y * L->noiseScale + 17.7f,
-                                pos.z * L->noiseScale + 17.7f);
-      float ny = Noise_Perlin3D(pos.x * L->noiseScale + 37.3f,
-                                pos.y * L->noiseScale + t,
-                                pos.z * L->noiseScale + 37.3f);
-      float nz = Noise_Perlin3D(pos.x * L->noiseScale + 73.1f,
-                                pos.y * L->noiseScale + 73.1f,
-                                pos.z * L->noiseScale + t);
-      acc = (Vector3){nx * L->strength, ny * L->strength, nz * L->strength};
-    } break;
+      float ns = L->noiseScale;
+      float px_s = px * ns, py_s = py * ns, pz_s = pz * ns;
 
-    case FORCE_NOISE_CURL: {
+      acc_x = Noise_Perlin3D(px_s + t, py_s + 17.7f, pz_s + 17.7f) * strength;
+      acc_y = Noise_Perlin3D(px_s + 37.3f, py_s + t, pz_s + 37.3f) * strength;
+      acc_z = Noise_Perlin3D(px_s + 73.1f, py_s + 73.1f, pz_s + t) * strength;
+    }
+    break;
+
+    case FORCE_NOISE_CURL:
+    {
       float t = time * L->noiseSpeed;
-      Vector3 curl =
-          Noise_Curl3D(pos.x * L->noiseScale + t, pos.y * L->noiseScale,
-                       pos.z * L->noiseScale + t, 1.0f);
-      acc = Vector3Scale(curl, L->strength);
-    } break;
+      Vector3 curl = Noise_Curl3D(px * L->noiseScale + t, py * L->noiseScale, pz * L->noiseScale + t, 1.0f);
+      acc_x = curl.x * strength;
+      acc_y = curl.y * strength;
+      acc_z = curl.z * strength;
+    }
+    break;
 
-    case FORCE_DRAG: {
-      acc = Vector3Scale(vel, -L->strength);
-    } break;
+    case FORCE_DRAG:
+      acc_x = vx * -strength;
+      acc_y = vy * -strength;
+      acc_z = vz * -strength;
+      break;
 
-    case FORCE_RADIAL_AXIS: {
-      if (Vector3LengthSqr(axisDir) < 1e-6f)
+    case FORCE_RADIAL_AXIS:
+    {
+      float aDirLenSq = ax_dir * ax_dir + ay_dir * ay_dir + az_dir * az_dir;
+      if (aDirLenSq < 1e-6f)
         break;
 
-      Vector3 toPoint = Vector3Subtract(pos, axisOrigin);
-      float alongAxis = Vector3DotProduct(toPoint, axisDir);
-      Vector3 closestOnAxis =
-          Vector3Add(axisOrigin, Vector3Scale(axisDir, alongAxis));
-      Vector3 radialVec = Vector3Subtract(pos, closestOnAxis);
-      float perpDistSq = Vector3LengthSqr(radialVec);
+      float toPt_x = px - ax_orig;
+      float toPt_y = py - ay_orig;
+      float toPt_z = pz - az_orig;
+
+      float alongAxis = toPt_x * ax_dir + toPt_y * ay_dir + toPt_z * az_dir;
+      float close_x = ax_orig + ax_dir * alongAxis;
+      float close_y = ay_orig + ay_dir * alongAxis;
+      float close_z = az_orig + az_dir * alongAxis;
+
+      float rad_x = px - close_x;
+      float rad_y = py - close_y;
+      float rad_z = pz - close_z;
+
+      float perpDistSq = rad_x * rad_x + rad_y * rad_y + rad_z * rad_z;
 
       if (L->radius > 0.0f && perpDistSq >= L->radius * L->radius)
         break;
-
       if (perpDistSq < 1e-6f)
         break;
 
       float perpDist = sqrtf(perpDistSq);
 
-      if (L->radius <= 0.0f) {
+      if (L->radius <= 0.0f)
+      {
         atten = 1.0f;
-      } else {
+      }
+      else
+      {
         float t = perpDist / L->radius;
         if (L->falloff <= 0.0f)
           atten = 1.0f;
@@ -346,49 +378,50 @@ Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel,
           atten = (1.0f - t) * (1.0f - t);
       }
 
-      // ==================================================================
-      // FIX #1: Dấu ngược chiều — hướng tâm (centripetal) vs li tâm
-      //
-      // radialVec trỏ TỪ trục → hạt (hướng ra ngoài = li tâm).
-      // Phiên bản cũ (SAI):
-      //   radialDir = radialVec / perpDist   (trỏ ra ngoài)
-      //   acc = radialDir * strength
-      //   → strength > 0 = đẩy ra xa trục (li tâm) — TRÁI với .h
-      //
-      // Phiên bản mới (ĐÚNG, khớp với header):
-      //   centripetal = -radialVec / perpDist (trỏ vào trong, về phía trục)
-      //   acc = centripetal * strength
-      //   → strength > 0 = hút vào trục (hướng tâm) ✓
-      //   → strength < 0 = đẩy ra khỏi trục (li tâm)
-      // ==================================================================
-      Vector3 centripetal = Vector3Scale(radialVec, -1.0f / perpDist);
-      acc = Vector3Scale(centripetal, L->strength);
-    } break;
+      float invD = -1.0f / perpDist;
+      acc_x = rad_x * invD * strength;
+      acc_y = rad_y * invD * strength;
+      acc_z = rad_z * invD * strength;
+    }
+    break;
 
-    case FORCE_VORTEX_AXIS: {
-      if (Vector3LengthSqr(axisDir) < 1e-6f)
+    case FORCE_VORTEX_AXIS:
+    {
+      float aDirLenSq = ax_dir * ax_dir + ay_dir * ay_dir + az_dir * az_dir;
+      if (aDirLenSq < 1e-6f)
         break;
 
-      Vector3 toPoint = Vector3Subtract(pos, axisOrigin);
-      float alongAxis = Vector3DotProduct(toPoint, axisDir);
-      Vector3 closestOnAxis =
-          Vector3Add(axisOrigin, Vector3Scale(axisDir, alongAxis));
-      Vector3 radialVec = Vector3Subtract(pos, closestOnAxis);
-      float perpDistSq = Vector3LengthSqr(radialVec);
+      float toPt_x = px - ax_orig;
+      float toPt_y = py - ay_orig;
+      float toPt_z = pz - az_orig;
 
-      if (L->radius > 0.0f && perpDistSq >= L->radius * L->radius) {
+      float alongAxis = toPt_x * ax_dir + toPt_y * ay_dir + toPt_z * az_dir;
+      float close_x = ax_orig + ax_dir * alongAxis;
+      float close_y = ay_orig + ay_dir * alongAxis;
+      float close_z = az_orig + az_dir * alongAxis;
+
+      float rad_x = px - close_x;
+      float rad_y = py - close_y;
+      float rad_z = pz - close_z;
+
+      float perpDistSq = rad_x * rad_x + rad_y * rad_y + rad_z * rad_z;
+
+      if (L->radius > 0.0f && perpDistSq >= L->radius * L->radius)
+      {
         atten = 0.0f;
         break;
       }
-
       if (perpDistSq < 1e-6f)
         break;
 
       float perpDist = sqrtf(perpDistSq);
 
-      if (L->radius <= 0.0f) {
+      if (L->radius <= 0.0f)
+      {
         atten = 1.0f;
-      } else {
+      }
+      else
+      {
         float t = perpDist / L->radius;
         if (L->falloff <= 0.0f)
           atten = 1.0f;
@@ -398,37 +431,51 @@ Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel,
           atten = (1.0f - t) * (1.0f - t);
       }
 
-      Vector3 tangent =
-          Vector3Normalize(Vector3CrossProduct(axisDir, radialVec));
+      // cross(axisDir, radialVec)
+      float tx = ay_dir * rad_z - az_dir * rad_y;
+      float ty = az_dir * rad_x - ax_dir * rad_z;
+      float tz = ax_dir * rad_y - ay_dir * rad_x;
 
-      float s = L->strength / (perpDist + 1.0f);
-      acc = Vector3Scale(tangent, s);
-    } break;
+      float tLenSq = tx * tx + ty * ty + tz * tz;
+      if (tLenSq > 0.0f)
+      {
+        float invTLen = 1.0f / sqrtf(tLenSq);
+        tx *= invTLen;
+        ty *= invTLen;
+        tz *= invTLen;
+      }
+
+      float s = strength / (perpDist + 1.0f);
+      acc_x = tx * s;
+      acc_y = ty * s;
+      acc_z = tz * s;
+    }
+    break;
 
     case FORCE_VISCOSITY:
-      break;
-
     case FORCE_VECTOR_TEXTURE:
-      // GPU-only (GpuParticleSystem COMPUTE path sample texture trong
-      // particles.comp) — không có Texture2D sampling trên CPU path, no-op
-      // có chủ đích, giống FORCE_VISCOSITY trên particle pool.
       break;
 
     default:
       break;
-    } // end switch
+    }
 
-    totalAcc = Vector3Add(totalAcc, Vector3Scale(acc, atten));
+    total_ax += acc_x * atten;
+    total_ay += acc_y * atten;
+    total_az += acc_z * atten;
   }
 
-  return totalAcc;
+  return (Vector3){total_ax, total_ay, total_az};
 }
 
-float ForceField_GetViscosityDamping(const ForceField *ff, float dt) {
+float ForceField_GetViscosityDamping(const ForceField *ff, float dt)
+{
   float factor = 1.0f;
-  for (int i = 0; i < ff->layerCount; i++) {
+  for (int i = 0; i < ff->layerCount; i++)
+  {
     const ForceLayer *L = &ff->layers[i];
-    if (L->type == FORCE_VISCOSITY) {
+    if (L->type == FORCE_VISCOSITY)
+    {
       factor *= expf(-L->strength * dt);
     }
   }
@@ -438,61 +485,66 @@ float ForceField_GetViscosityDamping(const ForceField *ff, float dt) {
 // ============================================================
 // WIND ZONE GLOBAL
 // ============================================================
-
 static ForceField g_windZone;
-static bool       g_windZoneActive = false;
+static bool g_windZoneActive = false;
 
-void WindZone_Set(Vector3 direction, float strength, float noiseAmp, float noiseFreq) {
+void WindZone_Set(Vector3 direction, float strength, float noiseAmp, float noiseFreq)
+{
   ForceField_Clear(&g_windZone);
-  float len = sqrtf(direction.x*direction.x + direction.y*direction.y + direction.z*direction.z);
-  if (len > 0.0001f) {
-    direction.x /= len; direction.y /= len; direction.z /= len;
+  float len = sqrtf(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
+  if (len > 0.0001f)
+  {
+    direction.x /= len;
+    direction.y /= len;
+    direction.z /= len;
   }
   ForceField_AddLayer(&g_windZone, (ForceLayer){
-    .type      = FORCE_WIND,
-    .direction = direction,
-    .strength  = strength
-  });
-  if (noiseAmp > 0.0f) {
+                                       .type = FORCE_WIND,
+                                       .direction = direction,
+                                       .strength = strength});
+  if (noiseAmp > 0.0f)
+  {
     ForceField_AddLayer(&g_windZone, (ForceLayer){
-      .type       = FORCE_NOISE_CURL,
-      .strength   = noiseAmp,
-      .noiseScale = noiseFreq,
-      .noiseSpeed = 0.4f
-    });
+                                         .type = FORCE_NOISE_CURL,
+                                         .strength = noiseAmp,
+                                         .noiseScale = noiseFreq,
+                                         .noiseSpeed = 0.4f});
   }
   g_windZoneActive = true;
 }
 
-void WindZone_Clear(void) {
+void WindZone_Clear(void)
+{
   ForceField_Clear(&g_windZone);
   g_windZoneActive = false;
 }
 
 bool WindZone_IsActive(void) { return g_windZoneActive; }
 
-Vector3 WindZone_Evaluate(Vector3 pos, Vector3 vel, float time) {
-  if (!g_windZoneActive) return (Vector3){0};
+Vector3 WindZone_Evaluate(Vector3 pos, Vector3 vel, float time)
+{
+  if (!g_windZoneActive)
+    return (Vector3){0};
   return ForceField_Evaluate(&g_windZone, pos, vel, time, (Vector3){0}, (Vector3){0});
 }
 
 void ForceField_PackGPU(const ForceField *ff, Vector3 axisOrigin,
-                        Vector3 axisDir, ForceFieldGPU *out) {
+                        Vector3 axisDir, ForceFieldGPU *out)
+{
   memset(out, 0, sizeof(*out));
 
   int packed = 0;
-  for (int i = 0; i < ff->layerCount; i++) {
+  for (int i = 0; i < ff->layerCount; i++)
+  {
     const ForceLayer *L = &ff->layers[i];
     if (fabsf(L->strength) < 1e-4f)
       continue;
-    ForceLayerGPU *G = &out->layers[packed++];
 
-    // FORCE_RADIAL_AXIS/FORCE_VORTEX_AXIS dùng trục động (axisOrigin/axisDir)
-    // thay vì L->origin/L->direction — bake vào đây để GLSL đọc origin/
-    // direction đồng nhất cho mọi layer type, không cần case riêng.
+    ForceLayerGPU *G = &out->layers[packed++];
     Vector3 o = L->origin;
     Vector3 d = L->direction;
-    if (L->type == FORCE_RADIAL_AXIS || L->type == FORCE_VORTEX_AXIS) {
+    if (L->type == FORCE_RADIAL_AXIS || L->type == FORCE_VORTEX_AXIS)
+    {
       o = axisOrigin;
       d = axisDir;
     }

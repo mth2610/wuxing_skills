@@ -270,6 +270,16 @@ void ProceduralMesh_BuildRock(RockMeshData *out, Vector3 center, float radius,
  * cảm giác facet góc cạnh. */
 void ProceduralMesh_DrawRock(const RockMeshData *data, Color color);
 
+/* Build MỘT rock mẫu (GPU-resident Mesh, UploadMesh một lần duy nhất — cùng
+ * vòng đời với shader/texture, KHÔNG BAO GIỜ rebuild) để dùng với
+ * DrawMeshInstanced khi cần N bản sao cùng hình dạng trong cùng 1 frame
+ * (vd VFX_ComposeFloatingStones, core/composition/vc_earth.inl). Đánh đổi:
+ * mọi instance dùng chung 1 silhouette, biến thể chỉ đến từ transform
+ * (vị trí/xoay/scale) — không còn N hình dạng khác nhau theo seed riêng
+ * như ProceduralMesh_BuildRock/MeshCache_GetRock. Xem CORE_API.md "GPU
+ * Instancing — standard pattern" và CORE_ISSUES.md Item 40. */
+Mesh ProceduralMesh_BuildRockTemplateMesh(float radius, float jitterAmount, int seed, int subdivisions);
+
 /* ============================================================================
  * SHARD CLUSTER MESH SYSTEM (MỚI)
  * --------------------------------------------------------------------------

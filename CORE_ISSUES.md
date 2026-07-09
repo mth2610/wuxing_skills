@@ -1161,7 +1161,31 @@ pattern, the bug is confirmed and localized.
 
 ## Item 39 — Procedural geometry / VFX composition audit checklist (found via Crystal Cluster, not yet applied to the rest of `core/geometry`/`core/composition`)
 
-**Status: OPEN.** Four distinct, unrelated-looking bugs were found and fixed
+**Status: RESOLVED (2026-07-09).** Both audits below were run against every
+file listed under "Not yet touched" — findings:
+- **Audit A (draw-cost):** `Rock`/`ShardCluster`/`Tube`/`WavePlane`/
+  `CurlingWave`/`VortexFunnel`/`Fissure` (`core/geometry/pm_*.inl`) checked.
+  Every `Draw*` other than Rock's is a **single-shape-per-effect** draw
+  (one tube, one funnel, one pillar/puddle), already consolidated to one/two
+  `rlBegin`/`rlEnd` per call — no instancing applies to a single instance,
+  no changes needed. `ProceduralMesh_DrawShardCluster`/`DrawWavePlane`/
+  `DrawCurlingWave`/`DrawFissure` have **zero call sites** anywhere in
+  `core/composition`/`skills/` (repo-wide grep) — left alone as unused-but-
+  valid public API, not deleted.
+  Two real N-copies-per-frame candidates were found and converted to GPU
+  instancing (Item 40 follow-up, see below): `VFX_ComposeFloatingStones`
+  (`vc_earth.inl`, 5 rocks) and `VFX_ComposeMetalShardCluster`'s 4-blade loop
+  (`vc_metal.inl`, explicitly flagged by name in this item's original text).
+- **Audit B (seed/variety):** `vc_fire.inl`, `vc_wood.inl`, `vc_earth.inl`,
+  `vc_taiji.inl` grepped for `seed` — **zero matches in all four files**
+  (none of their `VFX_Compose*` call a seed-taking `ProceduralMesh_Build*`/
+  `Draw*`). Nothing to fix; audit closes clean.
+
+The two-audit checklist itself remains valid and reusable for any future
+procedural shape — re-run it before assuming a new `Draw*`/`VFX_Compose*` is
+already optimal, per the original findings below.
+
+Original finding: four distinct, unrelated-looking bugs were found and fixed
 across one skill (`glacial_cannon_skill`'s ice-crystal effects) in the same
 session, and all four turned out to be **instances of two repeatable
 patterns** rather than one-off mistakes. Filed so the same two audits get
@@ -1259,12 +1283,14 @@ taking a `seed`/`int` randomness parameter):
 
 ### Not yet touched, likely worth the same pass
 
-`vc_fire.inl`, `vc_wood.inl`, `vc_earth.inl`, `vc_taiji.inl` (composition
+~~`vc_fire.inl`, `vc_wood.inl`, `vc_earth.inl`, `vc_taiji.inl` (composition
 layer — audit B), and Rock/ShardCluster/Tube/WavePlane/CurlingWave/
 VortexFunnel/Fissure (`core/geometry/pm_*.inl` — audit A). None of these were
 inspected this session; this item exists so the next pass through them
 starts from a checklist instead of rediscovering the same two bug shapes
-one skill at a time.
+one skill at a time.~~ **Done — see the RESOLVED note at the top of this
+item (2026-07-09).** Nothing left in this list; any *new* shape added later
+should still run through this same checklist before being assumed correct.
 
 ---
 
@@ -1324,6 +1350,56 @@ convenience wrapper, which only manages the transform buffer) — no existing
 code in this engine does this yet; whoever picks it up is establishing new
 precedent, not following one.
 
+### Follow-up conversions #2 and #3 (2026-07-09, Item 39's audit A findings)
+
+Both use the exact checklist above, no deviations:
+
+- **`VFX_ComposeMetalShardCluster`'s 4-blade loop** (`core/composition/vc_metal.inl`)
+  — was explicitly flagged by name in Item 39's original text as having "the
+  exact same shape as pattern 1" (per-blade `rlPushMatrix`+`ProceduralMesh_DrawCrystal`,
+  every frame). Converted to `GetMetalBladeTemplateMesh()` (one crystal
+  template, built once via `ProceduralMesh_BuildCrystalTemplateMesh`) +
+  `CrystalMaterialInstanced` (reused directly — this effect already used
+  `CrystalMaterial`, no new material system needed) + one `DrawMeshInstanced`
+  for the 4 blades. **Trade-off:** each blade's `twist` used to vary per-blade
+  (`desc.twist * (0.5 + r02)`) — twist changes mesh topology, not
+  representable as a rigid transform, so the template now uses one fixed
+  `twist` for all 4 blades (`GetMetalBladeDesc`, same file). Height/radius
+  variety is preserved via non-uniform `Matrix` scale instead. The
+  micro-crystal cluster drawn right after (`ProceduralMesh_DrawCrystalCluster`,
+  5 tiny stubs) was left untouched — it already goes through the
+  batched-cluster path from this item's original fix, not a per-instance loop.
+- **`VFX_ComposeFloatingStones`** (`core/composition/vc_earth.inl`) — was 5
+  `rlPushMatrix`+`ProceduralMesh_DrawRock` calls per frame (an ongoing
+  levitation effect, not a one-shot burst — drawn every frame for the
+  effect's whole lifetime). N=5 is below this item's original "N≳10" soft
+  threshold for a one-shot burst, but justified here because the draw
+  repeats every frame rather than once per cast (see the softened criterion
+  added to the CORE_API.md decision tree). This effect used `EffectMaterial`
+  (`Material_Get(MAT_ROCK)`), not `CrystalMaterial` — no instanced twin
+  existed yet, so this conversion **added new reusable infra**:
+  `core/shaders/effect_material_instanced.vs` + `EffectMaterialInstanced`
+  (`core/material/material_system.h/.c`), a duplicate of `EffectMaterial`'s
+  struct/`_Load`/`_Begin`/`_End` shape pointed at the new shader — exactly
+  mirroring `CrystalMaterialInstanced`'s relationship to `CrystalMaterial`.
+  Also added `ProceduralMesh_BuildRockTemplateMesh` (`core/geometry/pm_rocks.inl`)
+  — one GPU-resident rock template, mirroring `ProceduralMesh_BuildCrystalTemplateMesh`.
+  **Trade-off:** all 5 stones now share one rock silhouette instead of 5
+  independently-seeded shapes (`MeshCache_GetRock(i*733+17, ...)` per stone)
+  — variety comes from transform (orbit position/tumble/scale) only, same
+  precedent as the ice-crystal burst. `MeshCache_GetRock`/`ProceduralMesh_DrawRock`
+  are untouched and still used elsewhere (e.g. `VFX_ComposeBoulder`, a
+  single-instance draw where instancing doesn't apply).
+
+`EffectMaterialInstanced` is now available for any future `EffectMaterial`-
+backed effect that needs N transform-only copies — see the two-material
+decision guidance (Crystal-backed vs EffectMaterial-backed) in CORE_API.md's
+GPU Instancing decision tree.
+
+Both verified: `cmake --build build -j4` compiles clean. Visual in-game
+confirmation of both effects (Floating Stones, Metal Shard Cluster) is
+pending the user's own check — no headless harness covers this.
+
 ---
 
 ## Item 41 — Raylib 5.5 → 6.0 upgrade (DONE)
@@ -1353,3 +1429,18 @@ changes in the same session, suspect this first.
 `CORE_API.md`, `EXTERNAL_API.md`. **`CORE_API_SHORT.md` NOT updated** (still
 says 5.5 on its line 9) — per its own stated rule it's manual-only, not
 auto-synced with routine edits; regenerate it on request, not proactively.
+
+**Follow-up bug (also RESOLVED): window invisible after upgrade.** After the
+6.0 bump, `./build/wuxing` produced no visible window on this macOS +
+Intel HD 6000 machine (Dock icon present, `InitWindow` logged success, but
+nothing rendered on screen). Root cause found by bisection with an isolated
+minimal raylib-6.0 app: `CMakeLists.txt` had
+`set(CUSTOMIZE_BUILD ON CACHE BOOL ... FORCE)`, which changes raylib's own
+internal `SUPPORT_*` build defaults on 6.0 (the project never actually set
+any custom `SUPPORT_*` flags, so the line was doing nothing useful). With
+`CUSTOMIZE_BUILD ON`, the mini app's window also failed to appear; removing
+it fixed both the mini app and the real project. Fix applied: removed the
+`CUSTOMIZE_BUILD ON` line from `CMakeLists.txt` (see comment there). Do not
+re-enable it without also setting matching `SUPPORT_*` flags and re-testing
+window visibility on this hardware. Confirmed 2026-07-09: full rebuild from
+clean `_deps`/`build`, window renders, whole app runs normally.

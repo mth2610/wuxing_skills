@@ -166,6 +166,75 @@ void Material_End(void)
     SkillManager_EndShader();
 }
 
+static void EffectMaterialInstanced_FetchLocs(EffectMaterialInstanced *mat)
+{
+    mat->uTimeLoc = GetShaderLocation(mat->shader, "u_time");
+    mat->uDissolveLoc = GetShaderLocation(mat->shader, "u_dissolve");
+    mat->uBaseColorLoc = GetShaderLocation(mat->shader, "u_baseColor");
+    mat->uTranslucencyLoc = GetShaderLocation(mat->shader, "u_translucency");
+    mat->uRimStrengthLoc = GetShaderLocation(mat->shader, "u_rimStrength");
+    mat->uFresnelPowerLoc = GetShaderLocation(mat->shader, "u_fresnelPower");
+    mat->uEmissiveIntensityLoc = GetShaderLocation(mat->shader, "u_emissiveIntensity");
+    mat->uDistortionStrengthLoc = GetShaderLocation(mat->shader, "u_distortionStrength");
+    mat->uHasTexture1Loc = GetShaderLocation(mat->shader, "u_hasTexture1");
+    mat->uTexture1Loc = GetShaderLocation(mat->shader, "texture1");
+}
+
+EffectMaterialInstanced EffectMaterialInstanced_Load(EffectMaterialParams params)
+{
+    EffectMaterialInstanced mat = {0};
+    mat.preset = MAT_CUSTOM;
+    mat.shader = ResourceManager_LoadShader("core/shaders/effect_material_instanced.vs",
+                                            "core/shaders/effect_material.fs");
+    EffectMaterialInstanced_FetchLocs(&mat);
+    mat.params = params;
+    return mat;
+}
+
+void EffectMaterialInstanced_Begin(EffectMaterialInstanced mat)
+{
+    rlDrawRenderBatchActive();
+
+    SkillManager_BeginShader(mat.shader);
+    float time = (float)GetTime();
+    if (mat.uTimeLoc >= 0)
+    {
+        SetShaderValue(mat.shader, mat.uTimeLoc, &time, SHADER_UNIFORM_FLOAT);
+    }
+    if (mat.uBaseColorLoc >= 0)
+    {
+        Vector4 baseColorVec = ColorNormalize(mat.params.baseColor);
+        SetShaderValue(mat.shader, mat.uBaseColorLoc, &baseColorVec, SHADER_UNIFORM_VEC4);
+    }
+    if (mat.uTranslucencyLoc >= 0)
+        SetShaderValue(mat.shader, mat.uTranslucencyLoc, &mat.params.translucency, SHADER_UNIFORM_FLOAT);
+    if (mat.uRimStrengthLoc >= 0)
+        SetShaderValue(mat.shader, mat.uRimStrengthLoc, &mat.params.rimStrength, SHADER_UNIFORM_FLOAT);
+    if (mat.uFresnelPowerLoc >= 0)
+        SetShaderValue(mat.shader, mat.uFresnelPowerLoc, &mat.params.fresnelPower, SHADER_UNIFORM_FLOAT);
+    if (mat.uEmissiveIntensityLoc >= 0)
+        SetShaderValue(mat.shader, mat.uEmissiveIntensityLoc, &mat.params.emissiveIntensity, SHADER_UNIFORM_FLOAT);
+    if (mat.uDistortionStrengthLoc >= 0)
+        SetShaderValue(mat.shader, mat.uDistortionStrengthLoc, &mat.params.distortionStrength, SHADER_UNIFORM_FLOAT);
+    if (mat.uHasTexture1Loc >= 0)
+    {
+        int hasTexture1 = mat.params.texture1.id != 0;
+        SetShaderValue(mat.shader, mat.uHasTexture1Loc, &hasTexture1, SHADER_UNIFORM_INT);
+    }
+    if (mat.uTexture1Loc >= 0 && mat.params.texture1.id != 0)
+    {
+        rlSetTexture(mat.params.texture1.id);
+        SetShaderValueTexture(mat.shader, mat.uTexture1Loc, mat.params.texture1);
+    }
+}
+
+void EffectMaterialInstanced_End(void)
+{
+    rlDrawRenderBatchActive();
+    rlSetTexture(0);
+    SkillManager_EndShader();
+}
+
 CrystalMaterial CrystalMaterial_Load(CrystalMaterialParams params)
 {
     CrystalMaterial mat = {0};

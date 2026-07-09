@@ -75,6 +75,37 @@ void Material_Begin(EffectMaterial mat);
 // Kết thúc dùng chất liệu
 void Material_End(void);
 
+/* Biến thể GPU-instancing của EffectMaterial — dùng shader program RIÊNG
+ * (core/shaders/effect_material_instanced.vs, cùng effect_material.fs) nên
+ * cần cache uniform location riêng, giống lý do CrystalMaterialInstanced
+ * tách khỏi CrystalMaterial (location của cùng 1 tên uniform có thể khác
+ * nhau giữa 2 program đã link khác nhau). Dùng với DrawMeshInstanced để vẽ
+ * N mesh giống nhau (rock, shard...) bằng ĐÚNG 1 draw call thay vì N lần
+ * DrawMesh — xem VFX_ComposeFloatingStones (vc_earth.inl) và
+ * CORE_ISSUES.md Item 40. Chỉ dùng cho hiệu ứng backed bởi EffectMaterial
+ * (Material_Get/Material_LoadCustom) — hiệu ứng dùng CrystalMaterial thì
+ * dùng CrystalMaterialInstanced ở trên thay vì cái này. */
+typedef struct
+{
+    Shader shader;
+    MaterialPreset preset;
+    int uTimeLoc;
+    int uDissolveLoc;
+    int uBaseColorLoc;
+    int uTranslucencyLoc;
+    int uRimStrengthLoc;
+    int uFresnelPowerLoc;
+    int uEmissiveIntensityLoc;
+    int uDistortionStrengthLoc;
+    int uHasTexture1Loc;
+    int uTexture1Loc;
+    EffectMaterialParams params;
+} EffectMaterialInstanced;
+
+EffectMaterialInstanced EffectMaterialInstanced_Load(EffectMaterialParams params);
+void EffectMaterialInstanced_Begin(EffectMaterialInstanced mat);
+void EffectMaterialInstanced_End(void);
+
 /* ============================================================================
  * CRYSTAL MATERIAL SYSTEM (MỚI)
  * --------------------------------------------------------------------------

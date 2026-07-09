@@ -193,50 +193,90 @@ void VFX_ComposeRockBurst(Vector3 pos, float scale)
     VFXLight_Spawn(pos, VFX_Material(VC_MAT_EARTH)->soft, 1.2f * scale, 0.15f, VFX_PRIORITY_LOW);
 }
 
+// GPU-resident rock template (UploadMesh once, same lifetime as a shader —
+// never rebuilt) for VFX_ComposeFloatingStones' instanced draw below. See
+// ProceduralMesh_BuildRockTemplateMesh's doc comment and CORE_ISSUES.md
+// Item 40 for the pattern this mirrors (crystal template + DrawMeshInstanced).
+static Mesh GetFloatingStoneTemplateMesh(void)
+{
+    static Mesh s_template = {0};
+    static bool s_ready = false;
+    if (!s_ready)
+    {
+        s_template = ProceduralMesh_BuildRockTemplateMesh(1.0f, 0.5f, 733, 1);
+        s_ready = true;
+    }
+    return s_template;
+}
+
+// Instanced-shader twin of Material_Get(MAT_ROCK) — separate shader program
+// (effect_material_instanced.vs) needs its own uniform-location cache, see
+// EffectMaterialInstanced's doc comment in material_system.h.
+static EffectMaterialInstanced GetFloatingStoneMaterialInstanced(void)
+{
+    static EffectMaterialInstanced s_rockMatI;
+    static bool s_rockMatILoaded = false;
+    if (!s_rockMatILoaded)
+    {
+        EffectMaterial nonInstanced = Material_Get(MAT_ROCK);
+        s_rockMatI = EffectMaterialInstanced_Load(nonInstanced.params);
+        s_rockMatILoaded = true;
+    }
+    return s_rockMatI;
+}
+
+#define FLOATING_STONE_MAX 8 // reasonable stack cap for the transform array, not a real performance limit
+
 void VFX_ComposeFloatingStones(Vector3 pos, float radius, float time)
 {
     EarthFx_InitShared();
 
-    // ── Primary shape: 5 real rock meshes levitating in a loose ring — each
-    // gets a stable seed (same rock every frame), own orbit speed, height,
-    // bob phase and tumble axis. Slow everything: mass reads through inertia.
-    static EffectMaterial s_rockMat;
-    static bool s_rockMatLoaded = false;
-    if (!s_rockMatLoaded)
-    {
-        s_rockMat = Material_Get(MAT_ROCK);
-        s_rockMatLoaded = true;
-    }
-
-    rlDrawRenderBatchActive();
-    rlDisableBackfaceCulling();
-    Material_Begin(s_rockMat);
+    // ── Primary shape: 5 rock instances levitating in a loose ring, one
+    // DrawMeshInstanced call — each gets its own orbit speed, height, bob
+    // phase and tumble axis via transform only (shared rock silhouette,
+    // CORE_ISSUES.md Item 40 trade-off). Slow everything: mass reads
+    // through inertia.
+    Mesh templateMesh = GetFloatingStoneTemplateMesh();
     const int stoneCount = 5;
     Vector3 stonePos[5];
-    for (int i = 0; i < stoneCount; i++)
+    Matrix transforms[FLOATING_STONE_MAX];
+
+    if (templateMesh.vertexCount > 0)
     {
-        unsigned int h = (unsigned int)i * 2246822519u + 3266489917u;
-        float r01 = (float)(h >> 8 & 0xFFFF) / 65535.0f;
-        float r02 = (float)(h >> 20 & 0xFFF) / 4095.0f;
+        for (int i = 0; i < stoneCount; i++)
+        {
+            unsigned int h = (unsigned int)i * 2246822519u + 3266489917u;
+            float r01 = (float)(h >> 8 & 0xFFFF) / 65535.0f;
+            float r02 = (float)(h >> 20 & 0xFFF) / 4095.0f;
 
-        float a = time * (0.5f + 0.25f * r01) * ((i % 2) ? 1.0f : -1.0f) + (float)i * (2.0f * PI / (float)stoneCount);
-        float orbR = radius * (0.75f + 0.4f * r01);
-        float y = radius * (0.5f + 0.55f * r02) + radius * 0.1f * sinf(time * 1.3f + (float)i * 2.1f);
-        Vector3 p = {pos.x + cosf(a) * orbR, pos.y + y, pos.z + sinf(a) * orbR};
-        stonePos[i] = p;
+            float a = time * (0.5f + 0.25f * r01) * ((i % 2) ? 1.0f : -1.0f) + (float)i * (2.0f * PI / (float)stoneCount);
+            float orbR = radius * (0.75f + 0.4f * r01);
+            float y = radius * (0.5f + 0.55f * r02) + radius * 0.1f * sinf(time * 1.3f + (float)i * 2.1f);
+            Vector3 p = {pos.x + cosf(a) * orbR, pos.y + y, pos.z + sinf(a) * orbR};
+            stonePos[i] = p;
 
-        RockMeshData *rock = MeshCache_GetRock(i * 733 + 17, 0.5f);
-        float s = radius * (0.10f + 0.08f * r02);
-        rlPushMatrix();
-        rlTranslatef(p.x, p.y, p.z);
-        rlRotatef(time * (8.0f + 10.0f * r01), r01, 1.0f, r02); // lazy tumble
-        rlScalef(s, s, s);
-        ProceduralMesh_DrawRock(rock, WHITE);
-        rlPopMatrix();
+            float s = radius * (0.10f + 0.08f * r02);
+            float tumbleRad = (time * (8.0f + 10.0f * r01)) * DEG2RAD; // lazy tumble
+            Matrix scale = MatrixScale(s, s, s);
+            Matrix rot = MatrixRotate((Vector3){r01, 1.0f, r02}, tumbleRad);
+            Matrix translate = MatrixTranslate(p.x, p.y, p.z);
+            transforms[i] = MatrixMultiply(MatrixMultiply(scale, rot), translate);
+        }
+
+        rlDrawRenderBatchActive();
+        rlDisableBackfaceCulling();
+        EffectMaterialInstanced rockMatI = GetFloatingStoneMaterialInstanced();
+        EffectMaterialInstanced_Begin(rockMatI);
+        Material passthrough = ProceduralMesh_GetPassthroughMaterial(rockMatI.shader);
+        DrawMeshInstanced(templateMesh, passthrough, transforms, stoneCount);
+        EffectMaterialInstanced_End();
+        rlDrawRenderBatchActive();
+        rlEnableBackfaceCulling();
     }
-    Material_End();
-    rlDrawRenderBatchActive();
-    rlEnableBackfaceCulling();
+    else
+    {
+        for (int i = 0; i < stoneCount; i++) stonePos[i] = pos;
+    }
 
     // ── Anti-gravity tell: dust motes rising UNDER the stones — the magic
     // visibly pulling upward is what says "levitation", not the stones alone.

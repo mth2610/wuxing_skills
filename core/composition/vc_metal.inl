@@ -1,5 +1,64 @@
 // Metal-specific procedural visual components (implementations)
 
+// Fixed CrystalDesc for the 4 main blades — height/radius vary per blade via
+// Matrix scale in VFX_ComposeMetalShardCluster instead of via desc fields,
+// so all 4 can share one GPU-resident template mesh (DrawMeshInstanced).
+// Trade-off: per-blade `twist` variation (was desc.twist * (0.5+r02)) is
+// lost — twist changes topology, not representable as a rigid transform —
+// same accepted trade-off as VFX_DrawIceCrystalBurst (CORE_ISSUES.md Item 40).
+static CrystalDesc GetMetalBladeDesc(void)
+{
+    CrystalDesc desc = {0};
+    desc.height = 1.1f;
+    desc.radius = 0.11f;
+    desc.taper = 0.95f; // near-sharp tip — blade-like, sharper than ice's 0.85
+    desc.twist = 0.15f; // minimal twist — rigid metal, not organic ice growth
+    desc.noise = 0.03f; // low — faceted-clean rather than jagged
+    desc.sides = 5;
+    desc.segments = 4;
+    return desc;
+}
+
+static Mesh GetMetalBladeTemplateMesh(void)
+{
+    static Mesh s_template = {0};
+    static bool s_ready = false;
+    if (!s_ready)
+    {
+        CrystalDesc desc = GetMetalBladeDesc();
+        s_template = ProceduralMesh_BuildCrystalTemplateMesh(&desc);
+        s_ready = true;
+    }
+    return s_template;
+}
+
+// Instanced-shader twin of the CrystalMaterial below — separate shader
+// program (crystal_instanced.vs) needs its own uniform-location cache, see
+// CrystalMaterialInstanced's doc comment in material_system.h.
+static CrystalMaterialInstanced GetMetalBladeMaterialInstanced(void)
+{
+    static CrystalMaterialInstanced s_metalMatI;
+    static bool s_metalMatILoaded = false;
+    if (!s_metalMatILoaded)
+    {
+        CrystalMaterialParams p = {0};
+        p.baseColor = (Color){108, 120, 130, 255}; // cool steel gray, opaque
+        p.edgeColor = (Color){245, 250, 255, 255}; // bright silver-white rim
+        p.roughness = 0.82f;                       // sharper fresnel edge than ice's 0.35
+        p.fresnel = 2.0f;                          // stronger rim-light pop when viewed edge-on
+        p.refraction = 0.0f;                       // opaque metal — no fake-glass refraction
+        p.sparkle = 1.0f;                          // strong specular glints (steel catch-light)
+        p.crack = 0.0f;                            // no internal fracture pattern (that's ice's trait)
+        p.emission = 0.06f;
+        p.thickness = 0.6f;
+        s_metalMatI = CrystalMaterialInstanced_Load(p);
+        s_metalMatILoaded = true;
+    }
+    return s_metalMatI;
+}
+
+#define METAL_BLADE_COUNT 4
+
 void VFX_ComposeMetalShardCluster(Vector3 basePos, int seed)
 {
     static CrystalMaterial s_metalMat;
@@ -20,23 +79,20 @@ void VFX_ComposeMetalShardCluster(Vector3 basePos, int seed)
         s_metalMatLoaded = true;
     }
 
-    // Primary shape — main blades. Drawn one by one (not the uniform cluster
-    // helper) so every shard gets its own height/lean/scale: a natural
-    // eruption, not four copies of the same spike.
-    CrystalDesc desc = {0};
-    desc.height = 1.1f;
-    desc.radius = 0.11f;
-    desc.taper = 0.95f; // near-sharp tip — blade-like, sharper than ice's 0.85
-    desc.twist = 0.15f; // minimal twist — rigid metal, not organic ice growth
-    desc.noise = 0.03f; // low — faceted-clean rather than jagged
-    desc.sides = 5;
-    desc.segments = 4;
+    // Primary shape — main blades, one DrawMeshInstanced call: every shard
+    // still gets its own position/facing/lean/height-and-radius-scale (via
+    // transform), a natural eruption rather than four visibly identical
+    // spikes. See GetMetalBladeDesc's comment for the twist trade-off.
+    CrystalDesc desc = GetMetalBladeDesc();
+    Mesh templateMesh = GetMetalBladeTemplateMesh();
 
-    CrystalMaterial_Begin(s_metalMat);
     unsigned int rng = (unsigned int)seed * 747796405u + 2891336453u;
     Vector3 tallestTip = basePos;
     float tallestH = 0.0f;
-    for (int i = 0; i < 4; i++)
+    Matrix transforms[METAL_BLADE_COUNT];
+    float bladeHeights[METAL_BLADE_COUNT];
+
+    for (int i = 0; i < METAL_BLADE_COUNT; i++)
     {
         // Deterministic per-shard variation from the seed (stable across
         // frames — this function draws every frame).
@@ -47,29 +103,39 @@ void VFX_ComposeMetalShardCluster(Vector3 basePos, int seed)
         rng = rng * 1664525u + 1013904223u;
         float r03 = (float)(rng >> 8 & 0xFFFF) / 65535.0f;
 
-        float a = (float)i / 4.0f * 2.0f * PI + r01 * 1.2f;
+        float a = (float)i / (float)METAL_BLADE_COUNT * 2.0f * PI + r01 * 1.2f;
         float dist = 0.06f + r02 * 0.14f;
         Vector3 p = {basePos.x + cosf(a) * dist, basePos.y, basePos.z + sinf(a) * dist};
 
-        CrystalDesc d = desc;
-        d.height = desc.height * (0.55f + r03 * 0.7f); // 0.6x..1.25x height spread
-        d.radius = desc.radius * (0.75f + r01 * 0.5f);
-        d.twist = desc.twist * (0.5f + r02);
+        float heightScale = 0.55f + r03 * 0.7f; // 0.6x..1.25x height spread
+        float radiusScale = 0.75f + r01 * 0.5f;
+        bladeHeights[i] = desc.height * heightScale;
 
-        rlPushMatrix();
-        rlTranslatef(p.x, p.y, p.z);
-        rlRotatef(r02 * 360.0f, 0, 1, 0);         // random facing
-        rlRotatef((r01 - 0.5f) * 24.0f, 1, 0, 0); // slight outward lean
-        rlRotatef((r03 - 0.5f) * 24.0f, 0, 0, 1);
-        ProceduralMesh_DrawCrystal((Vector3){0, 0, 0}, &d, 1.0f, WHITE);
-        rlPopMatrix();
+        Matrix scale = MatrixScale(radiusScale, heightScale, radiusScale);
+        Matrix rotFacing = MatrixRotateY(r02 * 360.0f * DEG2RAD);        // random facing
+        Matrix rotLean = MatrixRotateX((r01 - 0.5f) * 24.0f * DEG2RAD);  // slight outward lean
+        Matrix rotTilt = MatrixRotateZ((r03 - 0.5f) * 24.0f * DEG2RAD);
+        Matrix rot = MatrixMultiply(MatrixMultiply(rotFacing, rotLean), rotTilt);
+        Matrix translate = MatrixTranslate(p.x, p.y, p.z);
+        transforms[i] = MatrixMultiply(MatrixMultiply(scale, rot), translate);
 
-        if (d.height > tallestH)
+        if (bladeHeights[i] > tallestH)
         {
-            tallestH = d.height;
-            tallestTip = (Vector3){p.x, p.y + d.height, p.z};
+            tallestH = bladeHeights[i];
+            tallestTip = (Vector3){p.x, p.y + bladeHeights[i], p.z};
         }
     }
+
+    if (templateMesh.vertexCount > 0)
+    {
+        CrystalMaterialInstanced metalMatI = GetMetalBladeMaterialInstanced();
+        CrystalMaterialInstanced_Begin(metalMatI);
+        Material passthrough = ProceduralMesh_GetPassthroughMaterial(metalMatI.shader);
+        DrawMeshInstanced(templateMesh, passthrough, transforms, METAL_BLADE_COUNT);
+        CrystalMaterialInstanced_End();
+    }
+
+    CrystalMaterial_Begin(s_metalMat);
 
     // Ambient detail — micro crystals scattered at the base: tiny stubs that
     // fill the silhouette's foot so the big blades don't grow out of bare flat

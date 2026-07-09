@@ -119,6 +119,43 @@ void ProceduralMesh_DrawRock(const RockMeshData *data, Color color) {
     rlEnd();
 }
 
+Mesh ProceduralMesh_BuildRockTemplateMesh(float radius, float jitterAmount, int seed, int subdivisions) {
+    Mesh mesh = {0};
+
+    static RockMeshData s_rock;
+    ProceduralMesh_BuildRock(&s_rock, Vector3Zero(), radius, jitterAmount, seed, subdivisions);
+    if (s_rock.faceCount <= 0) return mesh;
+
+    int vertCount = s_rock.faceCount * 3; // flat-shaded: 3 unique verts/face (matches DrawRock's per-face normal)
+    mesh.vertices = (float *)MemAlloc(vertCount * 3 * sizeof(float));
+    mesh.normals = (float *)MemAlloc(vertCount * 3 * sizeof(float));
+    mesh.texcoords = (float *)MemAlloc(vertCount * 2 * sizeof(float));
+
+    for (int f = 0; f < s_rock.faceCount; f++) {
+        Vector3 verts3[3] = {
+            s_rock.verts[s_rock.faceVertIdx[f][0]],
+            s_rock.verts[s_rock.faceVertIdx[f][1]],
+            s_rock.verts[s_rock.faceVertIdx[f][2]],
+        };
+        for (int k = 0; k < 3; k++) {
+            int v = f * 3 + k;
+            mesh.vertices[v * 3 + 0] = verts3[k].x;
+            mesh.vertices[v * 3 + 1] = verts3[k].y;
+            mesh.vertices[v * 3 + 2] = verts3[k].z;
+            mesh.normals[v * 3 + 0] = s_rock.faceNormals[f].x;
+            mesh.normals[v * 3 + 1] = s_rock.faceNormals[f].y;
+            mesh.normals[v * 3 + 2] = s_rock.faceNormals[f].z;
+            mesh.texcoords[v * 2 + 0] = 0.0f;
+            mesh.texcoords[v * 2 + 1] = 0.0f;
+        }
+    }
+
+    mesh.vertexCount = vertCount;
+    mesh.triangleCount = s_rock.faceCount;
+    UploadMesh(&mesh, false);
+    return mesh;
+}
+
 ShardClusterConfig ProceduralMesh_DefaultShardClusterConfig(void) {
     ShardClusterConfig cfg = {0};
     cfg.spreadAngle = 35.0f * (PI / 180.0f); cfg.thicknessMin = 0.06f; cfg.thicknessMax = 0.14f; cfg.tipSharpness = 0.85f; cfg.sides = 5;
