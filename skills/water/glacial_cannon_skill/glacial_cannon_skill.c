@@ -34,12 +34,16 @@ typedef struct
     Vector3 pathPoints[32];
     int pathPointCount;
     int lastSpawnedIdx;
+    int castSeed; // THÊM BIẾN NÀY
 
     int burstSeed;
     float burstProgress;
 } SkillInstance;
 
 static SkillInstance s_instances[MAX_INSTANCES];
+
+// TỐI ƯU: Cache lại Skill Index để tránh gọi tra cứu chuỗi tốn kém mỗi lần Cast
+static int s_glacialCannonSkillIndex = -1;
 
 #include "glacial_cannon_skill_params.inl"
 
@@ -52,14 +56,16 @@ void InitGlacialCannonSkill(int screenWidth, int screenHeight)
     static SkillTunableEntry s_tunables[GLACIAL_CANNON_TUNABLE_COUNT];
     int tn = 0;
 #include "glacial_cannon_skill_tunables.inl"
-    int skillIndex = Skill_GetIndexByName("GLACIAL_CANNON");
+
+    s_glacialCannonSkillIndex = Skill_GetIndexByName("GLACIAL_CANNON");
     SkillTunables_LoadPersisted("skills/water/glacial_cannon_skill/glacial_cannon_skill.tuning", s_tunables, tn);
-    RegisterSkillTunables(skillIndex, s_tunables, tn);
+    RegisterSkillTunables(s_glacialCannonSkillIndex, s_tunables, tn);
 }
 
 void CastGlacialCannonSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params)
 {
-    if (!SkillManager_CanCast(Skill_GetIndexByName("GLACIAL_CANNON"), agentId))
+    // Dùng index đã cache thay vì GetIndexByName
+    if (!SkillManager_CanCast(s_glacialCannonSkillIndex, agentId))
         return;
 
     for (int i = 0; i < MAX_INSTANCES; i++)
@@ -76,14 +82,19 @@ void CastGlacialCannonSkill(int agentId, Vector3 startPos, Vector3 target, Skill
         s->damageAccumulator = 0.0f;
         s->ownerAgentId = agentId;
         s->lastSpawnedIdx = -1;
+
+        // Trộn thời gian và ID để sinh seed độc nhất cho MỖI LẦN CAST
+        s->castSeed = (int)((unsigned int)(GetTime() * 10000.0f) ^ (unsigned int)GetRandomValue(0, 9999999));
+
         s->burstSeed = 0;
         s->burstProgress = 0.0f;
-
-        // Initialize path points (line from start to target)
         s->pathPointCount = 16;
+
+        // TỐI ƯU: Chuyển phép chia ra ngoài vòng lặp. Nhân luôn nhanh hơn chia.
+        float invPathSteps = 1.0f / (float)(s->pathPointCount - 1);
         for (int j = 0; j < s->pathPointCount; j++)
         {
-            float t = (float)j / (float)(s->pathPointCount - 1);
+            float t = (float)j * invPathSteps;
             s->pathPoints[j] = Vector3Lerp(startPos, target, t);
         }
 
@@ -91,9 +102,8 @@ void CastGlacialCannonSkill(int agentId, Vector3 startPos, Vector3 target, Skill
 
         PlayCastSound(EFFECT_PRESET_ICE_SHATTER);
 
-        // Trigger cooldown
-        int skillIndex = Skill_GetIndexByName("GLACIAL_CANNON");
-        SkillManager_TriggerCooldown(skillIndex, agentId, Skill_CalculateCooldown(SKILL_CAT_PROJECTILE, params));
+        // Dùng index đã cache
+        SkillManager_TriggerCooldown(s_glacialCannonSkillIndex, agentId, Skill_CalculateCooldown(SKILL_CAT_PROJECTILE, params));
         return;
     }
 }
@@ -126,7 +136,7 @@ void UpdateGlacialCannonSkill(float dt, Vector3 enemyPos, float enemyRadius)
             if (wavefrontIdx >= s->pathPointCount)
                 wavefrontIdx = s->pathPointCount - 1;
 
-            VFX_ComposePathMistWave(VC_MAT_ICE, s->pathPoints, s->pathPointCount, progress, s->sizeScale * 0.8);
+            // VFX_ComposePathMistWave(VC_MAT_ICE, s->pathPoints, s->pathPointCount, progress, s->sizeScale * 0.8f);
 
             s->damageAccumulator += s_damagePerSecond * dt;
             if (s->damageAccumulator >= 5.0f)
@@ -138,7 +148,6 @@ void UpdateGlacialCannonSkill(float dt, Vector3 enemyPos, float enemyRadius)
 
                 if (GetRandomValue(0, 100) < 40)
                 {
-                    // VFX_TriggerExplosion(VC_MAT_ICE, currentImpactPos, s->sizeScale, false);
                     PlayImpactSound(EFFECT_PRESET_ICE_SHATTER);
                 }
             }
@@ -146,7 +155,8 @@ void UpdateGlacialCannonSkill(float dt, Vector3 enemyPos, float enemyRadius)
             if (s->timer >= s_waveDuration)
             {
                 PlayImpactSound(EFFECT_PRESET_ICE_SHATTER);
-                ApplyAoEDamage(s->targetPos, s_aoeRadius * s->sizeScale * 1.8f, s_damagePerSecond * 0.5f, 1.5f);
+                // TỐI ƯU: gom nhóm phép nhân hằng số
+                ApplyAoEDamage(s->targetPos, s_aoeRadius * (s->sizeScale * 1.8f), s_damagePerSecond * 0.5f, 1.5f);
 
                 unsigned int seedBits = (unsigned int)(GetTime() * 1000.0f) ^ ((unsigned int)s->ownerAgentId * 747796405u) ^ ((unsigned int)i * 2891336453u);
                 s->burstSeed = (int)seedBits;
@@ -180,20 +190,15 @@ void DrawGlacialCannonSkill(void)
         if (!s->active)
             continue;
 
-        // Draw Aura Qi continuously from cast until the skill is complete
-        // VFX_ComposeAura(VC_MAT_QI, s->startPos, s_aoeRadius * s->sizeScale, time);
-
         if (s->state == STATE_CHANNELING)
         {
             float progress = s->timer / s_waveDuration;
-            // VFX_ComposeCylinderAura(VC_MAT_ICE, s->startPos, s_aoeRadius * s->sizeScale * 0.3, progress, time);
-            VFX_ComposeGroundAura(VC_MAT_ICE, s->startPos, s_aoeRadius * s->sizeScale * 0.5, -0.9f, time);
+            // VFX_ComposeGroundAura(VC_MAT_ICE, s->startPos, s_aoeRadius * s->sizeScale * 0.5f, -0.9f, time);
 
             if (progress > 1.0f)
                 progress = 1.0f;
 
-            // Draw sequential Ice Spikes along path (with updated deterministic non-wobbly mesh)
-            VFX_PathWave(PATH_ICE_SPIKE, s->pathPoints, s->pathPointCount, s_spikeScale * s->sizeScale, progress, time);
+            VFX_PathWave(PATH_ICE_SPIKE, s->pathPoints, s->pathPointCount, s_spikeScale * s->sizeScale, progress, time, s->castSeed);
         }
         else if (s->state == STATE_IMPACT_BURST)
         {

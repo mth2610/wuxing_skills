@@ -72,24 +72,35 @@ void main()
     finalColorRGB = mix(finalColorRGB * 0.25, finalColorRGB, absorption);
 
     // 5. Internal Crack Noise
+   // 5 & 8. Gộp chung tính toán Noise (TỐI ƯU CỰC MẠNH FILL RATE)
+    // Thay vì gọi vnoise3D 2 lần cho crack và dissolve, ta chỉ gọi 1 lần và biến đổi toán học
+    float baseNoise = 0.0;
+    if (u_crack > 0.001 || u_dissolve > 0.001)
+    {
+        // Chỉ tính noise 3D một lần duy nhất
+        baseNoise = vnoise3D(fragPosition * 8.0); 
+    }
+
+    // 5. Internal Crack Noise
     if (u_crack > 0.001)
     {
-        float cNoise = vnoise3D(fragPosition * 8.0);
-        float crackLine = smoothstep(0.3, 0.32, cNoise) * (1.0 - smoothstep(0.34, 0.36, cNoise));
+        float crackLine = smoothstep(0.3, 0.32, baseNoise) * (1.0 - smoothstep(0.34, 0.36, baseNoise));
         finalColorRGB += u_edgeColor.rgb * (crackLine * u_crack * 0.4);
     }
 
-    // 6. Sparkling Highlights [FIX: HẠT VUÔNG]
-    // Bỏ hàm floor(). Dùng giao thoa sóng lượng giác (Sine interference) 
-    // để tạo ra các đốm sáng có hình dáng mũi nhọn tự nhiên, biến thiên theo thời gian.
+    // 6. Sparkling Highlights 
     if (u_sparkle > 0.001)
     {
         vec3 p = fragPosition * 22.0;
         float sparkVal = sin(p.x + u_time) * cos(p.y - u_time) * sin(p.z + u_time * 0.8);
         
-        // Nâng số mũ lên số chẵn cực lớn (16.0) để triệt tiêu các dải sáng mờ,
-        // chỉ chừa lại các đỉnh (peaks) sắc lẹm lấp lánh như tinh thể.
-        sparkVal = pow(abs(sparkVal), 16.0); 
+        // TỐI ƯU ALU: Thay thế pow(abs(x), 16.0) bằng phép nhân chập. 
+        // GPU thực thi phép nhân nhanh hơn gấp nhiều lần so với hàm pow()
+        sparkVal = abs(sparkVal);
+        sparkVal *= sparkVal; // ^2
+        sparkVal *= sparkVal; // ^4
+        sparkVal *= sparkVal; // ^8
+        sparkVal *= sparkVal; // ^16
         
         finalColorRGB += vec3(2.0) * sparkVal * u_sparkle;
     }
@@ -97,15 +108,14 @@ void main()
     // 7. Additive Rim and Emission Glow
     finalColorRGB += rimGlow + (crystalBase * (u_emission * 0.4));
 
-    // 8. Dissolve Effect & Alpha [FIX: ĐỘ TRONG & HẠT VUÔNG]
-    // Không đẩy alpha lên mức 1.0 (đục hoàn toàn) ở phần viền nữa. 
-    // Alpha sẽ dao động tự nhiên quanh mức Alpha gốc của Color.
+    // 8. Dissolve Effect & Alpha
     float alpha = clamp(u_baseColor.a + (fresnel * u_rimStrength * 0.35), 0.0, 1.0);
-
+    
     if (u_dissolve > 0.001)
     {
-        // Trả lại hàm Value Noise 3D hữu cơ cho vết vỡ, thay vì noise hạt cát
-        float dNoise = vnoise3D(fragPosition * 12.0); 
+        // Fake high-frequency noise từ baseNoise bằng hàm fract() cực nhẹ
+        // Thay vì phải gọi vnoise3D(fragPosition * 12.0) như cũ
+        float dNoise = fract(baseNoise * 1.5 + 0.1); 
         if (dNoise < u_dissolve) discard;
         
         float edge = smoothstep(u_dissolve, u_dissolve + 0.06, dNoise);

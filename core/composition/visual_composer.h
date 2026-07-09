@@ -167,7 +167,7 @@ typedef enum
 void VFX_ComposeProjectile(VC_MaterialId matId, Vector3 pos, Vector3 target, float progress, float scale, float time);
 void VFX_GroundPattern(GroundPatternStyle style, Vector3 pos, float radius, float progress, float time);
 void VFX_ComposeBeam(VC_MaterialId matId, Vector3 start, Vector3 end, float width, float progress, float time);
-void VFX_PathWave(PathStyle style, const Vector3 *points, int count, float scale, float progress, float time);
+void VFX_PathWave(PathStyle style, const Vector3 *points, int count, float scale, float progress, float time, int seed);
 void VFX_SummonCircle(Vector3 pos, float radius, float progress, float time, Color color);
 void VFX_TriggerExplosion(VC_MaterialId matId, Vector3 pos, float scale, bool cameraShake);
 void VFX_ComposeAura(VC_MaterialId matId, Vector3 pos, float radius, float time);

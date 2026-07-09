@@ -118,11 +118,11 @@ static CrystalMaterial GetIceCrystalMaterial(void)
         p.baseColor = (Color){0, 110, 230, 200};
         p.edgeColor = (Color){130, 220, 255, 255};
         p.roughness = 0.35f;
-        p.fresnel = 1.2f;
+        p.fresnel = 0.6f;
         p.refraction = 0.15f;
-        p.sparkle = 0.45f;
-        p.crack = 0.35f;
-        p.emission = 0.15f;
+        p.sparkle = 0.2f;
+        p.crack = 0.2f;
+        p.emission = 0.0f;
         p.thickness = 1.8f;
         s_iceMat = CrystalMaterial_Load(p);
         s_iceMatLoaded = true;
@@ -224,8 +224,10 @@ void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float g
         const float staggerWindow = 0.5f;
         float startT = r06 * staggerWindow;
         float localGrow = (growProgress - startT) / (1.0f - startT);
-        if (localGrow < 0.0f) localGrow = 0.0f;
-        if (localGrow > 1.0f) localGrow = 1.0f;
+        if (localGrow < 0.0f)
+            localGrow = 0.0f;
+        if (localGrow > 1.0f)
+            localGrow = 1.0f;
         CrystalMaterial_SetGrowProgress(iceMat, localGrow);
 
         float angle = r01 * 2.0f * PI;
@@ -236,8 +238,8 @@ void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float g
             center.y + yOffset,
             center.z + sinf(angle) * dist};
 
-        float heightScale = 0.4f + r04 * 0.8f;  // 0.4x..1.2x — cùng biên độ với bản cluster-mesh cũ
-        float radiusScale = 0.4f + r02 * 0.6f;  // 0.4x..1.0x
+        float heightScale = 0.4f + r04 * 0.8f; // 0.4x..1.2x — cùng biên độ với bản cluster-mesh cũ
+        float radiusScale = 0.4f + r02 * 0.6f; // 0.4x..1.0x
         float tiltRad = (r05 * 45.0f) * DEG2RAD;
 
         // Cùng thứ tự xoay Y(-angle)->Z(tilt)->Y(angle) như ProceduralMesh_BuildCrystalCluster
@@ -260,12 +262,12 @@ void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float g
 //   BubbleStream — continuous rising bubbles (channel, submerged buff)
 //   MistVeil     — continuous low fog bank (zone, concealment)
 
-static ColorGradient s_dropGrad = {0};   // droplet body: sky-lit blue → deep fade
+static ColorGradient s_dropGrad = {0};    // droplet body: sky-lit blue → deep fade
 static ColorGradient s_dropCapGrad = {0}; // white foam caps
-static ColorGradient s_mistGrad = {0};   // soft desaturated vapor
-static ColorGradient s_bubbleGrad = {0}; // pale translucent bubble
-static SkillCurve s_mistShape = {0};     // billow: grow while fading
-static SkillCurve s_softInOut = {0};     // fade-in/out, no popping
+static ColorGradient s_mistGrad = {0};    // soft desaturated vapor
+static ColorGradient s_bubbleGrad = {0};  // pale translucent bubble
+static SkillCurve s_mistShape = {0};      // billow: grow while fading
+static SkillCurve s_softInOut = {0};      // fade-in/out, no popping
 static bool s_waterFxInit = false;
 
 static void WaterFx_InitShared(void)
