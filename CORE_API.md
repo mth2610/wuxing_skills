@@ -870,6 +870,21 @@ void DrawCoreSphere(
     Color color
 );
 
+// Camera-facing quad (2 tris) — for shader-driven effects whose SHAPE should
+// come entirely from the fragment shader's alpha (e.g. a radial-biased
+// erosion/dissolve, see energy_smoke.fs), not from a mesh silhouette. A
+// sphere's outline is always a hard geometric circle in screen space no
+// matter what the surface shader does; a flat quad has none of that
+// constraint. vertexNormal faces the camera (-forward) so shaders reading
+// fragNormal (fresnel/rim terms) still get a sane value. Much cheaper than
+// DrawCoreSphere too (2 tris vs. e.g. 800 for a 20x20 sphere).
+void DrawCoreBillboardQuad(
+    Vector3 center,
+    float halfSize,
+    Camera3D cam,
+    Color color
+);
+
 void DrawCoreCylinder(
     Vector3 bottom,
     Vector3 top,

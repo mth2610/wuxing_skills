@@ -65,6 +65,7 @@
 // @gen:vc_includes begin
 #include "vc_black_hole.inl"
 #include "vc_ground_aura.inl"
+#include "vc_smoke_energy.inl"
 // @gen:vc_includes end
 
 void VFX_Compose_Update(float dt) { VC_Archetype_Update(dt); }

@@ -70,6 +70,35 @@ void DrawCoreSphere(Vector3 center, float radius, int rings, int slices, Color c
     rlEnd();
 }
 
+// Camera-facing quad (billboard) — for shader-driven 2D-domain effects
+// (e.g. energy smoke erosion-dissolve) where the shape should be defined
+// entirely by the shader's own alpha/density, not by a 3D mesh silhouette
+// (a sphere's silhouette is always a hard geometric circle in screen space
+// no matter what surface noise does; a flat quad has no such constraint —
+// the visible shape is purely whatever the fragment shader outputs).
+// vertexNormal is set to face the camera (-forward) so shaders reading
+// fragNormal (e.g. rim/fresnel terms) still get a sane value.
+void DrawCoreBillboardQuad(Vector3 center, float halfSize, Camera3D cam, Color color)
+{
+    Vector3 forward = Vector3Normalize(Vector3Subtract(cam.target, cam.position));
+    Vector3 right   = Vector3Normalize(Vector3CrossProduct(forward, cam.up));
+    Vector3 up      = Vector3CrossProduct(right, forward);
+    Vector3 n       = Vector3Negate(forward);
+
+    Vector3 p00 = Vector3Add(center, Vector3Add(Vector3Scale(right, -halfSize), Vector3Scale(up, -halfSize)));
+    Vector3 p10 = Vector3Add(center, Vector3Add(Vector3Scale(right,  halfSize), Vector3Scale(up, -halfSize)));
+    Vector3 p11 = Vector3Add(center, Vector3Add(Vector3Scale(right,  halfSize), Vector3Scale(up,  halfSize)));
+    Vector3 p01 = Vector3Add(center, Vector3Add(Vector3Scale(right, -halfSize), Vector3Scale(up,  halfSize)));
+
+    rlBegin(RL_QUADS);
+    rlColor4ub(color.r, color.g, color.b, color.a);
+    rlNormal3f(n.x, n.y, n.z); rlTexCoord2f(0.0f, 0.0f); rlVertex3f(p00.x, p00.y, p00.z);
+    rlNormal3f(n.x, n.y, n.z); rlTexCoord2f(1.0f, 0.0f); rlVertex3f(p10.x, p10.y, p10.z);
+    rlNormal3f(n.x, n.y, n.z); rlTexCoord2f(1.0f, 1.0f); rlVertex3f(p11.x, p11.y, p11.z);
+    rlNormal3f(n.x, n.y, n.z); rlTexCoord2f(0.0f, 1.0f); rlVertex3f(p01.x, p01.y, p01.z);
+    rlEnd();
+}
+
 void DrawCoreCylinder(Vector3 bottom, Vector3 top, float radiusBottom, float radiusTop, int slices, Color color)
 {
     if (slices < 3)

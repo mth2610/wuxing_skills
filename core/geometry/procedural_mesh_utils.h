@@ -6,6 +6,9 @@
 // Procedural drawing utilities utilizing raw rlgl calls
 void DrawCoreSphere(Vector3 center, float radius, int rings, int slices,
                     Color color);
+// Camera-facing quad — shape defined by shader alpha, not mesh silhouette
+// (see comment at definition in pm_core_shapes.inl).
+void DrawCoreBillboardQuad(Vector3 center, float halfSize, Camera3D cam, Color color);
 void DrawCoreCylinder(Vector3 bottom, Vector3 top, float radiusBottom,
                       float radiusTop, int slices, Color color);
 void DrawCoreCone(Vector3 bottom, float radius, float height, int slices,

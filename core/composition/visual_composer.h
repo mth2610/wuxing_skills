@@ -212,6 +212,7 @@ void VFX_ChainLightning(const Vector3 *points, int count, float scale, float hop
 void VFX_ComposeCylinderAura(VC_MaterialId matId, Vector3 pos, float radius, float progress, float time);
 // @gen:vc_declarations begin
 void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
+void VFX_ComposeEnergySmoke(Vector3 pos, float scale, float progress, float time);
 void VFX_ComposeGroundAura(VC_MaterialId matId, Vector3 pos, float radius, float scrollSpeed, float time);
 // @gen:vc_declarations end
 #endif // VISUAL_COMPOSER_H

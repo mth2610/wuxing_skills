@@ -268,6 +268,13 @@
       "trigger_call": "VFX_ComposeEnergyFlow($POS, Vector3Add($POS, (Vector3){3, 0.5f, 0}), 1.0f, 3.0f)"
     },
     {
+      "fn": "VFX_ComposeEnergySmoke",
+      "label": "ENERGY SMOKE",
+      "category": "taiji",
+      "type": "continuous",
+      "draw_call": "VFX_ComposeEnergySmoke($POS, 1.0f, $PROG, $TIME)"
+    },
+    {
       "fn": "VFX_SpawnProcBeam",
       "label": "PROC BEAM",
       "category": "metal",
