@@ -73,4 +73,58 @@ void DrawRibbonStrip(const RibbonPoint *points, int count, Texture2D texture,
 // trước Draw*, sau khi đã điền position cho toàn bộ points[]. count >= 2.
 void Ribbon_ComputeArcLengthUV(RibbonPoint *points, int count);
 
+// Tính CẶP trục vuông góc (axisA, axisB) tại MỖI điểm trên path — tổng quát
+// hoá cặp perp1/perp2 mà VFX_ComposeBeam từng tính 1 lần (path thẳng, chỉ
+// 2 điểm) cho path cong bất kỳ (trail, spiral, kênh gợn sóng...). axisA liên
+// tục điểm-tới-điểm (cùng cơ chế chống bowtie của DrawRibbonStripEx's side
+// vector), axisB = tangent × axisA. `mode`/`fixedNormal` chọn hướng ưu tiên
+// của axisA giống hệt DrawRibbonStripEx (RIBBON_WORLD_UP = axisA ưu tiên
+// world-up, fallback (1,0,0) — đúng công thức beam cũ dùng).
+// outAxisA/outAxisB phải là mảng người gọi cấp, độ dài >= count.
+// Dùng cho VC_DrawEnergyField (core/composition/vc_common.inl) — "trường
+// năng lượng" 2 mặt phẳng chữ thập dọc theo path.
+void Ribbon_ComputeCrossFrame(const Vector3 *points, int count,
+                              RibbonMode mode, Vector3 fixedNormal, Camera3D camera,
+                              Vector3 *outAxisA, Vector3 *outAxisB);
+
+// ── Ribbon Energy Field — N configurable crossed-plane layers along a path ──
+// Generalizes the "2 fixed perpendicular planes" technique (originally
+// hand-rolled per-caller for a straight 2-point beam) to any N-point path
+// via Ribbon_ComputeCrossFrame — same call works for a straight beam (2
+// points), a wavy energy channel, a trail history, or spiral waypoints.
+// Each layer is its own independent width/breathe/scroll/tint pass — outer
+// soft glow, inner "electric" weave (scrollSpeed + vFlip for a cheap
+// interference look, no real geometric twist needed), a bright untextured
+// hot core, or however many/whatever the caller configures. Lives in core/
+// (not composition/) because both core/vfx_proc_ray.c's EnergyFlow and
+// composition/vc_beam.inl's VFX_ComposeBeam need it — composition may
+// depend on core, never the reverse.
+typedef struct {
+  float widthRatio;  // half-width = width * widthRatio * breathe * (widthEnvelope[i] or 1)
+  float breatheFreq; // pulsing width: 1 + breatheAmp*sin(time*breatheFreq). breatheAmp==0 disables.
+  float breatheAmp;
+  float scrollSpeed; // texcoord V scroll (V units/sec)
+  float uvTiling;    // total texture repeats along the WHOLE path (caller picks
+                     // e.g. pathLength/5.0f so texel density stays consistent
+                     // regardless of path length)
+  bool  vFlip;       // flip V (0<->1) — 2 layers scrolling at different speeds
+                     // with vFlip on one create a cheap woven/interference
+                     // look without real twisted geometry
+  bool  useTexture;  // false = flat color, ignores `texture` (e.g. hot core)
+  Color color;
+} RibbonEnergyFieldLayer;
+
+#define RIBBON_ENERGY_FIELD_MAX_LAYERS 4
+#define RIBBON_ENERGY_FIELD_MAX_PTS    64
+
+// Submits geometry only (same convention as DrawRibbonStrip) — caller sets
+// blend mode / depth mask before calling. `widthEnvelope` is an optional
+// per-point multiplier (NULL = uniform 1.0 everywhere) — e.g.
+// powf(sinf(t*PI), 0.55f) for a "thick middle, needle ends" taper.
+void DrawRibbonEnergyField(const Vector3 *points, int count, float width,
+                           const float *widthEnvelope,
+                           const RibbonEnergyFieldLayer *layers, int layerCount,
+                           Texture2D texture, RibbonMode mode, Vector3 fixedNormal,
+                           Camera3D camera, float time);
+
 #endif // RIBBON_STRIP_H

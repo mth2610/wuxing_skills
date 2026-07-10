@@ -49,6 +49,11 @@ static int s_testIndex = 0;
 static bool s_isPlayingMesh = false;
 static float s_meshTime = 0.0f;
 static Vector3 s_prefabStartPos = {0};
+// BEAM (util) fires from the character to the click point — captured at click
+// time (the generated draw block reads these; referenced by name in the
+// vfx_test_manifest.json draw_call so sync passes them through verbatim).
+static Vector3 s_beamStart = {0};
+static Vector3 s_beamEnd = {0};
 
 static bool s_isPanelOpen = true;
 static bool s_clickedOnUI = false;
@@ -509,6 +514,9 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
     if (clicked && !s_clickedOnUI)
     {
         s_prefabStartPos = mouseTarget3D;
+        // BEAM: shoot from the character (chest height) to the click point.
+        s_beamStart = Vector3Add(playerPos, (Vector3){0.0f, 0.3f, 0.0f});
+        s_beamEnd   = mouseTarget3D;
 
         if (s_testCategory == TEST_CAT_MESH)
         {
@@ -666,7 +674,7 @@ void VFXTest_Draw3D(void)
               case 54: VFX_ComposeZone(VC_MAT_FIRE, s_prefabStartPos, 1.2f, fminf(progress, 0.5f), s_meshTime); break;
               case 55: VFX_ComposeSlashArc(VC_MAT_METAL, s_prefabStartPos, (Vector3){1, 0, 0}, 1.0f, 120.0f, fminf(s_meshTime / 0.6f, 0.999f), s_meshTime); break;
               case 56: VFX_ComposeCyclone(s_prefabStartPos, 0.6f, s_meshTime); break;
-              case 57: VFX_ComposeBeam(VC_MAT_LIGHTNING, s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){0, 1.5f, 3.0f}), 0.07f, progress, s_meshTime); break;
+              case 57: VFX_ComposeBeam(VC_MAT_LIGHTNING, s_beamStart, s_beamEnd, 0.6f, progress, s_meshTime); break;
               case 58: VFX_ComposeProjectile(VC_MAT_FIRE, s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){3, 0, 0}), progress, 0.3f, s_meshTime); break;
               case 59: VFX_ComposeAura(VC_MAT_FIRE, s_prefabStartPos, 1.0f, s_meshTime); break;
               case 60: VFX_GroundPattern(GROUND_CRACK_RADIAL, s_prefabStartPos, 1.5f, progress, s_meshTime); break;

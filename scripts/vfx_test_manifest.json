@@ -454,7 +454,7 @@
       "label": "BEAM",
       "category": "util",
       "type": "continuous",
-      "draw_call": "VFX_ComposeBeam(VC_MAT_LIGHTNING, $POS, Vector3Add($POS, (Vector3){0, 1.5f, 3.0f}), 0.07f, $PROG, $TIME)"
+      "draw_call": "VFX_ComposeBeam(VC_MAT_LIGHTNING, s_beamStart, s_beamEnd, 0.6f, $PROG, $TIME)"
     },
     {
       "fn": "VFX_ComposeProjectile",

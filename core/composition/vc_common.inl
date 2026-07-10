@@ -1,5 +1,9 @@
-// Render primitives — low-level draw helpers for ground patterns and rune rings.
-// Only vc_ground.inl depends on these; keep this file minimal.
+// Render primitives — low-level draw helpers shared across VFX_Compose*.
+// Only vc_ground.inl depends on these.
+//
+// NOTE: the "energy field" crossed-plane technique (formerly VC_DrawEnergyField
+// here) moved to core/ribbon_strip.h's DrawRibbonEnergyField — core/vfx_proc_ray.c's
+// EnergyFlow needs it too, and core/ must not depend on composition/.
 
 // Horizontal quad at the CURRENT matrix origin — caller manages push/translate/
 // rotate for custom transforms.

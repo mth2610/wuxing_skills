@@ -463,14 +463,38 @@ void DrawRibbonStrip(const RibbonPoint *points, int count, Texture2D texture, Ca
 // ^ convenience wrapper: DrawRibbonStripEx(..., RIBBON_CAMERA_FACING, unused)
 
 void Ribbon_ComputeArcLengthUV(RibbonPoint *points, int count);
+
+void Ribbon_ComputeCrossFrame(const Vector3 *points, int count,
+                              RibbonMode mode, Vector3 fixedNormal, Camera3D camera,
+                              Vector3 *outAxisA, Vector3 *outAxisB);
+
+typedef struct {
+    float widthRatio;  // half-width = width * widthRatio * breathe * (widthEnvelope[i] or 1)
+    float breatheFreq; // pulsing width: 1 + breatheAmp*sin(time*breatheFreq). breatheAmp==0 disables.
+    float breatheAmp;
+    float scrollSpeed; // texcoord V scroll (V units/sec)
+    float uvTiling;    // total texture repeats along the WHOLE path (e.g. pathLength/5.0f)
+    bool  vFlip;       // flip V — 2 layers at different scrollSpeed + one vFlip = cheap woven look
+    bool  useTexture;  // false = flat color, ignores `texture` (e.g. hot core)
+    Color color;
+} RibbonEnergyFieldLayer;
+// max RIBBON_ENERGY_FIELD_MAX_LAYERS=4 layers, RIBBON_ENERGY_FIELD_MAX_PTS=64 points
+
+void DrawRibbonEnergyField(const Vector3 *points, int count, float width,
+                           const float *widthEnvelope, // NULL = uniform 1.0
+                           const RibbonEnergyFieldLayer *layers, int layerCount,
+                           Texture2D texture, RibbonMode mode, Vector3 fixedNormal,
+                           Camera3D camera, float time);
 ```
 Rules:
 - Module does not manage memory — caller supplies a static `RibbonPoint` array; `count >= 2` required.
 - Submits geometry only — does **not** change shader/blend state; `BeginShaderMode()`/`BeginBlendMode()` must be set from outside, so calls interleave with `DrawBillboard` in the same batch.
 - Mandatory for any long-body mesh in the project — do not hand-roll a billboard chain or an intersecting-plane beam (see `SKILL_STANDARD.md`).
 - `Ribbon_ComputeArcLengthUV` fills `points[i].v` with normalized cumulative distance (0 at `points[0]`, 1 at the last point) instead of `v = index/count` — call it right after filling `position` for all points, before `Draw*`. `v = index/count` stretches texture unevenly on a curved/jagged path (a long straight stretch between two waypoints gets compressed the same as a short one); this bit the original `DrawLightningBoltEx`/`ProcRay`/`ProcBolt` shared `DrawChannel`, fixed 2026-07-10 (see `core/vfx_proc_ray.c`).
-- This is the **only** ribbon/long-body primitive in the engine — `VFX_ComposeBeam` (`vc_beam.inl`) migrated to it 2026-07-10, drawing its two fixed (non-camera-facing) cross-section planes via `RIBBON_FIXED_NORMAL` instead of hand-rolled `rlBegin(RL_QUADS)`.
-- `DrawRibbonStripEx` resets to `rlSetTexture(0)` before returning (fixed 2026-07-10) — matters now that real textures are bound (`EnergyFlow`'s flow-texture pass, `VFX_ComposeBeam`'s `tex_crack_mask.png`), not just the `(Texture2D){0}` every earlier caller used.
+- `Ribbon_ComputeCrossFrame` (new 2026-07-10) computes a **pair** of continuous perpendicular axes (`axisA`, `axisB = tangent × axisA`) at every path point instead of `DrawRibbonStripEx`'s single side vector — generalizes the old "2 fixed perpendicular planes" beam trick (which only worked for a straight 2-point line) to any N-point path.
+- `DrawRibbonEnergyField` (new 2026-07-10) is the N-configurable-layer "energy field" primitive built on `Ribbon_ComputeCrossFrame` — a "+" cross-section (2 perpendicular planes) instead of one billboard, so it reads as real 3D geometry from any camera angle. Lives here (not in `core/composition/`) because both `core/vfx_proc_ray.c`'s EnergyFlow and `core/composition/vc_beam.inl`'s `VFX_ComposeBeam` need it, and composition may depend on core but never the reverse. Uses an internally-inlined `1+amp*sin(time*freq)` breathe formula rather than including `core/composition/vc_motion.h`'s identical `VC_Breathe` — same reason.
+- This is the **only** ribbon/long-body primitive in the engine. `VFX_ComposeBeam` migrated `DrawRibbonStripEx` → `DrawRibbonEnergyField` 2026-07-10 once the "+" cross-section technique needed to generalize beyond a straight 2-point line; `EnergyFlow` (`core/vfx_proc_ray.c`) migrated the same day for visual consistency with Beam (both now read as real 3D energy fields, not a flat camera-facing ribbon).
+- `DrawRibbonStripEx` resets to `rlSetTexture(0)` before returning (fixed 2026-07-10) — matters now that real textures are bound, not just the `(Texture2D){0}` every earlier caller used.
 
 ### Flow Map (`core/flow_map.h`)
 Shared module for UV flow effects (shield, fire, water, tornado...). Each skill owns its own `FlowMap` instance (location cache + config + texture) — no global state, so multiple skills can use flow maps concurrently with different shaders/textures.
@@ -621,7 +645,7 @@ typedef struct {
 ProcRayConfig ProcRay_LightningConfig(void);      // violet/white, high jitter, taperTip=0.12 needle tendrils
 ProcRayConfig ProcRay_BoltLightningConfig(void);  // amplitudeRatio=0.10, branchCount=3 — sky→ground bolts
 ProcRayConfig ProcRay_EnergyConfig(void);         // cyan/gold, smooth Catmull-Rom — used by VFX_SpawnProcBeam
-ProcRayConfig ProcRay_EnergyFlowConfig(void);     // cyan/gold, smooth, scrolling flow texture — EnergyFlow only
+ProcRayConfig ProcRay_EnergyFlowConfig(void);     // cyan-white/blue-purple, animated traveling wave + flow texture — EnergyFlow only
 ProcRayConfig ProcRay_WindConfig(void);           // white/teal, very low amplitude
 
 // Free-end ray — origin fixed, free end whips via traveling wave. Pool: 32 slots.
@@ -639,12 +663,18 @@ void ProcBolt_Update(int id, Vector3 from, Vector3 to, float scale, float dt);
 void ProcBolt_Draw(int id, Camera3D cam);
 void ProcBolt_Kill(int id);
 
-// Energy Flow — fixed A→B smooth channel, continuously scrolling flow texture
-// (mana stream, power conduit). Unlike ProcBolt the shape is a single static
-// bow (no per-frame re-jitter) — only the flow texture's UV scrolls
-// (config.flowScrollSpeed), so it tracks moving endpoints smoothly instead of
-// flickering. Pool: 16 slots. See core/composition/vc_archetype.inl's
-// VFX_ComposeEnergyFlow for the managed-pool wrapper (duration auto-expire).
+// Energy Flow — A→B energy stream (mana bridge / power conduit). Organic
+// multi-harmonic wave that TRAVELS along the length (config.waveSpeed drives a
+// wavePhase; both ends pinned) — NOT a static bow. Catmull-Rom-resampled to
+// FLOW_RIBBON_PTS=48, then drawn via DrawRibbonEnergyField (core/ribbon_strip.h)
+// — same "+" cross-section N-layer primitive VFX_ComposeBeam uses, so both read
+// as real 3D energy fields rather than a flat camera-facing ribbon. Width bulges
+// in the middle and tapers to needle ends (shared per-point envelope); 3 layers
+// (soft glow, no texture / flow-texture body / thin hot-white core), each with
+// its own scroll speed (config.flowScrollSpeed drives the body layer). Endpoints
+// tracked smoothly (no ProcBolt flicker). Pool: 16 slots. See
+// core/composition/vc_archetype.inl's VFX_ComposeEnergyFlow for the managed-pool
+// wrapper (duration auto-expire).
 int  SpawnEnergyFlow(ProcRayConfig config, float scale);
 void EnergyFlow_SetBrightness(int id, float b);
 void EnergyFlow_Update(int id, Vector3 from, Vector3 to, float scale, float dt);

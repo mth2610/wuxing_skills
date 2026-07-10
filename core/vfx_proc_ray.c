@@ -75,13 +75,20 @@ ProcRayConfig ProcRay_EnergyConfig(void) {
 
 ProcRayConfig ProcRay_EnergyFlowConfig(void) {
     return (ProcRayConfig){
-        .colorCore      = { 255, 240, 120, 220 },
-        .colorGlow      = {  80, 200, 255,  90 },
-        .glowWidthMult  = 1.6f,
-        .waveSpeed      = 0.0f,   // unused — EnergyFlow shape is static, not re-jittered
-        .amplitudeRatio = 0.08f,  // single gentle bow, not a whipping wave
+        .colorCore      = { 180, 240, 255, 235 },  // bright cyan-white hot core (thin — see
+                                                    // hot-core layer's widthRatio in DrawFlowChannel)
+        .colorGlow      = {  95, 110, 255, 110 },  // blue→purple haze — WIDE + soft, distinct
+                                                    // role from the hot core: user clarified
+                                                    // "core" (innermost bright line) should stay
+                                                    // thin, but the outer "energy" glow layer
+                                                    // should be wide and diffuse, not also thin.
+        .glowWidthMult  = 2.8f,  // wide soft halo around the textured body/core — width
+                                 // alone (not alpha) is what reads as "rộng và mờ"
+        .waveSpeed      = 2.6f,   // EnergyFlow now uses this: traveling-wave phase speed
+        .amplitudeRatio = 0.14f,  // organic multi-harmonic undulation (NOT a single bow)
         .jitterStrength = 0.0f,
-        .thickness      = 0.013f,
+        .thickness      = 0.10f, // was 0.05 — widened the whole stream; hot core stays
+                                 // relatively thin via its own small widthRatio (0.22)
         .envelopePow    = 1.0f,
         .sharpKinks     = false,
         .taperTip       = 1.0f,
@@ -498,25 +505,31 @@ void ProcBolt_Kill(int id) {
     s_bolts[id].active = false;
 }
 
-// ── Energy Flow — fixed A→B smooth channel, scrolling flow texture ────────
-// Unlike ProcBolt (re-jitters every BOLT_FLICKER_INTERVAL) or ProcRay
-// (whipping free end), the channel shape here is a single static bow — only
-// the flow texture's UV scrolls (config.flowScrollSpeed) to read as "energy
-// flowing" along it. This is what sells the effect without particles, per
-// the ribbon-mesh design discussion: RibbonPoint.v already supports a
-// caller-driven scroll, EnergyFlow is the first user of that.
+// ── Energy Flow — A→B energy stream, organic animated ribbon ─────────────
+// Reference target: a MOBA/ARPG "energy bridge" between two points — an
+// organic multi-harmonic wave that travels along its length (not a static
+// bow — a single bow reads as a stiff "stick"), a width bulge (thick middle,
+// needle ends), a scrolling flow texture, and a bright hot-white centre
+// line. Drawn via DrawRibbonEnergyField (core/ribbon_strip.h) — the same
+// "+" cross-section, N-configurable-layer technique VFX_ComposeBeam uses,
+// so both read consistently as real 3D energy fields instead of a flat
+// camera-facing ribbon.
 
-#define MAX_ENERGY_FLOWS 16
-#define FLOW_RIBBON_PTS  28
+#define MAX_ENERGY_FLOWS   16
+#define FLOW_WAYPOINT_CNT  17   // control points for the traveling wave
+#define FLOW_RIBBON_PTS    48   // Catmull-Rom-resampled ribbon vertices (smooth curve)
 
 typedef struct {
     bool          active;
     ProcRayConfig config;
     float         scale;
-    float         scrollOffset;
+    float         elapsedTime;    // raw accumulated dt — each layer's own
+                                  // scrollSpeed scales this independently
+                                  // (was a single pre-scaled scrollOffset)
+    float         wavePhase;      // traveling-wave phase (advances with waveSpeed)
     float         brightness;
-    Vector3       refHint;
-    Vector3       waypoints[RAY_WAYPOINT_CNT];
+    Vector3       refHint;        // per-slot perp-plane seed, fixed at spawn
+    Vector3       waypoints[FLOW_WAYPOINT_CNT];
 } EnergyFlowSlot;
 
 static EnergyFlowSlot s_flows[MAX_ENERGY_FLOWS];
@@ -528,30 +541,37 @@ static void EnsureFlowsInited(void) {
     s_flowsInited = true;
 }
 
-// Single gentle bow from `from` to `to` — envelope = sin(t*PI) so both ends
-// stay pinned. `refHint` (fixed per-slot, set at spawn) picks which way the
-// bow leans so concurrent flows between similar points don't overlap
-// identically; NOT re-randomized per frame, so the shape stays stable while
-// from/to move (no ProcBolt-style flicker).
+// Organic traveling wave from `from` to `to`. Both ends pinned (envelope =
+// sin(t*PI)); the middle undulates on TWO perpendicular axes with a couple of
+// incommensurate harmonics each so it never reads as a clean sine — and the
+// whole pattern travels because `phase` shifts the wave arguments over time.
 static void GenerateFlowWaypoints(Vector3 *out, Vector3 from, Vector3 to,
-                                  Vector3 refHint, float bowRatio) {
+                                  Vector3 refHint, float ampRatio, float phase) {
     float len = Vector3Distance(from, to);
     if (len < 0.0001f) {
-        for (int i = 0; i < RAY_WAYPOINT_CNT; i++) out[i] = from;
+        for (int i = 0; i < FLOW_WAYPOINT_CNT; i++) out[i] = from;
         return;
     }
     Vector3 dir = Vector3Scale(Vector3Subtract(to, from), 1.0f / len);
     Vector3 ref = (fabsf(Vector3DotProduct(dir, refHint)) > 0.9f)
                       ? ((fabsf(dir.y) > 0.95f) ? (Vector3){1,0,0} : (Vector3){0,1,0})
                       : refHint;
-    Vector3 side = Vector3Normalize(Vector3CrossProduct(dir, ref));
-    float bow = len * bowRatio;
+    Vector3 p1 = Vector3Normalize(Vector3CrossProduct(dir, ref));
+    Vector3 p2 = Vector3Normalize(Vector3CrossProduct(dir, p1));
+    float amp = len * ampRatio;
 
-    for (int i = 0; i < RAY_WAYPOINT_CNT; i++) {
-        float t        = (float)i / (float)(RAY_WAYPOINT_CNT - 1);
+    for (int i = 0; i < FLOW_WAYPOINT_CNT; i++) {
+        float t        = (float)i / (float)(FLOW_WAYPOINT_CNT - 1);
         float envelope = sinf(t * PI);
-        Vector3 base = Vector3Lerp(from, to, t);
-        out[i] = Vector3Add(base, Vector3Scale(side, bow * envelope));
+        float w1 = sinf(t * PI * 3.0f - phase)
+                 + 0.5f * sinf(t * PI * 5.3f - phase * 1.7f);
+        float w2 = cosf(t * PI * 2.4f - phase * 0.8f)
+                 + 0.4f * cosf(t * PI * 4.7f - phase * 1.3f);
+        Vector3 base   = Vector3Lerp(from, to, t);
+        Vector3 offset = Vector3Add(
+            Vector3Scale(p1, w1 * amp * envelope),
+            Vector3Scale(p2, w2 * amp * envelope * 0.7f));
+        out[i] = Vector3Add(base, offset);
     }
 }
 
@@ -562,7 +582,8 @@ int SpawnEnergyFlow(ProcRayConfig config, float scale) {
             s_flows[i].active       = true;
             s_flows[i].config       = config;
             s_flows[i].scale        = fmaxf(scale, 0.1f);
-            s_flows[i].scrollOffset = 0.0f;
+            s_flows[i].elapsedTime  = 0.0f;
+            s_flows[i].wavePhase    = (float)GetRandomValue(0, 628) * 0.01f; // desync concurrent flows
             s_flows[i].brightness   = 1.0f;
             float a = (float)GetRandomValue(0, 628) * 0.01f;
             float b = (float)GetRandomValue(0, 314) * 0.01f;
@@ -582,21 +603,25 @@ void EnergyFlow_SetBrightness(int id, float b) {
 void EnergyFlow_Update(int id, Vector3 from, Vector3 to, float scale, float dt) {
     if (id < 0 || id >= MAX_ENERGY_FLOWS || !s_flows[id].active) return;
     EnergyFlowSlot *s = &s_flows[id];
-    s->scale         = fmaxf(scale, 0.1f);
-    s->scrollOffset += s->config.flowScrollSpeed * dt;
-    GenerateFlowWaypoints(s->waypoints, from, to, s->refHint, s->config.amplitudeRatio);
+    s->scale        = fmaxf(scale, 0.1f);
+    s->elapsedTime += dt;
+    s->wavePhase   += s->config.waveSpeed * dt;
+    GenerateFlowWaypoints(s->waypoints, from, to, s->refHint,
+                          s->config.amplitudeRatio, s->wavePhase);
 }
 
-static RibbonPoint s_flowRibbon[FLOW_RIBBON_PTS];
-static Vector3     s_flowPts[FLOW_RIBBON_PTS];
-static float       s_flowArcV[FLOW_RIBBON_PTS];
+static Vector3 s_flowPts[FLOW_RIBBON_PTS];
+static float   s_flowArcT[FLOW_RIBBON_PTS];    // normalized 0..1 arc length (envelope only)
+static float   s_flowWidthEnv[FLOW_RIBBON_PTS]; // tapered width bulge
 
-// 2 passes: outer additive glow (no texture, same "sells the bloom" role as
-// DrawChannel's glow pass) + inner core sampled through a scrolling
-// grayscale-alpha flow texture — the scroll (arc-length v - scrollOffset,
-// wrapped 0..1) is what reads as motion without any particles.
+// Catmull-Rom-resamples `wp` into the dense s_flowPts ribbon, then draws it
+// via DrawRibbonEnergyField (core/ribbon_strip.h) — the same "+" cross-
+// section, N-layer primitive VFX_ComposeBeam uses. 3 layers: wide soft glow
+// (no texture) / flow-texture body / thin bright hot core, each scrolling
+// at its own rate. Width bulges in the middle and tapers to a needle at
+// both ends via a shared per-point envelope (reference "tapered width").
 static void DrawFlowChannel(const Vector3 *wp, int wpCount, const ProcRayConfig *cfg,
-                            float scrollOffset, float brightness, Camera3D cam) {
+                            float elapsedTime, float brightness, Camera3D cam) {
     for (int k = 0; k < FLOW_RIBBON_PTS; k++) {
         float f   = (float)k / (float)(FLOW_RIBBON_PTS - 1);
         float fi  = f * (float)(wpCount - 1);
@@ -615,56 +640,40 @@ static void DrawFlowChannel(const Vector3 *wp, int wpCount, const ProcRayConfig 
         };
     }
 
-    s_flowArcV[0] = 0.0f;
+    s_flowArcT[0] = 0.0f;
     for (int k = 1; k < FLOW_RIBBON_PTS; k++)
-        s_flowArcV[k] = s_flowArcV[k - 1] + Vector3Distance(s_flowPts[k - 1], s_flowPts[k]);
-    float totalLen = s_flowArcV[FLOW_RIBBON_PTS - 1];
+        s_flowArcT[k] = s_flowArcT[k - 1] + Vector3Distance(s_flowPts[k - 1], s_flowPts[k]);
+    float totalLen = s_flowArcT[FLOW_RIBBON_PTS - 1];
     if (totalLen < 0.0001f) totalLen = 0.0001f;
+    for (int k = 0; k < FLOW_RIBBON_PTS; k++)
+        s_flowWidthEnv[k] = powf(sinf((s_flowArcT[k] / totalLen) * PI), 0.55f);
 
-    // ── Pass 1: outer glow, additive, no texture ──
-    for (int k = 0; k < FLOW_RIBBON_PTS; k++) {
-        float f    = s_flowArcV[k] / totalLen;
-        float edge = 0.08f;
-        float tap;
-        if      (f < edge)        tap = f / edge;
-        else if (f > 1.0f - edge) tap = (1.0f - f) / edge;
-        else                      tap = 1.0f;
-        tap = tap * tap * (3.0f - 2.0f * tap);
+    // energy_flow.png (not water_flow.png — that's the puddle flow-DIRECTION
+    // map used by VFX_ComposeMagicPuddle, not a visual streak texture; using
+    // it here just read as a flat blurry gradient). Same texture VFX_ComposeBeam
+    // uses, for a consistent "energy" identity.
+    Texture2D flowTex = ResourceManager_LoadTexture("assets/textures/energy_flow.png");
+    Color hotCore = (Color){ 235, 248, 255, cfg->colorCore.a };
 
-        float a = cfg->colorGlow.a * tap * brightness;
-        if (a > 255.0f) a = 255.0f;
-        s_flowRibbon[k].position  = s_flowPts[k];
-        s_flowRibbon[k].halfWidth = cfg->thickness * cfg->glowWidthMult * tap;
-        s_flowRibbon[k].v         = f;
-        s_flowRibbon[k].tint      = (Color){ cfg->colorGlow.r, cfg->colorGlow.g, cfg->colorGlow.b, (unsigned char)a };
-    }
-    DrawRibbonStrip(s_flowRibbon, FLOW_RIBBON_PTS, (Texture2D){0}, cam);
+    float coreA = fminf(cfg->colorCore.a * brightness, 255.0f);
+    float hotA  = fminf(hotCore.a * brightness, 255.0f);
 
-    // ── Pass 2: flow core — scrolling flow texture, additive ──
-    // Known limitation: per-vertex v wraps independently at each point (no
-    // malloc'd scratch to unwrap across the strip), so the single quad
-    // straddling the 1→0 wrap seam can show a 1-frame texture pop. Accepted
-    // trade-off for staying allocation-free — not visible at normal flow speeds.
-    Texture2D flowTex = ResourceManager_LoadTexture("assets/textures/water_flow.png");
-    for (int k = 0; k < FLOW_RIBBON_PTS; k++) {
-        float f    = s_flowArcV[k] / totalLen;
-        float edge = 0.08f;
-        float tap;
-        if      (f < edge)        tap = f / edge;
-        else if (f > 1.0f - edge) tap = (1.0f - f) / edge;
-        else                      tap = 1.0f;
-        tap = tap * tap * (3.0f - 2.0f * tap);
+    // No untextured "bloom" glow layer anymore (removed per user request) —
+    // just the textured body + thin hot core. Relying on the game's own
+    // post-process bloom (core/post_fx.c) for the soft halo instead of
+    // faking one with a flat additive quad.
+    RibbonEnergyFieldLayer layers[2] = {
+        { .widthRatio = 1.0f, .breatheFreq = 0.0f, .breatheAmp = 0.0f,
+          .scrollSpeed = cfg->flowScrollSpeed, .uvTiling = 2.2f, .vFlip = false, .useTexture = true,
+          .color = (Color){ cfg->colorCore.r, cfg->colorCore.g, cfg->colorCore.b, (unsigned char)coreA } },
+        { .widthRatio = 0.22f, .breatheFreq = 0.0f, .breatheAmp = 0.0f,
+          .scrollSpeed = cfg->flowScrollSpeed * 1.3f, .uvTiling = 2.6f, .vFlip = true, .useTexture = true,
+          .color = (Color){ hotCore.r, hotCore.g, hotCore.b, (unsigned char)hotA } },
+    };
 
-        float a = cfg->colorCore.a * tap * brightness;
-        if (a > 255.0f) a = 255.0f;
-        float rawV = f * 2.2f - scrollOffset;
-        float wrappedV = rawV - floorf(rawV);
-        s_flowRibbon[k].position  = s_flowPts[k];
-        s_flowRibbon[k].halfWidth = cfg->thickness * tap;
-        s_flowRibbon[k].v         = wrappedV;
-        s_flowRibbon[k].tint      = (Color){ cfg->colorCore.r, cfg->colorCore.g, cfg->colorCore.b, (unsigned char)a };
-    }
-    DrawRibbonStrip(s_flowRibbon, FLOW_RIBBON_PTS, flowTex, cam);
+    DrawRibbonEnergyField(s_flowPts, FLOW_RIBBON_PTS, cfg->thickness, s_flowWidthEnv,
+                          layers, 2, flowTex, RIBBON_WORLD_UP, (Vector3){0, 1, 0},
+                          cam, elapsedTime);
 }
 
 void EnergyFlow_Draw(int id, Camera3D cam) {
@@ -672,8 +681,8 @@ void EnergyFlow_Draw(int id, Camera3D cam) {
     rlDrawRenderBatchActive();
     rlDisableDepthMask();
     BeginBlendMode(BLEND_ADDITIVE);
-    DrawFlowChannel(s_flows[id].waypoints, RAY_WAYPOINT_CNT, &s_flows[id].config,
-                   s_flows[id].scrollOffset, s_flows[id].brightness, cam);
+    DrawFlowChannel(s_flows[id].waypoints, FLOW_WAYPOINT_CNT, &s_flows[id].config,
+                   s_flows[id].elapsedTime, s_flows[id].brightness, cam);
     EndBlendMode();
     rlDrawRenderBatchActive();
     rlEnableDepthMask();
