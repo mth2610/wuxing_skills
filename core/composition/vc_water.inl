@@ -6,7 +6,13 @@ void VFX_ComposeMagicPuddle(Vector3 pos)
 
     float radius = 1.2f;
     rlPushMatrix();
-    rlTranslatef(pos.x, pos.y + 0.01f, pos.z);
+    // 0.01f was too thin a lift on a real map — real ground geometry spans a
+    // much larger view frustum/depth range than the tight sandbox test, so
+    // depth-buffer precision is coarser and a small offset that avoided
+    // z-fighting up close still flickers/clips at gameplay distance. 0.03f
+    // matches the margin DrawCoreGroundPatch/VFX_ComposeGroundSmoke needed
+    // for the same reason (see core/geometry/pm_core_shapes.inl's yLift doc).
+    rlTranslatef(pos.x, pos.y + 0.03f, pos.z);
 
     Shader flowShader = ResourceManager_LoadShader(0, "core/shaders/puddle.fs");
     Texture2D tex = ResourceManager_LoadTexture("assets/textures/water_caustics.png");

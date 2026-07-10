@@ -9,11 +9,19 @@
 //   VFX_ChainLightning                        — staggered lightning hop chain
 //   VFX_ComposeLightningBolt                  — single fixed-endpoint bolt (leader flash + decay)
 //   VFX_ComposeEnergyFlow                     — smooth A→B channel, scrolling flow texture (mana stream)
+//   VFX_SpawnSmokeColumn / VFX_KillSmokeColumn — long rising smoke column (cigarette-smoke style)
 //
 // VFX_ComposeSmokePuff / VFX_ComposeSmokeTrail lived here briefly (2026-07-10,
 // as a billboard-quad diffusion-shader pool) but were reverted back to
 // vc_neutral.inl's particle-burst implementation the same day — too costly
-// per-pixel for effects that can fire many times a second from gameplay.
+// per-pixel for effects that can fire many times a second from gameplay
+// (path pillars, impacts). SmokeColumn is the opposite case — normally 1-2
+// long-lived instances at once (a torch, incense, chimney) — so it uses
+// vc_smoke_energy.inl's VFX_ComposeSmokeColumnFX (2-3 crossed shader quads,
+// base-sourced diffusion field) instead of an emitter/particle pool: cost
+// scales with (concurrent shader quads) × (pixel area), and here that's a
+// small, mostly-constant number regardless of how long the column lives —
+// unlike a particle stream, which keeps spawning new draw calls over time.
 // Lifecycle (called by VFX_Compose_Update / VFX_Compose_Draw3D in visual_composer.c):
 //   static void VC_Archetype_Update(float dt)
 //   static void VC_Archetype_Draw3D(Camera3D cam)
@@ -27,6 +35,7 @@
 #define ARCH_CHAIN_MAX_QUEUE    32
 #define ARCH_MAX_BOLTS          8
 #define ARCH_MAX_FLOWS          8
+#define ARCH_MAX_SMOKE_COLUMNS  6
 
 typedef struct {
     bool active;
@@ -80,13 +89,24 @@ typedef struct {
     float duration, elapsed;
 } Arch_Flow;
 
-static Arch_Beam       s_archBeams[ARCH_MAX_BEAMS];
-static Arch_GroundWave s_archGwaves[ARCH_MAX_GROUNDWAVES];
-static Arch_Orbital    s_archOrbitals[ARCH_MAX_ORBITALS];
-static Arch_Aura       s_archAuras[ARCH_MAX_AURAS];
-static Arch_ChainEntry s_archChain[ARCH_CHAIN_MAX_QUEUE];
-static Arch_Bolt       s_archBolts[ARCH_MAX_BOLTS];
-static Arch_Flow       s_archFlows[ARCH_MAX_FLOWS];
+typedef struct {
+    bool active;
+    bool dying;      // true once past duration or VFX_KillSmokeColumn'd — fading out, not yet freed
+    Vector3 pos;
+    float halfWidth, height;
+    int   planeCount;
+    float duration, elapsed;  // duration <= 0 = runs until VFX_KillSmokeColumn
+    float dyingElapsed;
+} Arch_SmokeColumn;
+
+static Arch_Beam        s_archBeams[ARCH_MAX_BEAMS];
+static Arch_GroundWave  s_archGwaves[ARCH_MAX_GROUNDWAVES];
+static Arch_Orbital     s_archOrbitals[ARCH_MAX_ORBITALS];
+static Arch_Aura        s_archAuras[ARCH_MAX_AURAS];
+static Arch_ChainEntry  s_archChain[ARCH_CHAIN_MAX_QUEUE];
+static Arch_Bolt        s_archBolts[ARCH_MAX_BOLTS];
+static Arch_Flow        s_archFlows[ARCH_MAX_FLOWS];
+static Arch_SmokeColumn s_archSmokeColumns[ARCH_MAX_SMOKE_COLUMNS];
 
 static Color Arch_ElementColor(EffectPresetType e)
 {
@@ -281,6 +301,47 @@ int VFX_ComposeEnergyFlow(Vector3 from, Vector3 to, float scale, float duration)
     return -1;
 }
 
+// ── Smoke column (long rising column, cigarette-smoke style) ──────────────────
+// 2-3 fixed vertical "cross billboard" quads through `pos`, shaded by
+// vc_smoke_energy.inl's VFX_ComposeSmokeColumnFX (smoke_column.fs — a
+// continuous age-based rising flow driven by u_time, not a looped progress
+// ramp; see that file's comments). u_progress here is just a fade in/out
+// mask (SMOKE_COLUMN_FADE seconds each way), not a spread/dissolve driver —
+// the flow itself never stops or resets while active. See the file-header
+// comment above for why this uses the shader instead of vc_neutral.inl's
+// particle wisps: few concurrent long-lived instances, so the per-pixel
+// cost is affordable, unlike SmokePuff/SmokeTrail.
+#define SMOKE_COLUMN_FADE 0.35f
+
+int VFX_SpawnSmokeColumn(Vector3 pos, float duration)
+{
+    for (int i = 0; i < ARCH_MAX_SMOKE_COLUMNS; i++) {
+        if (!s_archSmokeColumns[i].active) {
+            s_archSmokeColumns[i].active     = true;
+            s_archSmokeColumns[i].dying      = false;
+            s_archSmokeColumns[i].pos        = pos;
+            s_archSmokeColumns[i].halfWidth  = 0.5f;  // bigger — easier to see/judge while tuning
+            s_archSmokeColumns[i].height     = 3.5f;
+            s_archSmokeColumns[i].planeCount = 3;
+            s_archSmokeColumns[i].duration   = duration;
+            s_archSmokeColumns[i].elapsed    = 0.0f;
+            s_archSmokeColumns[i].dyingElapsed = 0.0f;
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Starts the fade-out instead of an instant cut — matches smoke_column.fs's
+// own u_progress-as-fade-mask design. The pool slot frees itself once the
+// fade finishes (see VC_Archetype_Update).
+void VFX_KillSmokeColumn(int handle)
+{
+    if (handle < 0 || handle >= ARCH_MAX_SMOKE_COLUMNS || !s_archSmokeColumns[handle].active)
+        return;
+    s_archSmokeColumns[handle].dying = true;
+}
+
 // ── Internal update / draw ────────────────────────────────────────────────────
 
 static void VC_Archetype_Update(float dt)
@@ -357,6 +418,19 @@ static void VC_Archetype_Update(float dt)
         EnergyFlow_Update(s_archFlows[i].energyFlowId, s_archFlows[i].from,
                           s_archFlows[i].to, 1.0f, dt);
     }
+    for (int i = 0; i < ARCH_MAX_SMOKE_COLUMNS; i++) {
+        if (!s_archSmokeColumns[i].active) continue;
+        s_archSmokeColumns[i].elapsed += dt;
+        if (!s_archSmokeColumns[i].dying) {
+            if (s_archSmokeColumns[i].duration > 0.0f &&
+                s_archSmokeColumns[i].elapsed >= s_archSmokeColumns[i].duration)
+                s_archSmokeColumns[i].dying = true;
+        } else {
+            s_archSmokeColumns[i].dyingElapsed += dt;
+            if (s_archSmokeColumns[i].dyingElapsed >= SMOKE_COLUMN_FADE)
+                s_archSmokeColumns[i].active = false;
+        }
+    }
 }
 
 static void VC_Archetype_Draw3D(Camera3D cam)
@@ -408,5 +482,16 @@ static void VC_Archetype_Draw3D(Camera3D cam)
     for (int i = 0; i < ARCH_MAX_FLOWS; i++) {
         if (!s_archFlows[i].active) continue;
         EnergyFlow_Draw(s_archFlows[i].energyFlowId, cam);
+    }
+    for (int i = 0; i < ARCH_MAX_SMOKE_COLUMNS; i++) {
+        if (!s_archSmokeColumns[i].active) continue;
+        // u_progress is a fade in/out MASK now (smoke_column.fs), not a loop
+        // driver — the flow itself runs continuously off u_time.
+        float progress = s_archSmokeColumns[i].dying
+            ? Clamp(1.0f - s_archSmokeColumns[i].dyingElapsed / SMOKE_COLUMN_FADE, 0.0f, 1.0f)
+            : Clamp(s_archSmokeColumns[i].elapsed / SMOKE_COLUMN_FADE, 0.0f, 1.0f);
+        VFX_ComposeSmokeColumnFX(s_archSmokeColumns[i].pos, s_archSmokeColumns[i].halfWidth,
+                                 s_archSmokeColumns[i].height, progress,
+                                 s_archSmokeColumns[i].planeCount);
     }
 }

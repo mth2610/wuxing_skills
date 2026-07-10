@@ -109,6 +109,29 @@ MapGroundSurface MapProp_CreateGroundHeightmap(const char *heightmapPath, float 
     return result;
 }
 
+float MapProp_SampleGroundHeight(const MapGroundSurface *ground, Vector3 worldCenter, float x, float z)
+{
+    if (!ground->ready || ground->model.meshCount < 1)
+        return worldCenter.y;
+
+    // Raycast straight down through the ACTUAL rendered mesh — see the
+    // header comment on why this replaced a hand-derived pixel formula.
+    // Same transform MapProp_DrawGround passes to DrawModel.
+    Vector3 pos = {
+        worldCenter.x + ground->drawOffset.x,
+        worldCenter.y + ground->drawOffset.y,
+        worldCenter.z + ground->drawOffset.z,
+    };
+    Matrix transform = MatrixTranslate(pos.x, pos.y, pos.z);
+
+    Ray ray = { (Vector3){x, worldCenter.y + 1000.0f, z}, (Vector3){0.0f, -1.0f, 0.0f} };
+    RayCollision hit = GetRayCollisionMesh(ray, ground->model.meshes[0], transform);
+    if (hit.hit)
+        return hit.point.y;
+
+    return worldCenter.y; // (x,z) outside the mesh's footprint
+}
+
 void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
 {
     if (!ground->ready)

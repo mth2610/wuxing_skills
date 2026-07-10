@@ -113,7 +113,19 @@ void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float pro
     int seed = (int)(start.x * 131.0f) + (int)(start.z * 977.0f) +
                (int)(end.x * 53.0f) + (int)(end.z * 197.0f);
 
-    Vector3 path[2] = {start, end};
+    // Small nominal lift — kept the crack near the sampled ground level so
+    // it doesn't visibly hover, but no longer needs to out-margin the
+    // real ground mesh's depth: the structural draw below disables depth
+    // TEST entirely against it instead (see that comment). Chasing a yLift
+    // large enough to clear every noise-jittered shoulder/floor vertex
+    // (0.03 -> 0.06 -> 0.09, still partially occluded each time) was
+    // fighting the wrong problem — a ground-hugging "cut into solid,
+    // already-rendered opaque terrain" effect fundamentally can't rely on
+    // real depth occlusion to look right unless the ground mesh actually
+    // has a hole there, which it doesn't.
+    Vector3 liftedStart = Vector3Add(start, (Vector3){0.0f, 0.02f, 0.0f});
+    Vector3 liftedEnd   = Vector3Add(end,   (Vector3){0.0f, 0.02f, 0.0f});
+    Vector3 path[2] = {liftedStart, liftedEnd};
     static FissureMeshData mesh;
     ProceduralMesh_BuildFissure(&mesh, path, 2, width, 0.12f, 0.75f, seed);
     if (mesh.segments < 1)
@@ -143,10 +155,23 @@ void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float pro
     // call) whichever wall faces away from the camera drops out entirely —
     // this is why the crack looked like a faint sliver or vanished outright
     // depending on view angle/crack orientation.
+    //
+    // Depth test OFF (not just depth mask): on a real heightmap map the
+    // ground is a genuinely opaque, already-rendered mesh — a "cut into the
+    // ground" effect can only ever be a visual approximation on top of it
+    // (there's no actual hole in that mesh), so trying to win real depth
+    // competition against it means matching its exact surface height
+    // everywhere along the crack, including per-segment jaggedness noise —
+    // fragile and, in practice, never fully reliable (see the yLift history
+    // above). Drawing on top unconditionally guarantees visibility; the
+    // V-groove shading (bright rim -> dark floor) still sells the "cut into
+    // the ground" look on its own without needing real occlusion.
     rlDrawRenderBatchActive();
     rlDisableBackfaceCulling();
+    rlDisableDepthTest();
     ProceduralMesh_DrawFissureShaded(&mesh, crossColors, revealSeg);
     rlDrawRenderBatchActive();
+    rlEnableDepthTest();
     rlEnableBackfaceCulling();
 
     // ② Ember seam — warm glow pulsing along the crack floor AND rim, wide

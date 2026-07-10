@@ -8,8 +8,8 @@
 #include "maps/worlds/default_arena/default_arena.h"
 
 static inline void RegisterGeneratedMaps(void) {
-    MapManager_Register("VERDANT_PATH", InitVerdantPathMap, NULL, DrawVerdantPathMap, NULL);
-    MapManager_Register("DEFAULT_ARENA", InitDefaultArenaMap, NULL, DrawDefaultArenaMap, NULL);
+    MapManager_RegisterEx("VERDANT_PATH", InitVerdantPathMap, NULL, DrawVerdantPathMap, NULL, GetGroundHeightVerdantPathMap);
+    MapManager_RegisterEx("DEFAULT_ARENA", InitDefaultArenaMap, NULL, DrawDefaultArenaMap, NULL, NULL);
 }
 
 #endif // MAPS_GENERATED_H

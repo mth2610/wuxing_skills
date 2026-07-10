@@ -99,6 +99,128 @@ void DrawCoreBillboardQuad(Vector3 center, float halfSize, Camera3D cam, Color c
     rlEnd();
 }
 
+// Flat quad on a FIXED world-space plane (center + normal) — not camera-
+// facing like DrawCoreBillboardQuad, not terrain-conforming like
+// DrawCoreGroundPatch (that one's per-vertex heightFn is Y-up/absolute-Y
+// specific, matching MapProp_SampleGroundHeight — doesn't generalize to an
+// arbitrary normal). This is the "put a density-field quad on any surface"
+// primitive: a sloped rock face, a wall, a ceiling, not just horizontal
+// ground. right/fwd basis built via Gram-Schmidt against world-up (or
+// world-right if normal is nearly vertical, avoiding a degenerate cross
+// product when normal≈(0,±1,0)).
+void DrawCoreOrientedQuad(Vector3 center, Vector3 normal, float halfSize, Color color)
+{
+    Vector3 n = Vector3Normalize(normal);
+    Vector3 up = (fabsf(n.y) < 0.99f) ? (Vector3){0.0f, 1.0f, 0.0f} : (Vector3){1.0f, 0.0f, 0.0f};
+    Vector3 right = Vector3Normalize(Vector3CrossProduct(up, n));
+    Vector3 fwd   = Vector3CrossProduct(n, right);
+
+    Vector3 p00 = Vector3Add(center, Vector3Add(Vector3Scale(right, -halfSize), Vector3Scale(fwd, -halfSize)));
+    Vector3 p10 = Vector3Add(center, Vector3Add(Vector3Scale(right,  halfSize), Vector3Scale(fwd, -halfSize)));
+    Vector3 p11 = Vector3Add(center, Vector3Add(Vector3Scale(right,  halfSize), Vector3Scale(fwd,  halfSize)));
+    Vector3 p01 = Vector3Add(center, Vector3Add(Vector3Scale(right, -halfSize), Vector3Scale(fwd,  halfSize)));
+
+    rlBegin(RL_QUADS);
+    rlColor4ub(color.r, color.g, color.b, color.a);
+    rlNormal3f(n.x, n.y, n.z); rlTexCoord2f(0.0f, 0.0f); rlVertex3f(p00.x, p00.y, p00.z);
+    rlNormal3f(n.x, n.y, n.z); rlTexCoord2f(1.0f, 0.0f); rlVertex3f(p10.x, p10.y, p10.z);
+    rlNormal3f(n.x, n.y, n.z); rlTexCoord2f(1.0f, 1.0f); rlVertex3f(p11.x, p11.y, p11.z);
+    rlNormal3f(n.x, n.y, n.z); rlTexCoord2f(0.0f, 1.0f); rlVertex3f(p01.x, p01.y, p01.z);
+    rlEnd();
+}
+
+// N vertical rectangles all sharing the vertical (Y) axis through `base`,
+// evenly rotated around Y (classic "cross billboard" — same trick as
+// crossed-plane tree/grass sprites), rising from `base` to `base + (0,height,0)`.
+// Unlike DrawCoreBillboardQuad this is NOT camera-facing — the planes are
+// fixed in world space, so 2-3 of them read as a volumetric column shape
+// from any horizontal viewing angle without a true cylinder mesh. Vertical
+// UV: v=0 at the base, v=1 at the top — pair with a shader that reads
+// fragTexCoord as [-1,1] uv and offsets its origin toward v=0 (a "base
+// source" point) for e.g. a rising-smoke density field.
+void DrawCoreCrossQuads(Vector3 base, float halfWidth, float height, int planeCount, Color color)
+{
+    if (planeCount < 1) return;
+
+    for (int i = 0; i < planeCount; i++)
+    {
+        float theta = (PI * i) / planeCount; // planes are full rectangles, so only need to span 180°
+        Vector3 right = { cosf(theta), 0.0f, sinf(theta) };
+        Vector3 n     = { -sinf(theta), 0.0f, cosf(theta) }; // arbitrary but consistent facing for lighting
+
+        Vector3 p00 = Vector3Add(base, Vector3Scale(right, -halfWidth));
+        Vector3 p10 = Vector3Add(base, Vector3Scale(right,  halfWidth));
+        Vector3 p11 = Vector3Add(p10, (Vector3){0.0f, height, 0.0f});
+        Vector3 p01 = Vector3Add(p00, (Vector3){0.0f, height, 0.0f});
+
+        rlBegin(RL_QUADS);
+        rlColor4ub(color.r, color.g, color.b, color.a);
+        rlNormal3f(n.x, n.y, n.z); rlTexCoord2f(0.0f, 0.0f); rlVertex3f(p00.x, p00.y, p00.z);
+        rlNormal3f(n.x, n.y, n.z); rlTexCoord2f(1.0f, 0.0f); rlVertex3f(p10.x, p10.y, p10.z);
+        rlNormal3f(n.x, n.y, n.z); rlTexCoord2f(1.0f, 1.0f); rlVertex3f(p11.x, p11.y, p11.z);
+        rlNormal3f(n.x, n.y, n.z); rlTexCoord2f(0.0f, 1.0f); rlVertex3f(p01.x, p01.y, p01.z);
+        rlEnd();
+    }
+}
+
+// Horizontal ground-hugging patch — a subdiv×subdiv grid on the XZ plane
+// centered at `center`, with each vertex's Y independently queried through
+// `heightFn` (NULL = flat, all vertices at center.y). Lets a shader-driven
+// ground effect (dry-ice gas, fog patch) conform to sloped/heightmap terrain
+// instead of floating above or clipping through it like a single flat quad
+// would — see MAP_API.md's GetHeightmapHeight for the kind of sampler a map
+// would plug in here (this file stays map-agnostic; it only calls whatever
+// function pointer it's given). UV: standard [0,1] across the whole patch,
+// pair with a shader that reads fragTexCoord as [-1,1] uv (same convention
+// as DrawCoreBillboardQuad/DrawCoreCrossQuads).
+//
+// `yLift` pushes every vertex that many meters above the sampled height —
+// REQUIRED to be > 0 whenever the patch sits on/near real ground geometry:
+// a translucent quad exactly coplanar with an opaque ground mesh z-fights
+// against it, which reads as a jagged, hard-edged clip through the smoke
+// (not a shader bug — confirmed by core/decal_system.c:214 needing the same
+// 0.02f lift for ground decals). ~0.02-0.05 is enough at this project's
+// close VFX viewing distances; 0.0 only if the caller has already biased
+// `heightFn` itself.
+void DrawCoreGroundPatch(Vector3 center, float halfSize, int subdiv, float yLift,
+                         GroundHeightSampleFn heightFn, void *userData, Color color)
+{
+    if (halfSize <= 0.0f) return;
+    if (subdiv < 1) subdiv = 1;
+
+    rlBegin(RL_TRIANGLES);
+    rlColor4ub(color.r, color.g, color.b, color.a);
+    rlNormal3f(0.0f, 1.0f, 0.0f);
+
+    for (int iz = 0; iz < subdiv; iz++)
+    {
+        for (int ix = 0; ix < subdiv; ix++)
+        {
+            float u0 = (float)ix / subdiv, u1 = (float)(ix + 1) / subdiv;
+            float v0 = (float)iz / subdiv, v1 = (float)(iz + 1) / subdiv;
+
+            float x0 = center.x + (u0 * 2.0f - 1.0f) * halfSize;
+            float x1 = center.x + (u1 * 2.0f - 1.0f) * halfSize;
+            float z0 = center.z + (v0 * 2.0f - 1.0f) * halfSize;
+            float z1 = center.z + (v1 * 2.0f - 1.0f) * halfSize;
+
+            float y00 = (heightFn ? heightFn(x0, z0, userData) : center.y) + yLift;
+            float y10 = (heightFn ? heightFn(x1, z0, userData) : center.y) + yLift;
+            float y11 = (heightFn ? heightFn(x1, z1, userData) : center.y) + yLift;
+            float y01 = (heightFn ? heightFn(x0, z1, userData) : center.y) + yLift;
+
+            rlTexCoord2f(u0, v0); rlVertex3f(x0, y00, z0);
+            rlTexCoord2f(u1, v0); rlVertex3f(x1, y10, z0);
+            rlTexCoord2f(u1, v1); rlVertex3f(x1, y11, z1);
+
+            rlTexCoord2f(u0, v0); rlVertex3f(x0, y00, z0);
+            rlTexCoord2f(u1, v1); rlVertex3f(x1, y11, z1);
+            rlTexCoord2f(u0, v1); rlVertex3f(x0, y01, z1);
+        }
+    }
+    rlEnd();
+}
+
 void DrawCoreCylinder(Vector3 bottom, Vector3 top, float radiusBottom, float radiusTop, int slices, Color color)
 {
     if (slices < 3)

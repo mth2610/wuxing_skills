@@ -3,6 +3,7 @@
 #include "maps/toolkit/prop_lit.h"
 #include "environment/environment_system.h"
 #include "rlgl.h"
+#include "raymath.h"
 #include <math.h>
 
 // Split into one .inl per prop kind (ground/strip/rocks) — each grew its own

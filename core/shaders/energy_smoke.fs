@@ -7,8 +7,11 @@ uniform float u_progress;
 uniform float u_diffusion;
 uniform float u_noiseScale;
 uniform float u_driftSpeed;
-uniform vec2  u_sourcePos;   // origin of the puff in quad-local uv space
-                              // [-1,1]: (0,0)=center, (0,-1)=base (bottom edge)
+uniform vec2  u_sourcePos;   // origin of the puff in quad-local uv space, {0,0} = center
+                              // (radial shockwave-ring puff only — see core/shaders/smoke_column.fs
+                              // for the separate rising-column shader; a single shared shader
+                              // trying to do both a static-point ring AND a climbing column via
+                              // uniforms was hard to tune independently, so they were split)
 
 float vnoise3(vec3 p) {
     vec3 i = floor(p);

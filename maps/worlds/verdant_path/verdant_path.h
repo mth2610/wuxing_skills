@@ -6,5 +6,9 @@
 // screen's 3.5 m/s pace takes ~36s (see verdant_path.c for the math).
 void InitVerdantPathMap(void);
 void DrawVerdantPathMap(void);
+// Absolute world-space ground Y at (x,z) — real heightmap-based island
+// terrain (plateau + sunken cliff edge), not flat. Auto-registered with
+// MapManager by scripts/generate_map_registry.py's naming convention.
+float GetGroundHeightVerdantPathMap(float x, float z);
 
 #endif // VERDANT_PATH_MAP_H

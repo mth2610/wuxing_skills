@@ -61,6 +61,23 @@ MapGroundSurface MapProp_CreateGroundHeightmap(const char *heightmapPath, float 
 void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter);
 void MapProp_UnloadGround(MapGroundSurface *ground);
 
+// Absolute world-space ground Y at (x,z) — for a flat MapProp_CreateGround
+// surface this is just worldCenter.y; for a MapProp_CreateGroundHeightmap
+// surface it raycasts straight down against the ACTUAL built mesh
+// (GetRayCollisionMesh) instead of re-deriving height from the source
+// heightmap image. An earlier version re-implemented GenMeshHeightmap's
+// pixel->height mapping by hand (nearest-pixel, then bilinear) and both were
+// wrong somewhere (grayscale formula / row-column convention / low heightmap
+// resolution vs the smooth rendered surface — never fully pinned down) badly
+// enough to bury ground-hugging effects (FISSURE) meters underground.
+// Raycasting the real mesh can't have that class of bug — it reads the
+// exact same triangles DrawModel renders, no formula to get wrong. Slightly
+// more expensive per call (real ray-triangle test over the mesh) but this is
+// a low-frequency query (VFX placement, not per-frame-per-particle), so
+// correctness wins here. See CORE_API.md's DrawCoreGroundPatch for the
+// GroundHeightSampleFn signature this is meant to be wrapped for.
+float MapProp_SampleGroundHeight(const MapGroundSurface *ground, Vector3 worldCenter, float x, float z);
+
 // --- Flat strip (stone path, road, bridge deck, ...) --------------------
 
 typedef struct

@@ -381,13 +381,18 @@ int main(int argc, char **argv) {
             player.position.z + cosf(vfxCameraAngle) * vfxCamDist
         };
 
+        // Intersect against the flat Y=0 plane first (cheap, works for the
+        // common flat-map case), then snap the result's Y to the ACTIVE
+        // map's real ground height — on a heightmap map (e.g. VERDANT_PATH)
+        // Y=0 is only correct on the plateau interior; anywhere else (near
+        // the cliff falloff) this used to leave mouseTarget3D.y wrong,
+        // which broke ground-hugging/multi-point NEWFX effects that assume
+        // it's the real surface (e.g. FISSURE's start point).
         Ray mouseRay = GetScreenToWorldRay(GetMousePosition(), camera);
         float t = -mouseRay.position.y / mouseRay.direction.y;
-        mouseTarget3D = (Vector3){
-            mouseRay.position.x + mouseRay.direction.x * t,
-            0.0f,
-            mouseRay.position.z + mouseRay.direction.z * t
-        };
+        float mtX = mouseRay.position.x + mouseRay.direction.x * t;
+        float mtZ = mouseRay.position.z + mouseRay.direction.z * t;
+        mouseTarget3D = (Vector3){ mtX, MapManager_GetGroundHeightAt(mtX, mtZ), mtZ };
 
         if (VFXTest_UpdateAndHandleInput(player.position, mouseTarget3D, testAtlasTex, globalParticleTex)) {
             currentScreen = SCREEN_MAIN_MENU;

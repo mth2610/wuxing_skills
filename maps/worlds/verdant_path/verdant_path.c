@@ -146,6 +146,11 @@ void InitVerdantPathMap(void)
     s_ready = true;
 }
 
+float GetGroundHeightVerdantPathMap(float x, float z)
+{
+    return MapProp_SampleGroundHeight(&s_ground, kMapCenter, x, z);
+}
+
 void DrawVerdantPathMap(void)
 {
     if (!s_ready)

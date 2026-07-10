@@ -24,7 +24,8 @@
       "VFX_Compose_Update",
       "VFX_Compose_Draw3D",
       "VFX_KillProcBeam",
-      "VFX_KillAuraRing"
+      "VFX_KillAuraRing",
+      "VFX_KillSmokeColumn"
     ],
     "complex_multi_arg": [
       "VFX_ComposeTriggerImpactBurst",
@@ -342,7 +343,7 @@
       "label": "FISSURE",
       "category": "earth",
       "type": "continuous",
-      "draw_call": "VFX_ComposeFissureStreak($POS, Vector3Add($POS, (Vector3){3, 0, 0}), 0.4f, $PROG, $TIME)"
+      "draw_call": "VFX_ComposeFissureStreak($POS, (Vector3){$POS.x + 3, MapManager_GetGroundHeightAt($POS.x + 3, $POS.z), $POS.z}, 0.4f, $PROG, $TIME)"
     },
     {
       "fn": "VFX_ComposeImpact_EARTH",
@@ -427,6 +428,13 @@
       "category": "util",
       "type": "oneshot",
       "trigger_call": "VFX_ComposeSmokeTrail($POS, Vector3Add($POS, (Vector3){0, 0, 3}), 1.0f)"
+    },
+    {
+      "fn": "VFX_SpawnSmokeColumn",
+      "label": "SMOKE COLUMN",
+      "category": "util",
+      "type": "oneshot",
+      "trigger_call": "VFX_SpawnSmokeColumn($POS, 5.0f)"
     },
     {
       "fn": "VFX_ComposeShield",
@@ -555,6 +563,29 @@
       "_auto": true,
       "type": "oneshot",
       "trigger_call": "VFX_DrawIceCrystalBurst($POS, 5, $SEED, 1.0f)"
+    },
+    {
+      "fn": "VFX_ComposeSmokeColumnFX",
+      "label": "SMOKE COLUMN F X",
+      "category": "util",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeSmokeColumnFX($POS, 0.1f, 2.0f, fminf($PROG, 0.99f), 5)"
+    },
+    {
+      "fn": "VFX_ComposeGroundSmoke",
+      "label": "GROUND SMOKE",
+      "category": "util",
+      "type": "continuous",
+      "draw_call": "VFX_ComposeGroundSmoke($POS, 1.5f, fminf($PROG, 0.99f), VFXTest_GroundHeightAt, NULL)"
+    },
+    {
+      "fn": "VFX_ComposeSmokeOnPlane",
+      "label": "SMOKE ON PLANE",
+      "category": "util",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeSmokeOnPlane($POS, (Vector3){1.0f, 0.0f, 0.0f}, 1.5f, fminf($PROG, 0.99f))"
     }
   ],
   "overrides": {}

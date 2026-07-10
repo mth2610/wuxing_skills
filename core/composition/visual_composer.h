@@ -6,6 +6,7 @@
 #include "core/particle_system.h"       // for ParticleRadialBurstConfig
 #include "core/composition/vc_motion.h" // Motion Library (quỹ đạo/shaper thuần toán học)
 #include "core/presets/vc_material.h"   // Element Material Table (VC_MaterialId — trục nguyên tố của mọi archetype)
+#include "core/geometry/procedural_mesh_utils.h" // for GroundHeightSampleFn (VFX_ComposeGroundSmoke)
 
 typedef struct
 {
@@ -204,6 +205,12 @@ int VFX_SpawnOrbitals(Vector3 center, EffectPresetType element, int count, float
 int VFX_SpawnAuraRing(Vector3 center, EffectPresetType element, float radius, float duration);
 void VFX_KillAuraRing(int handle);
 
+// Long rising smoke column from a fixed base point (cigarette-smoke style).
+// duration <= 0 = keeps looping until VFX_KillSmokeColumn; > 0 = auto-kills
+// after that many seconds. Returns handle or -1.
+int VFX_SpawnSmokeColumn(Vector3 pos, float duration);
+void VFX_KillSmokeColumn(int handle);
+
 // Staggered lightning bolts along a hop chain (use SkillHelper_ChainTargets to build `points`).
 void VFX_ChainLightning(const Vector3 *points, int count, float scale, float hopDelay);
 
@@ -214,5 +221,8 @@ void VFX_ComposeCylinderAura(VC_MaterialId matId, Vector3 pos, float radius, flo
 void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
 void VFX_ComposeEnergySmoke(Vector3 pos, float scale, float progress, float time, Vector2 sourceUV);
 void VFX_ComposeGroundAura(VC_MaterialId matId, Vector3 pos, float radius, float scrollSpeed, float time);
+void VFX_ComposeGroundSmoke(Vector3 center, float halfSize, float progress, GroundHeightSampleFn heightFn, void *userData);
+void VFX_ComposeSmokeColumnFX(Vector3 base, float halfWidth, float height, float progress, int planeCount);
+void VFX_ComposeSmokeOnPlane(Vector3 center, Vector3 normal, float halfSize, float progress);
 // @gen:vc_declarations end
 #endif // VISUAL_COMPOSER_H

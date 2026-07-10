@@ -12,6 +12,7 @@
 #include "core/geometry/procedural_mesh_utils.h"
 #include "core/vfx_proc_ray.h"
 #include "core/resource_manager.h"
+#include "core/map_manager.h"
 #include "rlgl.h"
 #include "raymath.h"
 #include <math.h>
@@ -55,6 +56,16 @@ static Vector3 s_prefabStartPos = {0};
 static Vector3 s_beamStart = {0};
 static Vector3 s_beamEnd = {0};
 
+// GROUND SMOKE (util) demo — queries the REAL active map's terrain via
+// MapManager_GetGroundHeightAt (routes to whichever map's GetGroundHeight
+// hook is registered — see core/map_manager.h). On a flat map (no hook
+// registered) this returns 0.0f, same as passing heightFn=NULL directly.
+static float VFXTest_GroundHeightAt(float x, float z, void *userData)
+{
+    (void)userData;
+    return MapManager_GetGroundHeightAt(x, z);
+}
+
 static bool s_isPanelOpen = true;
 static bool s_clickedOnUI = false;
 static int s_newfxFilter = NEWFX_CAT_ALL;
@@ -64,7 +75,7 @@ static const char *s_meshNames[] = {
     "DISC", "RING", "CONE", "TORNADO", "CYLINDER", "SPHERE", "SHOCKWAVE", "PYRAMID", "TETRAHEDRON"};
 
 // @gen:newfx_names begin
-// 72 entries — auto-managed by sync_vfx_test.py
+// 76 entries — auto-managed by sync_vfx_test.py
 static const char* s_newFxNames[] = {
     "FLAME WISP", "FIRE PILLAR", "FIREBALL", "FIRE BREATH", "BURN GROUND", "FIRE WHIRL",
     "EMBER DRIFT", "IMPACT FIRE", "CAST FIRE", "SPLASH", "BUBBLES", "MIST VEIL",
@@ -75,9 +86,10 @@ static const char* s_newFxNames[] = {
     "ROCK BURST", "FLOAT STONE", "QUAKE", "STONE PILLAR", "BOULDER", "FISSURE",
     "IMPACT EARTH", "CAST EARTH", "ELEM MIST", "AURA RING", "IMPACT TAIJI", "CAST TAIJI",
     "SHOCKWAVE", "GLINT BURST", "STREAK FLARE", "GUST SLASH", "SMOKE PUFF", "SMOKE TRAIL",
-    "SHIELD", "ZONE", "SLASH ARC", "CYCLONE", "BEAM", "PROJECTILE",
-    "AURA", "GND PATTERN", "SUMMON RING", "EXPLOSION", "GROUND WAVE", "PROJ FIRE",
-    "PROJ WATER", "PROJ METAL", "CYLINDER AURA", "GROUND AURA", "BLACK HOLE", "DRAW ICE CRYSTAL BURST",
+    "SMOKE COLUMN", "SHIELD", "ZONE", "SLASH ARC", "CYCLONE", "BEAM",
+    "PROJECTILE", "AURA", "GND PATTERN", "SUMMON RING", "EXPLOSION", "GROUND WAVE",
+    "PROJ FIRE", "PROJ WATER", "PROJ METAL", "CYLINDER AURA", "GROUND AURA", "BLACK HOLE",
+    "DRAW ICE CRYSTAL BURST", "SMOKE COLUMN F X", "GROUND SMOKE", "SMOKE ON PLANE",
 };
 // @gen:newfx_names end
 
@@ -91,7 +103,7 @@ static const int s_newFxCategories[] = {
     4, 4, 4, 4, 5, 5, 5, 5, 6, 6,
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-    6, 1,
+    6, 6, 1, 6, 6, 6,
 };
 // @gen:newfx_categories end
 
@@ -402,7 +414,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             const char **names;
             int globalIdx;
             int visualIdx;
-            maxIdx = 72;
+            maxIdx = 76;
             names = s_newFxNames; // @gen:newfx_count
             visualIdx = 0;
             (void)names;
@@ -481,17 +493,19 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_ComposeSmokePuff(s_prefabStartPos, 0.8f);
           } else if (s_testIndex == 53) { /* SMOKE TRAIL */
               VFX_ComposeSmokeTrail(s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){0, 0, 3}), 1.0f);
-          } else if (s_testIndex == 63) { /* EXPLOSION */
+          } else if (s_testIndex == 54) { /* SMOKE COLUMN */
+              VFX_SpawnSmokeColumn(s_prefabStartPos, 5.0f);
+          } else if (s_testIndex == 64) { /* EXPLOSION */
               VFX_TriggerExplosion(VC_MAT_FIRE, s_prefabStartPos, 1.0f, false);
-          } else if (s_testIndex == 64) { /* GROUND WAVE */
+          } else if (s_testIndex == 65) { /* GROUND WAVE */
               VFX_SpawnGroundWave(s_prefabStartPos, (Vector3){1, 0, 0}, EFFECT_PRESET_FIRE_EXPLOSION, 3.0f, 2.0f);
-          } else if (s_testIndex == 65) { /* PROJ FIRE */
+          } else if (s_testIndex == 66) { /* PROJ FIRE */
               VFX_ComposeProjectileTrail(s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){4, 0, 0}), EFFECT_PRESET_FIRE_EXPLOSION, 1.0f, 5.0f);
-          } else if (s_testIndex == 66) { /* PROJ WATER */
+          } else if (s_testIndex == 67) { /* PROJ WATER */
               VFX_ComposeProjectileTrail(s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){4, 0, 0}), EFFECT_PRESET_WATER_SPLASH, 1.0f, 5.0f);
-          } else if (s_testIndex == 67) { /* PROJ METAL */
+          } else if (s_testIndex == 68) { /* PROJ METAL */
               VFX_ComposeProjectileTrail(s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){4, 0, 0}), EFFECT_PRESET_METAL_SHARD, 1.0f, 5.0f);
-          } else if (s_testIndex == 71) { /* DRAW ICE CRYSTAL BURST */
+          } else if (s_testIndex == 72) { /* DRAW ICE CRYSTAL BURST */
               VFX_DrawIceCrystalBurst(s_prefabStartPos, 5, posSeed, 1.0f);
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
@@ -590,17 +604,19 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_ComposeSmokePuff(s_prefabStartPos, 0.8f);
           } else if (s_testIndex == 53) { /* SMOKE TRAIL */
               VFX_ComposeSmokeTrail(s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){0, 0, 3}), 1.0f);
-          } else if (s_testIndex == 63) { /* EXPLOSION */
+          } else if (s_testIndex == 54) { /* SMOKE COLUMN */
+              VFX_SpawnSmokeColumn(s_prefabStartPos, 5.0f);
+          } else if (s_testIndex == 64) { /* EXPLOSION */
               VFX_TriggerExplosion(VC_MAT_FIRE, s_prefabStartPos, 1.0f, false);
-          } else if (s_testIndex == 64) { /* GROUND WAVE */
+          } else if (s_testIndex == 65) { /* GROUND WAVE */
               VFX_SpawnGroundWave(s_prefabStartPos, (Vector3){1, 0, 0}, EFFECT_PRESET_FIRE_EXPLOSION, 3.0f, 2.0f);
-          } else if (s_testIndex == 65) { /* PROJ FIRE */
+          } else if (s_testIndex == 66) { /* PROJ FIRE */
               VFX_ComposeProjectileTrail(s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){4, 0, 0}), EFFECT_PRESET_FIRE_EXPLOSION, 1.0f, 5.0f);
-          } else if (s_testIndex == 66) { /* PROJ WATER */
+          } else if (s_testIndex == 67) { /* PROJ WATER */
               VFX_ComposeProjectileTrail(s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){4, 0, 0}), EFFECT_PRESET_WATER_SPLASH, 1.0f, 5.0f);
-          } else if (s_testIndex == 67) { /* PROJ METAL */
+          } else if (s_testIndex == 68) { /* PROJ METAL */
               VFX_ComposeProjectileTrail(s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){4, 0, 0}), EFFECT_PRESET_METAL_SHARD, 1.0f, 5.0f);
-          } else if (s_testIndex == 71) { /* DRAW ICE CRYSTAL BURST */
+          } else if (s_testIndex == 72) { /* DRAW ICE CRYSTAL BURST */
               VFX_DrawIceCrystalBurst(s_prefabStartPos, 5, posSeed, 1.0f);
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
@@ -675,20 +691,23 @@ void VFXTest_Draw3D(void)
               case 38: VFX_ComposeQuakeRumble(s_prefabStartPos, 1.3f, s_meshTime); break;
               case 39: VFX_ComposeStonePillar(s_prefabStartPos, progress); break;
               case 40: VFX_ComposeBoulder(Vector3Add(s_prefabStartPos, (Vector3){0, 0.5f, 0})); break;
-              case 41: VFX_ComposeFissureStreak(s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){3, 0, 0}), 0.4f, progress, s_meshTime); break;
+              case 41: VFX_ComposeFissureStreak(s_prefabStartPos, (Vector3){s_prefabStartPos.x + 3, MapManager_GetGroundHeightAt(s_prefabStartPos.x + 3, s_prefabStartPos.z), s_prefabStartPos.z}, 0.4f, progress, s_meshTime); break;
               case 44: VFX_ComposeElementalMist(VC_MAT_ICE, s_prefabStartPos, 1.0f, s_meshTime); break;
-              case 54: VFX_ComposeShield(VC_MAT_METAL, s_prefabStartPos, 1.2f, fminf(progress, 0.5f), s_meshTime); break;
-              case 55: VFX_ComposeZone(VC_MAT_FIRE, s_prefabStartPos, 1.2f, fminf(progress, 0.5f), s_meshTime); break;
-              case 56: VFX_ComposeSlashArc(VC_MAT_METAL, s_prefabStartPos, (Vector3){1, 0, 0}, 1.0f, 120.0f, fminf(s_meshTime / 0.6f, 0.999f), s_meshTime); break;
-              case 57: VFX_ComposeCyclone(s_prefabStartPos, 0.6f, s_meshTime); break;
-              case 58: VFX_ComposeBeam(VC_MAT_LIGHTNING, s_beamStart, s_beamEnd, 0.6f, progress, s_meshTime); break;
-              case 59: VFX_ComposeProjectile(VC_MAT_FIRE, s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){3, 0, 0}), progress, 0.3f, s_meshTime); break;
-              case 60: VFX_ComposeAura(VC_MAT_FIRE, s_prefabStartPos, 1.0f, s_meshTime); break;
-              case 61: VFX_GroundPattern(GROUND_CRACK_RADIAL, s_prefabStartPos, 1.5f, progress, s_meshTime); break;
-              case 62: VFX_SummonCircle(s_prefabStartPos, 1.5f, progress, s_meshTime, (Color){100, 200, 255, 255}); break;
-              case 68: VFX_ComposeCylinderAura(VC_MAT_FIRE, s_prefabStartPos, 1.5f, fminf(progress, 0.99f), s_meshTime); break;
-              case 69: VFX_ComposeGroundAura(VC_MAT_FIRE, s_prefabStartPos, 1.5f, 0.9f, s_meshTime); break;
-              case 70: VFX_ComposeBlackHole(VC_MAT_VOID, Vector3Add(s_prefabStartPos, (Vector3){0, 2.5f, 0}), 1.0f, s_meshTime); break;
+              case 55: VFX_ComposeShield(VC_MAT_METAL, s_prefabStartPos, 1.2f, fminf(progress, 0.5f), s_meshTime); break;
+              case 56: VFX_ComposeZone(VC_MAT_FIRE, s_prefabStartPos, 1.2f, fminf(progress, 0.5f), s_meshTime); break;
+              case 57: VFX_ComposeSlashArc(VC_MAT_METAL, s_prefabStartPos, (Vector3){1, 0, 0}, 1.0f, 120.0f, fminf(s_meshTime / 0.6f, 0.999f), s_meshTime); break;
+              case 58: VFX_ComposeCyclone(s_prefabStartPos, 0.6f, s_meshTime); break;
+              case 59: VFX_ComposeBeam(VC_MAT_LIGHTNING, s_beamStart, s_beamEnd, 0.6f, progress, s_meshTime); break;
+              case 60: VFX_ComposeProjectile(VC_MAT_FIRE, s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){3, 0, 0}), progress, 0.3f, s_meshTime); break;
+              case 61: VFX_ComposeAura(VC_MAT_FIRE, s_prefabStartPos, 1.0f, s_meshTime); break;
+              case 62: VFX_GroundPattern(GROUND_CRACK_RADIAL, s_prefabStartPos, 1.5f, progress, s_meshTime); break;
+              case 63: VFX_SummonCircle(s_prefabStartPos, 1.5f, progress, s_meshTime, (Color){100, 200, 255, 255}); break;
+              case 69: VFX_ComposeCylinderAura(VC_MAT_FIRE, s_prefabStartPos, 1.5f, fminf(progress, 0.99f), s_meshTime); break;
+              case 70: VFX_ComposeGroundAura(VC_MAT_FIRE, s_prefabStartPos, 1.5f, 0.9f, s_meshTime); break;
+              case 71: VFX_ComposeBlackHole(VC_MAT_VOID, Vector3Add(s_prefabStartPos, (Vector3){0, 2.5f, 0}), 1.0f, s_meshTime); break;
+              case 73: VFX_ComposeSmokeColumnFX(s_prefabStartPos, 0.1f, 2.0f, fminf(progress, 0.99f), 5); break;
+              case 74: VFX_ComposeGroundSmoke(s_prefabStartPos, 1.5f, fminf(progress, 0.99f), VFXTest_GroundHeightAt, NULL); break;
+              case 75: VFX_ComposeSmokeOnPlane(s_prefabStartPos, (Vector3){1.0f, 0.0f, 0.0f}, 1.5f, fminf(progress, 0.99f)); break;
           }
 // @gen:newfx_draw end
         }
@@ -833,7 +852,7 @@ void VFXTest_DrawHUD(void)
         const char **names;
         int gi;
         int vIdx;
-        maxIdx = 72;
+        maxIdx = 76;
         names = s_newFxNames; // @gen:newfx_count
         vIdx = 0;
         (void)names;
@@ -896,12 +915,13 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
     case 51: VFX_ComposeGustSlash(Vector3Add(pos, (Vector3){0, 0.3f, 0}), (Vector3){1.0f, 0.0f, 0.0f}, 1.0f); break;
     case 52: VFX_ComposeSmokePuff(pos, 0.8f); break;
     case 53: VFX_ComposeSmokeTrail(pos, Vector3Add(pos, (Vector3){0, 0, 3}), 1.0f); break;
-    case 63: VFX_TriggerExplosion(VC_MAT_FIRE, pos, 1.0f, false); break;
-    case 64: VFX_SpawnGroundWave(pos, (Vector3){1, 0, 0}, EFFECT_PRESET_FIRE_EXPLOSION, 3.0f, 2.0f); break;
-    case 65: VFX_ComposeProjectileTrail(pos, Vector3Add(pos, (Vector3){4, 0, 0}), EFFECT_PRESET_FIRE_EXPLOSION, 1.0f, 5.0f); break;
-    case 66: VFX_ComposeProjectileTrail(pos, Vector3Add(pos, (Vector3){4, 0, 0}), EFFECT_PRESET_WATER_SPLASH, 1.0f, 5.0f); break;
-    case 67: VFX_ComposeProjectileTrail(pos, Vector3Add(pos, (Vector3){4, 0, 0}), EFFECT_PRESET_METAL_SHARD, 1.0f, 5.0f); break;
-    case 71: VFX_DrawIceCrystalBurst(pos, 5, 0, 1.0f); break;
+    case 54: VFX_SpawnSmokeColumn(pos, 5.0f); break;
+    case 64: VFX_TriggerExplosion(VC_MAT_FIRE, pos, 1.0f, false); break;
+    case 65: VFX_SpawnGroundWave(pos, (Vector3){1, 0, 0}, EFFECT_PRESET_FIRE_EXPLOSION, 3.0f, 2.0f); break;
+    case 66: VFX_ComposeProjectileTrail(pos, Vector3Add(pos, (Vector3){4, 0, 0}), EFFECT_PRESET_FIRE_EXPLOSION, 1.0f, 5.0f); break;
+    case 67: VFX_ComposeProjectileTrail(pos, Vector3Add(pos, (Vector3){4, 0, 0}), EFFECT_PRESET_WATER_SPLASH, 1.0f, 5.0f); break;
+    case 68: VFX_ComposeProjectileTrail(pos, Vector3Add(pos, (Vector3){4, 0, 0}), EFFECT_PRESET_METAL_SHARD, 1.0f, 5.0f); break;
+    case 72: VFX_DrawIceCrystalBurst(pos, 5, 0, 1.0f); break;
     default: break;
     }
 // @gen:newfx_render_trigger end

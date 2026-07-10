@@ -35,14 +35,26 @@ void MapManager_Init(void) {
 }
 
 void MapManager_Register(const char* name, void (*init)(void), void (*update)(float), void (*draw)(void), void (*unload)(void)) {
+    MapManager_RegisterEx(name, init, update, draw, unload, NULL);
+}
+
+void MapManager_RegisterEx(const char* name, void (*init)(void), void (*update)(float), void (*draw)(void),
+                           void (*unload)(void), float (*getGroundHeight)(float x, float z)) {
     if (s_mapCount >= MAX_MAPS) return;
     s_maps[s_mapCount++] = (MapDefinition){
         .name = name,
         .Init = init,
         .Update = update,
         .Draw = draw,
-        .Unload = unload
+        .Unload = unload,
+        .GetGroundHeight = getGroundHeight
     };
+}
+
+float MapManager_GetGroundHeightAt(float x, float z) {
+    if (s_mapCount == 0) return 0.0f;
+    float (*fn)(float, float) = s_maps[s_activeMapIndex].GetGroundHeight;
+    return fn ? fn(x, z) : 0.0f;
 }
 
 void MapManager_Update(float dt) {

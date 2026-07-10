@@ -9,6 +9,26 @@ void DrawCoreSphere(Vector3 center, float radius, int rings, int slices,
 // Camera-facing quad — shape defined by shader alpha, not mesh silhouette
 // (see comment at definition in pm_core_shapes.inl).
 void DrawCoreBillboardQuad(Vector3 center, float halfSize, Camera3D cam, Color color);
+// Flat quad on a fixed world-space plane (center + normal) — not camera-
+// facing, not terrain-conforming (see comment at definition in
+// pm_core_shapes.inl). For a density-field effect (e.g. smoke) sitting on
+// any surface orientation: a sloped rock face, wall, ceiling.
+void DrawCoreOrientedQuad(Vector3 center, Vector3 normal, float halfSize, Color color);
+// Fixed world-space "cross billboard" — N vertical rectangles sharing the Y
+// axis through `base`, rising to `base + (0,height,0)`. v=0 at base, v=1 at
+// top (see comment at definition in pm_core_shapes.inl).
+void DrawCoreCrossQuads(Vector3 base, float halfWidth, float height, int planeCount, Color color);
+// Returns absolute world-space Y at (worldX, worldZ) — same semantics as
+// MAP_API.md's GetHeightmapHeight. userData is whatever the caller passed
+// to DrawCoreGroundPatch (e.g. a heightmap Image + terrain size/center).
+typedef float (*GroundHeightSampleFn)(float worldX, float worldZ, void *userData);
+// Subdivided ground-plane patch, per-vertex height via `heightFn` (NULL =
+// flat, all vertices at center.y). `yLift` (meters) pushes every vertex
+// above the sampled height — needed to avoid z-fighting against real ground
+// geometry (see comment at definition in pm_core_shapes.inl; same fix as
+// core/decal_system.c's yOffset for ground decals).
+void DrawCoreGroundPatch(Vector3 center, float halfSize, int subdiv, float yLift,
+                         GroundHeightSampleFn heightFn, void *userData, Color color);
 void DrawCoreCylinder(Vector3 bottom, Vector3 top, float radiusBottom,
                       float radiusTop, int slices, Color color);
 void DrawCoreCone(Vector3 bottom, float radius, float height, int slices,
