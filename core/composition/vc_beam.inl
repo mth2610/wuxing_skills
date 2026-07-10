@@ -1,3 +1,12 @@
+#define BEAM_RIBBON_PTS 9
+
+// Two crossed planes (a fake "+" cross-section) instead of one billboard so
+// the beam reads as solid from any viewing angle, not just face-on. Both
+// planes are fixed relative to `dir` (perp1/perp2), NOT camera-facing —
+// unlike every other ribbon in the engine this one intentionally does not
+// billboard, which is exactly RIBBON_FIXED_NORMAL's use case: pass perp2 as
+// the fixed normal to get a plane whose width runs along perp1, and vice
+// versa for the second pass.
 void VFX_ComposeBeam(VC_MaterialId matId, Vector3 start, Vector3 end, float width, float progress, float time)
 {
     float beamLen = Vector3Distance(start, end);
@@ -11,64 +20,44 @@ void VFX_ComposeBeam(VC_MaterialId matId, Vector3 start, Vector3 end, float widt
     float currentWidth = width * fminf(progress / 0.1f, 1.0f);
     float halfW = currentWidth * 0.5f;
 
-    // Intersecting planes
-    Vector3 p1 = Vector3Add(start, Vector3Scale(perp1, -halfW));
-    Vector3 p2 = Vector3Add(end, Vector3Scale(perp1, -halfW));
-    Vector3 p3 = Vector3Add(end, Vector3Scale(perp1, halfW));
-    Vector3 p4 = Vector3Add(start, Vector3Scale(perp1, halfW));
-
-    Vector3 q1 = Vector3Add(start, Vector3Scale(perp2, -halfW));
-    Vector3 q2 = Vector3Add(end, Vector3Scale(perp2, -halfW));
-    Vector3 q3 = Vector3Add(end, Vector3Scale(perp2, halfW));
-    Vector3 q4 = Vector3Add(start, Vector3Scale(perp2, halfW));
-
-    rlDrawRenderBatchActive();
-    rlDisableDepthMask();
-    rlDisableBackfaceCulling();
-
-    Texture2D tex = ResourceManager_LoadTexture("assets/textures/tex_crack_mask.png"); // scrolling mask or simple glow
-    rlSetTexture(tex.id);
-
-    float scroll = time * -2.0f;
+    // Whole-beam rigid shake for lightning (matches the pre-ribbon version —
+    // a single offset applied uniformly, not a per-point wave).
+    Vector3 jitterOffset = {0};
+    if (matId == VC_MAT_LIGHTNING)
+        jitterOffset = Vector3Scale(perp1, sinf(time * 80.0f) * 0.05f);
 
     const VFX_ElementMaterial *mat = VFX_Material(matId);
     // Sheet ADDITIVE đọc bằng glow (nóng), sheet ALPHA đọc bằng body (đặc/mờ).
     Color col = (mat->blendMode == BLEND_ALPHA) ? VC_WithAlpha(mat->body, 190)
                                                 : VC_WithAlpha(mat->glow, 235);
-    BeginBlendMode(mat->blendMode);
+    Texture2D tex = ResourceManager_LoadTexture("assets/textures/tex_crack_mask.png"); // scrolling mask or simple glow
+    float scroll = time * -2.0f;
 
-    if (matId == VC_MAT_LIGHTNING)
+    static RibbonPoint s_beamRibbon[BEAM_RIBBON_PTS];
+    for (int pass = 0; pass < 2; pass++)
     {
-        // Jitter for electricity
-        float jitter = sinf(time * 80.0f) * 0.05f;
-        Vector3 offset = Vector3Scale(perp1, jitter);
-        p1 = Vector3Add(p1, offset); p2 = Vector3Add(p2, offset);
-        p3 = Vector3Add(p3, offset); p4 = Vector3Add(p4, offset);
+        Vector3 fixedNormal = (pass == 0) ? perp2 : perp1; // side = tangent × fixedNormal
+
+        for (int k = 0; k < BEAM_RIBBON_PTS; k++)
+        {
+            float t = (float)k / (float)(BEAM_RIBBON_PTS - 1);
+            s_beamRibbon[k].position  = Vector3Add(Vector3Lerp(start, end, t), jitterOffset);
+            s_beamRibbon[k].halfWidth = halfW;
+            s_beamRibbon[k].tint      = col;
+        }
+        Ribbon_ComputeArcLengthUV(s_beamRibbon, BEAM_RIBBON_PTS);
+        for (int k = 0; k < BEAM_RIBBON_PTS; k++)
+            s_beamRibbon[k].v += scroll; // scroll along length, same as the old U-axis scroll
+
+        rlDrawRenderBatchActive();
+        rlDisableDepthMask();
+        BeginBlendMode(mat->blendMode);
+        DrawRibbonStripEx(s_beamRibbon, BEAM_RIBBON_PTS, tex, (Camera3D){0},
+                          RIBBON_FIXED_NORMAL, fixedNormal);
+        EndBlendMode();
+        rlDrawRenderBatchActive();
+        rlEnableDepthMask();
     }
-
-    // Draw first plane
-    rlBegin(RL_QUADS);
-    rlColor4ub(col.r, col.g, col.b, col.a);
-    rlTexCoord2f(scroll, 0.0f); rlVertex3f(p1.x, p1.y, p1.z);
-    rlTexCoord2f(scroll + 1.0f, 0.0f); rlVertex3f(p2.x, p2.y, p2.z);
-    rlTexCoord2f(scroll + 1.0f, 1.0f); rlVertex3f(p3.x, p3.y, p3.z);
-    rlTexCoord2f(scroll, 1.0f); rlVertex3f(p4.x, p4.y, p4.z);
-    rlEnd();
-
-    // Draw second plane
-    rlBegin(RL_QUADS);
-    rlColor4ub(col.r, col.g, col.b, col.a);
-    rlTexCoord2f(scroll, 0.0f); rlVertex3f(q1.x, q1.y, q1.z);
-    rlTexCoord2f(scroll + 1.0f, 0.0f); rlVertex3f(q2.x, q2.y, q2.z);
-    rlTexCoord2f(scroll + 1.0f, 1.0f); rlVertex3f(q3.x, q3.y, q3.z);
-    rlTexCoord2f(scroll, 1.0f); rlVertex3f(q4.x, q4.y, q4.z);
-    rlEnd();
-
-    rlSetTexture(0);
-    rlDrawRenderBatchActive();
-    rlEnableBackfaceCulling();
-    rlEnableDepthMask();
-    EndBlendMode();
 
     // Emit particles at impact point
     if (GetRandomValue(0, 100) < 15)
@@ -83,3 +72,5 @@ void VFX_ComposeBeam(VC_MaterialId matId, Vector3 start, Vector3 end, float widt
         });
     }
 }
+
+#undef BEAM_RIBBON_PTS

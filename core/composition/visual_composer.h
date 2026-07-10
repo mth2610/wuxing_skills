@@ -41,11 +41,19 @@ void VFX_ComposeSmokePuff(Vector3 pos, float size);
 // 2. Spawning Smoke Trail
 void VFX_ComposeSmokeTrail(Vector3 start, Vector3 end, float duration);
 
-// 3. Spawning Ground Fissure Streak (instantly draws decals along path)
-void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width);
+// 3. Ground Fissure Streak — 3D V-groove crack mesh (ProceduralMesh_BuildFissure),
+//    progress (0..1) reveals A→B, time drives the ember-seam pulse. Continuous
+//    draw call, not a one-shot decal stamp.
+void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
 
 // 4. Spawning Lightning Bolt (procedural ray-based crackle)
 int VFX_ComposeLightningBolt(Vector3 start, Vector3 end, float scale);
+
+// 4b. Energy Flow — smooth A→B channel, scrolling flow texture (mana stream,
+//     power conduit). Not a fire-and-forget draw: registers a pool slot in
+//     vc_archetype.inl, auto-expires after `duration`. See EnergyFlow_* in
+//     core/vfx_proc_ray.h for the underlying mechanism.
+int VFX_ComposeEnergyFlow(Vector3 from, Vector3 to, float scale, float duration);
 
 // 5. Spawning Impact Effect (elemental: water, fire, wood, earth, metal, taiji)
 void VFX_ComposeImpact(Vector3 pos, EffectPresetType preset, float scale);
@@ -172,10 +180,8 @@ void VFX_SummonCircle(Vector3 pos, float radius, float progress, float time, Col
 void VFX_TriggerExplosion(VC_MaterialId matId, Vector3 pos, float scale, bool cameraShake);
 void VFX_ComposeAura(VC_MaterialId matId, Vector3 pos, float radius, float time);
 void VFX_ComposeShield(VC_MaterialId matId, Vector3 pos, float radius, float progress, float time);
-void VFX_ComposeChain(VC_MaterialId matId, const Vector3 *targets, int count, float progress, float time);
 void VFX_ComposeZone(VC_MaterialId matId, Vector3 pos, float radius, float progress, float time);
 void VFX_ComposeSlashArc(VC_MaterialId matId, Vector3 pos, Vector3 dir, float radius, float arcDegrees, float progress, float time);
-void VFX_ComposeChargeUp(VC_MaterialId matId, Vector3 pos, float radius, float progress, float time);
 
 // ── Stateful archetype VFX (pools managed by VFX_Compose_Update / VFX_Compose_Draw3D) ──
 

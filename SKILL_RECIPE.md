@@ -100,14 +100,12 @@ All driven by `SkillHelper_Update(dt)` in `main.c` (skills don't call Update dir
 | `SkillBuilder_SpawnOrbitals(center, element, count, radius, dur)` | N orbiting tetrahedra, randomised phase/scale | 8 groups |
 | `SkillBuilder_SpawnAuraRing(center, element, radius, dur)` | Looping emitter ring + glow decal | 8 |
 | `SkillHelper_ChainTargets(origin, jumpR, maxJumps, pts, maxOut)` | Nearest-neighbour jump list (returns count) | — |
-| `SpawnChainLightning(points, count, scale, hopDelay)` | One staggered lightning bolt per hop | queue 32 |
+| `VFX_ChainLightning(points, count, scale, hopDelay)` | One staggered lightning bolt per hop | queue 32 |
 
 Kill handles: `SkillBuilder_KillBeam(h)` / `SkillBuilder_KillAuraRing(h)`.
 Orbitals and GroundWave are fire-and-forget (self-expiring, no kill handle).
 
-**Chain effects — two options, pick by how much control you need:**
-- `SpawnChainLightning(points, count, scale, hopDelay)` — lightning-only, auto-staggered hops, queued/ticked by `SkillHelper_Update(dt)`. Use this when the chain is a METAL/lightning skill and you don't need per-frame control.
-- `VFX_ComposeChain(VC_MaterialId, points, count, progress, time)` (`core/composition/visual_composer.h`) — any element (all 12 `VC_MAT_*`; LIGHTNING = jagged bolts, WOOD = vine, others = element beam), Draw-time call where the skill itself owns `progress` (same convention as `VFX_PathWave`/`VFX_ComposeBeam`). Use this for non-lightning chains, or when the skill's own state machine already tracks progress and staggered auto-queuing isn't wanted.
+**Chain effects:** `VFX_ChainLightning(points, count, scale, hopDelay)` (`core/composition/visual_composer.h`, `vc_archetype.inl`) — lightning-only, auto-staggered hops, queued/ticked by `SkillHelper_Update(dt)`. This is the only chain-arc primitive left as of 2026-07-10 (`VFX_ComposeChain`/`vc_chain.inl` was removed — no multi-element chain replacement exists; a non-lightning chain skill needs to compose it by hand from `VFX_ComposeBeam` segments between `SkillHelper_ChainTargets`' points).
 
 ---
 
@@ -123,7 +121,6 @@ ones) or `Update`/impact site (one-shot ones). Full param docs: `CORE_API.md`
 | `VFX_ComposeShield(VC_MaterialId, pos, radius, progress, time)` | continuous (grow/hold/fade via `progress`) | Barrier/dome buff |
 | `VFX_ComposeZone(VC_MaterialId, pos, radius, progress, time)` | continuous, call every frame while active | Persistent AoE (any element; ground pattern picked per material) |
 | `VFX_ComposeSlashArc(VC_MaterialId, pos, dir, radius, arcDeg, progress, time)` | continuous over swing duration, then done | Melee swing |
-| `VFX_ComposeChargeUp(VC_MaterialId, pos, radius, progress, time)` | continuous during windup | Cast/channel buildup |
 | `VFX_ComposeShockwaveRing` / `GlintBurst` / `EmberDrift` / `StreakFlare` (`vc_common.inl`) | one-shot, no `progress` | Any impact/highlight accent — safe to sprinkle into other archetypes' impact moments |
 | `VFX_ComposeMetalShardCluster` / `MetalOrb` / `BladeRing` / `FlameWisp` / `FirePillar` | one-shot or continuous mesh | Metal/Fire element-specific set pieces (parity with `IceCrystal`/`Fireball`) |
 

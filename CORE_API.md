@@ -437,21 +437,40 @@ float FloatCurve_Sample(const FloatCurve *c, float t);
 * **`core/skill_curve.h`'s `SkillCurve`** (`typedef FloatCurve SkillCurve`) is the sandbox-tunable-wired specialization of this same type — a fixed 5-stop convention (`SKILL_CURVE_KEYS`, t = 0/25/50/75/100%) so it renders as 5 plain sliders instead of a free-form stop editor. Use `SkillCurve` (not a raw `FloatCurve`) for anything registered via `SkillTunableEntry.curve` (see "Tunable Parameters" below); reach for a raw `FloatCurve` directly only for curves that stay internal to a skill and are never sandbox-exposed.
 
 ### Ribbon Strip (`core/ribbon_strip.h`)
-Standard geometry for any continuous long body (dragon, vine, lightning bolt, water stream), replacing stacked billboard chains (heavy overdraw, wrong silhouette when viewed along the path). Technique: **camera-facing ribbon** — at each path point, offset left/right by a vector perpendicular to both the path tangent and the camera view direction, forming a continuous triangle strip (rlgl immediate-mode, no VBO, no malloc).
+Standard geometry for any continuous long body (dragon, vine, lightning bolt, water stream, energy flow), replacing stacked billboard chains (heavy overdraw, wrong silhouette when viewed along the path) **and** replacing hand-rolled intersecting-plane hacks. Technique: at each path point, offset left/right by a vector perpendicular to both the path tangent and a chosen "right" mode, forming a continuous triangle strip (rlgl immediate-mode, no VBO, no malloc).
 ```c
 typedef struct {
     Vector3 position;  // World-space point on the path
     float   halfWidth; // Half-width of the body at this point
     Color   tint;       // Color + alpha at this point
-    float   v;          // UV along strip length, caller-computed (e.g. normDist 0..1)
+    float   v;          // UV along strip length, caller-computed (e.g. normDist 0..1) —
+                        // or call Ribbon_ComputeArcLengthUV to fill this correctly (below)
 } RibbonPoint;
 
+typedef enum {
+    RIBBON_CAMERA_FACING, // right = tangent × camera view dir (default — Trail Renderer style,
+                          // silhouette always faces camera). Lightning, beams, projectile trails.
+    RIBBON_WORLD_UP,      // right = tangent × (0,1,0) — does NOT billboard. Ground-anchored
+                          // ribbons (rivers, vines lying on terrain) where camera-facing would
+                          // flip the silhouette wrong as the camera orbits.
+    RIBBON_FIXED_NORMAL,  // right = tangent × caller-supplied normal — ribbon pinned to an
+                          // arbitrary plane (e.g. a skill-defined wall/slope), not just world-up.
+} RibbonMode;
+
+void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture,
+                       Camera3D camera, RibbonMode mode, Vector3 fixedNormal);
 void DrawRibbonStrip(const RibbonPoint *points, int count, Texture2D texture, Camera3D camera);
+// ^ convenience wrapper: DrawRibbonStripEx(..., RIBBON_CAMERA_FACING, unused)
+
+void Ribbon_ComputeArcLengthUV(RibbonPoint *points, int count);
 ```
 Rules:
 - Module does not manage memory — caller supplies a static `RibbonPoint` array; `count >= 2` required.
 - Submits geometry only — does **not** change shader/blend state; `BeginShaderMode()`/`BeginBlendMode()` must be set from outside, so calls interleave with `DrawBillboard` in the same batch.
-- Mandatory for any long-body mesh in the project — do not hand-roll a billboard chain (see `SKILL_STANDARD.md`).
+- Mandatory for any long-body mesh in the project — do not hand-roll a billboard chain or an intersecting-plane beam (see `SKILL_STANDARD.md`).
+- `Ribbon_ComputeArcLengthUV` fills `points[i].v` with normalized cumulative distance (0 at `points[0]`, 1 at the last point) instead of `v = index/count` — call it right after filling `position` for all points, before `Draw*`. `v = index/count` stretches texture unevenly on a curved/jagged path (a long straight stretch between two waypoints gets compressed the same as a short one); this bit the original `DrawLightningBoltEx`/`ProcRay`/`ProcBolt` shared `DrawChannel`, fixed 2026-07-10 (see `core/vfx_proc_ray.c`).
+- This is the **only** ribbon/long-body primitive in the engine — `VFX_ComposeBeam` (`vc_beam.inl`) migrated to it 2026-07-10, drawing its two fixed (non-camera-facing) cross-section planes via `RIBBON_FIXED_NORMAL` instead of hand-rolled `rlBegin(RL_QUADS)`.
+- `DrawRibbonStripEx` resets to `rlSetTexture(0)` before returning (fixed 2026-07-10) — matters now that real textures are bound (`EnergyFlow`'s flow-texture pass, `VFX_ComposeBeam`'s `tex_crack_mask.png`), not just the `(Texture2D){0}` every earlier caller used.
 
 ### Flow Map (`core/flow_map.h`)
 Shared module for UV flow effects (shield, fire, water, tornado...). Each skill owns its own `FlowMap` instance (location cache + config + texture) — no global state, so multiple skills can use flow maps concurrently with different shaders/textures.
@@ -594,12 +613,15 @@ typedef struct {
     float taperTip;        // width mult at far end: 0.1=needle tip, 1.0=uniform; <=0 → 1.0
     int   branchCount;     // bolts only: forks off main channel (0–4), regenerated per flicker
     float branchScale;     // branch width/alpha vs main channel (0.4–0.6)
+    float flowScrollSpeed; // EnergyFlow only — flow-texture scroll speed (arc-length units/sec).
+                           // Ignored by Ray/Bolt. 0 = no scroll.
 } ProcRayConfig;
 
 // Named presets
 ProcRayConfig ProcRay_LightningConfig(void);      // violet/white, high jitter, taperTip=0.12 needle tendrils
 ProcRayConfig ProcRay_BoltLightningConfig(void);  // amplitudeRatio=0.10, branchCount=3 — sky→ground bolts
-ProcRayConfig ProcRay_EnergyConfig(void);         // cyan/gold, smooth Catmull-Rom
+ProcRayConfig ProcRay_EnergyConfig(void);         // cyan/gold, smooth Catmull-Rom — used by VFX_SpawnProcBeam
+ProcRayConfig ProcRay_EnergyFlowConfig(void);     // cyan/gold, smooth, scrolling flow texture — EnergyFlow only
 ProcRayConfig ProcRay_WindConfig(void);           // white/teal, very low amplitude
 
 // Free-end ray — origin fixed, free end whips via traveling wave. Pool: 32 slots.
@@ -616,6 +638,18 @@ void ProcBolt_SetBrightness(int id, float b); // drive strike flash→afterglow 
 void ProcBolt_Update(int id, Vector3 from, Vector3 to, float scale, float dt);
 void ProcBolt_Draw(int id, Camera3D cam);
 void ProcBolt_Kill(int id);
+
+// Energy Flow — fixed A→B smooth channel, continuously scrolling flow texture
+// (mana stream, power conduit). Unlike ProcBolt the shape is a single static
+// bow (no per-frame re-jitter) — only the flow texture's UV scrolls
+// (config.flowScrollSpeed), so it tracks moving endpoints smoothly instead of
+// flickering. Pool: 16 slots. See core/composition/vc_archetype.inl's
+// VFX_ComposeEnergyFlow for the managed-pool wrapper (duration auto-expire).
+int  SpawnEnergyFlow(ProcRayConfig config, float scale);
+void EnergyFlow_SetBrightness(int id, float b);
+void EnergyFlow_Update(int id, Vector3 from, Vector3 to, float scale, float dt);
+void EnergyFlow_Draw(int id, Camera3D cam);
+void EnergyFlow_Kill(int id);
 
 // Unmanaged immediate-mode bolt draw (no pool) — caller owns the 9 waypoints,
 // regenerates + draws per frame. Ex = caller-chosen colors (glow = wide outer

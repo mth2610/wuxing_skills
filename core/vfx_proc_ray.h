@@ -31,12 +31,15 @@ typedef struct {
                            // 1.0=uniform. <=0 is treated as 1.0 (backward compat)
     int   branchCount;     // bolts only: forks off the main channel (0–4). Rays ignore it.
     float branchScale;     // branch width/alpha relative to main channel (try 0.4–0.6)
+    float flowScrollSpeed; // EnergyFlow only — flow-texture scroll speed (arc-length
+                           // units/sec along the channel). Ignored by Ray/Bolt. 0 = no scroll.
 } ProcRayConfig;
 
 // Named presets — call these to get a ready-to-use config, tweak fields if needed.
 ProcRayConfig ProcRay_LightningConfig(void);     // violet/white, high jitter, fast wave — free-end rays
 ProcRayConfig ProcRay_BoltLightningConfig(void); // same colors, low amplitude — for fixed sky→ground bolts
-ProcRayConfig ProcRay_EnergyConfig(void);        // cyan/gold, smooth, medium wave
+ProcRayConfig ProcRay_EnergyConfig(void);        // cyan/gold, smooth, medium wave — used by VFX_SpawnProcBeam
+ProcRayConfig ProcRay_EnergyFlowConfig(void);    // cyan/gold, smooth, scrolling flow texture — for EnergyFlow
 ProcRayConfig ProcRay_WindConfig(void);          // white/teal, very low amplitude, slow wave
 
 // ── Free-end ray (one fixed origin, one whipping free end) ─────────────────
@@ -56,6 +59,18 @@ void ProcBolt_SetBrightness(int id, float b); // alpha multiplier — drive stri
 void ProcBolt_Update(int id, Vector3 from, Vector3 to, float scale, float dt);
 void ProcBolt_Draw(int id, Camera3D cam);
 void ProcBolt_Kill(int id);
+
+// ── Energy Flow (fixed A→B smooth channel, continuously scrolling flow
+// texture instead of jagged flicker/whip — mana stream, power conduit,
+// channel VFX). Unlike ProcBolt the shape does NOT re-randomize every
+// frame — only the flow texture scrolls (config.flowScrollSpeed) — so a
+// channel between two moving points tracks smoothly instead of flickering.
+// Pool: 16 simultaneous flows.
+int  SpawnEnergyFlow(ProcRayConfig config, float scale);
+void EnergyFlow_SetBrightness(int id, float b); // alpha multiplier, 1=normal
+void EnergyFlow_Update(int id, Vector3 from, Vector3 to, float scale, float dt);
+void EnergyFlow_Draw(int id, Camera3D cam);
+void EnergyFlow_Kill(int id);
 
 // ── Lightning Trail System (Hợp nhất từ skill_helper) ─────────────────────
 int SpawnLightningTrail(Vector3 start, Vector3 target, float scale, float speed);

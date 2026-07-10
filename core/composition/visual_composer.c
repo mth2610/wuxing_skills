@@ -57,10 +57,8 @@
 
 // Phase 3 archetypes
 #include "vc_shield.inl"
-#include "vc_chain.inl"
 #include "vc_zone.inl"
 #include "vc_slash.inl"
-#include "vc_charge.inl"
 #include "vc_elemental_mist.inl"
 #include "vc_archetype.inl" // stateful archetypes: Beam, GroundWave, Orbitals, AuraRing, ChainLightning
 

@@ -436,6 +436,18 @@ void ProceduralMesh_BuildFissure(FissureMeshData *out, const Vector3 *pathPoints
  * centerline. */
 void ProceduralMesh_DrawFissure(const FissureMeshData *data, Color color);
 
+/* Như DrawFissure nhưng chỉ vẽ `maxSegments` lát đầu (progressive reveal:
+ * vết nứt "chạy" từ A sang B theo thời gian thay vì hiện hết ngay). */
+void ProceduralMesh_DrawFissurePartial(const FissureMeshData *data, Color color, int maxSegments);
+
+/* Như DrawFissurePartial nhưng tô màu gradient theo cross-section (5 màu ứng
+ * với mép/vai/đáy/vai/mép, xem FISSURE_CROSS_VERTS) thay vì 1 màu đặc — tự
+ * mang shading riêng (rìa sáng, đáy tối gần đen) KHÔNG phụ thuộc ánh sáng
+ * scene. Dùng cái này thay vì DrawFissurePartial+EffectMaterial(lit) khi
+ * scene có ít/không ánh sáng thật (map tối, cảnh đêm) — mesh lit sẽ chìm
+ * thành đen-trên-đen nếu không có nguồn sáng chiếu vào. */
+void ProceduralMesh_DrawFissureShaded(const FissureMeshData *data, const Color crossColors[FISSURE_CROSS_VERTS], int maxSegments);
+
 /* ============================================================================
  * GPU VERTEX DISPLACEMENT MESH SYSTEM (MỚI — additive, KHÔNG thay builder CPU
  * ở trên)

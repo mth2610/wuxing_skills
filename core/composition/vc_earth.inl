@@ -47,54 +47,6 @@ void VFX_ComposeBoulder(Vector3 pos)
     rlEnableBackfaceCulling();
 }
 
-void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width)
-{
-    float totalDist = Vector3Distance(start, end);
-    if (totalDist > 0.001f)
-    {
-        Vector3 dir = Vector3Normalize(Vector3Subtract(end, start));
-        Vector3 right = (Vector3){-dir.z, 0.0f, dir.x};
-        float halfW = width * 0.5f;
-
-        Vector3 p1 = Vector3Add(start, Vector3Scale(right, -halfW));
-        Vector3 p2 = Vector3Add(end, Vector3Scale(right, -halfW));
-        Vector3 p3 = Vector3Add(end, Vector3Scale(right, halfW));
-        Vector3 p4 = Vector3Add(start, Vector3Scale(right, halfW));
-
-        float yOffset = 0.006f;
-        p1.y += yOffset;
-        p2.y += yOffset;
-        p3.y += yOffset;
-        p4.y += yOffset;
-
-        Texture2D tex = ResourceManager_LoadTexture("assets/textures/tex_crack_mask.png");
-
-        rlDrawRenderBatchActive();
-        BeginBlendMode(BLEND_ALPHA);
-        rlDisableDepthMask();
-        rlDisableBackfaceCulling();
-
-        rlSetTexture(tex.id);
-        rlBegin(RL_QUADS);
-        rlColor4ub(255, 255, 255, 255);
-        rlTexCoord2f(0.0f, 0.0f);
-        rlVertex3f(p1.x, p1.y, p1.z);
-        rlTexCoord2f(1.0f, 0.0f);
-        rlVertex3f(p2.x, p2.y, p2.z);
-        rlTexCoord2f(1.0f, 1.0f);
-        rlVertex3f(p3.x, p3.y, p3.z);
-        rlTexCoord2f(0.0f, 1.0f);
-        rlVertex3f(p4.x, p4.y, p4.z);
-        rlEnd();
-        rlSetTexture(0);
-
-        rlDrawRenderBatchActive();
-        rlEnableBackfaceCulling();
-        rlEnableDepthMask();
-        EndBlendMode();
-    }
-}
-
 // --- Earth skill set ---------------------------------------------------------
 // Earth's read is MASS: nothing floats unless magic holds it up, everything
 // that breaks falls HARD, and the tell of impact is dust, not glow (earth is
@@ -140,6 +92,114 @@ static ForceField *EarthGravField(void)
                                                  .direction = (Vector3){0.0f, -1.0f, 0.0f},
                                                  .strength = 9.8f});
     return &s_earthGravFld;
+}
+
+// FissureStreak — ground crack running from `start` to `end`, real 3D
+// V-groove geometry (not a flat decal quad) via ProceduralMesh_BuildFissure's
+// midpoint-displacement-style noise (lateral centerline jitter + edge/shoulder/
+// bottom jitter, seeded so the shape is stable per start/end pair, not
+// re-rolled every frame). `progress` (0..1) reveals segments A→B as the
+// crack tears open — driven by the caster's cast-time or a skill's travel
+// timer, NOT re-randomized. `time` only drives the ember-seam pulse below.
+void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time)
+{
+    float totalDist = Vector3Distance(start, end);
+    if (totalDist < 0.05f)
+        return;
+    progress = Clamp(progress, 0.0f, 1.0f);
+    if (progress <= 0.0f)
+        return;
+
+    int seed = (int)(start.x * 131.0f) + (int)(start.z * 977.0f) +
+               (int)(end.x * 53.0f) + (int)(end.z * 197.0f);
+
+    Vector3 path[2] = {start, end};
+    static FissureMeshData mesh;
+    ProceduralMesh_BuildFissure(&mesh, path, 2, width, 0.12f, 0.75f, seed);
+    if (mesh.segments < 1)
+        return;
+
+    int revealSeg = (int)(mesh.segments * progress + 0.999f);
+    if (revealSeg < 1)
+        revealSeg = 1;
+    if (revealSeg > mesh.segments)
+        revealSeg = mesh.segments;
+
+    // ① Structural crack — self-shaded gradient (mép sáng ấm bắt sáng → vai
+    // nâu tối → đáy gần đen), KHÔNG dùng EffectMaterial(lit): map/scene ở
+    // đây gần như không có ánh sáng thật, nên mesh lit chìm thành đen-trên-
+    // đen và vô hình (bug đã thấy: chỉ còn dải ember mỏng hiện ra). Dedicated
+    // geometry cho hình dạng này giờ tự mang shading riêng, không phụ thuộc
+    // scene lighting — xem ProceduralMesh_DrawFissureShaded.
+    Color crossColors[FISSURE_CROSS_VERTS] = {
+        (Color){95, 78, 58, 255},  // mép trái — bắt sáng viền
+        (Color){52, 42, 32, 255},  // vai trái
+        (Color){14, 10, 8, 255},   // đáy — gần đen, sâu nhất
+        (Color){52, 42, 32, 255},  // vai phải
+        (Color){95, 78, 58, 255},  // mép phải
+    };
+    // Two-sided: the V-groove's side walls face left/right, not just up, so
+    // with backface culling on (the default rlgl state going into this
+    // call) whichever wall faces away from the camera drops out entirely —
+    // this is why the crack looked like a faint sliver or vanished outright
+    // depending on view angle/crack orientation.
+    rlDrawRenderBatchActive();
+    rlDisableBackfaceCulling();
+    ProceduralMesh_DrawFissureShaded(&mesh, crossColors, revealSeg);
+    rlDrawRenderBatchActive();
+    rlEnableBackfaceCulling();
+
+    // ② Ember seam — warm glow pulsing along the crack floor AND rim, wide
+    // enough to actually read at gameplay distance (thin 1-line glow was
+    // the earlier bug). Earth stays the least-emissive element, so this is
+    // still restrained — not lava-bright.
+    float pulse = 0.55f + 0.45f * sinf(time * 3.2f);
+    unsigned char glowA = (unsigned char)(90.0f * pulse);
+    float glowHW = width * 0.55f;
+
+    rlDrawRenderBatchActive();
+    BeginBlendMode(BLEND_ADDITIVE);
+    rlDisableDepthMask();
+    rlDisableBackfaceCulling();
+    rlBegin(RL_QUADS);
+    rlColor4ub(255, 140, 70, glowA);
+    for (int i = 0; i < revealSeg; i++)
+    {
+        Vector3 acrossA = Vector3Normalize(Vector3Subtract(mesh.verts[i][3], mesh.verts[i][1]));
+        Vector3 acrossB = Vector3Normalize(Vector3Subtract(mesh.verts[i + 1][3], mesh.verts[i + 1][1]));
+        Vector3 a0 = Vector3Add(mesh.verts[i][2], Vector3Scale(acrossA, -glowHW));
+        Vector3 a1 = Vector3Add(mesh.verts[i][2], Vector3Scale(acrossA, glowHW));
+        Vector3 b1 = Vector3Add(mesh.verts[i + 1][2], Vector3Scale(acrossB, glowHW));
+        Vector3 b0 = Vector3Add(mesh.verts[i + 1][2], Vector3Scale(acrossB, -glowHW));
+        a0.y += 0.008f;
+        a1.y += 0.008f;
+        b0.y += 0.008f;
+        b1.y += 0.008f;
+        rlVertex3f(a0.x, a0.y, a0.z);
+        rlVertex3f(a1.x, a1.y, a1.z);
+        rlVertex3f(b1.x, b1.y, b1.z);
+        rlVertex3f(b0.x, b0.y, b0.z);
+    }
+    rlEnd();
+    rlEnableBackfaceCulling();
+    rlEnableDepthMask();
+    EndBlendMode();
+
+    // ③ Leading-edge dust — a little grit kicked up right where the crack is
+    // actively tearing open, not smeared along the whole length.
+    if (progress < 1.0f && GetRandomValue(0, 100) < 30)
+    {
+        EarthFx_InitShared();
+        Vector3 tipDir = Vector3Normalize(Vector3Subtract(end, start));
+        Vector3 tip = Vector3Add(start, Vector3Scale(tipDir, totalDist * progress));
+        SpawnParticle((ParticleConfig){
+            .position = (Vector3){tip.x, tip.y + 0.03f, tip.z},
+            .velocity = (Vector3){(Random01() - 0.5f) * 0.3f, 0.3f + Random01() * 0.3f, (Random01() - 0.5f) * 0.3f},
+            .radius = 0.03f + Random01() * 0.02f,
+            .lifetime = 0.4f + Random01() * 0.3f,
+            .gradient = &s_earthDustGrad,
+            .radiusCurve = &s_earthDustBillow});
+    }
 }
 
 void VFX_ComposeRockBurst(Vector3 pos, float scale)

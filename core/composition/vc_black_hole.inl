@@ -24,8 +24,8 @@
 // scattered on the actual ground plane under the singularity and fly
 // straight up into it, lifetime scaled to travel distance so they visibly
 // arrive instead of expiring mid-flight; (5) a rotating ground rune marking
-// the drain point (`mat->runeDecal`, same primitive VFX_ComposeChargeUp/
-// Shield use for their ground circles); (6) gravitational-lensing screen
+// the drain point (`mat->runeDecal`, same primitive VFX_ComposeShield uses
+// for its own ground circle); (6) gravitational-lensing screen
 // distortion; (7) a dim ambient light — deliberately subtle, a black hole
 // doesn't blaze.
 void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time)
@@ -201,9 +201,9 @@ void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float 
 
     // ─────────────────────────────────────────────────────────────────────
     // LAYER 5: GROUND RUNE — marks the drain point directly below the
-    // singularity, same primitive VFX_ComposeChargeUp/Shield use for their
-    // ground circles. Slow spin, radius scales with the singularity so a
-    // bigger black hole visibly drains a wider patch of ground.
+    // singularity, same primitive VFX_ComposeShield uses for its own ground
+    // circle. Slow spin, radius scales with the singularity so a bigger
+    // black hole visibly drains a wider patch of ground.
     // ─────────────────────────────────────────────────────────────────────
     {
         const char *runePath = mat->runeDecal;

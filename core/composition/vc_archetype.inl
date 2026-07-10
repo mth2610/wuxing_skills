@@ -7,6 +7,8 @@
 //   VFX_SpawnOrbitals / (auto-expire)         — N orbs orbiting a center
 //   VFX_SpawnAuraRing / VFX_KillAuraRing      — emitter ring + light
 //   VFX_ChainLightning                        — staggered lightning hop chain
+//   VFX_ComposeLightningBolt                  — single fixed-endpoint bolt (leader flash + decay)
+//   VFX_ComposeEnergyFlow                     — smooth A→B channel, scrolling flow texture (mana stream)
 //
 // Lifecycle (called by VFX_Compose_Update / VFX_Compose_Draw3D in visual_composer.c):
 //   static void VC_Archetype_Update(float dt)
@@ -19,6 +21,8 @@
 #define ARCH_MAX_AURAS          8
 #define ARCH_AURA_RING_K        8
 #define ARCH_CHAIN_MAX_QUEUE    32
+#define ARCH_MAX_BOLTS          8
+#define ARCH_MAX_FLOWS          8
 
 typedef struct {
     bool active;
@@ -58,11 +62,27 @@ typedef struct {
     bool active;
 } Arch_ChainEntry;
 
+typedef struct {
+    bool active;
+    int  procBoltId;
+    Vector3 from, to;
+    float scale, duration, elapsed;
+} Arch_Bolt;
+
+typedef struct {
+    bool active;
+    int  energyFlowId;
+    Vector3 from, to;
+    float duration, elapsed;
+} Arch_Flow;
+
 static Arch_Beam       s_archBeams[ARCH_MAX_BEAMS];
 static Arch_GroundWave s_archGwaves[ARCH_MAX_GROUNDWAVES];
 static Arch_Orbital    s_archOrbitals[ARCH_MAX_ORBITALS];
 static Arch_Aura       s_archAuras[ARCH_MAX_AURAS];
 static Arch_ChainEntry s_archChain[ARCH_CHAIN_MAX_QUEUE];
+static Arch_Bolt       s_archBolts[ARCH_MAX_BOLTS];
+static Arch_Flow       s_archFlows[ARCH_MAX_FLOWS];
 
 static Color Arch_ElementColor(EffectPresetType e)
 {
@@ -219,6 +239,44 @@ void VFX_ChainLightning(const Vector3 *points, int count,
     }
 }
 
+// ── Single lightning bolt (fixed endpoints, leader flash + afterglow decay) ────
+
+int VFX_ComposeLightningBolt(Vector3 start, Vector3 end, float scale)
+{
+    for (int i = 0; i < ARCH_MAX_BOLTS; i++) {
+        if (!s_archBolts[i].active) {
+            s_archBolts[i].active     = true;
+            s_archBolts[i].from       = start;
+            s_archBolts[i].to         = end;
+            s_archBolts[i].scale      = scale;
+            s_archBolts[i].duration   = 0.5f; // ~70ms leader flash + flickering afterglow decay
+            s_archBolts[i].elapsed    = 0.0f;
+            s_archBolts[i].procBoltId = SpawnProcBolt(ProcRay_BoltLightningConfig(), scale);
+            VFXLight_Spawn(end, (Color){0, 200, 255, 255}, 2.5f * scale, 0.25f, VFX_PRIORITY_HIGH_ULTIMATE);
+            return i;
+        }
+    }
+    return -1;
+}
+
+// ── Energy Flow (smooth A→B channel, scrolling flow texture) ──────────────────
+
+int VFX_ComposeEnergyFlow(Vector3 from, Vector3 to, float scale, float duration)
+{
+    for (int i = 0; i < ARCH_MAX_FLOWS; i++) {
+        if (!s_archFlows[i].active) {
+            s_archFlows[i].active       = true;
+            s_archFlows[i].from         = from;
+            s_archFlows[i].to           = to;
+            s_archFlows[i].duration     = duration;
+            s_archFlows[i].elapsed      = 0.0f;
+            s_archFlows[i].energyFlowId = SpawnEnergyFlow(ProcRay_EnergyFlowConfig(), scale);
+            return i;
+        }
+    }
+    return -1;
+}
+
 // ── Internal update / draw ────────────────────────────────────────────────────
 
 static void VC_Archetype_Update(float dt)
@@ -246,8 +304,23 @@ static void VC_Archetype_Update(float dt)
     for (int i = 0; i < ARCH_MAX_AURAS; i++) {
         if (!s_archAuras[i].active) continue;
         s_archAuras[i].elapsed += dt;
-        if (s_archAuras[i].elapsed >= s_archAuras[i].duration)
+        if (s_archAuras[i].elapsed >= s_archAuras[i].duration) {
             VFX_KillAuraRing(i);
+            continue;
+        }
+        // core/emitter_system.h's spawnRate ticking lives INSIDE
+        // UpdateEmitterTarget itself, not in any bulk per-frame Update — the
+        // 8 ring emitters were created once at spawn and never driven again,
+        // so their timeAccumulator never advanced and they emitted nothing.
+        // (main.c's EmitterSystem_Update(dt) is an unrelated, same-named
+        // system in skill_helper.c — a name collision, not this one.)
+        for (int k = 0; k < ARCH_AURA_RING_K; k++) {
+            float angle = (2.0f * PI * k) / ARCH_AURA_RING_K;
+            Vector3 p = { s_archAuras[i].center.x + cosf(angle) * s_archAuras[i].radius,
+                           s_archAuras[i].center.y,
+                           s_archAuras[i].center.z + sinf(angle) * s_archAuras[i].radius };
+            UpdateEmitterTarget(s_archAuras[i].emitterIds[k], p, dt);
+        }
     }
     for (int i = 0; i < ARCH_CHAIN_MAX_QUEUE; i++) {
         if (!s_archChain[i].active) continue;
@@ -257,6 +330,28 @@ static void VC_Archetype_Update(float dt)
                                 s_archChain[i].scale, 8.0f);
             s_archChain[i].active = false;
         }
+    }
+    for (int i = 0; i < ARCH_MAX_BOLTS; i++) {
+        if (!s_archBolts[i].active) continue;
+        s_archBolts[i].elapsed += dt;
+        if (s_archBolts[i].elapsed >= s_archBolts[i].duration) {
+            ProcBolt_Kill(s_archBolts[i].procBoltId);
+            s_archBolts[i].active = false;
+        }
+    }
+    for (int i = 0; i < ARCH_MAX_FLOWS; i++) {
+        if (!s_archFlows[i].active) continue;
+        s_archFlows[i].elapsed += dt;
+        if (s_archFlows[i].elapsed >= s_archFlows[i].duration) {
+            EnergyFlow_Kill(s_archFlows[i].energyFlowId);
+            s_archFlows[i].active = false;
+            continue;
+        }
+        // Scroll offset needs real dt (that's what sells "flowing") — unlike
+        // Beam/Bolt's Draw3D-side Update(dt=0.0f) calls, this can't wait for
+        // Draw3D since VC_Archetype_Draw3D doesn't receive dt.
+        EnergyFlow_Update(s_archFlows[i].energyFlowId, s_archFlows[i].from,
+                          s_archFlows[i].to, 1.0f, dt);
     }
 }
 
@@ -295,5 +390,19 @@ static void VC_Archetype_Draw3D(Camera3D cam)
                 s_archOrbitals[i].center.z + sinf(ang) * s_archOrbitals[i].radius };
             DrawCoreSphere(p, scale, 6, 6, c);
         }
+    }
+    for (int i = 0; i < ARCH_MAX_BOLTS; i++) {
+        if (!s_archBolts[i].active) continue;
+        // Leader flash (bright) decaying to flickering afterglow over `duration`.
+        float t = s_archBolts[i].elapsed / s_archBolts[i].duration;
+        float brightness = 1.9f * (1.0f - t) + 0.3f;
+        ProcBolt_SetBrightness(s_archBolts[i].procBoltId, brightness);
+        ProcBolt_Update(s_archBolts[i].procBoltId, s_archBolts[i].from,
+                        s_archBolts[i].to, s_archBolts[i].scale, 0.0f);
+        ProcBolt_Draw(s_archBolts[i].procBoltId, cam);
+    }
+    for (int i = 0; i < ARCH_MAX_FLOWS; i++) {
+        if (!s_archFlows[i].active) continue;
+        EnergyFlow_Draw(s_archFlows[i].energyFlowId, cam);
     }
 }

@@ -116,8 +116,18 @@ void ProceduralMesh_BuildFissure(FissureMeshData *out, const Vector3 *pathPoints
     if (out == NULL || pathPoints == NULL || pathPointCount < 2)
         return;
 
+    // Spacing floor was 1.0m regardless of width — for a short/thin crack
+    // (e.g. 3m long, 0.4m wide) that's only ~3 cross-sections total, so a
+    // progressive reveal (progress 0..1) shows one short near-straight stub
+    // instead of a visibly jagged crack. Scale spacing off actual path
+    // length instead, floored low enough to give real segment density.
+    float pathLen = 0.0f;
+    for (int i = 1; i < pathPointCount; i++)
+        pathLen += Vector3Distance(pathPoints[i - 1], pathPoints[i]);
+    float spacing = Clamp(pathLen / (float)FISSURE_MAX_SEGMENTS, 0.15f, fmaxf(width * 0.5f, 0.15f));
+
     Vector3 centerline[FISSURE_MAX_SEGMENTS + 1];
-    int sampleCount = SamplePath(pathPoints, pathPointCount, fmaxf(width * 0.5f, 1.0f), centerline, FISSURE_MAX_SEGMENTS + 1);
+    int sampleCount = SamplePath(pathPoints, pathPointCount, spacing, centerline, FISSURE_MAX_SEGMENTS + 1);
     if (sampleCount < 2)
     {
         out->segments = 0;
@@ -164,12 +174,21 @@ void ProceduralMesh_BuildFissure(FissureMeshData *out, const Vector3 *pathPoints
 
 void ProceduralMesh_DrawFissure(const FissureMeshData *data, Color color)
 {
+    ProceduralMesh_DrawFissurePartial(data, color, data ? data->segments : 0);
+}
+
+void ProceduralMesh_DrawFissurePartial(const FissureMeshData *data, Color color, int maxSegments)
+{
     if (data == NULL || data->segments < 1)
         return;
-    rlCheckRenderBatchLimit(data->segments * (FISSURE_CROSS_VERTS - 1) * 4);
+    if (maxSegments > data->segments)
+        maxSegments = data->segments;
+    if (maxSegments < 1)
+        return;
+    rlCheckRenderBatchLimit(maxSegments * (FISSURE_CROSS_VERTS - 1) * 4);
     rlBegin(RL_QUADS);
     rlColor4ub(color.r, color.g, color.b, color.a);
-    for (int i = 0; i < data->segments; i++)
+    for (int i = 0; i < maxSegments; i++)
     {
         for (int c = 0; c < FISSURE_CROSS_VERTS - 1; c++)
         {
@@ -180,6 +199,39 @@ void ProceduralMesh_DrawFissure(const FissureMeshData *data, Color color)
             rlNormal3f(data->normals[i + 1][c + 1].x, data->normals[i + 1][c + 1].y, data->normals[i + 1][c + 1].z);
             rlVertex3f(data->verts[i + 1][c + 1].x, data->verts[i + 1][c + 1].y, data->verts[i + 1][c + 1].z);
             rlNormal3f(data->normals[i + 1][c].x, data->normals[i + 1][c].y, data->normals[i + 1][c].z);
+            rlVertex3f(data->verts[i + 1][c].x, data->verts[i + 1][c].y, data->verts[i + 1][c].z);
+        }
+    }
+    rlEnd();
+}
+
+void ProceduralMesh_DrawFissureShaded(const FissureMeshData *data, const Color crossColors[FISSURE_CROSS_VERTS], int maxSegments)
+{
+    if (data == NULL || data->segments < 1 || crossColors == NULL)
+        return;
+    if (maxSegments > data->segments)
+        maxSegments = data->segments;
+    if (maxSegments < 1)
+        return;
+    rlCheckRenderBatchLimit(maxSegments * (FISSURE_CROSS_VERTS - 1) * 4);
+    rlBegin(RL_QUADS);
+    for (int i = 0; i < maxSegments; i++)
+    {
+        for (int c = 0; c < FISSURE_CROSS_VERTS - 1; c++)
+        {
+            Color c0 = crossColors[c];
+            Color c1 = crossColors[c + 1];
+            rlNormal3f(data->normals[i][c].x, data->normals[i][c].y, data->normals[i][c].z);
+            rlColor4ub(c0.r, c0.g, c0.b, c0.a);
+            rlVertex3f(data->verts[i][c].x, data->verts[i][c].y, data->verts[i][c].z);
+            rlNormal3f(data->normals[i][c + 1].x, data->normals[i][c + 1].y, data->normals[i][c + 1].z);
+            rlColor4ub(c1.r, c1.g, c1.b, c1.a);
+            rlVertex3f(data->verts[i][c + 1].x, data->verts[i][c + 1].y, data->verts[i][c + 1].z);
+            rlNormal3f(data->normals[i + 1][c + 1].x, data->normals[i + 1][c + 1].y, data->normals[i + 1][c + 1].z);
+            rlColor4ub(c1.r, c1.g, c1.b, c1.a);
+            rlVertex3f(data->verts[i + 1][c + 1].x, data->verts[i + 1][c + 1].y, data->verts[i + 1][c + 1].z);
+            rlNormal3f(data->normals[i + 1][c].x, data->normals[i + 1][c].y, data->normals[i + 1][c].z);
+            rlColor4ub(c0.r, c0.g, c0.b, c0.a);
             rlVertex3f(data->verts[i + 1][c].x, data->verts[i + 1][c].y, data->verts[i + 1][c].z);
         }
     }

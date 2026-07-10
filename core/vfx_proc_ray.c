@@ -8,6 +8,7 @@
 #include "core/trail_system.h"
 #include "core/vfx_light.h"
 #include "core/particle_system.h"
+#include "core/resource_manager.h"
 
 #ifndef PI
 #define PI 3.1415926535f
@@ -69,6 +70,24 @@ ProcRayConfig ProcRay_EnergyConfig(void) {
         .taperTip       = 1.0f,
         .branchCount    = 0,
         .branchScale    = 0.5f,
+    };
+}
+
+ProcRayConfig ProcRay_EnergyFlowConfig(void) {
+    return (ProcRayConfig){
+        .colorCore      = { 255, 240, 120, 220 },
+        .colorGlow      = {  80, 200, 255,  90 },
+        .glowWidthMult  = 1.6f,
+        .waveSpeed      = 0.0f,   // unused — EnergyFlow shape is static, not re-jittered
+        .amplitudeRatio = 0.08f,  // single gentle bow, not a whipping wave
+        .jitterStrength = 0.0f,
+        .thickness      = 0.013f,
+        .envelopePow    = 1.0f,
+        .sharpKinks     = false,
+        .taperTip       = 1.0f,
+        .branchCount    = 0,
+        .branchScale    = 0.5f,
+        .flowScrollSpeed = 1.4f,
     };
 }
 
@@ -163,11 +182,63 @@ static RibbonPoint s_ribbon[RAY_RIBBON_PTS];
 // Draws one lightning channel in 3 passes (outer haze → glow → hot core).
 // widthMul/alphaMul scale the whole channel (branches use <1). brightness >1
 // pushes alpha toward saturation for the strike-flash frame.
+static Vector3 s_channelPts[RAY_RIBBON_PTS];
+static float   s_channelTap[RAY_RIBBON_PTS];
+static float   s_channelWidthTaper[RAY_RIBBON_PTS];
+static float   s_channelArcV[RAY_RIBBON_PTS];
+
 static void DrawChannel(const Vector3 *wp, int wpCount, const ProcRayConfig *cfg,
                         float widthMul, float alphaMul, Camera3D cam) {
     float taper  = (cfg->taperTip > 0.0f) ? cfg->taperTip : 1.0f;
     int   ribPts = (wpCount - 1) * 4 + 1;
     if (ribPts > RAY_RIBBON_PTS) ribPts = RAY_RIBBON_PTS;
+
+    // Sample position/taper/width once — identical across all 3 passes, only
+    // width/tint differ per pass. Arc-length UV (not index/count) keeps
+    // texture repeat rate consistent regardless of how much the wave/jitter
+    // stretched any given stretch of the channel.
+    for (int k = 0; k < ribPts; k++) {
+        float f    = (float)k / (float)(ribPts - 1);
+        float edge = 0.08f;
+        float tap;
+        if      (f < edge)        tap = f / edge;
+        else if (f > 1.0f - edge) tap = (1.0f - f) / edge;
+        else                      tap = 1.0f;
+        tap = tap * tap * (3.0f - 2.0f * tap);
+        s_channelTap[k]        = tap;
+        s_channelWidthTaper[k] = 1.0f + (taper - 1.0f) * f;
+
+        float fi  = f * (float)(wpCount - 1);
+        int   seg = (int)fi;
+        if (seg >= wpCount - 1) seg = wpCount - 2;
+        float lt  = fi - (float)seg;
+
+        Vector3 pt;
+        if (cfg->sharpKinks) {
+            // Linear — preserves sharp kinks at each waypoint (lightning-style)
+            pt = Vector3Lerp(wp[seg], wp[seg + 1], lt);
+        } else {
+            // Catmull-Rom — smooth curves (energy/wind-style)
+            Vector3 p0 = wp[(seg > 0) ? seg - 1 : 0];
+            Vector3 p1 = wp[seg];
+            Vector3 p2 = wp[seg + 1];
+            Vector3 p3 = wp[(seg + 2 < wpCount) ? seg + 2 : wpCount - 1];
+            float t2 = lt * lt, t3 = t2 * lt;
+            pt = (Vector3){
+                0.5f * ((2*p1.x) + (-p0.x+p2.x)*lt + (2*p0.x-5*p1.x+4*p2.x-p3.x)*t2 + (-p0.x+3*p1.x-3*p2.x+p3.x)*t3),
+                0.5f * ((2*p1.y) + (-p0.y+p2.y)*lt + (2*p0.y-5*p1.y+4*p2.y-p3.y)*t2 + (-p0.y+3*p1.y-3*p2.y+p3.y)*t3),
+                0.5f * ((2*p1.z) + (-p0.z+p2.z)*lt + (2*p0.z-5*p1.z+4*p2.z-p3.z)*t2 + (-p0.z+3*p1.z-3*p2.z+p3.z)*t3),
+            };
+        }
+        s_channelPts[k] = pt;
+    }
+
+    s_channelArcV[0] = 0.0f;
+    for (int k = 1; k < ribPts; k++)
+        s_channelArcV[k] = s_channelArcV[k - 1] + Vector3Distance(s_channelPts[k - 1], s_channelPts[k]);
+    float totalLen = s_channelArcV[ribPts - 1];
+    if (totalLen > 0.0001f)
+        for (int k = 0; k < ribPts; k++) s_channelArcV[k] /= totalLen;
 
     for (int pass = 0; pass < 3; pass++) {
         float w;
@@ -187,44 +258,12 @@ static void DrawChannel(const Vector3 *wp, int wpCount, const ProcRayConfig *cfg
         w *= widthMul;
 
         for (int k = 0; k < ribPts; k++) {
-            float f    = (float)k / (float)(ribPts - 1);
-            float edge = 0.08f;
-            float tap;
-            if      (f < edge)        tap = f / edge;
-            else if (f > 1.0f - edge) tap = (1.0f - f) / edge;
-            else                      tap = 1.0f;
-            tap = tap * tap * (3.0f - 2.0f * tap);
-
-            float widthTaper = 1.0f + (taper - 1.0f) * f;
-
-            float fi  = f * (float)(wpCount - 1);
-            int   seg = (int)fi;
-            if (seg >= wpCount - 1) seg = wpCount - 2;
-            float lt  = fi - (float)seg;
-
-            Vector3 pt;
-            if (cfg->sharpKinks) {
-                // Linear — preserves sharp kinks at each waypoint (lightning-style)
-                pt = Vector3Lerp(wp[seg], wp[seg + 1], lt);
-            } else {
-                // Catmull-Rom — smooth curves (energy/wind-style)
-                Vector3 p0 = wp[(seg > 0) ? seg - 1 : 0];
-                Vector3 p1 = wp[seg];
-                Vector3 p2 = wp[seg + 1];
-                Vector3 p3 = wp[(seg + 2 < wpCount) ? seg + 2 : wpCount - 1];
-                float t2 = lt * lt, t3 = t2 * lt;
-                pt = (Vector3){
-                    0.5f * ((2*p1.x) + (-p0.x+p2.x)*lt + (2*p0.x-5*p1.x+4*p2.x-p3.x)*t2 + (-p0.x+3*p1.x-3*p2.x+p3.x)*t3),
-                    0.5f * ((2*p1.y) + (-p0.y+p2.y)*lt + (2*p0.y-5*p1.y+4*p2.y-p3.y)*t2 + (-p0.y+3*p1.y-3*p2.y+p3.y)*t3),
-                    0.5f * ((2*p1.z) + (-p0.z+p2.z)*lt + (2*p0.z-5*p1.z+4*p2.z-p3.z)*t2 + (-p0.z+3*p1.z-3*p2.z+p3.z)*t3),
-                };
-            }
-
+            float tap = s_channelTap[k];
             float a = tint.a * tap * aMul;
             if (a > 255.0f) a = 255.0f;
-            s_ribbon[k].position  = pt;
-            s_ribbon[k].halfWidth = w * tap * widthTaper;
-            s_ribbon[k].v         = f;
+            s_ribbon[k].position  = s_channelPts[k];
+            s_ribbon[k].halfWidth = w * tap * s_channelWidthTaper[k];
+            s_ribbon[k].v         = s_channelArcV[k];
             s_ribbon[k].tint      = (Color){ tint.r, tint.g, tint.b, (unsigned char)a };
         }
         DrawRibbonStrip(s_ribbon, ribPts, (Texture2D){0}, cam);
@@ -457,6 +496,192 @@ void ProcBolt_Draw(int id, Camera3D cam) {
 void ProcBolt_Kill(int id) {
     if (id < 0 || id >= MAX_PROC_BOLTS) return;
     s_bolts[id].active = false;
+}
+
+// ── Energy Flow — fixed A→B smooth channel, scrolling flow texture ────────
+// Unlike ProcBolt (re-jitters every BOLT_FLICKER_INTERVAL) or ProcRay
+// (whipping free end), the channel shape here is a single static bow — only
+// the flow texture's UV scrolls (config.flowScrollSpeed) to read as "energy
+// flowing" along it. This is what sells the effect without particles, per
+// the ribbon-mesh design discussion: RibbonPoint.v already supports a
+// caller-driven scroll, EnergyFlow is the first user of that.
+
+#define MAX_ENERGY_FLOWS 16
+#define FLOW_RIBBON_PTS  28
+
+typedef struct {
+    bool          active;
+    ProcRayConfig config;
+    float         scale;
+    float         scrollOffset;
+    float         brightness;
+    Vector3       refHint;
+    Vector3       waypoints[RAY_WAYPOINT_CNT];
+} EnergyFlowSlot;
+
+static EnergyFlowSlot s_flows[MAX_ENERGY_FLOWS];
+static bool           s_flowsInited = false;
+
+static void EnsureFlowsInited(void) {
+    if (s_flowsInited) return;
+    for (int i = 0; i < MAX_ENERGY_FLOWS; i++) s_flows[i].active = false;
+    s_flowsInited = true;
+}
+
+// Single gentle bow from `from` to `to` — envelope = sin(t*PI) so both ends
+// stay pinned. `refHint` (fixed per-slot, set at spawn) picks which way the
+// bow leans so concurrent flows between similar points don't overlap
+// identically; NOT re-randomized per frame, so the shape stays stable while
+// from/to move (no ProcBolt-style flicker).
+static void GenerateFlowWaypoints(Vector3 *out, Vector3 from, Vector3 to,
+                                  Vector3 refHint, float bowRatio) {
+    float len = Vector3Distance(from, to);
+    if (len < 0.0001f) {
+        for (int i = 0; i < RAY_WAYPOINT_CNT; i++) out[i] = from;
+        return;
+    }
+    Vector3 dir = Vector3Scale(Vector3Subtract(to, from), 1.0f / len);
+    Vector3 ref = (fabsf(Vector3DotProduct(dir, refHint)) > 0.9f)
+                      ? ((fabsf(dir.y) > 0.95f) ? (Vector3){1,0,0} : (Vector3){0,1,0})
+                      : refHint;
+    Vector3 side = Vector3Normalize(Vector3CrossProduct(dir, ref));
+    float bow = len * bowRatio;
+
+    for (int i = 0; i < RAY_WAYPOINT_CNT; i++) {
+        float t        = (float)i / (float)(RAY_WAYPOINT_CNT - 1);
+        float envelope = sinf(t * PI);
+        Vector3 base = Vector3Lerp(from, to, t);
+        out[i] = Vector3Add(base, Vector3Scale(side, bow * envelope));
+    }
+}
+
+int SpawnEnergyFlow(ProcRayConfig config, float scale) {
+    EnsureFlowsInited();
+    for (int i = 0; i < MAX_ENERGY_FLOWS; i++) {
+        if (!s_flows[i].active) {
+            s_flows[i].active       = true;
+            s_flows[i].config       = config;
+            s_flows[i].scale        = fmaxf(scale, 0.1f);
+            s_flows[i].scrollOffset = 0.0f;
+            s_flows[i].brightness   = 1.0f;
+            float a = (float)GetRandomValue(0, 628) * 0.01f;
+            float b = (float)GetRandomValue(0, 314) * 0.01f;
+            s_flows[i].refHint = (Vector3){ sinf(b)*cosf(a), cosf(b), sinf(b)*sinf(a) };
+            return i;
+        }
+    }
+    TraceLog(LOG_WARNING, "SpawnEnergyFlow: pool full (MAX_ENERGY_FLOWS=%d)", MAX_ENERGY_FLOWS);
+    return -1;
+}
+
+void EnergyFlow_SetBrightness(int id, float b) {
+    if (id < 0 || id >= MAX_ENERGY_FLOWS || !s_flows[id].active) return;
+    s_flows[id].brightness = fmaxf(b, 0.0f);
+}
+
+void EnergyFlow_Update(int id, Vector3 from, Vector3 to, float scale, float dt) {
+    if (id < 0 || id >= MAX_ENERGY_FLOWS || !s_flows[id].active) return;
+    EnergyFlowSlot *s = &s_flows[id];
+    s->scale         = fmaxf(scale, 0.1f);
+    s->scrollOffset += s->config.flowScrollSpeed * dt;
+    GenerateFlowWaypoints(s->waypoints, from, to, s->refHint, s->config.amplitudeRatio);
+}
+
+static RibbonPoint s_flowRibbon[FLOW_RIBBON_PTS];
+static Vector3     s_flowPts[FLOW_RIBBON_PTS];
+static float       s_flowArcV[FLOW_RIBBON_PTS];
+
+// 2 passes: outer additive glow (no texture, same "sells the bloom" role as
+// DrawChannel's glow pass) + inner core sampled through a scrolling
+// grayscale-alpha flow texture — the scroll (arc-length v - scrollOffset,
+// wrapped 0..1) is what reads as motion without any particles.
+static void DrawFlowChannel(const Vector3 *wp, int wpCount, const ProcRayConfig *cfg,
+                            float scrollOffset, float brightness, Camera3D cam) {
+    for (int k = 0; k < FLOW_RIBBON_PTS; k++) {
+        float f   = (float)k / (float)(FLOW_RIBBON_PTS - 1);
+        float fi  = f * (float)(wpCount - 1);
+        int   seg = (int)fi;
+        if (seg >= wpCount - 1) seg = wpCount - 2;
+        float lt  = fi - (float)seg;
+        Vector3 p0 = wp[(seg > 0) ? seg - 1 : 0];
+        Vector3 p1 = wp[seg];
+        Vector3 p2 = wp[seg + 1];
+        Vector3 p3 = wp[(seg + 2 < wpCount) ? seg + 2 : wpCount - 1];
+        float t2 = lt * lt, t3 = t2 * lt;
+        s_flowPts[k] = (Vector3){
+            0.5f * ((2*p1.x) + (-p0.x+p2.x)*lt + (2*p0.x-5*p1.x+4*p2.x-p3.x)*t2 + (-p0.x+3*p1.x-3*p2.x+p3.x)*t3),
+            0.5f * ((2*p1.y) + (-p0.y+p2.y)*lt + (2*p0.y-5*p1.y+4*p2.y-p3.y)*t2 + (-p0.y+3*p1.y-3*p2.y+p3.y)*t3),
+            0.5f * ((2*p1.z) + (-p0.z+p2.z)*lt + (2*p0.z-5*p1.z+4*p2.z-p3.z)*t2 + (-p0.z+3*p1.z-3*p2.z+p3.z)*t3),
+        };
+    }
+
+    s_flowArcV[0] = 0.0f;
+    for (int k = 1; k < FLOW_RIBBON_PTS; k++)
+        s_flowArcV[k] = s_flowArcV[k - 1] + Vector3Distance(s_flowPts[k - 1], s_flowPts[k]);
+    float totalLen = s_flowArcV[FLOW_RIBBON_PTS - 1];
+    if (totalLen < 0.0001f) totalLen = 0.0001f;
+
+    // ── Pass 1: outer glow, additive, no texture ──
+    for (int k = 0; k < FLOW_RIBBON_PTS; k++) {
+        float f    = s_flowArcV[k] / totalLen;
+        float edge = 0.08f;
+        float tap;
+        if      (f < edge)        tap = f / edge;
+        else if (f > 1.0f - edge) tap = (1.0f - f) / edge;
+        else                      tap = 1.0f;
+        tap = tap * tap * (3.0f - 2.0f * tap);
+
+        float a = cfg->colorGlow.a * tap * brightness;
+        if (a > 255.0f) a = 255.0f;
+        s_flowRibbon[k].position  = s_flowPts[k];
+        s_flowRibbon[k].halfWidth = cfg->thickness * cfg->glowWidthMult * tap;
+        s_flowRibbon[k].v         = f;
+        s_flowRibbon[k].tint      = (Color){ cfg->colorGlow.r, cfg->colorGlow.g, cfg->colorGlow.b, (unsigned char)a };
+    }
+    DrawRibbonStrip(s_flowRibbon, FLOW_RIBBON_PTS, (Texture2D){0}, cam);
+
+    // ── Pass 2: flow core — scrolling flow texture, additive ──
+    // Known limitation: per-vertex v wraps independently at each point (no
+    // malloc'd scratch to unwrap across the strip), so the single quad
+    // straddling the 1→0 wrap seam can show a 1-frame texture pop. Accepted
+    // trade-off for staying allocation-free — not visible at normal flow speeds.
+    Texture2D flowTex = ResourceManager_LoadTexture("assets/textures/water_flow.png");
+    for (int k = 0; k < FLOW_RIBBON_PTS; k++) {
+        float f    = s_flowArcV[k] / totalLen;
+        float edge = 0.08f;
+        float tap;
+        if      (f < edge)        tap = f / edge;
+        else if (f > 1.0f - edge) tap = (1.0f - f) / edge;
+        else                      tap = 1.0f;
+        tap = tap * tap * (3.0f - 2.0f * tap);
+
+        float a = cfg->colorCore.a * tap * brightness;
+        if (a > 255.0f) a = 255.0f;
+        float rawV = f * 2.2f - scrollOffset;
+        float wrappedV = rawV - floorf(rawV);
+        s_flowRibbon[k].position  = s_flowPts[k];
+        s_flowRibbon[k].halfWidth = cfg->thickness * tap;
+        s_flowRibbon[k].v         = wrappedV;
+        s_flowRibbon[k].tint      = (Color){ cfg->colorCore.r, cfg->colorCore.g, cfg->colorCore.b, (unsigned char)a };
+    }
+    DrawRibbonStrip(s_flowRibbon, FLOW_RIBBON_PTS, flowTex, cam);
+}
+
+void EnergyFlow_Draw(int id, Camera3D cam) {
+    if (id < 0 || id >= MAX_ENERGY_FLOWS || !s_flows[id].active) return;
+    rlDrawRenderBatchActive();
+    rlDisableDepthMask();
+    BeginBlendMode(BLEND_ADDITIVE);
+    DrawFlowChannel(s_flows[id].waypoints, RAY_WAYPOINT_CNT, &s_flows[id].config,
+                   s_flows[id].scrollOffset, s_flows[id].brightness, cam);
+    EndBlendMode();
+    rlDrawRenderBatchActive();
+    rlEnableDepthMask();
+}
+
+void EnergyFlow_Kill(int id) {
+    if (id < 0 || id >= MAX_ENERGY_FLOWS) return;
+    s_flows[id].active = false;
 }
 
 // ── Lightning Trail System (Hợp nhất từ skill_helper) ─────────────────────

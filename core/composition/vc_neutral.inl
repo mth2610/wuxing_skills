@@ -1,6 +1,8 @@
 // Generic neutral VFX — effects with no elemental identity.
 // SmokePuff, SmokeTrail: generic smoke/impact residue.
-// LightningBolt: neutral proc-ray bolt (element-colored bolts live in vc_metal.inl).
+// VFX_ComposeLightningBolt moved to vc_archetype.inl 2026-07-10 — it needs a
+// managed pool (ProcBolt requires per-frame Update/Draw with the same id,
+// same as VFX_SpawnProcBeam's ProcRay) instead of a stateless single call.
 
 void VFX_ComposeSmokePuff(Vector3 pos, float size)
 {
@@ -77,11 +79,3 @@ void VFX_ComposeSmokeTrail(Vector3 start, Vector3 end, float duration)
     }
 }
 
-int VFX_ComposeLightningBolt(Vector3 start, Vector3 end, float scale)
-{
-    int id = SpawnProcBolt(ProcRay_BoltLightningConfig(), scale);
-    (void)start; // TODO: pass start when SpawnProcBolt gains a start/end overload
-
-    VFXLight_Spawn(end, (Color){0, 200, 255, 255}, 2.5f * scale, 0.25f, VFX_PRIORITY_HIGH_ULTIMATE);
-    return id;
-}

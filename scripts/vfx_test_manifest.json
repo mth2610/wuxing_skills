@@ -256,9 +256,16 @@
     {
       "fn": "VFX_ComposeLightningBolt",
       "label": "BOLT",
-      "category": "metal",
+      "category": "taiji",
       "type": "oneshot",
       "trigger_call": "VFX_ComposeLightningBolt($POS, Vector3Add($POS, (Vector3){2, 1, 0}), 1.0f)"
+    },
+    {
+      "fn": "VFX_ComposeEnergyFlow",
+      "label": "ENERGY FLOW",
+      "category": "taiji",
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeEnergyFlow($POS, Vector3Add($POS, (Vector3){3, 0.5f, 0}), 1.0f, 3.0f)"
     },
     {
       "fn": "VFX_SpawnProcBeam",
@@ -327,8 +334,8 @@
       "fn": "VFX_ComposeFissureStreak",
       "label": "FISSURE",
       "category": "earth",
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeFissureStreak($POS, Vector3Add($POS, (Vector3){3, 0, 0}), 0.15f)"
+      "type": "continuous",
+      "draw_call": "VFX_ComposeFissureStreak($POS, Vector3Add($POS, (Vector3){3, 0, 0}), 0.4f, $PROG, $TIME)"
     },
     {
       "fn": "VFX_ComposeImpact_EARTH",
@@ -422,23 +429,6 @@
       "draw_call": "VFX_ComposeShield(VC_MAT_METAL, $POS, 1.2f, fminf($PROG, 0.5f), $TIME)"
     },
     {
-      "fn": "VFX_ComposeChain",
-      "label": "CHAIN",
-      "category": "util",
-      "type": "continuous",
-      "draw_block": [
-        "{",
-        "    Vector3 chainTargets[4] = {",
-        "        $POS,",
-        "        Vector3Add($POS, (Vector3){2.0f, 0, 1.0f}),",
-        "        Vector3Add($POS, (Vector3){3.5f, 0, -1.0f}),",
-        "        Vector3Add($POS, (Vector3){5.5f, 0, 0.5f}),",
-        "    };",
-        "    VFX_ComposeChain(VC_MAT_LIGHTNING, chainTargets, 4, $PROG, $TIME);",
-        "}"
-      ]
-    },
-    {
       "fn": "VFX_ComposeZone",
       "label": "ZONE",
       "category": "util",
@@ -451,13 +441,6 @@
       "category": "util",
       "type": "continuous",
       "draw_call": "VFX_ComposeSlashArc(VC_MAT_METAL, $POS, (Vector3){1, 0, 0}, 1.0f, 120.0f, fminf($TIME / 0.6f, 0.999f), $TIME)"
-    },
-    {
-      "fn": "VFX_ComposeChargeUp",
-      "label": "CHARGE UP",
-      "category": "util",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeChargeUp(VC_MAT_FIRE, $POS, 1.0f, $PROG, $TIME)"
     },
     {
       "fn": "VFX_ComposeCyclone",

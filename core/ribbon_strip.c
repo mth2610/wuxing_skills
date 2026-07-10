@@ -28,20 +28,21 @@ static Vector3 ComputeTangent(const RibbonPoint *points, int count, int i) {
 }
 
 // Vector "side" vuông góc với tangent, dùng để offset trái/phải tạo bề rộng
-// ribbon. Ưu tiên vuông góc với hướng nhìn camera (cho silhouette luôn đúng
-// hướng camera, đúng kiểu Trail Renderer). Có 2 lớp fallback khi suy biến:
-// 1) tangent gần song song hướng nhìn camera -> dùng camera.up
-// 2) tangent gần song song luôn cả camera.up (cực hiếm) -> dùng vector
+// ribbon. Ưu tiên vuông góc với `primaryNormal` (hướng nhìn camera cho
+// RIBBON_CAMERA_FACING, world-up cho RIBBON_WORLD_UP, mặt phẳng người gọi
+// cấp cho RIBBON_FIXED_NORMAL). Có 2 lớp fallback khi suy biến:
+// 1) tangent gần song song primaryNormal -> dùng `fallbackNormal`
+// 2) tangent gần song song luôn cả fallbackNormal (cực hiếm) -> dùng vector
 //    vuông góc cố định trên mặt phẳng ngang (cùng kiểu trick đã dùng trong
 //    CastFireSkill: { -tangent.z, 0, tangent.x }).
-static Vector3 ComputeSideVector(Vector3 tangent, Vector3 cameraForward,
-                                 Vector3 cameraUp) {
-  Vector3 side = Vector3CrossProduct(tangent, cameraForward);
+static Vector3 ComputeSideVector(Vector3 tangent, Vector3 primaryNormal,
+                                 Vector3 fallbackNormal) {
+  Vector3 side = Vector3CrossProduct(tangent, primaryNormal);
   float len = Vector3Length(side);
   if (len > RIBBON_DEGENERATE_EPSILON)
     return Vector3Scale(side, 1.0f / len);
 
-  side = Vector3CrossProduct(tangent, cameraUp);
+  side = Vector3CrossProduct(tangent, fallbackNormal);
   len = Vector3Length(side);
   if (len > RIBBON_DEGENERATE_EPSILON)
     return Vector3Scale(side, 1.0f / len);
@@ -52,13 +53,27 @@ static Vector3 ComputeSideVector(Vector3 tangent, Vector3 cameraForward,
                                            : (Vector3){1.0f, 0.0f, 0.0f};
 }
 
-void DrawRibbonStrip(const RibbonPoint *points, int count, Texture2D texture,
-                     Camera3D camera) {
+void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture,
+                       Camera3D camera, RibbonMode mode, Vector3 fixedNormal) {
   if (points == NULL || count < 2)
     return;
 
-  Vector3 cameraForward =
-      Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+  Vector3 primaryNormal, fallbackNormal;
+  switch (mode) {
+    case RIBBON_WORLD_UP:
+      primaryNormal  = (Vector3){0.0f, 1.0f, 0.0f};
+      fallbackNormal = (Vector3){1.0f, 0.0f, 0.0f};
+      break;
+    case RIBBON_FIXED_NORMAL:
+      primaryNormal  = Vector3Normalize(fixedNormal);
+      fallbackNormal = (Vector3){0.0f, 1.0f, 0.0f};
+      break;
+    case RIBBON_CAMERA_FACING:
+    default:
+      primaryNormal  = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+      fallbackNormal = camera.up;
+      break;
+  }
 
   // Dải có thể bị nhìn từ "mặt sau" khi path cong gập - tắt backface
   // culling cho riêng draw call này (tắt/mở thẳng theo style đã có sẵn
@@ -75,7 +90,7 @@ void DrawRibbonStrip(const RibbonPoint *points, int count, Texture2D texture,
 
   for (int i = 0; i < count; i++) {
     Vector3 tangent = ComputeTangent(points, count, i);
-    Vector3 side = ComputeSideVector(tangent, cameraForward, camera.up);
+    Vector3 side = ComputeSideVector(tangent, primaryNormal, fallbackNormal);
 
     // Giữ liên tục hướng "side" giữa các điểm liền kề trong CÙNG 1 dải,
     // tránh hiện tượng "bowtie" (dải bị xoắn) do cross product đổi dấu khi
@@ -120,5 +135,37 @@ void DrawRibbonStrip(const RibbonPoint *points, int count, Texture2D texture,
   }
 
   rlEnd();
+  rlSetTexture(0); // module binds `texture`, must not leak it into whatever draws next
   rlEnableBackfaceCulling();
+}
+
+void DrawRibbonStrip(const RibbonPoint *points, int count, Texture2D texture,
+                     Camera3D camera) {
+  DrawRibbonStripEx(points, count, texture, camera, RIBBON_CAMERA_FACING,
+                    (Vector3){0.0f, 1.0f, 0.0f});
+}
+
+void Ribbon_ComputeArcLengthUV(RibbonPoint *points, int count) {
+  if (points == NULL || count < 2)
+    return;
+
+  // Write cumulative distance straight into .v (the field we're about to
+  // overwrite anyway) instead of a separate scratch buffer - avoids a
+  // hardcoded max-count cap.
+  points[0].v = 0.0f;
+  for (int i = 1; i < count; i++)
+    points[i].v = points[i - 1].v +
+                  Vector3Distance(points[i - 1].position, points[i].position);
+
+  float total = points[count - 1].v;
+  if (total < RIBBON_DEGENERATE_EPSILON) {
+    // Degenerate (all points coincide) - fall back to uniform index spacing
+    // rather than divide by ~0.
+    for (int i = 0; i < count; i++)
+      points[i].v = (float)i / (float)(count - 1);
+    return;
+  }
+
+  for (int i = 0; i < count; i++)
+    points[i].v /= total;
 }

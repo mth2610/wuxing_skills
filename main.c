@@ -487,6 +487,13 @@ int main(int argc, char **argv) {
             Environment_DrawSmartShadow(player.position, ENV_SHAPE_SPHERE, 0.25f, 0.25f);
             DrawCharacter3D(player.position, 0.25f, GetColor(0xFFD39BFF), GetColor(0x3B5998FF), GetColor(0xCCCCCCFF), true, mouseTarget3D);
         }
+
+        // Stateful archetypes (VFX_SpawnProcBeam/Orbitals, VFX_ComposeLightningBolt's
+        // ProcBolt handle) live in a global pool updated unconditionally every frame
+        // (VFX_Compose_Update above) but were only ever DRAWN in SCREEN_SKILL_SANDBOX —
+        // triggering their NEWFX tab entries (BOLT/PROC BEAM/ORBITALS) spawned them
+        // correctly into the pool but nothing rendered. Draw here too.
+        VFX_Compose_Draw3D(camera);
     }
 
     if (currentScreen == SCREEN_SKILL_SANDBOX) {
