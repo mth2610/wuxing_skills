@@ -59,7 +59,7 @@ static const char *s_meshNames[] = {
     "DISC", "RING", "CONE", "TORNADO", "CYLINDER", "SPHERE", "SHOCKWAVE", "PYRAMID", "TETRAHEDRON"};
 
 // @gen:newfx_names begin
-// 71 entries — auto-managed by sync_vfx_test.py
+// 72 entries — auto-managed by sync_vfx_test.py
 static const char* s_newFxNames[] = {
     "FLAME WISP", "FIRE PILLAR", "FIREBALL", "FIRE BREATH", "BURN GROUND", "FIRE WHIRL",
     "EMBER DRIFT", "IMPACT FIRE", "CAST FIRE", "SPLASH", "BUBBLES", "MIST VEIL",
@@ -72,7 +72,7 @@ static const char* s_newFxNames[] = {
     "STREAK FLARE", "GUST SLASH", "SMOKE PUFF", "SMOKE TRAIL", "SHIELD", "CHAIN",
     "ZONE", "SLASH ARC", "CHARGE UP", "CYCLONE", "BEAM", "PROJECTILE",
     "AURA", "GND PATTERN", "SUMMON RING", "EXPLOSION", "GROUND WAVE", "PROJ FIRE",
-    "PROJ WATER", "PROJ METAL", "CYLINDER AURA", "GROUND AURA", "DRAW ICE CRYSTAL BURST",
+    "PROJ WATER", "PROJ METAL", "CYLINDER AURA", "GROUND AURA", "BLACK HOLE", "DRAW ICE CRYSTAL BURST",
 };
 // @gen:newfx_names end
 
@@ -86,7 +86,7 @@ static const int s_newFxCategories[] = {
     4, 4, 5, 5, 5, 5, 6, 6, 6, 6,
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-    1,
+    6, 1,
 };
 // @gen:newfx_categories end
 
@@ -397,7 +397,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             const char **names;
             int globalIdx;
             int visualIdx;
-            maxIdx = 71;
+            maxIdx = 72;
             names = s_newFxNames; // @gen:newfx_count
             visualIdx = 0;
             (void)names;
@@ -482,7 +482,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_ComposeProjectileTrail(s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){4, 0, 0}), EFFECT_PRESET_WATER_SPLASH, 1.0f, 5.0f);
           } else if (s_testIndex == 67) { /* PROJ METAL */
               VFX_ComposeProjectileTrail(s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){4, 0, 0}), EFFECT_PRESET_METAL_SHARD, 1.0f, 5.0f);
-          } else if (s_testIndex == 70) { /* DRAW ICE CRYSTAL BURST */
+          } else if (s_testIndex == 71) { /* DRAW ICE CRYSTAL BURST */
               VFX_DrawIceCrystalBurst(s_prefabStartPos, 5, posSeed, 1.0f);
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
@@ -584,7 +584,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_ComposeProjectileTrail(s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){4, 0, 0}), EFFECT_PRESET_WATER_SPLASH, 1.0f, 5.0f);
           } else if (s_testIndex == 67) { /* PROJ METAL */
               VFX_ComposeProjectileTrail(s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){4, 0, 0}), EFFECT_PRESET_METAL_SHARD, 1.0f, 5.0f);
-          } else if (s_testIndex == 70) { /* DRAW ICE CRYSTAL BURST */
+          } else if (s_testIndex == 71) { /* DRAW ICE CRYSTAL BURST */
               VFX_DrawIceCrystalBurst(s_prefabStartPos, 5, posSeed, 1.0f);
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
@@ -683,6 +683,7 @@ void VFXTest_Draw3D(void)
               case 62: VFX_SummonCircle(s_prefabStartPos, 1.5f, progress, s_meshTime, (Color){100, 200, 255, 255}); break;
               case 68: VFX_ComposeCylinderAura(VC_MAT_FIRE, s_prefabStartPos, 1.5f, fminf(progress, 0.99f), s_meshTime); break;
               case 69: VFX_ComposeGroundAura(VC_MAT_FIRE, s_prefabStartPos, 1.5f, 0.9f, s_meshTime); break;
+              case 70: VFX_ComposeBlackHole(VC_MAT_VOID, Vector3Add(s_prefabStartPos, (Vector3){0, 2.5f, 0}), 1.0f, s_meshTime); break;
           }
 // @gen:newfx_draw end
         }
@@ -827,7 +828,7 @@ void VFXTest_DrawHUD(void)
         const char **names;
         int gi;
         int vIdx;
-        maxIdx = 71;
+        maxIdx = 72;
         names = s_newFxNames; // @gen:newfx_count
         vIdx = 0;
         (void)names;
@@ -893,7 +894,7 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
     case 65: VFX_ComposeProjectileTrail(pos, Vector3Add(pos, (Vector3){4, 0, 0}), EFFECT_PRESET_FIRE_EXPLOSION, 1.0f, 5.0f); break;
     case 66: VFX_ComposeProjectileTrail(pos, Vector3Add(pos, (Vector3){4, 0, 0}), EFFECT_PRESET_WATER_SPLASH, 1.0f, 5.0f); break;
     case 67: VFX_ComposeProjectileTrail(pos, Vector3Add(pos, (Vector3){4, 0, 0}), EFFECT_PRESET_METAL_SHARD, 1.0f, 5.0f); break;
-    case 70: VFX_DrawIceCrystalBurst(pos, 5, 0, 1.0f); break;
+    case 71: VFX_DrawIceCrystalBurst(pos, 5, 0, 1.0f); break;
     default: break;
     }
 // @gen:newfx_render_trigger end

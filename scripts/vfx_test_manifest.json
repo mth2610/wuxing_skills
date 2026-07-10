@@ -552,6 +552,13 @@
       "draw_call": "VFX_ComposeGroundAura(VC_MAT_FIRE, $POS, 1.5f, 0.9f, $TIME)"
     },
     {
+      "fn": "VFX_ComposeBlackHole",
+      "label": "BLACK HOLE",
+      "category": "util",
+      "type": "continuous",
+      "draw_call": "VFX_ComposeBlackHole(VC_MAT_VOID, Vector3Add($POS, (Vector3){0, 2.5f, 0}), 1.0f, $TIME)"
+    },
+    {
       "fn": "VFX_DrawIceCrystalBurst",
       "label": "DRAW ICE CRYSTAL BURST",
       "category": "water",
