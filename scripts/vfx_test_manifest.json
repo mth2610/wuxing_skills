@@ -272,7 +272,7 @@
       "label": "ENERGY SMOKE",
       "category": "taiji",
       "type": "continuous",
-      "draw_call": "VFX_ComposeEnergySmoke($POS, 1.0f, $PROG, $TIME)"
+      "draw_call": "VFX_ComposeEnergySmoke($POS, 1.0f, $PROG, $TIME, (Vector2){0.0f, 0.0f})"
     },
     {
       "fn": "VFX_SpawnProcBeam",
@@ -418,15 +418,15 @@
       "fn": "VFX_ComposeSmokePuff",
       "label": "SMOKE PUFF",
       "category": "util",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeSmokePuff($POS, 0.8f)"
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeSmokePuff($POS, 0.8f)"
     },
     {
       "fn": "VFX_ComposeSmokeTrail",
       "label": "SMOKE TRAIL",
       "category": "util",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeSmokeTrail($POS, Vector3Add($POS, (Vector3){0, 0, 3}), 1.0f)"
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeSmokeTrail($POS, Vector3Add($POS, (Vector3){0, 0, 3}), 1.0f)"
     },
     {
       "fn": "VFX_ComposeShield",

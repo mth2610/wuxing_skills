@@ -20,7 +20,13 @@
 // Single puff only — user explicitly wanted one soft puff, not several
 // combined shapes. A "bigger cloud" is composed by calling this function
 // multiple times with different pos/scale/phase from the call site.
-void VFX_ComposeEnergySmoke(Vector3 pos, float scale, float progress, float time)
+//
+// sourceUV picks where inside the quad's [-1,1] local space the puff
+// originates: {0,0} = center (radial puff/shockwave ring), {0,-1} = base
+// (bottom edge) — the latter is what a rising column (e.g. cigarette
+// smoke) needs, since the puff must grow upward from a fixed foot point
+// rather than expand symmetrically in every direction.
+void VFX_ComposeEnergySmoke(Vector3 pos, float scale, float progress, float time, Vector2 sourceUV)
 {
     if (scale <= 0.0f) return;
     progress = Clamp(progress, 0.0f, 1.0f);
@@ -31,6 +37,7 @@ void VFX_ComposeEnergySmoke(Vector3 pos, float scale, float progress, float time
     static int    s_uDiffusion  = -1;
     static int    s_uNoiseScale = -1;
     static int    s_uDriftSpeed = -1;
+    static int    s_uSourcePos  = -1;
     static bool   s_smokeInit   = false;
     if (!s_smokeInit)
     {
@@ -41,6 +48,7 @@ void VFX_ComposeEnergySmoke(Vector3 pos, float scale, float progress, float time
         s_uDiffusion   = GetShaderLocation(s_smokeSh, "u_diffusion");
         s_uNoiseScale  = GetShaderLocation(s_smokeSh, "u_noiseScale");
         s_uDriftSpeed  = GetShaderLocation(s_smokeSh, "u_driftSpeed");
+        s_uSourcePos   = GetShaderLocation(s_smokeSh, "u_sourcePos");
         s_smokeInit    = true;
     }
 
@@ -69,6 +77,7 @@ void VFX_ComposeEnergySmoke(Vector3 pos, float scale, float progress, float time
     if (s_uDiffusion  >= 0) SetShaderValue(s_smokeSh, s_uDiffusion,  &diffusion,   SHADER_UNIFORM_FLOAT);
     if (s_uNoiseScale >= 0) SetShaderValue(s_smokeSh, s_uNoiseScale, &noiseScale,  SHADER_UNIFORM_FLOAT);
     if (s_uDriftSpeed >= 0) SetShaderValue(s_smokeSh, s_uDriftSpeed, &driftSpeed,  SHADER_UNIFORM_FLOAT);
+    if (s_uSourcePos  >= 0) SetShaderValue(s_smokeSh, s_uSourcePos,  &sourceUV,    SHADER_UNIFORM_VEC2);
 
     DrawCoreBillboardQuad(pos, r, camera, WHITE);
     rlDrawRenderBatchActive();

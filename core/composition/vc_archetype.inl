@@ -10,6 +10,10 @@
 //   VFX_ComposeLightningBolt                  — single fixed-endpoint bolt (leader flash + decay)
 //   VFX_ComposeEnergyFlow                     — smooth A→B channel, scrolling flow texture (mana stream)
 //
+// VFX_ComposeSmokePuff / VFX_ComposeSmokeTrail lived here briefly (2026-07-10,
+// as a billboard-quad diffusion-shader pool) but were reverted back to
+// vc_neutral.inl's particle-burst implementation the same day — too costly
+// per-pixel for effects that can fire many times a second from gameplay.
 // Lifecycle (called by VFX_Compose_Update / VFX_Compose_Draw3D in visual_composer.c):
 //   static void VC_Archetype_Update(float dt)
 //   static void VC_Archetype_Draw3D(Camera3D cam)

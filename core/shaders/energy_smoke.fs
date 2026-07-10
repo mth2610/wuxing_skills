@@ -3,10 +3,12 @@
 #include "core/shaders/common/noise.glsl"
 
 uniform vec4  u_color;
-uniform float u_progress;   
-uniform float u_diffusion;  
-uniform float u_noiseScale; 
-uniform float u_driftSpeed; 
+uniform float u_progress;
+uniform float u_diffusion;
+uniform float u_noiseScale;
+uniform float u_driftSpeed;
+uniform vec2  u_sourcePos;   // origin of the puff in quad-local uv space
+                              // [-1,1]: (0,0)=center, (0,-1)=base (bottom edge)
 
 float vnoise3(vec3 p) {
     vec3 i = floor(p);
@@ -59,7 +61,7 @@ void main() {
 
     float warpStrength = mix(0.2, 1.2, clamp(u_progress, 0.0, 1.0));
     vec2 uvw = uv + (n0 * 0.7 + n1 * 0.3) * warpStrength;
-    float dist = length(uvw);
+    float dist = length(uvw - u_sourcePos);
 
     // Bán kính hỗn loạn
     float pushRadius = mix(0.0, 0.35, pow(u_progress, 0.4));

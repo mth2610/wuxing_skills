@@ -34,7 +34,7 @@
 // Include modular visual composer implementations (grouped by element/functionality)
 #include "vc_common.inl"       // render primitives (VC_DrawGroundQuadXZ, VC_DrawGroundRune)
 #include "vc_beauty.inl"       // beauty primitives — must precede element .inl (vc_zone calls GlintBurst)
-#include "vc_neutral.inl"      // SmokePuff, SmokeTrail, LightningBolt
+#include "vc_neutral.inl"      // LightningBolt (SmokePuff/SmokeTrail moved to vc_archetype.inl)
 #include "vc_impact.inl"       // TriggerImpactBurst, ComposeImpact, TriggerExplosion
 #include "vc_cast_preset.inl"  // ComposeCast
 #include "vc_trail_preset.inl" // ComposeProjectileTrail

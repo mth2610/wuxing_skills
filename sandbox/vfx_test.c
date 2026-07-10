@@ -477,6 +477,10 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_ComposeStreakFlare(s_prefabStartPos, 1.0f, (Color){255, 250, 220, 255});
           } else if (s_testIndex == 51) { /* GUST SLASH */
               VFX_ComposeGustSlash(Vector3Add(s_prefabStartPos, (Vector3){0, 0.3f, 0}), (Vector3){1.0f, 0.0f, 0.0f}, 1.0f);
+          } else if (s_testIndex == 52) { /* SMOKE PUFF */
+              VFX_ComposeSmokePuff(s_prefabStartPos, 0.8f);
+          } else if (s_testIndex == 53) { /* SMOKE TRAIL */
+              VFX_ComposeSmokeTrail(s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){0, 0, 3}), 1.0f);
           } else if (s_testIndex == 63) { /* EXPLOSION */
               VFX_TriggerExplosion(VC_MAT_FIRE, s_prefabStartPos, 1.0f, false);
           } else if (s_testIndex == 64) { /* GROUND WAVE */
@@ -582,6 +586,10 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_ComposeStreakFlare(s_prefabStartPos, 1.0f, (Color){255, 250, 220, 255});
           } else if (s_testIndex == 51) { /* GUST SLASH */
               VFX_ComposeGustSlash(Vector3Add(s_prefabStartPos, (Vector3){0, 0.3f, 0}), (Vector3){1.0f, 0.0f, 0.0f}, 1.0f);
+          } else if (s_testIndex == 52) { /* SMOKE PUFF */
+              VFX_ComposeSmokePuff(s_prefabStartPos, 0.8f);
+          } else if (s_testIndex == 53) { /* SMOKE TRAIL */
+              VFX_ComposeSmokeTrail(s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){0, 0, 3}), 1.0f);
           } else if (s_testIndex == 63) { /* EXPLOSION */
               VFX_TriggerExplosion(VC_MAT_FIRE, s_prefabStartPos, 1.0f, false);
           } else if (s_testIndex == 64) { /* GROUND WAVE */
@@ -662,15 +670,13 @@ void VFXTest_Draw3D(void)
               case 24: VFX_ComposePlasmaOrb(Vector3Add(s_prefabStartPos, (Vector3){0, 0.9f, 0}), 0.5f, s_meshTime); break;
               case 25: VFX_ComposeBladeRing(s_prefabStartPos, 0.6f, 5, s_meshTime * 60.0f); break;
               case 26: VFX_ComposeBladeStorm(s_prefabStartPos, 0.7f, s_meshTime); break;
-              case 31: VFX_ComposeEnergySmoke(s_prefabStartPos, 1.0f, progress, s_meshTime); break;
+              case 31: VFX_ComposeEnergySmoke(s_prefabStartPos, 1.0f, progress, s_meshTime, (Vector2){0.0f, 0.0f}); break;
               case 37: VFX_ComposeFloatingStones(s_prefabStartPos, 0.7f, s_meshTime); break;
               case 38: VFX_ComposeQuakeRumble(s_prefabStartPos, 1.3f, s_meshTime); break;
               case 39: VFX_ComposeStonePillar(s_prefabStartPos, progress); break;
               case 40: VFX_ComposeBoulder(Vector3Add(s_prefabStartPos, (Vector3){0, 0.5f, 0})); break;
               case 41: VFX_ComposeFissureStreak(s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){3, 0, 0}), 0.4f, progress, s_meshTime); break;
               case 44: VFX_ComposeElementalMist(VC_MAT_ICE, s_prefabStartPos, 1.0f, s_meshTime); break;
-              case 52: VFX_ComposeSmokePuff(s_prefabStartPos, 0.8f); break;
-              case 53: VFX_ComposeSmokeTrail(s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){0, 0, 3}), 1.0f); break;
               case 54: VFX_ComposeShield(VC_MAT_METAL, s_prefabStartPos, 1.2f, fminf(progress, 0.5f), s_meshTime); break;
               case 55: VFX_ComposeZone(VC_MAT_FIRE, s_prefabStartPos, 1.2f, fminf(progress, 0.5f), s_meshTime); break;
               case 56: VFX_ComposeSlashArc(VC_MAT_METAL, s_prefabStartPos, (Vector3){1, 0, 0}, 1.0f, 120.0f, fminf(s_meshTime / 0.6f, 0.999f), s_meshTime); break;
@@ -888,6 +894,8 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
     case 49: VFX_ComposeGlintBurst(pos, 14, 0.4f, (Color){180, 230, 255, 255}); break;
     case 50: VFX_ComposeStreakFlare(pos, 1.0f, (Color){255, 250, 220, 255}); break;
     case 51: VFX_ComposeGustSlash(Vector3Add(pos, (Vector3){0, 0.3f, 0}), (Vector3){1.0f, 0.0f, 0.0f}, 1.0f); break;
+    case 52: VFX_ComposeSmokePuff(pos, 0.8f); break;
+    case 53: VFX_ComposeSmokeTrail(pos, Vector3Add(pos, (Vector3){0, 0, 3}), 1.0f); break;
     case 63: VFX_TriggerExplosion(VC_MAT_FIRE, pos, 1.0f, false); break;
     case 64: VFX_SpawnGroundWave(pos, (Vector3){1, 0, 0}, EFFECT_PRESET_FIRE_EXPLOSION, 3.0f, 2.0f); break;
     case 65: VFX_ComposeProjectileTrail(pos, Vector3Add(pos, (Vector3){4, 0, 0}), EFFECT_PRESET_FIRE_EXPLOSION, 1.0f, 5.0f); break;
