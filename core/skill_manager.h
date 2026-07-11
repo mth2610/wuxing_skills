@@ -73,7 +73,10 @@ void UnloadSkillManager(void);
 // Not auto-enforced for cooldown/abort: callers that want gating must still
 // call SkillManager_CanCast/TriggerCooldown themselves around this call.
 // Pass any stable int if the caster has no real agentId yet.
-void CastSkill(int skillIndex, int agentId, Vector3 startPos, Vector3 target, SkillParams params);
+// Returns true if the cast actually went through — false when aborted by the
+// bounds check or the mana gate. Lets callers gate cast-side feedback (e.g.
+// character/character_model.h's CHAR_ANIM_CAST one-shot) on real success.
+bool CastSkill(int skillIndex, int agentId, Vector3 startPos, Vector3 target, SkillParams params);
 
 int RegisterSkill(const char* name, Color color,
                   void (*init)(int screenWidth, int screenHeight),
@@ -243,5 +246,42 @@ typedef int (*NearbyTargetsProviderFn)(Vector3 center, float radius,
 void SkillManager_SetNearbyTargetsProvider(NearbyTargetsProviderFn fn);
 int  SkillManager_GetNearbyTargets(Vector3 center, float radius,
                                    int *outIds, int maxIds);
+
+// The single legacy test "enemy"'s entities/entities.h agentPool slot. Lets
+// skill impact code (which today only ever sees a raw enemyPos/enemyRadius,
+// no agentId) resolve a real agentId to call Entity_ApplyLaunch/Stun/Pull on.
+// Set once by sandbox (InitSandbox) — mirrors SkillManager_SetAgentPosProvider's
+// role of bridging entities into skill_manager without a header dependency.
+void SkillManager_SetEnemyAgentId(int agentId);
+int  SkillManager_GetEnemyAgentId(void); // -1 if never set
+
+// Wall Registry — lets a skill with a genuine stationary phase (e.g.
+// stone_prison's STATE_HOLDING pillar) "ping" its position/element every
+// frame it's up (same per-tick-refresh idiom already used for
+// AddRootToEnemy/Entity_ApplyStun), so the separate basic-attack system
+// (entities/entities.h's Entity_ExecuteBasicAttack) can look up "is there a
+// wall near the attacker" without any direct dependency between the two.
+// element follows entities/entities.h's Agent.currentElement convention
+// (0=Water,1=Wood,2=Fire,3=Earth,4=Metal).
+void SkillManager_RegisterWall(Vector3 position, int element, float radius, float refreshDuration);
+// Finds the nearest active wall within checkRadius of casterPos. Returns
+// false (outPos/outElement untouched) if none found.
+bool SkillManager_FindNearbyWall(Vector3 casterPos, float checkRadius, Vector3 *outWallPos, int *outElement);
+
+// Per-skill mana cost, optional override — purely additive like
+// RegisterSkillAbort/RegisterSkillLifecycleQuery: a skill that never calls
+// RegisterSkillManaCost still gets charged Skill_GetManaCost's default flat
+// cost on every CastSkill() call (see core/skill_manager.c's CastSkill).
+void RegisterSkillManaCost(int skillIndex, float cost);
+float Skill_GetManaCost(int skillIndex);
+
+// Per-skill cast-flourish duration (seconds) — how long the caster's cast
+// animation (character/character_model.h CHAR_ANIM_CAST) should take for
+// this skill. Same registry pattern as RegisterSkillManaCost: skills that
+// never register get DEFAULT_CAST_ANIM_SECONDS (1.5f). Register from the
+// skill's Init to make a heavy summon flourish longer / a quick jab of a
+// spell shorter — playback speed is derived from this, not hardcoded.
+void RegisterSkillCastAnimSeconds(int skillIndex, float seconds);
+float Skill_GetCastAnimSeconds(int skillIndex);
 
 #endif // SKILL_MANAGER_H

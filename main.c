@@ -433,8 +433,15 @@ int main(int argc, char **argv) {
         for (int i = 0; i < pathCount; i++) {
           uiState.currentParams.pathPoints[i] = pathPoints[i];
         }
-        CastSkill(uiState.activeSkillIndex, player.agentId, player.position,
-                  mouseTarget3D, uiState.currentParams);
+        // Cast anim gated on the bool result — no flourish when the mana
+        // gate (or bounds check) rejected the cast. Flourish length is the
+        // skill's own registered duration, not a fixed number.
+        if (CastSkill(uiState.activeSkillIndex, player.agentId, player.position,
+                      mouseTarget3D, uiState.currentParams)) {
+          CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_CAST,
+                                            Skill_GetCastAnimSeconds(uiState.activeSkillIndex));
+          Sandbox_FacePlayerToward(&player, mouseTarget3D); // quay về hướng đánh
+        }
       }
     }
 

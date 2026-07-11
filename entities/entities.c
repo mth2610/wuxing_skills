@@ -1,6 +1,7 @@
 // entities/entities.c
 #include "entities.h"
 #include "core/skill_manager.h"
+#include "raymath.h"
 #include <math.h>
 #include <stddef.h>
 
@@ -19,6 +20,16 @@ static const Vector3 ARENA_CENTER = { 6.0f, 0.0f, 4.4f };
 static const float   ARENA_RADIUS = 18.0f;
 static const float   GRAVITY = 5.0f; // below real 9.81 m/s² by design (floatier game feel)
 static const float   RING_OUT_KILL_Y = -2.0f;
+static const float   DEFAULT_MAX_MANA = 100.0f;
+static const float   MANA_REGEN_PER_SEC = 5.0f;
+// Basic attack tuning (see Entity_ExecuteBasicAttack). Real-world-scaled —
+// see root CLAUDE.md scale rules; melee range/wall-check radius sized to
+// "arm's reach" and "standing next to your own wall" respectively.
+static const float   BASIC_ATTACK_RANGE = 1.5f;
+static const float   WALL_CHECK_RADIUS = 3.0f;
+// Auto-target search radius — how far Entity_ExecuteBasicAttack looks for
+// the nearest other agent, no explicit target needed.
+static const float   AUTO_TARGET_RADIUS = 10.0f;
 
 void Entity_Init(void) {
     for (int i = 0; i < MAX_AGENTS; i++) {
@@ -49,6 +60,32 @@ void Entity_Update(float dt) {
             if (a->dashCooldown < 0.0f) a->dashCooldown = 0.0f;
         }
 
+        if (a->stunTimer > 0.0f) {
+            a->stunTimer -= dt;
+            if (a->stunTimer < 0.0f) a->stunTimer = 0.0f;
+        }
+
+        if (a->mana < a->maxMana) {
+            a->mana += MANA_REGEN_PER_SEC * dt;
+            if (a->mana > a->maxMana) a->mana = a->maxMana;
+        }
+
+        if (a->pullTimer > 0.0f) {
+            float dx = a->pullTarget.x - a->position.x;
+            float dz = a->pullTarget.z - a->position.z;
+            float dist = sqrtf(dx * dx + dz * dz);
+            float step = a->pullSpeed * dt;
+            if (dist <= step || dist < 0.0001f) {
+                a->position.x = a->pullTarget.x;
+                a->position.z = a->pullTarget.z;
+            } else {
+                a->position.x += (dx / dist) * step;
+                a->position.z += (dz / dist) * step;
+            }
+            a->pullTimer -= dt;
+            if (a->pullTimer < 0.0f) a->pullTimer = 0.0f;
+        }
+
         Entity_CheckRingOut(i);
 
         if (a->vState == AGENT_RING_OUT_FALLING) {
@@ -56,6 +93,16 @@ void Entity_Update(float dt) {
             a->position.y += a->velocity.y * dt;
             if (a->position.y < RING_OUT_KILL_Y) {
                 a->active = false;
+            }
+        } else if (a->vState == AGENT_JUMPING) {
+            a->velocity.y -= GRAVITY * dt;
+            a->position.x += a->velocity.x * dt;
+            a->position.y += a->velocity.y * dt;
+            a->position.z += a->velocity.z * dt;
+            if (a->position.y <= 0.0f) {
+                a->position.y = 0.0f;
+                a->velocity = (Vector3){ 0 };
+                a->vState = AGENT_GROUNDED;
             }
         }
     }
@@ -105,6 +152,143 @@ void Entity_Dash(int agentId, Vector3 direction, float speed) {
     (void)speed;
     a->dashCooldown = 1.0f; // placeholder cooldown value; real tuning TBD
     Entity_OnDash(agentId);
+}
+
+void Entity_ApplyLaunch(int agentId, float verticalForce, Vector3 horizontalVelocity) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return;
+    a->velocity = (Vector3){ horizontalVelocity.x, verticalForce, horizontalVelocity.z };
+    a->vState = AGENT_JUMPING;
+}
+
+void Entity_ApplyStun(int agentId, float duration) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return;
+    a->stunTimer = duration;
+}
+
+bool Entity_IsStunned(int agentId) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return false;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return false;
+    return a->stunTimer > 0.0f;
+}
+
+void Entity_ApplyPull(int agentId, Vector3 targetPos, float speed, float duration) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return;
+    a->pullTarget = targetPos;
+    a->pullSpeed = speed;
+    a->pullTimer = duration;
+}
+
+bool Entity_IsCrowdControlled(int agentId) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return false;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return false;
+    return a->stunTimer > 0.0f || a->vState != AGENT_GROUNDED || a->pullTimer > 0.0f;
+}
+
+bool Entity_TrySpendMana(int agentId, float amount) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return false;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return false;
+    if (a->mana < amount) return false;
+    a->mana -= amount;
+    return true;
+}
+
+float Entity_GetBasicAttackSeconds(BasicAttackType type) {
+    switch (type) {
+        case BASIC_ATTACK_PUNCH: return 1.0f;
+        case BASIC_ATTACK_KICK:  return 1.2f;
+        case BASIC_ATTACK_PALM:  return 1.4f;
+        default:                 return 1.0f;
+    }
+}
+
+bool Entity_ExecuteBasicAttack(int attackerId, BasicAttackType type,
+                               Vector3 *outTargetPos,
+                               Vector3 *outWallPos, int *outWallElement) {
+    if (outTargetPos) *outTargetPos = (Vector3){ 0 };
+    if (outWallPos) *outWallPos = (Vector3){ 0 };
+    if (outWallElement) *outWallElement = -1;
+
+    if (attackerId < 0 || attackerId >= MAX_AGENTS) return false;
+    Agent *attacker = &agentPool[attackerId];
+    if (!attacker->active) return false;
+
+    // Auto-target: nearest other active agent within AUTO_TARGET_RADIUS — no
+    // targetId parameter, no "enemy" reference needed. No team filtering yet
+    // (Agent has no team field — known gap, tracked for Module 1).
+    int nearbyIds[MAX_AGENTS];
+    int nearbyCount = Entity_GetNearbyTargets(attacker->position, AUTO_TARGET_RADIUS, nearbyIds, MAX_AGENTS);
+    int targetId = -1;
+    float bestDistSq = 0.0f;
+    for (int i = 0; i < nearbyCount; i++) {
+        if (nearbyIds[i] == attackerId) continue;
+        Agent *candidate = &agentPool[nearbyIds[i]];
+        float cdx = candidate->position.x - attacker->position.x;
+        float cdz = candidate->position.z - attacker->position.z;
+        float cDistSq = cdx * cdx + cdz * cdz;
+        if (targetId == -1 || cDistSq < bestDistSq) {
+            targetId = nearbyIds[i];
+            bestDistSq = cDistSq;
+        }
+    }
+    if (targetId == -1) return false;
+
+    Agent *target = &agentPool[targetId];
+    if (outTargetPos) *outTargetPos = target->position;
+
+    float dx = target->position.x - attacker->position.x;
+    float dz = target->position.z - attacker->position.z;
+    float distSq = dx * dx + dz * dz;
+
+    float dist = sqrtf(distSq);
+    Vector3 pushDir = { 0.0f, 0.0f, 0.0f };
+    if (dist > 0.0001f) {
+        pushDir.x = dx / dist;
+        pushDir.z = dz / dist;
+    }
+
+    // Melee hit only within BASIC_ATTACK_RANGE — but the wall-bonus check
+    // below is intentionally NOT gated behind this: the whole point of the
+    // wall synergy is a free ranged substitute when the enemy is too far to
+    // melee, so a wall bonus must still be able to fire even if the base
+    // punch/kick/palm doesn't land.
+    if (distSq <= BASIC_ATTACK_RANGE * BASIC_ATTACK_RANGE) {
+        switch (type) {
+            case BASIC_ATTACK_PUNCH:
+                Entity_ApplyDamage(targetId, 5.0f, Vector3Scale(pushDir, 1.5f));
+                break;
+            case BASIC_ATTACK_KICK:
+                Entity_ApplyDamage(targetId, 8.0f, Vector3Scale(pushDir, 3.0f));
+                break;
+            case BASIC_ATTACK_PALM:
+                // "Chưởng" — highest damage, breaks guard, small pop into the air.
+                Entity_ApplyDamage(targetId, 12.0f, (Vector3){ 0 });
+                Entity_ApplyLaunch(targetId, 3.0f, Vector3Scale(pushDir, 2.0f));
+                break;
+        }
+    }
+
+    Vector3 wallPos;
+    int wallElement;
+    if (SkillManager_FindNearbyWall(attacker->position, WALL_CHECK_RADIUS, &wallPos, &wallElement)) {
+        // Free elemental bonus hit — no mana cost, this whole path never
+        // touches Entity_TrySpendMana. Applies regardless of melee range
+        // (the rock/bolt is what closes the distance, not the fist).
+        Entity_ApplyDamage(targetId, 6.0f, Vector3Scale(pushDir, 2.0f));
+        if (outWallPos) *outWallPos = wallPos;
+        if (outWallElement) *outWallElement = wallElement;
+        return true;
+    }
+
+    return false;
 }
 
 bool Entity_CheckRingOut(int agentId) {
@@ -215,6 +399,12 @@ int Entity_SpawnAgent(Vector3 position, float maxHealth, int element) {
             a->dashCooldown = 0.0f;
             a->isStealthed = false;
             a->active = true;
+            a->stunTimer = 0.0f;
+            a->pullTarget = (Vector3){ 0 };
+            a->pullTimer = 0.0f;
+            a->pullSpeed = 0.0f;
+            a->maxMana = DEFAULT_MAX_MANA;
+            a->mana = DEFAULT_MAX_MANA;
             for (int m = 0; m < MAX_AGENT_MODIFIERS; m++) {
                 a->modifiers[m] = (AgentModifier){ 0 };
             }

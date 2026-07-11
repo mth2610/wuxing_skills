@@ -126,7 +126,6 @@ static void ShardSparkle_Init(void) {
     ColorGradient_AddStop(&s_shardSparkleGrad, 1.0f, (Color){100, 180, 255, 0});
     s_shardSparkleInit = true;
 }
-
 static Arch_Beam        s_archBeams[ARCH_MAX_BEAMS];
 static Arch_GroundWave  s_archGwaves[ARCH_MAX_GROUNDWAVES];
 static Arch_Orbital     s_archOrbitals[ARCH_MAX_ORBITALS];
@@ -783,3 +782,4 @@ void VFX_ComposeShardDebris(Vector3 pos, int count, float speed, VC_MaterialId m
         spawned++;
     }
 }
+

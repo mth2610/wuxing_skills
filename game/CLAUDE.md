@@ -4,10 +4,11 @@
 Owns the real, production-bound gameplay screen (`game/game_screen.h/.c`) —
 distinct from `sandbox/`, which stays the dev/test harness (debug panels,
 tuning sliders, autotest) and must never be modified by this agent. This is
-`MODULES_ROADMAP.md` Module 7's eventual home, currently scoped down to a
-minimal walk-around-and-view-the-map screen because Module 1 (team/mana) and
-Module 3 (combat) aren't built yet — no skill casting, no enemies, no combat
-here until those land.
+`MODULES_ROADMAP.md` Module 7's eventual home. Now has real basic-attack
+combat (đấm/đá/chưởng, auto-target, wall synergy — a deliberate shortcut ahead
+of Module 4 `control/` formalizing input, see game_screen.h's header) and a
+real mana bar (Module 1's mana landed). Still no real skill-casting/enemy/boss
+(Module 3 `combat/` + Module 5 `boss/` not built yet).
 
 ## Scope
 - **Read/write:** `game/game_screen.h`, `game/game_screen.c`
@@ -27,10 +28,10 @@ here until those land.
   global `PlayerEntity player` declared in `main.c` (same one `InitSandbox`
   already spawns into the Entity/Agent pool at startup — do not spawn a
   second player agent).
-- Real HP bar HUD only, read via `Entity_GetAgent(player->agentId)->health`.
-  No mana bar yet — `Agent` has no `mana` field until Module 1 lands; do not
-  fake one.
-- No skill casting, no enemy, no combat, no damage sources yet.
+- Real HP + mana bar HUD, read via `Entity_GetAgent(player->agentId)`.
+- Real basic attack (Z/C/right-click → `Entity_ExecuteBasicAttack`,
+  auto-target, wall synergy) — no real skill-casting/enemy/boss yet (Module 3
+  `combat/` + Module 5 `boss/` not built).
 - Map draw/update (`MapManager_DrawActive/Update`) and most VFX systems
   already run unconditionally in `main.c`'s main loop regardless of active
   screen — this module does NOT need to touch those.

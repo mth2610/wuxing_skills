@@ -36,6 +36,19 @@ typedef struct {
     bool    isStealthed;         // reserved, not consumed yet
     bool    active;
     AgentModifier modifiers[MAX_AGENT_MODIFIERS];
+
+    // --- Crowd control (see §12 in ENTITIES_API.md) ---
+    float   stunTimer;   // seconds remaining; <=0 = not stunned. Orthogonal to
+                          // vState — an agent can be airborne AND stunned.
+                          // Entities only ticks this down; enforcing "can't
+                          // act while stunned" is the caller's job.
+    Vector3 pullTarget;   // world position being pulled toward
+    float   pullTimer;    // seconds remaining; <=0 = not being pulled
+    float   pullSpeed;    // units/sec toward pullTarget, XZ-plane only
+
+    // --- Mana (see §13 in ENTITIES_API.md) ---
+    float   mana;
+    float   maxMana;
 } Agent;
 
 // Sized for the real target scale (up to 6 real players + a mixed pool of
@@ -58,6 +71,60 @@ void Entity_ApplyDamage(int agentId, float damage, Vector3 knockback);
 void Entity_Jump(int agentId, float force);
 void Entity_Dash(int agentId, Vector3 direction, float speed);
 bool Entity_CheckRingOut(int agentId);
+
+// --- Crowd control (see ENTITIES_API.md §12) ---
+// Launch: sets velocity and vState = AGENT_JUMPING (shared with Entity_Jump).
+// Entity_Update integrates gravity + full 3-axis position while airborne and
+// lands back to AGENT_GROUNDED at position.y <= 0 — a real ballistic arc, not
+// just a vertical pop.
+void Entity_ApplyLaunch(int agentId, float verticalForce, Vector3 horizontalVelocity);
+// Stun: sets/refreshes stunTimer. Entities has no action/input system to
+// enforce this — callers (skill cast, input) must check Entity_IsStunned.
+void Entity_ApplyStun(int agentId, float duration);
+bool Entity_IsStunned(int agentId);
+// Pull: entities directly integrates position.x/z toward targetPos at speed
+// for duration seconds (self-contained, does not rely on velocity/external
+// integration — see ENTITIES_API.md §12 for why).
+void Entity_ApplyPull(int agentId, Vector3 targetPos, float speed, float duration);
+// Convenience combined read for external movement/input systems deciding
+// whether to skip their own position writes this frame.
+bool Entity_IsCrowdControlled(int agentId);
+
+// --- Mana (see ENTITIES_API.md §13) ---
+// Spawned agents get mana = maxMana = 100.0f by default (Entity_SpawnAgent).
+// Passive regen (5/sec) ticks in Entity_Update, capped at maxMana.
+// Returns false and leaves mana untouched if amount > current mana.
+bool Entity_TrySpendMana(int agentId, float amount);
+
+// --- Basic attack (see ENTITIES_API.md §13) ---
+// Separate from the CastSkill/skill pipeline entirely — free, no cast time,
+// no cooldown gate, spammable. Auto-targets: internally scans
+// Entity_GetNearbyTargets around the attacker (no targetId parameter — no
+// "enemy" reference needed) and picks the nearest active agent other than
+// the attacker. No team filtering yet (Agent has no team field — known gap,
+// see entities/CLAUDE.md's Module 1 note). Returns false immediately with no
+// side effects if no other agent is within AUTO_TARGET_RADIUS.
+// Applies damage/knockback on the auto-found target (PALM also applies a
+// small Entity_ApplyLaunch pop) and reports its position via outTargetPos
+// (caller has no targetId to look this up itself — needed for VFX, e.g. a
+// wall-bonus beam's endpoint). If the attacker is standing near a
+// registered wall (core/skill_manager.h's SkillManager_FindNearbyWall), also
+// applies a small bonus hit and reports the wall's position/element via
+// out-params so the caller (which owns VFX — entities does not call
+// rendering code) can spawn the matching elemental bonus effect. Returns
+// true iff a wall bonus fired (independent of whether a target was found —
+// wall bonus still needs a target to hit, see entities.c).
+typedef enum { BASIC_ATTACK_PUNCH, BASIC_ATTACK_KICK, BASIC_ATTACK_PALM } BasicAttackType;
+bool Entity_ExecuteBasicAttack(int attackerId, BasicAttackType type,
+                               Vector3 *outTargetPos,
+                               Vector3 *outWallPos, int *outWallElement);
+
+// How long this attack's swing takes, in seconds — gameplay data (single
+// source of truth for both game/ and sandbox/ callers), consumed by the
+// rendering side (character/character_model.h's
+// CharacterModel_TriggerAttackTimed) to pace the swing animation. Escalates
+// with the move's weight: punch < kick < palm.
+float Entity_GetBasicAttackSeconds(BasicAttackType type);
 
 // --- Dash/afterimage hook (stub) ---
 void Entity_OnDash(int agentId);

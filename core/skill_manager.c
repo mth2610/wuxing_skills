@@ -1,5 +1,6 @@
 #include "core/skill_manager.h"
 #include "core/skills_config.h"
+#include "entities/entities.h"
 
 #if HAS_SKILL_ELECTRIC
 #include "skills/taiji/lightning/electric_skill.h"
@@ -60,6 +61,26 @@ static float slowTimer = 0.0f;
 static float burnTimer = 0.0f;
 static float burnTickAccumulator = 0.0f;
 static float rootTimer = 0.0f;
+
+// Wall Registry — see skill_manager.h's SkillManager_RegisterWall/FindNearbyWall.
+#define MAX_WALLS 8
+typedef struct {
+  Vector3 position;
+  int element;
+  float radius;
+  float timer; // seconds remaining; <=0 = inactive slot
+} WallSlot;
+static WallSlot s_walls[MAX_WALLS];
+
+// Per-skill mana cost override — see RegisterSkillManaCost/Skill_GetManaCost.
+static float s_skillManaCost[MAX_SKILLS];
+static bool  s_skillManaCostSet[MAX_SKILLS];
+#define DEFAULT_MANA_COST 20.0f
+
+// Per-skill cast-flourish duration — see RegisterSkillCastAnimSeconds.
+static float s_skillCastAnimSecs[MAX_SKILLS];
+static bool  s_skillCastAnimSecsSet[MAX_SKILLS];
+#define DEFAULT_CAST_ANIM_SECONDS 1.5f
 
 #define MAX_ACTIVE_PORTALS 16
 
@@ -390,6 +411,13 @@ void UpdateSkillManager(float dt, Vector3 enemyPos, float enemyRadius) {
   } else
     burnTickAccumulator = 0.0f;
 
+  for (int i = 0; i < MAX_WALLS; i++) {
+    if (s_walls[i].timer > 0.0f) {
+      s_walls[i].timer -= dt;
+      if (s_walls[i].timer < 0.0f) s_walls[i].timer = 0.0f;
+    }
+  }
+
   for (int i = 0; i < MAX_ACTIVE_PORTALS; i++) {
     if (activePortals[i].active) {
       activePortals[i].lifetime -= dt;
@@ -527,11 +555,23 @@ void UnloadSkillManager(void) {
   }
 }
 
-void CastSkill(int skillIndex, int agentId, Vector3 startPos, Vector3 target,
+bool CastSkill(int skillIndex, int agentId, Vector3 startPos, Vector3 target,
                SkillParams params) {
   EnsureBuiltInRegistered();
   if (skillIndex < 0 || skillIndex >= registeredSkillCount)
-    return;
+    return false;
+
+  // Mana gate — real skills (fire/tube/glacial_cannon/stone_prison/...) cost
+  // mana; basic attacks (entities/entities.h's Entity_ExecuteBasicAttack)
+  // bypass CastSkill entirely via a separate input system, so they never hit
+  // this. Abort the cast completely on insufficient mana — no VFX, no
+  // cooldown trigger.
+  float manaCost = Skill_GetManaCost(skillIndex);
+  if (manaCost > 0.0f && !Entity_TrySpendMana(agentId, manaCost)) {
+    AddFloatingText(startPos, "Thieu Mana!", GRAY, 18.0f, 0.6f);
+    return false;
+  }
+
   if (skillRegistry[skillIndex].forcePathType != -1)
     params.pathType = (CastPathType)skillRegistry[skillIndex].forcePathType;
   if (skillRegistry[skillIndex].forceAnchorType != -1)
@@ -604,6 +644,7 @@ void CastSkill(int skillIndex, int agentId, Vector3 startPos, Vector3 target,
   }
   if (skillRegistry[skillIndex].cast)
     skillRegistry[skillIndex].cast(agentId, adjustedStartPos, adjustedTarget, params);
+  return true;
 }
 
 bool IsEnemySlowed(void) { return slowTimer > 0.0f; }
@@ -819,10 +860,16 @@ static void UpdateFireSkillWrapper(float dt, Vector3 enemyPos,
       AddFloatingText(tempProjectiles[i].position, "80", RED, 25.0f, 0.8f);
       AddFloatingText(tempProjectiles[i].position, "BURN!", ORANGE, 18.0f,
                       0.9f);
-      
+
       Vector3 pushDir = Vector3Normalize(Vector3Subtract(enemyPos, tempProjectiles[i].position));
       pushDir.y = 0.0f;
-      AddKnockbackToEnemy(Vector3Scale(pushDir, 0.8f));
+      // Real launch (needs entities' gravity-integrated AGENT_JUMPING arc) —
+      // legacy AddKnockbackToEnemy has no gravity, can't produce a real
+      // airborne arc, see ENTITIES_API.md §12.
+      int hitAgentId = SkillManager_GetEnemyAgentId();
+      if (hitAgentId >= 0) {
+        Entity_ApplyLaunch(hitAgentId, 5.5f, (Vector3){ pushDir.x * 3.0f, 0.0f, pushDir.z * 3.0f });
+      }
     }
   }
 }
@@ -1270,4 +1317,75 @@ int SkillManager_GetNearbyTargets(Vector3 center, float radius,
                                   int *outIds, int maxIds) {
     if (!s_nearbyTargetsProvider || !outIds || maxIds <= 0) return 0;
     return s_nearbyTargetsProvider(center, radius, outIds, maxIds);
+}
+
+// The single legacy test "enemy"'s agentId (see skill_manager.h) — lets skill
+// impact wrappers below call Entity_ApplyLaunch/Stun/Pull instead of the
+// legacy singleton AddKnockbackToEnemy/AddRootToEnemy.
+static int s_enemyAgentId = -1;
+
+void SkillManager_SetEnemyAgentId(int agentId) {
+    s_enemyAgentId = agentId;
+}
+
+int SkillManager_GetEnemyAgentId(void) {
+    return s_enemyAgentId;
+}
+
+void SkillManager_RegisterWall(Vector3 position, int element, float radius, float refreshDuration) {
+    // Refresh an existing slot at ~the same spot (same skill instance
+    // pinging again this tick) instead of always taking a new one.
+    for (int i = 0; i < MAX_WALLS; i++) {
+        if (s_walls[i].timer > 0.0f && Vector3Distance(s_walls[i].position, position) < 0.5f) {
+            s_walls[i].position = position;
+            s_walls[i].element = element;
+            s_walls[i].radius = radius;
+            s_walls[i].timer = refreshDuration;
+            return;
+        }
+    }
+    for (int i = 0; i < MAX_WALLS; i++) {
+        if (s_walls[i].timer <= 0.0f) {
+            s_walls[i] = (WallSlot){ position, element, radius, refreshDuration };
+            return;
+        }
+    }
+    // Pool full — silently drop (minimal version, no eviction policy, same
+    // pattern as Entity_AddModifier).
+}
+
+bool SkillManager_FindNearbyWall(Vector3 casterPos, float checkRadius, Vector3 *outWallPos, int *outElement) {
+    for (int i = 0; i < MAX_WALLS; i++) {
+        if (s_walls[i].timer <= 0.0f) continue;
+        if (Vector3Distance(casterPos, s_walls[i].position) <= checkRadius + s_walls[i].radius) {
+            if (outWallPos) *outWallPos = s_walls[i].position;
+            if (outElement) *outElement = s_walls[i].element;
+            return true;
+        }
+    }
+    return false;
+}
+
+void RegisterSkillManaCost(int skillIndex, float cost) {
+    if (skillIndex < 0 || skillIndex >= MAX_SKILLS) return;
+    s_skillManaCost[skillIndex] = cost;
+    s_skillManaCostSet[skillIndex] = true;
+}
+
+float Skill_GetManaCost(int skillIndex) {
+    if (skillIndex < 0 || skillIndex >= MAX_SKILLS) return DEFAULT_MANA_COST;
+    if (!s_skillManaCostSet[skillIndex]) return DEFAULT_MANA_COST;
+    return s_skillManaCost[skillIndex];
+}
+
+void RegisterSkillCastAnimSeconds(int skillIndex, float seconds) {
+    if (skillIndex < 0 || skillIndex >= MAX_SKILLS) return;
+    s_skillCastAnimSecs[skillIndex] = seconds;
+    s_skillCastAnimSecsSet[skillIndex] = true;
+}
+
+float Skill_GetCastAnimSeconds(int skillIndex) {
+    if (skillIndex < 0 || skillIndex >= MAX_SKILLS) return DEFAULT_CAST_ANIM_SECONDS;
+    if (!s_skillCastAnimSecsSet[skillIndex]) return DEFAULT_CAST_ANIM_SECONDS;
+    return s_skillCastAnimSecs[skillIndex];
 }

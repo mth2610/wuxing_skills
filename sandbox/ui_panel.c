@@ -1,4 +1,6 @@
 #include "sandbox/ui_panel.h"
+#include "sandbox/sandbox_core.h"
+#include "entities/entities.h"
 #include "compute/gpu_particle_system.h"
 #include "core/tuning.h"
 #include "core/resource_manager.h"
@@ -30,6 +32,12 @@ static Rectangle rectPortalToggle;
 static Rectangle skillButtons[64];
 static Rectangle togglePanelBtn;
 static Rectangle backBtn;
+
+// --- Training dummy CC test buttons (entities/entities.h §12) ---
+static Rectangle dummyStunBtn;
+static Rectangle dummyLaunchBtn;
+static Rectangle dummyPullBtn;
+static Rectangle dummyResetBtn;
 
 static int hoverSkillIndex = -1;
 static int skillOrder[64];
@@ -215,6 +223,12 @@ void InitUIPanel(void) {
   togglePanelBtn = (Rectangle){20, 15, 180, 32};
   backBtn = (Rectangle){210, 15, 180, 32};
 
+  // Training dummy CC test row, continuing the same top bar
+  dummyStunBtn   = (Rectangle){400, 15, 140, 32};
+  dummyLaunchBtn = (Rectangle){550, 15, 140, 32};
+  dummyPullBtn   = (Rectangle){700, 15, 140, 32};
+  dummyResetBtn  = (Rectangle){850, 15, 140, 32};
+
   // Compacted row pitch (36px, was 50px) and button height (28px, was 35px)
   // so this whole control block takes noticeably less vertical space,
   // leaving more room for the (now wider) tuning panel below it.
@@ -280,6 +294,39 @@ void UpdateUIPanel(Vector2 mousePos, UIPanelState *state) {
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
       state->requestedBackToMenu = true;
       return;
+    }
+  }
+
+  // --- Training dummy CC test buttons (entities/entities.h §12) ---
+  // Fixed test constants, sized per root CLAUDE.md scale rules (force
+  // 3.0-7.0f vs. real gravity 9.81f) — not wired through RegisterSkillTunables
+  // since that registry is keyed to a skill's activeSkillIndex, not the dummy.
+  int dummyId = Sandbox_GetTrainingDummyAgentId();
+  if (CheckCollisionPointRec(mousePos, dummyStunBtn)) {
+    state->clickedOnUI = true;
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+      Entity_ApplyStun(dummyId, 2.0f);
+    }
+  }
+  if (CheckCollisionPointRec(mousePos, dummyLaunchBtn)) {
+    state->clickedOnUI = true;
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+      Entity_ApplyLaunch(dummyId, 5.5f, (Vector3){ 0.0f, 0.0f, -2.0f });
+    }
+  }
+  if (CheckCollisionPointRec(mousePos, dummyPullBtn)) {
+    state->clickedOnUI = true;
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+      const Agent *playerAgent = Entity_GetAgent(Sandbox_GetPlayerAgentId());
+      if (playerAgent != NULL) {
+        Entity_ApplyPull(dummyId, playerAgent->position, 3.5f, 1.0f);
+      }
+    }
+  }
+  if (CheckCollisionPointRec(mousePos, dummyResetBtn)) {
+    state->clickedOnUI = true;
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+      Sandbox_ResetTrainingDummy();
     }
   }
 
@@ -497,6 +544,24 @@ void DrawUIPanel(const UIPanelState *state) {
   const char *backText = "[<] QUAY LAI MENU";
   float backTextW = UITextWidth(backText, 13);
   UIText(backText, backBtn.x + (backBtn.width - backTextW) / 2, backBtn.y + 9, 13, WHITE);
+
+  // Vẽ các nút test CC cho training dummy
+  {
+    struct { Rectangle rect; const char *label; Color col; } dummyBtns[4] = {
+      { dummyStunBtn,   "STUN DUMMY",  GetColor(0xB8860BFF) },
+      { dummyLaunchBtn, "LAUNCH DUMMY",MAROON },
+      { dummyPullBtn,   "PULL DUMMY",  DARKBLUE },
+      { dummyResetBtn,  "RESET DUMMY", DARKGRAY },
+    };
+    for (int i = 0; i < 4; i++) {
+      bool isOver = CheckCollisionPointRec(mousePos, dummyBtns[i].rect);
+      Color col = isOver ? ColorBrightness(dummyBtns[i].col, 0.3f) : dummyBtns[i].col;
+      DrawRectangleRounded(dummyBtns[i].rect, 0.2f, 10, col);
+      DrawRectangleRoundedLines(dummyBtns[i].rect, 0.2f, 10, WHITE);
+      float tw = UITextWidth(dummyBtns[i].label, 12);
+      UIText(dummyBtns[i].label, dummyBtns[i].rect.x + (dummyBtns[i].rect.width - tw) / 2, dummyBtns[i].rect.y + 10, 12, WHITE);
+    }
+  }
 
   // Nếu bảng điều khiển đang đóng, không vẽ gì thêm
   if (!state->isPanelOpen) {

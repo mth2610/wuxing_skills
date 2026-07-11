@@ -10,6 +10,7 @@
 #include "core/skill_helper.h"
 #include "core/skill_curve.h"
 #include "core/skill_manager.h"
+#include "entities/entities.h"
 #include "environment/environment_system.h"
 #include "rlgl.h"
 #include "raymath.h"
@@ -24,7 +25,11 @@
 
 #include "stone_prison_skill_params.inl"
 
-#define MAX_PRISONS         2
+// 4, not 2 — cooldown (1.5s, SKILL_CAT_AOE_CONTROL) is shorter than a
+// prison's full lifecycle (~3.3s: CAST 1.2 + RISE 0.2 + HOLD 1.5 + explode +
+// DISSOLVE 0.4), so 2 slots could exhaust after only 2 casts while both are
+// still finishing, silently failing every cast after that until one clears.
+#define MAX_PRISONS         4
 #define PILLARS_COUNT       6
 #define HEIGHT_SEGS         8
 #define RADIAL_SEGS         8
@@ -328,7 +333,22 @@ void UpdateStonePrisonSkill(float dt, Vector3 enemyPos, float enemyRadius)
 
             if (distSq <= checkRad * checkRad) {
                 AddRootToEnemy(0.15f);
+                // Real immobilize — AddRootToEnemy/IsEnemyRooted has no
+                // movement-blocking effect wired up anywhere (checked, never
+                // called from sandbox_core.c). Entity_ApplyStun actually
+                // freezes the agent via entities/entities.h §12.
+                int hitAgentId = SkillManager_GetEnemyAgentId();
+                if (hitAgentId >= 0) {
+                    Entity_ApplyStun(hitAgentId, 0.15f);
+                }
             }
+
+            // Register as a defensive wall (independent of whether the enemy
+            // happens to be in the root-check radius above) — this is what
+            // lets the player's basic attacks get a free earth bonus when
+            // standing near their own pillar. See core/skill_manager.h's
+            // SkillManager_RegisterWall / entities.h's Entity_ExecuteBasicAttack.
+            SkillManager_RegisterWall(p->pos, /*element=*/3 /* Earth */, checkRad, 0.2f);
 
             if (GetRandomValue(0, 100) < 25) {
                 float a = (float)GetRandomValue(0, 360) * DEG2RAD;

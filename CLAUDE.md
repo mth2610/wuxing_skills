@@ -23,6 +23,8 @@ C/Raylib 6.0 / OpenGL 3.3 game project. Isometric Night-time Arena. 6 elements: 
 | **Map Agent** | `maps/` | `environment/environment_system.h`, `core/skill_manager.h`, `assets/` |
 | **Environment Agent** | `environment/` | `core/decal_system.h`, `core/skill_manager.h`, `compute/gpu_particle_system.h` |
 | **Entities Agent** | `entities/` | `core/skill_manager.h`, `ENTITIES_API.md` — minimal scope, see `entities/CLAUDE.md` |
+| **Character Agent** | `character/` | `core/resource_manager.h` — model/animation rendering, counterpart to `entities/`'s pure logic, see `character/CLAUDE.md` |
+| **Game Agent** | `game/` | `entities/entities.h`, `environment/environment_system.h`, `core/map_manager.h`, `sandbox/sandbox_core.h`, `character/character_model.h` — production screen, see `game/CLAUDE.md` |
 | **Sandbox Agent** | `sandbox/` | `.h` headers of ALL modules (dev/test integration harness, not shipped gameplay) — see `sandbox/CLAUDE.md` |
 
 ## Directories FORBIDDEN to every agent

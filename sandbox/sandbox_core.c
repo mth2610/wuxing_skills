@@ -1,5 +1,7 @@
 #include "sandbox/sandbox_core.h"
 #include "core/skill_manager.h"
+#include "core/skill_helper.h"
+#include "core/composition/visual_composer.h"
 #include "environment/environment_system.h"
 #include "entities/entities.h"
 #include "raymath.h"
@@ -116,6 +118,29 @@ void DrawCharacter3D(Vector3 position, float radius, Color skinCol, Color clothe
     }
 }
 
+// --- Training dummy (CC test rig, see entities/entities.h §12) ---
+static const Vector3 TRAINING_DUMMY_SPAWN_POS = { 6.0f, 0.0f, 8.0f };
+static int trainingDummyAgentId = -1;
+static int playerAgentIdCopy = -1;
+
+int Sandbox_GetTrainingDummyAgentId(void) {
+    return trainingDummyAgentId;
+}
+
+int Sandbox_GetPlayerAgentId(void) {
+    return playerAgentIdCopy;
+}
+
+void Sandbox_ResetTrainingDummy(void) {
+    const Agent *d = Entity_GetAgent(trainingDummyAgentId);
+    if (d != NULL) {
+        // Force-deactivate the old slot (no direct despawn API — dying is
+        // the existing sanctioned path to active = false).
+        Entity_ApplyDamage(trainingDummyAgentId, d->maxHealth + 1.0f, (Vector3){ 0 });
+    }
+    trainingDummyAgentId = Entity_SpawnAgent(TRAINING_DUMMY_SPAWN_POS, 9999.0f, 0);
+}
+
 void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
     // Camera (real-world-scaled: 1 unit = 1 meter)
     camera.position = (Vector3){ 6.0f, 5.0f, 8.4f };
@@ -135,6 +160,13 @@ void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
     player->jumpCount = 0;
     player->isFlying = false;
 
+    // Real character model (character/character_model.h) — no-op fallback to the
+    // old DrawCharacter3D stick figure while assets/characters/player.glb
+    // doesn't exist yet (CharacterModel_Load returns false, checked at draw
+    // time). Safe to call every InitSandbox — cached by ResourceManager.
+    CharacterModel_Load("assets/characters/player.glb");
+    CharacterModel_ResetState(&player->anim);
+
     // Cấu hình Enemy
     enemy->position = (Vector3){ 9.0f, 0.0f, 3.5f };
     enemy->radius = 0.35f;
@@ -152,11 +184,35 @@ void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
     Entity_Init();
     player->agentId = Entity_SpawnAgent(player->position, 100.0f, 0);
     enemy->agentId = Entity_SpawnAgent(enemy->position, 100.0f, 0);
+    playerAgentIdCopy = player->agentId;
+    // Lets skill impact code (core/skill_manager.c, which only ever sees a
+    // raw enemyPos/enemyRadius) resolve a real agentId for Entity_ApplyLaunch
+    // /Stun/Pull calls — see core/skill_manager.h's SkillManager_*EnemyAgentId.
+    SkillManager_SetEnemyAgentId(enemy->agentId);
+
+    // Training dummy — standalone CC test rig (entities/entities.h §12), NOT
+    // an EnemyEntity. Deliberately gets no per-frame Entity_SetPosition call
+    // (see UpdateSandbox) so Entities' own launch/pull integration is the
+    // sole owner of its position instead of being stomped every frame.
+    trainingDummyAgentId = Entity_SpawnAgent(TRAINING_DUMMY_SPAWN_POS, 9999.0f, 0);
 }
 // Biến toàn cục để điều khiển camera
 static float g_cameraAngle = 0.0f;
 static float g_camDist = 6.0f;
 static float g_camHeight = 4.5f;
+// Hướng model player (rad, quanh +Y) — cập nhật theo hướng DI CHUYỂN/dash,
+// đứng yên giữ hướng cuối. Trước đây xoay theo con trỏ chuột (giữ hành vi
+// tay-nhắm của stick-figure cũ) — sai với model thật: người chạy ngang mà
+// mặt vẫn nhìn chuột.
+static float g_playerModelYaw = 0.0f;
+
+void Sandbox_FacePlayerToward(const PlayerEntity* player, Vector3 worldPos) {
+    float dx = worldPos.x - player->position.x;
+    float dz = worldPos.z - player->position.z;
+    if (dx * dx + dz * dz > 0.0001f) {
+        g_playerModelYaw = atan2f(dx, dz);
+    }
+}
 
 void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelState* uiState, Vector3* outMouseTarget) {
     Vector2 mousePos = GetMousePosition();
@@ -397,16 +453,48 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         if (skillPressed) {
             int skillIdx = GetSkillAtOrderIndex(k);
             if (skillIdx != -1) {
-                CastSkill(skillIdx, player->agentId, player->position, enemy->position, uiState->currentParams);
+                // Animation cast chỉ phát khi CastSkill thật sự đi qua (không
+                // bị chặn bởi mana gate) — CastSkill trả bool cho đúng việc này.
+                if (CastSkill(skillIdx, player->agentId, player->position, enemy->position, uiState->currentParams)) {
+                    CharacterModel_TriggerAttackTimed(&player->anim, CHAR_ANIM_CAST,
+                                                      Skill_GetCastAnimSeconds(skillIdx));
+                    Sandbox_FacePlayerToward(player, enemy->position); // quay về hướng đánh
+                }
             }
         }
         prevTouchSkill[k] = touchSkill[k];
         g_touchSkillActive[k] = touchSkill[k];
     }
 
-    bool attackPressed = touchAttack && !prevTouchAttack;
+    // Nút cảm ứng "đánh thường" to (attackBtnCenter) — đây là hạ tầng touch
+    // DUY NHẤT hiện có trong toàn bộ engine (game/game_screen.c chưa có touch
+    // control nào). Đổi từ cast chiêu đang chọn sang gọi thẳng
+    // Entity_ExecuteBasicAttack (đấm/đá/chưởng NGẪU NHIÊN cho đến khi có hệ
+    // combo thật). Home THẬT của input PC là game/game_screen.c; Z/C ở đây
+    // chỉ là dev-mirror để test đánh thường ngay trong sandbox (nơi duy nhất
+    // hiện cast được chiêu/có enemy) mà không phải chuyển màn — không phải
+    // production input.
+    bool attackPressed = (touchAttack && !prevTouchAttack) ||
+                         IsKeyPressed(KEY_Z) || IsKeyPressed(KEY_C);
     if (attackPressed) {
-        CastSkill(uiState->activeSkillIndex, player->agentId, player->position, enemy->position, uiState->currentParams);
+        BasicAttackType randomType = (BasicAttackType)GetRandomValue(0, 2);
+        CharacterAnimSlot animSlot = (randomType == BASIC_ATTACK_PUNCH) ? CHAR_ANIM_PUNCH :
+                                     (randomType == BASIC_ATTACK_KICK)  ? CHAR_ANIM_KICK : CHAR_ANIM_PALM;
+        CharacterModel_TriggerAttackTimed(&player->anim, animSlot,
+                                          Entity_GetBasicAttackSeconds(randomType));
+        Vector3 targetPos, wallPos;
+        int wallElement;
+        bool gotWallBonus = Entity_ExecuteBasicAttack(player->agentId, randomType, &targetPos, &wallPos, &wallElement);
+        // targetPos chỉ được ghi khi auto-target tìm thấy mục tiêu (còn lại
+        // giữ (0,0,0)) — có mục tiêu thì quay mặt về hướng đánh.
+        if (targetPos.x != 0.0f || targetPos.y != 0.0f || targetPos.z != 0.0f) {
+            Sandbox_FacePlayerToward(player, targetPos);
+        }
+        if (gotWallBonus && wallElement == 3 /* Earth — chỉ nguyên tố này có tường thật đợt này */) {
+            VFX_SpawnProcBeam(wallPos, targetPos, EFFECT_PRESET_EARTH_CRACK, 0.12f, 0.35f);
+            VFX_ComposeImpact(targetPos, EFFECT_PRESET_EARTH_CRACK, 0.6f);
+            AddFloatingText(targetPos, "Cong Huong Dat!", ELEMENT_COLOR_EARTH, 16.0f, 0.6f);
+        }
     }
     prevTouchAttack = touchAttack;
     g_touchAttackActive = touchAttack;
@@ -462,6 +550,8 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         moveDir.z = camForward.z * -inputZ + camRight.z * inputX;
         moveDir = Vector3Normalize(moveDir);
     }
+
+    CharacterModel_Update(&player->anim, dt, inputX != 0.0f || inputZ != 0.0f);
 
     if (player->dashCooldown > 0.0f) player->dashCooldown -= dt;
 
@@ -541,6 +631,7 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         float dashSpeed = 12.0f;
         player->position.x += player->dashDir.x * dashSpeed * dt;
         player->position.z += player->dashDir.z * dashSpeed * dt;
+        g_playerModelYaw = atan2f(player->dashDir.x, player->dashDir.z);
 
         if (player->dashTimer <= 0.0f) {
             player->isDashing = false;
@@ -549,6 +640,9 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         float moveSpeed = 3.0f;
         player->position.x += moveDir.x * moveSpeed * dt;
         player->position.z += moveDir.z * moveSpeed * dt;
+        if (Vector3Length(moveDir) > 0.0001f) {
+            g_playerModelYaw = atan2f(moveDir.x, moveDir.z);
+        }
 
         if (dashPressed) {
             player->isDashing = true;
@@ -576,6 +670,28 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
 
     // 4. CẬP NHẬT ENEMY
     if (IsKeyPressed(KEY_P)) enemy->mode = (enemy->mode + 1) % 3;
+
+    // Test enemy has fixed 100 HP and no regen — repeated damage testing
+    // (basic attacks, wall bonus, any skill) eventually kills it
+    // (Agent.active = false). The legacy EnemyEntity draw/AI code doesn't
+    // check that flag at all, so it keeps walking/rendering normally while
+    // every Entity_* interaction with it (including Entity_ExecuteBasicAttack)
+    // silently no-ops from then on — looks like "everything just stopped
+    // working" with no visible cause. Respawn it right away so testing isn't
+    // gated by attrition, same reasoning as mana's passive regen.
+    if (Entity_GetAgent(enemy->agentId) == NULL) {
+        enemy->agentId = Entity_SpawnAgent(enemy->position, 100.0f, 0);
+        SkillManager_SetEnemyAgentId(enemy->agentId);
+    }
+
+    // While launched/stunned/pulled, Entities owns enemy->agentId's position
+    // entirely (see entities/entities.h §12's external-mover contract) — skip
+    // all AI movement, legacy knockback integration, and bounds/pillar
+    // collision below, and don't push this stale enemy->position back into
+    // the agentPool (that would stomp Entity_Update's own integration).
+    bool enemyCrowdControlled = Entity_IsCrowdControlled(enemy->agentId);
+
+    if (!enemyCrowdControlled) {
 
     float currentEnemySpeed = enemy->speed;
     if (IsEnemySlowed()) currentEnemySpeed *= 0.4f; 
@@ -676,6 +792,8 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         enemy->position.z += (float)GetRandomValue(-6, 6) * 0.01f;
     }
 
+    } // !enemyCrowdControlled
+
     // Xoay camera bằng phím Q/E hoặc phím ảo
     if (IsKeyDown(KEY_Q) || touchCamLeft) g_cameraAngle -= 2.5f * dt;
     if (IsKeyDown(KEY_E) || touchCamRight) g_cameraAngle += 2.5f * dt;
@@ -709,8 +827,17 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     // horizontal movement system) and tick the module's own state (cooldowns,
     // modifiers, ring-out).
     Entity_SetPosition(player->agentId, player->position);
-    Entity_SetPosition(enemy->agentId, enemy->position);
+    if (!enemyCrowdControlled) {
+        Entity_SetPosition(enemy->agentId, enemy->position);
+    }
     Entity_Update(dt);
+
+    if (enemyCrowdControlled) {
+        // Read back what Entity_Update just integrated (launch arc / pull)
+        // so DrawSandbox3D and the camera see this frame's real position.
+        const Agent *eAgent = Entity_GetAgent(enemy->agentId);
+        if (eAgent != NULL) enemy->position = eAgent->position;
+    }
 }
 
 // Simple in-world HP bar drawn as a billboard-less flat quad above the head.
@@ -724,6 +851,33 @@ static void DrawAgentHealthBar3D(Vector3 worldPos, float yOffset, int agentId, C
 
     float barWidth = 0.4f;
     float barHeight = 0.05f;
+    Vector3 barCenter = { worldPos.x, worldPos.y + yOffset, worldPos.z };
+
+    Vector3 bgMin = { barCenter.x - barWidth * 0.5f, barCenter.y, barCenter.z };
+    Vector3 bgMax = { barCenter.x + barWidth * 0.5f, barCenter.y + barHeight, barCenter.z };
+    DrawCube((Vector3){ (bgMin.x + bgMax.x) * 0.5f, (bgMin.y + bgMax.y) * 0.5f, barCenter.z }, barWidth, barHeight, 0.01f, ColorAlpha(BLACK, 0.6f));
+
+    if (ratio > 0.0f) {
+        float fillWidth = barWidth * ratio;
+        Vector3 fillCenter = { bgMin.x + fillWidth * 0.5f, (bgMin.y + bgMax.y) * 0.5f, barCenter.z };
+        DrawCube(fillCenter, fillWidth, barHeight, 0.012f, fillColor);
+    }
+}
+
+// Sibling of DrawAgentHealthBar3D reading mana/maxMana instead of
+// health/maxHealth — kept separate rather than parameterizing the existing
+// helper so the 3 existing HP-bar call sites (player/enemy/dummy) don't need
+// to change.
+static void DrawAgentManaBar3D(Vector3 worldPos, float yOffset, int agentId, Color fillColor) {
+    const Agent* agent = Entity_GetAgent(agentId);
+    if (agent == NULL) return;
+
+    float ratio = (agent->maxMana > 0.0f) ? (agent->mana / agent->maxMana) : 0.0f;
+    if (ratio < 0.0f) ratio = 0.0f;
+    if (ratio > 1.0f) ratio = 1.0f;
+
+    float barWidth = 0.4f;
+    float barHeight = 0.04f;
     Vector3 barCenter = { worldPos.x, worldPos.y + yOffset, worldPos.z };
 
     Vector3 bgMin = { barCenter.x - barWidth * 0.5f, barCenter.y, barCenter.z };
@@ -757,15 +911,58 @@ void DrawSandbox3D(const PlayerEntity* player, const EnemyEntity* enemy, Vector3
     }
 
     Environment_DrawSmartShadow(enemy->position, ENV_SHAPE_SPHERE, 0.3f, 0.3f);
-    DrawCharacter3D(enemy->position, 0.3f, GetColor(0xFFC0CBFF), IsEnemySlowed() ? GetColor(0x1B4F72FF) : (IsEnemyBurning() ? RED : GetColor(0x8B2500FF)), IsEnemySlowed() ? SKYBLUE : (IsEnemyBurning() ? YELLOW : GetColor(0xFF5500FF)), false, (Vector3){0});
+    {
+        Color enemyClothes = IsEnemySlowed() ? GetColor(0x1B4F72FF) : (IsEnemyBurning() ? RED : GetColor(0x8B2500FF));
+        Color enemyOutline = IsEnemySlowed() ? SKYBLUE : (IsEnemyBurning() ? YELLOW : GetColor(0xFF5500FF));
+        // Entities CC state (entities/entities.h §12) takes visual priority
+        // over the legacy slow/burn tint so hit-reactions are visible.
+        if (Entity_IsStunned(enemy->agentId)) {
+            enemyClothes = YELLOW;
+            enemyOutline = GOLD;
+        } else {
+            const Agent *eAgent = Entity_GetAgent(enemy->agentId);
+            if (eAgent != NULL && eAgent->vState == AGENT_JUMPING) {
+                enemyClothes = RED;
+                enemyOutline = MAROON;
+            }
+        }
+        DrawCharacter3D(enemy->position, 0.3f, GetColor(0xFFC0CBFF), enemyClothes, enemyOutline, false, (Vector3){0});
+    }
 
     Environment_DrawSmartShadow(player->position, ENV_SHAPE_SPHERE, 0.25f, 0.25f);
-    DrawCharacter3D(player->position, 0.25f, GetColor(0xFFD39BFF), GetColor(0x3B5998FF), player->isDashing ? GetRegisteredSkillColor(uiState->activeSkillIndex) : GetColor(0xCCCCCCFF), true, mouseTarget);
+    if (CharacterModel_IsLoaded()) {
+        // Facing = hướng di chuyển (g_playerModelYaw, cập nhật trong
+        // UpdateSandbox), KHÔNG theo con trỏ chuột — model thật chạy hướng
+        // nào phải quay mặt hướng đó, đứng yên giữ hướng cuối.
+        CharacterModel_Draw(&player->anim, player->position, g_playerModelYaw, 1.0f, WHITE);
+    } else {
+        DrawCharacter3D(player->position, 0.25f, GetColor(0xFFD39BFF), GetColor(0x3B5998FF), player->isDashing ? GetRegisteredSkillColor(uiState->activeSkillIndex) : GetColor(0xCCCCCCFF), true, mouseTarget);
+    }
 
     // HP bars sourced from the Entities agentPool (Entity_GetAgent), not the
     // legacy PlayerEntity/EnemyEntity structs (which have no HP field).
     DrawAgentHealthBar3D(enemy->position, 0.5f, enemy->agentId, RED);
     DrawAgentHealthBar3D(player->position, 0.46f, player->agentId, LIME);
+    DrawAgentManaBar3D(player->position, 0.40f, player->agentId, BLUE);
+
+    // Training dummy — drawn straight from Entity_GetAgent (Entities owns
+    // its position entirely, see InitSandbox), color-coded by CC state so
+    // the stun/launch/pull state machine is visible without any dedicated
+    // hit-react VFX yet.
+    const Agent *dummy = Entity_GetAgent(trainingDummyAgentId);
+    if (dummy != NULL) {
+        Color dummyClothes = GetColor(0x707070FF);
+        if (dummy->stunTimer > 0.0f) {
+            dummyClothes = YELLOW;
+        } else if (dummy->vState == AGENT_JUMPING) {
+            dummyClothes = RED;
+        } else if (dummy->pullTimer > 0.0f) {
+            dummyClothes = SKYBLUE;
+        }
+        Environment_DrawSmartShadow(dummy->position, ENV_SHAPE_SPHERE, 0.3f, 0.3f);
+        DrawCharacter3D(dummy->position, 0.3f, GetColor(0xE0E0E0FF), dummyClothes, WHITE, false, (Vector3){ 0 });
+        DrawAgentHealthBar3D(dummy->position, 0.5f, trainingDummyAgentId, ORANGE);
+    }
 }
 
 void DrawSandboxHUD(void) {

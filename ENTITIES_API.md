@@ -40,10 +40,20 @@ typedef struct {
     bool    isStealthed;         // true when motionless — reserved for future Auto-Targeting/Boss AI, not yet consumed anywhere
     bool    active;
     AgentModifier modifiers[MAX_AGENT_MODIFIERS]; // generic buff/debuff slots, see §8
+
+    // Crowd control — see §12
+    float   stunTimer;   // seconds remaining; <=0 = not stunned
+    Vector3 pullTarget;
+    float   pullTimer;   // seconds remaining; <=0 = not being pulled
+    float   pullSpeed;
+
+    // Mana — see §13
+    float   mana;
+    float   maxMana;
 } Agent;
 
-#define MAX_AGENTS 8
-static Agent agentPool[MAX_AGENTS]; // 4 ally + 4 enemy AI
+#define MAX_AGENTS 256
+static Agent agentPool[MAX_AGENTS]; // sized for 6 real players + minions/mid-tier monsters/2 bosses
 ```
 
 * **`currentElement`** is not chosen at creation — it's recomputed whenever the agent's 4 equipped skills change (Vô Hệ mechanic, see design doc §II). Recompute logic is NOT part of this minimal version; field exists, update logic comes later.
@@ -90,6 +100,7 @@ bool Entity_CheckRingOut(int agentId); // called every Entity_Update tick
   - Radius: `18.0f`
 * `Entity_CheckRingOut`: if `agentPool[id].position` is outside `arenaRadius` (XZ distance from `arenaCenter`), transition `vState → AGENT_RING_OUT_FALLING`. Once in this state, gravity pulls `velocity.y` down every frame (`GRAVITY = 5.0f`, below real 9.81 m/s² by design for a floatier fall) until the agent is deactivated (falls below a kill-Y threshold).
 * `Entity_Dash` is a **stub in this version** — only sets `dashCooldown`, does not move the agent yet. Real dash movement + afterimage VFX hook come in a later iteration.
+* `AGENT_JUMPING` now fully integrates: `Entity_Update` applies `GRAVITY` to `velocity.y` and integrates **all 3 axes** of `position` from `velocity` every frame while in this state (previously a stub — `Entity_Jump` set `velocity.y`/`vState` but nothing moved the agent afterward). Lands back to `AGENT_GROUNDED` when `position.y <= 0`, zeroing `velocity`. Entered by both `Entity_Jump` (voluntary) and `Entity_ApplyLaunch` (§12, involuntary) — same state, same integration, no separate "airborne" enum needed.
 
 ---
 
@@ -177,7 +188,119 @@ void Entity_SetPosition(int agentId, Vector3 position);
 
 ---
 
-## 11. Explicitly NOT in this version
+## 12. Crowd Control — Stun / Launch / Pull
+
+```c
+void Entity_ApplyLaunch(int agentId, float verticalForce, Vector3 horizontalVelocity);
+void Entity_ApplyStun(int agentId, float duration);
+bool Entity_IsStunned(int agentId);
+void Entity_ApplyPull(int agentId, Vector3 targetPos, float speed, float duration);
+bool Entity_IsCrowdControlled(int agentId);
+```
+
+* **Why self-contained, not velocity-impulse-and-let-someone-else-integrate:**
+  nothing in this module integrates `position.x/z` from `velocity` for a
+  standalone agent (horizontal movement is externally owned, §10's Position
+  sync setter). A one-shot velocity impulse for launch/pull would silently do
+  nothing for an agent with no external mover (e.g. a sandbox test dummy with
+  no per-frame `Entity_SetPosition` caller). So both effects own their own
+  position integration directly in `Entity_Update`, the same way
+  `AGENT_RING_OUT_FALLING` already owns its y-fall (§5) — not a new
+  architecture, just extended to more axes/effects.
+* **`Entity_ApplyLaunch`**: sets `velocity` and `vState = AGENT_JUMPING` —
+  identical entry point to `Entity_Jump` (§5). `Entity_Update`'s
+  `AGENT_JUMPING` branch (now gravity-integrated, see §5) owns the resulting
+  ballistic arc and the landing transition back to `AGENT_GROUNDED`.
+* **`Entity_ApplyStun`**: sets/refreshes `stunTimer`, ticked down once per
+  frame in `Entity_Update` (same shape as `dashCooldown`). Orthogonal to
+  `vState` — an agent can be airborne (launched) **and** stunned at the same
+  time (a common CC combo). Entities has no action/input system, so it
+  cannot itself block a stunned agent from doing anything — **callers
+  (skill-cast/input code) must check `Entity_IsStunned` before allowing an
+  action**, the same kind of caller-enforced contract `SkillManager_CanCast`
+  already relies on.
+* **`Entity_ApplyPull`**: sets `pullTarget`/`pullSpeed`/`pullTimer`.
+  `Entity_Update`, while `pullTimer > 0`, moves `position.x/z` directly
+  toward `pullTarget` at `pullSpeed` units/sec (XZ-plane, same convention as
+  `Entity_GetNearbyTargets`), clamped so it doesn't overshoot, and ticks
+  `pullTimer` down. Single-target only in this version — no AoE-pull
+  variant (no real use case for one yet; add one only when a skill needs it,
+  mirroring how §9's AoE wrappers were added on top of single-target
+  primitives once needed).
+* **`Entity_IsCrowdControlled`**: convenience OR of
+  `stunTimer > 0 || vState != AGENT_GROUNDED || pullTimer > 0`, for external
+  movement/input systems deciding whether to skip writing `Entity_SetPosition`
+  this frame and defer to Entities' own integration. **Not enforced** by
+  Entities itself — same caller-contract caveat as stun above.
+* **Known limitations, matching existing patterns elsewhere in this doc:**
+  no team/faction filtering (same gap as §7/§9), no AoE variant for pull or
+  stun (single-target only), and a stunned-but-grounded agent's horizontal
+  movement is still whatever an external mover writes each frame — Entities
+  can't block it, only report the state via `Entity_IsStunned`.
+
+---
+
+## 13. Mana + Basic Attack
+
+```c
+bool Entity_TrySpendMana(int agentId, float amount);
+
+typedef enum { BASIC_ATTACK_PUNCH, BASIC_ATTACK_KICK, BASIC_ATTACK_PALM } BasicAttackType;
+bool Entity_ExecuteBasicAttack(int attackerId, BasicAttackType type,
+                               Vector3 *outTargetPos,
+                               Vector3 *outWallPos, int *outWallElement);
+
+// Swing duration per attack type (punch 1.0s < kick 1.2s < palm 1.4s) —
+// single source of truth consumed by game/ and sandbox/ to pace the swing
+// animation (CharacterModel_TriggerAttackTimed). Pure data, no side effects.
+float Entity_GetBasicAttackSeconds(BasicAttackType type);
+```
+
+* **Mana**: `Agent.mana`/`maxMana`, both set to `100.0f` by `Entity_SpawnAgent`
+  (no signature change — every spawned agent gets a default pool). Passive
+  regen `5.0f/sec`, capped at `maxMana`, ticked in `Entity_Update` right next
+  to the stun-timer tick-down. `Entity_TrySpendMana` is all-or-nothing: if
+  `amount > mana` it returns `false` and leaves `mana` untouched (no partial
+  spend). `core/skill_manager.c`'s `CastSkill()` is the actual spend site —
+  every real skill cast costs mana (`Skill_GetManaCost`, default `20.0f` flat
+  unless a skill opts into `RegisterSkillManaCost`); insufficient mana aborts
+  the cast entirely (no VFX, no cooldown trigger).
+* **Basic attack**: deliberately **separate from the `CastSkill`/skill
+  pipeline** — free, no cast time, no cooldown, spammable (per design
+  decision — a normal combat game needs a mana-free/instant melee option).
+  **Auto-targets** — no `targetId` parameter; internally scans
+  `Entity_GetNearbyTargets` around the attacker (`AUTO_TARGET_RADIUS = 10.0f`)
+  and picks the nearest other active agent. No team filtering yet (`Agent`
+  has no `team` field — tracked for `MODULES_ROADMAP.md` Module 1, not this
+  pass). Returns `false` immediately, no side effects, if nothing is within
+  range. The found target's position is reported via `outTargetPos` (caller
+  has no `targetId` to look it up itself — needed for VFX, e.g. a wall-bonus
+  beam's endpoint). Melee damage only within `BASIC_ATTACK_RANGE = 1.5f` of
+  that target — `PUNCH`/`KICK` apply `Entity_ApplyDamage` with a small XZ
+  knockback, `PALM` (chưởng) applies the highest damage plus a small
+  `Entity_ApplyLaunch` pop — "phá giáp, đẩy lùi mạnh" per `SKILL_CAT_MELEE`'s
+  description (`core/skill_manager.h`).
+* **Wall synergy**: if the attacker is within `WALL_CHECK_RADIUS = 3.0f` of an
+  active wall (`core/skill_manager.h`'s `SkillManager_FindNearbyWall` — a
+  registry any skill with a genuine stationary phase can "ping" every frame
+  it's up, same per-tick-refresh idiom as `Entity_ApplyStun`'s caller in
+  `stone_prison_skill.c`), the basic attack also applies a small free bonus
+  hit (no mana — this path never touches `Entity_TrySpendMana`) and reports
+  the wall's position/element via `outWallPos`/`outWallElement` so the caller
+  can spawn the matching elemental VFX. **Entities does not spawn VFX itself**
+  (hard rule: pure gameplay logic, no rendering) — this out-param handoff
+  mirrors `Entity_OnDash`'s existing "entities reports, VFX layer reacts"
+  hook philosophy.
+* **Only Earth is wired to a real wall as of this version** — `stone_prison_skill.c`'s
+  `STATE_HOLDING` pillar registers itself (`element = 3`). Water/Fire/Wood/Metal
+  have no skill with a genuine stationary phase yet (checked: Glacial Cannon
+  is a pure projectile/wave skill, no standing structure) — the registry is
+  generic and ready for those elements' future wall-type skills to register
+  into with one call, no changes needed here.
+
+---
+
+## 14. Explicitly NOT in this version
 
 - Clash Matrix (Skill↔Skill projectile collision resolution)
 - Formation Pool / Trận Pháp
@@ -186,6 +309,8 @@ void Entity_SetPosition(int agentId, Vector3 position);
 - Map Virtual Trigger Zone consumption (blocked on Map module exposing the API)
 - Real dash movement and afterimage rendering
 - Auto-targeting / stealth visibility logic
+- AoE variants of stun/pull (single-target only, see §12)
+- AoE wall bonus / team filtering for basic attacks (single-target only, see §13)
 - Networking
 
 These will each get their own section added to this document when their prerequisites exist — do not pre-build them speculatively.

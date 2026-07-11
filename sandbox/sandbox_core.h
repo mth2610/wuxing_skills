@@ -3,6 +3,7 @@
 
 #include "raylib.h"
 #include "sandbox/ui_panel.h"
+#include "character/character_model.h"
 
 // Biến camera toàn cục
 extern Camera3D camera;
@@ -18,6 +19,9 @@ typedef struct {
     int jumpCount;
     bool isFlying;
     int agentId; // Entities module agentPool slot (see entities/entities.h)
+    CharacterAnimState anim; // character/character_model.h — real model+animation
+                              // playback state; no-op fallback to
+                              // DrawCharacter3D while no asset is loaded.
 } PlayerEntity;
 
 
@@ -54,5 +58,24 @@ void DrawSandboxHUD(void);
 // Hệ thống phím cảm ứng & Bay trên Android
 extern bool g_showTouchControls;
 void DrawSandboxTouchControls(const PlayerEntity* player);
+
+// --- Training dummy (CC test rig, see entities/entities.h §12) ---
+// agentPool slot of the standalone test dummy spawned by InitSandbox, or -1
+// if not yet spawned. Entities module owns its position/state entirely once
+// spawned (no per-frame Entity_SetPosition call for it) — ui_panel.c's CC
+// test buttons call Entity_ApplyStun/Launch/Pull directly with this id.
+int Sandbox_GetTrainingDummyAgentId(void);
+// Respawns the dummy at its fixed test position with full HP and cleared CC
+// state (deactivates the old slot, spawns a fresh one).
+void Sandbox_ResetTrainingDummy(void);
+// agentPool slot of the sandbox's PlayerEntity (set by InitSandbox) — lets
+// ui_panel.c's "Pull to Player" test button read a live target position
+// without needing a PlayerEntity pointer in its own signature.
+int Sandbox_GetPlayerAgentId(void);
+
+// Quay mặt model player về worldPos (chỉ đổi hướng vẽ, không đổi vị trí) —
+// gọi ngay khi ra đòn/cast chiêu để nhân vật xoay về hướng đánh thay vì giữ
+// hướng di chuyển cuối. Bỏ qua nếu worldPos trùng vị trí player.
+void Sandbox_FacePlayerToward(const PlayerEntity* player, Vector3 worldPos);
 
 #endif // SANDBOX_CORE_H

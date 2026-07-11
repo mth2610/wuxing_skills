@@ -8,6 +8,7 @@
 #define MAX_CACHED_SHADERS 32
 #define MAX_CACHED_SOUNDS 32
 #define MAX_CACHED_FONTS 8
+#define MAX_CACHED_MODELS 8
 
 typedef struct {
   char path[128];
@@ -35,10 +36,19 @@ typedef struct {
   bool active;
 } CachedFont;
 
+typedef struct {
+  char path[128];
+  Model model;
+  ModelAnimation *animations;
+  int animCount;
+  bool active;
+} CachedModel;
+
 static CachedTexture s_textures[MAX_CACHED_TEXTURES];
 static CachedShader s_shaders[MAX_CACHED_SHADERS];
 static CachedSound s_sounds[MAX_CACHED_SOUNDS];
 static CachedFont s_fonts[MAX_CACHED_FONTS];
+static CachedModel s_models[MAX_CACHED_MODELS];
 
 // Nạp shader có xử lý #include. Dùng thay cho LoadShader() ở mọi nơi trong file
 // này.
@@ -76,6 +86,12 @@ void ResourceManager_Init(void) {
     s_fonts[i].active = false;
     s_fonts[i].path[0] = '\0';
   }
+  for (int i = 0; i < MAX_CACHED_MODELS; i++) {
+    s_models[i].active = false;
+    s_models[i].path[0] = '\0';
+    s_models[i].animations = NULL;
+    s_models[i].animCount = 0;
+  }
 }
 
 void ResourceManager_Unload(void) {
@@ -111,6 +127,19 @@ void ResourceManager_Unload(void) {
       UnloadFont(s_fonts[i].font);
       s_fonts[i].active = false;
       s_fonts[i].path[0] = '\0';
+    }
+  }
+  // Unload all models + their animations
+  for (int i = 0; i < MAX_CACHED_MODELS; i++) {
+    if (s_models[i].active) {
+      if (s_models[i].animations != NULL) {
+        UnloadModelAnimations(s_models[i].animations, s_models[i].animCount);
+      }
+      UnloadModel(s_models[i].model);
+      s_models[i].active = false;
+      s_models[i].path[0] = '\0';
+      s_models[i].animations = NULL;
+      s_models[i].animCount = 0;
     }
   }
 }
@@ -241,4 +270,88 @@ Font ResourceManager_LoadFont(const char *filePath, int baseSize) {
   // Fallback if cache is full: return un-cached (caller must not Unload it)
   TraceLog(LOG_WARNING, "FONT: cache full, returning un-cached: %s", filePath);
   return font;
+}
+
+Model ResourceManager_LoadModel(const char *filePath) {
+  if (filePath == NULL || filePath[0] == '\0')
+    return (Model){0};
+
+  for (int i = 0; i < MAX_CACHED_MODELS; i++) {
+    if (s_models[i].active && strcmp(s_models[i].path, filePath) == 0) {
+      return s_models[i].model;
+    }
+  }
+
+  if (!FileExists(filePath)) {
+    TraceLog(LOG_WARNING, "MODEL: %s not found, returning empty model", filePath);
+    return (Model){0};
+  }
+
+  Model model = LoadModel(filePath);
+
+  for (int i = 0; i < MAX_CACHED_MODELS; i++) {
+    if (!s_models[i].active) {
+      s_models[i].model = model;
+      s_models[i].animations = NULL;
+      s_models[i].animCount = 0;
+      snprintf(s_models[i].path, sizeof(s_models[i].path), "%s", filePath);
+      s_models[i].active = true;
+      return model;
+    }
+  }
+
+  TraceLog(LOG_WARNING, "MODEL: cache full, returning un-cached: %s", filePath);
+  return model;
+}
+
+ModelAnimation *ResourceManager_LoadModelAnimations(const char *filePath, int *outCount) {
+  if (outCount) *outCount = 0;
+  if (filePath == NULL || filePath[0] == '\0')
+    return NULL;
+
+  for (int i = 0; i < MAX_CACHED_MODELS; i++) {
+    if (s_models[i].active && strcmp(s_models[i].path, filePath) == 0 && s_models[i].animations != NULL) {
+      if (outCount) *outCount = s_models[i].animCount;
+      return s_models[i].animations;
+    }
+  }
+
+  if (!FileExists(filePath)) {
+    TraceLog(LOG_WARNING, "MODEL ANIM: %s not found, no animations loaded", filePath);
+    return NULL;
+  }
+
+  int animCount = 0;
+  ModelAnimation *anims = LoadModelAnimations(filePath, &animCount);
+  if (anims == NULL || animCount == 0) {
+    TraceLog(LOG_WARNING, "MODEL ANIM: %s has no animations", filePath);
+    return NULL;
+  }
+
+  // Attach to the cache slot for this path if ResourceManager_LoadModel
+  // already created one; otherwise take a fresh slot (model-less, animation
+  // data only — unusual but harmless).
+  for (int i = 0; i < MAX_CACHED_MODELS; i++) {
+    if (s_models[i].active && strcmp(s_models[i].path, filePath) == 0) {
+      s_models[i].animations = anims;
+      s_models[i].animCount = animCount;
+      if (outCount) *outCount = animCount;
+      return anims;
+    }
+  }
+  for (int i = 0; i < MAX_CACHED_MODELS; i++) {
+    if (!s_models[i].active) {
+      s_models[i].model = (Model){0};
+      s_models[i].animations = anims;
+      s_models[i].animCount = animCount;
+      snprintf(s_models[i].path, sizeof(s_models[i].path), "%s", filePath);
+      s_models[i].active = true;
+      if (outCount) *outCount = animCount;
+      return anims;
+    }
+  }
+
+  TraceLog(LOG_WARNING, "MODEL ANIM: cache full, returning un-cached: %s", filePath);
+  if (outCount) *outCount = animCount;
+  return anims;
 }

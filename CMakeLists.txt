@@ -89,6 +89,10 @@ add_executable(wuxing
     # --- Entities ---
     entities/entities.c
 
+    # --- Character (model + animation rendering, counterpart to entities/'s
+    # pure gameplay logic) ---
+    character/character_model.c
+
     # --- Game Screen (production-bound; sandbox/ stays the dev harness) ---
     game/game_screen.c
 

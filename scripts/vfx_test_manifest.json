@@ -613,7 +613,8 @@
       "label": "SHARD DEBRIS",
       "category": "util",
       "type": "oneshot",
-      "draw_call": "VFX_ComposeShardDebris($POS, 12, 4.5f, VC_MAT_ICE)"
+      "draw_call": "VFX_ComposeShardDebris($POS, 12, 4.5f, VC_MAT_ICE)",
+      "trigger_call": "VFX_ComposeShardDebris($POS, 12, 4.5f, VC_MAT_ICE)"
     }
   ],
   "overrides": {

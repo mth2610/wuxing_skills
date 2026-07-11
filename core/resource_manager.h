@@ -26,4 +26,15 @@ Sound ResourceManager_LoadSound(const char *filePath);
 // scales smoothly (raylib's built-in font only looks correct unscaled).
 Font ResourceManager_LoadFont(const char *filePath, int baseSize);
 
+// Load a 3D model (returns cached instance if already loaded at that exact
+// path). Falls back to an empty Model{} (meshCount == 0 — check before
+// drawing) if filePath doesn't exist — never fails outright, safe to call
+// before an asset has been provided.
+Model ResourceManager_LoadModel(const char *filePath);
+
+// Load the animation clips embedded in a model file (returns cached
+// array+count if already loaded for that path). *outCount is set to 0 and
+// NULL is returned if filePath doesn't exist or has no animations.
+ModelAnimation *ResourceManager_LoadModelAnimations(const char *filePath, int *outCount);
+
 #endif // RESOURCE_MANAGER_H
