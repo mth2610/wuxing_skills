@@ -217,11 +217,24 @@ void VFX_ChainLightning(const Vector3 *points, int count, float scale, float hop
 // Aura dạng "Cột màng năng lượng" (Hình trụ không nắp)
 // Phù hợp cho các chiêu thức buff giáp, hộ thể.
 void VFX_ComposeCylinderAura(VC_MaterialId matId, Vector3 pos, float radius, float progress, float time);
+
+// Batch rendering helpers for high-performance visual composition
+void VFX_BeginEnergySmokeBatch(void);
+void VFX_EndEnergySmokeBatch(void);
+void VFX_BeginMagicFilamentsBatch(void);
+void VFX_EndMagicFilamentsBatch(void);
+void VFX_BeginSmokeColumnBatch(void);
+void VFX_EndSmokeColumnBatch(void);
+
+void VFX_ComposeMagicFilamentsOnPlane(Vector3 center, Vector3 normal, float scale, float progress, Color color, float thickness, float frequency, float speed, Vector2 sourceUV);
+void VFX_ComposeShardDebris(Vector3 pos, int count, float speed, VC_MaterialId matId);
+
 // @gen:vc_declarations begin
 void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
 void VFX_ComposeEnergySmoke(Vector3 pos, float scale, float progress, float time, Vector2 sourceUV);
 void VFX_ComposeGroundAura(VC_MaterialId matId, Vector3 pos, float radius, float scrollSpeed, float time);
 void VFX_ComposeGroundSmoke(Vector3 center, float halfSize, float progress, GroundHeightSampleFn heightFn, void *userData);
+void VFX_ComposeMagicFilaments(Vector3 pos, float scale, float progress, Color color, float thickness, float frequency, float speed, Vector2 sourceUV);
 void VFX_ComposeSmokeColumnFX(Vector3 base, float halfWidth, float height, float progress, int planeCount);
 void VFX_ComposeSmokeOnPlane(Vector3 center, Vector3 normal, float halfSize, float progress);
 // @gen:vc_declarations end

@@ -12,6 +12,7 @@ void MeshCache_Unload(void);
 
 // Lấy dữ liệu đá tảng đã cache theo seed và độ gồ ghề
 RockMeshData* MeshCache_GetRock(int seed, float jaggedness);
+RockMeshData* MeshCache_GetRockEx(int seed, float jaggedness, int subdivisions);
 
 // Lấy dữ liệu cụm tinh thể băng đã cache theo seed và độ sắc nhọn
 ShardClusterMeshData* MeshCache_GetIce(int seed, float sharpness);

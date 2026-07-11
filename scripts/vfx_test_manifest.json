@@ -25,7 +25,13 @@
       "VFX_Compose_Draw3D",
       "VFX_KillProcBeam",
       "VFX_KillAuraRing",
-      "VFX_KillSmokeColumn"
+      "VFX_KillSmokeColumn",
+      "VFX_BeginEnergySmokeBatch",
+      "VFX_EndEnergySmokeBatch",
+      "VFX_BeginMagicFilamentsBatch",
+      "VFX_EndMagicFilamentsBatch",
+      "VFX_BeginSmokeColumnBatch",
+      "VFX_EndSmokeColumnBatch"
     ],
     "complex_multi_arg": [
       "VFX_ComposeTriggerImpactBurst",
@@ -586,7 +592,45 @@
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeSmokeOnPlane($POS, (Vector3){1.0f, 0.0f, 0.0f}, 1.5f, fminf($PROG, 0.99f))"
+    },
+    {
+      "fn": "VFX_ComposeMagicFilaments",
+      "label": "MAGIC FILAMENTS",
+      "category": "util",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeMagicFilaments($POS, 1.5f, fminf($PROG, 0.99f), (Color){100, 200, 255, 200}, 0.8f, 3.5f, 4.0f, (Vector2){0.0f, 0.0f})"
+    },
+    {
+      "fn": "VFX_ComposeMagicFilamentsOnPlane",
+      "draw_call": "VFX_ComposeMagicFilamentsOnPlane($POS, (Vector3){0.0f, 1.0f, 0.0f}, 1.5f, fminf($PROG, 0.99f), (Color){100, 200, 255, 200}, 0.8f, 3.5f, 4.0f, (Vector2){0.0f, 0.0f})",
+      "label": "MAGIC FILAMENTS ON PLANE",
+      "category": "util",
+      "type": "continuous"
+    },
+    {
+      "fn": "VFX_ComposeShardDebris",
+      "label": "SHARD DEBRIS",
+      "category": "util",
+      "type": "oneshot",
+      "draw_call": "VFX_ComposeShardDebris($POS, 12, 4.5f, VC_MAT_ICE)"
     }
   ],
-  "overrides": {}
+  "overrides": {
+    "VFX_ComposeMagicFilaments": {
+      "draw_call": "VFX_ComposeMagicFilaments($POS, 1.5f, fminf($PROG, 0.99f), (Color){100, 200, 255, 200}, 0.8f, 3.5f, 4.0f, (Vector2){0.0f, 0.0f})"
+    },
+    "VFX_ComposeMagicFilamentsOnPlane": {
+      "label": "MAGIC FILAMENTS ON PLANE",
+      "category": "util",
+      "type": "continuous",
+      "draw_call": "VFX_ComposeMagicFilamentsOnPlane($POS, (Vector3){0.0f, 1.0f, 0.0f}, 1.5f, fminf($PROG, 0.99f), (Color){100, 200, 255, 200}, 0.8f, 3.5f, 4.0f, (Vector2){0.0f, 0.0f})"
+    },
+    "VFX_ComposeShardDebris": {
+      "label": "SHARD DEBRIS",
+      "category": "util",
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeShardDebris($POS, 12, 4.5f, VC_MAT_ICE)"
+    }
+  }
 }

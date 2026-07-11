@@ -7,6 +7,7 @@
 typedef struct {
     int seed;
     float jaggedness;
+    int subdivisions;
     RockMeshData data;
     bool active;
 } RockCache;
@@ -34,9 +35,11 @@ void MeshCache_Unload(void) {
     }
 }
 
-RockMeshData* MeshCache_GetRock(int seed, float jaggedness) {
+RockMeshData* MeshCache_GetRockEx(int seed, float jaggedness, int subdivisions) {
     for (int i = 0; i < CACHE_SIZE; i++) {
-        if (s_rockCache[i].active && s_rockCache[i].seed == seed && fabsf(s_rockCache[i].jaggedness - jaggedness) < 0.01f) {
+        if (s_rockCache[i].active && s_rockCache[i].seed == seed && 
+            s_rockCache[i].subdivisions == subdivisions &&
+            fabsf(s_rockCache[i].jaggedness - jaggedness) < 0.01f) {
             return &s_rockCache[i].data;
         }
     }
@@ -47,8 +50,13 @@ RockMeshData* MeshCache_GetRock(int seed, float jaggedness) {
     s_rockCache[slot].active = true;
     s_rockCache[slot].seed = seed;
     s_rockCache[slot].jaggedness = jaggedness;
-    ProceduralMesh_BuildRock(&s_rockCache[slot].data, Vector3Zero(), 1.0f, jaggedness, seed, 2);
+    s_rockCache[slot].subdivisions = subdivisions;
+    ProceduralMesh_BuildRock(&s_rockCache[slot].data, Vector3Zero(), 1.0f, jaggedness, seed, subdivisions);
     return &s_rockCache[slot].data;
+}
+
+RockMeshData* MeshCache_GetRock(int seed, float jaggedness) {
+    return MeshCache_GetRockEx(seed, jaggedness, 2);
 }
 
 ShardClusterMeshData* MeshCache_GetIce(int seed, float sharpness) {
