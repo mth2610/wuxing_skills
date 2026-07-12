@@ -57,4 +57,10 @@ void Control_FaceTowards(Vector3 point);
 // e.g. Thủy trong Sông → 0.5. Reset it every frame from game/.
 void Control_SetCastCooldownMult(float mult);
 
+// Cast feedback for the render side: returns the skillIndex of the cast
+// that actually fired since the last call (mana+cooldown gates passed),
+// or -1. game/ consumes it to play the character's cast animation —
+// control is pure logic and cannot touch character/VFX itself.
+int Control_ConsumeCastFired(void);
+
 #endif // CONTROL_H

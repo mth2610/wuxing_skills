@@ -19,6 +19,7 @@ static float s_camYaw  = 0.0f;
 static const Camera3D *s_camera = NULL;
 static float s_yaw = 0.0f; // facing, radians
 static float s_cdMult = 1.0f; // zone-rule cooldown multiplier (game/ sets)
+static int   s_castFired = -1; // skillIndex of the cast that fired this frame
 
 void Control_Init(int agentId) {
     s_agentId = agentId;
@@ -127,6 +128,12 @@ void Control_Apply(const PlayerIntent *in, float dt) {
             if (CastSkill(skillIndex, s_agentId, a->position, in->aimPoint, params)) {
                 SkillManager_TriggerCooldown(skillIndex, s_agentId,
                                              DEFAULT_CAST_COOLDOWN * s_cdMult);
+                // Face the cast direction — the character turning toward its
+                // target is the read that a skill actually fired.
+                float fdx = in->aimPoint.x - a->position.x;
+                float fdz = in->aimPoint.z - a->position.z;
+                if (fdx * fdx + fdz * fdz > 0.0001f) s_yaw = atan2f(fdx, fdz);
+                s_castFired = skillIndex; // render side plays the cast anim
             }
         }
     }
@@ -138,6 +145,12 @@ float Control_GetYaw(void) {
 
 void Control_SetCastCooldownMult(float mult) {
     s_cdMult = (mult > 0.0f) ? mult : 1.0f;
+}
+
+int Control_ConsumeCastFired(void) {
+    int idx = s_castFired;
+    s_castFired = -1;
+    return idx;
 }
 
 void Control_FaceTowards(Vector3 point) {

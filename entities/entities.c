@@ -14,10 +14,11 @@ static bool Entity_ProvideAgentPos(int agentId, Vector3 *outPos) {
 
 static Agent agentPool[MAX_AGENTS]; // 4 ally + 4 enemy AI
 
-// Arena constants — must match MAP_API.md §3 exactly.
-// Real-world-scaled: 1 unit = 1 meter (was 1 unit = 1cm before the rescale).
-static const Vector3 ARENA_CENTER = { 6.0f, 0.0f, 4.4f };
-static const float   ARENA_RADIUS = 18.0f;
+// Arena ring-out bounds — default matches MAP_API.md §3 (DEFAULT_ARENA);
+// mutable per map via Entity_SetArenaBounds (the game screen sets them when
+// pinning its match map). Real-world-scaled: 1 unit = 1 meter.
+static Vector3 ARENA_CENTER = { 6.0f, 0.0f, 4.4f };
+static float   ARENA_RADIUS = 18.0f;
 static const float   GRAVITY = 5.0f; // below real 9.81 m/s² by design (floatier game feel)
 static const float   RING_OUT_KILL_Y = -2.0f;
 static const float   DEFAULT_MAX_MANA = 100.0f;
@@ -171,6 +172,15 @@ void Entity_ApplyDamage(int agentId, float damage, Vector3 knockback) {
     a->velocity.x += knockback.x;
     a->velocity.y += knockback.y;
     a->velocity.z += knockback.z;
+
+    // A real shove must enter the airborne state — velocity only integrates
+    // while AGENT_JUMPING, so knockback on a grounded agent used to be a
+    // silent no-op (hits felt like nothing, ring-out by shoving impossible).
+    float kbSq = knockback.x * knockback.x + knockback.z * knockback.z;
+    if (kbSq > 0.25f && a->vState == AGENT_GROUNDED) {
+        if (a->velocity.y < 1.2f) a->velocity.y = 1.2f; // small pop so the arc runs
+        a->vState = AGENT_JUMPING;
+    }
 
     if (a->health <= 0.0f) {
         a->health = 0.0f;
@@ -463,6 +473,12 @@ bool Entity_CheckRingOut(int agentId) {
 void Entity_OnDash(int agentId) {
     (void)agentId;
     // reserved hook — no VFX wiring in this module
+}
+
+void Entity_SetArenaBounds(Vector3 center, float radius) {
+    if (radius <= 0.0f) return;
+    ARENA_CENTER = center;
+    ARENA_RADIUS = radius;
 }
 
 int Entity_GetNearbyTargets(Vector3 center, float radius, int *outIds, int maxIds) {

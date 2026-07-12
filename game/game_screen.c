@@ -27,10 +27,16 @@ static GameState s_state = GAME_ARENA_INTRO;
 static float s_introTimer = 0.0f;
 static int s_lastBossPhase = -1; // minion waves trigger on phase change (M8)
 
-// The Phase 0 match runs on DEFAULT_ARENA (its ring-out circle matches the
-// entities arena constants — center (6,0,4.4), r=18). Spawn points inside.
-static const Vector3 PLAYER_SPAWN = { 2.0f, 0.0f, 4.4f };
-static const Vector3 BOSS_SPAWN   = { 10.0f, 0.0f, 4.4f };
+// The Phase 0 match runs on VERDANT_PATH — the real grass island (100x75m,
+// flat plateau at Y=0, cliff falloff past ~34m from center). Ring-out
+// bounds + player placement are applied in the INTRO tick (only while this
+// screen is ACTIVE — the bounds are global, and the sandbox needs the
+// DEFAULT_ARENA circle back; main.c restores it on back-to-menu).
+#define MATCH_MAP_NAME "VERDANT_PATH"
+static const Vector3 MATCH_ARENA_CENTER = { 50.0f, 0.0f, 37.5f };
+static const float   MATCH_ARENA_RADIUS = 34.0f;
+static const Vector3 PLAYER_SPAWN = { 46.0f, 0.0f, 37.5f };
+static const Vector3 BOSS_SPAWN   = { 54.0f, 0.0f, 37.5f };
 static const float   INTRO_SECONDS = 2.0f;
 
 static void ResetMatch(PlayerEntity *player) {
@@ -39,11 +45,12 @@ static void ResetMatch(PlayerEntity *player) {
     s_lastBossPhase = -1;
 
     // Player agent may have died last match (HP or ring-out) — respawn it.
+    // Placement happens in the INTRO tick (bounds are only correct while
+    // this screen is active); spawning at the match point here is fine
+    // because ResetMatch only runs at startup or while in-game.
     if (Entity_GetAgent(player->agentId) == NULL) {
         player->agentId = Entity_SpawnAgent(PLAYER_SPAWN, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
     }
-    player->position = PLAYER_SPAWN;
-    Entity_SetPosition(player->agentId, player->position);
     Control_Init(player->agentId);
 
     // Default loadout (keys 1-4). One skill per element — deliberately NOT
@@ -91,16 +98,21 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
 
     // --- Match state machine (Module 7) ---
     if (s_state == GAME_ARENA_INTRO) {
-        // Pin the match map (only while this screen is active — never from
-        // Init, which runs once at startup for every screen).
-        if (strcmp(MapManager_GetName(MapManager_GetActiveIndex()), "DEFAULT_ARENA") != 0) {
+        // Pin the match map + its ring-out bounds (only while this screen
+        // is active — never from Init, which runs once at startup for every
+        // screen; main.c restores the DEFAULT_ARENA bounds on exit).
+        if (strcmp(MapManager_GetName(MapManager_GetActiveIndex()), MATCH_MAP_NAME) != 0) {
             for (int i = 0; i < MapManager_GetCount(); i++) {
-                if (strcmp(MapManager_GetName(i), "DEFAULT_ARENA") == 0) {
+                if (strcmp(MapManager_GetName(i), MATCH_MAP_NAME) == 0) {
                     MapManager_SetActiveIndex(i);
                     break;
                 }
             }
         }
+        Entity_SetArenaBounds(MATCH_ARENA_CENTER, MATCH_ARENA_RADIUS);
+        // Hold the player at the spawn point through the title card.
+        player->position = PLAYER_SPAWN;
+        Entity_SetPosition(player->agentId, player->position);
         s_introTimer -= dt;
         if (s_introTimer <= 0.0f) {
             Boss_Spawn(&BOSS_HAC_DIEN_TON_GIA, BOSS_SPAWN, TEAM_ENEMY);
@@ -164,6 +176,14 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
         Vector3 autoPt = UI_GetAutoAimPoint(player->agentId, &hasAuto);
         if (hasAuto) intent.aimPoint = autoPt;
         Control_Apply(&intent, dt);
+
+        // Cast flourish: control casts silently (pure logic) — it reports
+        // the fired skill back so the character actually swings its arms.
+        int castIdx = Control_ConsumeCastFired();
+        if (castIdx >= 0) {
+            CharacterModel_TriggerAttackTimed(&player->anim, CHAR_ANIM_CAST,
+                                              Skill_GetCastAnimSeconds(castIdx));
+        }
     }
     const Agent *selfAgent = Entity_GetAgent(player->agentId);
     if (selfAgent) player->position = selfAgent->position;

@@ -103,16 +103,21 @@ void UI_DrawOverlay(int agentId) {
         }
     }
 
-    // --- Auto-aim reticle: diamond over the current target. ---
+    // --- Auto-aim reticle: pulsing double diamond over the current target
+    // (đối-đòn/boss lock — casts fly here). ---
     if (s_hasTarget && s_camera != NULL) {
         Vector2 p = GetWorldToScreen((Vector3){ s_aimPoint.x, s_aimPoint.y + 0.4f, s_aimPoint.z }, *s_camera);
         if (p.x > -50 && p.x < sw + 50 && p.y > -50 && p.y < sh + 50) {
-            float r = 10.0f;
-            Color c = (Color){ 240, 230, 150, 255 };
-            DrawLineV((Vector2){ p.x, p.y - r }, (Vector2){ p.x + r, p.y }, c);
-            DrawLineV((Vector2){ p.x + r, p.y }, (Vector2){ p.x, p.y + r }, c);
-            DrawLineV((Vector2){ p.x, p.y + r }, (Vector2){ p.x - r, p.y }, c);
-            DrawLineV((Vector2){ p.x - r, p.y }, (Vector2){ p.x, p.y - r }, c);
+            float pulse = 1.0f + 0.25f * sinf((float)GetTime() * 8.0f);
+            Color c = (Color){ 250, 235, 140, 255 };
+            for (int layer = 0; layer < 2; layer++) {
+                float r = (layer == 0 ? 12.0f : 7.0f) * pulse;
+                DrawLineV((Vector2){ p.x, p.y - r }, (Vector2){ p.x + r, p.y }, c);
+                DrawLineV((Vector2){ p.x + r, p.y }, (Vector2){ p.x, p.y + r }, c);
+                DrawLineV((Vector2){ p.x, p.y + r }, (Vector2){ p.x - r, p.y }, c);
+                DrawLineV((Vector2){ p.x - r, p.y }, (Vector2){ p.x, p.y - r }, c);
+            }
+            DrawCircleV(p, 2.0f, c);
         }
     }
 }

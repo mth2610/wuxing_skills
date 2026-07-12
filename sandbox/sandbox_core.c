@@ -830,7 +830,10 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     if (!enemyCrowdControlled) {
         Entity_SetPosition(enemy->agentId, enemy->position);
     }
-    Entity_Update(dt);
+    // Entity_Update(dt) moved to main.c's common section — it must tick for
+    // EVERY screen (game screen had frozen timers/physics when it lived
+    // here). The CC readback below now sees last frame's integration — one
+    // frame of visual lag on launch arcs, acceptable for the dev harness.
 
     if (enemyCrowdControlled) {
         // Read back what Entity_Update just integrated (launch arc / pull)

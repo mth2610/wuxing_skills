@@ -427,6 +427,8 @@ static AutoTestResult AutoTest_GameModeStep(int frameInCase, char *outReason, in
   return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
 }
 
+static void AutoTest_ResetArenaToDefault(void); // defined below (needs `player`)
+
 // Step 0 (post-Module-7 hardening): real skills feed the combat registry.
 // Casts a real FIRE dragon at an enemy agent and waits for the combat-
 // applied hit (skills no longer damage projectiles themselves), and checks
@@ -435,6 +437,7 @@ static int s_step0Ally = -1, s_step0Foe = -1;
 static AutoTestResult AutoTest_SkillRegistryStep(int frameInCase, char *outReason, int outReasonSize) {
   if (frameInCase == 0) {
     GameScreen_Init(&player); // also applies the default loadout
+    AutoTest_ResetArenaToDefault();
     const Agent *pa = Entity_GetAgent(player.agentId);
     if (!AutoTest_ExpectTrue(pa && pa->equippedSkills[0] >= 0 && pa->equippedSkills[3] >= 0,
                              "default loadout equipped", outReason, outReasonSize)) return AUTOTEST_FAIL;
@@ -463,11 +466,28 @@ static AutoTestResult AutoTest_SkillRegistryStep(int frameInCase, char *outReaso
   return AUTOTEST_RUNNING; // maxFrames timeout fails the case
 }
 
+// The match (game_mode_loop test) pins VERDANT_PATH + its ring-out bounds
+// and parks the player at the island spawn. Tests that spawn actors at
+// DEFAULT_ARENA coordinates must restore that world first, or their agents
+// (and the parked player) fall out of the new bounds mid-test.
+static void AutoTest_ResetArenaToDefault(void) {
+  for (int i = 0; i < MapManager_GetCount(); i++) {
+    if (strcmp(MapManager_GetName(i), "DEFAULT_ARENA") == 0) {
+      MapManager_SetActiveIndex(i);
+      break;
+    }
+  }
+  Entity_SetArenaBounds((Vector3){ 6.0f, 0.0f, 4.4f }, 18.0f);
+  player.position = (Vector3){ -11.0f, 0.0f, 4.4f }; // sandbox home
+  Entity_SetPosition(player.agentId, player.position);
+}
+
 // Module 11 (wire core) DoD: PlayerIntent survives a pack/unpack round trip
 // bit-exact; an agent-pool snapshot packs and parses back with matching
 // fields; corrupted/mismatched packets are rejected.
 static AutoTestResult AutoTest_NetWireStep(int frameInCase, char *outReason, int outReasonSize) {
   if (frameInCase > 0) return AUTOTEST_PASS;
+  AutoTest_ResetArenaToDefault(); // snapshot probe spawns at arena coords
 
   // Intent round trip.
   PlayerIntent in = { 0 };
@@ -517,6 +537,7 @@ static AutoTestResult AutoTest_NetWireStep(int frameInCase, char *outReason, int
 // (0.4 vs 0.6 speedMult), duration expiry frees the slot, pool caps at 4.
 static AutoTestResult AutoTest_FormationStep(int frameInCase, char *outReason, int outReasonSize) {
   if (frameInCase > 0) return AUTOTEST_PASS;
+  AutoTest_ResetArenaToDefault(); // formation resonance reads DEFAULT_ARENA's river
 
   Vector3 river = { 0.0f, 0.0f, -2.0f }; // DEFAULT_ARENA river zone center
   int owner = Entity_SpawnAgent((Vector3){ river.x + 1.0f, 0, river.z }, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
@@ -569,6 +590,7 @@ static AutoTestResult AutoTest_FormationStep(int frameInCase, char *outReason, i
 // exists.
 static AutoTestResult AutoTest_AutoTargetStep(int frameInCase, char *outReason, int outReasonSize) {
   if (frameInCase > 0) return AUTOTEST_PASS;
+  AutoTest_ResetArenaToDefault();
 
   Vector3 base = { 6.0f, 0.0f, -4.0f };
   int ally = Entity_SpawnAgent(base, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
@@ -607,6 +629,7 @@ static AutoTestResult AutoTest_AutoTargetStep(int frameInCase, char *outReason, 
 // poll event, and the pool absorbs a 40-minion wave.
 static AutoTestResult AutoTest_MinionAIStep(int frameInCase, char *outReason, int outReasonSize) {
   if (frameInCase > 0) return AUTOTEST_PASS;
+  AutoTest_ResetArenaToDefault();
 
   // Two "boss" pole agents inside the arena, 4m apart.
   Vector3 allyPole = { -2.0f, 0.0f, -6.0f };
@@ -1032,7 +1055,21 @@ int main(int argc, char **argv) {
         CameraFX_Update(&camera, dt);
     } else if (currentScreen == SCREEN_GAME) {
         GameScreen_Update(&player, &camera, dt);
-        if (GameScreen_RequestedBackToMenu()) currentScreen = SCREEN_MAIN_MENU;
+        if (GameScreen_RequestedBackToMenu()) {
+            currentScreen = SCREEN_MAIN_MENU;
+            // The match pinned VERDANT_PATH + its ring-out bounds — hand the
+            // sandbox its DEFAULT_ARENA world back (bounds are global; a
+            // sandbox player outside the match circle would fall forever).
+            for (int i = 0; i < MapManager_GetCount(); i++) {
+                if (strcmp(MapManager_GetName(i), "DEFAULT_ARENA") == 0) {
+                    MapManager_SetActiveIndex(i);
+                    break;
+                }
+            }
+            Entity_SetArenaBounds((Vector3){ 6.0f, 0.0f, 4.4f }, 18.0f);
+            player.position = (Vector3){ -11.0f, 0.0f, 4.4f }; // sandbox home
+            Entity_SetPosition(player.agentId, player.position);
+        }
         CameraFX_Update(&camera, dt);
     }
 
@@ -1041,6 +1078,12 @@ int main(int argc, char **argv) {
     // after all skill updates submitted this frame's projectile colliders
     // (immediate mode). Both tick for every screen; no boss / no
     // submissions = no-op. (Module 7 game/ will own this ordering.)
+    // Entities tick — owned HERE for every screen (it used to live inside
+    // UpdateSandbox only, so in SCREEN_GAME timers never ticked: one dash
+    // arm froze movement forever, jumps never landed, mana never regened,
+    // knockback/ring-out physics were dead). Runs after the screen updates
+    // (positions pushed) and before AI/boss/combat consume fresh state.
+    Entity_Update(dt);
     AI_Update(dt);
     Boss_Update(dt);
     Formation_Update(dt);

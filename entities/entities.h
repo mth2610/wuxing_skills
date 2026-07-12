@@ -112,6 +112,13 @@ void Entity_Jump(int agentId, float force);
 void Entity_Dash(int agentId, Vector3 direction, float speed);
 bool Entity_CheckRingOut(int agentId);
 
+// Ring-out bounds are PER-MAP now (default: DEFAULT_ARENA's circle, center
+// (6,0,4.4) r=18 — matching MAP_API.md §3). The match screen sets them when
+// it pins its map (e.g. VERDANT_PATH's plateau: center (50,0,37.5) r=34)
+// and main.c restores the default on the way back to the sandbox. radius
+// <= 0 is ignored.
+void Entity_SetArenaBounds(Vector3 center, float radius);
+
 // --- Crowd control (see ENTITIES_API.md §12) ---
 // Launch: sets velocity and vState = AGENT_JUMPING (shared with Entity_Jump).
 // Entity_Update integrates gravity + full 3-axis position while airborne and

@@ -1,9 +1,53 @@
 #include "verdant_path.h"
 #include "raylib.h"
+#include "rlgl.h"
 #include "environment/environment_system.h"
 #include "maps/toolkit/prop_lit.h"
 #include "maps/toolkit/map_props.h"
+#include "core/map_manager.h"
+#include <math.h>
 #include <stddef.h>
+
+#ifndef PI
+#define PI 3.14159265358979323846f
+#endif
+
+// Virtual Trigger Zones (MAP_API.md §13) — the grass island's nature
+// pockets, all on the flat plateau interior (y = 0 there; heightmap only
+// falls off past ~34m from center (50, 37.5)). Modifier rules live in
+// game/game_rules.c, never here.
+static const MapZone ISLAND_ZONES[] = {
+    { NAT_RIVER,       { 40.0f, 0.0f, 30.0f }, 4.0f },
+    { NAT_FOREST,      { 61.0f, 0.0f, 31.0f }, 4.5f },
+    { NAT_DESERT_ZONE, { 50.0f, 0.0f, 47.0f }, 4.0f },
+};
+#define ISLAND_ZONE_COUNT (int)(sizeof(ISLAND_ZONES) / sizeof(ISLAND_ZONES[0]))
+
+// Radial-gradient ground disc, self-lit vertex colors (alpha 255 rule; lit
+// materials read black in the night scene) — same technique as
+// default_arena's zone cues, lifted slightly above the terrain mesh.
+static void DrawIslandZoneDisc(Vector3 center, float radius, Color cCenter, Color cEdge)
+{
+    rlDisableBackfaceCulling();
+    rlSetTexture(0);
+    rlBegin(RL_TRIANGLES);
+    int segments = 48;
+    float y = 0.05f;
+    for (int i = 0; i < segments; i++) {
+        float a1 = ((float)i / segments) * 2.0f * PI;
+        float a2 = ((float)(i + 1) / segments) * 2.0f * PI;
+        Vector3 p1 = { center.x + cosf(a1) * radius, y, center.z + sinf(a1) * radius };
+        Vector3 p2 = { center.x + cosf(a2) * radius, y, center.z + sinf(a2) * radius };
+        rlColor4ub(cCenter.r, cCenter.g, cCenter.b, 255);
+        rlVertex3f(center.x, y, center.z);
+        rlColor4ub(cEdge.r, cEdge.g, cEdge.b, 255);
+        rlVertex3f(p2.x, p2.y, p2.z);
+        rlColor4ub(cEdge.r, cEdge.g, cEdge.b, 255);
+        rlVertex3f(p1.x, p1.y, p1.z);
+    }
+    rlEnd();
+    rlEnableBackfaceCulling();
+}
 
 // Rectangle sized so a corner-to-corner diagonal walk takes ~30-45s at the
 // game screen's 3.5 m/s walk speed (game/game_screen.c): 100m x 75m is a
@@ -143,6 +187,8 @@ void InitVerdantPathMap(void)
     // as an endless void floor past the mountain ring.
     s_cloudSea = MapProp_CreateCloudSea(MAP_WIDTH + 300.0f, MAP_DEPTH + 300.0f, 50.0f);
 
+    MapManager_SetZones(ISLAND_ZONES, ISLAND_ZONE_COUNT);
+
     s_ready = true;
 }
 
@@ -163,4 +209,11 @@ void DrawVerdantPathMap(void)
     MapProp_DrawStrip(&s_path, kMapCenter, 0.01f);
     MapProp_DrawRocks(&s_mountainRockSet, s_mountainRocks, MOUNTAIN_ROCK_COUNT, false); // no shadow, plain material
     MapProp_DrawRocks(&s_rocks, kRocks, ROCK_COUNT, true); // decorative — keep shadow + prop_lit
+
+    // Nature-zone cues (No Tutorial — the ground itself says what it is):
+    // deep-water blue, forest green, dry sand, all fading into the grass.
+    Color grassEdge = (Color){ 26, 38, 24, 255 };
+    DrawIslandZoneDisc(ISLAND_ZONES[0].center, ISLAND_ZONES[0].radius, (Color){ 30, 84, 118, 255 }, grassEdge);
+    DrawIslandZoneDisc(ISLAND_ZONES[1].center, ISLAND_ZONES[1].radius, (Color){ 22, 70, 38, 255 },  grassEdge);
+    DrawIslandZoneDisc(ISLAND_ZONES[2].center, ISLAND_ZONES[2].radius, (Color){ 96, 80, 42, 255 },  grassEdge);
 }

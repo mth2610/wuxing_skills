@@ -7,6 +7,12 @@
 
 static const float BOSS_TARGET_RANGE = 25.0f; // meters
 static const float TAIJI_HP_FRACTION = 0.30f; // Module 6 trigger threshold
+// Movement: the spirit drifts to its preferred casting band around the
+// target and strafes sideways while inside it (meter-scaled).
+static const float BOSS_PREFERRED_MIN = 4.0f;
+static const float BOSS_PREFERRED_MAX = 6.5f;
+static const float BOSS_DRIFT_MPS     = 1.4f;
+static const float BOSS_STRAFE_MPS    = 0.8f;
 
 static const BossDef *s_def = NULL;
 static int   s_agentId = -1;
@@ -84,6 +90,35 @@ void Boss_Update(float dt) {
         if (target == -1 || dSq < bestSq) { target = ids[i]; bestSq = dSq; }
     }
     if (target < 0) return;
+
+    // --- Movement: drift into the casting band, then strafe (an external
+    // mover like control/: Entity_SetPosition, yield while entities owns
+    // the position during knockback arcs / pulls / stuns). ---
+    if (self->vState == AGENT_GROUNDED && !Entity_IsCrowdControlled(s_agentId)) {
+        const Agent *victim = Entity_GetAgent(target);
+        if (victim) {
+            float dx = victim->position.x - self->position.x;
+            float dz = victim->position.z - self->position.z;
+            float dist = sqrtf(dx * dx + dz * dz);
+            if (dist > 0.001f) {
+                float nx = dx / dist, nz = dz / dist;
+                Vector3 pos = self->position;
+                if (dist > BOSS_PREFERRED_MAX) {        // close in
+                    pos.x += nx * BOSS_DRIFT_MPS * dt;
+                    pos.z += nz * BOSS_DRIFT_MPS * dt;
+                } else if (dist < BOSS_PREFERRED_MIN) { // back off
+                    pos.x -= nx * BOSS_DRIFT_MPS * dt;
+                    pos.z -= nz * BOSS_DRIFT_MPS * dt;
+                } else {                                // circle the target
+                    float dir = (s_phase % 2 == 0) ? 1.0f : -1.0f; // flips per phase
+                    pos.x += -nz * dir * BOSS_STRAFE_MPS * dt;
+                    pos.z +=  nx * dir * BOSS_STRAFE_MPS * dt;
+                }
+                Entity_SetPosition(s_agentId, pos);
+                self = Entity_GetAgent(s_agentId); // refreshed for the cast below
+            }
+        }
+    }
 
     if (SkillManager_CanCast(skillIdx, s_agentId)) {
         const Agent *victim = Entity_GetAgent(target);
