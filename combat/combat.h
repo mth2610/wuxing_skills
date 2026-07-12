@@ -71,9 +71,21 @@ bool Combat_SubmitProjectile(int ownerAgentId, CombatElement elem,
 // Emits ClashEvents, then clears the frame's submissions.
 void Combat_Update(float dt);
 
-// Drain the event queue (call once per frame after Combat_Update; events
-// not polled before the next Combat_Update are overwritten). Returns the
-// number of events written into out (<= max).
+// Frame boundary: clears last frame's events. main.c (later game/) calls it
+// once at the top of the frame, BEFORE skill updates — so events produced by
+// Combat_Update (and by deflects during skill updates) stay readable for the
+// whole following frame.
+void Combat_BeginFrame(void);
+
+// Multi-consumer read (skills): borrow the internal event array. Valid until
+// the next Combat_BeginFrame. Each skill scans for its own skillInstanceIds
+// — peeking is idempotent, several skills can read the same frame's events.
+// CONVENTION: skills namespace instance ids as skillIndex*1000 + slot so ids
+// never collide across skills.
+int Combat_PeekEvents(const ClashEvent **outArr);
+
+// Single-consumer drain — autotest/tools only. A draining consumer starves
+// every peeker, so gameplay code must use Combat_PeekEvents instead.
 int Combat_PollEvents(ClashEvent *out, int max);
 
 // Thái Cực PHONG (Module 6): destroy every projectile submitted this frame

@@ -8,6 +8,7 @@
 #include "core/decal_system.h"
 #include "core/particle_system.h"
 #include "core/resource_manager.h"
+#include "combat/combat.h"
 #include "raymath.h"
 
 #define MAX_INSTANCES 4
@@ -110,6 +111,31 @@ void CastGlacialCannonSkill(int agentId, Vector3 startPos, Vector3 target, Skill
 
 void UpdateGlacialCannonSkill(float dt, Vector3 enemyPos, float enemyRadius)
 {
+    // Đấu Pháp events (peek — COMBAT_API.md: ids = skillIndex*1000 + slot).
+    // Losing a clash or crashing into an agent skips the wave straight to
+    // its impact burst at the clash point.
+    {
+        const ClashEvent *ev;
+        int evCount = Combat_PeekEvents(&ev);
+        for (int k = 0; k < evCount; k++)
+        {
+            int slot = ev[k].skillInstanceId - s_glacialCannonSkillIndex * 1000;
+            if (slot < 0 || slot >= MAX_INSTANCES) continue;
+            SkillInstance *s = &s_instances[slot];
+            if (!s->active || s->state != STATE_CHANNELING) continue;
+            if (ev[k].outcome == CLASH_B_WINS || ev[k].outcome == CLASH_MUTUAL_DESTROY ||
+                ev[k].outcome == CLASH_HIT_AGENT)
+            {
+                PlayImpactSound(EFFECT_PRESET_ICE_SHATTER);
+                s->targetPos = ev[k].clashPoint;
+                s->burstSeed = (int)((unsigned int)(GetTime() * 1000.0f) ^ ((unsigned int)slot * 2891336453u));
+                s->burstProgress = 0.0f;
+                s->state = STATE_IMPACT_BURST;
+                s->timer = 0.0f;
+            }
+        }
+    }
+
     for (int i = 0; i < MAX_INSTANCES; i++)
     {
         SkillInstance *s = &s_instances[i];
@@ -138,14 +164,20 @@ void UpdateGlacialCannonSkill(float dt, Vector3 enemyPos, float enemyRadius)
 
             // VFX_ComposePathMistWave(VC_MAT_ICE, s->pathPoints, s->pathPointCount, progress, s->sizeScale * 0.8f);
 
+            // Đấu Pháp: the ice wavefront is a combat collider — combat owns
+            // hit detection + agent damage now (COMBAT_API.md §5); the old
+            // core ApplyAoEDamage tick (no HP bookkeeping) is gone.
+            Combat_SubmitProjectile(s->ownerAgentId, ELEM_WATER,
+                                    s->pathPoints[wavefrontIdx],
+                                    s_aoeRadius * s->sizeScale,
+                                    s_damagePerSecond * 0.5f,
+                                    2.0f,
+                                    s_glacialCannonSkillIndex * 1000 + i);
+
             s->damageAccumulator += s_damagePerSecond * dt;
             if (s->damageAccumulator >= 5.0f)
             {
-                Vector3 currentImpactPos = s->pathPoints[wavefrontIdx];
-
-                ApplyAoEDamage(currentImpactPos, s_aoeRadius * s->sizeScale, s->damageAccumulator, 0.0f);
                 s->damageAccumulator = 0.0f;
-
                 if (GetRandomValue(0, 100) < 40)
                 {
                     PlayImpactSound(EFFECT_PRESET_ICE_SHATTER);
@@ -155,8 +187,14 @@ void UpdateGlacialCannonSkill(float dt, Vector3 enemyPos, float enemyRadius)
             if (s->timer >= s_waveDuration)
             {
                 PlayImpactSound(EFFECT_PRESET_ICE_SHATTER);
-                // TỐI ƯU: gom nhóm phép nhân hằng số
-                ApplyAoEDamage(s->targetPos, s_aoeRadius * (s->sizeScale * 1.8f), s_damagePerSecond * 0.5f, 1.5f);
+                // Final burst: real team-aware agent AoE (allowed direct
+                // path for AoE per COMBAT_API.md §5).
+                {
+                    const Agent *owner = Entity_GetAgent(s->ownerAgentId);
+                    Entity_ApplyAoEDamage(s->targetPos, s_aoeRadius * (s->sizeScale * 1.8f),
+                                          s_damagePerSecond * 0.5f, 1.5f,
+                                          owner ? owner->team : TEAM_NEUTRAL);
+                }
 
                 unsigned int seedBits = (unsigned int)(GetTime() * 1000.0f) ^ ((unsigned int)s->ownerAgentId * 747796405u) ^ ((unsigned int)i * 2891336453u);
                 s->burstSeed = (int)seedBits;

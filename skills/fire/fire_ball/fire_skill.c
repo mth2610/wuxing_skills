@@ -7,6 +7,7 @@
 #include "rlgl.h"
 #include "core/skill_manager.h"
 #include "core/skill_helper.h"
+#include "combat/combat.h"
 #include "core/resource_manager.h"
 #include "core/tuning.h"
 #include "core/utils_math.h"
@@ -429,6 +430,25 @@ void UpdateFireSkill(float dt) {
   if (!anyActive)
     return;
 
+  // Đấu Pháp events from last frame's Combat_Update (peek — never drain,
+  // other skills read the same array). Instance ids: skillIndex*1000 + slot.
+  {
+    const ClashEvent *ev;
+    int evCount = Combat_PeekEvents(&ev);
+    for (int i = 0; i < evCount; i++) {
+      int slot = ev[i].skillInstanceId - s_skillIndex * 1000;
+      if (slot < 0 || slot >= MAX_EMITTERS || !emitters[slot].active) continue;
+      if (ev[i].outcome == CLASH_B_WINS || ev[i].outcome == CLASH_MUTUAL_DESTROY ||
+          ev[i].outcome == CLASH_HIT_AGENT) {
+        // Lost a clash / hit an agent (combat already applied the damage) —
+        // the dragon dies in a burst at the clash point.
+        emitters[slot].active = false;
+        TriggerFireImpact(ev[i].clashPoint, emitters[slot].sizeScale);
+      }
+      // CLASH_A_WINS: keep flying — the loser's own event kills it.
+    }
+  }
+
   for (int e = 0; e < MAX_EMITTERS; e++) {
     if (!emitters[e].active)
       continue;
@@ -519,6 +539,19 @@ void UpdateFireSkill(float dt) {
     emitters[e].sampledCount =
         SamplePath(linearPath, emitters[e].pathCount, 0.045f,
                    emitters[e].sampledPath, MAX_SAMPLED_SEGMENTS);
+
+    // Đấu Pháp: submit the dragon head as a combat collider while in the
+    // real flight portion (progress <= 1.0; beyond that is the fade tail).
+    // Combat owns hit detection + agent damage — this skill no longer
+    // applies projectile damage itself (COMBAT_API.md §5).
+    if (emitters[e].headProgress <= 1.0f && emitters[e].sampledCount > 0) {
+      Combat_SubmitProjectile(emitters[e].ownerAgentId, ELEM_FIRE,
+                              emitters[e].sampledPath[0],
+                              0.25f * emitters[e].sizeScale,
+                              12.0f * emitters[e].sizeScale,
+                              2.5f,
+                              s_skillIndex * 1000 + e);
+    }
 
     if (emitters[e].headProgress > 1.0f && prevProgress <= 1.0f) {
       Vector3 impactPos = (emitters[e].sampledCount > 0)

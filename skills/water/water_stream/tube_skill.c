@@ -13,6 +13,7 @@
 #include "core/skill_manager.h"
 #include "core/utils_math.h"
 #include "core/vfx_light.h"
+#include "combat/combat.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <math.h>
@@ -230,6 +231,24 @@ void UpdateTubeSkill(float dt) {
   RebuildSplashField();
   RebuildImpactConfig();
 
+  // Đấu Pháp events (peek, ids = skillIndex*1000 + slot): a lost clash or
+  // an agent hit (combat already applied the damage) bursts the stream at
+  // the clash point instead of its Bezier endpoint.
+  {
+    const ClashEvent *ev;
+    int evCount = Combat_PeekEvents(&ev);
+    for (int k = 0; k < evCount; k++) {
+      int slot = ev[k].skillInstanceId - s_skillIndex * 1000;
+      if (slot < 0 || slot >= MAX_TUBE_EMITTERS || !emitters[slot].active) continue;
+      if (ev[k].outcome == CLASH_B_WINS || ev[k].outcome == CLASH_MUTUAL_DESTROY ||
+          ev[k].outcome == CLASH_HIT_AGENT) {
+        emitters[slot].active = false;
+        VFX_TriggerImpactBurst(ev[k].clashPoint, emitters[slot].sizeScale,
+                               &s_waterImpactConfig);
+      }
+    }
+  }
+
   for (int e = 0; e < MAX_TUBE_EMITTERS; e++) {
     if (!emitters[e].active)
       continue;
@@ -243,6 +262,15 @@ void UpdateTubeSkill(float dt) {
     emitters[e].headPos = ProceduralMesh_BezierPoint(
         emitters[e].p0, emitters[e].p1, emitters[e].p2, emitters[e].p3,
         emitters[e].progress);
+
+    // Đấu Pháp: submit the stream head as a combat collider — combat owns
+    // hit detection + agent damage (COMBAT_API.md §5).
+    Combat_SubmitProjectile(emitters[e].ownerAgentId, ELEM_WATER,
+                            emitters[e].headPos,
+                            0.2f * emitters[e].sizeScale,
+                            8.0f * emitters[e].sizeScale,
+                            2.0f,
+                            s_skillIndex * 1000 + e);
 
     if (GetRandomValue(0, 100) < 60) {
       RebuildMistField();

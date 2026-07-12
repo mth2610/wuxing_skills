@@ -187,6 +187,16 @@ void Combat_Update(float dt) {
     s_projCount = 0;
 }
 
+void Combat_BeginFrame(void) {
+    s_eventCount = 0;
+}
+
+int Combat_PeekEvents(const ClashEvent **outArr) {
+    if (outArr == NULL) return 0;
+    *outArr = s_events;
+    return s_eventCount;
+}
+
 int Combat_PollEvents(ClashEvent *out, int max) {
     if (out == NULL || max <= 0) return 0;
     int n = (s_eventCount < max) ? s_eventCount : max;

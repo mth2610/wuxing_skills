@@ -38,6 +38,7 @@
 #include "boss/boss_system.h"
 #include "skills/taiji/taiji_phong/taiji_phong_skill.h"
 #include "game/game_rules.h"
+#include "ai/ai.h"
 #include <stdio.h>
 
 // Biến camera toàn cục
@@ -423,6 +424,42 @@ static AutoTestResult AutoTest_GameModeStep(int frameInCase, char *outReason, in
   return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
 }
 
+// Step 0 (post-Module-7 hardening): real skills feed the combat registry.
+// Casts a real FIRE dragon at an enemy agent and waits for the combat-
+// applied hit (skills no longer damage projectiles themselves), and checks
+// the match loop equips the default loadout.
+static int s_step0Ally = -1, s_step0Foe = -1;
+static AutoTestResult AutoTest_SkillRegistryStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase == 0) {
+    GameScreen_Init(&player); // also applies the default loadout
+    const Agent *pa = Entity_GetAgent(player.agentId);
+    if (!AutoTest_ExpectTrue(pa && pa->equippedSkills[0] >= 0 && pa->equippedSkills[3] >= 0,
+                             "default loadout equipped", outReason, outReasonSize)) return AUTOTEST_FAIL;
+
+    s_step0Ally = Entity_SpawnAgent((Vector3){ 0, 0, 0 }, 100.0f, 2, TEAM_ALLY, ARCH_HERO);
+    s_step0Foe  = Entity_SpawnAgent((Vector3){ 4.0f, 0, 0 }, 100.0f, 0, TEAM_ENEMY, ARCH_HERO);
+    if (!AutoTest_ExpectTrue(s_step0Ally >= 0 && s_step0Foe >= 0, "spawned duel agents", outReason, outReasonSize)) return AUTOTEST_FAIL;
+
+    int fireIdx = Skill_GetIndexByName("FIRE");
+    if (!AutoTest_ExpectTrue(fireIdx >= 0, "FIRE registered", outReason, outReasonSize)) return AUTOTEST_FAIL;
+    Vector3 from = { 0, 0.5f, 0 };
+    if (!AutoTest_ExpectTrue(CastSkill(fireIdx, s_step0Ally, from, (Vector3){ 4.0f, 0.5f, 0 },
+                                       (SkillParams){ .level = 1, .quantity = 1, .sizeScale = 1.0f }),
+                             "fire cast went through", outReason, outReasonSize)) return AUTOTEST_FAIL;
+    return AUTOTEST_RUNNING;
+  }
+
+  const Agent *foe = Entity_GetAgent(s_step0Foe);
+  if (foe == NULL || foe->health < 100.0f) {
+    // Combat registry applied the dragon's hit (or knocked the foe out).
+    Entity_ApplyDamage(s_step0Ally, 1e9f, (Vector3){ 0 });
+    if (foe) Entity_ApplyDamage(s_step0Foe, 1e9f, (Vector3){ 0 });
+    GameScreen_Init(&player);
+    return AUTOTEST_PASS;
+  }
+  return AUTOTEST_RUNNING; // maxFrames timeout fails the case
+}
+
 // Module 5 DoD: boss spawns as ARCH_BOSS pool agent, phase follows %HP with
 // biến hệ (element change = visual cue source), AI cast fires through the
 // skill manager at a nearby opposing-team target, death via the normal
@@ -584,6 +621,7 @@ int main(int argc, char **argv) {
       AutoTest_Register("boss_hac_dien", AutoTest_BossStep, 5);
       AutoTest_Register("taiji_state", AutoTest_TaijiStep, 5);
       AutoTest_Register("game_mode_loop", AutoTest_GameModeStep, 5);
+      AutoTest_Register("skill_combat_registry", AutoTest_SkillRegistryStep, 300);
   }
   DamageVolume_Init();
   EmitterSystem_Init();
@@ -690,6 +728,10 @@ int main(int argc, char **argv) {
         dt = 0.0f; // Freeze time during automated screenshot capture
     }
 
+    // Combat event frame boundary: last frame's clash events stay peekable
+    // through this frame's skill updates, then get cleared here.
+    Combat_BeginFrame();
+
     if (currentScreen == SCREEN_MAIN_MENU) {
         Vector2 mousePos = GetMousePosition();
         bool clicked = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
@@ -795,8 +837,25 @@ int main(int argc, char **argv) {
     // after all skill updates submitted this frame's projectile colliders
     // (immediate mode). Both tick for every screen; no boss / no
     // submissions = no-op. (Module 7 game/ will own this ordering.)
+    AI_Update(dt);
     Boss_Update(dt);
     Combat_Update(dt);
+
+    // Minion self-destruct VFX — ai/ is pure logic and reports explosions
+    // as events; the composition layer draws them (element-matched preset).
+    {
+        MinionExplosion booms[8];
+        int nBooms = AI_PollExplosions(booms, 8);
+        for (int bi = 0; bi < nBooms; bi++) {
+            EffectPresetType preset =
+                (booms[bi].element == 0) ? EFFECT_PRESET_WATER_SPLASH :
+                (booms[bi].element == 1) ? EFFECT_PRESET_WOOD_BLOOM :
+                (booms[bi].element == 2) ? EFFECT_PRESET_FIRE_EXPLOSION :
+                (booms[bi].element == 3) ? EFFECT_PRESET_EARTH_CRACK :
+                                           EFFECT_PRESET_METAL_SHARD;
+            VFX_ComposeImpact(booms[bi].pos, preset, 0.8f);
+        }
+    }
 
     // Cảnh Giới Thái Cực → monochrome world (Module 6). Any live taiji
     // agent (player via balanced loadout, boss below 30% HP) fades the

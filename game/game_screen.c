@@ -9,6 +9,7 @@
 #include "boss/boss_system.h"
 #include "core/map_manager.h"
 #include "game/game_rules.h"
+#include "ai/ai.h"
 #include <math.h>
 #include <string.h>
 
@@ -23,6 +24,7 @@ static bool  s_backToMenu = false;
 // --- Module 7 match state ---
 static GameState s_state = GAME_ARENA_INTRO;
 static float s_introTimer = 0.0f;
+static int s_lastBossPhase = -1; // minion waves trigger on phase change (M8)
 
 // The Phase 0 match runs on DEFAULT_ARENA (its ring-out circle matches the
 // entities arena constants — center (6,0,4.4), r=18). Spawn points inside.
@@ -33,6 +35,7 @@ static const float   INTRO_SECONDS = 2.0f;
 static void ResetMatch(PlayerEntity *player) {
     s_state = GAME_ARENA_INTRO;
     s_introTimer = INTRO_SECONDS;
+    s_lastBossPhase = -1;
 
     // Player agent may have died last match (HP or ring-out) — respawn it.
     if (Entity_GetAgent(player->agentId) == NULL) {
@@ -41,6 +44,22 @@ static void ResetMatch(PlayerEntity *player) {
     player->position = PLAYER_SPAWN;
     Entity_SetPosition(player->agentId, player->position);
     Control_Init(player->agentId);
+
+    // Default loadout (keys 1-4). One skill per element — deliberately NOT
+    // 2 Âm + 2 Dương (that combination enters Thái Cực; the player should
+    // discover it by re-equipping, No Tutorial). Majority tie → Thủy.
+    {
+        static const struct { const char *name; int element; } kLoadout[AGENT_SKILL_SLOTS] = {
+            { "GLACIAL_CANNON", 0 }, // Thủy
+            { "FIRE",           2 }, // Hỏa
+            { "STONE_PRISON",   3 }, // Thổ
+            { "LEAF_WHIRLWIND", 1 }, // Mộc
+        };
+        for (int slot = 0; slot < AGENT_SKILL_SLOTS; slot++) {
+            int idx = Skill_GetIndexByName(kLoadout[slot].name);
+            if (idx >= 0) Entity_SetEquippedSkill(player->agentId, slot, idx, kLoadout[slot].element);
+        }
+    }
 
     // Leftover boss from an aborted match: kill it so the next intro spawns
     // a fresh one (Boss_Spawn would otherwise leak the old pool agent).
@@ -99,6 +118,15 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
             NatureZoneType zone = Map_QueryZoneAt(pa->position);
             Control_SetCastCooldownMult(GameRules_CooldownMult(pa->currentElement, zone));
             Entity_SetStealth(player->agentId, GameRules_GrantsStealth(pa->currentElement, zone));
+
+            // Module 8: the boss summons a minion wave on every phase
+            // change (bigger waves as it gets desperate).
+            int phase = Boss_GetPhase();
+            if (phase != s_lastBossPhase) {
+                if (phase > 0) AI_SpawnMinionWave(Boss_GetAgentId(), 3 + phase);
+                s_lastBossPhase = phase;
+            }
+
             if (!Boss_IsAlive()) s_state = GAME_VICTORY;
         }
     } else { // GAME_VICTORY / GAME_DEFEAT
@@ -174,8 +202,35 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
     };
 }
 
+static Color MinionElementColor(int elem) {
+    switch (elem) {
+        case 0:  return ELEMENT_COLOR_WATER;
+        case 1:  return ELEMENT_COLOR_WOOD;
+        case 2:  return ELEMENT_COLOR_FIRE;
+        case 3:  return ELEMENT_COLOR_EARTH;
+        case 4:  return ELEMENT_COLOR_METAL;
+        default: return ELEMENT_COLOR_TAIJI;
+    }
+}
+
 void GameScreen_Draw3D(const PlayerEntity *player) {
     if (s_state == GAME_DEFEAT) return; // the fallen player isn't drawn
+
+    // Minions (ARCH_MINION pool agents — ai/ is pure logic, render lives
+    // here): small element-colored spirit orbs with a dark body, bobbing.
+    for (int i = 0; i < MAX_AGENTS; i++) {
+        const Agent *a = Entity_GetAgent(i);
+        if (!a || a->archetype != ARCH_MINION) continue;
+        Color c = MinionElementColor(a->currentElement);
+        float bob = 0.25f + 0.05f * sinf((float)GetTime() * 4.0f + (float)i);
+        Vector3 body = { a->position.x, a->position.y + bob, a->position.z };
+        Environment_DrawSmartShadow(a->position, ENV_SHAPE_SPHERE, 0.2f, 0.6f);
+        DrawSphereEx(body, 0.18f, 8, 8,
+                     (Color){ (unsigned char)(20 + c.r / 6), (unsigned char)(20 + c.g / 6),
+                              (unsigned char)(20 + c.b / 6), 255 });
+        DrawCircle3D(body, 0.26f, (Vector3){ 0, 1, 0 }, (float)GetTime() * 90.0f + i * 40.0f, c);
+    }
+
     Environment_DrawSmartShadow(player->position, ENV_SHAPE_SPHERE, 0.5f, 0.9f);
     if (CharacterModel_IsLoaded()) {
         CharacterModel_Draw(&player->anim, player->position, Control_GetYaw(), 1.0f, WHITE);
