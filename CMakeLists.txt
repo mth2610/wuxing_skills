@@ -212,6 +212,9 @@ if (WUXING_EOS)
     elseif (UNIX)
         target_link_libraries(wuxing PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/eos-sdk/SDK/Bin/libEOSSDK-Linux-Shipping.so)
     endif()
+    # Dylib install name la @rpath/... — tro rpath ve SDK/Bin de dyld tim thay
+    set_target_properties(wuxing PROPERTIES
+        BUILD_RPATH ${CMAKE_CURRENT_SOURCE_DIR}/third_party/eos-sdk/SDK/Bin)
 else()
     target_sources(wuxing PRIVATE net/net_eos_stub.c)
 endif()

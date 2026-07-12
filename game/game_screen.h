@@ -57,4 +57,9 @@ void GameScreen_DrawHUD(const PlayerEntity *player);
 // SCREEN_MAIN_MENU when this returns true.
 bool GameScreen_RequestedBackToMenu(void);
 
+// Online match: the EOS join code to show in the HUD while the host waits
+// for an opponent ("MA PHONG: XXXXX"). NULL/empty clears it (main.c sets it
+// after Net_StartHostOnline succeeds and clears it on back-to-menu).
+void GameScreen_SetOnlineCode(const char *code);
+
 #endif // GAME_SCREEN_H

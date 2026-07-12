@@ -60,6 +60,41 @@ Single peer (1v1). CLI: `./wuxing --host [port]` / `./wuxing --join <ip>
   agents as mannequins and the snapshot boss as core+ring (the boss/ module
   state lives host-side only).
 
+## 3c. Online backend (`net/net_eos.c` — EOS, landed 07/2026)
+
+Internet play over Epic Online Services' free NAT-punch/relay. CLI:
+`./wuxing --host-online` (prints a 5-char join code) / `./wuxing
+--join-online <code>`. Needs `-DWUXING_EOS=ON` + SDK + `eos_keys.cfg`
+(EOS_SETUP.md); the default build compiles `net_eos_stub.c` (reports
+unavailable). Verified end-to-end 2026-07-12: two instances, real Epic
+lobby + P2P, host spawned the remote hero, session held with no drops.
+
+- **Seam**: `net/net_transport_internal.h`. The transport core (host sim,
+  snapshots, intents, ctrl packets) is backend-agnostic — a backend
+  installs `send/tick/stop` hooks via `NetTransport_SetBackend` and feeds
+  events back through `NetTransport_Backend{Connected,Disconnected,Packet}`.
+  ENet stays built-in for LAN; EOS replaces it per session, same wire
+  formats and protocol version on both.
+- **Auth**: Device ID (EOS Connect) — anonymous, no Epic account, no popup.
+- **Flow**: host creates a public lobby (max 2, bucket `wuxing:duel:v1`)
+  carrying the join code as a searchable attribute; the client finds it by
+  code, reads the owner's ProductUserId, and opens P2P (socket `WUXING`).
+  Client marks itself connected optimistically — its queued intents
+  (`bAllowDelayedDelivery`) trigger the NAT punch; the host flips connected
+  on the incoming connection request.
+- **Fragmentation**: EOS MTU is 1170 bytes < a full 256-agent snapshot, so
+  logical packets carry a 3-byte `[seq|idx|count]` header (channel 1 =
+  ReliableOrdered, channel 0 = UnreliableUnordered; a lost fragment drops
+  that snapshot only).
+- **macOS landmines** (both hit and fixed): the SDK dylib ships quarantined
+  (`xattr -d com.apple.quarantine` + ad-hoc `codesign` — EOS_SETUP.md), and
+  the SDK's HTTP stack delivers on the main CFRunLoop, so blocking setup
+  waits must pump `CFRunLoopRunInMode`, not sleep.
+- **Dev envs**: `WUXING_EOS_VERBOSE=1` (SDK verbose logs),
+  `WUXING_EOS_FRESH_DEVICE=1` (discard the machine's device id → new
+  anonymous user; required to test host+join on one machine because lobby
+  search hides lobbies the searcher is already in).
+
 ## 4. Explicitly NOT in this version
 
 - Side thread (main-thread polling for now), reconnection/session management.

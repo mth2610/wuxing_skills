@@ -3,6 +3,7 @@
 // the roadmap's side-thread lands with the jitter pass), no client-side
 // prediction.
 #include "net/net_transport.h"
+#include "net/net_transport_internal.h"
 #include "net/net.h"
 #include "entities/entities.h"
 #include "core/skill_manager.h"
@@ -47,6 +48,24 @@ static int s_hostMatchState = -1;   // host: last state game/ reported
 static int s_hostStateSent  = -1;   // host: last state actually sent
 static int s_remoteMatchState = -1; // client: host's match state
 
+// Pluggable packet backend (net_transport_internal.h) — when installed it
+// replaces the ENet endpoint for the whole session (s_host stays NULL).
+static NetBackendSendFn s_backendSend = NULL;
+static NetBackendTickFn s_backendTick = NULL;
+static NetBackendStopFn s_backendStop = NULL;
+
+// Route one outgoing packet through whichever layer owns the session.
+static void SendPacket(int channel, const void *data, int len, bool reliable) {
+    if (s_backendSend != NULL) {
+        s_backendSend(channel, data, len, reliable);
+        return;
+    }
+    if (s_peer == NULL) return;
+    ENetPacket *pkt = enet_packet_create(data, (size_t)len,
+                                         reliable ? ENET_PACKET_FLAG_RELIABLE : 0);
+    enet_peer_send(s_peer, (enet_uint8)channel, pkt);
+}
+
 static const float REMOTE_MOVE_MPS = 3.5f;  // mirror control/'s walk speed
 static const float REMOTE_JUMP_FORCE = 4.0f;
 static const float REMOTE_DASH_MPS = 10.0f;
@@ -81,6 +100,10 @@ bool Net_StartClient(const char *ip, int port) {
 }
 
 void Net_Stop(void) {
+    if (s_backendStop != NULL) s_backendStop();
+    s_backendSend = NULL;
+    s_backendTick = NULL;
+    s_backendStop = NULL;
     if (s_peer && s_connected) enet_peer_disconnect_now(s_peer, 0);
     if (s_host) enet_host_destroy(s_host);
     s_host = NULL;
@@ -120,8 +143,7 @@ static void HostSpawnRemoteHero(void) {
     }
     // Tell the client which agent is theirs (reliable channel).
     NetCtrl hello = { NET_CTRL_HELLO, NET_PROTOCOL_VERSION, (unsigned char)s_remoteAgentId };
-    ENetPacket *pkt = enet_packet_create(&hello, sizeof(hello), ENET_PACKET_FLAG_RELIABLE);
-    enet_peer_send(s_peer, NET_CH_CONTROL, pkt);
+    SendPacket(NET_CH_CONTROL, &hello, (int)sizeof(hello), true);
     s_hostStateSent = -1; // re-announce the match state to the fresh peer
 }
 
@@ -213,57 +235,93 @@ static void ClientApplySnapshot(const unsigned char *data, int len) {
     Entity_NetSyncEnd();
 }
 
+// --- Shared event core (ENet events and backend callbacks both land here) ---
+
+static void HandlePeerConnected(void) {
+    s_connected = true;
+    TraceLog(LOG_INFO, "[NET] peer connected (%s)",
+             s_mode == NET_MODE_HOST ? "host" : "client");
+    if (s_mode == NET_MODE_HOST) {
+        HostSpawnRemoteHero();
+        TraceLog(LOG_INFO, "[NET] remote hero agent=%d", s_remoteAgentId);
+    }
+}
+
+static void HandlePeerDisconnected(void) {
+    s_connected = false;
+    TraceLog(LOG_INFO, "[NET] peer disconnected");
+    if (s_mode == NET_MODE_HOST && s_remoteAgentId >= 0) {
+        Entity_ApplyDamage(s_remoteAgentId, 1e9f, (Vector3){ 0 });
+        s_remoteAgentId = -1;
+    }
+    if (s_mode == NET_MODE_CLIENT) s_localHeroId = -1;
+}
+
+static void HandlePacket(int channel, const unsigned char *data, int len) {
+    if (s_mode == NET_MODE_HOST && channel == NET_CH_STREAM) {
+        PlayerIntent in;
+        if (Net_UnpackIntent(&in, data, len)) {
+            HostApplyRemoteEdges(&in);
+            s_remoteIntent = in; // held state for per-frame movement
+        }
+    } else if (s_mode == NET_MODE_CLIENT) {
+        if (channel == NET_CH_CONTROL && len == (int)sizeof(NetCtrl)) {
+            NetCtrl ctrl;
+            memcpy(&ctrl, data, sizeof(ctrl));
+            if (ctrl.version == NET_PROTOCOL_VERSION) {
+                if (ctrl.type == NET_CTRL_HELLO) s_localHeroId = ctrl.value;
+                else if (ctrl.type == NET_CTRL_STATE) s_remoteMatchState = ctrl.value;
+            }
+        } else if (channel == NET_CH_STREAM) {
+            ClientApplySnapshot(data, len);
+        }
+    }
+}
+
+// --- Backend entry points (net_transport_internal.h) ------------------------
+
+void NetTransport_BackendConnected(void)    { HandlePeerConnected(); }
+void NetTransport_BackendDisconnected(void) { HandlePeerDisconnected(); }
+void NetTransport_BackendPacket(int channel, const unsigned char *data, int len) {
+    HandlePacket(channel, data, len);
+}
+
+void NetTransport_SetBackend(NetMode mode, NetBackendSendFn send,
+                             NetBackendTickFn tick, NetBackendStopFn stop) {
+    s_mode = mode;
+    s_backendSend = send;
+    s_backendTick = tick;
+    s_backendStop = stop;
+}
+
 // --- Tick -------------------------------------------------------------------
 
 void Net_Tick(float dt) {
-    if (s_mode == NET_MODE_OFF || s_host == NULL) return;
+    if (s_mode == NET_MODE_OFF) return;
 
-    ENetEvent ev;
-    while (enet_host_service(s_host, &ev, 0) > 0) {
-        switch (ev.type) {
-            case ENET_EVENT_TYPE_CONNECT:
-                s_connected = true;
-                TraceLog(LOG_INFO, "[NET] peer connected (%s)",
-                         s_mode == NET_MODE_HOST ? "host" : "client");
-                if (s_mode == NET_MODE_HOST) {
-                    s_peer = ev.peer;
-                    HostSpawnRemoteHero();
-                    TraceLog(LOG_INFO, "[NET] remote hero agent=%d", s_remoteAgentId);
-                }
-                break;
-            case ENET_EVENT_TYPE_DISCONNECT:
-                s_connected = false;
-                TraceLog(LOG_INFO, "[NET] peer disconnected");
-                if (s_mode == NET_MODE_HOST && s_remoteAgentId >= 0) {
-                    Entity_ApplyDamage(s_remoteAgentId, 1e9f, (Vector3){ 0 });
-                    s_remoteAgentId = -1;
-                }
-                if (s_mode == NET_MODE_CLIENT) s_localHeroId = -1;
-                break;
-            case ENET_EVENT_TYPE_RECEIVE:
-                if (s_mode == NET_MODE_HOST && ev.channelID == NET_CH_STREAM) {
-                    PlayerIntent in;
-                    if (Net_UnpackIntent(&in, ev.packet->data, (int)ev.packet->dataLength)) {
-                        HostApplyRemoteEdges(&in);
-                        s_remoteIntent = in; // held state for per-frame movement
-                    }
-                } else if (s_mode == NET_MODE_CLIENT) {
-                    if (ev.channelID == NET_CH_CONTROL &&
-                        ev.packet->dataLength == sizeof(NetCtrl)) {
-                        NetCtrl ctrl;
-                        memcpy(&ctrl, ev.packet->data, sizeof(ctrl));
-                        if (ctrl.version == NET_PROTOCOL_VERSION) {
-                            if (ctrl.type == NET_CTRL_HELLO) s_localHeroId = ctrl.value;
-                            else if (ctrl.type == NET_CTRL_STATE) s_remoteMatchState = ctrl.value;
-                        }
-                    } else if (ev.channelID == NET_CH_STREAM) {
-                        ClientApplySnapshot(ev.packet->data, (int)ev.packet->dataLength);
-                    }
-                }
-                enet_packet_destroy(ev.packet);
-                break;
-            default: break;
+    if (s_backendTick != NULL) {
+        s_backendTick(dt); // pumps the backend; events land in Handle* above
+    } else if (s_host != NULL) {
+        ENetEvent ev;
+        while (enet_host_service(s_host, &ev, 0) > 0) {
+            switch (ev.type) {
+                case ENET_EVENT_TYPE_CONNECT:
+                    if (s_mode == NET_MODE_HOST) s_peer = ev.peer;
+                    HandlePeerConnected();
+                    break;
+                case ENET_EVENT_TYPE_DISCONNECT:
+                    HandlePeerDisconnected();
+                    break;
+                case ENET_EVENT_TYPE_RECEIVE:
+                    HandlePacket((int)ev.channelID, ev.packet->data,
+                                 (int)ev.packet->dataLength);
+                    enet_packet_destroy(ev.packet);
+                    break;
+                default: break;
+            }
         }
+    } else {
+        return;
     }
 
     if (!s_connected) return;
@@ -273,28 +331,21 @@ void Net_Tick(float dt) {
         HostMoveRemote(dt);
         if (s_hostMatchState != s_hostStateSent && s_hostMatchState >= 0) {
             NetCtrl st = { NET_CTRL_STATE, NET_PROTOCOL_VERSION, (unsigned char)s_hostMatchState };
-            ENetPacket *pkt = enet_packet_create(&st, sizeof(st), ENET_PACKET_FLAG_RELIABLE);
-            enet_peer_send(s_peer, NET_CH_CONTROL, pkt);
+            SendPacket(NET_CH_CONTROL, &st, (int)sizeof(st), true);
             s_hostStateSent = s_hostMatchState;
         }
         if (s_sendAccum >= 1.0f / NET_SNAPSHOT_HZ) {
             s_sendAccum = 0.0f;
             static unsigned char buf[16 * 1024];
             int bytes = Net_PackAgentSnapshot(buf, (int)sizeof(buf));
-            if (bytes > 0) {
-                ENetPacket *pkt = enet_packet_create(buf, (size_t)bytes, 0 /*unreliable*/);
-                enet_peer_send(s_peer, NET_CH_STREAM, pkt);
-            }
+            if (bytes > 0) SendPacket(NET_CH_STREAM, buf, bytes, false);
         }
     } else { // client
         if (s_clientIntentValid && s_sendAccum >= 1.0f / NET_INTENT_HZ) {
             s_sendAccum = 0.0f;
             unsigned char buf[128];
             int bytes = Net_PackIntent(&s_clientIntent, buf, (int)sizeof(buf));
-            if (bytes > 0) {
-                ENetPacket *pkt = enet_packet_create(buf, (size_t)bytes, 0);
-                enet_peer_send(s_peer, NET_CH_STREAM, pkt);
-            }
+            if (bytes > 0) SendPacket(NET_CH_STREAM, buf, bytes, false);
             // Edge flags must not re-fire on the host — clear them until the
             // next real press updates the queued intent.
             s_clientIntent.jump = s_clientIntent.dash = s_clientIntent.meditate = false;

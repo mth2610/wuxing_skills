@@ -747,6 +747,8 @@ int main(int argc, char **argv) {
   int         netHostPort     = 0;      // --host [port]
   const char *netJoinIp       = NULL;   // --join <ip> [port]
   int         netJoinPort     = NET_DEFAULT_PORT;
+  bool        netHostOnline   = false;  // --host-online (EOS, prints join code)
+  const char *netJoinCode     = NULL;   // --join-online <code>
   for (int i = 1; i < argc; i++) {
       if (strcmp(argv[i], "--host") == 0)
           netHostPort = (i + 1 < argc && argv[i+1][0] != '-') ? atoi(argv[++i]) : NET_DEFAULT_PORT;
@@ -754,6 +756,10 @@ int main(int argc, char **argv) {
           netJoinIp = argv[++i];
           if (i + 1 < argc && argv[i+1][0] != '-') netJoinPort = atoi(argv[++i]);
       }
+      else if (strcmp(argv[i], "--host-online") == 0)
+          netHostOnline = true;
+      else if (strcmp(argv[i], "--join-online") == 0 && i + 1 < argc)
+          netJoinCode = argv[++i];
       else if (strcmp(argv[i], "--render-vfx") == 0 && i + 1 < argc)
           { renderVFXIndex = atoi(argv[++i]); renderVFXMode = true; }
       else if (strcmp(argv[i], "--warmup") == 0 && i + 1 < argc)
@@ -879,13 +885,29 @@ int main(int argc, char **argv) {
   InitSandbox(&player, &enemy);
   GameScreen_Init(&player);
 
-  // --host / --join: bring the ENet endpoint up and drop straight into the
-  // match screen (menu clicks are pointless on a dedicated PvP run).
+  // --host / --join (ENet, LAN) or --host-online / --join-online (EOS,
+  // internet): bring the endpoint up and drop straight into the match
+  // screen (menu clicks are pointless on a dedicated PvP run).
   bool netRequested = false;
   if (netHostPort > 0) netRequested = Net_StartHost(netHostPort);
   else if (netJoinIp != NULL) netRequested = Net_StartClient(netJoinIp, netJoinPort);
-  if ((netHostPort > 0 || netJoinIp) && !netRequested) {
-      TraceLog(LOG_WARNING, "[NET] failed to start %s", netHostPort > 0 ? "host" : "client");
+  else if (netHostOnline) {
+      char joinCode[16] = { 0 };
+      netRequested = Net_StartHostOnline(joinCode, (int)sizeof(joinCode));
+      if (netRequested) {
+          GameScreen_SetOnlineCode(joinCode); // HUD shows it while waiting
+
+          // The one line the host reads to their friend — keep it loud.
+          printf("\n==============================\n"
+                 "  WUXING ONLINE — JOIN CODE: %s\n"
+                 "  (ban be: ./wuxing --join-online %s)\n"
+                 "==============================\n\n", joinCode, joinCode);
+      }
+  }
+  else if (netJoinCode != NULL) netRequested = Net_JoinOnline(netJoinCode);
+  if ((netHostPort > 0 || netJoinIp || netHostOnline || netJoinCode) && !netRequested) {
+      TraceLog(LOG_WARNING, "[NET] failed to start %s",
+               (netHostPort > 0 || netHostOnline) ? "host" : "client");
   }
 
   UIPanelState uiState = {0};
@@ -933,6 +955,15 @@ int main(int argc, char **argv) {
   } GameScreen;
   GameScreen currentScreen = SCREEN_MAIN_MENU;
   if (netRequested) currentScreen = SCREEN_GAME; // PvP run: straight to the arena
+
+  // Main-menu online (EOS) UI state — TAO PHONG / NHAP MA buttons. Actions
+  // are queued one frame (menuOnlinePending) so the "DANG KET NOI" overlay
+  // renders before the blocking EOS setup call freezes the thread.
+  char menuOnlineMsg[64] = "";
+  char menuJoinInput[8]  = "";
+  int  menuJoinLen       = 0;
+  bool menuJoinOpen      = false;
+  int  menuOnlinePending = 0; // 0 none, 1 host, 2 join
   // Headless modes never click through the menu — drop straight into the
   // sandbox screen so AutoTest_RunFrame/VisualVerify actually tick (the menu
   // branch `continue;`s past them, which used to hang autotest forever).
@@ -982,14 +1013,39 @@ int main(int argc, char **argv) {
     Combat_BeginFrame();
 
     if (currentScreen == SCREEN_MAIN_MENU) {
+        // Execute the online action queued LAST frame — its "DANG KET NOI"
+        // overlay is already on screen, because EOS setup (login + lobby)
+        // blocks the thread for a few seconds.
+        if (menuOnlinePending != 0) {
+            int action = menuOnlinePending;
+            menuOnlinePending = 0;
+            if (action == 1) { // TAO PHONG
+                char code[16] = { 0 };
+                if (Net_StartHostOnline(code, (int)sizeof(code))) {
+                    GameScreen_SetOnlineCode(code);
+                    currentScreen = SCREEN_GAME;
+                    continue;
+                }
+                snprintf(menuOnlineMsg, sizeof(menuOnlineMsg), "TAO PHONG THAT BAI — XEM LOG TERMINAL");
+            } else {           // NHAP MA -> join
+                if (Net_JoinOnline(menuJoinInput)) {
+                    currentScreen = SCREEN_GAME;
+                    continue;
+                }
+                snprintf(menuOnlineMsg, sizeof(menuOnlineMsg), "KHONG VAO DUOC PHONG %s", menuJoinInput);
+            }
+        }
+
         Vector2 mousePos = GetMousePosition();
         bool clicked = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
-        
+
         int sw = GetScreenWidth();
         int sh = GetScreenHeight();
         Rectangle btnSandbox = { sw/2 - 150, sh/2 - 60, 300, 50 };
         Rectangle btnVFX = { sw/2 - 150, sh/2 + 20, 300, 50 };
         Rectangle btnGame = { sw/2 - 150, sh/2 + 100, 300, 50 };
+        Rectangle btnHost = { sw/2 - 150, sh/2 + 180, 300, 50 };
+        Rectangle btnJoin = { sw/2 - 150, sh/2 + 260, 300, 50 };
 
         if (CheckCollisionPointRec(mousePos, btnSandbox) && clicked) {
             currentScreen = SCREEN_SKILL_SANDBOX;
@@ -999,6 +1055,43 @@ int main(int argc, char **argv) {
         }
         if (CheckCollisionPointRec(mousePos, btnGame) && clicked) {
             currentScreen = SCREEN_GAME;
+        }
+        if (CheckCollisionPointRec(mousePos, btnHost) && clicked) {
+            if (!Net_OnlineAvailable())
+                snprintf(menuOnlineMsg, sizeof(menuOnlineMsg), "BUILD CHUA BAT EOS — cmake -DWUXING_EOS=ON");
+            else if (Net_GetMode() == NET_MODE_OFF) {
+                menuOnlineMsg[0] = '\0';
+                menuJoinOpen = false;
+                menuOnlinePending = 1;
+            }
+        }
+        if (CheckCollisionPointRec(mousePos, btnJoin) && clicked) {
+            if (!Net_OnlineAvailable())
+                snprintf(menuOnlineMsg, sizeof(menuOnlineMsg), "BUILD CHUA BAT EOS — cmake -DWUXING_EOS=ON");
+            else {
+                menuJoinOpen = !menuJoinOpen;
+                menuOnlineMsg[0] = '\0';
+            }
+        }
+
+        // Room-code entry (open while the NHAP MA button is toggled on).
+        if (menuJoinOpen) {
+            int ch;
+            while ((ch = GetCharPressed()) != 0) {
+                if (ch >= 'a' && ch <= 'z') ch -= 32;
+                if (((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')) &&
+                    menuJoinLen < 5) {
+                    menuJoinInput[menuJoinLen++] = (char)ch;
+                    menuJoinInput[menuJoinLen] = '\0';
+                }
+            }
+            if (IsKeyPressed(KEY_BACKSPACE) && menuJoinLen > 0)
+                menuJoinInput[--menuJoinLen] = '\0';
+            if (IsKeyPressed(KEY_ENTER) && menuJoinLen >= 3 &&
+                Net_GetMode() == NET_MODE_OFF) {
+                menuOnlineMsg[0] = '\0';
+                menuOnlinePending = 2;
+            }
         }
 
         BeginDrawing();
@@ -1019,6 +1112,41 @@ int main(int argc, char **argv) {
         DrawRectangleRounded(btnGame, 0.2f, 10, CheckCollisionPointRec(mousePos, btnGame) ? GRAY : LIGHTGRAY);
         DrawRectangleRoundedLines(btnGame, 0.2f, 10, WHITE);
         DrawText("3. ENTER GAME", (int)btnGame.x + 90, (int)btnGame.y + 15, 20, BLACK);
+
+        // Online (EOS) — greyed-out label when the build carries the stub.
+        bool onlineUp = Net_OnlineAvailable();
+        Color onlineTxt = onlineUp ? BLACK : (Color){ 90, 90, 90, 255 };
+        DrawRectangleRounded(btnHost, 0.2f, 10, CheckCollisionPointRec(mousePos, btnHost) ? GRAY : LIGHTGRAY);
+        DrawRectangleRoundedLines(btnHost, 0.2f, 10, WHITE);
+        DrawText("4. TAO PHONG ONLINE", (int)btnHost.x + 45, (int)btnHost.y + 15, 20, onlineTxt);
+
+        DrawRectangleRounded(btnJoin, 0.2f, 10, (menuJoinOpen || CheckCollisionPointRec(mousePos, btnJoin)) ? GRAY : LIGHTGRAY);
+        DrawRectangleRoundedLines(btnJoin, 0.2f, 10, WHITE);
+        DrawText("5. NHAP MA VAO PHONG", (int)btnJoin.x + 40, (int)btnJoin.y + 15, 20, onlineTxt);
+
+        if (menuJoinOpen) {
+            // Entry box to the right of the join button: MA: ABC_ + ENTER hint.
+            Rectangle box = { btnJoin.x + btnJoin.width + 16, btnJoin.y, 190, 50 };
+            DrawRectangleRec(box, (Color){ 25, 25, 35, 255 });
+            DrawRectangleLinesEx(box, 2, (Color){ 240, 220, 120, 255 });
+            const char *entry = TextFormat("MA: %s%s", menuJoinInput,
+                                           (((int)(g_totalElapsed * 2.0f)) & 1) ? "_" : " ");
+            DrawText(entry, (int)box.x + 12, (int)box.y + 8, 24, (Color){ 240, 220, 120, 255 });
+            DrawText("ENTER DE VAO", (int)box.x + 12, (int)box.y + 34, 12, (Color){ 180, 180, 190, 255 });
+        }
+        if (menuOnlineMsg[0] != '\0') {
+            int mw = MeasureText(menuOnlineMsg, 18);
+            DrawText(menuOnlineMsg, sw/2 - mw/2, (int)btnJoin.y + 60, 18, (Color){ 235, 140, 90, 255 });
+        }
+        if (menuOnlinePending != 0) {
+            // This frame queued a blocking EOS call — tell the user before
+            // the window freezes for the few seconds it takes.
+            const char *t = (menuOnlinePending == 1) ? "DANG TAO PHONG QUA EPIC..."
+                                                     : "DANG TIM PHONG QUA EPIC...";
+            int tw2 = MeasureText(t, 26);
+            DrawRectangle(sw/2 - tw2/2 - 20, sh/2 - 230, tw2 + 40, 44, (Color){ 15, 15, 25, 230 });
+            DrawText(t, sw/2 - tw2/2, sh/2 - 220, 26, (Color){ 240, 220, 120, 255 });
+        }
 
         EndDrawing();
         continue;
@@ -1079,6 +1207,10 @@ int main(int argc, char **argv) {
         GameScreen_Update(&player, &camera, dt);
         if (GameScreen_RequestedBackToMenu()) {
             currentScreen = SCREEN_MAIN_MENU;
+            // Leaving a net match tears the session down (EOS: closes P2P +
+            // leaves the lobby) so TAO PHONG / NHAP MA work again from the menu.
+            Net_Stop();
+            GameScreen_SetOnlineCode(NULL);
             // The match pinned VERDANT_PATH + its ring-out bounds — hand the
             // sandbox its DEFAULT_ARENA world back (bounds are global; a
             // sandbox player outside the match circle would fall forever).

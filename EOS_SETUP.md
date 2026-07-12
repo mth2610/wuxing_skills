@@ -58,12 +58,39 @@ client_id = xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 client_secret = xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-## Bước 6 — Báo Claude
+## Bước 6 — Build & chạy (ĐÃ XONG — net/net_eos.c landed 07/2026)
 
-Xong 5 bước trên thì nhắn "EOS sẵn sàng" — Claude sẽ:
-1. Bật `WUXING_EOS=ON` trong CMake, link SDK, viết `net/net_eos.c`
-   (init platform → Device ID login → tạo/join lobby bằng **mã phòng 4-6
-   ký tự** → mở kênh P2P → thay tầng ENet khi chơi online).
-2. Luồng người chơi cuối: host bấm "TẠO PHÒNG" → game hiện mã (vd `TX7K`)
-   → bạn bè nhập mã là vào, xuyên NAT, không cần IP, không cần cài gì.
-3. ENet vẫn giữ cho LAN/dev (`--host` / `--join <ip>` như cũ).
+```bash
+# macOS: dylib tải về bị Gatekeeper chặn (quarantine) — gỡ MỘT LẦN:
+xattr -d com.apple.quarantine third_party/eos-sdk/SDK/Bin/libEOSSDK-Mac-Shipping.dylib
+codesign --force --sign - third_party/eos-sdk/SDK/Bin/libEOSSDK-Mac-Shipping.dylib
+
+cmake -S . -B build -DWUXING_EOS=ON
+cmake --build build -j4
+
+# Cách 1 — GIAO DIỆN: chạy ./build/wuxing, ở menu chính bấm
+#   "4. TAO PHONG ONLINE"  → mã phòng hiện to giữa màn hình trong trận
+#   "5. NHAP MA VAO PHONG" → gõ mã 5 ký tự → ENTER
+./build/wuxing
+
+# Cách 2 — CLI (dev): host in mã ra terminal, khách join bằng mã:
+./build/wuxing --host-online
+./build/wuxing --join-online <MÃ>
+```
+
+ENet vẫn giữ cho LAN/dev (`--host` / `--join <ip>` như cũ).
+
+### Debug / test trên MỘT máy
+
+- `WUXING_EOS_VERBOSE=1` — mở log chi tiết của SDK khi auth/lobby trục trặc.
+- `WUXING_EOS_FRESH_DEVICE=1` — xoá device id của máy để lần login sau tạo
+  user ẩn danh MỚI. Bắt buộc khi tự test host+join trên cùng một máy:
+  lobby search của Epic ẨN các lobby mà chính user đang ở trong, nên hai
+  instance dùng chung device id sẽ không bao giờ thấy phòng của nhau.
+  ```bash
+  ./build/wuxing --host-online                                  # cửa sổ 1 → in mã
+  WUXING_EOS_FRESH_DEVICE=1 ./build/wuxing --join-online <MÃ>   # cửa sổ 2
+  ```
+
+Đã kiểm chứng end-to-end 2026-07-12: hai instance qua lobby + P2P thật của
+Epic, host spawn hero cho khách, phiên P2P giữ ổn định không rớt.

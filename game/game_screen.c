@@ -25,6 +25,7 @@ static bool  s_backToMenu = false;
 
 // --- Module 7 match state ---
 static GameState s_state = GAME_ARENA_INTRO;
+static char s_onlineCode[16] = { 0 }; // EOS room code shown while hosting
 static float s_introTimer = 0.0f;
 static int s_lastBossPhase = -1; // minion waves trigger on phase change (M8)
 static float s_swingSlowTimer = 0.0f; // movement damped while a swing plays
@@ -392,6 +393,21 @@ void GameScreen_DrawHUD(const PlayerEntity *player) {
         }
     }
 
+    // Online status strip (below the boss bar): the host shows its room
+    // code until the opponent arrives; a joining client shows the handshake
+    // wait (hero id assignment doubles as "snapshots are flowing").
+    if (Net_GetMode() == NET_MODE_HOST && !Net_IsPeerConnected() && s_onlineCode[0] != '\0') {
+        const char *t = TextFormat("MA PHONG: %s", s_onlineCode);
+        int tw = MeasureText(t, 30);
+        DrawRectangle(sw / 2 - tw / 2 - 14, 52, tw + 28, 66, (Color){ 15, 15, 25, 200 });
+        DrawText(t, sw / 2 - tw / 2, 60, 30, (Color){ 240, 220, 120, 255 });
+        const char *w = "DANG CHO DOI THU VAO PHONG...";
+        DrawText(w, sw / 2 - MeasureText(w, 16) / 2, 96, 16, (Color){ 200, 200, 210, 255 });
+    } else if (Net_GetMode() == NET_MODE_CLIENT && Net_GetLocalHeroAgentId() < 0) {
+        const char *w = "DANG KET NOI DEN HOST...";
+        DrawText(w, sw / 2 - MeasureText(w, 22) / 2, 60, 22, (Color){ 240, 220, 120, 255 });
+    }
+
     // Match-state overlays (No Tutorial — one line each, no instructions
     // beyond the exit key).
     if (s_state == GAME_ARENA_INTRO) {
@@ -414,4 +430,10 @@ bool GameScreen_RequestedBackToMenu(void) {
     bool req = s_backToMenu;
     s_backToMenu = false;
     return req;
+}
+
+void GameScreen_SetOnlineCode(const char *code) {
+    if (code == NULL) { s_onlineCode[0] = '\0'; return; }
+    strncpy(s_onlineCode, code, sizeof(s_onlineCode) - 1);
+    s_onlineCode[sizeof(s_onlineCode) - 1] = '\0';
 }
