@@ -16,7 +16,7 @@
 #include "entities/entities.h" // Agent snapshot fields
 #include <stdbool.h>
 
-#define NET_PROTOCOL_VERSION 1
+#define NET_PROTOCOL_VERSION 2 // v2: intent carries basicAttack (melee)
 
 // --- Client → Host: PlayerIntent ---
 // Returns bytes written (0 on undersized buffer).

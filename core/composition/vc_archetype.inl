@@ -237,56 +237,7 @@ int VFX_SpawnOrbitals(Vector3 center, EffectPresetType element,
     return -1;
 }
 
-// =========================================================
-// Petal Helper for Crown Splash
-// =========================================================
-static void DrawSubdividedPetal(float width, float height, float thickness, int rows, int cols)
-{
-    // A vertical thin rectangular block (front, back, left, right faces). Base is at Y=0.
-    rlBegin(RL_QUADS);
-    for (int r = 0; r < rows; r++) {
-        float y1 = height * (float)r / rows;
-        float y2 = height * (float)(r + 1) / rows;
-        float v1 = 1.0f - (float)r / rows; // V=1 at bottom
-        float v2 = 1.0f - (float)(r + 1) / rows; // V=0 at top
-        
-        for (int c = 0; c < cols; c++) {
-            float x1 = -width/2 + width * (float)c / cols;
-            float x2 = -width/2 + width * (float)(c + 1) / cols;
-            float u1 = (float)c / cols;
-            float u2 = (float)(c + 1) / cols;
-            
-            // Front face (+Z) - BL, BR, TR, TL
-            rlNormal3f(0.0f, 0.0f, 1.0f);
-            rlTexCoord2f(u1, v1); rlVertex3f(x1, y1, thickness/2);
-            rlTexCoord2f(u2, v1); rlVertex3f(x2, y1, thickness/2);
-            rlTexCoord2f(u2, v2); rlVertex3f(x2, y2, thickness/2);
-            rlTexCoord2f(u1, v2); rlVertex3f(x1, y2, thickness/2);
-            
-            // Back face (-Z) - BL, BR, TR, TL
-            rlNormal3f(0.0f, 0.0f, -1.0f);
-            rlTexCoord2f(u2, v1); rlVertex3f(x2, y1, -thickness/2);
-            rlTexCoord2f(u1, v1); rlVertex3f(x1, y1, -thickness/2);
-            rlTexCoord2f(u1, v2); rlVertex3f(x1, y2, -thickness/2);
-            rlTexCoord2f(u2, v2); rlVertex3f(x2, y2, -thickness/2);
-        }
-        
-        // Left face (-X) - BL, BR, TR, TL
-        rlNormal3f(-1.0f, 0.0f, 0.0f);
-        rlTexCoord2f(0.0f, v1); rlVertex3f(-width/2, y1, -thickness/2);
-        rlTexCoord2f(1.0f, v1); rlVertex3f(-width/2, y1, thickness/2);
-        rlTexCoord2f(1.0f, v2); rlVertex3f(-width/2, y2, thickness/2);
-        rlTexCoord2f(0.0f, v2); rlVertex3f(-width/2, y2, -thickness/2);
-        
-        // Right face (+X) - BL, BR, TR, TL
-        rlNormal3f(1.0f, 0.0f, 0.0f);
-        rlTexCoord2f(0.0f, v1); rlVertex3f(width/2, y1, thickness/2);
-        rlTexCoord2f(1.0f, v1); rlVertex3f(width/2, y1, -thickness/2);
-        rlTexCoord2f(1.0f, v2); rlVertex3f(width/2, y2, -thickness/2);
-        rlTexCoord2f(0.0f, v2); rlVertex3f(width/2, y2, thickness/2);
-    }
-    rlEnd();
-}
+
 
 // =========================================================
 // (Preserved) Torus Splash Helper (For future vortex/shockwave effects)
@@ -820,9 +771,9 @@ static void VC_Archetype_Draw3D(Camera3D cam)
 
         EffectMaterialParams p = {0};
         p.baseColor = ColorAlpha(eMat->body, 0.70f * alpha);
-        p.rimStrength = 3.5f;
-        p.fresnelPower = 2.0f;
-        p.emissiveIntensity = 1.6f;
+        p.rimStrength = 2.0f;
+        p.fresnelPower = 1.0f;
+        p.emissiveIntensity = 0.5f;
         p.distortionStrength = 0.18f;
         p.translucency = 0.90f;
         p.texture1 = ResourceManager_LoadTexture("assets/textures/water_caustics.png");
@@ -831,39 +782,73 @@ static void VC_Archetype_Draw3D(Camera3D cam)
         EffectMaterial mat = Material_LoadCustomShader(p, "core/shaders/water_splash.vs", "core/shaders/water_splash.fs");
         Material_Begin(mat);
 
-        // 1. Draw Petal Crown Splash via Vertex Shader
-        float scaleProgress = sinf(fminf(progress / 0.2f, 1.0f) * PI * 0.5f);
-        float currentScale = 0.2f + scaleProgress * 0.8f; 
+        // Base scale for the model (increased to 0.04 to fix small size)
         float maxR = s_archCrownSplashes[i].maxRadius;
-        float finalScale = maxR * currentScale;
+        float baseScale = maxR * 0.04f;
+        
+        // 3-Phase Animation in World Space (before model transform!)
+        float scaleX = baseScale;
+        float scaleY = baseScale;
+        float scaleZ = baseScale;
+        
+        if (progress < 0.35f) {
+            // Phase 1: Eruption (Grow organically using Elastic Easing & Squash/Stretch)
+            float t = progress / 0.35f;
+            
+            // Height shoots up elastically and wobbles back (Elastic Ease-Out)
+            float c4 = (2.0f * PI) / 3.0f;
+            float easeY = (t <= 0.0f || t >= 1.0f) ? t : (powf(2.0f, -10.0f * t) * sinf((t * 10.0f - 0.75f) * c4) + 1.0f);
+            
+            // Width responds inversely to height! (Volume Conservation: X*Y*Z = 1 -> X = 1/sqrt(Y))
+            float easeXZ;
+            if (t < 0.2f) {
+                // Initial width burst (0 to 1 rapidly)
+                easeXZ = sinf((t / 0.2f) * PI * 0.5f);
+            } else {
+                // True fluid squash and stretch based on elastic height
+                easeXZ = 1.0f / sqrtf(fmaxf(easeY, 0.1f)); 
+            }
+            
+            scaleX *= easeXZ;
+            scaleZ *= easeXZ;
+            scaleY *= easeY;
+            
+        } else if (progress < 0.65f) {
+            // Phase 2: Peak (Hold at 1)
+            // The Vertex Shader handles the continuous liquid wobbling here
+            
+        } else {
+            // Phase 3: Collapse (Squash down and fade out with centrifugal spread)
+            float t = (progress - 0.65f) / 0.35f;
+            
+            // Gravity is exponential (starts slow, slams down fast) -> Cubic Ease-In
+            float easeIn = t * t * t; 
+            
+            scaleY *= (1.0f - easeIn); // squash vertically towards ground
+            scaleX *= (1.0f + easeIn * 1.5f); // intense centrifugal force spread
+            scaleZ *= (1.0f + easeIn * 1.5f);
+        }
         
         rlPushMatrix();
         rlTranslatef(s_archCrownSplashes[i].position.x, s_archCrownSplashes[i].position.y, s_archCrownSplashes[i].position.z);
-        rlScalef(finalScale, finalScale, finalScale);
+        rlScalef(scaleX, scaleY, scaleZ);
         
-        int numPetals = 12;
-        // Seed based on splash position so it stays consistent per splash instance
-        int seed = (int)(s_archCrownSplashes[i].position.x * 1000.0f) ^ (int)(s_archCrownSplashes[i].position.z * 1000.0f);
-        
-        for (int k = 0; k < numPetals; k++) {
-            float angle = (float)k * (2.0f * PI / numPetals);
+        Model splashModel = ResourceManager_LoadModel("assets/models/water_splash.glb");
+        if (splashModel.meshCount > 0) {
+            // Re-bind texture0 to fix the 'white shader' bug!
+            Texture2D originalTex = splashModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture;
+            splashModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = p.texture1;
             
-            // Pseudo-random variations for jagged look
-            float r1 = (float)(((seed + k * 17) * 101) % 100) / 100.0f; 
-            float r2 = (float)(((seed + k * 31) * 103) % 100) / 100.0f; 
+            // Assign our custom water physics material temporarily
+            Material originalMat = splashModel.materials[0];
+            splashModel.materials[0].shader = mat.shader;
             
-            float petalHeight = 0.7f + r1 * 0.7f; // 0.7 to 1.4
-            float petalWidth = 0.5f + r2 * 0.4f;  // 0.5 to 0.9
+            // Use DrawModel to respect the GLB's internal transform matrix (fixes sideways mesh!)
+            DrawModel(splashModel, Vector3Zero(), 1.0f, WHITE);
             
-            rlPushMatrix();
-            // Position on the perimeter of a unit circle (radius=1.0)
-            rlTranslatef(cosf(angle), 0.0f, sinf(angle));
-            // Rotate so local +Z faces EXACTLY OUTWARD from the center
-            rlRotatef(90.0f - angle * RAD2DEG, 0.0f, 1.0f, 0.0f); 
-            
-            DrawSubdividedPetal(petalWidth, petalHeight, 0.05f, 8, 2);
-            
-            rlPopMatrix();
+            // Restore original material to avoid corrupting the cache
+            splashModel.materials[0] = originalMat;
+            splashModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = originalTex;
         }
         
         rlPopMatrix();

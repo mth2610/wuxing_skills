@@ -71,3 +71,7 @@ android.wuxing_skills/*.keystore
 # APK files
 *.apk
 .env
+
+# EOS (Epic Online Services) — SDK va keys khong commit
+third_party/eos-sdk/
+eos_keys.cfg

@@ -11,8 +11,7 @@
 // as the lifetime progress tracker.
 // ============================================================
 
-uniform sampler2D texture1;         // water_caustics.png (noise map)
-uniform int   u_hasTexture1;
+uniform sampler2D texture0;         // water_caustics.png (noise map, bound by Raylib)
 uniform vec4  u_baseColor;
 uniform float u_translucency;
 uniform float u_dissolve;
@@ -33,14 +32,10 @@ void main() {
 
     vec3 baseColor = u_baseColor.rgb * diffuse;
     
-    // Read the noise from the caustics map
-    float noiseVal = 1.0;
-    if (u_hasTexture1 != 0) {
-        // Use regular UV mapping so the water caustics stretch properly with the mesh
-        // Scale UV.x by 4.0 to repeat around the circumference of the splash
-        noiseVal = texture(texture1, fragTexCoord * vec2(4.0, 1.0)).r;
-        baseColor = baseColor * mix(0.5, 2.0, noiseVal);
-    }
+    // Read the noise from the caustics map using texture0 (provided by DrawMesh)
+    // Scale UV.x by 4.0 to repeat around the circumference of the splash
+    float noiseVal = texture(texture0, fragTexCoord * vec2(4.0, 1.0)).r;
+    baseColor = baseColor * mix(0.5, 2.0, noiseVal);
 
     baseColor += baseColor * u_emissiveIntensity;
 

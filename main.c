@@ -40,6 +40,7 @@
 #include "game/game_rules.h"
 #include "ai/ai.h"
 #include "ui/ui.h"
+#include "net/net_transport.h"
 #include "formations/formation_system.h"
 #include "net/net.h"
 #include <stdio.h>
@@ -494,13 +495,15 @@ static AutoTestResult AutoTest_NetWireStep(int frameInCase, char *outReason, int
   in.moveDir = (Vector2){ 0.7071f, -0.7071f };
   in.jump = true; in.meditate = true;
   in.castSkillSlot = 2;
+  in.basicAttack = 3; // KICK + 1 — v2 melee field must round-trip
   in.aimPoint = (Vector3){ 6.25f, 0.0f, -3.5f };
   unsigned char buf[64];
   int len = Net_PackIntent(&in, buf, sizeof(buf));
   bool ok = AutoTest_ExpectTrue(len > 0, "intent packed", outReason, outReasonSize);
   PlayerIntent out = { 0 };
   ok = ok && AutoTest_ExpectTrue(Net_UnpackIntent(&out, buf, len), "intent unpacked", outReason, outReasonSize);
-  ok = ok && AutoTest_ExpectTrue(out.jump && !out.dash && out.meditate && out.castSkillSlot == 2,
+  ok = ok && AutoTest_ExpectTrue(out.jump && !out.dash && out.meditate && out.castSkillSlot == 2 &&
+                                 out.basicAttack == 3,
                                  "intent flags/slot survive", outReason, outReasonSize);
   ok = ok && AutoTest_ExpectFloatNear(out.moveDir.x, in.moveDir.x, 0.0001f, "moveDir survives", outReason, outReasonSize);
   ok = ok && AutoTest_ExpectFloatNear(out.aimPoint.z, in.aimPoint.z, 0.0001f, "aimPoint survives", outReason, outReasonSize);
@@ -741,8 +744,17 @@ int main(int argc, char **argv) {
   int         renderVFXIndex  = 0;
   int         renderVFXWarmup = 90;
   const char *renderVFXOut    = "autotest_output/vfx_eval.png";
+  int         netHostPort     = 0;      // --host [port]
+  const char *netJoinIp       = NULL;   // --join <ip> [port]
+  int         netJoinPort     = NET_DEFAULT_PORT;
   for (int i = 1; i < argc; i++) {
-      if (strcmp(argv[i], "--render-vfx") == 0 && i + 1 < argc)
+      if (strcmp(argv[i], "--host") == 0)
+          netHostPort = (i + 1 < argc && argv[i+1][0] != '-') ? atoi(argv[++i]) : NET_DEFAULT_PORT;
+      else if (strcmp(argv[i], "--join") == 0 && i + 1 < argc) {
+          netJoinIp = argv[++i];
+          if (i + 1 < argc && argv[i+1][0] != '-') netJoinPort = atoi(argv[++i]);
+      }
+      else if (strcmp(argv[i], "--render-vfx") == 0 && i + 1 < argc)
           { renderVFXIndex = atoi(argv[++i]); renderVFXMode = true; }
       else if (strcmp(argv[i], "--warmup") == 0 && i + 1 < argc)
           renderVFXWarmup = atoi(argv[++i]);
@@ -867,6 +879,15 @@ int main(int argc, char **argv) {
   InitSandbox(&player, &enemy);
   GameScreen_Init(&player);
 
+  // --host / --join: bring the ENet endpoint up and drop straight into the
+  // match screen (menu clicks are pointless on a dedicated PvP run).
+  bool netRequested = false;
+  if (netHostPort > 0) netRequested = Net_StartHost(netHostPort);
+  else if (netJoinIp != NULL) netRequested = Net_StartClient(netJoinIp, netJoinPort);
+  if ((netHostPort > 0 || netJoinIp) && !netRequested) {
+      TraceLog(LOG_WARNING, "[NET] failed to start %s", netHostPort > 0 ? "host" : "client");
+  }
+
   UIPanelState uiState = {0};
   uiState.activeSkillIndex = 0;
   uiState.currentParams.level = 1;
@@ -911,6 +932,7 @@ int main(int argc, char **argv) {
       SCREEN_GAME
   } GameScreen;
   GameScreen currentScreen = SCREEN_MAIN_MENU;
+  if (netRequested) currentScreen = SCREEN_GAME; // PvP run: straight to the arena
   // Headless modes never click through the menu — drop straight into the
   // sandbox screen so AutoTest_RunFrame/VisualVerify actually tick (the menu
   // branch `continue;`s past them, which used to hang autotest forever).
@@ -1078,16 +1100,23 @@ int main(int argc, char **argv) {
     // after all skill updates submitted this frame's projectile colliders
     // (immediate mode). Both tick for every screen; no boss / no
     // submissions = no-op. (Module 7 game/ will own this ordering.)
+    // Net transport pump — host applies remote intents / broadcasts
+    // snapshots; a connected client mirrors the host pool instead of
+    // simulating (Net_ClientDrivesWorld skips the local gameplay ticks).
+    Net_Tick(dt);
+
     // Entities tick — owned HERE for every screen (it used to live inside
     // UpdateSandbox only, so in SCREEN_GAME timers never ticked: one dash
     // arm froze movement forever, jumps never landed, mana never regened,
     // knockback/ring-out physics were dead). Runs after the screen updates
     // (positions pushed) and before AI/boss/combat consume fresh state.
-    Entity_Update(dt);
-    AI_Update(dt);
-    Boss_Update(dt);
-    Formation_Update(dt);
-    Combat_Update(dt);
+    if (!Net_ClientDrivesWorld()) {
+        Entity_Update(dt);
+        AI_Update(dt);
+        Boss_Update(dt);
+        Formation_Update(dt);
+        Combat_Update(dt);
+    }
 
     // Minion self-destruct VFX — ai/ is pure logic and reports explosions
     // as events; the composition layer draws them (element-matched preset).

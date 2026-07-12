@@ -326,6 +326,49 @@ void Entity_SetStealth(int agentId, bool stealthed) {
     a->isStealthed = stealthed;
 }
 
+// --- Net snapshot mirroring (see header — net/ transport only) ---
+static bool s_netMark[MAX_AGENTS];
+
+void Entity_NetSyncBegin(void) {
+    for (int i = 0; i < MAX_AGENTS; i++) s_netMark[i] = false;
+}
+
+void Entity_NetSyncAgent(int agentId, Vector3 pos, float health, float maxHealth,
+                         float mana, float maxMana, int element,
+                         AgentTeam team, AgentArchetype archetype,
+                         bool taiji, bool meditating, bool stealthed) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) {
+        // Fresh mirror slot — zero the local-only state once.
+        *a = (Agent){ 0 };
+        a->vState = AGENT_GROUNDED;
+        for (int s = 0; s < AGENT_SKILL_SLOTS; s++) {
+            a->equippedSkills[s] = -1;
+            a->equippedElements[s] = -1;
+        }
+    }
+    a->active = true;
+    a->position = pos;
+    a->health = health;
+    a->maxHealth = maxHealth;
+    a->mana = mana;
+    a->maxMana = maxMana;
+    a->currentElement = element;
+    a->team = team;
+    a->archetype = archetype;
+    a->taijiActive = taiji;
+    a->isMeditating = meditating;
+    a->isStealthed = stealthed;
+    s_netMark[agentId] = true;
+}
+
+void Entity_NetSyncEnd(void) {
+    for (int i = 0; i < MAX_AGENTS; i++) {
+        if (agentPool[i].active && !s_netMark[i]) agentPool[i].active = false;
+    }
+}
+
 void Entity_SetElement(int agentId, int element) {
     if (agentId < 0 || agentId >= MAX_AGENTS) return;
     Agent *a = &agentPool[agentId];

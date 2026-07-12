@@ -111,9 +111,11 @@ void CharacterModel_Update(CharacterAnimState *state, float dt, bool isMoving) {
         state->frame++;
         if (state->frame >= frameCount) {
             if (state->oneShotActive) {
-                // One-shot finished — revert to idle/walk next Update call.
+                // One-shot finished — flow straight into walk when the
+                // player is still moving (snapping to idle mid-run read as
+                // a visible hitch), idle otherwise.
                 state->oneShotActive = false;
-                state->currentSlot = CHAR_ANIM_IDLE;
+                state->currentSlot = isMoving ? CHAR_ANIM_WALK : CHAR_ANIM_IDLE;
                 state->frame = 0;
             } else {
                 state->frame = 0; // loop (idle/walk)

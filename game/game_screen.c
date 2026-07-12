@@ -11,6 +11,7 @@
 #include "game/game_rules.h"
 #include "ai/ai.h"
 #include "ui/ui.h"
+#include "net/net_transport.h"
 #include <math.h>
 #include <string.h>
 
@@ -26,6 +27,7 @@ static bool  s_backToMenu = false;
 static GameState s_state = GAME_ARENA_INTRO;
 static float s_introTimer = 0.0f;
 static int s_lastBossPhase = -1; // minion waves trigger on phase change (M8)
+static float s_swingSlowTimer = 0.0f; // movement damped while a swing plays
 
 // The Phase 0 match runs on VERDANT_PATH — the real grass island (100x75m,
 // flat plateau at Y=0, cliff falloff past ~34m from center). Ring-out
@@ -43,6 +45,8 @@ static void ResetMatch(PlayerEntity *player) {
     s_state = GAME_ARENA_INTRO;
     s_introTimer = INTRO_SECONDS;
     s_lastBossPhase = -1;
+    s_swingSlowTimer = 0.0f;
+    if (UI_IsLoadoutOpen()) UI_ToggleLoadout();
 
     // Player agent may have died last match (HP or ring-out) — respawn it.
     // Placement happens in the INTRO tick (bounds are only correct while
@@ -91,9 +95,19 @@ void GameScreen_Init(PlayerEntity *player) {
 
 void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
     if (IsKeyPressed(KEY_ESCAPE)) {
-        s_backToMenu = true;
-        ResetMatch(player); // abort → next entry starts a fresh match
-        return;
+        if (UI_IsLoadoutOpen()) {
+            UI_ToggleLoadout(); // ESC closes the panel first, not the match
+        } else {
+            s_backToMenu = true;
+            ResetMatch(player); // abort → next entry starts a fresh match
+            return;
+        }
+    }
+
+    // Trang Bị panel — mid-fight swapping is allowed (the match keeps
+    // running; the risk is the point). Player intents freeze while open.
+    if (s_state == GAME_FIGHTING && IsKeyPressed(KEY_TAB)) {
+        UI_ToggleLoadout();
     }
 
     // --- Match state machine (Module 7) ---
@@ -121,6 +135,18 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
         // Camera keeps framing the player during the title card (falls
         // through to the camera block at the bottom).
     } else if (s_state == GAME_FIGHTING) {
+        // Connected client: the host owns rules/waves/outcomes — this side
+        // only points the camera/HUD at the hero the host assigned us
+        // (mirrored 1:1 into the local pool by snapshot sync).
+        if (Net_ClientDrivesWorld()) {
+            int hid = Net_GetLocalHeroAgentId();
+            if (hid >= 0) player->agentId = hid;
+            // Match outcome comes from the host — perspective-swapped: we
+            // fight on the boss's side, so the host winning is our defeat.
+            int rs = Net_GetRemoteMatchState();
+            if (rs == (int)GAME_VICTORY)      s_state = GAME_DEFEAT;
+            else if (rs == (int)GAME_DEFEAT)  s_state = GAME_VICTORY;
+        } else {
         const Agent *pa = Entity_GetAgent(player->agentId);
         if (pa == NULL) {
             s_state = GAME_DEFEAT; // HP hit zero or ring-out finished
@@ -143,6 +169,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
 
             if (!Boss_IsAlive()) s_state = GAME_VICTORY;
         }
+        }
     } else { // GAME_VICTORY / GAME_DEFEAT
         if (IsKeyPressed(KEY_ENTER)) {
             s_backToMenu = true;
@@ -150,6 +177,10 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
             return;
         }
     }
+
+    // Outcome sync: the host tells the connected client how the match
+    // stands (no-op offline / as client — the transport gates by mode).
+    Net_HostSetMatchState((int)s_state);
 
     if (IsKeyDown(KEY_Q)) s_camAngle -= 1.6f * dt;
     if (IsKeyDown(KEY_E)) s_camAngle += 1.6f * dt;
@@ -171,18 +202,31 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
     PlayerIntent intent = Control_ReadIntent();
     // Module 9 auto-targeting: an incoming enemy projectile (đối-đòn) or
     // the boss overrides the raw mouse aim — mobile-first UX (thiết kế §XI).
-    if (s_state == GAME_FIGHTING) {
+    if (s_state == GAME_FIGHTING && !UI_IsLoadoutOpen()) {
         bool hasAuto = false;
         Vector3 autoPt = UI_GetAutoAimPoint(player->agentId, &hasAuto);
         if (hasAuto) intent.aimPoint = autoPt;
-        Control_Apply(&intent, dt);
 
-        // Cast flourish: control casts silently (pure logic) — it reports
-        // the fired skill back so the character actually swings its arms.
-        int castIdx = Control_ConsumeCastFired();
-        if (castIdx >= 0) {
-            CharacterModel_TriggerAttackTimed(&player->anim, CHAR_ANIM_CAST,
-                                              Skill_GetCastAnimSeconds(castIdx));
+        // Swing damping: while an attack/cast animation plays, walking
+        // drops to 35% so the feet stop sliding through the swing — the
+        // "vừa đánh vừa chạy" root-motion feel without real root motion.
+        if (s_swingSlowTimer > 0.0f) s_swingSlowTimer -= dt;
+        Control_SetMoveSpeedMult(s_swingSlowTimer > 0.0f ? 0.35f : 1.0f);
+
+        if (Net_ClientDrivesWorld()) {
+            // The host simulates our hero; snapshots move it back to us.
+            Net_ClientSubmitIntent(&intent);
+        } else {
+            Control_Apply(&intent, dt);
+
+            // Cast flourish: control casts silently (pure logic) — it
+            // reports the fired skill back so the character swings.
+            int castIdx = Control_ConsumeCastFired();
+            if (castIdx >= 0) {
+                float castSecs = Skill_GetCastAnimSeconds(castIdx);
+                CharacterModel_TriggerAttackTimed(&player->anim, CHAR_ANIM_CAST, castSecs);
+                s_swingSlowTimer = castSecs * 0.6f; // free up before the anim tail
+            }
         }
     }
     const Agent *selfAgent = Entity_GetAgent(player->agentId);
@@ -198,28 +242,35 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
     // per-type mapping waits for the real combo system). This is the real
     // production home for this input (see game_screen.h header) — sandbox
     // no longer has a PC-keyboard copy of this.
-    bool basicAttackPressed = (s_state == GAME_FIGHTING) &&
-                              (IsKeyPressed(KEY_Z) || IsKeyPressed(KEY_C) ||
-                               IsMouseButtonPressed(MOUSE_BUTTON_RIGHT));
+    // Melee rides PlayerIntent now (net-replicated): the swing anim + damping
+    // always play locally for feedback; the gameplay hit runs locally only
+    // when we own the simulation — a connected client's intent already went
+    // to the host, which executes the hit there.
+    bool basicAttackPressed = (s_state == GAME_FIGHTING) && !UI_IsLoadoutOpen() &&
+                              intent.basicAttack > 0;
 
     if (basicAttackPressed) {
-        BasicAttackType basicAttackType = (BasicAttackType)GetRandomValue(0, 2);
+        BasicAttackType basicAttackType = (BasicAttackType)(intent.basicAttack - 1);
         CharacterAnimSlot animSlot = (basicAttackType == BASIC_ATTACK_PUNCH) ? CHAR_ANIM_PUNCH :
                                      (basicAttackType == BASIC_ATTACK_KICK)  ? CHAR_ANIM_KICK : CHAR_ANIM_PALM;
-        CharacterModel_TriggerAttackTimed(&player->anim, animSlot,
-                                          Entity_GetBasicAttackSeconds(basicAttackType));
-        Vector3 targetPos, wallPos;
-        int wallElement;
-        bool gotWallBonus = Entity_ExecuteBasicAttack(player->agentId, basicAttackType, &targetPos, &wallPos, &wallElement);
-        // targetPos is only written when auto-target found someone (stays
-        // (0,0,0) otherwise) — turn to face the attack direction if so.
-        if (targetPos.x != 0.0f || targetPos.y != 0.0f || targetPos.z != 0.0f) {
-            Control_FaceTowards(targetPos);
-        }
-        if (gotWallBonus && wallElement == 3 /* Earth — only element with a real wall so far */) {
-            VFX_SpawnProcBeam(wallPos, targetPos, EFFECT_PRESET_EARTH_CRACK, 0.12f, 0.35f);
-            VFX_ComposeImpact(targetPos, EFFECT_PRESET_EARTH_CRACK, 0.6f);
-            AddFloatingText(targetPos, "Cong Huong Dat!", ELEMENT_COLOR_EARTH, 16.0f, 0.6f);
+        float swingSecs = Entity_GetBasicAttackSeconds(basicAttackType);
+        CharacterModel_TriggerAttackTimed(&player->anim, animSlot, swingSecs);
+        s_swingSlowTimer = swingSecs * 0.6f; // damp walking through the swing
+
+        if (!Net_ClientDrivesWorld()) {
+            Vector3 targetPos, wallPos;
+            int wallElement;
+            bool gotWallBonus = Entity_ExecuteBasicAttack(player->agentId, basicAttackType, &targetPos, &wallPos, &wallElement);
+            // targetPos is only written when auto-target found someone (stays
+            // (0,0,0) otherwise) — turn to face the attack direction if so.
+            if (targetPos.x != 0.0f || targetPos.y != 0.0f || targetPos.z != 0.0f) {
+                Control_FaceTowards(targetPos);
+            }
+            if (gotWallBonus && wallElement == 3 /* Earth — only element with a real wall so far */) {
+                VFX_SpawnProcBeam(wallPos, targetPos, EFFECT_PRESET_EARTH_CRACK, 0.12f, 0.35f);
+                VFX_ComposeImpact(targetPos, EFFECT_PRESET_EARTH_CRACK, 0.6f);
+                AddFloatingText(targetPos, "Cong Huong Dat!", ELEMENT_COLOR_EARTH, 16.0f, 0.6f);
+            }
         }
     }
 
@@ -260,6 +311,29 @@ void GameScreen_Draw3D(const PlayerEntity *player) {
                      (Color){ (unsigned char)(20 + c.r / 6), (unsigned char)(20 + c.g / 6),
                               (unsigned char)(20 + c.b / 6), 255 });
         DrawCircle3D(body, 0.26f, (Vector3){ 0, 1, 0 }, (float)GetTime() * 90.0f + i * 40.0f, c);
+    }
+
+    // Other heroes (host: the remote invader; client: the host's hero) and
+    // a snapshot-mirrored boss (client has no boss/ module state — draw the
+    // ARCH_BOSS agent as a dark core + element ring so the fight reads).
+    for (int i = 0; i < MAX_AGENTS; i++) {
+        const Agent *a = Entity_GetAgent(i);
+        if (!a || i == player->agentId) continue;
+        if (a->archetype == ARCH_HERO) {
+            Environment_DrawSmartShadow(a->position, ENV_SHAPE_SPHERE, 0.5f, 0.9f);
+            DrawCharacter3D(a->position, 0.25f,
+                            GetColor(0xD9B08CFF), GetColor(0x7A2E2EFF), GetColor(0xAAAAAAFF),
+                            true, a->position);
+        } else if (a->archetype == ARCH_BOSS && !Boss_IsAlive()) {
+            Color c = MinionElementColor(a->currentElement);
+            float bob = 0.9f + 0.12f * sinf((float)GetTime() * 1.3f);
+            Vector3 core = { a->position.x, a->position.y + bob, a->position.z };
+            Environment_DrawSmartShadow(a->position, ENV_SHAPE_SPHERE, 0.9f, 1.2f);
+            DrawSphereEx(core, 0.55f, 12, 12,
+                         (Color){ (unsigned char)(10 + c.r / 8), (unsigned char)(10 + c.g / 8),
+                                  (unsigned char)(10 + c.b / 8), 255 });
+            DrawCircle3D(core, 0.9f, (Vector3){ 0, 1, 0 }, (float)GetTime() * 40.0f, c);
+        }
     }
 
     Environment_DrawSmartShadow(player->position, ENV_SHAPE_SPHERE, 0.5f, 0.9f);

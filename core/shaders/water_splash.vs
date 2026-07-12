@@ -2,61 +2,41 @@
 #include "core/shaders/common/vs_header.glsl"
 
 // ============================================================
-// Water Splash Material (Vertex Shader) - Fluid Subdivided Petal
+// Water Splash Material (Vertex Shader) - Custom GLB Mesh
 // ============================================================
 
 uniform float u_customParam1; // Splash progress (0.0 -> 1.0)
 
 void main() {
     vec3 displacedPos = vertexPosition;
-    float progress = u_customParam1;
     
-    // Multi-phase physics
-    float openPhase = smoothstep(0.1, 0.7, progress);
-    float fallPhase = smoothstep(0.4, 1.0, progress);
+    // 1. Calculate WORLD SPACE position to fix huge Blender scale issues
+    vec4 worldPos = matModel * vec4(vertexPosition, 1.0);
     
-    // We estimate max height to be ~1.2 for the height ratio calculation.
-    // Base is at 0.0. The higher up, the stronger the deformations.
-    float hRatio = clamp(vertexPosition.y / 1.2, 0.0, 1.0);
-    
-    if (vertexPosition.y > 0.0) {
-        
-        // 1. Tapering (Spike generation)
-        // The width (X) and thickness (Z) taper towards 0 at the very top.
-        float taper = 1.0 - (hRatio * hRatio * 0.9); // Keeps some thickness, tapers near top
-        displacedPos.x *= taper;
-        displacedPos.z *= taper;
-        
-        // 2. Outward Bending (Blooming)
-        // Local +Z points outward from the splash center.
-        // A quadratic curve (hRatio^2) creates a smooth, sweeping curve.
-        float bendOutward = hRatio * hRatio * 1.6 * openPhase;
-        displacedPos.z += bendOutward;
-        
-        // 3. Gravity Sagging
-        // The tips get pulled down heavily as the splash dissipates.
-        float sagDownward = hRatio * hRatio * 1.2 * fallPhase;
-        displacedPos.y -= sagDownward;
-        
-        // 4. Fluid Rippling (Turbulence)
-        // Add a high-frequency sine wave to simulate the liquid membrane fluttering.
-        float ripple = sin(vertexPosition.y * 12.0 - u_time * 18.0) * 0.06;
-        displacedPos.x += ripple * hRatio; 
-        displacedPos.z += ripple * hRatio;
+    // 2. Ensure we have a valid normal to push along
+    vec3 validNormal = vertexNormal;
+    if (length(validNormal) < 0.1) {
+        validNormal = vec3(0.0, 1.0, 0.0);
     }
+    
+    // 3. Gentle Fluid Wobble (Using World Space for smooth frequency)
+    float wobble = sin(worldPos.y * 3.0 + worldPos.x * 2.0 - u_time * 5.0);
+    
+    // Smooth height factor to GLUE the base to the ground! (Base wobbles 0%, Top wobbles 100%)
+    float heightFactor = clamp(worldPos.y / 2.0, 0.0, 1.0);
+    
+    // Very gentle displacement (adjusted for height so it bends flexibly)
+    float displacementAmt = wobble * 1.5 * heightFactor; 
+    displacedPos += validNormal * displacementAmt;
     
     // Standard output pipeline
     VS_FinalOutput(displacedPos);
     
-    // Recalculate Vertex Normal to catch lighting beautifully on the bent curves
-    if (vertexPosition.y > 0.0) {
-        vec3 customNormal = vertexNormal;
-        // The petal bends outwards (+Z), so its surface normal tilts upwards (+Y)
-        customNormal.y += hRatio * openPhase * 1.5;
-        // Fluid ripple affects the normal too
-        customNormal.x += cos(vertexPosition.y * 12.0 - u_time * 18.0) * 0.3 * hRatio;
-        
-        customNormal = normalize(customNormal);
-        fragNormal = normalize(vec3(matModel * vec4(customNormal, 0.0)));
-    }
+    // 4. Subtle Shimmer Normal
+    // Perturb the normal slightly to make the surface lighting shimmer like water
+    vec3 customNormal = validNormal;
+    customNormal.x += cos(worldPos.y * 4.0 - u_time * 5.0) * 0.1;
+    customNormal.z += sin(worldPos.x * 4.0 - u_time * 5.0) * 0.1;
+    
+    fragNormal = normalize(vec3(matModel * vec4(normalize(customNormal), 0.0)));
 }

@@ -16,8 +16,9 @@ static int ReadF32(const unsigned char *buf, int off, float *v) { memcpy(v, buf 
 
 // --- PlayerIntent (client → host) ---
 // Layout: magic, kind, version, flags(jump/dash/meditate), castSlot(int8),
-// moveDir.xy, aimPoint.xyz  → 5 + 5*4 = 25 bytes.
-#define INTENT_PACKET_BYTES 25
+// basicAttack(u8: 0=none, else BasicAttackType+1),
+// moveDir.xy, aimPoint.xyz  → 6 + 5*4 = 26 bytes.
+#define INTENT_PACKET_BYTES 26
 
 int Net_PackIntent(const PlayerIntent *in, unsigned char *buf, int maxBytes) {
     if (in == NULL || buf == NULL || maxBytes < INTENT_PACKET_BYTES) return 0;
@@ -27,6 +28,7 @@ int Net_PackIntent(const PlayerIntent *in, unsigned char *buf, int maxBytes) {
     buf[off++] = NET_PROTOCOL_VERSION;
     buf[off++] = (unsigned char)((in->jump ? 1 : 0) | (in->dash ? 2 : 0) | (in->meditate ? 4 : 0));
     buf[off++] = (unsigned char)(signed char)in->castSkillSlot;
+    buf[off++] = (unsigned char)in->basicAttack;
     off = WriteF32(buf, off, in->moveDir.x);
     off = WriteF32(buf, off, in->moveDir.y);
     off = WriteF32(buf, off, in->aimPoint.x);
@@ -43,7 +45,8 @@ bool Net_UnpackIntent(PlayerIntent *out, const unsigned char *buf, int len) {
     out->dash     = (buf[3] & 2) != 0;
     out->meditate = (buf[3] & 4) != 0;
     out->castSkillSlot = (int)(signed char)buf[4];
-    int off = 5;
+    out->basicAttack = (int)buf[5];
+    int off = 6;
     off = ReadF32(buf, off, &out->moveDir.x);
     off = ReadF32(buf, off, &out->moveDir.y);
     off = ReadF32(buf, off, &out->aimPoint.x);

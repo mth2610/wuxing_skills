@@ -20,6 +20,7 @@ static const Camera3D *s_camera = NULL;
 static float s_yaw = 0.0f; // facing, radians
 static float s_cdMult = 1.0f; // zone-rule cooldown multiplier (game/ sets)
 static int   s_castFired = -1; // skillIndex of the cast that fired this frame
+static float s_moveMult = 1.0f; // swing damping (game/ sets per frame)
 
 void Control_Init(int agentId) {
     s_agentId = agentId;
@@ -55,6 +56,13 @@ PlayerIntent Control_ReadIntent(void) {
     else if (IsKeyPressed(KEY_THREE)) intent.castSkillSlot = 2;
     else if (IsKeyPressed(KEY_FOUR))  intent.castSkillSlot = 3;
 
+    // Basic attack: random đấm/đá/chưởng per press (matches the pre-intent
+    // behavior; a real combo system picks deliberately later).
+    if (IsKeyPressed(KEY_Z) || IsKeyPressed(KEY_C) ||
+        IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
+        intent.basicAttack = 1 + GetRandomValue(0, 2);
+    }
+
     // Aim: mouse ray onto the Y=0 ground plane when a camera is wired,
     // otherwise 3m ahead of the agent's facing.
     const Agent *a = Entity_GetAgent(s_agentId);
@@ -84,7 +92,7 @@ void Control_Apply(const PlayerIntent *in, float dt) {
     float len = sqrtf(in->moveDir.x * in->moveDir.x + in->moveDir.y * in->moveDir.y);
     if (len > 0.0001f && a->vState == AGENT_GROUNDED &&
         !Entity_IsCrowdControlled(s_agentId) && a->dashTimer <= 0.0f) {
-        float speed = MOVE_SPEED_MPS * Entity_GetSpeedMult(s_agentId);
+        float speed = MOVE_SPEED_MPS * Entity_GetSpeedMult(s_agentId) * s_moveMult;
         Vector3 pos = a->position;
         pos.x += (in->moveDir.x / len) * speed * dt;
         pos.z += (in->moveDir.y / len) * speed * dt;
@@ -92,7 +100,18 @@ void Control_Apply(const PlayerIntent *in, float dt) {
         s_yaw = atan2f(in->moveDir.x, in->moveDir.y);
     }
 
-    if (in->jump) Entity_Jump(s_agentId, JUMP_FORCE);
+    if (in->jump && a->vState == AGENT_GROUNDED && !Entity_IsCrowdControlled(s_agentId)) {
+        // Khinh công carries the run: launch with the CURRENT horizontal
+        // intent as velocity so holding W + Space arcs forward instead of
+        // hopping in place (Entity_Jump only sets velocity.y).
+        Vector3 hv = { 0 };
+        if (len > 0.0001f) {
+            float speed = MOVE_SPEED_MPS * Entity_GetSpeedMult(s_agentId);
+            hv.x = (in->moveDir.x / len) * speed;
+            hv.z = (in->moveDir.y / len) * speed;
+        }
+        Entity_ApplyLaunch(s_agentId, JUMP_FORCE, hv);
+    }
 
     if (in->dash) {
         // Dash along the move direction, or facing when standing still.
@@ -151,6 +170,10 @@ int Control_ConsumeCastFired(void) {
     int idx = s_castFired;
     s_castFired = -1;
     return idx;
+}
+
+void Control_SetMoveSpeedMult(float mult) {
+    s_moveMult = (mult > 0.0f) ? mult : 1.0f;
 }
 
 void Control_FaceTowards(Vector3 point) {

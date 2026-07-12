@@ -30,6 +30,14 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(raylib)
 
+# ENet (Module 11 net transport — peer-hosted PvP). Small C89 lib, no deps.
+FetchContent_Declare(
+  enet
+  GIT_REPOSITORY https://github.com/lsalzman/enet.git
+  GIT_TAG        v1.3.18
+)
+FetchContent_MakeAvailable(enet)
+
 # -----------------------------------------------------------------
 # BIÊN DỊCH TRỰC TIẾP FILE MAIN.C Ở THƯ MỤC GỐC
 # -----------------------------------------------------------------
@@ -113,6 +121,7 @@ add_executable(wuxing
 
     # --- Net (wire-format core — Module 11; ENet transport gated on PvP) ---
     net/net.c
+    net/net_transport.c
 
     # --- Character (model + animation rendering, counterpart to entities/'s
     # pure gameplay logic) ---
@@ -188,7 +197,24 @@ configure_file(core/shaders/common/lighting.glsl ${CMAKE_CURRENT_BINARY_DIR}/cor
 
 
 # Liên kết tĩnh với thư viện Raylib vừa tải về
-target_link_libraries(wuxing PRIVATE raylib)
+target_link_libraries(wuxing PRIVATE raylib enet)
+target_include_directories(wuxing PRIVATE ${enet_SOURCE_DIR}/include)
+
+# EOS online backend (internet P2P qua ha tang free cua Epic — EOS_SETUP.md).
+# Mac dinh OFF: build voi stub. Bat khi SDK da nam o third_party/eos-sdk:
+#   cmake -S . -B build -DWUXING_EOS=ON
+option(WUXING_EOS "Build the EOS online backend (needs third_party/eos-sdk)" OFF)
+if (WUXING_EOS)
+    target_sources(wuxing PRIVATE net/net_eos.c)
+    target_include_directories(wuxing PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/eos-sdk/SDK/Include)
+    if (APPLE)
+        target_link_libraries(wuxing PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/eos-sdk/SDK/Bin/libEOSSDK-Mac-Shipping.dylib)
+    elseif (UNIX)
+        target_link_libraries(wuxing PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/eos-sdk/SDK/Bin/libEOSSDK-Linux-Shipping.so)
+    endif()
+else()
+    target_sources(wuxing PRIVATE net/net_eos_stub.c)
+endif()
 
 # Cấu hình các frameworks bắt buộc dành riêng cho macOS
 if(APPLE)

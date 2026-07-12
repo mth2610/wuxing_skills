@@ -213,6 +213,18 @@ bool Entity_IsTaijiActive(int agentId);
 // it; auto-targeting/boss AI consume the flag later).
 void Entity_SetStealth(int agentId, bool stealthed);
 
+// --- Net snapshot mirroring (net/ transport ONLY — never gameplay code).
+// A connected CLIENT mirrors the host's pool 1:1 by host agent id:
+// SyncBegin → SyncAgent per snapshot entry (activates/overwrites the slot)
+// → SyncEnd (deactivates every active agent the snapshot didn't mention,
+// including stale local-only agents from before the connection).
+void Entity_NetSyncBegin(void);
+void Entity_NetSyncAgent(int agentId, Vector3 pos, float health, float maxHealth,
+                         float mana, float maxMana, int element,
+                         AgentTeam team, AgentArchetype archetype,
+                         bool taiji, bool meditating, bool stealthed);
+void Entity_NetSyncEnd(void);
+
 // --- Speed multiplier read (Module 1) ---
 // Product of all active modifier slots' speedMult (>0 && duration>0).
 // Returns 1.0 for no active modifiers or invalid/inactive agent. External

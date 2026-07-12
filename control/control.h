@@ -21,6 +21,11 @@ typedef struct {
     bool    dash;
     bool    meditate;
     int     castSkillSlot; // -1 = none; 0..3 = Agent.equippedSkills slot
+    // Basic attack (đấm/đá/chưởng): 0 = none, else BasicAttackType + 1
+    // (offset so a zeroed intent means "no attack"). Carried in the intent
+    // so net/ replicates melee; the EXECUTION stays outside control —
+    // game/ runs it locally, the net host runs it for remote players.
+    int     basicAttack;
     Vector3 aimPoint;      // ground point being aimed at (mouse ray / auto-target)
 } PlayerIntent;
 
@@ -62,5 +67,11 @@ void Control_SetCastCooldownMult(float mult);
 // or -1. game/ consumes it to play the character's cast animation —
 // control is pure logic and cannot touch character/VFX itself.
 int Control_ConsumeCastFired(void);
+
+// Temporary movement damping (game/ sets it per frame): scales walk speed,
+// e.g. 0.35 while an attack/cast swing plays so the feet stop sliding
+// through the animation. 1.0 = normal; reset every frame like the cooldown
+// mult.
+void Control_SetMoveSpeedMult(float mult);
 
 #endif // CONTROL_H

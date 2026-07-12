@@ -27,4 +27,14 @@ Vector3 UI_GetAutoAimPoint(int agentId, bool *hasTarget);
 // shading + the auto-aim reticle. Call from the game screen's HUD.
 void UI_DrawOverlay(int agentId);
 
+// --- Loadout panel (Trang Bị — TAB in game/) ---
+// Click a slot, click a skill: equips via Entity_SetEquippedSkill (element
+// resolved from the registry), which recomputes Vô Hệ — and silently arms
+// the Thái Cực loadout when the player assembles it (No Tutorial: the
+// panel never labels Âm/Dương). The match keeps running while it's open —
+// swapping mid-fight is a deliberate risk. game/ freezes the player's own
+// intents while open.
+void UI_ToggleLoadout(void);
+bool UI_IsLoadoutOpen(void);
+
 #endif // UI_H
