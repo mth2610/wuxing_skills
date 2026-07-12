@@ -3,17 +3,20 @@
 ## Role
 Owns the real, production-bound gameplay screen (`game/game_screen.h/.c`) —
 distinct from `sandbox/`, which stays the dev/test harness (debug panels,
-tuning sliders, autotest) and must never be modified by this agent. This is
-`MODULES_ROADMAP.md` Module 7's eventual home. Now has real basic-attack
-combat (đấm/đá/chưởng, auto-target, wall synergy — a deliberate shortcut ahead
-of Module 4 `control/` formalizing input, see game_screen.h's header) and a
-real mana bar (Module 1's mana landed). Still no real skill-casting/enemy/boss
-(Module 3 `combat/` + Module 5 `boss/` not built yet).
+tuning sliders, autotest) and must never be modified by this agent. This IS
+`MODULES_ROADMAP.md` Module 7 (landed 07/2026, see `GAME_API.md`): the full
+match state machine (INTRO → FIGHTING → VICTORY/DEFEAT) against Boss Hắc
+Diện Tôn Giả on DEFAULT_ARENA, movement/cast via `control/`
+(Control_ReadIntent/Apply), boss HP bar + state overlays in the HUD, and the
+zone modifier rule table in `game/game_rules.h/.c` (the ONE place zone
+gameplay rules live). Basic attack (đấm/đá/chưởng + wall synergy) stays here
+because it couples to character anim + VFX.
 
 ## Scope
-- **Read/write:** `game/game_screen.h`, `game/game_screen.c`
+- **Read/write:** `game/game_screen.h/.c`, `game/game_rules.h/.c`
 - **Read (interface only, `.h` files):** `entities/entities.h`,
   `environment/environment_system.h`, `core/map_manager.h`,
+  `control/control.h`, `boss/boss_system.h`, `combat/combat.h`,
   `sandbox/sandbox_core.h` (for `PlayerEntity` — reused, not duplicated)
 - **Never touch:** anything under `sandbox/`, `core/*.c`, `skills/`,
   `maps/*.c`, `environment/*.c`
@@ -24,30 +27,28 @@ real mana bar (Module 1's mana landed). Still no real skill-casting/enemy/boss
 - `android.wuxing_skills/`
 
 ## Current scope (minimal, will grow)
-- WASD movement + orbit camera (Q/E rotate, wheel zoom), driving the shared
-  global `PlayerEntity player` declared in `main.c` (same one `InitSandbox`
-  already spawns into the Entity/Agent pool at startup — do not spawn a
-  second player agent).
-- Real HP + mana bar HUD, read via `Entity_GetAgent(player->agentId)`.
-- Real basic attack (Z/C/right-click → `Entity_ExecuteBasicAttack`,
-  auto-target, wall synergy) — no real skill-casting/enemy/boss yet (Module 3
-  `combat/` + Module 5 `boss/` not built).
-- Map draw/update (`MapManager_DrawActive/Update`) and most VFX systems
-  already run unconditionally in `main.c`'s main loop regardless of active
-  screen — this module does NOT need to touch those.
+- Match state machine (`GameState`, see `GAME_API.md` §2): 2s intro title
+  card → boss spawn → FIGHTING (win/lose checks, zone rules applied to the
+  player every frame) → VICTORY/DEFEAT (ENTER resets). ESC aborts + resets.
+- Movement/jump/dash/meditate/skill-cast via `control/`
+  (`Control_ReadIntent`/`Control_Apply`), gated to GAME_FIGHTING. Camera +
+  `Control_SetCamera` forwarding stays here.
+- Real HP + mana bars, boss HP bar, state overlays — all in
+  `GameScreen_DrawHUD`. `Boss_Draw` is wired in `main.c`'s SCREEN_GAME 3D
+  pass next to `GameScreen_Draw3D`.
+- Zone rule table `game_rules.h/.c` — cooldown mult → control, stealth →
+  entities; combat/ enforces the Thổ-forest projectile penalty itself.
+- Drives the shared global `PlayerEntity player` from `main.c` (respawned by
+  the match reset if dead — never spawn a second live player agent).
+- Map draw/update and most VFX systems run unconditionally in `main.c`'s
+  loop — this module does NOT touch those.
 
-## Growth path (do in order, per MODULES_ROADMAP.md's "don't skip more than
-one tier" rule)
-1. Module 1 lands → add real mana bar to `GameScreen_DrawHUD`.
-2. Module 4 (`control/`) lands → replace the WASD block in
-   `GameScreen_Update` with `Control_ReadIntent`/`Control_Apply`; likely
-   retire the `PlayerEntity` coupling in favor of whatever `control/` defines.
-3. Module 3 (`combat/`) + Module 6 (Thái Cực) land → this screen starts
-   hosting real skill casts and a real enemy/boss.
-4. Module 7 proper: rename/expand into the full `Game_Init/Update/Draw/
-   Unload` + `GameState` state machine described in `MODULES_ROADMAP.md`
-   §Module 7 — at that point `main.c` should shrink to init/loop/unload only,
-   with this module owning the `SCREEN_GAME` branch's internals fully.
+## Growth path (remaining)
+1. Module 8 `ai/` lands → minion waves join the fight.
+2. Module 9 `ui/` lands → touch HUD + auto-target writes PlayerIntent.aimPoint.
+3. Shrink `main.c` further toward pure init/loop/unload — the outer
+   Boss_Update/Combat_Update/monochrome ticks should eventually move into a
+   `Game_Update` that owns the roadmap's canonical tick order.
 
 ## Cross-agent communication
 - Need a new Entity/Environment/Map API → ask that module's agent, don't

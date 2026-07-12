@@ -1,23 +1,17 @@
 // game/game_screen.h
 // The real (production-bound) gameplay screen — as opposed to sandbox/,
 // which stays the dev/test harness (debug panels, tuning sliders, autotest)
-// and is never touched by this module. Currently a minimal walk-around
-// experience plus real basic-attack combat (đấm/đá/chưởng, auto-target, wall
-// synergy — see entities/entities.h's Entity_ExecuteBasicAttack). Still no
-// real skill-casting/enemies/boss yet (blocked on MODULES_ROADMAP.md Module 3
-// combat/ + Module 5 boss/, neither built) — this screen will grow into full
-// Module 7 (Game Mode) as those land. Basic-attack input living here (rather
-// than sandbox/) is a deliberate shortcut ahead of Module 4 (control/)
-// formalizing it properly — expect this block to move into control/ wholesale
-// once that module exists, per MODULES_ROADMAP.md's ordering rule.
+// and is never touched by this module. This IS MODULES_ROADMAP.md Module 7
+// (Game Mode, see GAME_API.md): the Phase 0 match loop vs Boss Hắc Diện Tôn
+// Giả on DEFAULT_ARENA — intro title card, FIGHTING with control/-driven
+// movement/casting and the game_rules.h zone modifier table applied to the
+// player, VICTORY/DEFEAT overlays. Basic attack (đấm/đá/chưởng, auto-target,
+// wall synergy) deliberately stays here rather than control/ — it couples to
+// character animation and VFX, which pure logic modules must not touch.
 //
-// Reuses sandbox_core.h's PlayerEntity (position + Entity agentId) rather
-// than inventing a parallel player struct — it's the only player
-// representation that exists right now and already carries a valid
-// Entity/Agent link (see main.c's global `player`, spawned once via
-// InitSandbox at startup regardless of which screen is active). Expect this
-// to be swapped for a real control/ PlayerIntent-driven struct once Module 4
-// (Player Controller) exists.
+// Reuses sandbox_core.h's PlayerEntity (position + Entity agentId) — main.c's
+// global `player`, spawned once via InitSandbox at startup. The match reset
+// respawns its pool agent when a previous match killed it.
 #ifndef GAME_SCREEN_H
 #define GAME_SCREEN_H
 
@@ -25,11 +19,27 @@
 #include "sandbox/sandbox_core.h"
 #include <stdbool.h>
 
+// Module 7 (Game Mode) state machine — the Phase 0 match loop against Boss
+// Hắc Diện Tôn Giả on DEFAULT_ARENA. GAME_MENU is represented by main.c's
+// SCREEN_MAIN_MENU (this screen is only updated while active); the states
+// below are the in-match flow.
+typedef enum {
+    GAME_MENU = 0,       // owned by main.c's screen switcher
+    GAME_ARENA_INTRO,    // boss title card; boss spawns at the end
+    GAME_FIGHTING,       // control + combat + boss AI + zone rules live
+    GAME_VICTORY,        // boss died — ENTER returns to menu
+    GAME_DEFEAT          // player died (HP or ring-out) — ENTER returns to menu
+} GameState;
+
+GameState GameScreen_GetState(void);
+
 // Called once at startup (alongside InitSandbox) — does not re-run per
 // screen-switch, matching how InitSandbox itself is only called once.
+// Resets the match (state → GAME_ARENA_INTRO, player at the arena spawn).
 void GameScreen_Init(PlayerEntity *player);
 
-// WASD move + wheel/Q/E orbit camera. Call only while this screen is active.
+// Match state machine tick + control intents + camera (wheel/Q/E orbit).
+// Call only while this screen is active.
 void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt);
 
 // Draws the player's own character mesh + fake shadow. Call inside the

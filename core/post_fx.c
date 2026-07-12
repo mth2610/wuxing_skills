@@ -23,6 +23,8 @@ static int chromaticStrengthLoc;
 static int vignetteEnabledLoc;
 static int vignetteRadiusLoc;
 static int vignetteSoftnessLoc;
+static float s_monochrome = 0.0f; // Thái Cực overlay — see PostFX_SetMonochrome
+
 static int colorGradeEnabledLoc;
 static int contrastLoc;
 static int saturationLoc;
@@ -196,10 +198,15 @@ void PostFX_Draw(const PostFXConfig *config) {
   SetShaderValue(compositeShader, vignetteRadiusLoc, &config->vignetteRadius, SHADER_UNIFORM_FLOAT);
   SetShaderValue(compositeShader, vignetteSoftnessLoc, &config->vignetteSoftness, SHADER_UNIFORM_FLOAT);
 
-  float colorGradeEnabledVal = config->colorGradeEnabled ? 1.0f : 0.0f;
+  // Thái Cực monochrome: force the color-grade path on and pull saturation
+  // toward 0 by s_monochrome — rides the existing composite pass, no new
+  // render target (thiết kế §VIII, one-canvas rule).
+  float colorGradeEnabledVal = (config->colorGradeEnabled || s_monochrome > 0.0f) ? 1.0f : 0.0f;
+  float saturationVal = config->colorGradeEnabled ? config->saturation : 1.0f;
+  saturationVal = saturationVal * (1.0f - s_monochrome);
   SetShaderValue(compositeShader, colorGradeEnabledLoc, &colorGradeEnabledVal, SHADER_UNIFORM_FLOAT);
   SetShaderValue(compositeShader, contrastLoc, &config->contrast, SHADER_UNIFORM_FLOAT);
-  SetShaderValue(compositeShader, saturationLoc, &config->saturation, SHADER_UNIFORM_FLOAT);
+  SetShaderValue(compositeShader, saturationLoc, &saturationVal, SHADER_UNIFORM_FLOAT);
   SetShaderValue(compositeShader, colorTintLoc, &config->colorTint, SHADER_UNIFORM_VEC3);
 
   DrawTextureRec(mainRenderTex.texture,
@@ -207,4 +214,10 @@ void PostFX_Draw(const PostFXConfig *config) {
                  (Vector2){0, 0}, WHITE);
   EndShaderMode();
 
+}
+
+void PostFX_SetMonochrome(float intensity01) {
+  if (intensity01 < 0.0f) intensity01 = 0.0f;
+  if (intensity01 > 1.0f) intensity01 = 1.0f;
+  s_monochrome = intensity01;
 }

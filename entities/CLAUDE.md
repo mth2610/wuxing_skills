@@ -33,13 +33,17 @@ This module is new and intentionally minimal. It is the foundational layer that 
 5. **Dash hook (no implementation yet)** — `Entity_OnDash(int id)` stub that other systems (a future VFX/trail layer) can hook into for afterimage effects. Entities module does NOT call `core/trail_system.h` directly — stay pure logic, no rendering.
 6. **Stealth flag** — `bool isStealthed` on Agent, set when motionless; consumed later by Auto-Targeting/Boss AI (not implemented yet, just reserve the field)
 
+## Landed since the minimal version (see ENTITIES_API.md §15-17)
+- Teams/archetypes, team-filtered AoE + nearby query, Thiền Định, Vô Hệ
+  loadout (`Entity_SetEquippedSkill`/`RecomputeElement`), real dash burst,
+  `Entity_GetSpeedMult`, Thái Cực state flag (+ mana-drain auto-exit),
+  `Entity_SetElement`/`Entity_SetStealth`.
+- Clash Matrix lives in `combat/` (its own module) — entities only provides
+  teams + the damage entry point it calls.
+
 ## Explicitly OUT of scope for now (do not build until instructed)
-- Clash Matrix 5×5 (Skill↔Skill collision resolution)
-- Formation Pool (Trận Pháp AoE control fields)
-- Minion Pool
-- Boss AI / Thái Cực transformation logic
-- Map Virtual Trigger Zone integration (Map module doesn't expose this API yet)
-- Actual dash/khinh công movement implementation — only the state enum + hook stub exist for now
+- Formation Pool (Trận Pháp AoE control fields) — Module 10
+- Minion brain (`ai/`, Module 8) — ARCH_MINION agents already fit this pool
 - Networking/sync — single-player local only at this stage
 
 ## Hard rules

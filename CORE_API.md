@@ -1385,6 +1385,7 @@ void PostFX_Unload(void);
 void PostFX_Begin(void);   // Begin rendering the main 3D scene into the PostFX buffer
 void PostFX_End(void);     // End main scene rendering
 void PostFX_Draw(const PostFXConfig *config); // Runs Bloom -> CA -> Grade -> Vignette, draws to screen
+void PostFX_SetMonochrome(float intensity01); // Thái Cực overlay: blends composite saturation toward 0 (1 = full B&W); overrides the config's color grade while > 0, no extra render target. main.c fades it while any agent has taijiActive.
 
 typedef struct {
     /* Bloom */

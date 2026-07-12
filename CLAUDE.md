@@ -8,7 +8,11 @@ C/Raylib 6.0 / OpenGL 3.3 game project. Isometric Night-time Arena. 6 elements: 
 - `COMPUTE_API.md` — GPU compute particle system (shared by skills + environment)
 - `ENVIRONMENT_API.md` — Lighting, shadow, fog system
 - `MAP_API.md` — Map creation & management
-- `ENTITIES_API.md` — Agent pool, vertical physics, damage entry point (minimal gameplay layer)
+- `ENTITIES_API.md` — Agent pool, teams, mana/Thiền Định, Vô Hệ, Thái Cực state, vertical physics, damage entry point
+- `COMBAT_API.md` — Đấu Pháp: projectile registry + 5x5 clash matrix
+- `CONTROL_API.md` — Player controller (PlayerIntent input/intent split)
+- `BOSS_API.md` — Boss engine/data split (BossDef)
+- `GAME_API.md` — Match state machine + zone modifier rule table
 - `VFX_ARCHITECTURE.md` — Overall VFX architecture
 - `WUXING_ART_DIRECTION.md` — Art style and aesthetic laws
 - `nguhanhtyvo_kehoach.md` — Game design doc (source of truth for gameplay intent)
@@ -22,9 +26,12 @@ C/Raylib 6.0 / OpenGL 3.3 game project. Isometric Night-time Arena. 6 elements: 
 | **Skills Agent** | `skills/`, `CORE_API.md` (shared write w/ Core Agent) | `core/*.h`, `compute/gpu_particle_system.h`, `environment/environment_system.h`, `assets/` |
 | **Map Agent** | `maps/` | `environment/environment_system.h`, `core/skill_manager.h`, `assets/` |
 | **Environment Agent** | `environment/` | `core/decal_system.h`, `core/skill_manager.h`, `compute/gpu_particle_system.h` |
-| **Entities Agent** | `entities/` | `core/skill_manager.h`, `ENTITIES_API.md` — minimal scope, see `entities/CLAUDE.md` |
+| **Entities Agent** | `entities/` | `core/skill_manager.h`, `ENTITIES_API.md` — teams/mana/Vô Hệ/Thái Cực state, see `entities/CLAUDE.md` |
+| **Combat Agent** | `combat/` | `entities/entities.h`, `core/map_manager.h`, `COMBAT_API.md` — Đấu Pháp registry + clash matrix, see `combat/CLAUDE.md` |
+| **Control Agent** | `control/` | `entities/entities.h`, `core/skill_manager.h`, `combat/combat.h`, `CONTROL_API.md` — PlayerIntent layer, see `control/CLAUDE.md` |
+| **Boss Agent** | `boss/` | `entities/entities.h`, `combat/combat.h`, `core/skill_manager.h`, core VFX `.h` (chỉ trong `_def.c`), `BOSS_API.md` — see `boss/CLAUDE.md` |
 | **Character Agent** | `character/` | `core/resource_manager.h` — model/animation rendering, counterpart to `entities/`'s pure logic, see `character/CLAUDE.md` |
-| **Game Agent** | `game/` | `entities/entities.h`, `environment/environment_system.h`, `core/map_manager.h`, `sandbox/sandbox_core.h`, `character/character_model.h` — production screen, see `game/CLAUDE.md` |
+| **Game Agent** | `game/` | `entities/entities.h`, `environment/environment_system.h`, `core/map_manager.h`, `sandbox/sandbox_core.h`, `character/character_model.h`, `control/control.h`, `boss/boss_system.h`, `GAME_API.md` — match state machine + zone rule table, see `game/CLAUDE.md` |
 | **Sandbox Agent** | `sandbox/` | `.h` headers of ALL modules (dev/test integration harness, not shipped gameplay) — see `sandbox/CLAUDE.md` |
 
 ## Directories FORBIDDEN to every agent

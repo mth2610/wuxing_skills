@@ -22,6 +22,13 @@ static const float   GRAVITY = 5.0f; // below real 9.81 m/s² by design (floatie
 static const float   RING_OUT_KILL_Y = -2.0f;
 static const float   DEFAULT_MAX_MANA = 100.0f;
 static const float   MANA_REGEN_PER_SEC = 5.0f;
+// Thiền Định: 3s immobile channel; regen sized so an empty default pool
+// (100) refills within the 3s window (34 * 3 > 100).
+static const float   MEDITATE_DURATION = 3.0f;
+static const float   MEDITATE_REGEN_PER_SEC = 34.0f;
+// Dash: short horizontal burst, then cooldown gate.
+static const float   DASH_DURATION = 0.15f;
+static const float   DASH_COOLDOWN = 1.0f;
 // Basic attack tuning (see Entity_ExecuteBasicAttack). Real-world-scaled —
 // see root CLAUDE.md scale rules; melee range/wall-check radius sized to
 // "arm's reach" and "standing next to your own wall" respectively.
@@ -65,9 +72,39 @@ void Entity_Update(float dt) {
             if (a->stunTimer < 0.0f) a->stunTimer = 0.0f;
         }
 
+        // Thái Cực "Vô Sát" downside: the state lives on mana — a dry pool
+        // exits it (Lôi's huge cost is the intended drain). Checked BEFORE
+        // regen so the tick that drained to zero actually exits.
+        if (a->taijiActive && a->mana <= 0.01f) {
+            a->taijiActive = false;
+        }
+
         if (a->mana < a->maxMana) {
-            a->mana += MANA_REGEN_PER_SEC * dt;
+            float regen = a->isMeditating ? MEDITATE_REGEN_PER_SEC : MANA_REGEN_PER_SEC;
+            a->mana += regen * dt;
             if (a->mana > a->maxMana) a->mana = a->maxMana;
+        }
+
+        if (a->isMeditating) {
+            a->meditateTimer -= dt;
+            if (a->meditateTimer <= 0.0f) {
+                a->meditateTimer = 0.0f;
+                a->isMeditating = false;
+            }
+        }
+
+        if (a->dashTimer > 0.0f) {
+            // Clamp the final step to the remaining burst time so total
+            // distance is exactly speed * DASH_DURATION (no float-residue
+            // extra frame).
+            float step = (dt < a->dashTimer) ? dt : a->dashTimer;
+            a->position.x += a->dashVelocity.x * step;
+            a->position.z += a->dashVelocity.z * step;
+            a->dashTimer -= dt;
+            if (a->dashTimer <= 0.0f) {
+                a->dashTimer = 0.0f;
+                a->dashVelocity = (Vector3){ 0 };
+            }
         }
 
         if (a->pullTimer > 0.0f) {
@@ -118,11 +155,18 @@ void Entity_Unload(void) {
     }
 }
 
+// Any hostile/forced action breaks Thiền Định.
+static void CancelMeditate(Agent *a) {
+    a->isMeditating = false;
+    a->meditateTimer = 0.0f;
+}
+
 void Entity_ApplyDamage(int agentId, float damage, Vector3 knockback) {
     if (agentId < 0 || agentId >= MAX_AGENTS) return;
     Agent *a = &agentPool[agentId];
     if (!a->active) return;
 
+    CancelMeditate(a);
     a->health -= damage;
     a->velocity.x += knockback.x;
     a->velocity.y += knockback.y;
@@ -139,6 +183,7 @@ void Entity_Jump(int agentId, float force) {
     Agent *a = &agentPool[agentId];
     if (!a->active) return;
     if (a->vState == AGENT_GROUNDED) {
+        CancelMeditate(a);
         a->velocity.y = force;
         a->vState = AGENT_JUMPING;
     }
@@ -148,9 +193,17 @@ void Entity_Dash(int agentId, Vector3 direction, float speed) {
     if (agentId < 0 || agentId >= MAX_AGENTS) return;
     Agent *a = &agentPool[agentId];
     if (!a->active) return;
-    (void)direction;
-    (void)speed;
-    a->dashCooldown = 1.0f; // placeholder cooldown value; real tuning TBD
+    if (a->dashCooldown > 0.0f) return;
+
+    // XZ-plane burst — normalize the direction, ignore Y.
+    float len = sqrtf(direction.x * direction.x + direction.z * direction.z);
+    if (len < 0.0001f) return;
+
+    CancelMeditate(a);
+    a->dashVelocity = (Vector3){ (direction.x / len) * speed, 0.0f,
+                                 (direction.z / len) * speed };
+    a->dashTimer = DASH_DURATION;
+    a->dashCooldown = DASH_COOLDOWN;
     Entity_OnDash(agentId);
 }
 
@@ -158,6 +211,7 @@ void Entity_ApplyLaunch(int agentId, float verticalForce, Vector3 horizontalVelo
     if (agentId < 0 || agentId >= MAX_AGENTS) return;
     Agent *a = &agentPool[agentId];
     if (!a->active) return;
+    CancelMeditate(a);
     a->velocity = (Vector3){ horizontalVelocity.x, verticalForce, horizontalVelocity.z };
     a->vState = AGENT_JUMPING;
 }
@@ -166,6 +220,7 @@ void Entity_ApplyStun(int agentId, float duration) {
     if (agentId < 0 || agentId >= MAX_AGENTS) return;
     Agent *a = &agentPool[agentId];
     if (!a->active) return;
+    CancelMeditate(a);
     a->stunTimer = duration;
 }
 
@@ -180,9 +235,105 @@ void Entity_ApplyPull(int agentId, Vector3 targetPos, float speed, float duratio
     if (agentId < 0 || agentId >= MAX_AGENTS) return;
     Agent *a = &agentPool[agentId];
     if (!a->active) return;
+    CancelMeditate(a);
     a->pullTarget = targetPos;
     a->pullSpeed = speed;
     a->pullTimer = duration;
+}
+
+void Entity_StartMeditate(int agentId) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return;
+    if (a->vState != AGENT_GROUNDED) return;
+    if (a->stunTimer > 0.0f || a->pullTimer > 0.0f) return;
+    a->isMeditating = true;
+    a->meditateTimer = MEDITATE_DURATION;
+}
+
+bool Entity_IsMeditating(int agentId) {
+    const Agent *a = Entity_GetAgent(agentId);
+    return a != NULL && a->isMeditating;
+}
+
+void Entity_SetEquippedSkill(int agentId, int slot, int skillId, int element) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return;
+    if (slot < 0 || slot >= AGENT_SKILL_SLOTS) return;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return;
+    a->equippedSkills[slot] = skillId;
+    a->equippedElements[slot] = (skillId >= 0) ? element : -1;
+    Entity_RecomputeElement(agentId);
+}
+
+int Entity_RecomputeElement(int agentId) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return -1;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return -1;
+
+    int counts[5] = { 0 };
+    int filled = 0;
+    for (int s = 0; s < AGENT_SKILL_SLOTS; s++) {
+        if (a->equippedSkills[s] < 0) continue;
+        int e = a->equippedElements[s];
+        if (e < 0 || e > 4) continue;
+        counts[e]++;
+        filled++;
+    }
+    if (filled == 0) return a->currentElement; // empty loadout — keep as-is
+
+    // Thái Cực trigger (thiết kế Trụ cột 3): balanced 2 Âm (Thủy 0 / Mộc 1)
+    // + 2 Dương (Hỏa 2 / Kim 4) loadout enters the state; any other full
+    // loadout leaves it (boss/'s forced flag is reapplied by Boss_Update).
+    int yin  = counts[0] + counts[1];
+    int yang = counts[2] + counts[4];
+    a->taijiActive = (filled == AGENT_SKILL_SLOTS && yin == 2 && yang == 2);
+
+    int best = 0;
+    for (int e = 1; e < 5; e++) {
+        if (counts[e] > counts[best]) best = e; // tie → lowest index wins
+    }
+    a->currentElement = best;
+    return best;
+}
+
+void Entity_SetTaijiActive(int agentId, bool active) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return;
+    a->taijiActive = active;
+}
+
+bool Entity_IsTaijiActive(int agentId) {
+    const Agent *a = Entity_GetAgent(agentId);
+    return a != NULL && a->taijiActive;
+}
+
+void Entity_SetStealth(int agentId, bool stealthed) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return;
+    a->isStealthed = stealthed;
+}
+
+void Entity_SetElement(int agentId, int element) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return;
+    if (element < 0 || element > 4) return;
+    a->currentElement = element;
+}
+
+float Entity_GetSpeedMult(int agentId) {
+    const Agent *a = Entity_GetAgent(agentId);
+    if (!a) return 1.0f;
+    float mult = 1.0f;
+    for (int m = 0; m < MAX_AGENT_MODIFIERS; m++) {
+        if (a->modifiers[m].duration > 0.0f && a->modifiers[m].speedMult > 0.0f) {
+            mult *= a->modifiers[m].speedMult;
+        }
+    }
+    return mult;
 }
 
 bool Entity_IsCrowdControlled(int agentId) {
@@ -221,9 +372,8 @@ bool Entity_ExecuteBasicAttack(int attackerId, BasicAttackType type,
     Agent *attacker = &agentPool[attackerId];
     if (!attacker->active) return false;
 
-    // Auto-target: nearest other active agent within AUTO_TARGET_RADIUS — no
-    // targetId parameter, no "enemy" reference needed. No team filtering yet
-    // (Agent has no team field — known gap, tracked for Module 1).
+    // Auto-target: nearest active agent within AUTO_TARGET_RADIUS on a
+    // different team — no targetId parameter, no "enemy" reference needed.
     int nearbyIds[MAX_AGENTS];
     int nearbyCount = Entity_GetNearbyTargets(attacker->position, AUTO_TARGET_RADIUS, nearbyIds, MAX_AGENTS);
     int targetId = -1;
@@ -231,6 +381,7 @@ bool Entity_ExecuteBasicAttack(int attackerId, BasicAttackType type,
     for (int i = 0; i < nearbyCount; i++) {
         if (nearbyIds[i] == attackerId) continue;
         Agent *candidate = &agentPool[nearbyIds[i]];
+        if (candidate->team == attacker->team) continue;
         float cdx = candidate->position.x - attacker->position.x;
         float cdz = candidate->position.z - attacker->position.z;
         float cDistSq = cdx * cdx + cdz * cdz;
@@ -336,6 +487,27 @@ int Entity_GetNearbyTargets(Vector3 center, float radius, int *outIds, int maxId
     return count;
 }
 
+int Entity_GetNearbyTargetsTeam(Vector3 center, float radius, AgentTeam filter,
+                                int *outIds, int maxIds) {
+    if (outIds == NULL || maxIds <= 0) return 0;
+
+    int count = 0;
+    float radiusSq = radius * radius;
+
+    for (int i = 0; i < MAX_AGENTS && count < maxIds; i++) {
+        Agent *a = &agentPool[i];
+        if (!a->active || a->team != filter) continue;
+
+        float dx = a->position.x - center.x;
+        float dz = a->position.z - center.z;
+        if (dx * dx + dz * dz <= radiusSq) {
+            outIds[count++] = i;
+        }
+    }
+
+    return count;
+}
+
 void Entity_AddModifier(int agentId, float speedMult, float duration) {
     if (agentId < 0 || agentId >= MAX_AGENTS) return;
     Agent *a = &agentPool[agentId];
@@ -351,13 +523,15 @@ void Entity_AddModifier(int agentId, float speedMult, float duration) {
     // no empty slot found — silently drop (minimal version, no eviction policy)
 }
 
-void Entity_ApplyAoEDamage(Vector3 center, float radius, float damage, float knockbackStrength) {
+void Entity_ApplyAoEDamage(Vector3 center, float radius, float damage,
+                           float knockbackStrength, AgentTeam attackerTeam) {
     int ids[MAX_AGENTS];
     int count = Entity_GetNearbyTargets(center, radius, ids, MAX_AGENTS);
 
     for (int i = 0; i < count; i++) {
         int id = ids[i];
         Agent *a = &agentPool[id];
+        if (a->team == attackerTeam) continue; // never hit your own team
 
         // XZ-plane direction away from center, consistent with the distance
         // check in Entity_GetNearbyTargets (Y ignored).
@@ -375,18 +549,18 @@ void Entity_ApplyAoEDamage(Vector3 center, float radius, float damage, float kno
     }
 }
 
-void Entity_ApplyAoEBuff(Vector3 center, float radius, float speedMult, float duration) {
+void Entity_ApplyAoEBuff(Vector3 center, float radius, float speedMult,
+                         float duration, AgentTeam allyTeam) {
     int ids[MAX_AGENTS];
-    int count = Entity_GetNearbyTargets(center, radius, ids, MAX_AGENTS);
+    int count = Entity_GetNearbyTargetsTeam(center, radius, allyTeam, ids, MAX_AGENTS);
 
-    // NOTE: no team/ally-enemy filtering — Agent has no team field yet.
-    // This buffs every active agent found in radius, friend or foe.
     for (int i = 0; i < count; i++) {
         Entity_AddModifier(ids[i], speedMult, duration);
     }
 }
 
-int Entity_SpawnAgent(Vector3 position, float maxHealth, int element) {
+int Entity_SpawnAgent(Vector3 position, float maxHealth, int element,
+                      AgentTeam team, AgentArchetype archetype) {
     for (int i = 0; i < MAX_AGENTS; i++) {
         if (!agentPool[i].active) {
             Agent *a = &agentPool[i];
@@ -405,6 +579,17 @@ int Entity_SpawnAgent(Vector3 position, float maxHealth, int element) {
             a->pullSpeed = 0.0f;
             a->maxMana = DEFAULT_MAX_MANA;
             a->mana = DEFAULT_MAX_MANA;
+            a->team = team;
+            a->archetype = archetype;
+            a->isMeditating = false;
+            a->meditateTimer = 0.0f;
+            a->dashVelocity = (Vector3){ 0 };
+            a->dashTimer = 0.0f;
+            a->taijiActive = false;
+            for (int s = 0; s < AGENT_SKILL_SLOTS; s++) {
+                a->equippedSkills[s] = -1;
+                a->equippedElements[s] = -1;
+            }
             for (int m = 0; m < MAX_AGENT_MODIFIERS; m++) {
                 a->modifiers[m] = (AgentModifier){ 0 };
             }
@@ -416,8 +601,17 @@ int Entity_SpawnAgent(Vector3 position, float maxHealth, int element) {
 
 void Entity_SetPosition(int agentId, Vector3 position) {
     if (agentId < 0 || agentId >= MAX_AGENTS) return;
-    if (!agentPool[agentId].active) return;
-    agentPool[agentId].position = position;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return;
+    // Actual movement breaks Thiền Định (external movement systems push
+    // position every frame even when idle — only a real change cancels).
+    if (a->isMeditating) {
+        float dx = position.x - a->position.x;
+        float dy = position.y - a->position.y;
+        float dz = position.z - a->position.z;
+        if (dx * dx + dy * dy + dz * dz > 1e-6f) CancelMeditate(a);
+    }
+    a->position = position;
 }
 
 const Agent *Entity_GetAgent(int agentId) {

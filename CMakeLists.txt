@@ -89,12 +89,23 @@ add_executable(wuxing
     # --- Entities ---
     entities/entities.c
 
+    # --- Combat (Đấu Pháp: projectile registry + clash matrix) ---
+    combat/combat.c
+
+    # --- Control (player controller: intent layer) ---
+    control/control.c
+
+    # --- Boss (engine + one _def.c per boss) ---
+    boss/boss_system.c
+    boss/hac_dien_ton_gia_def.c
+
     # --- Character (model + animation rendering, counterpart to entities/'s
     # pure gameplay logic) ---
     character/character_model.c
 
     # --- Game Screen (production-bound; sandbox/ stays the dev harness) ---
     game/game_screen.c
+    game/game_rules.c
 
     # --- Sandbox & Test Simulator ---
     sandbox/sandbox_core.c

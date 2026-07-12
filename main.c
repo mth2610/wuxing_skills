@@ -32,6 +32,12 @@
 #include "core/status_vfx.h"
 #include "core/afterimage.h"
 #include "game/game_screen.h"
+#include "entities/entities.h"
+#include "combat/combat.h"
+#include "control/control.h"
+#include "boss/boss_system.h"
+#include "skills/taiji/taiji_phong/taiji_phong_skill.h"
+#include "game/game_rules.h"
 #include <stdio.h>
 
 // Biến camera toàn cục
@@ -92,6 +98,374 @@ static AutoTestResult AutoTest_SmokeStep(int frameInCase, char *outReason, int o
                              outReason, outReasonSize)
              ? AUTOTEST_PASS
              : AUTOTEST_FAIL;
+}
+
+// Module 1 DoD (MODULES_ROADMAP.md): team-filtered AoE/buff, mana gate,
+// meditate refill, Vô Hệ majority element, real dash. Self-contained: drives
+// Entity_Update with its own dt and kills its test agents when done.
+static AutoTestResult AutoTest_EntitiesCombatV2Step(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+
+  // Spawn away from the sandbox spawns (nearest: training dummy at (6,0,8))
+  // but inside arena radius (center (6,0,4.4), r=18) so neither ring-out nor
+  // the 5m team-query radius picks up strangers.
+  Vector3 base = { 6.0f, 0.0f, 14.0f };
+  int a = Entity_SpawnAgent(base, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
+  int b = Entity_SpawnAgent((Vector3){ base.x + 1.0f, 0, base.z }, 100.0f, 2, TEAM_ENEMY, ARCH_HERO);
+  int c = Entity_SpawnAgent((Vector3){ base.x - 1.0f, 0, base.z }, 100.0f, 1, TEAM_ALLY, ARCH_HERO);
+  bool ok = AutoTest_ExpectTrue(a >= 0 && b >= 0 && c >= 0, "spawned 3 team agents", outReason, outReasonSize);
+
+  // Team-filtered AoE damage: ALLY attack hits only the ENEMY.
+  Entity_ApplyAoEDamage(base, 5.0f, 10.0f, 0.0f, TEAM_ALLY);
+  ok = ok && AutoTest_ExpectFloatNear(Entity_GetAgent(b)->health, 90.0f, 0.01f, "AoE hit enemy", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectFloatNear(Entity_GetAgent(a)->health, 100.0f, 0.01f, "AoE spared ally A", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectFloatNear(Entity_GetAgent(c)->health, 100.0f, 0.01f, "AoE spared ally C", outReason, outReasonSize);
+
+  // Team-filtered buff: only allies get the speed modifier.
+  Entity_ApplyAoEBuff(base, 5.0f, 1.5f, 5.0f, TEAM_ALLY);
+  ok = ok && AutoTest_ExpectFloatNear(Entity_GetSpeedMult(a), 1.5f, 0.01f, "buff hit ally", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectFloatNear(Entity_GetSpeedMult(b), 1.0f, 0.01f, "buff spared enemy", outReason, outReasonSize);
+
+  // Team query.
+  int ids[8];
+  ok = ok && AutoTest_ExpectTrue(Entity_GetNearbyTargetsTeam(base, 5.0f, TEAM_ENEMY, ids, 8) == 1,
+                                 "team query finds 1 enemy", outReason, outReasonSize);
+
+  // Mana gate: drain then over-spend fails.
+  ok = ok && AutoTest_ExpectTrue(Entity_TrySpendMana(a, 100.0f), "spend full mana ok", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(!Entity_TrySpendMana(a, 50.0f), "over-spend fails when drained", outReason, outReasonSize);
+
+  // Meditate: 3s refills the default pool (drive update manually).
+  Entity_StartMeditate(a);
+  ok = ok && AutoTest_ExpectTrue(Entity_IsMeditating(a), "meditate started", outReason, outReasonSize);
+  for (int i = 0; i < 7; i++) Entity_Update(0.5f);
+  ok = ok && AutoTest_ExpectTrue(!Entity_IsMeditating(a), "meditate ended after 3s", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectFloatNear(Entity_GetAgent(a)->mana, Entity_GetAgent(a)->maxMana, 0.01f,
+                                      "meditate refilled mana", outReason, outReasonSize);
+
+  // Meditate cancels on damage.
+  Entity_StartMeditate(b);
+  Entity_ApplyDamage(b, 1.0f, (Vector3){ 0 });
+  ok = ok && AutoTest_ExpectTrue(!Entity_IsMeditating(b), "damage cancels meditate", outReason, outReasonSize);
+
+  // Vô Hệ: majority element across equipped slots, re-equip flips it.
+  Entity_SetEquippedSkill(a, 0, 10, 2); // fire
+  Entity_SetEquippedSkill(a, 1, 11, 2); // fire
+  Entity_SetEquippedSkill(a, 2, 12, 0); // water
+  Entity_SetEquippedSkill(a, 3, 13, 4); // metal
+  ok = ok && AutoTest_ExpectTrue(Entity_GetAgent(a)->currentElement == 2, "majority element = fire", outReason, outReasonSize);
+  Entity_SetEquippedSkill(a, 1, 14, 0); // swap a fire for water → water majority
+  ok = ok && AutoTest_ExpectTrue(Entity_GetAgent(a)->currentElement == 0, "re-equip flips to water", outReason, outReasonSize);
+
+  // Real dash: covers ~speed*0.15s horizontally, gated by cooldown.
+  float xBefore = Entity_GetAgent(c)->position.x;
+  Entity_Dash(c, (Vector3){ 1.0f, 0.0f, 0.0f }, 10.0f);
+  for (int i = 0; i < 6; i++) Entity_Update(0.05f);
+  float dashDist = Entity_GetAgent(c)->position.x - xBefore;
+  ok = ok && AutoTest_ExpectFloatNear(dashDist, 1.5f, 0.3f, "dash moved ~1.5m", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(Entity_GetAgent(c)->dashCooldown > 0.0f, "dash set cooldown", outReason, outReasonSize);
+
+  // Cleanup: kill test agents so later cases see a clean pool.
+  Entity_ApplyDamage(a, 1e9f, (Vector3){ 0 });
+  Entity_ApplyDamage(b, 1e9f, (Vector3){ 0 });
+  Entity_ApplyDamage(c, 1e9f, (Vector3){ 0 });
+
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+// Module 2 DoD: active map (DEFAULT_ARENA) exposes its nature zones; point
+// queries resolve river/forest/desert vs none.
+static AutoTestResult AutoTest_MapZonesStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+  bool ok = AutoTest_ExpectTrue(Map_GetZoneCount() == 3, "default arena has 3 zones", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(Map_QueryZoneAt((Vector3){ 0.0f, 0, -2.0f }) == NAT_RIVER,
+                                 "river zone at its center", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(Map_QueryZoneAt((Vector3){ 14.0f, 0, 10.0f }) == NAT_FOREST,
+                                 "forest zone at its center", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(Map_QueryZoneAt((Vector3){ -2.0f, 0, 10.0f }) == NAT_DESERT_ZONE,
+                                 "desert zone at its center", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(Map_QueryZoneAt((Vector3){ 6.0f, 0, 4.4f }) == NAT_NONE,
+                                 "arena center is zone-free", outReason, outReasonSize);
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+// Module 3 DoD: Thủy–Hỏa head-on clash → Thủy wins with correct events both
+// sides; same-team projectiles pass through silently; projectile→agent hit
+// applies damage via combat with a CLASH_HIT_AGENT event; 128-collider cap.
+static AutoTestResult AutoTest_CombatClashStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+
+  Vector3 base = { 6.0f, 0.0f, -6.0f }; // clear of sandbox spawns + zones
+  int ally = Entity_SpawnAgent(base, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
+  int foe  = Entity_SpawnAgent((Vector3){ base.x + 4.0f, 0, base.z }, 100.0f, 2, TEAM_ENEMY, ARCH_HERO);
+  bool ok = AutoTest_ExpectTrue(ally >= 0 && foe >= 0, "spawned clash agents", outReason, outReasonSize);
+
+  // Thủy (ally) vs Hỏa (foe) at the same point → Thủy khắc Hỏa.
+  Vector3 mid = { base.x + 2.0f, 0.5f, base.z };
+  Combat_SubmitProjectile(ally, ELEM_WATER, mid, 0.3f, 10.0f, 0.0f, 101);
+  Combat_SubmitProjectile(foe,  ELEM_FIRE,  mid, 0.3f, 10.0f, 0.0f, 202);
+  Combat_Update(1.0f / 60.0f);
+  ClashEvent ev[8];
+  int n = Combat_PollEvents(ev, 8);
+  ok = ok && AutoTest_ExpectTrue(n == 2, "clash produced 2 events", outReason, outReasonSize);
+  bool waterWon = false, fireLost = false;
+  for (int i = 0; i < n; i++) {
+    if (ev[i].skillInstanceId == 101 && ev[i].outcome == CLASH_A_WINS && ev[i].otherElem == ELEM_FIRE) waterWon = true;
+    if (ev[i].skillInstanceId == 202 && ev[i].outcome == CLASH_B_WINS && ev[i].otherElem == ELEM_WATER) fireLost = true;
+  }
+  ok = ok && AutoTest_ExpectTrue(waterWon, "water projectile won", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(fireLost, "fire projectile lost", outReason, outReasonSize);
+
+  // Same team → pass through, no events.
+  Combat_SubmitProjectile(ally, ELEM_WATER, mid, 0.3f, 10.0f, 0.0f, 103);
+  Combat_SubmitProjectile(ally, ELEM_FIRE,  mid, 0.3f, 10.0f, 0.0f, 104);
+  Combat_Update(1.0f / 60.0f);
+  ok = ok && AutoTest_ExpectTrue(Combat_PollEvents(ev, 8) == 0, "same-team pass through", outReason, outReasonSize);
+
+  // Projectile → enemy agent: combat applies the damage + emits HIT_AGENT.
+  Combat_SubmitProjectile(ally, ELEM_WATER, Entity_GetAgent(foe)->position, 0.3f, 10.0f, 0.0f, 105);
+  Combat_Update(1.0f / 60.0f);
+  n = Combat_PollEvents(ev, 8);
+  ok = ok && AutoTest_ExpectTrue(n == 1 && ev[0].outcome == CLASH_HIT_AGENT && ev[0].otherAgentId == foe,
+                                 "agent hit event", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectFloatNear(Entity_GetAgent(foe)->health, 90.0f, 0.01f,
+                                      "combat applied projectile damage", outReason, outReasonSize);
+
+  // Capacity: 128 colliders accepted, the 129th dropped.
+  bool capOk = true;
+  for (int i = 0; i < MAX_COMBAT_PROJECTILES; i++) {
+    capOk = capOk && Combat_SubmitProjectile(ally, ELEM_WOOD,
+              (Vector3){ base.x + 100.0f + i, 0, base.z }, 0.1f, 1.0f, 0.0f, 300 + i);
+  }
+  ok = ok && AutoTest_ExpectTrue(capOk, "128 submissions accepted", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(!Combat_SubmitProjectile(ally, ELEM_WOOD, base, 0.1f, 1.0f, 0.0f, 999),
+                                 "129th submission rejected", outReason, outReasonSize);
+  Combat_Update(1.0f / 60.0f);
+  Combat_PollEvents(ev, 8);
+
+  Entity_ApplyDamage(ally, 1e9f, (Vector3){ 0 });
+  Entity_ApplyDamage(foe,  1e9f, (Vector3){ 0 });
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+// Module 4 DoD: intent-driven movement (with speedMult), dash burst,
+// meditate start + cancel-on-move, mana-charged skill cast with cooldown.
+// Drives Control_Apply directly — ReadIntent needs a real keyboard.
+static AutoTestResult AutoTest_ControlStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+
+  Vector3 base = { 0.0f, 0.0f, -4.0f };
+  int agent = Entity_SpawnAgent(base, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
+  bool ok = AutoTest_ExpectTrue(agent >= 0, "spawned control agent", outReason, outReasonSize);
+  Control_Init(agent);
+
+  // Movement: 1s at 3.5 m/s.
+  PlayerIntent intent = { 0 };
+  intent.castSkillSlot = -1;
+  intent.moveDir = (Vector2){ 1.0f, 0.0f };
+  Control_Apply(&intent, 1.0f);
+  ok = ok && AutoTest_ExpectFloatNear(Entity_GetAgent(agent)->position.x, base.x + 3.5f, 0.01f,
+                                      "moved 3.5m in 1s", outReason, outReasonSize);
+
+  // speedMult respected: 2x modifier → 7m in 1s.
+  Entity_AddModifier(agent, 2.0f, 5.0f);
+  float xBefore = Entity_GetAgent(agent)->position.x;
+  Control_Apply(&intent, 1.0f);
+  ok = ok && AutoTest_ExpectFloatNear(Entity_GetAgent(agent)->position.x - xBefore, 7.0f, 0.01f,
+                                      "speedMult doubles move speed", outReason, outReasonSize);
+
+  // Meditate starts when idle, breaks on a real move.
+  PlayerIntent idle = { 0 };
+  idle.castSkillSlot = -1;
+  idle.meditate = true;
+  Control_Apply(&idle, 1.0f / 60.0f);
+  ok = ok && AutoTest_ExpectTrue(Entity_IsMeditating(agent), "meditate via intent", outReason, outReasonSize);
+  Control_Apply(&intent, 1.0f / 60.0f); // move again
+  ok = ok && AutoTest_ExpectTrue(!Entity_IsMeditating(agent), "moving breaks meditate", outReason, outReasonSize);
+
+  // Dash via intent: burst timer + cooldown armed.
+  PlayerIntent dash = { 0 };
+  dash.castSkillSlot = -1;
+  dash.dash = true;
+  dash.moveDir = (Vector2){ 1.0f, 0.0f };
+  Control_Apply(&dash, 1.0f / 60.0f);
+  ok = ok && AutoTest_ExpectTrue(Entity_GetAgent(agent)->dashTimer > 0.0f, "dash burst armed", outReason, outReasonSize);
+
+  // Cast slot 0: equip a real registered skill, cast at a nearby aim point —
+  // mana must drop (CastSkill charges it) and the cooldown must engage.
+  ok = ok && AutoTest_ExpectTrue(GetRegisteredSkillCount() > 0, "have a skill to equip", outReason, outReasonSize);
+  Entity_SetEquippedSkill(agent, 0, 0, Entity_GetAgent(agent)->currentElement);
+  float manaBefore = Entity_GetAgent(agent)->mana;
+  PlayerIntent cast = { 0 };
+  cast.castSkillSlot = 0;
+  cast.aimPoint = (Vector3){ Entity_GetAgent(agent)->position.x + 2.0f, 0.0f,
+                             Entity_GetAgent(agent)->position.z };
+  Control_Apply(&cast, 1.0f / 60.0f);
+  ok = ok && AutoTest_ExpectTrue(Entity_GetAgent(agent)->mana < manaBefore,
+                                 "cast charged mana", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(!SkillManager_CanCast(0, agent),
+                                 "cast engaged cooldown", outReason, outReasonSize);
+
+  Entity_ApplyDamage(agent, 1e9f, (Vector3){ 0 });
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+// Module 6 DoD: balanced 2 Âm + 2 Dương loadout enters Thái Cực; taiji
+// projectiles are immune to elemental counters; Phong deflects enemy
+// projectiles + exposes its center for Lôi; Lôi damages through the
+// team-aware AoE; mana hitting zero exits the state.
+static AutoTestResult AutoTest_TaijiStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+
+  Vector3 base = { 12.0f, 0.0f, -2.0f };
+  int a = Entity_SpawnAgent(base, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
+  int b = Entity_SpawnAgent((Vector3){ base.x + 2.0f, 0, base.z }, 100.0f, 0, TEAM_ENEMY, ARCH_HERO);
+  bool ok = AutoTest_ExpectTrue(a >= 0 && b >= 0, "spawned taiji agents", outReason, outReasonSize);
+
+  // 2 Âm (Thủy/Mộc) + 2 Dương (Hỏa/Kim) → Thái Cực.
+  Entity_SetEquippedSkill(a, 0, 10, 0); // water (âm)
+  Entity_SetEquippedSkill(a, 1, 11, 1); // wood  (âm)
+  Entity_SetEquippedSkill(a, 2, 12, 2); // fire  (dương)
+  Entity_SetEquippedSkill(a, 3, 13, 4); // metal (dương)
+  ok = ok && AutoTest_ExpectTrue(Entity_IsTaijiActive(a), "2am+2duong enters taiji", outReason, outReasonSize);
+
+  // Immunity: taiji FIRE beats non-taiji WATER (matrix says the opposite).
+  Vector3 mid = { base.x + 1.0f, 0.5f, base.z };
+  Combat_SubmitProjectile(a, ELEM_FIRE,  mid, 0.3f, 10.0f, 0.0f, 401);
+  Combat_SubmitProjectile(b, ELEM_WATER, mid, 0.3f, 10.0f, 0.0f, 402);
+  Combat_Update(1.0f / 60.0f);
+  ClashEvent ev[8];
+  int n = Combat_PollEvents(ev, 8);
+  bool taijiWon = false;
+  for (int i = 0; i < n; i++) {
+    if (ev[i].skillInstanceId == 401 && ev[i].outcome == CLASH_A_WINS) taijiWon = true;
+  }
+  ok = ok && AutoTest_ExpectTrue(taijiWon, "taiji projectile immune to counter", outReason, outReasonSize);
+
+  // Phong deflect: enemy projectile inside the radius dies with a B_WINS
+  // event for its owner (deflect is called between submissions and update).
+  Combat_SubmitProjectile(b, ELEM_WATER, mid, 0.3f, 10.0f, 0.0f, 403);
+  int deflected = Combat_DeflectProjectilesInRadius(mid, 5.0f, a);
+  Combat_Update(1.0f / 60.0f);
+  n = Combat_PollEvents(ev, 8);
+  ok = ok && AutoTest_ExpectTrue(deflected == 1, "phong deflected 1 projectile", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(n == 1 && ev[0].skillInstanceId == 403 && ev[0].outcome == CLASH_B_WINS,
+                                 "deflect event reached owner", outReason, outReasonSize);
+
+  // Phong cast (mana -30) exposes its center; Lôi (mana -45) strikes it and
+  // damages the enemy standing inside through the team-aware AoE.
+  int phongIdx = Skill_GetIndexByName("TAIJI_PHONG");
+  int loiIdx   = Skill_GetIndexByName("TAIJI_LOI");
+  ok = ok && AutoTest_ExpectTrue(phongIdx >= 0 && loiIdx >= 0, "taiji skills registered", outReason, outReasonSize);
+  Vector3 vortex = Entity_GetAgent(b)->position;
+  ok = ok && AutoTest_ExpectTrue(CastSkill(phongIdx, a, base, vortex, (SkillParams){ .level = 1 }),
+                                 "phong cast went through", outReason, outReasonSize);
+  Vector3 phongCenter;
+  ok = ok && AutoTest_ExpectTrue(TaijiPhong_GetActiveCenter(&phongCenter), "phong center exposed", outReason, outReasonSize);
+  float hpBefore = Entity_GetAgent(b)->health;
+  ok = ok && AutoTest_ExpectTrue(CastSkill(loiIdx, a, base, base, (SkillParams){ .level = 1 }),
+                                 "loi cast went through", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(Entity_GetAgent(b)->health < hpBefore, "loi damaged enemy at vortex", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectFloatNear(Entity_GetAgent(a)->mana, 25.0f, 0.1f, "phong+loi drained 75 mana", outReason, outReasonSize);
+
+  // Dry pool exits the state.
+  Entity_TrySpendMana(a, Entity_GetAgent(a)->mana);
+  Entity_Update(1.0f / 600.0f);
+  ok = ok && AutoTest_ExpectTrue(!Entity_IsTaijiActive(a), "empty mana exits taiji", outReason, outReasonSize);
+
+  Entity_ApplyDamage(a, 1e9f, (Vector3){ 0 });
+  Entity_ApplyDamage(b, 1e9f, (Vector3){ 0 });
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+// Module 7 DoD: full match loop — intro title card spawns the boss and
+// enters FIGHTING; boss death → VICTORY; player death → DEFEAT; reset
+// re-arms the intro. Zone rule table sanity-checked directly.
+static AutoTestResult AutoTest_GameModeStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+
+  Camera3D cam = { .position = { 10, 8, 10 }, .target = { 6, 0, 4.4f },
+                   .up = { 0, 1, 0 }, .fovy = 45.0f, .projection = CAMERA_PERSPECTIVE };
+
+  GameScreen_Init(&player);
+  bool ok = AutoTest_ExpectTrue(GameScreen_GetState() == GAME_ARENA_INTRO, "match starts in intro", outReason, outReasonSize);
+
+  // 2s intro at fixed dt → boss spawns, fight begins.
+  for (int i = 0; i < 130 && GameScreen_GetState() == GAME_ARENA_INTRO; i++) {
+    GameScreen_Update(&player, &cam, 1.0f / 60.0f);
+  }
+  ok = ok && AutoTest_ExpectTrue(GameScreen_GetState() == GAME_FIGHTING, "intro leads to fighting", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(Boss_IsAlive(), "boss spawned by intro", outReason, outReasonSize);
+
+  // Boss death → victory.
+  Entity_ApplyDamage(Boss_GetAgentId(), 1e9f, (Vector3){ 0 });
+  Boss_Update(0.0f);
+  GameScreen_Update(&player, &cam, 1.0f / 60.0f);
+  ok = ok && AutoTest_ExpectTrue(GameScreen_GetState() == GAME_VICTORY, "boss death gives victory", outReason, outReasonSize);
+
+  // Fresh match, player death → defeat.
+  GameScreen_Init(&player);
+  for (int i = 0; i < 130 && GameScreen_GetState() == GAME_ARENA_INTRO; i++) {
+    GameScreen_Update(&player, &cam, 1.0f / 60.0f);
+  }
+  Entity_ApplyDamage(player.agentId, 1e9f, (Vector3){ 0 });
+  GameScreen_Update(&player, &cam, 1.0f / 60.0f);
+  ok = ok && AutoTest_ExpectTrue(GameScreen_GetState() == GAME_DEFEAT, "player death gives defeat", outReason, outReasonSize);
+
+  // Zone rule table (the one place gameplay rules live).
+  ok = ok && AutoTest_ExpectFloatNear(GameRules_CooldownMult(0, NAT_RIVER), 0.5f, 0.001f, "thuy in river halves cooldown", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectFloatNear(GameRules_DamageMult(2, NAT_RIVER), 0.5f, 0.001f, "hoa in river halves damage", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(GameRules_GrantsStealth(1, NAT_FOREST), "moc in forest stealths", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectFloatNear(GameRules_CooldownMult(2, NAT_RIVER), 1.0f, 0.001f, "no rule leaves 1.0", outReason, outReasonSize);
+
+  // Reset for a clean pool (respawns the player agent, clears the boss).
+  GameScreen_Init(&player);
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+// Module 5 DoD: boss spawns as ARCH_BOSS pool agent, phase follows %HP with
+// biến hệ (element change = visual cue source), AI cast fires through the
+// skill manager at a nearby opposing-team target, death via the normal
+// entities damage path ends the fight.
+static AutoTestResult AutoTest_BossStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+
+  Vector3 pos = { -6.0f, 0.0f, -4.0f }; // inside arena, clear of other cases
+  int bossId = Boss_Spawn(&BOSS_HAC_DIEN_TON_GIA, pos, TEAM_ENEMY);
+  bool ok = AutoTest_ExpectTrue(bossId >= 0, "boss spawned", outReason, outReasonSize);
+  const Agent *boss = Entity_GetAgent(bossId);
+  ok = ok && AutoTest_ExpectTrue(boss && boss->archetype == ARCH_BOSS, "boss archetype", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(boss && boss->currentElement == 0, "phase 0 element = water", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(Boss_GetPhase() == 0, "starts in phase 0", outReason, outReasonSize);
+
+  // A player-side target in range so the AI has someone to shoot.
+  int hero = Entity_SpawnAgent((Vector3){ pos.x + 5.0f, 0, pos.z }, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
+  ok = ok && AutoTest_ExpectTrue(hero >= 0, "spawned boss target", outReason, outReasonSize);
+
+  // Phase transitions follow %HP (400 max: 75% at 300, 50% at 200).
+  Entity_ApplyDamage(bossId, 150.0f, (Vector3){ 0 }); // 62.5%
+  Boss_Update(1.0f / 60.0f);
+  ok = ok && AutoTest_ExpectTrue(Boss_GetPhase() == 1, "phase 1 at 62.5% HP", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(Entity_GetAgent(bossId)->currentElement == 2, "biến hệ to fire", outReason, outReasonSize);
+
+  Entity_ApplyDamage(bossId, 100.0f, (Vector3){ 0 }); // 37.5%
+  Boss_Update(1.0f / 60.0f);
+  ok = ok && AutoTest_ExpectTrue(Boss_GetPhase() == 2, "phase 2 at 37.5% HP", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(Entity_GetAgent(bossId)->currentElement == 3, "biến hệ to earth", outReason, outReasonSize);
+
+  // AI cast: STONE_PRISON (phase 2 skill) cooldown must be engaged after an
+  // update tick with a target in range — i.e. the boss actually cast.
+  int phaseSkill = Skill_GetIndexByName("STONE_PRISON");
+  ok = ok && AutoTest_ExpectTrue(phaseSkill >= 0, "phase skill registered", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(!SkillManager_CanCast(phaseSkill, bossId), "boss cast engaged cooldown", outReason, outReasonSize);
+
+  // Death through the normal entities path ends the fight.
+  Entity_ApplyDamage(bossId, 1e9f, (Vector3){ 0 });
+  Boss_Update(1.0f / 60.0f);
+  ok = ok && AutoTest_ExpectTrue(!Boss_IsAlive() && Boss_GetPhase() == -1, "boss death ends fight", outReason, outReasonSize);
+
+  Entity_ApplyDamage(hero, 1e9f, (Vector3){ 0 });
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
 }
 
 int main(int argc, char **argv) {
@@ -203,6 +577,13 @@ int main(int argc, char **argv) {
   InitSkillManager(screenWidth, screenHeight);
   if (autoTestMode) {
       AutoTest_Register("smoke_skill_manager_init", AutoTest_SmokeStep, 5);
+      AutoTest_Register("entities_combat_v2", AutoTest_EntitiesCombatV2Step, 5);
+      AutoTest_Register("map_trigger_zones", AutoTest_MapZonesStep, 5);
+      AutoTest_Register("combat_clash_matrix", AutoTest_CombatClashStep, 5);
+      AutoTest_Register("control_intent", AutoTest_ControlStep, 5);
+      AutoTest_Register("boss_hac_dien", AutoTest_BossStep, 5);
+      AutoTest_Register("taiji_state", AutoTest_TaijiStep, 5);
+      AutoTest_Register("game_mode_loop", AutoTest_GameModeStep, 5);
   }
   DamageVolume_Init();
   EmitterSystem_Init();
@@ -215,6 +596,7 @@ int main(int argc, char **argv) {
   SkillDebugger_Init();
   Environment_Init();
   MapManager_Init();
+  Combat_Init();
 
   EnemyEntity enemy;
   InitSandbox(&player, &enemy);
@@ -264,6 +646,10 @@ int main(int argc, char **argv) {
       SCREEN_GAME
   } GameScreen;
   GameScreen currentScreen = SCREEN_MAIN_MENU;
+  // Headless modes never click through the menu — drop straight into the
+  // sandbox screen so AutoTest_RunFrame/VisualVerify actually tick (the menu
+  // branch `continue;`s past them, which used to hang autotest forever).
+  if (autoTestMode || visualVerifyMode) currentScreen = SCREEN_SKILL_SANDBOX;
   int renderVFXFrame = 0;
   if (renderVFXMode) {
       currentScreen    = SCREEN_VFX_TESTER;
@@ -404,6 +790,28 @@ int main(int argc, char **argv) {
         CameraFX_Update(&camera, dt);
     }
 
+    // Boss AI then Đấu Pháp resolve — boss casts submit through skills into
+    // the combat registry, so Boss_Update runs first; Combat_Update last,
+    // after all skill updates submitted this frame's projectile colliders
+    // (immediate mode). Both tick for every screen; no boss / no
+    // submissions = no-op. (Module 7 game/ will own this ordering.)
+    Boss_Update(dt);
+    Combat_Update(dt);
+
+    // Cảnh Giới Thái Cực → monochrome world (Module 6). Any live taiji
+    // agent (player via balanced loadout, boss below 30% HP) fades the
+    // whole canvas to black-and-white; fades back out on exit.
+    {
+        static float s_taijiMono = 0.0f;
+        bool anyTaiji = Entity_IsTaijiActive(Control_GetAgentId()) ||
+                        (Boss_IsAlive() && Entity_IsTaijiActive(Boss_GetAgentId()));
+        float target = anyTaiji ? 1.0f : 0.0f;
+        float speed = 2.5f * dt; // ~0.4s fade
+        if (s_taijiMono < target)      { s_taijiMono += speed; if (s_taijiMono > target) s_taijiMono = target; }
+        else if (s_taijiMono > target) { s_taijiMono -= speed; if (s_taijiMono < target) s_taijiMono = target; }
+        PostFX_SetMonochrome(s_taijiMono);
+    }
+
     static bool isDragging = false;
     static int pathCount = 0;
     static Vector3 pathPoints[32];
@@ -513,6 +921,7 @@ int main(int argc, char **argv) {
     }
     if (currentScreen == SCREEN_GAME) {
         GameScreen_Draw3D(&player);
+        Boss_Draw();
     }
     Afterimage_Draw();
 

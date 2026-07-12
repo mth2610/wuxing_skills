@@ -41,4 +41,10 @@ void PostFX_End(void);
 // Thực thi toàn bộ chuỗi thuật toán hậu kỳ (Bloom -> CA -> Grade -> Vignette) vẽ lên màn hình chính
 void PostFX_Draw(const PostFXConfig *config);
 
+// Cảnh Giới Thái Cực (MODULES_ROADMAP.md Module 6): monochrome overlay on
+// the ONE main canvas — no extra render target. intensity 0..1 blends the
+// composite's saturation toward 0 (1 = full black-and-white), overriding
+// the config's color grade while > 0. Cheap to call every frame.
+void PostFX_SetMonochrome(float intensity01);
+
 #endif // POST_FX_H

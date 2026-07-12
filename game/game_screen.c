@@ -5,7 +5,12 @@
 #include "core/skill_helper.h"
 #include "core/composition/visual_composer.h"
 #include "character/character_model.h"
+#include "control/control.h"
+#include "boss/boss_system.h"
+#include "core/map_manager.h"
+#include "game/game_rules.h"
 #include <math.h>
+#include <string.h>
 
 #ifndef PI
 #define PI 3.14159265358979323846f
@@ -14,25 +19,94 @@
 static float s_camAngle   = 0.0f;
 static float s_camDist    = 6.0f;
 static bool  s_backToMenu = false;
-static float s_playerYaw  = 0.0f; // radians, updated while moving, held otherwise
+
+// --- Module 7 match state ---
+static GameState s_state = GAME_ARENA_INTRO;
+static float s_introTimer = 0.0f;
+
+// The Phase 0 match runs on DEFAULT_ARENA (its ring-out circle matches the
+// entities arena constants — center (6,0,4.4), r=18). Spawn points inside.
+static const Vector3 PLAYER_SPAWN = { 2.0f, 0.0f, 4.4f };
+static const Vector3 BOSS_SPAWN   = { 10.0f, 0.0f, 4.4f };
+static const float   INTRO_SECONDS = 2.0f;
+
+static void ResetMatch(PlayerEntity *player) {
+    s_state = GAME_ARENA_INTRO;
+    s_introTimer = INTRO_SECONDS;
+
+    // Player agent may have died last match (HP or ring-out) — respawn it.
+    if (Entity_GetAgent(player->agentId) == NULL) {
+        player->agentId = Entity_SpawnAgent(PLAYER_SPAWN, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
+    }
+    player->position = PLAYER_SPAWN;
+    Entity_SetPosition(player->agentId, player->position);
+    Control_Init(player->agentId);
+
+    // Leftover boss from an aborted match: kill it so the next intro spawns
+    // a fresh one (Boss_Spawn would otherwise leak the old pool agent).
+    if (Boss_IsAlive()) {
+        Entity_ApplyDamage(Boss_GetAgentId(), 1e9f, (Vector3){ 0 });
+        Boss_Update(0.0f); // lets the boss system notice the death
+    }
+}
+
+GameState GameScreen_GetState(void) {
+    return s_state;
+}
 
 void GameScreen_Init(PlayerEntity *player) {
     s_camAngle   = 0.0f;
     s_camDist    = 6.0f;
     s_backToMenu = false;
-
-    // Center of maps/worlds/verdant_path (100m x 75m, center at 50/37.5) —
-    // spawns on the path, clear of the cliff ring. (Previously the corner,
-    // to gauge the ~125m diagonal walk time — the island/cliff redesign
-    // makes the center the more useful default now.)
-    player->position = (Vector3){ 50.0f, 0.0f, 37.5f };
-    Entity_SetPosition(player->agentId, player->position);
+    ResetMatch(player);
 }
 
 void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
     if (IsKeyPressed(KEY_ESCAPE)) {
         s_backToMenu = true;
+        ResetMatch(player); // abort → next entry starts a fresh match
         return;
+    }
+
+    // --- Match state machine (Module 7) ---
+    if (s_state == GAME_ARENA_INTRO) {
+        // Pin the match map (only while this screen is active — never from
+        // Init, which runs once at startup for every screen).
+        if (strcmp(MapManager_GetName(MapManager_GetActiveIndex()), "DEFAULT_ARENA") != 0) {
+            for (int i = 0; i < MapManager_GetCount(); i++) {
+                if (strcmp(MapManager_GetName(i), "DEFAULT_ARENA") == 0) {
+                    MapManager_SetActiveIndex(i);
+                    break;
+                }
+            }
+        }
+        s_introTimer -= dt;
+        if (s_introTimer <= 0.0f) {
+            Boss_Spawn(&BOSS_HAC_DIEN_TON_GIA, BOSS_SPAWN, TEAM_ENEMY);
+            s_state = GAME_FIGHTING;
+        }
+        // Camera keeps framing the player during the title card (falls
+        // through to the camera block at the bottom).
+    } else if (s_state == GAME_FIGHTING) {
+        const Agent *pa = Entity_GetAgent(player->agentId);
+        if (pa == NULL) {
+            s_state = GAME_DEFEAT; // HP hit zero or ring-out finished
+        } else {
+            // Zone modifier rules (game/game_rules.h — the one rule table):
+            // cooldown for the player's element in its current zone, plus
+            // forest stealth for Mộc. Combat/ enforces the Thổ projectile
+            // penalty itself.
+            NatureZoneType zone = Map_QueryZoneAt(pa->position);
+            Control_SetCastCooldownMult(GameRules_CooldownMult(pa->currentElement, zone));
+            Entity_SetStealth(player->agentId, GameRules_GrantsStealth(pa->currentElement, zone));
+            if (!Boss_IsAlive()) s_state = GAME_VICTORY;
+        }
+    } else { // GAME_VICTORY / GAME_DEFEAT
+        if (IsKeyPressed(KEY_ENTER)) {
+            s_backToMenu = true;
+            ResetMatch(player);
+            return;
+        }
     }
 
     if (IsKeyDown(KEY_Q)) s_camAngle -= 1.6f * dt;
@@ -44,23 +118,18 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
     float s = sinf(s_camAngle);
     float c = cosf(s_camAngle);
 
-    // Brisk walk speed, real-world-scaled (1 unit = 1 meter).
-    const float moveSpeed = 3.5f;
+    // Module 4: movement/jump/dash/meditate/skill-cast all live in control/
+    // now — this screen only forwards the camera and reads back the agent's
+    // authoritative position (control writes it via Entity_SetPosition, and
+    // entities owns it during jump arcs / dash bursts / knockback).
+    // Intents only apply mid-fight — intro/end screens freeze the player.
+    Control_SetCamera(s_camAngle, camera);
+    PlayerIntent intent = Control_ReadIntent();
+    if (s_state == GAME_FIGHTING) Control_Apply(&intent, dt);
+    const Agent *selfAgent = Entity_GetAgent(player->agentId);
+    if (selfAgent) player->position = selfAgent->position;
 
-    Vector3 move = {0};
-    if (IsKeyDown(KEY_W)) { move.x -= s; move.z -= c; }
-    if (IsKeyDown(KEY_S)) { move.x += s; move.z += c; }
-    if (IsKeyDown(KEY_A)) { move.x -= c; move.z += s; }
-    if (IsKeyDown(KEY_D)) { move.x += c; move.z -= s; }
-
-    float moveLen = sqrtf(move.x * move.x + move.z * move.z);
-    if (moveLen > 0.0001f) {
-        player->position.x += (move.x / moveLen) * moveSpeed * dt;
-        player->position.z += (move.z / moveLen) * moveSpeed * dt;
-        s_playerYaw = atan2f(move.x, move.z);
-    }
-
-    Entity_SetPosition(player->agentId, player->position);
+    float moveLen = sqrtf(intent.moveDir.x * intent.moveDir.x + intent.moveDir.y * intent.moveDir.y);
     CharacterModel_Update(&player->anim, dt, moveLen > 0.0001f);
 
     // Basic attack (đấm/đá/chưởng) — free, no cast time, spammable, auto-
@@ -70,8 +139,9 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
     // per-type mapping waits for the real combo system). This is the real
     // production home for this input (see game_screen.h header) — sandbox
     // no longer has a PC-keyboard copy of this.
-    bool basicAttackPressed = IsKeyPressed(KEY_Z) || IsKeyPressed(KEY_C) ||
-                              IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);
+    bool basicAttackPressed = (s_state == GAME_FIGHTING) &&
+                              (IsKeyPressed(KEY_Z) || IsKeyPressed(KEY_C) ||
+                               IsMouseButtonPressed(MOUSE_BUTTON_RIGHT));
 
     if (basicAttackPressed) {
         BasicAttackType basicAttackType = (BasicAttackType)GetRandomValue(0, 2);
@@ -85,8 +155,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
         // targetPos is only written when auto-target found someone (stays
         // (0,0,0) otherwise) — turn to face the attack direction if so.
         if (targetPos.x != 0.0f || targetPos.y != 0.0f || targetPos.z != 0.0f) {
-            s_playerYaw = atan2f(targetPos.x - player->position.x,
-                                 targetPos.z - player->position.z);
+            Control_FaceTowards(targetPos);
         }
         if (gotWallBonus && wallElement == 3 /* Earth — only element with a real wall so far */) {
             VFX_SpawnProcBeam(wallPos, targetPos, EFFECT_PRESET_EARTH_CRACK, 0.12f, 0.35f);
@@ -106,9 +175,10 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
 }
 
 void GameScreen_Draw3D(const PlayerEntity *player) {
+    if (s_state == GAME_DEFEAT) return; // the fallen player isn't drawn
     Environment_DrawSmartShadow(player->position, ENV_SHAPE_SPHERE, 0.5f, 0.9f);
     if (CharacterModel_IsLoaded()) {
-        CharacterModel_Draw(&player->anim, player->position, s_playerYaw, 1.0f, WHITE);
+        CharacterModel_Draw(&player->anim, player->position, Control_GetYaw(), 1.0f, WHITE);
     } else {
         DrawCharacter3D(player->position, 0.25f,
                         GetColor(0xFFD39BFF), GetColor(0x3B5998FF), GetColor(0xCCCCCCFF),
@@ -139,6 +209,42 @@ void GameScreen_DrawHUD(const PlayerEntity *player) {
     DrawRectangle(barX, manaBarY, barW, barH, (Color){ 30, 30, 30, 220 });
     DrawRectangle(barX, manaBarY, (int)(barW * manaRatio), barH, (Color){ 60, 90, 220, 255 });
     DrawRectangleLines(barX, manaBarY, barW, barH, (Color){ 220, 220, 220, 180 });
+
+    int sw = GetScreenWidth();
+    int sh = GetScreenHeight();
+
+    // Boss HP bar (top center) while a boss lives.
+    if (Boss_IsAlive()) {
+        const Agent *boss = Entity_GetAgent(Boss_GetAgentId());
+        if (boss) {
+            float bRatio = (boss->maxHealth > 0.0f) ? boss->health / boss->maxHealth : 0.0f;
+            if (bRatio < 0.0f) bRatio = 0.0f;
+            if (bRatio > 1.0f) bRatio = 1.0f;
+            const int bw = 420, bh = 14, bx = sw / 2 - bw / 2, by = 16;
+            DrawRectangle(bx, by, bw, bh, (Color){ 20, 20, 20, 220 });
+            DrawRectangle(bx, by, (int)(bw * bRatio), bh, (Color){ 150, 40, 170, 255 });
+            DrawRectangleLines(bx, by, bw, bh, (Color){ 220, 220, 220, 180 });
+            const char *bn = "HAC DIEN TON GIA";
+            DrawText(bn, sw / 2 - MeasureText(bn, 16) / 2, by + bh + 4, 16, (Color){ 230, 230, 240, 255 });
+        }
+    }
+
+    // Match-state overlays (No Tutorial — one line each, no instructions
+    // beyond the exit key).
+    if (s_state == GAME_ARENA_INTRO) {
+        const char *t = "HAC DIEN TON GIA";
+        DrawText(t, sw / 2 - MeasureText(t, 40) / 2, sh / 2 - 60, 40, (Color){ 235, 230, 245, 255 });
+    } else if (s_state == GAME_VICTORY) {
+        const char *t = "CHIEN THANG";
+        DrawText(t, sw / 2 - MeasureText(t, 44) / 2, sh / 2 - 60, 44, (Color){ 240, 220, 120, 255 });
+        const char *hint = "ENTER";
+        DrawText(hint, sw / 2 - MeasureText(hint, 18) / 2, sh / 2 - 8, 18, (Color){ 200, 200, 200, 255 });
+    } else if (s_state == GAME_DEFEAT) {
+        const char *t = "THAT BAI";
+        DrawText(t, sw / 2 - MeasureText(t, 44) / 2, sh / 2 - 60, 44, (Color){ 200, 70, 70, 255 });
+        const char *hint = "ENTER";
+        DrawText(hint, sw / 2 - MeasureText(hint, 18) / 2, sh / 2 - 8, 18, (Color){ 200, 200, 200, 255 });
+    }
 }
 
 bool GameScreen_RequestedBackToMenu(void) {

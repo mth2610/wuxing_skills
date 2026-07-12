@@ -3,6 +3,15 @@
 > Nguồn gốc: `nguhanhtyvo_kehoach.md` (thiết kế v3.5) đối chiếu với hiện trạng codebase (07/2026).
 > Tài liệu này là **thứ tự triển khai + hợp đồng API** cho các module gameplay còn thiếu.
 > Mỗi module khi bắt đầu triển khai PHẢI tạo file `<MODULE>_API.md` riêng ở root (theo mẫu `ENTITIES_API.md`) và `CLAUDE.md` riêng trong thư mục module.
+>
+> **TRẠNG THÁI 12/07/2026: Module 1–7 HOÀN THÀNH** (autotest 9/9 pass —
+> `WUXING_AUTOTEST=1 ./build/wuxing`). API docs: `ENTITIES_API.md` §15-17,
+> `MAP_API.md` §13, `COMBAT_API.md`, `CONTROL_API.md`, `BOSS_API.md`,
+> `GAME_API.md`. Còn lại: Module 8 (ai/), 9 (ui/), 10 (formations/), 11 (net/).
+> Ghi chú lệch spec (có chủ đích, chi tiết trong API docs): AoE/Spawn đổi chữ
+> ký thêm team param; `ClashEvent` thêm `CLASH_HIT_AGENT`/`otherAgentId`;
+> BossDef dùng skill NAME thay id; sandbox giữ nguyên làm dev harness (game/
+> là consumer thật của control/, không migrate sandbox).
 
 ---
 
@@ -18,7 +27,7 @@
 | `entities/` | Agent pool tối thiểu (`MAX_AGENTS=256`), damage entry point, vertical physics/ring-out, AoE, modifier slot, nearby query — **chưa có team, mana, Vô Hệ** |
 | `sandbox/` | Dev harness (WASD, autotest, debugger) — không phải gameplay ship |
 
-**Thiếu so với thiết kế:** team/Linh Khí/Thiền Định, Vô Hệ, Trigger Zones (Sông/Rừng/Cát), Clash Matrix (Đấu Pháp), player controller thật, Boss Đại Tinh Linh, Thái Cực (Phong/Lôi), Minion, Trận Pháp, HUD/Auto-targeting, game mode, networking.
+**Thiếu so với thiết kế (sau đợt 07/2026):** Minion + AI (Module 8), HUD/Auto-targeting (Module 9), Trận Pháp (Module 10), networking (Module 11), migrate các skill projectile cũ sang combat registry, loadout UI cho equippedSkills.
 
 ---
 
@@ -38,13 +47,13 @@
 
 | # | Module | Thư mục | API doc | Phụ thuộc (chỉ .h) | Mở khóa | Game Phase |
 |---|---|---|---|---|---|---|
-| 1 | Entities Combat v2 (Team, Linh Khí, Vô Hệ) | `entities/` (mở rộng) | `ENTITIES_API.md` §12+ | — | mọi module dưới | 0 |
-| 2 | Map Virtual Trigger Zones | `maps/` + `core/map_manager.h` | `MAP_API.md` §9 (mới) | map_manager | modifier địa hình, Trận Pháp cộng hưởng | 0 |
-| 3 | Combat — Projectile Registry + Clash Matrix | `combat/` (MỚI) | `COMBAT_API.md` | entities.h | Đấu Pháp, auto-targeting, boss AI né đạn | 0 |
-| 4 | Player Controller (Khinh công, Thiền định, cast) | `control/` (MỚI) | `CONTROL_API.md` | entities.h, skill_manager.h, combat.h | chơi thật thay vì sandbox | 0 |
-| 5 | Boss Đại Tinh Linh | `boss/` (MỚI) | `BOSS_API.md` | entities.h, combat.h + core VFX .h (chỉ phần draw) | Phase 0 DoD, Thái Cực | 0 |
-| 6 | Thái Cực State + Phong/Lôi | `entities/` (state) + `core/post_fx` (shader) + `skills/taiji/` (2 skill) | `ENTITIES_API.md` + `CORE_API.md` | entities, combat, boss | cao trào trận đấu | 0 |
-| 7 | Game Mode (vòng lặp trận đấu offline) | `game/` (MỚI) | `GAME_API.md` | tất cả .h trên | bản Test Nội Bộ hoàn chỉnh | 0 |
+| 1 ✅ | Entities Combat v2 (Team, Linh Khí, Vô Hệ) | `entities/` (mở rộng) | `ENTITIES_API.md` §12+ | — | mọi module dưới | 0 |
+| 2 ✅ | Map Virtual Trigger Zones | `maps/` + `core/map_manager.h` | `MAP_API.md` §9 (mới) | map_manager | modifier địa hình, Trận Pháp cộng hưởng | 0 |
+| 3 ✅ | Combat — Projectile Registry + Clash Matrix | `combat/` (MỚI) | `COMBAT_API.md` | entities.h | Đấu Pháp, auto-targeting, boss AI né đạn | 0 |
+| 4 ✅ | Player Controller (Khinh công, Thiền định, cast) | `control/` (MỚI) | `CONTROL_API.md` | entities.h, skill_manager.h, combat.h | chơi thật thay vì sandbox | 0 |
+| 5 ✅ | Boss Đại Tinh Linh | `boss/` (MỚI) | `BOSS_API.md` | entities.h, combat.h + core VFX .h (chỉ phần draw) | Phase 0 DoD, Thái Cực | 0 |
+| 6 ✅ | Thái Cực State + Phong/Lôi | `entities/` (state) + `core/post_fx` (shader) + `skills/taiji/` (2 skill) | `ENTITIES_API.md` + `CORE_API.md` | entities, combat, boss | cao trào trận đấu | 0 |
+| 7 ✅ | Game Mode (vòng lặp trận đấu offline) | `game/` (MỚI) | `GAME_API.md` | tất cả .h trên | bản Test Nội Bộ hoàn chỉnh | 0 |
 | 8 | Minion Pool + Minion AI | `ai/` (MỚI) + entities archetype | `AI_API.md` | entities.h, combat.h | 4v4 với minion | 1 |
 | 9 | HUD + Auto-Targeting | `ui/` (MỚI) | `UI_API.md` | entities.h, combat.h, control.h | mobile UX | 1 |
 | 10 | Trận Pháp (Formation Pool) | `formations/` (MỚI) | `FORMATIONS_API.md` | entities.h, map zones, combat.h | khống chế không gian | 2 |

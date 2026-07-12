@@ -138,7 +138,7 @@ void Sandbox_ResetTrainingDummy(void) {
         // the existing sanctioned path to active = false).
         Entity_ApplyDamage(trainingDummyAgentId, d->maxHealth + 1.0f, (Vector3){ 0 });
     }
-    trainingDummyAgentId = Entity_SpawnAgent(TRAINING_DUMMY_SPAWN_POS, 9999.0f, 0);
+    trainingDummyAgentId = Entity_SpawnAgent(TRAINING_DUMMY_SPAWN_POS, 9999.0f, 0, TEAM_ENEMY, ARCH_HERO);
 }
 
 void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
@@ -182,8 +182,8 @@ void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
     // bridged to this HP system in this pass — only a skill calling
     // Entity_ApplyAoEDamage directly will move these HP values.
     Entity_Init();
-    player->agentId = Entity_SpawnAgent(player->position, 100.0f, 0);
-    enemy->agentId = Entity_SpawnAgent(enemy->position, 100.0f, 0);
+    player->agentId = Entity_SpawnAgent(player->position, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
+    enemy->agentId = Entity_SpawnAgent(enemy->position, 100.0f, 0, TEAM_ENEMY, ARCH_HERO);
     playerAgentIdCopy = player->agentId;
     // Lets skill impact code (core/skill_manager.c, which only ever sees a
     // raw enemyPos/enemyRadius) resolve a real agentId for Entity_ApplyLaunch
@@ -194,7 +194,7 @@ void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
     // an EnemyEntity. Deliberately gets no per-frame Entity_SetPosition call
     // (see UpdateSandbox) so Entities' own launch/pull integration is the
     // sole owner of its position instead of being stomped every frame.
-    trainingDummyAgentId = Entity_SpawnAgent(TRAINING_DUMMY_SPAWN_POS, 9999.0f, 0);
+    trainingDummyAgentId = Entity_SpawnAgent(TRAINING_DUMMY_SPAWN_POS, 9999.0f, 0, TEAM_ENEMY, ARCH_HERO);
 }
 // Biến toàn cục để điều khiển camera
 static float g_cameraAngle = 0.0f;
@@ -680,7 +680,7 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     // working" with no visible cause. Respawn it right away so testing isn't
     // gated by attrition, same reasoning as mana's passive regen.
     if (Entity_GetAgent(enemy->agentId) == NULL) {
-        enemy->agentId = Entity_SpawnAgent(enemy->position, 100.0f, 0);
+        enemy->agentId = Entity_SpawnAgent(enemy->position, 100.0f, 0, TEAM_ENEMY, ARCH_HERO);
         SkillManager_SetEnemyAgentId(enemy->agentId);
     }
 

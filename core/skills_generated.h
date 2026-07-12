@@ -7,12 +7,16 @@
 #include "skills/wood/leaf_whirlwind_skill/leaf_whirlwind_skill.h"
 #include "skills/water/glacial_cannon_skill/glacial_cannon_skill.h"
 #include "skills/taiji/core_test/core_test_skill.h"
+#include "skills/taiji/taiji_phong/taiji_phong_skill.h"
+#include "skills/taiji/taiji_loi/taiji_loi_skill.h"
 #include "skills/earth/stone_prison_skill/stone_prison_skill.h"
 
 static inline void RegisterGeneratedSkills(void) {
     RegisterSkill("LEAF_WHIRLWIND", ELEMENT_COLOR_WOOD, InitLeafWhirlwindSkill, CastLeafWhirlwindSkill, UpdateLeafWhirlwindSkill, DrawLeafWhirlwindSkill, UnloadLeafWhirlwindSkill);
     RegisterSkill("GLACIAL_CANNON", ELEMENT_COLOR_WATER, InitGlacialCannonSkill, CastGlacialCannonSkill, UpdateGlacialCannonSkill, DrawGlacialCannonSkill, UnloadGlacialCannonSkill);
     RegisterSkill("CORE_TEST", ELEMENT_COLOR_TAIJI, InitCoreTestSkill, CastCoreTestSkill, UpdateCoreTestSkill, DrawCoreTestSkill, UnloadCoreTestSkill);
+    RegisterSkill("TAIJI_PHONG", ELEMENT_COLOR_TAIJI, InitTaijiPhongSkill, CastTaijiPhongSkill, UpdateTaijiPhongSkill, DrawTaijiPhongSkill, UnloadTaijiPhongSkill);
+    RegisterSkill("TAIJI_LOI", ELEMENT_COLOR_TAIJI, InitTaijiLoiSkill, CastTaijiLoiSkill, UpdateTaijiLoiSkill, DrawTaijiLoiSkill, UnloadTaijiLoiSkill);
     RegisterSkill("STONE_PRISON", ELEMENT_COLOR_EARTH, InitStonePrisonSkill, CastStonePrisonSkill, UpdateStonePrisonSkill, DrawStonePrisonSkill, UnloadStonePrisonSkill);
 }
 

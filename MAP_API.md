@@ -748,3 +748,47 @@ void UnloadMap(void) {
 
 
 
+
+---
+
+## 13. Virtual Trigger Zones (Vùng Nguyên Tố) — MODULES_ROADMAP.md Module 2
+
+Map = pure data: mỗi map chỉ khai báo **VỊ TRÍ** các vùng nguyên tố; luật
+modifier (Thủy -50% cooldown trong Sông...) nằm tập trung ở
+`game/game_rules.h` (xem `GAME_API.md` §3), KHÔNG nằm trong map.
+
+API (thuộc `core/map_manager.h`, trạng thái của map đang active):
+
+```c
+typedef enum { NAT_NONE = 0, NAT_RIVER, NAT_FOREST, NAT_DESERT_ZONE } NatureZoneType;
+
+typedef struct {
+    NatureZoneType type;
+    Vector3 center;   // bám sàn, y = 0
+    float   radius;   // check khoảng cách XZ (giống Entity_GetNearbyTargets)
+} MapZone;
+
+#define MAX_MAP_ZONES 16
+
+void MapManager_SetZones(const MapZone *zones, int count); // gọi trong Init của map
+int            Map_GetZoneCount(void);
+const MapZone *Map_GetZone(int index);        // NULL nếu index sai
+NatureZoneType Map_QueryZoneAt(Vector3 pos);  // NAT_NONE ngoài mọi vùng
+void MapManager_DebugDrawZones(void);         // vòng debug màu theo loại (trong BeginMode3D)
+```
+
+Quy tắc:
+- Zones bị **xóa tự động khi đổi map** (`MapManager_SetActiveIndex` clear
+  trước khi gọi `Init` của map mới) — map không có zone không cần gọi gì.
+- Map PHẢI vẽ **tín hiệu thị giác** khớp vị trí zone (No Tutorial — người
+  chơi tự Ngộ). Mẫu: `DEFAULT_ARENA` vẽ 3 đĩa gradient vertex-color tự phát
+  sáng (xanh nước / xanh lá / vàng cát, alpha 255 — xem
+  `maps/worlds/default_arena/default_arena.c`, kỹ thuật giống floor plate vì
+  lit material bị đen trong arena đêm).
+- Thêm map mới có zone = thêm 1 mảng `static const MapZone zones[]` + gọi
+  `MapManager_SetZones` trong `Init{Prefix}Map` + vẽ visual cue. Engine
+  không đổi.
+
+Consumer hiện tại: `game/game_screen.c` (áp luật lên player mỗi frame),
+`combat/combat.c` (đạn Thổ trong `NAT_FOREST` -50% damage).
+Autotest: `map_trigger_zones` trong `main.c`.

@@ -64,7 +64,7 @@ void Cast{{Name}}Skill(int agentId, Vector3 startPos, Vector3 target, SkillParam
         .active = true
     };
 
-    Entity_ApplyAoEBuff(startPos, radius, 1.5f, duration);
+    Entity_ApplyAoEBuff(startPos, radius, 1.5f, duration, TEAM_ALLY);
     SpawnCastEffect(startPos, EFFECT_PRESET_WOOD_BLOOM, params.sizeScale * 0.5f);
 }
 
