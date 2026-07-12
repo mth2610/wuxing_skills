@@ -13,6 +13,10 @@ C/Raylib 6.0 / OpenGL 3.3 game project. Isometric Night-time Arena. 6 elements: 
 - `CONTROL_API.md` — Player controller (PlayerIntent input/intent split)
 - `BOSS_API.md` — Boss engine/data split (BossDef)
 - `GAME_API.md` — Match state machine + zone modifier rule table
+- `AI_API.md` — Minion brain (march + self-destruct, explosion events)
+- `UI_API.md` — HUD + auto-targeting (đối-đòn priority)
+- `FORMATIONS_API.md` — Trận Pháp engine/data split + zone resonance
+- `NET_API.md` — PlayerIntent/snapshot wire formats (transport gated)
 - `VFX_ARCHITECTURE.md` — Overall VFX architecture
 - `WUXING_ART_DIRECTION.md` — Art style and aesthetic laws
 - `nguhanhtyvo_kehoach.md` — Game design doc (source of truth for gameplay intent)
@@ -30,6 +34,10 @@ C/Raylib 6.0 / OpenGL 3.3 game project. Isometric Night-time Arena. 6 elements: 
 | **Combat Agent** | `combat/` | `entities/entities.h`, `core/map_manager.h`, `COMBAT_API.md` — Đấu Pháp registry + clash matrix, see `combat/CLAUDE.md` |
 | **Control Agent** | `control/` | `entities/entities.h`, `core/skill_manager.h`, `combat/combat.h`, `CONTROL_API.md` — PlayerIntent layer, see `control/CLAUDE.md` |
 | **Boss Agent** | `boss/` | `entities/entities.h`, `combat/combat.h`, `core/skill_manager.h`, core VFX `.h` (chỉ trong `_def.c`), `BOSS_API.md` — see `boss/CLAUDE.md` |
+| **AI Agent** | `ai/` | `entities/entities.h`, `combat/combat.h`, `AI_API.md` — minion brain, see `ai/CLAUDE.md` |
+| **UI Agent** | `ui/` | `entities/entities.h`, `combat/combat.h`, `boss/boss_system.h`, `core/skill_manager.h`, `UI_API.md` — HUD + auto-target, see `ui/CLAUDE.md` |
+| **Formations Agent** | `formations/` | `entities/entities.h`, `combat/combat.h`, `core/map_manager.h`, core VFX `.h` (chỉ trong `_def.c`), `FORMATIONS_API.md` — see `formations/CLAUDE.md` |
+| **Net Agent** | `net/` | `control/control.h`, `entities/entities.h`, `NET_API.md` — wire formats (ENet transport gated), see `net/CLAUDE.md` |
 | **Character Agent** | `character/` | `core/resource_manager.h` — model/animation rendering, counterpart to `entities/`'s pure logic, see `character/CLAUDE.md` |
 | **Game Agent** | `game/` | `entities/entities.h`, `environment/environment_system.h`, `core/map_manager.h`, `sandbox/sandbox_core.h`, `character/character_model.h`, `control/control.h`, `boss/boss_system.h`, `GAME_API.md` — match state machine + zone rule table, see `game/CLAUDE.md` |
 | **Sandbox Agent** | `sandbox/` | `.h` headers of ALL modules (dev/test integration harness, not shipped gameplay) — see `sandbox/CLAUDE.md` |

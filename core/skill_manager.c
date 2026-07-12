@@ -1166,6 +1166,18 @@ void SkillManager_TriggerCooldown(int skillIndex, int agentId, float cooldownSec
   skillCooldownRemaining[skillIndex][agentId] = cooldownSeconds;
 }
 
+void SkillManager_ResetAgentCooldowns(int agentId) {
+  if (agentId < 0 || agentId >= SKILL_MANAGER_MAX_AGENTS)
+    return;
+  for (int s = 0; s < MAX_SKILLS; s++) {
+    if (skillCooldownRemaining[s][agentId] > 0.0f) {
+      skillCooldownRemaining[s][agentId] = 0.0f;
+      if (skillCooldownPendingCount[s] > 0)
+        skillCooldownPendingCount[s]--;
+    }
+  }
+}
+
 // --- Item 14: optional abort/interrupt registration ---
 
 void RegisterSkillAbort(int skillIndex, void (*abort)(int agentId)) {

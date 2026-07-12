@@ -10,6 +10,7 @@
 #include "core/map_manager.h"
 #include "game/game_rules.h"
 #include "ai/ai.h"
+#include "ui/ui.h"
 #include <math.h>
 #include <string.h>
 
@@ -77,6 +78,7 @@ void GameScreen_Init(PlayerEntity *player) {
     s_camAngle   = 0.0f;
     s_camDist    = 6.0f;
     s_backToMenu = false;
+    UI_Init();
     ResetMatch(player);
 }
 
@@ -152,8 +154,17 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
     // entities owns it during jump arcs / dash bursts / knockback).
     // Intents only apply mid-fight — intro/end screens freeze the player.
     Control_SetCamera(s_camAngle, camera);
+    UI_SetCamera(camera);
+    UI_Update(dt);
     PlayerIntent intent = Control_ReadIntent();
-    if (s_state == GAME_FIGHTING) Control_Apply(&intent, dt);
+    // Module 9 auto-targeting: an incoming enemy projectile (đối-đòn) or
+    // the boss overrides the raw mouse aim — mobile-first UX (thiết kế §XI).
+    if (s_state == GAME_FIGHTING) {
+        bool hasAuto = false;
+        Vector3 autoPt = UI_GetAutoAimPoint(player->agentId, &hasAuto);
+        if (hasAuto) intent.aimPoint = autoPt;
+        Control_Apply(&intent, dt);
+    }
     const Agent *selfAgent = Entity_GetAgent(player->agentId);
     if (selfAgent) player->position = selfAgent->position;
 
@@ -264,6 +275,9 @@ void GameScreen_DrawHUD(const PlayerEntity *player) {
     DrawRectangle(barX, manaBarY, barW, barH, (Color){ 30, 30, 30, 220 });
     DrawRectangle(barX, manaBarY, (int)(barW * manaRatio), barH, (Color){ 60, 90, 220, 255 });
     DrawRectangleLines(barX, manaBarY, barW, barH, (Color){ 220, 220, 220, 180 });
+
+    // Module 9 overlay: skill slot chips + auto-aim reticle.
+    UI_DrawOverlay(player->agentId);
 
     int sw = GetScreenWidth();
     int sh = GetScreenHeight();

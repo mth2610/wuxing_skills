@@ -154,6 +154,17 @@ void UpdateGlacialCannonSkill(float dt, Vector3 enemyPos, float enemyRadius)
         }
         else if (s->state == STATE_CHANNELING)
         {
+            // Linh khí tan khi chủ nhân chết: a channel with a dead caster
+            // fizzles instead of rolling on ownerless (Combat_SubmitProjectile
+            // would read its team as NEUTRAL — hitting BOTH sides — and pool
+            // slot reuse could even flip it to the wrong team).
+            if (Entity_GetAgent(s->ownerAgentId) == NULL)
+            {
+                s->state = STATE_DONE;
+                s->active = false;
+                continue;
+            }
+
             float progress = s->timer / s_waveDuration;
             if (progress > 1.0f)
                 progress = 1.0f;

@@ -100,6 +100,20 @@ add_executable(wuxing
     boss/boss_system.c
     boss/hac_dien_ton_gia_def.c
 
+    # --- AI (minion brain — Module 8) ---
+    ai/ai.c
+
+    # --- UI (HUD + auto-targeting — Module 9) ---
+    ui/ui.c
+
+    # --- Formations (Trận Pháp engine + one _def.c per formation — Module 10) ---
+    formations/formation_system.c
+    formations/cuu_thien_loi_dong_def.c
+    formations/han_bang_thuy_tuyet_def.c
+
+    # --- Net (wire-format core — Module 11; ENet transport gated on PvP) ---
+    net/net.c
+
     # --- Character (model + animation rendering, counterpart to entities/'s
     # pure gameplay logic) ---
     character/character_model.c

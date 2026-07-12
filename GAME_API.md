@@ -35,6 +35,17 @@ bool GameScreen_RequestedBackToMenu(void);
 Details:
 - Spawns: player `(2, 0, 4.4)`, boss `(10, 0, 4.4)` — inside the entities
   ring-out circle (center `(6,0,4.4)`, r=18) which matches DEFAULT_ARENA.
+- **Default loadout** (Step 0): GLACIAL_CANNON / FIRE / STONE_PRISON /
+  LEAF_WHIRLWIND on keys 1-4 — one per element, deliberately NOT 2 Âm +
+  2 Dương (the player discovers Thái Cực by re-equipping, No Tutorial).
+- **Auto-targeting** (Module 9): during FIGHTING, `UI_GetAutoAimPoint`
+  (incoming enemy projectile → boss) overrides `PlayerIntent.aimPoint`
+  before `Control_Apply`; `UI_DrawOverlay` renders slot chips + reticle in
+  the HUD pass.
+- **Minion waves** (Module 8): the boss summons `3 + phase` minions on
+  every phase change; minion rendering (element-colored spirit orbs) lives
+  in `GameScreen_Draw3D`; explosion VFX composes in `main.c` from
+  `AI_PollExplosions`.
 - ESC aborts and resets the match; leftover boss agents are killed on reset
   so re-entry spawns fresh.
 - Player agent is respawned by the reset if the previous match killed it.

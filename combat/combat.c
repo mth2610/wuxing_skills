@@ -1,8 +1,10 @@
 // combat/combat.c
 #include "combat/combat.h"
 #include "core/map_manager.h" // Map_QueryZoneAt — Thổ-in-forest penalty
+#include "raylib.h"
 #include <math.h>
 #include <stddef.h>
+#include <stdlib.h>
 
 // Agent body radius for projectile↔agent hits (meters, real-world scale).
 static const float AGENT_HIT_RADIUS = 0.4f;
@@ -25,6 +27,10 @@ static int s_projCount = 0;
 
 static ClashEvent s_events[MAX_CLASH_EVENTS];
 static int s_eventCount = 0;
+
+// Last resolved frame's surviving colliders — see Combat_QueryProjectiles.
+static CombatProjectileInfo s_snapshot[MAX_COMBAT_PROJECTILES];
+static int s_snapshotCount = 0;
 
 // Tương khắc: beats[a] == b means element a destroys element b.
 // Thủy khắc Hỏa, Hỏa khắc Kim, Kim khắc Mộc, Mộc khắc Thổ, Thổ khắc Thủy.
@@ -57,17 +63,22 @@ bool Combat_SubmitProjectile(int ownerAgentId, CombatElement elem,
                              Vector3 pos, float radius, float damage,
                              float knockback, int skillInstanceId) {
     if (s_projCount >= MAX_COMBAT_PROJECTILES) return false;
+    // A dead caster's projectile is rejected outright: it can't be
+    // team-attributed (NEUTRAL would hit BOTH sides, and agent-slot reuse
+    // could even flip it to the wrong team). The skill's VFX keeps flying;
+    // it just stops being a combat collider.
     const Agent *owner = Entity_GetAgent(ownerAgentId);
+    if (owner == NULL) return false;
     s_projs[s_projCount++] = (CombatProjectile){
         .ownerAgentId = ownerAgentId,
-        .team = owner ? owner->team : TEAM_NEUTRAL,
+        .team = owner->team,
         .elem = elem,
         .pos = pos,
         .radius = radius,
         .damage = damage,
         .knockback = knockback,
         .skillInstanceId = skillInstanceId,
-        .taiji = owner ? owner->taijiActive : false,
+        .taiji = owner->taijiActive,
         .dead = false,
     };
     return true;
@@ -183,8 +194,27 @@ void Combat_Update(float dt) {
         }
     }
 
-    // Immediate mode: everything must be re-submitted next frame.
+    // Snapshot the survivors for out-of-window readers (ui/ auto-aim) —
+    // then clear: immediate mode, everything re-submits next frame.
+    s_snapshotCount = 0;
+    for (int i = 0; i < s_projCount; i++) {
+        if (s_projs[i].dead) continue;
+        s_snapshot[s_snapshotCount++] = (CombatProjectileInfo){
+            .pos = s_projs[i].pos,
+            .radius = s_projs[i].radius,
+            .elem = s_projs[i].elem,
+            .team = s_projs[i].team,
+            .ownerAgentId = s_projs[i].ownerAgentId,
+        };
+    }
     s_projCount = 0;
+}
+
+int Combat_QueryProjectiles(CombatProjectileInfo *out, int max) {
+    if (out == NULL || max <= 0) return 0;
+    int n = (s_snapshotCount < max) ? s_snapshotCount : max;
+    for (int i = 0; i < n; i++) out[i] = s_snapshot[i];
+    return n;
 }
 
 void Combat_BeginFrame(void) {

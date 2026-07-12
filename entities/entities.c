@@ -513,6 +513,16 @@ void Entity_AddModifier(int agentId, float speedMult, float duration) {
     Agent *a = &agentPool[agentId];
     if (!a->active) return;
 
+    // Refresh-not-stack: a repeating source (aura/formation re-applying the
+    // same multiplier every tick) refreshes its slot instead of filling the
+    // array with copies that MULTIPLY in Entity_GetSpeedMult (0.4 re-applied
+    // twice used to become 0.16).
+    for (int m = 0; m < MAX_AGENT_MODIFIERS; m++) {
+        if (a->modifiers[m].duration > 0.0f && a->modifiers[m].speedMult == speedMult) {
+            if (duration > a->modifiers[m].duration) a->modifiers[m].duration = duration;
+            return;
+        }
+    }
     for (int m = 0; m < MAX_AGENT_MODIFIERS; m++) {
         if (a->modifiers[m].duration <= 0.0f) {
             a->modifiers[m].speedMult = speedMult;
@@ -564,6 +574,9 @@ int Entity_SpawnAgent(Vector3 position, float maxHealth, int element,
     for (int i = 0; i < MAX_AGENTS; i++) {
         if (!agentPool[i].active) {
             Agent *a = &agentPool[i];
+            // Pool slots are reused — wipe the previous occupant's skill
+            // cooldowns or the new agent inherits them (see skill_manager.h).
+            SkillManager_ResetAgentCooldowns(i);
             a->position = position;
             a->velocity = (Vector3){ 0 };
             a->health = maxHealth;

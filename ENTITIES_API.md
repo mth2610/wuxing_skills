@@ -172,8 +172,8 @@ void Entity_AddModifier(int agentId, float speedMult, float duration);
 float Entity_GetSpeedMult(int agentId); // product of active slots; 1.0 default
 ```
 
-* Finds the first empty/expired slot (`duration <= 0`) in `agentPool[agentId].modifiers[]` and writes `speedMult`/`duration` into it.
-* Simple find-first-empty — no priority/stacking logic. If no empty slot exists, the call is silently dropped (no eviction policy in this minimal version).
+* **Refresh-not-stack (Module 10 companion fix):** if an ACTIVE slot already holds the exact same `speedMult`, its `duration` is refreshed (extended, never shortened) instead of occupying a new slot — a repeating source (aura, formation tick) used to fill the array with copies that MULTIPLY in `Entity_GetSpeedMult` (0.4 re-applied twice became 0.16). Distinct multipliers still stack multiplicatively by design.
+* Otherwise finds the first empty/expired slot (`duration <= 0`) and writes `speedMult`/`duration` into it. If no empty slot exists, the call is silently dropped (no eviction policy in this minimal version).
 * `Entity_Update(dt)` ticks down `duration` on all active slots every frame; when a slot's `duration` reaches `<= 0` it is cleared (`duration = 0`, `speedMult = 0`).
 * **Wired (Module 1/4):** `Entity_GetSpeedMult(agentId)` returns the product of all active slots' `speedMult` (1.0 when none). `control/` multiplies its 3.5 m/s walk speed by it every frame; any other external mover should do the same.
 * Intended consumer: Buff-type skills (Core Agent's future "Entity-Attached" skeleton, `CORE_API.md` §4 — not yet documented) write into this slot; this module only stores and ticks it down.

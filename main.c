@@ -39,6 +39,9 @@
 #include "skills/taiji/taiji_phong/taiji_phong_skill.h"
 #include "game/game_rules.h"
 #include "ai/ai.h"
+#include "ui/ui.h"
+#include "formations/formation_system.h"
+#include "net/net.h"
 #include <stdio.h>
 
 // Biến camera toàn cục
@@ -460,6 +463,203 @@ static AutoTestResult AutoTest_SkillRegistryStep(int frameInCase, char *outReaso
   return AUTOTEST_RUNNING; // maxFrames timeout fails the case
 }
 
+// Module 11 (wire core) DoD: PlayerIntent survives a pack/unpack round trip
+// bit-exact; an agent-pool snapshot packs and parses back with matching
+// fields; corrupted/mismatched packets are rejected.
+static AutoTestResult AutoTest_NetWireStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+
+  // Intent round trip.
+  PlayerIntent in = { 0 };
+  in.moveDir = (Vector2){ 0.7071f, -0.7071f };
+  in.jump = true; in.meditate = true;
+  in.castSkillSlot = 2;
+  in.aimPoint = (Vector3){ 6.25f, 0.0f, -3.5f };
+  unsigned char buf[64];
+  int len = Net_PackIntent(&in, buf, sizeof(buf));
+  bool ok = AutoTest_ExpectTrue(len > 0, "intent packed", outReason, outReasonSize);
+  PlayerIntent out = { 0 };
+  ok = ok && AutoTest_ExpectTrue(Net_UnpackIntent(&out, buf, len), "intent unpacked", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(out.jump && !out.dash && out.meditate && out.castSkillSlot == 2,
+                                 "intent flags/slot survive", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectFloatNear(out.moveDir.x, in.moveDir.x, 0.0001f, "moveDir survives", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectFloatNear(out.aimPoint.z, in.aimPoint.z, 0.0001f, "aimPoint survives", outReason, outReasonSize);
+
+  // Corruption / version guard.
+  buf[2] = (unsigned char)(NET_PROTOCOL_VERSION + 1);
+  ok = ok && AutoTest_ExpectTrue(!Net_UnpackIntent(&out, buf, len), "version mismatch rejected", outReason, outReasonSize);
+
+  // Snapshot round trip: a known agent shows up with matching fields.
+  int probe = Entity_SpawnAgent((Vector3){ -4.0f, 0.0f, 8.0f }, 77.0f, 4, TEAM_ENEMY, ARCH_MINION);
+  ok = ok && AutoTest_ExpectTrue(probe >= 0, "spawned snapshot probe", outReason, outReasonSize);
+  static unsigned char snap[16 * 1024];
+  int snapLen = Net_PackAgentSnapshot(snap, (int)sizeof(snap));
+  ok = ok && AutoTest_ExpectTrue(snapLen > 0, "snapshot packed", outReason, outReasonSize);
+  static NetAgentState states[MAX_AGENTS];
+  int n = Net_UnpackAgentSnapshot(states, MAX_AGENTS, snap, snapLen);
+  ok = ok && AutoTest_ExpectTrue(n > 0, "snapshot unpacked", outReason, outReasonSize);
+  bool found = false;
+  for (int i = 0; i < n; i++) {
+    if (states[i].agentId != (unsigned char)probe) continue;
+    found = states[i].team == (unsigned char)TEAM_ENEMY &&
+            states[i].archetype == (unsigned char)ARCH_MINION &&
+            states[i].element == 4 &&
+            fabsf(states[i].health - 77.0f) < 0.001f &&
+            fabsf(states[i].position.z - 8.0f) < 0.001f;
+  }
+  ok = ok && AutoTest_ExpectTrue(found, "probe agent fields survive snapshot", outReason, outReasonSize);
+
+  Entity_ApplyDamage(probe, 1e9f, (Vector3){ 0 });
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+// Module 10 DoD: mana-gated deploy, river resonance deepens Hàn Băng's slow
+// (0.4 vs 0.6 speedMult), duration expiry frees the slot, pool caps at 4.
+static AutoTestResult AutoTest_FormationStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+
+  Vector3 river = { 0.0f, 0.0f, -2.0f }; // DEFAULT_ARENA river zone center
+  int owner = Entity_SpawnAgent((Vector3){ river.x + 1.0f, 0, river.z }, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
+  int foe   = Entity_SpawnAgent(river, 100.0f, 2, TEAM_ENEMY, ARCH_HERO);
+  bool ok = AutoTest_ExpectTrue(owner >= 0 && foe >= 0, "spawned formation actors", outReason, outReasonSize);
+
+  // Mana gate: drain, deploy must fail, nothing sticks.
+  Entity_TrySpendMana(owner, 95.0f);
+  ok = ok && AutoTest_ExpectTrue(Formation_Deploy(&FORMATION_HAN_BANG_THUY_TUYET, river, owner) < 0,
+                                 "deploy rejected on low mana", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(Formation_GetActiveCount() == 0, "no ghost formation", outReason, outReasonSize);
+
+  // Fresh owner: deploy on the river → resonant Hàn Băng (slow 0.4).
+  int owner2 = Entity_SpawnAgent((Vector3){ river.x - 1.0f, 0, river.z }, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
+  int slot = Formation_Deploy(&FORMATION_HAN_BANG_THUY_TUYET, river, owner2);
+  ok = ok && AutoTest_ExpectTrue(slot >= 0, "deploy went through", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectFloatNear(Entity_GetAgent(owner2)->mana, 70.0f, 0.1f,
+                                      "deploy charged 30 mana", outReason, outReasonSize);
+  for (int i = 0; i < 3; i++) Formation_Update(0.4f); // past the 0.5s refresh tick
+  ok = ok && AutoTest_ExpectFloatNear(Entity_GetSpeedMult(foe), 0.4f, 0.01f,
+                                      "resonant slow (0.4) on enemy in circle", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectFloatNear(Entity_GetSpeedMult(owner2), 1.0f, 0.01f,
+                                      "own team not slowed", outReason, outReasonSize);
+
+  // Duration expiry frees the slot.
+  for (int i = 0; i < 30; i++) Formation_Update(0.5f); // 15s >> 10s duration
+  ok = ok && AutoTest_ExpectTrue(Formation_GetActiveCount() == 0, "formation expired", outReason, outReasonSize);
+
+  // Pool cap: 4 deploys fit (2 owners × 2 × 30 mana), the 5th is rejected.
+  int owner3 = Entity_SpawnAgent((Vector3){ river.x, 0, river.z + 1.0f }, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
+  bool four = true;
+  four = four && Formation_Deploy(&FORMATION_HAN_BANG_THUY_TUYET, river, owner2) >= 0;
+  four = four && Formation_Deploy(&FORMATION_HAN_BANG_THUY_TUYET, river, owner2) >= 0;
+  four = four && Formation_Deploy(&FORMATION_CUU_THIEN_LOI_DONG, river, owner3) >= 0;
+  four = four && Formation_Deploy(&FORMATION_HAN_BANG_THUY_TUYET, river, owner3) >= 0;
+  ok = ok && AutoTest_ExpectTrue(four, "4 deploys fill the pool", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(Formation_Deploy(&FORMATION_HAN_BANG_THUY_TUYET, river, owner3) < 0,
+                                 "5th deploy rejected (pool full)", outReason, outReasonSize);
+  for (int i = 0; i < 30; i++) Formation_Update(0.5f); // let them all expire
+
+  Entity_ApplyDamage(owner, 1e9f, (Vector3){ 0 });
+  Entity_ApplyDamage(owner2, 1e9f, (Vector3){ 0 });
+  Entity_ApplyDamage(owner3, 1e9f, (Vector3){ 0 });
+  Entity_ApplyDamage(foe, 1e9f, (Vector3){ 0 });
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+// Module 9 DoD: auto-target prefers an incoming enemy projectile (đối-đòn)
+// over the boss, falls back to the boss, and reports no target when neither
+// exists.
+static AutoTestResult AutoTest_AutoTargetStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+
+  Vector3 base = { 6.0f, 0.0f, -4.0f };
+  int ally = Entity_SpawnAgent(base, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
+  int foe  = Entity_SpawnAgent((Vector3){ base.x, 0, base.z - 3.0f }, 100.0f, 2, TEAM_ENEMY, ARCH_HERO);
+  int bossId = Boss_Spawn(&BOSS_HAC_DIEN_TON_GIA, (Vector3){ base.x, 0, base.z - 6.0f }, TEAM_ENEMY);
+  bool ok = AutoTest_ExpectTrue(ally >= 0 && foe >= 0 && bossId >= 0, "spawned aim actors", outReason, outReasonSize);
+
+  // Priority 2 first: no projectiles in flight → aim at the boss core.
+  Combat_Update(1.0f / 60.0f); // empty resolve — clears the projectile snapshot
+  bool has = false;
+  Vector3 aim = UI_GetAutoAimPoint(ally, &has);
+  ok = ok && AutoTest_ExpectTrue(has, "boss targeted when no projectile", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectFloatNear(aim.z, base.z - 6.0f, 0.01f, "aim at boss position", outReason, outReasonSize);
+
+  // Priority 1: an enemy projectile in flight (5m away, boss is 6m) wins.
+  Combat_SubmitProjectile(foe, ELEM_FIRE, (Vector3){ base.x + 5.0f, 0.5f, base.z }, 0.3f, 10.0f, 0.0f, 901);
+  Combat_Update(1.0f / 60.0f); // snapshot now holds the projectile
+  aim = UI_GetAutoAimPoint(ally, &has);
+  ok = ok && AutoTest_ExpectTrue(has, "projectile targeted", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectFloatNear(aim.x, base.x + 5.0f, 0.01f, "aim at projectile over boss", outReason, outReasonSize);
+
+  // No boss, no projectile → no target.
+  Entity_ApplyDamage(bossId, 1e9f, (Vector3){ 0 });
+  Boss_Update(0.0f);
+  Combat_Update(1.0f / 60.0f); // empty resolve clears the snapshot again
+  UI_GetAutoAimPoint(ally, &has);
+  ok = ok && AutoTest_ExpectTrue(!has, "no target when field is clear", outReason, outReasonSize);
+
+  Entity_ApplyDamage(ally, 1e9f, (Vector3){ 0 });
+  Entity_ApplyDamage(foe, 1e9f, (Vector3){ 0 });
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+// Module 8 DoD: minion waves spawn around a boss inheriting team/element,
+// march toward the opposing boss, self-destruct with team-aware AoE + a
+// poll event, and the pool absorbs a 40-minion wave.
+static AutoTestResult AutoTest_MinionAIStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+
+  // Two "boss" pole agents inside the arena, 4m apart.
+  Vector3 allyPole = { -2.0f, 0.0f, -6.0f };
+  Vector3 foePole  = { -6.0f, 0.0f, -6.0f };
+  int allyBoss = Entity_SpawnAgent(allyPole, 200.0f, 1, TEAM_ALLY, ARCH_BOSS);
+  int foeBoss  = Entity_SpawnAgent(foePole, 200.0f, 2, TEAM_ENEMY, ARCH_BOSS);
+  bool ok = AutoTest_ExpectTrue(allyBoss >= 0 && foeBoss >= 0, "spawned pole bosses", outReason, outReasonSize);
+
+  // Wave inherits the ally boss's team + element.
+  int spawned = AI_SpawnMinionWave(allyBoss, 4);
+  ok = ok && AutoTest_ExpectTrue(spawned == 4, "wave of 4 spawned", outReason, outReasonSize);
+  int ids[16];
+  int minionCount = 0;
+  int n = Entity_GetNearbyTargetsTeam(allyPole, 3.0f, TEAM_ALLY, ids, 16);
+  for (int i = 0; i < n; i++) {
+    const Agent *a = Entity_GetAgent(ids[i]);
+    if (a && a->archetype == ARCH_MINION) {
+      minionCount++;
+      ok = ok && AutoTest_ExpectTrue(a->currentElement == 1, "minion inherits element", outReason, outReasonSize);
+    }
+  }
+  ok = ok && AutoTest_ExpectTrue(minionCount == 4, "minions near their boss", outReason, outReasonSize);
+
+  // March + detonation: drive AI_Update; minions cover ~4m at 2 m/s and
+  // blow up on the enemy boss. Collect explosion events as we go (the main
+  // loop's own poll runs earlier in the frame, so these are ours).
+  float foeHpBefore = Entity_GetAgent(foeBoss)->health;
+  int booms = 0;
+  MinionExplosion ev[8];
+  for (int step = 0; step < 60; step++) {
+    AI_Update(0.1f);
+    booms += AI_PollExplosions(ev, 8);
+  }
+  ok = ok && AutoTest_ExpectTrue(booms >= 1, "explosion events emitted", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(Entity_GetAgent(foeBoss)->health < foeHpBefore,
+                                 "explosions damaged enemy boss", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectFloatNear(Entity_GetAgent(allyBoss)->health, 200.0f, 0.01f,
+                                      "friendly boss untouched", outReason, outReasonSize);
+
+  // Capacity: a 40-minion wave fits the shared pool.
+  ok = ok && AutoTest_ExpectTrue(AI_SpawnMinionWave(allyBoss, 40) == 40, "40-minion wave", outReason, outReasonSize);
+
+  // Cleanup: kill every remaining test agent (minions included).
+  for (int i = 0; i < MAX_AGENTS; i++) {
+    const Agent *a = Entity_GetAgent(i);
+    if (!a) continue;
+    if (a->archetype == ARCH_MINION || i == allyBoss || i == foeBoss) {
+      Entity_ApplyDamage(i, 1e9f, (Vector3){ 0 });
+    }
+  }
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
 // Module 5 DoD: boss spawns as ARCH_BOSS pool agent, phase follows %HP with
 // biến hệ (element change = visual cue source), AI cast fires through the
 // skill manager at a nearby opposing-team target, death via the normal
@@ -622,6 +822,10 @@ int main(int argc, char **argv) {
       AutoTest_Register("taiji_state", AutoTest_TaijiStep, 5);
       AutoTest_Register("game_mode_loop", AutoTest_GameModeStep, 5);
       AutoTest_Register("skill_combat_registry", AutoTest_SkillRegistryStep, 300);
+      AutoTest_Register("minion_ai", AutoTest_MinionAIStep, 5);
+      AutoTest_Register("ui_auto_target", AutoTest_AutoTargetStep, 5);
+      AutoTest_Register("formation_tran_phap", AutoTest_FormationStep, 5);
+      AutoTest_Register("net_wire_format", AutoTest_NetWireStep, 5);
   }
   DamageVolume_Init();
   EmitterSystem_Init();
@@ -839,6 +1043,7 @@ int main(int argc, char **argv) {
     // submissions = no-op. (Module 7 game/ will own this ordering.)
     AI_Update(dt);
     Boss_Update(dt);
+    Formation_Update(dt);
     Combat_Update(dt);
 
     // Minion self-destruct VFX — ai/ is pure logic and reports explosions
@@ -981,6 +1186,7 @@ int main(int argc, char **argv) {
     if (currentScreen == SCREEN_GAME) {
         GameScreen_Draw3D(&player);
         Boss_Draw();
+        Formation_Draw();
     }
     Afterimage_Draw();
 

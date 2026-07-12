@@ -43,11 +43,17 @@ Resolution for two colliding projectiles of different teams:
 
 ```c
 void Combat_Init(void);
+void Combat_BeginFrame(void); // frame boundary: clears last frame's events.
+                              // main.c calls it once, BEFORE skill updates.
 
 // Submit MỖI FRAME while the projectile lives. Owner's team + taiji flag
-// are read from the agent pool at submit time (TEAM_NEUTRAL if invalid id).
-// skillInstanceId: opaque id, unique per live projectile (e.g. pool slot).
-// Returns false when the 128-collider frame registry is full.
+// are read from the agent pool at submit time; a DEAD/invalid owner REJECTS
+// the submission (an ownerless projectile can't be team-attributed —
+// NEUTRAL would hit both sides, and agent-slot reuse could flip its side;
+// the skill's VFX keeps flying, it just stops colliding).
+// skillInstanceId: opaque id, unique per live projectile — CONVENTION:
+// skillIndex*1000 + slot, so ids never collide across skills.
+// Returns false when rejected or the 128-collider frame registry is full.
 bool Combat_SubmitProjectile(int ownerAgentId, CombatElement elem,
                              Vector3 pos, float radius, float damage,
                              float knockback, int skillInstanceId);
@@ -70,10 +76,26 @@ typedef struct {
     int           otherAgentId;    // CLASH_HIT_AGENT: victim id; else -1
 } ClashEvent;
 
-// Drain the queue once per frame after Combat_Update. Unpolled events
-// survive until the next drain (deflect events are pushed BEFORE
-// Combat_Update and must not be lost).
+// Multi-consumer read for SKILLS: borrow the internal event array (valid
+// until the next Combat_BeginFrame). Each skill scans for its own
+// skillInstanceIds — peeking is idempotent, every skill sees the same
+// frame's events. This is the gameplay path.
+int Combat_PeekEvents(const ClashEvent **outArr);
+
+// Single-consumer drain — autotest/tools only (a drain starves peekers).
 int Combat_PollEvents(ClashEvent *out, int max);
+
+// Read-only snapshot of the LAST resolved frame's surviving colliders —
+// for consumers outside the skill-update window (ui/ auto-targeting; the
+// live registry is immediate-mode and already cleared by then).
+typedef struct {
+    Vector3       pos;
+    float         radius;
+    CombatElement elem;
+    AgentTeam     team;
+    int           ownerAgentId;
+} CombatProjectileInfo;
+int Combat_QueryProjectiles(CombatProjectileInfo *out, int max);
 
 // Thái Cực PHONG: destroy every projectile submitted this frame within
 // radius whose team differs from the deflector's. Owners get CLASH_B_WINS
@@ -94,9 +116,22 @@ int Combat_DeflectProjectilesInRadius(Vector3 center, float radius, int deflecto
 ## 5. Convention change for skills
 
 Projectile skills must NOT call `Entity_ApplyDamage` themselves anymore —
-submit to the registry and react to events. AoE/melee skills keep calling
-`Entity_ApplyAoEDamage` directly. (Migration of the existing ~11 skills to
-the registry is incremental — new/updated skills adopt it first.)
+submit to the registry and react to events (peek, filter your own
+`skillIndex*1000 + slot` ids; destroy on `CLASH_B_WINS` /
+`CLASH_MUTUAL_DESTROY` / `CLASH_HIT_AGENT`). AoE/melee skills keep calling
+`Entity_ApplyAoEDamage` directly.
+
+**Migrated so far (Step 0, 07/2026):** `FIRE` (dragon head collider),
+`GLACIAL_CANNON` (wavefront collider; final burst via team-aware
+`Entity_ApplyAoEDamage`; the channel fizzles when its caster dies), `TUBE`
+(stream head collider). Remaining VFX-only skills adopt the pattern as they
+gain gameplay.
+
+**Per-frame order (owned by main.c):** `Combat_BeginFrame` → screen/entity
+updates → `AI_Update` → `Boss_Update` → `Formation_Update` → `Combat_Update`
+→ `UpdateSkillManager` (skills submit + peek). Submissions are therefore
+resolved by the NEXT frame's `Combat_Update` — one frame of latency, by
+design.
 
 ## 6. Explicitly NOT in this version
 

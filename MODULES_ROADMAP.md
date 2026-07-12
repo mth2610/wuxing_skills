@@ -4,14 +4,19 @@
 > Tài liệu này là **thứ tự triển khai + hợp đồng API** cho các module gameplay còn thiếu.
 > Mỗi module khi bắt đầu triển khai PHẢI tạo file `<MODULE>_API.md` riêng ở root (theo mẫu `ENTITIES_API.md`) và `CLAUDE.md` riêng trong thư mục module.
 >
-> **TRẠNG THÁI 12/07/2026: Module 1–7 HOÀN THÀNH** (autotest 9/9 pass —
-> `WUXING_AUTOTEST=1 ./build/wuxing`). API docs: `ENTITIES_API.md` §15-17,
-> `MAP_API.md` §13, `COMBAT_API.md`, `CONTROL_API.md`, `BOSS_API.md`,
-> `GAME_API.md`. Còn lại: Module 8 (ai/), 9 (ui/), 10 (formations/), 11 (net/).
+> **TRẠNG THÁI 12/07/2026: Module 1–10 HOÀN THÀNH, Module 11 một nửa**
+> (autotest 14/14 pass — `WUXING_AUTOTEST=1 ./build/wuxing`). API docs:
+> `ENTITIES_API.md` §15-17, `MAP_API.md` §13, `COMBAT_API.md`,
+> `CONTROL_API.md`, `BOSS_API.md`, `GAME_API.md`, `AI_API.md`, `UI_API.md`,
+> `FORMATIONS_API.md`, `NET_API.md`.
+> Đợt 2 (Step 0 + Module 8–11): skill projectile (FIRE/GLACIAL/TUBE) đã nộp
+> collider vào combat registry; loadout mặc định phím 1-4; minion wave theo
+> phase boss; auto-target đối-đòn; 2 trận pháp + cộng hưởng Sông; net/ mới có
+> wire format (ENet transport chờ duyệt dependency + PvP milestone).
 > Ghi chú lệch spec (có chủ đích, chi tiết trong API docs): AoE/Spawn đổi chữ
-> ký thêm team param; `ClashEvent` thêm `CLASH_HIT_AGENT`/`otherAgentId`;
-> BossDef dùng skill NAME thay id; sandbox giữ nguyên làm dev harness (game/
-> là consumer thật của control/, không migrate sandbox).
+> ký thêm team param; `ClashEvent` thêm `CLASH_HIT_AGENT`/`otherAgentId` +
+> peek/BeginFrame model; BossDef dùng skill NAME thay id; FormationDef.onTick
+> thêm power/ownerTeam; sandbox giữ nguyên làm dev harness.
 
 ---
 
@@ -54,10 +59,10 @@
 | 5 ✅ | Boss Đại Tinh Linh | `boss/` (MỚI) | `BOSS_API.md` | entities.h, combat.h + core VFX .h (chỉ phần draw) | Phase 0 DoD, Thái Cực | 0 |
 | 6 ✅ | Thái Cực State + Phong/Lôi | `entities/` (state) + `core/post_fx` (shader) + `skills/taiji/` (2 skill) | `ENTITIES_API.md` + `CORE_API.md` | entities, combat, boss | cao trào trận đấu | 0 |
 | 7 ✅ | Game Mode (vòng lặp trận đấu offline) | `game/` (MỚI) | `GAME_API.md` | tất cả .h trên | bản Test Nội Bộ hoàn chỉnh | 0 |
-| 8 | Minion Pool + Minion AI | `ai/` (MỚI) + entities archetype | `AI_API.md` | entities.h, combat.h | 4v4 với minion | 1 |
-| 9 | HUD + Auto-Targeting | `ui/` (MỚI) | `UI_API.md` | entities.h, combat.h, control.h | mobile UX | 1 |
-| 10 | Trận Pháp (Formation Pool) | `formations/` (MỚI) | `FORMATIONS_API.md` | entities.h, map zones, combat.h | khống chế không gian | 2 |
-| 11 | Networking ENet (peer-hosted) | `net/` (MỚI) | `NET_API.md` | game.h, entities.h | PvP 1v1 | 1→2 |
+| 8 ✅ | Minion Pool + Minion AI | `ai/` (MỚI) + entities archetype | `AI_API.md` | entities.h, combat.h | 4v4 với minion | 1 |
+| 9 ✅ | HUD + Auto-Targeting | `ui/` (MỚI) | `UI_API.md` | entities.h, combat.h, control.h | mobile UX | 1 |
+| 10 ✅ | Trận Pháp (Formation Pool) | `formations/` (MỚI) | `FORMATIONS_API.md` | entities.h, map zones, combat.h | khống chế không gian | 2 |
+| 11 ◐ | Networking ENet (peer-hosted) | `net/` (MỚI) | `NET_API.md` | game.h, entities.h | PvP 1v1 | 1→2 |
 
 Quy tắc thứ tự: **không nhảy cóc quá 1 bậc** — module #N chỉ bắt đầu khi #N-1 build sạch + có autotest sandbox pass. Ngoại lệ: #2 (Map Zones) và #3 (Combat) độc lập nhau, có thể làm song song bởi 2 agent.
 

@@ -139,6 +139,11 @@ void SkillManager_EndShader(void);
 // real agentId yet (e.g. 0) — just be consistent per-caster.
 bool SkillManager_CanCast(int skillIndex, int agentId);
 void SkillManager_TriggerCooldown(int skillIndex, int agentId, float cooldownSeconds);
+// Clears every skill's cooldown for one agent id. Entity_SpawnAgent calls
+// this — agent pool slots are REUSED after death, and without the reset a
+// freshly spawned agent inherits the dead occupant's cooldowns (a skill's
+// internal CanCast gate then silently eats casts).
+void SkillManager_ResetAgentCooldowns(int agentId);
 
 // Optional abort/interrupt registration (CORE_ISSUES.md Item 14). A skill may
 // call this in addition to RegisterSkill() if it wants to support being

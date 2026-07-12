@@ -53,11 +53,13 @@ typedef struct {
 void Combat_Init(void);
 
 // Submit MỖI FRAME while the projectile is alive (immediate-mode: the
-// registry is cleared at the end of every Combat_Update). Owner's team is
-// read from the agent pool (TEAM_NEUTRAL if ownerAgentId is invalid).
+// registry is cleared at the end of every Combat_Update). Owner's team +
+// taiji flag are read from the agent pool at submit time; a DEAD/invalid
+// owner REJECTS the submission (returns false) — an ownerless projectile
+// can't be team-attributed, and agent-slot reuse could flip its side.
 // skillInstanceId is an opaque id the skill uses to recognize its own
-// events — unique per live projectile (e.g. pool slot index).
-// Returns false if the per-frame registry is full (collider dropped).
+// events — unique per live projectile (skillIndex*1000 + slot by
+// convention). Also returns false when the 128-collider registry is full.
 bool Combat_SubmitProjectile(int ownerAgentId, CombatElement elem,
                              Vector3 pos, float radius, float damage,
                              float knockback, int skillInstanceId);
@@ -87,6 +89,19 @@ int Combat_PeekEvents(const ClashEvent **outArr);
 // Single-consumer drain — autotest/tools only. A draining consumer starves
 // every peeker, so gameplay code must use Combat_PeekEvents instead.
 int Combat_PollEvents(ClashEvent *out, int max);
+
+// --- Read-only projectile snapshot (Module 9 auto-targeting) ---
+// The registry itself is immediate-mode (cleared every Combat_Update), so
+// consumers that run outside the skill-update window (ui/ auto-aim) read
+// the LAST resolved frame's still-alive colliders instead.
+typedef struct {
+    Vector3       pos;
+    float         radius;
+    CombatElement elem;
+    AgentTeam     team;
+    int           ownerAgentId;
+} CombatProjectileInfo;
+int Combat_QueryProjectiles(CombatProjectileInfo *out, int max);
 
 // Thái Cực PHONG (Module 6): destroy every projectile submitted this frame
 // within radius of center that belongs to a team other than the deflecting

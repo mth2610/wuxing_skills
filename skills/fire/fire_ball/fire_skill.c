@@ -12,6 +12,7 @@
 #include "core/tuning.h"
 #include "core/utils_math.h"
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define MAX_EMITTERS 10
