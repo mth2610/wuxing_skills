@@ -534,11 +534,15 @@ void DrawCoreTorus(Vector3 center, float innerRadius, float outerRadius, int sid
     {
         float cosTheta1 = cosTheta[i], sinTheta1 = sinTheta[i];
         float cosTheta2 = cosTheta[i + 1], sinTheta2 = sinTheta[i + 1];
+        float u1 = (float)i / rings;
+        float u2 = (float)(i + 1) / rings;
 
         for (int j = 0; j < sides; j++)
         {
             float cosPhi1 = cosPhi[j], sinPhi1 = sinPhi[j];
             float cosPhi2 = cosPhi[j + 1], sinPhi2 = sinPhi[j + 1];
+            float v1 = (float)j / sides;
+            float v2 = (float)(j + 1) / sides;
 
             Vector3 p1 = {center.x + (R + r * cosPhi1) * cosTheta1, center.y + r * sinPhi1, center.z + (R + r * cosPhi1) * sinTheta1};
             Vector3 p2 = {center.x + (R + r * cosPhi2) * cosTheta1, center.y + r * sinPhi2, center.z + (R + r * cosPhi2) * sinTheta1};
@@ -550,14 +554,10 @@ void DrawCoreTorus(Vector3 center, float innerRadius, float outerRadius, int sid
             Vector3 n3 = {cosPhi2 * cosTheta2, sinPhi2, cosPhi2 * sinTheta2};
             Vector3 n4 = {cosPhi1 * cosTheta2, sinPhi1, cosPhi1 * sinTheta2};
 
-            rlNormal3f(n1.x, n1.y, n1.z);
-            rlVertex3f(p1.x, p1.y, p1.z);
-            rlNormal3f(n4.x, n4.y, n4.z);
-            rlVertex3f(p4.x, p4.y, p4.z);
-            rlNormal3f(n3.x, n3.y, n3.z);
-            rlVertex3f(p3.x, p3.y, p3.z);
-            rlNormal3f(n2.x, n2.y, n2.z);
-            rlVertex3f(p2.x, p2.y, p2.z);
+            rlTexCoord2f(u1, v1); rlNormal3f(n1.x, n1.y, n1.z); rlVertex3f(p1.x, p1.y, p1.z);
+            rlTexCoord2f(u2, v1); rlNormal3f(n4.x, n4.y, n4.z); rlVertex3f(p4.x, p4.y, p4.z);
+            rlTexCoord2f(u2, v2); rlNormal3f(n3.x, n3.y, n3.z); rlVertex3f(p3.x, p3.y, p3.z);
+            rlTexCoord2f(u1, v2); rlNormal3f(n2.x, n2.y, n2.z); rlVertex3f(p2.x, p2.y, p2.z);
         }
     }
     rlEnd();

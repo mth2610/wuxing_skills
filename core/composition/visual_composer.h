@@ -228,6 +228,7 @@ void VFX_EndSmokeColumnBatch(void);
 
 void VFX_ComposeMagicFilamentsOnPlane(Vector3 center, Vector3 normal, float scale, float progress, Color color, float thickness, float frequency, float speed, Vector2 sourceUV);
 void VFX_ComposeShardDebris(Vector3 pos, int count, float speed, VC_MaterialId matId);
+void VFX_ComposeCrownSplash(Vector3 pos, float radius, float height, float duration, VC_MaterialId matId);
 
 // @gen:vc_declarations begin
 void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);

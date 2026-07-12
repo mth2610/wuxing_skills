@@ -16,6 +16,7 @@ static void Material_FetchLocs(EffectMaterial *mat)
     mat->uDistortionStrengthLoc = GetShaderLocation(mat->shader, "u_distortionStrength");
     mat->uHasTexture1Loc = GetShaderLocation(mat->shader, "u_hasTexture1");
     mat->uTexture1Loc = GetShaderLocation(mat->shader, "texture1");
+    mat->uCustomParam1Loc = GetShaderLocation(mat->shader, "u_customParam1");
 }
 
 void MaterialSystem_Init(void)
@@ -112,6 +113,16 @@ EffectMaterial Material_LoadCustom(EffectMaterialParams params)
     return mat;
 }
 
+EffectMaterial Material_LoadCustomShader(EffectMaterialParams params, const char* vsPath, const char* fsPath)
+{
+    EffectMaterial mat = {0};
+    mat.preset = MAT_CUSTOM;
+    mat.shader = ResourceManager_LoadShader(vsPath, fsPath);
+    Material_FetchLocs(&mat);
+    mat.params = params;
+    return mat;
+}
+
 void Material_SetFloat(EffectMaterial *mat, const char *uniformName, float val)
 {
     int loc = GetShaderLocation(mat->shader, uniformName);
@@ -157,6 +168,8 @@ void Material_Begin(EffectMaterial mat)
         rlSetTexture(mat.params.texture1.id);
         SetShaderValueTexture(mat.shader, mat.uTexture1Loc, mat.params.texture1);
     }
+    if (mat.uCustomParam1Loc >= 0)
+        SetShaderValue(mat.shader, mat.uCustomParam1Loc, &mat.params.customParam1, SHADER_UNIFORM_FLOAT);
 }
 
 void Material_End(void)

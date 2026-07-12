@@ -126,6 +126,18 @@ static void ShardSparkle_Init(void) {
     ColorGradient_AddStop(&s_shardSparkleGrad, 1.0f, (Color){100, 180, 255, 0});
     s_shardSparkleInit = true;
 }
+typedef struct {
+    bool active;
+    Vector3 position;
+    float maxRadius;
+    float maxHeight;
+    float duration;
+    float elapsed;
+    VC_MaterialId matId;
+} Arch_CrownSplash;
+
+#define ARCH_MAX_CROWN_SPLASHES 8
+
 static Arch_Beam        s_archBeams[ARCH_MAX_BEAMS];
 static Arch_GroundWave  s_archGwaves[ARCH_MAX_GROUNDWAVES];
 static Arch_Orbital     s_archOrbitals[ARCH_MAX_ORBITALS];
@@ -135,6 +147,7 @@ static Arch_Bolt        s_archBolts[ARCH_MAX_BOLTS];
 static Arch_Flow        s_archFlows[ARCH_MAX_FLOWS];
 static Arch_SmokeColumn s_archSmokeColumns[ARCH_MAX_SMOKE_COLUMNS];
 static Arch_DebrisShard s_archDebrisShards[ARCH_MAX_DEBRIS_SHARDS];
+static Arch_CrownSplash s_archCrownSplashes[ARCH_MAX_CROWN_SPLASHES];
 
 static Color Arch_ElementColor(EffectPresetType e)
 {
@@ -224,7 +237,67 @@ int VFX_SpawnOrbitals(Vector3 center, EffectPresetType element,
     return -1;
 }
 
-// ── Aura ring ─────────────────────────────────────────────────────────────────
+// =========================================================
+// Petal Helper for Crown Splash
+// =========================================================
+static void DrawSubdividedPetal(float width, float height, float thickness, int rows, int cols)
+{
+    // A vertical thin rectangular block (front, back, left, right faces). Base is at Y=0.
+    rlBegin(RL_QUADS);
+    for (int r = 0; r < rows; r++) {
+        float y1 = height * (float)r / rows;
+        float y2 = height * (float)(r + 1) / rows;
+        float v1 = 1.0f - (float)r / rows; // V=1 at bottom
+        float v2 = 1.0f - (float)(r + 1) / rows; // V=0 at top
+        
+        for (int c = 0; c < cols; c++) {
+            float x1 = -width/2 + width * (float)c / cols;
+            float x2 = -width/2 + width * (float)(c + 1) / cols;
+            float u1 = (float)c / cols;
+            float u2 = (float)(c + 1) / cols;
+            
+            // Front face (+Z) - BL, BR, TR, TL
+            rlNormal3f(0.0f, 0.0f, 1.0f);
+            rlTexCoord2f(u1, v1); rlVertex3f(x1, y1, thickness/2);
+            rlTexCoord2f(u2, v1); rlVertex3f(x2, y1, thickness/2);
+            rlTexCoord2f(u2, v2); rlVertex3f(x2, y2, thickness/2);
+            rlTexCoord2f(u1, v2); rlVertex3f(x1, y2, thickness/2);
+            
+            // Back face (-Z) - BL, BR, TR, TL
+            rlNormal3f(0.0f, 0.0f, -1.0f);
+            rlTexCoord2f(u2, v1); rlVertex3f(x2, y1, -thickness/2);
+            rlTexCoord2f(u1, v1); rlVertex3f(x1, y1, -thickness/2);
+            rlTexCoord2f(u1, v2); rlVertex3f(x1, y2, -thickness/2);
+            rlTexCoord2f(u2, v2); rlVertex3f(x2, y2, -thickness/2);
+        }
+        
+        // Left face (-X) - BL, BR, TR, TL
+        rlNormal3f(-1.0f, 0.0f, 0.0f);
+        rlTexCoord2f(0.0f, v1); rlVertex3f(-width/2, y1, -thickness/2);
+        rlTexCoord2f(1.0f, v1); rlVertex3f(-width/2, y1, thickness/2);
+        rlTexCoord2f(1.0f, v2); rlVertex3f(-width/2, y2, thickness/2);
+        rlTexCoord2f(0.0f, v2); rlVertex3f(-width/2, y2, -thickness/2);
+        
+        // Right face (+X) - BL, BR, TR, TL
+        rlNormal3f(1.0f, 0.0f, 0.0f);
+        rlTexCoord2f(0.0f, v1); rlVertex3f(width/2, y1, thickness/2);
+        rlTexCoord2f(1.0f, v1); rlVertex3f(width/2, y1, -thickness/2);
+        rlTexCoord2f(1.0f, v2); rlVertex3f(width/2, y2, -thickness/2);
+        rlTexCoord2f(0.0f, v2); rlVertex3f(width/2, y2, thickness/2);
+    }
+    rlEnd();
+}
+
+// =========================================================
+// (Preserved) Torus Splash Helper (For future vortex/shockwave effects)
+// =========================================================
+/*
+static void DrawSplashTorus(float maxR) {
+    DrawCoreTorus(Vector3Zero(), maxR * 0.9f, maxR, 32, 64, WHITE);
+}
+*/
+
+// ── Rendering loop ─────────────────────────────────────────────────────────────────
 
 int VFX_SpawnAuraRing(Vector3 center, EffectPresetType element,
                       float radius, float duration)
@@ -543,6 +616,13 @@ static void VC_Archetype_Update(float dt)
             }
         }
     }
+    for (int i = 0; i < ARCH_MAX_CROWN_SPLASHES; i++) {
+        if (!s_archCrownSplashes[i].active) continue;
+        s_archCrownSplashes[i].elapsed += dt;
+        if (s_archCrownSplashes[i].elapsed >= s_archCrownSplashes[i].duration) {
+            s_archCrownSplashes[i].active = false;
+        }
+    }
 }
 
 static void DrawUnitBoxJittered(int seed, Color color)
@@ -720,6 +800,82 @@ static void VC_Archetype_Draw3D(Camera3D cam)
         Material_End();
     }
     rlEnableBackfaceCulling();
+
+
+    // Draw Crown Splashes
+    rlDrawRenderBatchActive();
+    BeginBlendMode(BLEND_ALPHA);
+    rlDisableDepthMask();
+    rlDisableBackfaceCulling();
+    for (int i = 0; i < ARCH_MAX_CROWN_SPLASHES; i++) {
+        if (!s_archCrownSplashes[i].active) continue;
+
+        float progress = s_archCrownSplashes[i].elapsed / s_archCrownSplashes[i].duration;
+        float alpha = sqrtf(1.0f - progress);
+
+        float curHeight = s_archCrownSplashes[i].maxHeight * sinf(progress * PI * 0.5f * 1.4f);
+
+        const VFX_ElementMaterial *eMat = VFX_Material(s_archCrownSplashes[i].matId);
+        if (!eMat) continue;
+
+        EffectMaterialParams p = {0};
+        p.baseColor = ColorAlpha(eMat->body, 0.70f * alpha);
+        p.rimStrength = 3.5f;
+        p.fresnelPower = 2.0f;
+        p.emissiveIntensity = 1.6f;
+        p.distortionStrength = 0.18f;
+        p.translucency = 0.90f;
+        p.texture1 = ResourceManager_LoadTexture("assets/textures/water_caustics.png");
+        p.customParam1 = progress;
+
+        EffectMaterial mat = Material_LoadCustomShader(p, "core/shaders/water_splash.vs", "core/shaders/water_splash.fs");
+        Material_Begin(mat);
+
+        // 1. Draw Petal Crown Splash via Vertex Shader
+        float scaleProgress = sinf(fminf(progress / 0.2f, 1.0f) * PI * 0.5f);
+        float currentScale = 0.2f + scaleProgress * 0.8f; 
+        float maxR = s_archCrownSplashes[i].maxRadius;
+        float finalScale = maxR * currentScale;
+        
+        rlPushMatrix();
+        rlTranslatef(s_archCrownSplashes[i].position.x, s_archCrownSplashes[i].position.y, s_archCrownSplashes[i].position.z);
+        rlScalef(finalScale, finalScale, finalScale);
+        
+        int numPetals = 12;
+        // Seed based on splash position so it stays consistent per splash instance
+        int seed = (int)(s_archCrownSplashes[i].position.x * 1000.0f) ^ (int)(s_archCrownSplashes[i].position.z * 1000.0f);
+        
+        for (int k = 0; k < numPetals; k++) {
+            float angle = (float)k * (2.0f * PI / numPetals);
+            
+            // Pseudo-random variations for jagged look
+            float r1 = (float)(((seed + k * 17) * 101) % 100) / 100.0f; 
+            float r2 = (float)(((seed + k * 31) * 103) % 100) / 100.0f; 
+            
+            float petalHeight = 0.7f + r1 * 0.7f; // 0.7 to 1.4
+            float petalWidth = 0.5f + r2 * 0.4f;  // 0.5 to 0.9
+            
+            rlPushMatrix();
+            // Position on the perimeter of a unit circle (radius=1.0)
+            rlTranslatef(cosf(angle), 0.0f, sinf(angle));
+            // Rotate so local +Z faces EXACTLY OUTWARD from the center
+            rlRotatef(90.0f - angle * RAD2DEG, 0.0f, 1.0f, 0.0f); 
+            
+            DrawSubdividedPetal(petalWidth, petalHeight, 0.05f, 8, 2);
+            
+            rlPopMatrix();
+        }
+        
+        rlPopMatrix();
+        
+        Material_End();
+    }
+    
+    rlDrawRenderBatchActive();
+    rlEnableBackfaceCulling();
+    rlEnableDepthMask();
+    EndBlendMode();
+    rlDrawRenderBatchActive();
 }
 
 void VFX_ComposeShardDebris(Vector3 pos, int count, float speed, VC_MaterialId matId)
@@ -780,6 +936,60 @@ void VFX_ComposeShardDebris(Vector3 pos, int count, float speed, VC_MaterialId m
         s_archDebrisShards[i].matId = matId;
 
         spawned++;
+    }
+}
+
+void VFX_ComposeCrownSplash(Vector3 pos, float radius, float height, float duration, VC_MaterialId matId)
+{
+    if (duration <= 0.0f)
+        return;
+
+    int slot = -1;
+    for (int i = 0; i < ARCH_MAX_CROWN_SPLASHES; i++) {
+        if (!s_archCrownSplashes[i].active) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot != -1) {
+        s_archCrownSplashes[slot].active = true;
+        s_archCrownSplashes[slot].position = pos;
+        s_archCrownSplashes[slot].maxRadius = radius;
+        s_archCrownSplashes[slot].maxHeight = height;
+        s_archCrownSplashes[slot].duration = duration;
+        s_archCrownSplashes[slot].elapsed = 0.0f;
+        s_archCrownSplashes[slot].matId = matId;
+    }
+
+    const VFX_ElementMaterial *eMat = VFX_Material(matId);
+    Color col = eMat ? eMat->body : ELEMENT_COLOR_WATER;
+
+    // Trigger physical screen distortion
+    ScreenDistort_Add(pos, radius * 1.3f, 0.35f, duration * 0.7f, 2.5f);
+
+    // Trigger flat ground shockwave ring
+    VFX_ComposeShockwaveRing(pos, radius * 0.8f, duration * 0.9f, col);
+
+    // Spawn upward-flying particles from the splash base
+    if (eMat && eMat->grad) {
+        int count = 6 + (rand() % 3);
+        for (int p = 0; p < count; p++) {
+            float a = ((float)rand() / (float)RAND_MAX) * 2.0f * PI;
+            float r = radius * 0.2f * ((float)rand() / (float)RAND_MAX);
+            Vector3 partPos = { pos.x + r * cosf(a), pos.y + 0.05f, pos.z + r * sinf(a) };
+            Vector3 vel = {
+                cosf(a) * (0.2f + ((float)rand() / (float)RAND_MAX) * 0.5f),
+                1.5f + ((float)rand() / (float)RAND_MAX) * 1.5f,
+                sinf(a) * (0.2f + ((float)rand() / (float)RAND_MAX) * 0.5f)
+            };
+            SpawnParticle((ParticleConfig){
+                .position = partPos,
+                .velocity = vel,
+                .radius = 0.04f + ((float)rand() / (float)RAND_MAX) * 0.04f,
+                .lifetime = duration * (0.8f + ((float)rand() / (float)RAND_MAX) * 0.5f),
+                .gradient = eMat->grad
+            });
+        }
     }
 }
 

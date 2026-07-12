@@ -615,6 +615,13 @@
       "type": "oneshot",
       "draw_call": "VFX_ComposeShardDebris($POS, 12, 4.5f, VC_MAT_ICE)",
       "trigger_call": "VFX_ComposeShardDebris($POS, 12, 4.5f, VC_MAT_ICE)"
+    },
+    {
+      "fn": "VFX_ComposeCrownSplash",
+      "label": "CROWN SPLASH",
+      "category": "util",
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeCrownSplash($POS, 1.8f, 1.2f, 0.5f, VC_MAT_WATER)"
     }
   ],
   "overrides": {
@@ -632,6 +639,12 @@
       "category": "util",
       "type": "oneshot",
       "trigger_call": "VFX_ComposeShardDebris($POS, 12, 4.5f, VC_MAT_ICE)"
+    },
+    "VFX_ComposeCrownSplash": {
+      "label": "CROWN SPLASH",
+      "category": "util",
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeCrownSplash($POS, 1.8f, 1.2f, 0.5f, VC_MAT_WATER)"
     }
   }
 }

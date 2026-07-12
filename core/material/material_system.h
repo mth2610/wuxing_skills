@@ -35,6 +35,7 @@ typedef struct
                               // same formula as tube.fs). Draw call must use BLEND_ALPHA
                               // (BeginBlendMode/EndBlendMode) for this to actually blend.
     Texture2D texture1;       // optional secondary detail/mask texture; id==0 = unused
+    float customParam1;       // custom generic float param passed to shader
 } EffectMaterialParams;
 
 typedef struct
@@ -51,6 +52,7 @@ typedef struct
     int uDistortionStrengthLoc;
     int uHasTexture1Loc;
     int uTexture1Loc;
+    int uCustomParam1Loc;
     EffectMaterialParams params;
 } EffectMaterial;
 
@@ -65,6 +67,9 @@ EffectMaterial Material_Get(MaterialPreset preset);
 
 // Load chất liệu tùy biến
 EffectMaterial Material_LoadCustom(EffectMaterialParams params);
+
+// Load chất liệu tùy biến với shader file riêng (chỉ dùng khi cần thay thế shader gốc)
+EffectMaterial Material_LoadCustomShader(EffectMaterialParams params, const char* vsPath, const char* fsPath);
 
 // Gán uniform float cho shader
 void Material_SetFloat(EffectMaterial *mat, const char *uniformName, float val);

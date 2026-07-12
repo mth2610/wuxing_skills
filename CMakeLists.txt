@@ -88,6 +88,7 @@ add_executable(wuxing
 
     # --- Entities ---
     entities/entities.c
+    ai/ai.c
 
     # --- Combat (Đấu Pháp: projectile registry + clash matrix) ---
     combat/combat.c
@@ -164,7 +165,8 @@ configure_file(core/shaders/bloom_bright.fs ${CMAKE_CURRENT_BINARY_DIR}/core/sha
 configure_file(core/shaders/bloom_blur.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/bloom_blur.fs COPYONLY)
 configure_file(core/shaders/post_process.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/post_process.fs COPYONLY)
 configure_file(core/shaders/trail_glow.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/trail_glow.fs COPYONLY)
-
+configure_file(core/shaders/water_splash.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/water_splash.fs COPYONLY)
+configure_file(core/shaders/water_splash.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/water_splash.vs COPYONLY)
 
 configure_file(core/shaders/common/vs_header.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/vs_header.glsl COPYONLY)
 configure_file(core/shaders/common/fs_header.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/fs_header.glsl COPYONLY)
