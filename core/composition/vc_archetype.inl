@@ -133,6 +133,9 @@ typedef struct {
     float maxHeight;
     float duration;
     float elapsed;
+    float rotationAngle;
+    float randomScale;
+    float randomPhase;
     VC_MaterialId matId;
 } Arch_CrownSplash;
 
@@ -762,98 +765,90 @@ static void VC_Archetype_Draw3D(Camera3D cam)
         if (!s_archCrownSplashes[i].active) continue;
 
         float progress = s_archCrownSplashes[i].elapsed / s_archCrownSplashes[i].duration;
-        float alpha = sqrtf(1.0f - progress);
-
-        float curHeight = s_archCrownSplashes[i].maxHeight * sinf(progress * PI * 0.5f * 1.4f);
 
         const VFX_ElementMaterial *eMat = VFX_Material(s_archCrownSplashes[i].matId);
         if (!eMat) continue;
 
         EffectMaterialParams p = {0};
-        p.baseColor = ColorAlpha(eMat->body, 0.70f * alpha);
-        p.rimStrength = 2.0f;
-        p.fresnelPower = 1.0f;
-        p.emissiveIntensity = 0.5f;
-        p.distortionStrength = 0.18f;
-        p.translucency = 0.90f;
-        p.texture1 = ResourceManager_LoadTexture("assets/textures/water_caustics.png");
+        p.baseColor = ColorAlpha(eMat->body, 1.0f);
+        p.rimStrength = 3.5f;       // Strong fresnel edges
+        p.fresnelPower = 2.0f;      // Sharp edges
+        p.emissiveIntensity = 0.2f; // Slight inner glow
+        p.translucency = 0.70f * sqrtf(1.0f - progress); // 70% transparent water
         p.customParam1 = progress;
+        p.customParam2 = s_archCrownSplashes[i].randomPhase;
 
-        EffectMaterial mat = Material_LoadCustomShader(p, "core/shaders/water_splash.vs", "core/shaders/water_splash.fs");
-        Material_Begin(mat);
+        EffectMaterial mat = Material_LoadCustomShader(p, "core/shaders/water_splash.vs", "core/shaders/effect_material.fs");
 
         // Base scale for the model (increased to 0.04 to fix small size)
         float maxR = s_archCrownSplashes[i].maxRadius;
-        float baseScale = maxR * 0.04f;
+        float baseScale = maxR * 0.04f * s_archCrownSplashes[i].randomScale;
         
         // 3-Phase Animation in World Space (before model transform!)
         float scaleX = baseScale;
         float scaleY = baseScale;
         float scaleZ = baseScale;
         
-        if (progress < 0.35f) {
-            // Phase 1: Eruption (Grow organically using Elastic Easing & Squash/Stretch)
-            float t = progress / 0.35f;
-            
-            // Height shoots up elastically and wobbles back (Elastic Ease-Out)
-            float c4 = (2.0f * PI) / 3.0f;
-            float easeY = (t <= 0.0f || t >= 1.0f) ? t : (powf(2.0f, -10.0f * t) * sinf((t * 10.0f - 0.75f) * c4) + 1.0f);
-            
-            // Width responds inversely to height! (Volume Conservation: X*Y*Z = 1 -> X = 1/sqrt(Y))
-            float easeXZ;
-            if (t < 0.2f) {
-                // Initial width burst (0 to 1 rapidly)
-                easeXZ = sinf((t / 0.2f) * PI * 0.5f);
-            } else {
-                // True fluid squash and stretch based on elastic height
-                easeXZ = 1.0f / sqrtf(fmaxf(easeY, 0.1f)); 
-            }
-            
-            scaleX *= easeXZ;
-            scaleZ *= easeXZ;
-            scaleY *= easeY;
-            
-        } else if (progress < 0.65f) {
-            // Phase 2: Peak (Hold at 1)
-            // The Vertex Shader handles the continuous liquid wobbling here
-            
-        } else {
-            // Phase 3: Collapse (Squash down and fade out with centrifugal spread)
-            float t = (progress - 0.65f) / 0.35f;
-            
-            // Gravity is exponential (starts slow, slams down fast) -> Cubic Ease-In
-            float easeIn = t * t * t; 
-            
-            scaleY *= (1.0f - easeIn); // squash vertically towards ground
-            scaleX *= (1.0f + easeIn * 1.5f); // intense centrifugal force spread
-            scaleZ *= (1.0f + easeIn * 1.5f);
+        // 2-Phase Fluid Parabola Animation (Eruption -> Collapse)
+        float t = progress;
+        
+        // 1. Continuous organic math for the entire lifespan (no harsh if/else transitions)
+        // Height (Y): Perfect projectile motion (parabola) peaking at t=0.5. Goes 0 -> 1 -> 0
+        float easeY = 4.0f * t * (1.0f - t);
+        
+        // Width (XZ): Cubic ease-out. Rapid initial expansion (impact), slowly decelerating as energy dissipates
+        float invT = 1.0f - t;
+        float easeXZ = 1.0f - (invT * invT * invT); 
+        
+        // Let it splatter outward to 1.5x scale at the very end
+        easeXZ *= 1.5f; 
+        
+        // At t=0, it starts as a straight vertical cylinder pillar (40% base scale)
+        easeXZ += 0.4f; 
+        
+        // Add a slight bounce/squash at the very end when it hits the ground flat
+        if (t > 0.8f) {
+            float squash = (t - 0.8f) / 0.2f; // 0 to 1
+            easeXZ += squash * 0.3f; // Final splat pushes width out a bit more
         }
         
-        rlPushMatrix();
-        rlTranslatef(s_archCrownSplashes[i].position.x, s_archCrownSplashes[i].position.y, s_archCrownSplashes[i].position.z);
-        rlScalef(scaleX, scaleY, scaleZ);
+        // Note: scaleY is NO LONGER animated globally here! 
+        // The Vertex Shader (water_splash.vs) handles Y scaling radially so the center drops before the edges!
+        
+        scaleX *= easeXZ;
+        scaleZ *= easeXZ;
         
         Model splashModel = ResourceManager_LoadModel("assets/models/water_splash.glb");
         if (splashModel.meshCount > 0) {
-            // Re-bind texture0 to fix the 'white shader' bug!
-            Texture2D originalTex = splashModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture;
-            splashModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = p.texture1;
+            Matrix matScale = MatrixScale(scaleX, scaleY, scaleZ);
+            Matrix matRot = MatrixRotateY(s_archCrownSplashes[i].rotationAngle * DEG2RAD);
+            Matrix matTrans = MatrixTranslate(s_archCrownSplashes[i].position.x, s_archCrownSplashes[i].position.y, s_archCrownSplashes[i].position.z);
+            Matrix matModel = MatrixMultiply(matScale, matRot);
+            matModel = MatrixMultiply(matModel, matTrans);
             
-            // Assign our custom water physics material temporarily
+            // CRITICAL: Enable Depth Mask and Culling so the 3D fluid volume doesn't draw inside-out!
+            rlDrawRenderBatchActive();
+            rlEnableDepthMask();
+            rlEnableBackfaceCulling();
+            
+            // 1. Push our custom physics parameters into OpenGL
+            Material_Begin(mat);
+            
+            // 2. Assign the physics shader to the standard Material so DrawMesh uses it
             Material originalMat = splashModel.materials[0];
             splashModel.materials[0].shader = mat.shader;
+            splashModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = p.texture1;
             
-            // Use DrawModel to respect the GLB's internal transform matrix (fixes sideways mesh!)
-            DrawModel(splashModel, Vector3Zero(), 1.0f, WHITE);
+            // 3. Draw the mesh
+            DrawMesh(splashModel.meshes[0], splashModel.materials[0], matModel);
             
-            // Restore original material to avoid corrupting the cache
+            // 4. Restore original material
             splashModel.materials[0] = originalMat;
-            splashModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = originalTex;
+            
+            Material_End();
         }
         
         rlPopMatrix();
-        
-        Material_End();
     }
     
     rlDrawRenderBatchActive();
@@ -943,6 +938,9 @@ void VFX_ComposeCrownSplash(Vector3 pos, float radius, float height, float durat
         s_archCrownSplashes[slot].maxHeight = height;
         s_archCrownSplashes[slot].duration = duration;
         s_archCrownSplashes[slot].elapsed = 0.0f;
+        s_archCrownSplashes[slot].rotationAngle = (float)(rand() % 360);
+        s_archCrownSplashes[slot].randomScale = 0.85f + ((rand() % 100) / 100.0f) * 0.3f;
+        s_archCrownSplashes[slot].randomPhase = (rand() % 1000) / 100.0f;
         s_archCrownSplashes[slot].matId = matId;
     }
 

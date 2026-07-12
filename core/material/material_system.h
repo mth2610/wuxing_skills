@@ -36,6 +36,7 @@ typedef struct
                               // (BeginBlendMode/EndBlendMode) for this to actually blend.
     Texture2D texture1;       // optional secondary detail/mask texture; id==0 = unused
     float customParam1;       // custom generic float param passed to shader
+    float customParam2;       // second custom generic float param passed to shader
 } EffectMaterialParams;
 
 typedef struct
@@ -53,6 +54,7 @@ typedef struct
     int uHasTexture1Loc;
     int uTexture1Loc;
     int uCustomParam1Loc;
+    int uCustomParam2Loc;
     EffectMaterialParams params;
 } EffectMaterial;
 

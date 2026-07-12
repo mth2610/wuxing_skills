@@ -17,6 +17,7 @@ static void Material_FetchLocs(EffectMaterial *mat)
     mat->uHasTexture1Loc = GetShaderLocation(mat->shader, "u_hasTexture1");
     mat->uTexture1Loc = GetShaderLocation(mat->shader, "texture1");
     mat->uCustomParam1Loc = GetShaderLocation(mat->shader, "u_customParam1");
+    mat->uCustomParam2Loc = GetShaderLocation(mat->shader, "u_customParam2");
 }
 
 void MaterialSystem_Init(void)
@@ -170,6 +171,8 @@ void Material_Begin(EffectMaterial mat)
     }
     if (mat.uCustomParam1Loc >= 0)
         SetShaderValue(mat.shader, mat.uCustomParam1Loc, &mat.params.customParam1, SHADER_UNIFORM_FLOAT);
+    if (mat.uCustomParam2Loc >= 0)
+        SetShaderValue(mat.shader, mat.uCustomParam2Loc, &mat.params.customParam2, SHADER_UNIFORM_FLOAT);
 }
 
 void Material_End(void)

@@ -12,7 +12,7 @@
 // ============================================================
 
 uniform sampler2D texture0;         // water_caustics.png (noise map, bound by Raylib)
-uniform vec4  u_baseColor;
+uniform vec4  u_baseColor;          // Pushed by Material_Begin
 uniform float u_translucency;
 uniform float u_dissolve;
 uniform float u_rimStrength;
@@ -23,60 +23,22 @@ uniform float u_distortionStrength;
 uniform float u_customParam1; // Splash progress (0.0 -> 1.0)
 
 void main() {
-    vec3 normal   = normalize(fragNormal);
-    vec3 viewDir  = normalize(viewPos - fragPosition);
-    vec3 lightDir = normalize(u_lightDir);
+    vec3 lightDir = normalize(vec3(1.0, 1.0, 1.0));
+    vec3 viewDir = normalize(cameraPos - fragPosition);
+    vec3 normal = normalize(fragNormal);
 
     float diffuse = calcDiffuse(normal, lightDir, 0.2);
     float fresnel = calcFresnel(normal, viewDir, u_fresnelPower);
 
     vec3 baseColor = u_baseColor.rgb * diffuse;
     
-    // Read the noise from the caustics map using texture0 (provided by DrawMesh)
-    // Scale UV.x by 4.0 to repeat around the circumference of the splash
-    float noiseVal = texture(texture0, fragTexCoord * vec2(4.0, 1.0)).r;
-    baseColor = baseColor * mix(0.5, 2.0, noiseVal);
-
+    // Pure water looks best with minimal emissive, mostly relying on Fresnel edges
     baseColor += baseColor * u_emissiveIntensity;
-
-    float lightFacing = max(dot(normal, lightDir), 0.0);
-    float rim = fresnel * mix(0.3, 1.0, lightFacing);
-    baseColor += u_baseColor.rgb * rim * u_rimStrength;
-
-    // --- SHEET INSTABILITY & TEARING (Màng nước vỡ) ---
-    float progress = u_customParam1;
     
-    // Thickness decreases as the splash expands (progress approaches 1.0).
-    // Initial variations in thickness are provided by the noise texture.
-    float thickness = noiseVal * (1.0 - progress * 0.85); 
+    // Add rim lighting (Fresnel) for the specular water edge look
+    // Tint fresnel with cyan for water!
+    baseColor += vec3(fresnel) * u_rimStrength * u_baseColor.rgb; 
     
-    // Threshold increases over time. Puncture occurs when thickness < threshold.
-    // We start tearing aggressively around progress = 0.3.
-    float threshold = smoothstep(0.25, 1.0, progress) * 0.65; 
-    
-    float tearFactor = thickness - threshold;
-    
-    if (tearFactor < 0.0) {
-        // Hole torn! Fragment is discarded.
-        discard;
-    }
-    
-    float glassAlpha = mix(0.3, 0.9, fresnel);
-    float alpha = mix(u_baseColor.a, glassAlpha, u_translucency);
-    
-    // Surface Tension Froth (bọt nước ở mép rách)
-    // If the pixel is very close to the tearing edge, it glows bright white 
-    // and becomes opaque, simulating the accumulation of liquid via surface tension.
-    float frothWidth = 0.06;
-    if (tearFactor < frothWidth) {
-        float edgeGlow = smoothstep(frothWidth, 0.0, tearFactor); // 1.0 exactly on edge, 0.0 inward
-        vec3 frothColor = vec3(1.0, 1.0, 1.0);
-        baseColor = mix(baseColor, frothColor, edgeGlow * 0.9);
-        alpha = mix(alpha, 1.0, edgeGlow);
-    }
-
-    // Global fade out at the very end of the lifespan to prevent sudden pops
-    alpha *= (1.0 - smoothstep(0.85, 1.0, progress));
-
-    finalColor = vec4(baseColor, alpha);
+    float alpha = u_baseColor.a * u_translucency;
+    FS_FinalOutput(vec4(baseColor, alpha));
 }
