@@ -53,8 +53,9 @@ static EOS_ProductUserId  s_localPuid = NULL;
 static EOS_ProductUserId  s_hostPuid  = NULL; // CLIENT: the lobby owner we talk to
 static char               s_lobbyId[128] = { 0 };
 static bool               s_isHost = false;
-static EOS_NotificationId s_notifyRequest = EOS_INVALID_NOTIFICATIONID;
-static EOS_NotificationId s_notifyClosed  = EOS_INVALID_NOTIFICATIONID;
+static EOS_NotificationId s_notifyRequest     = EOS_INVALID_NOTIFICATIONID;
+static EOS_NotificationId s_notifyClosed      = EOS_INVALID_NOTIFICATIONID;
+static EOS_NotificationId s_notifyEstablished = EOS_INVALID_NOTIFICATIONID;
 
 static const EOS_P2P_SocketId s_socketId = {
     .ApiVersion = EOS_P2P_SOCKETID_API_LATEST,
@@ -204,6 +205,21 @@ static bool EnsureLoggedIn(void) {
         s_connect = EOS_Platform_GetConnectInterface(s_platform);
         s_lobby   = EOS_Platform_GetLobbyInterface(s_platform);
         s_p2p     = EOS_Platform_GetP2PInterface(s_platform);
+
+        // Relay control (must be set BEFORE any connection opens). NAT punch
+        // fails on many home routers (symmetric/strict NAT), and when it
+        // does the two players just never see each other. Epic's relay is
+        // free and always reachable, so DEFAULT to forcing it — internet
+        // play "just works" at the cost of a few ms. WUXING_EOS_DIRECT=1
+        // asks for direct-when-possible (AllowRelays) for LAN/low-latency.
+        EOS_P2P_SetRelayControlOptions rc = { 0 };
+        rc.ApiVersion   = EOS_P2P_SETRELAYCONTROL_API_LATEST;
+        rc.RelayControl = (getenv("WUXING_EOS_DIRECT") != NULL)
+                              ? EOS_RC_AllowRelays : EOS_RC_ForceRelays;
+        EOS_EResult rcr = EOS_P2P_SetRelayControl(s_p2p, &rc);
+        TraceLog(LOG_INFO, "[EOS] relay control = %s (%s)",
+                 rc.RelayControl == EOS_RC_ForceRelays ? "FORCE" : "ALLOW",
+                 EOS_EResult_ToString(rcr));
     }
 
     // Dev-only: WUXING_EOS_FRESH_DEVICE=1 discards this machine's device id
@@ -358,12 +374,47 @@ static void EOS_CALL OnConnectionRequest(const EOS_P2P_OnIncomingConnectionReque
         NetTransport_BackendConnected((void *)data->RemoteUserId);
 }
 
+static const char *ClosedReasonStr(EOS_EConnectionClosedReason r) {
+    switch (r) {
+        case EOS_CCR_ClosedByLocalUser:  return "closed-by-local";
+        case EOS_CCR_ClosedByPeer:       return "closed-by-peer";
+        case EOS_CCR_TimedOut:           return "TIMED-OUT";
+        case EOS_CCR_TooManyConnections: return "too-many-conns";
+        case EOS_CCR_InvalidMessage:     return "invalid-message";
+        default:                         return "unknown";
+    }
+}
+
 static void EOS_CALL OnConnectionClosed(const EOS_P2P_OnRemoteConnectionClosedInfo *data) {
+    // TIMED-OUT here = the connection never actually established (NAT/relay
+    // problem) — the single most useful line when two players can't see
+    // each other.
+    TraceLog(LOG_WARNING, "[EOS] P2P connection CLOSED reason=%s (host=%d)",
+             ClosedReasonStr(data->Reason), s_isHost ? 1 : 0);
     if (s_isHost) {
         NetTransport_BackendDisconnected((void *)data->RemoteUserId);
     } else if (data->RemoteUserId == s_hostPuid) {
         NetTransport_BackendDisconnected(NULL);
     }
+}
+
+static void EOS_CALL OnConnectionEstablished(const EOS_P2P_OnPeerConnectionEstablishedInfo *data) {
+    // The proof the P2P path actually opened, and HOW (direct vs relay).
+    const char *net =
+        data->NetworkType == EOS_NCT_DirectConnection  ? "DIRECT" :
+        data->NetworkType == EOS_NCT_RelayedConnection ? "RELAY"  : "none";
+    TraceLog(LOG_INFO, "[EOS] P2P ESTABLISHED via %s (host=%d, %s)",
+             net, s_isHost ? 1 : 0,
+             data->ConnectionType == EOS_CET_Reconnection ? "reconnect" : "new");
+}
+
+static void EOS_CALL OnNATType(const EOS_P2P_OnQueryNATTypeCompleteInfo *data) {
+    const char *t =
+        data->NATType == EOS_NAT_Open     ? "OPEN (best)"        :
+        data->NATType == EOS_NAT_Moderate ? "MODERATE"           :
+        data->NATType == EOS_NAT_Strict   ? "STRICT (needs relay)" : "unknown";
+    TraceLog(LOG_INFO, "[EOS] this machine's NAT type = %s (%s)", t,
+             EOS_EResult_ToString(data->ResultCode));
 }
 
 static void RegisterP2PNotifies(void) {
@@ -378,6 +429,17 @@ static void RegisterP2PNotifies(void) {
     cls.LocalUserId = s_localPuid;
     cls.SocketId    = &s_socketId;
     s_notifyClosed = EOS_P2P_AddNotifyPeerConnectionClosed(s_p2p, &cls, NULL, OnConnectionClosed);
+
+    EOS_P2P_AddNotifyPeerConnectionEstablishedOptions est = { 0 };
+    est.ApiVersion  = EOS_P2P_ADDNOTIFYPEERCONNECTIONESTABLISHED_API_LATEST;
+    est.LocalUserId = s_localPuid;
+    est.SocketId    = &s_socketId;
+    s_notifyEstablished = EOS_P2P_AddNotifyPeerConnectionEstablished(s_p2p, &est, NULL, OnConnectionEstablished);
+
+    // Fire-and-forget NAT probe — the result lands a few Ticks later.
+    EOS_P2P_QueryNATTypeOptions nat = { 0 };
+    nat.ApiVersion = EOS_P2P_QUERYNATTYPE_API_LATEST;
+    EOS_P2P_QueryNATType(s_p2p, &nat, NULL, OnNATType);
 }
 
 // --- Backend tick/stop (installed into the transport core) -------------------
@@ -428,6 +490,10 @@ static void EosStop(void) {
     if (s_notifyClosed != EOS_INVALID_NOTIFICATIONID) {
         EOS_P2P_RemoveNotifyPeerConnectionClosed(s_p2p, s_notifyClosed);
         s_notifyClosed = EOS_INVALID_NOTIFICATIONID;
+    }
+    if (s_notifyEstablished != EOS_INVALID_NOTIFICATIONID) {
+        EOS_P2P_RemoveNotifyPeerConnectionEstablished(s_p2p, s_notifyEstablished);
+        s_notifyEstablished = EOS_INVALID_NOTIFICATIONID;
     }
     if (s_lobby != NULL && s_lobbyId[0] != '\0') {
         EOS_Lobby_LeaveLobbyOptions lv = { 0 };
@@ -616,6 +682,18 @@ bool Net_JoinOnline(const char *joinCode) {
     EOS_LobbyDetails_Release(details);
     EOS_LobbySearch_Release(search);
     if (!ok || owner == NULL) return false;
+
+    // Self-join guard: on ONE machine both instances share the Device ID →
+    // the same ProductUserId → the joiner IS the host. P2P to yourself never
+    // delivers, so neither side ever sees the other (the classic "cùng máy
+    // quên WUXING_EOS_FRESH_DEVICE" trap). Fail loudly instead of hanging.
+    if (owner == s_localPuid) {
+        TraceLog(LOG_WARNING,
+                 "[EOS] ban dang tu join phong CUA CHINH MINH (cung 1 danh tinh "
+                 "Epic). Cung 1 may: chay cua so khach kem 'WUXING_EOS_FRESH_DEVICE=1'. "
+                 "Choi that: dung 2 may khac nhau.");
+        return false;
+    }
     strncpy(s_lobbyId, s_opLobbyId, sizeof(s_lobbyId) - 1);
 
     s_isHost = false;

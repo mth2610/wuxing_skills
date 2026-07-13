@@ -67,6 +67,7 @@ add_executable(wuxing
     core/flow_map.c
     core/force_field.c
     core/camera_fx.c
+    core/audio_system.c
     core/particle_system.c
     compute/gpu_particle_system.c
     core/path_spline.c

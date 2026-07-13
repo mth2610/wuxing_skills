@@ -59,6 +59,18 @@ old invasion-vs-boss run for a net room (dev only).
   waits for the host. BOSS mode keeps ENTER → back-to-menu.
 - HUD: team scoreboard "THANH LONG n — m BACH HO" (top center, replaces
   the boss bar slot); INTRO title card reads "SONG DAU".
+- **Rendering other heroes** (`GameScreen_Draw3D`): every non-local
+  ARCH_HERO (remote players + bots) is drawn with the SAME character model
+  as the local player — never the procedural stick figure, so an opponent
+  can't be mistaken for a minion orb. Each gets a per-agent
+  `CharacterAnimState` (static arrays keyed by agentId) whose walk/idle +
+  facing are inferred from the position delta between frames (no intent
+  stream client-side). Tint: cool (ally) vs warm (enemy) relative to the
+  local player's team — friend/foe at a glance, No Tutorial. Multiple
+  animated instances on one shared model is safe here because
+  `CharacterModel_Draw` updates+renders atomically per call (OpenGL
+  synchronizes buffer upload vs. draw) — the "one instance only" caveat in
+  character/ applies to update-all-then-draw, not this interleaving.
 
 Details:
 - Spawns: player `(2, 0, 4.4)`, boss `(10, 0, 4.4)` — inside the entities

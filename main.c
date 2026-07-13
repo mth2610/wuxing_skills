@@ -1,4 +1,5 @@
 #include "core/camera_fx.h"
+#include "core/audio_system.h"
 #include "core/decal_system.h"
 #include "core/metaball_fx.h"
 #include "core/particle_system.h"
@@ -955,6 +956,10 @@ int main(int argc, char **argv) {
   SetConfigFlags(configFlags);
   InitWindow(screenWidth, screenHeight, "Avatar: True 3D Element Testbed");
 
+  // Audio device + SFX/music framework (no-op & silent until the user drops
+  // assets under assets/audio/). Headless autotest/render modes skip it.
+  if (!headlessMode) Audio_Init();
+
   rlSetClipPlanes(0.001f, 150.0f);
 
   // Tự động sinh các texture cơ bản nếu thiếu trong thư mục assets/textures
@@ -1186,6 +1191,8 @@ int main(int argc, char **argv) {
     // Combat event frame boundary: last frame's clash events stay peekable
     // through this frame's skill updates, then get cleared here.
     Combat_BeginFrame();
+
+    Audio_Update(dt); // streams the music bed (SFX are fire-and-forget)
 
     if (currentScreen == SCREEN_MAIN_MENU) {
         // Execute the online action queued LAST frame — its "DANG KET NOI"
@@ -1429,6 +1436,11 @@ int main(int argc, char **argv) {
         }
         CameraFX_Update(&camera, dt);
     } else if (currentScreen == SCREEN_GAME) {
+        // Spatial-audio ears follow the local player; night bed loops (both
+        // no-ops until assets/audio/ has files — Audio_PlayMusic self-guards
+        // against restarting the same track).
+        Audio_SetListener(player.position);
+        Audio_PlayMusic(MUS_ARENA_NIGHT);
         GameScreen_Update(&player, &camera, dt);
         // Dev: WUXING_TEAM_TEST=1 — scripted team-battle round on the host
         // for headless net verification (no inputs available): 10s into
@@ -1525,6 +1537,7 @@ int main(int argc, char **argv) {
                 (booms[bi].element == 3) ? EFFECT_PRESET_EARTH_CRACK :
                                            EFFECT_PRESET_METAL_SHARD;
             VFX_ComposeImpact(booms[bi].pos, preset, 0.8f);
+            Audio_PlaySFXAt(SFX_EXPLOSION, booms[bi].pos);
         }
     }
 
@@ -1765,6 +1778,7 @@ int main(int argc, char **argv) {
   EmitterSystem_Unload();
   ResourceManager_Unload();
   MapManager_Unload();
+  Audio_Shutdown();
   CloseWindow();
 
   return exitCode;

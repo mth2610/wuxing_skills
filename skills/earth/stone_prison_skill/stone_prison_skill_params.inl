@@ -4,7 +4,11 @@
 
 // Pass 1 — meter-rescaled tunables (÷100 from old 1cm-scale values).
 // Loaded from .tuning file on Init; defaults below are the canonical source of truth.
-static float s_shakeEnable         = 1.0f;    // 1=on, 0=off
+static float s_shakeEnable         = 0.0f;    // 1=on, 0=off — OFF by default:
+// screen shake is reserved for a very few brutal skills (e.g. a boss ult).
+// With up to 8 players spamming skills, per-skill shake is nauseating, so
+// regular skills never shake. The CameraFX_Shake mechanism stays for the
+// boss to opt into; flip this tunable to 1 only for a deliberate showpiece.
 static float s_pillarHeight        = 0.56f;   // pillar height (m)
 static float s_pillarRadius        = 0.085f;  // pillar base radius (m)
 

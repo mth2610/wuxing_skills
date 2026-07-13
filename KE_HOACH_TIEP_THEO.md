@@ -96,7 +96,9 @@ build sạch + autotest rồi mới sang bước sau).
 - **DoD:** autotest — 1v2 có bot: bot cast được skill + không tự rớt đài;
   1v2 không bot: phe 1 người nhận đúng buff theo bảng; 2v2 đủ người: không buff.
 
-### A5. Chất lượng đường truyền + đồng bộ còn thiếu *(M — 1 phiên)* ✅ 13/07 code + autotest 16/16 (⚠ verify online cast-mirror/độ mượt còn chờ: GL của máy nghẽn sau chuỗi test — cần chạy 2 cửa sổ nhìn bằng mắt sau khi khởi động lại máy)
+### A5. Chất lượng đường truyền + đồng bộ còn thiếu *(M — 1 phiên)* ✅ 13/07 (autotest 16/16 + verify online: người chơi hiện đúng model, render nhiều hero không clobber). Kèm fix môi trường: self-join guard (cùng máy quên FRESH_DEVICE), ForceRelays mặc định (NAT-proof cho 2 máy thật), log chẩn đoán NAT/relay
+
+> **ĐỢT A HOÀN TẤT 13/07/2026** — PvP online 1v1→4v4 chơi được thật: sảnh chờ, team battle elimination, hero-bot + buff bù người, mirror chiêu + nội suy, đối thủ render bằng model thật. autotest 16/16.
 - **VFX event mirroring:** host phát `NET_EVT_CAST {agentId, skillIndex,
   aimPoint}` (reliable) khi CastSkill thành công; client cast "visual-only"
   (client không tick Combat_Update nên projectile chỉ là VFX — damage vẫn từ

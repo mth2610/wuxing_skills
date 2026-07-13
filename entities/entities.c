@@ -173,12 +173,18 @@ void Entity_ApplyDamage(int agentId, float damage, Vector3 knockback) {
     a->velocity.y += knockback.y;
     a->velocity.z += knockback.z;
 
-    // A real shove must enter the airborne state — velocity only integrates
-    // while AGENT_JUMPING, so knockback on a grounded agent used to be a
-    // silent no-op (hits felt like nothing, ring-out by shoving impossible).
+    // A real shove must enter the airborne state — the horizontal velocity
+    // only integrates while AGENT_JUMPING (grounded knockback would be a
+    // silent no-op). The pop height scales with the shove's strength so a
+    // hard hit (Fire ~2.5 m/s) arcs long enough to be VISIBLY knocked back,
+    // while a light nudge barely leaves the ground. Capped so nothing
+    // launches to the moon.
     float kbSq = knockback.x * knockback.x + knockback.z * knockback.z;
     if (kbSq > 0.25f && a->vState == AGENT_GROUNDED) {
-        if (a->velocity.y < 1.2f) a->velocity.y = 1.2f; // small pop so the arc runs
+        float pop = sqrtf(kbSq);           // arc height ∝ horizontal impulse
+        if (pop < 1.2f) pop = 1.2f;
+        if (pop > 4.0f) pop = 4.0f;
+        if (a->velocity.y < pop) a->velocity.y = pop;
         a->vState = AGENT_JUMPING;
     }
 

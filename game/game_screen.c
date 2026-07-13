@@ -12,6 +12,8 @@
 #include "ai/ai.h"
 #include "ui/ui.h"
 #include "net/net_transport.h"
+#include "combat/combat.h"
+#include "core/audio_system.h"
 #include <math.h>
 #include <string.h>
 
@@ -34,6 +36,13 @@ static float s_swingSlowTimer = 0.0f; // movement damped while a swing plays
 // Team battle: two spawn clusters facing each other across the plateau
 // center; heroes fan out ±z within their cluster.
 static const Vector3 TEAM_SPAWN[2] = { { 42.0f, 0.0f, 37.5f }, { 58.0f, 0.0f, 37.5f } };
+
+// Per-agent render state for OTHER heroes (remote players + bots), so each
+// gets its own walk/idle animation + facing on the shared character model.
+static CharacterAnimState s_remoteAnim[MAX_AGENTS];
+static Vector3            s_remotePrevPos[MAX_AGENTS];
+static float             s_remoteYaw[MAX_AGENTS];
+static bool              s_remoteAnimInit[MAX_AGENTS];
 
 // The Phase 0 match runs on VERDANT_PATH — the real grass island (100x75m,
 // flat plateau at Y=0, cliff falloff past ~34m from center). Ring-out
@@ -72,6 +81,8 @@ static void ResetMatch(PlayerEntity *player) {
     // Team battle: bots re-materialize from the roster each round (the
     // INTRO tick spawns them) — clear the old brains/agents first.
     if (s_mode == GAME_MODE_TEAM_BATTLE) AI_ClearHeroBots();
+    // Fresh remote-hero render state (slots get reused across rounds).
+    for (int i = 0; i < MAX_AGENTS; i++) s_remoteAnimInit[i] = false;
 
     // Player agent may have died last match (HP or ring-out) — respawn it.
     // Placement happens in the INTRO tick (bounds are only correct while
@@ -339,13 +350,38 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
     Net_HostSetMatchState((int)s_state);
 
     // One line per state change — the only reliable headless evidence of a
-    // round's arc (net tests grep for it).
+    // round's arc (net tests grep for it) — plus the outcome stinger.
     {
         static GameState s_prevLogged = (GameState)-1;
         if (s_state != s_prevLogged) {
             static const char *kNames[] = { "MENU", "INTRO", "FIGHTING", "VICTORY", "DEFEAT" };
             TraceLog(LOG_INFO, "[GAME] state -> %s", kNames[(int)s_state]);
+            if (s_state == GAME_VICTORY)     Audio_PlaySFX(SFX_VICTORY);
+            else if (s_state == GAME_DEFEAT) Audio_PlaySFX(SFX_DEFEAT);
             s_prevLogged = s_state;
+        }
+    }
+
+    // Thái Cực sting — the frame the local player crosses into the state.
+    {
+        static bool s_prevTaiji = false;
+        bool now = Entity_IsTaijiActive(player->agentId);
+        if (now && !s_prevTaiji) Audio_PlaySFX(SFX_TAIJI_ENTER);
+        s_prevTaiji = now;
+    }
+
+    // Combat hits/clashes → SFX (host only; the client mirrors positions,
+    // not combat events). Peek is non-draining, one frame's worth.
+    if (!Net_ClientDrivesWorld()) {
+        const ClashEvent *evs = NULL;
+        int n = Combat_PeekEvents(&evs);
+        for (int i = 0; i < n; i++) {
+            if (evs[i].outcome == CLASH_HIT_AGENT)
+                Audio_PlaySFXAt(SFX_SKILL_HIT, evs[i].clashPoint);
+            else if (evs[i].outcome == CLASH_A_WINS ||
+                     evs[i].outcome == CLASH_B_WINS ||
+                     evs[i].outcome == CLASH_MUTUAL_DESTROY)
+                Audio_PlaySFXAt(SFX_CLASH, evs[i].clashPoint); // Đấu Pháp
         }
     }
 
@@ -395,6 +431,11 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
                 s_swingSlowTimer = castSecs * 0.6f; // free up before the anim tail
                 // Đợt A5: connected clients replay this cast as pure VFX.
                 Net_HostNotifyCast(player->agentId, castIdx, intent.aimPoint);
+                const Agent *pc = Entity_GetAgent(player->agentId);
+                if (pc != NULL)
+                    Audio_PlaySFXAt(pc->taijiActive ? SFX_CAST_TAIJI
+                                        : Audio_CastSfxForElement(pc->currentElement),
+                                    player->position);
             }
         }
     }
@@ -425,6 +466,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
         float swingSecs = Entity_GetBasicAttackSeconds(basicAttackType);
         CharacterModel_TriggerAttackTimed(&player->anim, animSlot, swingSecs);
         s_swingSlowTimer = swingSecs * 0.6f; // damp walking through the swing
+        Audio_PlaySFXAt(SFX_MELEE_HIT, player->position);
 
         if (!Net_ClientDrivesWorld()) {
             Vector3 targetPos, wallPos;
@@ -482,17 +524,44 @@ void GameScreen_Draw3D(const PlayerEntity *player) {
         DrawCircle3D(body, 0.26f, (Vector3){ 0, 1, 0 }, (float)GetTime() * 90.0f + i * 40.0f, c);
     }
 
-    // Other heroes (host: the remote invader; client: the host's hero) and
-    // a snapshot-mirrored boss (client has no boss/ module state — draw the
+    // Other heroes (teammates + opponents: remote players and bots) and a
+    // snapshot-mirrored boss (client has no boss/ module state — draw the
     // ARCH_BOSS agent as a dark core + element ring so the fight reads).
+    // Every hero uses the SAME real character model as the local player —
+    // an opponent must never read as a minion (a small orb). CharacterModel_
+    // Draw updates+renders the shared mesh atomically, so drawing several in
+    // a row is safe (each pose renders before the next Draw remaps it).
+    const Agent *self = Entity_GetAgent(player->agentId);
+    AgentTeam myTeam = self ? self->team : TEAM_ALLY;
+    float frameDt = GetFrameTime();
     for (int i = 0; i < MAX_AGENTS; i++) {
         const Agent *a = Entity_GetAgent(i);
         if (!a || i == player->agentId) continue;
         if (a->archetype == ARCH_HERO) {
             Environment_DrawSmartShadow(a->position, ENV_SHAPE_SPHERE, 0.5f, 0.9f);
-            DrawCharacter3D(a->position, 0.25f,
-                            GetColor(0xD9B08CFF), GetColor(0x7A2E2EFF), GetColor(0xAAAAAAFF),
-                            true, a->position);
+            // Ally = cool tint, enemy = warm tint — reads friend/foe at a
+            // glance without labels (No Tutorial).
+            Color tint = (a->team == myTeam) ? (Color){ 150, 200, 255, 255 }
+                                             : (Color){ 255, 170, 150, 255 };
+            if (CharacterModel_IsLoaded()) {
+                // Per-agent anim state: infer walk/idle + facing from the
+                // position delta between frames (no intent stream here).
+                float dx = a->position.x - s_remotePrevPos[i].x;
+                float dz = a->position.z - s_remotePrevPos[i].z;
+                float moved = sqrtf(dx * dx + dz * dz);
+                if (!s_remoteAnimInit[i]) {
+                    CharacterModel_ResetState(&s_remoteAnim[i]);
+                    s_remoteAnimInit[i] = true;
+                }
+                if (moved > 0.001f) s_remoteYaw[i] = atan2f(dx, dz);
+                CharacterModel_Update(&s_remoteAnim[i], frameDt, moved > 0.02f * frameDt * 60.0f);
+                CharacterModel_Draw(&s_remoteAnim[i], a->position, s_remoteYaw[i], 1.0f, tint);
+                s_remotePrevPos[i] = a->position;
+            } else {
+                DrawCharacter3D(a->position, 0.25f,
+                                GetColor(0xD9B08CFF), GetColor(0x7A2E2EFF), GetColor(0xAAAAAAFF),
+                                true, a->position);
+            }
         } else if (a->archetype == ARCH_BOSS && !Boss_IsAlive()) {
             Color c = MinionElementColor(a->currentElement);
             float bob = 0.9f + 0.12f * sinf((float)GetTime() * 1.3f);

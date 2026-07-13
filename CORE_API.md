@@ -2027,3 +2027,25 @@ See **[COMPOSITION_API.md](COMPOSITION_API.md)** for the full composition refere
 > `COMPOSITION_API.md` §0's table to translate the cookbook pattern you pick
 > into concrete function calls from this API.
 
+
+## 20. Audio System (`#include "core/audio_system.h"`)
+
+Game SFX + one music bed. Data-driven and **asset-optional**: each event
+(`SfxId` / `MusicId`) maps to a fixed path under `assets/audio/`; a missing
+file is silent (empty `Sound`, `IsSoundValid` gates playback), so the game
+runs fully before any audio asset exists. See `assets/audio/README.md` for
+the file→event table users drop assets into.
+
+- `Audio_Init()` (after `InitWindow`, skip in headless) / `Audio_Shutdown()`
+  (before `CloseWindow`) / `Audio_Update(dt)` (streams the music bed).
+- `Audio_PlaySFX(id)` (2D, UI/stingers) / `Audio_PlaySFXAt(id, worldPos)`
+  (3D — distance falloff to `Audio_SetListener(pos)` + stereo pan, ±6% pitch
+  jitter). `Audio_CastSfxForElement(element)` maps 0..4 → `SFX_CAST_*`.
+- `Audio_PlayMusic(MUS_ARENA_NIGHT)` (self-guards restart) / `Audio_StopMusic()`.
+- **Layering rule**: this is a core service, but `entities/` and `combat/`
+  must NOT call it (they forbid VFX/audio). Wiring lives in main.c / game/ /
+  ui/, which poll those modules' events (`Combat_PeekEvents`,
+  `AI_PollExplosions`, `Control_ConsumeCastFired`) and translate to Audio_*.
+- Known gaps: `PlaySound` mono-voice (dồn dập cắt nhau — add `LoadSoundAlias`
+  pool later); online clients only hear cast (via mirror) + music, not
+  host-side hit/clash/explosion yet.
