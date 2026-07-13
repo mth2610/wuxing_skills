@@ -9,6 +9,7 @@
 #define NET_MAGIC        'W'
 #define NET_KIND_INTENT  0x01
 #define NET_KIND_SNAP    0x02
+#define NET_KIND_ROSTER  0x03
 
 // --- helpers ---
 static int WriteF32(unsigned char *buf, int off, float v)   { memcpy(buf + off, &v, 4); return off + 4; }
@@ -115,6 +116,47 @@ int Net_UnpackAgentSnapshot(NetAgentState *out, int maxAgents,
         off = ReadF32(buf, off, &s->maxHealth);
         off = ReadF32(buf, off, &s->mana);
         off = ReadF32(buf, off, &s->maxMana);
+    }
+    return n;
+}
+
+// --- Room roster (host → clients, reliable) ---
+// Header: magic, kind, version, count. Per entry: slot, team, agentId,
+// flags = 4 bytes. Max packet 4 + 8*4 = 36 bytes — always single-fragment.
+#define ROSTER_HEADER_BYTES 4
+#define ROSTER_ENTRY_BYTES  4
+
+int Net_PackRoster(const NetRosterEntry *entries, int count,
+                   unsigned char *buf, int maxBytes) {
+    if (entries == NULL || buf == NULL || count < 0 || count > NET_MAX_PLAYERS) return 0;
+    if (maxBytes < ROSTER_HEADER_BYTES + count * ROSTER_ENTRY_BYTES) return 0;
+    int off = 0;
+    buf[off++] = NET_MAGIC;
+    buf[off++] = NET_KIND_ROSTER;
+    buf[off++] = NET_PROTOCOL_VERSION;
+    buf[off++] = (unsigned char)count;
+    for (int i = 0; i < count; i++) {
+        buf[off++] = entries[i].slot;
+        buf[off++] = entries[i].team;
+        buf[off++] = entries[i].agentId;
+        buf[off++] = entries[i].flags;
+    }
+    return off;
+}
+
+int Net_UnpackRoster(NetRosterEntry *out, int maxEntries,
+                     const unsigned char *buf, int len) {
+    if (out == NULL || buf == NULL || len < ROSTER_HEADER_BYTES) return -1;
+    if (buf[0] != NET_MAGIC || buf[1] != NET_KIND_ROSTER || buf[2] != NET_PROTOCOL_VERSION) return -1;
+    int count = buf[3];
+    if (count > NET_MAX_PLAYERS || len < ROSTER_HEADER_BYTES + count * ROSTER_ENTRY_BYTES) return -1;
+    int n = (count < maxEntries) ? count : maxEntries;
+    int off = ROSTER_HEADER_BYTES;
+    for (int i = 0; i < n; i++) {
+        out[i].slot    = buf[off++];
+        out[i].team    = buf[off++];
+        out[i].agentId = buf[off++];
+        out[i].flags   = buf[off++];
     }
     return n;
 }

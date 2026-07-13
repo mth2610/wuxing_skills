@@ -49,11 +49,10 @@ static EOS_HPlatform      s_platform = NULL;
 static EOS_HConnect       s_connect  = NULL;
 static EOS_HLobby         s_lobby    = NULL;
 static EOS_HP2P           s_p2p      = NULL;
-static EOS_ProductUserId  s_localPuid  = NULL;
-static EOS_ProductUserId  s_remotePuid = NULL;
+static EOS_ProductUserId  s_localPuid = NULL;
+static EOS_ProductUserId  s_hostPuid  = NULL; // CLIENT: the lobby owner we talk to
 static char               s_lobbyId[128] = { 0 };
 static bool               s_isHost = false;
-static bool               s_peerUp = false;
 static EOS_NotificationId s_notifyRequest = EOS_INVALID_NOTIFICATIONID;
 static EOS_NotificationId s_notifyClosed  = EOS_INVALID_NOTIFICATIONID;
 
@@ -269,12 +268,16 @@ typedef struct {
     unsigned char seq, count;
     unsigned int  haveMask;    // bit per fragment (count ≤ 15 for 16KB)
     int           lastLen;     // payload bytes of the final fragment, -1 until seen
+    void         *peerRef;     // whose fragments these are
     unsigned char buf[MAX_LOGICAL];
 } Reassembly;
 static Reassembly s_reasm[2];
 
-static bool EosSend(int channel, const void *data, int len, bool reliable) {
-    if (s_localPuid == NULL || s_remotePuid == NULL || len <= 0 || len > MAX_LOGICAL)
+// peerRef: the target ProductUserId (host role); NULL = the lobby owner
+// (client role — its only link).
+static bool EosSend(void *peerRef, int channel, const void *data, int len, bool reliable) {
+    EOS_ProductUserId remote = (peerRef != NULL) ? (EOS_ProductUserId)peerRef : s_hostPuid;
+    if (s_localPuid == NULL || remote == NULL || len <= 0 || len > MAX_LOGICAL)
         return false;
     const unsigned char *src = (const unsigned char *)data;
     int count = (len + FRAG_PAYLOAD - 1) / FRAG_PAYLOAD;
@@ -283,7 +286,7 @@ static bool EosSend(int channel, const void *data, int len, bool reliable) {
     EOS_P2P_SendPacketOptions opt = { 0 };
     opt.ApiVersion  = EOS_P2P_SENDPACKET_API_LATEST;
     opt.LocalUserId  = s_localPuid;
-    opt.RemoteUserId = s_remotePuid;
+    opt.RemoteUserId = remote;
     opt.SocketId     = &s_socketId;
     opt.Channel      = (uint8_t)channel;
     // Queue while the NAT punch is still completing (client's first intents).
@@ -303,30 +306,33 @@ static bool EosSend(int channel, const void *data, int len, bool reliable) {
     return true;
 }
 
-static void ReceiveFragment(int channel, const unsigned char *pkt, int pktLen) {
+static void ReceiveFragment(void *peerRef, int channel,
+                            const unsigned char *pkt, int pktLen) {
     if (pktLen <= FRAG_HEADER) return;
     unsigned char seq = pkt[0], idx = pkt[1], count = pkt[2];
     const unsigned char *payload = pkt + FRAG_HEADER;
     int payloadLen = pktLen - FRAG_HEADER;
     if (count == 0 || idx >= count || count > MAX_LOGICAL / FRAG_PAYLOAD + 1) return;
 
-    if (count == 1) { // whole packet — the common case (intents, ctrl, small snapshots)
-        NetTransport_BackendPacket(channel, payload, payloadLen);
+    if (count == 1) { // whole packet — the common case (intents, ctrl, roster)
+        NetTransport_BackendPacket(peerRef, channel, payload, payloadLen);
         return;
     }
     // Unordered channel: fragments may arrive in any order — place by index,
     // deliver once every bit is in. A lost fragment just drops the snapshot
-    // (the next one is 50ms behind).
+    // (the next one is 50ms behind). Only host→client snapshots fragment, so
+    // one reassembly slot per channel is enough — but guard against peer mixups.
     Reassembly *r = &s_reasm[channel & 1];
-    if (r->seq != seq || r->count != count) {
+    if (r->seq != seq || r->count != count || r->peerRef != peerRef) {
         r->seq = seq; r->count = count; r->haveMask = 0; r->lastLen = -1;
+        r->peerRef = peerRef;
     }
     if (idx * FRAG_PAYLOAD + payloadLen > MAX_LOGICAL) return;
     memcpy(r->buf + idx * FRAG_PAYLOAD, payload, (size_t)payloadLen);
     r->haveMask |= 1u << idx;
     if (idx == count - 1) r->lastLen = payloadLen;
     if (r->lastLen >= 0 && r->haveMask == (1u << count) - 1u) {
-        NetTransport_BackendPacket(channel,
+        NetTransport_BackendPacket(peerRef, channel,
                                    r->buf, (count - 1) * FRAG_PAYLOAD + r->lastLen);
         r->count = 0; // consumed
     }
@@ -336,27 +342,25 @@ static void ReceiveFragment(int channel, const unsigned char *pkt, int pktLen) {
 
 static void EOS_CALL OnConnectionRequest(const EOS_P2P_OnIncomingConnectionRequestInfo *data) {
     if (strcmp(data->SocketId->SocketName, EOS_SOCKET_NAME) != 0) return;
-    if (s_remotePuid != NULL && s_remotePuid != data->RemoteUserId) return; // duel is 1v1
+    // Client only talks to the lobby owner; the host accepts anyone — the
+    // transport core caps the room at NET_MAX_PLAYERS and ignores overflow.
+    if (!s_isHost && data->RemoteUserId != s_hostPuid) return;
     EOS_P2P_AcceptConnectionOptions acc = { 0 };
     acc.ApiVersion   = EOS_P2P_ACCEPTCONNECTION_API_LATEST;
     acc.LocalUserId  = s_localPuid;
     acc.RemoteUserId = data->RemoteUserId;
     acc.SocketId     = &s_socketId;
     if (EOS_P2P_AcceptConnection(s_p2p, &acc) != EOS_Success) return;
-    s_remotePuid = data->RemoteUserId;
-    if (!s_peerUp) {
-        s_peerUp = true;
-        NetTransport_BackendConnected(); // host spawns the remote hero + HELLO
-    }
+    if (s_isHost) // spawns their hero + HELLO + roster (dedupe in the core)
+        NetTransport_BackendConnected((void *)data->RemoteUserId);
 }
 
 static void EOS_CALL OnConnectionClosed(const EOS_P2P_OnRemoteConnectionClosedInfo *data) {
-    if (data->RemoteUserId != s_remotePuid) return;
-    if (s_peerUp) {
-        s_peerUp = false;
-        NetTransport_BackendDisconnected();
+    if (s_isHost) {
+        NetTransport_BackendDisconnected((void *)data->RemoteUserId);
+    } else if (data->RemoteUserId == s_hostPuid) {
+        NetTransport_BackendDisconnected(NULL);
     }
-    if (s_isHost) s_remotePuid = NULL; // client keeps the owner for reconnect attempts
 }
 
 static void RegisterP2PNotifies(void) {
@@ -385,7 +389,7 @@ static void EosTick(float dt) {
     opt.MaxDataSizeBytes = EOS_P2P_MAX_PACKET_SIZE;
     opt.RequestedChannel = NULL;
 
-    for (int budget = 0; budget < 64; budget++) {
+    for (int budget = 0; budget < 128; budget++) {
         EOS_ProductUserId peer = NULL;
         EOS_P2P_SocketId  sock;
         uint8_t  channel = 0;
@@ -393,9 +397,11 @@ static void EosTick(float dt) {
         uint32_t bytes = 0;
         if (EOS_P2P_ReceivePacket(s_p2p, &opt, &peer, &sock, &channel,
                                   data, &bytes) != EOS_Success) break;
-        if (peer != s_remotePuid || strcmp(sock.SocketName, EOS_SOCKET_NAME) != 0)
-            continue;
-        ReceiveFragment((int)channel, data, (int)bytes);
+        if (strcmp(sock.SocketName, EOS_SOCKET_NAME) != 0) continue;
+        if (!s_isHost && peer != s_hostPuid) continue; // client: host only
+        // Host: pass the sender through — the core drops strangers itself.
+        ReceiveFragment(s_isHost ? (void *)peer : NULL, (int)channel,
+                        data, (int)bytes);
     }
 }
 
@@ -404,13 +410,13 @@ static void EOS_CALL OnLeaveLobby(const EOS_Lobby_LeaveLobbyCallbackInfo *data) 
 }
 
 static void EosStop(void) {
-    if (s_p2p != NULL && s_localPuid != NULL && s_remotePuid != NULL) {
-        EOS_P2P_CloseConnectionOptions cls = { 0 };
-        cls.ApiVersion   = EOS_P2P_CLOSECONNECTION_API_LATEST;
-        cls.LocalUserId  = s_localPuid;
-        cls.RemoteUserId = s_remotePuid;
-        cls.SocketId     = &s_socketId;
-        EOS_P2P_CloseConnection(s_p2p, &cls);
+    if (s_p2p != NULL && s_localPuid != NULL) {
+        // Close every connection on our socket in one call (multi-peer).
+        EOS_P2P_CloseConnectionsOptions cls = { 0 };
+        cls.ApiVersion  = EOS_P2P_CLOSECONNECTIONS_API_LATEST;
+        cls.LocalUserId = s_localPuid;
+        cls.SocketId    = &s_socketId;
+        EOS_P2P_CloseConnections(s_p2p, &cls);
     }
     if (s_notifyRequest != EOS_INVALID_NOTIFICATIONID) {
         EOS_P2P_RemoveNotifyPeerConnectionRequest(s_p2p, s_notifyRequest);
@@ -429,8 +435,7 @@ static void EosStop(void) {
         for (int i = 0; i < 10; i++) EOS_Platform_Tick(s_platform); // let it flush
         s_lobbyId[0] = '\0';
     }
-    s_remotePuid = NULL;
-    s_peerUp = false;
+    s_hostPuid = NULL;
     memset(s_reasm, 0, sizeof(s_reasm));
     // Platform + login stay up for the process — re-hosting skips auth.
 }
@@ -497,7 +502,7 @@ bool Net_StartHostOnline(char *outJoinCode, int maxCodeLen) {
     EOS_Lobby_CreateLobbyOptions create = { 0 };
     create.ApiVersion       = EOS_LOBBY_CREATELOBBY_API_LATEST;
     create.LocalUserId      = s_localPuid;
-    create.MaxLobbyMembers  = 2;
+    create.MaxLobbyMembers  = NET_MAX_PLAYERS; // 4v4 vision — 8 kể cả host
     create.PermissionLevel  = EOS_LPL_PUBLICADVERTISED;
     create.bPresenceEnabled = EOS_FALSE;
     create.bAllowInvites    = EOS_TRUE;
@@ -611,14 +616,13 @@ bool Net_JoinOnline(const char *joinCode) {
     strncpy(s_lobbyId, s_opLobbyId, sizeof(s_lobbyId) - 1);
 
     s_isHost = false;
-    s_remotePuid = owner;
+    s_hostPuid = owner;
     RegisterP2PNotifies();
     NetTransport_SetBackend(NET_MODE_CLIENT, EosSend, EosTick, EosStop);
     // Optimistically up: the first intent packets trigger the NAT punch
     // (bAllowDelayedDelivery queues them); the host flips connected when the
     // connection request lands on its side. Snapshots start flowing after.
-    s_peerUp = true;
-    NetTransport_BackendConnected();
+    NetTransport_BackendConnected(NULL);
     TraceLog(LOG_INFO, "[EOS] joined lobby for code %s — punching through to host", code);
     return true;
 }

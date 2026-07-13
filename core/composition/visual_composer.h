@@ -218,6 +218,11 @@ void VFX_ChainLightning(const Vector3 *points, int count, float scale, float hop
 // Phù hợp cho các chiêu thức buff giáp, hộ thể.
 void VFX_ComposeCylinderAura(VC_MaterialId matId, Vector3 pos, float radius, float progress, float time);
 
+// Meditation qi-gather — soft ground runes + rising wisps + spiral-in motes.
+// Call once per frame while meditating. progress 0..1 = channel fraction
+// (0 = start, 1 = finishing). Pure visual component; no gameplay side effects.
+void VFX_ComposeMeditate(Vector3 pos, float progress, float time);
+
 // Batch rendering helpers for high-performance visual composition
 void VFX_BeginEnergySmokeBatch(void);
 void VFX_EndEnergySmokeBatch(void);
@@ -232,11 +237,12 @@ void VFX_ComposeCrownSplash(Vector3 pos, float radius, float height, float durat
 
 // @gen:vc_declarations begin
 void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
+void VFX_ComposeChainLink(VC_MaterialId matId, Vector3 start, Vector3 end, float width, float sag, float progress, float time);
 void VFX_ComposeEnergySmoke(Vector3 pos, float scale, float progress, float time, Vector2 sourceUV);
 void VFX_ComposeGroundAura(VC_MaterialId matId, Vector3 pos, float radius, float scrollSpeed, float time);
 void VFX_ComposeGroundSmoke(Vector3 center, float halfSize, float progress, GroundHeightSampleFn heightFn, void *userData);
 void VFX_ComposeMagicFilaments(Vector3 pos, float scale, float progress, Color color, float thickness, float frequency, float speed, Vector2 sourceUV);
 void VFX_ComposeSmokeColumnFX(Vector3 base, float halfWidth, float height, float progress, int planeCount);
-void VFX_ComposeSmokeOnPlane(Vector3 center, Vector3 normal, float halfSize, float progress);
+void VFX_ComposeSmokeOnPlane(Vector3 center, Vector3 normal, float halfSize, float progress, Color color);
 // @gen:vc_declarations end
 #endif // VISUAL_COMPOSER_H

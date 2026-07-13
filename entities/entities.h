@@ -184,6 +184,9 @@ void Entity_OnDash(int agentId);
 // through Entity_SetPosition. No-op if preconditions fail.
 void Entity_StartMeditate(int agentId);
 bool Entity_IsMeditating(int agentId);
+// Channel fraction while meditating: 0 at start → 1 near natural finish.
+// Returns 0 if not meditating / invalid agent. For VFX consumers only.
+float Entity_GetMeditateProgress(int agentId);
 
 // --- Vô Hệ loadout (Module 1) ---
 // Writes skillId+element into the given slot (0..AGENT_SKILL_SLOTS-1) and
@@ -201,6 +204,10 @@ int Entity_RecomputeElement(int agentId);
 // Loadout-based agents should use Entity_SetEquippedSkill/RecomputeElement
 // instead; a later RecomputeElement overwrites this.
 void Entity_SetElement(int agentId, int element);
+
+// Runtime team reassignment (lobby: host moves a player between sides
+// before the match — net/'s room management is the caller).
+void Entity_SetAgentTeam(int agentId, AgentTeam team);
 
 // --- Thái Cực (Module 6) ---
 // Force the state on/off (boss/ at <30% HP; Entity_RecomputeElement sets it

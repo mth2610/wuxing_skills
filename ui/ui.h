@@ -27,6 +27,17 @@ Vector3 UI_GetAutoAimPoint(int agentId, bool *hasTarget);
 // shading + the auto-aim reticle. Call from the game screen's HUD.
 void UI_DrawOverlay(int agentId);
 
+// --- Lobby screen (Sảnh chờ — Đợt A2, ui/ui_lobby.c) ---
+// Full-screen room UI between the menu and the match: NET_MAX_PLAYERS slots
+// split into 2 team columns, rendered from Net_GetRoster. Host clicks:
+// human/bot entry → flip its side (Net_HostToggleTeam), empty slot → add a
+// bot on that side, bot's X corner → remove it; BAT DAU enables once each
+// side has ≥1 member. Clients render read-only + ROI PHONG. Call once per
+// frame between BeginDrawing/EndDrawing; the caller executes the returned
+// action (START → Net_HostStartMatch, LEAVE → Net_Stop + back to menu).
+typedef enum { UI_LOBBY_NONE = 0, UI_LOBBY_START, UI_LOBBY_LEAVE } UILobbyAction;
+UILobbyAction UI_LobbyUpdateDraw(const char *joinCode, bool isHost);
+
 // --- Loadout panel (Trang Bị — TAB in game/) ---
 // Click a slot, click a skill: equips via Entity_SetEquippedSkill (element
 // resolved from the registry), which recomputes Vô Hệ — and silently arms

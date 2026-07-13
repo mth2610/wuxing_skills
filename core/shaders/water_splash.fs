@@ -5,63 +5,81 @@
 #include "core/shaders/common/fx.glsl"
 
 // ============================================================
-// Water Splash Material (Fragment Shader)
+// Water Splash — Fragment Shader (Crown Splash GLB Mesh)
 // ============================================================
 
-uniform sampler2D texture0;         
-uniform vec4  u_baseColor;          
+uniform sampler2D texture0;
+uniform vec4  u_baseColor;
 uniform float u_translucency;
-uniform float u_dissolve;           
 uniform float u_rimStrength;
 uniform float u_fresnelPower;
 uniform float u_emissiveIntensity;
-
-uniform float u_customParam1; 
+uniform float u_customParam1;   // splash progress 0→1
+uniform float u_customParam2;   // random phase offset
 
 void main() {
-    vec3 lightDir = normalize(vec3(0.5, 1.0, 0.5)); 
-    vec3 viewDir = normalize(cameraPos - fragPosition);
-    vec3 normal = normalize(fragNormal);
-
-    // --- 1. HIỆU ỨNG TAN BIẾN (DISSOLVE / MIST) ---
-    // Vì mesh đã rách sẵn, ta dùng noise để làm nó dần tan biến ở cuối đời
-    vec2 uv = fragTexCoord + vec2(0.0, u_customParam1 * 0.5);
-    float noiseVal = texture(texture0, uv * 3.0).r;
+    vec3 N = normalize(fragNormal);
+    vec3 V = normalize(viewPos - fragPosition);
+    vec3 L = normalize(u_lightDir);
+    float t = u_customParam1;
     
-    // Chỉ bắt đầu tan biến khi progress > 0.5 (nước đang rơi xuống)
-    float dissolveProgress = smoothstep(0.5, 1.0, u_customParam1);
+    // ── 1. CAUSTIC SHIMMER (ÁNH LÓNG LÁNH MẶT NƯỚC) ──────────
+    // FBM noise lăn theo world-space XZ tạo vân nước dao động.
+    vec2 causticUV = fragPosition.xz * 1.8 + vec2(u_time * 0.3, u_time * 0.2);
+    causticUV += vec2(u_customParam2);               // lệch pha ngẫu nhiên mỗi lần bắn
+    float caustic = fbm2(causticUV);
+    // Boost caustic thành ánh lóe sắc nét
+    float shimmer = smoothstep(0.45, 0.70, caustic) * 0.6;
+    // Mờ dần khi nước đang tan biến
+    shimmer *= (1.0 - smoothstep(0.5, 0.9, t));
     
-    // Alpha mask "ăn mòn" bề mặt nước theo hình thù của noise map
-    float alphaMask = smoothstep(dissolveProgress - 0.1, dissolveProgress + 0.1, noiseVal);
+    // ── 2. DISSOLVE (TAN BIẾN CUỐI ĐỜI) ───────────────────────
+    // Noise 3D theo world-space để dissolve không phụ thuộc UV.
+    float noiseVal = hash3(floor(fragPosition * 8.0));
+    float dissolveT = smoothstep(0.50, 1.0, t);      // bắt đầu tan từ nửa đời
     
-    if (alphaMask < 0.05 && dissolveProgress > 0.0) {
-        discard;
-    }
-
-    // --- 2. ÁNH SÁNG & ĐỘ BÓNG (LIGHTING & SPECULAR) ---
-    float diffuse = calcDiffuse(normal, lightDir, 0.2);
-    float fresnel = calcFresnel(normal, viewDir, u_fresnelPower);
-
-    // Nước cần độ lóa (Specular Highlight) cực mạnh để trông ướt át
-    vec3 halfVector = normalize(lightDir + viewDir);
-    float specAmount = pow(max(dot(normal, halfVector), 0.0), 128.0) * 2.0;
-
-    vec3 baseColor = u_baseColor.rgb * diffuse;
+    float edgeFactor;
+    float discardFlag = dissolveCalc(noiseVal, dissolveT, 0.08, edgeFactor);
+    if (discardFlag >= 1.0) discard;
     
-    // Viền nước đổi màu theo Fresnel
-    baseColor += vec3(fresnel) * u_rimStrength * u_baseColor.rgb; 
+    // Viền tan biến phát sáng theo màu nguyên tố
+    vec3 dissolveEdgeColor = u_baseColor.rgb * 2.5;
     
-    // Thêm Specular (Sẽ mờ dần khi giọt nước tan biến để tránh bị đốm sáng bay lơ lửng)
-    baseColor += vec3(1.0) * specAmount * alphaMask;
-
-    // --- 3. ĐIỂM NHẤN Ở CÁC HẠT NƯỚC ĐANG TAN BIẾN ---
-    // Tạo viền sáng ở mép nước đang bốc hơi/rớt xuống
-    float edgeHighlight = smoothstep(dissolveProgress, dissolveProgress + 0.05, noiseVal);
-    baseColor += vec3(1.0) * (1.0 - edgeHighlight) * dissolveProgress;
-
-    // Fade mờ toàn bộ ở 20% cuối cùng của vòng đời để kết thúc êm ái
-    float globalFade = 1.0 - smoothstep(0.8, 1.0, u_customParam1);
-    float finalAlpha = u_baseColor.a * u_translucency * alphaMask * globalFade;
+    // ── 3. ÁNH SÁNG ───────────────────────────────────────────
+    float diffuse = calcDiffuse(N, L, 0.18);
+    float fresnel = calcFresnel(N, V, u_fresnelPower);
     
-    FS_FinalOutput(vec4(baseColor, finalAlpha));
+    // Specular kép: highlight nhỏ sắc (256) + highlight to mềm (48)
+    float specSharp = calcSpecular(N, L, V, 256.0) * 2.5;
+    float specSoft  = calcSpecular(N, L, V, 48.0)  * 0.8;
+    float spec      = specSharp + specSoft;
+    // Specular mờ đi khi tan biến (tránh đốm sáng bay lơ lửng)
+    spec *= (1.0 - dissolveT);
+    
+    // ── 4. TỔ HỢP MÀU ─────────────────────────────────────────
+    vec3 color = u_baseColor.rgb * diffuse;
+    
+    // Fresnel rim glow
+    color += fresnel * u_rimStrength * u_baseColor.rgb;
+    
+    // Emissive inner glow
+    color += u_baseColor.rgb * u_emissiveIntensity;
+    
+    // Caustic shimmer lấp lánh
+    color += vec3(shimmer) * mix(vec3(1.0), u_baseColor.rgb, 0.4);
+    
+    // Specular highlight
+    color += vec3(spec);
+    
+    // Dissolve edge glow
+    color = mix(color, dissolveEdgeColor, edgeFactor * 0.7);
+    
+    // ── 5. ALPHA ───────────────────────────────────────────────
+    // Fade toàn cục êm ái ở 15% cuối đời
+    float globalFade = 1.0 - smoothstep(0.85, 1.0, t);
+    float alpha = u_baseColor.a * u_translucency * globalFade;
+    // Dissolve cũng ăn dần alpha ở vùng gần mép
+    alpha *= mix(1.0, 0.4, edgeFactor);
+    
+    finalColor = vec4(color, alpha);
 }

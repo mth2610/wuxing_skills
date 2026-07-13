@@ -266,6 +266,15 @@ bool Entity_IsMeditating(int agentId) {
     return a != NULL && a->isMeditating;
 }
 
+float Entity_GetMeditateProgress(int agentId) {
+    const Agent *a = Entity_GetAgent(agentId);
+    if (a == NULL || !a->isMeditating || MEDITATE_DURATION <= 0.0f) return 0.0f;
+    float p = 1.0f - (a->meditateTimer / MEDITATE_DURATION);
+    if (p < 0.0f) p = 0.0f;
+    if (p > 1.0f) p = 1.0f;
+    return p;
+}
+
 void Entity_SetEquippedSkill(int agentId, int slot, int skillId, int element) {
     if (agentId < 0 || agentId >= MAX_AGENTS) return;
     if (slot < 0 || slot >= AGENT_SKILL_SLOTS) return;
@@ -375,6 +384,13 @@ void Entity_SetElement(int agentId, int element) {
     if (!a->active) return;
     if (element < 0 || element > 4) return;
     a->currentElement = element;
+}
+
+void Entity_SetAgentTeam(int agentId, AgentTeam team) {
+    if (agentId < 0 || agentId >= MAX_AGENTS) return;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return;
+    a->team = team;
 }
 
 float Entity_GetSpeedMult(int agentId) {

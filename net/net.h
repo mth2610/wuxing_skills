@@ -16,7 +16,33 @@
 #include "entities/entities.h" // Agent snapshot fields
 #include <stdbool.h>
 
-#define NET_PROTOCOL_VERSION 2 // v2: intent carries basicAttack (melee)
+#define NET_PROTOCOL_VERSION 3 // v3: multi-peer — roster packet, 8 players
+
+// Team-battle vision (KE_HOACH_TIEP_THEO.md Đợt A): up to 4v4 = 7 remote
+// players + the host. The roster is the host-owned room list — who occupies
+// which slot, on which team, driving which hero agent. Broadcast (reliable)
+// whenever it changes; clients render lobby/team UI from it.
+#define NET_MAX_PLAYERS 8
+
+#define NET_ROSTER_NONE      255  // agentId value: no hero spawned yet
+#define NET_ROSTER_OCCUPIED  0x1  // flags
+#define NET_ROSTER_BOT       0x2  // slot filled by a host-driven bot (Đợt A4)
+#define NET_ROSTER_HOST      0x4  // this slot is the host player
+
+typedef struct {
+    unsigned char slot;    // 0..NET_MAX_PLAYERS-1 (0 = host by convention)
+    unsigned char team;    // 0/1 — maps to AgentTeam ALLY/ENEMY on the host
+    unsigned char agentId; // host-pool hero id, NET_ROSTER_NONE before spawn
+    unsigned char flags;   // NET_ROSTER_* bits
+} NetRosterEntry;
+
+// Pack/unpack the full room roster (host → clients, reliable channel).
+// Returns bytes written (0 on undersized buffer) / entry count (-1 on
+// malformed or version mismatch).
+int Net_PackRoster(const NetRosterEntry *entries, int count,
+                   unsigned char *buf, int maxBytes);
+int Net_UnpackRoster(NetRosterEntry *out, int maxEntries,
+                     const unsigned char *buf, int len);
 
 // --- Client → Host: PlayerIntent ---
 // Returns bytes written (0 on undersized buffer).

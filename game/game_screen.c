@@ -345,6 +345,19 @@ void GameScreen_Draw3D(const PlayerEntity *player) {
                         GetColor(0xFFD39BFF), GetColor(0x3B5998FF), GetColor(0xCCCCCCFF),
                         true, player->position);
     }
+
+    // Meditation VFX component — drawn for every meditating hero (local + remote).
+    // Pure visual; gameplay cancel/regen stays in entities/control.
+    {
+        float t = (float)GetTime();
+        for (int i = 0; i < MAX_AGENTS; i++) {
+            if (!Entity_IsMeditating(i)) continue;
+            const Agent *a = Entity_GetAgent(i);
+            if (!a || a->archetype != ARCH_HERO) continue;
+            Vector3 p = (i == player->agentId) ? player->position : a->position;
+            VFX_ComposeMeditate(p, Entity_GetMeditateProgress(i), t);
+        }
+    }
 }
 
 void GameScreen_DrawHUD(const PlayerEntity *player) {

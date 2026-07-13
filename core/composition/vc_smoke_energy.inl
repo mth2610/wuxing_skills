@@ -233,7 +233,7 @@ void VFX_ComposeGroundSmoke(Vector3 center, float halfSize, float progress,
 // generalize to an arbitrary normal without real surface-following data to
 // sample). `normal` also picks the small anti-z-fighting lift direction
 // (0.03m along normal instead of a hardcoded +Y).
-void VFX_ComposeSmokeOnPlane(Vector3 center, Vector3 normal, float halfSize, float progress)
+void VFX_ComposeSmokeOnPlane(Vector3 center, Vector3 normal, float halfSize, float progress, Color color)
 {
     if (halfSize <= 0.0f)
         return;
@@ -246,7 +246,7 @@ void VFX_ComposeSmokeOnPlane(Vector3 center, Vector3 normal, float halfSize, flo
     rlDisableDepthMask();
     rlDisableBackfaceCulling();
 
-    SmokeShader_SetUniforms((Color){225, 235, 235, 190}, progress, 0.20f, 3.5f, 0.4f, (Vector2){0.0f, 0.0f});
+    SmokeShader_SetUniforms(color, progress, 0.20f, 3.5f, 0.4f, (Vector2){0.0f, 0.0f});
 
     Vector3 n = Vector3Normalize(normal);
     Vector3 lifted = Vector3Add(center, Vector3Scale(n, 0.03f)); // avoid z-fighting with the surface it sits on

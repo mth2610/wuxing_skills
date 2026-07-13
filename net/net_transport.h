@@ -1,22 +1,22 @@
 // net/net_transport.h
-// ENet transport (Module 11, nửa còn lại của net/net.h): peer-hosted 1v1.
-// HOST runs the one true simulation; the CLIENT sends PlayerIntent and
-// mirrors the host's agent pool from snapshots (no prediction in v1 — LAN
-// latency hides it). No other module includes this except main.c (wiring)
-// and game/ (intent submission + connection HUD).
+// Transport (Module 11, nửa còn lại của net/net.h): peer-hosted, multi-peer
+// (protocol v3, up to NET_MAX_PLAYERS = 8 → 4v4). HOST runs the one true
+// simulation; each CLIENT sends PlayerIntent and mirrors the host's agent
+// pool from snapshots. No other module includes this except main.c (wiring)
+// and game/ / ui/ (intent submission, connection HUD, lobby roster).
 //
-//   host:   ./wuxing --host [port]         (default 7777)
-//   client: ./wuxing --join <ip> [port]
+//   LAN:    ./wuxing --host [port]  /  --join <ip> [port]   (ENet, default 7777)
+//   online: ./wuxing --host-online  /  --join-online <code> (EOS backend)
 //
-// v1 model: the remote player spawns on the HOST as a TEAM_ENEMY hero with
-// the default loadout — an asymmetric invasion duel alongside the boss
-// match (a dedicated PvP game state comes later with NET_API.md's next
-// pass). Client-side, the whole local simulation is OFF
-// (Net_ClientDrivesWorld) — snapshots own the pool.
+// Every remote player spawns on the HOST as a hero (team auto-balanced in
+// join order until the lobby screen assigns teams — Đợt A2); the roster
+// packet tells everyone who's who. Client-side, the whole local simulation
+// is OFF (Net_ClientDrivesWorld) — snapshots own the pool.
 #ifndef NET_TRANSPORT_H
 #define NET_TRANSPORT_H
 
 #include "control/control.h" // PlayerIntent
+#include "net/net.h"         // NetRosterEntry, NET_MAX_PLAYERS
 #include <stdbool.h>
 
 typedef enum { NET_MODE_OFF = 0, NET_MODE_HOST, NET_MODE_CLIENT } NetMode;
@@ -47,9 +47,36 @@ bool Net_ClientDrivesWorld(void);
 
 // CLIENT: the host-pool agent id of OUR hero (mirrors 1:1 into the local
 // pool), or -1 before the host assigned it. game/ points the camera/HUD at
-// it. HOST: the remote player's agent id (-1 before a peer joins).
+// it. HOST: the FIRST remote player's agent id (-1 before any peer joins) —
+// kept for the invasion dev mode; team battle reads the roster instead.
 int Net_GetLocalHeroAgentId(void);
 int Net_GetRemoteAgentId(void);
+
+// --- Room roster (protocol v3) ---
+// HOST: built live (slot 0 = host, then peers in join order, then bots).
+// CLIENT: the last roster broadcast received (host rebroadcasts on every
+// change). Returns the number of entries written into out. Lobby UI (Đợt
+// A2) and team battle (Đợt A3) render/derive from this.
+int Net_GetRoster(NetRosterEntry *out, int maxEntries);
+// HOST: connected remote players. CLIENT: 1 while connected, else 0.
+int Net_GetPeerCount(void);
+
+// --- Lobby room management (Đợt A2 — HOST only, no-ops elsewhere) ---
+// rosterIndex = position in Net_GetRoster's output. Toggling a HUMAN entry
+// flips its team (0 ↔ 1) and retags its spawned hero via
+// Entity_SetAgentTeam; toggling a BOT entry moves the bot to the other
+// side. Every change rebroadcasts the roster.
+void Net_HostToggleTeam(int rosterIndex);
+// Add/remove a bot on a side (0/1). Bots are roster metadata until the
+// match starts — Đợt A4's hero-bot brain spawns/drives them host-side.
+void Net_HostAddBot(int team);
+void Net_HostRemoveBot(int team);
+
+// HOST presses BẮT ĐẦU: broadcasts a reliable START to every peer and arms
+// the local flag too. Net_ConsumeMatchStart() returns true exactly once on
+// every instance (host included) — main.c switches lobby → match on it.
+void Net_HostStartMatch(void);
+bool Net_ConsumeMatchStart(void);
 
 // --- Match outcome sync ---
 // HOST: game/ reports its GameState each frame; the transport sends it on

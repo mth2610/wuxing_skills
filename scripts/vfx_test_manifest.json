@@ -591,7 +591,7 @@
       "category": "util",
       "_auto": true,
       "type": "continuous",
-      "draw_call": "VFX_ComposeSmokeOnPlane($POS, (Vector3){1.0f, 0.0f, 0.0f}, 1.5f, fminf($PROG, 0.99f))"
+      "draw_call": "VFX_ComposeSmokeOnPlane($POS, (Vector3){1.0f, 0.0f, 0.0f}, 1.5f, fminf($PROG, 0.99f), WHITE)"
     },
     {
       "fn": "VFX_ComposeMagicFilaments",
@@ -622,6 +622,22 @@
       "category": "util",
       "type": "oneshot",
       "trigger_call": "VFX_ComposeCrownSplash($POS, 1.8f, 1.2f, 0.5f, VC_MAT_WATER)"
+    },
+    {
+      "fn": "VFX_ComposeChainLink",
+      "label": "CHAIN LINK",
+      "category": "util",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeChainLink(VC_MAT_FIRE, $POS, Vector3Add($POS, (Vector3){3.0f, 0, 0}), 0.1f, 1.0f, fminf($PROG, 0.99f), $TIME)"
+    },
+    {
+      "fn": "VFX_ComposeMeditate",
+      "label": "MEDITATE",
+      "category": "util",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeMeditate($POS, fminf($PROG, 0.99f), $TIME)"
     }
   ],
   "overrides": {

@@ -532,6 +532,28 @@ static AutoTestResult AutoTest_NetWireStep(int frameInCase, char *outReason, int
   }
   ok = ok && AutoTest_ExpectTrue(found, "probe agent fields survive snapshot", outReason, outReasonSize);
 
+  // Roster round trip (protocol v3 — multi-peer room list).
+  NetRosterEntry roster[3] = {
+    { 0, 0, 12, NET_ROSTER_OCCUPIED | NET_ROSTER_HOST },
+    { 1, 1, 34, NET_ROSTER_OCCUPIED },
+    { 5, 0, NET_ROSTER_NONE, NET_ROSTER_OCCUPIED | NET_ROSTER_BOT },
+  };
+  unsigned char rbuf[64];
+  int rlen = Net_PackRoster(roster, 3, rbuf, (int)sizeof(rbuf));
+  ok = ok && AutoTest_ExpectTrue(rlen > 0, "roster packed", outReason, outReasonSize);
+  NetRosterEntry rout[NET_MAX_PLAYERS];
+  int rn = Net_UnpackRoster(rout, NET_MAX_PLAYERS, rbuf, rlen);
+  ok = ok && AutoTest_ExpectTrue(rn == 3, "roster unpacked 3 entries", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(rn == 3 &&
+                                 rout[0].flags == (NET_ROSTER_OCCUPIED | NET_ROSTER_HOST) &&
+                                 rout[1].slot == 1 && rout[1].team == 1 && rout[1].agentId == 34 &&
+                                 rout[2].agentId == NET_ROSTER_NONE &&
+                                 (rout[2].flags & NET_ROSTER_BOT) != 0,
+                                 "roster fields survive", outReason, outReasonSize);
+  rbuf[2] = (unsigned char)(NET_PROTOCOL_VERSION + 1);
+  ok = ok && AutoTest_ExpectTrue(Net_UnpackRoster(rout, NET_MAX_PLAYERS, rbuf, rlen) < 0,
+                                 "roster version mismatch rejected", outReason, outReasonSize);
+
   Entity_ApplyDamage(probe, 1e9f, (Vector3){ 0 });
   return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
 }
