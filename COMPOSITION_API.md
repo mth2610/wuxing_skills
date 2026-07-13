@@ -169,6 +169,8 @@ Tự gán shader, texture, vật liệu và quản lý blend mode / Z-buffer ph�
 - `VFX_ComposeCast`: Sinh hiệu ứng tụ khí theo ElementPresetType.
 - `VFX_ComposeProjectileTrail`: Sinh vệt đạn bay theo ElementPresetType.
 - `VFX_ComposeWaterStream`: Dựng dòng nước cuộn trào dạng ống Bezier mềm mại uốn lượn sử dụng shader `tube.fs` và texture `water_caustics.png` trong chế độ `BLEND_ALPHA`.
+- `VFX_BeginWaterStreams` / `VFX_DrawWaterStreamOnPath` / `VFX_EndWaterStreams`: Bộ ba hàm vẽ dòng nước uốn lượn theo các khúc cua của một đường đi (path) bất kỳ. Hỗ trợ gom tất cả các dòng nước vẽ trong 1 Draw Call duy nhất trên GPU (Single-Pass Batching) và hỗ trợ lệch pha (`phaseOffset`) độc lập cho từng dòng nước để chuyển động tự nhiên không trùng khớp.
+- `VFX_ComposeWaterStreamOnPath`: Hàm tiện ích tự động đóng gói chuỗi gọi Begin -> Draw -> End cho một dòng nước duy nhất đi dọc theo path.
 - `VFX_ComposeGlowingVine`: Dựng dải dây leo phát sáng ngọc bích tự động bò và xoắn ốc quấn chặt lấy mục tiêu. Thực hiện vẽ 2-pass (pass 1 ngọc bích trong suốt phát quang viền Fresnel qua `Material_LoadCustom`, pass 2 lõi sáng trắng tăng cường chế độ cộng màu `BLEND_ADDITIVE`).
 - `VFX_ComposeProjectile(VC_MaterialId, ...)`: Vẽ đạn bay theo nguyên tố với đầy đủ hiệu ứng tích hợp (lõi cầu, vệt đuôi hạt, ánh sáng tỏa, tự xoay). 6 material có biến thể cấu trúc riêng (FIRE cầu lửa, ICE mảnh băng xoay, LIGHTNING tia sét, WOOD hạt mầm, EARTH đá xoay, TAIJI lưỡng nghi); material khác rơi về orb generic (lõi `soft` + vỏ `body` + hạt từ `grad`).
 - `VFX_GroundPattern`: Tạo hoa văn pháp trận trên mặt đất dạng Quad ngang tắt Culling (đất nứt, vòng ma thuật xoay, nham thạch sủi bọt, sương băng, gai mọc, chữ rune cổ).

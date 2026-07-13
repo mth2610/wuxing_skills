@@ -150,6 +150,17 @@ void ProceduralMesh_BuildTube(TubeMeshData *out, Vector3 p0, Vector3 p1,
                               int radialSegs, const TubeMeshConfig *cfg);
 
 /*
+ * Build tube chạy dọc theo một phân đoạn từ startT đến endT của một đường đi (path)
+ * gồm nhiều điểm (pathPoints). Tự động tính toán Frenet frame và deform.
+ */
+void ProceduralMesh_BuildTubeAlongPath(TubeMeshData *out, const Vector3 *pathPoints,
+                                      int pathCount, float baseRadius,
+                                      float startT, float endT, float time,
+                                      int segments, int radialSegs,
+                                      const TubeMeshConfig *cfg);
+
+
+/*
  * Vẽ tube đã build: quad strip dọc thân + 2 end-cap triangle fan (đuôi + đầu).
  * Phải gọi giữa BeginShaderMode()/EndShaderMode() và
  * rlColor4ub(255,255,255,255) đã được set trước đó theo quy tắc 9.1 trong API

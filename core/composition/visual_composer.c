@@ -52,9 +52,7 @@
 #include "vc_beam.inl"
 #include "vc_path.inl"
 #include "vc_summon.inl"
-#include "vc_aura.inl"
 #include "vc_cylinder_aura.inl"
-#include "vc_meditate.inl" // VFX_ComposeMeditate (after vc_aura — reuses VFX_ComposeAura)
 
 // Phase 3 archetypes
 #include "vc_shield.inl"
@@ -68,7 +66,6 @@
 #include "vc_chain_link.inl"
 #include "vc_ground_aura.inl"
 #include "vc_smoke_energy.inl"
-#include "vc_wisp_smoke.inl"
 // @gen:vc_includes end
 
 void VFX_Compose_Update(float dt) { VC_Archetype_Update(dt); }

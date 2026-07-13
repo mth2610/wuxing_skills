@@ -31,14 +31,17 @@
       "VFX_BeginMagicFilamentsBatch",
       "VFX_EndMagicFilamentsBatch",
       "VFX_BeginSmokeColumnBatch",
-      "VFX_EndSmokeColumnBatch"
+      "VFX_EndSmokeColumnBatch",
+      "VFX_BeginWaterStreams",
+      "VFX_EndWaterStreams"
     ],
     "complex_multi_arg": [
       "VFX_ComposeTriggerImpactBurst",
       "VFX_ChainLightning",
       "VFX_ComposePathMistWave",
       "VFX_PathWave",
-      "VFX_ComposePathLink"
+      "VFX_ComposePathLink",
+      "VFX_DrawWaterStreamOnPath"
     ]
   },
   "entries": [
@@ -486,13 +489,6 @@
       "draw_call": "VFX_ComposeProjectile(VC_MAT_FIRE, $POS, Vector3Add($POS, (Vector3){3, 0, 0}), $PROG, 0.3f, $TIME)"
     },
     {
-      "fn": "VFX_ComposeAura",
-      "label": "AURA",
-      "category": "util",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeAura(VC_MAT_FIRE, $POS, 1.0f, $TIME)"
-    },
-    {
       "fn": "VFX_GroundPattern",
       "label": "GND PATTERN",
       "category": "util",
@@ -633,23 +629,20 @@
       "draw_call": "VFX_ComposeChainLink(VC_MAT_FIRE, $POS, Vector3Add($POS, (Vector3){3.0f, 0, 0}), 0.1f, 1.0f, fminf($PROG, 0.99f), $TIME)"
     },
     {
-      "fn": "VFX_ComposeMeditate",
-      "label": "MEDITATE",
-      "category": "util",
-      "_auto": true,
+      "fn": "VFX_ComposeWaterStreamOnPath",
+      "label": "WATER STREAM ON PATH",
+      "category": "water",
       "type": "continuous",
-      "draw_call": "VFX_ComposeMeditate($POS, fminf($PROG, 0.99f), $TIME)"
-    },
-    {
-      "fn": "VFX_ComposeWispSmoke",
-      "label": "WISP SMOKE",
-      "category": "util",
-      "_auto": true,
-      "type": "continuous",
-      "draw_call": "VFX_ComposeWispSmoke(VC_MAT_FIRE, $POS, 0.1f, (Vector3){1.0f, 0.0f, 0.0f}, 1.0f, 1.0f, 1.0f, 1.0f, $TIME)"
+      "draw_call": "VFX_ComposeWaterStreamOnPath((Vector3[]){ $POS, Vector3Add($POS, (Vector3){2.0f, 1.0f, -1.0f}), Vector3Add($POS, (Vector3){4.0f, 2.0f, 1.0f}), Vector3Add($POS, (Vector3){6.0f, 0.0f, 0.0f}) }, 4, 0.25f, $PROG * 1.2f, 0.25f, $TIME)"
     }
   ],
   "overrides": {
+    "VFX_ComposeWaterStreamOnPath": {
+      "label": "WATER STREAM ON PATH",
+      "category": "water",
+      "type": "continuous",
+      "draw_call": "{ static bool splashed = false; if ($PROG < 0.05f) splashed = false; if ($PROG >= 0.83f && !splashed) { VFX_ComposeSplashBurst(s_testPathPoints[15], 1.2f); splashed = true; } VFX_ComposeWaterStreamOnPath(s_testPathPoints, 16, 0.25f, $PROG * 1.2f, 0.25f, $TIME); }"
+    },
     "VFX_ComposeMagicFilaments": {
       "draw_call": "VFX_ComposeMagicFilaments($POS, 1.5f, fminf($PROG, 0.99f), (Color){100, 200, 255, 200}, 0.8f, 3.5f, 4.0f, (Vector2){0.0f, 0.0f})"
     },

@@ -20,6 +20,10 @@ struct ParticleConfig {
   float radius;
   float lifetime;
 
+  float rotation;
+  float angularVelocity;
+  float velocityInheritance;
+
   // ForceField tùy chọn: NULL = không dùng; non-NULL = apply force field mỗi
   // frame
   const ForceField *forceField;

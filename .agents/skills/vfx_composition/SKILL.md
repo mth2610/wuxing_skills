@@ -25,6 +25,11 @@ This agent is strictly dedicated to designing, tuning, and optimizing visual com
   - `environment/` (environmental shadows/light calculation logic)
   - `build/`, `_deps/`, `third_party/`, `android.wuxing_skills/`
 
+### Strict Core API Adherence Rules:
+1. **Never reinvent core functionality:** Strictly reuse the existing core structures and systems (like the Particle system, Trail system, Ribbon, Flow map, Procedural Mesh system, and visual compositions) instead of writing custom drawing loops or direct raw OpenGL calls inside skill compositions.
+2. **Do not write ad-hoc helper logic:** Do not create custom wrappers or duplicate rendering mathematics in visual composition files.
+3. **Core Extension Procedure:** If a specific VFX requires features that the core systems currently lack (e.g., custom particle behaviors, new geometric shapes, or advanced texture mapping modes), the agent **must not** implement them as ad-hoc code in the composition layer. Instead, it must propose/request/implement the necessary extension directly in the core system files (`core/`) and update `CORE_API.md` and related documentation to keep the engine unified and modular.
+
 ---
 
 ## 2. Visual Composition Architecture Reference
@@ -104,3 +109,12 @@ Ensure no two skill casts look identical by applying randomization inside the sp
 1. **Yaw/Rotation:** Rotate the model matrix randomly `(0..360)` degrees on the Y-axis.
 2. **Scale Jitter:** Perturb the scale dynamically by a factor of `(0.85f - 1.15f)` on creation.
 3. **Wobble/Animation Phase:** Generate a random phase offset float `(0.0f - 10.0f)` and pass it as a custom uniform (e.g., `u_customParam2`) to shift vertex shader wave functions out of synchronization.
+
+---
+
+## 8. Token Efficiency & Terse Response Rules (MANDATORY)
+1. **Never read a whole file when only part is needed:** Use view range or grep rather than reading the entire file.
+2. **Never re-read files:** Do not re-read files that have already been read or analyzed during this session.
+3. **No whole file dumping:** Never output the entire content of a file in the response. Only cite snippets or lines.
+4. **Terse Response Style:** Respond in English (highly token-efficient), be extremely concise, do not restate the prompt, do not write polite preambles or long concluding summaries.
+5. **Batch Tool Calls:** Make parallel/batched read or search requests where possible rather than sequential steps.

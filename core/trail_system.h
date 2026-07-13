@@ -53,8 +53,16 @@ typedef enum {
   TRAIL_TYPE_FOLLOWER = 3
 } TrailType;
 
+typedef enum {
+  TRAIL_WIDTH_ENVELOPE_UNIFORM = 0,
+  TRAIL_WIDTH_ENVELOPE_TAPER_TAIL = 1,
+  TRAIL_WIDTH_ENVELOPE_TAPER_BOTH = 2,
+  TRAIL_WIDTH_ENVELOPE_PULSE = 3
+} TrailWidthEnvelopeType;
+
 typedef void (*TrailUpdateCallback)(int trailId, float dt);
 typedef void (*TrailDeathCallback)(Vector3 pos, float scale);
+typedef bool (*TrailCollisionCheckCallback)(int trailId, Vector3 currentPos);
 
 typedef struct {
   TrailType type;
@@ -95,6 +103,14 @@ typedef struct {
   Vector3 orbitAxis;
   float orbitPhase;
   BlendMode blendMode;
+
+  // 5 New Upgrades configuration
+  TrailCollisionCheckCallback collisionCheck;
+  float uvTiling;
+  float uvScrollSpeed;
+  float minVertexDistance;
+  TrailWidthEnvelopeType widthEnvelope;
+  bool smoothSpline;
 
   // Unified Config representation (Phase 3)
   VFX_GeneralConfig general;
@@ -185,6 +201,7 @@ typedef struct {
   // Non-NULL: tip position driven each frame by Vector3Transform(attachLocalOffset, *attachedTransform).
   // Caller owns the Matrix and must keep it valid for the trail's lifetime.
   const Matrix *attachedTransform;
+  TrailCollisionCheckCallback collisionCheck;
 
   // 2. Mảng và Struct lớn (Vectors)
   Vector3 history[TRAIL_HISTORY_COUNT];
@@ -224,6 +241,10 @@ typedef struct {
   float orbitSpeed;
   float orbitPhase;
   Vector3 orbitAxis;
+  float uvTiling;
+  float uvScrollSpeed;
+  float uvScrollOffset;
+  float minVertexDistance;
 
   // 5. Số nguyên và Enum (Int/Enum) - 4 bytes
   TrailType type;
@@ -233,9 +254,11 @@ typedef struct {
   int ownerTag;
   int nextFree;
   BlendMode blendMode;
+  TrailWidthEnvelopeType widthEnvelope;
 
   // 6. Kiểu Boolean - 1 byte
   bool active;
+  bool smoothSpline;
 } TrailEntity;
 
 void TrailSystem_SetGlobalTexture(Texture2D tex);

@@ -110,6 +110,117 @@ void ProceduralMesh_BuildTube(TubeMeshData *out, Vector3 p0, Vector3 p1,
     }
 }
 
+static void SamplePathPositionAndTangent(const Vector3 *path, int pathCount, float t, Vector3 *outPos, Vector3 *outTangent) {
+    if (pathCount <= 0) return;
+    if (pathCount == 1) {
+        *outPos = path[0];
+        *outTangent = (Vector3){0.0f, 1.0f, 0.0f};
+        return;
+    }
+    
+    float segLengths[128];
+    float totalLength = 0.0f;
+    int limit = pathCount - 1;
+    if (limit > 127) limit = 127;
+    
+    for (int i = 0; i < limit; i++) {
+        segLengths[i] = Vector3Distance(path[i], path[i+1]);
+        totalLength += segLengths[i];
+    }
+    
+    if (totalLength <= 0.0f) {
+        *outPos = path[0];
+        *outTangent = (Vector3){0.0f, 1.0f, 0.0f};
+        return;
+    }
+    
+    float targetDist = t * totalLength;
+    float currentDist = 0.0f;
+    
+    for (int i = 0; i < limit; i++) {
+        if (currentDist + segLengths[i] >= targetDist) {
+            float localT = (segLengths[i] > 0.0f) ? ((targetDist - currentDist) / segLengths[i]) : 0.0f;
+            *outPos = Vector3Lerp(path[i], path[i+1], localT);
+            *outTangent = Vector3Normalize(Vector3Subtract(path[i+1], path[i]));
+            return;
+        }
+        currentDist += segLengths[i];
+    }
+    
+    *outPos = path[pathCount - 1];
+    *outTangent = Vector3Normalize(Vector3Subtract(path[pathCount - 1], path[pathCount - 2]));
+}
+
+void ProceduralMesh_BuildTubeAlongPath(TubeMeshData *out, const Vector3 *pathPoints,
+                                      int pathCount, float baseRadius,
+                                      float startT, float endT, float time,
+                                      int segments, int radialSegs,
+                                      const TubeMeshConfig *cfg) {
+    if (out == NULL || pathPoints == NULL || pathCount <= 0) return;
+
+    TubeMeshConfig defaultCfg;
+    if (cfg == NULL) { defaultCfg = ProceduralMesh_DefaultTubeConfig(); cfg = &defaultCfg; }
+
+    if (segments > TUBE_MESH_MAX_SEGMENTS) segments = TUBE_MESH_MAX_SEGMENTS;
+    if (radialSegs > TUBE_MESH_MAX_RADIAL) radialSegs = TUBE_MESH_MAX_RADIAL;
+    out->segments = segments;
+    out->radialSegs = radialSegs;
+    out->tailApexFactor = cfg->tailApexFactor;
+    out->headApexFactor = cfg->headApexFactor;
+
+    float sinPhi[TUBE_MESH_MAX_RADIAL];
+    float cosPhi[TUBE_MESH_MAX_RADIAL];
+    for (int j = 0; j < radialSegs; j++) {
+        float phi = (float)j * (2.0f * PI) / (float)radialSegs;
+        sinPhi[j] = sinf(phi); cosPhi[j] = cosf(phi);
+    }
+
+    for (int i = 0; i <= segments; i++) {
+        float t = (float)i / (float)segments;
+        float currentT = startT + t * (endT - startT);
+        if (currentT < 0.0f) currentT = 0.0f;
+        if (currentT > 1.0f) currentT = 1.0f;
+
+        Vector3 pos;
+        Vector3 tangent;
+        SamplePathPositionAndTangent(pathPoints, pathCount, currentT, &pos, &tangent);
+
+        Vector3 up = (Vector3){0.0f, 1.0f, 0.0f};
+        if (fabsf(tangent.y) > 0.99f) up = (Vector3){1.0f, 0.0f, 0.0f};
+        Vector3 right = Vector3Normalize(Vector3CrossProduct(up, tangent));
+        up = Vector3CrossProduct(tangent, right);
+
+        float baseCapsule = 0.3f + 0.7f * sqrtf(fmaxf(0.0f, sinf(t * PI))) * cfg->capsuleTailExp;
+        float tailTaper = cfg->tailTaperMin + (cfg->tailTaperMax - cfg->tailTaperMin) * t;
+        float capsuleCurve = baseCapsule * tailTaper;
+        float headWeight = 1.0f + cfg->headGrowth * t;
+
+        if (i == 0) { out->tailTangent = tangent; out->tailCenter = pos; }
+        if (i == segments) { out->headTangent = tangent; out->headCenter = pos; }
+
+        float wobble = cfg->wobbleAmplitude * sinf(t * PI * cfg->wobbleFrequency + time * cfg->wobbleSpeed);
+        Vector3 twistedUp = Vector3Add(Vector3Scale(up, cosf(wobble)), Vector3Scale(right, sinf(wobble)));
+        Vector3 twistedRight = Vector3Normalize(Vector3CrossProduct(twistedUp, tangent));
+
+        for (int j = 0; j < radialSegs; j++) {
+            Vector3 normal = Vector3Add(Vector3Scale(twistedRight, cosPhi[j]), Vector3Scale(twistedUp, sinPhi[j]));
+            out->normals[i][j] = normal;
+
+            float phi = (float)j * (2.0f * PI) / (float)radialSegs;
+            float deform1 = sinf(t * cfg->deform1FreqT + phi * cfg->deform1FreqPhi + time * cfg->deform1Speed);
+            float deform2 = sinf(t * cfg->deform2FreqT - phi * cfg->deform2FreqPhi - time * cfg->deform2Speed);
+            float deform = 1.0f + deform1 * cfg->deform1Amp + deform2 * cfg->deform2Amp;
+
+            float finalRadius = baseRadius * capsuleCurve * headWeight * deform;
+            out->rings[i][j] = Vector3Add(pos, Vector3Scale(normal, finalRadius));
+        }
+
+        if (i == 0) out->tailRadius = baseRadius * capsuleCurve * headWeight;
+        if (i == segments) out->headRadius = baseRadius * capsuleCurve * headWeight;
+    }
+}
+
+
 void ProceduralMesh_DrawTube(const TubeMeshData *data, float uvLengthScale) {
     if (data == NULL) return;
 

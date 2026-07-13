@@ -1,6 +1,7 @@
 #include "particle_system.h"
 #include "raymath.h"
 #include "rlgl.h"
+#include "core/utils_math.h"
 #include <string.h>
 #include <math.h>
 
@@ -15,6 +16,9 @@ typedef struct
   float vx, vy, vz;
   float lifetime;
   float maxLifetime;
+
+  float rotation;
+  float angularVelocity;
 
   // --- WARM DATA (Dùng lúc vẽ) ---
   Color colorStart;
@@ -122,6 +126,8 @@ void SpawnParticle(ParticleConfig config)
   p->speedCurve = config.speedCurve;
   p->alphaCurve = config.alphaCurve;
   p->emissiveCurve = config.emissiveCurve;
+  p->rotation = config.rotation;
+  p->angularVelocity = config.angularVelocity;
   p->active = true;
 
   if (config.onDeathEmit && config.onDeathEmitCount > 0)
@@ -166,6 +172,7 @@ void UpdateParticles(float dt)
     ParticleInternal *p = &g_Particles[i];
 
     p->lifetime -= dt;
+    p->rotation += p->angularVelocity * dt;
 
     if (p->lifetime <= 0.0f)
     {
@@ -175,10 +182,15 @@ void UpdateParticles(float dt)
         {
           ParticleConfig tempChild = p->onDeathConfig;
           tempChild.position = (Vector3){p->x, p->y, p->z};
-          // Tối ưu hàm random tránh gọi GetRandomValue quá nặng
-          tempChild.velocity.x += (float)(GetRandomValue(-80, 80));
-          tempChild.velocity.y += (float)(GetRandomValue(-80, 80));
-          tempChild.velocity.z += (float)(GetRandomValue(-80, 80));
+          // Thừa hưởng vận tốc từ hạt mẹ (velocity inheritance)
+          tempChild.velocity.x += p->vx * p->onDeathConfig.velocityInheritance;
+          tempChild.velocity.y += p->vy * p->onDeathConfig.velocityInheritance;
+          tempChild.velocity.z += p->vz * p->onDeathConfig.velocityInheritance;
+
+          // Sử dụng float random nhanh qua Random01() thay cho GetRandomValue chậm
+          tempChild.velocity.x += (Random01() * 160.0f - 80.0f);
+          tempChild.velocity.y += (Random01() * 160.0f - 80.0f);
+          tempChild.velocity.z += (Random01() * 160.0f - 80.0f);
           SpawnParticle(tempChild);
         }
       }
@@ -191,13 +203,36 @@ void UpdateParticles(float dt)
       p->onLiveEmitTimer += dt;
       float spawnInterval = 1.0f / p->onLiveEmitRate;
       int safetyCounter = 0;
+      float totalT = p->onLiveEmitTimer;
+
+      float speedMul = 1.0f;
+      if (p->speedCurve)
+      {
+        float ageT = 1.0f - Clamp(p->lifetime / p->maxLifetime, 0.0f, 1.0f);
+        speedMul = SkillCurve_Eval(p->speedCurve, ageT);
+      }
+      float stepX = p->vx * dt * speedMul;
+      float stepY = p->vy * dt * speedMul;
+      float stepZ = p->vz * dt * speedMul;
 
       while (p->onLiveEmitTimer >= spawnInterval && safetyCounter < 10)
       {
-        // Tránh dùng fmodf ở đây vì phép chia float rất đắt đỏ
         p->onLiveEmitTimer -= spawnInterval;
-        p->onLiveConfig.position = (Vector3){p->x, p->y, p->z};
-        SpawnParticle(p->onLiveConfig);
+        float t = (totalT - p->onLiveEmitTimer) / totalT;
+
+        ParticleConfig tempLive = p->onLiveConfig;
+        tempLive.position = (Vector3){
+            p->x - stepX * (1.0f - t),
+            p->y - stepY * (1.0f - t),
+            p->z - stepZ * (1.0f - t)
+        };
+
+        // Thừa hưởng vận tốc từ hạt mẹ (velocity inheritance)
+        tempLive.velocity.x += p->vx * tempLive.velocityInheritance;
+        tempLive.velocity.y += p->vy * tempLive.velocityInheritance;
+        tempLive.velocity.z += p->vz * tempLive.velocityInheritance;
+
+        SpawnParticle(tempLive);
         safetyCounter++;
       }
       if (p->onLiveEmitTimer >= spawnInterval)
@@ -242,6 +277,26 @@ void UpdateParticles(float dt)
   }
 }
 
+static float s_particleDepths[MAX_PARTICLES];
+
+static void SortParticlesByDepth(int *ids, int count, const float *depths)
+{
+  for (int gap = count / 2; gap > 0; gap /= 2)
+  {
+    for (int i = gap; i < count; i++)
+    {
+      int temp = ids[i];
+      float tempDepth = depths[temp];
+      int j;
+      for (j = i; j >= gap && depths[ids[j - gap]] > tempDepth; j -= gap)
+      {
+        ids[j] = ids[j - gap];
+      }
+      ids[j] = temp;
+    }
+  }
+}
+
 void DrawParticles(Camera3D camera, Texture2D texture)
 {
   if (s_activeCount == 0)
@@ -274,6 +329,21 @@ void DrawParticles(Camera3D camera, Texture2D texture)
                 viewDir.z * right.x - viewDir.x * right.z,
                 viewDir.x * right.y - viewDir.y * right.x};
 
+  // Sắp xếp các hạt từ xa đến gần (Back-to-Front Depth Sorting)
+  for (int a = 0; a < s_activeCount; a++)
+  {
+    int idx = s_activeIds[a];
+    ParticleInternal *p = &g_Particles[idx];
+    s_particleDepths[idx] = p->x * viewDir.x + p->y * viewDir.y + p->z * viewDir.z;
+  }
+  SortParticlesByDepth(s_activeIds, s_activeCount, s_particleDepths);
+
+  // Đồng bộ lại s_slotListIndex do thứ tự trong s_activeIds đã thay đổi sau khi sắp xếp
+  for (int a = 0; a < s_activeCount; a++)
+  {
+    s_slotListIndex[s_activeIds[a]] = a;
+  }
+
   rlSetTexture(texture.id);
   rlBegin(RL_QUADS);
 
@@ -296,7 +366,6 @@ void DrawParticles(Camera3D camera, Texture2D texture)
     }
     else
     {
-      // Ép kiểu Fast Int Lerp thay vì float rườm rà
       c.r = (unsigned char)((int)p->colorStart.r * lifeRatio + (int)p->colorEnd.r * invRatio);
       c.g = (unsigned char)((int)p->colorStart.g * lifeRatio + (int)p->colorEnd.g * invRatio);
       c.b = (unsigned char)((int)p->colorStart.b * lifeRatio + (int)p->colorEnd.b * invRatio);
@@ -327,23 +396,48 @@ void DrawParticles(Camera3D camera, Texture2D texture)
       drawRadius *= SkillCurve_Eval(p->radiusCurve, invRatio);
     }
 
-    // Tiền tính toán trước các góc của Quad để tránh tính toán lại phép nhân vector 4 lần
     float rx = right.x * drawRadius, ry = right.y * drawRadius, rz = right.z * drawRadius;
     float ux = up.x * drawRadius, uy = up.y * drawRadius, uz = up.z * drawRadius;
+
+    // Xoay hạt quanh trục hướng camera (Billboard-space 2D Rotation)
+    if (p->rotation != 0.0f)
+    {
+      float cosT = cosf(p->rotation);
+      float sinT = sinf(p->rotation);
+
+      float rxRot = (right.x * cosT + up.x * sinT) * drawRadius;
+      float ryRot = (right.y * cosT + up.y * sinT) * drawRadius;
+      float rzRot = (right.z * cosT + up.z * sinT) * drawRadius;
+
+      float uxRot = (-right.x * sinT + up.x * cosT) * drawRadius;
+      float uyRot = (-right.y * sinT + up.y * cosT) * drawRadius;
+      float uzRot = (-right.z * sinT + up.z * cosT) * drawRadius;
+
+      rx = rxRot; ry = ryRot; rz = rzRot;
+      ux = uxRot; uy = uyRot; uz = uzRot;
+    }
+
+    // Đọc UV từ hoạt cảnh Sprite sheet atlas
+    Rectangle uv = { 0.0f, 0.0f, 1.0f, 1.0f };
+    if (p->spriteAnim)
+    {
+      float age = p->maxLifetime - p->lifetime;
+      uv = SpriteAnim_CalculateUV(p->spriteAnim, age, NULL);
+    }
 
     rlColor4ub(c.r, c.g, c.b, c.a);
 
     // TL
-    rlTexCoord2f(0.0f, 0.0f);
+    rlTexCoord2f(uv.x, uv.y);
     rlVertex3f(p->x + rx - ux, p->y + ry - uy, p->z + rz - uz);
     // BL
-    rlTexCoord2f(0.0f, 1.0f);
+    rlTexCoord2f(uv.x, uv.y + uv.height);
     rlVertex3f(p->x + rx + ux, p->y + ry + uy, p->z + rz + uz);
     // BR
-    rlTexCoord2f(1.0f, 1.0f);
+    rlTexCoord2f(uv.x + uv.width, uv.y + uv.height);
     rlVertex3f(p->x - rx + ux, p->y - ry + uy, p->z - rz + uz);
     // TR
-    rlTexCoord2f(1.0f, 0.0f);
+    rlTexCoord2f(uv.x + uv.width, uv.y);
     rlVertex3f(p->x - rx - ux, p->y - ry - uy, p->z - rz - uz);
   }
 
@@ -366,8 +460,6 @@ void ParticleSystem_GetStats(int *active, int *max)
 #ifndef PI
 #define PI 3.1415926535f
 #endif
-
-#include "core/utils_math.h"
 
 void ParticleSystem_SpawnRadialBurst(Vector3 origin, float sizeScale, const ParticleRadialBurstConfig *cfg)
 {

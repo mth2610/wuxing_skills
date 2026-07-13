@@ -275,8 +275,16 @@ typedef enum {
     TRAIL_TYPE_FOLLOWER     // Manually driven. Follows coordinates bound by skill code
 } TrailType;
 
+typedef enum {
+    TRAIL_WIDTH_ENVELOPE_UNIFORM = 0, // Uniform width multiplier (1.0)
+    TRAIL_WIDTH_ENVELOPE_TAPER_TAIL = 1, // Needle tail (segRatio ^ 1.2)
+    TRAIL_WIDTH_ENVELOPE_TAPER_BOTH = 2, // Needle head & tail (leaf shape)
+    TRAIL_WIDTH_ENVELOPE_PULSE       = 3  // Breathing wave along path
+} TrailWidthEnvelopeType;
+
 typedef void (*TrailUpdateCallback)(int trailId, float dt);
 typedef void (*TrailDeathCallback)(Vector3 pos, float scale);
+typedef bool (*TrailCollisionCheckCallback)(int trailId, Vector3 currentPos);
 
 typedef struct {
     TrailType type;
@@ -300,6 +308,14 @@ typedef struct {
     const ColorGradient *gradient;
     const SpriteAnim *spriteAnim;
     VFXPriority priority;   // core/vfx_light.h enum. Default 0 (VFX_PRIORITY_LOW) from {0} init.
+    
+    // 5 New Upgrades configuration
+    TrailCollisionCheckCallback collisionCheck; // Custom dynamic collision test
+    float uvTiling;          // Texture repeat count along path (defaults to 1.0f if 0)
+    float uvScrollSpeed;     // UV offset shift speed (V-coordinate units/sec)
+    float minVertexDistance; // Min distance before inserting new history node (0 = every frame)
+    TrailWidthEnvelopeType widthEnvelope; // Shape envelope along path length
+    bool smoothSpline;       // Enable Catmull-Rom spline interpolation (min 30 vertices)
 } TrailConfig;
 ```
 * **`priority` (CORE_ISSUES.md Item 12):** additive field — `TrailConfig cfg = {0};` still compiles and defaults to `VFX_PRIORITY_LOW`, so this is backward compatible (unlike `VFXLight_Spawn`'s signature change above). Set `cfg.priority = VFX_PRIORITY_HIGH_ULTIMATE;` for a cast that must not silently lose its trail to pool pressure.
@@ -326,6 +342,17 @@ typedef struct {
   TrailConfig cfg = {0};
   cfg.type = TRAIL_TYPE_PROJECTILE;
   cfg.wobbleAmplitudeOverride = 0.001f; // near-zero wobble
+  cfg.curveRangeOverride = 1.0f;        // snaps to target direction almost immediately
+  ```
+  Leave both at `0` (default from `{0}` zero-init) to keep the existing global-macro behavior — fully backward compatible.
+* **New 5 Upgrades Features:**
+  - **`uvTiling` & `uvScrollSpeed`:** Enables automatic texture coordinates scrolling along the trail path length. E.g., `cfg.uvTiling = 2.0f; cfg.uvScrollSpeed = 1.5f;` tiles the texture 2 times and scrolls it at 1.5 units/sec.
+  - **`widthEnvelope`:** Modifies the shape of the trail using `TrailWidthEnvelopeType`. E.g., `TRAIL_WIDTH_ENVELOPE_TAPER_BOTH` creates a double-pointed long leaf shape. `TRAIL_WIDTH_ENVELOPE_PULSE` generates breathing waves.
+  - **`minVertexDistance`:** Optimizes performance by filtering node insertion. A new node is only recorded in history if the head moves at least `minVertexDistance` (world units) away from the last node.
+  - **`smoothSpline`:** Smooths out segments via Catmull-Rom spline interpolation if `historyCount >= 4`. Dense points (minimum 30) are interpolated dynamically to avoid angular corners at low FPS.
+  - **`collisionCheck`:** Accepts a custom callback `collisionCheck(trailId, pos)`. For `TRAIL_TYPE_PROJECTILE`, if this callback returns `true`, it immediately triggers a collision impact hit (`onDeath`) and transitions to the follower decay stage.
+
+--- wobble
   cfg.curveRangeOverride = 1.0f;        // snaps to target direction almost immediately
   ```
   Leave both at `0` (default from `{0}` zero-init) to keep the existing global-macro behavior — fully backward compatible.
@@ -994,6 +1021,19 @@ void ProceduralMesh_BuildTube(
 void ProceduralMesh_DrawTube(
     const TubeMeshData *data,
     float uvLengthScale
+);
+
+void ProceduralMesh_BuildTubeAlongPath(
+    TubeMeshData *out,
+    const Vector3 *pathPoints,
+    int pathCount,
+    float baseRadius,
+    float startT,
+    float endT,
+    float time,
+    int segments,
+    int radialSegs,
+    const TubeMeshConfig *cfg
 );
 ```
 Rules:

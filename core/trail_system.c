@@ -72,6 +72,79 @@ static inline float ComputeWispStyleTaper(float segRatio)
          SmoothStepC(1.0f, TRAIL_WISP_TAIL_TAPER_EDGE, 1.0f - segRatio);
 }
 
+static float ComputeWidthEnvelope(const TrailEntity *t, float segRatio, float time)
+{
+  switch (t->widthEnvelope)
+  {
+  case TRAIL_WIDTH_ENVELOPE_TAPER_TAIL:
+    return powf(segRatio, 1.2f);
+  case TRAIL_WIDTH_ENVELOPE_TAPER_BOTH:
+    return powf(sinf(segRatio * 3.14159265f), 0.6f);
+  case TRAIL_WIDTH_ENVELOPE_PULSE:
+    return 1.0f + 0.25f * sinf(segRatio * 12.0f - time * 10.0f);
+  case TRAIL_WIDTH_ENVELOPE_UNIFORM:
+  default:
+    return 1.0f;
+  }
+}
+
+static inline Vector3 CatmullRom(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
+{
+  float t2 = t * t;
+  float t3 = t2 * t;
+
+  float f0 = -0.5f * t3 + t2 - 0.5f * t;
+  float f1 = 1.5f * t3 - 2.5f * t2 + 1.0f;
+  float f2 = -1.5f * t3 + 2.0f * t2 + 0.5f * t;
+  float f3 = 0.5f * t3 - 0.5f * t2;
+
+  return (Vector3){
+      p0.x * f0 + p1.x * f1 + p2.x * f2 + p3.x * f3,
+      p0.y * f0 + p1.y * f1 + p2.y * f2 + p3.y * f3,
+      p0.z * f0 + p1.z * f1 + p2.z * f2 + p3.z * f3};
+}
+
+static inline int GetHistoryNodeIndex(const TrailEntity *t, int i)
+{
+  if (t->type == TRAIL_TYPE_WISP)
+  {
+    return t->historyCount - 1 - i;
+  }
+  else
+  {
+    return (t->historyHead - (t->historyCount - 1 - i) + TRAIL_HISTORY_COUNT) % TRAIL_HISTORY_COUNT;
+  }
+}
+
+static Vector3 GetInterpolatedPosition(const TrailEntity *t, float segRatio)
+{
+  float idx = segRatio * (t->historyCount - 1);
+  int i = (int)floorf(idx);
+  float f = idx - (float)i;
+
+  if (t->historyCount < 4)
+  {
+    int idx1 = GetHistoryNodeIndex(t, i);
+    if (i + 1 >= t->historyCount)
+      return t->history[idx1];
+    int idx2 = GetHistoryNodeIndex(t, i + 1);
+    return Vector3Lerp(t->history[idx1], t->history[idx2], f);
+  }
+
+  int N = t->historyCount;
+  int p0 = i - 1; if (p0 < 0) p0 = 0;
+  int p1 = i;
+  int p2 = i + 1; if (p2 >= N) p2 = N - 1;
+  int p3 = i + 2; if (p3 >= N) p3 = N - 1;
+
+  int idxP0 = GetHistoryNodeIndex(t, p0);
+  int idxP1 = GetHistoryNodeIndex(t, p1);
+  int idxP2 = GetHistoryNodeIndex(t, p2);
+  int idxP3 = GetHistoryNodeIndex(t, p3);
+
+  return CatmullRom(t->history[idxP0], t->history[idxP1], t->history[idxP2], t->history[idxP3], f);
+}
+
 // Đã tối ưu lượng giác và LOẠI BỎ lệnh rlSetTexture(0) để giữ Batching
 static void DrawCameraFacingQuad(const TrailCameraBasis *cam, Vector3 center,
                                  float width, float height, float rotation,
@@ -168,20 +241,37 @@ static inline void GrowHistoryTowardMaxNodes(TrailEntity *t)
     t->historyCount = maxNodes;
 }
 
-static void UpdateProjectilePhysics(TrailEntity *t, float dt, float time)
+static void UpdateProjectilePhysics(int id, TrailEntity *t, float dt, float time)
 {
-  t->historyHead = (t->historyHead + 1) % TRAIL_HISTORY_COUNT;
-
   float velLen = Vector3Length(t->velocity);
   Vector3 dir = (velLen > 1e-6f) ? (Vector3){t->velocity.x / velLen, t->velocity.y / velLen, t->velocity.z / velLen}
                                  : (Vector3){0.0f, 0.0f, 1.0f};
 
-  t->history[t->historyHead] = (Vector3){
+  Vector3 spawnPos = (Vector3){
       t->position.x - dir.x * (t->length * TRAIL_PROJECTILE_SPAWN_OFFSET_MUL),
       t->position.y - dir.y * (t->length * TRAIL_PROJECTILE_SPAWN_OFFSET_MUL),
       t->position.z - dir.z * (t->length * TRAIL_PROJECTILE_SPAWN_OFFSET_MUL)};
 
-  GrowHistoryTowardMaxNodes(t);
+  bool shouldInsert = true;
+  if (t->minVertexDistance > 0.0f && t->historyCount > 0)
+  {
+    Vector3 lastNode = t->history[t->historyHead];
+    float distSqr = (spawnPos.x - lastNode.x) * (spawnPos.x - lastNode.x) +
+                    (spawnPos.y - lastNode.y) * (spawnPos.y - lastNode.y) +
+                    (spawnPos.z - lastNode.z) * (spawnPos.z - lastNode.z);
+    if (distSqr < t->minVertexDistance * t->minVertexDistance)
+    {
+      shouldInsert = false;
+    }
+  }
+
+  if (shouldInsert)
+  {
+    t->historyHead = (t->historyHead + 1) % TRAIL_HISTORY_COUNT;
+    GrowHistoryTowardMaxNodes(t);
+  }
+
+  t->history[t->historyHead] = spawnPos;
   t->wobblePhase += dt * TRAIL_PROJECTILE_WOBBLE_FREQ;
   Vector3 posBeforeMove = t->position;
 
@@ -244,7 +334,13 @@ static void UpdateProjectilePhysics(TrailEntity *t, float dt, float time)
     closestDistSqr = Vector3LengthSqr(Vector3Subtract(t->target, closestPoint));
   }
 
-  if (closestDistSqr < TRAIL_PROJECTILE_HIT_DIST_SQR)
+  bool isHit = (closestDistSqr < TRAIL_PROJECTILE_HIT_DIST_SQR);
+  if (!isHit && t->collisionCheck != NULL)
+  {
+    isHit = t->collisionCheck(id, t->position);
+  }
+
+  if (isHit)
   {
     t->type = TRAIL_TYPE_FOLLOWER;
     t->attachedTransform = NULL;
@@ -448,6 +544,15 @@ int SpawnTrailEntity(TrailConfig config)
   t->attachedTransform = NULL;
   t->attachLocalOffset = (Vector3){0, 0, 0};
 
+  // 5 New Upgrades configuration
+  t->collisionCheck = config.collisionCheck;
+  t->uvTiling = (config.uvTiling != 0.0f) ? config.uvTiling : 1.0f;
+  t->uvScrollSpeed = config.uvScrollSpeed;
+  t->uvScrollOffset = 0.0f;
+  t->minVertexDistance = config.minVertexDistance;
+  t->widthEnvelope = config.widthEnvelope;
+  t->smoothSpline = config.smoothSpline;
+
   for (int h = 0; h < TRAIL_HISTORY_COUNT; h++)
     t->nodeVelocity[h] = (Vector3){0, 0, 0};
 
@@ -492,11 +597,29 @@ void UpdateFollowerPosition(int id, Vector3 newTipPos)
   if (id < 0 || id >= MAX_TRAIL_PARTICLES || !trailPool[id].active || trailPool[id].type != TRAIL_TYPE_FOLLOWER)
     return;
   TrailEntity *t = &trailPool[id];
-  t->historyHead = (t->historyHead + 1) % TRAIL_HISTORY_COUNT;
+
+  bool shouldInsert = true;
+  if (t->minVertexDistance > 0.0f && t->historyCount > 0)
+  {
+    Vector3 lastNode = t->history[t->historyHead];
+    float distSqr = (newTipPos.x - lastNode.x) * (newTipPos.x - lastNode.x) +
+                    (newTipPos.y - lastNode.y) * (newTipPos.y - lastNode.y) +
+                    (newTipPos.z - lastNode.z) * (newTipPos.z - lastNode.z);
+    if (distSqr < t->minVertexDistance * t->minVertexDistance)
+    {
+      shouldInsert = false;
+    }
+  }
+
+  if (shouldInsert)
+  {
+    t->historyHead = (t->historyHead + 1) % TRAIL_HISTORY_COUNT;
+    GrowHistoryTowardMaxNodes(t);
+  }
+
   t->history[t->historyHead] = newTipPos;
   t->nodeVelocity[t->historyHead] = (Vector3){0, 0, 0};
   t->position = newTipPos;
-  GrowHistoryTowardMaxNodes(t);
   t->timeSinceLastFollowerUpdate = 0.0f;
   t->fadeAccumulator = 0.0f;
 }
@@ -545,6 +668,9 @@ void UpdateTrailSystem(float dt)
       continue;
     }
 
+    // Accumulate UV scroll offset
+    t->uvScrollOffset += t->uvScrollSpeed * dt;
+
     if (t->type == TRAIL_TYPE_FOLLOWER && t->attachedTransform != NULL)
     {
       Vector3 localPos = t->attachLocalOffset;
@@ -567,7 +693,7 @@ void UpdateTrailSystem(float dt)
     switch (t->type)
     {
     case TRAIL_TYPE_PROJECTILE:
-      UpdateProjectilePhysics(t, dt, time);
+      UpdateProjectilePhysics(i, t, dt, time);
       break;
     case TRAIL_TYPE_WISP:
       UpdateWispPhysics(t, dt, time);
@@ -586,7 +712,7 @@ void UpdateTrailSystem(float dt)
   }
 }
 
-static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCameraBasis *camBasis)
+static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCameraBasis *camBasis, float time)
 {
   float lifeRatio = t->lifetime / t->maxLifetime;
   Color c = t->tint;
@@ -595,26 +721,34 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
   {
     if (t->historyCount > 1)
     {
-      for (int h = 0; h < t->historyCount; h++)
+      int drawCount = t->historyCount;
+      if (t->smoothSpline && t->historyCount >= 4)
       {
-        int idx = (t->historyHead - h + TRAIL_HISTORY_COUNT) % TRAIL_HISTORY_COUNT;
-        float segRatio = 1.0f - (float)h / (float)(t->historyCount - 1);
-        float taper = powf(segRatio, TRAIL_PROJECTILE_TAPER_POWER);
+        drawCount = t->historyCount < 30 ? 30 : t->historyCount;
+        if (drawCount > TRAIL_HISTORY_COUNT) drawCount = TRAIL_HISTORY_COUNT;
+      }
+
+      for (int h = 0; h < drawCount; h++)
+      {
+        float segRatio = 1.0f - (float)h / (float)(drawCount - 1);
+        float taper = (t->widthEnvelope != TRAIL_WIDTH_ENVELOPE_UNIFORM)
+                      ? ComputeWidthEnvelope(t, segRatio, time)
+                      : powf(segRatio, TRAIL_PROJECTILE_TAPER_POWER);
         Color nodeColor = t->gradient ? ColorGradient_Sample(t->gradient, segRatio) : c;
 
-        scratchOuter[h].position = t->history[idx];
+        scratchOuter[h].position = GetInterpolatedPosition(t, segRatio);
         scratchOuter[h].halfWidth = t->thickness * TRAIL_PROJECTILE_OUTER_WIDTH_MUL * taper;
-        scratchOuter[h].v = segRatio;
+        scratchOuter[h].v = segRatio * t->uvTiling - t->uvScrollOffset;
         scratchOuter[h].tint = (Color){(unsigned char)(segRatio * nodeColor.r), nodeColor.g, nodeColor.b, (unsigned char)((nodeColor.a / 255.0f) * TRAIL_PROJECTILE_OUTER_ALPHA_MAX * lifeRatio)};
 
-        scratchInner[h].position = t->history[idx];
+        scratchInner[h].position = scratchOuter[h].position;
         scratchInner[h].halfWidth = t->thickness * TRAIL_PROJECTILE_INNER_WIDTH_MUL * taper;
-        scratchInner[h].v = segRatio;
+        scratchInner[h].v = scratchOuter[h].v;
         scratchInner[h].tint = (Color){(unsigned char)(segRatio * nodeColor.r), nodeColor.g, nodeColor.b, (unsigned char)(nodeColor.a * lifeRatio)};
       }
       Texture2D ribbonTex = t->sprite.id > 0 ? t->sprite : s_globalTrailTex;
-      DrawRibbonStrip(scratchOuter, t->historyCount, ribbonTex, camera);
-      DrawRibbonStrip(scratchInner, t->historyCount, ribbonTex, camera);
+      DrawRibbonStrip(scratchOuter, drawCount, ribbonTex, camera);
+      DrawRibbonStrip(scratchInner, drawCount, ribbonTex, camera);
     }
 
     Vector3 right = camBasis->right;
@@ -644,22 +778,31 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
   {
     if (t->historyCount > 1)
     {
-      for (int h = 0; h < t->historyCount; h++)
+      int drawCount = t->historyCount;
+      if (t->smoothSpline && t->historyCount >= 4)
       {
-        float segRatio = 1.0f - (float)h / (float)(t->historyCount - 1);
-        float taper = ComputeWispStyleTaper(segRatio);
+        drawCount = t->historyCount < 30 ? 30 : t->historyCount;
+        if (drawCount > TRAIL_HISTORY_COUNT) drawCount = TRAIL_HISTORY_COUNT;
+      }
+
+      for (int h = 0; h < drawCount; h++)
+      {
+        float segRatio = 1.0f - (float)h / (float)(drawCount - 1);
+        float taper = (t->widthEnvelope != TRAIL_WIDTH_ENVELOPE_UNIFORM)
+                      ? ComputeWidthEnvelope(t, segRatio, time)
+                      : ComputeWispStyleTaper(segRatio);
         Color nodeColor = c;
         if (t->gradient)
         {
           Color gradCol = ColorGradient_Sample(t->gradient, segRatio);
           nodeColor = (Color){(unsigned char)((gradCol.r / 255.0f) * c.r), (unsigned char)((gradCol.g / 255.0f) * c.g), (unsigned char)((gradCol.b / 255.0f) * c.b), (unsigned char)((gradCol.a / 255.0f) * c.a)};
         }
-        scratchOuter[h].position = t->history[h];
+        scratchOuter[h].position = GetInterpolatedPosition(t, segRatio);
         scratchOuter[h].halfWidth = t->thickness * taper;
-        scratchOuter[h].v = segRatio;
+        scratchOuter[h].v = segRatio * t->uvTiling - t->uvScrollOffset;
         scratchOuter[h].tint = (Color){nodeColor.r, nodeColor.g, nodeColor.b, (unsigned char)((nodeColor.a / 255.0f) * 180.0f * lifeRatio * taper)};
       }
-      DrawRibbonStrip(scratchOuter, t->historyCount, t->sprite.id > 0 ? t->sprite : s_globalTrailTex, camera);
+      DrawRibbonStrip(scratchOuter, drawCount, t->sprite.id > 0 ? t->sprite : s_globalTrailTex, camera);
     }
   }
   else if (t->type == TRAIL_TYPE_PORTAL)
@@ -675,29 +818,37 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
   {
     if (t->historyCount > 1)
     {
-      for (int h = 0; h < t->historyCount; h++)
+      int drawCount = t->historyCount;
+      if (t->smoothSpline && t->historyCount >= 4)
       {
-        int idx = (t->historyHead - h + TRAIL_HISTORY_COUNT) % TRAIL_HISTORY_COUNT;
-        float segRatio = 1.0f - (float)h / (float)(t->historyCount - 1);
-        float taper = ComputeWispStyleTaper(segRatio);
+        drawCount = t->historyCount < 30 ? 30 : t->historyCount;
+        if (drawCount > TRAIL_HISTORY_COUNT) drawCount = TRAIL_HISTORY_COUNT;
+      }
+
+      for (int h = 0; h < drawCount; h++)
+      {
+        float segRatio = 1.0f - (float)h / (float)(drawCount - 1);
+        float taper = (t->widthEnvelope != TRAIL_WIDTH_ENVELOPE_UNIFORM)
+                      ? ComputeWidthEnvelope(t, segRatio, time)
+                      : ComputeWispStyleTaper(segRatio);
         Color nodeColor = c;
         if (t->gradient)
         {
           Color gradCol = ColorGradient_Sample(t->gradient, segRatio);
           nodeColor = (Color){(unsigned char)((gradCol.r / 255.0f) * c.r), (unsigned char)((gradCol.g / 255.0f) * c.g), (unsigned char)((gradCol.b / 255.0f) * c.b), (unsigned char)((gradCol.a / 255.0f) * c.a)};
         }
-        scratchOuter[h].position = t->history[idx];
+        scratchOuter[h].position = GetInterpolatedPosition(t, segRatio);
         scratchOuter[h].halfWidth = t->thickness * 1.5f * taper;
-        scratchOuter[h].v = segRatio;
+        scratchOuter[h].v = segRatio * t->uvTiling - t->uvScrollOffset;
         scratchOuter[h].tint = (Color){nodeColor.r, nodeColor.g, nodeColor.b, (unsigned char)((nodeColor.a / 255.0f) * 180.0f * lifeRatio * taper)};
-        scratchInner[h].position = t->history[idx];
+        scratchInner[h].position = scratchOuter[h].position;
         scratchInner[h].halfWidth = t->thickness * 0.4f * taper;
-        scratchInner[h].v = segRatio;
+        scratchInner[h].v = scratchOuter[h].v;
         scratchInner[h].tint = (Color){255, 255, 255, (unsigned char)(255.0f * lifeRatio * taper)};
       }
       Texture2D ribbonTex = t->sprite.id > 0 ? t->sprite : s_globalTrailTex;
-      DrawRibbonStrip(scratchOuter, t->historyCount, ribbonTex, camera);
-      DrawRibbonStrip(scratchInner, t->historyCount, ribbonTex, camera);
+      DrawRibbonStrip(scratchOuter, drawCount, ribbonTex, camera);
+      DrawRibbonStrip(scratchInner, drawCount, ribbonTex, camera);
     }
   }
 }
@@ -770,7 +921,7 @@ void DrawTrailEntities(Camera3D camera)
 
       if (ResolveShader(t).id == fullShader.id && currentBm == groups[g].bm)
       {
-        DrawTrailGeometry(t, camera, &camBasis);
+        DrawTrailGeometry(t, camera, &camBasis, time);
       }
     }
 

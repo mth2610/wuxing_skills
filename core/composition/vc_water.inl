@@ -59,42 +59,45 @@ void VFX_ComposeMagicPuddle(Vector3 pos)
     rlEnableBackfaceCulling();
 }
 
+static Shader s_waterTubeShader = {0};
+static int s_waterTimeLoc = -1;
+static int s_waterViewPosLoc = -1;
+static int s_waterLightDirLoc = -1;
+static int s_waterUvLengthLoc = -1;
+
+static void InitWaterTubeShaderIfNeeded(void)
+{
+    if (s_waterTubeShader.id == 0)
+    {
+        s_waterTubeShader = ResourceManager_LoadShader("skills/water/water_stream/tube.vs", "skills/water/water_stream/tube.fs");
+        s_waterTimeLoc = GetShaderLocation(s_waterTubeShader, "u_time");
+        s_waterViewPosLoc = GetShaderLocation(s_waterTubeShader, "viewPos");
+        s_waterLightDirLoc = GetShaderLocation(s_waterTubeShader, "u_lightDir");
+        s_waterUvLengthLoc = GetShaderLocation(s_waterTubeShader, "u_uvLength");
+    }
+}
+
 void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time)
 {
-    static Shader s_tubeShader = {0};
-    static int s_timeLoc = -1;
-    static int s_viewPosLoc = -1;
-    static int s_lightDirLoc = -1;
-    static int s_uvLengthLoc = -1;
-
-    if (s_tubeShader.id == 0)
-    {
-        s_tubeShader = ResourceManager_LoadShader("skills/water/water_stream/tube.vs", "skills/water/water_stream/tube.fs");
-        s_timeLoc = GetShaderLocation(s_tubeShader, "u_time");
-        s_viewPosLoc = GetShaderLocation(s_tubeShader, "viewPos");
-        s_lightDirLoc = GetShaderLocation(s_tubeShader, "u_lightDir");
-        s_uvLengthLoc = GetShaderLocation(s_tubeShader, "u_uvLength");
-    }
-
-    if (s_tubeShader.locs == NULL)
+    InitWaterTubeShaderIfNeeded();
+    if (s_waterTubeShader.locs == NULL)
         return;
 
     rlDrawRenderBatchActive();
     rlDisableDepthMask();
     rlEnableBackfaceCulling();
     BeginBlendMode(BLEND_ALPHA);
-    BeginShaderMode(s_tubeShader);
+    BeginShaderMode(s_waterTubeShader);
 
-    SkillManager_BeginShader(s_tubeShader);
+    SkillManager_BeginShader(s_waterTubeShader);
 
-    SetShaderValue(s_tubeShader, s_timeLoc, &time, SHADER_UNIFORM_FLOAT);
-
-    SetShaderValue(s_tubeShader, s_viewPosLoc, &camera.position, SHADER_UNIFORM_VEC3);
+    SetShaderValue(s_waterTubeShader, s_waterTimeLoc, &time, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_waterTubeShader, s_waterViewPosLoc, &camera.position, SHADER_UNIFORM_VEC3);
 
     Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
-    SetShaderValue(s_tubeShader, s_lightDirLoc, &lightDir, SHADER_UNIFORM_VEC3);
+    SetShaderValue(s_waterTubeShader, s_waterLightDirLoc, &lightDir, SHADER_UNIFORM_VEC3);
     float uvLength = 2.0f;
-    SetShaderValue(s_tubeShader, s_uvLengthLoc, &uvLength, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_waterTubeShader, s_waterUvLengthLoc, &uvLength, SHADER_UNIFORM_FLOAT);
 
     rlColor4ub(255, 255, 255, 255);
 
@@ -110,6 +113,80 @@ void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, floa
     rlDisableBackfaceCulling();
     rlEnableDepthMask();
 }
+
+void VFX_BeginWaterStreams(float time)
+{
+    InitWaterTubeShaderIfNeeded();
+    if (s_waterTubeShader.locs == NULL)
+        return;
+
+    rlDrawRenderBatchActive();
+    rlDisableDepthMask();
+    rlEnableBackfaceCulling();
+    BeginBlendMode(BLEND_ALPHA);
+    BeginShaderMode(s_waterTubeShader);
+
+    SkillManager_BeginShader(s_waterTubeShader);
+
+    SetShaderValue(s_waterTubeShader, s_waterTimeLoc, &time, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_waterTubeShader, s_waterViewPosLoc, &camera.position, SHADER_UNIFORM_VEC3);
+
+    Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
+    SetShaderValue(s_waterTubeShader, s_waterLightDirLoc, &lightDir, SHADER_UNIFORM_VEC3);
+    float uvLength = 2.0f;
+    SetShaderValue(s_waterTubeShader, s_waterUvLengthLoc, &uvLength, SHADER_UNIFORM_FLOAT);
+
+    rlColor4ub(255, 255, 255, 255);
+}
+
+void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time, float phaseOffset)
+{
+    if (s_waterTubeShader.locs == NULL || pathPoints == NULL || pathCount <= 0)
+        return;
+
+    float startT = progress - segmentLengthRatio;
+    float endT = progress;
+
+    float clampedStartT = startT;
+    float clampedEndT = endT;
+    if (clampedStartT < 0.0f) clampedStartT = 0.0f;
+    if (clampedEndT > 1.0f) clampedEndT = 1.0f;
+    if (clampedStartT > 1.0f) clampedStartT = 1.0f;
+    if (clampedEndT < 0.0f) clampedEndT = 0.0f;
+
+    if (clampedEndT - clampedStartT <= 0.0f)
+        return;
+
+    float individualTime = time + phaseOffset;
+
+    TubeMeshData mesh;
+    TubeMeshConfig config = ProceduralMesh_DefaultTubeConfig();
+
+    ProceduralMesh_BuildTubeAlongPath(&mesh, pathPoints, pathCount, radius,
+                                      clampedStartT, clampedEndT, individualTime,
+                                      24, 16, &config);
+    ProceduralMesh_DrawTube(&mesh, 2.0f);
+}
+
+void VFX_EndWaterStreams(void)
+{
+    if (s_waterTubeShader.locs == NULL)
+        return;
+
+    SkillManager_EndShader();
+    EndShaderMode();
+    EndBlendMode();
+    rlDisableBackfaceCulling();
+    rlEnableDepthMask();
+}
+
+void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time)
+{
+    VFX_BeginWaterStreams(time);
+    VFX_DrawWaterStreamOnPath(pathPoints, pathCount, radius, progress, segmentLengthRatio, time, 0.0f);
+    VFX_EndWaterStreams();
+}
+
 
 // Tham số vật liệu pha lê băng dùng chung cho cả 2 shader (thường +
 // instancing) — tách hàm riêng để không lặp lại y hệt 1 khối CrystalMaterialParams

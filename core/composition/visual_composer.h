@@ -2,10 +2,10 @@
 #define VISUAL_COMPOSER_H
 
 #include "raylib.h"
-#include "core/skill_helper.h"          // for EffectPresetType
-#include "core/particle_system.h"       // for ParticleRadialBurstConfig
-#include "core/composition/vc_motion.h" // Motion Library (quỹ đạo/shaper thuần toán học)
-#include "core/presets/vc_material.h"   // Element Material Table (VC_MaterialId — trục nguyên tố của mọi archetype)
+#include "core/skill_helper.h"                   // for EffectPresetType
+#include "core/particle_system.h"                // for ParticleRadialBurstConfig
+#include "core/composition/vc_motion.h"          // Motion Library (quỹ đạo/shaper thuần toán học)
+#include "core/presets/vc_material.h"            // Element Material Table (VC_MaterialId — trục nguyên tố của mọi archetype)
 #include "core/geometry/procedural_mesh_utils.h" // for GroundHeightSampleFn (VFX_ComposeGroundSmoke)
 
 typedef struct
@@ -95,6 +95,10 @@ void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float g
 void VFX_ComposeMagicPuddle(Vector3 pos);
 void VFX_ComposeFireball(Vector3 pos, float time);
 void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
+void VFX_BeginWaterStreams(float time);
+void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time, float phaseOffset);
+void VFX_EndWaterStreams(void);
+void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
 void VFX_ComposeGlowingVine(Vector3 startPos, Vector3 targetPos, Vector3 p1, Vector3 p2, Vector3 contactPos, float progress, float time, float sizeScale, int branchIndex, int branchCount);
 void VFX_ComposeFlameWisp(Vector3 pos, float time);
 void VFX_ComposeFirePillar(Vector3 basePos, float progress);
@@ -179,7 +183,6 @@ void VFX_ComposeBeam(VC_MaterialId matId, Vector3 start, Vector3 end, float widt
 void VFX_PathWave(PathStyle style, const Vector3 *points, int count, float scale, float progress, float time, int seed);
 void VFX_SummonCircle(Vector3 pos, float radius, float progress, float time, Color color);
 void VFX_TriggerExplosion(VC_MaterialId matId, Vector3 pos, float scale, bool cameraShake);
-void VFX_ComposeAura(VC_MaterialId matId, Vector3 pos, float radius, float time);
 void VFX_ComposeShield(VC_MaterialId matId, Vector3 pos, float radius, float progress, float time);
 void VFX_ComposeZone(VC_MaterialId matId, Vector3 pos, float radius, float progress, float time);
 void VFX_ComposeSlashArc(VC_MaterialId matId, Vector3 pos, Vector3 dir, float radius, float arcDegrees, float progress, float time);
@@ -221,7 +224,6 @@ void VFX_ComposeCylinderAura(VC_MaterialId matId, Vector3 pos, float radius, flo
 // Meditation qi-gather — soft ground runes + rising wisps + spiral-in motes.
 // Call once per frame while meditating. progress 0..1 = channel fraction
 // (0 = start, 1 = finishing). Pure visual component; no gameplay side effects.
-void VFX_ComposeMeditate(Vector3 pos, float progress, float time);
 
 // Batch rendering helpers for high-performance visual composition
 void VFX_BeginEnergySmokeBatch(void);
@@ -244,7 +246,6 @@ void VFX_ComposeGroundSmoke(Vector3 center, float halfSize, float progress, Grou
 void VFX_ComposeMagicFilaments(Vector3 pos, float scale, float progress, Color color, float thickness, float frequency, float speed, Vector2 sourceUV);
 void VFX_ComposeSmokeColumnFX(Vector3 base, float halfWidth, float height, float progress, int planeCount);
 void VFX_ComposeSmokeOnPlane(Vector3 center, Vector3 normal, float halfSize, float progress, Color color);
-void VFX_ComposeWispSmoke(VC_MaterialId matId, Vector3 pos, float width, Vector3 windDirection, float windStrength, float buoyancy, float turbulence, float drag, float time);
 // @gen:vc_declarations end
 void VFX_ComposePathLink(VC_MaterialId matId, const Vector3 *points, int count, float width, float progress, float time);
 #endif // VISUAL_COMPOSER_H
