@@ -7,7 +7,6 @@ void VFX_ComposePlasmaOrb(Vector3 pos, float radius, float time)
     float breathe = 1.0f + 0.03f * sinf(time * 2.1f) + 0.015f * sinf(time * 5.3f);
     float r = radius * breathe;
 
-    // ── Layer 1: Core (Bloom Sphere lõi) ──
     rlDrawRenderBatchActive();
     BeginBlendMode(BLEND_ADDITIVE);
     rlDisableDepthMask();
@@ -21,12 +20,10 @@ void VFX_ComposePlasmaOrb(Vector3 pos, float radius, float time)
     EffectMaterial bloomMat = Material_LoadCustom(bloomParams);
 
     Material_Begin(bloomMat);
-    // Bán kính lõi là r * 0.30f
     DrawCoreSphere(pos, r * 0.30f, 12, 12, WHITE);
     Material_End();
     rlDrawRenderBatchActive();
 
-    // ── Layer 2: Wisp Trails (TRÔI LỬNG LỜ TRONG LÒNG QUẢ CẦU, QUẮN QUÉO THEO CURL NOISE) ──
     static ColorGradient s_wispTrailGrad = {0};
     static ForceField s_wispCurlFld = {0};
     static bool s_wispInit = false;
@@ -39,31 +36,20 @@ void VFX_ComposePlasmaOrb(Vector3 pos, float radius, float time)
 
         ForceField_AddLayer(&s_wispCurlFld, (ForceLayer){
                                                 .type = FORCE_NOISE_CURL,
-                                                // CHỈNH SỬA: Tăng mạnh Strength + noiseScale so với bản cũ.
-                                                // Giờ đây noise không còn là rung nhẹ nữa mà chính là động
-                                                // lực chủ đạo, bẻ đường bay thành các vòng xoắn "quắn quéo"
-                                                // thay vì một đường thẳng tâm-ra-vỏ.
                                                 .strength = 4.2f,
                                                 .noiseScale = 15.5f,
                                                 .noiseSpeed = 2.9f});
 
         ForceField_AddLayer(&s_wispCurlFld, (ForceLayer){
                                                 .type = FORCE_VISCOSITY,
-                                                // CHỈNH SỬA: Tăng lực cản để tia không văng ra ngoài mà
-                                                // lơ lửng, trôi chậm rãi bên trong thể tích quả cầu.
                                                 .strength = 15.6f});
         s_wispInit = true;
     }
 
-    // Tần suất sinh tia: giữ dày để luôn có nhiều tia đang lững lờ trôi cùng lúc
-    // (đời sống mỗi tia giờ dài hơn nhiều nên mật độ hiển thị vẫn dày đặc).
     float trailSpawnRate = 100.0f;
 
     if (Random01() < (trailSpawnRate * dt))
     {
-        // Điểm sinh: một vị trí ngẫu nhiên NẰM BÊN TRONG thể tích quả cầu
-        // (giữa lõi và mặt trong lớp vỏ), thay vì luôn cố định ở mặt lõi.
-        // Nhờ đó tia không còn cảm giác "bắn ra" mà xuất hiện lơ lửng sẵn bên trong.
         float theta = Random01() * 2.0f * PI;
         float z = 2.0f * Random01() - 1.0f;
         float r_xy = sqrtf(1.0f - z * z);
@@ -73,13 +59,7 @@ void VFX_ComposePlasmaOrb(Vector3 pos, float radius, float time)
         float outerBound = r * 0.75f;
         float startDist = innerBound + Random01() * (outerBound - innerBound);
 
-        // Vòng đời DÀI HƠN NHIỀU: để tia có đủ thời gian trôi lững lờ và uốn
-        // lượn nhiều vòng cong thay vì chớp tắt như xung điện.
         float life = 0.5f + Random01() * 0.9f;
-
-        // Vận tốc khởi tạo RẤT NHỎ: tia gần như đứng yên tại chỗ, chuyển động
-        // chính của nó sau đó hoàn toàn do ForceField curl noise dẫn dắt,
-        // tạo cảm giác trôi tự do, xoắn quéo ngẫu nhiên trong không gian.
         float driftSpeed = r * (0.12f + 0.10f * Random01());
 
         TrailConfig tCfg = {0};
@@ -92,9 +72,6 @@ void VFX_ComposePlasmaOrb(Vector3 pos, float radius, float time)
 
         tCfg.life = life;
         tCfg.thick = 0.008f * (radius / 0.5f);
-
-        // Chiều dài dải ribbon: ngắn và mảnh hơn để khi bị curl noise bẻ cong
-        // mạnh, nó vẽ ra những nét xoắn ốc nhỏ thay vì một vệt thẳng dài.
         tCfg.len = r * 0.15f;
 
         tCfg.gradient = &s_wispTrailGrad;
@@ -104,7 +81,6 @@ void VFX_ComposePlasmaOrb(Vector3 pos, float radius, float time)
         SpawnTrailEntity(tCfg);
     }
 
-    // ── Layer 3: Wispy Membrane (Giữ nguyên) ──
     rlDisableBackfaceCulling();
 
     static PlasmaMaterial s_shellOuter, s_shellInner;
@@ -149,7 +125,6 @@ void VFX_ComposePlasmaOrb(Vector3 pos, float radius, float time)
     EndBlendMode();
     rlDrawRenderBatchActive();
 
-    // ── Layer 4: Presence ──
     float lightSpawnRate = 10.0f;
     if (Random01() < (lightSpawnRate * dt))
     {

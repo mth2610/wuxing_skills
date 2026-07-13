@@ -32,41 +32,17 @@
 #endif
 
 // Include modular visual composer implementations (grouped by element/functionality)
-#include "vc_common.inl"       // render primitives (VC_DrawGroundQuadXZ, VC_DrawGroundRune)
-#include "vc_beauty.inl"       // beauty primitives — must precede element .inl (vc_zone calls GlintBurst)
-#include "vc_neutral.inl"      // LightningBolt (SmokePuff/SmokeTrail moved to vc_archetype.inl)
-#include "vc_impact.inl"       // TriggerImpactBurst, ComposeImpact, TriggerExplosion
-#include "vc_cast_preset.inl"  // ComposeCast
-#include "vc_trail_preset.inl" // ComposeProjectileTrail
-#include "vc_metal.inl"
-#include "vc_wood.inl"
-#include "vc_water.inl"
-#include "vc_fire.inl"
-#include "vc_earth.inl"
-#include "vc_plasma.inl"
-#include "vc_taiji.inl"
+#include "common/common.inl"
 
-// Include high-level general VFX system implementations
-#include "vc_projectile.inl"
-#include "vc_ground.inl"
-#include "vc_beam.inl"
-#include "vc_path.inl"
-#include "vc_summon.inl"
-#include "vc_cylinder_aura.inl"
+#include "metal/metal.inl"
+#include "wood/wood.inl"
+#include "water/water.inl"
+#include "fire/fire.inl"
+#include "earth/earth.inl"
+#include "plasma/plasma.inl"
+#include "taiji/taiji.inl"
 
-// Phase 3 archetypes
-#include "vc_shield.inl"
-#include "vc_zone.inl"
-#include "vc_slash.inl"
-#include "vc_elemental_mist.inl"
-#include "vc_archetype.inl" // stateful archetypes: Beam, GroundWave, Orbitals, AuraRing, ChainLightning
-
-// @gen:vc_includes begin
-#include "vc_black_hole.inl"
-#include "vc_chain_link.inl"
-#include "vc_ground_aura.inl"
-#include "vc_smoke_energy.inl"
-// @gen:vc_includes end
+#include "vc_archetype.inl"
 
 void VFX_Compose_Update(float dt) { VC_Archetype_Update(dt); }
 void VFX_Compose_Draw3D(Camera3D cam) { VC_Archetype_Draw3D(cam); }

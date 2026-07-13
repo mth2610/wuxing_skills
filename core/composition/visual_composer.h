@@ -4,7 +4,7 @@
 #include "raylib.h"
 #include "core/skill_helper.h"                   // for EffectPresetType
 #include "core/particle_system.h"                // for ParticleRadialBurstConfig
-#include "core/composition/vc_motion.h"          // Motion Library (quỹ đạo/shaper thuần toán học)
+#include "core/composition/common/vc_motion.h"          // Motion Library (quỹ đạo/shaper thuần toán học)
 #include "core/presets/vc_material.h"            // Element Material Table (VC_MaterialId — trục nguyên tố của mọi archetype)
 #include "core/geometry/procedural_mesh_utils.h" // for GroundHeightSampleFn (VFX_ComposeGroundSmoke)
 
