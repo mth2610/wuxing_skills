@@ -554,6 +554,155 @@ static AutoTestResult AutoTest_NetWireStep(int frameInCase, char *outReason, int
   ok = ok && AutoTest_ExpectTrue(Net_UnpackRoster(rout, NET_MAX_PLAYERS, rbuf, rlen) < 0,
                                  "roster version mismatch rejected", outReason, outReasonSize);
 
+  // Room management (Đợt A2): a real host endpoint, no peers needed. The
+  // roster starts as host-only; bots fill sides; toggling flips teams.
+  ok = ok && AutoTest_ExpectTrue(Net_StartHost(7997), "host endpoint up", outReason, outReasonSize);
+  int rc = Net_GetRoster(rout, NET_MAX_PLAYERS);
+  ok = ok && AutoTest_ExpectTrue(rc == 1 && (rout[0].flags & NET_ROSTER_HOST) &&
+                                 rout[0].team == 0,
+                                 "fresh room = host only, team 0", outReason, outReasonSize);
+  Net_HostAddBot(1);
+  Net_HostAddBot(1);
+  rc = Net_GetRoster(rout, NET_MAX_PLAYERS);
+  ok = ok && AutoTest_ExpectTrue(rc == 3 && (rout[1].flags & NET_ROSTER_BOT) &&
+                                 rout[1].team == 1 && rout[2].team == 1,
+                                 "two bots on side 1", outReason, outReasonSize);
+  Net_HostToggleTeam(1); // bot #1 → side 0
+  rc = Net_GetRoster(rout, NET_MAX_PLAYERS);
+  int bots0 = 0, bots1 = 0;
+  for (int i = 0; i < rc; i++)
+    if (rout[i].flags & NET_ROSTER_BOT) { if (rout[i].team == 0) bots0++; else bots1++; }
+  ok = ok && AutoTest_ExpectTrue(bots0 == 1 && bots1 == 1, "bot moved sides", outReason, outReasonSize);
+  Net_HostToggleTeam(0); // host flips to side 1
+  rc = Net_GetRoster(rout, NET_MAX_PLAYERS);
+  ok = ok && AutoTest_ExpectTrue(rc == 3 && rout[0].team == 1, "host flipped team", outReason, outReasonSize);
+  Net_HostRemoveBot(0);
+  Net_HostRemoveBot(1);
+  rc = Net_GetRoster(rout, NET_MAX_PLAYERS);
+  ok = ok && AutoTest_ExpectTrue(rc == 1, "bots removed", outReason, outReasonSize);
+  Net_HostStartMatch();
+  ok = ok && AutoTest_ExpectTrue(Net_ConsumeMatchStart(), "start flag arms", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(!Net_ConsumeMatchStart(), "start flag consumed once", outReason, outReasonSize);
+  Net_Stop();
+  ok = ok && AutoTest_ExpectTrue(Net_GetMode() == NET_MODE_OFF, "net stopped clean", outReason, outReasonSize);
+
+  Entity_ApplyDamage(probe, 1e9f, (Vector3){ 0 });
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+// Đợt A3 DoD: team-battle elimination — the exact count game_screen's
+// FIGHTING check reads must hit zero when one side is wiped, and only then.
+static AutoTestResult AutoTest_TeamEliminationStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+  AutoTest_ResetArenaToDefault();
+
+  // Clean slate: retire every leftover ENEMY hero from earlier cases so the
+  // baseline is unambiguous (ALLY keeps the sandbox player — counted).
+  for (int i = 0; i < MAX_AGENTS; i++) {
+    const Agent *a = Entity_GetAgent(i);
+    if (a != NULL && a->archetype == ARCH_HERO && a->team == TEAM_ENEMY)
+      Entity_ApplyDamage(i, 1e9f, (Vector3){ 0 });
+  }
+  bool ok = AutoTest_ExpectTrue(GameRules_CountAliveHeroes(TEAM_ENEMY) == 0,
+                                "enemy side starts empty", outReason, outReasonSize);
+
+  int allyBase = GameRules_CountAliveHeroes(TEAM_ALLY);
+  int a1 = Entity_SpawnAgent((Vector3){ -2.0f, 0, 0 }, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
+  int a2 = Entity_SpawnAgent((Vector3){ -2.0f, 0, 2.0f }, 100.0f, 1, TEAM_ALLY, ARCH_HERO);
+  int e1 = Entity_SpawnAgent((Vector3){  2.0f, 0, 0 }, 100.0f, 2, TEAM_ENEMY, ARCH_HERO);
+  int e2 = Entity_SpawnAgent((Vector3){  2.0f, 0, 2.0f }, 100.0f, 3, TEAM_ENEMY, ARCH_HERO);
+  ok = ok && AutoTest_ExpectTrue(a1 >= 0 && a2 >= 0 && e1 >= 0 && e2 >= 0,
+                                 "spawned 2v2", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(GameRules_CountAliveHeroes(TEAM_ALLY) == allyBase + 2 &&
+                                 GameRules_CountAliveHeroes(TEAM_ENEMY) == 2,
+                                 "2v2 counted", outReason, outReasonSize);
+
+  Entity_ApplyDamage(e1, 1e9f, (Vector3){ 0 });
+  ok = ok && AutoTest_ExpectTrue(GameRules_CountAliveHeroes(TEAM_ENEMY) == 1,
+                                 "one enemy down, side still alive", outReason, outReasonSize);
+  Entity_ApplyDamage(e2, 1e9f, (Vector3){ 0 });
+  ok = ok && AutoTest_ExpectTrue(GameRules_CountAliveHeroes(TEAM_ENEMY) == 0 &&
+                                 GameRules_CountAliveHeroes(TEAM_ALLY) == allyBase + 2,
+                                 "enemy side wiped -> elimination fires for ALLY",
+                                 outReason, outReasonSize);
+
+  Entity_ApplyDamage(a1, 1e9f, (Vector3){ 0 });
+  Entity_ApplyDamage(a2, 1e9f, (Vector3){ 0 });
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
+// Đợt A4 DoD: hero-bot brain (spawns, fights, stays on the arena) + the
+// handicap table + HP scaling for the short-handed side.
+static AutoTestResult AutoTest_HeroBotHandicapStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+  AutoTest_ResetArenaToDefault();
+  AI_ClearHeroBots();
+
+  // Handicap table: identity at 0, per-player steps, capped at 3.
+  TeamHandicap h0 = GameRules_HandicapFor(0);
+  TeamHandicap h2 = GameRules_HandicapFor(2);
+  TeamHandicap h9 = GameRules_HandicapFor(9);
+  bool ok = AutoTest_ExpectFloatNear(h0.maxHpMult, 1.0f, 0.001f, "deficit 0 = no buff", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectFloatNear(h2.maxHpMult, 1.30f, 0.001f, "deficit 2 HP mult", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectFloatNear(h9.maxHpMult, 1.45f, 0.001f, "deficit caps at 3", outReason, outReasonSize);
+
+  // HP scaling applies to max + current.
+  int probe = Entity_SpawnAgent((Vector3){ 0, 0, 0 }, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
+  Entity_ScaleMaxHealth(probe, h2.maxHpMult);
+  const Agent *pa = Entity_GetAgent(probe);
+  ok = ok && AutoTest_ExpectTrue(pa != NULL && fabsf(pa->maxHealth - 130.0f) < 0.01f &&
+                                 fabsf(pa->health - 130.0f) < 0.01f,
+                                 "HP scaled 100 -> 130", outReason, outReasonSize);
+
+  // Bot brain: spawn one ENEMY bot vs an ALLY target, tick 5 simulated
+  // seconds — it must survive, stay inside the ring, and have cast at
+  // least once (casting spends mana).
+  int bot = AI_SpawnHeroBot((Vector3){ 3.0f, 0, 4.4f }, TEAM_ENEMY);
+  ok = ok && AutoTest_ExpectTrue(bot >= 0, "bot spawned", outReason, outReasonSize);
+  ok = ok && AutoTest_ExpectTrue(AI_GetHeroBotCount(TEAM_ENEMY) == 1, "bot counted", outReason, outReasonSize);
+  {
+    static const struct { const char *name; int element; } kBotLoad[2] = {
+      { "GLACIAL_CANNON", 0 }, { "FIRE", 2 },
+    };
+    for (int slot = 0; slot < 2; slot++) {
+      int idx = Skill_GetIndexByName(kBotLoad[slot].name);
+      if (idx >= 0) Entity_SetEquippedSkill(bot, slot, idx, kBotLoad[slot].element);
+    }
+  }
+  for (int i = 0; i < 300; i++) { // ~5s @60fps
+    AI_Update(1.0f / 60.0f);
+    Entity_Update(1.0f / 60.0f);
+    UpdateSkillManager(1.0f / 60.0f, (Vector3){ 0, 0, 0 }, 0.35f);
+  }
+  const Agent *ba = Entity_GetAgent(bot);
+  ok = ok && AutoTest_ExpectTrue(ba != NULL, "bot alive after 5s", outReason, outReasonSize);
+  if (ba != NULL) {
+    float ex = ba->position.x - 6.0f, ez = ba->position.z - 4.4f;
+    ok = ok && AutoTest_ExpectTrue(sqrtf(ex * ex + ez * ez) < 18.0f,
+                                   "bot stayed on the arena", outReason, outReasonSize);
+    ok = ok && AutoTest_ExpectTrue(ba->mana < ba->maxMana - 0.01f,
+                                   "bot cast at least once (mana spent)", outReason, outReasonSize);
+  }
+
+  // Đợt A5: free-cast mode bypasses the mana gate (client VFX replay) —
+  // and turning it off restores the gate.
+  {
+    int caster = Entity_SpawnAgent((Vector3){ 1.0f, 0, 1.0f }, 100.0f, 2, TEAM_ALLY, ARCH_HERO);
+    int fire = Skill_GetIndexByName("FIRE");
+    const Agent *ca = Entity_GetAgent(caster);
+    if (ca != NULL) Entity_TrySpendMana(caster, ca->mana); // drain exactly
+    SkillParams sp = { .level = 1, .quantity = 1, .sizeScale = 1.0f };
+    ok = ok && AutoTest_ExpectTrue(fire >= 0 &&
+                                   !CastSkill(fire, caster, (Vector3){ 1, 0, 1 }, (Vector3){ 5, 0, 5 }, sp),
+                                   "drained caster rejected", outReason, outReasonSize);
+    SkillManager_SetFreeCast(true);
+    ok = ok && AutoTest_ExpectTrue(CastSkill(fire, caster, (Vector3){ 1, 0, 1 }, (Vector3){ 5, 0, 5 }, sp),
+                                   "free-cast bypasses mana gate", outReason, outReasonSize);
+    SkillManager_SetFreeCast(false);
+    Entity_ApplyDamage(caster, 1e9f, (Vector3){ 0 });
+  }
+
+  AI_ClearHeroBots();
   Entity_ApplyDamage(probe, 1e9f, (Vector3){ 0 });
   return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
 }
@@ -889,6 +1038,8 @@ int main(int argc, char **argv) {
       AutoTest_Register("ui_auto_target", AutoTest_AutoTargetStep, 5);
       AutoTest_Register("formation_tran_phap", AutoTest_FormationStep, 5);
       AutoTest_Register("net_wire_format", AutoTest_NetWireStep, 5);
+      AutoTest_Register("team_elimination", AutoTest_TeamEliminationStep, 5);
+      AutoTest_Register("hero_bot_handicap", AutoTest_HeroBotHandicapStep, 5);
   }
   DamageVolume_Init();
   EmitterSystem_Init();
@@ -908,22 +1059,23 @@ int main(int argc, char **argv) {
   GameScreen_Init(&player);
 
   // --host / --join (ENet, LAN) or --host-online / --join-online (EOS,
-  // internet): bring the endpoint up and drop straight into the match
-  // screen (menu clicks are pointless on a dedicated PvP run).
+  // internet): bring the endpoint up and drop into the LOBBY screen (Đợt
+  // A2 — the room gathers there; the host's BAT DAU moves everyone into
+  // the match together).
   bool netRequested = false;
+  char roomCode[16] = { 0 }; // shown in the lobby + match HUD (host only)
   if (netHostPort > 0) netRequested = Net_StartHost(netHostPort);
   else if (netJoinIp != NULL) netRequested = Net_StartClient(netJoinIp, netJoinPort);
   else if (netHostOnline) {
-      char joinCode[16] = { 0 };
-      netRequested = Net_StartHostOnline(joinCode, (int)sizeof(joinCode));
+      netRequested = Net_StartHostOnline(roomCode, (int)sizeof(roomCode));
       if (netRequested) {
-          GameScreen_SetOnlineCode(joinCode); // HUD shows it while waiting
+          GameScreen_SetOnlineCode(roomCode); // HUD shows it while waiting
 
           // The one line the host reads to their friend — keep it loud.
           printf("\n==============================\n"
                  "  WUXING ONLINE — JOIN CODE: %s\n"
                  "  (ban be: ./wuxing --join-online %s)\n"
-                 "==============================\n\n", joinCode, joinCode);
+                 "==============================\n\n", roomCode, roomCode);
       }
   }
   else if (netJoinCode != NULL) netRequested = Net_JoinOnline(netJoinCode);
@@ -973,10 +1125,11 @@ int main(int argc, char **argv) {
       SCREEN_MAIN_MENU,
       SCREEN_SKILL_SANDBOX,
       SCREEN_VFX_TESTER,
-      SCREEN_GAME
+      SCREEN_GAME,
+      SCREEN_LOBBY   // net room (Đợt A2) — waits for the host's BAT DAU
   } GameScreen;
   GameScreen currentScreen = SCREEN_MAIN_MENU;
-  if (netRequested) currentScreen = SCREEN_GAME; // PvP run: straight to the arena
+  if (netRequested) currentScreen = SCREEN_LOBBY; // PvP run: gather in the room
 
   // Main-menu online (EOS) UI state — TAO PHONG / NHAP MA buttons. Actions
   // are queued one frame (menuOnlinePending) so the "DANG KET NOI" overlay
@@ -1042,16 +1195,16 @@ int main(int argc, char **argv) {
             int action = menuOnlinePending;
             menuOnlinePending = 0;
             if (action == 1) { // TAO PHONG
-                char code[16] = { 0 };
-                if (Net_StartHostOnline(code, (int)sizeof(code))) {
-                    GameScreen_SetOnlineCode(code);
-                    currentScreen = SCREEN_GAME;
+                if (Net_StartHostOnline(roomCode, (int)sizeof(roomCode))) {
+                    GameScreen_SetOnlineCode(roomCode);
+                    currentScreen = SCREEN_LOBBY;
                     continue;
                 }
                 snprintf(menuOnlineMsg, sizeof(menuOnlineMsg), "TAO PHONG THAT BAI — XEM LOG TERMINAL");
             } else {           // NHAP MA -> join
                 if (Net_JoinOnline(menuJoinInput)) {
-                    currentScreen = SCREEN_GAME;
+                    roomCode[0] = '\0'; // khách không cần hiện mã
+                    currentScreen = SCREEN_LOBBY;
                     continue;
                 }
                 snprintf(menuOnlineMsg, sizeof(menuOnlineMsg), "KHONG VAO DUOC PHONG %s", menuJoinInput);
@@ -1076,6 +1229,7 @@ int main(int argc, char **argv) {
             currentScreen = SCREEN_VFX_TESTER;
         }
         if (CheckCollisionPointRec(mousePos, btnGame) && clicked) {
+            GameScreen_SetMode(GAME_MODE_BOSS); // offline entry — boss match
             currentScreen = SCREEN_GAME;
         }
         if (CheckCollisionPointRec(mousePos, btnHost) && clicked) {
@@ -1174,6 +1328,55 @@ int main(int argc, char **argv) {
         continue;
     }
 
+    if (currentScreen == SCREEN_LOBBY) {
+        // Room screen (Đợt A2). Net_Tick must keep pumping here — peers
+        // join/leave and the roster updates while everyone waits.
+        Net_Tick(dt);
+
+        // Dev: WUXING_LOBBY_AUTOSTART=<sec> — headless/scripted runs can't
+        // click BAT DAU; the host fires it automatically after N seconds.
+        static float s_lobbyElapsed = 0.0f;
+        s_lobbyElapsed += dt;
+        const char *autoStart = getenv("WUXING_LOBBY_AUTOSTART");
+        if (autoStart != NULL && Net_GetMode() == NET_MODE_HOST &&
+            s_lobbyElapsed >= (float)atoi(autoStart)) {
+            // WUXING_LOBBY_BOTS=n — headless runs can't click the bot
+            // slots either; drop n bots on side 1 right before starting.
+            const char *botEnv = getenv("WUXING_LOBBY_BOTS");
+            for (int b = 0; botEnv != NULL && b < atoi(botEnv); b++)
+                Net_HostAddBot(1);
+            Net_HostStartMatch();
+            s_lobbyElapsed = -1e9f; // fire once
+        }
+
+        if (Net_ConsumeMatchStart()) {
+            // Net rooms play team battle (Đợt A3); WUXING_NET_BOSS=1 keeps
+            // the old invasion-vs-boss run for dev/testing.
+            GameScreen_SetMode(getenv("WUXING_NET_BOSS") != NULL
+                                   ? GAME_MODE_BOSS : GAME_MODE_TEAM_BATTLE);
+            GameScreen_Init(&player); // fresh match state for everyone
+            currentScreen = SCREEN_GAME;
+            continue;
+        }
+
+        BeginDrawing();
+        ClearBackground((Color){ 12, 12, 20, 255 });
+        UILobbyAction act = UI_LobbyUpdateDraw(roomCode,
+                                               Net_GetMode() == NET_MODE_HOST);
+        EndDrawing();
+
+        if (act == UI_LOBBY_START) {
+            Net_HostStartMatch(); // ConsumeMatchStart picks it up next frame
+        } else if (act == UI_LOBBY_LEAVE ||
+                   (Net_GetMode() == NET_MODE_OFF)) { // host vanished / stopped
+            Net_Stop();
+            GameScreen_SetOnlineCode(NULL);
+            roomCode[0] = '\0';
+            currentScreen = SCREEN_MAIN_MENU;
+        }
+        continue;
+    }
+
     Vector3 mouseTarget3D = {0};
 
     if (currentScreen == SCREEN_SKILL_SANDBOX) {
@@ -1227,6 +1430,33 @@ int main(int argc, char **argv) {
         CameraFX_Update(&camera, dt);
     } else if (currentScreen == SCREEN_GAME) {
         GameScreen_Update(&player, &camera, dt);
+        // Dev: WUXING_TEAM_TEST=1 — scripted team-battle round on the host
+        // for headless net verification (no inputs available): 10s into
+        // FIGHTING wipe side 1 (elimination fires → VICTORY/DEFEAT sync),
+        // 6s later run the exact ENTER-rematch path (respawn + reset).
+        if (getenv("WUXING_TEAM_TEST") != NULL &&
+            GameScreen_GetMode() == GAME_MODE_TEAM_BATTLE &&
+            Net_GetMode() == NET_MODE_HOST) {
+            static float s_ttClock = 0.0f;
+            static bool s_ttWiped = false, s_ttRematched = false;
+            s_ttClock += dt;
+            if (!s_ttWiped && s_ttClock >= 10.0f &&
+                GameScreen_GetState() == GAME_FIGHTING) {
+                for (int i = 0; i < MAX_AGENTS; i++) {
+                    const Agent *a = Entity_GetAgent(i);
+                    if (a != NULL && a->archetype == ARCH_HERO && a->team == TEAM_ENEMY)
+                        Entity_ApplyDamage(i, 1e9f, (Vector3){ 0 });
+                }
+                s_ttWiped = true;
+                TraceLog(LOG_INFO, "[TEAMTEST] wiped side 1");
+            }
+            if (s_ttWiped && !s_ttRematched && s_ttClock >= 16.0f) {
+                Net_HostRespawnPeerHeroes();
+                GameScreen_Init(&player);
+                s_ttRematched = true;
+                TraceLog(LOG_INFO, "[TEAMTEST] rematch fired");
+            }
+        }
         if (GameScreen_RequestedBackToMenu()) {
             currentScreen = SCREEN_MAIN_MENU;
             // Leaving a net match tears the session down (EOS: closes P2P +
@@ -1270,6 +1500,16 @@ int main(int argc, char **argv) {
         Boss_Update(dt);
         Formation_Update(dt);
         Combat_Update(dt);
+    }
+
+    // Hero-bot casts → net mirror (Đợt A5): ai/ is net-blind, so main.c
+    // ferries its cast events to connected clients (no-op offline).
+    {
+        HeroBotCast botCasts[16];
+        int nCasts = AI_PollHeroCasts(botCasts, 16);
+        for (int ci = 0; ci < nCasts; ci++)
+            Net_HostNotifyCast(botCasts[ci].agentId, botCasts[ci].skillIndex,
+                               botCasts[ci].aim);
     }
 
     // Minion self-destruct VFX — ai/ is pure logic and reports explosions

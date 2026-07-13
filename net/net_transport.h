@@ -78,6 +78,24 @@ void Net_HostRemoveBot(int team);
 void Net_HostStartMatch(void);
 bool Net_ConsumeMatchStart(void);
 
+// HOST rematch (Đợt A3): every connected peer whose hero died gets a fresh
+// one (new HELLO with the new agent id) and the roster rebroadcasts.
+// game/'s team-battle reset calls this before the next round.
+void Net_HostRespawnPeerHeroes(void);
+
+// --- Đợt A5: VFX cast mirroring + loadout sync ---
+// HOST: broadcast "agent X cast skill Y at Z" (reliable). Call sites: game/
+// for the host player (Control_ConsumeCastFired), main.c for bot casts
+// (AI_PollHeroCasts); the transport emits its own for remote-intent casts.
+// Clients re-play it via CastSkill in free-cast mode — pure VFX, damage
+// still arrives through snapshots (clients never tick Combat_Update).
+void Net_HostNotifyCast(int agentId, int skillIndex, Vector3 aim);
+
+// CLIENT: TAB loadout change → tell the host (reliable). The host applies
+// Entity_SetEquippedSkill on our hero (element passed along — the client
+// resolved it from the registry), which recomputes Vô Hệ for everyone.
+void Net_ClientSendLoadout(int slot, int skillIndex, int element);
+
 // --- Match outcome sync ---
 // HOST: game/ reports its GameState each frame; the transport sends it on
 // change (reliable). CLIENT: reads the host's last known state (-1 until

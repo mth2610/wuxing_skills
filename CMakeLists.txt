@@ -113,6 +113,7 @@ add_executable(wuxing
 
     # --- UI (HUD + auto-targeting — Module 9) ---
     ui/ui.c
+    ui/ui_lobby.c
 
     # --- Formations (Trận Pháp engine + one _def.c per formation — Module 10) ---
     formations/formation_system.c

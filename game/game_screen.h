@@ -33,6 +33,16 @@ typedef enum {
 
 GameState GameScreen_GetState(void);
 
+// Match mode (Đợt A3). BOSS = the offline Hắc Diện match (default, also the
+// net invasion dev path via WUXING_NET_BOSS=1). TEAM_BATTLE = PvP
+// elimination, 1v1 → 4v4: two spawn clusters, no boss/minions, the side
+// with no living heroes loses, ENTER (host) rematches the whole room.
+// Set BEFORE GameScreen_Init — main.c picks per entry point (menu → BOSS,
+// lobby start → TEAM_BATTLE).
+typedef enum { GAME_MODE_BOSS = 0, GAME_MODE_TEAM_BATTLE } GameMode;
+void GameScreen_SetMode(GameMode mode);
+GameMode GameScreen_GetMode(void);
+
 // Called once at startup (alongside InitSandbox) — does not re-run per
 // screen-switch, matching how InitSandbox itself is only called once.
 // Resets the match (state → GAME_ARENA_INTRO, player at the arena spawn).

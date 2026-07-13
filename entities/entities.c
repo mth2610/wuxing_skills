@@ -393,6 +393,16 @@ void Entity_SetAgentTeam(int agentId, AgentTeam team) {
     a->team = team;
 }
 
+void Entity_ScaleMaxHealth(int agentId, float mult) {
+    if (agentId < 0 || agentId >= MAX_AGENTS || mult <= 0.0f) return;
+    Agent *a = &agentPool[agentId];
+    if (!a->active) return;
+    a->maxHealth *= mult;
+    a->health *= mult;
+    if (a->maxHealth < 1.0f) a->maxHealth = 1.0f;
+    if (a->health < 1.0f) a->health = 1.0f;
+}
+
 float Entity_GetSpeedMult(int agentId) {
     const Agent *a = Entity_GetAgent(agentId);
     if (!a) return 1.0f;
@@ -538,6 +548,11 @@ void Entity_SetArenaBounds(Vector3 center, float radius) {
     if (radius <= 0.0f) return;
     ARENA_CENTER = center;
     ARENA_RADIUS = radius;
+}
+
+void Entity_GetArenaBounds(Vector3 *outCenter, float *outRadius) {
+    if (outCenter != NULL) *outCenter = ARENA_CENTER;
+    if (outRadius != NULL) *outRadius = ARENA_RADIUS;
 }
 
 int Entity_GetNearbyTargets(Vector3 center, float radius, int *outIds, int maxIds) {

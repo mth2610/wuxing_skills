@@ -1,5 +1,6 @@
 // ui/ui.c — Module 9: minimal HUD + auto-targeting.
 #include "ui/ui.h"
+#include "net/net_transport.h" // lobby roster + loadout sync
 #include "entities/entities.h"
 #include "combat/combat.h"
 #include "boss/boss_system.h"
@@ -154,6 +155,9 @@ void UI_Update(float dt) {
             if (!SkillEquippable(i)) continue;
             if (CheckCollisionPointRec(m, LoadoutSkillRect(p, vis))) {
                 Entity_SetEquippedSkill(s_aimAgentId, s_selSlot, i, SkillElement(i));
+                // Connected client: the pool is a mirror — the swap must
+                // happen on the HOST's copy of our hero too (Đợt A5).
+                Net_ClientSendLoadout(s_selSlot, i, SkillElement(i));
                 return;
             }
             vis++;

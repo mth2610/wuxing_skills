@@ -350,7 +350,10 @@ static void EOS_CALL OnConnectionRequest(const EOS_P2P_OnIncomingConnectionReque
     acc.LocalUserId  = s_localPuid;
     acc.RemoteUserId = data->RemoteUserId;
     acc.SocketId     = &s_socketId;
-    if (EOS_P2P_AcceptConnection(s_p2p, &acc) != EOS_Success) return;
+    EOS_EResult ar = EOS_P2P_AcceptConnection(s_p2p, &acc);
+    TraceLog(LOG_INFO, "[EOS] P2P connection request (host=%d) accept=%s",
+             s_isHost ? 1 : 0, EOS_EResult_ToString(ar));
+    if (ar != EOS_Success) return;
     if (s_isHost) // spawns their hero + HELLO + roster (dedupe in the core)
         NetTransport_BackendConnected((void *)data->RemoteUserId);
 }

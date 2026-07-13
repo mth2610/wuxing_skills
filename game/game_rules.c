@@ -1,6 +1,7 @@
 // game/game_rules.c — the static zone modifier table. Keep every rule here;
 // consumers get plain multipliers/flags, never re-derive the table.
 #include "game/game_rules.h"
+#include <stddef.h> // NULL
 
 enum { E_WATER = 0, E_WOOD = 1, E_FIRE = 2, E_EARTH = 3, E_METAL = 4 };
 
@@ -27,4 +28,21 @@ float GameRules_KnockbackMult(int element, NatureZoneType zone) {
 float GameRules_RangeMult(int element, NatureZoneType zone) {
     if (zone == NAT_DESERT_ZONE && element == E_WATER) return 0.5f; // Thủy khô cạn
     return 1.0f;
+}
+
+int GameRules_CountAliveHeroes(AgentTeam team) {
+    int n = 0;
+    for (int i = 0; i < MAX_AGENTS; i++) {
+        const Agent *a = Entity_GetAgent(i);
+        if (a != NULL && a->archetype == ARCH_HERO && a->team == team) n++;
+    }
+    return n;
+}
+
+TeamHandicap GameRules_HandicapFor(int deficit) {
+    if (deficit < 0) deficit = 0;
+    if (deficit > 3) deficit = 3;
+    // Khởi điểm — tinh chỉnh qua playtest (KE_HOACH Đợt A4/D4).
+    return (TeamHandicap){ 1.0f + 0.15f * (float)deficit,
+                           1.0f + 0.05f * (float)deficit };
 }

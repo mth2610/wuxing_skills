@@ -95,6 +95,74 @@ lobby + P2P, host spawned the remote hero, session held with no drops.
   anonymous user; required to test host+join on one machine because lobby
   search hides lobbies the searcher is already in).
 
+## 3d. Multi-peer + lobby room (protocol v3 — Đợt A1/A2, 07/2026)
+
+Up to `NET_MAX_PLAYERS` = 8 (host + 7 remote players → 4v4). Every backend
+callback carries an opaque `peerRef` (EOS: the ProductUserId; ENet: the
+`ENetPeer*`); the core maps it to a `HostPeer` slot with its own hero,
+held intent, team, and liveness clock.
+
+- **Roster** (`net.h`): `NetRosterEntry {slot, team, agentId, flags}` —
+  flags = OCCUPIED / BOT / HOST, agentId = NET_ROSTER_NONE pre-spawn.
+  `Net_PackRoster/UnpackRoster` (kind 0x03). The host builds it live
+  (slot 0 = host, peers in join order, bots trailing) and rebroadcasts on
+  every change; clients read their copy via `Net_GetRoster`.
+- **Room management** (host-only): `Net_HostToggleTeam(rosterIndex)` (flips
+  a human's side + retags the spawned hero via `Entity_SetAgentTeam`; moves
+  a bot across), `Net_HostAddBot/RemoveBot(team)` (metadata until Đợt A4
+  spawns brains), `Net_HostStartMatch()` → reliable `NET_CTRL_START`;
+  every instance (host included) consumes it once via
+  `Net_ConsumeMatchStart()` — main.c's lobby screen switches on it.
+  `Net_HostRespawnPeerHeroes()` re-spawns dead peer heroes (fresh HELLO)
+  for the team-battle rematch.
+- **Join knock / heartbeat**: clients send `NET_CTRL_JOIN` at 1Hz. The
+  first one initiates the EOS NAT punch (nothing else flows while the room
+  idles in the lobby — without it the host NEVER sees the peer); afterwards
+  it feeds the host's liveness sweep: a peer silent for `NET_PEER_TIMEOUT`
+  (8s) is dropped (EOS raises no disconnect event for a killed process;
+  ENet's own 5s timeout covers the LAN path).
+- **Team auto-balance at join**: host counts as team 0; a joiner lands on
+  the smaller side, tie → team 1 (first joiner opposes the host). The
+  lobby reassigns freely afterwards.
+- Verified 13/07/2026 (3 instances over real EOS): two clients with
+  separate heroes + live roster updates on join, slot reuse after a leave,
+  8s timeout sweep on a killed client, START propagating everyone into the
+  match together.
+
+## 3d-bis. Đợt A5 — cast mirroring, interpolation, loadout/zone sync
+
+- **Cast mirroring**: `Net_HostNotifyCast(agentId, skillIndex, aim)` →
+  reliable `NET_CTRL_CAST` [5][ver][agent][skill][aim 12B] broadcast. Call
+  sites: game/ (host player, at Control_ConsumeCastFired), main.c (bot
+  casts via `AI_PollHeroCasts`), transport itself (remote-intent casts).
+  Clients re-play with `CastSkill` under `SkillManager_SetFreeCast(true)`
+  (their mirrored mana is post-debit — the real gate would misfire): pure
+  VFX, no Combat_Update ticks client-side, damage stays snapshot-driven.
+  Caveat: non-registry skills that mutate state inside their own Update
+  drift briefly on clients until the next snapshot (50ms) corrects it.
+- **Snapshot interpolation**: the client no longer snaps — each frame it
+  eases every agent from its currently DISPLAYED position toward the
+  newest snapshot, completing in one snapshot interval (20Hz). No
+  prediction/extrapolation; non-positional fields (HP/mana/flags) apply
+  immediately.
+- **Loadout sync**: ui/'s loadout panel calls
+  `Net_ClientSendLoadout(slot, skillIndex, element)` (reliable
+  `NET_CTRL_LOADOUT`, 5B) after a client equip; the host re-equips that
+  hero (`Entity_SetEquippedSkill` → Vô Hệ recomputes for everyone).
+- **Zone rules for remote heroes** (host): cast cooldown ×
+  `GameRules_CooldownMult`, stealth via `GameRules_GrantsStealth` per
+  frame — same table the local player uses (net/ now reads
+  `game/game_rules.h` + `core/map_manager.h` for this).
+
+## 3e. Lobby screen (ui/ui_lobby.c — Đợt A2)
+
+`UI_LobbyUpdateDraw(joinCode, isHost)` draws the room between menu and
+match (two team columns from `Net_GetRoster`; host clicks: entry → flip
+side, empty slot → add bot, bot's X → remove; BAT DAU gated on ≥1 member
+per side) and returns `UI_LOBBY_START/LEAVE` for main.c to execute.
+main.c's `SCREEN_LOBBY` pumps `Net_Tick`, honors `WUXING_LOBBY_AUTOSTART=
+<sec>` (dev: headless host can't click), and leaves on host-vanish.
+
 ## 4. Explicitly NOT in this version
 
 - Side thread (main-thread polling for now), reconnection/session management.

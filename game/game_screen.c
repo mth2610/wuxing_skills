@@ -25,10 +25,15 @@ static bool  s_backToMenu = false;
 
 // --- Module 7 match state ---
 static GameState s_state = GAME_ARENA_INTRO;
+static GameMode  s_mode = GAME_MODE_BOSS; // Đợt A3 — main.c sets per entry
 static char s_onlineCode[16] = { 0 }; // EOS room code shown while hosting
 static float s_introTimer = 0.0f;
 static int s_lastBossPhase = -1; // minion waves trigger on phase change (M8)
 static float s_swingSlowTimer = 0.0f; // movement damped while a swing plays
+
+// Team battle: two spawn clusters facing each other across the plateau
+// center; heroes fan out ±z within their cluster.
+static const Vector3 TEAM_SPAWN[2] = { { 42.0f, 0.0f, 37.5f }, { 58.0f, 0.0f, 37.5f } };
 
 // The Phase 0 match runs on VERDANT_PATH — the real grass island (100x75m,
 // flat plateau at Y=0, cliff falloff past ~34m from center). Ring-out
@@ -42,12 +47,31 @@ static const Vector3 PLAYER_SPAWN = { 46.0f, 0.0f, 37.5f };
 static const Vector3 BOSS_SPAWN   = { 54.0f, 0.0f, 37.5f };
 static const float   INTRO_SECONDS = 2.0f;
 
+// Default loadout (keys 1-4). One skill per element — deliberately NOT
+// 2 Âm + 2 Dương (that combination enters Thái Cực; the player should
+// discover it by re-equipping, No Tutorial). Majority tie → Thủy.
+static void EquipDefaultLoadout(int agentId) {
+    static const struct { const char *name; int element; } kLoadout[AGENT_SKILL_SLOTS] = {
+        { "GLACIAL_CANNON", 0 }, // Thủy
+        { "FIRE",           2 }, // Hỏa
+        { "STONE_PRISON",   3 }, // Thổ
+        { "LEAF_WHIRLWIND", 1 }, // Mộc
+    };
+    for (int slot = 0; slot < AGENT_SKILL_SLOTS; slot++) {
+        int idx = Skill_GetIndexByName(kLoadout[slot].name);
+        if (idx >= 0) Entity_SetEquippedSkill(agentId, slot, idx, kLoadout[slot].element);
+    }
+}
+
 static void ResetMatch(PlayerEntity *player) {
     s_state = GAME_ARENA_INTRO;
     s_introTimer = INTRO_SECONDS;
     s_lastBossPhase = -1;
     s_swingSlowTimer = 0.0f;
     if (UI_IsLoadoutOpen()) UI_ToggleLoadout();
+    // Team battle: bots re-materialize from the roster each round (the
+    // INTRO tick spawns them) — clear the old brains/agents first.
+    if (s_mode == GAME_MODE_TEAM_BATTLE) AI_ClearHeroBots();
 
     // Player agent may have died last match (HP or ring-out) — respawn it.
     // Placement happens in the INTRO tick (bounds are only correct while
@@ -55,24 +79,22 @@ static void ResetMatch(PlayerEntity *player) {
     // because ResetMatch only runs at startup or while in-game.
     if (Entity_GetAgent(player->agentId) == NULL) {
         player->agentId = Entity_SpawnAgent(PLAYER_SPAWN, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
+        // Team battle: the lobby may have moved the host to side 1 — the
+        // respawned agent must keep that side (roster's HOST entry has it).
+        if (s_mode == GAME_MODE_TEAM_BATTLE) {
+            NetRosterEntry roster[NET_MAX_PLAYERS];
+            int rc = Net_GetRoster(roster, NET_MAX_PLAYERS);
+            for (int i = 0; i < rc; i++) {
+                if (!(roster[i].flags & NET_ROSTER_HOST)) continue;
+                Entity_SetAgentTeam(player->agentId,
+                                    roster[i].team == 0 ? TEAM_ALLY : TEAM_ENEMY);
+                break;
+            }
+        }
     }
     Control_Init(player->agentId);
 
-    // Default loadout (keys 1-4). One skill per element — deliberately NOT
-    // 2 Âm + 2 Dương (that combination enters Thái Cực; the player should
-    // discover it by re-equipping, No Tutorial). Majority tie → Thủy.
-    {
-        static const struct { const char *name; int element; } kLoadout[AGENT_SKILL_SLOTS] = {
-            { "GLACIAL_CANNON", 0 }, // Thủy
-            { "FIRE",           2 }, // Hỏa
-            { "STONE_PRISON",   3 }, // Thổ
-            { "LEAF_WHIRLWIND", 1 }, // Mộc
-        };
-        for (int slot = 0; slot < AGENT_SKILL_SLOTS; slot++) {
-            int idx = Skill_GetIndexByName(kLoadout[slot].name);
-            if (idx >= 0) Entity_SetEquippedSkill(player->agentId, slot, idx, kLoadout[slot].element);
-        }
-    }
+    EquipDefaultLoadout(player->agentId);
 
     // Leftover boss from an aborted match: kill it so the next intro spawns
     // a fresh one (Boss_Spawn would otherwise leak the old pool agent).
@@ -84,6 +106,24 @@ static void ResetMatch(PlayerEntity *player) {
 
 GameState GameScreen_GetState(void) {
     return s_state;
+}
+
+void GameScreen_SetMode(GameMode mode) { s_mode = mode; }
+GameMode GameScreen_GetMode(void) { return s_mode; }
+
+// Host, team battle: line every living hero up on its side's spawn cluster
+// (remote heroes joined at the invasion point; the round starts in ranks).
+static void PlaceHeroesAtTeamSpawns(void) {
+    int placed[2] = { 0, 0 };
+    for (int i = 0; i < MAX_AGENTS; i++) {
+        const Agent *a = Entity_GetAgent(i);
+        if (a == NULL || a->archetype != ARCH_HERO) continue;
+        int t = (a->team == TEAM_ALLY) ? 0 : 1;
+        Vector3 pos = TEAM_SPAWN[t];
+        pos.z += (float)placed[t] * 1.8f - 2.7f;
+        Entity_SetPosition(i, pos);
+        placed[t]++;
+    }
 }
 
 void GameScreen_Init(PlayerEntity *player) {
@@ -125,12 +165,76 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
             }
         }
         Entity_SetArenaBounds(MATCH_ARENA_CENTER, MATCH_ARENA_RADIUS);
-        // Hold the player at the spawn point through the title card.
-        player->position = PLAYER_SPAWN;
-        Entity_SetPosition(player->agentId, player->position);
+        if (s_mode == GAME_MODE_TEAM_BATTLE) {
+            // Both sides stand in ranks through the title card. The host
+            // owns placement (clients mirror via snapshots).
+            if (!Net_ClientDrivesWorld()) {
+                NetRosterEntry roster[NET_MAX_PLAYERS];
+                int rc = Net_GetRoster(roster, NET_MAX_PLAYERS);
+
+                // Retire heroes that aren't part of this room — leftover
+                // sandbox/test agents would otherwise count toward a side
+                // (elimination + handicap both read the pool).
+                for (int i = 0; i < MAX_AGENTS; i++) {
+                    const Agent *a = Entity_GetAgent(i);
+                    if (a == NULL || a->archetype != ARCH_HERO) continue;
+                    if (i == player->agentId || AI_IsHeroBot(i)) continue;
+                    bool inRoster = false;
+                    for (int r = 0; r < rc; r++)
+                        if (roster[r].agentId == (unsigned char)i &&
+                            roster[r].agentId != NET_ROSTER_NONE) { inRoster = true; break; }
+                    if (!inRoster) Entity_ApplyDamage(i, 1e9f, (Vector3){ 0 });
+                }
+
+                // Bots from the lobby roster materialize here (Đợt A4):
+                // spawn until each side's living bot count matches it.
+                int want[2] = { 0, 0 };
+                for (int i = 0; i < rc; i++)
+                    if (roster[i].flags & NET_ROSTER_BOT) want[roster[i].team]++;
+                for (int t = 0; t < 2; t++) {
+                    AgentTeam team = (t == 0) ? TEAM_ALLY : TEAM_ENEMY;
+                    while (AI_GetHeroBotCount(team) < want[t]) {
+                        int botId = AI_SpawnHeroBot(TEAM_SPAWN[t], team);
+                        if (botId < 0) break;
+                        EquipDefaultLoadout(botId);
+                    }
+                }
+                PlaceHeroesAtTeamSpawns();
+                const Agent *pa = Entity_GetAgent(player->agentId);
+                if (pa != NULL) player->position = pa->position;
+            }
+        } else {
+            // Hold the player at the spawn point through the title card.
+            player->position = PLAYER_SPAWN;
+            Entity_SetPosition(player->agentId, player->position);
+        }
         s_introTimer -= dt;
         if (s_introTimer <= 0.0f) {
-            Boss_Spawn(&BOSS_HAC_DIEN_TON_GIA, BOSS_SPAWN, TEAM_ENEMY);
+            if (s_mode == GAME_MODE_BOSS) {
+                Boss_Spawn(&BOSS_HAC_DIEN_TON_GIA, BOSS_SPAWN, TEAM_ENEMY);
+            } else if (!Net_ClientDrivesWorld()) {
+                // Handicap buff (Đợt A4): the side that accepts fighting
+                // short-handed gets per-missing-player multipliers — once,
+                // at round start. Bots already count, so a bot-filled slot
+                // grants nothing.
+                int ally = GameRules_CountAliveHeroes(TEAM_ALLY);
+                int enemy = GameRules_CountAliveHeroes(TEAM_ENEMY);
+                int shortTeam = (ally < enemy) ? 0 : 1;
+                int deficit = (ally < enemy) ? (enemy - ally) : (ally - enemy);
+                if (deficit > 0) {
+                    TeamHandicap h = GameRules_HandicapFor(deficit);
+                    AgentTeam team = (shortTeam == 0) ? TEAM_ALLY : TEAM_ENEMY;
+                    for (int i = 0; i < MAX_AGENTS; i++) {
+                        const Agent *a = Entity_GetAgent(i);
+                        if (a == NULL || a->archetype != ARCH_HERO || a->team != team)
+                            continue;
+                        Entity_ScaleMaxHealth(i, h.maxHpMult);
+                        Entity_AddModifier(i, h.speedMult, 3600.0f); // whole round
+                    }
+                    TraceLog(LOG_INFO, "[GAME] handicap +%d cho phe %d (HP x%.2f, speed x%.2f)",
+                             deficit, shortTeam, h.maxHpMult, h.speedMult);
+                }
+            }
             s_state = GAME_FIGHTING;
         }
         // Camera keeps framing the player during the title card (falls
@@ -142,11 +246,48 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
         if (Net_ClientDrivesWorld()) {
             int hid = Net_GetLocalHeroAgentId();
             if (hid >= 0) player->agentId = hid;
-            // Match outcome comes from the host — perspective-swapped: we
-            // fight on the boss's side, so the host winning is our defeat.
+            // Match outcome comes from the host, stated from the HOST's
+            // perspective — map it through team membership: same side as
+            // the host → keep it, opposite side → swap.
+            // Our own side, cached while our hero lives — the outcome often
+            // lands right after we died, when the agent is already gone.
+            static int s_mySide = -1;
+            const Agent *me = Entity_GetAgent(player->agentId);
+            if (me != NULL) s_mySide = (me->team == TEAM_ALLY) ? 0 : 1;
             int rs = Net_GetRemoteMatchState();
-            if (rs == (int)GAME_VICTORY)      s_state = GAME_DEFEAT;
-            else if (rs == (int)GAME_DEFEAT)  s_state = GAME_VICTORY;
+            if (rs == (int)GAME_VICTORY || rs == (int)GAME_DEFEAT) {
+                bool sameSide = false; // invasion default: we oppose the host
+                if (s_mode == GAME_MODE_TEAM_BATTLE && s_mySide >= 0) {
+                    NetRosterEntry roster[NET_MAX_PLAYERS];
+                    int rc = Net_GetRoster(roster, NET_MAX_PLAYERS);
+                    for (int i = 0; i < rc; i++) {
+                        if (!(roster[i].flags & NET_ROSTER_HOST)) continue;
+                        sameSide = (s_mySide == (int)roster[i].team);
+                        break;
+                    }
+                }
+                bool hostWon = (rs == (int)GAME_VICTORY);
+                s_state = (hostWon == sameSide) ? GAME_VICTORY : GAME_DEFEAT;
+            }
+        } else if (s_mode == GAME_MODE_TEAM_BATTLE) {
+            // Elimination (Đợt A3): a side with no living heroes loses.
+            // Bots (A4) and remote players are heroes in the same pool.
+            const Agent *pa = Entity_GetAgent(player->agentId);
+            if (pa != NULL) {
+                NatureZoneType zone = Map_QueryZoneAt(pa->position);
+                Control_SetCastCooldownMult(GameRules_CooldownMult(pa->currentElement, zone));
+                Entity_SetStealth(player->agentId, GameRules_GrantsStealth(pa->currentElement, zone));
+            }
+            // Remember the host's side while alive — a dead host with
+            // living teammates still wins as a team.
+            static int s_hostSide = 0;
+            if (pa != NULL) s_hostSide = (pa->team == TEAM_ALLY) ? 0 : 1;
+            int ally = GameRules_CountAliveHeroes(TEAM_ALLY);
+            int enemy = GameRules_CountAliveHeroes(TEAM_ENEMY);
+            if (ally == 0 || enemy == 0) {
+                int aliveTeam = (ally > 0) ? 0 : 1;
+                s_state = (aliveTeam == s_hostSide) ? GAME_VICTORY : GAME_DEFEAT;
+            }
         } else {
         const Agent *pa = Entity_GetAgent(player->agentId);
         if (pa == NULL) {
@@ -172,7 +313,21 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
         }
         }
     } else { // GAME_VICTORY / GAME_DEFEAT
+        if (s_mode == GAME_MODE_TEAM_BATTLE && Net_ClientDrivesWorld()) {
+            // The host decides the rematch — its state dropping back to
+            // INTRO/FIGHTING is the signal a new round started.
+            int rs = Net_GetRemoteMatchState();
+            if (rs == (int)GAME_ARENA_INTRO || rs == (int)GAME_FIGHTING)
+                s_state = (GameState)rs;
+        }
         if (IsKeyPressed(KEY_ENTER)) {
+            if (s_mode == GAME_MODE_TEAM_BATTLE && !Net_ClientDrivesWorld()) {
+                // Team battle rematch: same room, fresh round. Dead heroes
+                // (host's own included, via ResetMatch) come back.
+                Net_HostRespawnPeerHeroes();
+                ResetMatch(player);
+                return;
+            }
             s_backToMenu = true;
             ResetMatch(player);
             return;
@@ -182,6 +337,17 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
     // Outcome sync: the host tells the connected client how the match
     // stands (no-op offline / as client — the transport gates by mode).
     Net_HostSetMatchState((int)s_state);
+
+    // One line per state change — the only reliable headless evidence of a
+    // round's arc (net tests grep for it).
+    {
+        static GameState s_prevLogged = (GameState)-1;
+        if (s_state != s_prevLogged) {
+            static const char *kNames[] = { "MENU", "INTRO", "FIGHTING", "VICTORY", "DEFEAT" };
+            TraceLog(LOG_INFO, "[GAME] state -> %s", kNames[(int)s_state]);
+            s_prevLogged = s_state;
+        }
+    }
 
     if (IsKeyDown(KEY_Q)) s_camAngle -= 1.6f * dt;
     if (IsKeyDown(KEY_E)) s_camAngle += 1.6f * dt;
@@ -227,6 +393,8 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt) {
                 float castSecs = Skill_GetCastAnimSeconds(castIdx);
                 CharacterModel_TriggerAttackTimed(&player->anim, CHAR_ANIM_CAST, castSecs);
                 s_swingSlowTimer = castSecs * 0.6f; // free up before the anim tail
+                // Đợt A5: connected clients replay this cast as pure VFX.
+                Net_HostNotifyCast(player->agentId, castIdx, intent.aimPoint);
             }
         }
     }
@@ -406,6 +574,17 @@ void GameScreen_DrawHUD(const PlayerEntity *player) {
         }
     }
 
+    // Team battle scoreboard (top center — the boss bar's slot; the two
+    // never coexist): living hero count per side, colored per team.
+    if (s_mode == GAME_MODE_TEAM_BATTLE) {
+        int ally = GameRules_CountAliveHeroes(TEAM_ALLY);
+        int enemy = GameRules_CountAliveHeroes(TEAM_ENEMY);
+        const char *score = TextFormat("THANH LONG  %d — %d  BACH HO", ally, enemy);
+        int scw = MeasureText(score, 22);
+        DrawRectangle(sw / 2 - scw / 2 - 12, 12, scw + 24, 34, (Color){ 15, 15, 25, 200 });
+        DrawText(score, sw / 2 - scw / 2, 18, 22, (Color){ 225, 225, 235, 255 });
+    }
+
     // Online status strip (below the boss bar): the host shows its room
     // code until the opponent arrives; a joining client shows the handshake
     // wait (hero id assignment doubles as "snapshots are flowing").
@@ -424,7 +603,7 @@ void GameScreen_DrawHUD(const PlayerEntity *player) {
     // Match-state overlays (No Tutorial — one line each, no instructions
     // beyond the exit key).
     if (s_state == GAME_ARENA_INTRO) {
-        const char *t = "HAC DIEN TON GIA";
+        const char *t = (s_mode == GAME_MODE_TEAM_BATTLE) ? "SONG DAU" : "HAC DIEN TON GIA";
         DrawText(t, sw / 2 - MeasureText(t, 40) / 2, sh / 2 - 60, 40, (Color){ 235, 230, 245, 255 });
     } else if (s_state == GAME_VICTORY) {
         const char *t = "CHIEN THANG";

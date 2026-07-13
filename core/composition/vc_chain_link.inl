@@ -1,25 +1,10 @@
-// Drooping Spline Chain / Vine Link visual composition.
-// progress (0..1) shoots the chain from start to end.
-// sag controls how much the curve sags under gravity.
-// time drives texture scrolling, waviness, and rotation.
+// Unifed Path/Beam/Chain Link visual composition.
+// Unifies straight beams, energy flows, and sagging chain links into a single
+// path-drawing logic that transforms points over time and handles extending progress.
 
-typedef struct {
-    Vector3 position;
-    Vector3 normal;
-    float size;
-    float elapsed;
-    float lifetime;
-    Color color;
-    bool active;
-} ChainSmokePuff;
-
-#define MAX_CHAIN_SMOKE_PUFFS 32
-static ChainSmokePuff s_chainSmokes[MAX_CHAIN_SMOKE_PUFFS];
-static bool s_chainSmokesInit = false;
-
-void VFX_ComposeChainLink(VC_MaterialId matId, Vector3 start, Vector3 end, float width, float sag, float progress, float time)
+void VFX_ComposePathLink(VC_MaterialId matId, const Vector3 *points, int count, float width, float progress, float time)
 {
-    if (progress <= 0.0f)
+    if (count < 2 || progress <= 0.0f)
         return;
 
     // 1. Fade logic to prevent popping
@@ -27,68 +12,99 @@ void VFX_ComposeChainLink(VC_MaterialId matId, Vector3 start, Vector3 end, float
     if (fadeAlpha <= 0.0f)
         return;
 
-    // Initialize local smoke pool if not done
-    if (!s_chainSmokesInit)
-    {
-        for (int i = 0; i < MAX_CHAIN_SMOKE_PUFFS; i++)
-            s_chainSmokes[i].active = false;
-        s_chainSmokesInit = true;
-    }
-
-    // Update smoke elapsed time once per frame
-    float dt = GetFrameTime();
-    static float s_lastUpdateTime = -1.0f;
-    if (time != s_lastUpdateTime)
-    {
-        for (int i = 0; i < MAX_CHAIN_SMOKE_PUFFS; i++)
-        {
-            if (s_chainSmokes[i].active)
-            {
-                s_chainSmokes[i].elapsed += dt;
-                if (s_chainSmokes[i].elapsed >= s_chainSmokes[i].lifetime)
-                {
-                    s_chainSmokes[i].active = false;
-                }
-            }
-        }
-        s_lastUpdateTime = time;
-    }
-
     const VFX_ElementMaterial *mat = VFX_Material(matId);
     Color bodyCol = (mat->blendMode == BLEND_ALPHA) ? VC_WithAlpha(mat->body, (unsigned char)(200 * fadeAlpha))
                                                     : VC_WithAlpha(mat->body, (unsigned char)(255 * fadeAlpha));
     Color glowCol = VC_WithAlpha(mat->glow, (unsigned char)(255 * fadeAlpha));
 
-    // 2. Bezier Curve Sampling
-    // Sample points along a quadratic Bezier curve with sag in Y axis
+    // Calculate total path length
+    float pathLen = 0.0f;
+    for (int i = 0; i < count - 1; i++)
+    {
+        pathLen += Vector3Distance(points[i], points[i + 1]);
+    }
+    if (pathLen < 0.01f)
+        return;
+
+    // Define direction from start to end (for local coordinate frame wiggling)
+    Vector3 start = points[0];
+    Vector3 end = points[count - 1];
+    Vector3 chainDir = Vector3Subtract(end, start);
+    float chainLen = Vector3Length(chainDir);
+    Vector3 dir = (chainLen > 0.001f) ? Vector3Scale(chainDir, 1.0f / chainLen) : (Vector3){0, 0, 1};
+
+    // Construct perpendicular frame
+    Vector3 upProj = {0.0f, 1.0f, 0.0f};
+    if (fabsf(Vector3DotProduct(dir, upProj)) > 0.95f) {
+        upProj = (Vector3){1.0f, 0.0f, 0.0f};
+    }
+    Vector3 rightVec = Vector3Normalize(Vector3CrossProduct(dir, upProj));
+    Vector3 upVec = Vector3Normalize(Vector3CrossProduct(rightVec, dir));
+
+    // Sample path segments up to progress
     #define CHAIN_SEGMENTS 16
     Vector3 pts[CHAIN_SEGMENTS];
-    Vector3 mid = Vector3Lerp(start, end, 0.5f);
-    mid.y -= sag; // droop under gravity
 
+    // Helper to sample path at normalized parameter u (0..1)
     for (int i = 0; i < CHAIN_SEGMENTS; i++)
     {
         float t = (float)i / (float)(CHAIN_SEGMENTS - 1);
-        // Extend the curve according to progress (shoots from start to end)
-        float t_curr = t * fminf(progress / 0.85f, 1.0f);
-        float omt = 1.0f - t_curr;
-        pts[i] = Vector3Add(
-            Vector3Add(Vector3Scale(start, omt * omt), Vector3Scale(mid, 2.0f * omt * t_curr)),
-            Vector3Scale(end, t_curr * t_curr)
-        );
-        // Prevent clipping below ground (Y = 0) with a minor offset to prevent Z-fighting
+        float progress_capped = fminf(progress / 0.85f, 1.0f);
+        float u = t * progress_capped;
+
+        // Sample base path
+        float floatIdx = u * (count - 1);
+        int idx = (int)floatIdx;
+        float f = floatIdx - idx;
+        Vector3 basePos;
+        if (idx >= count - 1)
+        {
+            basePos = points[count - 1];
+        }
+        else
+        {
+            basePos = Vector3Lerp(points[idx], points[idx + 1], f);
+        }
+
+        // Apply dynamic wave wiggling
+        float env = sinf(t * 3.14159265f); // envelope: zero at start and end of ACTIVE segment
+
+        // Wave amplitude depends on material (steel chain sways much less than fire/lightning)
+        float waveAmp1 = 0.0f;
+        float waveAmp2 = 0.0f;
+        if (matId == VC_MAT_WOOD || matId == VC_MAT_POISON || matId == VC_MAT_WATER ||
+            matId == VC_MAT_FIRE || matId == VC_MAT_LIGHTNING || matId == VC_MAT_VOID ||
+            matId == VC_MAT_ICE || matId == VC_MAT_QI || matId == VC_MAT_HOLY)
+        {
+            waveAmp1 = pathLen * 0.12f;
+            waveAmp2 = pathLen * 0.08f;
+        }
+        else
+        {
+            // Physical metal/earth chain: very subtle organic weight sway
+            waveAmp1 = pathLen * 0.02f;
+            waveAmp2 = pathLen * 0.01f;
+        }
+
+        float waveFreq1 = 6.0f;
+        float waveSpeed1 = 8.0f;
+        float waveFreq2 = 4.0f;
+        float waveSpeed2 = -5.0f;
+
+        pts[i] = Vector3Add(basePos, Vector3Scale(rightVec, sinf(t * waveFreq1 + time * waveSpeed1) * waveAmp1 * env));
+        pts[i] = Vector3Add(pts[i], Vector3Scale(upVec, cosf(t * waveFreq2 + time * waveSpeed2) * waveAmp2 * env));
+
+        // Clamp Y to prevent ground clipping
         pts[i].y = fmaxf(pts[i].y, 0.05f);
     }
 
-    // 3. Render Style Selection
+    // 2. Render Style Selection
     bool isPhysical = (matId == VC_MAT_METAL || matId == VC_MAT_EARTH || matId == VC_MAT_TAIJI);
     bool isOrganic = (matId == VC_MAT_WOOD || matId == VC_MAT_POISON || matId == VC_MAT_WATER);
 
     if (isPhysical)
     {
-        // ─────────────────────────────────────────────────────────────────────
-        // STYLE A: Physical Interlocking 3D Chain (torus loops)
-        // ─────────────────────────────────────────────────────────────────────
+        // Style A: Physical Torus Chain
         rlDrawRenderBatchActive();
         BeginBlendMode(mat->blendMode);
         rlDisableDepthMask();
@@ -99,47 +115,43 @@ void VFX_ComposeChainLink(VC_MaterialId matId, Vector3 start, Vector3 end, float
         ep.rimStrength = 2.0f;
         ep.fresnelPower = 2.5f;
         ep.emissiveIntensity = (matId == VC_MAT_METAL) ? 0.9f : 1.3f;
-        ep.translucency = (matId == VC_MAT_METAL) ? 0.15f : 0.5f;
+        ep.translucency = 0.1f;
 
-        EffectMaterial eMat = Material_LoadCustom(ep);
-        Material_Begin(eMat);
+        EffectMaterial torusMat = Material_LoadCustom(ep);
+        Material_Begin(torusMat);
 
-        // Draw individual interlocking rings along active segments
-        int activeCount = (int)(progress * (CHAIN_SEGMENTS - 1));
-        if (activeCount < 1)
-            activeCount = 1;
-        if (activeCount > CHAIN_SEGMENTS - 1)
-            activeCount = CHAIN_SEGMENTS - 1;
-
-        for (int i = 0; i < activeCount; i++)
+        for (int i = 0; i < CHAIN_SEGMENTS - 1; i++)
         {
             Vector3 p0 = pts[i];
             Vector3 p1 = pts[i + 1];
-            Vector3 linkPos = Vector3Lerp(p0, p1, 0.5f);
-            Vector3 linkDir = Vector3Normalize(Vector3Subtract(p1, p0));
+
+            Vector3 segDir = Vector3Subtract(p1, p0);
+            float segLen = Vector3Length(segDir);
+            if (segLen < 0.01f)
+                continue;
+            Vector3 center = Vector3Lerp(p0, p1, 0.5f);
+
+            Vector3 tangent = Vector3Scale(segDir, 1.0f / segLen);
+            Vector3 defaultUp = {0, 1, 0};
+            float dot = Vector3DotProduct(tangent, defaultUp);
+            Vector3 rotAxis;
+            float angle = 0.0f;
+            if (fabsf(dot) > 0.999f)
+            {
+                rotAxis = (Vector3){1, 0, 0};
+                angle = (dot > 0.0f) ? 0.0f : 180.0f;
+            }
+            else
+            {
+                rotAxis = Vector3Normalize(Vector3CrossProduct(defaultUp, tangent));
+                angle = acosf(dot) * 57.29578f;
+            }
 
             rlPushMatrix();
-            rlTranslatef(linkPos.x, linkPos.y, linkPos.z);
+            rlTranslatef(center.x, center.y, center.z);
+            rlRotatef(angle, rotAxis.x, rotAxis.y, rotAxis.z);
+            rlRotatef(i * 90.0f + time * 60.0f, 0, 1, 0);
 
-            // Align local Y axis with the link direction
-            Vector3 localUp = {0.0f, 1.0f, 0.0f};
-            float dot = Vector3DotProduct(localUp, linkDir);
-            if (fabsf(dot) < 0.999f)
-            {
-                Vector3 axis = Vector3Normalize(Vector3CrossProduct(localUp, linkDir));
-                float rotAngle = acosf(dot) * RAD2DEG;
-                rlRotatef(rotAngle, axis.x, axis.y, axis.z);
-            }
-            else if (dot < -0.999f)
-            {
-                rlRotatef(180.0f, 1.0f, 0.0f, 0.0f);
-            }
-
-            // Alternating 90-degree twist around link axis to interlock
-            float rollAngle = (float)(i % 2) * 90.0f;
-            rlRotatef(rollAngle, 0.0f, 1.0f, 0.0f);
-
-            // Link dimensions based on segment width
             float outerR = width * 1.1f;
             float innerR = width * 0.45f;
             DrawCoreTorus((Vector3){0, 0, 0}, innerR, outerR, 4, 8, WHITE);
@@ -155,9 +167,7 @@ void VFX_ComposeChainLink(VC_MaterialId matId, Vector3 start, Vector3 end, float
     }
     else if (isOrganic)
     {
-        // ─────────────────────────────────────────────────────────────────────
-        // STYLE B: Glowing Organic Vine / Fluid Spline (2-pass glowing ribbon)
-        // ─────────────────────────────────────────────────────────────────────
+        // Style B: Organic Spline (Vine/Water)
         static RibbonPoint ribbonPoints[CHAIN_SEGMENTS];
         for (int i = 0; i < CHAIN_SEGMENTS; i++)
         {
@@ -168,7 +178,7 @@ void VFX_ComposeChainLink(VC_MaterialId matId, Vector3 start, Vector3 end, float
 
             ribbonPoints[i].position = pts[i];
             ribbonPoints[i].halfWidth = width * 0.75f * taper;
-            ribbonPoints[i].v = norm - time * 0.8f; // scroll texture coordinate
+            ribbonPoints[i].v = norm - time * 0.8f;
             ribbonPoints[i].tint = bodyCol;
         }
 
@@ -190,7 +200,7 @@ void VFX_ComposeChainLink(VC_MaterialId matId, Vector3 start, Vector3 end, float
         DrawRibbonStrip(ribbonPoints, CHAIN_SEGMENTS, (Texture2D){0}, camera);
         Material_End();
 
-        // Pass 2: inner hot core (white additive)
+        // Pass 2: inner hot core (white additive thread)
         BeginBlendMode(BLEND_ADDITIVE);
         matParams.emissiveIntensity = 3.0f;
         matParams.translucency = 0.0f;
@@ -212,13 +222,9 @@ void VFX_ComposeChainLink(VC_MaterialId matId, Vector3 start, Vector3 end, float
     }
     else
     {
-        // ─────────────────────────────────────────────────────────────────────
-        // STYLE C: Energy Conduit / Scrolling Plasma Ray
-        // ─────────────────────────────────────────────────────────────────────
+        // Style C: Energy / Plasma beam
         Texture2D energyTex = ResourceManager_LoadTexture("assets/textures/energy_flow.png");
-
-        float chainLen = Vector3Distance(start, end);
-        float tiling = chainLen / 3.5f;
+        float tiling = pathLen / 3.5f;
 
         RibbonEnergyFieldLayer layers[2] = {
             { .widthRatio = 0.8f, .breatheFreq = 16.0f, .breatheAmp = 0.07f,
@@ -243,9 +249,8 @@ void VFX_ComposeChainLink(VC_MaterialId matId, Vector3 start, Vector3 end, float
         rlEnableDepthMask();
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // particles: Spawns glowing particles at the shooting front tip
-    // ─────────────────────────────────────────────────────────────────────────
+    // Spawns glowing particles at the shooting front tip
+    float dt = GetFrameTime();
     if (progress < 0.95f && Random01() < (40.0f * dt))
     {
         Vector3 tipPos = pts[CHAIN_SEGMENTS - 1];
@@ -253,7 +258,7 @@ void VFX_ComposeChainLink(VC_MaterialId matId, Vector3 start, Vector3 end, float
             .position = tipPos,
             .velocity = {
                 (Random01() - 0.5f) * 1.6f,
-                (Random01() - 0.5f) * 1.6f + 1.2f, // upward spray
+                (Random01() - 0.5f) * 1.6f + 1.2f,
                 (Random01() - 0.5f) * 1.6f
             },
             .colorStart = glowCol,
@@ -262,45 +267,26 @@ void VFX_ComposeChainLink(VC_MaterialId matId, Vector3 start, Vector3 end, float
             .lifetime = 0.4f + Random01() * 0.3f
         });
     }
+}
 
-    // Spawn new dust/smoke puffs along the chain as it moves/drags
-    if (Random01() < (3.5f * dt))
+void VFX_ComposeChainLink(VC_MaterialId matId, Vector3 start, Vector3 end, float width, float sag, float progress, float time)
+{
+    // 1. Generate base sagging Bezier path
+    #define BASE_PATH_SEGS 16
+    Vector3 pts[BASE_PATH_SEGS];
+    Vector3 mid = Vector3Lerp(start, end, 0.5f);
+    mid.y -= sag;
+
+    for (int i = 0; i < BASE_PATH_SEGS; i++)
     {
-        int activeCount = (int)(progress * (CHAIN_SEGMENTS - 1));
-        if (activeCount > 1)
-        {
-            int idx = GetRandomValue(0, activeCount - 1);
-            Vector3 p0 = pts[idx];
-            Vector3 p1 = pts[idx + 1];
-            Vector3 spawnPos = Vector3Lerp(p0, p1, Random01());
-            spawnPos.y = fmaxf(spawnPos.y, 0.05f); // align to ground
-
-            for (int k = 0; k < MAX_CHAIN_SMOKE_PUFFS; k++)
-            {
-                if (!s_chainSmokes[k].active)
-                {
-                    s_chainSmokes[k] = (ChainSmokePuff){
-                        .position = spawnPos,
-                        .normal = (Vector3){0.0f, 1.0f, 0.0f}, // horizontal oriented quad
-                        .size = width * (2.2f + Random01() * 2.2f),
-                        .elapsed = 0.0f,
-                        .lifetime = 0.7f + Random01() * 0.4f,
-                        .color = bodyCol,
-                        .active = true
-                    };
-                    break;
-                }
-            }
-        }
+        float t = (float)i / (float)(BASE_PATH_SEGS - 1);
+        float omt = 1.0f - t;
+        pts[i] = Vector3Add(
+            Vector3Add(Vector3Scale(start, omt * omt), Vector3Scale(mid, 2.0f * omt * t)),
+            Vector3Scale(end, t * t)
+        );
     }
 
-    // Draw active smoke puffs
-    for (int k = 0; k < MAX_CHAIN_SMOKE_PUFFS; k++)
-    {
-        if (s_chainSmokes[k].active)
-        {
-            float prog = s_chainSmokes[k].elapsed / s_chainSmokes[k].lifetime;
-            VFX_ComposeSmokeOnPlane(s_chainSmokes[k].position, s_chainSmokes[k].normal, s_chainSmokes[k].size, prog, s_chainSmokes[k].color);
-        }
-    }
+    // 2. Call unified path link drawer
+    VFX_ComposePathLink(matId, pts, BASE_PATH_SEGS, width, progress, time);
 }

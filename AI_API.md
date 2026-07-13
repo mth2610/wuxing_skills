@@ -38,14 +38,41 @@ int AI_PollExplosions(MinionExplosion *out, int max); // drained per frame (main
   + rotating ring + smart shadow) — ai/ never draws.
 - Tuning constants (speed/trigger/blast) are statics in `ai.c` — meter-scaled.
 
+## 3b. Hero bots (Đợt A4 — người chơi ảo)
+
+```c
+#define AI_MAX_HERO_BOTS 8
+int  AI_SpawnHeroBot(Vector3 pos, AgentTeam team); // agent + brain; caller equips
+void AI_ClearHeroBots(void);                       // match reset / room close
+int  AI_GetHeroBotCount(AgentTeam team);
+bool AI_IsHeroBot(int agentId);
+typedef struct { int agentId; int skillIndex; Vector3 aim; } HeroBotCast;
+int  AI_PollHeroCasts(HeroBotCast *out, int max);  // → net cast mirroring
+```
+
+A bot is an ordinary ARCH_HERO plus a brain slot: nearest/weakest-enemy
+targeting, hold-skill-range movement (close in >9m, back off <5m, strafe in
+band), dash perpendicular to a close enemy projectile
+(`Combat_QueryProjectiles`), edge guard against the ring-out
+(`Entity_GetArenaBounds`), casts off `equippedSkills` on a ~1.2s think
+cadence. Runs HOST-side only — clients see bots through the same snapshot
+path as humans. game/'s team-battle INTRO spawns them from the lobby
+roster's BOT entries and equips the default loadout; ai/ itself never
+touches the registry names. Extra reads this brought: `core/
+skill_manager.h` (CanCast/CastSkill) + `combat/combat.h` (projectiles).
+
 ## 4. Explicitly NOT in this version
 
-- Hero-AI brains (AI teammates/opponents) — the module's growth direction.
 - Pathfinding/avoidance (straight-line steering only).
 - Per-minion variety (HP/damage archetypes) — one 20 HP kamikaze type.
+- Bot difficulty tiers / per-bot loadout variety (all default loadout).
+- Bots respawning mid-round (elimination rules them out by design).
 
 ## Autotest
 
 `minion_ai` in `main.c`: wave spawn (team/element inheritance), march +
 detonation damaging only the opposing boss, explosion events, 40-minion wave
 within pool capacity.
+`hero_bot_handicap` in `main.c`: bot spawns/counts, survives 5 simulated
+seconds inside the arena, spends mana (cast proof); handicap table steps +
+cap; `Entity_ScaleMaxHealth`; free-cast bypasses the mana gate once.

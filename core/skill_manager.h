@@ -138,6 +138,12 @@ void SkillManager_EndShader(void);
 // not lock out agent 7's Fireball. Pass any stable int if a caster has no
 // real agentId yet (e.g. 0) — just be consistent per-caster.
 bool SkillManager_CanCast(int skillIndex, int agentId);
+
+// Free-cast mode (net client mirror): CastSkill skips the mana gate while
+// on. The connected client re-plays the host's cast events purely for VFX —
+// its mirrored mana was already debited by the host, so the real gate would
+// randomly reject the replay. Never leave this on outside that replay.
+void SkillManager_SetFreeCast(bool on);
 void SkillManager_TriggerCooldown(int skillIndex, int agentId, float cooldownSeconds);
 // Clears every skill's cooldown for one agent id. Entity_SpawnAgent calls
 // this — agent pool slots are REUSED after death, and without the reset a

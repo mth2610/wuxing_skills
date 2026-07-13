@@ -555,6 +555,9 @@ void UnloadSkillManager(void) {
   }
 }
 
+static bool s_freeCast = false; // net client VFX replay (see header)
+void SkillManager_SetFreeCast(bool on) { s_freeCast = on; }
+
 bool CastSkill(int skillIndex, int agentId, Vector3 startPos, Vector3 target,
                SkillParams params) {
   EnsureBuiltInRegistered();
@@ -567,7 +570,7 @@ bool CastSkill(int skillIndex, int agentId, Vector3 startPos, Vector3 target,
   // this. Abort the cast completely on insufficient mana — no VFX, no
   // cooldown trigger.
   float manaCost = Skill_GetManaCost(skillIndex);
-  if (manaCost > 0.0f && !Entity_TrySpendMana(agentId, manaCost)) {
+  if (!s_freeCast && manaCost > 0.0f && !Entity_TrySpendMana(agentId, manaCost)) {
     AddFloatingText(startPos, "Thieu Mana!", GRAY, 18.0f, 0.6f);
     return false;
   }

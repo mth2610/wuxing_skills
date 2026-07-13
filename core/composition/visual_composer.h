@@ -244,5 +244,7 @@ void VFX_ComposeGroundSmoke(Vector3 center, float halfSize, float progress, Grou
 void VFX_ComposeMagicFilaments(Vector3 pos, float scale, float progress, Color color, float thickness, float frequency, float speed, Vector2 sourceUV);
 void VFX_ComposeSmokeColumnFX(Vector3 base, float halfWidth, float height, float progress, int planeCount);
 void VFX_ComposeSmokeOnPlane(Vector3 center, Vector3 normal, float halfSize, float progress, Color color);
+void VFX_ComposeWispSmoke(VC_MaterialId matId, Vector3 pos, float width, Vector3 windDirection, float windStrength, float buoyancy, float turbulence, float drag, float time);
 // @gen:vc_declarations end
+void VFX_ComposePathLink(VC_MaterialId matId, const Vector3 *points, int count, float width, float progress, float time);
 #endif // VISUAL_COMPOSER_H

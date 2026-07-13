@@ -31,6 +31,22 @@ void UI_DrawOverlay(int agentId);          // 2D pass: slot chips + reticle
 - Reticle: yellow diamond projected over the target via `GetWorldToScreen`.
 - All reads, no `Entity_*` mutations.
 
+### 2b. Lobby screen (`ui/ui_lobby.c` — Đợt A2)
+
+```c
+typedef enum { UI_LOBBY_NONE = 0, UI_LOBBY_START, UI_LOBBY_LEAVE } UILobbyAction;
+UILobbyAction UI_LobbyUpdateDraw(const char *joinCode, bool isHost);
+```
+
+Full-screen room UI between menu and match, rendered from `Net_GetRoster`
+(this file is ui/'s one consumer of `net/net_transport.h`): two team
+columns (THANH LONG / BACH HO, 4 slots each), join code banner. Host
+clicks: human/bot entry → `Net_HostToggleTeam`, empty slot →
+`Net_HostAddBot`, bot's X corner → `Net_HostRemoveBot`; BAT DAU (enabled
+at ≥1 member per side) / ROI PHONG return the action for main.c to
+execute — ui/ never starts/stops the session itself. Clients render
+read-only + the connection state.
+
 ## 3. Explicitly NOT in this version
 
 - Mobile virtual buttons / touch input surface (Phase 1 follow-up alongside

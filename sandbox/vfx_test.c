@@ -75,7 +75,7 @@ static const char *s_meshNames[] = {
     "DISC", "RING", "CONE", "TORNADO", "CYLINDER", "SPHERE", "SHOCKWAVE", "PYRAMID", "TETRAHEDRON"};
 
 // @gen:newfx_names begin
-// 82 entries — auto-managed by sync_vfx_test.py
+// 83 entries — auto-managed by sync_vfx_test.py
 static const char* s_newFxNames[] = {
     "FLAME WISP", "FIRE PILLAR", "FIREBALL", "FIRE BREATH", "BURN GROUND", "FIRE WHIRL",
     "EMBER DRIFT", "IMPACT FIRE", "CAST FIRE", "SPLASH", "BUBBLES", "MIST VEIL",
@@ -90,7 +90,7 @@ static const char* s_newFxNames[] = {
     "PROJECTILE", "AURA", "GND PATTERN", "SUMMON RING", "EXPLOSION", "GROUND WAVE",
     "PROJ FIRE", "PROJ WATER", "PROJ METAL", "CYLINDER AURA", "GROUND AURA", "BLACK HOLE",
     "DRAW ICE CRYSTAL BURST", "SMOKE COLUMN F X", "GROUND SMOKE", "SMOKE ON PLANE", "MAGIC FILAMENTS", "MAGIC FILAMENTS ON PLANE",
-    "SHARD DEBRIS", "CROWN SPLASH", "CHAIN LINK", "MEDITATE",
+    "SHARD DEBRIS", "CROWN SPLASH", "CHAIN LINK", "MEDITATE", "WISP SMOKE",
 };
 // @gen:newfx_names end
 
@@ -105,7 +105,7 @@ static const int s_newFxCategories[] = {
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 6, 1, 6, 6, 6, 6, 6, 6, 6,
-    6, 6,
+    6, 6, 6,
 };
 // @gen:newfx_categories end
 
@@ -416,7 +416,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             const char **names;
             int globalIdx;
             int visualIdx;
-            maxIdx = 82;
+            maxIdx = 83;
             names = s_newFxNames; // @gen:newfx_count
             visualIdx = 0;
             (void)names;
@@ -722,6 +722,7 @@ void VFXTest_Draw3D(void)
               case 77: VFX_ComposeMagicFilamentsOnPlane(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, 1.5f, fminf(progress, 0.99f), (Color){100, 200, 255, 200}, 0.8f, 3.5f, 4.0f, (Vector2){0.0f, 0.0f}); break;
               case 80: VFX_ComposeChainLink(VC_MAT_FIRE, s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){3.0f, 0, 0}), 0.1f, 1.0f, fminf(progress, 0.99f), s_meshTime); break;
               case 81: VFX_ComposeMeditate(s_prefabStartPos, fminf(progress, 0.99f), s_meshTime); break;
+              case 82: VFX_ComposeWispSmoke(VC_MAT_FIRE, s_prefabStartPos, 0.1f, (Vector3){1.0f, 0.0f, 0.0f}, 1.0f, 1.0f, 1.0f, 1.0f, s_meshTime); break;
           }
 // @gen:newfx_draw end
         }
@@ -866,7 +867,7 @@ void VFXTest_DrawHUD(void)
         const char **names;
         int gi;
         int vIdx;
-        maxIdx = 82;
+        maxIdx = 83;
         names = s_newFxNames; // @gen:newfx_count
         vIdx = 0;
         (void)names;

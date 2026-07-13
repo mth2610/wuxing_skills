@@ -43,7 +43,7 @@ Toàn bộ nằm trong `net/` + `game/` + `ai/` (hero-bot) + `ui/` (sảnh chờ
 không đụng engine VFX. Thứ tự bắt buộc: A1 → A2 → A3 → A4 → A5 (mỗi bước
 build sạch + autotest rồi mới sang bước sau).
 
-### A1. Multi-peer transport — nền móng mọi thứ *(L — 1-2 phiên)*
+### A1. Multi-peer transport — nền móng mọi thứ *(L — 1-2 phiên)* ✅ 13/07
 - Hiện transport chỉ 1 peer (`enet_host_create(..., 1 peer)`, EOS
   `MaxLobbyMembers = 2`, một `s_remotePuid`). Nâng lên **tối đa 7 khách + host = 8**:
   - `net_transport.c`: mảng peer tĩnh `NetPeer[NET_MAX_PLAYERS-1]` (ENet peer
@@ -57,7 +57,7 @@ build sạch + autotest rồi mới sang bước sau).
   vào phòng, cả 2 khách điều khiển hero riêng, snapshot đồng bộ cả 3 màn hình;
   autotest wire-format v3 (roster round-trip).
 
-### A2. Sảnh chờ (lobby screen) *(M–L — 1-2 phiên)*
+### A2. Sảnh chờ (lobby screen) *(M–L — 1-2 phiên)* ✅ 13/07 (kèm heartbeat 1Hz + host timeout 8s — EOS không tự báo peer chết)
 - Màn hình mới giữa menu và trận: **8 ô slot chia 2 cột phe** (Thanh Long /
   Bạch Hổ...). Người vào phòng được xếp slot tự cân bằng, host có thể kéo/đổi
   phe. Hiện mã phòng to + danh sách tên (Device ID → tên "P1..P8" trước,
@@ -69,7 +69,7 @@ build sạch + autotest rồi mới sang bước sau).
 - **DoD:** 3 người thật vào sảnh thấy nhau + đổi phe; host start cả 3 vào
   trận đúng đội hình; khách thoát sảnh → slot mở lại.
 
-### A3. Team battle mode 1v1 → 4v4 *(M — 1 phiên)*
+### A3. Team battle mode 1v1 → 4v4 *(M — 1 phiên)* ✅ 13/07 (verify online trọn vòng thắng-thua-rematch qua Epic)
 - `game/`: `GAME_MODE_TEAM_BATTLE` — spawn 2 phe đối diện theo roster
   (2 cụm spawn point trên VERDANT_PATH), KHÔNG boss/minion wave.
 - Luật thắng: **team elimination** — phe nào hết hero (chết/rớt đài) thua;
@@ -79,7 +79,7 @@ build sạch + autotest rồi mới sang bước sau).
 - **DoD:** autotest luật elimination offline (giả lập 2v2, giết dần từng
   hero → đúng phe thắng); trận 1v1 online trọn vòng thắng-thua-rematch.
 
-### A4. Hero-bot AI + buff bù chênh lệch *(L — 1-2 phiên)*
+### A4. Hero-bot AI + buff bù chênh lệch *(L — 1-2 phiên)* ✅ 13/07 (verify online 1v2-bot: handicap +1 đúng cả 2 vòng; bot tự hạ host đứng im)
 - **Hero-bot** (`ai/` mở rộng — brain RIÊNG, không dùng minion brain):
   điều khiển agent ARCH_HERO phe thiếu người. Hành vi tối thiểu đáng chơi:
   giữ cự ly theo bộ skill trang bị, cast theo cooldown + mana, né ra khỏi
@@ -96,7 +96,7 @@ build sạch + autotest rồi mới sang bước sau).
 - **DoD:** autotest — 1v2 có bot: bot cast được skill + không tự rớt đài;
   1v2 không bot: phe 1 người nhận đúng buff theo bảng; 2v2 đủ người: không buff.
 
-### A5. Chất lượng đường truyền + đồng bộ còn thiếu *(M — 1 phiên)*
+### A5. Chất lượng đường truyền + đồng bộ còn thiếu *(M — 1 phiên)* ✅ 13/07 code + autotest 16/16 (⚠ verify online cast-mirror/độ mượt còn chờ: GL của máy nghẽn sau chuỗi test — cần chạy 2 cửa sổ nhìn bằng mắt sau khi khởi động lại máy)
 - **VFX event mirroring:** host phát `NET_EVT_CAST {agentId, skillIndex,
   aimPoint}` (reliable) khi CastSkill thành công; client cast "visual-only"
   (client không tick Combat_Update nên projectile chỉ là VFX — damage vẫn từ

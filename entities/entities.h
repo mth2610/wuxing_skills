@@ -118,6 +118,8 @@ bool Entity_CheckRingOut(int agentId);
 // and main.c restores the default on the way back to the sandbox. radius
 // <= 0 is ignored.
 void Entity_SetArenaBounds(Vector3 center, float radius);
+// Read them back (ai/'s hero-bot edge guard, HUD debug).
+void Entity_GetArenaBounds(Vector3 *outCenter, float *outRadius);
 
 // --- Crowd control (see ENTITIES_API.md §12) ---
 // Launch: sets velocity and vState = AGENT_JUMPING (shared with Entity_Jump).
@@ -208,6 +210,11 @@ void Entity_SetElement(int agentId, int element);
 // Runtime team reassignment (lobby: host moves a player between sides
 // before the match — net/'s room management is the caller).
 void Entity_SetAgentTeam(int agentId, AgentTeam team);
+
+// Scale max HP (current HP scales along, floor 1). Team-battle handicap
+// buff (Đợt A4): game/ applies GameRules_HandicapFor to the short side at
+// round start — mult > 1 only; this is not a general stat system.
+void Entity_ScaleMaxHealth(int agentId, float mult);
 
 // --- Thái Cực (Module 6) ---
 // Force the state on/off (boss/ at <30% HP; Entity_RecomputeElement sets it

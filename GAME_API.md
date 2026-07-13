@@ -30,7 +30,35 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt);
 void GameScreen_Draw3D(const PlayerEntity *player);
 void GameScreen_DrawHUD(const PlayerEntity *player); // HP/mana bars, boss bar, state overlays
 bool GameScreen_RequestedBackToMenu(void);
+
+// Đợt A3 — match mode, set by main.c BEFORE GameScreen_Init per entry point:
+typedef enum { GAME_MODE_BOSS = 0, GAME_MODE_TEAM_BATTLE } GameMode;
+void GameScreen_SetMode(GameMode mode);
+GameMode GameScreen_GetMode(void);
 ```
+
+### 2b. GAME_MODE_TEAM_BATTLE (Đợt A3 — PvP 1v1 → 4v4)
+
+Entry: the net lobby's BẮT ĐẦU (`Net_ConsumeMatchStart` in main.c) sets
+TEAM_BATTLE; the menu's ENTER GAME sets BOSS; `WUXING_NET_BOSS=1` keeps the
+old invasion-vs-boss run for a net room (dev only).
+
+- INTRO: no boss. The host lines every living ARCH_HERO up on its side's
+  spawn cluster (`TEAM_SPAWN[2]` = x 42 / 58 on VERDANT_PATH, fanned ±z).
+- FIGHTING (host): **elimination** — `GameRules_CountAliveHeroes(team)`
+  (living ARCH_HERO per side: host, remote players, bots all count;
+  minions/bosses don't). A side at 0 ends the match; VICTORY/DEFEAT wording
+  follows the HOST's side (cached while alive — a dead host whose team
+  wins still gets VICTORY). Zone rules still apply to the local player.
+- CLIENT: outcome arrives via `NET_CTRL_STATE` in the HOST's perspective
+  and is mapped through team membership (same side as host → keep, else
+  swap; own side cached pre-death). Host state dropping back to
+  INTRO/FIGHTING while the client shows VICTORY/DEFEAT = rematch signal.
+- ENTER on VICTORY/DEFEAT: host → rematch in place
+  (`Net_HostRespawnPeerHeroes()` + match reset — the room stays); client →
+  waits for the host. BOSS mode keeps ENTER → back-to-menu.
+- HUD: team scoreboard "THANH LONG n — m BACH HO" (top center, replaces
+  the boss bar slot); INTRO title card reads "SONG DAU".
 
 Details:
 - Spawns: player `(2, 0, 4.4)`, boss `(10, 0, 4.4)` — inside the entities

@@ -16,7 +16,8 @@
 #ifndef GAME_RULES_H
 #define GAME_RULES_H
 
-#include "core/map_manager.h" // NatureZoneType
+#include "core/map_manager.h"  // NatureZoneType
+#include "entities/entities.h" // AgentTeam (team-battle rules)
 #include <stdbool.h>
 
 float GameRules_CooldownMult(int element, NatureZoneType zone);  // 0.5 = twice as fast
@@ -24,5 +25,19 @@ float GameRules_DamageMult(int element, NatureZoneType zone);    // scales outgo
 bool  GameRules_GrantsStealth(int element, NatureZoneType zone);
 float GameRules_KnockbackMult(int element, NatureZoneType zone);
 float GameRules_RangeMult(int element, NatureZoneType zone);
+
+// --- Team battle (Đợt A3) ---
+// Elimination rule input: living ARCH_HERO agents on a side (bots and
+// remote players count — they're heroes in the same pool; minions/bosses
+// don't). A side reaching 0 loses the match.
+int GameRules_CountAliveHeroes(AgentTeam team);
+
+// --- Handicap buff (Đợt A4) ---
+// The side that ACCEPTS fighting short-handed (bots already count as
+// players — a bot-filled slot gives no buff) gets per-missing-player
+// multipliers, applied once at round start to each of its heroes.
+// deficit = other side's heroes − ours (≤ 0 → identity), capped at 3.
+typedef struct { float maxHpMult; float speedMult; } TeamHandicap;
+TeamHandicap GameRules_HandicapFor(int deficit);
 
 #endif // GAME_RULES_H

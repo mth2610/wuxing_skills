@@ -37,7 +37,8 @@
       "VFX_ComposeTriggerImpactBurst",
       "VFX_ChainLightning",
       "VFX_ComposePathMistWave",
-      "VFX_PathWave"
+      "VFX_PathWave",
+      "VFX_ComposePathLink"
     ]
   },
   "entries": [
@@ -638,6 +639,14 @@
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeMeditate($POS, fminf($PROG, 0.99f), $TIME)"
+    },
+    {
+      "fn": "VFX_ComposeWispSmoke",
+      "label": "WISP SMOKE",
+      "category": "util",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeWispSmoke(VC_MAT_FIRE, $POS, 0.1f, (Vector3){1.0f, 0.0f, 0.0f}, 1.0f, 1.0f, 1.0f, 1.0f, $TIME)"
     }
   ],
   "overrides": {

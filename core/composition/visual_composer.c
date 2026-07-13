@@ -68,6 +68,7 @@
 #include "vc_chain_link.inl"
 #include "vc_ground_aura.inl"
 #include "vc_smoke_energy.inl"
+#include "vc_wisp_smoke.inl"
 // @gen:vc_includes end
 
 void VFX_Compose_Update(float dt) { VC_Archetype_Update(dt); }

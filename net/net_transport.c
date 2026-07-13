@@ -9,6 +9,8 @@
 #include "net/net.h"
 #include "entities/entities.h"
 #include "core/skill_manager.h"
+#include "core/map_manager.h"  // Map_QueryZoneAt — zone rules for remote heroes
+#include "game/game_rules.h"   // cooldown/stealth table (the ONE rule table)
 #include <enet/enet.h>
 #include "raylib.h" // TraceLog only — no rendering in this module
 #include <math.h>
@@ -34,6 +36,18 @@ static const Vector3 REMOTE_SPAWN = { 54.0f, 0.0f, 41.0f };
 #define NET_CTRL_HELLO 1  // value = client's hero agent id (host pool)
 #define NET_CTRL_STATE 2  // value = host's GameState (match outcome sync)
 #define NET_CTRL_START 3  // host pressed BẮT ĐẦU — leave the lobby together
+#define NET_CTRL_CAST    5 // host → clients: [5][ver][agentId][skillIdx][aim 12B] = 16B
+#define NET_CTRL_LOADOUT 6 // client → host:  [6][ver][slot][skillIdx][element] = 5B
+#define NET_CAST_PACKET_BYTES    16
+#define NET_LOADOUT_PACKET_BYTES 5
+#define NET_CTRL_JOIN  4  // client → host 1Hz knock/heartbeat: the first one
+                          // initiates the EOS NAT punch (clients in the
+                          // lobby send no gameplay traffic, and EOS only
+                          // connects on the first packet); afterwards it
+                          // keeps proving liveness — the host drops a peer
+                          // silent for NET_PEER_TIMEOUT (EOS has no
+                          // process-kill disconnect event of its own).
+#define NET_PEER_TIMEOUT 8.0f
 typedef struct { unsigned char type, version, value; } NetCtrl;
 
 // --- Session state -----------------------------------------------------------
@@ -52,6 +66,7 @@ typedef struct {
     int           agentId;    // their hero in OUR pool, -1 if spawn failed
     unsigned char team;       // 0/1 — auto-balanced at join (lobby reassigns in A2)
     PlayerIntent  held;       // last held-state intent (movement)
+    float         silentFor;  // seconds since their last packet (liveness)
 } HostPeer;
 static HostPeer s_peers[NET_MAX_PLAYERS - 1];
 
@@ -67,6 +82,15 @@ static int s_remoteMatchState = -1; // client: host's match state
 
 static NetRosterEntry s_clientRoster[NET_MAX_PLAYERS]; // client: last broadcast
 static int            s_clientRosterCount = 0;
+
+// Snapshot interpolation (Đợt A5): the client renders ~one snapshot behind,
+// lerping each agent from its currently DISPLAYED position toward the newest
+// snapshot over the snapshot interval — no prediction, no extrapolation.
+static NetAgentState s_snapLatest[MAX_AGENTS];
+static int           s_snapCount = 0;
+static double        s_snapRecvTime = 0.0;
+static Vector3       s_renderPos[MAX_AGENTS]; // what's currently on screen
+static bool          s_renderValid[MAX_AGENTS];
 
 static unsigned char s_hostTeam = 0;     // lobby: the host player's own side
 static int           s_botCount[2] = { 0, 0 }; // lobby: bots per side
@@ -169,6 +193,8 @@ void Net_Stop(void) {
     s_hostTeam = 0;
     s_botCount[0] = s_botCount[1] = 0;
     s_matchStart = false;
+    s_snapCount = 0;
+    memset(s_renderValid, 0, sizeof(s_renderValid));
 }
 
 NetMode Net_GetMode(void) { return s_mode; }
@@ -200,6 +226,8 @@ void Net_ClientSubmitIntent(const PlayerIntent *intent) {
 
 // --- Roster ------------------------------------------------------------------
 
+static void HostSpawnPeerHero(int idx); // defined with the join/leave block
+
 int Net_GetRoster(NetRosterEntry *out, int maxEntries) {
     if (out == NULL || maxEntries <= 0) return 0;
     if (s_mode == NET_MODE_CLIENT) {
@@ -222,9 +250,11 @@ int Net_GetRoster(NetRosterEntry *out, int maxEntries) {
     }
     // Bots trail the humans (lobby metadata — Đợt A4 spawns their heroes).
     for (int t = 0; t < 2; t++)
-        for (int b = 0; b < s_botCount[t] && n < maxEntries; b++)
-            out[n++] = (NetRosterEntry){ (unsigned char)n, (unsigned char)t,
+        for (int b = 0; b < s_botCount[t] && n < maxEntries; b++) {
+            unsigned char slot = (unsigned char)n;
+            out[n++] = (NetRosterEntry){ slot, (unsigned char)t,
                 NET_ROSTER_NONE, NET_ROSTER_OCCUPIED | NET_ROSTER_BOT };
+        }
     return n;
 }
 
@@ -295,6 +325,40 @@ bool Net_ConsumeMatchStart(void) {
     bool v = s_matchStart;
     s_matchStart = false;
     return v;
+}
+
+void Net_HostRespawnPeerHeroes(void) {
+    if (s_mode != NET_MODE_HOST) return;
+    bool changed = false;
+    for (int i = 0; i < NET_MAX_PLAYERS - 1; i++) {
+        if (!s_peers[i].used) continue;
+        if (Entity_GetAgent(s_peers[i].agentId) != NULL) continue; // still alive
+        HostSpawnPeerHero(i); // re-sends HELLO with the fresh agent id
+        changed = true;
+    }
+    if (changed) HostBroadcastRoster();
+}
+
+void Net_HostNotifyCast(int agentId, int skillIndex, Vector3 aim) {
+    if (s_mode != NET_MODE_HOST || !s_connected) return;
+    if (agentId < 0 || agentId > 255 || skillIndex < 0 || skillIndex > 255) return;
+    unsigned char buf[NET_CAST_PACKET_BYTES];
+    buf[0] = NET_CTRL_CAST;
+    buf[1] = NET_PROTOCOL_VERSION;
+    buf[2] = (unsigned char)agentId;
+    buf[3] = (unsigned char)skillIndex;
+    memcpy(buf + 4, &aim, sizeof(Vector3));
+    HostBroadcast(NET_CH_CONTROL, buf, (int)sizeof(buf), true);
+}
+
+void Net_ClientSendLoadout(int slot, int skillIndex, int element) {
+    if (s_mode != NET_MODE_CLIENT || !s_connected) return;
+    if (slot < 0 || slot >= AGENT_SKILL_SLOTS || skillIndex < 0 || skillIndex > 255) return;
+    unsigned char buf[NET_LOADOUT_PACKET_BYTES] = {
+        NET_CTRL_LOADOUT, NET_PROTOCOL_VERSION,
+        (unsigned char)slot, (unsigned char)skillIndex, (unsigned char)element,
+    };
+    ClientSendToHost(NET_CH_CONTROL, buf, (int)sizeof(buf), true);
 }
 
 // --- Host: peers join/leave, drive their heroes ------------------------------
@@ -416,7 +480,12 @@ static void HostApplyRemoteEdges(int idx, const PlayerIntent *in) {
         if (skillIndex >= 0 && SkillManager_CanCast(skillIndex, agentId)) {
             if (CastSkill(skillIndex, agentId, a->position, in->aimPoint,
                           (SkillParams){ .level = 1, .quantity = 1, .sizeScale = 1.0f })) {
-                SkillManager_TriggerCooldown(skillIndex, agentId, 1.0f);
+                // Zone rule (Đợt A5): remote heroes get the same cooldown
+                // modifier the local player gets from game/'s rule table.
+                float cdMult = GameRules_CooldownMult(
+                    a->currentElement, Map_QueryZoneAt(a->position));
+                SkillManager_TriggerCooldown(skillIndex, agentId, 1.0f * cdMult);
+                Net_HostNotifyCast(agentId, skillIndex, in->aimPoint);
             }
         }
     }
@@ -428,6 +497,10 @@ static void HostMoveRemotes(float dt) {
         const PlayerIntent *in = &s_peers[i].held;
         const Agent *a = Entity_GetAgent(s_peers[i].agentId);
         if (a == NULL) continue;
+        // Zone rule (Đợt A5): Mộc ẩn hình trong Rừng — same as the local player.
+        Entity_SetStealth(s_peers[i].agentId,
+                          GameRules_GrantsStealth(a->currentElement,
+                                                  Map_QueryZoneAt(a->position)));
         float len = sqrtf(in->moveDir.x * in->moveDir.x + in->moveDir.y * in->moveDir.y);
         if (len > 0.0001f && a->vState == AGENT_GROUNDED &&
             !Entity_IsCrowdControlled(s_peers[i].agentId) && a->dashTimer <= 0.0f) {
@@ -450,28 +523,49 @@ int Net_GetRemoteMatchState(void) {
     return (s_mode == NET_MODE_CLIENT) ? s_remoteMatchState : -1;
 }
 
-// --- Client: apply snapshots -------------------------------------------------
+// --- Client: apply snapshots (interpolated — Đợt A5) --------------------------
 
-static void ClientApplySnapshot(const unsigned char *data, int len) {
-    static NetAgentState agents[MAX_AGENTS];
+static void ClientStoreSnapshot(const unsigned char *data, int len) {
     static bool s_loggedFirst = false;
-    int n = Net_UnpackAgentSnapshot(agents, MAX_AGENTS, data, len);
+    int n = Net_UnpackAgentSnapshot(s_snapLatest, MAX_AGENTS, data, len);
     if (n < 0) return;
+    s_snapCount = n;
+    s_snapRecvTime = GetTime();
     if (!s_loggedFirst) {
         s_loggedFirst = true;
         TraceLog(LOG_INFO, "[NET] first snapshot: %d agents", n);
     }
+}
+
+// Runs every client frame: push the latest snapshot into the pool with each
+// agent's position eased from where it is ON SCREEN toward the snapshot,
+// finishing in one snapshot interval. Non-positional fields snap (HP bars
+// shouldn't lag).
+static void ClientApplyInterpolated(void) {
+    if (s_snapCount <= 0) return;
+    float t = (float)((GetTime() - s_snapRecvTime) * NET_SNAPSHOT_HZ);
+    if (t > 1.0f) t = 1.0f;
     Entity_NetSyncBegin();
-    for (int i = 0; i < n; i++) {
-        Entity_NetSyncAgent(agents[i].agentId, agents[i].position,
-                            agents[i].health, agents[i].maxHealth,
-                            agents[i].mana, agents[i].maxMana,
-                            agents[i].element,
-                            (AgentTeam)agents[i].team,
-                            (AgentArchetype)agents[i].archetype,
-                            (agents[i].flags & 0x1) != 0,
-                            (agents[i].flags & 0x2) != 0,
-                            (agents[i].flags & 0x4) != 0);
+    for (int i = 0; i < s_snapCount; i++) {
+        const NetAgentState *a = &s_snapLatest[i];
+        Vector3 pos = a->position;
+        if (s_renderValid[a->agentId]) {
+            Vector3 from = s_renderPos[a->agentId];
+            pos.x = from.x + (a->position.x - from.x) * t;
+            pos.y = from.y + (a->position.y - from.y) * t;
+            pos.z = from.z + (a->position.z - from.z) * t;
+        }
+        s_renderPos[a->agentId] = pos;
+        s_renderValid[a->agentId] = true;
+        Entity_NetSyncAgent(a->agentId, pos,
+                            a->health, a->maxHealth,
+                            a->mana, a->maxMana,
+                            a->element,
+                            (AgentTeam)a->team,
+                            (AgentArchetype)a->archetype,
+                            (a->flags & 0x1) != 0,
+                            (a->flags & 0x2) != 0,
+                            (a->flags & 0x4) != 0);
     }
     Entity_NetSyncEnd();
 }
@@ -499,17 +593,57 @@ static void HandlePeerDisconnected(ENetPeer *ep, void *ref) {
 
 static void HandlePacket(ENetPeer *ep, void *ref, int channel,
                          const unsigned char *data, int len) {
-    if (s_mode == NET_MODE_HOST && channel == NET_CH_STREAM) {
+    if (s_mode == NET_MODE_HOST) {
         int idx = HostFindPeer(ep, ref);
-        if (idx < 0) return; // stranger — not in the room
-        PlayerIntent in;
-        if (Net_UnpackIntent(&in, data, len)) {
-            HostApplyRemoteEdges(idx, &in);
-            s_peers[idx].held = in; // held state for per-frame movement
+        if (idx < 0) {
+            // Unknown sender. A JOIN knock registers the peer DIRECTLY —
+            // the EOS connection-request notify is NOT a reliable join
+            // signal (it can be skipped when the SDK considers the
+            // connection already open, e.g. a rejoining client or a stale
+            // session), and a knock is proof enough the packet path works.
+            if (channel == NET_CH_CONTROL && len == (int)sizeof(NetCtrl) &&
+                data[0] == NET_CTRL_JOIN && data[1] == NET_PROTOCOL_VERSION) {
+                HandlePeerConnected(ep, ref);
+                idx = HostFindPeer(ep, ref);
+            }
+            if (idx < 0) return; // still a stranger (room full / junk packet)
         }
+        s_peers[idx].silentFor = 0.0f; // any packet proves liveness
+        if (channel == NET_CH_STREAM) {
+            PlayerIntent in;
+            if (Net_UnpackIntent(&in, data, len)) {
+                HostApplyRemoteEdges(idx, &in);
+                s_peers[idx].held = in; // held state for per-frame movement
+            }
+        } else if (channel == NET_CH_CONTROL &&
+                   len == NET_LOADOUT_PACKET_BYTES &&
+                   data[0] == NET_CTRL_LOADOUT &&
+                   data[1] == NET_PROTOCOL_VERSION) {
+            // TAB loadout sync (Đợt A5): re-equip their hero; the setter
+            // recomputes Vô Hệ so element/Thái Cực stay truthful for all.
+            int agentId = s_peers[idx].agentId;
+            if (agentId >= 0 && data[2] < AGENT_SKILL_SLOTS)
+                Entity_SetEquippedSkill(agentId, data[2], data[3], data[4]);
+        } // other NET_CH_CONTROL from a client = the JOIN knock — no payload
     } else if (s_mode == NET_MODE_CLIENT) {
         if (channel == NET_CH_CONTROL) {
-            if (len == (int)sizeof(NetCtrl) && data[0] != 'W') {
+            if (len == NET_CAST_PACKET_BYTES && data[0] == NET_CTRL_CAST &&
+                data[1] == NET_PROTOCOL_VERSION) {
+                // VFX replay of a host-side cast (Đợt A5): free-cast mode
+                // skips the mana gate (our mirrored mana is post-debit).
+                int agentId = data[2], skillIndex = data[3];
+                Vector3 aim;
+                memcpy(&aim, data + 4, sizeof(Vector3));
+                const Agent *caster = Entity_GetAgent(agentId);
+                if (caster != NULL) {
+                    SkillManager_SetFreeCast(true);
+                    bool played = CastSkill(skillIndex, agentId, caster->position, aim,
+                                            (SkillParams){ .level = 1, .quantity = 1, .sizeScale = 1.0f });
+                    SkillManager_SetFreeCast(false);
+                    if (played)
+                        TraceLog(LOG_INFO, "[NET] cast mirror agent=%d skill=%d", agentId, skillIndex);
+                }
+            } else if (len == (int)sizeof(NetCtrl) && data[0] != 'W') {
                 NetCtrl ctrl;
                 memcpy(&ctrl, data, sizeof(ctrl));
                 if (ctrl.version == NET_PROTOCOL_VERSION) {
@@ -530,7 +664,7 @@ static void HandlePacket(ENetPeer *ep, void *ref, int channel,
                 if (n >= 0) s_clientRosterCount = n;
             }
         } else if (channel == NET_CH_STREAM) {
-            ClientApplySnapshot(data, len);
+            ClientStoreSnapshot(data, len);
         }
     }
 }
@@ -585,6 +719,19 @@ void Net_Tick(float dt) {
     s_sendAccum += dt;
 
     if (s_mode == NET_MODE_HOST) {
+        // Liveness: the ENet path raises real DISCONNECT events, but a
+        // killed EOS peer just goes silent — sweep them out ourselves.
+        // (Backend path only; ENet's own 5s timeout handles its peers.)
+        if (s_backendSend != NULL) {
+            for (int i = 0; i < NET_MAX_PLAYERS - 1; i++) {
+                if (!s_peers[i].used) continue;
+                s_peers[i].silentFor += dt;
+                if (s_peers[i].silentFor > NET_PEER_TIMEOUT) {
+                    TraceLog(LOG_INFO, "[NET] peer slot=%d timed out", i + 1);
+                    HostPeerLeft(i);
+                }
+            }
+        }
         HostMoveRemotes(dt);
         if (s_hostMatchState != s_hostStateSent && s_hostMatchState >= 0) {
             NetCtrl st = { NET_CTRL_STATE, NET_PROTOCOL_VERSION, (unsigned char)s_hostMatchState };
@@ -598,6 +745,19 @@ void Net_Tick(float dt) {
             if (bytes > 0) HostBroadcast(NET_CH_STREAM, buf, bytes, false);
         }
     } else { // client
+        ClientApplyInterpolated(); // ease displayed positions every frame
+        // 1Hz knock/heartbeat: the first packet opens the EOS P2P
+        // connection (nothing else flows while everyone idles in the
+        // lobby); afterwards it keeps the host's liveness sweep fed.
+        {
+            static float s_joinAccum = 1e9f; // first knock immediately
+            s_joinAccum += dt;
+            if (s_joinAccum >= 1.0f) {
+                s_joinAccum = 0.0f;
+                NetCtrl join = { NET_CTRL_JOIN, NET_PROTOCOL_VERSION, 0 };
+                ClientSendToHost(NET_CH_CONTROL, &join, (int)sizeof(join), true);
+            }
+        }
         if (s_clientIntentValid && s_sendAccum >= 1.0f / NET_INTENT_HZ) {
             s_sendAccum = 0.0f;
             unsigned char buf[128];
