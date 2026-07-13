@@ -17,6 +17,12 @@ typedef struct {
 // Khởi tạo hệ thống Screen Distortion
 void ScreenDistort_Init(int width, int height);
 
+// Đợt G — true HDR: true if the scene buffer (renderTex, where the whole 3D
+// world is drawn) is a 16-bit half-float target, so emissive/additive VFX keep
+// values > 1.0 until PostFX tone-maps. false = LDR RGBA8 fallback (GLES2).
+// This is the AUTHORITATIVE HDR flag; PostFX_Init matches it. Valid after Init.
+bool ScreenDistort_IsHDR(void);
+
 // Giải phóng tài nguyên hệ thống
 void ScreenDistort_Unload(void);
 

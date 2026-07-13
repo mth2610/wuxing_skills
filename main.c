@@ -1112,7 +1112,10 @@ int main(int argc, char **argv) {
                                .colorGradeEnabled = true,
                                .contrast = 1.05f,
                                .saturation = 1.15f,
-                               .colorTint = {1.0f, 1.0f, 1.0f}};
+                               .colorTint = {1.0f, 1.0f, 1.0f},
+                               // Đợt G1 — cinematic tone mapping on by default.
+                               .tonemapEnabled = true,
+                               .exposure = 1.15f};
 
   if (visualVerifyMode) {
       VisualVerify_Init(Skill_GetIndexByName(VisualVerify_GetSkillName()));

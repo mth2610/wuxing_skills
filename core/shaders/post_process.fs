@@ -22,7 +22,23 @@ uniform float u_contrast;
 uniform float u_saturation;
 uniform vec3 u_colorTint;
 
+// Tone mapping (Đợt G1 — cinematic base). ACES filmic approximation
+// (Narkowicz) — cheap, GLES-friendly, no mat3. Rolls bright bloom off to
+// white smoothly instead of clipping, and gives the whole frame a filmic
+// contrast/color response. u_exposure scales scene brightness pre-curve.
+uniform float u_tonemapEnabled;
+uniform float u_exposure;
+
 out vec4 finalColor;
+
+vec3 acesFilmic(vec3 x) {
+    const float a = 2.51;
+    const float b = 0.03;
+    const float c = 2.43;
+    const float d = 0.59;
+    const float e = 0.14;
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+}
 
 void main() {
     vec2 uv = fragTexCoord;
@@ -41,11 +57,16 @@ void main() {
     
     sceneCol = mix(texture(texture0, uv), chromCol, u_chromaticEnabled);
 
-    // 2. Bloom
+    // 2. Bloom (added in a linear-ish HDR range; can exceed 1.0)
     vec4 bloomCol = texture(u_bloomTex, uv);
     sceneCol.rgb += (bloomCol.rgb * u_bloomIntensity) * u_bloomEnabled;
 
-    // 3. Color Grading
+    // 2b. Tone mapping — exposure then ACES filmic. Highlights (esp. bloom)
+    // roll off to white instead of clipping; the frame gets a filmic feel.
+    vec3 toned = acesFilmic(sceneCol.rgb * u_exposure);
+    sceneCol.rgb = mix(sceneCol.rgb, toned, u_tonemapEnabled);
+
+    // 3. Color Grading (on the tone-mapped LDR result)
     vec3 gradedCol = sceneCol.rgb;
     // Contrast
     gradedCol = (gradedCol - vec3(0.5)) * u_contrast + vec3(0.5);

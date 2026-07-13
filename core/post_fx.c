@@ -1,9 +1,17 @@
 #include "core/post_fx.h"
+#include "core/screen_distort.h" // ScreenDistort_IsHDR — scene buffer is the HDR authority
 #include "rlgl.h"
 #include <string.h>
 
 static RenderTexture2D mainRenderTex;
 static RenderTexture2D bloomTex; // bright-pass output + final upsampled result (1/4)
+
+// HDR (Đợt G) — the whole offscreen chain (scene + bloom pyramid) uses a
+// 16-bit half-float color format so additive VFX / emissive can exceed 1.0 and
+// survive until the composite pass tone-maps HDR→LDR. Probed once at init:
+// GLES2 devices without EXT_color_buffer_half_float fall back to RGBA8 (the old
+// LDR path) so nothing goes black on weak hardware. Query via PostFX_IsHDR().
+static bool s_hdrActive = false;
 
 // Dual-filter pyramid: dfTex[0]=1/8, dfTex[1]=1/16 of full resolution.
 #define DUAL_FILTER_LEVELS 2
@@ -29,6 +37,8 @@ static int colorGradeEnabledLoc;
 static int contrastLoc;
 static int saturationLoc;
 static int colorTintLoc;
+static int tonemapEnabledLoc;
+static int exposureLoc;
 
 // Uniform locations — bright pass
 static int brightThresholdLoc;
@@ -58,15 +68,28 @@ static RenderTexture2D LoadRenderTextureWithFormat(int width, int height, int fo
 }
 
 void PostFX_Init(int width, int height) {
-  mainRenderTex = LoadRenderTextureWithFormat(width, height, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
-  bloomTex      = LoadRenderTextureWithFormat(width / 4, height / 4, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+  // --- HDR: match ScreenDistort's authoritative decision. ScreenDistort_Init
+  // runs first (main.c) and probes the real scene buffer (float color + depth);
+  // PostFX only receives the composited distort quad, so it must use the SAME
+  // format to preserve > 1.0 values into bloom/tone-map. If ScreenDistort fell
+  // back to LDR, so do we. (A color-only float target is a strict subset of the
+  // color+depth float FBO ScreenDistort already validated, so no re-probe here.)
+  const int hdrFmt = RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16;
+  const int ldrFmt = RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+  s_hdrActive = ScreenDistort_IsHDR();
+  const int colorFmt = s_hdrActive ? hdrFmt : ldrFmt;
+  mainRenderTex = LoadRenderTextureWithFormat(width, height, colorFmt);
+  TraceLog(LOG_INFO, "PostFX: %s pipeline (%s)", s_hdrActive ? "HDR float" : "LDR",
+           s_hdrActive ? "R16G16B16A16" : "R8G8B8A8");
+
+  bloomTex      = LoadRenderTextureWithFormat(width / 4, height / 4, colorFmt);
   SetTextureFilter(bloomTex.texture, TEXTURE_FILTER_BILINEAR);
   SetTextureWrap(bloomTex.texture, TEXTURE_WRAP_CLAMP);
 
   int w = width / 4, h = height / 4;
   for (int i = 0; i < DUAL_FILTER_LEVELS; i++) {
     w /= 2; h /= 2;
-    dfTex[i] = LoadRenderTextureWithFormat(w, h, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    dfTex[i] = LoadRenderTextureWithFormat(w, h, colorFmt);
     SetTextureFilter(dfTex[i].texture, TEXTURE_FILTER_BILINEAR);
     SetTextureWrap(dfTex[i].texture, TEXTURE_WRAP_CLAMP);
   }
@@ -92,7 +115,11 @@ void PostFX_Init(int width, int height) {
   contrastLoc          = GetShaderLocation(compositeShader, "u_contrast");
   saturationLoc        = GetShaderLocation(compositeShader, "u_saturation");
   colorTintLoc         = GetShaderLocation(compositeShader, "u_colorTint");
+  tonemapEnabledLoc    = GetShaderLocation(compositeShader, "u_tonemapEnabled");
+  exposureLoc          = GetShaderLocation(compositeShader, "u_exposure");
 }
+
+bool PostFX_IsHDR(void) { return s_hdrActive; }
 
 void PostFX_Unload(void) {
   UnloadRenderTexture(mainRenderTex);
@@ -208,6 +235,12 @@ void PostFX_Draw(const PostFXConfig *config) {
   SetShaderValue(compositeShader, contrastLoc, &config->contrast, SHADER_UNIFORM_FLOAT);
   SetShaderValue(compositeShader, saturationLoc, &saturationVal, SHADER_UNIFORM_FLOAT);
   SetShaderValue(compositeShader, colorTintLoc, &config->colorTint, SHADER_UNIFORM_VEC3);
+
+  // Tone mapping (Đợt G1) — after bloom, before grade (matches the shader).
+  float tonemapEnabledVal = config->tonemapEnabled ? 1.0f : 0.0f;
+  float exposureVal = (config->exposure > 0.0f) ? config->exposure : 1.0f;
+  SetShaderValue(compositeShader, tonemapEnabledLoc, &tonemapEnabledVal, SHADER_UNIFORM_FLOAT);
+  SetShaderValue(compositeShader, exposureLoc, &exposureVal, SHADER_UNIFORM_FLOAT);
 
   DrawTextureRec(mainRenderTex.texture,
                  (Rectangle){0, 0, (float)width, -(float)height},

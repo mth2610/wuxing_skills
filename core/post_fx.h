@@ -24,10 +24,23 @@ typedef struct {
   float contrast;          // Độ tương phản [0.5 .. 2.0]
   float saturation;        // Độ bão hòa màu sắc [0.0 .. 2.0]
   Vector3 colorTint;       // Bộ lọc nhân tông màu RGB
+
+  // Tone mapping (Đợt G1 — cinematic base). ACES filmic: rolls bright
+  // highlights/bloom off to white smoothly instead of clipping, and gives
+  // the frame a filmic response. exposure scales scene brightness pre-curve
+  // (1.0 neutral; >1 brighter/more roll-off). Applied AFTER bloom, BEFORE
+  // color grade.
+  bool  tonemapEnabled;
+  float exposure;          // [0.5 .. 2.0], 1.0 = neutral
 } PostFXConfig;
 
 // Khởi tạo Post-processing Stack
 void PostFX_Init(int width, int height);
+
+// Đợt G — true HDR: returns true if the offscreen scene/bloom chain is a 16-bit
+// half-float target (colors > 1.0 preserved until tone mapping). false = the
+// GPU fell back to LDR RGBA8 (older GLES2). Valid after PostFX_Init.
+bool PostFX_IsHDR(void);
 
 // Giải phóng tài nguyên
 void PostFX_Unload(void);

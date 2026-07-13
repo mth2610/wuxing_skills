@@ -207,18 +207,25 @@ def infer_entry(fn_name, params_str):
 
 def scan_inl_functions(comp_dir):
     """
-    Scan all vc_*.inl files for VFX_* function definitions.
+    Scan all .inl files recursively for VFX_* function definitions.
     Returns dict: fn_name → (params_str, return_type, inl_filename)
-    First definition wins (in alphabetical file order).
+    First definition wins (in alphabetical relative-path order).
     """
     sig_re = re.compile(
         r'\b(void|int)\s+(VFX_\w+)\s*\(([^)]*)\)\s*\{',
         re.DOTALL,
     )
     result = {}
-    for fname in sorted(f for f in os.listdir(comp_dir)
-                         if f.startswith('vc_') and f.endswith('.inl')):
-        with open(os.path.join(comp_dir, fname)) as f:
+    
+    all_files = []
+    for root, dirs, files in os.walk(comp_dir):
+        for f in files:
+            if f.endswith('.inl'):
+                rel_path = os.path.relpath(os.path.join(root, f), comp_dir)
+                all_files.append(rel_path)
+                
+    for rel_path in sorted(all_files):
+        with open(os.path.join(comp_dir, rel_path), errors='ignore') as f:
             text = f.read()
         for m in sig_re.finditer(text):
             fn = m.group(2)
@@ -226,7 +233,7 @@ def scan_inl_functions(comp_dir):
                 result[fn] = (
                     re.sub(r'\s+', ' ', m.group(3)).strip(),  # params
                     m.group(1),                                # return type
-                    fname,                                     # source file
+                    rel_path,                                  # source file
                 )
     return result
 

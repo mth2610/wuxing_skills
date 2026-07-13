@@ -50,5 +50,20 @@ void main() {
         }
     }
 
-    finalColor = texture(texture0, uv + totalOffset) * colDiffuse;
+    vec4 scene = texture(texture0, uv + totalOffset);
+
+    // HDR SANITIZE (Đợt G) — single choke point feeding the post chain.
+    // (1) Force alpha OPAQUE. The float scene buffer's alpha is a garbage
+    //     byproduct of additive-particle accumulation (BLEND_ADDITIVE sums
+    //     src_a² unbounded; LDR RGBA8 used to clamp it to 1). This pass blits
+    //     into a BLACK-cleared mainRenderTex under BLEND_ALPHA, so
+    //     main.rgb = scene.rgb * scene.a — a huge accumulated alpha blew rgb up
+    //     to +Inf, then composite ACES(Inf)=NaN and the region rendered BLACK
+    //     wherever many particles overlapped. Opaque alpha = clean rgb copy.
+    // (2) NaN guard + finite cap on rgb: cheap insurance against half-float
+    //     overflow (anything above ~4 already tone-maps to white anyway).
+    vec3 hdr = scene.rgb;
+    hdr = mix(hdr, vec3(0.0), vec3(notEqual(hdr, hdr))); // NaN → 0
+    hdr = min(hdr, vec3(64.0));                          // cap runaway/Inf
+    finalColor = vec4(hdr * colDiffuse.rgb, 1.0);
 }

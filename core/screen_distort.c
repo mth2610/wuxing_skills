@@ -1,6 +1,7 @@
 #include "core/screen_distort.h"
 #include "rlgl.h"
 #include <string.h>
+#include <stdlib.h> // getenv (WUXING_NO_HDR)
 
 // CORE_ISSUES.md Item 3 rebuild — root cause #2: the soft-particle depth
 // linearization must use the SAME near/far the scene was actually rendered
@@ -64,21 +65,30 @@ static int progressLoc;
 static int countLoc;
 static int aspectLoc;
 
+// HDR (Đợt G) — renderTex is the AUTHORITATIVE scene buffer: the whole 3D
+// world is drawn into it (ScreenDistort_Begin/End), so THIS is where colors
+// must be allowed to exceed 1.0 for true HDR. PostFX's mainRenderTex only
+// receives the already-composited distort quad, so it just has to match. We
+// probe a 16-bit half-float color + depth-texture FBO here; GLES2 devices
+// without float-renderable color fall back to RGBA8 (old LDR path). Query via
+// ScreenDistort_IsHDR() — PostFX_Init reads it to stay in lockstep.
+static bool s_hdrActive = false;
+
 // LoadRenderTexture() mặc định gắn depth attachment là RENDERBUFFER (không
 // sample được trong shader). Build framebuffer thủ công qua rlgl để depth
-// attachment là TEXTURE thật. Color attachment vẫn RGBA8 giống hệt
-// LoadRenderTexture() nên không ảnh hưởng pipeline distortion hiện có.
-static RenderTexture2D LoadRenderTextureWithDepthTexture(int width, int height) {
+// attachment là TEXTURE thật. colorFormat chọn RGBA8 (LDR) hoặc R16G16B16A16
+// (HDR float) — xem probe trong ScreenDistort_Init.
+static RenderTexture2D LoadRenderTextureWithDepthTexture(int width, int height,
+                                                         int colorFormat) {
   RenderTexture2D target = {0};
   target.id = rlLoadFramebuffer();
   if (target.id > 0) {
     rlEnableFramebuffer(target.id);
 
-    target.texture.id =
-        rlLoadTexture(NULL, width, height, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8, 1);
+    target.texture.id = rlLoadTexture(NULL, width, height, colorFormat, 1);
     target.texture.width = width;
     target.texture.height = height;
-    target.texture.format = RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+    target.texture.format = colorFormat;
     target.texture.mipmaps = 1;
 
     target.depth.id = rlLoadTextureDepth(width, height, false);
@@ -137,7 +147,21 @@ void ScreenDistort_Init(int width, int height) {
   // renderTex needs a sampleable depth texture (real scene depth source for
   // soft particles — see screen_distort.h note). prevDepthTex stores the
   // LINEARIZED snapshot in R32F (see LoadLinearDepthTarget).
-  renderTex = LoadRenderTextureWithDepthTexture(width, height);
+  // HDR probe: try a half-float color + depth-texture FBO; fall back to RGBA8
+  // (LDR) if the combined attachment isn't renderable on this GPU (GLES2).
+  // WUXING_NO_HDR=1 forces the LDR path (A/B diagnostic + escape hatch).
+  bool forceLdr = (getenv("WUXING_NO_HDR") != NULL);
+  renderTex = forceLdr ? (RenderTexture2D){0} : LoadRenderTextureWithDepthTexture(
+      width, height, RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
+  s_hdrActive = !forceLdr && (renderTex.texture.id > 0) && rlFramebufferComplete(renderTex.id);
+  if (!s_hdrActive) {
+    if (renderTex.id > 0) UnloadRenderTexture(renderTex);
+    renderTex = LoadRenderTextureWithDepthTexture(
+        width, height, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    TraceLog(LOG_WARNING, "ScreenDistort: HDR float scene target unsupported — LDR RGBA8");
+  } else {
+    TraceLog(LOG_INFO, "ScreenDistort: HDR float scene buffer active (R16G16B16A16)");
+  }
   prevDepthTex = LoadLinearDepthTarget(width, height);
 
   distortShader = LoadShader(0, "core/shaders/distortion.fs");
@@ -156,6 +180,8 @@ void ScreenDistort_Init(int width, int height) {
   activeSourcesCount = 0;
   memset(sources, 0, sizeof(sources));
 }
+
+bool ScreenDistort_IsHDR(void) { return s_hdrActive; }
 
 void ScreenDistort_Unload(void) {
   UnloadRenderTexture(renderTex);
