@@ -99,22 +99,19 @@ static char *ProcessIncludes(const char *filePath, int depth) {
 // Also handles 310 es → 300 es so include files that mention 310 don't break.
 // Called only on Android after include expansion.
 static void RewriteVersionForGLES(char *buf, int maxLen) {
-    // Replace "#version 330" (12 chars) with "#version 300 es" (15 chars)
+    // Replace "#version 330" (12 chars) with "#version 300 es\nprecision highp float;\nprecision highp int;\n" (57 chars)
     char *p = strstr(buf, "#version 330");
     if (p) {
+        const char *newHeader = "#version 300 es\nprecision highp float;\nprecision highp int;\n";
+        int newLen = (int)strlen(newHeader);
         int pos = (int)(p - buf);
         int tail = (int)strlen(p + 12) + 1;
-        if (pos + 15 + tail <= maxLen) {
-            memmove(p + 15, p + 12, tail);
-            memcpy(p, "#version 300 es", 15);
+        if (pos + newLen + tail <= maxLen) {
+            memmove(p + newLen, p + 12, tail);
+            memcpy(p, newHeader, newLen);
         }
     }
     // Replace "#version 310 es" if accidentally included from a compute header
-    // — nhưng CHỈ khi shader không thực sự cần ES 3.1: `std430` (SSBO) chỉ
-    // hợp lệ ở 310 es trở lên. Downgrade vô điều kiện trước đây làm vỡ
-    // gpu_particles_ssbo.vs khi nạp runtime qua ResourceManager_LoadShader()
-    // (build-time convert_shaders_to_gles.py đã đúng để 310 es, nhưng hàm
-    // này hạ xuống 300 es ngay trước khi compile) — xem CORE_ISSUES.md.
     p = strstr(buf, "#version 310 es");
     if (p && !strstr(buf, "std430")) memcpy(p, "#version 300 es", 15);
 }

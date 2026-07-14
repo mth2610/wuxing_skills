@@ -10,6 +10,8 @@
 # usually begin with CPACK_<GENNAME>_xxxx.
 
 
+set(CPACK_ARCHIVE_GID "-1")
+set(CPACK_ARCHIVE_UID "-1")
 set(CPACK_BUILD_SOURCE_DIRS "/Users/mth2610/Desktop/c_games/wuxing_skills/build/_deps/raylib-src;/Users/mth2610/Desktop/c_games/wuxing_skills/android.wuxing_skills/raylib_build")
 set(CPACK_CMAKE_GENERATOR "Unix Makefiles")
 set(CPACK_COMPONENT_UNSPECIFIED_HIDDEN "TRUE")

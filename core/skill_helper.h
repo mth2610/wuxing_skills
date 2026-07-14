@@ -218,7 +218,7 @@ void DrawEffectMesh(MeshPresetType type, Vector3 pos, Vector3 scale, Color color
 // 6. Shader Material System
 #include "core/material/material_system.h"
 
-EffectMaterial Material_LoadElement(EffectPresetType element);
+void Material_LoadElement(EffectMaterial *outMat, EffectPresetType element);
 
 // 7. Ground Decal
 typedef enum {

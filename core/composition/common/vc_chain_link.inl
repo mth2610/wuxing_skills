@@ -117,7 +117,8 @@ void VFX_ComposePathLink(VC_MaterialId matId, const Vector3 *points, int count, 
         ep.emissiveIntensity = (matId == VC_MAT_METAL) ? 0.9f : 1.3f;
         ep.translucency = 0.1f;
 
-        EffectMaterial torusMat = Material_LoadCustom(ep);
+        EffectMaterial torusMat;
+        Material_LoadCustom(&torusMat, &ep);
         Material_Begin(torusMat);
 
         for (int i = 0; i < CHAIN_SEGMENTS - 1; i++)
@@ -195,7 +196,8 @@ void VFX_ComposePathLink(VC_MaterialId matId, const Vector3 *points, int count, 
         matParams.emissiveIntensity = 1.6f;
         matParams.translucency = 0.45f;
 
-        EffectMaterial matG = Material_LoadCustom(matParams);
+        EffectMaterial matG;
+        Material_LoadCustom(&matG, &matParams);
         Material_Begin(matG);
         DrawRibbonStrip(ribbonPoints, CHAIN_SEGMENTS, (Texture2D){0}, camera);
         Material_End();
@@ -204,7 +206,8 @@ void VFX_ComposePathLink(VC_MaterialId matId, const Vector3 *points, int count, 
         BeginBlendMode(BLEND_ADDITIVE);
         matParams.emissiveIntensity = 3.0f;
         matParams.translucency = 0.0f;
-        EffectMaterial matGlow = Material_LoadCustom(matParams);
+        EffectMaterial matGlow;
+        Material_LoadCustom(&matGlow, &matParams);
 
         Material_Begin(matGlow);
         for (int i = 0; i < CHAIN_SEGMENTS; i++)

@@ -37,7 +37,8 @@ void VFX_ComposeGlowingVine(Vector3 startPos, Vector3 targetPos, Vector3 p1, Vec
     matParams.distortionStrength = 0.0f;
     matParams.translucency = 0.4f;
 
-    EffectMaterial mat = Material_LoadCustom(matParams);
+    EffectMaterial mat;
+    Material_LoadCustom(&mat, &matParams);
 
     rlDrawRenderBatchActive();
     rlDisableDepthMask();
@@ -51,7 +52,8 @@ void VFX_ComposeGlowingVine(Vector3 startPos, Vector3 targetPos, Vector3 p1, Vec
     BeginBlendMode(BLEND_ADDITIVE);
     matParams.emissiveIntensity = 3.0f;
     matParams.translucency = 0.0f;
-    EffectMaterial matGlow = Material_LoadCustom(matParams);
+    EffectMaterial matGlow;
+    Material_LoadCustom(&matGlow, &matParams);
 
     Material_Begin(matGlow);
     for (int i = 0; i < pointCount; i++)

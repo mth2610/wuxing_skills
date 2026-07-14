@@ -57,8 +57,9 @@ static EffectMaterialInstanced GetFloatingStoneMaterialInstanced(void)
     static bool s_rockMatILoaded = false;
     if (!s_rockMatILoaded)
     {
-        EffectMaterial nonInstanced = Material_Get(MAT_ROCK);
-        s_rockMatI = EffectMaterialInstanced_Load(nonInstanced.params);
+        EffectMaterial nonInstanced;
+        Material_Get(&nonInstanced, MAT_ROCK);
+        EffectMaterialInstanced_Load(&s_rockMatI, &nonInstanced.params);
         s_rockMatILoaded = true;
     }
     return s_rockMatI;

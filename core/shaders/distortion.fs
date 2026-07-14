@@ -62,8 +62,11 @@ void main() {
     //     wherever many particles overlapped. Opaque alpha = clean rgb copy.
     // (2) NaN guard + finite cap on rgb: cheap insurance against half-float
     //     overflow (anything above ~4 already tone-maps to white anyway).
-    vec3 hdr = scene.rgb;
-    hdr = mix(hdr, vec3(0.0), vec3(notEqual(hdr, hdr))); // NaN → 0
-    hdr = min(hdr, vec3(64.0));                          // cap runaway/Inf
+    // min() caps Inf/overflow (min(Inf,64)=64) and is GLES2-safe. NaN only
+    // arises in the HDR float path (desktop/GLES3), and is now prevented at the
+    // source (opaque shaders output alpha=1 — see ground_splat/path_blend), so a
+    // bvec-mix NaN guard here isn't needed — and mix(...,bvec) is GLSL ES 3.00
+    // only, which would fail to compile on GLES2 (#version 100).
+    vec3 hdr = min(scene.rgb, vec3(64.0));
     finalColor = vec4(hdr * colDiffuse.rgb, 1.0);
 }

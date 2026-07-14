@@ -25,7 +25,7 @@ void VFX_ComposeCylinderAura(VC_MaterialId matId, Vector3 pos, float radius, flo
     static bool s_loaded = false;
     if (!s_loaded)
     {
-        s_auraMat = AuraShellMaterial_Load((AuraShellMaterialParams){
+        AuraShellMaterialParams p = {
             .bodyColor = WHITE, // overwritten below each frame
             .glowColor = WHITE,
             .opacity = 0.35f,
@@ -39,7 +39,8 @@ void VFX_ComposeCylinderAura(VC_MaterialId matId, Vector3 pos, float radius, flo
             .scanStrength = 0.35f,
             .displaceAmp = 0.0f,
             .topY = 0.0f, // guard: 0 = skip fade (uploaded each frame)
-        });
+        };
+        AuraShellMaterial_Load(&s_auraMat, &p);
         s_loaded = true;
     }
 

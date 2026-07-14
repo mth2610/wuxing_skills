@@ -4,7 +4,7 @@ void VFX_ComposeBladeRing(Vector3 pos, float radius, int bladeCount, float rotat
     static bool s_bladeMatLoaded = false;
     if (!s_bladeMatLoaded)
     {
-        s_bladeMat = Material_Get(MAT_METAL);
+        Material_Get(&s_bladeMat, MAT_METAL);
         s_bladeMatLoaded = true;
     }
 
@@ -47,7 +47,8 @@ void VFX_ComposeBladeRing(Vector3 pos, float radius, int bladeCount, float rotat
     ghostParams.baseColor = (Color){170, 215, 255, 70};
     ghostParams.emissiveIntensity = 1.2f;
     ghostParams.translucency = 0.3f;
-    EffectMaterial ghostMat = Material_LoadCustom(ghostParams);
+    EffectMaterial ghostMat;
+    Material_LoadCustom(&ghostMat, &ghostParams);
     Material_Begin(ghostMat);
     for (int i = 0; i < bladeCount; i++)
     {
@@ -68,7 +69,8 @@ void VFX_ComposeBladeRing(Vector3 pos, float radius, int bladeCount, float rotat
     edgeParams.fresnelPower = 3.0f;
     edgeParams.emissiveIntensity = 1.4f;
     edgeParams.translucency = 0.6f;
-    EffectMaterial edgeMat = Material_LoadCustom(edgeParams);
+    EffectMaterial edgeMat;
+    Material_LoadCustom(&edgeMat, &edgeParams);
     Material_Begin(edgeMat);
     DrawCoreTorus((Vector3){0, 0, 0}, liveRadius * 1.02f, liveRadius * 1.1f, 5, 28, WHITE);
     Material_End();
@@ -76,7 +78,8 @@ void VFX_ComposeBladeRing(Vector3 pos, float radius, int bladeCount, float rotat
     EffectMaterialParams coreParams = {0};
     coreParams.baseColor = (Color){225, 240, 255, 255};
     coreParams.emissiveIntensity = 1.8f + 0.5f * sinf(t * 6.0f);
-    EffectMaterial centerMat = Material_LoadCustom(coreParams);
+    EffectMaterial centerMat;
+    Material_LoadCustom(&centerMat, &coreParams);
     Material_Begin(centerMat);
     DrawCoreSphere((Vector3){0, 0, 0}, liveRadius * 0.12f, 12, 12, WHITE);
     Material_End();

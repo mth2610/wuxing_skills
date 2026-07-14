@@ -14,7 +14,7 @@ void VFX_ComposeMetalShardCluster(Vector3 basePos, int seed)
         p.crack = 0.0f;                            
         p.emission = 0.06f;
         p.thickness = 0.6f;
-        s_metalMat = CrystalMaterial_Load(p);
+        CrystalMaterial_Load(&s_metalMat, &p);
         s_metalMatLoaded = true;
     }
 

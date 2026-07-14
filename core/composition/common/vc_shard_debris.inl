@@ -225,13 +225,15 @@ static void VC_ShardDebris_Draw3D(Camera3D cam)
 
         if (shardPreset != currentPreset || fabsf(shardDissolve - currentDissolve) > 0.05f) {
             if (currentPreset != -1) {
-                EffectMaterial prevMat = Material_Get(currentPreset);
+                EffectMaterial prevMat;
+                Material_Get(&prevMat, currentPreset);
                 Material_SetFloat(&prevMat, "u_dissolve", 0.0f);
                 Material_End();
             }
             currentPreset = shardPreset;
             currentDissolve = shardDissolve;
-            EffectMaterial mat = Material_Get(currentPreset);
+            EffectMaterial mat;
+            Material_Get(&mat, currentPreset);
             Material_Begin(mat);
             Material_SetFloat(&mat, "u_dissolve", currentDissolve);
         }
@@ -252,7 +254,8 @@ static void VC_ShardDebris_Draw3D(Camera3D cam)
     }
 
     if (currentPreset != -1) {
-        EffectMaterial prevMat = Material_Get(currentPreset);
+        EffectMaterial prevMat;
+        Material_Get(&prevMat, currentPreset);
         Material_SetFloat(&prevMat, "u_dissolve", 0.0f);
         Material_End();
     }

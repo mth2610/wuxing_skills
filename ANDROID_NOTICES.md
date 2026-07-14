@@ -16,6 +16,7 @@ adb connect <IP>:<Port_chính>b
 adb install -r wuxing_skills.apk
 
 # log crash
+adb logcat -c
 adb logcat raylib:V "*:S"
 adb logcat -b crash | ~/Library/Android/sdk/ndk/28.2.13676358/ndk-stack -sym android.wuxing_skills/obj
 
@@ -62,6 +63,43 @@ Quá trình đưa Wuxing Skills lên Android đã vấp phải các giới hạn
 Shader gốc của dự án được viết cho PC (`#version 330`). Android sử dụng OpenGL ES 2.0 (`#version 100`).
 - Dự án sử dụng script `scripts/convert_shaders_to_gles.py` tự động chuyển đổi trong quá trình build (đổi `in/out` thành `attribute/varying`, thêm `precision highp float`, v.v...).
 - **Lưu ý Hàm Texture:** GLSL 330 dùng `texture()`, nhưng GLSL 100 bắt buộc phải dùng `texture2D()`. Script Python đã tự động xử lý việc này (Regex replace `texture(` thành `texture2D(`). **KHÔNG ĐƯỢC** tự ý vào thư mục `android.wuxing_skills/assets/` chỉnh sửa thủ công và gõ hàm `texture()` — thao tác này sẽ khiến shader biên dịch thất bại trong im lặng, khiến Raylib lùi về dùng shader mặc định (hậu quả là chiêu thức bị sai màu, VD: chiêu Metal màu vàng biến thành màu cam đỏ).
+
+### D2. Landmine raylib-CMake (14/07/2026 — nguyên nhân MÀN HÌNH ĐEN + crash Game)
+Hai cờ CMake khi build `libraylib.a` cho Android đã gây 2 lỗi chí mạng, đều đã
+fix trong `Makefile.Android` (mục `compile_raylib_android`) — **ĐỪNG thêm lại**:
+1. **`-DCUSTOMIZE_BUILD=ON` = màn hình đen toàn app.** Trên raylib 6.0 cờ này
+   lật default một `SUPPORT_*` khiến `EndDrawing()` không swap buffer + không
+   giới hạn FPS: app init GL bình thường, loop chạy ~1000fps, nhưng không có
+   frame nào được present (SurfaceFlinger thấy layer `buffer=0x0, 0.00Hz`).
+   Cùng bug từng gặp ở desktop (CORE_ISSUES.md Item 41).
+2. **`-DGRAPHICS=GRAPHICS_API_OPENGL_ES3` KHÔNG có tác dụng** — raylib CMake
+   ghi đè GRAPHICS=ES2 vô điều kiện khi PLATFORM=Android. Hệ quả build ES2:
+   instancing dùng con trỏ hàm extension (EXT/ANGLE) mà driver Mali GLES 3.2
+   không quảng cáo → con trỏ NULL → **SIGSEGV pc 0x0 trong `DrawMeshInstanced`**
+   ngay khi VFX instanced đầu tiên vẽ (vd vào Game, GlacialCannon). Cờ đúng:
+   `-DOPENGL_VERSION="ES 3.0"`. Dấu hiệu build ES2 nhầm trong logcat:
+   `GL: VAO extension detected` thay vì dùng VAO core.
+
+**Sau khi đổi cờ raylib phải xoá cache** (Makefile chỉ build raylib khi thiếu
+`libraylib.a`):
+```bash
+rm -rf android.wuxing_skills/raylib_build android.wuxing_skills/lib/arm64-v8a/libraylib.a
+```
+
+Debug nhanh khi nghi "app chạy mà không hiện": `adb shell dumpsys SurfaceFlinger`
+— layer của app phải có buffer + frameRate > 0; `buffer=0x0` nghĩa là
+eglSwapBuffers chưa bao giờ queue frame (lỗi tầng platform, không phải shader).
+
+### D3. Online (EOS) trên Android = stub
+`Makefile.Android` link `net/net_eos_stub.c` → `Net_OnlineAvailable()==false`,
+nút "TAO PHONG ONLINE"/"NHAP MA VAO PHONG" bị vô hiệu **by design**.
+`third_party/eos-sdk` hiện chỉ có binary Win/Mac/Linux. Muốn online thật trên
+Android: tải "EOS SDK for Android" (Epic portal) — gồm `EOSSDK.aar`
+(libEOSSDK arm64 + Java classes bắt buộc) — rồi thêm tầng Java/dex vào quy
+trình đóng gói APK (app hiện `hasCode=false`, C thuần) + init
+`EOS_Android_InitializeOptions` với JavaVM từ NativeActivity. Đây là hạng mục
+riêng, chưa làm. LAN (ENet `--host/--join`) đã link sẵn nhưng chưa có UI nhập
+IP trên Android.
 
 ### D. Không có Compute Shaders
 - Android phiên bản cũ (và GLES 2.0) không hỗ trợ Compute Shaders.

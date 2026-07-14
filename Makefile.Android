@@ -8,6 +8,7 @@
 # Define required raylib variables
 PLATFORM               ?= PLATFORM_ANDROID
 RAYLIB_PATH             = build/_deps/raylib-src
+ENET_PATH               = build/_deps/enet-src
 
 # Android architecture and API version
 ANDROID_ARCH           ?= ARM64
@@ -61,7 +62,6 @@ PROJECT_SOURCE_FILES   := main.c \
                           core/vfx_light.c \
                           core/decal_system.c \
                           core/geometry/procedural_mesh_utils.c \
-                          core/geometry/crystal_mesh_generator.c \
                           core/geometry/mesh_cache.c \
                           core/material/material_system.c \
                           core/composition/visual_composer.c \
@@ -82,9 +82,26 @@ PROJECT_SOURCE_FILES   := main.c \
                           sandbox/auto_test.c \
                           sandbox/visual_verify.c \
                           sandbox/pool_stats.c \
+                          core/atmosphere.c \
+                          core/audio_system.c \
+                          core/debug_draw.c \
+                          core/surface_material.c \
+                          $(wildcard ai/*.c) \
+                          $(wildcard boss/*.c) \
+                          $(wildcard combat/*.c) \
+                          $(wildcard control/*.c) \
+                          $(wildcard character/*.c) \
+                          $(wildcard formations/*.c) \
+                          $(wildcard game/*.c) \
+                          $(wildcard ui/*.c) \
+                          net/net.c \
+                          net/net_transport.c \
+                          net/net_eos_stub.c \
+                          $(wildcard $(ENET_PATH)/*.c) \
                           $(wildcard skills/*/*/*.c) \
                           $(wildcard skills/*/*/*/*.c) \
-                          $(wildcard maps/*/*.c)
+                          $(wildcard maps/*/*.c) \
+                          $(wildcard maps/*/*/*.c)
 PROJECT_SOURCE_FILES   := $(sort $(PROJECT_SOURCE_FILES))
 
 NATIVE_APP_GLUE_PATH    = $(ANDROID_NDK)/sources/android/native_app_glue
@@ -126,14 +143,24 @@ CFLAGS += -ffunction-sections -funwind-tables -fstack-protector-strong -fPIC
 CFLAGS += -Wall -Wa,--noexecstack -Wformat -Werror=format-security -no-canonical-prefixes
 CFLAGS += -DANDROID -DPLATFORM_ANDROID
 CFLAGS += -O2
+# ENet feature defines — normally set by enet's CMake check_symbol_exists; all
+# present on Android NDK API 31. Without HAS_SOCKLEN_T, unix.c redefines
+# socklen_t as int and fails to compile. Names are enet-specific → harmless to
+# other sources.
+CFLAGS += -DHAS_SOCKLEN_T=1 -DHAS_FCNTL=1 -DHAS_POLL=1 -DHAS_GETADDRINFO=1 \
+          -DHAS_GETNAMEINFO=1 -DHAS_GETHOSTBYNAME_R=1 -DHAS_GETHOSTBYADDR_R=1 \
+          -DHAS_INET_PTON=1 -DHAS_INET_NTOP=1 -DHAS_MSGHDR_FLAGS=1
 
 # Include paths
-INCLUDE_PATHS = -I. -Icore/geometry -Icore/material -Icore/composition -Icore/presets -I$(RAYLIB_PATH)/src -I$(NATIVE_APP_GLUE_PATH)
+INCLUDE_PATHS = -I. -Icore/geometry -Icore/material -Icore/composition -Icore/presets -I$(RAYLIB_PATH)/src -I$(NATIVE_APP_GLUE_PATH) -I$(ENET_PATH)/include
 
 # Linker flags
 LDFLAGS = -Wl,-soname,lib$(PROJECT_LIBRARY_NAME).so -Wl,--exclude-libs,libatomic.a
 LDFLAGS += -Wl,--build-id -Wl,--no-undefined -Wl,-z,noexecstack -Wl,-z,relro -Wl,-z,now -Wl,--warn-shared-textrel -Wl,--fatal-warnings
 LDFLAGS += -u ANativeActivity_onCreate
+# raylib's Android FileIO wraps fopen to read from APK assets (__wrap_fopen in
+# the raylib lib calls __real_fopen); the final link must supply --wrap=fopen.
+LDFLAGS += -Wl,--wrap=fopen
 LDFLAGS += -L. -L$(PROJECT_BUILD_PATH)/obj -L$(PROJECT_BUILD_PATH)/lib/$(ANDROID_ARCH_NAME)
 
 # Libraries
@@ -183,6 +210,17 @@ create_temp_project_dirs:
 	mkdir -p $(PROJECT_BUILD_PATH)/assets/$(PROJECT_RESOURCES_PATH)
 
 # Compile raylib for Android using CMake + NDK toolchain
+# CUSTOMIZE_BUILD đã BỊ BỎ (CORE_ISSUES.md Item 41, giống CMakeLists.txt desktop):
+# trên raylib 6.0 cờ này lật default một SUPPORT_* → EndDrawing không swap/không
+# giới hạn FPS → app chạy (GL init OK, loop quay ~1000fps) nhưng KHÔNG bao giờ
+# present frame nào lên surface = MÀN HÌNH ĐEN trên device. ĐỪNG bật lại.
+#
+# GLES3: PHẢI dùng -DOPENGL_VERSION="ES 3.0". Cờ -DGRAPHICS=... bị raylib CMake
+# GHI ĐÈ vô điều kiện thành ES2 trên PLATFORM=Android (LibraryConfigurations
+# .cmake); chỉ OPENGL_VERSION mới remap được sang GRAPHICS_API_OPENGL_ES3.
+# Build ES2 trên Mali (ES 3.2) → con trỏ hàm instancing (glDrawElementsInstanced
+# EXT/ANGLE) = NULL vì driver không quảng cáo extension (đã là core ES3) →
+# SIGSEGV pc 0x0 trong DrawMeshInstanced ngay khi VFX instanced đầu tiên vẽ.
 compile_raylib_android:
 	@if [ ! -f "$(PROJECT_BUILD_PATH)/lib/$(ANDROID_ARCH_NAME)/libraylib.a" ]; then \
 		echo "=== Building raylib for Android ($(ANDROID_ARCH_NAME)) ===" && \
@@ -196,9 +234,8 @@ compile_raylib_android:
 			-DCMAKE_BUILD_TYPE=Release \
 			-DBUILD_EXAMPLES=OFF \
 			-DBUILD_GAMES=OFF \
-			-DCUSTOMIZE_BUILD=ON \
 			-DPLATFORM=Android \
-			-DGRAPHICS=GRAPHICS_API_OPENGL_ES2 && \
+			-DOPENGL_VERSION="ES 3.0" && \
 		cmake --build . --config Release -j8 && \
 		cp -f raylib/libraylib.a $(CURDIR)/$(PROJECT_BUILD_PATH)/lib/$(ANDROID_ARCH_NAME)/libraylib.a; \
 	else \
@@ -209,7 +246,7 @@ copy_project_required_libs:
 	@echo "=== Copying libs ==="
 
 # Copy project resources: icons, strings.xml, shader/texture assets
-copy_project_resources:
+copy_project_resources: create_temp_project_dirs
 	cp -f $(APP_ICON_LDPI) $(PROJECT_BUILD_PATH)/res/drawable-ldpi/icon.png
 	cp -f $(APP_ICON_MDPI) $(PROJECT_BUILD_PATH)/res/drawable-mdpi/icon.png
 	cp -f $(APP_ICON_HDPI) $(PROJECT_BUILD_PATH)/res/drawable-hdpi/icon.png
@@ -232,11 +269,9 @@ copy_project_resources:
 	cd skills && find . -type d -exec mkdir -p ../$(PROJECT_BUILD_PATH)/assets/skills/{} \;
 	cd skills && find . -type f \( -name "*.fs" -o -name "*.png" -o -name "*.vs" \) -exec cp -f {} ../$(PROJECT_BUILD_PATH)/assets/skills/{} \;
 
-	@# Copy thư mục textures và models vào assets/assets để AssetManager đọc được chuỗi "assets/textures/..."
-	mkdir -p $(PROJECT_BUILD_PATH)/assets/assets/textures
-	cp -f assets/textures/* $(PROJECT_BUILD_PATH)/assets/assets/textures/ 2>/dev/null || true
-	mkdir -p $(PROJECT_BUILD_PATH)/assets/assets/models
-	cp -f assets/models/* $(PROJECT_BUILD_PATH)/assets/assets/models/ 2>/dev/null || true
+	@# Copy toàn bộ thư mục assets vào assets/assets để AssetManager đọc được chuỗi "assets/..."
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/assets
+	cp -rf assets/* $(PROJECT_BUILD_PATH)/assets/assets/ 2>/dev/null || true
 
 	@# Tự động sao chép các tệp tài nguyên của maps/ (như shader bamboo_alpha.fs) vào assets của APK
 	mkdir -p $(PROJECT_BUILD_PATH)/assets/maps
@@ -246,7 +281,7 @@ copy_project_resources:
 	@# Chạy script Python để convert Shader từ GLSL 330 sang GLES 100/300 es
 	python3 $(CURDIR)/scripts/convert_shaders_to_gles.py $(PROJECT_BUILD_PATH)/assets
 
-generate_android_manifest:
+generate_android_manifest: create_temp_project_dirs
 	@echo "<?xml version=\"1.0\" encoding=\"utf-8\"?>" > $(PROJECT_BUILD_PATH)/AndroidManifest.xml
 	@echo "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\"" >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
 	@echo "        package=\"com.$(APP_COMPANY_NAME).$(APP_PRODUCT_NAME)\" " >> $(PROJECT_BUILD_PATH)/AndroidManifest.xml
@@ -277,20 +312,20 @@ generate_apk_keystore:
 		-storepass $(APP_KEYSTORE_PASS) -keypass $(APP_KEYSTORE_PASS) \
 		-alias $(PROJECT_NAME)Key -keyalg RSA -storetype JKS
 
-config_project_package:
+config_project_package: copy_project_resources generate_android_manifest
 	$(ANDROID_BUILD_TOOLS)/aapt package -f -m \
 		-S $(PROJECT_BUILD_PATH)/res \
 		-M $(PROJECT_BUILD_PATH)/AndroidManifest.xml \
 		-I $(ANDROID_HOME)/platforms/android-$(ANDROID_API_VERSION)/android.jar
 
-compile_project_code: $(OBJS)
+compile_project_code: config_project_package compile_raylib_android $(OBJS)
 	$(CC) -o $(PROJECT_BUILD_PATH)/lib/$(ANDROID_ARCH_NAME)/lib$(PROJECT_LIBRARY_NAME).so \
 		$(OBJS) -shared $(INCLUDE_PATHS) $(LDFLAGS) $(LDLIBS)
 
 $(PROJECT_BUILD_PATH)/obj/%.o:%.c
 	$(CC) -c $^ -o $@ $(INCLUDE_PATHS) $(CFLAGS)
 
-create_project_apk_package:
+create_project_apk_package: compile_project_code
 	$(ANDROID_BUILD_TOOLS)/aapt package -f \
 		-M $(PROJECT_BUILD_PATH)/AndroidManifest.xml \
 		-S $(PROJECT_BUILD_PATH)/res \
@@ -300,11 +335,11 @@ create_project_apk_package:
 	cd $(PROJECT_BUILD_PATH) && $(ANDROID_BUILD_TOOLS)/aapt add \
 		$(PROJECT_NAME).unsigned.apk lib/$(ANDROID_ARCH_NAME)/lib$(PROJECT_LIBRARY_NAME).so
 
-zipalign_project_apk_package:
+zipalign_project_apk_package: create_project_apk_package
 	$(ANDROID_BUILD_TOOLS)/zipalign -p -f 4 \
 		$(PROJECT_BUILD_PATH)/$(PROJECT_NAME).unsigned.apk $(PROJECT_BUILD_PATH)/$(PROJECT_NAME).aligned.apk
 
-sign_project_apk_package:
+sign_project_apk_package: zipalign_project_apk_package generate_apk_keystore
 	$(ANDROID_BUILD_TOOLS)/apksigner sign --ks $(PROJECT_BUILD_PATH)/$(PROJECT_NAME).keystore \
 		--ks-pass pass:$(APP_KEYSTORE_PASS) --key-pass pass:$(APP_KEYSTORE_PASS) \
 		--ks-key-alias $(PROJECT_NAME)Key \

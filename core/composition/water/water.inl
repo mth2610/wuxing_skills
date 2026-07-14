@@ -40,7 +40,8 @@ static CrystalMaterial GetIceCrystalMaterial(void)
     static bool s_iceMatLoaded = false;
     if (!s_iceMatLoaded)
     {
-        s_iceMat = CrystalMaterial_Load(GetIceCrystalMaterialParams());
+        CrystalMaterialParams p = GetIceCrystalMaterialParams();
+        CrystalMaterial_Load(&s_iceMat, &p);
         s_iceMatLoaded = true;
     }
     return s_iceMat;
@@ -52,7 +53,8 @@ static CrystalMaterialInstanced GetIceCrystalMaterialInstanced(void)
     static bool s_iceMatILoaded = false;
     if (!s_iceMatILoaded)
     {
-        s_iceMatI = CrystalMaterialInstanced_Load(GetIceCrystalMaterialParams());
+        CrystalMaterialParams p = GetIceCrystalMaterialParams();
+        CrystalMaterialInstanced_Load(&s_iceMatI, &p);
         s_iceMatILoaded = true;
     }
     return s_iceMatI;

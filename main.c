@@ -909,8 +909,13 @@ int main(int argc, char **argv) {
   // Widened/heightened from 1200x700 so the sandbox tuning panel
   // (sandbox/ui_panel.c) has room for multi-column tunable layouts as skills
   // gain more sandbox-tunable parameters (CORE_ISSUES.md Item 34 follow-up).
-  const int screenWidth = 1280;
-  const int screenHeight = 720;
+  // Non-const: on Android these are reassigned to the native display size after
+  // InitWindow so raylib does NOT upscale (render size == display size). A
+  // render≠display mismatch makes raylib blit through an offscreen target that
+  // renders black on some devices (Mali), so the whole app (even 2D menu) shows
+  // black. Everything downstream (RTs, camera, UI) reads these, so it adapts.
+  int screenWidth = 1280;
+  int screenHeight = 720;
 
   // --render-vfx <index> [--warmup <frames>] [--out <path>]
   // Renders NEWFX tab entry <index> headlessly, saves PNG, exits.
@@ -964,6 +969,7 @@ int main(int argc, char **argv) {
 
   rlSetClipPlanes(0.001f, 150.0f);
 
+#ifndef PLATFORM_ANDROID
   // Tự động sinh các texture cơ bản nếu thiếu trong thư mục assets/textures
   if (!FileExists("assets/textures/noise.png")) {
       Image noiseImg = GenImagePerlinNoise(256, 256, 0, 0, 16.0f);
@@ -985,6 +991,7 @@ int main(int argc, char **argv) {
       ExportImage(causticsImg, "assets/textures/water_caustics.png");
       UnloadImage(causticsImg);
   }
+#endif
 
   // -----------------------------------------------------------------
   // KHỞI TẠO CÁC HỆ THỐNG ĐỒ HỌA VFX
@@ -1005,6 +1012,11 @@ int main(int argc, char **argv) {
 
   Image img = GenImageGradientRadial(64, 64, 0.0f, WHITE, BLACK);
   Texture2D globalParticleTex = LoadTextureFromImage(img);
+  // BILINEAR bắt buộc: mặc định raylib là POINT (GL_NEAREST) — hạt billboard
+  // phóng to (vd Fire) stretch texel 64x64 thành khối vuông cứng lộ viền rõ
+  // (thấy trên path CPU/VBO Android; path COMPUTE desktop ít lộ hơn do hạt
+  // thường nhỏ hơn). Cùng quy ước với atmosphere/flow_map/metaball_fx/post_fx.
+  SetTextureFilter(globalParticleTex, TEXTURE_FILTER_BILINEAR);
   Image trailImg = {
       .data = MemAlloc(64 * sizeof(Color)),
       .width = 64,
@@ -1021,6 +1033,7 @@ int main(int argc, char **argv) {
   }
   Texture2D globalTrailTex = LoadTextureFromImage(trailImg);
   UnloadImage(trailImg);
+  SetTextureFilter(globalTrailTex, TEXTURE_FILTER_BILINEAR); // same NEAREST-block issue as globalParticleTex above
   TrailSystem_SetGlobalTexture(globalTrailTex);
   UnloadImage(img);
 
@@ -1186,6 +1199,21 @@ int main(int argc, char **argv) {
          !WindowShouldClose()) {
     float dt = (autoTestMode || visualVerifyMode || renderVFXMode) ? (1.0f / 60.0f) : TimeFX_Apply(GetFrameTime());
     g_totalElapsed += dt;
+
+    // Android EGL present diagnostic (WUXING_PRESENT_TEST=1): bypasses ALL game
+    // rendering and draws only a solid color + shapes. RESOLVED 14/07/2026:
+    // the "black + uncapped fps" this test exposed was raylib built with
+    // -DCUSTOMIZE_BUILD=ON (EndDrawing neither swapped nor paced — see
+    // Makefile.Android compile_raylib_android + ANDROID_NOTICES.md §D2).
+    // Kept as a cheap present-path sanity toggle.
+    if (getenv("WUXING_PRESENT_TEST")) {
+        BeginDrawing();
+        ClearBackground(RED);
+        DrawCircle(GetScreenWidth()/2, GetScreenHeight()/2, 200, WHITE);
+        DrawText("PRESENT OK", 60, 60, 60, GREEN);
+        EndDrawing();
+        continue;
+    }
 
     // -------------------------------------------------------------------------
     // TIME CONTROL FOR DEBUGGING / SCREENSHOTTING

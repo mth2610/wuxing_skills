@@ -10,7 +10,8 @@ void VFX_ComposeFireball(Vector3 pos, float time)
     EffectMaterialParams coreParams = {0};
     coreParams.baseColor = (Color){255, 210, 130, 255};
     coreParams.emissiveIntensity = 2.5f;
-    EffectMaterial coreMat = Material_LoadCustom(coreParams);
+    EffectMaterial coreMat;
+    Material_LoadCustom(&coreMat, &coreParams);
     Material_Begin(coreMat);
     DrawCoreSphere(actualPos, (radius * 0.55f), 16, 16, WHITE);
     Material_End();
@@ -22,7 +23,8 @@ void VFX_ComposeFireball(Vector3 pos, float time)
     auraParams.emissiveIntensity = 1.2f;
     auraParams.distortionStrength = 0.45f;
     auraParams.translucency = 0.6f;
-    EffectMaterial auraMat = Material_LoadCustom(auraParams);
+    EffectMaterial auraMat;
+    Material_LoadCustom(&auraMat, &auraParams);
     Material_Begin(auraMat);
     DrawCoreSphere(actualPos, radius, 16, 16, WHITE);
     Material_End();

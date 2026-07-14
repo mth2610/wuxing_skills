@@ -259,6 +259,18 @@ void GpuParticleSystem_Init(void) {
 
     bool gl43 = LoadComputeProcs();
 
+#if defined(__ANDROID__)
+    // Force the CPU/VBO particle path on Android (ANDROID_NOTICES §D). Mobile
+    // GLES compute-DRAW (SSBO read in the vertex stage) is unreliable on Mali,
+    // and the GLES converter version-mismatches gpu_particles_ssbo.vs
+    // (#version 310 es) against gpu_particles.fs (#version 100) → the draw
+    // program fails to LINK. raylib then returns the DEFAULT shader (id != 0),
+    // so the `id == 0` fallback check below MISSES it, leaving a broken COMPUTE
+    // path active that hangs the render loop (ANR / black screen). The CPU path
+    // (immediate-mode quads) is the proven mobile path.
+    gl43 = false;
+#endif
+
     pfn_GetString p_GetStr = (pfn_GetString)s_LoadProc("glGetString");
     if (p_GetStr) {
         const char *ver = (const char *)p_GetStr(0x1F02); // GL_VERSION

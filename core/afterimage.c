@@ -27,7 +27,7 @@ void Afterimage_Init(void) {
     p.emissiveIntensity  = 0.8f;
     p.distortionStrength = 0.0f;
     p.translucency       = 0.9f;
-    s_mat = Material_LoadCustom(p);
+    Material_LoadCustom(&s_mat, &p);
     s_matLoaded = true;
 }
 

@@ -13,6 +13,8 @@ static int s_slotListIndex[MAX_DECALS];
 
 // Gom 2 shader thành 1 shader duy nhất để tránh switch trạng thái shader (Shader State Changes)
 static Shader g_DecalShader;
+// Uniform locations của uber-shader (decal_flow.fs), cache 1 lần ở Init
+static int s_locFlowTime = -1, s_locFlowSpeed = -1, s_locFlowStrength = -1, s_locGlow = -1;
 
 // Camera compensation
 static float g_cam_yaw = 0.0f;
@@ -133,8 +135,15 @@ void DecalSystem_Init(void)
         g_DecalPool[i].active = false;
         s_slotListIndex[i] = -1;
     }
-    // Khuyến khích gộp chung thành 1 Uber-Shader xử lý cả decal tĩnh và decal hiệu ứng dựa trên điều kiện thuộc tính đỉnh
-    g_DecalShader = ResourceManager_LoadShader(NULL, "core/shaders/decal_uber.fs");
+    // Uber-shader cho cả decal tĩnh lẫn decal flow: decal_flow.fs với mọi
+    // uniform = 0 rút gọn ĐÚNG về decal.fs (cùng edge mask radial, texture
+    // đứng yên) — không cần file decal_uber.fs riêng (chưa từng tồn tại;
+    // trước đây load hụt → rơi về default shader, mất edge fade + flow).
+    g_DecalShader   = ResourceManager_LoadShader(NULL, "core/shaders/decal_flow.fs");
+    s_locFlowTime     = GetShaderLocation(g_DecalShader, "u_time");
+    s_locFlowSpeed    = GetShaderLocation(g_DecalShader, "u_flowSpeed");
+    s_locFlowStrength = GetShaderLocation(g_DecalShader, "u_flowStrength");
+    s_locGlow         = GetShaderLocation(g_DecalShader, "u_glowIntensity");
 }
 
 static int FindSlot(void)
@@ -272,6 +281,15 @@ static void DrawGroup(BlendMode mode, bool flowOnly)
             rlDrawRenderBatchActive(); // Flash batch hiện tại của Raylib
             rlDisableDepthMask();
             BeginShaderMode(g_DecalShader);
+            // Nhóm tĩnh dùng CHUNG program với nhóm flow → phải reset 2 uniform
+            // "chế độ" về 0 (flowStrength 0 vô hiệu cuộn, glow 0 tắt boost),
+            // nếu không giá trị của nhóm flow vẽ trước đó rò sang decal tĩnh.
+            if (!flowOnly)
+            {
+                float zero = 0.0f;
+                SetShaderValue(g_DecalShader, s_locFlowStrength, &zero, SHADER_UNIFORM_FLOAT);
+                SetShaderValue(g_DecalShader, s_locGlow, &zero, SHADER_UNIFORM_FLOAT);
+            }
             shaderActive = true;
         }
 
@@ -280,15 +298,6 @@ static void DrawGroup(BlendMode mode, bool flowOnly)
         {
             // Nếu bạn chỉnh sửa Shader nhận dữ liệu qua Vertex, đoạn code SetShaderValue dưới đây sẽ biến mất, giúp tăng tốc X10.
             // Còn nếu giữ nguyên Uniform, dòng code dưới đây bắt buộc phải bẻ gãy batch:
-            static int timeLoc = -1, speedLoc = -1, strengthLoc = -1, glowLoc = -1;
-            if (timeLoc == -1)
-            {
-                timeLoc = GetShaderLocation(g_DecalShader, "u_time");
-                speedLoc = GetShaderLocation(g_DecalShader, "u_flowSpeed");
-                strengthLoc = GetShaderLocation(g_DecalShader, "u_flowStrength");
-                glowLoc = GetShaderLocation(g_DecalShader, "u_glowIntensity");
-            }
-
             float elapsed = d->maxLifetime - d->lifetime;
             if (drawing)
             {
@@ -296,10 +305,10 @@ static void DrawGroup(BlendMode mode, bool flowOnly)
                 drawing = false;
             } // Ép kết thúc cấu trúc hình cũ để nạp Uniform mới
 
-            SetShaderValue(g_DecalShader, timeLoc, &elapsed, SHADER_UNIFORM_FLOAT);
-            SetShaderValue(g_DecalShader, speedLoc, &d->flowSpeed, SHADER_UNIFORM_FLOAT);
-            SetShaderValue(g_DecalShader, strengthLoc, &d->flowStrength, SHADER_UNIFORM_FLOAT);
-            SetShaderValue(g_DecalShader, glowLoc, &d->glowIntensity, SHADER_UNIFORM_FLOAT);
+            SetShaderValue(g_DecalShader, s_locFlowTime, &elapsed, SHADER_UNIFORM_FLOAT);
+            SetShaderValue(g_DecalShader, s_locFlowSpeed, &d->flowSpeed, SHADER_UNIFORM_FLOAT);
+            SetShaderValue(g_DecalShader, s_locFlowStrength, &d->flowStrength, SHADER_UNIFORM_FLOAT);
+            SetShaderValue(g_DecalShader, s_locGlow, &d->glowIntensity, SHADER_UNIFORM_FLOAT);
         }
 
         // Thay đổi Texture: Chỉ ngắt kết nối Quads vẽ khi ID texture thay đổi

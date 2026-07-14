@@ -72,12 +72,14 @@ void VFX_ComposeSlashArc(VC_MaterialId matId, Vector3 pos, Vector3 dir, float ra
     matParams.fresnelPower = 2.5f;
     matParams.emissiveIntensity = 1.8f;
     matParams.translucency = 0.5f;
-    EffectMaterial mat = Material_LoadCustom(matParams);
+    EffectMaterial mat;
+    Material_LoadCustom(&mat, &matParams);
 
     EffectMaterialParams coreMatParams = {0};
     coreMatParams.baseColor = ColorAlpha(WHITE, 0.9f);
     coreMatParams.emissiveIntensity = 2.6f;
-    EffectMaterial coreMat = Material_LoadCustom(coreMatParams);
+    EffectMaterial coreMat;
+    Material_LoadCustom(&coreMat, &coreMatParams);
 
     rlDrawRenderBatchActive();
     rlDisableDepthMask();

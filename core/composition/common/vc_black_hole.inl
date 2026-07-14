@@ -53,7 +53,7 @@ void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float 
         p.emissiveIntensity  = 0.0f;
         p.distortionStrength = 0.0f;
         p.translucency       = 0.0f; // fully opaque body
-        s_coreMat = Material_LoadCustom(p);
+        Material_LoadCustom(&s_coreMat, &p);
         s_coreMatLoaded = true;
     }
     Material_Begin(s_coreMat);

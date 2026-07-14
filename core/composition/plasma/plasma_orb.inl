@@ -17,8 +17,8 @@ void VFX_ComposePlasmaOrb(Vector3 pos, float radius, float time)
     bloomParams.rimStrength = 0.4f;
     bloomParams.fresnelPower = 1.4f;
     bloomParams.translucency = 0.9f;
-    EffectMaterial bloomMat = Material_LoadCustom(bloomParams);
-
+    EffectMaterial bloomMat;
+    Material_LoadCustom(&bloomMat, &bloomParams);
     Material_Begin(bloomMat);
     DrawCoreSphere(pos, r * 0.30f, 12, 12, WHITE);
     Material_End();
@@ -97,7 +97,7 @@ void VFX_ComposePlasmaOrb(Vector3 pos, float radius, float time)
         p.emissive = 0.25f;
         p.opacity = 0.55f;
         p.displaceAmp = 0.05f;
-        s_shellOuter = PlasmaMaterial_Load(p);
+        PlasmaMaterial_Load(&s_shellOuter, &p);
 
         p.noiseScale = 4.6f;
         p.noiseSpeed = -0.6f;
@@ -105,7 +105,7 @@ void VFX_ComposePlasmaOrb(Vector3 pos, float radius, float time)
         p.rimStrength = 0.5f;
         p.emissive = 0.15f;
         p.opacity = 0.3f;
-        s_shellInner = PlasmaMaterial_Load(p);
+        PlasmaMaterial_Load(&s_shellInner, &p);
         s_shellLoaded = true;
     }
 

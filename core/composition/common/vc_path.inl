@@ -76,7 +76,8 @@ void VFX_PathWave(PathStyle style, const Vector3 *points, int count, float scale
                 matParams.fresnelPower = 2.0f;
                 matParams.emissiveIntensity = 1.5f;
 
-                EffectMaterial mat = Material_LoadCustom(matParams);
+                EffectMaterial mat;
+                Material_LoadCustom(&mat, &matParams);
                 Material_Begin(mat);
 
                 rlPushMatrix();

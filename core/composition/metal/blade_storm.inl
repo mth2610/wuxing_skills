@@ -6,7 +6,7 @@ void VFX_ComposeBladeStorm(Vector3 pos, float radius, float time)
     static bool s_stormMatLoaded = false;
     if (!s_stormMatLoaded)
     {
-        s_stormMat = Material_Get(MAT_METAL);
+        Material_Get(&s_stormMat, MAT_METAL);
         s_stormMatLoaded = true;
     }
 

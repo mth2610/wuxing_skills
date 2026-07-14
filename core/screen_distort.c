@@ -73,6 +73,7 @@ static int aspectLoc;
 // without float-renderable color fall back to RGBA8 (old LDR path). Query via
 // ScreenDistort_IsHDR() — PostFX_Init reads it to stay in lockstep.
 static bool s_hdrActive = false;
+static bool s_depthTextureActive = false;
 
 // LoadRenderTexture() mặc định gắn depth attachment là RENDERBUFFER (không
 // sample được trong shader). Build framebuffer thủ công qua rlgl để depth
@@ -151,18 +152,52 @@ void ScreenDistort_Init(int width, int height) {
   // (LDR) if the combined attachment isn't renderable on this GPU (GLES2).
   // WUXING_NO_HDR=1 forces the LDR path (A/B diagnostic + escape hatch).
   bool forceLdr = (getenv("WUXING_NO_HDR") != NULL);
-  renderTex = forceLdr ? (RenderTexture2D){0} : LoadRenderTextureWithDepthTexture(
-      width, height, RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
-  s_hdrActive = !forceLdr && (renderTex.texture.id > 0) && rlFramebufferComplete(renderTex.id);
-  if (!s_hdrActive) {
-    if (renderTex.id > 0) UnloadRenderTexture(renderTex);
+  s_depthTextureActive = false;
+
+  if (!forceLdr) {
+    renderTex = LoadRenderTextureWithDepthTexture(
+        width, height, RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
+    if (renderTex.id > 0 && rlFramebufferComplete(renderTex.id)) {
+      s_hdrActive = true;
+      s_depthTextureActive = true;
+      TraceLog(LOG_INFO, "ScreenDistort: HDR float scene buffer active (R16G16B16A16)");
+    } else {
+      if (renderTex.id > 0) UnloadRenderTexture(renderTex);
+      s_hdrActive = false;
+    }
+  } else {
+    s_hdrActive = false;
+  }
+
+  if (!s_depthTextureActive) {
     renderTex = LoadRenderTextureWithDepthTexture(
         width, height, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
-    TraceLog(LOG_WARNING, "ScreenDistort: HDR float scene target unsupported — LDR RGBA8");
-  } else {
-    TraceLog(LOG_INFO, "ScreenDistort: HDR float scene buffer active (R16G16B16A16)");
+    if (renderTex.id > 0 && rlFramebufferComplete(renderTex.id)) {
+      s_depthTextureActive = true;
+      TraceLog(LOG_INFO, "ScreenDistort: LDR depth-texture scene buffer active (RGBA8)");
+    } else {
+      if (renderTex.id > 0) UnloadRenderTexture(renderTex);
+      renderTex = LoadRenderTexture(width, height);
+      s_depthTextureActive = false;
+      TraceLog(LOG_WARNING, "ScreenDistort: depth-texture unsupported, falling back to standard FBO (no depth sampling)");
+    }
   }
-  prevDepthTex = LoadLinearDepthTarget(width, height);
+
+  if (s_depthTextureActive) {
+    prevDepthTex = LoadLinearDepthTarget(width, height);
+    if (prevDepthTex.id == 0 || !rlFramebufferComplete(prevDepthTex.id)) {
+      TraceLog(LOG_WARNING, "ScreenDistort: linear-depth framebuffer incomplete, falling back to standard FBO (no depth sampling)");
+      if (prevDepthTex.id > 0) UnloadRenderTexture(prevDepthTex);
+      prevDepthTex = (RenderTexture2D){0};
+
+      // Unload the depth-texture renderTex and fall back to standard FBO
+      UnloadRenderTexture(renderTex);
+      renderTex = LoadRenderTexture(width, height);
+      s_depthTextureActive = false;
+    }
+  } else {
+    prevDepthTex = (RenderTexture2D){0};
+  }
 
   distortShader = LoadShader(0, "core/shaders/distortion.fs");
   depthCopyShader = LoadShader(0, "core/shaders/depth_copy.fs");
@@ -185,7 +220,9 @@ bool ScreenDistort_IsHDR(void) { return s_hdrActive; }
 
 void ScreenDistort_Unload(void) {
   UnloadRenderTexture(renderTex);
-  UnloadRenderTexture(prevDepthTex);
+  if (s_depthTextureActive) {
+    UnloadRenderTexture(prevDepthTex);
+  }
   UnloadShader(distortShader);
   UnloadShader(depthCopyShader);
 }
@@ -284,6 +321,7 @@ void ScreenDistort_Draw(Camera3D camera) {
 }
 
 void ScreenDistort_SnapshotDepth(void) {
+  if (!s_depthTextureActive) return;
   // Copy scene depth (renderTex.depth) into prevDepthTex's COLOR attachment
   // via depthCopyShader (writes linearized depth to color R). Sampling that
   // color texture downstream is reliable, unlike sampling the depth texture
@@ -308,6 +346,9 @@ void ScreenDistort_SnapshotDepth(void) {
 Texture2D ScreenDistort_GetDepthTexture(void) { return prevDepthTex.texture; }
 
 void ScreenDistort_BindDepthForSoftParticles(Shader shader, int textureSlot) {
+  if (!s_depthTextureActive)
+    return;
+
   if (shader.id == 0 || shader.locs == NULL)
     return;
 

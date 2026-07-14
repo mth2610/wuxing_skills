@@ -31,8 +31,9 @@ void MaterialSystem_Unload(void)
     // Để trống, resource_manager tự lo dọn dẹp
 }
 
-EffectMaterial Material_Get(MaterialPreset preset)
+void Material_Get(EffectMaterial *outMat, MaterialPreset preset)
 {
+    if (!outMat) return;
     EffectMaterialParams p = {0};
 
     switch (preset)
@@ -98,30 +99,29 @@ EffectMaterial Material_Get(MaterialPreset preset)
         break;
     }
 
-    EffectMaterial mat = Material_LoadCustom(p);
-    mat.preset = preset;
-    return mat;
+    Material_LoadCustom(outMat, &p);
+    outMat->preset = preset;
 }
 
-EffectMaterial Material_LoadCustom(EffectMaterialParams params)
+void Material_LoadCustom(EffectMaterial *outMat, const EffectMaterialParams *params)
 {
-    EffectMaterial mat = {0};
-    mat.preset = MAT_CUSTOM;
-    mat.shader = ResourceManager_LoadShader("core/shaders/effect_material.vs",
+    if (!outMat) return;
+    *outMat = (EffectMaterial){0};
+    outMat->preset = MAT_CUSTOM;
+    outMat->shader = ResourceManager_LoadShader("core/shaders/effect_material.vs",
                                             "core/shaders/effect_material.fs");
-    Material_FetchLocs(&mat);
-    mat.params = params;
-    return mat;
+    Material_FetchLocs(outMat);
+    if (params) outMat->params = *params;
 }
 
-EffectMaterial Material_LoadCustomShader(EffectMaterialParams params, const char* vsPath, const char* fsPath)
+void Material_LoadCustomShader(EffectMaterial *outMat, const EffectMaterialParams *params, const char* vsPath, const char* fsPath)
 {
-    EffectMaterial mat = {0};
-    mat.preset = MAT_CUSTOM;
-    mat.shader = ResourceManager_LoadShader(vsPath, fsPath);
-    Material_FetchLocs(&mat);
-    mat.params = params;
-    return mat;
+    if (!outMat) return;
+    *outMat = (EffectMaterial){0};
+    outMat->preset = MAT_CUSTOM;
+    outMat->shader = ResourceManager_LoadShader(vsPath, fsPath);
+    Material_FetchLocs(outMat);
+    if (params) outMat->params = *params;
 }
 
 void Material_SetFloat(EffectMaterial *mat, const char *uniformName, float val)
@@ -196,15 +196,15 @@ static void EffectMaterialInstanced_FetchLocs(EffectMaterialInstanced *mat)
     mat->uTexture1Loc = GetShaderLocation(mat->shader, "texture1");
 }
 
-EffectMaterialInstanced EffectMaterialInstanced_Load(EffectMaterialParams params)
+void EffectMaterialInstanced_Load(EffectMaterialInstanced *outMat, const EffectMaterialParams *params)
 {
-    EffectMaterialInstanced mat = {0};
-    mat.preset = MAT_CUSTOM;
-    mat.shader = ResourceManager_LoadShader("core/shaders/effect_material_instanced.vs",
+    if (!outMat) return;
+    *outMat = (EffectMaterialInstanced){0};
+    outMat->preset = MAT_CUSTOM;
+    outMat->shader = ResourceManager_LoadShader("core/shaders/effect_material_instanced.vs",
                                             "core/shaders/effect_material.fs");
-    EffectMaterialInstanced_FetchLocs(&mat);
-    mat.params = params;
-    return mat;
+    EffectMaterialInstanced_FetchLocs(outMat);
+    if (params) outMat->params = *params;
 }
 
 void EffectMaterialInstanced_Begin(EffectMaterialInstanced mat)
@@ -251,32 +251,31 @@ void EffectMaterialInstanced_End(void)
     SkillManager_EndShader();
 }
 
-CrystalMaterial CrystalMaterial_Load(CrystalMaterialParams params)
+void CrystalMaterial_Load(CrystalMaterial *outMat, const CrystalMaterialParams *params)
 {
-    CrystalMaterial mat = {0};
-    mat.shader = ResourceManager_LoadShader("core/shaders/crystal.vs", "core/shaders/crystal.fs");
-    mat.params = params;
+    if (!outMat) return;
+    *outMat = (CrystalMaterial){0};
+    outMat->shader = ResourceManager_LoadShader("core/shaders/crystal.vs", "core/shaders/crystal.fs");
+    if (params) outMat->params = *params;
 
-    if (mat.params.texture1.id == 0)
+    if (outMat->params.texture1.id == 0)
     {
-        mat.params.texture1 = ResourceManager_LoadTexture("assets/textures/tex_crystal.png");
+        outMat->params.texture1 = ResourceManager_LoadTexture("assets/textures/tex_crystal.png");
     }
 
-    mat.uBaseColorLoc = GetShaderLocation(mat.shader, "u_baseColor");
-    mat.uEdgeColorLoc = GetShaderLocation(mat.shader, "u_edgeColor");
-    mat.uFresnelPowerLoc = GetShaderLocation(mat.shader, "u_fresnelPower");
-    mat.uRimStrengthLoc = GetShaderLocation(mat.shader, "u_rimStrength");
-    mat.uRefractionLoc = GetShaderLocation(mat.shader, "u_refraction");
-    mat.uSparkleLoc = GetShaderLocation(mat.shader, "u_sparkle");
-    mat.uCrackLoc = GetShaderLocation(mat.shader, "u_crack");
-    mat.uEmissionLoc = GetShaderLocation(mat.shader, "u_emission");
-    mat.uThicknessLoc = GetShaderLocation(mat.shader, "u_thickness");
-    mat.uDissolveLoc = GetShaderLocation(mat.shader, "u_dissolve");
-    mat.uTexture1Loc = GetShaderLocation(mat.shader, "texture1");
-    mat.uTimeLoc = GetShaderLocation(mat.shader, "u_time");
-    mat.uGrowProgressLoc = GetShaderLocation(mat.shader, "u_growProgress");
-
-    return mat;
+    outMat->uBaseColorLoc = GetShaderLocation(outMat->shader, "u_baseColor");
+    outMat->uEdgeColorLoc = GetShaderLocation(outMat->shader, "u_edgeColor");
+    outMat->uFresnelPowerLoc = GetShaderLocation(outMat->shader, "u_fresnelPower");
+    outMat->uRimStrengthLoc = GetShaderLocation(outMat->shader, "u_rimStrength");
+    outMat->uRefractionLoc = GetShaderLocation(outMat->shader, "u_refraction");
+    outMat->uSparkleLoc = GetShaderLocation(outMat->shader, "u_sparkle");
+    outMat->uCrackLoc = GetShaderLocation(outMat->shader, "u_crack");
+    outMat->uEmissionLoc = GetShaderLocation(outMat->shader, "u_emission");
+    outMat->uThicknessLoc = GetShaderLocation(outMat->shader, "u_thickness");
+    outMat->uDissolveLoc = GetShaderLocation(outMat->shader, "u_dissolve");
+    outMat->uTexture1Loc = GetShaderLocation(outMat->shader, "texture1");
+    outMat->uTimeLoc = GetShaderLocation(outMat->shader, "u_time");
+    outMat->uGrowProgressLoc = GetShaderLocation(outMat->shader, "u_growProgress");
 }
 
 void CrystalMaterial_Begin(CrystalMaterial mat)
@@ -360,36 +359,31 @@ void CrystalMaterial_End(void)
     SkillManager_EndShader();
 }
 
-// Y hệt CrystalMaterial_Load/Begin/End ở trên, chỉ khác shader program
-// (crystal_instanced.vs thay vì crystal.vs) — không tái dùng chung được vì 2
-// program đã link khác nhau có thể có location khác nhau cho cùng tên
-// uniform, phải GetShaderLocation() lại riêng cho từng cái.
-CrystalMaterialInstanced CrystalMaterialInstanced_Load(CrystalMaterialParams params)
+void CrystalMaterialInstanced_Load(CrystalMaterialInstanced *outMat, const CrystalMaterialParams *params)
 {
-    CrystalMaterialInstanced mat = {0};
-    mat.shader = ResourceManager_LoadShader("core/shaders/crystal_instanced.vs", "core/shaders/crystal.fs");
-    mat.params = params;
+    if (!outMat) return;
+    *outMat = (CrystalMaterialInstanced){0};
+    outMat->shader = ResourceManager_LoadShader("core/shaders/crystal_instanced.vs", "core/shaders/crystal.fs");
+    if (params) outMat->params = *params;
 
-    if (mat.params.texture1.id == 0)
+    if (outMat->params.texture1.id == 0)
     {
-        mat.params.texture1 = ResourceManager_LoadTexture("assets/textures/tex_crystal.png");
+        outMat->params.texture1 = ResourceManager_LoadTexture("assets/textures/tex_crystal.png");
     }
 
-    mat.uBaseColorLoc = GetShaderLocation(mat.shader, "u_baseColor");
-    mat.uEdgeColorLoc = GetShaderLocation(mat.shader, "u_edgeColor");
-    mat.uFresnelPowerLoc = GetShaderLocation(mat.shader, "u_fresnelPower");
-    mat.uRimStrengthLoc = GetShaderLocation(mat.shader, "u_rimStrength");
-    mat.uRefractionLoc = GetShaderLocation(mat.shader, "u_refraction");
-    mat.uSparkleLoc = GetShaderLocation(mat.shader, "u_sparkle");
-    mat.uCrackLoc = GetShaderLocation(mat.shader, "u_crack");
-    mat.uEmissionLoc = GetShaderLocation(mat.shader, "u_emission");
-    mat.uThicknessLoc = GetShaderLocation(mat.shader, "u_thickness");
-    mat.uDissolveLoc = GetShaderLocation(mat.shader, "u_dissolve");
-    mat.uTexture1Loc = GetShaderLocation(mat.shader, "texture1");
-    mat.uTimeLoc = GetShaderLocation(mat.shader, "u_time");
-    mat.uGrowProgressLoc = GetShaderLocation(mat.shader, "u_growProgress");
-
-    return mat;
+    outMat->uBaseColorLoc = GetShaderLocation(outMat->shader, "u_baseColor");
+    outMat->uEdgeColorLoc = GetShaderLocation(outMat->shader, "u_edgeColor");
+    outMat->uFresnelPowerLoc = GetShaderLocation(outMat->shader, "u_fresnelPower");
+    outMat->uRimStrengthLoc = GetShaderLocation(outMat->shader, "u_rimStrength");
+    outMat->uRefractionLoc = GetShaderLocation(outMat->shader, "u_refraction");
+    outMat->uSparkleLoc = GetShaderLocation(outMat->shader, "u_sparkle");
+    outMat->uCrackLoc = GetShaderLocation(outMat->shader, "u_crack");
+    outMat->uEmissionLoc = GetShaderLocation(outMat->shader, "u_emission");
+    outMat->uThicknessLoc = GetShaderLocation(outMat->shader, "u_thickness");
+    outMat->uDissolveLoc = GetShaderLocation(outMat->shader, "u_dissolve");
+    outMat->uTexture1Loc = GetShaderLocation(outMat->shader, "texture1");
+    outMat->uTimeLoc = GetShaderLocation(outMat->shader, "u_time");
+    outMat->uGrowProgressLoc = GetShaderLocation(outMat->shader, "u_growProgress");
 }
 
 void CrystalMaterialInstanced_Begin(CrystalMaterialInstanced mat)
@@ -469,25 +463,24 @@ void CrystalMaterialInstanced_End(void)
     SkillManager_EndShader();
 }
 
-PlasmaMaterial PlasmaMaterial_Load(PlasmaMaterialParams params)
+void PlasmaMaterial_Load(PlasmaMaterial *outMat, const PlasmaMaterialParams *params)
 {
-    PlasmaMaterial mat = {0};
-    mat.shader = ResourceManager_LoadShader("core/shaders/plasma_shell.vs",
+    if (!outMat) return;
+    *outMat = (PlasmaMaterial){0};
+    outMat->shader = ResourceManager_LoadShader("core/shaders/plasma_shell.vs",
                                             "core/shaders/plasma_shell.fs");
-    mat.params = params;
+    if (params) outMat->params = *params;
 
-    mat.uBaseColorLoc = GetShaderLocation(mat.shader, "u_baseColor");
-    mat.uWispColorLoc = GetShaderLocation(mat.shader, "u_wispColor");
-    mat.uNoiseScaleLoc = GetShaderLocation(mat.shader, "u_noiseScale");
-    mat.uNoiseSpeedLoc = GetShaderLocation(mat.shader, "u_noiseSpeed");
-    mat.uFresnelPowerLoc = GetShaderLocation(mat.shader, "u_fresnelPower");
-    mat.uRimStrengthLoc = GetShaderLocation(mat.shader, "u_rimStrength");
-    mat.uEmissiveLoc = GetShaderLocation(mat.shader, "u_emissive");
-    mat.uOpacityLoc = GetShaderLocation(mat.shader, "u_opacity");
-    mat.uDisplaceAmpLoc = GetShaderLocation(mat.shader, "u_displaceAmp");
-    mat.uTimeLoc = GetShaderLocation(mat.shader, "u_time");
-
-    return mat;
+    outMat->uBaseColorLoc = GetShaderLocation(outMat->shader, "u_baseColor");
+    outMat->uWispColorLoc = GetShaderLocation(outMat->shader, "u_wispColor");
+    outMat->uNoiseScaleLoc = GetShaderLocation(outMat->shader, "u_noiseScale");
+    outMat->uNoiseSpeedLoc = GetShaderLocation(outMat->shader, "u_noiseSpeed");
+    outMat->uFresnelPowerLoc = GetShaderLocation(outMat->shader, "u_fresnelPower");
+    outMat->uRimStrengthLoc = GetShaderLocation(outMat->shader, "u_rimStrength");
+    outMat->uEmissiveLoc = GetShaderLocation(outMat->shader, "u_emissive");
+    outMat->uOpacityLoc = GetShaderLocation(outMat->shader, "u_opacity");
+    outMat->uDisplaceAmpLoc = GetShaderLocation(outMat->shader, "u_displaceAmp");
+    outMat->uTimeLoc = GetShaderLocation(outMat->shader, "u_time");
 }
 
 void PlasmaMaterial_Begin(PlasmaMaterial mat)
@@ -534,29 +527,28 @@ void PlasmaMaterial_End(void)
 
 // ── AuraShellMaterial ─────────────────────────────────────────────────────
 
-AuraShellMaterial AuraShellMaterial_Load(AuraShellMaterialParams params)
+void AuraShellMaterial_Load(AuraShellMaterial *outMat, const AuraShellMaterialParams *params)
 {
-    AuraShellMaterial mat = {0};
-    mat.shader = ResourceManager_LoadShader("core/shaders/aura_shell.vs",
+    if (!outMat) return;
+    *outMat = (AuraShellMaterial){0};
+    outMat->shader = ResourceManager_LoadShader("core/shaders/aura_shell.vs",
                                             "core/shaders/aura_shell.fs");
-    mat.params = params;
+    if (params) outMat->params = *params;
 
-    mat.uBodyColorLoc    = GetShaderLocation(mat.shader, "u_bodyColor");
-    mat.uGlowColorLoc    = GetShaderLocation(mat.shader, "u_glowColor");
-    mat.uOpacityLoc      = GetShaderLocation(mat.shader, "u_opacity");
-    mat.uFresnelPowerLoc = GetShaderLocation(mat.shader, "u_fresnelPower");
-    mat.uRimStrengthLoc  = GetShaderLocation(mat.shader, "u_rimStrength");
-    mat.uScrollSpeedLoc  = GetShaderLocation(mat.shader, "u_scrollSpeed");
-    mat.uNoiseScaleLoc   = GetShaderLocation(mat.shader, "u_noiseScale");
-    mat.uHeightScaleLoc  = GetShaderLocation(mat.shader, "u_heightScale");
-    mat.uScanFreqLoc     = GetShaderLocation(mat.shader, "u_scanFreq");
-    mat.uScanSpeedLoc    = GetShaderLocation(mat.shader, "u_scanSpeed");
-    mat.uScanStrengthLoc = GetShaderLocation(mat.shader, "u_scanStrength");
-    mat.uDisplaceAmpLoc  = GetShaderLocation(mat.shader, "u_displaceAmp");
-    mat.uTopYLoc         = GetShaderLocation(mat.shader, "u_topY");
-    mat.uTimeLoc         = GetShaderLocation(mat.shader, "u_time");
-
-    return mat;
+    outMat->uBodyColorLoc    = GetShaderLocation(outMat->shader, "u_bodyColor");
+    outMat->uGlowColorLoc    = GetShaderLocation(outMat->shader, "u_glowColor");
+    outMat->uOpacityLoc      = GetShaderLocation(outMat->shader, "u_opacity");
+    outMat->uFresnelPowerLoc = GetShaderLocation(outMat->shader, "u_fresnelPower");
+    outMat->uRimStrengthLoc  = GetShaderLocation(outMat->shader, "u_rimStrength");
+    outMat->uScrollSpeedLoc  = GetShaderLocation(outMat->shader, "u_scrollSpeed");
+    outMat->uNoiseScaleLoc   = GetShaderLocation(outMat->shader, "u_noiseScale");
+    outMat->uHeightScaleLoc  = GetShaderLocation(outMat->shader, "u_heightScale");
+    outMat->uScanFreqLoc     = GetShaderLocation(outMat->shader, "u_scanFreq");
+    outMat->uScanSpeedLoc    = GetShaderLocation(outMat->shader, "u_scanSpeed");
+    outMat->uScanStrengthLoc = GetShaderLocation(outMat->shader, "u_scanStrength");
+    outMat->uDisplaceAmpLoc  = GetShaderLocation(outMat->shader, "u_displaceAmp");
+    outMat->uTopYLoc         = GetShaderLocation(outMat->shader, "u_topY");
+    outMat->uTimeLoc         = GetShaderLocation(outMat->shader, "u_time");
 }
 
 void AuraShellMaterial_Begin(AuraShellMaterial mat)

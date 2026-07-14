@@ -65,13 +65,13 @@ void MaterialSystem_Init(void);
 void MaterialSystem_Unload(void);
 
 // Lấy chất liệu theo preset chuẩn
-EffectMaterial Material_Get(MaterialPreset preset);
+void Material_Get(EffectMaterial *outMat, MaterialPreset preset);
 
 // Load chất liệu tùy biến
-EffectMaterial Material_LoadCustom(EffectMaterialParams params);
+void Material_LoadCustom(EffectMaterial *outMat, const EffectMaterialParams *params);
 
 // Load chất liệu tùy biến với shader file riêng (chỉ dùng khi cần thay thế shader gốc)
-EffectMaterial Material_LoadCustomShader(EffectMaterialParams params, const char* vsPath, const char* fsPath);
+void Material_LoadCustomShader(EffectMaterial *outMat, const EffectMaterialParams *params, const char* vsPath, const char* fsPath);
 
 // Gán uniform float cho shader
 void Material_SetFloat(EffectMaterial *mat, const char *uniformName, float val);
@@ -109,7 +109,7 @@ typedef struct
     EffectMaterialParams params;
 } EffectMaterialInstanced;
 
-EffectMaterialInstanced EffectMaterialInstanced_Load(EffectMaterialParams params);
+void EffectMaterialInstanced_Load(EffectMaterialInstanced *outMat, const EffectMaterialParams *params);
 void EffectMaterialInstanced_Begin(EffectMaterialInstanced mat);
 void EffectMaterialInstanced_End(void);
 
@@ -154,7 +154,7 @@ typedef struct
     int uGrowProgressLoc;
 } CrystalMaterial;
 
-CrystalMaterial CrystalMaterial_Load(CrystalMaterialParams params);
+void CrystalMaterial_Load(CrystalMaterial *outMat, const CrystalMaterialParams *params);
 void CrystalMaterial_Begin(CrystalMaterial mat);
 void CrystalMaterial_End(void);
 
@@ -193,7 +193,7 @@ typedef struct
     int uGrowProgressLoc;
 } CrystalMaterialInstanced;
 
-CrystalMaterialInstanced CrystalMaterialInstanced_Load(CrystalMaterialParams params);
+void CrystalMaterialInstanced_Load(CrystalMaterialInstanced *outMat, const CrystalMaterialParams *params);
 void CrystalMaterialInstanced_Begin(CrystalMaterialInstanced mat);
 void CrystalMaterialInstanced_SetGrowProgress(CrystalMaterialInstanced mat, float progress);
 void CrystalMaterialInstanced_End(void);
@@ -237,7 +237,7 @@ typedef struct
     int uTimeLoc;
 } PlasmaMaterial;
 
-PlasmaMaterial PlasmaMaterial_Load(PlasmaMaterialParams params);
+void PlasmaMaterial_Load(PlasmaMaterial *outMat, const PlasmaMaterialParams *params);
 void PlasmaMaterial_Begin(PlasmaMaterial mat);
 void PlasmaMaterial_End(void);
 
@@ -292,7 +292,7 @@ typedef struct
     int uTimeLoc;
 } AuraShellMaterial;
 
-AuraShellMaterial AuraShellMaterial_Load(AuraShellMaterialParams params);
+void AuraShellMaterial_Load(AuraShellMaterial *outMat, const AuraShellMaterialParams *params);
 void AuraShellMaterial_Begin(AuraShellMaterial mat);
 void AuraShellMaterial_End(void);
 

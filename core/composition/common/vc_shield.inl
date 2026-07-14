@@ -41,7 +41,8 @@ void VFX_ComposeShield(VC_MaterialId matId, Vector3 pos, float radius, float pro
     p.emissiveIntensity = 1.4f;
     p.distortionStrength = 0.15f;
     p.translucency = 0.9f;
-    EffectMaterial mat = Material_LoadCustom(p);
+    EffectMaterial mat;
+    Material_LoadCustom(&mat, &p);
     Material_Begin(mat);
     DrawCoreSphere(domeCenter, domeRadius * breathe, 24, 24, WHITE);
     Material_End();
@@ -54,7 +55,8 @@ void VFX_ComposeShield(VC_MaterialId matId, Vector3 pos, float radius, float pro
     ip.fresnelPower = 2.0f;
     ip.emissiveIntensity = 0.8f;
     ip.translucency = 0.8f;
-    EffectMaterial imat = Material_LoadCustom(ip);
+    EffectMaterial imat;
+    Material_LoadCustom(&imat, &ip);
     Material_Begin(imat);
     DrawCoreSphere(domeCenter, domeRadius * 0.92f, 18, 18, WHITE);
     Material_End();
@@ -86,7 +88,8 @@ void VFX_ComposeShield(VC_MaterialId matId, Vector3 pos, float radius, float pro
         EffectMaterialParams bp = {0};
         bp.baseColor = ColorAlpha(color, bandFade);
         bp.emissiveIntensity = (band == 0) ? 1.0f : 1.8f;
-        EffectMaterial bmat = Material_LoadCustom(bp);
+        EffectMaterial bmat;
+        Material_LoadCustom(&bmat, &bp);
         Material_Begin(bmat);
         DrawCoreTorus((Vector3){domeCenter.x, domeCenter.y + bandY, domeCenter.z},
                       latR * 0.985f, latR * 1.005f, 4, 32, WHITE);

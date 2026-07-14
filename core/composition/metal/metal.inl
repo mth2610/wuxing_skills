@@ -43,7 +43,7 @@ static CrystalMaterialInstanced GetMetalBladeMaterialInstanced(void)
         p.crack = 0.0f;                            
         p.emission = 0.06f;
         p.thickness = 0.6f;
-        s_metalMatI = CrystalMaterialInstanced_Load(p);
+        CrystalMaterialInstanced_Load(&s_metalMatI, &p);
         s_metalMatILoaded = true;
     }
     return s_metalMatI;

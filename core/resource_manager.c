@@ -60,6 +60,31 @@ static Shader LoadShaderProcessed(const char *vsFilePath,
   char *fsCode = (fsFilePath && fsFilePath[0])
                      ? ShaderPreprocessor_Load(fsFilePath)
                      : NULL;
+
+#ifdef __ANDROID__
+  // If fragment shader is loaded and has been rewritten to #version 300 es,
+  // but vertex shader is NULL, we must supply a default #version 300 es vertex shader
+  // to avoid "Link error: L0001 Shader languages do not match".
+  if (fsCode && strstr(fsCode, "#version 300 es") && vsCode == NULL) {
+    const char *defaultVs = 
+        "#version 300 es\n"
+        "precision highp float;\n"
+        "in vec3 vertexPosition;\n"
+        "in vec2 vertexTexCoord;\n"
+        "in vec4 vertexColor;\n"
+        "out vec2 fragTexCoord;\n"
+        "out vec4 fragColor;\n"
+        "uniform mat4 mvp;\n"
+        "void main() {\n"
+        "    fragTexCoord = vertexTexCoord;\n"
+        "    fragColor = vertexColor;\n"
+        "    gl_Position = mvp * vec4(vertexPosition, 1.0);\n"
+        "}\n";
+    vsCode = RL_MALLOC(strlen(defaultVs) + 1);
+    strcpy(vsCode, defaultVs);
+  }
+#endif
+
   Shader shader = LoadShaderFromMemory(vsCode, fsCode);
   if (vsCode)
     RL_FREE(vsCode);
@@ -248,10 +273,12 @@ Font ResourceManager_LoadFont(const char *filePath, int baseSize) {
     }
   }
 
-  if (!FileExists(filePath)) {
-    TraceLog(LOG_WARNING, "FONT: %s not found, falling back to default font", filePath);
-    return GetFontDefault();
-  }
+  // NOTE: On Android, FileExists() returns false for assets inside the APK because it uses access().
+  // We rely on LoadFontEx returning a default font if it fails to load.
+  // if (!FileExists(filePath)) {
+  //   TraceLog(LOG_WARNING, "FONT: %s not found, falling back to default font", filePath);
+  //   return GetFontDefault();
+  // }
 
   Font font = LoadFontEx(filePath, baseSize, NULL, 0);
   SetTextureFilter(font.texture, TEXTURE_FILTER_BILINEAR);
@@ -282,10 +309,11 @@ Model ResourceManager_LoadModel(const char *filePath) {
     }
   }
 
-  if (!FileExists(filePath)) {
-    TraceLog(LOG_WARNING, "MODEL: %s not found, returning empty model", filePath);
-    return (Model){0};
-  }
+  // NOTE: On Android, FileExists() returns false for APK assets.
+  // if (!FileExists(filePath)) {
+  //   TraceLog(LOG_WARNING, "MODEL: %s not found, returning empty model", filePath);
+  //   return (Model){0};
+  // }
 
   Model model = LoadModel(filePath);
 
@@ -316,10 +344,11 @@ ModelAnimation *ResourceManager_LoadModelAnimations(const char *filePath, int *o
     }
   }
 
-  if (!FileExists(filePath)) {
-    TraceLog(LOG_WARNING, "MODEL ANIM: %s not found, no animations loaded", filePath);
-    return NULL;
-  }
+  // NOTE: On Android, FileExists() returns false for APK assets.
+  // if (!FileExists(filePath)) {
+  //   TraceLog(LOG_WARNING, "MODEL ANIM: %s not found, no animations loaded", filePath);
+  //   return NULL;
+  // }
 
   int animCount = 0;
   ModelAnimation *anims = LoadModelAnimations(filePath, &animCount);

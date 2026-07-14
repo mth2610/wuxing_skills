@@ -12,7 +12,8 @@ void VFX_ComposeStonePillar(Vector3 basePos, float progress)
     Vector3 actualPos = Vector3Add(basePos, (Vector3){0, yOffset, 0});
     float topRadius = radius * 0.55f;
 
-    EffectMaterial mat = Material_Get(MAT_ROCK);
+    EffectMaterial mat;
+    Material_Get(&mat, MAT_ROCK);
     Material_Begin(mat);
     ProceduralMesh_DrawOrganicStonePillar(actualPos, height + 0.05f, radius, topRadius);
     Material_End();

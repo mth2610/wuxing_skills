@@ -2,7 +2,8 @@ void VFX_ComposeBoulder(Vector3 pos)
 {
     float randScale = 0.88f + ((float)rand() / (float)RAND_MAX * 0.24f);
 
-    EffectMaterial mat = Material_Get(MAT_ROCK);
+    EffectMaterial mat;
+    Material_Get(&mat, MAT_ROCK);
     Material_Begin(mat);
     DrawCoreSphere(pos, 0.22f * randScale, 24, 24, WHITE);
     Material_End();

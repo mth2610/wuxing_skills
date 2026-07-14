@@ -18,7 +18,8 @@ void VFX_ComposeProjectile(VC_MaterialId matId, Vector3 pos, Vector3 target, flo
             EffectMaterialParams coreParams = {0};
             coreParams.baseColor = (Color){255, 200, 110, 255};
             coreParams.emissiveIntensity = 3.0f;
-            EffectMaterial coreMat = Material_LoadCustom(coreParams);
+            EffectMaterial coreMat;
+            Material_LoadCustom(&coreMat, &coreParams);
             Material_Begin(coreMat);
             DrawCoreSphere(pos, 0.12f * scale, 12, 12, WHITE);
             Material_End();
@@ -29,7 +30,8 @@ void VFX_ComposeProjectile(VC_MaterialId matId, Vector3 pos, Vector3 target, flo
             auraParams.rimStrength = 2.0f;
             auraParams.fresnelPower = 2.0f;
             auraParams.emissiveIntensity = 1.5f;
-            EffectMaterial auraMat = Material_LoadCustom(auraParams);
+            EffectMaterial auraMat;
+            Material_LoadCustom(&auraMat, &auraParams);
             Material_Begin(auraMat);
             DrawCoreSphere(pos, 0.22f * scale, 12, 12, WHITE);
             Material_End();
@@ -57,7 +59,8 @@ void VFX_ComposeProjectile(VC_MaterialId matId, Vector3 pos, Vector3 target, flo
         {
             // Rotating Ice shard
             rlDisableBackfaceCulling();
-            EffectMaterial mat = Material_Get(MAT_ICE);
+            EffectMaterial mat;
+            Material_Get(&mat, MAT_ICE);
             BeginBlendMode(BLEND_ALPHA);
             Material_Begin(mat);
             rlPushMatrix();
@@ -119,7 +122,8 @@ void VFX_ComposeProjectile(VC_MaterialId matId, Vector3 pos, Vector3 target, flo
             EffectMaterialParams seedParams = {0};
             seedParams.baseColor = ColorAlpha(ELEMENT_COLOR_WOOD, 0.8f);
             seedParams.emissiveIntensity = 2.5f;
-            EffectMaterial seedMat = Material_LoadCustom(seedParams);
+            EffectMaterial seedMat;
+            Material_LoadCustom(&seedMat, &seedParams);
             Material_Begin(seedMat);
             DrawCoreSphere(pos, 0.14f * scale, 8, 8, WHITE);
             Material_End();
@@ -147,7 +151,8 @@ void VFX_ComposeProjectile(VC_MaterialId matId, Vector3 pos, Vector3 target, flo
         {
             // Rotating rock mesh
             float randScale = 0.8f + ((float)rand() / (float)RAND_MAX * 0.4f);
-            EffectMaterial rockMat = Material_Get(MAT_ROCK);
+            EffectMaterial rockMat;
+            Material_Get(&rockMat, MAT_ROCK);
             rlDrawRenderBatchActive();
             rlDisableBackfaceCulling();
             Material_Begin(rockMat);
@@ -227,7 +232,8 @@ void VFX_ComposeProjectile(VC_MaterialId matId, Vector3 pos, Vector3 target, flo
             EffectMaterialParams coreParams = {0};
             coreParams.baseColor = m->soft;
             coreParams.emissiveIntensity = 2.5f;
-            EffectMaterial coreMat = Material_LoadCustom(coreParams);
+            EffectMaterial coreMat;
+            Material_LoadCustom(&coreMat, &coreParams);
             Material_Begin(coreMat);
             DrawCoreSphere(pos, 0.12f * scale, 12, 12, WHITE);
             Material_End();
@@ -237,7 +243,8 @@ void VFX_ComposeProjectile(VC_MaterialId matId, Vector3 pos, Vector3 target, flo
             auraParams.rimStrength = 2.0f;
             auraParams.fresnelPower = 2.0f;
             auraParams.emissiveIntensity = 1.5f;
-            EffectMaterial auraMat = Material_LoadCustom(auraParams);
+            EffectMaterial auraMat;
+            Material_LoadCustom(&auraMat, &auraParams);
             Material_Begin(auraMat);
             DrawCoreSphere(pos, 0.22f * scale, 12, 12, WHITE);
             Material_End();

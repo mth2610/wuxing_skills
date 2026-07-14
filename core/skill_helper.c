@@ -558,8 +558,9 @@ void DrawEffectMesh(MeshPresetType type, Vector3 pos, Vector3 scale, Color color
 }
 
 // 6. Shader Material System Implementation
-EffectMaterial Material_LoadElement(EffectPresetType element)
+void Material_LoadElement(EffectMaterial *outMat, EffectPresetType element)
 {
+    if (!outMat) return;
     EffectMaterialParams p = {0};
     switch (element)
     {
@@ -614,7 +615,7 @@ EffectMaterial Material_LoadElement(EffectPresetType element)
     default:
         break;
     }
-    return Material_LoadCustom(p);
+    Material_LoadCustom(outMat, &p);
 }
 
 // 7. Ground Decal Implementation

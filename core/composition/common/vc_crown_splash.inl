@@ -103,7 +103,8 @@ static void VC_CrownSplash_Draw3D(Camera3D cam)
         p.customParam1 = progress;
         p.customParam2 = s_archCrownSplashes[i].randomPhase;
 
-        EffectMaterial mat = Material_LoadCustomShader(p, "core/shaders/water_splash.vs", "core/shaders/effect_material.fs");
+        EffectMaterial mat;
+        Material_LoadCustomShader(&mat, &p, "core/shaders/water_splash.vs", "core/shaders/effect_material.fs");
 
         float maxR = s_archCrownSplashes[i].maxRadius;
         float baseScale = maxR * 0.04f * s_archCrownSplashes[i].randomScale;
