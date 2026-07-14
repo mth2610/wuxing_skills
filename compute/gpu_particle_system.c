@@ -248,6 +248,67 @@ static unsigned int CompileComputeShader(const char *path) {
 // ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
+static int s_loc_pos = -1;
+static int s_loc_vel = -1;
+static int s_loc_col_start = -1;
+static int s_loc_col_end = -1;
+static int s_loc_life = -1;
+
+static void BindParticleAttributes(void) {
+    rlEnableVertexBuffer(s_ssbo);
+    int stride = sizeof(GpuParticleData);
+
+    if (s_loc_pos >= 0) {
+        rlEnableVertexAttribute(s_loc_pos);
+        rlSetVertexAttribute(s_loc_pos, 4, RL_FLOAT, 0, stride, 0);
+        rlSetVertexAttributeDivisor(s_loc_pos, 1);
+    }
+    if (s_loc_vel >= 0) {
+        rlEnableVertexAttribute(s_loc_vel);
+        rlSetVertexAttribute(s_loc_vel, 4, RL_FLOAT, 0, stride, 16);
+        rlSetVertexAttributeDivisor(s_loc_vel, 1);
+    }
+    if (s_loc_col_start >= 0) {
+        rlEnableVertexAttribute(s_loc_col_start);
+        rlSetVertexAttribute(s_loc_col_start, 4, RL_FLOAT, 0, stride, 32);
+        rlSetVertexAttributeDivisor(s_loc_col_start, 1);
+    }
+    if (s_loc_col_end >= 0) {
+        rlEnableVertexAttribute(s_loc_col_end);
+        rlSetVertexAttribute(s_loc_col_end, 4, RL_FLOAT, 0, stride, 48);
+        rlSetVertexAttributeDivisor(s_loc_col_end, 1);
+    }
+    if (s_loc_life >= 0) {
+        rlEnableVertexAttribute(s_loc_life);
+        rlSetVertexAttribute(s_loc_life, 4, RL_FLOAT, 0, stride, 64);
+        rlSetVertexAttributeDivisor(s_loc_life, 1);
+    }
+}
+
+static void UnbindParticleAttributes(void) {
+    if (s_loc_pos >= 0) {
+        rlSetVertexAttributeDivisor(s_loc_pos, 0);
+        rlDisableVertexAttribute(s_loc_pos);
+    }
+    if (s_loc_vel >= 0) {
+        rlSetVertexAttributeDivisor(s_loc_vel, 0);
+        rlDisableVertexAttribute(s_loc_vel);
+    }
+    if (s_loc_col_start >= 0) {
+        rlSetVertexAttributeDivisor(s_loc_col_start, 0);
+        rlDisableVertexAttribute(s_loc_col_start);
+    }
+    if (s_loc_col_end >= 0) {
+        rlSetVertexAttributeDivisor(s_loc_col_end, 0);
+        rlDisableVertexAttribute(s_loc_col_end);
+    }
+    if (s_loc_life >= 0) {
+        rlSetVertexAttributeDivisor(s_loc_life, 0);
+        rlDisableVertexAttribute(s_loc_life);
+    }
+    rlDisableVertexBuffer();
+}
+
 void GpuParticleSystem_Init(void) {
     if (s_initialized) return;
 
@@ -268,7 +329,7 @@ void GpuParticleSystem_Init(void) {
     // so the `id == 0` fallback check below MISSES it, leaving a broken COMPUTE
     // path active that hangs the render loop (ANR / black screen). The CPU path
     // (immediate-mode quads) is the proven mobile path.
-    gl43 = false;
+    gl43 = false; 
 #endif
 
     pfn_GetString p_GetStr = (pfn_GetString)s_LoadProc("glGetString");
@@ -309,17 +370,9 @@ void GpuParticleSystem_Init(void) {
                        NULL, RL_DYNAMIC_DRAW);
         s_glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
-        s_draw_vao = rlLoadVertexArray();
-
         s_draw_shader_gpu = ResourceManager_LoadShader(ssbo_vs_path, fs_path);
         if (s_draw_shader_gpu.id == 0) {
-            // Một số driver mobile (vd Mali) không hỗ trợ SSBO ở vertex-shader
-            // stage dù compute-shader compile được bình thường — dispatch vẫn
-            // chạy (particle count vẫn tăng) nhưng không có gì để vẽ ra màn
-            // hình. Fallback CPU/VBO thay vì giữ COMPUTE với draw shader hỏng.
             TraceLog(LOG_WARNING, "GPU_PARTICLES: draw shader compile failed, fallback CPU");
-            rlUnloadVertexArray(s_draw_vao);
-            s_draw_vao = 0;
             s_glUseProgram(0);
             rlUnloadShaderProgram(s_compute_prog);
             s_compute_prog = 0;
@@ -329,6 +382,15 @@ void GpuParticleSystem_Init(void) {
             s_ff_ssbo = 0;
             goto cpu_path;
         }
+
+        s_loc_pos = GetShaderLocationAttrib(s_draw_shader_gpu, "in_pos_radius");
+        s_loc_vel = GetShaderLocationAttrib(s_draw_shader_gpu, "in_vel_drag");
+        s_loc_col_start = GetShaderLocationAttrib(s_draw_shader_gpu, "in_color_start");
+        s_loc_col_end = GetShaderLocationAttrib(s_draw_shader_gpu, "in_color_end");
+        s_loc_life = GetShaderLocationAttrib(s_draw_shader_gpu, "in_life_data");
+
+        s_draw_vao = rlLoadVertexArray();
+
         s_use_compute = true;
         TraceLog(LOG_INFO, "GPU_PARTICLES: COMPUTE path active (%d particles)", MAX_GPU_PARTICLES);
     } else {
@@ -483,52 +545,67 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture) {
         s_glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, s_ssbo);
         rlSetTexture(texture.id);
 
+        rlEnableShader(s_draw_shader_gpu.id);
         rlEnableVertexArray(s_draw_vao);
-        rlDrawVertexArray(0, MAX_GPU_PARTICLES * 6);
+        
+        // Bắt buộc bind VBO per-frame để tránh lỗi (một số driver mất state VAO)
+        BindParticleAttributes();
+        
+        rlDrawVertexArrayInstanced(0, 6, MAX_GPU_PARTICLES);
+        
+        UnbindParticleAttributes();
         rlDisableVertexArray();
+        
+        rlDisableShader();
 
         rlSetTexture(0);
         EndShaderMode();
 
     } else {
-        // Immediate-mode qua rlgl — GIỐNG HỆT DrawParticles() trong
-        // core/particle_system.c: rlBegin()/rlEnd() PER-PARTICLE (không bọc
-        // ngoài cả vòng lặp). Xem ANDROID_NOTICES.md mục A "Lỗi Tràn Bộ Đệm
-        // Hình Học": buffer batch mặc định 8192 đỉnh, trên GPU mobile driver
-        // sẽ cắt nát/vứt bỏ toàn bộ buffer nếu tràn giữa chừng một draw call
-        // dài — PC thì "xề xòa" chấp nhận nên không lộ ra. Bọc rlBegin/rlEnd
-        // theo từng quad nhỏ (4 đỉnh) như DrawParticles() né hẳn giới hạn này.
+        // Immediate-mode qua rlgl
+        static int dbg_count = 0;
+        int active_count = 0;
+        
+        rlSetTexture(texture.id);
+        rlBegin(RL_QUADS);
+        
+        FILE *f = fopen("gpu_particles_debug.txt", "a");
+        
         for (int i = 0; i < MAX_GPU_PARTICLES; i++) {
             GpuParticleData *p = &s_cpu_pool[i];
             if (p->active < 0.5f) continue;
+            
+            active_count++;
 
             float t = 1.0f - (p->life_rem / p->life_max);
-            if (t < 0.0f) t = 0.0f;
-            if (t > 1.0f) t = 1.0f;
+            
             unsigned char cr = (unsigned char)((p->csr + (p->cer - p->csr) * t) * 255.0f);
             unsigned char cg = (unsigned char)((p->csg + (p->ceg - p->csg) * t) * 255.0f);
             unsigned char cb = (unsigned char)((p->csb + (p->ceb - p->csb) * t) * 255.0f);
             unsigned char ca = (unsigned char)((p->csa + (p->cea - p->csa) * t) * 255.0f);
+
             float cx = p->px, cy = p->py, cz = p->pz, r = p->radius;
 
-            rlSetTexture(texture.id);
-            rlBegin(RL_QUADS);
+            if (f && active_count < 5 && dbg_count % 60 == 0) {
+                fprintf(f, "Particle %d: cx=%.2f cy=%.2f cz=%.2f r=%.4f ca=%d\n", i, cx, cy, cz, r, ca);
+            }
+
             rlColor4ub(cr, cg, cb, ca);
+            
+            float rx = right.x * r, ry = right.y * r, rz = right.z * r;
+            float ux = up.x * r, uy = up.y * r, uz = up.z * r;
 
             rlTexCoord2f(0.0f, 0.0f);
-            rlVertex3f(cx + (-right.x - up.x) * r, cy + (-right.y - up.y) * r, cz + (-right.z - up.z) * r);
-
+            rlVertex3f(cx + rx - ux, cy + ry - uy, cz + rz - uz);
             rlTexCoord2f(0.0f, 1.0f);
-            rlVertex3f(cx + (-right.x + up.x) * r, cy + (-right.y + up.y) * r, cz + (-right.z + up.z) * r);
-
+            rlVertex3f(cx + rx + ux, cy + ry + uy, cz + rz + uz);
             rlTexCoord2f(1.0f, 1.0f);
-            rlVertex3f(cx + (right.x + up.x) * r, cy + (right.y + up.y) * r, cz + (right.z + up.z) * r);
-
+            rlVertex3f(cx - rx + ux, cy - ry + uy, cz - rz + uz);
             rlTexCoord2f(1.0f, 0.0f);
-            rlVertex3f(cx + (right.x - up.x) * r, cy + (right.y - up.y) * r, cz + (right.z - up.z) * r);
-
-            rlEnd();
+            rlVertex3f(cx - rx - ux, cy - ry - uy, cz - rz - uz);
         }
+        if (f) fclose(f);
+        rlEnd();
     }
 }
 

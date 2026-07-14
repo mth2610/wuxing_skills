@@ -10,6 +10,9 @@ PLATFORM               ?= PLATFORM_ANDROID
 RAYLIB_PATH             = build/_deps/raylib-src
 ENET_PATH               = build/_deps/enet-src
 
+# Vulkan Backend Switch (make USE_VULKAN=1 to enable)
+USE_VULKAN             ?= 0
+
 # Android architecture and API version
 ANDROID_ARCH           ?= ARM64
 ANDROID_API_VERSION     = 31
@@ -102,6 +105,11 @@ PROJECT_SOURCE_FILES   := main.c \
                           $(wildcard skills/*/*/*/*.c) \
                           $(wildcard maps/*/*.c) \
                           $(wildcard maps/*/*/*.c)
+
+ifeq ($(USE_VULKAN), 1)
+    PROJECT_SOURCE_FILES += core/vulkan/wuxing_vulkan.c
+endif
+
 PROJECT_SOURCE_FILES   := $(sort $(PROJECT_SOURCE_FILES))
 
 NATIVE_APP_GLUE_PATH    = $(ANDROID_NDK)/sources/android/native_app_glue
@@ -143,6 +151,10 @@ CFLAGS += -ffunction-sections -funwind-tables -fstack-protector-strong -fPIC
 CFLAGS += -Wall -Wa,--noexecstack -Wformat -Werror=format-security -no-canonical-prefixes
 CFLAGS += -DANDROID -DPLATFORM_ANDROID
 CFLAGS += -O2
+
+ifeq ($(USE_VULKAN), 1)
+    CFLAGS += -DWUXING_USE_VULKAN
+endif
 # ENet feature defines — normally set by enet's CMake check_symbol_exists; all
 # present on Android NDK API 31. Without HAS_SOCKLEN_T, unix.c redefines
 # socklen_t as int and fails to compile. Names are enet-specific → harmless to

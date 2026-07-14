@@ -30,6 +30,24 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(raylib)
 
+# -----------------------------------------------------------------
+# VULKAN BACKEND SWITCH (Lớp phân tách Renderer)
+# -----------------------------------------------------------------
+option(WUXING_USE_VULKAN "Build with Vulkan 1.3 backend (rlvk) instead of OpenGL" OFF)
+
+if(WUXING_USE_VULKAN)
+    message(STATUS "[WUXING] Vulkan Backend ENABLED. Disabling Raylib's OpenGL backend (rlgl.c)...")
+    
+    # Ép CMake coi rlgl.c (chứa code OpenGL của Raylib) như một file Header, 
+    # từ đó ngăn chặn trình biên dịch dịch file này thành mã máy.
+    set_source_files_properties(${raylib_SOURCE_DIR}/src/rlgl.c PROPERTIES HEADER_FILE_ONLY TRUE)
+    
+    # Bật cờ compile-time cho toàn bộ project
+    add_compile_definitions(WUXING_USE_VULKAN)
+else()
+    message(STATUS "[WUXING] OpenGL Backend ENABLED. Using native Raylib rlgl.")
+endif()
+
 # ENet (Module 11 net transport — peer-hosted PvP). Small C89 lib, no deps.
 FetchContent_Declare(
   enet
@@ -96,6 +114,7 @@ add_executable(wuxing
     core/shader_preprocessor.c
     core/metaball_fx.c
     core/debug_draw.c
+    core/vulkan/wuxing_vulkan.c
 
     # --- Entities ---
     entities/entities.c

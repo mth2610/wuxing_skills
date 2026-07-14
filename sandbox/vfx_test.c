@@ -267,7 +267,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             cfg.velocity = (Vector3){cosf(ang) * 0.15f, 0.0f, sinf(ang) * 0.15f};
             cfg.colorStart = (Color){80, 200, 255, 255};
             cfg.colorEnd = (Color){80, 200, 255, 0};
-            cfg.radius = 0.006f;
+            cfg.radius = 0.06f;
             cfg.lifetime = 2.5f;
             cfg.drag = 0.0f;
             cfg.forceField = &s_gpuTestField;

@@ -1009,8 +1009,7 @@ int main(int argc, char **argv) {
   Atmosphere_Configure((Vector3){6.0f, 3.0f, 4.4f}, (Vector3){15.0f, 5.0f, 15.0f},
                        340, (Color){160, 190, 235, 255});
   MetaballFX_Init(screenWidth, screenHeight);
-
-  Image img = GenImageGradientRadial(64, 64, 0.0f, WHITE, BLACK);
+  Image img = GenImageGradientRadial(64, 64, 0.0f, WHITE, BLANK);
   Texture2D globalParticleTex = LoadTextureFromImage(img);
   // BILINEAR bắt buộc: mặc định raylib là POINT (GL_NEAREST) — hạt billboard
   // phóng to (vd Fire) stretch texel 64x64 thành khối vuông cứng lộ viền rõ

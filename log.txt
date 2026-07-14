@@ -1,0 +1,159 @@
+INFO: Initializing raylib 6.0
+INFO: Platform backend: DESKTOP (GLFW)
+INFO: Supported raylib modules:
+INFO:     > rcore:..... loaded (mandatory)
+INFO:     > rlgl:...... loaded (mandatory)
+INFO:     > rshapes:... loaded (optional)
+INFO:     > rtextures:. loaded (optional)
+INFO:     > rtext:..... loaded (optional)
+INFO:     > rmodels:... loaded (optional)
+INFO:     > raudio:.... loaded (optional)
+INFO: DISPLAY: Device initialized successfully 
+INFO:     > Display size: 1280 x 800
+INFO:     > Screen size:  1280 x 720
+INFO:     > Render size:  1280 x 720
+INFO:     > Viewport offsets: 0, 0
+INFO: GLAD: OpenGL extensions loaded successfully
+INFO: GL: Supported extensions count: 45
+INFO: GL: OpenGL device information:
+INFO:     > Vendor:   Intel Inc.
+INFO:     > Renderer: Intel(R) HD Graphics 6000
+INFO:     > Version:  4.1 INTEL-18.8.6
+INFO:     > GLSL:     4.10
+INFO: GL: VAO extension detected, VAO functions loaded successfully
+INFO: GL: NPOT textures extension detected, full NPOT textures supported
+INFO: GL: DXT compressed textures supported
+INFO: PLATFORM: DESKTOP (GLFW - Cocoa): Initialized successfully
+INFO: TEXTURE: [ID 1] Texture loaded successfully (1x1 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 1] Default texture loaded successfully
+INFO: SHADER: [ID 1] Vertex shader compiled successfully
+INFO: SHADER: [ID 2] Fragment shader compiled successfully
+INFO: SHADER: [ID 3] Program shader loaded successfully
+INFO: SHADER: [ID 3] Default shader loaded successfully
+INFO: RLGL: Render batch vertex buffers loaded successfully in RAM (CPU)
+INFO: RLGL: Render batch vertex buffers loaded successfully in VRAM (GPU)
+INFO: RLGL: Default OpenGL state initialized successfully
+INFO: TEXTURE: [ID 2] Texture loaded successfully (128x128 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Default font loaded successfully (224 glyphs)
+INFO: SYSTEM: Working Directory: /Users/mth2610/Desktop/c_games/wuxing_skills/build
+INFO: AUDIO: Device initialized successfully
+INFO:     > Backend:       miniaudio | Core Audio
+INFO:     > Format:        32-bit IEEE Floating Point -> 32-bit IEEE Floating Point
+INFO:     > Channels:      2 -> 2
+INFO:     > Sample rate:   44100 -> 44100
+INFO:     > Periods size:  1323
+INFO: [AUDIO] ready (drop assets under assets/audio/ to hear them)
+WARNING: FILEIO: [assets/textures/noise.png] Failed to open file
+WARNING: FILEIO: [assets/textures/noise.png] Failed to export image
+WARNING: FILEIO: [assets/textures/flare.png] Failed to open file
+WARNING: FILEIO: [assets/textures/flare.png] Failed to export image
+WARNING: FILEIO: [assets/textures/crack.png] Failed to open file
+WARNING: FILEIO: [assets/textures/crack.png] Failed to export image
+WARNING: FILEIO: [assets/textures/water_caustics.png] Failed to open file
+WARNING: FILEIO: [assets/textures/water_caustics.png] Failed to export image
+INFO: GPU_PARTICLES: CPU/VBO path active (8192 particles)
+INFO: FILEIO: [core/shaders/trail_glow.fs] Text file loaded successfully
+INFO: SHADER: [ID 4] Fragment shader compiled successfully
+INFO: SHADER: [ID 5] Program shader loaded successfully
+WARNING: FILEIO: [core/shaders/decal_flow.fs] Failed to open text file
+ERROR: SHADER: Không đọc được file: core/shaders/decal_flow.fs
+INFO: TEXTURE: [ID 3] Texture loaded successfully (1280x720 | R16G16B16A16 | 1 mipmaps)
+INFO: TEXTURE: Depth texture loaded successfully
+INFO: ScreenDistort: HDR float scene buffer active (R16G16B16A16)
+INFO: TEXTURE: [ID 5] Texture loaded successfully (1280x720 | R32 | 1 mipmaps)
+INFO: FILEIO: [core/shaders/distortion.fs] Text file loaded successfully
+INFO: SHADER: [ID 4] Fragment shader compiled successfully
+INFO: SHADER: [ID 6] Program shader loaded successfully
+WARNING: FILEIO: [core/shaders/depth_copy.fs] Failed to open text file
+WARNING: SHADER: Shader files provided are not valid, using default shader
+INFO: TEXTURE: [ID 6] Texture loaded successfully (1280x720 | R16G16B16A16 | 1 mipmaps)
+INFO: PostFX: HDR float pipeline (R16G16B16A16)
+INFO: TEXTURE: [ID 7] Texture loaded successfully (320x180 | R16G16B16A16 | 1 mipmaps)
+INFO: TEXTURE: [ID 8] Texture loaded successfully (160x90 | R16G16B16A16 | 1 mipmaps)
+INFO: TEXTURE: [ID 9] Texture loaded successfully (80x45 | R16G16B16A16 | 1 mipmaps)
+INFO: FILEIO: [core/shaders/bloom_bright.fs] Text file loaded successfully
+INFO: SHADER: [ID 4] Fragment shader compiled successfully
+INFO: SHADER: [ID 7] Program shader loaded successfully
+WARNING: FILEIO: [core/shaders/bloom_downsample.fs] Failed to open text file
+WARNING: SHADER: Shader files provided are not valid, using default shader
+WARNING: FILEIO: [core/shaders/bloom_upsample.fs] Failed to open text file
+WARNING: SHADER: Shader files provided are not valid, using default shader
+INFO: FILEIO: [core/shaders/post_process.fs] Text file loaded successfully
+INFO: SHADER: [ID 4] Fragment shader compiled successfully
+INFO: SHADER: [ID 8] Program shader loaded successfully
+WARNING: FILEIO: [core/shaders/surface_lit.vs] Failed to open text file
+ERROR: SHADER: Không đọc được file: core/shaders/surface_lit.vs
+WARNING: FILEIO: [core/shaders/surface_lit.fs] Failed to open text file
+ERROR: SHADER: Không đọc được file: core/shaders/surface_lit.fs
+INFO: TEXTURE: [ID 10] Texture loaded successfully (32x32 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 11] Texture loaded successfully (640x360 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 1] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 7] Framebuffer object created successfully
+INFO: TEXTURE: [ID 12] Texture loaded successfully (640x360 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 2] Depth renderbuffer loaded successfully (32 bits)
+INFO: FBO: [ID 8] Framebuffer object created successfully
+INFO: FILEIO: [core/shaders/bloom_blur.fs] Text file loaded successfully
+INFO: SHADER: [ID 4] Fragment shader compiled successfully
+INFO: SHADER: [ID 9] Program shader loaded successfully
+WARNING: FILEIO: [core/shaders/metaball_threshold.fs] Failed to open text file
+WARNING: SHADER: Shader files provided are not valid, using default shader
+INFO: TEXTURE: [ID 13] Texture loaded successfully (64x64 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 14] Texture loaded successfully (64x1 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 15] Texture loaded successfully (128x128 | R8G8B8A8 | 1 mipmaps)
+WARNING: FILEIO: [assets/textures/water_caustics.png] Failed to open file
+INFO: FILEIO: [skills/fire/fire_ball/fire.fs] Text file loaded successfully
+WARNING: FILEIO: [core/shaders/common/noise.glsl] Failed to open text file
+ERROR: SHADER: Không đọc được file: core/shaders/common/noise.glsl
+WARNING: SHADER: [ID 4] Failed to compile fragment shader code
+WARNING: SHADER: [ID 4] Compile error: ERROR: 0:21: Invalid call of undeclared identifier 'vnoise'
+ERROR: 0:22: Use of undeclared identifier 'n'
+ERROR: 0:22: Invalid call of undeclared identifier 'vnoise'
+ERROR: 0:24: Use of undeclared identifier 'n'
+ERROR: 0:31: Use of undeclared identifier 'density'
+ERROR: 0:32: Use of undeclared identifier 'safeDensity'
+ERROR: 0:33: Use of undeclared identifier 'safeDensity'
+ERROR: 0:36: Use of undeclared identifier 't1'
+ERROR: 0:36: Use of undeclared identifier 't2'
+ERROR: 0:39: Use of undeclared identifier 'density'
+ERROR: 0:42: Use of undeclared identifier 'mixedColor'
+ERROR: 0:42: Use of undeclared identifier 'alphaOut'
+
+WARNING: SHADER: compile failed, not caching (vs= fs=skills/fire/fire_ball/fire.fs)
+INFO: FILEIO: [skills/fire/fire_ball/dragon_head.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (558x447 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 16] Texture loaded successfully (558x447 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 17] Texture loaded successfully (64x64 | R8G8B8A8 | 1 mipmaps)
+WARNING: FILEIO: [assets/textures/crack.png] Failed to open file
+WARNING: FILEIO: [assets/textures/noise.png] Failed to open file
+INFO: FILEIO: [skills/earth/stone_prison_skill/stone_prison.vs] Text file loaded successfully
+INFO: FILEIO: [core/shaders/common/vs_header.glsl] Text file loaded successfully
+INFO: FILEIO: [skills/earth/stone_prison_skill/stone_prison.fs] Text file loaded successfully
+WARNING: FILEIO: [core/shaders/common/noise.glsl] Failed to open text file
+ERROR: SHADER: Không đọc được file: core/shaders/common/noise.glsl
+INFO: SHADER: [ID 4] Vertex shader compiled successfully
+WARNING: SHADER: [ID 10] Failed to compile fragment shader code
+WARNING: SHADER: [ID 10] Compile error: ERROR: 0:25: Invalid call of undeclared identifier 'vnoise'
+ERROR: 0:26: Invalid call of undeclared identifier 'vnoise'
+
+WARNING: SHADER: compile failed, not caching (vs=skills/earth/stone_prison_skill/stone_prison.vs fs=skills/earth/stone_prison_skill/stone_prison.fs)
+INFO: FILEIO: [skills/earth/stone_prison_skill/stone_crack.fs] Text file loaded successfully
+WARNING: FILEIO: [core/shaders/common/noise.glsl] Failed to open text file
+ERROR: SHADER: Không đọc được file: core/shaders/common/noise.glsl
+WARNING: SHADER: [ID 10] Failed to compile fragment shader code
+WARNING: SHADER: [ID 10] Compile error: ERROR: 0:24: Invalid call of undeclared identifier 'vnoise'
+ERROR: 0:25: Use of undeclared identifier 'edgeNoise'
+ERROR: 0:34: Use of undeclared identifier 'revealRadius'
+ERROR: 0:49: Use of undeclared identifier 'revealRadius'
+ERROR: 0:49: Use of undeclared identifier 'revealRadius'
+ERROR: 0:50: Use of undeclared identifier 'border'
+
+WARNING: SHADER: compile failed, not caching (vs= fs=skills/earth/stone_prison_skill/stone_crack.fs)
+WARNING: FILEIO: [core/shaders/effect_material.vs] Failed to open text file
+ERROR: SHADER: Không đọc được file: core/shaders/effect_material.vs
+WARNING: FILEIO: [core/shaders/effect_material.fs] Failed to open text file
+ERROR: SHADER: Không đọc được file: core/shaders/effect_material.fs
+WARNING: FILEIO: [assets/fonts/ui_font.ttf] Failed to open file
+WARNING: FILEIO: [assets/characters/player.glb] Failed to open file
+WARNING: MESH: [assets/characters/player.glb] Failed to load model mesh(es) data
+WARNING: MATERIAL: [assets/characters/player.glb] Failed to load model material data, default to white material
+INFO: TIMER: Target time per frame: 16.667 milliseconds

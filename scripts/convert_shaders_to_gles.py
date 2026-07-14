@@ -71,6 +71,7 @@ ES31_INDICATORS = [
     r'\bgl_VertexID\b',
     r'\bgl_InstanceID\b.*layout',
     r'layout\s*\(\s*local_size_x',     # compute
+    r'//\s*REQUIRE_ES31',              # Magic comment de ep buoc version 310 es
 ]
 
 def needs_es31(content):

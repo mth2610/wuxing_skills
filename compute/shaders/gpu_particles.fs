@@ -1,4 +1,5 @@
 #version 330 core
+// REQUIRE_ES31
 // Fragment shader — dùng chung cho cả COMPUTE path và CPU/VBO path
 
 in vec2 fragTexCoord;

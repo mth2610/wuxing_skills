@@ -12,9 +12,12 @@ struct GpuParticleData {
     vec4 ff_data; // không dùng ở VS, chỉ giữ để khớp stride với ParticleBuffer
 };
 
-layout(std430, binding = 0) readonly buffer ParticleBuffer {
-    GpuParticleData particles[];
-};
+// VBO Instancing Bypass: Các thuộc tính này được nạp tự động qua VBO với Divisor = 1
+in vec4 in_pos_radius;
+in vec4 in_vel_drag;
+in vec4 in_color_start;
+in vec4 in_color_end;
+in vec4 in_life_data;
 
 uniform mat4 mvp;
 uniform vec3 u_right;   // camera right vector
@@ -45,21 +48,18 @@ const vec2 CORNER_TABLE[6] = vec2[6](
 );
 
 void main() {
-    int particle_idx = gl_VertexID / 6;
-    int corner_idx   = gl_VertexID % 6;
-
-    GpuParticleData p = particles[particle_idx];
+    int corner_idx = gl_VertexID % 6;
 
     // Invisible nếu inactive hoặc vừa mới chết
-    if (p.life_data.w < 0.5 || p.life_data.y <= 0.0) {
+    if (in_life_data.w < 0.5 || in_life_data.y <= 0.0) {
         gl_Position = vec4(0.0, 0.0, -1000.0, 1.0); // clip ra ngoài frustum
         fragColor   = vec4(0.0);
         fragTexCoord = vec2(0.0);
         return;
     }
 
-    float r      = p.pos_radius.w;
-    vec3  center = p.pos_radius.xyz;
+    float r      = in_pos_radius.w;
+    vec3  center = in_pos_radius.xyz;
     vec2  corner = CORNER_TABLE[corner_idx];
 
     vec3 worldPos = center
@@ -70,6 +70,6 @@ void main() {
     fragTexCoord = UV_TABLE[corner_idx];
 
     // Nội suy màu theo life ratio
-    float t      = 1.0 - (p.life_data.x / p.life_data.y);
-    fragColor    = mix(p.color_start, p.color_end, clamp(t, 0.0, 1.0));
+    float t      = 1.0 - (in_life_data.x / in_life_data.y);
+    fragColor    = mix(in_color_start, in_color_end, clamp(t, 0.0, 1.0));
 }
