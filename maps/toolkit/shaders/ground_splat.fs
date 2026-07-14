@@ -54,6 +54,10 @@ void main()
 
     vec4 totalLight = actualAmbient + (actualLight * NdotL);
 
-    // Xuất màu cuối
-    finalColor = mixedTex * colDiffuse * totalLight;
+    // Xuất màu cuối — alpha PHẢI = 1.0 (mặt đất đục). totalLight.a có thể tới ~2
+    // (ambient.a + sun.a*NdotL); trên scene buffer HDR float (Đợt G) alpha
+    // nguồn KHÔNG bị kẹp [0,1] như RGBA8 cũ → src alpha 2.0 làm blend
+    // (GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA) hoá điên: dst = 2*đất - mây → biển
+    // mây dưới đảo lòi/cộng màu xuyên qua nền. Ép alpha 1 để nền luôn đục.
+    finalColor = vec4((mixedTex * colDiffuse * totalLight).rgb, 1.0);
 }

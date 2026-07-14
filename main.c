@@ -7,6 +7,7 @@
 #include "core/post_fx.h"
 #include "sandbox/sandbox_core.h"
 #include "core/screen_distort.h"
+#include "core/surface_material.h"
 #include "sandbox/skill_debugger.h"
 #include "core/skill_manager.h"
 #include "core/trail_system.h"
@@ -995,6 +996,7 @@ int main(int argc, char **argv) {
   DecalSystem_Init();
   ScreenDistort_Init(screenWidth, screenHeight);
   PostFX_Init(screenWidth, screenHeight);
+  SurfaceMaterial_Init(); // G2 — must precede InitSandbox (CharacterModel_Load applies it)
   MetaballFX_Init(screenWidth, screenHeight);
 
   Image img = GenImageGradientRadial(64, 64, 0.0f, WHITE, BLACK);
@@ -1151,6 +1153,20 @@ int main(int argc, char **argv) {
   // sandbox screen so AutoTest_RunFrame/VisualVerify actually tick (the menu
   // branch `continue;`s past them, which used to hang autotest forever).
   if (autoTestMode || visualVerifyMode) currentScreen = SCREEN_SKILL_SANDBOX;
+  // Dev: WUXING_MAP=<name substring> forces the active map (case-insensitive)
+  // so headless verify/screenshot runs can target a specific world.
+  {
+    const char *wantMap = getenv("WUXING_MAP");
+    if (wantMap != NULL && wantMap[0] != '\0') {
+      for (int i = 0; i < MapManager_GetCount(); i++) {
+        if (strcasestr(MapManager_GetName(i), wantMap) != NULL) {
+          MapManager_SetActiveIndex(i);
+          TraceLog(LOG_INFO, "WUXING_MAP: active map -> %s", MapManager_GetName(i));
+          break;
+        }
+      }
+    }
+  }
   int renderVFXFrame = 0;
   if (renderVFXMode) {
       currentScreen    = SCREEN_VFX_TESTER;
@@ -1627,6 +1643,7 @@ int main(int argc, char **argv) {
     }
 
     MyBeginMode3D(camera);
+    SurfaceMaterial_UpdateFrame(camera); // G2 — push sun/ambient/fog to lit models
     MapManager_DrawActive();
     if (!g_isDebuggerCapturing && currentScreen == SCREEN_SKILL_SANDBOX) {
         DrawSandbox3D(&player, &enemy, mouseTarget3D, &uiState);

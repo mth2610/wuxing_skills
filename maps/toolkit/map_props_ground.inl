@@ -25,17 +25,23 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
     Texture2D texGrass = ResourceManager_LoadTexture(grassTexPath);
     Texture2D texPath = ResourceManager_LoadTexture(pathTexPath);
 
-    // Tối ưu Texture Lặp (Grass, Path)
+    // Splatmap filter FIRST. When splatMapPath == grassTexPath (a common
+    // placeholder setup), ResourceManager returns the SAME GPU texture for both
+    // texSplat and texGrass — so this bilinear (no-mipmap) filter would clobber
+    // the anisotropic+mipmap filter below if set last, leaving the tiled grass
+    // sampled without mipmaps → severe minification aliasing (the "speckle").
+    // Set the grass/path aniso+mipmap filters LAST so they win on a shared tex.
+    SetTextureFilter(texSplat, TEXTURE_FILTER_BILINEAR);
+    SetTextureWrap(texSplat, TEXTURE_WRAP_REPEAT);
+
+    // Tối ưu Texture Lặp (Grass, Path) — mipmaps + anisotropic để khử aliasing
+    // khi tile dày và nhìn xa/nghiêng.
     GenTextureMipmaps(&texGrass);
     GenTextureMipmaps(&texPath);
     SetTextureFilter(texGrass, TEXTURE_FILTER_ANISOTROPIC_16X);
     SetTextureFilter(texPath, TEXTURE_FILTER_ANISOTROPIC_16X);
     SetTextureWrap(texGrass, TEXTURE_WRAP_REPEAT);
     SetTextureWrap(texPath, TEXTURE_WRAP_REPEAT);
-
-    // Tối ưu Splatmap (Không lặp)
-    SetTextureFilter(texSplat, TEXTURE_FILTER_BILINEAR);
-    SetTextureWrap(texSplat, TEXTURE_WRAP_REPEAT);
 
     // 2. Khởi tạo Shader một lần duy nhất
     if (!shaderLoaded)

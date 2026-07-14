@@ -55,6 +55,9 @@ void main()
     vec4 actualLight = lightColor.a == 0.0 ? vec4(1.0, 1.0, 1.0, 1.0) : lightColor;
     vec4 totalLight = actualAmbient + (actualLight * NdotL);
 
-    finalColor = texColor * colDiffuse * totalLight;
-    finalColor.a *= alpha; // Áp dụng độ mờ lề đường
+    // Alpha KHÔNG được nhân totalLight.a (tới ~2): trên scene buffer HDR float
+    // (Đợt G) src alpha không bị kẹp [0,1] → blend hoá điên, biển mây lòi qua
+    // đường. Alpha chỉ = texture.a * tint.a * độ-mờ-lề (đều ≤1); lit chỉ ở rgb.
+    finalColor = vec4((texColor * colDiffuse * totalLight).rgb,
+                      texColor.a * colDiffuse.a * alpha);
 }

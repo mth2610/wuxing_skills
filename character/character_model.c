@@ -1,5 +1,6 @@
 #include "character/character_model.h"
 #include "core/resource_manager.h"
+#include "core/surface_material.h"
 #include <string.h>
 #include <ctype.h>
 
@@ -32,6 +33,11 @@ bool CharacterModel_Load(const char *filePath) {
     if (s_model.meshCount == 0) {
         return false;
     }
+
+    // G2: replace raylib's UNLIT default shader with the stylized-realism
+    // surface shader (half-Lambert + rim + fog). Safe no-op if the surface
+    // material system isn't initialized yet.
+    SurfaceMaterial_Apply(&s_model);
 
     s_animations = ResourceManager_LoadModelAnimations(filePath, &s_animCount);
     if (s_animations == NULL || s_animCount == 0) {

@@ -32,8 +32,12 @@ Stylized-**realism** võ hiệp — KHÔNG cel/anime:
 
 ## 3. Hiện trạng render (khảo sát 13/07)
 
-- **Nhân vật: shader MẶC ĐỊNH raylib** (Lambert phẳng, `DrawModelEx` không
-  material tùy chỉnh) — lý do trông "mannequin". Khoảng cách LỚN NHẤT.
+- **Nhân vật: surface shader stylized ✅ (G2)** — thay shader mặc định UNLIT
+  của raylib bằng `core/surface_material` + `surface_lit.vs/.fs`: half-Lambert
+  + Blinn sheen + Fresnel rim mát (viền trăng) + fog, lấy đèn từ
+  environment_system. Áp qua `SurfaceMaterial_Apply` khi load model. Nhân vật
+  giờ có khối/đổ sáng thật, hết "mannequin". (Enemy/dummy vẫn hình que
+  DrawCharacter3D tới khi có asset.)
 - **Tone mapping + HDR ✅** — pipeline giờ là **true HDR**: scene buffer
   (`core/screen_distort.c` renderTex) + bloom pyramid + composite đều dùng
   16-bit half-float (R16G16B16A16), nên additive/emissive giữ giá trị > 1.0
