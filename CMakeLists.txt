@@ -75,6 +75,7 @@ add_executable(wuxing
     core/ribbon_strip.c
     core/screen_distort.c
     core/surface_material.c
+    core/atmosphere.c
     core/skill_manager.c
     core/sprite_anim.c
     core/trail_system.c

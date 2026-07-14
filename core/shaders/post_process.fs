@@ -22,6 +22,13 @@ uniform float u_contrast;
 uniform float u_saturation;
 uniform vec3 u_colorTint;
 
+// Split-toning (Đợt G — cinematic color). Multiplicative tints applied by
+// luminance: shadows lean one way (cool moonlight), highlights the other
+// (warm), giving depth/mood that a single flat tint can't. Set to (1,1,1) to
+// disable. ACES desaturates, so this + a saturation lift restore richness.
+uniform vec3 u_shadowTint;
+uniform vec3 u_highlightTint;
+
 // Tone mapping (Đợt G1 — cinematic base). ACES filmic approximation
 // (Narkowicz) — cheap, GLES-friendly, no mat3. Rolls bright bloom off to
 // white smoothly instead of clipping, and gives the whole frame a filmic
@@ -73,7 +80,10 @@ void main() {
     // Saturation
     float luma = dot(gradedCol, vec3(0.2126, 0.7152, 0.0722));
     gradedCol = mix(vec3(luma), gradedCol, u_saturation);
-    // Color Tint
+    // Split-tone: cool shadows ↔ warm highlights by luminance (cinematic mood).
+    float toneLuma = clamp(dot(gradedCol, vec3(0.2126, 0.7152, 0.0722)), 0.0, 1.0);
+    gradedCol *= mix(u_shadowTint, u_highlightTint, smoothstep(0.0, 1.0, toneLuma));
+    // Color Tint (overall)
     gradedCol *= u_colorTint;
     
     sceneCol.rgb = mix(sceneCol.rgb, gradedCol, u_colorGradeEnabled);

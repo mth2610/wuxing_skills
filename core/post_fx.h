@@ -24,6 +24,11 @@ typedef struct {
   float contrast;          // Độ tương phản [0.5 .. 2.0]
   float saturation;        // Độ bão hòa màu sắc [0.0 .. 2.0]
   Vector3 colorTint;       // Bộ lọc nhân tông màu RGB
+  // Split-toning (cinematic): multiplicative tint by luminance. shadowTint
+  // colours the darks (cool moonlight), highlightTint the brights (warm).
+  // Both (1,1,1) = off. Values ~0.85..1.15 per channel are a natural range.
+  Vector3 shadowTint;
+  Vector3 highlightTint;
 
   // Tone mapping (Đợt G1 — cinematic base). ACES filmic: rolls bright
   // highlights/bloom off to white smoothly instead of clipping, and gives

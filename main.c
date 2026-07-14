@@ -8,6 +8,7 @@
 #include "sandbox/sandbox_core.h"
 #include "core/screen_distort.h"
 #include "core/surface_material.h"
+#include "core/atmosphere.h"
 #include "sandbox/skill_debugger.h"
 #include "core/skill_manager.h"
 #include "core/trail_system.h"
@@ -997,6 +998,9 @@ int main(int argc, char **argv) {
   ScreenDistort_Init(screenWidth, screenHeight);
   PostFX_Init(screenWidth, screenHeight);
   SurfaceMaterial_Init(); // G2 — must precede InitSandbox (CharacterModel_Load applies it)
+  Atmosphere_Init();      // G3 — ambient dust motes over the arena
+  Atmosphere_Configure((Vector3){6.0f, 3.0f, 4.4f}, (Vector3){15.0f, 5.0f, 15.0f},
+                       340, (Color){160, 190, 235, 255});
   MetaballFX_Init(screenWidth, screenHeight);
 
   Image img = GenImageGradientRadial(64, 64, 0.0f, WHITE, BLACK);
@@ -1112,12 +1116,15 @@ int main(int argc, char **argv) {
                                .vignetteRadius = 0.85f,
                                .vignetteSoftness = 0.45f,
                                .colorGradeEnabled = true,
-                               .contrast = 1.05f,
-                               .saturation = 1.15f,
+                               .contrast = 1.08f,
+                               .saturation = 1.28f, // ACES desaturates — lift richness back
                                .colorTint = {1.0f, 1.0f, 1.0f},
+                               // Split-tone: cool moonlit shadows, warm highlights (Moonlight Blade mood).
+                               .shadowTint = {0.90f, 0.97f, 1.12f},
+                               .highlightTint = {1.10f, 1.02f, 0.90f},
                                // Đợt G1 — cinematic tone mapping on by default.
                                .tonemapEnabled = true,
-                               .exposure = 1.15f};
+                               .exposure = 1.12f};
 
   if (visualVerifyMode) {
       VisualVerify_Init(Skill_GetIndexByName(VisualVerify_GetSkillName()));
@@ -1630,6 +1637,7 @@ int main(int argc, char **argv) {
     ScreenDistort_Update(dt);
     Environment_Update(dt);
     MapManager_Update(dt);
+    Atmosphere_Update(dt, camera); // G3 — drift dust motes
 
     SkillDebugger_PreRender();
 
@@ -1703,6 +1711,8 @@ int main(int argc, char **argv) {
         rlDrawRenderBatchActive();
         rlEnableDepthMask();
     }
+
+    Atmosphere_Draw(camera); // G3 — ambient dust motes (additive, in HDR scene)
 
     MyEndMode3D();
     ScreenDistort_End();
@@ -1792,6 +1802,7 @@ int main(int argc, char **argv) {
   UnloadTrailSystem();
   DecalSystem_Unload();
   ScreenDistort_Unload();
+  Atmosphere_Unload();
   MetaballFX_Unload();
   UnloadSkillManager();
   DamageVolume_Unload();

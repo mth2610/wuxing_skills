@@ -37,6 +37,8 @@ static int colorGradeEnabledLoc;
 static int contrastLoc;
 static int saturationLoc;
 static int colorTintLoc;
+static int shadowTintLoc;
+static int highlightTintLoc;
 static int tonemapEnabledLoc;
 static int exposureLoc;
 
@@ -115,6 +117,8 @@ void PostFX_Init(int width, int height) {
   contrastLoc          = GetShaderLocation(compositeShader, "u_contrast");
   saturationLoc        = GetShaderLocation(compositeShader, "u_saturation");
   colorTintLoc         = GetShaderLocation(compositeShader, "u_colorTint");
+  shadowTintLoc        = GetShaderLocation(compositeShader, "u_shadowTint");
+  highlightTintLoc     = GetShaderLocation(compositeShader, "u_highlightTint");
   tonemapEnabledLoc    = GetShaderLocation(compositeShader, "u_tonemapEnabled");
   exposureLoc          = GetShaderLocation(compositeShader, "u_exposure");
 }
@@ -235,6 +239,14 @@ void PostFX_Draw(const PostFXConfig *config) {
   SetShaderValue(compositeShader, contrastLoc, &config->contrast, SHADER_UNIFORM_FLOAT);
   SetShaderValue(compositeShader, saturationLoc, &saturationVal, SHADER_UNIFORM_FLOAT);
   SetShaderValue(compositeShader, colorTintLoc, &config->colorTint, SHADER_UNIFORM_VEC3);
+
+  // Split-tone tints — default to neutral (1,1,1) if a caller left them zeroed.
+  Vector3 shadowTint = (config->shadowTint.x + config->shadowTint.y + config->shadowTint.z > 0.0f)
+                           ? config->shadowTint : (Vector3){1.0f, 1.0f, 1.0f};
+  Vector3 highlightTint = (config->highlightTint.x + config->highlightTint.y + config->highlightTint.z > 0.0f)
+                           ? config->highlightTint : (Vector3){1.0f, 1.0f, 1.0f};
+  SetShaderValue(compositeShader, shadowTintLoc, &shadowTint, SHADER_UNIFORM_VEC3);
+  SetShaderValue(compositeShader, highlightTintLoc, &highlightTint, SHADER_UNIFORM_VEC3);
 
   // Tone mapping (Đợt G1) — after bloom, before grade (matches the shader).
   float tonemapEnabledVal = config->tonemapEnabled ? 1.0f : 0.0f;
