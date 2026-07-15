@@ -25,6 +25,6 @@ void main()
 {
     fragTexCoord = vertexTexCoord;
     fragColor    = vertexColor;
-    gl_Position  = pc.mvp*vec4(vertexPosition, 1.0);
-    gl_Position.z = (gl_Position.z + gl_Position.w)*0.5;   // GL [-1,1] -> VK [0,1] clip-z
+    // DEBUG: bypass push-constant mvp, hardcode 800x450 ortho
+    gl_Position  = vec4(vertexPosition.x/400.0 - 1.0, vertexPosition.y/225.0 - 1.0, 0.5, 1.0);
 }

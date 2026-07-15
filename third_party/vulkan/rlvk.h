@@ -1041,7 +1041,7 @@ static int rlvkDebugFlag(const char *name, int *cache)
     if (*cache < 0) *cache = (getenv(name) != NULL);
     return *cache;
 }
-static int s_dbgSamplers = -1, s_dbgFbo = -1, s_dbgFlush = -1, s_dbgVao = -1, s_dbgPipe = -1;
+static int s_dbgSamplers = -1, s_dbgFbo = -1, s_dbgFlush = -1, s_dbgVao = -1, s_dbgPipe = -1, s_dbgVtx = -1;
 static ill s_memLocalBytes, s_memHostBytes; static int s_memAllocCount, s_vboCreateCount, s_vboReuseCount, s_dbgMem = -1;   // RLVK_MEM_REPORT accounting
 
 // GPU timestamp trace (RLVK_GPU_TRACE env): three timestamps per frame measure the GPU span
@@ -2288,10 +2288,10 @@ static VkRenderPass rlvkGetRenderPass(const rlvkRenderPassKey *key)
             .storeOp        = (VkAttachmentStoreOp)key->depthStore,
             .stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
             .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-            .initialLayout  = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-            .finalLayout    = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+            .initialLayout  = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            .finalLayout    = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
         };
-        depthRef = (VkAttachmentReference){ attCount, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL };
+        depthRef = (VkAttachmentReference){ attCount, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
         attCount++;
     }
 
@@ -2451,7 +2451,7 @@ void rlEnableFramebuffer(unsigned int id)
     }
 
     rlvkTextureSlot *depth = fbDepth;
-    if (depth && depth->image && depth->currentLayout != VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL)
+    if (depth && depth->image && depth->currentLayout != VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
     {
         // The depth texture may have been SAMPLED since the last bind (depth shaders)
         vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
@@ -2466,12 +2466,12 @@ void rlEnableFramebuffer(unsigned int id)
                 .dstAccessMask    = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                 .oldLayout        = (depth->currentLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) ?
                                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
-                .newLayout        = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                .newLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                 .image            = depth->image,
                 .subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 },
             },
         });
-        depth->currentLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth->currentLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     }
 
     // GL semantics: framebuffer content persists across binds -> loadOp LOAD (ClearBackground
@@ -2558,7 +2558,7 @@ void rlDisableFramebuffer(void)
                     .srcAccessMask    = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                     .dstStageMask     = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                     .dstAccessMask    = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-                    .oldLayout        = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                    .oldLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                     .newLayout        = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                     .image            = depth->image,
                     .subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 },
@@ -2718,10 +2718,10 @@ void rlBlitFramebuffer(int srcX, int srcY, int srcWidth, int srcHeight, int dstX
                 // Access matched to the tracked OLD layout: after rlDisableFramebuffer the
                 // depth texture rests in SHADER_READ_ONLY (sampled); only when still bound
                 // as an attachment do prior depth writes need making available
-                .srcStageMask     = (srcDepth->currentLayout == VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL)?
+                .srcStageMask     = (srcDepth->currentLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)?
                                         (VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT) :
                                         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                .srcAccessMask    = (srcDepth->currentLayout == VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL)?
+                .srcAccessMask    = (srcDepth->currentLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)?
                                         VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT :
                                         VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                 .dstStageMask     = VK_PIPELINE_STAGE_2_BLIT_BIT,
@@ -2736,7 +2736,7 @@ void rlBlitFramebuffer(int srcX, int srcY, int srcWidth, int srcHeight, int dstX
                 .srcAccessMask    = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                 .dstStageMask     = VK_PIPELINE_STAGE_2_BLIT_BIT,
                 .dstAccessMask    = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                .oldLayout        = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                .oldLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                 .newLayout        = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                 .image            = RLVK.depthImage[frameIndex],
                 .subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 },
@@ -2765,7 +2765,7 @@ void rlBlitFramebuffer(int srcX, int srcY, int srcWidth, int srcHeight, int dstX
                 .dstStageMask     = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
                 .dstAccessMask    = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                 .oldLayout        = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                .newLayout        = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                .newLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                 .image            = srcDepth->image,
                 .subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 },
             },
@@ -2775,13 +2775,13 @@ void rlBlitFramebuffer(int srcX, int srcY, int srcWidth, int srcHeight, int dstX
                 .dstStageMask     = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
                 .dstAccessMask    = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                 .oldLayout        = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                .newLayout        = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                .newLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                 .image            = RLVK.depthImage[frameIndex],
                 .subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 },
             },
         },
     });
-    srcDepth->currentLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+    srcDepth->currentLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
     rlvkResumeSwapchainScope(cmdBuffer);
     RLVK.blitReadFb = 0;
@@ -3287,13 +3287,27 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
 
         s_bindingValid = false;   // batch flush rebinds vertex buffers outside the mesh-draw dedup cache
 
+        if (rlvkDebugFlag("RLVK_DEBUG_VTX", &s_dbgVtx))
+        {
+            const f32 *vp = (const f32 *)(dst + posOff);
+            const unsigned char *cp = (const unsigned char *)(dst + colOff);
+            const unsigned int *ip = (const unsigned int *)(dst + idxOff);
+            TRACELOG(RL_LOG_WARNING, "VKDBG idx: [%u %u %u %u %u %u] [%u %u %u %u %u %u] idxOff=%u posOff=%u",
+                ip[0], ip[1], ip[2], ip[3], ip[4], ip[5], ip[6], ip[7], ip[8], ip[9], ip[10], ip[11], (u32)idxOff, (u32)posOff);
+            TRACELOG(RL_LOG_WARNING, "VKDBG vtx: n=%u v0=(%.1f,%.1f,%.2f) v1=(%.1f,%.1f,%.2f) col0=(%u,%u,%u,%u) vpState=(%d,%d,%dx%d) scopeWH=%ux%u mvp[0]=%f mvp[5]=%f mvp[12]=%f mvp[13]=%f",
+                vcount, vp[0], vp[1], vp[2], vp[3], vp[4], vp[5], cp[0], cp[1], cp[2], cp[3],
+                RLVK.State.viewportX, RLVK.State.viewportY, RLVK.State.viewportW, RLVK.State.viewportH,
+                RLVK.scope.width, RLVK.scope.height,
+                RLVK.State.projection.m0, RLVK.State.projection.m5, RLVK.State.projection.m12, RLVK.State.projection.m13);
+        }
+
         // Vertex input layout and shader stages are baked into the cached pipeline
-        // (bound per draw below); only the buffer bindings at this flush's offsets are dynamic
-        vkCmdBindVertexBuffers(cmdBuffer, 0, 4,
-            (VkBuffer[]){ arena->buffer, arena->buffer, wantNormals? arena->buffer : RLVK.bufferSlots[RLVK.dummyAttribSlot].buffer, arena->buffer },
-            (VkDeviceSize[]){ posOff, uvOff, wantNormals? nrmOff : 12, colOff });
-        vkCmdBindIndexBuffer(cmdBuffer, arena->buffer, idxOff, VK_INDEX_TYPE_UINT32);
-        rlvkBindDummyAttribBuffers(cmdBuffer, RLVK_VLAYOUT_BATCH, shader);
+        // (bound per draw below); only the buffer bindings at this flush's offsets are dynamic.
+        // Bound AFTER the first pipeline bind of the loop below: spec-wise vertex bindings are
+        // command-buffer state independent of the pipeline, but MoltenVK resolves the Metal
+        // buffer indices through the pipeline's vertex descriptor - binding buffers with no
+        // (or a stale) pipeline bound leaves the attributes reading zeros on some drivers.
+        bool batchBuffersBound = false;
 
         // Draw batch vertex buffers (considering VR stereo if required) - mirrors rlgl's eye
         // loop exactly: two half-width viewports, per-eye view offset multiplied into the
@@ -3357,6 +3371,15 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
                 rlvkBindPipeline(cmdBuffer, (drawCall->mode == RL_LINES)? 0 : 1,
                     RLVK_VLAYOUT_BATCH, RLVK.State.currentShaderSlot);
                 rlvkFlushSet0(cmdBuffer);
+                if (!batchBuffersBound)
+                {
+                    vkCmdBindVertexBuffers(cmdBuffer, 0, 4,
+                        (VkBuffer[]){ arena->buffer, arena->buffer, wantNormals? arena->buffer : RLVK.bufferSlots[RLVK.dummyAttribSlot].buffer, arena->buffer },
+                        (VkDeviceSize[]){ posOff, uvOff, wantNormals? nrmOff : 12, colOff });
+                    vkCmdBindIndexBuffer(cmdBuffer, arena->buffer, idxOff, VK_INDEX_TYPE_UINT32);
+                    rlvkBindDummyAttribBuffers(cmdBuffer, RLVK_VLAYOUT_BATCH, shader);
+                    batchBuffersBound = true;
+                }
                 if ((drawCall->mode == RL_LINES) || (drawCall->mode == RL_TRIANGLES))
                     vk.CmdDraw(cmdBuffer, drawCall->vertexCount, 1, vertexOffset, 0);
                 else // RL_QUADS -> 2 triangles per quad via the index buffer
@@ -4611,11 +4634,36 @@ unsigned char *rlReadScreenPixels(int width, int height)
 {
     (void)width; (void)height;
     if (!isGpuReady || !RLVK.swapchain) return NULL;
-    // (MSAA: the fixed-function resolve into the intermediate happens at CmdEndRendering below)
-    // A frame with no draws never opened the render scope: open it now (clears to the current
-    // clear color) so reading back an empty frame returns the cleared backbuffer, like glReadPixels
-    if (!RLVK.frameActive) rlvkBeginFrame();
-    if (!RLVK.frameActive) return NULL;
+
+    // No frame recording (TakeScreenshot after EndDrawing, the common raylib pattern):
+    // GL's glReadPixels there sees the just-presented frame, which still lives in the
+    // PREVIOUS slot's intermediate image (color STOREd, left in TRANSFER_SRC by the flip
+    // blit). Read THAT - opening a fresh frame here would capture an empty clear instead.
+    if (!RLVK.frameActive)
+    {
+        if (RLVK.frameCounter == 0) return NULL;   // nothing was ever drawn/presented
+        u32 prev = (u32)((RLVK.frameCounter + RLVK_FRAME_INDEX_COUNT - 1) % RLVK_FRAME_INDEX_COUNT);
+        vkWaitForFences(RLVK.device, 1, &RLVK.frameFences[prev], VK_TRUE, UINT64_MAX);
+        u32 w = RLVK.swapchainExtent.width, h = RLVK.swapchainExtent.height;
+        unsigned char *rows = (unsigned char *)RL_MALLOC((size_t)w*h*4);
+        rlvkStagingReadImage(RLVK.interImage[prev], VK_IMAGE_ASPECT_COLOR_BIT, w, h,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rows, (VkDeviceSize)w*h*4);
+        // The intermediate is unmirrored (GL memory orientation): flip rows for the
+        // top-down BGRA->RGBA conversion below, matching the swapchain-path output
+        unsigned char *out = (unsigned char *)RL_MALLOC((size_t)w*h*4);
+        for (u32 y = 0; y < h; y++)
+            memcpy(out + (size_t)y*w*4, rows + (size_t)(h - 1 - y)*w*4, (size_t)w*4);
+        RL_FREE(rows);
+        // Return RGBA with opaque alpha, swapping R/B when the target format is BGRA -
+        // identical conversion to the in-frame path below
+        bool bgraPrev = (RLVK.swapchainFormat == VK_FORMAT_B8G8R8A8_UNORM) || (RLVK.swapchainFormat == VK_FORMAT_B8G8R8A8_SRGB);
+        for (size_t i = 0; i < (size_t)w*h; i++)
+        {
+            if (bgraPrev) { unsigned char b = out[i*4+0]; out[i*4+0] = out[i*4+2]; out[i*4+2] = b; }
+            out[i*4+3] = 255;
+        }
+        return out;
+    }
 
     u32 frameIndex         = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
     VkCommandBuffer cmdBuffer  = RLVK.cmdBuffers[frameIndex];
@@ -7298,6 +7346,11 @@ static void rlvkBeginFrame(void)
     if (RLVK.computeDescPools[frameIndex]) vkResetDescriptorPool(RLVK.device, RLVK.computeDescPools[frameIndex], 0);
 
     RLVK.arenaOffset[frameIndex] = 0;   // reset this frame's bump arena (the frame fence gates reuse)
+    // A freshly-begun frame WILL be presented: cancel any pending consumed-skip. Without this,
+    // a rlReadScreenPixels that presented its own frame leaves the flag armed, the NEXT frame's
+    // present gets skipped while its command buffer is still recording, frameCounter advances
+    // under it, and later commands land in a never-begun command buffer (GPU fault).
+    RLVK.frameConsumed = false;
 
     // GPU trace: harvest the ring-behind frame's timestamps, then reset+stamp this frame's start
     if (rlvkDebugFlag("RLVK_GPU_TRACE", &s_dbgGpu))
@@ -7404,7 +7457,7 @@ static void rlvkBeginFrame(void)
                 .dstStageMask     = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
                 .dstAccessMask    = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                 .oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED,
-                .newLayout        = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                .newLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                 .image            = RLVK.depthImage[frameIndex],
                 .subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 },
             },

@@ -20,5 +20,5 @@ layout(location = 0) out vec4 finalColor;
 
 void main()
 {
-    finalColor = texture(texture0, fragTexCoord)*pc.colDiffuse*fragColor;
+    finalColor = vec4(fragColor.rgb, 1.0);   // DEBUG: no texture, no colDiffuse
 }
