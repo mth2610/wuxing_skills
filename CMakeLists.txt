@@ -25,7 +25,7 @@ set(BUILD_GAMES OFF CACHE BOOL "Build raylib games" FORCE)
 # -----------------------------------------------------------------
 # VULKAN BACKEND SWITCH (Lớp phân tách Renderer)
 # -----------------------------------------------------------------
-option(WUXING_USE_VULKAN "Build with Vulkan 1.3 backend (rlvk) instead of OpenGL" OFF)
+option(WUXING_USE_VULKAN "Build with Vulkan 1.1 backend (rlvk) instead of OpenGL" ON)
 
 if(WUXING_USE_VULKAN)
     message(STATUS "[WUXING] Vulkan Backend ENABLED. Disabling Raylib's OpenGL backend (rlgl.c)...")

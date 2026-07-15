@@ -2968,9 +2968,19 @@ void rlglInit(int width, int height)
     // Dummy attribute buffer for the divisor-0 broadcast: missing attributes read constants -
     // uv vec2(0,0) @0, opaque white @8, +Z normal @12, bone ids/weights @24/@28 = GL's generic
     // attribute default (0,0,0,1)
-    struct { f32 uv[2]; unsigned int white; f32 normal[3]; unsigned char boneIds[4]; f32 boneW[4]; } dummyData =
-        { { 0.0f, 0.0f }, 0xFFFFFFFFu, { 0.0f, 0.0f, 1.0f }, { 0, 0, 0, 1 }, { 0.0f, 0.0f, 0.0f, 1.0f } };
+    typedef struct { f32 uv[2]; unsigned int white; f32 normal[3]; unsigned char boneIds[4]; f32 boneW[4]; } rlvkDummyData;
+    rlvkDummyData dummyData = { { 0.0f, 0.0f }, 0xFFFFFFFFu, { 0.0f, 0.0f, 1.0f }, { 0, 0, 0, 1 }, { 0.0f, 0.0f, 0.0f, 1.0f } };
+#if defined(__APPLE__)
+    // MoltenVK portability subset rejects stride < format size. We use stride = sizeof(rlvkDummyData)
+    // and allocate a large enough buffer (1M vertices = ~44MB) to prevent out-of-bounds reads.
+    int dummyCopies = 1048576;
+    rlvkDummyData* dummyArray = (rlvkDummyData*)RL_MALLOC(dummyCopies * sizeof(rlvkDummyData));
+    for (int i = 0; i < dummyCopies; i++) dummyArray[i] = dummyData;
+    RLVK.dummyAttribSlot = rlvkCreateVBO(dummyArray, dummyCopies * sizeof(rlvkDummyData), false, false);
+    RL_FREE(dummyArray);
+#else
     RLVK.dummyAttribSlot = rlvkCreateVBO(&dummyData, sizeof(dummyData), false, false);
+#endif
 
     // The default shader is the embedded push-constant SPIR-V (rlvk_shaders.h), NOT a runtime
     // compile: its draws take the push-constant fast path (no uniform snapshots or descriptor
@@ -6389,7 +6399,12 @@ static void rlvkAppendDummyAttribs(unsigned short vertexLayout, rlvkShaderSlot *
     {
         int idx = rlvkDummyAttribs[i].attrib;
         if ((covered & (1u << idx)) || (shader->attribLocs[idx] < 0)) continue;
-        binds[*bindCount] = (VkVertexInputBindingDescription){ .binding = dummyBinding, .stride = 0, .inputRate = VK_VERTEX_INPUT_RATE_VERTEX };
+#if defined(__APPLE__)
+        u32 stride = 44; // sizeof(rlvkDummyData)
+#else
+        u32 stride = 0;
+#endif
+        binds[*bindCount] = (VkVertexInputBindingDescription){ .binding = dummyBinding, .stride = stride, .inputRate = VK_VERTEX_INPUT_RATE_VERTEX };
         attrs[(*attrCount)++] = (VkVertexInputAttributeDescription){ .location = (u32)shader->attribLocs[idx], .binding = dummyBinding, .format = rlvkDummyAttribs[i].format };
         (*bindCount)++; dummyBinding++;
     }

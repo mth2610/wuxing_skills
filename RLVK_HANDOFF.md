@@ -55,6 +55,11 @@ with loose uniforms (one-shot path), runtime GLSL 330 graphics compile through s
 the clip-z epilogue, clean shutdown. Windowed/draw paths (render-pass cache, batch,
 present) still need a surface — untested until the platform layer (§4.2) exists.
 
+✅ FIX — vòng đời frameConsumed: TakeScreenshot để cờ "bỏ qua present kế tiếp" treo lại → frame sau bị nuốt present trong khi đang ghi → frameCounter lệch → lệnh rơi vào command buffer chưa begin → GPU timeout, device lost. Fix: frame mới mở phải xóa cờ. Sau fix: 0 lỗi MoltenVK.
+✅ FIX — screenshot chụp nhầm frame rỗng: rlReadScreenPixels sau EndDrawing mở frame MỚI (chỉ có clear) thay vì đọc frame vừa present. Fix: đọc inter image của slot trước (nội dung còn nguyên nhờ STORE). Xác nhận bằng shader debug: magenta phủ màn đúng như mong đợi — tức pipeline/raster/render-pass/blit đều hoạt động.
+✅ FIX — vertex attribute fetch đọc toà (MoltenVK stride=0 bug): MoltenVK's portability subset rejects `stride = 0`, causing the pointer to advance by format size and read out of bounds on a tiny 44-byte dummy buffer, leading to GPU timeout on Intel Iris 6000. Fix: Allocated a 1 million vertex dummy buffer (44MB) and set `stride = sizeof(dummyData)` specifically on `__APPLE__` via `#if defined(__APPLE__)` in `rlvk.h`.
+✅ FIX — File IO lỗi tải shader và texture: Nguyên nhân là do chạy file thực thi từ thư mục `build/` thay vì thư mục gốc dự án. Fix: Cấu hình IDE / dòng lệnh luôn đặt Working Directory (`Cwd`) là thư mục gốc dự án khi chạy. Toàn bộ file đã load thành công.
+
 Runtime bugs found & fixed during bring-up:
 - `rlvkDeferDestroy`'s immediate-destroy branch (frameCounter==0) leaked pipelines.
 - Descriptor-write scratch arrays in dispatch were undersized for the full binding mix.
