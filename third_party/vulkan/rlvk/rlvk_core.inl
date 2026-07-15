@@ -463,11 +463,14 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
                 "VKDBG flush draw %d/%d mode=%d verts=%d tex=%u shader=%u scope=%u depthT=%d vtxCtr=%d",
                 i, batch->drawCounter, drawCall->mode, drawCall->vertexCount, drawCall->textureId,
                 RLVK.State.currentShaderSlot, RLVK.scope.fbSlot, (int)RLVK.State.depthTest, RLVK.State.vertexCounter);
-            if (drawCall->vertexCount > 0)
+            // A failed pipeline build leaves the previous pipeline bound; drawing this batch
+            // segment with it would rasterize it under the WRONG shader (a custom-shader VFX
+            // quad shows as an opaque square). Skip the segment's draw when the build fails.
+            if ((drawCall->vertexCount > 0) &&
+                rlvkBindPipeline(cmdBuffer, (drawCall->mode == RL_LINES)? 0 : 1,
+                    RLVK_VLAYOUT_BATCH, RLVK.State.currentShaderSlot))
             {
                 rlvkPushTexture(cmdBuffer, 0, drawCall->textureId);
-                rlvkBindPipeline(cmdBuffer, (drawCall->mode == RL_LINES)? 0 : 1,
-                    RLVK_VLAYOUT_BATCH, RLVK.State.currentShaderSlot);
                 rlvkFlushSet0(cmdBuffer);
                 if (!batchBuffersBound)
                 {

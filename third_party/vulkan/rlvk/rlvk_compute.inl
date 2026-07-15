@@ -333,7 +333,8 @@ void rlLoadDrawQuad(void)
 
     // Interleaved pos+uv layout and shader stages are baked into the cached pipeline
     // Pipeline MUST be bound BEFORE vertex buffers (MoltenVK Metal buffer index resolution)
-    rlvkBindPipeline(cmdBuffer, 2, RLVK_VLAYOUT_QUAD, RLVK.State.activeShaderSlot);
+    // Bail on a failed build rather than blit with a stale pipeline (better a black frame).
+    if (!rlvkBindPipeline(cmdBuffer, 2, RLVK_VLAYOUT_QUAD, RLVK.State.activeShaderSlot)) return;
     vkCmdBindVertexBuffers(cmdBuffer, 0, 1,
         (VkBuffer[]){ RLVK.bufferSlots[quadVbo].buffer }, (VkDeviceSize[]){ 0 });
     rlvkBindDummyAttribBuffers(cmdBuffer, RLVK_VLAYOUT_QUAD, shader);

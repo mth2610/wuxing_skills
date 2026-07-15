@@ -358,7 +358,10 @@ static void rlvkDrawMesh(int offset, int count, bool indexed, int instances)
     // Pipeline MUST be bound BEFORE vertex buffers: MoltenVK resolves Metal buffer
     // indices via the active pipeline's reflection data. Without a pipeline, vertex buffer
     // bindings are silently lost and attribute reads return all zeros.
-    rlvkBindPipeline(cmdBuffer, 1, vertexLayout, RLVK.State.activeShaderSlot);
+    // A failed pipeline build returns false and leaves the PREVIOUS pipeline bound - drawing
+    // anyway rasterizes this mesh with the wrong shader (a soft-alpha particle/VFX quad shows
+    // as an opaque square). Skip the draw so a failed shader is invisible, not garbage.
+    if (!rlvkBindPipeline(cmdBuffer, 1, vertexLayout, RLVK.State.activeShaderSlot)) return;
 
     // Vertex layout and shader stages are baked into the cached pipeline; only the buffer
     // bindings are recorded here. Missing mesh attributes fall back to the divisor-0

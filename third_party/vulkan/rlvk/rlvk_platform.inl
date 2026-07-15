@@ -378,7 +378,18 @@ static void rlvkBeginFrame(void)
         if (RLVK.swapchain == VK_NULL_HANDLE) return;   // still minimized (0x0): skip the frame
         acq = vk.AcquireNextImageKHR(RLVK.device, RLVK.swapchain, UINT64_MAX,
                   RLVK.acquireSemaphores[frameIndex], VK_NULL_HANDLE, &imageIndex);
-        if ((acq != VK_SUCCESS) && (acq != VK_SUBOPTIMAL_KHR)) return;
+    }
+    // Any non-success acquire (device lost, surface lost, NOT_READY, ...) leaves imageIndex
+    // untouched and the acquire semaphore unsignaled. Falling through would open the frame on
+    // image 0 (never acquired) and submit a wait on a semaphore nothing can ever signal - the
+    // GPU then stalls until the driver kills it (VK_TIMEOUT -> device lost), and the frame ring
+    // desyncs behind it (fences/command buffers reused while still pending). Skip the frame:
+    // frameActive stays false, so the counter does not advance and the next frame retries.
+    // SUBOPTIMAL still acquired a real image and signalled - it is safe to render.
+    if ((acq != VK_SUCCESS) && (acq != VK_SUBOPTIMAL_KHR))
+    {
+        TRACELOG(RL_LOG_WARNING, "RLVK: vkAcquireNextImageKHR failed (VkResult %i), skipping frame", (int)acq);
+        return;
     }
     RLVK.currentImageIndex = imageIndex;
     RLVK.acquireWaited = false;
