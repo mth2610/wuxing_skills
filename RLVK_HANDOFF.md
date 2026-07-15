@@ -24,9 +24,24 @@ Tiering decided with the user:
 
 ## 2. What rlvk is
 
-`third_party/vulkan/rlvk.h` (~7,600 lines, single header, zlib license, v1.1) implements
+`third_party/vulkan/rlvk.h` (~350-line umbrella, zlib license, v1.1) implements
 **the complete rlgl API on Vulkan** — same `rl*` functions, different rasterizer. rlgl.h is
 included verbatim and never modified. The game keeps calling raylib/rlgl normally.
+
+**File layout (split 2026-07-15):** `rlvk.h` is now just the public declarations + the
+implementation preamble, ending in a fixed-order `#include` chain of 14 fragments under
+`third_party/vulkan/rlvk/*.inl`. The fragments are **textual includes of the ONE
+`RLVK_IMPLEMENTATION` translation unit** — no include guards, order is significant, static
+helpers/forward-decls span them. Never `#include` a fragment directly; never reorder the
+chain. Map: `rlvk_config` (defines/tunables/PFN table/sync1 shim) · `rlvk_state`
+(types + cache structs + global `RLVK`) · `rlvk_forward` (static fwd-decls) · `rlvk_shaderc`
+(GLSL→SPIR-V + reflection) · `rlvk_matrix` (matrix/vertex/GL-style ops) · `rlvk_renderpass`
+(RP+FB cache impl) · `rlvk_core` (init/close/blend/batch/rlSetTexture/vbuffers) ·
+`rlvk_texture` (staging transfer/textures/FBO) · `rlvk_shader` (shader modules/uniforms) ·
+`rlvk_compute` (dispatch/SSBO/matrix-state) · `rlvk_frame` (VK init + frame lifecycle +
+push-desc fallback) · `rlvk_pipeline` (pipeline state cache) · `rlvk_platform` (surface/
+present/swapchain-recreate) · `rlvk_format` (math + pixel-format map). Split is byte-exact
+vs the old single file; compile-check (`scripts/check_rlvk_compile.sh`) passes.
 
 Integration model (documented in the file header): in the ONE translation unit that would
 define `RLGL_IMPLEMENTATION`, define `RLVK_IMPLEMENTATION` and include `rlvk.h` instead.
