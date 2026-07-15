@@ -1,116 +1,16 @@
 #include "gpu_particle_system.h"
 #include "core/resource_manager.h"
+#if defined(GRAPHICS_API_VULKAN) || defined(WUXING_USE_VULKAN)
+#include "third_party/vulkan/rlvk.h"
+#else
 #include "rlgl.h"
+#endif
 #include "raymath.h"
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
-// ---------------------------------------------------------------------------
-// Platform proc-address loader
-// ---------------------------------------------------------------------------
-#if defined(_WIN32)
-    #include <windows.h>
-    static void *s_LoadProc(const char *name) { return (void *)wglGetProcAddress(name); }
-#elif defined(__ANDROID__)
-    #include <GLES3/gl31.h>
-    #include <EGL/egl.h>
-    static void *s_LoadProc(const char *name) { return (void *)eglGetProcAddress(name); }
-#elif defined(__linux__)
-    #include <GL/glx.h>
-    static void *s_LoadProc(const char *name) {
-        return (void *)glXGetProcAddressARB((const GLubyte *)name);
-    }
-#else
-    // macOS: GL 4.1 max, compute không hỗ trợ
-    static void *s_LoadProc(const char *name) { (void)name; return NULL; }
-#endif
-
-// ---------------------------------------------------------------------------
-// Proc types — compute + buffer operations
-// ---------------------------------------------------------------------------
-typedef void     (*pfn_Dispatch)    (unsigned int nx, unsigned int ny, unsigned int nz);
-typedef void     (*pfn_MemBarrier)  (unsigned int barriers);
-typedef void     (*pfn_BindBufBase) (unsigned int target, unsigned int index, unsigned int buffer);
-typedef unsigned int (*pfn_CreateShader)(unsigned int type);
-typedef void     (*pfn_ShaderSrc)   (unsigned int shader, int count, const char **str, const int *len);
-typedef void     (*pfn_CompileShader)(unsigned int shader);
-typedef void     (*pfn_GetShaderiv) (unsigned int shader, unsigned int pname, int *params);
-typedef void     (*pfn_GetShaderLog)(unsigned int shader, int maxLen, int *len, char *log);
-typedef unsigned int (*pfn_CreateProg)(void);
-typedef void     (*pfn_AttachShader)(unsigned int prog, unsigned int shader);
-typedef void     (*pfn_LinkProg)    (unsigned int prog);
-typedef void     (*pfn_GetProgiv)   (unsigned int prog, unsigned int pname, int *params);
-typedef void     (*pfn_GetProgLog)  (unsigned int prog, int maxLen, int *len, char *log);
-typedef void     (*pfn_UseProgram)  (unsigned int prog);
-typedef void     (*pfn_DeleteShader)(unsigned int shader);
-typedef int      (*pfn_GetUniformLoc)(unsigned int prog, const char *name);
-typedef void     (*pfn_Uniform1f)   (int loc, float v);
-typedef void     (*pfn_Uniform1i)   (int loc, int v);
-typedef void     (*pfn_GenBuffers)  (int n, unsigned int *buffers);
-typedef void     (*pfn_BindBuffer)  (unsigned int target, unsigned int buffer);
-typedef void     (*pfn_BufData)     (unsigned int target, ptrdiff_t size, const void *data, unsigned int usage);
-typedef void     (*pfn_BufSubData)  (unsigned int target, ptrdiff_t offset, ptrdiff_t size, const void *data);
-typedef const unsigned char *(*pfn_GetString)(unsigned int name);
-
-#define GL_SHADER_STORAGE_BUFFER           0x90D2
-#define GL_SHADER_STORAGE_BARRIER_BIT      0x00002000
-#define GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT 0x00000001
-#define GL_COMPUTE_SHADER                  0x91B9
-#define GL_COMPILE_STATUS                  0x8B81
-#define GL_LINK_STATUS                     0x8B82
-
-static pfn_Dispatch      s_glDispatchCompute     = NULL;
-static pfn_MemBarrier    s_glMemoryBarrier        = NULL;
-static pfn_BindBufBase   s_glBindBufferBase       = NULL;
-static pfn_CreateShader  s_glCreateShader         = NULL;
-static pfn_ShaderSrc     s_glShaderSource         = NULL;
-static pfn_CompileShader s_glCompileShader        = NULL;
-static pfn_GetShaderiv   s_glGetShaderiv          = NULL;
-static pfn_GetShaderLog  s_glGetShaderInfoLog     = NULL;
-static pfn_CreateProg    s_glCreateProgram        = NULL;
-static pfn_AttachShader  s_glAttachShader         = NULL;
-static pfn_LinkProg      s_glLinkProgram          = NULL;
-static pfn_GetProgiv     s_glGetProgramiv         = NULL;
-static pfn_GetProgLog    s_glGetProgramInfoLog    = NULL;
-static pfn_UseProgram    s_glUseProgram           = NULL;
-static pfn_DeleteShader  s_glDeleteShader         = NULL;
-static pfn_GetUniformLoc s_glGetUniformLocation   = NULL;
-static pfn_Uniform1f     s_glUniform1f            = NULL;
-static pfn_Uniform1i     s_glUniform1i            = NULL;
-static pfn_GenBuffers    s_glGenBuffers           = NULL;
-static pfn_BindBuffer    s_glBindBuffer           = NULL;
-static pfn_BufData       s_glBufferData           = NULL;
-static pfn_BufSubData    s_glBufferSubData        = NULL;
-
-#define LOAD_PROC(type, name) s_##name = (type)s_LoadProc(#name)
-
-static bool LoadComputeProcs(void) {
-    LOAD_PROC(pfn_Dispatch,      glDispatchCompute);
-    LOAD_PROC(pfn_MemBarrier,    glMemoryBarrier);
-    LOAD_PROC(pfn_BindBufBase,   glBindBufferBase);
-    LOAD_PROC(pfn_CreateShader,  glCreateShader);
-    LOAD_PROC(pfn_ShaderSrc,     glShaderSource);
-    LOAD_PROC(pfn_CompileShader, glCompileShader);
-    LOAD_PROC(pfn_GetShaderiv,   glGetShaderiv);
-    LOAD_PROC(pfn_GetShaderLog,  glGetShaderInfoLog);
-    LOAD_PROC(pfn_CreateProg,    glCreateProgram);
-    LOAD_PROC(pfn_AttachShader,  glAttachShader);
-    LOAD_PROC(pfn_LinkProg,      glLinkProgram);
-    LOAD_PROC(pfn_GetProgiv,     glGetProgramiv);
-    LOAD_PROC(pfn_GetProgLog,    glGetProgramInfoLog);
-    LOAD_PROC(pfn_UseProgram,    glUseProgram);
-    LOAD_PROC(pfn_DeleteShader,  glDeleteShader);
-    LOAD_PROC(pfn_GetUniformLoc, glGetUniformLocation);
-    LOAD_PROC(pfn_Uniform1f,     glUniform1f);
-    LOAD_PROC(pfn_Uniform1i,     glUniform1i);
-    LOAD_PROC(pfn_GenBuffers,    glGenBuffers);
-    LOAD_PROC(pfn_BindBuffer,    glBindBuffer);
-    LOAD_PROC(pfn_BufData,       glBufferData);
-    LOAD_PROC(pfn_BufSubData,    glBufferSubData);
-    return (s_glDispatchCompute != NULL && s_glMemoryBarrier != NULL);
-}
 
 // ---------------------------------------------------------------------------
 // GPU particle data — phải khớp struct trong .comp và _ssbo.vs
@@ -213,33 +113,20 @@ static unsigned int CompileComputeShader(const char *path) {
 #endif
     const char *final_src = patched ? patched : src;
 
-    unsigned int shader = s_glCreateShader(GL_COMPUTE_SHADER);
-    s_glShaderSource(shader, 1, &final_src, NULL);
-    s_glCompileShader(shader);
+    unsigned int compShader = rlLoadShader(final_src, RL_COMPUTE_SHADER);
     if (patched) RL_FREE(patched);
     UnloadFileText(src);
 
-    int ok = 0;
-    s_glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
-    if (!ok) {
-        char log[512]; int len;
-        s_glGetShaderInfoLog(shader, 512, &len, log);
-        TraceLog(LOG_ERROR, "GPU_PARTICLES compute compile: %s", log);
-        s_glDeleteShader(shader);
+    if (compShader == 0) {
+        TraceLog(LOG_ERROR, "GPU_PARTICLES compute compile failed");
         return 0;
     }
 
-    unsigned int prog = s_glCreateProgram();
-    s_glAttachShader(prog, shader);
-    s_glLinkProgram(prog);
-    s_glDeleteShader(shader);
-
-    int link_ok = 0;
-    s_glGetProgramiv(prog, GL_LINK_STATUS, &link_ok);
-    if (!link_ok) {
-        char log[512]; int len;
-        s_glGetProgramInfoLog(prog, 512, &len, log);
-        TraceLog(LOG_ERROR, "GPU_PARTICLES compute link: %s", log);
+    unsigned int prog = rlLoadShaderProgramCompute(compShader);
+    rlUnloadShader(compShader);
+    
+    if (prog == 0) {
+        TraceLog(LOG_ERROR, "GPU_PARTICLES compute link failed");
         return 0;
     }
     return prog;
@@ -318,7 +205,11 @@ void GpuParticleSystem_Init(void) {
     s_fieldCount = 0;
     s_elapsed_time = 0.0f;
 
-    bool gl43 = LoadComputeProcs();
+    #if defined(GRAPHICS_API_VULKAN) || defined(WUXING_USE_VULKAN)
+    bool gl43 = true;
+#else
+    bool gl43 = (rlGetVersion() == 4); // GL 4.3+
+#endif
 
 #if defined(__ANDROID__)
     // Force the CPU/VBO particle path on Android (ANDROID_NOTICES §D). Mobile
@@ -332,11 +223,7 @@ void GpuParticleSystem_Init(void) {
     gl43 = false; 
 #endif
 
-    pfn_GetString p_GetStr = (pfn_GetString)s_LoadProc("glGetString");
-    if (p_GetStr) {
-        const char *ver = (const char *)p_GetStr(0x1F02); // GL_VERSION
-        TraceLog(LOG_INFO, "GPU_PARTICLES: GL_VERSION = %s", ver ? ver : "?");
-    }
+    TraceLog(LOG_INFO, "GPU_PARTICLES: rlGetVersion = %d", rlGetVersion());
 
     if (gl43) {
         // ----- COMPUTE PATH -----
@@ -350,35 +237,19 @@ void GpuParticleSystem_Init(void) {
             goto cpu_path;
         }
 
-        unsigned int ssbo_buf[1];
-        s_glGenBuffers(1, ssbo_buf);
-        s_ssbo = ssbo_buf[0];
-        s_glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, s_ssbo);
-        s_glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_ssbo);
-        s_glBufferData(GL_SHADER_STORAGE_BUFFER,
-                       MAX_GPU_PARTICLES * (ptrdiff_t)sizeof(GpuParticleData),
-                       NULL, RL_DYNAMIC_DRAW);
-        s_glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        s_ssbo = rlLoadShaderBuffer(MAX_GPU_PARTICLES * (ptrdiff_t)sizeof(GpuParticleData), NULL, RL_DYNAMIC_DRAW);
 
-        unsigned int ff_ssbo_buf[1];
-        s_glGenBuffers(1, ff_ssbo_buf);
-        s_ff_ssbo = ff_ssbo_buf[0];
-        s_glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, s_ff_ssbo);
-        s_glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_ff_ssbo);
-        s_glBufferData(GL_SHADER_STORAGE_BUFFER,
-                       MAX_GPU_FORCE_FIELDS * (ptrdiff_t)sizeof(ForceFieldGPU),
-                       NULL, RL_DYNAMIC_DRAW);
-        s_glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        s_ff_ssbo = rlLoadShaderBuffer(MAX_GPU_FORCE_FIELDS * (ptrdiff_t)sizeof(ForceFieldGPU), NULL, RL_DYNAMIC_DRAW);
 
         s_draw_shader_gpu = ResourceManager_LoadShader(ssbo_vs_path, fs_path);
         if (s_draw_shader_gpu.id == 0) {
             TraceLog(LOG_WARNING, "GPU_PARTICLES: draw shader compile failed, fallback CPU");
-            s_glUseProgram(0);
+            rlDisableShader();
             rlUnloadShaderProgram(s_compute_prog);
             s_compute_prog = 0;
-            rlUnloadVertexBuffer(s_ssbo);
+            rlUnloadShaderBuffer(s_ssbo);
             s_ssbo = 0;
-            rlUnloadVertexBuffer(s_ff_ssbo);
+            rlUnloadShaderBuffer(s_ff_ssbo);
             s_ff_ssbo = 0;
             goto cpu_path;
         }
@@ -433,11 +304,7 @@ void GpuParticleSystem_Spawn(GpuParticleConfig cfg) {
     d.ff_pad0 = d.ff_pad1 = d.ff_pad2 = 0.0f;
 
     if (s_use_compute) {
-        s_glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_ssbo);
-        s_glBufferSubData(GL_SHADER_STORAGE_BUFFER,
-                          idx * (ptrdiff_t)sizeof(GpuParticleData),
-                          sizeof(GpuParticleData), &d);
-        s_glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        rlUpdateShaderBuffer(s_ssbo, &d, sizeof(GpuParticleData), idx * (ptrdiff_t)sizeof(GpuParticleData));
     } else {
         s_cpu_pool[idx] = d;
     }
@@ -468,17 +335,14 @@ void GpuParticleSystem_Update(float dt) {
                 ForceField_PackGPU(s_fieldRegistry[i], s_fieldAxisOrigin[i],
                                    s_fieldAxisDir[i], &packed[i]);
             }
-            s_glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_ff_ssbo);
-            s_glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-                              s_fieldCount * (ptrdiff_t)sizeof(ForceFieldGPU), packed);
-            s_glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+            rlUpdateShaderBuffer(s_ff_ssbo, packed, s_fieldCount * (ptrdiff_t)sizeof(ForceFieldGPU), 0);
         }
 
-        s_glUseProgram(s_compute_prog);
-        int loc_dt = s_glGetUniformLocation(s_compute_prog, "u_dt");
-        if (loc_dt >= 0) s_glUniform1f(loc_dt, dt);
-        int loc_time = s_glGetUniformLocation(s_compute_prog, "u_time");
-        if (loc_time >= 0) s_glUniform1f(loc_time, s_elapsed_time);
+        rlEnableShader(s_compute_prog);
+        int loc_dt = rlGetLocationUniform(s_compute_prog, "u_dt");
+        if (loc_dt >= 0) rlSetUniform(loc_dt, &dt, RL_SHADER_UNIFORM_FLOAT, 1);
+        int loc_time = rlGetLocationUniform(s_compute_prog, "u_time");
+        if (loc_time >= 0) rlSetUniform(loc_time, &s_elapsed_time, RL_SHADER_UNIFORM_FLOAT, 1);
 
         // Vector field textures (FORCE_VECTOR_TEXTURE) — bind vào texture
         // unit == slot index, khớp uVectorFieldN trong gpu_particles.comp.
@@ -490,16 +354,15 @@ void GpuParticleSystem_Update(float dt) {
             rlEnableTexture(s_vectorFieldTex[slot].id);
             char uname[24];
             snprintf(uname, sizeof(uname), "uVectorField%d", slot);
-            int loc_tex = s_glGetUniformLocation(s_compute_prog, uname);
-            if (loc_tex >= 0) s_glUniform1i(loc_tex, slot);
+            int loc_tex = rlGetLocationUniform(s_compute_prog, uname);
+            if (loc_tex >= 0) rlSetUniform(loc_tex, &slot, RL_SHADER_UNIFORM_INT, 1);
         }
 
-        s_glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, s_ssbo);
-        s_glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, s_ff_ssbo);
+        rlBindShaderBuffer(s_ssbo, 0);
+        rlBindShaderBuffer(s_ff_ssbo, 1);
         unsigned int groups = (MAX_GPU_PARTICLES + 255) / 256;
-        s_glDispatchCompute(groups, 1, 1);
-        s_glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
-        s_glUseProgram(0);
+        rlComputeShaderDispatch(groups, 1, 1);
+        rlDisableShader();
     } else {
         for (int i = 0; i < MAX_GPU_PARTICLES; i++) {
             GpuParticleData *p = &s_cpu_pool[i];
@@ -542,7 +405,7 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture) {
         if (loc_up    >= 0) SetShaderValue(s_draw_shader_gpu, loc_up,    &up,    SHADER_UNIFORM_VEC3);
         if (loc_mvp   >= 0) SetShaderValueMatrix(s_draw_shader_gpu, loc_mvp, matMVP);
 
-        s_glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, s_ssbo);
+        rlBindShaderBuffer(s_ssbo, 0);
         rlSetTexture(texture.id);
 
         rlEnableShader(s_draw_shader_gpu.id);
@@ -615,11 +478,11 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture) {
 void GpuParticleSystem_Unload(void) {
     if (!s_initialized) return;
     if (s_use_compute) {
-        if (s_ssbo)     { rlUnloadVertexBuffer(s_ssbo); s_ssbo = 0; }
-        if (s_ff_ssbo)  { rlUnloadVertexBuffer(s_ff_ssbo); s_ff_ssbo = 0; }
+        if (s_ssbo)     { rlUnloadShaderBuffer(s_ssbo); s_ssbo = 0; }
+        if (s_ff_ssbo)  { rlUnloadShaderBuffer(s_ff_ssbo); s_ff_ssbo = 0; }
         if (s_draw_vao) { rlUnloadVertexArray(s_draw_vao); s_draw_vao = 0; }
-        if (s_compute_prog && s_glUseProgram) {
-            s_glUseProgram(0);
+        if (s_compute_prog) {
+            rlDisableShader();
             rlUnloadShaderProgram(s_compute_prog);
             s_compute_prog = 0;
         }

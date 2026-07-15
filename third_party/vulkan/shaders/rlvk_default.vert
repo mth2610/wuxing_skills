@@ -25,6 +25,8 @@ void main()
 {
     fragTexCoord = vertexTexCoord;
     fragColor    = vertexColor;
-    // DEBUG: bypass push-constant mvp, hardcode 800x450 ortho
-    gl_Position  = vec4(vertexPosition.x/400.0 - 1.0, vertexPosition.y/225.0 - 1.0, 0.5, 1.0);
+    vec4 pos     = pc.mvp * vec4(vertexPosition, 1.0);
+    // Clip-z epilogue: remap GL [-1,1] → Vulkan [0,1] depth range
+    pos.z = (pos.z + pos.w) * 0.5;
+    gl_Position  = pos;
 }

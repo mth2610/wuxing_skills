@@ -3919,6 +3919,11 @@ static void rlvkDrawMesh(int offset, int count, bool indexed, int instances)
     bool sameBinding = (s_bindingValid && (memcmp(&bsig, &s_bindingSig, sizeof(bsig)) == 0));
     if (!sameBinding) { s_bindingSig = bsig; s_bindingValid = true; }
 
+    // Pipeline MUST be bound BEFORE vertex buffers: MoltenVK resolves Metal buffer
+    // indices via the active pipeline's reflection data. Without a pipeline, vertex buffer
+    // bindings are silently lost and attribute reads return all zeros.
+    rlvkBindPipeline(cmdBuffer, 1, vertexLayout, RLVK.State.activeShaderSlot);
+
     // Vertex layout and shader stages are baked into the cached pipeline; only the buffer
     // bindings are recorded here. Missing mesh attributes fall back to the divisor-0
     // broadcast constants in the dummy buffer.
@@ -3936,8 +3941,6 @@ static void rlvkDrawMesh(int offset, int count, bool indexed, int instances)
             hasNormal ? a->normalOffset : 12,   // dummy offset 12 = +Z normal
             hasColor  ? a->colorOffset  : 8,    // dummy offset  8 = opaque white
         });
-
-    rlvkBindPipeline(cmdBuffer, 1, vertexLayout, RLVK.State.activeShaderSlot);
 
     if (shader->usesUbo)
     {
@@ -4026,11 +4029,9 @@ unsigned int rlLoadTexture(const void *data, int width, int height, int format, 
     t->format   = vkfmt;
 
     // Component swizzle so 1/2-channel formats sample like the GL backend: (L,L,L,1) / (L,L,L,A)
+    // NOTE: Vulkan portability subset (MoltenVK) often disables imageViewFormatSwizzle.
+    // To support it universally, we always expand GRAYSCALE/GRAY_ALPHA to RGBA instead of swizzling.
     VkComponentMapping swizzle = { 0 };   // all IDENTITY
-    if (format == RL_PIXELFORMAT_UNCOMPRESSED_GRAYSCALE)
-        swizzle = (VkComponentMapping){ VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_ONE };
-    else if (format == RL_PIXELFORMAT_UNCOMPRESSED_GRAY_ALPHA)
-        swizzle = (VkComponentMapping){ VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G };
 
     // Vulkan optimal-tiling sampled images don't support 3-channel (RGB) formats - expand to
     // 4-channel with opaque alpha. (PNGs without alpha load as R8G8B8, so this is very common.)
@@ -4038,12 +4039,31 @@ unsigned int rlLoadTexture(const void *data, int width, int height, int format, 
     void *converted = NULL;
     size_t pixels = (size_t)width*height;
     // 3-channel formats are not sampleable/renderable: remap even when there is no data to convert
+    // We also expand 1/2 channel formats to 4-channels to avoid MoltenVK portability swizzle limitations.
+    if (format == RL_PIXELFORMAT_UNCOMPRESSED_GRAYSCALE)    vkfmt = VK_FORMAT_R8G8B8A8_UNORM;
+    if (format == RL_PIXELFORMAT_UNCOMPRESSED_GRAY_ALPHA)   vkfmt = VK_FORMAT_R8G8B8A8_UNORM;
     if (format == RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8)       vkfmt = VK_FORMAT_R8G8B8A8_UNORM;
     if (format == RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16)    vkfmt = VK_FORMAT_R16G16B16A16_SFLOAT;
     if (format == RL_PIXELFORMAT_UNCOMPRESSED_R32G32B32)    vkfmt = VK_FORMAT_R32G32B32A32_SFLOAT;
     if (data != NULL)
     {
-        if (format == RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8)
+        if (format == RL_PIXELFORMAT_UNCOMPRESSED_GRAYSCALE)
+        {
+            vkfmt = VK_FORMAT_R8G8B8A8_UNORM;
+            const unsigned char *s = (const unsigned char *)data;
+            unsigned char *d = (unsigned char *)RL_MALLOC(pixels*4);
+            for (size_t i = 0; i < pixels; i++) { d[i*4+0]=s[i]; d[i*4+1]=s[i]; d[i*4+2]=s[i]; d[i*4+3]=255; }
+            converted = d; uploadData = d;
+        }
+        else if (format == RL_PIXELFORMAT_UNCOMPRESSED_GRAY_ALPHA)
+        {
+            vkfmt = VK_FORMAT_R8G8B8A8_UNORM;
+            const unsigned char *s = (const unsigned char *)data;
+            unsigned char *d = (unsigned char *)RL_MALLOC(pixels*4);
+            for (size_t i = 0; i < pixels; i++) { d[i*4+0]=s[i*2+0]; d[i*4+1]=s[i*2+0]; d[i*4+2]=s[i*2+0]; d[i*4+3]=s[i*2+1]; }
+            converted = d; uploadData = d;
+        }
+        else if (format == RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8)
         {
             vkfmt = VK_FORMAT_R8G8B8A8_UNORM;
             const unsigned char *s = (const unsigned char *)data;
@@ -4286,7 +4306,25 @@ void rlUpdateTexture(unsigned int id, int x, int y, int w, int h, int format, co
     const void *uploadData = data;
     void *converted = NULL;
     int uploadFormat = format;
-    if (format == RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8)
+    if (format == RL_PIXELFORMAT_UNCOMPRESSED_GRAYSCALE)
+    {
+        size_t pixels = (size_t)w*h;
+        const unsigned char *src = (const unsigned char *)data;
+        unsigned char *dst = (unsigned char *)RL_MALLOC(pixels*4);
+        for (size_t i = 0; i < pixels; i++) { dst[i*4+0]=src[i]; dst[i*4+1]=src[i]; dst[i*4+2]=src[i]; dst[i*4+3]=255; }
+        converted = dst; uploadData = dst;
+        uploadFormat = RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+    }
+    else if (format == RL_PIXELFORMAT_UNCOMPRESSED_GRAY_ALPHA)
+    {
+        size_t pixels = (size_t)w*h;
+        const unsigned char *src = (const unsigned char *)data;
+        unsigned char *dst = (unsigned char *)RL_MALLOC(pixels*4);
+        for (size_t i = 0; i < pixels; i++) { dst[i*4+0]=src[i*2+0]; dst[i*4+1]=src[i*2+0]; dst[i*4+2]=src[i*2+0]; dst[i*4+3]=src[i*2+1]; }
+        converted = dst; uploadData = dst;
+        uploadFormat = RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+    }
+    else if (format == RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8)
     {
         size_t pixels = (size_t)w*h;
         const unsigned char *src = (const unsigned char *)data;
@@ -4824,9 +4862,10 @@ void rlResizeFramebuffer(int w, int h)                              { (void)w;(v
 // the slot; rlLoadShaderProgramCompute (and, later, rlLoadShaderProgramEx) consumes it.
 unsigned int rlLoadShader(const char *code, int type)
 {
-    if (!isGpuReady || !code) return RLVK_INVALID_SLOT;
+    if (!isGpuReady) { TRACELOG(RL_LOG_ERROR, "rlLoadShader failed: isGpuReady is false"); return RLVK_INVALID_SLOT; }
+    if (!code) { TRACELOG(RL_LOG_ERROR, "rlLoadShader failed: code is NULL"); return RLVK_INVALID_SLOT; }
     u32 slot = rlvkAllocShaderSlot();
-    if (slot == RLVK_INVALID_SLOT) return RLVK_INVALID_SLOT;
+    if (slot == RLVK_INVALID_SLOT) { TRACELOG(RL_LOG_ERROR, "rlLoadShader failed: rlvkAllocShaderSlot returned 0"); return RLVK_INVALID_SLOT; }
 
     rlvkShaderSlot *s = &RLVK.shaderSlots[slot];
     size_t len = strlen(code);
@@ -5562,10 +5601,11 @@ void rlLoadDrawQuad(void)
     rlvkShaderSlot *shader = &RLVK.shaderSlots[RLVK.State.activeShaderSlot];
 
     // Interleaved pos+uv layout and shader stages are baked into the cached pipeline
+    // Pipeline MUST be bound BEFORE vertex buffers (MoltenVK Metal buffer index resolution)
+    rlvkBindPipeline(cmdBuffer, 2, RLVK_VLAYOUT_QUAD, RLVK.State.activeShaderSlot);
     vkCmdBindVertexBuffers(cmdBuffer, 0, 1,
         (VkBuffer[]){ RLVK.bufferSlots[quadVbo].buffer }, (VkDeviceSize[]){ 0 });
     rlvkBindDummyAttribBuffers(cmdBuffer, RLVK_VLAYOUT_QUAD, shader);
-    rlvkBindPipeline(cmdBuffer, 2, RLVK_VLAYOUT_QUAD, RLVK.State.activeShaderSlot);
 
     if (shader->usesUbo)
     {

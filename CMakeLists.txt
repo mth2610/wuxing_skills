@@ -22,6 +22,19 @@ set(BUILD_GAMES OFF CACHE BOOL "Build raylib games" FORCE)
 # này vô dụng; bỏ đi để raylib build theo default chuẩn (đã kiểm chứng hiện
 # window bằng mini app cô lập). ĐỪNG bật lại mà không set kèm SUPPORT_* đúng.
 
+# -----------------------------------------------------------------
+# VULKAN BACKEND SWITCH (Lớp phân tách Renderer)
+# -----------------------------------------------------------------
+option(WUXING_USE_VULKAN "Build with Vulkan 1.3 backend (rlvk) instead of OpenGL" OFF)
+
+if(WUXING_USE_VULKAN)
+    message(STATUS "[WUXING] Vulkan Backend ENABLED. Disabling Raylib's OpenGL backend (rlgl.c)...")
+    add_compile_definitions(WUXING_USE_VULKAN)
+    add_compile_definitions(GRAPHICS_API_VULKAN)
+else()
+    message(STATUS "[WUXING] OpenGL Backend ENABLED. Using native Raylib rlgl.")
+endif()
+
 # Tải Raylib phiên bản 6.0
 FetchContent_Declare(
   raylib
@@ -30,22 +43,15 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(raylib)
 
-# -----------------------------------------------------------------
-# VULKAN BACKEND SWITCH (Lớp phân tách Renderer)
-# -----------------------------------------------------------------
-option(WUXING_USE_VULKAN "Build with Vulkan 1.3 backend (rlvk) instead of OpenGL" OFF)
+if(WUXING_USE_VULKAN)
+    find_package(Vulkan REQUIRED)
+    target_include_directories(raylib PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/vulkan ${Vulkan_INCLUDE_DIRS})
+endif()
 
 if(WUXING_USE_VULKAN)
-    message(STATUS "[WUXING] Vulkan Backend ENABLED. Disabling Raylib's OpenGL backend (rlgl.c)...")
-    
     # Ép CMake coi rlgl.c (chứa code OpenGL của Raylib) như một file Header, 
     # từ đó ngăn chặn trình biên dịch dịch file này thành mã máy.
     set_source_files_properties(${raylib_SOURCE_DIR}/src/rlgl.c PROPERTIES HEADER_FILE_ONLY TRUE)
-    
-    # Bật cờ compile-time cho toàn bộ project
-    add_compile_definitions(WUXING_USE_VULKAN)
-else()
-    message(STATUS "[WUXING] OpenGL Backend ENABLED. Using native Raylib rlgl.")
 endif()
 
 # ENet (Module 11 net transport — peer-hosted PvP). Small C89 lib, no deps.
@@ -172,6 +178,10 @@ add_executable(wuxing
 # Thêm root path để resolve includes có tiền tố core/ và skills/
 target_include_directories(wuxing PRIVATE . core/geometry core/material core/composition core/presets)
 
+if(WUXING_USE_VULKAN)
+    target_include_directories(wuxing PRIVATE ${Vulkan_INCLUDE_DIRS})
+endif()
+
 # Tự động quét toàn bộ tài nguyên (Shaders/Textures) của kỹ năng và copy vào thư mục build
 file(GLOB_RECURSE SKILL_ASSETS CONFIGURE_DEPENDS 
     "skills/**/*.fs"
@@ -221,6 +231,10 @@ configure_file(core/shaders/common/lighting.glsl ${CMAKE_CURRENT_BINARY_DIR}/cor
 
 # Liên kết tĩnh với thư viện Raylib vừa tải về
 target_link_libraries(wuxing PRIVATE raylib enet)
+if(WUXING_USE_VULKAN)
+    target_link_libraries(wuxing PRIVATE Vulkan::Vulkan)
+endif()
+
 target_include_directories(wuxing PRIVATE ${enet_SOURCE_DIR}/include)
 
 # EOS online backend (internet P2P qua ha tang free cua Epic — EOS_SETUP.md).

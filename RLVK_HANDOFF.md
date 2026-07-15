@@ -170,10 +170,7 @@ Headless verification is complete on MoltenVK (see §3). What remains needs a wi
    Debug helper: `RLVK_DUMP_SPV=<dir>` dumps every shaderc-compiled module for spirv-dis.
 
 ### 4.2 Platform layer (blocks 4.1)
-- CMake: `WUXING_USE_VULKAN` option exists (`CMakeLists.txt:36`) — it stops compiling
-  raylib's `rlgl.c` and compiles `core/vulkan/wuxing_vulkan.c`, but: no Vulkan
-  headers/loader on include/link paths, and the TU stub is wrong (must include `raylib.h`
-  before `rlvk.h`; see §3.4).
+- **[RESOLVED]** CMake: `WUXING_USE_VULKAN` option now properly uses `find_package(Vulkan REQUIRED)`. `Vulkan_INCLUDE_DIRS` are fed to `raylib` and `wuxing` targets, and `Vulkan::Vulkan` is linked to `wuxing`. The `rlvk_patch_raylib.py` script automatically patches `rcore.c` to swap `rlgl.h` for `rlvk.h`, which correctly compiles raylib entirely under the Vulkan backend! Tested and verified on macOS + MoltenVK with compute shader initialization confirming `rlGetVersion == 4` (Compute Shader success)!
 - raylib 6.0 GLFW platform patch (raylib is FetchContent'd into `build/_deps` — patch via
   CMake patch step or vendored platform file): window with `GLFW_NO_API`; after window
   creation `glfwCreateWindowSurface(rlvkGetInstance(), window, NULL, &surface)` →

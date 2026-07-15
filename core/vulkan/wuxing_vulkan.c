@@ -8,17 +8,13 @@
 #undef GRAPHICS_API_OPENGL_ES2
 #undef GRAPHICS_API_OPENGL_ES3
 
-// Kích hoạt việc sinh mã nguồn thực thi cho rlvk (Vulkan backend)
-#define RLVK_IMPLEMENTATION
-#include "../../third_party/vulkan/rlvk.h"
+// Việc khởi tạo Vulkan và móc nối surface với GLFW đã được thực hiện trực tiếp bên trong 
+// mã nguồn của Raylib thông qua script scripts/rlvk_patch_raylib.py (can thiệp vào rcore_desktop_glfw.c).
+// RLVK_IMPLEMENTATION cũng đã được định nghĩa trong rcore.c.
+// Do đó, platform layer đã hoàn tất, không cần biên dịch lại rlvk.h ở đây để tránh lỗi duplicate symbol.
 
-// TODO: Thêm logic móc nối Window/GLFW ở đây (rlvkAttachSurface)
-// vì Raylib mặc định sẽ khởi tạo OpenGL Context.
 void WuxingVulkan_InitBackend() {
-    // Tạm thời để trống. Sẽ được triển khai khi có thiết bị Vulkan thật.
-    // Các hàm cần móc nối:
-    // rlvkSetMsaaSamples(4);
-    // rlvkAttachSurface(glfw_surface);
+    // Không làm gì cả vì đã được xử lý tự động trong raylib InitWindow (WindowAttachVulkanSurface).
 }
 
 #endif // WUXING_USE_VULKAN
