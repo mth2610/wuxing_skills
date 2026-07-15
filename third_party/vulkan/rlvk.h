@@ -1,13 +1,20 @@
 /**********************************************************************************************
 *
-*   rlvk v1.0 - A Vulkan 1.3 backend implementation of the rlgl API
+*   rlvk v1.1 - A Vulkan 1.1 backend implementation of the rlgl API
 *
 *   DESCRIPTION:
 *       rlvk is an alternative backend for the rlgl abstraction layer, implementing the
-*       complete rlgl API on Vulkan 1.3 (plus four widely-shipped extensions), a direct
-*       replacement for the OpenGL backends when a Vulkan-only environment is required.
-*       It plays the same role for Vulkan that rlsw plays for software rendering: same
-*       rl* API, different rasterizer.
+*       complete rlgl API on core Vulkan 1.1 (the ONLY hard device requirement beyond it
+*       is VK_KHR_swapchain), a direct replacement for the OpenGL backends when a
+*       Vulkan-only environment is required. It plays the same role for Vulkan that rlsw
+*       plays for software rendering: same rl* API, different rasterizer.
+*       Retargeted from the original Vulkan 1.3 design to a 1.1 baseline so old/weak
+*       devices (pre-1.3 Android drivers, older desktop GPUs) run the same single code
+*       path: render-pass + framebuffer caches instead of dynamic rendering, a sync1
+*       shim behind the sync2-shaped call sites, staging uploads instead of host image
+*       copy, a per-frame descriptor-pool ring when push descriptors are absent, a
+*       vertex-shader clip-z epilogue instead of depth_clip_control, and stride-0
+*       broadcast bindings instead of zero-divisor attributes.
 *
 *       rlgl.h is included verbatim and NEVER modified; this header provides function
 *       bodies for every RLAPI symbol rlgl.h declares
@@ -21,17 +28,20 @@
 *         samplers auto-bound, locations auto-mapped, uniforms resolved by reflection)
 *       - Cached VkPipeline draw path: GL-equivalent state baked into monolithic pipelines
 *         bound once per state combo, disk-persisted through VkPipelineCache for instant
-*         warm starts; no VkRenderPass or VkFramebuffer objects, all rendering through
-*         vkCmdBeginRendering
+*         warm starts; rendering goes through cached VkRenderPass/VkFramebuffer objects
+*         (bounded caches keyed by scope shape / attachment views)
 *       - Pixel-for-pixel equivalence with the OpenGL backend for aliased rendering:
 *         unmirrored rasterization (GL memory orientation, Y-flip at present), GL-style
-*         [-1,1] clip-z accepted natively (VK_EXT_depth_clip_control), GL 1px line coverage
-*         (VK_EXT_line_rasterization bresenhamLines). MSAA uses standard Vulkan (the
-*         implementation's sample pattern + fixed-function resolve), so AA edge coverage
-*         may differ slightly from GL - accepted, covered by test tolerances
+*         [-1,1] clip-z remapped by a vertex-shader epilogue on every device, GL 1px line
+*         coverage where VK_EXT/KHR_line_rasterization exists (default lines otherwise,
+*         cosmetic delta). MSAA uses standard Vulkan (the implementation's sample pattern
+*         + fixed-function resolve), so AA edge coverage may differ slightly from GL -
+*         accepted, covered by test tolerances
 *       - Persistent-mapped batch vertex buffer with a fence-gated per-frame bump arena
-*       - Synchronization2 only: every barrier is vkCmdPipelineBarrier2, every submit
-*         is vkQueueSubmit2; binary semaphores plus per-frame fences pace the frame ring
+*       - Sync2-shaped code, 1.1-core execution: every barrier/submit call site uses the
+*         VkDependencyInfo/VkSubmitInfo2 shapes; on devices without synchronization2 a
+*         lossless sync1 shim is installed into the dispatch table. Binary semaphores
+*         plus per-frame fences pace the frame ring
 *
 *   ADDITIONAL NOTES:
 *       Including this header automatically defines GRAPHICS_API_VULKAN_14 (so other modules
@@ -88,19 +98,22 @@
 *         when unchanged) instead of ~25 re-issued dynamic-state commands, and the whole
 *         table disk-persists through VkPipelineCache so later runs never compile. Only
 *         viewport and scissor stay dynamic, both dedup-gated.
-*       - Dynamic rendering only, no VkRenderPass/VkFramebuffer objects. rlgl's framebuffer
-*         model is bind-and-draw, so rlEnableFramebuffer is pure bookkeeping and a
-*         vkCmdBeginRendering scope opens lazily at the next draw, matching GL's cost model.
-*       - Per-unit push descriptors: set 0 is one combined-image-sampler binding per GL
-*         texture unit plus two implicit-UBO bindings. rlgl batching already splits draws
-*         per texture, so descriptor pools/sets buy nothing; vkCmdPushDescriptorSetKHR
-*         writes into the command buffer with zero descriptor lifetime management.
+*       - Cached render passes + framebuffers (1.1 core). rlgl's framebuffer model is
+*         bind-and-draw, so rlEnableFramebuffer is pure bookkeeping and a render-pass
+*         scope opens lazily at the next draw from two bounded caches (keyed by scope
+*         shape and attachment views), matching GL's cost model. On tilers this also
+*         hands the driver real load/store ops to schedule around.
+*       - Per-unit push descriptors where VK_KHR_push_descriptor exists: set 0 is one
+*         combined-image-sampler binding per GL texture unit plus two implicit-UBO
+*         bindings. Without it, the same push call sites feed a CPU shadow and a
+*         per-frame descriptor-pool ring binds a snapshot set at each draw.
 *       - Persistent-mapped vertex stream: rlVertexBuffer pointers alias GPU-visible
 *         host-coherent memory, so rlVertex3f writes land in place; each flush bump-copies
 *         the used range into a fence-gated per-frame arena. No transcode at flush.
 *       - GL usage flags are placement contracts: static buffers stage into DEVICE_LOCAL
 *         once, dynamic buffers stay host-cached and mapped. Texture uploads go through
-*         VK_EXT_host_image_copy, a direct CPU-to-image write with no staging round-trip.
+*         classic staging buffers with one-shot submissions (transient command pool, so
+*         an in-progress frame recording is never clobbered).
 *       - Pixel equivalence is architectural, not patched in shaders: rasterize unmirrored
 *         into an intermediate image in GL's memory orientation (fill rule, Bresenham rows,
 *         gl_FragCoord and winding all match natively), Y-flip once at present. MSAA stays
@@ -111,20 +124,23 @@
 *         transient resource (arenas, buffer pools, dead-resource ring), so nothing ever
 *         waits on the whole device mid-run.
 *
-*       Measured against the GL backend on the benchmark suite this is faster on 17 of 19
-*       scenes (1.5x-7.5x) and statistically tied on the other two (fragment-ALU-saturated,
-*       deltas under 0.3%, within run noise) - it loses none. Most of the margin is CPU
-*       hygiene the design enables: no per-draw state re-issue, no descriptor churn, no
-*       environment scans, write-combined-aware placement.
+*       Measured against the GL backend on the benchmark suite the ORIGINAL 1.3 design was
+*       faster on 17 of 19 scenes (1.5x-7.5x) and statistically tied on the other two
+*       (fragment-ALU-saturated, deltas under 0.3%, within run noise). Most of the margin
+*       is CPU hygiene the design keeps after the 1.1 retarget (cached pipelines, no
+*       per-draw state re-issue, write-combined-aware placement); the retargeted paths
+*       (render passes, staging uploads, descriptor ring) have NOT been re-benchmarked yet.
 *
 *   DEPENDENCIES:
-*       - Vulkan loader (vulkan-1.dll / libvulkan.so) and recent 1.3-era headers; the
-*         device minimum is Vulkan 1.3 (dynamicRendering, synchronization2, wideLines,
-*         fillModeNonSolid) plus these extensions, checked individually at init:
-*         VK_KHR_push_descriptor, VK_EXT_host_image_copy, VK_EXT_line_rasterization,
-*         VK_EXT_vertex_attribute_divisor (all four 1.4-core-promoted),
-*         VK_EXT_depth_clip_control, VK_KHR_swapchain
-*       - shaderc_shared.dll (loaded at runtime) for GLSL->SPIR-V; when absent, only the
+*       - Vulkan loader (vulkan-1.dll / libvulkan.so) and recent headers (compile-time
+*         only; new-header types are used behind runtime capability checks). The DEVICE
+*         minimum is core Vulkan 1.1 + VK_KHR_swapchain - nothing else is required.
+*         Queried and used opportunistically when present: synchronization2 (1.3 core),
+*         VK_KHR_push_descriptor, VK_EXT/KHR_line_rasterization (bresenhamLines),
+*         fillModeNonSolid, VK_EXT_memory_priority, VK_EXT_pageable_device_local_memory,
+*         VK_EXT_graphics_pipeline_library, VK_KHR_portability_enumeration/subset
+*       - shaderc_shared.dll (loaded at runtime) for GLSL->SPIR-V (targets Vulkan 1.1 /
+*         SPIR-V 1.3 so modules stay loadable everywhere); when absent, only the
 *         embedded default shader is available (rlvk_shaders.h)
 *
 *   LICENSE: zlib/libpng
@@ -156,7 +172,7 @@
 #ifndef RLVK_H
 #define RLVK_H
 
-#define RLVK_VERSION  "1.0"
+#define RLVK_VERSION  "1.1"
 
 // Function specifiers definition
 #ifndef RLVKAPI
@@ -277,6 +293,9 @@ RLVKAPI void rlvkPresent(void);                     // Present the current frame
 #include <math.h>
 #include <stdint.h>
 #include <ctype.h>
+#if !defined(_WIN32)
+    #include <dlfcn.h>      // runtime shaderc loading (dlopen/dlsym)
+#endif
 
 //----------------------------------------------------------------------------------
 // Base Types - short fixed-width aliases used throughout the implementation
@@ -423,19 +442,10 @@ enum {
     RLVK_QUEUE_COUNT,
 };
 
-// NOTE: The 1.3 floor requests the extension spellings: VK_KHR_push_descriptor,
-// VK_EXT_host_image_copy, VK_EXT_line_rasterization, VK_EXT_vertex_attribute_divisor
-// (all 1.4-core-promoted, so every 1.4 driver has them too). The two EXT-then-KHR-promoted
-// names upgrade to their KHR spellings at device creation when the driver ships them.
-enum {
-    RLVK_DEV_EXT_DEPTH_CLIP_CONTROL,
-    RLVK_DEV_EXT_SWAPCHAIN,
-    RLVK_DEV_EXT_PUSH_DESCRIPTOR,
-    RLVK_DEV_EXT_HOST_IMAGE_COPY,
-    RLVK_DEV_EXT_LINE_RASTERIZATION,
-    RLVK_DEV_EXT_VERTEX_ATTRIBUTE_DIVISOR,
-    RLVK_DEV_EXT_COUNT,
-};
+// NOTE: On the Vulkan 1.1 baseline the ONLY hard device requirement is VK_KHR_swapchain.
+// Every other extension/feature is enumerated at device creation and recorded in RLVK.Caps;
+// the two EXT-then-KHR-promoted names (line_rasterization, vertex_attribute_divisor) prefer
+// their KHR spellings when the driver ships them.
 
 // Pipeline-key vertex layouts: the batch's fixed four streams, a mesh draw carrying a
 // presence mask of its optional attributes (position always present, missing ones ride the
@@ -457,13 +467,7 @@ enum {
 // PFN dispatch table (X-macro): hot-path and EXT entry points; init-time API goes via the loader
 //----------------------------------------------------------------------------------
 #define RLVK_PFN_FUNCS                                                  \
-    /* host_image_copy (VK_EXT_host_image_copy) */                      \
-    RLVK_PFN_FUNC(CopyMemoryToImageEXT)                                 \
-    RLVK_PFN_FUNC(CopyImageToMemoryEXT)                                 \
-    RLVK_PFN_FUNC(TransitionImageLayoutEXT)                             \
-    /* dynamic rendering / sync2 (1.3 core, loaded for hot path) */     \
-    RLVK_PFN_FUNC(CmdBeginRendering)                                    \
-    RLVK_PFN_FUNC(CmdEndRendering)                                      \
+    /* sync2 (native on 1.3 devices; sync1 compat shim installed otherwise) */ \
     RLVK_PFN_FUNC(CmdPipelineBarrier2)                                  \
     RLVK_PFN_FUNC(QueueSubmit2)                                         \
     /* push descriptors (VK_KHR_push_descriptor) */                     \
@@ -489,6 +493,137 @@ static struct {
 } vk;
 
 //----------------------------------------------------------------------------------
+// Synchronization2 -> sync1 compat shim (Vulkan 1.1 baseline)
+//
+// Every barrier/submit call site stays sync2-shaped (vk.CmdPipelineBarrier2 /
+// vk.QueueSubmit2 with VkDependencyInfo / VkSubmitInfo2). On devices without
+// synchronization2 these two shims are installed into the dispatch table instead of the
+// native entry points and translate to core-1.1 vkCmdPipelineBarrier / vkQueueSubmit.
+// Only the stage/access bits rlvk actually emits are mapped; sync2-only bits that have
+// no 32-bit sync1 twin fold into their containing sync1 stage (COPY/BLIT -> TRANSFER,
+// INDEX/VERTEX_ATTRIBUTE_INPUT -> VERTEX_INPUT, SAMPLED/STORAGE_READ -> SHADER_READ).
+//----------------------------------------------------------------------------------
+
+// Sync2 shim caps: sized for rlvk's own call sites (max seen: 2 image barriers, 1 of the
+// rest); generous headroom, loud failure if a future site outgrows them
+#define RLVK_SYNC1_MAX_BARRIERS     8
+#define RLVK_SYNC1_MAX_SEMAPHORES   4
+
+static VkPipelineStageFlags rlvkStageMask1(VkPipelineStageFlags2 s, bool isDst)
+{
+    if (s == VK_PIPELINE_STAGE_2_NONE) return isDst ? VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    VkPipelineStageFlags out = (VkPipelineStageFlags)(s & 0x7fffffffull);   // classic bits are numerically identical
+    if (s & (VK_PIPELINE_STAGE_2_COPY_BIT | VK_PIPELINE_STAGE_2_BLIT_BIT | VK_PIPELINE_STAGE_2_RESOLVE_BIT | VK_PIPELINE_STAGE_2_CLEAR_BIT))
+        out |= VK_PIPELINE_STAGE_TRANSFER_BIT;
+    if (s & (VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT | VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT))
+        out |= VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;
+    return out;
+}
+
+static VkAccessFlags rlvkAccessMask1(VkAccessFlags2 a)
+{
+    VkAccessFlags out = (VkAccessFlags)(a & 0x7fffffffull);                 // classic bits are numerically identical
+    if (a & (VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT)) out |= VK_ACCESS_SHADER_READ_BIT;
+    if (a & VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT) out |= VK_ACCESS_SHADER_WRITE_BIT;
+    return out;
+}
+
+static VKAPI_ATTR void VKAPI_CALL rlvkCmdPipelineBarrier2Compat(VkCommandBuffer cmdBuffer, const VkDependencyInfo *dep)
+{
+    // sync1 takes ONE src/dst stage pair for the whole command: aggregate every barrier's masks
+    VkPipelineStageFlags srcStages = 0, dstStages = 0;
+    VkMemoryBarrier       mem[RLVK_SYNC1_MAX_BARRIERS];
+    VkBufferMemoryBarrier buf[RLVK_SYNC1_MAX_BARRIERS];
+    VkImageMemoryBarrier  img[RLVK_SYNC1_MAX_BARRIERS];
+    uint32_t nMem = dep->memoryBarrierCount, nBuf = dep->bufferMemoryBarrierCount, nImg = dep->imageMemoryBarrierCount;
+    if ((nMem > RLVK_SYNC1_MAX_BARRIERS) || (nBuf > RLVK_SYNC1_MAX_BARRIERS) || (nImg > RLVK_SYNC1_MAX_BARRIERS))
+    {
+        TRACELOG(RL_LOG_ERROR, "RLVK: sync1 shim barrier overflow (%u/%u/%u)", nMem, nBuf, nImg);
+        nMem = (nMem > RLVK_SYNC1_MAX_BARRIERS)? RLVK_SYNC1_MAX_BARRIERS : nMem;
+        nBuf = (nBuf > RLVK_SYNC1_MAX_BARRIERS)? RLVK_SYNC1_MAX_BARRIERS : nBuf;
+        nImg = (nImg > RLVK_SYNC1_MAX_BARRIERS)? RLVK_SYNC1_MAX_BARRIERS : nImg;
+    }
+    for (uint32_t i = 0; i < nMem; i++)
+    {
+        const VkMemoryBarrier2 *b = &dep->pMemoryBarriers[i];
+        srcStages |= rlvkStageMask1(b->srcStageMask, false);
+        dstStages |= rlvkStageMask1(b->dstStageMask, true);
+        mem[i] = (VkMemoryBarrier){ VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+            .srcAccessMask = rlvkAccessMask1(b->srcAccessMask),
+            .dstAccessMask = rlvkAccessMask1(b->dstAccessMask) };
+    }
+    for (uint32_t i = 0; i < nBuf; i++)
+    {
+        const VkBufferMemoryBarrier2 *b = &dep->pBufferMemoryBarriers[i];
+        srcStages |= rlvkStageMask1(b->srcStageMask, false);
+        dstStages |= rlvkStageMask1(b->dstStageMask, true);
+        buf[i] = (VkBufferMemoryBarrier){ VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+            .srcAccessMask       = rlvkAccessMask1(b->srcAccessMask),
+            .dstAccessMask       = rlvkAccessMask1(b->dstAccessMask),
+            .srcQueueFamilyIndex = b->srcQueueFamilyIndex,
+            .dstQueueFamilyIndex = b->dstQueueFamilyIndex,
+            .buffer = b->buffer, .offset = b->offset, .size = b->size };
+    }
+    for (uint32_t i = 0; i < nImg; i++)
+    {
+        const VkImageMemoryBarrier2 *b = &dep->pImageMemoryBarriers[i];
+        srcStages |= rlvkStageMask1(b->srcStageMask, false);
+        dstStages |= rlvkStageMask1(b->dstStageMask, true);
+        img[i] = (VkImageMemoryBarrier){ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask       = rlvkAccessMask1(b->srcAccessMask),
+            .dstAccessMask       = rlvkAccessMask1(b->dstAccessMask),
+            .oldLayout           = b->oldLayout,
+            .newLayout           = b->newLayout,
+            .srcQueueFamilyIndex = b->srcQueueFamilyIndex,
+            .dstQueueFamilyIndex = b->dstQueueFamilyIndex,
+            .image = b->image, .subresourceRange = b->subresourceRange };
+    }
+    if (srcStages == 0) srcStages = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;      // sync1 forbids empty stage masks
+    if (dstStages == 0) dstStages = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+    vkCmdPipelineBarrier(cmdBuffer, srcStages, dstStages, dep->dependencyFlags,
+        nMem, mem, nBuf, buf, nImg, img);
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL rlvkQueueSubmit2Compat(VkQueue queue, uint32_t submitCount, const VkSubmitInfo2 *pSubmits, VkFence fence)
+{
+    // rlvk submits one VkSubmitInfo2 at a time; translate each (binary semaphores only)
+    for (uint32_t s = 0; s < submitCount; s++)
+    {
+        const VkSubmitInfo2 *in = &pSubmits[s];
+        VkSemaphore          waitSems  [RLVK_SYNC1_MAX_SEMAPHORES];
+        VkPipelineStageFlags waitStages[RLVK_SYNC1_MAX_SEMAPHORES];
+        VkSemaphore          signalSems[RLVK_SYNC1_MAX_SEMAPHORES];
+        VkCommandBuffer      cmdBufs   [RLVK_SYNC1_MAX_SEMAPHORES];
+        uint32_t nWait = in->waitSemaphoreInfoCount, nSig = in->signalSemaphoreInfoCount, nCmd = in->commandBufferInfoCount;
+        if ((nWait > RLVK_SYNC1_MAX_SEMAPHORES) || (nSig > RLVK_SYNC1_MAX_SEMAPHORES) || (nCmd > RLVK_SYNC1_MAX_SEMAPHORES))
+        {
+            TRACELOG(RL_LOG_ERROR, "RLVK: sync1 shim submit overflow (%u/%u/%u)", nWait, nSig, nCmd);
+            return VK_ERROR_UNKNOWN;
+        }
+        for (uint32_t i = 0; i < nWait; i++)
+        {
+            waitSems[i]   = in->pWaitSemaphoreInfos[i].semaphore;
+            waitStages[i] = rlvkStageMask1(in->pWaitSemaphoreInfos[i].stageMask, true);
+        }
+        for (uint32_t i = 0; i < nSig; i++) signalSems[i] = in->pSignalSemaphoreInfos[i].semaphore;
+        for (uint32_t i = 0; i < nCmd; i++) cmdBufs[i]    = in->pCommandBufferInfos[i].commandBuffer;
+
+        VkResult res = vkQueueSubmit(queue, 1, &(VkSubmitInfo){
+            VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .waitSemaphoreCount   = nWait,
+            .pWaitSemaphores      = waitSems,
+            .pWaitDstStageMask    = waitStages,
+            .commandBufferCount   = nCmd,
+            .pCommandBuffers      = cmdBufs,
+            .signalSemaphoreCount = nSig,
+            .pSignalSemaphores    = signalSems,
+        }, (s == submitCount - 1) ? fence : VK_NULL_HANDLE);
+        if (res != VK_SUCCESS) return res;
+    }
+    return VK_SUCCESS;
+}
+
+//----------------------------------------------------------------------------------
 // Module Types and Structures Definition
 //----------------------------------------------------------------------------------
 
@@ -512,6 +647,7 @@ typedef struct rlvkDeadResource {
     VkSampler           sampler;
     VkDeviceMemory      memory;                 // Backing device memory
     VkPipeline          pipeline;               // Cached pipeline evicted by shader unload
+    VkFramebuffer       framebuffer;            // Cached framebuffer evicted with a dying view
 } rlvkDeadResource;
 
 typedef struct rlvkTextureSlot {
@@ -540,6 +676,11 @@ typedef struct rlvkUniform {
 typedef struct rlvkShaderSlot {
     VkShaderModule      vertMod;                // VS module for the static-pipeline (pipeline-cache) draw path
     VkShaderModule      fragMod;                // FS module for the static-pipeline (pipeline-cache) draw path
+    VkShaderModule      compMod;                // CS module (compute programs)
+    VkPipeline          computePipeline;        // Monolithic compute pipeline (one per program)
+    char               *pendingCode;            // rlLoadShader stash until rlLoadShaderProgram* consumes it
+    int                 pendingType;            // RL_VERTEX_SHADER / RL_FRAGMENT_SHADER / RL_COMPUTE_SHADER
+    bool                isCompute;              // Slot holds a compute program (vsStage doubles as its uniform block)
     rlvkUniform        *uniforms;               // reflected uniform table ("location" = index here)
     unsigned char      *vsStage;                // CPU staging for the VS default uniform block
     unsigned char      *fsStage;                // CPU staging for the FS default uniform block
@@ -608,6 +749,48 @@ typedef struct rlvkPipelineEntry {
     VkPipeline          pipeline;               // Ready-to-bind pipeline
     rlvkPipelineKey     key;                    // State combo this pipeline bakes
 } rlvkPipelineEntry;
+
+//----------------------------------------------------------------------------------
+// Render-pass + framebuffer caches (Vulkan 1.1 baseline)
+//
+// The dynamic-rendering scope model is kept conceptually (scopes open lazily, suspend
+// around copies/blits, resume with LOAD), but every scope now begins a cached
+// VkRenderPass into a cached VkFramebuffer. Load/store ops are part of the render-pass
+// key; compatibility for pipelines only depends on formats/samples/counts, so pipeline
+// creation requests a canonical LOAD-ops pass of the same shape.
+// Attachment order convention everywhere: colors [0..colorCount), then the MSAA resolve
+// target (when hasResolve), then depth last.
+//----------------------------------------------------------------------------------
+#define RLVK_MAX_RENDER_PASSES          32
+#define RLVK_MAX_CACHED_FRAMEBUFFERS    64
+#define RLVK_MAX_SCOPE_ATTACHMENTS      10      // 8 colors + resolve + depth
+#define RLVK_DESC_SETS_PER_FRAME        1024    // pool-ring fallback: snapshot sets per frame slot
+#define RLVK_COMPUTE_SETS_PER_FRAME     256     // compute dispatch snapshot sets per frame slot
+
+typedef struct rlvkRenderPassKey {
+    VkFormat            colorFormats[8];        // [i] for i < colorCount
+    VkFormat            depthFormat;            // VK_FORMAT_UNDEFINED = no depth attachment
+    unsigned char       colorCount;
+    unsigned char       samples;                // normalized: 1 or 4 (matches pipeline multisample state)
+    unsigned char       colorLoad;              // VkAttachmentLoadOp shared by every color attachment
+    unsigned char       depthLoad;              // VkAttachmentLoadOp of the depth attachment
+    unsigned char       depthStore;             // VkAttachmentStoreOp of the depth attachment
+    unsigned char       hasResolve;             // MSAA fixed-function resolve into a 1x attachment (colorCount == 1 only)
+    unsigned char       _pad[2];                // keep memcmp-comparable: always zero
+} rlvkRenderPassKey;
+
+typedef struct rlvkRenderPassEntry {
+    VkRenderPass        pass;
+    rlvkRenderPassKey   key;
+} rlvkRenderPassEntry;
+
+typedef struct rlvkFramebufferEntry {
+    VkFramebuffer       framebuffer;
+    VkRenderPass        pass;                   // compatibility class it was created against
+    VkImageView         views[RLVK_MAX_SCOPE_ATTACHMENTS];
+    u32                 viewCount;
+    u32                 width, height;
+} rlvkFramebufferEntry;
 
 // A "VAO": records buffer slot + byte offset per vertex attribute plus the index buffer slot.
 // Built by rlLoadVertexArray + rlLoadVertexBuffer + rlSetVertexAttribute at model-load time;
@@ -708,6 +891,8 @@ typedef struct rlvkData {
     } scope;
     int                     deadResourceCount[RLVK_FRAME_INDEX_COUNT];
     int                     pipelineCount;      // entries used in pipelines[]
+    int                     renderPassCount;    // entries used in renderPasses[]
+    int                     framebufferCount;   // entries used in framebuffers[]
     int                     msaaSamples;        // requested via rlvkSetMsaaSamples (1 = off)
     u32                     blitReadFb;         // rlBindFramebuffer(RL_READ_FRAMEBUFFER, ...) source
 
@@ -754,11 +939,30 @@ typedef struct rlvkData {
     VkDeviceMemory          interMemory[RLVK_FRAME_INDEX_COUNT];
     rlvkDeadResource    deadResources[RLVK_FRAME_INDEX_COUNT][RLVK_MAX_DEAD_RESOURCES];   // deferred destruction, fence-gated
     rlvkPipelineEntry       pipelines[RLVK_MAX_PIPELINES];  // cached pipelines by baked-state key
+    rlvkRenderPassEntry     renderPasses[RLVK_MAX_RENDER_PASSES];        // cached render passes by scope-shape key
+    rlvkFramebufferEntry    framebuffers[RLVK_MAX_CACHED_FRAMEBUFFERS];  // cached framebuffers by pass + view set
     VkPipelineCache         pipelineCache;      // driver pipeline cache, persisted to disk across runs
     VkPipeline              boundPipeline;      // currently bound pipeline (skip redundant binds)
     rlvkShaderSlot         *lastUboShader;      // shader whose blocks hold UBO bindings 16/17 (they overwrite each other)
-    VkImageView             pushedView   [RLVK_MAX_TEXTURE_UNITS];  // last view pushed per unit binding (skip redundant pushes)
+    VkImageView             pushedView   [RLVK_MAX_TEXTURE_UNITS];  // last view pushed per unit binding (skip redundant pushes; doubles as the set-0 shadow on the pool-ring path)
     VkSampler               pushedSampler[RLVK_MAX_TEXTURE_UNITS];  // last sampler pushed per unit binding
+
+    // Pool-ring fallback state (devices without VK_KHR_push_descriptor): CPU shadow of the
+    // UBO bindings + per-frame descriptor pools; a fresh set is allocated, fully written and
+    // bound at the next draw whenever the shadow changed (rlvkFlushSet0)
+    VkDescriptorBufferInfo  shadowUbo[2];                       // [0]=VS binding, [1]=FS binding
+    VkDescriptorPool        descPools[RLVK_FRAME_INDEX_COUNT];  // reset with each frame slot's fence
+    bool                    set0Dirty;                          // shadow changed since the last bound set
+
+    // Compute state (core Vulkan 1.0/1.1 features only). Fixed set-0 layout for every compute
+    // program: bindings 0..7 SSBO, 8..11 storage image, 12..13 combined sampler, 14 the
+    // implicit loose-uniform block. GL-style bind-then-dispatch: rlBindShaderBuffer /
+    // rlBindImageTexture record here; rlComputeShaderDispatch snapshots into a fresh set.
+    VkDescriptorSetLayout   computeSetLayout;
+    VkPipelineLayout        computePipelineLayout;
+    VkDescriptorPool        computeDescPools[RLVK_FRAME_INDEX_COUNT];   // reset with each frame slot's fence
+    u32                     computeSSBO[8];                     // buffer slots bound per SSBO index (0 = unbound)
+    u32                     computeImage[4];                    // texture slots bound per image unit (0 = unbound)
     VkExtent2D              swapchainExtent;
     VkFormat                swapchainFormat;
     VkFormat                depthFormat;
@@ -778,9 +982,19 @@ typedef struct rlvkData {
 
     // 4B-aligned nested struct
     struct {
+        u32         apiVersion;         // Selected device's VkPhysicalDeviceProperties.apiVersion
         bool        memoryPriority;     // VK_EXT_memory_priority available (optional)
         bool        pageableMemory;     // VK_EXT_pageable_device_local_memory available (optional)
         bool        graphicsPipelineLibrary;    // VK_EXT_graphics_pipeline_library available (fast-linked pipelines)
+        // Vulkan 1.1 retarget: every former 1.3-floor requirement is a queried capability.
+        // Each flag's 1.1-core fallback lands milestone by milestone; once a fallback is in,
+        // the flag either becomes a pure fast-path gate or is deleted along with the old path.
+        bool        dynamicRendering;   // 1.3 core / VK_KHR_dynamic_rendering (unused: render-pass cache is the single path)
+        bool        synchronization2;   // 1.3 core / VK_KHR_synchronization2 (fallback: sync1 shim)
+        bool        pushDescriptor;     // VK_KHR_push_descriptor (fallback: per-frame descriptor-pool ring)
+        bool        bresenhamLines;     // VK_EXT/KHR_line_rasterization (fallback: default line raster, cosmetic delta)
+        bool        wideLines;          // Core optional feature (fallback: clamp rlSetLineWidth to 1.0)
+        bool        fillModeNonSolid;   // Core optional feature (fallback: rlEnableWireMode/PointMode no-op)
     } Caps;
 
     // 4B scalars
@@ -857,7 +1071,7 @@ static int          rlvkGetPixelDataSize     (int width, int height, int format)
 static VkFormat     rlvkGetVkTextureFormat(int rlFormat);          // Get Vulkan format for a raylib pixel format
 
 static bool         rlvkInitInstance      (void);                  // Initialize Vulkan instance
-static bool         rlvkPickPhysicalDevice(void);                  // Pick a Vulkan 1.3 capable physical device
+static bool         rlvkPickPhysicalDevice(void);                  // Pick a Vulkan 1.1+ capable physical device
 static bool         rlvkInitLogicalDevice (void);                  // Initialize logical device, features and extensions
 static bool         rlvkInitDefaultShader (void);                  // Initialize pipeline layout and embedded default shader
 static void         rlvkBeginFrame        (void);                  // Begin frame: acquire image, open rendering scope
@@ -876,6 +1090,9 @@ static void         rlvkUploadBuffer      (VkBuffer dst, u32 dstOffset, const vo
 static void         rlvkShaderWriteUniform(rlvkShaderSlot *shader, int loc, const void *data, u32 bytes); // Write a uniform into the shader staging blocks
 static void         rlvkBindShaderUbos    (VkCommandBuffer cmdBuffer, rlvkShaderSlot *shader); // Snapshot uniform staging and push UBO descriptors
 static void         rlvkBindShaderSamplers(VkCommandBuffer cmdBuffer, rlvkShaderSlot *shader, bool includeBinding0); // Push the shader sampler bindings
+static void         rlvkFlushSet0         (VkCommandBuffer cmdBuffer); // Pool-ring fallback: bind a snapshot set before a draw (no-op with native push descriptors)
+static VKAPI_ATTR void VKAPI_CALL rlvkPushDescriptorSetCompat(VkCommandBuffer cmdBuffer, VkPipelineBindPoint bindPoint,
+    VkPipelineLayout layout, uint32_t set, uint32_t writeCount, const VkWriteDescriptorSet *writes); // Shadow-updating shim installed when VK_KHR_push_descriptor is absent
 static void         rlvkLoadEntrypoints   (void);                  // Load device-level entry points into the vk dispatch table
 static bool         rlvkInitSet0Layout    (void);                  // Initialize the push-descriptor set layout
 static bool         rlvkInitFrameRing     (void);                  // Initialize per-frame command pools, semaphores, fences
@@ -919,7 +1136,7 @@ static VkDeviceMemory rlvkAllocMemory       (VkMemoryRequirements memReq, VkMemo
 RLVK_SHADERC_FUNCS
 #undef RLVK_SC_FUNC
 
-// Load shaderc_shared.dll at runtime and resolve the compiler entry points
+// Load the shaderc shared library at runtime and resolve the compiler entry points
 static bool rlvkLoadShaderc(void)
 {
 #if defined(_WIN32)
@@ -928,11 +1145,22 @@ static bool rlvkLoadShaderc(void)
 #define RLVK_SC_FUNC(_func) p_##_func = (__typeof__(_func) *)GetProcAddress(lib, #_func); if (!p_##_func) return false;
     RLVK_SHADERC_FUNCS
 #undef RLVK_SC_FUNC
+#else
+    // Linux/Android/macOS: try the common sonames (the Android NDK ships libshaderc.so;
+    // desktop SDK/distro builds ship libshaderc_shared)
+    static const char *names[] = {
+        "libshaderc_shared.so.1", "libshaderc_shared.so", "libshaderc.so",
+        "libshaderc_shared.dylib", "libshaderc_shared.1.dylib",
+    };
+    void *lib = NULL;
+    for (size_t i = 0; (i < RLVK_COUNTOF(names)) && !lib; i++) lib = dlopen(names[i], RTLD_NOW | RTLD_LOCAL);
+    if (!lib) return false;
+#define RLVK_SC_FUNC(_func) p_##_func = (__typeof__(_func) *)dlsym(lib, #_func); if (!p_##_func) return false;
+    RLVK_SHADERC_FUNCS
+#undef RLVK_SC_FUNC
+#endif
     RLVK.shadercCompiler = p_shaderc_compiler_initialize();
     return RLVK.shadercCompiler != NULL;
-#else
-    return false;   // TODO(vk): dlopen("libshaderc_shared.so") on Linux/macOS
-#endif
 }
 
 // Stock raylib default shader, GLSL 330 (mirrors rlgl.h's defaultVShaderCode/defaultFShaderCode)
@@ -998,12 +1226,55 @@ static char *rlvkSanitizeGlsl(const char *src)
     return out;
 }
 
+// Vulkan clip-z is [0,1] while GL-dialect shaders assume [-1,1]: rename the user's main()
+// (whole-word: GLSL has no other legal whole-word `main` outside comments, where a rename is
+// harmless) and append a wrapper that remaps gl_Position.z after it runs. One behavior on
+// every device - the embedded default shader bakes the same epilogue; depth_clip_control is
+// deliberately not used. Returns an RL_MALLOC'd rewritten copy.
+static char *rlvkInjectClipZEpilogue(const char *src)
+{
+    static const char *epilogue =
+        "\nvoid main() { rlvk_main_(); gl_Position.z = (gl_Position.z + gl_Position.w)*0.5; }\n";
+    static const char *bad = "main";
+    static const char *fix = "rlvk_main_";
+    size_t badLen = strlen(bad), fixLen = strlen(fix), n = 0;
+    for (const char *c = strstr(src, bad); c; c = strstr(c + badLen, bad))
+    {
+        char prev = (c == src) ? 0 : c[-1], next = c[badLen];
+        bool prevId = (prev == '_') || isalnum((unsigned char)prev);
+        bool nextId = (next == '_') || isalnum((unsigned char)next);
+        if (!prevId && !nextId) n++;
+    }
+    char *out = (char *)RL_MALLOC(strlen(src) + n*(fixLen - badLen) + strlen(epilogue) + 1);
+    char *w = out;
+    const char *r = src;
+    while (*r)
+    {
+        if (strncmp(r, bad, badLen) == 0)
+        {
+            char prev = (r == src) ? 0 : r[-1], next = r[badLen];
+            bool prevId = (prev == '_') || isalnum((unsigned char)prev);
+            bool nextId = (next == '_') || isalnum((unsigned char)next);
+            if (!prevId && !nextId) { memcpy(w, fix, fixLen); w += fixLen; r += badLen; continue; }
+        }
+        *w++ = *r++;
+    }
+    strcpy(w, epilogue);
+    return out;
+}
+
 // GLSL -> SPIR-V through shaderc with relaxed Vulkan rules. Optimization stays OFF so OpName /
 // OpMemberName debug info survives for reflection. Returned words are RL_MALLOC'd.
 static bool rlvkCompileGlsl(const char *source, int stage /*0=vs 1=fs 2=cs*/, u32 **outWords, size_t *outWordCount)
 {
+    // Vertex stage: clip-z remap epilogue (see rlvkInjectClipZEpilogue)
+    char *patched = (stage == 0)? rlvkInjectClipZEpilogue(source) : NULL;
+    if (patched) source = patched;
+
     shaderc_compile_options_t opts = p_shaderc_compile_options_initialize();
-    p_shaderc_compile_options_set_target_env(opts, shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_3);
+    // Baseline target: Vulkan 1.1 / SPIR-V 1.3 - modules stay loadable on every supported
+    // device (a 1.3-era target would emit SPIR-V 1.6, invalid on 1.1 drivers)
+    p_shaderc_compile_options_set_target_env(opts, shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_1);
     p_shaderc_compile_options_set_vulkan_rules_relaxed(opts, true);
     // NOTE: spirv-opt stays OFF: it strips the symbol names reflection needs, and gains only
     // ~0.15% even with debug info kept. The residual ~2% fragment-ALU deficit vs rlgl was
@@ -1018,11 +1289,19 @@ static bool rlvkCompileGlsl(const char *source, int stage /*0=vs 1=fs 2=cs*/, u3
     // both stages auto-bind from 0 otherwise (vertex texture fetch, e.g. displacement maps)
     p_shaderc_compile_options_set_binding_base_for_stage(opts, shaderc_vertex_shader,   shaderc_uniform_kind_texture, 8);
     p_shaderc_compile_options_set_binding_base_for_stage(opts, shaderc_vertex_shader,   shaderc_uniform_kind_sampler, 8);
+    // Compute stage: auto-bound resources land in the fixed compute set-0 layout ranges
+    // (SSBOs declare explicit std430 bindings 0..7 themselves; images 8..11, samplers 12..13,
+    // the implicit loose-uniform block at 14)
+    p_shaderc_compile_options_set_binding_base_for_stage(opts, shaderc_compute_shader, shaderc_uniform_kind_image,   8);
+    p_shaderc_compile_options_set_binding_base_for_stage(opts, shaderc_compute_shader, shaderc_uniform_kind_texture, 12);
+    p_shaderc_compile_options_set_binding_base_for_stage(opts, shaderc_compute_shader, shaderc_uniform_kind_sampler, 12);
+    p_shaderc_compile_options_set_binding_base_for_stage(opts, shaderc_compute_shader, shaderc_uniform_kind_buffer,  14);
 
     shaderc_shader_kind kind = (stage == 0) ? shaderc_vertex_shader : (stage == 1) ? shaderc_fragment_shader : shaderc_compute_shader;
     shaderc_compilation_result_t res = p_shaderc_compile_into_spv(
         (shaderc_compiler_t)RLVK.shadercCompiler, source, strlen(source), kind, "rlvk", "main", opts);
     p_shaderc_compile_options_release(opts);
+    if (patched) RL_FREE(patched);
 
     if (p_shaderc_result_get_compilation_status(res) != shaderc_compilation_status_success)
     {
@@ -1035,6 +1314,11 @@ static bool rlvkCompileGlsl(const char *source, int stage /*0=vs 1=fs 2=cs*/, u3
     memcpy(*outWords, p_shaderc_result_get_bytes(res), bytes);
     *outWordCount = bytes/4;
     p_shaderc_result_release(res);
+    if (getenv("RLVK_DUMP_SPV"))   // debug: write the module for spirv-dis inspection
+    {
+        char path[256]; snprintf(path, sizeof(path), "%s/rlvk_dump_stage%d.spv", getenv("RLVK_DUMP_SPV"), stage);
+        FILE *f = fopen(path, "wb"); if (f) { fwrite(*outWords, 4, *outWordCount, f); fclose(f); }
+    }
     return true;
 }
 
@@ -1703,7 +1987,7 @@ void rlViewport(int x, int y, int width, int height)
 {
     RLVK.State.viewportX = x; RLVK.State.viewportY = y; RLVK.State.stateGeneration++;
     RLVK.State.viewportW = width; RLVK.State.viewportH = height;
-    // vkCmdSetViewportWithCount happens at draw flush; Y is flipped via negative-height
+    // vkCmdSetViewport happens at draw flush; Y is flipped via negative-height
     // viewport so GL-style up-Y conventions hold.
 }
 
@@ -1941,7 +2225,184 @@ void rlEnableShader(unsigned int id)
 // Disable shader program
 void rlDisableShader(void) { RLVK.State.activeShaderSlot = RLVK.defaultShaderSlot; }
 
-// Switch the dynamic-rendering scope to a user framebuffer (render texture). The pending batch
+//----------------------------------------------------------------------------------
+// Render-pass + framebuffer cache implementation (Vulkan 1.1 baseline)
+//----------------------------------------------------------------------------------
+
+// Get (or build and cache) the render pass for a scope-shape key. Attachment layouts are
+// initial == final (rlvk transitions layouts with explicit barriers outside the pass), so a
+// pass never changes an image's layout behind the manual tracking's back.
+static VkRenderPass rlvkGetRenderPass(const rlvkRenderPassKey *key)
+{
+    for (int i = 0; i < RLVK.renderPassCount; i++)
+        if (memcmp(&RLVK.renderPasses[i].key, key, sizeof(rlvkRenderPassKey)) == 0) return RLVK.renderPasses[i].pass;
+
+    if (RLVK.renderPassCount >= RLVK_MAX_RENDER_PASSES)
+    {
+        TRACELOG(RL_LOG_WARNING, "RLVK: render-pass cache full (%d), raise RLVK_MAX_RENDER_PASSES", RLVK_MAX_RENDER_PASSES);
+        return VK_NULL_HANDLE;
+    }
+
+    VkSampleCountFlagBits samples = (key->samples > 1)? VK_SAMPLE_COUNT_4_BIT : VK_SAMPLE_COUNT_1_BIT;
+    bool hasDepth = (key->depthFormat != VK_FORMAT_UNDEFINED);
+    u32 attCount = 0;
+    VkAttachmentDescription atts[RLVK_MAX_SCOPE_ATTACHMENTS];
+    VkAttachmentReference   colorRefs[8], resolveRef, depthRef;
+
+    for (u32 c = 0; c < key->colorCount; c++)
+    {
+        atts[attCount] = (VkAttachmentDescription){
+            .format         = key->colorFormats[c],
+            .samples        = samples,
+            .loadOp         = (VkAttachmentLoadOp)key->colorLoad,
+            .storeOp        = VK_ATTACHMENT_STORE_OP_STORE,
+            .stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .initialLayout  = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .finalLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        };
+        colorRefs[c] = (VkAttachmentReference){ attCount, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+        attCount++;
+    }
+    if (key->hasResolve)   // MSAA fixed-function resolve into a 1x attachment (single color scope only)
+    {
+        atts[attCount] = (VkAttachmentDescription){
+            .format         = key->colorFormats[0],
+            .samples        = VK_SAMPLE_COUNT_1_BIT,
+            .loadOp         = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .storeOp        = VK_ATTACHMENT_STORE_OP_STORE,
+            .stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .initialLayout  = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .finalLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        };
+        resolveRef = (VkAttachmentReference){ attCount, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+        attCount++;
+    }
+    if (hasDepth)
+    {
+        atts[attCount] = (VkAttachmentDescription){
+            .format         = key->depthFormat,
+            .samples        = samples,
+            .loadOp         = (VkAttachmentLoadOp)key->depthLoad,
+            .storeOp        = (VkAttachmentStoreOp)key->depthStore,
+            .stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .initialLayout  = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+            .finalLayout    = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+        };
+        depthRef = (VkAttachmentReference){ attCount, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL };
+        attCount++;
+    }
+
+    VkRenderPass pass = VK_NULL_HANDLE;
+    VkResult res = vkCreateRenderPass(RLVK.device,
+        &(VkRenderPassCreateInfo){
+            VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+            .attachmentCount = attCount,
+            .pAttachments    = atts,
+            .subpassCount    = 1,
+            .pSubpasses      = &(VkSubpassDescription){
+                .pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS,
+                .colorAttachmentCount    = key->colorCount,
+                .pColorAttachments       = key->colorCount? colorRefs : NULL,
+                .pResolveAttachments     = key->hasResolve? &resolveRef : NULL,
+                .pDepthStencilAttachment = hasDepth? &depthRef : NULL,
+            },
+            // No subpass dependencies: rlvk orders everything with explicit barriers outside
+            // the pass, exactly like the dynamic-rendering path did
+        }, RLVK_ALLOC, &pass);
+    if (res != VK_SUCCESS) { TRACELOG(RL_LOG_WARNING, "RLVK: vkCreateRenderPass => %d", (int)res); return VK_NULL_HANDLE; }
+
+    RLVK.renderPasses[RLVK.renderPassCount++] = (rlvkRenderPassEntry){ pass, *key };
+    return pass;
+}
+
+// Get (or build and cache) the framebuffer for a pass + attachment view set
+static VkFramebuffer rlvkGetFramebuffer(VkRenderPass pass, const VkImageView *views, u32 viewCount, u32 width, u32 height)
+{
+    for (int i = 0; i < RLVK.framebufferCount; i++)
+    {
+        rlvkFramebufferEntry *e = &RLVK.framebuffers[i];
+        if ((e->pass == pass) && (e->viewCount == viewCount) && (e->width == width) && (e->height == height)
+            && (memcmp(e->views, views, viewCount*sizeof(VkImageView)) == 0)) return e->framebuffer;
+    }
+
+    if (RLVK.framebufferCount >= RLVK_MAX_CACHED_FRAMEBUFFERS)
+    {
+        TRACELOG(RL_LOG_WARNING, "RLVK: framebuffer cache full (%d), raise RLVK_MAX_CACHED_FRAMEBUFFERS", RLVK_MAX_CACHED_FRAMEBUFFERS);
+        return VK_NULL_HANDLE;
+    }
+
+    VkFramebuffer fb = VK_NULL_HANDLE;
+    VkResult res = vkCreateFramebuffer(RLVK.device,
+        &(VkFramebufferCreateInfo){
+            VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+            .renderPass      = pass,
+            .attachmentCount = viewCount,
+            .pAttachments    = views,
+            .width           = width,
+            .height          = height,
+            .layers          = 1,
+        }, RLVK_ALLOC, &fb);
+    if (res != VK_SUCCESS) { TRACELOG(RL_LOG_WARNING, "RLVK: vkCreateFramebuffer => %d", (int)res); return VK_NULL_HANDLE; }
+
+    rlvkFramebufferEntry *e = &RLVK.framebuffers[RLVK.framebufferCount++];
+    memset(e, 0, sizeof(*e));
+    e->framebuffer = fb; e->pass = pass; e->viewCount = viewCount; e->width = width; e->height = height;
+    memcpy(e->views, views, viewCount*sizeof(VkImageView));
+    return fb;
+}
+
+static void rlvkDeferDestroy(VkBuffer buffer, VkImage image, VkImageView view, VkSampler sampler, VkDeviceMemory memory, VkPipeline pipeline);
+static void rlvkDeferDestroyFramebufferOnly(VkFramebuffer framebuffer);
+
+// Evict every cached framebuffer that references a dying view. MUST run before the view is
+// destroyed or queued for deferred destruction; the framebuffers ride the same fence-gated
+// dead-resource ring so in-flight frames finish with them intact.
+static void rlvkEvictFramebuffersForView(VkImageView view)
+{
+    if (view == VK_NULL_HANDLE) return;
+    for (int i = 0; i < RLVK.framebufferCount; )
+    {
+        rlvkFramebufferEntry *e = &RLVK.framebuffers[i];
+        bool hit = false;
+        for (u32 v = 0; v < e->viewCount; v++) if (e->views[v] == view) { hit = true; break; }
+        if (!hit) { i++; continue; }
+        rlvkDeferDestroyFramebufferOnly(e->framebuffer);
+        RLVK.framebuffers[i] = RLVK.framebuffers[--RLVK.framebufferCount];   // swap-remove
+    }
+}
+
+// Open a rendering scope: cached render pass + cached framebuffer + vkCmdBeginRenderPass.
+// clearColor/clearDepth are consumed only by CLEAR load ops of the key.
+static void rlvkBeginScopeRenderPass(VkCommandBuffer cmdBuffer, const rlvkRenderPassKey *key,
+    const VkImageView *views, u32 viewCount, u32 width, u32 height,
+    const VkClearValue *clearColor, const VkClearValue *clearDepth)
+{
+    VkRenderPass pass = rlvkGetRenderPass(key);
+    if (pass == VK_NULL_HANDLE) return;
+    VkFramebuffer fb = rlvkGetFramebuffer(pass, views, viewCount, width, height);
+    if (fb == VK_NULL_HANDLE) return;
+
+    // pClearValues is indexed by attachment: colors [0..colorCount), resolve, depth last
+    VkClearValue clears[RLVK_MAX_SCOPE_ATTACHMENTS];
+    memset(clears, 0, sizeof(clears));
+    if (clearColor) for (u32 c = 0; c < key->colorCount; c++) clears[c] = *clearColor;
+    if (clearDepth) clears[key->colorCount + (key->hasResolve? 1u : 0u)] = *clearDepth;
+
+    vkCmdBeginRenderPass(cmdBuffer,
+        &(VkRenderPassBeginInfo){
+            VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+            .renderPass      = pass,
+            .framebuffer     = fb,
+            .renderArea      = { { 0, 0 }, { width, height } },
+            .clearValueCount = viewCount,       // >= highest CLEAR attachment index + 1
+            .pClearValues    = clears,
+        }, VK_SUBPASS_CONTENTS_INLINE);
+}
+
+// Switch the rendering scope to a user framebuffer (render texture). The pending batch
 // was already flushed by raylib's BeginTextureMode/EndTextureMode before this is called.
 void rlEnableFramebuffer(unsigned int id)
 {
@@ -1966,7 +2427,7 @@ void rlEnableFramebuffer(unsigned int id)
     rlvkTextureSlot *fbDepth = f->hasDepth ? &RLVK.textureSlots[f->depthTexture] : NULL;
     if (!color && !(fbDepth && fbDepth->image)) return;   // nothing attached yet
 
-    vk.CmdEndRendering(cmdBuffer);
+    vkCmdEndRenderPass(cmdBuffer);
 
     for (u32 c = 0; c < colorCount; c++)
     {
@@ -2018,30 +2479,25 @@ void rlEnableFramebuffer(unsigned int id)
     // color attachment at all; depth must be STORED so it can be sampled afterwards.
     int fbW = color ? color->width : depth->width;
     int fbH = color ? color->height : depth->height;
-    VkRenderingAttachmentInfo colorInfos[8];
+    bool fbHasDepth = (depth && depth->image);
+    VkImageView scopeViews[RLVK_MAX_SCOPE_ATTACHMENTS];
+    u32 scopeViewCount = 0;
+    rlvkRenderPassKey rpKey;
+    memset(&rpKey, 0, sizeof(rpKey));
     for (u32 c = 0; c < colorCount; c++)
-        colorInfos[c] = (VkRenderingAttachmentInfo){
-            VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView   = colors[c]->view,
-            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            .loadOp      = VK_ATTACHMENT_LOAD_OP_LOAD,
-            .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
-        };
-    vk.CmdBeginRendering(cmdBuffer, &(VkRenderingInfo){
-        VK_STRUCTURE_TYPE_RENDERING_INFO,
-        .renderArea           = { { 0, 0 }, { (u32)fbW, (u32)fbH } },
-        .layerCount           = 1,
-        .colorAttachmentCount = colorCount,
-        .pColorAttachments    = colorCount ? colorInfos : NULL,
-        .pDepthAttachment     = (depth && depth->image) ? &(VkRenderingAttachmentInfo){
-            VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView   = depth->view,
-            .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-            .loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR,
-            .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
-            .clearValue  = { .depthStencil = { 1.0f, 0 } },
-        } : NULL,
-    });
+    {
+        scopeViews[scopeViewCount++] = colors[c]->view;
+        rpKey.colorFormats[c] = colors[c]->format;
+    }
+    if (fbHasDepth) scopeViews[scopeViewCount++] = depth->view;
+    rpKey.depthFormat = fbHasDepth ? depth->format : VK_FORMAT_UNDEFINED;
+    rpKey.colorCount  = (unsigned char)colorCount;
+    rpKey.samples     = 1;
+    rpKey.colorLoad   = VK_ATTACHMENT_LOAD_OP_LOAD;
+    rpKey.depthLoad   = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    rpKey.depthStore  = VK_ATTACHMENT_STORE_OP_STORE;
+    rlvkBeginScopeRenderPass(cmdBuffer, &rpKey, scopeViews, scopeViewCount, (u32)fbW, (u32)fbH,
+        NULL, fbHasDepth? &(VkClearValue){ .depthStencil = { 1.0f, 0 } } : NULL);
     RLVK.scope.fbSlot = id;
     RLVK.scope.width  = (u32)fbW;
     RLVK.scope.height = (u32)fbH;
@@ -2063,7 +2519,7 @@ void rlDisableFramebuffer(void)
     VkCommandBuffer cmdBuffer = RLVK.cmdBuffers[frameIndex];
     rlvkFramebufferSlot *f = &RLVK.fbSlots[id];
 
-    vk.CmdEndRendering(cmdBuffer);
+    vkCmdEndRenderPass(cmdBuffer);
 
     for (u32 c = 0; c < f->colorCount && c < 8; c++)
     {
@@ -2122,30 +2578,25 @@ void rlDisableFramebuffer(void)
 static void rlvkResumeSwapchainScope(VkCommandBuffer cmdBuffer)
 {
     u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
-    vk.CmdBeginRendering(cmdBuffer, &(VkRenderingInfo){
-        VK_STRUCTURE_TYPE_RENDERING_INFO,
-        .renderArea           = { { 0, 0 }, RLVK.swapchainExtent },
-        .layerCount           = 1,
-        .colorAttachmentCount = 1,
-        .pColorAttachments    = &(VkRenderingAttachmentInfo){
-            VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView   = (RLVK.msaaSamples > 1)? RLVK.msaaView[frameIndex] : RLVK.interView[frameIndex],
-            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            // Fixed-function resolve into the 1x intermediate at every scope close (MSAA only)
-            .resolveMode        = (RLVK.msaaSamples > 1)? VK_RESOLVE_MODE_AVERAGE_BIT : VK_RESOLVE_MODE_NONE,
-            .resolveImageView   = (RLVK.msaaSamples > 1)? RLVK.interView[frameIndex] : VK_NULL_HANDLE,
-            .resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            .loadOp      = VK_ATTACHMENT_LOAD_OP_LOAD,
-            .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
-        },
-        .pDepthAttachment     = &(VkRenderingAttachmentInfo){
-            VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView   = RLVK.depthView[frameIndex],
-            .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-            .loadOp      = VK_ATTACHMENT_LOAD_OP_LOAD,
-            .storeOp     = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-        },
-    });
+    bool msaa = (RLVK.msaaSamples > 1);
+    // Fixed-function resolve into the 1x intermediate at every scope close (MSAA only)
+    VkImageView scopeViews[3];
+    u32 scopeViewCount = 0;
+    scopeViews[scopeViewCount++] = msaa? RLVK.msaaView[frameIndex] : RLVK.interView[frameIndex];
+    if (msaa) scopeViews[scopeViewCount++] = RLVK.interView[frameIndex];
+    scopeViews[scopeViewCount++] = RLVK.depthView[frameIndex];
+    rlvkRenderPassKey rpKey;
+    memset(&rpKey, 0, sizeof(rpKey));
+    rpKey.colorFormats[0] = RLVK.swapchainFormat;
+    rpKey.depthFormat     = RLVK.depthFormat;
+    rpKey.colorCount      = 1;
+    rpKey.samples         = msaa? 4 : 1;
+    rpKey.colorLoad       = VK_ATTACHMENT_LOAD_OP_LOAD;
+    rpKey.depthLoad       = VK_ATTACHMENT_LOAD_OP_LOAD;
+    rpKey.depthStore      = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    rpKey.hasResolve      = msaa? 1 : 0;
+    rlvkBeginScopeRenderPass(cmdBuffer, &rpKey, scopeViews, scopeViewCount,
+        RLVK.swapchainExtent.width, RLVK.swapchainExtent.height, NULL, NULL);
     RLVK.scope.fbSlot = 0;
     RLVK.scope.width  = RLVK.swapchainExtent.width;
     RLVK.scope.height = RLVK.swapchainExtent.height;
@@ -2179,7 +2630,7 @@ static void rlvkFlushFrame(void)
     // suspend the swapchain scope
     u32 openFb = RLVK.scope.fbSlot;
     if (openFb) rlDisableFramebuffer();
-    vk.CmdEndRendering(cmdBuffer);
+    vkCmdEndRenderPass(cmdBuffer);
     vk.EndCommandBuffer(cmdBuffer);
 
     vk.QueueSubmit2(RLVK.graphicsQueue, 1, &(VkSubmitInfo2){
@@ -2209,6 +2660,12 @@ static void rlvkFlushFrame(void)
     memset(RLVK.pushedSampler, 0, sizeof(RLVK.pushedSampler));
     s_viewportValid = false;
     s_bindingValid   = false;
+    // Pool-ring fallback: the drained submission released every snapshot set; the arena reset
+    // also invalidated the shadowed UBO regions
+    memset(RLVK.shadowUbo, 0, sizeof(RLVK.shadowUbo));
+    RLVK.set0Dirty = true;
+    if (!RLVK.Caps.pushDescriptor && RLVK.descPools[frameIndex]) vkResetDescriptorPool(RLVK.device, RLVK.descPools[frameIndex], 0);
+    if (RLVK.computeDescPools[frameIndex]) vkResetDescriptorPool(RLVK.device, RLVK.computeDescPools[frameIndex], 0);
 
     // Host writes made after this point (arena bump continues) must be visible again
     vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
@@ -2250,7 +2707,7 @@ void rlBlitFramebuffer(int srcX, int srcY, int srcWidth, int srcHeight, int dstX
     u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
     VkCommandBuffer cmdBuffer = RLVK.cmdBuffers[frameIndex];
 
-    vk.CmdEndRendering(cmdBuffer);
+    vkCmdEndRenderPass(cmdBuffer);
 
     // src depth (whatever state it rests in) -> TRANSFER_SRC; dst frame depth -> TRANSFER_DST
     vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
@@ -2529,7 +2986,8 @@ void rlglInit(int width, int height)
     RLVK.defaultBatch = rlLoadRenderBatch(RLVK_FRAME_INDEX_COUNT, RL_DEFAULT_BATCH_BUFFER_ELEMENTS);
     RLVK.currentBatch = &RLVK.defaultBatch;
 
-    TRACELOG(RL_LOG_INFO, "RLVK: Vulkan 1.3 backend initialized (%dx%d)", width, height);
+    TRACELOG(RL_LOG_INFO, "RLVK: Vulkan backend initialized (device API %u.%u, %dx%d)",
+             VK_API_VERSION_MAJOR(RLVK.Caps.apiVersion), VK_API_VERSION_MINOR(RLVK.Caps.apiVersion), width, height);
 }
 
 // Vertex Buffer Object deinitialization (memory free)
@@ -2551,6 +3009,12 @@ void rlglClose(void)
     RLVK.pipelineCount = 0;
     if (RLVK.pipelineCache != VK_NULL_HANDLE) vkDestroyPipelineCache(RLVK.device, RLVK.pipelineCache, RLVK_ALLOC);
 
+    // Release the render-pass + framebuffer caches (framebuffers first: they reference the passes)
+    for (int i = 0; i < RLVK.framebufferCount; i++) vkDestroyFramebuffer(RLVK.device, RLVK.framebuffers[i].framebuffer, RLVK_ALLOC);
+    RLVK.framebufferCount = 0;
+    for (int i = 0; i < RLVK.renderPassCount; i++) vkDestroyRenderPass(RLVK.device, RLVK.renderPasses[i].pass, RLVK_ALLOC);
+    RLVK.renderPassCount = 0;
+
     if (rlvkDebugFlag("RLVK_MEM_REPORT", &s_dbgMem)) TRACELOG(RL_LOG_WARNING, "VKMEM local=%lldKB host=%lldKB allocs=%d vboCreate=%d vboReuse=%d", s_memLocalBytes/1024, s_memHostBytes/1024, s_memAllocCount, s_vboCreateCount, s_vboReuseCount);
 
     // Full lifetime cleanup so repeated InitWindow()/CloseWindow() in one process does not
@@ -2560,6 +3024,7 @@ void rlglClose(void)
         for (int d = 0; d < RLVK.deadResourceCount[f]; d++)
         {
             rlvkDeadResource *r = &RLVK.deadResources[f][d];
+            if (r->framebuffer) vkDestroyFramebuffer(RLVK.device, r->framebuffer, RLVK_ALLOC);
             if (r->view)    vkDestroyImageView(RLVK.device, r->view, RLVK_ALLOC);
             if (r->sampler) vkDestroySampler(RLVK.device, r->sampler, RLVK_ALLOC);
             if (r->image)   vkDestroyImage(RLVK.device, r->image, RLVK_ALLOC);
@@ -2609,6 +3074,8 @@ void rlglClose(void)
         if (RLVK.acquireSemaphores[i]) vkDestroySemaphore(RLVK.device, RLVK.acquireSemaphores[i], RLVK_ALLOC);
         if (RLVK.frameFences[i])       vkDestroyFence(RLVK.device, RLVK.frameFences[i], RLVK_ALLOC);
         if (RLVK.cmdPools[i])          vkDestroyCommandPool(RLVK.device, RLVK.cmdPools[i], RLVK_ALLOC);
+        if (RLVK.descPools[i])         vkDestroyDescriptorPool(RLVK.device, RLVK.descPools[i], RLVK_ALLOC);
+        if (RLVK.computeDescPools[i])  vkDestroyDescriptorPool(RLVK.device, RLVK.computeDescPools[i], RLVK_ALLOC);
     }
     for (int i = 0; i < RLVK_MAX_SWAPCHAIN_IMAGES; i++)
     {
@@ -2618,6 +3085,8 @@ void rlglClose(void)
     if (RLVK.swapchain)      vkDestroySwapchainKHR(RLVK.device, RLVK.swapchain, RLVK_ALLOC);
     if (RLVK.set0Layout) vkDestroyDescriptorSetLayout(RLVK.device, RLVK.set0Layout, RLVK_ALLOC);
     if (RLVK.pipelineLayout) vkDestroyPipelineLayout(RLVK.device, RLVK.pipelineLayout, RLVK_ALLOC);
+    if (RLVK.computeSetLayout)      vkDestroyDescriptorSetLayout(RLVK.device, RLVK.computeSetLayout, RLVK_ALLOC);
+    if (RLVK.computePipelineLayout) vkDestroyPipelineLayout(RLVK.device, RLVK.computePipelineLayout, RLVK_ALLOC);
     if (RLVK.device)         vkDestroyDevice(RLVK.device, RLVK_ALLOC);
     if (RLVK.surface)        vkDestroySurfaceKHR(RLVK.instance, RLVK.surface, RLVK_ALLOC);
     if (RLVK.instance)       vkDestroyInstance(RLVK.instance, RLVK_ALLOC);
@@ -2887,6 +3356,7 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
                 rlvkPushTexture(cmdBuffer, 0, drawCall->textureId);
                 rlvkBindPipeline(cmdBuffer, (drawCall->mode == RL_LINES)? 0 : 1,
                     RLVK_VLAYOUT_BATCH, RLVK.State.currentShaderSlot);
+                rlvkFlushSet0(cmdBuffer);
                 if ((drawCall->mode == RL_LINES) || (drawCall->mode == RL_TRIANGLES))
                     vk.CmdDraw(cmdBuffer, drawCall->vertexCount, 1, vertexOffset, 0);
                 else // RL_QUADS -> 2 triangles per quad via the index buffer
@@ -3016,7 +3486,7 @@ static void rlvkUploadBuffer(VkBuffer dst, u32 dstOffset, const void *data, u32 
         // (content persists, both scopes resume with LOAD) - same dance as rlUpdateTexture
         u32 openFb = RLVK.scope.fbSlot;
         if (openFb) rlDisableFramebuffer();
-        vk.CmdEndRendering(cmdBuffer);
+        vkCmdEndRenderPass(cmdBuffer);
 
         vkCmdCopyBuffer(cmdBuffer, arena->buffer, dst, 1,
             &(VkBufferCopy){ .srcOffset = off, .dstOffset = dstOffset, .size = size });
@@ -3073,6 +3543,162 @@ static void rlvkUploadBuffer(VkBuffer dst, u32 dstOffset, const void *data, u32 
     }, uploadFence);
     vkWaitForFences(RLVK.device, 1, &uploadFence, VK_TRUE, UINT64_MAX);
     vkDestroyFence(RLVK.device, uploadFence, RLVK_ALLOC);
+    vkDestroyBuffer(RLVK.device, staging, RLVK_ALLOC);
+    vkFreeMemory(RLVK.device, stagingMem, RLVK_ALLOC);
+}
+
+//----------------------------------------------------------------------------------
+// Host <-> image transfer (Vulkan 1.1 baseline)
+// Replaces VK_EXT_host_image_copy with the classic staging buffer + one-shot submission.
+// A TRANSIENT command pool per call keeps this safe even while a frame is being recorded
+// (never touches the frame ring's pools); synchronous by design - these are load-time and
+// GL-style read-back paths, not per-frame hot paths.
+//----------------------------------------------------------------------------------
+
+static VkCommandBuffer rlvkOneShotBegin(VkCommandPool *outPool)
+{
+    VkCommandPool pool = VK_NULL_HANDLE;
+    if (vkCreateCommandPool(RLVK.device,
+        &(VkCommandPoolCreateInfo){
+            VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+            .queueFamilyIndex = RLVK.graphicsFamily,
+        }, RLVK_ALLOC, &pool) != VK_SUCCESS) return VK_NULL_HANDLE;
+    VkCommandBuffer cmdBuffer = VK_NULL_HANDLE;
+    vkAllocateCommandBuffers(RLVK.device,
+        &(VkCommandBufferAllocateInfo){
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 1,
+        }, &cmdBuffer);
+    if (cmdBuffer == VK_NULL_HANDLE) { vkDestroyCommandPool(RLVK.device, pool, RLVK_ALLOC); return VK_NULL_HANDLE; }
+    vk.BeginCommandBuffer(cmdBuffer, &(VkCommandBufferBeginInfo){
+        VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT });
+    *outPool = pool;
+    return cmdBuffer;
+}
+
+static void rlvkOneShotEnd(VkCommandPool pool, VkCommandBuffer cmdBuffer)
+{
+    vk.EndCommandBuffer(cmdBuffer);
+    VkFence fence = VK_NULL_HANDLE;
+    vkCreateFence(RLVK.device, &(VkFenceCreateInfo){ VK_STRUCTURE_TYPE_FENCE_CREATE_INFO }, RLVK_ALLOC, &fence);
+    vk.QueueSubmit2(RLVK.graphicsQueue, 1, &(VkSubmitInfo2){
+        VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+        .commandBufferInfoCount = 1,
+        .pCommandBufferInfos = &(VkCommandBufferSubmitInfo){
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, .commandBuffer = cmdBuffer },
+    }, fence);
+    vkWaitForFences(RLVK.device, 1, &fence, VK_TRUE, UINT64_MAX);
+    vkDestroyFence(RLVK.device, fence, RLVK_ALLOC);
+    vkDestroyCommandPool(RLVK.device, pool, RLVK_ALLOC);
+}
+
+// Record oldLayout -> newLayout for the given mip/layer ranges into cmdBuffer
+static void rlvkCmdTransitionImage(VkCommandBuffer cmdBuffer, VkImage image, VkImageAspectFlags aspect,
+    u32 baseMip, u32 mipCount, u32 baseLayer, u32 layerCount, VkImageLayout oldLayout, VkImageLayout newLayout)
+{
+    vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
+        VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .imageMemoryBarrierCount = 1,
+        .pImageMemoryBarriers = &(VkImageMemoryBarrier2){
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask     = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+            .srcAccessMask    = VK_ACCESS_2_TRANSFER_WRITE_BIT | VK_ACCESS_2_TRANSFER_READ_BIT,
+            .dstStageMask     = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+            .dstAccessMask    = VK_ACCESS_2_TRANSFER_WRITE_BIT | VK_ACCESS_2_TRANSFER_READ_BIT
+                              | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+            .oldLayout        = oldLayout,
+            .newLayout        = newLayout,
+            .image            = image,
+            .subresourceRange = { aspect, baseMip, mipCount, baseLayer, layerCount },
+        },
+    });
+}
+
+// One-shot layout transition (image with no data to upload still needs to leave UNDEFINED)
+static void rlvkHostTransitionImage(VkImage image, VkImageAspectFlags aspect,
+    u32 mipCount, u32 baseLayer, u32 layerCount, VkImageLayout oldLayout, VkImageLayout newLayout)
+{
+    VkCommandPool pool = VK_NULL_HANDLE;
+    VkCommandBuffer cmdBuffer = rlvkOneShotBegin(&pool);
+    if (cmdBuffer == VK_NULL_HANDLE) return;
+    rlvkCmdTransitionImage(cmdBuffer, image, aspect, 0, mipCount, baseLayer, layerCount, oldLayout, newLayout);
+    rlvkOneShotEnd(pool, cmdBuffer);
+}
+
+// Staging upload into an image region, transitioning oldLayout -> finalLayout around the copy.
+// `data` is tightly packed; multi-layer uploads stack layers consecutively.
+static void rlvkStagingUploadImage(VkImage image, VkImageAspectFlags aspect,
+    int x, int y, u32 width, u32 height, u32 baseLayer, u32 layerCount,
+    VkImageLayout oldLayout, VkImageLayout finalLayout, const void *data, VkDeviceSize bytes)
+{
+    if ((data == NULL) || (bytes == 0))
+    {
+        if (oldLayout != finalLayout) rlvkHostTransitionImage(image, aspect, 1, baseLayer, layerCount, oldLayout, finalLayout);
+        return;
+    }
+
+    VkBuffer staging = VK_NULL_HANDLE; VkDeviceMemory stagingMem = VK_NULL_HANDLE; void *map = NULL;
+    RLVK_CHECK(vkCreateBuffer(RLVK.device,
+        &(VkBufferCreateInfo){ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = bytes, .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT, .sharingMode = VK_SHARING_MODE_EXCLUSIVE },
+        RLVK_ALLOC, &staging));
+    VkMemoryRequirements memReq; vkGetBufferMemoryRequirements(RLVK.device, staging, &memReq);
+    stagingMem = rlvkAllocMemory(memReq, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    vkBindBufferMemory(RLVK.device, staging, stagingMem, 0);
+    vkMapMemory(RLVK.device, stagingMem, 0, bytes, 0, &map);
+    memcpy(map, data, (size_t)bytes);
+    vkUnmapMemory(RLVK.device, stagingMem);
+
+    VkCommandPool pool = VK_NULL_HANDLE;
+    VkCommandBuffer cmdBuffer = rlvkOneShotBegin(&pool);
+    if (cmdBuffer != VK_NULL_HANDLE)
+    {
+        rlvkCmdTransitionImage(cmdBuffer, image, aspect, 0, 1, baseLayer, layerCount, oldLayout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        vkCmdCopyBufferToImage(cmdBuffer, staging, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+            &(VkBufferImageCopy){
+                .imageSubresource = { aspect, 0, baseLayer, layerCount },
+                .imageOffset      = { x, y, 0 },
+                .imageExtent      = { width, height, 1 },
+            });
+        rlvkCmdTransitionImage(cmdBuffer, image, aspect, 0, 1, baseLayer, layerCount, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, finalLayout);
+        rlvkOneShotEnd(pool, cmdBuffer);
+    }
+    vkDestroyBuffer(RLVK.device, staging, RLVK_ALLOC);
+    vkFreeMemory(RLVK.device, stagingMem, RLVK_ALLOC);
+}
+
+// Staging read-back of a full single-layer image (GL-style synchronous pixel read).
+// The image's layout is preserved (transitioned to TRANSFER_SRC and back).
+static void rlvkStagingReadImage(VkImage image, VkImageAspectFlags aspect,
+    u32 width, u32 height, VkImageLayout currentLayout, void *out, VkDeviceSize bytes)
+{
+    VkBuffer staging = VK_NULL_HANDLE; VkDeviceMemory stagingMem = VK_NULL_HANDLE; void *map = NULL;
+    RLVK_CHECK(vkCreateBuffer(RLVK.device,
+        &(VkBufferCreateInfo){ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = bytes, .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT, .sharingMode = VK_SHARING_MODE_EXCLUSIVE },
+        RLVK_ALLOC, &staging));
+    VkMemoryRequirements memReq; vkGetBufferMemoryRequirements(RLVK.device, staging, &memReq);
+    stagingMem = rlvkAllocMemory(memReq, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    vkBindBufferMemory(RLVK.device, staging, stagingMem, 0);
+
+    VkCommandPool pool = VK_NULL_HANDLE;
+    VkCommandBuffer cmdBuffer = rlvkOneShotBegin(&pool);
+    if (cmdBuffer != VK_NULL_HANDLE)
+    {
+        rlvkCmdTransitionImage(cmdBuffer, image, aspect, 0, 1, 0, 1, currentLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        vk.CmdCopyImageToBuffer(cmdBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, staging, 1,
+            &(VkBufferImageCopy){
+                .imageSubresource = { aspect, 0, 0, 1 },
+                .imageExtent      = { width, height, 1 },
+            });
+        rlvkCmdTransitionImage(cmdBuffer, image, aspect, 0, 1, 0, 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, currentLayout);
+        rlvkOneShotEnd(pool, cmdBuffer);
+
+        vkMapMemory(RLVK.device, stagingMem, 0, bytes, 0, &map);
+        memcpy(out, map, (size_t)bytes);
+        vkUnmapMemory(RLVK.device, stagingMem);
+    }
     vkDestroyBuffer(RLVK.device, staging, RLVK_ALLOC);
     vkFreeMemory(RLVK.device, stagingMem, RLVK_ALLOC);
 }
@@ -3340,6 +3966,7 @@ static void rlvkDrawMesh(int offset, int count, bool indexed, int instances)
     // Dummy broadcasts for any remaining shader-declared attributes this layout leaves unfed
     if (!sameBinding) rlvkBindDummyAttribBuffers(cmdBuffer, vertexLayout, shader);
 
+    rlvkFlushSet0(cmdBuffer);
     if (indexed && a->indexSlot && a->indexSlot < RLVK_MAX_BUFFER_SLOTS)
     {
         vkCmdBindIndexBuffer(cmdBuffer, RLVK.bufferSlots[a->indexSlot].buffer, 0, VK_INDEX_TYPE_UINT16);
@@ -3433,7 +4060,7 @@ unsigned int rlLoadTexture(const void *data, int width, int height, int format, 
             .tiling        = VK_IMAGE_TILING_OPTIMAL,
             // TRANSFER_DST: rlUpdateTexture records an in-stream vkCmdCopyBufferToImage when
             // a frame is being recorded (ordering with already-recorded commands, GL semantics)
-            .usage         = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_HOST_TRANSFER_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+            .usage         = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
                            | ((format < RL_PIXELFORMAT_COMPRESSED_DXT1_RGB) ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT : 0),
             .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
         }, RLVK_ALLOC, &t->image));
@@ -3443,32 +4070,17 @@ unsigned int rlLoadTexture(const void *data, int width, int height, int format, 
     t->memory = rlvkAllocMemory(memReq, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     RLVK_CHECK(vkBindImageMemory(RLVK.device, t->image, t->memory, 0));
 
-    // Host-side layout transition, then host->image copy (no command buffer, no staging)
-    vk.TransitionImageLayoutEXT(RLVK.device, 1,
-        &(VkHostImageLayoutTransitionInfoEXT){
-            VK_STRUCTURE_TYPE_HOST_IMAGE_LAYOUT_TRANSITION_INFO_EXT,
-            .image            = t->image,
-            .oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED,
-            .newLayout        = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
-        });
-
+    // Staging upload (one-shot, synchronous): UNDEFINED -> TRANSFER_DST -> SHADER_READ_ONLY
+    VkDeviceSize uploadBytes = 0;
     if (uploadData != NULL)
     {
-        vk.CopyMemoryToImageEXT(RLVK.device,
-            &(VkCopyMemoryToImageInfoEXT){
-                VK_STRUCTURE_TYPE_COPY_MEMORY_TO_IMAGE_INFO_EXT,
-                .dstImage       = t->image,
-                .dstImageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                .regionCount    = 1,
-                .pRegions       = &(VkMemoryToImageCopyEXT){
-                    VK_STRUCTURE_TYPE_MEMORY_TO_IMAGE_COPY_EXT,
-                    .pHostPointer     = uploadData,
-                    .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
-                    .imageExtent      = { (u32)width, (u32)height, 1 },
-                },
-            });
+        if      (converted && (vkfmt == VK_FORMAT_R8G8B8A8_UNORM))      uploadBytes = (VkDeviceSize)pixels*4;    // expanded RGB8 -> RGBA8
+        else if (converted && (vkfmt == VK_FORMAT_R16G16B16A16_SFLOAT)) uploadBytes = (VkDeviceSize)pixels*8;    // expanded RGB16 -> RGBA16F
+        else if (converted && (vkfmt == VK_FORMAT_R32G32B32A32_SFLOAT)) uploadBytes = (VkDeviceSize)pixels*16;   // expanded RGB32 -> RGBA32F
+        else uploadBytes = (VkDeviceSize)rlvkGetPixelDataSize(width, height, format);
     }
+    rlvkStagingUploadImage(t->image, VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, (u32)width, (u32)height, 0, 1,
+        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, uploadData, uploadBytes);
     if (converted) RL_FREE(converted);
     t->currentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
@@ -3597,7 +4209,7 @@ unsigned int rlLoadTextureCubemap(const void *data, int size, int format, int mi
             .arrayLayers   = 6,
             .samples       = VK_SAMPLE_COUNT_1_BIT,
             .tiling        = VK_IMAGE_TILING_OPTIMAL,
-            .usage         = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_HOST_TRANSFER_BIT,
+            .usage         = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
             .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
         }, RLVK_ALLOC, &t->image));
     VkMemoryRequirements memReq;
@@ -3605,34 +4217,11 @@ unsigned int rlLoadTextureCubemap(const void *data, int size, int format, int mi
     t->memory = rlvkAllocMemory(memReq, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     RLVK_CHECK(vkBindImageMemory(RLVK.device, t->image, t->memory, 0));
 
-    vk.TransitionImageLayoutEXT(RLVK.device, 1,
-        &(VkHostImageLayoutTransitionInfoEXT){
-            VK_STRUCTURE_TYPE_HOST_IMAGE_LAYOUT_TRANSITION_INFO_EXT,
-            .image            = t->image,
-            .oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED,
-            .newLayout        = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6 },
-        });
-    if (uploadData)
-    {
-        // rlgl layout: 6 faces stored consecutively (+X, -X, +Y, -Y, +Z, -Z)
-        for (u32 face = 0; face < 6; face++)
-        {
-            vk.CopyMemoryToImageEXT(RLVK.device,
-                &(VkCopyMemoryToImageInfoEXT){
-                    VK_STRUCTURE_TYPE_COPY_MEMORY_TO_IMAGE_INFO_EXT,
-                    .dstImage       = t->image,
-                    .dstImageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                    .regionCount    = 1,
-                    .pRegions       = &(VkMemoryToImageCopyEXT){
-                        VK_STRUCTURE_TYPE_MEMORY_TO_IMAGE_COPY_EXT,
-                        .pHostPointer     = (const char *)uploadData + (size_t)face*faceBytes,
-                        .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, face, 1 },
-                        .imageExtent      = { (u32)size, (u32)size, 1 },
-                    },
-                });
-        }
-    }
+    // Staging upload: rlgl layout stores the 6 faces consecutively (+X, -X, +Y, -Y, +Z, -Z),
+    // which matches the tightly packed multi-layer copy exactly
+    rlvkStagingUploadImage(t->image, VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, (u32)size, (u32)size, 0, 6,
+        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        uploadData, uploadData? (VkDeviceSize)faceBytes*6 : 0);
     if (converted) RL_FREE(converted);
     t->currentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
@@ -3702,7 +4291,7 @@ void rlUpdateTexture(unsigned int id, int x, int y, int w, int h, int format, co
         u32 openFb = RLVK.scope.fbSlot;
         if (openFb) rlDisableFramebuffer();
 
-        vk.CmdEndRendering(cmdBuffer);
+        vkCmdEndRenderPass(cmdBuffer);
         vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
             VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
             .imageMemoryBarrierCount = 1,
@@ -3752,22 +4341,12 @@ void rlUpdateTexture(unsigned int id, int x, int y, int w, int h, int format, co
         return;
     }
 
-    // No frame being recorded (init-time upload): direct host image copy after a full wait
+    // No frame being recorded (init-time upload): staging copy after a full wait, keeping
+    // the texture in SHADER_READ_ONLY around the update
     rlvkWaitInFlightFrames();
-    vk.CopyMemoryToImageEXT(RLVK.device,
-        &(VkCopyMemoryToImageInfoEXT){
-            VK_STRUCTURE_TYPE_COPY_MEMORY_TO_IMAGE_INFO_EXT,
-            .dstImage       = t->image,
-            .dstImageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            .regionCount    = 1,
-            .pRegions       = &(VkMemoryToImageCopyEXT){
-                VK_STRUCTURE_TYPE_MEMORY_TO_IMAGE_COPY_EXT,
-                .pHostPointer     = uploadData,
-                .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
-                .imageOffset      = { x, y, 0 },
-                .imageExtent      = { (u32)w, (u32)h, 1 },
-            },
-        });
+    rlvkStagingUploadImage(t->image, VK_IMAGE_ASPECT_COLOR_BIT, x, y, (u32)w, (u32)h, 0, 1,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        uploadData, (VkDeviceSize)rlvkGetPixelDataSize(w, h, uploadFormat));
     if (converted) RL_FREE(converted);
 }
 
@@ -3856,21 +4435,10 @@ void rlGenTextureMipmaps(unsigned int id, int w, int h, int format, int *mipmaps
     rlvkFlushFrame();
     rlvkWaitInFlightFrames();
 
-    // Read back level 0
+    // Read back level 0 (staging, synchronous; layout preserved)
     unsigned char *level0 = (unsigned char *)RL_MALLOC((size_t)w*h*4);
-    vk.CopyImageToMemoryEXT(RLVK.device,
-        &(VkCopyImageToMemoryInfoEXT){
-            VK_STRUCTURE_TYPE_COPY_IMAGE_TO_MEMORY_INFO_EXT,
-            .srcImage       = t->image,
-            .srcImageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            .regionCount    = 1,
-            .pRegions       = &(VkImageToMemoryCopyEXT){
-                VK_STRUCTURE_TYPE_IMAGE_TO_MEMORY_COPY_EXT,
-                .pHostPointer     = level0,
-                .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
-                .imageExtent      = { (u32)w, (u32)h, 1 },
-            },
-        });
+    rlvkStagingReadImage(t->image, VK_IMAGE_ASPECT_COLOR_BIT, (u32)w, (u32)h,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, level0, (VkDeviceSize)w*h*4);
 
     int mipCount = 1;
     { int mw = w, mh = h; while (mw > 1 || mh > 1) { mw = (mw > 1) ? mw/2 : 1; mh = (mh > 1) ? mh/2 : 1; mipCount++; } }
@@ -3890,61 +4458,90 @@ void rlGenTextureMipmaps(unsigned int id, int w, int h, int format, int *mipmaps
             .tiling        = VK_IMAGE_TILING_OPTIMAL,
             // TRANSFER_DST: render-texture attachments can be rlUpdateTexture'd mid-frame too
             // (game_of_life seeds its world texture that way)
-            .usage         = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_HOST_TRANSFER_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            .usage         = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
             .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
         }, RLVK_ALLOC, &t->image));
     VkMemoryRequirements memReq;
     vkGetImageMemoryRequirements(RLVK.device, t->image, &memReq);
     t->memory = rlvkAllocMemory(memReq, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     RLVK_CHECK(vkBindImageMemory(RLVK.device, t->image, t->memory, 0));
-    vk.TransitionImageLayoutEXT(RLVK.device, 1,
-        &(VkHostImageLayoutTransitionInfoEXT){
-            VK_STRUCTURE_TYPE_HOST_IMAGE_LAYOUT_TRANSITION_INFO_EXT,
-            .image            = t->image,
-            .oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED,
-            .newLayout        = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, (u32)mipCount, 0, 1 },
-        });
-
-    // Upload level 0, then box-filter successive levels
-    unsigned char *src = level0;
-    int srcWidth = w, srcHeight = h;
-    for (int level = 0; level < mipCount; level++)
+    // Box-filter the whole chain on the CPU first, packing every level into one staging
+    // buffer, then upload all levels in a single one-shot submission
+    size_t totalBytes = 0;
+    { int mw = w, mh = h; for (int l = 0; l < mipCount; l++) { totalBytes += (size_t)mw*mh*4; mw = (mw > 1)? mw/2 : 1; mh = (mh > 1)? mh/2 : 1; } }
+    unsigned char *chain = (unsigned char *)RL_MALLOC(totalBytes);
     {
-        vk.CopyMemoryToImageEXT(RLVK.device,
-            &(VkCopyMemoryToImageInfoEXT){
-                VK_STRUCTURE_TYPE_COPY_MEMORY_TO_IMAGE_INFO_EXT,
-                .dstImage       = t->image,
-                .dstImageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                .regionCount    = 1,
-                .pRegions       = &(VkMemoryToImageCopyEXT){
-                    VK_STRUCTURE_TYPE_MEMORY_TO_IMAGE_COPY_EXT,
-                    .pHostPointer     = src,
-                    .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, (u32)level, 0, 1 },
-                    .imageExtent      = { (u32)srcWidth, (u32)srcHeight, 1 },
-                },
-            });
-        if (level == mipCount - 1) break;
-        int dstWidth = (srcWidth > 1) ? srcWidth/2 : 1, dstHeight = (srcHeight > 1) ? srcHeight/2 : 1;
-        unsigned char *dst = (unsigned char *)RL_MALLOC((size_t)dstWidth*dstHeight*4);
-        for (int y = 0; y < dstHeight; y++)
+        unsigned char *src = level0;
+        unsigned char *wPtr = chain;
+        int srcWidth = w, srcHeight = h;
+        for (int level = 0; level < mipCount; level++)
         {
-            int y0 = y*2, y1 = (srcHeight > 1) ? y*2 + 1 : y0;
-            for (int x = 0; x < dstWidth; x++)
+            memcpy(wPtr, src, (size_t)srcWidth*srcHeight*4);
+            wPtr += (size_t)srcWidth*srcHeight*4;
+            if (level == mipCount - 1) break;
+            int dstWidth = (srcWidth > 1) ? srcWidth/2 : 1, dstHeight = (srcHeight > 1) ? srcHeight/2 : 1;
+            unsigned char *dst = (unsigned char *)RL_MALLOC((size_t)dstWidth*dstHeight*4);
+            for (int y = 0; y < dstHeight; y++)
             {
-                int x0 = x*2, x1 = (srcWidth > 1) ? x*2 + 1 : x0;
-                for (int c = 0; c < 4; c++)
+                int y0 = y*2, y1 = (srcHeight > 1) ? y*2 + 1 : y0;
+                for (int x = 0; x < dstWidth; x++)
                 {
-                    int sum = src[(y0*srcWidth + x0)*4 + c] + src[(y0*srcWidth + x1)*4 + c]
-                            + src[(y1*srcWidth + x0)*4 + c] + src[(y1*srcWidth + x1)*4 + c];
-                    dst[(y*dstWidth + x)*4 + c] = (unsigned char)((sum + 2)/4);
+                    int x0 = x*2, x1 = (srcWidth > 1) ? x*2 + 1 : x0;
+                    for (int c = 0; c < 4; c++)
+                    {
+                        int sum = src[(y0*srcWidth + x0)*4 + c] + src[(y0*srcWidth + x1)*4 + c]
+                                + src[(y1*srcWidth + x0)*4 + c] + src[(y1*srcWidth + x1)*4 + c];
+                        dst[(y*dstWidth + x)*4 + c] = (unsigned char)((sum + 2)/4);
+                    }
                 }
             }
+            RL_FREE(src);
+            src = dst; srcWidth = dstWidth; srcHeight = dstHeight;
         }
         RL_FREE(src);
-        src = dst; srcWidth = dstWidth; srcHeight = dstHeight;
     }
-    RL_FREE(src);
+
+    // Staging upload of the packed chain: one buffer, one region per level
+    {
+        VkBuffer staging = VK_NULL_HANDLE; VkDeviceMemory stagingMem = VK_NULL_HANDLE; void *map = NULL;
+        RLVK_CHECK(vkCreateBuffer(RLVK.device,
+            &(VkBufferCreateInfo){ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                .size = totalBytes, .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT, .sharingMode = VK_SHARING_MODE_EXCLUSIVE },
+            RLVK_ALLOC, &staging));
+        VkMemoryRequirements smemReq; vkGetBufferMemoryRequirements(RLVK.device, staging, &smemReq);
+        stagingMem = rlvkAllocMemory(smemReq, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        vkBindBufferMemory(RLVK.device, staging, stagingMem, 0);
+        vkMapMemory(RLVK.device, stagingMem, 0, totalBytes, 0, &map);
+        memcpy(map, chain, totalBytes);
+        vkUnmapMemory(RLVK.device, stagingMem);
+
+        VkCommandPool pool = VK_NULL_HANDLE;
+        VkCommandBuffer oneShot = rlvkOneShotBegin(&pool);
+        if (oneShot != VK_NULL_HANDLE)
+        {
+            rlvkCmdTransitionImage(oneShot, t->image, VK_IMAGE_ASPECT_COLOR_BIT, 0, (u32)mipCount, 0, 1,
+                VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            VkDeviceSize levelOffset = 0;
+            int mw = w, mh = h;
+            for (int level = 0; level < mipCount; level++)
+            {
+                vkCmdCopyBufferToImage(oneShot, staging, t->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                    &(VkBufferImageCopy){
+                        .bufferOffset     = levelOffset,
+                        .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, (u32)level, 0, 1 },
+                        .imageExtent      = { (u32)mw, (u32)mh, 1 },
+                    });
+                levelOffset += (VkDeviceSize)mw*mh*4;
+                mw = (mw > 1)? mw/2 : 1; mh = (mh > 1)? mh/2 : 1;
+            }
+            rlvkCmdTransitionImage(oneShot, t->image, VK_IMAGE_ASPECT_COLOR_BIT, 0, (u32)mipCount, 0, 1,
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            rlvkOneShotEnd(pool, oneShot);
+        }
+        vkDestroyBuffer(RLVK.device, staging, RLVK_ALLOC);
+        vkFreeMemory(RLVK.device, stagingMem, RLVK_ALLOC);
+    }
+    RL_FREE(chain);
 
     RLVK_CHECK(vkCreateImageView(RLVK.device,
         &(VkImageViewCreateInfo){
@@ -3991,22 +4588,11 @@ void *rlReadTexturePixels(unsigned int id, int width, int height, int format)
 
     // GL order: glGetTexImage sees the texture as already-issued commands left it. Execute the
     // current recording first (a render texture read back mid-frame was returning zeros), then
-    // drain in-flight frames before the host-side copy
+    // drain in-flight frames before the staging read-back
     rlvkFlushFrame();
     rlvkWaitInFlightFrames();
-    vk.CopyImageToMemoryEXT(RLVK.device,
-        &(VkCopyImageToMemoryInfoEXT){
-            VK_STRUCTURE_TYPE_COPY_IMAGE_TO_MEMORY_INFO_EXT,
-            .srcImage       = t->image,
-            .srcImageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            .regionCount    = 1,
-            .pRegions       = &(VkImageToMemoryCopyEXT){
-                VK_STRUCTURE_TYPE_IMAGE_TO_MEMORY_COPY_EXT,
-                .pHostPointer     = gpuData,
-                .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
-                .imageExtent      = { (u32)width, (u32)height, 1 },
-            },
-        });
+    rlvkStagingReadImage(t->image, VK_IMAGE_ASPECT_COLOR_BIT, (u32)width, (u32)height,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, gpuData, (VkDeviceSize)gpuBytes);
 
     if (!expanded) return gpuData;
 
@@ -4049,7 +4635,7 @@ unsigned char *rlReadScreenPixels(int width, int height)
     vkBindBufferMemory(RLVK.device, rbBuf, rbMem, 0);
     vkMapMemory(RLVK.device, rbMem, 0, sizeBytes, 0, &rbMapped);
 
-    vk.CmdEndRendering(cmdBuffer);
+    vkCmdEndRenderPass(cmdBuffer);
     rlvkFinishSwapchainImage(cmdBuffer);   // flip-blit the frame into the swapchain
 
     // COLOR_ATTACHMENT_OPTIMAL -> TRANSFER_SRC_OPTIMAL
@@ -4185,25 +4771,20 @@ void rlResizeFramebuffer(int w, int h)                              { (void)w;(v
 //-----------------------------------------------------------------------------------------
 
 // Load (compile) shader and return shader id
+// Stage-compilation model: GL compiles stages separately and links them later. rlvk defers
+// everything to the program step - rlLoadShader just stashes a copy of the GLSL source in
+// the slot; rlLoadShaderProgramCompute (and, later, rlLoadShaderProgramEx) consumes it.
 unsigned int rlLoadShader(const char *code, int type)
 {
     if (!isGpuReady || !code) return RLVK_INVALID_SLOT;
     u32 slot = rlvkAllocShaderSlot();
     if (slot == RLVK_INVALID_SLOT) return RLVK_INVALID_SLOT;
 
-    // Detect SPIR-V vs GLSL by magic number. GLSL compilation needs glslang/shaderc;
-    // the initial accepts SPIR-V only.
-    bool isSpirv = (code[0] == 0x03 && code[1] == 0x02 && code[2] == 0x23 && code[3] == 0x07);
-    if (!isSpirv)
-    {
-        TRACELOG(RL_LOG_ERROR, "RLVK: rlLoadShader received GLSL but glslang is not yet integrated");
-        RLVK.shaderSlots[slot].inUse = false;
-        return RLVK_INVALID_SLOT;
-    }
-
-    // TODO(vk): vkCreateShadersEXT, single-stage, unlinked. Linked variants are constructed
-    //           lazily by rlLoadShaderProgramEx with VK_SHADER_CREATE_LINK_STAGE_BIT_EXT.
-    (void)type;
+    rlvkShaderSlot *s = &RLVK.shaderSlots[slot];
+    size_t len = strlen(code);
+    s->pendingCode = (char *)RL_MALLOC(len + 1);
+    memcpy(s->pendingCode, code, len + 1);
+    s->pendingType = type;
     return slot;
 }
 
@@ -4325,8 +4906,115 @@ unsigned int rlLoadShaderProgram(const char *vsCode, const char *fsCode)
 
 // Load shader program from already loaded shader ids
 unsigned int rlLoadShaderProgramEx(unsigned int vsId, unsigned int fsId)        { (void)vsId;(void)fsId; return RLVK_INVALID_SLOT; }
-// Load compute shader program
-unsigned int rlLoadShaderProgramCompute(unsigned int csId)                       { (void)csId; return RLVK_INVALID_SLOT; }
+
+// Lazily create the fixed compute set-0 layout + pipeline layout + per-frame pools
+static bool rlvkInitComputeLayout(void)
+{
+    if (RLVK.computePipelineLayout != VK_NULL_HANDLE) return true;
+
+    VkDescriptorSetLayoutBinding bindings[15];
+    for (u32 b = 0; b < 8; b++)   bindings[b] = (VkDescriptorSetLayoutBinding){ .binding = b, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,         .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT };
+    for (u32 b = 8; b < 12; b++)  bindings[b] = (VkDescriptorSetLayoutBinding){ .binding = b, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,          .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT };
+    for (u32 b = 12; b < 14; b++) bindings[b] = (VkDescriptorSetLayoutBinding){ .binding = b, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT };
+    bindings[14] = (VkDescriptorSetLayoutBinding){ .binding = 14, .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT };
+    RLVK_CHECK(vkCreateDescriptorSetLayout(RLVK.device,
+        &(VkDescriptorSetLayoutCreateInfo){
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = 15, .pBindings = bindings,
+        }, RLVK_ALLOC, &RLVK.computeSetLayout));
+    RLVK_CHECK(vkCreatePipelineLayout(RLVK.device,
+        &(VkPipelineLayoutCreateInfo){
+            VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            .setLayoutCount = 1, .pSetLayouts = &RLVK.computeSetLayout,
+        }, RLVK_ALLOC, &RLVK.computePipelineLayout));
+    for (int i = 0; i < RLVK_FRAME_INDEX_COUNT; i++)
+        RLVK_CHECK(vkCreateDescriptorPool(RLVK.device,
+            &(VkDescriptorPoolCreateInfo){
+                VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+                .maxSets       = RLVK_COMPUTE_SETS_PER_FRAME,
+                .poolSizeCount = 4,
+                .pPoolSizes    = (VkDescriptorPoolSize[]){
+                    { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,         RLVK_COMPUTE_SETS_PER_FRAME*8 },
+                    { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,          RLVK_COMPUTE_SETS_PER_FRAME*4 },
+                    { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, RLVK_COMPUTE_SETS_PER_FRAME*2 },
+                    { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         RLVK_COMPUTE_SETS_PER_FRAME },
+                },
+            }, RLVK_ALLOC, &RLVK.computeDescPools[i]));
+    return true;
+}
+
+// Load compute shader program: compile the stashed GLSL (shaderc, Vulkan 1.1 target),
+// reflect the loose-uniform block, build the monolithic compute pipeline. Returns csId
+// itself - the stage slot becomes the program slot, mirroring GL id semantics closely
+// enough for raylib's LoadComputeShaderProgram flow.
+unsigned int rlLoadShaderProgramCompute(unsigned int csId)
+{
+    if (!isGpuReady || csId == 0 || csId >= RLVK_MAX_SHADER_SLOTS) return RLVK_INVALID_SLOT;
+    rlvkShaderSlot *shader = &RLVK.shaderSlots[csId];
+    if (!shader->inUse || !shader->pendingCode) return RLVK_INVALID_SLOT;
+    if (!RLVK.shadercCompiler && !rlvkLoadShaderc())
+    {
+        TRACELOG(RL_LOG_WARNING, "RLVK: compute shader needs shaderc (GLSL compiler) - not available");
+        return RLVK_INVALID_SLOT;
+    }
+    if (!rlvkInitComputeLayout()) return RLVK_INVALID_SLOT;
+
+    char *sanitized = rlvkSanitizeGlsl(shader->pendingCode);
+    u32 *spv = NULL; size_t words = 0;
+    bool ok = rlvkCompileGlsl(sanitized ? sanitized : shader->pendingCode, 2, &spv, &words);
+    if (sanitized) RL_FREE(sanitized);
+    RL_FREE(shader->pendingCode);
+    shader->pendingCode = NULL;
+    if (!ok) return RLVK_INVALID_SLOT;
+
+    // Reflect the implicit loose-uniform block (binding 14) + samplers for rlGetLocationUniform
+    rlvkSpvReflection ref;
+    rlvkReflectSpv(spv, words, &ref);
+
+    VkResult r = vkCreateShaderModule(RLVK.device,
+        &(VkShaderModuleCreateInfo){ VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            .codeSize = words*4, .pCode = spv }, RLVK_ALLOC, &shader->compMod);
+    RL_FREE(spv);
+    if (r != VK_SUCCESS) { TRACELOG(RL_LOG_WARNING, "RLVK: vkCreateShaderModule (compute) => %d", (int)r); return RLVK_INVALID_SLOT; }
+
+    r = vkCreateComputePipelines(RLVK.device, RLVK.pipelineCache, 1,
+        &(VkComputePipelineCreateInfo){
+            VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+            .stage = (VkPipelineShaderStageCreateInfo){
+                VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                .stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = shader->compMod, .pName = "main" },
+            .layout = RLVK.computePipelineLayout,
+        }, RLVK_ALLOC, &shader->computePipeline);
+    if (r != VK_SUCCESS) { TRACELOG(RL_LOG_WARNING, "RLVK: vkCreateComputePipelines => %d", (int)r); return RLVK_INVALID_SLOT; }
+
+    for (int i = 0; i < RL_MAX_SHADER_LOCATIONS; i++) shader->locs[i] = -1;
+    for (int i = 0; i < RLVK_MAX_TEXTURE_UNITS; i++) { shader->bindingUnit[i] = i; shader->bindingTexture[i] = 0; }
+    shader->uniforms = (rlvkUniform *)RL_CALLOC(RLVK_MAX_SHADER_UNIFORMS, sizeof(rlvkUniform));
+    shader->uniformCount = 0;
+    for (int m = 0; m < ref.memberCount && shader->uniformCount < RLVK_MAX_SHADER_UNIFORMS; m++)
+    {
+        rlvkUniform *u = &shader->uniforms[shader->uniformCount++];
+        strncpy(u->name, ref.members[m].name, 63);
+        u->vsOffset = (int)ref.members[m].offset;   // compute block rides the VS staging fields
+        u->fsOffset = -1;
+        u->samplerBinding = -1;
+    }
+    for (int sm = 0; sm < ref.samplerCount && shader->uniformCount < RLVK_MAX_SHADER_UNIFORMS; sm++)
+    {
+        rlvkUniform *u = &shader->uniforms[shader->uniformCount++];
+        strncpy(u->name, ref.samplers[sm].name, 63);
+        u->vsOffset = -1; u->fsOffset = -1;
+        u->samplerBinding = ref.samplers[sm].binding;
+    }
+    shader->vsBlockSize = ref.hasBlock ? ref.blockSize : 0;
+    shader->vsStage = shader->vsBlockSize ? (unsigned char *)RL_CALLOC(1, shader->vsBlockSize) : NULL;
+    shader->usesUbo = (shader->vsBlockSize > 0);
+    shader->isCompute = true;
+
+    TRACELOG(RL_LOG_INFO, "RLVK: [ID %u] compute program compiled (%d uniforms, block %uB at binding %u)",
+        csId, shader->uniformCount, shader->vsBlockSize, ref.blockBinding);
+    return csId;
+}
 
 // Delete shader
 void rlUnloadShader(unsigned int id)
@@ -4349,6 +5037,9 @@ void rlUnloadShader(unsigned int id)
     s_pipelineFastValid = false;
     if (s->vertMod) vkDestroyShaderModule(RLVK.device, s->vertMod, RLVK_ALLOC);
     if (s->fragMod) vkDestroyShaderModule(RLVK.device, s->fragMod, RLVK_ALLOC);
+    if (s->compMod) vkDestroyShaderModule(RLVK.device, s->compMod, RLVK_ALLOC);
+    if (s->computePipeline) rlvkDeferDestroy(VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, s->computePipeline);
+    if (s->pendingCode) RL_FREE(s->pendingCode);
     if (s->uniforms) RL_FREE(s->uniforms);
     if (s->vsStage) RL_FREE(s->vsStage);
     if (s->fsStage) RL_FREE(s->fsStage);
@@ -4495,38 +5186,296 @@ void rlSetShader(unsigned int id, int *locs)
 // Compute shaders and shader buffer objects (SSBO)
 //-----------------------------------------------------------------------------------------
 
-// Dispatch compute shader (equivalent to *draw* for graphics pilepine)
+// Dispatch compute shader (equivalent to *draw* for graphics pipeline). Core 1.0 compute:
+// suspends the open render scope (dispatch is illegal inside a render pass), snapshots the
+// GL-style bind state into a fresh descriptor set, dispatches, and fences the writes so
+// later vertex/fragment/transfer reads observe them.
 void rlComputeShaderDispatch(unsigned int gx, unsigned int gy, unsigned int gz)
-{ (void)gx;(void)gy;(void)gz; }
+{
+    rlvkShaderSlot *shader = &RLVK.shaderSlots[RLVK.State.activeShaderSlot];
+    if (!isGpuReady || !shader->isCompute || (shader->computePipeline == VK_NULL_HANDLE)) return;
 
-// Load shader storage buffer object (SSBO)
+    u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
+    bool inFrame = RLVK.frameActive;
+    VkCommandPool oneShotPool = VK_NULL_HANDLE;
+    VkCommandBuffer cmdBuffer;
+    u32 openFb = 0;
+    if (inFrame)
+    {
+        cmdBuffer = RLVK.cmdBuffers[frameIndex];
+        openFb = RLVK.scope.fbSlot;
+        if (openFb) rlDisableFramebuffer();
+        vkCmdEndRenderPass(cmdBuffer);
+    }
+    else
+    {
+        cmdBuffer = rlvkOneShotBegin(&oneShotPool);   // init-time dispatch (seeding etc.)
+        if (cmdBuffer == VK_NULL_HANDLE) return;
+    }
+
+    // Snapshot descriptor set: bound SSBOs, storage images, sampler uniforms, uniform block
+    VkDescriptorSet ds = VK_NULL_HANDLE;
+    vkAllocateDescriptorSets(RLVK.device,
+        &(VkDescriptorSetAllocateInfo){
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .descriptorPool = RLVK.computeDescPools[frameIndex],
+            .descriptorSetCount = 1, .pSetLayouts = &RLVK.computeSetLayout,
+        }, &ds);
+    if (ds != VK_NULL_HANDLE)
+    {
+        VkWriteDescriptorSet  writes[18];      // 8 SSBO + 2 sampler defaults + 4 images + 2 sampler uniforms + 1 UBO
+        VkDescriptorBufferInfo bufInfos[9];
+        VkDescriptorImageInfo  imgInfos[8];
+        u32 nWrites = 0, nBuf = 0, nImg = 0;
+        // Every SSBO binding gets a valid buffer (unbound slots alias the arena): unwritten
+        // "hole" bindings in a set are technically legal for unused bindings, but MoltenVK's
+        // Metal argument mapping is happier - and it costs nothing
+        for (u32 i = 0; i < 8; i++)
+        {
+            u32 slot = RLVK.computeSSBO[i];
+            bool bound = (slot && slot < RLVK_MAX_BUFFER_SLOTS && RLVK.bufferSlots[slot].buffer != VK_NULL_HANDLE);
+            bufInfos[nBuf] = bound
+                ? (VkDescriptorBufferInfo){ RLVK.bufferSlots[slot].buffer, 0, RLVK.bufferSlots[slot].sizeBytes }
+                : (VkDescriptorBufferInfo){ RLVK.arena[frameIndex].buffer, 0, 16 };
+            writes[nWrites++] = (VkWriteDescriptorSet){ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds,
+                .dstBinding = i, .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .pBufferInfo = &bufInfos[nBuf] };
+            nBuf++;
+        }
+        // Sampler bindings always get the default texture (overridden below when a sampler
+        // uniform names a real one)
+        for (u32 b = 12; b <= 13; b++)
+        {
+            rlvkTextureSlot *dt = &RLVK.textureSlots[RLVK.defaultTextureSlot];
+            imgInfos[nImg] = (VkDescriptorImageInfo){ .sampler = dt->sampler, .imageView = dt->view, .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            writes[nWrites++] = (VkWriteDescriptorSet){ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds,
+                .dstBinding = b, .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &imgInfos[nImg] };
+            nImg++;
+        }
+        for (u32 i = 0; i < 4; i++)
+        {
+            u32 slot = RLVK.computeImage[i];
+            if (!slot || slot >= RLVK_MAX_TEXTURE_SLOTS || RLVK.textureSlots[slot].view == VK_NULL_HANDLE) continue;
+            imgInfos[nImg] = (VkDescriptorImageInfo){ .imageView = RLVK.textureSlots[slot].view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
+            writes[nWrites++] = (VkWriteDescriptorSet){ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds,
+                .dstBinding = 8 + i, .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .pImageInfo = &imgInfos[nImg] };
+            nImg++;
+        }
+        // Sampler uniforms (bindings 12..13): rlSetUniformSampler's explicit texture, else default
+        for (int u = 0; u < shader->uniformCount; u++)
+        {
+            int b = shader->uniforms[u].samplerBinding;
+            if (b < 12 || b > 13) continue;
+            u32 texSlot = shader->bindingTexture[b];
+            rlvkTextureSlot *t = &RLVK.textureSlots[(texSlot && texSlot < RLVK_MAX_TEXTURE_SLOTS)? texSlot : RLVK.defaultTextureSlot];
+            if (t->currentLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL || !t->view) t = &RLVK.textureSlots[RLVK.defaultTextureSlot];
+            imgInfos[nImg] = (VkDescriptorImageInfo){ .sampler = t->sampler, .imageView = t->view, .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            writes[nWrites++] = (VkWriteDescriptorSet){ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds,
+                .dstBinding = (u32)b, .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &imgInfos[nImg] };
+            nImg++;
+        }
+        // Loose-uniform block (binding 14): snapshot the staging block into the frame arena
+        if (shader->vsBlockSize && shader->vsStage)
+        {
+            rlvkBatchBackingBuffer *arena = &RLVK.arena[frameIndex];
+            VkDeviceSize off = (RLVK.arenaOffset[frameIndex] + 255) & ~(VkDeviceSize)255;
+            if (off + shader->vsBlockSize <= arena->sizeBytes)
+            {
+                memcpy((char *)arena->mapped + off, shader->vsStage, shader->vsBlockSize);
+                TRACELOG(RL_LOG_INFO, "RLVK-DBG dispatch ubo: off=%u stage[0]=%f arena[0]=%f block=%u", (u32)off, *(const f32 *)shader->vsStage, *(const f32 *)((char *)arena->mapped + off), shader->vsBlockSize);
+                RLVK.arenaOffset[frameIndex] = off + shader->vsBlockSize;
+                RLVK.arenaWanted[frameIndex] += shader->vsBlockSize + 256;
+                bufInfos[nBuf] = (VkDescriptorBufferInfo){ arena->buffer, off, shader->vsBlockSize };
+                if (getenv("RLVK_DBG_DEDICATED_UBO"))   // debug probe: dedicated UNIFORM-only buffer instead of the arena (leaks, debug only)
+                {
+                    VkBuffer dbgBuf = VK_NULL_HANDLE; VkDeviceMemory dbgMem = VK_NULL_HANDLE; void *dbgMap = NULL;
+                    vkCreateBuffer(RLVK.device, &(VkBufferCreateInfo){ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                        .size = shader->vsBlockSize, .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                        .sharingMode = VK_SHARING_MODE_EXCLUSIVE }, RLVK_ALLOC, &dbgBuf);
+                    VkMemoryRequirements mr; vkGetBufferMemoryRequirements(RLVK.device, dbgBuf, &mr);
+                    dbgMem = rlvkAllocMemory(mr, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                    vkBindBufferMemory(RLVK.device, dbgBuf, dbgMem, 0);
+                    vkMapMemory(RLVK.device, dbgMem, 0, shader->vsBlockSize, 0, &dbgMap);
+                    memcpy(dbgMap, shader->vsStage, shader->vsBlockSize);
+                    vkUnmapMemory(RLVK.device, dbgMem);
+                    bufInfos[nBuf] = (VkDescriptorBufferInfo){ dbgBuf, 0, shader->vsBlockSize };
+                    TRACELOG(RL_LOG_INFO, "RLVK-DBG dedicated UBO probe active");
+                }
+                writes[nWrites++] = (VkWriteDescriptorSet){ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds,
+                    .dstBinding = 14, .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .pBufferInfo = &bufInfos[nBuf] };
+                nBuf++;
+            }
+            else TRACELOG(RL_LOG_WARNING, "RLVK: arena full, compute uniforms skipped this dispatch");
+        }
+        if (nWrites) vkUpdateDescriptorSets(RLVK.device, nWrites, writes, 0, NULL);
+
+        vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, shader->computePipeline);
+        vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, RLVK.computePipelineLayout, 0, 1, &ds, 0, NULL);
+        vkCmdDispatch(cmdBuffer, gx, gy, gz);
+
+        // glMemoryBarrier semantics: compute writes visible to every later consumer
+        vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
+            VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .memoryBarrierCount = 1,
+            .pMemoryBarriers = &(VkMemoryBarrier2){
+                VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                .srcStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                .srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                .dstStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT
+                               | VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_TRANSFER_READ_BIT
+                               | VK_ACCESS_2_UNIFORM_READ_BIT,
+            },
+        });
+    }
+    else TRACELOG(RL_LOG_WARNING, "RLVK: compute descriptor pool exhausted - raise RLVK_COMPUTE_SETS_PER_FRAME");
+
+    if (inFrame)
+    {
+        rlvkResumeSwapchainScope(cmdBuffer);
+        if (openFb) rlEnableFramebuffer(openFb);
+    }
+    else rlvkOneShotEnd(oneShotPool, cmdBuffer);
+}
+
+// Load shader storage buffer object (SSBO): DEVICE_LOCAL storage buffer, optional initial data
 unsigned int rlLoadShaderBuffer(unsigned int size, const void *data, int usageHint)
 {
-    if (!isGpuReady) return RLVK_INVALID_SLOT;
+    if (!isGpuReady || size == 0) return RLVK_INVALID_SLOT;
     u32 slot = rlvkAllocBufferSlot();
     if (slot == RLVK_INVALID_SLOT) return RLVK_INVALID_SLOT;
     rlvkBufferSlot *b = &RLVK.bufferSlots[slot];
     b->sizeBytes = size;
     b->usageHint = usageHint;
-    // TODO(vk): SSBO backing for compute dispatch (the one known feature gap): create a
-    //           STORAGE_BUFFER and bind it through a descriptor path when compute lands.
-    (void)data;
+    b->isIndex   = false;
+    RLVK_CHECK(vkCreateBuffer(RLVK.device,
+        &(VkBufferCreateInfo){ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size  = size,
+            .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
+                   | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,   // particle systems draw straight from their SSBO
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE }, RLVK_ALLOC, &b->buffer));
+    VkMemoryRequirements memReq; vkGetBufferMemoryRequirements(RLVK.device, b->buffer, &memReq);
+    b->memory = rlvkAllocMemory(memReq, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    vkBindBufferMemory(RLVK.device, b->buffer, b->memory, 0);
+    if (data) rlvkUploadBuffer(b->buffer, 0, data, size);
     return slot;
 }
 
-// Unload shader storage buffer object (SSBO)
-void rlUnloadShaderBuffer(unsigned int id)                                                { if (id != 0 && id < RLVK_MAX_BUFFER_SLOTS) { RLVK.bufferSlots[id].inUse = false; RLVK.bufferSlots[id].freedFrame = (u32)RLVK.frameCounter; } }
-// Update SSBO buffer data
-void rlUpdateShaderBuffer(unsigned int id, const void *d, unsigned int s, unsigned int o) { (void)id;(void)d;(void)s;(void)o; }
-void rlBindShaderBuffer  (unsigned int id, unsigned int index)                             { (void)id;(void)index; }
-void rlReadShaderBuffer  (unsigned int id, void *d, unsigned int c, unsigned int o)       { (void)id;(void)d;(void)c;(void)o; }
-void rlCopyShaderBuffer  (unsigned int dst, unsigned int src, unsigned int dOff, unsigned int sOff, unsigned int c)
-{ (void)dst;(void)src;(void)dOff;(void)sOff;(void)c; }
+// Unload shader storage buffer object (SSBO): fence-gated like every other GPU object
+void rlUnloadShaderBuffer(unsigned int id)
+{
+    if (id == 0 || id >= RLVK_MAX_BUFFER_SLOTS) return;
+    rlvkBufferSlot *b = &RLVK.bufferSlots[id];
+    rlvkDeferDestroy(b->buffer, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, b->memory, VK_NULL_HANDLE);
+    b->buffer = VK_NULL_HANDLE; b->memory = VK_NULL_HANDLE; b->mapped = NULL;
+    b->inUse = false;
+    b->freedFrame = (u32)RLVK.frameCounter;
+    for (u32 i = 0; i < 8; i++) if (RLVK.computeSSBO[i] == id) RLVK.computeSSBO[i] = 0;
+}
+
+// Update SSBO buffer data (in-stream mid-frame, one-shot staging at load time)
+void rlUpdateShaderBuffer(unsigned int id, const void *data, unsigned int dataSize, unsigned int offset)
+{
+    if (id == 0 || id >= RLVK_MAX_BUFFER_SLOTS || !data || !dataSize) return;
+    rlvkBufferSlot *b = &RLVK.bufferSlots[id];
+    if (b->buffer == VK_NULL_HANDLE) return;
+    rlvkUploadBuffer(b->buffer, offset, data, dataSize);
+}
+
+// Bind SSBO at an indexed binding point (GL glBindBufferBase semantics, consumed at dispatch)
+void rlBindShaderBuffer(unsigned int id, unsigned int index)
+{
+    if (index >= 8) { TRACELOG(RL_LOG_WARNING, "RLVK: SSBO binding %u out of range (max 8)", index); return; }
+    RLVK.computeSSBO[index] = (id < RLVK_MAX_BUFFER_SLOTS)? id : 0;
+}
+
+// Read SSBO buffer data (GPU->CPU): synchronous, GL glGetBufferSubData semantics
+void rlReadShaderBuffer(unsigned int id, void *dest, unsigned int count, unsigned int offset)
+{
+    if (id == 0 || id >= RLVK_MAX_BUFFER_SLOTS || !dest || !count) return;
+    rlvkBufferSlot *b = &RLVK.bufferSlots[id];
+    if (b->buffer == VK_NULL_HANDLE) return;
+
+    // Execute everything recorded so far, then drain, so the read observes GL command order
+    rlvkFlushFrame();
+    rlvkWaitInFlightFrames();
+
+    VkBuffer staging = VK_NULL_HANDLE; VkDeviceMemory stagingMem = VK_NULL_HANDLE; void *map = NULL;
+    RLVK_CHECK(vkCreateBuffer(RLVK.device,
+        &(VkBufferCreateInfo){ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = count, .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT, .sharingMode = VK_SHARING_MODE_EXCLUSIVE },
+        RLVK_ALLOC, &staging));
+    VkMemoryRequirements memReq; vkGetBufferMemoryRequirements(RLVK.device, staging, &memReq);
+    stagingMem = rlvkAllocMemory(memReq, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    vkBindBufferMemory(RLVK.device, staging, stagingMem, 0);
+
+    VkCommandPool pool = VK_NULL_HANDLE;
+    VkCommandBuffer cmdBuffer = rlvkOneShotBegin(&pool);
+    if (cmdBuffer != VK_NULL_HANDLE)
+    {
+        vkCmdCopyBuffer(cmdBuffer, b->buffer, staging, 1, &(VkBufferCopy){ .srcOffset = offset, .size = count });
+        rlvkOneShotEnd(pool, cmdBuffer);
+        vkMapMemory(RLVK.device, stagingMem, 0, count, 0, &map);
+        memcpy(dest, map, count);
+        vkUnmapMemory(RLVK.device, stagingMem);
+    }
+    vkDestroyBuffer(RLVK.device, staging, RLVK_ALLOC);
+    vkFreeMemory(RLVK.device, stagingMem, RLVK_ALLOC);
+}
+
+// Copy SSBO data between buffers (GPU-side)
+void rlCopyShaderBuffer(unsigned int destId, unsigned int srcId, unsigned int destOffset, unsigned int srcOffset, unsigned int count)
+{
+    if (destId == 0 || destId >= RLVK_MAX_BUFFER_SLOTS || srcId == 0 || srcId >= RLVK_MAX_BUFFER_SLOTS || !count) return;
+    rlvkBufferSlot *dst = &RLVK.bufferSlots[destId], *src = &RLVK.bufferSlots[srcId];
+    if (dst->buffer == VK_NULL_HANDLE || src->buffer == VK_NULL_HANDLE) return;
+
+    if (RLVK.frameActive)
+    {
+        // In-stream: suspend the scope like every other mid-frame copy
+        u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
+        VkCommandBuffer cmdBuffer = RLVK.cmdBuffers[frameIndex];
+        u32 openFb = RLVK.scope.fbSlot;
+        if (openFb) rlDisableFramebuffer();
+        vkCmdEndRenderPass(cmdBuffer);
+        vkCmdCopyBuffer(cmdBuffer, src->buffer, dst->buffer, 1,
+            &(VkBufferCopy){ .srcOffset = srcOffset, .dstOffset = destOffset, .size = count });
+        vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
+            VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .memoryBarrierCount = 1,
+            .pMemoryBarriers = &(VkMemoryBarrier2){
+                VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                .srcStageMask  = VK_PIPELINE_STAGE_2_COPY_BIT,
+                .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                .dstStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT,
+            },
+        });
+        rlvkResumeSwapchainScope(cmdBuffer);
+        if (openFb) rlEnableFramebuffer(openFb);
+    }
+    else
+    {
+        VkCommandPool pool = VK_NULL_HANDLE;
+        VkCommandBuffer cmdBuffer = rlvkOneShotBegin(&pool);
+        if (cmdBuffer == VK_NULL_HANDLE) return;
+        vkCmdCopyBuffer(cmdBuffer, src->buffer, dst->buffer, 1,
+            &(VkBufferCopy){ .srcOffset = srcOffset, .dstOffset = destOffset, .size = count });
+        rlvkOneShotEnd(pool, cmdBuffer);
+    }
+}
+
 // Get SSBO buffer size
 unsigned int rlGetShaderBufferSize(unsigned int id) { return (id < RLVK_MAX_BUFFER_SLOTS) ? RLVK.bufferSlots[id].sizeBytes : 0; }
 
-// Bind image texture
-void rlBindImageTexture(unsigned int id, unsigned int idx, int f, bool ro) { (void)id;(void)idx;(void)f;(void)ro; }
+// Bind image texture at an image unit (GL glBindImageTexture semantics, consumed at dispatch).
+// NOTE: the texture must have been created with STORAGE usage; textures loaded through
+// rlLoadTexture are sampled-only today, so image load/store consumers need a dedicated path.
+void rlBindImageTexture(unsigned int id, unsigned int index, int format, bool readonly)
+{
+    (void)format; (void)readonly;
+    if (index >= 4) { TRACELOG(RL_LOG_WARNING, "RLVK: image unit %u out of range (max 4)", index); return; }
+    RLVK.computeImage[index] = (id < RLVK_MAX_TEXTURE_SLOTS)? id : 0;
+}
 
 // Matrix state management
 //-----------------------------------------------------------------------------------------
@@ -4589,6 +5538,7 @@ void rlLoadDrawQuad(void)
         rlvkBindShaderUbos(cmdBuffer, shader);
         rlvkBindShaderSamplers(cmdBuffer, shader, true);
     }
+    rlvkFlushSet0(cmdBuffer);
     vk.CmdDraw(cmdBuffer, 4, 1, 0, 0);
 }
 
@@ -4600,16 +5550,45 @@ void rlLoadDrawQuad(void)
 static bool rlvkInitInstance(void)
 {
     // Surface extensions so the platform layer can create a VkSurfaceKHR (via glfwCreateWindowSurface).
-    static const char *instanceExtensions[] = {
-        VK_KHR_SURFACE_EXTENSION_NAME,
+    const char *instanceExtensions[4];
+    u32 instanceExtensionCount = 0;
+    instanceExtensions[instanceExtensionCount++] = VK_KHR_SURFACE_EXTENSION_NAME;
 #if defined(_WIN32)
-        "VK_KHR_win32_surface",
+    instanceExtensions[instanceExtensionCount++] = "VK_KHR_win32_surface";
+#elif defined(__ANDROID__)
+    instanceExtensions[instanceExtensionCount++] = "VK_KHR_android_surface";
 #elif defined(__APPLE__)
-        "VK_EXT_metal_surface",
+    instanceExtensions[instanceExtensionCount++] = "VK_EXT_metal_surface";
 #else
-        "VK_KHR_xcb_surface",
+    instanceExtensions[instanceExtensionCount++] = "VK_KHR_xcb_surface";
 #endif
-    };
+
+    // Baseline is Vulkan 1.1; ask for 1.3 only when the loader has it, so devices that
+    // still expose the 1.3 fast paths (queried per-feature at device creation) may use them.
+    // vkEnumerateInstanceVersion is a core 1.1 loader export - the 1.1 baseline requires it.
+    u32 loaderVersion = VK_API_VERSION_1_1;
+    vkEnumerateInstanceVersion(&loaderVersion);
+    u32 apiVersion = (loaderVersion >= VK_API_VERSION_1_3) ? VK_API_VERSION_1_3 : VK_API_VERSION_1_1;
+
+    // MoltenVK (macOS) is a non-conformant "portability" ICD: recent loaders hide it unless
+    // VK_KHR_portability_enumeration is enabled with the matching create flag
+    VkInstanceCreateFlags instanceFlags = 0;
+    {
+        u32 propCount = 0;
+        vkEnumerateInstanceExtensionProperties(NULL, &propCount, NULL);
+        VkExtensionProperties *props = (VkExtensionProperties *)RL_MALLOC(propCount*sizeof(VkExtensionProperties));
+        vkEnumerateInstanceExtensionProperties(NULL, &propCount, props);
+        for (u32 i = 0; i < propCount; i++)
+        {
+            if (strcmp(props[i].extensionName, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME) == 0)
+            {
+                instanceExtensions[instanceExtensionCount++] = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+                instanceFlags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+                break;
+            }
+        }
+        RL_FREE(props);
+    }
 
     // DESIGN NOTE: rlvk never enables validation layers itself; that stays a developer-machine
     // choice via vkconfig / loader settings (zero layer overhead by default, reconfigurable
@@ -4677,17 +5656,18 @@ static bool rlvkInitInstance(void)
                     .pValues      = messageIdFilter,
                 },
             },
+            .flags = instanceFlags,
             .pApplicationInfo = &(VkApplicationInfo){
                 VK_STRUCTURE_TYPE_APPLICATION_INFO,
                 .pApplicationName = "raylib",
-                .apiVersion       = VK_API_VERSION_1_3,
+                .apiVersion       = apiVersion,
             },
-            .enabledExtensionCount   = RLVK_COUNTOF(instanceExtensions),
+            .enabledExtensionCount   = instanceExtensionCount,
             .ppEnabledExtensionNames = instanceExtensions,
         }, RLVK_ALLOC, &RLVK.instance) == VK_SUCCESS;
 }
 
-// Pick the physical device: first discrete GPU supporting Vulkan 1.3
+// Pick the physical device: best-scoring GPU supporting Vulkan 1.1+ (discrete first, newer API as tiebreak)
 static bool rlvkPickPhysicalDevice(void)
 {
     u32 count = 0;
@@ -4726,9 +5706,10 @@ static bool rlvkPickPhysicalDevice(void)
         {
             VkPhysicalDeviceProperties props;
             vkGetPhysicalDeviceProperties(devs[i], &props);
-            if (props.apiVersion < VK_API_VERSION_1_3) continue;
+            if (props.apiVersion < VK_API_VERSION_1_1) continue;   // 1.1 is the hard floor
 
             int score = (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) ? 100 : 50;
+            if (props.apiVersion >= VK_API_VERSION_1_3) score += 10;   // richer fast-path caps as tiebreak
             if (score > bestScore) { bestScore = score; best = devs[i]; }
         }
     }
@@ -4737,9 +5718,15 @@ static bool rlvkPickPhysicalDevice(void)
     RLVK.physicalDevice = best;
 
     // Log the selected device (mirrors the GL backend's device info output)
+    // VkPhysicalDeviceDriverProperties needs 1.2 / VK_KHR_driver_properties; on a plain 1.1
+    // device the struct must not be chained (driverName/driverInfo stay empty strings)
+    VkPhysicalDeviceProperties baseProps;
+    vkGetPhysicalDeviceProperties(best, &baseProps);
     VkPhysicalDeviceDriverProperties driverProps = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES };
-    VkPhysicalDeviceProperties2 props2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &driverProps };
+    VkPhysicalDeviceProperties2 props2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+        (baseProps.apiVersion >= VK_API_VERSION_1_2) ? &driverProps : NULL };
     vkGetPhysicalDeviceProperties2(best, &props2);
+    RLVK.Caps.apiVersion = props2.properties.apiVersion;
     TRACELOG(RL_LOG_INFO, "RLVK: Vulkan device information:");
     TRACELOG(RL_LOG_INFO, "    > Device:   %s", props2.properties.deviceName);
     TRACELOG(RL_LOG_INFO, "    > Driver:   %s %s", driverProps.driverName, driverProps.driverInfo);
@@ -4764,94 +5751,75 @@ static bool rlvkPickPhysicalDevice(void)
     return RLVK.graphicsFamily != UINT32_MAX;
 }
 
-// Initialize the logical device with the required features and extensions
+// Initialize the logical device: VK_KHR_swapchain is the only hard requirement (1.1 baseline);
+// every other extension/feature is enumerated, recorded in RLVK.Caps, and enabled when present
 static bool rlvkInitLogicalDevice(void)
 {
-    const char *deviceExtensions[RLVK_DEV_EXT_COUNT + 4] = {
-        [RLVK_DEV_EXT_DEPTH_CLIP_CONTROL] = VK_EXT_DEPTH_CLIP_CONTROL_EXTENSION_NAME,
-        [RLVK_DEV_EXT_SWAPCHAIN         ] = VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-        [RLVK_DEV_EXT_PUSH_DESCRIPTOR   ] = VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
-        [RLVK_DEV_EXT_HOST_IMAGE_COPY   ] = VK_EXT_HOST_IMAGE_COPY_EXTENSION_NAME,
-        [RLVK_DEV_EXT_LINE_RASTERIZATION] = VK_EXT_LINE_RASTERIZATION_EXTENSION_NAME,
-        [RLVK_DEV_EXT_VERTEX_ATTRIBUTE_DIVISOR] = VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME,
-    };
-    u32 deviceExtensionCount = RLVK_DEV_EXT_COUNT;
+    const char *deviceExtensions[12];
+    u32 deviceExtensionCount = 0;
 
-    // OPTIONAL: memory-priority extensions (NVIDIA best practice: hint eviction priority on
-    // every allocation). Enabled when supported; rlvkAllocMemory chains the priority then.
+    // Extension roll-call
+    bool hasSwapchain = false, hasPushDesc = false;
+    bool hasLineRasterEXT = false, hasLineRasterKHR = false;
+    bool hasPriority = false, hasPageable = false, hasGpl = false, hasPipelineLibrary = false;
+    bool hasPortabilitySubset = false;
     {
         u32 propCount = 0;
         vkEnumerateDeviceExtensionProperties(RLVK.physicalDevice, NULL, &propCount, NULL);
         VkExtensionProperties *props = (VkExtensionProperties *)RL_MALLOC(propCount*sizeof(VkExtensionProperties));
         vkEnumerateDeviceExtensionProperties(RLVK.physicalDevice, NULL, &propCount, props);
-        bool hasPriority = false, hasPageable = false, hasGpl = false, hasPipelineLibrary = false;
-        bool hasLineRasterKHR = false, hasDivisorKHR = false;
         for (u32 i = 0; i < propCount; i++)
         {
-            if (strcmp(props[i].extensionName, VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME) == 0) hasPriority = true;
-            if (strcmp(props[i].extensionName, VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME) == 0) hasPageable = true;
-            if (strcmp(props[i].extensionName, VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME) == 0) hasGpl = true;
-            if (strcmp(props[i].extensionName, VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME) == 0) hasPipelineLibrary = true;
-            if (strcmp(props[i].extensionName, VK_KHR_LINE_RASTERIZATION_EXTENSION_NAME) == 0) hasLineRasterKHR = true;
-            if (strcmp(props[i].extensionName, VK_KHR_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME) == 0) hasDivisorKHR = true;
+            const char *n = props[i].extensionName;
+            if      (strcmp(n, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0)                  hasSwapchain = true;
+            else if (strcmp(n, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME) == 0)            hasPushDesc = true;
+            else if (strcmp(n, VK_EXT_LINE_RASTERIZATION_EXTENSION_NAME) == 0)         hasLineRasterEXT = true;
+            else if (strcmp(n, VK_KHR_LINE_RASTERIZATION_EXTENSION_NAME) == 0)         hasLineRasterKHR = true;
+            else if (strcmp(n, VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME) == 0)            hasPriority = true;
+            else if (strcmp(n, VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME) == 0) hasPageable = true;
+            else if (strcmp(n, VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME) == 0)  hasGpl = true;
+            else if (strcmp(n, VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME) == 0)           hasPipelineLibrary = true;
+            else if (strcmp(n, "VK_KHR_portability_subset") == 0)                      hasPortabilitySubset = true;
         }
         RL_FREE(props);
+    }
+    if (!hasSwapchain) { TRACELOG(RL_LOG_FATAL, "RLVK: required device extension not supported: %s", VK_KHR_SWAPCHAIN_EXTENSION_NAME); return false; }
 
-        // Prefer the KHR spellings of the two EXT-then-KHR-promoted requirements when the driver
-        // ships them (identical features, aliased structs); the EXT names remain the fallback
-        // for older 1.3 drivers that predate the KHR versions
-        if (hasLineRasterKHR) deviceExtensions[RLVK_DEV_EXT_LINE_RASTERIZATION] = VK_KHR_LINE_RASTERIZATION_EXTENSION_NAME;
-        if (hasDivisorKHR) deviceExtensions[RLVK_DEV_EXT_VERTEX_ATTRIBUTE_DIVISOR] = VK_KHR_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME;
-        if (hasPriority) deviceExtensions[deviceExtensionCount++] = VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME;
-        if (hasPriority && hasPageable) deviceExtensions[deviceExtensionCount++] = VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME;
-        if (hasGpl && hasPipelineLibrary)
-        {
-            deviceExtensions[deviceExtensionCount++] = VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME;   // required by graphics_pipeline_library
-            deviceExtensions[deviceExtensionCount++] = VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME;
-        }
-        RLVK.Caps.memoryPriority = hasPriority;
-        RLVK.Caps.pageableMemory = (hasPriority && hasPageable);
-        RLVK.Caps.graphicsPipelineLibrary = (hasGpl && hasPipelineLibrary);
+    // Feature query: chain each optional struct only when its extension exists (chaining a
+    // struct of an unsupported extension is invalid); 1.3 core features only on 1.3+ devices
+    VkPhysicalDeviceLineRasterizationFeaturesEXT qLine = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_LINE_RASTERIZATION_FEATURES_EXT };
+    VkPhysicalDeviceVulkan13Features q13 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
+    VkPhysicalDeviceFeatures2 q2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+    {
+        void **qTail = &q2.pNext;
+        #define RLVK_CHAIN_IF(_cond, _s) if (_cond) { *qTail = (void *)&_s; qTail = &_s.pNext; }
+        RLVK_CHAIN_IF(hasLineRasterEXT || hasLineRasterKHR, qLine);
+        RLVK_CHAIN_IF(RLVK.Caps.apiVersion >= VK_API_VERSION_1_3, q13);
+        #undef RLVK_CHAIN_IF
+        vkGetPhysicalDeviceFeatures2(RLVK.physicalDevice, &q2);
     }
 
-    // REQUIRED support precheck: vkCreateDevice fails wholesale on any unsupported request
-    // (spec: all requested extensions and features must be supported), which yields a useless
-    // generic error. Check each requirement and name exactly what is missing.
-    {
-        u32 propCount = 0;
-        vkEnumerateDeviceExtensionProperties(RLVK.physicalDevice, NULL, &propCount, NULL);
-        VkExtensionProperties *props = (VkExtensionProperties *)RL_MALLOC(propCount*sizeof(VkExtensionProperties));
-        vkEnumerateDeviceExtensionProperties(RLVK.physicalDevice, NULL, &propCount, props);
-        bool missing = false;
-        for (u32 e = 0; e < RLVK_DEV_EXT_COUNT; e++)
-        {
-            bool found = false;
-            for (u32 i = 0; i < propCount; i++)
-                if (strcmp(props[i].extensionName, deviceExtensions[e]) == 0) { found = true; break; }
-            if (!found) { TRACELOG(RL_LOG_FATAL, "RLVK: required device extension not supported: %s", deviceExtensions[e]); missing = true; }
-        }
-        RL_FREE(props);
+    RLVK.Caps.dynamicRendering  = (RLVK.Caps.apiVersion >= VK_API_VERSION_1_3) && q13.dynamicRendering;
+    RLVK.Caps.synchronization2  = (RLVK.Caps.apiVersion >= VK_API_VERSION_1_3) && q13.synchronization2;
+    RLVK.Caps.pushDescriptor    = hasPushDesc;
+    RLVK.Caps.bresenhamLines    = (hasLineRasterEXT || hasLineRasterKHR) && qLine.bresenhamLines;
+    RLVK.Caps.wideLines         = q2.features.wideLines;
+    RLVK.Caps.fillModeNonSolid  = q2.features.fillModeNonSolid;
+    RLVK.Caps.memoryPriority    = hasPriority;
+    RLVK.Caps.pageableMemory    = (hasPriority && hasPageable);
+    RLVK.Caps.graphicsPipelineLibrary = (hasGpl && hasPipelineLibrary);
 
-        VkPhysicalDeviceDepthClipControlFeaturesEXT qDcc = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_CONTROL_FEATURES_EXT };
-        VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT qDiv = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_FEATURES_EXT, &qDcc };
-        VkPhysicalDeviceLineRasterizationFeaturesEXT qLine = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_LINE_RASTERIZATION_FEATURES_EXT, &qDiv };
-        VkPhysicalDeviceHostImageCopyFeaturesEXT qHic = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_IMAGE_COPY_FEATURES_EXT, &qLine };
-        VkPhysicalDeviceVulkan13Features q13 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, &qHic };
-        VkPhysicalDeviceFeatures2 q2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &q13 };
-        vkGetPhysicalDeviceFeatures2(RLVK.physicalDevice, &q2);
-        #define RLVK_REQUIRE_FEATURE(_struct, _feat) \
-            if (!_struct._feat) { TRACELOG(RL_LOG_FATAL, "RLVK: required device feature not supported: " #_feat); missing = true; }
-        RLVK_REQUIRE_FEATURE(q13, dynamicRendering);
-        RLVK_REQUIRE_FEATURE(q13, synchronization2);
-        RLVK_REQUIRE_FEATURE(qHic, hostImageCopy);
-        RLVK_REQUIRE_FEATURE(qLine, bresenhamLines);
-        RLVK_REQUIRE_FEATURE(qDiv, vertexAttributeInstanceRateDivisor);
-        RLVK_REQUIRE_FEATURE(qDiv, vertexAttributeInstanceRateZeroDivisor);
-        RLVK_REQUIRE_FEATURE(qDcc, depthClipControl);
-        RLVK_REQUIRE_FEATURE(q2.features, wideLines);
-        RLVK_REQUIRE_FEATURE(q2.features, fillModeNonSolid);
-        #undef RLVK_REQUIRE_FEATURE
-        if (missing) return false;
+    // Enable everything supported (spec: VK_KHR_portability_subset MUST be enabled when present)
+    deviceExtensions[deviceExtensionCount++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+    if (hasPortabilitySubset)       deviceExtensions[deviceExtensionCount++] = "VK_KHR_portability_subset";
+    if (RLVK.Caps.pushDescriptor)   deviceExtensions[deviceExtensionCount++] = VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME;
+    if (RLVK.Caps.bresenhamLines)   deviceExtensions[deviceExtensionCount++] = hasLineRasterKHR ? VK_KHR_LINE_RASTERIZATION_EXTENSION_NAME : VK_EXT_LINE_RASTERIZATION_EXTENSION_NAME;
+    if (RLVK.Caps.memoryPriority)   deviceExtensions[deviceExtensionCount++] = VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME;
+    if (RLVK.Caps.pageableMemory)   deviceExtensions[deviceExtensionCount++] = VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME;
+    if (RLVK.Caps.graphicsPipelineLibrary)
+    {
+        deviceExtensions[deviceExtensionCount++] = VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME;   // required by graphics_pipeline_library
+        deviceExtensions[deviceExtensionCount++] = VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME;
     }
 
     f32 queuePriority = 1.0f;
@@ -4871,64 +5839,49 @@ static bool rlvkInitLogicalDevice(void)
     };
     u32 queueCount = (RLVK.transferFamily != RLVK.graphicsFamily) ? RLVK_QUEUE_COUNT : 1;
 
-    // Requested features as a stack pNext chain: everything above 1.3 core uses its extension
-    // feature struct; optional memory/GPL structs link in only when their extensions exist
-    VkPhysicalDeviceDepthClipControlFeaturesEXT depthClipControlFeatures = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_CONTROL_FEATURES_EXT,
-        .depthClipControl = VK_TRUE,    // GL-style [-1,1] clip-z, no shader remap
-    };
-    // Optional memory-priority features (NVIDIA best practice), linked into the chain only
-    // when the extensions are available
+    // Requested features: each struct links into the pNext chain only when RLVK.Caps says
+    // the device has it (requesting an unsupported feature fails vkCreateDevice wholesale)
     VkPhysicalDeviceMemoryPriorityFeaturesEXT memoryPriorityFeatures = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PRIORITY_FEATURES_EXT,
-        &depthClipControlFeatures,
         .memoryPriority = VK_TRUE,
     };
     VkPhysicalDevicePageableDeviceLocalMemoryFeaturesEXT pageableMemoryFeatures = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PAGEABLE_DEVICE_LOCAL_MEMORY_FEATURES_EXT,
-        &memoryPriorityFeatures,
         .pageableDeviceLocalMemory = VK_TRUE,
     };
-    void *featureChainHead = RLVK.Caps.pageableMemory? (void *)&pageableMemoryFeatures :
-                             RLVK.Caps.memoryPriority? (void *)&memoryPriorityFeatures :
-                                                       (void *)&depthClipControlFeatures;
-    // Optional graphics-pipeline-library feature: fast-linked pipelines for the cached draw path
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT gplFeatures = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT,
-        featureChainHead,
         .graphicsPipelineLibrary = VK_TRUE,
-    };
-    if (RLVK.Caps.graphicsPipelineLibrary) featureChainHead = (void *)&gplFeatures;
-    VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT divisorFeatures = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_FEATURES_EXT,
-        featureChainHead,
-        .vertexAttributeInstanceRateDivisor     = VK_TRUE,
-        .vertexAttributeInstanceRateZeroDivisor = VK_TRUE,   // divisor-0 broadcast for missing mesh attributes
     };
     VkPhysicalDeviceLineRasterizationFeaturesEXT lineRasterizationFeatures = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_LINE_RASTERIZATION_FEATURES_EXT,
-        &divisorFeatures,
         .bresenhamLines = VK_TRUE,   // match GL's 1px line pixel coverage
-    };
-    VkPhysicalDeviceHostImageCopyFeaturesEXT hostImageCopyFeatures = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_IMAGE_COPY_FEATURES_EXT,
-        &lineRasterizationFeatures,
-        .hostImageCopy = VK_TRUE,
     };
     VkPhysicalDeviceVulkan13Features vulkan13Features = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-        &hostImageCopyFeatures,
         .dynamicRendering = VK_TRUE,
         .synchronization2 = VK_TRUE,
     };
     VkPhysicalDeviceFeatures2 features2 = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-        &vulkan13Features,
         .features = {
-            .wideLines        = VK_TRUE,
-            .fillModeNonSolid = VK_TRUE,
+            // wideLines is deliberately NOT requested: every pipeline uses lineWidth 1.0
+            // (rlSetLineWidth is stored for rlGetLineWidth but never widens rasterization)
+            .fillModeNonSolid = RLVK.Caps.fillModeNonSolid ? VK_TRUE : VK_FALSE,
         },
     };
+    {
+        void **fTail = &features2.pNext;
+        #define RLVK_CHAIN_IF(_cond, _s) if (_cond) { *fTail = (void *)&_s; fTail = &_s.pNext; }
+        RLVK_CHAIN_IF(RLVK.Caps.memoryPriority,   memoryPriorityFeatures);
+        RLVK_CHAIN_IF(RLVK.Caps.pageableMemory,   pageableMemoryFeatures);
+        RLVK_CHAIN_IF(RLVK.Caps.graphicsPipelineLibrary, gplFeatures);
+        RLVK_CHAIN_IF(RLVK.Caps.bresenhamLines,   lineRasterizationFeatures);
+        RLVK_CHAIN_IF(RLVK.Caps.dynamicRendering || RLVK.Caps.synchronization2, vulkan13Features);
+        #undef RLVK_CHAIN_IF
+        vulkan13Features.dynamicRendering = RLVK.Caps.dynamicRendering ? VK_TRUE : VK_FALSE;
+        vulkan13Features.synchronization2 = RLVK.Caps.synchronization2 ? VK_TRUE : VK_FALSE;
+    }
 
     VkResult _cdResult = vkCreateDevice(RLVK.physicalDevice,
         &(VkDeviceCreateInfo){
@@ -4949,8 +5902,18 @@ static bool rlvkInitLogicalDevice(void)
 static void rlvkLoadEntrypoints(void)
 {
 #define RLVK_PFN_FUNC(_func)                                                          \
-    vk._func = (PFN_vk##_func)vkGetDeviceProcAddr(RLVK.device, "vk" #_func);          \
-    RLVK_CHECK_LOG(vk._func == NULL, "Couldn't load vk" #_func);
+    vk._func = (PFN_vk##_func)vkGetDeviceProcAddr(RLVK.device, "vk" #_func);
+    RLVK_PFN_FUNCS
+#undef RLVK_PFN_FUNC
+
+    // Vulkan 1.1 fallbacks: install compat shims where the native entry point is absent,
+    // so every call site keeps its sync2/push-descriptor shape with zero branching
+    if (!RLVK.Caps.synchronization2 || (vk.CmdPipelineBarrier2 == NULL)) vk.CmdPipelineBarrier2 = rlvkCmdPipelineBarrier2Compat;
+    if (!RLVK.Caps.synchronization2 || (vk.QueueSubmit2 == NULL))        vk.QueueSubmit2        = rlvkQueueSubmit2Compat;
+    if (!RLVK.Caps.pushDescriptor || (vk.CmdPushDescriptorSetKHR == NULL)) vk.CmdPushDescriptorSetKHR = rlvkPushDescriptorSetCompat;
+
+    // Warn about anything still unresolved (a genuine gap: no native support, no fallback yet)
+#define RLVK_PFN_FUNC(_func) RLVK_CHECK_LOG(vk._func == NULL, "Couldn't load vk" #_func);
     RLVK_PFN_FUNCS
 #undef RLVK_PFN_FUNC
 }
@@ -4979,11 +5942,108 @@ static bool rlvkInitSet0Layout(void)
     RLVK_CHECK(vkCreateDescriptorSetLayout(RLVK.device,
         &(VkDescriptorSetLayoutCreateInfo){
             VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-            .flags        = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT,
+            // Push-descriptor layouts need the flag; the pool-ring fallback (no push
+            // descriptor support) allocates plain sets from this same layout instead
+            .flags        = RLVK.Caps.pushDescriptor ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR : 0,
             .bindingCount = RLVK_SET0_BINDING_COUNT,
             .pBindings    = bindings,
         }, RLVK_ALLOC, &RLVK.set0Layout));
     return true;
+}
+
+//----------------------------------------------------------------------------------
+// Push-descriptor fallback (Vulkan 1.1 baseline, no VK_KHR_push_descriptor)
+//
+// Every push site keeps calling vk.CmdPushDescriptorSetKHR. On devices without the
+// extension this shim is installed instead: it only updates a CPU shadow of set 0
+// (pushedView/pushedSampler for the 16 texture units, shadowUbo for the 2 UBOs) and
+// marks it dirty. rlvkFlushSet0 - called right before every draw - then allocates a
+// fresh set from the frame's descriptor pool, writes the whole shadow and binds it.
+// GL bind-at-draw semantics are preserved exactly; consecutive draws with unchanged
+// bindings reuse the previously bound set (dirty flag).
+//----------------------------------------------------------------------------------
+
+static VKAPI_ATTR void VKAPI_CALL rlvkPushDescriptorSetCompat(VkCommandBuffer cmdBuffer, VkPipelineBindPoint bindPoint,
+    VkPipelineLayout layout, uint32_t set, uint32_t writeCount, const VkWriteDescriptorSet *writes)
+{
+    (void)cmdBuffer; (void)bindPoint; (void)layout; (void)set;
+    for (uint32_t i = 0; i < writeCount; i++)
+    {
+        const VkWriteDescriptorSet *w = &writes[i];
+        if (w->descriptorType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+        {
+            if (w->dstBinding >= RLVK_MAX_TEXTURE_UNITS) continue;
+            RLVK.pushedView[w->dstBinding]    = w->pImageInfo->imageView;
+            RLVK.pushedSampler[w->dstBinding] = w->pImageInfo->sampler;
+        }
+        else if (w->descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+        {
+            if (w->dstBinding == (u32)RLVK_UBO_BINDING_VS)      RLVK.shadowUbo[0] = *w->pBufferInfo;
+            else if (w->dstBinding == (u32)RLVK_UBO_BINDING_FS) RLVK.shadowUbo[1] = *w->pBufferInfo;
+        }
+    }
+    RLVK.set0Dirty = true;
+}
+
+// Bind a snapshot of the set-0 shadow before a draw (no-op with native push descriptors)
+static void rlvkFlushSet0(VkCommandBuffer cmdBuffer)
+{
+    if (RLVK.Caps.pushDescriptor || !RLVK.set0Dirty) return;
+
+    u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
+    VkDescriptorSet ds = VK_NULL_HANDLE;
+    VkResult res = vkAllocateDescriptorSets(RLVK.device,
+        &(VkDescriptorSetAllocateInfo){
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .descriptorPool     = RLVK.descPools[frameIndex],
+            .descriptorSetCount = 1,
+            .pSetLayouts        = &RLVK.set0Layout,
+        }, &ds);
+    if (res != VK_SUCCESS)
+    {
+        // Pool exhausted: keep the previously bound set (stale textures beat a crash)
+        TRACELOG(RL_LOG_WARNING, "RLVK: descriptor pool exhausted (VkResult %d) - raise RLVK_DESC_SETS_PER_FRAME", (int)res);
+        RLVK.set0Dirty = false;
+        return;
+    }
+
+    rlvkTextureSlot *def = &RLVK.textureSlots[RLVK.defaultTextureSlot];
+    VkDescriptorImageInfo  imageInfos[RLVK_MAX_TEXTURE_UNITS];
+    VkWriteDescriptorSet   writes[RLVK_SET0_BINDING_COUNT];
+    u32 writeCount = 0;
+    for (u32 b = 0; b < RLVK_MAX_TEXTURE_UNITS; b++)
+    {
+        // Unset shadow entries fall back to the default texture: every binding of the set
+        // is valid regardless of which units the current shader statically uses
+        imageInfos[b] = (VkDescriptorImageInfo){
+            .sampler     = RLVK.pushedSampler[b] ? RLVK.pushedSampler[b] : def->sampler,
+            .imageView   = RLVK.pushedView[b]    ? RLVK.pushedView[b]    : def->view,
+            .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        };
+        writes[writeCount++] = (VkWriteDescriptorSet){
+            VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet          = ds,
+            .dstBinding      = b,
+            .descriptorCount = 1,
+            .descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .pImageInfo      = &imageInfos[b],
+        };
+    }
+    for (u32 s = 0; s < 2; s++)
+    {
+        if (RLVK.shadowUbo[s].buffer == VK_NULL_HANDLE) continue;   // shader without a UBO never binds these
+        writes[writeCount++] = (VkWriteDescriptorSet){
+            VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet          = ds,
+            .dstBinding      = s ? (u32)RLVK_UBO_BINDING_FS : (u32)RLVK_UBO_BINDING_VS,
+            .descriptorCount = 1,
+            .descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .pBufferInfo     = &RLVK.shadowUbo[s],
+        };
+    }
+    vkUpdateDescriptorSets(RLVK.device, writeCount, writes, 0, NULL);
+    vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, RLVK.pipelineLayout, 0, 1, &ds, 0, NULL);
+    RLVK.set0Dirty = false;
 }
 
 // Push one texture at a GL-texture-unit binding of set 0
@@ -5240,11 +6300,14 @@ static unsigned int rlvkLayoutCoverage(unsigned short vertexLayout, u32 *firstFr
     return covered;
 }
 
-// Append divisor-0 dummy broadcasts for every shader-declared attribute the layout leaves unfed
+// Append stride-0 dummy broadcasts for every shader-declared attribute the layout leaves
+// unfed. Core Vulkan 1.0 semantics: stride 0 at VERTEX rate re-reads the same bytes for
+// every vertex (address = offset + index*0), replacing the old zero-divisor trick that
+// needed VK_EXT_vertex_attribute_divisor. NOTE: MoltenVK's portability subset rejects
+// stride < format size - revisit only if macOS-over-Vulkan ever becomes a target.
 static void rlvkAppendDummyAttribs(unsigned short vertexLayout, rlvkShaderSlot *shader,
     VkVertexInputBindingDescription *binds, u32 *bindCount,
-    VkVertexInputAttributeDescription *attrs, u32 *attrCount,
-    VkVertexInputBindingDivisorDescription *divisors, u32 *divisorCount)
+    VkVertexInputAttributeDescription *attrs, u32 *attrCount)
 {
     u32 dummyBinding = 0;
     unsigned int covered = rlvkLayoutCoverage(vertexLayout, &dummyBinding);
@@ -5252,8 +6315,7 @@ static void rlvkAppendDummyAttribs(unsigned short vertexLayout, rlvkShaderSlot *
     {
         int idx = rlvkDummyAttribs[i].attrib;
         if ((covered & (1u << idx)) || (shader->attribLocs[idx] < 0)) continue;
-        binds[*bindCount] = (VkVertexInputBindingDescription){ .binding = dummyBinding, .stride = 0, .inputRate = VK_VERTEX_INPUT_RATE_INSTANCE };
-        divisors[(*divisorCount)++] = (VkVertexInputBindingDivisorDescription){ .binding = dummyBinding, .divisor = 0 };
+        binds[*bindCount] = (VkVertexInputBindingDescription){ .binding = dummyBinding, .stride = 0, .inputRate = VK_VERTEX_INPUT_RATE_VERTEX };
         attrs[(*attrCount)++] = (VkVertexInputAttributeDescription){ .location = (u32)shader->attribLocs[idx], .binding = dummyBinding, .format = rlvkDummyAttribs[i].format };
         (*bindCount)++; dummyBinding++;
     }
@@ -5264,10 +6326,9 @@ static void rlvkAppendDummyAttribs(unsigned short vertexLayout, rlvkShaderSlot *
 // bones/instancing, plus broadcasts for any shader-declared attributes left unfed
 static void rlvkBuildVertexInput(const rlvkPipelineKey *key,
     VkVertexInputBindingDescription *binds, u32 *bindCount,
-    VkVertexInputAttributeDescription *attrs, u32 *attrCount,
-    VkVertexInputBindingDivisorDescription *divisors, u32 *divisorCount)
+    VkVertexInputAttributeDescription *attrs, u32 *attrCount)
 {
-    *bindCount = 0; *attrCount = 0; *divisorCount = 0;
+    *bindCount = 0; *attrCount = 0;
     if (key->vertexLayout == RLVK_VLAYOUT_NONE) return;
 
     rlvkShaderSlot *shader = &RLVK.shaderSlots[key->shaderSlot];
@@ -5279,7 +6340,7 @@ static void rlvkBuildVertexInput(const rlvkPipelineKey *key,
         *bindCount = 1;
         if (shader->attribLocs[RLVK_ATTRIB_POSITION] >= 0) attrs[(*attrCount)++] = (VkVertexInputAttributeDescription){ .location = (u32)shader->attribLocs[RLVK_ATTRIB_POSITION], .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0 };
         if (shader->attribLocs[RLVK_ATTRIB_TEXCOORD] >= 0) attrs[(*attrCount)++] = (VkVertexInputAttributeDescription){ .location = (u32)shader->attribLocs[RLVK_ATTRIB_TEXCOORD], .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = 3*sizeof(f32) };
-        rlvkAppendDummyAttribs(key->vertexLayout, shader, binds, bindCount, attrs, attrCount, divisors, divisorCount);
+        rlvkAppendDummyAttribs(key->vertexLayout, shader, binds, bindCount, attrs, attrCount);
         return;
     }
 
@@ -5295,7 +6356,7 @@ static void rlvkBuildVertexInput(const rlvkPipelineKey *key,
         if (shader->attribLocs[RLVK_ATTRIB_TEXCOORD] >= 0) attrs[(*attrCount)++] = (VkVertexInputAttributeDescription){ .location = (u32)shader->attribLocs[RLVK_ATTRIB_TEXCOORD], .binding = 1, .format = VK_FORMAT_R32G32_SFLOAT };
         if (shader->attribLocs[RLVK_ATTRIB_NORMAL]   >= 0) attrs[(*attrCount)++] = (VkVertexInputAttributeDescription){ .location = (u32)shader->attribLocs[RLVK_ATTRIB_NORMAL],   .binding = 2, .format = VK_FORMAT_R32G32B32_SFLOAT };
         if (shader->attribLocs[RLVK_ATTRIB_COLOR]    >= 0) attrs[(*attrCount)++] = (VkVertexInputAttributeDescription){ .location = (u32)shader->attribLocs[RLVK_ATTRIB_COLOR],    .binding = 3, .format = VK_FORMAT_R8G8B8A8_UNORM };
-        rlvkAppendDummyAttribs(key->vertexLayout, shader, binds, bindCount, attrs, attrCount, divisors, divisorCount);
+        rlvkAppendDummyAttribs(key->vertexLayout, shader, binds, bindCount, attrs, attrCount);
         return;
     }
 
@@ -5306,15 +6367,12 @@ static void rlvkBuildVertexInput(const rlvkPipelineKey *key,
 
     binds[0] = (VkVertexInputBindingDescription){ .binding = 0, .stride = 3*sizeof(f32), .inputRate = VK_VERTEX_INPUT_RATE_VERTEX };
     binds[1] = (VkVertexInputBindingDescription){ .binding = 1, .stride = hasUV? 2*(u32)sizeof(f32) : 0u,
-                                                  .inputRate = hasUV? VK_VERTEX_INPUT_RATE_VERTEX : VK_VERTEX_INPUT_RATE_INSTANCE };
+                                                  .inputRate = VK_VERTEX_INPUT_RATE_VERTEX };   // !hasUV: stride-0 broadcast
     binds[2] = (VkVertexInputBindingDescription){ .binding = 2, .stride = hasNormal? 3*(u32)sizeof(f32) : 0u,
-                                                  .inputRate = hasNormal? VK_VERTEX_INPUT_RATE_VERTEX : VK_VERTEX_INPUT_RATE_INSTANCE };
+                                                  .inputRate = VK_VERTEX_INPUT_RATE_VERTEX };   // !hasNormal: stride-0 broadcast
     binds[3] = (VkVertexInputBindingDescription){ .binding = 3, .stride = hasColor? 4*(u32)sizeof(unsigned char) : 0u,
-                                                  .inputRate = hasColor? VK_VERTEX_INPUT_RATE_VERTEX : VK_VERTEX_INPUT_RATE_INSTANCE };
+                                                  .inputRate = VK_VERTEX_INPUT_RATE_VERTEX };   // !hasColor: stride-0 broadcast
     *bindCount = 4;
-    if (!hasUV)     divisors[(*divisorCount)++] = (VkVertexInputBindingDivisorDescription){ .binding = 1, .divisor = 0 };
-    if (!hasNormal) divisors[(*divisorCount)++] = (VkVertexInputBindingDivisorDescription){ .binding = 2, .divisor = 0 };
-    if (!hasColor)  divisors[(*divisorCount)++] = (VkVertexInputBindingDivisorDescription){ .binding = 3, .divisor = 0 };
 
     if (shader->attribLocs[RLVK_ATTRIB_POSITION] >= 0) attrs[(*attrCount)++] = (VkVertexInputAttributeDescription){ .location = (u32)shader->attribLocs[RLVK_ATTRIB_POSITION], .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT };
     if (shader->attribLocs[RLVK_ATTRIB_TEXCOORD] >= 0) attrs[(*attrCount)++] = (VkVertexInputAttributeDescription){ .location = (u32)shader->attribLocs[RLVK_ATTRIB_TEXCOORD], .binding = 1, .format = VK_FORMAT_R32G32_SFLOAT };
@@ -5340,18 +6398,13 @@ static void rlvkBuildVertexInput(const rlvkPipelineKey *key,
         // Real bone streams, or divisor-0 dummy broadcasts of GL's attribute defaults
         bool realBones = (key->vertexLayout & RLVK_VLAYOUT_MESH_BONES) != 0;
         binds[*bindCount] = (VkVertexInputBindingDescription){ .binding = 4, .stride = realBones? 4u : 0u,
-                                                               .inputRate = realBones? VK_VERTEX_INPUT_RATE_VERTEX : VK_VERTEX_INPUT_RATE_INSTANCE };
+                                                               .inputRate = VK_VERTEX_INPUT_RATE_VERTEX };   // !realBones: stride-0 broadcast
         attrs[(*attrCount)++] = (VkVertexInputAttributeDescription){ .location = (u32)shader->attribLocs[RLVK_ATTRIB_BONEIDS], .binding = 4, .format = VK_FORMAT_R8G8B8A8_USCALED };
         (*bindCount)++;
         binds[*bindCount] = (VkVertexInputBindingDescription){ .binding = 5, .stride = realBones? 4*(u32)sizeof(f32) : 0u,
-                                                               .inputRate = realBones? VK_VERTEX_INPUT_RATE_VERTEX : VK_VERTEX_INPUT_RATE_INSTANCE };
+                                                               .inputRate = VK_VERTEX_INPUT_RATE_VERTEX };   // !realBones: stride-0 broadcast
         attrs[(*attrCount)++] = (VkVertexInputAttributeDescription){ .location = (u32)shader->attribLocs[RLVK_ATTRIB_BONEWEIGHTS], .binding = 5, .format = VK_FORMAT_R32G32B32A32_SFLOAT };
         (*bindCount)++;
-        if (!realBones)
-        {
-            divisors[(*divisorCount)++] = (VkVertexInputBindingDivisorDescription){ .binding = 4, .divisor = 0 };
-            divisors[(*divisorCount)++] = (VkVertexInputBindingDivisorDescription){ .binding = 5, .divisor = 0 };
-        }
     }
     if (key->vertexLayout & RLVK_VLAYOUT_MESH_INSTANCED)
     {
@@ -5363,7 +6416,7 @@ static void rlvkBuildVertexInput(const rlvkPipelineKey *key,
         (*bindCount)++;
     }
 
-    rlvkAppendDummyAttribs(key->vertexLayout, shader, binds, bindCount, attrs, attrCount, divisors, divisorCount);
+    rlvkAppendDummyAttribs(key->vertexLayout, shader, binds, bindCount, attrs, attrCount);
 }
 
 // Bind the dummy attribute buffer at every dummy-broadcast binding the pipeline layout
@@ -5398,9 +6451,8 @@ static VkPipeline rlvkBuildPipeline(const rlvkPipelineKey *key)
 
     VkVertexInputBindingDescription binds[12];
     VkVertexInputAttributeDescription attrs[16];
-    VkVertexInputBindingDivisorDescription divisors[10];
-    u32 bindCount = 0, attrCount = 0, divisorCount = 0;
-    rlvkBuildVertexInput(key, binds, &bindCount, attrs, &attrCount, divisors, &divisorCount);
+    u32 bindCount = 0, attrCount = 0;
+    rlvkBuildVertexInput(key, binds, &bindCount, attrs, &attrCount);
 
     VkPipelineVertexInputStateCreateInfo vertexInput = {
         VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
@@ -5409,12 +6461,6 @@ static VkPipeline rlvkBuildPipeline(const rlvkPipelineKey *key)
         .vertexAttributeDescriptionCount = attrCount,
         .pVertexAttributeDescriptions    = attrs,
     };
-    VkPipelineVertexInputDivisorStateCreateInfo divisorState = {
-        VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_DIVISOR_STATE_CREATE_INFO,
-        .vertexBindingDivisorCount = divisorCount,
-        .pVertexBindingDivisors    = divisors,
-    };
-    if (divisorCount > 0) vertexInput.pNext = &divisorState;
 
     bool blendEnabled = (key->blendMode >= 0);   // negative blendMode encodes blend-disabled
     VkPipelineColorBlendAttachmentState blendAttachments[8];
@@ -5430,16 +6476,25 @@ static VkPipeline rlvkBuildPipeline(const rlvkPipelineKey *key)
         "VKDBG pipeline build: shader=%u layout=0x%X topo=%d samples=%d colors=%d blend=%d attrs=%u binds=%u",
         key->shaderSlot, key->vertexLayout, key->topology, key->samples, key->colorCount, key->blendMode, attrCount, bindCount);
 
+    // Canonical compatibility pass for this pipeline: load/store ops never affect render-pass
+    // compatibility, so a LOAD-ops pass of the same shape (formats/samples/counts/resolve)
+    // matches every scope this state combo can draw into
+    rlvkRenderPassKey rpKey;
+    memset(&rpKey, 0, sizeof(rpKey));
+    for (u32 a = 0; a < key->colorCount && a < 8; a++) rpKey.colorFormats[a] = key->colorFormats[a];
+    rpKey.depthFormat = key->depthFormat;
+    rpKey.colorCount  = key->colorCount;
+    rpKey.samples     = (key->samples > 1)? 4 : 1;
+    rpKey.colorLoad   = VK_ATTACHMENT_LOAD_OP_LOAD;
+    rpKey.depthLoad   = VK_ATTACHMENT_LOAD_OP_LOAD;
+    rpKey.depthStore  = VK_ATTACHMENT_STORE_OP_STORE;
+    rpKey.hasResolve  = (key->samples > 1)? 1 : 0;   // MSAA scopes always resolve into the 1x intermediate
+    VkRenderPass compatPass = rlvkGetRenderPass(&rpKey);
+
     VkPipeline pipeline = VK_NULL_HANDLE;
     VkResult result = vkCreateGraphicsPipelines(RLVK.device, RLVK.pipelineCache, 1,
         &(VkGraphicsPipelineCreateInfo){
             VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-            &(VkPipelineRenderingCreateInfo){
-                VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-                .colorAttachmentCount    = key->colorCount,
-                .pColorAttachmentFormats = key->colorFormats,
-                .depthAttachmentFormat   = key->depthFormat,
-            },
             .stageCount          = 2,
             .pStages             = stages,
             .pVertexInputState   = &vertexInput,
@@ -5450,20 +6505,20 @@ static VkPipeline rlvkBuildPipeline(const rlvkPipelineKey *key)
             },
             .pViewportState      = &(VkPipelineViewportStateCreateInfo){
                 VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
-                // GL-style [-1,1] clip-z accepted natively, same as the dynamic-state path
-                &(VkPipelineViewportDepthClipControlCreateInfoEXT){
-                    VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_DEPTH_CLIP_CONTROL_CREATE_INFO_EXT,
-                    .negativeOneToOne = VK_TRUE,
-                },
-                // viewportCount/scissorCount = 0: set dynamically with VK_DYNAMIC_STATE_*_WITH_COUNT
+                // GL-style [-1,1] clip-z is remapped to [0,1] by a vertex-shader epilogue on
+                // EVERY device (embedded default shader has it baked; the shaderc path injects
+                // it) - one behavior everywhere instead of a depth_clip_control split
+                .viewportCount = 1,     // set dynamically (VK_DYNAMIC_STATE_VIEWPORT/SCISSOR)
+                .scissorCount  = 1,
             },
             .pRasterizationState = &(VkPipelineRasterizationStateCreateInfo){
                 VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-                // Bresenham matches GL's aliased 1px lines; MSAA uses rectangular (GL smooth) lines
-                &(VkPipelineRasterizationLineStateCreateInfo){
-                    VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_LINE_STATE_CREATE_INFO,
-                    .lineRasterizationMode = (key->samples > 1)? VK_LINE_RASTERIZATION_MODE_DEFAULT : VK_LINE_RASTERIZATION_MODE_BRESENHAM,
-                },
+                // Bresenham matches GL's aliased 1px lines; MSAA uses rectangular (GL smooth)
+                // lines. Without the extension: implementation-default lines, cosmetic delta.
+                RLVK.Caps.bresenhamLines? (const void *)&(VkPipelineRasterizationLineStateCreateInfoEXT){
+                    VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_LINE_STATE_CREATE_INFO_EXT,
+                    .lineRasterizationMode = (key->samples > 1)? VK_LINE_RASTERIZATION_MODE_DEFAULT_EXT : VK_LINE_RASTERIZATION_MODE_BRESENHAM_EXT,
+                } : NULL,
                 .polygonMode = (VkPolygonMode)key->polygonMode,
                 .cullMode    = (VkCullModeFlags)key->cullMode,
                 .frontFace   = VK_FRONT_FACE_CLOCKWISE,     // unmirrored rendering: CW everywhere
@@ -5488,11 +6543,13 @@ static VkPipeline rlvkBuildPipeline(const rlvkPipelineKey *key)
                 VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
                 .dynamicStateCount = 2,
                 .pDynamicStates    = (VkDynamicState[]){
-                    VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT,
-                    VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT,
+                    VK_DYNAMIC_STATE_VIEWPORT,
+                    VK_DYNAMIC_STATE_SCISSOR,
                 },
             },
             .layout              = RLVK.pipelineLayout,
+            .renderPass          = compatPass,
+            .subpass             = 0,
         }, RLVK_ALLOC, &pipeline);
 
     if (result != VK_SUCCESS) TRACELOG(RL_LOG_WARNING, "RLVK: vkCreateGraphicsPipelines => %d", (int)result);
@@ -5548,8 +6605,10 @@ static bool rlvkBindPipeline(VkCommandBuffer cmdBuffer, unsigned char topology, 
     key.cullMode     = (unsigned char)(RLVK.State.cullEnabled?
                            ((RLVK.State.cullMode == RL_CULL_FACE_FRONT)? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT) :
                            VK_CULL_MODE_NONE);
-    key.polygonMode  = (unsigned char)(RLVK.State.pointMode? VK_POLYGON_MODE_POINT :
-                                       RLVK.State.wireMode?  VK_POLYGON_MODE_LINE  : VK_POLYGON_MODE_FILL);
+    // Wire/point fill modes need the optional fillModeNonSolid feature; without it (some
+    // mobile GPUs) they degrade to solid fill instead of failing pipeline creation
+    key.polygonMode  = (unsigned char)((RLVK.Caps.fillModeNonSolid && RLVK.State.pointMode)? VK_POLYGON_MODE_POINT :
+                                       (RLVK.Caps.fillModeNonSolid && RLVK.State.wireMode)?  VK_POLYGON_MODE_LINE  : VK_POLYGON_MODE_FILL);
     key.samples      = (unsigned char)RLVK.scope.samples;
     key.colorCount   = (unsigned char)RLVK.scope.colorCount;
     key.depthTest    = RLVK.State.depthTest? 1 : 0;
@@ -5596,8 +6655,8 @@ static bool rlvkBindPipeline(VkCommandBuffer cmdBuffer, unsigned char topology, 
     f32 vx = (f32)RLVK.State.viewportX, vy = (f32)RLVK.State.viewportY;
     f32 vw = (f32)RLVK.State.viewportW, vh = (f32)RLVK.State.viewportH;
     if (vw <= 0.0f || vh <= 0.0f) { vw = (f32)RLVK.scope.width; vh = (f32)RLVK.scope.height; }
-    if (RLVK.scope.flipY) vkCmdSetViewportWithCount(cmdBuffer, 1, &(VkViewport){ vx, vy + vh, vw, -vh, 0.0f, 1.0f });
-    else                  vkCmdSetViewportWithCount(cmdBuffer, 1, &(VkViewport){ vx, vy, vw, vh, 0.0f, 1.0f });
+    if (RLVK.scope.flipY) vkCmdSetViewport(cmdBuffer, 0, 1, &(VkViewport){ vx, vy + vh, vw, -vh, 0.0f, 1.0f });
+    else                  vkCmdSetViewport(cmdBuffer, 0, 1, &(VkViewport){ vx, vy, vw, vh, 0.0f, 1.0f });
 
     if (RLVK.State.scissorEnabled)
     {
@@ -5610,9 +6669,9 @@ static bool rlvkBindPipeline(VkCommandBuffer cmdBuffer, unsigned char topology, 
         if (sy + sch > (int)RLVK.scope.height) sch = (int)RLVK.scope.height - sy;
         if (scw < 0) scw = 0;
         if (sch < 0) sch = 0;
-        vkCmdSetScissorWithCount(cmdBuffer, 1, &(VkRect2D){ { sx, sy }, { (u32)scw, (u32)sch } });
+        vkCmdSetScissor(cmdBuffer, 0, 1, &(VkRect2D){ { sx, sy }, { (u32)scw, (u32)sch } });
     }
-    else vkCmdSetScissorWithCount(cmdBuffer, 1, &(VkRect2D){ { 0, 0 }, { RLVK.scope.width, RLVK.scope.height } });
+    else vkCmdSetScissor(cmdBuffer, 0, 1, &(VkRect2D){ { 0, 0 }, { RLVK.scope.width, RLVK.scope.height } });
 
     return true;
 }
@@ -5688,11 +6747,11 @@ static void rlvkFinishSwapchainImage(VkCommandBuffer cmdBuffer)
     // GPU trace: scene-end stamp before the present chain, present-end stamp after it
     u32 gpuFrame = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
     bool gpuTrace = rlvkDebugFlag("RLVK_GPU_TRACE", &s_dbgGpu) && (s_gpuPool != VK_NULL_HANDLE);
-    if (gpuTrace) vkCmdWriteTimestamp2(cmdBuffer, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, s_gpuPool, gpuFrame*3 + 1);
+    if (gpuTrace) vkCmdWriteTimestamp(cmdBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, s_gpuPool, gpuFrame*3 + 1);
 
     rlvkFlipToSwapchain(cmdBuffer);
 
-    if (gpuTrace) vkCmdWriteTimestamp2(cmdBuffer, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, s_gpuPool, gpuFrame*3 + 2);
+    if (gpuTrace) vkCmdWriteTimestamp(cmdBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, s_gpuPool, gpuFrame*3 + 2);
 }
 
 // Initialize the per-frame ring: command pools/buffers, semaphores and fences
@@ -5716,6 +6775,22 @@ static bool rlvkInitFrameRing(void)
                 .level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
                 .commandBufferCount = 1,
             }, &RLVK.cmdBuffers[i]));
+
+        // Pool-ring fallback (no push descriptors): one descriptor pool per frame slot,
+        // reset together with the slot's command pool at its fence
+        if (!RLVK.Caps.pushDescriptor)
+        {
+            RLVK_CHECK(vkCreateDescriptorPool(RLVK.device,
+                &(VkDescriptorPoolCreateInfo){
+                    VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+                    .maxSets       = RLVK_DESC_SETS_PER_FRAME,
+                    .poolSizeCount = 2,
+                    .pPoolSizes    = (VkDescriptorPoolSize[]){
+                        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, RLVK_DESC_SETS_PER_FRAME*RLVK_MAX_TEXTURE_UNITS },
+                        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         RLVK_DESC_SETS_PER_FRAME*2 },
+                    },
+                }, RLVK_ALLOC, &RLVK.descPools[i]));
+        }
     }
 
     // Frame pacing is fence-based; no timeline semaphore is created (the original design's
@@ -5853,7 +6928,63 @@ void rlvkSetMsaaSamples(int samples)
     if (RLVK.msaaSamples > 1) TRACELOG(RL_LOG_INFO, "RLVK: MSAA x%d enabled (matches GL FLAG_MSAA_4X_HINT)", RLVK.msaaSamples);
 }
 
-// Attach the platform-created surface and build the swapchain around it
+// Destroy everything sized to the swapchain (the swapchain itself, its views + present
+// semaphores, and the per-frame depth/intermediate/msaa targets), evicting cached
+// framebuffers built on the dying views. Callers guarantee the device is idle.
+static void rlvkDestroySwapchainSizedObjects(void)
+{
+    for (int i = 0; i < RLVK_FRAME_INDEX_COUNT; i++)
+    {
+        rlvkEvictFramebuffersForView(RLVK.depthView[i]);
+        rlvkEvictFramebuffersForView(RLVK.interView[i]);
+        rlvkEvictFramebuffersForView(RLVK.msaaView[i]);
+        if (RLVK.depthView[i])   vkDestroyImageView(RLVK.device, RLVK.depthView[i], RLVK_ALLOC);
+        if (RLVK.depthImage[i])  vkDestroyImage(RLVK.device, RLVK.depthImage[i], RLVK_ALLOC);
+        if (RLVK.depthMemory[i]) vkFreeMemory(RLVK.device, RLVK.depthMemory[i], RLVK_ALLOC);
+        if (RLVK.interView[i])   vkDestroyImageView(RLVK.device, RLVK.interView[i], RLVK_ALLOC);
+        if (RLVK.interImage[i])  vkDestroyImage(RLVK.device, RLVK.interImage[i], RLVK_ALLOC);
+        if (RLVK.interMemory[i]) vkFreeMemory(RLVK.device, RLVK.interMemory[i], RLVK_ALLOC);
+        if (RLVK.msaaView[i])    vkDestroyImageView(RLVK.device, RLVK.msaaView[i], RLVK_ALLOC);
+        if (RLVK.msaaImage[i])   vkDestroyImage(RLVK.device, RLVK.msaaImage[i], RLVK_ALLOC);
+        if (RLVK.msaaMemory[i])  vkFreeMemory(RLVK.device, RLVK.msaaMemory[i], RLVK_ALLOC);
+        RLVK.depthView[i] = VK_NULL_HANDLE; RLVK.depthImage[i] = VK_NULL_HANDLE; RLVK.depthMemory[i] = VK_NULL_HANDLE;
+        RLVK.interView[i] = VK_NULL_HANDLE; RLVK.interImage[i] = VK_NULL_HANDLE; RLVK.interMemory[i] = VK_NULL_HANDLE;
+        RLVK.msaaView[i]  = VK_NULL_HANDLE; RLVK.msaaImage[i]  = VK_NULL_HANDLE; RLVK.msaaMemory[i]  = VK_NULL_HANDLE;
+    }
+    for (int i = 0; i < RLVK_MAX_SWAPCHAIN_IMAGES; i++)
+    {
+        if (RLVK.swapchainViews[i])   vkDestroyImageView(RLVK.device, RLVK.swapchainViews[i], RLVK_ALLOC);
+        if (RLVK.renderSemaphores[i]) vkDestroySemaphore(RLVK.device, RLVK.renderSemaphores[i], RLVK_ALLOC);
+        RLVK.swapchainViews[i] = VK_NULL_HANDLE;
+        RLVK.renderSemaphores[i] = VK_NULL_HANDLE;
+        RLVK.swapchainImages[i] = VK_NULL_HANDLE;
+    }
+    if (RLVK.swapchain) vkDestroySwapchainKHR(RLVK.device, RLVK.swapchain, RLVK_ALLOC);
+    RLVK.swapchain = VK_NULL_HANDLE;
+    RLVK.swapchainImageCount = 0;
+}
+
+// Recreate the swapchain after OUT_OF_DATE/SUBOPTIMAL (window resize, Android rotate/resume).
+// Full device drain + rebuild: resize is rare, simplicity beats oldSwapchain retirement.
+static void rlvkRecreateSwapchain(void)
+{
+    if (!isGpuReady || (RLVK.surface == VK_NULL_HANDLE)) return;
+    vkDeviceWaitIdle(RLVK.device);
+
+    // A minimized window reports a 0x0 extent: creating a swapchain there is invalid.
+    // Keep the retired one; the next acquire fails OUT_OF_DATE again and retries here.
+    VkSurfaceCapabilitiesKHR caps;
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(RLVK.physicalDevice, RLVK.surface, &caps);
+    if ((caps.currentExtent.width == 0) || (caps.currentExtent.height == 0)) return;
+
+    rlvkDestroySwapchainSizedObjects();
+    rlvkAttachSurface(RLVK.surface);
+    TRACELOG(RL_LOG_INFO, "RLVK: swapchain recreated (%ux%u)", RLVK.swapchainExtent.width, RLVK.swapchainExtent.height);
+}
+
+// Attach the platform-created surface and build the swapchain around it.
+// Re-entrant by design: rlvkRecreateSwapchain calls it again after destroying the
+// size-dependent objects; the once-only per-frame pacing objects are guarded below.
 void rlvkAttachSurface(VkSurfaceKHR surface)
 {
     RLVK.surface = surface;
@@ -5956,14 +7087,18 @@ void rlvkAttachSurface(VkSurfaceKHR surface)
             RLVK_ALLOC, &RLVK.renderSemaphores[i]));
     }
 
-    for (int i = 0; i < RLVK_FRAME_INDEX_COUNT; i++)
+    // Once-only frame pacing objects (size-independent): survive swapchain recreation
+    if (RLVK.frameFences[0] == VK_NULL_HANDLE)
     {
-        RLVK_CHECK(vkCreateSemaphore(RLVK.device,
-            &(VkSemaphoreCreateInfo){ VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO },
-            RLVK_ALLOC, &RLVK.acquireSemaphores[i]));
-        RLVK_CHECK(vkCreateFence(RLVK.device,
-            &(VkFenceCreateInfo){ VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, .flags = VK_FENCE_CREATE_SIGNALED_BIT },
-            RLVK_ALLOC, &RLVK.frameFences[i]));
+        for (int i = 0; i < RLVK_FRAME_INDEX_COUNT; i++)
+        {
+            RLVK_CHECK(vkCreateSemaphore(RLVK.device,
+                &(VkSemaphoreCreateInfo){ VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO },
+                RLVK_ALLOC, &RLVK.acquireSemaphores[i]));
+            RLVK_CHECK(vkCreateFence(RLVK.device,
+                &(VkFenceCreateInfo){ VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, .flags = VK_FENCE_CREATE_SIGNALED_BIT },
+                RLVK_ALLOC, &RLVK.frameFences[i]));
+        }
     }
 
     // One depth buffer per frame-in-flight (sized to the swapchain, cleared each frame)
@@ -6074,6 +7209,9 @@ void rlvkAttachSurface(VkSurfaceKHR surface)
 // a still-RECORDING command buffer
 static void rlvkDeferDestroy(VkBuffer buffer, VkImage image, VkImageView view, VkSampler sampler, VkDeviceMemory memory, VkPipeline pipeline)
 {
+    // A dying view invalidates any cached framebuffer built on it (they follow via the same ring)
+    if (view) rlvkEvictFramebuffersForView(view);
+
     // Nothing recorded yet: no command buffer can reference these, destroy immediately
     if ((RLVK.frameCounter == 0) && !RLVK.frameActive)
     {
@@ -6082,6 +7220,7 @@ static void rlvkDeferDestroy(VkBuffer buffer, VkImage image, VkImageView view, V
         if (image) vkDestroyImage(RLVK.device, image, RLVK_ALLOC);
         if (sampler) vkDestroySampler(RLVK.device, sampler, RLVK_ALLOC);
         if (memory) vkFreeMemory(RLVK.device, memory, RLVK_ALLOC);
+        if (pipeline) vkDestroyPipeline(RLVK.device, pipeline, RLVK_ALLOC);
         return;
     }
 
@@ -6092,7 +7231,27 @@ static void rlvkDeferDestroy(VkBuffer buffer, VkImage image, VkImageView view, V
         TRACELOG(RL_LOG_WARNING, "RLVK: deferred-destruction queue full, leaking objects - raise RLVK_MAX_DEAD_RESOURCES");
         return;
     }
-    RLVK.deadResources[frameIndex][RLVK.deadResourceCount[frameIndex]++] = (rlvkDeadResource){ buffer, image, view, sampler, memory, pipeline };
+    RLVK.deadResources[frameIndex][RLVK.deadResourceCount[frameIndex]++] = (rlvkDeadResource){ buffer, image, view, sampler, memory, pipeline, VK_NULL_HANDLE };
+}
+
+// Queue a cached framebuffer for fence-gated destruction (evicted when one of its views dies)
+static void rlvkDeferDestroyFramebufferOnly(VkFramebuffer framebuffer)
+{
+    if (framebuffer == VK_NULL_HANDLE) return;
+    if ((RLVK.frameCounter == 0) && !RLVK.frameActive)
+    {
+        vkDestroyFramebuffer(RLVK.device, framebuffer, RLVK_ALLOC);
+        return;
+    }
+    u32 frameIndex = (u32)((RLVK.frameActive? RLVK.frameCounter : (RLVK.frameCounter + RLVK_FRAME_INDEX_COUNT - 1))%RLVK_FRAME_INDEX_COUNT);
+    if (RLVK.deadResourceCount[frameIndex] >= RLVK_MAX_DEAD_RESOURCES)
+    {
+        TRACELOG(RL_LOG_WARNING, "RLVK: deferred-destruction queue full, leaking objects - raise RLVK_MAX_DEAD_RESOURCES");
+        return;
+    }
+    rlvkDeadResource *r = &RLVK.deadResources[frameIndex][RLVK.deadResourceCount[frameIndex]++];
+    memset(r, 0, sizeof(*r));
+    r->framebuffer = framebuffer;
 }
 
 // Begin a frame: acquire a swapchain image and open the rendering scope
@@ -6107,6 +7266,7 @@ static void rlvkBeginFrame(void)
     for (int d = 0; d < RLVK.deadResourceCount[frameIndex]; d++)
     {
         rlvkDeadResource *r = &RLVK.deadResources[frameIndex][d];
+        if (r->framebuffer) vkDestroyFramebuffer(RLVK.device, r->framebuffer, RLVK_ALLOC);
         if (r->buffer) vkDestroyBuffer(RLVK.device, r->buffer, RLVK_ALLOC);
         if (r->view) vkDestroyImageView(RLVK.device, r->view, RLVK_ALLOC);
         if (r->image) vkDestroyImage(RLVK.device, r->image, RLVK_ALLOC);
@@ -6119,7 +7279,16 @@ static void rlvkBeginFrame(void)
     u32 imageIndex = 0;
     VkResult acq = vk.AcquireNextImageKHR(RLVK.device, RLVK.swapchain, UINT64_MAX,
                        RLVK.acquireSemaphores[frameIndex], VK_NULL_HANDLE, &imageIndex);
-    if (acq == VK_ERROR_OUT_OF_DATE_KHR) return;    // TODO(vk): recreate swapchain on resize
+    if (acq == VK_ERROR_OUT_OF_DATE_KHR)
+    {
+        // Resize/rotation retired the swapchain: rebuild and retry the acquire once.
+        // A failed acquire leaves the semaphore unsignaled, so it is safe to reuse.
+        rlvkRecreateSwapchain();
+        if (RLVK.swapchain == VK_NULL_HANDLE) return;   // still minimized (0x0): skip the frame
+        acq = vk.AcquireNextImageKHR(RLVK.device, RLVK.swapchain, UINT64_MAX,
+                  RLVK.acquireSemaphores[frameIndex], VK_NULL_HANDLE, &imageIndex);
+        if ((acq != VK_SUCCESS) && (acq != VK_SUBOPTIMAL_KHR)) return;
+    }
     RLVK.currentImageIndex = imageIndex;
     RLVK.acquireWaited = false;
 
@@ -6136,6 +7305,11 @@ static void rlvkBeginFrame(void)
     memset(RLVK.pushedSampler, 0, sizeof(RLVK.pushedSampler));
     s_viewportValid = false;
     s_bindingValid   = false;
+    // Pool-ring fallback: this slot's fence has signaled, its snapshot sets are reusable
+    memset(RLVK.shadowUbo, 0, sizeof(RLVK.shadowUbo));
+    RLVK.set0Dirty = true;
+    if (!RLVK.Caps.pushDescriptor && RLVK.descPools[frameIndex]) vkResetDescriptorPool(RLVK.device, RLVK.descPools[frameIndex], 0);
+    if (RLVK.computeDescPools[frameIndex]) vkResetDescriptorPool(RLVK.device, RLVK.computeDescPools[frameIndex], 0);
 
     RLVK.arenaOffset[frameIndex] = 0;   // reset this frame's bump arena (the frame fence gates reuse)
 
@@ -6252,34 +7426,30 @@ static void rlvkBeginFrame(void)
     });
 
     bool msaa = (RLVK.msaaSamples > 1);
-    vk.CmdBeginRendering(cmdBuffer, &(VkRenderingInfo){
-        VK_STRUCTURE_TYPE_RENDERING_INFO,
-        .renderArea           = { { 0, 0 }, RLVK.swapchainExtent },
-        .layerCount           = 1,
-        .colorAttachmentCount = 1,
-        .pColorAttachments    = &(VkRenderingAttachmentInfo){
-            VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView          = msaa ? RLVK.msaaView[frameIndex] : RLVK.interView[frameIndex],
-            .imageLayout        = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            // Fixed-function resolve into the 1x intermediate at every scope close (MSAA only)
-            .resolveMode        = msaa ? VK_RESOLVE_MODE_AVERAGE_BIT : VK_RESOLVE_MODE_NONE,
-            .resolveImageView   = msaa ? RLVK.interView[frameIndex] : VK_NULL_HANDLE,
-            .resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            .loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR,
-            .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
-            .clearValue  = { .color = { .float32 = {
+    {
+        // Fixed-function resolve into the 1x intermediate at every scope close (MSAA only)
+        VkImageView scopeViews[3];
+        u32 scopeViewCount = 0;
+        scopeViews[scopeViewCount++] = msaa? RLVK.msaaView[frameIndex] : RLVK.interView[frameIndex];
+        if (msaa) scopeViews[scopeViewCount++] = RLVK.interView[frameIndex];
+        scopeViews[scopeViewCount++] = RLVK.depthView[frameIndex];
+        rlvkRenderPassKey rpKey;
+        memset(&rpKey, 0, sizeof(rpKey));
+        rpKey.colorFormats[0] = RLVK.swapchainFormat;
+        rpKey.depthFormat     = RLVK.depthFormat;
+        rpKey.colorCount      = 1;
+        rpKey.samples         = msaa? 4 : 1;
+        rpKey.colorLoad       = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        rpKey.depthLoad       = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        rpKey.depthStore      = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        rpKey.hasResolve      = msaa? 1 : 0;
+        rlvkBeginScopeRenderPass(cmdBuffer, &rpKey, scopeViews, scopeViewCount,
+            RLVK.swapchainExtent.width, RLVK.swapchainExtent.height,
+            &(VkClearValue){ .color = { .float32 = {
                 RLVK.State.clearR/255.0f, RLVK.State.clearG/255.0f,
                 RLVK.State.clearB/255.0f, RLVK.State.clearA/255.0f } } },
-        },
-        .pDepthAttachment     = &(VkRenderingAttachmentInfo){
-            VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView   = RLVK.depthView[frameIndex],
-            .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-            .loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR,
-            .storeOp     = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-            .clearValue  = { .depthStencil = { 1.0f, 0 } },
-        },
-    });
+            &(VkClearValue){ .depthStencil = { 1.0f, 0 } });
+    }
     RLVK.scope.fbSlot = 0;
     RLVK.scope.width  = RLVK.swapchainExtent.width;
     RLVK.scope.height = RLVK.swapchainExtent.height;
@@ -6293,7 +7463,7 @@ static void rlvkBeginFrame(void)
     if (rlvkDebugFlag("RLVK_GPU_TRACE", &s_dbgGpu) && (s_gpuPool != VK_NULL_HANDLE))
     {
         vkCmdResetQueryPool(cmdBuffer, s_gpuPool, frameIndex*3, 3);
-        vkCmdWriteTimestamp2(cmdBuffer, VK_PIPELINE_STAGE_2_NONE, s_gpuPool, frameIndex*3 + 0);
+        vkCmdWriteTimestamp(cmdBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, s_gpuPool, frameIndex*3 + 0);
     }
     RLVK.frameActive = true;
 }
@@ -6313,7 +7483,7 @@ void rlvkPresent(void)
     u32 imageIndex = RLVK.currentImageIndex;
     VkCommandBuffer cmdBuffer  = RLVK.cmdBuffers[frameIndex];
 
-    vk.CmdEndRendering(cmdBuffer);
+    vkCmdEndRenderPass(cmdBuffer);
     rlvkFinishSwapchainImage(cmdBuffer);   // flip-blit the frame into the swapchain
 
     // COLOR_ATTACHMENT_OPTIMAL -> PRESENT_SRC
@@ -6352,7 +7522,7 @@ void rlvkPresent(void)
             .stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT },
     }, RLVK.frameFences[frameIndex]);
 
-    vk.QueuePresentKHR(RLVK.graphicsQueue, &(VkPresentInfoKHR){
+    VkResult pres = vk.QueuePresentKHR(RLVK.graphicsQueue, &(VkPresentInfoKHR){
         VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .waitSemaphoreCount = 1,
         .pWaitSemaphores    = &RLVK.renderSemaphores[imageIndex],
@@ -6363,6 +7533,10 @@ void rlvkPresent(void)
 
     RLVK.frameActive = false;
     RLVK.frameCounter++;
+
+    // The frame's work is already submitted (its fence gates the drain inside the rebuild);
+    // rebuild now so the NEXT acquire starts from a valid swapchain
+    if ((pres == VK_ERROR_OUT_OF_DATE_KHR) || (pres == VK_SUBOPTIMAL_KHR)) rlvkRecreateSwapchain();
 }
 
 //----------------------------------------------------------------------------------
