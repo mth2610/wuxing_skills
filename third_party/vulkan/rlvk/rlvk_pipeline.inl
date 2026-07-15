@@ -248,8 +248,10 @@ static void rlvkAppendDummyAttribs(unsigned short vertexLayout, rlvkShaderSlot *
             continue;
 #if defined(__APPLE__)
         u32 stride = 44; // sizeof(rlvkDummyData)
+        VkVertexInputRate rate = VK_VERTEX_INPUT_RATE_INSTANCE;
 #else
         u32 stride = 0;
+        VkVertexInputRate rate = VK_VERTEX_INPUT_RATE_VERTEX;
 #endif
         binds[*bindCount] = (VkVertexInputBindingDescription){.binding = dummyBinding, .stride = stride, .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
         attrs[(*attrCount)++] = (VkVertexInputAttributeDescription){.location = (u32)shader->attribLocs[idx], .binding = dummyBinding, .format = rlvkDummyAttribs[i].format};
