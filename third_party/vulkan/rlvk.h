@@ -4912,15 +4912,21 @@ static bool rlvkInitComputeLayout(void)
 {
     if (RLVK.computePipelineLayout != VK_NULL_HANDLE) return true;
 
-    VkDescriptorSetLayoutBinding bindings[15];
-    for (u32 b = 0; b < 8; b++)   bindings[b] = (VkDescriptorSetLayoutBinding){ .binding = b, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,         .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT };
-    for (u32 b = 8; b < 12; b++)  bindings[b] = (VkDescriptorSetLayoutBinding){ .binding = b, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,          .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT };
-    for (u32 b = 12; b < 14; b++) bindings[b] = (VkDescriptorSetLayoutBinding){ .binding = b, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT };
-    bindings[14] = (VkDescriptorSetLayoutBinding){ .binding = 14, .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT };
+    // NOTE: NO storage-image bindings. Empirically (raw-Vulkan bisect on MoltenVK 1.2.11 /
+    // Intel Iris 6000): merely DECLARING storage-image bindings 8..11 in this layout makes
+    // the UBO at binding 14 read as zeros in the shader, even when the images are never
+    // written or statically used. rlBindImageTexture is a recorded no-op until a dedicated
+    // storage-image path exists (textures lack STORAGE usage anyway); when that lands, put
+    // the images in their own descriptor SET rather than re-adding them here.
+    VkDescriptorSetLayoutBinding bindings[11];
+    for (u32 b = 0; b < 8; b++) bindings[b] = (VkDescriptorSetLayoutBinding){ .binding = b, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,         .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT };
+    bindings[8]  = (VkDescriptorSetLayoutBinding){ .binding = 12, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT };
+    bindings[9]  = (VkDescriptorSetLayoutBinding){ .binding = 13, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT };
+    bindings[10] = (VkDescriptorSetLayoutBinding){ .binding = 14, .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT };
     RLVK_CHECK(vkCreateDescriptorSetLayout(RLVK.device,
         &(VkDescriptorSetLayoutCreateInfo){
             VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-            .bindingCount = 15, .pBindings = bindings,
+            .bindingCount = 11, .pBindings = bindings,
         }, RLVK_ALLOC, &RLVK.computeSetLayout));
     RLVK_CHECK(vkCreatePipelineLayout(RLVK.device,
         &(VkPipelineLayoutCreateInfo){
@@ -4932,10 +4938,9 @@ static bool rlvkInitComputeLayout(void)
             &(VkDescriptorPoolCreateInfo){
                 VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
                 .maxSets       = RLVK_COMPUTE_SETS_PER_FRAME,
-                .poolSizeCount = 4,
+                .poolSizeCount = 3,
                 .pPoolSizes    = (VkDescriptorPoolSize[]){
                     { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,         RLVK_COMPUTE_SETS_PER_FRAME*8 },
-                    { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,          RLVK_COMPUTE_SETS_PER_FRAME*4 },
                     { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, RLVK_COMPUTE_SETS_PER_FRAME*2 },
                     { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         RLVK_COMPUTE_SETS_PER_FRAME },
                 },
@@ -5251,15 +5256,8 @@ void rlComputeShaderDispatch(unsigned int gx, unsigned int gy, unsigned int gz)
                 .dstBinding = b, .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &imgInfos[nImg] };
             nImg++;
         }
-        for (u32 i = 0; i < 4; i++)
-        {
-            u32 slot = RLVK.computeImage[i];
-            if (!slot || slot >= RLVK_MAX_TEXTURE_SLOTS || RLVK.textureSlots[slot].view == VK_NULL_HANDLE) continue;
-            imgInfos[nImg] = (VkDescriptorImageInfo){ .imageView = RLVK.textureSlots[slot].view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
-            writes[nWrites++] = (VkWriteDescriptorSet){ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds,
-                .dstBinding = 8 + i, .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .pImageInfo = &imgInfos[nImg] };
-            nImg++;
-        }
+        // (No storage-image writes: the fixed layout deliberately has no image bindings -
+        // see rlvkInitComputeLayout's MoltenVK note. rlBindImageTexture records + warns.)
         // Sampler uniforms (bindings 12..13): rlSetUniformSampler's explicit texture, else default
         for (int u = 0; u < shader->uniformCount; u++)
         {
@@ -5281,25 +5279,9 @@ void rlComputeShaderDispatch(unsigned int gx, unsigned int gy, unsigned int gz)
             if (off + shader->vsBlockSize <= arena->sizeBytes)
             {
                 memcpy((char *)arena->mapped + off, shader->vsStage, shader->vsBlockSize);
-                TRACELOG(RL_LOG_INFO, "RLVK-DBG dispatch ubo: off=%u stage[0]=%f arena[0]=%f block=%u", (u32)off, *(const f32 *)shader->vsStage, *(const f32 *)((char *)arena->mapped + off), shader->vsBlockSize);
                 RLVK.arenaOffset[frameIndex] = off + shader->vsBlockSize;
                 RLVK.arenaWanted[frameIndex] += shader->vsBlockSize + 256;
                 bufInfos[nBuf] = (VkDescriptorBufferInfo){ arena->buffer, off, shader->vsBlockSize };
-                if (getenv("RLVK_DBG_DEDICATED_UBO"))   // debug probe: dedicated UNIFORM-only buffer instead of the arena (leaks, debug only)
-                {
-                    VkBuffer dbgBuf = VK_NULL_HANDLE; VkDeviceMemory dbgMem = VK_NULL_HANDLE; void *dbgMap = NULL;
-                    vkCreateBuffer(RLVK.device, &(VkBufferCreateInfo){ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-                        .size = shader->vsBlockSize, .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                        .sharingMode = VK_SHARING_MODE_EXCLUSIVE }, RLVK_ALLOC, &dbgBuf);
-                    VkMemoryRequirements mr; vkGetBufferMemoryRequirements(RLVK.device, dbgBuf, &mr);
-                    dbgMem = rlvkAllocMemory(mr, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-                    vkBindBufferMemory(RLVK.device, dbgBuf, dbgMem, 0);
-                    vkMapMemory(RLVK.device, dbgMem, 0, shader->vsBlockSize, 0, &dbgMap);
-                    memcpy(dbgMap, shader->vsStage, shader->vsBlockSize);
-                    vkUnmapMemory(RLVK.device, dbgMem);
-                    bufInfos[nBuf] = (VkDescriptorBufferInfo){ dbgBuf, 0, shader->vsBlockSize };
-                    TRACELOG(RL_LOG_INFO, "RLVK-DBG dedicated UBO probe active");
-                }
                 writes[nWrites++] = (VkWriteDescriptorSet){ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds,
                     .dstBinding = 14, .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .pBufferInfo = &bufInfos[nBuf] };
                 nBuf++;
@@ -5467,14 +5449,18 @@ void rlCopyShaderBuffer(unsigned int destId, unsigned int srcId, unsigned int de
 // Get SSBO buffer size
 unsigned int rlGetShaderBufferSize(unsigned int id) { return (id < RLVK_MAX_BUFFER_SLOTS) ? RLVK.bufferSlots[id].sizeBytes : 0; }
 
-// Bind image texture at an image unit (GL glBindImageTexture semantics, consumed at dispatch).
-// NOTE: the texture must have been created with STORAGE usage; textures loaded through
-// rlLoadTexture are sampled-only today, so image load/store consumers need a dedicated path.
+// Bind image texture at an image unit (GL glBindImageTexture semantics). Recorded but NOT
+// consumed yet: the fixed compute layout deliberately has no storage-image bindings (a
+// MoltenVK/Intel bug zeroes the UBO when they merely exist - see rlvkInitComputeLayout),
+// and rlLoadTexture images lack STORAGE usage anyway. Image load/store consumers need a
+// dedicated path (own descriptor set + STORAGE-usage image creation) when one appears.
 void rlBindImageTexture(unsigned int id, unsigned int index, int format, bool readonly)
 {
     (void)format; (void)readonly;
     if (index >= 4) { TRACELOG(RL_LOG_WARNING, "RLVK: image unit %u out of range (max 4)", index); return; }
     RLVK.computeImage[index] = (id < RLVK_MAX_TEXTURE_SLOTS)? id : 0;
+    static bool warned = false;
+    if (!warned) { TRACELOG(RL_LOG_WARNING, "RLVK: rlBindImageTexture recorded but compute image load/store is not wired yet"); warned = true; }
 }
 
 // Matrix state management

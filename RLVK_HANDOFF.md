@@ -39,12 +39,33 @@ Platform hooks (NOT part of rlgl's API): platform layer creates `VkSurfaceKHR` �
 `rlvkSetMsaaSamples(4)` before attach for `FLAG_MSAA_4X_HINT`; `rlvkGetInstance()` for
 `glfwCreateWindowSurface`.
 
-## 3. State: retarget COMPLETE, compile-verified, **NOT runtime-tested**
+## 3. State: retarget COMPLETE — headless paths **RUNTIME-VERIFIED on MoltenVK**
 
 The original rlvk targeted Vulkan 1.3 + 6 required extensions. It has been fully retargeted:
-**the only hard device requirement is now core Vulkan 1.1 + `VK_KHR_swapchain`.** Device
-init succeeds on any conformant 1.1 device. Every claim below is verified by compile-check
-only — no Vulkan runtime exists on the dev Mac (Darwin 21.6, no MoltenVK installed).
+**the only hard device requirement is now core Vulkan 1.1 + `VK_KHR_swapchain`.**
+
+**Runtime verification (2026-07-15)**: LunarG Vulkan SDK 1.3.296 installed at
+`~/VulkanSDK/1.3.296.0` (user-level). MoltenVK 1.2.11 on Intel Iris 6000 reports device API
+**1.2** → sync2 absent → the sync1 shim and one-shot staging paths run for real, not the
+native fast paths. `./scripts/run_rlvk_runtime_test.sh` builds + runs
+`third_party/vulkan/tests/rlvk_runtime_test.c` with validation layers: **20/20 PASS, zero
+validation errors** — device init, texture staging roundtrips (RGBA8 + partial update +
+RGB→RGBA expand/repack), SSBO roundtrips (upload/read/partial/GPU-copy), compute dispatch
+with loose uniforms (one-shot path), runtime GLSL 330 graphics compile through shaderc with
+the clip-z epilogue, clean shutdown. Windowed/draw paths (render-pass cache, batch,
+present) still need a surface — untested until the platform layer (§4.2) exists.
+
+Runtime bugs found & fixed during bring-up:
+- `rlvkDeferDestroy`'s immediate-destroy branch (frameCounter==0) leaked pipelines.
+- Descriptor-write scratch arrays in dispatch were undersized for the full binding mix.
+- **MoltenVK/Intel driver bug (bisected via a raw-Vulkan repro, no rlvk involved): merely
+  DECLARING storage-image bindings in a compute descriptor-set layout makes a UBO at a
+  later binding read as zeros**, even when the images are never written or statically
+  used. Fix: the fixed compute layout has NO storage-image bindings (0–7 SSBO, 12–13
+  sampler, 14 UBO); when image load/store is needed, give images their own descriptor SET.
+- **shaderc's `auto_bind_uniforms` rebases even explicitly-bound UBOs** (`layout(binding=N)
+  uniform` becomes N + base). Compute shaders must use loose uniforms (the GL-style path)
+  or explicit-std430 SSBOs (storage-buffer kind has no base set, bindings preserved).
 
 ### 3.1 The conversion table (what replaced what)
 
@@ -134,19 +155,19 @@ creation, `VK_KHR_portability_subset` enabled when present (spec requires it).
 
 ## 4. What remains (ordered; each item is independent unless noted)
 
-### 4.1 Runtime bring-up on a real Vulkan machine (NEXT, highest value)
-Everything so far is compile-verified only. Needs a Windows/Linux box with a Vulkan driver
-(or MoltenVK on Mac — now viable since bresenham/wideLines became optional, but the
-stride-0 portability caveat in §3.1 applies; prefer a real driver).
-1. Build a minimal harness: raylib built with rlvk as the backend TU + patched platform
-   (see 4.2), draw the classic raylib examples.
-2. Run with validation layers ON (`VK_LAYER_KHRONOS_validation` via vkconfig — rlvk never
-   enables layers itself, by design; it only passes a message-id false-flag filter).
+### 4.1 Runtime bring-up — headless DONE, windowed/draw paths NEXT
+Headless verification is complete on MoltenVK (see §3). What remains needs a window:
+1. Platform layer (§4.2), then draw the classic raylib examples through rlvk.
+2. Keep validation layers ON (`scripts/run_rlvk_runtime_test.sh` shows the env recipe;
+   rlvk never enables layers itself, by design — it only passes a message-id filter).
 3. Expected first-bugs: render-pass/framebuffer cache edge cases (MSAA resolve path,
-   depth-only shadowmap FBOs, `rlvkFinishSwapchainImage` flip-blit interaction), pool-ring
-   fallback on a device that HAS push descriptors (fallback path won't be exercised there —
-   test both by env-forcing `Caps.pushDescriptor=false` temporarily), the sync1 shim on a
-   real 1.1 device, `RLVK_DEVICE_INDEX/RLVK_DEVICE_NAME` env overrides help device switching.
+   depth-only shadowmap FBOs, `rlvkFinishSwapchainImage` flip-blit interaction), the
+   pool-ring fallback vs native push descriptors (MoltenVK HAS push descriptors, so the
+   ring fallback ran headless only via compute — env-force `Caps.pushDescriptor=false` to
+   exercise it in draws), stride-0 broadcast bindings on MoltenVK portability (§3.1 caveat
+   — mesh draws with missing attributes may need a MoltenVK-specific fallback).
+   `RLVK_DEVICE_INDEX/RLVK_DEVICE_NAME` env overrides help device switching.
+   Debug helper: `RLVK_DUMP_SPV=<dir>` dumps every shaderc-compiled module for spirv-dis.
 
 ### 4.2 Platform layer (blocks 4.1)
 - CMake: `WUXING_USE_VULKAN` option exists (`CMakeLists.txt:36`) — it stops compiling
