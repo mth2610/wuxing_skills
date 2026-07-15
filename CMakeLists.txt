@@ -44,6 +44,11 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(raylib)
 
 if(WUXING_USE_VULKAN)
+    # Tự động vá raylib source tree để sử dụng rlvk thay vì rlgl
+    execute_process(COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/rlvk_patch_raylib.py ${raylib_SOURCE_DIR})
+endif()
+
+if(WUXING_USE_VULKAN)
     find_package(Vulkan REQUIRED)
     target_include_directories(raylib PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/vulkan ${Vulkan_INCLUDE_DIRS})
 endif()
