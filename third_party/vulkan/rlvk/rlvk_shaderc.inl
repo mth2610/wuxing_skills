@@ -726,6 +726,110 @@ static void rlvkCanonicalizeInputLocations(u32 *spv, size_t wordCount)
     RL_FREE(isInput);
 }
 
+// Graphics-stage storage buffers: GLSL declares std430 bindings 0..3 (GL habit), but set 0
+// already uses 0..15 for sampler units - rewrite each SSBO variable's Binding decoration to
+// RLVK_SSBO_BINDING_BASE + N and report the used indices in outMask. When the device lacks
+// vertexPipelineStoresAndAtomics, also inject a NonWritable decoration per SSBO variable
+// (VUID-RuntimeSpirv-NonWritable-06341) - graphics SSBOs are read-only on such devices.
+// May grow the SPIR-V (decoration insertion); buffer passed by reference.
+static void rlvkRebaseStorageBuffers(u32 **pSpv, size_t *pWordCount, bool injectNonWritable, u32 *outMask)
+{
+    enum { SpvOpTypePointer = 32, SpvOpVariable = 59, SpvOpDecorate = 71,
+           SpvDecorationBufferBlock = 3, SpvDecorationNonWritable = 24, SpvDecorationBinding = 33,
+           SpvStorageUniform = 2, SpvStorageStorageBuffer = 12 };
+    u32 *spv = *pSpv; size_t wordCount = *pWordCount;
+    *outMask = 0;
+    if (wordCount < 5 || spv[0] != 0x07230203) return;
+    u32 bound = spv[3];
+    unsigned char *isBufferBlock = (unsigned char *)RL_CALLOC(bound, 1);   // type ids decorated BufferBlock
+    u32 *ptrPointee = (u32 *)RL_CALLOC(bound, sizeof(u32));                // pointer type -> pointee type
+    unsigned char *ptrStorage = (unsigned char *)RL_CALLOC(bound, 1);     // pointer type -> storage class
+    u32 ssboVars[RLVK_SET0_SSBO_COUNT]; int ssboVarCount = 0;
+    size_t firstDecorateAt = 0;
+
+    // Pass 1: collect BufferBlock types, pointer map, and the first decoration offset
+    size_t i = 5;
+    while (i < wordCount)
+    {
+        u32 w = spv[i]; u32 op = w & 0xFFFF, len = w >> 16;
+        if (len == 0 || i + len > wordCount) break;
+        const u32 *a = spv + i + 1;
+        if (op == SpvOpDecorate)
+        {
+            if (!firstDecorateAt) firstDecorateAt = i;
+            if ((a[1] == SpvDecorationBufferBlock) && (a[0] < bound)) isBufferBlock[a[0]] = 1;
+        }
+        else if (op == SpvOpTypePointer && a[0] < bound)
+        {
+            ptrStorage[a[0]] = (unsigned char)a[1];
+            ptrPointee[a[0]] = a[2];
+        }
+        i += len;
+    }
+    // Pass 2: find SSBO variables (StorageBuffer class, or Uniform class pointing at a
+    // BufferBlock struct - shaderc's SPIR-V 1.3 output uses the latter)
+    i = 5;
+    while (i < wordCount)
+    {
+        u32 w = spv[i]; u32 op = w & 0xFFFF, len = w >> 16;
+        if (len == 0 || i + len > wordCount) break;
+        const u32 *a = spv + i + 1;
+        if (op == SpvOpVariable && a[0] < bound)
+        {
+            u32 sc = a[2];
+            bool ssbo = (sc == SpvStorageStorageBuffer) ||
+                        ((sc == SpvStorageUniform) && (ptrStorage[a[0]] == SpvStorageUniform) &&
+                         (ptrPointee[a[0]] < bound) && isBufferBlock[ptrPointee[a[0]]]);
+            if (ssbo && (ssboVarCount < (int)RLVK_SET0_SSBO_COUNT)) ssboVars[ssboVarCount++] = a[1];
+            else if (ssbo) TRACELOG(RL_LOG_WARNING, "RLVK: shader uses more than %d graphics SSBOs - extras ignored", (int)RLVK_SET0_SSBO_COUNT);
+        }
+        i += len;
+    }
+    RL_FREE(isBufferBlock); RL_FREE(ptrPointee); RL_FREE(ptrStorage);
+    if (ssboVarCount == 0) return;
+
+    // Pass 3: rewrite each SSBO variable's Binding decoration in place
+    i = 5;
+    while (i < wordCount)
+    {
+        u32 w = spv[i]; u32 op = w & 0xFFFF, len = w >> 16;
+        if (len == 0 || i + len > wordCount) break;
+        u32 *a = spv + i + 1;
+        if (op == SpvOpDecorate && a[1] == SpvDecorationBinding)
+            for (int v = 0; v < ssboVarCount; v++)
+                if (a[0] == ssboVars[v])
+                {
+                    u32 idx = a[2];
+                    if (idx >= RLVK_SET0_SSBO_COUNT)
+                    {
+                        TRACELOG(RL_LOG_WARNING, "RLVK: graphics SSBO binding %u out of range (max %d), clamping", idx, (int)RLVK_SET0_SSBO_COUNT - 1);
+                        idx = RLVK_SET0_SSBO_COUNT - 1;
+                    }
+                    *outMask |= (1u << idx);
+                    a[2] = RLVK_SSBO_BINDING_BASE + idx;
+                }
+        i += len;
+    }
+    // Pass 4: inject NonWritable decorations (3 words each) at the decoration section head
+    if (injectNonWritable && firstDecorateAt)
+    {
+        size_t grow = (size_t)ssboVarCount * 3;
+        u32 *grown = (u32 *)RL_MALLOC((wordCount + grow) * sizeof(u32));
+        memcpy(grown, spv, firstDecorateAt * sizeof(u32));
+        u32 *ins = grown + firstDecorateAt;
+        for (int v = 0; v < ssboVarCount; v++)
+        {
+            *ins++ = (3u << 16) | SpvOpDecorate;
+            *ins++ = ssboVars[v];
+            *ins++ = SpvDecorationNonWritable;
+        }
+        memcpy(ins, spv + firstDecorateAt, (wordCount - firstDecorateAt) * sizeof(u32));
+        RL_FREE(spv);
+        *pSpv = grown;
+        *pWordCount = wordCount + grow;
+    }
+}
+
 // GL links varyings BY NAME, SPIR-V stages match BY LOCATION: rewrite each FS input's Location
 // to the same-named VS output's location. FS inputs with no matching VS output are demoted to
 // Private storage (valid-but-undefined in GL; a Vulkan violation of VUID-RuntimeSpirv-
@@ -1032,6 +1136,42 @@ static void rlvkBindShaderUbos(VkCommandBuffer cmdBuffer, rlvkShaderSlot *shader
     vk.CmdPushDescriptorSetKHR(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, RLVK.pipelineLayout, 0, writeCount, writes);
     shader->uboPushedEpoch = RLVK.State.cbEpoch;
     RLVK.lastUboShader = shader;
+}
+
+// Push the graphics-SSBO descriptors a shader reads (GPU-particle draw path). Sources the
+// shared rlBindShaderBuffer table (indices 0..3 -> set0 bindings RLVK_SSBO_BINDING_BASE+i).
+// Native push descriptors only: on the pool-ring fallback rlvkFlushSet0 writes every SSBO
+// binding from the same table (rlBindShaderBuffer marks set0Dirty), so this is a no-op there.
+static void rlvkBindShaderSsbos(VkCommandBuffer cmdBuffer, rlvkShaderSlot *shader)
+{
+    if (!shader->ssboMask || !RLVK.Caps.pushDescriptor)
+        return;
+    VkDescriptorBufferInfo infos[RLVK_SET0_SSBO_COUNT];
+    VkWriteDescriptorSet writes[RLVK_SET0_SSBO_COUNT];
+    u32 writeCount = 0;
+    for (u32 i = 0; i < RLVK_SET0_SSBO_COUNT; i++)
+    {
+        if (!(shader->ssboMask & (1u << i)))
+            continue;
+        u32 slot = RLVK.computeSSBO[i];
+        if (RLVK.pushedSsbo[i] == slot)
+            continue;   // unchanged since the last push in this command buffer
+        VkBuffer buf = (slot && slot < RLVK_MAX_BUFFER_SLOTS && RLVK.bufferSlots[slot].buffer)
+                           ? RLVK.bufferSlots[slot].buffer
+                           : RLVK.bufferSlots[RLVK.dummyAttribSlot].buffer;
+        infos[writeCount] = (VkDescriptorBufferInfo){buf, 0, VK_WHOLE_SIZE};
+        writes[writeCount] = (VkWriteDescriptorSet){
+            VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstBinding = RLVK_SSBO_BINDING_BASE + i,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .pBufferInfo = &infos[writeCount],
+        };
+        writeCount++;
+        RLVK.pushedSsbo[i] = slot;
+    }
+    if (writeCount)
+        vk.CmdPushDescriptorSetKHR(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, RLVK.pipelineLayout, 0, writeCount, writes);
 }
 
 // Push the shader's sampler bindings: rlSetUniformSampler's explicit texture wins, else the GL

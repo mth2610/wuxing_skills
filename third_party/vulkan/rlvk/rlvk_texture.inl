@@ -505,6 +505,7 @@ static void rlvkDrawMesh(int offset, int count, bool indexed, int instances)
         // Uniforms (mvp, colDiffuse, user values) were already written by DrawMesh via
         // rlSetUniform* into the staging; snapshot, then resolve ALL sampler bindings (incl. 0)
         rlvkBindShaderUbos(cmdBuffer, shader);
+        rlvkBindShaderSsbos(cmdBuffer, shader);
         if (!sameBinding)
             rlvkBindShaderSamplers(cmdBuffer, shader, true); // samplers unchanged across identical binds
     }

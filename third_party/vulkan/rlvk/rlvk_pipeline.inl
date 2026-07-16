@@ -760,10 +760,11 @@ bool rlvkInitFrameRing(void)
                                               &(VkDescriptorPoolCreateInfo){
                                                   VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
                                                   .maxSets = RLVK_DESC_SETS_PER_FRAME,
-                                                  .poolSizeCount = 2,
+                                                  .poolSizeCount = 3,
                                                   .pPoolSizes = (VkDescriptorPoolSize[]){
                                                       {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, RLVK_DESC_SETS_PER_FRAME * RLVK_MAX_TEXTURE_UNITS},
                                                       {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, RLVK_DESC_SETS_PER_FRAME * 2},
+                                                      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, RLVK_DESC_SETS_PER_FRAME * RLVK_SET0_SSBO_COUNT},
                                                   },
                                               },
                                               RLVK_ALLOC, &RLVK.descPools[i]));

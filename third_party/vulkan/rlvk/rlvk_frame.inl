@@ -307,6 +307,7 @@ static bool rlvkInitLogicalDevice(void)
     RLVK.Caps.memoryPriority = hasPriority;
     RLVK.Caps.pageableMemory = (hasPriority && hasPageable);
     RLVK.Caps.graphicsPipelineLibrary = (hasGpl && hasPipelineLibrary);
+    RLVK.Caps.graphicsSsboStores = q2.features.vertexPipelineStoresAndAtomics;
     // MoltenVK on Intel GPUs: a depth image created with SAMPLED usage silently stops working
     // as a depth ATTACHMENT (test/write no-op, no validation error). Bisected empirically -
     // scripts/run_rlvk_visual_test.sh depth_rt reproduces. 0x8086 = Intel vendor id.
@@ -382,6 +383,9 @@ static bool rlvkInitLogicalDevice(void)
             // wideLines is deliberately NOT requested: every pipeline uses lineWidth 1.0
             // (rlSetLineWidth is stored for rlGetLineWidth but never widens rasterization)
             .fillModeNonSolid = RLVK.Caps.fillModeNonSolid ? VK_TRUE : VK_FALSE,
+            // Graphics-stage SSBO writes (optional): without it SSBOs are read-only and
+            // rlvkRebaseStorageBuffers injects NonWritable to satisfy VUID-RuntimeSpirv-06341
+            .vertexPipelineStoresAndAtomics = RLVK.Caps.graphicsSsboStores ? VK_TRUE : VK_FALSE,
         },
     };
     {
@@ -464,6 +468,12 @@ static bool rlvkInitSet0Layout(void)
         .binding = RLVK_UBO_BINDING_VS, .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_VERTEX_BIT};
     bindings[RLVK_UBO_BINDING_FS] = (VkDescriptorSetLayoutBinding){
         .binding = RLVK_UBO_BINDING_FS, .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT};
+    // Graphics-stage SSBOs (GPU-particle draws): GLSL bindings 0..3 rebased here by
+    // rlvkRebaseStorageBuffers; fed from the shared rlBindShaderBuffer table at draw time
+    for (u32 i = 0; i < RLVK_SET0_SSBO_COUNT; i++)
+        bindings[RLVK_SSBO_BINDING_BASE + i] = (VkDescriptorSetLayoutBinding){
+            .binding = RLVK_SSBO_BINDING_BASE + i, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT};
     RLVK_CHECK(vkCreateDescriptorSetLayout(RLVK.device,
                                            &(VkDescriptorSetLayoutCreateInfo){
                                                VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -596,6 +606,25 @@ static void rlvkFlushSet0(VkCommandBuffer cmdBuffer)
             .descriptorCount = 1,
             .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
             .pBufferInfo = &RLVK.shadowUbo[s],
+        };
+    }
+    // Graphics SSBO bindings mirror the shared bind table; unbound slots fall back to the
+    // dummy attrib buffer (created with STORAGE usage) so every binding stays valid
+    VkDescriptorBufferInfo ssboInfos[RLVK_SET0_SSBO_COUNT];
+    for (u32 i = 0; i < RLVK_SET0_SSBO_COUNT; i++)
+    {
+        u32 slot = RLVK.computeSSBO[i];
+        VkBuffer buf = (slot && slot < RLVK_MAX_BUFFER_SLOTS && RLVK.bufferSlots[slot].buffer)
+                           ? RLVK.bufferSlots[slot].buffer
+                           : RLVK.bufferSlots[RLVK.dummyAttribSlot].buffer;
+        ssboInfos[i] = (VkDescriptorBufferInfo){buf, 0, VK_WHOLE_SIZE};
+        writes[writeCount++] = (VkWriteDescriptorSet){
+            VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = ds,
+            .dstBinding = RLVK_SSBO_BINDING_BASE + i,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .pBufferInfo = &ssboInfos[i],
         };
     }
     vkUpdateDescriptorSets(RLVK.device, writeCount, writes, 0, NULL);

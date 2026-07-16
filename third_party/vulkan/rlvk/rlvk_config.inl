@@ -74,7 +74,13 @@
 enum {
     RLVK_UBO_BINDING_VS = RLVK_MAX_TEXTURE_UNITS,
     RLVK_UBO_BINDING_FS,
-    RLVK_SET0_BINDING_COUNT,
+    // Graphics-stage SSBOs (GPU-particle draw path: vertex shader reads per-instance data).
+    // GLSL declares std430 bindings 0..3; rlvkRebaseStorageBuffers rewrites them to 18..21
+    // so they never collide with the sampler units at 0..15. READ-ONLY unless the device
+    // has vertexPipelineStoresAndAtomics (NonWritable is injected otherwise).
+    RLVK_SSBO_BINDING_BASE,
+    RLVK_SET0_SSBO_COUNT   = 4,     // spec minimum maxPerStageDescriptorStorageBuffers
+    RLVK_SET0_BINDING_COUNT = RLVK_SSBO_BINDING_BASE + RLVK_SET0_SSBO_COUNT,
 };
 // Canonical raylib vertex attributes (indices into rlvkShaderSlot.attribLocs)
 enum {

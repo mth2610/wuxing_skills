@@ -251,6 +251,71 @@ static const char *sc_readback(void)
     return NULL;
 }
 
+// GPU-particle draw path: vertex shader reads a per-instance SSBO by gl_InstanceID
+// (mirrors core/shaders/particles.vs + compute/gpu_particle_system.c's draw half).
+// Guards: graphics set0 SSBO bindings, rlvkRebaseStorageBuffers, rlvkBindShaderSsbos.
+static const char *sc_ssbo_vs(void)
+{
+    const char *VS =
+        "#version 430\n"
+        "layout(location=0) in vec3 vertexPosition;\n"
+        "struct P { vec4 posSize; vec4 color; };\n"
+        "layout(std430, binding=0) buffer Buf { P items[]; };\n"
+        "uniform mat4 mvp;\n"
+        "out vec4 fragColor;\n"
+        "void main(){\n"
+        "  P p = items[gl_InstanceID];\n"
+        "  fragColor = p.color;\n"
+        "  gl_Position = mvp * vec4(p.posSize.xyz + vertexPosition*p.posSize.w, 1.0);\n"
+        "}\n";
+    const char *FS =
+        "#version 430\n"
+        "in vec4 fragColor; out vec4 finalColor;\n"
+        "void main(){ finalColor = fragColor; }\n";
+    Shader sh = LoadShaderFromMemory(VS, FS);
+    int mvpLoc = GetShaderLocation(sh, "mvp");
+
+    float quad[] = { -0.5f,-0.5f,0, 0.5f,-0.5f,0, 0.5f,0.5f,0,  -0.5f,-0.5f,0, 0.5f,0.5f,0, -0.5f,0.5f,0 };
+    unsigned int vao = rlLoadVertexArray();
+    rlEnableVertexArray(vao);
+    unsigned int vbo = rlLoadVertexBuffer(quad, sizeof(quad), false);
+    rlSetVertexAttribute(0, 3, RL_FLOAT, false, 0, 0);
+    rlEnableVertexAttribute(0);
+    rlDisableVertexArray();
+
+    struct P { float posSize[4]; float color[4]; } items[3] = {
+        { {-2,0,0, 1.2f}, {1,0.5f,0.1f,1} },       // orange left
+        { { 0,0,0, 1.2f}, {0.2f,1,0.3f,1} },       // green center
+        { { 2,0,0, 1.2f}, {0.3f,0.4f,1,1} },       // blue right
+    };
+    unsigned int ssbo = rlLoadShaderBuffer(sizeof(items), items, RL_DYNAMIC_COPY);
+
+    Camera3D cam = cam3d();
+    for (int f = 0; f < 3; f++)
+    {
+        BeginDrawing(); ClearBackground((Color){0,0,60,255});
+        BeginMode3D(cam);
+            Matrix mvp = MatrixMultiply(rlGetMatrixModelview(), rlGetMatrixProjection());
+            rlEnableShader(sh.id);
+            rlSetUniformMatrix(mvpLoc, mvp);
+            rlBindShaderBuffer(ssbo, 0);
+            rlEnableVertexArray(vao);
+            rlDrawVertexArrayInstanced(0, 6, 3);
+            rlDisableVertexArray();
+            rlDisableShader();
+        EndMode3D();
+        EndDrawing();
+    }
+    // fovy 45 at z=6: x = +/-2 -> center +/- 121 px (see sc_instanced)
+    Image im = snap();
+    Color l = at(im, W/2 - 121, H/2), m = at(im, W/2, H/2), r = at(im, W/2 + 121, H/2);
+    UnloadImage(im);
+    rlUnloadShaderBuffer(ssbo); rlUnloadVertexBuffer(vbo); rlUnloadVertexArray(vao); UnloadShader(sh);
+    if (m.g < 150)             return "center instance missing: VS did not read the SSBO";
+    if (l.r < 150 || r.b < 150) return "side instances missing/wrong color: gl_InstanceID indexing broken";
+    return NULL;
+}
+
 static const char *sc_stress(void)
 {
     Image gi = GenImageGradientRadial(32, 32, 0.0f, WHITE, BLACK);
@@ -289,6 +354,7 @@ static const Scenario SCENARIOS[] = {
     { "depth_rt",       sc_depth_rt },
     { "winding_rt",     sc_winding_rt },
     { "instanced",      sc_instanced },
+    { "ssbo_vs",        sc_ssbo_vs },
     { "readback",       sc_readback },
     { "stress",         sc_stress },
 };

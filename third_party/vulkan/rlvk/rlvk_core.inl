@@ -583,6 +583,7 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
                         rlvkShaderWriteUniform(shader, L[SHADER_LOC_COLOR_DIFFUSE], pc.colDiffuse, 16);
                 }
                 rlvkBindShaderUbos(cmdBuffer, shader);
+                rlvkBindShaderSsbos(cmdBuffer, shader);
                 rlvkBindShaderSamplers(cmdBuffer, shader, false);
             }
             else

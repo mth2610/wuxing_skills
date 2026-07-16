@@ -88,6 +88,11 @@ unsigned int rlLoadShaderProgram(const char *vsCode, const char *fsCode)
     // Force raylib's canonical attribute locations (the Vulkan glBindAttribLocation), reflect the
     // VS, then rewrite the FS's input locations to match the VS outputs BY NAME (GL link rules)
     rlvkCanonicalizeInputLocations(vsSpv, vsWords);
+    // Storage buffers: rebase GLSL bindings 0..3 to set0's SSBO range (18..21) in both stages;
+    // read-only (NonWritable injected) when the device lacks vertexPipelineStoresAndAtomics
+    u32 vsSsboMask = 0, fsSsboMask = 0;
+    rlvkRebaseStorageBuffers(&vsSpv, &vsWords, !RLVK.Caps.graphicsSsboStores, &vsSsboMask);
+    rlvkRebaseStorageBuffers(&fsSpv, &fsWords, !RLVK.Caps.graphicsSsboStores, &fsSsboMask);
     rlvkSpvReflection vsRef, fsRef;
     rlvkReflectSpv(vsSpv, vsWords, &vsRef);
     rlvkMatchStageInterface(&fsSpv, &fsWords, &vsRef);
@@ -209,6 +214,7 @@ unsigned int rlLoadShaderProgram(const char *vsCode, const char *fsCode)
     shader->vsStage = shader->vsBlockSize ? (unsigned char *)RL_CALLOC(1, shader->vsBlockSize) : NULL;
     shader->fsStage = shader->fsBlockSize ? (unsigned char *)RL_CALLOC(1, shader->fsBlockSize) : NULL;
     shader->usesUbo = true;
+    shader->ssboMask = vsSsboMask | fsSsboMask;
 
     TRACELOG(RL_LOG_INFO, "RLVK: [ID %u] shader program compiled (%d uniforms, VS block %uB at %u, FS block %uB at %u)",
              slot, shader->uniformCount, shader->vsBlockSize, vsRef.blockBinding, shader->fsBlockSize, fsRef.blockBinding);

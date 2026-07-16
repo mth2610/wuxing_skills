@@ -169,7 +169,7 @@ void rlUnloadShaderBuffer(unsigned int id)
     b->buffer = VK_NULL_HANDLE; b->memory = VK_NULL_HANDLE; b->mapped = NULL;
     b->inUse = false;
     b->freedFrame = (u32)RLVK.frameCounter;
-    for (u32 i = 0; i < 8; i++) if (RLVK.computeSSBO[i] == id) RLVK.computeSSBO[i] = 0;
+    for (u32 i = 0; i < 8; i++) if (RLVK.computeSSBO[i] == id) { RLVK.computeSSBO[i] = 0; if (i < RLVK_SET0_SSBO_COUNT) RLVK.set0Dirty = true; }
 }
 
 // Update SSBO buffer data (in-stream mid-frame, one-shot staging at load time)
@@ -186,6 +186,7 @@ void rlBindShaderBuffer(unsigned int id, unsigned int index)
 {
     if (index >= 8) { TRACELOG(RL_LOG_WARNING, "RLVK: SSBO binding %u out of range (max 8)", index); return; }
     RLVK.computeSSBO[index] = (id < RLVK_MAX_BUFFER_SLOTS)? id : 0;
+    if (index < RLVK_SET0_SSBO_COUNT) RLVK.set0Dirty = true;   // graphics draws mirror bindings 0..3 into set 0
 }
 
 // Read SSBO buffer data (GPU->CPU): synchronous, GL glGetBufferSubData semantics
@@ -342,6 +343,7 @@ void rlLoadDrawQuad(void)
     if (shader->usesUbo)
     {
         rlvkBindShaderUbos(cmdBuffer, shader);
+        rlvkBindShaderSsbos(cmdBuffer, shader);
         rlvkBindShaderSamplers(cmdBuffer, shader, true);
     }
     rlvkFlushSet0(cmdBuffer);

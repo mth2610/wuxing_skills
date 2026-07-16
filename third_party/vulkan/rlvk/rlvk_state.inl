@@ -77,6 +77,7 @@ typedef struct rlvkShaderSlot {
     u32                 vsPushedGen, fsPushedGen;   // Write generation last snapshotted+pushed
     u32                 uboPushedEpoch;             // Command-buffer epoch of the last push (pushes die with the cb)
     int                 uniformCount;           // Entries in the reflected uniform table
+    u32                 ssboMask;               // bit i: shader reads graphics SSBO index i (set0 binding RLVK_SSBO_BINDING_BASE+i)
     bool                usesUbo;                // runtime-compiled (reflected uniforms); false = embedded push-constant shader
     bool                inUse;                 // Slot occupied
 } rlvkShaderSlot;
@@ -329,6 +330,7 @@ typedef struct rlvkData {
     rlvkShaderSlot         *lastUboShader;      // shader whose blocks hold UBO bindings 16/17 (they overwrite each other)
     VkImageView             pushedView   [RLVK_MAX_TEXTURE_UNITS];  // last view pushed per unit binding (skip redundant pushes; doubles as the set-0 shadow on the pool-ring path)
     VkSampler               pushedSampler[RLVK_MAX_TEXTURE_UNITS];  // last sampler pushed per unit binding
+    u32                     pushedSsbo[RLVK_SET0_SSBO_COUNT];       // buffer slot last pushed per graphics-SSBO binding (0xFFFFFFFF = never; reset with the cb)
 
     // Pool-ring fallback state (devices without VK_KHR_push_descriptor): CPU shadow of the
     // UBO bindings + per-frame descriptor pools; a fresh set is allocated, fully written and
@@ -344,7 +346,9 @@ typedef struct rlvkData {
     VkDescriptorSetLayout   computeSetLayout;
     VkPipelineLayout        computePipelineLayout;
     VkDescriptorPool        computeDescPools[RLVK_FRAME_INDEX_COUNT];   // reset with each frame slot's fence
-    u32                     computeSSBO[8];                     // buffer slots bound per SSBO index (0 = unbound)
+    u32                     computeSSBO[8];                     // buffer slots bound per SSBO index (0 = unbound); shared GL-style
+                                                                // bind table: compute dispatch reads 0..7, graphics draws read 0..3
+                                                                // into set0 bindings RLVK_SSBO_BINDING_BASE+i
     u32                     computeImage[4];                    // texture slots bound per image unit (0 = unbound)
     VkExtent2D              swapchainExtent;
     VkFormat                swapchainFormat;
@@ -378,6 +382,9 @@ typedef struct rlvkData {
         bool        bresenhamLines;     // VK_EXT/KHR_line_rasterization (fallback: default line raster, cosmetic delta)
         bool        wideLines;          // Core optional feature (fallback: clamp rlSetLineWidth to 1.0)
         bool        fillModeNonSolid;   // Core optional feature (fallback: rlEnableWireMode/PointMode no-op)
+        bool        graphicsSsboStores; // vertexPipelineStoresAndAtomics: graphics-stage SSBOs may be written.
+                                        // Absent -> rlvkRebaseStorageBuffers injects NonWritable (read-only SSBOs,
+                                        // which is all the GPU-particle path needs; optional on many 1.1 devices)
         // Driver quirks (empirically bisected, see tests/rlvk_visual_test.c depth_rt scenario)
         bool        noSampledDepth;     // MoltenVK/Intel: SAMPLED usage on a depth image silently
                                         // disables depth test/write on that attachment. When set,

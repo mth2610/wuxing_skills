@@ -36,6 +36,8 @@ static u32          rlvkCreateVBO         (const void *data, int size, bool isIn
 static void         rlvkUploadBuffer      (VkBuffer dst, u32 dstOffset, const void *data, u32 size); // Copy into a device-local buffer (in-frame or one-shot)
 static void         rlvkShaderWriteUniform(rlvkShaderSlot *shader, int loc, const void *data, u32 bytes); // Write a uniform into the shader staging blocks
 static void         rlvkBindShaderUbos    (VkCommandBuffer cmdBuffer, rlvkShaderSlot *shader); // Snapshot uniform staging and push UBO descriptors
+static void         rlvkBindShaderSsbos   (VkCommandBuffer cmdBuffer, rlvkShaderSlot *shader); // Push graphics-SSBO descriptors from the shared bind table (native push path)
+static void         rlvkRebaseStorageBuffers(u32 **pSpv, size_t *pWordCount, bool injectNonWritable, u32 *outMask); // Rewrite SSBO bindings 0..3 -> set0 18..21 (+NonWritable)
 static void         rlvkBindShaderSamplers(VkCommandBuffer cmdBuffer, rlvkShaderSlot *shader, bool includeBinding0); // Push the shader sampler bindings
 static void         rlvkFlushSet0         (VkCommandBuffer cmdBuffer); // Pool-ring fallback: bind a snapshot set before a draw (no-op with native push descriptors)
 static VKAPI_ATTR void VKAPI_CALL rlvkPushDescriptorSetCompat(VkCommandBuffer cmdBuffer, VkPipelineBindPoint bindPoint,

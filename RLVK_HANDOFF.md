@@ -1,8 +1,11 @@
 # RLVK Vulkan 1.1 Backend — Handoff Document
 
 > **Purpose**: complete context for an AI (or human) continuing this work with zero prior
-> conversation. Read this top to bottom before touching `third_party/vulkan/rlvk.h`.
-> Written 2026-07-15, after the 1.3→1.1 retarget was completed and compile-verified.
+> conversation. Read this top to bottom before touching anything under `third_party/vulkan/`.
+> Companion: `third_party/vulkan/CLAUDE.md` (the Renderer Agent's operating rules — fragment
+> map, verification ladder, token rules). Last major update 2026-07-16, after the windowed
+> platform layer landed, the game ran on Vulkan, and the first real-content bug wave was
+> root-caused and fixed.
 
 ---
 
@@ -12,278 +15,313 @@ The user's goal (their words, translated): **many machines are stuck on Vulkan 1
 solve this, the engine has a real future.** Not just particles — beautiful VFX must run on
 old/weak devices. Long-term: extract a standalone renderer/engine, not wuxing-game-only.
 
-Tiering decided with the user:
-- **Old desktop + macOS + (for now) Android → existing OpenGL/GLES backend** (unchanged).
+Tiering:
+- **Old desktop + (for now) Android → existing OpenGL/GLES backend** (unchanged).
 - **Vulkan 1.1+ devices → rlvk**, one single code path from weakest 1.1 Android driver to
   newest desktop GPU. 1.3 features are *optional accelerators only* where trivially gated.
 - Key motivator: **compute particles on Android**. Mali GLES silently fails vertex-stage
-  SSBO reads (see `CORE_ISSUES.md` Item 5 — compute path permanently disabled on Android).
-  Vulkan *mandates* vertex-stage storage-buffer reads on every conformant device, so the
-  existing `compute/gpu_particle_system` architecture (compute writes SSBO → vertex shader
-  builds billboards from SSBO) works on Vulkan/Mali where GLES could not.
+  SSBO reads (`CORE_ISSUES.md` Item 5). Vulkan *mandates* vertex-stage storage-buffer reads
+  on every conformant device.
 
 ## 2. What rlvk is
 
-`third_party/vulkan/rlvk.h` (~350-line umbrella, zlib license, v1.1) implements
-**the complete rlgl API on Vulkan** — same `rl*` functions, different rasterizer. rlgl.h is
-included verbatim and never modified. The game keeps calling raylib/rlgl normally.
+`third_party/vulkan/rlvk.h` implements **the complete rlgl API on Vulkan** — same `rl*`
+functions, different rasterizer. rlgl.h is included verbatim and never modified. The game
+keeps calling raylib/rlgl normally.
 
-**File layout (split 2026-07-15):** `rlvk.h` is now just the public declarations + the
-implementation preamble, ending in a fixed-order `#include` chain of 14 fragments under
-`third_party/vulkan/rlvk/*.inl`. The fragments are **textual includes of the ONE
-`RLVK_IMPLEMENTATION` translation unit** — no include guards, order is significant, static
-helpers/forward-decls span them. Never `#include` a fragment directly; never reorder the
-chain. Map: `rlvk_config` (defines/tunables/PFN table/sync1 shim) · `rlvk_state`
-(types + cache structs + global `RLVK`) · `rlvk_forward` (static fwd-decls) · `rlvk_shaderc`
-(GLSL→SPIR-V + reflection) · `rlvk_matrix` (matrix/vertex/GL-style ops) · `rlvk_renderpass`
-(RP+FB cache impl) · `rlvk_core` (init/close/blend/batch/rlSetTexture/vbuffers) ·
-`rlvk_texture` (staging transfer/textures/FBO) · `rlvk_shader` (shader modules/uniforms) ·
-`rlvk_compute` (dispatch/SSBO/matrix-state) · `rlvk_frame` (VK init + frame lifecycle +
-push-desc fallback) · `rlvk_pipeline` (pipeline state cache) · `rlvk_platform` (surface/
-present/swapchain-recreate) · `rlvk_format` (math + pixel-format map). Split is byte-exact
-vs the old single file; compile-check (`scripts/check_rlvk_compile.sh`) passes.
+**File layout:** `rlvk.h` is a ~350-line umbrella (public decls + impl preamble) ending in
+a fixed-order `#include` chain of 14 fragments under `third_party/vulkan/rlvk/*.inl`. The
+fragments are **textual includes of the ONE `RLVK_IMPLEMENTATION` translation unit** — no
+include guards, order significant, statics span them. Never include a fragment directly,
+never reorder the chain. The per-fragment content map lives in
+`third_party/vulkan/CLAUDE.md` — grep the symbol, read only that fragment region.
 
-Integration model (documented in the file header): in the ONE translation unit that would
-define `RLGL_IMPLEMENTATION`, define `RLVK_IMPLEMENTATION` and include `rlvk.h` instead.
-`GRAPHICS_API_VULKAN_14` is defined for backend detection; `GRAPHICS_API_OPENGL_33` is
-defined ONLY to fix rlgl.h's `rlVertexBuffer` struct layout. Never combine both
-implementations in one build (`#error`-guarded).
+Integration model: in the ONE translation unit that would define `RLGL_IMPLEMENTATION`
+(raylib's rcore.c), define `RLVK_IMPLEMENTATION` and include `rlvk.h` instead — done by
+`scripts/rlvk_patch_raylib.py` (idempotent, marker-guarded), invoked from CMake when
+`WUXING_USE_VULKAN=ON`. `GRAPHICS_API_OPENGL_33` stays defined ONLY to fix rlgl.h's
+`rlVertexBuffer` struct layout. Never combine both implementations in one build
+(`#error`-guarded).
 
-Platform hooks (NOT part of rlgl's API): platform layer creates `VkSurfaceKHR` →
+Platform hooks (NOT part of rlgl's API): platform creates `VkSurfaceKHR` →
 `rlvkAttachSurface(surface)`; `SwapScreenBuffer()` → `rlvkPresent()`;
-`rlvkSetMsaaSamples(4)` before attach for `FLAG_MSAA_4X_HINT`; `rlvkGetInstance()` for
-`glfwCreateWindowSurface`.
+`rlvkSetMsaaSamples(4)` before attach; `rlvkGetInstance()` for `glfwCreateWindowSurface`.
 
-## 3. State: retarget COMPLETE — headless paths **RUNTIME-VERIFIED on MoltenVK**
+## 3. Current state (2026-07-16)
 
-The original rlvk targeted Vulkan 1.3 + 6 required extensions. It has been fully retargeted:
-**the only hard device requirement is now core Vulkan 1.1 + `VK_KHR_swapchain`.**
-
-**Runtime verification (2026-07-15)**: LunarG Vulkan SDK 1.3.296 installed at
-`~/VulkanSDK/1.3.296.0` (user-level). MoltenVK 1.2.11 on Intel Iris 6000 reports device API
-**1.2** → sync2 absent → the sync1 shim and one-shot staging paths run for real, not the
-native fast paths. `./scripts/run_rlvk_runtime_test.sh` builds + runs
-`third_party/vulkan/tests/rlvk_runtime_test.c` with validation layers: **20/20 PASS, zero
-validation errors** — device init, texture staging roundtrips (RGBA8 + partial update +
-RGB→RGBA expand/repack), SSBO roundtrips (upload/read/partial/GPU-copy), compute dispatch
-with loose uniforms (one-shot path), runtime GLSL 330 graphics compile through shaderc with
-the clip-z epilogue, clean shutdown. Windowed/draw paths (render-pass cache, batch,
-present) still need a surface — untested until the platform layer (§4.2) exists.
-
-✅ FIX — vòng đời frameConsumed: TakeScreenshot để cờ "bỏ qua present kế tiếp" treo lại → frame sau bị nuốt present trong khi đang ghi → frameCounter lệch → lệnh rơi vào command buffer chưa begin → GPU timeout, device lost. Fix: frame mới mở phải xóa cờ. Sau fix: 0 lỗi MoltenVK.
-✅ FIX — screenshot chụp nhầm frame rỗng: rlReadScreenPixels sau EndDrawing mở frame MỚI (chỉ có clear) thay vì đọc frame vừa present. Fix: đọc inter image của slot trước (nội dung còn nguyên nhờ STORE). Xác nhận bằng shader debug: magenta phủ màn đúng như mong đợi — tức pipeline/raster/render-pass/blit đều hoạt động.
-✅ FIX — vertex attribute fetch đọc toà (MoltenVK stride=0 bug): MoltenVK's portability subset rejects `stride = 0`, causing the pointer to advance by format size and read out of bounds on a tiny 44-byte dummy buffer, leading to GPU timeout on Intel Iris 6000. Fix: Allocated a 1 million vertex dummy buffer (44MB) and set `stride = sizeof(dummyData)` specifically on `__APPLE__` via `#if defined(__APPLE__)` in `rlvk.h`.
-✅ FIX — File IO lỗi tải shader và texture: Nguyên nhân là do chạy file thực thi từ thư mục `build/` thay vì thư mục gốc dự án. Fix: Cấu hình IDE / dòng lệnh luôn đặt Working Directory (`Cwd`) là thư mục gốc dự án khi chạy. Toàn bộ file đã load thành công.
-
-Runtime bugs found & fixed during bring-up:
-- `rlvkDeferDestroy`'s immediate-destroy branch (frameCounter==0) leaked pipelines.
-- Descriptor-write scratch arrays in dispatch were undersized for the full binding mix.
-- **MoltenVK/Intel driver bug (bisected via a raw-Vulkan repro, no rlvk involved): merely
-  DECLARING storage-image bindings in a compute descriptor-set layout makes a UBO at a
-  later binding read as zeros**, even when the images are never written or statically
-  used. Fix: the fixed compute layout has NO storage-image bindings (0–7 SSBO, 12–13
-  sampler, 14 UBO); when image load/store is needed, give images their own descriptor SET.
-- **shaderc's `auto_bind_uniforms` rebases even explicitly-bound UBOs** (`layout(binding=N)
-  uniform` becomes N + base). Compute shaders must use loose uniforms (the GL-style path)
-  or explicit-std430 SSBOs (storage-buffer kind has no base set, bindings preserved).
+- **Retarget 1.3 → 1.1-core: COMPLETE.** Only hard requirement: core 1.1 + `VK_KHR_swapchain`.
+- **Headless paths: 20/20 runtime-verified** on MoltenVK w/ validation
+  (`scripts/run_rlvk_runtime_test.sh`).
+- **Windowed platform layer: LANDED.** The full game builds and runs under Vulkan on macOS
+  (`WUXING_USE_VULKAN=ON`; MoltenVK is the dev proxy for "weak 1.1 driver" — macOS itself
+  ships GL in production).
+- **Visual test suite: 10/10** (`scripts/run_rlvk_visual_test.sh`, see §5).
+- **First real-content bug wave: root-caused and fixed** — every case is documented in §7.
+  Fixed: opaque-square particles (stale pipeline on failed build), device-lost after heavy
+  VFX (unchecked acquire), no depth occlusion inside render textures = character
+  see-through + black-hole-over-ring (MoltenVK/Intel `SAMPLED`-depth quirk).
+- Reference hardware so far: MoltenVK 1.2.11 / Intel Iris 6000 / macOS 12 (device API 1.2,
+  no native sync2 → the 1.1 fallback paths run for real). Android device target: Samsung
+  A33 (Mali-G68, VK 1.1) — not yet run.
 
 ### 3.1 The conversion table (what replaced what)
 
 | Old 1.3 requirement | Replacement (single path unless noted) | Where |
 |---|---|---|
-| `dynamicRendering` | Cached `VkRenderPass` + `VkFramebuffer` (two bounded tables in `rlvkData`: `renderPasses[32]`, `framebuffers[64]`, keyed by `rlvkRenderPassKey` / pass+views+extent). All scope opens go through `rlvkBeginScopeRenderPass()`; all closes are plain `vkCmdEndRenderPass`. Attachment layouts are initial==final (COLOR/DEPTH_ATTACHMENT_OPTIMAL) so the pass never fights rlvk's manual layout tracking; no subpass dependencies (explicit barriers outside, as before). MSAA resolve = subpass `pResolveAttachments` (attachment order convention: colors, resolve, depth — everywhere). | `rlvkGetRenderPass`, `rlvkGetFramebuffer`, `rlvkBeginScopeRenderPass`, `rlvkEvictFramebuffersForView` |
-| `synchronization2` | **Shim installed into the `vk.` dispatch table** when sync2 absent: `rlvkCmdPipelineBarrier2Compat` / `rlvkQueueSubmit2Compat` translate `VkDependencyInfo`/`VkSubmitInfo2` → core sync1 calls. All ~14 call sites keep their sync2 shape untouched; 1.3 devices keep native entry points. Bit mapping: COPY/BLIT/RESOLVE/CLEAR→TRANSFER, INDEX/VERTEX_ATTRIBUTE_INPUT→VERTEX_INPUT, SAMPLED/STORAGE_READ→SHADER_READ, NONE→TOP/BOTTOM_OF_PIPE. | shim section right after the `vk` struct; installed in `rlvkLoadEntrypoints` |
-| `VK_EXT_host_image_copy` | **Removed entirely.** Classic staging buffer + one-shot submission. `rlvkOneShotBegin/End` create a TRANSIENT command pool per call so an in-progress frame recording is never clobbered. Helpers: `rlvkStagingUploadImage` (layers, x/y offset), `rlvkStagingReadImage`, `rlvkCmdTransitionImage` (mip+layer ranges), `rlvkHostTransitionImage`. Converted: rlLoadTexture, cubemap, rlUpdateTexture load-time branch, rlGenTextureMipmaps (whole chain packed into ONE staging buffer, one submission), rlReadTexturePixels. | staging section before `rlvkCreateVBO` |
-| `VK_KHR_push_descriptor` | Optional. Same shim pattern: `rlvkPushDescriptorSetCompat` installed into `vk.CmdPushDescriptorSetKHR` updates a CPU shadow (`pushedView/pushedSampler` reused + `shadowUbo[2]`) and sets `set0Dirty`. `rlvkFlushSet0(cmdBuffer)` — called before **all 5 draw sites** (batch draw/drawIndexed, mesh draw/drawIndexed, quad draw) — allocates a snapshot set from `descPools[frame]` (`RLVK_DESC_SETS_PER_FRAME` 1024), writes all 16 samplers (NULL→default texture) + up-to-2 UBOs, binds it. Pools reset at both cb-reset points (alongside the `memset(pushedView)` lines). Native push descriptors used when available. | `rlvkPushDescriptorSetCompat`, `rlvkFlushSet0` |
-| `VK_EXT_depth_clip_control` | **Removed entirely — deliberately, on every device.** GL [-1,1] clip-z is remapped by a vertex-shader epilogue `gl_Position.z = (gl_Position.z + gl_Position.w)*0.5` in TWO places that must stay in sync: (a) injected by `rlvkInjectClipZEpilogue` in `rlvkCompileGlsl` for every runtime-compiled VS (whole-word-renames `main`→`rlvk_main_`, appends wrapper `main`), (b) baked into the embedded default shader source `third_party/vulkan/shaders/rlvk_default.vert`. **Trap: re-enabling the extension without removing the epilogue double-transforms depth.** | `rlvkInjectClipZEpilogue` |
-| `VK_EXT_vertex_attribute_divisor` (zero-divisor broadcasts) | **Removed entirely.** Missing-attribute broadcasts now use `stride = 0, inputRate = VERTEX` bindings — core Vulkan 1.0 semantics (address = offset + index*0). Real instancing (`RLVK_VLAYOUT_MESH_INSTANCED`) is plain INSTANCE rate (divisor-1 equivalent, core). Known caveat: **MoltenVK portability subset rejects stride < format size** — only matters if macOS-over-Vulkan ever becomes a target (it is not; macOS uses GL). | `rlvkBuildVertexInput`, `rlvkAppendDummyAttribs` |
-| `bresenhamLines`, `wideLines`, `fillModeNonSolid` | Optional Caps. Line state chained into pipelines only when ext present (default line raster otherwise — cosmetic delta, accepted). `wideLines` never requested (all pipelines use lineWidth 1.0; `rlSetLineWidth` only feeds `rlGetLineWidth`). Wire/point polygon modes degrade to FILL when `fillModeNonSolid` absent (pipeline-key time). | pipeline creation; `key.polygonMode` computation |
-| `vkCmdSetViewportWithCount` / `ScissorWithCount` / `vkCmdWriteTimestamp2` (1.3-only, missed by the first audit) | Plain `vkCmdSetViewport/vkCmdSetScissor(first=0,count=1)` + pipeline `viewportCount=scissorCount=1` + `VK_DYNAMIC_STATE_VIEWPORT/SCISSOR`; `vkCmdWriteTimestamp` with TOP/BOTTOM_OF_PIPE stages (GPU-trace debug path). | pipeline dynamic state; `RLVK_GPU_TRACE` sites |
-| shaderc target env vulkan **1.3** | **vulkan 1.1 / SPIR-V 1.3** — the old target emitted SPIR-V 1.6, *invalid on 1.1 drivers*. This was load-bearing, not cosmetic. | `rlvkCompileGlsl` |
+| `dynamicRendering` | Cached `VkRenderPass` + `VkFramebuffer` (bounded tables keyed by `rlvkRenderPassKey` / pass+views+extent). All scope opens via `rlvkBeginScopeRenderPass()`. Attachment layouts initial==final so passes never fight manual layout tracking; no subpass dependencies (explicit barriers outside). Attachment order everywhere: colors, resolve, depth. | `rlvk_renderpass.inl` |
+| `synchronization2` | Shim installed into the `vk.` dispatch table when sync2 absent: `rlvkCmdPipelineBarrier2Compat` / `rlvkQueueSubmit2Compat` translate to core sync1. Call sites keep the sync2 shape. Bit mapping: COPY/BLIT/RESOLVE/CLEAR→TRANSFER, INDEX/VERTEX_ATTRIBUTE_INPUT→VERTEX_INPUT, SAMPLED/STORAGE_READ→SHADER_READ. | `rlvk_config.inl` |
+| `VK_EXT_host_image_copy` | Removed. Staging buffer + one-shot TRANSIENT-pool submissions (`rlvkOneShotBegin/End`, `rlvkStagingUploadImage/ReadImage`, `rlvkCmdTransitionImage`). | `rlvk_texture.inl` |
+| `VK_KHR_push_descriptor` | Optional. CPU shadow + per-frame descriptor-pool ring; `rlvkFlushSet0` before every draw site. Native push descriptors when available. | `rlvk_frame.inl` |
+| `VK_EXT_depth_clip_control` | Removed **everywhere, deliberately**. GL [-1,1] clip-z remapped by vertex-shader epilogue `gl_Position.z = (z + w) * 0.5` in TWO places that must stay in sync: injected by `rlvkInjectClipZEpilogue` for every runtime-compiled VS, and baked into `shaders/rlvk_default.vert`. **Trap: re-enabling the extension without removing the epilogue double-transforms depth.** | `rlvk_shaderc.inl` |
+| `VK_EXT_vertex_attribute_divisor` | Removed. Missing-attribute broadcasts = `stride 0, rate VERTEX` (core semantics); real instancing = plain INSTANCE rate. See §7.5 for the MoltenVK stride-0 workaround. | `rlvk_pipeline.inl` |
+| `bresenhamLines`/`wideLines`/`fillModeNonSolid` | Optional Caps with graceful degradation (default raster / lineWidth 1.0 / FILL). | `rlvk_pipeline.inl` |
+| 1.3-only cmd variants (`SetViewportWithCount`, `WriteTimestamp2`) | Plain 1.0 calls. | pipeline dynamic state |
+| shaderc target vulkan 1.3 | **vulkan 1.1 / SPIR-V 1.3** — 1.3 target emits SPIR-V 1.6, invalid on 1.1 drivers. Load-bearing. | `rlvkCompileGlsl` |
 
-### 3.2 New capabilities added (beyond the retarget)
+### 3.2 Beyond the retarget
 
-**Swapchain recreation** (was `TODO(vk)`, mandatory for Android rotate/pause/resume, fixes
-desktop resize): `rlvkDestroySwapchainSizedObjects()` (destroys swapchain, its views +
-per-image present semaphores, per-frame depth/inter/msaa targets, evicting cached
-framebuffers per dying view) + `rlvkRecreateSwapchain()` (device-idle drain → destroy →
-re-run `rlvkAttachSurface`, which is now re-entrant: acquire semaphores + frame fences are
-guarded once-only). Wired at: acquire `OUT_OF_DATE` (recreate + one retry; failed acquire
-leaves the semaphore unsignaled so reuse is safe; still-0x0 = minimized → skip frame) and
-present `OUT_OF_DATE|SUBOPTIMAL` (recreate after frame bookkeeping).
+- **Swapchain recreation** on OUT_OF_DATE/SUBOPTIMAL + minimize handling (swapchain=NULL →
+  skip frames). `rlvkAttachSurface` is re-entrant.
+- **Compute fully implemented**: fixed set-0 layout (bindings 0–7 SSBO, 12–13 sampler,
+  14 loose-uniform UBO — **NO storage images, see §7.4**), GL bind-then-dispatch semantics,
+  render-scope suspension around dispatch, one-shot path outside frames. SSBOs get
+  VERTEX_BUFFER usage too (particle draws may read them as vertex streams).
+- **shaderc dlopen** for all platforms; vendored upstream `shaderc.h` (NDK's lacks
+  `set_vulkan_rules_relaxed`).
+- **MoltenVK enumeration** (`VK_KHR_portability_enumeration` + subset ext when present).
 
-**Compute — fully implemented** (was stubs; this unblocks the Android particle goal):
-- Fixed compute set-0 layout, created lazily (`rlvkInitComputeLayout`): bindings **0–7
-  STORAGE_BUFFER, 8–11 STORAGE_IMAGE, 12–13 COMBINED_IMAGE_SAMPLER, 14 UNIFORM_BUFFER**
-  (the implicit loose-uniform block). shaderc compute-stage auto-binding bases match
-  (image 8, texture/sampler 12, buffer 14); SSBOs declare explicit `std430, binding=0..7`
-  in GLSL themselves.
-- Flow: `rlLoadShader(code, RL_COMPUTE_SHADER)` stashes a copy of the GLSL in the slot
-  (`pendingCode`) → `rlLoadShaderProgramCompute(csId)` lazily loads shaderc, compiles
-  (stage 2), reflects the loose-uniform block + samplers via `rlvkReflectSpv` (offsets ride
-  the `vsStage/vsBlockSize` fields), creates module + monolithic compute pipeline against
-  `computePipelineLayout`, returns csId (stage slot becomes program slot).
-- `rlBindShaderBuffer(id, index)` / `rlBindImageTexture(id, unit, ...)` record into
-  `RLVK.computeSSBO[8]` / `computeImage[4]` (GL bind-then-dispatch semantics).
-- `rlComputeShaderDispatch(x,y,z)`: suspends the open render scope (same FBO-close +
-  `vkCmdEndRenderPass` + resume dance every mid-frame copy uses — dispatch is illegal
-  inside a render pass), allocates a snapshot set from `computeDescPools[frame]`
-  (`RLVK_COMPUTE_SETS_PER_FRAME` 256, reset with the frame fence), writes SSBOs + storage
-  images + sampler uniforms (explicit `rlSetUniformSampler` texture or default) + a
-  uniform-block snapshot bump-allocated from the frame arena, binds pipeline+set,
-  dispatches, then a broad memory barrier (storage writes → storage/sampled/vertex-attr/
-  transfer/uniform reads = `glMemoryBarrier` semantics). Outside a frame (init-time
-  seeding) it runs as a one-shot submission instead.
-- SSBO functions all real now: `rlLoadShaderBuffer` (DEVICE_LOCAL, STORAGE|TRANSFER_SRC/
-  DST|**VERTEX_BUFFER** usage — particle draw reads its SSBO), `rlUpdateShaderBuffer`
-  (delegates to `rlvkUploadBuffer`: in-stream arena copy mid-frame, one-shot staging at
-  load), `rlReadShaderBuffer` (flush+drain then one-shot readback), `rlCopyShaderBuffer`
-  (in-stream or one-shot), `rlUnloadShaderBuffer` (dead-ring deferred + unbinds from
-  `computeSSBO`).
-
-**shaderc dlopen for non-Windows** (was Windows-only): tries `libshaderc_shared.so.1/.so`,
-`libshaderc.so` (Android NDK naming), `.dylib` variants.
-
-**MoltenVK enumeration support**: `VK_KHR_portability_enumeration` + flag at instance
-creation, `VK_KHR_portability_subset` enabled when present (spec requires it).
-
-### 3.3 Files created/changed (all uncommitted in git)
+## 4. Key files
 
 | File | What |
 |---|---|
-| `third_party/vulkan/rlvk.h` | The retarget (modified, ~7,600 lines). Header docs updated to match. |
-| `third_party/vulkan/rlvk_shaders.h` | **Was missing from the repo entirely** (rlvk.h includes it; nothing compiled before). Generated embedded SPIR-V (`rlvkDefaultVertSpv/FragSpv`, uint32 arrays, SPIR-V 1.3). |
-| `third_party/vulkan/shaders/rlvk_default.vert/.frag` | Source for the embedded default shader. Interface contract documented in comments: attrib locations 0/1/3, push_constant block == `rlvkPushConstants{mat4 mvp; vec4 colDiffuse}` (80 B), set0 binding0 = texture0, **clip-z epilogue baked in**. |
-| `scripts/gen_rlvk_shaders.sh` | Regenerates rlvk_shaders.h via glslc (`--target-env=vulkan1.1`). Auto-finds Android NDK's glslc. |
-| `scripts/check_rlvk_compile.sh` | **The verification loop.** Compiles rlvk.h standalone: fetches Vulkan-Headers (git) + raylib 6.0 `raylib.h/config.h/rlgl.h` (curl) into `/tmp/rlvk_check_cache`, builds a TU mimicking rcore.c (`#include "raylib.h"` THEN `#define RLVK_IMPLEMENTATION #include "rlvk.h"`), `-std=c11 -Wall`. Run after every rlvk.h edit. No Vulkan SDK needed (compile only, no link). |
-| `third_party/vulkan/include/shaderc/` | Vendored shaderc C headers. `shaderc.h` is from **upstream google/shaderc main** (has `shaderc_compile_options_set_vulkan_rules_relaxed`; the NDK r27/r28 copy is too old and lacks it); `env.h/status.h/visibility.h` from NDK. |
-| `RLVK_HANDOFF.md` | This document. |
+| `third_party/vulkan/rlvk.h` + `rlvk/*.inl` | The backend (umbrella + 14 fragments). |
+| `third_party/vulkan/rlvk_shaders.h` | Generated embedded SPIR-V default shader. Regen: `scripts/gen_rlvk_shaders.sh` (glslc, `--target-env=vulkan1.1`). |
+| `third_party/vulkan/shaders/rlvk_default.vert/.frag` | Default-shader source. Contract: attrib locations 0/1/3, push_constant == `rlvkPushConstants{mat4 mvp; vec4 colDiffuse}`, set0 binding0 = texture0, clip-z epilogue baked in. |
+| `third_party/vulkan/tests/rlvk_runtime_test.c` | Headless suite (20 checks). |
+| `third_party/vulkan/tests/rlvk_visual_test.c` | Windowed scenario suite (10 scenarios, self-checking pixels). **Every draw-path bug fix adds a scenario here first.** |
+| `scripts/check_rlvk_compile.sh` | Tier-1 compile check (no SDK needed). |
+| `scripts/run_rlvk_runtime_test.sh` | Tier-2 headless + validation. |
+| `scripts/run_rlvk_visual_test.sh` | Tier-3 windowed; `VALIDATE=1` adds layers; caches a Vulkan-patched raylib in `/tmp/rlvk_visual_cache` (first run ~2 min, then ~20 s). |
+| `scripts/rlvk_patch_raylib.py` | Patches raylib 6.0 for Vulkan (rcore.c impl swap + GLFW NO_API/surface/present). Idempotent. |
+| `third_party/vulkan/CLAUDE.md` | Renderer Agent rules. |
 
-### 3.4 Dev-environment landmines (this specific Mac, Darwin 21.6 / macOS 12)
-
-- **No Vulkan SDK/runtime installed.** Compile-check works; runtime cannot.
-- **NDK glslc crashes** (`__libcpp_verbose_abort` missing in system libc++). Fix that
-  worked: copy glslc, `install_name_tool -add_rpath <ndk>/toolchains/llvm/prebuilt/darwin-x86_64/lib`,
-  `codesign -f -s -`. (The binary wants `@rpath/libc++.dylib`; no rpath → falls back to the
-  ancient system one.) `gen_rlvk_shaders.sh` accepts `GLSLC=<path>` override.
-- Vulkan-Headers must be **recent** (v1.3.280 was too old — rlvk uses 1.4-promoted type
-  names like `VkVertexInputBindingDivisorDescription`, `VK_IMAGE_USAGE_HOST_TRANSFER_BIT`;
-  latest headers work and are compile-time only).
-- rlvk.h **must be compiled in raylib's rcore.c context** (raylib.h included first): it uses
-  unprefixed `SHADER_LOC_*`, `DEG2RAD`, etc. The existing stub `core/vulkan/wuxing_vulkan.c`
-  does NOT do this yet — fix it when wiring the build.
-
-## 4. What remains (ordered; each item is independent unless noted)
-
-### 4.1 Runtime bring-up — headless DONE, windowed/draw paths NEXT
-Headless verification is complete on MoltenVK (see §3). What remains needs a window:
-1. Platform layer (§4.2), then draw the classic raylib examples through rlvk.
-2. Keep validation layers ON (`scripts/run_rlvk_runtime_test.sh` shows the env recipe;
-   rlvk never enables layers itself, by design — it only passes a message-id filter).
-3. Expected first-bugs: render-pass/framebuffer cache edge cases (MSAA resolve path,
-   depth-only shadowmap FBOs, `rlvkFinishSwapchainImage` flip-blit interaction), the
-   pool-ring fallback vs native push descriptors (MoltenVK HAS push descriptors, so the
-   ring fallback ran headless only via compute — env-force `Caps.pushDescriptor=false` to
-   exercise it in draws), stride-0 broadcast bindings on MoltenVK portability (§3.1 caveat
-   — mesh draws with missing attributes may need a MoltenVK-specific fallback).
-   `RLVK_DEVICE_INDEX/RLVK_DEVICE_NAME` env overrides help device switching.
-   Debug helper: `RLVK_DUMP_SPV=<dir>` dumps every shaderc-compiled module for spirv-dis.
-
-### 4.2 Platform layer (blocks 4.1)
-- **[RESOLVED]** CMake: `WUXING_USE_VULKAN` option now properly uses `find_package(Vulkan REQUIRED)`. `Vulkan_INCLUDE_DIRS` are fed to `raylib` and `wuxing` targets, and `Vulkan::Vulkan` is linked to `wuxing`. The `rlvk_patch_raylib.py` script automatically patches `rcore.c` to swap `rlgl.h` for `rlvk.h`, which correctly compiles raylib entirely under the Vulkan backend! Tested and verified on macOS + MoltenVK with compute shader initialization confirming `rlGetVersion == 4` (Compute Shader success)!
-- raylib 6.0 GLFW platform patch (raylib is FetchContent'd into `build/_deps` — patch via
-  CMake patch step or vendored platform file): window with `GLFW_NO_API`; after window
-  creation `glfwCreateWindowSurface(rlvkGetInstance(), window, NULL, &surface)` →
-  `rlvkAttachSurface(surface)`; `SwapScreenBuffer()` → `rlvkPresent()`;
-  `FLAG_MSAA_4X_HINT` → `rlvkSetMsaaSamples(4)` BEFORE attach.
-- Ship/locate `shaderc_shared` next to the binary (Windows: `shaderc_shared.dll` from the
-  Vulkan SDK; Linux: distro package). Without it only the embedded default shader works —
-  the game's ~30 custom shaders all need it. Must be new enough to export
-  `shaderc_compile_options_set_vulkan_rules_relaxed` (2023+; **NDK's libshaderc lacks it**
-  — for Android later, either ship a newer shaderc build or make that option optional-with-
-  fallback in `RLVK_SHADERC_FUNCS` loading).
-
-### 4.3 Port `compute/gpu_particle_system.c` from raw GL to the rl* compute API
-The ONLY file in the engine calling `gl*` directly (glDispatchCompute, glBindBufferBase,
-glBufferSubData, glUniform*, program compile). Map: program → `rlLoadShader(src,
-RL_COMPUTE_SHADER)` + `rlLoadShaderProgramCompute`; glBindBufferBase → `rlBindShaderBuffer`
-(indices 0..7); buffer create/update/read → `rlLoadShaderBuffer/rlUpdateShaderBuffer/
-rlReadShaderBuffer`; glUniform → `rlGetLocationUniform` + `rlSetUniform` +
-`rlEnableShader(program)`; dispatch+barrier → `rlComputeShaderDispatch` (barrier included).
-The GLSL itself (`compute/shaders/gpu_particles.comp`, `#version 310 es`, std430 explicit
-bindings 0/1) should compile via shaderc relaxed rules mostly as-is (bindings 0/1 fit the
-0–7 SSBO range). Keep the GL path compiling for the GL build (`#if !defined(WUXING_USE_VULKAN)`
-or migrate fully — decide with the module owner; `compute/` is the Compute Agent's per
-`CLAUDE.md`). Note `rlSetVertexAttributeDivisor` is a no-op in rlvk (not needed — the
-Vulkan draw path for particles should read the SSBO in the vertex shader via a descriptor,
-which is exactly what Mali GLES couldn't do; SSBOs are created with VERTEX_BUFFER usage too
-if a plain vertex-stream path is preferred).
-
-### 4.4 Android (after 4.1 proves the backend on desktop)
-- Instance ext `VK_KHR_android_surface` already handled (`__ANDROID__` branch);
-  platform code must create the surface from `ANativeWindow` and drive
-  `rlvkAttachSurface`/`rlvkPresent` through raylib's android platform.
-- Lifecycle: surface loss on pause/resume → `rlvkRecreateSwapchain` machinery exists but
-  Android also fully destroys the surface — needs a `rlvkDetachSurface`-style path
-  (destroy sized objects + surface, re-attach on resume). Not written yet.
-- shaderc on device: see 4.2 note; or precompile the game's shaders to SPIR-V offline at
-  build time (better for weak devices anyway — no runtime compile hitches) and extend
-  `rlLoadShaderProgram` to accept SPIR-V pairs (magic-number detect; the old rlLoadShader
-  SPIR-V branch was removed, the program-level path is where it belongs).
-- Real device matrix: the user's Samsung A33 (Mali-G68, VK 1.1) is the reference target.
-  Driver-quality bugs are expected — budget for it.
-
-### 4.5 Smaller known gaps (deliberate, documented in code)
-- `rlLoadShaderProgramEx` returns INVALID (separate VS/FS ids → program; raylib's normal
-  flow uses `rlLoadShaderProgram(vsCode, fsCode)` which is fully implemented — only exotic
-  callers need Ex).
-- `rlBindImageTexture` records, but textures created via `rlLoadTexture` lack
-  `VK_IMAGE_USAGE_STORAGE_BIT` and are never transitioned to `VK_IMAGE_LAYOUT_GENERAL` —
-  imageLoad/Store consumers need a dedicated creation path (add usage bit + layout
-  handling when a real consumer appears; adding STORAGE to all textures was rejected:
-  disables UBWC/compression on mobile).
-- Compute sampler units limited to bindings 12–13 (2 samplers per compute shader).
-- `RLVK_MAX_RENDER_PASSES 32` / `RLVK_MAX_CACHED_FRAMEBUFFERS 64` / pool sizes 1024/256 —
-  warn loudly when exhausted; tune when real content runs.
-- Perf note in the file header: the 1.3-design benchmark claim (1.5–7.5x vs GL on 17/19
-  scenes) predates the retarget; render-pass/staging/descriptor-ring paths are NOT
-  re-benchmarked.
-- Debug-messenger drain TODO at ~line 2871 (cosmetic).
-
-### 4.6 Long-term (the standalone-engine vision)
-After the backend is proven: engine-side work is tiler-aware VFX (the wuxing post chain —
-HDR, bloom MRT, soft particles reading depth — is bandwidth-heavy; render-pass load/store
-ops now exist as real levers), then extracting `core/` VFX + `compute/` + `environment/`
-into a library whose only downward interface is rlgl + the platform hooks. Renderer
-selection GL-vs-Vulkan stays a build-time choice per binary until someone needs a
-single-binary launcher (the two implementations define the same `rl*` symbols — runtime
-selection requires a renderer shared-library split; deliberately deferred).
-
-## 5. How to verify any change
+## 5. How to verify any change (MANDATORY ladder, cheapest first)
 
 ```bash
-./scripts/check_rlvk_compile.sh        # compile-check (the only loop available on this Mac)
-./scripts/gen_rlvk_shaders.sh          # only if the default .vert/.frag changed
+./scripts/check_rlvk_compile.sh                  # 1. seconds, after EVERY edit
+./scripts/run_rlvk_runtime_test.sh               # 2. init/compute/upload changes
+./scripts/run_rlvk_visual_test.sh [scenario]     # 3. anything touching draw/present/depth/blend
+cmake --build build && ./build/wuxing            # 4. HUMAN-run, final confirmation only
 ```
-Keep every intermediate state compiling. The strangler-pattern used throughout (Caps flag →
-fallback lands → old requirement deleted) kept the tree coherent; the transitional
-`RLVK_STILL_REQUIRED` guard block in `rlvkInitLogicalDevice` is now GONE — do not
-reintroduce hard feature requirements without a fallback.
 
-## 6. Architecture rules to preserve (decisions, not accidents)
+**Never start at tier 4.** Debugging via the full game burned entire sessions before the
+suite existed; every bug in §7 reproduces in a ≤40-line scenario that runs in seconds.
+Scenario list: `clear batch_alpha additive3d shader_uniform depth depth_rt winding_rt
+instanced readback stress` (`--list`). Each guards the bug class named in its comment.
 
-1. **One code path.** 1.1-core is THE path; 1.3-era features are dispatch-table fast paths
-   only where the shim pattern makes them free (sync2, push descriptors). Do not add
-   `if (Caps.x)` forks in draw-path logic.
-2. **Shims live in the `vk.` dispatch table**, call sites keep the modern shape.
-3. **Layout tracking is manual** (`rlvkTextureSlot.currentLayout` + explicit barriers);
-   render passes must never change layouts (initial==final always).
-4. **Fence-gated lifetime** for everything transient: dead-resource ring (now also
-   framebuffers), per-frame pools reset at the two cb-reset points (`rlvkFlushFrame`
-   post-wait and `rlvkBeginFrame` post-wait) — if you add a per-frame resource, reset it
-   at BOTH points.
-5. **Clip-z is a shader concern** — never re-add depth_clip_control (double-transform trap,
-   §3.1).
+## 6. DEBUGGING METHODOLOGY — read this before your first bug hunt
+
+Hard-won process lessons from the bring-up sessions. Following these would have saved the
+majority of all debugging time spent so far.
+
+1. **Reproduce in a micro-scenario before reading code.** For the FBO-depth bug (§7.1),
+   hours of careful code reading found *nothing* — every struct was correct — while four
+   env-gated experiments found the driver quirk in minutes. Reading tells you what the code
+   *intends*; only execution tells you what the driver *does*. Write/pick a visual-test
+   scenario first, always.
+
+2. **Zero validation errors does NOT mean correct.** Three separate silent bugs: the
+   SAMPLED-depth quirk (§7.1, silently no depth test), stale-pipeline draws (§7.2, silently
+   wrong shader), MoltenVK UBO zeroing (§7.4, silently zero uniforms). Validation catches
+   *illegal* Vulkan, not *wrong* Vulkan. The inverse also holds: a wall of validation
+   errors usually has ONE root cause — find the FIRST failure in the chain (§7.3: eight
+   scary sync VUIDs were all downstream of one unchecked `vkAcquireNextImageKHR`).
+
+3. **Bisect with single-variable, env-gated experiments compiled into the backend.**
+   Pattern used for §7.1: `getenv("RLVK_EXP_X") ? variantA : variantB` at the suspect site,
+   rebuild (~20 s), rerun the one failing scenario. Three runs isolated one usage flag.
+   **Remove the gates once the answer is known** — permanent switches rot.
+
+4. **Distrust your own probes.** Two self-inflicted detours: (a) pixel probes placed at
+   wrong coordinates reported "instancing broken" when rendering was perfect — *view the
+   actual screenshot image* before believing a numeric probe; (b) a depth-visualization
+   probe sampled the depth texture in the wrong layout and returned garbage that looked
+   like evidence. When a probe contradicts other evidence, validate the probe first.
+   (Same spirit as the project-wide rule: trust visuals over numeric PASS.)
+
+5. **Fail visibly-safe, never silently-garbage.** A failed pipeline build used to leave
+   the previous pipeline bound and draw anyway → soft-alpha particles rasterized with the
+   wrong shader as opaque squares (§7.2) — *worse than invisible*, because the symptom
+   (squares) pointed at blending/alpha, nowhere near the cause. All 3 draw sites now skip
+   the draw when `rlvkBindPipeline` returns false. Preserve this property in new code:
+   an error path must produce nothing, not leftovers.
+
+6. **Driver quirks get a Caps flag + a repro scenario, not an inline hack.** Every quirk in
+   §7 is (a) detected at init into `RLVK.Caps.*` or handled by a single guarded site,
+   (b) documented with the bisection evidence, (c) covered by a test scenario. Never
+   "fix" a driver issue with an unconditional behavior change that penalizes healthy
+   drivers, and never leave it as folklore in a chat log.
+
+7. **Suspect state *lifecycles* before state *values*.** The GPU-fault class (§7.3, §7.6)
+   all came from ring/lifecycle desync (fences, semaphores, frameCounter, frameConsumed) —
+   the individual values were always "plausible". When you see device-lost or
+   command-buffer-in-use errors, audit who advances the ring and every early-return between
+   acquire and present.
+
+## 7. CASE STUDIES — every real bug so far, with the chain that found it
+
+Each entry: symptom → what it *looked* like → actual root cause → fix → guard. Future
+bugs will rhyme with these. **Check this list before starting a new hunt.**
+
+### 7.1 No depth occlusion inside render textures (character see-through, black hole not occluding its ring)
+- **Symptom**: character limbs visible through clothing; VFX behind an opaque core drawn
+  over it. Only in the real game — because the game renders its whole scene through
+  PostFX's render texture.
+- **Looked like**: bad depth state in pipelines / missing depth attachment / winding.
+  Every one of those was read and verified CORRECT (pipeline key depthTest=1, pass had the
+  attachment, clear reached 1.0, framebuffer had the view). Validation: **silent**.
+- **Diagnostic chain**: `depth` scenario (swapchain) PASSED vs `depth_rt` (render texture)
+  FAILED → probes showed color writes landing, depth writes not → usage-flag bisection via
+  env gates: `ATT` PASS / `ATT|SAMPLED` FAIL / `ATT|TRANSFER_SRC` PASS.
+- **Root cause**: **MoltenVK/Intel quirk — creating a depth image with
+  `VK_IMAGE_USAGE_SAMPLED_BIT` silently disables depth test/write on that attachment.**
+- **Fix**: `Caps.noSampledDepth` (portability + vendorID 0x8086, `rlvk_frame.inl`), FBO
+  depth images drop SAMPLED under the quirk (`rlLoadTextureDepth`). Trade-off recorded:
+  depth-sampling consumers (soft particles, screen-distortion depth probe) lose their
+  input on this driver; if that matters, implement a shadow-copy (attachment-only depth +
+  `vkCmdCopyImage` to a sampleable twin at scope close).
+- **Guard**: `depth_rt` scenario.
+
+### 7.2 Particles/VFX as opaque squares (black borders that should be transparent)
+- **Symptom**: any soft-alpha billboard/VFX quad renders as a hard square.
+- **Looked like**: broken alpha blending or texture alpha. All blend paths tested fine in
+  isolation — the misdirection cost a full session of blend/texture experiments.
+- **Root cause**: `rlvkBindPipeline` returns false when a pipeline fails to build (e.g.
+  the GPU-particle shader reading an SSBO in the vertex stage — unsupported in the graphics
+  set0 layout), but all 3 draw sites ignored the return and issued the draw **with the
+  previous draw's pipeline still bound** → geometry rasterized under the wrong shader.
+- **Fix**: all 3 draw sites (`rlvk_core.inl` batch flush, `rlvk_texture.inl` rlvkDrawMesh,
+  `rlvk_compute.inl` quad blit) skip the draw on bind failure. Failed shader = invisible,
+  not garbage.
+- **Still open behind it**: graphics-stage SSBO support (§8.2) so GPU particles actually
+  *render* instead of being cleanly skipped.
+- **Guard**: validation `VUID-vkCmdDraw-None-08606` count == 0; the skip logic itself.
+
+### 7.3 Device lost (GPU timeout) after heavy VFX ran a while
+- **Symptom**: crash with a wall of sync validation errors — fences in use, command
+  buffers pending, semaphores double-signaled, "image not acquired".
+- **Looked like**: deep frame-ring corruption; every error individually suggested a
+  different fix.
+- **Root cause**: ONE unchecked call. `vkAcquireNextImageKHR`'s result was only handled
+  for OUT_OF_DATE; any other failure fell through with `imageIndex` still 0 and the
+  acquire semaphore unsignaled → present of a never-acquired image + a queue wait on a
+  semaphore nothing would ever signal → GPU stall → driver kills the device → every ring
+  object downstream desyncs (that's where the *other eight* VUIDs came from).
+- **Fix**: bail out of `rlvkBeginFrame` on any acquire result other than
+  SUCCESS/SUBOPTIMAL, **before** `vkResetFences` (fence stays signaled, `frameActive`
+  stays false, counter doesn't advance — next frame retries cleanly).
+- **Lesson**: in a VUID avalanche, sort by causality, not scariness.
+- **Guard**: `stress` scenario (arena-exhaustion mid-frame flush path) + `readback`.
+
+### 7.4 Compute UBO reads all zeros (MoltenVK)
+- **Root cause** (bisected with a raw-Vulkan repro, no rlvk code involved): merely
+  DECLARING storage-image bindings in a compute descriptor-set layout makes a UBO at a
+  later binding read zeros on MoltenVK/Intel.
+- **Fix**: the fixed compute layout has NO storage-image bindings (SSBO 0–7, samplers
+  12–13, UBO 14). Images will need their own descriptor SET when a consumer appears.
+- **Related shaderc trap**: `auto_bind_uniforms` rebases even explicitly-bound UBOs —
+  compute shaders must use loose uniforms; explicit std430 SSBO bindings are safe.
+
+### 7.5 Vertex attribute fetch reads zeros / GPU timeout on tiny dummy buffer (MoltenVK)
+- Two related MoltenVK facts, both already encoded — keep them:
+  (a) **Metal resolves vertex-buffer indices through the bound pipeline** → the pipeline
+  must be bound BEFORE `vkCmdBindVertexBuffers` at every draw site (comments mark this).
+  (b) portability subset rejects `stride < format size` → the stride-0 broadcast dummy
+  buffer has an `__APPLE__` workaround (large buffer + real stride).
+
+### 7.6 Present/readback lifecycle faults
+- `TakeScreenshot` after `EndDrawing` left `frameConsumed` armed → the NEXT frame's
+  present got skipped mid-recording → frameCounter advanced under it → commands landed in
+  a never-begun command buffer → GPU fault. Fix: a freshly-begun frame clears the flag.
+- Post-present readbacks read the PREVIOUS slot's intermediate image (STOREd, still
+  TRANSFER_SRC) instead of opening a fresh frame that would only contain a clear.
+- **Guard**: `readback` scenario.
+
+### 7.7 False alarms to not re-chase
+- **Winding/frontFace is CORRECT** (`frontFace = CLOCKWISE` + GL-CCW geometry under the
+  y-down convention = GL parity; verified: CCW visible, CW culled, `winding_rt` scenario).
+  An early "culled front face" result was a probe bug, not a backend bug.
+- **`GenImageGradientRadial` sprites are opaque-alpha by design** — they only look right
+  under ADDITIVE blend; a black square from one of these under ALPHA blend is a *caller*
+  bug (wrong blend mode), not a backend alpha bug. All backend blend paths are verified by
+  `batch_alpha`/`additive3d`/`shader_uniform`.
+
+## 8. What remains
+
+### 8.1 Confirm in-game (task open)
+User rebuilds the game → verify character self-occlusion + black-hole occlusion fixed by
+§7.1. If depth-sampling VFX (soft particles, screen distortion) visibly degrade on the
+quirk driver, implement the shadow-copy depth described in §7.1.
+
+### 8.2 Graphics-stage SSBO (GPU particles render path)
+`core/shaders/particles.vs` reads a std430 SSBO by `gl_InstanceID`. Today that pipeline
+fails to build (cleanly skipped per §7.2) because graphics set0 has only samplers+UBOs.
+Needed: SSBO bindings in the graphics set0 layout + `rlBindShaderBuffer` wiring for the
+graphics path + shaderc storage-buffer binding base for VS/FS (avoid Metal index collision
+— MoltenVK errored with "cannot reserve buffer resource location index 9") + enable
+`vertexPipelineStoresAndAtomics` feature (or inject NonWritable decoration). Repro exists:
+scratchpad `rlvk_ssbo_vs.c` pattern; add a `ssbo_vs` scenario when implementing.
+
+### 8.3 Port `compute/gpu_particle_system.c` from raw GL to the rl* compute API
+The only engine file calling `gl*` directly. Map: program → `rlLoadShader(src,
+RL_COMPUTE_SHADER)` + `rlLoadShaderProgramCompute`; glBindBufferBase →
+`rlBindShaderBuffer` (0..7); buffers → `rlLoadShaderBuffer/rlUpdateShaderBuffer/
+rlReadShaderBuffer`; dispatch+barrier → `rlComputeShaderDispatch`. GLSL
+(`compute/shaders/gpu_particles.comp`, 310 es, std430 bindings 0/1) should compile via
+relaxed rules. Coordinate with the Compute Agent (module owner). Depends on §8.2 for the
+draw half.
+
+### 8.4 Android
+- `VK_KHR_android_surface` branch exists; platform code must drive
+  `rlvkAttachSurface`/`rlvkPresent` from `ANativeWindow`.
+- Pause/resume destroys the surface — needs a `rlvkDetachSurface`-style path (not written).
+- shaderc on device: ship a new-enough libshaderc or precompile shaders to SPIR-V offline
+  (better for weak devices anyway) and extend `rlLoadShaderProgram` to accept SPIR-V pairs.
+- Expect Mali driver quirks; §6's methodology applies verbatim — build the scenario first.
+
+### 8.5 Smaller known gaps (deliberate)
+- `rlLoadShaderProgramEx` unimplemented (nothing in raylib's normal flow uses it).
+- `rlBindImageTexture` records but plain textures lack STORAGE usage/GENERAL layout —
+  dedicated creation path when a real consumer appears (blanket STORAGE rejected: kills
+  mobile framebuffer compression).
+- Compute samplers limited to 2 (bindings 12–13).
+- Cache limits warn loudly when exhausted (`RLVK_MAX_RENDER_PASSES` 32, framebuffers 64,
+  desc sets 1024/256) — tune against real content.
+- Perf not re-benchmarked since the retarget; old 1.3-era claims in the file header are
+  stale.
+
+### 8.6 Long-term (standalone engine)
+Tiler-aware VFX (load/store ops are now real levers), then extract `core/` VFX +
+`compute/` + `environment/` into a library whose only downward interface is rlgl + the
+platform hooks. GL-vs-Vulkan stays a build-time choice per binary (both define the same
+`rl*` symbols; runtime selection needs a shared-library split — deliberately deferred).
+
+## 9. Architecture rules to preserve (decisions, not accidents)
+
+1. **One code path.** 1.1-core is THE path; 1.3 features are dispatch-table fast paths
+   only (sync2, push descriptors). No `if (Caps.x)` forks in draw-path logic — quirk Caps
+   (§7) gate *resource creation*, not draw logic.
+2. **Shims live in the `vk.` dispatch table**; call sites keep the modern shape.
+3. **Layout tracking is manual** (`currentLayout` + explicit barriers); render passes never
+   change layouts (initial==final always).
+4. **Fence-gated lifetime** for everything transient (dead-resource ring, per-frame pools
+   reset at BOTH cb-reset points: `rlvkFlushFrame` post-wait and `rlvkBeginFrame`
+   post-wait). New per-frame resources must reset at both.
+5. **Clip-z is a shader concern** — never re-add depth_clip_control (double-transform trap).
 6. **SPIR-V target stays vulkan1.1** in `rlvkCompileGlsl` and `gen_rlvk_shaders.sh`.
-7. All GLSL compilation funnels through `rlvkCompileGlsl` — that is the single place for
-   source-level transforms (sanitizer, clip-z epilogue, binding bases).
+7. **All GLSL compilation funnels through `rlvkCompileGlsl`** — the single place for
+   source transforms (clip-z epilogue, binding bases, location canonicalization).
+8. **Error paths draw nothing** (§7.2). A failed bind/build/acquire skips the operation
+   and leaves ring state consistent; it never proceeds with stale handles.
+9. **Every draw-path bug fix ships with a visual-test scenario** that failed before the fix
+   and passes after. The suite is the backend's memory.

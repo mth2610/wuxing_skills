@@ -471,6 +471,7 @@ static void rlvkBeginFrame(void)
                                          VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT});
     RLVK.boundPipeline = VK_NULL_HANDLE;                 // pipeline binding is command-buffer state too
     memset(RLVK.pushedView, 0, sizeof(RLVK.pushedView)); // push-descriptor state resets with the command buffer
+    memset(RLVK.pushedSsbo, 0xFF, sizeof(RLVK.pushedSsbo)); // graphics-SSBO pushes die with the cb too (0xFF = never pushed)
     s_pipelineFastValid = false;
     RLVK.State.cbEpoch++;
     memset(RLVK.pushedSampler, 0, sizeof(RLVK.pushedSampler));
