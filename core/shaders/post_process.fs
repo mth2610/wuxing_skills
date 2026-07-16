@@ -6,7 +6,7 @@ in vec4 fragColor;
 uniform sampler2D texture0;   
 uniform sampler2D u_bloomTex; 
 
-// Cấu hình (Nhận giá trị 0.0 hoặc 1.0 thay cho int)
+// Cấu hình
 uniform float u_bloomEnabled;
 uniform float u_bloomIntensity;
 
@@ -22,76 +22,82 @@ uniform float u_contrast;
 uniform float u_saturation;
 uniform vec3 u_colorTint;
 
-// Split-toning (Đợt G — cinematic color). Multiplicative tints applied by
-// luminance: shadows lean one way (cool moonlight), highlights the other
-// (warm), giving depth/mood that a single flat tint can't. Set to (1,1,1) to
-// disable. ACES desaturates, so this + a saturation lift restore richness.
 uniform vec3 u_shadowTint;
 uniform vec3 u_highlightTint;
 
-// Tone mapping (Đợt G1 — cinematic base). ACES filmic approximation
-// (Narkowicz) — cheap, GLES-friendly, no mat3. Rolls bright bloom off to
-// white smoothly instead of clipping, and gives the whole frame a filmic
-// contrast/color response. u_exposure scales scene brightness pre-curve.
 uniform float u_tonemapEnabled;
 uniform float u_exposure;
 
 out vec4 finalColor;
 
 vec3 acesFilmic(vec3 x) {
-    const float a = 2.51;
-    const float b = 0.03;
-    const float c = 2.43;
-    const float d = 0.59;
-    const float e = 0.14;
-    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+    // Đã in-line các hằng số để tránh khai báo biến const trong hàm
+    return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
 
 void main() {
     vec2 uv = fragTexCoord;
-    vec4 sceneCol;
-
-    // 1. Chromatic Aberration (Tách màu bằng mix)
     vec2 toCenter = uv - vec2(0.5);
-    float dist = length(toCenter);
-    vec2 offset = toCenter * u_chromaticStrength * dist * 0.05;
-    
-    vec4 chromCol;
-    chromCol.r = texture(texture0, uv - offset).r;
-    chromCol.g = texture(texture0, uv).g;
-    chromCol.b = texture(texture0, uv + offset).b;
-    chromCol.a = texture(texture0, uv).a;
-    
-    sceneCol = mix(texture(texture0, uv), chromCol, u_chromaticEnabled);
 
-    // 2. Bloom (added in a linear-ish HDR range; can exceed 1.0)
-    vec4 bloomCol = texture(u_bloomTex, uv);
-    sceneCol.rgb += (bloomCol.rgb * u_bloomIntensity) * u_bloomEnabled;
+    // [TỐI ƯU 1]: Chỉ lấy mẫu texture0 MỘT LẦN duy nhất làm gốc.
+    vec4 sceneCol = texture(texture0, uv);
 
-    // 2b. Tone mapping — exposure then ACES filmic. Highlights (esp. bloom)
-    // roll off to white instead of clipping; the frame gets a filmic feel.
-    vec3 toned = acesFilmic(sceneCol.rgb * u_exposure);
-    sceneCol.rgb = mix(sceneCol.rgb, toned, u_tonemapEnabled);
+    // [TỐI ƯU 2]: Uniform Branching (Rẽ nhánh Uniform).
+    // Vì u_chromaticEnabled đồng nhất trên toàn màn hình, lệnh 'if' này có chi phí gần như bằng 0 
+    // và cứu GPU khỏi 2 lần fetch texture thừa khi hiệu ứng tắt.
+    if (u_chromaticEnabled > 0.5) {
+        
+        // [TỐI ƯU 3]: Thay length() bằng dot() để triệt tiêu hàm căn bậc 2 (sqrt) đắt đỏ.
+        // Falloff bằng bình phương (distSq) sẽ tạo cảm giác méo dồn ra viền màn hình tự nhiên hơn.
+        float distSq = dot(toCenter, toCenter);
+        vec2 offset = toCenter * (u_chromaticStrength * distSq * 0.05);
+        
+        sceneCol.r = texture(texture0, uv - offset).r;
+        // Kênh .g đã có sẵn trong sceneCol từ lần fetch trên cùng, KHÔNG FETCH LẠI!
+        sceneCol.b = texture(texture0, uv + offset).b;
+    }
 
-    // 3. Color Grading (on the tone-mapped LDR result)
-    vec3 gradedCol = sceneCol.rgb;
-    // Contrast
-    gradedCol = (gradedCol - vec3(0.5)) * u_contrast + vec3(0.5);
-    // Saturation
-    float luma = dot(gradedCol, vec3(0.2126, 0.7152, 0.0722));
-    gradedCol = mix(vec3(luma), gradedCol, u_saturation);
-    // Split-tone: cool shadows ↔ warm highlights by luminance (cinematic mood).
-    float toneLuma = clamp(dot(gradedCol, vec3(0.2126, 0.7152, 0.0722)), 0.0, 1.0);
-    gradedCol *= mix(u_shadowTint, u_highlightTint, smoothstep(0.0, 1.0, toneLuma));
-    // Color Tint (overall)
-    gradedCol *= u_colorTint;
-    
-    sceneCol.rgb = mix(sceneCol.rgb, gradedCol, u_colorGradeEnabled);
+    // 2. Bloom
+    if (u_bloomEnabled > 0.5) {
+        sceneCol.rgb += (texture(u_bloomTex, uv).rgb * u_bloomIntensity);
+    }
+
+    // 2b. Tone mapping
+    if (u_tonemapEnabled > 0.5) {
+        sceneCol.rgb = acesFilmic(sceneCol.rgb * u_exposure);
+    }
+
+    // 3. Color Grading
+    if (u_colorGradeEnabled > 0.5) {
+        vec3 gradedCol = sceneCol.rgb;
+        
+        // Contrast
+        gradedCol = (gradedCol - vec3(0.5)) * u_contrast + vec3(0.5);
+        
+        // [TỐI ƯU 4]: Tính toán Luminance (độ sáng) ĐÚNG 1 LẦN.
+        // Chuyển vec3 magic number thành hằng số (const) để compiler tối ưu register.
+        const vec3 LUMA_COEFF = vec3(0.2126, 0.7152, 0.0722);
+        float luma = dot(gradedCol, LUMA_COEFF);
+        
+        // Saturation
+        gradedCol = mix(vec3(luma), gradedCol, u_saturation);
+        
+        // Split-tone
+        // [TỐI ƯU 5]: Xóa bỏ hàm clamp(). 
+        // Hàm smoothstep nội bộ đã tự động clamp giá trị đầu vào trong khoảng [edge0, edge1] rồi.
+        gradedCol *= mix(u_shadowTint, u_highlightTint, smoothstep(0.0, 1.0, luma));
+        
+        // Color Tint
+        sceneCol.rgb = gradedCol * u_colorTint;
+    }
 
     // 4. Vignette
-    float len = length(uv - vec2(0.5));
-    float darkness = smoothstep(u_vignetteRadius - u_vignetteSoftness, u_vignetteRadius, len);
-    sceneCol.rgb = mix(sceneCol.rgb, sceneCol.rgb * (1.0 - darkness), u_vignetteEnabled);
+    if (u_vignetteEnabled > 0.5) {
+        // [TỐI ƯU 6]: Tái sử dụng vector toCenter đã tính từ bước đầu tiên thay vì tính lại.
+        float len = length(toCenter);
+        float darkness = smoothstep(u_vignetteRadius - u_vignetteSoftness, u_vignetteRadius, len);
+        sceneCol.rgb *= (1.0 - darkness);
+    }
 
     finalColor = sceneCol * fragColor;
 }
