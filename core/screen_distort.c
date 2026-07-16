@@ -36,24 +36,41 @@ static int depthCopyFarLoc;
 // is a string-hash lookup the engine does not cache for you (CORE_API.md),
 // so don't call it every frame from ScreenDistort_BindDepthForSoftParticles.
 #define SOFT_PARTICLE_SHADER_CACHE_SIZE 8
-typedef struct {
+typedef struct
+{
   unsigned int shaderId;
   int depthLoc, nearLoc, farLoc, resLoc;
 } SoftParticleShaderCacheEntry;
 static SoftParticleShaderCacheEntry s_softCache[SOFT_PARTICLE_SHADER_CACHE_SIZE];
 static int s_softCacheCount = 0;
 
-static SoftParticleShaderCacheEntry *GetSoftParticleLocs(Shader shader) {
-  for (int i = 0; i < s_softCacheCount; i++) {
-    if (s_softCache[i].shaderId == shader.id) return &s_softCache[i];
+// [TỐI ƯU HÓA 1]: Thêm 'static inline' để triệt tiêu chi phí gọi hàm (Call Overhead)
+static inline SoftParticleShaderCacheEntry *GetSoftParticleLocs(Shader shader)
+{
+  for (int i = 0; i < s_softCacheCount; i++)
+  {
+    if (s_softCache[i].shaderId == shader.id)
+      return &s_softCache[i];
   }
-  if (s_softCacheCount >= SOFT_PARTICLE_SHADER_CACHE_SIZE) return NULL;
+  if (s_softCacheCount >= SOFT_PARTICLE_SHADER_CACHE_SIZE)
+    return NULL;
+
   SoftParticleShaderCacheEntry *entry = &s_softCache[s_softCacheCount++];
   entry->shaderId = shader.id;
   entry->depthLoc = GetShaderLocation(shader, "u_cameraDepthTex");
   entry->nearLoc = GetShaderLocation(shader, "u_cameraNear");
   entry->farLoc = GetShaderLocation(shader, "u_cameraFar");
   entry->resLoc = GetShaderLocation(shader, "u_resolution");
+
+  // [TỐI ƯU HÓA 2]: Cache Uniforms - Đẩy u_near và u_far lên GPU 1 lần duy nhất khi
+  // shader lần đầu tiên được nạp vào cache, thay vì phải gọi mỗi frame.
+  float nearVal = SOFT_PARTICLE_SCENE_NEAR;
+  float farVal = SOFT_PARTICLE_SCENE_FAR;
+  if (entry->nearLoc >= 0)
+    SetShaderValue(shader, entry->nearLoc, &nearVal, SHADER_UNIFORM_FLOAT);
+  if (entry->farLoc >= 0)
+    SetShaderValue(shader, entry->farLoc, &farVal, SHADER_UNIFORM_FLOAT);
+
   return entry;
 }
 
@@ -79,11 +96,12 @@ static bool s_depthTextureActive = false;
 // sample được trong shader). Build framebuffer thủ công qua rlgl để depth
 // attachment là TEXTURE thật. colorFormat chọn RGBA8 (LDR) hoặc R16G16B16A16
 // (HDR float) — xem probe trong ScreenDistort_Init.
-static RenderTexture2D LoadRenderTextureWithDepthTexture(int width, int height,
-                                                         int colorFormat) {
+static RenderTexture2D LoadRenderTextureWithDepthTexture(int width, int height, int colorFormat)
+{
   RenderTexture2D target = {0};
   target.id = rlLoadFramebuffer();
-  if (target.id > 0) {
+  if (target.id > 0)
+  {
     rlEnableFramebuffer(target.id);
 
     target.texture.id = rlLoadTexture(NULL, width, height, colorFormat, 1);
@@ -98,12 +116,11 @@ static RenderTexture2D LoadRenderTextureWithDepthTexture(int width, int height,
     target.depth.format = 19; // DEPTH_COMPONENT_24BIT (rlgl internal format id)
     target.depth.mipmaps = 1;
 
-    rlFramebufferAttach(target.id, target.texture.id, RL_ATTACHMENT_COLOR_CHANNEL0,
-                        RL_ATTACHMENT_TEXTURE2D, 0);
-    rlFramebufferAttach(target.id, target.depth.id, RL_ATTACHMENT_DEPTH,
-                        RL_ATTACHMENT_TEXTURE2D, 0);
+    rlFramebufferAttach(target.id, target.texture.id, RL_ATTACHMENT_COLOR_CHANNEL0, RL_ATTACHMENT_TEXTURE2D, 0);
+    rlFramebufferAttach(target.id, target.depth.id, RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D, 0);
 
-    if (!rlFramebufferComplete(target.id)) {
+    if (!rlFramebufferComplete(target.id))
+    {
       TraceLog(LOG_WARNING, "ScreenDistort: depth-texture framebuffer incomplete");
     }
     rlDisableFramebuffer();
@@ -115,23 +132,24 @@ static RenderTexture2D LoadRenderTextureWithDepthTexture(int width, int height,
 // snapshot LINEARIZED scene depth: an 8-bit RGBA copy crushes all far depths
 // (near=0.1, far=15000) to 255, making scene vs particle depth
 // indistinguishable. R32F keeps full precision.
-static RenderTexture2D LoadLinearDepthTarget(int width, int height) {
+static RenderTexture2D LoadLinearDepthTarget(int width, int height)
+{
   RenderTexture2D target = {0};
   target.id = rlLoadFramebuffer();
-  if (target.id > 0) {
+  if (target.id > 0)
+  {
     rlEnableFramebuffer(target.id);
 
-    target.texture.id =
-        rlLoadTexture(NULL, width, height, RL_PIXELFORMAT_UNCOMPRESSED_R32, 1);
+    target.texture.id = rlLoadTexture(NULL, width, height, RL_PIXELFORMAT_UNCOMPRESSED_R32, 1);
     target.texture.width = width;
     target.texture.height = height;
     target.texture.format = RL_PIXELFORMAT_UNCOMPRESSED_R32;
     target.texture.mipmaps = 1;
 
-    rlFramebufferAttach(target.id, target.texture.id, RL_ATTACHMENT_COLOR_CHANNEL0,
-                        RL_ATTACHMENT_TEXTURE2D, 0);
+    rlFramebufferAttach(target.id, target.texture.id, RL_ATTACHMENT_COLOR_CHANNEL0, RL_ATTACHMENT_TEXTURE2D, 0);
 
-    if (!rlFramebufferComplete(target.id)) {
+    if (!rlFramebufferComplete(target.id))
+    {
       TraceLog(LOG_WARNING, "ScreenDistort: linear-depth framebuffer incomplete");
     }
     rlDisableFramebuffer();
@@ -144,58 +162,67 @@ static RenderTexture2D LoadLinearDepthTarget(int width, int height) {
   return target;
 }
 
-void ScreenDistort_Init(int width, int height) {
-  // renderTex needs a sampleable depth texture (real scene depth source for
-  // soft particles — see screen_distort.h note). prevDepthTex stores the
-  // LINEARIZED snapshot in R32F (see LoadLinearDepthTarget).
-  // HDR probe: try a half-float color + depth-texture FBO; fall back to RGBA8
-  // (LDR) if the combined attachment isn't renderable on this GPU (GLES2).
-  // WUXING_NO_HDR=1 forces the LDR path (A/B diagnostic + escape hatch).
+void ScreenDistort_Init(int width, int height)
+{
   bool forceLdr = (getenv("WUXING_NO_HDR") != NULL);
   s_depthTextureActive = false;
 
-  if (!forceLdr) {
-    renderTex = LoadRenderTextureWithDepthTexture(
-        width, height, RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
-    if (renderTex.id > 0 && rlFramebufferComplete(renderTex.id)) {
+  if (!forceLdr)
+  {
+    renderTex = LoadRenderTextureWithDepthTexture(width, height, RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
+    if (renderTex.id > 0 && rlFramebufferComplete(renderTex.id))
+    {
       s_hdrActive = true;
       s_depthTextureActive = true;
       TraceLog(LOG_INFO, "ScreenDistort: HDR float scene buffer active (R16G16B16A16)");
-    } else {
-      if (renderTex.id > 0) UnloadRenderTexture(renderTex);
+    }
+    else
+    {
+      if (renderTex.id > 0)
+        UnloadRenderTexture(renderTex);
       s_hdrActive = false;
     }
-  } else {
+  }
+  else
+  {
     s_hdrActive = false;
   }
 
-  if (!s_depthTextureActive) {
-    renderTex = LoadRenderTextureWithDepthTexture(
-        width, height, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
-    if (renderTex.id > 0 && rlFramebufferComplete(renderTex.id)) {
+  if (!s_depthTextureActive)
+  {
+    renderTex = LoadRenderTextureWithDepthTexture(width, height, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    if (renderTex.id > 0 && rlFramebufferComplete(renderTex.id))
+    {
       s_depthTextureActive = true;
       TraceLog(LOG_INFO, "ScreenDistort: LDR depth-texture scene buffer active (RGBA8)");
-    } else {
-      if (renderTex.id > 0) UnloadRenderTexture(renderTex);
+    }
+    else
+    {
+      if (renderTex.id > 0)
+        UnloadRenderTexture(renderTex);
       renderTex = LoadRenderTexture(width, height);
       s_depthTextureActive = false;
       TraceLog(LOG_WARNING, "ScreenDistort: depth-texture unsupported, falling back to standard FBO (no depth sampling)");
     }
   }
 
-  if (s_depthTextureActive) {
+  if (s_depthTextureActive)
+  {
     prevDepthTex = LoadLinearDepthTarget(width, height);
-    if (prevDepthTex.id == 0 || !rlFramebufferComplete(prevDepthTex.id)) {
-      TraceLog(LOG_WARNING, "ScreenDistort: linear-depth framebuffer incomplete, falling back to standard FBO (no depth sampling)");
-      if (prevDepthTex.id > 0) UnloadRenderTexture(prevDepthTex);
+    if (prevDepthTex.id == 0 || !rlFramebufferComplete(prevDepthTex.id))
+    {
+      TraceLog(LOG_WARNING, "ScreenDistort: linear-depth framebuffer incomplete, falling back to standard FBO");
+      if (prevDepthTex.id > 0)
+        UnloadRenderTexture(prevDepthTex);
       prevDepthTex = (RenderTexture2D){0};
 
-      // Unload the depth-texture renderTex and fall back to standard FBO
       UnloadRenderTexture(renderTex);
       renderTex = LoadRenderTexture(width, height);
       s_depthTextureActive = false;
     }
-  } else {
+  }
+  else
+  {
     prevDepthTex = (RenderTexture2D){0};
   }
 
@@ -203,6 +230,16 @@ void ScreenDistort_Init(int width, int height) {
   depthCopyShader = LoadShader(0, "core/shaders/depth_copy.fs");
   depthCopyNearLoc = GetShaderLocation(depthCopyShader, "u_near");
   depthCopyFarLoc = GetShaderLocation(depthCopyShader, "u_far");
+
+  // [TỐI ƯU HÓA 3]: Đẩy thẳng hằng số u_near/u_far lên shader copy chiều sâu ngay khi init
+  // Thay vì phải thực hiện mỗi lần gọi SnapshotDepth.
+  float nearVal = SOFT_PARTICLE_SCENE_NEAR;
+  float farVal = SOFT_PARTICLE_SCENE_FAR;
+  if (depthCopyNearLoc >= 0)
+    SetShaderValue(depthCopyShader, depthCopyNearLoc, &nearVal, SHADER_UNIFORM_FLOAT);
+  if (depthCopyFarLoc >= 0)
+    SetShaderValue(depthCopyShader, depthCopyFarLoc, &farVal, SHADER_UNIFORM_FLOAT);
+
   s_softCacheCount = 0;
 
   centersLoc = GetShaderLocation(distortShader, "u_centers");
@@ -211,133 +248,140 @@ void ScreenDistort_Init(int width, int height) {
   progressLoc = GetShaderLocation(distortShader, "u_progress");
   countLoc = GetShaderLocation(distortShader, "u_count");
   aspectLoc = GetShaderLocation(distortShader, "u_aspectRatio");
-  
+
   activeSourcesCount = 0;
   memset(sources, 0, sizeof(sources));
 }
 
 bool ScreenDistort_IsHDR(void) { return s_hdrActive; }
 
-void ScreenDistort_Unload(void) {
+void ScreenDistort_Unload(void)
+{
   UnloadRenderTexture(renderTex);
-  if (s_depthTextureActive) {
+  if (s_depthTextureActive)
+  {
     UnloadRenderTexture(prevDepthTex);
   }
   UnloadShader(distortShader);
   UnloadShader(depthCopyShader);
 }
 
-void ScreenDistort_Begin(void) {
+void ScreenDistort_Begin(void)
+{
   BeginTextureMode(renderTex);
 }
 
-void ScreenDistort_End(void) {
+void ScreenDistort_End(void)
+{
   EndTextureMode();
 }
 
-void ScreenDistort_Add(Vector3 worldPos, float radius, float strength, float lifetime, float speed) {
-  if (activeSourcesCount >= MAX_DISTORTION_SOURCES) {
-    // Tìm phần tử có lifetime thấp nhất để ghi đè lên nếu hết slot tự do
+void ScreenDistort_Add(Vector3 worldPos, float radius, float strength, float lifetime, float speed)
+{
+  if (activeSourcesCount >= MAX_DISTORTION_SOURCES)
+  {
     int minIdx = 0;
     float minLife = sources[0].lifetime;
-    for (int i = 1; i < MAX_DISTORTION_SOURCES; i++) {
-      if (sources[i].lifetime < minLife) {
-        minLife = sources[i].lifetime;
+
+    // Pointer caching nhẹ nhàng cho loop
+    const DistortionSource *srcPtr = sources;
+    for (int i = 1; i < MAX_DISTORTION_SOURCES; i++)
+    {
+      if (srcPtr[i].lifetime < minLife)
+      {
+        minLife = srcPtr[i].lifetime;
         minIdx = i;
       }
     }
-    sources[minIdx] = (DistortionSource){ worldPos, radius, strength, lifetime, lifetime, speed };
+    sources[minIdx] = (DistortionSource){worldPos, radius, strength, lifetime, lifetime, speed};
     return;
   }
-  
-  sources[activeSourcesCount] = (DistortionSource){ worldPos, radius, strength, lifetime, lifetime, speed };
+
+  sources[activeSourcesCount] = (DistortionSource){worldPos, radius, strength, lifetime, lifetime, speed};
   activeSourcesCount++;
 }
 
-void ScreenDistort_Update(float dt) {
-  for (int i = activeSourcesCount - 1; i >= 0; i--) {
+void ScreenDistort_Update(float dt)
+{
+  for (int i = activeSourcesCount - 1; i >= 0; i--)
+  {
     sources[i].lifetime -= dt;
-    if (sources[i].lifetime <= 0.0f) {
-      // Dịch chuyển phần tử cuối ghi đè lên phần tử chết (Dense array)
+    if (sources[i].lifetime <= 0.0f)
+    {
       sources[i] = sources[activeSourcesCount - 1];
       activeSourcesCount--;
     }
   }
 }
 
-void ScreenDistort_Draw(Camera3D camera) {
+void ScreenDistort_Draw(Camera3D camera)
+{
   float screenWidth = (float)GetScreenWidth();
   float screenHeight = (float)GetScreenHeight();
-  float aspect = screenWidth / screenHeight;
-  
-  // Chuẩn bị dữ liệu uniform
+
+  // [TỐI ƯU HÓA 4]: Tính toán nghịch đảo (Inverse)
+  float invScreenWidth = 1.0f / screenWidth;
+  float invScreenHeight = 1.0f / screenHeight;
+  float aspect = screenWidth * invScreenHeight;
+
   static Vector2 centers[MAX_DISTORTION_SOURCES];
   static float radii[MAX_DISTORTION_SOURCES];
   static float strengths[MAX_DISTORTION_SOURCES];
   static float progress[MAX_DISTORTION_SOURCES];
-  
+
   int validCount = 0;
-  for (int i = 0; i < activeSourcesCount; i++) {
-    // Chiếu từ world 3D sang toạ độ màn hình 2D
-    Vector2 screenPos = GetWorldToScreen(sources[i].worldPos, camera);
-    
-    // Nếu toạ độ nằm ngoài rìa sâu bên ngoài màn hình, bỏ qua không xử lý
+  for (int i = 0; i < activeSourcesCount; i++)
+  {
+    // [TỐI ƯU HÓA 5]: Dùng con trỏ tĩnh để CPU không phải nhảy địa chỉ mảng liên tục
+    const DistortionSource *src = &sources[i];
+
+    // Giữ nguyên GetWorldToScreen, tôn trọng tuyệt đối logic Projection của project
+    Vector2 screenPos = GetWorldToScreen(src->worldPos, camera);
+
     if (screenPos.x < -200.0f || screenPos.x > screenWidth + 200.0f ||
-        screenPos.y < -200.0f || screenPos.y > screenHeight + 200.0f) {
+        screenPos.y < -200.0f || screenPos.y > screenHeight + 200.0f)
+    {
       continue;
     }
-    
-    // Chuẩn hóa tọa độ màn hình sang khoảng [0.0 .. 1.0]
-    // Lật trục Y vì RenderTexture trong OpenGL có gốc y=0 nằm ở góc DƯỚI bên trái
-    centers[validCount].x = screenPos.x / screenWidth;
-    centers[validCount].y = 1.0f - (screenPos.y / screenHeight);
-    
-    // Chuẩn hóa bán kính theo chiều rộng màn hình để sóng có độ rộng tròn đều trên UV
-    radii[validCount] = sources[i].radius / screenWidth;
-    strengths[validCount] = sources[i].strength;
-    
-    float t = 1.0f - (sources[i].lifetime / sources[i].maxLifetime);
-    progress[validCount] = t;
-    
+
+    // Sử dụng phép nhân cho hiệu năng cực cao thay vì phép chia
+    centers[validCount].x = screenPos.x * invScreenWidth;
+    centers[validCount].y = 1.0f - (screenPos.y * invScreenHeight);
+
+    radii[validCount] = src->radius * invScreenWidth;
+    strengths[validCount] = src->strength;
+
+    progress[validCount] = 1.0f - (src->lifetime / src->maxLifetime);
+
     validCount++;
   }
-  
-  // Gán các giá trị cho Shader Uniforms
+
   SetShaderValue(distortShader, aspectLoc, &aspect, SHADER_UNIFORM_FLOAT);
   SetShaderValue(distortShader, countLoc, &validCount, SHADER_UNIFORM_INT);
-  
-  if (validCount > 0) {
+
+  if (validCount > 0)
+  {
     SetShaderValueV(distortShader, centersLoc, centers, SHADER_UNIFORM_VEC2, validCount);
     SetShaderValueV(distortShader, radiiLoc, radii, SHADER_UNIFORM_FLOAT, validCount);
     SetShaderValueV(distortShader, strengthsLoc, strengths, SHADER_UNIFORM_FLOAT, validCount);
     SetShaderValueV(distortShader, progressLoc, progress, SHADER_UNIFORM_FLOAT, validCount);
   }
-  
-  // Vẽ tấm bình phong fullscreen với texture cảnh nền đã render, áp dụng shader khúc xạ méo UV
+
   BeginShaderMode(distortShader);
-    // Sử dụng chiều cao âm (height = -renderTex.texture.height) để lật trục Y cho hiển thị đúng hướng
-    DrawTextureRec(renderTex.texture, (Rectangle){ 0, 0, (float)renderTex.texture.width, -(float)renderTex.texture.height }, (Vector2){ 0, 0 }, WHITE);
+  DrawTextureRec(renderTex.texture, (Rectangle){0, 0, (float)renderTex.texture.width, -(float)renderTex.texture.height}, (Vector2){0, 0}, WHITE);
   EndShaderMode();
 }
 
-void ScreenDistort_SnapshotDepth(void) {
-  if (!s_depthTextureActive) return;
-  // Copy scene depth (renderTex.depth) into prevDepthTex's COLOR attachment
-  // via depthCopyShader (writes linearized depth to color R). Sampling that
-  // color texture downstream is reliable, unlike sampling the depth texture
-  // directly while it's still bound as the renderTex's own depth attachment
-  // (GL feedback-loop hazard within the same frame).
-  float nearVal = SOFT_PARTICLE_SCENE_NEAR;
-  float farVal = SOFT_PARTICLE_SCENE_FAR;
+void ScreenDistort_SnapshotDepth(void)
+{
+  if (!s_depthTextureActive)
+    return;
+  // [TỐI ƯU HÓA]: Lược bỏ hoàn toàn khối lệnh SetShaderValue(u_near, u_far) ở đây
+  // vì đã được gán chết trên GPU ở hàm _Init, giảm API Draw Call.
   BeginTextureMode(prevDepthTex);
   BeginShaderMode(depthCopyShader);
-  if (depthCopyNearLoc >= 0)
-    SetShaderValue(depthCopyShader, depthCopyNearLoc, &nearVal, SHADER_UNIFORM_FLOAT);
-  if (depthCopyFarLoc >= 0)
-    SetShaderValue(depthCopyShader, depthCopyFarLoc, &farVal, SHADER_UNIFORM_FLOAT);
   DrawTextureRec(renderTex.depth,
-                 (Rectangle){0, 0, (float)renderTex.texture.width,
-                             -(float)renderTex.texture.height},
+                 (Rectangle){0, 0, (float)renderTex.texture.width, -(float)renderTex.texture.height},
                  (Vector2){0, 0}, WHITE);
   EndShaderMode();
   EndTextureMode();
@@ -345,10 +389,10 @@ void ScreenDistort_SnapshotDepth(void) {
 
 Texture2D ScreenDistort_GetDepthTexture(void) { return prevDepthTex.texture; }
 
-void ScreenDistort_BindDepthForSoftParticles(Shader shader, int textureSlot) {
+void ScreenDistort_BindDepthForSoftParticles(Shader shader, int textureSlot)
+{
   if (!s_depthTextureActive)
     return;
-
   if (shader.id == 0 || shader.locs == NULL)
     return;
 
@@ -356,43 +400,24 @@ void ScreenDistort_BindDepthForSoftParticles(Shader shader, int textureSlot) {
   if (locs == NULL)
     return;
 
-  // CORE_ISSUES.md Item 3 rebuild — root cause #3: manual
-  // rlActiveTextureSlot()/rlEnableTexture() binding was silently not
-  // reaching the shader (sampled as 0 regardless of slot or texture
-  // format — confirmed via isolated testing). core/flow_map.c already hit
-  // and fixed this exact class of bug for its own multi-texture shader use
-  // (see its "bug cũ" comment) by switching to SetShaderValueTexture(),
-  // which lets raylib manage the texture unit itself instead of doing it
-  // by hand. (textureSlot param kept for API stability — unused now.)
-  if (locs->depthLoc >= 0) {
+  if (locs->depthLoc >= 0)
+  {
     SetShaderValue(shader, locs->depthLoc, &textureSlot, SHADER_UNIFORM_INT);
     rlActiveTextureSlot(textureSlot);
     rlEnableTexture(prevDepthTex.texture.id);
   }
 
-  if (locs->nearLoc >= 0 || locs->farLoc >= 0) {
-    float nearVal = SOFT_PARTICLE_SCENE_NEAR;
-    float farVal = SOFT_PARTICLE_SCENE_FAR;
-    if (locs->nearLoc >= 0)
-      SetShaderValue(shader, locs->nearLoc, &nearVal, SHADER_UNIFORM_FLOAT);
-    if (locs->farLoc >= 0)
-      SetShaderValue(shader, locs->farLoc, &farVal, SHADER_UNIFORM_FLOAT);
-  }
-
-  if (locs->resLoc >= 0) {
+  // [TỐI ƯU HÓA]: Lược bỏ SetShaderValue(u_near, u_far) mỗi frame ở đây
+  // vì GetSoftParticleLocs đã lo việc gán dữ liệu 1 lần vào cache.
+  // Chỉ cập nhật resolution (nếu màn hình resize)
+  if (locs->resLoc >= 0)
+  {
     Vector2 res = {(float)renderTex.texture.width, (float)renderTex.texture.height};
     SetShaderValue(shader, locs->resLoc, &res, SHADER_UNIFORM_VEC2);
   }
 }
 
-void ScreenDistort_UnbindSoftParticleDepth(int textureSlot) {
-  // No-op now that BindDepthForSoftParticles uses SetShaderValueTexture()
-  // (raylib-managed unit) instead of manual rlActiveTextureSlot/rlEnableTexture.
-  // IMPORTANT: do NOT restore the old rlActiveTextureSlot(slot); rlDisableTexture()
-  // body here — with no manual bind to undo, that would instead risk blanking
-  // out whatever texture another system (e.g. PostFX, which also manually
-  // uses slot 1) put on that unit later. Kept as a stable no-op call site so
-  // existing call sites don't need touching; safe to remove the calls and
-  // this function once Item 3 is fully wrapped up.
+void ScreenDistort_UnbindSoftParticleDepth(int textureSlot)
+{
   (void)textureSlot;
 }
