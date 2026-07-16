@@ -812,7 +812,10 @@ unsigned int rlLoadTextureDepth(int width, int height, bool useRenderBuffer)
                                  .arrayLayers = 1,
                                  .samples = VK_SAMPLE_COUNT_1_BIT,
                                  .tiling = VK_IMAGE_TILING_OPTIMAL,
-                                 .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                                 // Caps.noSampledDepth (MoltenVK/Intel): SAMPLED usage on a depth image
+                                 // silently disables depth test/write on it - see quirk note in rlvk_frame.inl
+                                 .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+                                        | (RLVK.Caps.noSampledDepth ? 0 : VK_IMAGE_USAGE_SAMPLED_BIT),
                                  .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
                              },
                              RLVK_ALLOC, &t->image));

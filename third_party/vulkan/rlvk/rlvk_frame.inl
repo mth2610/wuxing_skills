@@ -307,6 +307,16 @@ static bool rlvkInitLogicalDevice(void)
     RLVK.Caps.memoryPriority = hasPriority;
     RLVK.Caps.pageableMemory = (hasPriority && hasPageable);
     RLVK.Caps.graphicsPipelineLibrary = (hasGpl && hasPipelineLibrary);
+    // MoltenVK on Intel GPUs: a depth image created with SAMPLED usage silently stops working
+    // as a depth ATTACHMENT (test/write no-op, no validation error). Bisected empirically -
+    // scripts/run_rlvk_visual_test.sh depth_rt reproduces. 0x8086 = Intel vendor id.
+    {
+        VkPhysicalDeviceProperties qprops;
+        vkGetPhysicalDeviceProperties(RLVK.physicalDevice, &qprops);
+        RLVK.Caps.noSampledDepth = hasPortabilitySubset && (qprops.vendorID == 0x8086);
+    }
+    if (RLVK.Caps.noSampledDepth)
+        TRACELOG(RL_LOG_INFO, "RLVK: quirk noSampledDepth active (MoltenVK/Intel) - FBO depth textures are not sampleable");
 
     // Enable everything supported (spec: VK_KHR_portability_subset MUST be enabled when present)
     deviceExtensions[deviceExtensionCount++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;

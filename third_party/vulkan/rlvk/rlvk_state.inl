@@ -378,6 +378,11 @@ typedef struct rlvkData {
         bool        bresenhamLines;     // VK_EXT/KHR_line_rasterization (fallback: default line raster, cosmetic delta)
         bool        wideLines;          // Core optional feature (fallback: clamp rlSetLineWidth to 1.0)
         bool        fillModeNonSolid;   // Core optional feature (fallback: rlEnableWireMode/PointMode no-op)
+        // Driver quirks (empirically bisected, see tests/rlvk_visual_test.c depth_rt scenario)
+        bool        noSampledDepth;     // MoltenVK/Intel: SAMPLED usage on a depth image silently
+                                        // disables depth test/write on that attachment. When set,
+                                        // FBO depth images drop SAMPLED (depth-sampling shaders
+                                        // like soft particles/screen distortion lose their input).
     } Caps;
 
     // 4B scalars

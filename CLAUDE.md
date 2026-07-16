@@ -41,6 +41,7 @@ C/Raylib 6.0 / OpenGL 3.3 game project. Isometric Night-time Arena. 6 elements: 
 | **Character Agent** | `character/` | `core/resource_manager.h` — model/animation rendering, counterpart to `entities/`'s pure logic, see `character/CLAUDE.md` |
 | **Game Agent** | `game/` | `entities/entities.h`, `environment/environment_system.h`, `core/map_manager.h`, `sandbox/sandbox_core.h`, `character/character_model.h`, `control/control.h`, `boss/boss_system.h`, `GAME_API.md` — match state machine + zone rule table, see `game/CLAUDE.md` |
 | **Sandbox Agent** | `sandbox/` | `.h` headers of ALL modules (dev/test integration harness, not shipped gameplay) — see `sandbox/CLAUDE.md` |
+| **Renderer Agent (rlvk)** | `third_party/vulkan/` (umbrella + `rlvk/*.inl` + tests), `scripts/*rlvk*` | `RLVK_HANDOFF.md` — Vulkan 1.1 backend; 3-tier test ladder (compile/headless/visual), never debugs via the game first — see `third_party/vulkan/CLAUDE.md` |
 
 ## Directories FORBIDDEN to every agent
 ```
