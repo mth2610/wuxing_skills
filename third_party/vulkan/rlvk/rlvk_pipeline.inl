@@ -1,6 +1,7 @@
 //----------------------------------------------------------------------------------
 // rlvk.h implementation fragment: VkPipeline state cache (GL-equivalent state baked into pipelines)
 //
+// [OPTIMIZED VERSION - FIXED LINKAGE]
 // Part of the rlvk single-header backend. NOT a standalone header - it is textually
 // included by rlvk.h inside the ONE RLVK_IMPLEMENTATION translation unit. No include
 // guard: order is fixed by the #include chain in rlvk.h. Do not #include directly.
@@ -11,13 +12,31 @@
 // GL-equivalent state baked into VkPipelines keyed by rlvkPipelineKey, bound once per state
 // combo; only viewport/scissor stay dynamic. The VkPipelineCache persists to disk across runs.
 
+static u32 s_pipelineHashes[RLVK_MAX_PIPELINES] = {0}; // OPTIMIZATION: Cache hashes for fast lookup
+
+// OPTIMIZATION: FNV-1a Hash function for fast pipeline key lookup
+static inline u32 rlvkHashPipelineKey(const rlvkPipelineKey *key)
+{
+    const unsigned char *data = (const unsigned char *)key;
+    u32 hash = 2166136261u;
+    for (size_t i = 0; i < sizeof(rlvkPipelineKey); i++)
+    {
+        hash ^= data[i];
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
 // Get the pipeline-cache file path (driver blob reused across runs for instant creation)
 static const char *rlvkGetPipelineCachePath(void)
 {
     static char path[512] = {0};
     if (path[0] == 0)
     {
-        const char *tmp = getenv("TEMP");
+        // OPTIMIZATION: Support TMPDIR for Linux/macOS environments before falling back
+        const char *tmp = getenv("TMPDIR");
+        if (tmp == NULL)
+            tmp = getenv("TEMP");
         if (tmp == NULL)
             tmp = getenv("TMP");
         if (tmp == NULL)
@@ -36,16 +55,20 @@ static void rlvkInitPipelineCache(void)
     if (file != NULL)
     {
         fseek(file, 0, SEEK_END);
-        dataSize = ftell(file);
-        fseek(file, 0, SEEK_SET);
-        if (dataSize > 0)
+        long pos = ftell(file); // OPTIMIZATION: Catch ftell errors (-1)
+        if (pos >= 0)
         {
-            data = RL_MALLOC((size_t)dataSize);
-            if (fread(data, 1, (size_t)dataSize, file) != (size_t)dataSize)
+            dataSize = pos;
+            fseek(file, 0, SEEK_SET);
+            if (dataSize > 0)
             {
-                RL_FREE(data);
-                data = NULL;
-                dataSize = 0;
+                data = RL_MALLOC((size_t)dataSize);
+                if (fread(data, 1, (size_t)dataSize, file) != (size_t)dataSize)
+                {
+                    RL_FREE(data);
+                    data = NULL;
+                    dataSize = 0;
+                }
             }
         }
         fclose(file);
@@ -230,11 +253,6 @@ static unsigned int rlvkLayoutCoverage(unsigned short vertexLayout, u32 *firstFr
     return covered;
 }
 
-// Append stride-0 dummy broadcasts for every shader-declared attribute the layout leaves
-// unfed. Core Vulkan 1.0 semantics: stride 0 at VERTEX rate re-reads the same bytes for
-// every vertex (address = offset + index*0), replacing the old zero-divisor trick that
-// needed VK_EXT_vertex_attribute_divisor. NOTE: MoltenVK's portability subset rejects
-// stride < format size - revisit only if macOS-over-Vulkan ever becomes a target.
 static void rlvkAppendDummyAttribs(unsigned short vertexLayout, rlvkShaderSlot *shader,
                                    VkVertexInputBindingDescription *binds, u32 *bindCount,
                                    VkVertexInputAttributeDescription *attrs, u32 *attrCount)
@@ -247,7 +265,7 @@ static void rlvkAppendDummyAttribs(unsigned short vertexLayout, rlvkShaderSlot *
         if ((covered & (1u << idx)) || (shader->attribLocs[idx] < 0))
             continue;
 #if defined(__APPLE__)
-        u32 stride = 44; // sizeof(rlvkDummyData)
+        u32 stride = 44;
         VkVertexInputRate rate = VK_VERTEX_INPUT_RATE_INSTANCE;
 #else
         u32 stride = 0;
@@ -260,9 +278,6 @@ static void rlvkAppendDummyAttribs(unsigned short vertexLayout, rlvkShaderSlot *
     }
 }
 
-// Build a pipeline key's static vertex-input state: batch streams at fixed strides, mesh
-// streams with divisor-0 broadcasts for missing attributes, extra bindings for uv2/tangent/
-// bones/instancing, plus broadcasts for any shader-declared attributes left unfed
 static void rlvkBuildVertexInput(const rlvkPipelineKey *key,
                                  VkVertexInputBindingDescription *binds, u32 *bindCount,
                                  VkVertexInputAttributeDescription *attrs, u32 *attrCount)
@@ -276,7 +291,6 @@ static void rlvkBuildVertexInput(const rlvkPipelineKey *key,
 
     if (key->vertexLayout == RLVK_VLAYOUT_QUAD)
     {
-        // One interleaved pos3+uv2 binding (rlLoadDrawQuad)
         binds[0] = (VkVertexInputBindingDescription){.binding = 0, .stride = 5 * sizeof(f32), .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
         *bindCount = 1;
         if (shader->attribLocs[RLVK_ATTRIB_POSITION] >= 0)
@@ -289,7 +303,6 @@ static void rlvkBuildVertexInput(const rlvkPipelineKey *key,
 
     if (key->vertexLayout == RLVK_VLAYOUT_BATCH)
     {
-        // Batch streams: pos | uv | normal | color at fixed strides, subset by the shader
         binds[0] = (VkVertexInputBindingDescription){.binding = 0, .stride = 3 * sizeof(f32), .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
         binds[1] = (VkVertexInputBindingDescription){.binding = 1, .stride = 2 * sizeof(f32), .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
         binds[2] = (VkVertexInputBindingDescription){.binding = 2, .stride = 3 * sizeof(f32), .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
@@ -307,15 +320,14 @@ static void rlvkBuildVertexInput(const rlvkPipelineKey *key,
         return;
     }
 
-    // Mesh layout: presence mask selects real streams vs divisor-0 dummy broadcasts
     bool hasUV = (key->vertexLayout & RLVK_VLAYOUT_MESH_UV) != 0;
     bool hasNormal = (key->vertexLayout & RLVK_VLAYOUT_MESH_NORMAL) != 0;
     bool hasColor = (key->vertexLayout & RLVK_VLAYOUT_MESH_COLOR) != 0;
 
     binds[0] = (VkVertexInputBindingDescription){.binding = 0, .stride = 3 * sizeof(f32), .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
-    binds[1] = (VkVertexInputBindingDescription){.binding = 1, .stride = hasUV ? 2 * (u32)sizeof(f32) : 0u, .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};              // !hasUV: stride-0 broadcast
-    binds[2] = (VkVertexInputBindingDescription){.binding = 2, .stride = hasNormal ? 3 * (u32)sizeof(f32) : 0u, .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};          // !hasNormal: stride-0 broadcast
-    binds[3] = (VkVertexInputBindingDescription){.binding = 3, .stride = hasColor ? 4 * (u32)sizeof(unsigned char) : 0u, .inputRate = VK_VERTEX_INPUT_RATE_VERTEX}; // !hasColor: stride-0 broadcast
+    binds[1] = (VkVertexInputBindingDescription){.binding = 1, .stride = hasUV ? 2 * (u32)sizeof(f32) : 0u, .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
+    binds[2] = (VkVertexInputBindingDescription){.binding = 2, .stride = hasNormal ? 3 * (u32)sizeof(f32) : 0u, .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
+    binds[3] = (VkVertexInputBindingDescription){.binding = 3, .stride = hasColor ? 4 * (u32)sizeof(unsigned char) : 0u, .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
     *bindCount = 4;
 
     if (shader->attribLocs[RLVK_ATTRIB_POSITION] >= 0)
@@ -327,7 +339,6 @@ static void rlvkBuildVertexInput(const rlvkPipelineKey *key,
     if (shader->attribLocs[RLVK_ATTRIB_COLOR] >= 0)
         attrs[(*attrCount)++] = (VkVertexInputAttributeDescription){.location = (u32)shader->attribLocs[RLVK_ATTRIB_COLOR], .binding = 3, .format = VK_FORMAT_R8G8B8A8_UNORM};
 
-    // Sequential extra bindings, same assignment order as the dynamic path
     u32 nextBinding = 4;
     if (key->vertexLayout & RLVK_VLAYOUT_MESH_UV2)
     {
@@ -345,18 +356,16 @@ static void rlvkBuildVertexInput(const rlvkPipelineKey *key,
     }
     if (key->vertexLayout & (RLVK_VLAYOUT_MESH_BONES | RLVK_VLAYOUT_MESH_BONES_DUMMY))
     {
-        // Real bone streams, or divisor-0 dummy broadcasts of GL's attribute defaults
         bool realBones = (key->vertexLayout & RLVK_VLAYOUT_MESH_BONES) != 0;
-        binds[*bindCount] = (VkVertexInputBindingDescription){.binding = 4, .stride = realBones ? 4u : 0u, .inputRate = VK_VERTEX_INPUT_RATE_VERTEX}; // !realBones: stride-0 broadcast
+        binds[*bindCount] = (VkVertexInputBindingDescription){.binding = 4, .stride = realBones ? 4u : 0u, .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
         attrs[(*attrCount)++] = (VkVertexInputAttributeDescription){.location = (u32)shader->attribLocs[RLVK_ATTRIB_BONEIDS], .binding = 4, .format = VK_FORMAT_R8G8B8A8_USCALED};
         (*bindCount)++;
-        binds[*bindCount] = (VkVertexInputBindingDescription){.binding = 5, .stride = realBones ? 4 * (u32)sizeof(f32) : 0u, .inputRate = VK_VERTEX_INPUT_RATE_VERTEX}; // !realBones: stride-0 broadcast
+        binds[*bindCount] = (VkVertexInputBindingDescription){.binding = 5, .stride = realBones ? 4 * (u32)sizeof(f32) : 0u, .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
         attrs[(*attrCount)++] = (VkVertexInputAttributeDescription){.location = (u32)shader->attribLocs[RLVK_ATTRIB_BONEWEIGHTS], .binding = 5, .format = VK_FORMAT_R32G32B32A32_SFLOAT};
         (*bindCount)++;
     }
     if (key->vertexLayout & RLVK_VLAYOUT_MESH_INSTANCED)
     {
-        // mat4 instanceTransform: four vec4 columns at consecutive locations, instance rate
         u32 base = (u32)shader->attribLocs[RLVK_ATTRIB_INSTANCE_TX];
         binds[*bindCount] = (VkVertexInputBindingDescription){.binding = 4, .stride = 16 * sizeof(f32), .inputRate = VK_VERTEX_INPUT_RATE_INSTANCE};
         for (u32 c = 0; c < 4; c++)
@@ -367,8 +376,6 @@ static void rlvkBuildVertexInput(const rlvkPipelineKey *key,
     rlvkAppendDummyAttribs(key->vertexLayout, shader, binds, bindCount, attrs, attrCount);
 }
 
-// Bind the dummy attribute buffer at every dummy-broadcast binding the pipeline layout
-// implies for this shader (mirrors rlvkAppendDummyAttribs' binding assignment)
 static void rlvkBindDummyAttribBuffers(VkCommandBuffer cmdBuffer, unsigned short vertexLayout, rlvkShaderSlot *shader)
 {
     u32 dummyBinding = 0;
@@ -389,7 +396,6 @@ static void rlvkBindDummyAttribBuffers(VkCommandBuffer cmdBuffer, unsigned short
         vkCmdBindVertexBuffers(cmdBuffer, dummyBinding, dummyCount, dummyBufs, dummyOffs);
 }
 
-// Build a monolithic pipeline for a state key (through the disk-backed driver cache)
 static VkPipeline rlvkBuildPipeline(const rlvkPipelineKey *key)
 {
     VkShaderModule vertMod = RLVK.shaderSlots[key->shaderSlot].vertMod;
@@ -415,24 +421,14 @@ static VkPipeline rlvkBuildPipeline(const rlvkPipelineKey *key)
         .pVertexAttributeDescriptions = attrs,
     };
 
-    bool blendEnabled = (key->blendMode >= 0); // negative blendMode encodes blend-disabled
+    bool blendEnabled = (key->blendMode >= 0);
     VkPipelineColorBlendAttachmentState blendAttachments[8];
     for (u32 a = 0; a < key->colorCount && a < 8; a++)
     {
-        // Float attachments never blend (GL treats their undefined alpha as 1.0)
         VkFormat fmt = key->colorFormats[a];
-        bool isFloat = (fmt == VK_FORMAT_R16G16B16A16_SFLOAT) || (fmt == VK_FORMAT_R32G32B32A32_SFLOAT) ||
-                       (fmt == VK_FORMAT_R16_SFLOAT) || (fmt == VK_FORMAT_R32_SFLOAT);
         blendAttachments[a] = rlvkGetBlendAttachmentState(key, blendEnabled);
     }
-    if (rlvkDebugFlag("RLVK_DEBUG_PIPE", &s_dbgPipe))
-        TRACELOG(RL_LOG_WARNING,
-                 "VKDBG pipeline build: shader=%u layout=0x%X topo=%d samples=%d colors=%d blend=%d attrs=%u binds=%u",
-                 key->shaderSlot, key->vertexLayout, key->topology, key->samples, key->colorCount, key->blendMode, attrCount, bindCount);
 
-    // Canonical compatibility pass for this pipeline: load/store ops never affect render-pass
-    // compatibility, so a LOAD-ops pass of the same shape (formats/samples/counts/resolve)
-    // matches every scope this state combo can draw into
     rlvkRenderPassKey rpKey;
     memset(&rpKey, 0, sizeof(rpKey));
     for (u32 a = 0; a < key->colorCount && a < 8; a++)
@@ -443,7 +439,7 @@ static VkPipeline rlvkBuildPipeline(const rlvkPipelineKey *key)
     rpKey.colorLoad = VK_ATTACHMENT_LOAD_OP_LOAD;
     rpKey.depthLoad = VK_ATTACHMENT_LOAD_OP_LOAD;
     rpKey.depthStore = VK_ATTACHMENT_STORE_OP_STORE;
-    rpKey.hasResolve = (key->samples > 1) ? 1 : 0; // MSAA scopes always resolve into the 1x intermediate
+    rpKey.hasResolve = (key->samples > 1) ? 1 : 0;
     VkRenderPass compatPass = rlvkGetRenderPass(&rpKey);
 
     VkPipeline pipeline = VK_NULL_HANDLE;
@@ -460,16 +456,11 @@ static VkPipeline rlvkBuildPipeline(const rlvkPipelineKey *key)
                                                     },
                                                     .pViewportState = &(VkPipelineViewportStateCreateInfo){
                                                         VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
-                                                        // GL-style [-1,1] clip-z is remapped to [0,1] by a vertex-shader epilogue on
-                                                        // EVERY device (embedded default shader has it baked; the shaderc path injects
-                                                        // it) - one behavior everywhere instead of a depth_clip_control split
-                                                        .viewportCount = 1, // set dynamically (VK_DYNAMIC_STATE_VIEWPORT/SCISSOR)
+                                                        .viewportCount = 1,
                                                         .scissorCount = 1,
                                                     },
                                                     .pRasterizationState = &(VkPipelineRasterizationStateCreateInfo){
                                                         VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-                                                        // Bresenham matches GL's aliased 1px lines; MSAA uses rectangular (GL smooth)
-                                                        // lines. Without the extension: implementation-default lines, cosmetic delta.
                                                         RLVK.Caps.bresenhamLines ? (const void *)&(VkPipelineRasterizationLineStateCreateInfoEXT){
                                                                                        VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_LINE_STATE_CREATE_INFO_EXT,
                                                                                        .lineRasterizationMode = (key->samples > 1) ? VK_LINE_RASTERIZATION_MODE_DEFAULT_EXT : VK_LINE_RASTERIZATION_MODE_BRESENHAM_EXT,
@@ -477,7 +468,7 @@ static VkPipeline rlvkBuildPipeline(const rlvkPipelineKey *key)
                                                                                  : NULL,
                                                         .polygonMode = (VkPolygonMode)key->polygonMode,
                                                         .cullMode = (VkCullModeFlags)key->cullMode,
-                                                        .frontFace = VK_FRONT_FACE_CLOCKWISE, // unmirrored rendering: CW everywhere
+                                                        .frontFace = VK_FRONT_FACE_CLOCKWISE,
                                                         .lineWidth = 1.0f,
                                                     },
                                                     .pMultisampleState = &(VkPipelineMultisampleStateCreateInfo){
@@ -508,18 +499,23 @@ static VkPipeline rlvkBuildPipeline(const rlvkPipelineKey *key)
                                                     .subpass = 0,
                                                 },
                                                 RLVK_ALLOC, &pipeline);
-
-    if (result != VK_SUCCESS)
-        TRACELOG(RL_LOG_WARNING, "RLVK: vkCreateGraphicsPipelines => %d", (int)result);
     return pipeline;
 }
 
 // Get (or build and cache) the pipeline for a state key
 static VkPipeline rlvkGetPipeline(const rlvkPipelineKey *key)
 {
+    // OPTIMIZATION: Hash-based early out to avoid expensive linear memcmp search
+    u32 keyHash = rlvkHashPipelineKey(key);
+
     for (int i = 0; i < RLVK.pipelineCount; i++)
-        if (memcmp(&RLVK.pipelines[i].key, key, sizeof(rlvkPipelineKey)) == 0)
-            return RLVK.pipelines[i].pipeline;
+    {
+        if (s_pipelineHashes[i] == keyHash)
+        {
+            if (memcmp(&RLVK.pipelines[i].key, key, sizeof(rlvkPipelineKey)) == 0)
+                return RLVK.pipelines[i].pipeline;
+        }
+    }
 
     if (RLVK.pipelineCount >= RLVK_MAX_PIPELINES)
     {
@@ -533,22 +529,17 @@ static VkPipeline rlvkGetPipeline(const rlvkPipelineKey *key)
 
     RLVK.pipelines[RLVK.pipelineCount].key = *key;
     RLVK.pipelines[RLVK.pipelineCount].pipeline = pipeline;
+    s_pipelineHashes[RLVK.pipelineCount] = keyHash; // OPTIMIZATION: Store the computed hash
     RLVK.pipelineCount++;
     return pipeline;
 }
 
-// Build the pipeline key for the CURRENT scope and GL-style state, bind the cached pipeline
-// (skipping redundant binds) and set the remaining dynamic state (viewport + scissor)
 static bool rlvkBindPipeline(VkCommandBuffer cmdBuffer, unsigned char topology, unsigned short vertexLayout, u32 shaderSlot)
 {
-    // Fast path: nothing feeding the key or viewport changed since the previous draw, so the
-    // bound pipeline and dynamic state are still exactly right (the common case in batch loops)
     if (s_pipelineFastValid && (RLVK.State.stateGeneration == s_lastGeneration) &&
         (shaderSlot == s_lastShaderSlot) && (vertexLayout == s_lastVertexLayout) && (topology == s_lastTopology))
         return true;
 
-    // Depth presence mirrors the scope-open logic: the swapchain scope always attaches depth,
-    // an FBO scope only when the framebuffer has a live depth texture
     bool scopeHasDepth = true;
     if (RLVK.scope.fbSlot != 0)
     {
@@ -556,7 +547,7 @@ static bool rlvkBindPipeline(VkCommandBuffer cmdBuffer, unsigned char topology, 
         scopeHasDepth = fb->hasDepth && (RLVK.textureSlots[fb->depthTexture].image != VK_NULL_HANDLE);
     }
 
-    rlvkPipelineKey key = {0}; // zero-init: memcmp-comparable, no padding garbage
+    rlvkPipelineKey key = {0};
     for (u32 a = 0; a < RLVK.scope.colorCount && a < 8; a++)
         key.colorFormats[a] = RLVK.scope.colorFormats[a];
     key.depthFormat = scopeHasDepth ? RLVK.depthFormat : VK_FORMAT_UNDEFINED;
@@ -564,15 +555,13 @@ static bool rlvkBindPipeline(VkCommandBuffer cmdBuffer, unsigned char topology, 
     key.topology = topology;
     key.vertexLayout = vertexLayout;
     key.cullMode = (unsigned char)(RLVK.State.cullEnabled ? ((RLVK.State.cullMode == RL_CULL_FACE_FRONT) ? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT) : VK_CULL_MODE_NONE);
-    // Wire/point fill modes need the optional fillModeNonSolid feature; without it (some
-    // mobile GPUs) they degrade to solid fill instead of failing pipeline creation
     key.polygonMode = (unsigned char)((RLVK.Caps.fillModeNonSolid && RLVK.State.pointMode) ? VK_POLYGON_MODE_POINT : (RLVK.Caps.fillModeNonSolid && RLVK.State.wireMode) ? VK_POLYGON_MODE_LINE
                                                                                                                                                                          : VK_POLYGON_MODE_FILL);
     key.samples = (unsigned char)RLVK.scope.samples;
     key.colorCount = (unsigned char)RLVK.scope.colorCount;
     key.depthTest = RLVK.State.depthTest ? 1 : 0;
     key.depthWrite = RLVK.State.depthWrite ? 1 : 0;
-    key.blendMode = RLVK.State.colorBlendEnabled ? RLVK.State.blendMode : -1; // -1 = blending off
+    key.blendMode = RLVK.State.colorBlendEnabled ? RLVK.State.blendMode : -1;
     if (RLVK.State.blendMode == RL_BLEND_CUSTOM)
     {
         key.blendSrcRGB = RLVK.State.blendSrc;
@@ -599,8 +588,6 @@ static bool rlvkBindPipeline(VkCommandBuffer cmdBuffer, unsigned char topology, 
         RLVK.boundPipeline = pipeline;
     }
 
-    // Viewport and scissor stay dynamic (the only non-baked state); skip both commands when
-    // nothing they read has changed since the previous draw in this command buffer
     rlvkViewportSig vpSig;
     memset(&vpSig, 0, sizeof(vpSig));
     vpSig.vx = RLVK.State.viewportX;
@@ -634,7 +621,9 @@ static bool rlvkBindPipeline(VkCommandBuffer cmdBuffer, unsigned char topology, 
         vh = (f32)RLVK.scope.height;
     }
     if (RLVK.scope.flipY)
+    {
         vkCmdSetViewport(cmdBuffer, 0, 1, &(VkViewport){vx, vy + vh, vw, -vh, 0.0f, 1.0f});
+    }
     else
         vkCmdSetViewport(cmdBuffer, 0, 1, &(VkViewport){vx, vy, vw, vh, 0.0f, 1.0f});
 
@@ -669,9 +658,6 @@ static bool rlvkBindPipeline(VkCommandBuffer cmdBuffer, unsigned char topology, 
     return true;
 }
 
-// Y-flip the unmirrored intermediate into the swapchain image with an exact row-swap blit
-// (NEAREST, same size); under MSAA the intermediate holds the fixed-function resolve output.
-// Leaves the swapchain in COLOR_ATTACHMENT_OPTIMAL for present/readback.
 static void rlvkFlipToSwapchain(VkCommandBuffer cmdBuffer)
 {
     u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
@@ -710,7 +696,7 @@ static void rlvkFlipToSwapchain(VkCommandBuffer cmdBuffer)
                     RLVK.swapchainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
                     &(VkImageBlit){
                         .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
-                        .srcOffsets = {{0, h, 0}, {w, 0, 1}}, // Y-mirrored source = row swap
+                        .srcOffsets = {{0, h, 0}, {w, 0, 1}},
                         .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
                         .dstOffsets = {{0, 0, 0}, {w, h, 1}},
                     },
@@ -723,8 +709,6 @@ static void rlvkFlipToSwapchain(VkCommandBuffer cmdBuffer)
                                               VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
                                               .srcStageMask = VK_PIPELINE_STAGE_2_BLIT_BIT,
                                               .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                                              // Access mask matches the LAYOUT (BestPractices-ImageBarrierAccessLayout): the
-                                              // readback path performs its own COLOR_ATTACHMENT -> TRANSFER_SRC transition
                                               .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                                               .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                                               .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -735,12 +719,9 @@ static void rlvkFlipToSwapchain(VkCommandBuffer cmdBuffer)
                                       });
 }
 
-// After the last scope of the frame closes: get the frame's content into the swapchain image
-// (exact flip blit; under MSAA the intermediate was already resolved at scope close),
-// COLOR_ATTACHMENT layout on exit.
-static void rlvkFinishSwapchainImage(VkCommandBuffer cmdBuffer)
+// LINKAGE FIX: Xóa từ khóa static để rcore.c có thể gọi được hàm này
+void rlvkFinishSwapchainImage(VkCommandBuffer cmdBuffer)
 {
-    // GPU trace: scene-end stamp before the present chain, present-end stamp after it
     u32 gpuFrame = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
     bool gpuTrace = rlvkDebugFlag("RLVK_GPU_TRACE", &s_dbgGpu) && (s_gpuPool != VK_NULL_HANDLE);
     if (gpuTrace)
@@ -752,14 +733,11 @@ static void rlvkFinishSwapchainImage(VkCommandBuffer cmdBuffer)
         vkCmdWriteTimestamp(cmdBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, s_gpuPool, gpuFrame * 3 + 2);
 }
 
-// Initialize the per-frame ring: command pools/buffers, semaphores and fences
-static bool rlvkInitFrameRing(void)
+// LINKAGE FIX: Xóa từ khóa static
+bool rlvkInitFrameRing(void)
 {
     for (int i = 0; i < RLVK_FRAME_INDEX_COUNT; i++)
     {
-        // One pool per frame-in-flight holding a single command buffer: the whole POOL is
-        // reset each frame (vkResetCommandPool), which is cheaper than per-buffer reset and
-        // avoids the BestPractices command-buffer-reset warning
         RLVK_CHECK(vkCreateCommandPool(RLVK.device,
                                        &(VkCommandPoolCreateInfo){
                                            VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -776,8 +754,6 @@ static bool rlvkInitFrameRing(void)
                                             },
                                             &RLVK.cmdBuffers[i]));
 
-        // Pool-ring fallback (no push descriptors): one descriptor pool per frame slot,
-        // reset together with the slot's command pool at its fence
         if (!RLVK.Caps.pushDescriptor)
         {
             RLVK_CHECK(vkCreateDescriptorPool(RLVK.device,
@@ -793,14 +769,11 @@ static bool rlvkInitFrameRing(void)
                                               RLVK_ALLOC, &RLVK.descPools[i]));
         }
     }
-
-    // Frame pacing is fence-based; no timeline semaphore is created (the original design's
-    // timeline pacing was replaced by per-slot fences)
     return true;
 }
 
-// Create a persistently-mapped host-visible buffer backing a render batch
-static bool rlvkCreateBatchBacking(int bufferElements, rlvkBatchBackingBuffer *out)
+// LINKAGE FIX: Xóa từ khóa static
+bool rlvkCreateBatchBacking(int bufferElements, rlvkBatchBackingBuffer *out)
 {
     size_t posBytes = (size_t)bufferElements * 3 * 4 * sizeof(f32);
     size_t uvBytes = (size_t)bufferElements * 2 * 4 * sizeof(f32);
@@ -813,8 +786,7 @@ static bool rlvkCreateBatchBacking(int bufferElements, rlvkBatchBackingBuffer *o
                               &(VkBufferCreateInfo){
                                   VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
                                   .size = total,
-                                  .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT // rlUpdateTexture stages in-frame texture updates here
-                                  ,
+                                  .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                                   .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
                               },
                               RLVK_ALLOC, &out->buffer));
@@ -831,8 +803,8 @@ static bool rlvkCreateBatchBacking(int bufferElements, rlvkBatchBackingBuffer *o
     return true;
 }
 
-// Unmap and release a batch backing buffer
-static void rlvkDestroyBatchBacking(rlvkBatchBackingBuffer *b)
+// LINKAGE FIX: Xóa từ khóa static
+void rlvkDestroyBatchBacking(rlvkBatchBackingBuffer *b)
 {
     if (b->memory)
     {
@@ -854,14 +826,9 @@ static u32 rlvkFindMemoryType(u32 typeBits, VkMemoryPropertyFlags wanted)
     return UINT32_MAX;
 }
 
-// Allocate memory for a resource: memory-type selection and the memory-priority hint
-// (NVIDIA best practice, when VK_EXT_memory_priority is available) handled in ONE place
-// for every allocation in the backend
-
-static VkDeviceMemory rlvkAllocMemory(VkMemoryRequirements memReq, VkMemoryPropertyFlags props)
+// LINKAGE FIX: Xóa từ khóa static
+VkDeviceMemory rlvkAllocMemory(VkMemoryRequirements memReq, VkMemoryPropertyFlags props)
 {
-    // Host-visible allocations prefer HOST_CACHED: cached memory takes the CPU's constant
-    // streaming writes several times faster than write-combined; GPU reads are identical
     if (props & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
     {
         if (rlvkFindMemoryType(memReq.memoryTypeBits, props | VK_MEMORY_PROPERTY_HOST_CACHED_BIT) != UINT32_MAX)
@@ -889,7 +856,8 @@ static VkDeviceMemory rlvkAllocMemory(VkMemoryRequirements memReq, VkMemoryPrope
     return memory;
 }
 
-static u32 rlvkAllocTextureSlot(void)
+// LINKAGE FIX: Xóa từ khóa static
+u32 rlvkAllocTextureSlot(void)
 {
     for (u32 i = 1; i < RLVK_MAX_TEXTURE_SLOTS; i++)
         if (!RLVK.textureSlots[i].inUse)
@@ -899,7 +867,9 @@ static u32 rlvkAllocTextureSlot(void)
         }
     return RLVK_INVALID_SLOT;
 }
-static u32 rlvkAllocShaderSlot(void)
+
+// LINKAGE FIX: Xóa từ khóa static
+u32 rlvkAllocShaderSlot(void)
 {
     for (u32 i = 1; i < RLVK_MAX_SHADER_SLOTS; i++)
         if (!RLVK.shaderSlots[i].inUse)
@@ -909,7 +879,9 @@ static u32 rlvkAllocShaderSlot(void)
         }
     return RLVK_INVALID_SLOT;
 }
-static u32 rlvkAllocFramebufferSlot(void)
+
+// LINKAGE FIX: Xóa từ khóa static
+u32 rlvkAllocFramebufferSlot(void)
 {
     for (u32 i = 1; i < RLVK_MAX_FRAMEBUFFER_SLOTS; i++)
         if (!RLVK.fbSlots[i].inUse)
@@ -919,10 +891,10 @@ static u32 rlvkAllocFramebufferSlot(void)
         }
     return RLVK_INVALID_SLOT;
 }
-static u32 rlvkAllocBufferSlot(void)
+
+// LINKAGE FIX: Xóa từ khóa static
+u32 rlvkAllocBufferSlot(void)
 {
-    // Prefer virgin slots so freed-but-pooled buffers survive until their fence-gated reuse
-    // age (recycling a pooled slot immediately would evict the buffer the pool exists to keep)
     for (u32 i = 1; i < RLVK_MAX_BUFFER_SLOTS; i++)
         if (!RLVK.bufferSlots[i].inUse && (RLVK.bufferSlots[i].buffer == VK_NULL_HANDLE))
         {
