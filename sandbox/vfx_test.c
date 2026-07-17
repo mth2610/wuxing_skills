@@ -80,7 +80,7 @@ static const char *s_meshNames[] = {
     "DISC", "RING", "CONE", "TORNADO", "CYLINDER", "SPHERE", "SHOCKWAVE", "PYRAMID", "TETRAHEDRON"};
 
 // @gen:newfx_names begin
-// 81 entries — auto-managed by sync_vfx_test.py
+// 82 entries — auto-managed by sync_vfx_test.py
 static const char* s_newFxNames[] = {
     "FLAME WISP", "FIRE PILLAR", "FIREBALL", "FIRE BREATH", "BURN GROUND", "FIRE WHIRL",
     "EMBER DRIFT", "IMPACT FIRE", "CAST FIRE", "SPLASH", "BUBBLES", "MIST VEIL",
@@ -95,7 +95,7 @@ static const char* s_newFxNames[] = {
     "PROJECTILE", "GND PATTERN", "SUMMON RING", "EXPLOSION", "GROUND WAVE", "PROJ FIRE",
     "PROJ WATER", "PROJ METAL", "CYLINDER AURA", "GROUND AURA", "BLACK HOLE", "DRAW ICE CRYSTAL BURST",
     "SMOKE COLUMN F X", "GROUND SMOKE", "SMOKE ON PLANE", "MAGIC FILAMENTS", "MAGIC FILAMENTS ON PLANE", "SHARD DEBRIS",
-    "CROWN SPLASH", "CHAIN LINK", "WATER STREAM ON PATH",
+    "CROWN SPLASH", "CHAIN LINK", "WATER STREAM ON PATH", "RAYMARCH SMOKE BOX",
 };
 // @gen:newfx_names end
 
@@ -110,7 +110,7 @@ static const int s_newFxCategories[] = {
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 1, 6, 6, 6, 6, 6, 6, 6, 6,
-    1,
+    1, 6,
 };
 // @gen:newfx_categories end
 
@@ -244,17 +244,17 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
     if (IsKeyPressed(KEY_F) || ffTestTouched)
     {
         static ForceField s_gpuTestField;
-        static bool s_gpuTestFieldInit = false;
-        if (!s_gpuTestFieldInit)
+        // Dựng lại field MỖI lần nhấn: origin vortex bám vị trí hiện tại của nhân vật.
+        // Bản cũ init một lần -> trục xoáy đóng băng ở vị trí lần nhấn ĐẦU TIÊN, đứng
+        // xa trục thì lực 4/(dist+1) yếu dần -> "tỏa hẹp / đứng im" tùy chỗ đứng.
+        ForceField_Clear(&s_gpuTestField);
         {
-            ForceField_Clear(&s_gpuTestField);
             ForceLayer vortex = {0};
             vortex.type = FORCE_VORTEX;
             vortex.origin = Vector3Add(playerPos, (Vector3){0.0f, 0.04f, 0.0f});
             vortex.direction = (Vector3){0.0f, 1.0f, 0.0f};
             vortex.strength = 4.0f;
             ForceField_AddLayer(&s_gpuTestField, vortex);
-            s_gpuTestFieldInit = true;
         }
 
         Vector3 center = Vector3Add(playerPos, (Vector3){0.0f, 0.04f, 0.0f});
@@ -267,7 +267,8 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             cfg.velocity = (Vector3){cosf(ang) * 0.15f, 0.0f, sinf(ang) * 0.15f};
             cfg.colorStart = (Color){80, 200, 255, 255};
             cfg.colorEnd = (Color){80, 200, 255, 0};
-            cfg.radius = 0.06f;
+            cfg.radius = 0.25f;  // 0.06f gần như dưới-pixel ở khoảng cách camera arena --
+                                 // GPU path chạy lần đầu (GL cũ dùng CPU) mới lộ ra
             cfg.lifetime = 2.5f;
             cfg.drag = 0.0f;
             cfg.forceField = &s_gpuTestField;
@@ -287,23 +288,27 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
     {
         static Texture2D s_flowTex = {0};
         static ForceField s_flowField;
-        static bool s_flowInit = false;
-        if (!s_flowInit)
+        if (s_flowTex.id == 0)
         {
             Image img = GenImageColor(4, 4, (Color){255, 128, 0, 255});
             s_flowTex = LoadTextureFromImage(img);
             UnloadImage(img);
             GpuParticleSystem_SetVectorFieldTexture(0, s_flowTex);
-
-            ForceField_Clear(&s_flowField);
+        }
+        // Dựng lại field MỖI lần nhấn (origin bám nhân vật) và mở rộng hộp:
+        // FORCE_VECTOR_TEXTURE là HARD BOX (direction.xz = bán kích thước, ngoài hộp
+        // lực = 0 — xem gpu_particles.comp). Bản cũ: hộp 0.6x0.6m đóng băng ở lần nhấn
+        // đầu, trong khi hàng hạt spawn dài ±0.8m -> đa số hạt ngoài hộp đứng im,
+        // hạt trôi ra mép hộp là dừng, đi chỗ khác nhấn thì đứng im toàn bộ.
+        ForceField_Clear(&s_flowField);
+        {
             ForceLayer vf = {0};
             vf.type = FORCE_VECTOR_TEXTURE;
             vf.origin = Vector3Add(playerPos, (Vector3){0.0f, 0.04f, 0.0f});
-            vf.direction = (Vector3){0.3f, 0.0f, 0.3f};
+            vf.direction = (Vector3){2.5f, 0.0f, 2.5f};   // hộp 5x5m phủ trọn hàng spawn + lối trôi
             vf.strength = 2.5f;
             vf.noiseScale = 0.0f;
             ForceField_AddLayer(&s_flowField, vf);
-            s_flowInit = true;
         }
 
         Vector3 spawnPos =
@@ -317,7 +322,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             cfg.velocity = (Vector3){0.0f, 0.0f, 0.0f};
             cfg.colorStart = (Color){255, 220, 100, 255};
             cfg.colorEnd = (Color){255, 220, 100, 0};
-            cfg.radius = 0.008f;
+            cfg.radius = 0.12f;  // 0.008f (8mm) vô hình ở khoảng cách camera -- xem ghi chú FF test
             cfg.lifetime = 3.0f;
             cfg.drag = 0.0f;
             cfg.forceField = &s_flowField;
@@ -435,7 +440,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             const char **names;
             int globalIdx;
             int visualIdx;
-            maxIdx = 81;
+            maxIdx = 82;
             names = s_newFxNames; // @gen:newfx_count
             visualIdx = 0;
             (void)names;
@@ -779,6 +784,7 @@ void VFXTest_Draw3D(void)
               case 76: VFX_ComposeMagicFilamentsOnPlane(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, 1.5f, fminf(progress, 0.99f), (Color){100, 200, 255, 200}, 0.8f, 3.5f, 4.0f, (Vector2){0.0f, 0.0f}); break;
               case 79: VFX_ComposeChainLink(VC_MAT_FIRE, s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){3.0f, 0, 0}), 0.1f, 1.0f, fminf(progress, 0.99f), s_meshTime); break;
               case 80: { static bool splashed = false; if (progress < 0.05f) splashed = false; if (progress >= 0.83f && !splashed) { VFX_ComposeSplashBurst(s_testPathPoints[15], 1.2f); splashed = true; } VFX_ComposeWaterStreamOnPath(s_testPathPoints, 16, 0.25f, progress * 1.2f, 0.25f, s_meshTime); }; break;
+              case 81: VFX_ComposeRaymarchSmokeBox(VC_MAT_FIRE, s_prefabStartPos, 1.5f, s_meshTime); break;
           }
 // @gen:newfx_draw end
         }
@@ -923,7 +929,7 @@ void VFXTest_DrawHUD(void)
         const char **names;
         int gi;
         int vIdx;
-        maxIdx = 81;
+        maxIdx = 82;
         names = s_newFxNames; // @gen:newfx_count
         vIdx = 0;
         (void)names;

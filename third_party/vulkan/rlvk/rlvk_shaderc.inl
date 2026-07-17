@@ -1144,6 +1144,8 @@ static void rlvkBindShaderUbos(VkCommandBuffer cmdBuffer, rlvkShaderSlot *shader
 // binding from the same table (rlBindShaderBuffer marks set0Dirty), so this is a no-op there.
 static void rlvkBindShaderSsbos(VkCommandBuffer cmdBuffer, rlvkShaderSlot *shader)
 {
+    static int s_dbgSsbo = -1;
+    if (rlvkDebugFlag("RLVK_DEBUG_SSBO", &s_dbgSsbo)) TRACELOG(RL_LOG_WARNING, "VKSSBO bind mask=0x%x pushDesc=%d slot0=%u", shader->ssboMask, (int)RLVK.Caps.pushDescriptor, RLVK.computeSSBO[0]);
     if (!shader->ssboMask || !RLVK.Caps.pushDescriptor)
         return;
     VkDescriptorBufferInfo infos[RLVK_SET0_SSBO_COUNT];

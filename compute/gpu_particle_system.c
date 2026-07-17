@@ -69,6 +69,7 @@ static unsigned int    s_ssbo            = 0;
 static unsigned int    s_ff_ssbo         = 0; // ForceFieldBuffer, binding = 1
 static unsigned int    s_compute_prog    = 0;
 static unsigned int    s_draw_vao        = 0;
+static unsigned int    s_draw_quad_vbo   = 0; // template quad, attribute 0
 static Shader          s_draw_shader_gpu = {0};
 static float           s_elapsed_time    = 0.0f;
 
@@ -135,67 +136,6 @@ static unsigned int CompileComputeShader(const char *path) {
 // ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
-static int s_loc_pos = -1;
-static int s_loc_vel = -1;
-static int s_loc_col_start = -1;
-static int s_loc_col_end = -1;
-static int s_loc_life = -1;
-
-static void BindParticleAttributes(void) {
-    rlEnableVertexBuffer(s_ssbo);
-    int stride = sizeof(GpuParticleData);
-
-    if (s_loc_pos >= 0) {
-        rlEnableVertexAttribute(s_loc_pos);
-        rlSetVertexAttribute(s_loc_pos, 4, RL_FLOAT, 0, stride, 0);
-        rlSetVertexAttributeDivisor(s_loc_pos, 1);
-    }
-    if (s_loc_vel >= 0) {
-        rlEnableVertexAttribute(s_loc_vel);
-        rlSetVertexAttribute(s_loc_vel, 4, RL_FLOAT, 0, stride, 16);
-        rlSetVertexAttributeDivisor(s_loc_vel, 1);
-    }
-    if (s_loc_col_start >= 0) {
-        rlEnableVertexAttribute(s_loc_col_start);
-        rlSetVertexAttribute(s_loc_col_start, 4, RL_FLOAT, 0, stride, 32);
-        rlSetVertexAttributeDivisor(s_loc_col_start, 1);
-    }
-    if (s_loc_col_end >= 0) {
-        rlEnableVertexAttribute(s_loc_col_end);
-        rlSetVertexAttribute(s_loc_col_end, 4, RL_FLOAT, 0, stride, 48);
-        rlSetVertexAttributeDivisor(s_loc_col_end, 1);
-    }
-    if (s_loc_life >= 0) {
-        rlEnableVertexAttribute(s_loc_life);
-        rlSetVertexAttribute(s_loc_life, 4, RL_FLOAT, 0, stride, 64);
-        rlSetVertexAttributeDivisor(s_loc_life, 1);
-    }
-}
-
-static void UnbindParticleAttributes(void) {
-    if (s_loc_pos >= 0) {
-        rlSetVertexAttributeDivisor(s_loc_pos, 0);
-        rlDisableVertexAttribute(s_loc_pos);
-    }
-    if (s_loc_vel >= 0) {
-        rlSetVertexAttributeDivisor(s_loc_vel, 0);
-        rlDisableVertexAttribute(s_loc_vel);
-    }
-    if (s_loc_col_start >= 0) {
-        rlSetVertexAttributeDivisor(s_loc_col_start, 0);
-        rlDisableVertexAttribute(s_loc_col_start);
-    }
-    if (s_loc_col_end >= 0) {
-        rlSetVertexAttributeDivisor(s_loc_col_end, 0);
-        rlDisableVertexAttribute(s_loc_col_end);
-    }
-    if (s_loc_life >= 0) {
-        rlSetVertexAttributeDivisor(s_loc_life, 0);
-        rlDisableVertexAttribute(s_loc_life);
-    }
-    rlDisableVertexBuffer();
-}
-
 void GpuParticleSystem_Init(void) {
     if (s_initialized) return;
 
@@ -254,13 +194,21 @@ void GpuParticleSystem_Init(void) {
             goto cpu_path;
         }
 
-        s_loc_pos = GetShaderLocationAttrib(s_draw_shader_gpu, "in_pos_radius");
-        s_loc_vel = GetShaderLocationAttrib(s_draw_shader_gpu, "in_vel_drag");
-        s_loc_col_start = GetShaderLocationAttrib(s_draw_shader_gpu, "in_color_start");
-        s_loc_col_end = GetShaderLocationAttrib(s_draw_shader_gpu, "in_color_end");
-        s_loc_life = GetShaderLocationAttrib(s_draw_shader_gpu, "in_life_data");
-
+        // Template quad (2 tam giác, góc ±1, CCW = front-face) ở attribute 0.
+        // Per-particle data đi qua SSBO binding 0 đọc bằng gl_InstanceID trong VS —
+        // không còn per-instance attribute + divisor (rlvk không hỗ trợ divisor).
+        // THỨ TỰ ĐỈNH QUAN TRỌNG: BL->BR->TR / BL->TR->TL là CCW nhìn từ camera —
+        // thứ tự CORNER_TABLE cũ (BL->TL->TR) là CW, bị backface-cull thành tàng hình.
+        static const float quadTemplate[18] = {
+            -1.0f, -1.0f, 0.0f,    1.0f, -1.0f, 0.0f,    1.0f,  1.0f, 0.0f,
+            -1.0f, -1.0f, 0.0f,    1.0f,  1.0f, 0.0f,   -1.0f,  1.0f, 0.0f,
+        };
         s_draw_vao = rlLoadVertexArray();
+        rlEnableVertexArray(s_draw_vao);
+        s_draw_quad_vbo = rlLoadVertexBuffer(quadTemplate, sizeof(quadTemplate), false);
+        rlSetVertexAttribute(0, 3, RL_FLOAT, 0, 0, 0);
+        rlEnableVertexAttribute(0);
+        rlDisableVertexArray();
 
         s_use_compute = true;
         TraceLog(LOG_INFO, "GPU_PARTICLES: COMPUTE path active (%d particles)", MAX_GPU_PARTICLES);
@@ -363,6 +311,28 @@ void GpuParticleSystem_Update(float dt) {
         unsigned int groups = (MAX_GPU_PARTICLES + 255) / 256;
         rlComputeShaderDispatch(groups, 1, 1);
         rlDisableShader();
+
+        // Gỡ vector-field texture khỏi các texture unit sau dispatch: để nguyên thì
+        // unit 0 giữ flow texture (4x4 cam) -> draw hạt sample nhầm nó thay vì
+        // globalParticleTex (hạt vuông vàng chanh sau khi bấm VF test một lần).
+        for (int slot = 0; slot < GPU_VECTOR_FIELD_SLOTS; slot++) {
+            if (s_vectorFieldTex[slot].id == 0) continue;
+            rlActiveTextureSlot(slot);
+            rlDisableTexture();
+        }
+        rlActiveTextureSlot(0);
+
+        // Đèn dò tạm (env GP_DUMP=1): đọc ngược hạt 0 mỗi 30 frame để phân định
+        // "data chết trên GPU" vs "render không hiện" khi debug hạt tàng hình.
+        if (getenv("GP_DUMP")) {
+            static int s_dumpTick = 0;
+            if ((++s_dumpTick % 30) == 0 && s_spawn_cursor > 0) {
+                GpuParticleData d;
+                rlReadShaderBuffer(s_ssbo, &d, sizeof(d), 0);
+                TraceLog(LOG_WARNING, "GPDUMP p0 pos=(%.2f %.2f %.2f) r=%.3f vel=(%.2f %.2f %.2f) life=%.2f/%.2f active=%.0f ffi=%.0f",
+                         d.px, d.py, d.pz, d.radius, d.vx, d.vy, d.vz, d.life_rem, d.life_max, d.active, d.ff_index);
+            }
+        }
     } else {
         for (int i = 0; i < MAX_GPU_PARTICLES; i++) {
             GpuParticleData *p = &s_cpu_pool[i];
@@ -393,7 +363,40 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture) {
     // trị mặc định (0) nếu không tự set -> mọi vertex biến thành (0,0,0,0) ->
     // vô hình hoàn toàn dù mọi tham số khác đều hợp lệ. Phải tự tính khớp với
     // ma trận camera hiện tại (đang active từ MyBeginMode3D ở main.c).
-    Matrix matMVP = MatrixMultiply(rlGetMatrixModelview(), rlGetMatrixProjection());
+    // KHÔNG đọc ambient state (rlGetMatrixModelview/Projection): trên backend Vulkan,
+    // tại điểm gọi này modelview đã bị reset về identity bởi một hệ trước đó trong pass
+    // (GPNDC probe: w == -z_world, NDC khớp P*world với view=identity -> hạt chiếu ra
+    // sau camera, tàng hình). Hàm nhận sẵn `camera` -- dựng thẳng view/proj từ đó,
+    // đúng công thức BeginMode3D, miễn nhiễm với mọi xáo trộn matrix stack.
+    Matrix matView = MatrixLookAt(camera.position, camera.target, camera.up);
+    float aspectMVP = (float)GetScreenWidth() / (float)GetScreenHeight();
+    // PHẢI sao y frustum của MyBeginMode3D (main.c): near=1.0, far=1000.0. X/Y của
+    // perspective không phụ thuộc near, nhưng DEPTH thì có -- near lệch (vd 0.01 mặc
+    // định) làm depth của hạt sâu hơn scene -> thua depth test ở mọi pixel có nền,
+    // "hạt chỉ hiện khi ra khỏi nền". Cùng quy ước SOFT_PARTICLE_SCENE_NEAR/FAR
+    // trong core/screen_distort.c -- đổi MyBeginMode3D thì đổi cả đây.
+    double topMVP = 1.0 * tan(camera.fovy * 0.5 * DEG2RAD);
+    double rightMVP = topMVP * aspectMVP;
+    Matrix matProjMVP = MatrixFrustum(-rightMVP, rightMVP, -topMVP, topMVP, 1.0, 1000.0);
+    Matrix matMVP = MatrixMultiply(matView, matProjMVP);
+
+    // Đèn dò tạm (GP_DUMP=1): chiếu hạt 0 qua đúng matMVP draw đang dùng -> NDC.
+    // Phân định "raster ngoài màn hình (ma trận/camera)" vs "raster đúng mà pixel không hiện".
+    if (s_use_compute && getenv("GP_DUMP")) {
+        static int s_ndcTick = 0;
+        if ((++s_ndcTick % 30) == 0 && s_spawn_cursor > 0) {
+            GpuParticleData d;
+            rlReadShaderBuffer(s_ssbo, &d, sizeof(d), 0);
+            float x=d.px, y=d.py, z=d.pz;
+            float cw = matMVP.m3*x + matMVP.m7*y + matMVP.m11*z + matMVP.m15;
+            float cx = matMVP.m0*x + matMVP.m4*y + matMVP.m8*z  + matMVP.m12;
+            float cy = matMVP.m1*x + matMVP.m5*y + matMVP.m9*z  + matMVP.m13;
+            float cz = matMVP.m2*x + matMVP.m6*y + matMVP.m10*z + matMVP.m14;
+            TraceLog(LOG_WARNING, "GPNDC p0 ndc=(%.2f %.2f %.2f) w=%.2f right=(%.2f %.2f %.2f) up=(%.2f %.2f %.2f) tex=%u",
+                     cw!=0?cx/cw:999, cw!=0?cy/cw:999, cw!=0?cz/cw:999, cw,
+                     right.x, right.y, right.z, up.x, up.y, up.z, texture.id);
+        }
+    }
 
     if (s_use_compute) {
         BeginShaderMode(s_draw_shader_gpu);
@@ -410,13 +413,7 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture) {
 
         rlEnableShader(s_draw_shader_gpu.id);
         rlEnableVertexArray(s_draw_vao);
-        
-        // Bắt buộc bind VBO per-frame để tránh lỗi (một số driver mất state VAO)
-        BindParticleAttributes();
-        
         rlDrawVertexArrayInstanced(0, 6, MAX_GPU_PARTICLES);
-        
-        UnbindParticleAttributes();
         rlDisableVertexArray();
         
         rlDisableShader();
@@ -481,6 +478,7 @@ void GpuParticleSystem_Unload(void) {
         if (s_ssbo)     { rlUnloadShaderBuffer(s_ssbo); s_ssbo = 0; }
         if (s_ff_ssbo)  { rlUnloadShaderBuffer(s_ff_ssbo); s_ff_ssbo = 0; }
         if (s_draw_vao) { rlUnloadVertexArray(s_draw_vao); s_draw_vao = 0; }
+        if (s_draw_quad_vbo) { rlUnloadVertexBuffer(s_draw_quad_vbo); s_draw_quad_vbo = 0; }
         if (s_compute_prog) {
             rlDisableShader();
             rlUnloadShaderProgram(s_compute_prog);

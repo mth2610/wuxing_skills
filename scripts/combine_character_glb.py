@@ -10,9 +10,7 @@ character/character_model.h's CharacterModel_Load.
 
 Must run INSIDE Blender's bundled Python (imports `bpy`), headless:
 
-  blender --background --python scripts/combine_character_glb.py -- \\
-      path/to/character_with_skin.fbx path/to/animations_folder \\
-      assets/characters/player.glb 0.25
+blender --background --python scripts/combine_character_glb.py -- character/raw_model/skin.fbx character/raw_model/animations assets/characters/player.glb 0.5
 
 Args after the literal `--` (Blender strips everything before it):
   argv[0]  character FBX, "With Skin" (required)

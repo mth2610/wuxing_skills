@@ -16,7 +16,20 @@
 void rlComputeShaderDispatch(unsigned int gx, unsigned int gy, unsigned int gz)
 {
     rlvkShaderSlot *shader = &RLVK.shaderSlots[RLVK.State.activeShaderSlot];
-    if (!isGpuReady || !shader->isCompute || (shader->computePipeline == VK_NULL_HANDLE)) return;
+    if (!isGpuReady || !shader->isCompute || (shader->computePipeline == VK_NULL_HANDLE))
+    {
+        // A silent no-op here looks like "physics frozen" upstream and is brutal to trace
+        // (see RLVK_HANDOFF §7.7 epilogue) - name the reason, once per offending slot
+        static u32 s_warnedSlot = 0;
+        if (isGpuReady && (s_warnedSlot != RLVK.State.activeShaderSlot))
+        {
+            s_warnedSlot = RLVK.State.activeShaderSlot;
+            TRACELOG(RL_LOG_WARNING, "RLVK: rlComputeShaderDispatch on slot %u skipped (%s) - dispatch is a no-op",
+                     RLVK.State.activeShaderSlot,
+                     !shader->isCompute ? "not a compute program (slot recycled?)" : "no compute pipeline");
+        }
+        return;
+    }
 
     u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
     bool inFrame = RLVK.frameActive;

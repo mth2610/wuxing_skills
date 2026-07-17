@@ -283,17 +283,21 @@ static const char *sc_ssbo_vs(void)
     rlEnableVertexAttribute(0);
     rlDisableVertexArray();
 
+    // NULL-init + mid-frame rlUpdateShaderBuffer = the real GPU-particle spawn pattern.
+    // Guards the in-stream upload barrier (transfer write -> shader STORAGE read): with
+    // attribute/index-only visibility this data stays stale and every instance is culled.
     struct P { float posSize[4]; float color[4]; } items[3] = {
         { {-2,0,0, 1.2f}, {1,0.5f,0.1f,1} },       // orange left
         { { 0,0,0, 1.2f}, {0.2f,1,0.3f,1} },       // green center
         { { 2,0,0, 1.2f}, {0.3f,0.4f,1,1} },       // blue right
     };
-    unsigned int ssbo = rlLoadShaderBuffer(sizeof(items), items, RL_DYNAMIC_COPY);
+    unsigned int ssbo = rlLoadShaderBuffer(sizeof(items), NULL, RL_DYNAMIC_DRAW);
 
     Camera3D cam = cam3d();
     for (int f = 0; f < 3; f++)
     {
         BeginDrawing(); ClearBackground((Color){0,0,60,255});
+        rlUpdateShaderBuffer(ssbo, items, sizeof(items), 0);   // spawn-style mid-frame write
         BeginMode3D(cam);
             Matrix mvp = MatrixMultiply(rlGetMatrixModelview(), rlGetMatrixProjection());
             rlEnableShader(sh.id);

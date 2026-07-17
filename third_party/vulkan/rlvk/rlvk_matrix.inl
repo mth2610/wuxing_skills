@@ -362,16 +362,20 @@ void rlEnableTexture(unsigned int id)
     u32 tex = (id == 0) ? RLVK.defaultTextureSlot : id;
     RLVK.State.activeTextureSlots[RLVK.State.activeTextureUnit] = tex;
 }
-// Disable texture
-void rlDisableTexture(void) { RLVK.State.currentTextureSlot = RLVK.defaultTextureSlot; }
+// Disable texture. GL semantics: glBindTexture(GL_TEXTURE_2D, 0) on the ACTIVE UNIT -
+// clears that unit's binding. It must NOT touch the batch's current texture (that is
+// rlSetTexture(0)'s job). The old currentTextureSlot reset here left stale unit bindings
+// alive: a vector-field texture bound at unit 0 for a compute dispatch kept poisoning
+// every later draw's texture0 (square lemon-yellow GPU particles).
+void rlDisableTexture(void) { RLVK.State.activeTextureSlots[RLVK.State.activeTextureUnit] = 0; }
 // Enable texture cubemap
 void rlEnableTextureCubemap(unsigned int id)
 {
     u32 tex = (id == 0) ? RLVK.defaultTextureSlot : id;
     RLVK.State.activeTextureSlots[RLVK.State.activeTextureUnit] = tex;
 }
-// Disable texture cubemap
-void rlDisableTextureCubemap(void) { RLVK.State.currentTextureSlot = RLVK.defaultTextureSlot; }
+// Disable texture cubemap (same active-unit semantics as rlDisableTexture)
+void rlDisableTextureCubemap(void) { RLVK.State.activeTextureSlots[RLVK.State.activeTextureUnit] = 0; }
 
 // Set texture parameters (wrap mode/filter mode)
 void rlTextureParameters(unsigned int id, int param, int value)

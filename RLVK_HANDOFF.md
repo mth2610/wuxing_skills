@@ -247,7 +247,45 @@ bugs will rhyme with these. **Check this list before starting a new hunt.**
   TRANSFER_SRC) instead of opening a fresh frame that would only contain a clear.
 - **Guard**: `readback` scenario.
 
-### 7.7 False alarms to not re-chase
+### 7.7 Invisible GPU particles — a masterclass in confounded bisection
+- **Symptom**: GPU-particle pool counts up, particles fully invisible. Zero validation
+  errors, pipeline builds, SSBO descriptor pushed with the right buffer, buffer content
+  verified correct by readback.
+- **Actual root causes (three, stacked)**: (1) the game's draw shader had been switched to
+  per-instance attributes + `rlSetVertexAttributeDivisor` ("VBO instancing bypass") which
+  rlvk doesn't support — attributes read zeros → the shader's own liveness guard culled
+  every particle (fixed by restoring the SSBO+`gl_InstanceID` read the backend now
+  supports); (2) latent: the mid-frame buffer-upload barrier only covered
+  vertex-attribute/index reads, not shader storage reads (widened — correct fix even
+  though it wasn't the visible breaker); (3) the new quad template copied the old
+  CORNER_TABLE vertex order, which is **CW = backface-culled** — the entire final mystery
+  was winding, nothing exotic.
+- **Bisection lessons paid for in hours**:
+  - **A control that can't fail is not a control.** Twice: a variant "proved" mid-frame
+    updates worked while its buffer slot was REUSED from a previous sub-test still holding
+    identical stale data; another update-test wrote data identical to the init data, so
+    delivery failure was undetectable. Make controls fail loudly: unique payloads per
+    variant, fresh processes, NULL-init when testing delivery.
+  - **One mutation per variant, one variant per process.** In-process sub-tests contaminate
+    each other through slot reuse and cached state.
+  - **Instrument the error you can't see**: `vkCreateGraphicsPipelines`' result was silently
+    dropped (now TRACELOGged) — combined with the (correct) skip-on-failed-bind rule,
+    a failed pipeline was pure silent invisibility.
+  - Debug flags added: `RLVK_DEBUG_SSBO` (rebase mask + bind pushes), post-rebase SPIR-V
+    dump via `RLVK_DUMP_SPV` (`rlvk_rebased_vs.spv`), `RLVK_DEBUG_PIPE` (pipeline-key at
+    bind), `VKSCOPE` under `RLVK_DEBUG_PIPE` (FBO scope opens).
+- **Guard**: `ssbo_vs` scenario now uses the game's exact pattern (NULL-init buffer +
+  mid-frame `rlUpdateShaderBuffer` + instanced draw); e2e repro with the real game shaders
+  lives in the session scratchpad pattern (LoadShader of `compute/shaders/gpu_particles_ssbo.vs`).
+- **Epilogue**: after all three fixes the game STILL showed nothing — the in-game
+  `RLVK_DEBUG_SSBO` log proved the whole chain ran (compile mask 0x1, bind mask 0x1), and
+  the residual invisibility was *content*: vfx_test spawn radii (0.06 m / 0.008 m) are
+  sub-pixel at arena camera distance; this machine had never run the GPU path before
+  (macOS GL = CPU path), so those numbers were never visibility-tuned. **Once
+  instrumentation proves the pipeline executes end-to-end, check data magnitudes
+  (meter scale!) before resuming the code hunt.**
+
+### 7.8 False alarms to not re-chase
 - **Winding/frontFace is CORRECT** (`frontFace = CLOCKWISE` + GL-CCW geometry under the
   y-down convention = GL parity; verified: CCW visible, CW culled, `winding_rt` scenario).
   An early "culled front face" result was a probe bug, not a backend bug.
@@ -263,23 +301,22 @@ User rebuilds the game → verify character self-occlusion + black-hole occlusio
 §7.1. If depth-sampling VFX (soft particles, screen distortion) visibly degrade on the
 quirk driver, implement the shadow-copy depth described in §7.1.
 
-### 8.2 Graphics-stage SSBO (GPU particles render path)
-`core/shaders/particles.vs` reads a std430 SSBO by `gl_InstanceID`. Today that pipeline
-fails to build (cleanly skipped per §7.2) because graphics set0 has only samplers+UBOs.
-Needed: SSBO bindings in the graphics set0 layout + `rlBindShaderBuffer` wiring for the
-graphics path + shaderc storage-buffer binding base for VS/FS (avoid Metal index collision
-— MoltenVK errored with "cannot reserve buffer resource location index 9") + enable
-`vertexPipelineStoresAndAtomics` feature (or inject NonWritable decoration). Repro exists:
-scratchpad `rlvk_ssbo_vs.c` pattern; add a `ssbo_vs` scenario when implementing.
+### 8.2 Graphics-stage SSBO — **DONE (2026-07-16, `ssbo_vs` 11/11, zero validation errors)**
+Implemented: set0 bindings 18–21 = STORAGE_BUFFER (VS|FS); new SPIR-V pass
+`rlvkRebaseStorageBuffers` (rlvk_shaderc.inl) rewrites GLSL std430 bindings 0..3 → 18..21
+(SSBO vars = StorageBuffer class OR Uniform+BufferBlock, shaderc's SPIR-V 1.3 shape) and
+injects NonWritable when the device lacks `vertexPipelineStoresAndAtomics`
+(`Caps.graphicsSsboStores`; feature enabled when present — so weak 1.1 devices get
+read-only graphics SSBOs, which is all particles need); `rlvkBindShaderSsbos` pushes from
+the shared `rlBindShaderBuffer` table (indices 0..3) with `pushedSsbo[]` dedup on the
+native path, while `rlvkFlushSet0` writes all 4 bindings on the pool-ring path
+(`rlBindShaderBuffer` marks set0Dirty). Dummy attrib buffer (STORAGE usage) backs unbound
+slots. Remaining: confirm GPU particles in the actual game (human-run build).
 
-### 8.3 Port `compute/gpu_particle_system.c` from raw GL to the rl* compute API
-The only engine file calling `gl*` directly. Map: program → `rlLoadShader(src,
-RL_COMPUTE_SHADER)` + `rlLoadShaderProgramCompute`; glBindBufferBase →
-`rlBindShaderBuffer` (0..7); buffers → `rlLoadShaderBuffer/rlUpdateShaderBuffer/
-rlReadShaderBuffer`; dispatch+barrier → `rlComputeShaderDispatch`. GLSL
-(`compute/shaders/gpu_particles.comp`, 310 es, std430 bindings 0/1) should compile via
-relaxed rules. Coordinate with the Compute Agent (module owner). Depends on §8.2 for the
-draw half.
+### 8.3 ~~Port `compute/gpu_particle_system.c` from raw GL~~ — STALE, nothing to do
+Checked 2026-07-16: the file is already pure rl* API (rlLoadShaderBuffer /
+rlBindShaderBuffer / rlComputeShaderDispatch / rlDrawVertexArrayInstanced). With §8.2 done
+the whole GPU-particle path should light up under Vulkan as-is.
 
 ### 8.4 Android
 - `VK_KHR_android_surface` branch exists; platform code must drive
@@ -299,6 +336,10 @@ draw half.
   desc sets 1024/256) — tune against real content.
 - Perf not re-benchmarked since the retarget; old 1.3-era claims in the file header are
   stale.
+- Open validation noise (pre-existing, non-blocking, seen in the full visual suite):
+  `VUID-VkImageMemoryBarrier-oldLayout-01211` ×30 (some barrier's oldLayout guess
+  mismatches the image's actual layout — audit `currentLayout` bookkeeping) and the known
+  §7.5 stride-0 `04457` ×3. `ssbo_vs` itself is clean.
 
 ### 8.6 Long-term (standalone engine)
 Tiler-aware VFX (load/store ops are now real levers), then extract `core/` VFX +

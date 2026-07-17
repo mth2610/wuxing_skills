@@ -499,6 +499,11 @@ static VkPipeline rlvkBuildPipeline(const rlvkPipelineKey *key)
                                                     .subpass = 0,
                                                 },
                                                 RLVK_ALLOC, &pipeline);
+    // A failed build must be LOUD: the draw sites skip drawing on NULL (correct - stale
+    // pipelines render garbage), which makes a silent failure here pure invisibility.
+    if (result != VK_SUCCESS)
+        TRACELOG(RL_LOG_WARNING, "RLVK: vkCreateGraphicsPipelines => %d (shader slot %u, layout 0x%x) - draws with this state are SKIPPED",
+                 (int)result, key->shaderSlot, key->vertexLayout);
     return pipeline;
 }
 

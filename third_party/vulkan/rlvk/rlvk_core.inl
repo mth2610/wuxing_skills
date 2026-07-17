@@ -765,8 +765,16 @@ static void rlvkUploadBuffer(VkBuffer dst, u32 dstOffset, const void *data, u32 
                                                   VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
                                                   .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
                                                   .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                                                  .dstStageMask = VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT,
-                                                  .dstAccessMask = VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT,
+                                                  // glBufferSubData semantics: EVERY later consumer sees the data.
+                                                  // SSBOs ride this path too (rlUpdateShaderBuffer mid-frame -> the
+                                                  // GPU-particle vertex shader reads them as storage buffers);
+                                                  // vertex-attribute/index visibility alone left those reads STALE
+                                                  // (invisible particles - silently wrong, no validation error).
+                                                  .dstStageMask = VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT
+                                                                | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT
+                                                                | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                                  .dstAccessMask = VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT
+                                                                 | VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT,
                                                   .buffer = dst,
                                                   .offset = dstOffset,
                                                   .size = size,

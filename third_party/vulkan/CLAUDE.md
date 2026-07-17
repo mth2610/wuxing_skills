@@ -48,8 +48,10 @@ significant, statics span them. Never include a fragment directly, never reorder
 
 ## Debug tools (env vars, all off by default)
 `RLVK_DEBUG_FLUSH` (batch draws), `RLVK_DEBUG_VAO` (mesh buffers), `RLVK_DEBUG_FBO`
-(frame/present lifecycle), `RLVK_MEM_REPORT`, `RLVK_GPU_TRACE` (GPU ms), `RLVK_DUMP_SPV=dir`
-(write compiled SPIR-V for spirv-dis).
+(frame/present lifecycle), `RLVK_DEBUG_PIPE` (pipeline key per bind + FBO scope opens),
+`RLVK_DEBUG_SSBO` (graphics-SSBO rebase mask + descriptor pushes), `RLVK_MEM_REPORT`,
+`RLVK_GPU_TRACE` (GPU ms), `RLVK_DUMP_SPV=dir` (compiled SPIR-V pre-rebase per stage +
+post-rebase `rlvk_rebased_vs.spv`, for spirv-dis).
 
 ## Known driver quirks (do not re-litigate; each has a Cap or a fixed workaround)
 - `Caps.noSampledDepth` (MoltenVK/Intel): SAMPLED usage on a depth image silently kills

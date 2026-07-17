@@ -93,6 +93,11 @@ unsigned int rlLoadShaderProgram(const char *vsCode, const char *fsCode)
     u32 vsSsboMask = 0, fsSsboMask = 0;
     rlvkRebaseStorageBuffers(&vsSpv, &vsWords, !RLVK.Caps.graphicsSsboStores, &vsSsboMask);
     rlvkRebaseStorageBuffers(&fsSpv, &fsWords, !RLVK.Caps.graphicsSsboStores, &fsSsboMask);
+    if (getenv("RLVK_DUMP_SPV") && vsSsboMask)   // debug: post-rebase module for spirv-dis
+    {
+        char path[256]; snprintf(path, sizeof(path), "%s/rlvk_rebased_vs.spv", getenv("RLVK_DUMP_SPV"));
+        FILE *df = fopen(path, "wb"); if (df) { fwrite(vsSpv, 4, vsWords, df); fclose(df); }
+    }
     rlvkSpvReflection vsRef, fsRef;
     rlvkReflectSpv(vsSpv, vsWords, &vsRef);
     rlvkMatchStageInterface(&fsSpv, &fsWords, &vsRef);
@@ -215,6 +220,7 @@ unsigned int rlLoadShaderProgram(const char *vsCode, const char *fsCode)
     shader->fsStage = shader->fsBlockSize ? (unsigned char *)RL_CALLOC(1, shader->fsBlockSize) : NULL;
     shader->usesUbo = true;
     shader->ssboMask = vsSsboMask | fsSsboMask;
+    if (getenv("RLVK_DEBUG_SSBO")) TRACELOG(RL_LOG_WARNING, "VKSSBO compile slot=%u vsMask=0x%x fsMask=0x%x", slot, vsSsboMask, fsSsboMask);
 
     TRACELOG(RL_LOG_INFO, "RLVK: [ID %u] shader program compiled (%d uniforms, VS block %uB at %u, FS block %uB at %u)",
              slot, shader->uniformCount, shader->vsBlockSize, vsRef.blockBinding, shader->fsBlockSize, fsRef.blockBinding);
@@ -384,6 +390,18 @@ void rlUnloadShader(unsigned int id)
     rlvkShaderSlot *s = &RLVK.shaderSlots[id];
     if (!s->inUse)
         return;
+    // GL semantics: glDeleteShader on a stage object AFTER linking is harmless - the linked
+    // program lives on. In rlvk the compute STAGE slot becomes the PROGRAM slot
+    // (rlLoadShaderProgramCompute returns csId itself), so honoring the delete here would
+    // destroy the live program AND free the slot for the next shader load to recycle -
+    // rlEnableShader(prog) then activates an unrelated shader and rlComputeShaderDispatch
+    // silently no-ops (frozen particles; found via the GPU-particle hunt). Ignore the
+    // stage-handle delete; rlUnloadShaderProgram() performs the real destroy.
+    if (s->isCompute && (s->computePipeline != VK_NULL_HANDLE))
+    {
+        TRACELOG(RL_LOG_DEBUG, "RLVK: rlUnloadShader(%u) on a linked compute program - ignored (GL stage-delete semantics)", id);
+        return;
+    }
 
     // Evict this slot's cached pipelines (slot numbers recycle; a stale pipeline would draw
     // the next shader with this one's modules): pipelines go through the fence-gated dead ring,
@@ -417,8 +435,15 @@ void rlUnloadShader(unsigned int id)
         RL_FREE(s->fsStage);
     memset(s, 0, sizeof(rlvkShaderSlot));
 }
-// Unload shader program
-void rlUnloadShaderProgram(unsigned int id) { rlUnloadShader(id); }
+// Unload shader program: the REAL destroy for compute programs (rlUnloadShader ignores
+// them per GL stage-delete semantics - see the guard there). Clears the guard, then reuses
+// rlUnloadShader's full teardown (pipeline eviction + modules + tables).
+void rlUnloadShaderProgram(unsigned int id)
+{
+    if (id != 0 && id < RLVK_MAX_SHADER_SLOTS && RLVK.shaderSlots[id].inUse)
+        RLVK.shaderSlots[id].isCompute = false;   // drop the stage-delete protection
+    rlUnloadShader(id);
+}
 
 // Get shader location uniform
 // NOTE: First parameter refers to shader program id
