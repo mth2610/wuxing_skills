@@ -55,7 +55,7 @@ Platform hooks (NOT part of rlgl's API): platform creates `VkSurfaceKHR` →
 - **Windowed platform layer: LANDED.** The full game builds and runs under Vulkan on macOS
   (`WUXING_USE_VULKAN=ON`; MoltenVK is the dev proxy for "weak 1.1 driver" — macOS itself
   ships GL in production).
-- **Visual test suite: 12/12** (`scripts/run_rlvk_visual_test.sh`, see §5).
+- **Visual test suite: 13/13 (soft_ground added)** (`scripts/run_rlvk_visual_test.sh`, see §5).
 - **First real-content bug wave: root-caused and fixed** — every case is documented in §7.
   Fixed: opaque-square particles (stale pipeline on failed build), device-lost after heavy
   VFX (unchecked acquire), no depth occlusion inside render textures = character
@@ -98,7 +98,7 @@ Platform hooks (NOT part of rlgl's API): platform creates `VkSurfaceKHR` →
 | `third_party/vulkan/rlvk_shaders.h` | Generated embedded SPIR-V default shader. Regen: `scripts/gen_rlvk_shaders.sh` (glslc, `--target-env=vulkan1.1`). |
 | `third_party/vulkan/shaders/rlvk_default.vert/.frag` | Default-shader source. Contract: attrib locations 0/1/3, push_constant == `rlvkPushConstants{mat4 mvp; vec4 colDiffuse}`, set0 binding0 = texture0, clip-z epilogue baked in. |
 | `third_party/vulkan/tests/rlvk_runtime_test.c` | Headless suite (20 checks). |
-| `third_party/vulkan/tests/rlvk_visual_test.c` | Windowed scenario suite (12 scenarios, self-checking pixels). **Every draw-path bug fix adds a scenario here first.** |
+| `third_party/vulkan/tests/rlvk_visual_test.c` | Windowed scenario suite (13 scenarios, self-checking pixels). **Every draw-path bug fix adds a scenario here first.** |
 | `scripts/check_rlvk_compile.sh` | Tier-1 compile check (no SDK needed). |
 | `scripts/run_rlvk_runtime_test.sh` | Tier-2 headless + validation. |
 | `scripts/run_rlvk_visual_test.sh` | Tier-3 windowed; `VALIDATE=1` adds layers; caches a Vulkan-patched raylib in `/tmp/rlvk_visual_cache` (first run ~2 min, then ~20 s). |
@@ -403,13 +403,513 @@ Checked 2026-07-16: the file is already pure rl* API (rlLoadShaderBuffer /
 rlBindShaderBuffer / rlComputeShaderDispatch / rlDrawVertexArrayInstanced). With §8.2 done
 the whole GPU-particle path should light up under Vulkan as-is.
 
-### 8.4 Android
-- `VK_KHR_android_surface` branch exists; platform code must drive
-  `rlvkAttachSurface`/`rlvkPresent` from `ANativeWindow`.
-- Pause/resume destroys the surface — needs a `rlvkDetachSurface`-style path (not written).
+### 8.4 Android (platform glue LANDED 2026-07-17, unverified on NDK/device — see below)
+
+**Starting point**: today's shipped `android.wuxing_skills` build is **100% GL/GLES** —
+`ANDROID_NOTICES.md` confirmed no Vulkan wiring ran there before this session
+(`Makefile.Android`'s `USE_VULKAN=1` branch only compiled `core/vulkan/wuxing_vulkan.c`, a
+no-op stub). Don't re-litigate "why doesn't Vulkan work on Android" pre-2026-07-17 — it was
+never wired, not broken. Default build (`USE_VULKAN` unset/0) is **unchanged** by everything
+below — dry-run-verified (`make -f Makefile.Android -n`) to emit identical flags/recipe.
+
+**Landed this session** (all written from first principles, cross-checked against the real
+`build/_deps/raylib-src` — human granted a one-off read exception for that normally-forbidden
+tree, specifically to find exact patch anchors):
+
+- `rlvkDetachSurface(void)` — `rlvk_platform.inl`/`rlvk.h`. Tears down the swapchain +
+  `VkSurfaceKHR` (device-wait-idle, `rlvkDestroySwapchainSizedObjects`, `vkDestroySurfaceKHR`,
+  clears `RLVK.surface`/`frameActive`). Compile-checked + full visual suite green (13/13).
+- **Android raylib patch** — new section in `scripts/rlvk_patch_raylib.py` targeting
+  `src/platforms/rcore_android.c` (idempotent, marker-guarded, same pattern as the existing
+  GLFW-desktop section; `#else` branches are byte-identical to the original — the GL path is
+  provably untouched when `GRAPHICS_API_VULKAN` is undefined). Anchor strings verified to
+  match the real checked-out file via a scratch-copy dry run (`python3
+  scripts/rlvk_patch_raylib.py <scratch-copy>` → "patched", brace-balance confirmed). Three
+  pieces:
+  - `SwapScreenBuffer` → `rlvkPresent()` + a new `WindowAttachVulkanSurface()` (mirrors the
+    GLFW one, using `vkCreateAndroidSurfaceKHR` + `platform.app->window`).
+  - **`APP_CMD_INIT_WINDOW` restructured around a real landmine**: Android's un-patched
+    handler calls `rlglInit()` itself (plus `SetupViewport`/`InitTimer`/`LoadFontDefault`/
+    `SetRandomSeed`) *inside* the callback, and then `rcore.c`'s generic `InitWindow()` calls
+    `rlglInit()` **again** right after `InitPlatform()` returns — a double-init GL silently
+    tolerates but Vulkan cannot (`rlglInit` creates the `VkInstance`/device; a second call
+    would recreate them over the live `RLVK` globals mid-use). Fix: under Vulkan, the
+    first-launch branch is reduced to just `CORE.Window.ready = true` + dimension bookkeeping;
+    the one real `rlglInit` + surface attach happens from the generic `rcore.c` site via
+    `WindowAttachVulkanSurface`. The resume branch (`contextRebindRequired`, i.e. after a
+    prior pause) calls `vkCreateAndroidSurfaceKHR` + the already-re-entrant
+    `rlvkAttachSurface` directly — no `rlglInit` involved, matching that it must never re-run.
+  - `APP_CMD_TERM_WINDOW` → `rlvkDetachSurface()` in place of the EGL teardown, still setting
+    `contextRebindRequired = true` (reused unchanged as the "window was lost, come back" flag
+    for both paths).
+- **`Makefile.Android`**: `USE_VULKAN=1` now also defines `GRAPHICS_API_VULKAN` (the macro the
+  patch's `#if` guards actually check — `WUXING_USE_VULKAN` alone never activated the raylib
+  source patch, a real gap in the flag as it existed before this session) and
+  `VK_USE_PLATFORM_ANDROID_KHR` (must come from a compile flag — `vulkan.h` is first included,
+  transitively, before `rcore_android.c` is reached in the same translation unit, so a
+  `#define` inside the patch would be too late). Added: `-Ithird_party/vulkan`, `-lvulkan`
+  (NDK stub, resolves the device's real `libvulkan.so` at load time, API 24+), and
+  `compile_raylib_android` now (a) runs the patch script before the raylib CMake build and
+  (b) passes `-DCMAKE_C_FLAGS="-DGRAPHICS_API_VULKAN -DVK_USE_PLATFORM_ANDROID_KHR
+  -Ithird_party/vulkan"` into that **separate** raylib-only CMake invocation — raylib.a is
+  built independently of the game's own `$(CFLAGS)`, so without this the archive would
+  silently contain the GL rcore.c path regardless of the patch or the game code's own flags.
+  **Landmine flagged inline**: `compile_raylib_android` skips rebuilding `libraylib.a` if the
+  path already exists — flipping `USE_VULKAN` without clearing
+  `android.wuxing_skills/raylib_build` + `lib/*/libraylib.a` silently reuses the stale
+  wrong-backend archive (same class of bug as the two already documented in §D2 of
+  `ANDROID_NOTICES.md`).
+- `core/vulkan/wuxing_vulkan.c` — cosmetic-only fix (see §7.11 for the REAL bug this looked
+  like it was addressing): removed `#undef GRAPHICS_API_OPENGL_33/ES2/ES3` from this no-op
+  stub. Harmless either way — the file doesn't `#include` anything, so an `#undef` inside it
+  has zero effect on any other translation unit's preprocessor state. Not the actual fix.
+
+### 7.11 First real Android compile attempt — two bugs found and fixed same-day (2026-07-17)
+A human ran `make -f Makefile.Android USE_VULKAN=1` for the first time against the platform
+glue above. Two real bugs surfaced immediately (both fixed, neither yet re-verified — no NDK
+here to confirm):
+- **`GRAPHICS_API_OPENGL_33`/`ES2` simultaneously defined → `rlgl.h` duplicate-member compile
+  error.** Root cause: `rlvk.h`'s forced `#define GRAPHICS_API_OPENGL_33` (needed so
+  `rlVertexBuffer.indices` comes out `unsigned int*`, which rlvk's own code assumes
+  unconditionally) had a `#ifndef GRAPHICS_API_OPENGL_33` guard but never checked
+  `ES2`/`ES3`. Desktop never hit this (never had ES2/ES3 defined in the first place). Android
+  does: raylib's own `src/CMakeLists.txt` (`cmake/CompileDefinitions.cmake`:
+  `target_compile_definitions(raylib PUBLIC "${GRAPHICS}")`) unconditionally defines
+  `GRAPHICS_API_OPENGL_ES3` from `-DOPENGL_VERSION="ES 3.0"`, and `rlgl.h` itself auto-implies
+  `ES2` from `ES3` (a legitimate, unrelated raylib pattern — not a bug). With both `_33` and
+  `_ES2` defined, `rlgl.h`'s two MUTUALLY EXCLUSIVE `#if` blocks for `rlVertexBuffer.indices`
+  (32-bit for `_33`, 16-bit for `_ES2`) both compiled → duplicate struct member. **My own
+  earlier "fix" to `core/vulkan/wuxing_vulkan.c` (removing its `#undef`s) was not wrong but
+  was irrelevant** — that file doesn't even get included anywhere, so its preprocessor state
+  never reaches `rcore.c`'s translation unit. The real fix has to live inside `rlvk.h` itself,
+  which is what actually gets included into `rcore.c`. **Fix**: `rlvk.h` now explicitly
+  `#undef`s `GRAPHICS_API_OPENGL_ES2`/`ES3` immediately before forcing `_33` — scoped to
+  `rcore.c`'s translation unit only (where `RLVK_IMPLEMENTATION` lives), doesn't desync any
+  other raylib source file (none of them read `rlVertexBuffer`'s layout directly). Desktop
+  `check_rlvk_compile.sh` + full visual suite (13/13) reconfirmed green after the change.
+- **`shaderc/shaderc.h` not found** compiling the Android raylib CMake build. The vendored
+  copy lives at `third_party/vulkan/include/shaderc/shaderc.h` (NDK's own bundled shaderc.h
+  lacks `set_vulkan_rules_relaxed` — see COMPUTE_API.md), but `Makefile.Android`'s
+  `-DCMAKE_C_FLAGS` for the raylib-only CMake sub-build only added `-Ithird_party/vulkan`, not
+  `-Ithird_party/vulkan/include`. `scripts/check_rlvk_compile.sh` already adds BOTH (that's
+  how desktop finds it without a system Vulkan SDK) — the Android Makefile just missed the
+  second path. **Fix**: added `-Ithird_party/vulkan/include` to both `Makefile.Android`'s
+  `INCLUDE_PATHS` (game code) and the raylib CMake sub-build's `CMAKE_C_FLAGS`.
+**Second compile attempt (same day) found two more bugs — one is a real "measure twice" lesson:**
+- **`VK_KHR_LINE_RASTERIZATION_EXTENSION_NAME` undeclared.** `VK_KHR_line_rasterization` (the
+  KHR promotion of the older, present `VK_EXT_line_rasterization`) is newer than the
+  Vulkan-Headers bundled with NDK 28. Only the string constant is needed (queried by name via
+  `vkEnumerateDeviceExtensionProperties`, never through a KHR-specific struct/enum) — **fix**:
+  `rlvk_config.inl` now supplies an `#ifndef`-guarded fallback matching the exact upstream
+  Khronos registry value (`"VK_KHR_line_rasterization"`). No-op on headers that already have
+  it (confirmed: desktop `check_rlvk_compile.sh` still green).
+- **`rcore_android.c:1072: unterminated conditional directive` → cascaded into ~20 bogus
+  "function definition is not allowed here" errors.** Self-inflicted: the §7.10-era Android
+  patch's `#if defined(GRAPHICS_API_VULKAN) ... #else ...` for `APP_CMD_INIT_WINDOW` never
+  closed with `#endif` — the anchor was cut short at `InitTimer();` (matching where the
+  *Vulkan* branch's own logic ends) instead of extending through the REST of the original,
+  untouched code (`LoadFontDefault`/`SetRandomSeed`/closing braces) that the `#else` branch
+  still needed to contain before an `#endif` could legally appear. The unclosed `#if` silently
+  swallowed everything after it as "inside the GL branch" until the file ended, and the
+  compiler's recovery from that produced the garbage cascade of "function definition" errors
+  much further down — a textbook case of one root cause producing a scary-looking error wall
+  (§6 point 2: sort by causality, not scariness; the FIRST error is the one that matters).
+  **Fix**: extended both the anchor and the replacement to the true end of the `else { ... }`
+  block, with the Vulkan branch's `#else` now correctly wrapping the complete, unmodified
+  original code before its own `#endif`.
+  **Verification this time was stronger than "read it carefully"**: reconstructed the
+  pre-patch file from the exact original text captured earlier in this session, ran the FIXED
+  patch script against it (confirmed: "patched", anchor matched byte-exact), then ran the
+  result through `gcc -E -P` (preprocessor-only, no NDK headers needed) under BOTH
+  `-DGRAPHICS_API_VULKAN` and without — **zero directive errors either way**, and the
+  no-Vulkan output is **byte-identical** (`diff`) to preprocessing the untouched original,
+  reconfirming the GL path is provably unaffected. This class of bug (preprocessor directive
+  imbalance) is exactly what a plain visual code read is bad at catching and a real
+  preprocessor pass catches for free — use `gcc -E -P` on any future raylib-patch edit here,
+  not just eyeballing the diff.
+- **CRITICAL — the live checkout is currently broken and needs a human action**:
+  `build/_deps/raylib-src/src/platforms/rcore_android.c` was already patched with the FIRST
+  (broken, unclosed-`#if`) version of this patch during the failed attempt above (`make`'s
+  `compile_raylib_android` runs the patch script before the CMake build). Because the patch
+  script's marker guard (`if MARKER in src: return`) makes every `patch()` call a no-op once
+  the marker string is present, **simply re-running `make` will NOT re-apply the now-fixed
+  script to that file** — it will see the marker and skip it, leaving the broken version in
+  place. **The human must delete and let it re-fetch before the next attempt**:
+  `rm -rf build/_deps/raylib-src` (plus the usual `android.wuxing_skills/raylib_build` +
+  `lib/*/libraylib.a` cache clear) so CMake re-fetches a pristine raylib 6.0 tree and the
+  now-fixed `rlvk_patch_raylib.py` applies cleanly to it.
+- **Lesson**: the first two Android compile attempts found FOUR bugs total, none visible from
+  source review alone — two were cross-translation-unit/cross-build-system interactions, one
+  was a bundled-header version gap, one was a directive-balance mistake in my own patch that a
+  preprocessor pass (not just re-reading the diff) actually catches. Exactly the §6
+  methodology point: reading tells you intent, only execution (or in this case, actually
+  running the preprocessor) tells you what's real. Expect more on the next attempt — normal
+  for a from-scratch platform bring-up.
+
+### 7.12 FIRST BUILD RUNS ON REAL HARDWARE (2026-07-17) — swapchain rotated/mispresented
+**Milestone**: after fixing §7.11's two bugs, `make -f Makefile.Android USE_VULKAN=1` compiled
+clean and the APK ran on a real device (Samsung, Mali-G68, driver reports Vulkan API 1.1.177).
+logcat confirms: RLVK device init, swapchain created (2320x1080, 5 images), shaders/textures/
+models all loaded, no crash, no device-lost. This is the actual Mali/Android hardware target
+the whole rlvk effort was motivated by (§1) — the first time any of it has run there.
+- **Symptom**: main menu renders sideways/garbled (text and buttons rotated ~90° from
+  expected), and touches don't land on the visible buttons.
+- **Root cause**: `rlvkAttachSurface` (`rlvk_platform.inl`) set the swapchain's
+  `preTransform = caps.currentTransform` unconditionally, but rlvk's rendering never actually
+  ROTATES its content to match a non-identity transform. On a phone whose native display panel
+  is portrait while the app runs landscape (the common case), `caps.currentTransform` reports
+  `ROTATE_90`/`270` — telling the presentation engine "this image is already pre-rotated to
+  match the panel," which was false, so the compositor mis-presented the whole frame. Touch
+  input arrives in the correct physical orientation regardless, so it lands on the wrong
+  on-screen location relative to what's drawn (explaining "can't tap the buttons" as the SAME
+  root cause, not a separate input bug). Desktop never surfaced this: window surfaces there
+  report `currentTransform = IDENTITY`, so the old code was accidentally correct there.
+- **Fix**: request `VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR` explicitly when the driver's
+  `supportedTransforms` includes it (essentially universal — Android's compositor efficiently
+  handles the panel-vs-app-orientation difference itself, the standard approach used by most
+  engines rather than the more complex "actually pre-rotate your own draw content" path).
+  Falls back to the old `caps.currentTransform` behavior on the rare device that doesn't
+  support IDENTITY (no regression there). `rlvkRecreateSwapchain` reuses `rlvkAttachSurface`
+  internally, so orientation-change/resize recreation picks up the same fix automatically.
+  Desktop `check_rlvk_compile.sh` + full visual suite (13/13) reconfirmed green — no-op there
+  as expected (MoltenVK/GLFW surfaces already report IDENTITY).
+- **Not yet re-verified on device** — reasoned from the logcat + screenshot the human provided,
+  not from running it myself (no device access). Also visible in this run's logcat, a SEPARATE
+  known/already-tracked gap (not touched by this fix): every custom shader load logs `RLVK:
+  custom shaders need shaderc_shared.dll (not found) - using default shader`, and GPU compute
+  particles fell back to the CPU/VBO path for the same reason — this is exactly the
+  "shaderc on device" item already listed as open below, now confirmed for real (previously
+  theoretical). It means today's on-device visuals use raylib's default shader everywhere a
+  skill expects a custom one, independent of the rotation bug — expect that to still look
+  wrong (colors/effects) even after the rotation fix, until shaderc is addressed.
+
+**Human retest (same day): text mirroring gone, but rotation and tap-misalignment persist.**
+The IDENTITY-preTransform fix changed something (no longer mirrored) but did not fully fix the
+symptom — meaning the diagnosis above was incomplete or there's a second, compounding cause.
+Rather than guess again blindly, added `RLVK_DEBUG_ROTATE` (env-gated TRACELOG right where
+`preTransform` is computed in `rlvkAttachSurface`) printing the raw
+`currentTransform`/`supportedTransforms`/chosen-`preTransform` bits and both extents
+(`caps.currentExtent` vs the swapchain's actual `extent`) — per §6 point 1, reproduce/measure
+before reading further, don't keep guessing from source alone. **Landmine hit writing this
+probe**: first attempt also logged `CORE.Window.render/screen` dimensions for cross-reference,
+which failed to compile with "use of undeclared identifier 'CORE'" — `rlvk.h` is textually
+included into `rcore.c` at the `#define RLVK_IMPLEMENTATION` / `#include "rlvk.h"` line, which
+comes BEFORE `CoreData CORE = { 0 };`'s own declaration further down the same file; nothing in
+`rlvk.h`/its fragments can reference `CORE`. **Also confirms `check_rlvk_compile.sh`'s
+standalone harness does NOT reproduce this class of error** (it passed clean while the real
+`run_rlvk_visual_test.sh` build — which compiles through the actual patched `rcore.c`, same as
+the game — caught it immediately); for anything referencing raylib-side globals or depending on
+real inclusion order, the visual-suite build is the one that matters, not just the compile
+check. Dropped the `CORE` fields from the log; `currentTransform`/`supportedTransforms`/extents
+alone are enough to diagnose the rotation. Made the log **unconditional** (not env-var-gated) —
+it only fires at swapchain create/recreate (rare) and env vars don't reliably reach a
+NativeActivity process the way a desktop shell launch does; marked TEMP/REMOVE-once-fixed in
+the code comment. Compile-check + full visual suite (13/13) reconfirmed clean with the
+corrected log. **Next step**: human rebuilds and pastes the `VKROTATE ...` logcat line (fires
+automatically, no setup needed) so the actual transform/extent values replace guessing.
+
+**Human retest with `RLVK_DEBUG_ROTATE` output (same day): `currentTransform=0x2` (ROTATE_90),
+`supportedTransforms=0x1ff`, `chosenPreTransform=0x1` (IDENTITY, correctly selected),
+`currentExtent`==`chosenExtent`==2320x1080.** Confirmed the ROTATE_90 hypothesis (panel truly
+is native-portrait) and confirmed the IDENTITY fix WAS applied. Direct verification via `adb`
+(device was connected, so used it instead of asking for more screenshots — `adb shell
+screencap` + `adb shell input tap`) showed the MENU screen renders correctly oriented and taps
+land on the right button (confirmed by a deliberate off-by-one-row tap correctly triggering the
+adjacent button's own distinct behavior, not a random/dead miss) — the swapchain rotation fix
+is real and working. **But then**: human tested in-game (entered via a stray tap, screenshot
+showed a garbled/noise-texture scene with what looked like UI/health-bar elements) and reported
+taps still don't land where expected, needing to "tap wildly outside" the visible target to
+trigger anything — a SEPARATE, genuine bug, not a residual rotation issue.
+
+### 7.13 Touch coordinates misaligned independent of rendering (2026-07-17) — SetupFramebuffer
+never ran under the Vulkan patch
+- **Root cause**: raylib's Android touch handler (`AndroidInputCallback`) scales every raw
+  touch position by `widthRatio = (CORE.Window.screen.width + CORE.Window.renderOffset.x) /
+  CORE.Window.display.width` (and the Y equivalent) — entirely dependent on
+  `CORE.Window.renderOffset`, which is computed ONLY by `SetupFramebuffer()` (pure
+  `CORE.Window.screen`/`display` math, zero EGL/GL calls, confirmed by reading its full body).
+  §7.11/7.12's Vulkan branch of `APP_CMD_INIT_WINDOW` skips `InitGraphicsDevice()` entirely
+  (correctly, to avoid its EGL context/surface creation) — but that also skipped the
+  `SetupFramebuffer()` call bundled inside it, so `CORE.Window.renderOffset` silently stayed at
+  its zero-init default. That default is only correct by coincidence when `screen` and
+  `display` share the same aspect ratio; on a real device (`screen` from `InitWindow`, e.g.
+  1280x720 = 16:9, vs `display` from the actual `ANativeWindow`, e.g. 2320x1080 ≈ 2.15:1 —
+  different aspect ratios, hits `SetupFramebuffer`'s "upscaling, needs letterbox offset"
+  branch) the missing offset put every touch at a systematically wrong position, while
+  rendering looked completely correct (the swapchain extent comes from `caps.currentExtent`
+  directly, entirely independent of `CORE.Window.render`/`renderOffset`) — exactly matching
+  "visuals are right, taps are wrong," a genuinely different bug class from §7.12's rotation
+  issue, just discovered back-to-back on the same device.
+  **Bonus finding**: this also explains the earlier `rlglInit(..., 1280x720)` log line
+  (§ milestone in 7.12) — that was `CORE.Window.render`'s zero-init-triggered fallback from
+  `rcore.c`'s generic "embedded platforms" 0x0 guard (`CORE.Window.render` never got set to
+  anything real), not an actual computed value; it happened to read 1280x720 only because that
+  matches `CORE.Window.screen` (the fallback sets `render = screen` verbatim when `render` is
+  still 0x0), not because any real display-aware sizing occurred.
+- **Fix**: added a call to `SetupFramebuffer(CORE.Window.display.width,
+  CORE.Window.display.height)` in the Vulkan branch's first-launch case, immediately after
+  `CORE.Window.display.width/height` are set from `ANativeWindow_get{Width,Height}` — plus the
+  same `CORE.Window.render = CORE.Window.screen` / `currentFbo` override the GL `else`-branch
+  does right after a successful attach, so behavior matches the known-working GL reference
+  exactly. This runs (inside `AndroidCommandCallback`, during `InitPlatform()`'s wait loop)
+  BEFORE the generic `rcore.c` site's `rlglInit(CORE.Window.render.width, ...)` call (which
+  only fires after `InitPlatform()` returns), so `rlglInit` will now receive the real computed
+  render size instead of the screen-dimension fallback.
+- **Verification**: re-fetched a fully pristine raylib checkout (`rm -rf
+  build/_deps/raylib-{src,subbuild,build}` + `cmake -S . -B build`, same as §7.11's protocol —
+  the marker-guard means editing the patch script alone does nothing to an already-patched
+  tree) and confirmed the updated patch applied clean to that fresh checkout: `#if`/`#endif`
+  balance 9/9, `gcc -E -P` reports zero directive errors. **Not yet verified on device** — the
+  actual behavioral fix (touches landing correctly) can only be confirmed by a human rebuild +
+  retest; nothing here proves the FORMULA reasoning is complete (there could be additional
+  contributing factors not yet surfaced, same as rotation took two rounds).
+- **Process note**: this is now the SECOND real Vulkan-vs-GL-Android-init-path bug from the
+  same source (§7.11's double-`rlglInit`, this one's skipped-`SetupFramebuffer`) — both because
+  `InitGraphicsDevice()` bundles EGL-specific work together with EGL-independent bookkeeping
+  that Vulkan still needs. Before adding any FUTURE Android-Vulkan-branch logic, check whether
+  the GL code path being skipped/replaced does anything else non-EGL-specific first, rather
+  than assuming "skip the whole function" is safe just because the function's NAME suggests
+  it's graphics-API-specific.
+
+**Human retest (same day): touch still broken, AND a visible regression from this fix.**
+Fresh `adb`-captured screenshot of the menu (device connected, used it directly instead of
+relying on more secondhand description) showed something new and worse: most of the UI
+(title, buttons 1–3) had scrolled off-screen entirely, only button 5 partially visible — a
+rendering regression, not just unfixed touch. **Also newly noticed in hindsight: every
+screenshot since the very first Android run (menu and in-game) has shown a large black
+region on the right side of the display** — previously dismissed as incidental, this turned
+out to be the same bug's real signature.
+
+### 7.14 The actual root cause: `CORE.Window.render` set to the wrong size for Vulkan's model
+- **Why §7.13's fix caused a regression**: it mirrored GL's `else`-branch override
+  (`CORE.Window.render = CORE.Window.screen`, e.g. 1280x720) after calling
+  `SetupFramebuffer()`. That override is only correct in GL's own flow because GL performs an
+  extra step §7.13 didn't replicate: after `SetupFramebuffer` computes a letterboxed render
+  size, GL calls `ANativeWindow_setBuffersGeometry(app->window, render.width, render.height,
+  ...)` to physically shrink the EGL surface's underlying buffer to that letterboxed size —
+  then relies on the OS compositor to upscale that smaller buffer to fill the real display.
+  `CORE.Window.render` gets reset to `screen` afterward because the GL viewport only ever
+  needs to fill that already-shrunk buffer, not the full display. **rlvk's swapchain has no
+  equivalent step**: `rlvkAttachSurface` creates it directly at `caps.currentExtent` (the
+  full display resolution, 2320x1080) — nothing shrinks it first. Setting
+  `CORE.Window.render = CORE.Window.screen` (1280x720) made `SetupViewport`'s
+  `rlViewport(renderOffset.x/2, renderOffset.y/2, render.width, render.height)` size the
+  Vulkan viewport SMALLER than the swapchain image — everything outside that sub-rectangle is
+  simply never drawn to, which is exactly the black region on the right that's been in every
+  screenshot since the first Android run. It also explains the touch misalignment: the
+  touch-scaling formula's assumptions (`widthRatio = (screen.width+renderOffset.x)/
+  display.width`) are built around GL's implicit OS-level buffer-upscale step actually
+  happening; nothing here performs an equivalent step for Vulkan, so the formula's inputs
+  never matched what was actually on screen.
+- **Fix**: stopped mirroring GL's override entirely. `CORE.Window.render` is now set to the
+  FULL display resolution (`CORE.Window.display.width/height`, i.e. what the swapchain
+  actually is) with `renderOffset = (0, 0)` — no letterboxing, since Vulkan is using the true
+  native resolution directly. This makes the Vulkan viewport span the entire swapchain image
+  (no more black region) and makes the touch-scaling formula's per-axis ratios
+  (`screen.width/display.width`, `screen.height/display.height` — non-uniform since
+  `screen`=1280x720 and `display`=2320x1080 have different aspect ratios) correctly invert
+  whatever non-uniform stretch raylib's 2D orthographic projection applies when it maps
+  `CORE.Window.screen`-space UI coordinates onto a same-sized-as-swapchain viewport — the
+  render side and the touch side now agree on the same physical space instead of two
+  different, GL-shaped assumptions that Vulkan's model never actually satisfies.
+- **Verification**: re-fetched pristine raylib again (same protocol) — patch applied clean,
+  `#if`/`#endif` balance 9/9, zero directive errors, desktop `check_rlvk_compile.sh` + full
+  visual suite (13/13) still green (this patch only touches `rcore_android.c`, so desktop is
+  provably unaffected either way, but reconfirmed regardless). **Not yet verified on device.**
+- **Confidence note**: this reasoning is more mechanistic (traced the actual GL code path
+  being diverged from, identified the specific missing step) than §7.12/§7.13's more
+  empirical trial-and-observe rounds, but it is still unverified on real hardware. If this
+  doesn't fully resolve it, the next diagnostic step should be screenshots of BOTH the full
+  screen (confirm no more black region) AND a deliberate tap-vs-visual-target comparison
+  (tap a specific labeled button, report exactly what happens), rather than a general
+  "still broken" — precise repro detail matters more than more guessing from first principles
+  at this point.
+
+**§7.14 partially confirmed same day, via direct `adb` access (device was connected — used
+`adb shell screencap`/`input tap` directly instead of relying on more screenshots):** the 2D
+UI layer (menu buttons, HUD bars, joystick, skill buttons) now renders correctly and fills the
+FULL display — the black region on the right is completely gone for that layer, confirming
+§7.14's `render=display` fix is right. But a fresh in-game screenshot showed a NEW, more
+specific shape: the 3D game-world viewport itself (not the 2D UI) renders as a smaller white
+rectangle confined to the upper-left, with black filling an L-shaped region around it (right
+side + bottom) — visible in every screenshot since the very first Android run, previously
+mis-attributed to the already-fixed black-bar bug instead of being its own separate issue.
+
+### 7.15 `core/` HDR scene composite still blits 1:1 instead of scaling to the real render size
+- **Root cause**: `core/screen_distort.c` and `core/post_fx.c` each render the 3D scene into an
+  intermediate `RenderTexture2D` sized at `GetScreenWidth()/GetScreenHeight()` (raylib's
+  LOGICAL window size, `CORE.Window.screen` — e.g. 1280x720, unchanged by any of §7.11–7.14's
+  fixes, which deliberately only touch `CORE.Window.render`), then blit that texture onto the
+  actual screen/swapchain with `DrawTextureRec` — which draws the source at its native pixel
+  size with NO destination scaling. On GL (desktop, and the original Android GL build), this
+  was invisibly correct because `CORE.Window.render` was ALSO always the same 1280x720 logical
+  size — GL's own `ANativeWindow_setBuffersGeometry` step (see §7.14) physically shrinks the
+  real window buffer to that logical size and lets the OS compositor upscale it to fill the
+  real display, so a 1:1 draw really did fill the (smaller, soon-to-be-upscaled) target. rlvk's
+  Vulkan swapchain has no such step (per §7.14, it's created directly at the real display
+  resolution) — with `CORE.Window.render` now correctly reflecting that real size, the
+  intermediate texture (still logical-size) drawn 1:1 only covers a fraction of the actual
+  screen, leaving the rest black — exactly the L-shaped region observed.
+- **Fix**: changed both final-composite blits from `DrawTextureRec` (implicit 1:1) to
+  `DrawTexturePro` with the destination rectangle sized to `GetRenderWidth()/GetRenderHeight()`
+  (raylib's existing accessor for `CORE.Window.render` — the ACTUAL render/swapchain target
+  size, distinct from `GetScreenWidth/Height`'s logical size) — `core/screen_distort.c`'s
+  distortion-shader final blit and `core/post_fx.c`'s bloom/tonemap "PASS 6: Composite →
+  screen". This is a `core/` change (Core Agent's normal territory) made directly in this
+  session since it's a direct continuation of the same bug chain — flagged clearly here in
+  case `CORE_API.md` conventions around `DrawTextureRec`/`GetScreenWidth` vs `GetRenderWidth`
+  in final-blit code need a note for future skill/VFX authors.
+  **Not fully audited**: `core/metaball_fx.c` has a similar-shaped `DrawTexturePro` call
+  (already scale-aware, not `DrawTextureRec`) using `GetScreenWidth()/GetScreenHeight()` for
+  its destination rect instead of `GetRenderWidth/Height` — left unchanged since it wasn't
+  confirmed whether its target at that point is the final swapchain or an intermediate texture
+  sized the same logical way (in which case it's already correct as-is); worth checking if
+  metaball effects show the same L-shaped-black-region symptom after this fix lands.
+- **Not yet verified on device** — reasoned from tracing the exact draw calls, not from
+  running it. Human should rebuild (desktop OR Android) and confirm the 3D game view now
+  fills the whole screen with no black region, then retest touch alignment now that both the
+  rlvk-side (render/renderOffset) and core-side (composite blit scale) halves of this bug
+  chain are addressed.
+
+**§7.14/§7.15 confirmed same day: screen now filled (no black region), but round UI elements
+render as ELLIPSES and touch is still off.** Direct visual confirmation that `render=display`
+(§7.14) was itself still wrong, in a new way: `CORE.Window.screen` (1280x720, 16:9≈1.778) and
+`CORE.Window.display` (2320x1080, ≈2.148) have DIFFERENT aspect ratios, and setting
+`render=display` scales the two axes by different factors (1.8125x vs 1.5x) — anything drawn
+as a circle in logical screen-space (joystick base, skill buttons) comes out visibly
+non-uniformly stretched into an ellipse. This is hard evidence, not just reasoning: two prior
+attempts (§7.13 `render=screen`, §7.14 `render=display`) were each wrong in an opposite way,
+and this is the failure mode that finally makes the actual bug class legible.
+
+### 7.16 Correct fix: uniform-scale letterbox instead of either non-letterboxed extreme
+- **Root cause, precisely**: neither "render=logical size" (§7.13, viewport too small — black
+  region) nor "render=physical size" (§7.14, viewport right size but WRONG aspect — ellipses)
+  is correct when `screen` and `display` have different aspect ratios. The only
+  shape-preserving option that also avoids leaving any part of the swapchain undrawn is a
+  **uniform scale factor letterboxed to fit** — same factor on both axes (so circles stay
+  circles), sized so the render rectangle fits entirely within the display (so the Vulkan
+  viewport never exceeds the swapchain), centered via `renderOffset` (so any leftover space
+  becomes symmetric black bars on the shorter axis, not an undrawn corner).
+- **Fix**: replaced the `render=display` override with a direct uniform-scale computation:
+  `scale = min(display.width/screen.width, display.height/screen.height)`,
+  `render.{width,height} = round(screen.{width,height} * scale)`,
+  `renderOffset.{x,y} = display.{width,height} - render.{width,height}`. (Deliberately NOT
+  routed through `SetupFramebuffer()` itself — its branches assume GL's separate
+  `ANativeWindow_setBuffersGeometry` + OS-compositor-upscale step exists, which rlvk's
+  swapchain never performs; computing the letterbox directly, tailored to "the swapchain IS
+  the real display, no OS upscale step," is simpler and avoids relitigating which of
+  `SetupFramebuffer`'s branches would even apply correctly here.) With this, `SetupViewport`'s
+  `rlViewport(renderOffset.x/2, renderOffset.y/2, render.width, render.height)` produces a
+  centered, correctly-proportioned viewport with matching letterbox bars — and
+  `core/screen_distort.c`/`core/post_fx.c`'s §7.15 blits to `GetRenderWidth/Height` now target
+  that same correctly-proportioned region, and `AndroidInputCallback`'s touch formula
+  (`(screen+renderOffset)/display` per axis) inverts the exact same uniform transform.
+- **Verification**: re-fetched pristine raylib (same protocol), patch applied clean, `#if`/
+  `#endif` balance 9/9, zero directive errors, desktop compile-check + full visual suite
+  (13/13) still green. **Not yet verified on device** — third attempt at this specific
+  sub-problem; if STILL wrong, get a screenshot + report whether shapes are now round (confirms
+  uniform scale landed) even if position is still off (would then point at something in the
+  touch-formula's OTHER input, `CORE.Window.screen`, or at the UI/button code's own
+  hit-test math rather than at the render/renderOffset computation itself).
+
+**§7.16 confirmed same day: shapes ARE round now, movement joystick works (usable, confirmed by
+a spawned particle), but menu buttons still don't hit-test where they visually appear** ("nút
+hiển thị để bấm ở 1 nơi, vùng bấm vào có hiệu lực ở 1 nơi khác" — button displays in one place,
+its effective tap region is somewhere else). This is a strong new data point: since the
+joystick (same rendering pipeline, same touch-scaling formula) DOES work, the render/touch
+FOUNDATION from §7.16 is very likely correct — the remaining bug is probably specific to how
+the menu buttons compute or consume their hit-test coordinates, not a global transform issue.
+
+**Investigation via direct `adb` access** (device connected — used it instead of asking for
+more screenshots): read `main.c`'s menu code directly — `btnSandbox` etc. are computed fresh
+every frame from `GetScreenWidth()/GetScreenHeight()` (`sw/2 - 150`, ...) and hit-tested via
+`CheckCollisionPointRec(GetMousePosition(), btnSandbox)` — internally consistent, no obvious
+bug in that code by inspection alone. A precise `adb shell input tap` at the visually-measured
+button center (from a fresh `adb shell screencap`) did NOT trigger navigation. Chased one
+promising lead that turned out NOT to be the cause, but IS worth recording: `adb shell dumpsys
+window com.mth2610.wuxing` shows the app's actual window frame is `Rect(80, 0 - 2400, 1080)` —
+offset 80px from the physical panel's left edge (a camera-cutout avoidance inset;
+`mOverlappingWithCutout=false` confirms Android deliberately shrank/shifted the window to dodge
+it), exactly matching why `caps.currentExtent.width` (2320) is 80px less than the full physical
+panel width (`adb shell wm size`: 2400 physical). This is NOT a bug — `ANativeWindow_getWidth/
+Height()` (what `CORE.Window.display` uses) correctly reports the app's OWN receivable
+2320-wide area, matching what the Vulkan swapchain uses; Android's input dispatch is expected
+to transparently deliver window-relative touch coordinates to the app regardless of this
+offset (true for both real touches and `adb shell input tap`, which inject at the same global-
+display level real touches do). Recorded here so it isn't rediscovered and mistaken for the
+bug in a future session — it explains the 2320-vs-2400 numbers but doesn't explain the button
+mismatch.
+
+**Diagnostic added**: a `TraceLog` in `main.c`'s menu block (TEMP, marked for removal), firing
+on every click anywhere on the menu screen, printing `mousePos` (post-scaling, what
+`CheckCollisionPointRec` actually tests against), `sw`/`sh` (`GetScreenWidth/Height`,
+the button rects' own coordinate space), `GetRenderWidth/Height`, and `btnSandbox`'s computed
+rect — the exact numbers needed to see directly whether `mousePos` is inside/outside/near
+`btnSandbox` and by how much, rather than continuing to infer from screenshots and manual pixel
+measurement. **Next step**: human rebuilds, taps ANYWHERE on the menu (doesn't need to land on
+a button — the log fires on any click), and pastes the `MENUTAP ...` logcat line.
+
+### 7.17 Found it: `CORE.Window.screen` never kept in sync with the letterboxed `render` size
+- **The `MENUTAP` data point**: `mousePos=(303.3,440.0) sw=1280 sh=720 renderW=1920 renderH=1080`.
+  `renderW/sw == renderH/sh == 1.5` exactly (zero offset at that moment) — confirms §7.16's
+  letterbox math itself is correct. But `sw`/`sh` (what `main.c`'s button rects are computed in)
+  are still the **original** 1280×720 `InitWindow()` request, while rendering happens in
+  1920×1080 `render` space.
+- **Root cause**: raylib's `SetupViewport()` (`rcore.c:4261`, stock/unpatched, shared by every
+  platform) always sets the ortho projection to `rlOrtho(0, CORE.Window.render.width,
+  CORE.Window.render.height, 0, ...)` — **never** `screen`. All 2D draw calls (`DrawRectangle`,
+  `DrawText`, ...) are therefore always in `render`-pixel space, everywhere, on every platform.
+  This has always been invisible on GL/Android specifically because stock
+  `rcore_android.c`'s `APP_CMD_INIT_WINDOW` sets `CORE.Window.currentFbo = CORE.Window.screen`
+  (small, the original request) — `SetupFramebuffer()`'s own bigger `render` computation for
+  aspect-fit purposes is fed to `ANativeWindow_setBuffersGeometry`, which creates a *physically
+  small* native buffer and lets the OS compositor upscale it to the real display at present
+  time, transparent to the app. So on GL, `render == currentFbo == screen` numerically, always,
+  and the whole codebase's `GetScreenWidth()`-based UI layout (menu, HUD, VFX sandbox — every
+  file) has silently depended on that equality.
+- rlvk's swapchain has no such small-buffer-then-OS-upscale step (§7.16) — it's created directly
+  at the real display extent — so §7.16's fix correctly set `currentFbo = render` (letterboxed,
+  bigger than `screen`) to make the Vulkan viewport fill the swapchain. But it left
+  `CORE.Window.screen` untouched at the original small request. Net effect: 2D content draws in
+  the bigger `render` space (1920×1080) while `main.c` lays out and hit-tests buttons in the
+  smaller, stale `screen` space (1280×720) — buttons draw compressed into a fraction of the
+  visible viewport (confirmed by screenshot: menu items confined to the top-left ~40% of the
+  display, rest a plain gray clear-color fill) AND get hit-tested against coordinates that no
+  longer correspond to where they're drawn. Two independent-looking symptoms, one cause.
+- **Fix** (`scripts/rlvk_patch_raylib.py`, same `APP_CMD_INIT_WINDOW` Vulkan block as §7.16):
+  after computing the letterboxed `render`/`renderOffset`, also set
+  `CORE.Window.screen.width = CORE.Window.render.width` (and `.height` likewise) — keeping
+  `screen` in lockstep with `render`, restoring the "draw and hit-test share one coordinate
+  space" invariant the rest of the codebase depends on. `AndroidInputCallback`'s
+  `widthRatio = (screen.width + renderOffset.x)/display.width` reads `CORE.Window.screen` live
+  (not cached), so this also fixes touch mapping for free — worked through both cases by hand:
+  zero-offset (`screen==render==display`) degenerates to ratio 1.0, pure passthrough; letterboxed
+  (`renderOffset != 0`) degenerates to `rawTouch - renderOffset/2`, i.e. subtract the half-bar
+  offset with no further scaling needed, since content is already drawn 1:1 in real render
+  pixels. Absolute pixel sizes (e.g. a fixed `300×50` button) will render visually smaller
+  relative to the full display than originally authored at 1280×720 — cosmetic only, tunable
+  later; correctness (position + hit-test agreement) matters more right now.
+- **Verification**: re-fetched pristine raylib (same protocol), patch applied clean (no
+  directive changes this time — pure C statements inside an existing brace block), desktop
+  compile-check + full visual suite still 13/13 green, confirming the GL `#else` branch and
+  desktop path are untouched. **Not yet verified on device** — needs a real Android rebuild +
+  retest.
+
+**Still open / explicitly NOT done**:
+- **Nothing in §8.4 has been compiled clean end-to-end yet** — no NDK toolchain exists on this
+  machine to attempt it directly; fixes above are reasoned from source + the human's pasted
+  compiler output, not from running the build myself. Treat this section as **actively being
+  debugged one real compiler error at a time**, not finished. Next step: human re-runs
+  `make -f Makefile.Android USE_VULKAN=1` and pastes whatever error (if any) comes next. The
+  failed attempt never reached `cp -f raylib/libraylib.a ...`, so the existing-archive cache
+  guard should naturally retry the CMake build rather than skip it — but if the retry behaves
+  oddly (stale CMake cache inside `raylib_build/` from the aborted configure/build), clear
+  `android.wuxing_skills/raylib_build` + `lib/*/libraylib.a` per the §D2 precedent and retry.
 - shaderc on device: ship a new-enough libshaderc or precompile shaders to SPIR-V offline
   (better for weak devices anyway) and extend `rlLoadShaderProgram` to accept SPIR-V pairs.
 - Expect Mali driver quirks; §6's methodology applies verbatim — build the scenario first.
+- **Physical-device testing is human-only** (no device access from here): `adb`/on-device
+  testing per `ANDROID_NOTICES.md`, once a human confirms the NDK build itself succeeds.
 
 ### 8.5 Smaller known gaps (deliberate)
 - `rlLoadShaderProgramEx` unimplemented (nothing in raylib's normal flow uses it).
@@ -428,7 +928,7 @@ the whole GPU-particle path should light up under Vulkan as-is.
   a sampler (needs a "was sampled" flag or lazy first-sample creation). Quirk drivers only.
 - Open validation noise: **`01211` ×30 FIXED (2026-07-17, §7.9) → suite now 0**. Only the
   known §7.5 stride-0 `04457` ×3 remains (intentional portability workaround). Verified with
-  `VALIDATE=1 ./scripts/run_rlvk_visual_test.sh` (12/12, `grep -c 01211` == 0).
+  `VALIDATE=1 ./scripts/run_rlvk_visual_test.sh` (13/13, `grep -c 01211` == 0).
 
 ### 8.6 Long-term (standalone engine)
 Tiler-aware VFX (load/store ops are now real levers), then extract `core/` VFX +

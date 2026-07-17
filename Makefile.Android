@@ -11,6 +11,11 @@ RAYLIB_PATH             = build/_deps/raylib-src
 ENET_PATH               = build/_deps/enet-src
 
 # Vulkan Backend Switch (make USE_VULKAN=1 to enable)
+# WARNING same class of landmine as ANDROID_NOTICES.md §D2's other raylib-flag changes:
+# compile_raylib_android skips rebuilding raylib.a if it already exists at the target path.
+# Toggling USE_VULKAN after a prior build reuses the STALE (wrong-backend) archive silently.
+# Always `rm -rf android.wuxing_skills/raylib_build android.wuxing_skills/lib/*/libraylib.a`
+# when flipping this flag.
 USE_VULKAN             ?= 0
 
 # Android architecture and API version
@@ -153,7 +158,15 @@ CFLAGS += -DANDROID -DPLATFORM_ANDROID
 CFLAGS += -O2
 
 ifeq ($(USE_VULKAN), 1)
-    CFLAGS += -DWUXING_USE_VULKAN
+    # WUXING_USE_VULKAN: this project's own switch (core/vulkan/wuxing_vulkan.c's guard).
+    # GRAPHICS_API_VULKAN: the macro scripts/rlvk_patch_raylib.py's #if guards actually check
+    # inside the patched raylib source (rcore.c / rcore_android.c) - same name the desktop
+    # CMake build defines (CMakeLists.txt: add_compile_definitions(GRAPHICS_API_VULKAN)).
+    # Missing this second define would silently build the GL path even with the patch applied.
+    # VK_USE_PLATFORM_ANDROID_KHR: must be visible before vulkan.h's first include (from rlvk.h,
+    # itself included very early in rcore.c) so vkCreateAndroidSurfaceKHR/
+    # VkAndroidSurfaceCreateInfoKHR get declared - a compiler flag is the only place early enough.
+    CFLAGS += -DWUXING_USE_VULKAN -DGRAPHICS_API_VULKAN -DVK_USE_PLATFORM_ANDROID_KHR
 endif
 # ENet feature defines — normally set by enet's CMake check_symbol_exists; all
 # present on Android NDK API 31. Without HAS_SOCKLEN_T, unix.c redefines
@@ -165,6 +178,13 @@ CFLAGS += -DHAS_SOCKLEN_T=1 -DHAS_FCNTL=1 -DHAS_POLL=1 -DHAS_GETADDRINFO=1 \
 
 # Include paths
 INCLUDE_PATHS = -I. -Icore/geometry -Icore/material -Icore/composition -Icore/presets -I$(RAYLIB_PATH)/src -I$(NATIVE_APP_GLUE_PATH) -I$(ENET_PATH)/include
+ifeq ($(USE_VULKAN), 1)
+    # third_party/vulkan/rlvk.h - Vulkan headers themselves come from the NDK sysroot
+    # (auto-included via the NDK clang wrapper, same as <android/native_window.h>/<EGL/egl.h>).
+    # third_party/vulkan/include - vendored shaderc.h (NDK's own copy lacks
+    # set_vulkan_rules_relaxed; see COMPUTE_API.md / RLVK_HANDOFF.md §8.4 shaderc-on-device).
+    INCLUDE_PATHS += -Ithird_party/vulkan -Ithird_party/vulkan/include
+endif
 
 # Linker flags
 LDFLAGS = -Wl,-soname,lib$(PROJECT_LIBRARY_NAME).so -Wl,--exclude-libs,libatomic.a
@@ -177,6 +197,13 @@ LDFLAGS += -L. -L$(PROJECT_BUILD_PATH)/obj -L$(PROJECT_BUILD_PATH)/lib/$(ANDROID
 
 # Libraries
 LDLIBS = -lm -lc -lraylib -llog -landroid -lEGL -lGLESv2 -lGLESv3 -lOpenSLES -ldl
+ifeq ($(USE_VULKAN), 1)
+    # NDK stub lib; resolves against the device's real libvulkan.so at load time (API 24+
+    # ships it on Vulkan-capable devices). EGL/GLESv2/v3 above stay linked too: rlvk only
+    # replaces the rendering backend, not the platform's EGL-adjacent surface bootstrap that
+    # raylib's own Android platform file still references at compile time either way.
+    LDLIBS += -lvulkan
+endif
 
 # Object files
 OBJS = $(patsubst %.c, $(PROJECT_BUILD_PATH)/obj/%.o, $(PROJECT_SOURCE_FILES))
@@ -234,6 +261,10 @@ create_temp_project_dirs:
 # EXT/ANGLE) = NULL vì driver không quảng cáo extension (đã là core ES3) →
 # SIGSEGV pc 0x0 trong DrawMeshInstanced ngay khi VFX instanced đầu tiên vẽ.
 compile_raylib_android:
+ifeq ($(USE_VULKAN), 1)
+	@echo "=== Patching raylib for rlvk (idempotent) ===" && \
+	python3 scripts/rlvk_patch_raylib.py $(CURDIR)/$(RAYLIB_PATH)
+endif
 	@if [ ! -f "$(PROJECT_BUILD_PATH)/lib/$(ANDROID_ARCH_NAME)/libraylib.a" ]; then \
 		echo "=== Building raylib for Android ($(ANDROID_ARCH_NAME)) ===" && \
 		mkdir -p $(PROJECT_BUILD_PATH)/raylib_build && \
@@ -247,7 +278,8 @@ compile_raylib_android:
 			-DBUILD_EXAMPLES=OFF \
 			-DBUILD_GAMES=OFF \
 			-DPLATFORM=Android \
-			-DOPENGL_VERSION="ES 3.0" && \
+			-DOPENGL_VERSION="ES 3.0" \
+			$(if $(filter 1,$(USE_VULKAN)),-DCMAKE_C_FLAGS="-DGRAPHICS_API_VULKAN -DVK_USE_PLATFORM_ANDROID_KHR -I$(CURDIR)/third_party/vulkan -I$(CURDIR)/third_party/vulkan/include") && \
 		cmake --build . --config Release -j8 && \
 		cp -f raylib/libraylib.a $(CURDIR)/$(PROJECT_BUILD_PATH)/lib/$(ANDROID_ARCH_NAME)/libraylib.a; \
 	else \

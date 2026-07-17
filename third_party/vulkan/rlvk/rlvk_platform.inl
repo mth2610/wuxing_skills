@@ -78,6 +78,28 @@ static void rlvkDestroySwapchainSizedObjects(void)
     RLVK.swapchainImageCount = 0;
 }
 
+// Tear down the swapchain and the surface itself (Android APP_CMD_TERM_WINDOW: the
+// ANativeWindow — and any VkSurfaceKHR built on it — becomes invalid the instant the
+// callback returns, so this MUST run synchronously inside that callback, before returning).
+// Safe to call with no surface attached (no-op). A later rlvkAttachSurface(newSurface) on
+// resume (APP_CMD_INIT_WINDOW with a fresh ANativeWindow) rebuilds the swapchain from
+// scratch — rlvkAttachSurface is already re-entrant for exactly this reason.
+void rlvkDetachSurface(void)
+{
+    if (!isGpuReady || (RLVK.surface == VK_NULL_HANDLE))
+        return;
+    vkDeviceWaitIdle(RLVK.device); // nothing may still reference the surface/swapchain/images below
+    rlvkDestroySwapchainSizedObjects();
+    vkDestroySurfaceKHR(RLVK.instance, RLVK.surface, RLVK_ALLOC);
+    RLVK.surface = VK_NULL_HANDLE;
+    // Fail visibly-safe: a frame caught mid-recording by APP_CMD_TERM_WINDOW has nowhere to
+    // present into. rlvkBeginFrame/rlvkPresent already no-op on !RLVK.swapchain, but clearing
+    // frameActive too means the NEXT rlvkBeginFrame starts clean rather than thinking a frame
+    // is still open.
+    RLVK.frameActive = false;
+    TRACELOG(RL_LOG_INFO, "RLVK: surface detached");
+}
+
 // Recreate the swapchain after OUT_OF_DATE/SUBOPTIMAL (window resize, Android rotate/resume).
 // Full device drain + rebuild: resize is rare, simplicity beats oldSwapchain retirement.
 static void rlvkRecreateSwapchain(void)
@@ -183,6 +205,37 @@ void rlvkAttachSurface(VkSurfaceKHR surface)
     }
 #endif
 
+    // Request IDENTITY pretransform when the driver supports it (virtually always does):
+    // rlvk never rotates its rendered content to compensate for a non-identity preTransform,
+    // so passing caps.currentTransform straight through (the old behavior) told the presentation
+    // engine the image was ALREADY pre-rotated to match the panel's native orientation when it
+    // wasn't - on phones whose native panel is portrait (currentTransform = ROTATE_90/270 while
+    // running landscape, the common case), that mismatch rotates and misaligns the whole
+    // presented frame, and touch input (delivered in the correct physical orientation) then lands
+    // on the wrong on-screen location relative to what's drawn. Falling back to currentTransform
+    // when IDENTITY isn't in supportedTransforms preserves the old (rare-case) behavior exactly.
+    VkSurfaceTransformFlagBitsKHR preTransform =
+        (caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR)
+            ? VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR
+            : caps.currentTransform;
+
+    // TEMP diagnostic for the Android orientation bug (§7.12) - print the raw surface transform
+    // bits + extent so we know what the driver actually reports instead of guessing further.
+    // currentTransform/supportedTransforms are VkSurfaceTransformFlagBitsKHR bit values:
+    // 0x1=IDENTITY 0x2=ROTATE_90 0x4=ROTATE_180 0x8=ROTATE_270 (bits 0x10+ = mirrored variants
+    // of each). Unconditional (not RLVK_DEBUG_*-gated): this only fires at swapchain
+    // create/recreate (rare, not a per-frame cost), and env vars don't reliably reach a
+    // NativeActivity process the way they do a desktop shell launch - REMOVE once the Android
+    // rotation bug is confirmed fixed. NOTE: this fragment is textually included into rcore.c
+    // BEFORE the `CoreData CORE` global is declared there - CORE is NOT usable from here
+    // (learned the hard way: "use of undeclared identifier 'CORE'" from the real raylib TU, a
+    // case the lighter check_rlvk_compile.sh harness didn't catch - full visual-suite build is
+    // the one that reproduces the real rcore.c inclusion order).
+    TRACELOG(RL_LOG_WARNING, "VKROTATE currentTransform=0x%x supportedTransforms=0x%x chosenPreTransform=0x%x "
+                              "currentExtent=%ux%u chosenExtent=%ux%u",
+             (unsigned)caps.currentTransform, (unsigned)caps.supportedTransforms, (unsigned)preTransform,
+             caps.currentExtent.width, caps.currentExtent.height, extent.width, extent.height);
+
     RLVK_CHECK(vkCreateSwapchainKHR(RLVK.device,
                                     &(VkSwapchainCreateInfoKHR){
                                         VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
@@ -196,7 +249,7 @@ void rlvkAttachSurface(VkSurfaceKHR surface)
                                         // swapchain image; TRANSFER_SRC: rlReadScreenPixels copies out of it
                                         .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                         .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
-                                        .preTransform = caps.currentTransform,
+                                        .preTransform = preTransform,
                                         .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
                                         .presentMode = presentMode,
                                         .clipped = VK_TRUE,

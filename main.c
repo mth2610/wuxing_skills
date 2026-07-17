@@ -1276,6 +1276,11 @@ int main(int argc, char **argv) {
 
         int sw = GetScreenWidth();
         int sh = GetScreenHeight();
+        // TEMP diagnostic (Android touch-vs-render mismatch investigation, RLVK_HANDOFF.md §7.16) -
+        // REMOVE once resolved.
+        if (clicked) TraceLog(LOG_WARNING, "MENUTAP mousePos=(%.1f,%.1f) sw=%d sh=%d renderW=%d renderH=%d btnSandbox=(%.0f,%.0f,%.0f,%.0f)",
+                              mousePos.x, mousePos.y, sw, sh, GetRenderWidth(), GetRenderHeight(),
+                              (float)(sw/2 - 150), (float)(sh/2 - 60), 300.0f, 50.0f);
         Rectangle btnSandbox = { sw/2 - 150, sh/2 - 60, 300, 50 };
         Rectangle btnVFX = { sw/2 - 150, sh/2 + 20, 300, 50 };
         Rectangle btnGame = { sw/2 - 150, sh/2 + 100, 300, 50 };

@@ -185,8 +185,25 @@
 #endif
 
 // rlVertexBuffer struct layout in rlgl.h is conditional on GRAPHICS_API_OPENGL_*.
-// We force the 32-bit-indices layout here so the struct comes out with `unsigned int *indices`.
-// rlgl.h itself is NOT modified.
+// We force the 32-bit-indices layout here so the struct comes out with `unsigned int *indices`
+// (rlvk's own code assumes this layout unconditionally). rlgl.h itself is NOT modified.
+//
+// A mobile platform's own build (Android: raylib's CMake unconditionally defines
+// GRAPHICS_API_OPENGL_ES3 via target_compile_definitions when -DOPENGL_VERSION="ES 3.0",
+// which rlgl.h's own "ES3 implies ES2" shim then also turns into GRAPHICS_API_OPENGL_ES2) may
+// already have ES2/ES3 defined by the time this header is reached. rlgl.h's rlVertexBuffer is
+// gated by MUTUALLY EXCLUSIVE #if blocks per API (32-bit indices for _33/_11, 16-bit for
+// _ES2) - if both a platform macro AND our forced _33 survive simultaneously, BOTH blocks
+// compile and the struct gets two `indices` members (duplicate-member compile error). Clear
+// the platform's ES macros first so _33 is the sole, unambiguous winner. This is scoped to
+// THIS translation unit only (rcore.c, where RLVK_IMPLEMENTATION lives) - it does not desync
+// any other raylib source file, none of which read rlVertexBuffer's internal layout directly.
+#if defined(GRAPHICS_API_OPENGL_ES2)
+    #undef GRAPHICS_API_OPENGL_ES2
+#endif
+#if defined(GRAPHICS_API_OPENGL_ES3)
+    #undef GRAPHICS_API_OPENGL_ES3
+#endif
 #ifndef GRAPHICS_API_OPENGL_33
     #define GRAPHICS_API_OPENGL_33
 #endif
@@ -268,6 +285,7 @@ extern "C" {            // Prevents name mangling of functions
 //------------------------------------------------------------------------------------
 RLVKAPI VkInstance rlvkGetInstance(void);           // Get the VkInstance (the platform needs it to create a surface)
 RLVKAPI void rlvkAttachSurface(VkSurfaceKHR surface); // Attach the platform-created surface, builds the swapchain
+RLVKAPI void rlvkDetachSurface(void);                 // Tear down the swapchain + surface (Android pause / window loss); a later rlvkAttachSurface(newSurface) resumes cleanly
 RLVKAPI void rlvkSetMsaaSamples(int samples);       // Set MSAA sample count, call BEFORE rlvkAttachSurface (FLAG_MSAA_4X_HINT)
 RLVKAPI void rlvkPresent(void);                     // Present the current frame, called from SwapScreenBuffer()
 

@@ -266,10 +266,16 @@ void PostFX_Draw(const PostFXConfig *config)
   SetShaderValue(compositeShader, exposureLoc, &exposureVal, SHADER_UNIFORM_FLOAT);
 
   // [TỐI ƯU 1]: Áp dụng vô hiệu hóa blend cho composite cuối cùng
+  // DrawTexturePro (dest = GetRenderWidth/Height) instead of DrawTextureRec's implicit 1:1:
+  // mainRenderTex is sized to GetScreenWidth/Height (the logical window size), which is NOT
+  // always the same as the real render/swapchain target size (rlvk/Vulkan on Android: the
+  // display's full native resolution, no GL-style OS buffer upscale) - a 1:1 draw only covers
+  // a sub-rectangle there, leaving the rest of the screen black. See RLVK_HANDOFF.md §7.14.
   rlDisableColorBlend();
-  DrawTextureRec(mainRenderTex.texture,
+  DrawTexturePro(mainRenderTex.texture,
                  (Rectangle){0, 0, (float)width, -(float)height},
-                 (Vector2){0, 0}, WHITE);
+                 (Rectangle){0, 0, (float)GetRenderWidth(), (float)GetRenderHeight()},
+                 (Vector2){0, 0}, 0.0f, WHITE);
   rlEnableColorBlend();
 
   EndShaderMode();

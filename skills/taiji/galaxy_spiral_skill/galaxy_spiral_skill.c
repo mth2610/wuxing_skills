@@ -8,7 +8,7 @@
 #include "core/force_field.h"
 
 // --- tunables (meter-scaled: 1 unit = 1 m) ---------------------------------
-#define GALAXY_PARTICLES 6000 // spawned per cast (ring buffer holds MAX_GPU_PARTICLES = 8192)
+#define GALAXY_PARTICLES 1000 // spawned per cast (ring buffer holds MAX_GPU_PARTICLES = 8192)
 #define GALAXY_ARMS 2
 #define GALAXY_RADIUS 6.0f // disk radius
 #define GALAXY_LIFT 1.6f   // float the disk above the target so it reads in the air

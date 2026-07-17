@@ -12,6 +12,16 @@
 #define RLVK_ALLOC              NULL
 #define RLVK_COUNTOF(arr)       ((u32)(sizeof(arr)/sizeof((arr)[0])))
 
+// VK_KHR_line_rasterization (the KHR promotion of the older VK_EXT_line_rasterization, which
+// IS present) is newer than the Vulkan-Headers bundled with some NDK releases (confirmed
+// missing on NDK 28's headers, 2026-07-17 Android bring-up) - only the string constant is
+// needed here (queried by name via vkEnumerateDeviceExtensionProperties, never through a
+// KHR-specific struct/enum), so a manual fallback is safe and exactly matches the upstream
+// Khronos registry value.
+#ifndef VK_KHR_LINE_RASTERIZATION_EXTENSION_NAME
+    #define VK_KHR_LINE_RASTERIZATION_EXTENSION_NAME "VK_KHR_line_rasterization"
+#endif
+
 #define RLVK_CHECK(expr) do {                                                         \
     VkResult _r = (expr);                                                             \
     if (_r != VK_SUCCESS) TRACELOG(RL_LOG_ERROR, "VK: " #expr " => %d", (int)_r);     \

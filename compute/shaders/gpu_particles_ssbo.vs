@@ -33,28 +33,39 @@ out vec2 fragTexCoord;
 out vec4 fragColor;
 
 void main() {
-    GpuParticleData p = particles[gl_InstanceID];
+    // TỐI ƯU HÓA: Chỉ đọc vector life_data, không copy toàn bộ struct
+    vec4 life = particles[gl_InstanceID].life_data;
 
     // Invisible nếu inactive hoặc vừa mới chết
-    if (p.life_data.w < 0.5 || p.life_data.y <= 0.0) {
-        gl_Position = vec4(0.0, 0.0, -1000.0, 1.0); // clip ra ngoài frustum
-        fragColor   = vec4(0.0);
+    if (life.w < 0.5 || life.y <= 0.0) {
+        // SỬA LỖI: Tạo Degenerate Vertex (w = 0.0). 
+        // Bị culling tuyệt đối ở bước Perspective Divide của Rasterizer.
+        gl_Position  = vec4(0.0); 
+        fragColor    = vec4(0.0);
         fragTexCoord = vec2(0.0);
         return;
     }
 
-    float r      = p.pos_radius.w;
-    vec3  center = p.pos_radius.xyz;
-    vec2  corner = vertexPosition.xy;
+    // TỐI ƯU HÓA: Nạp trực tiếp dữ liệu cần thiết từ SSBO
+    vec4 pr     = particles[gl_InstanceID].pos_radius;
+    float r     = pr.w;
+    vec3 center = pr.xyz;
+    vec2 corner = vertexPosition.xy;
 
     vec3 worldPos = center
                   + u_right * (corner.x * r)
                   + u_up    * (corner.y * r);
 
     gl_Position  = mvp * vec4(worldPos, 1.0);
-    fragTexCoord = corner * 0.5 + 0.5;   // (-1,-1)->(0,0) ... (1,1)->(1,1), khớp UV_TABLE cũ
+    
+    // (-1,-1)->(0,0) ... (1,1)->(1,1), khớp UV_TABLE cũ
+    fragTexCoord = corner * 0.5 + 0.5;   
 
-    // Nội suy màu theo life ratio
-    float t      = 1.0 - (p.life_data.x / p.life_data.y);
-    fragColor    = mix(p.color_start, p.color_end, clamp(t, 0.0, 1.0));
+    // TỐI ƯU HÓA: Bỏ hàm clamp() do Compute Shader đã bảo đảm life.x <= life.y
+    float t = 1.0 - (life.x / life.y);
+    
+    vec4 col_start = particles[gl_InstanceID].color_start;
+    vec4 col_end   = particles[gl_InstanceID].color_end;
+    
+    fragColor = mix(col_start, col_end, t);
 }

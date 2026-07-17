@@ -368,7 +368,16 @@ void ScreenDistort_Draw(Camera3D camera)
   }
 
   BeginShaderMode(distortShader);
-  DrawTextureRec(renderTex.texture, (Rectangle){0, 0, (float)renderTex.texture.width, -(float)renderTex.texture.height}, (Vector2){0, 0}, WHITE);
+  // DrawTexturePro (dest sized to GetRenderWidth/Height, not DrawTextureRec's implicit 1:1) -
+  // renderTex is created at GetScreenWidth/Height (the logical window size); on backends where
+  // the real render/swapchain target is a DIFFERENT size (rlvk/Vulkan on Android: the display's
+  // full native resolution, no OS-level buffer upscale the way GL's ANativeWindow_setBuffersGeometry
+  // provides), a 1:1 DrawTextureRec only covers a sub-rectangle, leaving the rest of the screen
+  // uncleared (black) - see RLVK_HANDOFF.md §7.14.
+  DrawTexturePro(renderTex.texture,
+                 (Rectangle){0, 0, (float)renderTex.texture.width, -(float)renderTex.texture.height},
+                 (Rectangle){0, 0, (float)GetRenderWidth(), (float)GetRenderHeight()},
+                 (Vector2){0, 0}, 0.0f, WHITE);
   EndShaderMode();
 }
 
