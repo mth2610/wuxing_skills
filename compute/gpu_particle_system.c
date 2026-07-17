@@ -393,19 +393,12 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture) {
 
     } else {
         // Immediate-mode qua rlgl
-        static int dbg_count = 0;
-        int active_count = 0;
-        
         rlSetTexture(texture.id);
         rlBegin(RL_QUADS);
-        
-        FILE *f = fopen("gpu_particles_debug.txt", "a");
-        
+
         for (int i = 0; i < MAX_GPU_PARTICLES; i++) {
             GpuParticleData *p = &s_cpu_pool[i];
             if (p->active < 0.5f) continue;
-            
-            active_count++;
 
             float t = 1.0f - (p->life_rem / p->life_max);
             
@@ -415,10 +408,6 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture) {
             unsigned char ca = (unsigned char)((p->csa + (p->cea - p->csa) * t) * 255.0f);
 
             float cx = p->px, cy = p->py, cz = p->pz, r = p->radius;
-
-            if (f && active_count < 5 && dbg_count % 60 == 0) {
-                fprintf(f, "Particle %d: cx=%.2f cy=%.2f cz=%.2f r=%.4f ca=%d\n", i, cx, cy, cz, r, ca);
-            }
 
             rlColor4ub(cr, cg, cb, ca);
             
@@ -434,7 +423,6 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture) {
             rlTexCoord2f(1.0f, 0.0f);
             rlVertex3f(cx - rx - ux, cy - ry - uy, cz - rz - uz);
         }
-        if (f) fclose(f);
         rlEnd();
     }
 }

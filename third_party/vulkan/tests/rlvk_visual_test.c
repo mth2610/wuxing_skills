@@ -283,6 +283,87 @@ static const char *sc_soft_ground(void)
     return NULL;
 }
 
+// Resolve one level of `#include "path"` (relative to root) into out — the engine's ResourceManager
+// does this for skill shaders; the raw harness LoadShader does not. Headers have no nested includes.
+static const char *resolveIncludes(const char *path, const char *root, char *out, int outSz)
+{
+    out[0] = 0;
+    char *src = LoadFileText(path);
+    if (!src) return out;
+    char line[2048]; int li = 0;
+    for (char *pch = src; ; pch++)
+    {
+        char ch = *pch;
+        if (ch == '\n' || ch == 0)
+        {
+            line[li] = 0;
+            char *inc = strstr(line, "#include");
+            char *q1 = inc ? strchr(line, '"') : NULL;
+            char *q2 = q1 ? strchr(q1 + 1, '"') : NULL;
+            if (q1 && q2)
+            {
+                *q2 = 0;
+                char ip[600]; snprintf(ip, sizeof ip, "%s/%s", root, q1 + 1);
+                char *it = LoadFileText(ip);
+                if (it) { strncat(out, it, outSz - strlen(out) - 2); strncat(out, "\n", outSz - strlen(out) - 2); UnloadFileText(it); }
+            }
+            else { strncat(out, line, outSz - strlen(out) - 2); strncat(out, "\n", outSz - strlen(out) - 2); }
+            li = 0;
+            if (ch == 0) break;
+        }
+        else if (li < 2047) line[li++] = ch;
+    }
+    UnloadFileText(src);
+    return out;
+}
+
+// DEV preview: raymarched volume campfire (skills/fire/campfire_skill), drawn exactly like the game
+// (engine vs/fs headers + fragNormal local reconstruction + proxy sphere). Dumps a PNG
+// (RLVK_FIRE_DUMP=path) for eyeballing. Not a pass/fail guard.
+static const char *sc_fire_preview(void)
+{
+    static char vsb[16384], fsb[16384];
+    const char *root = getenv("RLVK_SHADER_ROOT");     // repo root (test CWD is the cache dir)
+    if (!root) root = ".";
+    char vsp[600], fsp[600];
+    snprintf(vsp, sizeof vsp, "%s/skills/fire/campfire_skill/campfire.vs", root);
+    snprintf(fsp, sizeof fsp, "%s/skills/fire/campfire_skill/campfire.fs", root);
+    Shader sh = LoadShaderFromMemory(resolveIncludes(vsp, root, vsb, sizeof vsb),
+                                     resolveIncludes(fsp, root, fsb, sizeof fsb));
+    int locCam = GetShaderLocation(sh, "viewPos");
+    int locT   = GetShaderLocation(sh, "u_time");
+    int locR   = GetShaderLocation(sh, "u_radius");
+    float R = 1.2f;
+    Mesh sphere = GenMeshSphere(R, 24, 24);
+    Material mat = LoadMaterialDefault(); mat.shader = sh;
+    Matrix xf = MatrixTranslate(0, R, 0);               // sphere bottom (flame base) on the ground
+    Camera3D cam = { 0 };
+    cam.position = (Vector3){0, 1.0f, 3.3f}; cam.target = (Vector3){0, 0.75f, 0};
+    cam.up = (Vector3){0,1,0}; cam.fovy = 42.0f; cam.projection = CAMERA_PERSPECTIVE;
+    SetShaderValue(sh, locR, &R, SHADER_UNIFORM_FLOAT);
+    for (int f = 0; f < 90; f++)
+    {
+        float tm = f * (1.0f/60.0f);
+        BeginDrawing(); ClearBackground((Color){8,9,14,255});
+        SetShaderValue(sh, locCam, &cam.position, SHADER_UNIFORM_VEC3);
+        SetShaderValue(sh, locT, &tm, SHADER_UNIFORM_FLOAT);
+        BeginMode3D(cam);
+            DrawGrid(10, 1.0f);
+            BeginBlendMode(BLEND_ADDITIVE);
+            rlDisableDepthMask();
+            DrawMesh(sphere, mat, xf);
+            rlEnableDepthMask();
+            EndBlendMode();
+        EndMode3D();
+        EndDrawing();
+    }
+    Image im = snap();
+    if (getenv("RLVK_FIRE_DUMP")) ExportImage(im, getenv("RLVK_FIRE_DUMP"));
+    Color c = at(im, W/2, H/2 + 40);
+    UnloadImage(im); UnloadShader(sh); UnloadMesh(sphere);
+    return (c.r > 60) ? NULL : "fire volume produced no emission at the base";
+}
+
 static const char *sc_winding_rt(void)
 {
     Camera3D cam = cam3d();
@@ -464,6 +545,7 @@ static const Scenario SCENARIOS[] = {
     { "depth_rt",       sc_depth_rt },
     { "soft_depth",     sc_soft_depth },
     { "soft_ground",    sc_soft_ground },
+    { "fire_preview",   sc_fire_preview },
     { "winding_rt",     sc_winding_rt },
     { "instanced",      sc_instanced },
     { "ssbo_vs",        sc_ssbo_vs },
