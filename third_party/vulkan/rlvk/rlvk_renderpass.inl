@@ -248,17 +248,24 @@ void rlEnableFramebuffer(unsigned int id)
 
     for (u32 c = 0; c < colorCount; c++)
     {
-        // Color texture: SHADER_READ_ONLY (its resting state) -> COLOR_ATTACHMENT
+        // Color texture -> COLOR_ATTACHMENT. oldLayout MUST be the tracked layout, not a
+        // hardcoded SHADER_READ_ONLY: a freshly-created FBO texture is still UNDEFINED on its
+        // first bind, and a fixed oldLayout trips VUID-VkImageMemoryBarrier-oldLayout-01211
+        // (the depth barrier below already does this). Already-COLOR means nothing to transition.
+        if (colors[c]->currentLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+            continue;
+        VkImageLayout oldL = colors[c]->currentLayout;
+        bool wasRead = (oldL == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
                                               VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
                                               .imageMemoryBarrierCount = 1,
                                               .pImageMemoryBarriers = &(VkImageMemoryBarrier2){
                                                   VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                                                  .srcStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                                                  .srcAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                                                  .srcStageMask = wasRead ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                                                  .srcAccessMask = wasRead ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
                                                   .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                                                   .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                                                  .oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                                  .oldLayout = oldL,
                                                   .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                                   .image = colors[c]->image,
                                                   .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
@@ -370,12 +377,108 @@ void rlDisableFramebuffer(void)
         color->currentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
 
-    // The depth texture becomes sampleable too (depth-render / shadowmap shaders)
+    // Make the depth texture sampleable for depth-render / shadowmap / soft-particle shaders.
     if (f->hasDepth)
     {
         rlvkTextureSlot *depth = &RLVK.textureSlots[f->depthTexture];
-        if (depth->image)
+        if (depth->image && depth->sampleImage)
         {
+            // Caps.noSampledDepth (MoltenVK/Intel, §7.1): the attachment depth has no SAMPLED usage
+            // (transitioning it to SHADER_READ_ONLY is even illegal — VUID-...-oldLayout-01211), and
+            // Metal can't sample a depth-format texture via sampler2D anyway. Bounce the raw depth
+            // through sampleScratch into the R32F color twin (buffer copies cross the depth/color
+            // aspect that vkCmdCopyImage cannot); the attachment stays in its resting
+            // DEPTH_STENCIL_ATTACHMENT_OPTIMAL (the scope-open guard then skips re-transitioning it).
+            vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
+                                                  VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                                  .imageMemoryBarrierCount = 2,
+                                                  .pImageMemoryBarriers = (VkImageMemoryBarrier2[]){
+                                                      {
+                                                          VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                                                          .srcStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                                                          .srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                                                          .dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+                                                          .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
+                                                          .oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                                          .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                                          .image = depth->image,
+                                                          .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
+                                                      },
+                                                      {
+                                                          VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                                                          .srcStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                                          .srcAccessMask = 0,
+                                                          .dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+                                                          .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                                          .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED, // prior twin contents are stale; discard
+                                                          .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                                          .image = depth->sampleImage,
+                                                          .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+                                                      },
+                                                  },
+                                              });
+            // depth image (DEPTH aspect) -> scratch buffer -> twin (COLOR aspect), same 4 bytes/texel
+            vkCmdCopyImageToBuffer(cmdBuffer, depth->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                   depth->sampleScratch, 1,
+                                   &(VkBufferImageCopy){
+                                       .imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1},
+                                       .imageExtent = {(u32)depth->width, (u32)depth->height, 1},
+                                   });
+            vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
+                                                  VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                                  .bufferMemoryBarrierCount = 1,
+                                                  .pBufferMemoryBarriers = &(VkBufferMemoryBarrier2){
+                                                      VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+                                                      .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+                                                      .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                                      .dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+                                                      .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
+                                                      .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                                      .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                                      .buffer = depth->sampleScratch,
+                                                      .size = VK_WHOLE_SIZE,
+                                                  },
+                                              });
+            vkCmdCopyBufferToImage(cmdBuffer, depth->sampleScratch, depth->sampleImage,
+                                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                                   &(VkBufferImageCopy){
+                                       .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                                       .imageExtent = {(u32)depth->width, (u32)depth->height, 1},
+                                   });
+            vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
+                                                  VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                                  .imageMemoryBarrierCount = 2,
+                                                  .pImageMemoryBarriers = (VkImageMemoryBarrier2[]){
+                                                      {
+                                                          VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                                                          .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+                                                          .srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
+                                                          .dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                                                          .dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                                                          .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                                          .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                                          .image = depth->image,
+                                                          .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
+                                                      },
+                                                      {
+                                                          VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                                                          .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+                                                          .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                                          .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                                          .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                                                          .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                                          .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                                          .image = depth->sampleImage,
+                                                          .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+                                                      },
+                                                  },
+                                              });
+            depth->currentLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            depth->sampleLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        }
+        else if (depth->image)
+        {
+            // Healthy driver: the attachment depth carries SAMPLED — transition it directly.
             vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
                                                   VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
                                                   .imageMemoryBarrierCount = 1,

@@ -41,7 +41,8 @@ significant, statics span them. Never include a fragment directly, never reorder
    compute, shaderc). For init/compute/upload changes.
 3. `./scripts/run_rlvk_visual_test.sh [scenario|--list]` — windowed scenario suite, one
    PASS/FAIL line each (clear, batch_alpha, additive3d, shader_uniform, depth, depth_rt,
-   winding_rt, instanced, readback, stress). For anything touching draw/present/blend/depth.
+   soft_depth, winding_rt, instanced, ssbo_vs, readback, stress). For anything touching
+   draw/present/blend/depth.
    `VALIDATE=1` prepends Khronos validation. First run builds a raylib cache (~2 min),
    then ~20 s. **Every draw-path bug fix gets a scenario here reproducing it first.**
 4. Full game build (`cmake --build build`) — HUMAN-run only, final confirmation.
@@ -55,7 +56,9 @@ post-rebase `rlvk_rebased_vs.spv`, for spirv-dis).
 
 ## Known driver quirks (do not re-litigate; each has a Cap or a fixed workaround)
 - `Caps.noSampledDepth` (MoltenVK/Intel): SAMPLED usage on a depth image silently kills
-  depth test/write on that attachment. FBO depth drops SAMPLED under the quirk.
+  depth test/write on that attachment. FBO depth drops SAMPLED under the quirk; sampling of
+  `renderTex.depth` is served by an R32F color shadow-copy twin filled at scope close
+  (§7.10) — Metal also can't sample a depth-format texture via `sampler2D`, hence R32F color.
 - MoltenVK zeroes a UBO if the descriptor layout merely declares storage-image bindings
   (compute layout has none for this reason).
 - shaderc `auto_bind_uniforms` rebases even explicit UBO bindings → compute uses loose

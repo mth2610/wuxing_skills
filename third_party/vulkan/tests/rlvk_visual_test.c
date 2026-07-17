@@ -177,6 +177,112 @@ static const char *sc_depth_rt(void)
     return NULL;
 }
 
+// Sample a render texture's DEPTH attachment in a shader and linearize it, exactly like the
+// game's depth_copy.fs / soft-particle path. Under Caps.noSampledDepth the attachment depth has
+// no SAMPLED usage; rlvk must route the sample through the sampleable shadow-copy twin (§7.1),
+// else the sample falls back to the white default (depth==1.0 => "infinitely far" everywhere),
+// which is exactly the hard-edged, no-fade soft-particle symptom.
+static const char *sc_soft_depth(void)
+{
+    const char *FS =
+        "#version 330\n"
+        "in vec2 fragTexCoord; out vec4 finalColor;\n"
+        "uniform sampler2D texture0; uniform vec4 colDiffuse;\n"
+        "uniform float uNear; uniform float uFar;\n"
+        "void main(){\n"
+        "  float ndc = texture(texture0, fragTexCoord).r * 2.0 - 1.0;\n"
+        "  float lin = (2.0*uNear*uFar) / (uFar + uNear - ndc*(uFar - uNear));\n"
+        "  float v = clamp(lin/20.0, 0.0, 1.0);\n"  // near cube (~4) -> 0.2; cleared far (=uFar) -> 1.0
+        "  finalColor = vec4(v, v, v, 1.0); }\n";
+    Shader sh = LoadShaderFromMemory(NULL, FS);
+    float nearV = 0.01f, farV = 1000.0f;  // raylib BeginMode3D defaults
+    SetShaderValue(sh, GetShaderLocation(sh, "uNear"), &nearV, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(sh, GetShaderLocation(sh, "uFar"),  &farV,  SHADER_UNIFORM_FLOAT);
+    RenderTexture2D rt = LoadRenderTexture(W, H);
+    Camera3D cam = cam3d();
+    for (int f = 0; f < 3; f++)
+    {
+        BeginDrawing(); ClearBackground(BLACK);
+        BeginTextureMode(rt);
+            ClearBackground(BLACK);                     // clears RT depth to 1.0 (far)
+            BeginMode3D(cam);
+                DrawCube((Vector3){0,0,2}, 1.6f, 1.6f, 1.6f, WHITE); // near, fills center, writes depth
+            EndMode3D();
+        EndTextureMode();
+        BeginShaderMode(sh);
+            DrawTexturePro(rt.depth, (Rectangle){0,0,W,H}, (Rectangle){0,0,W,H}, (Vector2){0,0}, 0, WHITE);
+        EndShaderMode();
+        EndDrawing();
+    }
+    Image im = snap(); Color c = at(im, W/2, H/2), e = at(im, 8, 8); UnloadImage(im);
+    UnloadRenderTexture(rt); UnloadShader(sh);
+    // center covers the near cube -> real depth ~ dist 4 -> dark; corner is cleared far -> white
+    if (c.r > 150) return "RT depth sample reads far everywhere: soft-particle depth not sampleable (no shadow-copy twin)";
+    if (e.r < 200) return "cleared-far background not white: depth sample wrong";
+    return NULL;
+}
+
+// One soft-particle billboard straddling a ground plane: the half over open sky stays bright,
+// the half sunk into the ground fades out (the game's soft-particle behaviour). Also a depth
+// ORIENTATION test — a Y-flipped depth twin would fade the WRONG half. Set RLVK_SOFT_DUMP=path
+// to export the frame as a PNG for eyeballing.
+static const char *sc_soft_ground(void)
+{
+    const char *FS =
+        "#version 330\n"
+        "in vec2 fragTexCoord; out vec4 finalColor;\n"
+        "uniform sampler2D texture0;\n"             // = rt.depth (raw NDC scene depth of the ground)
+        "uniform vec2 uRes; uniform float uNear; uniform float uFar; uniform float uFade;\n"
+        "float lin(float d){ float n=d*2.0-1.0; return (2.0*uNear*uFar)/(uFar+uNear-n*(uFar-uNear)); }\n"
+        "void main(){\n"
+        "  float sceneL = lin(texture(texture0, gl_FragCoord.xy/uRes).r);\n"
+        "  float fragL  = lin(gl_FragCoord.z);\n"
+        "  float soft = clamp((sceneL - fragL)/uFade, 0.0, 1.0);\n"  // 0 where ground is in front/close
+        "  float g = 1.0 - clamp(length(fragTexCoord-vec2(0.5))*2.0, 0.0, 1.0);\n"
+        "  finalColor = vec4(vec3(0.35,0.75,1.0)*g*soft, 1.0); }\n";
+    Shader sh = LoadShaderFromMemory(NULL, FS);
+    float res[2] = {(float)W,(float)H}, nearV = 0.01f, farV = 1000.0f, fade = 0.6f;
+    SetShaderValue(sh, GetShaderLocation(sh,"uRes"),  res,   SHADER_UNIFORM_VEC2);
+    SetShaderValue(sh, GetShaderLocation(sh,"uNear"), &nearV,SHADER_UNIFORM_FLOAT);
+    SetShaderValue(sh, GetShaderLocation(sh,"uFar"),  &farV, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(sh, GetShaderLocation(sh,"uFade"), &fade, SHADER_UNIFORM_FLOAT);
+    Mesh quad = GenMeshPlane(2.6f, 2.6f, 1, 1);           // XZ plane; stood upright below
+    Material mat = LoadMaterialDefault(); mat.shader = sh;
+    RenderTexture2D rt = LoadRenderTexture(W, H);
+    mat.maps[MATERIAL_MAP_DIFFUSE].texture = rt.depth;    // texture0 = scene depth
+    Camera3D cam = { 0 };
+    cam.position = (Vector3){0,3,5}; cam.target = (Vector3){0,0,0};
+    cam.up = (Vector3){0,1,0}; cam.fovy = 45.0f; cam.projection = CAMERA_PERSPECTIVE;
+    Matrix stand = MatrixRotateX(PI*0.5f);                // XZ plane -> upright XY, facing the camera
+    for (int f = 0; f < 3; f++)
+    {
+        BeginDrawing(); ClearBackground((Color){10,12,24,255});
+        BeginTextureMode(rt);
+            ClearBackground((Color){10,12,24,255});
+            BeginMode3D(cam);
+                DrawCube((Vector3){0,0,0}, 30.0f, 0.1f, 30.0f, (Color){30,34,44,255}); // ground slab at y=0
+            EndMode3D();
+        EndTextureMode();
+        DrawTextureRec(rt.texture, (Rectangle){0,0,W,-H}, (Vector2){0,0}, WHITE);       // show the ground
+        BeginMode3D(cam);
+            BeginBlendMode(BLEND_ADDITIVE);
+            rlDisableDepthTest();
+            DrawMesh(quad, mat, stand);                    // soft-faded glow through the ground
+            rlEnableDepthTest();
+            EndBlendMode();
+        EndMode3D();
+        EndDrawing();
+    }
+    Image im = snap();
+    if (getenv("RLVK_SOFT_DUMP")) ExportImage(im, getenv("RLVK_SOFT_DUMP"));
+    // Above the ground line = open sky behind -> bright glow; below = ground in front -> faded.
+    Color hi = at(im, W/2, H/2 - 55), lo = at(im, W/2, H/2 + 70);
+    UnloadImage(im); UnloadRenderTexture(rt); UnloadShader(sh); UnloadMesh(quad);
+    if (hi.b < 90)  return "glow above ground missing: soft fade or depth sample wrong";
+    if (lo.b > hi.b) return "glow brighter BELOW ground than above: depth twin Y-flipped";
+    return NULL;
+}
+
 static const char *sc_winding_rt(void)
 {
     Camera3D cam = cam3d();
@@ -356,6 +462,8 @@ static const Scenario SCENARIOS[] = {
     { "shader_uniform", sc_shader_uniform },
     { "depth",          sc_depth },
     { "depth_rt",       sc_depth_rt },
+    { "soft_depth",     sc_soft_depth },
+    { "soft_ground",    sc_soft_ground },
     { "winding_rt",     sc_winding_rt },
     { "instanced",      sc_instanced },
     { "ssbo_vs",        sc_ssbo_vs },

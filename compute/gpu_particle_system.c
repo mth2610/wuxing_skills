@@ -321,18 +321,6 @@ void GpuParticleSystem_Update(float dt) {
             rlDisableTexture();
         }
         rlActiveTextureSlot(0);
-
-        // Đèn dò tạm (env GP_DUMP=1): đọc ngược hạt 0 mỗi 30 frame để phân định
-        // "data chết trên GPU" vs "render không hiện" khi debug hạt tàng hình.
-        if (getenv("GP_DUMP")) {
-            static int s_dumpTick = 0;
-            if ((++s_dumpTick % 30) == 0 && s_spawn_cursor > 0) {
-                GpuParticleData d;
-                rlReadShaderBuffer(s_ssbo, &d, sizeof(d), 0);
-                TraceLog(LOG_WARNING, "GPDUMP p0 pos=(%.2f %.2f %.2f) r=%.3f vel=(%.2f %.2f %.2f) life=%.2f/%.2f active=%.0f ffi=%.0f",
-                         d.px, d.py, d.pz, d.radius, d.vx, d.vy, d.vz, d.life_rem, d.life_max, d.active, d.ff_index);
-            }
-        }
     } else {
         for (int i = 0; i < MAX_GPU_PARTICLES; i++) {
             GpuParticleData *p = &s_cpu_pool[i];
@@ -379,24 +367,6 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture) {
     double rightMVP = topMVP * aspectMVP;
     Matrix matProjMVP = MatrixFrustum(-rightMVP, rightMVP, -topMVP, topMVP, 1.0, 1000.0);
     Matrix matMVP = MatrixMultiply(matView, matProjMVP);
-
-    // Đèn dò tạm (GP_DUMP=1): chiếu hạt 0 qua đúng matMVP draw đang dùng -> NDC.
-    // Phân định "raster ngoài màn hình (ma trận/camera)" vs "raster đúng mà pixel không hiện".
-    if (s_use_compute && getenv("GP_DUMP")) {
-        static int s_ndcTick = 0;
-        if ((++s_ndcTick % 30) == 0 && s_spawn_cursor > 0) {
-            GpuParticleData d;
-            rlReadShaderBuffer(s_ssbo, &d, sizeof(d), 0);
-            float x=d.px, y=d.py, z=d.pz;
-            float cw = matMVP.m3*x + matMVP.m7*y + matMVP.m11*z + matMVP.m15;
-            float cx = matMVP.m0*x + matMVP.m4*y + matMVP.m8*z  + matMVP.m12;
-            float cy = matMVP.m1*x + matMVP.m5*y + matMVP.m9*z  + matMVP.m13;
-            float cz = matMVP.m2*x + matMVP.m6*y + matMVP.m10*z + matMVP.m14;
-            TraceLog(LOG_WARNING, "GPNDC p0 ndc=(%.2f %.2f %.2f) w=%.2f right=(%.2f %.2f %.2f) up=(%.2f %.2f %.2f) tex=%u",
-                     cw!=0?cx/cw:999, cw!=0?cy/cw:999, cw!=0?cz/cw:999, cw,
-                     right.x, right.y, right.z, up.x, up.y, up.z, texture.id);
-        }
-    }
 
     if (s_use_compute) {
         BeginShaderMode(s_draw_shader_gpu);

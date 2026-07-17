@@ -43,6 +43,19 @@ typedef struct rlvkTextureSlot {
     int                 mipCount;
     int                 rlFormat;
     VkImageLayout       currentLayout;         // Tracked image layout (barriers use it as oldLayout)
+    // Sampleable depth twin (Caps.noSampledDepth only): the attachment `image` has no SAMPLED
+    // usage on the quirk driver, so its depth is copied into this twin at FBO scope close and
+    // rlvkPushTexture samples the twin instead (§7.1 shadow-copy). NULL on healthy drivers.
+    // The twin is an R32_SFLOAT COLOR image, not a depth image: MoltenVK/Metal cannot sample a
+    // depth-format texture through a plain GLSL sampler2D (returns garbage), so the raw NDC depth
+    // is round-tripped depth-image -> sampleScratch buffer -> R32F color twin (buffer copies cross
+    // the depth/color aspect that vkCmdCopyImage cannot). depth_copy.fs reads it as raw NDC depth.
+    VkImage             sampleImage;
+    VkImageView         sampleView;
+    VkDeviceMemory      sampleMemory;
+    VkImageLayout       sampleLayout;
+    VkBuffer            sampleScratch;         // w*h*4 staging for the depth->color aspect bounce
+    VkDeviceMemory      sampleScratchMemory;
     VkFilter            minFilter, magFilter;  // Sampler filters (rlTextureParameters)
     VkSamplerMipmapMode mipMode;               // Sampler mipmap mode
     VkSamplerAddressMode wrapS, wrapT;         // Sampler wrap modes (GL default: repeat)

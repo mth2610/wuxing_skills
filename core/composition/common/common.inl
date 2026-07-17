@@ -21,4 +21,3 @@
 #include "vc_chain_link.inl"
 #include "vc_ground_aura.inl"
 #include "vc_smoke_energy.inl"
-#include "vc_smoke.inl"

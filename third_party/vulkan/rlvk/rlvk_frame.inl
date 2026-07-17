@@ -636,16 +636,26 @@ static void rlvkFlushSet0(VkCommandBuffer cmdBuffer)
 static void rlvkPushTexture(VkCommandBuffer cmdBuffer, u32 binding, u32 textureSlot)
 {
     rlvkTextureSlot *t = &RLVK.textureSlots[textureSlot];
+    // A non-sampleable depth attachment (Caps.noSampledDepth, §7.1) exposes a sampleable twin
+    // filled at FBO scope close; sample the twin's view/layout so soft-particle / depth_copy
+    // shaders read real depth instead of the substituted default.
+    VkImageView view = t->sampleImage ? t->sampleView : t->view;
+    VkImageLayout layout = t->sampleImage ? t->sampleLayout : t->currentLayout;
+    VkSampler sampler = t->sampler;
     // An attachment of the open scope can't be sampled (GL feedback loop, undefined there
     // too): substitute the default texture - same "undefined" class, but layout-legal
-    if (t->currentLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL || !t->view)
-        t = &RLVK.textureSlots[RLVK.defaultTextureSlot];
+    if (layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL || !view)
+    {
+        rlvkTextureSlot *d = &RLVK.textureSlots[RLVK.defaultTextureSlot];
+        view = d->view;
+        sampler = d->sampler;
+    }
     // Skip the push when this binding already holds exactly this view+sampler (consecutive
     // batch draws almost always share one texture: font atlas, white texture, one material)
-    if ((RLVK.pushedView[binding] == t->view) && (RLVK.pushedSampler[binding] == t->sampler))
+    if ((RLVK.pushedView[binding] == view) && (RLVK.pushedSampler[binding] == sampler))
         return;
-    RLVK.pushedView[binding] = t->view;
-    RLVK.pushedSampler[binding] = t->sampler;
+    RLVK.pushedView[binding] = view;
+    RLVK.pushedSampler[binding] = sampler;
     vk.CmdPushDescriptorSetKHR(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, RLVK.pipelineLayout, 0, 1,
                                &(VkWriteDescriptorSet){
                                    VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -653,8 +663,8 @@ static void rlvkPushTexture(VkCommandBuffer cmdBuffer, u32 binding, u32 textureS
                                    .descriptorCount = 1,
                                    .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                                    .pImageInfo = &(VkDescriptorImageInfo){
-                                       .sampler = t->sampler,
-                                       .imageView = t->view,
+                                       .sampler = sampler,
+                                       .imageView = view,
                                        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                                    },
                                });

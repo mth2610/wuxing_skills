@@ -849,6 +849,55 @@ unsigned int rlLoadTextureDepth(int width, int height, bool useRenderBuffer)
                                },
                                RLVK_ALLOC, &t->sampler));
     t->currentLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    // Caps.noSampledDepth: the attachment depth above has no SAMPLED usage, so soft-particle /
+    // depth_copy shaders can't read it. Expose a sampleable R32_SFLOAT COLOR twin (Metal can't
+    // sample a depth-format texture via sampler2D); rlDisableFramebuffer bounces the raw depth
+    // depth-image -> sampleScratch -> twin at scope close and rlvkPushTexture routes here (§7.1).
+    if (RLVK.Caps.noSampledDepth)
+    {
+        RLVK_CHECK(vkCreateImage(RLVK.device,
+                                 &(VkImageCreateInfo){
+                                     VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                                     .imageType = VK_IMAGE_TYPE_2D,
+                                     .format = VK_FORMAT_R32_SFLOAT,
+                                     .extent = {(u32)width, (u32)height, 1},
+                                     .mipLevels = 1,
+                                     .arrayLayers = 1,
+                                     .samples = VK_SAMPLE_COUNT_1_BIT,
+                                     .tiling = VK_IMAGE_TILING_OPTIMAL,
+                                     .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                     .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                                 },
+                                 RLVK_ALLOC, &t->sampleImage));
+        VkMemoryRequirements smReq;
+        vkGetImageMemoryRequirements(RLVK.device, t->sampleImage, &smReq);
+        t->sampleMemory = rlvkAllocMemory(smReq, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        RLVK_CHECK(vkBindImageMemory(RLVK.device, t->sampleImage, t->sampleMemory, 0));
+        RLVK_CHECK(vkCreateImageView(RLVK.device,
+                                     &(VkImageViewCreateInfo){
+                                         VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                                         .image = t->sampleImage,
+                                         .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                                         .format = VK_FORMAT_R32_SFLOAT,
+                                         .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+                                     },
+                                     RLVK_ALLOC, &t->sampleView));
+        t->sampleLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        // D32_SFLOAT and R32_SFLOAT are both 4 bytes/texel: the depth bounces through this buffer
+        RLVK_CHECK(vkCreateBuffer(RLVK.device,
+                                  &(VkBufferCreateInfo){
+                                      VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                                      .size = (VkDeviceSize)width * height * 4,
+                                      .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                      .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+                                  },
+                                  RLVK_ALLOC, &t->sampleScratch));
+        VkMemoryRequirements sbReq;
+        vkGetBufferMemoryRequirements(RLVK.device, t->sampleScratch, &sbReq);
+        t->sampleScratchMemory = rlvkAllocMemory(sbReq, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        RLVK_CHECK(vkBindBufferMemory(RLVK.device, t->sampleScratch, t->sampleScratchMemory, 0));
+    }
     return slot;
 }
 
@@ -1214,10 +1263,19 @@ void rlUnloadTexture(unsigned int id)
 
     // A recorded (or executing) command buffer may still reference the texture: defer
     rlvkDeferDestroy(VK_NULL_HANDLE, t->image, t->view, t->sampler, t->memory, VK_NULL_HANDLE);
+    if (t->sampleImage) // depth shadow-copy twin (Caps.noSampledDepth); shares no sampler
+        rlvkDeferDestroy(VK_NULL_HANDLE, t->sampleImage, t->sampleView, VK_NULL_HANDLE, t->sampleMemory, VK_NULL_HANDLE);
+    if (t->sampleScratch) // the depth->color bounce buffer
+        rlvkDeferDestroy(t->sampleScratch, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, t->sampleScratchMemory, VK_NULL_HANDLE);
     t->image = VK_NULL_HANDLE;
     t->view = VK_NULL_HANDLE;
     t->sampler = VK_NULL_HANDLE;
     t->memory = VK_NULL_HANDLE;
+    t->sampleImage = VK_NULL_HANDLE;
+    t->sampleView = VK_NULL_HANDLE;
+    t->sampleMemory = VK_NULL_HANDLE;
+    t->sampleScratch = VK_NULL_HANDLE;
+    t->sampleScratchMemory = VK_NULL_HANDLE;
     t->inUse = false;
 }
 

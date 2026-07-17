@@ -55,7 +55,7 @@ Platform hooks (NOT part of rlgl's API): platform creates `VkSurfaceKHR` →
 - **Windowed platform layer: LANDED.** The full game builds and runs under Vulkan on macOS
   (`WUXING_USE_VULKAN=ON`; MoltenVK is the dev proxy for "weak 1.1 driver" — macOS itself
   ships GL in production).
-- **Visual test suite: 10/10** (`scripts/run_rlvk_visual_test.sh`, see §5).
+- **Visual test suite: 12/12** (`scripts/run_rlvk_visual_test.sh`, see §5).
 - **First real-content bug wave: root-caused and fixed** — every case is documented in §7.
   Fixed: opaque-square particles (stale pipeline on failed build), device-lost after heavy
   VFX (unchecked acquire), no depth occlusion inside render textures = character
@@ -98,7 +98,7 @@ Platform hooks (NOT part of rlgl's API): platform creates `VkSurfaceKHR` →
 | `third_party/vulkan/rlvk_shaders.h` | Generated embedded SPIR-V default shader. Regen: `scripts/gen_rlvk_shaders.sh` (glslc, `--target-env=vulkan1.1`). |
 | `third_party/vulkan/shaders/rlvk_default.vert/.frag` | Default-shader source. Contract: attrib locations 0/1/3, push_constant == `rlvkPushConstants{mat4 mvp; vec4 colDiffuse}`, set0 binding0 = texture0, clip-z epilogue baked in. |
 | `third_party/vulkan/tests/rlvk_runtime_test.c` | Headless suite (20 checks). |
-| `third_party/vulkan/tests/rlvk_visual_test.c` | Windowed scenario suite (10 scenarios, self-checking pixels). **Every draw-path bug fix adds a scenario here first.** |
+| `third_party/vulkan/tests/rlvk_visual_test.c` | Windowed scenario suite (12 scenarios, self-checking pixels). **Every draw-path bug fix adds a scenario here first.** |
 | `scripts/check_rlvk_compile.sh` | Tier-1 compile check (no SDK needed). |
 | `scripts/run_rlvk_runtime_test.sh` | Tier-2 headless + validation. |
 | `scripts/run_rlvk_visual_test.sh` | Tier-3 windowed; `VALIDATE=1` adds layers; caches a Vulkan-patched raylib in `/tmp/rlvk_visual_cache` (first run ~2 min, then ~20 s). |
@@ -116,8 +116,9 @@ cmake --build build && ./build/wuxing            # 4. HUMAN-run, final confirmat
 
 **Never start at tier 4.** Debugging via the full game burned entire sessions before the
 suite existed; every bug in §7 reproduces in a ≤40-line scenario that runs in seconds.
-Scenario list: `clear batch_alpha additive3d shader_uniform depth depth_rt winding_rt
-instanced readback stress` (`--list`). Each guards the bug class named in its comment.
+Scenario list: `clear batch_alpha additive3d shader_uniform depth depth_rt soft_depth
+winding_rt instanced ssbo_vs readback stress` (`--list`). Each guards the bug class named
+in its comment.
 
 ## 6. DEBUGGING METHODOLOGY — read this before your first bug hunt
 
@@ -186,10 +187,9 @@ bugs will rhyme with these. **Check this list before starting a new hunt.**
 - **Root cause**: **MoltenVK/Intel quirk — creating a depth image with
   `VK_IMAGE_USAGE_SAMPLED_BIT` silently disables depth test/write on that attachment.**
 - **Fix**: `Caps.noSampledDepth` (portability + vendorID 0x8086, `rlvk_frame.inl`), FBO
-  depth images drop SAMPLED under the quirk (`rlLoadTextureDepth`). Trade-off recorded:
-  depth-sampling consumers (soft particles, screen-distortion depth probe) lose their
-  input on this driver; if that matters, implement a shadow-copy (attachment-only depth +
-  `vkCmdCopyImage` to a sampleable twin at scope close).
+  depth images drop SAMPLED under the quirk (`rlLoadTextureDepth`). The depth-sampling
+  trade-off it created (soft particles, screen-distortion depth probe) is now **resolved by
+  the shadow-copy twin — see §7.10**.
 - **Guard**: `depth_rt` scenario.
 
 ### 7.2 Particles/VFX as opaque squares (black borders that should be transparent)
@@ -284,6 +284,38 @@ bugs will rhyme with these. **Check this list before starting a new hunt.**
   (macOS GL = CPU path), so those numbers were never visibility-tuned. **Once
   instrumentation proves the pipeline executes end-to-end, check data magnitudes
   (meter scale!) before resuming the code hunt.**
+- **The final four layers** (found by escalating in-game data probes — read back particle 0
+  every 30 frames, then project it through the draw's own MVP):
+  4. **`rlUnloadShader(cs)` after `rlLoadShaderProgramCompute(cs)` destroyed the program**:
+     GL stage-delete-after-link is harmless, but rlvk's compute STAGE slot IS the program
+     slot — the unload freed it, the next shader load RECYCLED it, `rlEnableShader(prog)`
+     activated the wrong shader, and every dispatch silently no-opped (probe signature:
+     life/pos FROZEN with active=1). Fixed in rlvk: `rlUnloadShader` ignores linked compute
+     programs; `rlUnloadShaderProgram` does the real destroy; the dispatch early-return now
+     WARNS once naming the reason.
+  5. **State.modelview was IDENTITY at the particle draw's callsite** (probe signature:
+     clip.w == −z_world exactly). Something mid-pass resets it under Vulkan only (open task:
+     root-cause; CPU particles at the same site still affected). Worked around by deriving
+     MVP from the function's own camera param — and the projection had to replicate
+     **MyBeginMode3D's exact `rlFrustum(near=1.0, far=1000.0)`**, not
+     `rlGetCullDistanceNear/Far`: perspective X/Y is near-independent but DEPTH is not, so
+     the mismatch made particles lose the depth test wherever ground pixels covered them
+     ("visible only off the edge of the ground").
+  6. **`rlDisableTexture()` had wrong semantics** (reset the batch's current texture instead
+     of clearing the ACTIVE UNIT's binding like `glBindTexture(unit, 0)`): a vector-field
+     texture bound at unit 0 for a compute dispatch poisoned every later draw's texture0 —
+     square, lemon-yellow particles after pressing VF test once. Fixed for 2D + cubemap.
+  7. **Test content again**: both vfx_test force fields were built ONCE with origins frozen
+     at the first press's player position, and `FORCE_VECTOR_TEXTURE` is a HARD BOX whose
+     half-extent was 0.3 m against a ±0.8 m spawn line — "physics depends on where you
+     stand" and "particles frozen in place" were the field's geometry, not the backend.
+     Fields now rebuild per press with a box covering the spawn line.
+- **Final lesson**: one symptom ("invisible particles"), SEVEN stacked causes spanning
+  shader authoring, API-semantics parity (twice), ambient matrix state, frustum constants,
+  and test content. None was guessable from the symptom; every one fell to a probe that
+  measured the *next* link in the chain (SSBO mask → bind → buffer content → life/pos over
+  time → NDC through the real MVP). When a fix doesn't change the symptom, the fix was
+  still usually right — re-probe, don't revert.
 
 ### 7.8 False alarms to not re-chase
 - **Winding/frontFace is CORRECT** (`frontFace = CLOCKWISE` + GL-CCW geometry under the
@@ -294,12 +326,65 @@ bugs will rhyme with these. **Check this list before starting a new hunt.**
   bug (wrong blend mode), not a backend alpha bug. All backend blend paths are verified by
   `batch_alpha`/`additive3d`/`shader_uniform`.
 
+### 7.9 `VUID-...-oldLayout-01211` ×30 in the validated suite (two independent causes)
+- **Symptom**: 30 `01211` errors under `VALIDATE=1` (never a wrong pixel — all scenarios
+  passed; pure validation noise, the §8.5 leftover).
+- **Cause A (minor)**: the FBO **color** scope-open barrier (`rlvk_renderpass.inl`
+  `rlEnableFramebuffer`) hardcoded `oldLayout = SHADER_READ_ONLY`, but a freshly-created FBO
+  color texture is still `UNDEFINED` on its first bind → oldLayout mismatch. Fix: use the
+  **tracked** `currentLayout` as oldLayout (skip if already `COLOR_ATTACHMENT`), exactly like
+  the depth barrier beside it. `UNDEFINED` is a legal oldLayout; `SHADER_READ` is not when the
+  image was never in it.
+- **Cause B (the ×30 bulk)**: `rlDisableFramebuffer` transitioned the FBO **depth** image to
+  `SHADER_READ_ONLY_OPTIMAL` (so depth shaders could sample it) **unconditionally** — but under
+  `Caps.noSampledDepth` (§7.1) that image is created WITHOUT `SAMPLED` usage, and a transition
+  to/from `SHADER_READ_ONLY` is illegal for a non-sampleable image (the VUID text is the
+  usage-compat clause, not a raw layout-tracking mismatch — a giveaway that the image lacks
+  `SAMPLED`, not that `currentLayout` was wrong). Fix: gate that transition on
+  `!Caps.noSampledDepth`; leave the depth in `DEPTH_STENCIL_ATTACHMENT_OPTIMAL` (it can never
+  be sampled on the quirk driver anyway), which also makes the scope-open depth guard skip it.
+- **Lesson**: `01211`'s message body distinguishes the two — "oldLayout X not compatible with
+  the image's *current layout*" = tracking bug (Cause A); "...not compatible with the image's
+  *usage flags*" = you're moving to a layout the image's usage forbids (Cause B). Read which.
+- **Guard**: `depth_rt` + `winding_rt` already exercised both paths (they PASSED on pixels
+  before, emitted the VUIDs); the fix is confirmed by the suite's `01211` count dropping 30→0.
+
+### 7.10 Soft particles hard-cut against geometry under `Caps.noSampledDepth` (shadow-copy twin)
+- **Symptom**: additive glows sliced by a hard edge where they meet scene geometry (the dark
+  sphere / arena), instead of fading — the classic "no soft particles" look. Real game only.
+- **Root cause**: §7.1 drops `SAMPLED` from FBO depth on the quirk driver, so the game's
+  `core/shaders/depth_copy.fs` (samples `renderTex.depth` → linearized R32F → soft-particle
+  fade in `core/shaders/common/soft_particle.glsl`) sampled the **white default** substitute →
+  depth reads as "infinitely far" → fade factor ≈ 1 → no fade → hard cut. (After the §7.9 fix
+  the depth rests in `DEPTH_ATTACHMENT`, so `rlvkPushTexture`'s "not `SHADER_READ` ⇒ default"
+  substitution kicks in cleanly — same visible result, no validation error.)
+- **Fix**: the §7.1 shadow-copy twin, done entirely in rlvk (game code untouched). Under the
+  quirk `rlLoadTextureDepth` also creates a sampleable **R32_SFLOAT color** twin + a scratch
+  buffer; `rlDisableFramebuffer` bounces the raw depth `depth-image → sampleScratch → twin` at
+  scope close; `rlvkPushTexture` routes any sample of that texture slot to the twin's
+  view/layout. The whole `rl*` surface is unchanged — `renderTex.depth` just becomes sampleable.
+- **Two traps paid for in bisection**:
+  - **The twin must be COLOR, not depth.** A D32 twin + `vkCmdCopyImage` (depth→depth) is
+    valid and validation-clean, but **Metal cannot sample a depth-format texture through a
+    plain GLSL `sampler2D`** — an env-gated `vkCmdClearDepthStencilImage(twin, 0.5)` control
+    still sampled as ~1.0, proving the sampler, not the copy, was the broken link. R32F color
+    samples correctly everywhere; `depth_copy.fs` already treats the value as raw NDC depth.
+  - **Aspect crossing.** `vkCmdCopyImage` can't copy DEPTH→COLOR aspect, so the raw bytes
+    (D32 and R32 are both 4 B/texel) bounce through the scratch buffer:
+    `vkCmdCopyImageToBuffer` (DEPTH) then `vkCmdCopyBufferToImage` (COLOR), one buffer barrier
+    between them.
+- **Guard**: `soft_depth` scenario — renders a near cube into an RT, samples `rt.depth` in a
+  shader, linearizes, and asserts the center reads a near distance (not the far default).
+- **Confirmed in-game (2026-07-17)**: arena glows fade softly into the background; the hard
+  cut against scene geometry is gone.
+
 ## 8. What remains
 
-### 8.1 Confirm in-game (task open)
-User rebuilds the game → verify character self-occlusion + black-hole occlusion fixed by
-§7.1. If depth-sampling VFX (soft particles, screen distortion) visibly degrade on the
-quirk driver, implement the shadow-copy depth described in §7.1.
+### 8.1 Confirm in-game — **DONE (2026-07-17, user-confirmed)**
+Character self-occlusion + black-hole occlusion fixed by §7.1, verified in the running game.
+The depth-sampling degradation it noted (hard-cut soft particles) surfaced in-game and is
+fixed by the §7.10 shadow-copy twin (`soft_depth` scenario) — **user-confirmed in-game: the
+arena glows now fade softly into the background instead of clipping.**
 
 ### 8.2 Graphics-stage SSBO — **DONE (2026-07-16, `ssbo_vs` 11/11, zero validation errors)**
 Implemented: set0 bindings 18–21 = STORAGE_BUFFER (VS|FS); new SPIR-V pass
@@ -336,10 +421,14 @@ the whole GPU-particle path should light up under Vulkan as-is.
   desc sets 1024/256) — tune against real content.
 - Perf not re-benchmarked since the retarget; old 1.3-era claims in the file header are
   stale.
-- Open validation noise (pre-existing, non-blocking, seen in the full visual suite):
-  `VUID-VkImageMemoryBarrier-oldLayout-01211` ×30 (some barrier's oldLayout guess
-  mismatches the image's actual layout — audit `currentLayout` bookkeeping) and the known
-  §7.5 stride-0 `04457` ×3. `ssbo_vs` itself is clean.
+- **Shadow-copy twin bandwidth (§7.10)**: under `Caps.noSampledDepth` the depth→buffer→R32F
+  bounce runs at EVERY `rlDisableFramebuffer` of a depth-bearing FBO, every frame — even for
+  depth targets that are never sampled (main depth, most shadowmaps). Correctness-first;
+  future optimization = only allocate the twin + bounce for depth textures actually bound as
+  a sampler (needs a "was sampled" flag or lazy first-sample creation). Quirk drivers only.
+- Open validation noise: **`01211` ×30 FIXED (2026-07-17, §7.9) → suite now 0**. Only the
+  known §7.5 stride-0 `04457` ×3 remains (intentional portability workaround). Verified with
+  `VALIDATE=1 ./scripts/run_rlvk_visual_test.sh` (12/12, `grep -c 01211` == 0).
 
 ### 8.6 Long-term (standalone engine)
 Tiler-aware VFX (load/store ops are now real levers), then extract `core/` VFX +

@@ -244,7 +244,6 @@ void VFX_ComposeEnergySmoke(Vector3 pos, float scale, float progress, float time
 void VFX_ComposeGroundAura(VC_MaterialId matId, Vector3 pos, float radius, float scrollSpeed, float time);
 void VFX_ComposeGroundSmoke(Vector3 center, float halfSize, float progress, GroundHeightSampleFn heightFn, void *userData);
 void VFX_ComposeMagicFilaments(Vector3 pos, float scale, float progress, Color color, float thickness, float frequency, float speed, Vector2 sourceUV);
-void VFX_ComposeRaymarchSmokeBox(VC_MaterialId matId, Vector3 center, float size, float time);
 void VFX_ComposeSmokeColumnFX(Vector3 base, float halfWidth, float height, float progress, int planeCount);
 void VFX_ComposeSmokeOnPlane(Vector3 center, Vector3 normal, float halfSize, float progress, Color color);
 // @gen:vc_declarations end

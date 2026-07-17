@@ -634,14 +634,6 @@
       "category": "water",
       "type": "continuous",
       "draw_call": "{ static bool splashed = false; if ($PROG < 0.05f) splashed = false; if ($PROG >= 0.83f && !splashed) { VFX_ComposeSplashBurst(s_testPathPoints[15], 1.2f); splashed = true; } VFX_ComposeWaterStreamOnPath(s_testPathPoints, 16, 0.25f, $PROG * 1.2f, 0.25f, $TIME); }"
-    },
-    {
-      "fn": "VFX_ComposeRaymarchSmokeBox",
-      "label": "RAYMARCH SMOKE BOX",
-      "category": "util",
-      "_auto": true,
-      "type": "continuous",
-      "draw_call": "VFX_ComposeRaymarchSmokeBox(VC_MAT_FIRE, $POS, 1.5f, $TIME)"
     }
   ],
   "overrides": {
