@@ -139,12 +139,15 @@ void VFX_ComposeFloatingStones(Vector3 pos, float radius, float time);
 struct MeshAdjacency;
 
 void VFX_ComposeQuakeRumble(Vector3 pos, float radius, float time);
+void VFX_ComposeParticleUpgradesTest(Vector3 pos);
 
 // Mesh Adjacency Electricity Composition APIs
-int VFX_SpawnMeshElectricity(const struct MeshAdjacency *adj, Color color, float duration);
+struct ForceField;
+int VFX_SpawnMeshElectricity(const struct MeshAdjacency *adj, Color color, float duration, const struct ForceField *forceField);
 void VFX_UpdateMeshElectricity(int handle, Matrix transform);
 void VFX_KillMeshElectricity(int handle);
 void VFX_ComposeMeshElectricity(Vector3 position, Color color, float duration);
+void ComposeMeshElectricityEx(Vector3 position, Color color, float duration, const struct ForceField *forceField);
 // Fire skill set (Phase 2) — all continuous: FlameBreath is a directional
 // flamethrower cone along `dir`; BurningGround an ignited patch; FireWhirl a
 // fire tornado.

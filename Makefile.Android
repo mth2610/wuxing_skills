@@ -84,6 +84,7 @@ PROJECT_SOURCE_FILES   := main.c \
                           core/skill_helper.c \
                           core/shader_preprocessor.c \
                           core/metaball_fx.c \
+                          core/mesh_adjacency.c \
                           entities/entities.c \
                           sandbox/sandbox_core.c \
                           sandbox/ui_panel.c \

@@ -3,6 +3,7 @@
 #include "raymath.h"
 #include "rlgl.h"
 #include "core/utils_math.h"
+#include "core/ribbon_strip.h"
 #include <string.h>
 #include <math.h>
 
@@ -46,6 +47,27 @@ typedef struct
   float onLiveEmitRate;
   float onLiveEmitTimer;
   bool hasLiveEmit;
+
+  // Stretch rendering
+  float stretchStrength;
+  float stretchMinSpeed;
+
+  // Physical collision
+  bool collisionEnabled;
+  float collisionElasticity;
+  float collisionFloorY;
+  ParticleConfig onCollisionConfig;
+  int onCollisionCount;
+  bool hasCollisionEmit;
+
+  // Particle trails history (static buffer, no malloc!)
+  int trailLength;
+  float trailWidthRatio;
+  Color trailColorStart;
+  Color trailColorEnd;
+  Vector3 trailHistory[8];
+  unsigned char trailHistoryCount;
+  float trailHistoryTimer;
 } ParticleInternal;
 
 static ParticleInternal g_Particles[MAX_PARTICLES];
@@ -157,6 +179,35 @@ void SpawnParticle(ParticleConfig config)
   {
     p->hasLiveEmit = false;
   }
+
+  // Populate stretch, collision, and trail parameters
+  p->stretchStrength = config.render.stretchStrength;
+  p->stretchMinSpeed = config.render.stretchMinSpeed;
+
+  p->collisionEnabled = config.physics.collisionEnabled;
+  p->collisionElasticity = config.physics.collisionElasticity;
+  p->collisionFloorY = config.physics.collisionFloorY;
+  if (config.physics.onCollisionEmit && config.physics.onCollisionEmitCount > 0)
+  {
+    p->onCollisionConfig = *config.physics.onCollisionEmit;
+    p->onCollisionConfig.onDeathEmit = NULL;
+    p->onCollisionConfig.onLiveEmit = NULL;
+    p->onCollisionConfig.physics.onCollisionEmit = NULL;
+    p->onCollisionCount = config.physics.onCollisionEmitCount;
+    p->hasCollisionEmit = true;
+  }
+  else
+  {
+    p->hasCollisionEmit = false;
+  }
+
+  p->trailLength = config.render.trailLength;
+  if (p->trailLength > 8) p->trailLength = 8; // clamp to static buffer size
+  p->trailWidthRatio = config.render.trailWidthRatio;
+  p->trailColorStart = config.render.trailColorStart;
+  p->trailColorEnd = config.render.trailColorEnd;
+  p->trailHistoryCount = 0;
+  p->trailHistoryTimer = 0.0f;
 }
 
 void UpdateParticles(float dt)
@@ -275,6 +326,52 @@ void UpdateParticles(float dt)
     p->x += p->vx * step;
     p->y += p->vy * step;
     p->z += p->vz * step;
+
+    // Ground Collision
+    if (p->collisionEnabled && p->y <= p->collisionFloorY)
+    {
+      p->vy = -p->vy * p->collisionElasticity;
+      p->vx *= 0.75f;
+      p->vz *= 0.75f;
+      p->y = p->collisionFloorY + 0.005f;
+
+      if (p->hasCollisionEmit && p->onCollisionCount > 0)
+      {
+        for (int c = 0; c < p->onCollisionCount; c++)
+        {
+          ParticleConfig tempColl = p->onCollisionConfig;
+          tempColl.position = (Vector3){p->x, p->collisionFloorY + 0.01f, p->z};
+          float ang = (Random01() * 360.0f) * DEG2RAD;
+          float spd = (Random01() * 2.0f + 1.0f);
+          tempColl.velocity.x += cosf(ang) * spd;
+          tempColl.velocity.y += (Random01() * 2.5f + 1.0f);
+          tempColl.velocity.z += sinf(ang) * spd;
+          SpawnParticle(tempColl);
+        }
+      }
+    }
+
+    // Particle Trail History Update
+    if (p->trailLength > 0)
+    {
+      p->trailHistoryTimer += dt;
+      if (p->trailHistoryTimer >= 0.015f || p->trailHistoryCount == 0)
+      {
+        p->trailHistoryTimer = 0.0f;
+        int maxLen = p->trailLength;
+        if (maxLen > 8) maxLen = 8;
+        int limit = (p->trailHistoryCount < maxLen) ? p->trailHistoryCount : maxLen - 1;
+        for (int h = limit; h > 0; h--)
+        {
+          p->trailHistory[h] = p->trailHistory[h - 1];
+        }
+        p->trailHistory[0] = (Vector3){p->x, p->y, p->z};
+        if (p->trailHistoryCount < maxLen)
+        {
+          p->trailHistoryCount++;
+        }
+      }
+    }
   }
 }
 
@@ -400,8 +497,44 @@ void DrawParticles(Camera3D camera, Texture2D texture)
     float rx = right.x * drawRadius, ry = right.y * drawRadius, rz = right.z * drawRadius;
     float ux = up.x * drawRadius, uy = up.y * drawRadius, uz = up.z * drawRadius;
 
-    // Xoay hạt quanh trục hướng camera (Billboard-space 2D Rotation)
-    if (p->rotation != 0.0f)
+    // Velocity-stretch rendering (directional billboard)
+    if (p->stretchStrength > 0.0f)
+    {
+      Vector3 vel = {p->vx, p->vy, p->vz};
+      float speed = sqrtf(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
+      if (speed > p->stretchMinSpeed)
+      {
+        Vector3 velDir = {vel.x / speed, vel.y / speed, vel.z / speed};
+        Vector3 tangent = velDir;
+        Vector3 rVec = {
+          tangent.y * viewDir.z - tangent.z * viewDir.y,
+          tangent.z * viewDir.x - tangent.x * viewDir.z,
+          tangent.x * viewDir.y - tangent.y * viewDir.x
+        };
+        float rVecLen = sqrtf(rVec.x * rVec.x + rVec.y * rVec.y + rVec.z * rVec.z);
+        if (rVecLen > 0.0f)
+        {
+          rVec.x /= rVecLen;
+          rVec.y /= rVecLen;
+          rVec.z /= rVecLen;
+        }
+        else
+        {
+          rVec = right;
+        }
+
+        float stretchFactor = 1.0f + speed * p->stretchStrength;
+        rx = rVec.x * drawRadius;
+        ry = rVec.y * drawRadius;
+        rz = rVec.z * drawRadius;
+
+        ux = tangent.x * drawRadius * stretchFactor;
+        uy = tangent.y * drawRadius * stretchFactor;
+        uz = tangent.z * drawRadius * stretchFactor;
+      }
+    }
+    // Xoay hạt quanh trục hướng camera (Billboard-space 2D Rotation, only if not stretched)
+    else if (p->rotation != 0.0f)
     {
       float cosT = cosf(p->rotation);
       float sinT = sinf(p->rotation);
@@ -443,6 +576,51 @@ void DrawParticles(Camera3D camera, Texture2D texture)
   }
 
   rlEnd();
+
+  // Second pass: Draw Particle Ribbon Trails
+  for (int a = 0; a < s_activeCount; a++)
+  {
+    ParticleInternal *p = &g_Particles[s_activeIds[a]];
+    if (p->trailLength > 0 && p->trailHistoryCount >= 2)
+    {
+      RibbonPoint trailPoints[8];
+      int count = p->trailHistoryCount;
+      if (count > p->trailLength) count = p->trailLength;
+
+      // Sample base particle alpha for alpha scaling
+      float lifeRatio = p->lifetime / p->maxLifetime;
+      float invRatio = 1.0f - lifeRatio;
+      Color baseColor = p->colorStart;
+      if (p->gradient) {
+        baseColor = ColorGradient_Sample(p->gradient, invRatio);
+      } else {
+        baseColor.a = (unsigned char)((int)p->colorStart.a * lifeRatio + (int)p->colorEnd.a * invRatio);
+      }
+      if (p->alphaCurve) {
+        float mul = SkillCurve_Eval(p->alphaCurve, invRatio);
+        int a_val = (int)((float)p->colorStart.a * mul);
+        baseColor.a = (unsigned char)(a_val < 0 ? 0 : (a_val > 255 ? 255 : a_val));
+      }
+
+      float baseAlpha = (float)baseColor.a / 255.0f;
+
+      for (int h = 0; h < count; h++)
+      {
+        trailPoints[h].position = p->trailHistory[h];
+
+        float ageRatio = (float)h / (float)(count - 1);
+        trailPoints[h].halfWidth = p->radius * p->trailWidthRatio * (1.0f - ageRatio * 0.7f);
+
+        Color tc = ColorLerp(p->trailColorStart, p->trailColorEnd, ageRatio);
+        float alphaFade = 1.0f - ageRatio * 0.9f;
+        trailPoints[h].tint = ColorAlpha(tc, baseAlpha * alphaFade);
+        trailPoints[h].v = ageRatio;
+      }
+
+      DrawRibbonStrip(trailPoints, count, texture, camera);
+    }
+  }
+
   rlSetTexture(0);
 }
 

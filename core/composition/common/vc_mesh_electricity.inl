@@ -1,6 +1,7 @@
 #include "core/mesh_adjacency.h"
 #include "core/ribbon_strip.h"
 #include "core/resource_manager.h"
+#include "core/force_field.h"
 #include "raylib.h"
 #include "raymath.h"
 #include <stdbool.h>
@@ -8,6 +9,7 @@
 #define ARCH_MAX_MESH_ELECTRICS 16
 #define MAX_ELECTRIC_ARCS 16
 #define ELECTRIC_PATH_LEN 8
+#define SMOOTH_POINTS_COUNT 32
 
 typedef struct {
     bool active;
@@ -20,6 +22,7 @@ typedef struct {
     unsigned char pathLengths[MAX_ELECTRIC_ARCS];
     short stepsRemaining[MAX_ELECTRIC_ARCS];
     float moveTimer;
+    const ForceField *forceField;
 } Arch_MeshElectricity;
 
 static Arch_MeshElectricity s_archElectrics[ARCH_MAX_MESH_ELECTRICS];
@@ -67,7 +70,7 @@ static void VC_MeshElectricity_InitArc(Arch_MeshElectricity *e, int a) {
 static MeshAdjacency s_fallbackAdjacency;
 static bool s_fallbackBuilt = false;
 
-int VFX_SpawnMeshElectricity(const MeshAdjacency *adj, Color color, float duration) {
+int VFX_SpawnMeshElectricity(const struct MeshAdjacency *adj, Color color, float duration, const struct ForceField *forceField) {
     if (adj == NULL) {
         if (!s_fallbackBuilt) {
             // Using a Torus mesh scaled to fit the 2m sandbox viewport (0.25f normalized tube thickness, 3.2f scale)
@@ -89,6 +92,7 @@ int VFX_SpawnMeshElectricity(const MeshAdjacency *adj, Color color, float durati
             s_archElectrics[i].elapsed = 0.0f;
             s_archElectrics[i].color = color;
             s_archElectrics[i].moveTimer = 0.0f;
+            s_archElectrics[i].forceField = (const ForceField *)forceField;
             
             // Initialize all crawling filaments
             for (int a = 0; a < MAX_ELECTRIC_ARCS; a++) {
@@ -174,6 +178,29 @@ static void VC_MeshElectricity_Update(float dt) {
     }
 }
 
+// Helpers for Catmull-Rom spline interpolation
+static Vector3 VC_MeshElectricity_GetPathPoint(const Arch_MeshElectricity *e, int a, int idx) {
+    if (idx < 0) idx = 0;
+    if (idx >= e->pathLengths[a]) idx = e->pathLengths[a] - 1;
+    return e->adj->vertices[e->paths[a][idx]];
+}
+
+static Vector3 VC_MeshElectricity_InterpolateCatmullRom(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t) {
+    float t2 = t * t;
+    float t3 = t2 * t;
+    Vector3 res;
+    res.x = 0.5f * ((2.0f * p1.x) + (-p0.x + p2.x) * t + 
+             (2.0f * p0.x - 5.0f * p1.x + 4.0f * p2.x - p3.x) * t2 + 
+             (-p0.x + 3.0f * p1.x - 3.0f * p2.x + p3.x) * t3);
+    res.y = 0.5f * ((2.0f * p1.y) + (-p0.y + p2.y) * t + 
+             (2.0f * p0.y - 5.0f * p1.y + 4.0f * p2.y - p3.y) * t2 + 
+             (-p0.y + 3.0f * p1.y - 3.0f * p2.y + p3.y) * t3);
+    res.z = 0.5f * ((2.0f * p1.z) + (-p0.z + p2.z) * t + 
+             (2.0f * p0.z - 5.0f * p1.z + 4.0f * p2.z - p3.z) * t2 + 
+             (-p0.z + 3.0f * p1.z - 3.0f * p2.z + p3.z) * t3);
+    return res;
+}
+
 static void VC_MeshElectricity_Draw3D(Camera3D cam) {
     Texture2D tex = ResourceManager_LoadTexture("assets/textures/generic/glow_circle.png");
     
@@ -185,41 +212,73 @@ static void VC_MeshElectricity_Draw3D(Camera3D cam) {
             int len = s_archElectrics[i].pathLengths[a];
             if (len < 2) continue;
 
-            RibbonPoint points[ELECTRIC_PATH_LEN];
-            for (int p = 0; p < len; p++) {
-                int vIdx = s_archElectrics[i].paths[a][p];
-                Vector3 localPos = s_archElectrics[i].adj->vertices[vIdx];
+            RibbonPoint points[SMOOTH_POINTS_COUNT];
+            float intensity = 0.7f + 0.3f * sinf(GetTime() * 10.0f + a * 3.0f);
 
-                // Scale down jitter (4cm) to keep arcs close to the mesh surface
-                float jitterAmount = 0.04f;
-                float frameJitter = sinf(GetTime() * 120.0f + p * 20.0f) * 0.02f;
+            for (int j = 0; j < SMOOTH_POINTS_COUNT; j++) {
+                float u = (float)j / (float)(SMOOTH_POINTS_COUNT - 1); // 0 at head, 1 at tail
                 
-                Vector3 jitter = (Vector3){
-                    (float)sinf(GetTime() * 60.0f + vIdx * 9.0f) * jitterAmount + frameJitter,
-                    (float)cosf(GetTime() * 63.0f + vIdx * 13.0f) * jitterAmount + frameJitter,
-                    (float)sinf(GetTime() * 57.0f - vIdx * 17.0f) * jitterAmount + frameJitter
+                // Determine segments and local t
+                float segmentF = u * (len - 1);
+                int segIdx = (int)segmentF;
+                if (segIdx >= len - 1) segIdx = len - 2;
+                float t = segmentF - (float)segIdx;
+
+                // Sample control points
+                Vector3 p0 = VC_MeshElectricity_GetPathPoint(&s_archElectrics[i], a, segIdx - 1);
+                Vector3 p1 = VC_MeshElectricity_GetPathPoint(&s_archElectrics[i], a, segIdx);
+                Vector3 p2 = VC_MeshElectricity_GetPathPoint(&s_archElectrics[i], a, segIdx + 1);
+                Vector3 p3 = VC_MeshElectricity_GetPathPoint(&s_archElectrics[i], a, segIdx + 2);
+
+                // Interpolate position
+                Vector3 localPos = VC_MeshElectricity_InterpolateCatmullRom(p0, p1, p2, p3, t);
+
+                // Slow, smooth wave wobble
+                float wobbleSpeed = 6.0f;
+                float wobbleAmt = 0.012f;
+                Vector3 wobble = (Vector3){
+                    (float)sinf(GetTime() * wobbleSpeed + j * 0.4f) * wobbleAmt,
+                    (float)cosf(GetTime() * wobbleSpeed + j * 0.5f) * wobbleAmt,
+                    (float)sinf(GetTime() * wobbleSpeed - j * 0.3f) * wobbleAmt
                 };
-                Vector3 finalLocal = Vector3Add(localPos, jitter);
-                Vector3 worldPos = Vector3Transform(finalLocal, s_archElectrics[i].transform);
+                Vector3 finalLocal = Vector3Add(localPos, wobble);
+                Vector3 worldPosNoForce = Vector3Transform(finalLocal, s_archElectrics[i].transform);
 
-                points[p].position = worldPos;
-                // Scale width down for thin, elegant filaments (3cm to 4cm total width)
-                points[p].halfWidth = 0.015f + 0.005f * sinf(GetTime() * 90.0f + p * 4.0f);
+                // Evaluate and apply Force Field influence
+                Vector3 force = (Vector3){0};
+                if (s_archElectrics[i].forceField) {
+                    force = ForceField_Evaluate(s_archElectrics[i].forceField, worldPosNoForce, (Vector3){0}, s_archElectrics[i].elapsed, (Vector3){0}, (Vector3){0});
+                }
+                Vector3 displacement = Vector3Scale(force, 0.04f); // 4cm per unit strength
+                Vector3 worldPos = Vector3Add(worldPosNoForce, displacement);
+
+                points[j].position = worldPos;
                 
-                // Pulsing electrical color brightness
-                float intensity = 0.75f + 0.25f * sinf(GetTime() * 140.0f + a * 5.0f);
-                points[p].tint = ColorAlpha(s_archElectrics[i].color, intensity);
-                points[p].v = (float)p / (float)(len - 1);
+                // Taper width from head to tail (1.2cm to 0.2cm half-width)
+                float baseWidth = 0.012f * (1.0f - u * 0.8f);
+                points[j].halfWidth = baseWidth * (0.8f + 0.2f * sinf(GetTime() * 15.0f + j * 0.5f));
+                
+                // Fade opacity towards the tail (100% to 10%)
+                float fadeAlpha = 1.0f - u * 0.9f;
+                points[j].tint = ColorAlpha(s_archElectrics[i].color, intensity * fadeAlpha);
+                points[j].v = u;
             }
 
             // Draw using the standard camera-facing ribbon
-            DrawRibbonStrip(points, len, tex, cam);
+            DrawRibbonStrip(points, SMOOTH_POINTS_COUNT, tex, cam);
         }
     }
 }
 
 void VFX_ComposeMeshElectricity(Vector3 position, Color color, float duration) {
-    int handle = VFX_SpawnMeshElectricity(NULL, color, duration);
+    int handle = VFX_SpawnMeshElectricity(NULL, color, duration, NULL);
+    if (handle != -1) {
+        VFX_UpdateMeshElectricity(handle, MatrixTranslate(position.x, position.y, position.z));
+    }
+}
+
+void ComposeMeshElectricityEx(Vector3 position, Color color, float duration, const struct ForceField *forceField) {
+    int handle = VFX_SpawnMeshElectricity(NULL, color, duration, forceField);
     if (handle != -1) {
         VFX_UpdateMeshElectricity(handle, MatrixTranslate(position.x, position.y, position.z));
     }

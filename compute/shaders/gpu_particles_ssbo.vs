@@ -52,9 +52,30 @@ void main() {
     vec3 center = pr.xyz;
     vec2 corner = vertexPosition.xy;
 
-    vec3 worldPos = center
-                  + u_right * (corner.x * r)
-                  + u_up    * (corner.y * r);
+    vec3 worldPos;
+    float stretchStrength = particles[gl_InstanceID].ff_data.y; // ff_pad0
+    vec3 vel = particles[gl_InstanceID].vel_drag.xyz;
+    float speed = length(vel);
+
+    if (stretchStrength > 0.0 && speed > 0.2) {
+        vec3 tangent = vel / speed;
+        vec3 rVec = cross(u_up, tangent);
+        float rLen = length(rVec);
+        if (rLen > 0.0) {
+            rVec /= rLen;
+        } else {
+            rVec = u_right;
+        }
+        
+        float stretchFactor = 1.0 + speed * stretchStrength;
+        worldPos = center
+                 + rVec * (corner.x * r)
+                 + tangent * (corner.y * r * stretchFactor);
+    } else {
+        worldPos = center
+                 + u_right * (corner.x * r)
+                 + u_up    * (corner.y * r);
+    }
 
     gl_Position  = mvp * vec4(worldPos, 1.0);
     

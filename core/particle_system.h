@@ -65,6 +65,23 @@ struct ParticleConfig {
   float onLiveEmitRate; // Số lượng hạt con sinh ra trên mỗi giây
                         // (particles/sec)[cite: 4]
 
+  // Velocity stretch (New)
+  float stretchStrength;
+  float stretchMinSpeed;
+
+  // Collision parameters (New)
+  bool collisionEnabled;
+  float collisionElasticity;
+  float collisionFloorY;
+  const struct ParticleConfig *onCollisionEmit;
+  int onCollisionEmitCount;
+
+  // Particle Ribbon trails (New)
+  int trailLength;
+  float trailWidthRatio;
+  Color trailColorStart;
+  Color trailColorEnd;
+
   // Unified Config representation (Phase 3)
   VFX_GeneralConfig general;
   VFX_GeometryConfig geometry;
@@ -92,6 +109,13 @@ static inline void ParticleConfig_Unify(ParticleConfig *cfg) {
     cfg->physics.speed = 0.0f;
     cfg->physics.forceField = cfg->forceField;
   }
+  if (cfg->physics.collisionEnabled == false && cfg->collisionEnabled != false) {
+    cfg->physics.collisionEnabled = cfg->collisionEnabled;
+    cfg->physics.collisionElasticity = cfg->collisionElasticity;
+    cfg->physics.collisionFloorY = cfg->collisionFloorY;
+    cfg->physics.onCollisionEmit = cfg->onCollisionEmit;
+    cfg->physics.onCollisionEmitCount = cfg->onCollisionEmitCount;
+  }
   if (cfg->animation.spriteAnim == NULL && cfg->spriteAnim != NULL) {
     cfg->animation.spriteAnim = cfg->spriteAnim;
     cfg->animation.radiusCurve = cfg->radiusCurve;
@@ -110,6 +134,16 @@ static inline void ParticleConfig_Unify(ParticleConfig *cfg) {
     cfg->render.gradient = cfg->gradient;
     cfg->render.tint = WHITE;
   }
+  if (cfg->render.stretchStrength == 0.0f && cfg->stretchStrength != 0.0f) {
+    cfg->render.stretchStrength = cfg->stretchStrength;
+    cfg->render.stretchMinSpeed = cfg->stretchMinSpeed;
+  }
+  if (cfg->render.trailLength == 0 && cfg->trailLength != 0) {
+    cfg->render.trailLength = cfg->trailLength;
+    cfg->render.trailWidthRatio = cfg->trailWidthRatio;
+    cfg->render.trailColorStart = cfg->trailColorStart;
+    cfg->render.trailColorEnd = cfg->trailColorEnd;
+  }
 
   // 2. Populate legacy flat fields from unified if unified is set and legacy is empty
   if (cfg->lifetime == 0.0f && cfg->general.life != 0.0f) {
@@ -124,6 +158,13 @@ static inline void ParticleConfig_Unify(ParticleConfig *cfg) {
   if (cfg->position.x == 0.0f && cfg->position.y == 0.0f && cfg->position.z == 0.0f) {
     cfg->position = cfg->physics.position;
     cfg->velocity = cfg->physics.velocity;
+  }
+  if (cfg->collisionEnabled == false && cfg->physics.collisionEnabled != false) {
+    cfg->collisionEnabled = cfg->physics.collisionEnabled;
+    cfg->collisionElasticity = cfg->physics.collisionElasticity;
+    cfg->collisionFloorY = cfg->physics.collisionFloorY;
+    cfg->onCollisionEmit = cfg->physics.onCollisionEmit;
+    cfg->onCollisionEmitCount = cfg->physics.onCollisionEmitCount;
   }
   if (cfg->spriteAnim == NULL && cfg->animation.spriteAnim != NULL) {
     cfg->spriteAnim = cfg->animation.spriteAnim;
@@ -140,6 +181,16 @@ static inline void ParticleConfig_Unify(ParticleConfig *cfg) {
   if (cfg->colorStart.a == 0 && cfg->render.colorStart.a != 0) {
     cfg->colorStart = cfg->render.colorStart;
     cfg->colorEnd = cfg->render.colorEnd;
+  }
+  if (cfg->stretchStrength == 0.0f && cfg->render.stretchStrength != 0.0f) {
+    cfg->stretchStrength = cfg->render.stretchStrength;
+    cfg->stretchMinSpeed = cfg->render.stretchMinSpeed;
+  }
+  if (cfg->trailLength == 0 && cfg->render.trailLength != 0) {
+    cfg->trailLength = cfg->render.trailLength;
+    cfg->trailWidthRatio = cfg->render.trailWidthRatio;
+    cfg->trailColorStart = cfg->render.trailColorStart;
+    cfg->trailColorEnd = cfg->render.trailColorEnd;
   }
 }
 

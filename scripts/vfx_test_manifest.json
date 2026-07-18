@@ -644,6 +644,13 @@
       "category": "util",
       "type": "oneshot",
       "trigger_call": "VFX_ComposeMeshElectricity($POS, (Color){100, 220, 255, 255}, 2.5f)"
+    },
+    {
+      "fn": "VFX_ComposeParticleUpgradesTest",
+      "label": "PARTICLE UPGRADES TEST",
+      "category": "util",
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeParticleUpgradesTest($POS)"
     }
   ],
   "overrides": {

@@ -281,5 +281,16 @@ void main() {
     // Integrate position
     p.pos_radius.xyz += p.vel_drag.xyz * u_dt;
 
+    // Ground Collision Y-bounce
+    float elasticity = p.ff_data.z; // ff_pad1
+    if (elasticity >= 0.0) {
+        float floorY = p.ff_data.w; // ff_pad2
+        if (p.pos_radius.y <= floorY) {
+            p.vel_drag.y = -p.vel_drag.y * elasticity;
+            p.vel_drag.xz *= 0.8;
+            p.pos_radius.y = floorY + 0.005;
+        }
+    }
+
     particles[idx] = p;
 }

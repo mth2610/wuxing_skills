@@ -1814,13 +1814,18 @@ int main(int argc, char **argv) {
         { static int s_pf = 0;
           if ((s_pf++ % 300) == 5) {
               Image im = LoadImageFromScreen();
-              int bx = 200 + 1000, by = 375;                 // letterbox: ortho-x 1000..1110 -> fb 1200..1310
-              Color l = GetImageColor(im, bx + 15,  by);
-              Color c = GetImageColor(im, bx + 55,  by);
-              Color r = GetImageColor(im, bx + 95,  by);
-              Color scn = GetImageColor(im, im.width/2, im.height*3/4);
-              TraceLog(LOG_WARNING, "PIXDBG img=%dx%d D4box L=(%d,%d,%d,%d) C=(%d,%d,%d,%d) R=(%d,%d,%d,%d) scene=(%d,%d,%d,%d)",
-                       im.width, im.height, l.r,l.g,l.b,l.a, c.r,c.g,c.b,c.a, r.r,r.g,r.b,r.a, scn.r,scn.g,scn.b,scn.a);
+              // D4 box is ortho (960..1110, 300..450); readback img == ortho space (1920 wide).
+              // Sample a horizontal line y=375 across x=900..1180 to locate the box vs scene.
+              int y = 375;
+              Color p900  = GetImageColor(im, 900,  y);
+              Color p980  = GetImageColor(im, 980,  y);
+              Color p1035 = GetImageColor(im, 1035, y);
+              Color p1090 = GetImageColor(im, 1090, y);
+              Color p1180 = GetImageColor(im, 1180, y);
+              TraceLog(LOG_WARNING, "PIXDBG img=%dx%d y=%d  x900=(%d,%d,%d) x980=(%d,%d,%d) x1035=(%d,%d,%d) x1090=(%d,%d,%d) x1180=(%d,%d,%d)",
+                       im.width, im.height, y,
+                       p900.r,p900.g,p900.b, p980.r,p980.g,p980.b, p1035.r,p1035.g,p1035.b,
+                       p1090.r,p1090.g,p1090.b, p1180.r,p1180.g,p1180.b);
               UnloadImage(im);
           } }
     }

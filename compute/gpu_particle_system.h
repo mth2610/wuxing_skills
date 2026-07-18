@@ -55,6 +55,15 @@ typedef struct {
     // frame với cùng forceField sẽ dùng chung trục mới nhất.
     Vector3 axisOrigin;
     Vector3 axisDir;
+
+    // Velocity-stretch rendering
+    float   stretchStrength;
+    float   stretchMinSpeed;
+
+    // Ground collision
+    bool    collisionEnabled;
+    float   collisionElasticity;
+    float   collisionFloorY;
 } GpuParticleConfig;
 
 // Khởi tạo — detect compute capability, tạo buffer/shader

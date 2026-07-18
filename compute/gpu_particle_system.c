@@ -1,5 +1,6 @@
 #include "gpu_particle_system.h"
 #include "core/resource_manager.h"
+#include "core/particle_system.h"
 #if defined(GRAPHICS_API_VULKAN) || defined(WUXING_USE_VULKAN)
 #include "third_party/vulkan/rlvk.h"
 #else
@@ -284,7 +285,9 @@ void GpuParticleSystem_Spawn(GpuParticleConfig cfg)
     d.phase = (float)GetRandomValue(0, 10000) / 10000.0f;
     d.active = 1.0f;
     d.ff_index = (float)RegisterField(cfg.forceField, cfg.axisOrigin, cfg.axisDir);
-    d.ff_pad0 = d.ff_pad1 = d.ff_pad2 = 0.0f;
+    d.ff_pad0 = cfg.stretchStrength;
+    d.ff_pad1 = cfg.collisionEnabled ? cfg.collisionElasticity : -1.0f;
+    d.ff_pad2 = cfg.collisionFloorY;
 
     s_cpu_pool[idx] = d;
 
@@ -388,28 +391,98 @@ void GpuParticleSystem_Update(float dt)
         }
         rlActiveTextureSlot(0);
     }
-    else
+    // ALWAYS run CPU update loop for tracking and spawning events (like dust puffs on collision!)
+    // If s_use_compute is false, this loop also integrates positions.
+    // If s_use_compute is true, it replicates physics in sync with GPU compute so the CPU can detect collision.
+    for (int i = 0; i < MAX_GPU_PARTICLES; i++)
     {
-        for (int i = 0; i < MAX_GPU_PARTICLES; i++)
+        GpuParticleData *p = &s_cpu_pool[i];
+        if (p->active < 0.5f)
+            continue;
+        p->life_rem -= dt;
+        if (p->life_rem <= 0.0f)
         {
-            GpuParticleData *p = &s_cpu_pool[i];
-            if (p->active < 0.5f)
-                continue;
-            p->life_rem -= dt;
-            if (p->life_rem <= 0.0f)
+            p->active = 0.0f;
+            continue;
+        }
+
+        // 1. Evaluate Force Field on CPU
+        if (p->ff_index >= 0.0f)
+        {
+            int ff_idx = (int)p->ff_index;
+            if (ff_idx < s_fieldCount)
             {
-                p->active = 0.0f;
-                continue;
+                const ForceField *ff = s_fieldRegistry[ff_idx];
+                Vector3 pos = {p->px, p->py, p->pz};
+                Vector3 vel = {p->vx, p->vy, p->vz};
+                Vector3 acc = ForceField_Evaluate(ff, pos, vel, s_elapsed_time, s_fieldAxisOrigin[ff_idx], s_fieldAxisDir[ff_idx]);
+                p->vx += acc.x * dt;
+                p->vy += acc.y * dt;
+                p->vz += acc.z * dt;
+
+                float viscDamp = ForceField_GetViscosityDamping(ff, dt);
+                p->vx *= viscDamp;
+                p->vy *= viscDamp;
+                p->vz *= viscDamp;
             }
-            float drag_f = 1.0f - p->drag * dt;
-            if (drag_f < 0.0f)
-                drag_f = 0.0f;
-            p->vx *= drag_f;
-            p->vy *= drag_f;
-            p->vz *= drag_f;
-            p->px += p->vx * dt;
-            p->py += p->vy * dt;
-            p->pz += p->vz * dt;
+        }
+
+        // 2. Drag
+        float drag_f = 1.0f - p->drag * dt;
+        if (drag_f < 0.0f)
+            drag_f = 0.0f;
+        p->vx *= drag_f;
+        p->vy *= drag_f;
+        p->vz *= drag_f;
+
+        // 3. Integrate position
+        p->px += p->vx * dt;
+        p->py += p->vy * dt;
+        p->pz += p->vz * dt;
+
+        // 4. Ground/Floor collision check (which triggers dust puffs on CPU)
+        if (p->ff_pad1 >= 0.0f)
+        {
+            float floorY = p->ff_pad2;
+            if (p->py <= floorY)
+            {
+                p->vy = -p->vy * p->ff_pad1;
+                p->vx *= 0.8f;
+                p->vz *= 0.8f;
+                p->py = floorY + 0.005f;
+
+                // Spawn small CPU dust puffs
+                static bool s_gpuDustInit = false;
+                static ParticleConfig s_gpuDustConfig;
+                static SkillCurve s_gpuDustCurve;
+                if (!s_gpuDustInit)
+                {
+                    s_gpuDustConfig = (ParticleConfig){0};
+                    s_gpuDustConfig.lifetime = 0.4f;
+                    s_gpuDustConfig.radius = 0.12f;
+                    s_gpuDustConfig.colorStart = (Color){200, 200, 200, 140};
+                    s_gpuDustConfig.colorEnd = (Color){220, 220, 220, 0};
+                    FloatCurve_AddStop(&s_gpuDustCurve, 0.0f, 0.2f);
+                    FloatCurve_AddStop(&s_gpuDustCurve, 0.5f, 1.0f);
+                    FloatCurve_AddStop(&s_gpuDustCurve, 1.0f, 1.2f);
+                    s_gpuDustConfig.radiusCurve = &s_gpuDustCurve;
+                    s_gpuDustInit = true;
+                }
+
+                for (int c = 0; c < 3; c++)
+                {
+                    ParticleConfig tempColl = s_gpuDustConfig;
+                    tempColl.position = (Vector3){p->px, floorY + 0.01f, p->pz};
+                    float ang = ((float)GetRandomValue(0, 359)) * DEG2RAD;
+                    float spd = (float)GetRandomValue(100, 200) * 0.01f;
+                    tempColl.velocity = (Vector3){
+                        cosf(ang) * spd,
+                        (float)GetRandomValue(80, 180) * 0.01f,
+                        sinf(ang) * spd
+                    };
+                    SpawnParticle(tempColl);
+                }
+            }
         }
     }
 }
@@ -489,6 +562,43 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
 
             float rx = right.x * r, ry = right.y * r, rz = right.z * r;
             float ux = up.x * r, uy = up.y * r, uz = up.z * r;
+
+            // Velocity stretch rendering
+            float stretchStrength = p->ff_pad0;
+            if (stretchStrength > 0.0f)
+            {
+                Vector3 vel = {p->vx, p->vy, p->vz};
+                float speed = sqrtf(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
+                if (speed > 0.2f)
+                {
+                    Vector3 velDir = {vel.x / speed, vel.y / speed, vel.z / speed};
+                    Vector3 tangent = velDir;
+                    
+                    // Find perpendicular right vector using cross product
+                    Vector3 crossV = {
+                        camera.up.y * tangent.z - camera.up.z * tangent.y,
+                        camera.up.z * tangent.x - camera.up.x * tangent.z,
+                        camera.up.x * tangent.y - camera.up.y * tangent.x
+                    };
+                    float crossLen = sqrtf(crossV.x * crossV.x + crossV.y * crossV.y + crossV.z * crossV.z);
+                    Vector3 rVec = right;
+                    if (crossLen > 0.0f)
+                    {
+                        rVec.x = crossV.x / crossLen;
+                        rVec.y = crossV.y / crossLen;
+                        rVec.z = crossV.z / crossLen;
+                    }
+                    
+                    float stretchFactor = 1.0f + speed * stretchStrength;
+                    rx = rVec.x * r;
+                    ry = rVec.y * r;
+                    rz = rVec.z * r;
+
+                    ux = tangent.x * r * stretchFactor;
+                    uy = tangent.y * r * stretchFactor;
+                    uz = tangent.z * r * stretchFactor;
+                }
+            }
 
             rlTexCoord2f(0.0f, 0.0f);
             rlVertex3f(cx + rx - ux, cy + ry - uy, cz + rz - uz);

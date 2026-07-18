@@ -212,6 +212,17 @@ static void rlvkBeginScopeRenderPass(VkCommandBuffer cmdBuffer, const rlvkRender
                              .pClearValues = clears,
                          },
                          VK_SUBPASS_CONTENTS_INLINE);
+
+    // Push-descriptor bindings are NOT guaranteed to persist across a render-pass boundary on
+    // every driver. Observed on Mali-G68 (2026-07-18): 2D drawn after the PostFX render-pass
+    // chain sampled a stale texture at unit 0 -> shapes/font texture replaced by the last scene
+    // RT, so opaque UI rendered as dim (texel*color, texel≈dark scene) and text garbled. MoltenVK
+    // persists them, which is why the desktop visual suite never caught it. Invalidate the per-
+    // unit push dedup here so the FIRST draw of this pass always re-pushes its textures. This is
+    // the same reset the mid-frame flush does when it resets the command buffer (rlvkFlushFrame).
+    memset(RLVK.pushedView, 0, sizeof(RLVK.pushedView));
+    memset(RLVK.pushedSampler, 0, sizeof(RLVK.pushedSampler));
+    RLVK.set0Dirty = true;
 }
 
 // Switch the rendering scope to a user framebuffer (render texture). The pending batch
