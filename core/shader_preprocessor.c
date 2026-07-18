@@ -94,10 +94,16 @@ static char *ProcessIncludes(const char *filePath, int depth) {
   return output;
 }
 
-#ifdef __ANDROID__
+#if defined(__ANDROID__) && !defined(GRAPHICS_API_VULKAN)
 // Rewrites "#version 330" (desktop GL 3.3) to "#version 300 es" (GLES 3.0).
 // Also handles 310 es → 300 es so include files that mention 310 don't break.
-// Called only on Android after include expansion.
+// Called only on Android/GLES after include expansion - NOT under rlvk (Vulkan backend),
+// which needs the original desktop-dialect GLSL 330 unchanged (shaderc targets
+// vulkan1.1/SPIR-V1.3 and rejects "#version 300 es" outright: "ES shaders for SPIR-V require
+// version 310 or higher"). Without this guard, every #include-using shader (the ones that
+// route through ShaderPreprocessor_Load instead of build-time convert_shaders_to_gles.py -
+// see that script's has_include_directives()) silently failed to compile under Vulkan even
+// after the build-time GLES conversion was fixed to skip Vulkan builds (RLVK_HANDOFF.md §7.18).
 static void RewriteVersionForGLES(char *buf, int maxLen) {
     // Replace "#version 330" (12 chars) with "#version 300 es\nprecision highp float;\nprecision highp int;\n" (57 chars)
     char *p = strstr(buf, "#version 330");
@@ -119,7 +125,7 @@ static void RewriteVersionForGLES(char *buf, int maxLen) {
 
 char *ShaderPreprocessor_Load(const char *filePath) {
     char *result = ProcessIncludes(filePath, 0);
-#ifdef __ANDROID__
+#if defined(__ANDROID__) && !defined(GRAPHICS_API_VULKAN)
     if (result) RewriteVersionForGLES(result, MAX_SHADER_SIZE);
 #endif
     return result;

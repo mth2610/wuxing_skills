@@ -219,23 +219,6 @@ void rlvkAttachSurface(VkSurfaceKHR surface)
             ? VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR
             : caps.currentTransform;
 
-    // TEMP diagnostic for the Android orientation bug (§7.12) - print the raw surface transform
-    // bits + extent so we know what the driver actually reports instead of guessing further.
-    // currentTransform/supportedTransforms are VkSurfaceTransformFlagBitsKHR bit values:
-    // 0x1=IDENTITY 0x2=ROTATE_90 0x4=ROTATE_180 0x8=ROTATE_270 (bits 0x10+ = mirrored variants
-    // of each). Unconditional (not RLVK_DEBUG_*-gated): this only fires at swapchain
-    // create/recreate (rare, not a per-frame cost), and env vars don't reliably reach a
-    // NativeActivity process the way they do a desktop shell launch - REMOVE once the Android
-    // rotation bug is confirmed fixed. NOTE: this fragment is textually included into rcore.c
-    // BEFORE the `CoreData CORE` global is declared there - CORE is NOT usable from here
-    // (learned the hard way: "use of undeclared identifier 'CORE'" from the real raylib TU, a
-    // case the lighter check_rlvk_compile.sh harness didn't catch - full visual-suite build is
-    // the one that reproduces the real rcore.c inclusion order).
-    TRACELOG(RL_LOG_WARNING, "VKROTATE currentTransform=0x%x supportedTransforms=0x%x chosenPreTransform=0x%x "
-                              "currentExtent=%ux%u chosenExtent=%ux%u",
-             (unsigned)caps.currentTransform, (unsigned)caps.supportedTransforms, (unsigned)preTransform,
-             caps.currentExtent.width, caps.currentExtent.height, extent.width, extent.height);
-
     RLVK_CHECK(vkCreateSwapchainKHR(RLVK.device,
                                     &(VkSwapchainCreateInfoKHR){
                                         VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,

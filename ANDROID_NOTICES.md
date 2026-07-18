@@ -39,6 +39,18 @@ make -f Makefile.Android
 ```
 *(Ghi chú: Makefile tự động lo việc tạo thư mục, sao chép assets, chuyển đổi shader, biên dịch liên kết thư viện động, và ký APK với keystore cục bộ).*
 
+**Không cần `clean` mỗi lần build (từ 2026-07-18)**: object rule đã có `-MMD -MP` +
+`-include $(OBJS:.o=.d)`, nên sửa một file `.h` (không đụng `.c` nào trực tiếp) giờ vẫn
+kích hoạt recompile đúng các `.c` include header đó — trước đây incremental build chỉ theo
+dõi mtime của chính file `.c`, nên sửa `.h` xong build lại "không có hiệu lực" là hiện tượng
+thật, không phải ảo giác. Vẫn cần `clean` (hoặc xoá cache thủ công) trong các trường hợp
+Make không thể tự phát hiện:
+- Bật/tắt `USE_VULKAN`: `compile_raylib_android` và `compile_shaderc_android` chỉ build nếu
+  archive đích **chưa tồn tại** — đổi cờ không tự invalidate cache cũ (xem §D2 và
+  `RLVK_HANDOFF.md` §7.18).
+- Sửa chính `Makefile.Android` (CFLAGS/LDLIBS mới) — object files cũ không tự biết cờ
+  compile đã đổi.
+
 ## 3. Các lưu ý Sống còn về Đồ họa trên Android (GLES 2.0 / Mali / Adreno)
 
 Quá trình đưa Wuxing Skills lên Android đã vấp phải các giới hạn cực kỳ khắt khe của phần cứng di động. Tuyệt đối tuân thủ các quy tắc sau khi tạo thêm hiệu ứng mới:

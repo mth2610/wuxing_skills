@@ -892,24 +892,246 @@ a button — the log fires on any click), and pastes the `MENUTAP ...` logcat li
 - **Verification**: re-fetched pristine raylib (same protocol), patch applied clean (no
   directive changes this time — pure C statements inside an existing brace block), desktop
   compile-check + full visual suite still 13/13 green, confirming the GL `#else` branch and
-  desktop path are untouched. **Not yet verified on device** — needs a real Android rebuild +
-  retest.
+  desktop path are untouched. **DEVICE-CONFIRMED (2026-07-17)**: user rebuilt, menu buttons now
+  hit-test at their visual position. Both TEMP diagnostics removed (`MENUTAP` in `main.c`,
+  unconditional `VKROTATE` log in `rlvk_platform.inl`) — `check_rlvk_compile.sh` still green
+  after removal.
+
+**Menu/UI touch-position bug: RESOLVED end-to-end (§7.12→§7.17).**
+
+### 7.18 shaderc on device — statically-linked NDK shaderc (2026-07-17, desktop-verified only)
+- **Problem**: every custom GLSL shader falls back to raylib's default (logcat: `RLVK: custom
+  shaders need shaderc_shared.dll (not found) - using default shader`), and GPU compute
+  particles fall back to their CPU/VBO path for the same reason — `rlvkLoadShaderc()`'s
+  dlopen sonames list (`libshaderc_shared.so`, `libshaderc.so`, ...) never resolves on Android
+  because **there is no prebuilt shaderc `.so` on-device to find**: NDK 28 ships shaderc only
+  as SOURCE (`$(NDK)/sources/third_party/shaderc/`, full glslang + SPIRV-Tools + SPIRV-Headers
+  tree with `Android.mk` for `ndk-build`), not a binary — confirmed by `find`, no `.so`/`.a`
+  anywhere under that tree.
+- **What that source tree actually builds**: `ndk-build libshaderc_combined` (the target name is
+  NOT the default — must be requested explicitly) produces a single **static** archive,
+  `libshaderc_combined.a` (glslang+SPIRV-Tools+SPIRV-Headers+shaderc `ar -M`-combined by Google's
+  own `Android.mk`, ~20 MB for arm64-v8a), plus `libc++_shared.so` (the app built with
+  `APP_STL := c++_shared`, so all the C++-implemented libraries need the shared C++ runtime at
+  load time). Verified buildable in isolation this session (`ndk-build` in a throwaway scratch
+  project pointed at the NDK's own `Android.mk`) — ~2 min, clean exit, `llvm-nm` confirms every
+  symbol `rlvkLoadShaderc`'s core function list needs is present as `T` (defined) in the archive.
+- **A static archive can't be `dlopen`'d** — the whole rest of `rlvkLoadShaderc()` assumes a
+  shared lib loaded and `dlsym`'d at runtime. Android needs a structurally different path:
+  **statically link `libshaderc_combined.a` into `lib$(PROJECT_LIBRARY_NAME).so` at Android
+  build time** and call the shaderc C API directly (linker resolves the symbols; no
+  dlopen/dlsym needed, and this path can't fail at runtime the way a missing `.so` could).
+  Added a `#elif defined(__ANDROID__)` branch in `rlvkLoadShaderc()` (`rlvk_shaderc.inl`) that
+  just does `p_shaderc_xxx = shaderc_xxx;` for each function — the prototypes are already
+  visible from `<shaderc/shaderc.h>` (included unconditionally in `rlvk.h`), so this is a plain,
+  ordinary function-pointer assignment.
+- **Version gap, handled**: the NDK's bundled shaderc is old enough to be **missing
+  `shaderc_compile_options_set_vulkan_rules_relaxed`** entirely (`diff` against the project's
+  vendored newer `shaderc.h` — only 3 functions differ; the other two,
+  `set_preserve_bindings`/`set_max_id_bound`, aren't used anywhere in this codebase). Linking
+  that symbol in would be a build-time undefined-symbol error. Split
+  `RLVK_SHADERC_FUNCS`/`RLVK_SHADERC_FUNCS_CORE` (the latter omits it) so the Android branch
+  only wires up what actually exists; the call site (`rlvkCompileGlsl`) now null-checks the
+  pointer before calling it, degrading gracefully rather than crashing. Building a genuinely
+  newer shaderc from actual upstream source (needs network + glslang/SPIRV-Tools/SPIRV-Headers
+  pinned to a compatible commit, cross-compiled via CMake like raylib itself) would close this
+  gap properly — **not attempted this session** given the added scope/fragility (network fetch +
+  submodule pinning) versus the payoff (`auto_bind_uniforms` + `auto_map_locations`, both
+  present in the NDK's version, already cover most of "accept stock GL-dialect GLSL";
+  `vulkan_rules_relaxed` is an incremental relaxation on top, not load-bearing for every
+  shader). Left as a known, documented gap — revisit if specific shaders still fail to compile
+  on Android after this lands.
+- **Build wiring** (`Makefile.Android`): new `compile_shaderc_android` target (same
+  cache-if-exists pattern as `compile_raylib_android` — builds once, skips on rerun, same
+  staleness caveat as §D2 if NDK/toolchain versions change underneath it), builds via a
+  throwaway `ndk-build` project (mirrors this session's scratch verification exactly), copies
+  `libshaderc_combined.a` + `libc++_shared.so` into `$(PROJECT_BUILD_PATH)/lib/$(ANDROID_ARCH_NAME)/`.
+  Wired as a `compile_project_code` prerequisite (alongside `compile_raylib_android`). Link line
+  gets `-lshaderc_combined -lc++_shared` (order matters — shaderc's undefined C++ symbols are
+  resolved by c++_shared, which must come after it) plus
+  `-Wl,--exclude-libs,libshaderc_combined.a` (keep its huge internal symbol set out of the
+  final `.so`'s dynamic symbol table). `create_project_apk_package` now also `aapt add`s
+  `libc++_shared.so` into the APK — it's a genuine runtime dependency, not a build-time-only
+  static lib.
+- Also fixed the misleading `rlvk_shader.inl` fallback log (`"shaderc_shared.dll (not found)"`
+  printed unconditionally on every platform, including Linux/Android/macOS) to platform-neutral
+  wording.
+- **Verification**: desktop `check_rlvk_compile.sh` green after both edits (Android branch is
+  behind `#elif defined(__ANDROID__)`, never compiled/type-checked on desktop — reviewed by hand
+  instead). `llvm-nm` symbol-presence check against the actual built archive (see above) is the
+  closest thing to a link test available without running the full Android build.
+
+**First real build attempt hit two issues, both fixed same day:**
+1. `compile_shaderc_android`'s `libc++_shared.so` copy sourced it from `ndk-build`'s own `libs/`
+   output — that only gets populated for actual shared-lib targets, not a static-archive-only
+   build like this one (confirmed missing on the real build, not hypothetical). Fixed: copy it
+   directly from the NDK toolchain's own sysroot instead
+   (`$(ANDROID_TOOLCHAIN)/sysroot/usr/lib/$(ANDROID_SYSROOT_TRIPLE)/libc++_shared.so`, always
+   present there per-ABI). Added `ANDROID_SYSROOT_TRIPLE` (`aarch64-linux-android` /
+   `arm-linux-androideabi`) alongside the existing `ANDROID_ARCH_NAME` mapping. **Caveat for next
+   rebuild**: the cache-check only tests for `libshaderc_combined.a` (which *did* copy
+   successfully before the original failure), so a plain rerun sees it, skips the whole block,
+   and still lacks `libc++_shared.so`. One-time fix: `rm -f
+   android.wuxing_skills/lib/arm64-v8a/libshaderc_combined.a` before rebuilding (the `ndk-build`
+   object cache under `shaderc_build/obj` survives, so the retry is fast).
+2. **The real blocker, found via device logcat once shaderc started actually compiling
+   shaders**: `RLVK: GLSL compile failed: rlvk:9: error: 'attribute' : Reserved word` and
+   `ES shaders for SPIR-V require version 310 or higher`. Root cause: `copy_project_resources`
+   unconditionally ran `scripts/convert_shaders_to_gles.py` on every shader asset — converting
+   desktop-dialect GLSL 330 (`in`/`out`, `#version 330`) to GLES 100/300es dialect
+   (`attribute`/`varying`, `#version 100`). Correct for the GL/GLES backend; actively wrong for
+   Vulkan — shaderc targets vulkan1.1/SPIR-V1.3 and rejects GLES-100 syntax outright
+   (`attribute`/`varying` are reserved words in that dialect, ES `#version` directives need 310+
+   for SPIR-V). This ran for EVERY Android build regardless of `USE_VULKAN`, so it silently
+   corrupted every shader asset the Vulkan build shipped. Fixed: gated the conversion behind
+   `ifneq ($(USE_VULKAN), 1)` in `Makefile.Android` — skipped entirely for Vulkan builds, still
+   runs for the default GL build (dry-run diffed both paths to confirm). This was almost
+   certainly the actual cause of "nothing changed" screenshots even after the shaderc fix landed
+   — shaderc was loading and running, just being fed shaders it structurally couldn't accept.
+   The `'non-opaque uniforms outside a block'` error seen alongside these two IS the
+   already-documented `vulkan_rules_relaxed` gap (a real but secondary contributor) — worth
+   re-checking whether it still appears once the GLES-conversion bug is fixed, since some of it
+   may have been misattributed to shaders that were actually GLES-mangled, not just missing the
+   relaxed-rules knob.
+- Also confirmed (unrelated to shaderc, pre-existing): the swapchain recreates every single
+  frame (`RLVK: swapchain created`/`recreated` in logcat at ~60 Hz) — `vkAcquireNextImageKHR`
+  returning `VK_ERROR_OUT_OF_DATE_KHR` every frame, most likely because §7.12's `preTransform`
+  choice (force `VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR` over the device's actual
+  `currentTransform=ROTATE_90`) causes the compositor to keep signaling the swapchain as
+  out-of-date, and recreating with the same IDENTITY choice never resolves it. This has
+  seemingly been happening since §7.12 landed, silently, without visibly blocking rendering
+  (menu/joystick/movement all confirmed working on top of it in §7.13–§7.17) — wasteful but not
+  (so far) correctness-breaking. Not fixed this session; flagged for follow-up since constant
+  swapchain teardown/rebuild is not free and could matter more once real shaders/GPU particles
+  are actually rendering through it.
+
+### 7.19 GLES-conversion fix confirmed working; found the REAL dominant blocker
+Device rebuild + fresh logcat after §7.18's two fixes confirmed the `libc++_shared.so`/
+GLES-conversion patches landed correctly (huge disk-space scare along the way — the dev
+machine hit 100% full mid-build, causing an earlier confusing "nothing changed" report from
+a build that had actually partially failed; resolved once space was freed). Real signal: most
+shaders (`decal_flow.fs`, `trail_glow.fs`, `bloom_*.fs`, `distortion.fs`, `post_process.fs`,
+`metaball_threshold.fs`, ...) now compile as genuine desktop GLSL 330 — no more
+`attribute`/`varying` errors. Progress confirmed.
+
+But two more things surfaced from the same logcat:
+1. **`#include`-using shaders still failed** with `ES shaders for SPIR-V require version 310
+   or higher` (`effect_material`, `stone_prison`, `smoke_column`, `surface_lit`,
+   `volume_smoke`, the GPU-particle compute shader). Root cause: a SEPARATE, RUNTIME
+   GLES-rewrite path in `core/shader_preprocessor.c` — `RewriteVersionForGLES()`, gated only
+   by `#ifdef __ANDROID__` (no Vulkan check), rewrites `#version 330` → `#version 300 es`
+   after `#include` expansion for every shader that goes through
+   `ShaderPreprocessor_Load()`. This is a completely different code path from
+   `convert_shaders_to_gles.py` (build-time, only touches shaders WITHOUT `#include` per that
+   script's own `has_include_directives()` skip) — fixing the build-time script didn't touch
+   this runtime path at all. Fixed: `#if defined(__ANDROID__) && !defined(GRAPHICS_API_VULKAN)`
+   on both the function definition and its call site in `core/shader_preprocessor.c`.
+2. **The real dominant blocker, corrected from §7.18's too-optimistic read**: `'non-opaque
+   uniforms outside a block'` appeared in essentially EVERY custom shader, `#include` or not —
+   not the minor edge case §7.18 assumed (`auto_bind_uniforms`/`auto_map_locations` do NOT
+   cover this case; they're about binding/location assignment, not the declaration-outside-a-
+   block rule itself). This is entirely the missing `vulkan_rules_relaxed` gap, and with it
+   being this pervasive, "ship without it and see if shaders still mostly work" was the wrong
+   call. Investigated properly this time: the NDK's bundled shaderc source tree
+   (`sources/third_party/shaderc/`) links against glslang, and **glslang itself already
+   implements the underlying feature** — `glslang::TShader::setEnvInputVulkanRulesRelaxed()`
+   exists in `libshaderc/third_party/glslang/glslang/Public/ShaderLang.h`, confirmed by
+   grepping the actual NDK-bundled source. Only libshaderc's thin C-API wrapper
+   (`shaderc_compile_options_set_vulkan_rules_relaxed`) was missing — a ~15-line, 4-file gap,
+   not a whole-library version problem. Rather than fetching real upstream shaderc (network +
+   glslang/SPIRV-Tools/SPIRV-Headers pinned to a compatible commit — bigger, more fragile),
+   added `scripts/rlvk_patch_shaderc.py`: same idempotent marker-guarded pattern as
+   `rlvk_patch_raylib.py`, patches a **staged copy** of the NDK shaderc source (never the NDK
+   install itself) to add the option storage field + setter in
+   `libshaderc_util/include/libshaderc_util/compiler.h`, the `shader.setEnvInputVulkanRulesRelaxed()`
+   call in `libshaderc_util/src/compiler.cc` (same injection point as the existing
+   `setAutoMapLocations` call), and the C API wrapper itself in `libshaderc/src/shaderc.cc` +
+   its declaration in `libshaderc/include/shaderc/shaderc.h`. `Makefile.Android`'s
+   `compile_shaderc_android` now does `cp -r` the NDK source into
+   `$(PROJECT_BUILD_PATH)/shaderc_src`, patches that copy, and points `ndk-build` at it instead
+   of the NDK's own `Android.mk`.
+   `rlvk_shaderc.inl` reverted to a single `RLVK_SHADERC_FUNCS` list (the temporary
+   `RLVK_SHADERC_FUNCS_CORE` split and the null-check at `rlvkCompileGlsl`'s call site are gone
+   — no longer needed once the function is guaranteed present).
+- **Verification**: patch reapplies cleanly against a fresh staged copy; the patched source
+  builds clean via `ndk-build` in isolation (~2-3 min, same as before); `llvm-nm` confirms
+  `shaderc_compile_options_set_vulkan_rules_relaxed` is now a defined (`T`) symbol in the
+  built archive. Desktop `check_rlvk_compile.sh` + full 13/13 visual suite still green (Android
+  branch never compiled/type-checked on desktop, as before). Makefile dry-run confirms the new
+  staged-copy-then-patch flow is wired correctly. **Not yet run through the real
+  `Makefile.Android` end-to-end or on device.**
+- Also confirmed (unrelated to shaderc, pre-existing, still unfixed): the swapchain recreates
+  every single frame (`RLVK: swapchain created`/`recreated` in logcat at ~60 Hz) —
+  `vkAcquireNextImageKHR` returning `VK_ERROR_OUT_OF_DATE_KHR` every frame, most likely because
+  §7.12's `preTransform` choice (force `VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR` over the
+  device's actual `currentTransform=ROTATE_90`) causes the compositor to keep signaling the
+  swapchain as out-of-date, and recreating with the same IDENTITY choice never resolves it.
+  Seemingly harmless so far (menu/joystick/movement all confirmed working on top of it) but
+  wasteful, and worth revisiting once real shaders are actually rendering through it.
+
+### 7.20 vulkan_rules_relaxed patch had no effect — a second, deeper glslang gap
+Two device rebuilds in a row with §7.19's shaderc patch still showed
+`'non-opaque uniforms outside a block'` on every custom shader, unchanged. First suspected
+the `compile_shaderc_android` cache (the archive from BEFORE the patch existed was still
+sitting at `lib/arm64-v8a/libshaderc_combined.a`, since the cache-check only looks at that one
+file's existence) — cleared it, forced a genuinely fresh `ndk-build` from the patched source,
+same result. So the patch itself wasn't reaching the compiler; traced why with `grep` instead
+of guessing further:
+- `ParseHelper.cpp`'s `transparentOpaqueCheck` (the function that raises this exact error)
+  checks `spvVersion.vulkan > 0 && !spvVersion.vulkanRelaxed` — confirmed `vulkanRelaxed` is
+  exactly the right flag, not a red herring.
+- But `TShader::setEnvInputVulkanRulesRelaxed()` (what §7.19's patch calls) only sets
+  `environment.input.vulkanRulesRelaxed` — a *staging* field on the `TShader`, not the live
+  `spvVersion.vulkanRelaxed` the parser actually reads.
+- `ShaderLang.cpp`'s `TranslateEnvironment()` is what copies staging → live, but only inside
+  `case EShClientVulkan:` of a `switch (environment->input.dialect)` — reached only if
+  `environment->input.languageFamily != EShSourceNone`, which requires
+  `TShader::setEnvInput()` to have been called first.
+- `grep -n "setEnvInput\b" libshaderc_util/src/compiler.cc` → **zero matches**. libshaderc's
+  compiler driver never calls `setEnvInput()` at all (only `setEnvClient`/`setEnvTarget`,
+  which touch different fields entirely). So `environment.input.languageFamily` stays
+  `EShSourceNone` forever, the whole dialect-switch branch never runs, and the relaxed-rules
+  flag silently never reaches `spvVersion.vulkanRelaxed` — regardless of §7.19's patch being
+  100% correctly wired on the `TShader` side. A genuine second gap, not a mistake in the first
+  patch.
+- **Fix**: added a 5th patch (`rlvk_patch_shaderc.py`) to `glslang/MachineIndependent/
+  ShaderLang.cpp`'s `TranslateEnvironment()` — apply `environment->input.vulkanRulesRelaxed`
+  to `spvVersion.vulkanRelaxed` unconditionally, right next to where `spvVersion.vulkan` itself
+  already gets set from the `EShMsgVulkanRules` messages flag (the path libshaderc actually
+  exercises), instead of leaving it gated behind the dialect-switch branch libshaderc never
+  reaches.
+- **Verification**: patch applies cleanly against a fresh staged copy (5/5 files); `ndk-build`
+  of the doubly-patched source completes clean, `libshaderc_combined.a` produced. Root cause
+  traced via `grep` across `ParseHelper.cpp`/`ShaderLang.cpp`/`compiler.cc` with each claim
+  checked against the actual NDK-bundled source, not assumed. **Not yet verified on device** —
+  functional confirmation (does the shader actually compile now) requires a human rebuild.
 
 **Still open / explicitly NOT done**:
-- **Nothing in §8.4 has been compiled clean end-to-end yet** — no NDK toolchain exists on this
-  machine to attempt it directly; fixes above are reasoned from source + the human's pasted
-  compiler output, not from running the build myself. Treat this section as **actively being
-  debugged one real compiler error at a time**, not finished. Next step: human re-runs
-  `make -f Makefile.Android USE_VULKAN=1` and pastes whatever error (if any) comes next. The
-  failed attempt never reached `cp -f raylib/libraylib.a ...`, so the existing-archive cache
-  guard should naturally retry the CMake build rather than skip it — but if the retry behaves
-  oddly (stale CMake cache inside `raylib_build/` from the aborted configure/build), clear
-  `android.wuxing_skills/raylib_build` + `lib/*/libraylib.a` per the §D2 precedent and retry.
-- shaderc on device: ship a new-enough libshaderc or precompile shaders to SPIR-V offline
-  (better for weak devices anyway) and extend `rlLoadShaderProgram` to accept SPIR-V pairs.
+- **Rebuild + retest** with all of §7.18's, §7.19's, and §7.20's fixes (`libc++_shared.so`
+  sysroot copy, GLES-conversion build-time skip, `RewriteVersionForGLES` Vulkan guard, and NOW
+  the two-part shaderc patch — the C-API wrapper AND the `TranslateEnvironment` fix, both
+  needed together) — none of this has been functionally verified on device yet, only reasoned
+  from logcat + isolated `ndk-build` testing.
+  **Also free disk space first** — the dev machine was at 829Mi free during §7.19's session,
+  which caused at least one confusing false "nothing changed" report from a build that had
+  silently failed partway; don't re-diagnose that class of symptom without checking `df -h`
+  first.
+  **Cache trap, again**: `compile_shaderc_android` only checks whether
+  `libshaderc_combined.a` exists — if it's already there from a PRIOR build (even one before
+  this session's newest patch), a rebuild silently reuses the stale archive. This has now bitten
+  twice. `rm -f android.wuxing_skills/lib/arm64-v8a/libshaderc_combined.a` before every rebuild
+  until/unless the cache check is made to detect script changes (e.g. hash `rlvk_patch_shaderc.py`
+  into the cache key) — not done this session, flagged as a real fix worth making if this class
+  of iteration continues.
+- **Per-frame swapchain recreate loop** (see above) — not yet investigated further; candidate
+  fix is matching the swapchain's `preTransform` to the real `currentTransform` and
+  counter-rotating rendered content instead of forcing IDENTITY, but that reopens the exact
+  problem §7.12 was trying to avoid — needs its own investigation, not a quick patch.
 - Expect Mali driver quirks; §6's methodology applies verbatim — build the scenario first.
-- **Physical-device testing is human-only** (no device access from here): `adb`/on-device
-  testing per `ANDROID_NOTICES.md`, once a human confirms the NDK build itself succeeds.
+- `adb`/on-device testing **is now available this session** (device connected, used extensively
+  in §7.12–§7.19) — the old "physical-device testing is human-only, no device access from here"
+  note is stale. Still true: the human must actually run `make -f Makefile.Android USE_VULKAN=1`
+  and reinstall — that part isn't something to do from here.
 
 ### 8.5 Smaller known gaps (deliberate)
 - `rlLoadShaderProgramEx` unimplemented (nothing in raylib's normal flow uses it).

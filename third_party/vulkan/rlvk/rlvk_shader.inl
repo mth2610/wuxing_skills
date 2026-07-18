@@ -50,7 +50,7 @@ unsigned int rlLoadShaderProgram(const char *vsCode, const char *fsCode)
     // never pay its module footprint or load time
     if (!RLVK.shadercCompiler && !rlvkLoadShaderc())
     {
-        TRACELOG(RL_LOG_WARNING, "RLVK: custom shaders need shaderc_shared.dll (not found) - using default shader");
+        TRACELOG(RL_LOG_WARNING, "RLVK: custom shaders need shaderc (not found/failed to load) - using default shader");
         return RLVK.defaultShaderSlot;
     }
     if (!vsCode)

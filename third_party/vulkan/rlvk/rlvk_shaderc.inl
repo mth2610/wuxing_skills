@@ -48,9 +48,21 @@ static bool rlvkLoadShaderc(void)
         return false;
     RLVK_SHADERC_FUNCS
 #undef RLVK_SC_FUNC
+#elif defined(__ANDROID__)
+    // The NDK ships shaderc only as SOURCE (Android.mk for ndk-build) - there is no prebuilt
+    // .so to dlopen on-device, unlike desktop/Linux distros. Makefile.Android's
+    // compile_shaderc_android target stages a copy of that source, applies
+    // scripts/rlvk_patch_shaderc.py (adds the shaderc_compile_options_set_vulkan_rules_relaxed
+    // C-API wrapper the NDK's bundled version lacks - the underlying glslang feature was
+    // already there), builds libshaderc_combined.a via ndk-build, and links it straight into
+    // lib<project>.so. Since the symbols are already resolved by the linker at build time,
+    // just point the function pointers at the real (statically-linked) functions - no
+    // dlopen/dlsym, and this branch cannot fail at runtime the way a missing shared lib could.
+#define RLVK_SC_FUNC(_func) p_##_func = _func;
+    RLVK_SHADERC_FUNCS
+#undef RLVK_SC_FUNC
 #else
-    // Linux/Android/macOS: try the common sonames (the Android NDK ships libshaderc.so;
-    // desktop SDK/distro builds ship libshaderc_shared)
+    // Linux/macOS: try the common sonames (desktop SDK/distro builds ship libshaderc_shared)
     static const char *names[] = {
         "libshaderc_shared.so.1",
         "libshaderc_shared.so",

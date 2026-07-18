@@ -1276,11 +1276,6 @@ int main(int argc, char **argv) {
 
         int sw = GetScreenWidth();
         int sh = GetScreenHeight();
-        // TEMP diagnostic (Android touch-vs-render mismatch investigation, RLVK_HANDOFF.md §7.16) -
-        // REMOVE once resolved.
-        if (clicked) TraceLog(LOG_WARNING, "MENUTAP mousePos=(%.1f,%.1f) sw=%d sh=%d renderW=%d renderH=%d btnSandbox=(%.0f,%.0f,%.0f,%.0f)",
-                              mousePos.x, mousePos.y, sw, sh, GetRenderWidth(), GetRenderHeight(),
-                              (float)(sw/2 - 150), (float)(sh/2 - 60), 300.0f, 50.0f);
         Rectangle btnSandbox = { sw/2 - 150, sh/2 - 60, 300, 50 };
         Rectangle btnVFX = { sw/2 - 150, sh/2 + 20, 300, 50 };
         Rectangle btnGame = { sw/2 - 150, sh/2 + 100, 300, 50 };
@@ -1780,6 +1775,19 @@ int main(int argc, char **argv) {
                  WHITE);
     }
 
+    // TEMP diagnostic (Android UI-vanishes-after-shaderc-fix investigation) - REMOVE once
+    // resolved. Fires once/sec to confirm whether this block is even being entered, and with
+    // what state, without flooding logcat every frame.
+    {
+        static double s_lastUiDbgLog = -1000.0;
+        double now = GetTime();
+        if (now - s_lastUiDbgLog > 1.0) {
+            s_lastUiDbgLog = now;
+            TRACELOG(LOG_WARNING, "UIDBG screen=%d dbgCapturing=%d vfxMode=%d panelOpen=%d",
+                      (int)currentScreen, (int)g_isDebuggerCapturing, (int)renderVFXMode,
+                      (int)uiState.isPanelOpen);
+        }
+    }
     if (!g_isDebuggerCapturing && !renderVFXMode) {
         if (currentScreen == SCREEN_SKILL_SANDBOX) {
             DrawUIPanel(&uiState);

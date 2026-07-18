@@ -34,9 +34,11 @@ JAVA_HOME              ?= /usr/local/opt/openjdk@17
 
 ifeq ($(ANDROID_ARCH),ARM)
     ANDROID_ARCH_NAME   = armeabi-v7a
+    ANDROID_SYSROOT_TRIPLE = arm-linux-androideabi
 endif
 ifeq ($(ANDROID_ARCH),ARM64)
     ANDROID_ARCH_NAME   = arm64-v8a
+    ANDROID_SYSROOT_TRIPLE = aarch64-linux-android
 endif
 
 # Project configuration
@@ -188,6 +190,12 @@ endif
 
 # Linker flags
 LDFLAGS = -Wl,-soname,lib$(PROJECT_LIBRARY_NAME).so -Wl,--exclude-libs,libatomic.a
+ifeq ($(USE_VULKAN), 1)
+    # Keep shaderc/glslang/SPIRV-Tools' huge internal symbol set out of our .so's dynamic
+    # symbol table (bloat + collision risk) - only the shaderc_* C API needs to stay reachable,
+    # and it does since rlvk_shaderc.inl calls it directly rather than through dlsym.
+    LDFLAGS += -Wl,--exclude-libs,libshaderc_combined.a
+endif
 LDFLAGS += -Wl,--build-id -Wl,--no-undefined -Wl,-z,noexecstack -Wl,-z,relro -Wl,-z,now -Wl,--warn-shared-textrel -Wl,--fatal-warnings
 LDFLAGS += -u ANativeActivity_onCreate
 # raylib's Android FileIO wraps fopen to read from APK assets (__wrap_fopen in
@@ -203,6 +211,12 @@ ifeq ($(USE_VULKAN), 1)
     # replaces the rendering backend, not the platform's EGL-adjacent surface bootstrap that
     # raylib's own Android platform file still references at compile time either way.
     LDLIBS += -lvulkan
+    # Statically-linked shaderc (compile_shaderc_android) + the C++ runtime it needs
+    # (APP_STL=c++_shared) - libshaderc_combined.a is C++ (glslang/SPIRV-Tools/shaderc), our
+    # own sources are C, so clang won't pull in libc++ automatically the way clang++ would.
+    # Order matters: shaderc's undefined C++ symbols are resolved by c++_shared, which must
+    # come after it on the link line.
+    LDLIBS += -lshaderc_combined -lc++_shared
 endif
 
 # Object files
@@ -286,6 +300,63 @@ endif
 		echo "=== raylib for Android already built, skipping ==="; \
 	fi
 
+# Build libshaderc as a static archive for on-device GLSL->SPIR-V compilation (rlvk).
+# The NDK ships shaderc only as SOURCE (Android.mk for ndk-build) - there is no prebuilt
+# libshaderc.so to dlopen on-device the way desktop/Linux distros ship one, so this project
+# builds Google's own combined static archive (glslang + SPIRV-Tools + shaderc, same 9 libs
+# the NDK's Android.mk itself `ar -M`-combines) via a throwaway ndk-build project, and links
+# it straight into lib$(PROJECT_LIBRARY_NAME).so at compile_project_code time - see
+# rlvk_shaderc.inl's __ANDROID__ branch (points its function pointers straight at the
+# statically-linked symbols, no dlopen/dlsym). APP_STL=c++_shared means the archive depends on
+# libc++_shared.so at runtime; that .so is pulled straight from the NDK toolchain's own sysroot
+# (ndk-build's own libs/ output copy only happens for actual shared-lib targets, not a
+# static-only build like this one - a real gap hit on first build, not a hypothetical) and
+# packaged into the APK by create_project_apk_package below.
+#
+# The NDK's bundled shaderc source is old enough to lack shaderc_compile_options_set_vulkan_
+# rules_relaxed entirely (confirmed on-device: virtually every custom shader failed with
+# "'non-opaque uniforms outside a block' : not allowed when using GLSL for Vulkan" without it -
+# RLVK_HANDOFF.md §7.18/§7.19). The underlying glslang compiler already implements the
+# feature; only libshaderc's thin C-API wrapper was missing. scripts/rlvk_patch_shaderc.py
+# adds it (4 files, ~15 lines) against a STAGED COPY of the source (never the NDK install
+# itself - copied to shaderc_src/ first, then patched, then built) - same idempotent
+# marker-guarded pattern as scripts/rlvk_patch_raylib.py.
+#
+# Cached like compile_raylib_android: skips the (~2-3 min) ndk-build if the archive already
+# exists AND rlvk_patch_shaderc.py hasn't changed since - the mtime check (`-nt`, not just
+# existence) exists because plain existence-only caching bit this project twice in one
+# session (RLVK_HANDOFF.md §7.19/§7.20): editing the patch script after an archive was
+# already cached silently kept shipping the stale, unpatched build with no error, no warning.
+# Still needs a full `rm -f .../libshaderc_combined.a` if the NDK/toolchain version itself
+# changes underneath it (not tracked by this check), same staleness caveat as raylib's §D2.
+compile_shaderc_android:
+ifeq ($(USE_VULKAN), 1)
+	@if [ ! -f "$(PROJECT_BUILD_PATH)/lib/$(ANDROID_ARCH_NAME)/libshaderc_combined.a" ] || \
+	    [ "$(CURDIR)/scripts/rlvk_patch_shaderc.py" -nt "$(PROJECT_BUILD_PATH)/lib/$(ANDROID_ARCH_NAME)/libshaderc_combined.a" ]; then \
+		echo "=== Building shaderc for Android ($(ANDROID_ARCH_NAME)) ===" && \
+		rm -rf $(PROJECT_BUILD_PATH)/shaderc_src && \
+		cp -r $(ANDROID_NDK)/sources/third_party/shaderc $(PROJECT_BUILD_PATH)/shaderc_src && \
+		python3 $(CURDIR)/scripts/rlvk_patch_shaderc.py $(CURDIR)/$(PROJECT_BUILD_PATH)/shaderc_src && \
+		mkdir -p $(PROJECT_BUILD_PATH)/shaderc_build/jni && \
+		printf 'NDK_MODULE_PATH := $$(call my-dir)\ninclude $(CURDIR)/$(PROJECT_BUILD_PATH)/shaderc_src/Android.mk\n' \
+			> $(PROJECT_BUILD_PATH)/shaderc_build/jni/Android.mk && \
+		printf 'APP_ABI := $(ANDROID_ARCH_NAME)\nAPP_PLATFORM := android-$(ANDROID_API_VERSION)\nAPP_STL := c++_shared\n' \
+			> $(PROJECT_BUILD_PATH)/shaderc_build/jni/Application.mk && \
+		$(ANDROID_NDK)/ndk-build libshaderc_combined \
+			NDK_PROJECT_PATH=$(CURDIR)/$(PROJECT_BUILD_PATH)/shaderc_build \
+			APP_BUILD_SCRIPT=$(CURDIR)/$(PROJECT_BUILD_PATH)/shaderc_build/jni/Android.mk \
+			NDK_APPLICATION_MK=$(CURDIR)/$(PROJECT_BUILD_PATH)/shaderc_build/jni/Application.mk \
+			-j8 && \
+		mkdir -p $(PROJECT_BUILD_PATH)/lib/$(ANDROID_ARCH_NAME) && \
+		cp -f $(PROJECT_BUILD_PATH)/shaderc_build/libs/c++_shared/$(ANDROID_ARCH_NAME)/libshaderc.a \
+			$(PROJECT_BUILD_PATH)/lib/$(ANDROID_ARCH_NAME)/libshaderc_combined.a && \
+		cp -f $(ANDROID_TOOLCHAIN)/sysroot/usr/lib/$(ANDROID_SYSROOT_TRIPLE)/libc++_shared.so \
+			$(PROJECT_BUILD_PATH)/lib/$(ANDROID_ARCH_NAME)/libc++_shared.so; \
+	else \
+		echo "=== shaderc for Android already built, skipping ==="; \
+	fi
+endif
+
 copy_project_required_libs:
 	@echo "=== Copying libs ==="
 
@@ -323,7 +394,15 @@ copy_project_resources: create_temp_project_dirs
 	cd maps && find . -type f \( -name "*.fs" -o -name "*.png" -o -name "*.vs" \) -exec cp -f {} ../$(PROJECT_BUILD_PATH)/assets/maps/{} \;
 	
 	@# Chạy script Python để convert Shader từ GLSL 330 sang GLES 100/300 es
+	@# rlvk (Vulkan backend) needs the ORIGINAL desktop-dialect GLSL 330 (in/out, #version 330)
+	@# unchanged - shaderc targets vulkan1.1/SPIR-V1.3 and rejects GLES-100 syntax outright
+	@# ('attribute'/'varying' are reserved words in that dialect, and ES #version directives
+	@# need 310+ for SPIR-V) - confirmed via on-device RLVK: GLSL compile failed logs after
+	@# shaderc-on-device (§7.18) started actually attempting real compiles. Skip the conversion
+	@# entirely under USE_VULKAN=1; only the GLES/GL backend needs it.
+ifneq ($(USE_VULKAN), 1)
 	python3 $(CURDIR)/scripts/convert_shaders_to_gles.py $(PROJECT_BUILD_PATH)/assets
+endif
 
 generate_android_manifest: create_temp_project_dirs
 	@echo "<?xml version=\"1.0\" encoding=\"utf-8\"?>" > $(PROJECT_BUILD_PATH)/AndroidManifest.xml
@@ -362,12 +441,21 @@ config_project_package: copy_project_resources generate_android_manifest
 		-M $(PROJECT_BUILD_PATH)/AndroidManifest.xml \
 		-I $(ANDROID_HOME)/platforms/android-$(ANDROID_API_VERSION)/android.jar
 
-compile_project_code: config_project_package compile_raylib_android $(OBJS)
+compile_project_code: config_project_package compile_raylib_android compile_shaderc_android $(OBJS)
 	$(CC) -o $(PROJECT_BUILD_PATH)/lib/$(ANDROID_ARCH_NAME)/lib$(PROJECT_LIBRARY_NAME).so \
 		$(OBJS) -shared $(INCLUDE_PATHS) $(LDFLAGS) $(LDLIBS)
 
 $(PROJECT_BUILD_PATH)/obj/%.o:%.c
-	$(CC) -c $^ -o $@ $(INCLUDE_PATHS) $(CFLAGS)
+	$(CC) -c $^ -o $@ $(INCLUDE_PATHS) $(CFLAGS) -MMD -MP
+
+# Per-file header dependencies (generated by -MMD -MP above, e.g.
+# obj/core/skill_manager.o.d listing every .h it transitively includes).
+# Without this, incremental `make` only notices a changed .c file's OWN mtime -
+# editing a .h (skill_manager.h, entities.h, ...) without touching any .c file
+# directly leaves every .o that includes it silently stale, so the header edit
+# has no effect until a full clean rebuild. `-include` is silent on missing
+# files (first build, before any .d exists) instead of erroring.
+-include $(OBJS:.o=.d)
 
 create_project_apk_package: compile_project_code
 	$(ANDROID_BUILD_TOOLS)/aapt package -f \
@@ -378,6 +466,13 @@ create_project_apk_package: compile_project_code
 		-F $(PROJECT_BUILD_PATH)/$(PROJECT_NAME).unsigned.apk $(PROJECT_BUILD_PATH)/bin
 	cd $(PROJECT_BUILD_PATH) && $(ANDROID_BUILD_TOOLS)/aapt add \
 		$(PROJECT_NAME).unsigned.apk lib/$(ANDROID_ARCH_NAME)/lib$(PROJECT_LIBRARY_NAME).so
+ifeq ($(USE_VULKAN), 1)
+	@# libc++_shared.so: runtime dependency of the statically-linked shaderc archive
+	@# (compile_shaderc_android, APP_STL=c++_shared) - must ship in the APK or dlopen of our
+	@# own lib$(PROJECT_LIBRARY_NAME).so fails to resolve its C++ symbols on-device.
+	cd $(PROJECT_BUILD_PATH) && $(ANDROID_BUILD_TOOLS)/aapt add \
+		$(PROJECT_NAME).unsigned.apk lib/$(ANDROID_ARCH_NAME)/libc++_shared.so
+endif
 
 zipalign_project_apk_package: create_project_apk_package
 	$(ANDROID_BUILD_TOOLS)/zipalign -p -f 4 \
