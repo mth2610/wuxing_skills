@@ -212,17 +212,6 @@ static void rlvkBeginScopeRenderPass(VkCommandBuffer cmdBuffer, const rlvkRender
                              .pClearValues = clears,
                          },
                          VK_SUBPASS_CONTENTS_INLINE);
-
-    // Push-descriptor bindings are NOT guaranteed to persist across a render-pass boundary on
-    // every driver. Observed on Mali-G68 (2026-07-18): 2D drawn after the PostFX render-pass
-    // chain sampled a stale texture at unit 0 -> shapes/font texture replaced by the last scene
-    // RT, so opaque UI rendered as dim (texel*color, texel≈dark scene) and text garbled. MoltenVK
-    // persists them, which is why the desktop visual suite never caught it. Invalidate the per-
-    // unit push dedup here so the FIRST draw of this pass always re-pushes its textures. This is
-    // the same reset the mid-frame flush does when it resets the command buffer (rlvkFlushFrame).
-    memset(RLVK.pushedView, 0, sizeof(RLVK.pushedView));
-    memset(RLVK.pushedSampler, 0, sizeof(RLVK.pushedSampler));
-    RLVK.set0Dirty = true;
 }
 
 // Switch the rendering scope to a user framebuffer (render texture). The pending batch
@@ -564,12 +553,10 @@ static void rlvkWaitInFlightFrames(void)
             vkWaitForFences(RLVK.device, 1, &RLVK.frameFences[i], VK_TRUE, UINT64_MAX);
 }
 
-static unsigned s_dbgFrameFlushCount = 0; // TEMP diag: mid-frame flush count (Android 2D-vanish)
 static void rlvkFlushFrame(void)
 {
     if (!RLVK.frameActive)
         return;
-    s_dbgFrameFlushCount++;
     u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
     VkCommandBuffer cmdBuffer = RLVK.cmdBuffers[frameIndex];
 

@@ -708,18 +708,6 @@ void rlvkPresent(void)
     u32 imageIndex = RLVK.currentImageIndex;
     VkCommandBuffer cmdBuffer = RLVK.cmdBuffers[frameIndex];
 
-    // TEMP scope diagnostic (Android 2D-after-MetaballFX vanish). If fbSlot != 0 at present, the
-    // frame ended with an FBO scope open -> the final 2D batch (flushed by EndDrawing) went into
-    // that render texture, not the swapchain intermediate, and is lost by the flip-blit below.
-    { static unsigned s_scopeDbg = 0;
-      if ((s_scopeDbg++ % 120u) == 0u)
-          TRACELOG(RL_LOG_WARNING, "SCOPEDBG present scopeW=%u scopeH=%u vp=[%d,%d %dx%d] scEn=%d sc=[%d,%d %dx%d] flushes=%u",
-                   RLVK.scope.width, RLVK.scope.height,
-                   RLVK.State.viewportX, RLVK.State.viewportY, RLVK.State.viewportW, RLVK.State.viewportH,
-                   (int)RLVK.State.scissorEnabled, RLVK.State.scissorX, RLVK.State.scissorY,
-                   RLVK.State.scissorW, RLVK.State.scissorH, s_dbgFrameFlushCount);
-      s_dbgFrameFlushCount = 0; }
-
     vkCmdEndRenderPass(cmdBuffer);
     rlvkFinishSwapchainImage(cmdBuffer); // flip-blit the frame into the swapchain
 

@@ -64,6 +64,9 @@ typedef struct {
     bool    collisionEnabled;
     float   collisionElasticity;
     float   collisionFloorY;
+
+    // Emissive intensity boost for HDR Bloom (1.0 = default, >1.0 = glowing core)
+    float   emissiveBoost;
 } GpuParticleConfig;
 
 // Khởi tạo — detect compute capability, tạo buffer/shader

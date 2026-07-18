@@ -36,7 +36,7 @@
 
 extern PlayerEntity player;
 
-static Vector3 g_currentEnemyPos = { 0 };
+static Vector3 g_currentEnemyPos = {0};
 static float g_currentEnemyRadius = 0.0f;
 static float g_skillManagerTime = 0.0f;
 
@@ -44,7 +44,8 @@ static float g_skillManagerTime = 0.0f;
 #define MAX_TEMP_PROJECTILES 128
 #define MAX_SKILLS 32
 
-typedef struct {
+typedef struct
+{
   Vector3 position;
   char text[32];
   Color color;
@@ -64,7 +65,8 @@ static float rootTimer = 0.0f;
 
 // Wall Registry — see skill_manager.h's SkillManager_RegisterWall/FindNearbyWall.
 #define MAX_WALLS 8
-typedef struct {
+typedef struct
+{
   Vector3 position;
   int element;
   float radius;
@@ -74,17 +76,18 @@ static WallSlot s_walls[MAX_WALLS];
 
 // Per-skill mana cost override — see RegisterSkillManaCost/Skill_GetManaCost.
 static float s_skillManaCost[MAX_SKILLS];
-static bool  s_skillManaCostSet[MAX_SKILLS];
-#define DEFAULT_MANA_COST 20.0f
+static bool s_skillManaCostSet[MAX_SKILLS];
+#define DEFAULT_MANA_COST 5.0f
 
 // Per-skill cast-flourish duration — see RegisterSkillCastAnimSeconds.
 static float s_skillCastAnimSecs[MAX_SKILLS];
-static bool  s_skillCastAnimSecsSet[MAX_SKILLS];
+static bool s_skillCastAnimSecsSet[MAX_SKILLS];
 #define DEFAULT_CAST_ANIM_SECONDS 1.5f
 
 #define MAX_ACTIVE_PORTALS 16
 
-typedef struct {
+typedef struct
+{
   Vector3 position;
   Color color;
   float maxLifetime;
@@ -97,8 +100,8 @@ typedef struct {
 
 static CastPortal activePortals[MAX_ACTIVE_PORTALS];
 
-
-typedef struct {
+typedef struct
+{
   char name[32];
   Color color;
   int forcePathType;
@@ -178,17 +181,20 @@ static void UpdateWindWrapper(float dt, Vector3 enemyPos, float enemyRadius);
 
 #if HAS_SKILL_SHIELD
 static void CastShieldWrapper(int agentId, Vector3 startPos, Vector3 target, SkillParams params);
-static void UpdateShieldSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius) {
+static void UpdateShieldSkillWrapper(float dt, Vector3 enemyPos, float enemyRadius)
+{
   (void)enemyPos;
   (void)enemyRadius;
   UpdateShieldSkill(dt, player.position);
 }
 #endif
 
-static void DrawCircleLines3D(Vector3 center, float radius, Color color) {
+static void DrawCircleLines3D(Vector3 center, float radius, Color color)
+{
   const int segments = 24;
   Vector3 prevPoint = {0};
-  for (int i = 0; i <= segments; i++) {
+  for (int i = 0; i <= segments; i++)
+  {
     float t = ((float)i / (float)segments) * PI * 2.0f;
     Vector3 point = {center.x + radius * cosf(t), center.y,
                      center.z + radius * sinf(t)};
@@ -199,9 +205,12 @@ static void DrawCircleLines3D(Vector3 center, float radius, Color color) {
 }
 
 static void AddCastPortal(Vector3 pos, Color portalColor, CastPathType pathType,
-                          float sizeScale, Vector3 target) {
-  for (int i = 0; i < MAX_ACTIVE_PORTALS; i++) {
-    if (!activePortals[i].active) {
+                          float sizeScale, Vector3 target)
+{
+  for (int i = 0; i < MAX_ACTIVE_PORTALS; i++)
+  {
+    if (!activePortals[i].active)
+    {
       activePortals[i].position = pos;
       activePortals[i].color = ColorAlpha(portalColor, 0.8f);
       activePortals[i].maxLifetime = 0.8f;
@@ -216,9 +225,12 @@ static void AddCastPortal(Vector3 pos, Color portalColor, CastPathType pathType,
 }
 
 void AddFloatingText(Vector3 pos, const char *text, Color color,
-                            float size, float maxLife) {
-  for (int i = 0; i < MAX_FLOATING_TEXTS; i++) {
-    if (!floatingTexts[i].active) {
+                     float size, float maxLife)
+{
+  for (int i = 0; i < MAX_FLOATING_TEXTS; i++)
+  {
+    if (!floatingTexts[i].active)
+    {
       floatingTexts[i].position = pos;
       floatingTexts[i].position.x += (float)GetRandomValue(-25, 25) * 0.01f;
       floatingTexts[i].position.y += (float)GetRandomValue(-15, 5) * 0.01f;
@@ -234,8 +246,10 @@ void AddFloatingText(Vector3 pos, const char *text, Color color,
   }
 }
 
-static void EnsureBuiltInRegistered(void) {
-  if (!builtInRegistered) {
+static void EnsureBuiltInRegistered(void)
+{
+  if (!builtInRegistered)
+  {
     builtInRegistered = true;
 
 #if HAS_SKILL_FLUID
@@ -288,12 +302,14 @@ int RegisterSkill(const char *name, Color color,
                   void (*cast)(int agentId, Vector3 startPos, Vector3 target,
                                SkillParams params),
                   void (*update)(float dt, Vector3 enemyPos, float enemyRadius),
-                  void (*draw)(void), void (*unload)(void)) {
+                  void (*draw)(void), void (*unload)(void))
+{
   if (!builtInRegistered)
     EnsureBuiltInRegistered();
   if (registeredSkillCount >= MAX_SKILLS)
     return -1;
-  for (int i = 0; i < registeredSkillCount; i++) {
+  for (int i = 0; i < registeredSkillCount; i++)
+  {
     if (strcmp(skillRegistry[i].name, name) == 0)
       return i;
   }
@@ -314,7 +330,8 @@ int RegisterSkill(const char *name, Color color,
 }
 
 void SetSkillOverrides(int skillIndex, int pathType, int anchorType,
-                       int quantity, float sizeScale) {
+                       int quantity, float sizeScale)
+{
   if (skillIndex < 0 || skillIndex >= registeredSkillCount)
     return;
   skillRegistry[skillIndex].forcePathType = pathType;
@@ -323,39 +340,46 @@ void SetSkillOverrides(int skillIndex, int pathType, int anchorType,
   skillRegistry[skillIndex].forceSizeScale = sizeScale;
 }
 
-int GetRegisteredSkillCount(void) {
+int GetRegisteredSkillCount(void)
+{
   EnsureBuiltInRegistered();
   return registeredSkillCount;
 }
 
-const char *GetRegisteredSkillName(int index) {
+const char *GetRegisteredSkillName(int index)
+{
   EnsureBuiltInRegistered();
   if (index < 0 || index >= registeredSkillCount)
     return "";
   return skillRegistry[index].name;
 }
 
-Color GetRegisteredSkillColor(int index) {
+Color GetRegisteredSkillColor(int index)
+{
   EnsureBuiltInRegistered();
   if (index < 0 || index >= registeredSkillCount)
     return WHITE;
   return skillRegistry[index].color;
 }
 
-int Skill_GetIndexByName(const char *name) {
+int Skill_GetIndexByName(const char *name)
+{
   EnsureBuiltInRegistered();
   if (name == NULL)
     return -1;
-  for (int i = 0; i < registeredSkillCount; i++) {
+  for (int i = 0; i < registeredSkillCount; i++)
+  {
     if (strcmp(skillRegistry[i].name, name) == 0)
       return i;
   }
   return -1;
 }
 
-void InitSkillManager(int screenWidth, int screenHeight) {
+void InitSkillManager(int screenWidth, int screenHeight)
+{
   EnsureBuiltInRegistered();
-  for (int i = 0; i < registeredSkillCount; i++) {
+  for (int i = 0; i < registeredSkillCount; i++)
+  {
     if (skillRegistry[i].init)
       skillRegistry[i].init(screenWidth, screenHeight);
   }
@@ -369,25 +393,31 @@ void InitSkillManager(int screenWidth, int screenHeight) {
     activePortals[i].active = false;
 }
 
-void UpdateSkillManager(float dt, Vector3 enemyPos, float enemyRadius) {
+void UpdateSkillManager(float dt, Vector3 enemyPos, float enemyRadius)
+{
   EnsureBuiltInRegistered();
   g_currentEnemyPos = enemyPos;
   g_currentEnemyRadius = enemyRadius;
   g_skillManagerTime += dt;
 
-  for (int i = 0; i < registeredSkillCount; i++) {
+  for (int i = 0; i < registeredSkillCount; i++)
+  {
     if (skillCooldownPendingCount[i] <= 0)
       continue;
     float *cd = skillCooldownRemaining[i];
-    for (int a = 0; a < SKILL_MANAGER_MAX_AGENTS; a++) {
+    for (int a = 0; a < SKILL_MANAGER_MAX_AGENTS; a++)
+    {
       float v = cd[a];
       if (v <= 0.0f)
         continue;
       v -= dt;
-      if (v <= 0.0f) {
+      if (v <= 0.0f)
+      {
         cd[a] = 0.0f;
         skillCooldownPendingCount[i]--;
-      } else {
+      }
+      else
+      {
         cd[a] = v;
       }
     }
@@ -397,10 +427,12 @@ void UpdateSkillManager(float dt, Vector3 enemyPos, float enemyRadius) {
     slowTimer -= dt;
   if (rootTimer > 0.0f)
     rootTimer -= dt;
-  if (burnTimer > 0.0f) {
+  if (burnTimer > 0.0f)
+  {
     burnTimer -= dt;
     burnTickAccumulator += dt;
-    if (burnTickAccumulator >= 0.5f) {
+    if (burnTickAccumulator >= 0.5f)
+    {
       burnTickAccumulator = 0.0f;
       Vector3 tickPos = enemyPos;
       tickPos.x += (float)GetRandomValue(-20, 20);
@@ -408,29 +440,38 @@ void UpdateSkillManager(float dt, Vector3 enemyPos, float enemyRadius) {
       tickPos.z += (float)GetRandomValue(-20, 20);
       AddFloatingText(tickPos, "12", RED, 16.0f, 0.4f);
     }
-  } else
+  }
+  else
     burnTickAccumulator = 0.0f;
 
-  for (int i = 0; i < MAX_WALLS; i++) {
-    if (s_walls[i].timer > 0.0f) {
+  for (int i = 0; i < MAX_WALLS; i++)
+  {
+    if (s_walls[i].timer > 0.0f)
+    {
       s_walls[i].timer -= dt;
-      if (s_walls[i].timer < 0.0f) s_walls[i].timer = 0.0f;
+      if (s_walls[i].timer < 0.0f)
+        s_walls[i].timer = 0.0f;
     }
   }
 
-  for (int i = 0; i < MAX_ACTIVE_PORTALS; i++) {
-    if (activePortals[i].active) {
+  for (int i = 0; i < MAX_ACTIVE_PORTALS; i++)
+  {
+    if (activePortals[i].active)
+    {
       activePortals[i].lifetime -= dt;
       if (activePortals[i].lifetime <= 0.0f)
         activePortals[i].active = false;
     }
   }
-  for (int i = 0; i < registeredSkillCount; i++) {
+  for (int i = 0; i < registeredSkillCount; i++)
+  {
     if (skillRegistry[i].update)
       skillRegistry[i].update(dt, enemyPos, enemyRadius);
   }
-  for (int i = 0; i < MAX_FLOATING_TEXTS; i++) {
-    if (floatingTexts[i].active) {
+  for (int i = 0; i < MAX_FLOATING_TEXTS; i++)
+  {
+    if (floatingTexts[i].active)
+    {
       floatingTexts[i].lifetime -= dt;
       floatingTexts[i].position.y += 55.0f * dt;
       if (floatingTexts[i].lifetime <= 0.0f)
@@ -439,12 +480,15 @@ void UpdateSkillManager(float dt, Vector3 enemyPos, float enemyRadius) {
   }
 }
 
-void DrawSkillManagerWorld3D(void) {
+void DrawSkillManagerWorld3D(void)
+{
   float time = (float)GetTime();
   EnsureBuiltInRegistered();
 
-  for (int i = 0; i < MAX_ACTIVE_PORTALS; i++) {
-    if (activePortals[i].active) {
+  for (int i = 0; i < MAX_ACTIVE_PORTALS; i++)
+  {
+    if (activePortals[i].active)
+    {
       float progress =
           1.0f - (activePortals[i].lifetime / activePortals[i].maxLifetime);
       float currentScale = 1.0f;
@@ -455,7 +499,8 @@ void DrawSkillManagerWorld3D(void) {
       float r = activePortals[i].size * currentScale;
       Color col = activePortals[i].color;
 
-      for (float f = 1.0f; f <= 1.4f; f += 0.1f) {
+      for (float f = 1.0f; f <= 1.4f; f += 0.1f)
+      {
         float alphaFactor = (1.4f - f) / 0.4f;
         DrawCircle3D(activePortals[i].position, r * f,
                      (Vector3){1.0f, 0.0f, 0.0f}, 90.0f,
@@ -470,7 +515,8 @@ void DrawSkillManagerWorld3D(void) {
                         ColorAlpha(col, 0.5f * currentScale));
 
       int spokes = 8;
-      for (int s = 0; s < spokes; s++) {
+      for (int s = 0; s < spokes; s++)
+      {
         float spAngle = (float)s * (PI * 2.0f / spokes) + time * 1.5f;
         Vector3 pInner = {
             activePortals[i].position.x + r * 0.5f * cosf(spAngle),
@@ -483,7 +529,8 @@ void DrawSkillManagerWorld3D(void) {
         DrawLine3D(pInner, pOuter, ColorAlpha(col, 0.35f * currentScale));
       }
       float rotSpeed = time * 7.0f;
-      for (int p = 0; p < 8; p++) {
+      for (int p = 0; p < 8; p++)
+      {
         float angleOffset = (float)p * (PI * 0.25f) + rotSpeed;
         Vector3 sparkPos = {
             activePortals[i].position.x + r * 0.85f * cosf(angleOffset),
@@ -524,17 +571,22 @@ void DrawSkillManagerWorld3D(void) {
 #endif
 
   // Draw any custom registered 3D skills in the 3D pass
-  for (int i = 0; i < registeredSkillCount; i++) {
-    if (skillRegistry[i].draw) {
+  for (int i = 0; i < registeredSkillCount; i++)
+  {
+    if (skillRegistry[i].draw)
+    {
       skillRegistry[i].draw();
     }
   }
 }
 
-void DrawSkillManagerOverlay(void) {
+void DrawSkillManagerOverlay(void)
+{
   EnsureBuiltInRegistered();
-  for (int i = 0; i < MAX_FLOATING_TEXTS; i++) {
-    if (floatingTexts[i].active) {
+  for (int i = 0; i < MAX_FLOATING_TEXTS; i++)
+  {
+    if (floatingTexts[i].active)
+    {
       float alpha = floatingTexts[i].lifetime / floatingTexts[i].maxLifetime;
       Color col = ColorAlpha(floatingTexts[i].color, alpha);
       Vector2 screenPos = GetWorldToScreen(floatingTexts[i].position, camera);
@@ -547,9 +599,11 @@ void DrawSkillManagerOverlay(void) {
   }
 }
 
-void UnloadSkillManager(void) {
+void UnloadSkillManager(void)
+{
   EnsureBuiltInRegistered();
-  for (int i = 0; i < registeredSkillCount; i++) {
+  for (int i = 0; i < registeredSkillCount; i++)
+  {
     if (skillRegistry[i].unload)
       skillRegistry[i].unload();
   }
@@ -559,7 +613,8 @@ static bool s_freeCast = false; // net client VFX replay (see header)
 void SkillManager_SetFreeCast(bool on) { s_freeCast = on; }
 
 bool CastSkill(int skillIndex, int agentId, Vector3 startPos, Vector3 target,
-               SkillParams params) {
+               SkillParams params)
+{
   EnsureBuiltInRegistered();
   if (skillIndex < 0 || skillIndex >= registeredSkillCount)
     return false;
@@ -570,7 +625,8 @@ bool CastSkill(int skillIndex, int agentId, Vector3 startPos, Vector3 target,
   // this. Abort the cast completely on insufficient mana — no VFX, no
   // cooldown trigger.
   float manaCost = Skill_GetManaCost(skillIndex);
-  if (!s_freeCast && manaCost > 0.0f && !Entity_TrySpendMana(agentId, manaCost)) {
+  if (!s_freeCast && manaCost > 0.0f && !Entity_TrySpendMana(agentId, manaCost))
+  {
     AddFloatingText(startPos, "Thieu Mana!", GRAY, 18.0f, 0.6f);
     return false;
   }
@@ -602,16 +658,20 @@ bool CastSkill(int skillIndex, int agentId, Vector3 startPos, Vector3 target,
   // displacement, which is why fire_ball, thunder_orb_skill, and a
   // brand-new from-scratch test skill ALL showed the identical symptom —
   // it was never in any of them.
-  switch (params.pathType) {
-  case CAST_PATH_PROJECTILE: {
+  switch (params.pathType)
+  {
+  case CAST_PATH_PROJECTILE:
+  {
     Vector3 shoulderPos = (Vector3){startPos.x, startPos.y + 0.25f, startPos.z};
     Vector3 aimDir = Vector3Normalize(Vector3Subtract(target, shoulderPos));
     adjustedStartPos = Vector3Add(shoulderPos, Vector3Scale(aimDir, 0.22f));
     adjustedTarget = target;
     break;
   }
-  case CAST_PATH_UNDERGROUND: {
-    if (params.anchorType == CAST_ANCHOR_CASTER) {
+  case CAST_PATH_UNDERGROUND:
+  {
+    if (params.anchorType == CAST_ANCHOR_CASTER)
+    {
       Vector3 dir = Vector3Normalize(Vector3Subtract(target, startPos));
       adjustedStartPos = Vector3Add(startPos, Vector3Scale(dir, 0.35f));
       adjustedStartPos.y = 0.02f;
@@ -619,7 +679,9 @@ bool CastSkill(int skillIndex, int agentId, Vector3 startPos, Vector3 target,
       if (params.showPortal)
         AddCastPortal(adjustedStartPos, skillColor, CAST_PATH_UNDERGROUND,
                       params.sizeScale, target);
-    } else {
+    }
+    else
+    {
       adjustedStartPos = target;
       adjustedStartPos.y = 0.02f;
       adjustedTarget = (Vector3){target.x, target.y + 1.0f, target.z};
@@ -629,11 +691,15 @@ bool CastSkill(int skillIndex, int agentId, Vector3 startPos, Vector3 target,
     }
     break;
   }
-  case CAST_PATH_SKY: {
-    if (params.anchorType == CAST_ANCHOR_CASTER) {
+  case CAST_PATH_SKY:
+  {
+    if (params.anchorType == CAST_ANCHOR_CASTER)
+    {
       adjustedStartPos = (Vector3){startPos.x, startPos.y + 3.48f, startPos.z};
       adjustedTarget = target;
-    } else {
+    }
+    else
+    {
       adjustedStartPos = (Vector3){target.x, target.y + 3.48f, target.z};
       adjustedTarget = target;
     }
@@ -653,15 +719,18 @@ bool CastSkill(int skillIndex, int agentId, Vector3 startPos, Vector3 target,
 bool IsEnemySlowed(void) { return slowTimer > 0.0f; }
 bool IsEnemyBurning(void) { return burnTimer > 0.0f; }
 bool IsEnemyRooted(void) { return rootTimer > 0.0f; }
-bool IsAnySkillCoiling(void) {
-  if (rootTimer > 0.0f) return true;
+bool IsAnySkillCoiling(void)
+{
+  if (rootTimer > 0.0f)
+    return true;
 #if HAS_SKILL_WOOD
   return IsWoodSkillCoiling();
 #else
   return false;
 #endif
 }
-bool IsAnySkillShocking(void) {
+bool IsAnySkillShocking(void)
+{
 #if HAS_SKILL_ELECTRIC
   return IsElectricSkillShocking();
 #else
@@ -669,14 +738,18 @@ bool IsAnySkillShocking(void) {
 #endif
 }
 
-void AddRootToEnemy(float duration) {
-  if (duration > rootTimer) {
+void AddRootToEnemy(float duration)
+{
+  if (duration > rootTimer)
+  {
     rootTimer = duration;
   }
 }
 
-void AddSlowToEnemy(float duration) {
-  if (duration > slowTimer) {
+void AddSlowToEnemy(float duration)
+{
+  if (duration > slowTimer)
+  {
     slowTimer = duration;
   }
 }
@@ -685,87 +758,104 @@ void AddSlowToEnemy(float duration) {
 
 #if HAS_SKILL_FLUID
 static void CastWaterWrapper(int agentId, Vector3 startPos, Vector3 target,
-                             SkillParams params) {
+                             SkillParams params)
+{
   int qty = params.quantity > 0 ? params.quantity : 1;
-  if (qty > 1) {
+  if (qty > 1)
+  {
     for (int i = 0; i < qty; i++)
       CastFluidSkill(startPos, target,
                      ((float)i / (float)(qty - 1) - 0.5f) * (PI * 0.5f),
                      params.sizeScale);
-  } else
+  }
+  else
     CastFluidSkill(startPos, target, -0.4f, params.sizeScale);
 }
 #endif
 
 #if HAS_SKILL_TUBE
 static void CastTubeWrapper(int agentId, Vector3 startPos, Vector3 target,
-                             SkillParams params) {
+                            SkillParams params)
+{
   int qty = params.quantity > 0 ? params.quantity : 1;
-  if (qty > 1) {
+  if (qty > 1)
+  {
     for (int i = 0; i < qty; i++)
       CastTubeSkill(agentId, startPos, target,
                     ((float)i / (float)(qty - 1) - 0.5f) * (PI * 0.6f),
                     params.sizeScale);
-  } else
+  }
+  else
     CastTubeSkill(agentId, startPos, target, 0.0f, params.sizeScale);
 }
 #endif
 
 #if HAS_SKILL_METAL
 static void CastMetalWrapper(int agentId, Vector3 startPos, Vector3 target,
-                             SkillParams params) {
+                             SkillParams params)
+{
   CastMetalSkill(startPos, target, params);
 }
 #endif
 
 #if HAS_SKILL_FIRE
 static void CastFireWrapper(int agentId, Vector3 startPos, Vector3 target,
-                            SkillParams params) {
+                            SkillParams params)
+{
   int qty = params.quantity > 0 ? params.quantity : 1;
-  if (qty > 1) {
+  if (qty > 1)
+  {
     for (int i = 0; i < qty; i++)
       CastFireSkill(agentId, startPos, target,
                     ((float)i / (float)(qty - 1) - 0.5f) * (PI * 0.5f),
                     params.sizeScale);
-  } else
+  }
+  else
     CastFireSkill(agentId, startPos, target, -0.4f, params.sizeScale);
 }
 #endif
 
 #if HAS_SKILL_WOOD
 static void CastWoodWrapper(int agentId, Vector3 startPos, Vector3 target,
-                            SkillParams params) {
+                            SkillParams params)
+{
   CastWoodSkill(startPos, target, params);
 }
 #endif
 
 #if HAS_SKILL_ELECTRIC
 static void CastElectricWrapper(int agentId, Vector3 startPos, Vector3 target,
-                                SkillParams params) {
+                                SkillParams params)
+{
   int qty = params.quantity > 0 ? params.quantity : 1;
-  if (qty > 1) {
-    for (int i = 0; i < qty; i++) {
+  if (qty > 1)
+  {
+    for (int i = 0; i < qty; i++)
+    {
       float angle = ((float)i / (float)(qty - 1) - 0.5f) * 0.35f;
       Vector3 dir = Vector3Normalize(Vector3Subtract(target, startPos));
       Vector3 offsetTarget = Vector3Add(
           target, Vector3Scale((Vector3){-dir.z, 0.0f, dir.x}, angle * 180.0f));
       CastElectricSkill(startPos, offsetTarget, params.sizeScale);
     }
-  } else
+  }
+  else
     CastElectricSkill(startPos, target, params.sizeScale);
 }
 #endif
 
 #if HAS_SKILL_WIND
 static void CastWindWrapper(int agentId, Vector3 startPos, Vector3 target,
-                            SkillParams params) {
+                            SkillParams params)
+{
   CastWindSkill(startPos, target, params);
 }
 #endif
 
 #if HAS_SKILL_SHIELD
 static void CastShieldWrapper(int agentId, Vector3 startPos, Vector3 target,
-                              SkillParams params) {
+                              SkillParams params)
+{
   (void)target;
   float baseRadius = 30.0f;
   float duration = 5.0f;
@@ -778,20 +868,23 @@ static void CastShieldWrapper(int agentId, Vector3 startPos, Vector3 target,
 
 #if HAS_SKILL_FLUID
 static void UpdateFluidSkillWrapper(float dt, Vector3 enemyPos,
-                                    float enemyRadius) {
+                                    float enemyRadius)
+{
   UpdateFluidSkill(dt);
   int numWater =
       GetFluidSkillProjectiles(tempProjectiles, MAX_TEMP_PROJECTILES);
-  for (int i = numWater - 1; i >= 0; i--) {
+  for (int i = numWater - 1; i >= 0; i--)
+  {
     if (tempProjectiles[i].active &&
         Vector3Distance(tempProjectiles[i].position, enemyPos) <
-            (tempProjectiles[i].radius + enemyRadius)) {
+            (tempProjectiles[i].radius + enemyRadius))
+    {
       DeactivateFluidProjectile(i);
       slowTimer = 3.0f;
       AddFloatingText(tempProjectiles[i].position, "15", BLUE, 22.0f, 0.7f);
       AddFloatingText(tempProjectiles[i].position, "SLOW!", SKYBLUE, 16.0f,
                       0.8f);
-      
+
       Vector3 pushDir = Vector3Normalize(Vector3Subtract(enemyPos, tempProjectiles[i].position));
       pushDir.y = 0.0f;
       AddKnockbackToEnemy(Vector3Scale(pushDir, 1.0f));
@@ -802,19 +895,22 @@ static void UpdateFluidSkillWrapper(float dt, Vector3 enemyPos,
 
 #if HAS_SKILL_TUBE
 static void UpdateTubeSkillWrapper(float dt, Vector3 enemyPos,
-                                   float enemyRadius) {
+                                   float enemyRadius)
+{
   UpdateTubeSkill(dt);
   int numTube = GetTubeSkillProjectiles(tempProjectiles, MAX_TEMP_PROJECTILES);
-  for (int i = numTube - 1; i >= 0; i--) {
+  for (int i = numTube - 1; i >= 0; i--)
+  {
     if (tempProjectiles[i].active &&
         Vector3Distance(tempProjectiles[i].position, enemyPos) <
-            (tempProjectiles[i].radius + enemyRadius)) {
+            (tempProjectiles[i].radius + enemyRadius))
+    {
       DeactivateTubeProjectile(i);
       slowTimer = 2.0f;
       AddFloatingText(tempProjectiles[i].position, "35", BLUE, 24.0f, 0.7f);
       AddFloatingText(tempProjectiles[i].position, "PIERCE!", SKYBLUE, 18.0f,
                       0.8f);
-      
+
       Vector3 pushDir = Vector3Normalize(Vector3Subtract(enemyPos, tempProjectiles[i].position));
       pushDir.y = 0.0f;
       AddKnockbackToEnemy(Vector3Scale(pushDir, 1.8f));
@@ -825,21 +921,24 @@ static void UpdateTubeSkillWrapper(float dt, Vector3 enemyPos,
 
 #if HAS_SKILL_METAL
 static void UpdateMetalSkillWrapper(float dt, Vector3 enemyPos,
-                                    float enemyRadius) {
+                                    float enemyRadius)
+{
   UpdateMetalSkill(dt);
   int numMetal =
       GetMetalSkillProjectiles(tempProjectiles, MAX_TEMP_PROJECTILES);
-  for (int i = numMetal - 1; i >= 0; i--) {
+  for (int i = numMetal - 1; i >= 0; i--)
+  {
     if (tempProjectiles[i].active &&
         Vector3Distance(tempProjectiles[i].position, enemyPos) <
-            (tempProjectiles[i].radius + enemyRadius)) {
+            (tempProjectiles[i].radius + enemyRadius))
+    {
       DeactivateMetalProjectile(i);
       if (GetRandomValue(1, 100) <= 30)
         AddFloatingText(tempProjectiles[i].position, "CRIT! 95", ORANGE, 28.0f,
                         1.0f);
       else
         AddFloatingText(tempProjectiles[i].position, "45", GOLD, 22.0f, 0.7f);
-      
+
       Vector3 pushDir = Vector3Normalize(Vector3Subtract(enemyPos, tempProjectiles[i].position));
       pushDir.y = 0.0f;
       AddKnockbackToEnemy(Vector3Scale(pushDir, 2.5f));
@@ -850,13 +949,16 @@ static void UpdateMetalSkillWrapper(float dt, Vector3 enemyPos,
 
 #if HAS_SKILL_FIRE
 static void UpdateFireSkillWrapper(float dt, Vector3 enemyPos,
-                                   float enemyRadius) {
+                                   float enemyRadius)
+{
   UpdateFireSkill(dt);
   int numFire = GetFireSkillProjectiles(tempProjectiles, MAX_TEMP_PROJECTILES);
-  for (int i = numFire - 1; i >= 0; i--) {
+  for (int i = numFire - 1; i >= 0; i--)
+  {
     if (tempProjectiles[i].active &&
         Vector3Distance(tempProjectiles[i].position, enemyPos) <
-            (tempProjectiles[i].radius + enemyRadius)) {
+            (tempProjectiles[i].radius + enemyRadius))
+    {
       DeactivateFireProjectile(i);
       burnTimer = 3.0f;
       burnTickAccumulator = 0.0f;
@@ -870,8 +972,9 @@ static void UpdateFireSkillWrapper(float dt, Vector3 enemyPos,
       // legacy AddKnockbackToEnemy has no gravity, can't produce a real
       // airborne arc, see ENTITIES_API.md §12.
       int hitAgentId = SkillManager_GetEnemyAgentId();
-      if (hitAgentId >= 0) {
-        Entity_ApplyLaunch(hitAgentId, 5.5f, (Vector3){ pushDir.x * 3.0f, 0.0f, pushDir.z * 3.0f });
+      if (hitAgentId >= 0)
+      {
+        Entity_ApplyLaunch(hitAgentId, 5.5f, (Vector3){pushDir.x * 3.0f, 0.0f, pushDir.z * 3.0f});
       }
     }
   }
@@ -880,13 +983,16 @@ static void UpdateFireSkillWrapper(float dt, Vector3 enemyPos,
 
 #if HAS_SKILL_WOOD
 static void UpdateWoodSkillWrapper(float dt, Vector3 enemyPos,
-                                   float enemyRadius) {
+                                   float enemyRadius)
+{
   UpdateWoodSkill(dt);
   int numWood = GetWoodSkillProjectiles(tempProjectiles, MAX_TEMP_PROJECTILES);
-  for (int i = numWood - 1; i >= 0; i--) {
+  for (int i = numWood - 1; i >= 0; i--)
+  {
     if (tempProjectiles[i].active &&
         Vector3Distance(tempProjectiles[i].position, enemyPos) <
-            (numWood + enemyRadius)) {
+            (numWood + enemyRadius))
+    {
       DeactivateWoodProjectile(i);
       AddFloatingText(tempProjectiles[i].position, "30", LIME, 22.0f, 0.7f);
       AddFloatingText(tempProjectiles[i].position, "ROOTED!", GREEN, 18.0f,
@@ -898,19 +1004,22 @@ static void UpdateWoodSkillWrapper(float dt, Vector3 enemyPos,
 
 #if HAS_SKILL_ELECTRIC
 static void UpdateElectricSkillWrapper(float dt, Vector3 enemyPos,
-                                       float enemyRadius) {
+                                       float enemyRadius)
+{
   UpdateElectricSkill(dt);
   int numElectric =
       GetElectricSkillProjectiles(tempProjectiles, MAX_TEMP_PROJECTILES);
-  for (int i = numElectric - 1; i >= 0; i--) {
+  for (int i = numElectric - 1; i >= 0; i--)
+  {
     if (tempProjectiles[i].active &&
         Vector3Distance(tempProjectiles[i].position, enemyPos) <
-            (tempProjectiles[i].radius + enemyRadius)) {
+            (tempProjectiles[i].radius + enemyRadius))
+    {
       DeactivateElectricProjectile(i);
       AddFloatingText(tempProjectiles[i].position, "120", MAGENTA, 26.0f, 0.9f);
       AddFloatingText(tempProjectiles[i].position, "SHOCK!", PURPLE, 19.0f,
                       0.9f);
-      
+
       Vector3 pushDir = Vector3Normalize(Vector3Subtract(enemyPos, tempProjectiles[i].position));
       pushDir.y = 0.0f;
       AddKnockbackToEnemy(Vector3Scale(pushDir, 0.4f));
@@ -920,15 +1029,16 @@ static void UpdateElectricSkillWrapper(float dt, Vector3 enemyPos,
 #endif
 
 #if HAS_SKILL_WIND
-static void UpdateWindWrapper(float dt, Vector3 enemyPos, float enemyRadius) {
+static void UpdateWindWrapper(float dt, Vector3 enemyPos, float enemyRadius)
+{
   (void)enemyPos;
   (void)enemyRadius;
   UpdateWindSkill(dt);
 }
 #endif
 
-
-ProjectedPoint ProjectPointCached(Vector3 worldPos, Camera3D cam) {
+ProjectedPoint ProjectPointCached(Vector3 worldPos, Camera3D cam)
+{
   ProjectedPoint pt;
   Vector3 camDir = Vector3Subtract(cam.target, cam.position);
   pt.behindCamera =
@@ -942,7 +1052,8 @@ ProjectedPoint ProjectPointCached(Vector3 worldPos, Camera3D cam) {
   return pt;
 }
 
-typedef struct {
+typedef struct
+{
   Vector3 center;
   float radius;
   float height;
@@ -950,7 +1061,8 @@ typedef struct {
 static StaticOccluder staticOccluders[16];
 static int staticOccluderCount = 0;
 
-void RegisterStaticOccluder(Vector3 center, float radius, float height) {
+void RegisterStaticOccluder(Vector3 center, float radius, float height)
+{
   if (staticOccluderCount < 16)
     staticOccluders[staticOccluderCount++] =
         (StaticOccluder){center, radius, height};
@@ -958,14 +1070,17 @@ void RegisterStaticOccluder(Vector3 center, float radius, float height) {
 
 void ClearStaticOccluders(void) { staticOccluderCount = 0; }
 
-float GetLineOfSightVisibility(Vector3 viewPoint, Vector3 targetPoint) {
-  for (int idx = 0; idx < staticOccluderCount; idx++) {
+float GetLineOfSightVisibility(Vector3 viewPoint, Vector3 targetPoint)
+{
+  for (int idx = 0; idx < staticOccluderCount; idx++)
+  {
     StaticOccluder oc = staticOccluders[idx];
     Vector2 A = {viewPoint.x, viewPoint.z}, B = {targetPoint.x, targetPoint.z},
             C = {oc.center.x, oc.center.z};
     Vector2 D = {B.x - A.x, B.y - A.y}, V = {A.x - C.x, A.y - C.y};
     float a = D.x * D.x + D.y * D.y;
-    if (a < 1e-6f) {
+    if (a < 1e-6f)
+    {
       if (V.x * V.x + V.y * V.y - oc.radius * oc.radius <= 0.0f &&
           viewPoint.y >= 0.0f && viewPoint.y <= oc.height)
         return 0.0f;
@@ -974,13 +1089,15 @@ float GetLineOfSightVisibility(Vector3 viewPoint, Vector3 targetPoint) {
     float discriminant =
         (2.0f * (V.x * D.x + V.y * D.y)) * (2.0f * (V.x * D.x + V.y * D.y)) -
         4.0f * a * (V.x * V.x + V.y * V.y - oc.radius * oc.radius);
-    if (discriminant >= 0.0f) {
+    if (discriminant >= 0.0f)
+    {
       float sqrtDisc = sqrtf(discriminant);
       float u_start = fmaxf(
           0.0f, (-(2.0f * (V.x * D.x + V.y * D.y)) - sqrtDisc) / (2.0f * a));
       float u_end = fminf(1.0f, (-(2.0f * (V.x * D.x + V.y * D.y)) + sqrtDisc) /
                                     (2.0f * a));
-      if (u_start <= u_end) {
+      if (u_start <= u_end)
+      {
         float y_min =
             fminf(viewPoint.y + u_start * (targetPoint.y - viewPoint.y),
                   viewPoint.y + u_end * (targetPoint.y - viewPoint.y));
@@ -995,93 +1112,134 @@ float GetLineOfSightVisibility(Vector3 viewPoint, Vector3 targetPoint) {
   return 1.0f;
 }
 
-float Skill_CalculateDamage(SkillCategory cat, SkillParams params) {
+float Skill_CalculateDamage(SkillCategory cat, SkillParams params)
+{
   float base = 50.0f + params.level * 10.0f;
-  switch (cat) {
-    case SKILL_CAT_MELEE:          return base * 2.5f * params.sizeScale;
-    case SKILL_CAT_PROJECTILE:     return base * 0.8f * params.sizeScale;
-    case SKILL_CAT_AOE_CONTROL:    return base * 1.3f * params.sizeScale;
-    case SKILL_CAT_TRAP_UTILITY:   return base * 0.5f * params.sizeScale;
-    case SKILL_CAT_BUFF_SUPPORT:   return 0.0f;
+  switch (cat)
+  {
+  case SKILL_CAT_MELEE:
+    return base * 2.5f * params.sizeScale;
+  case SKILL_CAT_PROJECTILE:
+    return base * 0.8f * params.sizeScale;
+  case SKILL_CAT_AOE_CONTROL:
+    return base * 1.3f * params.sizeScale;
+  case SKILL_CAT_TRAP_UTILITY:
+    return base * 0.5f * params.sizeScale;
+  case SKILL_CAT_BUFF_SUPPORT:
+    return 0.0f;
   }
   return base;
 }
 
-float Skill_CalculateCooldown(SkillCategory cat, SkillParams params) {
+float Skill_CalculateCooldown(SkillCategory cat, SkillParams params)
+{
   (void)params;
-  switch (cat) {
-    case SKILL_CAT_PROJECTILE:     return 0.15f; // Tầm xa: Spam liên hoàn như đạn bắn (Võ Lâm style)
-    case SKILL_CAT_MELEE:          return 0.25f; // Cận chiến: Chém liên hồi tốc độ cao
-    case SKILL_CAT_AOE_CONTROL:    return 1.50f; // Khống chế tầm trung: Hồi trung bình để tránh spam khống chế cứng
-    case SKILL_CAT_TRAP_UTILITY:   return 5.00f; // Bùa chú/Trận pháp bá đạo kiểm soát không gian: Hồi lâu
-    case SKILL_CAT_BUFF_SUPPORT:   return 8.00f; // Hộ thuẫn/Hồi phục: Hồi rất lâu để tránh bất tử
+  switch (cat)
+  {
+  case SKILL_CAT_PROJECTILE:
+    return 0.15f; // Tầm xa: Spam liên hoàn như đạn bắn (Võ Lâm style)
+  case SKILL_CAT_MELEE:
+    return 0.25f; // Cận chiến: Chém liên hồi tốc độ cao
+  case SKILL_CAT_AOE_CONTROL:
+    return 1.50f; // Khống chế tầm trung: Hồi trung bình để tránh spam khống chế cứng
+  case SKILL_CAT_TRAP_UTILITY:
+    return 5.00f; // Bùa chú/Trận pháp bá đạo kiểm soát không gian: Hồi lâu
+  case SKILL_CAT_BUFF_SUPPORT:
+    return 8.00f; // Hộ thuẫn/Hồi phục: Hồi rất lâu để tránh bất tử
   }
   return 1.0f;
 }
 
-float Skill_CalculateManaCost(SkillCategory cat, SkillParams params) {
+float Skill_CalculateManaCost(SkillCategory cat, SkillParams params)
+{
   float base = 10.0f + params.level * 2.0f;
-  switch (cat) {
-    case SKILL_CAT_PROJECTILE:     return base * 0.4f * params.quantity; // Đạn bắn lẻ tốn ít mana (ví dụ 4-6 mana)
-    case SKILL_CAT_MELEE:          return base * 0.8f;                   // Cận chiến tốn mana vừa phải (8-12)
-    case SKILL_CAT_AOE_CONTROL:    return base * 3.0f;                   // AoE/Khống chế tốn nhiều mana (30-45)
-    case SKILL_CAT_TRAP_UTILITY:   return base * 6.0f;                   // Bùa trận tốn lượng mana cực lớn (60-80)
-    case SKILL_CAT_BUFF_SUPPORT:   return base * 8.0f;                   // Khiên/Buff tốn gần cạn cột mana (80-100)
+  switch (cat)
+  {
+  case SKILL_CAT_PROJECTILE:
+    return base * 0.4f * params.quantity; // Đạn bắn lẻ tốn ít mana (ví dụ 4-6 mana)
+  case SKILL_CAT_MELEE:
+    return base * 0.8f; // Cận chiến tốn mana vừa phải (8-12)
+  case SKILL_CAT_AOE_CONTROL:
+    return base * 3.0f; // AoE/Khống chế tốn nhiều mana (30-45)
+  case SKILL_CAT_TRAP_UTILITY:
+    return base * 6.0f; // Bùa trận tốn lượng mana cực lớn (60-80)
+  case SKILL_CAT_BUFF_SUPPORT:
+    return base * 8.0f; // Khiên/Buff tốn gần cạn cột mana (80-100)
   }
   return base;
 }
 
-float Skill_CalculateKnockback(SkillCategory cat, SkillParams params) {
+float Skill_CalculateKnockback(SkillCategory cat, SkillParams params)
+{
   float base = 1.5f; // m/s knockback impulse — real-world-scaled (was 150.0f)
-  switch (cat) {
-    case SKILL_CAT_MELEE:          return base * 1.6f * params.sizeScale;
-    case SKILL_CAT_PROJECTILE:     return base * 0.5f * params.sizeScale;
-    case SKILL_CAT_AOE_CONTROL:    return base * 1.0f * params.sizeScale;
-    case SKILL_CAT_TRAP_UTILITY:   return base * 0.8f * params.sizeScale;
-    case SKILL_CAT_BUFF_SUPPORT:   return 0.0f;
+  switch (cat)
+  {
+  case SKILL_CAT_MELEE:
+    return base * 1.6f * params.sizeScale;
+  case SKILL_CAT_PROJECTILE:
+    return base * 0.5f * params.sizeScale;
+  case SKILL_CAT_AOE_CONTROL:
+    return base * 1.0f * params.sizeScale;
+  case SKILL_CAT_TRAP_UTILITY:
+    return base * 0.8f * params.sizeScale;
+  case SKILL_CAT_BUFF_SUPPORT:
+    return 0.0f;
   }
   return base;
 }
 
-const char* Skill_GetCategoryName(SkillCategory cat) {
-  switch (cat) {
-    case SKILL_CAT_PROJECTILE:     return "PROJECTILE";
-    case SKILL_CAT_AOE_CONTROL:    return "AOE_CONTROL";
-    case SKILL_CAT_MELEE:          return "MELEE";
-    case SKILL_CAT_TRAP_UTILITY:   return "TRAP_UTILITY";
-    case SKILL_CAT_BUFF_SUPPORT:   return "BUFF_SUPPORT";
+const char *Skill_GetCategoryName(SkillCategory cat)
+{
+  switch (cat)
+  {
+  case SKILL_CAT_PROJECTILE:
+    return "PROJECTILE";
+  case SKILL_CAT_AOE_CONTROL:
+    return "AOE_CONTROL";
+  case SKILL_CAT_MELEE:
+    return "MELEE";
+  case SKILL_CAT_TRAP_UTILITY:
+    return "TRAP_UTILITY";
+  case SKILL_CAT_BUFF_SUPPORT:
+    return "BUFF_SUPPORT";
   }
   return "UNKNOWN";
 }
 
 static Vector3 accumulatedKnockback = {0};
 
-void AddKnockbackToEnemy(Vector3 force) {
+void AddKnockbackToEnemy(Vector3 force)
+{
   accumulatedKnockback = Vector3Add(accumulatedKnockback, force);
 }
 
-Vector3 GetAccumulatedKnockback(void) {
+Vector3 GetAccumulatedKnockback(void)
+{
   return accumulatedKnockback;
 }
 
-void ClearAccumulatedKnockback(void) {
+void ClearAccumulatedKnockback(void)
+{
   accumulatedKnockback = (Vector3){0};
 }
 
-void ApplyAoEDamage(Vector3 position, float radius, float damage, float knockback) {
+void ApplyAoEDamage(Vector3 position, float radius, float damage, float knockback)
+{
   float dx = g_currentEnemyPos.x - position.x;
   float dz = g_currentEnemyPos.z - position.z;
   float distSq = dx * dx + dz * dz;
   float hitRad = radius + g_currentEnemyRadius;
 
-  if (distSq <= hitRad * hitRad) {
+  if (distSq <= hitRad * hitRad)
+  {
     char dmgStr[32];
     snprintf(dmgStr, sizeof(dmgStr), "%d", (int)damage);
     AddFloatingText(g_currentEnemyPos, dmgStr, RED, 26.0f, 0.7f);
     AddFloatingText(g_currentEnemyPos, "HIT!", ORANGE, 18.0f, 0.8f);
 
-    Vector3 pushDir = { dx, 1.5f, dz };
-    if (dx == 0.0f && dz == 0.0f) {
+    Vector3 pushDir = {dx, 1.5f, dz};
+    if (dx == 0.0f && dz == 0.0f)
+    {
       pushDir.x = 1.0f;
     }
     pushDir = Vector3Normalize(pushDir);
@@ -1089,22 +1247,27 @@ void ApplyAoEDamage(Vector3 position, float radius, float damage, float knockbac
   }
 }
 
-void SkillManager_BeginShader(Shader shader) {
-  if (shader.id == 0 || shader.locs == NULL) return;  // guard: invalid shader → no-op
+void SkillManager_BeginShader(Shader shader)
+{
+  if (shader.id == 0 || shader.locs == NULL)
+    return; // guard: invalid shader → no-op
   int timeLoc = GetShaderLocation(shader, "u_time");
-  if (timeLoc >= 0) {
+  if (timeLoc >= 0)
+  {
     SetShaderValue(shader, timeLoc, &g_skillManagerTime, SHADER_UNIFORM_FLOAT);
   }
 
   int viewPosLoc = GetShaderLocation(shader, "viewPos");
-  if (viewPosLoc >= 0) {
+  if (viewPosLoc >= 0)
+  {
     Vector3 viewPos = camera.position;
     SetShaderValue(shader, viewPosLoc, &viewPos, SHADER_UNIFORM_VEC3);
   }
 
   int resLoc = GetShaderLocation(shader, "u_resolution");
-  if (resLoc >= 0) {
-    Vector2 res = { (float)GetScreenWidth(), (float)GetScreenHeight() };
+  if (resLoc >= 0)
+  {
+    Vector2 res = {(float)GetScreenWidth(), (float)GetScreenHeight()};
     SetShaderValue(shader, resLoc, &res, SHADER_UNIFORM_VEC2);
   }
 
@@ -1114,7 +1277,8 @@ void SkillManager_BeginShader(Shader shader) {
   // convention needs the opposite: direction FROM the surface TOWARD the
   // light (Y positive). Negate here once so no shader has to remember to.
   int lightDirLoc = GetShaderLocation(shader, "u_lightDir");
-  if (lightDirLoc >= 0) {
+  if (lightDirLoc >= 0)
+  {
     Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
     SetShaderValue(shader, lightDirLoc, &lightDir, SHADER_UNIFORM_VEC3);
   }
@@ -1135,7 +1299,8 @@ void SkillManager_BeginShader(Shader shader) {
   // dạng). Phải tra location bằng tên qua GetShaderLocation() để lấy -1 thật
   // khi uniform không tồn tại, thay vì tin vào slot mặc định chưa từng ghi.
   int matModelLoc = GetShaderLocation(shader, "matModel");
-  if (matModelLoc >= 0) {
+  if (matModelLoc >= 0)
+  {
     Matrix identity = MatrixIdentity();
     SetShaderValueMatrix(shader, matModelLoc, identity);
   }
@@ -1143,13 +1308,15 @@ void SkillManager_BeginShader(Shader shader) {
   BeginShaderMode(shader);
 }
 
-void SkillManager_EndShader(void) {
+void SkillManager_EndShader(void)
+{
   EndShaderMode();
 }
 
 // --- Item 16: cooldown/resource GATING STATE ---
 
-bool SkillManager_CanCast(int skillIndex, int agentId) {
+bool SkillManager_CanCast(int skillIndex, int agentId)
+{
   if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
     return false;
   if (agentId < 0 || agentId >= SKILL_MANAGER_MAX_AGENTS)
@@ -1157,7 +1324,8 @@ bool SkillManager_CanCast(int skillIndex, int agentId) {
   return skillCooldownRemaining[skillIndex][agentId] <= 0.0f;
 }
 
-void SkillManager_TriggerCooldown(int skillIndex, int agentId, float cooldownSeconds) {
+void SkillManager_TriggerCooldown(int skillIndex, int agentId, float cooldownSeconds)
+{
   if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
     return;
   if (agentId < 0 || agentId >= SKILL_MANAGER_MAX_AGENTS)
@@ -1169,11 +1337,14 @@ void SkillManager_TriggerCooldown(int skillIndex, int agentId, float cooldownSec
   skillCooldownRemaining[skillIndex][agentId] = cooldownSeconds;
 }
 
-void SkillManager_ResetAgentCooldowns(int agentId) {
+void SkillManager_ResetAgentCooldowns(int agentId)
+{
   if (agentId < 0 || agentId >= SKILL_MANAGER_MAX_AGENTS)
     return;
-  for (int s = 0; s < MAX_SKILLS; s++) {
-    if (skillCooldownRemaining[s][agentId] > 0.0f) {
+  for (int s = 0; s < MAX_SKILLS; s++)
+  {
+    if (skillCooldownRemaining[s][agentId] > 0.0f)
+    {
       skillCooldownRemaining[s][agentId] = 0.0f;
       if (skillCooldownPendingCount[s] > 0)
         skillCooldownPendingCount[s]--;
@@ -1183,16 +1354,19 @@ void SkillManager_ResetAgentCooldowns(int agentId) {
 
 // --- Item 14: optional abort/interrupt registration ---
 
-void RegisterSkillAbort(int skillIndex, void (*abort)(int agentId)) {
+void RegisterSkillAbort(int skillIndex, void (*abort)(int agentId))
+{
   if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
     return;
   skillAbortCallback[skillIndex] = abort;
 }
 
-void AbortSkill(int skillIndex, int agentId) {
+void AbortSkill(int skillIndex, int agentId)
+{
   if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
     return;
-  if (skillAbortCallback[skillIndex] == NULL) {
+  if (skillAbortCallback[skillIndex] == NULL)
+  {
     TraceLog(LOG_WARNING,
              "[SkillManager] AbortSkill(%d) called but no abort callback "
              "registered for this skill (RegisterSkillAbort not called)",
@@ -1204,13 +1378,15 @@ void AbortSkill(int skillIndex, int agentId) {
 
 // --- Item 13: optional lifecycle-end query registration ---
 
-void RegisterSkillLifecycleQuery(int skillIndex, bool (*hasActiveInstance)(int agentId)) {
+void RegisterSkillLifecycleQuery(int skillIndex, bool (*hasActiveInstance)(int agentId))
+{
   if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
     return;
   skillLifecycleQuery[skillIndex] = hasActiveInstance;
 }
 
-bool Skill_HasActiveInstance(int skillIndex, int agentId) {
+bool Skill_HasActiveInstance(int skillIndex, int agentId)
+{
   if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
     return false;
   if (skillLifecycleQuery[skillIndex] == NULL)
@@ -1220,7 +1396,8 @@ bool Skill_HasActiveInstance(int skillIndex, int agentId) {
 
 // --- Optional per-skill tunable-parameter registration ---
 
-void RegisterSkillTunables(int skillIndex, const SkillTunableEntry *entries, int count) {
+void RegisterSkillTunables(int skillIndex, const SkillTunableEntry *entries, int count)
+{
   if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
     return;
   if (count > MAX_SKILL_TUNABLES)
@@ -1230,7 +1407,8 @@ void RegisterSkillTunables(int skillIndex, const SkillTunableEntry *entries, int
   skillTunableCount[skillIndex] = count;
 }
 
-int Skill_GetTunables(int skillIndex, SkillTunableEntry *outEntries, int maxEntries) {
+int Skill_GetTunables(int skillIndex, SkillTunableEntry *outEntries, int maxEntries)
+{
   if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
     return 0;
   int count = skillTunableCount[skillIndex];
@@ -1244,20 +1422,26 @@ int Skill_GetTunables(int skillIndex, SkillTunableEntry *outEntries, int maxEntr
 // --- Curve-capable flatten/unflatten (SkillTunableEntry <-> plain key=value) ---
 
 int SkillTunables_Flatten(const SkillTunableEntry *entries, int count,
-                           char outKeys[][TUNING_MAX_KEY_LEN], float *outValues,
-                           int maxKeys) {
+                          char outKeys[][TUNING_MAX_KEY_LEN], float *outValues,
+                          int maxKeys)
+{
   int n = 0;
-  for (int i = 0; i < count; i++) {
+  for (int i = 0; i < count; i++)
+  {
     const SkillTunableEntry *e = &entries[i];
-    if (e->curve != NULL) {
-      for (int k = 0; k < SKILL_CURVE_KEYS; k++) {
+    if (e->curve != NULL)
+    {
+      for (int k = 0; k < SKILL_CURVE_KEYS; k++)
+      {
         if (n >= maxKeys)
           return n;
         snprintf(outKeys[n], TUNING_MAX_KEY_LEN, "%s_t%d", e->label, k);
         outValues[n] = e->curve->stops[k].value;
         n++;
       }
-    } else {
+    }
+    else
+    {
       if (n >= maxKeys)
         return n;
       snprintf(outKeys[n], TUNING_MAX_KEY_LEN, "%s", e->label);
@@ -1269,24 +1453,34 @@ int SkillTunables_Flatten(const SkillTunableEntry *entries, int count,
 }
 
 void SkillTunables_Unflatten(const SkillTunableEntry *entries, int count,
-                              const char *const *keys, const float *values,
-                              int keyCount) {
-  for (int i = 0; i < count; i++) {
+                             const char *const *keys, const float *values,
+                             int keyCount)
+{
+  for (int i = 0; i < count; i++)
+  {
     const SkillTunableEntry *e = &entries[i];
-    if (e->curve != NULL) {
-      for (int k = 0; k < SKILL_CURVE_KEYS; k++) {
+    if (e->curve != NULL)
+    {
+      for (int k = 0; k < SKILL_CURVE_KEYS; k++)
+      {
         char wantKey[TUNING_MAX_KEY_LEN];
         snprintf(wantKey, TUNING_MAX_KEY_LEN, "%s_t%d", e->label, k);
-        for (int j = 0; j < keyCount; j++) {
-          if (strcmp(keys[j], wantKey) == 0) {
+        for (int j = 0; j < keyCount; j++)
+        {
+          if (strcmp(keys[j], wantKey) == 0)
+          {
             e->curve->stops[k].value = values[j];
             break;
           }
         }
       }
-    } else if (e->value != NULL) {
-      for (int j = 0; j < keyCount; j++) {
-        if (strcmp(keys[j], e->label) == 0) {
+    }
+    else if (e->value != NULL)
+    {
+      for (int j = 0; j < keyCount; j++)
+      {
+        if (strcmp(keys[j], e->label) == 0)
+        {
           *e->value = values[j];
           break;
         }
@@ -1295,7 +1489,8 @@ void SkillTunables_Unflatten(const SkillTunableEntry *entries, int count,
   }
 }
 
-bool SkillTunables_LoadPersisted(const char *path, SkillTunableEntry *entries, int count) {
+bool SkillTunables_LoadPersisted(const char *path, SkillTunableEntry *entries, int count)
+{
   static char flatKeys[SKILL_TUNABLES_MAX_FLAT_KEYS][TUNING_MAX_KEY_LEN];
   static float flatValues[SKILL_TUNABLES_MAX_FLAT_KEYS];
   static const char *flatKeyPtrs[SKILL_TUNABLES_MAX_FLAT_KEYS];
@@ -1312,26 +1507,32 @@ bool SkillTunables_LoadPersisted(const char *path, SkillTunableEntry *entries, i
 // Item 26: Agent position provider
 static AgentPosProviderFn s_agentPosProvider = NULL;
 
-void SkillManager_SetAgentPosProvider(AgentPosProviderFn fn) {
-    s_agentPosProvider = fn;
+void SkillManager_SetAgentPosProvider(AgentPosProviderFn fn)
+{
+  s_agentPosProvider = fn;
 }
 
-bool SkillManager_GetAgentPos(int agentId, Vector3 *outPos) {
-    if (!s_agentPosProvider || !outPos) return false;
-    return s_agentPosProvider(agentId, outPos);
+bool SkillManager_GetAgentPos(int agentId, Vector3 *outPos)
+{
+  if (!s_agentPosProvider || !outPos)
+    return false;
+  return s_agentPosProvider(agentId, outPos);
 }
 
 // Item 28: Nearby-targets provider
 static NearbyTargetsProviderFn s_nearbyTargetsProvider = NULL;
 
-void SkillManager_SetNearbyTargetsProvider(NearbyTargetsProviderFn fn) {
-    s_nearbyTargetsProvider = fn;
+void SkillManager_SetNearbyTargetsProvider(NearbyTargetsProviderFn fn)
+{
+  s_nearbyTargetsProvider = fn;
 }
 
 int SkillManager_GetNearbyTargets(Vector3 center, float radius,
-                                  int *outIds, int maxIds) {
-    if (!s_nearbyTargetsProvider || !outIds || maxIds <= 0) return 0;
-    return s_nearbyTargetsProvider(center, radius, outIds, maxIds);
+                                  int *outIds, int maxIds)
+{
+  if (!s_nearbyTargetsProvider || !outIds || maxIds <= 0)
+    return 0;
+  return s_nearbyTargetsProvider(center, radius, outIds, maxIds);
 }
 
 // The single legacy test "enemy"'s agentId (see skill_manager.h) — lets skill
@@ -1339,68 +1540,91 @@ int SkillManager_GetNearbyTargets(Vector3 center, float radius,
 // legacy singleton AddKnockbackToEnemy/AddRootToEnemy.
 static int s_enemyAgentId = -1;
 
-void SkillManager_SetEnemyAgentId(int agentId) {
-    s_enemyAgentId = agentId;
+void SkillManager_SetEnemyAgentId(int agentId)
+{
+  s_enemyAgentId = agentId;
 }
 
-int SkillManager_GetEnemyAgentId(void) {
-    return s_enemyAgentId;
+int SkillManager_GetEnemyAgentId(void)
+{
+  return s_enemyAgentId;
 }
 
-void SkillManager_RegisterWall(Vector3 position, int element, float radius, float refreshDuration) {
-    // Refresh an existing slot at ~the same spot (same skill instance
-    // pinging again this tick) instead of always taking a new one.
-    for (int i = 0; i < MAX_WALLS; i++) {
-        if (s_walls[i].timer > 0.0f && Vector3Distance(s_walls[i].position, position) < 0.5f) {
-            s_walls[i].position = position;
-            s_walls[i].element = element;
-            s_walls[i].radius = radius;
-            s_walls[i].timer = refreshDuration;
-            return;
-        }
+void SkillManager_RegisterWall(Vector3 position, int element, float radius, float refreshDuration)
+{
+  // Refresh an existing slot at ~the same spot (same skill instance
+  // pinging again this tick) instead of always taking a new one.
+  for (int i = 0; i < MAX_WALLS; i++)
+  {
+    if (s_walls[i].timer > 0.0f && Vector3Distance(s_walls[i].position, position) < 0.5f)
+    {
+      s_walls[i].position = position;
+      s_walls[i].element = element;
+      s_walls[i].radius = radius;
+      s_walls[i].timer = refreshDuration;
+      return;
     }
-    for (int i = 0; i < MAX_WALLS; i++) {
-        if (s_walls[i].timer <= 0.0f) {
-            s_walls[i] = (WallSlot){ position, element, radius, refreshDuration };
-            return;
-        }
+  }
+  for (int i = 0; i < MAX_WALLS; i++)
+  {
+    if (s_walls[i].timer <= 0.0f)
+    {
+      s_walls[i] = (WallSlot){position, element, radius, refreshDuration};
+      return;
     }
-    // Pool full — silently drop (minimal version, no eviction policy, same
-    // pattern as Entity_AddModifier).
+  }
+  // Pool full — silently drop (minimal version, no eviction policy, same
+  // pattern as Entity_AddModifier).
 }
 
-bool SkillManager_FindNearbyWall(Vector3 casterPos, float checkRadius, Vector3 *outWallPos, int *outElement) {
-    for (int i = 0; i < MAX_WALLS; i++) {
-        if (s_walls[i].timer <= 0.0f) continue;
-        if (Vector3Distance(casterPos, s_walls[i].position) <= checkRadius + s_walls[i].radius) {
-            if (outWallPos) *outWallPos = s_walls[i].position;
-            if (outElement) *outElement = s_walls[i].element;
-            return true;
-        }
+bool SkillManager_FindNearbyWall(Vector3 casterPos, float checkRadius, Vector3 *outWallPos, int *outElement)
+{
+  for (int i = 0; i < MAX_WALLS; i++)
+  {
+    if (s_walls[i].timer <= 0.0f)
+      continue;
+    if (Vector3Distance(casterPos, s_walls[i].position) <= checkRadius + s_walls[i].radius)
+    {
+      if (outWallPos)
+        *outWallPos = s_walls[i].position;
+      if (outElement)
+        *outElement = s_walls[i].element;
+      return true;
     }
-    return false;
+  }
+  return false;
 }
 
-void RegisterSkillManaCost(int skillIndex, float cost) {
-    if (skillIndex < 0 || skillIndex >= MAX_SKILLS) return;
-    s_skillManaCost[skillIndex] = cost;
-    s_skillManaCostSet[skillIndex] = true;
+void RegisterSkillManaCost(int skillIndex, float cost)
+{
+  if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
+    return;
+  s_skillManaCost[skillIndex] = cost;
+  s_skillManaCostSet[skillIndex] = true;
 }
 
-float Skill_GetManaCost(int skillIndex) {
-    if (skillIndex < 0 || skillIndex >= MAX_SKILLS) return DEFAULT_MANA_COST;
-    if (!s_skillManaCostSet[skillIndex]) return DEFAULT_MANA_COST;
-    return s_skillManaCost[skillIndex];
+float Skill_GetManaCost(int skillIndex)
+{
+  if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
+    return DEFAULT_MANA_COST;
+  if (!s_skillManaCostSet[skillIndex])
+    return DEFAULT_MANA_COST;
+  return s_skillManaCost[skillIndex];
 }
 
-void RegisterSkillCastAnimSeconds(int skillIndex, float seconds) {
-    if (skillIndex < 0 || skillIndex >= MAX_SKILLS) return;
-    s_skillCastAnimSecs[skillIndex] = seconds;
-    s_skillCastAnimSecsSet[skillIndex] = true;
+void RegisterSkillCastAnimSeconds(int skillIndex, float seconds)
+{
+  if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
+    return;
+  s_skillCastAnimSecs[skillIndex] = seconds;
+  s_skillCastAnimSecsSet[skillIndex] = true;
 }
 
-float Skill_GetCastAnimSeconds(int skillIndex) {
-    if (skillIndex < 0 || skillIndex >= MAX_SKILLS) return DEFAULT_CAST_ANIM_SECONDS;
-    if (!s_skillCastAnimSecsSet[skillIndex]) return DEFAULT_CAST_ANIM_SECONDS;
-    return s_skillCastAnimSecs[skillIndex];
+float Skill_GetCastAnimSeconds(int skillIndex)
+{
+  if (skillIndex < 0 || skillIndex >= MAX_SKILLS)
+    return DEFAULT_CAST_ANIM_SECONDS;
+  if (!s_skillCastAnimSecsSet[skillIndex])
+    return DEFAULT_CAST_ANIM_SECONDS;
+  return s_skillCastAnimSecs[skillIndex];
 }

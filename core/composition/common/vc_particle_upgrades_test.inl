@@ -113,6 +113,9 @@ void VFX_ComposeParticleUpgradesTest(Vector3 pos) {
         gcfg.collisionElasticity = 0.55f;
         gcfg.collisionFloorY = 0.0f;
 
+        // HDR Glow boost
+        gcfg.emissiveBoost = 4.5f;
+
         GpuParticleSystem_Spawn(gcfg);
     }
 }

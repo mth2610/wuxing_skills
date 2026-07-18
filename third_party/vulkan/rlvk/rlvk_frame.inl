@@ -656,6 +656,14 @@ static void rlvkPushTexture(VkCommandBuffer cmdBuffer, u32 binding, u32 textureS
         return;
     RLVK.pushedView[binding] = view;
     RLVK.pushedSampler[binding] = sampler;
+    // Pool-ring fallback (no VK_KHR_push_descriptor, e.g. Mali): the compat shim detects changes
+    // by comparing the incoming view against RLVK.pushedView - but we just overwrote pushedView
+    // above, so it would see "no change" and never set set0Dirty. Reaching here means the binding
+    // DID change (the dedup above returned otherwise), so mark the snapshot set dirty directly.
+    // Without this, a second batch draw with a different texture (sprite after background) kept the
+    // previous texture bound -> "sprite core not white" / the Android dim-2D + garbled-text bug.
+    // Harmless with native push descriptors (rlvkFlushSet0 early-outs on Caps.pushDescriptor).
+    RLVK.set0Dirty = true;
     vk.CmdPushDescriptorSetKHR(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, RLVK.pipelineLayout, 0, 1,
                                &(VkWriteDescriptorSet){
                                    VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,

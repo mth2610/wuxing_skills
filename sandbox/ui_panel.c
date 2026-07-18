@@ -220,8 +220,10 @@ static void RefreshTunableLayout(int skillIndex) {
 void InitUIPanel(void) {
   s_uiFont = ResourceManager_LoadFont("assets/fonts/ui_font.ttf", 32);
 
-  togglePanelBtn = (Rectangle){20, 15, 180, 32};
-  backBtn = (Rectangle){210, 15, 180, 32};
+  // Taller than a mouse-era 32px so they are reliable TOUCH targets (a finger tap a few px
+  // off-center was missing the old thin buttons - see the Android back-button hit issue).
+  togglePanelBtn = (Rectangle){20, 12, 190, 60};
+  backBtn = (Rectangle){218, 12, 190, 60};
 
   // Training dummy CC test row, continuing the same top bar
   dummyStunBtn   = (Rectangle){400, 15, 140, 32};
@@ -533,7 +535,7 @@ void DrawUIPanel(const UIPanelState *state) {
 
   const char *toggleText = state->isPanelOpen ? "[X] AN BANG DIEU KHIEN" : "[+] HIEN BANG DIEU KHIEN";
   float toggleTextW = UITextWidth(toggleText, 13);
-  UIText(toggleText, togglePanelBtn.x + (togglePanelBtn.width - toggleTextW) / 2, togglePanelBtn.y + 9, 13, WHITE);
+  UIText(toggleText, togglePanelBtn.x + (togglePanelBtn.width - toggleTextW) / 2, togglePanelBtn.y + 23, 13, WHITE);
 
   // Vẽ nút Back
   bool isOverBack = CheckCollisionPointRec(mousePos, backBtn);
@@ -543,7 +545,7 @@ void DrawUIPanel(const UIPanelState *state) {
 
   const char *backText = "[<] QUAY LAI MENU";
   float backTextW = UITextWidth(backText, 13);
-  UIText(backText, backBtn.x + (backBtn.width - backTextW) / 2, backBtn.y + 9, 13, WHITE);
+  UIText(backText, backBtn.x + (backBtn.width - backTextW) / 2, backBtn.y + 23, 13, WHITE);
 
   // Vẽ các nút test CC cho training dummy
   {
