@@ -258,6 +258,17 @@ typedef struct {
 * **Sub-Emitter Lifecycle:** Sub-emitters (`onDeathEmit` and `onLiveEmit`) inherit the parent position but **do not** inherit velocity. Configs passed to sub-emitters **MUST** be declared static (persistent scope).
 * **Over-lifetime curves (`radiusCurve`/`speedCurve`/`alphaCurve`, `core/skill_curve.h`):** all three are `NULL` by default (today's exact legacy behavior — fixed radius, physics-only velocity, colorStart/colorEnd/gradient's own alpha). When set, each is sampled fresh every frame at `t01 = 1.0 - lifeRatio` (0 at spawn, 1 at death — same "age fraction" convention `gradient` already uses) via `SkillCurve_Eval`, and **multiplies** the corresponding base value: `radiusCurve` scales the drawn radius, `speedCurve` scales only this frame's position step from `velocity` (the stored velocity itself is untouched, so it composes cleanly with `forceField`/`WindZone` physics instead of compounding), `alphaCurve` scales `colorStart.a` and overrides whatever alpha `colorStart`/`colorEnd`/`gradient` would have produced (RGB is unaffected). This is the mechanism for a skill's per-phase "particle size/speed/opacity over its own short lifetime" tunables — see `fire_skill.c`/`thunder_orb_skill.c` for the pattern: one `static SkillCurve` per phase per property, seeded flat at `1.0` via `SkillCurve_SetConstant` (a no-op multiplier), registered as a curve-kind `SkillTunableEntry`, and pointed to by every `ParticleConfig` spawned in that phase.
 
+### Mesh-based Particle Emission
+* `void SpawnParticleOnMesh(const struct MeshAdjacency *adj, Matrix transform, ParticleConfig config);`
+Spawns a particle at a random edge position on the mesh, transforming its position into world space using the given transform matrix.
+
+### Mesh Adjacency Graph (`#include "core/mesh_adjacency.h"`)
+Used to construct topological adjacency graphs of 3D meshes (welding vertices within a small threshold) to enable path walking and edge sampling.
+* `void MeshAdjacency_Build(MeshAdjacency *out, Mesh mesh);` - Builds the adjacency graph.
+* `Vector3 MeshAdjacency_SampleVertex(const MeshAdjacency *adj);` - Samples a random vertex.
+* `Vector3 MeshAdjacency_SampleEdge(const MeshAdjacency *adj);` - Samples a random point on an edge.
+* `int MeshAdjacency_GeneratePath(const MeshAdjacency *adj, int startVertex, int length, Vector3 *outPath);` - Generates a random non-backtracking walk path.
+
 ---
 
 ## 7. TRAIL & RIBBON SYSTEM (`#include "core/trail_system.h"`)

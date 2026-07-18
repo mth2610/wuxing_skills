@@ -1753,10 +1753,24 @@ int main(int argc, char **argv) {
     ClearBackground(BLACK);
     PostFX_Draw(&postFXConfig);
 
+    // TEMP bracket probe A (Android UI-vanish): 2D drawn RIGHT AFTER PostFX_Draw, BEFORE
+    // MetaballFX. Top-right GREEN. If this shows but the magenta (bottom, after MetaballFX +
+    // overlays) doesn't, MetaballFX is what breaks the scope. If this too is missing, the break
+    // is in PostFX_Draw's final state itself.
+    DrawRectangle(GetRenderWidth() - 220, 0, 200, 200, GREEN);
+    DrawText("A-POSTFX", GetRenderWidth() - 210, 90, 20, BLACK);
+
     // Metaballs: composite directly onto the screen, after post-process —
     // must run outside PostFX_Begin/End (BeginTextureMode can't nest) and
     // after PostFX_Draw (which would otherwise overwrite it).
-    MetaballFX_DrawRegistered(camera, ELEMENT_COLOR_WATER, 0.3f, 0.12f);
+    // TEMP bisect (Android 2D-vanish): MetaballFX disabled to confirm it's the cause + see the
+    // resulting viewport. If YELLOW/MAGENTA/UI return, MetaballFX's RT round-trip is the culprit.
+    if (getenv("WX_ENABLE_METABALL"))
+        MetaballFX_DrawRegistered(camera, ELEMENT_COLOR_WATER, 0.3f, 0.12f);
+
+    // TEMP bracket probe B: RIGHT AFTER MetaballFX, before the overlays. Top-center YELLOW.
+    DrawRectangle(GetRenderWidth()/2 - 100, 0, 200, 200, YELLOW);
+    DrawText("B-METABALL", GetRenderWidth()/2 - 90, 90, 20, BLACK);
 
     // These are dev/debug overlays — skip them entirely on SCREEN_GAME so it
     // reads as a real production screen, not a test environment. Untouched
@@ -1775,18 +1789,59 @@ int main(int argc, char **argv) {
                  WHITE);
     }
 
-    // TEMP diagnostic (Android UI-vanishes-after-shaderc-fix investigation) - REMOVE once
-    // resolved. Fires once/sec to confirm whether this block is even being entered, and with
-    // what state, without flooding logcat every frame.
+    // TEMP dim-diagnosis controls (Android 2D-after-PostFX renders dim). Three magenta boxes
+    // mid-screen under DIFFERENT forced blend states. Whichever is BRIGHT magenta identifies the
+    // fix; if all are dim it is not a blend-state leak.
+    if (!g_isDebuggerCapturing && !renderVFXMode && currentScreen == SCREEN_SKILL_SANDBOX) {
+        rlDrawRenderBatchActive();
+        rlDisableColorBlend();                                   // D1: opaque, no blend at all
+        DrawRectangle(300, 300, 150, 150, MAGENTA);
+        rlEnableColorBlend();
+        BeginBlendMode(BLEND_ALPHA);                             // D2: explicit default alpha blend
+        DrawRectangle(520, 300, 150, 150, MAGENTA);
+        EndBlendMode();
+        DrawRectangle(740, 300, 150, 150, MAGENTA);             // D3: whatever state is current
+        // D4: force default shader + default (white) texture + flush, then draw
+        rlDrawRenderBatchActive();
+        rlSetShader(rlGetShaderIdDefault(), rlGetShaderLocsDefault());
+        rlSetTexture(rlGetTextureIdDefault());
+        DrawRectangle(960, 300, 150, 150, MAGENTA);
+        rlDrawRenderBatchActive();
+        DrawText("D1  D2  D3  D4", 300, 470, 20, WHITE);
+        // TEMP pixel readback: sample 3 points ACROSS the D4 box + 1 scene point. Uniform box
+        // color = opaque dim value; a gradient across it = the box is sampling the scene texture
+        // (stale unit-0 bind). Once every ~300 frames (LoadImageFromScreen presents the frame).
+        { static int s_pf = 0;
+          if ((s_pf++ % 300) == 5) {
+              Image im = LoadImageFromScreen();
+              int bx = 200 + 1000, by = 375;                 // letterbox: ortho-x 1000..1110 -> fb 1200..1310
+              Color l = GetImageColor(im, bx + 15,  by);
+              Color c = GetImageColor(im, bx + 55,  by);
+              Color r = GetImageColor(im, bx + 95,  by);
+              Color scn = GetImageColor(im, im.width/2, im.height*3/4);
+              TraceLog(LOG_WARNING, "PIXDBG img=%dx%d D4box L=(%d,%d,%d,%d) C=(%d,%d,%d,%d) R=(%d,%d,%d,%d) scene=(%d,%d,%d,%d)",
+                       im.width, im.height, l.r,l.g,l.b,l.a, c.r,c.g,c.b,c.a, r.r,r.g,r.b,r.a, scn.r,scn.g,scn.b,scn.a);
+              UnloadImage(im);
+          } }
+    }
+
+    // TEMP diagnostic (Android UI-vanishes-on-in-game-screens investigation) - REMOVE once
+    // resolved. Distinguishes THREE hypotheses in a single on-device run:
+    //   (1) control flow never reaches here    -> UIDBG log ABSENT + no magenta box on screen
+    //   (2) rlvk drops 2D drawn after PostFX    -> UIDBG log PRESENT + magenta box MISSING
+    //   (3) the UI draw functions themselves    -> UIDBG log PRESENT + magenta box VISIBLE,
+    //       early-out (state bug, not rlvk)         but the real UI panel/HUD still absent
+    // Frame-counter gated (NOT GetTime) so a misbehaving timer can't suppress the log. The
+    // magenta box is an unconditional raw 2D primitive at this exact point in the frame - the
+    // simplest possible "does ANY 2D land after the PostFX blit" probe.
     {
-        static double s_lastUiDbgLog = -1000.0;
-        double now = GetTime();
-        if (now - s_lastUiDbgLog > 1.0) {
-            s_lastUiDbgLog = now;
-            TRACELOG(LOG_WARNING, "UIDBG screen=%d dbgCapturing=%d vfxMode=%d panelOpen=%d",
-                      (int)currentScreen, (int)g_isDebuggerCapturing, (int)renderVFXMode,
-                      (int)uiState.isPanelOpen);
-        }
+        static unsigned s_uiDbgFrame = 0;
+        if ((s_uiDbgFrame++ % 120u) == 0u)
+            TraceLog(LOG_WARNING, "UIDBG frame=%u screen=%d dbgCapturing=%d vfxMode=%d panelOpen=%d",
+                      s_uiDbgFrame, (int)currentScreen, (int)g_isDebuggerCapturing,
+                      (int)renderVFXMode, (int)uiState.isPanelOpen);
+        DrawRectangle(0, 0, 200, 200, MAGENTA);   // TEMP bracket probe C: after all overlays
+        DrawText("C-UIBLOCK", 20, 90, 20, WHITE);
     }
     if (!g_isDebuggerCapturing && !renderVFXMode) {
         if (currentScreen == SCREEN_SKILL_SANDBOX) {

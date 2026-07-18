@@ -553,10 +553,12 @@ static void rlvkWaitInFlightFrames(void)
             vkWaitForFences(RLVK.device, 1, &RLVK.frameFences[i], VK_TRUE, UINT64_MAX);
 }
 
+static unsigned s_dbgFrameFlushCount = 0; // TEMP diag: mid-frame flush count (Android 2D-vanish)
 static void rlvkFlushFrame(void)
 {
     if (!RLVK.frameActive)
         return;
+    s_dbgFrameFlushCount++;
     u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
     VkCommandBuffer cmdBuffer = RLVK.cmdBuffers[frameIndex];
 

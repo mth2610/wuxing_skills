@@ -1,4 +1,5 @@
 #include "particle_system.h"
+#include "mesh_adjacency.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include "core/utils_math.h"
@@ -495,4 +496,13 @@ void ParticleSystem_SpawnRadialBurst(Vector3 origin, float sizeScale, const Part
 
     SpawnParticle(pcfg);
   }
+}
+
+void SpawnParticleOnMesh(const struct MeshAdjacency *adj, Matrix transform, ParticleConfig config) {
+  if (!adj || adj->count == 0) return;
+  Vector3 localPos = MeshAdjacency_SampleEdge(adj);
+  Vector3 worldPos = Vector3Transform(localPos, transform);
+  config.position = worldPos;
+  config.physics.position = worldPos;
+  SpawnParticle(config);
 }

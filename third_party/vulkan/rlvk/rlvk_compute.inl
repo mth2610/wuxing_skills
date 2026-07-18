@@ -310,7 +310,13 @@ Matrix rlGetMatrixProjectionStereo(int eye)     { return RLVK.State.projectionSt
 Matrix rlGetMatrixViewOffsetStereo(int eye)     { return RLVK.State.viewOffsetStereo[eye & 1]; }
 
 // Set a custom projection matrix (replaces internal projection matrix)
-void rlSetMatrixProjection(Matrix p)            { RLVK.State.projection = p; }
+// §7.21's pre-rotation compensation here was reverted 2026-07-18 (see rlvkAttachSurface in
+// rlvk_platform.inl for why) - RLVK.preRotationQuarterTurns is now always 0, so this is back to
+// a plain assignment.
+void rlSetMatrixProjection(Matrix p)
+{
+    RLVK.State.projection = p;
+}
 void rlSetMatrixModelview (Matrix v)            { RLVK.State.modelview  = v; }
 // Set eyes projection matrices for stereo rendering
 void rlSetMatrixProjectionStereo(Matrix r, Matrix l) { RLVK.State.projectionStereo[0] = r; RLVK.State.projectionStereo[1] = l; }

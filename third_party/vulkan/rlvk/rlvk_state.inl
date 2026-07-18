@@ -368,6 +368,13 @@ typedef struct rlvkData {
     VkFormat                depthFormat;
     u32                     swapchainImageCount;
     u32                     currentImageIndex;
+    // Android Vulkan pre-rotation (see rlvkAttachSurface + rlSetMatrixProjection in
+    // rlvk_compute.inl): quarter-turns [0..3] the app must compensate for in its own clip-space
+    // output because preTransform is now set to match the device's real currentTransform
+    // (rather than always IDENTITY) - some Android/Mali drivers otherwise treat a
+    // preTransform/currentTransform mismatch as perpetually suboptimal and keep signaling
+    // VK_ERROR_OUT_OF_DATE_KHR every single frame.
+    int                     preRotationQuarterTurns;
 
     // 8B pointers
     rlRenderBatch          *currentBatch;

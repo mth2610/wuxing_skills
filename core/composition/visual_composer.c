@@ -20,6 +20,7 @@
 #include "core/emitter_system.h"
 #include "core/color_gradient.h"
 #include "core/utils_math.h"
+#include "core/mesh_adjacency.h"
 #include "rlgl.h"
 #include "raymath.h"
 #include <stdlib.h>

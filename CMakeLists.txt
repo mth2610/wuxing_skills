@@ -122,6 +122,7 @@ add_executable(wuxing
     core/motion_controller.c
     core/status_vfx.c
     core/afterimage.c
+    core/mesh_adjacency.c
     core/shader_preprocessor.c
     core/metaball_fx.c
     core/debug_draw.c

@@ -1123,15 +1123,185 @@ of guessing further:
   until/unless the cache check is made to detect script changes (e.g. hash `rlvk_patch_shaderc.py`
   into the cache key) — not done this session, flagged as a real fix worth making if this class
   of iteration continues.
-- **Per-frame swapchain recreate loop** (see above) — not yet investigated further; candidate
-  fix is matching the swapchain's `preTransform` to the real `currentTransform` and
-  counter-rotating rendered content instead of forcing IDENTITY, but that reopens the exact
-  problem §7.12 was trying to avoid — needs its own investigation, not a quick patch.
-- Expect Mali driver quirks; §6's methodology applies verbatim — build the scenario first.
-- `adb`/on-device testing **is now available this session** (device connected, used extensively
-  in §7.12–§7.19) — the old "physical-device testing is human-only, no device access from here"
-  note is stale. Still true: the human must actually run `make -f Makefile.Android USE_VULKAN=1`
-  and reinstall — that part isn't something to do from here.
+### 7.21 The swapchain recreate loop's real cost, and real Vulkan pre-rotation
+After §7.20 finally got every shader compiling, a new symptom appeared: entering any in-game
+screen made the entire 2D UI/HUD overlay vanish — buttons, panels, HUD bars all gone — while
+3D world content (character, environment, a debug gizmo) kept rendering fine, with **zero**
+warnings or errors logged. Investigation:
+- A TEMP diagnostic (`UIDBG`, unconditional `TRACELOG` right before the UI-draw block, gated by
+  nothing) never fired even once, confirmed via `adb logcat -c` immediately before checking (so
+  buffer eviction from the swapchain-recreate spam wasn't the explanation) — the code path
+  containing the UI draw calls appears to not run at all some of the time, though the exact
+  mechanism (crash? hang? some frames just never reaching that point?) was not conclusively
+  isolated before a stronger, connected lead emerged.
+- Checked the documented "failed pipeline build must skip the draw" quirk first (§9's known
+  driver-quirks list) — ruled out: that specific path DOES log
+  (`RLVK: vkCreateGraphicsPipelines => ... SKIPPED`) and would repeat every frame since failed
+  keys aren't cached, and nothing like it appeared.
+- Pulled a wider adb log and found real `gralloc4`/`GraphicBufferAllocator`/`AHardwareBuffer`
+  allocation failures (`Failed to allocate (4 x 4) ... format 59/56 usage b00: 5`), firing in
+  lockstep with every `RLVK: swapchain created/recreated` cycle — i.e. the **still-open,
+  previously-deprioritized "harmless" per-frame swapchain recreate bug from §7.12** is not
+  harmless: it's thrashing Android's own buffer allocator hard enough to produce hard
+  allocation failures on-device, now that real shaders/pipelines are actually being exercised
+  (previously every custom shader silently used the same default pipeline, never stressing
+  whatever this churn touches the same way).
+- Confirmed swapchain extent is rock-stable (`2320x1080`, every single recreate, `sort -u` over
+  the whole log session) — rules out extent fluctuation as the OUT_OF_DATE cause, consistent
+  with §7.12's original hypothesis: `preTransform=IDENTITY` not matching the device's real
+  `currentTransform=ROTATE_90` is what some Android/Mali drivers treat as perpetually
+  suboptimal, continuously reporting `VK_ERROR_OUT_OF_DATE_KHR`.
+
+**User explicitly chose the full fix over a smaller mitigation** (already committed/pushed to
+git as a safety net, so no `checkout` needed before proceeding). Implemented real Vulkan
+"pre-rotation" — the standard, Khronos/Google-documented technique for this exact class of
+Android driver behavior:
+- `rlvkAttachSurface` (`rlvk_platform.inl`) now requests `preTransform == currentTransform`
+  (falls back to IDENTITY only if currentTransform itself somehow isn't in
+  `supportedTransforms`, which shouldn't happen), and records how many 90° quarter-turns of
+  compensation are needed (`RLVK.preRotationQuarterTurns`, new top-level `rlvkData` field —
+  **not** inside the nested `RLVK.State` sub-struct, a placement mistake caught immediately by
+  `check_rlvk_compile.sh`).
+- The compensation itself lives in exactly ONE place: `rlSetMatrixProjection()`
+  (`rlvk_compute.inl`). Traced (not assumed) that this is the single choke point every draw
+  path funnels through: 2D UI (`SetupViewport`'s `rlOrtho` → this), 3D world (`BeginMode3D`'s
+  camera projection → this), AND raylib's own CPU-side `DrawMesh` MVP computation
+  (`rmodels.c:1517,1736` call `rlGetMatrixProjection()` — confirmed via `grep` against the
+  actual raylib source — which reads straight back from what this function stores). Rotating
+  the matrix stored here therefore covers every rendering path with **zero shader changes and
+  zero push-constant layout changes** — a dramatically smaller blast radius than the
+  alternative (injecting a rotation into the shared push-constant struct + extending
+  `rlvkInjectClipZEpilogue` + regenerating the embedded default shader's SPIR-V, which was the
+  first design considered and rejected as unnecessarily invasive once this single choke point
+  was found).
+- **Touch input needs no changes.** Reasoned through this rather than assumed: Android's input
+  system delivers touch coordinates in the app's own logical window space
+  (`ANativeWindow`-relative, landscape), independent of whatever the Vulkan swapchain's
+  `preTransform` is — that value only affects how the GPU-rendered buffer gets composited onto
+  the physical panel for *display*. Since the compensation is specifically designed to make the
+  final visual output identical to what already worked (same layout, same button positions),
+  and touch mapping is already correctly calibrated to that visual layout (§7.12–§7.17), it
+  should continue working unmodified. This is the main reason a MUCH smaller mitigation
+  (throttling recreate frequency, not fixing the transform) was on the table at all — full
+  pre-rotation looked risky specifically because it seemed likely to reopen the touch-alignment
+  saga; tracing the actual coupling (or lack thereof) defused that risk.
+- **Rotation sign NOT device-verified.** `-90°` per quarter-turn is the best derivation
+  available without a live device to iterate against — commented clearly in code as a one-line
+  fix (flip to `+90°`) if the on-device result comes out rotated the wrong way. §7.12's own
+  history of describing an uncompensated `ROTATE_90` result as "mirrored" (not just rotated)
+  hints the true relationship might have another wrinkle beyond a clean single rotation; flagged
+  rather than over-fit a guess.
+- **Verification**: desktop `check_rlvk_compile.sh` (caught the `RLVK.State.` vs `RLVK.`
+  placement bug immediately) + full 13/13 visual suite (desktop/MoltenVK reports IDENTITY
+  `currentTransform`, so `preRotationQuarterTurns` stays 0 there — the new code is a pure no-op
+  on desktop, and 13/13 staying green confirms zero regression for that path) + full `cmake
+  --build build` project build, all green. **Not yet verified on device** — this needs a real
+  Android rebuild, and the human should check THREE things together: (1) does the
+  `swapchain created/recreated` log spam stop, (2) does the UI reappear, (3) is the visual
+  orientation still correct (rotation sign) — a wrong sign would show up as the whole screen
+  rotated/mirrored, not a UI-specific symptom, so it should be easy to tell apart from the
+  original bug.
+
+**DEVICE-VERIFIED AND REVERTED (2026-07-18)**: the human rebuilt and tested. Results:
+- The recreate-spam theory was **half right**: logcat now shows exactly one
+  `RLVK: swapchain created (2320x1080, 5 images)` and no repeated `recreated` lines before a
+  clean `RLVK: surface detached` a minute later — so matching `preTransform` to
+  `currentTransform` genuinely does stop the OUT_OF_DATE loop.
+- But the compensation itself was **visually wrong**: on-screen text came out rotated/mirrored
+  (UI text rendered sideways) — the `-90°`-per-quarter-turn derivation was not correct as
+  written (and given §7.12's earlier "mirrored, not just rotated" observation, likely needs more
+  than a sign flip — a flat rotation may not be the whole transform Mali/Android expects here).
+- Critically, **the UI/HUD-vanishing bug was still present** even with the recreate spam gone —
+  the human confirmed the two symptoms are unrelated: orientation was already correct before
+  §7.21 (i.e. before pre-rotation was introduced), and it's specifically the UI-vanishing bug
+  that pre-dates this investigation and remains unexplained.
+- This disproves the gralloc-thrashing-causes-UI-vanishing hypothesis as *the* explanation (or at
+  least means fixing the recreate loop alone isn't sufficient) and demonstrates the pre-rotation
+  compensation math needs real device-side iteration to get right, not further reasoning from a
+  desk.
+- **Reverted** (same day): `preTransform` forced back to `VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR`
+  unconditionally, `RLVK.preRotationQuarterTurns` hardcoded to 0, `rlSetMatrixProjection` back to
+  a plain assignment. Desktop re-verified: `check_rlvk_compile.sh` clean, 13/13 visual suite
+  green (pure no-op there either way, since desktop's `currentTransform` is already IDENTITY).
+  `RLVK.preRotationQuarterTurns` field and the quarter-turn `switch` in `rlvkAttachSurface` are
+  left in place (dead-but-documented) rather than deleted, in case a future attempt wants the
+  scaffolding back — see git history around 2026-07-18 for the exact matrix/switch that was
+  tried and didn't work if resuming this.
+
+**Still open**:
+- The original UI/HUD-vanishing bug is **unsolved** and back to square one investigation-wise —
+  it is NOT a rotation/pre-rotation issue. The `gralloc4` allocation-failure lead from this
+  section may still be relevant (the recreate loop is real and worth fixing for its own sake:
+  wasted per-frame swapchain rebuild cost even setting aside the UI bug) but is no longer a
+  credible root-cause explanation for the UI symptom on its own.
+- The `UIDBG` TEMP diagnostic in `main.c` is still in place and STILL never fired on device even
+  after the recreate loop stopped — this rules out "recreate spam evicting the log line from the
+  logcat ring buffer" as the reason it doesn't show, strengthening the case that the UI draw
+  block genuinely isn't being reached (crash/early-return/branch-not-taken), not just that its
+  log got lost. Next investigation should instrument further upstream of that point to find where
+  execution diverges, rather than assume it's a rendering-layer (rlvk) issue at all — this may
+  belong to `main.c`/`core/` state, outside rlvk's ownership.
+- Real pre-rotation (fixing the OUT_OF_DATE loop properly) remains a valid future improvement but
+  needs on-device iteration to get the transform math right — not something to re-attempt blind.
+- ROTATE_180 was never observed/tested on this or any device — moot for now since pre-rotation is
+  reverted.
+- `adb`/on-device testing **is available this session** (device connected, used extensively in
+  §7.12–§7.21) — the old "physical-device testing is human-only" note is stale. Still true: the
+  human must actually run `make -f Makefile.Android USE_VULKAN=1` and reinstall.
+
+> **Superseded by §7.22.** The "back to square one" framing above was written before direct
+> on-device inspection found the actual root cause. Keep §7.21 for the pre-rotation dead-end
+> history, but §7.22 is the resolution.
+
+### 7.22 The real root cause: recreate-on-SUBOPTIMAL every-frame loop (2026-07-18)
+After reverting §7.21 (back to IDENTITY preTransform), orientation was correct again but the UI
+still vanished on in-game screens. This time the investigation was done **directly on-device via
+adb** instead of by reasoning, which cracked it:
+- `adb exec-out screencap` on the sandbox screen: 3D world (character, planet, health bar,
+  selection ring) renders, but no 2D UI **and** no magenta debug box that `main.c`'s UIDBG probe
+  draws unconditionally right before the UI block.
+- `adb logcat`: the UIDBG `TRACELOG` (a pure-C call, independent of rendering) fired **zero**
+  times — proving the frame never reaches that line at runtime — while `strings` on the installed
+  `libmain.so` confirmed the probe code (the `s_uiDbgFrame` symbol + the `UIDBG` literal) **was**
+  compiled in. So: code present, never executed. The menu (its own simple `BeginDrawing`→2D→
+  `EndDrawing`, no render textures) worked fine; only the render-texture/PostFX in-game path
+  stalled.
+- The lockstep signal: every ~30 ms, `GraphicBufferAllocator`/`gralloc4` allocation failures →
+  `RLVK: swapchain created` → `swapchain recreated`, forever. **The swapchain was being recreated
+  every single frame.**
+- Root cause in `rlvkPresent` (`rlvk_platform.inl`): it recreated the swapchain on
+  `VK_ERROR_OUT_OF_DATE_KHR` **OR** `VK_SUBOPTIMAL_KHR`. On this device (portrait-native Mali
+  panel, app locked to landscape) `vkQueuePresentKHR` returns `SUBOPTIMAL` on **every** present
+  because we request `preTransform=IDENTITY` (which is what composites with correct on-screen
+  orientation here) while the surface's `currentTransform` is `ROTATE_90`. That mismatch is
+  permanent — recreating yields the identical IDENTITY swapchain and the identical SUBOPTIMAL next
+  frame — so recreate-on-SUBOPTIMAL is an unbreakable every-frame rebuild loop. It thrashed
+  gralloc and stalled the in-game frames (which, unlike the menu, do mid-frame flushes for the
+  PostFX/depth-snapshot render-texture round-trips) badly enough that execution never reached the
+  post-PostFX 2D UI draws.
+
+**Fix**: recreate the swapchain ONLY on `OUT_OF_DATE`, never on `SUBOPTIMAL`. `SUBOPTIMAL` means
+"presented fine, just not ideal" — the acquire path already treated it as safe-to-render; the
+present path now matches. A real invalidation (resize/resume/rotation) still surfaces as
+`OUT_OF_DATE` on the next acquire, so nothing that genuinely needs a rebuild is missed. One-line
+change (drop the `|| SUBOPTIMAL` from the recreate condition), plus a repro scenario
+`ui_after_rt` in the visual suite (renders 3D into an RT, blits it full-screen, then draws 2D on
+top — the exact PostFX→UI sequence) which passes, and desktop 14/14 suite green. This keeps
+IDENTITY, so orientation stays correct with **no rotation compensation** — §7.21's pre-rotation
+was solving the wrong problem (it did stop the loop, but by matching currentTransform, which then
+demanded content rotation that was never the actual need).
+
+**Verification status**: desktop-green; **the on-device confirmation is the magenta box +
+UIDBG log both appearing on the sandbox screen after this fix** — pending the human's rebuild.
+The `preRotationQuarterTurns` field + the quarter-turn `switch` in `rlvkAttachSurface` are now
+provably dead (IDENTITY path only) and can be deleted whenever convenient; left in as documented
+history for now.
+
+**Still open**:
+- On-device confirmation of §7.22 (rebuild + verify magenta box and UIDBG log appear in the
+  sandbox, and the gralloc/`swapchain recreated` spam is gone).
+- Remove the `UIDBG` TEMP probe from `main.c` once confirmed.
+- The `preRotationQuarterTurns` dead scaffolding (see above) can be pruned.
 
 ### 8.5 Smaller known gaps (deliberate)
 - `rlLoadShaderProgramEx` unimplemented (nothing in raylib's normal flow uses it).

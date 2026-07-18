@@ -205,19 +205,15 @@ void rlvkAttachSurface(VkSurfaceKHR surface)
     }
 #endif
 
-    // Request IDENTITY pretransform when the driver supports it (virtually always does):
-    // rlvk never rotates its rendered content to compensate for a non-identity preTransform,
-    // so passing caps.currentTransform straight through (the old behavior) told the presentation
-    // engine the image was ALREADY pre-rotated to match the panel's native orientation when it
-    // wasn't - on phones whose native panel is portrait (currentTransform = ROTATE_90/270 while
-    // running landscape, the common case), that mismatch rotates and misaligns the whole
-    // presented frame, and touch input (delivered in the correct physical orientation) then lands
-    // on the wrong on-screen location relative to what's drawn. Falling back to currentTransform
-    // when IDENTITY isn't in supportedTransforms preserves the old (rare-case) behavior exactly.
-    VkSurfaceTransformFlagBitsKHR preTransform =
-        (caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR)
-            ? VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR
-            : caps.currentTransform;
+    // §7.21 real pre-rotation (matching preTransform to currentTransform + compensating in
+    // rlSetMatrixProjection) was tried and REVERTED on 2026-07-18: on-device it stopped the
+    // swapchain-recreate spam as intended, but broke visual orientation (mirrored/rotated UI
+    // text), and did NOT fix the separate UI/2D-overlay-vanishing bug it was meant to address -
+    // the human confirmed that bug pre-dates this change and is unrelated to rotation. Back to
+    // forcing IDENTITY (the known-good, visually-correct state from §7.12's original fix). See
+    // RLVK_HANDOFF.md §7.21 for the full writeup of what was tried and why it was reverted.
+    VkSurfaceTransformFlagBitsKHR preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+    RLVK.preRotationQuarterTurns = 0;
 
     RLVK_CHECK(vkCreateSwapchainKHR(RLVK.device,
                                     &(VkSwapchainCreateInfoKHR){
@@ -712,6 +708,18 @@ void rlvkPresent(void)
     u32 imageIndex = RLVK.currentImageIndex;
     VkCommandBuffer cmdBuffer = RLVK.cmdBuffers[frameIndex];
 
+    // TEMP scope diagnostic (Android 2D-after-MetaballFX vanish). If fbSlot != 0 at present, the
+    // frame ended with an FBO scope open -> the final 2D batch (flushed by EndDrawing) went into
+    // that render texture, not the swapchain intermediate, and is lost by the flip-blit below.
+    { static unsigned s_scopeDbg = 0;
+      if ((s_scopeDbg++ % 120u) == 0u)
+          TRACELOG(RL_LOG_WARNING, "SCOPEDBG present scopeW=%u scopeH=%u vp=[%d,%d %dx%d] scEn=%d sc=[%d,%d %dx%d] flushes=%u",
+                   RLVK.scope.width, RLVK.scope.height,
+                   RLVK.State.viewportX, RLVK.State.viewportY, RLVK.State.viewportW, RLVK.State.viewportH,
+                   (int)RLVK.State.scissorEnabled, RLVK.State.scissorX, RLVK.State.scissorY,
+                   RLVK.State.scissorW, RLVK.State.scissorH, s_dbgFrameFlushCount);
+      s_dbgFrameFlushCount = 0; }
+
     vkCmdEndRenderPass(cmdBuffer);
     rlvkFinishSwapchainImage(cmdBuffer); // flip-blit the frame into the swapchain
 
@@ -759,7 +767,22 @@ void rlvkPresent(void)
     RLVK.frameCounter++;
 
     // The frame's work is already submitted (its fence gates the drain inside the rebuild);
-    // rebuild now so the NEXT acquire starts from a valid swapchain
-    if ((pres == VK_ERROR_OUT_OF_DATE_KHR) || (pres == VK_SUBOPTIMAL_KHR))
+    // rebuild now so the NEXT acquire starts from a valid swapchain.
+    //
+    // Recreate ONLY on OUT_OF_DATE, never on SUBOPTIMAL. SUBOPTIMAL means "presented fine, but
+    // not ideal for the current surface transform" - and on this project's target (Samsung A33,
+    // Mali-G68, portrait-native panel locked to landscape) the driver reports SUBOPTIMAL on
+    // EVERY present, because we deliberately request preTransform=IDENTITY (which composits with
+    // correct on-screen orientation here) while the surface's currentTransform is ROTATE_90.
+    // That mismatch is permanent: recreating the swapchain produces the identical IDENTITY
+    // swapchain and the identical SUBOPTIMAL next frame, so recreating-on-SUBOPTIMAL is an
+    // every-frame infinite rebuild loop. On-device that loop thrashed Android's gralloc
+    // allocator (per-frame GraphicBufferAllocator failures) and stalled in-game frames so the
+    // 2D UI never rendered (the whole "HUD vanishes on in-game screens" bug, 2026-07-18). The
+    // acquire path (above) already treats SUBOPTIMAL as safe-to-render; the present path must be
+    // just as tolerant. A genuine surface invalidation (resize/resume/real rotation) still
+    // surfaces as OUT_OF_DATE on the next acquire, so nothing that actually needs a rebuild is
+    // missed. See RLVK_HANDOFF.md §7.22.
+    if (pres == VK_ERROR_OUT_OF_DATE_KHR)
         rlvkRecreateSwapchain();
 }

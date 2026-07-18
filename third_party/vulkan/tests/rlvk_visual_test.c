@@ -357,6 +357,41 @@ static const char *sc_readback(void)
     return NULL;
 }
 
+// The game's screen composite: render 3D into an RT, blit that RT full-screen onto the
+// default framebuffer (PostFX_Draw), THEN draw 2D UI (DrawRectangle/DrawText) on top of it.
+// On Android the whole 2D UI/HUD vanished on in-game screens while the blitted 3D scene stayed
+// visible - i.e. 2D primitives issued to the default framebuffer AFTER an RT pass + a
+// full-screen textured quad were being lost. The main menu (plain 2D, no RT pass) was fine.
+// depth_rt already proves 3D-after-blit works; this guards specifically the 2D-after-blit path.
+static const char *sc_ui_after_rt(void)
+{
+    Camera3D cam = cam3d();
+    RenderTexture2D rt = LoadRenderTexture(W, H);
+    Rectangle panel = { W/2 - 60, H/2 - 40, 120, 80 };
+    for (int f = 0; f < 3; f++)
+    {
+        BeginDrawing(); ClearBackground(BLACK);
+        // 1) scene into the RT
+        BeginTextureMode(rt);
+            ClearBackground((Color){ 20, 40, 120, 255 });     // distinctive "scene" blue
+            BeginMode3D(cam); DrawCube((Vector3){0,0,0}, 2.0f, 2.0f, 2.0f, (Color){40,60,140,255}); EndMode3D();
+        EndTextureMode();
+        // 2) blit the scene full-screen onto the default framebuffer (PostFX_Draw analogue)
+        DrawTextureRec(rt.texture, (Rectangle){0,0,W,-H}, (Vector2){0,0}, WHITE);
+        // 3) 2D UI on top (the vanishing HUD) - opaque red panel + white text
+        DrawRectangleRec(panel, RED);
+        DrawText("UI", (int)panel.x + 40, (int)panel.y + 28, 30, WHITE);
+        EndDrawing();
+    }
+    Image im = snap();
+    Color center = at(im, W/2, H/2);                          // inside the red panel
+    Color scene  = at(im, 20, H/2);                           // far-left: only the blitted scene
+    UnloadImage(im); UnloadRenderTexture(rt);
+    if (!near3(scene, 20, 40, 120, 40)) return "blitted scene missing: RT->screen blit itself lost";
+    if (center.r < 150 || center.g > 90) return "2D UI panel missing on top of RT blit (Android HUD-vanish class)";
+    return NULL;
+}
+
 // GPU-particle draw path: vertex shader reads a per-instance SSBO by gl_InstanceID
 // (mirrors core/shaders/particles.vs + compute/gpu_particle_system.c's draw half).
 // Guards: graphics set0 SSBO bindings, rlvkRebaseStorageBuffers, rlvkBindShaderSsbos.
@@ -468,6 +503,7 @@ static const Scenario SCENARIOS[] = {
     { "instanced",      sc_instanced },
     { "ssbo_vs",        sc_ssbo_vs },
     { "readback",       sc_readback },
+    { "ui_after_rt",    sc_ui_after_rt },
     { "stress",         sc_stress },
 };
 #define N_SCENARIOS (int)(sizeof(SCENARIOS)/sizeof(SCENARIOS[0]))

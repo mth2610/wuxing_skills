@@ -136,7 +136,15 @@ void VFX_ComposeYinYangOrbit(Vector3 pos, float radius, float time);
 // zone) are continuous.
 void VFX_ComposeRockBurst(Vector3 pos, float scale);
 void VFX_ComposeFloatingStones(Vector3 pos, float radius, float time);
+struct MeshAdjacency;
+
 void VFX_ComposeQuakeRumble(Vector3 pos, float radius, float time);
+
+// Mesh Adjacency Electricity Composition APIs
+int VFX_SpawnMeshElectricity(const struct MeshAdjacency *adj, Color color, float duration);
+void VFX_UpdateMeshElectricity(int handle, Matrix transform);
+void VFX_KillMeshElectricity(int handle);
+void VFX_ComposeMeshElectricity(Vector3 position, Color color, float duration);
 // Fire skill set (Phase 2) — all continuous: FlameBreath is a directional
 // flamethrower cone along `dir`; BurningGround an ignited patch; FireWhirl a
 // fire tornado.

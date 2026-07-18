@@ -26,6 +26,9 @@
       "VFX_KillProcBeam",
       "VFX_KillAuraRing",
       "VFX_KillSmokeColumn",
+      "VFX_SpawnMeshElectricity",
+      "VFX_UpdateMeshElectricity",
+      "VFX_KillMeshElectricity",
       "VFX_BeginEnergySmokeBatch",
       "VFX_EndEnergySmokeBatch",
       "VFX_BeginMagicFilamentsBatch",
@@ -634,6 +637,13 @@
       "category": "water",
       "type": "continuous",
       "draw_call": "{ static bool splashed = false; if ($PROG < 0.05f) splashed = false; if ($PROG >= 0.83f && !splashed) { VFX_ComposeSplashBurst(s_testPathPoints[15], 1.2f); splashed = true; } VFX_ComposeWaterStreamOnPath(s_testPathPoints, 16, 0.25f, $PROG * 1.2f, 0.25f, $TIME); }"
+    },
+    {
+      "fn": "VFX_ComposeMeshElectricity",
+      "label": "MESH ELECTRICITY",
+      "category": "util",
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeMeshElectricity($POS, (Color){100, 220, 255, 255}, 2.5f)"
     }
   ],
   "overrides": {

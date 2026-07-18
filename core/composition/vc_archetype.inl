@@ -34,6 +34,7 @@ static void ShardSparkle_Init(void) {
 #include "common/vc_smoke_column.inl"
 #include "common/vc_shard_debris.inl"
 #include "common/vc_crown_splash.inl"
+#include "common/vc_mesh_electricity.inl"
 
 static void VC_Archetype_Update(float dt)
 {
@@ -45,6 +46,7 @@ static void VC_Archetype_Update(float dt)
     VC_SmokeColumn_Update(dt);
     VC_ShardDebris_Update(dt);
     VC_CrownSplash_Update(dt);
+    VC_MeshElectricity_Update(dt);
 }
 
 static void VC_Archetype_Draw3D(Camera3D cam)
@@ -57,4 +59,5 @@ static void VC_Archetype_Draw3D(Camera3D cam)
     VC_SmokeColumn_Draw3D(cam);
     VC_ShardDebris_Draw3D(cam);
     VC_CrownSplash_Draw3D(cam);
+    VC_MeshElectricity_Draw3D(cam);
 }

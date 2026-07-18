@@ -231,6 +231,10 @@ static inline void ParticleRadialBurstConfig_Unify(ParticleRadialBurstConfig *cf
 
 void ParticleSystem_SpawnRadialBurst(Vector3 origin, float sizeScale, const ParticleRadialBurstConfig *cfg);
 
+// Mesh-based Particle Emission
+struct MeshAdjacency;
+void SpawnParticleOnMesh(const struct MeshAdjacency *adj, Matrix transform, ParticleConfig config);
+
 // ============================================================
 // CHỈ CÓ Ý NGHĨA Ở GPU COMPUTE MODE
 // ============================================================

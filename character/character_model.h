@@ -87,4 +87,9 @@ void CharacterModel_TriggerAttackTimed(CharacterAnimState *state, CharacterAnimS
 // CharacterModel_IsLoaded() is false.
 void CharacterModel_Draw(const CharacterAnimState *state, Vector3 position, float yawRadians, float scale, Color tint);
 
+// Getters for integration with visual composer / skill effects
+struct MeshAdjacency;
+Model CharacterModel_GetModel(void);
+struct MeshAdjacency* CharacterModel_GetAdjacency(void);
+
 #endif // CHARACTER_MODEL_H

@@ -1,6 +1,7 @@
 #include "character/character_model.h"
 #include "core/resource_manager.h"
 #include "core/surface_material.h"
+#include "core/mesh_adjacency.h"
 #include <string.h>
 #include <ctype.h>
 
@@ -167,4 +168,21 @@ void CharacterModel_Draw(const CharacterAnimState *state, Vector3 position, floa
     float yawDegrees = yawRadians * RAD2DEG;
     DrawModelEx(s_model, position, (Vector3){ 0.0f, 1.0f, 0.0f }, yawDegrees,
                 (Vector3){ scale, scale, scale }, tint);
+}
+
+static MeshAdjacency s_charAdjacency;
+static bool s_charAdjacencyBuilt = false;
+
+Model CharacterModel_GetModel(void) {
+    return s_model;
+}
+
+MeshAdjacency* CharacterModel_GetAdjacency(void) {
+    if (!s_charAdjacencyBuilt && s_loaded) {
+        if (s_model.meshCount > 0) {
+            MeshAdjacency_Build(&s_charAdjacency, s_model.meshes[0]);
+            s_charAdjacencyBuilt = true;
+        }
+    }
+    return s_charAdjacencyBuilt ? &s_charAdjacency : NULL;
 }

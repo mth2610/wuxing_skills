@@ -80,7 +80,7 @@ static const char *s_meshNames[] = {
     "DISC", "RING", "CONE", "TORNADO", "CYLINDER", "SPHERE", "SHOCKWAVE", "PYRAMID", "TETRAHEDRON"};
 
 // @gen:newfx_names begin
-// 81 entries — auto-managed by sync_vfx_test.py
+// 82 entries — auto-managed by sync_vfx_test.py
 static const char* s_newFxNames[] = {
     "FLAME WISP", "FIRE PILLAR", "FIREBALL", "FIRE BREATH", "BURN GROUND", "FIRE WHIRL",
     "EMBER DRIFT", "IMPACT FIRE", "CAST FIRE", "SPLASH", "BUBBLES", "MIST VEIL",
@@ -95,7 +95,7 @@ static const char* s_newFxNames[] = {
     "PROJECTILE", "GND PATTERN", "SUMMON RING", "EXPLOSION", "GROUND WAVE", "PROJ FIRE",
     "PROJ WATER", "PROJ METAL", "CYLINDER AURA", "GROUND AURA", "BLACK HOLE", "DRAW ICE CRYSTAL BURST",
     "SMOKE COLUMN F X", "GROUND SMOKE", "SMOKE ON PLANE", "MAGIC FILAMENTS", "MAGIC FILAMENTS ON PLANE", "SHARD DEBRIS",
-    "CROWN SPLASH", "CHAIN LINK", "WATER STREAM ON PATH",
+    "CROWN SPLASH", "CHAIN LINK", "WATER STREAM ON PATH", "MESH ELECTRICITY",
 };
 // @gen:newfx_names end
 
@@ -110,7 +110,7 @@ static const int s_newFxCategories[] = {
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 1, 6, 6, 6, 6, 6, 6, 6, 6,
-    1,
+    1, 6,
 };
 // @gen:newfx_categories end
 
@@ -440,7 +440,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             const char **names;
             int globalIdx;
             int visualIdx;
-            maxIdx = 81;
+            maxIdx = 82;
             names = s_newFxNames; // @gen:newfx_count
             visualIdx = 0;
             (void)names;
@@ -537,6 +537,8 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_ComposeShardDebris(s_prefabStartPos, 12, 4.5f, VC_MAT_ICE);
           } else if (s_testIndex == 78) { /* CROWN SPLASH */
               VFX_ComposeCrownSplash(s_prefabStartPos, 1.8f, 1.2f, 0.5f, VC_MAT_WATER);
+          } else if (s_testIndex == 81) { /* MESH ELECTRICITY */
+              VFX_ComposeMeshElectricity(s_prefabStartPos, (Color){100, 220, 255, 255}, 2.5f);
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
               s_isPlayingMesh = true;
@@ -691,6 +693,8 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_ComposeShardDebris(s_prefabStartPos, 12, 4.5f, VC_MAT_ICE);
           } else if (s_testIndex == 78) { /* CROWN SPLASH */
               VFX_ComposeCrownSplash(s_prefabStartPos, 1.8f, 1.2f, 0.5f, VC_MAT_WATER);
+          } else if (s_testIndex == 81) { /* MESH ELECTRICITY */
+              VFX_ComposeMeshElectricity(s_prefabStartPos, (Color){100, 220, 255, 255}, 2.5f);
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
               s_isPlayingMesh = true;
@@ -928,7 +932,7 @@ void VFXTest_DrawHUD(void)
         const char **names;
         int gi;
         int vIdx;
-        maxIdx = 81;
+        maxIdx = 82;
         names = s_newFxNames; // @gen:newfx_count
         vIdx = 0;
         (void)names;
@@ -1000,6 +1004,7 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
     case 71: VFX_DrawIceCrystalBurst(pos, 5, 0, 1.0f); break;
     case 77: VFX_ComposeShardDebris(pos, 12, 4.5f, VC_MAT_ICE); break;
     case 78: VFX_ComposeCrownSplash(pos, 1.8f, 1.2f, 0.5f, VC_MAT_WATER); break;
+    case 81: VFX_ComposeMeshElectricity(pos, (Color){100, 220, 255, 255}, 2.5f); break;
     default: break;
     }
 // @gen:newfx_render_trigger end
