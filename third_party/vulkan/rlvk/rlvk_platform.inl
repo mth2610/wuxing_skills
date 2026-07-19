@@ -513,7 +513,11 @@ static void rlvkBeginFrame(void)
     memset(RLVK.shadowUbo, 0, sizeof(RLVK.shadowUbo));
     RLVK.set0Dirty = true;
     if (!RLVK.Caps.pushDescriptor && RLVK.descPools[frameIndex])
+    {
         vkResetDescriptorPool(RLVK.device, RLVK.descPools[frameIndex], 0);
+        RLVK.set0CacheCount[frameIndex] = 0; // pool reset freed every cached snapshot set
+        RLVK.boundSet0 = VK_NULL_HANDLE;
+    }
     if (RLVK.computeDescPools[frameIndex])
         vkResetDescriptorPool(RLVK.device, RLVK.computeDescPools[frameIndex], 0);
 

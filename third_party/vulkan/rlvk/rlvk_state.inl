@@ -163,6 +163,7 @@ typedef struct rlvkPipelineEntry {
 #define RLVK_MAX_SCOPE_ATTACHMENTS      10      // 8 colors + resolve + depth
 #define RLVK_DESC_SETS_PER_FRAME        1024    // pool-ring fallback: snapshot sets per frame slot
 #define RLVK_COMPUTE_SETS_PER_FRAME     256     // compute dispatch snapshot sets per frame slot
+#define RLVK_SET0_CACHE_SIZE            128     // pool-ring fallback: distinct set-0 snapshots reused within one frame
 
 typedef struct rlvkRenderPassKey {
     VkFormat            colorFormats[8];        // [i] for i < colorCount
@@ -205,6 +206,22 @@ typedef struct rlvkVertexArray {
     u32                 indexSlot;      // bufferSlots[] id holding the index buffer (0 = none)
     bool                inUse;                 // Slot occupied
 } rlvkVertexArray;
+
+// Pool-ring fallback: one cached set-0 snapshot, keyed by the full bindable state it captures.
+// Within a frame many draws revisit the same (texture, UBO, SSBO) combo (font atlas + one UBO,
+// the white texture, the scene RT rebound after each PostFX pass) - caching lets those reuse the
+// already-allocated+written set instead of paying vkAllocateDescriptorSets + a full rewrite each
+// time. The default-texture/dummy-buffer fallbacks in rlvkFlushSet0 are deterministic from these
+// keys, so equal keys always produce an identical set. Reset whenever the frame's pool is reset.
+typedef struct rlvkSet0CacheEntry {
+    VkImageView     view   [RLVK_MAX_TEXTURE_UNITS];
+    VkSampler       sampler[RLVK_MAX_TEXTURE_UNITS];
+    VkBuffer        uboBuf  [2];
+    VkDeviceSize    uboOff  [2];
+    VkDeviceSize    uboRange[2];
+    u32             ssboSlot[RLVK_SET0_SSBO_COUNT];
+    VkDescriptorSet set;
+} rlvkSet0CacheEntry;
 
 //----------------------------------------------------------------------------------
 // Global Variables Definition
@@ -351,6 +368,9 @@ typedef struct rlvkData {
     VkDescriptorBufferInfo  shadowUbo[2];                       // [0]=VS binding, [1]=FS binding
     VkDescriptorPool        descPools[RLVK_FRAME_INDEX_COUNT];  // reset with each frame slot's fence
     bool                    set0Dirty;                          // shadow changed since the last bound set
+    VkDescriptorSet         boundSet0;                          // last set-0 actually bound (skip redundant vkCmdBindDescriptorSets on a cache hit)
+    rlvkSet0CacheEntry      set0Cache[RLVK_FRAME_INDEX_COUNT][RLVK_SET0_CACHE_SIZE]; // per-frame snapshot reuse cache
+    u32                     set0CacheCount[RLVK_FRAME_INDEX_COUNT];                  // live entries this frame slot (cleared on pool reset)
 
     // Compute state (core Vulkan 1.0/1.1 features only). Fixed set-0 layout for every compute
     // program: bindings 0..7 SSBO, 8..11 storage image, 12..13 combined sampler, 14 the

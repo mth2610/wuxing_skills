@@ -314,8 +314,10 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     for (int i = 0; i < inputPointCount; i++) {
         Vector2 pt = inputPoints[i];
 
-        // Mặc định bất kỳ điểm chạm nào ở nửa bên trái màn hình đều tính là click vào UI (tránh cast chiêu khi di chuyển)
-        if (pt.x < screenWidth * 0.45f) {
+        // Chỉ chặn cast chiêu khi chạm vào ĐÚNG vùng joystick (góc dưới trái) thay vì cả nửa
+        // trái màn hình — trước đây chặn 45% bên trái khiến ko bao giờ cast được về phía trái
+        // nhân vật. Joystick chỉ nằm ở góc dưới-trái (bán kính chạm = joystickBaseRadius * 2).
+        if (Vector2Distance(pt, joystickCenter) < joystickBaseRadius * 2.0f) {
             uiState->clickedOnUI = true;
         }
         

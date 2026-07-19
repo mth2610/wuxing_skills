@@ -112,6 +112,11 @@ typedef struct {
   TrailWidthEnvelopeType widthEnvelope;
   bool smoothSpline;
 
+  const SkillCurve *widthCurve;
+  const SkillCurve *alphaCurve;
+  float distortionStrength;
+  float distortionSpeed;
+
   // Unified Config representation (Phase 3)
   VFX_GeneralConfig general;
   VFX_GeometryConfig geometry;
@@ -143,8 +148,9 @@ static inline void TrailConfig_Unify(TrailConfig *cfg) {
     cfg->animation.spriteAnim = cfg->spriteAnim;
     cfg->animation.radiusCurve = NULL;
     cfg->animation.speedCurve = NULL;
-    cfg->animation.alphaCurve = NULL;
+    cfg->animation.alphaCurve = cfg->alphaCurve;
     cfg->animation.emissiveCurve = NULL;
+    cfg->animation.widthCurve = cfg->widthCurve;
   }
   if (cfg->render.gradient == NULL && cfg->gradient != NULL) {
     cfg->render.gradient = cfg->gradient;
@@ -152,12 +158,16 @@ static inline void TrailConfig_Unify(TrailConfig *cfg) {
     cfg->render.colorEnd = cfg->tint;
     cfg->render.tint = cfg->tint;
     cfg->render.shader = cfg->shader;
+    cfg->render.distortionStrength = cfg->distortionStrength;
+    cfg->render.distortionSpeed = cfg->distortionSpeed;
   } else if (cfg->render.tint.a == 0 && cfg->tint.a != 0) {
     cfg->render.tint = cfg->tint;
     cfg->render.colorStart = cfg->tint;
     cfg->render.colorEnd = cfg->tint;
     cfg->render.gradient = cfg->gradient;
     cfg->render.shader = cfg->shader;
+    cfg->render.distortionStrength = cfg->distortionStrength;
+    cfg->render.distortionSpeed = cfg->distortionSpeed;
   }
 
   // 2. Populate legacy flat fields from unified if unified is set and legacy is empty
@@ -181,8 +191,18 @@ static inline void TrailConfig_Unify(TrailConfig *cfg) {
   if (cfg->spriteAnim == NULL && cfg->animation.spriteAnim != NULL) {
     cfg->spriteAnim = cfg->animation.spriteAnim;
   }
+  if (cfg->widthCurve == NULL && cfg->animation.widthCurve != NULL) {
+    cfg->widthCurve = cfg->animation.widthCurve;
+  }
+  if (cfg->alphaCurve == NULL && cfg->animation.alphaCurve != NULL) {
+    cfg->alphaCurve = cfg->animation.alphaCurve;
+  }
   if (cfg->gradient == NULL && cfg->render.gradient != NULL) {
     cfg->gradient = cfg->render.gradient;
+  }
+  if (cfg->distortionStrength == 0.0f && cfg->render.distortionStrength != 0.0f) {
+    cfg->distortionStrength = cfg->render.distortionStrength;
+    cfg->distortionSpeed = cfg->render.distortionSpeed;
   }
   if (cfg->tint.a == 0 && cfg->render.tint.a != 0) {
     cfg->tint = cfg->render.tint;
@@ -198,6 +218,8 @@ typedef struct {
   const ForceField *forceField;
   const ColorGradient *gradient;
   const SpriteAnim *spriteAnim;
+  const SkillCurve *widthCurve;
+  const SkillCurve *alphaCurve;
   // Non-NULL: tip position driven each frame by Vector3Transform(attachLocalOffset, *attachedTransform).
   // Caller owns the Matrix and must keep it valid for the trail's lifetime.
   const Matrix *attachedTransform;
@@ -245,6 +267,8 @@ typedef struct {
   float uvScrollSpeed;
   float uvScrollOffset;
   float minVertexDistance;
+  float distortionStrength;
+  float distortionSpeed;
 
   // 5. Số nguyên và Enum (Int/Enum) - 4 bytes
   TrailType type;

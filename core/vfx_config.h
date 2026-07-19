@@ -46,6 +46,7 @@ typedef struct {
     const SkillCurve *speedCurve;
     const SkillCurve *alphaCurve;
     const SkillCurve *emissiveCurve;
+    const SkillCurve *widthCurve;
 } VFX_AnimationConfig;
 
 // 5. Render Config
@@ -66,6 +67,10 @@ typedef struct {
     float trailWidthRatio; // trail width factor relative to particle radius
     Color trailColorStart;
     Color trailColorEnd;
+
+    // Noise/Flow Distortion for Trails & Ribbons
+    float distortionStrength; // 0.0 = disabled (default)
+    float distortionSpeed;    // time multiplier for distortion noise
 } VFX_RenderConfig;
 
 #endif // CORE_VFX_CONFIG_H

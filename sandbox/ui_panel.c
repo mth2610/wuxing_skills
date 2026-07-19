@@ -94,9 +94,9 @@ static Rectangle tunableTabRects[TUNABLE_MAX_TABS];
 // Top Y values tightened (was 340/380) to match the compacted control block
 // above (Quantity..GPU status now ends around y=240 instead of y=340).
 #define TUNABLE_PANEL_X 770.0f
-#define TUNABLE_TAB_ROW_TOP 280.0f
+#define TUNABLE_TAB_ROW_TOP 360.0f
 #define TUNABLE_TAB_ROW_H 30.0f
-#define TUNABLE_PANEL_TOP 320.0f
+#define TUNABLE_PANEL_TOP 400.0f
 #define TUNABLE_LABEL_ROW_H 22.0f
 #define TUNABLE_SLIDER_ROW_H 28.0f
 #define TUNABLE_ROW_GAP 14.0f
@@ -222,31 +222,40 @@ void InitUIPanel(void) {
 
   // Taller than a mouse-era 32px so they are reliable TOUCH targets (a finger tap a few px
   // off-center was missing the old thin buttons - see the Android back-button hit issue).
-  togglePanelBtn = (Rectangle){20, 12, 190, 60};
-  backBtn = (Rectangle){218, 12, 190, 60};
+  // NOTE: the whole panel starts at y=95, not the top edge. Android reserves the top 84px as a
+  // MANDATORY system-gesture inset (notification-shade pull) - confirmed on the Mali A33 via
+  // `dumpsys window` (`mandatorySystemGestures frame=[0,0][2400,84] sideHint=TOP`). Real finger
+  // taps on anything inside that band are intermittently stolen by the OS ("highlights but no
+  // action / hên xui" - the touch never reaches the app; verified with TOUCHDBG: taps there log
+  // nothing while an adb-injected tap, which bypasses the OS gesture layer, works). This band is
+  // MANDATORY and cannot be excluded via setSystemGestureExclusionRects, so the only fix is to
+  // keep interactive UI out of it. Every Y below (and TUNABLE_*_TOP) is shifted down together so
+  // relative layout is unchanged - do NOT move a single row back up into y<84.
+  togglePanelBtn = (Rectangle){20, 95, 190, 32};
+  backBtn = (Rectangle){215, 95, 180, 32};
 
   // Training dummy CC test row, continuing the same top bar
-  dummyStunBtn   = (Rectangle){400, 15, 140, 32};
-  dummyLaunchBtn = (Rectangle){550, 15, 140, 32};
-  dummyPullBtn   = (Rectangle){700, 15, 140, 32};
-  dummyResetBtn  = (Rectangle){850, 15, 140, 32};
+  dummyStunBtn   = (Rectangle){400, 95, 140, 32};
+  dummyLaunchBtn = (Rectangle){550, 95, 140, 32};
+  dummyPullBtn   = (Rectangle){700, 95, 140, 32};
+  dummyResetBtn  = (Rectangle){850, 95, 140, 32};
 
   // Compacted row pitch (36px, was 50px) and button height (28px, was 35px)
   // so this whole control block takes noticeably less vertical space,
   // leaving more room for the (now wider) tuning panel below it.
   for (int i = 0; i < 5; i++) {
-    rectQty[i] = (Rectangle){870 + i * 55, 20, 46, 28};
+    rectQty[i] = (Rectangle){870 + i * 55, 100, 46, 28};
   }
   for (int i = 0; i < 3; i++) {
-    rectSize[i] = (Rectangle){870 + i * 92, 56, 84, 28};
+    rectSize[i] = (Rectangle){870 + i * 92, 136, 84, 28};
   }
   for (int i = 0; i < 2; i++) {
-    rectAnchor[i] = (Rectangle){870 + i * 140, 92, 132, 28};
+    rectAnchor[i] = (Rectangle){870 + i * 140, 172, 132, 28};
   }
   for (int i = 0; i < 3; i++) {
-    rectPath[i] = (Rectangle){870 + i * 92, 128, 88, 28};
+    rectPath[i] = (Rectangle){870 + i * 92, 208, 88, 28};
   }
-  rectPortalToggle = (Rectangle){870, 164, 190, 28};
+  rectPortalToggle = (Rectangle){870, 244, 190, 28};
 
   int skillCount = GetRegisteredSkillCount();
   if (skillCount > 64)
@@ -264,7 +273,7 @@ void InitUIPanel(void) {
     int row = i / columns;
     skillButtons[i] = (Rectangle){
         20.0f + col * (buttonWidth + spacingX),
-        60.0f + row * (buttonHeight + spacingY),
+        140.0f + row * (buttonHeight + spacingY),
         buttonWidth,
         buttonHeight
     };
@@ -280,20 +289,72 @@ void UpdateUIPanel(Vector2 mousePos, UIPanelState *state) {
   state->requestedBackToMenu = false;
   hoverSkillIndex = -1;
 
-  // Kiểm tra click vào nút Ẩn/Hiện Bảng Điều Khiển đầu tiên
-  bool isOverToggleBtn = CheckCollisionPointRec(mousePos, togglePanelBtn);
+  // TEMP DIAGNOSTIC (§8.4b-1 top-button tap) — REMOVE once root-caused. Logs to logcat only while
+  // a touch/click is present: mapped mouse (what the button test uses) vs the RAW touch point (pre
+  // renderOffset scaling) vs the toggle rect vs screen size. Disambiguates letterbox/renderOffset
+  // mismatch (raw ≠ mouse, or mouse outside a rect the raw is inside) from OS top-edge gesture
+  // interception (touch never registers a point at all). Fires on the DOWN/press frame only.
+  {
+    int pts = GetTouchPointCount();
+    int dn = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
+    int pr = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+    int rl = IsMouseButtonReleased(MOUSE_BUTTON_LEFT);
+    static int s_prevPts = 0, s_prevDn = 0;
+    // Fire on any touch/button activity OR an edge transition, so a fast tap whose down-state falls
+    // between polls still logs the frame its point count / button state changes.
+    if (pts > 0 || dn || pr || rl || pts != s_prevPts || dn != s_prevDn) {
+      Vector2 raw = GetTouchPosition(0);
+      TraceLog(LOG_WARNING,
+        "TOUCHDBG mouse=(%.0f,%.0f) raw0=(%.0f,%.0f) pts=%d down=%d pressed=%d released=%d overToggle=%d overBack=%d screen=(%d,%d)",
+        mousePos.x, mousePos.y, raw.x, raw.y, pts, dn, pr, rl,
+        CheckCollisionPointRec(mousePos, togglePanelBtn), CheckCollisionPointRec(mousePos, backBtn),
+        GetScreenWidth(), GetScreenHeight());
+    }
+    s_prevPts = pts; s_prevDn = dn;
+  }
+
+  // Robust touch tap for the top buttons: arm while the touch is DOWN over the button, fire on
+  // RELEASE over it. IsMouseButtonPressed (down-edge) was unreliable on Android here - on the
+  // down frame GetMousePosition can still be the stale/previous position (and the top-edge is a
+  // system-gesture zone), so the edge and the over-button test miss even though the button then
+  // highlights. Arming off the level state (IsMouseButtonDown) + firing on release is immune to
+  // that: the release position is settled over the button.
+  bool downNow = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
+  static bool s_toggleArmed = false, s_backArmed = false;
+
+  // Touch targets are padded well beyond the small visual rect. Measured via TOUCHDBG: taps aimed
+  // at these top-row buttons register ~15-20px LOW on this device (a top-region vertical touch bias
+  // that does NOT affect center-screen buttons - the main menu works untouched), so a visual-sized
+  // 32px hit rect barely catches the finger. Keep the small visual (matches the other top buttons,
+  // per request) but expand the HIT area down to cover where taps actually land (~y+50).
+  // Vertical-only padding: taps are accurate in X (measured x≈120-132, well inside) but land
+  // ~15-20px low in Y, so widening X would only risk overlapping the neighbouring buttons.
+  Rectangle toggleHit = { togglePanelBtn.x, togglePanelBtn.y - 8,
+                          togglePanelBtn.width, togglePanelBtn.height + 34 };
+  Rectangle backHit   = { backBtn.x, backBtn.y - 8,
+                          backBtn.width, backBtn.height + 34 };
+
+  bool isOverToggleBtn = CheckCollisionPointRec(mousePos, toggleHit);
   if (isOverToggleBtn) {
     state->clickedOnUI = true;
-    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+    if (downNow) s_toggleArmed = true;
+  }
+  if (s_toggleArmed && !downNow) {
+    s_toggleArmed = false;
+    if (isOverToggleBtn) {
       state->isPanelOpen = !state->isPanelOpen;
       return;
     }
   }
 
-  bool isOverBackBtn = CheckCollisionPointRec(mousePos, backBtn);
+  bool isOverBackBtn = CheckCollisionPointRec(mousePos, backHit);
   if (isOverBackBtn) {
     state->clickedOnUI = true;
-    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+    if (downNow) s_backArmed = true;
+  }
+  if (s_backArmed && !downNow) {
+    s_backArmed = false;
+    if (isOverBackBtn) {
       state->requestedBackToMenu = true;
       return;
     }
@@ -535,7 +596,7 @@ void DrawUIPanel(const UIPanelState *state) {
 
   const char *toggleText = state->isPanelOpen ? "[X] AN BANG DIEU KHIEN" : "[+] HIEN BANG DIEU KHIEN";
   float toggleTextW = UITextWidth(toggleText, 13);
-  UIText(toggleText, togglePanelBtn.x + (togglePanelBtn.width - toggleTextW) / 2, togglePanelBtn.y + 23, 13, WHITE);
+  UIText(toggleText, togglePanelBtn.x + (togglePanelBtn.width - toggleTextW) / 2, togglePanelBtn.y + 9, 13, WHITE);
 
   // Vẽ nút Back
   bool isOverBack = CheckCollisionPointRec(mousePos, backBtn);
@@ -545,7 +606,7 @@ void DrawUIPanel(const UIPanelState *state) {
 
   const char *backText = "[<] QUAY LAI MENU";
   float backTextW = UITextWidth(backText, 13);
-  UIText(backText, backBtn.x + (backBtn.width - backTextW) / 2, backBtn.y + 23, 13, WHITE);
+  UIText(backText, backBtn.x + (backBtn.width - backTextW) / 2, backBtn.y + 9, 13, WHITE);
 
   // Vẽ các nút test CC cho training dummy
   {

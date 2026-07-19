@@ -301,6 +301,11 @@ static bool rlvkInitLogicalDevice(void)
     RLVK.Caps.dynamicRendering = (RLVK.Caps.apiVersion >= VK_API_VERSION_1_3) && q13.dynamicRendering;
     RLVK.Caps.synchronization2 = (RLVK.Caps.apiVersion >= VK_API_VERSION_1_3) && q13.synchronization2;
     RLVK.Caps.pushDescriptor = hasPushDesc;
+    // Test hook: force the pool-ring snapshot-descriptor fallback (the Mali/no-push-descriptor
+    // path) even on a device that has VK_KHR_push_descriptor, so the desktop visual suite can
+    // exercise it (§7.23 - no dev machine hits the fallback naturally). Installs the compat shim
+    // (§ below), skips enabling the extension, and drops PUSH_DESCRIPTOR_BIT from the set0 layout.
+    if (getenv("RLVK_FORCE_POOL_RING")) RLVK.Caps.pushDescriptor = false;
     RLVK.Caps.bresenhamLines = (hasLineRasterEXT || hasLineRasterKHR) && qLine.bresenhamLines;
     RLVK.Caps.wideLines = q2.features.wideLines;
     RLVK.Caps.fillModeNonSolid = q2.features.fillModeNonSolid;
@@ -556,6 +561,47 @@ static void rlvkFlushSet0(VkCommandBuffer cmdBuffer)
         return;
 
     u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
+
+    // Snapshot the key this flush would produce, then look for an already-allocated+written set
+    // for the identical state this frame. A hit skips the vkAllocateDescriptorSets + full
+    // vkUpdateDescriptorSets rewrite (the Mali-path hot cost, §8.4b-3) - only the bind remains,
+    // and even that is skipped when the same set is still bound.
+    rlvkSet0CacheEntry key;
+    memcpy(key.view, RLVK.pushedView, sizeof(key.view));
+    memcpy(key.sampler, RLVK.pushedSampler, sizeof(key.sampler));
+    for (u32 s = 0; s < 2; s++)
+    {
+        key.uboBuf[s]   = RLVK.shadowUbo[s].buffer;
+        key.uboOff[s]   = RLVK.shadowUbo[s].offset;
+        key.uboRange[s] = RLVK.shadowUbo[s].range;
+    }
+    for (u32 i = 0; i < RLVK_SET0_SSBO_COUNT; i++) key.ssboSlot[i] = RLVK.computeSSBO[i];
+
+    static int s_noCache = -1;
+    if (s_noCache < 0) s_noCache = getenv("RLVK_NO_SET0CACHE") ? 1 : 0;
+
+    rlvkSet0CacheEntry *cache = RLVK.set0Cache[frameIndex];
+    u32 count = s_noCache ? 0 : RLVK.set0CacheCount[frameIndex];
+    for (u32 e = 0; e < count; e++)
+    {
+        rlvkSet0CacheEntry *c = &cache[e];
+        if (memcmp(c->view, key.view, sizeof(key.view)) == 0 &&
+            memcmp(c->sampler, key.sampler, sizeof(key.sampler)) == 0 &&
+            memcmp(c->uboBuf, key.uboBuf, sizeof(key.uboBuf)) == 0 &&
+            memcmp(c->uboOff, key.uboOff, sizeof(key.uboOff)) == 0 &&
+            memcmp(c->uboRange, key.uboRange, sizeof(key.uboRange)) == 0 &&
+            memcmp(c->ssboSlot, key.ssboSlot, sizeof(key.ssboSlot)) == 0)
+        {
+            if (RLVK.boundSet0 != c->set)
+            {
+                vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, RLVK.pipelineLayout, 0, 1, &c->set, 0, NULL);
+                RLVK.boundSet0 = c->set;
+            }
+            RLVK.set0Dirty = false;
+            return;
+        }
+    }
+
     VkDescriptorSet ds = VK_NULL_HANDLE;
     VkResult res = vkAllocateDescriptorSets(RLVK.device,
                                             &(VkDescriptorSetAllocateInfo){
@@ -629,7 +675,18 @@ static void rlvkFlushSet0(VkCommandBuffer cmdBuffer)
     }
     vkUpdateDescriptorSets(RLVK.device, writeCount, writes, 0, NULL);
     vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, RLVK.pipelineLayout, 0, 1, &ds, 0, NULL);
+    RLVK.boundSet0 = ds;
     RLVK.set0Dirty = false;
+
+    // Remember this snapshot for reuse by a later draw with the identical key this frame. Above the
+    // cap we simply stop caching (still correct - the pool has RLVK_DESC_SETS_PER_FRAME sets and the
+    // old allocate-every-flush path takes over); distinct combos per frame stay well under the cap.
+    if (count < RLVK_SET0_CACHE_SIZE)
+    {
+        key.set = ds;
+        cache[count] = key;
+        RLVK.set0CacheCount[frameIndex] = count + 1;
+    }
 }
 
 // Push one texture at a GL-texture-unit binding of set 0

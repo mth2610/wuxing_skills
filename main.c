@@ -1016,23 +1016,19 @@ int main(int argc, char **argv) {
   // (thấy trên path CPU/VBO Android; path COMPUTE desktop ít lộ hơn do hạt
   // thường nhỏ hơn). Cùng quy ước với atmosphere/flow_map/metaball_fx/post_fx.
   SetTextureFilter(globalParticleTex, TEXTURE_FILTER_BILINEAR);
-  Image trailImg = {
-      .data = MemAlloc(64 * sizeof(Color)),
-      .width = 64,
-      .height = 1,
-      .mipmaps = 1,
-      .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8
-  };
-  Color *trailPixels = (Color *)trailImg.data;
-  for(int i=0; i<64; i++) {
-      float u = i / 63.0f;
+  Image trailImg = GenImageColor(64, 64, BLANK);
+  for (int y = 0; y < 64; y++) {
+    for (int x = 0; x < 64; x++) {
+      float u = x / 63.0f;
       float dist = fabsf(u - 0.5f) * 2.0f;
-      float alpha = 1.0f - dist;
-      trailPixels[i] = (Color){255, 255, 255, (unsigned char)(255 * alpha)};
+      float alpha = fmaxf(0.0f, 1.0f - dist * dist);
+      ImageDrawPixel(&trailImg, x, y, (Color){255, 255, 255, (unsigned char)(255 * alpha)});
+    }
   }
   Texture2D globalTrailTex = LoadTextureFromImage(trailImg);
   UnloadImage(trailImg);
-  SetTextureFilter(globalTrailTex, TEXTURE_FILTER_BILINEAR); // same NEAREST-block issue as globalParticleTex above
+  SetTextureFilter(globalTrailTex, TEXTURE_FILTER_BILINEAR);
+  SetTextureWrap(globalTrailTex, TEXTURE_WRAP_CLAMP);
   TrailSystem_SetGlobalTexture(globalTrailTex);
   UnloadImage(img);
 
@@ -1272,7 +1268,6 @@ int main(int argc, char **argv) {
         }
 
         Vector2 mousePos = GetMousePosition();
-        bool clicked = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
 
         int sw = GetScreenWidth();
         int sh = GetScreenHeight();
@@ -1282,17 +1277,35 @@ int main(int argc, char **argv) {
         Rectangle btnHost = { sw/2 - 150, sh/2 + 180, 300, 50 };
         Rectangle btnJoin = { sw/2 - 150, sh/2 + 260, 300, 50 };
 
-        if (CheckCollisionPointRec(mousePos, btnSandbox) && clicked) {
+        // Robust Android tap: arm the button under the touch while it's DOWN, fire on RELEASE if
+        // the release settles over the same button. IsMouseButtonPressed (down-edge) is unreliable
+        // here — on the down frame GetMousePosition can still be the stale/previous position, so the
+        // over-button test misses even though the button highlights. Same fix pattern as the sandbox
+        // top buttons (sandbox/ui_panel.c). Buttons are screen-centered, so no top-edge gesture zone.
+        Rectangle menuBtns[5] = { btnSandbox, btnVFX, btnGame, btnHost, btnJoin };
+        bool downNow = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
+        int overIdx = -1;
+        for (int i = 0; i < 5; i++)
+            if (CheckCollisionPointRec(mousePos, menuBtns[i])) { overIdx = i; break; }
+        static int s_menuArmed = -1;
+        if (downNow && overIdx >= 0) s_menuArmed = overIdx;
+        int fired = -1;
+        if (!downNow && s_menuArmed >= 0) {
+            if (overIdx == s_menuArmed) fired = s_menuArmed;
+            s_menuArmed = -1;
+        }
+
+        if (fired == 0) {
             currentScreen = SCREEN_SKILL_SANDBOX;
         }
-        if (CheckCollisionPointRec(mousePos, btnVFX) && clicked) {
+        if (fired == 1) {
             currentScreen = SCREEN_VFX_TESTER;
         }
-        if (CheckCollisionPointRec(mousePos, btnGame) && clicked) {
+        if (fired == 2) {
             GameScreen_SetMode(GAME_MODE_BOSS); // offline entry — boss match
             currentScreen = SCREEN_GAME;
         }
-        if (CheckCollisionPointRec(mousePos, btnHost) && clicked) {
+        if (fired == 3) {
             if (!Net_OnlineAvailable())
                 snprintf(menuOnlineMsg, sizeof(menuOnlineMsg), "BUILD CHUA BAT EOS — cmake -DWUXING_EOS=ON");
             else if (Net_GetMode() == NET_MODE_OFF) {
@@ -1301,7 +1314,7 @@ int main(int argc, char **argv) {
                 menuOnlinePending = 1;
             }
         }
-        if (CheckCollisionPointRec(mousePos, btnJoin) && clicked) {
+        if (fired == 4) {
             if (!Net_OnlineAvailable())
                 snprintf(menuOnlineMsg, sizeof(menuOnlineMsg), "BUILD CHUA BAT EOS — cmake -DWUXING_EOS=ON");
             else {

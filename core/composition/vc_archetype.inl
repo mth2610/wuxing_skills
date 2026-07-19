@@ -36,6 +36,7 @@ static void ShardSparkle_Init(void) {
 #include "common/vc_crown_splash.inl"
 #include "common/vc_mesh_electricity.inl"
 #include "common/vc_particle_upgrades_test.inl"
+#include "common/vc_trail_upgrades_test.inl"
 
 static void VC_Archetype_Update(float dt)
 {

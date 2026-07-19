@@ -651,6 +651,27 @@
       "category": "util",
       "type": "oneshot",
       "trigger_call": "VFX_ComposeParticleUpgradesTest($POS)"
+    },
+    {
+      "fn": "VFX_ComposeTrailUpgradesTest",
+      "label": "TRAIL UPGRADES TEST",
+      "category": "util",
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeTrailUpgradesTest($POS)"
+    },
+    {
+      "fn": "VFX_ComposeSpiritWispTest",
+      "label": "SPIRIT WISP TEST",
+      "category": "yin",
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeSpiritWispTest($POS)"
+    },
+    {
+      "fn": "VFX_ComposeCrescentSlashTest",
+      "label": "CRESCENT SLASH TEST",
+      "category": "metal",
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeCrescentSlashTest($POS)"
     }
   ],
   "overrides": {

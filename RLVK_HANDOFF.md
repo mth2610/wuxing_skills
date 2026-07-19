@@ -1297,11 +1297,114 @@ The `preRotationQuarterTurns` field + the quarter-turn `switch` in `rlvkAttachSu
 provably dead (IDENTITY path only) and can be deleted whenever convenient; left in as documented
 history for now.
 
-**Still open**:
-- On-device confirmation of §7.22 (rebuild + verify magenta box and UIDBG log appear in the
-  sandbox, and the gralloc/`swapchain recreated` spam is gone).
-- Remove the `UIDBG` TEMP probe from `main.c` once confirmed.
-- The `preRotationQuarterTurns` dead scaffolding (see above) can be pruned.
+**§7.22 CONFIRMED on device (2026-07-19)**: SUBOPTIMAL fix stopped the recreate/gralloc spam,
+orientation stayed correct. All the TEMP probes named here (UIDBG etc.) were removed 2026-07-19.
+The `preRotationQuarterTurns` dead scaffolding can still be pruned.
+
+### 7.23 THE Android dim/garbled 2D bug: rlvk pool-ring descriptor path (2026-07-19) — FIXED
+After §7.22 the UI still rendered **dim + garbled** on in-game screens (opaque magenta drew at
+~18% brightness, text as dark blocks). Root-caused entirely on device (adb screencap + pixel
+readback + `strings` on the installed lib), then reproduced on desktop and fixed there:
+
+- **Symptom decode**: on-device screenshot pixel of an opaque-magenta probe box read `(45,0,58)` —
+  i.e. `texel × vertexColor` where `texel` ≈ the dark bluish *scene* (G killed because magenta's
+  G=0). So 2D draws were sampling a **stale scene render-target at texture unit 0** instead of the
+  1×1 white / font atlas. `PUSHTEX0`/`SHDDBG` diagnostics proved the correct texture SLOT and the
+  correct default shader + colDiffuse were being used — so the descriptor *binding* was the fault.
+- **Root cause** (`rlvk_frame.inl`): rlvk uses a **pool-ring snapshot-descriptor fallback** when
+  the device lacks `VK_KHR_push_descriptor` — which Mali-G68 does; MoltenVK/desktop HAS the
+  extension and always took the push path, so the fallback was effectively untested and the whole
+  visual suite was green on it. In `rlvkPushTexture`, after the dedup passed (binding changed) it
+  wrote `RLVK.pushedView[binding] = view` **before** calling the compat shim
+  `rlvkPushDescriptorSetCompat`, which detects changes by comparing the incoming view against
+  `pushedView`. Since `pushedView` was already overwritten, the shim saw "no change", never set
+  `set0Dirty`, and `rlvkFlushSet0` skipped rebinding the set. Net effect: the **second batch draw
+  with a different texture kept the previous texture bound** — e.g. the UI text/rects after the
+  PostFX composite (which had just bound the scene RT to unit 0) sampled the scene → dim + garbled.
+- **Fix**: one line — set `RLVK.set0Dirty = true` in `rlvkPushTexture` right after updating
+  `pushedView` (reaching there means the binding genuinely changed). Harmless on the push path
+  (`rlvkFlushSet0` early-outs on `Caps.pushDescriptor`).
+- **Desktop repro/guard**: forcing the pool-ring path (now `RLVK_FORCE_POOL_RING=1
+  ./scripts/run_rlvk_visual_test.sh`, an env toggle added 2026-07-19 instead of editing
+  `RLVK.Caps.pushDescriptor` by hand) makes the visual suite exercise the fallback (it FAILED "sprite
+  core not white" before the fix). Keep this as a periodic manual test — no dev machine hits the
+  fallback naturally. **CAVEAT (2026-07-19): this guard is currently RED on the Intel-Iris/MoltenVK
+  dev machine** — the forced fallback skips textured draws entirely there (blue screen), a
+  MoltenVK/Metal artifact of the forced path, not a real Mali bug (§8.4b-3 has the full evidence). So
+  a green run here can't be assumed; validate pool-ring changes on real Mali until the guard host is
+  fixed.
+- **Also fixed MetaballFX's total UI loss** (§ earlier this session): that was the SAME bug
+  amplified — MetaballFX's extra half-res RT round-trips guaranteed a different texture was bound
+  right before the UI, so the stale binding became a *total* loss rather than a dim tint.
+- **USER-CONFIRMED in-game**: buttons, panels, readable text all back; MetaballFX re-enabled fine.
+
+### 7.24 Session build-system + gameplay fixes (2026-07-18/19)
+- `Makefile.Android`: (a) `-c $^` → `-c $<` (once the `-include`d `.d` files exist, `$^` fed every
+  header to clang → "cannot specify -o when generating multiple output files"); (b) raylib.a is now
+  rebuilt when any `third_party/vulkan/rlvk/**` or `rlvk_patch_raylib.py` is newer than it (rlvk is
+  compiled INTO libraylib.a via the rlgl→rlvk patch, and the old existence-only cache silently
+  no-op'd every rlvk edit — this wasted several device round-trips before it was found); (c) added
+  missing `core/mesh_adjacency.c` to `PROJECT_SOURCE_FILES` (a new mesh-particle feature linked on
+  desktop CMake but not Android).
+- Sandbox touch: the "no-cast on the left 45% of screen" was cut to just the joystick zone
+  (`sandbox/sandbox_core.c`), so skills cast to the left of the character again.
+
+### 8.4b OPEN issues at end of 2026-07-19 session (Android/Mali, unresolved)
+1. **Top sandbox buttons ([+] HIEN BANG DIEU KHIEN / QUAY LAI MENU) still hard to tap.** They
+   highlight (position/hover registers via `GetMousePosition`) but the ACTION fires only
+   intermittently. Tried: bigger buttons (60px), and a manual arm-on-`IsMouseButtonDown`-over-button
+   + fire-on-release in `UpdateUIPanel` (`sandbox/ui_panel.c`) — improved but NOT solved. The skill
+   buttons (lower, only when panel open) work reliably with the *same* code, so it's position-linked
+   (top-of-screen). BTNDBG on device showed touch coords that don't cleanly map to the button rect
+   (values ranged −10…1530 for taps on a top button in a 1920-wide space), i.e. a likely
+   **touch-coordinate vs draw-coordinate (letterbox) mismatch** and/or Android top-edge
+   system-gesture interception, worsened by ~30fps. NOT yet root-caused — needs a device session
+   logging raw `GetTouchPosition(0)` + `GetTouchPointCount` transitions vs the button rect frame by
+   frame, and/or checking raylib's Android touch→screen scaling against the letterboxed
+   `CORE.Window.screen` (§7.14–7.17 territory, now for INPUT not output).
+2. **Black-hole VFX: its 3 rings/shells render invisible** on device (every other VFX tested
+   correct). Separate rendering bug, not investigated. Likely specific to that skill's
+   shader/draw (concentric-shell technique, see memory `black-hole-swirl-technique`). Could be a
+   depth/blend/culling or a texture-binding interaction — check whether it also repros on desktop
+   rlvk first.
+3. **~30 FPS on Mali** with the full HDR + ScreenDistort + PostFX(+bloom) + GPU-particle pipeline.
+   The pool-ring descriptor path (per-draw `vkAllocateDescriptorSets` + full set rewrite in
+   `rlvkFlushSet0`) is inherently heavier than push descriptors and every draw now dirties it more
+   (the `set0Dirty` fix). Perf not profiled.
+   **Descriptor snapshot cache LANDED (2026-07-19) — the "future win" above, not yet Mali-verified.**
+   `rlvkFlushSet0` now keys a per-frame cache (`RLVK.set0Cache[frameIndex]`, `RLVK_SET0_CACHE_SIZE`
+   128) on the full snapshot state — `pushedView[]`, `pushedSampler[]`, `shadowUbo[]` (buffer/off/
+   range), and the `computeSSBO[0..3]` slots (all deterministic inputs to the written set). A hit
+   skips both `vkAllocateDescriptorSets` and the full `vkUpdateDescriptorSets` rewrite, keeping only
+   the bind — and even the bind is skipped when the same set is still bound (`RLVK.boundSet0`). On a
+   Mali frame this collapses the repeated re-binds of the font atlas / white texture / scene-RT
+   (rebound after every PostFX pass) from an alloc-per-flush to one alloc-per-distinct-combo. The
+   cache + `boundSet0` are cleared at BOTH pool-reset sites (`rlvk_platform.inl` beginFrame,
+   `rlvk_renderpass.inl` flushFrame) since the reset frees every set. Above the 128 cap it falls
+   through to the old allocate-every-flush path (still correct; distinct combos/frame stay well under
+   it). New env toggles: `RLVK_FORCE_POOL_RING` (force the fallback on a push-descriptor desktop for
+   the §7.23 manual test), `RLVK_NO_SET0CACHE` (A/B the cache off).
+   **Verified**: desktop `check_rlvk_compile.sh` + normal suite 14/14 green — but the cache is a pure
+   no-op on the healthy push-descriptor desktop path (it only runs when `!Caps.pushDescriptor`), so
+   14/14 confirms *zero regression*, not the cache itself. Positive validation needs an on-device Mali
+   run (or a desktop that lacks push descriptors). Attempting to validate it via `RLVK_FORCE_POOL_RING`
+   on this MoltenVK/Intel-Iris machine hit the pre-existing guard breakage below, NOT a cache bug:
+   committed code (cache reverted) produces a *byte-identical* failure signature, so the cache is
+   behaviorally transparent — a buggy cache returning a wrong set would have diverged.
+   - **NEW FINDING — the §7.23 desktop guard is currently RED on this MoltenVK/Intel-Iris machine.**
+     `RLVK_FORCE_POOL_RING=1 ./scripts/run_rlvk_visual_test.sh` fails `batch_alpha` + `additive3d` and
+     segfaults entering `depth`. Pixel-probed: `batch_alpha` center reads `(0,121,241)` = the pure BLUE
+     clear color, i.e. the textured 2D draw is **skipped entirely** (§7.2 "failed pipeline build ⇒ skip
+     draw" signature — blue screen, not a stale texture), and no pipeline-bind logs fire even under
+     `RLVK_DEBUG_PIPE`. This is almost certainly a MoltenVK/Metal artifact of the forced fallback on
+     *this* device (the non-push set-0 layout = 16 combined samplers + 4 SSBOs may trip a per-stage
+     Metal argument limit that real Mali clears), NOT a real Mali regression — §7.23 was user-confirmed
+     in-game on Mali and the healthy desktop path is 14/14. But it means **the forced-pool-ring guard
+     cannot validate any pool-ring change on this machine right now** — next device session should
+     (a) confirm the descriptor cache renders correctly on real Mali, and (b) decide whether the desktop
+     guard needs a different host (an Android emulator / a non-Intel MoltenVK) or a documented "skip on
+     Intel-Iris" caveat. Did NOT chase the MoltenVK skip further: out of the perf task's scope and not a
+     real-hardware bug.
 
 ### 8.5 Smaller known gaps (deliberate)
 - `rlLoadShaderProgramEx` unimplemented (nothing in raylib's normal flow uses it).

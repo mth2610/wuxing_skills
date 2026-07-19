@@ -44,3 +44,4 @@ static Vector3 TaijiSphereDir(int index, int epoch)
 
 #include "gust_slash.inl"
 #include "cyclone.inl"
+#include "vc_spirit_wisp_test.inl"

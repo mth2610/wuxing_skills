@@ -74,3 +74,4 @@ static void MetalFx_InitShared(void)
 #include "blade_storm.inl"
 #include "shrapnel_burst.inl"
 #include "ricochet_spark.inl"
+#include "vc_crescent_slash_test.inl"

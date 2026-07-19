@@ -80,7 +80,7 @@ static const char *s_meshNames[] = {
     "DISC", "RING", "CONE", "TORNADO", "CYLINDER", "SPHERE", "SHOCKWAVE", "PYRAMID", "TETRAHEDRON"};
 
 // @gen:newfx_names begin
-// 83 entries — auto-managed by sync_vfx_test.py
+// 86 entries — auto-managed by sync_vfx_test.py
 static const char* s_newFxNames[] = {
     "FLAME WISP", "FIRE PILLAR", "FIREBALL", "FIRE BREATH", "BURN GROUND", "FIRE WHIRL",
     "EMBER DRIFT", "IMPACT FIRE", "CAST FIRE", "SPLASH", "BUBBLES", "MIST VEIL",
@@ -95,7 +95,8 @@ static const char* s_newFxNames[] = {
     "PROJECTILE", "GND PATTERN", "SUMMON RING", "EXPLOSION", "GROUND WAVE", "PROJ FIRE",
     "PROJ WATER", "PROJ METAL", "CYLINDER AURA", "GROUND AURA", "BLACK HOLE", "DRAW ICE CRYSTAL BURST",
     "SMOKE COLUMN F X", "GROUND SMOKE", "SMOKE ON PLANE", "MAGIC FILAMENTS", "MAGIC FILAMENTS ON PLANE", "SHARD DEBRIS",
-    "CROWN SPLASH", "CHAIN LINK", "WATER STREAM ON PATH", "MESH ELECTRICITY", "PARTICLE UPGRADES TEST",
+    "CROWN SPLASH", "CHAIN LINK", "WATER STREAM ON PATH", "MESH ELECTRICITY", "PARTICLE UPGRADES TEST", "TRAIL UPGRADES TEST",
+    "SPIRIT WISP TEST", "CRESCENT SLASH TEST",
 };
 // @gen:newfx_names end
 
@@ -110,7 +111,7 @@ static const int s_newFxCategories[] = {
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 1, 6, 6, 6, 6, 6, 6, 6, 6,
-    1, 6, 6,
+    1, 6, 6, 6, 6, 3,
 };
 // @gen:newfx_categories end
 
@@ -440,7 +441,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             const char **names;
             int globalIdx;
             int visualIdx;
-            maxIdx = 83;
+            maxIdx = 86;
             names = s_newFxNames; // @gen:newfx_count
             visualIdx = 0;
             (void)names;
@@ -541,6 +542,12 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_ComposeMeshElectricity(s_prefabStartPos, (Color){100, 220, 255, 255}, 2.5f);
           } else if (s_testIndex == 82) { /* PARTICLE UPGRADES TEST */
               VFX_ComposeParticleUpgradesTest(s_prefabStartPos);
+          } else if (s_testIndex == 83) { /* TRAIL UPGRADES TEST */
+              VFX_ComposeTrailUpgradesTest(s_prefabStartPos);
+          } else if (s_testIndex == 84) { /* SPIRIT WISP TEST */
+              VFX_ComposeSpiritWispTest(s_prefabStartPos);
+          } else if (s_testIndex == 85) { /* CRESCENT SLASH TEST */
+              VFX_ComposeCrescentSlashTest(s_prefabStartPos);
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
               s_isPlayingMesh = true;
@@ -699,6 +706,12 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_ComposeMeshElectricity(s_prefabStartPos, (Color){100, 220, 255, 255}, 2.5f);
           } else if (s_testIndex == 82) { /* PARTICLE UPGRADES TEST */
               VFX_ComposeParticleUpgradesTest(s_prefabStartPos);
+          } else if (s_testIndex == 83) { /* TRAIL UPGRADES TEST */
+              VFX_ComposeTrailUpgradesTest(s_prefabStartPos);
+          } else if (s_testIndex == 84) { /* SPIRIT WISP TEST */
+              VFX_ComposeSpiritWispTest(s_prefabStartPos);
+          } else if (s_testIndex == 85) { /* CRESCENT SLASH TEST */
+              VFX_ComposeCrescentSlashTest(s_prefabStartPos);
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
               s_isPlayingMesh = true;
@@ -936,7 +949,7 @@ void VFXTest_DrawHUD(void)
         const char **names;
         int gi;
         int vIdx;
-        maxIdx = 83;
+        maxIdx = 86;
         names = s_newFxNames; // @gen:newfx_count
         vIdx = 0;
         (void)names;
@@ -1010,6 +1023,9 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
     case 78: VFX_ComposeCrownSplash(pos, 1.8f, 1.2f, 0.5f, VC_MAT_WATER); break;
     case 81: VFX_ComposeMeshElectricity(pos, (Color){100, 220, 255, 255}, 2.5f); break;
     case 82: VFX_ComposeParticleUpgradesTest(pos); break;
+    case 83: VFX_ComposeTrailUpgradesTest(pos); break;
+    case 84: VFX_ComposeSpiritWispTest(pos); break;
+    case 85: VFX_ComposeCrescentSlashTest(pos); break;
     default: break;
     }
 // @gen:newfx_render_trigger end

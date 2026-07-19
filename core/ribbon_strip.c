@@ -137,7 +137,7 @@ void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture,
   rlSetTexture(texture.id);
   rlBegin(RL_QUADS);
 
-  Vector3 prevLeft = {0}, prevRight = {0};
+  Vector3 prevLeft = {0}, prevRight = {0}, prevCenter = {0};
   Color prevTint = WHITE;
   float prevV = 0.0f;
   Vector3 prevSide = {0};
@@ -159,14 +159,32 @@ void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture,
         Vector3Add(points[i].position, Vector3Scale(side, points[i].halfWidth));
     Vector3 right = Vector3Subtract(points[i].position,
                                     Vector3Scale(side, points[i].halfWidth));
+    Vector3 center = points[i].position;
 
     if (i > 0) {
-      // Quad nối mặt cắt trước (prevLeft/prevRight) với mặt cắt hiện tại
-      // (left/right) - thứ tự near-left -> near-right -> far-right ->
-      // far-left tạo 1 vòng quad hợp lệ, không tự cắt nhau.
+      // Left Quad (U: 0.0 -> 0.5)
       rlColor4ub(prevTint.r, prevTint.g, prevTint.b, prevTint.a);
       rlTexCoord2f(0.0f, prevV);
       rlVertex3f(prevLeft.x, prevLeft.y, prevLeft.z);
+
+      rlColor4ub(prevTint.r, prevTint.g, prevTint.b, prevTint.a);
+      rlTexCoord2f(0.5f, prevV);
+      rlVertex3f(prevCenter.x, prevCenter.y, prevCenter.z);
+
+      rlColor4ub(points[i].tint.r, points[i].tint.g, points[i].tint.b,
+                 points[i].tint.a);
+      rlTexCoord2f(0.5f, points[i].v);
+      rlVertex3f(center.x, center.y, center.z);
+
+      rlColor4ub(points[i].tint.r, points[i].tint.g, points[i].tint.b,
+                 points[i].tint.a);
+      rlTexCoord2f(0.0f, points[i].v);
+      rlVertex3f(left.x, left.y, left.z);
+
+      // Right Quad (U: 0.5 -> 1.0)
+      rlColor4ub(prevTint.r, prevTint.g, prevTint.b, prevTint.a);
+      rlTexCoord2f(0.5f, prevV);
+      rlVertex3f(prevCenter.x, prevCenter.y, prevCenter.z);
 
       rlColor4ub(prevTint.r, prevTint.g, prevTint.b, prevTint.a);
       rlTexCoord2f(1.0f, prevV);
@@ -179,12 +197,13 @@ void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture,
 
       rlColor4ub(points[i].tint.r, points[i].tint.g, points[i].tint.b,
                  points[i].tint.a);
-      rlTexCoord2f(0.0f, points[i].v);
-      rlVertex3f(left.x, left.y, left.z);
+      rlTexCoord2f(0.5f, points[i].v);
+      rlVertex3f(center.x, center.y, center.z);
     }
 
     prevLeft = left;
     prevRight = right;
+    prevCenter = center;
     prevTint = points[i].tint;
     prevV = points[i].v;
   }

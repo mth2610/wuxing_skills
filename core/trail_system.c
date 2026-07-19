@@ -74,6 +74,10 @@ static inline float ComputeWispStyleTaper(float segRatio)
 
 static float ComputeWidthEnvelope(const TrailEntity *t, float segRatio, float time)
 {
+  if (t->widthCurve)
+  {
+    return SkillCurve_Eval(t->widthCurve, segRatio);
+  }
   switch (t->widthEnvelope)
   {
   case TRAIL_WIDTH_ENVELOPE_TAPER_TAIL:
@@ -118,22 +122,18 @@ static inline int GetHistoryNodeIndex(const TrailEntity *t, int i)
 
 static Vector3 GetInterpolatedPosition(const TrailEntity *t, float segRatio)
 {
+  if (t->historyCount < 1)
+    return (Vector3){0, 0, 0};
+  if (t->historyCount == 1)
+    return t->history[GetHistoryNodeIndex(t, 0)];
+
   float idx = segRatio * (t->historyCount - 1);
   int i = (int)floorf(idx);
   float f = idx - (float)i;
 
-  if (t->historyCount < 4)
-  {
-    int idx1 = GetHistoryNodeIndex(t, i);
-    if (i + 1 >= t->historyCount)
-      return t->history[idx1];
-    int idx2 = GetHistoryNodeIndex(t, i + 1);
-    return Vector3Lerp(t->history[idx1], t->history[idx2], f);
-  }
-
   int N = t->historyCount;
   int p0 = i - 1; if (p0 < 0) p0 = 0;
-  int p1 = i;
+  int p1 = i; if (p1 >= N) p1 = N - 1;
   int p2 = i + 1; if (p2 >= N) p2 = N - 1;
   int p3 = i + 2; if (p3 >= N) p3 = N - 1;
 
@@ -301,16 +301,30 @@ static void UpdateProjectilePhysics(int id, TrailEntity *t, float dt, float time
     t->velocity = Vector3Lerp(t->velocity, desiredVel, dt * TRAIL_PROJECTILE_STEER_LERP_RATE);
   }
 
-  if (t->forceField)
+  const bool windActive = WindZone_IsActive();
+  if (t->forceField || windActive)
   {
-    Vector3 acc = ForceField_Evaluate(t->forceField, t->position, t->velocity, time, (Vector3){0}, (Vector3){0});
+    Vector3 acc = (Vector3){0, 0, 0};
+    if (t->forceField)
+    {
+      acc = ForceField_Evaluate(t->forceField, t->position, t->velocity, time, (Vector3){0}, (Vector3){0});
+    }
+    if (windActive)
+    {
+      Vector3 windAcc = WindZone_Evaluate(t->position, t->velocity, time);
+      acc.x += windAcc.x; acc.y += windAcc.y; acc.z += windAcc.z;
+    }
     t->velocity.x += acc.x * dt;
     t->velocity.y += acc.y * dt;
     t->velocity.z += acc.z * dt;
-    float viscDamp = ForceField_GetViscosityDamping(t->forceField, dt);
-    t->velocity.x *= viscDamp;
-    t->velocity.y *= viscDamp;
-    t->velocity.z *= viscDamp;
+
+    if (t->forceField)
+    {
+      float viscDamp = ForceField_GetViscosityDamping(t->forceField, dt);
+      t->velocity.x *= viscDamp;
+      t->velocity.y *= viscDamp;
+      t->velocity.z *= viscDamp;
+    }
   }
 
   t->position.x += t->velocity.x * dt;
@@ -351,14 +365,24 @@ static void UpdateProjectilePhysics(int id, TrailEntity *t, float dt, float time
 
 static void UpdateWispPhysics(TrailEntity *t, float dt, float time)
 {
-  if (!t->forceField || t->historyCount < 2 || t->nodeRestLen <= 0.0f)
+  const bool windActive = WindZone_IsActive();
+  if ((!t->forceField && !windActive) || t->historyCount < 2 || t->nodeRestLen <= 0.0f)
     return;
-  float viscDamp = ForceField_GetViscosityDamping(t->forceField, dt);
+  float viscDamp = t->forceField ? ForceField_GetViscosityDamping(t->forceField, dt) : 1.0f;
   float restLen = t->nodeRestLen;
 
   for (int h = 0; h < t->historyCount; h++)
   {
-    Vector3 acc = ForceField_Evaluate(t->forceField, t->history[h], t->nodeVelocity[h], time, (Vector3){0}, (Vector3){0});
+    Vector3 acc = (Vector3){0, 0, 0};
+    if (t->forceField)
+    {
+      acc = ForceField_Evaluate(t->forceField, t->history[h], t->nodeVelocity[h], time, (Vector3){0}, (Vector3){0});
+    }
+    if (windActive)
+    {
+      Vector3 windAcc = WindZone_Evaluate(t->history[h], t->nodeVelocity[h], time);
+      acc.x += windAcc.x; acc.y += windAcc.y; acc.z += windAcc.z;
+    }
     t->nodeVelocity[h] = (Vector3){
         (t->nodeVelocity[h].x + acc.x * dt) * viscDamp,
         (t->nodeVelocity[h].y + acc.y * dt) * viscDamp,
@@ -373,6 +397,10 @@ static void UpdateWispPhysics(TrailEntity *t, float dt, float time)
   for (int iter = 0; iter < WISP_CONSTRAINT_ITERS; iter++)
   {
     for (int h = 1; h < t->historyCount; h++)
+    {
+      ConstrainRibbonSegment(&t->history[h - 1], &t->history[h], restLen, false);
+    }
+    for (int h = t->historyCount - 1; h >= 1; h--)
     {
       ConstrainRibbonSegment(&t->history[h - 1], &t->history[h], restLen, false);
     }
@@ -411,14 +439,24 @@ static void UpdateFollowerPhysics(int i, TrailEntity *t, float dt, float time)
     }
   }
 
-  if (!t->forceField || t->historyCount < 2)
+  const bool windActive = WindZone_IsActive();
+  if ((!t->forceField && !windActive) || t->historyCount < 2)
     return;
-  float viscDamp = ForceField_GetViscosityDamping(t->forceField, dt);
+  float viscDamp = t->forceField ? ForceField_GetViscosityDamping(t->forceField, dt) : 1.0f;
 
   for (int h = 1; h < t->historyCount; h++)
   {
     int idx = (t->historyHead - h + TRAIL_HISTORY_COUNT) % TRAIL_HISTORY_COUNT;
-    Vector3 acc = ForceField_Evaluate(t->forceField, t->history[idx], t->nodeVelocity[idx], time, t->axisOrigin, t->axisDir);
+    Vector3 acc = (Vector3){0, 0, 0};
+    if (t->forceField)
+    {
+      acc = ForceField_Evaluate(t->forceField, t->history[idx], t->nodeVelocity[idx], time, t->axisOrigin, t->axisDir);
+    }
+    if (windActive)
+    {
+      Vector3 windAcc = WindZone_Evaluate(t->history[idx], t->nodeVelocity[idx], time);
+      acc.x += windAcc.x; acc.y += windAcc.y; acc.z += windAcc.z;
+    }
 
     t->nodeVelocity[idx] = (Vector3){
         (t->nodeVelocity[idx].x + acc.x * dt) * viscDamp,
@@ -544,7 +582,6 @@ int SpawnTrailEntity(TrailConfig config)
   t->attachedTransform = NULL;
   t->attachLocalOffset = (Vector3){0, 0, 0};
 
-  // 5 New Upgrades configuration
   t->collisionCheck = config.collisionCheck;
   t->uvTiling = (config.uvTiling != 0.0f) ? config.uvTiling : 1.0f;
   t->uvScrollSpeed = config.uvScrollSpeed;
@@ -552,6 +589,10 @@ int SpawnTrailEntity(TrailConfig config)
   t->minVertexDistance = config.minVertexDistance;
   t->widthEnvelope = config.widthEnvelope;
   t->smoothSpline = config.smoothSpline;
+  t->widthCurve = config.widthCurve;
+  t->alphaCurve = config.alphaCurve;
+  t->distortionStrength = config.distortionStrength;
+  t->distortionSpeed = (config.distortionSpeed != 0.0f) ? config.distortionSpeed : 1.0f;
 
   for (int h = 0; h < TRAIL_HISTORY_COUNT; h++)
     t->nodeVelocity[h] = (Vector3){0, 0, 0};
@@ -722,7 +763,7 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
     if (t->historyCount > 1)
     {
       int drawCount = t->historyCount;
-      if (t->smoothSpline && t->historyCount >= 4)
+      if (t->smoothSpline && t->historyCount >= 2)
       {
         drawCount = t->historyCount < 30 ? 30 : t->historyCount;
         if (drawCount > TRAIL_HISTORY_COUNT) drawCount = TRAIL_HISTORY_COUNT;
@@ -731,12 +772,28 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
       for (int h = 0; h < drawCount; h++)
       {
         float segRatio = 1.0f - (float)h / (float)(drawCount - 1);
-        float taper = (t->widthEnvelope != TRAIL_WIDTH_ENVELOPE_UNIFORM)
+        float taper = (t->widthEnvelope != TRAIL_WIDTH_ENVELOPE_UNIFORM || t->widthCurve)
                       ? ComputeWidthEnvelope(t, segRatio, time)
                       : powf(segRatio, TRAIL_PROJECTILE_TAPER_POWER);
         Color nodeColor = t->gradient ? ColorGradient_Sample(t->gradient, segRatio) : c;
+        if (t->alphaCurve) {
+          float aMul = SkillCurve_Eval(t->alphaCurve, segRatio);
+          nodeColor.a = (unsigned char)((float)nodeColor.a * (aMul < 0.0f ? 0.0f : (aMul > 1.0f ? 1.0f : aMul)));
+        }
 
-        scratchOuter[h].position = GetInterpolatedPosition(t, segRatio);
+        Vector3 posNode = GetInterpolatedPosition(t, segRatio);
+        if (t->distortionStrength > 0.0f)
+        {
+          float dTime = time * t->distortionSpeed;
+          float nX = (Noise_Perlin3D(posNode.x * 0.8f + dTime, posNode.y * 0.8f, posNode.z * 0.8f) - 0.5f) * 2.0f;
+          float nY = (Noise_Perlin3D(posNode.x * 0.8f, posNode.y * 0.8f + dTime, posNode.z * 0.8f + 17.7f) - 0.5f) * 2.0f;
+          float nZ = (Noise_Perlin3D(posNode.x * 0.8f + 31.4f, posNode.y * 0.8f, posNode.z * 0.8f + dTime) - 0.5f) * 2.0f;
+          posNode.x += nX * t->distortionStrength;
+          posNode.y += nY * t->distortionStrength;
+          posNode.z += nZ * t->distortionStrength;
+        }
+
+        scratchOuter[h].position = posNode;
         scratchOuter[h].halfWidth = t->thickness * TRAIL_PROJECTILE_OUTER_WIDTH_MUL * taper;
         scratchOuter[h].v = segRatio * t->uvTiling - t->uvScrollOffset;
         scratchOuter[h].tint = (Color){(unsigned char)(segRatio * nodeColor.r), nodeColor.g, nodeColor.b, (unsigned char)((nodeColor.a / 255.0f) * TRAIL_PROJECTILE_OUTER_ALPHA_MAX * lifeRatio)};
@@ -779,7 +836,7 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
     if (t->historyCount > 1)
     {
       int drawCount = t->historyCount;
-      if (t->smoothSpline && t->historyCount >= 4)
+      if (t->smoothSpline && t->historyCount >= 2)
       {
         drawCount = t->historyCount < 30 ? 30 : t->historyCount;
         if (drawCount > TRAIL_HISTORY_COUNT) drawCount = TRAIL_HISTORY_COUNT;
@@ -788,7 +845,7 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
       for (int h = 0; h < drawCount; h++)
       {
         float segRatio = 1.0f - (float)h / (float)(drawCount - 1);
-        float taper = (t->widthEnvelope != TRAIL_WIDTH_ENVELOPE_UNIFORM)
+        float taper = (t->widthEnvelope != TRAIL_WIDTH_ENVELOPE_UNIFORM || t->widthCurve)
                       ? ComputeWidthEnvelope(t, segRatio, time)
                       : ComputeWispStyleTaper(segRatio);
         Color nodeColor = c;
@@ -797,7 +854,24 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
           Color gradCol = ColorGradient_Sample(t->gradient, segRatio);
           nodeColor = (Color){(unsigned char)((gradCol.r / 255.0f) * c.r), (unsigned char)((gradCol.g / 255.0f) * c.g), (unsigned char)((gradCol.b / 255.0f) * c.b), (unsigned char)((gradCol.a / 255.0f) * c.a)};
         }
-        scratchOuter[h].position = GetInterpolatedPosition(t, segRatio);
+        if (t->alphaCurve) {
+          float aMul = SkillCurve_Eval(t->alphaCurve, segRatio);
+          nodeColor.a = (unsigned char)((float)nodeColor.a * (aMul < 0.0f ? 0.0f : (aMul > 1.0f ? 1.0f : aMul)));
+        }
+
+        Vector3 posNode = GetInterpolatedPosition(t, segRatio);
+        if (t->distortionStrength > 0.0f)
+        {
+          float dTime = time * t->distortionSpeed;
+          float nX = (Noise_Perlin3D(posNode.x * 0.15f + dTime, posNode.y * 0.15f, posNode.z * 0.15f) - 0.5f) * 2.0f;
+          float nY = (Noise_Perlin3D(posNode.x * 0.15f, posNode.y * 0.15f + dTime, posNode.z * 0.15f + 17.7f) - 0.5f) * 2.0f;
+          float nZ = (Noise_Perlin3D(posNode.x * 0.15f + 31.4f, posNode.y * 0.15f, posNode.z * 0.15f + dTime) - 0.5f) * 2.0f;
+          posNode.x += nX * t->distortionStrength;
+          posNode.y += nY * t->distortionStrength;
+          posNode.z += nZ * t->distortionStrength;
+        }
+
+        scratchOuter[h].position = posNode;
         scratchOuter[h].halfWidth = t->thickness * taper;
         scratchOuter[h].v = segRatio * t->uvTiling - t->uvScrollOffset;
         scratchOuter[h].tint = (Color){nodeColor.r, nodeColor.g, nodeColor.b, (unsigned char)((nodeColor.a / 255.0f) * 180.0f * lifeRatio * taper)};
@@ -819,7 +893,7 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
     if (t->historyCount > 1)
     {
       int drawCount = t->historyCount;
-      if (t->smoothSpline && t->historyCount >= 4)
+      if (t->smoothSpline && t->historyCount >= 2)
       {
         drawCount = t->historyCount < 30 ? 30 : t->historyCount;
         if (drawCount > TRAIL_HISTORY_COUNT) drawCount = TRAIL_HISTORY_COUNT;
@@ -828,7 +902,7 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
       for (int h = 0; h < drawCount; h++)
       {
         float segRatio = 1.0f - (float)h / (float)(drawCount - 1);
-        float taper = (t->widthEnvelope != TRAIL_WIDTH_ENVELOPE_UNIFORM)
+        float taper = (t->widthEnvelope != TRAIL_WIDTH_ENVELOPE_UNIFORM || t->widthCurve)
                       ? ComputeWidthEnvelope(t, segRatio, time)
                       : ComputeWispStyleTaper(segRatio);
         Color nodeColor = c;
@@ -837,7 +911,23 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
           Color gradCol = ColorGradient_Sample(t->gradient, segRatio);
           nodeColor = (Color){(unsigned char)((gradCol.r / 255.0f) * c.r), (unsigned char)((gradCol.g / 255.0f) * c.g), (unsigned char)((gradCol.b / 255.0f) * c.b), (unsigned char)((gradCol.a / 255.0f) * c.a)};
         }
-        scratchOuter[h].position = GetInterpolatedPosition(t, segRatio);
+        if (t->alphaCurve) {
+          float aMul = SkillCurve_Eval(t->alphaCurve, segRatio);
+          nodeColor.a = (unsigned char)((float)nodeColor.a * (aMul < 0.0f ? 0.0f : (aMul > 1.0f ? 1.0f : aMul)));
+        }
+
+        Vector3 posNode = GetInterpolatedPosition(t, segRatio);
+        if (t->distortionStrength > 0.0f)
+        {
+          float dTime = time * t->distortionSpeed;
+          float nX = (Noise_Perlin3D(posNode.x * 0.8f + dTime, posNode.y * 0.8f, posNode.z * 0.8f) - 0.5f) * 2.0f;
+          float nY = (Noise_Perlin3D(posNode.x * 0.8f, posNode.y * 0.8f + dTime, posNode.z * 0.8f + 17.7f) - 0.5f) * 2.0f;
+          float nZ = (Noise_Perlin3D(posNode.x * 0.8f + 31.4f, posNode.y * 0.8f, posNode.z * 0.8f + dTime) - 0.5f) * 2.0f;
+          posNode.x += nX * t->distortionStrength;
+          posNode.y += nY * t->distortionStrength;
+          posNode.z += nZ * t->distortionStrength;
+        }
+        scratchOuter[h].position = posNode;
         scratchOuter[h].halfWidth = t->thickness * 1.5f * taper;
         scratchOuter[h].v = segRatio * t->uvTiling - t->uvScrollOffset;
         scratchOuter[h].tint = (Color){nodeColor.r, nodeColor.g, nodeColor.b, (unsigned char)((nodeColor.a / 255.0f) * 180.0f * lifeRatio * taper)};
