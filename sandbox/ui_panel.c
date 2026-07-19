@@ -289,30 +289,6 @@ void UpdateUIPanel(Vector2 mousePos, UIPanelState *state) {
   state->requestedBackToMenu = false;
   hoverSkillIndex = -1;
 
-  // TEMP DIAGNOSTIC (§8.4b-1 top-button tap) — REMOVE once root-caused. Logs to logcat only while
-  // a touch/click is present: mapped mouse (what the button test uses) vs the RAW touch point (pre
-  // renderOffset scaling) vs the toggle rect vs screen size. Disambiguates letterbox/renderOffset
-  // mismatch (raw ≠ mouse, or mouse outside a rect the raw is inside) from OS top-edge gesture
-  // interception (touch never registers a point at all). Fires on the DOWN/press frame only.
-  {
-    int pts = GetTouchPointCount();
-    int dn = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
-    int pr = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
-    int rl = IsMouseButtonReleased(MOUSE_BUTTON_LEFT);
-    static int s_prevPts = 0, s_prevDn = 0;
-    // Fire on any touch/button activity OR an edge transition, so a fast tap whose down-state falls
-    // between polls still logs the frame its point count / button state changes.
-    if (pts > 0 || dn || pr || rl || pts != s_prevPts || dn != s_prevDn) {
-      Vector2 raw = GetTouchPosition(0);
-      TraceLog(LOG_WARNING,
-        "TOUCHDBG mouse=(%.0f,%.0f) raw0=(%.0f,%.0f) pts=%d down=%d pressed=%d released=%d overToggle=%d overBack=%d screen=(%d,%d)",
-        mousePos.x, mousePos.y, raw.x, raw.y, pts, dn, pr, rl,
-        CheckCollisionPointRec(mousePos, togglePanelBtn), CheckCollisionPointRec(mousePos, backBtn),
-        GetScreenWidth(), GetScreenHeight());
-    }
-    s_prevPts = pts; s_prevDn = dn;
-  }
-
   // Robust touch tap for the top buttons: arm while the touch is DOWN over the button, fire on
   // RELEASE over it. IsMouseButtonPressed (down-edge) was unreliable on Android here - on the
   // down frame GetMousePosition can still be the stale/previous position (and the top-edge is a

@@ -21,15 +21,29 @@
 //   fx.glsl không phụ thuộc noise.glsl — có thể include riêng lẻ.
 // ============================================================
 
-// 2D hash → [0, 1]
+// 2D / 3D hash → [0, 1]
+//
+// MOBILE-SAFE (Dave Hoskins "Hash without Sine", https://www.shadertoy.com/view/4djSRW).
+// The old `fract(sin(dot(p, K)) * 43758.5)` hash silently DIES on Mali/Adreno when the
+// argument to sin() grows large: sin() loses precision for big inputs, the hash returns a
+// near-constant, and any fbm built on it collapses to a flat value. Desktop (good sin
+// precision) hid it. It broke exactly the effects that push the noise domain far — fbm3 with
+// several octaves (black_hole_swirl.fs: invisible shells) and time-in-the-domain scroll
+// (aura_shell.fs: `dom.y -= u_time*speed` grows unbounded → membrane with no swirl). The
+// `fract(p * 0.1031)` step below bounds the working set to [0,1) BEFORE any arithmetic, so the
+// result is magnitude-independent and identical on every GPU. Pattern differs slightly from the
+// old hash (it's a different RNG) but it's still white noise — no VFX depends on the exact seed.
 float hash2(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
 }
 
-// 3D hash → [0, 1]
 // Dùng cho dissolve noise theo world-space: hash3(floor(fragPosition * scale))
-float hash3(vec3 p) {
-    return fract(sin(dot(p, vec3(12.9898, 78.233, 45.164))) * 43758.5453123);
+float hash3(vec3 p3) {
+    p3 = fract(p3 * 0.1031);
+    p3 += dot(p3, p3.zyx + 31.32);
+    return fract((p3.x + p3.y) * p3.z);
 }
 
 // 2D value noise → [0, 1]

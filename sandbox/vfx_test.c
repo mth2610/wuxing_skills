@@ -96,7 +96,7 @@ static const char* s_newFxNames[] = {
     "PROJ WATER", "PROJ METAL", "CYLINDER AURA", "GROUND AURA", "BLACK HOLE", "DRAW ICE CRYSTAL BURST",
     "SMOKE COLUMN F X", "GROUND SMOKE", "SMOKE ON PLANE", "MAGIC FILAMENTS", "MAGIC FILAMENTS ON PLANE", "SHARD DEBRIS",
     "CROWN SPLASH", "CHAIN LINK", "WATER STREAM ON PATH", "MESH ELECTRICITY", "PARTICLE UPGRADES TEST", "TRAIL UPGRADES TEST",
-    "SPIRIT WISP TEST", "CRESCENT SLASH TEST",
+    "SPIRIT WISP TEST", "METEOR COMET TEST",
 };
 // @gen:newfx_names end
 
@@ -337,20 +337,37 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
     Vector2 mousePos = GetMousePosition();
     bool clicked = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
 
-    Rectangle toggleBtn = {20, 15, 180, 32};
-    Rectangle backBtn = {210, 15, 180, 32};
+    // y=95 (not 15): Android reserves the top 84px as a mandatory system-gesture inset that
+    // intermittently steals finger taps there (see the long note in sandbox/ui_panel.c). Also
+    // arm-on-DOWN / fire-on-RELEASE instead of IsMouseButtonPressed: the down-frame position is
+    // often stale on Android, so a naive down-edge check highlights but never fires.
+    Rectangle toggleBtn = {20, 95, 180, 32};
+    Rectangle backBtn = {210, 95, 180, 32};
+    bool downNow = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
+    static bool s_toggleArmed = false, s_backArmed = false;
 
-    if (CheckCollisionPointRec(mousePos, toggleBtn))
+    bool overToggleBtn = CheckCollisionPointRec(mousePos, toggleBtn);
+    if (overToggleBtn)
     {
         s_clickedOnUI = true;
-        if (clicked)
-            s_isPanelOpen = !s_isPanelOpen;
+        if (downNow) s_toggleArmed = true;
     }
-    if (CheckCollisionPointRec(mousePos, backBtn))
+    if (s_toggleArmed && !downNow)
+    {
+        s_toggleArmed = false;
+        if (overToggleBtn) s_isPanelOpen = !s_isPanelOpen;
+    }
+
+    bool overBackBtn = CheckCollisionPointRec(mousePos, backBtn);
+    if (overBackBtn)
     {
         s_clickedOnUI = true;
-        if (clicked)
-            return true; // Request back to menu
+        if (downNow) s_backArmed = true;
+    }
+    if (s_backArmed && !downNow)
+    {
+        s_backArmed = false;
+        if (overBackBtn) return true; // Request back to menu
     }
 
     if (s_isPlayingMesh && s_testCategory == TEST_CAT_MESH)
@@ -363,7 +380,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
     if (s_isPanelOpen)
     {
         float startX = 20.0f;
-        float startY = 70.0f;
+        float startY = 150.0f; // shifted down with the toggle/back row (clear of top-84px gesture inset)
         float tabW = 120.0f;
         float tabH = 35.0f;
         float spacing = 10.0f;
@@ -546,8 +563,8 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_ComposeTrailUpgradesTest(s_prefabStartPos);
           } else if (s_testIndex == 84) { /* SPIRIT WISP TEST */
               VFX_ComposeSpiritWispTest(s_prefabStartPos);
-          } else if (s_testIndex == 85) { /* CRESCENT SLASH TEST */
-              VFX_ComposeCrescentSlashTest(s_prefabStartPos);
+          } else if (s_testIndex == 85) { /* METEOR COMET TEST */
+              VFX_ComposeMeteorCometTest(s_prefabStartPos);
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
               s_isPlayingMesh = true;
@@ -710,8 +727,8 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_ComposeTrailUpgradesTest(s_prefabStartPos);
           } else if (s_testIndex == 84) { /* SPIRIT WISP TEST */
               VFX_ComposeSpiritWispTest(s_prefabStartPos);
-          } else if (s_testIndex == 85) { /* CRESCENT SLASH TEST */
-              VFX_ComposeCrescentSlashTest(s_prefabStartPos);
+          } else if (s_testIndex == 85) { /* METEOR COMET TEST */
+              VFX_ComposeMeteorCometTest(s_prefabStartPos);
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
               s_isPlayingMesh = true;
@@ -836,9 +853,9 @@ void VFXTest_DrawHUD(void)
     DrawText("VF", (int)VF_TEST_BTN_X - 14, (int)VF_TEST_BTN_Y - 12, 20, WHITE);
     DrawText("TEST", (int)VF_TEST_BTN_X - 22, (int)VF_TEST_BTN_Y + 10, 14, WHITE);
 
-    // Toggle and back buttons
-    Rectangle toggleBtn = {20, 15, 180, 32};
-    Rectangle backBtn = {210, 15, 180, 32};
+    // Toggle and back buttons (y=95: clear of the top-84px Android system-gesture inset)
+    Rectangle toggleBtn = {20, 95, 180, 32};
+    Rectangle backBtn = {210, 95, 180, 32};
     Vector2 mousePos = GetMousePosition();
 
     bool isOverToggle = CheckCollisionPointRec(mousePos, toggleBtn);
@@ -868,7 +885,7 @@ void VFXTest_DrawHUD(void)
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), ColorAlpha(BLACK, 0.4f));
 
     float startX = 20.0f;
-    float startY = 70.0f;
+    float startY = 150.0f; // shifted down with the toggle/back row (clear of top-84px gesture inset)
     float tabW = 120.0f;
     float tabH = 35.0f;
     float spacing = 10.0f;
@@ -1025,7 +1042,7 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
     case 82: VFX_ComposeParticleUpgradesTest(pos); break;
     case 83: VFX_ComposeTrailUpgradesTest(pos); break;
     case 84: VFX_ComposeSpiritWispTest(pos); break;
-    case 85: VFX_ComposeCrescentSlashTest(pos); break;
+    case 85: VFX_ComposeMeteorCometTest(pos); break;
     default: break;
     }
 // @gen:newfx_render_trigger end

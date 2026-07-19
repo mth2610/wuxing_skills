@@ -667,11 +667,11 @@
       "trigger_call": "VFX_ComposeSpiritWispTest($POS)"
     },
     {
-      "fn": "VFX_ComposeCrescentSlashTest",
-      "label": "CRESCENT SLASH TEST",
+      "fn": "VFX_ComposeMeteorCometTest",
+      "label": "METEOR COMET TEST",
       "category": "metal",
       "type": "oneshot",
-      "trigger_call": "VFX_ComposeCrescentSlashTest($POS)"
+      "trigger_call": "VFX_ComposeMeteorCometTest($POS)"
     }
   ],
   "overrides": {
