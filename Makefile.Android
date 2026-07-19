@@ -97,6 +97,7 @@ PROJECT_SOURCE_FILES   := main.c \
                           core/audio_system.c \
                           core/debug_draw.c \
                           core/surface_material.c \
+                          core/gfx_quality.c \
                           $(wildcard ai/*.c) \
                           $(wildcard boss/*.c) \
                           $(wildcard combat/*.c) \

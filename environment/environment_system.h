@@ -34,6 +34,11 @@ void Environment_SetSunColor(Color col);
 Color Environment_GetAmbientColor(void);
 void Environment_SetAmbientColor(Color col);
 
+// Real Shading P1c — hemispheric ambient split for surface_lit (upper-sky
+// tint vs. lower-ground bounce), derived from the flat ambient above.
+Color Environment_GetSkyAmbient(void);
+Color Environment_GetGroundAmbient(void);
+
 Color Environment_GetShadowColor(void);
 void Environment_SetShadowColor(Color col);
 

@@ -272,6 +272,33 @@ void Environment_SetSunColor(Color col) { s_sunColor = col; }
 Color Environment_GetAmbientColor(void) { return s_ambientColor; }
 void Environment_SetAmbientColor(Color col) { s_ambientColor = col; }
 
+// Real Shading P1c — hemispheric split derived from the existing flat
+// ambient (no preset-struct change yet): sky brighter/cooler, ground dimmer
+// and slightly warm (bounce light off the arena floor).
+static inline unsigned char EnvClampByteF(float v) {
+    if (v < 0.0f) return 0;
+    if (v > 255.0f) return 255;
+    return (unsigned char)v;
+}
+
+Color Environment_GetSkyAmbient(void) {
+    return (Color){
+        EnvClampByteF(s_ambientColor.r * 1.25f),
+        EnvClampByteF(s_ambientColor.g * 1.25f),
+        EnvClampByteF(s_ambientColor.b * 1.35f),
+        255
+    };
+}
+
+Color Environment_GetGroundAmbient(void) {
+    return (Color){
+        EnvClampByteF(s_ambientColor.r * 0.55f),
+        EnvClampByteF(s_ambientColor.g * 0.45f),
+        EnvClampByteF(s_ambientColor.b * 0.40f),
+        255
+    };
+}
+
 Color Environment_GetShadowColor(void) { return s_shadowColor; }
 void Environment_SetShadowColor(Color col) { s_shadowColor = col; }
 

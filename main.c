@@ -8,6 +8,7 @@
 #include "sandbox/sandbox_core.h"
 #include "core/screen_distort.h"
 #include "core/surface_material.h"
+#include "core/gfx_quality.h"
 #include "core/atmosphere.h"
 #include "sandbox/skill_debugger.h"
 #include "core/skill_manager.h"
@@ -1005,6 +1006,7 @@ int main(int argc, char **argv) {
   ScreenDistort_Init(screenWidth, screenHeight);
   PostFX_Init(screenWidth, screenHeight);
   SurfaceMaterial_Init(); // G2 — must precede InitSandbox (CharacterModel_Load applies it)
+  GfxQuality_Set(GfxQuality_Default()); // Real Shading P0 — platform-appropriate tier
   Atmosphere_Init();      // G3 — ambient dust motes over the arena
   Atmosphere_Configure((Vector3){6.0f, 3.0f, 4.4f}, (Vector3){15.0f, 5.0f, 15.0f},
                        340, (Color){160, 190, 235, 255});
@@ -1219,6 +1221,9 @@ int main(int argc, char **argv) {
     if (IsKeyPressed(KEY_K)) {
         int nextMap = (MapManager_GetActiveIndex() + 1) % MapManager_GetCount();
         MapManager_SetActiveIndex(nextMap);
+    }
+    if (IsKeyPressed(KEY_L)) {
+        GfxQuality_Set((GfxQuality)((GfxQuality_Get() + 1) % 4)); // Real Shading — cycle UNLIT..HIGH
     }
 
     if (g_gamePaused) {
@@ -1803,6 +1808,8 @@ int main(int argc, char **argv) {
 
         if (currentScreen != SCREEN_GAME) {
             DrawText(TextFormat("FPS: %d", GetFPS()), 10, 640, 20, GREEN);
+            static const char *gfxTierName[4] = { "UNLIT", "LOW", "MED", "HIGH" };
+            DrawText(TextFormat("GFX [L]: %s", gfxTierName[GfxQuality_Get()]), 10, 662, 20, SKYBLUE);
         }
     }
              

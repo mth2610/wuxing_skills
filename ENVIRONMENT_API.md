@@ -88,6 +88,11 @@ void Environment_SetSunColor(Color col);
 Color Environment_GetAmbientColor(void);
 void Environment_SetAmbientColor(Color col);
 
+// --- Ambient bán cầu (Real Shading P1c) — derived from the flat ambient
+// above; feeds surface_lit's hemispheric term (sky above / ground bounce below).
+Color Environment_GetSkyAmbient(void);    // = ambient * 1.25 (cooler-tinted blue channel)
+Color Environment_GetGroundAmbient(void); // = ambient * ~0.5 (dimmer, slight warm shift)
+
 // --- Màu Bóng Râm (Shadow) ---
 Color Environment_GetShadowColor(void);
 void Environment_SetShadowColor(Color col);

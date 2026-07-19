@@ -2063,6 +2063,61 @@ int         VisualVerify_GetExitCode(void);  // 0 = ok, 1 = unknown skill
 
 > [!NOTE]
 > When autotest reports PASS but visual output looks wrong, trust the screenshot over the numeric result — see memory entry "Trust Visual Over Numeric PASS".
+
+## 18. Real Shading — Surface Material & Quality Toggle (`#include "core/surface_material.h"` / `#include "core/gfx_quality.h"`)
+
+Stylized-realism forward lighting for opaque scene meshes (characters/props/map/bosses) — half-Lambert diffuse + hemispheric ambient + Blinn sheen + cool Fresnel rim + emissive + distance fog, all in one shader (`core/shaders/surface_lit.{vs,fs}`) gated by a single quality tier. See `REAL_SHADING_PLAN.md` / `REAL_SHADING_SPEC.md` for full design rationale.
+
+```c
+// core/gfx_quality.h
+typedef enum { GFX_UNLIT = 0, GFX_LOW = 1, GFX_MED = 2, GFX_HIGH = 3 } GfxQuality;
+void       GfxQuality_Set(GfxQuality q);
+GfxQuality GfxQuality_Get(void);
+GfxQuality GfxQuality_Default(void); // GFX_HIGH desktop, GFX_MED __ANDROID__
+
+// core/surface_material.h
+void   SurfaceMaterial_Init(void);              // once, after window/GL is up
+Shader SurfaceMaterial_GetShader(void);
+void   SurfaceMaterial_Apply(Model *model);      // once per model after loading
+void   SurfaceMaterial_UpdateFrame(Camera3D camera); // once per frame before drawing lit models
+
+// Matcap / lit-sphere material (P3c, MED+ only) — jade/metal/energy props.
+// Shader is shared globally, so this is a per-call toggle, not per-material
+// state: call SetMatcapActive right before the DrawModel(s) that should use
+// it, ClearMatcap right after so later draws aren't affected.
+void SurfaceMaterial_SetMatcapActive(Texture2D matcap, float amount); // amount in [0,1]
+void SurfaceMaterial_ClearMatcap(void);
+```
+
+**Tiers** (one shader, `uniform int u_qualityTier`, runtime `>=` branches — no shader-variant matrix):
+- `GFX_UNLIT` (0) — cheap passthrough: `albedo * colDiffuse * fragColor`, zero lighting cost.
+- `GFX_LOW` (1) — half-Lambert diffuse + hemispheric ambient (`u_skyColor`/`u_groundColor`, from `Environment_GetSkyAmbient/GetGroundAmbient`) + Fresnel rim + emissive. All cheap ALU, the signature moonlit look.
+- `GFX_MED` (2, default) — LOW + Blinn spec sheen + directional-moon-facing rim tint (`smoothstep(-0.2, 0.6, dot(N,-L))` narrows the rim to the anti-moon silhouette instead of a uniform halo) + optional matcap (below).
+- `GFX_HIGH` (3) — MED + normal mapping + anisotropic sheen + fake jade/skin SSS (below).
+
+**Matcap materials** (MED+, `SurfaceMaterial_SetMatcapActive`/`ClearMatcap`) — no authored matcap textures exist in `assets/` yet (Art task); the shader/API plumbing is done and inert (`u_hasMatcap` defaults to 0) until a texture is supplied. Because the shader instance is shared across all models, this is a **call-around-the-draw** toggle, not a per-material flag baked at `Apply` time — wrap the specific `DrawModel` call(s) that should use it.
+
+**HIGH-tier extras** (P5, same call-around-the-draw pattern, no-op below `GFX_HIGH`):
+```c
+void SurfaceMaterial_SetNormalMapActive(Texture2D normalMap); void SurfaceMaterial_ClearNormalMap(void);
+void SurfaceMaterial_SetAniso(float anisoShininess);          void SurfaceMaterial_ClearAniso(void);
+void SurfaceMaterial_SetSSS(float strength, float power);     void SurfaceMaterial_ClearSSS(void); // strength=0 clears
+```
+- **Normal map** — `SurfaceMaterial_Apply` now calls `GenMeshTangents` on every mesh so tangents exist even without authored export data; the VS builds a world-space TBN (`fragTBN`), the FS perturbs `N` before any lighting term when `u_hasNormalMap > 0.5`.
+- **Anisotropic sheen** — streaks the Blinn highlight along the tangent (hair/silk) instead of dotting it; `anisoShininess` reuses `u_specStrength` for intensity.
+- **Fake SSS** — cheap back-scatter (`pow(dot(V,-L), power) * strength`) for jade/skin/thin-robe edges glowing with the moon behind them.
+No authored normal-map textures exist yet either (Art/Character task) — the plumbing is done and inert until one is supplied.
+
+**Deploy recipe (3 lines, per model):**
+```c
+SurfaceMaterial_Init();               // once at startup, before InitSandbox/model loads
+SurfaceMaterial_Apply(&model);        // once per model, right after loading
+SurfaceMaterial_UpdateFrame(camera);  // once per frame, before drawing any lit model
+```
+Currently applied to `character/character_model.c` hero models. Map props and boss models are NOT yet wired — call `SurfaceMaterial_Apply` on them the same way to bring them into the same lighting model.
+
+`GfxQuality_Set`/`Get` changes take effect immediately (just flips `u_qualityTier`, never reloads a shader or re-applies materials) — safe to call from a debug hotkey or options menu. In-game: **L** cycles UNLIT→LOW→MED→HIGH, current tier shown in the corner HUD text.
+
 ## 19. Visual Composition & Procedural Meshes
 
 See **[COMPOSITION_API.md](COMPOSITION_API.md)** for the full composition reference:
