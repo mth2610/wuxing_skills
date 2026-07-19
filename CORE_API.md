@@ -2108,6 +2108,36 @@ void SurfaceMaterial_SetSSS(float strength, float power);     void SurfaceMateri
 - **Fake SSS** — cheap back-scatter (`pow(dot(V,-L), power) * strength`) for jade/skin/thin-robe edges glowing with the moon behind them.
 No authored normal-map textures exist yet either (Art/Character task) — the plumbing is done and inert until one is supplied.
 
+**Real shadow map** (P6, HIGH+Shadow, Environment-owned — `#include "environment/env_shadow.h"`): single directional depth pass + 3×3 PCF, an opt-in layer on top of HIGH; fake blob shadows (`Environment_DrawSmartShadow`) remain the default everywhere else. **OFF by default on every platform** — not yet profiled on Mali.
+
+> [!NOTE]
+> **STATUS (2026-07-19): implemented but NOT confirmed working — paused, not a shipped feature.**
+> `ShadowFactor()` reports zero occlusion everywhere it was tested on desktop, despite the capture
+> pass and light-space matrix both being verified numerically correct. Extensive debugging log,
+> what was ruled out, and recommended next steps (needs RenderDoc/Xcode GPU capture, not further
+> blind iteration) are in **`REAL_SHADING_P6_NOTES.md`** — read it before touching this code again.
+> Harmless as-is: `EnvShadow_SetEnabled` defaults `false` everywhere, so none of this runs unless a
+> developer explicitly enables it (**J** in-game).
+```c
+void       EnvShadow_Init(void);           // once, after Environment_Init + SurfaceMaterial_Init
+void       EnvShadow_SetEnabled(bool enabled);
+bool       EnvShadow_IsEnabled(void);
+void       EnvShadow_BeginCapture(void);   // begin the light-space depth pass
+void       EnvShadow_EndCapture(void);
+Shader     EnvShadow_GetDepthShader(void);
+Matrix     EnvShadow_GetLightVP(void);
+Texture2D  EnvShadow_GetShadowMap(void);
+
+void SurfaceMaterial_BeginShadowCast(Model model, Shader depthShader); // swap a Model's materials to the depth shader
+void SurfaceMaterial_EndShadowCast(Model model);                       // swap back to the lit shader
+```
+`main.c` wires it once per frame: if `EnvShadow_IsEnabled()`, wraps `EnvShadow_BeginCapture()`/`EndCapture()` around re-invoking the same draw calls the real scene uses (`DrawSandbox3D`/`GameScreen_Draw3D`+`Boss_Draw`+`Formation_Draw`), with the character model's shader swapped to the depth shader for that pass via `SurfaceMaterial_BeginShadowCast`/`EndShadowCast`. `SurfaceMaterial_UpdateFrame` then pushes `u_lightVP`/`shadowMap`/`u_shadowEnabled` automatically. In-game: **J** toggles it, shown in the corner HUD next to the GFX tier.
+- Depth target: sampleable depth **texture** (not the renderbuffer `LoadRenderTexture` gives you) built via raw `rlgl` calls (`rlLoadTextureDepth` + `rlFramebufferAttach(..., RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D)` + `rlActiveDrawBuffers(0)`), the same recipe `core/screen_distort.c`'s `LoadRenderTextureWithDepthTexture` already uses successfully in this codebase (de-risks it against the rlvk Vulkan backend).
+- Resolution: 1024² desktop, 512² `__ANDROID__`.
+- Shadow multiplies **diffuse + spec only**, not ambient — shadowed areas stay lit by the hemispheric ambient instead of going pitch black.
+- The pre-pass currently sweeps in whatever `DrawSandbox3D`/`GameScreen_Draw3D` draw (HP bars, decals, etc., not just meshes) since those aren't split into geometry-only vs. overlay layers — harmless (stray depth contribution), not visually wrong, but not a clean caster list either; a future pass could split that out.
+- **Not verified on-device / not run through the Renderer Agent's rlvk test ladder yet** — treat as unverified until that happens (see `third_party/vulkan/CLAUDE.md`).
+
 **Deploy recipe (3 lines, per model):**
 ```c
 SurfaceMaterial_Init();               // once at startup, before InitSandbox/model loads

@@ -58,7 +58,36 @@ uniform float u_fogStart;
 uniform float u_fogEnd;
 uniform float u_fogEnabled;
 
+// Real shadow map (P6, HIGH+Shadow) — single directional PCF shadow from
+// EnvShadow. Multiplies diffuse/spec only (not ambient), so shadowed areas
+// stay lit by the hemispheric ambient rather than going pitch black.
+uniform sampler2D shadowMap;
+uniform mat4      u_lightVP;
+uniform float     u_shadowEnabled;
+
 out vec4 finalColor;
+
+// 3x3 PCF; returns 1.0 = fully lit, 0.0 = fully shadowed.
+// NOTE: vec*mat (not mat*vec) — u_lightVP arrives transposed via
+// SetShaderValueMatrix under rlvk. See REAL_SHADING_P6_NOTES.md / ground_shadow.fs.
+// (P6 not working yet: capture stores far-crammed depth — see the notes.)
+float ShadowFactor(vec3 worldPos, float ndl) {
+    vec4 posLS = vec4(worldPos, 1.0) * u_lightVP;
+    vec3 proj = posLS.xyz / posLS.w;
+    proj = proj * 0.5 + 0.5;
+    if (proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) return 1.0;
+
+    float bias = max(0.0025 * (1.0 - ndl), 0.0006);
+    vec2 texel = 1.0 / vec2(textureSize(shadowMap, 0));
+    float shadow = 0.0;
+    for (int x = -1; x <= 1; x++) {
+        for (int y = -1; y <= 1; y++) {
+            float pcfDepth = texture(shadowMap, proj.xy + vec2(float(x), float(y)) * texel).r;
+            shadow += (proj.z - bias > pcfDepth) ? 0.0 : 1.0;
+        }
+    }
+    return shadow / 9.0;
+}
 
 void main() {
     vec4 tex = texture(texture0, fragTexCoord);
@@ -77,12 +106,18 @@ void main() {
     vec3 H = normalize(L + V);
     float ndl = dot(N, L);
 
+    // Real shadow map (P6) — HIGH tier only; 1.0 (no-op) otherwise.
+    float shadow = 1.0;
+    if (u_qualityTier >= 3 && u_shadowEnabled > 0.5) {
+        shadow = ShadowFactor(fragWorldPos, ndl);
+    }
+
     // --- LOW base (all tiers >= 1) ---
     // Half-Lambert (Valve) — wraps light around the terminator for a soft,
     // stylized falloff with no harsh dark/light boundary on skin & cloth.
     float wrap = ndl * 0.5 + 0.5;
     wrap *= wrap;
-    vec3 diffuse = albedo * u_sunColor * wrap;
+    vec3 diffuse = albedo * u_sunColor * wrap * shadow;
 
     // Hemispheric ambient — near-free, biggest dark-scene win (no flat-black
     // undersides): sky tint above, ground bounce below, blended by N.y.
@@ -101,7 +136,7 @@ void main() {
     if (u_qualityTier >= 2) {
         float spec = pow(max(dot(N, H), 0.0), u_shininess) * u_specStrength;
         spec *= smoothstep(0.0, 0.15, ndl);
-        color += u_sunColor * spec;
+        color += u_sunColor * spec * shadow;
 
         // Favour the anti-moon silhouette so the rim reads as real backlight
         // instead of a uniform halo.
@@ -126,7 +161,7 @@ void main() {
             vec3  T = normalize(fragTBN[0]);
             float ToH = dot(T, H);
             float aniso = sqrt(max(0.0, 1.0 - ToH * ToH));
-            color += u_sunColor * pow(aniso, u_anisoShininess) * u_specStrength;
+            color += u_sunColor * pow(aniso, u_anisoShininess) * u_specStrength * shadow;
         }
         if (u_sssStrength > 0.0) {
             // Fake jade/skin SSS — half-Lambert already wraps light; add

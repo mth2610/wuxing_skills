@@ -4,6 +4,7 @@
 #include "environment/environment_system.h"
 #include "maps/toolkit/prop_lit.h"
 #include "maps/toolkit/map_props.h"
+#include "maps/toolkit/ground_shadow.h"
 #include "core/map_manager.h"
 #include <math.h>
 #include <stddef.h>
@@ -30,6 +31,7 @@ static void DrawIslandZoneDisc(Vector3 center, float radius, Color cCenter, Colo
 {
     rlDisableBackfaceCulling();
     rlSetTexture(0);
+    GroundShadow_Begin(); // Real Shading P6 — receive the real shadow map (no-op if disabled)
     rlBegin(RL_TRIANGLES);
     int segments = 48;
     float y = 0.05f;
@@ -46,6 +48,7 @@ static void DrawIslandZoneDisc(Vector3 center, float radius, Color cCenter, Colo
         rlVertex3f(p1.x, p1.y, p1.z);
     }
     rlEnd();
+    GroundShadow_End();
     rlEnableBackfaceCulling();
 }
 
@@ -126,7 +129,7 @@ void InitVerdantPathMap(void)
     // it comes from the VFX's own emissive shader, not this ambient/sun.
     Environment_SetAmbientColor((Color){38, 42, 55, 255});
     Environment_SetSunColor((Color){125, 130, 145, 255});
-    Environment_SetSunDirection((Vector3){0.5f, -0.8f, -0.3f}); // project-standard direction
+    Environment_SetSunDirection((Vector3){0.5f, -0.5f, -0.3f}); // Real Shading P6 — lowered elevation (was y=-0.8) so the real shadow map reads as a visible raking shadow instead of near-vertical/underfoot
     Environment_SetShadowColor((Color){10, 10, 15, 150});
 
     EnvFogConfig fog = {0};

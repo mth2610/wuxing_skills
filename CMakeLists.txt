@@ -85,6 +85,7 @@ add_executable(wuxing
     main.c 
     # --- Environment System ---
     environment/environment_system.c
+    environment/env_shadow.c
     # --- Core Systems ---
     core/map_manager.c
     core/resource_manager.c

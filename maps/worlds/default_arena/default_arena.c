@@ -1,5 +1,6 @@
 #include "default_arena.h"
 #include "core/map_manager.h"
+#include "maps/toolkit/ground_shadow.h"
 #include "raylib.h"
 #include "rlgl.h"
 #include <math.h>
@@ -28,6 +29,7 @@ void InitDefaultArenaMap(void) {
 static void DrawZoneDisc(Vector3 center, float radius, Color cCenter, Color cEdge) {
     rlDisableBackfaceCulling();
     rlSetTexture(0);
+    GroundShadow_Begin(); // Real Shading P6 — receive the real shadow map (no-op if disabled)
     rlBegin(RL_TRIANGLES);
     int segments = 48;
     float y = center.y + 0.001f; // just above the floor plate
@@ -44,6 +46,7 @@ static void DrawZoneDisc(Vector3 center, float radius, Color cCenter, Color cEdg
         rlVertex3f(p1.x, p1.y, p1.z);
     }
     rlEnd();
+    GroundShadow_End();
     rlEnableBackfaceCulling();
 }
 
@@ -51,6 +54,7 @@ void DrawDefaultArenaMap(void) {
     // Draw the main floor plate with a radial lighting gradient
     rlDisableBackfaceCulling();
     rlSetTexture(0);
+    GroundShadow_Begin(); // Real Shading P6 — receive the real shadow map (no-op if disabled)
     rlBegin(RL_TRIANGLES);
     Color cCenter = GetColor(0x3B3D4DFF); // Lighter blue-grey for center highlight (spotlight effect)
     Color cEdge = GetColor(0x131317FF);   // Darker tone at the edge of the arena
@@ -75,6 +79,7 @@ void DrawDefaultArenaMap(void) {
         rlVertex3f(p1.x, p1.y, p1.z);
     }
     rlEnd();
+    GroundShadow_End();
     rlEnableBackfaceCulling();
 
     // Nature-zone visual cues: muted gradient discs blending into the dark

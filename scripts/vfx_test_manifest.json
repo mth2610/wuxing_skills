@@ -672,6 +672,14 @@
       "category": "metal",
       "type": "oneshot",
       "trigger_call": "VFX_ComposeMeteorCometTest($POS)"
+    },
+    {
+      "fn": "VFX_ComposeSpiritOrb",
+      "label": "SPIRIT ORB",
+      "category": "util",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeSpiritOrb(VC_MAT_FIRE, $POS, 1.5f, $TIME)"
     }
   ],
   "overrides": {

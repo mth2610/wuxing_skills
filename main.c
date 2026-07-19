@@ -28,6 +28,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include "environment/environment_system.h"
+#include "environment/env_shadow.h"
+#include "maps/toolkit/ground_shadow.h"
 #include "core/map_manager.h"
 #include "skills/taiji/core_test/core_test_skill.h"
 #include "sandbox/auto_test.h"
@@ -1072,6 +1074,7 @@ int main(int argc, char **argv) {
   InitUIPanel();
   SkillDebugger_Init();
   Environment_Init();
+  EnvShadow_Init(); // Real Shading P6 — depth-only shadow map, OFF until toggled
   MapManager_Init();
   Combat_Init();
 
@@ -1224,6 +1227,9 @@ int main(int argc, char **argv) {
     }
     if (IsKeyPressed(KEY_L)) {
         GfxQuality_Set((GfxQuality)((GfxQuality_Get() + 1) % 4)); // Real Shading — cycle UNLIT..HIGH
+    }
+    if (IsKeyPressed(KEY_J)) {
+        EnvShadow_SetEnabled(!EnvShadow_IsEnabled()); // Real Shading P6 — toggle real shadow map
     }
 
     if (g_gamePaused) {
@@ -1688,6 +1694,32 @@ int main(int argc, char **argv) {
 
     BeginDrawing();
 
+    // Real Shading P6 — depth-only shadow caster pre-pass, off by default.
+    // Re-invokes the same (pure, no-side-effect) draw functions used for the
+    // real scene below, but into the light's depth target with the depth-only
+    // shader; overlay draws (HP bars, decals) get swept in too since these
+    // functions aren't split into geometry-only vs. UI layers — harmless
+    // (they just contribute stray depth), not visually wrong.
+    if (EnvShadow_IsEnabled()) {
+        EnvShadow_BeginCapture();
+        Model charModel = CharacterModel_GetModel();
+        if (CharacterModel_IsLoaded()) {
+            SurfaceMaterial_BeginShadowCast(charModel, EnvShadow_GetDepthShader());
+        }
+        if (!g_isDebuggerCapturing && currentScreen == SCREEN_SKILL_SANDBOX) {
+            DrawSandbox3D(&player, &enemy, mouseTarget3D, &uiState);
+        }
+        if (currentScreen == SCREEN_GAME) {
+            GameScreen_Draw3D(&player);
+            Boss_Draw();
+            Formation_Draw();
+        }
+        if (CharacterModel_IsLoaded()) {
+            SurfaceMaterial_EndShadowCast(charModel);
+        }
+        EnvShadow_EndCapture();
+    }
+
     ScreenDistort_Begin();
     if (g_isDebuggerCapturing) {
         ClearBackground(BLACK);
@@ -1697,6 +1729,7 @@ int main(int argc, char **argv) {
 
     MyBeginMode3D(camera);
     SurfaceMaterial_UpdateFrame(camera); // G2 — push sun/ambient/fog to lit models
+    GroundShadow_UpdateFrame(); // Real Shading P6 — push shadow map to raw-immediate ground draws
     MapManager_DrawActive();
     if (!g_isDebuggerCapturing && currentScreen == SCREEN_SKILL_SANDBOX) {
         DrawSandbox3D(&player, &enemy, mouseTarget3D, &uiState);
@@ -1809,7 +1842,27 @@ int main(int argc, char **argv) {
         if (currentScreen != SCREEN_GAME) {
             DrawText(TextFormat("FPS: %d", GetFPS()), 10, 640, 20, GREEN);
             static const char *gfxTierName[4] = { "UNLIT", "LOW", "MED", "HIGH" };
-            DrawText(TextFormat("GFX [L]: %s", gfxTierName[GfxQuality_Get()]), 10, 662, 20, SKYBLUE);
+            DrawText(TextFormat("GFX [L]: %s   SHADOW [J]: %s", gfxTierName[GfxQuality_Get()],
+                                 EnvShadow_IsEnabled() ? "ON" : "OFF"), 10, 662, 20, SKYBLUE);
+        }
+
+        // Real Shading P6 — debug preview of the raw shadow-map texture
+        // (temporary, remove once the pipeline is confirmed working). If
+        // this box is a flat solid color, the depth CAPTURE isn't producing
+        // real per-pixel data; if it shows a recognizable arena/character
+        // silhouette, the capture is fine and the bug is in the comparison
+        // math instead.
+        if (EnvShadow_IsEnabled()) {
+            int previewSize = 220;
+            int px = GetScreenWidth() - previewSize - 10;
+            int py = GetScreenHeight() - previewSize - 10;
+            Texture2D shadowTex = EnvShadow_GetShadowMap();
+            DrawRectangle(px - 2, py - 2, previewSize + 4, previewSize + 4, BLACK);
+            DrawTexturePro(shadowTex,
+                           (Rectangle){ 0, 0, (float)shadowTex.width, (float)shadowTex.height },
+                           (Rectangle){ (float)px, (float)py, (float)previewSize, (float)previewSize },
+                           (Vector2){ 0, 0 }, 0.0f, WHITE);
+            DrawText("SHADOW MAP DEBUG", px, py - 20, 14, YELLOW);
         }
     }
              

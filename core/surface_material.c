@@ -2,6 +2,7 @@
 #include "core/resource_manager.h"
 #include "core/gfx_quality.h"
 #include "environment/environment_system.h"
+#include "environment/env_shadow.h"
 #include "raymath.h"
 #include <stddef.h> // NULL
 
@@ -15,6 +16,7 @@ static int s_locFogColor, s_locFogStart, s_locFogEnd, s_locFogEnabled;
 static int s_locMatcapTex, s_locHasMatcap, s_locMatcapAmount;
 static int s_locNormalMap, s_locHasNormalMap;
 static int s_locAniso, s_locAnisoShininess, s_locSssStrength, s_locSssPower;
+static int s_locLightVP, s_locShadowMap, s_locShadowEnabled;
 
 static inline Vector3 ColorToVec3(Color c) {
     return (Vector3){ c.r / 255.0f, c.g / 255.0f, c.b / 255.0f };
@@ -50,6 +52,9 @@ void SurfaceMaterial_Init(void) {
     s_locAnisoShininess = GetShaderLocation(s_shader, "u_anisoShininess");
     s_locSssStrength    = GetShaderLocation(s_shader, "u_sssStrength");
     s_locSssPower       = GetShaderLocation(s_shader, "u_sssPower");
+    s_locLightVP        = GetShaderLocation(s_shader, "u_lightVP");
+    s_locShadowMap      = GetShaderLocation(s_shader, "shadowMap");
+    s_locShadowEnabled  = GetShaderLocation(s_shader, "u_shadowEnabled");
 
     // Material constants — the stylized "moonlight" identity. Cool blue-white
     // rim traces the silhouette; a tight Blinn sheen adds a wet/silk highlight.
@@ -82,6 +87,7 @@ void SurfaceMaterial_Init(void) {
     SetShaderValue(s_shader, s_locHasNormalMap, &zero, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_shader, s_locAniso,        &zero, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_shader, s_locSssStrength,  &zero, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_shader, s_locShadowEnabled,&zero, SHADER_UNIFORM_FLOAT);
 
     s_ready = true;
 }
@@ -128,6 +134,17 @@ void SurfaceMaterial_UpdateFrame(Camera3D camera) {
     SetShaderValue(s_shader, s_locFogStart,   &fog.start,   SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_shader, s_locFogEnd,     &fog.end,     SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_shader, s_locFogEnabled, &fogEnabled,  SHADER_UNIFORM_FLOAT);
+
+    // Real Shading P6 — shadow map (HIGH tier only in-shader; harmless to
+    // push always, EnvShadow_GetLightVP/GetShadowMap return stale-but-valid
+    // data when disabled since the uniform is gated by u_shadowEnabled).
+    float shadowEnabled = EnvShadow_IsEnabled() ? 1.0f : 0.0f;
+    SetShaderValue(s_shader, s_locShadowEnabled, &shadowEnabled, SHADER_UNIFORM_FLOAT);
+    if (EnvShadow_IsEnabled()) {
+        Matrix lightVP = EnvShadow_GetLightVP();
+        SetShaderValueMatrix(s_shader, s_locLightVP, lightVP);
+        SetShaderValueTexture(s_shader, s_locShadowMap, EnvShadow_GetShadowMap());
+    }
 }
 
 void SurfaceMaterial_SetMatcapActive(Texture2D matcap, float amount) {
@@ -180,4 +197,13 @@ void SurfaceMaterial_ClearSSS(void) {
     if (!s_ready) return;
     float zero = 0.0f;
     SetShaderValue(s_shader, s_locSssStrength, &zero, SHADER_UNIFORM_FLOAT);
+}
+
+void SurfaceMaterial_BeginShadowCast(Model model, Shader depthShader) {
+    for (int i = 0; i < model.materialCount; i++) model.materials[i].shader = depthShader;
+}
+
+void SurfaceMaterial_EndShadowCast(Model model) {
+    if (!s_ready) return;
+    for (int i = 0; i < model.materialCount; i++) model.materials[i].shader = s_shader;
 }

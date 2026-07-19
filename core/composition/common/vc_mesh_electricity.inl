@@ -1,80 +1,146 @@
 #include "core/mesh_adjacency.h"
-#include "core/ribbon_strip.h"
-#include "core/resource_manager.h"
+#include "core/trail_system.h"
+#include "core/color_gradient.h"
+#include "core/vfx_light.h"
 #include "core/force_field.h"
+#include "core/resource_manager.h"
 #include "raylib.h"
 #include "raymath.h"
 #include <stdbool.h>
 
+// Mỗi instance có MAX_ELECTRIC_ARCS arc, mỗi arc = 1 TRAIL_TYPE_FOLLOWER.
+// Trail tip được push mỗi frame theo head vertex hiện tại.
+// smoothSpline=true → trail system Catmull-Rom nội suy giữa các history node.
+//
+// Key fix: trail được spawn LAZY ở frame đầu tiên của Update — lúc đó
+// transform đã được set đúng bởi VFX_UpdateMeshElectricity. Nếu spawn
+// trong VFX_SpawnMeshElectricity thì transform vẫn là MatrixIdentity(),
+// tip bắt đầu tại (0,0,0) rồi "flash" ra vị trí đúng ở frame tiếp theo.
+
 #define ARCH_MAX_MESH_ELECTRICS 16
-#define MAX_ELECTRIC_ARCS 16
-#define ELECTRIC_PATH_LEN 8
-#define SMOOTH_POINTS_COUNT 32
+#define MAX_ELECTRIC_ARCS       16
+#define ELECTRIC_PATH_LEN        8
+#define ELECTRIC_TRAIL_NODES    14
+#define CRAWL_INTERVAL          0.10f
 
 typedef struct {
-    bool active;
+    bool  active;
+    bool  trailsSpawned;  // lazy: spawn trail lần đầu ở Update, không phải Spawn
     const MeshAdjacency *adj;
     Matrix transform;
-    float duration;
-    float elapsed;
-    Color color;
+    float  duration;
+    float  elapsed;
+    Color  color;
+
     unsigned short paths[MAX_ELECTRIC_ARCS][ELECTRIC_PATH_LEN];
-    unsigned char pathLengths[MAX_ELECTRIC_ARCS];
-    short stepsRemaining[MAX_ELECTRIC_ARCS];
-    float moveTimer;
+    unsigned char  pathLengths[MAX_ELECTRIC_ARCS];
+    short          stepsRemaining[MAX_ELECTRIC_ARCS];
+    float          moveTimer;
+
+    int trailIds[MAX_ELECTRIC_ARCS];
+
     const ForceField *forceField;
 } Arch_MeshElectricity;
 
 static Arch_MeshElectricity s_archElectrics[ARCH_MAX_MESH_ELECTRICS];
 
-static void VC_MeshElectricity_InitArc(Arch_MeshElectricity *e, int a) {
+// ── Gradient ─────────────────────────────────────────────────────────────────
+
+static ColorGradient s_elecGrad = {0};
+
+static void ElecGrad_Init(Color tint)
+{
+    s_elecGrad.count = 0;
+    ColorGradient_AddStop(&s_elecGrad, 0.0f,
+        (Color){(unsigned char)fminf(tint.r+80,255),
+                (unsigned char)fminf(tint.g+80,255),
+                (unsigned char)fminf(tint.b+80,255), 255});
+    ColorGradient_AddStop(&s_elecGrad, 0.25f, tint);
+    ColorGradient_AddStop(&s_elecGrad, 0.7f,
+        (Color){tint.r/2, tint.g/2, tint.b/2, 120});
+    ColorGradient_AddStop(&s_elecGrad, 1.0f,
+        (Color){tint.r/3, tint.g/3, tint.b/3, 0});
+}
+
+// ── Path walk init (không spawn trail — chỉ init path data) ──────────────────
+
+static void VC_MeshElectricity_InitPath(Arch_MeshElectricity *e, int a)
+{
     if (!e->adj || e->adj->count == 0) return;
     int startVertex = GetRandomValue(0, e->adj->count - 1);
-    e->paths[a][0] = (unsigned short)startVertex;
-    e->pathLengths[a] = 1;
+    e->paths[a][0]       = (unsigned short)startVertex;
+    e->pathLengths[a]    = 1;
     e->stepsRemaining[a] = GetRandomValue(15, 30);
-    
-    // Generate a valid initial walk of length ELECTRIC_PATH_LEN to avoid zero-length segments
-    int current = startVertex;
-    int prev = -1;
+
+    int current = startVertex, prev = -1;
     for (int p = 1; p < ELECTRIC_PATH_LEN; p++) {
-        if (e->adj->neighborCount[current] == 0) {
-            e->paths[a][p] = (unsigned short)current;
-            continue;
-        }
+        if (e->adj->neighborCount[current] == 0) { e->paths[a][p] = (unsigned short)current; continue; }
         int next = -1;
         if (e->adj->neighborCount[current] > 1 && prev != -1) {
-            int eligible[MAX_VERTEX_NEIGHBORS];
-            int eligibleCount = 0;
+            int eligible[MAX_VERTEX_NEIGHBORS], cnt = 0;
             for (int n = 0; n < e->adj->neighborCount[current]; n++) {
-                int neighbor = e->adj->neighbors[current][n];
-                if (neighbor != prev) {
-                    eligible[eligibleCount++] = neighbor;
-                }
+                int nb = e->adj->neighbors[current][n];
+                if (nb != prev) eligible[cnt++] = nb;
             }
-            if (eligibleCount > 0) {
-                next = eligible[GetRandomValue(0, eligibleCount - 1)];
-            }
+            if (cnt > 0) next = eligible[GetRandomValue(0, cnt-1)];
         }
-        if (next == -1) {
-            next = e->adj->neighbors[current][GetRandomValue(0, e->adj->neighborCount[current] - 1)];
-        }
-        prev = current;
-        current = next;
+        if (next == -1)
+            next = e->adj->neighbors[current][GetRandomValue(0, e->adj->neighborCount[current]-1)];
+        prev = current; current = next;
         e->paths[a][p] = (unsigned short)current;
         e->pathLengths[a]++;
     }
 }
 
-// Fallback mesh adjacency generated from a Torus
-static MeshAdjacency s_fallbackAdjacency;
-static bool s_fallbackBuilt = false;
+// ── Spawn trail cho 1 arc (gọi khi transform đã đúng) ────────────────────────
 
-int VFX_SpawnMeshElectricity(const struct MeshAdjacency *adj, Color color, float duration, const struct ForceField *forceField) {
+static void VC_MeshElectricity_SpawnTrail(Arch_MeshElectricity *e, int a)
+{
+    // Kill trail cũ nếu còn
+    if (e->trailIds[a] >= 0) {
+        KillTrail(e->trailIds[a]);
+        e->trailIds[a] = -1;
+    }
+
+    // Re-init path walk tại vị trí random mới
+    VC_MeshElectricity_InitPath(e, a);
+
+    Vector3 headLocal = e->adj->vertices[e->paths[a][0]];
+    Vector3 headWorld = Vector3Transform(headLocal, e->transform);
+
+    ElecGrad_Init(e->color);
+
+    TrailConfig tcfg    = {0};
+    tcfg.type           = TRAIL_TYPE_FOLLOWER;
+    tcfg.pos            = headWorld;
+    tcfg.thick          = 0.012f;
+    tcfg.len            = 0.018f;
+    tcfg.trailLength    = (float)ELECTRIC_TRAIL_NODES;
+    tcfg.life           = e->duration - e->elapsed + 0.05f;
+    tcfg.gradient       = &s_elecGrad;
+    tcfg.widthEnvelope  = TRAIL_WIDTH_ENVELOPE_TAPER_TAIL;
+    tcfg.smoothSpline   = true;
+    tcfg.priority       = VFX_PRIORITY_LOW;
+
+    e->trailIds[a] = SpawnTrailEntity(tcfg);
+
+    // Push tip ngay lập tức để trail không bắt đầu từ (0,0,0)
+    if (e->trailIds[a] >= 0)
+        UpdateFollowerPosition(e->trailIds[a], headWorld);
+}
+
+// ── Fallback mesh ─────────────────────────────────────────────────────────────
+
+static MeshAdjacency s_fallbackAdjacency;
+static bool          s_fallbackBuilt = false;
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+int VFX_SpawnMeshElectricity(const struct MeshAdjacency *adj, Color color,
+                              float duration, const struct ForceField *forceField)
+{
     if (adj == NULL) {
         if (!s_fallbackBuilt) {
-            // Using a Torus mesh scaled to fit the 2m sandbox viewport (0.25f normalized tube thickness, 3.2f scale)
-            // Center Radius = 1.6m, Tube Radius = 0.4m, Outer Radius = 2.0m, Inner Radius = 1.2m (clear hollow center)
             Mesh torusMesh = GenMeshTorus(0.25f, 3.2f, 16, 48);
             MeshAdjacency_Build(&s_fallbackAdjacency, torusMesh);
             UnloadMesh(torusMesh);
@@ -85,18 +151,21 @@ int VFX_SpawnMeshElectricity(const struct MeshAdjacency *adj, Color color, float
 
     for (int i = 0; i < ARCH_MAX_MESH_ELECTRICS; i++) {
         if (!s_archElectrics[i].active) {
-            s_archElectrics[i].active = true;
-            s_archElectrics[i].adj = adj;
-            s_archElectrics[i].transform = MatrixIdentity();
-            s_archElectrics[i].duration = duration;
-            s_archElectrics[i].elapsed = 0.0f;
-            s_archElectrics[i].color = color;
-            s_archElectrics[i].moveTimer = 0.0f;
-            s_archElectrics[i].forceField = (const ForceField *)forceField;
-            
-            // Initialize all crawling filaments
+            Arch_MeshElectricity *e = &s_archElectrics[i];
+            e->active        = true;
+            e->trailsSpawned = false;   // lazy — trails sẽ spawn ở Update frame đầu
+            e->adj           = adj;
+            e->transform     = MatrixIdentity();
+            e->duration      = duration;
+            e->elapsed       = 0.0f;
+            e->color         = color;
+            e->moveTimer     = 0.0f;
+            e->forceField    = (const ForceField *)forceField;
+
+            // Chỉ init path data — chưa spawn trail
             for (int a = 0; a < MAX_ELECTRIC_ARCS; a++) {
-                VC_MeshElectricity_InitArc(&s_archElectrics[i], a);
+                e->trailIds[a] = -1;
+                VC_MeshElectricity_InitPath(e, a);
             }
             return i;
         }
@@ -104,182 +173,119 @@ int VFX_SpawnMeshElectricity(const struct MeshAdjacency *adj, Color color, float
     return -1;
 }
 
-void VFX_UpdateMeshElectricity(int handle, Matrix transform) {
+void VFX_UpdateMeshElectricity(int handle, Matrix transform)
+{
     if (handle < 0 || handle >= ARCH_MAX_MESH_ELECTRICS || !s_archElectrics[handle].active) return;
     s_archElectrics[handle].transform = transform;
 }
 
-void VFX_KillMeshElectricity(int handle) {
+void VFX_KillMeshElectricity(int handle)
+{
     if (handle < 0 || handle >= ARCH_MAX_MESH_ELECTRICS) return;
-    s_archElectrics[handle].active = false;
+    Arch_MeshElectricity *e = &s_archElectrics[handle];
+    for (int a = 0; a < MAX_ELECTRIC_ARCS; a++) {
+        if (e->trailIds[a] >= 0) { KillTrail(e->trailIds[a]); e->trailIds[a] = -1; }
+    }
+    e->active = false;
 }
 
-static void VC_MeshElectricity_Update(float dt) {
+// ── Internal update ───────────────────────────────────────────────────────────
+
+static void VC_MeshElectricity_Update(float dt)
+{
     for (int i = 0; i < ARCH_MAX_MESH_ELECTRICS; i++) {
-        if (!s_archElectrics[i].active) continue;
-        s_archElectrics[i].elapsed += dt;
-        if (s_archElectrics[i].elapsed >= s_archElectrics[i].duration) {
-            s_archElectrics[i].active = false;
+        Arch_MeshElectricity *e = &s_archElectrics[i];
+        if (!e->active) continue;
+
+        e->elapsed += dt;
+        if (e->elapsed >= e->duration) {
+            VFX_KillMeshElectricity(i);
             continue;
         }
 
-        // Crawling update tick - slower speed (0.10s per step)
-        s_archElectrics[i].moveTimer += dt;
-        if (s_archElectrics[i].moveTimer >= 0.10f) {
-            s_archElectrics[i].moveTimer = 0.0f;
+        // Lazy spawn: frame đầu tiên, transform đã được set đúng bởi caller
+        if (!e->trailsSpawned) {
+            for (int a = 0; a < MAX_ELECTRIC_ARCS; a++)
+                VC_MeshElectricity_SpawnTrail(e, a);
+            e->trailsSpawned = true;
+        }
+
+        // Crawl tick
+        e->moveTimer += dt;
+        if (e->moveTimer >= CRAWL_INTERVAL) {
+            e->moveTimer = 0.0f;
 
             for (int a = 0; a < MAX_ELECTRIC_ARCS; a++) {
-                s_archElectrics[i].stepsRemaining[a]--;
-                
-                if (s_archElectrics[i].stepsRemaining[a] <= 0) {
-                    // Re-initialize/spawn at a new random location
-                    VC_MeshElectricity_InitArc(&s_archElectrics[i], a);
+                e->stepsRemaining[a]--;
+
+                if (e->stepsRemaining[a] <= 0) {
+                    // Re-spawn trail tại vị trí ngẫu nhiên mới
+                    VC_MeshElectricity_SpawnTrail(e, a);
                 } else {
-                    int head = s_archElectrics[i].paths[a][0];
-                    int prev = (s_archElectrics[i].pathLengths[a] > 1) ? s_archElectrics[i].paths[a][1] : -1;
-                    
+                    int head = e->paths[a][0];
+                    int prev = (e->pathLengths[a] > 1) ? e->paths[a][1] : -1;
+                    int neighborCount = e->adj->neighborCount[head];
                     int next = -1;
-                    int neighborCount = s_archElectrics[i].adj->neighborCount[head];
-                    
+
                     if (neighborCount > 0) {
-                        // Find neighbors that aren't the previous vertex to keep moving forward
                         if (neighborCount > 1 && prev != -1) {
-                            int eligible[MAX_VERTEX_NEIGHBORS];
-                            int eligibleCount = 0;
+                            int eligible[MAX_VERTEX_NEIGHBORS], cnt = 0;
                             for (int n = 0; n < neighborCount; n++) {
-                                int neighborIndex = s_archElectrics[i].adj->neighbors[head][n];
-                                if (neighborIndex != prev) {
-                                    eligible[eligibleCount++] = neighborIndex;
-                                }
+                                int nb = e->adj->neighbors[head][n];
+                                if (nb != prev) eligible[cnt++] = nb;
                             }
-                            if (eligibleCount > 0) {
-                                next = eligible[GetRandomValue(0, eligibleCount - 1)];
-                            }
+                            if (cnt > 0) next = eligible[GetRandomValue(0, cnt-1)];
                         }
-                        
-                        if (next == -1) {
-                            next = s_archElectrics[i].adj->neighbors[head][GetRandomValue(0, neighborCount - 1)];
-                        }
+                        if (next == -1)
+                            next = e->adj->neighbors[head][GetRandomValue(0, neighborCount-1)];
                     }
-                    
+
                     if (next != -1) {
-                        // Shift path to the right
-                        for (int p = ELECTRIC_PATH_LEN - 1; p > 0; p--) {
-                            s_archElectrics[i].paths[a][p] = s_archElectrics[i].paths[a][p - 1];
-                        }
-                        s_archElectrics[i].paths[a][0] = (unsigned short)next;
-                        if (s_archElectrics[i].pathLengths[a] < ELECTRIC_PATH_LEN) {
-                            s_archElectrics[i].pathLengths[a]++;
-                        }
+                        for (int p = ELECTRIC_PATH_LEN-1; p > 0; p--)
+                            e->paths[a][p] = e->paths[a][p-1];
+                        e->paths[a][0] = (unsigned short)next;
+                        if (e->pathLengths[a] < ELECTRIC_PATH_LEN) e->pathLengths[a]++;
                     }
                 }
             }
         }
-    }
-}
 
-// Helpers for Catmull-Rom spline interpolation
-static Vector3 VC_MeshElectricity_GetPathPoint(const Arch_MeshElectricity *e, int a, int idx) {
-    if (idx < 0) idx = 0;
-    if (idx >= e->pathLengths[a]) idx = e->pathLengths[a] - 1;
-    return e->adj->vertices[e->paths[a][idx]];
-}
-
-static Vector3 VC_MeshElectricity_InterpolateCatmullRom(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t) {
-    float t2 = t * t;
-    float t3 = t2 * t;
-    Vector3 res;
-    res.x = 0.5f * ((2.0f * p1.x) + (-p0.x + p2.x) * t + 
-             (2.0f * p0.x - 5.0f * p1.x + 4.0f * p2.x - p3.x) * t2 + 
-             (-p0.x + 3.0f * p1.x - 3.0f * p2.x + p3.x) * t3);
-    res.y = 0.5f * ((2.0f * p1.y) + (-p0.y + p2.y) * t + 
-             (2.0f * p0.y - 5.0f * p1.y + 4.0f * p2.y - p3.y) * t2 + 
-             (-p0.y + 3.0f * p1.y - 3.0f * p2.y + p3.y) * t3);
-    res.z = 0.5f * ((2.0f * p1.z) + (-p0.z + p2.z) * t + 
-             (2.0f * p0.z - 5.0f * p1.z + 4.0f * p2.z - p3.z) * t2 + 
-             (-p0.z + 3.0f * p1.z - 3.0f * p2.z + p3.z) * t3);
-    return res;
-}
-
-static void VC_MeshElectricity_Draw3D(Camera3D cam) {
-    Texture2D tex = ResourceManager_LoadTexture("assets/textures/generic/glow_circle.png");
-    
-    for (int i = 0; i < ARCH_MAX_MESH_ELECTRICS; i++) {
-        if (!s_archElectrics[i].active) continue;
-
-        // Draw crawling electric discharge filaments
+        // Mỗi frame: push tip trail đến head vertex hiện tại (world space)
         for (int a = 0; a < MAX_ELECTRIC_ARCS; a++) {
-            int len = s_archElectrics[i].pathLengths[a];
-            if (len < 2) continue;
+            if (e->trailIds[a] < 0) continue;
+            Vector3 headLocal = e->adj->vertices[e->paths[a][0]];
+            Vector3 headWorld = Vector3Transform(headLocal, e->transform);
+            UpdateFollowerPosition(e->trailIds[a], headWorld);
+        }
 
-            RibbonPoint points[SMOOTH_POINTS_COUNT];
-            float intensity = 0.7f + 0.3f * sinf(GetTime() * 10.0f + a * 3.0f);
-
-            for (int j = 0; j < SMOOTH_POINTS_COUNT; j++) {
-                float u = (float)j / (float)(SMOOTH_POINTS_COUNT - 1); // 0 at head, 1 at tail
-                
-                // Determine segments and local t
-                float segmentF = u * (len - 1);
-                int segIdx = (int)segmentF;
-                if (segIdx >= len - 1) segIdx = len - 2;
-                float t = segmentF - (float)segIdx;
-
-                // Sample control points
-                Vector3 p0 = VC_MeshElectricity_GetPathPoint(&s_archElectrics[i], a, segIdx - 1);
-                Vector3 p1 = VC_MeshElectricity_GetPathPoint(&s_archElectrics[i], a, segIdx);
-                Vector3 p2 = VC_MeshElectricity_GetPathPoint(&s_archElectrics[i], a, segIdx + 1);
-                Vector3 p3 = VC_MeshElectricity_GetPathPoint(&s_archElectrics[i], a, segIdx + 2);
-
-                // Interpolate position
-                Vector3 localPos = VC_MeshElectricity_InterpolateCatmullRom(p0, p1, p2, p3, t);
-
-                // Slow, smooth wave wobble
-                float wobbleSpeed = 6.0f;
-                float wobbleAmt = 0.012f;
-                Vector3 wobble = (Vector3){
-                    (float)sinf(GetTime() * wobbleSpeed + j * 0.4f) * wobbleAmt,
-                    (float)cosf(GetTime() * wobbleSpeed + j * 0.5f) * wobbleAmt,
-                    (float)sinf(GetTime() * wobbleSpeed - j * 0.3f) * wobbleAmt
-                };
-                Vector3 finalLocal = Vector3Add(localPos, wobble);
-                Vector3 worldPosNoForce = Vector3Transform(finalLocal, s_archElectrics[i].transform);
-
-                // Evaluate and apply Force Field influence
-                Vector3 force = (Vector3){0};
-                if (s_archElectrics[i].forceField) {
-                    force = ForceField_Evaluate(s_archElectrics[i].forceField, worldPosNoForce, (Vector3){0}, s_archElectrics[i].elapsed, (Vector3){0}, (Vector3){0});
-                }
-                Vector3 displacement = Vector3Scale(force, 0.04f); // 4cm per unit strength
-                Vector3 worldPos = Vector3Add(worldPosNoForce, displacement);
-
-                points[j].position = worldPos;
-                
-                // Taper width from head to tail (1.2cm to 0.2cm half-width)
-                float baseWidth = 0.012f * (1.0f - u * 0.8f);
-                points[j].halfWidth = baseWidth * (0.8f + 0.2f * sinf(GetTime() * 15.0f + j * 0.5f));
-                
-                // Fade opacity towards the tail (100% to 10%)
-                float fadeAlpha = 1.0f - u * 0.9f;
-                points[j].tint = ColorAlpha(s_archElectrics[i].color, intensity * fadeAlpha);
-                points[j].v = u;
+        // VFXLight crackle
+        if (GetRandomValue(0, 100) < 8) {
+            int a = GetRandomValue(0, MAX_ELECTRIC_ARCS - 1);
+            if (e->trailIds[a] >= 0) {
+                Vector3 headLocal = e->adj->vertices[e->paths[a][0]];
+                Vector3 headWorld = Vector3Transform(headLocal, e->transform);
+                VFXLight_Spawn(headWorld, e->color,
+                               0.4f * (0.6f + 0.4f * Random01()), 0.07f, VFX_PRIORITY_LOW);
             }
-
-            // Draw using the standard camera-facing ribbon
-            DrawRibbonStrip(points, SMOOTH_POINTS_COUNT, tex, cam);
         }
     }
 }
 
-void VFX_ComposeMeshElectricity(Vector3 position, Color color, float duration) {
+static void VC_MeshElectricity_Draw3D(Camera3D cam) { (void)cam; }
+
+// ── Convenience wrappers ──────────────────────────────────────────────────────
+
+void VFX_ComposeMeshElectricity(Vector3 position, Color color, float duration)
+{
     int handle = VFX_SpawnMeshElectricity(NULL, color, duration, NULL);
-    if (handle != -1) {
+    if (handle != -1)
         VFX_UpdateMeshElectricity(handle, MatrixTranslate(position.x, position.y, position.z));
-    }
 }
 
-void ComposeMeshElectricityEx(Vector3 position, Color color, float duration, const struct ForceField *forceField) {
+void ComposeMeshElectricityEx(Vector3 position, Color color, float duration,
+                               const struct ForceField *forceField)
+{
     int handle = VFX_SpawnMeshElectricity(NULL, color, duration, forceField);
-    if (handle != -1) {
+    if (handle != -1)
         VFX_UpdateMeshElectricity(handle, MatrixTranslate(position.x, position.y, position.z));
-    }
 }

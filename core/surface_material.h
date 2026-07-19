@@ -50,4 +50,11 @@ void SurfaceMaterial_ClearAniso(void);
 void SurfaceMaterial_SetSSS(float strength, float power); // jade/skin back-scatter, strength=0 clears
 void SurfaceMaterial_ClearSSS(void);
 
+// Real Shading P6 — swap a model's materials to the shadow depth shader for
+// the EnvShadow_BeginCapture()..EndCapture() pass, then back to the lit
+// shader. `model` is passed by value (Model.materials is a pointer — the
+// underlying array is shared, so this affects the real model's draws).
+void SurfaceMaterial_BeginShadowCast(Model model, Shader depthShader);
+void SurfaceMaterial_EndShadowCast(Model model);
+
 #endif // SURFACE_MATERIAL_H

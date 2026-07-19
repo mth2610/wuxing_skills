@@ -49,6 +49,7 @@ PROJECT_BUILD_PATH     ?= $(PROJECT_BUILD_ID).$(PROJECT_NAME)
 PROJECT_RESOURCES_PATH ?= resources
 PROJECT_SOURCE_FILES   := main.c \
                           environment/environment_system.c \
+                          environment/env_shadow.c \
                           core/map_manager.c \
                           core/resource_manager.c \
                           core/color_gradient.c \
