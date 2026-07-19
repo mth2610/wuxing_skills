@@ -1349,24 +1349,27 @@ readback + `strings` on the installed lib), then reproduced on desktop and fixed
 - Sandbox touch: the "no-cast on the left 45% of screen" was cut to just the joystick zone
   (`sandbox/sandbox_core.c`), so skills cast to the left of the character again.
 
-### 8.4b OPEN issues at end of 2026-07-19 session (Android/Mali, unresolved)
-1. **Top sandbox buttons ([+] HIEN BANG DIEU KHIEN / QUAY LAI MENU) still hard to tap.** They
-   highlight (position/hover registers via `GetMousePosition`) but the ACTION fires only
-   intermittently. Tried: bigger buttons (60px), and a manual arm-on-`IsMouseButtonDown`-over-button
-   + fire-on-release in `UpdateUIPanel` (`sandbox/ui_panel.c`) — improved but NOT solved. The skill
-   buttons (lower, only when panel open) work reliably with the *same* code, so it's position-linked
-   (top-of-screen). BTNDBG on device showed touch coords that don't cleanly map to the button rect
-   (values ranged −10…1530 for taps on a top button in a 1920-wide space), i.e. a likely
-   **touch-coordinate vs draw-coordinate (letterbox) mismatch** and/or Android top-edge
-   system-gesture interception, worsened by ~30fps. NOT yet root-caused — needs a device session
-   logging raw `GetTouchPosition(0)` + `GetTouchPointCount` transitions vs the button rect frame by
-   frame, and/or checking raylib's Android touch→screen scaling against the letterboxed
-   `CORE.Window.screen` (§7.14–7.17 territory, now for INPUT not output).
-2. **Black-hole VFX: its 3 rings/shells render invisible** on device (every other VFX tested
-   correct). Separate rendering bug, not investigated. Likely specific to that skill's
-   shader/draw (concentric-shell technique, see memory `black-hole-swirl-technique`). Could be a
-   depth/blend/culling or a texture-binding interaction — check whether it also repros on desktop
-   rlvk first.
+### 8.4b issues from the 2026-07-19 session
+1. **Top sandbox/vfx_test buttons hard to tap — RESOLVED (2026-07-19, device-confirmed).** Root
+   cause was NOT letterbox/renderOffset (`GetMousePosition == GetTouchPosition` on device, mapping
+   correct). It was the **Android top-84px MANDATORY system-gesture inset** (`dumpsys window` →
+   `mandatorySystemGestures frame=[0,0][2400,84] sideHint=TOP`): the buttons sat at y=15, inside that
+   band, so the OS intermittently stole the touch (notification-shade pull) → button highlights on a
+   leaked down-frame but the tap never reaches the app. Nailed it by comparing an `adb shell input
+   tap` on the button (bypasses the OS gesture layer → worked, opened the panel) against a real
+   finger tap (logged NOTHING reaching the app). MANDATORY zone can't be excluded, so **fix = shift
+   the whole sandbox/vfx_test panel down +80px** (interactive UI now starts at y≥95). Full detail in
+   memory [[project_mali_device_landmines]]. Also fixed the main-menu + these buttons' click logic to
+   arm-on-DOWN/fire-on-RELEASE (Android's down-frame `GetMousePosition` is stale).
+2. **Black-hole VFX 3 swirl shells invisible — RESOLVED (2026-07-19, device-confirmed).** Root cause
+   was the shared noise hash, not the black hole's draw path (VS/FS/blend/cull all fine). Cylinder
+   aura had the same root (visible membrane, dead swirl). `core/shaders/common/noise.glsl`'s
+   `hash*()` used `fract(sin(dot(p,K))*43758.5)`, which loses precision on Mali for large sin
+   arguments → hash goes constant → fbm collapses → density/alpha 0 (invisible) or no animated
+   detail (static aura). Broke only the effects that push the noise domain far (black-hole fbm3
+   octaves; aura_shell's `u_time`-in-domain scroll); small-domain fbm2 VFX were unaffected, masking
+   it. **Fix = non-sin Dave Hoskins hash** (see [[project_mali_device_landmines]]). Note for future:
+   invisible ≠ shader-compile-fail (that falls back to the default shader and draws WHITE).
 3. **~30 FPS on Mali** with the full HDR + ScreenDistort + PostFX(+bloom) + GPU-particle pipeline.
    The pool-ring descriptor path (per-draw `vkAllocateDescriptorSets` + full set rewrite in
    `rlvkFlushSet0`) is inherently heavier than push descriptors and every draw now dirties it more

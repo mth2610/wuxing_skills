@@ -589,6 +589,8 @@ int SpawnTrailEntity(TrailConfig config)
   t->minVertexDistance = config.minVertexDistance;
   t->widthEnvelope = config.widthEnvelope;
   t->smoothSpline = config.smoothSpline;
+  t->disableInnerCore = config.disableInnerCore;
+  t->useCustomBlendMode = config.useCustomBlendMode;
   t->widthCurve = config.widthCurve;
   t->alphaCurve = config.alphaCurve;
   t->distortionStrength = config.distortionStrength;
@@ -805,7 +807,10 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
       }
       Texture2D ribbonTex = t->sprite.id > 0 ? t->sprite : s_globalTrailTex;
       DrawRibbonStrip(scratchOuter, drawCount, ribbonTex, camera);
-      DrawRibbonStrip(scratchInner, drawCount, ribbonTex, camera);
+      if (!t->disableInnerCore)
+      {
+        DrawRibbonStrip(scratchInner, drawCount, ribbonTex, camera);
+      }
     }
 
     Vector3 right = camBasis->right;
@@ -877,6 +882,23 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
         scratchOuter[h].tint = (Color){nodeColor.r, nodeColor.g, nodeColor.b, (unsigned char)((nodeColor.a / 255.0f) * 180.0f * lifeRatio * taper)};
       }
       DrawRibbonStrip(scratchOuter, drawCount, t->sprite.id > 0 ? t->sprite : s_globalTrailTex, camera);
+      // WISP can optionally draw a bright hot-core layer (same as PROJECTILE/FOLLOWER)
+      // Only drawn when disableInnerCore is false
+      if (!t->disableInnerCore)
+      {
+        for (int h = 0; h < drawCount; h++)
+        {
+          float segRatio = 1.0f - (float)h / (float)(drawCount - 1);
+          float taper = (t->widthEnvelope != TRAIL_WIDTH_ENVELOPE_UNIFORM || t->widthCurve)
+                        ? ComputeWidthEnvelope(t, segRatio, time)
+                        : ComputeWispStyleTaper(segRatio);
+          scratchInner[h].position = scratchOuter[h].position;
+          scratchInner[h].halfWidth = t->thickness * 0.35f * taper;
+          scratchInner[h].v = scratchOuter[h].v;
+          scratchInner[h].tint = (Color){255, 255, 255, (unsigned char)(180.0f * lifeRatio * taper)};
+        }
+        DrawRibbonStrip(scratchInner, drawCount, t->sprite.id > 0 ? t->sprite : s_globalTrailTex, camera);
+      }
     }
   }
   else if (t->type == TRAIL_TYPE_PORTAL)
@@ -938,7 +960,10 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
       }
       Texture2D ribbonTex = t->sprite.id > 0 ? t->sprite : s_globalTrailTex;
       DrawRibbonStrip(scratchOuter, drawCount, ribbonTex, camera);
-      DrawRibbonStrip(scratchInner, drawCount, ribbonTex, camera);
+      if (!t->disableInnerCore)
+      {
+        DrawRibbonStrip(scratchInner, drawCount, ribbonTex, camera);
+      }
     }
   }
 }
@@ -974,7 +999,10 @@ void DrawTrailEntities(Camera3D camera)
   {
     TrailEntity *t = &trailPool[s_activeIds[a]];
     Shader sh = ResolveShader(t);
-    BlendMode bm = (t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE;
+    // useCustomBlendMode flag fixes BLEND_ALPHA=0 sentinel ambiguity.
+    // Without it, (t->blendMode > 0) fails when blendMode=BLEND_ALPHA.
+    BlendMode bm = t->useCustomBlendMode ? t->blendMode
+                                         : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
 
     bool found = false;
     for (int g = 0; g < groupCount; g++)
@@ -1007,7 +1035,8 @@ void DrawTrailEntities(Camera3D camera)
     for (int a = 0; a < activeCount; a++)
     {
       TrailEntity *t = &trailPool[s_activeIds[a]];
-      BlendMode currentBm = (t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE;
+      BlendMode currentBm = t->useCustomBlendMode ? t->blendMode
+                                                   : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
 
       if (ResolveShader(t).id == fullShader.id && currentBm == groups[g].bm)
       {

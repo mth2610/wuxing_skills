@@ -17,7 +17,8 @@ static void InitMeteorCurves(void)
     FloatCurve_AddStop(&s_meteorWidthCurve, 0.0f, 0.0f);
     FloatCurve_AddStop(&s_meteorWidthCurve, 0.3f, 0.8f);
     FloatCurve_AddStop(&s_meteorWidthCurve, 0.8f, 1.3f);
-    FloatCurve_AddStop(&s_meteorWidthCurve, 1.0f, 2.5f); // Head
+    FloatCurve_AddStop(&s_meteorWidthCurve, 0.95f, 2.5f); // Bulbous head
+    FloatCurve_AddStop(&s_meteorWidthCurve, 1.0f, 0.0f);  // Pinch to a point at the absolute tip to avoid flat cut-off
 
     // Alpha curve: Solid at head, fading smoothly at tail
     FloatCurve_AddStop(&s_meteorAlphaCurve, 0.0f, 0.0f);
@@ -33,33 +34,40 @@ void VFX_ComposeMeteorCometTest(Vector3 pos)
     InitMeteorCurves();
 
     TrailConfig cometCfg = {0};
-    
+
     // Comet falling from the sky!
-    cometCfg.type = TRAIL_TYPE_PROJECTILE; 
+    cometCfg.disableInnerCore = true;    // Tắt lớp lõi phát sáng
+    cometCfg.blendMode = BLEND_ALPHA;    // Dùng alpha thường thay vì additive
+    cometCfg.useCustomBlendMode = true;  // Bắt buộc, vì BLEND_ALPHA=0 không detect được qua ">0"
+
+    cometCfg.type = TRAIL_TYPE_WISP;
     cometCfg.pos = (Vector3){pos.x, pos.y + 10.0f, pos.z}; // Spawn high up
-    cometCfg.vel = (Vector3){4.0f, -8.0f, 0.0f}; // Fall diagonally down-right
-    
+    cometCfg.vel = (Vector3){4.0f, -8.0f, 0.0f};           // Fall diagonally down-right
+
     // Very long tail
-    cometCfg.trailLength = 40; 
-    cometCfg.thick = 0.8f; 
-    cometCfg.life = 1.2f; 
-    
-    // Orange-yellow fire comet, lower alpha to not blow out bloom
-    cometCfg.tint = (Color){255, 120, 30, 200}; 
-    
+    cometCfg.len = 6.0f; // Wisp uses physical length
+    cometCfg.thick = 0.8f;
+    cometCfg.life = 1.2f;
+
+    // Orange tint but dark enough to stay below bloomThreshold=0.5 luma
+    // so PostFX bloom won't kick in — lets us see pure BLEND_ALPHA effect.
+    // Luma = 0.299*r + 0.587*g + 0.114*b
+    // (140, 60, 15) luma = 0.299*0.55 + 0.587*0.24 + 0.114*0.06 ≈ 0.31 < 0.5
+    cometCfg.tint = (Color){140, 60, 15, 200};
+
     cometCfg.smoothSpline = true;
-    
-    // ADD TEXTURE so we can see UV scrolling clearly!
-    cometCfg.tex = ResourceManager_LoadTexture("assets/textures/energy_flow.png");
-    
+
+    // ADD TEXTURE so we can see UV scrolling clearly! Use noise to avoid directional mapping issues
+    cometCfg.tex = ResourceManager_LoadTexture("assets/textures/noise.png");
+
     // Scroll the texture backward along the tail
-    cometCfg.uvTiling = 2.0f; 
-    cometCfg.uvScrollSpeed = -3.0f; 
-    
+    cometCfg.uvTiling = 1.0f;
+    cometCfg.uvScrollSpeed = -1.5f;
+
     // Meteor rumbles and wiggles a bit as it falls through atmosphere
-    cometCfg.distortionStrength = 0.3f; 
-    cometCfg.distortionSpeed = 6.0f;     
-    
+    cometCfg.distortionStrength = 0.2f;
+    cometCfg.distortionSpeed = 6.0f;
+
     cometCfg.widthCurve = &s_meteorWidthCurve;
     cometCfg.alphaCurve = &s_meteorAlphaCurve;
 

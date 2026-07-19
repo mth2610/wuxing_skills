@@ -111,6 +111,10 @@ typedef struct {
   float minVertexDistance;
   TrailWidthEnvelopeType widthEnvelope;
   bool smoothSpline;
+  bool disableInnerCore; // Set true to disable the extra bright core layer (PROJECTILE/FOLLOWER only)
+  // blendMode defaults to BLEND_ADDITIVE. Set useCustomBlendMode=true to override
+  // with any value including BLEND_ALPHA (=0), which cannot be detected via >0 check.
+  bool useCustomBlendMode;
 
   const SkillCurve *widthCurve;
   const SkillCurve *alphaCurve;
@@ -283,6 +287,8 @@ typedef struct {
   // 6. Kiểu Boolean - 1 byte
   bool active;
   bool smoothSpline;
+  bool disableInnerCore;
+  bool useCustomBlendMode;
 } TrailEntity;
 
 void TrailSystem_SetGlobalTexture(Texture2D tex);
