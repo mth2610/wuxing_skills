@@ -129,7 +129,7 @@ void InitVerdantPathMap(void)
     // it comes from the VFX's own emissive shader, not this ambient/sun.
     Environment_SetAmbientColor((Color){38, 42, 55, 255});
     Environment_SetSunColor((Color){125, 130, 145, 255});
-    Environment_SetSunDirection((Vector3){0.5f, -0.5f, -0.3f}); // Real Shading P6 — lowered elevation (was y=-0.8) so the real shadow map reads as a visible raking shadow instead of near-vertical/underfoot
+    Environment_SetSunDirection((Vector3){0.5f, -0.7f, -0.3f}); // Real Shading P6 — moderate elevation (was y=-0.8 near-steep, then debug-era y=-0.5): visible raking shadow without over-stretching
     Environment_SetShadowColor((Color){10, 10, 15, 150});
 
     EnvFogConfig fog = {0};

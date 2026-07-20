@@ -1,5 +1,68 @@
 # Real Shading P6 — Shadow Map Debugging Notes (2026-07-19, paused unresolved)
 
+## SESSION 3 UPDATE (2026-07-19, latest — READ THIS FIRST)
+
+Session 3 built a **numeric instrument** and got the shadow to actually RENDER — a coherent,
+character-shaped, caster-following shadow — but with an unresolved position/scale drift. Paused at
+the best-so-far state. What's in the tree now:
+
+**The instrument (keep — this is how future sessions should work):**
+- `EnvShadow_DebugDump(Vector3)` (env_shadow.c) + **H hotkey** (main.c, works when shadow is ON):
+  CPU-reads the shadow map back (`rlReadTexturePixels` — works under rlvk), prints min/max/
+  histogram, projects the player + the ground under them with the exact CPU row-vector formula,
+  prints the stored depth at those texels in both Y orientations + 5×5 neighborhoods, and walks the
+  expected shadow line (t=0..6m along the flat sun dir) printing z/stored/PASS-fail per step.
+  One keypress = full numeric ground truth; no more color-guessing.
+
+**Fixed and confirmed in session 3 (all still in the tree):**
+1. **`textureSize()` returns 0 under rlvk** → `texel = 1/0 = INF` → every PCF tap coordinate NaN
+   (`0*INF`) → silently no shadow. Replaced with a `u_shadowTexel` uniform pushed from C
+   (`1.0/map.width`). Same fix hardcoded (1/1024) in surface_lit.fs.
+2. **Capture + copy are byte-correct** (proven by readback at BOTH 1024 and 2048): casters land at
+   exactly the CPU-predicted texels with depths matching computed values to 3 decimals
+   (e.g. stored 0.7172 vs computed 0.7173), no Y flip, far-clear 1.0 elsewhere. The capture
+   pipeline (rlOrtho + rlMultMatrixf view + depth shader + copy pass) is NOT the problem.
+3. **Empirical GLSL multiply = `vec * mat`** (4-combo color experiment: only `(vec*mat, v-as-is)`
+   produced caster silhouettes; `mat*vec` produced far-crammed z). Combined with reading
+   `rlvk_shader.inl`'s `rlSetUniformMatrix` (uploads raylib memory order = semantic column-major,
+   correct std140), the implication is **rlvk's auto-generated UBO declares mat4s row_major** —
+   NOT yet verified in `rlvk_shaderc.inl`; verify with `RLVK_DUMP_SPV` + spirv-dis.
+
+**The best-so-far state (what's committed now):** 2048 map + copy texture + `mat4 u_lightVP` +
+`vec*mat` + texture0-via-`rlSetTexture` + `u_shadowTexel` + real darken output. Renders a coherent
+character-shaped shadow that follows the caster. **Remaining bug: the shadow's position and size
+drift proportionally to the caster's distance from the arena center** (~2× at mid-arena — the
+yellow-ball experiment pinned it: a marker drawn at the CPU-predicted shadow spot stays fixed at
+the feet while the rendered shadow sits meters away and scales).
+
+**Open contradictions (the next session must resolve these, ideally as an rlvk visual-test
+scenario, NOT via more in-game iteration):**
+- (a) Same shader code: **1024 map → NO shadow at all; 2048 map → displaced-but-present shadow.**
+  Readback proves the copy content correct at both sizes. Something in sampling/binding is
+  texture-size-dependent (pool-ring descriptors? batch texture0 path? NPOT-vs-window-size in the
+  §7.14-7.17 letterbox handling?).
+- (b) Uploading the matrix as **4 plain vec4 rows** (bit-exact CPU formula, no mat4 convention
+  ambiguity) → NO shadow at all, even though `rlSetUniform`'s VEC4 path reads correct in source.
+  Suggests the auto-UBO offset table and `GetShaderLocation` indices desync for some layouts.
+- (c) Sampling the **raw depth texture** (rlvk §7.10 auto-twin) instead of the manual copy →
+  shadow appears but with a DISTORTED shape.
+- (d) Round C (1024 + sun y=-0.5): user stood inside the rendered patch and the CPU line-walk
+  matched exactly. A later 1024 run (sun y=-0.7, otherwise same) → nothing. Possibly sun-angle-
+  dependent, possibly a mis-tracked variable across rounds.
+
+**Recommended next steps (Renderer agent, `third_party/vulkan/CLAUDE.md` ladder):**
+1. `RLVK_DUMP_SPV=dir` + spirv-dis on ground_shadow.fs → confirm the mat4's RowMajor/ColMajor
+   decoration and the UBO offsets of every uniform (settles (b) and the multiply question for good).
+2. Write a minimal visual-test scenario (tests ladder step 3): ortho depth capture to an RT,
+   second shader samples it with the same VP, assert a known occluder shadows a known point.
+   Vary RT size 1024/2048 → reproduces (a) headlessly.
+3. Only after both pass, come back to the game.
+
+The rest of this file is the session-1/session-2 history (superseded where it conflicts with the
+above, kept for the reasoning trail).
+
+---
+
 Companion to `REAL_SHADING_PLAN.md` / `REAL_SHADING_SPEC.md`. P0–P5 are done and confirmed working
 on desktop (user-tested). P6 (real directional shadow map) is **implemented but does not produce a
 visible shadow** — extensively debugged in TWO sessions. This doc is the handoff for whoever

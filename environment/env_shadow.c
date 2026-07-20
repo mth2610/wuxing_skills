@@ -37,10 +37,13 @@ void EnvShadow_Init(void) {
 #if defined(__ANDROID__)
     s_resolution = 512; // Mali class — smaller depth target
 #else
-    s_resolution = 2048; // 40m frustum / 2048 = ~2cm texels — thin limbs
-                         // (legs/feet) rasterize solidly, so the shadow
-                         // connects to the feet instead of starting ~1.5m
-                         // away (at 1024/4cm the lower body left no texels).
+    s_resolution = 2048; // The session-3 state that produced the best result
+                         // so far: a coherent character-shaped shadow that
+                         // follows the caster, displaced/scaled with distance
+                         // from the arena center (unresolved — see
+                         // REAL_SHADING_P6_NOTES.md). 1024 with otherwise
+                         // identical code produced NO shadow at all, which is
+                         // one of the open contradictions.
 #endif
 
     // Depth + throwaway color attachment — same recipe as
@@ -231,9 +234,9 @@ void EnvShadow_EndCapture(void) {
 
 Shader EnvShadow_GetDepthShader(void) { return s_depthShader; }
 Matrix EnvShadow_GetLightVP(void) { return s_lightVP; }
-// The R32F copy — CPU readback (EnvShadow_DebugDump) PROVED its content is
-// correct: casters stored at their exact expected light-space depth
-// (0.712–0.730 vs computed 0.7173), no Y flip, clear at 1.0 elsewhere.
+// The R32F copy. Direct raw-depth sampling (rlvk's §7.10 twin) was also
+// tried — it produced a DISTORTED shadow shape, so the copy remains the
+// least-broken source. See REAL_SHADING_P6_NOTES.md session-3 findings.
 Texture2D EnvShadow_GetShadowMap(void) { return s_copyRT.texture; }
 
 // ---------------------------------------------------------------------------

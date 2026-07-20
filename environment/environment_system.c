@@ -7,13 +7,12 @@
 #define PI 3.14159265358979323846f
 #endif
 
-// Real Shading P6 — lowered elevation (was y=-1.0, near-vertical: on the
-// isometric camera a near-vertical sun casts a shadow almost directly
-// underfoot, foreshortened to nearly nothing and easily lost under the
-// existing fake blob shadow decal). y=-0.5 gives a longer, clearly offset
-// raking shadow so the real shadow map is actually visible; same Tây Nam
-// (southwest) horizontal direction as before.
-static Vector3 s_sunDirection = { -0.6f, -0.5f, 0.6f }; // Hướng mặt trời (bóng đổ về Tây Nam, góc thấp hơn để thấy rõ bóng)
+// Real Shading P6 — moderate elevation (was y=-1.0 near-vertical, then a
+// debug-era y=-0.5 which stretched shadows to 1.7x height and exaggerated
+// the gap left by sparsely-rasterized legs). y=-0.7 (~40° elevation) keeps a
+// clearly visible raking shadow (~1.2x height) without the exaggeration;
+// same Tây Nam (southwest) horizontal direction as before.
+static Vector3 s_sunDirection = { -0.6f, -0.7f, 0.6f }; // Hướng mặt trời (bóng đổ về Tây Nam)
 static Color s_sunColor = { 255, 245, 230, 255 };      // Warm white / yellowish sun light
 static Color s_ambientColor = { 50, 50, 70, 255 };      // Cool bluish shadow ambient tone
 static Color s_shadowColor = { 8, 8, 12, 180 };       // Transparent dark shadow tone

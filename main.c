@@ -1771,6 +1771,7 @@ int main(int argc, char **argv) {
     if (currentScreen == SCREEN_SKILL_SANDBOX) {
         VFX_Compose_Draw3D(camera);
     }
+
     if (currentScreen == SCREEN_GAME) {
         GameScreen_Draw3D(&player);
         Boss_Draw();

@@ -2111,13 +2111,14 @@ No authored normal-map textures exist yet either (Art/Character task) — the pl
 **Real shadow map** (P6, HIGH+Shadow, Environment-owned — `#include "environment/env_shadow.h"`): single directional depth pass + 3×3 PCF, an opt-in layer on top of HIGH; fake blob shadows (`Environment_DrawSmartShadow`) remain the default everywhere else. **OFF by default on every platform** — not yet profiled on Mali.
 
 > [!NOTE]
-> **STATUS (2026-07-19): implemented but NOT confirmed working — paused, not a shipped feature.**
-> `ShadowFactor()` reports zero occlusion everywhere it was tested on desktop, despite the capture
-> pass and light-space matrix both being verified numerically correct. Extensive debugging log,
-> what was ruled out, and recommended next steps (needs RenderDoc/Xcode GPU capture, not further
-> blind iteration) are in **`REAL_SHADING_P6_NOTES.md`** — read it before touching this code again.
-> Harmless as-is: `EnvShadow_SetEnabled` defaults `false` everywhere, so none of this runs unless a
-> developer explicitly enables it (**J** in-game).
+> **STATUS (2026-07-19, session 3): PARTIALLY working — paused, not a shipped feature.**
+> Renders a coherent caster-following shadow on the ground, but its position/size drift with the
+> caster's distance from the arena center (unresolved rlvk-side scale mismatch; plus several open
+> contradictions — e.g. identical code shows no shadow at 1024² but a displaced one at 2048²).
+> Full evidence log, the numeric debug instrument (**H** hotkey → `EnvShadow_DebugDump`), and the
+> recommended Renderer-agent next steps are in **`REAL_SHADING_P6_NOTES.md`** — read it before
+> touching this code again. Harmless as-is: `EnvShadow_SetEnabled` defaults `false` everywhere, so
+> none of this runs unless a developer explicitly enables it (**J** in-game).
 ```c
 void       EnvShadow_Init(void);           // once, after Environment_Init + SurfaceMaterial_Init
 void       EnvShadow_SetEnabled(bool enabled);

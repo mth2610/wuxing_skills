@@ -28,10 +28,10 @@ out vec4 finalColor;
 
 // 3x3 PCF; returns 1.0 = fully lit, 0.0 = fully shadowed.
 float ShadowFactor(vec3 worldPos) {
-    // vec * mat (== transpose(mat) * vec): u_lightVP arrives transposed via
-    // SetShaderValueMatrix under rlvk (raylib's internal mvp upload transposes,
-    // SetShaderValueMatrix does not), so this is the multiply that produces
-    // correct light-space coordinates. Confirmed via a bucketed proj.z debug.
+    // vec * mat — under rlvk's auto-UBO the mat4 arrives row_major-decorated,
+    // so v*M here computes the semantic M*v == the CPU-verified formula.
+    // (Empirically proven: with the 1024 map this samples caster silhouettes
+    // at exactly the CPU-predicted texels with matching depth.)
     vec4 posLS = vec4(worldPos, 1.0) * u_lightVP;
     vec3 proj = posLS.xyz / posLS.w;
     proj = proj * 0.5 + 0.5;
@@ -50,15 +50,17 @@ float ShadowFactor(vec3 worldPos) {
 }
 
 void main() {
-    // WORKING (2026-07-19, numerically verified): capture, copy, (vec*mat,
-    // v-as-is) sampling, and the depth test all confirmed correct via CPU
-    // readback + on-screen band diagnostics — see REAL_SHADING_P6_NOTES.md.
+    // STATUS (2026-07-19, session 3 pause): PARTIALLY working — renders a
+    // coherent character-shaped shadow that follows the caster, but its
+    // position/size drift with the caster's distance from the arena center
+    // (an unresolved scale mismatch somewhere between the capture, the copy
+    // pass, and this sampling — see REAL_SHADING_P6_NOTES.md session-3 log
+    // before touching anything here).
     float shadow = 1.0;
     if (u_shadowEnabled > 0.5) {
         shadow = ShadowFactor(fragWorldPos);
     }
     // Darken toward ~30%, not full black — reads as a soft shadow on the
-    // night floor instead of a hole. (Verified working end-to-end via the
-    // magenta-tag test at these exact texels.)
+    // night floor instead of a hole.
     finalColor = vec4(fragColor.rgb * mix(0.30, 1.0, shadow), fragColor.a);
 }
