@@ -5,9 +5,14 @@ Manages the entire **Maps** module of the Wuxing Skills project. Responsible for
 
 ## Scope
 - **Read/write:** The entire `maps/` directory — `maps/toolkit/` (reusable prop-kit source + shared shaders, includes `prop_lit`/`grass_material`, transferred from Core Agent since only maps/ ever used them) and `maps/worlds/<map_name>/` (finished, playable maps)
-- **Read (required):** `MAP_API.md`, `ENVIRONMENT_API.md`
+- **Read (required):** `docs/API.md`, `../environment/docs/API.md`
 - **Read (interface only):** `environment/environment_system.h`, `core/skill_manager.h` (only the element colors and `ApplyAoEDamage` sections, if needed)
 - **Read:** `assets/` (to know what textures/models are available)
+
+## Docs layout (per `DOC_ARCHITECTURE.md`)
+- `docs/API.md` — pure interface (formerly root `maps/docs/API.md`).
+- `docs/LANDMINES.md` — distilled reusable lessons. Cross-cutting ones live in root `ENGINE_LANDMINES.md`.
+- `docs/PROGRESS.md` — backlog / session log (not yet created — add when needed).
 
 ## Directories FULLY FORBIDDEN
 - `build/`
@@ -33,7 +38,7 @@ maps/
         <map_name>/
             ├── <map_name>.h   # Declares Init, Draw, (Update, Unload optional)
             └── <map_name>.c   # Implementation — build it from maps/toolkit/ functions,
-                                # see MAP_API.md's Toolkit API section
+                                # see docs/API.md's Toolkit API section
 ```
 The directory name, `.h` filename, and `.c` filename MUST match exactly. The
 map registry generator (`scripts/generate_map_registry.py`) walks `maps/`

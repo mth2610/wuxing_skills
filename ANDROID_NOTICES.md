@@ -3,116 +3,138 @@
 # clean android
 make -f Makefile.Android clean
 
-# build android 
+# build android
 make -f Makefile.Android
 
 # pair
-adb pair <IP>:<Port_ghép_nối>
+adb pair <IP>:<pairing_port>
 
-# connect 
-adb connect <IP>:<Port_chính>b 
+# connect
+adb connect <IP>:<main_port>
 
-# intasll
+# install
 adb install -r wuxing_skills.apk
 
-# log crash
+# crash log
 adb logcat -c
 adb logcat raylib:V "*:S"
 adb logcat -b crash | ~/Library/Android/sdk/ndk/28.2.13676358/ndk-stack -sym android.wuxing_skills/obj
 
-Tài liệu này ghi chú lại toàn bộ quy trình, cấu hình và các lỗi phần cứng/trình điều khiển đặc thù đã gặp phải trong quá trình port dự án C/Raylib này sang nền tảng Android.
+This document records the full process, configuration, and hardware/driver-specific bugs
+encountered while porting this C/Raylib project to Android.
 
-## 1. Môi trường & Kiến trúc cốt lõi
-- **Kiến trúc ứng dụng:** Sử dụng hoàn toàn `NativeActivity` (C thuần) để chạy Raylib, loại bỏ hoàn toàn tầng Java (`NativeLoader`, `MainActivity.java`) nhằm tối giản overhead và tránh lỗi khởi tạo rườm rà.
-- **Công cụ biên dịch:** Quá trình build được tự động hóa qua `Makefile.Android`. Yêu cầu có:
-  - **Android NDK** (Cung cấp Clang compiler `aarch64-linux-android31-clang`, sysroot, và thư viện `libandroid`, `liblog`, `libEGL`, `libGLESv2`, `libOpenSLES`).
-  - **Android SDK Build-Tools** (Cung cấp `aapt` để đóng gói APK, `zipalign` để tối ưu hóa bộ nhớ RAM, và `apksigner` để ký ứng dụng).
+## 1. Environment & Core Architecture
+- **App architecture:** Uses pure `NativeActivity` (plain C) to run Raylib, entirely dropping the
+  Java layer (`NativeLoader`, `MainActivity.java`) to minimize overhead and avoid convoluted init
+  bugs.
+- **Build tooling:** The build is automated via `Makefile.Android`. Requires:
+  - **Android NDK** (provides the `aarch64-linux-android31-clang` compiler, sysroot, and
+    `libandroid`, `liblog`, `libEGL`, `libGLESv2`, `libOpenSLES` libraries).
+  - **Android SDK Build-Tools** (provides `aapt` for APK packaging, `zipalign` for RAM
+    optimization, and `apksigner` for signing).
 
-## 2. Quy trình Build
-Thực thi các lệnh sau tại thư mục gốc của dự án:
+## 2. Build Process
+Run the following from the project root:
 ```bash
-# Dọn dẹp các tệp build và object cũ để tránh xung đột
+# Clean old build/object files to avoid conflicts
 make -f Makefile.Android clean
 
-# Biên dịch toàn bộ mã nguồn (.c) thành libmain.so, đóng gói tài nguyên, và xuất file .apk
+# Compile all .c sources into libmain.so, package resources, and produce the .apk
 make -f Makefile.Android
 ```
-*(Ghi chú: Makefile tự động lo việc tạo thư mục, sao chép assets, chuyển đổi shader, biên dịch liên kết thư viện động, và ký APK với keystore cục bộ).*
+*(Note: the Makefile automatically handles directory creation, asset copying, shader conversion,
+dynamic-library linking, and signing the APK with a local keystore.)*
 
-**Không cần `clean` mỗi lần build (từ 2026-07-18)**: object rule đã có `-MMD -MP` +
-`-include $(OBJS:.o=.d)`, nên sửa một file `.h` (không đụng `.c` nào trực tiếp) giờ vẫn
-kích hoạt recompile đúng các `.c` include header đó — trước đây incremental build chỉ theo
-dõi mtime của chính file `.c`, nên sửa `.h` xong build lại "không có hiệu lực" là hiện tượng
-thật, không phải ảo giác. Vẫn cần `clean` (hoặc xoá cache thủ công) trong các trường hợp
-Make không thể tự phát hiện:
-- Bật/tắt `USE_VULKAN`: `compile_raylib_android` và `compile_shaderc_android` chỉ build nếu
-  archive đích **chưa tồn tại** — đổi cờ không tự invalidate cache cũ (xem §D2 và
-  `RLVK_HANDOFF.md` §7.18).
-- Sửa chính `Makefile.Android` (CFLAGS/LDLIBS mới) — object files cũ không tự biết cờ
-  compile đã đổi.
+**No need to `clean` on every build (since 2026-07-18):** the object rule now has `-MMD -MP` +
+`-include $(OBJS:.o=.d)`, so editing a `.h` file (without touching any `.c` directly) now correctly
+triggers a recompile of every `.c` that includes that header — previously, incremental builds only
+tracked the mtime of the `.c` file itself, so editing a `.h` and rebuilding silently having "no
+effect" was a real bug, not a false impression. `clean` (or manually clearing the cache) is still
+required in cases Make can't auto-detect:
+- Toggling `USE_VULKAN`: `compile_raylib_android` and `compile_shaderc_android` only build if the
+  target archive **doesn't already exist** — flipping the flag doesn't invalidate the old cache
+  (see §D2 and `RLVK_HANDOFF.md` §7.18).
+- Editing `Makefile.Android` itself (new CFLAGS/LDLIBS) — old object files don't know the compile
+  flags changed.
 
-## 3. Các lưu ý Sống còn về Đồ họa trên Android (GLES 2.0 / Mali / Adreno)
+## 3. Critical Graphics Notes on Android (GLES 2.0 / Mali / Adreno)
 
-Quá trình đưa Wuxing Skills lên Android đã vấp phải các giới hạn cực kỳ khắt khe của phần cứng di động. Tuyệt đối tuân thủ các quy tắc sau khi tạo thêm hiệu ứng mới:
+Bringing Wuxing Skills to Android ran into extremely strict mobile hardware limits. Strictly follow
+these rules when adding any new effect:
 
-### A. Lỗi Tràn Bộ Đệm Hình Học (Geometry Batch Limit)
-- **Triệu chứng:** Mặt nước bị cắt vuông góc, các khối cầu/trụ bị mất một nửa hình, hoặc các chi tiết bị gãy vụn ngẫu nhiên.
-- **Nguyên nhân:** Raylib dùng `rlBegin()`/`rlEnd()` với bộ đệm mặc định là 8192 đỉnh. Trên PC, nếu bộ đệm đầy ngang chừng một Quad/Triangle, OpenGL xử lý khá xề xòa. Nhưng trên GPU Mobile, trình điều khiển sẽ **cắt nát và vứt bỏ** toàn bộ buffer bị lẻ đỉnh, gây hỏng hình học.
-- **Giải pháp bắt buộc:** Bất cứ khi nào vẽ các khối lưới (Mesh) thủ công bằng vòng lặp, **BẮT BUỘC** phải gọi hàm `rlCheckRenderBatchLimit(số_đỉnh)` ngay TRƯỚC `rlBegin()`. 
-  - *Ví dụ:* `rlCheckRenderBatchLimit(rings * slices * 4);`
+### A. Geometry Batch Overflow
+- **Symptom:** water surfaces get clipped at right angles, spheres/cylinders lose half their
+  geometry, or details break apart randomly.
+- **Cause:** Raylib's `rlBegin()`/`rlEnd()` uses a default 8192-vertex buffer. On PC, if the buffer
+  fills mid-Quad/Triangle, OpenGL is fairly lenient. On mobile GPUs, the driver will **shred and
+  discard** the entire buffer once it has a leftover/odd vertex, corrupting the geometry.
+- **Mandatory fix:** whenever manually drawing meshes in a loop, you **MUST** call
+  `rlCheckRenderBatchLimit(vertex_count)` right BEFORE `rlBegin()`.
+  - *Example:* `rlCheckRenderBatchLimit(rings * slices * 4);`
 
-### B. Lỗi Toán Học (Math Fault) Gây Crash Cứng GPU
-- **Triệu chứng:** Game crash văng ra ngoài ngay lập tức khi tung chiêu (ví dụ: Hoa Long Phong Ba).
-- **Nguyên nhân:** GPU trên điện thoại sẽ gây lỗi phần cứng (Hardware Segmentation Fault / SIGSEGV) nếu bạn gọi hàm `normalize(vec3(0.0))` trong GLSL. Trong kỹ thuật làm biến dạng mesh bằng TBN (Tangent-Bitangent-Normal), nếu dùng `cross(vec3(0,1,0), fragNormal)` tại đỉnh khối cầu (nơi `fragNormal` cũng hướng `(0,1,0)`), kết quả của `cross` sẽ là `vec3(0)`.
-- **Giải pháp bắt buộc:** Luôn tính toán biến tạm, kiểm tra độ dài bằng `length()` trước khi `normalize()`.
+### B. Math Fault Causing a Hard GPU Crash
+- **Symptom:** the game crashes immediately when casting a skill (e.g. Hoa Long Phong Ba).
+- **Cause:** the phone's GPU triggers a hardware fault (Segmentation Fault / SIGSEGV) if you call
+  `normalize(vec3(0.0))` in GLSL. In TBN (Tangent-Bitangent-Normal) mesh-deformation code, using
+  `cross(vec3(0,1,0), fragNormal)` at a sphere's pole (where `fragNormal` also points `(0,1,0)`)
+  produces `cross == vec3(0)`.
+- **Mandatory fix:** always compute into a temporary and check the length via `length()` before
+  calling `normalize()`.
   ```glsl
   vec3 tangent = cross(vec3(0.0, 1.0, 0.0), fragNormal);
   if (length(tangent) < 0.1) tangent = cross(vec3(1.0, 0.0, 0.0), fragNormal);
-  tangent = normalize(tangent); // An toàn
+  tangent = normalize(tangent); // Safe
   ```
 
-### C. Chuyển đổi Shader (PC sang Android)
-Shader gốc của dự án được viết cho PC (`#version 330`). Android sử dụng OpenGL ES 2.0 (`#version 100`).
-- Dự án sử dụng script `scripts/convert_shaders_to_gles.py` tự động chuyển đổi trong quá trình build (đổi `in/out` thành `attribute/varying`, thêm `precision highp float`, v.v...).
-- **Lưu ý Hàm Texture:** GLSL 330 dùng `texture()`, nhưng GLSL 100 bắt buộc phải dùng `texture2D()`. Script Python đã tự động xử lý việc này (Regex replace `texture(` thành `texture2D(`). **KHÔNG ĐƯỢC** tự ý vào thư mục `android.wuxing_skills/assets/` chỉnh sửa thủ công và gõ hàm `texture()` — thao tác này sẽ khiến shader biên dịch thất bại trong im lặng, khiến Raylib lùi về dùng shader mặc định (hậu quả là chiêu thức bị sai màu, VD: chiêu Metal màu vàng biến thành màu cam đỏ).
+### C. Shader Conversion (PC to Android)
+The project's shaders were originally written for PC (`#version 330`). Android uses OpenGL ES 2.0
+(`#version 100`).
+- The project uses `scripts/convert_shaders_to_gles.py` to automatically convert them during the
+  build (turns `in/out` into `attribute/varying`, adds `precision highp float`, etc.).
+- **Texture function note:** GLSL 330 uses `texture()`, but GLSL 100 requires `texture2D()`. The
+  Python script handles this automatically (regex-replaces `texture(` with `texture2D(`). **DO
+  NOT** manually edit files under `android.wuxing_skills/assets/` and type `texture()` by hand —
+  doing so makes the shader fail to compile silently, causing Raylib to fall back to its default
+  shader (the visible symptom: a skill's color is wrong, e.g. a yellow Metal skill turning
+  orange-red).
 
-### D2. Landmine raylib-CMake (14/07/2026 — nguyên nhân MÀN HÌNH ĐEN + crash Game)
-Hai cờ CMake khi build `libraylib.a` cho Android đã gây 2 lỗi chí mạng, đều đã
-fix trong `Makefile.Android` (mục `compile_raylib_android`) — **ĐỪNG thêm lại**:
-1. **`-DCUSTOMIZE_BUILD=ON` = màn hình đen toàn app.** Trên raylib 6.0 cờ này
-   lật default một `SUPPORT_*` khiến `EndDrawing()` không swap buffer + không
-   giới hạn FPS: app init GL bình thường, loop chạy ~1000fps, nhưng không có
-   frame nào được present (SurfaceFlinger thấy layer `buffer=0x0, 0.00Hz`).
-   Cùng bug từng gặp ở desktop (CORE_ISSUES.md Item 41).
-2. **`-DGRAPHICS=GRAPHICS_API_OPENGL_ES3` KHÔNG có tác dụng** — raylib CMake
-   ghi đè GRAPHICS=ES2 vô điều kiện khi PLATFORM=Android. Hệ quả build ES2:
-   instancing dùng con trỏ hàm extension (EXT/ANGLE) mà driver Mali GLES 3.2
-   không quảng cáo → con trỏ NULL → **SIGSEGV pc 0x0 trong `DrawMeshInstanced`**
-   ngay khi VFX instanced đầu tiên vẽ (vd vào Game, GlacialCannon). Cờ đúng:
-   `-DOPENGL_VERSION="ES 3.0"`. Dấu hiệu build ES2 nhầm trong logcat:
-   `GL: VAO extension detected` thay vì dùng VAO core.
+### D2. raylib-CMake landmine (2026-07-14 — cause of the BLACK SCREEN + game crash)
+Two CMake flags used when building `libraylib.a` for Android caused 2 fatal bugs, both fixed in
+`Makefile.Android` (the `compile_raylib_android` target) — **DO NOT re-add them**:
+1. **`-DCUSTOMIZE_BUILD=ON` = entire app renders a black screen.** On raylib 6.0 this flag flips a
+   `SUPPORT_*` default so `EndDrawing()` no longer swaps the buffer and no longer caps FPS: the app
+   initializes GL normally, the loop runs at ~1000fps, but no frame is ever presented
+   (SurfaceFlinger sees the layer as `buffer=0x0, 0.00Hz`). Same bug previously seen on desktop
+   (`core/docs/PROGRESS.md` Item 41).
+2. **`-DGRAPHICS=GRAPHICS_API_OPENGL_ES3` has NO effect** — raylib's CMake unconditionally
+   overrides `GRAPHICS=ES2` when `PLATFORM=Android`. This causes an ES2 build where instancing uses
+   extension function pointers (EXT/ANGLE) that the Mali GLES 3.2 driver doesn't advertise → NULL
+   pointer → **SIGSEGV at pc 0x0 inside `DrawMeshInstanced`**, right when the first instanced VFX
+   draws (e.g. entering Game, GlacialCannon). Correct flag: `-DOPENGL_VERSION="ES 3.0"`. Logcat
+   symptom of an accidental ES2 build: `GL: VAO extension detected` instead of using the core VAO
+   path.
 
-**Sau khi đổi cờ raylib phải xoá cache** (Makefile chỉ build raylib khi thiếu
-`libraylib.a`):
+**After changing raylib flags, the cache must be cleared** (the Makefile only builds raylib if
+`libraylib.a` is missing):
 ```bash
 rm -rf android.wuxing_skills/raylib_build android.wuxing_skills/lib/arm64-v8a/libraylib.a
 ```
 
-Debug nhanh khi nghi "app chạy mà không hiện": `adb shell dumpsys SurfaceFlinger`
-— layer của app phải có buffer + frameRate > 0; `buffer=0x0` nghĩa là
-eglSwapBuffers chưa bao giờ queue frame (lỗi tầng platform, không phải shader).
+Quick debug when suspecting "the app is running but not showing anything":
+`adb shell dumpsys SurfaceFlinger` — the app's layer must show a buffer + frameRate > 0;
+`buffer=0x0` means `eglSwapBuffers` never queued a frame (a platform-layer bug, not a shader bug).
 
-### D3. Online (EOS) trên Android = stub
-`Makefile.Android` link `net/net_eos_stub.c` → `Net_OnlineAvailable()==false`,
-nút "TAO PHONG ONLINE"/"NHAP MA VAO PHONG" bị vô hiệu **by design**.
-`third_party/eos-sdk` hiện chỉ có binary Win/Mac/Linux. Muốn online thật trên
-Android: tải "EOS SDK for Android" (Epic portal) — gồm `EOSSDK.aar`
-(libEOSSDK arm64 + Java classes bắt buộc) — rồi thêm tầng Java/dex vào quy
-trình đóng gói APK (app hiện `hasCode=false`, C thuần) + init
-`EOS_Android_InitializeOptions` với JavaVM từ NativeActivity. Đây là hạng mục
-riêng, chưa làm. LAN (ENet `--host/--join`) đã link sẵn nhưng chưa có UI nhập
-IP trên Android.
+### D3. Online (EOS) on Android = stub
+`Makefile.Android` links `net/net_eos_stub.c` → `Net_OnlineAvailable() == false`, so the "HOST
+ONLINE" / "JOIN CODE" buttons are disabled **by design**. `third_party/eos-sdk` currently only ships
+Win/Mac/Linux binaries. To get real online play on Android: download "EOS SDK for Android" (Epic
+portal) — includes `EOSSDK.aar` (libEOSSDK arm64 + required Java classes) — then add a Java/dex
+layer to the APK packaging process (the app currently has `hasCode=false`, pure C) + initialize
+`EOS_Android_InitializeOptions` with the JavaVM from NativeActivity. This is a separate, not-yet-done
+item. LAN (ENet `--host/--join`) is already linked but has no IP-entry UI on Android yet.
 
-### D. Không có Compute Shaders
-- Android phiên bản cũ (và GLES 2.0) không hỗ trợ Compute Shaders.
-- Mọi logic Particle, Vortex, Force Fields hiện tại của dự án đều là **CPU-based**. Vòng lặp C (giới hạn 2000 hạt) có tốc độ xử lý dưới 0.1ms và hoàn toàn có thể chạy mượt trên Android mà không cần đến Compute Shaders.
+### D. No Compute Shaders
+- Older Android versions (and GLES 2.0) don't support Compute Shaders.
+- All of the project's Particle/Vortex/Force Field logic is currently **CPU-based**. The C loop
+  (capped at 2000 particles) runs in under 0.1ms and runs smoothly on Android without needing
+  Compute Shaders.

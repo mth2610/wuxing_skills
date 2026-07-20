@@ -1,5 +1,12 @@
 # Net Module Agent
 
+## Docs layout
+- `docs/API.md` — pure interface (signatures, contracts, invariants)
+- `docs/LANDMINES.md` — distilled Symptom→Cause→Rule lessons
+- `docs/PROGRESS.md` — backlog / in-progress / log
+- `docs/EOS_SETUP.md` — topical setup guide (human-only Epic Dev Portal steps)
+Read root `ENGINE_LANDMINES.md` before touching GL/shaders.
+
 ## Role
 Owns `net/` — networking (MODULES_ROADMAP.md Module 11), peer-hosted model:
 clients send serialized `PlayerIntent` to the host; the host runs the one
@@ -8,7 +15,7 @@ snapshots. **Current state: fully landed** — wire core (`net.c`), ENet
 transport for LAN (`net_transport.c`, vendored ENet 1.3.18 via CMake with
 user approval 07/2026), and the EOS online backend for internet play
 (`net_eos.c`, gated behind `-DWUXING_EOS=ON`; `net_eos_stub.c` otherwise).
-See `NET_API.md` §3b/3c.
+See `docs/API.md` §3b/3c.
 
 ## Scope
 - **Read/write:** `net/net.h`, `net/net.c`, `net/net_transport.h`,

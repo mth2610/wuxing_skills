@@ -15,8 +15,8 @@ This agent is strictly dedicated to designing, tuning, and optimizing visual com
   - `core/composition/vc_*.inl` (modular archetypes)
   - `core/shaders/` (vertex/fragment shaders including custom/common)
 - **Allowed (Read Only - Interface / Documentation):**
-  - `COMPOSITION_API.md`
-  - `SHADER_API.md`
+  - `core/docs/COMPOSITION_API.md`
+  - `core/docs/SHADER_API.md`
   - `core/material/material_system.h` (to check `EffectMaterialParams` or presets)
   - `core/geometry/procedural_mesh_utils.h` (for procedural shape structures)
 - **Strictly Forbidden (Never Read, List, or Scraped):**
@@ -28,7 +28,7 @@ This agent is strictly dedicated to designing, tuning, and optimizing visual com
 ### Strict Core API Adherence Rules:
 1. **Never reinvent core functionality:** Strictly reuse the existing core structures and systems (like the Particle system, Trail system, Ribbon, Flow map, Procedural Mesh system, and visual compositions) instead of writing custom drawing loops or direct raw OpenGL calls inside skill compositions.
 2. **Do not write ad-hoc helper logic:** Do not create custom wrappers or duplicate rendering mathematics in visual composition files.
-3. **Core Extension Procedure:** If a specific VFX requires features that the core systems currently lack (e.g., custom particle behaviors, new geometric shapes, or advanced texture mapping modes), the agent **must not** implement them as ad-hoc code in the composition layer. Instead, it must propose/request/implement the necessary extension directly in the core system files (`core/`) and update `CORE_API.md` and related documentation to keep the engine unified and modular.
+3. **Core Extension Procedure:** If a specific VFX requires features that the core systems currently lack (e.g., custom particle behaviors, new geometric shapes, or advanced texture mapping modes), the agent **must not** implement them as ad-hoc code in the composition layer. Instead, it must propose/request/implement the necessary extension directly in the core system files (`core/`) and update `core/docs/API.md` and related documentation to keep the engine unified and modular.
 
 ---
 

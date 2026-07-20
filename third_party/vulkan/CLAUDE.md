@@ -41,8 +41,8 @@ significant, statics span them. Never include a fragment directly, never reorder
    compute, shaderc). For init/compute/upload changes.
 3. `./scripts/run_rlvk_visual_test.sh [scenario|--list]` — windowed scenario suite, one
    PASS/FAIL line each (clear, batch_alpha, additive3d, shader_uniform, depth, depth_rt,
-   soft_depth, winding_rt, instanced, ssbo_vs, readback, stress). For anything touching
-   draw/present/blend/depth.
+   soft_depth, soft_ground, shadow_ortho, winding_rt, instanced, ssbo_vs, readback,
+   ui_after_rt, stress). For anything touching draw/present/blend/depth.
    `VALIDATE=1` prepends Khronos validation. First run builds a raylib cache (~2 min),
    then ~20 s. **Every draw-path bug fix gets a scenario here reproducing it first.**
 4. Full game build (`cmake --build build`) — HUMAN-run only, final confirmation.

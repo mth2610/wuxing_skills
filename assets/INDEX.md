@@ -2,7 +2,7 @@
 
 Catalog of all runtime assets under `assets/`. Skill authors may only reference
 textures listed here (or ship their own PNG inside the skill directory).
-See `SKILL_RECIPE.md` for the per-element preset table that cross-references
+See `skills/docs/RECIPE.md` for the per-element preset table that cross-references
 these files.
 
 > **Rule:** never invent an asset path. Use the exact filenames below, or add

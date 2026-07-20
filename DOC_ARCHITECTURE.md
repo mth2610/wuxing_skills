@@ -1,0 +1,103 @@
+# DOC_ARCHITECTURE.md — How docs are organized
+
+> Mandatory convention for **how documentation is structured** (where files live, how they split).
+> Sibling doc: `DOC_MAINTENANCE.md` governs **how to write** a doc (fact vs inference, patch log).
+> Both humans and AI follow this. Goals: API stays pure API, debugging lessons get distilled & propagated, an agent reads the fewest tokens needed.
+>
+> **Language:** every doc is written in **English**, the single exception being `nguhanhtyvo_kehoach.md` (the gameplay design doc, kept in Vietnamese as the source of intent).
+
+---
+
+## 1. Three doc archetypes — split by RATE OF CHANGE, not by topic
+
+This is the root rule. Every doc is exactly one archetype. Never mix them.
+
+| Archetype | File | Changes when | Contains | **MUST NOT** contain |
+|---|---|---|---|---|
+| **API** | `docs/API.md` | Only on a breaking change | Signatures, contracts, invariants, calling conventions — pure interface | Status/progress, plans, debugging stories ("fixed bug X yesterday"), TODOs |
+| **LANDMINES** | `docs/LANDMINES.md` | Append when a lesson is distilled after debugging | Lessons already learned. Each entry has 3 parts: **Symptom → Cause → Rule** | Backlog, unfinished work, TODOs |
+| **PROGRESS** | `docs/PROGRESS.md` | Frequently — most sessions | Done / in-progress / backlog / pending decisions | Duplication of API or landmine content (link to it instead) |
+
+**Why split by rate of change:** API is stable so it can be read-to-use; landmines only grow (append-only); progress churns constantly. Mixing them forces an agent that wants one signature to wade through progress + debugging notes — wasted tokens, and diffs that are hard to review.
+
+**"API is pure API" means:** if a sentence in `API.md` is not describing the interface (it's progress, or a lesson), move it to `PROGRESS.md` / `LANDMINES.md`. Do not leave it in API.
+
+---
+
+## 2. File location — docs live inside the module
+
+A module's docs live in a **`docs/` subfolder inside that module**, next to its code. `CLAUDE.md` stays at the **module root** (it is the agent entry point, conventionally found at `module/CLAUDE.md`).
+
+```
+core/CLAUDE.md
+core/docs/API.md   core/docs/LANDMINES.md   core/docs/PROGRESS.md
+skills/CLAUDE.md
+skills/docs/API.md skills/docs/LANDMINES.md skills/docs/PROGRESS.md
+...
+```
+
+The `docs/` folder keeps the module root clean when the module has many `.c`/`.h` files. The root of the repo keeps **only** project-wide docs (section 4). Never put a single module's doc at the repo root.
+
+A module may keep additional **topical** API docs alongside the main one (e.g. `core/docs/SHADER_API.md`, `core/docs/FORCE_FIELD_GUIDE.md`); `API.md` is the primary entry point and should link to them.
+
+---
+
+## 3. No `_SHORT` files — API is self-short
+
+Do not create a separate `*_SHORT.md` (it must be hand-synced and will drift).
+
+Instead, `API.md` opens with a **"Quick Ref"** section — an index table of signatures — then the details below, ordered **general → specific**. An agent reads top-down and **stops early** once it has enough. One file does the job of both short and full.
+
+---
+
+## 4. Project-wide docs — kept at the repo root
+
+| File | Role |
+|---|---|
+| `CLAUDE.md` | Project map + shared rules + module ownership table |
+| `AGENT_CODE_STANDARD.md` | Code standard for every agent |
+| `DOC_MAINTENANCE.md` | How to WRITE a doc (fact vs inferred, patch log) |
+| `DOC_ARCHITECTURE.md` | (this file) How to ORGANIZE docs |
+| `ROADMAP.md` | The **one** project-wide plan/progress (consolidates the scattered plan docs) |
+| `ENGINE_LANDMINES.md` | **Cross-cutting** lessons — see section 5 |
+| `nguhanhtyvo_kehoach.md` | Design doc — source of truth for gameplay intent (Vietnamese) |
+
+---
+
+## 5. Propagating lessons — two tiers
+
+This is the mechanism that stops "a debugging lesson learned in one module" from being repeated by other modules.
+
+- **Module-local lesson** (only relevant to that module) → `module/docs/LANDMINES.md`.
+- **Cross-cutting lesson** (any module could hit it: the rlgl batching hazard, Mali `fract(sin())` dying, `rlFrustum near<1.0` → blank render...) → **promote** it to `ENGINE_LANDMINES.md` at the repo root, one index line per entry pointing at the detail. Each `module/CLAUDE.md` opens with: *"Read `ENGINE_LANDMINES.md` before touching GL/shaders."*
+
+**Promotion rule:** when distilling a landmine, ask *"could another module hit this?"* If yes → write it into `ENGINE_LANDMINES.md`, don't bury it in one module's file.
+
+**Relationship to auto-memory:** the AI's auto-memory also captures cross-session landmines, but that is the AI's private recall — not versioned, human teammates can't read it. `ENGINE_LANDMINES.md` is the in-repo, git-tracked, reviewable copy. When recording one, record both and have them reference each other.
+
+---
+
+## 6. Required format for a LANDMINE entry
+
+Write each lesson in exactly 3 parts, concise — so it skims fast:
+
+```markdown
+### <Short name of the trap>
+- **Symptom:** what we SEE (white screen / black aura / autotest PASS but looks wrong...).
+- **Cause:** the real root cause, cite file:line if available.
+- **Rule:** what to DO/AVOID so it never repeats. One imperative sentence.
+```
+
+Do not write a landmine as a long diary entry. If an entry has been permanently fixed in code (no longer a trap), consider removing it from LANDMINES and leaving a one-line note in PROGRESS.
+
+---
+
+## 7. Checklist when adding/editing a doc
+
+- [ ] Is this content in the right archetype? (interface → API, lesson → LANDMINES, progress → PROGRESS)
+- [ ] Is `API.md` free of progress / debugging stories? If not, move them out.
+- [ ] Is the doc under the correct module's `docs/` folder (not dumped at the repo root)?
+- [ ] Is the just-distilled lesson cross-cutting? If so, was it promoted to `ENGINE_LANDMINES.md`?
+- [ ] Is the landmine written in the 3 parts Symptom/Cause/Rule, concise?
+- [ ] Is it in English (the only Vietnamese doc is `nguhanhtyvo_kehoach.md`)?
+- [ ] Did you follow the WRITING rules in `DOC_MAINTENANCE.md` (fact vs inferred, patch log)?

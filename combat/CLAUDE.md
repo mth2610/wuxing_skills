@@ -1,5 +1,11 @@
 # Combat Module Agent
 
+## Docs layout
+- `docs/API.md` — pure interface (signatures, contracts, invariants)
+- `docs/LANDMINES.md` — distilled Symptom→Cause→Rule lessons
+- `docs/PROGRESS.md` — backlog / in-progress / log
+Read root `ENGINE_LANDMINES.md` before touching GL/shaders.
+
 ## Role
 Owns `combat/` — Đấu Pháp: the immediate-mode projectile collider registry +
 5x5 Clash Matrix (MODULES_ROADMAP.md Module 3). Skills keep owning projectile

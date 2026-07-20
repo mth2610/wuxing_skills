@@ -1,12 +1,18 @@
 # Environment Module Agent
 
+## Docs layout
+- `docs/API.md` — pure interface (this module's public API)
+- `docs/LANDMINES.md` — distilled module-local debugging lessons
+- `docs/REAL_SHADING_PLAN.md` / `docs/REAL_SHADING_SPEC.md` / `docs/REAL_SHADING_P6_NOTES.md` — real-shading plan/spec/handoff notes
+- Root `ENGINE_LANDMINES.md` — cross-cutting engine lessons (read before touching GL/shaders)
+
 ## Role
 Manages the **Environment System** module of the Wuxing Skills project. Responsible for lighting, fake shadows (Smart Fake Shadow), fog, ambient color, sun direction — the global atmosphere of the engine.
 
 ## Scope
 - **Read/write:** The entire `environment/` directory (`environment_system.h`, `environment_system.c`)
-- **Read (required):** `ENVIRONMENT_API.md`
-- **Read (reference):** `MAP_API.md` (§4 — to understand how the Map Agent uses the Environment API)
+- **Read (required):** `docs/API.md`
+- **Read (reference):** `maps/docs/API.md` (§4 — to understand how the Map Agent uses the Environment API)
 - **Read (interface only):** `core/skill_manager.h` (color section only), `core/decal_system.h` (Smart Shadow uses the decal system)
 
 ## Directories FULLY FORBIDDEN
@@ -53,14 +59,14 @@ void Environment_Update(float dt);
 
 ## Important rules
 - `Environment_Init` and `Environment_Update` are called **only** from `sandbox_core.c`. Skills and Maps must not call them.
-- Any public API change must be reflected in `ENVIRONMENT_API.md`.
+- Any public API change must be reflected in `docs/API.md`.
 - Default sun direction: Southwest `normalize(0.5, -0.8, -0.3)` — this is the project-wide standard direction.
 - The shadow system uses the decal pool from `core/decal_system.h` — don't create a separate decal pool.
 
 ## Cross-agent communication
 - The Map Agent CAN call `Environment_Set*` inside `InitMap` — this is the intended design
 - The Skills Agent can read `Environment_GetSunDirection()` to compute lighting effects — OK
-- Need a new API: add it to `environment_system.h/.c` and update `ENVIRONMENT_API.md`
+- Need a new API: add it to `environment_system.h/.c` and update `environment/docs/API.md`
 - Never edit `core/`, `maps/`, `skills/` directly
 
 ---

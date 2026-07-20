@@ -5,7 +5,7 @@ Manages the entire **Core Engine** module of the Wuxing Skills project. Owns the
 
 ## Scope
 - **Read/write:** All files under `core/` (`.c`, `.h`, `.glsl` shaders in `core/shaders/`)
-- **Read (reference):** `CORE_API.md`, `CORE_API_SHORT.md`, `VFX_ARCHITECTURE.md`, `vfx_engine.md`, `CMakeLists.txt`, `main.c`
+- **Read (reference):** `docs/API.md`, `docs/VFX_ARCHITECTURE.md`, `docs/VFX_ENGINE.md`, `docs/SHADER_API.md`, `docs/COMPOSITION_API.md`, `docs/EXTERNAL_API.md`, `CMakeLists.txt`, `main.c`
 - **Read (interface only):** `environment/environment_system.h`, `skills/` headers (`.h` only, never `.c`), `maps/` headers (`.h` only)
 
 ## Directories FULLY FORBIDDEN (never read, list, or touch)
@@ -25,9 +25,9 @@ Manages the entire **Core Engine** module of the Wuxing Skills project. Owns the
 2. **Shared shaders:** Own `core/shaders/common/` (`vs_header.glsl`, `fs_header.glsl`, `lighting.glsl`). Don't edit shared shaders without clear cause — changes here affect the entire engine.
 3. **Memory safety:** Ensure no `malloc`/`free` in core. Static pools only.
 4. **Performance:** Track MAX pool sizes. Expanding them requires weighing memory footprint.
-5. **Docs:** Update `CORE_API.md` whenever public API is added/changed. `CORE_API.md` is **shared-write** with the Skills Agent (it documents usage notes/conventions Skills discovers too) — see "Updating CORE_API.md" below.
+5. **Docs:** Update `docs/API.md` whenever public API is added/changed. `docs/API.md` is **shared-write** with the Skills Agent (it documents usage notes/conventions Skills discovers too) — see "Updating docs/API.md" below.
 
-## Code rules (from CORE_API.md)
+## Code rules (from docs/API.md)
 - Strict C99, Raylib 6.0, OpenGL 3.3
 - Guard the PI macro: `#ifndef PI #define PI 3.1415926535f #endif`
 - No `malloc`/`calloc`/`realloc`/`free`
@@ -40,17 +40,18 @@ Manages the entire **Core Engine** module of the Wuxing Skills project. Owns the
 - Need to know how a skill uses an API: read only its `.h`, never its `.c`
 - Any breaking change must be clearly documented
 
-## Updating `CORE_API.md` (shared with Skills Agent — MANDATORY workflow)
-`CORE_API.md` is jointly maintained: **Core Agent** writes it when a `core/*.h` signature/struct/enum changes; **Skills Agent** writes it when it discovers a usage convention, gotcha, or UV/uniform behavior worth documenting (e.g. confirming an `[!NOTE]`-tagged assumption from real skill code). Both follow the same surgical procedure — never rewrite the whole file:
-1. `grep -n "^### \|^## " CORE_API.md` to find the section heading matching the changed module/header.
+## Updating `docs/API.md` (shared with Skills Agent — MANDATORY workflow)
+`docs/API.md` is jointly maintained: **Core Agent** writes it when a `core/*.h` signature/struct/enum changes; **Skills Agent** writes it when it discovers a usage convention, gotcha, or UV/uniform behavior worth documenting (e.g. confirming an `[!NOTE]`-tagged assumption from real skill code). Both follow the same surgical procedure — never rewrite the whole file:
+1. `grep -n "^### \|^## " docs/API.md` to find the section heading matching the changed module/header.
 2. `Read` only that section (`offset`/`limit` around the matched line), not the full file.
 3. `Edit` with a precise `old_string` (the exact signature/table row/paragraph) — never `Write` the whole file.
 4. Only touch the file for **public API surface** changes (signature, struct field, enum value, parameter semantics) or confirmed usage notes — not internal `.c` refactors.
 5. If Skills Agent's edit conflicts with or corrects a Core-authored section, flag it explicitly in the edit (e.g. resolve `[!NOTE]` "treat as working assumption" markers once confirmed) rather than silently overwriting.
 
-## `CORE_API_SHORT.md` — manual-only, NOT auto-synced
-
-`CORE_API_SHORT.md` is a maximally compact, lossless-but-terse condensation of `CORE_API.md`, written for AI consumption (dense signatures/tables, minimal prose). **Do NOT update it as part of routine `CORE_API.md` edits, resolved-issue passes, or any other task — only regenerate it when the user explicitly asks.** Treating it as auto-synced would double the cost of every future `CORE_API.md` change for no benefit between explicit requests. If you notice it's drifted from `CORE_API.md`, mention it in your report; don't fix it unprompted.
+## Docs layout (per `DOC_ARCHITECTURE.md`)
+- `docs/API.md` — pure interface (the `_SHORT` companion is abolished; API.md opens with a Quick Ref instead).
+- `docs/LANDMINES.md` — distilled reusable lessons. Cross-cutting ones live in root `ENGINE_LANDMINES.md` — **read that before touching GL/shaders.**
+- `docs/PROGRESS.md` — backlog / session log.
 
 ---
 

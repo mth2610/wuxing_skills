@@ -1,5 +1,11 @@
 # UI Module Agent
 
+## Docs layout
+- `docs/API.md` — pure interface (signatures, contracts, invariants)
+- `docs/LANDMINES.md` — distilled Symptom→Cause→Rule lessons
+- `docs/PROGRESS.md` — backlog / in-progress / log (not created yet — no progress content pending)
+Read root `ENGINE_LANDMINES.md` before touching GL/shaders.
+
 ## Role
 Owns `ui/` — HUD + auto-targeting (MODULES_ROADMAP.md Module 9). Minimal by
 philosophy (No Tutorial): skill slot chips with cooldown shading + an

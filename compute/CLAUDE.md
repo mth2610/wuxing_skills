@@ -6,7 +6,7 @@ Provides GPU-side particle physics, designed to be extensible for rain, fog, and
 
 ## Scope
 - **Read/write:** The entire `compute/` directory (`.c`, `.h`, `shaders/`)
-- **Read (reference):** `COMPUTE_API.md`, `CORE_API.md` (§ Android/GLES rules), `CMakeLists.txt`
+- **Read (reference):** `docs/API.md`, `../core/docs/API.md` (§ Android/GLES rules), `CMakeLists.txt`
 - **Read (interface only):** `core/resource_manager.h` (for shader loading), `environment/environment_system.h` (if needed)
 
 ## Directories FULLY FORBIDDEN
@@ -39,7 +39,7 @@ Provides GPU-side particle physics, designed to be extensible for rain, fog, and
 
 ### Precision rule (strict GLES 3.x)
 - Every shader under `compute/shaders/` must declare `precision highp float; precision highp int;` in GLES mode
-- A uniform used in both VS and FS must use the same precision — see CORE_API.md Rule E
+- A uniform used in both VS and FS must use the same precision — see ../core/docs/API.md Rule E
 
 ## Code rules
 - No direct `malloc`/`calloc`/`free`. Use `RL_MALLOC`/`RL_FREE` if needed (only inside `CompileComputeShader` for version patching)

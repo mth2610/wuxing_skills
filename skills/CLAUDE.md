@@ -5,10 +5,17 @@ Manages the entire **Skills** module of the Wuxing Skills project. Responsible f
 
 ## Scope
 - **Read/write:** The entire `skills/` directory (all elements: `water/`, `wood/`, `fire/`, `earth/`, `metal/`, `taiji/`)
-- **Read/write (shared doc):** `CORE_API.md` — Skills Agent may edit it directly to document usage notes/conventions discovered while building skills (e.g. confirming a `[!NOTE]` assumption); see "Updating CORE_API.md" below. Still never edit `core/*.c`/`*.h` themselves.
-- **Read (required when working):** `CORE_API_SHORT.md`, `VFX_ARCHITECTURE.md`, `WUXING_ART_DIRECTION.md`
-- **Read (interface only):** `core/` headers `.h` (for API knowledge), `environment/environment_system.h`, `entities/entities.h` (for `Entity_ApplyAoEDamage`/`Entity_ApplyAoEBuff`/`Entity_GetNearbyTargets` — see `ENTITIES_API.md` §4/§7/§8/§9)
+- **Read/write (shared doc):** `../core/docs/API.md` — Skills Agent may edit it directly to document usage notes/conventions discovered while building skills (e.g. confirming a `[!NOTE]` assumption); see "Updating ../core/docs/API.md" below. Still never edit `core/*.c`/`*.h` themselves.
+- **Read (required when working):** `../core/docs/VFX_ARCHITECTURE.md`, `WUXING_ART_DIRECTION.md`, `docs/RECIPE.md`, `docs/SKELETONS.md`
+- **Read (interface only):** `core/` headers `.h` (for API knowledge), `environment/environment_system.h`, `entities/entities.h` (for `Entity_ApplyAoEDamage`/`Entity_ApplyAoEBuff`/`Entity_GetNearbyTargets` — see `../entities/docs/API.md` §4/§7/§8/§9)
 - **DO NOT read:** `core/*.c`, `maps/*.c`, `environment/*.c`, `entities/*.c`
+
+## Docs layout (per `DOC_ARCHITECTURE.md`)
+- `docs/RECIPE.md` — one-prompt skill creation guide (formerly root `skills/docs/RECIPE.md`): archetype picker, command sequence, element presets, scale rules, aesthetic checklist.
+- `docs/SKELETONS.md` — minimal complete `.c`/`.h` skeletons per skill archetype (formerly root `skills/docs/SKELETONS.md`).
+- `docs/LANDMINES.md` — distilled reusable lessons. Cross-cutting ones live in root `ENGINE_LANDMINES.md`.
+- `docs/PROGRESS.md` — backlog / session log (not yet created — add when needed).
+- No local `docs/API.md` — skills document their own usage notes in the shared `../core/docs/API.md` (see "Updating ../core/docs/API.md" below).
 
 ## Directories FULLY FORBIDDEN
 - `build/`
@@ -44,7 +51,7 @@ int Get[Name]SkillProjectiles(SkillProjectile *outProjectiles, int maxProjectile
 void Deactivate[Name]Projectile(int index);
 ```
 
-**`agentId` (CORE_ISSUES.md Item 15)**: the caster's `entities/entities.h` agent
+**`agentId` (../core/docs/PROGRESS.md Item 15)**: the caster's `entities/entities.h` agent
 pool slot (0..255), forwarded automatically by `CastSkill()`. Store it in your
 per-instance struct as `int ownerAgentId;` when a new instance is allocated
 (cast time) — this is what lets `AbortSkill(skillIndex, agentId)` (Item 14)
@@ -71,15 +78,15 @@ real need comes up — this field's only job right now is ownership tracking.
 
 ## Cross-agent communication
 - Need a new API from Core: ask the Core Agent to add it to `core/` (Skills never edits `core/*.c`/`*.h`)
-- Need to document a usage note/convention for an existing API: edit `CORE_API.md` directly (see below), no need to ask Core Agent
+- Need to document a usage note/convention for an existing API: edit `../core/docs/API.md` directly (see below), no need to ask Core Agent
 - Need environment info (sun direction, shadow): use the `environment/environment_system.h` API
 - Need to spawn a GPU particle: use `compute/gpu_particle_system.h` — don't edit `compute/` directly
-- Need to deal damage or apply a buff to agents: use `entities/entities.h`'s `Entity_ApplyAoEDamage`/`Entity_ApplyAoEBuff` (radius-based, works for single-target via small radius or true AoE via large radius — see `ENTITIES_API.md` §9). Do NOT call `core/skill_manager.h`'s `ApplyAoEDamage()` for agent-targeted damage — superseded, no HP bookkeeping.
+- Need to deal damage or apply a buff to agents: use `entities/entities.h`'s `Entity_ApplyAoEDamage`/`Entity_ApplyAoEBuff` (radius-based, works for single-target via small radius or true AoE via large radius — see `../entities/docs/API.md` §9). Do NOT call `core/skill_manager.h`'s `ApplyAoEDamage()` for agent-targeted damage — superseded, no HP bookkeeping.
 - Never edit `core/`, `environment/`, or `entities/` directly
 
-## Updating `CORE_API.md` (shared with Core Agent — MANDATORY workflow)
-`CORE_API.md` is jointly maintained: **Core Agent** writes it when a `core/*.h` signature/struct/enum changes; **Skills Agent** writes it when it confirms a usage convention, gotcha, or behavior worth documenting (e.g. resolving an `[!NOTE]`-tagged assumption after validating it in real skill code). Never rewrite the whole file:
-1. `grep -n "^### \|^## " CORE_API.md` to find the section matching the relevant module/header.
+## Updating `../core/docs/API.md` (shared with Core Agent — MANDATORY workflow)
+`../core/docs/API.md` is jointly maintained: **Core Agent** writes it when a `core/*.h` signature/struct/enum changes; **Skills Agent** writes it when it confirms a usage convention, gotcha, or behavior worth documenting (e.g. resolving an `[!NOTE]`-tagged assumption after validating it in real skill code). Never rewrite the whole file:
+1. `grep -n "^### \|^## " ../core/docs/API.md` to find the section matching the relevant module/header.
 2. `Read` only that section (`offset`/`limit`), not the full file.
 3. `Edit` with a precise `old_string` — never `Write` the whole file.
 4. Only document confirmed, code-verified findings — not speculation.

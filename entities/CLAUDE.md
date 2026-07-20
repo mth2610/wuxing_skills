@@ -3,11 +3,11 @@
 ## Role
 Manages the **Entities** module — the gameplay/combat layer of the Wuxing Skills project. Owns Agent (player/AI character) state, vertical physics (jump/dash/ring-out), and the pools that other modules (Skills, Maps) hook into for damage and movement.
 
-This module is new and intentionally minimal. It is the foundational layer that Clash Matrix, Formation Pool, Minion Pool, Boss AI, and Map Virtual Trigger Zones will all build on top of — do not expand scope ahead of what's documented in `ENTITIES_API.md`.
+This module is new and intentionally minimal. It is the foundational layer that Clash Matrix, Formation Pool, Minion Pool, Boss AI, and Map Virtual Trigger Zones will all build on top of — do not expand scope ahead of what's documented in `docs/API.md`.
 
 ## Scope
 - **Read/write:** The entire `entities/` directory (`.c`, `.h`)
-- **Read (required):** `ENTITIES_API.md`, `nguhanhtyvo_kehoach.md` (design doc — source of truth for gameplay intent)
+- **Read (required):** `docs/API.md`, `nguhanhtyvo_kehoach.md` (design doc — source of truth for gameplay intent)
 - **Read (interface only):** `core/skill_manager.h` (damage/AoE), `core/utils_math.h`
 
 ## Directories FULLY FORBIDDEN
@@ -29,11 +29,11 @@ This module is new and intentionally minimal. It is the foundational layer that 
    typedef enum { AGENT_GROUNDED, AGENT_JUMPING, AGENT_RING_OUT_FALLING } AgentVerticalState;
    ```
 3. **Damage entry point** — `Entity_ApplyDamage(int id, float damage, Vector3 knockback)`, calls into `core/skill_manager.h`'s `ApplyAoEDamage` pattern but owns the actual HP mutation (core does not track HP — entities does)
-4. **Ring-out detection** — reads `arenaRadius`/`arenaCenter` (same constants as `MAP_API.md` §3), transitions Agent to `AGENT_RING_OUT_FALLING` when outside radius
+4. **Ring-out detection** — reads `arenaRadius`/`arenaCenter` (same constants as `maps/docs/API.md` §3), transitions Agent to `AGENT_RING_OUT_FALLING` when outside radius
 5. **Dash hook (no implementation yet)** — `Entity_OnDash(int id)` stub that other systems (a future VFX/trail layer) can hook into for afterimage effects. Entities module does NOT call `core/trail_system.h` directly — stay pure logic, no rendering.
 6. **Stealth flag** — `bool isStealthed` on Agent, set when motionless; consumed later by Auto-Targeting/Boss AI (not implemented yet, just reserve the field)
 
-## Landed since the minimal version (see ENTITIES_API.md §15-17)
+## Landed since the minimal version (see docs/API.md §15-17)
 - Teams/archetypes, team-filtered AoE + nearby query, Thiền Định, Vô Hệ
   loadout (`Entity_SetEquippedSkill`/`RecomputeElement`), real dash burst,
   `Entity_GetSpeedMult`, Thái Cực state flag (+ mana-drain auto-exit),
@@ -50,11 +50,11 @@ This module is new and intentionally minimal. It is the foundational layer that 
 - Strict C99. Static arrays only — no malloc/free.
 - Entities module is **pure gameplay logic** — no rendering, no shader, no particle calls. If a hook needs to trigger VFX (e.g. dash afterimage), expose a stub/callback; do not `#include` core VFX headers here beyond `skill_manager.h` for damage.
 - Vertical physics (jump, dash, ring-out) must share one state machine — do not implement ring-out and jump as separate ad-hoc checks.
-- Arena constants (`center = (6.0f, 0.0f, 4.4f)`, `radius = 18.0f` — real-world-scaled, 1 unit = 1 meter, see root `CLAUDE.md`) must match `MAP_API.md` exactly — do not hardcode a second copy elsewhere.
+- Arena constants (`center = (6.0f, 0.0f, 4.4f)`, `radius = 18.0f` — real-world-scaled, 1 unit = 1 meter, see root `CLAUDE.md`) must match `maps/docs/API.md` exactly — do not hardcode a second copy elsewhere.
 
 ## Cross-agent communication
-- Need to apply damage from a skill: Skills Agent calls into `Entity_ApplyDamage()` (once implemented) — Entities Agent defines this contract in `ENTITIES_API.md`
-- Need map zone modifiers: blocked until Map Agent adds a Virtual Trigger Zone API — do not guess at this integration, wait for `MAP_API.md` to document it
+- Need to apply damage from a skill: Skills Agent calls into `Entity_ApplyDamage()` (once implemented) — Entities Agent defines this contract in `docs/API.md`
+- Need map zone modifiers: blocked until Map Agent adds a Virtual Trigger Zone API — do not guess at this integration, wait for `maps/docs/API.md` to document it
 - Need VFX for dash/afterimage: expose a hook, let Skills/Core decide how to render it — never reach into `core/particle_system.h` or `core/trail_system.h` directly from this module
 
 ---

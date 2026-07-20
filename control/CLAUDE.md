@@ -1,5 +1,11 @@
 # Control Module Agent
 
+## Docs layout
+- `docs/API.md` — pure interface (signatures, contracts, invariants)
+- `docs/LANDMINES.md` — distilled Symptom→Cause→Rule lessons
+- `docs/PROGRESS.md` — backlog / in-progress / log (not created yet — no progress content pending)
+Read root `ENGINE_LANDMINES.md` before touching GL/shaders.
+
 ## Role
 Owns `control/` — the player controller (MODULES_ROADMAP.md Module 4).
 Splits INPUT (device: keyboard/mouse today, touch/gamepad/net later) from

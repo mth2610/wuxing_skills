@@ -1,10 +1,16 @@
 # Game Screen Agent
 
+## Docs layout
+- `docs/API.md` — pure interface (signatures, contracts, invariants)
+- `docs/LANDMINES.md` — distilled Symptom→Cause→Rule lessons
+- `docs/PROGRESS.md` — backlog / in-progress / log (not created yet — no progress content pending)
+Read root `ENGINE_LANDMINES.md` before touching GL/shaders.
+
 ## Role
 Owns the real, production-bound gameplay screen (`game/game_screen.h/.c`) —
 distinct from `sandbox/`, which stays the dev/test harness (debug panels,
 tuning sliders, autotest) and must never be modified by this agent. This IS
-`MODULES_ROADMAP.md` Module 7 (landed 07/2026, see `GAME_API.md`): the full
+`MODULES_ROADMAP.md` Module 7 (landed 07/2026, see `game/docs/API.md`): the full
 match state machine (INTRO → FIGHTING → VICTORY/DEFEAT) against Boss Hắc
 Diện Tôn Giả on DEFAULT_ARENA, movement/cast via `control/`
 (Control_ReadIntent/Apply), boss HP bar + state overlays in the HUD, and the
@@ -27,7 +33,7 @@ because it couples to character anim + VFX.
 - `android.wuxing_skills/`
 
 ## Current scope (minimal, will grow)
-- Match state machine (`GameState`, see `GAME_API.md` §2): 2s intro title
+- Match state machine (`GameState`, see `game/docs/API.md` §2): 2s intro title
   card → boss spawn → FIGHTING (win/lose checks, zone rules applied to the
   player every frame) → VICTORY/DEFEAT (ENTER resets). ESC aborts + resets.
 - Movement/jump/dash/meditate/skill-cast via `control/`

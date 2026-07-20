@@ -20,7 +20,7 @@ Tiering:
 - **Vulkan 1.1+ devices → rlvk**, one single code path from weakest 1.1 Android driver to
   newest desktop GPU. 1.3 features are *optional accelerators only* where trivially gated.
 - Key motivator: **compute particles on Android**. Mali GLES silently fails vertex-stage
-  SSBO reads (`CORE_ISSUES.md` Item 5). Vulkan *mandates* vertex-stage storage-buffer reads
+  SSBO reads (`core/docs/PROGRESS.md` Item 5). Vulkan *mandates* vertex-stage storage-buffer reads
   on every conformant device.
 
 ## 2. What rlvk is
@@ -55,7 +55,7 @@ Platform hooks (NOT part of rlgl's API): platform creates `VkSurfaceKHR` →
 - **Windowed platform layer: LANDED.** The full game builds and runs under Vulkan on macOS
   (`WUXING_USE_VULKAN=ON`; MoltenVK is the dev proxy for "weak 1.1 driver" — macOS itself
   ships GL in production).
-- **Visual test suite: 13/13 (soft_ground added)** (`scripts/run_rlvk_visual_test.sh`, see §5).
+- **Visual test suite: 15/15 (soft_ground, shadow_ortho added)** (`scripts/run_rlvk_visual_test.sh`, see §5).
 - **First real-content bug wave: root-caused and fixed** — every case is documented in §7.
   Fixed: opaque-square particles (stale pipeline on failed build), device-lost after heavy
   VFX (unchecked acquire), no depth occlusion inside render textures = character
@@ -117,8 +117,8 @@ cmake --build build && ./build/wuxing            # 4. HUMAN-run, final confirmat
 **Never start at tier 4.** Debugging via the full game burned entire sessions before the
 suite existed; every bug in §7 reproduces in a ≤40-line scenario that runs in seconds.
 Scenario list: `clear batch_alpha additive3d shader_uniform depth depth_rt soft_depth
-winding_rt instanced ssbo_vs readback stress` (`--list`). Each guards the bug class named
-in its comment.
+soft_ground shadow_ortho winding_rt instanced ssbo_vs readback ui_after_rt stress`
+(`--list`). Each guards the bug class named in its comment.
 
 ## 6. DEBUGGING METHODOLOGY — read this before your first bug hunt
 
@@ -489,7 +489,7 @@ here to confirm):
   `check_rlvk_compile.sh` + full visual suite (13/13) reconfirmed green after the change.
 - **`shaderc/shaderc.h` not found** compiling the Android raylib CMake build. The vendored
   copy lives at `third_party/vulkan/include/shaderc/shaderc.h` (NDK's own bundled shaderc.h
-  lacks `set_vulkan_rules_relaxed` — see COMPUTE_API.md), but `Makefile.Android`'s
+  lacks `set_vulkan_rules_relaxed` — see compute/docs/API.md), but `Makefile.Android`'s
   `-DCMAKE_C_FLAGS` for the raylib-only CMake sub-build only added `-Ithird_party/vulkan`, not
   `-Ithird_party/vulkan/include`. `scripts/check_rlvk_compile.sh` already adds BOTH (that's
   how desktop finds it without a system Vulkan SDK) — the Android Makefile just missed the
@@ -757,7 +757,7 @@ mis-attributed to the already-fixed black-bar bug instead of being its own separ
   distortion-shader final blit and `core/post_fx.c`'s bloom/tonemap "PASS 6: Composite →
   screen". This is a `core/` change (Core Agent's normal territory) made directly in this
   session since it's a direct continuation of the same bug chain — flagged clearly here in
-  case `CORE_API.md` conventions around `DrawTextureRec`/`GetScreenWidth` vs `GetRenderWidth`
+  case `core/docs/API.md` conventions around `DrawTextureRec`/`GetScreenWidth` vs `GetRenderWidth`
   in final-blit code need a note for future skill/VFX authors.
   **Not fully audited**: `core/metaball_fx.c` has a similar-shaped `DrawTexturePro` call
   (already scale-aware, not `DrawTextureRec`) using `GetScreenWidth()/GetScreenHeight()` for
@@ -1348,6 +1348,44 @@ readback + `strings` on the installed lib), then reproduced on desktop and fixed
   desktop CMake but not Android).
 - Sandbox touch: the "no-cast on the left 45% of screen" was cut to just the joystick zone
   (`sandbox/sandbox_core.c`), so skills cast to the left of the character again.
+
+### 7.25 MODELVIEW `rlPushMatrix()`/`rlPopMatrix()` inside a non-swapchain framebuffer corrupts a later unrelated draw (2026-07-20)
+- **Symptom**: while root-causing the wuxing game's shadow-map feature (`REAL_SHADING_P6_NOTES.md`
+  session 4), a new `shadow_ortho` visual-test scenario — manual ortho depth-capture FBO, mirroring
+  `environment/env_shadow.c` — made TWO unrelated LATER scenarios fail (`instanced`: "center
+  instance missing"; `ui_after_rt`: "blitted scene missing") whenever it ran earlier in the same
+  process. `shadow_ortho` itself always passed; only scenarios running after it broke.
+- **Bisection** (env-gated variants of the same scenario, per §6 rule 3): allocating the depth FBO
+  and immediately disposing it (no render) = clean. Enable/viewport/clear/disable the FBO 3× with
+  zero matrix calls = clean. Add back `rlMatrixMode(RL_PROJECTION); rlPushMatrix(); rlLoadIdentity();
+  rlOrtho(...); ...; rlPopMatrix();` around that = still clean. Add back the MODELVIEW equivalent
+  (`rlMatrixMode(RL_MODELVIEW); rlPushMatrix(); rlLoadIdentity(); rlMultMatrixf(view); ...;
+  rlPopMatrix();`) — **with zero draw calls between the push and pop** — reproduces the corruption on
+  its own. Explicitly resetting the matrices to a sane default after the pop did NOT fix it (rules
+  out "wrong final matrix value"). Replacing the MODELVIEW push/pop with a direct
+  `rlMatrixMode(RL_MODELVIEW); rlLoadIdentity(); rlMultMatrixf(view);` (no stack push at all, this
+  scenario doesn't need to preserve/restore an outer MODELVIEW value) made all 15 scenarios pass.
+- **Not (yet) root-caused**: `rlPushMatrix()`/`rlPopMatrix()` (`rlvk_matrix.inl`) are pure CPU
+  struct-copy bookkeeping — no Vulkan calls, and the affected repro has an EMPTY render batch the
+  whole time (`rlDrawRenderBatch` early-returns on `vertexCounter==0`), so the corruption isn't in
+  the obvious place. `RLVK.State.transform`/`transformRequired` (what MODELVIEW push redirects to)
+  is read unconditionally by the mesh-draw uniform path (`rlvk_core.inl` — `L[SHADER_LOC_MATRIX_
+  MODEL] = RLVK.State.transform`, not gated on `transformRequired`) and raylib's own `DrawMesh()`
+  folds `rlGetMatrixTransform()` into every mesh's model matrix regardless — a plausible carrier for
+  a later `DrawMeshInstanced` to pick up stale state, but WHY the push/pop round-trip (which should
+  restore `.transform` to its pre-push value bit-for-bit) leaves it wrong wasn't isolated. Needs a
+  RenderDoc/Xcode GPU capture (§6) across the exact push→pop→next-mesh-draw window.
+- **Fix applied**: `environment/env_shadow.c`'s `EnvShadow_BeginCapture`/`EndCapture` (the real
+  in-game caller of this exact pattern) switched from MODELVIEW push/pop to the same direct
+  `rlLoadIdentity()`+`rlMultMatrixf()`. The PROJECTION stack's push/pop (`rlOrtho`) is unaffected —
+  bisected clean — and was left as-is.
+- **Guard**: `shadow_ortho` scenario (also guards the unrelated mat*vec-vs-vec*mat shadow-matrix
+  convention bug it was originally written for — see `REAL_SHADING_P6_NOTES.md` session 4).
+- **Open question for whoever picks this up**: does this affect any OTHER in-game caller that
+  brackets a MODELVIEW change with `rlPushMatrix()`/`rlPopMatrix()` while a custom (non-swapchain)
+  framebuffer is bound? `main.c`'s `MyBeginMode3D`/`MyEndMode3D` use the same push/pop idiom but
+  always target the swapchain's own framebuffer, never a custom FBO mid-bracket — the offscreen-FBO
+  condition may be load-bearing for the bug, but that wasn't isolated either.
 
 ### 8.4b issues from the 2026-07-19 session
 1. **Top sandbox/vfx_test buttons hard to tap — RESOLVED (2026-07-19, device-confirmed).** Root

@@ -1,83 +1,82 @@
-# GRAPHICS DIRECTION — Định hướng đồ họa tổng thể
+# GRAPHICS DIRECTION — Overall visual direction
 
-> Chốt 13/07/2026. Đây là **đổi hướng lớn** so với art direction gốc
-> (`nguhanhtyvo_kehoach.md`: low-poly + đêm + sương để CHE thiếu chi tiết &
-> tối ưu Android). Hướng mới: **đẹp mãn nhãn, stylized-realism võ hiệp** —
-> vẫn chạy được máy yếu / Android GLES. `WUXING_ART_DIRECTION.md` vẫn giữ
-> nguyên (nó nói về VFX của skill); tài liệu này nói về **render surface +
-> khí quyển + hậu kỳ** của toàn cảnh.
+> Locked 2026-07-13. This is a **major pivot** from the original art direction
+> (`nguhanhtyvo_kehoach.md`: low-poly + night + fog to HIDE a lack of detail & optimize for
+> Android). New direction: **eye-catching, stylized-realism wuxia** — still runs on weak machines /
+> Android GLES. `WUXING_ART_DIRECTION.md` is unchanged (it covers skill VFX); this document covers
+> the **surface render + atmosphere + post-processing** of the overall scene.
 
-## 1. Look đích: Thiên Nhai Minh Nguyệt Đao (Moonlight Blade)
+## 1. Target look: Thiên Nhai Minh Nguyệt Đao (Moonlight Blade)
 
-Stylized-**realism** võ hiệp — KHÔNG cel/anime:
-- Nhân vật tỉ lệ thật, da/vải/kim loại **có chất liệu** nhưng lý tưởng hóa
-  (sạch, mượt, ánh sáng đẹp). KHÔNG cel-ramp bậc, KHÔNG outline nét anime.
-- Cái đẹp đến từ **material + khí quyển + hậu kỳ điện ảnh**, KHÔNG phải độ
-  chính xác vật lý. Đây là lý do nó chạy được máy yếu.
-- Chạy máy cùi nhờ **né real-time shadow + GI** (thứ đắt nhất). Bóng giả +
-  ánh sáng baked/fake là đủ đẹp — đã được người dùng xác nhận là chủ ý.
+Stylized-**realism** wuxia — NOT cel/anime:
+- Characters at real proportions, skin/cloth/metal **have material identity** but are idealized
+  (clean, smooth, beautifully lit). NO stepped cel-ramp, NO anime-style outline.
+- The beauty comes from **material + atmosphere + cinematic post-processing**, NOT physical
+  accuracy. This is exactly why it can run on weak hardware.
+- Runs on low-end machines by **avoiding real-time shadows + GI** (the most expensive things).
+  Fake shadows + baked/fake lighting are good enough — confirmed as an intentional choice by the
+  user.
 
-## 2. Ràng buộc nền tảng: Android GLES (giữ nguyên)
+## 2. Platform constraint: Android GLES (unchanged)
 
-- Shader phải chạy GLES (đã có kiến trúc 2-nhánh, xem memory
-  `android-shader-pipeline`: matModel identity, precision mediump/highp,
-  f-suffix...). Mỗi shader mới PHẢI có nhánh GLES.
-- Forward rendering, ít đèn (1 mặt trời + ambient + fill). KHÔNG deferred
-  MRT nặng.
-- Hậu kỳ chọn lọc: bloom (đã có mip-chain), tone map, color grade, fog,
-  god-ray fake đều rẻ. TRÁNH: DOF bokeh nặng, SSAO, volumetric raymarch
-  thật (để PC-only hoặc bỏ).
-- Ngân sách dư vì cảnh nhỏ (1 map, ≤8 người, minion đơn giản) → đổ vào chất
-  lượng pixel, không phải số lượng.
+- Shaders must run on GLES (already has the 2-branch architecture, see memory
+  `android-shader-pipeline`: matModel identity, mediump/highp precision, f-suffix literals...).
+  Every new shader MUST have a GLES branch.
+- Forward rendering, few lights (1 sun + ambient + fill). NO heavy deferred MRT.
+- Selective post-processing: bloom (already has a mip-chain), tone mapping, color grading, fog, and
+  fake god-rays are all cheap. AVOID: heavy bokeh DOF, SSAO, real volumetric raymarching (keep those
+  PC-only or drop them).
+- Extra budget available since the scene is small (1 map, ≤8 players, simple minions) → spend it on
+  pixel quality, not quantity.
 
-## 3. Hiện trạng render (khảo sát 13/07)
+## 3. Render state survey (as of 07/13)
 
-- **Nhân vật: surface shader stylized ✅ (G2)** — thay shader mặc định UNLIT
-  của raylib bằng `core/surface_material` + `surface_lit.vs/.fs`: half-Lambert
-  + Blinn sheen + Fresnel rim mát (viền trăng) + fog, lấy đèn từ
-  environment_system. Áp qua `SurfaceMaterial_Apply` khi load model. Nhân vật
-  giờ có khối/đổ sáng thật, hết "mannequin". (Enemy/dummy vẫn hình que
-  DrawCharacter3D tới khi có asset.)
-- **Tone mapping + HDR ✅** — pipeline giờ là **true HDR**: scene buffer
-  (`core/screen_distort.c` renderTex) + bloom pyramid + composite đều dùng
-  16-bit half-float (R16G16B16A16), nên additive/emissive giữ giá trị > 1.0
-  cho tới khi ACES filmic nén HDR→LDR ở composite. Có probe/fallback RGBA8 cho
-  GLES2 (`ScreenDistort_IsHDR()` = cờ quyết định, `PostFX_IsHDR()` bám theo).
-  Bloom đã có mip-chain (bright/downsample/upsample/blur) — nền tốt.
-- Có: post-fx chain (bloom, chromatic, vignette, color grade), compute
-  particle, VFX composition mạnh, environment (sun + ambient + fog + ToD),
-  fake blob shadow. Tái dùng ~60%.
+- **Characters: stylized surface shader ✅ (G2)** — replaced raylib's default UNLIT shader with
+  `core/surface_material` + `surface_lit.vs/.fs`: half-Lambert + Blinn sheen + cool Fresnel rim
+  (moonlit edge) + fog, lit by environment_system. Applied via `SurfaceMaterial_Apply` on model
+  load. Characters now have real volume/shading, no longer "mannequins". (Enemy/dummy characters
+  still use the stick-figure `DrawCharacter3D` until assets arrive.)
+- **Tone mapping + HDR ✅** — the pipeline is now **true HDR**: the scene buffer
+  (`core/screen_distort.c` renderTex) + bloom pyramid + composite all use 16-bit half-float
+  (R16G16B16A16), so additive/emissive values stay above 1.0 until ACES filmic compresses HDR→LDR
+  at composite. Has a probe/fallback to RGBA8 for GLES2 (`ScreenDistort_IsHDR()` is the deciding
+  flag, `PostFX_IsHDR()` follows it). Bloom already has a mip-chain (bright/downsample/upsample/
+  blur) — a solid foundation.
+- Have: the post-fx chain (bloom, chromatic aberration, vignette, color grade), compute particles,
+  a strong VFX composition system, environment (sun + ambient + fog + time-of-day), fake blob
+  shadows. ~60% reusable as-is.
 
-## 4. Lộ trình (Đợt G) — thứ tự theo tác động / công sức
+## 4. Roadmap (the "G" rounds) — ordered by impact/effort ratio
 
-| # | Đợt | Nội dung | Cần asset user? |
+| # | Round | Content | Needs user assets? |
 |---|---|---|---|
-| **G1 ✅** | HDR pipeline + tone mapping | Scene/bloom/composite → RGBA16F float (true HDR); ACES filmic HDR→LDR; probe+fallback GLES2 | Không |
-| **G2** | Surface shader nhân vật/môi trường | Half-Lambert mượt + Blinn specular + normal map + rim + fog. Thay shader mặc định. GLES 2-nhánh | Không (đẹp ngay trên model hiện có; normal map nâng thêm) |
-| **G3** | Khí quyển võ hiệp | Height fog nâng cấp + god-ray/light-shaft (billboard, GLES-rẻ) + bụi/tàn lơ lửng + aerial perspective | Không |
-| **G4** | Fake shadow chất lượng | Blob mềm gradient / projected đơn giản thay blob cứng | Không |
-| **G5** | Color grading điện ảnh + nước stylized | LUT võ hiệp (trăng lạnh/hổ phách); nước fresnel+foam+distortion | Không |
-| **G6** | Tích hợp asset chất lượng | Model võ hiệp + props môi trường (Synty/chợ) qua shader mới | **Có** |
+| **G1 ✅** | HDR pipeline + tone mapping | Scene/bloom/composite → RGBA16F float (true HDR); ACES filmic HDR→LDR; GLES2 probe+fallback | No |
+| **G2** | Character/environment surface shader | Smooth half-Lambert + Blinn specular + normal map + rim + fog. Replaces the default shader. GLES 2-branch | No (looks good on existing models immediately; normal maps are a further upgrade) |
+| **G3** | Wuxia atmosphere | Upgraded height fog + god-rays/light-shafts (billboard, cheap on GLES) + floating dust/embers + aerial perspective | No |
+| **G4** | Higher-quality fake shadows | Soft gradient blob / simple projected shadow replacing the hard blob | No |
+| **G5** | Cinematic color grading + stylized water | Wuxia LUT (cold moonlight/amber); water with fresnel+foam+distortion | No |
+| **G6** | Integrate quality assets | Wuxia character models + environment props (Synty/marketplace) through the new shaders | **Yes** |
 
-G1-G5 là engine/shader (Claude làm, không chờ asset). G6 là lúc asset của
-bạn vào và "nở hoa" nhờ nền shader đã dựng.
+G1-G5 are engine/shader work (Claude does these, no need to wait on assets). G6 is when your assets
+come in and "bloom" thanks to the shader foundation already built.
 
-## 5. Pipeline asset (khuyến nghị)
+## 5. Asset pipeline (recommendation)
 
-- **Nhân vật**: model tỉ lệ thật kiểu võ hiệp — ArtStation/CGTrader/Sketchfab
-  ("wuxia/xianxia/chinese warrior"), Synty POLYGON Oriental. **Ưu tiên
-  model có normal map** để G2 phát huy. Rig/anim qua Mixamo. Xuất GLB.
-- **Môi trường**: Synty POLYGON (Fantasy/Samurai/Oriental), Quaternius/Kenney
-  (free) cho props stylized.
-- **Ramp/LUT/gradient**: tự tạo Blender/GIMP.
-- **Công cụ trung tâm**: Blender (free).
-- KHÔNG dùng VRoid (đó là anime — sai hướng).
+- **Characters**: realistically-proportioned wuxia-style models — ArtStation/CGTrader/Sketchfab
+  ("wuxia/xianxia/chinese warrior"), Synty POLYGON Oriental. **Prefer models with a normal map** so
+  G2 pays off fully. Rig/animate via Mixamo. Export as GLB.
+- **Environment**: Synty POLYGON (Fantasy/Samurai/Oriental), Quaternius/Kenney (free) for stylized
+  props.
+- **Ramp/LUT/gradient**: author in Blender/GIMP.
+- **Central tool**: Blender (free).
+- Do NOT use VRoid (that's anime style — wrong direction).
 
-## 6. Nguyên tắc khi code (mọi shader mới)
+## 6. Coding principles (every new shader)
 
-1. Luôn có nhánh GLES + PC (Rules A-E, memory `android-shader-pipeline`).
-2. Tone map là bước CUỐI của chain, sau bloom, trước color-grade UI.
-3. Material shader mới đi qua `core/material/` hoặc shader riêng — KHÔNG hard-
-   code màu (dùng texture/uniform).
-4. Mọi hiệu ứng khí quyển phải rẻ trên GLES — fake trước, thật sau (nếu PC).
-5. Giữ readability gameplay: đừng để hậu kỳ nuốt mất chỉ báo skill/phe.
+1. Always have both GLES and PC branches (Rules A-E, memory `android-shader-pipeline`).
+2. Tone mapping is the LAST step of the chain, after bloom, before UI color-grade.
+3. New material shaders go through `core/material/` or their own shader file — do NOT hard-code
+   colors (use textures/uniforms).
+4. Every atmosphere effect must be cheap on GLES — fake it first, do it for real later (PC-only if
+   ever).
+5. Preserve gameplay readability: don't let post-processing swallow skill/team indicators.

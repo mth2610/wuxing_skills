@@ -1,74 +1,77 @@
-# KẾ HOẠCH ANIMATION ASSETS — Người chơi / Quái (Minion) / Boss
+# ANIMATION ASSETS PLAN — Player / Monster (Minion) / Boss
 
-> File chuẩn bị asset cho anh Thang. Engine đã sẵn sàng nhận thêm clip —
-> chỉ cần xuất đúng quy ước bên dưới rồi báo Claude wire slot mới.
+> Asset prep sheet for the user (Thang). The engine is already ready to accept more clips — just
+> export following the conventions below then tell Claude to wire the new slot.
 
-## Quy ước kỹ thuật (bắt buộc — theo `character/character_model.c`)
+## Technical conventions (mandatory — per `character/character_model.c`)
 
-- **Định dạng**: GLB, tất cả animation nằm CHUNG 1 file model
-  (như `assets/characters/player.glb` hiện tại — dùng
-  `scripts/combine_character_glb.py` để gộp nếu xuất rời).
-- **Sample rate**: engine phát ở `ANIM_FPS = 60` — xuất bake 60fps
-  (30fps vẫn chạy nhưng sẽ bị nhanh gấp đôi, tránh).
-- **Đặt tên clip**: match theo **substring, không phân hoa thường**
-  (vd slot "punch" nhận cả `Punching_Fast`). Tên gợi ý bên dưới đã an toàn.
-- Clip one-shot (đòn đánh, né, chết) nên có pose đầu ≈ pose idle để đỡ giật
-  khi cắt vào; engine tự co giãn tốc độ clip theo thời lượng gameplay
-  (`CharacterModel_TriggerAttackTimed`), cứ làm đúng "nhịp đẹp" của clip.
+- **Format**: GLB, all animations bundled in ONE model file
+  (like the current `assets/characters/player.glb` — use
+  `scripts/combine_character_glb.py` to merge if exported separately).
+- **Sample rate**: the engine plays at `ANIM_FPS = 60` — export baked at 60fps
+  (30fps still runs but will play twice as fast — avoid this).
+- **Clip naming**: matched by **substring, case-insensitive** (e.g. slot "punch" matches
+  `Punching_Fast` too). The suggested names below are already safe.
+- One-shot clips (attacks, dodges, death) should have a start pose ≈ the idle pose to avoid a pop
+  when cutting in; the engine auto-stretches clip speed to the gameplay duration
+  (`CharacterModel_TriggerAttackTimed`) — just author the clip's own "good rhythm."
 
-## 1. NGƯỜI CHƠI (player.glb — đã có: idle, walking, running*, punching, kicking, palming, casting)
+## 1. PLAYER (player.glb — already has: idle, walking, running*, punching, kicking, palming, casting)
 
-(*`running` đã nằm trong file nhưng engine chưa dùng — sẽ wire khi có dash/run thật.)
+(*`running` is already in the file but the engine doesn't use it yet — will be wired once real
+dash/run exists.)
 
-| Ưu tiên | Tên clip | Dùng cho | Ghi chú nhịp |
+| Priority | Clip name | Used for | Timing notes |
 |---|---|---|---|
-| ★★★ | `dashing` | Lướt khinh công (Shift) | 0.3–0.4s, người lao về trước, tà áo/khăn bay — engine phát kèm afterimage |
-| ★★★ | `jumping` | Bật nhảy + bay (Space) | 3 đoạn trong 1 clip: đạp đất → lơ lửng (giữa clip loop được càng tốt) → tiếp đất |
-| ★★★ | `hitreact` | Trúng đòn | 0.2–0.3s giật người, nhẹ thôi vì bị đánh liên tục |
-| ★★★ | `dying` | Hết máu / rơi vực | 1–1.5s gục xuống; rơi vực sẽ dùng đoạn đầu |
-| ★★ | `meditating` | Thiền định (G) | Ngồi kiết già, loop 2–3s, có nhịp thở |
-| ★★ | `casting_heavy` | Chiêu lớn / Thái Cực Lôi | Vung 2 tay chậm & nặng hơn `casting` thường |
-| ★★ | `victory` | Thắng trận (màn CHIEN THANG) | Loop ngắn, chắp tay/vuốt râu kiểu tu tiên |
-| ★ | `strafe_left` / `strafe_right` | Đi ngang khi khóa mục tiêu | Chuẩn bị cho auto-target lock đi vòng |
-| ★ | `taiji_enter` | Vào Cảnh Giới Thái Cực | 1s dang tay, khớp lúc màn hình chuyển trắng đen |
+| ★★★ | `dashing` | Movement-tech dash (Shift) | 0.3–0.4s, body lunges forward, robe/scarf flowing — engine plays it with an afterimage |
+| ★★★ | `jumping` | Jump + airborne (Space) | 3 beats in 1 clip: push off ground → hang in the air (the middle segment should loop well) → land |
+| ★★★ | `hitreact` | Getting hit | 0.2–0.3s flinch, keep it light since hits land repeatedly |
+| ★★★ | `dying` | Out of HP / falling off the ring | 1–1.5s collapse; the ring-out death uses just the start of the clip |
+| ★★ | `meditating` | Meditation (G) | Cross-legged sitting, 2–3s loop, with a breathing rhythm |
+| ★★ | `casting_heavy` | Big skills / Thái Cực Lôi | Slower, heavier two-arm sweep than the normal `casting` |
+| ★★ | `victory` | Match win (VICTORY screen) | Short loop, hands clasped/stroking a beard, cultivator-style |
+| ★ | `strafe_left` / `strafe_right` | Sidestepping while locked on target | Prep for auto-target-lock circling |
+| ★ | `taiji_enter` | Entering the Thái Cực state | 1s arms spread, timed with the screen going black-and-white |
 
-## 2. QUÁI / MINION (chưa có model — đang vẽ procedural cầu + vòng xoay)
+## 2. MONSTER / MINION (no model yet — currently drawn as a procedural sphere + spin ring)
 
-Một model chung `minion.glb`, đổi màu theo ngũ hành bằng tint (engine tự làm):
+One shared `minion.glb` model, recolored per element via tint (engine handles this automatically):
 
-| Ưu tiên | Tên clip | Dùng cho | Ghi chú |
+| Priority | Clip name | Used for | Notes |
 |---|---|---|---|
-| ★★★ | `idle` | Lơ lửng tại chỗ | Loop, phập phồng như tinh linh |
-| ★★★ | `walk` | Lầm lũi bò về boss địch | Loop, tốc độ khớp 2 m/s |
-| ★★★ | `windup` | 0.3s trước khi tự nổ | Phồng to + rung — tín hiệu cho người chơi né (No Tutorial) |
-| ★★ | `dying` | Bị giết trước khi kịp nổ | Xẹp/tan 0.4s |
-| ★ | `spawn` | Chui ra từ boss | 0.5s tụ hình từ khói |
+| ★★★ | `idle` | Hovering in place | Loop, pulsing like a spirit |
+| ★★★ | `walk` | Trudging toward the enemy boss | Loop, speed matched to 2 m/s |
+| ★★★ | `windup` | 0.3s before self-detonating | Swells up + shakes — the player's dodge cue (No Tutorial) |
+| ★★ | `dying` | Killed before it can explode | Collapses/dissolves over 0.4s |
+| ★ | `spawn` | Emerging from the boss | 0.5s condensing out of smoke |
 
-Kiểu dáng gợi ý: tinh linh nhỏ đầu to không chân (bay là đỡ phải làm chân),
-đúng khí chất "đèn lồng ma trơi" ban đêm của art direction.
+Suggested design: a small will-o'-the-wisp spirit, big head, no legs (flying avoids needing legs),
+matching the night "ghost lantern" mood of the art direction.
 
-## 3. BOSS HẮC DIỆN TÔN GIẢ (chưa có model — đang vẽ procedural)
+## 3. BOSS — HẮC DIỆN TÔN GIẢ (no model yet — currently procedural)
 
-Nếu làm model `boss_hac_dien.glb` (1 model, đổi hệ bằng tint + VFX rune có sẵn):
+If a `boss_hac_dien.glb` model is made (one model, element swapped via tint + the existing rune VFX):
 
-| Ưu tiên | Tên clip | Dùng cho | Ghi chú |
+| Priority | Clip name | Used for | Notes |
 |---|---|---|---|
-| ★★★ | `idle` | Lơ lửng thở | Loop 3–4s, áo choàng/khí bay |
-| ★★★ | `casting` | Bắn skill theo phase (3s/phát) | 0.8–1s vươn tay — cho người chơi thấy trước mà né |
-| ★★★ | `phaseshift` | Chuyển phase / biến hệ | 1.5s gồng + bung năng lượng, khớp lúc rune đổi màu |
-| ★★ | `hitreact` | Trúng đòn nặng / mất khiên | Ngắn 0.2s, boss không nên giật nhiều |
-| ★★ | `summon` | Gọi bầy minion | 1s dang tay triệu hồi |
-| ★★ | `dying` | Gục — màn CHIEN THANG | 2–3s tan rã hoành tráng, đáng công người chơi |
-| ★ | `taiji_rage` | Dưới 30% máu vào Thái Cực | Loop idle dữ tợn hơn, dùng thay `idle` ở phase cuối |
+| ★★★ | `idle` | Hovering, breathing | 3–4s loop, robe/energy flowing |
+| ★★★ | `casting` | Firing a skill per phase (every 3s) | 0.8–1s arm extension — lets the player see it coming and dodge |
+| ★★★ | `phaseshift` | Phase transition / element change | 1.5s tensing + energy burst, timed with the rune color change |
+| ★★ | `hitreact` | Taking a heavy hit / losing a shield | Short 0.2s, the boss shouldn't flinch much |
+| ★★ | `summon` | Summoning a minion wave | 1s arms spread, summoning |
+| ★★ | `dying` | Defeat — VICTORY screen | 2–3s dramatic dissolution, should feel earned |
+| ★ | `taiji_rage` | Below 30% HP, entering Thái Cực | A fiercer idle loop, replaces `idle` in the final phase |
 
-Kiểu dáng gợi ý: nhân dạng cao gầy, mặt nạ đen trống (đúng tên Hắc Diện),
-tay dài — phần thân dưới có thể là khói (đỡ rig chân, hợp levitate).
+Suggested design: tall, gaunt humanoid, blank black mask (matches the name Hắc Diện/"Black Face"),
+long arms — the lower body could be smoke (avoids leg rigging, fits the levitating look).
 
-## Thứ tự làm đề xuất
+## Suggested build order
 
-1. Player: `dashing`, `jumping`, `hitreact`, `dying` — 4 clip này nâng cảm giác chiến đấu nhiều nhất.
-2. Minion model + `idle/walk/windup` — quái hiện là quả cầu, thay sớm là arena sống hẳn.
-3. Boss model + bộ ★★★ — làm cuối vì procedural hiện tại vẫn tạm đạt.
+1. Player: `dashing`, `jumping`, `hitreact`, `dying` — these 4 clips improve combat feel the most.
+2. Minion model + `idle/walk/windup` — the monster is currently a plain sphere; replacing it early
+   makes the arena feel far more alive.
+3. Boss model + the ★★★ set — done last since the current procedural version is still acceptable
+   for now.
 
-Xuất xong clip nào cứ đưa vào `assets/characters/` rồi nhắn — wire vào engine
-(slot mới trong `character_model.h` + trigger đúng chỗ) là việc của Claude.
+Once a clip is exported, drop it into `assets/characters/` and say so — wiring it into the engine
+(a new slot in `character_model.h` + triggering it in the right place) is Claude's job.

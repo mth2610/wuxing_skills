@@ -1,11 +1,11 @@
 # AGENT_CODE_STANDARD.md — Self-Check Rules (Agent-Maintained)
 
-> Not API docs (see `CORE_API.md`, `COMPUTE_API.md`, `ENVIRONMENT_API.md`, `MAP_API.md`). This is a terse mistake-prevention checklist for ALL code layers: skills (`skills/`), core engine (`core/`, `compute/`, `environment/`, `maps/`), common shaders (`core/shaders/common/*.glsl`).
+> Not API docs (see `core/docs/API.md`, `compute/docs/API.md`, `environment/docs/API.md`, `maps/docs/API.md`). This is a terse mistake-prevention checklist for ALL code layers: skills (`skills/`), core engine (`core/`, `compute/`, `environment/`, `maps/`), common shaders (`core/shaders/common/*.glsl`).
 > Sections 1-9 = skill code. Section 10 = core layer (incl. common shader functions).
 > **Update rule:** any time an API doc changes, or you learn a new lesson from a bug, edit this file in the same turn. Keep entries terse — bullet + one-line reason max.
 
 ## 0. Before writing a skill
-- Read relevant `CORE_API.md` section. Grep `core/*.h` to confirm function still exists (docs may lag).
+- Read relevant `core/docs/API.md` section. Grep `core/*.h` to confirm function still exists (docs may lag).
 - Folder: `skills/[element]/[skill_name]_skill/` — include path must match exactly incl. `_skill` suffix.
 - Never edit `core/` files directly (Core Agent owns it) — read `.h` only. If you ARE Core Agent, go to §10.
 
@@ -68,28 +68,28 @@
 ## 9. Definition of done (skill)
 - `make` builds clean — don't just eyeball code.
 - Re-check §1-8 as a literal checklist; don't skip §7a if the skill has a custom shader.
-- New core API found in `.h` but missing from `CORE_API.md` → report it, don't guess behavior.
+- New core API found in `.h` but missing from `core/docs/API.md` → report it, don't guess behavior.
 
 ## 10. Core layer (`core/`, `compute/`, `environment/`, `maps/`, common shaders)
 
 ### 10.1 General
 - New/changed core API must stay backward compatible with every skill caller — don't change existing signatures; add new functions or append-only struct fields instead.
-- Before changing a public function's behavior: `grep -r` across `skills/` for callers. Breaking changes must be documented (`CORE_API.md` etc.) BEFORE landing, per `CLAUDE.md` cross-module rule.
+- Before changing a public function's behavior: `grep -r` across `skills/` for callers. Breaking changes must be documented (`core/docs/API.md` etc.) BEFORE landing, per `CLAUDE.md` cross-module rule.
 - No dynamic allocation in core runtime paths — static pools matching existing patterns (`MAX_DECALS`, `MAX_VFX_LIGHTS`, `MAX_DISTORTION_SOURCES`).
 - New modules follow existing Init/Update/Draw/Unload lifecycle shape (see `decal_system.h`, `vfx_light.h`).
-- Update `CORE_API.md` (or relevant doc) in the same turn as the code change — docs must never lag code.
+- Update `core/docs/API.md` (or relevant doc) in the same turn as the code change — docs must never lag code.
 
 ### 10.2 Adding functions to common shaders (`core/shaders/common/*.glsl`)
 - File by domain: hash/noise/fbm → `noise.glsl`; lighting (diffuse/specular/fresnel/normal) → `lighting.glsl`; generic effects (dissolve/flow/emissive) → `fx.glsl`; world-space/no-UV projection → `triplanar.glsl`. Don't mix domains.
 - Check name doesn't collide with GLSL builtins (lesson: `noise2` clashed with builtin `noise()` → renamed `vnoise`).
 - No `f` float suffixes in new GLSL — affects every skill that includes the file.
 - Don't redeclare existing `vs_header.glsl`/`fs_header.glsl` vars/uniforms.
-- A new common-header function is public API for every skill — keep its signature stable; if it must change, do the §10.1 caller-grep and update the GLSL Shader Guidelines section of `CORE_API.md`.
+- A new common-header function is public API for every skill — keep its signature stable; if it must change, do the §10.1 caller-grep and update the GLSL Shader Guidelines section of `core/docs/API.md`.
 - Keep `highp` precision for any uniform shared between VS+FS (lesson: `mediump`→`highp` fix was required for Android, see commit "fs_header.glsl — đổi precision mediump float → precision highp float"). Don't introduce `mediump`/`lowp` regressions.
 - New common code only runs through the `#include` path (runtime-rewritten to `#version 300 es`) — must stay valid under both `#version 330` (desktop) and `#version 300 es` (Android) syntax.
 
 ### 10.3 Compute (`compute/`)
-- Read `COMPUTE_API.md` first — GPU particle system is shared by skills AND environment; bugs here hit both.
+- Read `compute/docs/API.md` first — GPU particle system is shared by skills AND environment; bugs here hit both.
 - SSBO/buffer layout changes must stay in sync with C-side structs — verify std140/std430 alignment before committing.
 
 ### 10.4 Definition of done (core change)

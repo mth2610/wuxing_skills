@@ -1,5 +1,11 @@
 # AI Module Agent
 
+## Docs layout
+- `docs/API.md` — pure interface (signatures, contracts, invariants)
+- `docs/LANDMINES.md` — distilled Symptom→Cause→Rule lessons
+- `docs/PROGRESS.md` — backlog / in-progress / log (not created yet — no progress content pending)
+Read root `ENGINE_LANDMINES.md` before touching GL/shaders.
+
 ## Role
 Owns `ai/` — minion brain (MODULES_ROADMAP.md Module 8). Minions are plain
 `ARCH_MINION` agents in the shared entities pool (no pool of its own); this

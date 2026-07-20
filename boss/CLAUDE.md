@@ -1,5 +1,11 @@
 # Boss Module Agent
 
+## Docs layout
+- `docs/API.md` — pure interface (signatures, contracts, invariants)
+- `docs/LANDMINES.md` — distilled Symptom→Cause→Rule lessons
+- `docs/PROGRESS.md` — backlog / in-progress / log
+Read root `ENGINE_LANDMINES.md` before touching GL/shaders.
+
 ## Role
 Owns `boss/` — Boss Đại Tinh Linh (MODULES_ROADMAP.md Module 5). Strict
 engine/data split:

@@ -68,7 +68,7 @@ copy this pattern for new cases rather than inventing a new one.
 
 ## IMPORTANT — known duplication with `entities/` (do not let this drift further)
 
-`sandbox_core.h`'s `PlayerEntity`/`EnemyEntity` structs already contain fields that duplicate `entities/ENTITIES_API.md`'s `Agent` struct: `dashCooldown`/`dashTimer`, `zVelocity` (vertical physics), `jumpCount`, `knockbackVelocity`. This is a **temporary stand-in** that predates the Entities module.
+`sandbox_core.h`'s `PlayerEntity`/`EnemyEntity` structs already contain fields that duplicate `entities/docs/API.md`'s `Agent` struct: `dashCooldown`/`dashTimer`, `zVelocity` (vertical physics), `jumpCount`, `knockbackVelocity`. This is a **temporary stand-in** that predates the Entities module.
 
 - **Do not extend `PlayerEntity`/`EnemyEntity` with new gameplay fields** (more HP mechanics, more combat state) — that belongs in `entities/` now that it exists.
 - **When `entities/` Agent Pool is implemented**, `sandbox_core.c` should migrate to calling `Entity_*` functions and drop its own duplicate physics/combat fields — flag this as a follow-up, don't do it speculatively without instruction.
