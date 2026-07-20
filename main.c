@@ -1231,6 +1231,9 @@ int main(int argc, char **argv) {
     if (IsKeyPressed(KEY_J)) {
         EnvShadow_SetEnabled(!EnvShadow_IsEnabled()); // Real Shading P6 — toggle real shadow map
     }
+    if (IsKeyPressed(KEY_H) && EnvShadow_IsEnabled()) {
+        EnvShadow_DebugDump(player.position); // P6 diag — numeric shadow-map readback (see notes)
+    }
 
     if (g_gamePaused) {
         if (g_stepNextFrame) {

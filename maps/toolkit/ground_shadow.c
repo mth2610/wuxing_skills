@@ -7,7 +7,7 @@
 
 static Shader s_shader;
 static bool   s_ready = false;
-static int    s_locLightVP, s_locShadowEnabled;
+static int    s_locLightVP, s_locShadowEnabled, s_locShadowTexel;
 
 static void EnsureLoaded(void) {
     if (s_ready) return;
@@ -17,6 +17,7 @@ static void EnsureLoaded(void) {
 
     s_locLightVP       = GetShaderLocation(s_shader, "u_lightVP");
     s_locShadowEnabled = GetShaderLocation(s_shader, "u_shadowEnabled");
+    s_locShadowTexel   = GetShaderLocation(s_shader, "u_shadowTexel");
     s_ready = true;
 }
 
@@ -37,13 +38,16 @@ void GroundShadow_Begin(void) {
     if (EnvShadow_IsEnabled()) {
         Matrix lightVP = EnvShadow_GetLightVP();
         SetShaderValueMatrix(s_shader, s_locLightVP, lightVP);
+        Texture2D map = EnvShadow_GetShadowMap();
+        float texel = (map.width > 0) ? (1.0f / (float)map.width) : (1.0f / 1024.0f);
+        SetShaderValue(s_shader, s_locShadowTexel, &texel, SHADER_UNIFORM_FLOAT);
         // Bind the shadow map as texture0 (the default diffuse sampler), the
         // one texture-binding path proven to work under rlvk — the on-screen
         // debug preview samples the same texture fine via DrawTexturePro,
         // which also goes through texture0. A custom `sampler2D shadowMap`
         // uniform via SetShaderValueTexture read as unbound/white here (~1.0 =
         // far -> nothing ever occluded). See ground_shadow.fs.
-        rlSetTexture(EnvShadow_GetShadowMap().id);
+        rlSetTexture(map.id);
     }
 }
 

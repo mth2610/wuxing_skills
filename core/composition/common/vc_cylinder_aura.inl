@@ -52,9 +52,9 @@ void VFX_ComposeCylinderAura(VC_MaterialId matId, Vector3 pos, float radius, flo
 
     VortexFunnelConfig fCfg = ProceduralMesh_DefaultVortexFunnelConfig();
     fCfg.bottomRadius = r * 1.1f;
-    fCfg.topRadius = r * 1.1f;
+    fCfg.topRadius = r * 0.3f;
     fCfg.height = auraHeight;
-    fCfg.twistAmount = 0.0f;
+    fCfg.twistAmount = 10.8f;
     fCfg.ridgeAmount = 0.0f;
 
     VortexFunnelMeshData funnelData;

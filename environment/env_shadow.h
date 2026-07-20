@@ -37,4 +37,12 @@ Shader     EnvShadow_GetDepthShader(void); // assign to casters during BeginCapt
 Matrix     EnvShadow_GetLightVP(void);     // combined light view*projection, for the main pass
 Texture2D  EnvShadow_GetShadowMap(void);   // sampleable depth texture, for the main pass
 
+// TEMP diagnostic (P6 bug 3) — CPU-readback of the shadow map + numeric
+// projection of a reference world position. Prints, via TraceLog: stored
+// depth min/max/histogram, the projected texel of `worldPos` (the caster,
+// e.g. player position) and of the ground point underneath it, and the
+// stored depth at both texels. One call = full numeric picture, no more
+// color-guessing from screenshots.
+void EnvShadow_DebugDump(Vector3 worldPos);
+
 #endif // ENV_SHADOW_H

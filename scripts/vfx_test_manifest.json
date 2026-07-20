@@ -680,6 +680,30 @@
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeSpiritOrb(VC_MAT_FIRE, $POS, 1.5f, $TIME)"
+    },
+    {
+      "fn": "VFX_ComposeTaijiArcStrike",
+      "label": "TAIJI ARC STRIKE",
+      "category": "taiji",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeTaijiArcStrike($POS, 1.5f)"
+    },
+    {
+      "fn": "VFX_ComposeTornado",
+      "label": "TORNADO",
+      "category": "util",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeTornado(VC_MAT_FIRE, $POS, 1.5f, 2.0f, $TIME)"
+    },
+    {
+      "fn": "VFX_ReleaseTornado",
+      "label": "RELEASE TORNADO",
+      "category": "util",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ReleaseTornado($POS)"
     }
   ],
   "overrides": {

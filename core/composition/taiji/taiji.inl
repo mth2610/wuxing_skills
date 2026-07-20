@@ -1,10 +1,10 @@
 // taiji.inl — Master include for taiji element VFX sub-modules
 // Included once by visual_composer.c
 
-static ColorGradient s_windGrad = {0};     
-static ColorGradient s_windDustGrad = {0}; 
-static ColorGradient s_yinGrad = {0};      
-static ColorGradient s_yangGrad = {0};     
+static ColorGradient s_windGrad = {0};
+static ColorGradient s_windDustGrad = {0};
+static ColorGradient s_yinGrad = {0};
+static ColorGradient s_yangGrad = {0};
 static bool s_taijiFxInit = false;
 
 static void TaijiFx_InitShared(void)
@@ -45,3 +45,5 @@ static Vector3 TaijiSphereDir(int index, int epoch)
 #include "gust_slash.inl"
 #include "cyclone.inl"
 #include "vc_spirit_wisp_test.inl"
+#include "taiji_arc_strike.inl"
+#include "tornado.inl"

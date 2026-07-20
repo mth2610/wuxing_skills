@@ -78,7 +78,9 @@ float ShadowFactor(vec3 worldPos, float ndl) {
     if (proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) return 1.0;
 
     float bias = max(0.0025 * (1.0 - ndl), 0.0006);
-    vec2 texel = 1.0 / vec2(textureSize(shadowMap, 0));
+    // Do NOT use textureSize() here: under rlvk it returned 0, making texel
+    // INF and every PCF coordinate NaN (0*INF) — no shadow, silently.
+    vec2 texel = vec2(1.0 / 1024.0);
     float shadow = 0.0;
     for (int x = -1; x <= 1; x++) {
         for (int y = -1; y <= 1; y++) {

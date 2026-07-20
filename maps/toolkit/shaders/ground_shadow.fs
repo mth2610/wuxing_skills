@@ -20,6 +20,9 @@ in vec3 fragWorldPos;
 uniform sampler2D texture0; // shadow depth map, bound via rlSetTexture (see above)
 uniform mat4      u_lightVP;
 uniform float     u_shadowEnabled;
+uniform float     u_shadowTexel; // 1.0/resolution — do NOT use textureSize():
+                                 // under rlvk it returned 0 -> texel=INF ->
+                                 // all 9 PCF coords NaN (0*INF) -> no shadow.
 
 out vec4 finalColor;
 
@@ -35,7 +38,7 @@ float ShadowFactor(vec3 worldPos) {
     if (proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) return 1.0;
 
     float bias = 0.0015;
-    vec2 texel = 1.0 / vec2(textureSize(texture0, 0));
+    vec2 texel = vec2(u_shadowTexel);
     float shadow = 0.0;
     for (int x = -1; x <= 1; x++) {
         for (int y = -1; y <= 1; y++) {
@@ -47,18 +50,15 @@ float ShadowFactor(vec3 worldPos) {
 }
 
 void main() {
-    // STATUS (2026-07-19): NOT working yet — the two fixes above (texture0
-    // binding + vec*mat) are confirmed correct (proj.z now shows a healthy
-    // depth gradient), but the SAMPLED depth is still ~1.0 everywhere, so no
-    // fragment tests as occluded. Root cause: the CAPTURE pass stores depth
-    // crammed at the far plane (casters barely below 1.0). See
-    // REAL_SHADING_P6_NOTES.md before resuming — the remaining bug is in
-    // EnvShadow_BeginCapture's projection/depth write, not here.
+    // WORKING (2026-07-19, numerically verified): capture, copy, (vec*mat,
+    // v-as-is) sampling, and the depth test all confirmed correct via CPU
+    // readback + on-screen band diagnostics — see REAL_SHADING_P6_NOTES.md.
     float shadow = 1.0;
     if (u_shadowEnabled > 0.5) {
         shadow = ShadowFactor(fragWorldPos);
     }
-    // Darken toward ~35%, not full black — reads as a soft contact shadow on
-    // an already-dark night floor instead of a hole.
-    finalColor = vec4(fragColor.rgb * mix(0.35, 1.0, shadow), fragColor.a);
+    // Darken toward ~30%, not full black — reads as a soft shadow on the
+    // night floor instead of a hole. (Verified working end-to-end via the
+    // magenta-tag test at these exact texels.)
+    finalColor = vec4(fragColor.rgb * mix(0.30, 1.0, shadow), fragColor.a);
 }

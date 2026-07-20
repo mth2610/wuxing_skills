@@ -46,14 +46,34 @@ iteration. This is the technique to keep using. Three distinct bugs were found; 
    `rlMultMatrixf(MatrixToFloat(matView))` for the *view* — so the proven-good pattern is
    **rlOrtho for the projection, not rlMultMatrixf of a MatrixOrtho**.
 
-   **Next thing to try:** in `EnvShadow_BeginCapture`, replace
-   `rlMultMatrixf(MatrixToFloat(s_lightProj))` with a direct `rlOrtho(-halfExtent, halfExtent,
-   -halfExtent, halfExtent, near, far)` call (matching the params used to build `s_lightProj` for
-   the FS), keeping the view as `rlMultMatrixf(MatrixToFloat(s_lightView))`. Then re-check with the
-   bucketed **sampled-d** debug: if the casters now show up GREEN (~0.3–0.6) instead of faint
-   near-white, the capture is fixed and the shadow test should immediately start working. Keep the
-   FS's `vec*mat` (bug 2 fix) — it's independent and correct. If `rlOrtho` alone doesn't spread the
-   depth, next suspect is the copy pass / rlvk depth-twin scaling.
+   **Tried `rlOrtho` (did NOT fix it).** Replaced `rlMultMatrixf(MatrixToFloat(s_lightProj))` with
+   `rlOrtho(-halfExtent, halfExtent, -halfExtent, halfExtent, 0.1, distance*2)` (kept in the code —
+   it's the proven-good projection pattern regardless). Sampled-d bucket was still all-WHITE.
+   **So the cramming is NOT the projection-matrix upload path.**
+
+   **The decisive observation (do NOT lose this):** after the bug-2 fix, the FS's own `proj.z`
+   (`vec4(worldPos,1)*u_lightVP`, remapped `*0.5+0.5`) reads a healthy **~0.1–0.9 (GREEN)** across
+   the ground — so the FS's light-space depth is correct and NOT crammed. But the depth **SAMPLED
+   from the shadow map** at those same texels reads **~0.95–0.999 (WHITE, casters barely below
+   1.0)**. So a caster (physically ABOVE the ground, i.e. NEARER an overhead light) is stored with a
+   depth (~0.97) that is LARGER than the ground fragment's own computed depth (~0.5). That ordering
+   is **inverted** — the near-to-light caster should store a SMALLER depth than the farther ground.
+   This is a **depth-convention / range mismatch between what the capture pipeline WRITES and what
+   the FS COMPUTES**, specific to rlvk (custom Vulkan rlgl). Candidate causes not yet isolated:
+   - rlvk's clip-z epilogue (`gl_Position.z=(z+w)*0.5`, HANDOFF §3.1) interacting with `rlOrtho`'s
+     depth range differently than the FS's manual `MatrixOrtho`-based `*0.5+0.5` remap (possible
+     double- or half-transform → cram to [0.5,1.0], which fits the observed ~0.97).
+   - rlvk's `noSampledDepth` depth→R32F twin (HANDOFF §7.10) storing/scaling depth non-linearly or
+     reversed relative to a straight [0,1].
+
+   **Recommended next step (needs the rlvk/Renderer agent or GPU capture, NOT more screenshot
+   guessing):** determine rlvk's EXACT written-depth convention for an `rlOrtho` projection + the
+   epilogue, then make the FS's `proj.z` replicate that same transform (instead of the textbook
+   GL `*0.5+0.5`). Concretely: render a plane at a KNOWN light-space depth into the map and read
+   back the stored value to calibrate the transform. Or sample the depth twin directly (skip the
+   manual copy pass — `EnvShadow_GetShadowMap` could return `s_depthTex2D` and rely on rlvk's auto
+   twin per §7.10) to remove the copy pass as a variable. This is squarely the Renderer agent's
+   domain (`third_party/vulkan/CLAUDE.md`); the two application-side bugs (1 & 2) are already fixed.
 
 **Debug scaffolding still in the tree (remove when P6 works or is abandoned):** `main.c`'s
 bottom-right "SHADOW MAP DEBUG" preview box; the sun elevation was lowered (`env_shadow`'s callers +
