@@ -263,7 +263,6 @@ void VFX_ComposeSpiritOrb(VC_MaterialId matId, Vector3 pos, float radius, float 
 void VFX_ComposeSpiritWispTest(Vector3 pos);
 void VFX_ComposeTaijiArcStrike(Vector3 pos, float scale);
 void VFX_ComposeTornado(VC_MaterialId matId, Vector3 pos, float radius, float height, float time);
-void VFX_ComposeTrailRibbonTest(Vector3 pos);
 void VFX_ReleaseTornado(Vector3 pos);
 // @gen:vc_declarations end
 void VFX_ComposePathLink(VC_MaterialId matId, const Vector3 *points, int count, float width, float progress, float time);

@@ -676,13 +676,6 @@
       "trigger_call": "VFX_ComposeTrailUpgradesTest($POS)"
     },
     {
-      "fn": "VFX_ComposeTrailRibbonTest",
-      "label": "TRAIL RIBBON TEST",
-      "category": "util",
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeTrailRibbonTest($POS)"
-    },
-    {
       "fn": "VFX_ComposeSpiritWispTest",
       "label": "SPIRIT WISP TEST",
       "category": "yin",

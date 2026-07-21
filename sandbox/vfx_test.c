@@ -80,7 +80,7 @@ static const char *s_meshNames[] = {
     "DISC", "RING", "CONE", "TORNADO", "CYLINDER", "SPHERE", "SHOCKWAVE", "PYRAMID", "TETRAHEDRON"};
 
 // @gen:newfx_names begin
-// 91 entries — auto-managed by sync_vfx_test.py
+// 90 entries — auto-managed by sync_vfx_test.py
 static const char* s_newFxNames[] = {
     "FLAME WISP", "FIRE PILLAR", "FIREBALL", "FIRE BREATH", "BURN GROUND", "FIRE WHIRL",
     "EMBER DRIFT", "IMPACT FIRE", "CAST FIRE", "SPLASH", "BUBBLES", "MIST VEIL",
@@ -96,8 +96,7 @@ static const char* s_newFxNames[] = {
     "PROJ WATER", "PROJ METAL", "CYLINDER AURA", "GROUND AURA", "BLACK HOLE", "DRAW ICE CRYSTAL BURST",
     "SMOKE COLUMN F X", "GROUND SMOKE", "SMOKE ON PLANE", "MAGIC FILAMENTS", "MAGIC FILAMENTS ON PLANE", "SHARD DEBRIS",
     "CROWN SPLASH", "CHAIN LINK", "WATER STREAM ON PATH", "MESH ELECTRICITY", "PARTICLE UPGRADES TEST", "TRAIL UPGRADES TEST",
-    "TRAIL RIBBON TEST", "SPIRIT WISP TEST", "METEOR COMET TEST", "SPIRIT ORB", "TAIJI ARC STRIKE", "TORNADO",
-    "RELEASE TORNADO",
+    "SPIRIT WISP TEST", "METEOR COMET TEST", "SPIRIT ORB", "TAIJI ARC STRIKE", "TORNADO", "RELEASE TORNADO",
 };
 // @gen:newfx_names end
 
@@ -112,8 +111,7 @@ static const int s_newFxCategories[] = {
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 1, 6, 6, 6, 6, 6, 6, 6, 6,
-    1, 6, 6, 6, 6, 6, 3, 6, 5, 6,
-    6,
+    1, 6, 6, 6, 6, 3, 6, 5, 6, 6,
 };
 // @gen:newfx_categories end
 
@@ -460,7 +458,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             const char **names;
             int globalIdx;
             int visualIdx;
-            maxIdx = 91;
+            maxIdx = 90;
             names = s_newFxNames; // @gen:newfx_count
             visualIdx = 0;
             (void)names;
@@ -563,15 +561,13 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_ComposeParticleUpgradesTest(s_prefabStartPos);
           } else if (s_testIndex == 83) { /* TRAIL UPGRADES TEST */
               VFX_ComposeTrailUpgradesTest(s_prefabStartPos);
-          } else if (s_testIndex == 84) { /* TRAIL RIBBON TEST */
-              VFX_ComposeTrailRibbonTest(s_prefabStartPos);
-          } else if (s_testIndex == 85) { /* SPIRIT WISP TEST */
+          } else if (s_testIndex == 84) { /* SPIRIT WISP TEST */
               VFX_ComposeSpiritWispTest(s_prefabStartPos);
-          } else if (s_testIndex == 86) { /* METEOR COMET TEST */
+          } else if (s_testIndex == 85) { /* METEOR COMET TEST */
               VFX_ComposeMeteorCometTest(s_prefabStartPos);
-          } else if (s_testIndex == 88) { /* TAIJI ARC STRIKE */
+          } else if (s_testIndex == 87) { /* TAIJI ARC STRIKE */
               VFX_ComposeTaijiArcStrike(s_prefabStartPos, 1.5f);
-          } else if (s_testIndex == 90) { /* RELEASE TORNADO */
+          } else if (s_testIndex == 89) { /* RELEASE TORNADO */
               VFX_ReleaseTornado(s_prefabStartPos);
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
@@ -733,15 +729,13 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_ComposeParticleUpgradesTest(s_prefabStartPos);
           } else if (s_testIndex == 83) { /* TRAIL UPGRADES TEST */
               VFX_ComposeTrailUpgradesTest(s_prefabStartPos);
-          } else if (s_testIndex == 84) { /* TRAIL RIBBON TEST */
-              VFX_ComposeTrailRibbonTest(s_prefabStartPos);
-          } else if (s_testIndex == 85) { /* SPIRIT WISP TEST */
+          } else if (s_testIndex == 84) { /* SPIRIT WISP TEST */
               VFX_ComposeSpiritWispTest(s_prefabStartPos);
-          } else if (s_testIndex == 86) { /* METEOR COMET TEST */
+          } else if (s_testIndex == 85) { /* METEOR COMET TEST */
               VFX_ComposeMeteorCometTest(s_prefabStartPos);
-          } else if (s_testIndex == 88) { /* TAIJI ARC STRIKE */
+          } else if (s_testIndex == 87) { /* TAIJI ARC STRIKE */
               VFX_ComposeTaijiArcStrike(s_prefabStartPos, 1.5f);
-          } else if (s_testIndex == 90) { /* RELEASE TORNADO */
+          } else if (s_testIndex == 89) { /* RELEASE TORNADO */
               VFX_ReleaseTornado(s_prefabStartPos);
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
@@ -836,8 +830,8 @@ void VFXTest_Draw3D(void)
               case 76: VFX_ComposeMagicFilamentsOnPlane(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, 1.5f, fminf(progress, 0.99f), (Color){100, 200, 255, 200}, 0.8f, 3.5f, 4.0f, (Vector2){0.0f, 0.0f}); break;
               case 79: VFX_ComposeChainLink(VC_MAT_FIRE, s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){3.0f, 0, 0}), 0.1f, 1.0f, fminf(progress, 0.99f), s_meshTime); break;
               case 80: { static bool splashed = false; if (progress < 0.05f) splashed = false; if (progress >= 0.83f && !splashed) { VFX_ComposeSplashBurst(s_testPathPoints[15], 1.2f); splashed = true; } VFX_ComposeWaterStreamOnPath(s_testPathPoints, 16, 0.25f, progress * 1.2f, 0.25f, s_meshTime); }; break;
-              case 87: VFX_ComposeSpiritOrb(VC_MAT_FIRE, s_prefabStartPos, 1.5f, s_meshTime); break;
-              case 89: VFX_ComposeTornado(VC_MAT_FIRE, s_prefabStartPos, 1.5f, 2.0f, s_meshTime); break;
+              case 86: VFX_ComposeSpiritOrb(VC_MAT_FIRE, s_prefabStartPos, 1.5f, s_meshTime); break;
+              case 88: VFX_ComposeTornado(VC_MAT_FIRE, s_prefabStartPos, 1.5f, 2.0f, s_meshTime); break;
           }
 // @gen:newfx_draw end
         }
@@ -982,7 +976,7 @@ void VFXTest_DrawHUD(void)
         const char **names;
         int gi;
         int vIdx;
-        maxIdx = 91;
+        maxIdx = 90;
         names = s_newFxNames; // @gen:newfx_count
         vIdx = 0;
         (void)names;
@@ -1057,11 +1051,10 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
     case 81: VFX_ComposeMeshElectricity(pos, (Color){100, 220, 255, 255}, 2.5f); break;
     case 82: VFX_ComposeParticleUpgradesTest(pos); break;
     case 83: VFX_ComposeTrailUpgradesTest(pos); break;
-    case 84: VFX_ComposeTrailRibbonTest(pos); break;
-    case 85: VFX_ComposeSpiritWispTest(pos); break;
-    case 86: VFX_ComposeMeteorCometTest(pos); break;
-    case 88: VFX_ComposeTaijiArcStrike(pos, 1.5f); break;
-    case 90: VFX_ReleaseTornado(pos); break;
+    case 84: VFX_ComposeSpiritWispTest(pos); break;
+    case 85: VFX_ComposeMeteorCometTest(pos); break;
+    case 87: VFX_ComposeTaijiArcStrike(pos, 1.5f); break;
+    case 89: VFX_ReleaseTornado(pos); break;
     default: break;
     }
 // @gen:newfx_render_trigger end
