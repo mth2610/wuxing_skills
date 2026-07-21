@@ -2084,19 +2084,14 @@ No authored normal-map textures exist yet either (Art/Character task) — the pl
 **Real shadow map** (P6, HIGH+Shadow, Environment-owned — `#include "environment/env_shadow.h"`): single directional depth pass + 3×3 PCF, an opt-in layer on top of HIGH; fake blob shadows (`Environment_DrawSmartShadow`) remain the default everywhere else. **OFF by default on every platform** — not yet profiled on Mali.
 
 > [!NOTE]
-> **STATUS (2026-07-20, session 4): matrix bug fixed; ground still reads unshadowed in-game;
-> manual screenshot debugging retired in favor of a deterministic headless test.** In-game
-> testing (via **J**) kept showing no visible shadow even after the matrix fix, and every
-> screenshot-based diagnostic desynced because the player moved between builds. Session 4 added
-> `WUXING_SHADOW_TEST=1` (`main.c`) — a headless mode (patterned on `WUXING_VERIFY=<skill>`) that
-> fixes the player at the arena center, enables the shadow, and programmatically reads back two
-> screen pixels to report `SHADOW VISIBLE`/`NO SHADOW DETECTED` via `TraceLog`, no manual
-> screenshot needed. **Run it next**: `cmake --build build -j4 && WUXING_SHADOW_TEST=1
-> ./build/wuxing`. Full evidence log (including 4 rlvk visual-test scenarios that reproduce
-> `ground_shadow`'s exact draw technique and all pass in isolation, meaning the bug needs the real
-> frame's structure to reproduce) is in **`REAL_SHADING_P6_NOTES.md`** — read it before touching
-> this code again. Harmless as-is: `EnvShadow_SetEnabled` defaults `false` everywhere, so none of
-> this runs unless a developer explicitly enables it (**J** in-game or `WUXING_SHADOW_TEST=1`).
+> **STATUS (2026-07-19, session 3): PARTIALLY working — paused, not a shipped feature.**
+> Renders a coherent caster-following shadow on the ground, but its position/size drift with the
+> caster's distance from the arena center (unresolved rlvk-side scale mismatch; plus several open
+> contradictions — e.g. identical code shows no shadow at 1024² but a displaced one at 2048²).
+> Full evidence log, the numeric debug instrument (**H** hotkey → `EnvShadow_DebugDump`), and the
+> recommended Renderer-agent next steps are in **`environment/docs/REAL_SHADING_P6_NOTES.md`** —
+> read it before touching this code again. Harmless as-is: `EnvShadow_SetEnabled` defaults `false`
+> everywhere, so none of this runs unless a developer explicitly enables it (**J** in-game).
 ```c
 void       EnvShadow_Init(void);           // once, after Environment_Init + SurfaceMaterial_Init
 void       EnvShadow_SetEnabled(bool enabled);

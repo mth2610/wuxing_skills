@@ -132,3 +132,5 @@ static void WaterFx_InitShared(void)
 #include "splash_burst.inl"
 #include "bubble_stream.inl"
 #include "mist_veil.inl"
+// @gen:water_includes begin
+// @gen:water_includes end

@@ -926,14 +926,6 @@ int main(int argc, char **argv) {
   int         renderVFXIndex  = 0;
   int         renderVFXWarmup = 90;
   const char *renderVFXOut    = "autotest_output/vfx_eval.png";
-  // WUXING_SHADOW_TEST=1: headless real-shadow-map verify (REAL_SHADING_P6_NOTES.md
-  // session-4 part 6 — deterministic replacement for manual in-game screenshot
-  // round-trips, which kept losing sync because the player moved between builds).
-  // Fixes player at the arena center, enables EnvShadow, waits WUXING_SHADOW_TEST_WARMUP
-  // frames (default matches renderVFXWarmup), saves a screenshot + one TraceLog
-  // pixel-readback line, exits.
-  bool        shadowTestMode   = (getenv("WUXING_SHADOW_TEST") != NULL);
-  int         shadowTestWarmup = getenv("WUXING_SHADOW_TEST_WARMUP") ? atoi(getenv("WUXING_SHADOW_TEST_WARMUP")) : 20;
   int         netHostPort     = 0;      // --host [port]
   const char *netJoinIp       = NULL;   // --join <ip> [port]
   int         netJoinPort     = NET_DEFAULT_PORT;
@@ -960,7 +952,7 @@ int main(int argc, char **argv) {
 
   bool autoTestMode     = AutoTest_IsEnabled();
   bool visualVerifyMode = VisualVerify_IsEnabled();
-  bool headlessMode     = autoTestMode || visualVerifyMode || renderVFXMode || shadowTestMode;
+  bool headlessMode     = autoTestMode || visualVerifyMode || renderVFXMode;
 
   unsigned int configFlags = 0;
   if (headlessMode) {
@@ -1180,7 +1172,7 @@ int main(int argc, char **argv) {
   // Headless modes never click through the menu — drop straight into the
   // sandbox screen so AutoTest_RunFrame/VisualVerify actually tick (the menu
   // branch `continue;`s past them, which used to hang autotest forever).
-  if (autoTestMode || visualVerifyMode || shadowTestMode) currentScreen = SCREEN_SKILL_SANDBOX;
+  if (autoTestMode || visualVerifyMode) currentScreen = SCREEN_SKILL_SANDBOX;
   // Dev: WUXING_MAP=<name substring> forces the active map (case-insensitive)
   // so headless verify/screenshot runs can target a specific world.
   {
@@ -1201,22 +1193,11 @@ int main(int argc, char **argv) {
       player.position  = (Vector3){6.0f, 0.0f, 4.4f}; // arena center
       VFXTest_SetRenderTarget(renderVFXIndex, player.position);
   }
-  int shadowTestFrame = 0;
-  if (shadowTestMode) {
-      // Arena center — deterministic, always inside default_arena's ground
-      // plate and inside EnvShadow's light frustum. WUXING_MAP can override
-      // the map (see above); the position stays valid for default_arena and
-      // verdant_path since both use the same MAP_API.md arena coordinates.
-      player.position = (Vector3){6.0f, 0.0f, 4.4f};
-      EnvShadow_SetEnabled(true);
-      TraceLog(LOG_INFO, "WUXING_SHADOW_TEST: player @ arena center, shadow enabled, %d warmup frames", shadowTestWarmup);
-  }
   while (autoTestMode     ? !AutoTest_IsFinished()      :
          visualVerifyMode ? !VisualVerify_IsFinished()  :
          renderVFXMode    ? (renderVFXFrame <= renderVFXWarmup) :
-         shadowTestMode   ? (shadowTestFrame <= shadowTestWarmup) :
          !WindowShouldClose()) {
-    float dt = (autoTestMode || visualVerifyMode || renderVFXMode || shadowTestMode) ? (1.0f / 60.0f) : TimeFX_Apply(GetFrameTime());
+    float dt = (autoTestMode || visualVerifyMode || renderVFXMode) ? (1.0f / 60.0f) : TimeFX_Apply(GetFrameTime());
     g_totalElapsed += dt;
 
     // Android EGL present diagnostic (WUXING_PRESENT_TEST=1): bypasses ALL game
@@ -1903,26 +1884,6 @@ int main(int argc, char **argv) {
             if (!DirectoryExists("autotest_output")) MakeDirectory("autotest_output");
             Image img = LoadImageFromScreen();
             ExportImage(img, renderVFXOut);
-            UnloadImage(img);
-            break;
-        }
-    }
-    if (shadowTestMode) {
-        shadowTestFrame++;
-        if (shadowTestFrame >= shadowTestWarmup) {
-            if (!DirectoryExists("autotest_output")) MakeDirectory("autotest_output");
-            Image img = LoadImageFromScreen();
-            ExportImage(img, "autotest_output/shadow_test.png");
-
-            // Parts 8-10's screen-pixel numeric readback (scanning ground_shadow.fs's own
-            // output color as encoded data) proved unreliable — values didn't vary
-            // consistently with world position, likely HDR bloom bleed from nearby glowing
-            // sandbox props or the scan path crossing other rendered geometry, not pure
-            // ground_shadow.fs pixels. Replaced with EnvShadow_DebugDump (the proven H-hotkey
-            // CPU diagnostic) plus direct TraceLogs of the exact Matrix bytes at both the
-            // computation site (env_shadow.c) and the upload site (ground_shadow.c) — see
-            // REAL_SHADING_P6_NOTES.md session-4 part 11 for how to read the combined output.
-            EnvShadow_DebugDump(player.position);
             UnloadImage(img);
             break;
         }

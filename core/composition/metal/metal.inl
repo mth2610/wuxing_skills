@@ -75,3 +75,5 @@ static void MetalFx_InitShared(void)
 #include "shrapnel_burst.inl"
 #include "ricochet_spark.inl"
 #include "vc_meteor_comet_test.inl"
+// @gen:metal_includes begin
+// @gen:metal_includes end

@@ -22,3 +22,5 @@
 #include "vc_ground_aura.inl"
 #include "vc_smoke_energy.inl"
 #include "vc_spirit_orb.inl"
+// @gen:common_includes begin
+// @gen:common_includes end

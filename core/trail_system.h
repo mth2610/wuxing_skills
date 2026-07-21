@@ -121,6 +121,13 @@ typedef struct {
   float distortionStrength;
   float distortionSpeed;
 
+  // Ribbon orientation mode (anti-pinching). Default RIBBON_CAMERA_FACING for
+  // backward compatibility. Set to RIBBON_WORLD_UP or RIBBON_FIXED_NORMAL for
+  // normal-aligned trails that avoid camera-pinching artefacts.
+  // fixedNormal is only used when ribbonMode == RIBBON_FIXED_NORMAL.
+  RibbonMode ribbonMode;
+  Vector3 fixedNormal;
+
   // Unified Config representation (Phase 3)
   VFX_GeneralConfig general;
   VFX_GeometryConfig geometry;
@@ -243,6 +250,7 @@ typedef struct {
   Vector3 axisDir; // Hướng trục, PHẢI là vector đơn vị khi truyền vào
                    // SetFollowerAxis().
   Vector3 attachLocalOffset; // Local-space offset transformed by attachedTransform each frame.
+  Vector3 fixedNormal; // Normal vector for RIBBON_FIXED_NORMAL mode.
 
   // 3. Texture và Color
   Texture2D sprite;
@@ -283,6 +291,7 @@ typedef struct {
   int nextFree;
   BlendMode blendMode;
   TrailWidthEnvelopeType widthEnvelope;
+  RibbonMode ribbonMode;
 
   // 6. Kiểu Boolean - 1 byte
   bool active;

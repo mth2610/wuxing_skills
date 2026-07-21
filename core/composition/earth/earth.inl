@@ -71,3 +71,5 @@ static EffectMaterialInstanced GetFloatingStoneMaterialInstanced(void)
 #include "rock_burst.inl"
 #include "floating_stones.inl"
 #include "quake_rumble.inl"
+// @gen:earth_includes begin
+// @gen:earth_includes end

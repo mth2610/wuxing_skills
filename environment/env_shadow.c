@@ -157,26 +157,6 @@ void EnvShadow_BeginCapture(void) {
 
     s_lightVP = ComputeLightVP();
 
-    // TEMPORARY (REAL_SHADING_P6_NOTES.md session-4 part 11) — one-shot dump
-    // of s_lightVP the moment it's computed, to diff byte-for-byte against
-    // maps/toolkit/ground_shadow.c's own diagnostic dump of the SAME Matrix
-    // (both read via EnvShadow_GetLightVP()) right before it uploads to the
-    // shader. If these two logged matrices match but the shader still
-    // computes wrong proj values, the bug is downstream of the C-side upload
-    // call, inside rlvk itself.
-    {
-        static bool s_dumped = false;
-        if (!s_dumped) {
-            s_dumped = true;
-            TraceLog(LOG_INFO, "ENV_SHADOW diag: s_lightVP row0=(%.4f,%.4f,%.4f,%.4f) row1=(%.4f,%.4f,%.4f,%.4f)",
-                     s_lightVP.m0, s_lightVP.m4, s_lightVP.m8, s_lightVP.m12,
-                     s_lightVP.m1, s_lightVP.m5, s_lightVP.m9, s_lightVP.m13);
-            TraceLog(LOG_INFO, "ENV_SHADOW diag: s_lightVP row2=(%.4f,%.4f,%.4f,%.4f) row3=(%.4f,%.4f,%.4f,%.4f)",
-                     s_lightVP.m2, s_lightVP.m6, s_lightVP.m10, s_lightVP.m14,
-                     s_lightVP.m3, s_lightVP.m7, s_lightVP.m11, s_lightVP.m15);
-        }
-    }
-
     rlDrawRenderBatchActive(); // flush the main pass's pending batch before switching FBO/matrices
 
     // Force depth test/write ON before the clear+capture: whatever state the
@@ -207,19 +187,6 @@ void EnvShadow_BeginCapture(void) {
     rlLoadIdentity();
     rlOrtho(-halfExtent, halfExtent, -halfExtent, halfExtent, 0.1, distance * 2.0);
 
-    // MODELVIEW: rlPushMatrix()/rlLoadIdentity()/rlMultMatrixf(), matching
-    // main.c's MyBeginMode3D idiom. A rlvk visual-test scenario found that
-    // bracketing a MODELVIEW change with push/pop while a non-swapchain
-    // framebuffer is bound can corrupt a LATER unrelated draw elsewhere in
-    // the same process (see RLVK_HANDOFF.md §7.25) — a direct rlLoadIdentity()
-    // (no stack push) avoided it there. **Reverted here (2026-07-20,
-    // in-game regression):** switching to the direct form broke the actual
-    // capture in the real game — stored depth went from crammed-far to
-    // crammed-near almost everywhere (near-total loss of separation) with a
-    // hard shadowed/unshadowed diagonal split following the frustum bounds.
-    // Root cause of §7.25's synthetic-test finding vs. this real regression
-    // is unreconciled; push/pop is the one confirmed NOT to break the real
-    // game, so it stays until someone can test both under a GPU capture.
     rlMatrixMode(RL_MODELVIEW);
     rlPushMatrix();
     rlLoadIdentity();

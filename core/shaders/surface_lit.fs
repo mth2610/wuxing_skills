@@ -68,15 +68,11 @@ uniform float     u_shadowEnabled;
 out vec4 finalColor;
 
 // 3x3 PCF; returns 1.0 = fully lit, 0.0 = fully shadowed.
-// mat*vec — spirv-dis confirms rlvk/shaderc decorates u_lightVP ColMajor in
-// the auto-generated default uniform block, matching rlSetUniformMatrix's
-// straight column-major upload of raylib's Matrix. Standard M*v, same as the
-// automatic `mvp` uniform used everywhere else. See REAL_SHADING_P6_NOTES.md
-// session-4 / ground_shadow.fs for the full evidence (the earlier vec*mat
-// workaround computed transpose(u_lightVP)*v, which caused the
-// distance-from-arena-center shadow drift).
+// NOTE: vec*mat (not mat*vec) — u_lightVP arrives transposed via
+// SetShaderValueMatrix under rlvk. See REAL_SHADING_P6_NOTES.md / ground_shadow.fs.
+// (P6 not working yet: capture stores far-crammed depth — see the notes.)
 float ShadowFactor(vec3 worldPos, float ndl) {
-    vec4 posLS = u_lightVP * vec4(worldPos, 1.0);
+    vec4 posLS = vec4(worldPos, 1.0) * u_lightVP;
     vec3 proj = posLS.xyz / posLS.w;
     proj = proj * 0.5 + 0.5;
     if (proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) return 1.0;

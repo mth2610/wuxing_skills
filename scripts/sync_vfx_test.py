@@ -314,6 +314,83 @@ def update_vc_c(comp_dir, dry_run=False):
         f.write(result)
     return True
 
+
+SUB_DIRS = ['fire', 'water', 'wood', 'metal', 'earth', 'taiji', 'common']
+
+def update_subdir_includes(comp_dir, manifest=None, dry_run=False):
+    """
+    Auto-sync @gen:fire_includes / @gen:water_includes / etc. blocks in each
+    element master .inl file. New .inl files detected on disk but not yet
+    manually included are added; files removed from disk are cleaned up.
+    Files listed in manifest's 'exclude_from_auto_include' (<subdir> → [files])
+    are never auto-included (use for common/ files that belong in vc_archetype.inl).
+    """
+    exclude_map = {}
+    if manifest and "exclude_from_auto_include" in manifest:
+        exclude_map = manifest["exclude_from_auto_include"]
+
+    changed = False
+    for subdir in SUB_DIRS:
+        master_path = os.path.join(comp_dir, subdir, f"{subdir}.inl")
+        subdir_path = os.path.join(comp_dir, subdir)
+        if not os.path.exists(master_path) or not os.path.isdir(subdir_path):
+            continue
+
+        files = sorted(f for f in os.listdir(subdir_path)
+                       if f.endswith('.inl') and f != f"{subdir}.inl")
+        exclude = set(exclude_map.get(subdir, []))
+
+        with open(master_path) as f:
+            src = f.read()
+
+        gen_key = f"{subdir}_includes"
+        gen_pat = re.compile(
+            r'// @gen:' + gen_key + r' begin.*?// @gen:' + gen_key + r' end',
+            re.DOTALL)
+
+        src_without_gen = gen_pat.sub('', src) if gen_pat.search(src) else src
+        manual_inl = set(re.findall(r'#include\s+"([^"]+\.inl)"', src_without_gen))
+
+        gen_inl = sorted(f for f in files if f not in manual_inl and f not in exclude)
+
+        m = gen_pat.search(src)
+        cur_gen_inl = set()
+        if m:
+            cur_gen_inl = set(re.findall(r'#include\s+"([^"]+\.inl)"', m.group(0)))
+
+        added   = [f for f in gen_inl if f not in cur_gen_inl]
+        removed = [f for f in cur_gen_inl if f not in set(gen_inl)]
+
+        if not added and not removed:
+            continue
+        changed = True
+        if dry_run:
+            if added:
+                print(f"[sync_vfx_test] {subdir}/{subdir}.inl: would add {added}")
+            if removed:
+                print(f"[sync_vfx_test] {subdir}/{subdir}.inl: would remove {removed}")
+            continue
+
+        new_block = (f"// @gen:{gen_key} begin\n" +
+                     "\n".join(f'#include "{f}"' for f in gen_inl) +
+                     f"\n// @gen:{gen_key} end")
+
+        if m:
+            result = src[:m.start()] + new_block + src[m.end():]
+        else:
+            result = src.rstrip() + "\n" + new_block + "\n"
+
+        with open(master_path, "w") as f:
+            f.write(result)
+
+        if added:
+            print(f"[sync_vfx_test] {subdir}/{subdir}.inl: +{len(added)} include(s): {', '.join(added)}")
+        if removed:
+            print(f"[sync_vfx_test] {subdir}/{subdir}.inl: -{len(removed)} include(s): {', '.join(removed)}")
+
+    return changed
+
+
 def update_vc_h(inl_fns, excluded, dry_run=False):
     """
     Sync the @gen:vc_declarations section in visual_composer.h.
@@ -546,6 +623,7 @@ def main():
         # Still check visual_composer files
         update_vc_c(COMP_DIR, dry_run=True)
         update_vc_h(inl_fns, excluded, dry_run=True)
+        update_subdir_includes(COMP_DIR, manifest=manifest, dry_run=True)
         sys.exit(0 if (not new_fns and not removed) else 1)
 
     # ── 5. Update entries ─────────────────────────────────────────────────────
@@ -581,6 +659,9 @@ def main():
     # ── 7. Update visual_composer.c and .h ───────────────────────────────────
     update_vc_c(COMP_DIR)
     update_vc_h(inl_fns, excluded)
+
+    # ── 7b. Update element master .inl includes ──────────────────────────────
+    update_subdir_includes(COMP_DIR, manifest=manifest)
 
     # ── 8. Regenerate vfx_test.c ─────────────────────────────────────────────
     with open(VFX_TEST_PATH) as f:

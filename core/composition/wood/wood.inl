@@ -106,3 +106,5 @@ static void WoodAmbience_InitShared(void)
 #include "leaf_swirl.inl"
 #include "bloom_burst.inl"
 #include "leaf_fall.inl"
+// @gen:wood_includes begin
+// @gen:wood_includes end

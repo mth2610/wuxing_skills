@@ -47,3 +47,5 @@ static Vector3 TaijiSphereDir(int index, int epoch)
 #include "vc_spirit_wisp_test.inl"
 #include "taiji_arc_strike.inl"
 #include "tornado.inl"
+// @gen:taiji_includes begin
+// @gen:taiji_includes end

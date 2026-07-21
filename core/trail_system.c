@@ -595,6 +595,8 @@ int SpawnTrailEntity(TrailConfig config)
   t->alphaCurve = config.alphaCurve;
   t->distortionStrength = config.distortionStrength;
   t->distortionSpeed = (config.distortionSpeed != 0.0f) ? config.distortionSpeed : 1.0f;
+  t->ribbonMode = config.ribbonMode;
+  t->fixedNormal = config.fixedNormal;
 
   for (int h = 0; h < TRAIL_HISTORY_COUNT; h++)
     t->nodeVelocity[h] = (Vector3){0, 0, 0};
@@ -806,10 +808,10 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
         scratchInner[h].tint = (Color){(unsigned char)(segRatio * nodeColor.r), nodeColor.g, nodeColor.b, (unsigned char)(nodeColor.a * lifeRatio)};
       }
       Texture2D ribbonTex = t->sprite.id > 0 ? t->sprite : s_globalTrailTex;
-      DrawRibbonStrip(scratchOuter, drawCount, ribbonTex, camera);
+      DrawRibbonStripEx(scratchOuter, drawCount, ribbonTex, camera, t->ribbonMode, t->fixedNormal);
       if (!t->disableInnerCore)
       {
-        DrawRibbonStrip(scratchInner, drawCount, ribbonTex, camera);
+        DrawRibbonStripEx(scratchInner, drawCount, ribbonTex, camera, t->ribbonMode, t->fixedNormal);
       }
     }
 
@@ -881,7 +883,7 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
         scratchOuter[h].v = segRatio * t->uvTiling - t->uvScrollOffset;
         scratchOuter[h].tint = (Color){nodeColor.r, nodeColor.g, nodeColor.b, (unsigned char)((nodeColor.a / 255.0f) * 180.0f * lifeRatio * taper)};
       }
-      DrawRibbonStrip(scratchOuter, drawCount, t->sprite.id > 0 ? t->sprite : s_globalTrailTex, camera);
+      DrawRibbonStripEx(scratchOuter, drawCount, t->sprite.id > 0 ? t->sprite : s_globalTrailTex, camera, t->ribbonMode, t->fixedNormal);
       // WISP can optionally draw a bright hot-core layer (same as PROJECTILE/FOLLOWER)
       // Only drawn when disableInnerCore is false
       if (!t->disableInnerCore)
@@ -897,7 +899,7 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
           scratchInner[h].v = scratchOuter[h].v;
           scratchInner[h].tint = (Color){255, 255, 255, (unsigned char)(180.0f * lifeRatio * taper)};
         }
-        DrawRibbonStrip(scratchInner, drawCount, t->sprite.id > 0 ? t->sprite : s_globalTrailTex, camera);
+        DrawRibbonStripEx(scratchInner, drawCount, t->sprite.id > 0 ? t->sprite : s_globalTrailTex, camera, t->ribbonMode, t->fixedNormal);
       }
     }
   }
@@ -959,10 +961,10 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
         scratchInner[h].tint = (Color){255, 255, 255, (unsigned char)(255.0f * lifeRatio * taper)};
       }
       Texture2D ribbonTex = t->sprite.id > 0 ? t->sprite : s_globalTrailTex;
-      DrawRibbonStrip(scratchOuter, drawCount, ribbonTex, camera);
+      DrawRibbonStripEx(scratchOuter, drawCount, ribbonTex, camera, t->ribbonMode, t->fixedNormal);
       if (!t->disableInnerCore)
       {
-        DrawRibbonStrip(scratchInner, drawCount, ribbonTex, camera);
+        DrawRibbonStripEx(scratchInner, drawCount, ribbonTex, camera, t->ribbonMode, t->fixedNormal);
       }
     }
   }

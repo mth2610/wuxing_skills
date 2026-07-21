@@ -47,6 +47,22 @@
       "VFX_DrawWaterStreamOnPath"
     ]
   },
+  "exclude_from_auto_include": {
+    "common": [
+      "vc_proc_beam.inl",
+      "vc_ground_wave.inl",
+      "vc_orbital.inl",
+      "vc_aura_ring.inl",
+      "vc_chain_lightning.inl",
+      "vc_smoke_column.inl",
+      "vc_shard_debris.inl",
+      "vc_crown_splash.inl",
+      "vc_mesh_electricity.inl",
+      "vc_particle_upgrades_test.inl",
+      "vc_trail_upgrades_test.inl",
+      "vc_trail_ribbon_test.inl"
+    ]
+  },
   "entries": [
     {
       "fn": "VFX_ComposeFlameWisp",
@@ -658,6 +674,13 @@
       "category": "util",
       "type": "oneshot",
       "trigger_call": "VFX_ComposeTrailUpgradesTest($POS)"
+    },
+    {
+      "fn": "VFX_ComposeTrailRibbonTest",
+      "label": "TRAIL RIBBON TEST",
+      "category": "util",
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeTrailRibbonTest($POS)"
     },
     {
       "fn": "VFX_ComposeSpiritWispTest",
