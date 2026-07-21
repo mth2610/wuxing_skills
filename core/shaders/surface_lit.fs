@@ -64,23 +64,24 @@ uniform float u_fogEnabled;
 uniform sampler2D shadowMap;
 uniform mat4      u_lightVP;
 uniform float     u_shadowEnabled;
+uniform float     u_shadowTexel; // 1.0/resolution, pushed from C (map is 2048
+                                 // desktop / 512 Mali) — do NOT use textureSize()
+                                 // (returns 0 under rlvk -> texel INF -> NaN PCF).
 
 out vec4 finalColor;
 
 // 3x3 PCF; returns 1.0 = fully lit, 0.0 = fully shadowed.
-// NOTE: vec*mat (not mat*vec) — u_lightVP arrives transposed via
-// SetShaderValueMatrix under rlvk. See REAL_SHADING_P6_NOTES.md / ground_shadow.fs.
-// (P6 not working yet: capture stores far-crammed depth — see the notes.)
+// mat*vec — TEST-PROVEN by rlvk scenario `shadow_proj` (M*v matches CPU to
+// 0.002, v*M off by 0.324). Keep in lockstep with ground_shadow.fs. See
+// REAL_SHADING_P6_NOTES.md; do NOT flip from in-game guessing.
 float ShadowFactor(vec3 worldPos, float ndl) {
-    vec4 posLS = vec4(worldPos, 1.0) * u_lightVP;
+    vec4 posLS = u_lightVP * vec4(worldPos, 1.0);
     vec3 proj = posLS.xyz / posLS.w;
     proj = proj * 0.5 + 0.5;
     if (proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) return 1.0;
 
     float bias = max(0.0025 * (1.0 - ndl), 0.0006);
-    // Do NOT use textureSize() here: under rlvk it returned 0, making texel
-    // INF and every PCF coordinate NaN (0*INF) — no shadow, silently.
-    vec2 texel = vec2(1.0 / 1024.0);
+    vec2 texel = vec2(u_shadowTexel);
     float shadow = 0.0;
     for (int x = -1; x <= 1; x++) {
         for (int y = -1; y <= 1; y++) {

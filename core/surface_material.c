@@ -16,7 +16,7 @@ static int s_locFogColor, s_locFogStart, s_locFogEnd, s_locFogEnabled;
 static int s_locMatcapTex, s_locHasMatcap, s_locMatcapAmount;
 static int s_locNormalMap, s_locHasNormalMap;
 static int s_locAniso, s_locAnisoShininess, s_locSssStrength, s_locSssPower;
-static int s_locLightVP, s_locShadowMap, s_locShadowEnabled;
+static int s_locLightVP, s_locShadowMap, s_locShadowEnabled, s_locShadowTexel;
 
 static inline Vector3 ColorToVec3(Color c) {
     return (Vector3){ c.r / 255.0f, c.g / 255.0f, c.b / 255.0f };
@@ -55,6 +55,7 @@ void SurfaceMaterial_Init(void) {
     s_locLightVP        = GetShaderLocation(s_shader, "u_lightVP");
     s_locShadowMap      = GetShaderLocation(s_shader, "shadowMap");
     s_locShadowEnabled  = GetShaderLocation(s_shader, "u_shadowEnabled");
+    s_locShadowTexel    = GetShaderLocation(s_shader, "u_shadowTexel");
 
     // Material constants — the stylized "moonlight" identity. Cool blue-white
     // rim traces the silhouette; a tight Blinn sheen adds a wet/silk highlight.
@@ -143,7 +144,12 @@ void SurfaceMaterial_UpdateFrame(Camera3D camera) {
     if (EnvShadow_IsEnabled()) {
         Matrix lightVP = EnvShadow_GetLightVP();
         SetShaderValueMatrix(s_shader, s_locLightVP, lightVP);
-        SetShaderValueTexture(s_shader, s_locShadowMap, EnvShadow_GetShadowMap());
+        Texture2D shadowMap = EnvShadow_GetShadowMap();
+        SetShaderValueTexture(s_shader, s_locShadowMap, shadowMap);
+        // PCF tap spacing must track the real map size (2048 desktop / 512
+        // Mali), not a hardcoded 1/1024 — see ground_shadow.c's texel push.
+        float texel = (shadowMap.width > 0) ? (1.0f / (float)shadowMap.width) : (1.0f / 1024.0f);
+        SetShaderValue(s_shader, s_locShadowTexel, &texel, SHADER_UNIFORM_FLOAT);
     }
 }
 

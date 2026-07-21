@@ -28,11 +28,14 @@ out vec4 finalColor;
 
 // 3x3 PCF; returns 1.0 = fully lit, 0.0 = fully shadowed.
 float ShadowFactor(vec3 worldPos) {
-    // vec * mat — under rlvk's auto-UBO the mat4 arrives row_major-decorated,
-    // so v*M here computes the semantic M*v == the CPU-verified formula.
-    // (Empirically proven: with the 1024 map this samples caster silhouettes
-    // at exactly the CPU-predicted texels with matching depth.)
-    vec4 posLS = vec4(worldPos, 1.0) * u_lightVP;
+    // mat*vec — TEST-PROVEN by rlvk visual scenario `shadow_proj` (2026-07-21):
+    // for a CUSTOM `uniform mat4` uploaded via SetShaderValueMatrix, `M * v`
+    // reproduces the CPU light-space projection to 0.002, while `v * M` is off
+    // by 0.324 (it lands the shadow at the wrong UV → the "shadow drifts far
+    // from the caster" screenshots). Run: scripts/run_rlvk_visual_test.sh
+    // shadow_proj. Do NOT flip this from in-game guessing — the scenario is the
+    // arbiter; if it ever fails, the rlvk mat4 decoration changed.
+    vec4 posLS = u_lightVP * vec4(worldPos, 1.0);
     vec3 proj = posLS.xyz / posLS.w;
     proj = proj * 0.5 + 0.5;
     if (proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) return 1.0;
@@ -49,13 +52,40 @@ float ShadowFactor(vec3 worldPos) {
     return shadow / 9.0;
 }
 
+// TEMP DEBUG (2026-07-21): paints the whole floor with the shadow PROJECTION
+// FIELD so we can SEE, in-game, exactly what the ground computes — the answer
+// to "where is the shadow being drawn?". Reading the colors:
+//   * smooth RED→GREEN gradient across the floor = u_lightVP works, proj is
+//     sane; the BLACK silhouette (sampled occluder depth) shows where the
+//     shadow lands — that spot IS the shadow's coordinate.
+//   * whole floor BLUE = proj falls OUTSIDE [0,1] everywhere → u_lightVP is
+//     wrong/garbage in-game (uniform not reaching the FS).
+//   * flat uniform grey, no black shape, no blue = texture0 is NOT the shadow
+//     map (sampling the default white) → binding failed.
+// Set to 0 to restore the normal darken. Convention is M*v, TEST-PROVEN
+// (scripts/run_rlvk_visual_test.sh shadow_proj / shadow_cast).
+#define GROUND_SHADOW_DEBUG_PROJ 1
+
 void main() {
-    // STATUS (2026-07-19, session 3 pause): PARTIALLY working — renders a
-    // coherent character-shaped shadow that follows the caster, but its
-    // position/size drift with the caster's distance from the arena center
-    // (an unresolved scale mismatch somewhere between the capture, the copy
-    // pass, and this sampling — see REAL_SHADING_P6_NOTES.md session-3 log
-    // before touching anything here).
+#if GROUND_SHADOW_DEBUG_PROJ
+    if (u_shadowEnabled > 0.5) {
+        vec4 p = u_lightVP * vec4(fragWorldPos, 1.0);
+        vec3 pr = p.xyz / p.w * 0.5 + 0.5;
+        if (pr.x < 0.0 || pr.x > 1.0 || pr.y < 0.0 || pr.y > 1.0) {
+            finalColor = vec4(0.0, 0.0, 0.4, 1.0);      // dim BLUE: outside the shadow frustum
+            return;
+        }
+        // Pure sampled shadow-map depth across the floor. This is a BINDING test:
+        //   * floor shows a DARK character-shaped patch somewhere = texture0 IS
+        //     the shadow map, sampling works -> that patch = the shadow's spot.
+        //   * floor is UNIFORM WHITE (no dark patch anywhere, only dim-blue edges)
+        //     = texture0 is NOT bound to the shadow map for this immediate-mode
+        //     3D draw (rlSetTexture didn't stick) -> the rlvk binding bug.
+        float d = texture(texture0, pr.xy).r;
+        finalColor = vec4(vec3(d), 1.0);                // WHITE=far(1.0), DARK=occluder
+        return;
+    }
+#endif
     float shadow = 1.0;
     if (u_shadowEnabled > 0.5) {
         shadow = ShadowFactor(fragWorldPos);

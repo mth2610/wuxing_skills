@@ -487,6 +487,347 @@ static const char *sc_stress(void)
     return NULL;   // surviving 90 heavy frames without device loss is the main assertion
 }
 
+// Real-Shading-P6 shadow projection convention probe. The game builds a light
+// view-proj on the CPU (MatrixLookAt + MatrixOrtho), uploads it as a CUSTOM
+// `uniform mat4 u_lightVP` via SetShaderValueMatrix, and a fragment shader
+// projects a world point into shadow-map UV. THREE sessions of the game bug
+// hunt could not settle whether the shader must use `M * v` or `v * M` to
+// reproduce the CPU projection — because that depends on rlvk's SPIR-V mat4
+// decoration for a reflected custom uniform, which the game can't show numer-
+// ically. This does: it has the shader OUTPUT the projected UV as a color,
+// reads it back, and compares BOTH multiply orders against the CPU formula
+// that is known to match the captured shadow texels (env_shadow.c ProjectLS).
+// The order whose readback matches the CPU is the correct one, full stop.
+static void ls_cpu_proj(Matrix vp, Vector3 wp, float *ox, float *oy)
+{
+    float x = wp.x*vp.m0 + wp.y*vp.m4 + wp.z*vp.m8  + vp.m12;
+    float y = wp.x*vp.m1 + wp.y*vp.m5 + wp.z*vp.m9  + vp.m13;
+    float w = wp.x*vp.m3 + wp.y*vp.m7 + wp.z*vp.m11 + vp.m15;
+    if (w == 0.0f) w = 1.0f;
+    *ox = (x/w)*0.5f + 0.5f;
+    *oy = (y/w)*0.5f + 0.5f;
+}
+static void ls_render_proj(const char *mulExpr, Matrix vp, Vector3 wp, float *rx, float *ry)
+{
+    char fs[640];
+    snprintf(fs, sizeof(fs),
+        "#version 330\n"
+        "in vec2 fragTexCoord; out vec4 finalColor;\n"
+        "uniform sampler2D texture0; uniform vec4 colDiffuse;\n"
+        "uniform mat4 u_lightVP; uniform vec3 uWorldPos;\n"
+        "void main(){\n"
+        "  vec4 p = %s;\n"
+        "  vec3 proj = p.xyz / p.w * 0.5 + 0.5;\n"
+        "  finalColor = vec4(clamp(proj.xy, 0.0, 1.0), 0.0, 1.0);\n"
+        "}\n", mulExpr);
+    Shader sh = LoadShaderFromMemory(NULL, fs);
+    int locVP = GetShaderLocation(sh, "u_lightVP");
+    int locWP = GetShaderLocation(sh, "uWorldPos");
+    Image wi = GenImageColor(8, 8, WHITE); Texture2D white = LoadTextureFromImage(wi); UnloadImage(wi);
+    for (int f = 0; f < 3; f++) {
+        BeginDrawing(); ClearBackground(BLACK);
+        BeginShaderMode(sh);
+        SetShaderValueMatrix(sh, locVP, vp);                       // exactly the game's upload
+        SetShaderValue(sh, locWP, &wp, SHADER_UNIFORM_VEC3);
+        DrawTexturePro(white, (Rectangle){0,0,8,8}, (Rectangle){0,0,W,H}, (Vector2){0,0}, 0, WHITE);
+        EndShaderMode();
+        EndDrawing();
+    }
+    Image im = snap(); Color c = at(im, W/2, H/2); UnloadImage(im);
+    UnloadTexture(white); UnloadShader(sh);
+    *rx = c.r / 255.0f; *ry = c.g / 255.0f;
+}
+static const char *sc_shadow_proj(void)
+{
+    // Replicate env_shadow.c's ComputeLightVP (verdant_path sun).
+    Vector3 center = { 6.0f, 1.0f, 4.4f };
+    Vector3 sun = Vector3Normalize((Vector3){ 0.5f, -0.7f, -0.3f });
+    float dist = 18.0f + 6.0f;
+    Vector3 lightPos = Vector3Subtract(center, Vector3Scale(sun, dist));
+    Matrix view = MatrixLookAt(lightPos, center, (Vector3){0,1,0});
+    float he = 18.0f + 2.0f;
+    Matrix proj = MatrixOrtho(-he, he, -he, he, 0.1f, dist*2.0f);
+    Matrix vp = MatrixMultiply(view, proj);
+
+    // A world point well off the arena center, where a W/translation transpose
+    // bug diverges most (the game's "drift ∝ distance from center" signature).
+    Vector3 wp = { 14.0f, 0.8f, 9.0f };
+    float cx, cy; ls_cpu_proj(vp, wp, &cx, &cy);
+    float mx, my; ls_render_proj("u_lightVP * vec4(uWorldPos, 1.0)", vp, wp, &mx, &my);
+    float vx, vy; ls_render_proj("vec4(uWorldPos, 1.0) * u_lightVP", vp, wp, &vx, &vy);
+
+    float dM = fabsf(mx-cx) + fabsf(my-cy);
+    float dV = fabsf(vx-cx) + fabsf(vy-cy);
+    printf("  [shadow_proj] CPU=(%.3f,%.3f)  M*v=(%.3f,%.3f) dPix=%.3f  v*M=(%.3f,%.3f) dPix=%.3f\n",
+           cx, cy, mx, my, dM, vx, vy, dV);
+    const float TOL = 0.02f; // ~5 LSB of 8-bit readback
+    bool mOK = dM < TOL, vOK = dV < TOL;
+    if (mOK && !vOK) return NULL;                 // convention is M*v (game shaders should use it)
+    if (vOK && !mOK) return "convention is v*M, not M*v (see printed deltas)";
+    if (mOK && vOK)  return "AMBIGUOUS: both match (worldPos too central?)";
+    return "NEITHER order matches CPU — capture/upload path differs (see deltas)";
+}
+
+// Real-Shading-P6 END-TO-END shadow test: does the whole chain actually put a
+// DARK patch on the ground? shadow_proj only proved the projection UV; this
+// reproduces the game faithfully — capture a real occluder from the light
+// (exactly EnvShadow_BeginCapture's manual rlOrtho + rlMultMatrixf(view) dance),
+// store NDC depth in a color RT (the game's copy result), then draw the ground
+// as IMMEDIATE-MODE triangles bound to that RT via rlSetTexture (exactly
+// default_arena + GroundShadow_Begin), sampling with M*v. Renders once with the
+// shadow ON and once OFF and asserts a localized cluster of ground pixels
+// darkened. RLVK_SHADOW_DUMP=path exports the ON frame as a PNG to eyeball.
+// GAME-FAITHFUL light params: exactly env_shadow.c ComputeLightVP (ARENA_CENTER
+// (6,1,4.4), halfExtent 20, dist 24), so this reproduces the real frustum SCALE
+// — a character-sized caster in a 40 m box on a 2048 map, i.e. a tiny shadow.
+static Vector3 g_center = { 6.0f, 1.0f, 4.4f };
+static void ls_light(Matrix *view, Matrix *proj, Matrix *vp, float *he_out, float *dist_out)
+{
+    Vector3 sun = Vector3Normalize((Vector3){ 0.5f, -0.7f, -0.3f }); // verdant_path sun
+    float dist = 18.0f + 6.0f;
+    Vector3 lp = Vector3Subtract(g_center, Vector3Scale(sun, dist));
+    *view = MatrixLookAt(lp, g_center, (Vector3){0,1,0});
+    float he = 18.0f + 2.0f;                             // game halfExtent (whole arena)
+    *proj = MatrixOrtho(-he, he, -he, he, 0.1f, dist*2.0f);
+    *vp = MatrixMultiply(*view, *proj);
+    *he_out = he; *dist_out = dist;
+}
+static const char *sc_shadow_cast(void)
+{
+    const int SM = 2048;                                 // game desktop resolution
+    Matrix lview, lproj, lvp; float he, dist; ls_light(&lview, &lproj, &lvp, &he, &dist);
+
+    // Capture: store the occluder's light-space NDC depth in R (game copy result).
+    Shader depthSh = LoadShaderFromMemory(
+        "#version 330\nin vec3 vertexPosition; uniform mat4 mvp;\n"
+        "void main(){ gl_Position = mvp * vec4(vertexPosition,1.0); }\n",
+        "#version 330\nout vec4 finalColor;\n"
+        "void main(){ finalColor = vec4(gl_FragCoord.z, 0.0, 0.0, 1.0); }\n");
+
+    // Ground receiver: immediate-mode attribs (position+color), sample via M*v.
+    Shader groundSh = LoadShaderFromMemory(
+        "#version 330\nin vec3 vertexPosition; in vec4 vertexColor; uniform mat4 mvp;\n"
+        "out vec4 fc; out vec3 fwp;\n"
+        "void main(){ fc=vertexColor; fwp=vertexPosition; gl_Position=mvp*vec4(vertexPosition,1.0); }\n",
+        "#version 330\nin vec4 fc; in vec3 fwp; out vec4 finalColor;\n"
+        "uniform sampler2D texture0; uniform mat4 u_lightVP; uniform float u_on; uniform float u_texel;\n"
+        "float sf(vec3 wp){\n"
+        "  vec4 p = u_lightVP * vec4(wp,1.0);\n"                 // M*v (shadow_proj-proven)
+        "  vec3 pr = p.xyz/p.w*0.5+0.5;\n"
+        "  if(pr.z>1.0||pr.x<0.0||pr.x>1.0||pr.y<0.0||pr.y>1.0) return 1.0;\n"
+        "  float s=0.0;\n"
+        "  for(int x=-1;x<=1;x++)for(int y=-1;y<=1;y++){\n"
+        "    float d=texture(texture0, pr.xy+vec2(x,y)*u_texel).r;\n"
+        "    s += (pr.z-0.002 > d)?0.0:1.0; }\n"
+        "  return s/9.0; }\n"
+        "void main(){ float sh = (u_on>0.5)? sf(fwp):1.0;\n"
+        "  finalColor = vec4(fc.rgb*mix(0.30,1.0,sh), 1.0); }\n");
+    int gLocVP = GetShaderLocation(groundSh, "u_lightVP");
+    int gLocOn = GetShaderLocation(groundSh, "u_on");
+    int gLocTx = GetShaderLocation(groundSh, "u_texel");
+
+    RenderTexture2D sm = LoadRenderTexture(SM, SM);
+    Vector3 occ = { 10.0f, 0.9f, 6.0f };                 // character-scale caster, off-center in the arena
+    Camera3D cam = { 0 };
+    cam.position=(Vector3){10,5,14}; cam.target=(Vector3){10,0.3f,6};
+    cam.up=(Vector3){0,1,0}; cam.fovy=45.0f; cam.projection=CAMERA_PERSPECTIVE;
+    float texel = 1.0f/(float)SM;
+
+    Image imOn = {0}, imOff = {0};
+    for (int pass = 0; pass < 2; pass++) {
+        float on = (pass==0) ? 1.0f : 0.0f;
+        for (int f = 0; f < 3; f++) {
+            BeginDrawing(); ClearBackground((Color){40,44,70,255});
+
+            // --- capture the occluder into the shadow map (light POV) ---
+            BeginTextureMode(sm);
+                ClearBackground(WHITE);                         // far = 1.0
+                rlEnableDepthTest(); rlEnableDepthMask();
+                rlMatrixMode(RL_PROJECTION); rlPushMatrix(); rlLoadIdentity();
+                rlOrtho(-he, he, -he, he, 0.1, dist*2.0);
+                rlMatrixMode(RL_MODELVIEW); rlPushMatrix(); rlLoadIdentity();
+                rlMultMatrixf(MatrixToFloat(lview));
+                BeginShaderMode(depthSh);
+                    DrawCube(occ, 0.6f, 1.8f, 0.6f, WHITE); // character-scale caster
+                EndShaderMode();
+                rlDrawRenderBatchActive();
+                rlMatrixMode(RL_PROJECTION); rlPopMatrix();
+                rlMatrixMode(RL_MODELVIEW);  rlPopMatrix();
+            EndTextureMode();
+
+            // --- main view: draw the ground as immediate-mode tris, sampling the SM ---
+            BeginMode3D(cam);
+                BeginShaderMode(groundSh);
+                    SetShaderValueMatrix(groundSh, gLocVP, lvp);
+                    SetShaderValue(groundSh, gLocOn, &on,   SHADER_UNIFORM_FLOAT);
+                    SetShaderValue(groundSh, gLocTx, &texel,SHADER_UNIFORM_FLOAT);
+                    rlSetTexture(sm.texture.id);                // bind SM as texture0 (game path)
+                    rlBegin(RL_TRIANGLES);
+                        rlColor4ub(120,130,160,255);
+                        // arena-covering ground quad at y=0 around the caster
+                        float x0=g_center.x-20, x1=g_center.x+20, z0=g_center.z-20, z1=g_center.z+20;
+                        rlVertex3f(x0,0,z0); rlVertex3f(x0,0,z1); rlVertex3f(x1,0,z1);
+                        rlVertex3f(x0,0,z0); rlVertex3f(x1,0,z1); rlVertex3f(x1,0,z0);
+                    rlEnd();
+                    rlSetTexture(0);
+                EndShaderMode();
+            EndMode3D();
+            EndDrawing();
+        }
+        Image im = snap();
+        if (pass==0) imOn = im; else imOff = im;
+    }
+    if (getenv("RLVK_SHADOW_DUMP")) ExportImage(imOn, getenv("RLVK_SHADOW_DUMP"));
+
+    // Count ground pixels that DARKENED when the shadow is on.
+    int darker = 0, total = imOn.width*imOn.height;
+    for (int i = 0; i < total; i++) {
+        Color a = ((Color*)imOn.data)[i], b = ((Color*)imOff.data)[i];
+        if ((int)b.r - (int)a.r > 18 && (int)b.g - (int)a.g > 18) darker++;
+    }
+    UnloadImage(imOn); UnloadImage(imOff);
+    UnloadRenderTexture(sm); UnloadShader(depthSh); UnloadShader(groundSh);
+    printf("  [shadow_cast] darkened ground pixels = %d / %d\n", darker, total);
+    if (darker < 150)          return "NO shadow reaches the ground (sample/compare/bind broken)";
+    if (darker > total*6/10)   return "whole ground darkened (shadow not localized)";
+    return NULL;
+}
+
+// FAITHFUL reproduction of the GAME's exact capture path that shadow_cast
+// skipped: render occluder depth into a real DEPTH ATTACHMENT (manual FBO, like
+// env_shadow.c), then COPY depth->R32F through a fullscreen blit (the rlvk
+// noSampledDepth twin path), then sample. Runs the copy blit with the Y-flip
+// (game's negative-height DrawTextureRec) AND without, and reports which
+// orientation actually lands the shadow — settling the "occluder stored at a
+// different UV than the sample reads" orientation bug headlessly.
+static int ls_darkcount(Image on, Image off)
+{
+    int d = 0, n = on.width*on.height;
+    for (int i = 0; i < n; i++) {
+        Color a = ((Color*)on.data)[i], b = ((Color*)off.data)[i];
+        if ((int)b.r-(int)a.r > 18 && (int)b.g-(int)a.g > 18) d++;
+    }
+    return d;
+}
+static int sc_pipeline_run(int flip)   // returns darkened ground pixels
+{
+    const int SM = 2048;
+    Matrix lview, lproj, lvp; float he, dist; ls_light(&lview, &lproj, &lvp, &he, &dist);
+
+    // --- manual depth-attachment FBO, exactly env_shadow.c EnvShadow_Init ---
+    unsigned int colTex = rlLoadTexture(NULL, SM, SM, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8, 1);
+    unsigned int depTex = rlLoadTextureDepth(SM, SM, false);
+    unsigned int fbo    = rlLoadFramebuffer();
+    rlEnableFramebuffer(fbo);
+    rlFramebufferAttach(fbo, colTex, RL_ATTACHMENT_COLOR_CHANNEL0, RL_ATTACHMENT_TEXTURE2D, 0);
+    rlFramebufferAttach(fbo, depTex, RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D, 0);
+    rlFramebufferComplete(fbo);
+    rlDisableFramebuffer();
+    Texture2D depthTex2D = { depTex, SM, SM, 1, 19 };            // DEPTH_COMPONENT_24BIT, like env_shadow
+    // R32F copy target — EXACTLY env_shadow.c (was RGBA8 LoadRenderTexture,
+    // which masked the game bug: sampling an R32F color texture as texture0 in
+    // an immediate-mode 3D draw is the suspect).
+    RenderTexture2D copyRT = { 0 };
+    copyRT.id = rlLoadFramebuffer();
+    copyRT.texture.id = rlLoadTexture(NULL, SM, SM, RL_PIXELFORMAT_UNCOMPRESSED_R32, 1);
+    copyRT.texture.width = SM; copyRT.texture.height = SM;
+    copyRT.texture.mipmaps = 1; copyRT.texture.format = RL_PIXELFORMAT_UNCOMPRESSED_R32;
+    rlEnableFramebuffer(copyRT.id);
+    rlFramebufferAttach(copyRT.id, copyRT.texture.id, RL_ATTACHMENT_COLOR_CHANNEL0, RL_ATTACHMENT_TEXTURE2D, 0);
+    rlFramebufferComplete(copyRT.id);
+    rlDisableFramebuffer();
+    SetTextureFilter(copyRT.texture, TEXTURE_FILTER_POINT);
+    SetTextureWrap(copyRT.texture, TEXTURE_WRAP_CLAMP);
+    Shader depthSh = LoadShaderFromMemory(
+        "#version 330\nin vec3 vertexPosition; uniform mat4 mvp;\n"
+        "void main(){ gl_Position = mvp*vec4(vertexPosition,1.0); }\n",
+        "#version 330\nout vec4 c; void main(){ c=vec4(1.0); }\n"); // depth written by rasterizer
+    Shader copySh = LoadShaderFromMemory(NULL,
+        "#version 330\nin vec2 fragTexCoord; out vec4 c; uniform sampler2D texture0;\n"
+        "void main(){ float d=texture(texture0,fragTexCoord).r; c=vec4(d,0.0,0.0,1.0); }\n");
+    Shader groundSh = LoadShaderFromMemory(
+        "#version 330\nin vec3 vertexPosition; in vec4 vertexColor; uniform mat4 mvp;\n"
+        "out vec4 fc; out vec3 fwp;\n"
+        "void main(){ fc=vertexColor; fwp=vertexPosition; gl_Position=mvp*vec4(vertexPosition,1.0);}\n",
+        "#version 330\nin vec4 fc; in vec3 fwp; out vec4 finalColor;\n"
+        "uniform sampler2D texture0; uniform mat4 u_lightVP; uniform float u_on;\n"
+        "void main(){ float sh=1.0;\n"
+        "  if(u_on>0.5){ vec4 p=u_lightVP*vec4(fwp,1.0); vec3 pr=p.xyz/p.w*0.5+0.5;\n"
+        "    if(!(pr.z>1.0||pr.x<0.0||pr.x>1.0||pr.y<0.0||pr.y>1.0)){\n"
+        "      float d=texture(texture0,pr.xy).r; sh=(pr.z-0.002>d)?0.0:1.0; } }\n"
+        "  finalColor=vec4(fc.rgb*mix(0.30,1.0,sh),1.0); }\n");
+    int gVP=GetShaderLocation(groundSh,"u_lightVP"), gOn=GetShaderLocation(groundSh,"u_on");
+
+    Vector3 occ = { 10.0f, 0.9f, 6.0f };
+    Camera3D cam = {0};
+    cam.position=(Vector3){10,5,14}; cam.target=(Vector3){10,0.3f,6};
+    cam.up=(Vector3){0,1,0}; cam.fovy=45.0f; cam.projection=CAMERA_PERSPECTIVE;
+
+    Image imOn={0}, imOff={0};
+    for (int pass=0; pass<2; pass++) {
+        float on=(pass==0)?1.0f:0.0f;
+        for (int f=0; f<3; f++) {
+            BeginDrawing(); ClearBackground((Color){40,44,70,255});
+            // capture occluder depth into the depth attachment (env_shadow BeginCapture dance)
+            rlEnableDepthTest(); rlEnableDepthMask();
+            rlEnableFramebuffer(fbo); rlViewport(0,0,SM,SM); rlClearScreenBuffers();
+            rlMatrixMode(RL_PROJECTION); rlPushMatrix(); rlLoadIdentity();
+            rlOrtho(-he,he,-he,he,0.1,dist*2.0);
+            rlMatrixMode(RL_MODELVIEW); rlPushMatrix(); rlLoadIdentity();
+            rlMultMatrixf(MatrixToFloat(lview));
+            BeginShaderMode(depthSh); DrawCube(occ,0.6f,1.8f,0.6f,WHITE); EndShaderMode();
+            rlDrawRenderBatchActive();
+            rlMatrixMode(RL_PROJECTION); rlPopMatrix();
+            rlMatrixMode(RL_MODELVIEW);  rlPopMatrix();
+            rlDisableFramebuffer();
+            // copy depth -> R (with/without Y-flip)
+            BeginTextureMode(copyRT);
+                BeginShaderMode(copySh);
+                float hh = flip ? -(float)SM : (float)SM;
+                DrawTextureRec(depthTex2D, (Rectangle){0,0,(float)SM,hh}, (Vector2){0,0}, WHITE);
+                EndShaderMode();
+            EndTextureMode();
+            rlViewport(0,0,GetScreenWidth(),GetScreenHeight());
+            // main: draw ground sampling copyRT
+            BeginMode3D(cam);
+                // Pollute batch/texture state like a real game frame: default-shader
+                // 3D draws (bind default white tex) + a shader switch BEFORE the ground.
+                DrawCube((Vector3){occ.x-3,1.0f,occ.z}, 1.0f,2.0f,1.0f, (Color){80,80,90,255});
+                DrawCube((Vector3){occ.x+3,1.0f,occ.z}, 1.0f,2.0f,1.0f, (Color){80,80,90,255});
+                BeginShaderMode(groundSh);
+                    SetShaderValueMatrix(groundSh,gVP,lvp);
+                    SetShaderValue(groundSh,gOn,&on,SHADER_UNIFORM_FLOAT);
+                    rlSetTexture(copyRT.texture.id);
+                    rlBegin(RL_TRIANGLES); rlColor4ub(120,130,160,255);
+                        float x0=g_center.x-20,x1=g_center.x+20,z0=g_center.z-20,z1=g_center.z+20;
+                        rlVertex3f(x0,0,z0); rlVertex3f(x0,0,z1); rlVertex3f(x1,0,z1);
+                        rlVertex3f(x0,0,z0); rlVertex3f(x1,0,z1); rlVertex3f(x1,0,z0);
+                    rlEnd();
+                    rlSetTexture(0);
+                EndShaderMode();
+            EndMode3D();
+            EndDrawing();
+        }
+        Image im=snap(); if(pass==0) imOn=im; else imOff=im;
+    }
+    if (flip && getenv("RLVK_SHADOW_DUMP")) ExportImage(imOn, getenv("RLVK_SHADOW_DUMP"));
+    int darker = ls_darkcount(imOn, imOff);
+    UnloadImage(imOn); UnloadImage(imOff);
+    rlUnloadFramebuffer(copyRT.id); rlUnloadTexture(copyRT.texture.id);
+    UnloadShader(depthSh); UnloadShader(copySh); UnloadShader(groundSh);
+    rlUnloadFramebuffer(fbo); rlUnloadTexture(colTex); rlUnloadTexture(depTex);
+    return darker;
+}
+static const char *sc_shadow_pipeline(void)
+{
+    int df = sc_pipeline_run(1);   // game's current Y-flip
+    int dn = sc_pipeline_run(0);   // no flip
+    printf("  [shadow_pipeline] darkened: flip(game)=%d  noflip=%d\n", df, dn);
+    if (df < 150 && dn < 150)  return "NEITHER orientation lands a shadow (capture/copy/sample chain broken, not just flip)";
+    if (df >= 150) return NULL;                       // game orientation works
+    return "game's Y-FLIP copy misses; NO-FLIP lands the shadow -> remove the -height in env_shadow copy";
+}
+
 // ---- runner ----------------------------------------------------------------------
 
 typedef struct { const char *name; const char *(*fn)(void); } Scenario;
@@ -505,6 +846,9 @@ static const Scenario SCENARIOS[] = {
     { "readback",       sc_readback },
     { "ui_after_rt",    sc_ui_after_rt },
     { "stress",         sc_stress },
+    { "shadow_proj",    sc_shadow_proj },
+    { "shadow_cast",    sc_shadow_cast },
+    { "shadow_pipeline",sc_shadow_pipeline },
 };
 #define N_SCENARIOS (int)(sizeof(SCENARIOS)/sizeof(SCENARIOS[0]))
 

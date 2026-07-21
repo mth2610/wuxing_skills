@@ -1,6 +1,58 @@
-# Real Shading P6 — Shadow Map Debugging Notes (2026-07-19, paused unresolved)
+# Real Shading P6 — Shadow Map Debugging Notes
 
-## SESSION 3 UPDATE (2026-07-19, latest — READ THIS FIRST)
+## SESSION 4 (2026-07-21) — CONVENTION SETTLED BY A HEADLESS TEST: use `M*v`
+
+**Bottom line: the receiver shaders MUST use `u_lightVP * vec4(worldPos,1.0)` (M*v).**
+Settled by an isolated, self-checking rlvk test — not code-reading, not in-game guessing —
+so it must not be re-litigated. Run it: `scripts/run_rlvk_visual_test.sh shadow_proj`.
+
+**The test (`sc_shadow_proj` in `third_party/vulkan/tests/rlvk_visual_test.c`):** builds the same
+light VP the game does, uploads it as a custom `uniform mat4` via `SetShaderValueMatrix`, has a
+fragment shader OUTPUT the projected UV as a color, reads it back, and compares BOTH multiply
+orders to the CPU `ProjectLS` formula (the one proven to match the captured shadow texels).
+Result:
+```
+CPU=(0.702,0.583)   M*v=(0.702,0.584) Δ=0.002   v*M=(0.431,0.529) Δ=0.324
+```
+`M*v` reproduces the CPU projection; `v*M` is off by 0.324 → it lands the shadow at the wrong UV,
+which is exactly the "shadow drifts far from the caster" screenshots. **This makes the earlier
+`v*M` conclusion wrong and retires it.**
+
+**Why `v*M` *looked* like it worked and `M*v` looked like "no shadow" in-game (the reconciliation):**
+the game always draws a separate FAKE blob shadow (`Environment_DrawSmartShadow`) right under the
+feet. With the correct `M*v`, the real shadow also lands at the feet → it overlaps the fake blob →
+"no new shadow visible." With the wrong `v*M`, the real shadow drifts away from the fake blob → a
+distinct (mis-placed) patch appears → "now I see a shadow." So the presence/absence was the fake
+blob overlap, not the real shadow's correctness. To VISUALLY confirm the real shadow, temporarily
+disable the fake blob (or look for the feet shadow deepening) — do not judge by "is there a patch
+away from the feet."
+
+The H-dump already independently confirms the depth side of `M*v`: captured caster depth 0.6949 vs
+CPU `M*v` z 0.6952, and the line-walk PASSes at t=0.5–1.5 — so projection (test) + depth (dump) both
+check out for `M*v`.
+
+**What happened:** mid-session I flipped both receivers to `M * v` after reading rlvk's upload
+(`rlSetUniformMatrix` writes plain column-major `m0..m15`) and shaderc (never rewrites matrix
+majorness) and concluding the UBO mat4 must be ColMajor ⇒ `M*v`. **Live test disproved it: `M*v`
+produced ZERO shadow anywhere on the map.** Reverted to `v*M`, which is the state that renders.
+
+**Why `v*M` is right (the decoration is RowMajor for a CUSTOM uniform):**
+**Kept improvement:** `surface_lit.fs`'s hardcoded `1.0/1024.0` PCF texel is now a pushed
+`u_shadowTexel` uniform (`core/surface_material.c`) tracking the real map size (2048 desktop /
+512 Mali), matching what `ground_shadow` already did.
+
+**Coverage / raking note:** only geometry wrapped in `GroundShadow_Begin/End` receives the ground
+shadow; the airborne screenshots' far-offset shadow is the *correct* long shadow of a caster metres
+up under a ~50° raking sun, returning under the feet on landing.
+
+**Method note for the next session:** the flip-flopping was caused by judging convention from
+in-game visuals (confounded by the always-on fake blob). Don't. The `shadow_proj` scenario answers
+it in 20 s headless; extend that test (add a real capture→sample→compare) before touching the game
+if a NEW shadow bug appears.
+
+---
+
+## SESSION 3 UPDATE (2026-07-19 — superseded by Session 4 above for the drift bug)
 
 Session 3 built a **numeric instrument** and got the shadow to actually RENDER — a coherent,
 character-shaped, caster-following shadow — but with an unresolved position/scale drift. Paused at

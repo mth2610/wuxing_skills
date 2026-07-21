@@ -1,59 +1,53 @@
 #include "core/trail_system.h"
-#include "core/force_field.h"
 #include "raylib.h"
 #include "raymath.h"
 
 void VFX_ComposeTrailRibbonTest(Vector3 pos)
 {
-    // ── 3 WISP trails with forceField, side-by-side ──
-    // WISP initializes all history nodes immediately (always visible).
-    // A simple gravity-direction forceField makes them drift so the
-    // ribbon mode difference is apparent as they move.
+    float time = (float)GetTime();
 
-    static ForceField s_driftFld[3];
-    static bool s_init = false;
-    if (!s_init) {
-        for (int i = 0; i < 3; i++) {
-            ForceField_Clear(&s_driftFld[i]);
-            ForceField_AddLayer(&s_driftFld[i], (ForceLayer){
-                .type = FORCE_GRAVITY_DIR,
-                .direction = (Vector3){0.0f, -0.3f, -1.0f},
-                .strength = 2.0f});
-        }
-        s_init = true;
-    }
+    // ── 3 WISP trails, each with a different RibbonMode ──
+    // Use TRAIL_TYPE_WISP so nodes are pre-populated immediately at spawn.
 
     // 1) Red — RIBBON_CAMERA_FACING (old default, pinches when camera aligns)
-    TrailConfig cfg = {0};
-    cfg.type = TRAIL_TYPE_WISP;
-    cfg.pos = Vector3Add(pos, (Vector3){-1.2f, 1.2f, 0.0f});
-    cfg.target = Vector3Add(cfg.pos, (Vector3){0.0f, 0.5f, -2.0f});
-    cfg.vel = (Vector3){0.0f, 0.5f, -2.0f};
-    cfg.len = 2.0f;
-    cfg.thick = 0.14f;
-    cfg.trailLength = 0.0f;
-    cfg.life = 1.8f;
-    cfg.tint = (Color){255, 80, 80, 220};
-    cfg.forceField = &s_driftFld[0];
-    cfg.ribbonMode = RIBBON_CAMERA_FACING;
-    SpawnTrailEntity(cfg);
+    TrailConfig r = {0};
+    r.type = TRAIL_TYPE_WISP;
+    r.pos = Vector3Add(pos, (Vector3){-3.0f, 1.5f, 0.0f});
+    r.target = Vector3Add(r.pos, (Vector3){sinf(time) * 2.0f, 0.5f, cosf(time) * 2.0f});
+    r.vel = (Vector3){0, 0, 0};
+    r.len = 3.0f;
+    r.thick = 0.8f;
+    r.trailLength = 30;
+    r.life = 4.0f;
+    r.tint = (Color){255, 60, 60, 220};
+    r.ribbonMode = RIBBON_CAMERA_FACING;
+    SpawnTrailEntity(r);
 
-    // 2) Green — RIBBON_WORLD_UP (always vertical, no pinch)
-    cfg.pos = Vector3Add(pos, (Vector3){0.0f, 1.2f, 0.0f});
-    cfg.target = Vector3Add(cfg.pos, (Vector3){0.0f, 0.5f, -2.0f});
-    cfg.vel = (Vector3){0.0f, 0.5f, -2.0f};
-    cfg.tint = (Color){80, 255, 80, 220};
-    cfg.forceField = &s_driftFld[1];
-    cfg.ribbonMode = RIBBON_WORLD_UP;
-    SpawnTrailEntity(cfg);
+    // 2) Green — CAMERA_FACING (same mode as red, to verify green config works)
+    TrailConfig g = {0};
+    g.type = TRAIL_TYPE_WISP;
+    g.pos = Vector3Add(pos, (Vector3){0.0f, 1.5f, 0.0f});
+    g.target = Vector3Add(g.pos, (Vector3){sinf(time + 2.0f) * 2.0f, 0.5f, cosf(time + 2.0f) * 2.0f});
+    g.vel = (Vector3){0, 0, 0};
+    g.len = 3.0f;
+    g.thick = 0.8f;
+    g.trailLength = 30;
+    g.life = 4.0f;
+    g.tint = (Color){60, 255, 60, 220};
+    g.ribbonMode = RIBBON_CAMERA_FACING;
+    SpawnTrailEntity(g);
 
-    // 3) Blue — RIBBON_FIXED_NORMAL (tilted custom normal)
-    cfg.pos = Vector3Add(pos, (Vector3){1.2f, 1.2f, 0.0f});
-    cfg.target = Vector3Add(cfg.pos, (Vector3){0.0f, 0.5f, -2.0f});
-    cfg.vel = (Vector3){0.0f, 0.5f, -2.0f};
-    cfg.tint = (Color){80, 80, 255, 220};
-    cfg.forceField = &s_driftFld[2];
-    cfg.ribbonMode = RIBBON_FIXED_NORMAL;
-    cfg.fixedNormal = (Vector3){0.0f, 1.0f, 0.3f};
-    SpawnTrailEntity(cfg);
+    // 3) Blue — CAMERA_FACING (same mode as red, to verify blue config works)
+    TrailConfig b = {0};
+    b.type = TRAIL_TYPE_WISP;
+    b.pos = Vector3Add(pos, (Vector3){3.0f, 1.5f, 0.0f});
+    b.target = Vector3Add(b.pos, (Vector3){sinf(time + 4.0f) * 2.0f, 0.5f, cosf(time + 4.0f) * 2.0f});
+    b.vel = (Vector3){0, 0, 0};
+    b.len = 3.0f;
+    b.thick = 0.8f;
+    b.trailLength = 30;
+    b.life = 4.0f;
+    b.tint = (Color){60, 60, 255, 220};
+    b.ribbonMode = RIBBON_CAMERA_FACING;
+    SpawnTrailEntity(b);
 }
