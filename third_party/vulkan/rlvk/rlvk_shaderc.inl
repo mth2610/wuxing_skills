@@ -1095,25 +1095,27 @@ static void rlvkShaderWriteMatrixUniform(rlvkShaderSlot *shader, int loc, Matrix
     rlvkShaderWriteUniform(shader, loc, f, sizeof(f));
 }
 
-// Snapshot the shader's uniform staging into the per-frame arena (glUniform semantics: each draw
-// sees the values current at record time) and push the UBO descriptors.
-static void rlvkBindShaderUbos(VkCommandBuffer cmdBuffer, rlvkShaderSlot *shader)
+// Snapshot the shader's dirty UBO stage blocks into the per-frame arena (glUniform semantics: each
+// draw sees the values current at record time) and APPEND the resulting descriptor writes to the
+// caller's arrays. Returns how many writes were appended (0..2). `bufferInfos`/`writes` must have
+// room for 2 entries and stay alive until the caller issues its CmdPushDescriptorSetKHR. The
+// pushed-gen bookkeeping is advanced exactly as a standalone push would; the caller is responsible
+// for setting uboPushedEpoch/lastUboShader after the actual push.
+static u32 rlvkAppendUboWrites(rlvkShaderSlot *shader, VkDescriptorBufferInfo *bufferInfos, VkWriteDescriptorSet *writes)
 {
     if (!shader->usesUbo)
-        return;
+        return 0;
 
-    // Snapshot and push a stage's block ONLY when its uniforms changed since the last push in
-    // this command buffer (pushes persist until overwritten); both stages ride one push call
+    // Snapshot a stage's block ONLY when its uniforms changed since the last push in this command
+    // buffer (pushes persist until overwritten); both stages ride the caller's one push call.
     bool cbFresh = (shader->uboPushedEpoch != RLVK.State.cbEpoch) || (RLVK.lastUboShader != shader);
     bool wantVs = shader->vsBlockSize && shader->vsStage && (cbFresh || (shader->vsPushedGen != shader->vsWriteGen));
     bool wantFs = shader->fsBlockSize && shader->fsStage && (cbFresh || (shader->fsPushedGen != shader->fsWriteGen));
     if (!wantVs && !wantFs)
-        return;
+        return 0;
 
     u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
     rlvkBatchBackingBuffer *arena = &RLVK.arena[frameIndex];
-    VkDescriptorBufferInfo bufferInfos[2];
-    VkWriteDescriptorSet writes[2];
     u32 writeCount = 0;
     for (int stage = 0; stage < 2; stage++)
     {
@@ -1124,9 +1126,9 @@ static void rlvkBindShaderUbos(VkCommandBuffer cmdBuffer, rlvkShaderSlot *shader
         VkDeviceSize off = (RLVK.arenaOffset[frameIndex] + 255) & ~(VkDeviceSize)255; // minUniformBufferOffsetAlignment
         if (off + size > arena->sizeBytes)
         {
-            // Cannot drain here (this draw's binds would be lost): request growth, skip the push
+            // Cannot drain here (this draw's binds would be lost): request growth, skip this stage
             RLVK.arenaWanted[frameIndex] += size + 256; // demand grows even when the push is skipped
-            return;
+            return writeCount;
         }
         memcpy((char *)arena->mapped + off, src, size);
         RLVK.arenaOffset[frameIndex] = off + size;
@@ -1145,6 +1147,19 @@ static void rlvkBindShaderUbos(VkCommandBuffer cmdBuffer, rlvkShaderSlot *shader
         else
             shader->vsPushedGen = shader->vsWriteGen;
     }
+    return writeCount;
+}
+
+// Snapshot the shader's uniform staging and push the UBO descriptors as one call (mesh path).
+static void rlvkBindShaderUbos(VkCommandBuffer cmdBuffer, rlvkShaderSlot *shader)
+{
+    if (!shader->usesUbo)
+        return;
+    VkDescriptorBufferInfo bufferInfos[2];
+    VkWriteDescriptorSet writes[2];
+    u32 writeCount = rlvkAppendUboWrites(shader, bufferInfos, writes);
+    if (writeCount == 0)
+        return;
     vk.CmdPushDescriptorSetKHR(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, RLVK.pipelineLayout, 0, writeCount, writes);
     shader->uboPushedEpoch = RLVK.State.cbEpoch;
     RLVK.lastUboShader = shader;

@@ -582,9 +582,11 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
                     if (L[SHADER_LOC_COLOR_DIFFUSE] >= 0)
                         rlvkShaderWriteUniform(shader, L[SHADER_LOC_COLOR_DIFFUSE], pc.colDiffuse, 16);
                 }
-                rlvkBindShaderUbos(cmdBuffer, shader);
-                rlvkBindShaderSsbos(cmdBuffer, shader);
-                rlvkBindShaderSamplers(cmdBuffer, shader, false);
+                // NOTE: for a UBO shader the whole set-0 (UBO + binding-0 texture + samplers +
+                // SSBOs) is issued as ONE coalesced CmdPushDescriptorSetKHR per draw, inside the
+                // loop below after the pipeline bind (rlvkPushSet0Batch). MoltenVK drops the SECOND
+                // separate push-descriptor call of a draw, so pushing the UBO here and the texture
+                // later as two calls lost the texture (HANDOFF §7.26).
             }
             else
                 vk.CmdPushConstants(cmdBuffer, RLVK.pipelineLayout,
@@ -600,6 +602,10 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
                              "VKDBG flush draw %d/%d mode=%d verts=%d tex=%u shader=%u scope=%u depthT=%d vtxCtr=%d",
                              i, batch->drawCounter, drawCall->mode, drawCall->vertexCount, drawCall->textureId,
                              RLVK.State.currentShaderSlot, RLVK.scope.fbSlot, (int)RLVK.State.depthTest, RLVK.State.vertexCounter);
+                // EXP: push set-0 BEFORE binding the ground pipeline (while the prior pipeline is
+                // still bound); compatible layouts mean the push must persist across the bind.
+                if (shader->usesUbo && drawCall->vertexCount > 0 && getenv("RLVK_EXP_PUSH_BEFORE_PIPE"))
+                    rlvkPushSet0Batch(cmdBuffer, shader, drawCall->textureId);
                 // A failed pipeline build leaves the previous pipeline bound; drawing this batch
                 // segment with it would rasterize it under the WRONG shader (a custom-shader VFX
                 // quad shows as an opaque square). Skip the segment's draw when the build fails.
@@ -607,7 +613,16 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
                     rlvkBindPipeline(cmdBuffer, (drawCall->mode == RL_LINES) ? 0 : 1,
                                      RLVK_VLAYOUT_BATCH, RLVK.State.currentShaderSlot))
                 {
-                    rlvkPushTexture(cmdBuffer, 0, drawCall->textureId);
+                    // GL bind-at-draw semantics, atomically. A UBO shader coalesces its entire
+                    // set-0 into one push AFTER the pipeline bind (defeats the MoltenVK 2nd-push
+                    // drop, §7.26); the default shader pushes just its texture0 (a single call).
+                    if (shader->usesUbo)
+                    {
+                        if (!getenv("RLVK_EXP_PUSH_BEFORE_PIPE"))
+                            rlvkPushSet0Batch(cmdBuffer, shader, drawCall->textureId);
+                    }
+                    else
+                        rlvkPushTexture(cmdBuffer, 0, drawCall->textureId);
                     rlvkFlushSet0(cmdBuffer);
                     if (!batchBuffersBound)
                     {
@@ -618,10 +633,12 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
                         rlvkBindDummyAttribBuffers(cmdBuffer, RLVK_VLAYOUT_BATCH, shader);
                         batchBuffersBound = true;
                     }
+                    if (getenv("RLVK_DBG_DRAWSITE")) { fprintf(stderr, "[DRAW] pre mode=%d verts=%d ubo=%d slot=%u\n", drawCall->mode, drawCall->vertexCount, (int)shader->usesUbo, RLVK.State.currentShaderSlot); fflush(stderr); }
                     if ((drawCall->mode == RL_LINES) || (drawCall->mode == RL_TRIANGLES))
                         vk.CmdDraw(cmdBuffer, drawCall->vertexCount, 1, vertexOffset, 0);
                     else // RL_QUADS -> 2 triangles per quad via the index buffer
                         vk.CmdDrawIndexed(cmdBuffer, drawCall->vertexCount / 4 * 6, 1, vertexOffset / 4 * 6, 0, 0);
+                    if (getenv("RLVK_DBG_DRAWSITE")) { fprintf(stderr, "[DRAW] post\n"); fflush(stderr); }
                 }
                 vertexOffset += drawCall->vertexCount + drawCall->vertexAlignment;
             }

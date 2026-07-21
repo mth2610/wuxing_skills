@@ -17,6 +17,7 @@
 
 ### MoltenVK / driver quirks (desktop macOS)
 - **Depth test silently off inside a render texture** (see-through characters, black-hole ring not occluded). SAMPLED-usage depth attachments don't test on MoltenVK → `Caps.noSampledDepth` + shadow-copy twin. → §7.1, §7.10
+- **Second push-descriptor to the same binding within one render pass is dropped** (a custom-shader immediate-mode draw that binds a texture via `rlSetTexture` samples the DEFAULT WHITE texture when *any* prior 3D draw already pushed binding 0 in the same pass; first draw works, later ones don't). UBO push is unaffected when it's the pass's first set-0 UBO push. **UNFIXED.** Repro: `run_rlvk_visual_test.sh shadow_pipeline` (FAILs; delete its two pollution DrawCubes → PASSes). This is what silently broke Real-Shading-P6 ground shadows. Fix dir: pool-ring for mid-pass binding changes (currently `RLVK_FORCE_POOL_RING=1` segfaults — fix that first) or one coalesced full-set-0 push per draw.
 - **Compute UBO reads all zeros** when the shader also declares storage images → MoltenVK quirk; split/rearrange bindings. → §7.4
 - **Vertex attribute fetch reads zeros / GPU timeout on a tiny dummy buffer.** → §7.5
 

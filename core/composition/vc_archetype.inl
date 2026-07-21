@@ -3,22 +3,32 @@
 
 static Color Arch_ElementColor(EffectPresetType e)
 {
-    switch (e) {
-    case EFFECT_PRESET_WATER_SPLASH:  return ELEMENT_COLOR_WATER;
-    case EFFECT_PRESET_WOOD_BLOOM:    return ELEMENT_COLOR_WOOD;
-    case EFFECT_PRESET_FIRE_EXPLOSION:return ELEMENT_COLOR_FIRE;
-    case EFFECT_PRESET_EARTH_CRACK:   return ELEMENT_COLOR_EARTH;
-    case EFFECT_PRESET_METAL_SHARD:   return ELEMENT_COLOR_METAL;
-    case EFFECT_PRESET_TAIJI_BURST:   return ELEMENT_COLOR_TAIJI;
-    default: return WHITE;
+    switch (e)
+    {
+    case EFFECT_PRESET_WATER_SPLASH:
+        return ELEMENT_COLOR_WATER;
+    case EFFECT_PRESET_WOOD_BLOOM:
+        return ELEMENT_COLOR_WOOD;
+    case EFFECT_PRESET_FIRE_EXPLOSION:
+        return ELEMENT_COLOR_FIRE;
+    case EFFECT_PRESET_EARTH_CRACK:
+        return ELEMENT_COLOR_EARTH;
+    case EFFECT_PRESET_METAL_SHARD:
+        return ELEMENT_COLOR_METAL;
+    case EFFECT_PRESET_TAIJI_BURST:
+        return ELEMENT_COLOR_TAIJI;
+    default:
+        return WHITE;
     }
 }
 
 static ColorGradient s_shardSparkleGrad = {0};
 static bool s_shardSparkleInit = false;
 
-static void ShardSparkle_Init(void) {
-    if (s_shardSparkleInit) return;
+static void ShardSparkle_Init(void)
+{
+    if (s_shardSparkleInit)
+        return;
     ColorGradient_AddStop(&s_shardSparkleGrad, 0.0f, WHITE);
     ColorGradient_AddStop(&s_shardSparkleGrad, 0.15f, (Color){220, 245, 255, 255});
     ColorGradient_AddStop(&s_shardSparkleGrad, 1.0f, (Color){100, 180, 255, 0});
@@ -37,7 +47,6 @@ static void ShardSparkle_Init(void) {
 #include "common/vc_mesh_electricity.inl"
 #include "common/vc_particle_upgrades_test.inl"
 #include "common/vc_trail_upgrades_test.inl"
-#include "common/vc_trail_ribbon_test.inl"
 
 static void VC_Archetype_Update(float dt)
 {

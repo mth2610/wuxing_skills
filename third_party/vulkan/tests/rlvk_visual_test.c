@@ -729,9 +729,10 @@ static int sc_pipeline_run(int flip)   // returns darkened ground pixels
     // an immediate-mode 3D draw is the suspect).
     RenderTexture2D copyRT = { 0 };
     copyRT.id = rlLoadFramebuffer();
-    copyRT.texture.id = rlLoadTexture(NULL, SM, SM, RL_PIXELFORMAT_UNCOMPRESSED_R32, 1);
+    int cfmt = getenv("RLVK_DIAG_RGBA8") ? RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 : RL_PIXELFORMAT_UNCOMPRESSED_R32;
+    copyRT.texture.id = rlLoadTexture(NULL, SM, SM, cfmt, 1);
     copyRT.texture.width = SM; copyRT.texture.height = SM;
-    copyRT.texture.mipmaps = 1; copyRT.texture.format = RL_PIXELFORMAT_UNCOMPRESSED_R32;
+    copyRT.texture.mipmaps = 1; copyRT.texture.format = cfmt;
     rlEnableFramebuffer(copyRT.id);
     rlFramebufferAttach(copyRT.id, copyRT.texture.id, RL_ATTACHMENT_COLOR_CHANNEL0, RL_ATTACHMENT_TEXTURE2D, 0);
     rlFramebufferComplete(copyRT.id);
@@ -792,6 +793,8 @@ static int sc_pipeline_run(int flip)   // returns darkened ground pixels
             BeginMode3D(cam);
                 // Pollute batch/texture state like a real game frame: default-shader
                 // 3D draws (bind default white tex) + a shader switch BEFORE the ground.
+                // The trigger: any prior 3D draw in the main render pass. In the game this is
+                // all the other scene geometry drawn before the ground receiver.
                 DrawCube((Vector3){occ.x-3,1.0f,occ.z}, 1.0f,2.0f,1.0f, (Color){80,80,90,255});
                 DrawCube((Vector3){occ.x+3,1.0f,occ.z}, 1.0f,2.0f,1.0f, (Color){80,80,90,255});
                 BeginShaderMode(groundSh);
@@ -811,6 +814,11 @@ static int sc_pipeline_run(int flip)   // returns darkened ground pixels
         Image im=snap(); if(pass==0) imOn=im; else imOff=im;
     }
     if (flip && getenv("RLVK_SHADOW_DUMP")) ExportImage(imOn, getenv("RLVK_SHADOW_DUMP"));
+    if (flip && getenv("RLVK_SHADOW_RB")) {
+        float *px = (float*)rlReadTexturePixels(copyRT.texture.id, SM, SM, RL_PIXELFORMAT_UNCOMPRESSED_R32);
+        if (px) { float mn=9,mx=-9; int occ=0; for(int i=0;i<SM*SM;i++){float d=px[i]; if(d<mn)mn=d; if(d>mx)mx=d; if(d<0.99f)occ++;}
+                  printf("  [rb] copyRT min=%.3f max=%.3f occluderTexels=%d\n",mn,mx,occ); RL_FREE(px); }
+    }
     int darker = ls_darkcount(imOn, imOff);
     UnloadImage(imOn); UnloadImage(imOff);
     rlUnloadFramebuffer(copyRT.id); rlUnloadTexture(copyRT.texture.id);
@@ -823,8 +831,16 @@ static const char *sc_shadow_pipeline(void)
     int df = sc_pipeline_run(1);   // game's current Y-flip
     int dn = sc_pipeline_run(0);   // no flip
     printf("  [shadow_pipeline] darkened: flip(game)=%d  noflip=%d\n", df, dn);
-    if (df < 150 && dn < 150)  return "NEITHER orientation lands a shadow (capture/copy/sample chain broken, not just flip)";
-    if (df >= 150) return NULL;                       // game orientation works
+    // KNOWN-OPEN rlvk bug (2026-07-21): with a prior 3D draw in the main render pass, the
+    // immediate-mode ground draw's per-draw texture push (rlvkPushTexture -> CmdPushDescriptorSetKHR
+    // binding 0) does not take effect on the MoltenVK push-descriptor path — the shader samples the
+    // default white texture (reads 1.0 = "no occluder") even though the RT is correctly bound (tex
+    // id in the flush log), populated (readback shows the occluder), SHADER_READ_ONLY, and the UBO
+    // (u_lightVP/u_on) pushed just before it DOES arrive. Remove the two pollution DrawCubes above
+    // and the shadow lands (proving capture/copy/convention/binding are all correct). This scenario
+    // FAILS until the push-descriptor set-0 multi-push bug is fixed.
+    if (df < 150 && dn < 150)  return "KNOWN rlvk bug: prior 3D draw drops the ground's texture push (MoltenVK set-0 multi-push)";
+    if (df >= 150) return NULL;
     return "game's Y-FLIP copy misses; NO-FLIP lands the shadow -> remove the -height in env_shadow copy";
 }
 

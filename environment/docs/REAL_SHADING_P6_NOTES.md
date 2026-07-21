@@ -1,5 +1,52 @@
 # Real Shading P6 — Shadow Map Debugging Notes
 
+## SESSION 5 (2026-07-21) — FULLY ROOT-CAUSED: an rlvk MoltenVK push-descriptor bug (READ FIRST)
+
+The shadow algorithm is **100% correct** — proven by two passing headless rlvk scenarios
+(`shadow_proj`, `shadow_cast`) that reproduce the game's exact capture→copy→sample→`M*v` chain at
+game scale and DO render a correct ground shadow (PNGs verified). The reason it fails in-game is a
+**renderer bug**, isolated to a third headless scenario, `shadow_pipeline`, which FAILs:
+
+**Root cause:** on the MoltenVK **push-descriptor** path, when the main render pass already has a
+prior 3D draw, the immediate-mode ground receiver's **per-draw texture push**
+(`rlvkPushTexture` → `CmdPushDescriptorSetKHR` binding 0, in the batch draw loop) **does not take
+effect** — the fragment shader samples the **default white texture** (reads 1.0 = "no occluder")
+even though: the shadow-map RT is correctly bound (its id shows in the `RLVK_DEBUG_FLUSH` log),
+populated (a `rlReadTexturePixels` readback shows 3204 occluder texels), transitioned to
+`SHADER_READ_ONLY`, and the shader's **UBO** (`u_lightVP`/`u_on`, pushed via `rlvkBindShaderUbos`
+just before) DOES arrive (an in-shader red probe confirmed `u_on`). The discriminator: the UBO push
+is the *first* set-0 push in the main pass (the default-shader pollution uses push constants, no UBO
+push) → it works; the texture push is the *second* set-0 push to binding 0 (pollution's batch draw
+already pushed the white default there) → **MoltenVK drops the second push to the same binding
+within one render pass.**
+
+Confirmed NOT the cause (each ruled out with a probe): matrix convention (M*v, `shadow_proj`
+Δ0.002), projection (`u_lightVP` delivered — proj gradient sane), capture, copy-flip orientation,
+R32F copy format, texture binding value (flush log shows the RT id), the default-texture
+substitution branch (`rlvkPushTexture`), image layout, copyRT content (readback), the set-0 cache,
+the texture dedup (force-pushed, still fails), push-constant↔push-descriptor interaction (custom-
+shader pollution fails identically).
+
+**Repro:** `scripts/run_rlvk_visual_test.sh shadow_pipeline` — FAILs; delete the two "pollution"
+`DrawCube`s in `sc_shadow_pipeline` and it PASSes (isolating the trigger to "a prior 3D draw").
+
+**Fix candidates (Renderer agent — a real rlvk fix, not a game workaround):**
+1. Route set-0 through the **pool-ring** (bound descriptor sets, one consistent `vkUpdateDescriptorSets`
+   per draw) instead of incremental push-descriptor writes when a binding changes mid-pass.
+   `RLVK_FORCE_POOL_RING=1` currently **segfaults** on this device — that path has a latent bug that
+   must be fixed first (and note Mali/Android already relies on the pool-ring path).
+2. Or coalesce the UBO + texture writes into a **single** `CmdPushDescriptorSetKHR` per draw and
+   re-issue the full set-0 whenever any binding changes, so no binding depends on a prior push
+   surviving.
+
+The game shaders / env_shadow / ground_shadow are all correct as they stand; do not change them for
+this. The two green scenarios are permanent guards that the algorithm stays correct.
+
+`ground_shadow.fs` currently has `GROUND_SHADOW_DEBUG_PROJ 1` (floor-projection viz) — set back to 0
+after the renderer fix lands.
+
+---
+
 ## SESSION 4 (2026-07-21) — CONVENTION SETTLED BY A HEADLESS TEST: use `M*v`
 
 **Bottom line: the receiver shaders MUST use `u_lightVP * vec4(worldPos,1.0)` (M*v).**

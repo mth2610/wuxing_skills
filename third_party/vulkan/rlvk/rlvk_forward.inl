@@ -32,6 +32,7 @@ static bool         rlvkBindPipeline      (VkCommandBuffer cmdBuffer, unsigned c
 static void         rlvkBindDummyAttribBuffers(VkCommandBuffer cmdBuffer, unsigned short vertexLayout, rlvkShaderSlot *shader); // Bind dummy buffers at the layout's broadcast bindings
 static void         rlvkFinishSwapchainImage(VkCommandBuffer cmdBuffer); // Flip-blit the frame into the swapchain image
 static void         rlvkPushTexture       (VkCommandBuffer cmdBuffer, u32 binding, u32 textureSlot); // Push a texture descriptor at a GL texture unit binding
+static void         rlvkPushSet0Batch     (VkCommandBuffer cmdBuffer, rlvkShaderSlot *shader, u32 tex0Slot); // Coalesced set-0 push for the batch UBO path (§7.26)
 static u32          rlvkCreateVBO         (const void *data, int size, bool isIndex, bool dynamic); // Create a buffer slot (static: device-local, dynamic: host-mapped)
 static void         rlvkUploadBuffer      (VkBuffer dst, u32 dstOffset, const void *data, u32 size); // Copy into a device-local buffer (in-frame or one-shot)
 static void         rlvkShaderWriteUniform(rlvkShaderSlot *shader, int loc, const void *data, u32 bytes); // Write a uniform into the shader staging blocks
