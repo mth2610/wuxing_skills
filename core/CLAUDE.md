@@ -28,7 +28,7 @@ Manages the entire **Core Engine** module of the Wuxing Skills project. Owns the
 5. **Docs:** Update `docs/API.md` whenever public API is added/changed. `docs/API.md` is **shared-write** with the Skills Agent (it documents usage notes/conventions Skills discovers too) — see "Updating docs/API.md" below.
 
 ## Code rules (from docs/API.md)
-- Strict C99, Raylib 6.0, OpenGL 3.3
+- Strict C99, Raylib 6.0. Backend: Vulkan 1.1 via `rlvk` (priority); OpenGL 3.3 Core / GLES 3.x fallback. Keep draw code backend-agnostic (`rlgl`/raylib, never raw GL/Vulkan).
 - Guard the PI macro: `#ifndef PI #define PI 3.1415926535f #endif`
 - No `malloc`/`calloc`/`realloc`/`free`
 - Use `ResourceManager_LoadShader()` — never call `UnloadShader`/`UnloadTexture` in skill code
@@ -40,16 +40,15 @@ Manages the entire **Core Engine** module of the Wuxing Skills project. Owns the
 - Need to know how a skill uses an API: read only its `.h`, never its `.c`
 - Any breaking change must be clearly documented
 
-## Updating `docs/API.md` (shared with Skills Agent — MANDATORY workflow)
-`docs/API.md` is jointly maintained: **Core Agent** writes it when a `core/*.h` signature/struct/enum changes; **Skills Agent** writes it when it discovers a usage convention, gotcha, or UV/uniform behavior worth documenting (e.g. confirming an `[!NOTE]`-tagged assumption from real skill code). Both follow the same surgical procedure — never rewrite the whole file:
-1. `grep -n "^### \|^## " docs/API.md` to find the section heading matching the changed module/header.
-2. `Read` only that section (`offset`/`limit` around the matched line), not the full file.
-3. `Edit` with a precise `old_string` (the exact signature/table row/paragraph) — never `Write` the whole file.
-4. Only touch the file for **public API surface** changes (signature, struct field, enum value, parameter semantics) or confirmed usage notes — not internal `.c` refactors.
-5. If Skills Agent's edit conflicts with or corrects a Core-authored section, flag it explicitly in the edit (e.g. resolve `[!NOTE]` "treat as working assumption" markers once confirmed) rather than silently overwriting.
+## Updating `docs/API.md` — it is GENERATED, do not hand-edit
+`docs/API.md` is an **index generated from the `core/*.h` headers** by `scripts/gen_core_api_index.sh`. The Signature Index never drifts because it is re-extracted from source.
+- **Changed a signature/struct/enum?** Edit the header (the source of truth), then run `bash scripts/gen_core_api_index.sh > core/docs/API.md`. Do **not** hand-edit the Signature Index.
+- **A usage contract / gotcha worth documenting?** Put it in the header's own comment (it's ground-truth there), or — if it's the "what a bare signature can't tell you" kind — in the hand-authored **Critical usage rules** preamble, which lives in the heredoc at the top of `scripts/gen_core_api_index.sh` (edit there, regenerate). Reusable debugging lessons go in `docs/LANDMINES.md`, not the index.
+- Struct fields are intentionally NOT in the index (only struct names) — the header is the place to read them.
 
 ## Docs layout (per `DOC_ARCHITECTURE.md`)
-- `docs/API.md` — pure interface (the `_SHORT` companion is abolished; API.md opens with a Quick Ref instead).
+- `docs/API.md` — **generated index** of signatures/enums/struct-names + a critical-rules preamble (the `_SHORT` companion is abolished). Regenerate via `scripts/gen_core_api_index.sh`; never hand-edit.
+- `docs/API_GUIDE.md` — **hand-maintained usage guide** (prose companion to the index): patterns, worked examples, contracts, the "why". Keep it current when API usage changes.
 - `docs/LANDMINES.md` — distilled reusable lessons. Cross-cutting ones live in root `ENGINE_LANDMINES.md` — **read that before touching GL/shaders.**
 - `docs/PROGRESS.md` — backlog / session log.
 

@@ -1,6 +1,6 @@
 # CONTROL MODULE API SPECIFICATION
 
-> Module: `control/` (`control.h` / `control.c`) — MODULES_ROADMAP.md Module 4.
+> Module: `control/` (`control.h` / `control.c`) — ../../ROADMAP.md Module 4.
 > Player controller: INPUT (device) split from INTENT (gameplay).
 > Owner agent: **Control Agent** (see `control/CLAUDE.md`).
 

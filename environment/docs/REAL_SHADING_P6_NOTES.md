@@ -25,7 +25,7 @@ matter — the moment `env_shadow.c` computes `s_lightVP` (`EnvShadow_BeginCaptu
 construction — if these two logged matrices match (they should, trivially) but the shader still
 computes wrong `proj` values, the bug is confirmed to be inside rlvk's C→GPU uniform upload path
 itself (`rlSetUniformMatrix`/`rlvkShaderWriteUniform`/the UBO push), not in application code — at
-that point this needs RenderDoc/Xcode GPU capture (`RLVK_HANDOFF.md` §6), not more TraceLogs.
+that point this needs RenderDoc/Xcode GPU capture (`../../third_party/vulkan/docs/HANDOFF.md` §6), not more TraceLogs.
 `ground_shadow.c` also logs whether `GetShaderLocation` resolved `u_lightVP` to a valid (non -1)
 slot, ruling out the simplest possible cause first. `ground_shadow.fs` is back to real production
 logic (no diagnostic output).
@@ -295,7 +295,7 @@ proportionally to distance from arena center, ~2× at mid-arena."
 and two test points placed well off the world origin and off the light's own position (the shape
 of scene that actually exposes a transpose bug — a check near the origin/aim-point wouldn't). With
 `vec*mat` the scenario fails (point B, in open ground, is falsely shadowed); with `mat*vec` it
-passes. This scenario is now permanent regression coverage — see `RLVK_HANDOFF.md` §5's scenario
+passes. This scenario is now permanent regression coverage — see `../../third_party/vulkan/docs/HANDOFF.md` §5's scenario
 list.
 
 **Second bug found (while getting the test suite clean): a real rlvk state-lifecycle bug.** The
@@ -305,11 +305,11 @@ MODELVIEW change with `rlPushMatrix()`/`rlPopMatrix()` while a non-swapchain (ma
 is bound corrupts a LATER, unrelated `DrawMesh`/`DrawMeshInstanced` call — reproduced with **zero
 draw calls** between the push and the pop. This is the exact pattern `EnvShadow_BeginCapture`/
 `EndCapture` used for the light's view matrix. Root cause isn't fully isolated (needs a GPU
-capture, see `RLVK_HANDOFF.md` §7.25), but a direct `rlLoadIdentity()`+`rlMultMatrixf()` (no
+capture, see `../../third_party/vulkan/docs/HANDOFF.md` §7.25), but a direct `rlLoadIdentity()`+`rlMultMatrixf()` (no
 matrix-stack push at all) reproducibly avoids it, confirmed by the full 15/15 visual suite passing.
 Applied the same fix to `environment/env_shadow.c` (both `BeginCapture` and `EndCapture`) — the
 PROJECTION stack's push/pop (`rlOrtho`) was unaffected and left as-is. Full case study, bisection
-log, and the open question for a future session: `RLVK_HANDOFF.md` §7.25.
+log, and the open question for a future session: `../../third_party/vulkan/docs/HANDOFF.md` §7.25.
 
 **Superseded by part 2 above**: this session could not run the actual game itself (build output is
 off-limits to this agent), so verification of the mat*vec fix happened only through the Renderer
@@ -525,7 +525,7 @@ aggressively the effect was amplified for visibility (see debugging log below).
    Switched to depth+throwaway-color attachment, matching `core/screen_distort.c`'s
    `LoadRenderTextureWithDepthTexture` (proven working). Didn't fix it, but is the safer form
    regardless — kept.
-3. **rlvk's `noSampledDepth` quirk** (`RLVK_HANDOFF.md` §7.10, confirmed active on this dev machine:
+3. **rlvk's `noSampledDepth` quirk** (`../../third_party/vulkan/docs/HANDOFF.md` §7.10, confirmed active on this dev machine:
    Intel Iris + MoltenVK 1.2.11) — FBO depth-attachment textures aren't reliably sampleable
    directly. Added a depth→R32F copy pass (`shadow_copy.fs` + `BeginTextureMode`/`DrawTextureRec`,
    mirroring `ScreenDistort_SnapshotDepth`). The debug preview confirmed the *copy* itself produces
@@ -589,7 +589,7 @@ targeted tests, e.g.:
 
 This needs real GPU introspection (RenderDoc, or Xcode's Metal/GPU frame capture attached to the
 MoltenVK process) to see the actual bound resources and pixel values at each pass — exactly the
-class of tool `RLVK_HANDOFF.md` §6 ("DEBUGGING METHODOLOGY") assumes for this kind of bug, and
+class of tool `../../third_party/vulkan/docs/HANDOFF.md` §6 ("DEBUGGING METHODOLOGY") assumes for this kind of bug, and
 which a remote coding session can't drive. Whoever picks this up next should:
 1. Capture a frame with shadow enabled (J) in RenderDoc/Xcode.
 2. Inspect the depth-capture pass's output directly (is the character really there, at the
@@ -607,7 +607,7 @@ which a remote coding session can't drive. Whoever picks this up next should:
   switching to whatever pattern *is* proven elsewhere — a good general debugging heuristic for this
   project given how much of `rlvk` is a from-scratch reimplementation that doesn't cover 100% of
   raylib's surface with equal confidence everywhere.
-- `RLVK_HANDOFF.md` §7.10 describes rlvk's OWN internal automatic depth→sampleable-twin mechanism
+- `../../third_party/vulkan/docs/HANDOFF.md` §7.10 describes rlvk's OWN internal automatic depth→sampleable-twin mechanism
   (triggered at `rlDisableFramebuffer()`), which — per that doc — should make the RAW depth texture
   directly sampleable transparently, without needing a manual copy at all. This session's manual
   copy (mirroring `screen_distort.c`) was kept anyway since it's the pattern with actual proven

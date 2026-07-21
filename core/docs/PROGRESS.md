@@ -856,7 +856,7 @@ it could be visually confirmed — so it's unverified, not merely rejected.
 
 ## Item 36 — `prop_lit` shader: PBR-lite material for map terrain/props (requested by Map Agent)
 
-**Problem.** Module 2 (Map Virtual Trigger Zones, see `MODULES_ROADMAP.md` §2)
+**Problem.** Module 2 (Map Virtual Trigger Zones, see `../../ROADMAP.md` §2)
 is moving map art direction from pure flat-shaded `rlgl` immediate-mode
 (current `maps/default_arena.c` — no shader, no normals at all) to
 "moderate realism" for terrain/props: diffuse+normal+roughness textures via

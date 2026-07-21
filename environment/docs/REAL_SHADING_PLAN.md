@@ -171,7 +171,7 @@ one lighting model:
 
 ## 7. Mobile / rlvk constraints (Renderer agent verifies each shader change)
 - **Every `surface_lit` edit must compile & run on Mali via rlvk, verified ON DEVICE** — desktop
-  green ≠ device correct (see `RLVK_HANDOFF.md`, and the sin-hash landmine: mobile precision kills
+  green ≠ device correct (see `../../third_party/vulkan/docs/HANDOFF.md`, and the sin-hash landmine: mobile precision kills
   things silently). Watch for: large-magnitude math (avoid `sin`/`fract` hashes),
   `mediump`/precision, `f`-suffix literals, `matModel` identity assumptions (memory
   `android-shader-pipeline`).

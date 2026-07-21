@@ -750,7 +750,7 @@ void UnloadMap(void) {
 
 ---
 
-## 13. Virtual Trigger Zones (Elemental Zones) — MODULES_ROADMAP.md Module 2
+## 13. Virtual Trigger Zones (Elemental Zones) — ../../ROADMAP.md Module 2
 
 Map = pure data: each map only declares the **POSITION** of elemental zones; the
 modifier rule (Water = -50% cooldown in a River...) lives centrally in

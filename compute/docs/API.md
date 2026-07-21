@@ -1,35 +1,35 @@
 # COMPUTE MODULE API
 
-> Module GPU compute dùng chung — particle physics, rain, simulation.
-> Nằm ở `compute/`, độc lập với `core/`, dùng được từ skills, environment, maps.
+> Shared GPU compute module — particle physics, rain, simulation.
+> Lives in `compute/`, independent of `core/`, usable from skills, environment, maps.
 
 ---
 
-## 1. Tổng quan kiến trúc
+## 1. Architecture overview
 
-Module tự detect khả năng GPU lúc runtime và chọn một trong hai path:
+The module auto-detects GPU capability at runtime and picks one of two paths:
 
-| Path | Điều kiện | Mô tả |
+| Path | Condition | Description |
 |---|---|---|
-| **COMPUTE** | GL 4.3+ (desktop) hoặc GLES 3.1+ (Android Mali-G68+) | Physics hoàn toàn trên GPU — dispatch compute shader, SSBO |
-| **CPU/VBO** | GL 3.3 (macOS) hoặc thiết bị cũ | Physics trên CPU, upload VBO mỗi frame |
+| **COMPUTE** | GL 4.3+ (desktop) or GLES 3.1+ (Android Mali-G68+) | Physics fully on GPU — compute-shader dispatch, SSBO |
+| **CPU/VBO** | GL 3.3 (macOS) or older devices | Physics on CPU, VBO upload per frame |
 
-Không cần kiểm tra path từ phía caller — API giống nhau ở cả hai path.
+The caller doesn't need to check the path — the API is identical on both.
 
 ---
 
-## 2. Tích hợp vào game loop (main.c)
+## 2. Game-loop integration (main.c)
 
 ```c
 #include "compute/gpu_particle_system.h"
 
-// Sau InitWindow():
+// After InitWindow():
 GpuParticleSystem_Init();
 
-// Trong game loop — Update phase:
+// In the game loop — Update phase:
 GpuParticleSystem_Update(dt);
 
-// Trong game loop — Draw 3D phase (sau BeginMode3D / MyBeginMode3D):
+// In the game loop — 3D draw phase (after BeginMode3D / MyBeginMode3D):
 GpuParticleSystem_Draw(camera, particleTexture);
 
 // Cleanup:
@@ -41,10 +41,10 @@ GpuParticleSystem_Unload();
 ## 3. API
 
 ### `GpuParticleSystem_Init(void)`
-Phát hiện compute capability, khởi tạo shader và buffer. Gọi một lần sau `InitWindow()`.
+Detects compute capability, initializes shaders and buffers. Call once after `InitWindow()`.
 
 ### `GpuParticleSystem_Spawn(GpuParticleConfig cfg)`
-Spawn một particle. Hoạt động ở cả hai path. Ring-buffer — particle cũ bị overwrite khi pool đầy.
+Spawn one particle. Works on both paths. Ring-buffer — old particles are overwritten when the pool is full.
 
 ```c
 typedef struct {
@@ -53,14 +53,14 @@ typedef struct {
     Color   colorStart;
     Color   colorEnd;
     float   radius;
-    float   lifetime;  // giây
-    float   drag;      // 0.0 = không cản | 0.98 = cản nhẹ | 1.0 = dừng ngay
+    float   lifetime;  // seconds
+    float   drag;      // 0.0 = no drag | 0.98 = light drag | 1.0 = stop instantly
 
-    // ForceField tùy chọn — CHỈ có hiệu lực ở COMPUTE path. Fallback CPU/VBO
-    // (macOS, hoặc thiết bị compute-shader compile fail) bỏ qua field này,
-    // particle chạy drag-only. axisOrigin/axisDir: trục động cho layer
-    // FORCE_RADIAL_AXIS/FORCE_VORTEX_AXIS bên trong forceField (bỏ qua nếu
-    // không dùng loại layer đó).
+    // Optional ForceField — ONLY effective on the COMPUTE path. The CPU/VBO
+    // fallback (macOS, or a device where the compute shader fails to compile)
+    // ignores this field, and particles run drag-only. axisOrigin/axisDir:
+    // the dynamic axis for a FORCE_RADIAL_AXIS/FORCE_VORTEX_AXIS layer inside
+    // forceField (ignored if you don't use those layer types).
     const ForceField *forceField;
     Vector3 axisOrigin;
     Vector3 axisDir;
@@ -68,14 +68,13 @@ typedef struct {
 ```
 
 > [!NOTE]
-> Con trỏ `forceField` được đăng ký vào registry nội bộ và re-pack MỖI FRAME
-> — phải trỏ tới bộ nhớ sống lâu (static/pool), không dùng biến local trên
-> stack. Xem `../../core/docs/PROGRESS.md` Item 5 nếu path COMPUTE không compile được
-> trên thiết bị (giới hạn driver phổ biến trên GPU mobile: SSBO không được
-> hỗ trợ ở vertex-shader stage) — hệ thống tự fallback về CPU/VBO, nhưng khi
-> đó `forceField` không có tác dụng gì.
+> The `forceField` pointer is registered into an internal registry and re-packed EVERY FRAME
+> — it must point to long-lived memory (static/pool), never a local stack variable. See
+> `../../core/docs/PROGRESS.md` Item 5 if the COMPUTE path fails to compile on a device
+> (a common mobile-GPU driver limitation: SSBO unsupported at the vertex-shader stage) —
+> the system auto-falls back to CPU/VBO, but then `forceField` has no effect.
 
-**Ví dụ spawn mưa:**
+**Rain-spawn example:**
 ```c
 GpuParticleConfig rain = {
     .position   = (Vector3){ x, 200.0f, z },
@@ -90,38 +89,38 @@ GpuParticleSystem_Spawn(rain);
 ```
 
 ### `GpuParticleSystem_Update(float dt)`
-Update vật lý. COMPUTE path: dispatch compute shader. CPU/VBO path: CPU loop.
+Update physics. COMPUTE path: dispatch the compute shader. CPU/VBO path: CPU loop.
 
 ### `GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)`
-Vẽ billboard particles. Gọi trong 3D draw phase.
+Draw billboard particles. Call in the 3D draw phase.
 
 ### `GpuParticleSystem_Unload(void)`
-Giải phóng GPU buffer, shader. Gọi khi kết thúc.
+Free GPU buffers and shaders. Call at shutdown.
 
 ### `GpuParticleSystem_IsComputeActive(void) → bool`
-`true` nếu đang dùng GPU compute path.
+`true` if the GPU compute path is active.
 
 ### `GpuParticleSystem_ActiveCount(void) → int`
-Số particle đang sống.
+Number of live particles.
 
 ### `GpuParticleSystem_DrawDebug(int x, int y)`
-Hiển thị debug overlay (path, GL version, particle count).
+Show a debug overlay (path, GL version, particle count).
 
 ### `GpuParticleSystem_SetVectorFieldTexture(int slot, Texture2D tex)`
-Gán texture "vector field" vào slot (`0` hoặc `1`, xem `GPU_VECTOR_FIELD_SLOTS`)
-để particle dùng `ForceLayer.type = FORCE_VECTOR_TEXTURE` (xem `../../core/docs/API.md`
-§5) sample velocity từ đó thay vì công thức procedural. CHỈ có hiệu lực ở
-COMPUTE path. Texture format: kênh RG = hướng flow XZ remap `[-1,1] -> [0,1]`.
+Bind a "vector field" texture into a slot (`0` or `1`, see `GPU_VECTOR_FIELD_SLOTS`) so
+particles using `ForceLayer.type = FORCE_VECTOR_TEXTURE` (see `../../core/docs/API.md` §5)
+sample velocity from it instead of a procedural formula. ONLY effective on the COMPUTE
+path. Texture format: the RG channels = flow direction XZ remapped `[-1,1] -> [0,1]`.
 
 ```c
 Texture2D smokeFlow = LoadTexture("assets/flow/smoke_wall_hug.png");
 GpuParticleSystem_SetVectorFieldTexture(0, smokeFlow);
 
-static ForceField s_smokeField; // static — sống cùng đời particle
+static ForceField s_smokeField; // static — lives as long as the particles
 ForceField_Clear(&s_smokeField);
 ForceField_AddLayer(&s_smokeField, (ForceLayer){
     .type      = FORCE_VECTOR_TEXTURE,
-    .origin    = (Vector3){600.0f, 0.0f, 440.0f}, // box center (y bỏ qua)
+    .origin    = (Vector3){600.0f, 0.0f, 440.0f}, // box center (y ignored)
     .direction = (Vector3){400.0f, 0.0f, 400.0f}, // box half-extent (xz)
     .strength  = 120.0f,
     .noiseScale = 0.0f, // slot 0
@@ -129,75 +128,74 @@ ForceField_AddLayer(&s_smokeField, (ForceLayer){
 ```
 
 > [!NOTE]
-> Texture không được sở hữu bởi module này — caller tự `UnloadTexture` khi
-> không cần nữa (sau khi clear slot bằng `tex.id == 0` hoặc sau khi mọi
-> `ForceField` dùng slot đó ngừng hoạt động). Chưa được xác nhận trên GPU
-> thật — macOS giới hạn GL 4.1 nên luôn fallback CPU/VBO, không bao giờ chạy
-> qua nhánh COMPUTE path này trên máy dev. Cần kiểm chứng trên thiết bị
-> Android/GL4.3+ trước khi coi là hoạt động ổn định.
+> The texture is not owned by this module — the caller must `UnloadTexture` it when no
+> longer needed (after clearing the slot with `tex.id == 0`, or after every `ForceField`
+> using that slot stops). Not yet confirmed on real hardware — macOS caps at GL 4.1 so it
+> always falls back to CPU/VBO and never exercises this COMPUTE path on the dev machine.
+> Verify on an Android / GL 4.3+ device before treating it as stable.
 
 ---
 
-## 4. Giới hạn
+## 4. Limits
 
 ```c
 #define MAX_GPU_PARTICLES 8192  // Ring-buffer size
-#define GPU_VECTOR_FIELD_SLOTS 2  // Số vector field texture đồng thời
+#define GPU_VECTOR_FIELD_SLOTS 2  // Concurrent vector-field textures
 ```
 
-Mỗi particle chiếm 80 bytes trong SSBO. Pool fixed-size, không malloc.
+Each particle occupies 80 bytes in the SSBO. Fixed-size pool, no malloc.
 
 ---
 
 ## 5. Shader files
 
-Tất cả shader nằm trong `compute/shaders/`:
+All shaders live in `compute/shaders/`:
 
-| File | Dùng cho | Mô tả |
+| File | Used by | Description |
 |---|---|---|
 | `gpu_particles.comp` | COMPUTE path | Physics update: lifetime, drag, integrate |
-| `gpu_particles_ssbo.vs` | COMPUTE path | Vertex: billboard từ SSBO + gl_VertexID |
-| `gpu_particles.fs` | Cả hai path | Fragment: texture * color interpolate |
-| `gpu_particles_vbo.vs` | CPU/VBO path | Vertex: nhận VBO đã được build trên CPU |
+| `gpu_particles_ssbo.vs` | COMPUTE path | Vertex: billboard from SSBO + gl_VertexID |
+| `gpu_particles.fs` | Both paths | Fragment: texture * color interpolate |
+| `gpu_particles_vbo.vs` | CPU/VBO path | Vertex: consumes the VBO built on the CPU |
 
 ---
 
-## 6. Android / GLES Rules
+## 6. Android / GLES rules
 
 ### Compute shader (`.comp`)
-- Source giữ `#version 310 es` (GLES 3.1)
-- `CompileComputeShader()` runtime-patch → `#version 430 core` trên desktop
-- Build script nhận diện `layout(local_size_x` → target ES 3.1 (không cần thêm gì)
+- Source keeps `#version 310 es` (GLES 3.1)
+- `CompileComputeShader()` runtime-patches → `#version 430 core` on desktop
+- The build script detects `layout(local_size_x` → targets ES 3.1 (nothing else needed)
 
 ### SSBO vertex shader (`_ssbo.vs`)
-- Trên desktop: `#version 430 core`, load qua `ResourceManager_LoadShader`
-- Trên Android: build script chuyển `#version 430 core` → `#version 310 es` (nhận diện `layout(std430`)
-- `ShaderPreprocessor` bỏ qua `#version 310 es` (chỉ xử lý `#version 330`) → GLES 3.1 nhận trực tiếp
+- On desktop: `#version 430 core`, loaded via `ResourceManager_LoadShader`
+- On Android: the build script converts `#version 430 core` → `#version 310 es` (detects `layout(std430`)
+- `ShaderPreprocessor` skips `#version 310 es` (only rewrites `#version 330`) → GLES 3.1 takes it directly
 
 ### CPU/VBO shader (`_vbo.vs`, `.fs`)
 - Desktop: `#version 330 core`
-- Android: build script chuyển → `#version 100` (GLES 1.00 / ES 2.0)
-- Không có tính năng SSBO → không cần GLES 3.1
+- Android: the build script converts → `#version 100` (GLES 1.00 / ES 2.0)
+- No SSBO features → GLES 3.1 not required
 
-### Precision rule (GLES 3.x strict)
-Uniform xuất hiện ở cả VS lẫn FS phải cùng precision. Shader compute cần:
+### Precision rule (strict GLES 3.x)
+A uniform appearing in both VS and FS must use the same precision. The compute shader needs:
 ```glsl
 precision highp float;
 precision highp int;
-precision highp sampler2D;  // bắt buộc nếu compute shader có uniform sampler2D
-                             // (vd uVectorField0/1) — sampler không có default
-                             // precision trong GLES như float/int.
+precision highp sampler2D;  // required if the compute shader has a sampler2D uniform
+                            // (e.g. uVectorField0/1) — samplers have no default
+                            // precision in GLES, unlike float/int.
 ```
 
 ---
 
-## 7. Mở rộng (Rain, Fog, v.v.)
+## 7. Extending (Rain, Fog, etc.)
 
-Để environment tạo mưa:
+For environment to make rain:
 ```c
 #include "compute/gpu_particle_system.h"
 
-// Trong Environment_Update(dt):
+// In Environment_Update(dt):
 for (int i = 0; i < rain_spawn_count; i++) {
     GpuParticleSystem_Spawn((GpuParticleConfig){
         .position = randomRainPosition(),
@@ -211,4 +209,4 @@ for (int i = 0; i < rain_spawn_count; i++) {
 }
 ```
 
-Không cần Init/Update/Draw ở environment — đã được main.c quản lý tập trung.
+No Init/Update/Draw needed in environment — main.c manages it centrally.

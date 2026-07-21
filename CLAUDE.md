@@ -1,6 +1,6 @@
 # Wuxing Skills — Root Agent Guide
 
-C/Raylib 6.0 / OpenGL 3.3 game project. Isometric Night-time Arena. 6 elements: Water, Wood, Fire, Earth, Metal, Taiji.
+C / Raylib 6.0 game project. Rendering backend: **Vulkan 1.1 via `rlvk` (priority)**, with OpenGL 3.3 Core / GLES 3.x as fallback paths (see `third_party/vulkan/docs/HANDOFF.md`). Isometric Night-time Arena. 6 elements: Water, Wood, Fire, Earth, Metal, Taiji.
 
 ## Reference docs
 - `DOC_ARCHITECTURE.md` — **How docs are organized** (3 archetypes: API/LANDMINES/PROGRESS, per-module placement, cross-cutting landmine promotion). Read before adding/moving any doc.
@@ -21,9 +21,31 @@ C/Raylib 6.0 / OpenGL 3.3 game project. Isometric Night-time Arena. 6 elements: 
 - `ui/docs/API.md` — HUD + auto-targeting (đối-đòn priority)
 - `formations/docs/API.md` — Trận Pháp engine/data split + zone resonance
 - `net/docs/API.md` — PlayerIntent/snapshot wire formats (transport gated)
+- `third_party/vulkan/docs/HANDOFF.md` — rlvk Vulkan 1.1 backend (architecture + §7 debugging case studies); `docs/LANDMINES.md` = trap index, `docs/PROGRESS.md` = status
 - `core/docs/VFX_ARCHITECTURE.md` — Overall VFX architecture
 - `WUXING_ART_DIRECTION.md` — Art style and aesthetic laws
 - `nguhanhtyvo_kehoach.md` — Game design doc (source of truth for gameplay intent)
+
+## Agent working protocol
+
+### What to read first (in order — stop once you have enough)
+1. **This root `CLAUDE.md`** — project map, ownership, shared rules.
+2. **Your module's `CLAUDE.md`** (`<module>/CLAUDE.md`) — your scope, what you own, what you may read.
+3. **Your module's `docs/API.md`** — the signature index (*what exists*). For *how to use* it: `core/docs/API_GUIDE.md`, or the module's own usage notes. Struct fields / full behavior live in the `.h`.
+4. **`ENGINE_LANDMINES.md`** — **before touching GL/shaders, rendering, or the Vulkan/Android build.** Cross-cutting traps every module can repeat.
+5. **Your module's `docs/LANDMINES.md`** — module-local traps.
+6. **`AGENT_CODE_STANDARD.md`** — **before writing any code** (C99, memory, meter-scale, shaders, backend rules).
+
+Then **grep the actual `.h` for ground truth** — docs can lag; source wins (`DOC_MAINTENANCE.md` §5). Read with intent: don't read a whole file when a grep + one section will do; only read another module's `.h` when you need its signature (see "Token-efficiency rules" below).
+
+### Where to write
+- **Work in progress / status / backlog / session notes** → your module's **`docs/PROGRESS.md`**. Project-wide milestones → **`ROADMAP.md`**.
+- **A reusable lesson learned from a bug** → your module's **`docs/LANDMINES.md`**, as **Symptom → Cause → Rule**. If another module could hit it, **promote to `ENGINE_LANDMINES.md`** (leave a one-line pointer behind).
+- **API changed** (signature/struct/enum) → edit the `.h`. `core/docs/API.md` is **generated** (`scripts/gen_core_api_index.sh`) — never hand-edit it; usage prose goes in `core/docs/API_GUIDE.md`. Other modules' `API.md` are hand-written — edit the specific section, never rewrite the file.
+- **A new code rule / gotcha for all agents** → `AGENT_CODE_STANDARD.md` (same turn as the code).
+- *How to WRITE a doc* (fact vs inferred, patch log, edit scope): `DOC_MAINTENANCE.md`. *How docs are ORGANIZED* (the 3 archetypes, placement): `DOC_ARCHITECTURE.md`.
+
+Never edit another module's files — ask that module's agent. Never read/list/touch `build/`, `_deps/`, `android.wuxing_skills/`.
 
 ## Module Agents — Ownership split
 
@@ -45,7 +67,7 @@ C/Raylib 6.0 / OpenGL 3.3 game project. Isometric Night-time Arena. 6 elements: 
 | **Character Agent** | `character/` | `core/resource_manager.h` — model/animation rendering, counterpart to `entities/`'s pure logic, see `character/CLAUDE.md` |
 | **Game Agent** | `game/` | `entities/entities.h`, `environment/environment_system.h`, `core/map_manager.h`, `sandbox/sandbox_core.h`, `character/character_model.h`, `control/control.h`, `boss/boss_system.h`, `game/docs/API.md` — match state machine + zone rule table, see `game/CLAUDE.md` |
 | **Sandbox Agent** | `sandbox/` | `.h` headers of ALL modules (dev/test integration harness, not shipped gameplay) — see `sandbox/CLAUDE.md` |
-| **Renderer Agent (rlvk)** | `third_party/vulkan/` (umbrella + `rlvk/*.inl` + tests), `scripts/*rlvk*` | `RLVK_HANDOFF.md` — Vulkan 1.1 backend; 3-tier test ladder (compile/headless/visual), never debugs via the game first — see `third_party/vulkan/CLAUDE.md` |
+| **Renderer Agent (rlvk)** | `third_party/vulkan/` (umbrella + `rlvk/*.inl` + tests), `scripts/*rlvk*` | `third_party/vulkan/docs/HANDOFF.md` — Vulkan 1.1 backend; 3-tier test ladder (compile/headless/visual), never debugs via the game first — see `third_party/vulkan/CLAUDE.md` |
 
 ## Directories FORBIDDEN to every agent
 ```

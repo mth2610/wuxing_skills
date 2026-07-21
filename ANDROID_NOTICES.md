@@ -53,7 +53,7 @@ effect" was a real bug, not a false impression. `clean` (or manually clearing th
 required in cases Make can't auto-detect:
 - Toggling `USE_VULKAN`: `compile_raylib_android` and `compile_shaderc_android` only build if the
   target archive **doesn't already exist** — flipping the flag doesn't invalidate the old cache
-  (see §D2 and `RLVK_HANDOFF.md` §7.18).
+  (see §D2 and `third_party/vulkan/docs/HANDOFF.md` §7.18).
 - Editing `Makefile.Android` itself (new CFLAGS/LDLIBS) — old object files don't know the compile
   flags changed.
 

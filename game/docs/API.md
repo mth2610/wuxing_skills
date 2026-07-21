@@ -1,7 +1,7 @@
 # GAME MODULE API SPECIFICATION
 
 > Module: `game/` (`game_screen.h/.c`, `game_rules.h/.c`) —
-> MODULES_ROADMAP.md Module 7 (Game Mode) grown out of the earlier minimal
+> ../../ROADMAP.md Module 7 (Game Mode) grown out of the earlier minimal
 > game screen. Owner agent: **Game Agent** (see `game/CLAUDE.md`).
 
 ## 1. Scope & Design

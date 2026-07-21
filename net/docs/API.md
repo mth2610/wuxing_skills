@@ -1,6 +1,6 @@
 # NET MODULE API SPECIFICATION
 
-> Module: `net/` (`net.h` / `net.c`) — MODULES_ROADMAP.md Module 11
+> Module: `net/` (`net.h` / `net.c`) — ../../ROADMAP.md Module 11
 > (Networking, peer-hosted). Owner agent: **Net Agent** (see `net/CLAUDE.md`).
 
 ## 1. Scope & Design

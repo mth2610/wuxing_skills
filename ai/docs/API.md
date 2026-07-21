@@ -1,6 +1,6 @@
 # AI MODULE API SPECIFICATION
 
-> Module: `ai/` (`ai.h` / `ai.c`) — MODULES_ROADMAP.md Module 8 (Minion
+> Module: `ai/` (`ai.h` / `ai.c`) — ../../ROADMAP.md Module 8 (Minion
 > Pool + AI). Owner agent: **AI Agent** (see `ai/CLAUDE.md`).
 
 ## 1. Scope & Design

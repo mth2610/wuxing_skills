@@ -43,7 +43,7 @@ GfxQuality GfxQuality_Default(void) {
 ```
 `main.c` calls `GfxQuality_Set(GfxQuality_Default())` once at startup, after window init, before the
 first frame. Add `core/gfx_quality.c` to the build (CMake + `Makefile.Android` `PROJECT_SOURCE_FILES`
-— the Android list is separate, don't forget it, see `RLVK_HANDOFF.md` §7.24).
+— the Android list is separate, don't forget it, see `../../third_party/vulkan/docs/HANDOFF.md` §7.24).
 
 **Acceptance:** builds on desktop + Android; `GfxQuality_Get()` returns the platform default.
 

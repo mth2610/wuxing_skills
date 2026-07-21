@@ -34,7 +34,7 @@ Manages the entire **Core Engine** and **Visual Composition** modules of the Wux
 6. **VFX Creation & Testing**: Create, optimize, and maintain visual effects. Register all new composition functions in the test harness by updating `scripts/vfx_test_manifest.json` (providing explicit `overrides` for custom call arguments) and running `python3 scripts/sync_vfx_test.py` to synchronize the sandbox category tabs.
 
 ## Code rules (from core/docs/API.md)
-- Strict C99, Raylib 5.5, OpenGL 3.3
+- Strict C99, Raylib 6.0. Backend: Vulkan 1.1 via `rlvk` (priority); OpenGL 3.3 / GLES fallback
 - Guard the PI macro: `#ifndef PI #define PI 3.1415926535f #endif`
 - No `malloc`/`calloc`/`realloc`/`free`
 - Use `ResourceManager_LoadShader()` — never call `UnloadShader`/`UnloadTexture` in skill code

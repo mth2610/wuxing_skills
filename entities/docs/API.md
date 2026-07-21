@@ -2,7 +2,7 @@
 
 > Gameplay/combat foundation: Agent Pool, vertical physics (jump/dash/
 > ring-out), damage entry point, teams, mana + Thiền Định, Vô Hệ loadout,
-> Thái Cực state (MODULES_ROADMAP.md Module 1 "Entities Combat v2" +
+> Thái Cực state (../../ROADMAP.md Module 1 "Entities Combat v2" +
 > Module 6 state, both landed). Clash Matrix lives in `combat/`
 > (combat/docs/API.md); Boss logic in `boss/` (boss/docs/API.md); Formation/Minion
 > pools remain out of scope here.

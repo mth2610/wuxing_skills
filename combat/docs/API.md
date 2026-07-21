@@ -1,6 +1,6 @@
 # COMBAT MODULE API SPECIFICATION
 
-> Module: `combat/` (`combat.h` / `combat.c`) — MODULES_ROADMAP.md Module 3.
+> Module: `combat/` (`combat.h` / `combat.c`) — ../../ROADMAP.md Module 3.
 > Đấu Pháp: immediate-mode projectile collider registry + 5×5 Clash Matrix.
 > Owner agent: **Combat Agent** (see `combat/CLAUDE.md`).
 

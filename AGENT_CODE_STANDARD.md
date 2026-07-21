@@ -6,19 +6,21 @@
 
 ## 0. Before writing a skill
 - Read relevant `core/docs/API.md` section. Grep `core/*.h` to confirm function still exists (docs may lag).
-- Folder: `skills/[element]/[skill_name]_skill/` — include path must match exactly incl. `_skill` suffix.
 - Never edit `core/` files directly (Core Agent owns it) — read `.h` only. If you ARE Core Agent, go to §10.
+- **Auto-registered on build** by `scripts/generate_registry.py` — no manual registration step. Folder `skills/[element]/[skill_name]_skill/` holds `[skill]_skill.h` (lifecycle protos), `[skill]_skill.c` (logic + rlgl render), optional `.vs`/`.fs`/`.png` (auto-copied). Include your own header with the FULL path matching the folder exactly, incl. the `_skill` suffix (e.g. `#include "skills/wood/jade_burst_skill/jade_burst_skill.h"`).
 
 ## 1. C99 / Compile
-- `.c` skill files: must `#include <stddef.h> <stdlib.h> <stdio.h>`.
-- Never bare `#define PI` — always `#ifndef PI / #define PI ... / #endif`.
-- No `malloc/calloc/realloc/free` anywhere in skill code — static arrays + flags only.
+- Strict **C99**; Raylib 6.0. Rendering backend: **Vulkan 1.1 via `rlvk` is the priority** (see `third_party/vulkan/docs/HANDOFF.md` / `third_party/vulkan/`); OpenGL 3.3 Core (desktop) and GLES 3.x (Android) are the fallback/legacy paths. Skill/draw code stays backend-agnostic — use `rlgl`/raylib calls, never raw GL or raw Vulkan.
+- Relative include paths from repo root: `#include "core/particle_system.h"`.
+- `.c` skill files: must `#include <stddef.h> <stdlib.h> <stdio.h>` (for `NULL`/`snprintf` — not implicitly included).
+- Never bare `#define PI` — always `#ifndef PI / #define PI ... / #endif` (bare redef = `-Wmacro-redefined`, a hard error in strict builds).
+- No `malloc/calloc/realloc/free` anywhere in skill code — static arrays + flags only (stack vars/structs OK).
 - `onDeathEmit`/`onLiveEmit` configs must be `static`.
 
-## 2. Scale (do not use "normal physics" numbers)
-- Mesh/tube radius: 10-20f. Impact/light radius: 50-100f.
-- Gravity/force: 300-700f (never 9.8 or 1.0).
-- Particle speed: 100-300f.
+## 2. Scale — meter-scale (1 unit = 1 m; NEVER the old ×100 numbers)
+- Mesh/tube radius: 0.10–0.20f. Impact-burst/light radius: 0.5–1.5f.
+- Gravity/force: 3.0–9.8f (judge against real gravity 9.81; never the old 300–700f).
+- Particle speed: 1.0–3.0f (m/s).
 
 ## 3. Color
 - No raw `Color{...}` literals — use `ELEMENT_COLOR_*` from `skill_manager.h`.

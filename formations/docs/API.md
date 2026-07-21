@@ -1,6 +1,6 @@
 # FORMATIONS MODULE API SPECIFICATION
 
-> Module: `formations/` — MODULES_ROADMAP.md Module 10 (Trận Pháp).
+> Module: `formations/` — ../../ROADMAP.md Module 10 (Trận Pháp).
 > Owner agent: **Formations Agent** (see `formations/CLAUDE.md`).
 
 ## 1. Scope & Design — engine/data split (same shape as boss/)

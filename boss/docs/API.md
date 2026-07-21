@@ -1,6 +1,6 @@
 # BOSS MODULE API SPECIFICATION
 
-> Module: `boss/` — MODULES_ROADMAP.md Module 5. Boss Đại Tinh Linh.
+> Module: `boss/` — ../../ROADMAP.md Module 5. Boss Đại Tinh Linh.
 > Owner agent: **Boss Agent** (see `boss/CLAUDE.md`).
 
 ## 1. Scope & Design — engine/data split

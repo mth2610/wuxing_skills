@@ -24,6 +24,11 @@
 - **Cause:** the shared functions it calls (`CastSkill` offsets, `SpawnImpactEffect` presets, `ProcRay_*Config` thickness, `UpdateSkillManager` enemyRadius) had un-rescaled internals.
 - **Rule:** when converting a skill, trace *into* every shared function it calls and check that function's own internals are meter-scaled — don't trust a normal-looking signature. Full checklist in `PROGRESS.md` (Item 34).
 
+### Lightning zigzag needs precomputed geometric waypoints, not physics/noise
+- **Symptom:** an electric bolt drawn via a physics/noise trail renders as a straight line or a smooth "silk ribbon" sag, never a sharp zigzag.
+- **Cause:** `TRAIL_TYPE_PROJECTILE` homing steer damps deviation back to straight every frame; `TRAIL_TYPE_WISP`'s `ConstrainRibbonSegment` distance-solver low-pass-filters per-node jaggedness into a flowing curve. Both are built to stay smooth by design.
+- **Rule:** build a precomputed jagged polyline (perpendicular-offset kinks, no `forceField`) and drive a `TRAIL_TYPE_FOLLOWER` along it — see `SpawnLightningTrail`/`GenerateLightningWaypoints`. Don't try to make physics produce the kink.
+
 ### Check `IsKeyPressed` collisions before binding a test key
 - **Symptom:** a debug toggle also cycles the map; effect looks position-dependent when it isn't.
 - **Cause:** `KEY_K` is already globally bound in `main.c` (cycle maps); raylib gives no key exclusive ownership, so both handlers fire.

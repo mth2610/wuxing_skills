@@ -3,12 +3,28 @@
 ## Role
 Owns the rlvk Vulkan backend: a drop-in implementation of raylib's rlgl API (same `rl*`
 functions, Vulkan 1.1-core rasterizer). Vision: standalone renderer, not wuxing-only.
-Full history/architecture: `RLVK_HANDOFF.md` (repo root) — read it before deep work.
+
+## Docs (in `docs/`)
+- **`docs/HANDOFF.md`** — the deep reference: vision, architecture, conversion table, key files, verification ladder, the full **§7 case-study debugging log**, §8 remaining, §9 architecture invariants. Read it before deep work.
+- **`docs/LANDMINES.md`** — scannable trap index + the 7 debugging-methodology rules; **read before any bug hunt** (points into HANDOFF §7 for full chains).
+- **`docs/PROGRESS.md`** — status / backlog / known gaps.
+
+## Working protocol
+Follows the root `CLAUDE.md` "Agent working protocol"; the rlvk specifics:
+
+**Read first:** root `CLAUDE.md` → this file → `docs/LANDMINES.md` (**before any bug hunt** — your bug likely rhymes with a §7 case study) → `docs/HANDOFF.md` for the full chain/architecture → then grep the implicated `rlvk/*.inl` fragment. Reproduce empirically before reading broadly (methodology rule 1).
+
+**Where to write:**
+- **A bug you just root-caused** → add a case study to `docs/HANDOFF.md` §7 (symptom → what it looked like → root cause → fix → guard) **and** a one-line row in `docs/LANDMINES.md` pointing to it. Every draw-path fix also gets a `run_rlvk_visual_test.sh` scenario reproducing it first.
+- **A driver quirk** → a `RLVK.Caps.*` flag detected at init + a repro scenario, never an inline hack (methodology rule 6); summarize it in this file's "Known driver quirks" and in `docs/LANDMINES.md`.
+- **Status / remaining work / known gaps / perf notes** → `docs/PROGRESS.md`.
+- **A lesson another (non-rlvk) module could hit** → promote to root `ENGINE_LANDMINES.md` (leave a pointer behind).
+- Remove env-gated experiment switches once the answer is known — permanent switches rot (rule 3).
 
 ## Scope
 - **Read/write:** `third_party/vulkan/` (umbrella `rlvk.h`, `rlvk/*.inl`, `shaders/`,
   `tests/`, `include/`), `scripts/*rlvk*`
-- **Read (reference):** `RLVK_HANDOFF.md`, raylib headers in the test caches
+- **Read (reference):** `docs/HANDOFF.md`, raylib headers in the test caches
 - **Never:** `build/`, `_deps/`, `android.wuxing_skills/`. Game modules (`core/`, `skills/`,
   `compute/`, ...) only via targeted grep to construct a repro — ask the owning agent instead
   of reading their `.c` files.
@@ -55,6 +71,7 @@ significant, statics span them. Never include a fragment directly, never reorder
 post-rebase `rlvk_rebased_vs.spv`, for spirv-dis).
 
 ## Known driver quirks (do not re-litigate; each has a Cap or a fixed workaround)
+> Quick list below; full case-study index + methodology in `docs/LANDMINES.md`.
 - `Caps.noSampledDepth` (MoltenVK/Intel): SAMPLED usage on a depth image silently kills
   depth test/write on that attachment. FBO depth drops SAMPLED under the quirk; sampling of
   `renderTex.depth` is served by an R32F color shadow-copy twin filled at scope close

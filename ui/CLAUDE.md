@@ -7,7 +7,7 @@
 Read root `ENGINE_LANDMINES.md` before touching GL/shaders.
 
 ## Role
-Owns `ui/` — HUD + auto-targeting (MODULES_ROADMAP.md Module 9). Minimal by
+Owns `ui/` — HUD + auto-targeting (ROADMAP.md Module 9). Minimal by
 philosophy (No Tutorial): skill slot chips with cooldown shading + an
 auto-aim reticle. Auto-target priority: enemy projectile in flight (đối-đòn,
 from combat/'s snapshot query) → enemy boss → none (caller keeps mouse aim).

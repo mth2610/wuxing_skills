@@ -1,6 +1,6 @@
 # UI MODULE API SPECIFICATION
 
-> Module: `ui/` (`ui.h` / `ui.c`) — MODULES_ROADMAP.md Module 9 (HUD +
+> Module: `ui/` (`ui.h` / `ui.c`) — ../../ROADMAP.md Module 9 (HUD +
 > Auto-Targeting). Owner agent: **UI Agent** (see `ui/CLAUDE.md`).
 
 ## 1. Scope & Design

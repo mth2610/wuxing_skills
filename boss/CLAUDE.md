@@ -7,7 +7,7 @@
 Read root `ENGINE_LANDMINES.md` before touching GL/shaders.
 
 ## Role
-Owns `boss/` — Boss Đại Tinh Linh (MODULES_ROADMAP.md Module 5). Strict
+Owns `boss/` — Boss Đại Tinh Linh (../ROADMAP.md Module 5). Strict
 engine/data split:
 - `boss_system.h/.c` — ENGINE, written once: agent-pool spawn (ARCH_BOSS),
   %HP phase machine, biến hệ via `Entity_SetElement`, AI target + cast loop
