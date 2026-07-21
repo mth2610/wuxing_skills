@@ -43,6 +43,7 @@ void rlPushMatrix(void)
     {
         RLVK.State.transformRequired = true;
         RLVK.State.currentMatrix = &RLVK.State.transform;
+        RLVK.State.mvStackDepth++;
     }
 
     RLVK.State.stack[RLVK.State.stackCounter] = *RLVK.State.currentMatrix;
@@ -59,10 +60,20 @@ void rlPopMatrix(void)
         Matrix mat = RLVK.State.stack[RLVK.State.stackCounter];
         *RLVK.State.currentMatrix = mat;
 
-        if (RLVK.State.stackCounter == 0 && RLVK.State.currentMatrixMode == RL_MODELVIEW)
+        // Reset the software-transform redirect when the last MODELVIEW push is popped. The shared
+        // stackCounter is WRONG here: BeginMode3D leaves a PROJECTION push outstanding, so a
+        // balanced MODELVIEW push/pop (e.g. DrawCube) would never see stackCounter==0 and would leak
+        // transformRequired=true + currentMatrix=&transform into the next draw -> a later custom-UBO
+        // batch draw (ground shadow receiver) mis-delivers its uniforms. Track MODELVIEW depth on its
+        // own counter instead. (§7.26)
+        if (RLVK.State.currentMatrixMode == RL_MODELVIEW && RLVK.State.mvStackDepth > 0)
         {
-            RLVK.State.currentMatrix = &RLVK.State.modelview;
-            RLVK.State.transformRequired = false;
+            RLVK.State.mvStackDepth--;
+            if (RLVK.State.mvStackDepth == 0)
+            {
+                RLVK.State.currentMatrix = &RLVK.State.modelview;
+                RLVK.State.transformRequired = false;
+            }
         }
     }
     else

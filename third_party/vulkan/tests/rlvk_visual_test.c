@@ -831,15 +831,15 @@ static const char *sc_shadow_pipeline(void)
     int df = sc_pipeline_run(1);   // game's current Y-flip
     int dn = sc_pipeline_run(0);   // no flip
     printf("  [shadow_pipeline] darkened: flip(game)=%d  noflip=%d\n", df, dn);
-    // KNOWN-OPEN rlvk bug (2026-07-21): with a prior 3D draw in the main render pass, the
-    // immediate-mode ground draw's per-draw texture push (rlvkPushTexture -> CmdPushDescriptorSetKHR
-    // binding 0) does not take effect on the MoltenVK push-descriptor path — the shader samples the
-    // default white texture (reads 1.0 = "no occluder") even though the RT is correctly bound (tex
-    // id in the flush log), populated (readback shows the occluder), SHADER_READ_ONLY, and the UBO
-    // (u_lightVP/u_on) pushed just before it DOES arrive. Remove the two pollution DrawCubes above
-    // and the shadow lands (proving capture/copy/convention/binding are all correct). This scenario
-    // FAILS until the push-descriptor set-0 multi-push bug is fixed.
-    if (df < 150 && dn < 150)  return "KNOWN rlvk bug: prior 3D draw drops the ground's texture push (MoltenVK set-0 multi-push)";
+    // Guards the §7.26 fix: DrawCube uses rlPushMatrix/rlPopMatrix (MODELVIEW). Because BeginMode3D
+    // leaves a PROJECTION push outstanding, the old rlPopMatrix reset (gated on the SHARED
+    // stackCounter==0) never fired for that balanced MODELVIEW push/pop, leaking
+    // transformRequired=true + currentMatrix=&transform into the following custom-UBO ground draw
+    // and corrupting its uniform delivery (u_lightVP) -> shadow projected off into the far/clear
+    // region, sampling 1.0 = "no occluder". It looked like a dropped texture push (it is NOT: the
+    // copyRT is bound, populated, SHADER_READ_ONLY). Fixed by tracking MODELVIEW push depth on its
+    // own counter (rlvk_matrix.inl). Removing the two DrawCubes also makes it pass (no push/pop).
+    if (df < 150 && dn < 150)  return "REGRESSION §7.26: rlPushMatrix/rlPopMatrix leaks transformRequired into the ground draw";
     if (df >= 150) return NULL;
     return "game's Y-FLIP copy misses; NO-FLIP lands the shadow -> remove the -height in env_shadow copy";
 }

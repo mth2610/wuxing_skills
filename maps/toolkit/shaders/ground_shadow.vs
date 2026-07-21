@@ -17,8 +17,11 @@ out vec3 fragWorldPos;
 
 void main() {
     fragColor = vertexColor;
-    // The ground draws this wraps never rlPushMatrix/rlTranslatef — vertices
-    // are already authored in world space (arena center ~(6,0,4.4)).
+    // NOTE: `vertexPosition` is NOT world space in-game. main.c's MyBeginMode3D puts the view
+    // matrix into rlgl's `transform` (transformRequired), so immediate-mode coords are CPU-
+    // transformed to VIEW space before arriving here. The receiver keeps sampling with
+    // `u_lightVP * fragWorldPos`, and ground_shadow.c folds inverse(view) into `u_lightVP` so the
+    // product equals lightVP * worldPos (identity fold when transformRequired is off). See §7.26.
     fragWorldPos = vertexPosition;
     gl_Position = mvp * vec4(vertexPosition, 1.0);
 }

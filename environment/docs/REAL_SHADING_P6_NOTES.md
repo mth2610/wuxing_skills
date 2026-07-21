@@ -1,6 +1,42 @@
 # Real Shading P6 — Shadow Map Debugging Notes
 
-## SESSION 5 (2026-07-21) — FULLY ROOT-CAUSED: an rlvk MoltenVK push-descriptor bug (READ FIRST)
+## SESSION 6 (2026-07-22) — FIXED IN-GAME. Two bugs; the game one is a VIEW-SPACE mismatch (READ FIRST)
+
+The ground shadow now works. Session 5's "MoltenVK drops the second push to binding 0" theory is
+**wrong** and retired. Two distinct bugs were found:
+
+**Bug 1 — the actual in-game cause (the fix that makes the character's shadow appear):**
+`main.c`'s `MyBeginMode3D` `rlPushMatrix()`es the MODELVIEW and `rlMultMatrixf(view)`s into it, so
+the **view matrix lands in rlgl's `transform`** (`transformRequired=true`) for the whole main pass.
+Every immediate-mode `rlVertex3f` (the arena floor = the shadow receiver) is therefore CPU-
+transformed to **VIEW space** before the vertex shader. `ground_shadow.vs` set
+`fragWorldPos = vertexPosition` assuming **world** space, so `u_lightVP * fragWorldPos` projected the
+shadow into garbage → **no shadow ever appeared in-game**. The headless `shadow_proj`/`shadow_cast`
+passed only because they use raylib's `BeginMode3D`, which keeps the view in MODELVIEW
+(`transformRequired=false`, coords stay world-space).
+- **Fix**: `maps/toolkit/ground_shadow.c` `GroundShadow_Begin` folds `inverse(rlGetMatrixTransform())`
+  into the uploaded `u_lightVP` (`transform` = view in-game, identity otherwise → correct in both
+  paths). Verified headlessly (rlvk_visual_test, MyBeginMode3D-style camera → shadow lands).
+- **How it was found**: the human noted the game uses `DrawCoreCube` (absolute coords, **no**
+  `rlPushMatrix`), not raylib `DrawCube`. Reproducing the game's `MyBeginMode3D` camera in the
+  headless test made the shadow vanish; a `fwp`/`u_lightVP` probe showed the projection (not the
+  texture) was wrong; the trigger was the view-in-`transform` immediate-mode path.
+- **Character self-shadow (`surface_lit.fs`, mesh/`DrawModel`)** is unaffected — the mesh path
+  builds `fragWorldPos` from `matModel` (world space), no `transformRequired`.
+
+**Bug 2 — a real but game-irrelevant rlvk bug (found while chasing Bug 1):** raylib's `DrawCube`
+uses `rlPushMatrix/rlPopMatrix`; `rlvk`'s `rlPopMatrix` reset `transformRequired` only when the
+**shared** `stackCounter==0`, which never fires while `BeginMode3D`'s PROJECTION push is outstanding
+→ `transformRequired` leaked into the next custom-UBO draw. Fixed with a MODELVIEW-only depth counter
+(`rlvk_matrix.inl` + `rlvk_state.inl`, HANDOFF §7.26). The **game never hits this** (`DrawCoreCube`
+has no push/pop), but it's a correct fix and `shadow_pipeline` guards it.
+
+Everything below (Session 5 and earlier) is kept as the reasoning trail but is **superseded** where
+it conflicts with the above.
+
+---
+
+## SESSION 5 (2026-07-21) — FULLY ROOT-CAUSED: an rlvk MoltenVK push-descriptor bug (READ FIRST) [SUPERSEDED — see Session 6; the "second push dropped" conclusion was WRONG]
 
 The shadow algorithm is **100% correct** — proven by two passing headless rlvk scenarios
 (`shadow_proj`, `shadow_cast`) that reproduce the game's exact capture→copy→sample→`M*v` chain at

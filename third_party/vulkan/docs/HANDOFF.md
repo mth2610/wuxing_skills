@@ -378,6 +378,43 @@ bugs will rhyme with these. **Check this list before starting a new hunt.**
 - **Confirmed in-game (2026-07-17)**: arena glows fade softly into the background; the hard
   cut against scene geometry is gone.
 
+### 7.26 Real-shadow ground receiver blank after a prior 3D draw — an `rlPushMatrix` transform leak (NOT a descriptor bug)
+- **Symptom**: the P6 real ground shadow (immediate-mode receiver: custom-UBO shader, samples the
+  depth→R32F copy at `texture0`) rendered **no shadow** whenever any ordinary 3D geometry was drawn
+  earlier in the main pass. Alone in an empty pass it worked. Repro: `run_rlvk_visual_test.sh
+  shadow_pipeline` (two pollution `DrawCube`s → FAIL; delete them → PASS).
+- **What it looked like** (and the wrong theory it produced): the receiver sampled the **default
+  white texture** (1.0 ⇒ "no occluder"). Session-5 notes concluded *"MoltenVK drops the second
+  push-descriptor to binding 0 in a render pass."* **That diagnosis is wrong.** Proven wrong by
+  bisection: (a) the pushed descriptor is byte-identical with/without the prior draw — copyRT view,
+  `SHADER_READ_ONLY`, no substitution (probe in `rlvkPushTexture`); (b) the **pool-ring bound-set
+  path fails identically** (a completely different binding mechanism — so it isn't the push path);
+  (c) coalescing the whole set-0 into one push, reordering vs the pipeline bind, and an
+  ALL_COMMANDS barrier before the draw all fail. The texture binding was never the problem.
+- **The real bisection**: swapping the pollution draw type flipped the result. `DrawBillboard`
+  (any texture, even the default) → PASS; a hand-written textured `rlBegin(RL_TRIANGLES)` → PASS;
+  **`DrawCube` → FAIL**. Adding `rlPushMatrix()/rlTranslatef()/rlPopMatrix()` around the passing
+  manual draw made it FAIL. So the trigger is a **MODELVIEW push/pop in a prior draw** — exactly
+  what `DrawCube` does internally — not the texture, format, draw mode, or normals. A `fwp`/uniform
+  probe then showed the receiver's **`u_lightVP` projection** was off (shadow landing in the clear
+  region), i.e. corrupted uniform state, not a wrong texture.
+- **Root cause**: `rlPopMatrix` reset `transformRequired`/`currentMatrix` gated on the **shared**
+  `stackCounter == 0`. `BeginMode3D` leaves a PROJECTION `rlPushMatrix` outstanding, so a balanced
+  MODELVIEW push/pop inside it never brings `stackCounter` to 0 → the reset is skipped →
+  `transformRequired` stays `true` and `currentMatrix` stays `&State.transform` after the draw. The
+  next custom-UBO batch flush then mis-delivered its uniforms (`u_lightVP`). (rlgl leaves
+  `transformRequired` set too, but its uniform path tolerates it; rlvk's does not.)
+- **Fix** (`rlvk_matrix.inl` + `rlvk_state.inl`): track MODELVIEW push depth on its own counter
+  `State.mvStackDepth` (inc in `rlPushMatrix` when MODELVIEW, dec in `rlPopMatrix` when MODELVIEW);
+  reset `transformRequired`/`currentMatrix` when **it** hits 0, independent of the shared
+  `stackCounter`. Two-line-class change, no descriptor/MoltenVK path touched.
+- **Guard**: `shadow_pipeline` scenario (the two `DrawCube`s are the trigger). `shadow_proj` +
+  `shadow_cast` remain the algorithm guards. Full suite 17/17, `VALIDATE=1` clean.
+- **Method note**: four sessions chased this as a texture/descriptor/MoltenVK bug. It was a CPU
+  matrix-state leak. The lesson: when *two independent binding mechanisms* fail identically, stop
+  blaming the binding — probe what the shader actually *computes* (here `u_lightVP`), and bisect the
+  **prior** draw's side effects, not just the failing draw.
+
 ## 8. What remains
 
 ### 8.1 Confirm in-game — **DONE (2026-07-17, user-confirmed)**

@@ -258,6 +258,7 @@ typedef struct rlvkData {
         int             blendMode;              // Current raylib blend mode
         int             cullMode;               // Face culling mode (front/back)
         int             stackCounter;           // Matrix stack depth
+        int             mvStackDepth;           // MODELVIEW-only push depth (transformRequired reset, §7.26)
         int             vertexCounter;          // Vertices written into the current batch buffer
         int             currentMatrixMode;      // Current matrix mode (modelview/projection)
         u32             currentTextureSlot;     // Batch draw texture (rlSetTexture)

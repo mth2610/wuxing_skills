@@ -64,7 +64,7 @@ float ShadowFactor(vec3 worldPos) {
 //     map (sampling the default white) → binding failed.
 // Set to 0 to restore the normal darken. Convention is M*v, TEST-PROVEN
 // (scripts/run_rlvk_visual_test.sh shadow_proj / shadow_cast).
-#define GROUND_SHADOW_DEBUG_PROJ 1
+#define GROUND_SHADOW_DEBUG_PROJ 0
 
 void main() {
 #if GROUND_SHADOW_DEBUG_PROJ

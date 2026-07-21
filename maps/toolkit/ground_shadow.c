@@ -2,7 +2,8 @@
 #include "core/resource_manager.h"
 #include "environment/env_shadow.h"
 #include "raylib.h"
-#include "rlgl.h" // rlSetTexture
+#include "raymath.h" // MatrixInvert/MatrixMultiply
+#include "rlgl.h"    // rlSetTexture, rlGetMatrixTransform
 #include <stddef.h>
 
 static Shader s_shader;
@@ -36,8 +37,18 @@ void GroundShadow_Begin(void) {
     float enabled = EnvShadow_IsEnabled() ? 1.0f : 0.0f;
     SetShaderValue(s_shader, s_locShadowEnabled, &enabled, SHADER_UNIFORM_FLOAT);
     if (EnvShadow_IsEnabled()) {
+        // The floor draws this wraps are IMMEDIATE-MODE inside main.c's MyBeginMode3D, which
+        // rlPushMatrix()es the MODELVIEW and rlMultMatrixf(view)s into it -> the view matrix lands in
+        // rlgl's `transform` (transformRequired=true), so rlVertex3f coords are CPU-transformed to
+        // VIEW space before the vertex shader. `fragWorldPos` in ground_shadow.vs is therefore
+        // view-space, not world-space, and a plain `u_lightVP * fragWorldPos` projected the shadow
+        // into garbage -> no shadow ever appeared in-game (headless shadow_proj/cast pass because
+        // they use raylib's BeginMode3D, which keeps the view in MODELVIEW, transformRequired=false).
+        // Fold inverse(view) into the uploaded matrix so `u_lightVP * fragWorldPos` == lightVP*world.
+        // `transform` is identity when transformRequired is off, so this is correct in BOTH paths.
         Matrix lightVP = EnvShadow_GetLightVP();
-        SetShaderValueMatrix(s_shader, s_locLightVP, lightVP);
+        Matrix worldFromVert = MatrixInvert(rlGetMatrixTransform()); // view^-1 in-game, identity otherwise
+        SetShaderValueMatrix(s_shader, s_locLightVP, MatrixMultiply(worldFromVert, lightVP));
         Texture2D map = EnvShadow_GetShadowMap();
         float texel = (map.width > 0) ? (1.0f / (float)map.width) : (1.0f / 1024.0f);
         SetShaderValue(s_shader, s_locShadowTexel, &texel, SHADER_UNIFORM_FLOAT);
