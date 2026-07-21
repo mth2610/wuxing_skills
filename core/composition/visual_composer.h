@@ -155,6 +155,7 @@ void ComposeMeshElectricityEx(Vector3 position, Color color, float duration, con
 void VFX_ComposeFlameBreath(Vector3 pos, Vector3 dir, float scale, float time);
 void VFX_ComposeBurningGround(Vector3 pos, float radius, float time);
 void VFX_ComposeFireWhirl(Vector3 pos, float radius, float time);
+void VFX_ComposeFireFunnel(Vector3 pos, float bottomRadius, float topRadius, float height, float time);
 // Elemental dry-ice mist — thin, cold, ground-hugging vapor that radiates
 // outward from a point (like dry ice sublimation). Continuous; call once per
 // frame. Colors and glow come from VFX_Material(matId) — available for all

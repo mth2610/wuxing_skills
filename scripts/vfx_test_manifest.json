@@ -720,6 +720,14 @@
       "_auto": true,
       "type": "oneshot",
       "trigger_call": "VFX_ReleaseTornado($POS)"
+    },
+    {
+      "fn": "VFX_ComposeFireFunnel",
+      "label": "FIRE FUNNEL",
+      "category": "fire",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeFireFunnel($POS, 1.5f, 1.5f, 2.0f, $TIME)"
     }
   ],
   "overrides": {
@@ -743,6 +751,9 @@
       "category": "util",
       "type": "oneshot",
       "trigger_call": "VFX_ComposeShardDebris($POS, 12, 4.5f, VC_MAT_ICE)"
+    },
+    "VFX_ComposeFireFunnel": {
+      "draw_call": "VFX_ComposeFireFunnel($POS, 0.6f, 0.08f, 1.5f, $TIME)"
     },
     "VFX_ComposeCrownSplash": {
       "label": "CROWN SPLASH",

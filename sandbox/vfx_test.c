@@ -80,7 +80,7 @@ static const char *s_meshNames[] = {
     "DISC", "RING", "CONE", "TORNADO", "CYLINDER", "SPHERE", "SHOCKWAVE", "PYRAMID", "TETRAHEDRON"};
 
 // @gen:newfx_names begin
-// 90 entries — auto-managed by sync_vfx_test.py
+// 91 entries — auto-managed by sync_vfx_test.py
 static const char* s_newFxNames[] = {
     "FLAME WISP", "FIRE PILLAR", "FIREBALL", "FIRE BREATH", "BURN GROUND", "FIRE WHIRL",
     "EMBER DRIFT", "IMPACT FIRE", "CAST FIRE", "SPLASH", "BUBBLES", "MIST VEIL",
@@ -97,6 +97,7 @@ static const char* s_newFxNames[] = {
     "SMOKE COLUMN F X", "GROUND SMOKE", "SMOKE ON PLANE", "MAGIC FILAMENTS", "MAGIC FILAMENTS ON PLANE", "SHARD DEBRIS",
     "CROWN SPLASH", "CHAIN LINK", "WATER STREAM ON PATH", "MESH ELECTRICITY", "PARTICLE UPGRADES TEST", "TRAIL UPGRADES TEST",
     "SPIRIT WISP TEST", "METEOR COMET TEST", "SPIRIT ORB", "TAIJI ARC STRIKE", "TORNADO", "RELEASE TORNADO",
+    "FIRE FUNNEL",
 };
 // @gen:newfx_names end
 
@@ -112,6 +113,7 @@ static const int s_newFxCategories[] = {
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 1, 6, 6, 6, 6, 6, 6, 6, 6,
     1, 6, 6, 6, 6, 3, 6, 5, 6, 6,
+    0,
 };
 // @gen:newfx_categories end
 
@@ -458,7 +460,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             const char **names;
             int globalIdx;
             int visualIdx;
-            maxIdx = 90;
+            maxIdx = 91;
             names = s_newFxNames; // @gen:newfx_count
             visualIdx = 0;
             (void)names;
@@ -832,6 +834,7 @@ void VFXTest_Draw3D(void)
               case 80: { static bool splashed = false; if (progress < 0.05f) splashed = false; if (progress >= 0.83f && !splashed) { VFX_ComposeSplashBurst(s_testPathPoints[15], 1.2f); splashed = true; } VFX_ComposeWaterStreamOnPath(s_testPathPoints, 16, 0.25f, progress * 1.2f, 0.25f, s_meshTime); }; break;
               case 86: VFX_ComposeSpiritOrb(VC_MAT_FIRE, s_prefabStartPos, 1.5f, s_meshTime); break;
               case 88: VFX_ComposeTornado(VC_MAT_FIRE, s_prefabStartPos, 1.5f, 2.0f, s_meshTime); break;
+              case 90: VFX_ComposeFireFunnel(s_prefabStartPos, 0.6f, 0.08f, 1.5f, s_meshTime); break;
           }
 // @gen:newfx_draw end
         }
@@ -976,7 +979,7 @@ void VFXTest_DrawHUD(void)
         const char **names;
         int gi;
         int vIdx;
-        maxIdx = 90;
+        maxIdx = 91;
         names = s_newFxNames; // @gen:newfx_count
         vIdx = 0;
         (void)names;

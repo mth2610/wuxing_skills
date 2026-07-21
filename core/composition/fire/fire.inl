@@ -79,5 +79,6 @@ static void FireFlow_EmitPacket(Vector3 axisPos, float discR, float height,
 #include "flame_breath.inl"
 #include "burning_ground.inl"
 #include "fire_whirl.inl"
+#include "fire_funnel.inl"
 // @gen:fire_includes begin
 // @gen:fire_includes end
