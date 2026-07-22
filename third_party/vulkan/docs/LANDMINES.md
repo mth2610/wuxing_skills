@@ -30,6 +30,13 @@
 - **Present/readback lifecycle faults.** → §7.6
 - **`VUID-…-oldLayout-01211` ×30 in the validated suite** — two independent layout-transition causes. → §7.9
 
+### Perf traps
+- **§7.27 (OPEN) — the `Caps.noSampledDepth` depth twin is bounced at EVERY scope close, even when nothing samples it.** `rlDisableFramebuffer` does `depth-image → sampleScratch buffer → R32F twin` for any depth attachment that has a twin, unconditionally — `width*height*4` image→buffer **plus** buffer→image. For a 2048² shadow-map FBO whose depth is only ever depth-TESTED (env_shadow samples its own R32F *color* attachment) that is **~32 MB/frame of pure waste**, and it is the prime suspect for "enabling the real shadow costs ~16 ms" on MoltenVK/Intel. Signature that points here: the cost is **per-pass**, unchanged by resolution *or* geometry, and only removing whole passes moves it.
+  **Two obvious fixes were tried and BOTH regress — do not repeat them:**
+  1. *Lazy bounce* (only bounce twins something sampled): desyncs the depth image's layout bookkeeping → reintroduces `VUID-…-oldLayout-01211` (the §7.9 class). 0 → 8 VUIDs on `soft_depth`.
+  2. *Honour `useRenderBuffer=true` by skipping twin creation*: **raylib's own `LoadRenderTexture` passes `true`**, so this strips the twin from every render texture and breaks soft-particle depth sampling. 0 → 8/9 VUIDs.
+  A correct fix must keep the depth image's layout transitions consistent whether or not the bounce runs, and must not key off `useRenderBuffer`. Gate any attempt on `VALIDATE=1` for `soft_depth`/`soft_ground`/`depth_rt` (baseline: 0/1/0).
+
 ### Layout / soft-depth
 - **Soft particles hard-cut against geometry under `Caps.noSampledDepth`** — the shadow-copy twin of §7.1. → §7.10
 

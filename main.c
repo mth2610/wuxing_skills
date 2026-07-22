@@ -1850,13 +1850,17 @@ int main(int argc, char **argv) {
                                  EnvShadow_IsEnabled() ? "ON" : "OFF"), 10, 662, 20, SKYBLUE);
         }
 
-        // Real Shading P6 — debug preview of the raw shadow-map texture
-        // (temporary, remove once the pipeline is confirmed working). If
-        // this box is a flat solid color, the depth CAPTURE isn't producing
-        // real per-pixel data; if it shows a recognizable arena/character
-        // silhouette, the capture is fine and the bug is in the comparison
-        // math instead.
-        if (EnvShadow_IsEnabled()) {
+        // Real Shading P6 — debug preview of the raw shadow-map texture.
+        // OFF by default: set WUXING_SHADOW_DEBUG=1 to show it.
+        // PERF (2026-07-22): this is NOT free. It minifies the whole 2048x2048 R32F shadow map
+        // (16 MB) into a 220px box with POINT filtering and no mipmaps, so every preview pixel is a
+        // scattered, cache-missing texel fetch. Because it was gated on EnvShadow_IsEnabled() it ran
+        // only after pressing J — i.e. it was part of the "shadow costs 30 FPS" measurement itself.
+        // Keep it behind the env var; never leave it on while judging shadow performance.
+        // If the box is a flat solid color the depth CAPTURE isn't producing real per-pixel data;
+        // a recognizable arena/character silhouette means the capture is fine and any bug is in the
+        // comparison math instead.
+        if (EnvShadow_IsEnabled() && getenv("WUXING_SHADOW_DEBUG")) {
             int previewSize = 220;
             int px = GetScreenWidth() - previewSize - 10;
             int py = GetScreenHeight() - previewSize - 10;

@@ -51,13 +51,42 @@ What was tried, and what it tells us (this is the useful part — a map of the p
    pillar wireframes, circle outlines, lines — via `EnvShadow_IsCapturing()`): **NO FPS change.**
    ⇒ the cost is NOT the extra geometry either.
 
-**Conclusion (judgement, not yet profiled):** the remaining ~16 ms is the **fixed overhead of the
-capture render pass itself** on this old Intel/MoltenVK — the FBO bind + the 2048² clear + the
+4. **THE DEBUG PREVIEW WAS INSIDE THE MEASUREMENT (found last, invalidates the above).** `main.c`'s
+   "SHADOW MAP DEBUG" box was gated on `EnvShadow_IsEnabled()` — so it only ran **after pressing J**,
+   i.e. it was part of every "shadow costs 30 FPS" number in steps 1–3. It minifies the entire
+   **2048×2048 R32F (16 MB)** map into a 220 px box with **POINT filtering and no mipmaps**: ~48 k
+   scattered, cache-missing texel fetches per frame. Now gated behind `WUXING_SHADOW_DEBUG=1`
+   (default OFF). **Steps 1–3 were measured with this cost mixed in and must be re-tested before
+   their conclusions are trusted.**
+   → **Lesson: never leave a debug visualiser gated on the same switch as the feature you're
+   profiling.** It makes the feature look expensive and silently poisons every A/B.
+
+**Conclusion (judgement, PARTLY INVALIDATED by finding 4 — re-measure first):** the remaining ~16 ms
+was believed to be the **fixed overhead of the capture render pass itself** on this old Intel/MoltenVK — the FBO bind + the 2048² clear + the
 scope-open/close layout barriers + the encoder switch — plus the player model being **fully skinned
 twice per frame** (once for the shadow, once for the main view). Neither is reducible by touching
 geometry or resolution. Removing *whole passes* is what moved the needle (step 2); nothing else did.
 
+5. **PRIME SUSPECT IDENTIFIED (rlvk §7.27, still OPEN):** `rlvk`'s `Caps.noSampledDepth` depth
+   **twin is bounced at every scope close** (`depth-image → buffer → R32F twin`,
+   `width*height*4` each way) — **unconditionally**, even though since the depth-as-color change
+   **nothing ever samples this twin** (we read the R32F *color* attachment). At 2048² that is
+   **~32 MB/frame of pure waste**, and it matches the signature exactly: per-pass cost, unmoved by
+   resolution or geometry, only removing whole passes helps.
+   Suspect files: `rlvk_renderpass.inl` (the scope-close bounce) + `rlvk_texture.inl` (twin creation).
+   **Two fixes were attempted and BOTH regressed validation — documented in `rlvk/docs/LANDMINES.md`
+   §7.27 so they are not repeated:** (a) lazy "only bounce twins that were sampled" desyncs the depth
+   layout bookkeeping → reintroduces `VUID-…-oldLayout-01211`; (b) honouring `useRenderBuffer=true`
+   fails because **raylib's own `LoadRenderTexture` passes `true`**, so it strips the twin from every
+   render texture and breaks soft particles. Both were reverted; tree is back to 17/17, VUID 0/1/0.
+
 **Remaining problems / untried levers (for whoever picks this up):**
+- **§7.27 is the highest-value open lead** — see above. A correct fix keeps the depth image's layout
+  transitions consistent whether or not the bounce runs, and must not key off `useRenderBuffer`.
+  Gate it on `VALIDATE=1` for `soft_depth`/`soft_ground`/`depth_rt` (baseline 0/1/0).
+- **FIRST: re-measure with the debug preview off** (it is now off by default). If FPS with J is back
+  near 60, the whole "shadow is expensive" premise was largely the preview and nothing else is
+  needed. If it's still ~30, re-run levers 1 and 3 — their earlier verdicts were confounded.
 - **Skin the player model ONCE per frame** and reuse the posed mesh for both the capture and the main
   pass (currently `CharacterModel_Draw` re-skins in each). This is a `character/` module change and is
   the most likely real win if the skinning (not the pass overhead) dominates. **Profile first**:
@@ -71,6 +100,20 @@ geometry or resolution. Removing *whole passes* is what moved the needle (step 2
 - Soft shadows at the raking sun angle are inherently aliasing-prone; the current fix is a contiguous
   7×7 PCF (`GROUND_SHADOW_PCF_*` in `ground_shadow.fs`). Bilinear-filtering the R32F map would help
   but R32F linear-filter support is unreliable on GL3.3/Intel (why it's forced POINT).
+
+**STATE OF THE TREE AT SESSION END (2026-07-22):**
+- ✅ **Shadow works and looks good.** Soft, character-shaped, correctly placed, no banding/stripes.
+- ❌ **Perf unresolved: ~30 FPS with J on (60 off).** Every lever tried is listed above; the one
+  identified-but-unfixed cause is **rlvk §7.27** (the always-on depth-twin bounce).
+- **LANDED (working, keep):** `ground_shadow.c` inverse-view fold · `env_shadow.c` depth-as-color
+  capture (no copy pass, white "far" clear) · `ground_shadow.fs` contiguous 7×7 PCF ·
+  `shadow_depth.fs` emits `gl_FragCoord.z` · rlvk §7.26 `mvStackDepth` matrix fix ·
+  `main.c` shadow-map debug preview now behind `WUXING_SHADOW_DEBUG=1` (was ON whenever the shadow
+  was, polluting every perf measurement) · `EnvShadow_IsCapturing()` + `DrawSandbox3D` non-caster gate.
+- **REVERTED (do not retry as-is):** both §7.27 fix attempts — see `rlvk/docs/LANDMINES.md` §7.27.
+- **Verification state:** rlvk suite **17/17**, `VALIDATE=1` baseline **soft_depth 0 / soft_ground 1
+  / depth_rt 0**. rlvk working tree clean vs HEAD. Use these exact numbers as the regression gate.
+- **Resolution stays 2048** — lowering it does not help FPS and visibly degrades the shadow.
 
 **Top lessons from this multi-session hunt (the meta-lessons):**
 1. **The 4-session "rlvk descriptor bug" never existed.** It was diagnosed as "MoltenVK drops the 2nd

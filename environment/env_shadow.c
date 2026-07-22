@@ -59,6 +59,13 @@ void EnvShadow_Init(void)
     // (R32F), so it's sampled directly — no depth->R32F copy pass. Depth attachment is only for the
     // capture's depth TEST (nearest caster wins); it is never sampled.
     s_colorTexId = rlLoadTexture(NULL, s_resolution, s_resolution, RL_PIXELFORMAT_UNCOMPRESSED_R32, 1);
+    // NOTE (§7.27, OPEN PERF ISSUE): this depth attachment is only ever depth-TESTED against — the
+    // shadow map we sample is the R32F COLOR attachment above. But rlvk still builds a
+    // Caps.noSampledDepth "sampleable twin" for it and bounces depth->buffer->twin at EVERY scope
+    // close (~32 MB/frame at 2048) for a twin nobody reads. That is the prime suspect for the
+    // remaining shadow cost. Do NOT "fix" it by passing useRenderBuffer=true here: raylib's own
+    // LoadRenderTexture also passes true, so honouring it in rlvk strips the twin from every render
+    // texture and breaks soft-particle depth sampling (VUID-…-oldLayout-01211). See the notes.
     s_depthTexId = rlLoadTextureDepth(s_resolution, s_resolution, false); // real texture, not a renderbuffer
     s_fboId = rlLoadFramebuffer();
     if (s_fboId == 0 || s_depthTexId == 0 || s_colorTexId == 0)
