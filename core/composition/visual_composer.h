@@ -36,8 +36,14 @@ typedef struct
 
 #define VFX_TriggerImpactBurst VFX_ComposeTriggerImpactBurst
 
-// 1. Spawning Smoke Puff
-void VFX_ComposeSmokePuff(Vector3 pos, float size);
+// 1. Smoke / dust puff — Đợt E F2, rebuilt on the F1 lit-particle foundation
+// (core/composition/common/vc_smoke_puff.inl). Layered alpha sprites with
+// per-sprite spin that grow while they fade, deliberately dark so the lighting
+// pass supplies the brightness. Draw with BLEND_ALPHA; a glowing puff is this
+// plus a SECOND additive draw, never this one flipped to additive.
+// `density` 0..1 scales the sprite count. Needs particle lighting on to look
+// right: tuning.cfg → particle_lighting_strength / particle_scatter_strength.
+void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float density);
 
 // 2. Spawning Smoke Trail
 void VFX_ComposeSmokeTrail(Vector3 start, Vector3 end, float duration);

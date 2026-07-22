@@ -194,6 +194,8 @@
   void UpdateParticles(float dt);
   void DrawParticles(Camera3D camera, Texture2D texture);
   void UnloadParticleSystem(void);
+  void ParticleSystem_SetLighting(float strength01, float scatter01);
+  void ParticleSystem_GetLighting(float *outStrength, float *outScatter);
   bool IsParticleSystemActive(void);
   void ParticleSystem_SpawnRadialBurst(Vector3 origin, float sizeScale, const ParticleRadialBurstConfig *cfg);
   void SpawnParticleOnMesh(const struct MeshAdjacency *adj, Matrix transform, ParticleConfig config);
@@ -563,7 +565,7 @@
 
 ### `core/composition/visual_composer.h`
 ```c
-  void VFX_ComposeSmokePuff(Vector3 pos, float size);
+  void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float density);
   void VFX_ComposeSmokeTrail(Vector3 start, Vector3 end, float duration);
   void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
   int VFX_ComposeLightningBolt(Vector3 start, Vector3 end, float scale);
@@ -619,6 +621,7 @@
   void VFX_ComposeFlameBreath(Vector3 pos, Vector3 dir, float scale, float time);
   void VFX_ComposeBurningGround(Vector3 pos, float radius, float time);
   void VFX_ComposeFireWhirl(Vector3 pos, float radius, float time);
+  void VFX_ComposeFireFunnel(Vector3 pos, float bottomRadius, float topRadius, float height, float time);
   void VFX_ComposeElementalMist(VC_MaterialId matId, Vector3 pos, float radius, float time);
   void VFX_ComposePathMistWave(VC_MaterialId matId, const Vector3 *pathPoints, int pathCount, float progress, float radius);
   void VFX_ComposeProjectile(VC_MaterialId matId, Vector3 pos, Vector3 target, float progress, float scale, float time);
@@ -657,11 +660,8 @@
   void VFX_ComposeGroundAura(VC_MaterialId matId, Vector3 pos, float radius, float scrollSpeed, float time);
   void VFX_ComposeGroundSmoke(Vector3 center, float halfSize, float progress, GroundHeightSampleFn heightFn, void *userData);
   void VFX_ComposeMagicFilaments(Vector3 pos, float scale, float progress, Color color, float thickness, float frequency, float speed, Vector2 sourceUV);
-  void VFX_ComposeMeteorCometTest(Vector3 pos);
   void VFX_ComposeSmokeColumnFX(Vector3 base, float halfWidth, float height, float progress, int planeCount);
   void VFX_ComposeSmokeOnPlane(Vector3 center, Vector3 normal, float halfSize, float progress, Color color);
-  void VFX_ComposeSpiritOrb(VC_MaterialId matId, Vector3 pos, float radius, float time);
-  void VFX_ComposeSpiritWispTest(Vector3 pos);
   void VFX_ComposeTaijiArcStrike(Vector3 pos, float scale);
   void VFX_ComposeTornado(VC_MaterialId matId, Vector3 pos, float radius, float height, float time);
   void VFX_ReleaseTornado(Vector3 pos);

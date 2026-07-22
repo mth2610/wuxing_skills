@@ -318,7 +318,16 @@ and additive outnumbers alpha 42:23. Smoke, dust, ash, cloud and soft aura can
 `core/particle_system.c`, `core/vfx_config.h` (`VFX_RenderConfig`),
 `core/particle_system.h`
 
-### F1a — Spherical-normal billboard lighting
+### F1a — Fake-normal billboard lighting  ✅ IMPLEMENTED
+
+> **As-built note.** The plan below specified a hemisphere normal rebuilt from
+> quad-local UV. That is not reachable on this batch (see Landmines), so the
+> shipped `core/shaders/particle_lit.fs` derives the normal from the
+> **screen-space derivative of the sprite's alpha**, treating the texture as a
+> heightfield. It needs no vertex data, works with atlas UVs, and follows the
+> sprite's actual silhouette — which is strictly better once flipbook smoke
+> (F2/E4) arrives, because a billow lobe is not a sphere. The original text is
+> kept for the reasoning.
 
 The standard cheap trick, and the one that transforms flat sprites into volume:
 derive a fake normal from the billboard's own UV so each particle shades like a
@@ -392,12 +401,22 @@ single draw, which is how commercial engines ship fire.
 - rlvk headless green; GLES converted and verified.
 
 **Landmines**
-- `particles.fs` is `#version 430` — the GLES conversion
-  (`scripts/convert_shaders_to_gles.py`) must be re-run and checked, not assumed.
-- Alpha-blended particles need **back-to-front sorting** to composite correctly,
-  which additive never needed. If the pool does not sort, sorting must be added
-  or the smoke will show quad-order popping as the camera orbits. Check before
-  assuming, and budget for it — this is the hidden cost of F1b.
+- **There are TWO particle paths.** `core/shaders/particles.vs/.fs` (`#version
+  430`, `layout(std430)`) is the GPU/SSBO instanced path used by `compute/`. The
+  CPU pool in `particle_system.c` does not use them at all — it draws one
+  immediate-mode `rlBegin(RL_QUADS)` batch. Both were unlit; F1 fixes the CPU
+  path, and the GPU path still needs the same treatment.
+- ~~Alpha particles need back-to-front sorting added~~ — **wrong, and corrected
+  after reading the source**: `particle_system.c:430-443` already depth-sorts the
+  batch every frame. No work needed here.
+- The immediate-mode batch carries position + texcoord + colour and **nothing
+  else**, and its texcoord may be an atlas sub-rect (`SpriteAnim`). So there is
+  no quad-local UV for a hemisphere normal and no spare channel to add one —
+  hence the derivative-of-alpha normal actually implemented. Any future
+  per-particle shading value hits this same wall.
+- Do **not** reference `colDiffuse` from a shader bound around a raw
+  `rlBegin` run: rlgl only guarantees to push it on its own shape/texture draw
+  paths, and an unwritten GLSL uniform is zero — the whole batch goes black.
 - Lighting maths per particle is a real fill-rate cost on Mali. Gate
   `lightingStrength` behind `GfxQuality_Get()` (`GFX_LOW` forces 0).
 - Batching hazard: any depth-state change needs `rlDrawRenderBatchActive()`
@@ -1007,5 +1026,6 @@ larger initiative — not a line item here.
 | Date | Editor | Section | Source | Tier |
 |---|---|---|---|---|
 | 2026-07-22 | Claude | F0: added the locked 3-tier deletion boundary (tier 1 primitives off-limits, extend only; tiers 2+3 purged) | Owner decision this session, plus a line count of each tier | **Ground-truth** — owner's explicit scope call: composition + skills only, `particle_system.c` is an update not a rewrite |
+| 2026-07-22 | Claude | F1 implemented (CPU path): `particle_lit.vs/.fs` + `ParticleSystem_SetLighting`. Corrected three spec assumptions | Reading `particle_system.c` (draw path, existing depth sort at :430), `shaders/particles.vs` (`#version 430` SSBO — a different path), `CMakeLists.txt` shader copy list | **Ground-truth** corrections: the sort already existed (spec was wrong to list it as work), there are two particle paths, and the immediate-mode batch has no spare vertex channel. Shipped code is **unverified** — not yet compiled or run |
 | 2026-07-22 | Claude | Added §0.1b (root-cause diagnosis) + Part A (F0–F4) after owner reported most VFX are not good enough and the skill layer is disposable | Direct read of `shaders/particles.fs` (14 lines, unlit — ground truth), `energy_smoke.fs`, `smoke_column.fs`, `ground_aura.fs`, `aura_shell.fs`, `fire_funnel.fs:69-76`, blend-mode census across `core/composition/` (42 additive / 23 alpha), `vfx_config.h` `VFX_RenderConfig` (no blend or lighting field) | **Ground-truth** for all four root causes and the file/line evidence. **Inferred/proposed** for the F0–F4 designs, proposed signatures and sizes |
 | 2026-07-22 | Claude | Whole doc — initial spec | Direct audit this session of `core/post_fx.c/.h`, `particle_system.h`, `composition/visual_composer.h/.c`, `common/vc_motion.h`, `presets/vc_material.h`, `vfx_light.h`, `sprite_anim.h`, `ribbon_strip.h`, `gfx_quality.h`, `shaders/surface_lit.fs`, `scripts/vfx_test_manifest.json`, `main.c` wiring points, `assets/textures/` listing | **Ground-truth** for §0.1's "what exists" table, the E2 gap finding (`surface_lit.fs` does not read `vfx_light`), file/line references, and the manifest format. **Inferred/proposed** for all phase plans, proposed API signatures, effort sizes, and the Elden Ring comparison — none of it is implemented or validated yet |

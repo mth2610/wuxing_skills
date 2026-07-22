@@ -566,6 +566,13 @@
       "_auto": true,
       "type": "oneshot",
       "trigger_call": "VFX_ComposeCrownSplash($POS, 1.5f, 2.0f, 2.0f, VC_MAT_WATER)"
+    },
+    {
+      "fn": "VFX_ComposeSmokePuff",
+      "label": "SMOKE PUFF",
+      "category": "util",
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeSmokePuff($POS, VC_MAT_EARTH, 1.0f, 1.0f)"
     }
   ],
   "overrides": {
@@ -592,6 +599,12 @@
     },
     "VFX_ComposeFireFunnel": {
       "draw_call": "VFX_ComposeFireFunnel($POS, 0.6f, 0.08f, 1.5f, $TIME)"
+    },
+    "VFX_ComposeSmokePuff": {
+      "label": "SMOKE PUFF",
+      "category": "util",
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeSmokePuff($POS, VC_MAT_EARTH, 1.0f, 1.0f)"
     }
   }
 }

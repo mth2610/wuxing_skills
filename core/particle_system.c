@@ -4,6 +4,11 @@
 #include "rlgl.h"
 #include "core/utils_math.h"
 #include "core/ribbon_strip.h"
+#include "core/resource_manager.h"
+#include "core/vfx_light.h"
+#include "core/gfx_quality.h"
+#include "core/tuning.h"
+#include "environment/environment_system.h"
 #include <string.h>
 #include <math.h>
 
@@ -107,6 +112,18 @@ static inline int Particle_AllocSlot(void)
   return idx;
 }
 
+// Đợt E / F1 — lit particles. Declared up here (rather than beside the draw
+// code that uses them) so InitParticleSystem can register them as tunables.
+// Both default to 0 = the exact pre-F1 unlit look.
+static float s_lightingStrength = 0.0f;
+static float s_scatterStrength  = 0.0f;
+static float s_debugNormal      = 0.0f;  // 1 = paint particle normals as RGB
+static float s_normalBulge      = 1.0f;  // 1 = true hemisphere; >1 exaggerates
+static float s_sunGain          = 2.5f;  // night sun/ambient are ~0.2 — without
+static float s_ambientGain      = 0.7f;  // gain, lighting just dims the smoke
+static float s_lightAzimuth     = -1.0f; // <0 = real sun; >=0 = debug override
+static float s_analyticUV       = 1.0f;  // 0 only if a SpriteAnim atlas is in use
+
 void InitParticleSystem(void)
 {
   for (int i = 0; i < MAX_PARTICLES - 1; i++)
@@ -119,6 +136,7 @@ void InitParticleSystem(void)
     g_Particles[i].active = false;
     s_slotListIndex[i] = -1;
   }
+
 }
 
 void SpawnParticle(ParticleConfig config)
@@ -395,6 +413,203 @@ static void SortParticlesByDepth(int *ids, int count, const float *depths)
   }
 }
 
+// ─── Đợt E / F1 — lit particles ──────────────────────────────────────────────
+// Flat-shaded smoke can only ever look like a decal OF smoke; volume reads from
+// lighting. See core/docs/ELDEN_VFX_SPEC.md §0.1b.
+//
+// Scope note: this lights the whole CPU batch with ONE strength, not per
+// particle. The batch is a single immediate-mode rlBegin(RL_QUADS) run with no
+// spare vertex channel, so a per-particle value cannot be smuggled through.
+// That is not the compromise it looks like — it lines up with F1b's blend law:
+// alpha-blended bodies (smoke, dust, ash) want lighting, additive emitters
+// (embers, sparks, glow) emit their own and must stay unlit. Callers that draw
+// additive simply leave the strength at 0.
+//
+// Default is 0.0 = the exact pre-F1 look, so nothing already shipped moves.
+// (s_lightingStrength / s_scatterStrength are declared above InitParticleSystem,
+// which registers them as hot-reloadable tunables.)
+static Shader s_litShader = {0};
+static bool   s_litShaderTried = false;
+static bool   s_litActive = false;
+static int s_locSunToLight, s_locSunColor, s_locAmbient, s_locViewPos;
+static int s_locLightStrength, s_locScatterStrength;
+static int s_locVfxCount, s_locVfxPos, s_locVfxColor, s_locVfxRadius;
+static int s_locDebugNormal, s_locNormalBulge, s_locSunGain, s_locAmbientGain;
+static int s_locLightAzimuth, s_locAnalyticUV;
+
+#define PARTICLE_MAX_VFX_LIGHTS 4
+
+void ParticleSystem_SetLighting(float strength01, float scatter01)
+{
+  s_lightingStrength = strength01 < 0.0f ? 0.0f : (strength01 > 1.0f ? 1.0f : strength01);
+  s_scatterStrength  = scatter01  < 0.0f ? 0.0f : (scatter01  > 2.0f ? 2.0f : scatter01);
+}
+
+void ParticleSystem_GetLighting(float *outStrength, float *outScatter)
+{
+  if (outStrength) *outStrength = s_lightingStrength;
+  if (outScatter)  *outScatter  = s_scatterStrength;
+}
+
+static Vector3 ColorToVec3_Particle(Color c)
+{
+  return (Vector3){c.r / 255.0f, c.g / 255.0f, c.b / 255.0f};
+}
+
+// Registered on first draw, NOT from InitParticleSystem. main.c calls
+// InitParticleSystem (:1017) well before Tuning_Init (:1063), and
+// Tuning_RegisterFloat only reads the config file when the path is already
+// set — registering early therefore silently keeps the default and the feature
+// looks dead until someone happens to re-save tuning.cfg. By first draw the
+// path is set. See core/docs/LANDMINES.md.
+static bool s_tunablesRegistered = false;
+
+static void ParticleLighting_Begin(Camera3D camera)
+{
+  if (!s_tunablesRegistered)
+  {
+    s_tunablesRegistered = true;
+    Tuning_RegisterFloat("particle_lighting_strength", &s_lightingStrength, s_lightingStrength);
+    Tuning_RegisterFloat("particle_scatter_strength", &s_scatterStrength, s_scatterStrength);
+    Tuning_RegisterFloat("particle_debug_normal", &s_debugNormal, s_debugNormal);
+    Tuning_RegisterFloat("particle_normal_bulge", &s_normalBulge, s_normalBulge);
+    Tuning_RegisterFloat("particle_sun_gain", &s_sunGain, s_sunGain);
+    Tuning_RegisterFloat("particle_ambient_gain", &s_ambientGain, s_ambientGain);
+    Tuning_RegisterFloat("particle_light_azimuth", &s_lightAzimuth, s_lightAzimuth);
+    Tuning_RegisterFloat("particle_analytic_uv", &s_analyticUV, s_analyticUV);
+  }
+
+  s_litActive = false;
+  // Clamp HERE, not only in the setter: a tuning.cfg hot-reload writes the
+  // float directly and never goes through ParticleSystem_SetLighting.
+  if (s_lightingStrength < 0.0f) s_lightingStrength = 0.0f;
+  else if (s_lightingStrength > 1.0f) s_lightingStrength = 1.0f;
+  if (s_scatterStrength < 0.0f) s_scatterStrength = 0.0f;
+  else if (s_scatterStrength > 2.0f) s_scatterStrength = 2.0f;
+
+  // State report — re-emitted whenever a value CHANGES, not just once. The
+  // first version logged one line at startup, which was useless for the actual
+  // workflow: tuning.cfg hot-reloads, so the interesting values are the ones
+  // that arrive AFTER that line has already scrolled past. With no confirmation
+  // of what is live, an edit that never took effect is indistinguishable from an
+  // edit that took effect and did nothing.
+  {
+    static float last[5] = {-999, -999, -999, -999, -999};
+    const float now[5] = {s_lightingStrength, s_scatterStrength, s_normalBulge,
+                          s_lightAzimuth, s_analyticUV};
+    bool changed = false;
+    for (int i = 0; i < 5; i++)
+      if (fabsf(now[i] - last[i]) > 1e-4f) changed = true;
+    if (changed)
+    {
+      for (int i = 0; i < 5; i++) last[i] = now[i];
+      TraceLog(LOG_INFO,
+               "PARTICLE F1: strength=%.2f scatter=%.2f bulge=%.2f azimuth=%.1f "
+               "analyticUV=%.0f sunGain=%.2f ambGain=%.2f quality=%d%s",
+               s_lightingStrength, s_scatterStrength, s_normalBulge, s_lightAzimuth,
+               s_analyticUV, s_sunGain, s_ambientGain, (int)GfxQuality_Get(),
+               (s_lightingStrength <= 0.0f)  ? "  -> OFF (strength is 0)" :
+               (GfxQuality_Get() <= GFX_LOW) ? "  -> OFF (needs GfxQuality >= MED)" :
+                                               "  -> lit path ACTIVE");
+    }
+  }
+
+  if (s_lightingStrength <= 0.0f)
+    return;
+  // Per-fragment lighting on every particle is real fill-rate; the Mali devices
+  // are the constraint (ENGINE_LANDMINES.md). LOW/UNLIT keep the cheap path.
+  if (GfxQuality_Get() <= GFX_LOW)
+    return;
+
+  if (!s_litShaderTried)
+  {
+    s_litShaderTried = true;
+    s_litShader = ResourceManager_LoadShader("core/shaders/particle_lit.vs",
+                                             "core/shaders/particle_lit.fs");
+    if (s_litShader.id != 0)
+    {
+      s_locSunToLight      = GetShaderLocation(s_litShader, "u_sunToLight");
+      s_locSunColor        = GetShaderLocation(s_litShader, "u_sunColor");
+      s_locAmbient         = GetShaderLocation(s_litShader, "u_ambient");
+      s_locViewPos         = GetShaderLocation(s_litShader, "viewPos");
+      s_locLightStrength   = GetShaderLocation(s_litShader, "u_lightingStrength");
+      s_locScatterStrength = GetShaderLocation(s_litShader, "u_scatterStrength");
+      s_locVfxCount        = GetShaderLocation(s_litShader, "u_vfxLightCount");
+      s_locVfxPos          = GetShaderLocation(s_litShader, "u_vfxLightPos");
+      s_locVfxColor        = GetShaderLocation(s_litShader, "u_vfxLightColor");
+      s_locVfxRadius       = GetShaderLocation(s_litShader, "u_vfxLightRadius");
+      s_locDebugNormal     = GetShaderLocation(s_litShader, "u_debugNormal");
+      s_locNormalBulge     = GetShaderLocation(s_litShader, "u_normalBulge");
+      s_locSunGain         = GetShaderLocation(s_litShader, "u_sunGain");
+      s_locAmbientGain     = GetShaderLocation(s_litShader, "u_ambientGain");
+      s_locLightAzimuth    = GetShaderLocation(s_litShader, "u_lightAzimuth");
+      s_locAnalyticUV      = GetShaderLocation(s_litShader, "u_analyticUV");
+    }
+    else
+    {
+      // Never fail silently — a skipped shader that logs nothing has cost this
+      // project a full debugging session before (rlvk_shaderc.inl:1129).
+      TraceLog(LOG_WARNING,
+               "PARTICLE: particle_lit shader failed to load — particles stay unlit");
+    }
+  }
+  if (s_litShader.id == 0)
+    return;
+
+  Vector3 sunToLight = Vector3Normalize(Vector3Negate(Environment_GetSunDirection()));
+  Vector3 sunColor   = ColorToVec3_Particle(Environment_GetSunColor());
+  Vector3 ambient    = ColorToVec3_Particle(Environment_GetAmbientColor());
+
+  BeginShaderMode(s_litShader);
+  s_litActive = true;
+
+  SetShaderValue(s_litShader, s_locSunToLight, &sunToLight, SHADER_UNIFORM_VEC3);
+  SetShaderValue(s_litShader, s_locSunColor, &sunColor, SHADER_UNIFORM_VEC3);
+  SetShaderValue(s_litShader, s_locAmbient, &ambient, SHADER_UNIFORM_VEC3);
+  SetShaderValue(s_litShader, s_locViewPos, &camera.position, SHADER_UNIFORM_VEC3);
+  SetShaderValue(s_litShader, s_locLightStrength, &s_lightingStrength, SHADER_UNIFORM_FLOAT);
+  SetShaderValue(s_litShader, s_locScatterStrength, &s_scatterStrength, SHADER_UNIFORM_FLOAT);
+  SetShaderValue(s_litShader, s_locDebugNormal, &s_debugNormal, SHADER_UNIFORM_FLOAT);
+  SetShaderValue(s_litShader, s_locNormalBulge, &s_normalBulge, SHADER_UNIFORM_FLOAT);
+  SetShaderValue(s_litShader, s_locSunGain, &s_sunGain, SHADER_UNIFORM_FLOAT);
+  SetShaderValue(s_litShader, s_locAmbientGain, &s_ambientGain, SHADER_UNIFORM_FLOAT);
+  SetShaderValue(s_litShader, s_locLightAzimuth, &s_lightAzimuth, SHADER_UNIFORM_FLOAT);
+  SetShaderValue(s_litShader, s_locAnalyticUV, &s_analyticUV, SHADER_UNIFORM_FLOAT);
+
+  // VFX point lights — the caster's own fireball lighting the smoke inside it.
+  VFXLightData lights[PARTICLE_MAX_VFX_LIGHTS];
+  int count = 0;
+  VFXLight_GetActive(lights, &count, PARTICLE_MAX_VFX_LIGHTS);
+  if (count > PARTICLE_MAX_VFX_LIGHTS) count = PARTICLE_MAX_VFX_LIGHTS;
+
+  float pos[PARTICLE_MAX_VFX_LIGHTS * 3] = {0};
+  float col[PARTICLE_MAX_VFX_LIGHTS * 3] = {0};
+  float rad[PARTICLE_MAX_VFX_LIGHTS] = {0};
+  for (int i = 0; i < count; i++)
+  {
+    pos[i * 3 + 0] = lights[i].position.x;
+    pos[i * 3 + 1] = lights[i].position.y;
+    pos[i * 3 + 2] = lights[i].position.z;
+    Vector3 c = ColorToVec3_Particle(lights[i].color);
+    col[i * 3 + 0] = c.x;
+    col[i * 3 + 1] = c.y;
+    col[i * 3 + 2] = c.z;
+    rad[i] = lights[i].radius;
+  }
+  SetShaderValue(s_litShader, s_locVfxCount, &count, SHADER_UNIFORM_INT);
+  SetShaderValueV(s_litShader, s_locVfxPos, pos, SHADER_UNIFORM_VEC3, PARTICLE_MAX_VFX_LIGHTS);
+  SetShaderValueV(s_litShader, s_locVfxColor, col, SHADER_UNIFORM_VEC3, PARTICLE_MAX_VFX_LIGHTS);
+  SetShaderValueV(s_litShader, s_locVfxRadius, rad, SHADER_UNIFORM_FLOAT, PARTICLE_MAX_VFX_LIGHTS);
+}
+
+static void ParticleLighting_End(void)
+{
+  if (!s_litActive)
+    return;
+  EndShaderMode();
+  s_litActive = false;
+}
+
 void DrawParticles(Camera3D camera, Texture2D texture)
 {
   if (s_activeCount == 0)
@@ -441,6 +656,8 @@ void DrawParticles(Camera3D camera, Texture2D texture)
   {
     s_slotListIndex[s_activeIds[a]] = a;
   }
+
+  ParticleLighting_Begin(camera);
 
   rlSetTexture(texture.id);
   rlBegin(RL_QUADS);
@@ -576,6 +793,8 @@ void DrawParticles(Camera3D camera, Texture2D texture)
   }
 
   rlEnd();
+
+  ParticleLighting_End();
 
   // Second pass: Draw Particle Ribbon Trails
   for (int a = 0; a < s_activeCount; a++)

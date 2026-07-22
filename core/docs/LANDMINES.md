@@ -33,3 +33,25 @@
 - **Symptom:** a debug toggle also cycles the map; effect looks position-dependent when it isn't.
 - **Cause:** `KEY_K` is already globally bound in `main.c` (cycle maps); raylib gives no key exclusive ownership, so both handlers fire.
 - **Rule:** grep `IsKeyPressed(KEY_` across `main.c`/`sandbox/*.c` before binding any new key in a harness.
+
+---
+
+## Tuning_RegisterFloat before Tuning_Init silently keeps the default
+
+**Symptom.** A float registered with `Tuning_RegisterFloat` ignores the value in
+`tuning.cfg` on a fresh run. The feature it drives looks dead. Editing and saving
+`tuning.cfg` while the game runs makes it spring to life — which reads like a
+hot-reload quirk and sends you looking in the wrong place entirely.
+
+**Cause.** `Tuning_RegisterFloat` (`core/tuning.c:64`) only reads the config file
+`if (s_configPath[0] != '\0')` — and that path is set by `Tuning_Init`. `main.c`
+calls the subsystem inits (e.g. `InitParticleSystem`, :1017) well BEFORE
+`Tuning_Init` (:1063), so anything registering from its own init registers before
+the path exists, silently keeps `defaultValue`, and only picks the real value up
+on the next mtime change.
+
+**Rule.** Do not register tunables from a subsystem's `Init`. Register lazily on
+first use (a `static bool` one-shot in the update/draw path), by which time
+`Tuning_Init` has certainly run. If a default of 0 means "feature off", this bug
+is invisible rather than merely wrong — see `ParticleLighting_Begin` in
+`core/particle_system.c` for the shape to copy.

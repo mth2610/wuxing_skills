@@ -80,7 +80,7 @@ static const char *s_meshNames[] = {
     "DISC", "RING", "CONE", "TORNADO", "CYLINDER", "SPHERE", "SHOCKWAVE", "PYRAMID", "TETRAHEDRON"};
 
 // @gen:newfx_names begin
-// 67 entries — auto-managed by sync_vfx_test.py
+// 68 entries — auto-managed by sync_vfx_test.py
 static const char* s_newFxNames[] = {
     "FLAME WISP", "FIRE PILLAR", "FIREBALL", "FIRE BREATH", "BURN GROUND", "FIRE WHIRL",
     "EMBER DRIFT", "IMPACT FIRE", "CAST FIRE", "SPLASH", "BUBBLES", "MIST VEIL",
@@ -93,7 +93,7 @@ static const char* s_newFxNames[] = {
     "SMOKE ON PLANE", "MAGIC FILAMENTS", "MAGIC FILAMENTS ON PLANE", "SHARD DEBRIS", "WATER STREAM ON PATH", "MESH ELECTRICITY",
     "PARTICLE UPGRADES TEST", "TAIJI ARC STRIKE", "TORNADO", "RELEASE TORNADO", "FIRE FUNNEL", "ENERGY FLOW",
     "LIGHTNING BOLT", "PROC BEAM", "BEAM", "ORBITALS", "LEAF SWIRL", "CHAIN LINK",
-    "CROWN SPLASH",
+    "CROWN SPLASH", "SMOKE PUFF",
 };
 // @gen:newfx_names end
 
@@ -106,7 +106,7 @@ static const int s_newFxCategories[] = {
     5, 6, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 6, 6, 6, 6, 1, 6, 6, 6, 6,
     6, 6, 1, 6, 6, 5, 6, 6, 0, 6,
-    6, 6, 6, 6, 2, 6, 1,
+    6, 6, 6, 6, 2, 6, 1, 6,
 };
 // @gen:newfx_categories end
 
@@ -453,7 +453,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             const char **names;
             int globalIdx;
             int visualIdx;
-            maxIdx = 67;
+            maxIdx = 68;
             names = s_newFxNames; // @gen:newfx_count
             visualIdx = 0;
             (void)names;
@@ -542,6 +542,8 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_SpawnOrbitals(s_prefabStartPos, EFFECT_PRESET_FIRE_EXPLOSION, 5, 1.5f, 2.0f);
           } else if (s_testIndex == 66) { /* CROWN SPLASH */
               VFX_ComposeCrownSplash(s_prefabStartPos, 1.5f, 2.0f, 2.0f, VC_MAT_WATER);
+          } else if (s_testIndex == 67) { /* SMOKE PUFF */
+              VFX_ComposeSmokePuff(s_prefabStartPos, VC_MAT_EARTH, 1.0f, 1.0f);
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
               s_isPlayingMesh = true;
@@ -688,6 +690,8 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_SpawnOrbitals(s_prefabStartPos, EFFECT_PRESET_FIRE_EXPLOSION, 5, 1.5f, 2.0f);
           } else if (s_testIndex == 66) { /* CROWN SPLASH */
               VFX_ComposeCrownSplash(s_prefabStartPos, 1.5f, 2.0f, 2.0f, VC_MAT_WATER);
+          } else if (s_testIndex == 67) { /* SMOKE PUFF */
+              VFX_ComposeSmokePuff(s_prefabStartPos, VC_MAT_EARTH, 1.0f, 1.0f);
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
               s_isPlayingMesh = true;
@@ -915,7 +919,7 @@ void VFXTest_DrawHUD(void)
         const char **names;
         int gi;
         int vIdx;
-        maxIdx = 67;
+        maxIdx = 68;
         names = s_newFxNames; // @gen:newfx_count
         vIdx = 0;
         (void)names;
@@ -983,6 +987,7 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
     case 61: VFX_SpawnProcBeam(pos, pos, EFFECT_PRESET_FIRE_EXPLOSION, 0.1f, 2.0f); break;
     case 63: VFX_SpawnOrbitals(pos, EFFECT_PRESET_FIRE_EXPLOSION, 5, 1.5f, 2.0f); break;
     case 66: VFX_ComposeCrownSplash(pos, 1.5f, 2.0f, 2.0f, VC_MAT_WATER); break;
+    case 67: VFX_ComposeSmokePuff(pos, VC_MAT_EARTH, 1.0f, 1.0f); break;
     default: break;
     }
 // @gen:newfx_render_trigger end

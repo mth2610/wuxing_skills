@@ -1481,3 +1481,37 @@ dark; and noise is being used as silhouette when it can only be detail.
 
 Order: `F0 → E0 → F1 → F2 → F3 → F4 → E1 → E2 → E3 → E5 → E6 → E7 → E8`,
 with E4 in parallel from F1.
+
+---
+
+## Core headless test suite (new 22/07/2026)
+
+```bash
+./scripts/run_core_tests.sh            # everything
+./scripts/run_core_tests.sh particle   # filter by name
+```
+
+Modelled on the rlvk ladder (`third_party/vulkan/tests/` + `scripts/run_rlvk_*`).
+Each `core/tests/*_test.c` is standalone: links nothing from the game, no raylib,
+no GL, no window. Runs in milliseconds, prints `PASS:`/`FAIL:`, exits non-zero on
+failure. Adding a test = drop a `*_test.c` in `core/tests/`; the runner globs.
+
+Tiers, following rlvk: **1 compile** (not built yet for core) · **2 headless**
+(this) · **3 visual** (not built yet — would drive the app and diff
+`AutoTest_SaveScreenshot` output).
+
+| Suite | Covers |
+|---|---|
+| `particle_lighting_test.c` | A C mirror of `particle_lit.fs`: normal is unit-length, spans the full hemisphere, shading is directional, azimuth sweep rotates the bright side, bulge raises contrast, ambient gain flattens. Plus a **documented trap**: light along the view vector makes shading radially symmetric, which looks exactly like a broken shader but is not. `shader_source_matches` guards the mirror against drifting from the GLSL. |
+| `shader_uniform_wiring_test.c` | Parses a `.fs` for `uniform` declarations and its owning `.c` for `GetShaderLocation` + `SetShaderValue`. Catches the silent case where a uniform is declared and used but never uploaded — an unwritten GLSL uniform reads as ZERO, so the feature behaves as if the knob were pinned to 0. |
+
+**Why it was built.** "Is the particle shading directional?" went five rounds of
+build → screenshot → guess, because the only instrument was a human eye judging
+overlapping translucent sprites in a dark scene. It was never a rendering
+question — it was arithmetic, and the suite settles it in milliseconds.
+
+What headless tests cannot see: shader binding, driver behaviour, quality-tier
+gating, and whether a value is *right* rather than merely *present*. For those
+`ParticleLighting_Begin` logs a one-shot `PARTICLE F1: ... -> lit path ACTIVE /
+OFF (reason)` line, because both of its early-exits are otherwise silent and
+"never ran" is indistinguishable on screen from "ran and the maths is wrong".

@@ -15,7 +15,8 @@
 #include "vc_ground_aura.inl"
 #include "vc_smoke_energy.inl"
 // @gen:common_includes begin
-// 2 include(s) — auto-managed by sync_vfx_test.py
+// 3 include(s) — auto-managed by sync_vfx_test.py
 #include "vc_beam.inl"
 #include "vc_chain_link.inl"
+#include "vc_smoke_puff.inl"
 // @gen:common_includes end

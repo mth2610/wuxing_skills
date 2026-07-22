@@ -200,6 +200,33 @@ void ParticleSystem_GetStats(int *active, int *max); // Item 32
 void UpdateParticles(float dt);
 void DrawParticles(Camera3D camera, Texture2D texture);
 void UnloadParticleSystem(void);
+
+// ─── Đợt E / F1 — lit particles (core/docs/ELDEN_VFX_SPEC.md §0.1b, F1) ──────
+//
+// Flat-shaded smoke can only ever look like a decal OF smoke. Volume reads from
+// lighting: a bright rim toward the light, a dark occluded core, and a glow when
+// backlit. `strength01` blends between the legacy unlit look (0, the DEFAULT —
+// nothing already shipped changes) and fully lit (1).
+//
+// `scatter01` fakes forward scattering: smoke lights up when the sun is BEHIND
+// it. This is the most convincing volumetric cue the eye has, and the acceptance
+// test for F1 — a puff between the camera and a bright light must visibly glow
+// through. ~0.5-1.0 is a natural range; 0 = off.
+//
+// Applies to the WHOLE batch, not per particle: the immediate-mode vertex format
+// has no spare channel. That matches F1b's blend law rather than fighting it —
+//
+//   THE BLEND LAW: if the thing would BLOCK light in reality, draw it
+//   BLEND_ALPHA and light it. If it EMITS light, draw it BLEND_ADDITIVE and
+//   leave it unlit. Smoke that glows is TWO draws — an alpha body plus an
+//   additive glow — never one additive draw. Additive output can never be
+//   darker than its background, which is why additive smoke always reads as
+//   glowing gas rather than smoke.
+//
+// Gated to GFX_MED and above: per-fragment lighting on every particle is real
+// fill-rate, and Mali is the constraint.
+void ParticleSystem_SetLighting(float strength01, float scatter01);
+void ParticleSystem_GetLighting(float *outStrength, float *outScatter);
 bool IsParticleSystemActive(void);
 
 // ============================================================
