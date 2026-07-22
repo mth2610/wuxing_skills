@@ -34,6 +34,61 @@ has no push/pop), but it's a correct fix and `shadow_pipeline` guards it.
 Everything below (Session 5 and earlier) is kept as the reasoning trail but is **superseded** where
 it conflicts with the above.
 
+### SESSION 6 — PERFORMANCE PASS + SESSION CLOSE (2026-07-22)
+
+**Status: shadow WORKS and looks good (soft, character-shaped, no banding). Perf is the open issue.**
+On the dev machine (Intel Iris + MoltenVK) enabling the real shadow drops **60 → ~30 FPS** (~16 ms).
+
+What was tried, and what it tells us (this is the useful part — a map of the perf space):
+1. **Shadow-map resolution 2048 → 1024: NO FPS change.** ⇒ the cost is NOT fill-rate / O(res²). Also
+   made the shadow *worse* — at the raking sun angle a lower-res map shows coarse diagonal texel
+   STREAKS (projective aliasing). Reverted to 2048. Do not lower it.
+2. **Removed the depth→R32F copy pass + the §7.10 depth-sample twin bounce** (capture depth-as-color
+   straight into an R32F color attachment, like the `shadow_cast` test): **60→... 20→30 FPS.** This
+   is the ONE thing that helped — it removed ~2 render/blit encoders per frame. ⇒ the cost is
+   *per-pass / per-encoder fixed overhead*, not fill.
+3. **Gated out the non-caster draws in the shadow capture** (HP/mana text bars, fake blob shadows,
+   pillar wireframes, circle outlines, lines — via `EnvShadow_IsCapturing()`): **NO FPS change.**
+   ⇒ the cost is NOT the extra geometry either.
+
+**Conclusion (judgement, not yet profiled):** the remaining ~16 ms is the **fixed overhead of the
+capture render pass itself** on this old Intel/MoltenVK — the FBO bind + the 2048² clear + the
+scope-open/close layout barriers + the encoder switch — plus the player model being **fully skinned
+twice per frame** (once for the shadow, once for the main view). Neither is reducible by touching
+geometry or resolution. Removing *whole passes* is what moved the needle (step 2); nothing else did.
+
+**Remaining problems / untried levers (for whoever picks this up):**
+- **Skin the player model ONCE per frame** and reuse the posed mesh for both the capture and the main
+  pass (currently `CharacterModel_Draw` re-skins in each). This is a `character/` module change and is
+  the most likely real win if the skinning (not the pass overhead) dominates. **Profile first**:
+  `RLVK_GPU_TRACE=1` prints per-section GPU ms — that settles skinning-vs-pass-overhead definitively.
+  Every perf guess this session was made without that profile; get it before more work.
+- The 2048² **clear** is the one remaining O(res²) item; if the profile shows it dominating, a
+  cheaper clear or a tighter (caster-fit, not arena-fit) light frustum at a smaller map could help
+  without the grazing-angle streaks — but resolution alone (step 1) already proved fill isn't it.
+- Only `DrawSandbox3D` gates non-casters; `GameScreen_Draw3D`/`Boss`/`Formation` (SCREEN_GAME) do
+  NOT yet — apply the same `EnvShadow_IsCapturing()` gate there if the real game screen is slow.
+- Soft shadows at the raking sun angle are inherently aliasing-prone; the current fix is a contiguous
+  7×7 PCF (`GROUND_SHADOW_PCF_*` in `ground_shadow.fs`). Bilinear-filtering the R32F map would help
+  but R32F linear-filter support is unreliable on GL3.3/Intel (why it's forced POINT).
+
+**Top lessons from this multi-session hunt (the meta-lessons):**
+1. **The 4-session "rlvk descriptor bug" never existed.** It was diagnosed as "MoltenVK drops the 2nd
+   push-descriptor to binding 0." Disproven decisively: the descriptor was byte-correct, and the
+   *bound-set path failed identically*. When **two independent binding mechanisms fail the same way,
+   stop blaming the binding** — probe what the shader actually *computes*. Here it was `u_lightVP` /
+   `fragWorldPos`, not the texture.
+2. **The real bugs were mundane and CPU-side:** (a) an rlvk matrix-stack leak (`rlPopMatrix` gating
+   its `transformRequired` reset on the shared `stackCounter`, §7.26), and (b) the game's
+   `MyBeginMode3D` putting the view matrix into `transform`, making immediate-mode `vertexPosition`
+   **view-space**, which the ground receiver assumed was world-space.
+3. **Test the game's real path, not a lookalike.** The headless repro used raylib `DrawCube` /
+   `BeginMode3D`; the game uses `DrawCoreCube` (no `rlPushMatrix`) / `MyBeginMode3D` (view in
+   transform). Those differences were the entire bug. The user catching "we use DrawCoreCube, not
+   DrawCube" is what unblocked it.
+4. **Perf: measure which axis moves the number.** Resolution (fill) and geometry both did nothing;
+   only removing whole passes did. That single fact redirects all future perf work here.
+
 ---
 
 ## SESSION 5 (2026-07-21) — FULLY ROOT-CAUSED: an rlvk MoltenVK push-descriptor bug (READ FIRST) [SUPERSEDED — see Session 6; the "second push dropped" conclusion was WRONG]

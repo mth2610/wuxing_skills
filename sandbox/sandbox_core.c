@@ -3,6 +3,7 @@
 #include "core/skill_helper.h"
 #include "core/composition/visual_composer.h"
 #include "environment/environment_system.h"
+#include "environment/env_shadow.h" // EnvShadow_IsCapturing — skip non-casters in the shadow pass
 #include "entities/entities.h"
 #include "raymath.h"
 #include "rlgl.h"
@@ -897,12 +898,19 @@ static void DrawAgentManaBar3D(Vector3 worldPos, float yOffset, int agentId, Col
 }
 
 void DrawSandbox3D(const PlayerEntity* player, const EnemyEntity* enemy, Vector3 mouseTarget, UIPanelState* uiState) {
-    if (player->position.y > 0.05f) {
+    // During the real-shadow capture pass, draw ONLY solid caster geometry (characters, pillar
+    // bodies). Skipping fake shadows, HP/mana bars, wires, and outlines here removes a large chunk
+    // of the per-frame shadow-map fill/geometry that was re-rendered pointlessly every frame.
+    bool shadowPass = EnvShadow_IsCapturing();
+
+    if (!shadowPass && player->position.y > 0.05f) {
         DrawLine3D((Vector3){ player->position.x, 0.0f, player->position.z }, player->position, ColorAlpha(GRAY, 0.5f));
     }
 
-    DrawCircleOutline3D((Vector3){ player->position.x, 0.0008f, player->position.z }, 0.25f, ColorAlpha(LIME, 0.6f));
-    DrawCircleOutline3D((Vector3){ enemy->position.x, 0.0008f, enemy->position.z }, 0.3f, ColorAlpha(RED, 0.6f));
+    if (!shadowPass) {
+        DrawCircleOutline3D((Vector3){ player->position.x, 0.0008f, player->position.z }, 0.25f, ColorAlpha(LIME, 0.6f));
+        DrawCircleOutline3D((Vector3){ enemy->position.x, 0.0008f, enemy->position.z }, 0.3f, ColorAlpha(RED, 0.6f));
+    }
 
     for (int i = 0; i < NUM_PILLARS; i++) {
         float pillarHeight = pillars[i].radius * 2.5f;
@@ -910,12 +918,12 @@ void DrawSandbox3D(const PlayerEntity* player, const EnemyEntity* enemy, Vector3
         Color pCol = (i == 0) ? GetColor(0xDAA520FF) : GetColor(0x3B3B42FF);
         Color pLineCol = (i == 0) ? YELLOW : GetColor(0x73737CFF);
 
-        Environment_DrawSmartShadow(pillars[i].position, ENV_SHAPE_CYLINDER, pillars[i].radius, pillarHeight);
+        if (!shadowPass) Environment_DrawSmartShadow(pillars[i].position, ENV_SHAPE_CYLINDER, pillars[i].radius, pillarHeight);
         DrawCylinder(center, pillars[i].radius, pillars[i].radius, pillarHeight, 16, pCol);
-        DrawCylinderWires(center, pillars[i].radius, pillars[i].radius, pillarHeight, 16, pLineCol);
+        if (!shadowPass) DrawCylinderWires(center, pillars[i].radius, pillars[i].radius, pillarHeight, 16, pLineCol);
     }
 
-    Environment_DrawSmartShadow(enemy->position, ENV_SHAPE_SPHERE, 0.3f, 0.3f);
+    if (!shadowPass) Environment_DrawSmartShadow(enemy->position, ENV_SHAPE_SPHERE, 0.3f, 0.3f);
     {
         Color enemyClothes = IsEnemySlowed() ? GetColor(0x1B4F72FF) : (IsEnemyBurning() ? RED : GetColor(0x8B2500FF));
         Color enemyOutline = IsEnemySlowed() ? SKYBLUE : (IsEnemyBurning() ? YELLOW : GetColor(0xFF5500FF));
@@ -934,7 +942,7 @@ void DrawSandbox3D(const PlayerEntity* player, const EnemyEntity* enemy, Vector3
         DrawCharacter3D(enemy->position, 0.3f, GetColor(0xFFC0CBFF), enemyClothes, enemyOutline, false, (Vector3){0});
     }
 
-    Environment_DrawSmartShadow(player->position, ENV_SHAPE_SPHERE, 0.25f, 0.25f);
+    if (!shadowPass) Environment_DrawSmartShadow(player->position, ENV_SHAPE_SPHERE, 0.25f, 0.25f);
     if (CharacterModel_IsLoaded()) {
         // Facing = hướng di chuyển (g_playerModelYaw, cập nhật trong
         // UpdateSandbox), KHÔNG theo con trỏ chuột — model thật chạy hướng
@@ -946,9 +954,11 @@ void DrawSandbox3D(const PlayerEntity* player, const EnemyEntity* enemy, Vector3
 
     // HP bars sourced from the Entities agentPool (Entity_GetAgent), not the
     // legacy PlayerEntity/EnemyEntity structs (which have no HP field).
+    if (!shadowPass) {
     DrawAgentHealthBar3D(enemy->position, 0.5f, enemy->agentId, RED);
     DrawAgentHealthBar3D(player->position, 0.46f, player->agentId, LIME);
     DrawAgentManaBar3D(player->position, 0.40f, player->agentId, BLUE);
+    }
 
     // Training dummy — drawn straight from Entity_GetAgent (Entities owns
     // its position entirely, see InitSandbox), color-coded by CC state so
@@ -964,9 +974,9 @@ void DrawSandbox3D(const PlayerEntity* player, const EnemyEntity* enemy, Vector3
         } else if (dummy->pullTimer > 0.0f) {
             dummyClothes = SKYBLUE;
         }
-        Environment_DrawSmartShadow(dummy->position, ENV_SHAPE_SPHERE, 0.3f, 0.3f);
+        if (!shadowPass) Environment_DrawSmartShadow(dummy->position, ENV_SHAPE_SPHERE, 0.3f, 0.3f);
         DrawCharacter3D(dummy->position, 0.3f, GetColor(0xE0E0E0FF), dummyClothes, WHITE, false, (Vector3){ 0 });
-        DrawAgentHealthBar3D(dummy->position, 0.5f, trainingDummyAgentId, ORANGE);
+        if (!shadowPass) DrawAgentHealthBar3D(dummy->position, 0.5f, trainingDummyAgentId, ORANGE);
     }
 }
 

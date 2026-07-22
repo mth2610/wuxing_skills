@@ -32,6 +32,11 @@ bool       EnvShadow_IsEnabled(void);   // false also when Init failed (e.g. FBO
 
 void       EnvShadow_BeginCapture(void); // begins the light-space depth pass
 void       EnvShadow_EndCapture(void);   // ends it, restores default framebuffer/viewport
+bool       EnvShadow_IsCapturing(void);  // true between Begin/EndCapture — scene draw code should
+                                          // SKIP non-casters (UI/HP bars, fake shadows, wires,
+                                          // outlines, decals) when this is set: a shadow map only
+                                          // needs solid caster geometry, everything else is wasted
+                                          // fill/geometry re-rendered into the map every frame.
 
 Shader     EnvShadow_GetDepthShader(void); // assign to casters during BeginCapture..EndCapture
 Matrix     EnvShadow_GetLightVP(void);     // combined light view*projection, for the main pass
