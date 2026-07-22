@@ -707,6 +707,8 @@ static void rlvkResolveTexBinding(u32 textureSlot, VkImageView *outView, VkSampl
     // A non-sampleable depth attachment (Caps.noSampledDepth, §7.1) exposes a sampleable twin
     // filled at FBO scope close; sample the twin's view/layout so soft-particle / depth_copy
     // shaders read real depth instead of the substituted default.
+    if (t->sampleImage)
+        t->sampleWanted = true; // latch: from now on scope close must actually fill the twin (§7.27)
     VkImageView view = t->sampleImage ? t->sampleView : t->view;
     VkImageLayout layout = t->sampleImage ? t->sampleLayout : t->currentLayout;
     VkSampler sampler = t->sampler;

@@ -444,6 +444,38 @@ bugs will rhyme with these. **Check this list before starting a new hunt.**
 - **Method note**: the first version of this scenario PASSED while the warning proved the skip was
   happening — a test that exercises a path is not a test that *detects* its damage.
 
+### 7.29 §7.27 closed: the depth twin is only bounced once something samples it (2026-07-22)
+- **Symptom**: the game sits at exactly 30 FPS with real shadows on, and successive optimization
+  passes change nothing.
+- **First, the measurement trap**: FIFO present + `SetTargetFPS(60)` **quantizes** the number. A
+  17 ms frame and a 33 ms frame both report 30 FPS, so every partial win reads as "no effect" until
+  the last one crosses 16.6 ms. Nothing can be tuned through an FPS counter here. Added
+  `UNCAPPED=1` to `run_rlvk_visual_test.sh` (compiles the raylib cache with `PERFORMANCE_CAPTURE`
+  ⇒ IMMEDIATE present, separate cache dir) and `-DWUXING_PERF_CAPTURE=ON` for the game.
+- **Measured** (`perf_base` / `perf_rt256` / `perf_rt2048`, one 3D cube each, MoltenVK/Intel):
+  4.75 / 6.51 / **13.42** ms/frame. The RT pass costs +1.8 ms at 256² and +8.7 ms at 2048² — it
+  **scales with pixels**. That kills §7.27's recorded signature ("unchanged by resolution", which
+  was asserted, never measured) and confirms the per-pixel `depth → sampleScratch → R32F twin`
+  bounce as the cost. `RLVK_GPU_TRACE` is useless here: MoltenVK returns all-zero timestamps.
+- **Fix**: `rlvkTextureSlot.sampleWanted`, sticky, latched in `rlvkResolveTexBinding` the first time
+  anything binds the twin as a shader resource. In `rlDisableFramebuffer`, a twin that was never
+  wanted emits **no barriers and no copies** — the depth image simply stays in its resting
+  `DEPTH_STENCIL_ATTACHMENT_OPTIMAL` and the twin keeps `sampleLayout = UNDEFINED`, which is
+  exactly the `oldLayout` the bounce path itself declares for the twin ("prior contents are stale;
+  discard"). **Layout bookkeeping is therefore identical either way** — that is what separates this
+  from the *lazy bounce* attempt recorded under §7.27, which desynced it and reintroduced the §7.9
+  `VUID-…-oldLayout-01211` class. A later first bind reads the existing default-texture
+  substitution (white = far = "no occluder") for one frame, then bounces for real from then on.
+- **Result**: 2048² RT pass **13.42 → 8.94 ms/frame**. Suite 18/18; `VALIDATE=1` on
+  `soft_depth`/`soft_ground`/`depth_rt` = 0 / 1 (the unrelated `vertexAttributeAccessBeyondStride`
+  portability VUID) / 0 — the documented baseline, unchanged.
+- **In the game**: `environment/env_shadow.c`'s 2048² capture FBO is exactly the never-sampled case
+  (it samples its own R32F **color** attachment; the depth attachment is only depth-tested), so it
+  pays zero bounce now. Its source comment still describes §7.27 as OPEN — Environment Agent's file
+  to update.
+- **Guard**: the `perf_*` probes are skipped in a full run (measurement, not assertion); ask for
+  them by name with `UNCAPPED=1`.
+
 ## 8. What remains
 
 ### 8.1 Confirm in-game — **DONE (2026-07-17, user-confirmed)**

@@ -6,6 +6,9 @@
 #   ./scripts/run_rlvk_visual_test.sh depth_rt        # one scenario
 #   ./scripts/run_rlvk_visual_test.sh --list          # scenario names
 #   VALIDATE=1 ./scripts/run_rlvk_visual_test.sh ...  # with Khronos validation layers
+#   UNCAPPED=1 ./scripts/run_rlvk_visual_test.sh perf_rt2048   # IMMEDIATE present (no vsync)
+#              for the perf_* probes: FIFO quantizes every frame time to the refresh interval,
+#              which makes any measurement useless. Uses its own raylib cache dir.
 #
 # First run clones + builds a Vulkan-patched raylib 6.0 into /tmp/rlvk_visual_cache
 # (out of the repo, ~2 min); later runs only recompile rlvk + the test (~15 s).
@@ -15,7 +18,17 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VSDK="${VULKAN_SDK:-$(ls -d "$HOME"/VulkanSDK/*/macOS 2>/dev/null | sort | tail -1)}"
 [ -d "$VSDK" ] || { echo "Vulkan SDK not found (set VULKAN_SDK)"; exit 1; }
 
-CACHE="${RLVK_VISUAL_CACHE:-/tmp/rlvk_visual_cache}"
+# PERFORMANCE_CAPTURE switches the swapchain to IMMEDIATE present (rlvk_platform.inl) so the
+# perf_* probes measure real frame cost instead of the vsync interval. Separate cache: it is a
+# different raylib build and must not clobber the normal one.
+EXTRA_CFLAGS=""
+CACHE_SUFFIX=""
+if [ "${UNCAPPED:-0}" = "1" ]; then
+    EXTRA_CFLAGS="-DPERFORMANCE_CAPTURE"
+    CACHE_SUFFIX="_uncapped"
+fi
+
+CACHE="${RLVK_VISUAL_CACHE:-/tmp/rlvk_visual_cache$CACHE_SUFFIX}"
 RAYLIB="$CACHE/raylib"
 BUILD="$CACHE/raylib-build"
 mkdir -p "$CACHE"
@@ -30,7 +43,7 @@ python3 "$ROOT/scripts/rlvk_patch_raylib.py" "$RAYLIB" >/dev/null
 NEWEST_RLVK=$(ls -t "$ROOT/third_party/vulkan/rlvk.h" "$ROOT/third_party/vulkan/rlvk"/*.inl | head -1)
 if [ ! -f "$BUILD/raylib/libraylib.a" ] || [ "$NEWEST_RLVK" -nt "$BUILD/raylib/libraylib.a" ]; then
     cmake -S "$RAYLIB" -B "$BUILD" -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_C_FLAGS="-DGRAPHICS_API_VULKAN -I$ROOT/third_party/vulkan -I$ROOT/third_party/vulkan/include -I$VSDK/include" \
+        -DCMAKE_C_FLAGS="$EXTRA_CFLAGS -DGRAPHICS_API_VULKAN -I$ROOT/third_party/vulkan -I$ROOT/third_party/vulkan/include -I$VSDK/include" \
         >/dev/null
     touch "$RAYLIB/src/rcore.c"
     cmake --build "$BUILD" -j4 >/dev/null

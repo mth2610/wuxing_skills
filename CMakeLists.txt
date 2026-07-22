@@ -35,6 +35,21 @@ else()
     message(STATUS "[WUXING] OpenGL Backend ENABLED. Using native Raylib rlgl.")
 endif()
 
+# -----------------------------------------------------------------
+# FRAME-TIME MEASUREMENT BUILD
+# -----------------------------------------------------------------
+# With vsync (FIFO present) + SetTargetFPS(60), FPS is QUANTIZED: a frame at 17 ms and a frame at
+# 33 ms both report 30. Every partial optimization therefore looks like it "did nothing" until the
+# very last one crosses 16.6 ms. This option switches the swapchain to IMMEDIATE present and drops
+# the FPS cap, so the HUD shows the real frame cost and improvements are visible as they land.
+#   cmake -S . -B build -DWUXING_PERF_CAPTURE=ON && cmake --build build -j4
+# Turn it back OFF for normal play (uncapped present burns GPU and can tear).
+option(WUXING_PERF_CAPTURE "Uncapped present + no FPS cap: measure real frame time, not vsync buckets" OFF)
+if(WUXING_PERF_CAPTURE)
+    message(STATUS "[WUXING] PERF CAPTURE build: vsync OFF, FPS cap OFF (measurement only)")
+    add_compile_definitions(PERFORMANCE_CAPTURE)
+endif()
+
 # Tải Raylib phiên bản 6.0
 FetchContent_Declare(
   raylib

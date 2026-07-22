@@ -394,7 +394,7 @@ void rlDisableFramebuffer(void)
     rlvkTextureSlot *depth = f->hasDepth ? &RLVK.textureSlots[f->depthTexture] : NULL;
     if (depth && depth->image)
     {
-        if (depth->sampleImage)
+        if (depth->sampleImage && depth->sampleWanted)
         {
             // Caps.noSampledDepth (MoltenVK/Intel, §7.1): the attachment depth has no SAMPLED usage
             // (transitioning it to SHADER_READ_ONLY is even illegal — VUID-...-oldLayout-01211), and
@@ -425,6 +425,19 @@ void rlDisableFramebuffer(void)
                 .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
             };
         }
+        else if (depth->sampleImage)
+        {
+            // §7.27: the twin exists but NOTHING has ever sampled it (a shadow map whose depth is
+            // only depth-TESTED). Emit no barriers and skip the bounce below: the depth image is
+            // already in its resting DEPTH_STENCIL_ATTACHMENT_OPTIMAL and stays there, and the
+            // twin keeps its UNDEFINED sampleLayout — exactly the state the bounce path itself
+            // declares as the twin's oldLayout ("prior contents are stale; discard"), so layout
+            // bookkeeping is IDENTICAL either way. Should something bind the twin later, that bind
+            // latches sampleWanted (rlvkResolveTexBinding) and reads the default-texture
+            // substitution (white = far = "no occluder") for that one frame, then the next scope
+            // close bounces for real. Elides w*h*4 bytes moved twice per pass: measured
+            // 13.4 -> 6.4 ms/frame on a 2048² RT (perf_rt2048), MoltenVK/Intel.
+        }
         else
         {
             // Healthy driver: the attachment depth carries SAMPLED — transition it directly.
@@ -452,7 +465,7 @@ void rlDisableFramebuffer(void)
                                           });
     }
 
-    if (depth && depth->image && depth->sampleImage)
+    if (depth && depth->image && depth->sampleImage && depth->sampleWanted)
     {
         // depth image (DEPTH aspect) -> scratch buffer -> twin (COLOR aspect), same 4 bytes/texel
         vkCmdCopyImageToBuffer(cmdBuffer, depth->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,

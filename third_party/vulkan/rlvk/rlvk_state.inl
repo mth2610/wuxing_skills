@@ -56,6 +56,11 @@ typedef struct rlvkTextureSlot {
     VkImageLayout       sampleLayout;
     VkBuffer            sampleScratch;         // w*h*4 staging for the depth->color aspect bounce
     VkDeviceMemory      sampleScratchMemory;
+    // Sticky: set the first time anything binds this twin as a shader resource. Until then the
+    // depth->buffer->twin bounce at scope close is pure waste (a shadow map whose depth is only
+    // ever depth-TESTED never reads it) - w*h*4 bytes moved TWICE per pass, ~7ms/frame at 2048².
+    // Never cleared once set: the bounce must not flicker on and off between frames (§7.27).
+    bool                sampleWanted;
     VkFilter            minFilter, magFilter;  // Sampler filters (rlTextureParameters)
     VkSamplerMipmapMode mipMode;               // Sampler mipmap mode
     VkSamplerAddressMode wrapS, wrapT;         // Sampler wrap modes (GL default: repeat)

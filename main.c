@@ -1143,7 +1143,9 @@ int main(int argc, char **argv) {
       VisualVerify_Init(Skill_GetIndexByName(VisualVerify_GetSkillName()));
   }
 
+#if !defined(PERFORMANCE_CAPTURE)
   if (!autoTestMode && !visualVerifyMode) SetTargetFPS(60);
+#endif // -DWUXING_PERF_CAPTURE=ON: no cap, so the HUD reports real frame time (see CMakeLists)
 
   bool g_gamePaused = false;
   bool g_stepNextFrame = false;
@@ -1843,8 +1845,29 @@ int main(int argc, char **argv) {
             GameScreen_DrawHUD(&player);
         }
 
+        // Frame-time readout. FPS alone cannot be tuned with: it is a reciprocal, so equal FPS
+        // steps are unequal amounts of work (60->50 is 3.3 ms, 30->25 is 6.7 ms), and under vsync
+        // it snaps to refresh divisors and hides every partial win. Milliseconds are LINEAR in the
+        // work done - a 2 ms saving reads as 2 ms whether you are at 60 FPS or at 40. Budget for
+        // 60 FPS is 16.6 ms; the colour is that budget (green under, yellow under 33, red over).
+        {
+            static float s_msAvg = 0.0f, s_msWorst = 0.0f, s_worstWindow = 0.0f;
+            float dt = GetFrameTime();
+            float msNow = dt * 1000.0f;
+            s_msAvg += (msNow - s_msAvg) * 0.05f;   // ~20-frame smoothing: steady enough to read
+            if (msNow > s_msWorst) s_msWorst = msNow;
+            s_worstWindow += dt;
+            if (s_worstWindow >= 1.0f) { s_worstWindow = 0.0f; s_msWorst = msNow; } // worst of the last second
+            Color budget = (s_msAvg < 16.6f) ? GREEN : (s_msAvg < 33.3f) ? YELLOW : RED;
+            const char *line = TextFormat("%.1f ms  %d FPS   worst %.1f ms", s_msAvg, GetFPS(), s_msWorst);
+#if defined(PERFORMANCE_CAPTURE)
+            DrawText(line, 10, 616, 20, budget);   // measurement build: show it in-game too
+#else
+            if (currentScreen != SCREEN_GAME) DrawText(line, 10, 616, 20, budget);
+#endif
+        }
+
         if (currentScreen != SCREEN_GAME) {
-            DrawText(TextFormat("FPS: %d", GetFPS()), 10, 640, 20, GREEN);
             static const char *gfxTierName[4] = { "UNLIT", "LOW", "MED", "HIGH" };
             DrawText(TextFormat("GFX [L]: %s   SHADOW [J]: %s", gfxTierName[GfxQuality_Get()],
                                  EnvShadow_IsEnabled() ? "ON" : "OFF"), 10, 662, 20, SKYBLUE);

@@ -490,6 +490,49 @@ static const char *sc_stress(void)
     return NULL;   // surviving 90 heavy frames without device loss is the main assertion
 }
 
+// ---- perf probes (skipped in a full run; ask for them by name) --------------------
+// Measurement, not assertion: they always "pass". Run with RLVK_GPU_TRACE=1 and read the
+// "VKGPU frames=512 scene=... present=..." line; the query pool prints every 512 frames, so
+// each probe renders 520. Compare probes ACROSS PROCESSES - the averages are cumulative.
+//
+// What they discriminate: perf_rt2048 vs perf_rt256 is the same number of passes with 64x the
+// pixels. If the extra cost scales with resolution it is per-PIXEL work (the Caps.noSampledDepth
+// depth->buffer->twin bounce at scope close, LANDMINES 7.27); if 2048 ~= 256 it is per-PASS
+// overhead (encoder/pass splits) and the twin is NOT the culprit.
+static void perfFrame(RenderTexture2D *rt, Camera3D cam)
+{
+    BeginDrawing();
+    ClearBackground((Color){8,8,16,255});
+    if (rt)
+    {
+        BeginTextureMode(*rt);
+            ClearBackground(BLACK);
+            BeginMode3D(cam); DrawCube((Vector3){0,0,0}, 1.5f, 1.5f, 1.5f, RED); EndMode3D();
+        EndTextureMode();
+    }
+    BeginMode3D(cam); DrawCube((Vector3){0,0,0}, 1.5f, 1.5f, 1.5f, BLUE); EndMode3D();
+    EndDrawing();
+}
+
+static const char *perfRun(int rtSize)
+{
+    Camera3D cam = cam3d();
+    RenderTexture2D rt = {0};
+    if (rtSize) rt = LoadRenderTexture(rtSize, rtSize);
+    for (int f = 0; f < 60; f++) perfFrame(rtSize ? &rt : NULL, cam);   // warm up: pipelines, arena growth
+    double t0 = GetTime();
+    const int N = 460;
+    for (int f = 0; f < N; f++) perfFrame(rtSize ? &rt : NULL, cam);
+    double ms = (GetTime() - t0) * 1000.0 / N;
+    if (rtSize) UnloadRenderTexture(rt);
+    printf("  [perf rt=%-4d] %.3f ms/frame (%.1f fps)\n", rtSize, ms, 1000.0 / ms);
+    return NULL;
+}
+
+static const char *sc_perf_base(void)   { return perfRun(0);    }
+static const char *sc_perf_rt256(void)  { return perfRun(256);  }
+static const char *sc_perf_rt2048(void) { return perfRun(2048); }
+
 // Real-Shading-P6 shadow projection convention probe. The game builds a light
 // view-proj on the CPU (MatrixLookAt + MatrixOrtho), uploads it as a CUSTOM
 // `uniform mat4 u_lightVP` via SetShaderValueMatrix, and a fragment shader
@@ -946,6 +989,9 @@ static const Scenario SCENARIOS[] = {
     { "shadow_cast",    sc_shadow_cast },
     { "shadow_pipeline",sc_shadow_pipeline },
     { "ubo_arena",      sc_ubo_arena },
+    { "perf_base",      sc_perf_base },
+    { "perf_rt256",     sc_perf_rt256 },
+    { "perf_rt2048",    sc_perf_rt2048 },
 };
 #define N_SCENARIOS (int)(sizeof(SCENARIOS)/sizeof(SCENARIOS[0]))
 
@@ -963,6 +1009,7 @@ int main(int argc, char **argv)
     for (int i = 0; i < N_SCENARIOS; i++)
     {
         if (only && (strcmp(only, SCENARIOS[i].name) != 0)) continue;
+        if (!only && (strncmp(SCENARIOS[i].name, "perf_", 5) == 0)) continue; // measurement probes: by name only
         const char *why = SCENARIOS[i].fn();
         ran++;
         if (why) { fails++; printf("FAIL %-14s %s\n", SCENARIOS[i].name, why); }
