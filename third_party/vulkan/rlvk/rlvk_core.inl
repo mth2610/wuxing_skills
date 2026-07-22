@@ -460,6 +460,22 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
         VkDeviceSize colBytes = (VkDeviceSize)vcount * 4 * sizeof(unsigned char);
         VkDeviceSize idxBytes = (VkDeviceSize)icount * sizeof(unsigned int);
 
+        // The UBO snapshot this flush is about to push (rlvkAppendUboWrites, inside the draw loop
+        // below) comes out of the SAME arena, but that call cannot drain — it silently skips the
+        // push, and the draw then executes with the previous push still bound (stale mvp + stale
+        // uniforms = quads drawn with another draw's transform). Reserve its worst case HERE, where
+        // draining is still legal, so the skip path is never reached from the batch site.
+        VkDeviceSize uboBytes = 0;
+        if (shader->usesUbo)
+        {
+            if (shader->vsBlockSize)
+                uboBytes += ((VkDeviceSize)shader->vsBlockSize + 255) & ~(VkDeviceSize)255;
+            if (shader->fsBlockSize)
+                uboBytes += ((VkDeviceSize)shader->fsBlockSize + 255) & ~(VkDeviceSize)255;
+            if (uboBytes)
+                uboBytes += 256; // alignment slack for the first block's 256-byte rounding
+        }
+
         // Arena exhaustion is handled, never dropped: drain the recording mid-frame (the wait
         // consumes all arena data, so the arena restarts from offset 0) and record the demanded
         // size so the arena grows at the next frame boundary and steady state stops draining
@@ -471,7 +487,7 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
             nrmOff = uvOff + uvBytes;
             colOff = nrmOff + nrmBytes;
             idxOff = colOff + colBytes;
-            if (idxOff + idxBytes <= arena->sizeBytes)
+            if (idxOff + idxBytes + uboBytes <= arena->sizeBytes)
                 break;
             if (attempt > 0)
             {
@@ -485,7 +501,7 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
             cmdBuffer = RLVK.cmdBuffers[frameIndex];
         }
         RLVK.arenaOffset[frameIndex] = idxOff + idxBytes;
-        RLVK.arenaWanted[frameIndex] += (idxOff + idxBytes) - posOff + 16; // this flush's arena demand
+        RLVK.arenaWanted[frameIndex] += (idxOff + idxBytes) - posOff + 16 + uboBytes; // this flush's arena demand (vertex streams + its UBO snapshot)
 
         char *dst = (char *)arena->mapped;
         memcpy(dst + posOff, srcvb->vertices, (size_t)posBytes);

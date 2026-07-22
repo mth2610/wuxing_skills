@@ -27,7 +27,11 @@ void main() {
     // Giải mã seed từ trục Y của normal vector nhận từ vertex (tránh phân mảnh pixel và loại bỏ flushes)
     float lenXZ = length(fragNormal.xz);
     float seedVal = u_seed + ((lenXZ > 0.0001) ? (fragNormal.y / lenXZ) * 100.0 : 0.0);
-    vec2 seedOff = vec2(seedVal * 13.13, seedVal * 27.37);
+    // Keep the noise domain BOUNDED. seedVal is decoded from a normalized varying, so a stray
+    // matModel (or simply a large seed) can push the offset into the thousands; vnoise' floor()/
+    // fract() then quantize and the column degenerates into flat hard-edged blocks. fract() first
+    // makes the offset magnitude-proof — the pattern differs, nothing depends on the exact seed.
+    vec2 seedOff = fract(vec2(seedVal * 0.1031, seedVal * 0.1237)) * 32.0;
 
     // ==========================================
     // 2. TĂNG MẠNH ĐỘ UỐN LƯỢN VÀ NHIỄU (Macro Curl & Domain Warp)

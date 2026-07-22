@@ -18,6 +18,9 @@
 //                  (frameConsumed/present lifecycle class - GPU-fault regression)
 //   stress         many additive billboards x frames: arena-exhaustion mid-frame
 //                  flush path (fire_pillar crash class) - survival test
+//   ubo_arena      per-draw uniform changes until the arena is spent: the UBO push must
+//                  never be skipped (stale mvp/uniforms = smoke-column "shuffled
+//                  rectangles" class, HANDOFF 7.28) - correctness test
 #include "raylib.h"
 #include "raymath.h"
 #include "rlgl.h"
@@ -844,6 +847,83 @@ static const char *sc_shadow_pipeline(void)
     return "game's Y-FLIP copy misses; NO-FLIP lands the shadow -> remove the -height in env_shadow copy";
 }
 
+// Per-draw uniform changes under arena pressure (smoke-column class).
+// A VFX that changes a uniform between instances forces one batch flush per instance; every flush
+// snapshots the shader's UBO block into the per-frame bump arena. rlvkAppendUboWrites cannot drain
+// the arena, so when it filled up it SKIPPED the push and the draw silently inherited the previous
+// push - stale mvp AND stale uniforms, i.e. quads painted in another quad's color / another quad's
+// place ("the picture got cut into rectangles and shuffled"). Fix: the call sites that CAN drain
+// (batch flush, mesh draw) reserve the UBO block up front, so the skip path is unreachable.
+// Detection is ADDITIVE on purpose: each stripe accumulates exactly 10 x 0.1 of its own channel,
+// so a single stale push (which paints the pressure quads' black instead) leaves that stripe one
+// increment short FOREVER - later correct draws cannot repair it. A last-draw-wins pixel check
+// would only catch corruption in the final draw and pass by luck.
+static const char *sc_ubo_arena(void)
+{
+    const char *FS = "#version 330\n"
+        "in vec2 fragTexCoord; in vec4 fragColor; out vec4 finalColor;\n"
+        "uniform sampler2D texture0; uniform vec4 colDiffuse;\n"
+        "uniform vec4 uColor;\n"
+        // A fat (zero-filled, never set) uniform block widens the failure window on purpose: once
+        // the arena has less than one block left, EVERY following flush skips its push while the
+        // much smaller vertex payload still fits - dozens of stale draws in a row, not a lucky one.
+        "uniform vec4 uPad[512];\n"
+        "void main(){ finalColor = vec4((uColor.rgb + uPad[511].rgb) * 0.1, 1.0); }\n";
+    Shader sh = LoadShaderFromMemory(NULL, FS);
+    int loc = GetShaderLocation(sh, "uColor");
+
+    const int STRIPES = 12, ROUNDS = 250;
+    const int SW = W / STRIPES;
+    Vector4 white = { 1.0f, 1.0f, 1.0f, 1.0f }; // the pressure color: it contaminates EVERY channel of a stripe that inherits it
+    Vector4 col[12];
+    for (int s = 0; s < STRIPES; s++) // one pure channel per stripe: contamination is unmistakable
+        col[s] = (Vector4){ (s % 3 == 0) ? 1.0f : 0.0f, (s % 3 == 1) ? 1.0f : 0.0f, (s % 3 == 2) ? 1.0f : 0.0f, 1.0f };
+
+    BeginDrawing();
+    ClearBackground(BLACK);
+    BeginBlendMode(BLEND_ADDITIVE);
+    BeginShaderMode(sh);
+    for (int r = 0; r < ROUNDS; r++)
+    {
+        // Pressure: one flush (= one UBO snapshot) per tiny black quad, until the arena is spent
+        for (int i = 0; i < 50; i++)
+        {
+            rlDrawRenderBatchActive();
+            SetShaderValue(sh, loc, &white, SHADER_UNIFORM_VEC4);
+            DrawRectangle(0, H - 2, 2, 2, WHITE);
+        }
+        // Payload: one stripe per uniform change, at every arena offset the pressure loop leaves
+        for (int s = 0; s < STRIPES; s++)
+        {
+            rlDrawRenderBatchActive();
+            SetShaderValue(sh, loc, &col[s], SHADER_UNIFORM_VEC4);
+            DrawRectangle(s * SW, 40, SW, H - 100, WHITE);
+        }
+    }
+    EndShaderMode();
+    EndBlendMode();
+    EndDrawing();
+
+    Image im = snap();
+    const char *why = NULL;
+    static char buf[160];
+    for (int s = 0; s < STRIPES && !why; s++)
+    {
+        Color c = at(im, s * SW + SW / 2, H / 2);
+        int own = (s % 3 == 0) ? c.r : (s % 3 == 1) ? c.g : c.b;
+        int f1 = (s % 3 == 0) ? c.g : c.r;
+        int f2 = (s % 3 == 2) ? c.g : c.b;
+        if (own < 245 || f1 > 15 || f2 > 15)
+        {
+            snprintf(buf, sizeof(buf), "stripe %d is (%u,%u,%u): a UBO push was skipped, that draw ran on stale uniforms", s, c.r, c.g, c.b);
+            why = buf;
+        }
+    }
+    UnloadImage(im);
+    UnloadShader(sh);
+    return why;
+}
+
 // ---- runner ----------------------------------------------------------------------
 
 typedef struct { const char *name; const char *(*fn)(void); } Scenario;
@@ -865,6 +945,7 @@ static const Scenario SCENARIOS[] = {
     { "shadow_proj",    sc_shadow_proj },
     { "shadow_cast",    sc_shadow_cast },
     { "shadow_pipeline",sc_shadow_pipeline },
+    { "ubo_arena",      sc_ubo_arena },
 };
 #define N_SCENARIOS (int)(sizeof(SCENARIOS)/sizeof(SCENARIOS[0]))
 

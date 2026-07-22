@@ -15,11 +15,12 @@
 // pass never changes an image's layout behind the manual tracking's back.
 static VkRenderPass rlvkGetRenderPass(const rlvkRenderPassKey *key)
 {
-    for (int i = 0; i < RLVK.renderPassCount; i++)
+    const u32 count = RLVK.renderPassCount;
+    for (u32 i = 0; i < count; i++)
         if (memcmp(&RLVK.renderPasses[i].key, key, sizeof(rlvkRenderPassKey)) == 0)
             return RLVK.renderPasses[i].pass;
 
-    if (RLVK.renderPassCount >= RLVK_MAX_RENDER_PASSES)
+    if (count >= RLVK_MAX_RENDER_PASSES)
     {
         TRACELOG(RL_LOG_WARNING, "RLVK: render-pass cache full (%d), raise RLVK_MAX_RENDER_PASSES", RLVK_MAX_RENDER_PASSES);
         return VK_NULL_HANDLE;
@@ -108,14 +109,15 @@ static VkRenderPass rlvkGetRenderPass(const rlvkRenderPassKey *key)
 // Get (or build and cache) the framebuffer for a pass + attachment view set
 static VkFramebuffer rlvkGetFramebuffer(VkRenderPass pass, const VkImageView *views, u32 viewCount, u32 width, u32 height)
 {
-    for (int i = 0; i < RLVK.framebufferCount; i++)
+    const u32 count = RLVK.framebufferCount;
+    for (u32 i = 0; i < count; i++)
     {
         rlvkFramebufferEntry *e = &RLVK.framebuffers[i];
         if ((e->pass == pass) && (e->viewCount == viewCount) && (e->width == width) && (e->height == height) && (memcmp(e->views, views, viewCount * sizeof(VkImageView)) == 0))
             return e->framebuffer;
     }
 
-    if (RLVK.framebufferCount >= RLVK_MAX_CACHED_FRAMEBUFFERS)
+    if (count >= RLVK_MAX_CACHED_FRAMEBUFFERS)
     {
         TRACELOG(RL_LOG_WARNING, "RLVK: framebuffer cache full (%d), raise RLVK_MAX_CACHED_FRAMEBUFFERS", RLVK_MAX_CACHED_FRAMEBUFFERS);
         return VK_NULL_HANDLE;
@@ -140,7 +142,7 @@ static VkFramebuffer rlvkGetFramebuffer(VkRenderPass pass, const VkImageView *vi
     }
 
     rlvkFramebufferEntry *e = &RLVK.framebuffers[RLVK.framebufferCount++];
-    memset(e, 0, sizeof(*e));
+    // Optimized: No need for memset(e, 0, ...) since all fields (except optional struct padding) are immediately populated
     e->framebuffer = fb;
     e->pass = pass;
     e->viewCount = viewCount;
@@ -160,7 +162,7 @@ static void rlvkEvictFramebuffersForView(VkImageView view)
 {
     if (view == VK_NULL_HANDLE)
         return;
-    for (int i = 0; i < RLVK.framebufferCount;)
+    for (u32 i = 0; i < RLVK.framebufferCount;)
     {
         rlvkFramebufferEntry *e = &RLVK.framebuffers[i];
         bool hit = false;
@@ -194,8 +196,7 @@ static void rlvkBeginScopeRenderPass(VkCommandBuffer cmdBuffer, const rlvkRender
         return;
 
     // pClearValues is indexed by attachment: colors [0..colorCount), resolve, depth last
-    VkClearValue clears[RLVK_MAX_SCOPE_ATTACHMENTS];
-    memset(clears, 0, sizeof(clears));
+    VkClearValue clears[RLVK_MAX_SCOPE_ATTACHMENTS] = {0}; // Optimized: Replaced memset with zero-init
     if (clearColor)
         for (u32 c = 0; c < key->colorCount; c++)
             clears[c] = *clearColor;
@@ -218,8 +219,11 @@ static void rlvkBeginScopeRenderPass(VkCommandBuffer cmdBuffer, const rlvkRender
 // was already flushed by raylib's BeginTextureMode/EndTextureMode before this is called.
 void rlEnableFramebuffer(unsigned int id)
 {
-    RLVK.State.stateGeneration++;
-    RLVK.State.currentFramebufferSlot = id;
+    if (RLVK.State.currentFramebufferSlot != id)
+    {
+        RLVK.State.stateGeneration++;
+        RLVK.State.currentFramebufferSlot = id;
+    }
     if (!isGpuReady || id == 0 || id >= RLVK_MAX_FRAMEBUFFER_SLOTS)
         return;
     if (RLVK.scope.fbSlot == id && RLVK.frameActive)
@@ -246,6 +250,11 @@ void rlEnableFramebuffer(unsigned int id)
 
     vkCmdEndRenderPass(cmdBuffer);
 
+    // OPTIMIZATION: Batched Pipeline Barriers
+    // Instead of calling CmdPipelineBarrier2 multiple times in loops, collect them into one single submission.
+    VkImageMemoryBarrier2 batchedBarriers[9]; // max 8 colors + 1 depth
+    u32 barrierCount = 0;
+
     for (u32 c = 0; c < colorCount; c++)
     {
         // Color texture -> COLOR_ATTACHMENT. oldLayout MUST be the tracked layout, not a
@@ -256,21 +265,18 @@ void rlEnableFramebuffer(unsigned int id)
             continue;
         VkImageLayout oldL = colors[c]->currentLayout;
         bool wasRead = (oldL == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
-                                              VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                                              .imageMemoryBarrierCount = 1,
-                                              .pImageMemoryBarriers = &(VkImageMemoryBarrier2){
-                                                  VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                                                  .srcStageMask = wasRead ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
-                                                  .srcAccessMask = wasRead ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
-                                                  .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                                  .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                                                  .oldLayout = oldL,
-                                                  .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                                  .image = colors[c]->image,
-                                                  .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
-                                              },
-                                          });
+
+        batchedBarriers[barrierCount++] = (VkImageMemoryBarrier2){
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask = wasRead ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+            .srcAccessMask = wasRead ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
+            .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            .oldLayout = oldL,
+            .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .image = colors[c]->image,
+            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+        };
         colors[c]->currentLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     }
 
@@ -278,22 +284,27 @@ void rlEnableFramebuffer(unsigned int id)
     if (depth && depth->image && depth->currentLayout != VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
     {
         // The depth texture may have been SAMPLED since the last bind (depth shaders)
+        batchedBarriers[barrierCount++] = (VkImageMemoryBarrier2){
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+            .srcAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+            .dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            .oldLayout = (depth->currentLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            .image = depth->image,
+            .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
+        };
+        depth->currentLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    }
+
+    if (barrierCount > 0)
+    {
         vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
                                               VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                                              .imageMemoryBarrierCount = 1,
-                                              .pImageMemoryBarriers = &(VkImageMemoryBarrier2){
-                                                  VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                                                  .srcStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                                                  .srcAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-                                                  .dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                                                  .dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                                                  .oldLayout = (depth->currentLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
-                                                  .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                                                  .image = depth->image,
-                                                  .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
-                                              },
+                                              .imageMemoryBarrierCount = barrierCount,
+                                              .pImageMemoryBarriers = batchedBarriers,
                                           });
-        depth->currentLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     }
 
     // GL semantics: framebuffer content persists across binds -> loadOp LOAD (ClearBackground
@@ -305,8 +316,9 @@ void rlEnableFramebuffer(unsigned int id)
     bool fbHasDepth = (depth && depth->image);
     VkImageView scopeViews[RLVK_MAX_SCOPE_ATTACHMENTS];
     u32 scopeViewCount = 0;
-    rlvkRenderPassKey rpKey;
-    memset(&rpKey, 0, sizeof(rpKey));
+
+    // Optimized: Replaced memset with zero-init
+    rlvkRenderPassKey rpKey = {0};
 
     for (u32 c = 0; c < colorCount; c++)
     {
@@ -354,34 +366,35 @@ void rlDisableFramebuffer(void)
 
     vkCmdEndRenderPass(cmdBuffer);
 
+    // OPTIMIZATION: Batched Pipeline Barriers
+    VkImageMemoryBarrier2 batchedBarriers[10]; // max 8 colors + up to 2 for depth
+    u32 barrierCount = 0;
+
     for (u32 c = 0; c < f->colorCount && c < 8; c++)
     {
         rlvkTextureSlot *color = &RLVK.textureSlots[f->colorTextures[c]];
         if (!color->image || color->currentLayout != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
             continue;
-        vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
-                                              VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                                              .imageMemoryBarrierCount = 1,
-                                              .pImageMemoryBarriers = &(VkImageMemoryBarrier2){
-                                                  VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                                                  .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                                  .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                                                  .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                                                  .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-                                                  .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                                  .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                                  .image = color->image,
-                                                  .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
-                                              },
-                                          });
+
+        batchedBarriers[barrierCount++] = (VkImageMemoryBarrier2){
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            .image = color->image,
+            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+        };
         color->currentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
 
     // Make the depth texture sampleable for depth-render / shadowmap / soft-particle shaders.
-    if (f->hasDepth)
+    rlvkTextureSlot *depth = f->hasDepth ? &RLVK.textureSlots[f->depthTexture] : NULL;
+    if (depth && depth->image)
     {
-        rlvkTextureSlot *depth = &RLVK.textureSlots[f->depthTexture];
-        if (depth->image && depth->sampleImage)
+        if (depth->sampleImage)
         {
             // Caps.noSampledDepth (MoltenVK/Intel, §7.1): the attachment depth has no SAMPLED usage
             // (transitioning it to SHADER_READ_ONLY is even illegal — VUID-...-oldLayout-01211), and
@@ -389,113 +402,116 @@ void rlDisableFramebuffer(void)
             // through sampleScratch into the R32F color twin (buffer copies cross the depth/color
             // aspect that vkCmdCopyImage cannot); the attachment stays in its resting
             // DEPTH_STENCIL_ATTACHMENT_OPTIMAL (the scope-open guard then skips re-transitioning it).
-            vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
-                                                  VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                                                  .imageMemoryBarrierCount = 2,
-                                                  .pImageMemoryBarriers = (VkImageMemoryBarrier2[]){
-                                                      {
-                                                          VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                                                          .srcStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                                                          .srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                                                          .dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
-                                                          .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
-                                                          .oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                                                          .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                                          .image = depth->image,
-                                                          .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
-                                                      },
-                                                      {
-                                                          VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                                                          .srcStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                                                          .srcAccessMask = 0,
-                                                          .dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
-                                                          .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                                                          .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED, // prior twin contents are stale; discard
-                                                          .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                                          .image = depth->sampleImage,
-                                                          .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
-                                                      },
-                                                  },
-                                              });
-            // depth image (DEPTH aspect) -> scratch buffer -> twin (COLOR aspect), same 4 bytes/texel
-            vkCmdCopyImageToBuffer(cmdBuffer, depth->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                   depth->sampleScratch, 1,
-                                   &(VkBufferImageCopy){
-                                       .imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1},
-                                       .imageExtent = {(u32)depth->width, (u32)depth->height, 1},
-                                   });
-            vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
-                                                  VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                                                  .bufferMemoryBarrierCount = 1,
-                                                  .pBufferMemoryBarriers = &(VkBufferMemoryBarrier2){
-                                                      VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-                                                      .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
-                                                      .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                                                      .dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
-                                                      .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
-                                                      .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                                                      .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                                                      .buffer = depth->sampleScratch,
-                                                      .size = VK_WHOLE_SIZE,
-                                                  },
-                                              });
-            vkCmdCopyBufferToImage(cmdBuffer, depth->sampleScratch, depth->sampleImage,
-                                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
-                                   &(VkBufferImageCopy){
-                                       .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
-                                       .imageExtent = {(u32)depth->width, (u32)depth->height, 1},
-                                   });
-            vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
-                                                  VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                                                  .imageMemoryBarrierCount = 2,
-                                                  .pImageMemoryBarriers = (VkImageMemoryBarrier2[]){
-                                                      {
-                                                          VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                                                          .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
-                                                          .srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
-                                                          .dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                                                          .dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                                                          .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                                          .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                                                          .image = depth->image,
-                                                          .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
-                                                      },
-                                                      {
-                                                          VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                                                          .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
-                                                          .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                                                          .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                                                          .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-                                                          .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                                          .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                                          .image = depth->sampleImage,
-                                                          .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
-                                                      },
-                                                  },
-                                              });
-            depth->currentLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-            depth->sampleLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            batchedBarriers[barrierCount++] = (VkImageMemoryBarrier2){
+                VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                .srcStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                .srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                .dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+                .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
+                .oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                .image = depth->image,
+                .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
+            };
+            batchedBarriers[barrierCount++] = (VkImageMemoryBarrier2){
+                VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                .srcStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                .srcAccessMask = 0,
+                .dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+                .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED, // prior twin contents are stale; discard
+                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .image = depth->sampleImage,
+                .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+            };
         }
-        else if (depth->image)
+        else
         {
             // Healthy driver: the attachment depth carries SAMPLED — transition it directly.
-            vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
-                                                  VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                                                  .imageMemoryBarrierCount = 1,
-                                                  .pImageMemoryBarriers = &(VkImageMemoryBarrier2){
+            batchedBarriers[barrierCount++] = (VkImageMemoryBarrier2){
+                VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                .srcStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                .srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                .oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                .image = depth->image,
+                .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
+            };
+            depth->currentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        }
+    }
+
+    if (barrierCount > 0)
+    {
+        vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
+                                              VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                              .imageMemoryBarrierCount = barrierCount,
+                                              .pImageMemoryBarriers = batchedBarriers,
+                                          });
+    }
+
+    if (depth && depth->image && depth->sampleImage)
+    {
+        // depth image (DEPTH aspect) -> scratch buffer -> twin (COLOR aspect), same 4 bytes/texel
+        vkCmdCopyImageToBuffer(cmdBuffer, depth->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               depth->sampleScratch, 1,
+                               &(VkBufferImageCopy){
+                                   .imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1},
+                                   .imageExtent = {(u32)depth->width, (u32)depth->height, 1},
+                               });
+        vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
+                                              VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                              .bufferMemoryBarrierCount = 1,
+                                              .pBufferMemoryBarriers = &(VkBufferMemoryBarrier2){
+                                                  VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+                                                  .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+                                                  .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                                  .dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+                                                  .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
+                                                  .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                                  .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                                  .buffer = depth->sampleScratch,
+                                                  .size = VK_WHOLE_SIZE,
+                                              },
+                                          });
+        vkCmdCopyBufferToImage(cmdBuffer, depth->sampleScratch, depth->sampleImage,
+                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                               &(VkBufferImageCopy){
+                                   .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                                   .imageExtent = {(u32)depth->width, (u32)depth->height, 1},
+                               });
+        vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
+                                              VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                              .imageMemoryBarrierCount = 2,
+                                              .pImageMemoryBarriers = (VkImageMemoryBarrier2[]){
+                                                  {
                                                       VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                                                      .srcStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                                                      .srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                                                      .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                                                      .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-                                                      .oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                                                      .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                                      .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+                                                      .srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
+                                                      .dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                                                      .dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                                                      .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                                      .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                                                       .image = depth->image,
                                                       .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
                                                   },
-                                              });
-            depth->currentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        }
+                                                  {
+                                                      VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                                                      .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+                                                      .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                                      .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                                      .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                                                      .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                                      .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                                      .image = depth->sampleImage,
+                                                      .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+                                                  },
+                                              },
+                                          });
+        depth->currentLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depth->sampleLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
 
     // Resume the swapchain scope, preserving its content
@@ -516,8 +532,9 @@ static void rlvkResumeSwapchainScope(VkCommandBuffer cmdBuffer)
     if (msaa)
         scopeViews[scopeViewCount++] = RLVK.interView[frameIndex];
     scopeViews[scopeViewCount++] = RLVK.depthView[frameIndex];
-    rlvkRenderPassKey rpKey;
-    memset(&rpKey, 0, sizeof(rpKey));
+
+    // Optimized: Replaced memset with zero-init
+    rlvkRenderPassKey rpKey = {0};
     rpKey.colorFormats[0] = RLVK.swapchainFormat;
     rpKey.depthFormat = RLVK.depthFormat;
     rpKey.colorCount = 1;
@@ -526,6 +543,7 @@ static void rlvkResumeSwapchainScope(VkCommandBuffer cmdBuffer)
     rpKey.depthLoad = VK_ATTACHMENT_LOAD_OP_LOAD;
     rpKey.depthStore = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     rpKey.hasResolve = msaa ? 1 : 0;
+
     rlvkBeginScopeRenderPass(cmdBuffer, &rpKey, scopeViews, scopeViewCount,
                              RLVK.swapchainExtent.width, RLVK.swapchainExtent.height, NULL, NULL);
     RLVK.scope.fbSlot = 0;
@@ -586,8 +604,8 @@ static void rlvkFlushFrame(void)
     vkResetCommandPool(RLVK.device, RLVK.cmdPools[frameIndex], 0);
     vk.BeginCommandBuffer(cmdBuffer, &(VkCommandBufferBeginInfo){
                                          VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT});
-    RLVK.boundPipeline = VK_NULL_HANDLE;                 // pipeline binding is command-buffer state too
-    memset(RLVK.pushedView, 0, sizeof(RLVK.pushedView)); // push-descriptor state resets with the command buffer
+    RLVK.boundPipeline = VK_NULL_HANDLE;                    // pipeline binding is command-buffer state too
+    memset(RLVK.pushedView, 0, sizeof(RLVK.pushedView));    // push-descriptor state resets with the command buffer
     memset(RLVK.pushedSsbo, 0xFF, sizeof(RLVK.pushedSsbo)); // graphics-SSBO pushes die with the cb too (0xFF = never pushed)
     s_pipelineFastValid = false;
     RLVK.State.cbEpoch++;
@@ -748,50 +766,74 @@ void rlBindFramebuffer(unsigned int target, unsigned int fb)
 // Enable color blending
 void rlEnableColorBlend(void)
 {
-    RLVK.State.colorBlendEnabled = true;
-    RLVK.State.stateGeneration++;
+    if (!RLVK.State.colorBlendEnabled)
+    {
+        RLVK.State.colorBlendEnabled = true;
+        RLVK.State.stateGeneration++;
+    }
 }
 // Disable color blending
 void rlDisableColorBlend(void)
 {
-    RLVK.State.colorBlendEnabled = false;
-    RLVK.State.stateGeneration++;
+    if (RLVK.State.colorBlendEnabled)
+    {
+        RLVK.State.colorBlendEnabled = false;
+        RLVK.State.stateGeneration++;
+    }
 }
 // Enable depth test
 void rlEnableDepthTest(void)
 {
-    RLVK.State.depthTest = true;
-    RLVK.State.stateGeneration++;
+    if (!RLVK.State.depthTest)
+    {
+        RLVK.State.depthTest = true;
+        RLVK.State.stateGeneration++;
+    }
 }
 // Disable depth test
 void rlDisableDepthTest(void)
 {
-    RLVK.State.depthTest = false;
-    RLVK.State.stateGeneration++;
+    if (RLVK.State.depthTest)
+    {
+        RLVK.State.depthTest = false;
+        RLVK.State.stateGeneration++;
+    }
 }
 // Enable depth write
 void rlEnableDepthMask(void)
 {
-    RLVK.State.depthWrite = true;
-    RLVK.State.stateGeneration++;
+    if (!RLVK.State.depthWrite)
+    {
+        RLVK.State.depthWrite = true;
+        RLVK.State.stateGeneration++;
+    }
 }
 // Disable depth write
 void rlDisableDepthMask(void)
 {
-    RLVK.State.depthWrite = false;
-    RLVK.State.stateGeneration++;
+    if (RLVK.State.depthWrite)
+    {
+        RLVK.State.depthWrite = false;
+        RLVK.State.stateGeneration++;
+    }
 }
 // Enable backface culling
 void rlEnableBackfaceCulling(void)
 {
-    RLVK.State.cullEnabled = true;
-    RLVK.State.stateGeneration++;
+    if (!RLVK.State.cullEnabled)
+    {
+        RLVK.State.cullEnabled = true;
+        RLVK.State.stateGeneration++;
+    }
 }
 // Disable backface culling
 void rlDisableBackfaceCulling(void)
 {
-    RLVK.State.cullEnabled = false;
-    RLVK.State.stateGeneration++;
+    if (RLVK.State.cullEnabled)
+    {
+        RLVK.State.cullEnabled = false;
+        RLVK.State.stateGeneration++;
+    }
 }
 // Set color mask active for screen read/draw
 void rlColorMask(bool r, bool g, bool b, bool a)
@@ -804,41 +846,59 @@ void rlColorMask(bool r, bool g, bool b, bool a)
 // Set face culling mode
 void rlSetCullFace(int mode)
 {
-    RLVK.State.cullMode = mode;
-    RLVK.State.stateGeneration++;
+    if (RLVK.State.cullMode != mode)
+    {
+        RLVK.State.cullMode = mode;
+        RLVK.State.stateGeneration++;
+    }
 }
 // Enable scissor test
 void rlEnableScissorTest(void)
 {
-    RLVK.State.scissorEnabled = true;
-    RLVK.State.stateGeneration++;
+    if (!RLVK.State.scissorEnabled)
+    {
+        RLVK.State.scissorEnabled = true;
+        RLVK.State.stateGeneration++;
+    }
 }
 // Disable scissor test
 void rlDisableScissorTest(void)
 {
-    RLVK.State.scissorEnabled = false;
-    RLVK.State.stateGeneration++;
+    if (RLVK.State.scissorEnabled)
+    {
+        RLVK.State.scissorEnabled = false;
+        RLVK.State.stateGeneration++;
+    }
 }
 // Scissor test
 void rlScissor(int x, int y, int w, int h)
 {
-    RLVK.State.scissorX = x;
-    RLVK.State.scissorY = y;
-    RLVK.State.scissorW = w;
-    RLVK.State.scissorH = h;
-    RLVK.State.stateGeneration++;
+    if (RLVK.State.scissorX != x || RLVK.State.scissorY != y || RLVK.State.scissorW != w || RLVK.State.scissorH != h)
+    {
+        RLVK.State.scissorX = x;
+        RLVK.State.scissorY = y;
+        RLVK.State.scissorW = w;
+        RLVK.State.scissorH = h;
+        RLVK.State.stateGeneration++;
+    }
 }
 // Enable point mode
 void rlEnablePointMode(void)
 {
-    RLVK.State.pointMode = true;
-    RLVK.State.stateGeneration++;
+    if (!RLVK.State.pointMode)
+    {
+        RLVK.State.pointMode = true;
+        RLVK.State.stateGeneration++;
+    }
 }
 // Disable point mode
 void rlDisablePointMode(void)
 {
-    RLVK.State.pointMode = false;
-    RLVK.State.stateGeneration++;
+    if (RLVK.State.pointMode)
+    {
+        RLVK.State.pointMode = false;
+        RLVK.State.stateGeneration++;
+    }
 }
 // Set the point drawing size
 void rlSetPointSize(f32 s) { RLVK.State.pointSize = s; }
@@ -847,14 +907,20 @@ f32 rlGetPointSize(void) { return RLVK.State.pointSize; }
 // Enable wire mode
 void rlEnableWireMode(void)
 {
-    RLVK.State.wireMode = true;
-    RLVK.State.stateGeneration++;
+    if (!RLVK.State.wireMode)
+    {
+        RLVK.State.wireMode = true;
+        RLVK.State.stateGeneration++;
+    }
 }
 // Disable wire mode
 void rlDisableWireMode(void)
 {
-    RLVK.State.wireMode = false;
-    RLVK.State.stateGeneration++;
+    if (RLVK.State.wireMode)
+    {
+        RLVK.State.wireMode = false;
+        RLVK.State.stateGeneration++;
+    }
 }
 // Set the line drawing width
 void rlSetLineWidth(f32 w) { RLVK.State.lineWidth = w; }
@@ -926,9 +992,9 @@ void rlCheckErrors(void)
 // Set blend mode
 void rlSetBlendMode(int mode)
 {
-    RLVK.State.stateGeneration++;
     if ((RLVK.State.blendMode != mode) || ((mode == RL_BLEND_CUSTOM || mode == RL_BLEND_CUSTOM_SEPARATE) && RLVK.State.customBlendModified))
     {
+        RLVK.State.stateGeneration++;
         rlDrawRenderBatch(RLVK.currentBatch); // flush geometry drawn with the previous mode
         RLVK.State.blendMode = mode;
         RLVK.State.customBlendModified = false;
@@ -937,21 +1003,30 @@ void rlSetBlendMode(int mode)
 // Set blending mode factor and equation
 void rlSetBlendFactors(int srcF, int dstF, int eq)
 {
-    RLVK.State.stateGeneration++;
-    RLVK.State.blendSrc = srcF;
-    RLVK.State.blendDst = dstF;
-    RLVK.State.blendEq = eq;
-    RLVK.State.customBlendModified = true;
+    if (RLVK.State.blendSrc != srcF || RLVK.State.blendDst != dstF || RLVK.State.blendEq != eq)
+    {
+        RLVK.State.stateGeneration++;
+        RLVK.State.blendSrc = srcF;
+        RLVK.State.blendDst = dstF;
+        RLVK.State.blendEq = eq;
+        RLVK.State.customBlendModified = true;
+    }
 }
 // Set blending mode factor and equation separately for RGB and alpha
 void rlSetBlendFactorsSeparate(int srcRGB, int dstRGB, int srcA, int dstA, int eqRGB, int eqA)
 {
-    RLVK.State.stateGeneration++;
-    RLVK.State.blendSrcRGB = srcRGB;
-    RLVK.State.blendDstRGB = dstRGB;
-    RLVK.State.blendSrcA = srcA;
-    RLVK.State.blendDstA = dstA;
-    RLVK.State.blendEqRGB = eqRGB;
-    RLVK.State.blendEqA = eqA;
-    RLVK.State.customBlendModified = true;
+    if (RLVK.State.blendSrcRGB != srcRGB || RLVK.State.blendDstRGB != dstRGB ||
+        RLVK.State.blendSrcA != srcA || RLVK.State.blendDstA != dstA ||
+        RLVK.State.blendEqRGB != eqRGB || RLVK.State.blendEqA != eqA)
+    {
+
+        RLVK.State.stateGeneration++;
+        RLVK.State.blendSrcRGB = srcRGB;
+        RLVK.State.blendDstRGB = dstRGB;
+        RLVK.State.blendSrcA = srcA;
+        RLVK.State.blendDstA = dstA;
+        RLVK.State.blendEqRGB = eqRGB;
+        RLVK.State.blendEqA = eqA;
+        RLVK.State.customBlendModified = true;
+    }
 }

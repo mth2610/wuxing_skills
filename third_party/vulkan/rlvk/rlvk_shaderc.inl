@@ -1126,7 +1126,17 @@ static u32 rlvkAppendUboWrites(rlvkShaderSlot *shader, VkDescriptorBufferInfo *b
         VkDeviceSize off = (RLVK.arenaOffset[frameIndex] + 255) & ~(VkDeviceSize)255; // minUniformBufferOffsetAlignment
         if (off + size > arena->sizeBytes)
         {
-            // Cannot drain here (this draw's binds would be lost): request growth, skip this stage
+            // Cannot drain here (this draw's binds would be lost): request growth, skip this stage.
+            // A skipped push is NOT harmless — the draw keeps the previously pushed UBO, i.e. stale
+            // mvp + stale uniforms (the "scrambled rectangles" class of artifact). Call sites that
+            // CAN drain must reserve the block up front (see rlDrawRenderBatch's arena loop); this
+            // warning fires when one of them forgot to.
+            static bool s_warned = false;
+            if (!s_warned)
+            {
+                s_warned = true;
+                TRACELOG(RL_LOG_WARNING, "RLVK: UBO push skipped, arena full (%u bytes) - draw uses STALE uniforms; arena will grow", arena->sizeBytes);
+            }
             RLVK.arenaWanted[frameIndex] += size + 256; // demand grows even when the push is skipped
             return writeCount;
         }

@@ -414,6 +414,34 @@ static void rlvkDrawMesh(int offset, int count, bool indexed, int instances)
 
     rlvkShaderSlot *shader = &RLVK.shaderSlots[RLVK.State.activeShaderSlot];
 
+    // Reserve this draw's UBO snapshot BEFORE anything is recorded. rlvkBindShaderUbos (below,
+    // after the pipeline bind) cannot drain the arena — it silently skips the push and the draw
+    // then runs with the PREVIOUS push still bound (stale mvp/uniforms). Draining here is still
+    // legal: nothing of this draw has been recorded yet, and the drain refreshes the cmd buffer.
+    if (shader->usesUbo && RLVK.frameActive)
+    {
+        VkDeviceSize need = 0;
+        if (shader->vsBlockSize)
+            need += ((VkDeviceSize)shader->vsBlockSize + 255) & ~(VkDeviceSize)255;
+        if (shader->fsBlockSize)
+            need += ((VkDeviceSize)shader->fsBlockSize + 255) & ~(VkDeviceSize)255;
+        if (need)
+        {
+            need += 256; // alignment slack for the first block's 256-byte rounding
+            rlvkBatchBackingBuffer *arena = &RLVK.arena[frameIndex];
+            if (RLVK.arenaOffset[frameIndex] + need > arena->sizeBytes)
+            {
+                RLVK.arenaWanted[frameIndex] += need;
+                if (need <= arena->sizeBytes) // a block bigger than the whole arena: growth request stands, skip the drain
+                {
+                    rlvkFlushFrame();
+                    cmdBuffer = RLVK.cmdBuffers[frameIndex];
+                    s_bindingValid = false; // the drain reset the command buffer: rebind everything
+                }
+            }
+        }
+    }
+
     // Optional attribute tiers at bindings 4+, mutually exclusive with the same priority the
     // dynamic path's overwriting vkCmdSetVertexInputEXT calls resolved to: instancing wins,
     // then bones, then uv2/tangent

@@ -415,6 +415,35 @@ bugs will rhyme with these. **Check this list before starting a new hunt.**
   blaming the binding — probe what the shader actually *computes* (here `u_lightVP`), and bisect the
   **prior** draw's side effects, not just the failing draw.
 
+### 7.28 VFX "cut into rectangles and shuffled" — a UBO push SKIPPED on a full arena (2026-07-22)
+- **Symptom** (reported in-game after P6 real shading landed): `vc_smoke_column` renders correctly
+  most of the time, then intermittently comes out as **small rectangles in scrambled positions /
+  wrong colors**. Worse with **several columns at once** or while **rotating the camera**; a frame
+  later it can look fine again.
+- **Why that VFX**: it changes `u_progress` **per column**, and a uniform change between instances
+  forces `rlDrawRenderBatchActive()` — i.e. **one batch flush, and one UBO snapshot, per column**.
+  It is the heaviest per-draw-uniform pattern in the engine, so it hits the arena limit first.
+- **Root cause**: `rlvkAppendUboWrites` (`rlvk_shaderc.inl`) bump-allocates the shader's UBO block
+  out of the per-frame arena. When the block does not fit it **returns without pushing** — the
+  comment ("cannot drain here, this draw's binds would be lost") is true, but the consequence was
+  never harmless: the draw keeps the **previously pushed** descriptor, i.e. **stale `mvp` + stale
+  user uniforms**. Stale `mvp` = quads drawn with another draw's transform (the "shuffled
+  rectangles"); stale uniforms = another draw's color/progress. And because the *vertex* payload of
+  a flush is much smaller than a UBO block, once the arena has less than one block left **every**
+  following flush skips until the vertex path finally drains — dozens of stale draws in a row, not
+  one. P6 raised the per-frame UBO demand enough to reach that window regularly.
+- **Fix**: reserve the block where draining is still legal, so the skip path is unreachable.
+  `rlDrawRenderBatch` (`rlvk_core.inl`) adds `uboBytes` to the arena capacity test that already
+  drives its mid-frame drain loop; `rlvkDrawMesh` (`rlvk_texture.inl`) reserves (and drains, before
+  it records anything, invalidating `s_bindingValid`) at the top of the draw. The skip path in
+  `rlvkAppendUboWrites` now also **TRACELOGs once** — it must never be silent again.
+- **Guard**: `run_rlvk_visual_test.sh ubo_arena`. Additive accumulation makes a single stale draw
+  permanent (last-draw-wins pixel checks pass by luck), and a fat zero-filled `uPad[512]` uniform
+  widens the window deterministically. Before the fix: `stripe 0 is (255,151,151)`. After: PASS,
+  suite 18/18.
+- **Method note**: the first version of this scenario PASSED while the warning proved the skip was
+  happening — a test that exercises a path is not a test that *detects* its damage.
+
 ## 8. What remains
 
 ### 8.1 Confirm in-game — **DONE (2026-07-17, user-confirmed)**
