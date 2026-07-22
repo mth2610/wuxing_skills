@@ -2,6 +2,42 @@
 
 > Status + remaining work for the rlvk Vulkan 1.1 backend. Full narrative and per-item evidence in [`HANDOFF.md`](HANDOFF.md) §8; the debugging log is §7 (indexed in `LANDMINES.md`).
 
+## Perf measurement — HOW, and two traps that produce confident nonsense (2026-07-22)
+
+`UNCAPPED=1 ./scripts/run_rlvk_visual_test.sh perf_<name>` (IMMEDIATE present; under FIFO every
+number is just a vsync bucket, and the game additionally caps with `SetTargetFPS(60)` — build it
+with `-DWUXING_PERF_CAPTURE=ON` and read the **ms** HUD, never FPS).
+
+**Trap 1 — never time variant A as one block and variant B as the next.** Presentation throttling
+changes phase during a run: the same `perf_dynmesh` work measured **10 ms in whichever block ran
+first and 1.8 ms in whichever ran second**. Swapping the order swapped the numbers. Any A/B taken
+as consecutive blocks on this platform is worthless.
+
+**Trap 2 — do not alternate variants with `f & 1`.** `RLVK_FRAME_INDEX_COUNT` is **2**, so
+alternating pins each variant to its own frame-ring slot. That bias reported "1 upload costs
+4.2 ms, 2 uploads cost 1.8 ms" — an impossibility that looked like a real measurement.
+
+**The method that works**: interleave the variants within one run and pick each frame's variant
+from an LCG, so neither presentation phase nor the frame ring can correlate with the variant. Two
+independent runs then agree to ~0.3 ms. `sc_perf_dynmesh` is the worked example — copy its shape.
+
+### Numbers that were taken correctly
+- **A dynamic mesh re-upload costs ~0.5–0.65 ms per `UpdateMeshBuffer` CALL** (1681-vertex mesh,
+  40 KB per buffer; two calls = 1.0–1.3 ms/mesh/frame). 40 KB cannot cost that — the cost is
+  `rlvkUploadBuffer` tearing down and rebuilding the render pass **per call**
+  (`rlDisableFramebuffer` + `vkCmdEndRenderPass` + copy + barrier + resume). It is per-CALL, not
+  per-vertex. Anything doing raylib's `UpdateModelAnimation` (CPU skinning + full vertex re-upload,
+  2–3 buffers) pays this per character per frame. **Open optimization**: coalesce consecutive
+  uploads into a single pass split (lazy resume) — and, game-side, GPU skinning removes it entirely.
+- **The §7.29 twin-fix delta**: `perf_rt2048` 13.4 → 8.9 ms, corroborated in-game (33 → 21 ms).
+
+### Numbers that are NOT trustworthy — retake them with the LCG method before citing
+`perf_base`, `perf_switch*`, `perf_rt256`, `perf_fullres*`, `perf_hdr_*`, `perf_ldr_bloom` were all
+taken one-config-per-process (trap 1). They suggested that scope switches, extra full-res passes,
+the bloom pyramid and the HDR format were all free — **the dynmesh result contradicts at least the
+"pass splits are free" part of that**, since the upload cost IS a pass split. Treat those as
+unmeasured.
+
 ## State
 Retarget 1.3→1.1-core complete. Headless suite runtime-verified on MoltenVK (20/20, zero validation errors); visual suite 14/14. **In-game confirmed on desktop** (character self-occlusion, black-hole occlusion, soft-particle fade). **Runs on real Android/Mali hardware** (2026-07-17); the Android bring-up bugs (HANDOFF §7.11–7.23) are fixed.
 

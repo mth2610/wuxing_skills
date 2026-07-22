@@ -529,6 +529,214 @@ static const char *perfRun(int rtSize)
     return NULL;
 }
 
+// A color-only render texture in an explicit format — core/post_fx.c's LoadRenderTextureWithFormat.
+// No depth attachment, so no Caps.noSampledDepth twin is involved: this probe measures the postFX
+// chain's own bandwidth, nothing else.
+static RenderTexture2D fmtRT(int w, int h, int format)
+{
+    RenderTexture2D t = {0};
+    t.id = rlLoadFramebuffer();
+    if (t.id == 0) return t;
+    rlEnableFramebuffer(t.id);
+    t.texture.id = rlLoadTexture(NULL, w, h, format, 1);
+    t.texture.width = w; t.texture.height = h; t.texture.format = format; t.texture.mipmaps = 1;
+    rlFramebufferAttach(t.id, t.texture.id, RL_ATTACHMENT_COLOR_CHANNEL0, RL_ATTACHMENT_TEXTURE2D, 0);
+    rlDisableFramebuffer();
+    SetTextureFilter(t.texture, TEXTURE_FILTER_BILINEAR);
+    return t;
+}
+
+static void blit(Texture2D src, int dstW, int dstH)
+{
+    DrawTexturePro(src, (Rectangle){0, 0, (float)src.width, (float)src.height},
+                   (Rectangle){0, 0, (float)dstW, (float)dstH}, (Vector2){0, 0}, 0, WHITE);
+}
+
+// The postFX pipeline's shape at the game's real resolution: full-res HDR scene target, then the
+// bloom pyramid (bright 1/4 -> 1/8 -> 1/16 -> back up) and a composite. `withBloom=false` isolates
+// the full-res target alone, so the difference is what the pyramid costs.
+static const char *perfPostFX(bool withBloom, int format, const char *label)
+{
+    const int FW = 1280, FH = 720;
+    Camera3D cam = cam3d();
+    RenderTexture2D main = fmtRT(FW, FH, format);
+    RenderTexture2D bloom = fmtRT(FW / 4, FH / 4, format);
+    RenderTexture2D df0 = fmtRT(FW / 8, FH / 8, format);
+    RenderTexture2D df1 = fmtRT(FW / 16, FH / 16, format);
+
+    for (int f = 0; f < 40 + 260; f++)
+    {
+        if (f == 40) { /* warm-up done */ }
+        BeginDrawing();
+        ClearBackground(BLACK);
+        BeginTextureMode(main);
+            ClearBackground((Color){8, 8, 16, 255});
+            BeginMode3D(cam); DrawCube((Vector3){0,0,0}, 1.5f, 1.5f, 1.5f, RED); EndMode3D();
+        EndTextureMode();
+        if (withBloom)
+        {
+            BeginTextureMode(bloom); blit(main.texture,  FW/4,  FH/4);  EndTextureMode();
+            BeginTextureMode(df0);   blit(bloom.texture, FW/8,  FH/8);  EndTextureMode();
+            BeginTextureMode(df1);   blit(df0.texture,   FW/16, FH/16); EndTextureMode();
+            BeginTextureMode(df0);   blit(df1.texture,   FW/8,  FH/8);  EndTextureMode();
+            BeginTextureMode(bloom); blit(df0.texture,   FW/4,  FH/4);  EndTextureMode();
+        }
+        blit(main.texture, W, H);   // composite to the (small) window
+        EndDrawing();
+        if (f == 39) { /* start timing below */ }
+    }
+    // second, timed run
+    double t0 = GetTime();
+    const int N = 260;
+    for (int f = 0; f < N; f++)
+    {
+        BeginDrawing();
+        ClearBackground(BLACK);
+        BeginTextureMode(main);
+            ClearBackground((Color){8, 8, 16, 255});
+            BeginMode3D(cam); DrawCube((Vector3){0,0,0}, 1.5f, 1.5f, 1.5f, RED); EndMode3D();
+        EndTextureMode();
+        if (withBloom)
+        {
+            BeginTextureMode(bloom); blit(main.texture,  FW/4,  FH/4);  EndTextureMode();
+            BeginTextureMode(df0);   blit(bloom.texture, FW/8,  FH/8);  EndTextureMode();
+            BeginTextureMode(df1);   blit(df0.texture,   FW/16, FH/16); EndTextureMode();
+            BeginTextureMode(df0);   blit(df1.texture,   FW/8,  FH/8);  EndTextureMode();
+            BeginTextureMode(bloom); blit(df0.texture,   FW/4,  FH/4);  EndTextureMode();
+        }
+        blit(main.texture, W, H);
+        EndDrawing();
+    }
+    double ms = (GetTime() - t0) * 1000.0 / N;
+    printf("  [perf %s] %.3f ms/frame (%.1f fps)\n", label, ms, 1000.0 / ms);
+
+    UnloadRenderTexture(main); UnloadRenderTexture(bloom);
+    UnloadRenderTexture(df0);  UnloadRenderTexture(df1);
+    return NULL;
+}
+
+// Marginal cost of each EXTRA full-resolution offscreen pass (scene RT -> distort RT -> postFX RT
+// ... every full-res target a frame bounces through). `passes` counts full-res targets: 1 = scene
+// only, 2 = scene + one full-res copy, 3 = two copies.
+static const char *perfFullResChain(int passes, const char *label)
+{
+    const int FW = 1280, FH = 720, FMT = RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16;
+    Camera3D cam = cam3d();
+    RenderTexture2D rt[3] = {0};
+    for (int i = 0; i < passes && i < 3; i++) rt[i] = fmtRT(FW, FH, FMT);
+
+    double t0 = 0; const int WARM = 40, N = 260;
+    for (int f = 0; f < WARM + N; f++)
+    {
+        if (f == WARM) t0 = GetTime();
+        BeginDrawing();
+        ClearBackground(BLACK);
+        BeginTextureMode(rt[0]);
+            ClearBackground((Color){8, 8, 16, 255});
+            BeginMode3D(cam); DrawCube((Vector3){0,0,0}, 1.5f, 1.5f, 1.5f, RED); EndMode3D();
+        EndTextureMode();
+        for (int i = 1; i < passes && i < 3; i++)
+        {
+            BeginTextureMode(rt[i]); blit(rt[i-1].texture, FW, FH); EndTextureMode();
+        }
+        blit(rt[(passes < 3 ? passes : 3) - 1].texture, W, H);
+        EndDrawing();
+    }
+    double ms = (GetTime() - t0) * 1000.0 / N;
+    printf("  [perf %s] %.3f ms/frame (%.1f fps)\n", label, ms, 1000.0 / ms);
+    for (int i = 0; i < passes && i < 3; i++) UnloadRenderTexture(rt[i]);
+    return NULL;
+}
+
+// Dynamic-mesh re-upload cost — raylib's UpdateModelAnimation does CPU skinning and pushes the
+// whole vertex buffer every frame, per character. In rlvk each upload also ENDS and re-opens the
+// render pass (rlvkUploadBuffer). This times draw-only vs draw+re-upload of the same mesh IN ONE
+// PROCESS, back to back: the machine's ±2 ms run-to-run variance cancels in the delta.
+static const char *sc_perf_dynmesh(void)
+{
+    Camera3D cam = cam3d();
+    Mesh mesh = GenMeshPlane(3.0f, 3.0f, 40, 40);   // ~9.6k vertices, the scale of a character mesh
+    UploadMesh(&mesh, true);                         // dynamic
+    Material mat = LoadMaterialDefault();
+    Matrix xf = MatrixIdentity();
+    size_t posBytes = (size_t)mesh.vertexCount * 3 * sizeof(float);
+
+    // METHODOLOGY (learned the hard way, see PROGRESS.md): timing variant A as one block and
+    // variant B as a second block is INVALID on this platform - whichever block ran first measured
+    // ~10 ms and the second ~1.8 ms, with the SAME work, because presentation throttling changes
+    // phase during the run. Interleave the variants frame by frame instead: every slow phase then
+    // hits both variants equally and only the real difference survives.
+    unsigned int seed = 22222u;
+    double acc[2] = {0, 0};
+    int cnt[2] = {0, 0};
+    const int WARM = 60, N = 600;
+    for (int f = 0; f < WARM + N; f++)
+    {
+        // NOT f&1: RLVK_FRAME_INDEX_COUNT is 2, so alternating aligns the variants with the frame
+        // ring and each one systematically lands on the same slot (that bias produced "1 upload
+        // costs 4.2 ms, 2 uploads cost 1.8 ms"). Decorrelate with a cheap LCG.
+        seed = seed * 1103515245u + 12345u;
+        int variant = (int)((seed >> 16) & 1u);
+        double t0 = GetTime();
+        if (variant)
+        {
+            for (int v = 0; v < mesh.vertexCount; v++) mesh.vertices[v*3 + 1] = 0.01f * (float)(v & 7);
+            UpdateMeshBuffer(mesh, 0, mesh.vertices, (int)posBytes, 0);
+            UpdateMeshBuffer(mesh, 2, mesh.normals,  (int)posBytes, 0);
+        }
+        BeginDrawing();
+        ClearBackground((Color){8, 8, 16, 255});
+        BeginMode3D(cam); DrawMesh(mesh, mat, xf); EndMode3D();
+        EndDrawing();
+        if (f >= WARM) { acc[variant] += (GetTime() - t0) * 1000.0; cnt[variant]++; }
+    }
+    double ms[2] = { acc[0] / cnt[0], acc[1] / cnt[1] };
+    printf("  [perf dynmesh %d verts] draw-only %.3f ms | +re-upload %.3f ms | cost %.3f ms/mesh/frame\n",
+           mesh.vertexCount, ms[0], ms[1], ms[1] - ms[0]);
+    UnloadMesh(mesh);
+    return NULL;
+}
+
+// Pure FBO-scope-switch cost. A 64x64 target renders essentially nothing, so whatever this
+// measures is the switch itself: end the swapchain pass, open the FBO pass, close it, resume the
+// swapchain pass with LOAD. Compare against perf_base (no switch at all).
+static const char *perfSwitches(int count, const char *label)
+{
+    RenderTexture2D tiny = fmtRT(64, 64, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    Camera3D cam = cam3d();
+    double t0 = 0; const int WARM = 40, N = 300;
+    for (int f = 0; f < WARM + N; f++)
+    {
+        if (f == WARM) t0 = GetTime();
+        BeginDrawing();
+        ClearBackground((Color){8, 8, 16, 255});
+        BeginMode3D(cam); DrawCube((Vector3){0,0,0}, 1.5f, 1.5f, 1.5f, BLUE); EndMode3D();
+        for (int i = 0; i < count; i++)
+        {
+            BeginTextureMode(tiny);
+                DrawRectangle(0, 0, 8, 8, RED);
+            EndTextureMode();
+        }
+        EndDrawing();
+    }
+    double ms = (GetTime() - t0) * 1000.0 / N;
+    printf("  [perf %s] %.3f ms/frame (%.1f fps)\n", label, ms, 1000.0 / ms);
+    UnloadRenderTexture(tiny);
+    return NULL;
+}
+
+static const char *sc_perf_switch1(void)  { return perfSwitches(1,  "switch x1   64x64 scope switches"); }
+static const char *sc_perf_switch4(void)  { return perfSwitches(4,  "switch x4   64x64 scope switches"); }
+static const char *sc_perf_switch8(void)  { return perfSwitches(8,  "switch x8   64x64 scope switches"); }
+
+static const char *sc_perf_fullres1(void) { return perfFullResChain(1, "fullres x1  1280x720 RGBA16F"); }
+static const char *sc_perf_fullres2(void) { return perfFullResChain(2, "fullres x2  1280x720 RGBA16F"); }
+static const char *sc_perf_fullres3(void) { return perfFullResChain(3, "fullres x3  1280x720 RGBA16F"); }
+
+static const char *sc_perf_hdr_main(void)  { return perfPostFX(false, RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16, "hdr_main   1280x720 RGBA16F, no bloom"); }
+static const char *sc_perf_hdr_bloom(void) { return perfPostFX(true,  RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16, "hdr_bloom  1280x720 RGBA16F + pyramid"); }
+static const char *sc_perf_ldr_bloom(void) { return perfPostFX(true,  RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8,     "ldr_bloom  1280x720 RGBA8   + pyramid"); }
+
 static const char *sc_perf_base(void)   { return perfRun(0);    }
 static const char *sc_perf_rt256(void)  { return perfRun(256);  }
 static const char *sc_perf_rt2048(void) { return perfRun(2048); }
@@ -990,6 +1198,16 @@ static const Scenario SCENARIOS[] = {
     { "shadow_pipeline",sc_shadow_pipeline },
     { "ubo_arena",      sc_ubo_arena },
     { "perf_base",      sc_perf_base },
+    { "perf_dynmesh",   sc_perf_dynmesh },
+    { "perf_switch1",   sc_perf_switch1 },
+    { "perf_switch4",   sc_perf_switch4 },
+    { "perf_switch8",   sc_perf_switch8 },
+    { "perf_fullres1",  sc_perf_fullres1 },
+    { "perf_fullres2",  sc_perf_fullres2 },
+    { "perf_fullres3",  sc_perf_fullres3 },
+    { "perf_hdr_main",  sc_perf_hdr_main },
+    { "perf_hdr_bloom", sc_perf_hdr_bloom },
+    { "perf_ldr_bloom", sc_perf_ldr_bloom },
     { "perf_rt256",     sc_perf_rt256 },
     { "perf_rt2048",    sc_perf_rt2048 },
 };
