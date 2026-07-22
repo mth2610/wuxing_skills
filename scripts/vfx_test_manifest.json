@@ -72,13 +72,6 @@
       "draw_call": "VFX_ComposeBurningGround($POS, 0.9f, $TIME)"
     },
     {
-      "fn": "VFX_ComposeEmberDrift",
-      "label": "EMBER DRIFT",
-      "category": "fire",
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeEmberDrift($POS, 0.8f, 12, (Color){255, 140, 60, 255})"
-    },
-    {
       "fn": "VFX_ComposeImpact_FIRE",
       "label": "IMPACT FIRE",
       "category": "fire",
@@ -105,13 +98,6 @@
       "category": "water",
       "type": "continuous",
       "draw_call": "VFX_ComposeBubbleStream($POS, 0.8f, $TIME)"
-    },
-    {
-      "fn": "VFX_ComposeMistVeil",
-      "label": "MIST VEIL",
-      "category": "water",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeMistVeil($POS, 1.2f, $TIME)"
     },
     {
       "fn": "VFX_ComposeIceCrystal",
@@ -263,27 +249,6 @@
       "trigger_call": "VFX_ComposeCast($POS, EFFECT_PRESET_TAIJI_BURST, 1.5f)"
     },
     {
-      "fn": "VFX_ComposeShockwaveRing",
-      "label": "SHOCKWAVE",
-      "category": "util",
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeShockwaveRing($POS, 1.5f, 0.6f, (Color){255, 200, 80, 255})"
-    },
-    {
-      "fn": "VFX_ComposeGlintBurst",
-      "label": "GLINT BURST",
-      "category": "util",
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeGlintBurst($POS, 14, 0.4f, (Color){180, 230, 255, 255})"
-    },
-    {
-      "fn": "VFX_ComposeStreakFlare",
-      "label": "STREAK FLARE",
-      "category": "util",
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeStreakFlare($POS, 1.0f, (Color){255, 250, 220, 255})"
-    },
-    {
       "fn": "VFX_ComposeGustSlash",
       "label": "GUST SLASH",
       "category": "util",
@@ -310,13 +275,6 @@
       "category": "util",
       "type": "continuous",
       "draw_call": "VFX_GroundPattern(GROUND_CRACK_RADIAL, $POS, 1.5f, $PROG, $TIME)"
-    },
-    {
-      "fn": "VFX_TriggerExplosion",
-      "label": "EXPLOSION",
-      "category": "util",
-      "type": "oneshot",
-      "trigger_call": "VFX_TriggerExplosion(VC_MAT_FIRE, $POS, 1.0f, false)"
     },
     {
       "fn": "VFX_ComposeProjectileTrail_FIRE",
@@ -545,6 +503,46 @@
       "category": "fire",
       "type": "continuous",
       "draw_call": "VFX_ComposeFlameVolume($POS, VC_MAT_FIRE, 1.0f, 1.0f)"
+    },
+    {
+      "fn": "VFX_ComposeEmberDrift",
+      "label": "EMBER DRIFT",
+      "category": "fire",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeEmberDrift($POS, 1.5f, 5, WHITE)"
+    },
+    {
+      "fn": "VFX_ComposeGlintBurst",
+      "label": "GLINT BURST",
+      "category": "util",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeGlintBurst($POS, 5, 1.0f, WHITE)"
+    },
+    {
+      "fn": "VFX_ComposeShockwaveRing",
+      "label": "SHOCKWAVE RING",
+      "category": "water",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeShockwaveRing($POS, 1.5f, 2.0f, WHITE)"
+    },
+    {
+      "fn": "VFX_ComposeStreakFlare",
+      "label": "STREAK FLARE",
+      "category": "fire",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeStreakFlare($POS, 1.5f, WHITE)"
+    },
+    {
+      "fn": "VFX_TriggerExplosion",
+      "label": "EXPLOSION",
+      "category": "util",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_TriggerExplosion(VC_MAT_FIRE, $POS, 1.5f, false)"
     }
   ],
   "overrides": {

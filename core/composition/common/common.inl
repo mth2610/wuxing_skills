@@ -2,9 +2,6 @@
 // Included once by visual_composer.c
 
 #include "vc_common.inl"
-#include "vc_beauty.inl"
-#include "vc_impact.inl"
-#include "vc_cast_preset.inl"
 #include "vc_trail_preset.inl"
 #include "vc_ground.inl"
 #include "vc_path.inl"
@@ -15,8 +12,11 @@
 #include "vc_ground_aura.inl"
 #include "vc_smoke_energy.inl"
 // @gen:common_includes begin
-// 3 include(s) — auto-managed by sync_vfx_test.py
+// 6 include(s) — auto-managed by sync_vfx_test.py
 #include "vc_beam.inl"
 #include "vc_chain_link.inl"
 #include "vc_smoke_puff.inl"
+#include "vc_beauty.inl"
+#include "vc_cast_preset.inl"
+#include "vc_impact.inl"
 // @gen:common_includes end

@@ -131,6 +131,6 @@ static void WaterFx_InitShared(void)
 #include "ice_crystal.inl"
 #include "splash_burst.inl"
 #include "bubble_stream.inl"
-#include "mist_veil.inl"
 // @gen:water_includes begin
+// 0 include(s) — auto-managed by sync_vfx_test.py
 // @gen:water_includes end
