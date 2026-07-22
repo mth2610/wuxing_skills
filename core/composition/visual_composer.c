@@ -56,41 +56,39 @@
 // made this a SECOND, easy-to-miss include site: a deletion had to be mirrored
 // in two files, and a missed dispatch call failed with an error that named a
 // symbol rather than the file that was removed.)
+// @gen:archetype_includes begin
 #include "common/vc_proc_beam.inl"
-#include "common/vc_ground_wave.inl"
-#include "common/vc_orbital.inl"
-#include "common/vc_aura_ring.inl"
-#include "common/vc_chain_lightning.inl"
 #include "common/vc_smoke_column.inl"
 #include "common/vc_shard_debris.inl"
-#include "common/vc_crown_splash.inl"
 #include "common/vc_mesh_electricity.inl"
+#include "common/vc_crown_splash.inl"
+#include "common/vc_orbital.inl"
+// @gen:archetype_includes end
 // No Update/Draw pair — included for their VFX_Compose* entry points only:
 #include "common/vc_particle_upgrades_test.inl"
-#include "common/vc_trail_upgrades_test.inl"
 
 void VFX_Compose_Update(float dt)
 {
+    (void)dt;
+// @gen:archetype_update begin
     VC_ProcBeam_Update(dt);
-    VC_GroundWave_Update(dt);
-    VC_Orbital_Update(dt);
-    VC_AuraRing_Update(dt);
-    VC_ChainLightning_Update(dt);
     VC_SmokeColumn_Update(dt);
     VC_ShardDebris_Update(dt);
-    VC_CrownSplash_Update(dt);
     VC_MeshElectricity_Update(dt);
+    VC_CrownSplash_Update(dt);
+    VC_Orbital_Update(dt);
+// @gen:archetype_update end
 }
 
 void VFX_Compose_Draw3D(Camera3D cam)
 {
+    (void)cam;
+// @gen:archetype_draw begin
     VC_ProcBeam_Draw3D(cam);
-    VC_GroundWave_Draw3D(cam);
-    VC_Orbital_Draw3D(cam);
-    VC_AuraRing_Draw3D(cam);
-    VC_ChainLightning_Draw3D(cam);
     VC_SmokeColumn_Draw3D(cam);
     VC_ShardDebris_Draw3D(cam);
-    VC_CrownSplash_Draw3D(cam);
     VC_MeshElectricity_Draw3D(cam);
+    VC_CrownSplash_Draw3D(cam);
+    VC_Orbital_Draw3D(cam);
+// @gen:archetype_draw end
 }

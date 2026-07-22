@@ -66,10 +66,7 @@ static EffectMaterialInstanced GetFloatingStoneMaterialInstanced(void)
 }
 
 #include "stone_pillar.inl"
-#include "boulder.inl"
 #include "fissure_streak.inl"
-#include "rock_burst.inl"
-#include "floating_stones.inl"
-#include "quake_rumble.inl"
 // @gen:earth_includes begin
+// 0 include(s) — auto-managed by sync_vfx_test.py
 // @gen:earth_includes end

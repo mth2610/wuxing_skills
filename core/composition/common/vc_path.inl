@@ -35,11 +35,10 @@ void VFX_PathWave(PathStyle style, const Vector3 *points, int count, float scale
             VFX_ComposeStonePillar((Vector3){0, 0, 0}, localT);
             rlPopMatrix();
 
-            // Earth puff when emerging
-            if (localT < 0.2f && GetRandomValue(0, 10) < 3)
-            {
-                VFX_ComposeSmokePuff(pos, 0.8f * scale);
-            }
+            // Earth puff when emerging — dropped with vc_neutral.inl in the
+            // 2026-07 purge. Re-add once F2's lit, layered puff lands
+            // (core/docs/ELDEN_VFX_SPEC.md): a pillar breaking ground is
+            // exactly the dust cue that one is built for.
             break;
         }
         case PATH_ICE_SPIKE:

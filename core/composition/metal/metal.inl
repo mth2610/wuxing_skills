@@ -69,11 +69,6 @@ static void MetalFx_InitShared(void)
     s_metalFxInit = true;
 }
 
-#include "metal_shard_cluster.inl"
-#include "blade_ring.inl"
-#include "blade_storm.inl"
-#include "shrapnel_burst.inl"
-#include "ricochet_spark.inl"
-#include "vc_meteor_comet_test.inl"
 // @gen:metal_includes begin
+// 0 include(s) — auto-managed by sync_vfx_test.py
 // @gen:metal_includes end

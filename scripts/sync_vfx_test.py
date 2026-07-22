@@ -9,6 +9,14 @@ Scans core/composition/**.inl for VFX_* function definitions, then:
   3. Auto-updates visual_composer.c               (#include "vc_*.inl")
   4. Auto-updates visual_composer.h               (function declarations)
   5. Auto-updates each <elem>/<elem>.inl master   (per-VFX #includes)
+  6. Auto-updates visual_composer.c's archetype   (#include + the two per-frame
+     blocks                                        dispatch calls)
+
+A STATEFUL archetype declares itself by defining both `VC_<Name>_Update(float)`
+and `VC_<Name>_Draw3D(Camera3D)`. Nothing needs registering: the pair is the
+declaration, so creating or deleting the .inl is the only manual step. Missing
+that wiring by hand is the expensive mistake — a forgotten dispatch call on ADD
+compiles clean and the VFX simply never appears, because its pool never ticks.
 
 ADDING and DELETING a per-VFX .inl file both propagate through all five, so the
 only manual step is creating or deleting the file itself. Element folders are
@@ -352,7 +360,7 @@ def _gen_block(gen_key, files):
             + f"// @gen:{gen_key} end")
 
 
-def update_subdir_includes(comp_dir, manifest=None, dry_run=False):
+def update_subdir_includes(comp_dir, manifest=None, dry_run=False, archetypes=None):
     """
     Sync the @gen:<subdir>_includes block in each element master .inl so that
     ADDING and DELETING a per-VFX .inl file both propagate automatically.
@@ -383,13 +391,24 @@ def update_subdir_includes(comp_dir, manifest=None, dry_run=False):
     exclude_map = (manifest or {}).get("exclude_from_auto_include", {})
     changed = False
 
+    # Archetypes are included by visual_composer.c, so the element master must
+    # NOT also pull them in — that is a double inclusion and a redefinition
+    # error. Derived from the Update/Draw3D pair rather than read from the
+    # manifest, so a NEW archetype is handled without anyone remembering to
+    # list it. (The manifest's exclude_from_auto_include stays for the other
+    # cases: include-only files with no pair.)
+    arch_by_dir = {}
+    for rel in (archetypes or {}):
+        d, _, base = rel.rpartition('/')
+        arch_by_dir.setdefault(d, set()).add(base)
+
     for subdir in discover_subdirs(comp_dir):
         subdir_path = os.path.join(comp_dir, subdir)
         master_path = os.path.join(subdir_path, f"{subdir}.inl")
 
         on_disk = {f for f in os.listdir(subdir_path)
                    if f.endswith('.inl') and f != f"{subdir}.inl"}
-        exclude = set(exclude_map.get(subdir, []))
+        exclude = set(exclude_map.get(subdir, [])) | arch_by_dir.get(subdir, set())
 
         with open(master_path) as f:
             src = f.read()
@@ -476,6 +495,168 @@ def update_subdir_includes(comp_dir, manifest=None, dry_run=False):
             f.write(result)
 
     return changed
+
+
+ARCH_UPDATE_RE = re.compile(r'\bstatic\s+void\s+VC_(\w+)_Update\s*\(\s*float\b')
+ARCH_DRAW_RE   = re.compile(r'\bstatic\s+void\s+VC_(\w+)_Draw3D\s*\(\s*Camera3D\b')
+
+def scan_archetypes(comp_dir):
+    """
+    An archetype is a .inl defining BOTH `VC_<Name>_Update(float)` and
+    `VC_<Name>_Draw3D(Camera3D)` — a stateful VFX that owns a private pool and
+    therefore needs a per-frame tick. Fire-and-forget compositions spawn into
+    the global particle system and define neither.
+
+    The pair IS the declaration: nothing has to be registered anywhere, so a new
+    archetype cannot be forgotten and a deleted one cannot linger.
+
+    Returns {include_path_relative_to_comp_dir: Name}, e.g.
+    {"common/vc_proc_beam.inl": "ProcBeam"}.
+    """
+    found = {}
+    for root, _dirs, files in os.walk(comp_dir):
+        for fn in sorted(files):
+            if not fn.endswith('.inl'):
+                continue
+            path = os.path.join(root, fn)
+            with open(path, errors='ignore') as f:
+                text = f.read()
+            names = set(ARCH_UPDATE_RE.findall(text)) & set(ARCH_DRAW_RE.findall(text))
+            if not names:
+                continue
+            rel = os.path.relpath(path, comp_dir).replace(os.sep, '/')
+            if len(names) > 1:
+                print(f"[sync_vfx_test] WARNING: {rel} defines {len(names)} archetype "
+                      f"pairs ({', '.join(sorted(names))}); one per file is the "
+                      f"convention — dispatching only {sorted(names)[0]}",
+                      file=sys.stderr)
+            found[rel] = sorted(names)[0]
+    return found
+
+
+FN_BODY_RE = {
+    "archetype_update": re.compile(
+        r'(void\s+VFX_Compose_Update\s*\(\s*float\s+\w+\s*\)\s*\n\{\n)(.*?)(\n\})', re.DOTALL),
+    "archetype_draw": re.compile(
+        r'(void\s+VFX_Compose_Draw3D\s*\(\s*Camera3D\s+\w+\s*\)\s*\n\{\n)(.*?)(\n\})', re.DOTALL),
+}
+
+def _adopt_archetype_markers(src, arch, dry_run):
+    """
+    Put the three @gen markers back around content that is already in the file.
+    Used when they are missing entirely. Returns (new_src, ok).
+    """
+    # 1. Include run: wrap the span from the first to the last archetype include.
+    lines = src.split("\n")
+    idx = [i for i, l in enumerate(lines)
+           if (mm := re.match(r'\s*#include\s+"([^"]+\.inl)"', l)) and mm.group(1) in arch]
+    if not idx:
+        print("[sync_vfx_test] WARNING: cannot adopt archetype markers — no archetype "
+              "#include found in visual_composer.c. Add the @gen:archetype_includes "
+              "markers by hand.", file=sys.stderr)
+        return src, False
+
+    lo, hi = min(idx), max(idx)
+    print(f"[sync_vfx_test] visual_composer.c: {'would restore' if dry_run else 'restore'} "
+          f"missing @gen:archetype_* markers (adopting {hi - lo + 1} include line(s) "
+          f"and both dispatch bodies)")
+    lines[lo:hi + 1] = (["// @gen:archetype_includes begin"]
+                        + lines[lo:hi + 1]
+                        + ["// @gen:archetype_includes end"])
+    src = "\n".join(lines)
+
+    # 2. The two dispatch bodies: wrap whatever they currently contain. The
+    #    regeneration pass immediately after replaces the contents anyway, so
+    #    stale calls in there do not survive — the markers just give it a target.
+    for key, pat in FN_BODY_RE.items():
+        m = pat.search(src)
+        if not m:
+            print(f"[sync_vfx_test] WARNING: cannot adopt @gen:{key} — could not find "
+                  f"the function body in visual_composer.c. Add the markers by hand.",
+                  file=sys.stderr)
+            return src, False
+        guard = "    (void)dt;\n" if key == "archetype_update" else "    (void)cam;\n"
+        if guard.strip() in m.group(2):
+            guard = ""
+        src = (src[:m.start()] + m.group(1) + guard
+               + f"// @gen:{key} begin\n" + m.group(2).rstrip("\n") + "\n"
+               + f"// @gen:{key} end" + m.group(3) + src[m.end():])
+    return src, True
+
+
+def update_archetype_dispatch(comp_dir, dry_run=False):
+    """
+    Keep visual_composer.c's three @gen blocks in step with the archetype .inl
+    files on disk: the include run, and the call lists inside VFX_Compose_Update
+    and VFX_Compose_Draw3D.
+
+    Deleting an archetype .inl used to need three hand edits in this file, and a
+    missed dispatch call failed with an error naming a symbol rather than the
+    file that was removed. Adding one had the mirror-image problem, and a missed
+    call there is worse: it compiles clean and the VFX simply never appears,
+    because its pool is never ticked.
+
+    Existing order is preserved; new archetypes are appended. Include-only files
+    (no Update/Draw pair) live outside the markers and are never touched.
+    """
+    arch = scan_archetypes(comp_dir)          # rel path → Name
+    with open(VC_C_PATH) as f:
+        src = f.read()
+
+    inc_pat = re.compile(r'// @gen:archetype_includes begin.*?// @gen:archetype_includes end',
+                         re.DOTALL)
+    if not inc_pat.search(src):
+        # ADOPT — markers absent (fresh checkout, an editor undo, a hand revert).
+        # Warning-and-skip was the wrong behaviour here: the warning goes to
+        # stderr, scrolls past, and the file silently stops being managed until
+        # the next build fails. Rebuild the markers from what is already there.
+        src, ok = _adopt_archetype_markers(src, arch, dry_run)
+        if not ok:
+            return False
+        if dry_run:
+            return True
+        with open(VC_C_PATH, "w") as f:
+            f.write(src)
+    m = inc_pat.search(src)
+    if not m:
+        return False
+
+    current = [p for p in INCLUDE_LINE_RE.findall(m.group(0))]
+    kept    = [p for p in current if p in arch]
+    dropped = [p for p in current if p not in arch]
+    added   = sorted(p for p in arch if p not in current)
+    order   = kept + added
+
+    if not dropped and not added:
+        return False
+
+    for p in dropped:
+        print(f"[sync_vfx_test] visual_composer.c: {'would remove' if dry_run else 'remove'} "
+              f"archetype -{p} (no Update/Draw3D pair on disk) — include + 2 dispatch calls")
+    for p in added:
+        print(f"[sync_vfx_test] visual_composer.c: {'would add' if dry_run else 'add'} "
+              f"archetype +{p} as VC_{arch[p]}_* — include + 2 dispatch calls")
+    if dry_run:
+        return True
+
+    new_inc = ("// @gen:archetype_includes begin\n"
+               + "".join(f'#include "{p}"\n' for p in order)
+               + "// @gen:archetype_includes end")
+    src = src[:m.start()] + new_inc + src[m.end():]
+
+    for key, call in (("archetype_update", "{n}_Update(dt);"),
+                      ("archetype_draw",   "{n}_Draw3D(cam);")):
+        pat = re.compile(r'// @gen:' + key + r' begin.*?// @gen:' + key + r' end', re.DOTALL)
+        if not pat.search(src):
+            print(f"[sync_vfx_test] WARNING: @gen:{key} markers missing in "
+                  f"visual_composer.c — calls not synced", file=sys.stderr)
+            continue
+        body = "".join("    VC_" + call.format(n=arch[p]) + "\n" for p in order)
+        src = pat.sub(f"// @gen:{key} begin\n{body}// @gen:{key} end", src)
+
+    with open(VC_C_PATH, "w") as f:
+        f.write(src)
+    return True
 
 
 def prune_manifest_cruft(manifest, inl_fns, dry_run=False):
@@ -752,7 +933,10 @@ def main():
         drift = bool(new_fns or removed)
         drift |= bool(update_vc_c(COMP_DIR, dry_run=True))
         drift |= bool(update_vc_h(inl_fns, excluded, dry_run=True))
-        drift |= bool(update_subdir_includes(COMP_DIR, manifest=manifest, dry_run=True))
+        arch = scan_archetypes(COMP_DIR)
+        drift |= bool(update_subdir_includes(COMP_DIR, manifest=manifest,
+                                             dry_run=True, archetypes=arch))
+        drift |= bool(update_archetype_dispatch(COMP_DIR, dry_run=True))
         drift |= bool(prune_manifest_cruft(manifest, inl_fns, dry_run=True))
         if not drift:
             print("[sync_vfx_test] everything in sync.")
@@ -793,8 +977,12 @@ def main():
     update_vc_c(COMP_DIR)
     update_vc_h(inl_fns, excluded)
 
-    # ── 7b. Update element master .inl includes ──────────────────────────────
-    update_subdir_includes(COMP_DIR, manifest=manifest)
+    # ── 7b/7c. Element master includes + stateful-archetype dispatch ─────────
+    # Archetypes are resolved first: the master must skip them (visual_composer.c
+    # owns their include) or the file lands in the TU twice.
+    arch = scan_archetypes(COMP_DIR)
+    update_subdir_includes(COMP_DIR, manifest=manifest, archetypes=arch)
+    update_archetype_dispatch(COMP_DIR)
 
     # ── 8. Regenerate vfx_test.c ─────────────────────────────────────────────
     with open(VFX_TEST_PATH) as f:

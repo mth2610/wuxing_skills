@@ -43,9 +43,8 @@ static Vector3 TaijiSphereDir(int index, int epoch)
 }
 
 #include "gust_slash.inl"
-#include "cyclone.inl"
-#include "vc_spirit_wisp_test.inl"
 #include "taiji_arc_strike.inl"
 #include "tornado.inl"
 // @gen:taiji_includes begin
+// 0 include(s) — auto-managed by sync_vfx_test.py
 // @gen:taiji_includes end

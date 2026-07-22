@@ -192,27 +192,6 @@
       "trigger_call": "VFX_ComposeCast($POS, EFFECT_PRESET_WATER_SPLASH, 1.5f)"
     },
     {
-      "fn": "VFX_ComposeLeafSwirl",
-      "label": "LEAF SWIRL",
-      "category": "wood",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeLeafSwirl($POS, 0.8f, $TIME)"
-    },
-    {
-      "fn": "VFX_ComposeBloomBurst",
-      "label": "BLOOM BURST",
-      "category": "wood",
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeBloomBurst($POS, 1.0f)"
-    },
-    {
-      "fn": "VFX_ComposeLeafFall",
-      "label": "LEAF FALL",
-      "category": "wood",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeLeafFall($POS, 1.2f, $TIME)"
-    },
-    {
       "fn": "VFX_ComposeGlowingVine",
       "label": "GLOW VINE",
       "category": "wood",
@@ -242,13 +221,6 @@
       "trigger_call": "VFX_ComposeCast($POS, EFFECT_PRESET_WOOD_BLOOM, 1.5f)"
     },
     {
-      "fn": "VFX_ComposeMetalShardCluster",
-      "label": "METAL SHARD",
-      "category": "metal",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeMetalShardCluster($POS, $SEED)"
-    },
-    {
       "fn": "VFX_ComposePlasmaOrb",
       "label": "PLASMA ORB",
       "category": "metal",
@@ -256,67 +228,11 @@
       "draw_call": "VFX_ComposePlasmaOrb(Vector3Add($POS, (Vector3){0, 0.9f, 0}), 0.5f, $TIME)"
     },
     {
-      "fn": "VFX_ComposeBladeRing",
-      "label": "BLADE RING",
-      "category": "metal",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeBladeRing($POS, 0.6f, 5, $TIME * 60.0f)"
-    },
-    {
-      "fn": "VFX_ComposeBladeStorm",
-      "label": "BLADE STORM",
-      "category": "metal",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeBladeStorm($POS, 0.7f, $TIME)"
-    },
-    {
-      "fn": "VFX_ComposeShrapnelBurst",
-      "label": "SHRAPNEL",
-      "category": "metal",
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeShrapnelBurst(Vector3Add($POS, (Vector3){0, 0.25f, 0}), 1.0f)"
-    },
-    {
-      "fn": "VFX_ComposeRicochetSpark",
-      "label": "RICOCHET",
-      "category": "metal",
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeRicochetSpark(Vector3Add($POS, (Vector3){0, 0.5f, 0}), (Vector3){0.7f, 0.7f, 0.0f}, 1.0f)"
-    },
-    {
-      "fn": "VFX_ComposeLightningBolt",
-      "label": "BOLT",
-      "category": "taiji",
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeLightningBolt($POS, Vector3Add($POS, (Vector3){2, 1, 0}), 1.0f)"
-    },
-    {
-      "fn": "VFX_ComposeEnergyFlow",
-      "label": "ENERGY FLOW",
-      "category": "taiji",
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeEnergyFlow($POS, Vector3Add($POS, (Vector3){3, 0.5f, 0}), 1.0f, 3.0f)"
-    },
-    {
       "fn": "VFX_ComposeEnergySmoke",
       "label": "ENERGY SMOKE",
       "category": "taiji",
       "type": "continuous",
       "draw_call": "VFX_ComposeEnergySmoke($POS, 1.0f, $PROG, $TIME, (Vector2){0.0f, 0.0f})"
-    },
-    {
-      "fn": "VFX_SpawnProcBeam",
-      "label": "PROC BEAM",
-      "category": "metal",
-      "type": "oneshot",
-      "trigger_call": "VFX_SpawnProcBeam($POS, Vector3Add($POS, (Vector3){2, 1, 0}), EFFECT_PRESET_METAL_SHARD, 0.1f, 3.0f)"
-    },
-    {
-      "fn": "VFX_SpawnOrbitals",
-      "label": "ORBITALS",
-      "category": "metal",
-      "type": "oneshot",
-      "trigger_call": "VFX_SpawnOrbitals($POS, EFFECT_PRESET_METAL_SHARD, 5, 0.8f, 4.0f)"
     },
     {
       "fn": "VFX_ComposeImpact_METAL",
@@ -333,39 +249,11 @@
       "trigger_call": "VFX_ComposeCast($POS, EFFECT_PRESET_METAL_SHARD, 1.5f)"
     },
     {
-      "fn": "VFX_ComposeRockBurst",
-      "label": "ROCK BURST",
-      "category": "earth",
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeRockBurst($POS, 1.0f)"
-    },
-    {
-      "fn": "VFX_ComposeFloatingStones",
-      "label": "FLOAT STONE",
-      "category": "earth",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeFloatingStones($POS, 0.7f, $TIME)"
-    },
-    {
-      "fn": "VFX_ComposeQuakeRumble",
-      "label": "QUAKE",
-      "category": "earth",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeQuakeRumble($POS, 1.3f, $TIME)"
-    },
-    {
       "fn": "VFX_ComposeStonePillar",
       "label": "STONE PILLAR",
       "category": "earth",
       "type": "continuous",
       "draw_call": "VFX_ComposeStonePillar($POS, $PROG)"
-    },
-    {
-      "fn": "VFX_ComposeBoulder",
-      "label": "BOULDER",
-      "category": "earth",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeBoulder(Vector3Add($POS, (Vector3){0, 0.5f, 0}))"
     },
     {
       "fn": "VFX_ComposeFissureStreak",
@@ -394,13 +282,6 @@
       "category": "taiji",
       "type": "continuous",
       "draw_call": "VFX_ComposeElementalMist(VC_MAT_ICE, $POS, 1.0f, $TIME)"
-    },
-    {
-      "fn": "VFX_SpawnAuraRing",
-      "label": "AURA RING",
-      "category": "taiji",
-      "type": "oneshot",
-      "trigger_call": "VFX_SpawnAuraRing($POS, EFFECT_PRESET_TAIJI_BURST, 1.0f, 5.0f)"
     },
     {
       "fn": "VFX_ComposeImpact_TAIJI",
@@ -445,20 +326,6 @@
       "trigger_call": "VFX_ComposeGustSlash(Vector3Add($POS, (Vector3){0, 0.3f, 0}), (Vector3){1.0f, 0.0f, 0.0f}, 1.0f)"
     },
     {
-      "fn": "VFX_ComposeSmokePuff",
-      "label": "SMOKE PUFF",
-      "category": "util",
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeSmokePuff($POS, 0.8f)"
-    },
-    {
-      "fn": "VFX_ComposeSmokeTrail",
-      "label": "SMOKE TRAIL",
-      "category": "util",
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeSmokeTrail($POS, Vector3Add($POS, (Vector3){0, 0, 3}), 1.0f)"
-    },
-    {
       "fn": "VFX_SpawnSmokeColumn",
       "label": "SMOKE COLUMN",
       "category": "util",
@@ -473,41 +340,6 @@
       "draw_call": "VFX_ComposeShield(VC_MAT_METAL, $POS, 1.2f, fminf($PROG, 0.5f), $TIME)"
     },
     {
-      "fn": "VFX_ComposeZone",
-      "label": "ZONE",
-      "category": "util",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeZone(VC_MAT_FIRE, $POS, 1.2f, fminf($PROG, 0.5f), $TIME)"
-    },
-    {
-      "fn": "VFX_ComposeSlashArc",
-      "label": "SLASH ARC",
-      "category": "util",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeSlashArc(VC_MAT_METAL, $POS, (Vector3){1, 0, 0}, 1.0f, 120.0f, fminf($TIME / 0.6f, 0.999f), $TIME)"
-    },
-    {
-      "fn": "VFX_ComposeCyclone",
-      "label": "CYCLONE",
-      "category": "util",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeCyclone($POS, 0.6f, $TIME)"
-    },
-    {
-      "fn": "VFX_ComposeBeam",
-      "label": "BEAM",
-      "category": "util",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeBeam(VC_MAT_LIGHTNING, s_beamStart, s_beamEnd, 0.6f, $PROG, $TIME)"
-    },
-    {
-      "fn": "VFX_ComposeProjectile",
-      "label": "PROJECTILE",
-      "category": "util",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeProjectile(VC_MAT_FIRE, $POS, Vector3Add($POS, (Vector3){3, 0, 0}), $PROG, 0.3f, $TIME)"
-    },
-    {
       "fn": "VFX_GroundPattern",
       "label": "GND PATTERN",
       "category": "util",
@@ -515,25 +347,11 @@
       "draw_call": "VFX_GroundPattern(GROUND_CRACK_RADIAL, $POS, 1.5f, $PROG, $TIME)"
     },
     {
-      "fn": "VFX_SummonCircle",
-      "label": "SUMMON RING",
-      "category": "util",
-      "type": "continuous",
-      "draw_call": "VFX_SummonCircle($POS, 1.5f, $PROG, $TIME, (Color){100, 200, 255, 255})"
-    },
-    {
       "fn": "VFX_TriggerExplosion",
       "label": "EXPLOSION",
       "category": "util",
       "type": "oneshot",
       "trigger_call": "VFX_TriggerExplosion(VC_MAT_FIRE, $POS, 1.0f, false)"
-    },
-    {
-      "fn": "VFX_SpawnGroundWave",
-      "label": "GROUND WAVE",
-      "category": "util",
-      "type": "oneshot",
-      "trigger_call": "VFX_SpawnGroundWave($POS, (Vector3){1, 0, 0}, EFFECT_PRESET_FIRE_EXPLOSION, 3.0f, 2.0f)"
     },
     {
       "fn": "VFX_ComposeProjectileTrail_FIRE",
@@ -633,21 +451,6 @@
       "trigger_call": "VFX_ComposeShardDebris($POS, 12, 4.5f, VC_MAT_ICE)"
     },
     {
-      "fn": "VFX_ComposeCrownSplash",
-      "label": "CROWN SPLASH",
-      "category": "util",
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeCrownSplash($POS, 1.8f, 1.2f, 0.5f, VC_MAT_WATER)"
-    },
-    {
-      "fn": "VFX_ComposeChainLink",
-      "label": "CHAIN LINK",
-      "category": "util",
-      "_auto": true,
-      "type": "continuous",
-      "draw_call": "VFX_ComposeChainLink(VC_MAT_FIRE, $POS, Vector3Add($POS, (Vector3){3.0f, 0, 0}), 0.1f, 1.0f, fminf($PROG, 0.99f), $TIME)"
-    },
-    {
       "fn": "VFX_ComposeWaterStreamOnPath",
       "label": "WATER STREAM ON PATH",
       "category": "water",
@@ -667,35 +470,6 @@
       "category": "util",
       "type": "oneshot",
       "trigger_call": "VFX_ComposeParticleUpgradesTest($POS)"
-    },
-    {
-      "fn": "VFX_ComposeTrailUpgradesTest",
-      "label": "TRAIL UPGRADES TEST",
-      "category": "util",
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeTrailUpgradesTest($POS)"
-    },
-    {
-      "fn": "VFX_ComposeSpiritWispTest",
-      "label": "SPIRIT WISP TEST",
-      "category": "yin",
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeSpiritWispTest($POS)"
-    },
-    {
-      "fn": "VFX_ComposeMeteorCometTest",
-      "label": "METEOR COMET TEST",
-      "category": "metal",
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeMeteorCometTest($POS)"
-    },
-    {
-      "fn": "VFX_ComposeSpiritOrb",
-      "label": "SPIRIT ORB",
-      "category": "util",
-      "_auto": true,
-      "type": "continuous",
-      "draw_call": "VFX_ComposeSpiritOrb(VC_MAT_FIRE, $POS, 1.5f, $TIME)"
     },
     {
       "fn": "VFX_ComposeTaijiArcStrike",
@@ -727,7 +501,71 @@
       "category": "fire",
       "_auto": true,
       "type": "continuous",
-      "draw_call": "VFX_ComposeFireFunnel($POS, 1.5f, 1.5f, 2.0f, $TIME)"
+      "draw_call": "VFX_ComposeFireFunnel($POS, 0.6f, 0.08f, 1.5f, $TIME)"
+    },
+    {
+      "fn": "VFX_ComposeEnergyFlow",
+      "label": "ENERGY FLOW",
+      "category": "util",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeEnergyFlow($POS, $POS, 1.5f, 2.0f)"
+    },
+    {
+      "fn": "VFX_ComposeLightningBolt",
+      "label": "LIGHTNING BOLT",
+      "category": "util",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeLightningBolt($POS, Vector3Add($POS, (Vector3){3.0f, 0, 0}), 1.5f)"
+    },
+    {
+      "fn": "VFX_SpawnProcBeam",
+      "label": "PROC BEAM",
+      "category": "util",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_SpawnProcBeam($POS, $POS, EFFECT_PRESET_FIRE_EXPLOSION, 0.1f, 2.0f)"
+    },
+    {
+      "fn": "VFX_ComposeBeam",
+      "label": "BEAM",
+      "category": "util",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeBeam(VC_MAT_FIRE, $POS, Vector3Add($POS, (Vector3){3.0f, 0, 0}), 0.1f, fminf($PROG, 0.99f), $TIME)"
+    },
+    {
+      "fn": "VFX_SpawnOrbitals",
+      "label": "ORBITALS",
+      "category": "util",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_SpawnOrbitals($POS, EFFECT_PRESET_FIRE_EXPLOSION, 5, 1.5f, 2.0f)"
+    },
+    {
+      "fn": "VFX_ComposeLeafSwirl",
+      "label": "LEAF SWIRL",
+      "category": "wood",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeLeafSwirl($POS, 1.5f, $TIME)"
+    },
+    {
+      "fn": "VFX_ComposeChainLink",
+      "label": "CHAIN LINK",
+      "category": "util",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeChainLink(VC_MAT_FIRE, $POS, Vector3Add($POS, (Vector3){3.0f, 0, 0}), 0.1f, 1.0f, fminf($PROG, 0.99f), $TIME)"
+    },
+    {
+      "fn": "VFX_ComposeCrownSplash",
+      "label": "CROWN SPLASH",
+      "category": "water",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeCrownSplash($POS, 1.5f, 2.0f, 2.0f, VC_MAT_WATER)"
     }
   ],
   "overrides": {
@@ -754,12 +592,6 @@
     },
     "VFX_ComposeFireFunnel": {
       "draw_call": "VFX_ComposeFireFunnel($POS, 0.6f, 0.08f, 1.5f, $TIME)"
-    },
-    "VFX_ComposeCrownSplash": {
-      "label": "CROWN SPLASH",
-      "category": "util",
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeCrownSplash($POS, 1.8f, 1.2f, 0.5f, VC_MAT_WATER)"
     }
   }
 }

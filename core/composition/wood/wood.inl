@@ -103,8 +103,7 @@ static void WoodAmbience_InitShared(void)
 }
 
 #include "glowing_vine.inl"
-#include "leaf_swirl.inl"
-#include "bloom_burst.inl"
-#include "leaf_fall.inl"
 // @gen:wood_includes begin
+// 1 include(s) — auto-managed by sync_vfx_test.py
+#include "leaf_swirl.inl"
 // @gen:wood_includes end
