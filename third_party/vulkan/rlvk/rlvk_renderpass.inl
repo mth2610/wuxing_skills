@@ -392,9 +392,12 @@ void rlDisableFramebuffer(void)
 
     // Make the depth texture sampleable for depth-render / shadowmap / soft-particle shaders.
     rlvkTextureSlot *depth = f->hasDepth ? &RLVK.textureSlots[f->depthTexture] : NULL;
+    // The twin is refilled only while a bind is RECENT; see rlvkTextureSlot.sampleWantedFrame.
+    bool twinWanted = depth && depth->sampleWantedFrame &&
+                      ((RLVK.frameCounter + 1 - depth->sampleWantedFrame) <= (u64)RLVK_TWIN_KEEPALIVE_FRAMES);
     if (depth && depth->image)
     {
-        if (depth->sampleImage && depth->sampleWanted)
+        if (depth->sampleImage && twinWanted)
         {
             // Caps.noSampledDepth (MoltenVK/Intel, §7.1): the attachment depth has no SAMPLED usage
             // (transitioning it to SHADER_READ_ONLY is even illegal — VUID-...-oldLayout-01211), and
@@ -433,7 +436,7 @@ void rlDisableFramebuffer(void)
             // twin keeps its UNDEFINED sampleLayout — exactly the state the bounce path itself
             // declares as the twin's oldLayout ("prior contents are stale; discard"), so layout
             // bookkeeping is IDENTICAL either way. Should something bind the twin later, that bind
-            // latches sampleWanted (rlvkResolveTexBinding) and reads the default-texture
+            // re-arms sampleWantedFrame (rlvkResolveTexBinding) and reads the default-texture
             // substitution (white = far = "no occluder") for that one frame, then the next scope
             // close bounces for real. Elides w*h*4 bytes moved twice per pass: measured
             // 13.4 -> 6.4 ms/frame on a 2048² RT (perf_rt2048), MoltenVK/Intel.
@@ -465,7 +468,7 @@ void rlDisableFramebuffer(void)
                                           });
     }
 
-    if (depth && depth->image && depth->sampleImage && depth->sampleWanted)
+    if (depth && depth->image && depth->sampleImage && twinWanted)
     {
         // depth image (DEPTH aspect) -> scratch buffer -> twin (COLOR aspect), same 4 bytes/texel
         vkCmdCopyImageToBuffer(cmdBuffer, depth->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,

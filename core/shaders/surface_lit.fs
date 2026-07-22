@@ -81,15 +81,30 @@ float ShadowFactor(vec3 worldPos, float ndl) {
     if (proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) return 1.0;
 
     float bias = max(0.0025 * (1.0 - ndl), 0.0006);
-    vec2 texel = vec2(u_shadowTexel);
+    float z = proj.z - bias;
+    // Bilinear-weighted PCF (same fix as maps/toolkit/shaders/ground_shadow.fs, 2026-07-22): the
+    // shadow map is sampled POINT — R32F linear filtering is an optional format feature and is not
+    // assumable on Vulkan/Mali — so a plain 3x3 of raw taps quantises every sample onto a texel
+    // centre and the shadow edge reads as SQUARE BLOCKS on a low-resolution map. Comparing per
+    // texel and blending the RESULTS with the sub-texel fraction removes the grid without needing
+    // any format feature. 4 bilinear taps = 16 fetches (was 9), on the tier that already opted
+    // into real shading.
+    float res = 1.0 / u_shadowTexel;
     float shadow = 0.0;
-    for (int x = -1; x <= 1; x++) {
-        for (int y = -1; y <= 1; y++) {
-            float pcfDepth = texture(shadowMap, proj.xy + vec2(float(x), float(y)) * texel).r;
-            shadow += (proj.z - bias > pcfDepth) ? 0.0 : 1.0;
+    for (int x = 0; x < 2; x++) {
+        for (int y = 0; y < 2; y++) {
+            vec2 o = (vec2(float(x), float(y)) * 3.0 - 1.5) * u_shadowTexel; // +-1.5 texels
+            vec2 t = (proj.xy + o) * res - 0.5;
+            vec2 f = fract(t);
+            vec2 base = (floor(t) + 0.5) * u_shadowTexel;
+            float s00 = step(z, texture(shadowMap, base).r);
+            float s10 = step(z, texture(shadowMap, base + vec2(u_shadowTexel, 0.0)).r);
+            float s01 = step(z, texture(shadowMap, base + vec2(0.0, u_shadowTexel)).r);
+            float s11 = step(z, texture(shadowMap, base + vec2(u_shadowTexel, u_shadowTexel)).r);
+            shadow += mix(mix(s00, s10, f.x), mix(s01, s11, f.x), f.y);
         }
     }
-    return shadow / 9.0;
+    return shadow * 0.25;
 }
 
 void main() {

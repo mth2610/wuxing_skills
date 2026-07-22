@@ -67,6 +67,13 @@
 #ifndef RLVK_ARENA_SLOTS
     #define RLVK_ARENA_SLOTS             2
 #endif
+// How many frames after the last bind the Caps.noSampledDepth depth twin keeps being refilled at
+// scope close (§7.27/§7.29). Must comfortably exceed the frames-in-flight count AND tolerate the
+// usual "sample the depth captured by the PREVIOUS frame" pattern, so 3 - a consumer that binds
+// every frame re-arms it continuously and never lapses.
+#ifndef RLVK_TWIN_KEEPALIVE_FRAMES
+    #define RLVK_TWIN_KEEPALIVE_FRAMES   3
+#endif
 #ifndef RLVK_MAX_VAO_SLOTS
     #define RLVK_MAX_VAO_SLOTS           2048
 #endif

@@ -51,6 +51,9 @@ Manages the entire **Core Engine** module of the Wuxing Skills project. Owns the
 - `docs/API_GUIDE.md` — **hand-maintained usage guide** (prose companion to the index): patterns, worked examples, contracts, the "why". Keep it current when API usage changes.
 - `docs/LANDMINES.md` — distilled reusable lessons. Cross-cutting ones live in root `ENGINE_LANDMINES.md` — **read that before touching GL/shaders.**
 - `docs/PROGRESS.md` — backlog / session log.
+- `docs/ELDEN_VFX_SPEC.md` — **Đợt E implementation spec** (Elden-Ring-tier VFX). Per-task
+  self-contained: API to add, files, wiring points, DoD, landmines. If you are assigned an
+  E-task, read its §0 + your section only — no other exploration needed.
 
 ---
 

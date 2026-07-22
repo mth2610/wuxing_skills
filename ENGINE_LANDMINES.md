@@ -61,6 +61,7 @@
 - **Symptom (black screen):** app runs but shows only black; **Symptom (crash):** hard crash on launch.
 - **Cause:** black screen = raylib 6.0 `CUSTOMIZE_BUILD` landmine (`EndDrawing` never swaps buffers). Crash = `-DGRAPHICS` is ignored on Android; ES2 instancing pointers are NULL on Mali.
 - **Rule:** build Android with `-DOPENGL_VERSION="ES 3.0"` (not `-DGRAPHICS`, not ES2). After changing build flags, delete the raylib build cache. (Verified on Samsung A33 / Mali.)
+- **STALE-DOC WARNING (2026-07-22):** the rule above belongs to the **GLES fallback** path. Since 2026-07-17 the Android build runs the **Vulkan backend (rlvk)** on real Mali hardware (`third_party/vulkan/docs/PROGRESS.md`, HANDOFF §7.11–7.23). Do not read this entry as "Android = GLES" — it cost one wrong conclusion already. What that means for renderer work: rlvk fixes DO reach Android, **except** anything gated on `Caps.noSampledDepth`, which is detected as *portability-subset AND vendorID 0x8086* (`rlvk_frame.inl:322`) — i.e. MoltenVK-on-Intel only, never Mali. The depth-twin machinery (§7.10/§7.27/§7.29) therefore does not exist on device.
 
 ## 7. Emitter systems: per-frame target + name collision
 

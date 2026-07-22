@@ -1440,3 +1440,44 @@ clean `_deps`/`build`, window renders, whole app runs normally.### 6. Lỗi lộ
 - **Tình trạng:** Khi spawn các hạt dạng soft circle (như `Impact Fire`), trên Android xuất hiện các viền vuông màu đỏ/cam rất rõ ràng, trong khi trên Mac (Desktop) thì hiển thị mềm mại bình thường.
 - **Phân tích:** Khởi tạo `globalParticleTex` dùng `GenImageGradientRadial(64, 64, 0.0f, WHITE, BLACK)`. Trong Raylib, `BLACK` là `(0, 0, 0, 255)`. Hàm tạo gradient nội suy cả Alpha, nên toàn bộ texture có Alpha = 255. Ở viền texture, màu là `(0, 0, 0, 255)`. Trong chế độ `BLEND_ADDITIVE` (`GL_SRC_ALPHA, GL_ONE`), GPU lấy `fragRGB * fragAlpha`. Do `fragAlpha = 1.0` (từ 255), bất kỳ sai số làm tròn (precision) cực nhỏ nào của GLES 2.0 trên Android ở tọa độ viền cũng sẽ tạo ra `fragRGB > 0`, và bị cộng dồn lên màn hình tạo thành viền vuông. Trên Mac (OpenGL 3.3/4.3), độ phân giải float cao hơn nên `fragRGB` trả về chính xác `0`.
 - **Khắc phục:** Thay `BLACK` bằng `BLANK` (`(0, 0, 0, 0)`) trong `GenImageGradientRadial` tại `main.c`. Lúc này viền texture có Alpha = 0. Khi đó `fragAlpha = 0`, GPU nhân `fragRGB * 0 = 0`, triệt tiêu hoàn toàn sai số và đảm bảo viền hạt trong suốt tuyệt đối trên mọi nền tảng.
+
+---
+
+## Đợt E — Elden-Ring-tier VFX (planned 22/07/2026, NOT STARTED)
+
+Full implementation spec: **`core/docs/ELDEN_VFX_SPEC.md`** (per-task API, files,
+wiring points, DoD, landmines — written so one agent can take one task cold).
+Pointer in `ROADMAP.md` Part 3.
+
+**Read `ELDEN_VFX_SPEC.md` §0.1b first** — the root-cause diagnosis of why smoke,
+fire and character aura currently underperform. Short version: every one of them
+is one surface + FBM noise; particles are wholly unlit (`particles.fs` is 14
+lines, no light term); additive outnumbers alpha 42:23 so smoke can never be
+dark; and noise is being used as silhouette when it can only be detail.
+
+### Part A — purge + fundamentals (do first)
+
+| Task | What | Size | Status |
+|---|---|---|---|
+| F0 | Triage table for tiers 2+3 (composition + skills); tier 1 primitives extend-only. **Owner deletes by hand**; agent then runs the post-deletion cleanup checklist | M | ☐ |
+| F1 | **Lit particles + blend law** — spherical-normal billboard lighting, forward-scatter, explicit blend mode. *Highest-value task in the doc* | L | ☐ |
+| F2 | Smoke rebuilt as layered lit sprites (20–40/puff, rotation variance, dark base) | L | ☐ |
+| F3 | Fire — black-body ramp + cools into F2's smoke; additive core / alpha body | M | ☐ |
+| F4 | Character aura — discrete elements breaking the silhouette + real light emission | M | ☐ |
+
+### Part B — polish on top of A
+
+| Task | What | Size | Status |
+|---|---|---|---|
+| E0 | Baseline captures (after F0, of survivors only) | S | ☐ |
+| E1 | PostFX radial blur + anamorphic streak bloom | M | ☐ |
+| E2 | VFX point lights consumed by `surface_lit.fs` (verified gap) | M | ☐ |
+| E3 | `VFX_Sequence` choreography layer | L | ☐ |
+| E4 | ~15 authored flipbook/mask textures — **priority raised**, gates F2/F3 | L | ☐ asset-gated |
+| E5 | Compositions: GlintSparkle, RuneCircle, ChargeConverge, DissolveExit | L | ☐ |
+| E6 | Compositions: SweepSlash, ImpactPackage, LightShaft, SpiritSwarm | L | ☐ |
+| E7 | Retrofit pilot skills — **stop-gate**, A/B vs E0 | M | ☐ Skills Agent |
+| E8 | rlvk + GLES/Mali + fill-rate budget | M | ☐ Renderer Agent |
+
+Order: `F0 → E0 → F1 → F2 → F3 → F4 → E1 → E2 → E3 → E5 → E6 → E7 → E8`,
+with E4 in parallel from F1.

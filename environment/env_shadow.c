@@ -38,7 +38,17 @@ static Vector3 s_lastSunDir = {0};
 void EnvShadow_Init(void)
 {
 #if defined(__ANDROID__)
-    s_resolution = 512; // Mali class — smaller depth target
+    // 2026-07-22, on-device (Mali-G68, rlvk/Vulkan): 512 was chosen defensively before the shadow
+    // path had ever run on hardware, and it is the reason the shadow looks SHATTERED there. The
+    // light frustum is fixed at halfExtent = ARENA_RADIUS + 2 = 20 m, so the map covers a 40x40 m
+    // box regardless of resolution: 512 gives 12.8 texels/m (7.8 cm per texel), and at the raking
+    // sun angle that is exactly the "coarse diagonal texel STREAKS" failure the desktop comment
+    // below describes — only 4x worse. 1024 doubles the density to 3.9 cm/texel.
+    // Cost check before raising it: on a MUCH weaker GPU (Intel Iris 6000) the whole 2048-vs-1024
+    // capture-fill difference measured 0.6-1.1 ms/frame (rlvk perf_shadow_ab), so 512->1024 on a
+    // G68 should be well under that. VERIFY on device with the ms HUD before going further to
+    // 2048 — this is a mid-range mobile GPU and the budget is 16.6 ms.
+    s_resolution = 1024;
 #else
     // 2048: at the raking sun angle the shadow is very elongated, so a lower resolution shows
     // coarse diagonal texel STREAKS across the shadow (projective aliasing). Keep it high for a

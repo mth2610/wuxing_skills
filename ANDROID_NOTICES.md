@@ -5,6 +5,8 @@ make -f Makefile.Android clean
 
 # build android
 make -f Makefile.Android
+make -f Makefile.Android USE_VULKAN=1
+
 
 # pair
 adb pair <IP>:<pairing_port>

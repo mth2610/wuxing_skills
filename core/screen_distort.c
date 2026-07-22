@@ -381,10 +381,23 @@ void ScreenDistort_Draw(Camera3D camera)
   EndShaderMode();
 }
 
+// PERF (2026-07-22): frames since anything last called ScreenDistort_BindDepthForSoftParticles.
+// The snapshot below is a FULL-SCREEN pass, and it is also the only thing that ever samples
+// renderTex.depth — which under rlvk's Caps.noSampledDepth quirk (MoltenVK/Intel) is served by a
+// twin the backend refills at every scope close of this render target. With no soft particles on
+// screen both are pure waste. The keep-alive window is generous (soft particles read the PREVIOUS
+// frame's depth by design, and effects start abruptly), so a skill that begins using them finds
+// the snapshot already running.
+#define SOFT_DEPTH_KEEPALIVE_FRAMES 20
+static int s_softDepthIdleFrames = SOFT_DEPTH_KEEPALIVE_FRAMES + 1; // start idle: nothing has asked yet
+
 void ScreenDistort_SnapshotDepth(void)
 {
   if (!s_depthTextureActive)
     return;
+  if (s_softDepthIdleFrames > SOFT_DEPTH_KEEPALIVE_FRAMES)
+    return;             // nobody has wanted soft-particle depth for a while: skip the whole pass
+  s_softDepthIdleFrames++;
   // [TỐI ƯU HÓA]: Lược bỏ hoàn toàn khối lệnh SetShaderValue(u_near, u_far) ở đây
   // vì đã được gán chết trên GPU ở hàm _Init, giảm API Draw Call.
   BeginTextureMode(prevDepthTex);
@@ -402,6 +415,7 @@ void ScreenDistort_BindDepthForSoftParticles(Shader shader, int textureSlot)
 {
   if (!s_depthTextureActive)
     return;
+  s_softDepthIdleFrames = 0; // re-arm the snapshot (and rlvk's depth-twin refill) for the next frames
   if (shader.id == 0 || shader.locs == NULL)
     return;
 

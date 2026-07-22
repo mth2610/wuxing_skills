@@ -56,11 +56,14 @@ typedef struct rlvkTextureSlot {
     VkImageLayout       sampleLayout;
     VkBuffer            sampleScratch;         // w*h*4 staging for the depth->color aspect bounce
     VkDeviceMemory      sampleScratchMemory;
-    // Sticky: set the first time anything binds this twin as a shader resource. Until then the
-    // depth->buffer->twin bounce at scope close is pure waste (a shadow map whose depth is only
-    // ever depth-TESTED never reads it) - w*h*4 bytes moved TWICE per pass, ~7ms/frame at 2048².
-    // Never cleared once set: the bounce must not flicker on and off between frames (§7.27).
-    bool                sampleWanted;
+    // `frameCounter + 1` of the last bind of this twin as a shader resource; 0 = never bound.
+    // The depth->buffer->twin bounce at scope close only runs while a bind is RECENT (within
+    // RLVK_TWIN_KEEPALIVE_FRAMES): a twin nobody reads costs w*h*4 bytes moved TWICE per pass,
+    // ~7 ms/frame at 2048². A window rather than a sticky flag so a target that STOPS being
+    // sampled (soft-particle depth while no soft particles are on screen) stops paying too; the
+    // window is re-armed by every bind, so a continuous consumer never lapses. Layout bookkeeping
+    // is identical whether or not the bounce runs, which is what makes this safe (§7.27/§7.29).
+    u64                 sampleWantedFrame;
     VkFilter            minFilter, magFilter;  // Sampler filters (rlTextureParameters)
     VkSamplerMipmapMode mipMode;               // Sampler mipmap mode
     VkSamplerAddressMode wrapS, wrapT;         // Sampler wrap modes (GL default: repeat)

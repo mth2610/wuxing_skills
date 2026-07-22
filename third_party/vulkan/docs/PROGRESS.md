@@ -60,6 +60,21 @@ map**. Capturing on alternate frames halves the whole capture cost, CPU draw cal
 NOTE: `perf_shadow_ab`'s first version drew one small cube and reported resolution as free — a
 capture probe must make the casters FILL the map, as the fitted light frustum does in-game.
 
+### Session outcome (2026-07-22, in-game, Intel Iris 6000)
+33 ms → 21 ms (§7.29 twin elision) → 17 ms (half-rate shadow capture + 8 PCF taps) → **16 ms /
+62 FPS** (twin keep-alive window + idle-gated `ScreenDistort_SnapshotDepth`).
+
+**Half-rate shadow capture was REVERTED (same day).** It bought ~1.5 ms but produced visible
+shimmer on moving casters (30 Hz shadow vs 60 Hz motion, worse wherever the frame rate is lower)
+*and* the alternating frame cost below. Temporal tricks on the shadow update rate are not free
+here; take the milliseconds from resolution (spatial) instead. Confirmed on device (Mali-G68).
+
+**Watch frame PACING, not just the average.** Half-rate shadow capture makes frame cost alternate
+heavy/light — a 16 ms average with a 19 ms worst is capture frames at ~19 and skipped frames at
+~14. Under vsync every heavy frame misses the 16.6 ms deadline, which can feel like judder even
+though the average clears 60. If that shows up, prefer an evenly-distributed cost (e.g. a 1024²
+capture EVERY frame) over an alternating one at the same average.
+
 ### Numbers that are NOT trustworthy — retake them with the LCG method before citing
 `perf_base`, `perf_switch*`, `perf_rt256`, `perf_fullres*`, `perf_hdr_*`, `perf_ldr_bloom` were all
 taken one-config-per-process (trap 1). They suggested that scope switches, extra full-res passes,

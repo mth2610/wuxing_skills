@@ -283,13 +283,23 @@ ifeq ($(USE_VULKAN), 1)
 	python3 scripts/rlvk_patch_raylib.py $(CURDIR)/$(RAYLIB_PATH)
 endif
 	@LIBA="$(CURDIR)/$(PROJECT_BUILD_PATH)/lib/$(ANDROID_ARCH_NAME)/libraylib.a"; \
+	STAMP="$(CURDIR)/$(PROJECT_BUILD_PATH)/lib/$(ANDROID_ARCH_NAME)/.raylib_backend"; \
+	WANT="$(if $(filter 1,$(USE_VULKAN)),vulkan,gles)"; \
+	HAVE="$$(cat "$$STAMP" 2>/dev/null || echo unknown)"; \
 	RLVK_NEWER=""; \
+	BACKEND_SWITCHED=""; \
+	if [ -f "$$LIBA" ] && [ "$$HAVE" != "$$WANT" ]; then BACKEND_SWITCHED="1"; fi; \
 	if [ "$(USE_VULKAN)" = "1" ] && [ -f "$$LIBA" ]; then \
 		RLVK_NEWER=$$(find "$(CURDIR)/third_party/vulkan/rlvk.h" "$(CURDIR)/third_party/vulkan/rlvk" "$(CURDIR)/scripts/rlvk_patch_raylib.py" -newer "$$LIBA" 2>/dev/null); \
 	fi; \
-	if [ ! -f "$$LIBA" ] || [ -n "$$RLVK_NEWER" ]; then \
+	if [ ! -f "$$LIBA" ] || [ -n "$$RLVK_NEWER" ] || [ -n "$$BACKEND_SWITCHED" ]; then \
 		echo "=== Building raylib for Android ($(ANDROID_ARCH_NAME)) ===" && \
 		[ -n "$$RLVK_NEWER" ] && echo "    (rlvk backend source changed since libraylib.a -> rebuilding: rlvk is compiled INTO raylib.a via the rlgl.h->rlvk.h patch)"; \
+		if [ -n "$$BACKEND_SWITCHED" ]; then \
+			echo "    (backend switched: libraylib.a was '$$HAVE', build wants '$$WANT' -> rebuilding. Without this the STALE archive links against the WRONG backend: a Vulkan-patched raylib.a linked without -lvulkan produces a wall of 'undefined symbol: vkCmdBindVertexBuffers' etc.)"; \
+			echo "    (also dropping every .o/.d: they were compiled for the OTHER backend and are newer than their sources, so make would silently keep them and link a half-and-half binary)"; \
+			find "$(CURDIR)/$(PROJECT_BUILD_PATH)/obj" \( -name '*.o' -o -name '*.d' \) -delete 2>/dev/null || true; \
+		fi; \
 		mkdir -p $(PROJECT_BUILD_PATH)/raylib_build && \
 		cd $(PROJECT_BUILD_PATH)/raylib_build && \
 		cmake $(CURDIR)/$(RAYLIB_PATH) \
@@ -304,9 +314,10 @@ endif
 			-DOPENGL_VERSION="ES 3.0" \
 			$(if $(filter 1,$(USE_VULKAN)),-DCMAKE_C_FLAGS="-DGRAPHICS_API_VULKAN -DVK_USE_PLATFORM_ANDROID_KHR -I$(CURDIR)/third_party/vulkan -I$(CURDIR)/third_party/vulkan/include") && \
 		cmake --build . --config Release -j8 && \
-		cp -f raylib/libraylib.a "$$LIBA"; \
+		cp -f raylib/libraylib.a "$$LIBA" && \
+		echo "$$WANT" > "$$STAMP"; \
 	else \
-		echo "=== raylib for Android already built, skipping ==="; \
+		echo "=== raylib for Android already built ($$HAVE), skipping ==="; \
 	fi
 
 # Build libshaderc as a static archive for on-device GLSL->SPIR-V compilation (rlvk).
@@ -396,6 +407,16 @@ copy_project_resources: create_temp_project_dirs
 	@# Copy toàn bộ thư mục assets vào assets/assets để AssetManager đọc được chuỗi "assets/..."
 	mkdir -p $(PROJECT_BUILD_PATH)/assets/assets
 	cp -rf assets/* $(PROJECT_BUILD_PATH)/assets/assets/ 2>/dev/null || true
+
+	@# environment/shaders (shadow_depth.vs/.fs) — BỎ SÓT cho tới 2026-07-22. Không có luật copy
+	@# nào cho environment/, nên trên máy ResourceManager_LoadShader thất bại và raylib im lặng
+	@# rơi về SHADER MẶC ĐỊNH cho pass capture bóng: shadow map R32F khi đó chứa MÀU của caster
+	@# chứ không phải gl_FragCoord.z, nên bóng vẫn "có" nhưng sai bản chất.
+	@# Dấu hiệu trong logcat: "SHADER: Không đọc được file: environment/shaders/shadow_depth.vs"
+	@# rồi ID kế tiếp compile với 3 uniforms (shader mặc định) thay vì 1 (shadow_depth thật).
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/environment/shaders
+	cp -f environment/shaders/*.vs $(PROJECT_BUILD_PATH)/assets/environment/shaders/ 2>/dev/null || true
+	cp -f environment/shaders/*.fs $(PROJECT_BUILD_PATH)/assets/environment/shaders/ 2>/dev/null || true
 
 	@# Tự động sao chép các tệp tài nguyên của maps/ (như shader bamboo_alpha.fs) vào assets của APK
 	mkdir -p $(PROJECT_BUILD_PATH)/assets/maps

@@ -45,6 +45,24 @@ const vec2 poissonDisk[16] = vec2[](
    vec2( 0.19984126, 0.78641367 ), vec2( 0.14383161, -0.14100790 ) 
 );
 
+// One bilinear-weighted PCF tap: compare the 4 texels around `uv`, then blend the COMPARISON
+// RESULTS with the sub-texel fraction. Order matters — comparing first and blending after is what
+// removes the texel grid. The map is sampled POINT (env_shadow.c forces it: R32F linear filtering
+// is an OPTIONAL format feature and cannot be assumed on either GL3.3 or Vulkan/Mali), so every
+// raw tap snaps to a texel centre; that snapping is precisely why the shadow edge showed square
+// blocks on device. Doing the interpolation here needs no format feature at all.
+float ShadowTapBilinear(vec2 uv, float z) {
+    float res  = 1.0 / u_shadowTexel;
+    vec2  t    = uv * res - 0.5;
+    vec2  f    = fract(t);
+    vec2  base = (floor(t) + 0.5) * u_shadowTexel;
+    float s00 = step(z, texture(texture0, base).r);
+    float s10 = step(z, texture(texture0, base + vec2(u_shadowTexel, 0.0)).r);
+    float s01 = step(z, texture(texture0, base + vec2(0.0, u_shadowTexel)).r);
+    float s11 = step(z, texture(texture0, base + vec2(u_shadowTexel, u_shadowTexel)).r);
+    return mix(mix(s00, s10, f.x), mix(s01, s11, f.x), f.y);
+}
+
 // Percentage-closer-filtering; returns 1.0 = fully lit, 0.0 = fully shadowed.
 float ShadowFactor(vec3 worldPos) {
     // mat*vec — TEST-PROVEN by rlvk visual scenario `shadow_proj` (2026-07-21):
@@ -61,21 +79,23 @@ float ShadowFactor(vec3 worldPos) {
     if (proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) return 1.0;
 
     float bias = 0.0015;
-    // Bán kính phủ bóng mềm (có thể tăng lên để bóng mềm hơn mà không tốn thêm hiệu năng)
-    float filterRadius = u_shadowTexel * 3.0; // Tương đương GROUND_SHADOW_PCF_RADIUS = 3
-    float shadow = 0.0;
+    float shadow = 0.0;   // (filterRadius/poissonDisk are unused now — see the tap grid below)
     
-    // PERF (2026-07-22): 8 taps, not 16. Measured on Intel Iris 6000 / MoltenVK
-    // (rlvk scenario perf_pcf_ab): 12 extra taps cost 0.16-0.89 ms/frame over a full 1280x720
-    // target. The Poisson set below is ordered so its first 8 entries already spread over the
-    // whole disk — halving the count widens the sample spacing slightly but keeps the disk
-    // covered, so the edge stays smooth rather than banded.
-    for (int i = 0; i < 8; i++) {
-        float pcfDepth = texture(texture0, proj.xy + poissonDisk[i] * filterRadius).r;
-        shadow += step(proj.z - bias, pcfDepth);
-    }
+    // 2x2 grid of BILINEAR taps, 1.5 texels apart = 16 texture fetches — the same fetch budget as
+    // the old 16-tap Poisson set, but each fetch now carries a bilinear weight instead of snapping
+    // to a grid cell. That is the fix for "the edge shows square blocks" (on-device, Mali-G68):
+    // the problem was never the number of samples, it was that POINT sampling quantised every one
+    // of them onto the same texel centres. The Poisson set above is kept for reference; a
+    // scattered disk is the wrong tool when the map is point-sampled — it leaves gaps that read as
+    // separate blocks, and thinning it to 8 taps (tried 2026-07-22) made that clearly worse.
+    float z = proj.z - bias;
+    const float S = 1.5;
+    shadow += ShadowTapBilinear(proj.xy + vec2(-S, -S) * u_shadowTexel, z);
+    shadow += ShadowTapBilinear(proj.xy + vec2( S, -S) * u_shadowTexel, z);
+    shadow += ShadowTapBilinear(proj.xy + vec2(-S,  S) * u_shadowTexel, z);
+    shadow += ShadowTapBilinear(proj.xy + vec2( S,  S) * u_shadowTexel, z);
 
-    return shadow * 0.125; // 1.0/8.0
+    return shadow * 0.25;
 }
 
 

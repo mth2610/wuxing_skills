@@ -908,6 +908,21 @@ static AutoTestResult AutoTest_BossStep(int frameInCase, char *outReason, int ou
   return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
 }
 
+// Real-Shading debug toggles, laid out as TAP TARGETS. Android has no keyboard, so the two status
+// labels double as buttons (raylib reports a touch as mouse button 0), which is the only way to
+// exercise the shadow path on device — EnvShadow ships DISABLED and `J` was its only switch.
+// PLACEMENT is the whole difficulty on a phone. The bottom-left belongs to the virtual joystick
+// (sandbox_core.c: centre {150*s, h-150*s}, radius 65*s — and `s` scales up on big screens, so
+// "just above it" is not safe either), the bottom-right to attack/dash/jump, the top-right to the
+// camera buttons, and the top 84 px is the OS's mandatory gesture strip (ENGINE_LANDMINES §5,
+// verified on the A33: a finger there never reaches the app, though `adb tap` does — so this is
+// NOT something device testing via adb will catch). That leaves the top-left, below y=90.
+//   index 0 = frame-time readout, 1 = GFX tier button, 2 = SHADOW button
+static Rectangle DebugToggleRect(int index) {
+  const float y[3] = { 96.0f, 122.0f, 148.0f };
+  return (Rectangle){ 10.0f, y[index], 300.0f, 24.0f }; // generous width: a finger is not a cursor
+}
+
 int main(int argc, char **argv) {
   // Widened/heightened from 1200x700 so the sandbox tuning panel
   // (sandbox/ui_panel.c) has room for multi-column tunable layouts as skills
@@ -1232,6 +1247,16 @@ int main(int argc, char **argv) {
     }
     if (IsKeyPressed(KEY_J)) {
         EnvShadow_SetEnabled(!EnvShadow_IsEnabled()); // Real Shading P6 — toggle real shadow map
+    }
+    // Same two toggles by TOUCH, for Android (no keyboard). Only while the labels are actually
+    // drawn (they are hidden on SCREEN_GAME), so gameplay taps are never swallowed.
+    if (currentScreen != SCREEN_GAME && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        Vector2 tap = GetMousePosition();
+        if (CheckCollisionPointRec(tap, DebugToggleRect(1))) {
+            GfxQuality_Set((GfxQuality)((GfxQuality_Get() + 1) % 4));
+        } else if (CheckCollisionPointRec(tap, DebugToggleRect(2))) {
+            EnvShadow_SetEnabled(!EnvShadow_IsEnabled());
+        }
     }
     if (IsKeyPressed(KEY_H) && EnvShadow_IsEnabled()) {
         EnvShadow_DebugDump(player.position); // P6 diag — numeric shadow-map readback (see notes)
@@ -1705,17 +1730,18 @@ int main(int argc, char **argv) {
     // shader; overlay draws (HP bars, decals) get swept in too since these
     // functions aren't split into geometry-only vs. UI layers — harmless
     // (they just contribute stray depth), not visually wrong.
-    // PERF (2026-07-22): capture at HALF rate. The capture re-walks and re-issues the entire
-    // scene every frame, and that second traversal — not the map's resolution (0.8 ms) and not the
-    // receiver's PCF taps (0.5 ms) — is the bulk of the ~5 ms the shadow system costs
-    // (rlvk docs/PROGRESS.md "The shadow system: no single hotspot"). The map is a persistent FBO
-    // texture: on a skipped frame receivers simply sample the previous capture, and s_lightVP is
-    // left at the value that map was rendered with, so the projection stays consistent. Shadows
-    // therefore update at 30 Hz while the game runs at 60 — standard practice, and at this camera
-    // distance with a raking sun the lag is not perceptible.
-    static unsigned int s_shadowCaptureTick = 0;
-    bool captureShadowThisFrame = EnvShadow_IsEnabled() && ((s_shadowCaptureTick++ & 1u) == 0u);
-    if (captureShadowThisFrame) {
+    // PERF NOTE (2026-07-22): half-rate capture was tried here and REVERTED the same day. It did
+    // buy ~1.5 ms (the capture's second scene traversal is the bulk of the shadow cost), but it
+    // cost two things that matter more:
+    //   1. Visible SHIMMER on moving casters — the shadow updates at 30 Hz against 60 Hz motion,
+    //      and lower wherever the frame rate is lower (on Mali it landed around 15-25 Hz). Note
+    //      this is NOT shadow "swimming": ComputeLightVP's frustum is world-static, so the texel
+    //      grid never moves. It is purely the update rate.
+    //   2. Alternating frame cost (capture frames ~19 ms, skipped ~14 ms), which under vsync means
+    //      every other frame misses the deadline — judder at a 16 ms average.
+    // Both are temporal artifacts, and the ms it saved is available from resolution instead, which
+    // is a purely spatial trade. Do not re-introduce it without solving the update rate.
+    if (EnvShadow_IsEnabled()) {
         EnvShadow_BeginCapture();
         Model charModel = CharacterModel_GetModel();
         if (CharacterModel_IsLoaded()) {
@@ -1870,17 +1896,23 @@ int main(int argc, char **argv) {
             if (s_worstWindow >= 1.0f) { s_worstWindow = 0.0f; s_msWorst = msNow; } // worst of the last second
             Color budget = (s_msAvg < 16.6f) ? GREEN : (s_msAvg < 33.3f) ? YELLOW : RED;
             const char *line = TextFormat("%.1f ms  %d FPS   worst %.1f ms", s_msAvg, GetFPS(), s_msWorst);
+            Rectangle r = DebugToggleRect(0);   // screen-relative: lands correctly on a phone too
 #if defined(PERFORMANCE_CAPTURE)
-            DrawText(line, 10, 616, 20, budget);   // measurement build: show it in-game too
+            DrawText(line, (int)r.x, (int)r.y, 20, budget);   // measurement build: show it in-game too
 #else
-            if (currentScreen != SCREEN_GAME) DrawText(line, 10, 616, 20, budget);
+            if (currentScreen != SCREEN_GAME) DrawText(line, (int)r.x, (int)r.y, 20, budget);
 #endif
         }
 
+        // Two separate lines, each its own tap target (see DebugToggleRect): on Android these ARE
+        // the only way to switch tier / turn the real shadow on, since there is no keyboard.
         if (currentScreen != SCREEN_GAME) {
             static const char *gfxTierName[4] = { "UNLIT", "LOW", "MED", "HIGH" };
-            DrawText(TextFormat("GFX [L]: %s   SHADOW [J]: %s", gfxTierName[GfxQuality_Get()],
-                                 EnvShadow_IsEnabled() ? "ON" : "OFF"), 10, 662, 20, SKYBLUE);
+            Rectangle rg = DebugToggleRect(1), rs = DebugToggleRect(2);
+            DrawText(TextFormat("GFX [L/tap]: %s", gfxTierName[GfxQuality_Get()]),
+                     (int)rg.x, (int)rg.y, 20, SKYBLUE);
+            DrawText(TextFormat("SHADOW [J/tap]: %s", EnvShadow_IsEnabled() ? "ON" : "OFF"),
+                     (int)rs.x, (int)rs.y, 20, EnvShadow_IsEnabled() ? GREEN : SKYBLUE);
         }
 
         // Real Shading P6 — debug preview of the raw shadow-map texture.

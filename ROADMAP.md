@@ -585,8 +585,35 @@ Process per item (kept from the prior convention):
 
 ---
 
+## Part 3 — Đợt E: Elden-Ring-tier VFX (planned 22/07/2026)
+
+Core-owned engine work. Full spec lives in **`core/docs/ELDEN_VFX_SPEC.md`** —
+per-task implementation detail (API, files, wiring points, DoD, landmines).
+
+**Part A — purge + fundamentals (first).** Owner's assessment 22/07: most VFX are
+not good enough, only a few keepers, and the skill layer is disposable. Root cause
+of the weak fundamentals (spec §0.1b, from direct source reading): every smoke /
+fire / aura effect is **one surface + FBM noise**; particles are wholly unlit
+(`particles.fs` is 14 lines, no light term); additive outnumbers alpha 42:23 so
+smoke can never be dark; and noise is used as silhouette when it can only be
+detail. `F0` triage/purge → `F1` lit particles + blend law (highest-value task in
+the plan) → `F2/F3/F4` smoke, fire, character aura rebuilt on it.
+
+**Part B — polish on top.** `E0` baseline, `E1` radial blur + anamorphic streak
+bloom, `E2` VFX light bleed onto characters (`surface_lit.fs` verified not to read
+the `vfx_light` list), `E3` `VFX_Sequence` choreography layer, `E5/E6` new
+compositions, `E7` retrofit **stop-gate**, `E8` rlvk/Mali budget. `E4` (authored
+flipbook library) runs in parallel from F1 — priority raised, since it now gates
+F2/F3.
+
+No renderer rewrite required. Cross-module: E2 coordinates with
+Character/Environment, F0's skill purge and E7 are Skills, E8 is Renderer.
+
+---
+
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
 | 2026-07-20 | Claude | Initial consolidation | `MODULES_ROADMAP.md`, `KE_HOACH_TIEP_THEO.md` (read directly, translated) | Ground-truth (translation), status notes cross-checked against session memory |
+| 2026-07-22 | Claude | Added Part 3 — Đợt E (Elden-Ring-tier VFX) | Direct audit of `core/` this session: `post_fx.h`, `particle_system.h`, `visual_composer.h` (79 components enumerated), `vfx_light.h`, `sprite_anim.h`, `ribbon_strip.h`, `core/shaders/` and `assets/textures/` listings | Ground-truth for the "what exists" audit; the phase plan, effort sizes and the Elden Ring comparison are **inferred/proposed** — not yet validated by implementation |
