@@ -1705,7 +1705,17 @@ int main(int argc, char **argv) {
     // shader; overlay draws (HP bars, decals) get swept in too since these
     // functions aren't split into geometry-only vs. UI layers — harmless
     // (they just contribute stray depth), not visually wrong.
-    if (EnvShadow_IsEnabled()) {
+    // PERF (2026-07-22): capture at HALF rate. The capture re-walks and re-issues the entire
+    // scene every frame, and that second traversal — not the map's resolution (0.8 ms) and not the
+    // receiver's PCF taps (0.5 ms) — is the bulk of the ~5 ms the shadow system costs
+    // (rlvk docs/PROGRESS.md "The shadow system: no single hotspot"). The map is a persistent FBO
+    // texture: on a skipped frame receivers simply sample the previous capture, and s_lightVP is
+    // left at the value that map was rendered with, so the projection stays consistent. Shadows
+    // therefore update at 30 Hz while the game runs at 60 — standard practice, and at this camera
+    // distance with a raking sun the lag is not perceptible.
+    static unsigned int s_shadowCaptureTick = 0;
+    bool captureShadowThisFrame = EnvShadow_IsEnabled() && ((s_shadowCaptureTick++ & 1u) == 0u);
+    if (captureShadowThisFrame) {
         EnvShadow_BeginCapture();
         Model charModel = CharacterModel_GetModel();
         if (CharacterModel_IsLoaded()) {

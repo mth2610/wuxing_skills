@@ -697,6 +697,188 @@ static const char *sc_perf_dynmesh(void)
     return NULL;
 }
 
+// The same mesh re-upload, but INSIDE an FBO scope whose depth twin is live (something sampled it,
+// so sampleWanted is latched). rlvkUploadBuffer suspends the scope through the full
+// rlDisableFramebuffer path, which runs the depth->buffer->twin bounce - so every upload inside a
+// scene render target may be paying a whole-attachment depth round trip on top of the pass split.
+// Compare the delta here against sc_perf_dynmesh's (same work on the swapchain, no twin).
+static const char *sc_perf_upload_fbo(void)
+{
+    const int FW = 1280, FH = 720;
+    Camera3D cam = cam3d();
+    RenderTexture2D rt = LoadRenderTexture(FW, FH);   // has a depth attachment -> has a twin
+    Mesh mesh = GenMeshPlane(3.0f, 3.0f, 40, 40);
+    UploadMesh(&mesh, true);
+    Material mat = LoadMaterialDefault();
+    Matrix xf = MatrixIdentity();
+    size_t posBytes = (size_t)mesh.vertexCount * 3 * sizeof(float);
+
+    unsigned int seed = 9001u;
+    double acc[2] = {0, 0};
+    int cnt[2] = {0, 0};
+    const int WARM = 60, N = 600;
+    for (int f = 0; f < WARM + N; f++)
+    {
+        seed = seed * 1103515245u + 12345u;
+        int variant = (int)((seed >> 16) & 1u);
+        double t0 = GetTime();
+        BeginDrawing();
+        ClearBackground(BLACK);
+        BeginTextureMode(rt);
+            ClearBackground((Color){8, 8, 16, 255});
+            if (variant)
+            {
+                for (int v = 0; v < mesh.vertexCount; v++) mesh.vertices[v*3 + 1] = 0.01f * (float)(v & 7);
+                UpdateMeshBuffer(mesh, 0, mesh.vertices, (int)posBytes, 0);
+                UpdateMeshBuffer(mesh, 2, mesh.normals,  (int)posBytes, 0);
+            }
+            BeginMode3D(cam); DrawMesh(mesh, mat, xf); EndMode3D();
+        EndTextureMode();
+        blit(rt.texture, W, H);
+        DrawTextureRec(rt.depth, (Rectangle){0,0,1,1}, (Vector2){0,0}, WHITE); // bind the depth twin: latches sampleWanted
+        EndDrawing();
+        if (f >= WARM) { acc[variant] += (GetTime() - t0) * 1000.0; cnt[variant]++; }
+    }
+    printf("  [perf upload-in-FBO %d verts] no-upload %.3f ms | +2 uploads %.3f ms | cost %.3f ms/frame\n",
+           mesh.vertexCount, acc[0]/cnt[0], acc[1]/cnt[1], acc[1]/cnt[1] - acc[0]/cnt[0]);
+    UnloadMesh(mesh); UnloadRenderTexture(rt);
+    return NULL;
+}
+
+// Does the NUMBER of full-resolution offscreen targets matter? (scene RT -> distort RT -> postFX
+// RT -> ...). 1 vs 3 full-res passes, LCG-interleaved in one run so neither presentation phase nor
+// the 2-slot frame ring can bias a variant. This is the architectural question: is it worth
+// collapsing the full-res chain, or is only the FIRST target expensive?
+static const char *sc_perf_fullres_ab(void)
+{
+    const int FW = 1280, FH = 720, FMT = RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16;
+    Camera3D cam = cam3d();
+    RenderTexture2D rt[3];
+    for (int i = 0; i < 3; i++) rt[i] = fmtRT(FW, FH, FMT);
+
+    unsigned int seed = 4242u;
+    double acc[2] = {0, 0};
+    int cnt[2] = {0, 0};
+    const int WARM = 60, N = 600;
+    for (int f = 0; f < WARM + N; f++)
+    {
+        seed = seed * 1103515245u + 12345u;
+        int variant = (int)((seed >> 16) & 1u);   // 0 = one full-res pass, 1 = three
+        int passes = variant ? 3 : 1;
+        double t0 = GetTime();
+        BeginDrawing();
+        ClearBackground(BLACK);
+        BeginTextureMode(rt[0]);
+            ClearBackground((Color){8, 8, 16, 255});
+            BeginMode3D(cam); DrawCube((Vector3){0,0,0}, 1.5f, 1.5f, 1.5f, RED); EndMode3D();
+        EndTextureMode();
+        for (int i = 1; i < passes; i++)
+        {
+            BeginTextureMode(rt[i]); blit(rt[i-1].texture, FW, FH); EndTextureMode();
+        }
+        blit(rt[passes-1].texture, W, H);
+        EndDrawing();
+        if (f >= WARM) { acc[variant] += (GetTime() - t0) * 1000.0; cnt[variant]++; }
+    }
+    printf("  [perf fullres A/B] 1 pass %.3f ms | 3 passes %.3f ms | cost %.3f ms per extra full-res pass\n",
+           acc[0]/cnt[0], acc[1]/cnt[1], (acc[1]/cnt[1] - acc[0]/cnt[0]) / 2.0);
+    for (int i = 0; i < 3; i++) UnloadRenderTexture(rt[i]);
+    return NULL;
+}
+
+// What a shadow-map capture pass costs at 2048² vs 1024², LCG-interleaved in one run. Mirrors
+// env_shadow's target shape: an R32F color attachment written by a trivial depth shader, plus the
+// depth attachment it depth-tests against. Answers "is dropping the shadow resolution worth it?"
+// with a number instead of an opinion (the in-file note claiming 1024 changed nothing was measured
+// through the vsync-quantized FPS counter, which could not have shown a 4 ms win).
+static const char *sc_perf_shadow_ab(void)
+{
+    Camera3D cam = cam3d();
+    RenderTexture2D big = LoadRenderTexture(2048, 2048);
+    RenderTexture2D small = LoadRenderTexture(1024, 1024);
+
+    unsigned int seed = 777u;
+    double acc[2] = {0, 0};
+    int cnt[2] = {0, 0};
+    const int WARM = 60, N = 500;
+    for (int f = 0; f < WARM + N; f++)
+    {
+        seed = seed * 1103515245u + 12345u;
+        int variant = (int)((seed >> 16) & 1u);   // 0 = 1024², 1 = 2048²
+        RenderTexture2D *sm = variant ? &big : &small;
+        double t0 = GetTime();
+        BeginDrawing();
+        ClearBackground(BLACK);
+        BeginTextureMode(*sm);                     // the capture pass
+            ClearBackground(WHITE);
+            // Casters must FILL the map, as they do in-game (the light frustum is fit to the
+            // arena). A probe that rasterizes one small cube measures no fill and wrongly
+            // concludes that the map's resolution is free.
+            BeginMode3D(cam);
+                DrawCube((Vector3){0,0,-1}, 40.0f, 40.0f, 0.1f, RED);
+                DrawCube((Vector3){0,0,0}, 1.5f, 1.5f, 1.5f, GREEN);
+            EndMode3D();
+        EndTextureMode();
+        BeginMode3D(cam); DrawCube((Vector3){0,0,0}, 1.5f, 1.5f, 1.5f, BLUE); EndMode3D(); // main pass
+        EndDrawing();
+        if (f >= WARM) { acc[variant] += (GetTime() - t0) * 1000.0; cnt[variant]++; }
+    }
+    printf("  [perf shadow A/B] 1024² %.3f ms | 2048² %.3f ms | dropping to 1024 saves %.3f ms/frame\n",
+           acc[0]/cnt[0], acc[1]/cnt[1], acc[1]/cnt[1] - acc[0]/cnt[0]);
+    UnloadRenderTexture(big); UnloadRenderTexture(small);
+    return NULL;
+}
+
+// What PCF tap count costs. maps/toolkit/shaders/ground_shadow.fs takes 16 Poisson taps out of the
+// shadow map for every ground pixel, every frame - a per-pixel cost that is INDEPENDENT of the
+// shadow map's resolution (which is why 2048² vs 1024² measures identical while turning shadows
+// off entirely is worth many ms). 16 vs 4 taps over a 1280x720 target, LCG-interleaved.
+static const char *sc_perf_pcf_ab(void)
+{
+    const char *FS_TMPL = "#version 330\n"
+        "in vec2 fragTexCoord; in vec4 fragColor; out vec4 finalColor;\n"
+        "uniform sampler2D texture0; uniform vec4 colDiffuse;\n"
+        "void main(){ float s = 0.0; vec2 uv = fragTexCoord;\n"
+        "  for (int i = 0; i < %d; i++) {\n"
+        "    vec2 o = vec2(cos(float(i)*2.4), sin(float(i)*2.4)) * 0.003;\n"
+        "    s += step(0.5, texture(texture0, uv + o).r); }\n"
+        "  finalColor = vec4(vec3(s / float(%d)), 1.0); }\n";
+    char src16[640], src4[640];
+    snprintf(src16, sizeof(src16), FS_TMPL, 16, 16);
+    snprintf(src4,  sizeof(src4),  FS_TMPL, 4, 4);
+    Shader sh[2] = { LoadShaderFromMemory(NULL, src4), LoadShaderFromMemory(NULL, src16) };
+
+    RenderTexture2D dst = fmtRT(1280, 720, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    RenderTexture2D smap = LoadRenderTexture(2048, 2048);
+    BeginTextureMode(smap); ClearBackground(WHITE); EndTextureMode();
+
+    unsigned int seed = 31337u;
+    double acc[2] = {0, 0};
+    int cnt[2] = {0, 0};
+    const int WARM = 60, N = 500;
+    for (int f = 0; f < WARM + N; f++)
+    {
+        seed = seed * 1103515245u + 12345u;
+        int variant = (int)((seed >> 16) & 1u);   // 0 = 4 taps, 1 = 16 taps
+        double t0 = GetTime();
+        BeginDrawing();
+        ClearBackground(BLACK);
+        BeginTextureMode(dst);
+            BeginShaderMode(sh[variant]);
+                blit(smap.texture, 1280, 720);
+            EndShaderMode();
+        EndTextureMode();
+        blit(dst.texture, W, H);
+        EndDrawing();
+        if (f >= WARM) { acc[variant] += (GetTime() - t0) * 1000.0; cnt[variant]++; }
+    }
+    printf("  [perf pcf A/B @1280x720] 4 taps %.3f ms | 16 taps %.3f ms | the extra 12 taps cost %.3f ms/frame\n",
+           acc[0]/cnt[0], acc[1]/cnt[1], acc[1]/cnt[1] - acc[0]/cnt[0]);
+    UnloadRenderTexture(dst); UnloadRenderTexture(smap);
+    UnloadShader(sh[0]); UnloadShader(sh[1]);
+    return NULL;
+}
+
 // Pure FBO-scope-switch cost. A 64x64 target renders essentially nothing, so whatever this
 // measures is the switch itself: end the swapchain pass, open the FBO pass, close it, resume the
 // swapchain pass with LOAD. Compare against perf_base (no switch at all).
@@ -1199,6 +1381,10 @@ static const Scenario SCENARIOS[] = {
     { "ubo_arena",      sc_ubo_arena },
     { "perf_base",      sc_perf_base },
     { "perf_dynmesh",   sc_perf_dynmesh },
+    { "perf_upload_fbo",sc_perf_upload_fbo },
+    { "perf_fullres_ab",sc_perf_fullres_ab },
+    { "perf_shadow_ab", sc_perf_shadow_ab },
+    { "perf_pcf_ab",    sc_perf_pcf_ab },
     { "perf_switch1",   sc_perf_switch1 },
     { "perf_switch4",   sc_perf_switch4 },
     { "perf_switch8",   sc_perf_switch8 },

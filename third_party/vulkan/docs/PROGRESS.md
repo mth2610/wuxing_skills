@@ -31,6 +31,35 @@ independent runs then agree to ~0.3 ms. `sc_perf_dynmesh` is the worked example 
   uploads into a single pass split (lazy resume) — and, game-side, GPU skinning removes it entirely.
 - **The §7.29 twin-fix delta**: `perf_rt2048` 13.4 → 8.9 ms, corroborated in-game (33 → 21 ms).
 
+- **Extra full-resolution offscreen passes are free.** `perf_fullres_ab` (1 vs 3 × 1280×720
+  RGBA16F, LCG-interleaved): −0.80 and +0.28 ms per extra pass across two runs. Collapsing the
+  postFX/distort chain is not worth doing.
+- **An upload inside an FBO scope costs no more than one on the swapchain.** `perf_upload_fbo`:
+  −0.39 / +1.08 ms across two runs, i.e. noise. The theory that every `rlvkUploadBuffer` suspend
+  re-runs the depth-twin bounce for the active render target is **tested and rejected** — do not
+  re-chase it.
+- **The step that IS large: rendering into a 1280×720 offscreen target at all.** Drawing the same
+  mesh to the swapchain is ~0.9 ms/frame (`perf_dynmesh` draw-only); the moment the scene goes
+  through a full-res target the frame is ~9 ms, reproduced across `perf_fullres*`,
+  `perf_hdr_main` and `perf_upload_fbo` in separate sessions. Since *extra* passes are free, this
+  is fill/resolution-bound, not pass-count bound — the lever is internal resolution (and the 2048²
+  shadow capture, which is 4.5× the scene's pixel count).
+
+### The shadow system: no single hotspot (2026-07-22, user-confirmed `J` off ⇒ >60 FPS)
+In-game the whole shadow subsystem is worth ~5 ms (20 ms → under 16.6 ms when toggled off). Probing
+its parts found **no dominant one** — it is the sum:
+
+| part | A/B probe | cost |
+|---|---|---|
+| capture map 2048² vs 1024² | `perf_shadow_ab` | **0.6 – 1.1 ms** |
+| ground receiver 16 vs 4 PCF taps @1280×720 | `perf_pcf_ab` | **0.16 – 0.89 ms** (full-screen; the ground covers less) |
+| the rest (~3 ms) | not isolable in the harness | the **second full scene traversal** the capture pass costs — draw calls, binds, vertex work, all doubled |
+
+So the lever is not resolution and not the filter: it is **how often the scene is re-drawn into the
+map**. Capturing on alternate frames halves the whole capture cost, CPU draw calls included.
+NOTE: `perf_shadow_ab`'s first version drew one small cube and reported resolution as free — a
+capture probe must make the casters FILL the map, as the fitted light frustum does in-game.
+
 ### Numbers that are NOT trustworthy — retake them with the LCG method before citing
 `perf_base`, `perf_switch*`, `perf_rt256`, `perf_fullres*`, `perf_hdr_*`, `perf_ldr_bloom` were all
 taken one-config-per-process (trap 1). They suggested that scope switches, extra full-res passes,
