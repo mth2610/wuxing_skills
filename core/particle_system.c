@@ -37,6 +37,8 @@ typedef struct
   const ForceField *forceField;
   const ColorGradient *gradient;
   const SpriteAnim *spriteAnim;
+  unsigned int texId;   // 0 = use the batch default passed to DrawParticles
+  int blendMode;        // VFX_BlendMode — see the blend law in vfx_config.h
   const SkillCurve *radiusCurve;
   const SkillCurve *speedCurve;
   const SkillCurve *alphaCurve;
@@ -115,12 +117,15 @@ static inline int Particle_AllocSlot(void)
 // Đợt E / F1 — lit particles. Declared up here (rather than beside the draw
 // code that uses them) so InitParticleSystem can register them as tunables.
 // Both default to 0 = the exact pre-F1 unlit look.
+// Tuned 22/07/2026 against the smoke puff. Lighting stays OFF by default so
+// nothing already shipped changes look; the rest are the values that made smoke
+// read as smoke, promoted out of tuning.cfg so a fresh clone gets them.
 static float s_lightingStrength = 0.0f;
-static float s_scatterStrength  = 0.0f;
+static float s_scatterStrength  = 0.0f;  // shape-neutral: raise only for backlit glow
 static float s_debugNormal      = 0.0f;  // 1 = paint particle normals as RGB
 static float s_normalBulge      = 1.0f;  // 1 = true hemisphere; >1 exaggerates
-static float s_sunGain          = 2.5f;  // night sun/ambient are ~0.2 — without
-static float s_ambientGain      = 0.7f;  // gain, lighting just dims the smoke
+static float s_sunGain          = 1.0f;  // night sun/ambient are ~0.2 — without
+static float s_ambientGain      = 0.25f; // gain, lighting just dims the smoke
 static float s_lightAzimuth     = -1.0f; // <0 = real sun; >=0 = debug override
 static float s_analyticUV       = 1.0f;  // 0 only if a SpriteAnim atlas is in use
 
@@ -163,6 +168,8 @@ void SpawnParticle(ParticleConfig config)
   p->forceField = config.forceField;
   p->gradient = config.gradient;
   p->spriteAnim = config.spriteAnim;
+  p->texId = config.render.texture.id;
+  p->blendMode = config.render.blendMode;
   p->radiusCurve = config.radiusCurve;
   p->speedCurve = config.speedCurve;
   p->alphaCurve = config.alphaCurve;
@@ -659,12 +666,37 @@ void DrawParticles(Camera3D camera, Texture2D texture)
 
   ParticleLighting_Begin(camera);
 
-  rlSetTexture(texture.id);
-  rlBegin(RL_QUADS);
+  // Per-particle textures, batched by walking the ALREADY depth-sorted list and
+  // reopening the batch whenever the texture changes. Splitting this way (rather
+  // than grouping by texture first) keeps the global back-to-front order intact,
+  // which alpha blending requires — grouping would composite a near puff before
+  // a far one and show through. Cost is one extra draw call per texture change;
+  // with a handful of distinct particle textures that is a few per frame.
+  unsigned int curTex = 0xFFFFFFFFu;
+  int curBlend = -1;
 
   for (int a = 0; a < s_activeCount; a++)
   {
     ParticleInternal *p = &g_Particles[s_activeIds[a]];
+
+    unsigned int want = p->texId ? p->texId : texture.id;
+    if (want != curTex || p->blendMode != curBlend)
+    {
+      if (curTex != 0xFFFFFFFFu) rlEnd();
+      if (p->blendMode != curBlend)
+      {
+        // Blend state must be flushed either side or it leaks across the batch
+        // boundary — ENGINE_LANDMINES.md §1, the raylib batching hazard.
+        rlDrawRenderBatchActive();
+        if (curBlend >= 0) EndBlendMode();
+        BeginBlendMode(p->blendMode == VFX_BLEND_ADDITIVE ? BLEND_ADDITIVE : BLEND_ALPHA);
+        rlDrawRenderBatchActive();
+        curBlend = p->blendMode;
+      }
+      rlSetTexture(want);
+      rlBegin(RL_QUADS);
+      curTex = want;
+    }
 
     float lifeRatio = p->lifetime / p->maxLifetime;
     if (lifeRatio < 0.0f)
@@ -792,7 +824,13 @@ void DrawParticles(Camera3D camera, Texture2D texture)
     rlVertex3f(p->x - rx - ux, p->y - ry - uy, p->z - rz - uz);
   }
 
-  rlEnd();
+  if (curTex != 0xFFFFFFFFu) rlEnd();
+  if (curBlend >= 0)
+  {
+    rlDrawRenderBatchActive();
+    EndBlendMode();
+    rlDrawRenderBatchActive();
+  }
 
   ParticleLighting_End();
 

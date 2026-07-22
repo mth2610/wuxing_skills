@@ -96,3 +96,11 @@ Required files when item is complete:
 | `metal_impact.ogg` | `EFFECT_PRESET_METAL_SHARD` | Impact |
 | `taiji_cast.ogg` | `EFFECT_PRESET_TAIJI_BURST` | Cast windup |
 | `taiji_impact.ogg` | `EFFECT_PRESET_TAIJI_BURST` | Impact |
+
+## smoke_puff_01..03.png (Đợt E / F2)
+Lobed-silhouette smoke/dust sprites, generated — not hand-painted:
+`python3 scripts/generate_smoke_sprite.py assets/textures/smoke_puff_0N.png 256 <seed> 14`
+White RGB, shape in ALPHA (the particle system tints per particle). Three
+variants because one sprite repeated 28 times reads as stamps however much each
+is rotated. Replaces the stock radial gradient, which has no outline at all —
+see ELDEN_VFX_SPEC.md §0.1b cause 3.

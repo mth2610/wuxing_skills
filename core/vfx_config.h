@@ -1,6 +1,11 @@
 #ifndef CORE_VFX_CONFIG_H
 #define CORE_VFX_CONFIG_H
 
+typedef enum {
+    VFX_BLEND_ALPHA = 0,   // DEFAULT — smoke, dust, ash: anything that occludes
+    VFX_BLEND_ADDITIVE,    // embers, sparks, glow, the incandescent core of fire
+} VFX_BlendMode;
+
 #include "raylib.h"
 #include <stddef.h>
 #include "core/force_field.h"
@@ -57,6 +62,15 @@ typedef struct {
     const ColorGradient *gradient;
     Shader shader;
     Texture2D texture;
+
+    // Blend mode — Đợt E / F1b, THE BLEND LAW:
+    //   if the thing would BLOCK light in reality, it is ALPHA and it gets lit;
+    //   if it EMITS light, it is ADDITIVE and stays unlit.
+    // Smoke that glows is TWO populations — an alpha body plus an additive core
+    // — never one additive draw. Additive output can never be darker than its
+    // background, which is why additive smoke always reads as glowing gas.
+    // 0 = VFX_BLEND_ALPHA (default), so nothing already written changes.
+    int blendMode;         // VFX_BlendMode
 
     // Velocity stretch
     float stretchStrength; // 0.0 = disabled (default)

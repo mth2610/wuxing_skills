@@ -30,6 +30,7 @@
 // that proves F1 is doing something.
 
 #include "core/tuning.h"
+#include "core/resource_manager.h"
 
 #define SMOKE_PUFF_MAX_SPRITES 28
 
@@ -45,8 +46,28 @@ static bool s_smokePuffInit = false;
 // sprite is unmistakable; raise it back and watch it dissolve into mush. That
 // dissolve is not a bug in F1 — it is why F2 needs authored silhouettes (E4)
 // rather than more of the same soft radial blob.
-static float s_smokePuffCountMul = 1.0f;
+static float s_smokePuffCountMul = 1.4f;
 static float s_smokePuffSizeMul  = 1.0f;
+// Per-sprite opacity. LOW on purpose. Once the sprites gained a real silhouette
+// they stopped being a soft smear and started reading as separate stamps, because
+// each one was nearly opaque and they all had similar radii. Smoke is built from
+// many FAINT layers whose overlaps accumulate — an individual sprite should be
+// barely visible on its own. Raise this and the puff turns back into clumps.
+static float s_smokePuffAlpha    = 0.28f;
+// Spread of sprite radii. Uniform sizes read as repetition no matter how the
+// silhouettes differ; a wide spread is what makes overlaps look like structure.
+static float s_smokePuffSizeVar  = 1.4f;
+
+// Three lobed-silhouette variants (scripts/generate_smoke_sprite.py). The stock
+// particle texture is a plain radial gradient, which has no OUTLINE — lighting a
+// featureless blob yields a lit featureless blob, and 28 of them average back to
+// a uniform smear. That is the ceiling F1's shading kept running into once the
+// maths was proven correct (ELDEN_VFX_SPEC.md §0.1b cause 3).
+//
+// Three, not one: a single sprite repeated 28 times reads as stamps no matter
+// how much each is rotated.
+#define SMOKE_PUFF_VARIANTS 3
+static Texture2D s_smokePuffTex[SMOKE_PUFF_VARIANTS];
 
 static void SmokePuff_InitShared(void)
 {
@@ -56,8 +77,10 @@ static void SmokePuff_InitShared(void)
     // Registered lazily (first spawn), never from an Init: Tuning_RegisterFloat
     // only reads the config once Tuning_Init has set the path — see
     // core/docs/LANDMINES.md.
-    Tuning_RegisterFloat("smokepuff_count_mul", &s_smokePuffCountMul, 1.0f);
+    Tuning_RegisterFloat("smokepuff_count_mul", &s_smokePuffCountMul, 1.4f);
     Tuning_RegisterFloat("smokepuff_size_mul", &s_smokePuffSizeMul, 1.0f);
+    Tuning_RegisterFloat("smokepuff_alpha", &s_smokePuffAlpha, 0.28f);
+    Tuning_RegisterFloat("smokepuff_size_var", &s_smokePuffSizeVar, 1.4f);
 
     // Grows to ~2.2x over its life and never shrinks back — smoke does not
     // contract, it dissipates. The fade curve is what removes it.
@@ -90,6 +113,21 @@ static void SmokePuff_InitShared(void)
         .type = FORCE_DRAG,
         .strength = 1.6f,
     });
+
+    static const char *paths[SMOKE_PUFF_VARIANTS] = {
+        "assets/textures/smoke_puff_01.png",
+        "assets/textures/smoke_puff_02.png",
+        "assets/textures/smoke_puff_03.png",
+    };
+    for (int i = 0; i < SMOKE_PUFF_VARIANTS; i++)
+    {
+        s_smokePuffTex[i] = ResourceManager_LoadTexture(paths[i]);
+        if (s_smokePuffTex[i].id == 0)
+            TraceLog(LOG_WARNING,
+                     "SMOKE PUFF: %s missing — falling back to the default particle "
+                     "texture (regenerate: python3 scripts/generate_smoke_sprite.py)",
+                     paths[i]);
+    }
 
     s_smokePuffInit = true;
 }
@@ -149,15 +187,21 @@ void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float d
         SpawnParticle((ParticleConfig){
             .position = p,
             .velocity = vel,
-            .radius = Math_Mix(0.22f, 0.40f, Random01()) * scale,
+            // Wide, non-uniform radii: a few big soft ones read as the body,
+            // many small ones as the broken edge.
+            .radius = Math_Mix(0.14f, 0.14f + 0.42f * s_smokePuffSizeVar,
+                               powf(Random01(), 1.8f)) * scale,
             .lifetime = Math_Mix(1.1f, 2.0f, Random01()),
-            .colorStart = VC_WithAlpha(c, 200),
+            .colorStart = VC_WithAlpha(c, (unsigned char)(255.0f *
+                              (s_smokePuffAlpha < 0.0f ? 0.0f :
+                               s_smokePuffAlpha > 1.0f ? 1.0f : s_smokePuffAlpha))),
             .colorEnd = VC_WithAlpha(c, 0),
             .forceField = &s_smokePuffFld,
             .radiusCurve = &s_smokePuffGrow,
             .alphaCurve = &s_smokePuffFade,
             // Per-sprite spin. Without this the repeated texture is obvious no
             // matter how many sprites are stacked.
+            .render.texture = s_smokePuffTex[i % SMOKE_PUFF_VARIANTS],
             .rotation = Random01() * 2.0f * PI,
             .angularVelocity = (Random01() - 0.5f) * 0.9f,
         });

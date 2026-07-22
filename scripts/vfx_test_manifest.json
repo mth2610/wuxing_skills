@@ -573,6 +573,13 @@
       "category": "util",
       "type": "oneshot",
       "trigger_call": "VFX_ComposeSmokePuff($POS, VC_MAT_EARTH, 1.0f, 1.0f)"
+    },
+    {
+      "fn": "VFX_ComposeFlameVolume",
+      "label": "FLAME VOLUME",
+      "category": "fire",
+      "type": "continuous",
+      "draw_call": "VFX_ComposeFlameVolume($POS, VC_MAT_FIRE, 1.0f, 1.0f)"
     }
   ],
   "overrides": {
@@ -605,6 +612,12 @@
       "category": "util",
       "type": "oneshot",
       "trigger_call": "VFX_ComposeSmokePuff($POS, VC_MAT_EARTH, 1.0f, 1.0f)"
+    },
+    "VFX_ComposeFlameVolume": {
+      "label": "FLAME VOLUME",
+      "category": "fire",
+      "type": "continuous",
+      "draw_call": "VFX_ComposeFlameVolume($POS, VC_MAT_FIRE, 1.0f, 1.0f)"
     }
   }
 }

@@ -57,6 +57,78 @@ Manages the entire **Core Engine** module of the Wuxing Skills project. Owns the
 
 ---
 
+## Debugging & testing workflow (MANDATORY)
+
+Learned the expensive way in the F1 lit-particle round (22/07/2026): a visual
+bug was chased through **five** build → screenshot → guess cycles before anyone
+asked whether it was a visual question at all. It was arithmetic. Three of the
+five rounds were wasted on hypotheses a millisecond of computation would have
+killed.
+
+### 1. Before debugging a render bug, ask what KIND of question it is
+
+| Question | Instrument | Cost |
+|---|---|---|
+| Is this formula capable of the effect at all? | `core/tests/` headless suite | ms, no GPU |
+| Is the C→shader wiring present? | `shader_uniform_wiring_test.c` | ms, no GPU |
+| Did this code path even run, and with what values? | a `TraceLog` state line | one run |
+| Does it look good? | the human, in the app | a full cycle |
+
+Only the last one needs an eyeball. Push every question as far up this table as
+it will go **before** rebuilding. "The maths might be wrong" is never a reason
+to take a screenshot.
+
+### 2. Run the suite
+
+```bash
+./scripts/run_core_tests.sh            # all suites
+./scripts/run_core_tests.sh particle   # filter by filename
+```
+
+Each `core/tests/*_test.c` is standalone — links nothing from the game, no
+raylib, no GL, no window. Add one by dropping a `*_test.c` in; the runner globs.
+Modelled on the rlvk ladder (`third_party/vulkan/tests/`): **tier 1 compile**
+(not built for core yet) · **tier 2 headless** (this) · **tier 3 visual** (not
+built yet — would drive the app and diff `AutoTest_SaveScreenshot` output).
+
+### 3. When a headless test mirrors a shader, guard the mirror
+
+A C mirror of GLSL silently rots into fiction. Every mirror test must assert the
+load-bearing expressions still exist in the `.fs` (see `shader_source_matches`).
+**And know what a mirror cannot see:** the F1 bug survived a green mirror
+because the mirror computed a direction analytically where the shader derived it
+from `dFdx` — and the shader's version collapsed to zero across the sprite core.
+When the maths passes but the screen disagrees, suspect the *simplifications in
+the mirror* before suspecting the hardware.
+
+### 4. Make silent paths announce themselves
+
+An early-`return` that skips a feature, and a feature that runs but does
+nothing, look identical on screen. Any gated path (quality tier, strength 0,
+missing shader) must log why it opted out. Log **on change**, not once at
+startup: `tuning.cfg` hot-reloads, so a one-shot line scrolls away before the
+values that matter arrive, and then "my edit didn't apply" is indistinguishable
+from "my edit applied and did nothing". Pattern to copy: `ParticleLighting_Begin`
+in `core/particle_system.c`.
+
+### 5. Prefer a tunable over a rebuild
+
+`Tuning_RegisterFloat` (`core/tuning.h`) hot-reloads from `tuning.cfg` with no
+rebuild and no restart. Anything an artist or a debugger will want to sweep —
+strengths, gains, debug-view toggles, even sprite counts — should be a tunable
+from the start. **Register lazily on first use, never from a subsystem `Init`**
+(`Tuning_Init` runs after the subsystem inits in `main.c`, so early registration
+silently keeps the default — see `docs/LANDMINES.md`).
+
+### 6. Add a debug visualisation mode, and make it discriminative
+
+A debug view that renders the wrong quantity is worse than none: the first F1
+normal-view painted the *world* normal, whose view-direction component dominates,
+so it showed the same flat colour whether the maths was right or wrong. Paint the
+quantity in the space where the failure would be obvious.
+
+---
+
 ## Token-efficiency rules (MANDATORY)
 
 1. **Never read a whole file when only part of it is needed.** Use `Read` with `offset`/`limit`, or `grep`/`Grep` to find the symbol/line before reading the full file.

@@ -81,4 +81,6 @@ static void FireFlow_EmitPacket(Vector3 axisPos, float discR, float height,
 #include "fire_whirl.inl"
 #include "fire_funnel.inl"
 // @gen:fire_includes begin
+// 1 include(s) — auto-managed by sync_vfx_test.py
+#include "flame_volume.inl"
 // @gen:fire_includes end

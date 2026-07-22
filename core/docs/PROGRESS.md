@@ -1460,9 +1460,9 @@ dark; and noise is being used as silhouette when it can only be detail.
 | Task | What | Size | Status |
 |---|---|---|---|
 | F0 | Triage table for tiers 2+3 (composition + skills); tier 1 primitives extend-only. **Owner deletes by hand**; agent then runs the post-deletion cleanup checklist | M | ☐ |
-| F1 | **Lit particles + blend law** — spherical-normal billboard lighting, forward-scatter, explicit blend mode. *Highest-value task in the doc* | L | ☐ |
-| F2 | Smoke rebuilt as layered lit sprites (20–40/puff, rotation variance, dark base) | L | ☐ |
-| F3 | Fire — black-body ramp + cools into F2's smoke; additive core / alpha body | M | ☐ |
+| F1 | **Lit particles + blend law** | L | ✅ 22/07 — `particle_lit.vs/.fs`, analytic hemisphere normal, sun/ambient gains, per-particle texture AND blend mode, 8 hot-reload tunables. Default OFF (`strength=0`) so nothing shipped changed |
+| F2 | Smoke — layered lit sprites | ◐ 22/07 — `VFX_ComposeSmokePuff` done and visually confirmed. `VFX_ComposeSmokeVolume` (column/orchestration) still open |
+| F3 | Fire — black-body + cools into smoke | M | ◐ 22/07 — `VFX_ComposeFlameVolume` written, NOT yet visually verified |
 | F4 | Character aura — discrete elements breaking the silhouette + real light emission | M | ☐ |
 
 ### Part B — polish on top of A
@@ -1473,7 +1473,7 @@ dark; and noise is being used as silhouette when it can only be detail.
 | E1 | PostFX radial blur + anamorphic streak bloom | M | ☐ |
 | E2 | VFX point lights consumed by `surface_lit.fs` (verified gap) | M | ☐ |
 | E3 | `VFX_Sequence` choreography layer | L | ☐ |
-| E4 | ~15 authored flipbook/mask textures — **priority raised**, gates F2/F3 | L | ☐ asset-gated |
+| E4 | ~15 authored flipbook/mask textures | L | ◐ **Finding 22/07: silhouette is a PREREQUISITE, not polish.** F1's shading was proven correct by the headless suite yet still read as a flat smear, because the stock particle texture is a radial gradient with no outline. `scripts/generate_smoke_sprite.py` now generates lobed-silhouette sprites procedurally (metaball union + low-freq warp), which unblocked F2 without hand art. The same route should be tried before waiting on assets for the rest of the E4 set |
 | E5 | Compositions: GlintSparkle, RuneCircle, ChargeConverge, DissolveExit | L | ☐ |
 | E6 | Compositions: SweepSlash, ImpactPackage, LightShaft, SpiritSwarm | L | ☐ |
 | E7 | Retrofit pilot skills — **stop-gate**, A/B vs E0 | M | ☐ Skills Agent |
