@@ -1,3 +1,18 @@
+// Sparkle gradient for metal shards. Lived in vc_archetype.inl until that
+// orchestrator was dissolved (see visual_composer.c); this is its only consumer.
+static ColorGradient s_shardSparkleGrad = {0};
+static bool s_shardSparkleInit = false;
+
+static void ShardSparkle_Init(void)
+{
+    if (s_shardSparkleInit)
+        return;
+    ColorGradient_AddStop(&s_shardSparkleGrad, 0.0f, WHITE);
+    ColorGradient_AddStop(&s_shardSparkleGrad, 0.15f, (Color){220, 245, 255, 255});
+    ColorGradient_AddStop(&s_shardSparkleGrad, 1.0f, (Color){100, 180, 255, 0});
+    s_shardSparkleInit = true;
+}
+
 #define ARCH_MAX_DEBRIS_SHARDS 128
 
 typedef struct {

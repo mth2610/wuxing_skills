@@ -2,11 +2,24 @@
 """
 sync_vfx_test.py — Fully automatic VFX sync.
 
-Scans core/composition/vc_*.inl for VFX_* function definitions, then:
-  1. Auto-updates scripts/vfx_test_manifest.json  (adds new / removes deleted entries)
+Scans core/composition/**.inl for VFX_* function definitions, then:
+  1. Auto-updates scripts/vfx_test_manifest.json  (adds new / removes deleted entries,
+                                                   drops overrides for deleted fns)
   2. Regenerates sandbox/vfx_test.c               (NEWFX tab)
-  3. Auto-updates visual_composer.c               (new #include "vc_*.inl")
-  4. Auto-updates visual_composer.h               (new function declarations)
+  3. Auto-updates visual_composer.c               (#include "vc_*.inl")
+  4. Auto-updates visual_composer.h               (function declarations)
+  5. Auto-updates each <elem>/<elem>.inl master   (per-VFX #includes)
+
+ADDING and DELETING a per-VFX .inl file both propagate through all five, so the
+only manual step is creating or deleting the file itself. Element folders are
+discovered from disk — a new one needs no script edit.
+
+Deleting is the case that used to break: a hand-removed .inl left a dangling
+#include in its element master, which does not compile. Those are now pruned
+even when the include sits outside the @gen block.
+
+Include ORDER inside a master is preserved, never sorted — .inl bodies land in
+one translation unit and some rely on statics from an earlier sibling.
 
 No JSON editing needed for new simple functions.
 For complex functions (pointer arrays, custom colors, etc.) add to:
@@ -315,29 +328,67 @@ def update_vc_c(comp_dir, dry_run=False):
     return True
 
 
-SUB_DIRS = ['fire', 'water', 'wood', 'metal', 'earth', 'taiji', 'common']
+def discover_subdirs(comp_dir):
+    """
+    Every element folder that owns a master include (<name>/<name>.inl).
+    Discovered from disk rather than hard-coded, so adding a new element
+    directory needs no script edit. (The old hard-coded list silently omitted
+    `plasma`, which meant plasma/plasma.inl was never synced at all.)
+    """
+    out = []
+    for d in sorted(os.listdir(comp_dir)):
+        p = os.path.join(comp_dir, d)
+        if os.path.isdir(p) and os.path.isfile(os.path.join(p, f"{d}.inl")):
+            out.append(d)
+    return out
+
+
+INCLUDE_LINE_RE = re.compile(r'^[ \t]*#include\s+"([^"]+\.inl)"[^\n]*\n', re.MULTILINE)
+
+def _gen_block(gen_key, files):
+    return (f"// @gen:{gen_key} begin\n"
+            f"// {len(files)} include(s) — auto-managed by sync_vfx_test.py\n"
+            + "".join(f'#include "{f}"\n' for f in files)
+            + f"// @gen:{gen_key} end")
+
 
 def update_subdir_includes(comp_dir, manifest=None, dry_run=False):
     """
-    Auto-sync @gen:fire_includes / @gen:water_includes / etc. blocks in each
-    element master .inl file. New .inl files detected on disk but not yet
-    manually included are added; files removed from disk are cleaned up.
-    Files listed in manifest's 'exclude_from_auto_include' (<subdir> → [files])
-    are never auto-included (use for common/ files that belong in vc_archetype.inl).
+    Sync the @gen:<subdir>_includes block in each element master .inl so that
+    ADDING and DELETING a per-VFX .inl file both propagate automatically.
+
+    Three behaviours, in order:
+
+    1. ADOPT — a master file with hand-written includes and no @gen block has
+       them absorbed into one, in their EXISTING ORDER, at the position of the
+       first one. Until this happens nothing in that folder is auto-managed:
+       every include counts as "manual", so the generated block stays empty and
+       the sync is a silent no-op. This is a one-time migration per folder.
+    2. PRUNE — an include naming a file that is no longer on disk is removed,
+       whether it sits inside the @gen block or outside it. A dangling include
+       left by a hand deletion breaks the build, so these are always cleaned
+       even in the manual region.
+    3. APPEND — .inl files present on disk but not included anywhere are added
+       to the end of the @gen block.
+
+    Order is PRESERVED, never sorted: these are `.inl` bodies pasted into one
+    translation unit, and some depend on statics defined by an earlier sibling
+    (`fire.inl`'s run is deliberately not alphabetical). Re-sorting them would
+    break the build in ways that look unrelated to this script.
+
+    Files listed in the manifest's 'exclude_from_auto_include' (<subdir> → [files])
+    are never auto-included — used for common/ files that belong to
+    the visual_composer.c orchestrator instead.
     """
-    exclude_map = {}
-    if manifest and "exclude_from_auto_include" in manifest:
-        exclude_map = manifest["exclude_from_auto_include"]
-
+    exclude_map = (manifest or {}).get("exclude_from_auto_include", {})
     changed = False
-    for subdir in SUB_DIRS:
-        master_path = os.path.join(comp_dir, subdir, f"{subdir}.inl")
-        subdir_path = os.path.join(comp_dir, subdir)
-        if not os.path.exists(master_path) or not os.path.isdir(subdir_path):
-            continue
 
-        files = sorted(f for f in os.listdir(subdir_path)
-                       if f.endswith('.inl') and f != f"{subdir}.inl")
+    for subdir in discover_subdirs(comp_dir):
+        subdir_path = os.path.join(comp_dir, subdir)
+        master_path = os.path.join(subdir_path, f"{subdir}.inl")
+
+        on_disk = {f for f in os.listdir(subdir_path)
+                   if f.endswith('.inl') and f != f"{subdir}.inl"}
         exclude = set(exclude_map.get(subdir, []))
 
         with open(master_path) as f:
@@ -347,46 +398,123 @@ def update_subdir_includes(comp_dir, manifest=None, dry_run=False):
         gen_pat = re.compile(
             r'// @gen:' + gen_key + r' begin.*?// @gen:' + gen_key + r' end',
             re.DOTALL)
-
-        src_without_gen = gen_pat.sub('', src) if gen_pat.search(src) else src
-        manual_inl = set(re.findall(r'#include\s+"([^"]+\.inl)"', src_without_gen))
-
-        gen_inl = sorted(f for f in files if f not in manual_inl and f not in exclude)
-
         m = gen_pat.search(src)
-        cur_gen_inl = set()
-        if m:
-            cur_gen_inl = set(re.findall(r'#include\s+"([^"]+\.inl)"', m.group(0)))
 
-        added   = [f for f in gen_inl if f not in cur_gen_inl]
-        removed = [f for f in cur_gen_inl if f not in set(gen_inl)]
+        # Includes inside the @gen block (ordered), and outside it (ordered).
+        cur_gen = INCLUDE_LINE_RE.findall(m.group(0)) if m else []
+        outside = src[:m.start()] + src[m.end():] if m else src
+        manual  = INCLUDE_LINE_RE.findall(outside)
 
-        if not added and not removed:
+        adopted = []
+        if not m and manual:
+            # (1) ADOPT — take over the existing hand-written run, order intact.
+            adopted = [f for f in manual if f not in exclude]
+            cur_gen, manual = adopted, []
+
+        # (2) PRUNE — anything naming a file that no longer exists.
+        dangling_gen    = [f for f in cur_gen if f not in on_disk]
+        dangling_manual = [f for f in manual  if f not in on_disk]
+        kept = [f for f in cur_gen if f in on_disk and f not in exclude]
+        # An include that moved into the exclude list also leaves the block.
+        excluded_out = [f for f in cur_gen if f in on_disk and f in exclude]
+
+        # (3) APPEND — on disk, referenced nowhere, not excluded.
+        referenced = set(kept) | set(manual) | set(excluded_out)
+        appended = sorted(f for f in on_disk
+                          if f not in referenced and f not in exclude)
+        want = kept + appended
+
+        if not (adopted or appended or dangling_gen or dangling_manual or excluded_out):
             continue
         changed = True
+
+        tag = f"{subdir}/{subdir}.inl"
+        verb = "would " if dry_run else ""
+        if adopted:
+            print(f"[sync_vfx_test] {tag}: {verb}adopt {len(adopted)} manual include(s) "
+                  f"into @gen:{gen_key} (one-time migration)")
+        if appended:
+            print(f"[sync_vfx_test] {tag}: {verb}add +{len(appended)}: {', '.join(appended)}")
+        for f_ in dangling_gen:
+            print(f"[sync_vfx_test] {tag}: {verb}remove -{f_} (file deleted from disk)")
+        for f_ in dangling_manual:
+            print(f"[sync_vfx_test] {tag}: {verb}remove -{f_} (dangling MANUAL include, "
+                  f"file deleted from disk — would not compile)")
+        for f_ in excluded_out:
+            print(f"[sync_vfx_test] {tag}: {verb}remove -{f_} (now in exclude_from_auto_include)")
         if dry_run:
-            if added:
-                print(f"[sync_vfx_test] {subdir}/{subdir}.inl: would add {added}")
-            if removed:
-                print(f"[sync_vfx_test] {subdir}/{subdir}.inl: would remove {removed}")
             continue
 
-        new_block = (f"// @gen:{gen_key} begin\n" +
-                     "\n".join(f'#include "{f}"' for f in gen_inl) +
-                     f"\n// @gen:{gen_key} end")
+        new_block = _gen_block(gen_key, want)
 
         if m:
-            result = src[:m.start()] + new_block + src[m.end():]
+            head, tail = src[:m.start()], src[m.end():]
+            if dangling_manual:
+                # Strip on BOTH sides — a leftover include after the block is
+                # just as fatal, and leaving it also makes the script
+                # non-idempotent (it would re-report the same file forever).
+                dead = set(dangling_manual)
+                strip = lambda t: INCLUDE_LINE_RE.sub(
+                    lambda mm: "" if mm.group(1) in dead else mm.group(0), t)
+                head, tail = strip(head), strip(tail)
+            result = head + new_block + tail
+        elif adopted:
+            # Replace the manual run in place: block goes where the first one was.
+            first = INCLUDE_LINE_RE.search(src)
+            body  = INCLUDE_LINE_RE.sub(
+                lambda mm: "" if mm.group(1) in set(adopted) | set(dangling_manual)
+                           else mm.group(0),
+                src)
+            # Re-find the insertion point in the stripped text.
+            anchor = src[:first.start()]
+            body = body.replace(anchor, anchor + new_block + "\n", 1)
+            result = body
         else:
-            result = src.rstrip() + "\n" + new_block + "\n"
+            result = src.rstrip() + "\n\n" + new_block + "\n"
 
         with open(master_path, "w") as f:
             f.write(result)
 
-        if added:
-            print(f"[sync_vfx_test] {subdir}/{subdir}.inl: +{len(added)} include(s): {', '.join(added)}")
-        if removed:
-            print(f"[sync_vfx_test] {subdir}/{subdir}.inl: -{len(removed)} include(s): {', '.join(removed)}")
+    return changed
+
+
+def prune_manifest_cruft(manifest, inl_fns, dry_run=False):
+    """
+    A deleted VFX leaves its `overrides` key and any `excluded` listing behind.
+    They are inert but they accumulate, and a later function reusing the name
+    silently inherits a stale override. Drop overrides for functions that no
+    longer exist; only WARN about `excluded`/`exclude_from_auto_include`, which
+    are hand-curated and may intentionally name things not yet written.
+    """
+    changed = False
+    stale_ov = [fn for fn in manifest.get("overrides", {}) if fn not in inl_fns]
+    if stale_ov:
+        changed = True
+        verb = "would drop" if dry_run else "dropping"
+        print(f"[sync_vfx_test] manifest: {verb} {len(stale_ov)} stale override(s): "
+              f"{', '.join(stale_ov)}")
+        if not dry_run:
+            for fn in stale_ov:
+                del manifest["overrides"][fn]
+
+    for group, v in manifest.get("excluded", {}).items():
+        if not isinstance(v, list):
+            continue
+        stale = [fn for fn in v if fn.startswith("VFX_") and fn not in inl_fns]
+        if stale:
+            print(f"[sync_vfx_test] NOTE: excluded.{group} names "
+                  f"{len(stale)} function(s) that no longer exist: {', '.join(stale)}")
+
+    for sub, files in manifest.get("exclude_from_auto_include", {}).items():
+        if not isinstance(files, list):
+            continue
+        d = os.path.join(COMP_DIR, sub)
+        if not os.path.isdir(d):
+            continue
+        stale = [f for f in files if not os.path.isfile(os.path.join(d, f))]
+        if stale:
+            print(f"[sync_vfx_test] NOTE: exclude_from_auto_include.{sub} names "
+                  f"{len(stale)} missing file(s): {', '.join(stale)}")
 
     return changed
 
@@ -620,11 +748,15 @@ def main():
         print("[sync_vfx_test] manifest entries in sync with .inl files.")
 
     if dry:
-        # Still check visual_composer files
-        update_vc_c(COMP_DIR, dry_run=True)
-        update_vc_h(inl_fns, excluded, dry_run=True)
-        update_subdir_includes(COMP_DIR, manifest=manifest, dry_run=True)
-        sys.exit(0 if (not new_fns and not removed) else 1)
+        # Still check visual_composer files + the element master includes.
+        drift = bool(new_fns or removed)
+        drift |= bool(update_vc_c(COMP_DIR, dry_run=True))
+        drift |= bool(update_vc_h(inl_fns, excluded, dry_run=True))
+        drift |= bool(update_subdir_includes(COMP_DIR, manifest=manifest, dry_run=True))
+        drift |= bool(prune_manifest_cruft(manifest, inl_fns, dry_run=True))
+        if not drift:
+            print("[sync_vfx_test] everything in sync.")
+        sys.exit(1 if drift else 0)
 
     # ── 5. Update entries ─────────────────────────────────────────────────────
     removed_fns  = {e["fn"] for e in removed}
@@ -648,7 +780,8 @@ def main():
         print(f"  Add to \"overrides\" in {os.path.basename(MANIFEST_PATH)} to customize.")
 
     # ── 6. Save manifest ──────────────────────────────────────────────────────
-    if new_fns or removed:
+    pruned = prune_manifest_cruft(manifest, inl_fns)
+    if new_fns or removed or pruned:
         manifest["entries"] = new_entries
         if "overrides" not in manifest:
             manifest["overrides"] = {}

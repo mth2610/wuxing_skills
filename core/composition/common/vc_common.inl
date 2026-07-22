@@ -5,6 +5,31 @@
 // here) moved to core/ribbon_strip.h's DrawRibbonEnergyField — core/vfx_proc_ray.c's
 // EnergyFlow needs it too, and core/ must not depend on composition/.
 
+// Element → signature colour. Shared by the managed archetypes (proc_beam,
+// ground_wave, orbital, aura_ring). Lived in vc_archetype.inl until that
+// orchestrator was dissolved; it belongs here because vc_common.inl is the
+// first thing common.inl pulls in, so every later .inl in the TU can see it.
+static Color Arch_ElementColor(EffectPresetType e)
+{
+    switch (e)
+    {
+    case EFFECT_PRESET_WATER_SPLASH:
+        return ELEMENT_COLOR_WATER;
+    case EFFECT_PRESET_WOOD_BLOOM:
+        return ELEMENT_COLOR_WOOD;
+    case EFFECT_PRESET_FIRE_EXPLOSION:
+        return ELEMENT_COLOR_FIRE;
+    case EFFECT_PRESET_EARTH_CRACK:
+        return ELEMENT_COLOR_EARTH;
+    case EFFECT_PRESET_METAL_SHARD:
+        return ELEMENT_COLOR_METAL;
+    case EFFECT_PRESET_TAIJI_BURST:
+        return ELEMENT_COLOR_TAIJI;
+    default:
+        return WHITE;
+    }
+}
+
 // Horizontal quad at the CURRENT matrix origin — caller manages push/translate/
 // rotate for custom transforms.
 static void VC_DrawGroundQuadXZ(Texture2D tex, float halfX, float halfZ, Color tint)
