@@ -65,46 +65,11 @@
   },
   "entries": [
     {
-      "fn": "VFX_ComposeFlameWisp",
-      "label": "FLAME WISP",
-      "category": "fire",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeFlameWisp($POS, $TIME)"
-    },
-    {
-      "fn": "VFX_ComposeFirePillar",
-      "label": "FIRE PILLAR",
-      "category": "fire",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeFirePillar($POS, $PROG)"
-    },
-    {
-      "fn": "VFX_ComposeFireball",
-      "label": "FIREBALL",
-      "category": "fire",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeFireball(Vector3Add($POS, (Vector3){0, 0.8f, 0}), $TIME)"
-    },
-    {
-      "fn": "VFX_ComposeFlameBreath",
-      "label": "FIRE BREATH",
-      "category": "fire",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeFlameBreath(Vector3Add($POS, (Vector3){0, 0.5f, 0}), (Vector3){1.0f, 0.05f, 0.0f}, 1.0f, $TIME)"
-    },
-    {
       "fn": "VFX_ComposeBurningGround",
       "label": "BURN GROUND",
       "category": "fire",
       "type": "continuous",
       "draw_call": "VFX_ComposeBurningGround($POS, 0.9f, $TIME)"
-    },
-    {
-      "fn": "VFX_ComposeFireWhirl",
-      "label": "FIRE WHIRL",
-      "category": "fire",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeFireWhirl($POS, 0.5f, $TIME)"
     },
     {
       "fn": "VFX_ComposeEmberDrift",

@@ -73,12 +73,7 @@ static void FireFlow_EmitPacket(Vector3 axisPos, float discR, float height,
         .forceField = &s_flameFld});
 }
 
-#include "fireball.inl"
-#include "flame_wisp.inl"
-#include "fire_pillar.inl"
-#include "flame_breath.inl"
 #include "burning_ground.inl"
-#include "fire_whirl.inl"
 #include "fire_funnel.inl"
 // @gen:fire_includes begin
 // 1 include(s) — auto-managed by sync_vfx_test.py
