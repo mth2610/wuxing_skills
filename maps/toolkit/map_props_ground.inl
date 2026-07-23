@@ -46,12 +46,32 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
     // 2. Khởi tạo Shader một lần duy nhất
     if (!shaderLoaded)
     {
-        groundShader = LoadShader(0, "maps/toolkit/shaders/ground_splat.fs");
+        // ResourceManager_LoadShader, not raylib's LoadShader: only the former
+        // runs core/shader_preprocessor.c, which is what resolves the
+        // `#include "core/shaders/common/vfx_lights.glsl"` these shaders now
+        // carry. Raw LoadShader hands the #include line straight to GLSL, which
+        // has no such directive, and the shader fails to compile.
+        // (It also caches by path — never UnloadShader the result.)
+        groundShader = ResourceManager_LoadShader("maps/toolkit/shaders/ground_splat.vs",
+                                                  "maps/toolkit/shaders/ground_splat.fs");
+
+        // matModel is NOT auto-uploaded to a custom shader unless this loc is
+        // set — raylib only pushes it when shader.locs[SHADER_LOC_MATRIX_MODEL]
+        // is valid. Left unset, the uniform is never written, GLSL reads it as
+        // the ZERO matrix, and ground_splat.vs's
+        //     fragPosition = matModel * vertexPosition
+        // collapses to (0,0,0) for every fragment: the whole ground believes it
+        // is at the world origin. Sun/ambient still look right (they need no
+        // position), so nothing appears wrong until something POSITIONAL — like
+        // a point light — silently receives nothing. See ENGINE_LANDMINES.md.
+        groundShader.locs[SHADER_LOC_MATRIX_MODEL] =
+            GetShaderLocation(groundShader, "matModel");
 
         // Cache lại các vị trí uniform ánh sáng để dùng trong hàm Draw
         locLightDir = GetShaderLocation(groundShader, "lightDir");
         locLightColor = GetShaderLocation(groundShader, "lightColor");
         locAmbientColor = GetShaderLocation(groundShader, "ambientColor");
+        VFXLight_RegisterShader(groundShader);   // main.c binds it each frame
 
         shaderLoaded = true;
     }
@@ -158,6 +178,8 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     SetShaderValue(groundShader, locLightDir, lightDirArr, SHADER_UNIFORM_VEC3);
     SetShaderValue(groundShader, locLightColor, sunColArr, SHADER_UNIFORM_VEC4);
     SetShaderValue(groundShader, locAmbientColor, ambColArr, SHADER_UNIFORM_VEC4);
+
+
 
     // Vẽ mặt đất — drawOffset (0,0,0) for the flat plane, non-zero for the
     // heightmap variant (see MapProp_CreateGroundHeightmap).

@@ -55,3 +55,156 @@ first use (a `static bool` one-shot in the update/draw path), by which time
 `Tuning_Init` has certainly run. If a default of 0 means "feature off", this bug
 is invisible rather than merely wrong — see `ParticleLighting_Begin` in
 `core/particle_system.c` for the shape to copy.
+
+---
+
+## A shader with `#include` MUST be loaded via `ResourceManager_LoadShader`
+
+**Symptom.** A shader that compiled fine suddenly fails the moment a shared block
+is `#include`d into it — or, worse, silently renders wrong because the driver
+tolerated the line.
+
+**Cause.** GLSL has no `#include`. The directive works in this project only
+because `core/shader_preprocessor.c` resolves it, and that runs **only** inside
+`ResourceManager_LoadShader`. raylib's plain `LoadShader` hands the file to the
+driver verbatim. Hit in `maps/toolkit/map_props_ground.inl`, which used raw
+`LoadShader` and broke as soon as `ground_splat.fs` gained a shared include.
+
+**Rule.** Any `.fs`/`.vs` containing `#include` must be loaded with
+`ResourceManager_LoadShader`. Adding an include to an existing shader means
+checking its load site too — the two live in different files and nothing links
+them. Audit with:
+
+```bash
+grep -rln '#include' --include=*.fs --include=*.vs . | while read s; do
+  grep -rn "LoadShader" --include=*.c --include=*.inl . | grep -v ResourceManager | grep "$(basename $s)"
+done
+```
+
+Corollary: `ResourceManager_LoadShader` caches by path, so never call
+`UnloadShader` on the result.
+
+---
+
+## std140: a `vec3` or `float` ARRAY uniform uploads garbage under rlvk
+
+**Symptom.** A shader's scalar uniforms arrive correctly but an ARRAY uniform is
+zero or nonsense. Nothing errors. The feature driven by the array silently does
+nothing, and every other diagnostic (the value is computed, the location is
+valid, `SetShaderValueV` is called) reports healthy.
+
+**Cause.** rlvk is a real Vulkan backend and packs uniforms into **std140**
+blocks. In std140 every array element is padded to a 16-byte boundary — so
+`vec3 arr[4]` has a stride of 16 bytes, not 12, and `float arr[4]` a stride of
+16, not 4. `SetShaderValueV(shader, loc, data, SHADER_UNIFORM_VEC3, 4)` uploads
+12 bytes per element, tightly packed. Element 0 happens to land correctly;
+everything after it is read from the wrong offset.
+
+**CORRECTION (23/07/2026) — this entry's original diagnosis was wrong.** It
+claimed E2's `u_vfxLightPos[4]` (vec3) and `u_vfxLightRadius[4]` (float) "arrived
+corrupt". They did not. `rlSetUniform` in `third_party/vulkan/rlvk/rlvk_shader.inl`
+already strides array writes by 16 bytes, so a `vec3[]` upload is handled
+correctly; a headless probe that compiled the real shaders and read the UBO
+staging back confirmed every element landed at the right offset, before and after
+the vec4 rewrite. The lights were dark for a completely different reason — see
+"A positional effect lights nothing" below. The vec3→vec4 rewrite was therefore a
+change that fixed nothing, and it cost a session because it was believed to have.
+
+The rule below still stands on its own merits (it is correct under desktop GL and
+any other std140 consumer, and it removes a class of trap), but do **not** cite
+this entry as evidence that an array uniform is your problem: measure the staging
+bytes first. The probe that does it is ~120 lines against `rlLoadShaderProgram` +
+`rlGetLocationUniform` + `RLVK.shaderSlots[id].fsStage`, and it runs in ~2 s.
+
+**Rule.** Never declare a `vec3[]` or `float[]` uniform array. Use `vec4[]` and
+pack the spare component (radius into `.w`, a flag into `.a`). Correct under
+std140 and under desktop GL alike, and it removes the trap rather than
+documenting around it. A `mat4[]` is already 16-byte aligned and is safe.
+
+**How it was found** (the method matters more than the fact): a debug mode in the
+shared GLSL that painted each suspect quantity — world position, then
+attenuation, then the count alone, then the array element alone. Position was
+correct and the count was correct while the array was not, which localised the
+fault in one run after several rounds of guessing had not.
+
+---
+
+## A positional effect lights nothing: `matModel` is model×view, so `fragPosition` is VIEW space
+
+**Symptom.** A point light (or any radial falloff / distance fade) has no effect
+whatsoever — not faint, *nothing* — on every lit surface simultaneously:
+character, ground, path. The sun and ambient on those same shaders look right.
+Every check passes: the pool has lights, all three shaders compile and reflect
+every `u_vfxLight*` uniform, the uploaded bytes reach the UBO staging at the
+correct std140 offsets, and the debug wire sphere lands exactly on the effect.
+
+**Cause.** raylib's `DrawMesh` builds the matrix it uploads as
+
+```c
+matModel = modelTransform * rlGetMatrixTransform();
+```
+
+and inside a 3D pass `rlGetMatrixTransform()` returns **the view matrix**, not
+identity: `rlPushMatrix()` in `RL_MODELVIEW` mode sets rlgl's `transformRequired`
+and redirects the current matrix to `RLGL.State.transform`, so `MyBeginMode3D`'s
+`rlLoadIdentity()` + `rlMultMatrixf(matView)` write the view there. Measured, not
+inferred: `rlGetMatrixTransform()`'s translation row came back bit-identical to
+`MatrixLookAt(camera.position, camera.target, camera.up)`'s.
+
+Consequence: every shader in this project that writes
+
+```glsl
+fragPosition = vec3(matModel * vec4(vertexPosition, 1.0));   // labelled "world space"
+```
+
+is producing a **view-space** position. The VFX lights were uploaded in world
+space, so `length(lightPos - fragPos)` measured roughly the camera distance
+(40+ m) instead of the true ~1 m, `clamp(1 - d/radius)` pinned to 0, and nothing
+was ever lit — at any quality tier, on any surface, with no error anywhere.
+Directional lighting never noticed because it uses no position at all.
+
+**Rule.** `matModel` is not a model matrix here. Put the light and the fragment
+in the **same** space and name that space in a comment. Two working precedents:
+
+- `core/vfx_light.c` — `VFXLight_ShaderSpaceMatrix()` transforms light positions
+  by `rlGetMatrixTransform()` before upload, meeting the surfaces in view space.
+  The view matrix is rigid, so the radius (a length) needs no conversion.
+- `maps/toolkit/ground_shadow.c` — folds `MatrixInvert(rlGetMatrixTransform())`
+  into its light-VP matrix, going the other way, back to world.
+
+Anything reading that matrix must run **inside** the 3D pass. `VFXLight_BindAll`
+was originally called from the update block, where the matrix is identity and the
+conversion is a silent no-op; it is now called immediately after `MyBeginMode3D`,
+and `VFXLight_ShaderSpaceMatrix` logs a warning if it ever sees identity again.
+`core/tests/vfx_light_space_test.c` asserts the call ordering in `main.c` so the
+move cannot be quietly undone.
+
+**The decoy — this is the expensive part.** Debug mode 1 painted
+`fract(fragPosition)` and produced a clean 1 m colour grid, which was written
+down as proof that `fragPosition` was genuine world space. It proves no such
+thing: `fract()` of a *translated* position is an identical grid. The one debug
+view aimed at the actual fault reported success, and two sessions were then spent
+looking everywhere else — at std140 padding, at rlvk's uniform delivery, at
+whether Vulkan supported dynamic lights at all.
+
+A debug view that renders the wrong quantity is worse than no debug view
+(`core/CLAUDE.md` §6). `fract(pos)` can only show the *gradient*; it is blind to
+the *origin*, and the origin was the bug. What settled it in one run was mode 7:
+paint `length(lightPos - fragPos)` directly. It has no dark spot anywhere, so the
+two positions were nowhere near each other — a fact no amount of staring at an
+unlit floor would have produced.
+
+**Method that worked, for next time.** Order the debug modes so each isolates one
+link, and always include a mode that *cannot* be faked:
+`5` a flat constant (proves the block's return reaches the output at all),
+`3` the count alone, `4` the array element alone, `6` the packed `.w` alone,
+`7` the distance (the only one sensitive to the origin). Modes 3/4/5/6 all passed
+while 0/2/7 failed, which localised the fault to "the two positions disagree" —
+the only thing those two groups differ by.
+
+**Also worth knowing (cost ~4 rounds):** the first screenshots were taken in a
+scene where the caster stood off the island plateau, so the "ground" filling the
+frame was the *cloud sea*, and a hard-coded green in `ground_splat.fs` appeared
+only as a sliver in one corner. Before concluding "this shader has no effect on
+screen", make the shader output a flat unmistakable colour and confirm you can
+see *where* it is drawing at all.

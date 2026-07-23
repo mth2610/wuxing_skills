@@ -36,6 +36,11 @@ uniform float u_specStrength;
 uniform float u_shininess;
 uniform vec3  u_emissiveColor; // glowing runes/eyes/weapon energy (default 0)
 
+// Đợt E / E2 — VFX point lights. The uniforms and the accumulate function live
+// in the shared block so the ground, props and particles all use the same
+// falloff and wrap; a per-shader copy drifts the moment one of them is edited.
+#include "core/shaders/common/vfx_lights.glsl"
+
 // Matcap / lit-sphere material (P3c) — jade/metal/energy props. Per-material,
 // set via SurfaceMaterial_SetMatcapActive/ClearMatcap right around a draw
 // call (default u_hasMatcap = 0, zero cost when unused).
@@ -148,7 +153,10 @@ void main() {
 
     vec3 emissive = u_emissiveColor; // additive, BEFORE fog so bloom nurses it
 
-    vec3 color = ambient + diffuse + rim + emissive;
+    // Accumulated after the sun's half-Lambert and before the rim.
+    vec3 vfxLit = VFXLights_Accumulate(fragWorldPos, N, albedo);
+
+    vec3 color = ambient + diffuse + vfxLit + rim + emissive;
 
     // --- MED adds (tier >= 2): Blinn spec sheen + directional-moon rim tint ---
     if (u_qualityTier >= 2) {

@@ -1,12 +1,15 @@
 #include "maps/toolkit/grass_material.h"
 #include "core/resource_manager.h"
 #include "environment/environment_system.h"
+#include "core/vfx_light.h"
+#include "core/gfx_quality.h"
 #include "raymath.h"
 #include <stddef.h>
 
 Shader GrassMaterial_GetShader(void) {
   Shader shader = ResourceManager_LoadShader("maps/toolkit/shaders/grass_material.vs",
                                               "maps/toolkit/shaders/grass_material.fs");
+  VFXLight_RegisterShader(shader);   // Đợt E / E2 — main.c binds each frame
 
   // Same shader.locs[] gotcha as PropLit_GetShader (CORE_ISSUES.md Item 36):
   // LoadShaderFromMemory only auto-binds a small fixed default set of
@@ -95,6 +98,7 @@ void GrassMaterial_UpdateLighting(void) {
   Shader shader = GrassMaterial_GetShader();
   if (shader.id == 0)
     return;
+
 
   int lightDirLoc = GetShaderLocation(shader, "u_lightDir");
   if (lightDirLoc >= 0) {

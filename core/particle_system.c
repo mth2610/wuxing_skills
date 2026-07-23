@@ -39,6 +39,7 @@ typedef struct
   const SpriteAnim *spriteAnim;
   unsigned int texId;   // 0 = use the batch default passed to DrawParticles
   int blendMode;        // VFX_BlendMode — see the blend law in vfx_config.h
+  int unlit;            // 1 = emissive, skip the lighting multiply
   const SkillCurve *radiusCurve;
   const SkillCurve *speedCurve;
   const SkillCurve *alphaCurve;
@@ -170,6 +171,7 @@ void SpawnParticle(ParticleConfig config)
   p->spriteAnim = config.spriteAnim;
   p->texId = config.render.texture.id;
   p->blendMode = config.render.blendMode;
+  p->unlit = config.render.unlit;
   p->radiusCurve = config.radiusCurve;
   p->speedCurve = config.speedCurve;
   p->alphaCurve = config.alphaCurve;
@@ -609,6 +611,15 @@ static void ParticleLighting_Begin(Camera3D camera)
   SetShaderValueV(s_litShader, s_locVfxRadius, rad, SHADER_UNIFORM_FLOAT, PARTICLE_MAX_VFX_LIGHTS);
 }
 
+// Push a one-off strength without disturbing the tunable. Used to make emissive
+// particles skip lighting mid-batch.
+static void ParticleLighting_SetStrength(float v)
+{
+  if (!s_litActive) return;
+  rlDrawRenderBatchActive();
+  SetShaderValue(s_litShader, s_locLightStrength, &v, SHADER_UNIFORM_FLOAT);
+}
+
 static void ParticleLighting_End(void)
 {
   if (!s_litActive)
@@ -674,13 +685,14 @@ void DrawParticles(Camera3D camera, Texture2D texture)
   // with a handful of distinct particle textures that is a few per frame.
   unsigned int curTex = 0xFFFFFFFFu;
   int curBlend = -1;
+  int curUnlit = -1;
 
   for (int a = 0; a < s_activeCount; a++)
   {
     ParticleInternal *p = &g_Particles[s_activeIds[a]];
 
     unsigned int want = p->texId ? p->texId : texture.id;
-    if (want != curTex || p->blendMode != curBlend)
+    if (want != curTex || p->blendMode != curBlend || p->unlit != curUnlit)
     {
       if (curTex != 0xFFFFFFFFu) rlEnd();
       if (p->blendMode != curBlend)
@@ -692,6 +704,15 @@ void DrawParticles(Camera3D camera, Texture2D texture)
         BeginBlendMode(p->blendMode == VFX_BLEND_ADDITIVE ? BLEND_ADDITIVE : BLEND_ALPHA);
         rlDrawRenderBatchActive();
         curBlend = p->blendMode;
+      }
+      if (p->unlit != curUnlit)
+      {
+        // Emissive particles skip the lighting multiply. Flipping the STRENGTH
+        // uniform rather than unbinding the shader keeps one pipeline: at 0 the
+        // shader takes its early-out and returns texel*colour, which is exactly
+        // the legacy unlit result.
+        ParticleLighting_SetStrength(p->unlit ? 0.0f : s_lightingStrength);
+        curUnlit = p->unlit;
       }
       rlSetTexture(want);
       rlBegin(RL_QUADS);

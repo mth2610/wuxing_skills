@@ -72,6 +72,13 @@ typedef struct {
     // 0 = VFX_BLEND_ALPHA (default), so nothing already written changes.
     int blendMode;         // VFX_BlendMode
 
+    // EMISSIVE opt-out. Lighting is a MULTIPLY, so anything that emits its own
+    // light must not go through it — a flame body multiplied by a dim night sky
+    // turns brown, which is exactly what happened when F1's lighting was applied
+    // globally. Smoke/dust/ash occlude and want lighting; fire, sparks, glow and
+    // magic do not. 0 = lit (default, so existing effects are unaffected).
+    int unlit;
+
     // Velocity stretch
     float stretchStrength; // 0.0 = disabled (default)
     float stretchMinSpeed; // speed threshold to apply stretch

@@ -1714,6 +1714,7 @@ int main(int argc, char **argv) {
     GpuParticleSystem_Update(dt);
     UpdateTrailSystem(dt);
     VFXLight_Update(dt);
+    VFXLight_DebugTestLight(player.position);   // tuning.cfg → vfx_light_test = 1
     DecalSystem_Update(dt);
     ScreenDistort_Update(dt);
     Environment_Update(dt);
@@ -1769,6 +1770,18 @@ int main(int argc, char **argv) {
     }
 
     MyBeginMode3D(camera);
+    // Đợt E / E2 — one place binds the VFX light pool to every registered lit
+    // shader (characters, ground, path, props). Doing it per-surface inside each
+    // draw function did not scale: a new ground shader meant hunting for its
+    // per-frame hook, and the one that got missed stayed dark with nothing to
+    // show why. A shader now opts in with #include + one call in the .fs and
+    // VFXLight_RegisterShader at load — no per-frame code of its own.
+    //
+    // MUST be inside the 3D pass and after MyBeginMode3D: the upload converts
+    // the lights into the space the surfaces actually compute in, and it reads
+    // that space off rlGetMatrixTransform(), which only holds the view matrix
+    // once MyBeginMode3D has pushed it. See VFXLight_ShaderSpaceMatrix.
+    VFXLight_BindAll(GfxQuality_Get() >= GFX_HIGH ? 4 : (GfxQuality_Get() >= GFX_MED ? 2 : 0));
     SurfaceMaterial_UpdateFrame(camera); // G2 — push sun/ambient/fog to lit models
     GroundShadow_UpdateFrame(); // Real Shading P6 — push shadow map to raw-immediate ground draws
     MapManager_DrawActive();
@@ -1804,10 +1817,12 @@ int main(int argc, char **argv) {
         // triggering their NEWFX tab entries (BOLT/PROC BEAM/ORBITALS) spawned them
         // correctly into the pool but nothing rendered. Draw here too.
         VFX_Compose_Draw3D(camera);
+        VFXLight_DrawDebug();   // tuning.cfg → vfx_light_debug = 1
     }
 
     if (currentScreen == SCREEN_SKILL_SANDBOX) {
         VFX_Compose_Draw3D(camera);
+        VFXLight_DrawDebug();   // tuning.cfg → vfx_light_debug = 1
     }
 
     if (currentScreen == SCREEN_GAME) {

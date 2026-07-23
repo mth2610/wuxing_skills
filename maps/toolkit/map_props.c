@@ -2,6 +2,8 @@
 #include "core/resource_manager.h"
 #include "maps/toolkit/prop_lit.h"
 #include "environment/environment_system.h"
+#include "core/vfx_light.h"   // Đợt E / E2 — VFXLight_BindToShader on the ground
+#include "core/gfx_quality.h"
 #include "rlgl.h"
 #include "raymath.h"
 #include <math.h>

@@ -1,6 +1,12 @@
 #version 330
 
+// Đợt E / E2 — VFX point lights. Shared block so the ground agrees with the
+// characters and the smoke about where the light is; a private copy of the
+// falloff drifts the moment one of them is edited.
+#include "core/shaders/common/vfx_lights.glsl"
+
 in vec2 fragTexCoord;
+in vec3 fragPosition;   // world space, from ground_splat.vs (E2)
 
 // Đã XÓA biến: in vec3 fragNormal;
 
@@ -59,5 +65,10 @@ void main()
     // nguồn KHÔNG bị kẹp [0,1] như RGBA8 cũ → src alpha 2.0 làm blend
     // (GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA) hoá điên: dst = 2*đất - mây → biển
     // mây dưới đảo lòi/cộng màu xuyên qua nền. Ép alpha 1 để nền luôn đục.
-    finalColor = vec4((mixedTex * colDiffuse * totalLight).rgb, 1.0);
+    vec3 groundLit = (mixedTex * colDiffuse * totalLight).rgb;
+    // Flat variant: the splat plane has no per-vertex normal worth trusting, and
+    // a floor faces up.
+    groundLit += VFXLights_AccumulateFlat(fragPosition, (mixedTex * colDiffuse).rgb);
+
+    finalColor = vec4(groundLit, 1.0);
 }

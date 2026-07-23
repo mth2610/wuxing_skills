@@ -1,6 +1,7 @@
 #include "core/surface_material.h"
 #include "core/resource_manager.h"
 #include "core/gfx_quality.h"
+#include "core/vfx_light.h"
 #include "environment/environment_system.h"
 #include "environment/env_shadow.h"
 #include "raymath.h"
@@ -34,6 +35,7 @@ void SurfaceMaterial_Init(void) {
     s_shader.locs[SHADER_LOC_VERTEX_TANGENT] = GetShaderLocationAttrib(s_shader, "vertexTangent"); // P5a
 
     s_locQualityTier = GetShaderLocation(s_shader, "u_qualityTier");
+    VFXLight_RegisterShader(s_shader);   // Đợt E / E2 — main.c binds each frame
     s_locSunToLight = GetShaderLocation(s_shader, "u_sunToLight");
     s_locSunColor   = GetShaderLocation(s_shader, "u_sunColor");
     s_locSky        = GetShaderLocation(s_shader, "u_skyColor");

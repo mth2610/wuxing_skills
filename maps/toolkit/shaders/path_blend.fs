@@ -1,6 +1,12 @@
 #version 330
 
+// Đợt E / E2 — VFX point lights. The paved path is what a caster actually
+// stands on, so an effect that lights the grass but not the stone underfoot
+// still reads as pasted on — which is exactly how it looked before this.
+#include "core/shaders/common/vfx_lights.glsl"
+
 in vec2 fragTexCoord;
+in vec3 fragPosition;   // world space, from path_blend.vs (E2)
 
 uniform sampler2D texture0; // Texture đường
 uniform vec2 tiling;
@@ -58,6 +64,9 @@ void main()
     // Alpha KHÔNG được nhân totalLight.a (tới ~2): trên scene buffer HDR float
     // (Đợt G) src alpha không bị kẹp [0,1] → blend hoá điên, biển mây lòi qua
     // đường. Alpha chỉ = texture.a * tint.a * độ-mờ-lề (đều ≤1); lit chỉ ở rgb.
-    finalColor = vec4((texColor * colDiffuse * totalLight).rgb,
+    vec3 pathLit = (texColor * colDiffuse * totalLight).rgb;
+    pathLit += VFXLights_AccumulateFlat(fragPosition, (texColor * colDiffuse).rgb);
+
+    finalColor = vec4(pathLit,
                       texColor.a * colDiffuse.a * alpha);
 }

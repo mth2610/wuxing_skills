@@ -20,7 +20,17 @@ MapStripSurface MapProp_CreateStrip(float length, float width, float tileSize,
     // 2. Load Shader Con đường
     if (!pathShaderLoaded)
     {
-        pathShader = LoadShader(0, "maps/toolkit/shaders/path_blend.fs");
+        // ResourceManager_LoadShader — only it runs the preprocessor that resolves
+        // the #include this shader now carries (core/docs/LANDMINES.md).
+        pathShader = ResourceManager_LoadShader("maps/toolkit/shaders/path_blend.vs",
+                                                "maps/toolkit/shaders/path_blend.fs");
+        // Required for path_blend.vs's world-space fragPosition — see the long
+        // note in map_props_ground.inl. Without it the strip thinks it is at
+        // the origin and receives no point light.
+        pathShader.locs[SHADER_LOC_MATRIX_MODEL] =
+            GetShaderLocation(pathShader, "matModel");
+
+        VFXLight_RegisterShader(pathShader);   // main.c binds it each frame
         locPathLightDir = GetShaderLocation(pathShader, "lightDir");
         locPathLightCol = GetShaderLocation(pathShader, "lightColor");
         locPathAmbCol = GetShaderLocation(pathShader, "ambientColor");
@@ -63,6 +73,8 @@ void MapProp_DrawStrip(const MapStripSurface *strip, Vector3 worldCenter, float 
     SetShaderValue(strip->model.materials[0].shader, locPathLightDir, lightDirArr, SHADER_UNIFORM_VEC3);
     SetShaderValue(strip->model.materials[0].shader, locPathLightCol, sunColArr, SHADER_UNIFORM_VEC4);
     SetShaderValue(strip->model.materials[0].shader, locPathAmbCol, ambColArr, SHADER_UNIFORM_VEC4);
+
+
 
     Vector3 pos = {worldCenter.x, worldCenter.y + yOffset, worldCenter.z};
     DrawModel(strip->model, pos, 1.0f, WHITE);

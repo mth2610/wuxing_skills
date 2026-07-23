@@ -335,6 +335,11 @@
   void VFXLight_Update(float dt);
   void VFXLight_GetActive(VFXLightData *out, int *count, int maxCount);
   void VFXLight_GetStats(int *active, int *max);
+  void VFXLight_BindToShader(Shader shader, int maxLights);
+  void VFXLight_RegisterShader(Shader shader);
+  void VFXLight_BindAll(int maxLights);
+  void VFXLight_DrawDebug(void);
+  void VFXLight_DebugTestLight(Vector3 pos);
 ```
 **Enums:** VFXPriority { VFX_PRIORITY_LOW,VFX_PRIORITY_HIGH_ULTIMATE }
 **Structs** (fields in header): VFXLightData
@@ -657,6 +662,7 @@
   void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
   void VFX_ComposeChainLink(VC_MaterialId matId, Vector3 start, Vector3 end, float width, float sag, float progress, float time);
   void VFX_ComposeEnergySmoke(Vector3 pos, float scale, float progress, float time, Vector2 sourceUV);
+  void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
   void VFX_ComposeGroundAura(VC_MaterialId matId, Vector3 pos, float radius, float scrollSpeed, float time);
   void VFX_ComposeGroundSmoke(Vector3 center, float halfSize, float progress, GroundHeightSampleFn heightFn, void *userData);
   void VFX_ComposeMagicFilaments(Vector3 pos, float scale, float progress, Color color, float thickness, float frequency, float speed, Vector2 sourceUV);

@@ -1,6 +1,11 @@
 #version 330
 #include "core/shaders/common/noise.glsl"
 #include "core/shaders/common/lighting.glsl"
+// Đợt E / E2 — spell and effect lights. The ground is the LARGEST share of the
+// screen next to a floor-level effect, so a fire that lights the caster but not
+// the dirt under it still reads as pasted on. Shared block, so this agrees with
+// the characters and the smoke about where the light is.
+#include "core/shaders/common/vfx_lights.glsl"
 
 // ============================================================
 // WUXING — grass_material Fragment Shader (CORE_ISSUES.md Item 38,
@@ -94,6 +99,7 @@ void main() {
     float diff = calcDiffuse(normal, normalize(u_lightDir), 0.0);
 
     vec3 lit = blended * (u_ambientColor + diff * u_lightColor);
+    lit += VFXLights_Accumulate(fragPosition, normal, blended);
 
     finalColor = vec4(lit, 1.0) * colDiffuse;
 }

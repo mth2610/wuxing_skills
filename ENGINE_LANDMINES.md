@@ -16,6 +16,20 @@
 | 6 | Android: black screen / crash on device | Anyone changing the Android build flags |
 | 7 | `CreateEmitter` needs per-frame target update; name collision | Anyone using the emitter systems |
 | 8 | Per-instance uniform changes → stale-UBO scrambling (rlvk) | Any VFX that calls `SetShaderValue` between instances |
+| 9 | `matModel` is model×**view** → `fragPosition` is NOT world space | Any shader doing positional lighting/effects |
+
+---
+
+## 9. `matModel` is model×view — `fragPosition` is view space, not world space
+
+- **Symptom:** a positional effect (point light, radial falloff, distance fade) does nothing at all — not dim, *nothing* — on every surface at once, while directional sun/ambient on the same shaders looks perfectly correct. Everything checkable checks out: the uniforms reflect, the values reach the UBO, the debug marker lands on the effect.
+- **Cause:** raylib's `DrawMesh` uploads `matModel = modelTransform * rlGetMatrixTransform()`, and inside a 3D pass `rlGetMatrixTransform()` **is the view matrix** — `rlPushMatrix()` in `RL_MODELVIEW` mode flips rlgl into `transformRequired` and redirects the current matrix into `RLGL.State.transform`, which is where `MyBeginMode3D`'s `rlMultMatrixf(matView)` then lands. So the near-universal line
+  ```glsl
+  fragPosition = vec3(matModel * vec4(vertexPosition, 1.0));   // "world space"
+  ```
+  produces a **view-space** position. Compare it against anything genuinely in world space and the distance is roughly the camera distance, so every falloff clamps to zero. Directional lighting never notices, because it uses no position.
+- **Rule:** never assume `matModel` gives world space. Put both operands in the *same* space and say which one in a comment. Two working precedents: `core/vfx_light.c` converts light positions with `rlGetMatrixTransform()` before upload (so lights meet the surfaces in view space), and `maps/toolkit/ground_shadow.c` folds `MatrixInvert(rlGetMatrixTransform())` into its light-VP matrix (so the shader gets back to world). Anything reading that matrix must run **inside** the 3D pass — outside it the matrix is identity and the correction silently becomes a no-op.
+- **The decoy — do not repeat it:** `fract(fragPosition)` was used to "prove" the coordinates were world space, and it painted a clean 1 m grid. It always will: `fract()` of a *translated* position is an identical grid. A debug view that cannot distinguish the failure from success is worse than none (core/`CLAUDE.md` §6). Paint a quantity that depends on the ORIGIN — the distance to a known point — or assert it numerically. Full chain + regression test: `core/tests/vfx_light_space_test.c`, `core/docs/LANDMINES.md`.
 
 ---
 

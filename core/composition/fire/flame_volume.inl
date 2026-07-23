@@ -26,27 +26,27 @@
 #define FVOL_MAX_CORE 10
 #define FVOL_MAX_BODY 22
 
-static ColorGradient s_fvolCoreGrad = {0};   // additive hot core
-static ColorGradient s_fvolBodyGrad = {0};   // black-body body, ends dark
-static SkillCurve    s_fvolRise     = {0};
-static SkillCurve    s_fvolFade     = {0};
-static SkillCurve    s_fvolGrow     = {0};
-static ForceField    s_fvolFld      = {0};
-static ParticleConfig s_fvolSmokeSeed;       // what a dying body ember becomes
+static ColorGradient s_fvolCoreGrad = {0}; // additive hot core
+static ColorGradient s_fvolBodyGrad = {0}; // black-body body, ends dark
+static SkillCurve s_fvolRise = {0};
+static SkillCurve s_fvolFade = {0};
+static SkillCurve s_fvolGrow = {0};
+static ForceField s_fvolFld = {0};
+static ParticleConfig s_fvolSmokeSeed; // what a dying body ember becomes
 static bool s_fvolInit = false;
 
 static float s_fvolCoreAlpha = 0.55f;
-static float s_fvolSmokeAmt  = 1.0f;
+static float s_fvolSmokeAmt = 1.0f;
 // Rise speed, as a multiplier on everything vertical. Meter-scale is unforgiving
 // here: a 1 m flame whose particles travel 1-2 m in their 0.5 s lifetime reads as
 // a blowtorch, not as fire — the embers outrun the flame that made them. Visible
 // rise for a flame this size is more like 0.3-0.5 m over a particle's life.
-static float s_fvolRiseMul   = 1.0f;
+static float s_fvolRiseMul = 1.0f;
 // Base width. A flame is TALL and narrow; the ratio of base radius to rise
 // height is what decides whether it reads as a flame or as a fireball. A wide
 // base with a short rise blurs into a ball no matter how good the colour ramp
 // is — and enlarging the particles to fill it makes that worse, not better.
-static float s_fvolWidthMul  = 1.0f;
+static float s_fvolWidthMul = 1.0f;
 
 static void FVol_InitShared(void)
 {
@@ -74,8 +74,8 @@ static void FVol_InitShared(void)
     ColorGradient_AddStop(&s_fvolBodyGrad, 0.00f, (Color){255, 216, 130, 235});
     ColorGradient_AddStop(&s_fvolBodyGrad, 0.28f, (Color){248, 140, 40, 210});
     ColorGradient_AddStop(&s_fvolBodyGrad, 0.55f, (Color){186, 62, 18, 150});
-    ColorGradient_AddStop(&s_fvolBodyGrad, 0.78f, (Color){92, 46, 34, 90});     // cooling
-    ColorGradient_AddStop(&s_fvolBodyGrad, 1.00f, (Color){44, 40, 38, 0});      // meets smoke
+    ColorGradient_AddStop(&s_fvolBodyGrad, 0.78f, (Color){92, 46, 34, 90}); // cooling
+    ColorGradient_AddStop(&s_fvolBodyGrad, 1.00f, (Color){44, 40, 38, 0});  // meets smoke
 
     // Buoyancy: fast while hot, slowing as it cools. Constant rise reads as a
     // jet; this is what gives the licking, unsteady motion.
@@ -94,10 +94,10 @@ static void FVol_InitShared(void)
     FloatCurve_AddStop(&s_fvolGrow, 1.0f, 0.55f);
 
     ForceField_AddLayer(&s_fvolFld, (ForceLayer){
-        .type = FORCE_GRAVITY_DIR,
-        .direction = {0.0f, 1.0f, 0.0f},
-        .strength = 1.0f,      // meter-scale: real gravity is 9.81
-    });
+                                        .type = FORCE_GRAVITY_DIR,
+                                        .direction = {0.0f, 1.0f, 0.0f},
+                                        .strength = 1.0f, // meter-scale: real gravity is 9.81
+                                    });
     // Turbulence is what makes the licks unsteady. Without it the flame is a
     // smooth plume and reads as a gas burner.
     // noiseScale/noiseSpeed are NOT optional. Left at 0 the curl field samples
@@ -105,11 +105,11 @@ static void FVol_InitShared(void)
     // turbulence at all — it is a single constant force shoving the whole flame
     // in one arbitrary direction.
     ForceField_AddLayer(&s_fvolFld, (ForceLayer){
-        .type = FORCE_NOISE_CURL,
-        .strength = 0.7f,
-        .noiseScale = 2.2f,   // ~0.45 m features: lick-sized, not grain-sized
-        .noiseSpeed = 1.1f,
-    });
+                                        .type = FORCE_NOISE_CURL,
+                                        .strength = 0.7f,
+                                        .noiseScale = 2.2f, // ~0.45 m features: lick-sized, not grain-sized
+                                        .noiseSpeed = 1.1f,
+                                    });
     // Moderate drag. Too little and the lick never stops climbing; too much and
     // it stalls immediately and the flame collapses into a ball — which is what
     // 2.6 did, combined with too short a lifetime.
@@ -118,9 +118,9 @@ static void FVol_InitShared(void)
     // and it is invisible in the source unless you divide — see
     // core/tests/flame_motion_test.c.
     ForceField_AddLayer(&s_fvolFld, (ForceLayer){
-        .type = FORCE_DRAG,
-        .strength = 1.8f,
-    });
+                                        .type = FORCE_DRAG,
+                                        .strength = 1.8f,
+                                    });
 
     s_fvolInit = true;
 }
@@ -137,18 +137,22 @@ void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale,
                             float intensity)
 {
     FVol_InitShared();
-    SmokePuff_InitShared();   // the flame's smoke reuses F2's sprites
+    SmokePuff_InitShared(); // the flame's smoke reuses F2's sprites
 
     const VFX_ElementMaterial *mat = VFX_Material(matId);
-    (void)mat;   // black-body colour is physical, not per-element — see below
+    (void)mat; // black-body colour is physical, not per-element — see below
 
-    if (intensity <= 0.0f) return;
-    if (intensity > 1.0f) intensity = 1.0f;
+    if (intensity <= 0.0f)
+        return;
+    if (intensity > 1.0f)
+        intensity = 1.0f;
 
     int nCore = (int)(FVOL_MAX_CORE * intensity);
     int nBody = (int)(FVOL_MAX_BODY * intensity);
-    if (nCore < 1) nCore = 1;
-    if (nBody < 2) nBody = 2;
+    if (nCore < 1)
+        nCore = 1;
+    if (nBody < 2)
+        nBody = 2;
 
     // ── BODY: alpha, black-body ramp, cools into smoke ───────────────────────
     for (int i = 0; i < nBody; i++)
@@ -199,11 +203,15 @@ void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale,
             .alphaCurve = &s_fvolFade,
             .speedCurve = &s_fvolRise,
             .render.texture = s_smokePuffTex[i % SMOKE_PUFF_VARIANTS],
+            // FIRE EMITS LIGHT — it must not be multiplied by the scene's.
+            // Lighting is a multiply, so a flame lit by a dim sky turns brown;
+            // that is what "the fire went black" was. Only its smoke is lit.
+            .render.unlit = 1,
             .rotation = Random01() * 2.0f * PI,
             .angularVelocity = (Random01() - 0.5f) * 1.4f,
             // Only some embers make smoke, otherwise the fire is smothered by it.
-            .onDeathEmit = (s_fvolSmokeAmt > 0.0f && (i % 3) == 0) ? &s_fvolSmokeSeed : NULL,
-            .onDeathEmitCount = 1,
+            // .onDeathEmit = (s_fvolSmokeAmt > 0.0f && (i % 3) == 0) ? &s_fvolSmokeSeed : NULL,
+            // .onDeathEmitCount = 1,
         });
     }
 
@@ -215,8 +223,8 @@ void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale,
     {
         float ang = Random01() * 2.0f * PI;
         float rad = sqrtf(Random01()) * 0.05f * scale * s_fvolWidthMul;
-        unsigned char a = (unsigned char)(255.0f * (s_fvolCoreAlpha < 0.0f ? 0.0f :
-                                          s_fvolCoreAlpha > 1.0f ? 1.0f : s_fvolCoreAlpha));
+        unsigned char a = (unsigned char)(255.0f * (s_fvolCoreAlpha < 0.0f ? 0.0f : s_fvolCoreAlpha > 1.0f ? 1.0f
+                                                                                                           : s_fvolCoreAlpha));
         SpawnParticle((ParticleConfig){
             .position = {pos.x + cosf(ang) * rad,
                          pos.y + Random01() * 0.08f * scale,
@@ -235,7 +243,7 @@ void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale,
             .forceField = &s_fvolFld,
             .alphaCurve = &s_fvolFade,
             .speedCurve = &s_fvolRise,
-            .render.blendMode = VFX_BLEND_ADDITIVE,   // it EMITS light
+            .render.blendMode = VFX_BLEND_ADDITIVE, // it EMITS light
             .rotation = Random01() * 2.0f * PI,
             .angularVelocity = (Random01() - 0.5f) * 2.0f,
         });
@@ -243,7 +251,23 @@ void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale,
 
     // Fire lights its surroundings — and with E2 it will light the caster too.
     // Flicker so the light is alive rather than a steady lamp.
-    float flick = 0.85f + VC_Flicker01((float)GetTime() * 7.0f, pos.x) * 0.3f;
-    VFXLight_Spawn(pos, (Color){255, 150, 60, 255},
-                   2.2f * scale * flick, 0.12f, VFX_PRIORITY_LOW);
+    // ONE light, refreshed on an interval — not one per frame. This is called
+    // every frame for a sustained fire, so a 0.12 s light spawned each time left
+    // ~7 duplicates alive at once, all at the same spot: they filled the 16-slot
+    // pool, starved every other effect, and still lit the scene like a single
+    // lamp. The refresh interval only has to beat the lifetime.
+    static float s_lightTimer = 0.0f;
+    s_lightTimer -= GetFrameTime();
+    if (s_lightTimer <= 0.0f)
+    {
+        s_lightTimer = 0.10f;
+        float flick = 0.85f + VC_Flicker01((float)GetTime() * 7.0f, pos.x) * 0.3f;
+        // Lifted to mid-flame height. At the base the light sits IN the ground
+        // plane, so the vector to it is nearly parallel to the floor and
+        // dot(N, toL) collapses to ~0.1 — the ground receives almost nothing no
+        // matter how bright the light is. Geometry first, intensity second.
+        Vector3 lightPos = {pos.x, pos.y + 0.55f * scale, pos.z};
+        VFXLight_Spawn(lightPos, (Color){255, 150, 60, 255},
+                       4.0f * scale * flick, 0.13f, VFX_PRIORITY_LOW);
+    }
 }
