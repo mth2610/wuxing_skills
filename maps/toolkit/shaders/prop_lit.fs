@@ -1,5 +1,8 @@
 #version 330
 #include "core/shaders/common/lighting.glsl"
+// Đợt E / E2 — spell/effect point lights. Same shared block as the ground and
+// the character so a fireball agrees with every surface it stands on.
+#include "core/shaders/common/vfx_lights.glsl"
 
 // ============================================================
 // WUXING — prop_lit Fragment Shader (CORE_ISSUES.md Item 36)
@@ -68,6 +71,11 @@ void main() {
     float spec = calcSpecular(normal, lightDir, viewDir, shininess) * specStrength;
 
     vec3 lit = albedo.rgb * (u_ambientColor + diff * u_lightColor) + spec * u_lightColor;
+
+    // `normal` is the TBN-perturbed normal built from fragNormal, which prop_lit.vs
+    // derives via mat3(matModel) — the same model*view matrix the lights are
+    // uploaded through, so it is already in their space and needs no conversion.
+    lit += VFXLights_Accumulate(fragPosition, normal, albedo.rgb);
 
     finalColor = vec4(lit, albedo.a) * colDiffuse;
 }

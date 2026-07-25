@@ -1,5 +1,6 @@
 #include "maps/toolkit/ground_shadow.h"
 #include "core/resource_manager.h"
+#include "core/vfx_light.h"
 #include "environment/env_shadow.h"
 #include "raylib.h"
 #include "raymath.h" // MatrixInvert/MatrixMultiply
@@ -23,6 +24,11 @@ static inline void EnsureLoaded(void) {
     s_locLightVP       = GetShaderLocation(s_shader, "u_lightVP");
     s_locShadowEnabled = GetShaderLocation(s_shader, "u_shadowEnabled");
     s_locShadowTexel   = GetShaderLocation(s_shader, "u_shadowTexel");
+    // Đợt E / E2 — opt into the VFX point-light pool (main.c binds each frame).
+    // This is what puts a spell's glow on default_arena's floor plate and on
+    // both maps' zone discs — raw immediate-mode draws that reach no
+    // Model/Material shader able to carry the lights for them.
+    VFXLight_RegisterShader(s_shader);
     s_ready = true;
 }
 

@@ -1,5 +1,12 @@
 #version 330
 
+// Đợt E / E2 — spell/effect point lights. `fragWorldPos` here is already in
+// the lights' space: these are IMMEDIATE-MODE draws whose vertices rlgl has
+// CPU-transformed by RLGL.State.transform (the view matrix) before arrival,
+// exactly as ground_shadow.vs documents — so no conversion, the same reason
+// ground_shadow.c folds inverse(view) into its shadow matrix.
+#include "core/shaders/common/vfx_lights.glsl"
+
 // Real Shading P6 — fragment shader for GroundShadow. The ground's "lighting"
 // here is pre-baked per-vertex color, so shadow is applied as a straight
 // darken-toward-a-floor multiplier.
@@ -139,5 +146,9 @@ void main() {
     }
     // Darken toward ~30%, not full black — reads as a soft shadow on the
     // night floor instead of a hole.
-    finalColor = vec4(fragColor.rgb * mix(0.30, 1.0, shadow), fragColor.a);
+    vec3 floorLit = fragColor.rgb * mix(0.30, 1.0, shadow);
+    // A floor plate faces up and carries no vertex normal (immediate-mode draws
+    // feed position + colour only), so the flat variant is the only option here.
+    floorLit += VFXLights_AccumulateFlat(fragWorldPos, fragColor.rgb);
+    finalColor = vec4(floorLit, fragColor.a);
 }

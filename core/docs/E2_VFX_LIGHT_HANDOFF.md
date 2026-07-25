@@ -13,12 +13,19 @@ and `main.c` calls `VFXLight_BindAll` **inside** the 3D pass, right after
 `MyBeginMode3D`, where that matrix actually holds the view.
 
 Verified in-scene: a 6 m test light at the player casts a real warm pool on the
-grass and warm bounce onto the character. Regression test:
+grass, the paved path, the arena floor plate, the rocks, and the character.
+
+**Consumers (all five lit-surface shaders):** `core/shaders/surface_lit.fs`
+(character), `maps/toolkit/shaders/{ground_splat,grass_material,path_blend}.fs`
+(terrain), `maps/toolkit/shaders/prop_lit.fs` (rocks/props),
+`maps/toolkit/shaders/ground_shadow.fs` (immediate-mode floor plate + zone discs). Regression test:
 `core/tests/vfx_light_space_test.c` (suite green, 5/5).
 
 E2's own design — the shared GLSL block, the register-once/bind-all-per-frame
-structure, the vec4 packing, the three consumers — was correct as written. No
-part of it needed changing.
+structure, the vec4 packing — was correct as written; only the world-vs-view
+space of the upload was wrong. Extending it to the remaining surfaces (rocks,
+immediate-mode floor/discs) was then a one-include-plus-one-register job per
+shader (see PROGRESS.md, 25/07/2026 follow-up).
 
 ---
 

@@ -1,6 +1,7 @@
 #include "maps/toolkit/prop_lit.h"
 #include "core/resource_manager.h"
 #include "core/camera_context.h"
+#include "core/vfx_light.h"
 #include "environment/environment_system.h"
 #include "raymath.h"
 #include <stddef.h>
@@ -49,6 +50,11 @@ Shader PropLit_GetShader(void) {
         GetShaderLocation(shader, "texture2");
     shader.locs[SHADER_LOC_MAP_ROUGHNESS] =
         GetShaderLocation(shader, "texture3");
+
+    // Đợt E / E2 — opt into the VFX point-light pool. Registration is all it
+    // needs: main.c's VFXLight_BindAll pushes the pool to every registered
+    // shader each frame, so there is no per-frame code here.
+    VFXLight_RegisterShader(shader);
 
     s_locsFixed = true;
   }

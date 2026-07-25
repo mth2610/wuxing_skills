@@ -278,3 +278,31 @@ was `length(lightPos - fragPos)`: paint a quantity that depends on the ORIGIN,
 not just the gradient. And a ~120-line headless probe compiling the real shaders
 through `rlLoadShaderProgram` and reading `fsStage` back killed three hypotheses
 (std140, uniform delivery, compile failure) in two seconds, before any screenshot.
+
+### E2 follow-up — remaining lit surfaces wired (25/07/2026)
+
+After the view-space fix landed, only three surfaces consumed the pool
+(character `surface_lit`, ground `ground_splat`/`grass_material`, path
+`path_blend`). The rest of the scene stayed dark next to a floor-level effect.
+Now wired too, same pattern (`#include vfx_lights.glsl` + one
+`VFXLight_RegisterShader` at load, no per-frame code):
+
+- **`maps/toolkit/shaders/prop_lit.fs`** (rocks / props, DrawModel path) —
+  `VFXLights_Accumulate` with the TBN-perturbed normal, which prop_lit.vs already
+  builds via `mat3(matModel)`, i.e. the same view space the lights are uploaded in.
+- **`maps/toolkit/shaders/ground_shadow.fs`** (default_arena floor plate + BOTH
+  maps' zone discs — raw immediate-mode `rlBegin` draws) — `VFXLights_AccumulateFlat`.
+  `fragWorldPos` is already view space here for the immediate-mode reason
+  documented in ground_shadow.vs (rlgl CPU-transforms the verts by the view
+  matrix), so no conversion.
+
+Verified in-scene per map: rock lit warm on verdant_path, floor plate lit warm on
+default_arena, character lit on both. `shader_uniform_wiring_test.c` extended to
+cover both new .fs/.c pairs (suite 5/5).
+
+Note left for a later pass: the flat-ground consumers pass a literal `vec3(0,1,0)`
+as the normal to `AccumulateFlat`. That is world-up, not view-up, so a flat floor's
+half-Lambert term drifts slightly as the camera orbits. Visible result is fine
+(the wrap's 0.5 base is forgiving) so it was left as-is to avoid regressing the
+committed look; the correct fix is to upload world-up rotated into view space and
+use it in `AccumulateFlat`.
