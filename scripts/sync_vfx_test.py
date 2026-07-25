@@ -878,6 +878,15 @@ def is_synthetic(fn):
     return any(fn.endswith(s) for s in ELEM_SUFFIXES)
 
 
+def is_manual(entry):
+    """Hand-written entry for something that is NOT a composition function in a
+    .inl — e.g. a post-FX or engine API you still want a button for in the NEW FX
+    tab. Without this the removal pass below deletes it on the next run, because
+    it cannot find the name among the scanned .inl files, and it does so
+    silently. Set "_manual": true in the manifest entry to keep it."""
+    return bool(entry.get("_manual"))
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -907,7 +916,7 @@ def main():
 
     # Entries to remove: function deleted from .inl OR moved to excluded
     removed = [e for e in entries
-               if not is_synthetic(e["fn"])
+               if not is_synthetic(e["fn"]) and not is_manual(e)
                and (base_fn(e["fn"]) not in inl_fns
                     or base_fn(e["fn"]) in excluded)]
 

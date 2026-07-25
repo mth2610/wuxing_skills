@@ -28,6 +28,18 @@ uniform vec3 u_highlightTint;
 uniform float u_tonemapEnabled;
 uniform float u_exposure;
 
+// Radial blur (Đợt E1a) — screen-space smear away from a focal point. This is
+// what makes a burst read as VIOLENT rather than merely bright: brightness
+// alone says "there is light here", a directional smear says "something just
+// happened here". Folded into the composite rather than run as its own pass —
+// one extra pass costs a full-screen read/write, this costs 8 taps only while
+// it is on, and the whole loop sits behind a uniform branch so the OFF path is
+// a single branch on a value that is constant across the frame.
+uniform float u_radialBlurEnabled;
+uniform vec2  u_radialBlurCenter;   // screen UV [0..1] of the focal point
+uniform float u_radialBlurStrength; // sample offset scale (~0.15 = strong)
+uniform float u_radialBlurFalloff;  // UV radius where the blur reaches full strength
+
 out vec4 finalColor;
 
 vec3 acesFilmic(vec3 x) {
@@ -55,6 +67,25 @@ void main() {
         sceneCol.r = texture(texture0, uv - offset).r;
         // Kênh .g đã có sẵn trong sceneCol từ lần fetch trên cùng, KHÔNG FETCH LẠI!
         sceneCol.b = texture(texture0, uv + offset).b;
+    }
+
+    // 1b. Radial blur — AFTER chromatic (so it smears the aberrated image, not
+    // the other way round, which would re-sharpen the fringes) and BEFORE bloom,
+    // so the bloom that follows blooms the smear rather than the sharp source.
+    if (u_radialBlurEnabled > 0.5) {
+        vec2  dir = uv - u_radialBlurCenter;
+        // The focal point stays SHARP and the smear grows outward. Blurring
+        // uniformly reads as a camera fault; blurring around a fixed point
+        // reads as force radiating from that point.
+        float w = smoothstep(0.0, u_radialBlurFalloff, length(dir));
+        if (w > 0.001) {
+            vec3 acc = vec3(0.0);
+            for (int i = 1; i <= 8; i++) {
+                float s = float(i) / 8.0;
+                acc += texture(texture0, uv - dir * (u_radialBlurStrength * s * w)).rgb;
+            }
+            sceneCol.rgb = mix(sceneCol.rgb, acc * 0.125, w);
+        }
     }
 
     // 2. Bloom

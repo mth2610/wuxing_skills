@@ -1714,6 +1714,10 @@ int main(int argc, char **argv) {
     GpuParticleSystem_Update(dt);
     UpdateTrailSystem(dt);
     VFXLight_Update(dt);
+    // Đợt E1a — decay any live radial burst and project its focal point.
+    // Must use the SAME camera the scene is rendered with, and must run
+    // before PostFX_Draw.
+    PostFX_UpdateTransient(camera, dt);
     VFXLight_DebugTestLight(player.position);   // tuning.cfg → vfx_light_test = 1
     DecalSystem_Update(dt);
     ScreenDistort_Update(dt);

@@ -37,6 +37,24 @@ typedef struct {
   // color grade.
   bool  tonemapEnabled;
   float exposure;          // [0.5 .. 2.0], 1.0 = neutral
+
+  // ── Radial blur (Đợt E1a) ──────────────────────────────────────────────
+  // Screen-space smear away from a focal point — the "violent burst" read.
+  // Normally you do NOT set these by hand: call PostFX_RadialBurst() and let
+  // PostFX_UpdateTransient decay them. Defaults OFF, so nothing that exists
+  // today changes appearance.
+  bool    radialBlurEnabled;
+  Vector2 radialBlurCenter;   // screen UV [0..1] — the effect, projected
+  float   radialBlurStrength; // 0 = off, ~0.15 = strong. Sample offset scale.
+  float   radialBlurFalloff;  // UV radius at which the blur reaches full strength
+
+  // ── Anamorphic streak bloom (Đợt E1b) ──────────────────────────────────
+  // Stretches the bloom along one axis, the way an anamorphic lens does.
+  // Applied inside the bloom downsample, so it costs nothing when bloom is off.
+  // Defaults OFF.
+  bool  bloomStreakEnabled;
+  float bloomStreakStrength; // 0..1 — blend of the streaked tap vs the round one
+  float bloomStreakAngle;    // radians, 0 = horizontal (classic anamorphic)
 } PostFXConfig;
 
 // Khởi tạo Post-processing Stack
@@ -64,5 +82,28 @@ void PostFX_Draw(const PostFXConfig *config);
 // composite's saturation toward 0 (1 = full black-and-white), overriding
 // the config's color grade while > 0. Cheap to call every frame.
 void PostFX_SetMonochrome(float intensity01);
+
+// ── Transient radial burst (Đợt E1a) ─────────────────────────────────────────
+// Fire-and-forget: an effect asks for a burst at a WORLD position and the decay
+// is handled here, mirroring CameraFX_Shake's trauma model. Effects must not
+// poke PostFXConfig's radialBlur* fields directly — several effects firing in
+// the same frame would each clobber the others, and nothing would decay.
+// The strongest live burst wins (a bigger explosion should not be softened by a
+// small one that happens to start later).
+void PostFX_RadialBurst(Vector3 worldPos, float strength, float duration);
+
+// Decays live bursts and projects the winner's world position to a screen UV.
+// Call once per frame from the frame loop, next to VFXLight_Update, BEFORE
+// PostFX_Draw. `cam` is the camera the scene was rendered with — the projection
+// has to match or the smear centre lands somewhere the effect is not.
+void PostFX_UpdateTransient(Camera3D cam, float dt);
+
+// True while a burst is live — lets a caller skip work when nothing is running.
+bool PostFX_HasTransient(void);
+
+// Writes the live burst's radialBlur* values into `config`. PostFX_Draw calls
+// this itself; exposed so a caller that keeps its own config copy can see what
+// was applied.
+void PostFX_ApplyTransient(PostFXConfig *config);
 
 #endif // POST_FX_H

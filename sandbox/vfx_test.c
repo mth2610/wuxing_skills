@@ -6,6 +6,7 @@
 #include "core/screen_distort.h"
 #include "core/trail_system.h"
 #include "core/vfx_light.h"
+#include "core/post_fx.h"        // RADIAL BURST E1A — exercises the transient path
 #include "core/presets/vfx_presets.h"
 #include "core/composition/visual_composer.h"
 #include "core/skill_helper.h"
@@ -81,7 +82,7 @@ static const char *s_meshNames[] = {
     "DISC", "RING", "CONE", "TORNADO", "CYLINDER", "SPHERE", "SHOCKWAVE", "PYRAMID", "TETRAHEDRON"};
 
 // @gen:newfx_names begin
-// 64 entries — auto-managed by sync_vfx_test.py
+// 65 entries — auto-managed by sync_vfx_test.py
 static const char* s_newFxNames[] = {
     "BURN GROUND", "IMPACT FIRE", "CAST FIRE", "SPLASH", "BUBBLES", "ICE CRYSTAL",
     "PUDDLE", "WATER STREAM", "IMPACT WATER", "CAST WATER", "GLOW VINE", "IMPACT WOOD",
@@ -93,7 +94,7 @@ static const char* s_newFxNames[] = {
     "MESH ELECTRICITY", "PARTICLE UPGRADES TEST", "TAIJI ARC STRIKE", "TORNADO", "RELEASE TORNADO", "FIRE FUNNEL",
     "ENERGY FLOW", "LIGHTNING BOLT", "PROC BEAM", "BEAM", "ORBITALS", "LEAF SWIRL",
     "CHAIN LINK", "CROWN SPLASH", "SMOKE PUFF", "FLAME VOLUME", "EMBER DRIFT", "GLINT BURST",
-    "SHOCKWAVE RING", "STREAK FLARE", "EXPLOSION", "CHARACTER AURA",
+    "SHOCKWAVE RING", "STREAK FLARE", "EXPLOSION", "CHARACTER AURA", "RADIAL BURST E1A",
 };
 // @gen:newfx_names end
 
@@ -106,7 +107,7 @@ static const int s_newFxCategories[] = {
     6, 6, 6, 6, 1, 6, 6, 6, 6, 6,
     6, 1, 6, 6, 5, 6, 6, 0, 6, 6,
     6, 6, 6, 2, 6, 1, 6, 0, 0, 6,
-    1, 0, 6, 5,
+    1, 0, 6, 5, 6,
 };
 // @gen:newfx_categories end
 
@@ -453,7 +454,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             const char **names;
             int globalIdx;
             int visualIdx;
-            maxIdx = 64;
+            maxIdx = 65;
             names = s_newFxNames; // @gen:newfx_count
             visualIdx = 0;
             (void)names;
@@ -544,6 +545,8 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_ComposeStreakFlare(s_prefabStartPos, 1.5f, WHITE);
           } else if (s_testIndex == 62) { /* EXPLOSION */
               VFX_TriggerExplosion(VC_MAT_FIRE, s_prefabStartPos, 1.5f, false);
+          } else if (s_testIndex == 64) { /* RADIAL BURST E1A */
+              PostFX_RadialBurst(s_prefabStartPos, 0.18f, 0.7f);
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
               s_isPlayingMesh = true;
@@ -692,6 +695,8 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_ComposeStreakFlare(s_prefabStartPos, 1.5f, WHITE);
           } else if (s_testIndex == 62) { /* EXPLOSION */
               VFX_TriggerExplosion(VC_MAT_FIRE, s_prefabStartPos, 1.5f, false);
+          } else if (s_testIndex == 64) { /* RADIAL BURST E1A */
+              PostFX_RadialBurst(s_prefabStartPos, 0.18f, 0.7f);
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
               s_isPlayingMesh = true;
@@ -915,7 +920,7 @@ void VFXTest_DrawHUD(void)
         const char **names;
         int gi;
         int vIdx;
-        maxIdx = 64;
+        maxIdx = 65;
         names = s_newFxNames; // @gen:newfx_count
         vIdx = 0;
         (void)names;
@@ -984,6 +989,7 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
     case 60: VFX_ComposeShockwaveRing(pos, 1.5f, 2.0f, WHITE); break;
     case 61: VFX_ComposeStreakFlare(pos, 1.5f, WHITE); break;
     case 62: VFX_TriggerExplosion(VC_MAT_FIRE, pos, 1.5f, false); break;
+    case 64: PostFX_RadialBurst(pos, 0.18f, 0.7f); break;
     default: break;
     }
 // @gen:newfx_render_trigger end

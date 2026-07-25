@@ -17,6 +17,31 @@
 | 7 | `CreateEmitter` needs per-frame target update; name collision | Anyone using the emitter systems |
 | 8 | Per-instance uniform changes → stale-UBO scrambling (rlvk) | Any VFX that calls `SetShaderValue` between instances |
 | 9 | `matModel` is model×**view** → `fragPosition` is NOT world space | Any shader doing positional lighting/effects |
+| 10 | `SetShaderValue` writes to the **active** shader under rlvk | Anyone setting uniforms outside `BeginShaderMode` |
+
+---
+
+## 10. `SetShaderValue` targets the ACTIVE shader under rlvk, not the one you passed
+
+- **Symptom:** a uniform you set on shader A never arrives — or worse, silently
+  lands on shader B and corrupts one of ITS uniforms. No error, no warning. The
+  feature driven by that uniform behaves as if pinned to whatever was there.
+- **Cause:** rlvk's `rlSetUniform` writes into
+  `RLVK.shaderSlots[RLVK.State.activeShaderSlot]` — the currently **bound**
+  shader. raylib's `SetShaderValue(shader, ...)` looks like it addresses the
+  `shader` you hand it, and under desktop GL it effectively does (the location is
+  program-scoped). Under rlvk the `shader` argument only supplies the *location*;
+  the *destination* is whatever is active. Setting a uniform before its
+  `BeginShaderMode` therefore writes it into the previous shader.
+- **Rule:** every `SetShaderValue` must sit **between** `BeginShaderMode(sh)` and
+  `EndShaderMode()` for that same `sh`. Never hoist uniform sets out of a shader
+  scope "to avoid repeating them" — that is exactly the mistake. When a helper
+  performs the `BeginShaderMode` for you, pass the values INTO the helper rather
+  than setting them at the call site (worked example: `DualFilterPass`'s
+  `streakCfg` parameter in `core/post_fx.c`, added for Đợt E1b — the streak
+  uniforms would otherwise have landed on the bright-pass shader).
+- Same family as §9: an API whose signature implies one target while the backend
+  uses another.
 
 ---
 

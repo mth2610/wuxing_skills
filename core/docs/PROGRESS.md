@@ -306,3 +306,55 @@ half-Lambert term drifts slightly as the camera orbits. Visible result is fine
 (the wrap's 0.5 base is forgiving) so it was left as-is to avoid regressing the
 committed look; the correct fix is to upload world-up rotated into view space and
 use it in `AccumulateFlat`.
+
+---
+
+## E1 — Post-FX radial blur + anamorphic streak bloom: LANDED 25/07/2026
+
+Both features per `ELDEN_VFX_SPEC.md` §E1, **defaulting OFF** so nothing shipped
+changes appearance until it opts in.
+
+**E1a — radial blur** (`core/shaders/post_process.fs`, folded into the composite
+rather than a separate pass, as the spec prefers): 8-tap smear along
+`uv - center`, weighted by `smoothstep(0, falloff, length(dir))` so the focal
+point stays sharp. Placed AFTER chromatic (so it smears the aberrated image
+rather than re-sharpening the fringes) and BEFORE bloom (so the bloom blooms the
+smear). Whole loop sits behind a uniform branch.
+
+Transient API in `core/post_fx.{h,c}`: `PostFX_RadialBurst(worldPos, strength,
+duration)` + `PostFX_UpdateTransient(cam, dt)` (wired in `main.c` next to
+`VFXLight_Update`) + `PostFX_HasTransient` / `PostFX_ApplyTransient`. One slot,
+not a pool — a full-screen effect cannot show two focal points, so the strongest
+LIVE burst wins (compared against the decayed value, so a nearly-finished big
+burst does not lock out a fresh small one). Quadratic decay, CameraFX_Shake's
+trauma shape.
+
+**E1b — anamorphic streak** (`core/shaders/bloom_downsample.fs`): a second
+axis-stretched tap set (×4 along the axis, compressed across) blended into the
+same target by `bloomStreakStrength`. In the downsample, so it costs one tap loop
+at 1/8 res and nothing at all when bloom is off.
+
+**Landmine avoided:** the streak uniforms are set INSIDE `BeginShaderMode` in
+`DualFilterPass`. Under rlvk `SetShaderValue` writes to whichever shader is
+ACTIVE, so setting them before the mode switch lands them on the previous
+shader — silently. `DualFilterPass` gained a `streakCfg` parameter (NULL for the
+upsample pass) rather than hoisting the sets out.
+
+**Verified**
+- A/B at 0.50s, arena: forced ON vs OFF = 3.2% of sampled pixels changed, max
+  delta 253 — streaked highlights and an outward smear with a sharp centre.
+- OFF path unchanged by construction: both shader blocks are gated on uniforms
+  that are 0 when the (zero-initialised) config fields are false.
+- `./scripts/run_core_tests.sh` 5/5 · `./scripts/run_rlvk_runtime_test.sh`
+  0 failures · `convert_shaders_to_gles.py --dry-run` on both touched shaders:
+  2 converted, **0 warnings needing manual review** (loop bounds are constant,
+  which is what ES 2.0 requires).
+
+**Live switches** (`tuning.cfg`, default 0 = off, they can only turn something
+ON that the caller left off — never disable what a caller asked for):
+`postfx_streak`, `postfx_streak_angle`, `postfx_radial`.
+
+**Not done here:** nothing calls `PostFX_RadialBurst` yet — hooking it to
+explosions/ultimates is the E7 retrofit pass. E0's 8-capture baseline was never
+taken, so the "re-take E0 with the features ON" half of the DoD was replaced
+with the targeted A/B above.
