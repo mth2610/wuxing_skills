@@ -386,6 +386,10 @@
   void PostFX_End(void);
   void PostFX_Draw(const PostFXConfig *config);
   void PostFX_SetMonochrome(float intensity01);
+  void PostFX_RadialBurst(Vector3 worldPos, float strength, float duration);
+  void PostFX_UpdateTransient(Camera3D cam, float dt);
+  bool PostFX_HasTransient(void);
+  void PostFX_ApplyTransient(PostFXConfig *config);
 ```
 **Structs** (fields in header): PostFXConfig
 
@@ -659,6 +663,9 @@
   void VFX_ComposeMagicFilamentsOnPlane(Vector3 center, Vector3 normal, float scale, float progress, Color color, float thickness, float frequency, float speed, Vector2 sourceUV);
   void VFX_ComposeShardDebris(Vector3 pos, int count, float speed, VC_MaterialId matId);
   void VFX_ComposeCrownSplash(Vector3 pos, float radius, float height, float duration, VC_MaterialId matId);
+  int VFX_ComposeCharacterAura(int agentId, VC_MaterialId matId, float intensity);
+  void VFX_AuraSetIntensity(int handle, float intensity01);
+  void VFX_KillCharacterAura(int handle);
   void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
   void VFX_ComposeChainLink(VC_MaterialId matId, Vector3 start, Vector3 end, float width, float sag, float progress, float time);
   void VFX_ComposeEnergySmoke(Vector3 pos, float scale, float progress, float time, Vector2 sourceUV);

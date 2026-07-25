@@ -561,6 +561,14 @@
       "type": "oneshot",
       "_manual": true,
       "trigger_call": "PostFX_RadialBurst($POS, 0.18f, 0.7f)"
+    },
+    {
+      "fn": "VFX_SeqPreset",
+      "label": "SEQUENCE ENVELOPE E3",
+      "category": "util",
+      "type": "oneshot",
+      "_manual": true,
+      "trigger_call": "{ VFX_Sequence *sq = VFX_SeqPreset($POS, VC_MAT_FIRE, 1.0f, 0.35f, 0.10f, 0.35f, 0.5f); if (sq) { VFX_SeqAt(sq, 0.00f, (VFX_Beat){ .kind = VFX_BEAT_COMPOSE, .cb = VFXTest_SeqPuff }); VFX_SeqAt(sq, 0.35f, (VFX_Beat){ .kind = VFX_BEAT_COMPOSE, .cb = VFXTest_SeqBurst }); VFX_SeqPlay(sq); } }"
     }
   ],
   "overrides": {

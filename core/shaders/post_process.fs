@@ -78,11 +78,32 @@ void main() {
         // uniformly reads as a camera fault; blurring around a fixed point
         // reads as force radiating from that point.
         float w = smoothstep(0.0, u_radialBlurFalloff, length(dir));
+
+        // FADE OUT AN OFF-SCREEN FOCAL POINT. Two reasons, one physical and one
+        // practical. Physical: a burst you cannot see should not smear the whole
+        // frame — the smear is supposed to say "the force came from THERE", and
+        // there is no there on screen. Practical: `dir` grows without bound as
+        // the centre leaves the view, and long taps stop reading as a smear and
+        // start reading as discrete GHOST COPIES of the frame. Both were found
+        // by the E3 TAIJI_LOI port, whose strike lands away from the camera.
+        vec2  c   = u_radialBlurCenter;
+        float off = max(max(-c.x, c.x - 1.0), max(-c.y, c.y - 1.0)); // 0 inside the view
+        w *= 1.0 - smoothstep(0.0, 0.35, off);
+
         if (w > 0.001) {
+            // CAP THE SMEAR LENGTH. `dir` grows without bound as the focal point
+            // moves off-screen — an effect 17 m to the side projects to a UV far
+            // outside [0,1], and the 8 taps then land so far apart that they read
+            // as discrete GHOST COPIES of the frame instead of a smear. Found by
+            // the E3 TAIJI_LOI port, where the strike lands away from the camera
+            // target. Capping keeps the tap spacing sane at any distance and
+            // costs one clamp.
+            vec2 smear = dir * (u_radialBlurStrength * w);
+            float smearLen = length(smear);
+            if (smearLen > 0.08) smear *= (0.08 / smearLen);
             vec3 acc = vec3(0.0);
             for (int i = 1; i <= 8; i++) {
-                float s = float(i) / 8.0;
-                acc += texture(texture0, uv - dir * (u_radialBlurStrength * s * w)).rgb;
+                acc += texture(texture0, uv - smear * (float(i) / 8.0)).rgb;
             }
             sceneCol.rgb = mix(sceneCol.rgb, acc * 0.125, w);
         }

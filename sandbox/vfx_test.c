@@ -6,11 +6,26 @@
 #include "core/screen_distort.h"
 #include "core/trail_system.h"
 #include "core/vfx_light.h"
-#include "core/post_fx.h"        // RADIAL BURST E1A — exercises the transient path
+#include "core/post_fx.h"
+#include "core/composition/vfx_sequence.h"        // RADIAL BURST E1A — exercises the transient path
 #include "core/presets/vfx_presets.h"
 #include "core/composition/visual_composer.h"
 #include "core/skill_helper.h"
 #include "core/path_spline.h"
+
+// E3 adapters: a beat calls fn(pos, scale, ud), so a VFX_Compose* needs a
+// 3-line wrapper. This is the intended shape — see vfx_sequence.h's COMPOSE row.
+static void VFXTest_SeqPuff(Vector3 pos, float scale, void *ud)
+{
+    (void)ud;
+    VFX_ComposeSmokePuff(pos, VC_MAT_EARTH, scale * 0.8f, 0.6f);
+}
+static void VFXTest_SeqBurst(Vector3 pos, float scale, void *ud)
+{
+    (void)ud;
+    VFX_ComposeImpact(pos, EFFECT_PRESET_FIRE_EXPLOSION, scale * 1.4f);
+    VFX_ComposeSmokePuff(pos, VC_MAT_FIRE, scale, 1.0f);
+}
 
 #define TEST_PATH_POINT_COUNT 16
 static Vector3 s_testPathPoints[TEST_PATH_POINT_COUNT];
@@ -82,7 +97,7 @@ static const char *s_meshNames[] = {
     "DISC", "RING", "CONE", "TORNADO", "CYLINDER", "SPHERE", "SHOCKWAVE", "PYRAMID", "TETRAHEDRON"};
 
 // @gen:newfx_names begin
-// 65 entries — auto-managed by sync_vfx_test.py
+// 66 entries — auto-managed by sync_vfx_test.py
 static const char* s_newFxNames[] = {
     "BURN GROUND", "IMPACT FIRE", "CAST FIRE", "SPLASH", "BUBBLES", "ICE CRYSTAL",
     "PUDDLE", "WATER STREAM", "IMPACT WATER", "CAST WATER", "GLOW VINE", "IMPACT WOOD",
@@ -94,7 +109,7 @@ static const char* s_newFxNames[] = {
     "MESH ELECTRICITY", "PARTICLE UPGRADES TEST", "TAIJI ARC STRIKE", "TORNADO", "RELEASE TORNADO", "FIRE FUNNEL",
     "ENERGY FLOW", "LIGHTNING BOLT", "PROC BEAM", "BEAM", "ORBITALS", "LEAF SWIRL",
     "CHAIN LINK", "CROWN SPLASH", "SMOKE PUFF", "FLAME VOLUME", "EMBER DRIFT", "GLINT BURST",
-    "SHOCKWAVE RING", "STREAK FLARE", "EXPLOSION", "CHARACTER AURA", "RADIAL BURST E1A",
+    "SHOCKWAVE RING", "STREAK FLARE", "EXPLOSION", "CHARACTER AURA", "RADIAL BURST E1A", "SEQUENCE ENVELOPE E3",
 };
 // @gen:newfx_names end
 
@@ -107,7 +122,7 @@ static const int s_newFxCategories[] = {
     6, 6, 6, 6, 1, 6, 6, 6, 6, 6,
     6, 1, 6, 6, 5, 6, 6, 0, 6, 6,
     6, 6, 6, 2, 6, 1, 6, 0, 0, 6,
-    1, 0, 6, 5, 6,
+    1, 0, 6, 5, 6, 6,
 };
 // @gen:newfx_categories end
 
@@ -454,7 +469,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             const char **names;
             int globalIdx;
             int visualIdx;
-            maxIdx = 65;
+            maxIdx = 66;
             names = s_newFxNames; // @gen:newfx_count
             visualIdx = 0;
             (void)names;
@@ -547,6 +562,8 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_TriggerExplosion(VC_MAT_FIRE, s_prefabStartPos, 1.5f, false);
           } else if (s_testIndex == 64) { /* RADIAL BURST E1A */
               PostFX_RadialBurst(s_prefabStartPos, 0.18f, 0.7f);
+          } else if (s_testIndex == 65) { /* SEQUENCE ENVELOPE E3 */
+              { VFX_Sequence *sq = VFX_SeqPreset(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 0.35f, 0.10f, 0.35f, 0.5f); if (sq) { VFX_SeqAt(sq, 0.00f, (VFX_Beat){ .kind = VFX_BEAT_COMPOSE, .cb = VFXTest_SeqPuff }); VFX_SeqAt(sq, 0.35f, (VFX_Beat){ .kind = VFX_BEAT_COMPOSE, .cb = VFXTest_SeqBurst }); VFX_SeqPlay(sq); } };
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
               s_isPlayingMesh = true;
@@ -697,6 +714,8 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_TriggerExplosion(VC_MAT_FIRE, s_prefabStartPos, 1.5f, false);
           } else if (s_testIndex == 64) { /* RADIAL BURST E1A */
               PostFX_RadialBurst(s_prefabStartPos, 0.18f, 0.7f);
+          } else if (s_testIndex == 65) { /* SEQUENCE ENVELOPE E3 */
+              { VFX_Sequence *sq = VFX_SeqPreset(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 0.35f, 0.10f, 0.35f, 0.5f); if (sq) { VFX_SeqAt(sq, 0.00f, (VFX_Beat){ .kind = VFX_BEAT_COMPOSE, .cb = VFXTest_SeqPuff }); VFX_SeqAt(sq, 0.35f, (VFX_Beat){ .kind = VFX_BEAT_COMPOSE, .cb = VFXTest_SeqBurst }); VFX_SeqPlay(sq); } };
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
               s_isPlayingMesh = true;
@@ -920,7 +939,7 @@ void VFXTest_DrawHUD(void)
         const char **names;
         int gi;
         int vIdx;
-        maxIdx = 65;
+        maxIdx = 66;
         names = s_newFxNames; // @gen:newfx_count
         vIdx = 0;
         (void)names;
@@ -990,6 +1009,7 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
     case 61: VFX_ComposeStreakFlare(pos, 1.5f, WHITE); break;
     case 62: VFX_TriggerExplosion(VC_MAT_FIRE, pos, 1.5f, false); break;
     case 64: PostFX_RadialBurst(pos, 0.18f, 0.7f); break;
+    case 65: { VFX_Sequence *sq = VFX_SeqPreset(pos, VC_MAT_FIRE, 1.0f, 0.35f, 0.10f, 0.35f, 0.5f); if (sq) { VFX_SeqAt(sq, 0.00f, (VFX_Beat){ .kind = VFX_BEAT_COMPOSE, .cb = VFXTest_SeqPuff }); VFX_SeqAt(sq, 0.35f, (VFX_Beat){ .kind = VFX_BEAT_COMPOSE, .cb = VFXTest_SeqBurst }); VFX_SeqPlay(sq); } }; break;
     default: break;
     }
 // @gen:newfx_render_trigger end

@@ -2159,3 +2159,85 @@ the file→event table users drop assets into.
 - Known gaps: `PlaySound` mono-voice (rapid casts cut each other off — add `LoadSoundAlias`
   pool later); online clients only hear cast (via mirror) + music, not
   host-side hit/clash/explosion yet.
+
+---
+
+## VFX_Sequence — the choreography layer (Đợt E / E3)
+
+`core/composition/vfx_sequence.h`. A sequence is a **beat track**: you say what
+happens and *when*, and the pool fires it. It exists because every skill used to
+hand-code its own phase timing, so the
+`anticipation → burst → sustain → dissipate` envelope that makes an effect
+readable was accidental and drifted between skills.
+
+### The shape of a call
+
+```c
+VFX_Sequence *s = VFX_SeqBegin(pos, VC_MAT_FIRE, 1.0f);
+VFX_SeqAt(s, 0.00f, (VFX_Beat){ .kind = VFX_BEAT_COMPOSE, .cb = MyWindup });
+VFX_SeqAt(s, 0.20f, (VFX_Beat){ .kind = VFX_BEAT_COMPOSE, .cb = MyBoom });
+VFX_SeqAt(s, 0.20f, (VFX_Beat){ .kind = VFX_BEAT_SHAKE,  .a = 0.4f });
+VFX_SeqAt(s, 0.20f, (VFX_Beat){ .kind = VFX_BEAT_RADIAL, .a = 0.16f, .b = 0.45f });
+VFX_SeqPlay(s);                 // returns a handle; keep it only to Stop early
+```
+
+Beats may be added in any order — they are sorted on `VFX_SeqPlay`. Adding after
+Play is ignored (and warned): the track is fixed once it starts.
+
+### A `VFX_Compose*` needs a 3-line adapter
+
+A beat calls `fn(pos, scale, ud)`, so wrap the composition:
+
+```c
+static void MyBoom(Vector3 pos, float scale, void *ud) {
+    (void)ud;
+    VFX_ComposeImpact(pos, EFFECT_PRESET_FIRE_EXPLOSION, 1.2f * scale);
+}
+```
+
+`scale` arrives pre-multiplied by the sequence's scale, so one sequence authored
+at 1.0 scales as a whole.
+
+### Take the envelope for free
+
+```c
+VFX_Sequence *s = VFX_SeqPreset(pos, VC_MAT_FIRE, 1.0f,
+                                0.15f,   // anticipation
+                                0.10f,   // burst
+                                0.40f,   // sustain
+                                0.50f);  // dissipate
+// then add YOUR compose beats — the preset supplies light/shake/warp/smear only
+```
+
+The preset deliberately does **not** fill in hitstop (that stops the world — a
+gameplay decision a preset must not impose) or COMPOSE beats (it cannot know
+what your effect spawns, only when it should land).
+
+### What goes on the track, and what must not
+
+`VFX_BEAT_COMPOSE` and `VFX_BEAT_CALLBACK` run the same mechanism but mean
+different things, and the split is load-bearing: a future quality-tier filter may
+drop COMPOSE beats on a weak device, but must never drop CALLBACK — that is
+where gameplay and audio hang.
+
+**Keep damage off the track.** The `TAIJI_LOI` port (the E3 reference case) keeps
+`Entity_ApplyAoEDamage` at cast time and puts only the visuals on beats. Moving
+the hit onto a beat would delay it by the bolt's travel time and change gameplay
+and netcode timing — a VFX change has no business doing that.
+
+### The clock
+
+Sequences advance on the **scaled** dt (post `TimeFX_Apply`), so a sequence that
+fires its own hitstop also stretches its own remaining beats — that stretch is
+the intended feel, and it keeps the sequence in sync with the particles it
+spawned. `VFX_SeqSetUnscaled(s, true)` opts out, for UI flourishes and anything
+that must keep wall-clock time through a hitstop.
+
+### Pools
+
+`VFX_SEQ_MAX = 16` sequences × `VFX_SEQ_MAX_BEATS = 24` beats, static. A full
+pool recycles the oldest **playing** sequence (never one still being authored —
+someone holds that pointer) and logs once. Frame spikes never drop beats: a
+single long frame fires every beat it jumped over, in order.
+
+Live demo: NEW FX tab → `SEQUENCE ENVELOPE E3`.

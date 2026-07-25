@@ -18,6 +18,7 @@
 #include "core/skill_manager.h"
 #include "core/vfx_proc_ray.h"
 #include "core/emitter_system.h"
+#include "core/composition/vfx_sequence.h"
 #include "core/color_gradient.h"
 #include "core/utils_math.h"
 #include "core/mesh_adjacency.h"
@@ -80,6 +81,11 @@ void VFX_Compose_Update(float dt)
     VC_Orbital_Update(dt);
     VC_CharacterAura_Update(dt);
 // @gen:archetype_update end
+    // E3 — the choreography layer rides the same single main.c wiring as the
+    // archetypes above (spec §E3: "needs no main.c edit"). `dt` here is already
+    // post-TimeFX_Apply, which is the scaled clock sequences are specified to
+    // run on; VFX_Sequence_Update takes the raw one itself for `unscaled` ones.
+    VFX_Sequence_Update(dt);
 }
 
 void VFX_Compose_Draw3D(Camera3D cam)
