@@ -256,6 +256,22 @@ void VFX_ComposeMagicFilamentsOnPlane(Vector3 center, Vector3 normal, float scal
 void VFX_ComposeShardDebris(Vector3 pos, int count, float speed, VC_MaterialId matId);
 void VFX_ComposeCrownSplash(Vector3 pos, float radius, float height, float duration, VC_MaterialId matId);
 
+// F4 — Character aura. Three layers: discrete motes crossing the silhouette
+// (the layer that actually reads as an aura), a breathing shell + ground
+// contact, and a real VFXLight tracking the agent so the character is lit BY
+// their own aura (needs E2). Attaches to an agent and follows it via
+// SkillManager_GetAgentPos.
+//
+// Long-lived and per-agent, so unlike a fire-and-forget composition it must be
+// released: call VFX_KillCharacterAura on cleanse/death. It also self-releases
+// when the agent stops resolving (despawn), so a missed Kill costs one slot
+// until then rather than leaking forever. Re-attaching to an agent that already
+// has one RETUNES it instead of stacking a second.
+// Returns a handle, or the recycled slot's handle when the pool (8) is full.
+int  VFX_ComposeCharacterAura(int agentId, VC_MaterialId matId, float intensity);
+void VFX_AuraSetIntensity(int handle, float intensity01); // ramped, never popped
+void VFX_KillCharacterAura(int handle);
+
 // @gen:vc_declarations begin
 void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
 void VFX_ComposeChainLink(VC_MaterialId matId, Vector3 start, Vector3 end, float width, float sag, float progress, float time);

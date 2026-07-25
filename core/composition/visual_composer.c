@@ -63,6 +63,7 @@
 #include "common/vc_mesh_electricity.inl"
 #include "common/vc_crown_splash.inl"
 #include "common/vc_orbital.inl"
+#include "common/vc_character_aura.inl"
 // @gen:archetype_includes end
 // No Update/Draw pair — included for their VFX_Compose* entry points only:
 #include "common/vc_particle_upgrades_test.inl"
@@ -77,6 +78,7 @@ void VFX_Compose_Update(float dt)
     VC_MeshElectricity_Update(dt);
     VC_CrownSplash_Update(dt);
     VC_Orbital_Update(dt);
+    VC_CharacterAura_Update(dt);
 // @gen:archetype_update end
 }
 
@@ -90,5 +92,6 @@ void VFX_Compose_Draw3D(Camera3D cam)
     VC_MeshElectricity_Draw3D(cam);
     VC_CrownSplash_Draw3D(cam);
     VC_Orbital_Draw3D(cam);
+    VC_CharacterAura_Draw3D(cam);
 // @gen:archetype_draw end
 }

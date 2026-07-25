@@ -36,7 +36,9 @@
       "VFX_BeginSmokeColumnBatch",
       "VFX_EndSmokeColumnBatch",
       "VFX_BeginWaterStreams",
-      "VFX_EndWaterStreams"
+      "VFX_EndWaterStreams",
+      "VFX_AuraSetIntensity",
+      "VFX_KillCharacterAura"
     ],
     "complex_multi_arg": [
       "VFX_ComposeTriggerImpactBurst",
@@ -60,7 +62,8 @@
       "vc_mesh_electricity.inl",
       "vc_particle_upgrades_test.inl",
       "vc_trail_upgrades_test.inl",
-      "vc_trail_ribbon_test.inl"
+      "vc_trail_ribbon_test.inl",
+      "vc_character_aura.inl"
     ]
   },
   "entries": [
@@ -543,6 +546,13 @@
       "_auto": true,
       "type": "oneshot",
       "trigger_call": "VFX_TriggerExplosion(VC_MAT_FIRE, $POS, 1.5f, false)"
+    },
+    {
+      "fn": "VFX_ComposeCharacterAura",
+      "label": "CHARACTER AURA",
+      "category": "taiji",
+      "type": "continuous",
+      "draw_call": "{ static int auraH = -1; if ($PROG < 0.02f && auraH < 0) auraH = VFX_ComposeCharacterAura(Sandbox_GetPlayerAgentId(), VC_MAT_QI, 0.0f); if (auraH >= 0) VFX_AuraSetIntensity(auraH, ($PROG < 0.80f) ? ($PROG / 0.80f) : (1.0f - ($PROG - 0.80f) / 0.20f)); if ($PROG >= 0.99f && auraH >= 0) { VFX_KillCharacterAura(auraH); auraH = -1; } }"
     }
   ],
   "overrides": {
@@ -581,6 +591,12 @@
       "category": "fire",
       "type": "continuous",
       "draw_call": "VFX_ComposeFlameVolume($POS, VC_MAT_FIRE, 1.0f, 1.0f)"
+    },
+    "VFX_ComposeCharacterAura": {
+      "label": "CHARACTER AURA",
+      "category": "taiji",
+      "type": "continuous",
+      "draw_call": "{ static int auraH = -1; static bool auraDone = false; if ($PROG < 0.5f) auraDone = false; if (!auraDone && auraH < 0) auraH = VFX_ComposeCharacterAura(Sandbox_GetPlayerAgentId(), VC_MAT_QI, 0.0f); if (auraH >= 0) VFX_AuraSetIntensity(auraH, ($PROG < 0.80f) ? ($PROG / 0.80f) : (1.0f - ($PROG - 0.80f) / 0.20f)); if ($PROG >= 0.99f && auraH >= 0) { VFX_KillCharacterAura(auraH); auraH = -1; auraDone = true; } }"
     }
   }
 }
