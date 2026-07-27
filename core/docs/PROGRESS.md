@@ -1088,3 +1088,225 @@ NEW FX index 68 `DISSOLVE EXIT`; suite 6/6.
 
 **E5 batch status:** E5.1 GlintSparkle · E5.2 RuneCircle · E5.3 ChargeConverge ·
 E5.4 DissolveExit — all four landed. E6 is the next batch in the spec.
+
+---
+
+## E4 — fire flipbook rewritten as a fluid SIM, not a render (27/07/2026)
+
+`scripts/sim_fire_flipbook.py`. Replaces the Blender path for fire
+(`gen_fire_flipbook.py` is left in place but is no longer the source of the
+shipped sheet).
+
+**Why a rewrite rather than a re-tune.** The E4 audit measured the Blender sheet
+at 4.1% cell coverage and height/width 1.00 — it was rendering the same
+SPHERICAL puff as the smoke sheet, only smaller. No parameter reaches flame
+morphology from a spherical domain. Second reason: Cycles volume rendering is
+stochastic, and E4 follow-up 4 traced the writhing dissipation rim to exactly
+that. A grid solver is deterministic — same seed, same frames.
+
+**What it is:** a 3D incompressible fluid on a uniform grid — semi-Lagrangian
+advection, Jacobi pressure projection, buoyancy, vorticity confinement, T^4
+radiative cooling that converts flame into soot, fuel cutting off at 62% so the
+tail of the sheet is the flame dying rather than a hard loop. numpy only
+(trilinear interpolation is hand-written; scipy is not installed here).
+
+**Two commands, as asked:** `--quick` (~11 s, 512px) for iterating, bare (~2.5
+min, 2048px) for the sheet that ships. `--buoyancy` / `--cooling` / `--swirl` are
+on the command line, so shape is swept without editing code, and every run
+prints coverage + height/width and WARNS when the result is still puff-shaped.
+
+**Three failures, each caught by a number rather than by eye**
+
+1. **Empty sheet (coverage 0.0%).** Semi-Lagrangian advection is unconditionally
+   stable, which is exactly why it failed silently: instead of blowing up, the
+   solver kept running while every parcel was traced off the grid. Probing the
+   fields showed |v| going 26 → 146 cells/step in eight steps. Fixed with a CFL
+   clamp plus drag; `dt` dropped 0.55 → 0.12.
+2. **A flat bright LID across every cell** — gas piling against the ceiling. The
+   hard 3-row damp was replaced with a graded outflow over the top eighth.
+3. **A hard bright BAR along the bottom** — the injection layer is a boundary
+   condition, not part of the flame; it is now faded out of the projection.
+
+Also: normalisation is done ONCE across the whole sheet, not per frame.
+Per-frame would rescale a dying flame to look exactly as bright as a roaring
+one, i.e. delete the intensity arc that an authored flipbook exists to carry.
+
+Current numbers at `--buoyancy 19 --cooling 2.0 --swirl 4.2`: coverage 41.3%,
+height/width 1.18. Above the 1.0 the Blender sheet managed, still below the
+1.3 target — the remaining gap is a look sweep, which is what `--quick` is for.
+
+### E4 fire — Mantaflow + Eevee pipeline (27/07/2026)
+
+Owner: *"nếu thấy xài qua blender không hiệu quả có thể dùng Mantaflow trực tiếp
+mà"*. Checked rather than argued, and the check changed the conclusion:
+
+- **There is no standalone Mantaflow to install** — `pip` has no such package;
+  using the C++ library directly means building it from source.
+- **Blender 3.6 IS Mantaflow.** The Fluid modifier is Mantaflow embedded.
+
+So the earlier failure was never "Blender is not good enough". It was two other
+things: a cubic/spherical setup that cannot produce flame morphology, and
+**Cycles** — path-traced volumes are stochastic, which is what E4 follow-up 4
+traced the writhing rim to. Mantaflow for the SIM, **Eevee** for the render
+(rasterised volumes, so the noise is gone by construction, not by sample count).
+
+`scripts/manta_fire_flipbook.py` (bake + render) and `scripts/pack_flipbook.py`
+(pack + audit). Split because the bake needs Blender's interpreter and the pack
+needs numpy/PIL — and because a re-pack then costs seconds instead of a re-bake.
+
+    blender --background --python scripts/manta_fire_flipbook.py -- --quick
+    python3 scripts/pack_flipbook.py build_cache_manta/frames --grid 8 --out fire_atlas_manta_8x8.png
+
+Quick bake is ~5 s, render ~15 s. Knobs on the command line: `--buoyancy`,
+`--vorticity`, `--burn`, `--flame-smoke`, `--emission`.
+
+**Measured against the audit that failed the old sheet:**
+
+| | old (Cycles) | numpy solver | Mantaflow + Eevee |
+|---|---|---|---|
+| height/width | 1.00 | 1.18 | **1.43** |
+| cell coverage | 4.1% | 41% | 15.6% (smoke: 19.6%) |
+
+**Four bugs, each found by a measurement rather than by eye**
+1. `argparse.parse_args()` with no argument reads `sys.argv`, which under
+   Blender still holds Blender's own flags — must be `parse_args(argv)`.
+2. The fuel emitter rendered as a solid white blob in every cell: it is a
+   boundary condition, `hide_render = True`.
+3. **Emission-only volumes render bright but nearly TRANSPARENT** — Eevee's
+   alpha comes from extinction, not emission, so the flame measured rgb 255 /
+   alpha 10 and the audit read the sheet as 64/64 empty frames. `pack_flipbook`
+   now folds luminance into alpha (`--alpha-from-luma`).
+4. Emission gain 25 clipped every flame pixel to white and threw away the
+   temperature gradient; exposed as `--emission`.
+
+**Known limitation, stated rather than hidden:** with alpha derived from
+luminance the sheet carries ONE channel of information — it cannot express
+"thick but cool" (smoke). The fix is a two-pass render (density-only pass → A,
+flame-only pass → RGB), roughly 20 lines, not yet done. Also note the grey
+histogram inside the mask is self-referential while alpha comes from luma: the
+region selected by alpha is by definition the bright region, so that particular
+measurement cannot judge the gradient.
+
+`scripts/sim_fire_flipbook.py` (pure numpy) stays as the no-Blender fallback.
+
+### E4 — the flipbook pipeline settles: Mantaflow sim + Taichi render (27/07/2026)
+
+Owner asked which to standardise on for the remaining flipbooks. Answer, with
+the checks behind it: **both, split by what each is actually good at.**
+
+- **Mantaflow does the SIM.** Production solver (MacCormack, calibrated
+  fuel → flame → soot combustion, obstacles, wavelet turbulence). Reproducing it
+  by hand is thousands of lines, and every future sheet — explosion, shockwave,
+  dust, steam — needs a *different* physical model that it already has.
+  There is no standalone build to install (`pip` has no mantaflow); Blender's
+  Fluid modifier IS Mantaflow.
+- **Taichi does the RENDER.** Verified installed and running on Metal:
+  128³, 2.86 ms/kernel — about 1000x per voxel over the numpy solver.
+- **The link that makes the split possible, verified before committing to it:**
+  `density_grid`, `flame_grid`, `temperature_grid`, `velocity_grid` are readable
+  straight from Blender's Python. No OpenVDB, no build step.
+
+**Why not just render in Eevee.** Its alpha comes from EXTINCTION, so an
+emissive flame renders bright and nearly transparent (measured: rgb 255 /
+alpha 10). That forced alpha to be faked from luminance, which collapses the
+sheet to ONE channel — it can no longer express "thick but cool" (smoke) apart
+from "hot". That is not a tuning problem; it is how raster volumes work.
+
+**Three scripts, deliberately separate**
+
+    blender --background --python scripts/manta_bake.py -- --preset fire --quick
+    python3 scripts/ti_render.py build_cache/fire --cell 128 --supersample 2
+    python3 scripts/pack_flipbook.py build_cache/fire/frames --grid 8 \
+        --alpha-from-luma 0 --out fire_atlas_8x8_v2.png
+
+Bake ~8 s, render ~5 s, pack instant (at --quick). The split means a look change
+never re-bakes, and one bake feeds any number of sheets. New effects are a
+PRESETS entry in `manta_bake.py`, not a new script (`fire`, `smoke`, `explosion`
+are in already).
+
+**Channel layout** — R = flame emission (multiply by the black-body ramp at the
+call site, F3; the additive population), G = smoke density (the alpha-blended,
+LIT population, F1b), B = reserved (motion vectors / rim / 6-way lighting),
+A = true opacity from transmittance. One sheet now feeds BOTH populations the
+blend law requires.
+
+**Result**: height/width **2.02** (Cycles sheet: 1.00), flame covers 26.9% of the
+sheet and smoke 35.7%. The audit now reports the two channels separately — the
+old 19.6% target was measured on a sheet where alpha *was* the smoke, so
+comparing a two-channel sheet against it is meaningless.
+
+**One sim fix found by the render:** soot was conserved, so it filled the domain
+within a dozen frames and the silhouette became the box (66.8% coverage, a
+rectangular outline). `dissolve` is now on in the fire preset.
+
+**Known limit:** the dumped grids are BASE resolution — Mantaflow's wavelet
+upres lives in a grid Python does not expose. Raise `--res` instead; the GPU
+ray-marcher can afford it.
+
+### E4 flipbook pipeline — packaged, and two renderer bugs the audit could not see (27/07/2026)
+
+Pipeline now lives in `scripts/flipbook/` (`make.py` runs all three stages;
+`bake.py` / `render.py` / `pack.py` / `fb_presets.py` / `selftest.py` / README).
+Adding an effect is a `fb_presets.py` entry — `fire`, `smoke`, `explosion`,
+`dust` are in. `make.py --no-bake` re-renders from grids already on disk, which
+is the loop that matters: the look never needs a re-bake.
+
+**Two bugs in the renderer, both invisible to the audit** because the audit
+measures the sheet and the sheet was wrong in the same direction as the
+measurement:
+
+1. **Frames written transposed** — Taichi fields index `[x, y]`, numpy/PIL read
+   axis 0 as the row. The flame "rose" along the image's X axis. Caught by
+   measuring centroids: row-centroid sat at 128 in every frame while the
+   column-centroid drifted 236 → 198. **Every height/width number reported
+   before this fix was meaningless** (the 2.02 and 2.13 figures included).
+2. **Each axis stretched to the full square cell**, ignoring the domain's
+   aspect. A 34x34x96 grid came out smeared 2.8x horizontally. This one bug
+   produced three complaints that sounded unrelated — "nhìn đâu giống lửa",
+   "khói hình dạng kỳ", "lan hết ô → bị cắt hình".
+
+**`selftest.py`** now renders a synthetic column of known shape and asserts the
+result is tall, unclipped, and rising. No Blender, ~5 s. A real bake cannot test
+this: nobody knows what the flame *should* look like, so a distorted one just
+looks vaguely wrong.
+
+**Correction to what was written earlier.** The `bake_all()` failure
+(`'NoneType' object has no attribute 'getDataPointer'`) was blamed on a stale
+Mantaflow cache, and that went into the README. It is wrong: a 20-line minimal
+repro with `--factory-startup` and a fresh cache fails identically, on a machine
+where the same script worked half an hour earlier. It is an environment fault
+(restart Blender, then the machine), not a pipeline bug. The README now says so.
+
+**Also fixed:** a failed bake used to be silent — the next stage rendered the
+OLD grids and every measurement afterwards described the previous sheet.
+`bake.py` returns non-zero on a bake exception and on a short frame count, and
+`make.py` stops.
+
+**Blocked:** the fire sheet cannot be regenerated until Mantaflow bakes again.
+
+### E4 fire sheet — SHIPPED (27/07/2026)
+
+`assets/textures/fire_atlas_8x8.png`, 2048x2048, produced entirely by
+`scripts/flipbook/` (Mantaflow bake 512 s at res 112 → grid 70x70x112 → Taichi
+render → pack).
+
+| | Cycles sheet (E4 audit) | this one |
+|---|---|---|
+| height/width | 1.00 (a spherical puff) | **1.73** |
+| cell coverage | 4.1% | 18.1% (smoke sheet, which works: 19.6%) |
+| channels | 1 (greyscale) | R flame 9.1% · G smoke 9.9% · true A |
+
+**The bake failure was `cache_type = 'ALL'`, not the environment.** It is a
+valid enum value so nothing warns, but with it set `bpy.ops.fluid.bake_all()`
+dies with `'NoneType' object has no attribute 'getDataPointer'`. Blender's
+default REPLAY works, and under REPLAY the solver steps as frames are set —
+exactly what the dump loop walks anyway.
+
+**Method note, because two wrong diagnoses came first.** It was blamed on a
+stale cache (wiping `build_cache` did make one run succeed — coincidence), then
+on a broken Blender install (restarting Blender changed nothing). What actually
+found it: build a MINIMAL scene that bakes cleanly with Blender's defaults, then
+re-enable one setting at a time — cachedir OK, resolution OK, adaptive-domain
+OK, `cache_type='ALL'` FAILED. When "the same script worked half an hour ago",
+the temptation is to reach for environment state; the reliable move is to walk
+from a working configuration toward the broken one, one variable per step.
