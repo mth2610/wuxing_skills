@@ -50,6 +50,20 @@ uniform float u_scatterStrength;  // forward-scatter / backlit glow
 // the alpha falloff, so what is left can only be the lighting.
 uniform float u_debugNormal;
 uniform float u_normalBulge;      // 1 = true hemisphere; >1 exaggerates the dome
+// Đợt E — EMISSIVE HDR BOOST. The reason particles had no blown-out core.
+//
+// Everything upstream is capped at 1.0: the vertex colour is rlColor4ub (8-bit),
+// emissiveCurve is applied CPU-side and clamped at 255, and the texture is [0,1].
+// So a single emissive sprite could never write more than 1.0 — while the scene
+// buffer is R16F and happily holds 10.0. ACES then maps 1.0 to ~0.8, which is
+// exactly the bloom threshold, so nothing ever blew out and nothing bloomed.
+// The HDR pipeline existed and particles never used its headroom.
+//
+// Pushing the emissive population above 1.0 is what gives the white-hot core
+// with a coloured rim: the tonemapper rolls the excess off to white and bloom
+// picks up what is over threshold. Set per BATCH (>1 only for unlit/emissive
+// particles); smoke must stay at 1.0 or it would emit light it should occlude.
+uniform float u_emissiveBoost;
 uniform float u_analyticUV;       // 1 = quad-local UV (default), 0 = derivative fallback
 // Đợt E / E4 — atlas grid (cols, rows); (1,1) = not an atlas.
 //
@@ -80,7 +94,13 @@ void main()
 
     if (u_lightingStrength <= 0.0)
     {
-        finalColor = base;        // byte-identical to the pre-F1 shader
+        // EMISSIVE particles take this branch — strength is set to 0 for them
+        // per batch — so the HDR boost has to be applied HERE, not only at the
+        // lit output below. Missing that is why the first attempt changed
+        // nothing despite the uniform arriving: sparks and glints are exactly
+        // the population that never reaches the lit path.
+        // At boost 1.0 this is still byte-identical to the pre-F1 shader.
+        finalColor = vec4(base.rgb * u_emissiveBoost, base.a);
         return;
     }
 
@@ -219,5 +239,6 @@ void main()
     // ACES in post_fx rolls the highlights off, and clamping here would flatten
     // exactly the bright rim this whole shader exists to produce.
     vec3 shaded = base.rgb * lit;
-    finalColor = vec4(mix(base.rgb, shaded, u_lightingStrength), base.a);
+    // Boost is 1.0 for lit batches, so this is a no-op for smoke and dust.
+    finalColor = vec4(mix(base.rgb, shaded, u_lightingStrength) * u_emissiveBoost, base.a);
 }

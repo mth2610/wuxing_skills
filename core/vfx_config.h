@@ -72,6 +72,19 @@ typedef struct {
     // 0 = VFX_BLEND_ALPHA (default), so nothing already written changes.
     int blendMode;         // VFX_BlendMode
 
+    // Emissive intensity boost for HDR bloom (1.0 = default, >1.0 = glowing core).
+    // Mirrors GpuParticleConfig.emissiveBoost so the CPU and GPU particle paths
+    // take the same value — the glowing core existed only on the GPU side until
+    // this landed.
+    //
+    // The GPU path can bake the boost straight into the colour because it stores
+    // colour as FLOAT. The CPU path cannot: its vertices go through rlColor4ub,
+    // which is 8-bit and caps at 1.0 (rlColor4f just converts down to the same
+    // thing). So here the value rides a shader uniform instead, and it takes part
+    // in the draw batching the way `unlit` does — particles with different boosts
+    // land in different batches.
+    float emissiveBoost;
+
     // EMISSIVE opt-out. Lighting is a MULTIPLY, so anything that emits its own
     // light must not go through it — a flame body multiplied by a dim night sky
     // turns brown, which is exactly what happened when F1's lighting was applied

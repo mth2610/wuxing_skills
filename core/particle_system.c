@@ -40,6 +40,7 @@ typedef struct
   unsigned int texId;   // 0 = use the batch default passed to DrawParticles
   int blendMode;        // VFX_BlendMode — see the blend law in vfx_config.h
   int unlit;            // 1 = emissive, skip the lighting multiply
+  float emissiveBoost;  // >1 = HDR headroom for a glowing core (see vfx_config.h)
   const SkillCurve *radiusCurve;
   const SkillCurve *speedCurve;
   const SkillCurve *alphaCurve;
@@ -130,6 +131,11 @@ static float s_ambientGain      = 0.25f; // gain, lighting just dims the smoke
 static float s_lightAzimuth     = -1.0f; // <0 = real sun; >=0 = debug override
 static float s_analyticUV       = 1.0f;  // 0 only if a SpriteAnim atlas is in use
 static int   s_locAtlasGrid     = -1;
+static int   s_locEmissiveBoost = -1;
+// How far above 1.0 an EMISSIVE particle writes into the HDR scene buffer. 1.0
+// reproduces the old look exactly (no core, no bloom); ~3 gives the AAA
+// white-hot core with a coloured rim. Only applied to unlit/additive batches.
+static float s_emissiveBoost    = 1.0f;  // GLOBAL multiplier; per-particle value carries the intent
 
 void InitParticleSystem(void)
 {
@@ -173,6 +179,7 @@ void SpawnParticle(ParticleConfig config)
   p->texId = config.render.texture.id;
   p->blendMode = config.render.blendMode;
   p->unlit = config.render.unlit;
+  p->emissiveBoost = (config.render.emissiveBoost > 0.0f) ? config.render.emissiveBoost : 1.0f;
   p->radiusCurve = config.radiusCurve;
   p->speedCurve = config.speedCurve;
   p->alphaCurve = config.alphaCurve;
@@ -487,6 +494,7 @@ static void ParticleLighting_Begin(Camera3D camera)
     Tuning_RegisterFloat("particle_ambient_gain", &s_ambientGain, s_ambientGain);
     Tuning_RegisterFloat("particle_light_azimuth", &s_lightAzimuth, s_lightAzimuth);
     Tuning_RegisterFloat("particle_analytic_uv", &s_analyticUV, s_analyticUV);
+    Tuning_RegisterFloat("particle_emissive_boost", &s_emissiveBoost, 1.0f);
   }
 
   s_litActive = false;
@@ -555,6 +563,7 @@ static void ParticleLighting_Begin(Camera3D camera)
       s_locLightAzimuth    = GetShaderLocation(s_litShader, "u_lightAzimuth");
       s_locAnalyticUV      = GetShaderLocation(s_litShader, "u_analyticUV");
       s_locAtlasGrid       = GetShaderLocation(s_litShader, "u_atlasGrid");
+      s_locEmissiveBoost   = GetShaderLocation(s_litShader, "u_emissiveBoost");
     }
     else
     {
@@ -586,6 +595,8 @@ static void ParticleLighting_Begin(Camera3D camera)
   SetShaderValue(s_litShader, s_locAmbientGain, &s_ambientGain, SHADER_UNIFORM_FLOAT);
   SetShaderValue(s_litShader, s_locLightAzimuth, &s_lightAzimuth, SHADER_UNIFORM_FLOAT);
   SetShaderValue(s_litShader, s_locAnalyticUV, &s_analyticUV, SHADER_UNIFORM_FLOAT);
+  { float one = 1.0f;   // lit default; flipped per batch for emissive particles
+    if (s_locEmissiveBoost >= 0) SetShaderValue(s_litShader, s_locEmissiveBoost, &one, SHADER_UNIFORM_FLOAT); }
   { // default: not an atlas. Flipped per batch in the draw loop.
     float grid[2] = {1.0f, 1.0f};
     if (s_locAtlasGrid >= 0) SetShaderValue(s_litShader, s_locAtlasGrid, grid, SHADER_UNIFORM_VEC2);
@@ -624,6 +635,13 @@ static void ParticleLighting_SetStrength(float v)
   if (!s_litActive) return;
   rlDrawRenderBatchActive();
   SetShaderValue(s_litShader, s_locLightStrength, &v, SHADER_UNIFORM_FLOAT);
+}
+
+static void ParticleLighting_SetEmissive(float v)
+{
+  if (!s_litActive || s_locEmissiveBoost < 0) return;
+  rlDrawRenderBatchActive();
+  SetShaderValue(s_litShader, s_locEmissiveBoost, &v, SHADER_UNIFORM_FLOAT);
 }
 
 static void ParticleLighting_End(void)
@@ -696,6 +714,7 @@ void DrawParticles(Camera3D camera, Texture2D texture)
   // atlas particle necessarily carries a different texture from a plain one, so
   // this never splits a batch that would not have split anyway.
   int curGridC = -1, curGridR = -1;
+  float curBoost = -1.0f;
 
   for (int a = 0; a < s_activeCount; a++)
   {
@@ -704,8 +723,11 @@ void DrawParticles(Camera3D camera, Texture2D texture)
     unsigned int want = p->texId ? p->texId : texture.id;
     int wantGridC = (p->spriteAnim ? p->spriteAnim->cols : 1);
     int wantGridR = (p->spriteAnim ? p->spriteAnim->rows : 1);
+    // Global multiplier on top of the per-particle value, so the whole look can
+    // be dialled without touching every call site.
+    float wantBoost = p->emissiveBoost * s_emissiveBoost;
     if (want != curTex || p->blendMode != curBlend || p->unlit != curUnlit ||
-        wantGridC != curGridC || wantGridR != curGridR)
+        wantGridC != curGridC || wantGridR != curGridR || wantBoost != curBoost)
     {
       if (curTex != 0xFFFFFFFFu) rlEnd();
       if (p->blendMode != curBlend)
@@ -726,6 +748,13 @@ void DrawParticles(Camera3D camera, Texture2D texture)
         // the legacy unlit result.
         ParticleLighting_SetStrength(p->unlit ? 0.0f : s_lightingStrength);
         curUnlit = p->unlit;
+      }
+      if (wantBoost != curBoost)
+      {
+        // Occluding particles never emit: boosting smoke would make it give off
+        // light it is supposed to block (the F1b blend law).
+        ParticleLighting_SetEmissive(p->unlit ? wantBoost : 1.0f);
+        curBoost = wantBoost;
       }
       if (wantGridC != curGridC || wantGridR != curGridR)
       {

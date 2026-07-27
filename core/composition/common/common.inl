@@ -11,6 +11,7 @@
 #include "vc_black_hole.inl"
 #include "vc_ground_aura.inl"
 #include "vc_smoke_energy.inl"
+#include "vc_glint_sparkle.inl"
 // @gen:common_includes begin
 // 6 include(s) — auto-managed by sync_vfx_test.py
 #include "vc_beam.inl"

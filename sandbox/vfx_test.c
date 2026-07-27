@@ -97,7 +97,7 @@ static const char *s_meshNames[] = {
     "DISC", "RING", "CONE", "TORNADO", "CYLINDER", "SPHERE", "SHOCKWAVE", "PYRAMID", "TETRAHEDRON"};
 
 // @gen:newfx_names begin
-// 66 entries — auto-managed by sync_vfx_test.py
+// 67 entries — auto-managed by sync_vfx_test.py
 static const char* s_newFxNames[] = {
     "BURN GROUND", "IMPACT FIRE", "CAST FIRE", "SPLASH", "BUBBLES", "ICE CRYSTAL",
     "PUDDLE", "WATER STREAM", "IMPACT WATER", "CAST WATER", "GLOW VINE", "IMPACT WOOD",
@@ -110,6 +110,7 @@ static const char* s_newFxNames[] = {
     "ENERGY FLOW", "LIGHTNING BOLT", "PROC BEAM", "BEAM", "ORBITALS", "LEAF SWIRL",
     "CHAIN LINK", "CROWN SPLASH", "SMOKE PUFF", "FLAME VOLUME", "EMBER DRIFT", "GLINT BURST",
     "SHOCKWAVE RING", "STREAK FLARE", "EXPLOSION", "CHARACTER AURA", "RADIAL BURST E1A", "SEQUENCE ENVELOPE E3",
+    "GLINT SPARKLE",
 };
 // @gen:newfx_names end
 
@@ -122,7 +123,7 @@ static const int s_newFxCategories[] = {
     6, 6, 6, 6, 1, 6, 6, 6, 6, 6,
     6, 1, 6, 6, 5, 6, 6, 0, 6, 6,
     6, 6, 6, 2, 6, 1, 6, 0, 0, 6,
-    1, 0, 6, 5, 6, 6,
+    1, 0, 6, 5, 6, 6, 3,
 };
 // @gen:newfx_categories end
 
@@ -469,7 +470,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             const char **names;
             int globalIdx;
             int visualIdx;
-            maxIdx = 66;
+            maxIdx = 67;
             names = s_newFxNames; // @gen:newfx_count
             visualIdx = 0;
             (void)names;
@@ -795,6 +796,7 @@ void VFXTest_Draw3D(void)
               case 54: VFX_ComposeChainLink(VC_MAT_FIRE, s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){3.0f, 0, 0}), 0.1f, 1.0f, fminf(progress, 0.99f), s_meshTime); break;
               case 57: VFX_ComposeFlameVolume(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 1.0f); break;
               case 63: { static int auraH = -1; static bool auraDone = false; if (progress < 0.5f) auraDone = false; if (!auraDone && auraH < 0) auraH = VFX_ComposeCharacterAura(Sandbox_GetPlayerAgentId(), VC_MAT_QI, 0.0f); if (auraH >= 0) VFX_AuraSetIntensity(auraH, (progress < 0.80f) ? (progress / 0.80f) : (1.0f - (progress - 0.80f) / 0.20f)); if (progress >= 0.99f && auraH >= 0) { VFX_KillCharacterAura(auraH); auraH = -1; auraDone = true; } }; break;
+              case 66: VFX_ComposeGlintSparkle(s_prefabStartPos, VC_MAT_HOLY, 1.0f, s_meshTime); break;
           }
 // @gen:newfx_draw end
         }
@@ -939,7 +941,7 @@ void VFXTest_DrawHUD(void)
         const char **names;
         int gi;
         int vIdx;
-        maxIdx = 66;
+        maxIdx = 67;
         names = s_newFxNames; // @gen:newfx_count
         vIdx = 0;
         (void)names;

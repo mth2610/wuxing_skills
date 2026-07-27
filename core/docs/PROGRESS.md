@@ -682,3 +682,97 @@ soft edge band, roughly constant across the sheet — consistent with a Cycles
 `--samples 1`, against an argparse default of 16). Re-rendering with more samples
 (or denoising) would cut it at source; a gentler dissipation tail would cut the
 rest. Nothing further is available from the engine side.
+
+---
+
+## E5.1 — VFX_ComposeGlintSparkle: LANDED (27/07/2026)
+
+`core/composition/common/vc_glint_sparkle.inl`. Anisotropic star glints over a
+Fibonacci point cloud — per the spec, nothing in the existing components did
+this.
+
+**Built only on the rebuilt foundation.** Owner's standing constraint for Đợt E:
+this is a restructure, and the F2 smoke puff is the one component that has
+actually been rebuilt, so a new component must be assembled the same way —
+F1 lit particles, the F1b blend law, `VFX_Material` colours, `vc_motion.h`
+motion. It touches none of `aura_shell` / `ground_aura` / `smoke_energy` /
+`effect_material`: those are the single-surface-plus-FBM architecture §0.1b
+diagnoses as the problem, and reusing them is exactly the character-aura mistake.
+
+**Particles, not hand-drawn quads.** The spec's per-glint `VC_Flicker01` twinkle
+reads as "draw N quads yourself"; routing it through the particle system instead
+inherits the blend law, batching, soft-depth and pooling, and avoids adding
+another hand-rolled geometry path. The twinkle is a spawn/death cycle on a fast-
+bloom fade curve rather than a per-frame alpha.
+
+**Blend law:** a glint EMITS, so additive + `unlit = 1`. Through the lighting
+multiply it would brown out against the night sky.
+
+**No asset dependency.** E4's `glint_star_4pt` does not exist, and the required
+fallback cannot be the stock particle texture — that is a round blob, and
+"anisotropic" is the entire point. So the star is GENERATED once into an image:
+two perpendicular lobes (long falloff along the axis, sharp across) plus a small
+round core. Closed-form, no noise hash — `fract(sin(...))` dies on Mali
+(ENGINE_LANDMINES §4), which is precisely what authored masks exist to avoid.
+An authored sheet is still preferred if one ever lands.
+
+Verified in the NEW FX tab (index 66). First capture showed nothing readable —
+diagnosed as a values question rather than a wiring one (the case was present
+and `VC_MAT_HOLY` had a bright glow), confirmed with the live knobs, then the
+defaults were raised: rate 16 → 34/s, radius 0.035–0.09 → 0.085–0.215 m.
+
+Knobs: `glint_rate`, `glint_size`, `glint_points`.
+
+---
+
+## CPU particles gain the glowing core (emissiveBoost) — 27/07/2026
+
+Owner: *"particle của chúng ta không có cái core sáng, như mấy game AAA"*, then —
+decisively — *"lõi phát sáng đã được thực thi trong GPU particle... tuy nhiên
+chưa có trong CPU particle"*. That pointer saved inventing a second design.
+
+**Why the CPU path could not have a hot core.** Everything upstream was capped
+at 1.0 and the cap was provable, not guessed:
+
+1. vertex colour is `rlColor4ub` — 8-bit, max 1.0 (`rlColor4f` merely converts
+   down to the same thing, so it is not an escape);
+2. `emissiveCurve` is applied CPU-side and clamped at 255 — it can push a colour
+   *toward* white but never *past* 1.0;
+3. `particle_lit.fs` outputs `texelColor * fragColor`, so ≤ 1.0;
+4. the scene buffer is R16F and holds 10.0 happily — the headroom existed and
+   nothing ever used it;
+5. ACES maps 1.0 to ~0.83, and the bloom threshold is 0.8, so a lone emissive
+   particle sat exactly at the threshold: no blow-out, essentially no bloom.
+
+**How the GPU path already solved it** (`compute/gpu_particle_system.c:275`): it
+bakes the boost into the colour at spawn — `d.csr = (r/255) * boost` — which
+works there because GPU particle colour is stored as FLOAT.
+
+**The CPU port.** Baking into the colour is impossible for the reason above, so
+the value rides a shader uniform instead: `u_emissiveBoost` in `particle_lit.fs`,
+and `ParticleConfig.render.emissiveBoost` mirrors `GpuParticleConfig.emissiveBoost`
+so both paths take the same number and mean the same thing. It participates in
+draw batching exactly the way `unlit` does, which makes it genuinely per-particle
+rather than per-pass. Only emissive (unlit) particles receive it — boosting smoke
+would make it emit light it is meant to occlude (F1b).
+
+**A trap worth recording.** The first attempt applied the multiply only at the
+lit output and changed nothing, despite the uniform demonstrably arriving.
+`particle_lit.fs` has an early-out at `u_lightingStrength <= 0.0` — and emissive
+particles are *exactly* the population that takes it. The boost had to be applied
+in that branch too. At boost 1.0 that branch is still byte-identical to the
+pre-F1 shader.
+
+**On the measurements.** Mean brightness over "gold" pixels showed almost nothing
+(0.83 → 0.84) and briefly suggested the feature was dead. Two confounds: the
+sample region included the tester's white crosshair, and the mean is dominated by
+low-alpha rim pixels. Measuring the *core* (95th percentile) showed the real
+behaviour — whiteness 0.87 → 0.94 at boost 20. At the shipped 4.5 the delta on
+this particular test is modest because glints overlap additively and those pixels
+are already near saturation; the boost matters most for single, non-overlapping
+sprites and for what crosses the bloom threshold.
+
+`VFX_ComposeGlintSparkle` uses 4.5 — the same value the GPU particle upgrades
+test already uses, so the two paths agree on what "glowing" means. Global
+override: `tuning.cfg → particle_emissive_boost` (1.0 = per-particle values as
+authored).

@@ -569,6 +569,13 @@
       "type": "oneshot",
       "_manual": true,
       "trigger_call": "{ VFX_Sequence *sq = VFX_SeqPreset($POS, VC_MAT_FIRE, 1.0f, 0.35f, 0.10f, 0.35f, 0.5f); if (sq) { VFX_SeqAt(sq, 0.00f, (VFX_Beat){ .kind = VFX_BEAT_COMPOSE, .cb = VFXTest_SeqPuff }); VFX_SeqAt(sq, 0.35f, (VFX_Beat){ .kind = VFX_BEAT_COMPOSE, .cb = VFXTest_SeqBurst }); VFX_SeqPlay(sq); } }"
+    },
+    {
+      "fn": "VFX_ComposeGlintSparkle",
+      "label": "GLINT SPARKLE",
+      "category": "metal",
+      "type": "continuous",
+      "draw_call": "VFX_ComposeGlintSparkle($POS, VC_MAT_HOLY, 1.0f, $TIME)"
     }
   ],
   "overrides": {
@@ -613,6 +620,12 @@
       "category": "taiji",
       "type": "continuous",
       "draw_call": "{ static int auraH = -1; static bool auraDone = false; if ($PROG < 0.5f) auraDone = false; if (!auraDone && auraH < 0) auraH = VFX_ComposeCharacterAura(Sandbox_GetPlayerAgentId(), VC_MAT_QI, 0.0f); if (auraH >= 0) VFX_AuraSetIntensity(auraH, ($PROG < 0.80f) ? ($PROG / 0.80f) : (1.0f - ($PROG - 0.80f) / 0.20f)); if ($PROG >= 0.99f && auraH >= 0) { VFX_KillCharacterAura(auraH); auraH = -1; auraDone = true; } }"
+    },
+    "VFX_ComposeGlintSparkle": {
+      "label": "GLINT SPARKLE",
+      "category": "metal",
+      "type": "continuous",
+      "draw_call": "VFX_ComposeGlintSparkle($POS, VC_MAT_HOLY, 1.0f, $TIME)"
     }
   }
 }

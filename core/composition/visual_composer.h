@@ -253,6 +253,12 @@ void VFX_BeginSmokeColumnBatch(void);
 void VFX_EndSmokeColumnBatch(void);
 
 void VFX_ComposeMagicFilamentsOnPlane(Vector3 center, Vector3 normal, float scale, float progress, Color color, float thickness, float frequency, float speed, Vector2 sourceUV);
+// E5.1 — anisotropic star glints over a Fibonacci point cloud (the holy/faith
+// signature). Continuous: call once per frame with a running `time`. `scale` is
+// the cloud radius in metres. Additive + unlit per the blend law. Needs no
+// asset: falls back to a generated 4-point star if glint_star_4pt.png is absent.
+void VFX_ComposeGlintSparkle(Vector3 center, VC_MaterialId mat, float scale, float time);
+
 void VFX_ComposeShardDebris(Vector3 pos, int count, float speed, VC_MaterialId matId);
 void VFX_ComposeCrownSplash(Vector3 pos, float radius, float height, float duration, VC_MaterialId matId);
 
