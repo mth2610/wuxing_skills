@@ -232,3 +232,30 @@ change, not just depth-mask ones — culling counts. Fixed in
 are different claims. The log proved the first and said nothing about the second;
 what separated them in one run was drawing a control shape (a plain polygon) from
 the same code at the same place — it isolated the state from the maths.
+
+## rlDrawRenderBatchActive() resets the bound texture (27/07/2026)
+
+**Symptom.** A cluster of soft round sprites rendered as a hard bright SQUARE —
+but only from the second sprite onward; the first was correct.
+
+**Cause.** The loop flushed the batch between sprites (needed, to change a
+per-sprite uniform), and `rlDrawRenderBatchActive()` restores rlgl's default 1x1
+WHITE texture as the current binding. Every quad after the flush therefore
+sampled solid white: alpha 1 across the whole quad, hence the square.
+
+**Rule.** `rlSetTexture(id)` must be re-issued AFTER every batch flush, not once
+before the loop. This pairs with the flush rule (ENGINE_LANDMINES §1) — flushing
+is mandatory around state changes, and flushing itself changes state.
+
+## A shader with no consumer has never been compiled (27/07/2026)
+
+`core/shaders/dissolve.fs` sat in the tree unused. Its first consumer (E5.4)
+found it failing to compile — `'colDiffuse' : undeclared identifier` — and a
+failed compile falls back to the DEFAULT shader silently, so the effect drew as
+an ordinary quad with no erosion and nothing in the frame said why.
+
+**Rule.** Treat any never-instantiated shader as unverified code, and read the
+compile log the first time it is instantiated. Two smaller traps in the same
+file: uniform initialisers (`uniform float edgeWidth = 0.04;`) are ignored with
+a warning under this backend, so a caller that forgets to set one gets 0, not
+the written default.

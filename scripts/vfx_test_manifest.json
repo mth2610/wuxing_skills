@@ -585,6 +585,13 @@
       "draw_call": "VFX_ComposeRuneCircle(Vector3Add($POS, (Vector3){0.0f, 0.9f, 0.0f}), (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.6f, fmodf($TIME, 3.0f) / 3.0f, 4)"
     },
     {
+      "fn": "VFX_ComposeDissolveExit",
+      "label": "DISSOLVE EXIT",
+      "category": "util",
+      "type": "continuous",
+      "draw_call": "VFX_ComposeDissolveExit(Vector3Add($POS, (Vector3){0.0f, 0.9f, 0.0f}), VC_MAT_FIRE, 1.0f, fmodf($TIME, 2.5f) / 2.5f)"
+    },
+    {
       "fn": "VFX_ComposeChargeConverge",
       "label": "CHARGE CONVERGE",
       "category": "util",

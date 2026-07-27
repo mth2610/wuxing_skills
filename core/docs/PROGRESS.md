@@ -1048,3 +1048,43 @@ Owner: *"ký tự cổ xấu quá, sao không dùng font? với cái vòng tròn
    a filament down the middle, which would cross out the writing. Plus
    `tuning.cfg → bloom_intensity` as an explicit override (0 = the caller's
    value passes through untouched).
+
+---
+
+## E5.4 — VFX_ComposeDissolveExit: LANDED (27/07/2026) — E5 batch complete
+
+`core/composition/common/vc_dissolve_exit.inl`. The shared erosion-out: any
+effect can call it on its death instead of inventing a fade. Two populations per
+the blend law — an ALPHA body that still occludes while it erodes, and additive
+unlit embers with an emissiveBoost, because one draw call cannot be both.
+
+**The spec said `dissolve.fs` "exists but is not exposed". It was worse than
+that: it had never compiled.** `colDiffuse` was undeclared, and a failed compile
+falls back to the default shader silently — the first capture showed a perfectly
+ordinary soft quad with no erosion at all, and nothing on screen said why. Fixed
+in the shader, along with its uniform initialisers (ignored with a warning by
+this backend, so a caller that forgets to set one gets 0 rather than the written
+default). Written up in `core/docs/LANDMINES.md`.
+
+**Two measurements that replaced guesswork**
+
+1. *Grain*: sampling the noise at the quad's raw UV gives one whole noise image
+   per sprite — the finest grain available, which reads as static. New
+   `noiseScale`/`noiseOffset` uniforms magnify it into clumps and give each
+   sprite in the cluster its own patch, so they do not erode as one stencil.
+2. *Timing*: `assets/textures/noise.png` measures mean 0.498, p10 0.310,
+   p90 0.686 — a narrow distribution. Fed the threshold raw, `t01` does nothing
+   below ~0.31, erases nearly everything between 0.31 and 0.69, and has nothing
+   left to do above it: all the visible change happened in a 40% window. `t01`
+   is now remapped onto [0.18, 0.86].
+
+**Landmine found on the way:** `rlDrawRenderBatchActive()` restores rlgl's
+default 1x1 white texture, so the per-sprite uniform flush unbound the body
+mask and every quad after the first rendered as a hard bright SQUARE.
+`rlSetTexture` has to be re-issued after every flush.
+
+Knobs: `dissolve_edge`, `dissolve_ember`, `dissolve_grain`.
+NEW FX index 68 `DISSOLVE EXIT`; suite 6/6.
+
+**E5 batch status:** E5.1 GlintSparkle · E5.2 RuneCircle · E5.3 ChargeConverge ·
+E5.4 DissolveExit — all four landed. E6 is the next batch in the spec.
