@@ -323,6 +323,7 @@
   bool SpriteAnim_IsFinished(const SpriteAnim *anim);
   void SpriteAnim_Reset(SpriteAnim *anim);
   Rectangle SpriteAnim_CalculateUV(const SpriteAnim *template, float age, int *outFrame);
+  Rectangle SpriteAnim_CalculateUVBlend(const SpriteAnim *template, float age, Rectangle *outNext, float *outBlend);
 ```
 **Enums:** AnimPlayMode { ANIM_ONCE,ANIM_LOOP,ANIM_RANDOM_START,ANIM_PING_PONG }
 **Structs** (fields in header): SpriteAnim
@@ -661,6 +662,7 @@
   void VFX_BeginSmokeColumnBatch(void);
   void VFX_EndSmokeColumnBatch(void);
   void VFX_ComposeMagicFilamentsOnPlane(Vector3 center, Vector3 normal, float scale, float progress, Color color, float thickness, float frequency, float speed, Vector2 sourceUV);
+  void VFX_ComposeGlintSparkle(Vector3 center, VC_MaterialId mat, float scale, float time);
   void VFX_ComposeShardDebris(Vector3 pos, int count, float speed, VC_MaterialId matId);
   void VFX_ComposeCrownSplash(Vector3 pos, float radius, float height, float duration, VC_MaterialId matId);
   int VFX_ComposeCharacterAura(int agentId, VC_MaterialId matId, float intensity);
@@ -668,6 +670,7 @@
   void VFX_KillCharacterAura(int handle);
   void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
   void VFX_ComposeChainLink(VC_MaterialId matId, Vector3 start, Vector3 end, float width, float sag, float progress, float time);
+  void VFX_ComposeChargeConverge(Vector3 center, VC_MaterialId mat, float radius, float t01, int moteCount);
   void VFX_ComposeEnergySmoke(Vector3 pos, float scale, float progress, float time, Vector2 sourceUV);
   void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
   void VFX_ComposeGroundAura(VC_MaterialId matId, Vector3 pos, float radius, float scrollSpeed, float time);

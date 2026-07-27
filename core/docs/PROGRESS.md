@@ -776,3 +776,156 @@ sprites and for what crosses the bloom threshold.
 test already uses, so the two paths agree on what "glowing" means. Global
 override: `tuning.cfg → particle_emissive_boost` (1.0 = per-particle values as
 authored).
+
+---
+
+## E5.3 — VFX_ComposeChargeConverge: LANDED (27/07/2026)
+
+`core/composition/common/vc_charge_converge.inl`. The universal cast tell —
+motes drawn inward into a hot core, pairing with `VFX_SeqPreset`'s anticipation
+phase. Assembled the same way E5.1 was (F1 particles + F1b blend law +
+`VFX_Material` + `vc_motion.h`); touches none of the §0.1b components.
+
+**Deviation from the spec's use of `t01`.** The spec reads as "every mote sits at
+`VC_MotionSpiralIn(..., t01)`", which freezes the whole field into a static
+dotted ring whenever a caller holds `t01` still (a charge waiting on input, a
+paused sequence). Each mote carries its OWN progress `u` instead, and `t01`
+drives what the tell actually communicates: density, brightness, funnel
+tightness, light radius.
+
+### What the first four passes got wrong, and why
+
+Each was measured/derived, not guessed:
+
+1. **A linear spiral cannot express suction at any `turns`.** Its
+   tangential/radial ratio is `turns*2PI*(1-t)` — at the RIM, where the motes
+   are, motion is almost purely tangential, so the field reads as *orbiting*.
+   At `turns` 0.85 it was still ~4:1 tangential there. Fixed with a new motion
+   primitive, **`VC_MotionSpiralInAccrete`** (`vc_motion.h`): angle piles up as
+   `t01^3`, so the outer leg flies nearly straight in and only the inner leg
+   curls — angular-momentum-shaped, the ER look.
+2. **Uniform `u` clusters motes at the centre** (path radius is `rim*(1-u)`, so
+   equal counts per radius band = far too many per unit AREA near the middle).
+   `u = 1 - x^0.65` sits between that and a strictly area-uniform `sqrt`, which
+   over-loaded the rim and read as a torus.
+3. **Lifetime must be DERIVED from the trip, not chosen.** With a constant life
+   and a speed that rises with `t01`, late motes shot through the core and out
+   the far side — a full charge held FEWER motes in the funnel than a half one.
+   Now `life = remaining_distance / speed`.
+4. **A saturated element colour never reaches white.** Additive stacking of
+   `VC_MAT_LIGHTNING`'s glow (0,185,255) just gives more cyan, so nothing read
+   as hot however high `emissiveBoost` went — the multiply cannot lift a channel
+   that is 0. New shared helper **`VC_Whiten`** (`core/presets/vc_material.h`)
+   leaves headroom at the source; motes 30%, the core 75%.
+
+### Owner's call: wisps, not dots
+
+*"tôi nghĩ dùng trail hay wisp nhìn nó sẽ đẹp hơn"* — right, and cheaper to read:
+one head plus a tail beats a crowd of dots. Switched from stretched billboards to
+the particle system's own ribbon trails (`render.trailLength`). A stretched
+billboard can only smear along the CURRENT velocity, i.e. a straight dash; the
+ribbon follows the mote's actual curved path, which is the whole point here.
+
+Two engine gaps surfaced doing it, both fixed in `core/`:
+
+- **Particle trails ignored the particle's blend mode.** The trail pass runs
+  after the main pass tears the blend state down, so every trail drew
+  `BLEND_ALPHA` — an additive emissive particle dragged a non-emitting grey
+  smear. Nothing had noticed because until now nothing paired `trailLength` with
+  `VFX_BLEND_ADDITIVE`. The pass now switches blend per particle like pass 1.
+- **Tail length was capped by a hard-coded step.** History is 8 points recorded
+  every 0.015 s, so a tail could only ever cover 0.105 s of travel — a comet
+  dash, never a wisp. New `render.trailStepTime` (0 = the legacy 0.015)
+  buys ~3x the length at the same 8 points and same memory. Cost is a coarser
+  polyline, invisible on smooth paths.
+
+Then, second owner note — *"cho nó thành sợi khí mảnh thôi, bỏ đầu tròn luôn"*:
+a third gap. There was no way to draw a particle's trail WITHOUT its head.
+Alpha 0 on the head kills the trail too (the trail scales its alpha by the
+particle's), and shrinking the head thins the trail with it (half-width is
+`radius * trailWidthRatio`). New `render.trailOnly` skips the billboard in the
+main pass — before the batching decision, so it cannot split a batch — leaving
+the particle as a pure PATH and `radius` as the thread's thickness.
+
+Knobs: `charge_rate`, `charge_size`, `charge_speed`, `charge_core`,
+`charge_trail` (0 = bare motes, A/B the tails), `charge_turns`.
+NEW FX index 67 `CHARGE CONVERGE`; suite 6/6.
+
+### E5.3 rebuild — mesh emitter + force-driven qi threads (27/07/2026)
+
+Owner rejected the dot/streak version twice, then set the direction: *"nó chỉ nên đơn
+giản, nên phát ra các trail ở bề mặt 1 hình cầu, sau đó tụ lại, quan trọng tạo
+được chuyển động mềm mại của chân khí"*, plus *"có mesh emitter, bạn cũng chưa
+tận dụng được"*. Both notes were right, and the second named a facility this
+component should have used from the start.
+
+**Re-diagnosed against §0.1b.** The streak version repeated the very disease the
+spec diagnoses, in a different costume: instead of one-surface-plus-FBM it was
+all-particles-all-additive. Additive output can never be darker than what is
+behind it, so nothing occludes anything and there is no volume; and the
+silhouette was still coming from a closed-form curve, which §0.1b says gives
+texture but never an outline.
+
+**What replaced it**
+
+- **Shape from geometry.** `SpawnParticleOnMesh` + `MeshAdjacency` on a real
+  `GenMeshSphere` — the engine's mesh emitter, previously used only by
+  `vc_mesh_electricity`. Threads are born on the sphere's EDGES, so the launch
+  set is scattered the way a surface is, not the way a parameter sweep is. One
+  unit sphere serves every scale; `radius` rides the spawn matrix.
+- **Motion from forces.** A launch push, then `FORCE_GRAVITY_POINT` +
+  a weak `FORCE_VORTEX` + `FORCE_DRAG`. The analytic spiral was the reason the
+  old version read as machinery — every thread swept the same arc at the same
+  rate. Under an attractor each thread accelerates as it closes in and no two
+  paths match, which is what "mềm mại" is. Drag is load-bearing: without it
+  threads slingshot through the centre and out the far side.
+- **Force fields are POOLED (4), matched by centre.** A particle holds the field
+  pointer for its whole life, so one shared field would drag every thread of
+  every concurrent charge toward whichever centre was written last.
+- `VC_MotionSpiralInAccrete` stays in `vc_motion.h` — it is a correct, reusable
+  primitive with its reasoning recorded above — but nothing calls it now.
+
+**Third core gap, found here:** the 8-point history is a coarse polyline, and on
+a curving path its corners show as facets — a bent wire, not a thread of gas.
+New `render.trailSmooth` subdivides each segment with a **Catmull-Rom** through
+the recorded points (interpolating, so the smoothed trail still passes exactly
+where the particle was; a Bezier would have needed invented control points).
+`PS_TRAIL_SUBDIV` 4, buffer 32.
+
+So E5.3 ended up adding four things to the particle system that the project had
+never needed before: per-particle trail blend mode, `trailStepTime`,
+`trailOnly`, `trailSmooth`. All four default to the previous behaviour.
+
+### E5.3 — white threads, per-thread opacity, and the real bloom ceiling (27/07/2026)
+
+Owner: *"sao lại phải màu xanh? nó nên màu trắng để dễ tint màu vào, và mỗi trail
+có độ mờ ngẫu nhiên nữa, hơn nữa có cách nào làm cái core nó sáng hơn để bloom?"*
+
+- **White threads** (`charge_white`, 0.88). The element hue now appears only as
+  a thread fades out, so a caller TINTS the effect instead of each material
+  baking its own hue into the geometry. It is also the only colour additive
+  stacking can drive to a hot core — a saturated hue just accumulates itself.
+- **Per-thread opacity**, alpha 90–255 at spawn. Uniform alpha reads as a
+  printed pattern; the ribbon scales its alpha by the particle's, so one random
+  value varies the whole thread.
+- **The bloom question had an arithmetic answer, found by reading the shader
+  rather than by tuning.** `bloom_bright.fs` clamps EVERY pixel's contribution
+  at `maxEnergy = 4.0` (a firefly guard). Past that point, raising a particle's
+  `emissiveBoost` changes the bloom by exactly nothing — which is precisely why
+  the earlier emissive measurement showed 0.87 → 0.94 for a boost of 20 and the
+  feature looked dead. **Bloom size is set by how MANY pixels clear the
+  threshold, not by how far one pixel clears it.**
+
+  Two fixes, in that order of importance:
+  1. A **mid-glow layer** at the core: a wider sprite kept just over the
+     threshold, rather than a second white-hot point. This is what buys the
+     glow, and it is the standard layered-core construction.
+  2. The clamp is now a uniform — `tuning.cfg → bloom_max_energy`, default 4.0,
+     i.e. byte-identical to the old constant until someone raises it.
+
+  Measured over the core region, same frame, before vs after:
+  near-white pixels **76 → 655**, pixels over 150 **4384 → 12790**. (Region is
+  fixed and does include some threads; the ratios are far too large to be that.)
+
+`convert_shaders_to_gles.py --dry-run`: `bloom_bright.fs` converts clean; the one
+warning in the run is `particle_lit.fs`, pre-existing.

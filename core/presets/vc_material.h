@@ -46,4 +46,19 @@ const VFX_ElementMaterial* VFX_Material(VC_MaterialId id);
 // cường độ (alpha) là quyết định của từng layer.
 static inline Color VC_WithAlpha(Color c, unsigned char a) { c.a = a; return c; }
 
+// Pha màu material về phía trắng (t: 0 = giữ nguyên, 1 = trắng). Dùng cho "lõi
+// nóng": một màu nguyên tố bão hòa (vd. glow của LIGHTNING = 0,185,255) khi cộng
+// dồn additive sẽ kẹt ở đúng hue đó và không bao giờ ra trắng — muốn có lõi
+// trắng-nóng thì phải chừa sẵn kênh ở nguồn, emissiveBoost một mình không làm
+// được (nó nhân, mà nhân 0 vẫn là 0).
+static inline Color VC_Whiten(Color c, float t)
+{
+    if (t <= 0.0f) return c;
+    if (t > 1.0f) t = 1.0f;
+    c.r = (unsigned char)(c.r + (255 - c.r) * t);
+    c.g = (unsigned char)(c.g + (255 - c.g) * t);
+    c.b = (unsigned char)(c.b + (255 - c.b) * t);
+    return c;
+}
+
 #endif // CORE_VC_MATERIAL_H

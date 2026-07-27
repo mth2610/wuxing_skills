@@ -101,6 +101,27 @@ typedef struct {
     float trailWidthRatio; // trail width factor relative to particle radius
     Color trailColorStart;
     Color trailColorEnd;
+    // Seconds between recorded trail points. 0 = the legacy 0.015 s.
+    //
+    // The tail's LENGTH is trailLength * trailStepTime * speed, and trailLength
+    // is capped at 8 by the static history buffer — so at the legacy step a tail
+    // can only ever cover 0.105 s of travel, which is a comet dash, never a
+    // flowing wisp. Raising the step buys length with no extra memory; the cost
+    // is a coarser polyline, which is invisible on a smooth path and shows up as
+    // faceting on a sharply curving one.
+    float trailStepTime;
+    // 1 = do not draw the particle's own billboard at all; only its ribbon
+    // trail. The particle becomes a PATH rather than a sprite — a thin wisp of
+    // gas with no head. Setting the head's alpha to 0 cannot do this (the trail
+    // scales its own alpha by the particle's, so the trail vanishes with it),
+    // and shrinking the head to nothing also thins the trail, whose half-width
+    // is radius * trailWidthRatio. `radius` still sets the wisp's thickness.
+    int trailOnly;
+    // 1 = subdivide the trail with a Catmull-Rom through the recorded points
+    // instead of drawing the raw polyline. History is only 8 points spaced
+    // trailStepTime apart, so a curving path shows its corners as facets — a
+    // bent wire rather than a thread of gas. 0 = the legacy polyline.
+    int trailSmooth;
 
     // Noise/Flow Distortion for Trails & Ribbons
     float distortionStrength; // 0.0 = disabled (default)

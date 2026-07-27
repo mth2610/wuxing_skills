@@ -576,6 +576,13 @@
       "category": "metal",
       "type": "continuous",
       "draw_call": "VFX_ComposeGlintSparkle($POS, VC_MAT_HOLY, 1.0f, $TIME)"
+    },
+    {
+      "fn": "VFX_ComposeChargeConverge",
+      "label": "CHARGE CONVERGE",
+      "category": "util",
+      "type": "continuous",
+      "draw_call": "VFX_ComposeChargeConverge(Vector3Add($POS, (Vector3){0.0f, 0.9f, 0.0f}), VC_MAT_LIGHTNING, 1.3f, fmodf($TIME, 2.2f) / 2.2f, 45)"
     }
   ],
   "overrides": {

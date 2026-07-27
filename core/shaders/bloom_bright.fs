@@ -5,6 +5,13 @@ in vec4 fragColor;
 
 uniform sampler2D texture0;
 uniform float u_threshold;
+// Per-pixel cap on how much energy one pixel may contribute to the bloom.
+// This is the REAL ceiling on "make the core glow harder": past it, raising a
+// particle's emissiveBoost changes nothing at all, because every pixel of the
+// core is already clamped here. It exists to stop fireflies, so it is a
+// uniform (tuning.cfg -> bloom_max_energy) rather than a constant — 4.0
+// reproduces the old behaviour exactly.
+uniform float u_maxEnergy;
 
 out vec4 finalColor;
 
@@ -29,7 +36,7 @@ void main() {
     // Giới hạn không cho năng lượng pixel tăng đột biến quá mức kiểm soát của bộ Blur
     // Boost bloom extraction weight slightly to offset clamping dilution
     vec3 brightColor = col.rgb * weight * 2.2;
-    float maxEnergy = 4.0; // Ngưỡng năng lượng tối đa của một pixel bloom
+    float maxEnergy = (u_maxEnergy > 0.0) ? u_maxEnergy : 4.0;
     float currentEnergy = length(brightColor);
     if (currentEnergy > maxEnergy) {
         brightColor = (brightColor / currentEnergy) * maxEnergy;

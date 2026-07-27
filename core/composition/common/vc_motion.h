@@ -53,6 +53,22 @@ static inline Vector3 VC_MotionSpiralIn(Vector3 center, float startRadius, float
     return VC_RingPointXZ(center, startRadius * (1.0f - t01), angle);
 }
 
+// Xoáy hút vào tâm kiểu BỒI TỤ: bán kính vẫn co startRadius→0 theo t01, nhưng
+// góc quay dồn về cuối đường đi (dθ/dt tăng khi r nhỏ, kiểu bảo toàn mô-men
+// góc). Đoạn ngoài gần như đi THẲNG vào tâm, chỉ đoạn trong mới cuộn.
+//
+// Vì sao cần cái này bên cạnh VC_MotionSpiralIn: spiral tuyến tính có tỉ lệ
+// tiếp tuyến/hướng tâm = turns*2*PI*(1-t01), tức ở vành ngoài chuyển động gần
+// như hoàn toàn tiếp tuyến — mắt đọc thành "đang quay quanh", không phải "đang
+// bị hút vào" (đo được trong E5.3: turns 0.85 vẫn cho tỉ lệ ~4:1 ở vành).
+static inline Vector3 VC_MotionSpiralInAccrete(Vector3 center, float startRadius,
+                                               float turns, float phase, float t01)
+{
+    float s = t01 * t01 * t01;   // góc dồn về cuối
+    float angle = phase + s * turns * 2.0f * PI;
+    return VC_RingPointXZ(center, startRadius * (1.0f - t01), angle);
+}
+
 // Rung lắc quanh pos: sin 3 trục tần số lệch nhau (không đồng pha nên không
 // đọc thành dao động tuyến tính). `seed` tách pha giữa các vật thể cùng rung.
 static inline Vector3 VC_MotionJitter(Vector3 pos, float amp, float freq, float time, float seed)

@@ -2241,3 +2241,64 @@ someone holds that pointer) and logs once. Frame spikes never drop beats: a
 single long frame fires every beat it jumped over, in order.
 
 Live demo: NEW FX tab → `SEQUENCE ENVELOPE E3`.
+
+---
+
+## Making a particle GLOW (the hot core)
+
+Four knobs, and the first two are mandatory — a boost on its own does nothing.
+
+```c
+SpawnParticle((ParticleConfig){
+    .position   = p,
+    .colorStart = VC_WithAlpha(mat->glow, 255),
+    .render.blendMode     = VFX_BLEND_ADDITIVE, // 1. it EMITS -> additive
+    .render.unlit         = 1,                  // 2. REQUIRED, see below
+    .render.emissiveBoost = 4.5f,               // 3. the intensity
+});
+```
+
+### 1–2. `blendMode` + `unlit` — the gate
+
+`emissiveBoost` is applied **only to `unlit` particles**
+(`particle_system.c`: `SetEmissive(p->unlit ? wantBoost : 1.0f)`). That is not a
+quirk, it is the F1b blend law: smoke and dust OCCLUDE light and get lit, so
+boosting them would make them emit light they are supposed to block. If you set
+a boost and see nothing, check `unlit` first — that is the usual cause.
+
+### 3. `emissiveBoost` — the intensity, and what the numbers mean
+
+| value | result |
+|---|---|
+| `1.0` (default) | exactly the pre-HDR look: caps at 1.0, sits at the bloom threshold, no blow-out |
+| `2–3` | visibly hotter core, light bloom |
+| `4.5` | the house value — `VFX_ComposeGlintSparkle` and the GPU particle upgrades test both use it |
+| `8+` | core goes fully white, strong bloom halo. Reserve for ultimates |
+
+Why these numbers: the scene buffer is R16F, ACES maps 1.0 to ~0.83, and the
+bloom threshold is `0.8`. So a particle at 1.0 sits *exactly* at the threshold —
+it can never blow out. Values above 1.0 are what push into the tonemapper's
+roll-off (which is what makes a core read as white-hot with a coloured rim) and
+past the bloom threshold (which is what gives it a halo).
+
+Same field, same meaning on both paths: `GpuParticleConfig.emissiveBoost` bakes
+the value into its float colour, `ParticleConfig.render.emissiveBoost` rides a
+shader uniform because CPU vertex colour is `rlColor4ub` — 8-bit, hard-capped at
+1.0. Use the same number for either.
+
+### 4. `emissiveCurve` — brightness over LIFETIME, not headroom
+
+Different tool, common confusion. It is applied **CPU-side into the 8-bit colour
+and clamps at 255**, so it can only push a colour *toward* white — it cannot
+exceed 1.0 and cannot produce a hot core on its own. Use it for shape over time
+(flare up then fade); use `emissiveBoost` for how hot the peak is. They compose.
+
+### Global overrides
+
+- `tuning.cfg → particle_emissive_boost` — multiplies every per-particle value
+  (1.0 = respect what each call site authored). Hot-reload, for dialling a whole
+  scene without editing call sites.
+- `PostFXConfig.bloomThreshold` (0.8) / `.bloomIntensity` (0.25) in `main.c` —
+  what counts as "bright enough to bloom" and how strong the halo is. Raising the
+  boost and lowering the threshold both increase halo; prefer the boost, since
+  the threshold is global and will drag every bright surface in with it.

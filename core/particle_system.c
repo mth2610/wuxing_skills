@@ -14,6 +14,29 @@
 
 #define MAX_PARTICLES 2000
 
+// Trail ribbon buffer: 8 recorded history points, optionally subdivided.
+#define PS_TRAIL_SUBDIV         4
+#define PS_TRAIL_MAX_RIBBON_PTS 32
+
+// Catmull-Rom through p1..p2 (p0/p3 are the neighbouring points that set the
+// tangents). Chosen over a Bezier because it INTERPOLATES the recorded points
+// — a smoothed trail must still pass through where the particle actually was.
+static inline Vector3 PS_CatmullRom(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
+{
+  float t2 = t * t, t3 = t2 * t;
+  Vector3 r;
+  r.x = 0.5f * ((2.0f * p1.x) + (-p0.x + p2.x) * t +
+                (2.0f * p0.x - 5.0f * p1.x + 4.0f * p2.x - p3.x) * t2 +
+                (-p0.x + 3.0f * p1.x - 3.0f * p2.x + p3.x) * t3);
+  r.y = 0.5f * ((2.0f * p1.y) + (-p0.y + p2.y) * t +
+                (2.0f * p0.y - 5.0f * p1.y + 4.0f * p2.y - p3.y) * t2 +
+                (-p0.y + 3.0f * p1.y - 3.0f * p2.y + p3.y) * t3);
+  r.z = 0.5f * ((2.0f * p1.z) + (-p0.z + p2.z) * t +
+                (2.0f * p0.z - 5.0f * p1.z + 4.0f * p2.z - p3.z) * t2 +
+                (-p0.z + 3.0f * p1.z - 3.0f * p2.z + p3.z) * t3);
+  return r;
+}
+
 // TỐI ƯU 1: Sắp xếp lại thứ tự biến (Data Alignment & Hot/Cold Split)
 // Các biến hay dùng (Physics) đặt lên đầu để vừa khít 1 CPU Cache Line (64 bytes)
 typedef struct
@@ -74,6 +97,9 @@ typedef struct
   float trailWidthRatio;
   Color trailColorStart;
   Color trailColorEnd;
+  float trailStepTime;
+  int trailOnly;
+  int trailSmooth;
   Vector3 trailHistory[8];
   unsigned char trailHistoryCount;
   float trailHistoryTimer;
@@ -241,6 +267,9 @@ void SpawnParticle(ParticleConfig config)
   p->trailWidthRatio = config.render.trailWidthRatio;
   p->trailColorStart = config.render.trailColorStart;
   p->trailColorEnd = config.render.trailColorEnd;
+  p->trailStepTime = (config.render.trailStepTime > 0.0f) ? config.render.trailStepTime : 0.015f;
+  p->trailOnly = (p->trailLength > 0) ? config.render.trailOnly : 0;
+  p->trailSmooth = config.render.trailSmooth;
   p->trailHistoryCount = 0;
   p->trailHistoryTimer = 0.0f;
 }
@@ -390,7 +419,7 @@ void UpdateParticles(float dt)
     if (p->trailLength > 0)
     {
       p->trailHistoryTimer += dt;
-      if (p->trailHistoryTimer >= 0.015f || p->trailHistoryCount == 0)
+      if (p->trailHistoryTimer >= p->trailStepTime || p->trailHistoryCount == 0)
       {
         p->trailHistoryTimer = 0.0f;
         int maxLen = p->trailLength;
@@ -719,6 +748,9 @@ void DrawParticles(Camera3D camera, Texture2D texture)
   for (int a = 0; a < s_activeCount; a++)
   {
     ParticleInternal *p = &g_Particles[s_activeIds[a]];
+    // Headless wisp: the particle exists to carry a path, not to be a sprite.
+    // Skipped before the batching decision so it cannot split a batch either.
+    if (p->trailOnly) continue;
 
     unsigned int want = p->texId ? p->texId : texture.id;
     int wantGridC = (p->spriteAnim ? p->spriteAnim->cols : 1);
@@ -945,12 +977,27 @@ void DrawParticles(Camera3D camera, Texture2D texture)
   ParticleLighting_End();
 
   // Second pass: Draw Particle Ribbon Trails
+  //
+  // The trail inherits the PARTICLE's blend mode. It used to run here with the
+  // blend state already torn down above, i.e. always BLEND_ALPHA — so an
+  // additive, emissive particle (the F1b blend law's whole point) dragged a
+  // trail that did not emit, and the tail read as grey smear over a glowing
+  // head. Nothing in the project had noticed because until E5.3 nothing paired
+  // trailLength with VFX_BLEND_ADDITIVE.
+  int trailBlend = -1;
   for (int a = 0; a < s_activeCount; a++)
   {
     ParticleInternal *p = &g_Particles[s_activeIds[a]];
     if (p->trailLength > 0 && p->trailHistoryCount >= 2)
     {
-      RibbonPoint trailPoints[8];
+      int want = (p->blendMode == VFX_BLEND_ADDITIVE) ? BLEND_ADDITIVE : BLEND_ALPHA;
+      if (want != trailBlend)
+      {
+        if (trailBlend >= 0) EndBlendMode();
+        BeginBlendMode(want);
+        trailBlend = want;
+      }
+      RibbonPoint trailPoints[PS_TRAIL_MAX_RIBBON_PTS];
       int count = p->trailHistoryCount;
       if (count > p->trailLength) count = p->trailLength;
 
@@ -971,22 +1018,55 @@ void DrawParticles(Camera3D camera, Texture2D texture)
 
       float baseAlpha = (float)baseColor.a / 255.0f;
 
-      for (int h = 0; h < count; h++)
-      {
-        trailPoints[h].position = p->trailHistory[h];
+      // Smoothing: the history is a coarse polyline (8 points, one per
+      // trailStepTime), and on a curving path the corners are visible as
+      // FACETS — the tail reads as a bent wire, not as a thread of gas. When
+      // trailSmooth is on, each segment is subdivided with a Catmull-Rom
+      // through the recorded points, which passes exactly through them (no
+      // control points to invent) and stays C1 across joints.
+      int sub = p->trailSmooth ? PS_TRAIL_SUBDIV : 1;
+      int outCount = (count - 1) * sub + 1;
+      if (outCount > PS_TRAIL_MAX_RIBBON_PTS) { sub = 1; outCount = count; }
 
-        float ageRatio = (float)h / (float)(count - 1);
-        trailPoints[h].halfWidth = p->radius * p->trailWidthRatio * (1.0f - ageRatio * 0.7f);
+      for (int o = 0; o < outCount; o++)
+      {
+        float fh = (float)o / (float)sub;      // position in history index space
+        int   h  = (int)fh;
+        float ft = fh - (float)h;
+        if (h > count - 1) { h = count - 1; ft = 0.0f; }
+
+        Vector3 pos;
+        if (sub == 1 || ft <= 0.0001f)
+        {
+          pos = p->trailHistory[h];
+        }
+        else
+        {
+          // Endpoints duplicate the terminal point, the standard clamped
+          // Catmull-Rom boundary, so the curve does not overshoot at the ends.
+          int i0 = (h - 1 < 0) ? 0 : h - 1;
+          int i1 = h;
+          int i2 = (h + 1 > count - 1) ? count - 1 : h + 1;
+          int i3 = (h + 2 > count - 1) ? count - 1 : h + 2;
+          pos = PS_CatmullRom(p->trailHistory[i0], p->trailHistory[i1],
+                              p->trailHistory[i2], p->trailHistory[i3], ft);
+        }
+
+        trailPoints[o].position = pos;
+
+        float ageRatio = fh / (float)(count - 1);
+        trailPoints[o].halfWidth = p->radius * p->trailWidthRatio * (1.0f - ageRatio * 0.7f);
 
         Color tc = ColorLerp(p->trailColorStart, p->trailColorEnd, ageRatio);
         float alphaFade = 1.0f - ageRatio * 0.9f;
-        trailPoints[h].tint = ColorAlpha(tc, baseAlpha * alphaFade);
-        trailPoints[h].v = ageRatio;
+        trailPoints[o].tint = ColorAlpha(tc, baseAlpha * alphaFade);
+        trailPoints[o].v = ageRatio;
       }
 
-      DrawRibbonStrip(trailPoints, count, texture, camera);
+      DrawRibbonStrip(trailPoints, outCount, texture, camera);
     }
   }
+  if (trailBlend >= 0) EndBlendMode();
 
   rlSetTexture(0);
 }

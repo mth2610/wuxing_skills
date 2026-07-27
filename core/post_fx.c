@@ -67,6 +67,8 @@ static float   s_burstCurrent;    // decayed strength this frame
 
 // Uniform locations — bright pass
 static int brightThresholdLoc;
+static int brightMaxEnergyLoc;
+static float s_bloomMaxEnergy = 4.0f;  // 4.0 = the shader's historical constant
 
 // Uniform locations — dual-filter passes
 static int dsTexSizeLoc;
@@ -130,6 +132,7 @@ void PostFX_Init(int width, int height)
   compositeShader = LoadShader(0, "core/shaders/post_process.fs");
 
   brightThresholdLoc = GetShaderLocation(brightShader, "u_threshold");
+  brightMaxEnergyLoc = GetShaderLocation(brightShader, "u_maxEnergy");
   dsTexSizeLoc = GetShaderLocation(dsShader, "u_texelSize");
   usTexSizeLoc = GetShaderLocation(usShader, "u_texelSize");
 
@@ -342,6 +345,13 @@ void PostFX_Draw(const PostFXConfig *config)
     // [TỐI ƯU 1]: Xóa ClearBackground(BLACK) gây lãng phí bộ nhớ FBO
     BeginShaderMode(brightShader);
     SetShaderValue(brightShader, brightThresholdLoc, &config->bloomThreshold,
+                   SHADER_UNIFORM_FLOAT);
+    // Registered lazily, never from an Init — Tuning_Init runs after the
+    // subsystem inits, so an early registration silently keeps the default
+    // (core/docs/LANDMINES.md).
+    static bool s_maxEnergyReg = false;
+    if (!s_maxEnergyReg) { Tuning_RegisterFloat("bloom_max_energy", &s_bloomMaxEnergy, 4.0f); s_maxEnergyReg = true; }
+    SetShaderValue(brightShader, brightMaxEnergyLoc, &s_bloomMaxEnergy,
                    SHADER_UNIFORM_FLOAT);
 
     rlDisableColorBlend();
