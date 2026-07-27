@@ -51,6 +51,16 @@ uniform float u_scatterStrength;  // forward-scatter / backlit glow
 uniform float u_debugNormal;
 uniform float u_normalBulge;      // 1 = true hemisphere; >1 exaggerates the dome
 uniform float u_analyticUV;       // 1 = quad-local UV (default), 0 = derivative fallback
+// Đợt E / E4 — atlas grid (cols, rows); (1,1) = not an atlas.
+//
+// With a SpriteAnim atlas, fragTexCoord is the ATLAS sub-rect (e.g. 0.25..0.375),
+// not the quad's 0..1. The analytic hemisphere below reads it as if it were
+// quad-local, so it shades from a small off-centre patch of the sphere — and
+// that patch JUMPS to a different region every time the animation steps to the
+// next cell, which reads as the sprite popping frame to frame. Handing the grid
+// over lets the local UV be recovered exactly, so the analytic path (which
+// exists because the derivative fallback has a dead core) keeps working.
+uniform vec2 u_atlasGrid;
 uniform float u_lightAzimuth;     // <0 = use the real sun; >=0 = debug override
 uniform float u_sunGain;          // scales the directional term
 uniform float u_ambientGain;      // scales the flat fill (LOWER = more contrast)
@@ -87,7 +97,13 @@ void main()
     // fragTexCoord is the quad-local UV for every particle that does not use a
     // SpriteAnim atlas, which after the purge is all of them; u_analyticUV lets
     // the caller fall back when an atlas is in play and the UV is a sub-rect.
-    vec2  q = fragTexCoord * 2.0 - 1.0;      // [-1,1] across the quad
+    // Recover the quad-local UV. fract() of the cell-scaled coord is exactly the
+    // position within the cell; guarded so a non-atlas particle (grid 1,1) is
+    // untouched — fract(1.0) is 0.0 and would fold the quad's far edge.
+    vec2 luv = (u_atlasGrid.x > 1.5 || u_atlasGrid.y > 1.5)
+                 ? fract(fragTexCoord * u_atlasGrid)
+                 : fragTexCoord;
+    vec2  q = luv * 2.0 - 1.0;               // [-1,1] across the quad
     float rr = length(q);
     vec3  n;
     if (u_analyticUV > 0.5)

@@ -101,3 +101,44 @@ Rectangle SpriteAnim_CalculateUV(const SpriteAnim *template, float age, int *out
   
   return (Rectangle){ (float)c * cellWidth, (float)r * cellHeight, cellWidth, cellHeight };
 }
+
+Rectangle SpriteAnim_CalculateUVBlend(const SpriteAnim *template, float age,
+                                      Rectangle *outNext, float *outBlend)
+{
+  float cellWidth = 1.0f / template->cols;
+  float cellHeight = 1.0f / template->rows;
+
+  // Fractional frame position — the whole point of this variant. The integer
+  // part picks the frame, the fraction is how far into the NEXT one we are.
+  float exact = age * template->fps;
+  if (exact < 0.0f) exact = 0.0f;
+  int frame = (int)exact;
+  float blend = exact - (float)frame;
+
+  int next = frame + 1;
+
+  if (template->playMode == ANIM_ONCE) {
+    if (frame >= template->frameCount - 1) {
+      // Clamped at the end: hold the last frame and stop blending, or the sheet
+      // would cross-fade into frame 0 and the puff would appear to restart.
+      frame = template->frameCount - 1;
+      next = frame;
+      blend = 0.0f;
+    }
+  } else {
+    frame = frame % template->frameCount;
+    next  = (frame + 1) % template->frameCount;
+  }
+  if (next >= template->frameCount) next = template->frameCount - 1;
+
+  int r  = frame / template->cols, c  = frame % template->cols;
+  int rn = next  / template->cols, cn = next  % template->cols;
+
+  if (outNext)
+    *outNext = (Rectangle){ (float)cn * cellWidth, (float)rn * cellHeight,
+                            cellWidth, cellHeight };
+  if (outBlend) *outBlend = blend;
+
+  return (Rectangle){ (float)c * cellWidth, (float)r * cellHeight,
+                      cellWidth, cellHeight };
+}

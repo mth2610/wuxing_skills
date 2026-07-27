@@ -35,6 +35,19 @@
 #define SMOKE_PUFF_MAX_SPRITES 28
 
 static SkillCurve s_smokePuffGrow  = {0};
+// A SECOND, much flatter growth curve used only with the flipbook.
+//
+// The aggressive 0.45->2.2x curve above exists because a FLAT sprite does not
+// expand on its own — "smoke expands and thins; constant-size puffs read as a
+// decal popping in and out". The flipbook already expands: measured, the sheet
+// grows 1.46x by itself. Multiplying the two gives 7.2x apparent growth, so the
+// sprite balloons while its content is also ballooning.
+//
+// Worse, the sheet's own width WOBBLES frame to frame (measured +-7%: 162, 153,
+// 173, 155, 150, 167 px...). Riding that wobble on top of a steep scale ramp is
+// what reads as pulsing rather than drifting — the "vừa lớn lên, vừa đổi khung
+// hình" the owner spotted. Flattening the curve lets the sheet own the growth.
+static SkillCurve s_smokePuffGrowFb = {0};
 static SkillCurve s_smokePuffFade  = {0};
 static ColorGradient s_smokePuffGrad = {0};
 static ForceField s_smokePuffFld = {0};
@@ -69,6 +82,68 @@ static float s_smokePuffSizeVar  = 1.4f;
 #define SMOKE_PUFF_VARIANTS 3
 static Texture2D s_smokePuffTex[SMOKE_PUFF_VARIANTS];
 
+// ── Đợt E / E4 — the authored flipbook ──────────────────────────────────────
+// The three static sprites above give a SILHOUETTE but no MOTION: every sprite
+// is frozen, so a puff is a cloud of stamps that only moves because the
+// particles translate. Real smoke's billow rolls — the outline itself changes
+// shape — and no amount of translating a fixed cutout produces that.
+// `smoke_atlas_8x8.png` is a 64-frame simulated puff (birth → billow →
+// dissipate) and the particle system already knows how to play an atlas
+// (ParticleConfig.spriteAnim); nothing consumed it until now.
+//
+// The static sprites REMAIN as the fallback: the spec requires every consumer
+// to keep a procedural/asset-free path so a build never depends on an asset
+// landing, and this one costs nothing to keep.
+static Texture2D s_smokeFbTex = {0};
+// FOUR templates, not one, at slightly different playback rates.
+//
+// SpriteAnim_CalculateUV derives the frame from the particle's ABSOLUTE age
+// (frame = age * fps) and there is no per-particle phase offset in the API. Every
+// sprite in a puff spawns on the SAME frame, so with a single template they all
+// carry age 0 together and then step to each new atlas frame IN LOCKSTEP — ~20
+// sprites all snapping to a different billow shape at the same instant, several
+// times a second. That synchronized snap is what reads as churning; the
+// per-sprite spin was only part of it.
+//
+// Giving each sprite a slightly different rate desynchronises them within a few
+// frames, so the puff dissolves between shapes instead of cutting between them.
+// Rates are jittered DOWNWARD only: a faster template would reach the end of the
+// 64-frame sheet before a long-lived particle dies and then hold frame 63, which
+// is EMPTY — the smoke would disappear while its alpha says it is still there.
+#define SMOKE_FB_RATES 4
+static SpriteAnim s_smokeFbAnim[SMOKE_FB_RATES];
+static bool       s_smokeFbReady = false;
+// 1 = flipbook when available, 0 = force the old static sprites (A/B by eye,
+// no rebuild — the flipbook changes F2's look and that is a judgement call).
+static float s_smokePuffUseFlipbook = 1.0f;
+// Flipbook-only corrections to the static-sprite tuning. Every knob F2 was tuned
+// with — many sprites, per-sprite spin, wide size spread — exists to fake INTERNAL
+// MOTION that flat cutouts do not have. The flipbook has real internal motion, so
+// those same compensations stop helping and start fighting it: 39 cutouts each
+// spinning while each also plays its own 64-frame billow reads as churning, not
+// as smoke. Reported as "từng khung hình thì giống khói, nhưng chuyển động giữa
+// các khung thì hỗn loạn, quay cuồng" — which is exactly this.
+static float s_smokePuffFbSpin     = 0.12f; // x on angular velocity (1.0 = the old spin)
+static float s_smokePuffFbCountMul = 0.55f; // x on sprite count
+// Size compensation. Dropping the 0.45->2.2x curve for the flat one removes most
+// of the apparent growth, so without this the flipbook puff would simply be
+// SMALLER than the tuned static one — and this change is meant to be about
+// smoothness, not size. 1.45 ~ the ratio of the two curves' mean scale.
+static float s_smokePuffFbSizeMul  = 1.45f;
+// How many of the sheet's 64 frames to actually play.
+//
+// The tail of the sim is where the puff breaks into thin wisps, and those wisps
+// genuinely change shape frame to frame — measured, it is the SHEET's content,
+// not the consumer: turning the cross-fade off barely moves the rim's
+// frame-to-frame change (16.4 vs 16.9), and the same is true of the texture
+// filter. Since the sprite is also at its LARGEST then, that rim churn is
+// magnified most exactly when it is least wanted.
+//
+// Stopping short lets ANIM_ONCE hold a calmer mid-dissipation frame while the
+// alpha curve finishes the fade — the puff still thins out and vanishes, it just
+// stops crawling while it does. 64 = play the whole sheet.
+static float s_smokePuffFbFrames   = 50.0f;
+
 static void SmokePuff_InitShared(void)
 {
     if (s_smokePuffInit)
@@ -81,12 +156,24 @@ static void SmokePuff_InitShared(void)
     Tuning_RegisterFloat("smokepuff_size_mul", &s_smokePuffSizeMul, 1.0f);
     Tuning_RegisterFloat("smokepuff_alpha", &s_smokePuffAlpha, 0.28f);
     Tuning_RegisterFloat("smokepuff_size_var", &s_smokePuffSizeVar, 1.4f);
+    Tuning_RegisterFloat("smokepuff_flipbook", &s_smokePuffUseFlipbook, 1.0f);
+    Tuning_RegisterFloat("smokepuff_fb_spin", &s_smokePuffFbSpin, 0.12f);
+    Tuning_RegisterFloat("smokepuff_fb_count", &s_smokePuffFbCountMul, 0.55f);
+    Tuning_RegisterFloat("smokepuff_fb_size", &s_smokePuffFbSizeMul, 1.45f);
+    Tuning_RegisterFloat("smokepuff_fb_frames", &s_smokePuffFbFrames, 50.0f);
 
     // Grows to ~2.2x over its life and never shrinks back — smoke does not
     // contract, it dissipates. The fade curve is what removes it.
     FloatCurve_AddStop(&s_smokePuffGrow, 0.0f, 0.45f);
     FloatCurve_AddStop(&s_smokePuffGrow, 0.25f, 1.0f);
     FloatCurve_AddStop(&s_smokePuffGrow, 1.0f, 2.2f);
+
+    // Flipbook: a gentle drift only. Not 1.0 flat — a little scale motion still
+    // helps the sprite read as receding, and it hides the sheet's own wobble
+    // rather than amplifying it.
+    FloatCurve_AddStop(&s_smokePuffGrowFb, 0.0f, 0.90f);
+    FloatCurve_AddStop(&s_smokePuffGrowFb, 0.30f, 1.05f);
+    FloatCurve_AddStop(&s_smokePuffGrowFb, 1.0f, 1.30f);
 
     // Fast in, slow out: a puff appears almost instantly then lingers. Front-
     // loading the fade instead makes it read as a muzzle flash.
@@ -129,6 +216,52 @@ static void SmokePuff_InitShared(void)
                      paths[i]);
     }
 
+    // E4 flipbook. 8x8 = 64 frames covering one full puff life.
+    //
+    // fps is derived, not picked: SpriteAnim_CalculateUV advances on ABSOLUTE
+    // age (frame = age * fps) while these particles live 1.1-2.0 s. Setting fps
+    // from the LONGEST lifetime means the oldest particle only just reaches the
+    // final frame; picking the average instead would let long-lived sprites run
+    // off the end early and then hold frame 63 — which is empty — so the smoke
+    // would VANISH while its alpha curve says it should still be visible.
+    // ANIM_ONCE clamps, so shorter-lived particles simply end mid-dissipation,
+    // which their own alpha fade hides.
+    s_smokeFbTex = ResourceManager_LoadTexture("assets/textures/smoke_atlas_8x8.png");
+    if (s_smokeFbTex.id != 0)
+    {
+        // BILINEAR. raylib's default is POINT, and at the end of a puff's life
+        // the sprite is at its largest, so one 256px atlas cell is magnified
+        // across a big chunk of screen — with point sampling every texel becomes
+        // a hard block. The sheet's rim carries real render noise (measured ~8-10
+        // of 255 high-frequency energy in the soft edge band, a Cycles volume at
+        // low sample counts), and magnifying that noise as blocks is what makes
+        // the outline appear to wriggle as the frames advance.
+        //
+        // Bilinear only, NOT mipmaps: at coarse mip levels an 8x8 atlas bleeds
+        // neighbouring cells into each other. Bilinear's own one-texel bleed is
+        // harmless here because the puff covers ~20% of its cell, centred, so the
+        // rim never reaches the cell boundary.
+        SetTextureFilter(s_smokeFbTex, TEXTURE_FILTER_BILINEAR);
+        static const float rateMul[SMOKE_FB_RATES] = { 1.0f, 0.90f, 0.81f, 0.72f };
+        int fbFrames = (int)s_smokePuffFbFrames;
+        if (fbFrames < 8)  fbFrames = 8;
+        if (fbFrames > 64) fbFrames = 64;
+        // fps stays derived from the frames actually played over the longest
+        // lifetime, so trimming the tail slows playback rather than ending early.
+        for (int r = 0; r < SMOKE_FB_RATES; r++)
+            SpriteAnim_Init(&s_smokeFbAnim[r], 8, 8, fbFrames,
+                            ((float)fbFrames / 2.0f) * rateMul[r], ANIM_ONCE);
+        s_smokeFbReady = true;
+    }
+    else
+    {
+        // Announce the fallback: a silently-static puff and a flipbook that
+        // failed to load look identical in a screenshot.
+        TraceLog(LOG_WARNING,
+                 "SMOKE PUFF: assets/textures/smoke_atlas_8x8.png missing — falling "
+                 "back to the 3 static sprites (no billow animation).");
+    }
+
     s_smokePuffInit = true;
 }
 
@@ -146,7 +279,12 @@ void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float d
 
     if (density <= 0.0f) density = 1.0f;
     else if (density > 1.0f) density = 1.0f;
-    int count = (int)(SMOKE_PUFF_MAX_SPRITES * density * s_smokePuffCountMul);
+    bool useFb = s_smokeFbReady && (s_smokePuffUseFlipbook > 0.5f);
+    // Each flipbook sprite is a whole puff simulation, not a stamp — stacking as
+    // many as the flat version needs averages them into mush AND multiplies the
+    // churn. Fewer, larger, calmer sprites read as more smoke, not less.
+    int count = (int)(SMOKE_PUFF_MAX_SPRITES * density * s_smokePuffCountMul
+                      * (useFb ? s_smokePuffFbCountMul : 1.0f));
     if (count < 1) count = 1;
     scale *= s_smokePuffSizeMul;
 
@@ -175,6 +313,20 @@ void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float d
         };
 
         Color c = ColorGradient_Sample(&s_smokePuffGrad, Random01());
+        if (useFb)
+        {
+            // THE FLIPBOOK ALREADY CARRIES ITS OWN VALUE. The atlas is a shaded
+            // render (mean RGB ~121/255 inside the puff), while this gradient is
+            // deliberately near-black because the static sprites are flat masks
+            // that the lighting pass is supposed to lift. Multiplying the two
+            // lands at ~33/255 — measured — and the puff reads as a black smudge.
+            // With the flipbook the sprite supplies the value, so the vertex
+            // colour must step back and only TINT. This is what the spec's name
+            // `fb_smoke_lit_*` means: the sheet is already lit.
+            c.r = (unsigned char)(160 + (c.r >> 2));
+            c.g = (unsigned char)(160 + (c.g >> 2));
+            c.b = (unsigned char)(160 + (c.b >> 2));
+        }
         if (!neutral)
         {
             // Pull a third of the way toward the element body colour. Any more
@@ -190,20 +342,30 @@ void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float d
             // Wide, non-uniform radii: a few big soft ones read as the body,
             // many small ones as the broken edge.
             .radius = Math_Mix(0.14f, 0.14f + 0.42f * s_smokePuffSizeVar,
-                               powf(Random01(), 1.8f)) * scale,
+                               powf(Random01(), 1.8f)) * scale
+                      * (useFb ? s_smokePuffFbSizeMul : 1.0f),
             .lifetime = Math_Mix(1.1f, 2.0f, Random01()),
             .colorStart = VC_WithAlpha(c, (unsigned char)(255.0f *
                               (s_smokePuffAlpha < 0.0f ? 0.0f :
                                s_smokePuffAlpha > 1.0f ? 1.0f : s_smokePuffAlpha))),
             .colorEnd = VC_WithAlpha(c, 0),
             .forceField = &s_smokePuffFld,
-            .radiusCurve = &s_smokePuffGrow,
+            .radiusCurve = (useFb ? &s_smokePuffGrowFb : &s_smokePuffGrow),
             .alphaCurve = &s_smokePuffFade,
             // Per-sprite spin. Without this the repeated texture is obvious no
             // matter how many sprites are stacked.
-            .render.texture = s_smokePuffTex[i % SMOKE_PUFF_VARIANTS],
+            // Flipbook when it loaded, static silhouettes otherwise. Variety
+            // across sprites comes from their different spawn times and
+            // lifetimes (so they are on different frames) plus the per-sprite
+            // spin below — SpriteAnim has no per-particle frame offset.
+            .render.texture = (useFb ? s_smokeFbTex : s_smokePuffTex[i % SMOKE_PUFF_VARIANTS]),
+            .spriteAnim = (useFb ? &s_smokeFbAnim[i % SMOKE_FB_RATES] : NULL),
             .rotation = Random01() * 2.0f * PI,
-            .angularVelocity = (Random01() - 0.5f) * 0.9f,
+            // Spin is all but OFF for the flipbook (see s_smokePuffFbSpin): the
+            // sheet supplies its own motion, and rigid-body rotation on top of a
+            // billow that is already rolling is what reads as churning. A trace
+            // is kept so sprites are not perfectly static relative to each other.
+            .angularVelocity = (Random01() - 0.5f) * 0.9f * (useFb ? s_smokePuffFbSpin : 1.0f),
         });
     }
 }

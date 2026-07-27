@@ -129,6 +129,7 @@ static float s_sunGain          = 1.0f;  // night sun/ambient are ~0.2 — witho
 static float s_ambientGain      = 0.25f; // gain, lighting just dims the smoke
 static float s_lightAzimuth     = -1.0f; // <0 = real sun; >=0 = debug override
 static float s_analyticUV       = 1.0f;  // 0 only if a SpriteAnim atlas is in use
+static int   s_locAtlasGrid     = -1;
 
 void InitParticleSystem(void)
 {
@@ -553,6 +554,7 @@ static void ParticleLighting_Begin(Camera3D camera)
       s_locAmbientGain     = GetShaderLocation(s_litShader, "u_ambientGain");
       s_locLightAzimuth    = GetShaderLocation(s_litShader, "u_lightAzimuth");
       s_locAnalyticUV      = GetShaderLocation(s_litShader, "u_analyticUV");
+      s_locAtlasGrid       = GetShaderLocation(s_litShader, "u_atlasGrid");
     }
     else
     {
@@ -584,6 +586,10 @@ static void ParticleLighting_Begin(Camera3D camera)
   SetShaderValue(s_litShader, s_locAmbientGain, &s_ambientGain, SHADER_UNIFORM_FLOAT);
   SetShaderValue(s_litShader, s_locLightAzimuth, &s_lightAzimuth, SHADER_UNIFORM_FLOAT);
   SetShaderValue(s_litShader, s_locAnalyticUV, &s_analyticUV, SHADER_UNIFORM_FLOAT);
+  { // default: not an atlas. Flipped per batch in the draw loop.
+    float grid[2] = {1.0f, 1.0f};
+    if (s_locAtlasGrid >= 0) SetShaderValue(s_litShader, s_locAtlasGrid, grid, SHADER_UNIFORM_VEC2);
+  }
 
   // VFX point lights — the caster's own fireball lighting the smoke inside it.
   VFXLightData lights[PARTICLE_MAX_VFX_LIGHTS];
@@ -686,13 +692,20 @@ void DrawParticles(Camera3D camera, Texture2D texture)
   unsigned int curTex = 0xFFFFFFFFu;
   int curBlend = -1;
   int curUnlit = -1;
+  // Atlas grid of the batch in flight. Batches already split on texture, and an
+  // atlas particle necessarily carries a different texture from a plain one, so
+  // this never splits a batch that would not have split anyway.
+  int curGridC = -1, curGridR = -1;
 
   for (int a = 0; a < s_activeCount; a++)
   {
     ParticleInternal *p = &g_Particles[s_activeIds[a]];
 
     unsigned int want = p->texId ? p->texId : texture.id;
-    if (want != curTex || p->blendMode != curBlend || p->unlit != curUnlit)
+    int wantGridC = (p->spriteAnim ? p->spriteAnim->cols : 1);
+    int wantGridR = (p->spriteAnim ? p->spriteAnim->rows : 1);
+    if (want != curTex || p->blendMode != curBlend || p->unlit != curUnlit ||
+        wantGridC != curGridC || wantGridR != curGridR)
     {
       if (curTex != 0xFFFFFFFFu) rlEnd();
       if (p->blendMode != curBlend)
@@ -713,6 +726,17 @@ void DrawParticles(Camera3D camera, Texture2D texture)
         // the legacy unlit result.
         ParticleLighting_SetStrength(p->unlit ? 0.0f : s_lightingStrength);
         curUnlit = p->unlit;
+      }
+      if (wantGridC != curGridC || wantGridR != curGridR)
+      {
+        // Tell the lighting which grid the UVs live on, so it can recover the
+        // quad-local coordinate. Without this an atlas sprite is shaded from a
+        // lopsided slice of the hemisphere that jumps every frame step.
+        float grid[2] = {(float)wantGridC, (float)wantGridR};
+        if (s_locAtlasGrid >= 0)
+          SetShaderValue(s_litShader, s_locAtlasGrid, grid, SHADER_UNIFORM_VEC2);
+        curGridC = wantGridC;
+        curGridR = wantGridR;
       }
       rlSetTexture(want);
       rlBegin(RL_QUADS);
@@ -823,26 +847,62 @@ void DrawParticles(Camera3D camera, Texture2D texture)
 
     // Đọc UV từ hoạt cảnh Sprite sheet atlas
     Rectangle uv = { 0.0f, 0.0f, 1.0f, 1.0f };
+    Rectangle uvNext = uv;
+    float     fbBlend = 0.0f;
     if (p->spriteAnim)
     {
       float age = p->maxLifetime - p->lifetime;
-      uv = SpriteAnim_CalculateUV(p->spriteAnim, age, NULL);
+      // Đợt E / E4 — cross-faded flipbook. Snapping to whole frames makes an
+      // authored sheet read as the sprites flipping back and forth (32 fps atlas
+      // against a 60 fps render, ~2 render frames per atlas frame, then a jump to
+      // a different simulation state). Blending the two adjacent frames removes
+      // the jump entirely.
+      uv = SpriteAnim_CalculateUVBlend(p->spriteAnim, age, &uvNext, &fbBlend);
+      // Kill switch + A/B. Cross-fading emits TWO quads per particle, so this is
+      // also the lever if the vertex cost ever matters on a weak device.
+      // Registered lazily on first use, never from an Init (docs/LANDMINES.md).
+      {
+        static float s_fbBlendOn = 1.0f;
+        static bool  s_fbBlendReg = false;
+        if (!s_fbBlendReg) { s_fbBlendReg = true;
+          Tuning_RegisterFloat("particle_fb_blend", &s_fbBlendOn, 1.0f); }
+        if (s_fbBlendOn <= 0.5f) fbBlend = 0.0f;
+      }
     }
 
-    rlColor4ub(c.r, c.g, c.b, c.a);
+    // The quad, emitted once per frame being cross-faded. rlgl's immediate batch
+    // carries position/texcoord/colour only — there is no spare attribute to
+    // hand a second UV set plus a blend factor to the shader — so the fade is
+    // done the standard way: draw A at (1-t) and B at t.
+    //
+    // The mid-blend coverage dip this causes (two alpha draws are not exactly a
+    // lerp) is ~7% at smoke's 0.28 alpha and is not visible; it would matter for
+    // near-opaque sprites, which flipbooks here are not.
+    #define PS_EMIT_QUAD(_uv, _a)                                                  \
+      do {                                                                         \
+        if ((_a) > 0) {                                                            \
+          rlColor4ub(c.r, c.g, c.b, (unsigned char)(_a));                           \
+          rlTexCoord2f((_uv).x, (_uv).y);                                          \
+          rlVertex3f(p->x + rx - ux, p->y + ry - uy, p->z + rz - uz);              \
+          rlTexCoord2f((_uv).x, (_uv).y + (_uv).height);                           \
+          rlVertex3f(p->x + rx + ux, p->y + ry + uy, p->z + rz + uz);              \
+          rlTexCoord2f((_uv).x + (_uv).width, (_uv).y + (_uv).height);             \
+          rlVertex3f(p->x - rx + ux, p->y - ry + uy, p->z - rz + uz);              \
+          rlTexCoord2f((_uv).x + (_uv).width, (_uv).y);                            \
+          rlVertex3f(p->x - rx - ux, p->y - ry - uy, p->z - rz - uz);              \
+        }                                                                          \
+      } while (0)
 
-    // TL
-    rlTexCoord2f(uv.x, uv.y);
-    rlVertex3f(p->x + rx - ux, p->y + ry - uy, p->z + rz - uz);
-    // BL
-    rlTexCoord2f(uv.x, uv.y + uv.height);
-    rlVertex3f(p->x + rx + ux, p->y + ry + uy, p->z + rz + uz);
-    // BR
-    rlTexCoord2f(uv.x + uv.width, uv.y + uv.height);
-    rlVertex3f(p->x - rx + ux, p->y - ry + uy, p->z - rz + uz);
-    // TR
-    rlTexCoord2f(uv.x + uv.width, uv.y);
-    rlVertex3f(p->x - rx - ux, p->y - ry - uy, p->z - rz - uz);
+    if (fbBlend > 0.001f)
+    {
+      PS_EMIT_QUAD(uv,     (float)c.a * (1.0f - fbBlend));
+      PS_EMIT_QUAD(uvNext, (float)c.a * fbBlend);
+    }
+    else
+    {
+      PS_EMIT_QUAD(uv, (float)c.a);
+    }
+    #undef PS_EMIT_QUAD
   }
 
   if (curTex != 0xFFFFFFFFu) rlEnd();

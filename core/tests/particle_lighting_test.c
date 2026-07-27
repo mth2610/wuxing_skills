@@ -297,7 +297,12 @@ static void Test_ShaderSourceMatchesMirror(void)
     // let the suite quietly start testing fiction.
     const char *path = "core/shaders/particle_lit.fs";
     struct { const char *needle, *why; } req[] = {
-        { "vec2  q = fragTexCoord * 2.0 - 1.0",   "quad-local UV" },
+        // E4: the quad-local UV is now RECOVERED from the atlas grid before this
+        // step, because with a SpriteAnim atlas fragTexCoord is a sub-rect and
+        // feeding it straight in shades from a different slice of the hemisphere
+        // per cell — which jumps every time the animation steps.
+        { "vec2  q = luv * 2.0 - 1.0",            "quad-local UV" },
+        { "fract(fragTexCoord * u_atlasGrid)",    "atlas -> quad-local UV recovery" },
         { "sqrt(max(1.0 - rc * rc, 0.0))",        "analytic hemisphere z" },
         { "sqrt(clamp(1.0 - a, 0.0, 1.0))",       "derivative-fallback radius r" },
         { "pow(ndl * 0.5 + 0.5, 1.5)",            "half-Lambert wrap" },

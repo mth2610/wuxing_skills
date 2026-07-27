@@ -446,3 +446,239 @@ toggle failing; noted in the code comment so it is not re-debugged.
 **Verified:** strike cast on the caster renders the bolt, the shockwave ring, the
 ground light pool and the character lit by its own strike (E2 bleed), with the
 E3 envelope timing. E1a's radial burst fires on the same beat.
+
+---
+
+## E4 — flipbook library: smoke LANDED, fire/energy diagnosed (27/07/2026)
+
+Assets are owner-generated (`scripts/gen_*_flipbook.py`, Blender). This session
+did the **engine-side** half plus an audit of the sheets.
+
+### Wired: `smoke_atlas_8x8.png` → `VFX_ComposeSmokePuff`
+
+The sheet existed but **nothing consumed it** — F2 was still drawing the three
+static silhouettes, and `ParticleConfig.spriteAnim` (full atlas playback, already
+implemented in `particle_system.c:826`) had no callers anywhere in the project.
+Now F2 plays the 64-frame billow, with the static sprites kept as the fallback
+the spec requires (logged when it happens). `tuning.cfg → smokepuff_flipbook`
+switches for A/B.
+
+`fps` is derived, not chosen: `SpriteAnim_CalculateUV` advances on ABSOLUTE age
+(`frame = age * fps`) while these particles live 1.1–2.0 s, so fps comes from the
+LONGEST lifetime (64/2.0 = 32). Using the average instead would let long-lived
+sprites run past the end and hold frame 63 — which is empty — so the smoke would
+VANISH while its alpha curve still says visible.
+
+**Integration bug found and fixed:** the sheet is a *lit* render (RGB mean
+121/255) while F2's gradient is deliberately near-black (the flat sprites are
+masks the lighting pass lifts). Multiplying the two measured ~33/255 — the puff
+rendered as a black smudge. The consumer now lifts the vertex colour to a
+near-neutral tint when the flipbook is active; measured brightness back in line
+with the tuned static path (96 vs 99 mean over the puff region).
+
+### Audit of the sheets
+
+`smoke_atlas_8x8.png` — **good.** Real cauliflower silhouettes, a proper
+growth→dissipation arc (coverage peaks mid-sheet), 19.6% cell coverage.
+Straight alpha (correct for this engine's `BLEND_ALPHA`; the spec's
+"premultiplied" line is wrong for this pipeline). Blank frame 0 and 62-63 are
+harmless — they coincide with the alpha curve's own fade in/out.
+
+`fire_atlas_8x8.png` — **not usable, and the reason is structural, not tuning.**
+Measured against the smoke sheet:
+
+| | coverage | height/width |
+|---|---|---|
+| smoke | 19.6% | 1.00 |
+| fire | **4.1%** | **1.00** |
+
+Fire is rendering as *the same spherical puff as smoke*, only smaller and with a
+brightness ramp (the last row blows out to white). Flame morphology is the
+opposite: buoyancy stretches it vertically (height/width should be well above
+1.3), with tongues that lick up and detach — none of which a spherical smoke
+domain produces. It also wastes ~80% of each cell. So `gen_fire_flipbook.py`
+needs a different SIM (vertical buoyancy + a flame front), not different
+parameters; and per F3 the colour should come from the black-body ramp at the
+call site, so the sheet itself should stay a greyscale *density/temperature*
+mask.
+
+`energy_shockwave_atlas_8x8.png` — not audited this session (owner says WIP).
+
+### E4 follow-up — flipbook cross-fade (27/07/2026)
+
+Owner report on the F2 flipbook: *"xét riêng từng khung hình thì đúng là giống
+khói, nhưng chuyển động giữa các khung cứ có cảm giác hỗn loạn, quay cuồng"*,
+then *"tôi có cảm giác những hạt bị lật qua, lật lại"*.
+
+**The atlas was cleared first, by measurement — it is not the fault:**
+- frame order correct (the script's `GRID-1-row` flip matches the engine's
+  row-major, top-left `frame/cols`);
+- cells are not internally flipped (alpha centroid holds at 128/256 across all
+  64 frames);
+- the puff is radially symmetric, so there is no up/down for it to flip.
+
+Three causes, all consumer-side:
+
+1. **Lockstep frame stepping.** `frame = age * fps` and every sprite in a puff
+   spawns on the same frame, so ~39 sprites stepped to a new atlas frame
+   *simultaneously*, 32×/s. Fixed with four `SpriteAnim` templates at jittered
+   rates (downward only — a faster rate would reach the sheet's empty frame 63
+   before a long-lived particle dies, and the smoke would vanish while its alpha
+   still said visible).
+2. **Per-sprite spin fighting the sheet.** The spin exists to hide texture
+   repetition on *flat* sprites; with a flipbook that job is already done and the
+   rigid rotation just churns on top of a billow that is already rolling.
+   Flipbook-only multipliers: spin ×0.12, sprite count ×0.55 (each flipbook
+   sprite carries a whole simulation, so stacking as many as the flat version
+   needs averages to mush).
+3. **No inter-frame interpolation — the real one.** `SpriteAnim` snapped to whole
+   frames: a 64-frame sheet over a 2 s life is 32 fps against a 60 fps render, so
+   each atlas frame was held ~2 render frames then JUMPED to a different sim
+   state. On a soft blob that is invisible; on an authored turbulent sheet it is
+   exactly "flipping back and forth".
+
+**Fix for (3):** `SpriteAnim_CalculateUVBlend` returns frame N, frame N+1 and the
+fraction between them, and `particle_system.c` cross-fades the two quads.
+
+The in-shader route was investigated first and is **blocked**: rlgl's immediate
+batch carries position/texcoord/colour only (stated in `particle_lit.vs`'s own
+header comment), so there is no spare vertex attribute to hand a second UV set
+plus a per-particle blend factor to the fragment shader. The two-quad cross-fade
+is the standard alternative. Its mid-blend coverage dip (two alpha draws are not
+exactly a lerp) is ~7% at smoke's 0.28 alpha — not visible, and it would only
+matter for near-opaque sheets, which these are not.
+
+At the clamped end of an `ANIM_ONCE` sheet the blend is forced to 0 so it cannot
+cross-fade into a wrapped-around frame 0 and appear to restart.
+
+**Measured** (8 consecutive frames, puff region, deterministic capture):
+
+| | mean Δ/frame | jitter (std of Δ) |
+|---|---|---|
+| snapping | 2.08 | 0.494 |
+| cross-faded | 1.71 | **0.384** |
+
+Jitter is the metric that matters here: uneven frame-to-frame deltas ARE the
+snap. Both fell.
+
+`tuning.cfg → particle_fb_blend = 0` disables it (also the perf lever — the
+cross-fade emits two quads per flipbook particle). Non-flipbook particles are
+untouched: with no `spriteAnim` the blend is 0 and exactly one quad is emitted,
+as before.
+
+### E4 follow-up 2 — the flipbook was growing twice (27/07/2026)
+
+Owner, after dropping to a single particle to isolate it: *"nó đã đỡ hơn nhưng
+còn 1 cảm giác gì đó, tôi nghi ngờ do hạt vừa lớn lên, vừa đổi khung hình"*.
+Correct, and measurable:
+
+- the SHEET expands on its own: puff width 123 px → 180 px = **1.46×**
+- `radiusCurve` (0.45 → 2.2) multiplied **4.89×** on top
+- compound apparent growth **7.2×**
+
+Same class of bug as the double-darkening: the static-sprite tuning compensates
+for something flat cutouts lack, and the flipbook already provides it. The steep
+curve exists because "smoke expands and thins; constant-size puffs read as a
+decal popping in and out" — true for a flat sprite, already handled by the sheet.
+
+Worse, the sheet's width **wobbles ±7% frame to frame** (162, 153, 173, 155, 150,
+167, 161, 172, 163 px). Riding that wobble on a steep scale ramp is what turns a
+drift into a pulse.
+
+Fixed with a second, flat curve used only when the flipbook is active
+(0.90 → 1.05 → 1.30), plus a 1.45× base-radius compensation so the change affects
+smoothness and not size. Measured apparent growth over the visible life is now
+**2.0×** and decelerating (5381 → 6290 → 8809 → 10499 → 10725 covered px).
+
+**On metrics:** mean per-frame pixel delta is confounded by sprite size (bigger
+sprites move more pixels) and rose purely from the size compensation, while
+jitter was unchanged (0.384 → 0.382). Neither settles "does it feel smooth" —
+that stays the owner's call. What IS established numerically is that the growth
+is no longer compounded.
+
+New knobs: `smokepuff_fb_size` (base radius compensation) alongside
+`smokepuff_fb_spin`, `smokepuff_fb_count`, `smokepuff_flipbook`,
+`particle_fb_blend`.
+
+### E4 follow-up 3 — the flicker was F1's fake normal, not the atlas (27/07/2026)
+
+Owner sent a screen recording; the flicker survived the cross-fade, the desync,
+the spin cut and the flat growth curve. Root cause was none of those.
+
+**Atlas cleared again, numerically:** adjacent frames correlate at **0.974 mean,
+0.952 worst** (0 frames below 0.90). The sheet is temporally continuous — the
+jump was not coming from the asset.
+
+**Actual cause — `particle_lit.fs`'s analytic hemisphere normal.** It computes
+`q = fragTexCoord * 2.0 - 1.0`, i.e. it assumes fragTexCoord is the QUAD-LOCAL
+0..1 UV. With a SpriteAnim atlas it is the atlas SUB-RECT, so:
+
+| atlas cell | q actually spans |
+|---|---|
+| col 0 | [-1.00, -0.75] |
+| col 3 | [-0.25, 0.00] |
+| col 7 | [ 0.75, 1.00] |
+
+Every cell shades from a *different slice of the hemisphere*, so the lighting
+changes discontinuously the instant the animation steps to the next cell. A
+guaranteed per-frame pop, entirely independent of how good the sheet is.
+
+F1's author anticipated exactly this: `u_analyticUV` exists with the comment
+"0 only if a SpriteAnim atlas is in use", and a derivative fallback sits behind
+it. **Nothing ever set it to 0** — at the time F1 landed there were no atlas
+particles in the project, and the smoke flipbook is the first one.
+
+**Fix:** rather than fall back to the derivative path (which F1 replaced because
+it has a dead core across the sprite's centre), the shader is now told the grid —
+`uniform vec2 u_atlasGrid` — and recovers the local UV as
+`fract(fragTexCoord * u_atlasGrid)`. Every cell then spans the full [-1,1]
+hemisphere and the step disappears. Guarded so grid (1,1) leaves non-atlas
+particles on the identical code path (`fract(1.0)` is 0.0 and would fold the
+quad's far edge).
+
+Set per batch in `particle_system.c` from `p->spriteAnim->cols/rows`. This never
+splits a batch that would not already split, since an atlas particle necessarily
+carries a different texture.
+
+Correct **by construction** — the table above is the proof; the pixel-diff
+metrics used earlier are too confounded (sprite size, particle birth/death) to
+settle it, which is why they are not quoted here.
+
+`particle_lighting_test`'s mirror guard caught the shader edit and was updated
+rather than relaxed — the mechanism working as designed (core/CLAUDE.md §3).
+
+### E4 follow-up 4 — the dissipation rim (27/07/2026)
+
+Owner: the body now reads correctly; what remains is that *"lúc nó to ra hết cỡ,
+sắp biến mất, thì cái viền tạo ra cảm giác hơi lăn quăn"*.
+
+Isolated to the **sheet's own late frames**, not the consumer. Two consumer
+hypotheses were tested and both came back flat, measuring frame-to-frame change
+restricted to rim pixels (alpha band 4..70) over 5 consecutive captures:
+
+| variable | rim change |
+|---|---|
+| cross-fade ON vs OFF | 16.91 vs 16.37 — no effect |
+| texture filter POINT vs BILINEAR | 13.63 vs 15.14 — no improvement |
+
+So the rim churn is the simulation's dissipation wisps genuinely changing shape,
+amplified because the sprite is at its LARGEST exactly then.
+
+`SetTextureFilter(BILINEAR)` was kept anyway: raylib defaults to POINT, and a
+256 px cell magnified across a large sprite gives hard texel blocks. That is
+wrong on principle even though this metric could not show it — stated plainly
+rather than claimed as a win. Bilinear only, never mipmaps: at coarse mip levels
+an 8×8 atlas bleeds neighbouring cells together.
+
+**Mitigation that did help:** `smokepuff_fb_frames` (default 50 of 64) stops the
+animation before the most broken-up frames and lets `ANIM_ONCE` hold a calmer
+mid-dissipation frame while the alpha curve finishes the fade. Rim change
+16.91 → 15.34 (−9%). fps is re-derived from the trimmed count so playback slows
+rather than ending early.
+
+**The rest is asset-side.** Rim high-frequency noise measures ~8–10/255 in the
+soft edge band, roughly constant across the sheet — consistent with a Cycles
+*volume* render at a very low sample count (the script's own usage line is
+`--samples 1`, against an argparse default of 16). Re-rendering with more samples
+(or denoising) would cut it at source; a gentler dissipation tail would cut the
+rest. Nothing further is available from the engine side.
