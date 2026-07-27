@@ -133,6 +133,15 @@ void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture,
   // Dải có thể bị nhìn từ "mặt sau" khi path cong gập - tắt backface
   // culling cho riêng draw call này (tắt/mở thẳng theo style đã có sẵn
   // trong DrawFireSkill, ví dụ rlDisableDepthMask/rlEnableDepthMask).
+  // ENGINE_LANDMINES.md §1 — a raster-state change must be flushed on BOTH
+  // sides or it does not apply to what is submitted next. Without this flush
+  // the disable never took effect for this strip's own quads, and any strip
+  // whose quads face AWAY from the camera was silently culled: a
+  // RIBBON_CAMERA_FACING strip always faces the viewer so it looked fine, while
+  // a RIBBON_FIXED_NORMAL ring lying flat on a plane rendered NOTHING AT ALL
+  // (found by E5.2's rune circle, which drew nothing while its geometry, alpha
+  // and side vectors all logged as correct).
+  rlDrawRenderBatchActive();
   rlDisableBackfaceCulling();
   rlSetTexture(texture.id);
   rlBegin(RL_QUADS);
@@ -210,7 +219,9 @@ void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture,
 
   rlEnd();
   rlSetTexture(0); // module binds `texture`, must not leak it into whatever draws next
+  rlDrawRenderBatchActive();   // flush before restoring, same reason as above
   rlEnableBackfaceCulling();
+  rlDrawRenderBatchActive();
 }
 
 void DrawRibbonStrip(const RibbonPoint *points, int count, Texture2D texture,

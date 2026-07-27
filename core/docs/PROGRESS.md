@@ -929,3 +929,122 @@ có độ mờ ngẫu nhiên nữa, hơn nữa có cách nào làm cái core nó
 
 `convert_shaders_to_gles.py --dry-run`: `bloom_bright.fs` converts clean; the one
 warning in the run is `particle_lit.fs`, pre-existing.
+
+**Still open after all of the above — "vẫn cảm giác nó không sáng, không rực rỡ"**
+(owner, deferred rather than solved). Two system-level suspects, neither of them
+in the charge component, both to be tested when something else brings them up:
+1. **ACES tonemap** (G1) maps 1.0 to ~0.83 and compresses hard above it, so
+   *everything* lands white-but-not-radiant. A saturated glow that survives ACES
+   usually needs the colour to stay off the neutral axis at high luminance.
+2. **`bloomIntensity = 0.25`** (main.c) is a conservative global. `bloom_max_energy`
+   is now tunable but intensity is not.
+Do not tune these from inside a single effect — they are scene-wide.
+
+---
+
+## E5.2 — VFX_ComposeRuneCircle: LANDED (27/07/2026)
+
+`core/composition/common/vc_rune_circle.inl`. `ringCount` concentric counter-
+rotating rings on an arbitrary plane, snapping open and easing shut on `t01`,
+with sparks running along the rings.
+
+**Ribbons, not a decal or a textured quad.** A sigil has to sit on a plane the
+caller chooses (`normal`), which a ground decal cannot do, and per §0.1b the
+silhouette must come from geometry rather than from noise inside a quad. Built
+on `ribbon_strip` — the project's one ribbon primitive — plus `VFX_Material` and
+`vc_motion.h`. `MagicFilaments`/`GroundAura` also draw circles and are
+deliberately NOT reused: they are the architecture §0.1b diagnoses.
+
+**Glyphs without an atlas.** E4's sheet does not exist, so rings are DASHED —
+alpha switched along the band, tooth count/duty/phase varying per ring so no two
+share a rhythm. Closed-form, no `fract(sin(...))` (ENGINE_LANDMINES §4, Mali).
+
+**Layered additive passes, because a ribbon has no `emissiveBoost`.** That
+uniform lives on the particle shader; immediate-mode geometry caps at 8-bit 1.0,
+which is under where the bloom threshold can reach. The way to exceed 1.0 in the
+HDR buffer with plain geometry is to draw it additively more than once: wide dim
+halo → the band → narrow near-white core. Measured over the sigil region,
+pixels over 150: **3103 → 7239**. This is also the general answer to "why doesn't
+my geometry bloom", and worth remembering for the still-open radiance question.
+
+### The bug this task actually found — ribbons were being culled
+
+Drew nothing at all, while logging correct geometry (97 points, unit side
+vectors, alpha 242, sane positions). `DrawRibbonStripEx` disabled back-face
+culling immediately before `rlBegin` **without a batch flush**, so the disable
+never applied to its own quads: camera-facing strips always present their front
+face and looked fine, a ring lying flat via `RIBBON_FIXED_NORMAL` presented its
+back face and vanished entirely. Fixed in `core/ribbon_strip.c` — every ribbon
+consumer in the project inherits it. Written up in `core/docs/LANDMINES.md` with
+a pointer from `ENGINE_LANDMINES.md`.
+
+Diagnostic note: "the geometry is correct" and "the geometry is visible" are
+different claims, and the TraceLog only ever proved the first. What separated
+them in one run was drawing a plain control polygon from the same function at the
+same position — state isolated from maths.
+
+Knobs: `rune_white`, `rune_width`, `rune_spin`, `rune_dash`.
+NEW FX index 67 `RUNE CIRCLE` (charge moved to 68); suite 6/6.
+
+### E5.2 follow-up — the glyph textures, generated not drawn (27/07/2026)
+
+Owner asked for the script that was offered (not an AI prompt), and: *"rune_line
+nó phải có vân năng lượng, chứ không đều như vậy"*.
+
+**`scripts/gen_rune_textures.py`** writes the whole set:
+`rune_line.png` (64x1024) and `rune_glyphs_0..3.png` (256x2048, four styles).
+
+Procedural strokes rather than a font or an image model, for three reasons that
+are requirements here rather than preferences:
+1. the strip wraps a circle, so its join is on screen at ALL times — it must tile
+   exactly, which the script guarantees by making the glyph pitch divide the
+   width (measured seam delta: **0.0/255** on all four sheets, 0.6 on the line);
+2. glyph height must be uniform or the ring looks ragged;
+3. a clean alpha channel — image models effectively never give one, and macOS
+   has no Unicode Runic font installed by default.
+
+**The line profile is deliberately uneven.** A perfect gradient reads as a
+printed circle. Brightness, thickness and centre all wander along the ring's
+length, with occasional near-breaks, all built from sines at INTEGER cycle
+counts so f(0) == f(1) exactly — a noise hash would not close the loop (and dies
+on Mali anyway, ENGINE_LANDMINES §4).
+
+Files are written TRANSPOSED because a ribbon's `u` runs across the band width
+and `v` along its length: image X = band width, image Y = circumference.
+
+Consumer: rings alternate written/plain (`r % 2`), a written ring is ~3x wider so
+its glyphs are legible, takes 2 passes not 3 (the third pass paints a white
+filament down the middle, which would cross out the text), and skips the dash
+mask (the sheet's alpha IS the pattern). Falls back to dashed rings with a
+warning if the sheets are missing.
+
+### E5.2 follow-up 2 — real fonts, unbroken inner ring, no debris (27/07/2026)
+
+Owner: *"ký tự cổ xấu quá, sao không dùng font? với cái vòng tròn nhỏ nhất sao bị
+đứt nét? bỏ những ribbon, hạt thừa thãi, hơn nữa sao nó không sáng rực?"*
+
+1. **"macOS has no runic font" was wrong** — that claim was assumed, not checked.
+   Probing every system font against the tofu glyph (a missing glyph renders as
+   the SAME box for every codepoint, so the test must compare against U+FFFF,
+   not just ask whether ink landed) finds `Apple Symbols` carrying the Runic
+   block **and all 64 I Ching hexagrams**, `Songti` the Han set, Noto the
+   Tifinagh. Sheets are now hexagram / Han (heavenly stems, earthly branches,
+   five elements, eight trigrams) / runic / tifinagh — the project's own
+   cosmology first.
+2. **Strip aspect had to change with it.** At 8:1 a Han character came out three
+   times wider than its own pitch and the glyphs piled into each other. Now
+   32:1 (4096x128), with glyph size clamped by BOTH the band height and the
+   pitch. Seam delta 0.0/255 on three sheets, 9.7 on the runic one.
+3. **The broken inner ring had two causes, both removed.** The dash mask ran on
+   every plain ring, and the innermost has the shortest circumference, so the
+   same pattern that reads as marks on a big ring reads as a broken ring there;
+   and `rune_line` dimmed almost to zero in places to suggest uneven energy.
+   The innermost plain ring is now solid, and the line profile modulates without
+   ever interrupting.
+4. **Sparks deleted** (the loose particles orbiting the sigil).
+5. **Radiance:** the element colour is no longer bleached out (`rune_white`
+   0.85 → 0.25 — white was making it pale, not bright), and a glyph ring now
+   takes three passes where the third is the SAME sheet drawn again rather than
+   a filament down the middle, which would cross out the writing. Plus
+   `tuning.cfg → bloom_intensity` as an explicit override (0 = the caller's
+   value passes through untouched).

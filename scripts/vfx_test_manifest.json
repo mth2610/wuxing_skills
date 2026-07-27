@@ -578,6 +578,13 @@
       "draw_call": "VFX_ComposeGlintSparkle($POS, VC_MAT_HOLY, 1.0f, $TIME)"
     },
     {
+      "fn": "VFX_ComposeRuneCircle",
+      "label": "RUNE CIRCLE",
+      "category": "taiji",
+      "type": "continuous",
+      "draw_call": "VFX_ComposeRuneCircle(Vector3Add($POS, (Vector3){0.0f, 0.9f, 0.0f}), (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.6f, fmodf($TIME, 3.0f) / 3.0f, 4)"
+    },
+    {
       "fn": "VFX_ComposeChargeConverge",
       "label": "CHARGE CONVERGE",
       "category": "util",

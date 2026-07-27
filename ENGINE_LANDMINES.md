@@ -113,3 +113,13 @@
 - **Symptom:** an effect renders correctly most of the time, then intermittently comes out as **small rectangles in scrambled positions or wrong colors**. Worse with several instances on screen at once, or while the camera moves; the next frame can look fine.
 - **Cause:** changing a uniform between instances forces one batch flush — and one UBO snapshot — per instance. When rlvk's per-frame bump arena filled up, the UBO push was silently **skipped** and the draw inherited the *previous* push: stale `mvp` (wrong transform → scrambled quads) plus stale uniform values. Fixed in the backend (reserve-before-record, `third_party/vulkan/docs/HANDOFF.md` §7.28, guard scenario `ubo_arena`); the pattern is still the one that stresses the arena hardest.
 - **Rule:** don't flush per instance when you can avoid it — carry per-instance variation in a **vertex attribute** (color/normal/UV channel) instead of a uniform, and keep uniforms to values shared by the whole batch. If you must change a uniform per instance, keep the instance count bounded. Also: never let a shader's noise domain depend on an unbounded value — wrap it with `fract()` first, or a bad frame degenerates into flat blocks (see `core/shaders/smoke_column.fs`).
+
+
+## Raster-state flush also covers CULLING (27/07/2026)
+
+§1's flush rule was written about depth state. It applies to back-face culling
+just as literally: `core/ribbon_strip.c` disabled culling immediately before
+`rlBegin` without a flush, so the disable never reached its own quads and any
+ribbon presenting its back face — e.g. a ring lying flat on a plane via
+`RIBBON_FIXED_NORMAL` — rendered NOTHING, while camera-facing ribbons looked
+fine. Fixed in core; details in `core/docs/LANDMINES.md`.

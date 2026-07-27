@@ -208,3 +208,27 @@ frame was the *cloud sea*, and a hard-coded green in `ground_splat.fs` appeared
 only as a sliver in one corner. Before concluding "this shader has no effect on
 screen", make the shader output a flat unmistakable colour and confirm you can
 see *where* it is drawing at all.
+
+## Ribbon strips could be silently back-face culled (27/07/2026)
+
+**Symptom.** `VFX_ComposeRuneCircle` drew nothing at all. Its geometry logged as
+correct — 97 points, unit-length side vectors, alpha 242, sensible world
+positions — and a control shape drawn from the same function at the same spot
+appeared normally. Swapping the ribbon's mode to `RIBBON_CAMERA_FACING` made it
+appear; `RIBBON_FIXED_NORMAL` stayed invisible.
+
+**Cause.** `DrawRibbonStripEx` called `rlDisableBackfaceCulling()` immediately
+before `rlBegin`, with no batch flush. A raster-state change that is not flushed
+on both sides does not apply to what is submitted next (ENGINE_LANDMINES §1), so
+the disable never took effect for the strip's own quads. A camera-facing strip
+always presents its front face and looked fine; a strip lying on a fixed plane
+presents its back face from half the viewing angles and was culled entirely.
+
+**Rule.** Flush (`rlDrawRenderBatchActive()`) around EVERY raster/depth state
+change, not just depth-mask ones — culling counts. Fixed in
+`core/ribbon_strip.c`, so every ribbon consumer inherits it.
+
+**And the diagnostic lesson:** "geometry is correct" and "geometry is visible"
+are different claims. The log proved the first and said nothing about the second;
+what separated them in one run was drawing a control shape (a plain polygon) from
+the same code at the same place — it isolated the state from the maths.

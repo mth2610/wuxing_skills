@@ -69,6 +69,9 @@ static float   s_burstCurrent;    // decayed strength this frame
 static int brightThresholdLoc;
 static int brightMaxEnergyLoc;
 static float s_bloomMaxEnergy = 4.0f;  // 4.0 = the shader's historical constant
+// <=0 means "use whatever the caller configured" — so this knob can only ever
+// be an explicit override, never a silent change to a caller's setting.
+static float s_bloomIntensityOverride = 0.0f;
 
 // Uniform locations — dual-filter passes
 static int dsTexSizeLoc;
@@ -350,7 +353,11 @@ void PostFX_Draw(const PostFXConfig *config)
     // subsystem inits, so an early registration silently keeps the default
     // (core/docs/LANDMINES.md).
     static bool s_maxEnergyReg = false;
-    if (!s_maxEnergyReg) { Tuning_RegisterFloat("bloom_max_energy", &s_bloomMaxEnergy, 4.0f); s_maxEnergyReg = true; }
+    if (!s_maxEnergyReg) {
+      Tuning_RegisterFloat("bloom_max_energy", &s_bloomMaxEnergy, 4.0f);
+      Tuning_RegisterFloat("bloom_intensity", &s_bloomIntensityOverride, 0.0f);
+      s_maxEnergyReg = true;
+    }
     SetShaderValue(brightShader, brightMaxEnergyLoc, &s_bloomMaxEnergy,
                    SHADER_UNIFORM_FLOAT);
 
@@ -402,7 +409,11 @@ void PostFX_Draw(const PostFXConfig *config)
   // [TỐI ƯU 2]: Ép kiểu (float) thẳng từ bool, thay thế cho toán tử rẽ nhánh `? 1.0f : 0.0f`
   float bloomEnabledVal = (float)config->bloomEnabled;
   SetShaderValue(compositeShader, bloomEnabledLoc, &bloomEnabledVal, SHADER_UNIFORM_FLOAT);
-  SetShaderValue(compositeShader, bloomIntensityLoc, &config->bloomIntensity, SHADER_UNIFORM_FLOAT);
+  // tuning.cfg -> bloom_intensity overrides the caller's value when set above
+  // zero; at 0 the caller's setting is passed through untouched.
+  float bloomI = (s_bloomIntensityOverride > 0.0f) ? s_bloomIntensityOverride
+                                                   : config->bloomIntensity;
+  SetShaderValue(compositeShader, bloomIntensityLoc, &bloomI, SHADER_UNIFORM_FLOAT);
 
   float chromaticEnabledVal = (float)config->chromaticEnabled;
   SetShaderValue(compositeShader, chromaticEnabledLoc, &chromaticEnabledVal, SHADER_UNIFORM_FLOAT);
