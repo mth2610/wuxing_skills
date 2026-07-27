@@ -438,6 +438,23 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     bool dashPressed = (IsKeyPressed(KEY_X) && player->dashCooldown <= 0.0f) || (touchDash && !prevTouchDash && player->dashCooldown <= 0.0f);
     bool flyTogglePressed = IsKeyPressed(KEY_G) || (touchFlyToggle && !prevTouchFlyToggle);
 
+    // [U] — force Thái Cực on/off for the sandbox player. A DEBUG AFFORDANCE,
+    // not a rule change: Thái Cực-exclusive skills (TAIJI_LOI, TAIJI_PHONG)
+    // return early unless the state is active, so without this you cannot test
+    // them without first building a 2 Âm + 2 Dương loadout through the TAB UI
+    // every run. The design rule itself (Entity_RecomputeElement's loadout
+    // check, thiết kế §XVII "Vô Sát") is untouched — this only forces the state
+    // the same way boss/ already does below 30% HP.
+    // NOTE: mana still governs it. Entity_Update clears Thái Cực at mana <= 0,
+    // and TAIJI_LOI costs 45 of a 100 pool, so it drops after ~2 casts. That is
+    // the design, not the toggle failing.
+    if (IsKeyPressed(KEY_U) && player->agentId >= 0) {
+        bool now = !Entity_IsTaijiActive(player->agentId);
+        Entity_SetTaijiActive(player->agentId, now);
+        TraceLog(LOG_INFO, "SANDBOX: Thái Cực %s (debug [U]) — agent %d",
+                 now ? "ON" : "OFF", player->agentId);
+    }
+
     prevTouchJump = touchJump;
     prevTouchDash = touchDash;
     prevTouchFlyToggle = touchFlyToggle;

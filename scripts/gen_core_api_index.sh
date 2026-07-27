@@ -21,7 +21,7 @@ HEADERS=(
   core/debug_draw.h core/motion_controller.h core/status_vfx.h core/afterimage.h
   core/surface_material.h core/gfx_quality.h core/audio_system.h core/atmosphere.h
   core/material/material_system.h core/geometry/procedural_mesh_utils.h
-  core/composition/visual_composer.h core/presets/vfx_presets.h core/utils_math.h
+  core/composition/visual_composer.h core/composition/vfx_sequence.h core/presets/vfx_presets.h core/utils_math.h
 )
 
 protos() {

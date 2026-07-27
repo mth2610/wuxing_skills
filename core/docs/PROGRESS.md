@@ -358,3 +358,91 @@ ON that the caller left off — never disable what a caller asked for):
 explosions/ultimates is the E7 retrofit pass. E0's 8-capture baseline was never
 taken, so the "re-take E0 with the features ON" half of the DoD was replaced
 with the targeted A/B above.
+
+---
+
+## E3 — VFX_Sequence (choreography layer): LANDED 25/07/2026
+
+Rewritten from scratch: the original `vfx_sequence.c/.h` were uncommitted work
+lost when the tree was reset mid-session (confirmed with the owner: no backup,
+delete and redo).
+
+**New:** `core/composition/vfx_sequence.{h,c}` — a beat track. `VFX_SeqBegin` →
+`VFX_SeqAt(t, beat)` × N → `VFX_SeqPlay`. 8 beat kinds (COMPOSE, LIGHT, SHAKE,
+HITSTOP, DISTORT, RADIAL, DECAL, CALLBACK), static pools 16×24, driven from
+`VFX_Compose_Update` so there is **no `main.c` wiring** (spec §E3).
+`VFX_SeqPreset` pre-fills the `anticipation → burst → sustain → dissipate`
+envelope; the caller adds its own COMPOSE beats.
+
+**Deviation from the spec, deliberate:** `VFX_SeqPlay` returns `int` rather than
+`void`. The spec pairs `void VFX_SeqPlay` with `VFX_SeqStop(int handle)`, which
+leaves no way to ever obtain a handle — Stop would be uncallable.
+
+**Clock:** scaled dt (post `TimeFX_Apply`), the spec's recommendation, so a
+sequence that fires its own hitstop stretches its own remaining beats.
+`VFX_SeqSetUnscaled` opts out. Documented in the header, asserted by the test.
+
+**Ported skill (DoD):** `TAIJI_LOI`. It used to fire bolt + impact + shockwave on
+the SAME frame — a sky→ground strike with no travel and no envelope. Now the bolt
+leaves at t=0 with a ground telegraph light, and impact/shake/radial/distort all
+land together at t=0.10 (travel), with a dimming tail. Old path deleted, not
+commented out. **Damage deliberately stays off the track** at cast time: moving
+it onto a beat would delay the hit and change gameplay/netcode timing.
+
+**Headless test:** `core/tests/vfx_sequence_test.c` (suite now 6/6). Covers the
+two failures that are invisible on screen — a long frame must not EAT a beat
+(one 0.5 s frame fires all 5, in order) and beats authored out of order must fire
+in time order — plus fire-once, t=0-on-first-update, retire-after-last-beat and
+overflow clamping. Mirror guards assert the load-bearing lines still exist in
+the real `.c`/`.h` (core/CLAUDE.md §3).
+
+### Bug found in E1a by this port, and fixed
+
+The `TAIJI_LOI` strike lands away from the camera target, which exposed two
+defects in the E1a radial blur that the centred NEW-FX demo never could:
+
+1. `dir = uv - center` grows without bound as the focal point leaves the view, so
+   the 8 taps landed far apart and rendered as **discrete ghost copies of the
+   frame** rather than a smear.
+2. Conceptually wrong: a burst you cannot see was smearing the whole screen.
+
+Fixed in `post_process.fs`: the smear length is capped (0.08 UV) and the whole
+effect fades out as the centre leaves `[0,1]`. Verified — ghosting gone.
+
+**Also:** `sync_vfx_test.py` silently deleted a hand-written manifest entry for
+anything not found as a composition function in a `.inl` (`PostFX_RadialBurst`,
+`VFX_SeqPreset`). Added a `_manual: true` flag that preserves such entries, with
+the reason in the function's docstring. Both E1a and E3 now have NEW FX buttons
+(`RADIAL BURST E1A`, `SEQUENCE ENVELOPE E3`).
+
+`core/docs/API_GUIDE.md` has the worked example; `gen_core_api_index.sh` gained
+`vfx_sequence.h` so the generated index covers it.
+
+### TAIJI_LOI made testable — debug affordance, NOT a rule change (27/07/2026)
+
+The E3 port could not be verified by the owner because `TAIJI_LOI` is Thái Cực-
+exclusive: `CastTaijiLoiSkill` returns early unless `Entity_IsTaijiActive`, and
+that state is entered only by building a 2 Âm + 2 Dương loadout through the TAB
+UI. So the skill silently did nothing and there was no way to tell the gate from
+a broken sequencer.
+
+Deliberately did NOT unlock the skill. The gate is a design rule (thiết kế §XVII
+"Vô Sát", implemented in `Entity_RecomputeElement`); weakening it to make testing
+easier would be a VFX task changing gameplay. Instead:
+
+- **`[U]` in the sandbox** forces Thái Cực on/off for the player
+  (`sandbox/sandbox_core.c`), the same `Entity_SetTaijiActive` path `boss/`
+  already uses below 30% HP. The loadout rule is untouched.
+- **`THAI CUC [U]: ON/OFF` on the debug HUD** (`main.c`). Without it, "[U] did
+  nothing" and "[U] worked and the skill is still gated" look identical — the
+  exact confusion the toggle exists to remove.
+- Key checked for collisions first (`core/docs/LANDMINES.md`: KEY_K is already
+  globally bound; `U` was free).
+
+Mana still governs the state — `Entity_Update` clears Thái Cực at mana 0 and LOI
+costs 45 of a 100 pool, so it drops after ~2 casts. That is the design, not the
+toggle failing; noted in the code comment so it is not re-debugged.
+
+**Verified:** strike cast on the caster renders the bolt, the shockwave ring, the
+ground light pool and the character lit by its own strike (E2 bleed), with the
+E3 envelope timing. E1a's radial burst fires on the same beat.

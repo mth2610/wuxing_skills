@@ -1932,6 +1932,13 @@ int main(int argc, char **argv) {
                      (int)rg.x, (int)rg.y, 20, SKYBLUE);
             DrawText(TextFormat("SHADOW [J/tap]: %s", EnvShadow_IsEnabled() ? "ON" : "OFF"),
                      (int)rs.x, (int)rs.y, 20, EnvShadow_IsEnabled() ? GREEN : SKYBLUE);
+            // Thái Cực state — without it on screen, "[U] did nothing" and
+            // "[U] worked and the skill is still gated" look identical, which is
+            // exactly the confusion the toggle exists to remove.
+            bool taiji = Entity_IsTaijiActive(player.agentId);
+            Rectangle rt = DebugToggleRect(3);
+            DrawText(TextFormat("THAI CUC [U]: %s", taiji ? "ON" : "OFF"),
+                     (int)rt.x, (int)rt.y, 20, taiji ? GOLD : SKYBLUE);
         }
 
         // Real Shading P6 — debug preview of the raw shadow-map texture.

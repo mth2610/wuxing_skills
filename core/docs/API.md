@@ -683,6 +683,20 @@
 **Enums:** GroundPatternStyle { GROUND_CRACK_RADIAL,GROUND_CRACK_LINE,GROUND_MAGIC_CIRCLE,GROUND_LAVA,GROUND_FROST,GROUND_THORNS,GROUND_RUNE };PathStyle { PATH_THORNS,PATH_STONE_PILLAR,PATH_ICE_SPIKE,PATH_FIRE_ERUPTION,PATH_LIGHTNING_CHAIN }
 **Structs** (fields in header): ImpactBurstConfig
 
+### `core/composition/vfx_sequence.h`
+```c
+  VFX_Sequence *VFX_SeqBegin(Vector3 origin, VC_MaterialId mat, float scale);
+  void VFX_SeqAt(VFX_Sequence *s, float t, VFX_Beat beat);
+  void VFX_SeqSetUnscaled(VFX_Sequence *s, bool unscaled);
+  int VFX_SeqPlay(VFX_Sequence *s);
+  void VFX_SeqStop(int handle);
+  VFX_Sequence *VFX_SeqPreset(Vector3 origin, VC_MaterialId mat, float scale, float anticipation, float burst, float sustain, float dissipate);
+  void VFX_Sequence_Update(float scaledDt);
+  void VFX_Sequence_GetStats(int *playing, int *max);
+```
+**Enums:** VFX_BeatKind { VFX_BEAT_COMPOSE,VFX_BEAT_LIGHT,VFX_BEAT_SHAKE,VFX_BEAT_HITSTOP,VFX_BEAT_DISTORT,VFX_BEAT_RADIAL,VFX_BEAT_DECAL,VFX_BEAT_CALLBACK }
+**Structs** (fields in header): VFX_Beat, VFX_Sequence
+
 ### `core/presets/vfx_presets.h`
 ```c
   VC_MaterialId VFX_MaterialFromPreset(EffectPresetType preset);
