@@ -501,6 +501,20 @@
       "trigger_call": "VFX_ComposeSmokePuff($POS, VC_MAT_EARTH, 1.0f, 1.0f)"
     },
     {
+      "fn": "VFX_ComposeEnergyBurst",
+      "label": "ENERGY BURST",
+      "category": "util",
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeEnergyBurst($POS, VC_MAT_FIRE, 1.0f, 0.9f)"
+    },
+    {
+      "fn": "VFX_ComposeImpactPackage",
+      "label": "IMPACT PKG",
+      "category": "util",
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeImpactPackage($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_EARTH, 1.0f, 1.0f)"
+    },
+    {
       "fn": "VFX_ComposeFlameVolume",
       "label": "FLAME VOLUME",
       "category": "fire",

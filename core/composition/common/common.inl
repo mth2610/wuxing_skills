@@ -20,6 +20,8 @@
 #include "vc_beauty.inl"
 #include "vc_cast_preset.inl"
 #include "vc_impact.inl"
+#include "vc_energy_burst.inl"
+#include "vc_impact_package.inl"
 #include "vc_charge_converge.inl"
 #include "vc_rune_circle.inl"
 #include "vc_dissolve_exit.inl"

@@ -246,6 +246,15 @@ static void SmokePuff_InitShared(void)
     s_smokeFbTex = ResourceManager_LoadTexture("assets/textures/smoke_puff_8x8_smoke.png");
     if (s_smokeFbTex.id == 0)
         s_smokeFbTex = ResourceManager_LoadTexture("assets/textures/smoke_atlas_8x8.png");
+    // WHICH sheet loaded, said out loud. Until now a silent fallback from the
+    // new sheet to the old one — or from either to the three static sprites —
+    // looked identical on screen to a working flipbook, and "the sprites hold
+    // one frame" had no way to be told apart from "the sprites animate".
+    TraceLog(s_smokeFbTex.id != 0 ? LOG_INFO : LOG_WARNING,
+             "SMOKE PUFF: flipbook %s (tex id %u)",
+             s_smokeFbTex.id != 0 ? "loaded" : "MISSING",
+             (unsigned)s_smokeFbTex.id);
+
     if (s_smokeFbTex.id != 0)
     {
         // BILINEAR. raylib's default is POINT, and at the end of a puff's life

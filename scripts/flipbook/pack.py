@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Pack rendered frames into a flipbook atlas, and AUDIT it before it ships.
 
-    python3 scripts/pack_flipbook.py build_cache_manta/frames --grid 8 \
-        --out fire_atlas_manta_8x8.png
+    python3 scripts/flipbook/pack.py build_cache/smoke_puff/frames --grid 8 \
+        --alpha-from-luma 0 --split --shape puff --out smoke_puff_8x8.png
+    python3 scripts/flipbook/pack.py assets/textures/smoke_puff_8x8.png --grid 8
 
-Separate from the Blender script on purpose: packing and measuring need PIL and
-numpy, which live in the system Python, while the bake needs Blender's bundled
-interpreter. Splitting them also means a re-pack (different normalisation, a
-different grid) costs seconds instead of a re-bake.
+A separate stage because a re-pack (different normalisation, a different grid,
+a re-audit of something that already shipped) costs seconds instead of a re-sim.
 
-THE AUDIT IS THE POINT. E4's fire sheet reached the engine and only then was
-measured at 4.1% coverage and height/width 1.00 — a spherical puff. Those two
-numbers are checked here, against the smoke sheet that works (19.6%) and against
-the 1.3 ratio below which a flame is not a flame.
+THE AUDIT IS THE POINT. E4's first fire sheet reached the engine and only THEN
+was measured at 4.1% coverage and height/width 1.00 — a spherical puff. What is
+checked here: framing (reach / clipped — the thing a screenshot cannot judge
+once it saturates), silhouette (lobes), shape (height/width, for columns), and
+the per-channel split. There is deliberately no coverage TARGET; see README.
 """
 
 import argparse
@@ -63,10 +63,8 @@ def audit(sheet, grid, cell):
             edge = mm & ~(np.roll(mm, 1, 0) & np.roll(mm, -1, 0)
                           & np.roll(mm, 1, 1) & np.roll(mm, -1, 1))
             rough.append(int(edge.sum()) / (2.0 * math.sqrt(math.pi * area)))
-    # Channel coverage, reported separately. On a multi-channel sheet (R = flame,
-    # G = smoke) the alpha figure is the union of both populations, so comparing
-    # it against the old single-channel 19.6% target is meaningless — that number
-    # was measured on a sheet where alpha WAS the smoke.
+    # Channel coverage, reported separately: on a two-population sheet the alpha
+    # figure is the UNION of flame and smoke, so it says nothing about either.
     flame_cov = float((arr[..., 0] > 0.25).mean())
     smoke_cov = float((arr[..., 1] > 0.25).mean())
     return (float(np.mean(covs)) if covs else 0.0,
@@ -82,16 +80,23 @@ def main():
                          "to re-audit in place (a sheet that shipped before a "
                          "measurement existed has never been held to it)")
     ap.add_argument("--grid", type=int, default=8)
-    ap.add_argument("--out", default="fire_atlas_manta_8x8.png")
+    ap.add_argument("--out", default="flipbook_8x8.png")
     ap.add_argument("--cell", type=int, default=None)
+    ap.add_argument("--stride", type=int, default=1,
+                    help="take every Nth rendered frame. A smaller GRID must not "
+                         "be produced by simulating fewer frames: --frames is a "
+                         "PHYSICS axis (dt is per frame), so a 16-frame sim is an "
+                         "earlier MOMENT of the effect, not a coarser sampling of "
+                         "it. Simulate the full event, then subsample here.")
     ap.add_argument("--split", action="store_true",
-                    help="also write <out>_flame.png and <out>_smoke.png, each a "
-                         "single-population sheet (white RGB, artwork in alpha). "
-                         "The engine's particle shader multiplies the WHOLE rgb "
-                         "by the vertex colour, so a two-channel sheet used "
-                         "directly would tint the flame with the smoke channel. "
-                         "Splitting keeps one bake feeding both populations "
-                         "without touching the shader.")
+                    help="also write <out>_flame.png and <out>_smoke.png. The "
+                         "engine's particle shader multiplies the WHOLE rgb by "
+                         "the vertex colour, so a two-channel sheet used directly "
+                         "would tint the flame with its own smoke. The FLAME "
+                         "sheet is white RGB + alpha (it emits; its colour comes "
+                         "from the ramp at the call site); the SMOKE sheet gets "
+                         "the self-shadow (B/G) as its RGB value, because an "
+                         "unshaded mask stacks into flat cards.")
     ap.add_argument("--shape", default="column", choices=["column", "puff"],
                     help="what the sheet is SUPPOSED to be. height/width > 1.3 is "
                          "a defect check for a rising column and nonsense for a "
@@ -114,6 +119,8 @@ def main():
         return 0
 
     files = sorted(glob.glob(os.path.join(args.frames_dir, "*.png")))
+    if args.stride > 1:
+        files = files[::args.stride]
     want = args.grid * args.grid
     if len(files) < want:
         print("only %d frames in %s, need %d" % (len(files), args.frames_dir, want))
@@ -143,6 +150,15 @@ def main():
         base = os.path.splitext(args.out)[0]
         for chan, name in ((0, "flame"), (1, "smoke")):
             m = a[..., chan]
+            if float((m > 64.0).mean()) < 0.01:
+                # A cold effect has no usable flame channel — dust injects a
+                # little heat that cools within a few frames, so the channel is
+                # not literally empty, just spurious. Writing it anyway puts a
+                # file in assets/ that looks like an asset and is not one.
+                # Threshold matches the audit's own channel-coverage test.
+                print("  split -> %s_%s SKIPPED (channel is empty)"
+                      % (os.path.splitext(args.out)[0], name))
+                continue
             out = np.zeros(a.shape, np.uint8)
             out[..., 0] = out[..., 1] = out[..., 2] = 255      # white: tint at
             out[..., 3] = np.clip(m, 0, 255).astype(np.uint8)  # the call site

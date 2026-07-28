@@ -1,30 +1,25 @@
 #!/usr/bin/env python3
-"""Stage 1, GPU alternative — a fluid solver in Taichi, replacing the Mantaflow bake.
+"""Stage 1 of 3 — the fluid solver (Taichi, GPU).
 
     python3 scripts/flipbook/ti_sim.py fire_puff --res 96 --frames 64
     python3 scripts/flipbook/ti_sim.py fire_puff --res 96 --radial 9 --curl 3.5
 
-Writes the same `build_cache/<name>/f###.npz` that `bake.py` does, so
-`render.py` and `pack.py` are unchanged — the two stages downstream do not care
-which solver produced the grids.
+Stage 1 of three: writes `build_cache/<name>/f###.npz`, which `render.py` then
+marches and `pack.py` packs. See README.md for the whole loop and for the
+landmines (framing, resolution transfer, wall contamination).
 
-WHY THIS EXISTS ALONGSIDE bake.py
+WHY IT REPLACED BLENDER/MANTAFLOW (28/07/2026)
 
-  1. **Speed.** Mantaflow runs on the CPU: measured 1037 s for 64 frames at
-     res 112, i.e. 16 s per frame. Taichi on Metal measured 2.86 ms per kernel at
-     128³; a solver step is ~50 kernels, so a frame costs well under a second.
-     That turns a 17-minute experiment into a sub-minute one, which is the
-     difference between tuning a look and guessing at it.
-  2. **The physics the owner actually asked for.** A puff should have "no
-     buoyancy, no gravity — only radial expansion, curl noise and viscosity".
-     Mantaflow's gas domain has no radial force and no viscosity, so the
-     Mantaflow preset fakes them with inflow-along-normals and dissolve speed.
-     Here each is a term of its own.
+  1. **Speed.** Same config, res 64 / 24 frames: Mantaflow 99.9 s, this 3.7 s.
+     At res 112 / 64 frames it was 1037 s against ~60 s — the difference between
+     tuning a look and guessing at it.
+  2. **The physics the owner asked for.** A puff has "no buoyancy, no gravity —
+     only radial expansion, curl noise and viscosity". Mantaflow's gas domain
+     has no radial force and no viscosity, so its preset faked them with
+     inflow-along-normals and dissolve speed. Here each is a term of its own.
 
-WHAT MANTAFLOW STILL DOES BETTER
-  Its combustion model (fuel -> flame -> soot) and wavelet turbulence are years
-  of tuning. `bake.py` stays for effects that want them; this one is for the
-  fast loop and for physics Mantaflow cannot express.
+  What was given up: Mantaflow's combustion model and wavelet turbulence. `git
+  log` has `bake.py` if a future effect wants them back.
 """
 
 import argparse
@@ -49,7 +44,7 @@ PRESETS = {
     # large sphere means the first frames are already a big ball and the growth
     # has nowhere to read from — the sim spends the sheet deforming a blob
     # instead of expanding one.
-    "fire_puff": dict(
+    "fire_puff": dict(dt=0.9, gravity=0.0, flat=1.0, shell=0.0, impulse=0.22, fuel_dens=1.0, 
         # Small ignition volume: a puff starts as a point and expands. Seeding a
         # large sphere means the first frames are already a big ball.
         # fuel_frames is what decides how much of the sheet is still FIRE: at
@@ -87,7 +82,7 @@ PRESETS = {
     # velocity double-counts it, while the puff also drifts off the cell centre
     # and the autofit crop (which is symmetric about that centre) pays for the
     # empty half. A small value is enough to break the symmetry.
-    "smoke_puff": dict(
+    "smoke_puff": dict(dt=0.9, gravity=0.0, flat=1.0, shell=0.0, impulse=0.22, fuel_dens=1.0, 
         fuel_radius=0.06, fuel_frames=0.18,
         radial=4.0, curl=3.2, swirl=4.0,
         # Smoke is rounder than flame: it has no thin licking tongues, so it
@@ -96,11 +91,63 @@ PRESETS = {
         viscosity=0.30, buoyancy=1.5,
         cool=3.0, soot=1.0),
 
+    # DUST, as ONE SMALL PARCEL inside a larger cloud — which is what a sprite
+    # in a flipbook actually is (owner, 28/07/2026). That framing decides two
+    # terms by itself:
+    #
+    #   gravity 0 and flat 1.0. Settling and the wide, low shape of an impact
+    #     cloud are properties of the CLOUD — where the composition places its
+    #     sprites and what force field it moves them with. A parcel a few
+    #     centimetres across expands isotropically; baking a fall or a squash
+    #     into the sheet applies the cloud's behaviour a second time, per sprite.
+    #     (Measured what happens if you do it anyway: gravity 4.0 piled 16.4% of
+    #     the mass onto the domain floor, where the boundary clamp then
+    #     manufactures more.)
+    #
+    # What is left to distinguish dust from smoke at THIS scale is small, and
+    # honest: dust is GRAINIER (finer eddies, less diffusion) and its shape
+    # stops evolving sooner (higher viscosity, shorter impulse) because the
+    # particles are heavy and the parcel loses its momentum quickly. Smoke keeps
+    # rolling for the whole sheet.
+    "dust_puff": dict(dt=0.9, gravity=0.0, flat=1.0, shell=0.0, impulse=0.22, fuel_dens=1.0, 
+        fuel_radius=0.06, fuel_frames=0.10,
+        radial=7.0, curl=3.4, swirl=4.5,
+        diffuse=0.035, eddy=48.0,
+        viscosity=0.85, buoyancy=0.0,
+        cool=3.0, soot=1.0),
+
+    # ENERGY EXPLOSION — the one preset that is NOT composed from parcels.
+    #
+    # The reference (owner, 28/07/2026) is a single CORRELATED structure: each
+    # filament runs continuously from the core to the rim and its shape depends
+    # on its neighbours. That is why it must be one large sheet rather than many
+    # small sprites — cut it up and the correlation, which IS the look, is gone.
+    #
+    # Almost every number is the OPPOSITE of the smoke/dust presets, and for the
+    # same reasons stated there, inverted:
+    #   diffuse ~0   — diffusion is what rounds filaments into convex billows.
+    #                  Cauliflower wanted it; wisps are destroyed by it.
+    #   shell 0.72   — a detonation ignites a SURFACE. The dark core in the
+    #                  reference is where the fuel never was, not a flame dying.
+    #   eddy 60      — fine turbulence, so the wisps are thin.
+    #   radial 22    — a violent, brief impulse. Strong advection is what STRETCHES
+    #                  the noise into radial streaks; without it the curl just
+    #                  stirs a ball.
+    #   soot 0.10    — energy, not fire: almost nothing is left behind as smoke.
+    #   cool 0.30    — it must stay emissive across the sheet, since the FLAME
+    #                  channel is what gets drawn (additive).
+    "energy_burst": dict(dt=0.32, gravity=0.0, flat=1.0, impulse=0.07, fuel_dens=0.18,
+        shell=0.72, fuel_radius=0.15, fuel_frames=0.06,
+        radial=22.0, curl=4.5, swirl=6.5,
+        diffuse=0.004, eddy=60.0,
+        viscosity=0.12, buoyancy=0.0,
+        cool=0.30, soot=0.10),
+
     # A rising flame: buoyancy on, radial off.
-    "fire": dict(eddy=21.0, diffuse=0.10, radial=1.2, curl=2.4, viscosity=1.2, buoyancy=17.0,
+    "fire": dict(dt=0.9, gravity=0.0, flat=1.0, shell=0.0, impulse=0.22, fuel_dens=1.0, eddy=21.0, diffuse=0.10, radial=1.2, curl=2.4, viscosity=1.2, buoyancy=17.0,
                  cool=2.2, fuel_frames=0.75, fuel_radius=0.16,
                  soot=0.5, swirl=3.4),
-    "smoke": dict(eddy=21.0, diffuse=0.18, radial=0.8, curl=2.0, viscosity=1.6, buoyancy=6.0,
+    "smoke": dict(dt=0.9, gravity=0.0, flat=1.0, shell=0.0, impulse=0.22, fuel_dens=1.0, eddy=21.0, diffuse=0.18, radial=0.8, curl=2.0, viscosity=1.6, buoyancy=6.0,
                   cool=3.0, fuel_frames=0.30, fuel_radius=0.18,
                   soot=0.9, swirl=2.2),
 }
@@ -120,6 +167,26 @@ def main():
     ap.add_argument("--curl", type=float, default=None, help="curl-noise forcing")
     ap.add_argument("--viscosity", type=float, default=None, help="velocity damping")
     ap.add_argument("--buoyancy", type=float, default=None, help="0 for a puff")
+    ap.add_argument("--dt", type=float, default=None,
+                    help="simulated time per frame — how much of the EVENT the "
+                         "sheet covers. See the note at the step loop.")
+    ap.add_argument("--impulse", type=float, default=None,
+                    help="how long the radial impulse lasts, as a fraction of "
+                         "the sheet. A puff coasts after a shove (0.22); a "
+                         "detonation is over in a few frames")
+    ap.add_argument("--fuel-dens", type=float, default=None,
+                    help="density injected with the heat. Low = ENERGY (little "
+                         "smoke left behind), high = fire that turns to soot")
+    ap.add_argument("--shell", type=float, default=None,
+                    help="0 = ignite a solid ball; 0..1 = ignite a hollow SHELL "
+                         "at that fraction of --fuel-radius. A detonation lights "
+                         "a surface, and the dark core is where the fuel was not")
+    ap.add_argument("--flat", type=float, default=None,
+                    help="vertical scale on the radial push. 1 = a ball, "
+                         "<1 = spreads sideways like impact dust")
+    ap.add_argument("--gravity", type=float, default=None,
+                    help="settling force on DENSITY (dust), along the same "
+                         "vertical axis buoyancy uses")
     ap.add_argument("--cool", type=float, default=None, help="T^4 cooling into soot")
     ap.add_argument("--swirl", type=float, default=None, help="vorticity confinement")
     ap.add_argument("--eddy", type=float, default=None,
@@ -142,7 +209,8 @@ def main():
     # Every knob is quoted at res 64 (see the scaling below), so an override
     # means the same shape whatever --res it is applied at.
     for k in ("radial", "curl", "viscosity", "buoyancy", "cool", "swirl",
-              "diffuse", "soot", "fuel_frames", "eddy"):
+              "diffuse", "soot", "fuel_frames", "eddy", "gravity", "flat",
+              "shell", "impulse", "fuel_dens", "dt"):
         if getattr(args, k) is not None:
             p[k] = getattr(args, k)
 
@@ -154,7 +222,7 @@ def main():
     # from lying about the full bake (the trap that cost a 17-minute Mantaflow
     # run earlier).
     res_k = REF_RES / args.res
-    for k in ("radial", "curl", "buoyancy", "swirl"):
+    for k in ("radial", "curl", "buoyancy", "swirl", "gravity"):
         p[k] *= res_k
 
     # DIFFUSION SCALES BY THE SQUARE, not linearly, and it was not scaled at all.
@@ -263,19 +331,27 @@ def main():
         return c
 
     @ti.kernel
-    def add_fuel(t: ti.f32, dt: ti.f32, rad: ti.f32, radial: ti.f32):
+    def add_fuel(t: ti.f32, dt: ti.f32, rad: ti.f32, radial: ti.f32,
+                 shell: ti.f32, kdens: ti.f32):
         c = ti.Vector([N * 0.5, N * 0.5, N * 0.5])
         r = rad * N
         for I in ti.grouped(dens):
             d = (ti.cast(I, ti.f32) - c).norm()
             if d < r:
+                # SOLID BALL (shell = 0) or a HOLLOW SHELL. A detonation ignites
+                # a surface, not a volume: the reference the owner gave is dark
+                # in the middle with a bright, filamented rim, and that hole is
+                # not the flame dying — it is where the fuel never was.
                 m = (1.0 - d / r) ** 0.7
+                if shell > 0.0:
+                    w = r * (1.0 - shell)
+                    m = ti.max(0.0, 1.0 - ti.abs(d - r * shell) / ti.max(w, 1e-3))
                 # Slight per-cell jitter so the source is not a perfect ball —
                 # a perfectly symmetric source produces a perfectly symmetric
                 # puff, which is the "solid sphere" failure.
                 m *= 0.6 + 0.4 * ti.random()
                 temp[I] += m * 6.0 * dt
-                dens[I] += m * 1.2 * dt
+                dens[I] += m * 1.2 * kdens * dt
                 if d > 0.001:
                     # A small launch kick only; the sustained expansion is a
                     # force on the gas itself, applied in forces().
@@ -283,7 +359,8 @@ def main():
 
     @ti.kernel
     def forces(dt: ti.f32, buoy: ti.f32, curl: ti.f32, visc: ti.f32,
-               swirl: ti.f32, t: ti.f32, radial: ti.f32, decay: ti.f32):
+               swirl: ti.f32, t: ti.f32, radial: ti.f32, decay: ti.f32,
+               grav: ti.f32, flat: ti.f32):
         c = ti.Vector([N * 0.5, N * 0.5, N * 0.5])
         for I in ti.grouped(u):
             v = u[I]
@@ -301,9 +378,24 @@ def main():
                 # ignition and then coasts, which is what lets surface tension —
                 # here, diffusion — round the lobes back up. Cauliflower is
                 # LOBES, and lobes need the flow to settle.
-                v += dt * radial * decay * (temp[I] + 0.35 * dens[I]) * d / dist
-            # Buoyancy (0 for a puff).
-            v.y += dt * buoy * temp[I]
+                # FLATTEN: impact dust spreads along the ground, it does not
+                # inflate a ball. Scaling the vertical component of the push is
+                # the only part of that a SPRITE can carry — the fall itself
+                # belongs to the particle, exactly as buoyancy does for smoke.
+                dir = ti.Vector([d.x, d.y, d.z * flat])
+                v += dt * radial * decay * (temp[I] + 0.35 * dens[I]) * dir / dist
+            # UP IS Z, not Y. The renderer's image Y is the grid's z
+            # (`gz = (1-v)*(rz-1)`) and its ray marches along y, so a force on
+            # v.y pushes the puff straight AWAY FROM THE CAMERA. Measured with
+            # buoyancy 40: the centroid moved 27.8 -> 43.8 along the view ray
+            # while the render's up axis went 24.1 -> 22.5. It was invisible
+            # until now only because both shipped puffs have buoyancy ~0.
+            v.z += dt * buoy * temp[I]
+            # GRAVITY, on DENSITY rather than temperature: dust is heavy
+            # particulate that settles, which is the whole difference between a
+            # dust puff and a smoke puff. Buoyancy cannot express it — it scales
+            # with temp, and dust is cold, so a negative buoyancy does nothing.
+            v.z -= dt * grav * dens[I]
             # Turbulent forcing, scaled by how much material is here: empty
             # cells should not be stirred.
             v += dt * curl * noise[I] * (0.4 + dens[I] + temp[I])
@@ -421,7 +513,14 @@ def main():
             # outlive the flame by a long way.
             dens[I] = (dens[I] + loss * soot) * (1.0 - 0.06 * dt)
 
-    dt = 0.9
+    # Simulated time per FRAME. The sheet always has --frames cells, so this is
+    # what decides how much of an EVENT they cover: a puff drifting for a second
+    # (0.9) or a detonation that is over in a fifth of one (0.3). Lowering it is
+    # how a violent impulse fits inside the domain — lowering the FORCE instead
+    # also removes the strong advection that stretches the noise into filaments,
+    # which is the entire look of an explosion (measured: radial 22 -> 12 took
+    # lobes from 2.19 to 1.20).
+    dt = p["dt"]
     t0 = time.time()
     wall_max = 0.0
     r90 = 0.0
@@ -438,11 +537,17 @@ def main():
         for _ in range(args.substeps):
             frac = f / max(1, args.frames - 1)
             if frac < p["fuel_frames"]:
-                add_fuel(frac, dt / args.substeps, p["fuel_radius"], p["radial"])
+                add_fuel(frac, dt / args.substeps, p["fuel_radius"], p["radial"],
+                         p["shell"], p["fuel_dens"])
             # Impulse envelope: full push while the fuel burns, then off.
-            decay = max(0.0, 1.0 - (f / max(1, args.frames - 1)) / 0.22) ** 2
+            # How long the radial impulse lasts, as a fraction of the sheet.
+            # A puff coasts after a gentle shove (0.22); a DETONATION is over in
+            # a few frames and everything after is momentum.
+            decay = max(0.0, 1.0 - (f / max(1, args.frames - 1))
+                        / max(p["impulse"], 1e-3)) ** 2
             forces(dt / args.substeps, p["buoyancy"], p["curl"], p["viscosity"],
-                   p["swirl"], f * 0.1, p["radial"], decay)
+                   p["swirl"], f * 0.1, p["radial"], decay, p["gravity"],
+                   p["flat"])
             divergence()
             for k in range(jacobi_iters // 2):
                 jacobi(pre, pre2)
@@ -460,7 +565,7 @@ def main():
             wall_max = max(wall_max, shell / tot)
             w = d.ravel()[rad_order]
             r90 = float(rad_sorted[np.searchsorted(np.cumsum(w), 0.9 * tot)])
-        # Same layout bake.py writes: [z][y][x], so render.py is unchanged.
+        # Layout [z][y][x], which is what render.py indexes.
         np.savez_compressed(
             os.path.join(out_dir, "f%03d.npz" % (f + 1)),
             density=np.ascontiguousarray(d.transpose(2, 1, 0), np.float16),

@@ -1718,3 +1718,385 @@ that is got backwards).
 
 Re-shipped: `smoke_puff_8x8.png` + splits, coverage 22.5%, lobes 1.08, 0/64
 clipped. Builds clean, core suites 6/6, `selftest.py` PASS.
+
+### Đợt E — where the plan stands, and what should come next (28/07/2026)
+
+**Part A is complete.** F1 (lit particles + blend law), F2 (smoke), F3 (fire),
+F4 (character aura, three layers) are all in. **Part B**: E1 post-FX LANDED,
+E2 VFX light bleed RESOLVED, E3 `VFX_Sequence` LANDED, E5 batch 1 complete
+(GlintSparkle, RuneCircle, ChargeConverge, DissolveExit). E4 now ships real
+sheets rather than a plan (`fire_puff_8x8`, `smoke_puff_8x8`, both accepted).
+
+**F0 (the purge) is the owner's, and is happening now** — the survivor set is
+`VFX_ComposeSmokePuff` and `VFX_ComposeFlameVolume`, the two just rebuilt.
+
+That leaves, from the spec: **E6 batch 2** — and every one of its dependencies
+is now satisfied (SweepSlash needed E4, ImpactPackage needed E3, LightShaft
+needed E1) — then **E7**, the retrofit stop-gate, then **E8** platform/perf.
+
+**Ranked by how many future moments each unlocks, not by spec order:**
+
+1. **`VFX_ComposeImpactPackage` (E6 #6).** The one effect every skill, minion
+   death and boss hit routes through; it is also what tells a player their hit
+   LANDED. `vc_impact.inl` exists but predates F1/E3 — 175 lines, no sequence,
+   no lit population.
+2. **A `dust_puff` sheet.** The pipeline's next sheet should be dust, not
+   another fire: it is what an impact package, a footfall, a landing, a fissure
+   and any Earth skill all need, and it is the same `smoke_puff` skeleton with
+   a shorter life and no soot hand-off. ~90 s of sim + the audit.
+3. **Clash VFX.** Đấu Pháp resolves a 5x5 element matrix (`combat/docs/API.md`)
+   and the moment two projectiles meet — the signature gameplay beat — has no
+   composition of its own. It needs E3's envelope more than it needs new
+   particles.
+4. **Telegraph / anticipation.** E3 gives the envelope but nothing draws the
+   *anticipation* phase, which is the half of ER readability the spec's own
+   §0.1 names. A ground-decal wind-up per element is small and reusable.
+5. **`VFX_ComposeSweepSlash` (E6 #5)** — was blocked on E4, now unblocked; the
+   sheet it wants is a thin arc, which the pipeline does not yet author (its
+   domain is cubic and its physics radial). Costs a new sim shape, not a preset.
+6. **E7 stop-gate** once 1–3 are in: retrofit three pilot skills and A/B them.
+   The spec is explicit that this is where the plan is proven or re-scoped.
+
+**Deliberately NOT doing** (owner's call, 28/07/2026): re-enabling FlameVolume's
+own smoke layer (`flame_volume.inl:345`, still commented) — fire reads well
+enough as it is; and retrofitting the other smoke emitters (`vc_smoke_energy`,
+`burning_ground`, aura) onto the flipbook, since F0 may delete them. Both would
+otherwise be correct: the flat-mask defect measured this session applies to
+every one of them.
+
+**Pipeline housekeeping done with this entry:** `scripts/flipbook/README.md`
+rewritten around the Taichi solver, and `bake.py` / `make.py` / `fb_presets.py`
+deleted — Mantaflow measured 1037 s where this takes ~60 s, and could not
+express a radial force, viscosity, or buoyancy at zero. `git log` has them.
+
+### E4 — `dust_puff` shipped, and the vertical axis was the wrong one (28/07/2026)
+
+`assets/textures/dust_puff_4x4.png` + `_smoke`, 1024x1024, res 112 / 64 frames.
+Coverage 18.1%, lobes 1.02, 0/16 clipped, wall-shell 0.0%, value spread 0.73.
+
+**The solver's UP was the camera's DEPTH axis.** `forces()` applied buoyancy to
+`v.y`, while the renderer's image-up is the grid's **z** (`gz = (1-v)*(rz-1)`)
+and its ray marches along y — so buoyancy pushed the puff straight away from the
+camera. Measured before the fix, buoyancy 40: centroid 27.8 → 43.8 along the
+view ray, 24.1 → 22.5 along the render's up. After: 27.7 → 43.2 up, view ray
+flat. It survived this long only because both shipped puffs have buoyancy ~0 —
+`fire_puff` 0.0 and `smoke_puff` 1.5, whose "slight rise" was in fact a slight
+drift into the screen. The `fire` and `smoke` column presets were nonsense and
+had never been baked from this solver.
+
+**Two terms dust needs that no gas preset has:**
+- `flat` squashes the vertical component of the radial push. Impact dust spreads
+  along the ground rather than inflating a ball, and at 0.20 the sheet measures
+  **height/width 0.87** — wider than tall, which is the shape a viewer reads as
+  "something hit the floor".
+- `gravity`, on DENSITY rather than temperature. Buoyancy cannot express
+  settling: it scales with `temp`, and dust is cold, so a negative buoyancy does
+  nothing at all.
+
+**Gravity had to stay SMALL, for the same reason buoyancy does.** At 4.0 the dust
+piled onto the domain floor and the boundary clamp manufactured **16.4%** of the
+total mass there. The fall belongs to the PARTICLE; what a sheet can carry that
+a rigidly-moving sprite cannot is the internal asymmetry. Known limit: even at
+1.0 the lateral spread grazes the SIDE walls at res 64 (1.4%) — the real fix is
+a wide, short domain, and the solver is cubic.
+
+**A smaller grid is a PACK decision, not a sim one.** The spec asks for
+`fb_dust_4x4`; simulating 16 frames would have produced an earlier moment of the
+event rather than a coarser sampling of it, so the sim runs the full 64 and
+`pack.py --stride 4` subsamples. `--split` now also skips a channel whose
+coverage is under 1% — a cold effect has no usable flame channel, and writing it
+puts a file in `assets/` that looks like an asset and is not one.
+
+**E4's DoD, honestly:** flipbooks 3/4 (`fire_puff`, `smoke_puff`, `dust_puff`;
+`spark_burst` is a PARTICLE effect, not a fluid, so it belongs in a composition
+rather than in this pipeline). Still absent: glint/streak masks, `arc_slash_*`,
+`sigil_ring_*`, distortion normal maps, erosion masks — all with working
+procedural fallbacks in their consumers, as the spec requires. `assets/INDEX.md`
+now has an entry per sheet, including why `smoke_atlas_8x8` is superseded.
+
+### E6 #6 — `VFX_ComposeImpactPackage`, and where a cloud ends and a puff begins (28/07/2026)
+
+Owner, on the dust preset: *"chúng ta đang làm flipbook cho 1 đám bụi nhỏ trong
+1 đám bụi lớn, nên trọng lực hút xuống là việc của mô hình đám bụi lớn quyết chứ
+không phải việc của flipbook"*. Correct, and it invalidated more than the gravity
+term: the FLATTENING went with it. A wide, low, ground-hugging shape is a
+property of the CLOUD — of where the composition puts its sprites — not of a
+parcel a few centimetres across, which expands isotropically. Both terms were
+solving the cloud's problem inside the sheet, where they would then be applied a
+second time per sprite.
+
+`dust_puff` re-baked with `gravity 0`, `flat 1.0`: height/width **0.99** (a
+round parcel, as it should be), lobes 1.04, 0/16 clipped, wall-shell 0.0%. What
+still separates dust from smoke at this scale is small and honest — dust is
+GRAINIER (eddy 48 vs 34, diffuse 0.035 vs 0.06) and its shape stops evolving
+sooner (viscosity 0.85 vs 0.30, a shorter fuel window), because heavy particles
+lose their momentum quickly while smoke keeps rolling for the whole sheet.
+
+**The package** (`core/composition/common/vc_impact_package.inl`) is authored as
+a `VFX_Sequence`, which is what E3 was built for — the beats and their offsets
+ARE the effect:
+
+    0.00  LIGHT     flash — the beat that says the hit registered; never delayed
+    0.00  HITSTOP   gated at severity 0.45 (a light hit that freezes reads as a dropped frame)
+    0.00  COMPOSE   element debris — additive, unlit, ballistic (its own 9.81 field)
+    0.02  COMPOSE   the dust cloud — one frame behind, so the eye sees cause then effect
+    0.03  DISTORT   gated at 0.35
+    0.04  DECAL     the only beat that outlives the moment; lifetime scales with severity
+    0.05  SHAKE     gated at 0.90
+
+The cloud carries what the sheet gave up: a RING (not a disc — a filled disc
+puts most of its sprites where they only occlude each other), velocity outward
+ACROSS the surface rather than up (dust thrown up reads as an explosion, dust
+thrown out reads as an impact), and a gentle 1.1 m/s² sink against a 2.4 drag,
+which is what makes it spread and then stop. `normal` builds a tangent basis, so
+a hit on a wall throws dust off the wall — hard-coding the ground plane is what
+makes every impact in a game look like it happened on a floor.
+
+**Shake is gated at 0.90 rather than removed.** The project decided against
+per-skill screen shake (reserved for a boss ultimate), but a package that cannot
+express the beat at all cannot express a boss ult either; the gate says "not for
+ordinary hits" in a way a deleted line cannot.
+
+Wired into `sandbox/vfx_test.c` (NEW FX → "IMPACT PKG", severity 1.0 so every
+gate is open). Builds clean, core suites 6/6.
+
+**Known gap:** the DECAL beat uses the sequence's default texture — the old
+`vc_impact.inl` had its decal and light calls commented out, so there is no
+established dust-scuff decal to point at. `assets/textures/decals/` has burn and
+crack only.
+
+### E6 — energy burst: a particle SYSTEM, not one big flipbook (28/07/2026)
+
+Owner: the impact's important half is the ENERGY EXPLOSION, dust is only
+accompaniment — and *"làm 1 flipbook lớn ko thực tế"*, with a proposed design: a
+low capless cylinder emitter, centrifugal launch, the outward push giving way to
+viscosity and curl past a set radius, the burst existing as the superposition.
+That design is right, and it is what shipping games use for repeatable gameplay
+VFX (baked hero explosions exist, but they are one fixed silhouette, one scale,
+~16 MB, blind to the scene). The engine already had all four terms.
+
+**The one thing the design was missing, and the screenshot had already proved
+it:** a round puff sprite cannot make a radial filament however it moves. The
+dust ring made exactly the lumpy necklace that predicts. The fix is
+`ParticleConfig.stretchStrength` — velocity-stretched billboards, so each
+particle IS a streak along its own motion and the superposition reads as a
+starburst. Every other term decides where the streaks go; this one decides that
+they are streaks.
+
+**"Viscosity increases past a radius" is expressible as "the push runs out".**
+`FORCE_GRAVITY_POINT` with a negative strength, a `radius` and `falloff 1.0` is
+full at the centre and absent beyond `reach`; the curl and drag layers are
+constant, so they simply become the whole story once it has faded. Nothing has
+to ramp up, and nothing needs a term the force field cannot express.
+
+`VFX_ComposeEnergyBurst(pos, mat, scale, intensity)`, wired as the LEAD beat of
+`VFX_ComposeImpactPackage` at t=0.005 (a hair after the light, so the flash is
+what the eye catches first). Dust dropped to 8 sprites at alpha 135 with much
+wider angular and radial jitter — an evenly spaced ring reads as a necklace, and
+the giveaway is that you can count the sprites. Borrows the smoke flipbook as a
+placeholder sheet by the owner's decision; a dedicated sheet should be a WISP
+(thin, elongated, sharp ends), since stretching a round puff only goes so far.
+
+**What the flipbook route measured, before it was abandoned.** An `energy_burst`
+sim preset is in `ti_sim.py` and inverts the smoke presets term by term
+(`diffuse` ~0 — diffusion is what rounds filaments into billows; `shell 0.72` —
+a detonation ignites a SURFACE, and the reference's dark core is where the fuel
+never was; fine `eddy`; a violent brief `impulse`). Three findings worth keeping:
+
+1. **The promising number was an artifact.** The first run measured lobes 2.19
+   (filaments!) — with 38.2% of its mass pressed against the domain wall. The
+   jagged silhouette was the BOX. Clean runs measured 1.04–1.25, i.e. a smooth
+   ball, and no combination of `radial`/`dt`/`impulse` reached the reference.
+2. **Filaments need total advected DISTANCE, which is what hits the wall.**
+   Cutting `dt` to fit the event inside the domain removes the very stretching
+   that draws the streaks: radial 22 → 12 took lobes 2.19 → 1.20.
+3. **A fine-eddy preset cannot be probed at low resolution.** `eddy 60` across
+   the domain at res 64 is ~1 voxel per eddy — below the grid, so the
+   turbulence is unresolved noise. The parameter is resolution-INDEPENDENT and
+   still unusable below a minimum grid; those are different properties.
+
+New solver knobs from this round: `shell` (hollow ignition), `impulse` (how long
+the radial impulse lasts, replacing a hard-coded 0.22), `fuel_dens` (density
+injected with the heat — low = energy, high = fire that becomes soot), `dt`
+(simulated time per frame: how much of an EVENT the sheet covers).
+
+**Camera shake removed from ImpactPackage**, and the rule recorded: shake is
+never added on a VFX's own initiative — a severity gate is not permission.
+
+### E6 energy burst — the smoke sheet stays; growth is the effect (28/07/2026)
+
+Owner: the smoke flipbook already reads well, so the planned energy-WISP bake is
+dropped — more particles instead, born tiny and growing, with size and opacity
+randomised per particle.
+
+Why the smoke sheet works here, worth keeping since it decided against a bake:
+its RGB carries the puff's own self-shadow, so every streak has internal
+brightness variation a flat mask cannot have, while velocity-stretching plus
+additive overlap supply the direction its round silhouette does not.
+
+- **Growth curve 0.14 → 2.40** (was 0.55 → 1.70). The eye reads the RATE of
+  growth; a sprite that starts near its final size only translates.
+- **Lifetime 0.38–0.78 s** (was 0.30–0.55). At 0.30 s that growth happens faster
+  than it can be resolved and the burst goes back to looking like sprites
+  appearing at size — the curve and the lifetime are one parameter, not two.
+- **Count 40–80** (was 18–40), sizes `Mix(0.07, 0.34)` weighted to the small end
+  (pow 2.2) and alpha randomised 0.45–1.0 per particle, independently of size.
+  A cloud whose sprites share a size reads as one object cut into pieces.
+
+**Fill rate is the thing to watch**, and `count` is the lever: additive flipbook
+sprites draw TWICE (the atlas cross-fade), and F3 measured 22 fps from
+twenty-two LARGE ones. These are a third of that size and shorter-lived, which
+is what buys the count — it is not headroom that was always there.
+
+### ImpactPackage — the cloud takes the SMOKE sheet, not the dust one (28/07/2026)
+
+Owner, on the impact still looking wrong: the smoke flipbook was the one to use.
+The lead energy burst was already on it; the trailing CLOUD was still bound to
+`dust_puff_4x4_smoke`, and that sheet is baked grainy on purpose — fine eddies
+(48 across the domain), almost no diffusion (0.035) — because that is what
+separates dust from smoke AS A FLUID. On a sprite, that grain reads as a torn,
+stringy edge, and a dozen torn edges overlapping is what looked bizarre. The
+smoke sheet's rounder, self-shadowed billows carry the same motion without the
+fray.
+
+The lesson generalises past this case: **a property that distinguishes two
+fluids in a simulation is not automatically a property worth having on a
+sprite.** Grain is real dust physics and it is the wrong thing to magnify onto a
+half-metre billboard.
+
+`dust_puff_4x4` stays on disk with no consumer — it is the sheet to come back to
+if a gritty rock impact ever wants exactly that quality. The cloud now also uses
+the smoke sheet's four-rate table, so the sprites do not step to each new billow
+in lockstep.
+
+### ImpactPackage stripped to one population (28/07/2026)
+
+Owner: *"giờ impact chỉ cần khói, di chuyển theo tôi mô tả là đủ, ko cần gì
+hết"*. Removed, in order of how wrong each was:
+
+- **Velocity stretch on the burst sprites** — the "trail". This file had argued
+  it was the load-bearing term, on the grounds that a round sprite cannot make a
+  radial filament however it moves. That argument was reasoned from the
+  reference IMAGE rather than from the effect on screen: with the smoke sheet,
+  enough particles and the size ramp, the burst already reads, and the stretched
+  version read as a smear behind each sprite. The premise was not wrong about
+  filaments — it was wrong that this effect needed them.
+- **The separate dust cloud** — a second smoke population with its own sheet,
+  field, gradient and curves, doing what the burst already does.
+- **Ballistic debris sparks** — they said "what was hit"; nothing had asked for
+  that to be said, and they competed with the burst inside a tenth of a second.
+- **The motionless core-flash sprites** in the burst — a flash belongs to the
+  LIGHT beat, which costs no overdraw and reads brighter than a sprite can.
+
+The file went 300 → 120 lines. What is left is a light flash, the burst, a
+distortion, a decal, and a gated hitstop — beats that own their own state, so
+`ImpactPkg_InitShared` now builds nothing.
+
+**The pattern behind all four removals, worth naming:** each was reasoned from a
+reference image rather than from what was on screen, and each added a population
+that competed with the one doing the work. A package is stronger with one
+population and clear timing than with four inside a tenth of a second.
+
+### Energy burst — two phases, and sprite size derived from the ring (28/07/2026)
+
+Owner, on the first working build: the ring forms correctly, but the sprites are
+too small to OVERLAP, and once the ring exists the centrifugal force should be
+essentially zero — the smoke passes into a chaotic phase and dissipates, and
+THAT is the explosion.
+
+**Phase 1 builds the shape, phase 2 is the effect.** The force field already
+expressed the hand-off (a repulsor with `radius` + `falloff 1.0` is absent
+beyond `reach`), but phase 2 had nothing to take over with: curl 2.2–4.5 against
+drag 1.5 left the ring coasting outward and thinning, which reads as a smoke
+ring rather than an explosion. Now curl 5.0–9.5 in TWO layers — coarse
+(noiseScale 0.55) to roll whole sections of the ring, fine (2.2) to break their
+edges — against drag 1.1, enough to end the outward flight without damping the
+churn. Lifetimes went 0.38–0.78 s → 0.85–1.45 s, since the flight to the ring
+alone costs ~0.3 s: roughly two thirds of each life should now be phase 2. The
+alpha curve was holding 0.30 by mid-life, i.e. the churn was happening behind a
+fade that had already run; it now holds 0.80 to 55% of life.
+
+**Sprite size is now DERIVED, not picked.** The burst exists only as the
+superposition, and superposition needs overlap: on a ring of radius `reach`
+carrying `count` sprites, neighbours sit `2*PI*reach/count` apart, so anything
+smaller leaves gaps — the necklace of separate puffs the owner photographed. The
+size is computed from that spacing with an overlap factor of 1.30, divided by
+the growth curve's mid-life value because the number set is the radius at BIRTH
+while the overlap has to hold on ARRIVAL. Measured at intensity 0.9, scale 1.0:
+count 76, spacing 0.182 m, radius at the ring 0.15–0.37 m, **diameter 2.6x the
+spacing, ring coverage 2.6x**. Randomisation is now around that derived mean
+rather than around a constant, so the spread still breaks up the ring but cannot
+move the mean off the overlap.
+
+The point of deriving it: changing `count` or `reach` later cannot silently
+break the overlap again.
+
+### The flipbook was playing — every sprite was playing the SAME frame (28/07/2026)
+
+Owner: *"sao nó như ko có đổi sprite, mà như 1 cái ảnh di chuyển vậy?"* The
+animation was running. `SpriteAnim` derives its frame from the particle's
+ABSOLUTE age, and a burst spawns every sprite in the same instant, so all of
+them held the same frame for their whole lives. Under ADDITIVE with one tint,
+three dozen identical frames overlapping is one image being moved around.
+
+`vc_smoke_puff.inl` had already met this and worked around it with four
+templates at different RATES. That only splits a burst into four identical
+groups — nine sprites per frame here — and they all still start at frame 0
+together. The comment there says as much ("SpriteAnim has no per-particle frame
+offset"); the workaround was treated as the fix for long enough that the next
+consumer inherited the bug.
+
+**`ParticleConfig.spriteAnimPhase`** (seconds, default 0 = old behaviour) is the
+actual fix, in the engine where the limitation is: the renderer now reads
+`age + phase`. Every flipbook consumer can use it.
+
+The rate then has to be re-derived, because phase spends sheet: the longest life
+PLUS the largest phase must still land inside 64 frames, or the sprite runs into
+the empty tail and vanishes while its alpha says visible (the E4 landmine, third
+time). The burst uses its own templates at 64/2.4 s x {1.0, 0.92, 0.85, 0.78} —
+slowest 20.8 fps reaches frame 48 at (1.7 s life + 0.6 s phase), fastest
+26.7 fps reaches 61. Both inside the sheet.
+
+Also added, per this module's own rule about silent paths: EnergyBurst now warns
+once if the smoke flipbook is not loaded. A burst of static sprites and a burst
+whose flipbook failed to load are the same picture, and only one of them is a
+bug.
+
+**`VFX_ComposeSmokePuff` still has the lockstep**, and could take the same
+phase — left alone deliberately: the owner likes how it looks now, and this is
+a change to a shipped effect, not a fix to a broken one.
+
+### Energy burst — the motion the owner actually specified (28/07/2026)
+
+Owner's correction, and they were right that their own earlier idea was wrong:
+*"lực li tâm ban đầu hơi mạnh ... sau đó giảm dần về 0 + 1 xíu nhiễu ... chứ ko
+cần curl noise mạnh làm nó bay lung tung"*.
+
+**The impulse is a launch VELOCITY, not a force.** "Strong, then decaying to
+zero" is exactly what a launch speed against drag does, so the repulsor field
+went away entirely: with drag k, speed decays as exp(-k*t), and at k = 4.5 the
+outward motion is a third of launch by ~0.35 s and gone by ~0.8 s — inside the
+sprite's life, so the ring visibly SETTLES instead of drifting off. The ring's
+final radius is therefore launch/drag (~0.9 m at scale 1): move the ring by
+changing the SPEED, not by tuning a separate radius. Curl dropped 5.0-9.5 in two
+layers to 0.6-1.3 in one — "một xíu nhiễu", not a force of its own.
+
+Count 28 -> 60: SmokePuff spreads its 28 across a DISC, while a ring has to
+cover a circumference, so the same density needs more of them. Rotation is
+random at BIRTH with no spin after it — the angle is what stops one sheet read
+sixty times from showing sixty copies of the same silhouette, while continuous
+rotation on a billow that is already rolling reads as churning (SmokePuff turns
+its own flipbook spin down to 0.12x for the same reason).
+
+**A diagnostic gap closed, because "every sprite holds one frame from birth to
+death" had two indistinguishable causes.** Both `SmokePuff_InitShared` and the
+burst now log which path they took — which sheet loaded, or that none did and
+the static sprites are in use. A silent fallback from the new sheet to the old
+one, or from either to the three static cutouts, looked exactly like a working
+flipbook on screen; the effect being static was the only symptom, and it is the
+symptom of three different faults.
+
+**Not verifiable from this side:** `./build/wuxing --render-vfx 57` dies with
+`FATAL: RLVK: instance creation failed` outside the owner's graphical session,
+so the burst cannot be run headless here the way the flipbook audit can. The log
+line is the instrument instead.

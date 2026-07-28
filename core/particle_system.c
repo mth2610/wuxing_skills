@@ -60,6 +60,7 @@ typedef struct
   const ForceField *forceField;
   const ColorGradient *gradient;
   const SpriteAnim *spriteAnim;
+  float spriteAnimPhase;
   unsigned int texId;   // 0 = use the batch default passed to DrawParticles
   int blendMode;        // VFX_BlendMode — see the blend law in vfx_config.h
   int unlit;            // 1 = emissive, skip the lighting multiply
@@ -202,6 +203,7 @@ void SpawnParticle(ParticleConfig config)
   p->forceField = config.forceField;
   p->gradient = config.gradient;
   p->spriteAnim = config.spriteAnim;
+  p->spriteAnimPhase = config.spriteAnimPhase;
   p->texId = config.render.texture.id;
   p->blendMode = config.render.blendMode;
   p->unlit = config.render.unlit;
@@ -912,7 +914,9 @@ void DrawParticles(Camera3D camera, Texture2D texture)
     float     fbBlend = 0.0f;
     if (p->spriteAnim)
     {
-      float age = p->maxLifetime - p->lifetime;
+      // Phase-shifted age: without the offset every sprite from one burst
+      // holds the same frame as every other (see ParticleConfig.spriteAnimPhase).
+      float age = p->maxLifetime - p->lifetime + p->spriteAnimPhase;
       // Đợt E / E4 — cross-faded flipbook. Snapping to whole frames makes an
       // authored sheet read as the sprites flipping back and forth (32 fps atlas
       // against a 60 fps render, ~2 render frames per atlas frame, then a jump to

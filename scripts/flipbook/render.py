@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Step 2 of 3 — ray-march the dumped Mantaflow grids on the GPU (Taichi).
+"""Step 2 of 3 — ray-march the simulated grids on the GPU (Taichi).
 
-    python3 scripts/ti_render.py build_cache/fire --cell 128
-    python3 scripts/ti_render.py build_cache/fire --cell 256 --supersample 2
+    python3 scripts/flipbook/render.py build_cache/smoke_puff --cell 256 \
+        --supersample 2 --density-scale 3 --zoom auto
 
-Reads build_cache/<name>/f###.npz (from scripts/manta_bake.py) and writes
-build_cache/<name>/frames/f###.png, ready for scripts/pack_flipbook.py.
+Reads build_cache/<name>/f###.npz (from ti_sim.py) and writes
+build_cache/<name>/frames/f###.png, ready for pack.py.
 
 WHY A HAND-WRITTEN RAY-MARCHER RATHER THAN EEVEE
     Eevee's alpha comes from EXTINCTION, so an emissive flame renders bright and
@@ -18,7 +18,10 @@ CHANNEL LAYOUT (what the engine gets)
     R = emission / flame        → multiply by the black-body ramp at the call
                                   site (F3); this is the additive population.
     G = smoke density           → the alpha-blended, LIT population (F1b).
-    B = 0                       → reserved (motion vectors, rim, 6-way lighting).
+    B = self-shadow             → the same integral weighted by the light that
+                                  reaches each sample (--light). pack.py --split
+                                  writes B/G into the smoke sheet's RGB: an
+                                  UNSHADED smoke mask stacks into flat cards.
     A = 1 - transmittance       → a real opacity, not a luminance guess.
 
     One draw of this sheet can therefore feed both populations the blend law
@@ -44,9 +47,12 @@ def main():
     ap.add_argument("--supersample", type=int, default=2,
                     help="render at N x cell then box-filter down; 1 = off")
     ap.add_argument("--density-scale", type=float, default=28.0,
-                    help="extinction per unit of Mantaflow density. Its grid "
-                         "peaks near 0.1 for smoke, so the raw values integrate "
-                         "to almost nothing over a short ray.")
+                    help="extinction per unit of simulated density. The grids peak "
+                         "near 0.1 for smoke, so raw values integrate to almost "
+                         "nothing over a short ray. Raising it also SATURATES "
+                         "the puff's interior into a plateau — measured, the "
+                         "alpha median moved only 0.54->0.72 across 1.5..7, so "
+                         "this is not the knob for a card-looking sprite.")
     ap.add_argument("--flame-scale", type=float, default=3.0)
     ap.add_argument("--flame-extinction", type=float, default=6.0,
                     help="how much the flame itself blocks light; 0 makes fire "
@@ -81,7 +87,7 @@ def main():
 
     files = sorted(glob.glob(os.path.join(args.cache_dir, "f*.npz")))
     if not files:
-        print("no f###.npz in %s — run scripts/manta_bake.py first" % args.cache_dir)
+        print("no f###.npz in %s — run scripts/flipbook/ti_sim.py first" % args.cache_dir)
         return 1
 
     ti.init(arch=ti.gpu if args.arch == "gpu" else ti.cpu)

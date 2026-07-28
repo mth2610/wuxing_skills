@@ -97,7 +97,7 @@ static const char *s_meshNames[] = {
     "DISC", "RING", "CONE", "TORNADO", "CYLINDER", "SPHERE", "SHOCKWAVE", "PYRAMID", "TETRAHEDRON"};
 
 // @gen:newfx_names begin
-// 70 entries — auto-managed by sync_vfx_test.py
+// 72 entries — auto-managed by sync_vfx_test.py
 static const char* s_newFxNames[] = {
     "BURN GROUND", "IMPACT FIRE", "CAST FIRE", "SPLASH", "BUBBLES", "ICE CRYSTAL",
     "PUDDLE", "WATER STREAM", "IMPACT WATER", "CAST WATER", "GLOW VINE", "IMPACT WOOD",
@@ -108,9 +108,9 @@ static const char* s_newFxNames[] = {
     "GROUND SMOKE", "SMOKE ON PLANE", "MAGIC FILAMENTS", "MAGIC FILAMENTS ON PLANE", "SHARD DEBRIS", "WATER STREAM ON PATH",
     "MESH ELECTRICITY", "PARTICLE UPGRADES TEST", "TAIJI ARC STRIKE", "TORNADO", "RELEASE TORNADO", "FIRE FUNNEL",
     "ENERGY FLOW", "LIGHTNING BOLT", "PROC BEAM", "BEAM", "ORBITALS", "LEAF SWIRL",
-    "CHAIN LINK", "CROWN SPLASH", "SMOKE PUFF", "FLAME VOLUME", "EMBER DRIFT", "GLINT BURST",
-    "SHOCKWAVE RING", "STREAK FLARE", "EXPLOSION", "CHARACTER AURA", "RADIAL BURST E1A", "SEQUENCE ENVELOPE E3",
-    "GLINT SPARKLE", "RUNE CIRCLE", "DISSOLVE EXIT", "CHARGE CONVERGE",
+    "CHAIN LINK", "CROWN SPLASH", "SMOKE PUFF", "ENERGY BURST", "IMPACT PKG", "FLAME VOLUME",
+    "EMBER DRIFT", "GLINT BURST", "SHOCKWAVE RING", "STREAK FLARE", "EXPLOSION", "CHARACTER AURA",
+    "RADIAL BURST E1A", "SEQUENCE ENVELOPE E3", "GLINT SPARKLE", "RUNE CIRCLE", "DISSOLVE EXIT", "CHARGE CONVERGE",
 };
 // @gen:newfx_names end
 
@@ -122,8 +122,9 @@ static const int s_newFxCategories[] = {
     4, 5, 5, 5, 6, 6, 6, 6, 6, 6,
     6, 6, 6, 6, 1, 6, 6, 6, 6, 6,
     6, 1, 6, 6, 5, 6, 6, 0, 6, 6,
-    6, 6, 6, 2, 6, 1, 6, 0, 0, 6,
-    1, 0, 6, 5, 6, 6, 3, 5, 6, 6,
+    6, 6, 6, 2, 6, 1, 6, 6, 6, 0,
+    0, 6, 1, 0, 6, 5, 6, 6, 3, 5,
+    6, 6,
 };
 // @gen:newfx_categories end
 
@@ -470,7 +471,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             const char **names;
             int globalIdx;
             int visualIdx;
-            maxIdx = 70;
+            maxIdx = 72;
             names = s_newFxNames; // @gen:newfx_count
             visualIdx = 0;
             (void)names;
@@ -551,19 +552,23 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_ComposeCrownSplash(s_prefabStartPos, 1.5f, 2.0f, 2.0f, VC_MAT_WATER);
           } else if (s_testIndex == 56) { /* SMOKE PUFF */
               VFX_ComposeSmokePuff(s_prefabStartPos, VC_MAT_EARTH, 1.0f, 1.0f);
-          } else if (s_testIndex == 58) { /* EMBER DRIFT */
+          } else if (s_testIndex == 57) { /* ENERGY BURST */
+              VFX_ComposeEnergyBurst(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 0.9f);
+          } else if (s_testIndex == 58) { /* IMPACT PKG */
+              VFX_ComposeImpactPackage(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_EARTH, 1.0f, 1.0f);
+          } else if (s_testIndex == 60) { /* EMBER DRIFT */
               VFX_ComposeEmberDrift(s_prefabStartPos, 1.5f, 5, WHITE);
-          } else if (s_testIndex == 59) { /* GLINT BURST */
+          } else if (s_testIndex == 61) { /* GLINT BURST */
               VFX_ComposeGlintBurst(s_prefabStartPos, 5, 1.0f, WHITE);
-          } else if (s_testIndex == 60) { /* SHOCKWAVE RING */
+          } else if (s_testIndex == 62) { /* SHOCKWAVE RING */
               VFX_ComposeShockwaveRing(s_prefabStartPos, 1.5f, 2.0f, WHITE);
-          } else if (s_testIndex == 61) { /* STREAK FLARE */
+          } else if (s_testIndex == 63) { /* STREAK FLARE */
               VFX_ComposeStreakFlare(s_prefabStartPos, 1.5f, WHITE);
-          } else if (s_testIndex == 62) { /* EXPLOSION */
+          } else if (s_testIndex == 64) { /* EXPLOSION */
               VFX_TriggerExplosion(VC_MAT_FIRE, s_prefabStartPos, 1.5f, false);
-          } else if (s_testIndex == 64) { /* RADIAL BURST E1A */
+          } else if (s_testIndex == 66) { /* RADIAL BURST E1A */
               PostFX_RadialBurst(s_prefabStartPos, 0.18f, 0.7f);
-          } else if (s_testIndex == 65) { /* SEQUENCE ENVELOPE E3 */
+          } else if (s_testIndex == 67) { /* SEQUENCE ENVELOPE E3 */
               { VFX_Sequence *sq = VFX_SeqPreset(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 0.35f, 0.10f, 0.35f, 0.5f); if (sq) { VFX_SeqAt(sq, 0.00f, (VFX_Beat){ .kind = VFX_BEAT_COMPOSE, .cb = VFXTest_SeqPuff }); VFX_SeqAt(sq, 0.35f, (VFX_Beat){ .kind = VFX_BEAT_COMPOSE, .cb = VFXTest_SeqBurst }); VFX_SeqPlay(sq); } };
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
@@ -703,19 +708,23 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_ComposeCrownSplash(s_prefabStartPos, 1.5f, 2.0f, 2.0f, VC_MAT_WATER);
           } else if (s_testIndex == 56) { /* SMOKE PUFF */
               VFX_ComposeSmokePuff(s_prefabStartPos, VC_MAT_EARTH, 1.0f, 1.0f);
-          } else if (s_testIndex == 58) { /* EMBER DRIFT */
+          } else if (s_testIndex == 57) { /* ENERGY BURST */
+              VFX_ComposeEnergyBurst(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 0.9f);
+          } else if (s_testIndex == 58) { /* IMPACT PKG */
+              VFX_ComposeImpactPackage(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_EARTH, 1.0f, 1.0f);
+          } else if (s_testIndex == 60) { /* EMBER DRIFT */
               VFX_ComposeEmberDrift(s_prefabStartPos, 1.5f, 5, WHITE);
-          } else if (s_testIndex == 59) { /* GLINT BURST */
+          } else if (s_testIndex == 61) { /* GLINT BURST */
               VFX_ComposeGlintBurst(s_prefabStartPos, 5, 1.0f, WHITE);
-          } else if (s_testIndex == 60) { /* SHOCKWAVE RING */
+          } else if (s_testIndex == 62) { /* SHOCKWAVE RING */
               VFX_ComposeShockwaveRing(s_prefabStartPos, 1.5f, 2.0f, WHITE);
-          } else if (s_testIndex == 61) { /* STREAK FLARE */
+          } else if (s_testIndex == 63) { /* STREAK FLARE */
               VFX_ComposeStreakFlare(s_prefabStartPos, 1.5f, WHITE);
-          } else if (s_testIndex == 62) { /* EXPLOSION */
+          } else if (s_testIndex == 64) { /* EXPLOSION */
               VFX_TriggerExplosion(VC_MAT_FIRE, s_prefabStartPos, 1.5f, false);
-          } else if (s_testIndex == 64) { /* RADIAL BURST E1A */
+          } else if (s_testIndex == 66) { /* RADIAL BURST E1A */
               PostFX_RadialBurst(s_prefabStartPos, 0.18f, 0.7f);
-          } else if (s_testIndex == 65) { /* SEQUENCE ENVELOPE E3 */
+          } else if (s_testIndex == 67) { /* SEQUENCE ENVELOPE E3 */
               { VFX_Sequence *sq = VFX_SeqPreset(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 0.35f, 0.10f, 0.35f, 0.5f); if (sq) { VFX_SeqAt(sq, 0.00f, (VFX_Beat){ .kind = VFX_BEAT_COMPOSE, .cb = VFXTest_SeqPuff }); VFX_SeqAt(sq, 0.35f, (VFX_Beat){ .kind = VFX_BEAT_COMPOSE, .cb = VFXTest_SeqBurst }); VFX_SeqPlay(sq); } };
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
@@ -794,12 +803,12 @@ void VFXTest_Draw3D(void)
               case 51: VFX_ComposeBeam(VC_MAT_FIRE, s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){3.0f, 0, 0}), 0.1f, fminf(progress, 0.99f), s_meshTime); break;
               case 53: VFX_ComposeLeafSwirl(s_prefabStartPos, 1.5f, s_meshTime); break;
               case 54: VFX_ComposeChainLink(VC_MAT_FIRE, s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){3.0f, 0, 0}), 0.1f, 1.0f, fminf(progress, 0.99f), s_meshTime); break;
-              case 57: VFX_ComposeFlameVolume(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 1.0f); break;
-              case 63: { static int auraH = -1; static bool auraDone = false; if (progress < 0.5f) auraDone = false; if (!auraDone && auraH < 0) auraH = VFX_ComposeCharacterAura(Sandbox_GetPlayerAgentId(), VC_MAT_QI, 0.0f); if (auraH >= 0) VFX_AuraSetIntensity(auraH, (progress < 0.80f) ? (progress / 0.80f) : (1.0f - (progress - 0.80f) / 0.20f)); if (progress >= 0.99f && auraH >= 0) { VFX_KillCharacterAura(auraH); auraH = -1; auraDone = true; } }; break;
-              case 66: VFX_ComposeGlintSparkle(s_prefabStartPos, VC_MAT_HOLY, 1.0f, s_meshTime); break;
-              case 67: VFX_ComposeRuneCircle(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.9f, 0.0f}), (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.6f, fmodf(s_meshTime, 3.0f) / 3.0f, 4); break;
-              case 68: VFX_ComposeDissolveExit(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.9f, 0.0f}), VC_MAT_FIRE, 1.0f, fmodf(s_meshTime, 2.5f) / 2.5f); break;
-              case 69: VFX_ComposeChargeConverge(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.9f, 0.0f}), VC_MAT_LIGHTNING, 1.3f, fmodf(s_meshTime, 2.2f) / 2.2f, 45); break;
+              case 59: VFX_ComposeFlameVolume(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 1.0f); break;
+              case 65: { static int auraH = -1; static bool auraDone = false; if (progress < 0.5f) auraDone = false; if (!auraDone && auraH < 0) auraH = VFX_ComposeCharacterAura(Sandbox_GetPlayerAgentId(), VC_MAT_QI, 0.0f); if (auraH >= 0) VFX_AuraSetIntensity(auraH, (progress < 0.80f) ? (progress / 0.80f) : (1.0f - (progress - 0.80f) / 0.20f)); if (progress >= 0.99f && auraH >= 0) { VFX_KillCharacterAura(auraH); auraH = -1; auraDone = true; } }; break;
+              case 68: VFX_ComposeGlintSparkle(s_prefabStartPos, VC_MAT_HOLY, 1.0f, s_meshTime); break;
+              case 69: VFX_ComposeRuneCircle(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.9f, 0.0f}), (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.6f, fmodf(s_meshTime, 3.0f) / 3.0f, 4); break;
+              case 70: VFX_ComposeDissolveExit(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.9f, 0.0f}), VC_MAT_FIRE, 1.0f, fmodf(s_meshTime, 2.5f) / 2.5f); break;
+              case 71: VFX_ComposeChargeConverge(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.9f, 0.0f}), VC_MAT_LIGHTNING, 1.3f, fmodf(s_meshTime, 2.2f) / 2.2f, 45); break;
           }
 // @gen:newfx_draw end
         }
@@ -944,7 +953,7 @@ void VFXTest_DrawHUD(void)
         const char **names;
         int gi;
         int vIdx;
-        maxIdx = 70;
+        maxIdx = 72;
         names = s_newFxNames; // @gen:newfx_count
         vIdx = 0;
         (void)names;
@@ -1008,13 +1017,15 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
     case 52: VFX_SpawnOrbitals(pos, EFFECT_PRESET_FIRE_EXPLOSION, 5, 1.5f, 2.0f); break;
     case 55: VFX_ComposeCrownSplash(pos, 1.5f, 2.0f, 2.0f, VC_MAT_WATER); break;
     case 56: VFX_ComposeSmokePuff(pos, VC_MAT_EARTH, 1.0f, 1.0f); break;
-    case 58: VFX_ComposeEmberDrift(pos, 1.5f, 5, WHITE); break;
-    case 59: VFX_ComposeGlintBurst(pos, 5, 1.0f, WHITE); break;
-    case 60: VFX_ComposeShockwaveRing(pos, 1.5f, 2.0f, WHITE); break;
-    case 61: VFX_ComposeStreakFlare(pos, 1.5f, WHITE); break;
-    case 62: VFX_TriggerExplosion(VC_MAT_FIRE, pos, 1.5f, false); break;
-    case 64: PostFX_RadialBurst(pos, 0.18f, 0.7f); break;
-    case 65: { VFX_Sequence *sq = VFX_SeqPreset(pos, VC_MAT_FIRE, 1.0f, 0.35f, 0.10f, 0.35f, 0.5f); if (sq) { VFX_SeqAt(sq, 0.00f, (VFX_Beat){ .kind = VFX_BEAT_COMPOSE, .cb = VFXTest_SeqPuff }); VFX_SeqAt(sq, 0.35f, (VFX_Beat){ .kind = VFX_BEAT_COMPOSE, .cb = VFXTest_SeqBurst }); VFX_SeqPlay(sq); } }; break;
+    case 57: VFX_ComposeEnergyBurst(pos, VC_MAT_FIRE, 1.0f, 0.9f); break;
+    case 58: VFX_ComposeImpactPackage(pos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_EARTH, 1.0f, 1.0f); break;
+    case 60: VFX_ComposeEmberDrift(pos, 1.5f, 5, WHITE); break;
+    case 61: VFX_ComposeGlintBurst(pos, 5, 1.0f, WHITE); break;
+    case 62: VFX_ComposeShockwaveRing(pos, 1.5f, 2.0f, WHITE); break;
+    case 63: VFX_ComposeStreakFlare(pos, 1.5f, WHITE); break;
+    case 64: VFX_TriggerExplosion(VC_MAT_FIRE, pos, 1.5f, false); break;
+    case 66: PostFX_RadialBurst(pos, 0.18f, 0.7f); break;
+    case 67: { VFX_Sequence *sq = VFX_SeqPreset(pos, VC_MAT_FIRE, 1.0f, 0.35f, 0.10f, 0.35f, 0.5f); if (sq) { VFX_SeqAt(sq, 0.00f, (VFX_Beat){ .kind = VFX_BEAT_COMPOSE, .cb = VFXTest_SeqPuff }); VFX_SeqAt(sq, 0.35f, (VFX_Beat){ .kind = VFX_BEAT_COMPOSE, .cb = VFXTest_SeqBurst }); VFX_SeqPlay(sq); } }; break;
     default: break;
     }
 // @gen:newfx_render_trigger end

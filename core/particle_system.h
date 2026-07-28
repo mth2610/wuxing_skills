@@ -31,6 +31,15 @@ struct ParticleConfig {
   // Tùy chọn chuyển màu dải stop và ảnh hoạt cảnh atlas
   const ColorGradient *gradient;
   const SpriteAnim *spriteAnim;
+  // PER-PARTICLE PHASE into that animation, in seconds. SpriteAnim derives its
+  // frame from the particle's ABSOLUTE age, so a burst of sprites spawned on
+  // the same instant all show the SAME frame for their whole lives — with an
+  // authored sheet that reads as one image being moved around rather than as
+  // many puffs. There is no other way to break the lockstep: giving templates
+  // different rates only splits the burst into as many groups as there are
+  // templates, and they all still start at frame 0 together.
+  // Randomise it over the sheet's duration; 0 keeps the old behaviour.
+  float spriteAnimPhase;
 
   // Optional over-lifetime multiplier curves (t01 = 0 at spawn, 1 at death —
   // same "age fraction" convention as `gradient` above). NULL = today's

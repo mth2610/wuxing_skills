@@ -74,6 +74,26 @@ int VFX_ComposeProjectileTrail(Vector3 start, Vector3 target, EffectPresetType p
 // 8. Triggering full generic 4-step Impact Burst (from impact_burst.h)
 void VFX_ComposeTriggerImpactBurst(Vector3 pos, float sizeScale, const ImpactBurstConfig *cfg);
 
+// 7a2. ENERGY BURST (Đợt E / E6) — an expanding SHEET of energy: a low, capless
+// cylinder emitter throws additive smoke sprites centrifugally; the outward push
+// fades out at a set radius and curl noise plus drag take over from there, so
+// the ring breaks into separate tongues. The burst exists only as the
+// superposition — no single sprite is the effect. Each sprite opens from ~1/7 of
+// its final size, with size and opacity randomised independently per particle.
+// Uses the smoke flipbook by design (the wisp sheet was dropped): its baked
+// self-shadow gives every streak internal variation a flat mask would not.
+void VFX_ComposeEnergyBurst(Vector3 pos, VC_MaterialId matId, float scale,
+                            float intensity);
+
+// 7b. IMPACT PACKAGE (Đợt E / E6 #6) — the impact as ONE sequence: light flash,
+// the energy/smoke burst above, a distortion and a decal, timed as a track.
+// `severity01` is the single dial: it scales the pieces together and gates the
+// beats that must not fire on a light hit (hitstop 0.45, distortion 0.35).
+// `normal` is the surface that was hit. No dust population, no debris, no
+// velocity stretch, no camera shake — see the .inl for why each was removed.
+void VFX_ComposeImpactPackage(Vector3 pos, Vector3 normal, VC_MaterialId matId,
+                              float scale, float severity01);
+
 // 8b. Beauty primitives — reusable "polish" pieces (particle/decal/light
 // only, no post-process pipeline — see CORE_ISSUES.md Item 35)
 void VFX_ComposeShockwaveRing(Vector3 pos, float radius, float life, Color tint);
