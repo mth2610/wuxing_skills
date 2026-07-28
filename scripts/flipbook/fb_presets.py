@@ -6,6 +6,7 @@ physics of an explosion differs from a flame, but the ray-marcher and the packer
 do not care which one produced the grids.
 
 Fields
+    fuel_flat        emitter Z squash, default 0.45. 1.0 = a sphere, for puffs.
     domain_scale     (x, y, z) half-extents. The CELL is square, so a tall
                      domain is what makes a tall silhouette possible at all —
                      a cubic domain cannot exceed height/width ~1, which is
@@ -41,6 +42,43 @@ PRESETS = {
         flow_type='FIRE', buoyancy=3.0, alpha=-0.35, vorticity=0.35,
         burn=0.9, flame_smoke=0.22, temperature=1.4, velocity_normal=1.4,
         fuel_cutoff=0.78, dissolve=14),
+
+    # A single TONGUE, not a column. The `fire` preset bakes a whole fire in one
+    # sprite, which is right for a lone campfire but wrong as a building block:
+    # stack a few and they merge into one mass (the reference the owner gave is a
+    # bed of fire made of many SEPARATE licks with dark gaps between them). A
+    # narrow domain plus high vorticity gives a thin, whipping tongue that the
+    # composition can scatter along a base.
+    "flame_tongue": dict(
+        # NOTE the resolution trap: `resolution_max` applies to the LONGEST
+        # axis, so a 0.32 x 1.9 domain at res 32 gives a 5x5x32 grid — five
+        # voxels across the tongue, which is mush. A narrow preset needs res
+        # 128+ to be worth baking at all.
+        domain_scale=(0.45, 0.45, 1.9), fuel_radius=0.16, fuel_z=0.16,
+        flow_type='FIRE', buoyancy=4.2, alpha=-0.25, vorticity=0.75,
+        burn=1.1, flame_smoke=0.12, temperature=1.5, velocity_normal=2.6,
+        fuel_cutoff=0.80, dissolve=18),
+
+    # A PUFF of fire — the building block, not a whole fire. Same role the smoke
+    # sheet plays: several of these compose into a big blaze with gaps between
+    # them, where one column sprite just merges into a solid mass. Nearly cubic
+    # domain (a puff expands in every direction), a SHORT fuel burst, and fast
+    # dissolve so each puff has a clear birth and death inside the 64 frames.
+    "fire_puff": dict(
+        # NO buoyancy and NO weight (owner's spec): a puff does not rise and does
+        # not fall. Its expansion comes from the inflow's own velocity along the
+        # emitter sphere's NORMALS — which is radial in every direction — plus
+        # vorticity for the curl, and dissolve standing in for viscosity.
+        # buoyancy/alpha at 0 is the whole difference from `fire`: with them on,
+        # every sheet drifts upward and becomes a column again.
+        domain_scale=(1.0, 1.0, 1.0), fuel_radius=0.26, fuel_z=0.5,
+        flow_type='FIRE', buoyancy=0.0, alpha=0.0, vorticity=0.95,
+        # burn is how fast fuel is CONSUMED: at 1.4 the flame was gone by frame
+        # 10 and the sheet was two thirds empty. Low burn + a slightly longer
+        # inflow keeps fire alive across the first half, and the slow dissolve
+        # lets the smoke carry the rest.
+        burn=0.45, flame_smoke=0.35, temperature=1.6, velocity_normal=6.5,
+        fuel_cutoff=0.16, dissolve=45, fuel_flat=1.0),   # spherical emitter
 
     # Slower, colder, wider — and no flame channel worth speaking of.
     "smoke": dict(

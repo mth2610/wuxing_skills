@@ -48,6 +48,46 @@ static float s_fvolRiseMul = 1.0f;
 // is — and enlarging the particles to fill it makes that worse, not better.
 static float s_fvolWidthMul = 1.0f;
 
+// E4 flipbook. Two simulated sheets, and they are not interchangeable:
+//
+//   0 = the F2 round sprites (A/B reference)
+//   1 = fire_puff_8x8_flame  — a radial PUFF, one billow per sprite. The
+//       building block: several of them scatter into a bed of fire, which is
+//       the reference the owner gave (many separate tongues, dark gaps).
+//   2 = fire_atlas_8x8_flame — a whole flame COLUMN in one sprite. Right for a
+//       single isolated flame, wrong as a block: a few of them merge into one
+//       mass because each already IS the fire.
+//
+// Neither is "better" — they are different scales of the same effect, which is
+// why this is one knob with three values rather than a quality setting.
+static float s_fvolAtlas = 1.0f;
+static Texture2D s_fvolFlameTex = {0};   // the COLUMN sheet
+static Texture2D s_fvolPuffTex = {0};    // the PUFF sheet
+static float s_fvolBodyCount = 1.0f;   // x on atlas body sprites (perf lever)
+static float s_fvolSpread = 1.0f;      // x on how wide the licks are spread
+// Body blend: 1 = ADDITIVE (default with the atlas), 0 = the original ALPHA.
+//
+// F3 chose ALPHA for the body so the flame could be DARKER than its background —
+// the old fire_funnel was one additive draw and read as glowing gas. That was
+// the right call for a hand-tuned gradient on a round sprite. With a SIMULATED
+// sheet it is wrong: the sprite already carries its own density falloff, so
+// alpha stacks it into opaque PATCHES, while real flame is translucent and
+// accumulates (owner: "lửa mới có độ trong nhất định... còn cái này màu giống
+// theo từng mảng"). The cooling tail that needs to occlude is the SMOKE layer,
+// which stays alpha and stays lit.
+static float s_fvolBodyBlend = 1.0f;
+// Per-sprite contribution when the body is additive. Additive ACCUMULATES, so
+// this is the knob that decides whether overlapping tongues keep their orange or
+// clip to white — and it interacts with the background: the test arena's sky
+// sits around 0.35, so the same value that reads as fire against a night scene
+// blows out here. Tune it in the scene the effect ships in.
+static float s_fvolBodyAlpha = 0.18f;
+static SpriteAnim s_fvolFlameAnim = {0};
+static SpriteAnim s_fvolPuffAnim = {0};
+// The longest life a BODY particle can be given below. The flipbook rate is
+// derived from it, so the two cannot drift apart.
+#define FVOL_BODY_LIFE_MAX 1.40f
+
 static void FVol_InitShared(void)
 {
     if (s_fvolInit)
@@ -57,6 +97,47 @@ static void FVol_InitShared(void)
     Tuning_RegisterFloat("flame_smoke_amount", &s_fvolSmokeAmt, 1.0f);
     Tuning_RegisterFloat("flame_rise_mul", &s_fvolRiseMul, 1.0f);
     Tuning_RegisterFloat("flame_width_mul", &s_fvolWidthMul, 1.0f);
+    Tuning_RegisterFloat("flame_atlas", &s_fvolAtlas, 1.0f); // 0 sprites/1 puff/2 column
+    Tuning_RegisterFloat("flame_body_count", &s_fvolBodyCount, 1.0f);
+    Tuning_RegisterFloat("flame_spread", &s_fvolSpread, 1.0f);
+    Tuning_RegisterFloat("flame_body_blend", &s_fvolBodyBlend, 1.0f);
+    Tuning_RegisterFloat("flame_body_alpha", &s_fvolBodyAlpha, 0.18f);
+
+    // The FLAME channel only — the sheet's smoke channel is a separate file.
+    // The particle shader multiplies the whole of rgb by the vertex colour, so a
+    // two-channel sheet would tint the fire with its own smoke.
+    s_fvolFlameTex = ResourceManager_LoadTexture("assets/textures/fire_atlas_8x8_flame.png");
+    if (s_fvolFlameTex.id != 0)
+    {
+        SetTextureFilter(s_fvolFlameTex, TEXTURE_FILTER_BILINEAR);
+        // fps derived from the LONGEST body lifetime (1.7 s), never the average:
+        // SpriteAnim advances on absolute age, so a faster rate would run a
+        // long-lived particle past the last frame, where the sheet is empty —
+        // the flame would VANISH while its alpha curve still says visible.
+        // (E4 landmine, learned on the smoke puff.)
+        SpriteAnim_Init(&s_fvolFlameAnim, 8, 8, 64, 64.0f / 1.7f, ANIM_ONCE);
+    }
+    else
+        TraceLog(LOG_WARNING, "FlameVolume: fire_atlas_8x8_flame.png missing — "
+                              "using F2 sprites (run scripts/flipbook/make.py fire)");
+
+    s_fvolPuffTex = ResourceManager_LoadTexture("assets/textures/fire_puff_8x8_flame.png");
+    if (s_fvolPuffTex.id != 0)
+    {
+        SetTextureFilter(s_fvolPuffTex, TEXTURE_FILTER_BILINEAR);
+        // Derived from the longest body life, so the sheet plays exactly ONCE
+        // over it and can never run past its empty tail (E4's smoke landmine:
+        // SpriteAnim advances on absolute age, so a rate faster than the
+        // longest-lived particle makes the flame vanish while its alpha curve
+        // still says visible). The puff sim ends in dissipation rather than
+        // darkness, so overrunning it would blink, not fade.
+        SpriteAnim_Init(&s_fvolPuffAnim, 8, 8, 64, 64.0f / FVOL_BODY_LIFE_MAX,
+                        ANIM_ONCE);
+    }
+    else
+        TraceLog(LOG_WARNING, "FlameVolume: fire_puff_8x8_flame.png missing — "
+                              "falling back to the column sheet (bake it with "
+                              "scripts/flipbook/ti_sim.py fire_puff)");
 
     // BLACK-BODY ramp, not three smoothsteps. Weighted so the flame spends most
     // of its life in the orange band and reaches white only at the very hottest
@@ -138,6 +219,15 @@ void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale,
 {
     FVol_InitShared();
     SmokePuff_InitShared(); // the flame's smoke reuses F2's sprites
+    // Which sheet, resolved once. A missing file must fall THROUGH to the other
+    // sheet rather than to the F2 sprites: an effect that silently changes
+    // scale is harder to diagnose than one that silently changes look.
+    const bool wantPuff = (s_fvolAtlas > 0.5f) && (s_fvolAtlas < 1.5f);
+    const bool usePuff = wantPuff && (s_fvolPuffTex.id != 0);
+    const bool useAtlas = (s_fvolAtlas > 0.5f)
+                          && (usePuff || s_fvolFlameTex.id != 0);
+    const Texture2D bodyTex = usePuff ? s_fvolPuffTex : s_fvolFlameTex;
+    SpriteAnim *bodyAnim = usePuff ? &s_fvolPuffAnim : &s_fvolFlameAnim;
 
     const VFX_ElementMaterial *mat = VFX_Material(matId);
     (void)mat; // black-body colour is physical, not per-element — see below
@@ -149,6 +239,21 @@ void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale,
 
     int nCore = (int)(FVOL_MAX_CORE * intensity);
     int nBody = (int)(FVOL_MAX_BODY * intensity);
+    if (useAtlas)
+    {
+        // FAR fewer, FAR bigger. Each atlas sprite already carries a whole
+        // simulated flame — stacking 22 of them is both why the fire read as one
+        // solid mass and why the frame rate collapsed to 22 fps on a single
+        // flame: every sprite is a large alpha-blended quad, and with the
+        // flipbook cross-fade each one draws TWICE. Overdraw, not particle
+        // count, is the cost here. (Same lesson as E4's smoke: a flipbook sprite
+        // is a simulation, not a puff — do not stack it like one.)
+        // The PUFF sheet is one billow, not a whole fire, so the bed needs more
+        // of them — but each is also SMALLER (see the radius below), so the
+        // overdraw that capped the column sheet at 6 sprites stays paid for.
+        nBody = (int)((usePuff ? 10.0f : 6.0f) * intensity * s_fvolBodyCount);
+        nCore = (int)(3.0f * intensity);
+    }
     if (nCore < 1)
         nCore = 1;
     if (nBody < 2)
@@ -158,7 +263,12 @@ void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale,
     for (int i = 0; i < nBody; i++)
     {
         float ang = Random01() * 2.0f * PI;
-        float rad = sqrtf(Random01()) * 0.10f * scale * s_fvolWidthMul;
+        // Spread the licks across a BASE rather than stacking them on one
+        // axis. The reference the owner gave is a row of separate tongues over a
+        // wide bed of fire, not a single column — with the atlas each sprite is
+        // already a tongue, so the composition's job is where to place them.
+        float rad = sqrtf(Random01()) * (useAtlas ? 0.34f * s_fvolSpread : 0.10f)
+                    * scale * s_fvolWidthMul;
         Vector3 p = {pos.x + cosf(ang) * rad,
                      pos.y + Random01() * 0.10f * scale,
                      pos.z + sinf(ang) * rad};
@@ -167,7 +277,7 @@ void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale,
         // how fast a particle crosses its own size, not its metres per second.
         // Short-lived particles pop in and out and read as frantic even when
         // their velocity is modest.
-        float life = Math_Mix(0.75f, 1.40f, Random01());
+        float life = Math_Mix(0.75f, FVOL_BODY_LIFE_MAX, Random01());
 
         // A dying body ember becomes smoke. This is the hand-off that the old
         // implementation was missing entirely, and it is why the flame reads as
@@ -193,22 +303,44 @@ void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale,
             .velocity = {cosf(ang) * 0.06f * scale,
                          Math_Mix(0.45f, 0.75f, Random01()) * scale * s_fvolRiseMul,
                          sinf(ang) * 0.06f * scale},
-            .radius = Math_Mix(0.09f, 0.20f, powf(Random01(), 1.5f)) * scale,
+            // Bigger with the atlas: the sprite IS the flame, so it has to be
+            // read at flame size rather than as one blob among many.
+            .radius = (usePuff  ? Math_Mix(0.20f, 0.32f, Random01())
+                       : useAtlas ? Math_Mix(0.30f, 0.46f, Random01())
+                                  : Math_Mix(0.09f, 0.20f, powf(Random01(), 1.5f))) * scale,
             .lifetime = life,
-            .colorStart = WHITE,
+            .colorStart = (useAtlas && s_fvolBodyBlend > 0.5f)
+                              ? VC_WithAlpha(WHITE, (unsigned char)(255.0f * s_fvolBodyAlpha))
+                              : WHITE,
             .colorEnd = (Color){44, 40, 38, 0},
             .gradient = &s_fvolBodyGrad,
             .forceField = &s_fvolFld,
             .radiusCurve = &s_fvolGrow,
             .alphaCurve = &s_fvolFade,
             .speedCurve = &s_fvolRise,
-            .render.texture = s_smokePuffTex[i % SMOKE_PUFF_VARIANTS],
+            .render.blendMode = (useAtlas && s_fvolBodyBlend > 0.5f)
+                                    ? VFX_BLEND_ADDITIVE : VFX_BLEND_ALPHA,
+            // Additive accumulates, so each sprite must contribute LESS or a few
+            // overlapping tongues clip straight to white.
+            .render.emissiveBoost = (useAtlas && s_fvolBodyBlend > 0.5f) ? 1.05f : 1.0f,
+            .render.texture = useAtlas ? bodyTex
+                                       : s_smokePuffTex[i % SMOKE_PUFF_VARIANTS],
+            .spriteAnim = useAtlas ? bodyAnim : NULL,
             // FIRE EMITS LIGHT — it must not be multiplied by the scene's.
             // Lighting is a multiply, so a flame lit by a dim sky turns brown;
             // that is what "the fire went black" was. Only its smoke is lit.
             .render.unlit = 1,
-            .rotation = Random01() * 2.0f * PI,
-            .angularVelocity = (Random01() - 0.5f) * 1.4f,
+            // Rotation is a property of the SHEET, not of the atlas path. The
+            // COLUMN sheet has an UP — spinning it renders the fire upside down
+            // (the bug that hid the engine's flipped-quad landmine for so long).
+            // The PUFF sheet was simulated with buoyancy and gravity at zero, so
+            // it is radially symmetric by construction and has no up to lose:
+            // spinning it is legal again, and it is what keeps ten sprites off
+            // one sheet from reading as ten copies of the same billow.
+            .rotation = (!useAtlas || usePuff) ? Random01() * 2.0f * PI : 0.0f,
+            .angularVelocity = (!useAtlas || usePuff)
+                                   ? (Random01() - 0.5f) * (usePuff ? 0.5f : 1.4f)
+                                   : 0.0f,
             // Only some embers make smoke, otherwise the fire is smothered by it.
             // .onDeathEmit = (s_fvolSmokeAmt > 0.0f && (i % 3) == 0) ? &s_fvolSmokeSeed : NULL,
             // .onDeathEmitCount = 1,

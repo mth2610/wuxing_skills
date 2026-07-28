@@ -943,13 +943,19 @@ void DrawParticles(Camera3D camera, Texture2D texture)
       do {                                                                         \
         if ((_a) > 0) {                                                            \
           rlColor4ub(c.r, c.g, c.b, (unsigned char)(_a));                           \
-          rlTexCoord2f((_uv).x, (_uv).y);                                          \
+          /* V runs DOWN the image while +up runs UP in the world, so the      \
+             top-left texel must land on the TOP vertex. It used to be paired    \
+             with the bottom one, i.e. every particle sprite was drawn flipped   \
+             vertically. Nobody noticed because every sprite this engine had was \
+             round and symmetric; the E4 flame flipbook, which has an UP, came   \
+             out upside down. */                                                 \
+          rlTexCoord2f((_uv).x, (_uv).y + (_uv).height);                          \
           rlVertex3f(p->x + rx - ux, p->y + ry - uy, p->z + rz - uz);              \
-          rlTexCoord2f((_uv).x, (_uv).y + (_uv).height);                           \
+          rlTexCoord2f((_uv).x, (_uv).y);                                          \
           rlVertex3f(p->x + rx + ux, p->y + ry + uy, p->z + rz + uz);              \
-          rlTexCoord2f((_uv).x + (_uv).width, (_uv).y + (_uv).height);             \
-          rlVertex3f(p->x - rx + ux, p->y - ry + uy, p->z - rz + uz);              \
           rlTexCoord2f((_uv).x + (_uv).width, (_uv).y);                            \
+          rlVertex3f(p->x - rx + ux, p->y - ry + uy, p->z - rz + uz);              \
+          rlTexCoord2f((_uv).x + (_uv).width, (_uv).y + (_uv).height);             \
           rlVertex3f(p->x - rx - ux, p->y - ry - uy, p->z - rz - uz);              \
         }                                                                          \
       } while (0)

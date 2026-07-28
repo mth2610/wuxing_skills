@@ -1310,3 +1310,411 @@ re-enable one setting at a time — cachedir OK, resolution OK, adaptive-domain
 OK, `cache_type='ALL'` FAILED. When "the same script worked half an hour ago",
 the temptation is to reach for environment state; the reliable move is to walk
 from a working configuration toward the broken one, one variable per step.
+
+### F3 consumes the E4 fire sheet (27/07/2026)
+
+`VFX_ComposeFlameVolume`'s BODY layer now plays the simulated flipbook
+(`assets/textures/fire_atlas_8x8_flame.png`) instead of F2's round sprites.
+Owner asked whether a COLUMN sheet fits this component: it does — FlameVolume is
+already a tall, narrow, rising flame with core/body/smoke layers, which is the
+same shape the sim produces.
+
+Two things the wiring needed:
+
+1. **The sheet had to be split per population.** `particle_lit.fs` multiplies the
+   WHOLE of `texelColor.rgb` by the vertex colour, so feeding it a two-channel
+   sheet (R flame, G smoke) would tint the fire with its own smoke. `pack.py
+   --split` writes `<name>_flame.png` and `<name>_smoke.png`, each white-RGB with
+   the channel in alpha, so the black-body ramp at the call site still owns the
+   colour. One bake, two sheets, no shader change.
+2. **Rotation had to be turned OFF for the atlas.** A round puff can spin freely
+   — that is how F2 hides sprite repetition — but a simulated flame column has an
+   UP, and spinning it renders the fire upside down.
+
+`fps` is derived from the LONGEST body lifetime (64 / 1.7 s), not the average:
+SpriteAnim advances on absolute age, so a faster rate runs a long-lived particle
+past the sheet's empty last frames and the flame vanishes while its alpha curve
+still says visible — the same landmine the smoke puff hit in E4.
+
+`tuning.cfg → flame_atlas` (0 = the old sprites) for A/B. Falls back with a
+warning if the sheet is missing.
+
+### F3 atlas follow-up — UV flip, fill-rate, and why it still is not the reference (28/07/2026)
+
+Owner: *"những particle bị ngược thì phải, hơn nữa fps tụt thê thảm, còn 22 chỉ
+với ngọn lửa này"* + a reference photo of a fire bed made of many separate licks.
+
+**1. The particles WERE upside down, and it is an engine bug, not the sheet.**
+`PS_EMIT_QUAD` paired texcoord `(x, y)` — the atlas cell's TOP-left — with the
+`-up` vertex, i.e. the BOTTOM of the quad. Every particle sprite this engine has
+ever drawn was flipped vertically. It went unnoticed for the same reason the
+atlas-UV hemisphere bug did: every sprite was round and symmetric. The E4 flame
+flipbook is the first sprite with an UP. Fixed in `particle_system.c`; suite 6/6.
+
+**2. Frame rate: 22 fps on one flame is OVERDRAW, not particle count.** Each
+atlas sprite is a large alpha-blended quad, and with the flipbook cross-fade it
+draws TWICE. Twenty-two of them stacked on one axis is a wall of full-screen
+alpha. The atlas path now spawns 6 body sprites instead of 22, each ~2.5x larger,
+with `flame_body_count` as the lever. Same lesson E4 recorded for smoke: a
+flipbook sprite carries a whole simulation — do not stack it like a flat puff.
+
+**3. The look still is not the reference, and the reason is structural.** The
+`fire` preset bakes an ENTIRE fire into one sprite. Right for a lone campfire,
+wrong as a building block: a few of them merge into one mass, while the
+reference is many separate tongues with dark gaps. Added a `flame_tongue`
+preset (narrow domain, high vorticity) — the composition then scatters tongues
+along a base instead of stacking columns.
+
+**Resolution trap found doing that:** `resolution_max` applies to the LONGEST
+axis, so a 0.32 x 0.32 x 1.9 domain at res 32 bakes a **5x5x32** grid — five
+voxels across the tongue. A narrow preset needs res 128+ to be worth baking.
+
+### F3 — the body blend was the reason fire read as PATCHES (28/07/2026)
+
+Owner: *"tôi nghĩ do chế độ blend màu nữa, lửa mới có độ trong nhất định như ảnh
+mẫu. còn cái này màu giống theo từng mảng."* Correct, and the contradiction was
+sitting in the file: the comment above the body layer says "FIRE EMITS LIGHT —
+it must not be multiplied by the scene's", and the layer was then drawn with
+`BLEND_ALPHA`.
+
+F3 chose alpha deliberately, and for a good reason at the time: the old
+`fire_funnel` was ONE additive draw and read as glowing gas, so the body was made
+able to be darker than its background. That is right for a hand-tuned gradient on
+a round sprite. It is wrong for a SIMULATED sheet, which already carries its own
+density falloff — alpha then stacks the sprites into opaque patches, while real
+flame is translucent and accumulates. The layer that genuinely needs to occlude
+is the SMOKE, which stays alpha and stays lit (F1b intact).
+
+`flame_body_blend` (1 = additive, default with the atlas; 0 = the original) and
+`flame_body_alpha` (per-sprite contribution). Additive accumulates, so that
+second knob is what decides whether overlapping tongues keep their orange or clip
+to white — and it depends on the BACKGROUND: the test arena's sky sits near 0.35,
+so a value that reads as fire in the night scene blows out there. Still blowing
+out in the test scene at the time of writing; it needs tuning where it ships.
+
+**Owner's direction for the next sheet:** bake fire as a PUFF (like the smoke
+sheet) rather than a column — a column sprite is right for one isolated flame or
+a round fire bed, but puffs are what compose into a larger fire.
+
+### E4 — `fire_puff` preset, and a resolution trap that invalidates quick-tuning (28/07/2026)
+
+Owner specified the physics: a puff has **no buoyancy and no gravity** — only
+radial expansion, curl noise and viscosity. In Mantaflow that maps to
+`beta = 0`, `alpha = 0` (the whole difference from the `fire` preset; leave them
+on and every sheet drifts upward into a column again), radial push from the
+inflow's `velocity_normal` along the emitter sphere's NORMALS, `vorticity 0.95`
+for the curl, and `dissolve` standing in for viscosity, which a gas domain has
+no parameter for.
+
+Two things the first attempt got wrong:
+- **`burn` is fuel CONSUMPTION rate.** At 1.4 the flame was gone by frame 10 and
+  two thirds of the sheet was empty. 0.45 keeps fire alive through the first half.
+- **The emitter was flattened for every preset** (`flow.scale.z = 0.45`), which
+  is right for something rising off a floor and wrong for a puff — a flat source
+  biases the expansion wide before any physics runs. Now `fuel_flat` per preset.
+
+**The trap: parameters tuned at `--quick` do not transfer to full resolution.**
+The quick sheet (res 32) had a clear life cycle with visible curl structure. The
+same preset at res 112 baked a smooth, near-solid SPHERE — 17 minutes to find
+out. Vorticity and burn are resolution-relative: at 112 the same vorticity acts
+on features eight times smaller, and the same burn rate consumes far less fuel
+per voxel per step. Tune at a MIDDLE resolution (~64) before committing to a
+full bake, or treat quick output as composition-only (timing, extent) and never
+as a preview of the look.
+
+`fire_puff_8x8.png` + `_flame`/`_smoke` splits are written but are NOT usable
+yet for that reason.
+
+### E4 — Taichi GPU solver as the fast path (28/07/2026)
+
+Owner asked whether writing the sim in Taichi would be faster. Measured, same
+config (res 64, 24 frames): **Mantaflow 99.9 s → Taichi 3.7 s**, ~27x. At res
+112/64 frames Mantaflow took 1037 s, so the iteration loop goes from 17 minutes
+to well under one. `scripts/flipbook/ti_sim.py` writes the same `.npz` grids
+`bake.py` does, so `render.py` and `pack.py` are untouched — the two solvers are
+interchangeable stage-1s.
+
+It also expresses the physics the owner specified, which Mantaflow's gas domain
+cannot: a **radial** force, **curl noise**, **viscosity**, buoyancy at zero. The
+Mantaflow preset had to fake the first with inflow-along-normals and the third
+with dissolve speed.
+
+**Four bugs, each one a mis-modelled force rather than a coding slip:**
+1. *Lattice noise.* The first "curl noise" was sums of `sin(x)+sin(y)+sin(z)` —
+   a periodic LATTICE, and it stamped a visible grid into the puff. Replaced by
+   a real smoothed random field. Note the reasoning error behind it: the ban on
+   `fract(sin(...))` is a **Mali shader** landmine (ENGINE_LANDMINES §4) and has
+   nothing to do with an offline script.
+2. *Noise frequency below feature size.* At 6 cycles across the domain the field
+   is a large-scale flow that bends the whole puff into lobes.
+3. *Viscosity as a brake.* `exp(-1.7 * dt)` applied EVERY substep killed the
+   radial push within three steps and the puff never left its ignition volume.
+   Viscosity is a slow drag; 0.22 works.
+4. *Non-zero-mean noise = wind.* A smoothed random field keeps a large-scale
+   bias, and a constant force applied every substep blew the puff sideways into
+   a comet. Zero-meaning it per channel helps but is not sufficient — see below.
+
+**Open:** the noise field's cell (N/8 = 8 voxels) is LARGER than the ignition
+volume the owner asked for (radius 0.05N ≈ 3 voxels), so within the puff the
+"turbulence" is still effectively uniform and pushes it off-centre. Fix is to
+raise the noise field's resolution relative to the feature it perturbs, not to
+lower its gain.
+
+### Taichi solver — the radial force was in the wrong place (28/07/2026)
+
+Raising `--radial` from 13 to 26 changed the sheet by nothing measurable, which
+was the tell. The force was applied inside `add_fuel`, i.e. only within the
+ignition volume (3 voxels) and only for the first 10% of the sheet. An expansion
+needs a force on the EXPANDING MATERIAL, not on its source; it now lives in
+`forces()`, scaled by `temp + 0.35*dens` so only hot gas is pushed and the
+surrounding air is not. The source keeps a 15% launch kick.
+
+Sequence of mis-modelled forces in this solver, all of the same species — the
+term existed but acted on the wrong thing, at the wrong scale, or for the wrong
+duration:
+- viscosity applied per substep as `exp(-1.7*dt)` = a brake, not a drag;
+- noise cell (8 voxels) larger than the feature it stirred (3) = uniform wind;
+- noise with non-zero mean = wind again, at the domain scale;
+- `sin`-lattice standing in for noise = a printed grid;
+- radial force on the source instead of on the gas.
+
+Puff now expands from a small ignition volume, stays centred (centroid 59,66 vs
+centre 64) and keeps its structure. Cell coverage 6.3% against the smoke sheet's
+19.6% — still small in frame, which is the next thing to tune (`--radial` and
+frame count together, since expansion is now sustained rather than impulsive).
+
+### Taichi puff — framing, resolution-independence, and the cooling law (28/07/2026)
+
+Three more findings, each one a term that was right in spirit and wrong in form:
+
+1. **Framing belongs to the RENDERER, not the solver.** Raising `--radial`
+   barely moved cell coverage (6.3% → 6.8% → 7.4% for radial 3 → 6 → 10) because
+   the sim needs a wide domain — a plume that touches a wall gets a box-shaped
+   silhouette — while the SHEET wants the effect to fill its cell. New
+   `render.py --zoom` crops toward the centre: coverage 7.4% → 24.1% with no
+   change to the physics.
+2. **Forces are measured in VOXELS per step, so a preset does not survive a
+   resolution change.** The preset that filled 24% of the cell at res 64 filled
+   85% at res 112 — the same numbers push gas further, relatively, on a finer
+   grid. `ti_sim.py` now scales the advective terms by `64/N`, which is what
+   makes quick-tuning transferable and kills the trap that cost a 17-minute
+   Mantaflow run.
+3. **`T^4` cooling stalls.** At T=0.3 it is 0.008, so once a puff drops below
+   ~0.5 it essentially stops cooling and the sheet burns to the last frame
+   regardless of the rate. Real cooling is radiative (T^4) PLUS convective
+   (linear); the linear term is what finishes it.
+
+**Current state:** puff expands from a small ignition volume, stays centred,
+keeps its structure, and now hands fire over to smoke — but it dissipates by
+about frame 40, leaving the last three rows of the sheet empty. The next lever
+is the soot decay inside `cool()` (`dens *= 1 - 0.25*dt`, too aggressive for a
+64-frame sheet) together with `fuel_frames`; both are sim-side, ~90 s per trial.
+
+### Taichi puff — cauliflower (28/07/2026)
+
+Owner: *"nó bắt đầu phân tán ra nhiều hơn rồi đó, phải làm cho nó hơi tròn tròn
+giống súp lơ thì mới giống khói puff"*. Three changes, in order of effect:
+
+1. **Radial became an IMPULSE.** Held on as a constant force it keeps
+   accelerating every parcel outward and shreds the puff into filaments. A real
+   puff takes its momentum at ignition and then coasts — which is what lets the
+   lobes round back up. Envelope: full for the first 22% of the sheet, then off.
+2. **Diffusion added** (`diffuse`). This is the term that makes billows convex:
+   without it the density field keeps every filament the velocity field ever
+   drew, so the silhouette is spiky. It is also the knob that trades "one smooth
+   mass" (0.16 welded the lobes together) against "separable billows" (0.09).
+3. **Curl halved** (2.2 → 1.1). Turbulence should add detail TO a shape; past a
+   point it becomes the shape, and the result is a shredded cloud.
+
+At res 112 the lobes are unmistakably cauliflower. Two things left:
+- **`diffuse` is not resolution-scaled** (the advective forces are). It is a
+  per-step fraction on the grid, so at res 112 it smooths relatively less and
+  the lobes come out larger and fewer than at res 64 — the same class of trap
+  as the force scaling, and the same fix.
+- Flame is now only 4.8% of the sheet against smoke's 55.5%; the puff reads as
+  smoke with a hot core rather than as fire. `cool` and `fuel_frames` are the
+  levers.
+
+### E4 puff — the framing, and three more terms measured in voxels (28/07/2026)
+
+**Framing cannot be dialled by hand, because the measurement saturates.** At
+`--zoom 1.4` the puff was clipped at 63% coverage, and every correction guessed
+from a clipped sheet is blind: a puff twice too big and one 1% too big both
+report "touching the border". `render.py --zoom auto` renders one uncropped
+probe pass — where nothing can be cut — measures how far alpha 0.06 actually
+reaches, and sets the crop from it. Exact arithmetic, one extra pass (~1.5 s).
+`pack.py` now also reports `reach`, how many frames touch the border, and the
+factor to multiply a manual `--zoom` by.
+
+**`diffuse` needed the SQUARE of the resolution ratio, not `64/N`.** It is a
+per-step fraction of the 6-neighbour average, so over a fixed step count it
+smooths a length of ~`sqrt(k)` VOXELS: holding that length at a constant
+fraction of the domain needs `k*(N/64)^2`, whereas a velocity in voxels/step
+needs `64/N`. Same trap, one power apart.
+
+**But diffusion was not the reason presets did not transfer.** Measured, res 112
+vs res 64, same preset, 64 frames: scaled `diffuse` 44.2% coverage / lobes 1.08,
+unscaled 40.7% / 1.15 — while the res-64 reference sat at 81.4% / 1.41. Two more
+quantities were in voxels: the noise field's eddy was `N//3` cells, i.e. **3
+voxels wide at any resolution**, so res 112 stirred features 1.8x smaller
+relative to the puff; and the Jacobi count was fixed at 40, so the projection
+reached a shorter fraction of a finer domain. Both now scale from `REF_RES`.
+
+**The dominant cause was neither: at res 64 the puff was hitting the WALL.**
+Measured in sim space (the one extent that does not pass through the renderer):
+r90 = 1.27 of the domain half-width at res 64 versus 0.79 at res 112 — past the
+inscribed sphere, i.e. mass in the box CORNERS. Advection samples are clamped at
+the boundary, so material pressed against a wall is re-sampled from itself and
+the solver **manufactures density**. A run in that state is not a smaller
+version of the same effect and cannot be compared with anything. `ti_sim.py` now
+prints `r90` and the wall-shell mass fraction every run and warns. With
+`--radial 8`, where neither resolution touches the wall, the preset transfers:
+lobes 1.08 vs 1.06, coverage 27.5% vs 21.5% (was 2.3x apart).
+
+**Frame count is a physics axis, not a sampling axis.** `dt` is per frame, so
+`--frames` changes how long the sim runs: identical preset at res 64, 24 frames
+→ 64 frames took coverage 18.1% → 89.5%, with 57/64 cells clipped. A 24-frame
+probe shows an EARLIER MOMENT of the effect, not a cheap version of it — the
+frame count must match the sheet being tuned for.
+
+**Lobe count is `--eddy`, not `curl`.** Curl is the amplitude, eddy the scale;
+raising curl to get more billows mostly transports the puff (curl 2.4 pushed
+r90 from 0.86 to 1.00, into the wall) while `--eddy` 21 → 44 changed lobes by
+0.04 at curl 1.1 — turbulence too weak to imprint at any scale. Both knobs
+exist now, and `lobes` (isoperimetric perimeter/(2*sqrt(pi*area)), 1.0 = one
+round blob) is the number that reads cauliflower, independent of size on screen.
+
+**`fire_puff` shipped** — `assets/textures/fire_puff_8x8.png` + `_flame`/`_smoke`
+splits, 2048x2048, res 112 / 64 frames / 57.6 s:
+
+| | before | now |
+|---|---|---|
+| cell coverage | 63% (clipped) | 22.3% (target ~20%) |
+| frames touching the border | most | 0/64 |
+| flame : smoke | 4.8% : 55.5% (1:11.6) | 4.5% : 18.1% (1:4) |
+| sim wall-shell mass | — | 0.1% (clean) |
+
+Fire came up via `cool` 0.5 → 0.22 and `fuel_frames` 0.16 → 0.35: at 0.5 the
+flame was out by frame 20 of 64, so the sheet was smoke with a hot core.
+
+**Two warnings were firing on a correct sheet, and that is a defect of its own.**
+`height/width > 1.3` is a check for a rising COLUMN and is nonsense for a puff
+(`pack.py --shape puff`), and the autofit's "silhouette is the box" test used the
+visibility threshold — a ray crossing the whole domain accumulates alpha 0.06
+from haze alone, so it fired at reach 0.996 on a sim whose mass audit said
+r90 0.79 / wall 0.1%. It now tests opaque material (alpha > 0.5).
+
+### F3 — FlameVolume takes the puff sheet as its building block (28/07/2026)
+
+`flame_atlas` is now three-valued: **0** = the F2 round sprites, **1** = the new
+`fire_puff_8x8_flame` (default), **2** = `fire_atlas_8x8_flame`, the column. The
+two sheets are different SCALES of the same effect, not two qualities of it —
+the column bakes an entire fire into one sprite, so several of them merge into
+one mass, while a puff is one billow and several of them scatter into the bed of
+separate tongues the owner's reference photo shows. A missing file falls through
+to the other sheet, not to the F2 sprites: an effect that silently changes scale
+is harder to diagnose than one that silently changes look.
+
+Three things the puff sheet changes, each for a reason in the sheet itself:
+
+- **Rotation is legal again.** It was disabled for the whole atlas path because
+  the column has an UP and spinning it renders the fire upside down. The puff
+  was simulated with buoyancy AND gravity at zero, so it is radially symmetric
+  by construction — spinning it is what stops ten sprites off one sheet from
+  reading as ten copies of one billow. Rotation is a property of the SHEET, not
+  of the atlas path.
+- **Ten sprites instead of six, each smaller** (0.20–0.32 vs 0.30–0.46). The
+  overdraw budget that capped the column at six is unchanged; a billow simply
+  does not need to be read at whole-flame size.
+- **The flipbook rate is derived, not written down.** `FVOL_BODY_LIFE_MAX` is
+  now the constant the body lifetime and the sheet's fps both come from
+  (64 / 1.40 s), so a sprite plays the sheet exactly once over the longest life
+  it can be given. The column's hand-written 1.7 could not drift into a bug
+  because it was slower than the longest life; deriving it removes the class.
+
+Builds clean, core suites 6/6.
+
+### E4 — `smoke_puff`, and the retirement of the 19.6% "sheet that works" (28/07/2026)
+
+Owner: *"smoke_atlas_8x8.png không chuẩn"*. Re-auditing it says how, and the
+audit could not have said so before today (`pack.py <sheet.png>` now re-audits a
+shipped sheet in place — a sheet that shipped before a measurement existed has
+never been held to it):
+
+| | smoke_atlas_8x8 (old) | smoke_puff_8x8 (new) |
+|---|---|---|
+| lobes | 2.31 — shredded, not billowed | 1.08 |
+| channels | R = G = 21.0%, i.e. ONE greyscale channel tripled | flame 0.7% · smoke 18.4% |
+| framing | reach 0.75 — a quarter of the cell wasted | 0.98, 0/64 clipped |
+| sim wall contact | unknown, predates the audit | 0.0% |
+
+Identical R and G is the tell that it predates the channel layout entirely: it
+is a Cycles greyscale render, so it cannot express "thick but cool" apart from
+"hot", which is the whole reason the pipeline marches the grids itself.
+
+**The 19.6% target is deleted from `pack.py`.** Every coverage figure in E4 was
+printed against "the smoke sheet, which works: 19.6%" — a calibration taken from
+the sheet the owner has now rejected. A constant that came from a rejected
+artifact is worse than no constant: it made 22% look like a pass. Coverage is
+still reported; what it should be is a judgement about the effect.
+
+**`smoke_puff` preset** — the fire_puff skeleton with combustion turned into an
+instant hand-off (`cool` 3.0, `soot` 1.0: heat becomes density within a few
+frames, so the sheet is smoke from frame one instead of fire that fades), more
+diffusion, and **buoyancy near zero even though smoke rises**. The rise belongs
+to the PARTICLE: bake it into the sheet and the engine's own upward velocity
+double-counts it, while the puff drifts off the cell centre and the autofit crop
+— symmetric about that centre — pays for the empty half.
+
+**Two sheets, two contracts, and the wiring must know which.** The new sheet is
+a MASK (white RGB, density in alpha) whose value comes from the lighting pass —
+the F1b split, same as the flame. The old one is pre-shaded, which is why
+`vc_smoke_puff.inl` lifts the vertex colour to ~160 for it; applying that lift
+to a mask lights it twice, and skipping it on a pre-shaded sheet is the measured
+33/255 black smudge. `s_smokeFbMask` now carries the distinction, and the old
+sheet stays as the fallback.
+
+`assets/textures/smoke_puff_8x8.png` + `_flame`/`_smoke`, res 112 / 64 frames /
+67.3 s. Builds clean, core suites 6/6.
+
+### E4 — "những mảng màu riêng biệt": a flat mask cannot be a volume (28/07/2026)
+
+Owner asked whether the patchy smoke was the blend mode. It was not, and the
+measurement says so without a rebuild: the sheet's RGB **value spread (p10..p90)
+was 0.00** — literally flat white. A stack of flat plates reads as overlapping
+cards no matter how faint each one is made, and the per-sprite alpha was already
+0.28.
+
+The plateau in the alpha channel is real but is not the cause: 61.6% of lit
+pixels sat above 0.6, and dropping `--density-scale` from 7 to 1.5 only moved
+the median 0.72 → 0.54. It cannot be tuned away either, because it is physical —
+the column density through a fat cauliflower puff IS near-constant across its
+middle. Real smoke reads as volume for a different reason: it is SHADED.
+
+**`render.py --light`: the volume's own shadow, from a prefix sum.** With the key
+light straight overhead, the light ray IS the grid's z axis, so the optical depth
+above every voxel is one cumulative sum — O(N^3) once per frame, instead of a
+second march per sample. The marcher accumulates the same integral weighted by
+that transmittance and writes it to **B, the channel the layout reserved for
+lighting**. `pack.py --split` then puts **B/G** in the smoke sheet's RGB: B and G
+share a normalisation, so their ratio is exactly the fraction of light that
+survived, with the density falloff divided back out. Multiplying density in twice
+(RGB and alpha) is what turns a thick puff into a silhouette.
+
+| sheet | value spread p10..p90 |
+|---|---|
+| smoke_puff, unshaded mask (what shipped this morning) | 0.00 |
+| smoke_atlas_8x8 (the rejected sheet) | 0.31 |
+| smoke_puff, self-shadowed | **0.69** |
+
+**The flame sheet deliberately does NOT get this.** Fire emits; it is not
+shadowed by anything, and its colour comes from the black-body ramp at the call
+site — so its split stays white-RGB-plus-alpha. Two sheets from one pipeline with
+two different contracts, and `vc_smoke_puff.inl`'s existing "the sheet is already
+lit" path is the correct one for the smoke sheet (its near-black gradient exists
+to be lifted by the lighting pass for FLAT sprites; a shaded sheet needs the
+vertex colour to step back and only tint — measured 33/255 black smudge when
+that is got backwards).
+
+Re-shipped: `smoke_puff_8x8.png` + splits, coverage 22.5%, lobes 1.08, 0/64
+clipped. Builds clean, core suites 6/6, `selftest.py` PASS.

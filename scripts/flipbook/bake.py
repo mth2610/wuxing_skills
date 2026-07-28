@@ -74,6 +74,9 @@ def parse_args():
     ap.add_argument("--vorticity", type=float, default=None)
     ap.add_argument("--burn", type=float, default=None)
     ap.add_argument("--flame-smoke", type=float, default=None)
+    ap.add_argument("--velocity", type=float, default=None,
+                    help="inflow speed along the emitter normals — the radial "
+                         "push for a puff")
     return ap.parse_args(argv)
 
 
@@ -134,7 +137,11 @@ def build(p, res, frames, cache_dir, noise):
                                          location=(0, 0, p["fuel_z"]))
     flow = bpy.context.object
     flow.name = "Fuel"
-    flow.scale = (1.0, 1.0, 0.45)
+    # A flattened emitter is right for something rising from a floor (a fire, a
+    # smoke column) and wrong for a PUFF, which should start as a sphere and
+    # expand equally — a flat source biases the puff wide before any physics runs.
+    fz = p.get("fuel_flat", 0.45)
+    flow.scale = (1.0, 1.0, fz)
     bpy.ops.object.transform_apply(scale=True)
     bpy.ops.object.modifier_add(type='FLUID')
     flow.modifiers["Fluid"].fluid_type = 'FLOW'
@@ -214,6 +221,8 @@ def main():
             p[k] = getattr(a, k)
     if a.flame_smoke is not None:
         p["flame_smoke"] = a.flame_smoke
+    if a.velocity is not None:
+        p["velocity_normal"] = a.velocity
 
     name = a.name or a.preset
     res = a.res or (32 if a.quick else 128)

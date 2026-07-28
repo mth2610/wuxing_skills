@@ -226,7 +226,26 @@ static void SmokePuff_InitShared(void)
     // would VANISH while its alpha curve says it should still be visible.
     // ANIM_ONCE clamps, so shorter-lived particles simply end mid-dissipation,
     // which their own alpha fade hides.
-    s_smokeFbTex = ResourceManager_LoadTexture("assets/textures/smoke_atlas_8x8.png");
+    // TWO sheets with DIFFERENT CONTRACTS, and the difference is not cosmetic.
+    //
+    //   smoke_puff_8x8_smoke.png (preferred) — from scripts/flipbook/. RGB is
+    //     the fraction of light that survives to each pixel (the volume's OWN
+    //     shadow, marched at bake time), alpha is the density mask. Measured
+    //     internal value spread p10..p90 = 0.69.
+    //   smoke_atlas_8x8.png (fallback) — same contract, older sheet. Owner
+    //     rejected it: R and G identical at 21.0% (one greyscale channel
+    //     tripled, from before the channel layout existed), silhouette shredded
+    //     rather than billowed (lobes 2.31 vs 1.08), framed 1.31x small, and
+    //     value spread only 0.31.
+    //
+    // BOTH carry their own value, which is why the vertex colour is lifted for
+    // either (see the spawn site). A flat-white MASK cannot be substituted here:
+    // the lighting pass shades a BILLBOARD and knows nothing about the depth
+    // inside the puff, so an unshaded sheet stacks into flat cards — measured at
+    // value spread 0.00, which is what "những mảng màu riêng biệt" was.
+    s_smokeFbTex = ResourceManager_LoadTexture("assets/textures/smoke_puff_8x8_smoke.png");
+    if (s_smokeFbTex.id == 0)
+        s_smokeFbTex = ResourceManager_LoadTexture("assets/textures/smoke_atlas_8x8.png");
     if (s_smokeFbTex.id != 0)
     {
         // BILINEAR. raylib's default is POINT, and at the end of a puff's life
@@ -258,8 +277,8 @@ static void SmokePuff_InitShared(void)
         // Announce the fallback: a silently-static puff and a flipbook that
         // failed to load look identical in a screenshot.
         TraceLog(LOG_WARNING,
-                 "SMOKE PUFF: assets/textures/smoke_atlas_8x8.png missing — falling "
-                 "back to the 3 static sprites (no billow animation).");
+                 "SMOKE PUFF: neither smoke_puff_8x8_smoke.png nor smoke_atlas_8x8.png "
+                 "loaded — falling back to the 3 static sprites (no billow animation).");
     }
 
     s_smokePuffInit = true;

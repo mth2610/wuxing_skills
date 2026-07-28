@@ -51,6 +51,31 @@ def main():
     ap.add_argument("--flame-extinction", type=float, default=6.0,
                     help="how much the flame itself blocks light; 0 makes fire "
                          "purely additive and it stops occluding its own smoke")
+    ap.add_argument("--zoom", default="1.0",
+                    help="a number, or 'auto' to FIT the sheet: render once "
+                         "uncropped, measure how far the lit alpha actually "
+                         "reaches, and set the crop so it sits 2%% inside the "
+                         "cell border. Dialling this by hand cannot converge, "
+                         "because once the effect is clipped the measurement "
+                         "saturates — a puff twice too big and one 1%% too big "
+                         "both report 'touching the border'. "
+                         "Crops toward the domain centre. The SIM needs room so "
+                         "the plume never touches a wall (a wall makes the "
+                         "silhouette a box), but the SHEET wants the effect to "
+                         "fill its cell. Those are different requirements, so "
+                         "framing belongs here and not in the solver — raising "
+                         "the radial force to fill the frame just runs the puff "
+                         "into the boundary.")
+    ap.add_argument("--light", type=float, default=1.0,
+                    help="self-shadow strength, as a multiple of --density-scale "
+                         "(0 = off, flat). Written to channel B, the one the "
+                         "layout reserved for lighting. A smoke sheet needs it: "
+                         "the engine lights a BILLBOARD, so nothing at the call "
+                         "site can shade the inside of the puff, and an unshaded "
+                         "mask stacks into flat cards.")
+    ap.add_argument("--ambient", type=float, default=0.22,
+                    help="floor under the self-shadow, so the underside of a "
+                         "thick puff goes dark rather than black")
     ap.add_argument("--arch", default="gpu", choices=["gpu", "cpu"])
     args = ap.parse_args()
 
@@ -72,12 +97,17 @@ def main():
     # wrong, why the smoke reached the cell edges and got clipped, and why the
     # height/width audit read 0.60 for a plume that is actually tall.
     aspect = rx / rz                      # width / height of the domain
-    fit_w = min(1.0, aspect)              # fraction of the cell used, per axis
-    fit_h = min(1.0, 1.0 / aspect)
+    autofit = str(args.zoom).lower() == "auto"
+    zoom = 1.0 if autofit else float(args.zoom)
+    fit_w = min(1.0, aspect) * zoom        # fraction of the cell used, per axis
+    fit_h = min(1.0, 1.0 / aspect) * zoom
 
     dens = ti.field(ti.f32, shape=(rz, ry, rx))
     flame = ti.field(ti.f32, shape=(rz, ry, rx))
-    out = ti.Vector.field(3, ti.f32, shape=(S, S))   # emission, smoke, opacity
+    # Transmittance from the LIGHT to each voxel — the volume's own shadow.
+    shad = ti.field(ti.f32, shape=(rz, ry, rx))
+    # emission, smoke, opacity, shaded value
+    out = ti.Vector.field(4, ti.f32, shape=(S, S))
 
     @ti.func
     def sample(fld, gx, gy, gz):
@@ -112,6 +142,7 @@ def main():
             trans = 1.0
             emis = 0.0
             smoke = 0.0
+            shade = 0.0
             inside = (u >= 0.0) and (u <= 1.0) and (v >= 0.0) and (v <= 1.0)
             steps = ry * 2 if inside else 0
             dstep = ti.cast(ry - 1, ti.f32) / steps
@@ -122,32 +153,90 @@ def main():
                 ext = (d * ks + f * kfe) * dstep
                 emis += f * kf * trans * dstep
                 smoke += d * ks * trans * dstep
+                # The same integral WEIGHTED by how much light reaches each
+                # sample. Without it every sprite is a flat plate of one value,
+                # and a stack of flat plates reads as overlapping cards no
+                # matter how faint each one is made — the lighting pass at the
+                # call site cannot supply this, because it lights a BILLBOARD
+                # and knows nothing about the depth inside it.
+                shade += d * ks * trans * sample(shad, gx, gy, gz) * dstep
                 trans *= ti.exp(-ext)
                 if trans < 0.004:      # the rest cannot contribute a visible level
                     break
-            out[px, py] = ti.Vector([emis, smoke, 1.0 - trans])
+            out[px, py] = ti.Vector([emis, smoke, 1.0 - trans, shade])
 
-    frames = []
     t0 = time.time()
-    for i, p in enumerate(files):
-        z = np.load(p)
-        dens.from_numpy(np.ascontiguousarray(z["density"], np.float32))
-        flame.from_numpy(np.ascontiguousarray(z["flame"], np.float32))
-        march(args.density_scale, args.flame_scale, args.flame_extinction,
-              fit_w, fit_h)
+
+    def render_all(fw, fh, quiet=False):
+        frames = []
+        for i, p in enumerate(files):
+            z = np.load(p)
+            d = np.ascontiguousarray(z["density"], np.float32)
+            dens.from_numpy(d)
+            flame.from_numpy(np.ascontiguousarray(z["flame"], np.float32))
+            # SELF-SHADOW, computed by a prefix sum rather than a second ray per
+            # sample: with the key light straight overhead the light ray IS the
+            # grid's z axis, so the optical depth above every voxel is one
+            # cumulative sum (grid index rz-1 is the TOP — see gz above). An
+            # arbitrary light direction would cost a march per sample; a fixed
+            # overhead one costs O(N^3) once per frame and buys the same cue.
+            above = np.cumsum(d[::-1], axis=0)[::-1] - d
+            shad.from_numpy(np.ascontiguousarray(
+                args.ambient + (1.0 - args.ambient)
+                * np.exp(-args.light * args.density_scale * above), np.float32))
+            march(args.density_scale, args.flame_scale, args.flame_extinction,
+                  fw, fh)
         # transpose: the Taichi field is indexed [px, py] (x first), but numpy
         # and PIL read axis 0 as the ROW. Without this the sheet comes out
         # rotated 90 degrees — the flame rises along the image's X axis, which
         # measured as a row-centroid that never moved (128 in every frame) while
         # the column-centroid drifted 236 -> 198.
-        img = out.to_numpy().transpose(1, 0, 2)
-        if args.supersample > 1:
-            k = args.supersample
-            img = img.reshape(args.cell, k, args.cell, k, 3).mean(axis=(1, 3))
-        frames.append(img)
-        if i % 8 == 0:
-            print("RENDER: %d/%d  %.1fs" % (i, len(files), time.time() - t0), flush=True)
+            img = out.to_numpy().transpose(1, 0, 2)
+            if args.supersample > 1:
+                k = args.supersample
+                img = img.reshape(args.cell, k, args.cell, k, 4).mean(axis=(1, 3))
+            frames.append(img)
+            if i % 8 == 0 and not quiet:
+                print("RENDER: %d/%d  %.1fs" % (i, len(files), time.time() - t0),
+                      flush=True)
+        return frames
 
+    if autofit:
+        # Measure on the UNCROPPED render, where nothing can be cut off, so the
+        # reach is a true extent and not a saturated one. Alpha is 1 - trans,
+        # an absolute quantity (unlike R/G, which are percentile-normalised
+        # later), so the 0.06 threshold here is the same one pack.py audits with.
+        probe = np.stack(render_all(fit_w, fit_h, quiet=True))[..., 2]
+        lit = probe > 0.06
+        half = args.cell / 2.0
+        ys, xs = np.nonzero(lit.any(axis=0))
+        if len(ys):
+            reach = max(abs(ys.max() + 0.5 - half), abs(ys.min() + 0.5 - half),
+                        abs(xs.max() + 0.5 - half), abs(xs.min() + 0.5 - half)) / half
+            zoom = 0.98 / max(reach, 1e-3)
+            fit_w, fit_h = min(1.0, aspect) * zoom, min(1.0, 1.0 / aspect) * zoom
+            print("RENDER: autofit reach %.3f of the domain half-width -> zoom %.2f"
+                  % (reach, zoom))
+            # The "silhouette is the box" test needs a SOLID threshold, not the
+            # visibility one. A ray crossing the whole domain accumulates enough
+            # optical depth from haze alone to pass alpha 0.06 at the very edge,
+            # so the faint reach is ~1.0 on a perfectly healthy puff (measured:
+            # reach 0.996 on a sim whose mass audit said r90 0.79, wall 0.1%).
+            # Warning on that number cries wolf on every good sheet.
+            solid = np.nonzero((probe > 0.5).any(axis=0))
+            if len(solid[0]):
+                sreach = max(abs(solid[0].max() + 0.5 - half),
+                             abs(solid[0].min() + 0.5 - half),
+                             abs(solid[1].max() + 0.5 - half),
+                             abs(solid[1].min() + 0.5 - half)) / half
+                if sreach > 0.95:
+                    print("RENDER: WARNING opaque material reaches the domain "
+                          "wall (%.2f) — the silhouette is partly the box, and "
+                          "no crop repairs that" % sreach)
+        else:
+            print("RENDER: autofit found nothing lit; keeping zoom 1.0")
+
+    frames = render_all(fit_w, fit_h)
     stack = np.stack(frames)
     # One scale for the WHOLE sheet, from a high percentile. Per-frame
     # normalisation would rescale a dying flame to look as bright as a roaring
@@ -163,7 +252,11 @@ def main():
         rgba = np.zeros((args.cell, args.cell, 4), np.float32)
         rgba[..., 0] = np.clip(img[..., 0] / e_max, 0, 1)     # emission
         rgba[..., 1] = np.clip(img[..., 1] / s_max, 0, 1)     # smoke
-        rgba[..., 2] = 0.0                                     # reserved
+        # B = the SHADED smoke value, normalised by the same scale as G so the
+        # two are directly comparable: B/G is exactly the fraction of light that
+        # survived to each pixel, which is what makes B usable as a shading term
+        # rather than as a second, differently-scaled density.
+        rgba[..., 2] = np.clip(img[..., 3] / s_max, 0, 1)      # self-shadowed value
         rgba[..., 3] = np.clip(img[..., 2], 0, 1)              # true opacity
         # Rows: image Y already runs down from the grid's top, so no flip here.
         Image.fromarray((rgba * 255).astype(np.uint8), "RGBA").save(

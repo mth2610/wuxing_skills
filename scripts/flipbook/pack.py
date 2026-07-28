@@ -17,6 +17,7 @@ the 1.3 ratio below which a flame is not a flame.
 
 import argparse
 import glob
+import math
 import os
 import sys
 
@@ -29,7 +30,10 @@ OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "assets", "texture
 def audit(sheet, grid, cell):
     arr = np.asarray(sheet).astype(np.float32) / 255.0
     a = arr[..., 3]
-    covs, ratios = [], []
+    covs, ratios, rough = [], [], []
+    reach = 0.0          # farthest lit pixel, as a fraction of the cell HALF-width
+    clipped = 0
+    half = cell / 2.0
     for f in range(grid * grid):
         r, c = divmod(f, grid)
         sub = a[r * cell:(r + 1) * cell, c * cell:(c + 1) * cell]
@@ -39,6 +43,26 @@ def audit(sheet, grid, cell):
         covs.append(m.mean())
         ys, xs = np.nonzero(m)
         ratios.append((ys.max() - ys.min() + 1) / max(1, (xs.max() - xs.min() + 1)))
+        # FRAMING, measured instead of eyeballed. A sheet is clipped the moment a
+        # lit pixel lands on the cell border, and a screenshot cannot tell that
+        # apart from a puff that merely fills the frame. reach > 1 is impossible
+        # (the crop stops there), so a value AT 1.0 with border pixels lit means
+        # the effect was cut, not framed.
+        d = max(abs(ys.max() + 0.5 - half), abs(ys.min() + 0.5 - half),
+                abs(xs.max() + 0.5 - half), abs(xs.min() + 0.5 - half)) / half
+        reach = max(reach, d)
+        if (m[0].any() or m[-1].any() or m[:, 0].any() or m[:, -1].any()):
+            clipped += 1
+        # LOBE COUNT, as an isoperimetric ratio: perimeter / (2*sqrt(pi*area)).
+        # 1.0 is a disc; cauliflower is many small convex billows, so the number
+        # rises with lobe COUNT and is independent of the puff's size on screen —
+        # which is what makes it comparable across resolutions and zooms.
+        mm = sub > 0.35
+        area = int(mm.sum())
+        if area > 64:
+            edge = mm & ~(np.roll(mm, 1, 0) & np.roll(mm, -1, 0)
+                          & np.roll(mm, 1, 1) & np.roll(mm, -1, 1))
+            rough.append(int(edge.sum()) / (2.0 * math.sqrt(math.pi * area)))
     # Channel coverage, reported separately. On a multi-channel sheet (R = flame,
     # G = smoke) the alpha figure is the union of both populations, so comparing
     # it against the old single-channel 19.6% target is meaningless — that number
@@ -47,15 +71,33 @@ def audit(sheet, grid, cell):
     smoke_cov = float((arr[..., 1] > 0.25).mean())
     return (float(np.mean(covs)) if covs else 0.0,
             float(np.mean(ratios)) if ratios else 0.0,
-            len(covs), flame_cov, smoke_cov)
+            len(covs), flame_cov, smoke_cov,
+            reach, clipped, float(np.mean(rough)) if rough else 0.0)
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("frames_dir")
+    ap.add_argument("frames_dir",
+                    help="folder of rendered frames, or an existing SHEET .png "
+                         "to re-audit in place (a sheet that shipped before a "
+                         "measurement existed has never been held to it)")
     ap.add_argument("--grid", type=int, default=8)
     ap.add_argument("--out", default="fire_atlas_manta_8x8.png")
     ap.add_argument("--cell", type=int, default=None)
+    ap.add_argument("--split", action="store_true",
+                    help="also write <out>_flame.png and <out>_smoke.png, each a "
+                         "single-population sheet (white RGB, artwork in alpha). "
+                         "The engine's particle shader multiplies the WHOLE rgb "
+                         "by the vertex colour, so a two-channel sheet used "
+                         "directly would tint the flame with the smoke channel. "
+                         "Splitting keeps one bake feeding both populations "
+                         "without touching the shader.")
+    ap.add_argument("--shape", default="column", choices=["column", "puff"],
+                    help="what the sheet is SUPPOSED to be. height/width > 1.3 is "
+                         "a defect check for a rising column and nonsense for a "
+                         "puff, which is round by definition — a warning that "
+                         "fires on a correct sheet gets everything else ignored "
+                         "with it.")
     ap.add_argument("--alpha-from-luma", type=float, default=1.0,
                     help="fold RGB luminance into alpha (1 = on). Emission-only "
                          "volumes render bright but nearly TRANSPARENT: Eevee's "
@@ -64,6 +106,12 @@ def main():
                          "uses alpha as its MASK, so luminance is the right "
                          "source for it.")
     args = ap.parse_args()
+
+    if args.frames_dir.lower().endswith(".png") and os.path.isfile(args.frames_dir):
+        sheet = Image.open(args.frames_dir).convert("RGBA")
+        cell = sheet.size[0] // args.grid
+        report(audit(sheet, args.grid, cell), args, args.frames_dir, sheet)
+        return 0
 
     files = sorted(glob.glob(os.path.join(args.frames_dir, "*.png")))
     want = args.grid * args.grid
@@ -89,20 +137,68 @@ def main():
 
     path = os.path.join(OUT_DIR, args.out)
     sheet.save(path)
-    cov, ratio, live, fcov, scov = audit(sheet, args.grid, cell)
-    print("wrote %s  %dx%d  (%d non-empty frames)" % (path, sheet.size[0], sheet.size[1], live))
-    print("  cell coverage %.1f%%   (smoke sheet, which works: 19.6%%)" % (cov * 100))
+
+    if args.split:
+        a = np.asarray(sheet).astype(np.float32)
+        base = os.path.splitext(args.out)[0]
+        for chan, name in ((0, "flame"), (1, "smoke")):
+            m = a[..., chan]
+            out = np.zeros(a.shape, np.uint8)
+            out[..., 0] = out[..., 1] = out[..., 2] = 255      # white: tint at
+            out[..., 3] = np.clip(m, 0, 255).astype(np.uint8)  # the call site
+            if chan == 1 and a[..., 2].max() > 0.5:
+                # B holds the SAME integral with the light's transmittance folded
+                # in, so B/G is the fraction of light that survived to this pixel
+                # — pure shading, with the density falloff divided back out. That
+                # is what belongs in RGB: the value. Multiplying the density in
+                # twice (once in RGB, once in alpha) is what darkens a thick puff
+                # into a silhouette.
+                #
+                # A FLAME sheet never gets this: it emits, so it is not shadowed
+                # by anything, and its colour comes from the black-body ramp at
+                # the call site.
+                lit = np.maximum(m, 1e-3)
+                val = np.clip(a[..., 2] / lit, 0.0, 1.0) * 255.0
+                out[..., 0] = out[..., 1] = out[..., 2] = val.astype(np.uint8)
+            p2 = os.path.join(OUT_DIR, "%s_%s.png" % (base, name))
+            Image.fromarray(out, "RGBA").save(p2)
+            print("  split -> %s  (mean alpha %.1f)" % (os.path.basename(p2), m.mean()))
+    report(audit(sheet, args.grid, cell), args, path, sheet, want)
+    return 0
+
+
+def report(nums, args, path, sheet, want=None):
+    cov, ratio, live, fcov, scov, reach, clipped, rough = nums
+    if want is None:
+        want = live
+    print("%s  %dx%d  (%d non-empty frames)" % (path, sheet.size[0], sheet.size[1], live))
+    # No "target" coverage is quoted any more. The 19.6% figure printed here for
+    # a long time came from smoke_atlas_8x8.png, called the sheet that works —
+    # the owner has since rejected that sheet, so every number calibrated
+    # against it was calibrated against nothing. Coverage is reported; what it
+    # should be is a judgement about the effect, not a constant.
+    print("  cell coverage %.1f%%" % (cov * 100))
     print("  height/width  %.2f    (must exceed 1.30 — flame, not puff)" % ratio)
+    print("  reach %.2f of the half-cell, %d/%d frames touch the border" % (reach, clipped, live))
+    print("  lobes %.2f  (isoperimetric: 1.0 = one round blob, higher = more billows)" % rough)
+    if reach > 0.001:
+        # Framing scales linearly about the cell centre, so the corrected zoom is
+        # exact arithmetic, not another guess-and-render round.
+        print("  -> multiply render.py --zoom by %.2f to sit 2%% inside the border"
+              % (0.98 / reach))
     if fcov > 0.001 or scov > 0.001:
         print("  channels: flame %.1f%% of sheet, smoke %.1f%% "
-              "(R and G are separate populations — see ti_render.py)"
+              "(R and G are separate populations — see render.py)"
               % (fcov * 100, scov * 100))
-    if ratio < 1.3:
+    if args.shape == "column" and ratio < 1.3:
         print("  WARNING: still puff-shaped — raise --buoyancy or make the domain taller.")
+    if reach >= 1.0 or clipped:
+        print("  WARNING: CLIPPED at the cell border (%d frames) — re-render with "
+              "--zoom auto; dialling zoom by hand cannot converge once clipped."
+              % clipped)
     if live < want * 0.8:
         print("  WARNING: %d/%d frames are empty — bake or camera framing is off."
               % (want - live, want))
-    return 0
 
 
 if __name__ == "__main__":
