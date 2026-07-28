@@ -102,7 +102,7 @@ static const char *s_meshNames[] = {
 static const char* s_newFxNames[] = {
     "SMOKE PUFF", "ENERGY BURST", "IMPACT PKG", "FLAME VOLUME", "GLINT SPARKLE", "RUNE CIRCLE",
     "DISSOLVE EXIT", "CHARGE CONVERGE", "SWEEP SLASH", "LIGHT SHAFT", "CHARACTER AURA", "BLACK HOLE",
-    "FISSURE STREAK", "ICE CRYSTAL", "PARTICLE UPGRADES TEST", "SHARD DEBRIS", "STONE PILLAR", "DRAW ICE CRYSTAL BURST",
+    "FISSURE STREAK", "ICE CRYSTAL", "PARTICLE UPGRADES TEST", "SHARD DEBRIS", "STONE PILLAR", "ICE CRYSTAL BURST",
     "WATER STREAM", "WATER STREAM ON PATH",
 };
 // @gen:newfx_names end
@@ -478,7 +478,6 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
                         s_testIndex = globalIdx;
                         s_isPlayingMesh = false;
                         // @gen:newfx_trigger begin
-          int posSeed = (int)(s_prefabStartPos.x * 17.0f + s_prefabStartPos.z * 31.0f) & 0xFFFF;
           if (s_testIndex == 0) { /* SMOKE PUFF */
               VFX_ComposeSmokePuff(s_prefabStartPos, VC_MAT_EARTH, 1.0f, 1.0f);
           } else if (s_testIndex == 1) { /* ENERGY BURST */
@@ -487,14 +486,10 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_ComposeImpactPackage(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_EARTH, 1.0f, 1.0f);
           } else if (s_testIndex == 10) { /* CHARACTER AURA */
               VFX_ComposeCharacterAura(0, VC_MAT_FIRE, 1.0f);
-          } else if (s_testIndex == 13) { /* ICE CRYSTAL */
-              VFX_ComposeIceCrystal(s_prefabStartPos, posSeed);
           } else if (s_testIndex == 14) { /* PARTICLE UPGRADES TEST */
               VFX_ComposeParticleUpgradesTest(s_prefabStartPos);
           } else if (s_testIndex == 15) { /* SHARD DEBRIS */
               VFX_ComposeShardDebris(s_prefabStartPos, 5, 2.0f, VC_MAT_METAL);
-          } else if (s_testIndex == 17) { /* DRAW ICE CRYSTAL BURST */
-              VFX_DrawIceCrystalBurst(s_prefabStartPos, 5, posSeed, 1.0f);
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
               s_isPlayingMesh = true;
@@ -572,7 +567,6 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
         {
             s_isPlayingMesh = false;
             // @gen:newfx_trigger begin
-          int posSeed = (int)(s_prefabStartPos.x * 17.0f + s_prefabStartPos.z * 31.0f) & 0xFFFF;
           if (s_testIndex == 0) { /* SMOKE PUFF */
               VFX_ComposeSmokePuff(s_prefabStartPos, VC_MAT_EARTH, 1.0f, 1.0f);
           } else if (s_testIndex == 1) { /* ENERGY BURST */
@@ -581,14 +575,10 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_ComposeImpactPackage(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_EARTH, 1.0f, 1.0f);
           } else if (s_testIndex == 10) { /* CHARACTER AURA */
               VFX_ComposeCharacterAura(0, VC_MAT_FIRE, 1.0f);
-          } else if (s_testIndex == 13) { /* ICE CRYSTAL */
-              VFX_ComposeIceCrystal(s_prefabStartPos, posSeed);
           } else if (s_testIndex == 14) { /* PARTICLE UPGRADES TEST */
               VFX_ComposeParticleUpgradesTest(s_prefabStartPos);
           } else if (s_testIndex == 15) { /* SHARD DEBRIS */
               VFX_ComposeShardDebris(s_prefabStartPos, 5, 2.0f, VC_MAT_METAL);
-          } else if (s_testIndex == 17) { /* DRAW ICE CRYSTAL BURST */
-              VFX_DrawIceCrystalBurst(s_prefabStartPos, 5, posSeed, 1.0f);
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
               s_isPlayingMesh = true;
@@ -634,7 +624,9 @@ void VFXTest_Draw3D(void)
               case 9: VFX_ComposeLightShaft(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 3.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.05f, 0.0f}), VC_MAT_HOLY, 2.0f, 0.9f); break;
               case 11: VFX_ComposeBlackHole(VC_MAT_FIRE, s_prefabStartPos, 1.5f, s_meshTime); break;
               case 12: VFX_ComposeFissureStreak(s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){3.0f, 0, 0}), 0.1f, fminf(progress, 0.99f), s_meshTime); break;
+              case 13: VFX_ComposeIceCrystal(s_prefabStartPos, posSeed); break;
               case 16: VFX_ComposeStonePillar(s_prefabStartPos, fminf(progress, 0.99f)); break;
+              case 17: VFX_DrawIceCrystalBurst(s_prefabStartPos, 10, posSeed, fminf(fmodf(s_meshTime, 2.0f) / 1.2f, 1.0f)); break;
               case 18: VFX_ComposeWaterStream(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.4f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){1.2f, 1.7f, 0.5f}), Vector3Add(s_prefabStartPos, (Vector3){2.6f, 1.3f, -0.5f}), Vector3Add(s_prefabStartPos, (Vector3){3.8f, 0.15f, 0.0f}), 0.22f, fminf(progress, 0.99f), s_meshTime); break;
               case 19: VFX_ComposeWaterStreamOnPath(s_testPathPoints, TEST_PATH_POINT_COUNT, 0.25f, progress * 1.2f, 0.25f, s_meshTime); break;
           }
@@ -819,10 +811,8 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
     case 1: VFX_ComposeEnergyBurst(pos, VC_MAT_FIRE, 1.0f, 0.9f); break;
     case 2: VFX_ComposeImpactPackage(pos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_EARTH, 1.0f, 1.0f); break;
     case 10: VFX_ComposeCharacterAura(0, VC_MAT_FIRE, 1.0f); break;
-    case 13: VFX_ComposeIceCrystal(pos, 0); break;
     case 14: VFX_ComposeParticleUpgradesTest(pos); break;
     case 15: VFX_ComposeShardDebris(pos, 5, 2.0f, VC_MAT_METAL); break;
-    case 17: VFX_DrawIceCrystalBurst(pos, 5, 0, 1.0f); break;
     default: break;
     }
 // @gen:newfx_render_trigger end

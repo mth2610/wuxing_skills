@@ -44,7 +44,7 @@ static void LoiDongTick(Vector3 center, float dt, float power, AgentTeam ownerTe
         // rebuild.
         (void)sky;
         VFX_ComposeImpactPackage(ground, (Vector3){0.0f, 1.0f, 0.0f},
-                                 VC_MAT_LIGHTNING, 0.7f, 0.65f);
+                                 VC_MAT_LIGHTNING, 0.7f, 0.40f);
     }
 }
 

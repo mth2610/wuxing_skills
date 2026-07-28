@@ -121,6 +121,12 @@ void VFX_ComposeEnergyBurst(Vector3 pos, VC_MaterialId matId, float scale,
 // pieces together and gates the beats that must not fire on a light hit. It must
 // live in exactly ONE place; ramping it per-beat as well multiplies (a 1.69x
 // scale is 4.7x the fill). `normal` is the surface that was hit. No shake.
+//
+// **THE GATES ARE PART OF THE CONTRACT.** severity >= 0.45 fires HITSTOP, which
+// slows time; severity >= 0.35 fires the screen distortion. Replacing a purely
+// visual burst? Stay UNDER 0.45, or every hit in the game develops a stutter —
+// this is exactly what happened when the F0 purge mapped old impact calls onto
+// this one at 0.55-0.7 (owner: "như là thời gian bị chậm lại").
 void VFX_ComposeImpactPackage(Vector3 pos, Vector3 normal, VC_MaterialId matId,
                               float scale, float severity01);
 
@@ -133,6 +139,12 @@ void VFX_ComposeImpactPackage(Vector3 pos, Vector3 normal, VC_MaterialId matId,
 // rlvk), so shafts fade by distance along their own length, not by what they hit.
 void VFX_ComposeLightShaft(Vector3 from, Vector3 to, VC_MaterialId mat,
                            float width, float intensity);
+
+// Batch helpers for the restored water stream: bind the tube shader once and
+// draw N streams inside, instead of a Begin/End per projectile. Not generated —
+// the scan only picks up VFX_Compose* entry points.
+void VFX_BeginWaterStreams(float time);
+void VFX_EndWaterStreams(void);
 
 // @gen:vc_declarations begin
 void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);

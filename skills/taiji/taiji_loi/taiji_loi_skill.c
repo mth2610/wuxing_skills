@@ -34,7 +34,7 @@ static void LoiImpact(Vector3 pos, float scale, void *ud)
     // F0 purge: VFX_ComposeImpact + VFX_ComposeShockwaveRing -> the E6 package,
     // which is both of them plus a light and a decal, tuned as one unit.
     VFX_ComposeImpactPackage(pos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_LIGHTNING,
-                             1.2f * scale, 0.7f);
+                             1.2f * scale, 0.40f);
 }
 
 void InitTaijiLoiSkill(int screenWidth, int screenHeight) {

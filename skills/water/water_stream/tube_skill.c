@@ -53,7 +53,7 @@ static TubeMeshConfig s_waterTubeConfig;
 // F0 purge: ImpactBurstConfig and VFX_TriggerImpactBurst are deleted. The
 // successor takes no config struct — the E6 package IS the tuning, and
 // `severity01` is the only dial it exposes on purpose.
-#define TUBE_IMPACT_SEVERITY 0.6f
+#define TUBE_IMPACT_SEVERITY 0.40f   // under the 0.45 hitstop gate on purpose
 
 static inline float ClampSizeScale(float scale) {
   return Clamp(scale, 0.2f, 3.0f);
@@ -266,6 +266,13 @@ void UpdateTubeSkill(float dt) {
       cfgMist.speedCurve    = &s_mistSpeedCurve;
       cfgMist.alphaCurve    = &s_mistAlphaCurve;
       cfgMist.emissiveCurve = &s_mistEmissiveCurve;
+      // THE BLEND LAW (core/particle_system.h): this mist EMITS — it is the
+      // stream's own glow coming apart — so it draws additive and unlit. Left
+      // alpha-blended it goes through the lighting multiply, and in the night
+      // arena that renders it black.
+      cfgMist.render.blendMode = VFX_BLEND_ADDITIVE;
+      cfgMist.render.unlit = 1;
+      cfgMist.render.emissiveBoost = 1.15f;
       SpawnParticle(cfgMist);
     }
   }
@@ -279,14 +286,22 @@ void DrawTubeSkill(void) {
   if (!anyActive) return;
 
   float time = GetTime();
+
+  // ONE Begin/End around the whole loop, not per emitter. Each pair binds the
+  // tube shader and sets its uniforms; doing that per stream flushes the batch
+  // for every projectile on screen, which is the difference between one draw
+  // state change and MAX_TUBE_EMITTERS of them.
+  VFX_BeginWaterStreams(time);
   for (int e = 0; e < MAX_TUBE_EMITTERS; e++) {
     if (!emitters[e].active) continue;
     float radius = s_tubeBaseRadius * emitters[e].sizeScale;
-    // F0 purge: VFX_ComposeWaterStream is deleted (owner's explicit list). The
-    // projectile still flies and still clashes — it is simply not drawn until
-    // E7 rebuilds it from the surviving set.
-    (void)radius; (void)time;
+    // The stream body itself: a tube mesh swept along the emitter's own Bezier,
+    // revealed up to `progress`, so the head is where the collider is.
+    VFX_ComposeWaterStream(emitters[e].p0, emitters[e].p1, emitters[e].p2,
+                           emitters[e].p3, radius, emitters[e].progress, time);
   }
+  VFX_EndWaterStreams();
+
 }
 
 void UnloadTubeSkill(void) {

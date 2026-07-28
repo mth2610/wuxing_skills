@@ -958,7 +958,7 @@ void SkillBuilder_Build(SkillBuildContext *ctx)
         // itself.
         VFX_ComposeImpactPackage(ctx->target, (Vector3){0.0f, 1.0f, 0.0f},
                                  SkillHelper_PresetMaterial(ctx->explosionEffect),
-                                 ctx->scale, 0.6f);
+                                 ctx->scale, 0.40f);
     }
     if (ctx->hasDecal)
     {

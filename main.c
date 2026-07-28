@@ -1646,7 +1646,7 @@ int main(int argc, char **argv) {
                 (booms[bi].element == 3) ? VC_MAT_EARTH :
                                            VC_MAT_METAL;
             VFX_ComposeImpactPackage(booms[bi].pos, (Vector3){0.0f, 1.0f, 0.0f},
-                                     mat, 0.8f, 0.6f);
+                                     mat, 0.8f, 0.40f);
             Audio_PlaySFXAt(SFX_EXPLOSION, booms[bi].pos);
         }
     }

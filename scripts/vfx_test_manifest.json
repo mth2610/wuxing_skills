@@ -234,6 +234,18 @@
       "category": "water",
       "type": "continuous",
       "draw_call": "VFX_ComposeWaterStream(Vector3Add($POS, (Vector3){0.0f, 0.4f, 0.0f}), Vector3Add($POS, (Vector3){1.2f, 1.7f, 0.5f}), Vector3Add($POS, (Vector3){2.6f, 1.3f, -0.5f}), Vector3Add($POS, (Vector3){3.8f, 0.15f, 0.0f}), 0.22f, fminf($PROG, 0.99f), $TIME)"
+    },
+    "VFX_ComposeIceCrystal": {
+      "label": "ICE CRYSTAL",
+      "category": "water",
+      "type": "continuous",
+      "draw_call": "VFX_ComposeIceCrystal($POS, $SEED)"
+    },
+    "VFX_DrawIceCrystalBurst": {
+      "label": "ICE CRYSTAL BURST",
+      "category": "water",
+      "type": "continuous",
+      "draw_call": "VFX_DrawIceCrystalBurst($POS, 10, $SEED, fminf(fmodf($TIME, 2.0f) / 1.2f, 1.0f))"
     }
   }
 }

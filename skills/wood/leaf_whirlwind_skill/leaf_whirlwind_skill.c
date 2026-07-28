@@ -79,7 +79,7 @@ void UpdateLeafWhirlwindSkill(float dt, Vector3 enemyPos, float enemyRadius) {
                     // the surviving set orbits a point); the whirlwind's pull and
                     // damage are untouched, only its orbiting leaves are gone.
                     VFX_ComposeImpactPackage(s->position, (Vector3){0.0f, 1.0f, 0.0f},
-                                             VC_MAT_WOOD, s_effectScale, 0.55f);
+                                             VC_MAT_WOOD, s_effectScale, 0.40f);
                 }
                 break;
 

@@ -514,7 +514,7 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
             // F0 purge: proc beam deleted, no one-shot successor.
             (void)wallPos;
             VFX_ComposeImpactPackage(targetPos, (Vector3){0.0f, 1.0f, 0.0f},
-                                     VC_MAT_EARTH, 0.6f, 0.6f);
+                                     VC_MAT_EARTH, 0.6f, 0.40f);
             AddFloatingText(targetPos, "Cong Huong Dat!", ELEMENT_COLOR_EARTH, 16.0f, 0.6f);
         }
     }
