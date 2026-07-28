@@ -17,7 +17,7 @@ HEADERS=(
   core/trail_system.h core/ribbon_strip.h core/decal_system.h
   core/screen_distort.h core/metaball_fx.h core/color_gradient.h
   core/float_curve.h core/flow_map.h core/path_spline.h core/sprite_anim.h
-  core/vfx_light.h core/vfx_proc_ray.h core/post_fx.h core/camera_fx.h
+  core/vfx_light.h core/post_fx.h core/camera_fx.h
   core/debug_draw.h core/motion_controller.h core/status_vfx.h core/afterimage.h
   core/surface_material.h core/gfx_quality.h core/audio_system.h core/atmosphere.h
   core/material/material_system.h core/geometry/procedural_mesh_utils.h

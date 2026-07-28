@@ -54,7 +54,11 @@ void CastLeafWhirlwindSkill(int agentId, Vector3 startPos, Vector3 target, Skill
             .ownerAgentId = agentId,
             .active = true
         };
-        SpawnCastEffect(target, EFFECT_PRESET_WOOD_BLOOM, s_effectScale * params.sizeScale * 0.6f);
+        // F0 purge: SpawnCastEffect (VFX_ComposeCast) is deleted, and its
+        // successor VFX_ComposeChargeConverge is CONTINUOUS — it belongs in the
+        // STATE_CASTING draw path with the state timer as t01, not in a one-shot
+        // at cast time. Left for E7 rather than faked here.
+        (void)target;
         return;
     }
 }
@@ -70,8 +74,12 @@ void UpdateLeafWhirlwindSkill(float dt, Vector3 enemyPos, float enemyRadius) {
                 if (s->stateTimer >= CASTING_DURATION) {
                     s->state = STATE_ACTIVE;
                     s->stateTimer = 0.0f;
-                    SpawnImpactEffect(s->position, EFFECT_PRESET_WOOD_BLOOM, s_effectScale);
-                    VFX_SpawnOrbitals(s->position, EFFECT_PRESET_WOOD_BLOOM, ORBITAL_COUNT, s->radius, ACTIVE_DURATION);
+                    // F0 purge: SpawnImpactEffect -> the E6 package.
+                    // VFX_SpawnOrbitals is deleted with no successor (nothing in
+                    // the surviving set orbits a point); the whirlwind's pull and
+                    // damage are untouched, only its orbiting leaves are gone.
+                    VFX_ComposeImpactPackage(s->position, (Vector3){0.0f, 1.0f, 0.0f},
+                                             VC_MAT_WOOD, s_effectScale, 0.55f);
                 }
                 break;
 

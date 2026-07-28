@@ -247,11 +247,18 @@ void DrawGlacialCannonSkill(void)
             if (progress > 1.0f)
                 progress = 1.0f;
 
-            VFX_PathWave(PATH_ICE_SPIKE, s->pathPoints, s->pathPointCount, s_spikeScale * s->sizeScale, progress, time, s->castSeed);
+            // F0 purge: VFX_PathWave (ice spikes along a path) is deleted with
+            // no successor — nothing in the surviving set draws geometry along a
+            // path. The travel stage is invisible until E7 rebuilds it; the
+            // state machine and its timing are untouched.
+            (void)progress; (void)time;
         }
         else if (s->state == STATE_IMPACT_BURST)
         {
-            VFX_DrawIceCrystalBurst(s->targetPos, GLACIAL_CANNON_BURST_CRYSTAL_COUNT, s->burstSeed, s->burstProgress);
+            // F0 purge: VFX_DrawIceCrystalBurst deleted. The burst beat keeps a
+            // visual through the E6 package, which is what an impact is now.
+            VFX_ComposeImpactPackage(s->targetPos, (Vector3){0.0f, 1.0f, 0.0f},
+                                     VC_MAT_ICE, s->sizeScale, 0.7f);
         }
     }
 }

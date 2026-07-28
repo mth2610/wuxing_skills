@@ -126,11 +126,8 @@ static void WaterFx_InitShared(void)
     s_waterFxInit = true;
 }
 
-#include "magic_puddle.inl"
-#include "water_stream.inl"
 #include "ice_crystal.inl"
-#include "splash_burst.inl"
-#include "bubble_stream.inl"
 // @gen:water_includes begin
-// 0 include(s) — auto-managed by sync_vfx_test.py
+// 1 include(s) — auto-managed by sync_vfx_test.py
+#include "water_stream.inl"
 // @gen:water_includes end

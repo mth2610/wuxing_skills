@@ -21,15 +21,20 @@ static int s_skillIndex = -1;
 static void LoiBolt(Vector3 pos, float scale, void *ud)
 {
     (void)ud;
-    Vector3 sky = { pos.x, LOI_SKY_HEIGHT, pos.z };
-    VFX_SpawnProcBeam(sky, pos, EFFECT_PRESET_LIGHTNING_IMPACT, 0.18f * scale, 0.35f);
+    // F0 purge: the sky->ground proc beam is deleted. VFX_ComposeLightShaft is
+    // the nearest survivor and it IS a descending cone, but it is continuous —
+    // a beat fires once, so this would draw a single frame. Left empty until E7
+    // rebuilds the bolt; the beat stays so the sequence's timing is unchanged.
+    (void)pos; (void)scale;
 }
 
 static void LoiImpact(Vector3 pos, float scale, void *ud)
 {
     (void)ud;
-    VFX_ComposeImpact(pos, EFFECT_PRESET_LIGHTNING_IMPACT, 1.2f * scale);
-    VFX_ComposeShockwaveRing(pos, LOI_RADIUS * scale, 0.4f, (Color){ 235, 225, 255, 255 });
+    // F0 purge: VFX_ComposeImpact + VFX_ComposeShockwaveRing -> the E6 package,
+    // which is both of them plus a light and a decal, tuned as one unit.
+    VFX_ComposeImpactPackage(pos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_LIGHTNING,
+                             1.2f * scale, 0.7f);
 }
 
 void InitTaijiLoiSkill(int screenWidth, int screenHeight) {

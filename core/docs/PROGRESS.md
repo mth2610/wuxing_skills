@@ -2646,3 +2646,410 @@ the other half of the leaf.
 `Test_BandIsThinAgainstItsOwnArc` pins both the ratio and its invariance to
 `arcRad` — the second assertion is the one that matters, because the first would
 have passed on the old formula too, at exactly one angle.
+
+### E6 #7 — `VFX_ComposeLightShaft` landed (28/07/2026)
+
+`core/composition/common/vc_light_shaft.inl`. Continuous, no pool, no particles —
+camera-facing ribbons only, so it is cheap.
+
+**The one property that makes godrays godrays is geometric:** the shafts CONVERGE
+at `from` and separate with distance (`spread = width * 0.5 * s_shaftSpread * t`).
+Drop the `* t` and it is a bundle of parallel bars — neon tubing, not light. That
+is one character, invisible in review, and `light_shaft_test.c` now asserts both
+the convergence and that the cone opens monotonically.
+
+Placement is the golden angle (2.39996 rad, radius `sqrt((i+0.5)/n)`): NOT random
+per frame — a shaft that moves every frame flickers — and NOT evenly spaced,
+which reads as a machine part. The test measures the closest pair at every count
+from 3 to 8 rather than trusting the constant.
+
+Each shaft breathes on its own clock and phase. Six shafts pulsing together is a
+lamp; the point of the effect is a VOLUME with dust drifting through it.
+
+Brightness: `main.c:1139` sets `bloomThreshold = 0.8` on luma, and ribbon vertex
+colour is 8-bit capped at 1.0, so one pass cannot reliably clear it. Two per
+shaft — wide/soft at 0.55 alpha, then narrow/hot at 0.34x width — and the core is
+what tips over the threshold for E1's streak bloom to catch. The cross profile is
+a SYMMETRIC gaussian, so unlike SweepSlash the passes can share a centre (the
+outer-edge alignment rule applies only to asymmetric masks).
+
+**What the spec asked for and did not get: the soft-particle depth fade.** That
+feature is parked — a second `sampler2D` in a core shader unbinds `texture0`
+under rlvk (`ENGINE_LANDMINES.md`, 28/07) — and this composition would need
+exactly that sampler. Adding it would break this effect's own texture the same
+way. The far end fades on its own alpha envelope instead, so a shaft that meets
+geometry is already dim where it hits. That is weaker (it fades by distance along
+the shaft, not by proximity to what it hits) and it is what is available until
+the binding is fixed in `third_party/vulkan/`. The test asserts no sampler
+appears here, so the shortcut cannot be quietly undone.
+
+Tunables: `shaft_count` (max 8), `shaft_spread`, `shaft_gain`. Manifest entry
+added by hand + `sync_vfx_test.py` → NEW FX tab, "LIGHT SHAFT". 8/8 suites.
+Not eyeballed by me.
+
+### E6 #8 — `VFX_ComposeSpiritSwarm` landed; E6 is closed (28/07/2026)
+
+`core/composition/common/vc_spirit_swarm.inl`. Returns a handle, so per §0.3 it
+owns a pool — 6 swarms x 24 wisps, static, and `sync_vfx_test.py` found
+`VC_SpiritSwarm_Update`/`_Draw3D` by name and wired the include plus both
+dispatch calls itself (the archetype pattern; nobody has to remember
+visual_composer.c).
+
+**A swarm is a SCHEDULE.** Each wisp has its own launch delay and its own flight
+time, so they leave apart and land apart; everything arriving together is a
+volley. The lane index is jittered within its own slot, which breaks the metronome
+beat while preserving the ORDER — `spirit_swarm_test.c` asserts both, and asserts
+the worst-case arrival (last index, latest jitter, slowest flight) lands at 0.97
+of the duration, i.e. before the pool retires the slot. A wisp still flying when
+its swarm deactivates blinks out in mid-air, and that would have been found on
+screen rather than in 3 ms.
+
+**The tail is the path, not a history.** A wisp's position is a closed form of its
+own progress, so the tail is that same function evaluated a few steps earlier —
+no per-wisp ring buffer, no allocation, and the tail is correct on the wisp's
+FIRST frame instead of growing in over several. It clamps at u = 0, or the
+quadratic Bezier extrapolates and the tail whips off behind the source.
+
+Landing is deliberately visible (two sparks, once per wisp, flagged so it cannot
+re-fire). Wisps that simply stop existing read as a rendering bug rather than as
+an arrival.
+
+Tunables: `swarm_tail`, `swarm_width`, `swarm_spark`. Manifest + sync → NEW FX
+tab, "SPIRIT SWARM". 9/9 suites green, build clean. Not eyeballed by me.
+
+**E6 is now complete** (5, 6, 7, 8). Next is E7 — the retrofit checkpoint, which
+the spec marks as a deliberate stop-gate: 3 pilot skills through the new
+compositions, A/B against E0, and a written continue-or-rescope verdict.
+
+### SpiritSwarm's first capture: shark fins (28/07/2026)
+
+A scatter of solid triangles. Two causes, and the first one is the SAME mistake
+SweepSlash made two rounds earlier:
+
+1. **Width and length came from unrelated quantities.** Half-width was
+   `0.055 * spread` (0.07 m) while the tail was `0.13` of a 2.6 m path (0.34 m) —
+   nothing tied them together, and the pair happened to land at **2.4:1**, which
+   is a fin. Width now derives from the tail's OWN length
+   (`width = tailLen * 0.035`, i.e. ~1:14 full width to length) and holds at any
+   path length. The general rule, now twice paid for: *a thing's thickness must
+   be a ratio against the length of that same thing* — not against some other
+   parameter that happens to be nearby.
+2. **The nose was a flat cap.** The strip started at full width, so its leading
+   end was a straight edge across the front — the flat base of the triangle. The
+   first 18% of the strip is now a nose taper, so both ends come to a point.
+   Same lesson as the slash's lens, in a different geometry.
+
+Tail default also went 0.13 → 0.30 of the path; at 0.13 the wisp was too short to
+read as motion at all.
+
+`Test_WispIsAComaNotAFin` asserts the ratio, its invariance to path length, and
+that neither end is flat.
+
+### `VFX_ComposeSpiritStream` — the wisp becomes a tube mesh (28/07/2026)
+
+Owner, on the swarm: *"nó chỉ là 1 cái trail bay ra rồi tụ lại, ko có ấn tượng
+gì... nên tham khảo water stream on path, tạo ra 1 mesh giống vậy rồi áp dụng
+map flow, texture... nên làm cho 1 cái thôi để thay hoàn toàn projectile."*
+
+Right on both counts, and the second half is the more useful correction: the
+group behaviour (many things converging) is a PATH-AND-FORCE problem, not a
+rendering one. Drawing twenty-four ribbons better was never going to produce the
+missing impression; one object with real material would.
+
+`core/composition/common/vc_spirit_stream.inl` + `core/shaders/spirit_stream.*`.
+Geometry is borrowed wholesale from the water stream —
+`ProceduralMesh_BuildTubeAlongPath` (Frenet frame along a path, organic deform)
+and `ProceduralMesh_DrawTube`. That pipeline is correct and tuned; re-deriving it
+would have been the EnergyBurst mistake a third time. What differs is the
+MATERIAL: water is alpha-blended, lit, specular; a spirit current is additive,
+self-lit, eroded at the tail, and its surface flows rather than waves. The tube
+config differs too — needle tail (`tailTaperMin` 0.15 → 0.05, `tailApexFactor`
+0.25 → 0.10), leading mass (`headGrowth` 0.20 → 0.38) and a frame that snakes
+twice as hard, because nothing carries it but its own will.
+
+**The flow map is COMPUTED, not sampled, and that is forced.** A real flow map
+needs a second `sampler2D` for the RG vector field — which under rlvk unbinds
+`texture0` outright (ENGINE_LANDMINES, 28/07: every particle became a flat white
+square, and the shader still compiled). So the field is two fbm octaves in the
+fragment shader, displacing the UV before the single fetch. Same visual job,
+one sampler, and the arithmetic is free on a pass this small.
+
+Three other things the shader has to get right, each written down in it: the
+circumferential terms use INTEGER multiples of 2pi or the tube shows a seam
+crease down its length; the noise rides `along` only for the same reason; and
+the rim is a fresnel against `viewPos - fragPosition` — the convention every
+other core shader uses, with the one-line fallback noted in case rlvk's
+matModel-is-model*view landmine inverts it.
+
+Guards: the "shader loaded but did not compile" check (`id != 0` proves nothing —
+raylib substitutes the default shader) logs an ERROR naming which uniforms failed
+to resolve. `shader_uniform_wiring_test.c` now covers BOTH stages of this shader,
+with `core/skill_manager.c` listed as the binder of the four auto-bound uniforms.
+
+Tunables: `spirit_flow`, `spirit_distort`, `spirit_emissive`, `spirit_opacity`,
+`spirit_wobble`, `spirit_radius`. Manifest override (it takes a path array, like
+the water stream) → NEW FX tab, "SPIRIT STREAM". 9/9 suites, build clean.
+NOT eyeballed — and this one has a shader, so the first thing to check in the log
+is whether `spirit_stream` compiled at all.
+
+### SpiritStream's first capture: rings, because the sheet was for a BEAM (28/07/2026)
+
+The tube came out as bright RINGS around its circumference with black gaps
+between them. Reading the asset settled it in one look:
+`assets/textures/energy_flow.png` is a bundle of streaks running along its X axis,
+confined to a narrow band at the middle of Y with the rest black — authored for a
+flat BEAM, where X is the beam's length and Y is across it.
+
+The shader sampled `vec2(around, along)`, i.e. X = the circumference. So the
+streaks wrapped into rings, and the sheet's black margins became the gaps. **The
+texture was not wrong; the mapping was**, and no amount of tuning `u_flowSpeed`
+or `u_flowDistort` would ever have fixed it — which is why the first move was to
+look at the asset rather than at the numbers.
+
+Fixed both halves, because a sheet and its mapping are ONE decision:
+- the shader now samples `vec2(along, around)`, X along the tube;
+- the sheet is generated for a tube (`SpiritStream_BuildFlowSheet`): filaments
+  running along X, spread over the whole of Y so they wrap all the way round,
+  tiling seamlessly in both axes — integer X frequencies, and Y distance measured
+  the short way round the circle so threads cross the seam instead of stopping at
+  it.
+
+**A second bug the capture hid.** `fragTexCoord.y` runs 0..`uvLengthScale` (3),
+not 0..1, so the tail erosion's `smoothstep(0.0, 0.45, along + ...)` was
+saturated everywhere and the feature did nothing. `u_uvLength` is now a uniform
+and the shader normalises with it. Any threshold against a tube coordinate needs
+the normalised one; the raw coordinate silently disables it.
+
+Surface wobble 0.055 → 0.030 m (25% of a 0.22 m radius was lumps, not flow), and
+the bench call is thinner and longer (radius 0.22 → 0.14, segment 0.35 → 0.45) so
+the stream is about 1:10 against its own body — the same aspect rule the slash
+and the swarm each cost a round to learn.
+
+### SpiritStream: "giống nước quá" — the sheet, and the smoke (28/07/2026)
+
+Two notes from the owner, both right, and they are the same note twice.
+
+**1. The texture.** `energy_flow.png` was never going to work here, and neither
+was the stopgap sheet I generated in C: unbroken parallel veins running down a
+smooth tube IS water, whatever colour it is. `scripts/gen_spirit_flow.py` now
+bakes `assets/textures/spirit_flow.png` (512x256) with the three properties the
+look actually needs, each measured by the script rather than asserted:
+- tiles in both axes (integer X frequencies; Y distance measured the short way
+  round the circle). It prints the wrap difference against the typical
+  neighbouring-pixel difference — wrap <= typical means no seam, which is the
+  honest test, since thin threads make adjacent rows differ anyway;
+- mostly EMPTY (mean 0.16, ~8% of texels over 0.5) — a filament sheet that fills
+  its frame draws a solid rod;
+- a third of the threads nearly unbroken, the rest gated into flares. This one
+  took two passes: all-broken read as a scatter of rice grains, all-continuous
+  read as water. The eye needs a continuous line to follow before the broken ones
+  can read as fraying off it.
+
+The C generator is now a FALLBACK only, deliberately plainer, and says so — one
+authoritative source for the look, not two that drift.
+
+**A trap worth writing down: the image viewer composites alpha over WHITE.** The
+first bake looked blown-out and I was one step from retuning it; the histogram
+said mean 0.10. Inspecting a greyscale sheet means dumping RGB with alpha forced
+to 255, not looking at the RGBA file.
+
+**2. The smoke.** "Linh hồn phải có thêm khói năng lượng." A clean surface with
+veins in it is a liquid; what separates a soul from a liquid is that it is not
+contained — it sheds. The stream now emits smoke puffs (the E4 8x8 sheet, with a
+per-particle `spriteAnimPhase`) from its own SURFACE, biased toward the tail,
+drifting outward and backward. It is a particle population and not more tube
+geometry precisely because it has to keep drifting after the body has moved on.
+Emission is a RATE scaled by the body's radius, with an accumulator — a fixed
+count per call would make the density depend on the frame rate, which is the
+FlameVolume bug from this morning.
+
+Tunable `spirit_smoke` (0 = off). `assets/INDEX.md` documents the sheet and its
+axis convention. 9/9 suites, build clean.
+
+### OPEN — SpiritStream reads as energy, not as a SOUL (28/07/2026)
+
+Owner: *"nó ko xấu, nhưng ko giống linh hồn, tôi cũng ko biết giải thích thế
+nào."* Parked deliberately. Writing down the hypotheses now, while the captures
+are fresh, so the next attempt starts from candidates instead of from a blank
+page — "it doesn't feel right" is a real signal and a useless starting point.
+
+**State:** `VFX_ComposeSpiritStream` works and is not ugly. Tube mesh along a
+path (water-stream geometry), computed flow field on a purpose-baked filament
+sheet, energy smoke shedding off the surface. Everything asked for is in and
+none of it produced the read.
+
+**Why a soul probably isn't a stream, in rough order of how much I'd bet on
+each:**
+
+1. **It is CONTINUOUS, and a soul is not.** Every ghost that works on screen is
+   intermittent — it thins to nothing and re-forms, and the eye supplies the
+   body. This effect is a solid tube with a defined silhouette at all times,
+   i.e. an object. Candidate: drive the tube's own alpha with a slow large-scale
+   noise so whole SECTIONS of it drop out and return, rather than eroding only
+   at the tail.
+2. **Its motion is ballistic.** It flies the way a projectile flies, because it
+   is one. Souls drift, hesitate, and are pulled. Candidate: a slow lateral
+   float on the path plus a variable speed, so it does not travel at a constant
+   rate along a fixed curve.
+3. **No FIGURE.** The strongest spirit VFX in games hint at a silhouette —
+   trailing cloth, a hollow, a face that is almost there. A featureless tube
+   cannot hint at anything. This may be the real answer, and it is the most
+   expensive one: it argues for a shaped mesh or a flipbook, not a tube.
+4. **The colour is elemental, not spectral.** Bench uses `VC_MAT_QI` (saturated
+   cyan), which is the palette of every energy effect in the game. Ghost-pale —
+   desaturated white-cyan with a dark core — costs one line to try and should be
+   tried first precisely because it is cheap.
+5. **It has no INTERIOR.** Fresnel makes the middle see-through, but the middle
+   is empty. Souls read as volumes with something inside them. Candidate: a
+   second inner shell at a different scroll rate, which the tube pipeline can
+   already draw.
+
+Cheapest experiments first: (4) colour, then (1) sectional dropout, then (2)
+motion. If none of those move it, the answer is (3) and the shape is wrong,
+which means this composition stays a good ENERGY STREAM and the soul look needs
+a different primitive.
+
+### E8 — quality tiers landed; the GLES half of the spec was stale (28/07/2026)
+
+**The spec correction first, because it removes work rather than adding it.**
+E8 step 1 said "then a real GLES 3.0 device run". That has been wrong since
+**2026-07-17**: the Android build runs the **rlvk Vulkan backend on real Mali
+hardware** (`ENGINE_LANDMINES.md` §6 carries a stale-doc warning saying exactly
+this, and noting it had already caused one wrong conclusion). The owner caught it
+in a sentence. `scripts/convert_shaders_to_gles.py` is not part of this pass; GLES
+3.x survives only as a fallback backend, so a new core shader still must not
+DEPEND on desktop-only GLSL, but converting it is no longer a shipping step. The
+spec section now carries the correction inline. (`spirit_stream.vs/.fs` convert
+with zero changes and zero warnings — checked before the correction landed, and
+kept as evidence that the fallback constraint is met.)
+
+**The tier gate (step 2).** `PostFX_ApplyQualityTier` in `core/post_fx.c`:
+LOW = neither new pass, MED = streak bloom only, HIGH = both. Three properties
+make it a budget rather than a second config source, and all three are asserted
+in `core/tests/gfx_tier_test.c`:
+- **It can only ever clamp DOWN.** All 16 (tier x request) combinations checked.
+  A gate that can ENABLE something is not a ceiling — a LOW device would get a
+  HIGH pass because some other layer asked for it.
+- **It runs LAST**, after the transient burst and after the `tuning.cfg`
+  overrides, so neither can smuggle a pass past the budget. The test pins the
+  ordering in the source, not just the function.
+- **Tiers are monotonic** — raising quality can never remove an effect.
+
+Extended past post-FX to the four Đợt E compositions that are fill-hungry on
+device, each keeping its GEOMETRY and losing only the screen-wide extra:
+SweepSlash drops its refraction below MED (a full-screen per-fragment cost per
+live source); LightShaft halves its shaft count and drops the wide soft pass at
+LOW; SpiritStream halves its smoke rate; ImpactPackage drops its light and
+distortion below MED (a VFX light is a loop iteration in every particle AND
+lit-surface fragment on screen).
+
+**The instrument (step 3).** `postfx_perf_log = 1` prints once a second:
+ms/frame, frame count, resolution, tier, and which passes were on. The
+configuration is printed WITH the number because a timing with no configuration
+attached cannot be compared to anything. CPU wall-clock, and the comment says so:
+the chain is fullscreen fill, so this measures the shape of the answer (which
+passes, what resolution, how the frame moves when they switch), not a per-pass
+GPU cost — that needs timestamp queries and is the Renderer Agent's.
+
+**Verified here:** rlvk headless runtime test 20/20, 0 failures
+(`scripts/run_rlvk_runtime_test.sh`); rlvk compile check OK; 10/10 core suites;
+build clean.
+
+**NOT verifiable here, and now precisely why.** `./build/wuxing` still dies with
+`FATAL: RLVK: instance creation failed` — but the headless rlvk test creates an
+instance and runs 20 scenarios fine. So the earlier handoff line "the agent
+cannot create a Vulkan instance" is too broad: it is the **windowed/surface path**
+that fails outside the owner's graphics session, not Vulkan itself. Anything
+headless is testable from here; anything that needs a surface is not. That leaves
+the owner: the rlvk **visual** tier, the PC 60 fps check with everything on, and
+the A33 run at its tier.
+
+### F0 — the purge, executed (28/07/2026)
+
+Owner's instruction: delete every VFX except the ones the Đợt E/F rebuild
+produced, and delete the two spirit components with them (plus, named
+explicitly: black hole, lightning bolt, earth fissure, stone pillar, water
+stream and water-stream-on-path — all of which fell inside the general rule
+anyway). Strip the call sites wherever they live so the app still runs.
+
+**Survivors — eleven compositions and the engine under them:** SmokePuff (F2),
+FlameVolume (F3), CharacterAura (F4), GlintSparkle / RuneCircle /
+ChargeConverge / DissolveExit (E5), SweepSlash / EnergyBurst / ImpactPackage /
+LightShaft (E6), on top of VFX_Sequence, vfx_light, post-FX, particle, trail and
+decal. `visual_composer.h` went from ~120 declarations to eleven and now opens
+with what the file IS rather than a list.
+
+**Deleted:** 34 `.inl` files, six element sub-directories, `core/vfx_proc_ray.c/.h`
+(its only consumers were deleted compositions — it was dead the moment the purge
+landed), the spirit shaders and their generator script, and the corresponding
+tests and asset entries.
+
+**What replaced the load-bearing call sites**, rather than being stubbed:
+`VFX_ComposeImpact` → `VFX_ComposeImpactPackage` at eight sites (skill builder,
+AI explosions, zone resonance in both game and sandbox, taiji lightning, leaf
+whirlwind, glacial cannon burst, the bench's sequence adapter), with the
+element mapped through a new `SkillHelper_PresetMaterial`.
+`VFX_TriggerImpactBurst` + its 20-field `ImpactBurstConfig` → the same call: E6
+#6 exists precisely so the pieces are tuned as a unit, and a per-skill config
+struct would put back what it removed.
+
+**What is deliberately NOT replaced, and why it matters.** Cast visuals, the
+proc-beam bolt, projectile trails, ice-spike paths, orbitals: each has no
+one-shot successor in the surviving set. The nearest survivors —
+`VFX_ComposeChargeConverge` for cast, `VFX_ComposeLightShaft` for a descending
+bolt — are CONTINUOUS: fired from a one-shot hook they draw a single frame and
+read as a flicker. Substituting them would have produced motion that looks like
+a bug and, worse, would hide exactly what E7's checkpoint is meant to measure.
+Every one of those sites carries a comment naming the deletion and the reason.
+`SpawnCastEffect` / `SpawnImpactEffect` / `SpawnProjectileTrail` are gone rather
+than re-pointed: an alias that quietly changes meaning is how a purge becomes a
+mystery six months later.
+
+**Skills are bare now, and that is the intended state.** Their logic, timing,
+damage, clash and state machines are untouched — only the drawing is gone. E7 is
+what puts visuals back, from this set, and the stop-gate now has real teeth: if
+three rebuilt skills do not out-read the E0 captures, there is nothing to fall
+back on and the plan gets re-scoped, which is what the spec asked for.
+
+Build clean, 9/9 core suites, `sync_vfx_test.py` idempotent, `core/docs/API.md`
+regenerated. NOT run: the windowed path still fails from here, so the owner's
+first launch is the real check that nothing draws garbage.
+
+**One mistake worth recording:** I deleted `core/tests/light_shaft_test.c` in the
+same sweep as the spirit tests. It had never been committed, so git could not
+restore it and it had to be rewritten from scratch. A batch `rm` in a purge
+should list only files that are already tracked; anything created in the same
+session has no safety net.
+
+### F0 follow-up — the owner restored a batch, and it failed to LINK (28/07/2026)
+
+Owner brought back a set of pre-Đợt-E effects to rewrite the two water skills
+against (water stream + on-path, ice crystal + burst, stone pillar, fissure
+streak, black hole, shard debris, particle upgrades test) and hit a build error.
+
+Two separate causes, and only the second one is interesting:
+
+1. **A compile error in the bench, caused by the purge, not by the restore.**
+   `VFX_ComposeWaterStreamOnPath` takes `const Vector3 *` + a count. When I
+   stripped the manifest during F0 I removed its `override` along with its entry,
+   so `sync_vfx_test.py` fell back to the default `$POS` placeholder and generated
+   a call passing a `Vector3` where a pointer was wanted. Overrides exist for
+   exactly this — a signature the placeholders cannot express. Both water entries
+   have proper overrides again; `VFX_ComposeWaterStream` got one too, because the
+   default would have passed the same point for all four Bezier controls: that
+   COMPILES and draws a zero-length tube, and a bench entry that shows nothing
+   reads as "the VFX is broken" rather than "the bench call is wrong".
+
+2. **A LINK error: restored `.inl` files with no `#include`.** The element master
+   includes (`water/water.inl`, `earth/earth.inl`, `metal`, `wood`, and the black
+   hole) were removed from `visual_composer.c` during the purge, so the restored
+   files sat in the tree compiling into nothing. The symptom is an undefined
+   symbol at link, well after the compiler has said everything is fine.
+
+**Rule for this unit-build layout:** a `.inl` is not code until something
+includes it. Restoring one means restoring its include site in
+`visual_composer.c` in the same edit — the file existing is not the thing that
+makes it build.
+
+The header now says plainly that the restored block is a scaffold with a planned
+end date, not part of the survivor set, so it does not quietly become permanent.

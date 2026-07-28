@@ -1637,13 +1637,16 @@ int main(int argc, char **argv) {
         MinionExplosion booms[8];
         int nBooms = AI_PollExplosions(booms, 8);
         for (int bi = 0; bi < nBooms; bi++) {
-            EffectPresetType preset =
-                (booms[bi].element == 0) ? EFFECT_PRESET_WATER_SPLASH :
-                (booms[bi].element == 1) ? EFFECT_PRESET_WOOD_BLOOM :
-                (booms[bi].element == 2) ? EFFECT_PRESET_FIRE_EXPLOSION :
-                (booms[bi].element == 3) ? EFFECT_PRESET_EARTH_CRACK :
-                                           EFFECT_PRESET_METAL_SHARD;
-            VFX_ComposeImpact(booms[bi].pos, preset, 0.8f);
+            // F0 purge: VFX_ComposeImpact is gone. Its successor is the E6
+            // package — one call, tuned as a unit, severity as the single dial.
+            VC_MaterialId mat =
+                (booms[bi].element == 0) ? VC_MAT_WATER :
+                (booms[bi].element == 1) ? VC_MAT_WOOD :
+                (booms[bi].element == 2) ? VC_MAT_FIRE :
+                (booms[bi].element == 3) ? VC_MAT_EARTH :
+                                           VC_MAT_METAL;
+            VFX_ComposeImpactPackage(booms[bi].pos, (Vector3){0.0f, 1.0f, 0.0f},
+                                     mat, 0.8f, 0.6f);
             Audio_PlaySFXAt(SFX_EXPLOSION, booms[bi].pos);
         }
     }

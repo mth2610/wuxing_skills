@@ -37,8 +37,14 @@ static void LoiDongTick(Vector3 center, float dt, float power, AgentTeam ownerTe
         Entity_ApplyStun(ids[i], LOI_STUN_BASE * power);
         Vector3 ground = { victim->position.x, 0.0f, victim->position.z };
         Vector3 sky = { ground.x, 12.0f, ground.z };
-        VFX_SpawnProcBeam(sky, ground, EFFECT_PRESET_LIGHTNING_IMPACT, 0.12f, 0.3f);
-        VFX_ComposeImpact(ground, EFFECT_PRESET_LIGHTNING_IMPACT, 0.7f);
+        // F0 purge: the sky->ground proc beam is deleted and has no one-shot
+        // successor (VFX_ComposeLightShaft is the nearest survivor, but it is
+        // CONTINUOUS — fired once it draws a single frame and reads as a
+        // flicker). The strike keeps its impact; the bolt itself is E7's to
+        // rebuild.
+        (void)sky;
+        VFX_ComposeImpactPackage(ground, (Vector3){0.0f, 1.0f, 0.0f},
+                                 VC_MAT_LIGHTNING, 0.7f, 0.65f);
     }
 }
 

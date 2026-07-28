@@ -345,39 +345,6 @@
 **Enums:** VFXPriority { VFX_PRIORITY_LOW,VFX_PRIORITY_HIGH_ULTIMATE }
 **Structs** (fields in header): VFXLightData
 
-### `core/vfx_proc_ray.h`
-```c
-  ProcRayConfig ProcRay_LightningConfig(void);
-  ProcRayConfig ProcRay_BoltLightningConfig(void);
-  ProcRayConfig ProcRay_EnergyConfig(void);
-  ProcRayConfig ProcRay_EnergyFlowConfig(void);
-  ProcRayConfig ProcRay_WindConfig(void);
-  int SpawnProcRay(ProcRayConfig config, float scale);
-  void ProcRay_SetPhase(int id, float phase);
-  void ProcRay_SetBrightness(int id, float b);
-  void ProcRay_Update(int id, Vector3 origin, Vector3 dir, float length, float scale, float dt);
-  void ProcRay_Draw(int id, Camera3D cam);
-  void ProcRay_Kill(int id);
-  int SpawnProcBolt(ProcRayConfig config, float scale);
-  void ProcBolt_SetBrightness(int id, float b);
-  void ProcBolt_Update(int id, Vector3 from, Vector3 to, float scale, float dt);
-  void ProcBolt_Draw(int id, Camera3D cam);
-  void ProcBolt_Kill(int id);
-  int SpawnEnergyFlow(ProcRayConfig config, float scale);
-  void EnergyFlow_SetBrightness(int id, float b);
-  void EnergyFlow_Update(int id, Vector3 from, Vector3 to, float scale, float dt);
-  void EnergyFlow_Draw(int id, Camera3D cam);
-  void EnergyFlow_Kill(int id);
-  int SpawnLightningTrail(Vector3 start, Vector3 target, float scale, float speed);
-  int SpawnLightningFollowerTrail(Vector3 startPos, float scale, float life);
-  void Lightning_UpdateFollowerTip(int id, Vector3 tipPos, float scale);
-  void RegenerateLightningWaypoints(Vector3 *waypoints9, Vector3 from, Vector3 to, float scale);
-  void RegenerateLightningRay(Vector3 *waypoints9, Vector3 origin, Vector3 direction, float length, float phase, float amplitude, float scale);
-  void DrawLightningBolt(const Vector3 *waypoints9, float thickness, Camera3D cam);
-  void DrawLightningBoltEx(const Vector3 *waypoints9, float thickness, Camera3D cam, Color colorGlow, Color colorCore);
-```
-**Structs** (fields in header): ProcRayConfig
-
 ### `core/post_fx.h`
 ```c
   void PostFX_Init(int width, int height);
@@ -575,116 +542,22 @@
 
 ### `core/composition/visual_composer.h`
 ```c
-  void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float density);
-  void VFX_ComposeSmokeTrail(Vector3 start, Vector3 end, float duration);
-  void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
-  int VFX_ComposeLightningBolt(Vector3 start, Vector3 end, float scale);
-  int VFX_ComposeEnergyFlow(Vector3 from, Vector3 to, float scale, float duration);
-  void VFX_ComposeImpact(Vector3 pos, EffectPresetType preset, float scale);
-  void VFX_ComposeCast(Vector3 pos, EffectPresetType preset, float scale);
-  int VFX_ComposeProjectileTrail(Vector3 start, Vector3 target, EffectPresetType preset, float scale, float speed);
-  void VFX_ComposeTriggerImpactBurst(Vector3 pos, float sizeScale, const ImpactBurstConfig *cfg);
-  void VFX_ComposeShockwaveRing(Vector3 pos, float radius, float life, Color tint);
-  void VFX_ComposeGlintBurst(Vector3 pos, int count, float spread, Color tint);
-  void VFX_ComposeEmberDrift(Vector3 pos, float radius, int count, Color tint);
-  void VFX_ComposeStreakFlare(Vector3 pos, float scale, Color tint);
-  void VFX_ComposeStonePillar(Vector3 basePos, float progress);
-  void VFX_ComposeBoulder(Vector3 pos);
-  void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
-  void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
-  void VFX_ComposeMagicPuddle(Vector3 pos);
-  void VFX_ComposeFireball(Vector3 pos, float time);
-  void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
-  void VFX_BeginWaterStreams(float time);
-  void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time, float phaseOffset);
-  void VFX_EndWaterStreams(void);
-  void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
-  void VFX_ComposeGlowingVine(Vector3 startPos, Vector3 targetPos, Vector3 p1, Vector3 p2, Vector3 contactPos, float progress, float time, float sizeScale, int branchIndex, int branchCount);
-  void VFX_ComposeFlameWisp(Vector3 pos, float time);
-  void VFX_ComposeFirePillar(Vector3 basePos, float progress);
-  void VFX_ComposeMetalShardCluster(Vector3 basePos, int seed);
-  void VFX_ComposeBladeRing(Vector3 pos, float radius, int bladeCount, float rotationDeg);
-  void VFX_ComposePlasmaOrb(Vector3 pos, float radius, float time);
-  void VFX_ComposeLeafSwirl(Vector3 pos, float radius, float time);
-  void VFX_ComposeBloomBurst(Vector3 pos, float scale);
-  void VFX_ComposeLeafFall(Vector3 pos, float radius, float time);
-  void VFX_ComposeBladeStorm(Vector3 pos, float radius, float time);
-  void VFX_ComposeShrapnelBurst(Vector3 pos, float scale);
-  void VFX_ComposeRicochetSpark(Vector3 pos, Vector3 dir, float scale);
-  void VFX_ComposeSplashBurst(Vector3 pos, float scale);
-  void VFX_ComposeBubbleStream(Vector3 pos, float radius, float time);
-  void VFX_ComposeMistVeil(Vector3 pos, float radius, float time);
-  void VFX_ComposeGustSlash(Vector3 pos, Vector3 dir, float scale);
-  void VFX_ComposeCyclone(Vector3 pos, float radius, float time);
-  void VFX_ComposeStaticField(Vector3 pos, float radius, float time);
-  void VFX_ComposeYinYangOrbit(Vector3 pos, float radius, float time);
-  void VFX_ComposeRockBurst(Vector3 pos, float scale);
-  void VFX_ComposeFloatingStones(Vector3 pos, float radius, float time);
-  void VFX_ComposeQuakeRumble(Vector3 pos, float radius, float time);
-  void VFX_ComposeParticleUpgradesTest(Vector3 pos);
-  void VFX_ComposeTrailUpgradesTest(Vector3 pos);
-  int VFX_SpawnMeshElectricity(const struct MeshAdjacency *adj, Color color, float duration, const struct ForceField *forceField);
-  void VFX_UpdateMeshElectricity(int handle, Matrix transform);
-  void VFX_KillMeshElectricity(int handle);
-  void VFX_ComposeMeshElectricity(Vector3 position, Color color, float duration);
-  void ComposeMeshElectricityEx(Vector3 position, Color color, float duration, const struct ForceField *forceField);
-  void VFX_ComposeFlameBreath(Vector3 pos, Vector3 dir, float scale, float time);
-  void VFX_ComposeBurningGround(Vector3 pos, float radius, float time);
-  void VFX_ComposeFireWhirl(Vector3 pos, float radius, float time);
-  void VFX_ComposeFireFunnel(Vector3 pos, float bottomRadius, float topRadius, float height, float time);
-  void VFX_ComposeElementalMist(VC_MaterialId matId, Vector3 pos, float radius, float time);
-  void VFX_ComposePathMistWave(VC_MaterialId matId, const Vector3 *pathPoints, int pathCount, float progress, float radius);
-  void VFX_ComposeProjectile(VC_MaterialId matId, Vector3 pos, Vector3 target, float progress, float scale, float time);
-  void VFX_GroundPattern(GroundPatternStyle style, Vector3 pos, float radius, float progress, float time);
-  void VFX_ComposeBeam(VC_MaterialId matId, Vector3 start, Vector3 end, float width, float progress, float time);
-  void VFX_PathWave(PathStyle style, const Vector3 *points, int count, float scale, float progress, float time, int seed);
-  void VFX_SummonCircle(Vector3 pos, float radius, float progress, float time, Color color);
-  void VFX_TriggerExplosion(VC_MaterialId matId, Vector3 pos, float scale, bool cameraShake);
-  void VFX_ComposeShield(VC_MaterialId matId, Vector3 pos, float radius, float progress, float time);
-  void VFX_ComposeZone(VC_MaterialId matId, Vector3 pos, float radius, float progress, float time);
-  void VFX_ComposeSlashArc(VC_MaterialId matId, Vector3 pos, Vector3 dir, float radius, float arcDegrees, float progress, float time);
   void VFX_Compose_Update(float dt);
   void VFX_Compose_Draw3D(Camera3D cam);
-  int VFX_SpawnProcBeam(Vector3 from, Vector3 to, EffectPresetType element, float width, float duration);
-  void VFX_KillProcBeam(int handle);
-  void VFX_SpawnGroundWave(Vector3 origin, Vector3 dir, EffectPresetType element, float range, float speed);
-  int VFX_SpawnOrbitals(Vector3 center, EffectPresetType element, int count, float radius, float duration);
-  int VFX_SpawnAuraRing(Vector3 center, EffectPresetType element, float radius, float duration);
-  void VFX_KillAuraRing(int handle);
-  int VFX_SpawnSmokeColumn(Vector3 pos, float duration);
-  void VFX_KillSmokeColumn(int handle);
-  void VFX_ChainLightning(const Vector3 *points, int count, float scale, float hopDelay);
-  void VFX_ComposeCylinderAura(VC_MaterialId matId, Vector3 pos, float radius, float progress, float time);
-  void VFX_BeginEnergySmokeBatch(void);
-  void VFX_EndEnergySmokeBatch(void);
-  void VFX_BeginMagicFilamentsBatch(void);
-  void VFX_EndMagicFilamentsBatch(void);
-  void VFX_BeginSmokeColumnBatch(void);
-  void VFX_EndSmokeColumnBatch(void);
-  void VFX_ComposeMagicFilamentsOnPlane(Vector3 center, Vector3 normal, float scale, float progress, Color color, float thickness, float frequency, float speed, Vector2 sourceUV);
-  void VFX_ComposeGlintSparkle(Vector3 center, VC_MaterialId mat, float scale, float time);
-  void VFX_ComposeShardDebris(Vector3 pos, int count, float speed, VC_MaterialId matId);
-  void VFX_ComposeCrownSplash(Vector3 pos, float radius, float height, float duration, VC_MaterialId matId);
+  void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float density);
+  void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
   int VFX_ComposeCharacterAura(int agentId, VC_MaterialId matId, float intensity);
   void VFX_AuraSetIntensity(int handle, float intensity01);
   void VFX_KillCharacterAura(int handle);
-  void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
-  void VFX_ComposeChainLink(VC_MaterialId matId, Vector3 start, Vector3 end, float width, float sag, float progress, float time);
+  void VFX_ComposeGlintSparkle(Vector3 center, VC_MaterialId mat, float scale, float time);
+  void VFX_ComposeRuneCircle(Vector3 center, Vector3 normal, VC_MaterialId mat, float radius, float t01, int ringCount);
   void VFX_ComposeChargeConverge(Vector3 center, VC_MaterialId mat, float radius, float t01, int moteCount);
-  void VFX_ComposeEnergySmoke(Vector3 pos, float scale, float progress, float time, Vector2 sourceUV);
-  void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
-  void VFX_ComposeGroundAura(VC_MaterialId matId, Vector3 pos, float radius, float scrollSpeed, float time);
-  void VFX_ComposeGroundSmoke(Vector3 center, float halfSize, float progress, GroundHeightSampleFn heightFn, void *userData);
-  void VFX_ComposeMagicFilaments(Vector3 pos, float scale, float progress, Color color, float thickness, float frequency, float speed, Vector2 sourceUV);
-  void VFX_ComposeSmokeColumnFX(Vector3 base, float halfWidth, float height, float progress, int planeCount);
-  void VFX_ComposeSmokeOnPlane(Vector3 center, Vector3 normal, float halfSize, float progress, Color color);
-  void VFX_ComposeTaijiArcStrike(Vector3 pos, float scale);
-  void VFX_ComposeTornado(VC_MaterialId matId, Vector3 pos, float radius, float height, float time);
-  void VFX_ReleaseTornado(Vector3 pos);
-  void VFX_ComposePathLink(VC_MaterialId matId, const Vector3 *points, int count, float width, float progress, float time);
+  void VFX_ComposeDissolveExit(Vector3 pos, VC_MaterialId mat, float scale, float t01);
+  void VFX_ComposeSweepSlash(Vector3 origin, Vector3 dir, VC_MaterialId mat, float length, float arcRad, float t01);
+  void VFX_ComposeEnergyBurst(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
+  void VFX_ComposeImpactPackage(Vector3 pos, Vector3 normal, VC_MaterialId matId, float scale, float severity01);
+  void VFX_ComposeLightShaft(Vector3 from, Vector3 to, VC_MaterialId mat, float width, float intensity);
 ```
-**Enums:** GroundPatternStyle { GROUND_CRACK_RADIAL,GROUND_CRACK_LINE,GROUND_MAGIC_CIRCLE,GROUND_LAVA,GROUND_FROST,GROUND_THORNS,GROUND_RUNE };PathStyle { PATH_THORNS,PATH_STONE_PILLAR,PATH_ICE_SPIKE,PATH_FIRE_ERUPTION,PATH_LIGHTNING_CHAIN }
-**Structs** (fields in header): ImpactBurstConfig
 
 ### `core/composition/vfx_sequence.h`
 ```c

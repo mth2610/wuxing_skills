@@ -993,9 +993,19 @@ in `skills/docs/PROGRESS.md`.
 Radial blur and a second bloom tap are fill-rate hungry; the Samsung A33 / Mali
 is the binding constraint.
 
+> **CORRECTION (28/07/2026, owner).** This section was written when Android meant
+> GLES. It has not since **2026-07-17**: the Android build runs the **rlvk Vulkan
+> backend on real Mali hardware** (`ENGINE_LANDMINES.md` §6 stale-doc warning,
+> `third_party/vulkan/docs/PROGRESS.md`). Step 1's "GLES 3.0 device run" therefore
+> means **a device run on rlvk**, and `scripts/convert_shaders_to_gles.py` is not
+> part of this pass. GLES 3.x survives only as a fallback backend, so a new core
+> shader still must not *depend* on desktop-only GLSL — but converting it is no
+> longer a shipping step. (For the record, `spirit_stream.vs/.fs` convert with
+> zero changes and zero warnings; that was checked before the correction landed.)
+
 **Steps**
-1. rlvk visual-tier test (`scripts/run_rlvk_visual_test.sh`); then a real GLES 3.0
-   device run.
+1. rlvk visual-tier test (`scripts/run_rlvk_visual_test.sh`); then a real device
+   run — on **rlvk**, per the correction above.
 2. Gate the new post passes behind `GfxQuality_Get()` tiers
    (`core/gfx_quality.h`): `GFX_LOW` = no radial blur, no streak bloom;
    `GFX_MED` = streak only; `GFX_HIGH` = both.

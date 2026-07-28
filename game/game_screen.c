@@ -581,8 +581,11 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
             }
             if (gotWallBonus && wallElement == 3 /* Earth — only element with a real wall so far */)
             {
-                VFX_SpawnProcBeam(wallPos, targetPos, EFFECT_PRESET_EARTH_CRACK, 0.12f, 0.35f);
-                VFX_ComposeImpact(targetPos, EFFECT_PRESET_EARTH_CRACK, 0.6f);
+                // F0 purge: proc beam deleted, no one-shot successor. The
+                // resonance keeps its impact.
+                (void)wallPos;
+                VFX_ComposeImpactPackage(targetPos, (Vector3){0.0f, 1.0f, 0.0f},
+                                         VC_MAT_EARTH, 0.6f, 0.6f);
                 AddFloatingText(targetPos, "Cong Huong Dat!", ELEMENT_COLOR_EARTH, 16.0f, 0.6f);
             }
         }

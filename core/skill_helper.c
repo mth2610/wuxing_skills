@@ -935,14 +935,30 @@ void SkillBuilder_AddDamageVolume(SkillBuildContext *ctx, float radius, float dp
 // lifecycle than the impact-time Build() call.
 void SkillBuilder_AddCastEffect(SkillBuildContext *ctx, EffectPresetType preset)
 {
-    SpawnCastEffect(ctx->target, preset, ctx->scale);
+    // F0 purge: VFX_ComposeCast is deleted and has no drop-in successor. The
+    // hook stays so every caller keeps compiling and the skill lifecycle is
+    // unchanged; it draws nothing until E7 rebuilds cast visuals from the
+    // surviving set (VFX_ComposeChargeConverge is the intended replacement, but
+    // it is CONTINUOUS — it needs a t01 driven over the wind-up, which this
+    // one-shot hook has no way to supply. Wiring it here would produce one
+    // frame of a converge and read as a flicker).
+    (void)ctx;
+    (void)preset;
 }
 
 void SkillBuilder_Build(SkillBuildContext *ctx)
 {
     if (ctx->hasExplosion)
     {
-        SpawnImpactEffect(ctx->target, ctx->explosionEffect, ctx->scale);
+        // F0 purge: VFX_ComposeImpact -> VFX_ComposeImpactPackage, the E6
+        // successor. Severity 0.6 is a middling hit: high enough that the
+        // distortion beat (gated at 0.35) fires, low enough to stay off the
+        // hitstop. Normal is straight up because SkillBuilder has no surface
+        // information — a skill that knows the surface should call the package
+        // itself.
+        VFX_ComposeImpactPackage(ctx->target, (Vector3){0.0f, 1.0f, 0.0f},
+                                 SkillHelper_PresetMaterial(ctx->explosionEffect),
+                                 ctx->scale, 0.6f);
     }
     if (ctx->hasDecal)
     {

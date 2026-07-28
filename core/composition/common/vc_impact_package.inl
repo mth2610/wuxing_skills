@@ -107,7 +107,10 @@ void VFX_ComposeImpactPackage(Vector3 pos, Vector3 normal, VC_MaterialId matId,
     // t=0 — THE FLASH. What tells the player the hit registered, and the only
     // beat that must never be delayed: everything else can arrive a frame or
     // two late without reading as lag.
-    if (s_ipLight > 0.5f)
+    // E8: a VFX light is a loop iteration in EVERY particle and lit-surface
+    // fragment on screen, so spamming impacts spreads its cost over the whole
+    // frame (PROGRESS, 28/07). Below MED the flash is dropped, not dimmed.
+    if (s_ipLight > 0.5f && GfxQuality_Get() >= GFX_MED)
     VFX_SeqAt(s, 0.0f, (VFX_Beat){
         .kind = VFX_BEAT_LIGHT,
         .a = 3.4f,                           // radius, metres (x sequence scale)
@@ -136,7 +139,7 @@ void VFX_ComposeImpactPackage(Vector3 pos, Vector3 normal, VC_MaterialId matId,
     });
 
     // t=0.03 — distortion, gated: a shockwave on a light hit is noise.
-    if (sev >= 0.35f && s_ipDistort > 0.5f)
+    if (sev >= 0.35f && s_ipDistort > 0.5f && GfxQuality_Get() >= GFX_MED)
         VFX_SeqAt(s, 0.03f, (VFX_Beat){
             .kind = VFX_BEAT_DISTORT,
             .a = 2.1f,                        // radius (x sequence scale)

@@ -21,11 +21,37 @@ typedef enum {
 } EffectPresetType;
 
 #include "core/composition/visual_composer.h"
-#include "core/vfx_proc_ray.h"
 
-#define SpawnImpactEffect VFX_ComposeImpact
-#define SpawnCastEffect VFX_ComposeCast
-#define SpawnProjectileTrail VFX_ComposeProjectileTrail
+// F0 purge (28/07/2026): `SpawnImpactEffect` / `SpawnCastEffect` /
+// `SpawnProjectileTrail` were aliases for VFX_ComposeImpact / VFX_ComposeCast /
+// VFX_ComposeProjectileTrail, all three of which are deleted. The aliases are
+// gone rather than pointed at something else — an alias that quietly changes
+// what it means is how a purge turns into a mystery.
+//
+// The successor for the impact case is `VFX_ComposeImpactPackage`, and
+// `SkillBuilder_Build` now calls it directly with the element mapped to a
+// VC_MaterialId. There is deliberately NO successor wired for cast or for
+// projectile trails: rebuilding those from the surviving set is E7's job, and
+// silently substituting something would hide exactly what the checkpoint is
+// meant to measure.
+
+// Element → material, for callers still holding an EffectPresetType. Kept next
+// to the enum so a new preset cannot be added without seeing it.
+static inline VC_MaterialId SkillHelper_PresetMaterial(EffectPresetType p)
+{
+    switch (p)
+    {
+    case EFFECT_PRESET_FIRE_EXPLOSION:    return VC_MAT_FIRE;
+    case EFFECT_PRESET_ICE_SHATTER:       return VC_MAT_ICE;
+    case EFFECT_PRESET_WATER_SPLASH:      return VC_MAT_WATER;
+    case EFFECT_PRESET_LIGHTNING_IMPACT:  return VC_MAT_LIGHTNING;
+    case EFFECT_PRESET_EARTH_CRACK:       return VC_MAT_EARTH;
+    case EFFECT_PRESET_WOOD_BLOOM:        return VC_MAT_WOOD;
+    case EFFECT_PRESET_METAL_SHARD:       return VC_MAT_METAL;
+    case EFFECT_PRESET_TAIJI_BURST:       return VC_MAT_TAIJI;
+    default:                              return VC_MAT_QI;
+    }
+}
 
 
 

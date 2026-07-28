@@ -16,7 +16,7 @@
 #include "core/material/material_system.h"
 #include "core/resource_manager.h"
 #include "core/skill_manager.h"
-#include "core/vfx_proc_ray.h"
+#include "core/gfx_quality.h"
 #include "core/emitter_system.h"
 #include "core/composition/vfx_sequence.h"
 #include "core/color_gradient.h"
@@ -33,58 +33,44 @@
 #define PI 3.1415926535f
 #endif
 
-// Include modular visual composer implementations (grouped by element/functionality)
+// The surviving compositions. F0 (28/07/2026) deleted the rest; see
+// visual_composer.h for what remains and why.
 #include "common/common.inl"
+#include "fire/flame_volume.inl"   // F3 — reads vc_smoke_puff.inl's sheet, so it comes after it
 
+// ── Restored after F0 (owner, 28/07/2026) ───────────────────────────────────
+// Brought back to rebuild the two water skills. These are pre-Đợt-E effects and
+// are NOT part of the survivor set: they are here to be rewritten against, not
+// kept. A `.inl` that exists but is not included compiles into nothing and fails
+// at LINK time with an undefined symbol — which is exactly how this batch
+// arrived, so restoring a file means restoring its include too.
+#include "water/water.inl"         // -> ice_crystal.inl, water_stream.inl
+#include "earth/earth.inl"         // -> stone_pillar.inl, fissure_streak.inl
 #include "metal/metal.inl"
 #include "wood/wood.inl"
-#include "water/water.inl"
-#include "fire/fire.inl"
-#include "earth/earth.inl"
-#include "plasma/plasma.inl"
-#include "taiji/taiji.inl"
+#include "taiji/vc_black_hole.inl"
 
-// ─── Managed archetypes ──────────────────────────────────────────────────────
-// Unlike the fire-and-forget compositions above, each of these owns a private
-// pool and is driven every frame by the two entry points below. They are listed
-// in the manifest's `exclude_from_auto_include` so common.inl leaves them alone
-// — this file is their single include site.
-//
-// TO DELETE ONE: remove its .inl, then its #include here and its two calls
-// below. All three live in this one file, adjacent and in matching order, so
-// grepping the archetype name here finds every reference.
-// (They were previously routed through a vc_archetype.inl orchestrator, which
-// made this a SECOND, easy-to-miss include site: a deletion had to be mirrored
-// in two files, and a missed dispatch call failed with an error that named a
-// symbol rather than the file that was removed.)
+// The only POOLED component left. Unlike a fire-and-forget composition it owns
+// state and is driven by the two entry points below; both live in this one file,
+// adjacent and in matching order, so a deletion cannot be half-done.
 // @gen:archetype_includes begin
-#include "common/vc_proc_beam.inl"
-#include "common/vc_smoke_column.inl"
-#include "common/vc_shard_debris.inl"
-#include "common/vc_mesh_electricity.inl"
-#include "common/vc_crown_splash.inl"
-#include "common/vc_orbital.inl"
 #include "common/vc_character_aura.inl"
+#include "common/vc_shard_debris.inl"
 // @gen:archetype_includes end
-// No Update/Draw pair — included for their VFX_Compose* entry points only:
-#include "common/vc_particle_upgrades_test.inl"
 
 void VFX_Compose_Update(float dt)
 {
     (void)dt;
 // @gen:archetype_update begin
-    VC_ProcBeam_Update(dt);
-    VC_SmokeColumn_Update(dt);
-    VC_ShardDebris_Update(dt);
-    VC_MeshElectricity_Update(dt);
-    VC_CrownSplash_Update(dt);
-    VC_Orbital_Update(dt);
     VC_CharacterAura_Update(dt);
+    VC_ShardDebris_Update(dt);
 // @gen:archetype_update end
-    // E3 — the choreography layer rides the same single main.c wiring as the
-    // archetypes above (spec §E3: "needs no main.c edit"). `dt` here is already
-    // post-TimeFX_Apply, which is the scaled clock sequences are specified to
-    // run on; VFX_Sequence_Update takes the raw one itself for `unscaled` ones.
+    // E3 — the choreography layer rides the same single main.c wiring. Kept
+    // OUTSIDE the generated block on purpose: sync_vfx_test.py rewrites what is
+    // between the markers from the archetype scan, so a hand-written call in
+    // there is deleted by the next sync.
+    // `dt` is already post-TimeFX_Apply, the scaled clock sequences run on;
+    // VFX_Sequence_Update takes the raw one itself for `unscaled` beats.
     VFX_Sequence_Update(dt);
 }
 
@@ -92,12 +78,7 @@ void VFX_Compose_Draw3D(Camera3D cam)
 {
     (void)cam;
 // @gen:archetype_draw begin
-    VC_ProcBeam_Draw3D(cam);
-    VC_SmokeColumn_Draw3D(cam);
-    VC_ShardDebris_Draw3D(cam);
-    VC_MeshElectricity_Draw3D(cam);
-    VC_CrownSplash_Draw3D(cam);
-    VC_Orbital_Draw3D(cam);
     VC_CharacterAura_Draw3D(cam);
+    VC_ShardDebris_Draw3D(cam);
 // @gen:archetype_draw end
 }

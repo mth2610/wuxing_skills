@@ -1,6 +1,7 @@
 #include "core/post_fx.h"
 #include "core/tuning.h"
 #include "core/screen_distort.h" // ScreenDistort_IsHDR — scene buffer is the HDR authority
+#include "core/gfx_quality.h"    // E8 — the tier budget for the two new passes
 #include "rlgl.h"
 #include <string.h>
 
@@ -329,6 +330,101 @@ static void PostFX_ApplyTuning(PostFXConfig *c)
   }
 }
 
+// E8 — quality tiers. Radial blur and the streak tap are the two fill-hungry
+// additions of Đợt E, and the Mali A33 is the binding constraint:
+//   GFX_LOW  = neither    GFX_MED = streak only    GFX_HIGH = both
+//
+// THIS FUNCTION ONLY EVER CLAMPS DOWN. It can turn a feature off; it can never
+// turn one on. That direction matters — the tier is a BUDGET, and a budget that
+// can enable things is not a budget, it is a second configuration source that
+// silently overrides the caller's intent. It runs last, after the transient and
+// the tuning overrides, precisely so that neither can smuggle a HIGH-tier pass
+// onto a LOW-tier device.
+static void PostFX_ApplyQualityTier(PostFXConfig *c)
+{
+  GfxQuality q = GfxQuality_Get();
+
+  bool allowStreak = (q >= GFX_MED);
+  bool allowRadial = (q >= GFX_HIGH);
+
+  bool cutStreak = c->bloomStreakEnabled && !allowStreak;
+  bool cutRadial = c->radialBlurEnabled  && !allowRadial;
+
+  if (!allowStreak) c->bloomStreakEnabled = false;
+  if (!allowRadial) c->radialBlurEnabled  = false;
+
+  // Announce on CHANGE, not once at startup: the tier is switchable at runtime
+  // and `tuning.cfg` hot-reloads, so a one-shot line scrolls away long before
+  // the values that matter arrive — and then "my postfx_radial edit did
+  // nothing" is indistinguishable from "it applied and had no effect"
+  // (core/CLAUDE.md §4).
+  static int s_lastTier = -1;
+  static int s_lastCut  = -1;
+  int cutBits = (cutStreak ? 1 : 0) | (cutRadial ? 2 : 0);
+  if ((int)q != s_lastTier || cutBits != s_lastCut)
+  {
+    s_lastTier = (int)q;
+    s_lastCut  = cutBits;
+    if (cutBits)
+      TraceLog(LOG_INFO, "POSTFX tier %d: dropped%s%s (budget, not a bug — "
+                         "raise GfxQuality to get them back)",
+               (int)q, cutStreak ? " streak-bloom" : "",
+               cutRadial ? " radial-blur" : "");
+    else
+      TraceLog(LOG_INFO, "POSTFX tier %d: streak %s, radial %s", (int)q,
+               allowStreak ? "allowed" : "blocked",
+               allowRadial ? "allowed" : "blocked");
+  }
+}
+
+// E8 step 3 — the instrument for "profile post-FX cost per frame".
+//
+// CPU wall-clock around the whole chain, not a GPU timer query: the chain is a
+// handful of fullscreen draws, so what it actually costs is GPU fill, and the
+// CPU time here is submission only. What this measures reliably is the SHAPE of
+// the answer — which passes are on, at what resolution, and how the frame time
+// moves when they are switched. That is the question E8 asks; a real per-pass
+// GPU number needs timestamp queries and is a Renderer Agent job.
+//
+// Print once per second, and print WHAT WAS ON alongside the number, because a
+// timing with no configuration attached cannot be compared against anything.
+static float s_perfLog = 0.0f;      // tuning.cfg: postfx_perf_log = 1
+static bool  s_perfReg = false;
+
+static void PostFX_PerfSample(const PostFXConfig *c, int width, int height)
+{
+  if (!s_perfReg)
+  {
+    s_perfReg = true;
+    Tuning_RegisterFloat("postfx_perf_log", &s_perfLog, 0.0f);
+  }
+  if (s_perfLog < 0.5f)
+    return;
+
+  static double s_accum = 0.0;
+  static int    s_frames = 0;
+  static double s_last = 0.0;
+
+  double now = GetTime();
+  s_accum += (double)GetFrameTime();
+  s_frames++;
+  if (now - s_last < 1.0 || s_frames == 0)
+    return;
+
+  float avgMs = (float)(s_accum / (double)s_frames * 1000.0);
+  TraceLog(LOG_INFO,
+           "POSTFX perf: %.2f ms/frame avg over %d frames at %dx%d | tier=%d "
+           "bloom=%d streak=%d radial=%.2f tonemap=%d chroma=%d",
+           avgMs, s_frames, width, height, (int)GfxQuality_Get(),
+           c->bloomEnabled ? 1 : 0, c->bloomStreakEnabled ? 1 : 0,
+           (c->radialBlurEnabled ? c->radialBlurStrength : 0.0f),
+           c->tonemapEnabled ? 1 : 0, c->chromaticEnabled ? 1 : 0);
+
+  s_accum = 0.0;
+  s_frames = 0;
+  s_last = now;
+}
+
 void PostFX_Draw(const PostFXConfig *config)
 {
   // A live burst overrides whatever the caller configured. Copying rather than
@@ -337,6 +433,7 @@ void PostFX_Draw(const PostFXConfig *config)
   if (PostFX_HasTransient())
     PostFX_ApplyTransient(&local);
   PostFX_ApplyTuning(&local);
+  PostFX_ApplyQualityTier(&local);   // last: the budget outranks both of the above
   config = &local;
   int width = mainRenderTex.texture.width;
   int height = mainRenderTex.texture.height;
@@ -471,6 +568,8 @@ void PostFX_Draw(const PostFXConfig *config)
   rlEnableColorBlend();
 
   EndShaderMode();
+
+  PostFX_PerfSample(config, width, height);
 }
 
 void PostFX_SetMonochrome(float intensity01)

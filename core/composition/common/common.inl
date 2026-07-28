@@ -1,29 +1,30 @@
-// common.inl — Master include file for general VFX and shared helpers
-// Included once by visual_composer.c
+// common.inl — master include for the surviving compositions.
+// Included once by visual_composer.c.
+//
+// ORDER MATTERS in exactly two places, because these are pasted into ONE
+// translation unit and later files read earlier files' statics:
+//   - vc_common.inl first: it defines the shared draw/colour helpers.
+//   - vc_smoke_puff.inl before vc_energy_burst.inl and fire/flame_volume.inl:
+//     both call SmokePuff_InitShared() and read its sheet.
+// Everything else here is independent.
+//
+// F0 (28/07/2026) deleted every composition predating the Đợt E/F rebuild; what
+// is left is this list. The `@gen` block is still machine-managed — add the new
+// VFX to scripts/vfx_test_manifest.json and run scripts/sync_vfx_test.py rather
+// than editing it here, or the next sync will overwrite the edit.
 
-#include "vc_common.inl"
-#include "vc_trail_preset.inl"
-#include "vc_ground.inl"
-#include "vc_path.inl"
-#include "vc_cylinder_aura.inl"
-#include "vc_shield.inl"
-#include "vc_elemental_mist.inl"
-#include "vc_black_hole.inl"
-#include "vc_ground_aura.inl"
-#include "vc_smoke_energy.inl"
-#include "vc_glint_sparkle.inl"
 // @gen:common_includes begin
-// 12 include(s) — auto-managed by sync_vfx_test.py
-#include "vc_beam.inl"
-#include "vc_chain_link.inl"
+// 11 include(s) — auto-managed by sync_vfx_test.py
+#include "vc_common.inl"
 #include "vc_smoke_puff.inl"
-#include "vc_beauty.inl"
-#include "vc_cast_preset.inl"
-#include "vc_impact.inl"
 #include "vc_energy_burst.inl"
 #include "vc_impact_package.inl"
-#include "vc_charge_converge.inl"
+#include "vc_glint_sparkle.inl"
 #include "vc_rune_circle.inl"
+#include "vc_charge_converge.inl"
 #include "vc_dissolve_exit.inl"
 #include "vc_sweep_slash.inl"
+#include "vc_light_shaft.inl"
+#include "vc_particle_upgrades_test.inl"
 // @gen:common_includes end
+

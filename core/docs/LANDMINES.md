@@ -296,3 +296,33 @@ comes from: that value is for a much faster population.
 spawn at: `strength = (factor - 1) / speed`. For a 4 m/s spark wanting a 5x
 streak, that is 1.0, not 0.1. Also set `stretchMinSpeed` below the slowest
 speed in the population, or the slow tail silently opts out of stretching.
+
+## Thickness is a ratio against the thing's OWN length (28/07/2026)
+
+**Symptom.** A new VFX is not broken and not ugly, but reads as the wrong
+object: a slash reads as a crescent moon, a swarm's wisps read as shark fins, a
+stream reads as a leaf. Tuning colours and brightness never fixes it.
+
+**Cause.** The width was keyed to a parameter that is not the element's own
+length. Three cases in one session:
+- `SweepSlash`: half-width from the arc's RADIUS, so the aspect ratio moved with
+  `arcRad` — 1:10 at a 2.2 rad swing, ~1:3 at a 0.6 rad flick. Right at exactly
+  one sweep angle, and nothing said which.
+- `SpiritSwarm`: width from the swarm's `spread` while length came from the tail
+  fraction. Unrelated quantities; they happened to land at 2.4:1.
+- `SpiritStream`: radius from the caller while length came from the path
+  segment.
+
+**Rule.** Derive thickness from the length of the SAME thing —
+`halfWidth = ownLength * k` — and pick `k` from a target aspect ratio. Working
+values from this session: a blade trail ~**1:20** against the arc it travelled;
+a comet/wisp ~**1:14**; an energy stream ~**1:10**. Then assert the ratio AND
+its invariance in a headless test — the invariance is the assertion that matters,
+because the ratio alone passes on the broken formula too, at one parameter value.
+
+**Related:** both ends of a moving element come to a POINT. "Zero at the
+endpoint" is not the same property as "comes to a point": `sqrt(s)` is zero at
+s=0 and still reaches half width by s=0.25, which draws a blunt club. A lens
+(`pow(sin(PI*s), 0.85)`) is the shape; assert symmetry, not the endpoints. A
+strip that starts at full width has a flat cap, and a flat cap on a short strip
+is the flat base of a triangle.

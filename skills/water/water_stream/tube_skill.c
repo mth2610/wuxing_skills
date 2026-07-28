@@ -50,7 +50,10 @@ static TubeEmitter emitters[MAX_TUBE_EMITTERS];
 static int s_skillIndex = -1;
 
 static TubeMeshConfig s_waterTubeConfig;
-static ImpactBurstConfig s_waterImpactConfig;
+// F0 purge: ImpactBurstConfig and VFX_TriggerImpactBurst are deleted. The
+// successor takes no config struct — the E6 package IS the tuning, and
+// `severity01` is the only dial it exposes on purpose.
+#define TUBE_IMPACT_SEVERITY 0.6f
 
 static inline float ClampSizeScale(float scale) {
   return Clamp(scale, 0.2f, 3.0f);
@@ -100,43 +103,14 @@ static void RebuildMistField(void) {
     SkillForceMix_AddLayers(&s_mistForce, &s_mistFieldActive);
 }
 
-// Rebuild the ImpactBurstConfig from current tunables.
-static void RebuildImpactConfig(void) {
-    s_waterImpactConfig.distortEnabled  = true;
-    s_waterImpactConfig.distortRadius   = s_impactDistortRadius;
-    s_waterImpactConfig.distortStrength = s_impactDistortStrength;
-    s_waterImpactConfig.distortLife     = s_impactDistortLife;
-    s_waterImpactConfig.distortSpeed    = s_impactDistortSpeed;
-
-    s_waterImpactConfig.decalEnabled        = true;
-    s_waterImpactConfig.decalTex            = s_causticsTex;
-    s_waterImpactConfig.decalScale          = s_impactDecalScale;
-    s_waterImpactConfig.decalLife           = s_impactDecalLife;
-    s_waterImpactConfig.decalTint           = ColorAlpha(ELEMENT_COLOR_WATER, 0.7f);
-    s_waterImpactConfig.decalRandomRotation = true;
-
-    s_waterImpactConfig.lightEnabled  = true;
-    s_waterImpactConfig.lightColor    = ELEMENT_COLOR_WATER;
-    s_waterImpactConfig.lightRadius   = s_impactLightRadius;
-    s_waterImpactConfig.lightLife     = s_impactLightLife;
-
-    s_waterImpactConfig.particlesEnabled         = true;
-    s_waterImpactConfig.particles.countMin       = 25;
-    s_waterImpactConfig.particles.countMax       = 40;
-    s_waterImpactConfig.particles.speedMin       = s_burstSpeedMin;
-    s_waterImpactConfig.particles.speedMax       = s_burstSpeedMax;
-    s_waterImpactConfig.particles.radiusMin      = s_burstRadiusMin;
-    s_waterImpactConfig.particles.radiusMax      = s_burstRadiusMax;
-    s_waterImpactConfig.particles.lifetimeMin    = s_burstLifeMin;
-    s_waterImpactConfig.particles.lifetimeMax    = s_burstLifeMax;
-    s_waterImpactConfig.particles.pitchRange     = PI;
-    s_waterImpactConfig.particles.upwardBias     = s_burstUpwardBias;
-    s_waterImpactConfig.particles.colorStart     = ELEMENT_COLOR_WATER;
-    s_waterImpactConfig.particles.colorEnd       =
-        ColorAlpha(ColorLerp(ELEMENT_COLOR_WATER, WHITE, 0.3f), 0.0f);
-    s_waterImpactConfig.particles.forceField     = &s_tubeSplashField;
-    s_waterImpactConfig.particles.gradient       = &s_splashGrad;
-}
+// F0 purge: the ImpactBurstConfig this used to fill is deleted along with
+// VFX_TriggerImpactBurst. The successor, VFX_ComposeImpactPackage, deliberately
+// exposes ONE dial (severity) instead of a 20-field struct — the whole point of
+// E6 #6 was that the pieces are tuned together, so a per-skill config would put
+// back exactly what it removed. The tunables below still exist and still
+// hot-reload; they simply have nothing to drive until a skill needs its own
+// variant, which is an E7 question.
+static void RebuildImpactConfig(void) {}
 
 void InitTubeSkill(int screenWidth, int screenHeight) {
   (void)screenWidth;
@@ -243,8 +217,8 @@ void UpdateTubeSkill(float dt) {
       if (ev[k].outcome == CLASH_B_WINS || ev[k].outcome == CLASH_MUTUAL_DESTROY ||
           ev[k].outcome == CLASH_HIT_AGENT) {
         emitters[slot].active = false;
-        VFX_TriggerImpactBurst(ev[k].clashPoint, emitters[slot].sizeScale,
-                               &s_waterImpactConfig);
+        VFX_ComposeImpactPackage(ev[k].clashPoint, (Vector3){0.0f, 1.0f, 0.0f},
+                                 VC_MAT_WATER, emitters[slot].sizeScale, TUBE_IMPACT_SEVERITY);
       }
     }
   }
@@ -255,8 +229,8 @@ void UpdateTubeSkill(float dt) {
     emitters[e].progress += dt * TUBE_TRAVEL_SPEED;
     if (emitters[e].progress >= 1.0f) {
       emitters[e].active = false;
-      VFX_TriggerImpactBurst(emitters[e].p3, emitters[e].sizeScale,
-                             &s_waterImpactConfig);
+      VFX_ComposeImpactPackage(emitters[e].p3, (Vector3){0.0f, 1.0f, 0.0f},
+                                 VC_MAT_WATER, emitters[e].sizeScale, TUBE_IMPACT_SEVERITY);
       continue;
     }
     emitters[e].headPos = ProceduralMesh_BezierPoint(
@@ -308,7 +282,10 @@ void DrawTubeSkill(void) {
   for (int e = 0; e < MAX_TUBE_EMITTERS; e++) {
     if (!emitters[e].active) continue;
     float radius = s_tubeBaseRadius * emitters[e].sizeScale;
-    VFX_ComposeWaterStream(emitters[e].p0, emitters[e].p1, emitters[e].p2, emitters[e].p3, radius, emitters[e].progress, time);
+    // F0 purge: VFX_ComposeWaterStream is deleted (owner's explicit list). The
+    // projectile still flies and still clashes — it is simply not drawn until
+    // E7 rebuilds it from the surviving set.
+    (void)radius; (void)time;
   }
 }
 
@@ -336,8 +313,8 @@ void DeactivateTubeProjectile(int index) {
     if (emitters[i].active) {
       if (count == index) {
         emitters[i].active = false;
-        VFX_TriggerImpactBurst(emitters[i].headPos, emitters[i].sizeScale,
-                               &s_waterImpactConfig);
+        VFX_ComposeImpactPackage(emitters[i].headPos, (Vector3){0.0f, 1.0f, 0.0f},
+                                 VC_MAT_WATER, emitters[i].sizeScale, TUBE_IMPACT_SEVERITY);
         return;
       }
       count++;

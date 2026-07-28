@@ -204,14 +204,6 @@ static void SweepSlash_InitShared(void)
     s_slashInit = true;
 }
 
-static Color SweepSlash_MixColor(Color a, Color b, float t)
-{
-    return (Color){(unsigned char)Math_Mix((float)a.r, (float)b.r, t),
-                   (unsigned char)Math_Mix((float)a.g, (float)b.g, t),
-                   (unsigned char)Math_Mix((float)a.b, (float)b.b, t),
-                   255};
-}
-
 // Half-width envelope from tail (s=0) to head (s=1). A LENS: pointed at both
 // ends, widest in the middle.
 //
@@ -360,7 +352,7 @@ void VFX_ComposeSweepSlash(Vector3 origin, Vector3 dir, VC_MaterialId mat,
             // its glow colour at the head. A single flat colour along the band
             // is what makes an additive strip read as painted plastic.
             float hot = SmoothStep01((s - 0.45f) / 0.55f);
-            Color c = SweepSlash_MixColor(bodyCol, glowCol, hot);
+            Color c = VC_MixColor(bodyCol, glowCol, hot);
             c = VC_Whiten(c, passWhite[pass]);
             pts[i].tint = ColorAlpha(c, Clamp(a, 0.0f, 1.0f));
         }
@@ -390,7 +382,12 @@ void VFX_ComposeSweepSlash(Vector3 origin, Vector3 dir, VC_MaterialId mat,
     // active source (PROGRESS, 28/07/2026) — hence `slash_distort` as a switch,
     // and hence the deliberately short life.
     float dt = GetFrameTime();
-    if (s_slashDistort > 0.5f && headT < 1.0f)
+    // E8 tier budget. The distortion pass costs per fragment across the WHOLE
+    // screen for every live source, which is exactly the shape of cost the Mali
+    // A33 cannot absorb. Below MED the slash keeps its geometry and loses only
+    // the refraction — the effect still reads, it just stops bending the world.
+    bool allowDistort = (GfxQuality_Get() >= GFX_MED);
+    if (allowDistort && s_slashDistort > 0.5f && headT < 1.0f)
     {
         s_slashDistortAcc += dt * SLASH_DISTORT_RATE;
         while (s_slashDistortAcc >= 1.0f)

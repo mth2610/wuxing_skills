@@ -54,7 +54,11 @@ void DrawCoreTestSkill(void) {
         return;
     Vector3 fwd = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
     Vector3 orbPos = Vector3Add(camera.position, Vector3Scale(fwd, 2.5f));
-    VFX_ComposePlasmaOrb(orbPos, 0.5f, s_plasmaTime);
+    // F0 purge: VFX_ComposePlasmaOrb is deleted. Nearest survivor for a held
+    // orb is VFX_ComposeChargeConverge — continuous, and this call site already
+    // has a running clock, so it maps cleanly.
+    VFX_ComposeChargeConverge(orbPos, VC_MAT_TAIJI, 0.5f,
+                              fmodf(s_plasmaTime, 1.6f) / 1.6f, 40);
 }
 void DrawCoreTestSkillDebugHUD(void) {}
 void UnloadCoreTestSkill(void) {}

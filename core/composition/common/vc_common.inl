@@ -30,6 +30,19 @@ static Color Arch_ElementColor(EffectPresetType e)
     }
 }
 
+// Linear RGB blend between two material colours. Alpha is set by the caller
+// (VC_WithAlpha / ColorAlpha), so this deliberately returns 255 — a composition
+// that mixed alpha here would fight its own envelope.
+static Color VC_MixColor(Color a, Color b, float t)
+{
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    return (Color){(unsigned char)Math_Mix((float)a.r, (float)b.r, t),
+                   (unsigned char)Math_Mix((float)a.g, (float)b.g, t),
+                   (unsigned char)Math_Mix((float)a.b, (float)b.b, t),
+                   255};
+}
+
 // Horizontal quad at the CURRENT matrix origin — caller manages push/translate/
 // rotate for custom transforms.
 static void VC_DrawGroundQuadXZ(Texture2D tex, float halfX, float halfZ, Color tint)

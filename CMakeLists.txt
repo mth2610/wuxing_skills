@@ -127,7 +127,6 @@ add_executable(wuxing
     core/trail_system.c
     core/utils_math.c
     core/vfx_light.c
-    core/vfx_proc_ray.c
     core/decal_system.c
     core/geometry/procedural_mesh_utils.c
     core/geometry/mesh_cache.c
