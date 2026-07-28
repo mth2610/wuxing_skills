@@ -49,6 +49,18 @@ float SoftParticle_Factor(float fadeDistance) {
     // core/shaders/depth_copy.fs into an R32F target) — do NOT linearize it
     // again. Only the fragment's own gl_FragCoord.z needs linearizing.
     float sceneLinear = texture(u_cameraDepthTex, screenUV).r;
+
+    // NO DATA IS NOT FULL OCCLUSION. A linear scene depth at or before the near
+    // plane is geometrically impossible — nothing can be solid at the camera's
+    // eye — so it means the texture has nothing here: never written, cleared to
+    // zero, or a backend where the snapshot did not land. Reading it as an
+    // occluder takes the factor to 0 and makes EVERY particle in the game
+    // invisible, which is exactly what happened the first frame this function
+    // actually ran (rlvk, depth texture bound but empty: the flame vanished).
+    // Failing OPEN — no fade — is the only safe direction for a term that
+    // multiplies alpha.
+    if (sceneLinear <= max(u_cameraNear, 0.01)) return 1.0;
+
     float fragLinear  = SoftParticle_LinearDepth(gl_FragCoord.z);
     float diff = sceneLinear - fragLinear;
     return clamp(diff / max(fadeDistance, 0.0001), 0.0, 1.0);

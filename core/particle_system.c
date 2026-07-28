@@ -8,6 +8,7 @@
 #include "core/vfx_light.h"
 #include "core/gfx_quality.h"
 #include "core/tuning.h"
+#include "core/screen_distort.h"
 #include "environment/environment_system.h"
 #include <string.h>
 #include <math.h>
@@ -157,6 +158,34 @@ static float s_sunGain          = 1.0f;  // night sun/ambient are ~0.2 — witho
 static float s_ambientGain      = 0.25f; // gain, lighting just dims the smoke
 static float s_lightAzimuth     = -1.0f; // <0 = real sun; >=0 = debug override
 static float s_analyticUV       = 1.0f;  // 0 only if a SpriteAnim atlas is in use
+// SOFT PARTICLES. A billboard that intersects the ground is CUT by the depth
+// test along a dead-straight line, and the bigger the sprite the more it reads
+// as a sheet of paper pushed into the floor. The fade hides the cut by taking
+// the alpha to zero just before the geometry gets there.
+//
+// Metres. Too small and the cut is still visible; too large and sprites go
+// translucent while nowhere near anything, which reads as the effect dimming
+// for no reason. Sized against the sprites that show it worst — the 0.2-1.0 m
+// smoke billows.
+// DEFAULT OFF, and the default is the evidence. Adding the depth sampler to
+// this shader coincided with every particle drawing as a flat white SQUARE —
+// the signature of `texture0` not being bound at all, since an unbound sampler
+// reads a 1x1 white texel and a quad of constant colour is a square. rlvk has
+// previous form here (shaderc rebases explicit bindings; see the project's
+// Vulkan landmines), and a SECOND sampler in a shader that had one is exactly
+// the change that would shift it.
+//
+// Off by default until that is settled: the fade is a polish feature and the
+// particles are the game. `particle_soft_fade` turns it on, and doing so is
+// also the experiment — if the squares come back with it at 0, the mere
+// DECLARATION of the sampler is the problem and the fix is a shader variant,
+// not a uniform.
+static float s_softFade         = 0.0f;
+static float s_softDebug        = 0.0f;
+static int   s_locSoftFade      = -1;
+static int   s_locSoftDebug     = -1;
+static bool  s_softBound        = false;
+#define PARTICLE_SOFT_DEPTH_SLOT 3
 static int   s_locAtlasGrid     = -1;
 static int   s_locEmissiveBoost = -1;
 // How far above 1.0 an EMISSIVE particle writes into the HDR scene buffer. 1.0
@@ -526,6 +555,8 @@ static void ParticleLighting_Begin(Camera3D camera)
     Tuning_RegisterFloat("particle_light_azimuth", &s_lightAzimuth, s_lightAzimuth);
     Tuning_RegisterFloat("particle_analytic_uv", &s_analyticUV, s_analyticUV);
     Tuning_RegisterFloat("particle_emissive_boost", &s_emissiveBoost, 1.0f);
+    Tuning_RegisterFloat("particle_soft_fade", &s_softFade, 0.0f);
+    Tuning_RegisterFloat("particle_soft_debug", &s_softDebug, 0.0f);
   }
 
   s_litActive = false;
@@ -593,6 +624,8 @@ static void ParticleLighting_Begin(Camera3D camera)
       s_locAmbientGain     = GetShaderLocation(s_litShader, "u_ambientGain");
       s_locLightAzimuth    = GetShaderLocation(s_litShader, "u_lightAzimuth");
       s_locAnalyticUV      = GetShaderLocation(s_litShader, "u_analyticUV");
+      s_locSoftFade        = GetShaderLocation(s_litShader, "u_softFade");
+      s_locSoftDebug       = GetShaderLocation(s_litShader, "u_softDebug");
       s_locAtlasGrid       = GetShaderLocation(s_litShader, "u_atlasGrid");
       s_locEmissiveBoost   = GetShaderLocation(s_litShader, "u_emissiveBoost");
     }
@@ -603,6 +636,24 @@ static void ParticleLighting_Begin(Camera3D camera)
       TraceLog(LOG_WARNING,
                "PARTICLE: particle_lit shader failed to load — particles stay unlit");
     }
+  }
+  // DID IT ACTUALLY COMPILE? A non-zero id is not the same answer. raylib hands
+  // back the DEFAULT shader when compilation fails, and rlvk logs the GLSL error
+  // and carries on, so `id != 0` was true for a shader that did not exist —
+  // measured the hard way: one misplaced uniform declaration killed the lit
+  // path, the emissive boost and the soft fade at once, while this file happily
+  // reported "soft-fade: ON" for several rounds of debugging.
+  //
+  // The test is uniforms this shader definitely declares. If none of them
+  // resolve, whatever is bound is not ours.
+  if (s_litShader.id != 0 && s_locSunToLight < 0 && s_locLightStrength < 0 &&
+      s_locAmbient < 0)
+  {
+    TraceLog(LOG_ERROR, "PARTICLE: particle_lit.fs loaded (id %u) but NONE of its "
+                        "uniforms resolved — it did not compile. Falling back to "
+                        "unlit; check the GLSL error above this line.",
+             (unsigned)s_litShader.id);
+    s_litShader.id = 0;
   }
   if (s_litShader.id == 0)
     return;
@@ -628,6 +679,47 @@ static void ParticleLighting_Begin(Camera3D camera)
   SetShaderValue(s_litShader, s_locAnalyticUV, &s_analyticUV, SHADER_UNIFORM_FLOAT);
   { float one = 1.0f;   // lit default; flipped per batch for emissive particles
     if (s_locEmissiveBoost >= 0) SetShaderValue(s_litShader, s_locEmissiveBoost, &one, SHADER_UNIFORM_FLOAT); }
+  // SOFT PARTICLES — bind the previous frame's linearised scene depth.
+  //
+  // OFF unless there is really a depth texture to sample. The failure mode of
+  // getting this wrong is total: an unbound sampler reads 0, the factor is then
+  // 0 everywhere, and EVERY particle in the game disappears. So the C side
+  // decides, and the shader treats 0 as "feature off" rather than "fully
+  // occluded".
+  {
+    // Also gated on the shader actually HAVING the uniform: particle_lit.fs
+    // carries no depth sampler under rlvk (see the note at its top), so the
+    // locations are -1 and this whole block must stay inert rather than binding
+    // a texture nothing will read.
+    Texture2D depthTex = ScreenDistort_GetDepthTexture();
+    float fade = (depthTex.id != 0 && s_softFade > 0.0f && s_locSoftFade >= 0)
+                     ? s_softFade : 0.0f;
+    if (fade > 0.0f && depthTex.id != 0)
+      ScreenDistort_BindDepthForSoftParticles(s_litShader, PARTICLE_SOFT_DEPTH_SLOT);
+    if (s_locSoftFade >= 0)
+      SetShaderValue(s_litShader, s_locSoftFade, &fade, SHADER_UNIFORM_FLOAT);
+    if (s_locSoftDebug >= 0)
+      SetShaderValue(s_litShader, s_locSoftDebug, &s_softDebug, SHADER_UNIFORM_FLOAT);
+    // The debug view needs the depth bound even when the fade itself is off,
+    // or it would paint the answer to a question nobody asked.
+    if (fade <= 0.0f && s_softDebug > 0.5f && depthTex.id != 0)
+    {
+      ScreenDistort_BindDepthForSoftParticles(s_litShader, PARTICLE_SOFT_DEPTH_SLOT);
+      s_softBound = true;
+    }
+    s_softBound = (fade > 0.0f);
+    // Announce on CHANGE: "the cut is still there" has to be separable from
+    // "the fade is running and is too small".
+    static int lastState = -1;
+    int state = (int)(fade > 0.0f) + ((depthTex.id != 0) ? 2 : 0);
+    if (state != lastState)
+    {
+      lastState = state;
+      TraceLog(depthTex.id != 0 ? LOG_INFO : LOG_WARNING,
+               "PARTICLE soft-fade: %s (depth tex %u, fade %.2f m)",
+               (fade > 0.0f) ? "ON" : "OFF", (unsigned)depthTex.id, fade);
+    }
+  }
   { // default: not an atlas. Flipped per batch in the draw loop.
     float grid[2] = {1.0f, 1.0f};
     if (s_locAtlasGrid >= 0) SetShaderValue(s_litShader, s_locAtlasGrid, grid, SHADER_UNIFORM_VEC2);
@@ -679,9 +771,36 @@ static void ParticleLighting_End(void)
 {
   if (!s_litActive)
     return;
+  // Release the texture unit before the shader goes away, or the next system to
+  // use slot 3 inherits a bound depth texture.
+  if (s_softBound)
+  {
+    ScreenDistort_UnbindSoftParticleDepth(PARTICLE_SOFT_DEPTH_SLOT);
+    s_softBound = false;
+  }
   EndShaderMode();
   s_litActive = false;
 }
+
+// ── PERF INSTRUMENT ─────────────────────────────────────────────────────────
+// Added after two WRONG guesses at where the cost was (first "overdraw", then
+// "emission rate"): cutting one flame's live sprites from ~700 to ~18 barely
+// moved the frame rate, which means the binding constraint was never the
+// particle count. Guessing again is the expensive move; this reports the three
+// quantities that tell the cases apart:
+//
+//   live    — particles alive. If this is small and it is still slow, the cost
+//             is NOT particle count.
+//   quads   — vertices/4, i.e. how much fill was requested. The cross-fade
+//             doubles this against `live`.
+//   batches — rlEnd/rlBegin splits, one per change of texture, blend mode,
+//             lit flag, atlas grid or emissive boost. Particles are drawn in
+//             pool order, so populations INTERLEAVE, and every alternation is a
+//             flush. This is the number that would explain "10 bursts kill it
+//             but 700 sprites of one flame did not".
+static int   s_perfBatches = 0;
+static int   s_perfQuads   = 0;
+static float s_perfLog     = 0.0f;
 
 void DrawParticles(Camera3D camera, Texture2D texture)
 {
@@ -764,6 +883,7 @@ void DrawParticles(Camera3D camera, Texture2D texture)
         wantGridC != curGridC || wantGridR != curGridR || wantBoost != curBoost)
     {
       if (curTex != 0xFFFFFFFFu) rlEnd();
+      s_perfBatches++;
       if (p->blendMode != curBlend)
       {
         // Blend state must be flushed either side or it leaks across the batch
@@ -928,10 +1048,21 @@ void DrawParticles(Camera3D camera, Texture2D texture)
       // Registered lazily on first use, never from an Init (docs/LANDMINES.md).
       {
         static float s_fbBlendOn = 1.0f;
+        static float s_fbBlendMax = 220.0f;
         static bool  s_fbBlendReg = false;
         if (!s_fbBlendReg) { s_fbBlendReg = true;
-          Tuning_RegisterFloat("particle_fb_blend", &s_fbBlendOn, 1.0f); }
+          Tuning_RegisterFloat("particle_fb_blend", &s_fbBlendOn, 1.0f);
+          Tuning_RegisterFloat("particle_fb_blend_max", &s_fbBlendMax, 220.0f); }
         if (s_fbBlendOn <= 0.5f) fbBlend = 0.0f;
+        // LOAD SHEDDING. The cross-fade costs a SECOND full-size quad for every
+        // animated particle — it exists to hide the ~2-render-frame step of a
+        // 25 fps atlas, which is a subtle artifact, while the second quad is a
+        // literal doubling of the most expensive thing on screen. Past a live
+        // count where fill rate is the binding constraint, the trade inverts:
+        // nobody sees the step in a screen full of overlapping sprites, and
+        // everybody sees 20 fps. Dropping it is exactly a 2x fill saving on the
+        // frames that need it, and it costs nothing on the frames that do not.
+        else if ((float)s_activeCount > s_fbBlendMax) fbBlend = 0.0f;
       }
     }
 
@@ -968,10 +1099,12 @@ void DrawParticles(Camera3D camera, Texture2D texture)
     {
       PS_EMIT_QUAD(uv,     (float)c.a * (1.0f - fbBlend));
       PS_EMIT_QUAD(uvNext, (float)c.a * fbBlend);
+      s_perfQuads += 2;
     }
     else
     {
       PS_EMIT_QUAD(uv, (float)c.a);
+      s_perfQuads++;
     }
     #undef PS_EMIT_QUAD
   }
@@ -985,6 +1118,30 @@ void DrawParticles(Camera3D camera, Texture2D texture)
   }
 
   ParticleLighting_End();
+
+  // One line a second, and only when asked for. Registered lazily on first use,
+  // never from an Init (docs/LANDMINES.md).
+  {
+    static float s_perfOn = 0.0f;
+    static bool  s_perfReg = false;
+    if (!s_perfReg) { s_perfReg = true;
+      Tuning_RegisterFloat("particle_perf_log", &s_perfOn, 0.0f); }
+    if (s_perfOn > 0.5f)
+    {
+      s_perfLog += GetFrameTime();
+      if (s_perfLog >= 1.0f)
+      {
+        s_perfLog = 0.0f;
+        int lights = 0;
+        VFXLight_GetStats(&lights, NULL);
+        TraceLog(LOG_INFO,
+                 "PARTICLE perf: live=%d quads=%d batches=%d vfxLights=%d fps=%d",
+                 s_activeCount, s_perfQuads, s_perfBatches, lights, GetFPS());
+      }
+    }
+    s_perfBatches = 0;
+    s_perfQuads = 0;
+  }
 
   // Second pass: Draw Particle Ribbon Trails
   //

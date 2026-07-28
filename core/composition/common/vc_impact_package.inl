@@ -23,10 +23,39 @@
 
 static bool s_ipInit = false;
 
+// PER-BEAT KILL SWITCHES, added to settle a performance question by measurement
+// instead of argument. The burst on its own holds ~60 fps under continuous
+// fire; the package does not. The burst is the only beat made of particles, so
+// the cost is in one of the others — and both of the plausible ones are the
+// same shape of problem: a handful of objects whose cost is paid per FRAGMENT
+// across the whole screen.
+//
+//   LIGHT   — every active VFX light is a loop iteration in every particle
+//             fragment AND in every lit surface fragment in the scene.
+//   DISTORT — the distortion pass always runs (it is the blit of the scene),
+//             but with sources active its shader loops over them per fragment,
+//             full screen.
+//   DECAL   — one more textured quad; the cheap one, listed so it can be ruled
+//             out rather than assumed.
+//
+// Turn them off one at a time in tuning.cfg and watch the frame rate; whichever
+// restores it is the answer. They exist for the measurement, and they stay
+// afterwards as the per-effect budget switches.
+static float s_ipLight   = 1.0f;
+static float s_ipDistort = 1.0f;
+static float s_ipDecal   = 1.0f;
+static float s_ipHitstop = 1.0f;
+
 static void ImpactPkg_InitShared(void)
 {
-    // Nothing to build any more: the package is one smoke burst plus beats that
-    // own their own state. Kept as the hook for whatever the package grows.
+    if (s_ipInit)
+        return;
+    // Lazily, at first USE — never from a subsystem Init, or Tuning_Init runs
+    // afterwards and silently keeps the defaults (docs/LANDMINES.md).
+    Tuning_RegisterFloat("impact_light", &s_ipLight, 1.0f);
+    Tuning_RegisterFloat("impact_distort", &s_ipDistort, 1.0f);
+    Tuning_RegisterFloat("impact_decal", &s_ipDecal, 1.0f);
+    Tuning_RegisterFloat("impact_hitstop", &s_ipHitstop, 1.0f);
     s_ipInit = true;
 }
 
@@ -56,6 +85,21 @@ void VFX_ComposeImpactPackage(Vector3 pos, Vector3 normal, VC_MaterialId matId,
     s_ipNormalNext = (s_ipNormalNext + 1) % VFX_SEQ_MAX;
     *nrm = normal;
 
+    // SEVERITY LIVES HERE, AND ONLY HERE. The sequence multiplies every beat's
+    // spatial `a` by this scale (`s->scale * scale` for COMPOSE, `b->a *
+    // s->scale` for LIGHT / DISTORT / DECAL), so a beat that ALSO ramps with
+    // severity applies it twice.
+    //
+    // Measured, at severity 1.0: the burst was running at scale 1.25 x 1.35 =
+    // 1.69, which is 123 sprites instead of 75, each 2.85x the area — 4.7x the
+    // fill of the same burst fired on its own. That is the entire reason the
+    // package dropped the frame rate while the burst alone held 60: it was
+    // never the light, the distortion or the decal, it was the same effect at
+    // nearly five times the size.
+    //
+    // Every `a` below is therefore a plain per-beat PROPORTION, in metres at
+    // scale 1 and severity 1. Time values (hitstop, lifetimes) still ramp with
+    // severity where it makes sense — the sequence does not scale those.
     VFX_Sequence *s = VFX_SeqBegin(pos, matId, scale * Math_Mix(0.7f, 1.25f, sev));
     if (s == NULL)
         return;
@@ -63,16 +107,17 @@ void VFX_ComposeImpactPackage(Vector3 pos, Vector3 normal, VC_MaterialId matId,
     // t=0 — THE FLASH. What tells the player the hit registered, and the only
     // beat that must never be delayed: everything else can arrive a frame or
     // two late without reading as lag.
+    if (s_ipLight > 0.5f)
     VFX_SeqAt(s, 0.0f, (VFX_Beat){
         .kind = VFX_BEAT_LIGHT,
-        .a = Math_Mix(1.6f, 4.2f, sev),      // radius, metres
-        .b = Math_Mix(0.10f, 0.22f, sev),    // lifetime
+        .a = 3.4f,                           // radius, metres (x sequence scale)
+        .b = Math_Mix(0.10f, 0.22f, sev),    // lifetime — a TIME, not scaled
         .color = mat ? mat->glow : WHITE,
     });
 
     // t=0 — HITSTOP, gated. A light hit that freezes the game reads as a
     // dropped frame, not as weight.
-    if (sev >= 0.45f)
+    if (sev >= 0.45f && s_ipHitstop > 0.5f)
         VFX_SeqAt(s, 0.0f, (VFX_Beat){
             .kind = VFX_BEAT_HITSTOP,
             .a = Math_Mix(0.03f, 0.075f, sev),   // duration
@@ -85,27 +130,28 @@ void VFX_ComposeImpactPackage(Vector3 pos, Vector3 normal, VC_MaterialId matId,
     // light is what the eye catches first.
     VFX_SeqAt(s, 0.005f, (VFX_Beat){
         .kind = VFX_BEAT_COMPOSE,
-        .a = Math_Mix(0.6f, 1.35f, sev),
+        .a = 1.0f,                           // the sequence scale is the size
         .cb = ImpactPkg_EnergyBurst,
         .ud = (void *)(intptr_t)matId,
     });
 
     // t=0.03 — distortion, gated: a shockwave on a light hit is noise.
-    if (sev >= 0.35f)
+    if (sev >= 0.35f && s_ipDistort > 0.5f)
         VFX_SeqAt(s, 0.03f, (VFX_Beat){
             .kind = VFX_BEAT_DISTORT,
-            .a = Math_Mix(1.2f, 2.6f, sev),   // radius
-            .b = Math_Mix(0.18f, 0.42f, sev), // strength
+            .a = 2.1f,                        // radius (x sequence scale)
+            .b = Math_Mix(0.18f, 0.42f, sev), // strength — not a length
             .c = 0.35f,                       // lifetime
         });
 
     // t=0.04 — the mark left behind, and the only beat that outlives the
     // moment. Its lifetime scales with severity because a scuff and a crater
     // should not linger for the same three seconds.
+    if (s_ipDecal > 0.5f)
     VFX_SeqAt(s, 0.04f, (VFX_Beat){
         .kind = VFX_BEAT_DECAL,
-        .a = Math_Mix(0.8f, 1.9f, sev),      // scale
-        .b = Math_Mix(1.6f, 4.5f, sev),      // lifetime
+        .a = 1.5f,                           // scale (x sequence scale)
+        .b = Math_Mix(1.6f, 4.5f, sev),      // lifetime — a TIME, not scaled
         .c = (float)GetRandomValue(0, 360),  // rotation
     });
 

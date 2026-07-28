@@ -1,4 +1,17 @@
 #version 330
+// NO SOFT-PARTICLE SAMPLER HERE — this shader must keep exactly ONE sampler.
+//
+// Adding `u_cameraDepthTex` (via common/soft_particle.glsl) made every particle
+// draw as a flat white SQUARE: the signature of `texture0` not being bound at
+// all, since an unbound sampler reads a 1x1 white texel. Confirmed by the
+// cleanest test available — the squares appear with the fade uniform at ZERO,
+// so the sampler is never read and the mere DECLARATION is what moves the
+// binding. rlvk's shaderc pass rebases binding indices, and one sampler
+// becoming two is exactly the change that shifts the first.
+//
+// The C-side machinery stays and is inert: its uniform locations resolve to -1,
+// so nothing binds and nothing uploads. Re-enabling needs the rlvk binding
+// fixed, or a SEPARATE shader variant used only where it works.
 
 // Đợt E / F1 — lit CPU particles. See core/docs/ELDEN_VFX_SPEC.md §0.1b:
 // flat-shaded smoke can only ever look like a decal OF smoke. Volume reads

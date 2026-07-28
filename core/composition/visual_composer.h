@@ -94,6 +94,16 @@ void VFX_ComposeEnergyBurst(Vector3 pos, VC_MaterialId matId, float scale,
 void VFX_ComposeImpactPackage(Vector3 pos, Vector3 normal, VC_MaterialId matId,
                               float scale, float severity01);
 
+// 7c. SWEEP SLASH (Đợt E / E6 #5) — a weapon-art arc: a ribbon band whose HEAD
+// outruns its TAIL along one arc, masked by a generated blade-streak texture
+// (hot against the outer edge, smeared inward, striated along the sweep), with
+// screen refraction and sparks shed off the leading edge. Continuous: call every
+// frame with `t01` 0→1 over the swing. `dir` = where the arc's MIDPOINT points,
+// `length` = arc radius in metres, `arcRad` = total swept angle in radians.
+// The swing plane is tilted off horizontal by the `slash_tilt` tunable.
+void VFX_ComposeSweepSlash(Vector3 origin, Vector3 dir, VC_MaterialId mat,
+                           float length, float arcRad, float t01);
+
 // 8b. Beauty primitives — reusable "polish" pieces (particle/decal/light
 // only, no post-process pipeline — see CORE_ISSUES.md Item 35)
 void VFX_ComposeShockwaveRing(Vector3 pos, float radius, float life, Color tint);

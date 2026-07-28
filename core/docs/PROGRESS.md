@@ -2100,3 +2100,549 @@ symptom of three different faults.
 `FATAL: RLVK: instance creation failed` outside the owner's graphical session,
 so the burst cannot be run headless here the way the flipbook audit can. The log
 line is the instrument instead.
+
+### Soft particles reach the PARTICLES (28/07/2026)
+
+Owner, on the burst: the long-standing problem is billboards being cut where
+they meet scene geometry, and the bigger the sprite the more it shows. The
+screenshot is a textbook case — dead-straight horizontal slices through every
+large sprite where the quads cross the ground plane.
+
+**The feature already existed and no particle had ever used it.** "Item 3 — Soft
+Particles (RESOLVED)" at the top of this file is real: `ScreenDistort` snapshots
+the previous frame's linearised scene depth, `soft_particle.glsl` exposes
+`SoftParticle_Factor()`, and it was proven end-to-end — on a bespoke test shader
+in `skills/taiji/core_test/`. The CPU particle path draws through
+`particle_lit.fs`, which never included it. A capability can be finished,
+documented and shipped, and still not be CONNECTED to the thing it was built
+for; "resolved" meant the mechanism worked, not that anything used it.
+
+Wired now in `particle_lit.fs`, and applied to `base.a` BEFORE the emissive
+early-out — emissive sprites (this burst, sparks, glints) are exactly the
+population that shows the cut worst, being large and bright, and they never
+reach the lit path at the bottom of the shader.
+
+**`u_softFade` is 0 = OFF, and the C side is what raises it.** The failure mode
+otherwise is total: an unbound sampler reads 0, so the factor is 0 everywhere
+and EVERY particle in the game vanishes. `ParticleLighting_Begin` only binds and
+raises it when `ScreenDistort_GetDepthTexture()` is a real texture, and the
+shader treats 0 as "feature off" rather than "fully occluded". It logs the state
+on change, so "the cut is still there" stays separable from "the fade is on and
+0.45 m is too small".
+
+`particle_soft_fade` (metres, default 0.45) is a tunable — no rebuild to sweep
+it. Depth is one frame stale by design (sampling the depth buffer you are
+writing to is undefined); for a fade that is invisible.
+
+**The wiring test caught the change**, which is the point of it: the four depth
+uniforms are uploaded by `ScreenDistort_BindDepthForSoftParticles`, not by
+`particle_system.c`, so `shader_uniform_wiring_test` reported them unwired. Fixed
+by adding `core/screen_distort.c` to that shader's source list — the check stays
+strict, it just knows where to look. Suites 6/6.
+
+### Soft particles — a debug view, because "still cut" has three causes (28/07/2026)
+
+Owner, after the wiring landed: the cut is still visible — is it simply
+unavoidable when a billboard intersects geometry? No. That is precisely what
+soft particles remove, so something is not working, and "still cut" has three
+causes that look identical on screen:
+
+1. the feature is OFF (no depth texture — the C side refuses to raise
+   `u_softFade` without one, since an unbound sampler reads 0 and would erase
+   every particle in the game);
+2. it is ON but 0.45 m is too short to hide the cut on a 1 m sprite;
+3. it is ON and sampling the WRONG depth — most plausibly a `u_resolution` that
+   does not match the render target actually being drawn into, which sends
+   `gl_FragCoord.xy / u_resolution` to the wrong texel.
+
+`particle_soft_debug = 1` (tunable, no rebuild) paints the factor instead of the
+particle: GREEN where nothing is behind the fragment, RED where it is fading.
+The three cases are then distinguishable in one look — a red BAND along the
+floor line means the fade is working and only its distance is wrong; a flat
+green sprite means the factor is 1 everywhere and the depth being sampled is not
+the scene's; and the log line already separates OFF from ON.
+
+The view deliberately uses `max(u_softFade, 0.5)` so it still answers "what does
+the depth buffer say here" when the fade itself is off — a debug view that goes
+blank in the failure case it exists to diagnose is the one mistake this module's
+notes keep recording (§6 of core/CLAUDE.md).
+
+**Ruled out already:** particles writing depth and cutting each other.
+`main.c:1845` disables the depth mask around the whole particle pass, with the
+batch flushed either side.
+
+### OPEN — soft-particle fade still shows the cut (28/07/2026)
+
+Wired, builds, logs its state, has a debug view — and the owner still sees the
+hard intersection line. Parked by their decision to do performance first. When
+it resumes, the debug view (`particle_soft_debug = 1`) answers it in one look:
+a red BAND along the floor line = working, distance too short; flat green =
+factor 1 everywhere, so the sampled depth is not the scene's (suspect
+`u_resolution` versus the render target actually bound — `gl_FragCoord.xy` is in
+the CURRENT target's pixels, and the particle pass draws inside ScreenDistort's
+`renderTex`, which under HDR may not be the screen's size). Already ruled out:
+particles writing depth (main.c:1845 disables the mask around the whole pass).
+
+### PERF — the flame was emitting per FRAME, not per second (28/07/2026)
+
+Owner: ten energy bursts drop the game to 20 fps, and a single FlameVolume is
+"tụt fps thê thảm" on its own. The flame's cause is a bug, not a budget.
+
+**`VFX_ComposeFlameVolume` spawned a fixed count per CALL, and the caller calls
+it every frame.** No `dt` anywhere in the file. Two consequences:
+
+1. **Frame-rate dependent emission.** 13 sprites/frame is 780 per SECOND at
+   60 fps and 260 at 20. The fire changed density with the frame rate — and it
+   "settled" at ~20 fps because emitting less is what let the frame rate
+   recover. That is a feedback loop, not a budget.
+2. **The live count is rate x lifetime**: 600 body/s against a 1.075 s average
+   life is ~645 live body sprites plus ~54 core, for ONE flame. Each is a large
+   blended quad that the atlas cross-fade draws TWICE — about 1400 quads per
+   frame from a single campfire.
+
+Emission is now a RATE derived from a LIVE-COUNT target, which is the quantity
+an artist can actually see: `rate = live / averageLifetime`, with an accumulator
+carrying the fraction so 0.25 sprites per frame emits one every fourth frame
+rather than rounding to zero. Target 14 live body + 4 core with the puff sheet.
+
+| | before | after |
+|---|---|---|
+| emission | 13/frame (780/s at 60 fps) | 14 body + 4 core LIVE |
+| live sprites | ~700 | ~18 |
+| quads/frame | ~1400 | ~36 |
+
+`FVOL_BODY_LIFE_AVG` / `FVOL_CORE_LIFE_AVG` sit next to the lifetime ranges they
+average, because the rate is derived from them: change a lifetime without
+changing these and the live count silently moves. They are two halves of one
+number. A per-frame clamp (8 body, 4 core) keeps a long hitch from dumping a
+hundred sprites in the frame after it.
+
+**Second lever: the cross-fade now sheds under load.** It draws a second
+full-size quad for every animated particle, to hide the ~2-render-frame step of
+a 25 fps atlas. That is a subtle artifact; the second quad is a literal doubling
+of the most expensive thing on screen. Past `particle_fb_blend_max` live
+particles (default 220) the fade is dropped — an exact 2x fill saving on the
+frames that need it, nothing on the frames that do not. Nobody sees the step in
+a screen full of overlapping sprites; everybody sees 20 fps.
+
+**Still to do, in the order they are likely to pay** (the burst is one-shot, so
+it has no rate bug — its cost is 60 sprites x 10 bursts x 2 quads):
+1. Measure before tuning further — `ParticleSystem_GetStats` already reports
+   live/max, and the number to watch is live count x average screen area, not
+   particle count.
+2. The burst's `count` (60) and its sprite radius: fill scales with the SQUARE
+   of the radius, so 0.8x radius is a 36% saving where 0.8x count is 20%.
+3. `particle_soft_fade` adds a dependent texture fetch per fragment on a
+   fill-bound pass; worth A/B-ing once it works.
+4. Bloom over large bright additive areas (`post_fx.c`) is the other fullscreen
+   cost that scales with exactly this content.
+
+### PERF — two wrong guesses, then an instrument (28/07/2026)
+
+Owner: the rate fix changed the frame rate very little, and it left FlameVolume
+as "những hạt rời rạc, nhỏ xíu, ko đánh giá được gì".
+
+**Both of my perf changes were guesses, and the second one broke the look.**
+Cutting one flame from ~700 live sprites to ~18 barely moved the frame rate —
+which is itself the most useful measurement of the session, because it FALSIFIES
+the overdraw hypothesis. If 700 large blended quads were the binding constraint,
+removing 97% of them would not have been a small improvement. The emission-rate
+fix was still correct on its own terms (frame-rate-dependent emission is a bug
+whatever the cost profile), but it was sold as a performance fix and it was not
+one.
+
+`flame_body_live` is now a tunable (default 90, was hard-coded 14). A correct
+UNIT with a wrong VALUE is still wrong, and 14 was never justified by anything
+measured — it came from the same guess.
+
+**The instrument, so the third attempt is aimed.** `particle_perf_log = 1` prints
+one line per second:
+
+    PARTICLE perf: live=N quads=N batches=N vfxLights=N fps=N
+
+Each number kills a different hypothesis:
+
+- **live** small while fps is low → the cost is not particle count, and no
+  amount of spawning less will fix it.
+- **quads** versus live → how much the atlas cross-fade is really costing (it
+  doubles), measured rather than assumed.
+- **batches** → rlEnd/rlBegin splits. Particles draw in POOL order, so
+  populations interleave, and every alternation of texture, blend mode, lit
+  flag, atlas grid or emissive boost is a flush. Ten bursts plus a flame is
+  exactly the case that would interleave badly, and it is the hypothesis that
+  survives the flame result: the flame is ONE population and cutting it changed
+  nothing, while ten mixed effects are hundreds of state changes.
+- **vfxLights** → each one is a loop iteration in every particle fragment AND in
+  the scene's lit surfaces; FlameVolume spawns lights continuously.
+
+Next step is to read that line before touching anything else.
+
+### The particle shader had not compiled since the soft-particle wiring (28/07/2026)
+
+The owner's log, asked for to settle a performance question, answered a
+different one:
+
+    WARNING: RLVK: GLSL compile failed:
+    rlvk:50: error: 'u_resolution' : undeclared identifier
+    INFO: PARTICLE soft-fade: ON (depth tex 5, fade 0.45 m)
+
+`#include "common/soft_particle.glsl"` went in right after `#version`, while
+`uniform vec2 u_resolution` — which the included function uses — was declared
+further down with the other soft-particle uniforms. GLSL is read top to bottom.
+`particle_lit.fs` has not compiled since, so the F1 lit path, the emissive boost
+and the fade itself were all dead, and every visual judgement made in between
+was made on raylib's default shader.
+
+**The two lines together are the real lesson.** The engine said the shader
+failed; this file said the feature was ON. `ParticleLighting_Begin` gated on
+`s_litShader.id == 0`, and a failed compile does not produce id 0 — raylib hands
+back the DEFAULT shader and rlvk logs the error and continues. A non-zero id
+answers "did something get bound", not "did my shader compile".
+
+Now checked: if none of the uniforms this shader definitely declares resolve,
+the bound shader is not ours — log an ERROR naming the id and fall back to the
+documented unlit path instead of pretending. That is the difference between a
+silent wrong render and a line that says which line of GLSL to look at.
+
+**Every performance number from the last three rounds was measured on a broken
+shader** and has to be taken again.
+
+### Soft particles erased every particle the first frame they ran (28/07/2026)
+
+With the compile fixed, `SoftParticle_Factor` ran for real for the first time
+and the flame went invisible. The depth texture is bound (id 5) but reads back
+~0, so `diff = sceneLinear - fragLinear` is negative everywhere, the factor
+clamps to 0, and 0 multiplied into alpha is every particle in the game.
+
+**A linear scene depth at or before the near plane is geometrically
+impossible** — nothing can be solid at the camera's eye — so it is not
+occlusion, it is "this texture has no data here": never written, cleared to
+zero, or a backend where the snapshot did not land. `soft_particle.glsl` now
+returns 1.0 for that case. For a term that MULTIPLIES alpha there is only one
+safe direction to fail, and it is open.
+
+The C-side guard was already there and was not enough: it checks that a depth
+texture EXISTS, which is a different question from whether it contains depth.
+Two guards, two distinct failure modes — a missing target, and a target that is
+empty.
+
+**What this says about the original complaint.** The cut was never being faded:
+the shader had not compiled since the feature was wired, so every "still cut"
+observation was of a build with no soft particles at all. Whether the fade now
+works depends on whether that depth snapshot ever lands under rlvk, and the
+answer is visible in one look with `particle_soft_debug = 1`: all-red means the
+factor is 0 (the texture is empty and the new guard is what is keeping the
+particles on screen), a red band along the floor line means it works.
+
+### Soft particles, attempt parked: the second sampler (28/07/2026)
+
+With the shader compiling and the fade failing open, every particle drew as a
+flat bright SQUARE. That is the signature of `texture0` not being bound: an
+unbound sampler reads a 1x1 white texel, and a quad of constant colour is a
+square. Ruled out on the way: rlvk's `RL_BLEND_ADDITIVE` is
+`(SRC_ALPHA, ONE)` — the standard pair — so the white-RGB flame split is
+correctly modulated by its alpha and the blend was not the cause.
+
+What changed at exactly that point is that `particle_lit.fs` gained a SECOND
+sampler (`u_cameraDepthTex`). rlvk has previous form for binding-index
+rebasing, and going from one sampler to two is precisely the change that would
+shift `texture0`.
+
+`particle_soft_fade` now defaults to **0** — the fade is polish, the particles
+are the game. The default is also the experiment: turn it on and the squares
+tell us which layer is at fault.
+
+- squares only when the fade is ON → the sampling is wrong, keep the sampler;
+- squares even at 0 → the DECLARATION shifts the binding, and the fix is a
+  separate shader variant (one with the sampler, one without) rather than a
+  uniform.
+
+**Three separate faults in one feature, each hidden behind the previous one:**
+the include order stopped it compiling; the C guard checked that a depth texture
+exists rather than that it holds depth, so the first working frame erased every
+particle; and now the sampler itself. Only the first was visible without
+running the game, which is why the shader-compile check added earlier matters
+more than the feature does.
+
+### Soft particles reverted out of particle_lit.fs — rlvk sampler binding (28/07/2026)
+
+The decisive test came back: the squares appear with `particle_soft_fade = 0`,
+i.e. with the depth sampler declared but never read. So it is not the sampling —
+the DECLARATION alone moves `texture0`'s binding under rlvk, and an unbound
+sampler reads a 1x1 white texel, which across a quad is a flat square.
+
+`particle_lit.fs` is back to exactly one sampler. The C-side machinery stays and
+is inert: `s_locSoftFade` resolves to -1, the block is gated on that, and
+nothing binds or uploads. Promoted to `ENGINE_LANDMINES.md` because it is not a
+particle problem — ANY core shader that grows a second sampler will hit it, and
+the shader compiles cleanly so there is no error to notice.
+
+**What this cost, and the cheap thing that would have caught it.** Three rounds
+of visual debugging, on a build where the particle shader had not compiled at
+all for two of them. The instrument that finally worked was the owner pasting
+the engine's own log — it had been saying `GLSL compile failed` the whole time.
+The two checks added on the way (a shader that loads but does not compile; a
+depth texture that exists but is empty) are worth more than the feature was.
+
+**Soft particles remain unsolved**, and the cut is still there. Options when it
+resumes, in order of cost: a separate shader variant used only where the binding
+works; or the rlvk binding itself, which is the Renderer Agent's module.
+
+### PERF — the burst is free, the package is not (28/07/2026)
+
+Owner, measuring: `VFX_ComposeEnergyBurst` fired continuously holds ~60 fps;
+`VFX_ComposeImpactPackage` drops it. The burst is the only beat made of
+PARTICLES, so this rules the particle system out entirely — and with it the two
+optimisations attempted earlier, which were both aimed there.
+
+What is left is the same shape of problem twice over: a handful of objects whose
+cost is paid per FRAGMENT across the whole screen.
+
+- **VFX lights.** Each active light is a loop iteration in every particle
+  fragment AND in every lit surface fragment in the scene. The package spawns
+  one per impact; spam impacts and the whole screen pays for all of them.
+- **Screen distortion.** The pass always runs — it IS the blit of the scene, so
+  turning distortions off does not skip anything — but with sources active its
+  shader loops over them per fragment, full screen.
+
+Neither shows up as particle count, quads or batches, which is why the perf line
+alone would not have found it.
+
+Rather than argue about which, `impact_light` / `impact_distort` / `impact_decal`
+/ `impact_hitstop` now gate the beats individually. Turn them off one at a time
+and watch the frame rate; whichever restores it is the answer. The decal is in
+the list not because it is suspected but so it can be ruled OUT by measurement
+rather than by assumption. They stay afterwards as the per-effect budget
+switches.
+
+**Method note.** Three performance changes have now been made in this area; the
+first two were guesses at the particle system and neither paid. The owner's
+one-line comparison — one effect fast, a superset of it slow — narrowed it
+further in a sentence than either guess did in a round trip. The subtraction
+was available the whole time.
+
+### PERF — severity was applied twice, and that was the whole difference (28/07/2026)
+
+Owner: still dropping with the beats switched off. That narrowed it to the burst
+itself — and the burst alone holds 60 fps, so the package was not firing the
+same burst.
+
+It was not. `VFX_Sequence` multiplies every beat's spatial `a` by the sequence's
+scale (`s->scale * scale` for COMPOSE, `b->a * s->scale` for LIGHT / DISTORT /
+DECAL). The package ramped with severity in BOTH places: once in `VFX_SeqBegin`
+(`scale * Mix(0.7, 1.25, sev)`) and again in each beat's `a`
+(`Mix(0.6, 1.35, sev)` for the burst). At severity 1.0 that is 1.69x scale:
+
+| | bench burst | inside the package |
+|---|---|---|
+| scale | 1.00 | 1.69 |
+| sprites | 75 | 123 |
+| area each | x1 | x2.85 |
+| **total fill** | x1 | **x4.70** |
+
+Severity now lives in exactly one place — the sequence scale — and every beat's
+`a` is a plain proportion in metres at scale 1. Times (hitstop duration, decal
+and light lifetimes) keep their own severity ramps, because the sequence does
+not scale those. **4.70x -> 1.91x.**
+
+The residual 1.91x is real and intended: a maximum-severity impact SHOULD be
+bigger than the bench's default burst (scale 1.25 and intensity 0.85 against
+1.0/0.9). If spamming maximum-severity impacts is still too expensive, that is a
+budget question with an obvious dial — at severity 0.5 the sequence scale is
+0.975, i.e. exactly the bench burst.
+
+**Method note, the third in this area.** Two guesses at the particle system paid
+nothing; per-beat kill switches were about to blame the light or the distortion;
+the answer was a multiplier applied twice, and it fell out of ARITHMETIC once
+the owner's subtraction ("burst fast, package slow, beats off, still slow") left
+only one thing standing. A scale that compounds silently through a layer is the
+kind of bug that is invisible in a screenshot and obvious in a table.
+
+### Handoff written: HANDOFF_E_F.md (28/07/2026)
+
+`HANDOFF_E_F.md` at the repo root is the entry point for the next session on the
+remaining E/F work. It exists because this file is now 2459 lines and reading it
+whole is the most expensive mistake available in this codebase: the handoff
+points at **line 2186 onward only**, plus the last entry of
+`ENGINE_LANDMINES.md` and one section of the spec.
+
+It carries the state table, the seven landmines that would otherwise be stepped
+on again (rlvk's second sampler, a failed compile not returning id 0,
+`spriteAnimPhase` and its budget against the sheet, the sequence's double
+severity, emission as a rate, no camera shake on initiative, smoke sheets must
+self-shadow), and the working rules this session paid for — chiefly that the
+cost was never in the particle system, that the owner's own subtraction found in
+one sentence what two guesses did not, and that the game cannot be run from the
+agent's side (`FATAL: RLVK: instance creation failed`), so every runtime
+question has to go through a log line or a tunable.
+
+### E6 #5 — `VFX_ComposeSweepSlash` landed (28/07/2026)
+
+The last blocked item in E6. The spec wants "an arc mesh driven by an authored
+flipbook mask (`arc_slash_*`)"; that sheet does not exist and nothing in
+`scripts/flipbook/` can bake one — that pipeline is a Taichi smoke SIMULATION,
+which is the wrong instrument for a blade streak. So this took the route §0.2
+authorises where an asset stalls and GENERATED the mask
+(`core/composition/common/vc_sweep_slash.inl`, `SweepSlash_BuildMask`), the same
+move `VFX_ComposeDissolveExit` made for its body texture. Swapping in an authored
+sheet later is one line.
+
+**What makes it read as a cut rather than as a glowing banana**, in the order
+they matter:
+
+1. **The head outruns the tail.** The band is the gap between two angles walking
+   the same arc on different clocks — head ease-out (fastest at the start, a
+   follow-through), tail smoothstep starting 0.16 in. It is never a whole arc
+   that fades; a slash you can see all of at once is a decoration.
+2. **The cross-section is asymmetric.** Near-white against the outer edge,
+   smearing inward. Symmetric is a tube.
+3. **The tip is a needle.** Half-width goes to zero at the head, so the leading
+   end is a point rather than a cut-off rectangle.
+
+**The bug that would have shipped, caught by arithmetic rather than by looking.**
+Which side of the strip carries the hot rim is decided by `ribbon_strip.c`, not
+by the mask: `DrawRibbonStripEx` emits u = 0 at `center + side*halfWidth` with
+`side = normalize(cross(tangent, normal))`, and for this arc that cross product
+is the radially OUTWARD direction (basis check: axU x axV = n, so
+tangent x n = axU cos a + axV sin a = the radial). The mask had been authored
+with u = 1 as the outer edge, which would have buried the rim against the pivot
+and hung the smear outside the swing. On screen that does not look like a bug —
+it looks "a bit soft", which is exactly the kind of wrongness that survives a
+screenshot review. `core/tests/sweep_slash_test.c` now pins it.
+
+Also in the file, each one a landmine already paid for: emission of both the
+refraction sources and the sparks is a **rate** (`dt`-driven accumulator, ~9/s
+and ~55/s) rather than a count per call, because this composition is re-called
+every frame; the strip is `RIBBON_FIXED_NORMAL` + `Ribbon_ComputeArcLengthUV`, so
+the mask keeps its texel density as the band shortens; depth state is flushed on
+both sides; and there is no camera shake.
+
+Tunables (lazy, on first use): `slash_width`, `slash_tilt` (plane tilt off
+horizontal — at 0 the sweep is a disc on the ground and reads as a shockwave),
+`slash_distort` (the refraction is per-fragment across the whole screen for every
+live source — this is the perf switch), `slash_sparks`.
+
+Bench: manifest entry added by hand, `scripts/sync_vfx_test.py` regenerated the
+rest → NEW FX tab, "SWEEP SLASH". Build clean, `run_core_tests.sh` 7/7.
+
+**Not verified on screen** — the agent cannot run the game
+(`FATAL: RLVK: instance creation failed`). What the headless suite cannot answer:
+whether the tilt reads as a diagonal from the game camera, whether the striation
+frequency survives at gameplay distance, and whether three additive passes is the
+right amount of bloom feed. Those are the eyeball questions left for the owner.
+
+### SweepSlash, first screenshot: the sparks beat the blade (28/07/2026)
+
+Owner's capture: a chain of round bright beads strung along the arc, with the
+blade itself a faint blue smear behind them. It reads as fairy lights, not as a
+cut. The beads are the SPARKS, and three mistakes stacked to make them the
+effect:
+
+| | first cut | why it failed | now |
+|---|---|---|---|
+| rate x life | 55/s x 0.25 s = ~14 live | they accumulate faster than the head moves, so they lie on the arc like beads on a wire | 24/s x 0.14 s = ~3 live |
+| stretch | 0.10 → `1 + 4*0.10` = **1.4x** at 4 m/s | that is a round dot, not a streak | 1.10 → ~5x |
+| emissiveBoost | 1.5 | over the bloom threshold, and bloom turns a 2 cm sprite into a 10 cm bead | 1.15 |
+
+They also spawned across the leading THIRD of the band; now only the leading 8%,
+so they come off the tip instead of decorating the arc.
+
+The band had its own version of the same problem — too much soft, not enough
+edge. Half-width 0.16 → 0.105 of the arc radius (at 1.8 m that was a 1.5 m wide
+glow on a 1.8 m arc: a crescent moon, not a cut), the halo pass 2.7x → 1.8x, and
+the mask's rim narrowed and weighted up against its smear (sigma 0.10 → 0.075,
+0.55/0.95 → 0.45/0.80).
+
+**The lesson worth keeping is about the stretch number.** `stretchStrength` is
+not a 0..1 fraction — `stretchFactor = 1 + speed * strength`
+(`core/particle_system.c:1003`), so at gameplay speeds a value like 0.10 is
+indistinguishable from no stretch at all. The only other user in the tree
+(`vc_particle_upgrades_test.inl`) uses 0.04, which is where the wrong intuition
+came from. `core/tests/sweep_slash_test.c` now asserts the streak factor, the
+live-spark count and the life-to-sweep ratio, so this exact picture cannot come
+back silently.
+
+### SweepSlash: three passes drew three edges (28/07/2026)
+
+Second capture — the beads are gone and the blade reads — but the arc came out as
+**two or three parallel wires** rather than one edge, clearest at the head.
+
+The mask puts its hot rim at a fixed FRACTION of the strip's width (u ~ 0.05).
+The three passes were centred on the same path at 1.8x / 1.0x / 0.34x width, so
+each one placed its rim at a different radius: 1.8x as far out for the halo, a
+third as far for the core. Three rims, three wires. A symmetric mask (the rune
+circle's, which this layering was copied from) does not have this failure mode —
+widening a symmetric band just blurs it, which is why the pattern transferred
+without the problem transferring with it.
+
+Passes are now aligned by their **outer edge**, not their centre:
+`rr += halfW * env * (1 - passW[pass])`. Every rim lands on the same world
+circle; the wider passes reach further INWARD, which is what a halo behind a
+blade should do anyway. Asserted in `core/tests/sweep_slash_test.c`
+(`Test_PassesShareOneOuterEdge`), including that the halo still reaches inward
+past the core.
+
+**Rule for reuse:** any multi-pass ribbon whose mask is ASYMMETRIC across the
+strip must align its passes on the edge the mask is keyed to. Centre-aligning is
+only safe for symmetric masks.
+
+### SweepSlash: a lens, not a comet; and the AA was erasing the edge (28/07/2026)
+
+Owner, on the third capture: *"nó có 1 đầu bự 1 đầu nhọn, đầu bự đi trước đầu
+nhỏ theo sau — sao ko làm 2 đầu nhọn luôn?"* Correct, and the envelope's own
+arithmetic said so all along.
+
+`powf(s, 0.5f) * (1 - smoothstep((s-0.86)/0.14))` is zero at both endpoints —
+which is the property the first test asserted, and it is the WRONG property.
+`sqrt` reaches half width by s = 0.25, so the band was fat across most of its
+length and pinched only in the last percent, while the head's taper was squeezed
+into 14%. A blunt club leading a thin streamer: a comet. A blade leaves a LENS,
+pointed at both ends, because both ends are the same edge at different times.
+Now `powf(sinf(PI*s), 0.85f)`, and the test asserts **symmetry** —
+`env(s) == env(1-s)` — instead of the endpoint values, because that is the
+property that was actually wanted. Direction is still readable: it lives in the
+brightness and hue ramp toward the head, not in the silhouette.
+
+**Two more, both found while fixing that:**
+
+1. **The halo pass was washing out the edge it was supposed to sit behind.** All
+   three passes share one outer edge, so a halo carrying the rim lays a rim
+   1.8x thicker in metres on exactly the same line — a broad soft gradient
+   instead of a line, i.e. the "crescent moon, not a cut" of capture three. The
+   halo now draws from a SECOND generated sheet with the smear alone
+   (`SweepSlash_Profile(u, withRim)`), asserted monotone by
+   `Test_HaloSheetHasNoRim`.
+2. **The antialiasing shoulder was erasing the rim it protects.** The shoulder
+   spanned the outer 4% of the strip while the rim's sigma had been narrowed to
+   0.05 — they overlapped, and the shoulder was halving the rim's peak. The
+   shoulder must be narrower than the rim's distance from the border: 1.5%,
+   which at the mask's new 192-texel width is ~3 texels, all AA needs. The mask
+   also went 64 → 192 across, because a 5%-wide rim on a 64-texel sheet is three
+   texels magnified across metres of screen — bilinear cannot invent an edge the
+   texture does not resolve.
+
+Mask also gained a shallow lengthwise swell (`pulse`, 0.8-1.0) so the band is not
+a uniform sheet of light; a perfectly even arc reads as painted glass.
+
+7/7 suites, 46 checks in this one. Still not eyeballed by me — capture four is
+the owner's.
+
+### SweepSlash: width belongs to the arc's LENGTH, not its radius (28/07/2026)
+
+Fourth capture: pointed at both ends now, and reading as a LEAF — far too fat.
+
+Fatness is an aspect ratio against the distance the head travels, and the width
+was keyed to the arc's RADIUS (`length * 0.105`). That makes the ratio move with
+`arcRad`: at the bench's 2.2 rad the head covers 3.96 m and the band was 0.38 m
+across — 1:10, a leaf. The same constant at a 0.6 rad flick would have been about
+1:3, a paddle. The number was only ever right at one sweep angle, and nothing
+said which one.
+
+Now `halfW = length * clamp(arcRad, 0.5, 3.2) * 0.022`, i.e. **1:23 against the
+arc it actually travelled**, and the look holds at any sweep angle. Halo pass
+trimmed 1.8x -> 1.5x and 0.26 -> 0.18 alpha with it, since the wide dim smear was
+the other half of the leaf.
+
+`Test_BandIsThinAgainstItsOwnArc` pins both the ratio and its invariance to
+`arcRad` — the second assertion is the one that matters, because the first would
+have passed on the old formula too, at exactly one angle.

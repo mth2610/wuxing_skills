@@ -242,7 +242,12 @@ static void CheckPairMulti(const char *fsPath, const char *const *cPaths)
 int main(void)
 {
     printf("=== core headless test: shader uniform wiring ===\n");
-    static const char *particleSrc[] = { "core/particle_system.c", "core/vfx_light.c", NULL };
+    // screen_distort.c is in the list because the soft-particle uniforms
+    // (u_cameraDepthTex/Near/Far, u_resolution) are uploaded by
+    // ScreenDistort_BindDepthForSoftParticles, not by the particle system
+    // itself — the check stays strict, it just knows where to look.
+    static const char *particleSrc[] = { "core/particle_system.c", "core/vfx_light.c",
+                                         "core/screen_distort.c", NULL };
     static const char *surfaceSrc[]  = { "core/surface_material.c", "core/vfx_light.c", NULL };
     CheckPairMulti("core/shaders/particle_lit.fs", particleSrc);
     CheckPairMulti("core/shaders/surface_lit.fs", surfaceSrc);

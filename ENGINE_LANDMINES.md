@@ -123,3 +123,32 @@ just as literally: `core/ribbon_strip.c` disabled culling immediately before
 ribbon presenting its back face — e.g. a ring lying flat on a plane via
 `RIBBON_FIXED_NORMAL` — rendered NOTHING, while camera-facing ribbons looked
 fine. Fixed in core; details in `core/docs/LANDMINES.md`.
+
+## rlvk: a SECOND sampler in a shader unbinds the first (28/07/2026)
+
+**Symptom.** Every particle draws as a flat, uniformly bright SQUARE — soft
+interior gone, quad edges hard. Anything textured through the affected shader
+loses its texture; a 1x1 white texel across a quad is a square.
+
+**Cause.** `core/shaders/particle_lit.fs` gained a second `uniform sampler2D`
+(`u_cameraDepthTex`, pulled in by `common/soft_particle.glsl`). rlvk's shaderc
+pass rebases binding indices, and going from one sampler to two moved
+`texture0`, so nothing was bound to it. The shader COMPILES cleanly — rlvk
+reported "shader program compiled (26 uniforms)" — so there is no error to find.
+
+**Rule.** Under the Vulkan backend, treat "how many samplers this shader
+declares" as an interface that other things depend on. Before adding a second
+sampler to a shader that has one, verify on-device; if the texture goes flat,
+that is this. The mere DECLARATION is enough — the squares appear with the new
+sampler's feature switched off and never read, which is the cleanest way to tell
+this apart from a sampling bug.
+
+**Diagnosis shortcut.** Set the new feature's uniform to 0 so its sampler is
+never read. Still square = binding (this landmine). Square only when the feature
+is on = the sampling maths.
+
+Related, same session: a shader that FAILS to compile does not come back with
+id 0 — raylib hands over the default shader and rlvk logs the GLSL error and
+continues, so `shader.id != 0` answers "did something get bound", not "did mine
+compile". Check that a uniform you know the shader declares resolves; see
+`ParticleLighting_Begin` in `core/particle_system.c`.

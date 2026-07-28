@@ -13,7 +13,7 @@
 #include "vc_smoke_energy.inl"
 #include "vc_glint_sparkle.inl"
 // @gen:common_includes begin
-// 9 include(s) — auto-managed by sync_vfx_test.py
+// 12 include(s) — auto-managed by sync_vfx_test.py
 #include "vc_beam.inl"
 #include "vc_chain_link.inl"
 #include "vc_smoke_puff.inl"
@@ -25,4 +25,5 @@
 #include "vc_charge_converge.inl"
 #include "vc_rune_circle.inl"
 #include "vc_dissolve_exit.inl"
+#include "vc_sweep_slash.inl"
 // @gen:common_includes end

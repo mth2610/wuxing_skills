@@ -259,3 +259,40 @@ compile log the first time it is instantiated. Two smaller traps in the same
 file: uniform initialisers (`uniform float edgeWidth = 0.04;`) are ignored with
 a warning under this backend, so a caller that forgets to set one gets 0, not
 the written default.
+
+## A masked ribbon: which side of the strip is u = 0 (28/07/2026)
+
+**Symptom.** An asymmetric mask on a `DrawRibbonStripEx` band comes out mirrored
+— the hot edge on the wrong side of the path. It does not look like a bug on
+screen; it looks like the effect is "a bit soft", which is the kind of wrongness
+that survives a screenshot review indefinitely.
+
+**Cause.** `ribbon_strip.c` emits u = 0 at `center + side*halfWidth` and u = 1 at
+`center - side*halfWidth`, with `side = normalize(cross(tangent, primaryNormal))`.
+Nothing about the caller's own geometry decides it. The path is the strip's
+CENTRE (u = 0.5), not one of its edges — the band extends `halfWidth` to BOTH
+sides of it.
+
+**Rule.** Before authoring an asymmetric mask, work out which world direction
+`cross(tangent, normal)` actually points for your path and write the derivation
+down. For an arc built as `p(a) = origin + axU cos a + axV sin a` with
+`axV = cross(n, axU)`, the basis is right-handed (`axU x axV = n`), so
+`tangent x n` is the radial OUTWARD direction — i.e. u = 0 is the outer edge.
+Worked example and a headless assertion on it: `VFX_ComposeSweepSlash`
+(`core/composition/common/vc_sweep_slash.inl`, `core/tests/sweep_slash_test.c`).
+
+## `stretchStrength` is not a 0..1 fraction (28/07/2026)
+
+**Symptom.** Fast particles meant to read as streaks/sparks draw as ROUND DOTS,
+and bloom then inflates each one into a bead. Nothing logs anything wrong.
+
+**Cause.** `stretchFactor = 1 + speed * stretchStrength`
+(`core/particle_system.c:1003`). At 4 m/s a "reasonable-looking" 0.10 gives
+1.4x — visually identical to no stretch. The only prior user in the tree
+(`vc_particle_upgrades_test.inl`) sets 0.04, which is where the wrong intuition
+comes from: that value is for a much faster population.
+
+**Rule.** Pick the value from the FACTOR you want at the speed you actually
+spawn at: `strength = (factor - 1) / speed`. For a 4 m/s spark wanting a 5x
+streak, that is 1.0, not 0.1. Also set `stretchMinSpeed` below the slowest
+speed in the population, or the slow tail silently opts out of stretching.

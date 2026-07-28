@@ -64,6 +64,13 @@ static float s_fvolAtlas = 1.0f;
 static Texture2D s_fvolFlameTex = {0};   // the COLUMN sheet
 static Texture2D s_fvolPuffTex = {0};    // the PUFF sheet
 static float s_fvolBodyCount = 1.0f;   // x on atlas body sprites (perf lever)
+// How many body sprites are ALIVE at once — the quantity the eye judges, and
+// the one the emission rate is derived from (rate = live / average lifetime).
+static float s_fvolBodyLive = 90.0f;
+// Multiplier on the puff body's radius. Count and size buy the same cohesion at
+// the same fill cost; size is the cheaper one in draw calls. Which is right is
+// a look judgement, so both are tunables.
+static float s_fvolBodySize = 1.0f;
 static float s_fvolSpread = 1.0f;      // x on how wide the licks are spread
 // Body blend: 1 = ADDITIVE (default with the atlas), 0 = the original ALPHA.
 //
@@ -87,6 +94,14 @@ static SpriteAnim s_fvolPuffAnim = {0};
 // The longest life a BODY particle can be given below. The flipbook rate is
 // derived from it, so the two cannot drift apart.
 #define FVOL_BODY_LIFE_MAX 1.40f
+// Averages of the lifetime ranges the spawns below actually use. The emission
+// rate is derived from these, so if a lifetime changes, change these with it —
+// they are two halves of one number (live count = rate x lifetime).
+// Spread of the per-particle flipbook phase. Bought out of the playback rate,
+// not added on top of it — see where the rate is derived.
+#define FVOL_BODY_PHASE_MAX 0.50f
+#define FVOL_BODY_LIFE_AVG 1.075f   // Mix(0.75, 1.40)
+#define FVOL_CORE_LIFE_AVG 0.30f
 
 static void FVol_InitShared(void)
 {
@@ -99,6 +114,8 @@ static void FVol_InitShared(void)
     Tuning_RegisterFloat("flame_width_mul", &s_fvolWidthMul, 1.0f);
     Tuning_RegisterFloat("flame_atlas", &s_fvolAtlas, 1.0f); // 0 sprites/1 puff/2 column
     Tuning_RegisterFloat("flame_body_count", &s_fvolBodyCount, 1.0f);
+    Tuning_RegisterFloat("flame_body_live", &s_fvolBodyLive, 90.0f);
+    Tuning_RegisterFloat("flame_body_size", &s_fvolBodySize, 1.0f);
     Tuning_RegisterFloat("flame_spread", &s_fvolSpread, 1.0f);
     Tuning_RegisterFloat("flame_body_blend", &s_fvolBodyBlend, 1.0f);
     Tuning_RegisterFloat("flame_body_alpha", &s_fvolBodyAlpha, 0.18f);
@@ -131,7 +148,15 @@ static void FVol_InitShared(void)
         // longest-lived particle makes the flame vanish while its alpha curve
         // still says visible). The puff sim ends in dissipation rather than
         // darkness, so overrunning it would blink, not fade.
-        SpriteAnim_Init(&s_fvolPuffAnim, 8, 8, 64, 64.0f / FVOL_BODY_LIFE_MAX,
+        // Rate derived from the longest life PLUS the largest phase offset, so
+        // the two together still land inside the 64 frames. At the old
+        // 64/1.40 = 45.7 fps a full-life sprite consumed the whole sheet
+        // exactly, which left no room for a phase at all — and without a phase
+        // every sprite spawned in the same frame holds the same frame for its
+        // whole life (SpriteAnim advances on ABSOLUTE age). 64/1.90 = 33.7 fps
+        // leaves 0.5 s of phase: (1.40 + 0.50) x 33.0 = 62.7 frames.
+        SpriteAnim_Init(&s_fvolPuffAnim, 8, 8, 64,
+                        64.0f / (FVOL_BODY_LIFE_MAX + FVOL_BODY_PHASE_MAX),
                         ANIM_ONCE);
     }
     else
@@ -237,8 +262,29 @@ void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale,
     if (intensity > 1.0f)
         intensity = 1.0f;
 
-    int nCore = (int)(FVOL_MAX_CORE * intensity);
-    int nBody = (int)(FVOL_MAX_BODY * intensity);
+    // ── EMISSION IS A RATE, NOT A COUNT PER CALL ─────────────────────────────
+    //
+    // This function is called EVERY FRAME for a sustained fire, and it used to
+    // spawn a fixed number of sprites each time. Two consequences, one of them
+    // a bug and one of them the reason a single flame cost the frame rate:
+    //
+    //   1. Frame-rate dependent. At 60 fps it emitted 13 sprites/frame = 780 per
+    //      SECOND; at 20 fps, 260. The fire literally changed density with the
+    //      frame rate, and it "stabilised" at ~20 fps because emitting less is
+    //      what let the frame rate recover — a feedback loop, not a budget.
+    //   2. The live count was rate x lifetime: 780/s against a 0.75-1.40 s body
+    //      life is ~860 live sprites for ONE flame, each a large blended quad
+    //      drawn TWICE by the atlas cross-fade. ~1700 quads/frame.
+    //
+    // The knob is now the LIVE COUNT, which is the thing an artist can actually
+    // see, and the rate is derived from it: rate = live / averageLifetime. The
+    // accumulator carries the fraction, so 0.25 sprites per frame at 60 fps
+    // emits one every fourth frame instead of rounding to zero or to one.
+    const float dtNow = GetFrameTime();
+    static float s_fvolBodyAccum = 0.0f;
+    static float s_fvolCoreAccum = 0.0f;
+
+    int nCore, nBody;
     if (useAtlas)
     {
         // FAR fewer, FAR bigger. Each atlas sprite already carries a whole
@@ -251,13 +297,32 @@ void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale,
         // The PUFF sheet is one billow, not a whole fire, so the bed needs more
         // of them — but each is also SMALLER (see the radius below), so the
         // overdraw that capped the column sheet at 6 sprites stays paid for.
-        nBody = (int)((usePuff ? 10.0f : 6.0f) * intensity * s_fvolBodyCount);
-        nCore = (int)(3.0f * intensity);
+        // Target LIVE sprites. The first pass at this set 14 and the fire fell
+        // apart into scattered dots — a correct unit with a wrong value is
+        // still wrong, and cutting 700 to 14 was never justified by anything
+        // measured. It is a TUNABLE now (`flame_body_live`) precisely because
+        // the right value is a judgement about the look, not arithmetic.
+        const float bodyLive = s_fvolBodyLive * intensity * s_fvolBodyCount;
+        const float coreLive = s_fvolBodyLive * 0.22f * intensity;
+        s_fvolBodyAccum += dtNow * (bodyLive / FVOL_BODY_LIFE_AVG);
+        s_fvolCoreAccum += dtNow * (coreLive / FVOL_CORE_LIFE_AVG);
     }
-    if (nCore < 1)
-        nCore = 1;
-    if (nBody < 2)
-        nBody = 2;
+    else
+    {
+        // The pre-atlas path keeps its own densities, expressed the same way.
+        s_fvolBodyAccum += dtNow * (FVOL_MAX_BODY * intensity / FVOL_BODY_LIFE_AVG);
+        s_fvolCoreAccum += dtNow * (FVOL_MAX_CORE * intensity / FVOL_CORE_LIFE_AVG);
+    }
+    nBody = (int)s_fvolBodyAccum;
+    nCore = (int)s_fvolCoreAccum;
+    s_fvolBodyAccum -= (float)nBody;
+    s_fvolCoreAccum -= (float)nCore;
+    // A long hitch must not dump a hundred sprites in one frame — that is the
+    // spike the budget exists to prevent.
+    if (nBody > 24) { nBody = 24; s_fvolBodyAccum = 0.0f; }
+    if (nCore > 8)  { nCore = 8;  s_fvolCoreAccum = 0.0f; }
+    if (nBody < 0) nBody = 0;
+    if (nCore < 0) nCore = 0;
 
     // ── BODY: alpha, black-body ramp, cools into smoke ───────────────────────
     for (int i = 0; i < nBody; i++)
@@ -305,7 +370,16 @@ void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale,
                          sinf(ang) * 0.06f * scale},
             // Bigger with the atlas: the sprite IS the flame, so it has to be
             // read at flame size rather than as one blob among many.
-            .radius = (usePuff  ? Math_Mix(0.20f, 0.32f, Random01())
+            // SIZE, and why it went up when the COUNT came down. At ~215 live
+            // sprites the old 0.20-0.32 m billows overlapped by sheer number;
+            // at 90 they read as separate dots. Fill cost is count x radius^2,
+            // so buying cohesion back with size costs the same as buying it
+            // with count — and size also removes the visible EDGES that make a
+            // sparse cloud read as debris. Same law SmokePuff uses, and for the
+            // same reason: mostly medium with a tail of large ones (the pow
+            // weighting), so overlaps look like structure rather than texture.
+            .radius = (usePuff  ? Math_Mix(0.22f, 0.62f, powf(Random01(), 1.6f))
+                                      * s_fvolBodySize
                        : useAtlas ? Math_Mix(0.30f, 0.46f, Random01())
                                   : Math_Mix(0.09f, 0.20f, powf(Random01(), 1.5f))) * scale,
             .lifetime = life,
@@ -326,6 +400,11 @@ void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale,
             .render.texture = useAtlas ? bodyTex
                                        : s_smokePuffTex[i % SMOKE_PUFF_VARIANTS],
             .spriteAnim = useAtlas ? bodyAnim : NULL,
+            // Per-particle phase into the sheet. Sprites born in the same frame
+            // otherwise hold the SAME frame for their whole lives — the flame
+            // emits several per frame, so without this it reads as batches of
+            // identical stamps rather than as many independent billows.
+            .spriteAnimPhase = usePuff ? Random01() * FVOL_BODY_PHASE_MAX : 0.0f,
             // FIRE EMITS LIGHT — it must not be multiplied by the scene's.
             // Lighting is a multiply, so a flame lit by a dim sky turns brown;
             // that is what "the fire went black" was. Only its smoke is lit.
