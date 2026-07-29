@@ -64,6 +64,93 @@ static void ImpactPkg_EnergyBurst(Vector3 pos, float scale, void *ud)
     VFX_ComposeEnergyBurst(pos, (VC_MaterialId)(intptr_t)ud, scale, 0.85f);
 }
 
+// ── THE IMPACT PRIMARIES ────────────────────────────────────────────────────
+//
+// An impact is not one effect, it is four arriving on a schedule. Until now the
+// four existed only as beats INSIDE this file, which had two costs. The obvious
+// one is that a skill wanting just a flash had to fire a whole package. The
+// expensive one is that a beat buried in a composite is invisible: the DECAL
+// beat here shipped without its `.ud` texture, so the sequencer's
+// `if (b->ud != NULL)` skipped it every time and the impact has been drawing
+// NO MARK AT ALL — while the `normal` this function takes, and carefully kept
+// alive in a static ring for that beat, was written and never read. Nothing
+// failed, nothing logged, and it survived every review. A named primary with
+// its own bench entry could not have hidden that.
+//
+// So the numbers below are the single definition of what an impact's pieces
+// ARE, used both by the primaries and by the package's score. Severity is a
+// deliberate exception: it scales TIMES here (a scuff and a crater should not
+// linger equally) and never sizes — the size ramp lives in exactly one place,
+// the package, or it multiplies (see the note in VFX_ComposeImpactPackage).
+static float ImpactFlash_Radius(void)             { return 3.4f; }
+static float ImpactFlash_Life(float sev)          { return Math_Mix(0.10f, 0.22f, sev); }
+static float ImpactDistort_Radius(void)           { return 2.1f; }
+static float ImpactDistort_Strength(float sev)    { return Math_Mix(0.18f, 0.42f, sev); }
+static float ImpactDistort_Life(void)             { return 0.35f; }
+static float ImpactDecal_Radius(void)             { return 1.5f; }
+static float ImpactDecal_Life(float sev)          { return Math_Mix(1.6f, 4.5f, sev); }
+
+// The tier gates travel WITH the primaries, not with the package. A caller
+// reaching for the primary directly gets the same budget protection, which is
+// the whole point of making these callable rather than copyable.
+void VFX_ComposeImpactFlash(Vector3 pos, VC_MaterialId matId, float scale, float severity01)
+{
+    ImpactPkg_InitShared();
+    float sev = Clamp(severity01, 0.0f, 1.0f);
+    // E8: a VFX light is a loop iteration in EVERY particle and lit-surface
+    // fragment on screen, so spamming impacts spreads its cost over the whole
+    // frame. Below MED the flash is DROPPED, not dimmed.
+    if (s_ipLight <= 0.5f || GfxQuality_Get() < GFX_MED) return;
+    const VFX_ElementMaterial *m = VFX_Material(matId);
+    VFXLight_Spawn(pos, m ? m->glow : WHITE,
+                   ImpactFlash_Radius() * scale, ImpactFlash_Life(sev),
+                   // Only two priorities exist. LOW: an impact is a normal beat
+                   // and must never evict an ultimate's light.
+                   VFX_PRIORITY_LOW);
+}
+
+void VFX_ComposeImpactDistort(Vector3 pos, float scale, float severity01)
+{
+    ImpactPkg_InitShared();
+    float sev = Clamp(severity01, 0.0f, 1.0f);
+    // The distortion pass costs per fragment across the WHOLE screen for every
+    // live source, which is the shape of cost a Mali A33 cannot absorb.
+    if (s_ipDistort <= 0.5f || GfxQuality_Get() < GFX_MED) return;
+    ScreenDistort_Add(pos, ImpactDistort_Radius() * scale,
+                      ImpactDistort_Strength(sev), ImpactDistort_Life(), 1.0f);
+}
+
+void VFX_ComposeImpactDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01)
+{
+    ImpactPkg_InitShared();
+    if (s_ipDecal <= 0.5f) return;
+    float sev = Clamp(severity01, 0.0f, 1.0f);
+    // Routed through SpawnGroundDecal, which RESOLVES the preset to a real
+    // texture. The dead beat this replaces passed no texture at all — that is
+    // exactly the failure a preset enum prevents and a raw Texture2D field
+    // invites.
+    const VFX_ElementMaterial *m = VFX_Material(matId);
+    DecalPresetType preset = (m && m->blendMode == BLEND_ALPHA) ? DECAL_PRESET_CRACK
+                                                                : DECAL_PRESET_BURN;
+    SpawnGroundDecal(preset, pos, ImpactDecal_Radius() * scale, ImpactDecal_Life(sev));
+}
+
+// Sequence adapters — the package fires the primaries THROUGH the score, so
+// there is exactly one implementation of each beat and it is the callable one.
+typedef struct { VC_MaterialId mat; float sev; } ImpactPkgParams;
+static ImpactPkgParams s_ipParams[VFX_SEQ_MAX];
+static int             s_ipParamNext = 0;
+
+static void ImpactPkg_Flash(Vector3 pos, float scale, void *ud)
+{ const ImpactPkgParams *p = (const ImpactPkgParams *)ud;
+  VFX_ComposeImpactFlash(pos, p->mat, scale, p->sev); }
+static void ImpactPkg_Distort(Vector3 pos, float scale, void *ud)
+{ const ImpactPkgParams *p = (const ImpactPkgParams *)ud;
+  (void)p; VFX_ComposeImpactDistort(pos, scale, p->sev); }
+static void ImpactPkg_Decal(Vector3 pos, float scale, void *ud)
+{ const ImpactPkgParams *p = (const ImpactPkgParams *)ud;
+  VFX_ComposeImpactDecal(pos, p->mat, scale, p->sev); }
+
 void VFX_ComposeImpactPackage(Vector3 pos, Vector3 normal, VC_MaterialId matId,
                               float scale, float severity01)
 {
@@ -76,14 +163,18 @@ void VFX_ComposeImpactPackage(Vector3 pos, Vector3 normal, VC_MaterialId matId,
         normal = (Vector3){0.0f, 1.0f, 0.0f};
     normal = Vector3Normalize(normal);
 
-    // The normal has to outlive this call: the sequence fires its beats over
-    // the next fraction of a second, long after this stack frame is gone.
-    // One slot per sequence, so a burst of impacts cannot alias each other.
-    static Vector3 s_ipNormals[VFX_SEQ_MAX];
-    static int     s_ipNormalNext = 0;
-    Vector3 *nrm = &s_ipNormals[s_ipNormalNext];
-    s_ipNormalNext = (s_ipNormalNext + 1) % VFX_SEQ_MAX;
-    *nrm = normal;
+    // The beat parameters have to outlive this call: the sequence fires over the
+    // next fraction of a second, long after this stack frame is gone. One slot
+    // per sequence, so a burst of impacts cannot alias each other. (This ring
+    // used to hold the `normal` for a decal beat that never fired — see the
+    // primaries above. `normal` is still taken because callers pass a surface
+    // and the API should not churn, but nothing consumes it yet: the decal path
+    // is ground-projected, so there is no orientation to give it.)
+    ImpactPkgParams *prm = &s_ipParams[s_ipParamNext];
+    s_ipParamNext = (s_ipParamNext + 1) % VFX_SEQ_MAX;
+    prm->mat = matId;
+    prm->sev = sev;
+    (void)normal;
 
     // SEVERITY LIVES HERE, AND ONLY HERE. The sequence multiplies every beat's
     // spatial `a` by this scale (`s->scale * scale` for COMPOSE, `b->a *
@@ -110,12 +201,11 @@ void VFX_ComposeImpactPackage(Vector3 pos, Vector3 normal, VC_MaterialId matId,
     // E8: a VFX light is a loop iteration in EVERY particle and lit-surface
     // fragment on screen, so spamming impacts spreads its cost over the whole
     // frame (PROGRESS, 28/07). Below MED the flash is dropped, not dimmed.
-    if (s_ipLight > 0.5f && GfxQuality_Get() >= GFX_MED)
     VFX_SeqAt(s, 0.0f, (VFX_Beat){
-        .kind = VFX_BEAT_LIGHT,
-        .a = 3.4f,                           // radius, metres (x sequence scale)
-        .b = Math_Mix(0.10f, 0.22f, sev),    // lifetime — a TIME, not scaled
-        .color = mat ? mat->glow : WHITE,
+        .kind = VFX_BEAT_COMPOSE,
+        .a = 1.0f,                 // the sequence scale IS the size
+        .cb = ImpactPkg_Flash,     // gate + numbers live in the primary
+        .ud = prm,
     });
 
     // t=0 — HITSTOP, gated. A light hit that freezes the game reads as a
@@ -139,23 +229,22 @@ void VFX_ComposeImpactPackage(Vector3 pos, Vector3 normal, VC_MaterialId matId,
     });
 
     // t=0.03 — distortion, gated: a shockwave on a light hit is noise.
-    if (sev >= 0.35f && s_ipDistort > 0.5f && GfxQuality_Get() >= GFX_MED)
+    if (sev >= 0.35f)
         VFX_SeqAt(s, 0.03f, (VFX_Beat){
-            .kind = VFX_BEAT_DISTORT,
-            .a = 2.1f,                        // radius (x sequence scale)
-            .b = Math_Mix(0.18f, 0.42f, sev), // strength — not a length
-            .c = 0.35f,                       // lifetime
+            .kind = VFX_BEAT_COMPOSE,
+            .a = 1.0f,
+            .cb = ImpactPkg_Distort,
+            .ud = prm,
         });
 
     // t=0.04 — the mark left behind, and the only beat that outlives the
     // moment. Its lifetime scales with severity because a scuff and a crater
     // should not linger for the same three seconds.
-    if (s_ipDecal > 0.5f)
     VFX_SeqAt(s, 0.04f, (VFX_Beat){
-        .kind = VFX_BEAT_DECAL,
-        .a = 1.5f,                           // scale (x sequence scale)
-        .b = Math_Mix(1.6f, 4.5f, sev),      // lifetime — a TIME, not scaled
-        .c = (float)GetRandomValue(0, 360),  // rotation
+        .kind = VFX_BEAT_COMPOSE,
+        .a = 1.0f,
+        .cb = ImpactPkg_Decal,
+        .ud = prm,
     });
 
     // NO SCREEN SHAKE. This shipped with a shake beat gated at severity 0.90;

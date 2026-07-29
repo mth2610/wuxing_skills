@@ -7,6 +7,9 @@ C / Raylib 6.0 game project. Rendering backend: **Vulkan 1.1 via `rlvk` (priorit
 - `DOC_MAINTENANCE.md` — How to WRITE a doc (ground-truth vs inferred, patch log).
 - `ENGINE_LANDMINES.md` — **Cross-cutting traps** every module can hit (read before touching GL/shaders or the Android build).
 - `ROADMAP.md` — The one project-wide plan/progress doc.
+- `core/docs/VFX_PLAN.md` — **the active VFX plan (Đợt H)**: what is left of E/F, why the
+  look still falls short (the toolkit is all particles, the geometry half is unused), and
+  the ordered task list. `core/docs/ELDEN_VFX_SPEC.md` is now history.
 - `core/docs/API.md` — Full engine API (particle, trail, force field, shader, mesh...)
 - `skills/docs/RECIPE.md` — **One-prompt skill creation guide** (archetype picker, command sequence, element presets, scale rules, aesthetic checklist)
 - `compute/docs/API.md` — GPU compute particle system (shared by skills + environment)

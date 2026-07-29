@@ -35,6 +35,7 @@
 #include "core/particle_system.h"
 #include "core/composition/common/vc_motion.h"   // Motion Library (orbit/helix/jitter/breathe)
 #include "core/presets/vc_material.h"            // Element Material Table (VC_MaterialId)
+#include "core/geometry/procedural_mesh_utils.h" // GroundHeightSampleFn (H2 ground wave)
 
 // ── Per-frame drivers ───────────────────────────────────────────────────────
 // The pooled components (character aura) and the E3 sequencer ride these two
@@ -129,6 +130,16 @@ void VFX_ComposeEnergyBurst(Vector3 pos, VC_MaterialId matId, float scale,
 // this one at 0.55-0.7 (owner: "như là thời gian bị chậm lại").
 void VFX_ComposeImpactPackage(Vector3 pos, Vector3 normal, VC_MaterialId matId,
                               float scale, float severity01);
+// ...and its PRIMARIES, callable on their own. A skill that wants only the
+// flash, or only the mark, calls one of these instead of firing a package and
+// switching the rest off. Each carries its own tier gate and its own `impact_*`
+// budget switch, so reaching for a piece cannot bypass the budget.
+// `severity01` scales TIMES only (lifetime, strength); the SIZE ramp lives in
+// the package alone, or it multiplies. One-shot: call once from a state
+// transition, never from a draw path.
+void VFX_ComposeImpactFlash(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
+void VFX_ComposeImpactDistort(Vector3 pos, float scale, float severity01);
+void VFX_ComposeImpactDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
 
 // ── E6.7. Light shaft ───────────────────────────────────────────────────────
 // Godrays. Camera-facing tapered ribbons that CONVERGE at `from` and widen
@@ -139,6 +150,69 @@ void VFX_ComposeImpactPackage(Vector3 pos, Vector3 normal, VC_MaterialId matId,
 // rlvk), so shafts fade by distance along their own length, not by what they hit.
 void VFX_ComposeLightShaft(Vector3 from, Vector3 to, VC_MaterialId mat,
                            float width, float intensity);
+
+// ── H1. Swept trail ─────────────────────────────────────────────────────────
+// The swept weapon/body trail: a strip that records where something HAS BEEN,
+// instead of sprites re-emitted along its path. Đợt H's first task, because
+// `core/trail_system.h` was 18 shipping entry points that no composition used.
+//
+// `followTransform` is sampled at its ORIGIN every frame and must stay valid
+// until VFX_KillSweptTrail (typically a static Matrix on the owning skill).
+// `width` is the FULL width in metres at its widest — a CEILING, not a value:
+// the drawn width is also capped against the length the tip actually travelled
+// (1:20 blade, 1:10 ribbon, 1:40 filament), so a slow or hard-turning weapon
+// gets a thin trail rather than a fat stub. `lifetime` is the tail's memory in
+// seconds (how long a laid-down point stays in the strip), clamped to 1.0 s by
+// TRAIL_HISTORY_COUNT.
+//
+// ONE-SHOT + POOLED: call once from a state transition, keep the handle, and
+// release it. Calling it every frame stacks trails until the pool (8) recycles.
+// Kill does not cut the strip out of existence — it stops the feed, and the
+// strip drains its own history and fades, which is the wind-down.
+typedef enum {
+    VFX_TRAIL_BLADE = 0,   // thin, hard outer edge, lies in the plane of the
+                           // swing (holds a real silhouette), SweepSlash mask
+    VFX_TRAIL_RIBBON = 1,  // soft, wide, cloth-like, camera-facing
+    VFX_TRAIL_FILAMENT = 2 // several thin strands at staggered lags — the "many
+                           // threads" look; sheds strands below GFX_MED
+} VFX_TrailStyle;
+
+int  VFX_ComposeSweptTrail(const Matrix *followTransform, VC_MaterialId mat,
+                           float width, float lifetime, VFX_TrailStyle style);
+void VFX_TrailSetWidth(int handle, float width01);   // ramped, for wind-down
+void VFX_KillSweptTrail(int handle);
+
+// ── H2. Ground wave ─────────────────────────────────────────────────────────
+// An expanding ring of ground-CONFORMING geometry: it rises, it has a lip whose
+// crest leads, and its inner face is brighter than its outer one — the thing a
+// flat additive decal cannot do. `radius` is where the front arrives at t01 = 1,
+// in metres. `heightFn` (procedural_mesh_utils.h) is sampled per vertex so the
+// wave follows a slope instead of clipping through it; pass NULL for flat at
+// `center.y`. Additive and unlit with an AUTHORED shading gradient — a lit
+// material on ground geometry is black-on-black in the night arena
+// (ENGINE_LANDMINES §3).
+//
+// CONTINUOUS: call every frame from a draw path with t01 running 0 -> 1. Called
+// once it draws a single frame and looks like nothing happened.
+void VFX_ComposeGroundWave(Vector3 center, VC_MaterialId mat, float radius,
+                           float t01, GroundHeightSampleFn heightFn, void *ud);
+// The terrain sampler almost every caller wants: the ACTIVE map's ground height.
+// Pass it as `heightFn` (with ud = NULL). Passing NULL instead gives a flat ring
+// at center.y, which looks correct on level ground and wrong on any slope.
+float VFX_GroundHeightFromMap(float worldX, float worldZ, void *unused);
+
+// ── PRIMARY: spark trail ────────────────────────────────────────────────────
+// ONE small moving thing with a CURVED tail, self-terminating. The piece Charge
+// Converge and the old Spirit Swarm were missing: motes that are dots read as
+// dots, and a stretched sprite cannot help because a stretch is a straight
+// segment while a mote spiralling inward is doing nothing but turning.
+// `vel` m/s sets the motion and the direction the tail lays in; `length` is the
+// tail in metres, `life` in seconds. Returns a trail id, or -1 when the pool is
+// full — an emitter running at a rate can ignore it.
+// One-shot per spark: the CALLER spawns these at a rate, never one per frame
+// per mote.
+int VFX_ComposeSparkTrail(Vector3 pos, Vector3 vel, VC_MaterialId matId,
+                          float length, float life);
 
 // Batch helpers for the restored water stream: bind the tube shader once and
 // draw N streams inside, instead of a Begin/End per projectile. Not generated —

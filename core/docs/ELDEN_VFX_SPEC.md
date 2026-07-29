@@ -1,4 +1,33 @@
-# Đợt E — Elden-Ring-tier VFX: implementation spec
+# Đợt E/F — Elden-Ring-tier VFX (HISTORY, superseded 28/07/2026)
+
+> **This document is no longer the plan.** The active plan is
+> [`VFX_PLAN.md`](VFX_PLAN.md) (Đợt H). Read this one only for context on why
+> Đợt E/F made the choices it did.
+>
+> **Status of everything it specified**, so nobody has to reconstruct it:
+>
+> | Task | Outcome |
+> |---|---|
+> | F0 purge | done 28/07 — 34 `.inl` deleted, eleven survivors |
+> | F1 lit particles, F2 smoke, F3 fire, F4 aura | done |
+> | E0 baseline capture | **dead — do not do it.** Its eight subjects were deleted by F0 |
+> | E1 post-FX, E2 VFX light, E3 sequencer | done |
+> | E4 asset library | ~20% (3 flipbooks) → carried to `VFX_PLAN.md` H6 |
+> | E5 batch 1 (4), E6 batch 2 (4) | done |
+> | E7 retrofit checkpoint | not started → carried to `VFX_PLAN.md` H8 |
+> | E8 platform/perf | tier gate + instrument done; device verification outstanding |
+>
+> **What it got right and what it missed**, in one line each, because that is the
+> only part of a superseded plan worth carrying forward: it correctly identified
+> the blend law, lit particles, choreography and the material table as the
+> foundation — and it built the *particle* half of the toolkit while leaving the
+> *geometry* half (trail system, procedural mesh, splines, flow maps, surface
+> materials) completely unused. That omission is what `VFX_PLAN.md` exists to fix.
+>
+> The detailed task text below is kept verbatim. Its landmine sections have all
+> been promoted to `LANDMINES.md`; where the two disagree, LANDMINES wins.
+
+---
 
 Owner: **Core Agent**. Companion to `VFX_ARCHITECTURE.md` (which describes the VFX
 system as it is); this doc describes **what to build next and exactly how**.

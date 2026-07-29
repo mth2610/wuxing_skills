@@ -152,3 +152,97 @@ id 0 — raylib hands over the default shader and rlvk logs the GLSL error and
 continues, so `shader.id != 0` answers "did something get bound", not "did mine
 compile". Check that a uniform you know the shader declares resolves; see
 `ParticleLighting_Begin` in `core/particle_system.c`.
+
+## A plane-pinned ribbon dashes where it CURVES (29/07/2026)
+
+- **Symptom:** a `RIBBON_FIXED_NORMAL` / `RIBBON_WORLD_UP` strip renders as a row
+  of dashes — but only where the path bends, worse the further the camera is, and
+  never in `RIBBON_CAMERA_FACING` on the same path with the same code.
+- **Cause:** the width vector `side = cross(tangent, planeNormal)` rotates with
+  the tangent, so the fraction of it that survives projection changes ALONG the
+  strip. Measured on a real bench path (lemniscate, sandbox camera at 8.4 m):
+  **1.00 at one end of the band and 0.08 at the other — 13x within a single
+  strip.** The thin end is sub-pixel and dashes; the wide end is solid. A
+  straight path holds the tangent constant and therefore the factor, which is why
+  the artefact tracks curvature. A camera-facing strip is immune by construction:
+  its side vector is built perpendicular to the view, factor 1 everywhere.
+- **Rule:** fixed in `core/ribbon_strip.c` for every consumer — below
+  `RIBBON_MIN_PROJECTION` (0.35, ~70 degrees of foreshortening) `side` is blended
+  toward the camera-facing side vector, reaching it at true edge-on. **Rotate it,
+  do not widen it.** The first attempt held the projected width by widening the
+  band and paying in alpha (conserving brightness x width, which is the right law
+  for a DISTANCE floor) — that converts a thin stretch into a DIM stretch, and a
+  dim stretch between two bright ones still reads as a break. Measured worst
+  factor over every camera angle and phase: 0.069 raw, 0.342 blended.
+- **Diagnostic that cost four rounds to learn.** When one variant of an effect
+  breaks and another does not, enumerate what actually DIFFERS between them and
+  rule the list out one item at a time — and when a hypothesis cannot be tested
+  by eye, MODEL IT NUMERICALLY rather than shipping the next plausible fix. Three
+  rounds went to candidates that each looked obvious (mask frequency, sub-pixel
+  geometry, mask energy distribution); twenty lines of arithmetic against the
+  real path and the real camera settled it and produced the regression test
+  (`Test_Foreshortening`, `core/tests/swept_trail_test.c`). The decisive fact was
+  available the whole time and came from the owner: the THINNEST geometry of the
+  three (a 1:40 filament) never dashed while a 1:20 blade did.
+
+## The anti-bowtie check must run on the side vector you actually DRAW (29/07/2026)
+
+- **Symptom:** a ribbon pinches to nothing somewhere along its length and crosses
+  over itself — a dark wedge in the middle of an otherwise clean band.
+- **Cause:** `DrawRibbonStripEx` keeps `side` continuous point-to-point by
+  flipping it when it opposes the previous point's. That check stored `prevSide`
+  **before** the foreshortening blend that runs a few lines later, so continuity
+  was enforced on the RAW side vectors while the quads were built from the
+  BLENDED ones — and two blended sides are free to point opposite ways even when
+  their raw versions agree.
+- **Rule:** record continuity as the LAST thing before the geometry is emitted.
+  Anything that modifies `side` — a blend, a twist, a per-point rotation — has to
+  happen before that store, and the ordering is asserted in
+  `core/tests/swept_trail_test.c`.
+- **Related, same symptom from the other end:** a cloth/rope solver whose
+  constraint is stretch-only lets adjacent nodes collapse onto each other or pass
+  THROUGH each other. A zero-length or reversed segment gives a garbage tangent,
+  which flips the side vector, which is the same bowtie. Constrain from both
+  sides — a floor at ~1/3 of the rest spacing lets the ribbon bunch without ever
+  degenerating.
+
+## A boolean that means "exactly" when you read it as "at least" (29/07/2026)
+
+- **Symptom:** a simulated ribbon 6 m long rendered as a short, stiff spindle
+  stuck near its emitter — it stopped following the path at all, and the flow
+  animating along it had almost no length left to travel.
+- **Cause:** `Ribbon_ConstrainSegment(a, b, rest, pinned, stretchOnly)` was called
+  twice per segment: once with `true` for the inextensibility CEILING, then once
+  with a shorter length and `false`, intended as a FLOOR against nodes collapsing
+  into each other. `stretchOnly = false` does not mean "also enforce a minimum" —
+  it means "force the distance to be EXACTLY restLen". The second call therefore
+  overwrote the first and pinned every segment to a third of its rest spacing.
+- **Rule:** when a constraint can be a ceiling, a floor, or an equality, give it
+  a **named mode**, never a bool. `RIBBON_CONSTRAIN_MAX / MIN / EXACT` makes the
+  wrong call unspellable; `stretchOnly = false` reads like the opposite of what
+  it does. More generally: a boolean parameter whose `false` branch is not the
+  negation of its `true` branch is a mis-named enum.
+- **How it was found:** by pulling one frame out of the owner's screen recording
+  with `qlmanage -t` and looking at it. The trail's rendered length against the
+  path it was supposed to trace was obvious in a single still — after several
+  rounds of reasoning had not found it.
+
+## A ribbon pinches where the path points AT the camera — and a sign flip cannot fix it (29/07/2026)
+
+- **Symptom:** a camera-facing strip closes to a single point somewhere along its
+  length and re-opens rotated — two wedges meeting at a vertex. Once or twice per
+  loop on a path that curves through the view direction.
+- **Cause:** `side = cross(tangent, primaryNormal)` carries no direction when the
+  tangent is parallel to `primaryNormal` — for a camera-facing strip, wherever the
+  path runs straight at or away from the viewer. `ComputeSideVector` then fell
+  back to an unrelated reference vector, so `side` did not flip, it **jumped to a
+  different direction entirely**.
+- **Rule:** the anti-bowtie continuity check only ever NEGATES `side`, which
+  cannot undo a 90-degree jump — do not reach for it here. Detect the degenerate
+  cross product by its LENGTH and **parallel-transport** the previous side vector
+  instead: re-orthogonalise it against the new tangent. The strip then narrows
+  through the degenerate stretch, which is correct (it is being seen end-on),
+  rather than tearing. Fixed in `core/ribbon_strip.c` for every consumer.
+- **Diagnostic:** a pinch that recurs at the same points of a repeating path is
+  geometric degeneracy, not shading and not the mask. Ask what the cross product
+  is doing where the path aligns with the reference direction.

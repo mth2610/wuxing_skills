@@ -557,7 +557,22 @@
   void VFX_ComposeEnergyBurst(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
   void VFX_ComposeImpactPackage(Vector3 pos, Vector3 normal, VC_MaterialId matId, float scale, float severity01);
   void VFX_ComposeLightShaft(Vector3 from, Vector3 to, VC_MaterialId mat, float width, float intensity);
+  int VFX_ComposeSweptTrail(const Matrix *followTransform, VC_MaterialId mat, float width, float lifetime, VFX_TrailStyle style);
+  void VFX_TrailSetWidth(int handle, float width01);
+  void VFX_KillSweptTrail(int handle);
+  void VFX_BeginWaterStreams(float time);
+  void VFX_EndWaterStreams(void);
+  void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
+  void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
+  void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
+  void VFX_ComposeParticleUpgradesTest(Vector3 pos);
+  void VFX_ComposeShardDebris(Vector3 pos, int count, float speed, VC_MaterialId matId);
+  void VFX_ComposeStonePillar(Vector3 basePos, float progress);
+  void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
+  void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
+  void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
 ```
+**Enums:** VFX_TrailStyle { VFX_TRAIL_BLADE,VFX_TRAIL_RIBBON,VFX_TRAIL_FILAMENT }
 
 ### `core/composition/vfx_sequence.h`
 ```c

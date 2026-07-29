@@ -98,12 +98,13 @@ static const char *s_meshNames[] = {
     "DISC", "RING", "CONE", "TORNADO", "CYLINDER", "SPHERE", "SHOCKWAVE", "PYRAMID", "TETRAHEDRON"};
 
 // @gen:newfx_names begin
-// 20 entries — auto-managed by sync_vfx_test.py
+// 26 entries — auto-managed by sync_vfx_test.py
 static const char* s_newFxNames[] = {
     "SMOKE PUFF", "ENERGY BURST", "IMPACT PKG", "FLAME VOLUME", "GLINT SPARKLE", "RUNE CIRCLE",
     "DISSOLVE EXIT", "CHARGE CONVERGE", "SWEEP SLASH", "LIGHT SHAFT", "CHARACTER AURA", "BLACK HOLE",
     "FISSURE STREAK", "ICE CRYSTAL", "PARTICLE UPGRADES TEST", "SHARD DEBRIS", "STONE PILLAR", "ICE CRYSTAL BURST",
-    "WATER STREAM", "WATER STREAM ON PATH",
+    "WATER STREAM", "WATER STREAM ON PATH", "SWEPT TRAIL", "GROUND WAVE", "IMPACT FLASH", "IMPACT DISTORT",
+    "IMPACT DECAL", "SPARK TRAIL",
 };
 // @gen:newfx_names end
 
@@ -112,6 +113,7 @@ static const char* s_newFxNames[] = {
 static const int s_newFxCategories[] = {
     6, 6, 6, 0, 3, 5, 6, 6, 3, 6,
     6, 6, 4, 1, 6, 3, 4, 1, 1, 1,
+    3, 4, 6, 6, 6, 6,
 };
 // @gen:newfx_categories end
 
@@ -458,7 +460,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             const char **names;
             int globalIdx;
             int visualIdx;
-            maxIdx = 20;
+            maxIdx = 26;
             names = s_newFxNames; // @gen:newfx_count
             visualIdx = 0;
             (void)names;
@@ -490,6 +492,12 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_ComposeParticleUpgradesTest(s_prefabStartPos);
           } else if (s_testIndex == 15) { /* SHARD DEBRIS */
               VFX_ComposeShardDebris(s_prefabStartPos, 5, 2.0f, VC_MAT_METAL);
+          } else if (s_testIndex == 22) { /* IMPACT FLASH */
+              VFX_ComposeImpactFlash(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 0.8f);
+          } else if (s_testIndex == 23) { /* IMPACT DISTORT */
+              VFX_ComposeImpactDistort(s_prefabStartPos, 1.0f, 0.8f);
+          } else if (s_testIndex == 24) { /* IMPACT DECAL */
+              VFX_ComposeImpactDecal(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 0.8f);
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
               s_isPlayingMesh = true;
@@ -579,6 +587,12 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
               VFX_ComposeParticleUpgradesTest(s_prefabStartPos);
           } else if (s_testIndex == 15) { /* SHARD DEBRIS */
               VFX_ComposeShardDebris(s_prefabStartPos, 5, 2.0f, VC_MAT_METAL);
+          } else if (s_testIndex == 22) { /* IMPACT FLASH */
+              VFX_ComposeImpactFlash(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 0.8f);
+          } else if (s_testIndex == 23) { /* IMPACT DISTORT */
+              VFX_ComposeImpactDistort(s_prefabStartPos, 1.0f, 0.8f);
+          } else if (s_testIndex == 24) { /* IMPACT DECAL */
+              VFX_ComposeImpactDecal(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 0.8f);
           } else {
               /* continuous — handled per-frame in VFXTest_Draw3D */
               s_isPlayingMesh = true;
@@ -629,6 +643,34 @@ void VFXTest_Draw3D(void)
               case 17: VFX_DrawIceCrystalBurst(s_prefabStartPos, 10, posSeed, fminf(fmodf(s_meshTime, 2.0f) / 1.2f, 1.0f)); break;
               case 18: VFX_ComposeWaterStream(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.4f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){1.2f, 1.7f, 0.5f}), Vector3Add(s_prefabStartPos, (Vector3){2.6f, 1.3f, -0.5f}), Vector3Add(s_prefabStartPos, (Vector3){3.8f, 0.15f, 0.0f}), 0.22f, fminf(progress, 0.99f), s_meshTime); break;
               case 19: VFX_ComposeWaterStreamOnPath(s_testPathPoints, TEST_PATH_POINT_COUNT, 0.25f, progress * 1.2f, 0.25f, s_meshTime); break;
+              case 20: {
+                  static Matrix sweptXf;
+                  static int sweptH = -1;
+                  static float sweptPrevT = -1.0f;
+                  float a = s_meshTime * 2.4f;
+                  Vector3 p = Vector3Add(s_prefabStartPos, (Vector3){ 3.0f * sinf(a), 1.7f + 0.45f * sinf(a * 0.7f), 2.1f * cosf(a) });
+                  // The clock jumps backwards on every re-trigger, so the emitter jumps with
+                  // it. Kill and respawn rather than letting the trail see a 3.6 m teleport.
+                  if (s_meshTime < sweptPrevT) { VFX_KillSweptTrail(sweptH); sweptH = -1; }
+                  sweptPrevT = s_meshTime;
+                  sweptXf = MatrixTranslate(p.x, p.y, p.z);
+                  if (sweptH < 0) sweptH = VFX_ComposeSweptTrail(&sweptXf, VC_MAT_WATER, 1.60f, 0.85f, VFX_TRAIL_RIBBON);
+                  break;
+              }
+              case 21: VFX_ComposeGroundWave(s_prefabStartPos, VC_MAT_EARTH, 5.0f, fmodf(s_meshTime, 1.6f) / 1.6f, VFX_GroundHeightFromMap, NULL); break;
+              case 25: {
+                  static float acc = 0.0f;
+                  acc += GetFrameTime();
+                  if (acc > 0.55f) {
+                      acc = 0.0f;
+                      Vector3 c = Vector3Add(s_prefabStartPos, (Vector3){0.0f, 1.2f, 0.0f});
+                      float ang = s_meshTime * 1.3f;
+                      Vector3 sp = (Vector3){ c.x + cosf(ang) * 2.0f, c.y, c.z + sinf(ang) * 2.0f };
+                      Vector3 v = Vector3Scale(Vector3Normalize(Vector3Subtract(c, sp)), 3.0f);
+                      VFX_ComposeSparkTrail(sp, Vector3Add(v, (Vector3){ -sinf(ang) * 2.2f, 0.4f, cosf(ang) * 2.2f }), VC_MAT_LIGHTNING, 0.5f, 0.9f);
+                  }
+                  break;
+              }
           }
 // @gen:newfx_draw end
         }
@@ -773,7 +815,7 @@ void VFXTest_DrawHUD(void)
         const char **names;
         int gi;
         int vIdx;
-        maxIdx = 20;
+        maxIdx = 26;
         names = s_newFxNames; // @gen:newfx_count
         vIdx = 0;
         (void)names;
@@ -813,6 +855,9 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
     case 10: VFX_ComposeCharacterAura(0, VC_MAT_FIRE, 1.0f); break;
     case 14: VFX_ComposeParticleUpgradesTest(pos); break;
     case 15: VFX_ComposeShardDebris(pos, 5, 2.0f, VC_MAT_METAL); break;
+    case 22: VFX_ComposeImpactFlash(pos, VC_MAT_FIRE, 1.0f, 0.8f); break;
+    case 23: VFX_ComposeImpactDistort(pos, 1.0f, 0.8f); break;
+    case 24: VFX_ComposeImpactDecal(pos, VC_MAT_FIRE, 1.0f, 0.8f); break;
     default: break;
     }
 // @gen:newfx_render_trigger end

@@ -140,8 +140,12 @@ static void Test_SourcesStillGate(void)
           "SweepSlash drops its screen refraction below MED" },
         { "core/composition/common/vc_light_shaft.inl", "GfxQuality_Get() <= GFX_LOW",
           "LightShaft thins its cone at LOW" },
-        { "core/composition/common/vc_impact_package.inl", "GfxQuality_Get() >= GFX_MED",
-          "ImpactPackage drops its light and distortion below MED" },
+        // The gate moved WITH the beat when the package was decomposed into
+        // primaries (29/07): it is now an early return inside
+        // VFX_ComposeImpactFlash / _Distort, so a caller reaching for the piece
+        // on its own cannot bypass the budget. Same gate, opposite sense.
+        { "core/composition/common/vc_impact_package.inl", "GfxQuality_Get() < GFX_MED",
+          "the impact flash and distortion primaries drop themselves below MED" },
     };
     for (int i = 0; i < 3; i++)
     {

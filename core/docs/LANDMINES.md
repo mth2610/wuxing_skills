@@ -326,3 +326,419 @@ s=0 and still reaches half width by s=0.25, which draws a blunt club. A lens
 (`pow(sin(PI*s), 0.85)`) is the shape; assert symmetry, not the endpoints. A
 strip that starts at full width has a flat cap, and a flat cap on a short strip
 is the flat base of a triangle.
+
+## The blend law, violated: mist that renders BLACK (28/07/2026)
+
+**Symptom.** A coloured mist/smoke population comes out near-black, on top of a
+dark scene. Changing its colour barely helps.
+
+**Cause.** It was `BLEND_ALPHA` with `render.unlit = 0`, i.e. it went through the
+lighting multiply — and a night arena has almost no light to multiply by. Both
+water skills had this.
+
+**Rule.** `core/particle_system.h` states it: if it would BLOCK light, draw
+`BLEND_ALPHA` and light it; if it EMITS light, draw `BLEND_ADDITIVE` and leave it
+unlit. Additive output can never be darker than its background, which is exactly
+why "energy mist" must be additive. Glowing smoke is TWO draws — an alpha body
+plus an additive glow — never one alpha draw turned bright.
+
+**Corollary:** `VFX_ComposeSmokePuff` is *deliberately* dark (its own header says
+so) and depends on the lighting pass for brightness. Adding it to an unlit scene
+as a "glow" makes a black smudge.
+
+## A sequence called from Draw restarts every frame (28/07/2026)
+
+**Symptom.** After an impact the game appears to enter slow motion for as long as
+the effect lasts; lights stack far brighter than authored.
+
+**Cause.** `VFX_ComposeImpactPackage` plays a `VFX_Sequence`. It was called from
+a skill's *draw* path, so it re-fired 60 times a second — including its hitstop
+beat, which is a time-scale effect.
+
+**Rule.** Know which side of the line a composition sits on before wiring it:
+**one-shot** (spawns a population or plays a sequence — call it once, from a
+state transition in Update) versus **continuous/immediate-mode** (emits geometry
+for the current frame and keeps no state — call it every frame from Draw).
+Getting it backwards fails in both directions: a one-shot in Draw stacks, and a
+continuous one called once draws a single frame and looks like nothing happened —
+which is precisely what made the bench's ICE CRYSTAL entry appear dead when
+`sync_vfx_test.py` auto-classified it as one-shot.
+
+**Also:** `VFX_ComposeImpactPackage`'s severity is gated — `>= 0.45` fires
+hitstop, `>= 0.35` fires screen distortion. A substitution for a purely visual
+burst must stay under 0.45 or every hit in the game develops a stutter.
+
+## Density belongs to the world, not to the array (28/07/2026)
+
+**Symptom.** A row of effects along a path looks right at one range and wrong at
+another — separated clumps up close, gaps far away, or the reverse.
+
+**Cause.** Spacing was computed by stepping the path's POINT INDEX. The path had
+a fixed point count regardless of length, so the metres between elements changed
+with the target distance.
+
+**Rule.** Space things by metres: `count = pathLength / spacingMetres`, clamped.
+The array that describes a path is an implementation detail of the path, not a
+unit of distance. (Same family as the thickness rule above: derive from the world
+quantity, not from whatever number is nearby.)
+
+## An `.inl` is not code until something includes it (28/07/2026)
+
+**Symptom.** A restored/added `.inl` compiles cleanly — and the build fails at
+LINK with an undefined symbol for the function it defines.
+
+**Cause.** `core/composition/` is a unit build: `visual_composer.c` includes the
+`.inl` files. A file present in the tree but absent from that include list is
+compiled into nothing.
+
+**Rule.** Adding or restoring an `.inl` means adding its `#include` in the same
+edit. The compiler cannot warn about this, and the link error names the symbol,
+not the missing include.
+
+## Inspecting a greyscale sheet: the viewer composites alpha over white (28/07/2026)
+
+**Symptom.** A generated mask looks blown out and nearly white when opened, while
+its histogram says it is mostly dark.
+
+**Cause.** The image is RGBA with low alpha; the viewer composites it over a
+white background.
+
+**Rule.** To judge a mask, dump RGB with alpha forced to 255 and look at that —
+or trust the numbers (mean, percentile coverage) over the picture. Retuning a
+sheet against a viewer artifact wastes a full round.
+
+## The bench's play window is 5 seconds, and a bench that cycles state inside it invents symptoms (29/07/2026)
+
+**Symptom.** The owner reported a swept trail "splitting into several strands"
+now and then. Nothing in the composition can do that: the two non-FILAMENT
+styles spawn exactly one strand, and the arithmetic was green on 57 assertions.
+
+**Cause.** The BENCH, not the effect. `sandbox/vfx_test.c` stops a NEWFX play at
+`s_meshTime > 5.0f` (VFXTest_Update). The H1 entry cycled its style on a 4 s
+timer inside that window, so a play went BLADE (0-4 s) → RIBBON (4-5 s) → frozen,
+and FILAMENT was unreachable. At the switch it called `VFX_KillSweptTrail` and
+immediately created the next style — and Kill deliberately does not cut the strip
+out of existence, it stops the feed and lets the strip drain. So for ~0.85 s a
+fading BLADE and a growing RIBBON were on screen at once: two strands, from a
+one-strand effect, once per play.
+
+**Rule.** A bench entry's own timers must fit inside the 5 s play window, and
+**state that advances per PLAY belongs on the re-trigger, not on a timer** — the
+H1 entry now advances one style per trigger and TraceLogs its name. More
+generally: before debugging an effect against what the bench shows, check that
+the bench is showing one instance of it. A killed-but-fading effect overlapping
+its replacement is the cheapest way to manufacture a symptom the effect does not
+have, and the overlap is CORRECT behaviour for the API (a combo's second swing
+should start while the first is still fading).
+
+**Corollary — the other way one trail reads as several.** A `TRAIL_TYPE_FOLLOWER`
+draws TWO concentric strips, and the inner white core's alpha ignores the alpha
+curve entirely (`trail_system.c:961`). Additive plus bloom, that core can read as
+a separate bright thread inside the band. `swept_core = 0` in tuning.cfg turns it
+off, so the question is answered by looking rather than by rebuilding.
+
+## One axis, two consumers: one needs the SIGN, the other needs CONTINUITY (29/07/2026)
+
+**Symptom.** A FILAMENT swept trail's four strands knotted together near the
+head, crossing each other, instead of running parallel as a bundle. Only at some
+camera angles and only sometimes — i.e. the shape of report that gets dismissed
+as "looks a bit messy".
+
+**Cause.** One vector was serving two purposes. The swing-plane normal
+`cross(chord1, chord2)` is used (a) as the ribbon's `fixedNormal`, where its SIGN
+is load-bearing because it decides which side of the strip u = 0 lands on, and
+(b) as the axis the filament strands are offset along. At an inflection the
+curvature genuinely reverses, so the normal flips — correct for (a), and for (b)
+it teleports every strand's newest node from +offset to -offset in a single
+frame, which is a knot.
+
+**Rule.** When one derived vector feeds two consumers, ask whether each wants the
+raw quantity or a *stabilised* one, and keep both. Here: `normal` stays raw for
+the ribbon, `lateralAxis` is the same vector flipped to keep `dot(prev, cur) > 0`
+and is what the offsets use. Cheap, and the two can never fight again.
+
+**And the second thing that capture showed:** the spread table was
+`{-1.0, -0.28, 0.34, 1.0}` — near-uniform gaps, which draws a COMB (four parallel
+wires), not a bundle of threads. Regularity is what the eye picks up; no colour or
+width change fixes it. The headless test now asserts `minGap/maxGap < 0.85`,
+which is what caught the first "irregular" table being 0.861.
+
+## A trail assumes the gap between two samples was SWEPT (29/07/2026)
+
+**Symptom.** A long, perfectly straight, hairline streak crossing the whole
+frame, unrelated to the curve the effect was drawing — and "at some spawn
+positions it comes out as two strands, at others it doesn't".
+
+**Cause.** `VFX_ComposeSweptTrail` lays nodes along the gap between the previous
+frame's tip and this frame's, interpolating sub-frame steps in between. That is
+correct for motion and wrong for a **teleport**: dragging the bench's spawn point
+(or an agent respawning, or a blink) moves the transform metres in one frame, and
+the trail dutifully draws a straight band BRIDGING two places the weapon never
+was. The second "strand" is that bridge lying next to the real curve.
+
+**Rule.** Any effect that reconstructs a path from per-frame samples needs a
+teleport discriminator, and it cannot be a fixed distance: a real swing covers
+0.4 m per frame at 60 fps and 2.5 m during a 100 ms hitch. Scale it with dt and
+put a floor under it — `moved > max(45 m/s * dt, 0.75 m)` — then CUT the history
+rather than bridging it (a fading bridge is still a bridge). Asserted from both
+sides in `core/tests/swept_trail_test.c`: every plausible swing at 30/60/144 fps
+and through a hitch must pass, and a 1 m single-frame jump must be caught.
+
+## A mask is authored for a physical WIDTH, and reusing it narrower re-scales every frequency in it (29/07/2026)
+
+**Symptom.** The BLADE swept trail rendered as a DOTTED line — a row of dashes
+following the right path — while the same code's RIBBON and FILAMENT strips next
+to it were solid.
+
+**Cause.** It borrowed `VFX_ComposeSweepSlash`'s sheet, which H1 was written to
+reuse. That sheet carries cross-blade striations at `sin(u*PI*23)` — 11.5 cycles
+ACROSS the band — and it was authored for the slash's band, `arcLen*0.044` ≈
+0.38 m. A trail band at 1:20 against a 1.2 m tail is 0.06 m: the same texture,
+six times narrower on screen, so every frequency in it is six times higher.
+`LoadTextureFromImage` produces exactly ONE mip level, so there is nothing to
+filter it down with — each pixel samples whichever phase it lands on, and the
+strip breaks into dashes.
+
+**Rule.** "Reuse before invent" still holds, but a mask's frequencies are only
+valid at the width it was authored for. Before reusing a sheet, compare the two
+consumers' widths **in metres**; if they differ by more than ~2x, author a second
+sheet at the new width instead of scaling the old one. Keep the SHAPE (hot edge,
+smear inward, one slow swell) and drop everything the narrower band cannot
+resolve — and widen the rim in proportion, or the edge itself aliases (sigma 0.05
+→ 0.16 here). `core/tests/swept_trail_test.c` asserts it by counting direction
+changes in the profile: one peak passes, the slash sheet's 12 do not.
+
+**Family:** this is the size half of VFX_PLAN §H6's rule, whose axis half already
+says "a sheet authored for a flat beam produces rings when wrapped on a tube".
+Both are the same mistake — a sheet carries assumptions its pixels do not state.
+
+## A strip thinner than a pixel renders as DASHES — and the symptom is zoom-dependence (29/07/2026)
+
+**Symptom.** The BLADE swept trail came out dotted. Replacing its mask (see the
+entry above) changed nothing. The owner's decisive observation: **it depends on
+ZOOM** — solid close in, broken far out, and the TAIL dashed at every zoom.
+
+**Cause.** Geometry, not texture. A strip under ~1 px wide is rasterised where
+its centre happens to land inside a pixel and dropped where it does not, which
+draws a row of dashes. Two independent instances of it here:
+1. Distance. A 6 cm band (1:20 against a 1.2 m tail) is many pixels at 6 m and
+   sub-pixel at 90 m — hence the zoom dependence, which is the tell that
+   separates this from any texture problem.
+2. The tail, at every distance, because the width envelope takes it to ZERO. The
+   BLADE alpha curve had 0.48 where the width curve had 0.36: the tail was
+   *brighter than it was wide*, so it disintegrated instead of fading.
+
+**Rule, two parts.**
+- **Floor the width in SCREEN space and pay for it in alpha.** `minHalf =
+  (minPx/2) / pixelsPerMetre`, `alpha *= halfW/minHalf`. The floor alone is worse
+  than the dashes — a distant trail becomes a fat opaque worm; conserving
+  width x alpha makes it fade instead. `pixelsPerMetre = screenH / (2 d
+  tan(fovy/2))`, and `camera` is available via `core/camera_context.h`.
+- **A taper's alpha must fall at least as fast as its width.** Anywhere a strip
+  narrows to nothing, brightness must lead the narrowing, or the last stretch is
+  sub-pixel while still visible. Assert `alpha(s) <= width(s)` over the taper.
+
+**And the layer that fails FIRST is the brightest one:** `TRAIL_TYPE_FOLLOWER`'s
+inner core is 0.267x the outer half-width and drawn at full white, so it goes
+sub-pixel roughly four times sooner than the band around it. It is gated off
+below 5 px of band width — a distance LOD, clamping down only.
+
+**Diagnostic worth reusing:** *ask whether the artefact tracks zoom.* Texture
+frequency artefacts change with distance too, but they do not vanish when the
+geometry is a handful of pixels wide — sub-pixel geometry does exactly that, and
+one sentence from the owner ("zoom cận thì ít đứt") separated the two after a
+whole round had been spent on the wrong one.
+
+## A mask decides how wide an effect LOOKS, independently of how wide it IS (29/07/2026)
+
+**Symptom.** One swept-trail style (BLADE) rendered as dashes; the other two,
+drawn by the same code on the same paths, were solid. The owner's two decisive
+observations: it tracked ZOOM, and it tracked CURVATURE — straight stretches
+solid, bends dotted. Two rounds were spent on the wrong causes first (the mask's
+frequency content, then a screen-space width floor).
+
+**Cause.** The BLADE sheet put **66% of its alpha in the outer 20% of the band**
+and only 9% at the centre (measured, `OuterEnergyFraction` in
+`core/tests/swept_trail_test.c`). So a 3-pixel-wide strip displayed a
+0.6-pixel-wide bright line, and a sub-pixel line rasterises where its centre
+lands inside a pixel and drops where it does not. The geometry was never the
+problem: the *feature inside* the geometry was.
+
+**The fact that falsifies every other theory:** FILAMENT has the THINNEST
+geometry of the three (1:40 vs the blade's 1:20) and never dashed — because it
+uses the centre-weighted global trail sheet (10% in the outer 20%, peak at
+u = 0.5). Its visible feature IS its geometry. Any "the strip is sub-pixel"
+explanation predicts the opposite ordering, which is how the real cause was
+finally cornered.
+
+**Rule.** When authoring a mask for a strip, measure what fraction of its alpha
+lies in what fraction of its width, and keep the bright feature a comparable size
+to the band. An edge-weighted profile is right for a wide band seen close (the
+slash) and is a dashed line on a thin one. Assert it: `OuterEnergyFraction < 0.4`
+plus a real value at mid-band.
+
+**And the process lesson, which cost more than the bug.** Each candidate cause
+could only be tested by a rebuild, so each round tested exactly one guess. The
+fix was to ship the DISCRIMINATORS as tunables — `swept_blade_flat` (swap in the
+centre-weighted sheet) and `swept_camfacing` (drop the fixed normal) — so the
+next observation settles the question whichever way it falls. When an artefact
+survives one confident fix, stop fixing and start instrumenting
+(core/CLAUDE.md §5, §6).
+
+## A bench that passes NULL cannot show the one thing the effect exists for (29/07/2026)
+
+**Symptom.** `VFX_ComposeGroundWave` was reported as conforming to the flat parts
+of a heightmap map and floating on the slopes — i.e. failing at the single
+requirement H2 was written to meet.
+
+**Cause.** Not the composition. The BENCH entry passed `heightFn = NULL`, with a
+comment reasoning that "the sandbox floor is flat". NULL means "flat at
+center.y", which coincides with the ground exactly where the ground is level and
+diverges everywhere else. The effect was never given a terrain sampler, so it
+could not conform, and the bench could not have shown it either way.
+
+**Rule, two parts.**
+- **A bench entry must exercise the FEATURE, not just the code path.** When an
+  effect's reason for existing is a callback, an argument or a mode, the bench
+  must pass the real one. A default-argument bench proves the function runs; it
+  proves nothing about what it was built for.
+- **Ship the obvious adapter with the API.** Every caller of a
+  `GroundHeightSampleFn` wants the active map's height, so
+  `VFX_GroundHeightFromMap` (over `MapManager_GetGroundHeightAt`) now sits beside
+  the composition. An API whose correct use requires each caller to write the
+  same five-line shim will be called with NULL.
+
+## A "low-frequency query" called per vertex: 455 raycasts a frame (29/07/2026)
+
+**Symptom.** The grass map ran at **13 fps** while a ground wave was on screen.
+The controlled comparison was already in hand: the only change between the fast
+run and the slow one was `heightFn` going from NULL to a real sampler.
+
+**Cause.** `MapProp_SampleGroundHeight` is a **ray-triangle test against the
+terrain mesh**, and its own header says exactly what it is for: *"slightly more
+expensive per call (real ray-triangle test over the mesh) but this is a
+low-frequency query (VFX placement, not per-frame-per-particle)"*. The ground
+wave sampled it once per vertex — 65 slices x 7 radials = **455 raycasts every
+frame**. The map layer was not slow; the caller ignored a contract written in the
+line above the function it called.
+
+**Rule.**
+- **Read the cost note on any callback before putting it in a per-vertex loop.**
+  A `GroundHeightSampleFn` is not a cheap array lookup, and nothing in the type
+  says so — the header does.
+- **Sample the world at the world's own scale, not the mesh's.** The ground under
+  a 5 m ring is described perfectly well by 24 samples; the 455 were describing
+  the tessellation, not the terrain. Interpolating between them is EXACT for a
+  planar slope, which is what a narrow band sits on.
+- **Make the budget independent of the quality tier.** A raycast count derived
+  from the slice count grows on exactly the machines the tier gate is protecting.
+  Asserted in `core/tests/ground_wave_test.c`.
+- Same family as "Density belongs to the world, not to the array" — one is about
+  how many things to draw, this is about how often to ask the world a question.
+
+## The halo must not carry the body's texture — again (29/07/2026)
+
+**Symptom.** A swept ribbon's edge came out as a regular SAWTOOTH, long thin
+spikes reaching out from an otherwise smooth band. The owner read it as the trail
+"cutting itself" into segments. The centre line stayed clean, which is what says
+it is the TEXTURE and not the geometry.
+
+**Cause.** All three layers shared one sheet. The fibres inside it wander across
+`u` as they travel down `v` — the whole point of them — and near the band's edge
+that wander modulates the alpha of the silhouette itself. On the body layer it is
+invisible; on the GLOW layer, which is 2.6x wider, the same wander is thrown 2.6x
+further out and becomes spikes.
+
+**Rule.** A halo exists to put light BEHIND a shape, not to be a second
+silhouette: give it its own sheet with none of the body's structure. Damp interior
+detail by the band profile SQUARED so it lives in the middle and is gone before
+the edge.
+
+**And the point that costs more than the bug:** this exact lesson was already
+written, by this project, in `core/composition/common/vc_sweep_slash.inl` — "WHY
+THE HALO MUST NOT CARRY THE RIM" — and repeated here anyway, because it was
+recorded as a fact about the slash rather than as a rule about halos. A landmine
+filed under one effect's name will be re-stepped-on by the next effect.
+
+## Three additive copies of one pattern sum to something FLAT (29/07/2026)
+
+**Symptom.** A ribbon's flow texture would not visibly move at ANY scroll speed —
+1.3, 2.1, 3.6 tiles/sec all read as "the energy just sits there". Five rounds
+went on the speed number.
+
+**Cause.** The speed was never the problem. All three layers of the trail drew the
+SAME quasi-periodic fibre sheet at three different phases, additively. Averaging
+shifted copies of a pattern is how you REMOVE the pattern: the interior structure
+cancelled itself into a smooth glow, and a smooth glow cannot be seen to move
+however fast it scrolls.
+
+**Rule.** In a multi-pass additive effect, the structure belongs to exactly ONE
+layer. The others are lit SHAPES — a halo puts light behind, a core puts a hot
+line through the middle — and giving them the body's texture both flattens the
+pattern and, on the wider layers, throws its edge artefacts outward (see "The halo
+must not carry the body's texture").
+
+**Diagnostic worth reusing:** when a parameter has been swept across an order of
+magnitude and nothing on screen changes, the parameter is not connected to the
+symptom. Stop tuning and ask what could be cancelling the whole quantity.
+
+## A distance constraint cannot stop node ORDER from reversing (29/07/2026)
+
+**Symptom.** A simulated ribbon developed a fold the owner reported four times as
+"it twists itself" — one place along the strip where the band pinched to a wedge
+and the shading flipped. Four rounds went on the strip's side vector, its
+tangent, and its plane. None of them was the cause.
+
+**Cause.** Arithmetic settled it in one line. The bench swings a 3 m arm at
+2.4 rad/s, so the tip runs at 7.2 m/s; the history is sampled at 60 Hz, so nodes
+are laid **0.12 m apart**. The cloth sim bounded each node's stray from its laid
+position at a flat **0.30 m** — two and a half node spacings. A node was free to
+travel clean past its own leader, and the polyline folded back on itself. The
+side vector "flipping" was a symptom: it flips because the tangent reverses at a
+crossing.
+
+The two rope constraints running underneath could not catch it, and this is the
+general point: **distance is a scalar.** A node that has passed THROUGH its
+leader is simply "slightly too close" again, so `CONSTRAIN_MIN` pushes them apart
+in the reversed order and stabilises the fold instead of undoing it.
+
+**Rule.** In any chain — cloth, rope, ribbon, trail — a per-node displacement
+bound must be expressed **relative to the node spacing, not in absolute metres**,
+and only along the chain. Split the displacement:
+
+- **along** the chain: bound by a fraction of the spacing, strictly `< 0.5` (both
+  ends move, so the gap can close by twice the bound). This is a *correctness*
+  bound, and it is cheap — the fraction never needs tuning.
+- **across** it: the loose absolute bound. Sag, curl and flutter are almost
+  entirely lateral, so the look lives here and the fix costs no motion.
+
+See `SWEPT_ORDER_FRAC` in `core/composition/common/vc_swept_trail.inl` and
+`Test_NodesCannotCrossTheirNeighbour` in `core/tests/swept_trail_test.c`.
+
+## A scrolling texture made of CONTINUOUS features reads as static (29/07/2026)
+
+**Symptom.** With the sheet-sharing bug above fixed, the ribbon's energy flow
+provably scrolled — and the owner still said it looked frozen, then diagnosed it
+exactly: *"it is like you are dragging a sine GRAPH along, not a cord oscillating
+— this texture is wrong."*
+
+**Cause.** The sheet's fibres were continuous lanes,
+`c = lane[f] + wob[f] * sin(2*PI*cyc[f]*v + phase[f])`, each running the full
+height of the sheet. Scrolling `v` can then only **translate a rigid pattern**:
+every feature is present at every instant, nothing begins and nothing ends. The
+eye reads motion far more strongly from things appearing and vanishing than from
+a rigid shape sliding, so a rigid pattern at any speed reads as a still image
+being moved.
+
+Seamlessness is what forced the mistake. Tiling demands an integer period in `v`,
+and the cheapest way to get one is a feature that spans the whole sheet.
+
+**Rule.** Flow is made of **finite streaks**, not lanes: bound each feature in
+`v` with a raised-cosine envelope (zero value *and* zero slope at both ends) and
+measure `v` with a **circular** distance (`dv -= floorf(dv + 0.5f)`) so the
+bounded feature wraps. Then the tiling stays seamless while filaments slide in,
+brighten, stretch past and fade — motion the envelope gives for free, independent
+of the scroll rate.
+
+**Rule of thumb:** if scrolling a texture faster does not make it look faster,
+the pattern has no beginnings or ends in it.

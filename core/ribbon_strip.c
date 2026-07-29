@@ -1,6 +1,7 @@
 #include "core/ribbon_strip.h"
 #include "raymath.h"
 #include "rlgl.h"
+#include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
 
@@ -8,6 +9,51 @@
 // ngưỡng này phải fallback sang vector tham chiếu khác để tránh chia 0 /
 // NaN khi normalize.
 #define RIBBON_DEGENERATE_EPSILON 0.0001f
+
+// ── Foreshortening guard, for the non-camera-facing modes ──────────────────
+//
+// A camera-facing strip has a constant projected width by construction. A strip
+// pinned to a plane (RIBBON_FIXED_NORMAL / RIBBON_WORLD_UP) does not: its width
+// vector `side` is perpendicular to the plane normal and ROTATES WITH THE
+// TANGENT, so how much of it survives projection changes ALONG the strip. On a
+// straight path the tangent is constant and so is the projection — the band is
+// uniformly wide or uniformly edge-on, and both look deliberate. Where the path
+// CURVES, the tangent sweeps and the projected width sweeps with it.
+//
+// Measured on the swept trail's bench path (a lemniscate, camera at the sandbox's
+// own 8.4 m / 38 deg): the projection factor runs from 1.00 at one end of the
+// strip to **0.08 at the other — a 13x change along a single band**, at many
+// camera angles. The thin end is sub-pixel, so it renders as dashes while the
+// wide end is solid. That is the artefact the swept BLADE trail was chased
+// through four rounds for (core/composition/common/vc_swept_trail.inl,
+// 29/07/2026): dashed only in the plane-pinned style, dashed only where the path
+// bent, worse zoomed out, and absent from the camera-facing styles drawn by the
+// same code on the same paths — including one with THINNER geometry, which is
+// what ruled out every "the strip is sub-pixel" and "the mask is wrong" theory.
+//
+// THE FIX IS TO ROTATE `side`, NOT TO WIDEN IT. The first attempt held the
+// projected width by widening the band in world space and paying for it in
+// alpha, conserving brightness x width. That is the right law for a DISTANCE
+// floor and the wrong one here: it turns a thin stretch into a DIM stretch, and
+// a dim stretch between two bright ones is still read as a break. What actually
+// works is to blend `side` toward the camera-facing side vector exactly where
+// the plane's own side vector is disappearing — the band keeps its width and its
+// brightness, and it gives up its plane orientation only where that orientation
+// was projecting to nothing anyway, i.e. where it carries no silhouette
+// information. Verified on the same path: the worst projection factor over every
+// camera angle and every phase goes from 0.069 to 0.342.
+//
+// 0.35 = about 70 degrees of foreshortening before the blend starts, and it
+// reaches fully camera-facing only at true edge-on. Nothing that currently reads
+// correctly is touched: above the threshold this is a no-op.
+#define RIBBON_MIN_PROJECTION 0.35f
+
+// Below this the cross product carries no direction, only noise: `side` must be
+// carried forward from the previous point rather than recomputed. Generous on
+// purpose — the transported vector is as correct as the computed one, so there
+// is no cost to switching over early, and a marginal cross product is exactly
+// where the jump happens.
+#define RIBBON_SIDE_DEGENERATE 0.12f
 
 // Tangent tại điểm i dọc theo path - sai phân trung tâm cho các điểm giữa
 // (mượt hơn sai phân 1 phía), sai phân 1 phía ở 2 đầu mút.
@@ -151,23 +197,134 @@ void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture,
   float prevV = 0.0f;
   Vector3 prevSide = {0};
   bool havePrevSide = false;
+  Vector3 prevTangent = {0};
+  bool havePrevTangent = false;
 
   for (int i = 0; i < count; i++) {
-    Vector3 tangent = ComputeTangent(points, count, i);
-    Vector3 side = ComputeSideVector(tangent, primaryNormal, fallbackNormal);
+    // ── THE TANGENT CAN BE FABRICATED, AND THAT IS THE REAL PINCH ───────────
+    //
+    // ComputeTangent takes a CENTRAL difference, points[i+1] - points[i-1]. When
+    // a simulated ribbon bunches — nodes crowding together, which cloth does —
+    // those two points can land on top of each other, and the helper then returns
+    // a hard-coded (1,0,0). That is not a short vector, it is a CONFIDENT WRONG
+    // one: the degenerate-cross-product guard below sees a perfectly healthy
+    // cross product and normalises it, so `side` jumps to whatever is
+    // perpendicular to a fabricated axis. The band closes to a point and re-opens
+    // rotated, always at the same place on a repeating path, which is what makes
+    // it look like a deliberate twist.
+    //
+    // So the tangent is validated FIRST, and carried forward when it has no
+    // information — the same parallel-transport argument as the side vector, one
+    // level up. Guarding only the cross product was the previous fix and it could
+    // not see this, because by then the damage is already an ordinary-looking
+    // unit vector.
+    Vector3 tangent;
+    {
+      Vector3 d;
+      if (i == 0)              d = Vector3Subtract(points[1].position, points[0].position);
+      else if (i == count - 1) d = Vector3Subtract(points[count - 1].position,
+                                                   points[count - 2].position);
+      else                     d = Vector3Subtract(points[i + 1].position,
+                                                   points[i - 1].position);
+      if (Vector3Length(d) < RIBBON_DEGENERATE_EPSILON && i > 0)
+        d = Vector3Subtract(points[i].position, points[i - 1].position);   // one-sided
+      if (Vector3Length(d) < RIBBON_DEGENERATE_EPSILON)
+        tangent = havePrevTangent ? prevTangent
+                                  : ComputeTangent(points, count, i);      // last resort
+      else
+        tangent = Vector3Normalize(d);
+      prevTangent = tangent;
+      havePrevTangent = true;
+    }
 
-    // Giữ liên tục hướng "side" giữa các điểm liền kề trong CÙNG 1 dải,
-    // tránh hiện tượng "bowtie" (dải bị xoắn) do cross product đổi dấu khi
-    // tangent đi qua vùng gần song song với hướng nhìn camera.
+    // ── THE PINCH, and why a sign flip cannot fix it ────────────────────────
+    //
+    // `side = cross(tangent, primaryNormal)` COLLAPSES wherever the tangent runs
+    // parallel to primaryNormal — for a camera-facing strip, wherever the path
+    // points straight at or away from the viewer. `ComputeSideVector` then falls
+    // back to an unrelated reference vector, so `side` does not flip, it JUMPS to
+    // a completely different direction, and the band closes to a point and
+    // re-opens rotated. On a path that curves through the view direction this
+    // happens once or twice per loop: the owner's 29/07 capture shows exactly one
+    // such pinch with two wedges meeting at a point.
+    //
+    // The continuity check below only ever negated `side`, which cannot undo a
+    // 90-degree jump — that was the previous fix and it was aimed at the wrong
+    // failure.
+    //
+    // PARALLEL TRANSPORT is the standard answer: where the cross product has no
+    // information, carry the PREVIOUS side vector forward, re-orthogonalised
+    // against the new tangent. The strip then narrows through the degenerate
+    // stretch — which is correct, it is being seen end-on — instead of tearing.
+    Vector3 raw = Vector3CrossProduct(tangent, primaryNormal);
+    Vector3 side;
+    if (Vector3Length(raw) > RIBBON_SIDE_DEGENERATE && havePrevSide) {
+      side = Vector3Normalize(raw);
+    } else if (havePrevSide) {
+      Vector3 t = Vector3Subtract(
+          prevSide, Vector3Scale(tangent, Vector3DotProduct(prevSide, tangent)));
+      side = (Vector3Length(t) > RIBBON_DEGENERATE_EPSILON)
+                 ? Vector3Normalize(t)
+                 : ComputeSideVector(tangent, primaryNormal, fallbackNormal);
+    } else {
+      side = ComputeSideVector(tangent, primaryNormal, fallbackNormal);
+    }
+
+    // Sign continuity on top of that — a well-conditioned cross product can still
+    // come out negated between neighbours.
+    if (havePrevSide && Vector3DotProduct(side, prevSide) < 0.0f)
+      side = Vector3Negate(side);
+
+    // Foreshortening guard (see RIBBON_MIN_PROJECTION). Camera-facing strips are
+    // exempt: their side vector is already built perpendicular to the view, so
+    // the factor is 1 by construction and this would be a no-op.
+    float halfWidth = points[i].halfWidth;
+    Color tint = points[i].tint;
+    if (mode != RIBBON_CAMERA_FACING) {
+      Vector3 toCam = Vector3Subtract(points[i].position, camera.position);
+      float camLen = Vector3Length(toCam);
+      if (camLen > RIBBON_DEGENERATE_EPSILON) {
+        Vector3 viewDir = Vector3Scale(toCam, 1.0f / camLen);
+        // `side` is unit, so the fraction of it that survives projection is
+        // sin(angle to the view direction).
+        float along = Vector3DotProduct(side, viewDir);
+        float proj2 = 1.0f - along * along;
+        float proj = (proj2 > 0.0f) ? sqrtf(proj2) : 0.0f;
+        if (proj < RIBBON_MIN_PROJECTION) {
+          Vector3 camSide = Vector3CrossProduct(tangent, viewDir);
+          if (Vector3Length(camSide) > RIBBON_DEGENERATE_EPSILON) {
+            camSide = Vector3Normalize(camSide);
+            // Align it with the side we already have, or the blend would swing
+            // the band through zero on its way to the other orientation.
+            if (Vector3DotProduct(camSide, side) < 0.0f)
+              camSide = Vector3Negate(camSide);
+            // 0 at the threshold, 1 at true edge-on: continuous, so a band that
+            // sweeps through the view direction never pops.
+            float w = 1.0f - proj / RIBBON_MIN_PROJECTION;
+            side = Vector3Normalize(Vector3Add(Vector3Scale(side, 1.0f - w),
+                                               Vector3Scale(camSide, w)));
+          }
+        }
+      }
+    }
+
+    // CONTINUITY IS RECORDED ON THE VECTOR ACTUALLY USED, not on the raw one.
+    // It used to be stored before the foreshortening blend above, so the
+    // anti-bowtie check compared each point's RAW side against the previous
+    // point's RAW side while the geometry was built from the BLENDED ones —
+    // which are free to point opposite ways. The strip then pinches to nothing
+    // and crosses over itself: the owner's 29/07 capture shows exactly that
+    // wedge in the middle of a trail. Anything that modifies `side` must happen
+    // before this line.
     if (havePrevSide && Vector3DotProduct(side, prevSide) < 0.0f)
       side = Vector3Negate(side);
     prevSide = side;
     havePrevSide = true;
 
     Vector3 left =
-        Vector3Add(points[i].position, Vector3Scale(side, points[i].halfWidth));
+        Vector3Add(points[i].position, Vector3Scale(side, halfWidth));
     Vector3 right = Vector3Subtract(points[i].position,
-                                    Vector3Scale(side, points[i].halfWidth));
+                                    Vector3Scale(side, halfWidth));
     Vector3 center = points[i].position;
 
     if (i > 0) {
@@ -180,13 +337,11 @@ void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture,
       rlTexCoord2f(0.5f, prevV);
       rlVertex3f(prevCenter.x, prevCenter.y, prevCenter.z);
 
-      rlColor4ub(points[i].tint.r, points[i].tint.g, points[i].tint.b,
-                 points[i].tint.a);
+      rlColor4ub(tint.r, tint.g, tint.b, tint.a);
       rlTexCoord2f(0.5f, points[i].v);
       rlVertex3f(center.x, center.y, center.z);
 
-      rlColor4ub(points[i].tint.r, points[i].tint.g, points[i].tint.b,
-                 points[i].tint.a);
+      rlColor4ub(tint.r, tint.g, tint.b, tint.a);
       rlTexCoord2f(0.0f, points[i].v);
       rlVertex3f(left.x, left.y, left.z);
 
@@ -199,13 +354,11 @@ void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture,
       rlTexCoord2f(1.0f, prevV);
       rlVertex3f(prevRight.x, prevRight.y, prevRight.z);
 
-      rlColor4ub(points[i].tint.r, points[i].tint.g, points[i].tint.b,
-                 points[i].tint.a);
+      rlColor4ub(tint.r, tint.g, tint.b, tint.a);
       rlTexCoord2f(1.0f, points[i].v);
       rlVertex3f(right.x, right.y, right.z);
 
-      rlColor4ub(points[i].tint.r, points[i].tint.g, points[i].tint.b,
-                 points[i].tint.a);
+      rlColor4ub(tint.r, tint.g, tint.b, tint.a);
       rlTexCoord2f(0.5f, points[i].v);
       rlVertex3f(center.x, center.y, center.z);
     }
@@ -213,7 +366,7 @@ void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture,
     prevLeft = left;
     prevRight = right;
     prevCenter = center;
-    prevTint = points[i].tint;
+    prevTint = tint;
     prevV = points[i].v;
   }
 
@@ -222,6 +375,28 @@ void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture,
   rlDrawRenderBatchActive();   // flush before restoring, same reason as above
   rlEnableBackfaceCulling();
   rlDrawRenderBatchActive();
+}
+
+void Ribbon_ConstrainSegment(Vector3 *a, Vector3 *b, float restLen,
+                             bool pinnedA, RibbonConstrainMode mode) {
+  if (restLen <= 1e-6f) return;
+  float dx = b->x - a->x, dy = b->y - a->y, dz = b->z - a->z;
+  float dist2 = dx * dx + dy * dy + dz * dz;
+  float rest2 = restLen * restLen;
+  if (fabsf(dist2 - rest2) < rest2 * 1e-8f || dist2 < 1e-10f) return;
+  if (mode == RIBBON_CONSTRAIN_MAX && dist2 < rest2) return;   // already inside
+  if (mode == RIBBON_CONSTRAIN_MIN && dist2 > rest2) return;   // already outside
+
+  float dist = sqrtf(dist2);
+  float err = (dist - restLen) / dist;
+  float cx = dx * err, cy = dy * err, cz = dz * err;
+  if (pinnedA) {
+    b->x -= cx; b->y -= cy; b->z -= cz;
+  } else {
+    cx *= 0.5f; cy *= 0.5f; cz *= 0.5f;
+    a->x += cx; a->y += cy; a->z += cz;
+    b->x -= cx; b->y -= cy; b->z -= cz;
+  }
 }
 
 void DrawRibbonStrip(const RibbonPoint *points, int count, Texture2D texture,

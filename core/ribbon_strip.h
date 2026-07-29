@@ -2,6 +2,7 @@
 #define RIBBON_STRIP_H
 
 #include "raylib.h"
+#include <stdbool.h>
 
 // =============================================================================
 // RIBBON STRIP - Module dùng chung cho mọi chiêu cần vẽ "thân dài" liên tục
@@ -64,6 +65,32 @@ void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture,
 // đa số ribbon trong project - tia sét, beam, trail - đều camera-facing).
 void DrawRibbonStrip(const RibbonPoint *points, int count, Texture2D texture,
                      Camera3D camera);
+
+// Rope/cloth inextensibility for one segment of a strip: pull `b` back toward
+// `a` (or both toward each other) until they are `restLen` apart. Promoted out
+// of trail_system.c's WISP solver, which is where it was written and where it
+// was the only copy — a second consumer (the swept trail's cloth simulation)
+// would otherwise have reimplemented it, and two solvers that must agree is a
+// bug waiting for the first divergence.
+//
+// `pinnedA` = a is fixed (an emitter, the head of a trail), so all the
+// correction goes into b.
+//
+// The MODE is not a detail. It shipped as a `stretchOnly` bool, and a caller
+// wanting a lower BOUND on the spacing passed `false` — which does not mean
+// "also enforce a minimum", it means "force the distance to be EXACTLY this".
+// Two calls, one for the ceiling and one for the floor, therefore had the second
+// overwrite the first and pinned every segment to the floor: a 6 m ribbon
+// collapsed to a third of its length and read as a short stiff spindle.
+// Naming the three intents makes that mistake unspellable.
+typedef enum {
+  RIBBON_CONSTRAIN_EXACT,        // distance == restLen, both directions
+  RIBBON_CONSTRAIN_MAX,          // distance <= restLen (a ceiling: inextensible)
+  RIBBON_CONSTRAIN_MIN,          // distance >= restLen (a floor: cannot collapse)
+} RibbonConstrainMode;
+
+void Ribbon_ConstrainSegment(Vector3 *a, Vector3 *b, float restLen,
+                             bool pinnedA, RibbonConstrainMode mode);
 
 // Điền points[i].v = độ dài cộng dồn từ points[0] đến points[i], chuẩn hoá
 // về [0,1] (points[0].v = 0, points[count-1].v = 1). Dùng thay cho việc tự
