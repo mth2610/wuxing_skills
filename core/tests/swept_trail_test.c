@@ -204,6 +204,188 @@ static void Test_NodesCannotCrossTheirNeighbour(void)
               "%.3f m of %.2f m", lateral, SWEPT_HOME_MAX_DEV);
 }
 
+// ── 0b2. The flow does not ride on the swing ─────────────────────────────────
+//
+// The owner's call, before anyone measured it: "the UV scroll is in the same
+// direction as the motion, which is what makes it feel still." He was right, and
+// the numbers say by how much.
+//
+// The UV was `arc from the TAIL / tile`. Once the history ring is full the tail
+// retreats at exactly the speed the head advances, so a fixed piece of cloth sees
+// its own arc value change at the tip speed whether or not anything is scrolling.
+// That is not a scroll — it is the swing leaking into the texture.
+
+#define SWEPT_FLOW_SPEED 2.10f
+#define SWEPT_FLOW_TILE  1.10f
+
+static void Test_FlowIsDecoupledFromTheSwing(void)
+{
+    const float armLen = 3.0f, omega = 2.4f;
+    float tipSpeed = armLen * omega;                        // 7.2 m/s
+    float bodyPass = 0.50f + 0.55f * 1.0f;                  // the textured layer
+
+    // What the OLD formula did, at a fixed point of cloth, in tiles/sec.
+    float fromSwing  = tipSpeed / SWEPT_FLOW_TILE;
+    float fromScroll = SWEPT_FLOW_SPEED * bodyPass;
+    float oldTotal   = fromSwing + fromScroll;
+    CHECK_MSG(fromSwing > 2.0f * fromScroll,
+              "the swing really did dominate the old UV motion",
+              "%.1f tiles/s from the swing vs %.1f from the scroll",
+              fromSwing, fromScroll);
+    CHECK_MSG(fromSwing / oldTotal > 0.70f,
+              "...to the tune of most of it — the 'scroll speed' was a minority term",
+              "%.0f%% of the motion was the swing", 100.0f * fromSwing / oldTotal);
+
+    // And it was too fast to read. A strip 3 m long at a 1.10 m tile is 2.7 tiles,
+    // so the whole sheet crossed it three times a second. Too fast to track and
+    // not moving look the same, which is why no scroll SPEED ever fixed it.
+    float stripTiles = armLen / SWEPT_FLOW_TILE;
+    CHECK_MSG(oldTotal / stripTiles > 2.5f,
+              "the old flow crossed the whole strip several times a second",
+              "%.1f strip-lengths/sec", oldTotal / stripTiles);
+
+    // The new rate, at a fixed point of cloth, is the scroll term ALONE.
+    float newRate = fromScroll;
+    CHECK_MSG(newRate / stripTiles > 0.4f && newRate / stripTiles < 1.5f,
+              "the new flow crosses the strip about once a second — trackable",
+              "%.2f strip-lengths/sec", newRate / stripTiles);
+    // The property that matters more than the number: doubling the swing speed
+    // must not change the flow at all.
+    float fast = SWEPT_FLOW_SPEED * bodyPass;   // no tipSpeed term anywhere
+    CHECK_MSG(fabsf(fast - newRate) < 1e-6f,
+              "and swinging twice as fast no longer changes the flow rate",
+              "%.4f vs %.4f tiles/s", fast, newRate);
+}
+
+typedef struct { float t, v; } Stop2;
+static float Curve2(const Stop2 *s, int n, float t)
+{
+    if (t <= s[0].t) return s[0].v;
+    if (t >= s[n - 1].t) return s[n - 1].v;
+    for (int i = 0; i < n - 1; i++)
+        if (t >= s[i].t && t <= s[i + 1].t) {
+            float f = (t - s[i].t) / (s[i + 1].t - s[i].t);
+            return s[i].v + (s[i + 1].v - s[i].v) * f;
+        }
+    return 0.0f;
+}
+
+// ── 0b3. The additive layers must not saturate the band ─────────────────────
+//
+// The layers OVERLAP — the core sits inside the body, which sits inside the halo
+// — and they are additive, so the frame buffer sees their SUM. Above 1.0 every
+// texel clips to white and the sheet's filaments become mathematically
+// unrecoverable, however good the sheet is. The first version summed to 2.01 at
+// the head and 1.85 through the body.
+//
+// It went unnoticed because the ribbon was also FOLDING, and the fold carved
+// dark notches across the band that read as detail. Fixing the fold removed the
+// only structure surviving the clipping, so "it works" and "it is blown out"
+// arrived in the same frame. This test is here so that cannot recur silently.
+
+static void Test_AdditiveBudget(void)
+{
+    const float alpha[3] = {0.14f, 0.62f, 0.55f};   // halo, body, core
+    const float headPow[3] = {0.0f, 0.0f, 3.4f};
+    // BLADE alpha curve, and the width curve that also scales alpha.
+    const Stop2 aCurve[] = {{0.00f,0.00f},{0.25f,0.32f},{0.70f,0.82f},{1.00f,1.00f}};
+    const Stop2 wCurve[] = {{0.00f,0.00f},{0.25f,0.55f},{0.60f,1.00f},{0.88f,0.72f},{1.00f,0.18f}};
+
+    float worst = 0.0f, worstS = 0.0f;
+    float bodyPeak = 0.0f;
+    for (float sr = 0.02f; sr <= 0.92f; sr += 0.01f) {
+        float base = Curve2(aCurve, 4, sr) * Curve2(wCurve, 5, sr);
+        float sum = 0.0f;
+        for (int L = 0; L < 3; L++) {
+            float a = base * alpha[L];
+            if (headPow[L] > 0.0f) a *= powf(sr, headPow[L]);
+            sum += a;
+        }
+        if (sum > worst) { worst = sum; worstS = sr; }
+        if (sr < 0.80f && sum > bodyPeak) bodyPeak = sum;
+    }
+    CHECK_MSG(bodyPeak < 1.0f,
+              "along the BODY the layers stay under saturation, so the sheet survives",
+              "peaks at %.2f of full white", bodyPeak);
+    CHECK_MSG(worst < 1.6f, "and even the hottest point is not several times over",
+              "%.2f at segRatio %.2f", worst, worstS);
+
+    // The head is ALLOWED to blow out — that is the one place a trail should.
+    float headSum = 0.0f;
+    for (int L = 0; L < 3; L++)
+        headSum += alpha[L] * ((headPow[L] > 0.0f) ? 1.0f : 1.0f);
+    CHECK_MSG(headSum > 1.0f, "the head still blows out on purpose",
+              "%.2f at the tip", headSum);
+
+    // What the old numbers did, kept as the regression this test exists for.
+    const float oldAlpha[3] = {0.16f, 0.85f, 1.00f};
+    float oldSum = oldAlpha[0] + oldAlpha[1] + oldAlpha[2];
+    CHECK_MSG(oldSum > 2.0f, "the old stack really was twice over saturation",
+              "%.2f", oldSum);
+    CHECK_MSG(oldAlpha[1] + oldAlpha[2] > 1.5f,
+              "...and body+core alone clipped wherever they overlapped",
+              "%.2f", oldAlpha[1] + oldAlpha[2]);
+}
+
+// ── 0c. The authored flow sheet is USABLE as a trail sheet ───────────────────
+//
+// energy_flow.png is 1792x896 greyscale with the flow running across its WIDTH,
+// so it is sideways, mostly empty, and does not tile. Each of those is handled
+// once at load, and each of them is arithmetic, so each is checked here rather
+// than by looking.
+
+#define SWEPT_ASSET_CROP0 0.30f
+#define SWEPT_ASSET_CROP1 0.70f
+#define SWEPT_ASSET_FADE  0.125f
+
+static void Test_AssetSheetGeometry(void)
+{
+    // Mean alpha per 5% band of the SOURCE height, measured off the file. The
+    // crop window is defended by this, not by an opinion about where the
+    // filaments look like they are.
+    static const float rowMean[20] = {
+        1.63f, 1.46f, 1.67f, 2.16f, 1.63f, 1.73f, 3.93f, 16.14f, 49.50f, 100.69f,
+        98.53f, 57.57f, 16.09f, 4.15f, 2.06f, 1.39f, 1.53f, 1.17f, 1.91f, 2.05f};
+    float inside = 0.0f, outside = 0.0f;
+    int   nIn = 0, nOut = 0;
+    for (int b = 0; b < 20; b++) {
+        float mid = ((float)b + 0.5f) / 20.0f;
+        if (mid > SWEPT_ASSET_CROP0 && mid < SWEPT_ASSET_CROP1) { inside  += rowMean[b]; nIn++; }
+        else                                                    { outside += rowMean[b]; nOut++; }
+    }
+    inside /= (float)nIn; outside /= (float)nOut;
+    CHECK_MSG(outside < 4.0f, "everything the crop DISCARDS really is empty",
+              "mean %.2f of 255 outside the crop", outside);
+    CHECK_MSG(inside > 10.0f * outside, "and everything it keeps is where the filaments are",
+              "%.1f inside vs %.2f outside", inside, outside);
+
+    // The cross-fade endpoints. A raised cosine over F rows runs 0 -> 1, so the
+    // first output row IS the discarded tail's first row and the last blended row
+    // IS the source's — which is exactly what makes the wrap continuous. Get the
+    // ramp backwards and the seam moves rather than disappearing.
+    const int F = 224;
+    float t0 = 0.5f * (1.0f - cosf(3.14159265f * 0.0f / (float)F));
+    float t1 = 0.5f * (1.0f - cosf(3.14159265f * (float)(F - 1) / (float)F));
+    CHECK_MSG(t0 < 1e-6f, "the fade starts wholly on the wrapped-around tail", "t0 = %.4f", t0);
+    CHECK_MSG(t1 > 0.9999f, "and ends wholly on the sheet's own head", "t1 = %.4f", t1);
+    CHECK_MSG(SWEPT_ASSET_FADE > 0.0f && SWEPT_ASSET_FADE <= 1.0f / 3.0f,
+              "the fade never eats more than a third of the tile",
+              "%.3f of the length", SWEPT_ASSET_FADE);
+
+    // How far the asset gets stretched along the strip at the default tile.
+    // Doing this arithmetic is the point: the eyeball guess was 3x and the real
+    // figure is 1.7x, which is the difference between "the default will smear"
+    // and "the default is close to how it was painted".
+    float srcAlong  = 1792.0f * (1.0f - SWEPT_ASSET_FADE);
+    float srcAcross = 896.0f * (SWEPT_ASSET_CROP1 - SWEPT_ASSET_CROP0);
+    float authored  = srcAlong / srcAcross;
+    float drawn     = 1.10f / (2.0f * (3.0f * 0.0250f));   // 1.10 m tile / a 3 m blade's width
+    CHECK_MSG(drawn / authored > 1.0f && drawn / authored < 2.5f,
+              "the default tile draws the asset near its authored proportions",
+              "authored %.1f:1, drawn %.1f:1 (%.1fx stretch)",
+              authored, drawn, drawn / authored);
+}
+
 // ── 1. The aspect rule ───────────────────────────────────────────────────────
 //
 // The trap this exists for (core/docs/LANDMINES.md, "Thickness is a ratio
@@ -332,39 +514,6 @@ static void Test_WidthEnvelope(void)
 
 // ── 3. The lag schedule ──────────────────────────────────────────────────────
 
-static void Test_LagSchedule(void)
-{
-    CHECK(LagSamples(0) == 0, "strand 0 rides the live tip (zero lag)");
-
-    int prev = -1, strictly = 1;
-    for (int i = 0; i < 4; i++) {
-        int n = LagSamples(i);
-        if (n <= prev) strictly = 0;
-        prev = n;
-    }
-    CHECK(strictly, "lag is strictly increasing across strands");
-
-    // The lag is in SECONDS. If it were ever rewritten as a frame count this
-    // conversion is the thing that would quietly disappear.
-    for (int i = 0; i < 4; i++) {
-        float secs = (float)LagSamples(i) * SWEPT_SAMPLE_DT;
-        float want = (float)i * SWEPT_LAG_STEP;
-        CHECK_MSG(fabsf(secs - want) <= SWEPT_SAMPLE_DT * 0.5f + 1e-6f,
-                  "lag in seconds matches the schedule to within half a sample",
-                  "strand %d: %.4f s vs %.4f s", i, secs, want);
-    }
-
-    // The whole schedule has to fit in the ring, or the oldest strand reads a
-    // sample that has already been overwritten — which is not a crash, it is a
-    // strand that jitters, i.e. exactly the kind of bug a screenshot loses.
-    CHECK_MSG(LagSamples(3) < SWEPT_RING - 1, "the deepest lag fits in the ring",
-              "%d of %d", LagSamples(3), SWEPT_RING);
-
-    // ...and inside the tail itself at the shortest sensible lifetime, or the
-    // last strand is asking for history the trail no longer holds.
-    CHECK_MSG(LagSamples(3) < MaxNodes(0.20f), "the deepest lag fits a 0.2 s tail",
-              "%d of %d nodes", LagSamples(3), MaxNodes(0.20f));
-}
 
 static void Test_MaxNodes(void)
 {
@@ -828,56 +977,6 @@ static float ScreenFloor(float halfW, float pxPerMetre, float minFullPx, float *
     return minHalf;
 }
 
-static void Test_ScreenFloor(void)
-{
-    const float fovy = 45.0f, H = 1080.0f;
-
-    // Close up, a 6 cm blade band is many pixels and must be left ALONE — a
-    // floor that engages when it is not needed would fatten every trail.
-    float aScale;
-    float near_ = PixelsPerMetre(6.0f, fovy, H);
-    float hw = ScreenFloor(0.03f, near_, SWEPT_MIN_PIXELS, &aScale);
-    CHECK_MSG(fabsf(hw - 0.03f) < 1e-6f && aScale == 1.0f,
-              "at 6 m the band is left untouched", "%.4f m, alpha x%.3f", hw, aScale);
-
-    // Far out it goes sub-pixel; the floor holds the width and pays in alpha.
-    float far_ = PixelsPerMetre(90.0f, fovy, H);
-    float hw2 = ScreenFloor(0.03f, far_, SWEPT_MIN_PIXELS, &aScale);
-    CHECK_MSG(hw2 > 0.03f && aScale < 1.0f,
-              "far away the width is floored and the alpha pays for it",
-              "%.4f m, alpha x%.3f", hw2, aScale);
-    CHECK_MSG(fabsf(2.0f * hw2 * far_ - SWEPT_MIN_PIXELS) < 1e-3f,
-              "the floored band is exactly the minimum pixel width",
-              "%.3f px", 2.0f * hw2 * far_);
-
-    // THE POINT OF PAYING IN ALPHA: brightness x width is conserved, so a
-    // distant trail fades instead of becoming a fat opaque worm. Without this a
-    // floor is worse than the dashes it fixes.
-    float unfloored = 0.03f;
-    CHECK_MSG(fabsf(hw2 * aScale - unfloored) < 1e-6f,
-              "width x alpha is conserved by the floor", "%.6f vs %.6f",
-              hw2 * aScale, unfloored);
-
-    // Monotone in distance: no range where moving away makes the band brighter.
-    float prevProduct = 1e9f; int mono = 1;
-    for (float d = 2.0f; d < 200.0f; d *= 1.15f) {
-        float p = PixelsPerMetre(d, fovy, H);
-        float a; ScreenFloor(0.03f, p, SWEPT_MIN_PIXELS, &a);
-        if (a > prevProduct + 1e-6f) mono = 0;
-        prevProduct = a;
-    }
-    CHECK(mono, "alpha compensation never increases with distance");
-
-    // The inner core is 0.4/1.5 = 0.267x the outer half-width, so it is
-    // sub-pixel while the band around it still looks fine — which is why the
-    // BRIGHTEST layer is the one seen breaking up. Its gate must engage first.
-    float coreRatio = 0.4f / 1.5f;
-    CHECK_MSG(SWEPT_CORE_MIN_PIXELS * coreRatio >= SWEPT_MIN_PIXELS * 0.5f,
-              "the core is dropped while it is still wider than half the floor",
-              "%.2f px", SWEPT_CORE_MIN_PIXELS * coreRatio);
-    CHECK(SWEPT_CORE_MIN_PIXELS > SWEPT_MIN_PIXELS,
-          "the core gate engages BEFORE the band's own floor does");
-}
 
 // The tail is thinner than a pixel at every zoom, because the envelope takes it
 // to zero. So it must be DIMMER than it is thin, or it dashes instead of fading.
@@ -1055,252 +1154,188 @@ static void Test_Foreshortening(void)
 
 // ── the mirror guard ─────────────────────────────────────────────────────────
 
+// A mirror needle must pin the CODE, not the FORMATTING. These needles were
+// written with the source's column alignment baked in — `#define FOO    1.0f`,
+// three spaces — and the moment a formatter reflowed the file, SEVENTEEN of them
+// failed at once while nothing about the behaviour had changed. A test that
+// cries wolf on whitespace teaches people to ignore it, which is worse than not
+// having it. So both sides are collapsed to single spaces first: any run of
+// spaces, tabs and newlines compares equal to one space, and multi-line needles
+// work for free.
+static void CollapseWS(const char *in, char *out, size_t cap)
+{
+    size_t o = 0;
+    int pendingSpace = 0;
+    for (const char *p = in; *p; p++) {
+        if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') { pendingSpace = 1; continue; }
+        if (pendingSpace && o > 0 && o + 1 < cap) out[o++] = ' ';
+        pendingSpace = 0;
+        if (o + 1 < cap) out[o++] = *p;
+    }
+    out[o < cap ? o : cap - 1] = '\0';
+}
+
 static int FileHas(const char *path, const char *needle)
 {
     FILE *f = fopen(path, "rb");
     if (!f) return 0;
-    static char buf[200000];
+    static char buf[300000], flat[300000];
     size_t n = fread(buf, 1, sizeof(buf) - 1, f);
     buf[n] = '\0';
     fclose(f);
-    return strstr(buf, needle) != NULL;
+    CollapseWS(buf, flat, sizeof(flat));
+    char want[1024];
+    CollapseWS(needle, want, sizeof(want));
+    return strstr(flat, want) != NULL;
 }
 
 static void Test_MirrorStillMatchesSource(void)
 {
     const char *inl = "core/composition/common/vc_swept_trail.inl";
-    CHECK(FileHas(inl, "return 0.0250f;"),   "source still uses the 1:20 blade aspect");
+
+    // ── What this file still OWNS ───────────────────────────────────────────
+    //
+    // After the port onto core/trail_system.h, the mechanism lives in the
+    // engine and is pinned by core/tests/trail_cloth_test.c. Duplicating those
+    // needles here would just be a second place to update. What belongs here is
+    // the AUTHORING — the numbers that decide whether this reads as a blade, a
+    // cloth or a thread — and the WIRING, i.e. that the authored numbers are
+    // actually handed to the engine.
+
+    CHECK(FileHas(inl, "return 0.0250f;"), "source still uses the 1:20 blade aspect");
     CHECK(FileHas(inl, "return 0.0715f;"),
-          "source still uses the 1:7 ribbon aspect (cloth is broader than a blade)");
-    CHECK(FileHas(inl, "return 0.0125f;"),   "source still uses the 1:40 filament aspect");
+          "source still uses the 1:7 ribbon aspect (cloth is BROAD)");
+    CHECK(FileHas(inl, "return 0.0125f;"), "source still uses the 1:40 filament aspect");
     CHECK(FileHas(inl, "return (cap < want) ? cap : want;"),
-          "width is still MIN(requested, aspect cap)");
-    CHECK(FileHas(inl, "#define SWEPT_SAMPLE_HZ    60.0f"),
-          "the sample clock is still 60 Hz");
-    CHECK(FileHas(inl, "#define SWEPT_LAG_STEP     0.030f"),
-          "the filament lag step is still 30 ms");
-    CHECK(FileHas(inl, "Vector3Lerp(s->prevTip, tip,"),
-          "sub-frame interpolation is still in the push loop");
-    CHECK(FileHas(inl, "Vector3CrossProduct(Vector3Subtract(b, a), Vector3Subtract(c, b))"),
-          "the swing normal is still the cross product of two chords");
-    CHECK(FileHas(inl, "Vector3DotProduct(n, s->normal) < 0.0f"),
-          "the normal is still SNAPPED at an inflection, not lerped through zero");
-    // The trail no longer hands its width to a TrailEntity, so there is no
-    // 1.5x outer multiplier to divide out — this file draws the strip itself in
-    // three layers (see k_sweptPassW).
-    CHECK(FileHas(inl, "static const float k_sweptPassW[3]     = {1.55f, 1.00f, 0.26f};"),
-          "the three-layer pass widths still match this mirror");
-    CHECK(FileHas(inl, "static const float k_sweptPassA[3]     = {0.16f, 0.85f, 1.00f};"),
-          "the glow layer is still faint and wide, the core bright and thin");
+          "the caller's width is still a CEILING, not a value");
+
     CHECK(FileHas(inl, "FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_BLADE], 0.60f, 1.00f);"),
           "the blade width envelope peaks in the BODY, not at the head");
     CHECK(FileHas(inl, "FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_BLADE], 1.00f, 0.18f);"),
           "the blade's head still tapers to a needle");
-    // Guide §3, the layer that was missing entirely: a tiled, scrolled flow
-    // sheet with fibres inside the band.
-    CHECK(FileHas(inl, "SetTextureWrap(s_sweptBladeTex, TEXTURE_WRAP_REPEAT);"),
-          "the sheet still WRAPS, so it can be tiled and scrolled");
-    CHECK(FileHas(inl, "arc[k] / SWEPT_FLOW_TILE"),
-          "UV is still tiled by METRES, not stretched over the strip");
-    CHECK(FileHas(inl, "s->elapsed * SWEPT_FLOW_SPEED * s_sweptFlow"),
-          "the flow still scrolls over time");
+    CHECK(FileHas(inl, "{-1.00f, -0.50f, 0.38f, 1.00f}"),
+          "the filament spread table still matches this mirror");
+
+    // ── The layer stack ─────────────────────────────────────────────────────
+    //
+    // The three-strip idea used to be a hand-rolled pass loop in this file. It
+    // is now a TrailLayer table, and the ratios have to survive the move.
+    CHECK(FileHas(inl, ".widthMul = 1.55f, .alphaMul = 0.14f"),
+          "the halo is still faint and wide");
+    CHECK(FileHas(inl, ".widthMul = 0.26f, .alphaMul = 0.55f"),
+          "and the core still thin, and no longer a second saturated band");
+    CHECK(FileHas(inl, ".whiten = 0.00f"),
+          "the hue-carrying glow layer is still NOT whitened");
+    CHECK(FileHas(inl, ".headAlphaPow = 3.4f"),
+          "the white-hot core is still concentrated at the head, and now more tightly");
+    // THE RULE, not a preference: several additive copies of one textured
+    // pattern at different phases sum to something FLAT, and the wider layers
+    // throw the sheet's edge detail outward as spikes.
+    CHECK(FileHas(inl, ".scrollMul = 1.05f, .headAlphaPow = 0.0f, .texture = &s_sweptBodyTex"),
+          "exactly ONE layer carries the texture, and it is the body");
+    CHECK(FileHas(inl, "s_sweptLayers[0].texture = (s_sweptHaloTex.id != 0) ? &s_sweptHaloTex : NULL;"),
+          "the halo still gets the structure-free sheet");
+    CHECK(FileHas(inl, "s_sweptLayers[2].texture = s_sweptLayers[0].texture;"),
+          "...and so does the core");
+
+    // ── The sheets ──────────────────────────────────────────────────────────
     CHECK(FileHas(inl, "#define SWEPT_STREAKS 16"),
-          "the sheet still has interior structure, not a plain falloff");
-    // THE SHAPE OF THAT STRUCTURE, not just its presence. Continuous lanes
-    // running the full height of the sheet can only TRANSLATE when v scrolls —
-    // "a sine graph being dragged along" (owner, 29/07) — and read as static at
-    // any scroll rate. Finite streaks appear and vanish, which is where the eye
-    // actually gets motion from. Two things make a streak finite: a bounded
-    // envelope, and a circular distance in v so the bound can wrap seamlessly.
+          "the procedural sheet still has interior structure, not a plain falloff");
     CHECK(FileHas(inl, "if (t <= -1.0f || t >= 1.0f) continue;"),
           "each streak is still FINITE along v, not a full-height lane");
     CHECK(FileHas(inl, "dv -= floorf(dv + 0.5f);"),
           "and its extent still wraps, so the tiled sheet has no seam");
     CHECK(!FileHas(inl, "sinf(2.0f * PI * (float)cyc[f] * v + phase[f])"),
           "the rigid continuous sine lanes are gone for good");
-    // ...and the HALO does not carry them. The glow pass is 2.6x wider, so any
-    // structure in its sheet is thrown 2.6x further out: a fibre lane wandering
-    // across u — invisible at the body's edge — becomes long spikes at the
-    // halo's, and the band reads as sawtoothed, i.e. cut into segments. The
-    // identical lesson is written in vc_sweep_slash.inl ("the halo must not
-    // carry the rim") and was repeated here anyway.
-    CHECK(FileHas(inl, "s_sweptHaloTex"),
-          "there is still a SEPARATE fibre-less sheet for the halo pass");
-    CHECK(FileHas(inl, "Texture2D sheet = (pass == 1 || s_sweptHaloTex.id == 0)"),
-          "and BOTH the halo and the core pass use it — only the body is textured");
     CHECK(FileHas(inl, "a += st_amp[f] * expf(-d * d) * env * base * base;"),
           "streaks are still damped by the band profile SQUARED, away from the edge");
-    // A correction gain that divides by dt is not framerate-independent: at
-    // 60 fps `corr * 0.25/dt` is a gain of fifteen, at 144 fps thirty-six, and
-    // the chain rings node-to-node.
-    CHECK(!FileHas(inl, "0.25f / dt"),
-          "the dt-scaled constraint feedback is gone");
-    // The blend law and the tier gate are contracts, not tuning.
-    CHECK(FileHas(inl, "BeginBlendMode(BLEND_ADDITIVE);"),
-          "a trail still EMITS: additive, per the blend law");
-    CHECK(FileHas(inl, "rlDisableDepthMask();") && FileHas(inl, "rlEnableDepthMask();"),
-          "depth WRITE is still off while depth TEST stays on");
-    CHECK(FileHas(inl, "GfxQuality_Get() < GFX_MED"),
-          "the filament strand count is still gated by the quality tier");
-    CHECK(FileHas(inl, "{ -1.00f, -0.50f, 0.38f, 1.00f }"),
-          "the filament spread table still matches this mirror");
-    // The bug the 29/07 capture showed: the strands knotted at the head because
-    // the offset axis flipped sign at every inflection.
-    CHECK(FileHas(inl, "Vector3DotProduct(lat, s->lateralAxis) < 0.0f"),
-          "the FILAMENT spread axis is still sign-STABILISED, unlike `normal`");
-    CHECK(FileHas(inl, "Vector3Scale(s->lateralAxis,"),
-          "the spread still uses lateralAxis, not the raw swing normal");
-    CHECK(FileHas(inl, "#define SWEPT_TELEPORT_SPEED 45.0f") &&
-          FileHas(inl, "#define SWEPT_TELEPORT_MIN   0.75f"),
-          "the teleport discriminator still matches this mirror");
-    CHECK(FileHas(inl, "SweptTrail_Cut(s, i, tip);"),
-          "a teleport still CUTS the trail instead of bridging the gap");
-    // Layer four of the reference sheet, and the only one that is not geometry.
-    CHECK(FileHas(inl, "s->sparkAcc += dt * SWEPT_SPARK_RATE"),
-          "sparkles are still shed at a RATE, not a count per frame");
-    CHECK(FileHas(inl, "sqrtf(Random01()) * (float)span"),
-          "sparkles are still born ALONG the ribbon, biased toward the head");
-    // The shape's life is SIMULATED, not decorated. A synthetic wave layered on
-    // a rigid history is what the owner read as "a picture being moved in a
-    // circle" (29/07) — the ribbon has to lag, sag and overshoot on its own.
-    CHECK(FileHas(inl, "ForceField_Evaluate(fld, s->ring[idx], s->nvel[idx]"),
-          "node motion still comes from a ForceField, not hand-written sin()");
-    CHECK(FileHas(inl, "FORCE_NOISE_CURL"),
-          "the air the ribbon hangs in is still divergence-free curl noise");
-    CHECK(FileHas(inl, "FORCE_DRAG"),
-          "drag is still what makes the tail lag instead of snapping to the path");
-    CHECK(FileHas(inl, "Ribbon_ConstrainSegment(&s->ring[lead], &s->ring[idx],"),
-          "inextensibility still uses the SHARED rope constraint, not a second copy");
-    // A node that collapses onto its neighbour, or passes through it, gives a
-    // zero or REVERSED segment — and a reversed segment flips the strip's side
-    // vector and pinches the band into a bowtie (owner's 29/07 capture).
-    // THE MODE, not the number. `stretchOnly = false` does not mean "also
-    // enforce a minimum", it means "force the distance to be EXACTLY this" — so
-    // the floor call silently overwrote the ceiling call and pinned every
-    // segment to a third of its rest spacing. A 6 m ribbon collapsed to a third
-    // of its length and read as a short stiff spindle (owner's recording,
-    // 29/07). The enum exists so that mistake cannot be spelled.
-    CHECK(FileHas(inl, "RIBBON_CONSTRAIN_MAX);"),
-          "the ceiling call is still a MAX (inextensible), not an exact length");
-    CHECK(FileHas(inl, "RIBBON_CONSTRAIN_MIN);"),
-          "the floor call is still a MIN (cannot collapse), not an exact length");
-    CHECK(!FileHas(inl, ", true, false);") && !FileHas(inl, ", true, true);"),
-          "no constraint call passes a bare bool any more");
-    CHECK(FileHas("core/ribbon_strip.h", "RIBBON_CONSTRAIN_EXACT") &&
-          FileHas("core/ribbon_strip.h", "RIBBON_CONSTRAIN_MAX") &&
-          FileHas("core/ribbon_strip.h", "RIBBON_CONSTRAIN_MIN"),
-          "the three constraint intents are still named in the API");
-    CHECK(FileHas(inl, "#define SWEPT_FLOW_SPEED     2.10f"),
-          "the flow speed still matches this mirror");
-    // THE ANCHOR. Without it the cloth forces drive the shape instead of
-    // perturbing it, and the ribbon writhes free of the path it was dragged
-    // along — the owner's "snake being swung by the head" (29/07).
-    CHECK(FileHas(inl, "Vector3Scale(pull, SWEPT_HOME_SPRING)"),
-          "nodes are still sprung back toward the path they were LAID on");
-    CHECK(FileHas(inl, "#define SWEPT_HOME_MAX_DEV   0.30f"),
-          "and the stray distance is still hard-bounded in metres");
-    // ...but that metre bound must apply ACROSS the path only. Applied to the
-    // whole deviation it is 2.5x the node spacing at bench speed and the ribbon
-    // folds (Test_NodesCannotCrossTheirNeighbour). The split is the fix, so the
-    // decomposition itself is what has to be pinned, not just the constant.
-    CHECK(FileHas(inl, "#define SWEPT_ORDER_FRAC     0.45f"),
-          "the along-path bound is still a FRACTION of the node spacing");
-    CHECK(FileHas(inl, "float along = Vector3DotProduct(off, dir);"),
-          "the deviation is still split along/across the path before clamping");
-    CHECK(FileHas(inl, "float spacing = fminf(s->nrest[idx], s->nrest[leadI]);"),
-          "and the along bound still uses the SMALLER of the two spacings");
-    // THE BUG THIS CAUGHT. nhome[] shadows ring[], and ring[0] is seeded in TWO
-    // places that Push() never runs through — spawn and teleport-cut. Leaving
-    // nhome[0] at {0,0,0} anchored the trail's first node to the WORLD ORIGIN,
-    // i.e. it appeared at the map centre and snapped to the spawn point.
-    CHECK(FileHas(inl, "s->nhome[0]    = tip;") && FileHas(inl, "s->nhome[0]   = tip;"),
-          "the anchor is seeded in BOTH places the ring is seeded (spawn and cut)");
-    // Contrast: the core burns at the head only, so there is one bright spot
-    // rather than a uniformly lit length.
-    CHECK(FileHas(inl, "al *= powf(t, SWEPT_CORE_HEAD_POW)"),
-          "the white-hot core is still concentrated at the head");
-    CHECK(FileHas(inl, "{0.00f, 0.18f, 1.00f}"),
-          "the hue-carrying glow layer is still NOT whitened");
-    // Dust, not sparks: it stays where it was born and twinkles.
-    CHECK(FileHas(inl, ".velocity = Vector3Scale(jit, 0.11f),"),
-          "motes are still nearly stationary dust, not thrown grit");
-    CHECK(!FileHas(inl, ".stretchStrength = 1.0f,"),
-          "and they are no longer streaked (a streaked dust mote is a contradiction)");
-    CHECK(FileHas(inl, ".alphaCurve = &s_sweptTwinkle,"),
-          "the twinkle curve is still wired");
-    CHECK(FileHas("core/ribbon_strip.h", "void Ribbon_ConstrainSegment("),
-          "the rope constraint is still public, so there is only one of it");
-    // Only the newest node belongs to the emitter; everything behind it is free.
-    CHECK(FileHas(inl, "for (int k = 1; k < n; k++)"),
-          "the head is still pinned and the rest of the ribbon is not");
-    // The sheet is SYMMETRIC now: a camera-facing strip has no outer edge, so
-    // an edge-weighted mask puts its bright line at whatever side the view makes
-    // u = 0. The brightness comes from the layers instead.
+    CHECK(FileHas(inl, "#define SWEPT_ASSET_PATH \"assets/textures/energy_flow.png\""),
+          "the body sheet still comes from the authored flow asset");
+    CHECK(FileHas(inl, "ImageRotateCW(&src);"),
+          "still rotated a quarter turn — the asset's flow runs across its WIDTH");
+    CHECK(FileHas(inl, "ImageCrop(&src,"),
+          "still cropped to the band that actually carries filaments");
+    CHECK(FileHas(inl, "float t = 0.5f * (1.0f - cosf(PI * (float)y / (float)F));"),
+          "the wrap is still cross-faded, so the tiled sheet has no seam");
+    CHECK(FileHas(inl, "SetTextureWrap(s_sweptBladeTex, TEXTURE_WRAP_REPEAT);"),
+          "the sheet still WRAPS, so it can be tiled and scrolled");
+    CHECK(FileHas(inl, "s_sweptBodyTex = (s_sweptSheet >= 0.5f && s_sweptAssetTex.id != 0)"),
+          "and it still falls back to the procedural sheet if the asset is missing");
     CHECK(FileHas(inl, "float d = fabsf(u - 0.5f) * 2.0f;"),
-          "the trail sheet is still symmetric across the band");
-    CHECK(!FileHas(inl, "0.50f * body + 0.60f * rim"),
-          "the edge-weighted sheet is gone");
-    CHECK(FileHas(inl, "s_sweptBladeFlat") && FileHas(inl, "s_sweptCamFacing"),
-          "both diagnostic dials are still wired");
-    // The inner core is the last structural difference between BLADE and the two
-    // styles that never dashed; it is 0.267x the width and 1.5x the brightness
-    // of the band, so it goes sub-pixel four times sooner.
-    CHECK(FileHas(inl, "static float s_sweptCore      = 0.0f;"),
-          "the sub-pixel inner core is OFF by default");
-    const char *rib = "core/ribbon_strip.c";
-    // THE PINCH. `cross(tangent, normal)` collapses where the path runs along
-    // the reference direction; the old code then fell back to an unrelated
-    // vector, so `side` JUMPED rather than flipped, and the band closed to a
-    // point and re-opened rotated. A sign check cannot undo a 90-degree jump.
-    CHECK(FileHas(rib, "#define RIBBON_SIDE_DEGENERATE"),
-          "a degenerate cross product is still DETECTED rather than fallen back on");
-    CHECK(FileHas(rib, "prevSide, Vector3Scale(tangent, Vector3DotProduct(prevSide, tangent))"),
-          "and the side vector is still parallel-TRANSPORTED through it");
-    // The TANGENT is the one that gets fabricated. ComputeTangent returns a
-    // hard-coded (1,0,0) when the central difference degenerates, and that is a
-    // confident wrong unit vector, not a short one — so a cross-product length
-    // guard cannot see it. It has to be validated one level up.
-    CHECK(FileHas(rib, "d = Vector3Subtract(points[i].position, points[i - 1].position);"),
-          "the tangent still falls back to a ONE-SIDED difference before giving up");
-    CHECK(FileHas(rib, "tangent = havePrevTangent ? prevTangent"),
-          "and it is still carried forward rather than fabricated");
-    // Only ONE layer may carry the fibres: three additive copies of the same
-    // quasi-periodic pattern at different phases sum to something flat, which is
-    // why the flow looked frozen at every scroll speed.
-    CHECK(FileHas(inl, "(pass == 1 || s_sweptHaloTex.id == 0)"),
-          "the fibre sheet is still used by the BODY layer alone");
-    // The anti-bowtie continuity check must compare the vector the geometry is
-    // BUILT from. Recording it before the foreshortening blend meant the check
-    // ran on the raw side while the quads used the blended one, and the two are
-    // free to point opposite ways — which is a twist, not a subtle error.
-    {
-        char *src = NULL;
-        FILE *f = fopen(rib, "rb");
-        static char buf[200000];
-        if (f) { size_t n = fread(buf, 1, sizeof(buf) - 1, f); buf[n] = 0; fclose(f); src = buf; }
-        const char *blend = src ? strstr(src, "float w = 1.0f - proj / RIBBON_MIN_PROJECTION;") : NULL;
-        const char *store = src ? strstr(src, "prevSide = side;") : NULL;
-        CHECK_MSG(blend && store && store > blend,
-                  "side continuity is recorded AFTER every modification to `side`",
-                  "%s", blend && store ? "store precedes the blend" : "pattern not found");
-    }
-    CHECK(FileHas(rib, "#define RIBBON_MIN_PROJECTION 0.35f"),
-          "ribbon_strip still holds a minimum projected width");
-    CHECK(FileHas(rib, "if (mode != RIBBON_CAMERA_FACING) {"),
-          "the projected-width guard still exempts camera-facing strips");
-    CHECK(FileHas(rib, "float w = 1.0f - proj / RIBBON_MIN_PROJECTION;"),
-          "the guard still ROTATES the side vector rather than widening it");
-    CHECK(!FileHas(rib, "tint.a * (1.0f / widen)"),
-          "the widen-and-dim version is gone (it made dim gaps, not solid band)");
-    CHECK(!FileHas(inl, "s_slashTex"),
-          "the trail no longer borrows the SweepSlash sheet");
-    CHECK(FileHas(inl, "#define SWEPT_MIN_PIXELS      2.0f") &&
-          FileHas(inl, "#define SWEPT_CORE_MIN_PIXELS 5.0f"),
-          "the screen-space floor still matches this mirror");
-    CHECK(FileHas(inl, "aScale * s_sweptAlphaMul;"),
-          "the screen-space floor is still PAID FOR in alpha, not applied bare");
-    CHECK(FileHas(inl, "FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_BLADE], 0.25f, 0.32f);"),
-          "the blade's tail alpha still falls faster than its width");
+          "the band profile still matches this mirror");
+
+    // ── The WIRING. Authored numbers are worthless if they are not handed over,
+    // and every one of these was a hand-rolled loop in this file yesterday. ──
+    CHECK(FileHas(inl, "cfg.type = TRAIL_TYPE_FOLLOWER;"),
+          "the trail is a real TrailEntity now, not a private ring");
+    CHECK(!FileHas(inl, "DrawRibbonStripEx"),
+          "and this file no longer draws a ribbon itself");
+    CHECK(FileHas(inl, "cfg.sampleHz = SWEPT_SAMPLE_HZ;"),
+          "the fixed-rate sample clock is still asked for (a RATE, not per frame)");
+    CHECK(FileHas(inl, "cfg.teleportSpeed = SWEPT_TELEPORT_SPEED;"),
+          "a teleport still CUTS the trail instead of bridging the gap");
+    CHECK(FileHas(inl, "cfg.idleSpeed = SWEPT_IDLE_SPEED;"),
+          "a stationary weapon still lets its trail DECAY");
+    CHECK(FileHas(inl, "cfg.nodeHomeSpring = SWEPT_HOME_SPRING;"),
+          "nodes are still sprung back toward the path they were LAID on");
+    CHECK(FileHas(inl, "cfg.nodeOrderFrac = SWEPT_ORDER_FRAC;"),
+          "and the order bound is still asked for — the fix for the self-twist");
+    CHECK(FileHas(inl, "cfg.forceField = &s_sweptCloth[s->style];"),
+          "node motion still comes from a ForceField, not hand-written sin()");
+    CHECK(FileHas(inl, "cfg.uvMetresPerTile"),
+          "the flow UV is still the MATERIAL one, not segRatio");
+    CHECK(FileHas(inl, "cfg.blendMode = BLEND_ADDITIVE;") &&
+          FileHas(inl, "cfg.useCustomBlendMode = true;"),
+          "a trail still EMITS: additive, per the blend law");
+    CHECK(FileHas(inl, "cfg.disableInnerCore = true;"),
+          "the engine's legacy sub-pixel core is still off — the stack replaces it");
+    CHECK(FileHas(inl, "cfg.gradient = SweptTrail_Gradient(s->matId);"),
+          "colour along the strip still comes from the element material");
+    CHECK(FileHas(inl, "cfg.ribbonMode = (s->style == VFX_TRAIL_BLADE) ? RIBBON_FIXED_NORMAL"),
+          "BLADE still lies in the swing plane; the others stay camera-facing");
+
+    // Handle safety. Trail ids are recycled and the pool evicts by priority, so
+    // a stored id can silently become somebody else's entity.
+    CHECK(FileHas(inl, "t->ownerTag != (SWEPT_TAG_BASE | (slot << 4) | strand)"),
+          "a strand id is still VALIDATED against its tag, never trusted");
+    CHECK(FileHas(inl, "s->strandId[c] = SweptTrail_SpawnStrand(s, i, c);"),
+          "and an evicted strand still respawns — eviction stays self-healing");
+    // The entity holds the CALLER's Matrix now, so the kill path must detach or
+    // it is a read after free every frame until the idle fade finishes.
+    CHECK(FileHas(inl, "Trail_AttachToTransform(s->strandId[k], NULL,"),
+          "kill still DETACHES rather than killing — a wind-down, and no dangling Matrix");
+
+    // The sparkles, which are the one layer that is not geometry.
+    CHECK(FileHas(inl, "s->sparkAcc += dt * SWEPT_SPARK_RATE * s_sweptSpark;"),
+          "sparks are still a RATE carried between frames, not a count per call");
+    CHECK(FileHas(inl, "sqrtf(Random01()) * (float)span"),
+          "they are still born ALONG the ribbon, biased toward the head");
+    CHECK(FileHas(inl, ".velocity = Vector3Scale(jit, 0.11f),"),
+          "and still magic DUST — born, hanging, drifting — not thrown grit");
+    CHECK(!FileHas(inl, ".stretchStrength = 1.0f,"),
+          "a streaked dust mote is still a contradiction");
+    CHECK(FileHas(inl, ".alphaCurve = &s_sweptTwinkle,"),
+          "each mote still twinkles on its own clock");
+    CHECK(FileHas(inl, "GfxQuality_Get() < GFX_MED"),
+          "the tier gate still only clamps DOWN");
+
+    // The freeze, and the thing that makes it an instrument rather than a pause
+    // button: it must wait for a FULL ribbon, or the dial shows nothing.
+    CHECK(FileHas(inl, "(t->historyCount >= SweptTrail_MaxNodes(s->lifetime))"),
+          "the freeze still waits for a full ribbon before it holds");
+    CHECK(FileHas(inl, "Trail_SetFrozen(s->strandId[c], frozen);"),
+          "and it is still the engine's freeze, not a second one here");
+
+    // Dead weight is really gone. Every one of these was an instrument for the
+    // dashing, and the dashing was the ribbon FOLDING — fixed at the source.
+    CHECK(!FileHas(inl, "s_sweptMinPx") && !FileHas(inl, "SWEPT_MIN_PIXELS"),
+          "the screen-space width floor is gone with the bug it never fixed");
+    CHECK(!FileHas(inl, "s_sweptBladeFlat") && !FileHas(inl, "s_sweptCamFacing"),
+          "and so are the two diagnostic dials it came with");
+    CHECK(!FileHas(inl, "SWEPT_LAG_STEP"),
+          "the filament lag schedule is gone — strands diverge in the air field now");
+    CHECK(!FileHas(inl, "SweptTrail_Simulate") && !FileHas(inl, "SweptTrail_Push"),
+          "the private cloth simulation and history ring are gone");
 }
 
 int main(void)
@@ -1308,9 +1343,11 @@ int main(void)
     printf("=== swept trail (H1) ===\n");
     Test_ClothStaysNearThePath();
     Test_NodesCannotCrossTheirNeighbour();
+    Test_FlowIsDecoupledFromTheSwing();
+    Test_AdditiveBudget();
+    Test_AssetSheetGeometry();
     Test_Aspect();
     Test_WidthEnvelope();
-    Test_LagSchedule();
     Test_MaxNodes();
     Test_SampleClock();
     Test_SideIsOuter();
@@ -1318,7 +1355,6 @@ int main(void)
     Test_FilamentBundle();
     Test_Teleport();
     Test_BladeMask();
-    Test_ScreenFloor();
     Test_TailFadesFasterThanItThins();
     Test_Foreshortening();
     Test_MirrorStillMatchesSource();

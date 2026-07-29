@@ -742,3 +742,99 @@ of the scroll rate.
 
 **Rule of thumb:** if scrolling a texture faster does not make it look faster,
 the pattern has no beginnings or ends in it.
+
+## A scroll built on a MOVING origin is the motion, not a scroll (29/07/2026)
+
+**Symptom.** A trail's flow texture read as frozen. Five rounds went on the
+scroll speed; the sheet was proven to be scrolling, and it still looked still.
+The owner named the cause without measuring it: *"the UV scroll is in the same
+direction as the motion, which is what makes it feel still."*
+
+**Cause.** The flow UV was `arc from the TAIL / tile`. That looks like a
+material coordinate and is not one. Once a history ring is full, the tail
+retreats at exactly the speed the head advances, so **a fixed piece of the ribbon
+sees its own arc value change at the tip speed whether or not anything is
+scrolling**. Measured on the bench swing (3 m arm, 2.4 rad/s, 1.10 m tile):
+
+| term | tiles/sec |
+|---|---|
+| leaked in from the swing | 6.5 |
+| the actual scroll | 2.2 |
+
+So **75% of the UV motion was the swing**, with two consequences, both fatal:
+
+- It was *locked to the motion*: the flow accelerated and stopped exactly with
+  the blade. Flow that is a function of the movement is read as part of the
+  movement — a pattern being dragged, not energy travelling.
+- It totalled ~8.8 tiles/sec, about three whole sheet-lengths a second on a band
+  a few centimetres wide. **Too fast to track is indistinguishable from not
+  moving**, which is why no scroll *speed* ever fixed it.
+
+**Rule.** Scroll against a **material coordinate** — a label stamped on the
+geometry when it is created and never revisited (here: metres of emitter path at
+the moment the node was laid). Then the scroll term is the *only* thing that
+moves the texture, its rate is exactly what you set, and it is independent of how
+fast the emitter is driven. Anything measured from a *moving* end of the geometry
+— tail, head, first live particle — is not a material coordinate.
+
+**Two diagnostics that generalise:**
+
+- A "the animation looks frozen" bug is one of THREE things, and speed is the
+  least likely: it is not moving; it is moving too fast to track; or it is moving
+  in lockstep with something else, so the eye cancels it. Measure the rate in the
+  frame of the thing being textured before touching the speed.
+- An instrument must measure the right frame. The UV log here watched the HEAD's
+  `v` — a different node every frame — so it faithfully reported the swing, and
+  agreed with the broken code all five rounds.
+
+## A mirror needle must pin the CODE, not the FORMATTING (29/07/2026)
+
+**Symptom.** A formatter reflowed `vc_swept_trail.inl` and **seventeen** mirror
+assertions failed in one run, with nothing about the behaviour changed.
+
+**Cause.** The needles were written by copying source lines complete with their
+column alignment — `#define SWEPT_FLOW_SPEED     2.10f`, five spaces. Alignment
+belongs to whatever formats the file, not to the author, so every needle was a
+hostage to it.
+
+**Rule.** Collapse whitespace on BOTH sides before matching (`CollapseWS` in
+`core/tests/swept_trail_test.c`): any run of spaces, tabs and newlines compares
+equal to one space. Multi-line needles then work for free. A test that cries wolf
+over whitespace trains people to ignore it, which is worse than not having it.
+
+## Overlapping additive layers clip, and a BUG can hide the clipping (29/07/2026)
+
+**Symptom.** A trail finally moved and folded correctly — and immediately read as
+"burnt out, no fine detail left". The flow sheet had been rebuilt twice to get
+that detail; none of it was visible.
+
+**Cause.** The three ribbon layers OVERLAP — the core sits inside the body, which
+sits inside the halo — and they are additive, so the frame buffer sees their
+**sum**:
+
+| | halo | body | core | sum |
+|---|---|---|---|---|
+| before | 0.16 | 0.85 | 1.00 | **2.01** |
+| body+core alone, where they overlap | | 0.85 | 1.00 | **1.85** |
+
+1.00 is already full white. Every texel through the body clipped, so the sheet's
+filaments were **mathematically unrecoverable** however good the sheet was. No
+amount of authoring can put detail into a clipped region.
+
+**The part worth the entry.** Those numbers were unchanged from the version
+everyone had been looking at for days, and nobody called it burnt out — because
+the ribbon was also FOLDING, and the fold carved dark notches across the band.
+The notches were read as detail. Fixing the fold removed the only structure that
+was surviving the clipping, so **"it works now" and "it is blown out" arrived in
+the same frame**, and the second looked like a regression caused by the first.
+
+**Rule.** For any stack of additive layers drawn over each other, budget the SUM,
+not each layer: keep it **below 1.0 through the body** so texture survives, and
+let it go over only at the one point that is supposed to blow out (a trail's
+head, an impact's centre). Write the budget down as a test — the numbers are
+arithmetic and drift silently otherwise (`Test_AdditiveBudget`).
+
+**And the diagnostic:** when fixing a bug makes something look worse, check
+whether the bug was supplying contrast. Dashes, flicker, gaps and folds all read
+as detail; removing them can expose a saturation or flatness problem that was
+there the whole time.

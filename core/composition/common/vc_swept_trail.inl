@@ -1,153 +1,126 @@
 // ── H1. VFX_ComposeSweptTrail — the swept weapon/body trail ──────────────────
 //
-// Đợt H's first task, and the one with the largest visual delta per line of new
-// code, for a reason that is arithmetic rather than aesthetic: `core/trail_system.h`
-// is 18 shipping entry points — attach-to-transform, orbit followers, RibbonMode,
-// arc-length UV, inner/outer double strips — and after the F0 purge **not one
-// composition used it** (VFX_PLAN §0, the primitive table). Everything we owned
-// was a camera-facing sprite, and a sprite cannot hold a silhouette from an
-// angle. A swept strip lying in the plane of the swing is a broad sheet from the
-// front and a thin edge from the side, and that change IS the sense of a real
-// object moving.
+// PORTED ONTO core/trail_system.h, 29/07. The first version of this file grew
+// its own history ring, its own fixed-rate sample clock, its own cloth
+// simulation and its own layered draw — 849 lines of code — right next to a
+// trail system with 18 public entry points and, after the F0 purge, zero
+// consumers. H1 existed to BE that consumer and had quietly become a second
+// implementation instead.
 //
-// WHY THIS IS A COMPOSITION AND NOT "JUST CALL THE TRAIL SYSTEM". The trail
-// system takes a texture and a config and knows nothing about elements, the
-// blend law, the tier budget, or the aspect-ratio rule. Every skill wiring it by
-// hand would re-derive those four things and each would get them slightly wrong.
-// Concretely, this file owns the five decisions the raw primitive cannot make:
+// Every mechanism it had is now in the engine, where the other three trail types
+// get it too: `TrailConfig.layers`, `.uvMetresPerTile`, `.nodeHomeSpring`,
+// `.nodeOrderFrac`, `.sampleHz`, `.teleportSpeed`, `.idleSpeed`. Three of those
+// fixed bugs that had been sitting in `trail_system.c` the whole time — FOLLOWER
+// laid one node per FRAME, had no constraint at all, and built its UV from
+// `segRatio`, which both stretches with the trail's length and is anchored to
+// the moving head.
+//
+// WHAT IS LEFT HERE IS AUTHORING, and it is why this is a composition and not
+// "just call the trail system". The trail system takes a config and knows
+// nothing about elements, the blend law, the tier budget or the aspect rule.
+// Five decisions live here and cannot sensibly live in a caller:
 //
 //   1. THE PLANE. BLADE runs RIBBON_FIXED_NORMAL with the normal recomputed
-//      every frame from the tip's own path (§ the swing normal, below). That is
-//      what makes it read as an object rather than a decal, and it is not
-//      something a caller can be expected to maintain.
+//      every frame from the tip's own path. That is what makes it read as an
+//      object rather than a decal.
 //   2. THE ASPECT RATIO. Width is capped against the length the tip ACTUALLY
 //      travelled, not against the caller's number (core/docs/LANDMINES.md,
 //      "Thickness is a ratio against the thing's OWN length"). A slow weapon
-//      gets a thin trail instead of a fat stub; a fast one gets the full width.
-//   3. THE SAMPLE CLOCK. Nodes are laid down at a fixed 60 Hz with sub-frame
-//      interpolation, never once per frame — otherwise the tail's length in
-//      metres moves with the frame rate, which is the rate-vs-count rule
-//      (VFX_PLAN §0.3) applied to geometry instead of particles.
-//   4. THE LAG SCHEDULE. FILAMENT is several strands reading the same path at
-//      different delays. The delay is in SECONDS and converted to ring samples
-//      here, so it does not become a frame count by accident.
-//   5. THE TIER GATE. FILAMENT sheds strands below GFX_MED. The gate only ever
+//      gets a thin trail instead of a fat stub.
+//   3. THE LAYER STACK. Three strips — wide soft glow, textured body, hot core —
+//      with the structure in exactly ONE of them.
+//   4. THE CLOTH. Per style: a blade's trail is struck, silk is draped.
+//   5. THE TIER GATE. FILAMENT sheds strands below GFX_MED, and only ever
 //      clamps DOWN.
 //
-// WHY IT DRIVES THE STRANDS BY HAND INSTEAD OF Trail_AttachToTransform. The
-// attach path (trail_system.c:719) is exactly right for one strand at zero lag,
-// and useless for the other two things this needs: a delayed sample (FILAMENT)
-// and a motion gate (a stationary weapon must let its trail decay, and the
-// attach path re-stamps the idle timer every frame, so an idle blade would hold
-// a frozen full-length ribbon forever). Driving `UpdateFollowerPosition`
-// ourselves also means the entity never holds a pointer into the caller's
-// storage, so a caller whose Matrix goes out of scope after VFX_KillSweptTrail
-// cannot be read after free.
+// TWO THINGS WERE DROPPED IN THE PORT, both deliberately:
 //
-// Managed archetype: private pool + VC_SweptTrail_Update/_Draw3D, which is what
-// a handle-returning composition needs — a manifest `type` is not sufficient
-// (VFX_PLAN §0.3; same shape as vc_character_aura.inl).
+//   - The SCREEN-SPACE WIDTH FLOOR. It existed to stop the blade rendering as a
+//     dotted line, and it never did. The dashing turned out to be the ribbon
+//     FOLDING: an absolute deviation bound of 0.30 m against a 0.12 m node
+//     spacing let a node pass its own neighbour. That is fixed at the source
+//     (`nodeOrderFrac`), so the floor is a workaround for a bug that no longer
+//     exists — and keeping it would drag a camera dependency into an update path
+//     with no business knowing about one.
+//   - The FILAMENT LAG SCHEDULE. Strands used to read one path at staggered
+//     delays so they would not overlap. Each strand is now its own entity at its
+//     own lateral offset, sampling the cloth field at its own position — so they
+//     diverge because they are in different places in a moving air field, which
+//     is what happens to a real bundle of threads, rather than because they are
+//     copies of one path in the past.
+//
+// Managed archetype: private pool + VC_SweptTrail_Update/_Draw3D. That pair is
+// how a stateful composition declares itself to scripts/sync_vfx_test.py, so the
+// Draw3D half stays even though the trail system now does the drawing.
 
 #include "core/tuning.h"
 
-#define SWEPT_MAX          8      // concurrent trails
-#define SWEPT_STRANDS_MAX  4      // strands per trail (FILAMENT uses all of them)
-#define SWEPT_RING         64     // tip-path samples kept; >= TRAIL_HISTORY_COUNT
-#define SWEPT_SAMPLE_HZ    60.0f  // node rate — a RATE, so the tail's metres do
-#define SWEPT_SAMPLE_DT    (1.0f / SWEPT_SAMPLE_HZ)   // not move with the frame rate
-#define SWEPT_STEPS_MAX    6      // sub-steps per frame after a hitch
-#define SWEPT_LAG_STEP     0.030f // seconds between consecutive FILAMENT strands
-#define SWEPT_FADE_TIME    0.45f  // seconds to fade once we stop feeding a strand
-#define SWEPT_IDLE_SPEED   0.12f  // m/s below which the tip counts as stationary
-#define SWEPT_MIN_VERTEX   0.005f // metres; rejects exact duplicate nodes only
+#define SWEPT_MAX 8         // concurrent trails
+#define SWEPT_STRANDS_MAX 4 // strands per trail (FILAMENT uses all of them)
+#define SWEPT_SAMPLE_HZ 60.0f
+#define SWEPT_IDLE_SPEED 0.12f  // m/s below which the tip counts as stationary
+#define SWEPT_MIN_VERTEX 0.005f // metres; rejects exact duplicate nodes only
 // A TELEPORT is not a fast swing. Above this the tip did not travel, it was
-// moved — the spawn point was dragged, an agent respawned, a blink fired — and
-// laying nodes along the gap draws a long straight streak BRIDGING the two
-// places, which is the one artefact in a trail that can never be mistaken for
-// motion. The limit is per frame and scales with dt so a frame hitch is not
-// mistaken for a jump; the floor is what catches a jump during a long frame.
-#define SWEPT_TELEPORT_SPEED 45.0f  // m/s — well above any weapon tip
-#define SWEPT_TELEPORT_MIN   0.75f  // metres in one frame, whatever dt was
-#define SWEPT_SPARK_RATE     26.0f  // sparks/sec shed off the ribbon, x0.18 s life
-// Guide §3: the sheet TILES along the trail rather than stretching over it, so
-// texel density stays constant however long the tail is, and it SCROLLS so the
-// fibres flow. Metres per tile, and tiles per second.
-//
-// 2.1, bracketed from both sides by the owner: 1.3 was "it just sits there" and
-// 3.6 was "too fast to judge". A 3 m tail is about five and a half tiles across,
-// so a fibre now crosses the ribbon in roughly two and a half seconds. The
-// per-pass spread (0.5 / 1.05 / 1.6) matters as much as the speed: layers moving
-// at nearly the same rate read as one thick stroke however many of them there
-// are, and the PARALLAX between them is the effect.
-// How hard a node is held to the path it was laid on, and the absolute ceiling
-// on how far it may stray. Deviation settles near force/spring: with the cloth
-// forces below that is a few centimetres of flutter.
-#define SWEPT_HOME_SPRING    9.0f
-#define SWEPT_HOME_MAX_DEV   0.30f   // metres, ACROSS the path only
-// How far along the path a node may stray, as a fraction of its spacing to the
-// next node. Must be < 0.5: both ends of a segment move, so 2 x this is the
-// most the gap can close, and anything >= 0.5 lets neighbours swap places —
-// which is a FOLD, and a distance constraint cannot undo one.
-#define SWEPT_ORDER_FRAC     0.45f
-#define SWEPT_FLOW_TILE      1.10f
-#define SWEPT_FLOW_SPEED     2.10f
-
+// moved — a respawn, a blink — and laying nodes along the gap draws a long
+// straight streak BRIDGING two places, the one artefact in a trail that can
+// never be mistaken for motion.
+#define SWEPT_TELEPORT_SPEED 45.0f // m/s — well above any weapon tip
+#define SWEPT_SPARK_RATE 26.0f     // sparks/sec shed along the ribbon
+// How hard a node is held to the path it was laid on, and the ceiling on how far
+// it may stray ACROSS that path. Deviation settles near force/spring: with the
+// cloth forces below, a few centimetres of flutter.
+#define SWEPT_HOME_SPRING 9.0f
+#define SWEPT_HOME_MAX_DEV 0.30f
+// ALONG the path, as a fraction of the node spacing. Must be < 0.5: both ends of
+// a segment move, so 2x this is the most the gap can close, and anything >= 0.5
+// lets neighbours swap places — a FOLD, which no distance constraint can undo.
+#define SWEPT_ORDER_FRAC 0.45f
+// The sheet TILES along the trail rather than stretching over it, so texel
+// density stays constant however long the tail is, and it SCROLLS so the fibres
+// flow. Metres per tile, and tiles per second OVER THE CLOTH — with the material
+// UV that rate is exactly what it says, whatever the emitter is doing.
+#define SWEPT_FLOW_TILE 1.10f
+#define SWEPT_FLOW_SPEED 2.10f
 // Trails are tagged so a handle can be VALIDATED rather than trusted. Trail ids
 // are recycled and the pool evicts by priority, so "our" id can silently become
-// somebody else's entity — writing thickness/normal into that would corrupt an
-// unrelated effect. With the tag, an evicted strand is simply respawned on the
-// next sample, which makes eviction self-healing instead of fatal.
-#define SWEPT_TAG_BASE     0x57540000   /* 'WT' */
+// somebody else's entity — writing a thickness or a normal into that would
+// corrupt an unrelated effect. With the tag an evicted strand is simply
+// respawned, which makes eviction self-healing instead of fatal.
+#define SWEPT_TAG_BASE 0x57540000 /* 'WT' */
 
-typedef struct {
-    bool  active;
-    const Matrix *xf;             // caller-owned; must outlive the handle
+typedef struct
+{
+    bool active;
+    const Matrix *xf; // caller-owned; must outlive the handle
     VC_MaterialId matId;
     VFX_TrailStyle style;
-    float width;                  // full width in metres, before the aspect cap
-    float widthTarget;            // 0..1, set by VFX_TrailSetWidth
-    float widthLevel;             // what is actually drawn — ramps toward target
-    int   maxNodes;               // tail memory, in samples
-
-    // The ribbon's nodes. NOT a recording of where the tip went — see
-    // SweptTrail_Simulate. Newest at `head`, and only the newest is pinned.
-    Vector3 ring[SWEPT_RING];
-    Vector3 nvel[SWEPT_RING];     // per-node velocity: the inertia that makes it lag
-    float   nrest[SWEPT_RING];    // spacing at which each node was laid, in metres
-    Vector3 nhome[SWEPT_RING];    // where the node was LAID — the swept path itself
-    int   head;
-    int   filled;
-
-    Vector3 prevTip;              // last frame's tip, for sub-frame interpolation
-    bool  hasPrevTip;
-    Vector3 normal;               // the swing plane's normal (BLADE's fixedNormal)
-    bool  hasNormal;
-    Vector3 lateralAxis;          // `normal` with a CONTINUOUS sign (FILAMENT spread)
-    bool  hasLateral;
-    float sampleAcc;
+    float width;       // full width in metres, before the aspect cap
+    float widthTarget; // 0..1, set by VFX_TrailSetWidth
+    float widthLevel;  // what is actually drawn — ramps toward target
+    float lifetime;    // tail memory, seconds
+    int strandId[SWEPT_STRANDS_MAX];
+    int strands;
     float sparkAcc;
-    float elapsed;   // seconds since spawn — drives the flow scroll and the wobble
+    Vector3 normal; // the swing plane's normal (BLADE's fixedNormal)
+    bool hasNormal;
+    Vector3 lateralAxis; // `normal` with a CONTINUOUS sign (FILAMENT spread)
+    bool hasLateral;
+    bool wasFrozen;
 } VC_SweptTrail;
 
 static VC_SweptTrail s_swept[SWEPT_MAX];
-static int  s_sweptNextSerial = 0;
+static int s_sweptNextSerial = 0;
 static bool s_sweptInit = false;
-static Texture2D s_sweptBladeTex = {0};   // fibre sheet — body + core passes
-static Texture2D s_sweptHaloTex  = {0};   // the SAME band with NO fibres — glow pass
+static Texture2D s_sweptBladeTex = {0}; // procedural streak sheet — the fallback
+static Texture2D s_sweptHaloTex = {0};  // the SAME band with NO structure — glow pass
+static Texture2D s_sweptAssetTex = {0}; // energy_flow.png, rotated + made to tile
+// Whichever of the two the dial selects. The layer table holds its ADDRESS, so
+// swapping sheets is one assignment and takes effect on the next draw.
+static Texture2D s_sweptBodyTex = {0};
 
-// Indexed by VFX_TrailStyle. Zero-initialised as file-scope statics, which is
-// what FloatCurve_AddStop expects (count 0 = no stops yet).
-// The air the ribbon hangs in — an authored ForceField per style rather than
-// hand-written sin() terms. The owner's point, 29/07: the trail system already
-// applies force fields per node, and `core/force_field.h` already has curl noise
-// (divergence-free, which is precisely the swirling a cloth sits in), wind,
-// gravity and drag. Writing that arithmetic again inside a composition is both
-// duplication and a violation of the project's own rule that force fields come
-// from the force layer.
-//
-// Per style, because "how cloth-like is it" IS the difference between a sword
-// trail and a silk ribbon: a struck blade trail barely sags and settles fast, a
-// silk one is carried by the air and keeps moving after the hand has stopped.
+// How much the ribbon behaves like cloth. BLADE is nearly a record (a sword's
+// trail is struck, not draped); RIBBON is silk and is allowed to sag, lag and
+// overshoot; FILAMENT sits between.
 static ForceField s_sweptCloth[3];
 
 // The dust's twinkle: three beats inside one life, so a mote pulses instead of
@@ -157,64 +130,40 @@ static SkillCurve s_sweptTwinkle;
 static SkillCurve s_sweptWidthCurve[3];
 static SkillCurve s_sweptAlphaCurve[3];
 
+// The colour ramp along the strip: the element's BODY in the cooling tail, its
+// GLOW at the head. One flat colour along a band is what makes an additive strip
+// read as plastic. A ColorGradient because that is exactly what the trail system
+// samples at segRatio — the shape was already there, this file just never used it.
+#define SWEPT_MAT_MAX 16
+static ColorGradient s_sweptGrad[SWEPT_MAT_MAX];
+static bool s_sweptGradBuilt[SWEPT_MAT_MAX];
+
 // Live-tunable: every one of these is a look decision, and the alternative to a
 // tunable is a rebuild per guess (core/CLAUDE.md §5).
-static float s_sweptWidthMul  = 1.0f;   // x on the caller's width
-static float s_sweptAspectMul = 1.0f;   // x on the aspect cap (the 1:20 rule)
-static float s_sweptLagMul    = 1.0f;   // x on the FILAMENT lag step
-// The trail system draws BLADE as TWO concentric strips — a coloured outer one
-// and a pure-white core at 0.4x width whose alpha ignores the alpha curve
-// entirely (trail_system.c:961). Additive plus bloom, that core can read as a
-// separate bright thread INSIDE the band, which is one of the two ways a single
-// trail can look like several. Set swept_core = 0 to answer that by eye without
-// a rebuild rather than by guessing.
-// DEFAULT OFF, changed 29/07 — the last structural difference between BLADE and
-// the two styles that never dashed.
-//
-// The trail system draws a FOLLOWER as two concentric strips, and the inner one
-// is 0.4/1.5 = 0.267x the outer half-width, drawn pure white at alpha 255 with
-// the alpha curve ignored entirely (trail_system.c:961). So it is ~4x thinner
-// and ~1.5x brighter than the band around it: whatever the band is doing, the
-// CORE is what the eye actually follows, and it goes sub-pixel four times sooner.
-//
-// The distance gate added earlier did not save it, and the reason is arithmetic:
-// the gate measures the band at the HEAD, once per frame, while the width
-// envelope tapers the band along its length. At segRatio 0.4 the taper is ~0.6,
-// so a band the gate measured at 9 px is really 5.4 px there and the core is
-// 1.4 px — dashes, with the gate reporting everything fine.
-//
-// RIBBON and FILAMENT both set disableInnerCore = true and neither has ever
-// dashed. The hot line BLADE wanted from the core is already in its own mask
-// (the rim), so this is a layer that was costing an artefact to duplicate
-// something the sheet already had. Set swept_core = 1 to put it back.
-static float s_sweptCore      = 0.0f;
-static float s_sweptSpread    = 2.2f;   // x on halfW, FILAMENT strand separation
-static float s_sweptMinPx     = 1.0f;   // x on the screen-space width floor
-static float s_sweptSpark     = 1.0f;   // x on the sparkle rate, 0 = none
-static float s_sweptAlphaMul  = 1.0f;   // x on the whole trail's opacity
-static float s_sweptFlow      = 1.0f;   // x on the UV scroll speed, 0 = frozen
-static float s_sweptSag       = 1.0f;   // x on how much the ribbon sags
-static float s_sweptWind      = 1.0f;   // x on the air that moves it, 0 = still
-static float s_sweptCoreHot   = 1.0f;   // x on the white-hot head
-static float s_sweptUVLog     = 0.0f;   // 1 = report what the flow UV is doing, 1 Hz
-// DIAGNOSTIC DIALS, both default OFF. Two rounds were spent on this artefact
-// because each candidate cause could only be tested by a rebuild. These make the
-// next observation decisive instead: set one, look, and the answer is a fact.
-//   swept_blade_flat = 1 -> BLADE uses the CENTRE-weighted global sheet. Still
-//       dashed? then the mask is not the cause and the geometry is.
-//   swept_camfacing  = 1 -> BLADE drops RIBBON_FIXED_NORMAL for camera-facing,
-//       which is the only other thing that separates it from the two styles that
-//       never broke up. Fixes it? then the swing plane is the cause.
-static float s_sweptBladeFlat = 0.0f;
-static float s_sweptCamFacing = 0.0f;
+static float s_sweptWidthMul = 1.0f;  // x on the caller's width
+static float s_sweptAspectMul = 1.0f; // x on the aspect cap (the 1:20 rule)
+static float s_sweptSpread = 2.2f;    // x on the FILAMENT bundle's width
+static float s_sweptSpark = 1.0f;     // x on the sparkle rate, 0 = none
+static float s_sweptAlphaMul = 1.0f;  // x on the whole trail's opacity
+static float s_sweptFlow = 1.0f;      // x on the flow rate; NEGATIVE reverses it
+static float s_sweptSag = 1.0f;       // x on how much the ribbon sags
+static float s_sweptCoreHot = 1.0f;   // x on the white-hot head
+// WHICH SHEET, and HOW LONG A TILE OF IT IS — the two dials that decide whether
+// the flow reads as surging energy. `swept_sheet` 1 = the authored
+// energy_flow.png, 0 = the procedural streaks. `swept_tile` is metres per
+// repeat: the asset is authored 4.4:1 along:across, and a 1.10 m tile on a 3 m
+// blade draws it at 7.3:1, so strands come out 1.7x longer than they were
+// painted. Mild, and that stretch reads as speed.
+static float s_sweptSheet = 1.0f;
+static float s_sweptTile = SWEPT_FLOW_TILE;
+// Hold the shape still and let ONLY the flow move. The decisive instrument for
+// "is the energy actually flowing": a moving shape with a moving texture and a
+// moving shape with a painted-on one look exactly the same.
+static float s_sweptFreeze = 0.0f;
 
-// Where each FILAMENT strand sits across the bundle, in units of half-width.
-// DELIBERATELY IRREGULAR. Evenly spaced strands of similar width read as a comb
-// — four parallel wires, which is what the owner's 29/07 capture shows — and no
-// amount of colour fixes it, because the regularity is the thing the eye picks
-// up. Uneven spacing plus the width falloff in SweptTrail_StrandLook is what
-// turns four wires into a bundle of threads. Pinned by swept_trail_test.c.
-static const float k_sweptSpread[SWEPT_STRANDS_MAX] = { -1.00f, -0.50f, 0.38f, 1.00f };
+// Uneven by design: evenly spaced strands of equal width read as a comb, no
+// amount of colour fixes it, and the regularity is the thing the eye picks up.
+static const float k_sweptSpread[SWEPT_STRANDS_MAX] = {-1.00f, -0.50f, 0.38f, 1.00f};
 
 // ── The arithmetic, factored out so core/tests/swept_trail_test.c can mirror it ─
 
@@ -226,11 +175,15 @@ static const float k_sweptSpread[SWEPT_STRANDS_MAX] = { -1.00f, -0.50f, 0.38f, 1
 // Half-width is half of that, hence 0.025 / 0.05 / 0.0125.
 static float SweptTrail_AspectK(VFX_TrailStyle style)
 {
-    switch (style) {
-    case VFX_TRAIL_RIBBON:   return 0.0715f;   // 1:7 — cloth, and cloth is BROAD
-    case VFX_TRAIL_FILAMENT: return 0.0125f;   // 1:40 — thread
+    switch (style)
+    {
+    case VFX_TRAIL_RIBBON:
+        return 0.0715f; // 1:7 — cloth, and cloth is BROAD
+    case VFX_TRAIL_FILAMENT:
+        return 0.0125f; // 1:40 — thread
     case VFX_TRAIL_BLADE:
-    default:                 return 0.0250f;   // 1:20 — blade
+    default:
+        return 0.0250f; // 1:20 — blade
     }
 }
 
@@ -242,64 +195,10 @@ static float SweptTrail_HalfWidth(float widthMetres, float level01,
                                   float travelLen, VFX_TrailStyle style)
 {
     float want = widthMetres * 0.5f * level01;
-    float cap  = travelLen * SweptTrail_AspectK(style) * s_sweptAspectMul;
-    if (want < 0.0f) want = 0.0f;
+    float cap = travelLen * SweptTrail_AspectK(style) * s_sweptAspectMul;
+    if (want < 0.0f)
+        want = 0.0f;
     return (cap < want) ? cap : want;
-}
-
-// Strand `i` reads the tip path delayed by i * SWEPT_LAG_STEP SECONDS. Expressed
-// in samples here and nowhere else, so the lag cannot quietly become a frame
-// count on a machine running at a different rate.
-static int SweptTrail_LagSamples(int strand)
-{
-    float lag = (float)strand * SWEPT_LAG_STEP * s_sweptLagMul;
-    int   n   = (int)(lag / SWEPT_SAMPLE_DT + 0.5f);
-    if (n < 0) n = 0;
-    if (n > SWEPT_RING - 2) n = SWEPT_RING - 2;
-    return n;
-}
-
-// ── The screen-space floor — why a correct width still renders as dashes ─────
-//
-// The blade came out DOTTED, and the giveaway was that it depended on ZOOM:
-// close in it was solid except at the tail, far out it broke up along its whole
-// length. That is not the mask (which was the first suspect, and replacing it
-// changed nothing) — it is the band being THINNER THAN A PIXEL. A strip under
-// ~1 px wide is rasterised where its centre happens to land inside a pixel and
-// dropped where it does not, which draws exactly a row of dashes. The tail goes
-// first at any zoom, because the width envelope takes it to zero.
-//
-// The fix is the standard hair/thin-line one, and it is a FLOOR PLUS A FADE, not
-// just a floor: below the minimum, hold the width at the minimum and scale alpha
-// by how much narrower it should have been. The band then keeps roughly the
-// light it ought to emit, and a trail too far away to resolve fades out instead
-// of disintegrating. A bare floor would do the opposite — a distant trail would
-// grow into a fat opaque worm.
-#define SWEPT_MIN_PIXELS      2.0f   // full width, below which the strip breaks up
-#define SWEPT_CORE_MIN_PIXELS 5.0f   // the inner core is 0.27x the outer half-width
-
-// Pixels per metre at `dist` under a vertical-FOV perspective camera.
-static float SweptTrail_PixelsPerMetre(float dist, float fovyDeg, float screenH)
-{
-    if (dist < 0.01f) dist = 0.01f;
-    float halfFov = fovyDeg * 0.5f * DEG2RAD;
-    float t = tanf(halfFov);
-    if (t < 1e-4f) t = 1e-4f;
-    return screenH / (2.0f * dist * t);
-}
-
-// Returns the half-width to actually draw and writes the alpha compensation.
-// Split out with no raylib types in the signature so the headless test can
-// mirror it exactly (core/tests/swept_trail_test.c).
-static float SweptTrail_ScreenFloor(float halfW, float pxPerMetre, float minFullPx,
-                                    float *outAlphaScale)
-{
-    *outAlphaScale = 1.0f;
-    if (pxPerMetre <= 0.0f || minFullPx <= 0.0f) return halfW;
-    float minHalf = (minFullPx * 0.5f) / pxPerMetre;
-    if (halfW >= minHalf) return halfW;
-    *outAlphaScale = (halfW > 0.0f) ? (halfW / minHalf) : 0.0f;
-    return minHalf;
 }
 
 // How much the ribbon behaves like cloth. BLADE is nearly a record (a sword's
@@ -307,34 +206,47 @@ static float SweptTrail_ScreenFloor(float halfW, float pxPerMetre, float minFull
 // overshoot; FILAMENT sits between.
 static float SweptTrail_Sag(VFX_TrailStyle style)
 {
-    switch (style) {
-    case VFX_TRAIL_RIBBON:   return 2.60f;   // m/s^2 downward
-    case VFX_TRAIL_FILAMENT: return 0.90f;
-    default:                 return 0.70f;
+    switch (style)
+    {
+    case VFX_TRAIL_RIBBON:
+        return 2.60f; // m/s^2 downward
+    case VFX_TRAIL_FILAMENT:
+        return 0.90f;
+    default:
+        return 0.70f;
     }
 }
 static float SweptTrail_Drag(VFX_TrailStyle style)
 {
     // Higher = the node settles faster = stiffer. Low drag is what lets the tail
     // keep travelling after the head has stopped.
-    switch (style) {
-    case VFX_TRAIL_RIBBON:   return 1.9f;
-    case VFX_TRAIL_FILAMENT: return 3.0f;
-    default:                 return 5.0f;
+    switch (style)
+    {
+    case VFX_TRAIL_RIBBON:
+        return 1.9f;
+    case VFX_TRAIL_FILAMENT:
+        return 3.0f;
+    default:
+        return 5.0f;
     }
 }
 static float SweptTrail_Wind(VFX_TrailStyle style)
 {
-    switch (style) {
-    case VFX_TRAIL_RIBBON:   return 1.70f;
-    case VFX_TRAIL_FILAMENT: return 1.10f;
-    default:                 return 0.55f;
+    switch (style)
+    {
+    case VFX_TRAIL_RIBBON:
+        return 1.70f;
+    case VFX_TRAIL_FILAMENT:
+        return 1.10f;
+    default:
+        return 0.55f;
     }
 }
 
 static int SweptTrail_StrandCount(VFX_TrailStyle style, bool lowTier)
 {
-    if (style != VFX_TRAIL_FILAMENT) return 1;
+    if (style != VFX_TRAIL_FILAMENT)
+        return 1;
     // E8 tier budget: each strand is its own ribbon submission. The gate only
     // ever clamps DOWN — a low tier loses threads, never gains them.
     return lowTier ? 2 : SWEPT_STRANDS_MAX;
@@ -345,8 +257,10 @@ static int SweptTrail_StrandCount(VFX_TrailStyle style, bool lowTier)
 static int SweptTrail_MaxNodes(float lifetime)
 {
     int n = (int)(lifetime * SWEPT_SAMPLE_HZ + 0.5f);
-    if (n < 4) n = 4;
-    if (n > TRAIL_HISTORY_COUNT) n = TRAIL_HISTORY_COUNT;
+    if (n < 4)
+        n = 4;
+    if (n > TRAIL_HISTORY_COUNT)
+        n = TRAIL_HISTORY_COUNT;
     return n;
 }
 
@@ -387,15 +301,16 @@ static int SweptTrail_MaxNodes(float lifetime)
 
 static float SweptTrail_BandProfile(float u)
 {
-    float d = fabsf(u - 0.5f) * 2.0f;      // 0 at the centre line, 1 at the edges
+    float d = fabsf(u - 0.5f) * 2.0f; // 0 at the centre line, 1 at the edges
     float a = 1.0f - d * d;
-    if (a < 0.0f) a = 0.0f;
-    return powf(a, 1.35f);                 // soft shoulders, no hard rim
+    if (a < 0.0f)
+        a = 0.0f;
+    return powf(a, 1.35f); // soft shoulders, no hard rim
 }
 
 static void SweptTrail_BuildBladeMask(void)
 {
-    const int W = 128, H = 256;            // H carries the streaks; must be seamless
+    const int W = 128, H = 256; // H carries the streaks; must be seamless
     // One row per streak: where it sits across the band, where its middle sits
     // along it, its HALF-length in v, how tight it is across u, how bright, and
     // how far it drifts across the band over its own length (a streak that runs
@@ -415,20 +330,22 @@ static void SweptTrail_BuildBladeMask(void)
         0.16f, 0.11f, 0.13f, 0.19f, 0.09f, 0.14f, 0.17f, 0.10f,
         0.12f, 0.20f, 0.11f, 0.15f, 0.12f, 0.10f, 0.08f, 0.09f};
     static const float st_wide[SWEPT_STREAKS] = {
-        0.045f,0.035f,0.050f,0.040f,0.030f,0.055f,0.038f,0.032f,
-        0.048f,0.042f,0.036f,0.052f,0.034f,0.044f,0.030f,0.028f};
+        0.045f, 0.035f, 0.050f, 0.040f, 0.030f, 0.055f, 0.038f, 0.032f,
+        0.048f, 0.042f, 0.036f, 0.052f, 0.034f, 0.044f, 0.030f, 0.028f};
     static const float st_amp[SWEPT_STREAKS] = {
         1.00f, 0.72f, 0.66f, 0.90f, 0.55f, 0.60f, 0.85f, 0.62f,
         0.48f, 0.95f, 0.58f, 0.68f, 0.74f, 0.50f, 0.44f, 0.52f};
     static const float st_slant[SWEPT_STREAKS] = {
-        0.05f,-0.04f, 0.06f,-0.07f, 0.03f,-0.05f, 0.06f,-0.03f,
-        0.05f,-0.06f, 0.04f,-0.05f, 0.03f,-0.04f, 0.05f,-0.03f};
+        0.05f, -0.04f, 0.06f, -0.07f, 0.03f, -0.05f, 0.06f, -0.03f,
+        0.05f, -0.06f, 0.04f, -0.05f, 0.03f, -0.04f, 0.05f, -0.03f};
 
-    Image img  = GenImageColor(W, H, BLANK);
+    Image img = GenImageColor(W, H, BLANK);
     Image halo = GenImageColor(W, H, BLANK);
-    for (int y = 0; y < H; y++) {
+    for (int y = 0; y < H; y++)
+    {
         float v = ((float)y + 0.5f) / (float)H;
-        for (int x = 0; x < W; x++) {
+        for (int x = 0; x < W; x++)
+        {
             float u = ((float)x + 0.5f) / (float)W;
             // A dim base band so the fibres sit INSIDE something, rather than
             // floating as separate wires.
@@ -442,7 +359,8 @@ static void SweptTrail_BuildBladeMask(void)
             // into segments (owner's recording, 29/07). Damping is cheaper than
             // moving the streaks, and it keeps them free to drift in the middle
             // where the drift is the whole point.
-            for (int f = 0; f < SWEPT_STREAKS; f++) {
+            for (int f = 0; f < SWEPT_STREAKS; f++)
+            {
                 // CIRCULAR distance along v. The sheet is tiled and scrolled, so
                 // a streak whose middle sits near v = 0 has to reach round to
                 // v = 1 or the wrap shows as a seam travelling down the trail
@@ -451,9 +369,10 @@ static void SweptTrail_BuildBladeMask(void)
                 // here at all — the old lanes bought seamlessness with integer
                 // periods, which is exactly what forced them to be continuous.
                 float dv = v - st_v[f];
-                dv -= floorf(dv + 0.5f);              // into [-0.5, 0.5)
+                dv -= floorf(dv + 0.5f); // into [-0.5, 0.5)
                 float t = dv / st_len[f];
-                if (t <= -1.0f || t >= 1.0f) continue;
+                if (t <= -1.0f || t >= 1.0f)
+                    continue;
                 // Raised cosine: zero VALUE and zero SLOPE at both ends, so a
                 // streak fades in and out instead of switching on at a hard edge.
                 float env = 0.5f * (1.0f + cosf(PI * t));
@@ -462,8 +381,7 @@ static void SweptTrail_BuildBladeMask(void)
                 a += st_amp[f] * expf(-d * d) * env * base * base;
             }
             a = a < 0.0f ? 0.0f : (a > 1.0f ? 1.0f : a);
-            ImageDrawPixel(&img, x, y, (Color){255, 255, 255,
-                                               (unsigned char)(a * 255.0f)});
+            ImageDrawPixel(&img, x, y, (Color){255, 255, 255, (unsigned char)(a * 255.0f)});
 
             // THE HALO SHEET: the same band with NO fibres at all.
             //
@@ -475,19 +393,20 @@ static void SweptTrail_BuildBladeMask(void)
             // light BEHIND the ribbon, not to be a second silhouette.
             float h = base * (0.90f + 0.10f * sinf(v * 2.0f * PI));
             h = h < 0.0f ? 0.0f : (h > 1.0f ? 1.0f : h);
-            ImageDrawPixel(&halo, x, y, (Color){255, 255, 255,
-                                                (unsigned char)(h * 255.0f)});
+            ImageDrawPixel(&halo, x, y, (Color){255, 255, 255, (unsigned char)(h * 255.0f)});
         }
     }
     s_sweptBladeTex = LoadTextureFromImage(img);
-    s_sweptHaloTex  = LoadTextureFromImage(halo);
+    s_sweptHaloTex = LoadTextureFromImage(halo);
     UnloadImage(img);
     UnloadImage(halo);
-    if (s_sweptHaloTex.id != 0) {
+    if (s_sweptHaloTex.id != 0)
+    {
         SetTextureFilter(s_sweptHaloTex, TEXTURE_FILTER_BILINEAR);
         SetTextureWrap(s_sweptHaloTex, TEXTURE_WRAP_REPEAT);
     }
-    if (s_sweptBladeTex.id != 0) {
+    if (s_sweptBladeTex.id != 0)
+    {
         SetTextureFilter(s_sweptBladeTex, TEXTURE_FILTER_BILINEAR);
         // REPEAT, not CLAMP: the sheet is TILED along the trail and scrolled, so
         // it must wrap. Harmless across u because the profile is zero at both
@@ -496,11 +415,111 @@ static void SweptTrail_BuildBladeMask(void)
     }
 }
 
+// ── The AUTHORED flow sheet ──────────────────────────────────────────────────
+//
+// `assets/textures/energy_flow.png` is a real filament bundle: strands that
+// braid, cross, thicken and gutter out, with a haze around them. Nothing hand
+// written is going to beat it, and the whole reason the procedural sheet exists
+// is that nobody had looked to see whether the asset was on disk.
+//
+// Three things have to happen before it can be a trail sheet, and each of them
+// is the reason a straight `ResourceManager_LoadTexture` would not have worked:
+//
+//  1. **It is authored SIDEWAYS.** The source is 1792 x 896 with the flow
+//     running across the WIDTH. A ribbon strip's `u` is across the band and `v`
+//     is along it, so the sheet is rotated a quarter turn at load. Doing it here
+//     costs one load; doing it in the UV costs a swap on every vertex, forever.
+//  2. **Most of it is empty.** Measured row by row: everything above 0.30 and
+//     below 0.70 of the height averages under 4/255. Mapped whole, the ribbon
+//     would be a thin bright wire floating inside a band of nothing — the
+//     geometry would be four times wider than anything you can see in it.
+//  3. **It does not tile.** The sheet is scrolled and REPEATed, so a seam would
+//     travel down the trail once per tile. The ends are cross-faded into each
+//     other over an eighth of the length, which for wisps just reads as more
+//     wisps.
+//
+// The procedural streak sheet is kept as the fallback, and `swept_sheet` swaps
+// between them live — the asset is a look decision, and the owner is the one who
+// can see it.
+#define SWEPT_ASSET_PATH "assets/textures/energy_flow.png"
+#define SWEPT_ASSET_CROP0 0.30f // where filaments start, as a fraction of height
+#define SWEPT_ASSET_CROP1 0.70f
+#define SWEPT_ASSET_FADE 0.125f // of the tile length, spent cross-fading the wrap
+#define SWEPT_ASSET_GAIN 1.15f
+#define SWEPT_ASSET_FLOOR 0.14f // a dim body so the strip keeps a silhouette
+#define SWEPT_ASSET_EDGE 0.12f  // of the width, forced to zero at both rims
+
+static void SweptTrail_BuildAssetSheet(void)
+{
+    Image src = LoadImage(SWEPT_ASSET_PATH);
+    if (src.data == NULL)
+    {
+        TraceLog(LOG_WARNING,
+                 "VFX_SWEPT: %s missing — falling back to the procedural streak sheet",
+                 SWEPT_ASSET_PATH);
+        return;
+    }
+    ImageFormat(&src, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+
+    int y0 = (int)((float)src.height * SWEPT_ASSET_CROP0);
+    int y1 = (int)((float)src.height * SWEPT_ASSET_CROP1);
+    ImageCrop(&src, (Rectangle){0.0f, (float)y0,
+                                (float)src.width, (float)(y1 - y0)});
+    ImageRotateCW(&src); // width becomes ACROSS the band, height ALONG it
+
+    int W = src.width, H = src.height;
+    int F = (int)((float)H * SWEPT_ASSET_FADE);
+    if (F < 2)
+        F = 2;
+    if (F > H / 3)
+        F = H / 3;
+    int outH = H - F; // the faded-in head replaces the discarded tail
+
+    Image out = GenImageColor(W, outH, BLANK);
+    const Color *sp = (const Color *)src.data;
+    for (int y = 0; y < outH; y++)
+    {
+        for (int x = 0; x < W; x++)
+        {
+            float a = (float)sp[y * W + x].r / 255.0f; // greyscale source
+            if (y < F)
+            {
+                // Raised-cosine cross-fade, so out[0] continues from out[outH-1].
+                float t = 0.5f * (1.0f - cosf(PI * (float)y / (float)F));
+                float b = (float)sp[(H - F + y) * W + x].r / 255.0f;
+                a = b * (1.0f - t) + a * t;
+            }
+            float u = ((float)x + 0.5f) / (float)W;
+            // The rims are forced to zero over a NARROW margin rather than by
+            // multiplying in the band profile: the asset brought its own falloff,
+            // and stacking a second one on top leaves a wire. This only
+            // guarantees the silhouette closes, which is what stops the strip
+            // scalloping (see the halo lesson in docs/LANDMINES.md).
+            float edge = SmoothStep01(fminf(u, 1.0f - u) / SWEPT_ASSET_EDGE);
+            a = (a * SWEPT_ASSET_GAIN + SWEPT_ASSET_FLOOR * edge) * edge;
+            a = a < 0.0f ? 0.0f : (a > 1.0f ? 1.0f : a);
+            ImageDrawPixel(&out, x, y, (Color){255, 255, 255, (unsigned char)(a * 255.0f)});
+        }
+    }
+    s_sweptAssetTex = LoadTextureFromImage(out);
+    UnloadImage(src);
+    UnloadImage(out);
+    if (s_sweptAssetTex.id != 0)
+    {
+        SetTextureFilter(s_sweptAssetTex, TEXTURE_FILTER_BILINEAR);
+        SetTextureWrap(s_sweptAssetTex, TEXTURE_WRAP_REPEAT);
+        TraceLog(LOG_INFO, "VFX_SWEPT: flow sheet from %s (%dx%d, wrap cross-faded)",
+                 SWEPT_ASSET_PATH, W, outH);
+    }
+}
+
 static void SweptTrail_InitShared(void)
 {
-    if (s_sweptInit) return;
+    if (s_sweptInit)
+        return;
 
     SweptTrail_BuildBladeMask();
+    SweptTrail_BuildAssetSheet();
 
     FloatCurve_AddStop(&s_sweptTwinkle, 0.00f, 0.00f);
     FloatCurve_AddStop(&s_sweptTwinkle, 0.10f, 1.00f);
@@ -519,29 +538,30 @@ static void SweptTrail_InitShared(void)
     // distance-to-neighbour constraint, so the chain wandered wherever the air
     // took it and stopped reading as the trail OF anything. Cloth flutters
     // AROUND the path it was dragged along; it does not leave it. These are a
-    // perturbation — see the home spring in SweptTrail_Simulate, which is what
+    // perturbation — see `nodeHomeSpring` in core/trail_system.c, which is what
     // actually bounds the deviation.
-    static const float sag[3]  = {0.40f, 0.95f, 0.55f};   // BLADE, RIBBON, FILAMENT
+    static const float sag[3] = {0.40f, 0.95f, 0.55f}; // BLADE, RIBBON, FILAMENT
     static const float curl[3] = {0.30f, 0.55f, 0.40f};
     static const float drag[3] = {5.50f, 3.40f, 4.20f};
-    for (int st = 0; st < 3; st++) {
+    for (int st = 0; st < 3; st++)
+    {
         ForceField_AddLayer(&s_sweptCloth[st], (ForceLayer){
-            .type = FORCE_GRAVITY_DIR,
-            .direction = {0.0f, -1.0f, 0.0f},
-            .strength = sag[st],
-        });
+                                                   .type = FORCE_GRAVITY_DIR,
+                                                   .direction = {0.0f, -1.0f, 0.0f},
+                                                   .strength = sag[st],
+                                               });
         ForceField_AddLayer(&s_sweptCloth[st], (ForceLayer){
-            .type = FORCE_NOISE_CURL,
-            .strength = curl[st],
-            .noiseScale = 0.95f,  // finer eddies: a flutter, not a swing
-            .noiseSpeed = 0.45f,  // the air itself moves, slowly
-        });
+                                                   .type = FORCE_NOISE_CURL,
+                                                   .strength = curl[st],
+                                                   .noiseScale = 0.95f, // finer eddies: a flutter, not a swing
+                                                   .noiseSpeed = 0.45f, // the air itself moves, slowly
+                                               });
         // Drag is what makes the tail LAG rather than snap: it is the difference
         // between a node that keeps its momentum and one that is glued to the path.
         ForceField_AddLayer(&s_sweptCloth[st], (ForceLayer){
-            .type = FORCE_DRAG,
-            .strength = drag[st],
-        });
+                                                   .type = FORCE_DRAG,
+                                                   .strength = drag[st],
+                                               });
     }
 
     // Width along the strip. segRatio 1 = the HEAD (the newest node, where the
@@ -596,65 +616,155 @@ static void SweptTrail_InitShared(void)
 
     // Lazily, never from a subsystem Init — Tuning_Init runs after those and an
     // early registration silently keeps the default (core/docs/LANDMINES.md).
-    Tuning_RegisterFloat("swept_width",  &s_sweptWidthMul,  1.0f);
+    // Nine, down from seventeen. `swept_lag`, `swept_minpx`, `swept_core`,
+    // `swept_blade_flat` and `swept_camfacing` were all instruments for the
+    // dashing, and the dashing was the ribbon FOLDING — fixed at the source, so
+    // the instruments for it are dead weight. `swept_wind` and `swept_uvlog`
+    // went with the hand-rolled simulation and the hand-rolled UV.
+    Tuning_RegisterFloat("swept_width", &s_sweptWidthMul, 1.0f);
     Tuning_RegisterFloat("swept_aspect", &s_sweptAspectMul, 1.0f);
-    Tuning_RegisterFloat("swept_lag",    &s_sweptLagMul,    1.0f);
-    Tuning_RegisterFloat("swept_core",   &s_sweptCore,      0.0f);
-    Tuning_RegisterFloat("swept_spread", &s_sweptSpread,    2.2f);
-    Tuning_RegisterFloat("swept_minpx",  &s_sweptMinPx,     1.0f);
-    Tuning_RegisterFloat("swept_spark",  &s_sweptSpark,     1.0f);
-    Tuning_RegisterFloat("swept_alpha",  &s_sweptAlphaMul,  1.0f);
-    Tuning_RegisterFloat("swept_flow",   &s_sweptFlow,      1.0f);
-    Tuning_RegisterFloat("swept_sag",    &s_sweptSag,       1.0f);
-    Tuning_RegisterFloat("swept_wind",   &s_sweptWind,      1.0f);
-    Tuning_RegisterFloat("swept_corehot",&s_sweptCoreHot,   1.0f);
-    Tuning_RegisterFloat("swept_uvlog",  &s_sweptUVLog,     0.0f);
-    Tuning_RegisterFloat("swept_blade_flat", &s_sweptBladeFlat, 0.0f);
-    Tuning_RegisterFloat("swept_camfacing",  &s_sweptCamFacing, 0.0f);
+    Tuning_RegisterFloat("swept_spread", &s_sweptSpread, 2.2f);
+    Tuning_RegisterFloat("swept_spark", &s_sweptSpark, 1.0f);
+    Tuning_RegisterFloat("swept_alpha", &s_sweptAlphaMul, 1.0f);
+    Tuning_RegisterFloat("swept_flow", &s_sweptFlow, 1.0f);
+    Tuning_RegisterFloat("swept_sag", &s_sweptSag, 1.0f);
+    Tuning_RegisterFloat("swept_corehot", &s_sweptCoreHot, 1.0f);
+    Tuning_RegisterFloat("swept_sheet", &s_sweptSheet, 1.0f);
+    Tuning_RegisterFloat("swept_tile", &s_sweptTile, SWEPT_FLOW_TILE);
+    Tuning_RegisterFloat("swept_freeze", &s_sweptFreeze, 0.0f);
 
     s_sweptInit = true;
 }
-// ── The layered draw ────────────────────────────────────────────────────────
+// ── The layer stack ─────────────────────────────────────────────────────────
 //
-// WHY THIS FILE DRAWS THE RIBBON ITSELF, having spent its first version driving
-// TRAIL_TYPE_FOLLOWER entities. The trail system's value is history plus node
-// physics; this composition samples its OWN history ring (it has to, for the
-// fixed-rate clock and the lag schedule) and uses no node physics at all, so
-// the entities were carrying nothing but their draw — and that draw is a fixed
-// two strips whose inner one is 0.267x as wide, pure white, and ignores the
-// alpha curve. Three of the artefacts chased this week came out of it.
+// What makes a trail read as beautiful, from the owner's reference sheet: every
+// trail on it is FOUR LAYERS — a wide soft glow, a textured body, a hot near-
+// white core, and sparkle points along the way. A single strip with a mask is a
+// line, however good the mask is.
 //
-// WHAT MAKES A TRAIL READ AS BEAUTIFUL, from the owner's own reference sheet
-// (29/07): every trail on it is FOUR LAYERS — a wide soft glow, a hot near-white
-// core, a taper to nothing, and sparkle points along the way. A single strip
-// with a mask is a line, however good the mask is, and that is exactly what ours
-// looked like.
+// The ratios are VFX_ComposeSweepSlash's, the one multi-pass effect in the tree
+// that has never been objected to. 1.55 for the halo, not the 2.6 this shipped
+// with: the halo multiplies a width that is itself earned from the path length,
+// so on a 6 m ribbon 2.6x meant a band over two metres across, and additive
+// light that wide through E1's bloom stops being a glow behind the ribbon and
+// becomes a coarse slab around it.
 //
-// The pass ratios are NOT invented here: they are VFX_ComposeSweepSlash's, which
-// is the one multi-pass effect in the tree the owner has not objected to. Same
-// reason a ribbon goes through the immediate-mode path with no emissiveBoost —
-// its vertex colour is 8-bit and caps at 1.0, so drawing it again is the only
-// way plain geometry gets past the bloom threshold.
-// 1.55, not the 2.6 this shipped with. The halo is a MULTIPLIER on a width that
-// is itself earned from the path length, so on a 6 m ribbon 2.6x meant a band
-// over two metres across — and additive light that wide, through E1's bloom,
-// stops being a glow behind the ribbon and becomes a coarse slab around it
-// (owner, 29/07: "a big rough bloom ring"). VFX_ComposeSweepSlash uses 1.5 for
-// the same job and does not do this.
-static const float k_sweptPassW[3]     = {1.55f, 1.00f, 0.26f}; // x half-width
-static const float k_sweptPassA[3]     = {0.16f, 0.85f, 1.00f}; // x alpha
-static const float k_sweptPassWhite[3] = {0.00f, 0.18f, 1.00f}; // toward white
-// CONTRAST, and it is the reason the trail read as "even, no blazing spot".
-// All three passes used the SAME alpha profile, so every layer was bright over
-// the same stretch and the result averaged into one flat luminance. The core is
-// now concentrated at the HEAD — pow(t, HEAD) — so there is a small white-hot
-// point with saturated element colour trailing behind it, which is what every
-// image on the reference sheet does. The glow, being the layer that carries the
-// hue, is deliberately NOT whitened at all.
-#define SWEPT_CORE_HEAD_POW  2.6f
-// ...and the tail keeps its colour instead of washing out: the mid layer is only
-// lightly whitened now (0.18, was 0.30). Whitening is what kills saturation, and
-// a desaturated additive band is exactly the "even, no bright spot" look.
+// ONLY THE BODY IS TEXTURED, and this is the rule, not a preference: three
+// additive copies of the same quasi-periodic pattern at three phases SUM TO
+// SOMETHING FLAT — averaging shifted copies of a pattern is how you remove it —
+// and the wider layers throw the sheet's edge detail outward as spikes. The halo
+// and the core are lit SHAPES.
+//
+// Not const: `swept_corehot` scales the core's alpha per frame, and the body's
+// texture pointer follows the sheet dial.
+// THE ALPHA BUDGET, and it is arithmetic, not taste. These layers are ADDITIVE
+// and they overlap: the core sits inside the body, which sits inside the halo,
+// so what the frame buffer sees is their SUM. The first version summed to 2.01
+// at the head and 1.85 wherever body and core overlap — where 1.00 is already
+// full white. Every texel in that region clipped, so the sheet's filaments were
+// mathematically unrecoverable however good the sheet was.
+//
+// That was true of the hand-rolled version too, and it went unnoticed for a
+// reason worth writing down: the ribbon was FOLDING, and the fold carved dark
+// notches across the band. Those notches were read as detail. Fixing the fold
+// removed the only structure that was surviving the clipping, which is why "it
+// works now" and "it is blown out" arrived in the same frame.
+//
+// The budget now: BELOW 1.0 along the body, so the texture survives, and over it
+// only at the head, which is the one place a trail is supposed to blow out.
+static TrailLayer s_sweptLayers[3] = {
+    {.widthMul = 1.55f, .alphaMul = 0.14f, .whiten = 0.00f, .scrollMul = 0.50f,
+     .headAlphaPow = 0.0f, .texture = NULL},
+    {.widthMul = 1.00f, .alphaMul = 0.62f, .whiten = 0.18f, .scrollMul = 1.05f,
+     .headAlphaPow = 0.0f, .texture = &s_sweptBodyTex},
+    // The core burns at the head and is gone by mid-tail, so the ribbon has ONE
+    // bright spot rather than three layers bright in the same places.
+    // 0.55 and a STEEPER head power, not 1.00 and 2.6. A pure-white core at full
+    // alpha is a second saturated band inside the first; steepening the power
+    // shortens the hot spot instead of running it down half the ribbon.
+    {.widthMul = 0.26f, .alphaMul = 0.55f, .whiten = 1.00f, .scrollMul = 1.60f,
+     .headAlphaPow = 3.4f, .texture = NULL},
+};
+
+// The tail→head colour ramp, one per material, built on first use.
+static const ColorGradient *SweptTrail_Gradient(VC_MaterialId mat)
+{
+    int i = (int)mat;
+    if (i < 0 || i >= SWEPT_MAT_MAX)
+        return NULL;
+    if (!s_sweptGradBuilt[i])
+    {
+        const VFX_ElementMaterial *m = VFX_Material(mat);
+        ColorGradient_AddStop(&s_sweptGrad[i], 0.00f, m->body);
+        ColorGradient_AddStop(&s_sweptGrad[i], 0.35f, m->body);
+        ColorGradient_AddStop(&s_sweptGrad[i], 1.00f, m->glow);
+        s_sweptGradBuilt[i] = true;
+    }
+    return &s_sweptGrad[i];
+}
+
+// ── Strand plumbing ─────────────────────────────────────────────────────────
+
+// The entity this handle's strand refers to, or NULL if it has been recycled
+// under us. NEVER trust a stored trail id: ids are reused and the pool evicts by
+// priority, so writing a thickness into a stale one corrupts an unrelated effect.
+static TrailEntity *SweptTrail_Strand(const VC_SweptTrail *s, int slot, int strand)
+{
+    int id = s->strandId[strand];
+    if (id < 0)
+        return NULL;
+    TrailEntity *t = GetTrail(id);
+    if (!t || !t->active || t->ownerTag != (SWEPT_TAG_BASE | (slot << 4) | strand))
+        return NULL;
+    return t;
+}
+
+static int SweptTrail_SpawnStrand(const VC_SweptTrail *s, int slot, int strand)
+{
+    const VFX_ElementMaterial *m = VFX_Material(s->matId);
+    TrailConfig cfg = {0};
+    cfg.type = TRAIL_TYPE_FOLLOWER;
+    cfg.pos = Vector3Transform((Vector3){0.0f, 0.0f, 0.0f}, *s->xf);
+    // Long-lived by construction: this trail dies when the caller kills it, or
+    // when it stops being fed and the idle fade drains it. A lifetime here would
+    // be a second, hidden death condition.
+    cfg.life = 1.0e6f;
+    cfg.thick = 0.05f; // real value written every frame from the aspect cap
+    cfg.tint = WHITE;  // the gradient carries the colour
+    cfg.gradient = SweptTrail_Gradient(s->matId);
+    cfg.widthCurve = &s_sweptWidthCurve[s->style];
+    cfg.alphaCurve = &s_sweptAlphaCurve[s->style];
+    cfg.widthEnvelope = TRAIL_WIDTH_ENVELOPE_TAPER_BOTH;
+    cfg.forceField = &s_sweptCloth[s->style];
+    cfg.ownerTag = SWEPT_TAG_BASE | (slot << 4) | strand;
+    cfg.priority = VFX_PRIORITY_LOW;
+    cfg.blendMode = BLEND_ADDITIVE;
+    cfg.useCustomBlendMode = true;
+    cfg.minVertexDistance = SWEPT_MIN_VERTEX;
+    // BLADE lies in the plane of the swing — a broad sheet from the front and a
+    // thin edge from the side, which IS the sense of a real object moving. The
+    // other two are camera-facing, the mode that never pinches on a curve.
+    cfg.ribbonMode = (s->style == VFX_TRAIL_BLADE) ? RIBBON_FIXED_NORMAL
+                                                   : RIBBON_CAMERA_FACING;
+    cfg.fixedNormal = (Vector3){0.0f, 1.0f, 0.0f};
+    cfg.disableInnerCore = true; // superseded by the layer stack
+    cfg.layers = s_sweptLayers;
+    cfg.layerCount = 3;
+    cfg.uvMetresPerTile = (s_sweptTile > 0.05f) ? s_sweptTile : 0.05f;
+    cfg.uvScrollSpeed = SWEPT_FLOW_SPEED * s_sweptFlow;
+    cfg.nodeHomeSpring = SWEPT_HOME_SPRING;
+    cfg.nodeHomeMaxDev = SWEPT_HOME_MAX_DEV;
+    cfg.nodeOrderFrac = SWEPT_ORDER_FRAC;
+    cfg.sampleHz = SWEPT_SAMPLE_HZ;
+    cfg.teleportSpeed = SWEPT_TELEPORT_SPEED;
+    cfg.idleSpeed = SWEPT_IDLE_SPEED;
+    cfg.trailLength = (float)SweptTrail_MaxNodes(s->lifetime);
+    (void)m;
+    int id = SpawnTrailEntity(cfg);
+    if (id >= 0)
+        Trail_AttachToTransform(id, s->xf, (Vector3){0.0f, 0.0f, 0.0f});
+    return id;
+}
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -662,65 +772,69 @@ int VFX_ComposeSweptTrail(const Matrix *followTransform, VC_MaterialId mat,
                           float width, float lifetime, VFX_TrailStyle style)
 {
     SweptTrail_InitShared();
-    if (!followTransform) {
+    if (!followTransform)
+    {
         TraceLog(LOG_WARNING, "VFX_SWEPT: NULL transform — no trail created");
         return -1;
     }
-    if (style < VFX_TRAIL_BLADE || style > VFX_TRAIL_FILAMENT) style = VFX_TRAIL_BLADE;
-    if (width <= 0.0f) width = 0.22f;
+    if (style < VFX_TRAIL_BLADE || style > VFX_TRAIL_FILAMENT)
+        style = VFX_TRAIL_BLADE;
+    if (width <= 0.0f)
+        width = 0.22f;
+    if (lifetime <= 0.0f)
+        lifetime = 0.5f;
 
     int slot = -1;
-    for (int i = 0; i < SWEPT_MAX; i++) {
-        if (!s_swept[i].active) { slot = i; break; }
+    for (int i = 0; i < SWEPT_MAX; i++)
+    {
+        if (!s_swept[i].active)
+        {
+            slot = i;
+            break;
+        }
     }
-    if (slot < 0) {
+    if (slot < 0)
+    {
         // Announced: a trail that never appears and a trail that was never
         // requested look identical on screen (core/CLAUDE.md §4).
         slot = s_sweptNextSerial % SWEPT_MAX;
         TraceLog(LOG_WARNING, "VFX_SWEPT: pool full (%d) — recycling slot %d",
                  SWEPT_MAX, slot);
+        VFX_KillSweptTrail(slot);
     }
     s_sweptNextSerial++;
 
     VC_SweptTrail *s = &s_swept[slot];
-    Vector3 tip = Vector3Transform((Vector3){0.0f, 0.0f, 0.0f}, *followTransform);
-
-    s->active      = true;
-    s->xf          = followTransform;
-    s->matId       = mat;
-    s->style       = style;
-    s->width       = width;
+    s->active = true;
+    s->xf = followTransform;
+    s->matId = mat;
+    s->style = style;
+    s->width = width;
+    s->lifetime = lifetime;
     s->widthTarget = 1.0f;
-    s->widthLevel  = 1.0f;
-    s->maxNodes    = SweptTrail_MaxNodes(lifetime);
-    s->head        = 0;
-    s->filled      = 1;
-    s->ring[0]     = tip;
-    // SEED THE ANCHOR TOO. Missing this left nhome[0] at {0,0,0} — the world
-    // origin — and the home spring then dragged the trail's first node toward
-    // the MAP CENTRE, which is the "it appears in the middle of the map and then
-    // snaps to the spawn point" the owner saw. Any state that shadows `ring`
-    // has to be seeded on the same line as `ring`, not only in Push().
-    s->nhome[0]    = tip;
-    s->nvel[0]     = (Vector3){0.0f, 0.0f, 0.0f};
-    s->nrest[0]    = 1e-4f;
-    s->prevTip     = tip;
-    s->hasPrevTip  = true;
-    s->normal      = (Vector3){0.0f, 1.0f, 0.0f};
-    s->hasNormal   = false;
+    s->widthLevel = 1.0f;
+    s->sparkAcc = 0.0f;
+    s->normal = (Vector3){0.0f, 1.0f, 0.0f};
+    s->hasNormal = false;
     s->lateralAxis = (Vector3){0.0f, 1.0f, 0.0f};
-    s->hasLateral  = false;
-    s->sampleAcc   = 0.0f;
-    s->sparkAcc    = 0.0f;
-    s->elapsed     = 0.0f;
+    s->hasLateral = false;
+    s->wasFrozen = false;
+    s->strands = SweptTrail_StrandCount(style, GfxQuality_Get() < GFX_MED);
+    for (int k = 0; k < SWEPT_STRANDS_MAX; k++)
+        s->strandId[k] = -1;
+    for (int k = 0; k < s->strands; k++)
+        s->strandId[k] = SweptTrail_SpawnStrand(s, slot, k);
     return slot;
 }
 
 void VFX_TrailSetWidth(int handle, float width01)
 {
-    if (handle < 0 || handle >= SWEPT_MAX || !s_swept[handle].active) return;
-    if (width01 < 0.0f) width01 = 0.0f;
-    if (width01 > 1.0f) width01 = 1.0f;
+    if (handle < 0 || handle >= SWEPT_MAX || !s_swept[handle].active)
+        return;
+    if (width01 < 0.0f)
+        width01 = 0.0f;
+    if (width01 > 1.0f)
+        width01 = 1.0f;
     // Only the TARGET moves; Update ramps toward it. Assigning straight through
     // is what makes a wind-down pop.
     s_swept[handle].widthTarget = width01;
@@ -728,30 +842,42 @@ void VFX_TrailSetWidth(int handle, float width01)
 
 void VFX_KillSweptTrail(int handle)
 {
-    if (handle < 0 || handle >= SWEPT_MAX) return;
-    // Deliberately does NOT KillTrail the strands. Cutting a ribbon out of
-    // existence mid-swing is a pop; releasing the slot stops the feed, and the
-    // strands then drain their own history and fade over SWEPT_FADE_TIME, which
-    // is the wind-down the caller wanted. Nothing dangles: the entities never
-    // held a pointer to the caller's Matrix (see the header comment).
-    s_swept[handle].active = false;
+    if (handle < 0 || handle >= SWEPT_MAX)
+        return;
+    VC_SweptTrail *s = &s_swept[handle];
+    // DETACH rather than kill. Cutting a ribbon out of existence mid-swing is a
+    // pop; detaching stops the feed, and the strands then drain their own
+    // history and fade — the wind-down the caller wanted.
+    //
+    // And detaching is not optional. The entity holds the CALLER'S Matrix, so a
+    // strand still attached after the caller's storage goes out of scope is a
+    // read after free every frame until the idle fade finishes.
+    for (int k = 0; k < SWEPT_STRANDS_MAX; k++)
+    {
+        TrailEntity *t = SweptTrail_Strand(s, handle, k);
+        if (t)
+            Trail_AttachToTransform(s->strandId[k], NULL, (Vector3){0.0f, 0.0f, 0.0f});
+        s->strandId[k] = -1;
+    }
+    s->active = false;
+    s->xf = NULL;
 }
 
 // ── Per-frame ────────────────────────────────────────────────────────────────
 
-// Metres of tip path currently inside the tail window. Walked in full rather
-// than kept as a running sum: the window is at most 59 segments and this runs at
-// most 8 times per sample, which is nothing, and an incremental sum would drift.
-static float SweptTrail_TravelLength(const VC_SweptTrail *s)
+// Metres of tip path currently inside the tail window, walked from the entity's
+// own history. This is what the aspect cap is measured against — the length the
+// tip ACTUALLY travelled, not the caller's idea of it.
+static float SweptTrail_TravelLength(const TrailEntity *t)
 {
-    int segs = s->filled - 1;
-    if (segs > s->maxNodes - 1) segs = s->maxNodes - 1;
-    if (segs < 1) return 0.0f;
+    if (t->historyCount < 2)
+        return 0.0f;
     float total = 0.0f;
-    int i = s->head;
-    for (int n = 0; n < segs; n++) {
-        int prev = (i - 1 + SWEPT_RING) % SWEPT_RING;
-        total += Vector3Distance(s->ring[i], s->ring[prev]);
+    int i = t->historyHead;
+    for (int n = 0; n < t->historyCount - 1; n++)
+    {
+        int prev = (i - 1 + TRAIL_HISTORY_COUNT) % TRAIL_HISTORY_COUNT;
+        total += Vector3Distance(t->history[i], t->history[prev]);
         i = prev;
     }
     return total;
@@ -760,16 +886,13 @@ static float SweptTrail_TravelLength(const VC_SweptTrail *s)
 // The swing plane. Three samples spanning the tail give two chords; their cross
 // product is along the axis the tip is turning about.
 //
-// WHICH SIDE OF THE STRIP THIS PUTS u = 0 ON, and it is not a matter of taste
-// (core/docs/LANDMINES.md, "A masked ribbon: which side of the strip is u = 0").
-// DrawRibbonStripEx emits u = 0 at center + side*halfWidth with
+// WHICH SIDE OF THE STRIP THIS PUTS u = 0 ON, and it is not a matter of taste.
+// The ribbon strip emits u = 0 at center + side*halfWidth with
 // side = normalize(cross(tangent, normal)). For a tip turning at angular
 // velocity w about a radius r, tangent = w x r and normal here is along w, so
 //     side = (w x r) x ŵ = r(w·ŵ) - w(r·ŵ) = |w| r     for r ⊥ w,
 // i.e. side points radially OUTWARD — u = 0 is the outer edge of the swing, the
-// line the blade itself traced. That is exactly the edge the reused SweepSlash
-// mask puts its hot rim on, so the two agree without a flip. Asserted
-// numerically in core/tests/swept_trail_test.c.
+// line the blade itself traced.
 //
 // Sign: cross(chord1, chord2) already carries the turn's handedness, so it is
 // used unflipped. At an inflection (the crossing of a figure-eight) the plane
@@ -777,321 +900,163 @@ static float SweptTrail_TravelLength(const VC_SweptTrail *s)
 // because lerping across a sign change passes through a degenerate normal and
 // the strip would collapse for a few frames. Curvature is ~0 at an inflection,
 // so the snap is invisible.
-static void SweptTrail_UpdateNormal(VC_SweptTrail *s)
+static void SweptTrail_UpdateNormal(VC_SweptTrail *s, const TrailEntity *t)
 {
-    int span = s->filled - 1;
-    if (span > s->maxNodes - 1) span = s->maxNodes - 1;
-    if (span < 2) return;
+    int span = t->historyCount - 1;
+    if (span < 2)
+        return;
     int half = span / 2;
-    Vector3 c = s->ring[s->head];
-    Vector3 b = s->ring[(s->head - half + SWEPT_RING) % SWEPT_RING];
-    Vector3 a = s->ring[(s->head - span + SWEPT_RING) % SWEPT_RING];
+    Vector3 c = t->history[t->historyHead];
+    Vector3 b = t->history[(t->historyHead - half + TRAIL_HISTORY_COUNT) % TRAIL_HISTORY_COUNT];
+    Vector3 a = t->history[(t->historyHead - span + TRAIL_HISTORY_COUNT) % TRAIL_HISTORY_COUNT];
     Vector3 n = Vector3CrossProduct(Vector3Subtract(b, a), Vector3Subtract(c, b));
-    if (Vector3LengthSqr(n) < 1e-10f) return;      // straight line: keep the last plane
+    if (Vector3LengthSqr(n) < 1e-10f)
+        return; // straight line: keep the last plane
     n = Vector3Normalize(n);
-    if (!s->hasNormal || Vector3DotProduct(n, s->normal) < 0.0f) {
-        s->normal = n;                              // first sample, or an inflection
+    if (!s->hasNormal || Vector3DotProduct(n, s->normal) < 0.0f)
+    {
+        s->normal = n; // first sample, or an inflection
         s->hasNormal = true;
-    } else {
+    }
+    else
+    {
         s->normal = Vector3Normalize(Vector3Lerp(s->normal, n, 0.25f));
     }
 
     // The SAME axis, sign-stabilised, and the two must not be conflated.
-    //
-    // `normal` above carries the true handedness of the turn, which is what the
-    // BLADE's masked strip needs (it decides which side u = 0 lands on). But
-    // FILAMENT uses this axis for something else entirely — to spread its
-    // strands sideways — and there the sign flip at an inflection is a BUG: the
-    // offsets jump from +o to -o in one frame, so every strand's newest node
-    // teleports across the bundle and the threads knot together at the head.
-    // That knot is visible in the owner's capture (29/07). Flipping to keep the
-    // sign continuous costs nothing here and cannot affect BLADE, whose ribbon
-    // is drawn from `normal`.
+    // `normal` carries the true handedness of the turn, which is what BLADE's
+    // masked strip needs. FILAMENT uses this axis to spread its strands, and
+    // there the sign flip at an inflection is a BUG: the offsets jump from +o to
+    // -o in one frame, every strand's newest node teleports across the bundle,
+    // and the threads knot together at the head.
     Vector3 lat = s->normal;
     if (s->hasLateral && Vector3DotProduct(lat, s->lateralAxis) < 0.0f)
         lat = Vector3Negate(lat);
     s->lateralAxis = lat;
-    s->hasLateral  = true;
-}
-
-// Cut the trail dead and restart it at `tip`. Used for a teleport, where the
-// alternative is a straight streak bridging two places the weapon never swept.
-// The strands are hard-killed here — unlike VFX_KillSweptTrail, which fades them
-// on purpose: a fading bridge is still a bridge.
-// Cut the trail dead and restart it at `tip`. Used for a teleport, where the
-// alternative is a straight streak bridging two places the weapon never swept.
-static void SweptTrail_Cut(VC_SweptTrail *s, int slot, Vector3 tip)
-{
-    (void)slot;
-    s->head       = 0;
-    s->filled     = 1;
-    s->ring[0]    = tip;
-    s->nhome[0]   = tip;      // see VFX_ComposeSweptTrail: seed the anchor too
-    s->nvel[0]    = (Vector3){0.0f, 0.0f, 0.0f};
-    s->nrest[0]   = 1e-4f;
-    s->prevTip    = tip;
-    s->hasNormal  = false;
-    s->hasLateral = false;
-    s->sampleAcc  = 0.0f;
-}
-
-static void SweptTrail_Push(VC_SweptTrail *s, Vector3 p, Vector3 tipVel)
-{
-    int prev = s->head;
-    s->head = (s->head + 1) % SWEPT_RING;
-    s->ring[s->head]  = p;
-    // A node is born MOVING, carrying the tip's velocity. Born at rest it would
-    // be dropped behind the emitter with no momentum, and the ribbon would form
-    // by falling rather than by being flung.
-    s->nvel[s->head]  = tipVel;
-    s->nhome[s->head] = p;
-    s->nrest[s->head] = (s->filled > 0) ? Vector3Distance(p, s->ring[prev]) : 0.0f;
-    if (s->nrest[s->head] < 1e-4f) s->nrest[s->head] = 1e-4f;
-    if (s->filled < SWEPT_RING) s->filled++;
-}
-
-// ── The ribbon is SIMULATED, not recorded ───────────────────────────────────
-//
-// The owner's words, 29/07: "like holding a picture and moving it in a circle,
-// not a silk ribbon in the wind." That is exactly what a history ring is — every
-// node sits precisely where the emitter was, so the shape is a rigid record being
-// translated, and no amount of texture makes rigid geometry read as cloth. The
-// sine displacement the previous version added made it worse for the same
-// reason: a fixed pattern riding along is still a picture.
-//
-// What silk does is LAG. Each node carries momentum, is dragged by the air,
-// sags, and is pulled back toward the node ahead of it by the cloth's own
-// inextensibility — so the tail keeps travelling after the head has stopped and
-// overshoots when the head turns. That is a follow-the-leader chain, and it is
-// cheap: integrate, then satisfy a distance constraint against the node NEARER
-// THE HEAD, twice.
-//
-// Only the head is pinned. Everything behind it is free, which is the whole
-// difference between a ribbon and a decal of one.
-static void SweptTrail_Simulate(VC_SweptTrail *s, float dt)
-{
-    int n = s->filled;
-    if (n > s->maxNodes) n = s->maxNodes;
-    if (n < 3) return;
-
-    const ForceField *fld = &s_sweptCloth[s->style];
-    const float time = (float)GetTime();
-
-    // Integrate. k = 0 is the head and is left alone — it belongs to the emitter.
-    for (int k = 1; k < n; k++) {
-        int idx = (s->head - k + SWEPT_RING) % SWEPT_RING;
-        Vector3 acc = ForceField_Evaluate(fld, s->ring[idx], s->nvel[idx], time,
-                                          (Vector3){0}, (Vector3){0});
-        // THE ANCHOR. A node is sprung back toward where it was LAID — the swept
-        // path — so the air and the sag move it a few centimetres instead of
-        // carrying it away. Without this the chain is free-floating and writhes;
-        // with it the deviation settles at roughly force/spring, which is the
-        // difference between silk fluttering and a snake being swung.
-        Vector3 pull = Vector3Subtract(s->nhome[idx], s->ring[idx]);
-        acc = Vector3Add(acc, Vector3Scale(pull, SWEPT_HOME_SPRING));
-        // Deeper nodes feel it more — the far end of a ribbon is the loose end,
-        // and a uniform response reads as the whole sheet swinging as one piece.
-        float depth = (float)k / (float)(n - 1);
-        acc = Vector3Scale(acc, (0.25f + 0.75f * depth) * s_sweptSag);
-        s->nvel[idx] = Vector3Add(s->nvel[idx], Vector3Scale(acc, dt));
-        s->ring[idx] = Vector3Add(s->ring[idx], Vector3Scale(s->nvel[idx], dt));
-
-        // Hard ceiling on the deviation, SPLIT INTO TWO BOUNDS — and the split
-        // is the whole point, not tidiness.
-        //
-        // THE SELF-TWIST BUG (owner, 29/07: "vẫn bị tự xoắn"). The bound used to
-        // be one number, 0.30 m, applied to the deviation as a whole. Do the
-        // arithmetic for the bench swing: a 3 m arm at 2.4 rad/s puts the tip at
-        // 7.2 m/s, and at the 60 Hz sample clock that lays nodes 0.12 m apart. A
-        // 0.30 m bound is therefore TWO AND A HALF TIMES the node spacing — a
-        // node was free to travel past its own leader, and the polyline folded
-        // back on itself. That fold is what reads as a twist: the strip's side
-        // vector reverses across the crossing and the band pinches into a wedge.
-        //
-        // A distance constraint cannot fix it. Distance is a scalar, so a node
-        // that has passed THROUGH its leader is simply "a bit too close" again,
-        // and the constraint happily settles it in the reversed order. Ordering
-        // has to be protected where it can still be seen — in the direction
-        // ALONG the path.
-        //
-        //   - ALONG the laid path: bounded by a FRACTION of the node spacing, so
-        //     two neighbours can approach but provably never swap. This is a
-        //     correctness bound.
-        //   - ACROSS it: the old loose metre bound. Sag, curl and flutter are
-        //     almost entirely lateral, so this is the component the look lives
-        //     in and it is left alone — the fix costs no motion.
-        int leadI = (s->head - k + 1 + SWEPT_RING) % SWEPT_RING;
-        Vector3 off = Vector3Subtract(s->ring[idx], s->nhome[idx]);
-        Vector3 seg = Vector3Subtract(s->nhome[leadI], s->nhome[idx]);
-        float segLen = Vector3Length(seg);
-        if (segLen > 1e-5f) {
-            Vector3 dir = Vector3Scale(seg, 1.0f / segLen);
-            float along = Vector3DotProduct(off, dir);
-            // The neighbour is free to move too, so each end gets less than half
-            // the gap between them: 0.45 + 0.45 < 1, and they can meet without
-            // ever crossing.
-            float spacing = fminf(s->nrest[idx], s->nrest[leadI]);
-            float alongMax = SWEPT_ORDER_FRAC * spacing;
-            float clamped  = along;
-            if (clamped >  alongMax) clamped =  alongMax;
-            if (clamped < -alongMax) clamped = -alongMax;
-            if (clamped != along)
-                off = Vector3Add(off, Vector3Scale(dir, clamped - along));
-        }
-        float offLen = Vector3Length(off);
-        if (offLen > SWEPT_HOME_MAX_DEV)
-            off = Vector3Scale(off, SWEPT_HOME_MAX_DEV / offLen);
-        Vector3 corrected = Vector3Add(s->nhome[idx], off);
-        if (Vector3DistanceSqr(corrected, s->ring[idx]) > 1e-10f) {
-            s->ring[idx] = corrected;
-            s->nvel[idx] = Vector3Scale(s->nvel[idx], 0.5f);
-        }
-    }
-
-    // Inextensibility, head-pinned, two passes — the same rope constraint the
-    // trail system runs on its WISP strands (`Ribbon_ConstrainSegment`), not a
-    // second implementation of it. Stretch only: a node closer than its rest
-    // spacing is a ribbon bunching up, which cloth does, and forcing it back out
-    // makes it spring.
-    for (int pass = 0; pass < 2; pass++) {
-        for (int k = 1; k < n; k++) {
-            int idx  = (s->head - k + SWEPT_RING) % SWEPT_RING;
-            int lead = (s->head - k + 1 + SWEPT_RING) % SWEPT_RING;
-            (void)0;
-            // A CEILING: the ribbon is inextensible, so pull it back to its
-            // rest spacing when it has been stretched past it.
-            Ribbon_ConstrainSegment(&s->ring[lead], &s->ring[idx],
-                                    s->nrest[idx], true, RIBBON_CONSTRAIN_MAX);
-            // ...and a FLOOR. Cloth bunches, but two nodes that collapse onto
-            // each other — or pass THROUGH each other — give a zero or REVERSED
-            // segment, which flips the strip's side vector and pinches the band
-            // into a bowtie. A third of the rest spacing lets it gather without
-            // ever degenerating. 0.60 rather than 0.34: the floor also protects
-            // the TANGENT, which is a central difference over the neighbours and
-            // is fabricated outright when they crowd together (see
-            // core/ribbon_strip.c). A third of the rest spacing left far too
-            // little room for that.
-            //
-            // MODE MATTERS HERE MORE THAN THE NUMBER. This second call shipped
-            // for one round as `stretchOnly = false`, which is not "also enforce
-            // a minimum" but "force the distance to be EXACTLY a third of rest",
-            // and it silently overwrote the ceiling above. The whole 6 m ribbon
-            // collapsed to a third of its length and read as a short stiff
-            // spindle stuck to the head — the owner's "it is stiff, and the
-            // energy no longer flows" (the flow had barely any length left to
-            // travel along).
-            Ribbon_ConstrainSegment(&s->ring[lead], &s->ring[idx],
-                                    s->nrest[idx] * 0.60f, true,
-                                    RIBBON_CONSTRAIN_MIN);
-            // NO velocity feedback from the correction. It was `corr * 0.25/dt`,
-            // which at 60 fps is a gain of FIFTEEN on the position error and at
-            // 144 fps is thirty-six: a node nudged a centimetre got a 0.15 m/s
-            // kick, the next node reacted to that, and the chain rang node-to-node.
-            // The liveliness comes from the force field and the home spring, both
-            // of which are framerate-independent; a correction gain that divides
-            // by dt is not, and it is not needed.
-        }
-    }
+    s->hasLateral = true;
 }
 
 static void VC_SweptTrail_Update(float dt)
 {
-    if (dt <= 0.0f) return;
-    for (int i = 0; i < SWEPT_MAX; i++) {
-        VC_SweptTrail *s = &s_swept[i];
-        if (!s->active) continue;
+    if (dt <= 0.0f)
+        return;
 
-        s->elapsed += dt;
-        Vector3 tip = Vector3Transform((Vector3){0.0f, 0.0f, 0.0f}, *s->xf);
-        if (!s->hasPrevTip) { s->prevTip = tip; s->hasPrevTip = true; }
+    // The two shared dials, applied once for everything: which sheet the body
+    // draws, and how hot the core burns. The layer table holds the texture's
+    // ADDRESS, so the swap needs no per-trail work.
+    s_sweptBodyTex = (s_sweptSheet >= 0.5f && s_sweptAssetTex.id != 0)
+                         ? s_sweptAssetTex
+                         : s_sweptBladeTex;
+    s_sweptLayers[2].alphaMul = 0.55f * s_sweptCoreHot;
+    // The halo and the core are lit shapes; the fibre-less sheet is what makes
+    // them shapes rather than second silhouettes.
+    s_sweptLayers[0].texture = (s_sweptHaloTex.id != 0) ? &s_sweptHaloTex : NULL;
+    s_sweptLayers[2].texture = s_sweptLayers[0].texture;
+
+    for (int i = 0; i < SWEPT_MAX; i++)
+    {
+        VC_SweptTrail *s = &s_swept[i];
+        if (!s->active)
+            continue;
 
         // Ramped width — never popped.
         float k = 1.0f - expf(-dt * 6.0f);
         s->widthLevel += (s->widthTarget - s->widthLevel) * k;
 
-        // THE MOTION GATE. A stationary weapon must let its trail decay, not
-        // hold a frozen full-length ribbon: feeding is what keeps a strand
-        // alive, so simply not feeding it IS the decay.
-        float moved = Vector3Distance(tip, s->prevTip);
+        bool frozen = false;
+        const TrailEntity *lead = NULL;
 
-        // TELEPORT before anything else. Everything below this line assumes the
-        // gap between two samples is a path the tip actually swept.
-        float jumpLimit = SWEPT_TELEPORT_SPEED * dt;
-        if (jumpLimit < SWEPT_TELEPORT_MIN) jumpLimit = SWEPT_TELEPORT_MIN;
-        if (moved > jumpLimit) {
-            TraceLog(LOG_INFO,
-                     "VFX_SWEPT: slot %d cut — the transform jumped %.2f m in one "
-                     "frame (limit %.2f m). Treated as a teleport, not a swing.",
-                     i, moved, jumpLimit);
-            SweptTrail_Cut(s, i, tip);
-            continue;
-        }
-
-        bool  moving = (moved / dt) > SWEPT_IDLE_SPEED;
-
-        // Nodes at a fixed RATE with sub-frame interpolation. Pushing once per
-        // frame instead would make the tail's length in metres a function of the
-        // frame rate, and at 30 fps every sub-step would land on the same point.
-        s->sampleAcc += dt;
-        int steps = (int)(s->sampleAcc / SWEPT_SAMPLE_DT);
-        if (steps > SWEPT_STEPS_MAX) { steps = SWEPT_STEPS_MAX; s->sampleAcc = 0.0f; }
-        else s->sampleAcc -= (float)steps * SWEPT_SAMPLE_DT;
-
-        if (moving) {
-            for (int n = 1; n <= steps; n++) {
-                SweptTrail_Push(s, Vector3Lerp(s->prevTip, tip,
-                                               (float)n / (float)steps),
-                                Vector3Scale(Vector3Subtract(tip, s->prevTip),
-                                             1.0f / dt));
+        for (int c = 0; c < s->strands; c++)
+        {
+            TrailEntity *t = SweptTrail_Strand(s, i, c);
+            if (!t)
+            {
+                // Evicted or recycled under us. Respawning is why the tag
+                // exists: eviction becomes self-healing instead of fatal.
+                s->strandId[c] = SweptTrail_SpawnStrand(s, i, c);
+                continue;
             }
+            if (c == 0)
+                lead = t;
+
+            // FREEZE, and it fills first: freezing a trail with one node holds
+            // an EMPTY ribbon, and a dial that shows nothing reads as broken.
+            frozen = (s_sweptFreeze >= 0.5f) &&
+                     (t->historyCount >= SweptTrail_MaxNodes(s->lifetime));
+            Trail_SetFrozen(s->strandId[c], frozen);
+
+            // Width from the length the tip ACTUALLY travelled, with the
+            // caller's width as a ceiling.
+            float travel = SweptTrail_TravelLength(t);
+            t->thickness = SweptTrail_HalfWidth(s->width * s_sweptWidthMul,
+                                                s->widthLevel, travel, s->style);
+            t->tint = VC_WithAlpha(WHITE, (unsigned char)(255.0f * Clamp(s_sweptAlphaMul, 0.0f, 1.0f)));
+            t->uvMetresPerTile = (s_sweptTile > 0.05f) ? s_sweptTile : 0.05f;
+            t->uvScrollSpeed = SWEPT_FLOW_SPEED * s_sweptFlow;
+
+            if (c == 0)
+                SweptTrail_UpdateNormal(s, t);
+            if (s->style == VFX_TRAIL_BLADE)
+                t->fixedNormal = s->normal;
+
+            // FILAMENT's strands are spread along the swing-plane axis. Not a
+            // fixed local offset: the axis is derived from the path the trail
+            // has already travelled, so it only exists here and has to be
+            // pushed in each frame.
+            if (s->strands > 1 && s->hasLateral)
+                Trail_SetLateralOffset(s->strandId[c],
+                                       Vector3Scale(s->lateralAxis,
+                                                    k_sweptSpread[c] * t->thickness *
+                                                        s_sweptSpread));
         }
-        s->prevTip = tip;
-        // The chain runs EVERY frame, moving or not. A ribbon whose emitter has
-        // stopped is still a ribbon settling, and freezing it the instant the
-        // hand stops is exactly the "picture" read.
-        SweptTrail_Simulate(s, dt);
-        // The head belongs to the emitter, always.
-        if (s->filled > 0) { s->ring[s->head] = tip; s->nvel[s->head] = (Vector3){0,0,0}; }
-        if (!moving || steps <= 0) continue;
 
-        SweptTrail_UpdateNormal(s);
+        if (frozen != s->wasFrozen)
+        {
+            TraceLog(LOG_INFO,
+                     "VFX_SWEPT: slot %d %s — flow %.2f tiles/s still running",
+                     i, frozen ? "FROZEN, only the flow moves" : "released",
+                     SWEPT_FLOW_SPEED * s_sweptFlow);
+            s->wasFrozen = frozen;
+        }
+        if (frozen || !lead)
+            continue;
 
-        // SPARKLE — layer four of the reference sheet, and the only one that is
-        // not geometry. A RATE, carried between frames, and only while moving.
-        // Born ON the trail's newest node with the tip's own velocity, so they
-        // shed off the head instead of being sprinkled along the band.
+        // SPARKLE — the fourth layer of the reference sheet, and the only one
+        // that is not geometry. A RATE, carried between frames.
         s->sparkAcc += dt * SWEPT_SPARK_RATE * s_sweptSpark;
         int sparks = (int)s->sparkAcc;
-        if (sparks > 3) sparks = 3;
+        if (sparks > 3)
+            sparks = 3;
         s->sparkAcc -= (float)sparks;
-        if (s_sweptSpark > 0.01f && GfxQuality_Get() >= GFX_MED) {
+        if (s_sweptSpark > 0.01f && GfxQuality_Get() >= GFX_MED && lead->historyCount > 1)
+        {
             const VFX_ElementMaterial *sm = VFX_Material(s->matId);
-            for (int k = 0; k < sparks; k++) {
-                Vector3 v = Vector3Scale(Vector3Subtract(tip, s->prevTip), 1.0f / dt);
-                Vector3 jit = { (Random01() - 0.5f), (Random01() - 0.5f), (Random01() - 0.5f) };
-                // ALONG the ribbon, not only off the head — guide §5, "particles
-                // along ribbon". Biased toward the head (sqrt) so the shower is
-                // densest where the energy is, without the tail going bare.
-                int span = s->filled - 1;
-                if (span > s->maxNodes - 1) span = s->maxNodes - 1;
-                int back = (span > 0) ? (int)(sqrtf(Random01()) * (float)span) : 0;
-                Vector3 born = s->ring[(s->head - back + SWEPT_RING) % SWEPT_RING];
+            for (int k2 = 0; k2 < sparks; k2++)
+            {
+                Vector3 jit = {(Random01() - 0.5f), (Random01() - 0.5f), (Random01() - 0.5f)};
+                // ALONG the ribbon, not only off the head. Biased toward the
+                // head (sqrt) so the shower is densest where the energy is,
+                // without the tail going bare.
+                int span = lead->historyCount - 1;
+                int back = (int)(sqrtf(Random01()) * (float)span);
+                Vector3 born = lead->history[(lead->historyHead - back + TRAIL_HISTORY_COUNT) %
+                                             TRAIL_HISTORY_COUNT];
                 SpawnParticle((ParticleConfig){
                     .position = Vector3Add(born, Vector3Scale(jit, 0.09f)),
-                    // MAGIC DUST, not sparks. The owner's direction, 29/07:
-                    // "born, stay where they are, drift gently, then go." A
-                    // spark thrown at a quarter of the tip's speed is grit
-                    // leaving a grinder; dust hangs in the air the ribbon passed
-                    // through. So the velocity is almost nothing and there is no
-                    // stretch at all — a streaked dust mote is a contradiction.
+                    // MAGIC DUST, not sparks: "born, stay where they are, drift
+                    // gently, then go." A spark thrown at a quarter of the tip's
+                    // speed is grit leaving a grinder; dust hangs in the air the
+                    // ribbon passed through. So the velocity is almost nothing
+                    // and there is no stretch at all — a streaked dust mote is a
+                    // contradiction.
                     .velocity = Vector3Scale(jit, 0.11f),
                     // Small and VERY bright: the sparkle comes from luminance,
                     // not from area. emissiveBoost pushes it over the bloom
-                    // threshold, which is what turns a 1 cm dot into a star.
-                    .radius   = Math_Mix(0.006f, 0.013f, Random01()),
+                    // threshold, which turns a 1 cm dot into a star.
+                    .radius = Math_Mix(0.006f, 0.013f, Random01()),
                     .lifetime = Math_Mix(0.55f, 1.40f, Random01()),
                     .colorStart = VC_WithAlpha(VC_Whiten(sm->glow, 0.75f), 255),
-                    .colorEnd   = VC_WithAlpha(VC_Whiten(sm->glow, 0.30f), 0),
+                    .colorEnd = VC_WithAlpha(VC_Whiten(sm->glow, 0.30f), 0),
                     // The TWINKLE. One shared curve would pulse every mote in
                     // lockstep, so each gets a random lifetime instead and the
                     // curve's three beats land at different wall-clock moments.
@@ -1105,161 +1070,14 @@ static void VC_SweptTrail_Update(float dt)
     }
 }
 
-// Fills `out` with this frame's strip, tail (s = 0) to head (s = 1), and returns
-// the point count. Positions only — width, colour and UV are per PASS.
-static int SweptTrail_BuildPoints(const VC_SweptTrail *s, RibbonPoint *out, int max)
-{
-    int n = s->filled;
-    if (n > s->maxNodes) n = s->maxNodes;
-    if (n > max) n = max;
-    if (n < 2) return 0;
-    for (int i = 0; i < n; i++) {
-        // ring[head] is the newest, so walk backwards from it into out[] from
-        // the END: out[n-1] is the head.
-        int idx = (s->head - (n - 1 - i) + SWEPT_RING * 2) % SWEPT_RING;
-        out[i].position = s->ring[idx];
-    }
-    return n;
-}
-
+// Nothing to draw. DrawTrailEntities owns the ribbon now, and the sparkles
+// belong to the particle system — which is the whole point of the port.
+//
+// The function stays because the Update/Draw3D PAIR is how a stateful
+// composition declares itself to scripts/sync_vfx_test.py; without it the
+// generator would not emit the update dispatch either, and the trail would
+// silently never be fed.
 static void VC_SweptTrail_Draw3D(Camera3D cam)
 {
-    static RibbonPoint pts[SWEPT_RING];
-
-    // Additive, depth test on, depth write off, batch flushed on BOTH sides of
-    // every state change (ENGINE_LANDMINES §1). Once for all trails, not once
-    // per trail: the whole point of doing this here is that the passes batch.
-    bool began = false;
-
-    for (int i = 0; i < SWEPT_MAX; i++) {
-        VC_SweptTrail *s = &s_swept[i];
-        if (!s->active) continue;
-
-        int n = SweptTrail_BuildPoints(s, pts, SWEPT_RING);
-        if (n < 2) continue;
-
-        // Width from the length the tip ACTUALLY travelled, with the caller's
-        // width as a ceiling — the thickness rule, unchanged.
-        float travel = SweptTrail_TravelLength(s);
-        float halfW  = SweptTrail_HalfWidth(s->width * s_sweptWidthMul,
-                                            s->widthLevel, travel, s->style);
-        float pxPerM = SweptTrail_PixelsPerMetre(
-                           Vector3Distance(cam.position, s->ring[s->head]),
-                           cam.fovy, (float)GetScreenHeight());
-        float aScale = 1.0f;
-        halfW = SweptTrail_ScreenFloor(halfW, pxPerM,
-                                       SWEPT_MIN_PIXELS * s_sweptMinPx, &aScale);
-        if (halfW <= 0.0f) continue;
-
-        const VFX_ElementMaterial *m = VFX_Material(s->matId);
-        // FILAMENT is the same layered strip drawn a few times across the
-        // bundle; every other style is one.
-        int copies = (s->style == VFX_TRAIL_FILAMENT)
-                         ? SweptTrail_StrandCount(s->style, GfxQuality_Get() < GFX_MED)
-                         : 1;
-
-        if (!began) {
-            rlDrawRenderBatchActive();
-            BeginBlendMode(BLEND_ADDITIVE);
-            rlDisableDepthMask();
-            rlDrawRenderBatchActive();
-            began = true;
-        }
-
-        for (int c = 0; c < copies; c++) {
-            Vector3 lateral = {0.0f, 0.0f, 0.0f};
-            if (copies > 1 && s->hasLateral) {
-                lateral = Vector3Scale(s->lateralAxis,
-                                       k_sweptSpread[c] * halfW * s_sweptSpread);
-            }
-            // Cumulative arc length in METRES, and the flow-noise offset, both
-            // computed once for all three passes.
-            float arc[SWEPT_RING];
-            Vector3 disp[SWEPT_RING];
-            arc[0] = 0.0f;
-            for (int k = 0; k < n; k++) {
-                int idx = (s->head - (n - 1 - k) + SWEPT_RING * 2) % SWEPT_RING;
-                Vector3 p = Vector3Add(s->ring[idx], lateral);
-                if (k > 0) arc[k] = arc[k - 1] + Vector3Distance(p, disp[k - 1]);
-                disp[k] = p;
-            }
-            float arcLen = arc[n - 1];
-            if (arcLen < 1e-4f) continue;
-
-            // NO synthetic displacement here any more. The shape's life comes
-            // from SweptTrail_Simulate — real lag, sag and overshoot in the node
-            // positions — and a decorative wave layered on top of that was
-            // precisely the "picture being moved around" the owner saw.
-
-            for (int pass = 0; pass < 3; pass++) {
-                for (int k = 0; k < n; k++) {
-                    float t = (float)k / (float)(n - 1);          // 0 tail, 1 head
-                    float env = SkillCurve_Eval(&s_sweptWidthCurve[s->style], t);
-                    float a   = SkillCurve_Eval(&s_sweptAlphaCurve[s->style], t);
-                    pts[k].position  = disp[k];
-                    pts[k].halfWidth = halfW * env * k_sweptPassW[pass];
-                    // GUIDE §4 "colour over length": the element's BODY in the
-                    // cooling tail, its GLOW at the head. One flat colour along
-                    // a band is what makes an additive strip read as plastic.
-                    Color col = VC_MixColor(m->body, m->glow,
-                                            SmoothStep01((t - 0.35f) / 0.65f));
-                    col = VC_Whiten(col, k_sweptPassWhite[pass]);
-                    float al = a * k_sweptPassA[pass] * aScale * s_sweptAlphaMul;
-                    // The core burns at the head and is gone by mid-tail, so the
-                    // ribbon has ONE bright spot rather than a uniformly lit
-                    // length. Without this the three layers are bright in the
-                    // same places and average into a flat stroke.
-                    if (pass == 2) al *= powf(t, SWEPT_CORE_HEAD_POW) * s_sweptCoreHot;
-                    pts[k].tint = ColorAlpha(col, Clamp(al, 0.0f, 1.0f));
-                    // GUIDE §3: TILED by metres so texel density does not change
-                    // with the tail's length, and SCROLLED so the fibres flow.
-                    // The outer glow scrolls slower than the core — parallax
-                    // between the layers is what stops three passes reading as
-                    // one thick stroke.
-                    pts[k].v = arc[k] / SWEPT_FLOW_TILE
-                             - s->elapsed * SWEPT_FLOW_SPEED * s_sweptFlow
-                               * (0.50f + 0.55f * (float)pass);
-                }
-                // Pass 0 is the halo and gets the fibre-less sheet.
-                // THE INSTRUMENT. Four rounds have now gone on "the fibres do
-                // not move", each answered by changing a number and waiting for
-                // a screenshot. This prints what the UV is ACTUALLY doing, once
-                // a second, so the next observation settles it: if dv is moving
-                // and the screen is not, the scroll is not the problem.
-                if (s_sweptUVLog >= 0.5f && pass == 1 && c == 0) {
-                    static double lastUVLog = 0.0;
-                    static float  lastHeadV = 0.0f;
-                    double now = GetTime();
-                    if (now - lastUVLog > 1.0) {
-                        TraceLog(LOG_INFO,
-                                 "VFX_SWEPT uv: arc %.2f m = %.1f tiles | v tail %.2f head %.2f "
-                                 "| head v moved %.2f since last second",
-                                 arcLen, arcLen / SWEPT_FLOW_TILE, pts[0].v,
-                                 pts[n - 1].v, pts[n - 1].v - lastHeadV);
-                        lastHeadV = pts[n - 1].v;
-                        lastUVLog = now;
-                    }
-                }
-                // ONLY THE BODY CARRIES THE FIBRES, and this is why the flow
-                // looked frozen however fast it was scrolled. Three additive
-                // layers of the SAME quasi-periodic pattern at three different
-                // phases SUM TO SOMETHING FLAT — that is what averaging shifted
-                // copies of a pattern does — so the interior structure cancelled
-                // itself out and left a smooth glow that could not visibly move.
-                // The halo and the core are lit SHAPES, not textured ones; the
-                // structure belongs to exactly one layer or it belongs to none.
-                Texture2D sheet = (pass == 1 || s_sweptHaloTex.id == 0)
-                                      ? s_sweptBladeTex : s_sweptHaloTex;
-                DrawRibbonStripEx(pts, n, sheet, cam,
-                                  RIBBON_CAMERA_FACING, (Vector3){0.0f, 1.0f, 0.0f});
-            }
-        }
-    }
-
-    if (began) {
-        rlDrawRenderBatchActive();
-        rlEnableDepthMask();
-        EndBlendMode();
-        rlDrawRenderBatchActive();
-    }
+    (void)cam;
 }

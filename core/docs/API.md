@@ -228,19 +228,22 @@
   void Trail_AttachToTransform(int id, const Matrix *targetTransform, Vector3 localOffset);
   void Trail_SetFollowerOrbit(int id, float radius, float speed, Vector3 axis, float phase);
   void SetFollowerAxis(int id, Vector3 axisOrigin, Vector3 axisDir);
+  void Trail_SetLateralOffset(int id, Vector3 worldOffset);
+  void Trail_SetFrozen(int id, bool frozen);
 ```
 **Enums:** TrailType { TRAIL_TYPE_PROJECTILE,TRAIL_TYPE_WISP,TRAIL_TYPE_PORTAL,TRAIL_TYPE_FOLLOWER };TrailWidthEnvelopeType { TRAIL_WIDTH_ENVELOPE_UNIFORM,TRAIL_WIDTH_ENVELOPE_TAPER_TAIL,TRAIL_WIDTH_ENVELOPE_TAPER_BOTH,TRAIL_WIDTH_ENVELOPE_PULSE }
-**Structs** (fields in header): TrailConfig, TrailEntity
+**Structs** (fields in header): TrailLayer, TrailConfig, TrailEntity
 
 ### `core/ribbon_strip.h`
 ```c
   void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture, Camera3D camera, RibbonMode mode, Vector3 fixedNormal);
   void DrawRibbonStrip(const RibbonPoint *points, int count, Texture2D texture, Camera3D camera);
+  void Ribbon_ConstrainSegment(Vector3 *a, Vector3 *b, float restLen, bool pinnedA, RibbonConstrainMode mode);
   void Ribbon_ComputeArcLengthUV(RibbonPoint *points, int count);
   void Ribbon_ComputeCrossFrame(const Vector3 *points, int count, RibbonMode mode, Vector3 fixedNormal, Camera3D camera, Vector3 *outAxisA, Vector3 *outAxisB);
   void DrawRibbonEnergyField(const Vector3 *points, int count, float width, const float *widthEnvelope, const RibbonEnergyFieldLayer *layers, int layerCount, Texture2D texture, RibbonMode mode, Vector3 fixedNormal, Camera3D camera, float time);
 ```
-**Enums:** RibbonMode { RIBBON_CAMERA_FACING,RIBBON_WORLD_UP,RIBBON_FIXED_NORMAL }
+**Enums:** RibbonMode { RIBBON_CAMERA_FACING,RIBBON_WORLD_UP,RIBBON_FIXED_NORMAL };RibbonConstrainMode { RIBBON_CONSTRAIN_EXACT,RIBBON_CONSTRAIN_MAX,RIBBON_CONSTRAIN_MIN }
 **Structs** (fields in header): RibbonPoint, RibbonEnergyFieldLayer
 
 ### `core/decal_system.h`
@@ -556,10 +559,16 @@
   void VFX_ComposeSweepSlash(Vector3 origin, Vector3 dir, VC_MaterialId mat, float length, float arcRad, float t01);
   void VFX_ComposeEnergyBurst(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
   void VFX_ComposeImpactPackage(Vector3 pos, Vector3 normal, VC_MaterialId matId, float scale, float severity01);
+  void VFX_ComposeImpactFlash(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
+  void VFX_ComposeImpactDistort(Vector3 pos, float scale, float severity01);
+  void VFX_ComposeImpactDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   void VFX_ComposeLightShaft(Vector3 from, Vector3 to, VC_MaterialId mat, float width, float intensity);
   int VFX_ComposeSweptTrail(const Matrix *followTransform, VC_MaterialId mat, float width, float lifetime, VFX_TrailStyle style);
   void VFX_TrailSetWidth(int handle, float width01);
   void VFX_KillSweptTrail(int handle);
+  void VFX_ComposeGroundWave(Vector3 center, VC_MaterialId mat, float radius, float t01, GroundHeightSampleFn heightFn, void *ud);
+  float VFX_GroundHeightFromMap(float worldX, float worldZ, void *unused);
+  int VFX_ComposeSparkTrail(Vector3 pos, Vector3 vel, VC_MaterialId matId, float length, float life);
   void VFX_BeginWaterStreams(float time);
   void VFX_EndWaterStreams(void);
   void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);

@@ -77,7 +77,68 @@ rather than opinion (`docs/LANDMINES.md` has the write-ups):**
   streaks (raised-cosine envelope, circular distance in `v` so the tiling stays
   seamless), which appear and fade as they pass.
 
-Still unverified on screen — both need the owner's eye.
+- *"the energy still does not surge"* — the fold and the sheet were both fixed and
+  it was still the flow. The owner called it: the UV was scrolling **with** the
+  motion. It was `arc from the tail / tile`, and a full history ring's tail
+  retreats at the head's speed, so 6.5 of the 8.8 tiles/sec was the swing leaking
+  in — locked to the blade, and far too fast to track. The UV now comes from
+  `nuv[]`, a material stamp written once when a node is laid, so the rate is the
+  scroll term alone. Body sheet is `assets/textures/energy_flow.png`, rotated a
+  quarter turn, cropped to the band that carries filaments and cross-faded so it
+  tiles. New dials: `swept_sheet` (asset vs procedural), `swept_tile` (metres per
+  repeat); `swept_flow` now means tiles/sec over the cloth, and negative flows the
+  other way.
+
+Still unverified on screen — all of it needs the owner's eye.
+
+**Audit that changed the plan (29/07).** The owner asked whether H1 reused the
+engine. It did not: `vc_swept_trail.inl` used `DrawRibbonStripEx`,
+`Ribbon_ConstrainSegment`, `ForceField_*` and the curve types — but **zero** of
+`core/trail_system.h`, whose empty consumer list was H1's stated reason for
+existing. 849 lines of code (plus 637 of comment) had grown a private history
+ring, sample clock, cloth and layered draw next to a system that should have
+owned all four. The force field was hard-coded per style instead of coming from
+`VFX_Material`, against `core/CLAUDE.md`'s composition rule.
+
+**Step 1 — DONE: `core/trail_system.c` now owns the mechanism.** All additions
+are inert at 0, so every existing consumer is byte-identical:
+
+| Added to `TrailConfig` | What it fixes |
+|---|---|
+| `layers` / `layerCount` (`TrailLayer`) | replaces the hard-coded outer+inner pair; per-layer width, alpha, whiten, scroll rate, head burn, and its own texture |
+| `uvMetresPerTile` | material-coordinate UV — the legacy `segRatio * uvTiling` both stretches with the trail's length AND is anchored to the moving head |
+| `nodeHomeSpring` / `nodeHomeMaxDev` / `nodeOrderFrac` | cloth: FOLLOWER had NO constraint at all, so any force field replaced the swept path instead of perturbing it |
+| `sampleHz` | FOLLOWER laid one node per FRAME — trail length in metres was a function of frame rate |
+| `teleportSpeed` | a jump no longer draws a bridge through space the emitter never crossed |
+
+Plus `Trail_SetLateralOffset` (per-frame world offset, for a bundle spreading
+along an axis the caller derives) and `Trail_SetFrozen` (hold the shape, keep the
+flow — the instrument that settles "is it actually flowing"). Arithmetic covered
+by `core/tests/trail_cloth_test.c` (40 assertions). 13/13 suites green.
+
+**Step 2 — DONE: `vc_swept_trail.inl` ported onto it.** 849 lines of code down
+to 625, and what is left is authoring: styles, aspect cap, width/alpha curves,
+the two sheets, the layer table, the swing-plane normal, the sparkles. The ring,
+`Push`, `Cut`, `Simulate`, `BuildPoints`, the sample clock, the teleport check
+and the three-pass draw are all gone into the engine. Tunables: 17 down to 11.
+
+Two things were dropped on purpose, and the owner made the call that unblocked
+both by confirming the dashing was the self-twist:
+
+- **The screen-space width floor.** It existed to stop the blade rendering as a
+  dotted line and never did; the dashing was the FOLD, fixed at the source by
+  `nodeOrderFrac`. Keeping it would have dragged a camera dependency into an
+  update path with no business knowing about one.
+- **The FILAMENT lag schedule.** Each strand is now its own entity at its own
+  lateral offset (`Trail_SetLateralOffset`), sampling the cloth field at its own
+  position — so strands diverge because they sit in different places in a moving
+  air field, not because they are copies of one path in the past.
+
+One safety change the port forced: the entity now holds the CALLER's Matrix, so
+`VFX_KillSweptTrail` must **detach** rather than just release the slot. It still
+wind-downs (detaching stops the feed and the idle fade drains the tail), but a
+strand left attached after the caller's storage goes out of scope would be a read
+after free every frame. Pinned in the mirror test.
 
 Dropping the TrailEntity also removed the inner-core strip, which was the last
 unruled-out suspect for the dashing. The history below is kept because it is four

@@ -47,7 +47,10 @@ static int GetCachedTimeLoc(Shader shader)
 
 static RibbonPoint scratchOuter[TRAIL_HISTORY_COUNT];
 static RibbonPoint scratchInner[TRAIL_HISTORY_COUNT];
+static RibbonPoint scratchLayer[TRAIL_HISTORY_COUNT];
 static Vector3 scratchNodePrevPos[TRAIL_HISTORY_COUNT];
+static float scratchTaper[TRAIL_HISTORY_COUNT];
+static float scratchSegRatio[TRAIL_HISTORY_COUNT];
 
 #define WISP_CONSTRAINT_ITERS 2
 
@@ -118,6 +121,22 @@ static inline int GetHistoryNodeIndex(const TrailEntity *t, int i)
   {
     return (t->historyHead - (t->historyCount - 1 - i) + TRAIL_HISTORY_COUNT) % TRAIL_HISTORY_COUNT;
   }
+}
+
+// Which ring slot a drawn point reads its MATERIAL stamp from. The draw walks
+// h = 0..drawCount-1 with segRatio = 1 - h/(drawCount-1), and GetHistoryNodeIndex
+// maps i = historyCount-1 to historyHead — so segRatio 1 is the head. The stamp
+// is not interpolated: a material coordinate is a label, and averaging two of
+// them across a spline sub-step would smear the texture rather than place it.
+static inline int NodeIndexForSegRatio(const TrailEntity *t, int drawCount, int h)
+{
+  if (t->historyCount < 1)
+    return 0;
+  float segRatio = (drawCount > 1) ? 1.0f - (float)h / (float)(drawCount - 1) : 1.0f;
+  int i = (int)(segRatio * (float)(t->historyCount - 1) + 0.5f);
+  if (i < 0) i = 0;
+  if (i > t->historyCount - 1) i = t->historyCount - 1;
+  return GetHistoryNodeIndex(t, i);
 }
 
 static Vector3 GetInterpolatedPosition(const TrailEntity *t, float segRatio)
@@ -420,6 +439,61 @@ static void UpdateWispPhysics(TrailEntity *t, float dt, float time)
   t->position = t->history[0];
 }
 
+// Bound how far a node may stray from where it was laid, SPLIT INTO TWO — and
+// the split is the whole point, not tidiness.
+//
+//   - ALONG the path: a FRACTION of the node spacing, so two neighbours can
+//     approach but provably never swap. A single absolute bound in metres looks
+//     safe and is not: at any decent emitter speed the node spacing is small
+//     (a 3 m arm at 2.4 rad/s laying at 60 Hz gives 0.12 m), so a "generous"
+//     0.30 m bound is two and a half spacings and a node can travel clean past
+//     its own leader. The polyline folds, the tangent reverses, the strip
+//     pinches into a wedge — and the constraint pass CANNOT undo it, because
+//     distance is a scalar and a node that has passed THROUGH its neighbour
+//     just reads as slightly too close.
+//   - ACROSS it: the loose metre bound. Sag, drift and flutter are almost
+//     entirely lateral, so the look lives here and it is left alone. Splitting
+//     costs no motion.
+static void ClampFollowerDeviation(TrailEntity *t, int idx, int h)
+{
+  if (t->nodeHomeSpring <= 0.0f)
+    return;
+  int lead = (t->historyHead - h + 1 + TRAIL_HISTORY_COUNT) % TRAIL_HISTORY_COUNT;
+  Vector3 off = Vector3Subtract(t->history[idx], t->nodeHome[idx]);
+
+  if (t->nodeOrderFrac > 0.0f)
+  {
+    Vector3 seg = Vector3Subtract(t->nodeHome[lead], t->nodeHome[idx]);
+    float segLen = Vector3Length(seg);
+    if (segLen > 1e-5f)
+    {
+      Vector3 dir = Vector3Scale(seg, 1.0f / segLen);
+      float along = Vector3DotProduct(off, dir);
+      float spacing = fminf(t->nodeRest[idx], t->nodeRest[lead]);
+      float alongMax = t->nodeOrderFrac * spacing;
+      float clamped = along;
+      if (clamped > alongMax) clamped = alongMax;
+      if (clamped < -alongMax) clamped = -alongMax;
+      if (clamped != along)
+        off = Vector3Add(off, Vector3Scale(dir, clamped - along));
+    }
+  }
+
+  if (t->nodeHomeMaxDev > 0.0f)
+  {
+    float offLen = Vector3Length(off);
+    if (offLen > t->nodeHomeMaxDev)
+      off = Vector3Scale(off, t->nodeHomeMaxDev / offLen);
+  }
+
+  Vector3 corrected = Vector3Add(t->nodeHome[idx], off);
+  if (Vector3DistanceSqr(corrected, t->history[idx]) > 1e-10f)
+  {
+    t->history[idx] = corrected;
+    t->nodeVelocity[idx] = Vector3Scale(t->nodeVelocity[idx], 0.5f);
+  }
+}
+
 static void UpdateFollowerPhysics(int i, TrailEntity *t, float dt, float time)
 {
   t->timeSinceLastFollowerUpdate += dt;
@@ -440,6 +514,8 @@ static void UpdateFollowerPhysics(int i, TrailEntity *t, float dt, float time)
   }
 
   const bool windActive = WindZone_IsActive();
+  if (t->frozen)
+    return;
   if ((!t->forceField && !windActive) || t->historyCount < 2)
     return;
   float viscDamp = t->forceField ? ForceField_GetViscosityDamping(t->forceField, dt) : 1.0f;
@@ -458,6 +534,24 @@ static void UpdateFollowerPhysics(int i, TrailEntity *t, float dt, float time)
       acc.x += windAcc.x; acc.y += windAcc.y; acc.z += windAcc.z;
     }
 
+    // THE ANCHOR. Without it a FOLLOWER under any force field is a free-floating
+    // chain: the field does not perturb the swept path, it REPLACES it, and the
+    // trail writhes free of the shape the emitter drew. With it the deviation
+    // settles at roughly force/spring — the difference between silk fluttering
+    // along a path and a snake being swung by the head.
+    if (t->nodeHomeSpring > 0.0f)
+    {
+      Vector3 pull = Vector3Subtract(t->nodeHome[idx], t->history[idx]);
+      acc.x += pull.x * t->nodeHomeSpring;
+      acc.y += pull.y * t->nodeHomeSpring;
+      acc.z += pull.z * t->nodeHomeSpring;
+      // Deeper nodes feel it more: the far end of a ribbon is the loose end, and
+      // a uniform response reads as the whole sheet swinging as one piece.
+      float depth = (float)h / (float)(t->historyCount - 1);
+      float scale = 0.25f + 0.75f * depth;
+      acc.x *= scale; acc.y *= scale; acc.z *= scale;
+    }
+
     t->nodeVelocity[idx] = (Vector3){
         (t->nodeVelocity[idx].x + acc.x * dt) * viscDamp,
         (t->nodeVelocity[idx].y + acc.y * dt) * viscDamp,
@@ -466,6 +560,35 @@ static void UpdateFollowerPhysics(int i, TrailEntity *t, float dt, float time)
         t->history[idx].x + t->nodeVelocity[idx].x * dt,
         t->history[idx].y + t->nodeVelocity[idx].y * dt,
         t->history[idx].z + t->nodeVelocity[idx].z * dt};
+
+    ClampFollowerDeviation(t, idx, h);
+  }
+
+  // Inextensibility, head-pinned. Only runs for an anchored (cloth) trail: an
+  // unanchored FOLLOWER has no rest spacing worth enforcing.
+  if (t->nodeHomeSpring > 0.0f)
+  {
+    for (int pass = 0; pass < TRAIL_CLOTH_CONSTRAIN_ITERS; pass++)
+    {
+      for (int h = 1; h < t->historyCount; h++)
+      {
+        int idx = (t->historyHead - h + TRAIL_HISTORY_COUNT) % TRAIL_HISTORY_COUNT;
+        int lead = (t->historyHead - h + 1 + TRAIL_HISTORY_COUNT) % TRAIL_HISTORY_COUNT;
+        // A CEILING: the ribbon is inextensible, so pull it back when stretched.
+        Ribbon_ConstrainSegment(&t->history[lead], &t->history[idx],
+                                t->nodeRest[idx], true, RIBBON_CONSTRAIN_MAX);
+        // ...and a FLOOR, so it can gather without ever degenerating.
+        //
+        // THE MODE MATTERS MORE THAN THE NUMBER. This system's own older helper,
+        // ConstrainRibbonSegment, takes a `stretchOnly` bool whose false branch
+        // does not mean "also enforce a minimum" — it means "force the distance
+        // to be EXACTLY this", which silently overwrites the ceiling above and
+        // collapses the whole ribbon to the floor's length.
+        Ribbon_ConstrainSegment(&t->history[lead], &t->history[idx],
+                                t->nodeRest[idx] * TRAIL_CLOTH_MIN_SPACING, true,
+                                RIBBON_CONSTRAIN_MIN);
+      }
+    }
   }
 }
 
@@ -598,8 +721,36 @@ int SpawnTrailEntity(TrailConfig config)
   t->ribbonMode = config.ribbonMode;
   t->fixedNormal = config.fixedNormal;
 
+  // FOLLOWER extensions. Every one is inert at 0, so a config that does not
+  // mention them keeps the old behaviour exactly.
+  t->layers = config.layers;
+  t->layerCount = (config.layerCount > TRAIL_MAX_LAYERS) ? TRAIL_MAX_LAYERS : config.layerCount;
+  if (t->layers == NULL)
+    t->layerCount = 0;
+  t->uvMetresPerTile = config.uvMetresPerTile;
+  t->laidDist = 0.0f;
+  t->nodeHomeSpring = config.nodeHomeSpring;
+  t->nodeHomeMaxDev = config.nodeHomeMaxDev;
+  // A bound at or above half the node spacing lets two neighbours swap places,
+  // which folds the ribbon and cannot be undone by any distance constraint.
+  // Clamped rather than trusted: this is a correctness bound, not a dial.
+  t->nodeOrderFrac = (config.nodeOrderFrac > 0.49f) ? 0.49f : config.nodeOrderFrac;
+  t->sampleHz = config.sampleHz;
+  t->sampleAcc = 0.0f;
+  t->teleportSpeed = config.teleportSpeed;
+  t->idleSpeed = config.idleSpeed;
+  t->prevAttachPos = config.pos;
+  t->lateralOffset = (Vector3){0, 0, 0};
+  t->hasPrevAttach = false;
+  t->frozen = false;
+
   for (int h = 0; h < TRAIL_HISTORY_COUNT; h++)
+  {
     t->nodeVelocity[h] = (Vector3){0, 0, 0};
+    t->nodeHome[h] = config.pos;
+    t->nodeRest[h] = 0.0f;
+    t->nodeUV[h] = 0.0f;
+  }
 
   if (config.type == TRAIL_TYPE_WISP)
   {
@@ -658,15 +809,62 @@ void UpdateFollowerPosition(int id, Vector3 newTipPos)
 
   if (shouldInsert)
   {
+    int prev = t->historyHead;
     t->historyHead = (t->historyHead + 1) % TRAIL_HISTORY_COUNT;
     GrowHistoryTowardMaxNodes(t);
+
+    // STAMP THE CLOTH. Everything that describes a node as a piece of material
+    // rather than as a position has to be written on the same line the position
+    // is, and in the same place — a shadow array seeded anywhere else is a bug
+    // waiting to happen. (The composition layer learned this the hard way: an
+    // unseeded home anchor pinned a trail's first node to the world origin, so
+    // it appeared at the map centre and snapped to the emitter.)
+    float step = (t->historyCount > 1)
+                     ? Vector3Distance(newTipPos, t->history[prev])
+                     : 0.0f;
+    if (step < 1e-4f)
+      step = 1e-4f;
+    t->nodeRest[t->historyHead] = step;
+    t->laidDist += step;
+    t->nodeUV[t->historyHead] = t->laidDist;
   }
 
   t->history[t->historyHead] = newTipPos;
+  t->nodeHome[t->historyHead] = newTipPos;
   t->nodeVelocity[t->historyHead] = (Vector3){0, 0, 0};
   t->position = newTipPos;
   t->timeSinceLastFollowerUpdate = 0.0f;
   t->fadeAccumulator = 0.0f;
+}
+
+// Cut the trail dead and restart it at `tip`. A teleport, where the alternative
+// is a straight streak bridging two places the emitter never travelled through.
+static void FollowerCut(TrailEntity *t, Vector3 tip)
+{
+  t->historyHead = 0;
+  t->historyCount = 1;
+  t->history[0] = tip;
+  t->nodeHome[0] = tip;
+  t->nodeVelocity[0] = (Vector3){0, 0, 0};
+  t->nodeRest[0] = 1e-4f;
+  t->laidDist = 0.0f;
+  t->nodeUV[0] = 0.0f;
+  t->prevAttachPos = tip;
+  t->sampleAcc = 0.0f;
+}
+
+void Trail_SetLateralOffset(int id, Vector3 worldOffset)
+{
+  if (id < 0 || id >= MAX_TRAIL_PARTICLES || !trailPool[id].active)
+    return;
+  trailPool[id].lateralOffset = worldOffset;
+}
+
+void Trail_SetFrozen(int id, bool frozen)
+{
+  if (id < 0 || id >= MAX_TRAIL_PARTICLES || !trailPool[id].active)
+    return;
+  trailPool[id].frozen = frozen;
 }
 
 void SetFollowerAxis(int id, Vector3 axisOrigin, Vector3 axisDir)
@@ -732,7 +930,67 @@ void UpdateTrailSystem(float dt)
           localPos = (Vector3){localPos.x + rotated.x * t->orbitRadius, localPos.y + rotated.y * t->orbitRadius, localPos.z + rotated.z * t->orbitRadius};
         }
       }
-      UpdateFollowerPosition(i, Vector3Transform(localPos, *t->attachedTransform));
+      Vector3 tip = Vector3Transform(localPos, *t->attachedTransform);
+      tip = Vector3Add(tip, t->lateralOffset);
+      if (!t->hasPrevAttach)
+      {
+        t->prevAttachPos = tip;
+        t->hasPrevAttach = true;
+      }
+
+      // TELEPORT before anything else: everything below assumes the gap between
+      // two samples is a path the emitter actually travelled.
+      float moved = Vector3Distance(tip, t->prevAttachPos);
+      if (t->teleportSpeed > 0.0f && moved > t->teleportSpeed * dt)
+      {
+        TraceLog(LOG_INFO,
+                 "TRAIL: follower %d cut — the transform jumped %.2f m in one frame "
+                 "(limit %.2f m). Treated as a teleport, not a sweep.",
+                 i, moved, t->teleportSpeed * dt);
+        FollowerCut(t, tip);
+      }
+      else if (t->frozen)
+      {
+        // Nothing is laid and nothing is simulated, but prevAttachPos keeps
+        // tracking so releasing the freeze is not read as a teleport.
+        t->prevAttachPos = tip;
+        t->timeSinceLastFollowerUpdate = 0.0f;
+      }
+      else if (t->idleSpeed > 0.0f && dt > 1e-6f && (moved / dt) <= t->idleSpeed)
+      {
+        // THE MOTION GATE. Feeding is what keeps a trail alive, so simply not
+        // feeding it IS the decay — the idle timer is left to run instead of
+        // being re-stamped, and the tail drains node by node.
+        t->prevAttachPos = tip;
+      }
+      else if (t->sampleHz > 0.0f)
+      {
+        // NODES AT A FIXED RATE, with sub-frame interpolation. One node per
+        // frame — which is what this did for its whole life — makes the trail's
+        // length in METRES a function of the frame rate, and at 30 fps the
+        // sub-steps all land on the same point.
+        float sampleDt = 1.0f / t->sampleHz;
+        t->sampleAcc += dt;
+        int steps = (int)(t->sampleAcc / sampleDt);
+        if (steps > TRAIL_SAMPLE_STEPS_MAX)
+        {
+          steps = TRAIL_SAMPLE_STEPS_MAX;
+          t->sampleAcc = 0.0f;
+        }
+        else
+        {
+          t->sampleAcc -= (float)steps * sampleDt;
+        }
+        for (int n = 1; n <= steps; n++)
+          UpdateFollowerPosition(i, Vector3Lerp(t->prevAttachPos, tip,
+                                                (float)n / (float)steps));
+        t->prevAttachPos = tip;
+      }
+      else
+      {
+        UpdateFollowerPosition(i, tip);
+        t->prevAttachPos = tip;
+      }
     }
 
     switch (t->type)
@@ -754,6 +1012,52 @@ void UpdateTrailSystem(float dt)
     if (t->active && t->onUpdate)
       t->onUpdate(i, dt);
     a++;
+  }
+}
+
+// Draw the declared layers over the base strip already built in scratchOuter.
+//
+// Each layer scales the base's width and alpha, optionally whitens its colour,
+// optionally burns only at the head, and scrolls at its own rate — parallax
+// between the layers is what stops several passes reading as one thick stroke.
+//
+// The texture rule is load-bearing, not stylistic: a layer with texture == NULL
+// draws the untextured global sheet, because several additive copies of the SAME
+// pattern at different phases average into something FLAT, and the wider layers
+// throw the pattern's edge detail outward as spikes. Structure belongs to one
+// layer or to none.
+static void DrawLayeredRibbon(const TrailEntity *t, int drawCount,
+                              Texture2D fallbackTex, Camera3D camera)
+{
+  for (int L = 0; L < t->layerCount; L++)
+  {
+    const TrailLayer *ly = &t->layers[L];
+    float wMul = (ly->widthMul > 0.0f) ? ly->widthMul : 1.0f;
+    float aMul = (ly->alphaMul > 0.0f) ? ly->alphaMul : 1.0f;
+    float sMul = (ly->scrollMul != 0.0f) ? ly->scrollMul : 1.0f;
+    for (int h = 0; h < drawCount; h++)
+    {
+      scratchLayer[h] = scratchOuter[h];
+      scratchLayer[h].halfWidth *= wMul;
+      scratchLayer[h].v -= t->uvScrollOffset * sMul;
+      float a = (float)scratchOuter[h].tint.a * aMul;
+      if (ly->headAlphaPow > 0.0f)
+        a *= powf(scratchSegRatio[h], ly->headAlphaPow);
+      if (a < 0.0f) a = 0.0f;
+      if (a > 255.0f) a = 255.0f;
+      Color col = scratchOuter[h].tint;
+      if (ly->whiten > 0.0f)
+      {
+        float w = (ly->whiten > 1.0f) ? 1.0f : ly->whiten;
+        col.r = (unsigned char)(col.r + (255 - col.r) * w);
+        col.g = (unsigned char)(col.g + (255 - col.g) * w);
+        col.b = (unsigned char)(col.b + (255 - col.b) * w);
+      }
+      col.a = (unsigned char)a;
+      scratchLayer[h].tint = col;
+    }
+    Texture2D tex = (ly->texture != NULL) ? *ly->texture : fallbackTex;
+    DrawRibbonStripEx(scratchLayer, drawCount, tex, camera, t->ribbonMode, t->fixedNormal);
   }
 }
 
@@ -952,19 +1256,57 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
           posNode.z += nZ * t->distortionStrength;
         }
         scratchOuter[h].position = posNode;
-        scratchOuter[h].halfWidth = t->thickness * 1.5f * taper;
-        scratchOuter[h].v = segRatio * t->uvTiling - t->uvScrollOffset;
-        scratchOuter[h].tint = (Color){nodeColor.r, nodeColor.g, nodeColor.b, (unsigned char)((nodeColor.a / 255.0f) * 180.0f * lifeRatio * taper)};
-        scratchInner[h].position = scratchOuter[h].position;
-        scratchInner[h].halfWidth = t->thickness * 0.4f * taper;
-        scratchInner[h].v = scratchOuter[h].v;
-        scratchInner[h].tint = (Color){255, 255, 255, (unsigned char)(255.0f * lifeRatio * taper)};
+        scratchOuter[h].halfWidth = t->thickness * taper;
+        // THE UV. Two forms, and they are not two flavours of the same thing.
+        //
+        // Legacy: `segRatio * uvTiling`. segRatio is the node's INDEX over the
+        // strip, so the texture stretches as the trail grows, and it is measured
+        // from the HEAD, which moves — so a fixed piece of ribbon sees its own
+        // segRatio change at the emitter's speed and most of the apparent scroll
+        // is the motion leaking in.
+        //
+        // Material: metres of path stamped on the node when it was laid. Tiled
+        // by metres, anchored to the cloth, and `uvScrollSpeed` is then exactly
+        // the flow rate over the ribbon whatever the emitter does.
+        scratchOuter[h].v = (t->uvMetresPerTile > 0.0f)
+                                ? (t->nodeUV[NodeIndexForSegRatio(t, drawCount, h)] /
+                                   t->uvMetresPerTile)
+                                : (segRatio * t->uvTiling);
+        scratchOuter[h].tint = (Color){nodeColor.r, nodeColor.g, nodeColor.b,
+                                       (unsigned char)(nodeColor.a * lifeRatio * taper)};
+        scratchTaper[h] = taper;
+        scratchSegRatio[h] = segRatio;
       }
       Texture2D ribbonTex = t->sprite.id > 0 ? t->sprite : s_globalTrailTex;
-      DrawRibbonStripEx(scratchOuter, drawCount, ribbonTex, camera, t->ribbonMode, t->fixedNormal);
-      if (!t->disableInnerCore)
+      if (t->layerCount > 0)
       {
-        DrawRibbonStripEx(scratchInner, drawCount, ribbonTex, camera, t->ribbonMode, t->fixedNormal);
+        DrawLayeredRibbon(t, drawCount, ribbonTex, camera);
+      }
+      else
+      {
+        // The legacy pair, unchanged: outer at 1.5x thickness and alpha 180,
+        // inner at 0.4x, pure white, alpha 255. Derived from the base rather
+        // than rewritten, so it stays bit-for-bit what every existing consumer
+        // has been drawing.
+        for (int h = 0; h < drawCount; h++)
+        {
+          float taper = scratchTaper[h];
+          scratchInner[h] = scratchOuter[h];
+          scratchOuter[h].halfWidth = t->thickness * 1.5f * taper;
+          scratchOuter[h].tint.a = (unsigned char)((float)scratchOuter[h].tint.a * (180.0f / 255.0f));
+          // The scroll: the base strip now carries the UNSCROLLED coordinate so
+          // each declared layer can scroll at its own rate. The legacy pair has
+          // one rate, so it is applied here, once.
+          scratchOuter[h].v -= t->uvScrollOffset;
+          scratchInner[h].v = scratchOuter[h].v;
+          scratchInner[h].halfWidth = t->thickness * 0.4f * taper;
+          scratchInner[h].tint = (Color){255, 255, 255, (unsigned char)(255.0f * lifeRatio * taper)};
+        }
+        DrawRibbonStripEx(scratchOuter, drawCount, ribbonTex, camera, t->ribbonMode, t->fixedNormal);
+        if (!t->disableInnerCore)
+        {
+          DrawRibbonStripEx(scratchInner, drawCount, ribbonTex, camera, t->ribbonMode, t->fixedNormal);
+        }
       }
     }
   }
