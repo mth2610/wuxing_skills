@@ -14,15 +14,15 @@
 // than editing it here, or the next sync will overwrite the edit.
 
 // @gen:common_includes begin
-// 13 include(s) — auto-managed by sync_vfx_test.py
+// 19 include(s) — auto-managed by sync_vfx_test.py
 #include "vc_common.inl"
 #include "vc_smoke_puff.inl"
 #include "vc_energy_burst.inl"
 #include "vc_impact_package.inl"
 #include "vc_glint_sparkle.inl"
 #include "vc_rune_circle.inl"
-#include "vc_core_glow.inl"        // PRIMARY — extracted from charge_converge, so it comes first
-#include "vc_energy_orb.inl"         // PRIMARY — consumes vc_core_glow, so it comes after it
+#include "vc_core_glow.inl"
+#include "vc_energy_orb.inl"
 #include "vc_charge_converge.inl"
 #include "vc_dissolve_exit.inl"
 #include "vc_sweep_slash.inl"
@@ -30,5 +30,9 @@
 #include "vc_particle_upgrades_test.inl"
 #include "vc_ground_wave.inl"
 #include "vc_spark_trail.inl"
+#include "vc_converge_motes.inl"
+#include "vc_beam.inl"
+#include "vc_portal_disc.inl"
+#include "vc_shock_ring.inl"
 // @gen:common_includes end
 

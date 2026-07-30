@@ -43,6 +43,71 @@ static Color VC_MixColor(Color a, Color b, float t)
                    255};
 }
 
+// ── Shared by every SWEPT primary ───────────────────────────────────────────
+//
+// Both of these lived inside vc_swept_trail.inl until P1 needed them. They are
+// here rather than copied because the copy is the failure mode this module keeps
+// repeating: a composition grew its own history ring beside core/trail_system.h,
+// then the trail system grew its own tube beside ProceduralMesh_BuildTubeAlongPath.
+// Twelve lines of ramp is small enough to duplicate without noticing, which is
+// exactly why it gets hoisted the first time a second caller appears.
+
+// The element's tail→head ramp: its BODY colour through the cooling tail, its
+// GLOW at the head. One flat colour along a swept thing is what makes it read as
+// plastic, and it is a ColorGradient because that is what the trail system
+// samples at segRatio.
+#define VC_RAMP_MAX 16
+static ColorGradient s_vcRamp[VC_RAMP_MAX];
+static bool s_vcRampBuilt[VC_RAMP_MAX];
+
+static const ColorGradient *VC_ElementRamp(VC_MaterialId mat)
+{
+    int i = (int)mat;
+    if (i < 0 || i >= VC_RAMP_MAX)
+        return NULL;
+    if (!s_vcRampBuilt[i])
+    {
+        const VFX_ElementMaterial *m = VFX_Material(mat);
+        ColorGradient_AddStop(&s_vcRamp[i], 0.00f, m->body);
+        ColorGradient_AddStop(&s_vcRamp[i], 0.35f, m->body);
+        ColorGradient_AddStop(&s_vcRamp[i], 1.00f, m->glow);
+        s_vcRampBuilt[i] = true;
+    }
+    return &s_vcRamp[i];
+}
+
+// Two unit axes spanning the plane perpendicular to `unitNormal`, which MUST
+// already be normalised.
+//
+// The guard is the whole reason this is a function. `cross(n, ref)` is ~zero
+// when `ref` is parallel to `n`, and `Vector3Normalize` of ~zero returns garbage
+// SILENTLY — no NaN, no log, just a frame that spans nothing, so every ring built
+// on it collapses onto a line and the shape draws as a plane or vanishes
+// (core/docs/LANDMINES.md, 30/07, which cost four rounds on the swept tube).
+// Picking the reference away from `n` costs one comparison and removes the case
+// entirely. Same guard `VC_DirCone` uses.
+static void VC_PlaneFrame(Vector3 unitNormal, Vector3 *outA, Vector3 *outB)
+{
+    Vector3 ref = (fabsf(unitNormal.y) < 0.99f) ? (Vector3){0.0f, 1.0f, 0.0f}
+                                                : (Vector3){1.0f, 0.0f, 0.0f};
+    Vector3 a = Vector3Normalize(Vector3CrossProduct(unitNormal, ref));
+    *outA = a;
+    *outB = Vector3CrossProduct(unitNormal, a);
+}
+
+// Tail memory in SECONDS → history nodes. The ceiling is TRAIL_HISTORY_COUNT
+// (60), which at 60 Hz is exactly 1.0 s of history; asking for more silently
+// gets 1.0 s. Four is the floor because a strip of three nodes has no shape.
+static int VC_TrailNodesForLifetime(float lifetime, float sampleHz)
+{
+    int n = (int)(lifetime * sampleHz + 0.5f);
+    if (n < 4)
+        n = 4;
+    if (n > TRAIL_HISTORY_COUNT)
+        n = TRAIL_HISTORY_COUNT;
+    return n;
+}
+
 // Horizontal quad at the CURRENT matrix origin — caller manages push/translate/
 // rotate for custom transforms.
 static void VC_DrawGroundQuadXZ(Texture2D tex, float halfX, float halfZ, Color tint)

@@ -112,7 +112,121 @@ void VFX_ComposeCoreGlow(Vector3 center, VC_MaterialId mat, float radius, float 
 // for an orb. Immediate mode; call every frame it should exist.
 void VFX_ComposeEnergyOrb(Vector3 center, VC_MaterialId mat, float radius, float intensity01);
 
+// ── PRIMARY. Shock ring ─────────────────────────────────────────────────────
+// The expanding ring, OFF the ground: an impact in the air, a parry, a barrier
+// breaking. `VFX_ComposeGroundWave` raycasts the terrain and stands a lip UP out
+// of it; this shares none of that — but the height function is the smaller half
+// of the difference.
+//
+// The larger half: a ground ring is never seen edge-on (you look down at the
+// floor), while a mid-air ring is seen from every angle including exactly along
+// its own plane, where a flat annulus is a LINE. So this ring's cross-section is
+// a LENS with real thickness out of its plane, drawn on both faces. It also
+// takes an ORIENTATION, which a ground wave cannot: `normal` is the plane it
+// expands in — (0,1,0) gives the horizontal pose.
+//
+// Additive and unlit with AUTHORED shading (a lit material in the night arena is
+// black-on-black, ENGINE_LANDMINES §3). CONTINUOUS: call every frame with `t01`
+// running 0 → 1. `radius` is where the front arrives at t01 = 1, in metres.
+void VFX_ComposeShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat,
+                          float radius, float t01);
+
+// ── PRIMARY. Portal disc ────────────────────────────────────────────────────
+// A flat disc lying in a plane the WORLD chose, with all its energy in the rim
+// and a dark middle — additive adds nothing through the centre, so the scene
+// behind shows through and it reads as a hole rather than a coin. The interior
+// swirls by scrolling POLAR UVs, so the material turns while the silhouette
+// stays rock steady.
+//
+// It deliberately does NOT use `TRAIL_TYPE_PORTAL`, which the plan named as the
+// unused primitive: that draws one camera-facing billboard, so it is the same
+// shape from every angle and has no rim. A portal that does not foreshorten as
+// you walk around it is a decal floating in front of the camera. TRAIL_TYPE_PORTAL
+// should be deleted rather than adopted.
+//
+// CONTINUOUS: call every frame, `t01` 0 → 1. It OPENS by growing from nothing,
+// holds, and COLLAPSES shut — unlike a beam, which stops being fed and goes out.
+// `normal` is the plane it lies in ((0,1,0) = flat on the ground, the summoning-
+// seal pose). `radius` is the disc's radius in metres at full open.
+void VFX_ComposePortalDisc(Vector3 center, Vector3 normal, VC_MaterialId mat,
+                           float radius, float t01);
+
+// ── PRIMARY. Beam ───────────────────────────────────────────────────────────
+// The sustained line, and the library had nothing that drew one:
+// `DrawRibbonEnergyField` had one consumer and `core/vfx_proc_ray.h` had none,
+// and both are STRIPS — a beam of camera-facing cards is the same shape from
+// every angle and vanishes when you look along it, which is exactly when a beam
+// aimed at you should be at its most emphatic.
+//
+// So it is a swept TUBE, the same one P1 promoted. It is not
+// `VFX_ComposeVolumeTrail` with different arguments because a volume trail's
+// path is HISTORY — where an emitter has been — and a beam's is a straight line
+// between two points that both exist right now. No emitter, nothing to remember,
+// so no pool and no handle.
+//
+// IMMEDIATE MODE: call every frame the beam is held, `t01` running 0→1 over its
+// life. It FIRES UP over the first 14% (the far end travels out from `from`, so
+// the beam has a source), holds, and cuts out over the last 14%.
+//
+// `width` is the shaft's FULL width in metres at its widest — a CEILING: the
+// drawn width is also capped against the beam's OWN length at 1:10, so a short
+// beam is a thin lance rather than a stub, and the fire-up extends instead of
+// inflating. Below 2 cm of separation nothing is drawn (announced once): a beam
+// with no length has no direction, and normalising it returns garbage silently.
+void VFX_ComposeBeam(Vector3 from, Vector3 to, VC_MaterialId mat,
+                     float width, float t01);
+
+// ── PRIMARY. Debris shards ──────────────────────────────────────────────────
+// Angular chips thrown off an impact or a break. NOT sprites, and that is the
+// definition rather than a preference: a thing that is the same shape from every
+// angle is a SPARK. A chip is a squashed, per-instance-jittered box that TUMBLES,
+// and its faces are flat-shaded on the CPU against an authored key direction —
+// so the tumble is visible as faces changing brightness and occasionally
+// flashing. (Authored, not lit: a lit material on small geometry in the night
+// arena is black-on-black, ENGINE_LANDMINES §3.)
+//
+// Chips OCCLUDE, so they draw BLEND_ALPHA and depth-write; the dust they shed
+// EMITS, so it is additive and unlit. That is one effect, two draws, per the
+// blend law — never one draw compromising between them.
+//
+// ONE-SHOT: `count` chips per CALL, from a state transition. Calling it from a
+// draw path spawns a burst every frame and exhausts the pool in about two.
+// `vel` is the burst's base velocity in m/s and the chips spread in a cone
+// around it; pass a zero vector for the classic upward scatter off a surface.
+// `scale` is a chip's longest axis in metres. `count` is clamped DOWN by the
+// quality tier and by a per-call ceiling of 24.
+void VFX_ComposeDebrisShards(Vector3 pos, Vector3 vel, VC_MaterialId mat,
+                             float scale, int count);
+
+// ── PRIMARY. Converge motes ─────────────────────────────────────────────────
+// Motes peeling off the surface of a SHELL and being drawn in along curved
+// threads. The emitter is a real sphere mesh (so the launch points have an
+// outline a formula cannot give) and the motion is a point attractor + vortex +
+// drag (so no two threads sweep the same arc, which is what an analytic spiral
+// always does).
+//
+// A converge is not a charge: a summon draws motes into a rune, a drain pulls
+// them off a victim, an absorb takes them into a weapon, and none of those wants
+// a hot core in the middle. Add `VFX_ComposeCoreGlow` when you do — that is
+// exactly what `VFX_ComposeChargeConverge` now is.
+//
+// Continuous — call every frame while it should exist. `radius` is the emitter
+// shell in metres, `t01` 0→1 drives density/pull/brightness, `moteCount` is
+// threads per SECOND (a rate; the mesh decides where, this decides how many).
+void VFX_ComposeConvergeMotes(Vector3 center, VC_MaterialId mat, float radius,
+                              float t01, int moteCount);
+// The `charge_size` dial, readable by the composite below. Internal to the
+// composition module, and it is a prototype here rather than a `static` forward
+// declaration in the composite because every .inl is pasted into ONE translation
+// unit — where a repeated file-scope `static` NAME is exactly what
+// core/tests/composition_tu_test.c exists to catch, and that guard cannot tell a
+// second declaration of one symbol from two different symbols.
+float VC_ConvergeMotesSizeMul(void);
+
 // ── E5.3. Charge converge ───────────────────────────────────────────────────
+// COMPOSITE, and a pure score over two primaries with no visual idea of its own:
+// converge motes, plus a core glow at the destination (which brings its own
+// point light). `charge_core = 0` drops the destination and leaves the motes.
 // The anticipation beat: motes spiralling INTO a point while it brightens.
 // Continuous, `t01` 0→1 over the wind-up.
 void VFX_ComposeChargeConverge(Vector3 center, VC_MaterialId mat, float radius, float t01, int moteCount);
@@ -226,6 +340,54 @@ int  VFX_ComposeSweptTrail(const Matrix *followTransform, VC_MaterialId mat,
 void VFX_TrailSetWidth(int handle, float width01);   // ramped, for wind-down
 void VFX_KillSweptTrail(int handle);
 
+// ── PRIMARY. Volume trail ───────────────────────────────────────────────────
+// A swept VOLUME, and nothing else. The tube that `VFX_TRAIL_HAZE` proved out on
+// 30/07 existed only as a STYLE of the swept weapon trail, so reaching it meant
+// taking the weapon trail's cloth, its per-style aspect table and its spark
+// layer along with it. Smoke, fire, a dragon's breath and (once P4 lands) a
+// beam want the volume and none of those three.
+//
+// It reuses TRAIL_SHAPE_TUBE wholesale. There is exactly ONE tube in this tree
+// and this is not a second one.
+//
+// `kind` selects THREE things: the sheet, how hard the surface is deformed by
+// noise, and how fast that sheet flows over it. Everything structural — the
+// teardrop profile, the caps, the layer stack, the tier ladder, the aspect law —
+// is shared, and that is the point: three kinds are a PARAMETER, not three
+// implementations (VFX_PLAN §4.1).
+//
+// The fourth thing `kind` decides is the BLEND, and it is not a fourth knob —
+// it is the blend law applied. Smoke BLOCKS light, so VOL_SMOKE draws
+// BLEND_ALPHA over a dark ramp; energy and fire EMIT, so they draw
+// BLEND_ADDITIVE over the element's body→glow ramp. Blend and ramp come from one
+// predicate so they cannot drift apart. **Glowing smoke is VOL_SMOKE plus a
+// SECOND additive draw**, never VOL_SMOKE flipped to additive.
+//
+// `radius` is the tube's radius in METRES at its widest, and it is a CEILING:
+// it is also capped against the length the emitter has actually travelled (a
+// volume runs about 1:2.5, full width against its own length), so an emitter
+// that has barely moved gets a wisp instead of a ball. `lifetime` is the tail's
+// memory in seconds, clamped to 1.0 s by TRAIL_HISTORY_COUNT.
+//
+// ONE-SHOT + POOLED, exactly like the swept trail: call once from a state
+// transition, keep the handle, release it. Calling it every frame stacks volumes
+// until the pool (8) recycles. `followTransform` is caller-owned and must
+// outlive the handle. Kill stops the FEED rather than cutting the volume out of
+// existence, so it drains its own history and fades.
+typedef enum {
+    VOL_ENERGY = 0, // strands, tight surface, fast flow — a bolt's wake
+    VOL_SMOKE  = 1, // no edges, billowing surface, slow churn — and it OCCLUDES
+    VOL_FIRE   = 2, // stretched along travel, hot core, fastest flow
+    // Not a kind — the count. Range-check against THIS. `VFX_ComposeSweptTrail`
+    // validated against the last style by name and silently clamped every HAZE
+    // request to BLADE for a day (core/docs/LANDMINES.md, 30/07).
+    VFX_VOLUME_KIND_COUNT
+} VFX_VolumeKind;
+
+int  VFX_ComposeVolumeTrail(const Matrix *followTransform, VC_MaterialId mat,
+                            float radius, float lifetime, VFX_VolumeKind kind);
+void VFX_KillVolumeTrail(int handle);
+
 // ── H2. Ground wave ─────────────────────────────────────────────────────────
 // An expanding ring of ground-CONFORMING geometry: it rises, it has a lip whose
 // crest leads, and its inner face is brighter than its outer one — the thing a
@@ -281,7 +443,6 @@ void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float 
 void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
 void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
 void VFX_ComposeParticleUpgradesTest(Vector3 pos);
-void VFX_ComposeShardDebris(Vector3 pos, int count, float speed, VC_MaterialId matId);
 void VFX_ComposeStonePillar(Vector3 basePos, float progress);
 void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
 void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);

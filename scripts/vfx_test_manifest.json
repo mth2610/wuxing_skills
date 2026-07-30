@@ -41,6 +41,7 @@
       "VFX_KillCharacterAura",
       "VFX_TrailSetWidth",
       "VFX_KillSweptTrail",
+      "VFX_KillVolumeTrail",
       "VFX_GroundHeightFromMap",
       "VFX_KillProjectile"
     ],
@@ -133,6 +134,19 @@
       ]
     },
     {
+      "fn": "VFX_ComposeConvergeMotes",
+      "label": "CONVERGE MOTES",
+      "category": "util",
+      "type": "continuous",
+      "_comment": "P2. The primary EXTRACTED from ChargeConverge, judged ALONE — no core glow, because a primary next to a bright destination is judged against the destination. What to look for: threads leave the whole SURFACE of a shell (not a band or a ring), no two sweep the same arc, and the last stretch of every thread bends the same way (the vortex) so N attractor falls do not read as N straight lines converging. Compare with the CHARGE CONVERGE entry, which is this plus VFX_ComposeCoreGlow — the two must look identical apart from the hot point.",
+      "draw_block": [
+        "{",
+        "float mi01 = $TIME / 2.2f; if (mi01 > 1.0f) mi01 = 1.0f;",
+        "VFX_ComposeConvergeMotes(Vector3Add($POS, (Vector3){0.0f, 1.4f, 0.0f}), VC_MAT_QI, 1.3f, mi01, 45);",
+        "}"
+      ]
+    },
+    {
       "fn": "VFX_ComposeChargeConverge",
       "label": "CHARGE CONVERGE",
       "category": "util",
@@ -193,14 +207,6 @@
       "_auto": true,
       "type": "oneshot",
       "trigger_call": "VFX_ComposeParticleUpgradesTest($POS)"
-    },
-    {
-      "fn": "VFX_ComposeShardDebris",
-      "label": "SHARD DEBRIS",
-      "category": "metal",
-      "_auto": true,
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeShardDebris($POS, 5, 2.0f, VC_MAT_METAL)"
     },
     {
       "fn": "VFX_ComposeStonePillar",
@@ -278,6 +284,36 @@
       ]
     },
     {
+      "fn": "VFX_ComposeVolumeTrail",
+      "label": "VOLUME TRAIL",
+      "category": "util",
+      "type": "continuous",
+      "_comment": "P1. The swept TUBE promoted to a primary — the SAME tube the ENERGY TUBE entry shows, reached without a weapon trail's cloth, aspect table or sparks. All three kinds fly the SAME curved path side by side, because the whole claim of P1 is that they differ in three things and nothing else, and that is only judgeable next to each other. What to look for, in order: (1) all three are ROUND from a low angle — a rounded funnel, not a band that thins as the camera comes level; if any is flat, read the TRAIL tube roundness line (VFX_PLAN 4.4). (2) SMOKE OCCLUDES and the other two GLOW — smoke should darken what is behind it, energy and fire should only ever brighten. If smoke glows, the blend law broke. (3) the surfaces differ: smoke billows, energy holds its shape, fire sits between. (4) the sheets flow AGAINST travel at three visibly different rates. Dials: vol_solid=1 for a matte white cast when judging shape alone, vol_noise / vol_flow / vol_radius.",
+      "draw_block": [
+        "{",
+        "static Matrix volXf[3];",
+        "static int volH[3] = { -1, -1, -1 };",
+        "static float volPrevT = -1.0f;",
+        "if ($TIME < volPrevT) { for (int vk = 0; vk < 3; vk++) { VFX_KillVolumeTrail(volH[vk]); volH[vk] = -1; } }",
+        "volPrevT = $TIME;",
+        "float volA = $TIME * 1.6f;",
+        "for (int vk = 0; vk < 3; vk++)",
+        "{",
+        "    // One path, three lateral offsets. Curved in ALL THREE axes: a straight or",
+        "    // planar path lets a broken cross-section frame pass, which is the whole",
+        "    // trap in a tube (core/docs/LANDMINES.md, 30/07).",
+        "    Vector3 vp = Vector3Add($POS, (Vector3){ 3.0f * sinf(volA) + (float)(vk - 1) * 2.6f,",
+        "                                             1.9f + 0.7f * sinf(volA * 1.7f),",
+        "                                             2.2f * cosf(volA * 1.3f) });",
+        "    volXf[vk] = MatrixTranslate(vp.x, vp.y, vp.z);",
+        "    if (volH[vk] < 0)",
+        "        volH[vk] = VFX_ComposeVolumeTrail(&volXf[vk], (vk == 0) ? VC_MAT_LIGHTNING : ((vk == 1) ? VC_MAT_EARTH : VC_MAT_FIRE),",
+        "                                          0.45f, 0.85f, (VFX_VolumeKind)vk);",
+        "}",
+        "}"
+      ]
+    },
+    {
       "fn": "VFX_ComposeGroundWave",
       "label": "GROUND WAVE",
       "category": "earth",
@@ -347,6 +383,71 @@
         "Vector3 p = Vector3Add($POS, (Vector3){ 4.0f * sinf(a), 1.8f + 0.6f * sinf(a * 0.8f), 3.0f * cosf(a * 0.7f) });",
         "projXf = MatrixTranslate(p.x, p.y, p.z);",
         "if (projH < 0) projH = VFX_ComposeProjectile(&projXf, VC_MAT_WATER, 0.34f);",
+        "}"
+      ]
+    },
+    {
+      "fn": "VFX_ComposeDebrisShards",
+      "label": "DEBRIS SHARDS",
+      "category": "metal",
+      "type": "oneshot",
+      "_comment": "P3. Rewritten from the pre-Dot-E VFX_ComposeShardDebris scaffold, which drew LIT EffectMaterial boxes (black-on-black in the night arena) and flipped backface culling with no batch flush. ONE-SHOT: chips per CALL, so it is on the trigger key, not the draw path. What to look for: (1) the chips are ANGULAR and FLATTER than they are wide, and you can tell one face from another; (2) as each tumbles its faces change brightness and occasionally FLASH — that specular pop is the whole point, and if every chip is one flat value the per-face shading is not running; (3) they are the ELEMENT's colour, not white; (4) they bounce once and settle. Dials: debris_scale / debris_spin / debris_dust / debris_life.",
+      "trigger_call": "VFX_ComposeDebrisShards($POS, (Vector3){2.5f, 3.0f, 0.0f}, VC_MAT_METAL, 0.09f, 14)"
+    },
+    {
+      "fn": "VFX_ComposeBeam",
+      "label": "BEAM",
+      "category": "util",
+      "type": "continuous",
+      "_comment": "P4. The sustained line, built as a TUBE (P1's tube, not a second one). Three beams at once, and that is the DoD rather than decoration: [A] a normal beam across the bench; [B] one aimed straight AT the camera-ish vertical, to check the end-on view is a bright disc and not a hole; [C] one whose endpoints close to within a few millimetres, to check it thins to nothing and vanishes instead of inflating into a ball. What to look for: (1) beam A fires UP from its source over the first moments rather than appearing at full length; (2) the shaft wanders slightly but MEETS both endpoints exactly — a gap at either end means the sin(PI*t) envelope is not pinning the deviation; (3) no half-shell (that is the culling flush); (4) beam C never becomes a blob. Dials: beam_width / beam_alpha / beam_wander / beam_flow.",
+      "draw_block": [
+        "{",
+        "float bt = fmodf($TIME, 2.6f) / 2.6f;",
+        "// [A] the ordinary case: a held beam across the bench.",
+        "VFX_ComposeBeam(Vector3Add($POS, (Vector3){-3.5f, 1.5f, 0.0f}),",
+        "                Vector3Add($POS, (Vector3){ 3.5f, 2.1f, 0.0f}), VC_MAT_LIGHTNING, 0.30f, bt);",
+        "// [B] END-ON. Nearly vertical, so from most bench angles you look down it.",
+        "VFX_ComposeBeam(Vector3Add($POS, (Vector3){0.0f, 0.1f, 3.0f}),",
+        "                Vector3Add($POS, (Vector3){0.0f, 5.0f, 3.0f}), VC_MAT_HOLY, 0.30f, bt);",
+        "// [C] DEGENERATE. The endpoints close to millimetres and reopen; it must thin",
+        "// out and disappear, never inflate. It also logs once, then stays quiet.",
+        "float bgap = 0.004f + 1.6f * (0.5f + 0.5f * sinf($TIME * 1.1f));",
+        "VFX_ComposeBeam(Vector3Add($POS, (Vector3){3.0f, 1.5f, -2.5f}),",
+        "                Vector3Add($POS, (Vector3){3.0f + bgap, 1.5f, -2.5f}), VC_MAT_FIRE, 0.30f, 0.5f);",
+        "}"
+      ]
+    },
+    {
+      "fn": "VFX_ComposeShockRing",
+      "label": "SHOCK RING",
+      "category": "util",
+      "type": "continuous",
+      "_comment": "P5. The expanding ring OFF the ground. TWO rings at once, at right angles, and that pairing IS the test: one horizontal (the pose a ground wave would take) and one VERTICAL, which from a normal bench camera is seen close to edge-on. What to look for: (1) the vertical ring does NOT disappear when you line up with its plane — it has a lens section, so edge-on you see its silhouette; if it vanishes the out-of-plane thickness is zero. (2) the crest LEADS: the bright line sits toward the outer edge with the long slope trailing inside, not a symmetric doughnut. (3) the inner face is brighter than the outer at the same height. (4) it decelerates as it expands. Dials: shock_band / shock_thick / shock_alpha.",
+      "draw_block": [
+        "{",
+        "float st = fmodf($TIME, 1.6f) / 1.6f;",
+        "// Horizontal — the ground wave's pose, without the ground.",
+        "VFX_ComposeShockRing(Vector3Add($POS, (Vector3){-3.0f, 1.6f, 0.0f}), (Vector3){0.0f, 1.0f, 0.0f},",
+        "                     VC_MAT_LIGHTNING, 3.0f, st);",
+        "// VERTICAL — the case a flat annulus cannot survive.",
+        "VFX_ComposeShockRing(Vector3Add($POS, (Vector3){ 3.0f, 1.8f, 0.0f}), (Vector3){0.0f, 0.0f, 1.0f},",
+        "                     VC_MAT_METAL, 3.0f, st);",
+        "}"
+      ]
+    },
+    {
+      "fn": "VFX_ComposePortalDisc",
+      "label": "PORTAL DISC",
+      "category": "taiji",
+      "type": "continuous",
+      "_comment": "P6. The flat disc with a rim. TWO discs: one flat on the ground (the summoning-seal pose) and one standing vertically, so the foreshortening and the edge-on rim are both visible from one camera. What to look for: (1) the MIDDLE IS DARK — you should see the arena through it; if the disc glows evenly it is a coin, not a hole, and the interior falloff is too flat. (2) the RIM is the hottest thing and it survives edge-on (it has a lens section). (3) the interior swirls while the disc's OUTLINE stays perfectly still — the swirl is a UV scroll, so any wobble of the silhouette means geometry is being rotated. (4) it collapses shut faster than it opened. Dials: portal_alpha / portal_swirl / portal_rim.",
+      "draw_block": [
+        "{",
+        "float pt = fmodf($TIME, 3.2f) / 3.2f;",
+        "VFX_ComposePortalDisc(Vector3Add($POS, (Vector3){-2.6f, 0.08f, 0.0f}), (Vector3){0.0f, 1.0f, 0.0f},",
+        "                      VC_MAT_VOID, 1.6f, pt);",
+        "VFX_ComposePortalDisc(Vector3Add($POS, (Vector3){ 2.6f, 1.9f, 0.0f}), (Vector3){0.0f, 0.0f, 1.0f},",
+        "                      VC_MAT_TAIJI, 1.6f, pt);",
         "}"
       ]
     }

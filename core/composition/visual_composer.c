@@ -56,9 +56,10 @@
 // adjacent and in matching order, so a deletion cannot be half-done.
 // @gen:archetype_includes begin
 #include "common/vc_character_aura.inl"
-#include "common/vc_shard_debris.inl"
 #include "common/vc_swept_trail.inl"
 #include "common/vc_projectile.inl"
+#include "common/vc_volume_trail.inl"
+#include "common/vc_debris_shards.inl"
 // @gen:archetype_includes end
 
 void VFX_Compose_Update(float dt)
@@ -66,9 +67,10 @@ void VFX_Compose_Update(float dt)
     (void)dt;
 // @gen:archetype_update begin
     VC_CharacterAura_Update(dt);
-    VC_ShardDebris_Update(dt);
     VC_SweptTrail_Update(dt);
     VC_Projectile_Update(dt);
+    VC_VolumeTrail_Update(dt);
+    VC_DebrisShards_Update(dt);
 // @gen:archetype_update end
     // E3 — the choreography layer rides the same single main.c wiring. Kept
     // OUTSIDE the generated block on purpose: sync_vfx_test.py rewrites what is
@@ -84,8 +86,9 @@ void VFX_Compose_Draw3D(Camera3D cam)
     (void)cam;
 // @gen:archetype_draw begin
     VC_CharacterAura_Draw3D(cam);
-    VC_ShardDebris_Draw3D(cam);
     VC_SweptTrail_Draw3D(cam);
     VC_Projectile_Draw3D(cam);
+    VC_VolumeTrail_Draw3D(cam);
+    VC_DebrisShards_Draw3D(cam);
 // @gen:archetype_draw end
 }

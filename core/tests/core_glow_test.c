@@ -247,8 +247,12 @@ static void Test_ExtractionChangedTheAddressAndNothingElse(void)
 
     // And the composite actually got smaller — an extraction that leaves the
     // original intact is a copy, which is worse than not extracting.
-    CHECK(FileHas(chg, "VFX_ComposeCoreGlow(center, mat, radius * s_chargeSize, t01);"),
-          "the composite now CALLS the primary");
+    // The scale expression changed shape on 30/07 when P2 extracted the MOTES as
+    // well: `s_chargeSize` moved into vc_converge_motes.inl with the threads it
+    // scales, so the composite reads it through an accessor. The number is the
+    // same number — the dial, at the same key — and that is what this pins.
+    CHECK(FileHas(chg, "VFX_ComposeCoreGlow(center, mat, radius * VC_ConvergeMotesSizeMul(), t01);"),
+          "the composite now CALLS the primary, still at the charge_size scale");
     CHECK(!FileHas(chg, "MID GLOW — the layer that actually buys bloom"),
           "and no longer contains a copy of it");
     CHECK(!FileHas(chg, "VFXLight_Spawn(center, m->soft,"),

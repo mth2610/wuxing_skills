@@ -345,7 +345,7 @@ whole cross-section into a line. The last one is the general lesson — see
 **Primaries:** `SmokePuff` `FlameVolume` `CharacterAura` `GlintSparkle`
 `RuneCircle` `DissolveExit` `SweepSlash` `EnergyBurst` `LightShaft`
 `ImpactFlash` `ImpactDistort` `ImpactDecal` `SweptTrail` `GroundWave`
-`SparkTrail` `CoreGlow` `EnergyOrb`
+`SparkTrail` `CoreGlow` `EnergyOrb` `VolumeTrail` (P1, 30/07)
 
 **Composites:** `ImpactPackage` `Projectile` (and `ChargeConverge`, which is one
 primary short of being a pure score — the converge motes still need extracting).
@@ -357,28 +357,52 @@ anything after it.
 
 ---
 
-#### P1. `VFX_ComposeVolumeTrail` — promote the tube to a named primary
+#### P1. `VFX_ComposeVolumeTrail` — promote the tube to a named primary — **LANDED 30/07**
 
-**Why it is first:** the tube exists only as `VFX_TRAIL_HAZE`, a *style* of the
+**Why it was first:** the tube existed only as `VFX_TRAIL_HAZE`, a *style* of the
 swept trail, reachable only through a trail handle. Smoke, fire, a dragon's
 breath and a beam all want a swept volume without wanting a weapon trail's
 cloth, aspect cap or spark layer.
 
+`core/composition/common/vc_volume_trail.inl`, declared in `visual_composer.h`.
+
 ```c
-typedef enum { VOL_ENERGY = 0, VOL_SMOKE, VOL_FIRE } VFX_VolumeKind;
+typedef enum { VOL_ENERGY = 0, VOL_SMOKE, VOL_FIRE, VFX_VOLUME_KIND_COUNT } VFX_VolumeKind;
 
 int  VFX_ComposeVolumeTrail(const Matrix *followTransform, VC_MaterialId mat,
                             float radius, float lifetime, VFX_VolumeKind kind);
 void VFX_KillVolumeTrail(int handle);
 ```
 
-- `kind` selects the sheet (`smoke_volume` / `fire_volume` / `energy_volume`),
-  the noise amplitude and the flow swirl. Nothing else differs — that is the
-  point.
-- Reuse `TRAIL_SHAPE_TUBE` wholesale. Do NOT write a second tube.
-- **DoD:** bench entry `VOLUME TRAIL` with the three kinds on a curved path;
-  headless test pinning that the three kinds differ in sheet + noise + swirl and
-  in nothing else.
+- `kind` selects the sheet, the noise amplitude and the flow swirl. **Exactly
+  three columns**, and `core/tests/volume_trail_test.c` counts the per-kind
+  tables so a fourth cannot arrive quietly.
+- `TRAIL_SHAPE_TUBE` reused wholesale — the test asserts the file contains no
+  `ProceduralMesh_BuildTubeAlongPath` call and no `rlBegin` of its own.
+- **Three departures from the spec as written, each recorded here so nobody
+  re-litigates them:**
+  1. **The blend is a fourth thing `kind` decides**, because the blend law is not
+     optional: smoke OCCLUDES (`BLEND_ALPHA`, dark ramp), energy and fire EMIT
+     (`BLEND_ADDITIVE`, body→glow ramp). Both are read off ONE predicate
+     (`VolumeTrail_Emits`) so they cannot drift apart. Glowing smoke stays TWO
+     draws.
+  2. **The aspect cap stays**, as ONE ratio (1:2.5 full width against travelled
+     length) shared by every kind — not the weapon trail's per-style table,
+     which is the thing P1 sheds. Dropping it entirely would let a barely-moved
+     emitter draw a ball, which is the exact landmine "Thickness is a ratio
+     against the thing's OWN length".
+  3. **The tier ladder scales the tube instead of dropping it.** `VFX_TRAIL_HAZE`
+     falls back to a flat strip below `GFX_MED`; that is a switch, not a tier, so
+     here radial segments / rings / layer count clamp down (8·24·2 → 5·10·1,
+     ~9x cheaper) and it is still a closed tube at the lowest tier.
+- Cloth, spark layer and the per-style aspect table are all gone; the surface's
+  life comes from the noise deform travelling along the tube on the sheet's own
+  scroll clock.
+- Dials: `vol_radius vol_aspect vol_alpha vol_noise vol_flow vol_tile vol_layers`
+  and `vol_solid` (the matte white cast, for judging silhouette alone).
+- **DoD met:** bench entry `VOLUME TRAIL` (all three kinds flying the same curved
+  path side by side, which is the only way "they differ in three things" is
+  judgeable); `core/tests/volume_trail_test.c`, 59 checks.
 
 #### P2. `VFX_ComposeConvergeMotes` — finish decomposing ChargeConverge
 

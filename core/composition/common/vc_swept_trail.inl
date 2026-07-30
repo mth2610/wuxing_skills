@@ -164,14 +164,6 @@ static SkillCurve s_sweptTwinkle;
 static SkillCurve s_sweptWidthCurve[SWEPT_STYLES];
 static SkillCurve s_sweptAlphaCurve[SWEPT_STYLES];
 
-// The colour ramp along the strip: the element's BODY in the cooling tail, its
-// GLOW at the head. One flat colour along a band is what makes an additive strip
-// read as plastic. A ColorGradient because that is exactly what the trail system
-// samples at segRatio — the shape was already there, this file just never used it.
-#define SWEPT_MAT_MAX 16
-static ColorGradient s_sweptGrad[SWEPT_MAT_MAX];
-static bool s_sweptGradBuilt[SWEPT_MAT_MAX];
-
 // Live-tunable: every one of these is a look decision, and the alternative to a
 // tunable is a rebuild per guess (core/CLAUDE.md §5).
 static float s_sweptWidthMul = 1.0f;  // x on the caller's width
@@ -329,16 +321,11 @@ static int SweptTrail_StrandCount(VFX_TrailStyle style, bool lowTier)
     return lowTier ? 1 : 2;
 }
 
-// Tail memory in seconds → nodes. The ceiling is TRAIL_HISTORY_COUNT (60), which
-// at 60 Hz is exactly 1.0 s of history; asking for more silently gets 1.0 s.
+// Tail memory in seconds → nodes. The arithmetic moved to vc_common.inl when the
+// volume trail became its second caller; the sample rate is still this file's.
 static int SweptTrail_MaxNodes(float lifetime)
 {
-    int n = (int)(lifetime * SWEPT_SAMPLE_HZ + 0.5f);
-    if (n < 4)
-        n = 4;
-    if (n > TRAIL_HISTORY_COUNT)
-        n = TRAIL_HISTORY_COUNT;
-    return n;
+    return VC_TrailNodesForLifetime(lifetime, SWEPT_SAMPLE_HZ);
 }
 
 // ── Shared authored state ────────────────────────────────────────────────────
@@ -910,21 +897,13 @@ static TrailLayer s_sweptHazeLayers[2] = {
      .headAlphaPow = 0.0f, .texture = NULL},
 };
 
-// The tail→head colour ramp, one per material, built on first use.
+// The tail→head colour ramp, one per material, built on first use. MOVED to
+// vc_common.inl when VFX_ComposeVolumeTrail became its second caller — the ramp
+// is the element's, not this composition's. Kept as a name here because the
+// spawn path reads better with it and one test pins the call site.
 static const ColorGradient *SweptTrail_Gradient(VC_MaterialId mat)
 {
-    int i = (int)mat;
-    if (i < 0 || i >= SWEPT_MAT_MAX)
-        return NULL;
-    if (!s_sweptGradBuilt[i])
-    {
-        const VFX_ElementMaterial *m = VFX_Material(mat);
-        ColorGradient_AddStop(&s_sweptGrad[i], 0.00f, m->body);
-        ColorGradient_AddStop(&s_sweptGrad[i], 0.35f, m->body);
-        ColorGradient_AddStop(&s_sweptGrad[i], 1.00f, m->glow);
-        s_sweptGradBuilt[i] = true;
-    }
-    return &s_sweptGrad[i];
+    return VC_ElementRamp(mat);
 }
 
 // ── Strand plumbing ─────────────────────────────────────────────────────────
