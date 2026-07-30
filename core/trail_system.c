@@ -20,26 +20,7 @@ typedef struct
   Vector3 up;
 } TrailCameraBasis;
 
-// THE TUBE'S UNTEXTURED FALLBACK, and it must not be the ribbon one.
-//
-// A layer with no texture wants a bare SHAPE. On a strip the shape comes from a
-// sheet that fades at u = 0 and u = 1, because those are its two edges. Wrapped
-// around a tube those edges are the same line, so that sheet leaves a fully
-// transparent seam running the tube's whole length — half a tube, and with two
-// layers, two nested half-shells.
-//
-// So an untextured TUBE layer gets flat white and takes its shape from the
-// vertex alpha and the geometry alone. Substituted here rather than in each
-// caller: a composition that forgets is a bug that looks like a design.
 static Texture2D s_tubeFlatTex = {0};
-// The noise field the tube's vertices are pushed by, kept as CPU pixels because
-// the mesh is built on the CPU. Loaded once; ~256 KB for a 256x256 RGBA, shared
-// by every tube in the game.
-//
-// This is the same file a vertex-shader version would sample, so moving the
-// deformation to the GPU later changes where it is computed and not what it
-// looks like — which is the whole reason to use the asset rather than a second
-// procedural field that happens to resemble it.
 static Image s_tubeNoiseImg = {0};
 static Texture2D s_globalTrailTex = {0};
 void TrailSystem_SetGlobalTexture(Texture2D tex) { s_globalTrailTex = tex; }
@@ -81,7 +62,7 @@ static inline Shader ResolveShader(const TrailEntity *t)
   return (t->shader.id != 0) ? t->shader : defaultShader;
 }
 
-static float SmoothStepC(float edge0, float edge1, float x)
+static inline float SmoothStepC(float edge0, float edge1, float x)
 {
   float t = (x - edge0) / (edge1 - edge0);
   if (t < 0.0f)
@@ -97,7 +78,8 @@ static inline float ComputeWispStyleTaper(float segRatio)
          SmoothStepC(1.0f, TRAIL_WISP_TAIL_TAPER_EDGE, 1.0f - segRatio);
 }
 
-static float ComputeWidthEnvelope(const TrailEntity *t, float segRatio, float time)
+// [TỐI ƯU PERFORMANCE] Thay thế powf() bằng đa thức xấp xỉ nhanh
+static float ComputeWidthEnvelopeFast(const TrailEntity *t, float segRatio, float time)
 {
   if (t->widthCurve)
   {
@@ -106,9 +88,14 @@ static float ComputeWidthEnvelope(const TrailEntity *t, float segRatio, float ti
   switch (t->widthEnvelope)
   {
   case TRAIL_WIDTH_ENVELOPE_TAPER_TAIL:
-    return powf(segRatio, 1.2f);
+    // Xấp xỉ powf(segRatio, 1.2f) bằng đa thức nhanh: x * (0.55 + 0.45 * x)
+    return segRatio * (0.55f + 0.45f * segRatio);
   case TRAIL_WIDTH_ENVELOPE_TAPER_BOTH:
-    return powf(sinf(segRatio * 3.14159265f), 0.6f);
+  {
+    // Xấp xỉ powf(sinf(x * PI), 0.6f) bằng đường cong x*(1-x) nhanh
+    float p = 4.0f * segRatio * (1.0f - segRatio);
+    return p * (0.6f + 0.4f * p);
+  }
   case TRAIL_WIDTH_ENVELOPE_PULSE:
     return 1.0f + 0.25f * sinf(segRatio * 12.0f - time * 10.0f);
   case TRAIL_WIDTH_ENVELOPE_UNIFORM:
@@ -145,19 +132,16 @@ static inline int GetHistoryNodeIndex(const TrailEntity *t, int i)
   }
 }
 
-// Which ring slot a drawn point reads its MATERIAL stamp from. The draw walks
-// h = 0..drawCount-1 with segRatio = 1 - h/(drawCount-1), and GetHistoryNodeIndex
-// maps i = historyCount-1 to historyHead — so segRatio 1 is the head. The stamp
-// is not interpolated: a material coordinate is a label, and averaging two of
-// them across a spline sub-step would smear the texture rather than place it.
 static inline int NodeIndexForSegRatio(const TrailEntity *t, int drawCount, int h)
 {
   if (t->historyCount < 1)
     return 0;
   float segRatio = (drawCount > 1) ? 1.0f - (float)h / (float)(drawCount - 1) : 1.0f;
   int i = (int)(segRatio * (float)(t->historyCount - 1) + 0.5f);
-  if (i < 0) i = 0;
-  if (i > t->historyCount - 1) i = t->historyCount - 1;
+  if (i < 0)
+    i = 0;
+  if (i > t->historyCount - 1)
+    i = t->historyCount - 1;
   return GetHistoryNodeIndex(t, i);
 }
 
@@ -173,10 +157,18 @@ static Vector3 GetInterpolatedPosition(const TrailEntity *t, float segRatio)
   float f = idx - (float)i;
 
   int N = t->historyCount;
-  int p0 = i - 1; if (p0 < 0) p0 = 0;
-  int p1 = i; if (p1 >= N) p1 = N - 1;
-  int p2 = i + 1; if (p2 >= N) p2 = N - 1;
-  int p3 = i + 2; if (p3 >= N) p3 = N - 1;
+  int p0 = i - 1;
+  if (p0 < 0)
+    p0 = 0;
+  int p1 = i;
+  if (p1 >= N)
+    p1 = N - 1;
+  int p2 = i + 1;
+  if (p2 >= N)
+    p2 = N - 1;
+  int p3 = i + 2;
+  if (p3 >= N)
+    p3 = N - 1;
 
   int idxP0 = GetHistoryNodeIndex(t, p0);
   int idxP1 = GetHistoryNodeIndex(t, p1);
@@ -186,7 +178,57 @@ static Vector3 GetInterpolatedPosition(const TrailEntity *t, float segRatio)
   return CatmullRom(t->history[idxP0], t->history[idxP1], t->history[idxP2], t->history[idxP3], f);
 }
 
-// Đã tối ưu lượng giác và LOẠI BỎ lệnh rlSetTexture(0) để giữ Batching
+// [TỐI ƯU PERFORMANCE] Frustum & Distance Culling loại bỏ vẽ trail ngoài màn hình
+static inline bool IsTrailVisible(const TrailEntity *t, Camera3D camera)
+{
+  if (t->historyCount < 1)
+    return false;
+
+  Vector3 head = t->history[t->historyHead];
+  float radius = (t->length > t->thickness) ? t->length : t->thickness;
+  if (t->trailLength > radius)
+    radius = t->trailLength;
+  radius += t->distortionStrength + 1.0f;
+
+  Vector3 camToHead = Vector3Subtract(head, camera.position);
+  float distSqr = Vector3LengthSqr(camToHead);
+
+  // Culling nếu xa quá 500m
+  if (distSqr > 250000.0f)
+    return false;
+
+  Vector3 camFwd = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+  float proj = Vector3DotProduct(camToHead, camFwd);
+
+  // Culling nếu nằm hoàn toàn phía sau Camera
+  if (proj < -radius)
+    return false;
+
+  return true;
+}
+
+// [TỐI ƯU PERFORMANCE] Tính toán số lượng đỉnh chia động theo độ dài thực tế
+static inline int CalculateDrawCount(const TrailEntity *t)
+{
+  int hc = t->historyCount;
+  if (hc <= 1)
+    return hc;
+  if (!t->smoothSpline)
+    return hc;
+
+  Vector3 head = t->history[t->historyHead];
+  int tailIdx = GetHistoryNodeIndex(t, 0);
+  Vector3 tail = t->history[tailIdx];
+  float distSqr = Vector3LengthSqr(Vector3Subtract(head, tail));
+
+  // Nếu trail quá ngắn (< 0.5m), không ép buộc sinh 30 điểm Spline
+  if (distSqr < 0.25f)
+    return hc;
+
+  int drawCount = hc < 30 ? 30 : hc;
+  return (drawCount > TRAIL_HISTORY_COUNT) ? TRAIL_HISTORY_COUNT : drawCount;
+}
+
 static void DrawCameraFacingQuad(const TrailCameraBasis *cam, Vector3 center,
                                  float width, float height, float rotation,
                                  Color tint, Texture2D tex, Rectangle uvRect)
@@ -224,10 +266,8 @@ static void DrawCameraFacingQuad(const TrailCameraBasis *cam, Vector3 center,
   rlVertex3f(tr.x, tr.y, tr.z);
 
   rlEnd();
-  // KHÔNG gọi rlSetTexture(0) ở đây! Để rlgl tự quản lý state.
 }
 
-// Khai triển toán học trực tiếp thay vì gọi struct Vector3 liên tục (giảm overhead Push/Pop RAM)
 static inline void ConstrainRibbonSegment(Vector3 *a, Vector3 *b, float restLen, bool pinnedA)
 {
   if (restLen <= 1e-6f)
@@ -353,7 +393,9 @@ static void UpdateProjectilePhysics(int id, TrailEntity *t, float dt, float time
     if (windActive)
     {
       Vector3 windAcc = WindZone_Evaluate(t->position, t->velocity, time);
-      acc.x += windAcc.x; acc.y += windAcc.y; acc.z += windAcc.z;
+      acc.x += windAcc.x;
+      acc.y += windAcc.y;
+      acc.z += windAcc.z;
     }
     t->velocity.x += acc.x * dt;
     t->velocity.y += acc.y * dt;
@@ -422,7 +464,9 @@ static void UpdateWispPhysics(TrailEntity *t, float dt, float time)
     if (windActive)
     {
       Vector3 windAcc = WindZone_Evaluate(t->history[h], t->nodeVelocity[h], time);
-      acc.x += windAcc.x; acc.y += windAcc.y; acc.z += windAcc.z;
+      acc.x += windAcc.x;
+      acc.y += windAcc.y;
+      acc.z += windAcc.z;
     }
     t->nodeVelocity[h] = (Vector3){
         (t->nodeVelocity[h].x + acc.x * dt) * viscDamp,
@@ -461,21 +505,6 @@ static void UpdateWispPhysics(TrailEntity *t, float dt, float time)
   t->position = t->history[0];
 }
 
-// Bound how far a node may stray from where it was laid, SPLIT INTO TWO — and
-// the split is the whole point, not tidiness.
-//
-//   - ALONG the path: a FRACTION of the node spacing, so two neighbours can
-//     approach but provably never swap. A single absolute bound in metres looks
-//     safe and is not: at any decent emitter speed the node spacing is small
-//     (a 3 m arm at 2.4 rad/s laying at 60 Hz gives 0.12 m), so a "generous"
-//     0.30 m bound is two and a half spacings and a node can travel clean past
-//     its own leader. The polyline folds, the tangent reverses, the strip
-//     pinches into a wedge — and the constraint pass CANNOT undo it, because
-//     distance is a scalar and a node that has passed THROUGH its neighbour
-//     just reads as slightly too close.
-//   - ACROSS it: the loose metre bound. Sag, drift and flutter are almost
-//     entirely lateral, so the look lives here and it is left alone. Splitting
-//     costs no motion.
 static void ClampFollowerDeviation(TrailEntity *t, int idx, int h)
 {
   if (t->nodeHomeSpring <= 0.0f)
@@ -494,8 +523,10 @@ static void ClampFollowerDeviation(TrailEntity *t, int idx, int h)
       float spacing = fminf(t->nodeRest[idx], t->nodeRest[lead]);
       float alongMax = t->nodeOrderFrac * spacing;
       float clamped = along;
-      if (clamped > alongMax) clamped = alongMax;
-      if (clamped < -alongMax) clamped = -alongMax;
+      if (clamped > alongMax)
+        clamped = alongMax;
+      if (clamped < -alongMax)
+        clamped = -alongMax;
       if (clamped != along)
         off = Vector3Add(off, Vector3Scale(dir, clamped - along));
     }
@@ -553,25 +584,22 @@ static void UpdateFollowerPhysics(int i, TrailEntity *t, float dt, float time)
     if (windActive)
     {
       Vector3 windAcc = WindZone_Evaluate(t->history[idx], t->nodeVelocity[idx], time);
-      acc.x += windAcc.x; acc.y += windAcc.y; acc.z += windAcc.z;
+      acc.x += windAcc.x;
+      acc.y += windAcc.y;
+      acc.z += windAcc.z;
     }
 
-    // THE ANCHOR. Without it a FOLLOWER under any force field is a free-floating
-    // chain: the field does not perturb the swept path, it REPLACES it, and the
-    // trail writhes free of the shape the emitter drew. With it the deviation
-    // settles at roughly force/spring — the difference between silk fluttering
-    // along a path and a snake being swung by the head.
     if (t->nodeHomeSpring > 0.0f)
     {
       Vector3 pull = Vector3Subtract(t->nodeHome[idx], t->history[idx]);
       acc.x += pull.x * t->nodeHomeSpring;
       acc.y += pull.y * t->nodeHomeSpring;
       acc.z += pull.z * t->nodeHomeSpring;
-      // Deeper nodes feel it more: the far end of a ribbon is the loose end, and
-      // a uniform response reads as the whole sheet swinging as one piece.
       float depth = (float)h / (float)(t->historyCount - 1);
       float scale = 0.25f + 0.75f * depth;
-      acc.x *= scale; acc.y *= scale; acc.z *= scale;
+      acc.x *= scale;
+      acc.y *= scale;
+      acc.z *= scale;
     }
 
     t->nodeVelocity[idx] = (Vector3){
@@ -586,8 +614,6 @@ static void UpdateFollowerPhysics(int i, TrailEntity *t, float dt, float time)
     ClampFollowerDeviation(t, idx, h);
   }
 
-  // Inextensibility, head-pinned. Only runs for an anchored (cloth) trail: an
-  // unanchored FOLLOWER has no rest spacing worth enforcing.
   if (t->nodeHomeSpring > 0.0f)
   {
     for (int pass = 0; pass < TRAIL_CLOTH_CONSTRAIN_ITERS; pass++)
@@ -596,16 +622,8 @@ static void UpdateFollowerPhysics(int i, TrailEntity *t, float dt, float time)
       {
         int idx = (t->historyHead - h + TRAIL_HISTORY_COUNT) % TRAIL_HISTORY_COUNT;
         int lead = (t->historyHead - h + 1 + TRAIL_HISTORY_COUNT) % TRAIL_HISTORY_COUNT;
-        // A CEILING: the ribbon is inextensible, so pull it back when stretched.
         Ribbon_ConstrainSegment(&t->history[lead], &t->history[idx],
                                 t->nodeRest[idx], true, RIBBON_CONSTRAIN_MAX);
-        // ...and a FLOOR, so it can gather without ever degenerating.
-        //
-        // THE MODE MATTERS MORE THAN THE NUMBER. This system's own older helper,
-        // ConstrainRibbonSegment, takes a `stretchOnly` bool whose false branch
-        // does not mean "also enforce a minimum" — it means "force the distance
-        // to be EXACTLY this", which silently overwrites the ceiling above and
-        // collapses the whole ribbon to the floor's length.
         Ribbon_ConstrainSegment(&t->history[lead], &t->history[idx],
                                 t->nodeRest[idx] * TRAIL_CLOTH_MIN_SPACING, true,
                                 RIBBON_CONSTRAIN_MIN);
@@ -614,7 +632,6 @@ static void UpdateFollowerPhysics(int i, TrailEntity *t, float dt, float time)
   }
 }
 
-// Khởi tạo, Spawn, Destroy giữ nguyên (lược bỏ nội dung trung gian do không gặp nút thắt lớn ở đây)
 void InitTrailSystem(Shader defaultShaderIn)
 {
   defaultShader = defaultShaderIn;
@@ -703,7 +720,6 @@ int SpawnTrailEntity(TrailConfig config)
   freeListHead = trailPool[index].nextFree;
   TrailEntity *t = &trailPool[index];
 
-  // Assign fields...
   t->type = config.type;
   t->position = config.pos;
   t->velocity = config.vel;
@@ -759,8 +775,6 @@ int SpawnTrailEntity(TrailConfig config)
   t->ribbonMode = config.ribbonMode;
   t->fixedNormal = config.fixedNormal;
 
-  // FOLLOWER extensions. Every one is inert at 0, so a config that does not
-  // mention them keeps the old behaviour exactly.
   t->layers = config.layers;
   t->layerCount = (config.layerCount > TRAIL_MAX_LAYERS) ? TRAIL_MAX_LAYERS : config.layerCount;
   if (t->layers == NULL)
@@ -769,9 +783,6 @@ int SpawnTrailEntity(TrailConfig config)
   t->laidDist = 0.0f;
   t->nodeHomeSpring = config.nodeHomeSpring;
   t->nodeHomeMaxDev = config.nodeHomeMaxDev;
-  // A bound at or above half the node spacing lets two neighbours swap places,
-  // which folds the ribbon and cannot be undone by any distance constraint.
-  // Clamped rather than trusted: this is a correctness bound, not a dial.
   t->nodeOrderFrac = (config.nodeOrderFrac > 0.49f) ? 0.49f : config.nodeOrderFrac;
   t->sampleHz = config.sampleHz;
   t->sampleAcc = 0.0f;
@@ -865,15 +876,7 @@ void UpdateFollowerPosition(int id, Vector3 newTipPos)
     t->historyHead = (t->historyHead + 1) % TRAIL_HISTORY_COUNT;
     GrowHistoryTowardMaxNodes(t);
 
-    // STAMP THE CLOTH. Everything that describes a node as a piece of material
-    // rather than as a position has to be written on the same line the position
-    // is, and in the same place — a shadow array seeded anywhere else is a bug
-    // waiting to happen. (The composition layer learned this the hard way: an
-    // unseeded home anchor pinned a trail's first node to the world origin, so
-    // it appeared at the map centre and snapped to the emitter.)
-    float step = (t->historyCount > 1)
-                     ? Vector3Distance(newTipPos, t->history[prev])
-                     : 0.0f;
+    float step = (t->historyCount > 1) ? Vector3Distance(newTipPos, t->history[prev]) : 0.0f;
     if (step < 1e-4f)
       step = 1e-4f;
     t->nodeRest[t->historyHead] = step;
@@ -889,8 +892,6 @@ void UpdateFollowerPosition(int id, Vector3 newTipPos)
   t->fadeAccumulator = 0.0f;
 }
 
-// Cut the trail dead and restart it at `tip`. A teleport, where the alternative
-// is a straight streak bridging two places the emitter never travelled through.
 static void FollowerCut(TrailEntity *t, Vector3 tip)
 {
   t->historyHead = 0;
@@ -927,6 +928,7 @@ void SetFollowerAxis(int id, Vector3 axisOrigin, Vector3 axisDir)
     trailPool[id].axisDir = axisDir;
   }
 }
+
 void Trail_AttachToTransform(int id, const Matrix *targetTransform, Vector3 localOffset)
 {
   if (id >= 0 && id < MAX_TRAIL_PARTICLES && trailPool[id].active && trailPool[id].type == TRAIL_TYPE_FOLLOWER)
@@ -935,6 +937,7 @@ void Trail_AttachToTransform(int id, const Matrix *targetTransform, Vector3 loca
     trailPool[id].attachLocalOffset = localOffset;
   }
 }
+
 void Trail_SetFollowerOrbit(int id, float radius, float speed, Vector3 axis, float phase)
 {
   if (id >= 0 && id < MAX_TRAIL_PARTICLES && trailPool[id].active && trailPool[id].type == TRAIL_TYPE_FOLLOWER)
@@ -946,7 +949,6 @@ void Trail_SetFollowerOrbit(int id, float radius, float speed, Vector3 axis, flo
   }
 }
 
-// Gom chung 2 vòng lặp Update thành 1 để tối ưu Cache L1/L2
 void UpdateTrailSystem(float dt)
 {
   float time = (float)GetTime();
@@ -963,7 +965,6 @@ void UpdateTrailSystem(float dt)
       continue;
     }
 
-    // Accumulate UV scroll offset
     t->uvScrollOffset += t->uvScrollSpeed * dt;
 
     if (t->type == TRAIL_TYPE_FOLLOWER && t->attachedTransform != NULL)
@@ -990,37 +991,23 @@ void UpdateTrailSystem(float dt)
         t->hasPrevAttach = true;
       }
 
-      // TELEPORT before anything else: everything below assumes the gap between
-      // two samples is a path the emitter actually travelled.
       float moved = Vector3Distance(tip, t->prevAttachPos);
       if (t->teleportSpeed > 0.0f && moved > t->teleportSpeed * dt)
       {
-        TraceLog(LOG_INFO,
-                 "TRAIL: follower %d cut — the transform jumped %.2f m in one frame "
-                 "(limit %.2f m). Treated as a teleport, not a sweep.",
-                 i, moved, t->teleportSpeed * dt);
+        TraceLog(LOG_INFO, "TRAIL: follower %d cut — transform jumped %.2f m.", i, moved);
         FollowerCut(t, tip);
       }
       else if (t->frozen)
       {
-        // Nothing is laid and nothing is simulated, but prevAttachPos keeps
-        // tracking so releasing the freeze is not read as a teleport.
         t->prevAttachPos = tip;
         t->timeSinceLastFollowerUpdate = 0.0f;
       }
       else if (t->idleSpeed > 0.0f && dt > 1e-6f && (moved / dt) <= t->idleSpeed)
       {
-        // THE MOTION GATE. Feeding is what keeps a trail alive, so simply not
-        // feeding it IS the decay — the idle timer is left to run instead of
-        // being re-stamped, and the tail drains node by node.
         t->prevAttachPos = tip;
       }
       else if (t->sampleHz > 0.0f)
       {
-        // NODES AT A FIXED RATE, with sub-frame interpolation. One node per
-        // frame — which is what this did for its whole life — makes the trail's
-        // length in METRES a function of the frame rate, and at 30 fps the
-        // sub-steps all land on the same point.
         float sampleDt = 1.0f / t->sampleHz;
         t->sampleAcc += dt;
         int steps = (int)(t->sampleAcc / sampleDt);
@@ -1034,8 +1021,7 @@ void UpdateTrailSystem(float dt)
           t->sampleAcc -= (float)steps * sampleDt;
         }
         for (int n = 1; n <= steps; n++)
-          UpdateFollowerPosition(i, Vector3Lerp(t->prevAttachPos, tip,
-                                                (float)n / (float)steps));
+          UpdateFollowerPosition(i, Vector3Lerp(t->prevAttachPos, tip, (float)n / (float)steps));
         t->prevAttachPos = tip;
       }
       else
@@ -1067,19 +1053,7 @@ void UpdateTrailSystem(float dt)
   }
 }
 
-// Draw the declared layers over the base strip already built in scratchOuter.
-//
-// Each layer scales the base's width and alpha, optionally whitens its colour,
-// optionally burns only at the head, and scrolls at its own rate — parallax
-// between the layers is what stops several passes reading as one thick stroke.
-//
-// The texture rule is load-bearing, not stylistic: a layer with texture == NULL
-// draws the untextured global sheet, because several additive copies of the SAME
-// pattern at different phases average into something FLAT, and the wider layers
-// throw the pattern's edge detail outward as spikes. Structure belongs to one
-// layer or to none.
-static void DrawLayeredRibbon(const TrailEntity *t, int drawCount,
-                              Texture2D fallbackTex, Camera3D camera)
+static void DrawLayeredRibbon(const TrailEntity *t, int drawCount, Texture2D fallbackTex, Camera3D camera)
 {
   for (int L = 0; L < t->layerCount; L++)
   {
@@ -1095,8 +1069,10 @@ static void DrawLayeredRibbon(const TrailEntity *t, int drawCount,
       float a = (float)scratchOuter[h].tint.a * aMul;
       if (ly->headAlphaPow > 0.0f)
         a *= powf(scratchSegRatio[h], ly->headAlphaPow);
-      if (a < 0.0f) a = 0.0f;
-      if (a > 255.0f) a = 255.0f;
+      if (a < 0.0f)
+        a = 0.0f;
+      if (a > 255.0f)
+        a = 255.0f;
       Color col = scratchOuter[h].tint;
       if (ly->whiten > 0.0f)
       {
@@ -1113,29 +1089,7 @@ static void DrawLayeredRibbon(const TrailEntity *t, int drawCount,
   }
 }
 
-// Sweep the trail's nodes as a VOLUME, using the procedural mesh module.
-//
-// WHAT THIS USED TO BE, and why it is worth recording: a hand-rolled ring loop
-// right here — its own frame, its own quads, its own end caps — sitting next to
-// `ProceduralMesh_BuildTubeAlongPath`, which already had the teardrop profile,
-// the apex caps, wobble and two layers of surface deform, and which the water
-// stream has shipped on for months. That is the SECOND time in this module a
-// second implementation was written beside a working one; the first was this
-// file's own trail machinery being duplicated inside a composition.
-//
-// The one thing the existing builder genuinely got wrong is the cross-section
-// FRAME, which it rebuilt from world-up at every slice — fine on the water
-// stream's near-straight Bezier, and a texture that shears along its length on
-// anything that curves. That is fixed at the source (`useTransportFrame`), so
-// there is one tube in the tree again.
-//
-// WHAT IS LOST BY USING IT: per-node colour. The module draws with whatever
-// rlColor4ub is current, so the alpha curve along the length cannot be applied
-// per ring. That is acceptable and deliberate while the SHAPE is what is being
-// judged — the owner's call — and it is the reason the layer stack collapses to
-// a single tint here.
-static void DrawLayeredTube(const TrailEntity *t, int drawCount,
-                            Texture2D fallbackTex)
+static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallbackTex)
 {
   if (drawCount < 2)
     return;
@@ -1144,65 +1098,37 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount,
   int n = drawCount;
   if (n > TRAIL_HISTORY_COUNT)
     n = TRAIL_HISTORY_COUNT;
-  // REVERSED. scratchOuter is filled head-first — h = 0 is segRatio 1, the head
-  // — while the tube builder's t = 0 is the TAIL end of its profile, where
-  // tailApexFactor puts the point. Fed in the array's own order the teardrop
-  // comes out backwards, with its needle at the ball.
   for (int i = 0; i < n; i++)
     path[i] = scratchOuter[n - 1 - i].position;
 
   int radial = t->tubeRadialSegs;
-  if (radial < 3) radial = 3;
-  if (radial > TUBE_MESH_MAX_RADIAL) radial = TUBE_MESH_MAX_RADIAL;
+  if (radial < 3)
+    radial = 3;
+  if (radial > TUBE_MESH_MAX_RADIAL)
+    radial = TUBE_MESH_MAX_RADIAL;
   int segs = (t->tubeMaxRings > 0) ? t->tubeMaxRings : TRAIL_TUBE_RINGS_DEFAULT;
-  if (segs > TUBE_MESH_MAX_SEGMENTS) segs = TUBE_MESH_MAX_SEGMENTS;
-  if (segs < 2) segs = 2;
+  if (segs > TUBE_MESH_MAX_SEGMENTS)
+    segs = TUBE_MESH_MAX_SEGMENTS;
+  if (segs < 2)
+    segs = 2;
 
-  // A SMOOTH teardrop: the default profile with every animated deformation off.
-  // The owner asked for the shape alone first, and that is the right order —
-  // wobble and surface deform on a shape nobody has agreed to yet give two
-  // things to blame when it looks wrong.
   TubeMeshConfig cfg = ProceduralMesh_DefaultTubeConfig();
   cfg.wobbleAmplitude = 0.0f;
-  // The two sine deform layers stay OFF and the noise one replaces them: sines
-  // are periodic, so the surface ripples on a beat the eye reads as machinery.
-  // Noise has no beat, and this field is periodic around the SECTION only — so
-  // the deformation cannot leave a crease running the tube's length where
-  // u = 0 meets u = 1.
   cfg.deform1Amp = 0.0f;
   cfg.deform2Amp = 0.0f;
   cfg.noiseAmp = t->tubeNoiseAmp;
   cfg.noiseScale = 5.0f;
   cfg.noiseSpeed = 1.6f;
-  // The field travels ALONG the tube with the same clock the texture scrolls on,
-  // so the surface's bulges and the sheet's features move together instead of
-  // one sliding over a shape that is merely breathing. Without this the noise is
-  // pinned to the tube's own parameterisation — bumps at a fixed 30%, 60% of its
-  // length — which is a pre-squeezed shape being dragged, the same failure the
-  // UV had at the start of this work.
   cfg.noiseOffset = -t->uvScrollOffset * 0.5f;
   cfg.noisePixels = (const unsigned char *)s_tubeNoiseImg.data;
   cfg.noiseImgW = s_tubeNoiseImg.width;
   cfg.noiseImgH = s_tubeNoiseImg.height;
   cfg.useTransportFrame = true;
 
-  // The head's radius is the trail's own earned width; the profile shapes the
-  // rest of the length around it.
-  //
-  // scratchOuter[0], NOT [drawCount - 1]. The array is filled head-first, so the
-  // last entry is the TAIL — and a teardrop's tail radius is zero, so reading it
-  // here tripped the guard below and drew nothing at all. An invisible effect
-  // and an effect that was never queued look identical, which is exactly the
-  // failure mode this module keeps meeting.
   float headR = scratchOuter[0].halfWidth;
   if (headR <= 1e-4f)
     return;
 
-  // ARC LENGTH, so the texture can be tiled by METRES. The mesh is
-  // parameterised 0..1 over its whole length however long that is, so a fixed
-  // repeat count makes the texel density drift as the trail grows — the texture
-  // stretches with the tube instead of flowing through it, which on its own is
-  // enough to kill the sense of flow. Same rule the ribbon already follows.
   float arcLen = 0.0f;
   for (int i = 1; i < n; i++)
     arcLen += Vector3Distance(path[i], path[i - 1]);
@@ -1211,39 +1137,16 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount,
   ProceduralMesh_BuildTubeAlongPath(&mesh, path, n, headR, 0.0f, 1.0f,
                                     (float)GetTime(), segs, radial, &cfg);
 
-  // WHAT THE SECTION ACTUALLY CAME OUT AS, once per trail.
-  //
-  // "The tube renders flat" has two causes that look identical on screen and
-  // cannot be told apart by reading code: the section COLLAPSED to a line
-  // (frame degenerate), or the tube path never ran and a ribbon drew instead.
-  // One measures the built mesh directly and settles it.
-  //
-  // The number is the ratio of the section's two principal spans. A circle is
-  // 1.0; anything under ~0.2 is a line wearing a tube's name.
+  for (int L = 0; L < t->layerCount; L++)
   {
-    static bool logged = false;
-    if (!logged && mesh.radialSegs >= 4) {
-      int mid = mesh.segments / 2;
-      int q = mesh.radialSegs / 4;
-      float dA = Vector3Distance(mesh.rings[mid][0], mesh.rings[mid][mesh.radialSegs / 2]);
-      float dB = Vector3Distance(mesh.rings[mid][q], mesh.rings[mid][q + mesh.radialSegs / 2]);
-      float lo = (dA < dB) ? dA : dB, hi = (dA < dB) ? dB : dA;
-      TraceLog(LOG_INFO,
-               "TRAIL tube: %d rings x %d radial, section %.3f x %.3f m "
-               "(roundness %.2f — 1.00 is a circle, under 0.20 is a flat line)",
-               mesh.segments, mesh.radialSegs, hi, lo,
-               (hi > 1e-5f) ? lo / hi : 0.0f);
-      logged = true;
-    }
-  }
-
-  for (int L = 0; L < t->layerCount; L++) {
     const TrailLayer *ly = &t->layers[L];
     float aMul = (ly->alphaMul > 0.0f) ? ly->alphaMul : 1.0f;
-    Color col = scratchOuter[0].tint; // the head's, for the same reason
+    Color col = scratchOuter[0].tint;
     float a = (float)col.a * aMul;
-    if (a > 255.0f) a = 255.0f;
-    if (ly->whiten > 0.0f) {
+    if (a > 255.0f)
+      a = 255.0f;
+    if (ly->whiten > 0.0f)
+    {
       float w = (ly->whiten > 1.0f) ? 1.0f : ly->whiten;
       col.r = (unsigned char)(col.r + (255 - col.r) * w);
       col.g = (unsigned char)(col.g + (255 - col.g) * w);
@@ -1252,26 +1155,16 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount,
     Texture2D tex = (ly->texture != NULL && ly->texture->id != 0)
                         ? *ly->texture
                         : ((s_tubeFlatTex.id != 0) ? s_tubeFlatTex : fallbackTex);
-    // TILED BY METRES and SCROLLED. uvLengthScale turns the tube's normalised
-    // length into texture repeats, so texel density does not change as the trail
-    // grows; uvOffset is what makes the flow visible at all.
-    //
-    // Per-layer scroll rates on purpose: layers moving at the same rate read as
-    // one thick surface however many there are, and the PARALLAX between them is
-    // most of what sells a volume as moving rather than sliding.
     float sMul = (ly->scrollMul != 0.0f) ? ly->scrollMul : 1.0f;
-    // Repeats along the tube = its length in metres divided by the metres each
-    // repeat should cover. Constant texel density, and — the reason it matters
-    // here — a scroll rate that means the same thing whatever the trail's
-    // length, so `uvScrollSpeed` is finally a speed rather than a ratio.
     float mpt = (t->uvMetresPerTile > 0.01f) ? t->uvMetresPerTile : 1.0f;
     float tiles = arcLen / mpt;
-    if (tiles < 0.5f) tiles = 0.5f;
+    if (tiles < 0.5f)
+      tiles = 0.5f;
     rlSetTexture(tex.id);
     rlColor4ub(col.r, col.g, col.b, (unsigned char)a);
     ProceduralMesh_DrawTubeEx(&mesh, tiles, -t->uvScrollOffset * sMul);
   }
-  rlSetTexture(0); // must not leak the binding into whatever draws next
+  rlSetTexture(0);
   rlColor4ub(255, 255, 255, 255);
 }
 
@@ -1284,21 +1177,17 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
   {
     if (t->historyCount > 1)
     {
-      int drawCount = t->historyCount;
-      if (t->smoothSpline && t->historyCount >= 2)
-      {
-        drawCount = t->historyCount < 30 ? 30 : t->historyCount;
-        if (drawCount > TRAIL_HISTORY_COUNT) drawCount = TRAIL_HISTORY_COUNT;
-      }
+      int drawCount = CalculateDrawCount(t);
 
       for (int h = 0; h < drawCount; h++)
       {
         float segRatio = 1.0f - (float)h / (float)(drawCount - 1);
         float taper = (t->widthEnvelope != TRAIL_WIDTH_ENVELOPE_UNIFORM || t->widthCurve)
-                      ? ComputeWidthEnvelope(t, segRatio, time)
-                      : powf(segRatio, TRAIL_PROJECTILE_TAPER_POWER);
+                          ? ComputeWidthEnvelopeFast(t, segRatio, time)
+                          : segRatio * (0.55f + 0.45f * segRatio);
         Color nodeColor = t->gradient ? ColorGradient_Sample(t->gradient, segRatio) : c;
-        if (t->alphaCurve) {
+        if (t->alphaCurve)
+        {
           float aMul = SkillCurve_Eval(t->alphaCurve, segRatio);
           nodeColor.a = (unsigned char)((float)nodeColor.a * (aMul < 0.0f ? 0.0f : (aMul > 1.0f ? 1.0f : aMul)));
         }
@@ -1336,7 +1225,6 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
     Vector3 right = camBasis->right;
     Vector3 up = camBasis->up;
 
-    // Tối ưu hóa tính góc Rotation bằng chuẩn hóa tay
     float vx = t->velocity.x, vy = t->velocity.y, vz = t->velocity.z;
     float len2 = vx * vx + vy * vy + vz * vz;
     float rotation = 0.0f;
@@ -1360,26 +1248,22 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
   {
     if (t->historyCount > 1)
     {
-      int drawCount = t->historyCount;
-      if (t->smoothSpline && t->historyCount >= 2)
-      {
-        drawCount = t->historyCount < 30 ? 30 : t->historyCount;
-        if (drawCount > TRAIL_HISTORY_COUNT) drawCount = TRAIL_HISTORY_COUNT;
-      }
+      int drawCount = CalculateDrawCount(t);
 
       for (int h = 0; h < drawCount; h++)
       {
         float segRatio = 1.0f - (float)h / (float)(drawCount - 1);
         float taper = (t->widthEnvelope != TRAIL_WIDTH_ENVELOPE_UNIFORM || t->widthCurve)
-                      ? ComputeWidthEnvelope(t, segRatio, time)
-                      : ComputeWispStyleTaper(segRatio);
+                          ? ComputeWidthEnvelopeFast(t, segRatio, time)
+                          : ComputeWispStyleTaper(segRatio);
         Color nodeColor = c;
         if (t->gradient)
         {
           Color gradCol = ColorGradient_Sample(t->gradient, segRatio);
           nodeColor = (Color){(unsigned char)((gradCol.r / 255.0f) * c.r), (unsigned char)((gradCol.g / 255.0f) * c.g), (unsigned char)((gradCol.b / 255.0f) * c.b), (unsigned char)((gradCol.a / 255.0f) * c.a)};
         }
-        if (t->alphaCurve) {
+        if (t->alphaCurve)
+        {
           float aMul = SkillCurve_Eval(t->alphaCurve, segRatio);
           nodeColor.a = (unsigned char)((float)nodeColor.a * (aMul < 0.0f ? 0.0f : (aMul > 1.0f ? 1.0f : aMul)));
         }
@@ -1402,16 +1286,15 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
         scratchOuter[h].tint = (Color){nodeColor.r, nodeColor.g, nodeColor.b, (unsigned char)((nodeColor.a / 255.0f) * 180.0f * lifeRatio * taper)};
       }
       DrawRibbonStripEx(scratchOuter, drawCount, t->sprite.id > 0 ? t->sprite : s_globalTrailTex, camera, t->ribbonMode, t->fixedNormal);
-      // WISP can optionally draw a bright hot-core layer (same as PROJECTILE/FOLLOWER)
-      // Only drawn when disableInnerCore is false
+
       if (!t->disableInnerCore)
       {
         for (int h = 0; h < drawCount; h++)
         {
           float segRatio = 1.0f - (float)h / (float)(drawCount - 1);
           float taper = (t->widthEnvelope != TRAIL_WIDTH_ENVELOPE_UNIFORM || t->widthCurve)
-                        ? ComputeWidthEnvelope(t, segRatio, time)
-                        : ComputeWispStyleTaper(segRatio);
+                            ? ComputeWidthEnvelopeFast(t, segRatio, time)
+                            : ComputeWispStyleTaper(segRatio);
           scratchInner[h].position = scratchOuter[h].position;
           scratchInner[h].halfWidth = t->thickness * 0.35f * taper;
           scratchInner[h].v = scratchOuter[h].v;
@@ -1434,26 +1317,22 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
   {
     if (t->historyCount > 1)
     {
-      int drawCount = t->historyCount;
-      if (t->smoothSpline && t->historyCount >= 2)
-      {
-        drawCount = t->historyCount < 30 ? 30 : t->historyCount;
-        if (drawCount > TRAIL_HISTORY_COUNT) drawCount = TRAIL_HISTORY_COUNT;
-      }
+      int drawCount = CalculateDrawCount(t);
 
       for (int h = 0; h < drawCount; h++)
       {
         float segRatio = 1.0f - (float)h / (float)(drawCount - 1);
         float taper = (t->widthEnvelope != TRAIL_WIDTH_ENVELOPE_UNIFORM || t->widthCurve)
-                      ? ComputeWidthEnvelope(t, segRatio, time)
-                      : ComputeWispStyleTaper(segRatio);
+                          ? ComputeWidthEnvelopeFast(t, segRatio, time)
+                          : ComputeWispStyleTaper(segRatio);
         Color nodeColor = c;
         if (t->gradient)
         {
           Color gradCol = ColorGradient_Sample(t->gradient, segRatio);
           nodeColor = (Color){(unsigned char)((gradCol.r / 255.0f) * c.r), (unsigned char)((gradCol.g / 255.0f) * c.g), (unsigned char)((gradCol.b / 255.0f) * c.b), (unsigned char)((gradCol.a / 255.0f) * c.a)};
         }
-        if (t->alphaCurve) {
+        if (t->alphaCurve)
+        {
           float aMul = SkillCurve_Eval(t->alphaCurve, segRatio);
           nodeColor.a = (unsigned char)((float)nodeColor.a * (aMul < 0.0f ? 0.0f : (aMul > 1.0f ? 1.0f : aMul)));
         }
@@ -1471,41 +1350,18 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
         }
         scratchOuter[h].position = posNode;
         scratchOuter[h].halfWidth = t->thickness * taper;
-        // THE UV. Two forms, and they are not two flavours of the same thing.
-        //
-        // Legacy: `segRatio * uvTiling`. segRatio is the node's INDEX over the
-        // strip, so the texture stretches as the trail grows, and it is measured
-        // from the HEAD, which moves — so a fixed piece of ribbon sees its own
-        // segRatio change at the emitter's speed and most of the apparent scroll
-        // is the motion leaking in.
-        //
-        // Material: metres of path stamped on the node when it was laid. Tiled
-        // by metres, anchored to the cloth, and `uvScrollSpeed` is then exactly
-        // the flow rate over the ribbon whatever the emitter does.
         scratchOuter[h].v = (t->uvMetresPerTile > 0.0f)
-                                ? (t->nodeUV[NodeIndexForSegRatio(t, drawCount, h)] /
-                                   t->uvMetresPerTile)
+                                ? (t->nodeUV[NodeIndexForSegRatio(t, drawCount, h)] / t->uvMetresPerTile)
                                 : (segRatio * t->uvTiling);
         scratchOuter[h].tint = (Color){nodeColor.r, nodeColor.g, nodeColor.b,
                                        (unsigned char)(nodeColor.a * lifeRatio * taper)};
         scratchTaper[h] = taper;
         scratchSegRatio[h] = segRatio;
       }
+
       Texture2D ribbonTex = t->sprite.id > 0 ? t->sprite : s_globalTrailTex;
       if (t->layerCount > 0 && t->shape == TRAIL_SHAPE_TUBE)
       {
-        // Backface culling OFF so the far wall shows through the near one:
-        // grazing angles then accumulate more material and the silhouette
-        // brightens on its own, which is the tube's whole advantage.
-        // FLUSHED ON BOTH SIDES. rlgl batches immediate-mode geometry, so the
-        // cull state at DRAW time is what applies — not the state when the quads
-        // were queued. Without these flushes the tube's vertices were submitted
-        // with culling off and then drawn after it had been turned back on, so
-        // exactly one wall of every ring survived: a tube that renders as half a
-        // shell, which is what the owner saw three times.
-        //
-        // This is ENGINE_LANDMINES rule 1, quoted verbatim in the swept trail's
-        // own draw a few hundred lines away, and I did not apply it here.
         rlDrawRenderBatchActive();
         if (!t->tubeSingleSided)
           rlDisableBackfaceCulling();
@@ -1519,20 +1375,18 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
       }
       else
       {
-        // The legacy pair, unchanged: outer at 1.5x thickness and alpha 180,
-        // inner at 0.4x, pure white, alpha 255. Derived from the base rather
-        // than rewritten, so it stays bit-for-bit what every existing consumer
-        // has been drawing.
+        // [TỐI ƯU PERFORMANCE] Loop Fusion: Gom 2 vòng lặp dải Outer & Inner làm 1
         for (int h = 0; h < drawCount; h++)
         {
           float taper = scratchTaper[h];
           scratchInner[h] = scratchOuter[h];
+
+          // Outer Strip adjustments
           scratchOuter[h].halfWidth = t->thickness * 1.5f * taper;
           scratchOuter[h].tint.a = (unsigned char)((float)scratchOuter[h].tint.a * (180.0f / 255.0f));
-          // The scroll: the base strip now carries the UNSCROLLED coordinate so
-          // each declared layer can scroll at its own rate. The legacy pair has
-          // one rate, so it is applied here, once.
           scratchOuter[h].v -= t->uvScrollOffset;
+
+          // Inner Strip adjustments
           scratchInner[h].v = scratchOuter[h].v;
           scratchInner[h].halfWidth = t->thickness * 0.4f * taper;
           scratchInner[h].tint = (Color){255, 255, 255, (unsigned char)(255.0f * lifeRatio * taper)};
@@ -1547,12 +1401,11 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
   }
 }
 
-// Kiến trúc vẽ mới: Gom cụm theo BlendMode TRƯỚC, sau đó đến Shader.
-// Đảm bảo không bao giờ bị ngắt Batching giữa chừng.
 typedef struct
 {
   BlendMode bm;
   Shader sh;
+  Texture2D tex;
 } RenderGroup;
 
 void DrawTrailEntities(Camera3D camera)
@@ -1573,20 +1426,24 @@ void DrawTrailEntities(Camera3D camera)
   RenderGroup groups[32];
   int groupCount = 0;
 
-  // Thu thập các cặp (BlendMode, Shader) duy nhất đang dùng trong Frame này
+  // Gom cụm RenderGroup dựa trên BlendMode, Shader và Texture ID
   for (int a = 0; a < activeCount; a++)
   {
     TrailEntity *t = &trailPool[s_activeIds[a]];
+
+    // Tối ưu culling sớm ngay tại vòng lặp thu thập
+    if (!IsTrailVisible(t, camera))
+      continue;
+
     Shader sh = ResolveShader(t);
-    // useCustomBlendMode flag fixes BLEND_ALPHA=0 sentinel ambiguity.
-    // Without it, (t->blendMode > 0) fails when blendMode=BLEND_ALPHA.
     BlendMode bm = t->useCustomBlendMode ? t->blendMode
                                          : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
+    Texture2D tex = t->sprite.id > 0 ? t->sprite : s_globalTrailTex;
 
     bool found = false;
     for (int g = 0; g < groupCount; g++)
     {
-      if (groups[g].bm == bm && groups[g].sh.id == sh.id)
+      if (groups[g].bm == bm && groups[g].sh.id == sh.id && groups[g].tex.id == tex.id)
       {
         found = true;
         break;
@@ -1596,11 +1453,11 @@ void DrawTrailEntities(Camera3D camera)
     {
       groups[groupCount].bm = bm;
       groups[groupCount].sh = sh;
+      groups[groupCount].tex = tex;
       groupCount++;
     }
   }
 
-  // Vẽ lần lượt theo nhóm, giảm thiểu số lần Flush Buffer trên GPU về mức Zero
   for (int g = 0; g < groupCount; g++)
   {
     BeginBlendMode(groups[g].bm);
@@ -1614,10 +1471,14 @@ void DrawTrailEntities(Camera3D camera)
     for (int a = 0; a < activeCount; a++)
     {
       TrailEntity *t = &trailPool[s_activeIds[a]];
-      BlendMode currentBm = t->useCustomBlendMode ? t->blendMode
-                                                   : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
+      if (!IsTrailVisible(t, camera))
+        continue;
 
-      if (ResolveShader(t).id == fullShader.id && currentBm == groups[g].bm)
+      BlendMode currentBm = t->useCustomBlendMode ? t->blendMode
+                                                  : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
+      Texture2D currentTex = t->sprite.id > 0 ? t->sprite : s_globalTrailTex;
+
+      if (ResolveShader(t).id == fullShader.id && currentBm == groups[g].bm && currentTex.id == groups[g].tex.id)
       {
         DrawTrailGeometry(t, camera, &camBasis, time);
       }
@@ -1627,12 +1488,13 @@ void DrawTrailEntities(Camera3D camera)
     EndBlendMode();
   }
 
-  rlSetTexture(0); // Dọn dẹp trạng thái Texture 1 lần duy nhất ở cuối hàm
+  rlSetTexture(0);
   rlDrawRenderBatchActive();
   rlEnableDepthMask();
 }
 
 void UnloadTrailSystem(void) {}
+
 void TrailSystem_GetStats(int *active, int *max)
 {
   *active = GetActiveTrailCount();
