@@ -106,6 +106,7 @@ typedef struct
     Vector3 lateralAxis; // `normal` with a CONTINUOUS sign (FILAMENT spread)
     bool hasLateral;
     bool wasFrozen;
+    bool widthLogged;
 } VC_SweptTrail;
 
 static VC_SweptTrail s_swept[SWEPT_MAX];
@@ -117,6 +118,19 @@ static Texture2D s_sweptAssetTex = {0}; // energy_flow.png, rotated + made to ti
 // Whichever of the two the dial selects. The layer table holds its ADDRESS, so
 // swapping sheets is one assignment and takes effect on the next draw.
 static Texture2D s_sweptBodyTex = {0};
+// THE SAME FILAMENTS, SEAMLESS ACROSS u — for a swept TUBE.
+//
+// A ribbon sheet cannot be wrapped around a tube, and the reason is structural
+// rather than a matter of tuning. On a strip, u = 0 and u = 1 are the two EDGES,
+// and the sheet fades to zero at both so the silhouette closes. Wrap that around
+// a cylinder and those two edges are THE SAME LINE: the tube goes fully
+// transparent along one seam and opaque on the opposite side, i.e. it draws as
+// half a tube. With two layers, two nested half-shells — which is exactly what
+// the owner described seeing, before anyone had looked at the UV.
+//
+// So the tube gets its own sheet: no edge kill, and cross-faded in BOTH axes so
+// it tiles along the length AND wraps around the circumference.
+static Texture2D s_sweptTubeTex = {0};
 
 // How much the ribbon behaves like cloth. BLADE is nearly a record (a sword's
 // trail is struck, not draped); RIBBON is silk and is allowed to sag, lag and
@@ -165,6 +179,12 @@ static float s_sweptTile = SWEPT_FLOW_TILE;
 // "is the energy actually flowing": a moving shape with a moving texture and a
 // moving shape with a painted-on one look exactly the same.
 static float s_sweptFreeze = 0.0f;
+// Both are DIAGNOSTIC, and both default to the stripped-back state. Turn them up
+// only once the bare tube is agreed to be the right shape.
+//   haze_layers = 2 -> add the outer bloom back
+//   haze_tex    = 1 -> put the flow sheet on the tube
+static float s_hazeLayers = 1.0f;
+static float s_hazeTex = 0.0f;
 
 // Uneven by design: evenly spaced strands of equal width read as a comb, no
 // amount of colour fixes it, and the regularity is the thing the eye picks up.
@@ -516,8 +536,54 @@ static void SweptTrail_BuildAssetSheet(void)
         }
     }
     s_sweptAssetTex = LoadTextureFromImage(out);
+
+    // The tube variant, from the same rotated source: cross-faded in u as well
+    // as v, and with NO edge kill — a rim that fades to nothing is a hole when
+    // the two rims meet.
+    int G = W / 6;
+    if (G < 2) G = 2;
+    if (G > W / 3) G = W / 3;
+    int outW = W - G;
+    Image tube = GenImageColor(outW, outH, BLANK);
+    for (int y = 0; y < outH; y++)
+    {
+        for (int x = 0; x < outW; x++)
+        {
+            float a = (float)sp[y * W + x].r / 255.0f;
+            if (y < F)
+            {
+                float t = 0.5f * (1.0f - cosf(PI * (float)y / (float)F));
+                a = ((float)sp[(H - F + y) * W + x].r / 255.0f) * (1.0f - t) + a * t;
+            }
+            if (x < G)
+            {
+                // The same raised-cosine wrap, around the circumference.
+                float t = 0.5f * (1.0f - cosf(PI * (float)x / (float)G));
+                float b = (float)sp[y * W + (W - G + x)].r / 255.0f;
+                if (y < F)
+                {
+                    float tv = 0.5f * (1.0f - cosf(PI * (float)y / (float)F));
+                    b = ((float)sp[(H - F + y) * W + (W - G + x)].r / 255.0f) * (1.0f - tv) + b * tv;
+                }
+                a = b * (1.0f - t) + a * t;
+            }
+            // Lifted, not edge-killed: every point around the tube must carry
+            // some material or the silhouette has a gap in it.
+            a = a * SWEPT_ASSET_GAIN + SWEPT_ASSET_FLOOR;
+            a = a < 0.0f ? 0.0f : (a > 1.0f ? 1.0f : a);
+            ImageDrawPixel(&tube, x, y, (Color){255, 255, 255,
+                                                (unsigned char)(a * 255.0f)});
+        }
+    }
+    s_sweptTubeTex = LoadTextureFromImage(tube);
+    UnloadImage(tube);
     UnloadImage(src);
     UnloadImage(out);
+    if (s_sweptTubeTex.id != 0)
+    {
+        SetTextureFilter(s_sweptTubeTex, TEXTURE_FILTER_BILINEAR);
+        SetTextureWrap(s_sweptTubeTex, TEXTURE_WRAP_REPEAT); // both axes wrap now
+    }
     if (s_sweptAssetTex.id != 0)
     {
         SetTextureFilter(s_sweptAssetTex, TEXTURE_FILTER_BILINEAR);
@@ -679,6 +745,8 @@ static void SweptTrail_InitShared(void)
     Tuning_RegisterFloat("swept_sheet", &s_sweptSheet, 1.0f);
     Tuning_RegisterFloat("swept_tile", &s_sweptTile, SWEPT_FLOW_TILE);
     Tuning_RegisterFloat("swept_freeze", &s_sweptFreeze, 0.0f);
+    Tuning_RegisterFloat("haze_layers", &s_hazeLayers, 1.0f);
+    Tuning_RegisterFloat("haze_tex", &s_hazeTex, 0.0f);
 
     s_sweptInit = true;
 }
@@ -772,13 +840,16 @@ static TrailLayer s_sweptLayers[3] = {
 // is not "faint", that is absent. "Mờ ảo" means hazy, not invisible — this layer
 // is what gives the wake its MASS, and mass you cannot see is not mass.
 static TrailLayer s_sweptHazeLayers[2] = {
-    // The soft outer bloom: no texture, this one really is just a shape.
-    {.widthMul = 1.35f, .alphaMul = 0.18f, .whiten = 0.00f, .scrollMul = 0.55f,
+    // [0] THE TUBE ITSELF. Untextured and single by default while the SHAPE is
+    // still being judged — the owner's call, and the right one: two layers and a
+    // wrapped sheet have now produced three different wrong silhouettes, and
+    // every diagnosis had to guess which of the two was at fault. Flat white on
+    // one tube has exactly one thing that can be wrong, and it is the geometry.
+    {.widthMul = 1.00f, .alphaMul = 0.45f, .whiten = 0.00f, .scrollMul = 1.00f,
      .headAlphaPow = 0.0f, .texture = NULL},
-    // THE FIELD ITSELF: the flow sheet, scrolling. This is the layer the owner
-    // has asked for three times.
-    {.widthMul = 1.00f, .alphaMul = 0.42f, .whiten = 0.02f, .scrollMul = 1.00f,
-     .headAlphaPow = 0.0f, .texture = &s_sweptBodyTex},
+    // [1] The soft outer bloom, restored by haze_layers = 2.
+    {.widthMul = 1.35f, .alphaMul = 0.16f, .whiten = 0.00f, .scrollMul = 0.55f,
+     .headAlphaPow = 0.0f, .texture = NULL},
 };
 
 // The tail→head colour ramp, one per material, built on first use.
@@ -843,10 +914,30 @@ static int SweptTrail_SpawnStrand(const VC_SweptTrail *s, int slot, int strand)
                                                    : RIBBON_CAMERA_FACING;
     cfg.fixedNormal = (Vector3){0.0f, 1.0f, 0.0f};
     cfg.disableInnerCore = true; // superseded by the layer stack
+    // THE FIELD IS A VOLUME, not a card. Everything else here is a flat strip,
+    // which is right for a struck arc and wrong for the mass a projectile drags:
+    // a card is the same shape from every angle, so it can be made wide and
+    // faint and still read as a decal of a field rather than a field. A swept
+    // tube has a silhouette from anywhere, occludes along its own length, and —
+    // drawn additively with the far wall showing through the near one —
+    // brightens at its own edges without a fresnel term.
+    //
+    // Its width curve is already the funnel the owner drew (base at the orb,
+    // point behind), and that shape pays for itself twice here: a tube's end-cap
+    // would otherwise be a flat disc sitting across the tail, and a radius that
+    // goes to zero makes the cap degenerate to a point instead.
+    //
+    // TIER GATE: below GFX_MED it falls back to the flat strip. ~2k triangles
+    // per field is not free, and the gate may only ever clamp DOWN.
+    if (s->style == VFX_TRAIL_HAZE && GfxQuality_Get() >= GFX_MED)
+    {
+        cfg.shape = TRAIL_SHAPE_TUBE;
+        cfg.tubeRadialSegs = 8;
+    }
     if (s->style == VFX_TRAIL_HAZE)
     {
         cfg.layers = s_sweptHazeLayers;
-        cfg.layerCount = 2;
+        cfg.layerCount = (s_hazeLayers >= 1.5f) ? 2 : 1;
     }
     else
     {
@@ -866,6 +957,15 @@ static int SweptTrail_SpawnStrand(const VC_SweptTrail *s, int slot, int strand)
     int id = SpawnTrailEntity(cfg);
     if (id >= 0)
         Trail_AttachToTransform(id, s->xf, (Vector3){0.0f, 0.0f, 0.0f});
+    // ONE LINE PER STRAND, unconditional. "It looks the same as before" and "the
+    // new path is not running" are indistinguishable on screen, and three rounds
+    // have now been spent reading code to tell them apart. This says which.
+    TraceLog(LOG_INFO,
+             "VFX_SWEPT: slot %d strand %d — style %d, shape %s, radial %d, "
+             "tier %d, requested width %.2f m",
+             slot, strand, (int)s->style,
+             (cfg.shape == TRAIL_SHAPE_TUBE) ? "TUBE" : "ribbon",
+             cfg.tubeRadialSegs, (int)GfxQuality_Get(), s->width);
     return id;
 }
 
@@ -880,8 +980,23 @@ int VFX_ComposeSweptTrail(const Matrix *followTransform, VC_MaterialId mat,
         TraceLog(LOG_WARNING, "VFX_SWEPT: NULL transform — no trail created");
         return -1;
     }
-    if (style < VFX_TRAIL_BLADE || style > VFX_TRAIL_FILAMENT)
+    // AGAINST THE COUNT, never against the last style by name. This check read
+    // `style > VFX_TRAIL_FILAMENT` and was not updated when VFX_TRAIL_HAZE was
+    // added, so every request for the wide energy field was quietly turned into
+    // a BLADE — the narrowest, sharpest style in the file, which is why the
+    // field "looked exactly like a normal trail". It did: it WAS one.
+    //
+    // And it said nothing. A silent clamp is the worst possible failure mode
+    // here, because it produces a plausible result rather than an absent one, so
+    // there is nothing to notice. It announces itself now.
+    if (style < VFX_TRAIL_BLADE || style >= VFX_TRAIL_STYLE_COUNT)
+    {
+        TraceLog(LOG_WARNING,
+                 "VFX_SWEPT: style %d is out of range — clamped to BLADE. "
+                 "A new style was probably added without updating this check.",
+                 (int)style);
         style = VFX_TRAIL_BLADE;
+    }
     if (width <= 0.0f)
         width = 0.22f;
     if (lifetime <= 0.0f)
@@ -922,6 +1037,7 @@ int VFX_ComposeSweptTrail(const Matrix *followTransform, VC_MaterialId mat,
     s->lateralAxis = (Vector3){0.0f, 1.0f, 0.0f};
     s->hasLateral = false;
     s->wasFrozen = false;
+    s->widthLogged = false;
     s->strands = SweptTrail_StrandCount(style, GfxQuality_Get() < GFX_MED);
     for (int k = 0; k < SWEPT_STRANDS_MAX; k++)
         s->strandId[k] = -1;
@@ -1057,7 +1173,14 @@ static void VC_SweptTrail_Update(float dt)
     s_sweptLayers[2].texture = s_sweptLayers[0].texture;
     // The haze's OUTER layer is a bare shape and takes the structure-free sheet;
     // its BODY keeps the flow sheet, which is the whole point of the field.
-    s_sweptHazeLayers[0].texture = s_sweptLayers[0].texture;
+    // NULL is the default for BOTH haze layers now. A sheet authored for a strip
+    // fades at u = 0 and u = 1 because those are its two edges, and on a tube
+    // those edges are the same line — so any band sheet leaves a transparent seam
+    // running the whole length. Only the u-seamless variant may ever go on a
+    // tube, and only when the dial asks for it.
+    s_sweptHazeLayers[0].texture =
+        (s_hazeTex >= 0.5f && s_sweptTubeTex.id != 0) ? &s_sweptTubeTex : NULL;
+    s_sweptHazeLayers[1].texture = NULL;
 
     for (int i = 0; i < SWEPT_MAX; i++)
     {
@@ -1096,8 +1219,26 @@ static void VC_SweptTrail_Update(float dt)
             float travel = SweptTrail_TravelLength(t);
             t->thickness = SweptTrail_HalfWidth(s->width * s_sweptWidthMul,
                                                 s->widthLevel, travel, s->style);
+            // THE NUMBER THAT DECIDES WHETHER ANY OF THIS IS VISIBLE. The width
+            // is EARNED from the length the tip travelled, so a trail can be
+            // configured perfectly and still draw as a hairline if the aspect
+            // cap is holding it down. Reported once, when the history is full.
+            if (!s->widthLogged && t->historyCount >= SweptTrail_MaxNodes(s->lifetime))
+            {
+                TraceLog(LOG_INFO,
+                         "VFX_SWEPT: slot %d strand %d — travelled %.2f m -> "
+                         "radius %.3f m (%.2f m across). Ceiling was %.2f m.",
+                         i, c, travel, t->thickness, t->thickness * 2.0f,
+                         s->width * s_sweptWidthMul * 0.5f);
+                s->widthLogged = true;
+            }
             t->tint = VC_WithAlpha(WHITE, (unsigned char)(255.0f * Clamp(s_sweptAlphaMul, 0.0f, 1.0f)));
             t->uvMetresPerTile = (s_sweptTile > 0.05f) ? s_sweptTile : 0.05f;
+            // The haze's layer count is a live dial, so it is written every
+            // frame rather than baked at spawn — otherwise judging one layer
+            // against two costs a rebuild each way.
+            if (s->style == VFX_TRAIL_HAZE)
+                t->layerCount = (s_hazeLayers >= 1.5f) ? 2 : 1;
             t->uvScrollSpeed = SWEPT_FLOW_SPEED * s_sweptFlow;
 
             if (c == 0)

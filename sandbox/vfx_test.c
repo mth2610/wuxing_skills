@@ -103,7 +103,7 @@ static const char* s_newFxNames[] = {
     "SMOKE PUFF", "ENERGY BURST", "IMPACT PKG", "FLAME VOLUME", "GLINT SPARKLE", "RUNE CIRCLE",
     "DISSOLVE EXIT", "CORE GLOW", "ENERGY ORB", "CHARGE CONVERGE", "SWEEP SLASH", "LIGHT SHAFT",
     "CHARACTER AURA", "BLACK HOLE", "FISSURE STREAK", "ICE CRYSTAL", "PARTICLE UPGRADES TEST", "SHARD DEBRIS",
-    "STONE PILLAR", "ICE CRYSTAL BURST", "WATER STREAM", "WATER STREAM ON PATH", "SWEPT TRAIL", "TRAIL HAZE",
+    "STONE PILLAR", "ICE CRYSTAL BURST", "WATER STREAM", "WATER STREAM ON PATH", "SWEPT TRAIL", "ENERGY TUBE",
     "GROUND WAVE", "IMPACT FLASH", "IMPACT DISTORT", "IMPACT DECAL", "SPARK TRAIL", "PROJECTILE",
 };
 // @gen:newfx_names end
@@ -666,15 +666,17 @@ void VFXTest_Draw3D(void)
                   break;
               }
               case 23: {
-                  static Matrix hazeXf;
-                  static int hazeH = -1;
-                  static float hazePrevT = -1.0f;
-                  float a = s_meshTime * 2.4f;
-                  Vector3 p = Vector3Add(s_prefabStartPos, (Vector3){ 3.0f * sinf(a), 1.7f + 0.45f * sinf(a * 0.7f), 2.1f * cosf(a) });
-                  if (s_meshTime < hazePrevT) { VFX_KillSweptTrail(hazeH); hazeH = -1; }
-                  hazePrevT = s_meshTime;
-                  hazeXf = MatrixTranslate(p.x, p.y, p.z);
-                  if (hazeH < 0) hazeH = VFX_ComposeSweptTrail(&hazeXf, VC_MAT_WATER, 2.40f, 0.85f, VFX_TRAIL_HAZE);
+                  static Matrix tubeXf;
+                  static int tubeH = -1;
+                  static float tubePrevT = -1.0f;
+                  float a = s_meshTime * 1.8f;
+                  // A path that curves in all three axes — a straight or planar one lets a
+                  // broken cross-section frame pass, which is the whole trap in a tube.
+                  Vector3 p = Vector3Add(s_prefabStartPos, (Vector3){ 3.2f * sinf(a), 1.8f + 0.7f * sinf(a * 1.7f), 2.4f * cosf(a * 1.3f) });
+                  if (s_meshTime < tubePrevT) { VFX_KillSweptTrail(tubeH); tubeH = -1; }
+                  tubePrevT = s_meshTime;
+                  tubeXf = MatrixTranslate(p.x, p.y, p.z);
+                  if (tubeH < 0) tubeH = VFX_ComposeSweptTrail(&tubeXf, VC_MAT_WATER, 2.40f, 0.85f, VFX_TRAIL_HAZE);
                   break;
               }
               case 24: VFX_ComposeGroundWave(s_prefabStartPos, VC_MAT_EARTH, 5.0f, fmodf(s_meshTime, 1.6f) / 1.6f, VFX_GroundHeightFromMap, NULL); break;

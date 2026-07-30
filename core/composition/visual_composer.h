@@ -200,8 +200,9 @@ typedef enum {
     VFX_TRAIL_RIBBON = 1,  // soft, wide, cloth-like, camera-facing
     VFX_TRAIL_FILAMENT = 2, // several thin strands — the "many threads" look;
                             // sheds strands below GFX_MED
-    // WIDE, FAINT, SOFT-EDGED — the BACKDROP behind a sharper trail, not a trail
-    // in its own right. A projectile is at least two trails: a hazy field that
+    // WIDE, FAINT, and a VOLUME — the swept-tube backdrop behind a sharper
+    // trail, not a trail in its own right. Drawn as a funnel: broad where it
+    // meets the emitter, coming to a point behind it. A projectile is at least two trails: a hazy field that
     // gives the wake mass, and a defined ribbon on top of it that gives it a
     // shape. Drawing only the sharp one reads as a wire; drawing only the hazy
     // one reads as smoke.
@@ -212,7 +213,12 @@ typedef enum {
     // and "differs only in numbers" is the definition of a parameter
     // (VFX_PLAN §Part 4, the rule that keeps the library from reaching 120
     // functions without gaining a capability).
-    VFX_TRAIL_HAZE = 3
+    VFX_TRAIL_HAZE = 3,
+    // Not a style — the count, so range checks cannot go stale when a style is
+    // added. `VFX_ComposeSweptTrail` validated against VFX_TRAIL_FILAMENT and
+    // was never updated when HAZE landed, so every HAZE request in the tree was
+    // silently clamped to BLADE for a day. Validate against this.
+    VFX_TRAIL_STYLE_COUNT
 } VFX_TrailStyle;
 
 int  VFX_ComposeSweptTrail(const Matrix *followTransform, VC_MaterialId mat,

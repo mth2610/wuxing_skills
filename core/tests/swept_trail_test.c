@@ -467,6 +467,73 @@ static void Test_TrailKeepsTheElementHue(void)
               "the core contributes %.0f%%", 100.0f * a[2] * w[2] / total);
 }
 
+// ── 0b6. The style validator must not go stale ──────────────────────────────
+//
+// THE BUG THIS EXISTS FOR, and it is the most expensive kind. VFX_TRAIL_HAZE was
+// added as a fourth style; `VFX_ComposeSweptTrail`'s range check still read
+// `style > VFX_TRAIL_FILAMENT` and was not updated. So every request for the
+// wide energy field — the bench entry, the projectile's field, an entire day of
+// visual iteration — was SILENTLY clamped to BLADE, the narrowest and sharpest
+// style there is.
+//
+// The owner asked "how is this any different from a normal trail?" and the
+// answer was that it WAS one. Three rounds went into tuning alpha, whitening and
+// texture on geometry that was never being built.
+//
+// A silent clamp is the worst failure mode available: an absent effect is
+// noticed immediately, a plausible WRONG one is argued about. The arithmetic
+// below is what the log finally proved, and it is kept as the regression.
+
+// Defined with the other mirror helpers, further down.
+static int FileHas(const char *path, const char *needle);
+
+static void Test_StyleValidatorCoversEveryStyle(void)
+{
+    // The log: travelled 5.04 m, drawn radius 0.126 m. Which aspect is that?
+    const float travelled = 5.04f, observed = 0.126f;
+    const float aspect[4] = {0.0250f, 0.0715f, 0.0125f, 0.1600f}; // BLADE..HAZE
+    const char *nm[4] = {"BLADE", "RIBBON", "FILAMENT", "HAZE"};
+    int match = -1;
+    for (int i = 0; i < 4; i++)
+        if (fabsf(travelled * aspect[i] - observed) < 0.002f) match = i;
+    CHECK_MSG(match == 0,
+              "the observed radius identifies the style that was ACTUALLY drawn",
+              "%.3f m matches %s, not HAZE's %.3f m",
+              observed, (match >= 0) ? nm[match] : "nothing",
+              travelled * aspect[3]);
+    // And what it should have been — a factor of six, which is why "wide faint
+    // field" and "thin bright line" were the same object.
+    CHECK_MSG(aspect[3] / aspect[0] > 5.0f,
+              "HAZE would have been several times wider, so the clamp was not subtle",
+              "%.1fx wider", aspect[3] / aspect[0]);
+
+    // The structural fix: validate against a COUNT, so adding a style cannot
+    // leave a range check behind.
+    CHECK(FileHas("core/composition/visual_composer.h", "VFX_TRAIL_STYLE_COUNT"),
+          "the enum still carries a count for range checks to use");
+    CHECK(FileHas("core/composition/common/vc_swept_trail.inl",
+                  "style >= VFX_TRAIL_STYLE_COUNT"),
+          "and the validator still checks against it, not against the last style by name");
+    // The needle carries the surrounding punctuation on purpose. Written as the
+    // bare expression it also matched the COMMENT that explains the fix — so the
+    // test failed precisely because the bug had been documented. A negative
+    // FileHas cannot tell code from prose about code; give it something only the
+    // code can contain.
+    CHECK(!FileHas("core/composition/common/vc_swept_trail.inl",
+                   "|| style > VFX_TRAIL_FILAMENT)"),
+          "the stale by-name check is gone");
+    // A clamp that says nothing is how this survived a day.
+    CHECK(FileHas("core/composition/common/vc_swept_trail.inl",
+                  "is out of range — clamped to BLADE"),
+          "and an out-of-range style still announces itself");
+
+    // Every style must have authored curves and an aspect, or a new one silently
+    // draws with a zero-width envelope, which is the same class of bug.
+    for (int i = 0; i < 4; i++)
+        CHECK_MSG(aspect[i] > 0.0f, "every style has a real aspect",
+                  "%s is %.4f", nm[i], aspect[i]);
+}
+
 // ── 0c. The authored flow sheet is USABLE as a trail sheet ───────────────────
 //
 // energy_flow.png is 1792x896 greyscale with the flow running across its WIDTH,
@@ -1388,13 +1455,26 @@ static void Test_MirrorStillMatchesSource(void)
     // its texture, on a rule that only applies WITHIN one trail's layer stack —
     // and a featureless band cannot be seen to scroll, which is the field's one
     // job. Its outer layer is a bare shape; its body keeps the flow sheet.
-    CHECK(FileHas(inl, ".scrollMul = 1.00f,\n     .headAlphaPow = 0.0f, .texture = &s_sweptBodyTex"),
-          "the haze BODY still carries the flow sheet — the field has to be seen flowing");
-    CHECK(FileHas(inl, "s_sweptHazeLayers[0].texture = s_sweptLayers[0].texture;") &&
-          !FileHas(inl, "s_sweptHazeLayers[1].texture ="),
-          "and only its outer layer is a bare shape");
+
+    // STRIPPED BACK, on the owner's call: one untextured tube while the SHAPE is
+    // being judged. Three wrong silhouettes in a row each had two candidate
+    // causes — the second layer or the wrapped sheet — and neither could be
+    // ruled out without removing the other. A bare tube has exactly one thing
+    // that can be wrong.
+    CHECK(FileHas(inl, "s_sweptHazeLayers[1].texture = NULL;"),
+          "no haze layer is handed a ribbon band sheet — those seam on a tube");
+    CHECK(FileHas(inl, "(s_hazeTex >= 0.5f && s_sweptTubeTex.id != 0) ? &s_sweptTubeTex : NULL"),
+          "and only the u-SEAMLESS sheet can ever go on the tube, on request");
+    CHECK(FileHas(inl, "t->layerCount = (s_hazeLayers >= 1.5f) ? 2 : 1;"),
+          "the layer count is a live dial, so one-vs-two costs no rebuild");
     CHECK(FileHas(inl, "return 0.1600f;"),
           "the haze aspect is still 1:3 — a wake is BROAD");
+    // THE FIELD IS A VOLUME. A flat card can be made wide and faint and still
+    // reads as a decal of a field; a swept tube has a silhouette from anywhere.
+    CHECK(FileHas(inl, "cfg.shape = TRAIL_SHAPE_TUBE;"),
+          "the haze field is still swept as a TUBE, not a flat strip");
+    CHECK(FileHas(inl, "s->style == VFX_TRAIL_HAZE && GfxQuality_Get() >= GFX_MED"),
+          "and the tube is still tier-gated — the gate may only clamp DOWN");
     CHECK(FileHas(inl, "s_sweptLayers[0].texture = (s_sweptHaloTex.id != 0) ? &s_sweptHaloTex : NULL;"),
           "the halo still gets the structure-free sheet");
     CHECK(FileHas(inl, "s_sweptLayers[2].texture = s_sweptLayers[0].texture;"),
@@ -1509,6 +1589,7 @@ int main(void)
     Test_AdditiveBudget();
     Test_HazeSitsUnderTheSharpTrail();
     Test_TrailKeepsTheElementHue();
+    Test_StyleValidatorCoversEveryStyle();
     Test_AssetSheetGeometry();
     Test_Aspect();
     Test_WidthEnvelope();

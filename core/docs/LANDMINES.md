@@ -868,3 +868,46 @@ a hand-written include is merely redundant instead of destructive.
 
 **Generalisable:** an idempotence check must compare against what the tool
 PRODUCES, not against what tells it to run.
+
+## A stale range check silently CLAMPS a new enum value (30/07/2026)
+
+**Symptom.** A newly added trail style produced something that looked exactly
+like the old default. The owner: *"sao nó có khác gì trail bình thường? có nhầm
+lẫn gì ko?"* Three rounds went into tuning its alpha, whitening and texture.
+
+**Cause.** `VFX_TRAIL_HAZE` was added as a fourth `VFX_TrailStyle`.
+`VFX_ComposeSweptTrail` validated its argument with
+
+```c
+if (style < VFX_TRAIL_BLADE || style > VFX_TRAIL_FILAMENT)   // the OLD last style
+    style = VFX_TRAIL_BLADE;
+```
+
+so every HAZE request was silently turned into BLADE — the narrowest, sharpest
+style in the file. The wide faint energy field was never built. Not once.
+
+**Why it survived so long:** a silent clamp produces a **plausible** result
+rather than an absent one. An effect that does not appear is noticed in seconds;
+an effect that appears as the wrong thing gets argued about, tuned, and rebuilt.
+Every visual "fix" applied on top was being applied to a different style.
+
+**What actually caught it** was one log line printing the style, shape and drawn
+radius — after four rounds of reading the code and finding every path correct.
+The arithmetic was conclusive the moment it existed: drawn radius 0.126 m over
+5.04 m travelled is an aspect of 0.0250, which is BLADE exactly, where HAZE's
+0.1600 would have given 0.81 m. **When "it looks unchanged" and "the new path
+never ran" are indistinguishable on screen, stop reading and print the value.**
+
+**Rules.**
+1. Range-check against a **count sentinel** (`VFX_TRAIL_STYLE_COUNT`) added to
+   the enum itself, never against the last member by name. Then adding a member
+   cannot leave a check behind.
+2. **A clamp must announce itself.** Defaulting an out-of-range value without a
+   log converts a caller's bug into a rendering mystery.
+3. Grep for every range check on an enum when adding a member — the compiler
+   will not, because the value is still a valid `int`.
+
+**And a test trap met while pinning this:** a NEGATIVE `FileHas` assertion
+matches comments as well as code, so `!FileHas("style > VFX_TRAIL_FILAMENT")`
+failed against the comment explaining the fix — the test broke *because* the bug
+had been documented. Give a negative needle punctuation only the code can carry.

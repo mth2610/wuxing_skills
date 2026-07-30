@@ -465,6 +465,82 @@ shipped and paid for:
 | Too many particles | not hit — the sparkle rate has been conservative |
 | Random chaos | hit, and named by the owner: "a snake being swung by the head", fixed by the home anchor |
 
+#### THE STRUCTURAL ERROR, found 30/07 — and it explains every failure above
+
+The owner: *"đập lại xây lại từ đầu. Nó quá sai rồi."* He is right, and the
+diagnosis is one sentence: **every layer I built is a flat camera-facing ribbon.**
+
+Look at what the spec actually asks for, layer by layer:
+
+| Layer | Spec says | What I built |
+|---|---|---|
+| 2 Shell | sphere **mesh**, fresnel rim, UV scroll | sphere mesh — correct |
+| 3 Flow | **mesh dạng ống dài (tube/cylinder)** along the flight axis, scrolling noise | a flat ribbon (`VFX_TRAIL_HAZE`) |
+| 4 Ribbon | ribbon trail | ribbon — correct |
+| 5 Wisps | small ribbons | ribbons — correct |
+
+Layer 3 is a **TUBE**, and a tube is the one thing a flat strip can never imitate:
+it has a silhouette from every angle, it occludes and is occluded along its own
+length, and its scrolling texture wraps AROUND it instead of sliding across a
+card. That is why the field never read as volume however its alpha was tuned —
+three rounds were spent on brightness for a shape that was wrong.
+
+And this is not a new lesson. It is §0.1 of this very document, written before
+any of Đợt H was built: *"almost everything we own is a camera-facing sprite...
+a sprite cannot hold a silhouette from any angle."* Đợt H exists to build the
+GEOMETRY half of the toolkit, and I built the projectile's field out of the
+particle half anyway.
+
+**`ProceduralMesh_BuildTubeAlongPath` already exists** (core/geometry/
+procedural_mesh_utils.h): a tube along an arbitrary path with Frenet frames,
+taper and deform. Feed it a trail's history and layer 3 is geometry, not a card.
+It is another entry on the §0 list of primitives with no consumer.
+
+#### The rebuild, in order
+
+1. **Layer 3 as a real tube.** `VFX_ComposeEnergyTube` — a primary that builds a
+   tube along a path and scrolls noise along it. This replaces `VFX_TRAIL_HAZE`
+   in the projectile; the style itself can stay for cases that genuinely want a
+   flat wide backdrop.
+2. **A dedicated shell material.** `aura_shell.fs` is authored for buff-column
+   cylinders: it carries horizontal SCANLINE RINGS and a top-edge fade that mean
+   nothing on a projectile. `PlasmaMaterial` is not the answer either — the owner
+   ruled it out explicitly. The orb wants its own small shader: fresnel + scrolled
+   noise + HDR, nothing else.
+3. **Then re-judge the trails.** The ribbon layers may well be fine once they are
+   sitting on a tube instead of on another ribbon; changing them now would be
+   tuning against a broken backdrop.
+
+**A blocker I raised and then disproved, kept because the reasoning error is the
+reusable part.** I warned that `flow_map.fs` declares TWO samplers and that this
+engine has a proven rlvk landmine where a second sampler unbinds the first — so
+its zero consumers might mean it cannot work on the priority backend. The owner
+said he remembered the flow map working, and he is right. The counter-evidence
+was already in the tree and took one command to find:
+
+| Shader | Samplers | Consumers |
+|---|---|---|
+| `surface_lit.fs` | **4** | `core/surface_material.c` — shipping |
+| `decal_flow.fs` | **2** | 2 files — shipping |
+
+Multi-sampler shaders work fine here. Reading the landmine again, it says
+something narrower than I repeated: adding a *second* sampler to a shader that
+had *one* made shaderc **rebase the binding indices**, which moved `texture0` out
+from under raylib's implicit binding. A shader authored with two samplers from
+the start and binding both explicitly — which is what `decal_flow.fs`,
+`surface_lit.fs` and `flow_map.fs` all do — never relies on that implicit slot
+and is not affected.
+
+**The error to avoid repeating:** I turned a specific, mechanism-level landmine
+("adding a sampler shifts an implicit binding") into a general prohibition
+("shaders cannot have two samplers"), and then used it to block work. A landmine
+entry states its mechanism precisely for exactly this reason — re-read the
+mechanism before letting one veto a design, and check whether anything shipping
+already contradicts the general form.
+
+So `flow_map.fs`'s zero consumers are an oversight, not an incompatibility, and
+layer 3 can be built on it.
+
 #### Order
 
 (a) layer 3 — give the shell's flow UV the travel direction, and wire

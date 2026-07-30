@@ -95,6 +95,68 @@ typedef struct {
   const Texture2D *texture;
 } TrailLayer;
 
+// ── The trail's CROSS-SECTION ───────────────────────────────────────────────
+//
+// A trail is a shape swept along a path, and the shape is a parameter. A flat
+// ribbon is the two-point cross-section; a tube is the N-point one. Same
+// history, same width curve, same layers, same material UV — only the section
+// changes, which is why this is an enum and not a second trail type.
+//
+// WHY A TUBE IS WORTH THE TRIANGLES. It holds a silhouette from every angle,
+// where a camera-facing strip is the same shape from everywhere and a
+// plane-locked one vanishes edge-on. Drawn additively with backface culling off
+// you see the far wall through the near one, so grazing angles accumulate more
+// material and the edges brighten on their own — a fresnel rim for free, which
+// is most of what makes an energy volume read as a volume.
+typedef enum {
+  TRAIL_SHAPE_RIBBON = 0, // flat strip (the default, and every existing caller)
+  TRAIL_SHAPE_TUBE = 1    // swept tube — a volume with a real silhouette
+} TrailShape;
+
+// ── The cross-section itself ────────────────────────────────────────────────
+//
+// A closed loop of offsets in the section plane, in units of the trail's radius,
+// swept along the path. This is the generalisation that makes the tube path
+// worth having: the SHAPE is data, so the same sweep draws a round bolt, a
+// flattened plume, a crescent of smoke or a ragged flame profile without a line
+// of new drawing code.
+//
+//   x is along the transported frame's first axis, y along its second.
+//   A unit circle is the default and is generated when `section` is NULL.
+//
+// Radius per node still scales the whole section, so the width curve, the aspect
+// cap and the layer width multipliers all keep working unchanged.
+//
+// WHAT IT DOES NOT SOLVE: u is distributed evenly by INDEX around the loop, not
+// by arc length, so a section with very uneven spacing will stretch the texture
+// where its points are sparse. Space the points roughly evenly, or accept it —
+// for a smoke or flame profile the texture is noise and nobody can tell.
+typedef struct {
+  float x, y;
+} TrailSectionPoint;
+
+// Radial slices around a tube. 8 is plenty: the section is small on screen and
+// additive, so faceting hides in the falloff. Cost is segments x radial x 2
+// triangles PER LAYER, so this is the number to cut first if a tube trail is
+// ever the thing dropping frames.
+#define TRAIL_TUBE_RADIAL_DEFAULT 8
+#define TRAIL_TUBE_RADIAL_MAX 16
+
+// A tube does NOT need one ring per history node, and this is the cheapest real
+// saving available. The history is sampled at 60 Hz, so a 5 m tube gets a ring
+// every 10 cm — far finer than the silhouette can show, since the path between
+// two nodes is nearly straight at that scale. Rings are decimated to this many,
+// evenly along the history and always including both ends, which more than
+// halves the vertex count for no visible change.
+//
+// Measured, not guessed: 50 rings x 8 radial x 4 verts = 1600 vertices per layer
+// per trail per frame; 24 rings is 768.
+#define TRAIL_TUBE_RINGS_DEFAULT 24
+// Below this the ring contributes nothing but still costs a full circle of
+// quads. The tail's width envelope goes to zero, so about a third of a trail's
+// rings are invisible by construction.
+#define TRAIL_TUBE_MIN_ALPHA 3
+
 typedef enum {
   TRAIL_WIDTH_ENVELOPE_UNIFORM = 0,
   TRAIL_WIDTH_ENVELOPE_TAPER_TAIL = 1,
@@ -207,6 +269,14 @@ typedef struct {
   // cut and restarted rather than drawing a straight bridge through space the
   // emitter never swept.
   float teleportSpeed;
+  // The swept cross-section. Zero (RIBBON) is what every existing caller gets.
+  TrailShape shape;
+  int tubeRadialSegs; // 0 = TRAIL_TUBE_RADIAL_DEFAULT (ignored when section != NULL)
+  int tubeMaxRings;   // 0 = TRAIL_TUBE_RINGS_DEFAULT
+  // NULL = a circle. Caller-owned and must outlive the trail — a static table.
+  const TrailSectionPoint *section;
+  int sectionCount;
+
   // > 0 (metres/sec): below this the attach path stops laying nodes, so the idle
   // fade runs and the trail DECAYS. Without it an attached trail re-stamps its
   // idle timer every frame, and a weapon standing still holds a frozen
@@ -408,6 +478,11 @@ typedef struct {
   RibbonMode ribbonMode;
   const TrailLayer *layers;
   int layerCount;
+  TrailShape shape;
+  int tubeRadialSegs;
+  int tubeMaxRings;
+  const TrailSectionPoint *section;
+  int sectionCount;
 
   // 6. Kiểu Boolean - 1 byte
   bool active;

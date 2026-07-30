@@ -246,3 +246,43 @@ compile". Check that a uniform you know the shader declares resolves; see
 - **Diagnostic:** a pinch that recurs at the same points of a repeating path is
   geometric degeneracy, not shading and not the mask. Ask what the cross product
   is doing where the path aligns with the reference direction.
+
+### Postscript, 30/07/2026 — do not over-generalise the above
+
+This entry was later cited as "shaders cannot have two samplers" and used to
+block a design. That is not what it says, and the tree contradicts the general
+form: `core/shaders/surface_lit.fs` declares **four** samplers and ships
+(`core/surface_material.c`), `decal_flow.fs` declares two and ships.
+
+The mechanism is narrower: adding a *second* sampler to a shader that had *one*
+made shaderc rebase the binding indices, which moved `texture0` out from under
+the implicit binding raylib sets up for it. A shader authored with several
+samplers from the start, binding each explicitly, never depends on that implicit
+slot. **Re-read the mechanism before letting a landmine veto a design, and check
+whether something shipping already disproves the general form.**
+
+### The batch-flush rule applies to BACKFACE CULLING too (30/07/2026)
+
+The rule above is written for depth mask/test. It is the same for
+`rlDisableBackfaceCulling` / `rlEnableBackfaceCulling`, and forgetting it there
+produces a shape that looks deliberate:
+
+**Symptom.** A swept TUBE rendered as half a shell — the owner described it three
+times, most precisely as "a pipe split lengthwise, one half rotated 180 degrees
+and stacked on the other". Two other causes were found and fixed first (a ribbon
+sheet wrapped around a tube leaves a transparent seam; the fix was applied to one
+layer and not the other), and it still looked the same.
+
+**Cause.** `rlDisableBackfaceCulling(); DrawTube(); rlEnableBackfaceCulling();`
+The tube's vertices go into the rlgl batch and are drawn LATER — after culling
+has been switched back on — so exactly one wall of every ring survived.
+
+**Rule.** `rlDrawRenderBatchActive()` before AND after **any** rlgl state change
+that the queued geometry depends on: depth mask, depth test, blend mode, and
+culling. If the state matters at draw time, it must be flushed at change time.
+
+**And the diagnostic worth keeping:** the same visible symptom had THREE
+independent causes here, and fixing each one in turn produced no change, which
+read each time as "the fix did not work". When a symptom survives a correct fix,
+consider that the pipeline has more than one way to produce it rather than that
+the fix was wrong.

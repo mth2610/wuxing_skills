@@ -231,8 +231,8 @@
   void Trail_SetLateralOffset(int id, Vector3 worldOffset);
   void Trail_SetFrozen(int id, bool frozen);
 ```
-**Enums:** TrailType { TRAIL_TYPE_PROJECTILE,TRAIL_TYPE_WISP,TRAIL_TYPE_PORTAL,TRAIL_TYPE_FOLLOWER };TrailWidthEnvelopeType { TRAIL_WIDTH_ENVELOPE_UNIFORM,TRAIL_WIDTH_ENVELOPE_TAPER_TAIL,TRAIL_WIDTH_ENVELOPE_TAPER_BOTH,TRAIL_WIDTH_ENVELOPE_PULSE }
-**Structs** (fields in header): TrailLayer, TrailConfig, TrailEntity
+**Enums:** TrailType { TRAIL_TYPE_PROJECTILE,TRAIL_TYPE_WISP,TRAIL_TYPE_PORTAL,TRAIL_TYPE_FOLLOWER };TrailShape { TRAIL_SHAPE_RIBBON,TRAIL_SHAPE_TUBE } TrailWidthEnvelopeType { TRAIL_WIDTH_ENVELOPE_UNIFORM,TRAIL_WIDTH_ENVELOPE_TAPER_TAIL,TRAIL_WIDTH_ENVELOPE_TAPER_BOTH,TRAIL_WIDTH_ENVELOPE_PULSE }
+**Structs** (fields in header): TrailLayer, TrailSectionPoint, TrailConfig, TrailEntity
 
 ### `core/ribbon_strip.h`
 ```c
@@ -585,7 +585,7 @@
   void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
   void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
 ```
-**Enums:** VFX_TrailStyle { VFX_TRAIL_BLADE,VFX_TRAIL_RIBBON,VFX_TRAIL_FILAMENT,VFX_TRAIL_HAZE }
+**Enums:** VFX_TrailStyle { VFX_TRAIL_BLADE,VFX_TRAIL_RIBBON,VFX_TRAIL_FILAMENT,VFX_TRAIL_HAZE,VFX_TRAIL_STYLE_COUNT }
 
 ### `core/composition/vfx_sequence.h`
 ```c
