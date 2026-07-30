@@ -443,9 +443,11 @@ void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float 
 void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
 void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
 void VFX_ComposeParticleUpgradesTest(Vector3 pos);
+int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime);
 void VFX_ComposeStonePillar(Vector3 basePos, float progress);
 void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
 void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
 void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
+void VFX_SmokeTrail_SetTexture(const Texture2D *smokeTex);
 // @gen:vc_declarations end
 #endif // VISUAL_COMPOSER_H

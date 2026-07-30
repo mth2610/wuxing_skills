@@ -7,7 +7,7 @@
 #include "core/trail_system.h"
 #include "core/vfx_light.h"
 #include "core/post_fx.h"
-#include "core/composition/vfx_sequence.h"        // RADIAL BURST E1A — exercises the transient path
+#include "core/composition/vfx_sequence.h" // RADIAL BURST E1A — exercises the transient path
 #include "core/presets/vfx_presets.h"
 #include "core/composition/visual_composer.h"
 #include "core/skill_helper.h"
@@ -35,7 +35,7 @@ static bool s_hasTestPath = false;
 #include "core/geometry/procedural_mesh_utils.h"
 #include "core/resource_manager.h"
 #include "core/map_manager.h"
-#include "sandbox/sandbox_core.h"   // Sandbox_GetPlayerAgentId — CHARACTER AURA attaches to the real player agent
+#include "sandbox/sandbox_core.h" // Sandbox_GetPlayerAgentId — CHARACTER AURA attaches to the real player agent
 #include "rlgl.h"
 #include "raymath.h"
 #include <math.h>
@@ -98,24 +98,88 @@ static const char *s_meshNames[] = {
     "DISC", "RING", "CONE", "TORNADO", "CYLINDER", "SPHERE", "SHOCKWAVE", "PYRAMID", "TETRAHEDRON"};
 
 // @gen:newfx_names begin
-// 35 entries — auto-managed by sync_vfx_test.py
-static const char* s_newFxNames[] = {
-    "SMOKE PUFF", "ENERGY BURST", "IMPACT PKG", "FLAME VOLUME", "GLINT SPARKLE", "RUNE CIRCLE",
-    "DISSOLVE EXIT", "CORE GLOW", "ENERGY ORB", "CONVERGE MOTES", "CHARGE CONVERGE", "SWEEP SLASH",
-    "LIGHT SHAFT", "CHARACTER AURA", "BLACK HOLE", "FISSURE STREAK", "ICE CRYSTAL", "PARTICLE UPGRADES TEST",
-    "STONE PILLAR", "ICE CRYSTAL BURST", "WATER STREAM", "WATER STREAM ON PATH", "SWEPT TRAIL", "ENERGY TUBE",
-    "VOLUME TRAIL", "GROUND WAVE", "IMPACT FLASH", "IMPACT DISTORT", "IMPACT DECAL", "SPARK TRAIL",
-    "PROJECTILE", "DEBRIS SHARDS", "BEAM", "SHOCK RING", "PORTAL DISC",
+// 37 entries — auto-managed by sync_vfx_test.py
+static const char *s_newFxNames[] = {
+    "SMOKE PUFF",
+    "ENERGY BURST",
+    "IMPACT PKG",
+    "FLAME VOLUME",
+    "GLINT SPARKLE",
+    "RUNE CIRCLE",
+    "DISSOLVE EXIT",
+    "CORE GLOW",
+    "ENERGY ORB",
+    "CONVERGE MOTES",
+    "CHARGE CONVERGE",
+    "SWEEP SLASH",
+    "LIGHT SHAFT",
+    "CHARACTER AURA",
+    "BLACK HOLE",
+    "FISSURE STREAK",
+    "ICE CRYSTAL",
+    "PARTICLE UPGRADES TEST",
+    "STONE PILLAR",
+    "ICE CRYSTAL BURST",
+    "WATER STREAM",
+    "WATER STREAM ON PATH",
+    "SWEPT TRAIL",
+    "ENERGY TUBE",
+    "VOLUME TRAIL",
+    "GROUND WAVE",
+    "IMPACT FLASH",
+    "IMPACT DISTORT",
+    "IMPACT DECAL",
+    "SPARK TRAIL",
+    "PROJECTILE",
+    "DEBRIS SHARDS",
+    "BEAM",
+    "SHOCK RING",
+    "PORTAL DISC",
+    "SMOKE TRAIL",
+    "SMOKE TRAIL_ SET TEXTURE",
 };
 // @gen:newfx_names end
 
 // @gen:newfx_categories begin
 // NEWFX_CAT_FIRE=0 WATER=1 WOOD=2 METAL=3 EARTH=4 TAIJI=5 UTIL=6
 static const int s_newFxCategories[] = {
-    6, 6, 6, 0, 3, 5, 6, 6, 6, 6,
-    6, 3, 6, 6, 6, 4, 1, 6, 4, 1,
-    1, 1, 3, 1, 6, 4, 6, 6, 6, 6,
-    1, 3, 6, 6, 5,
+    6,
+    6,
+    6,
+    0,
+    3,
+    5,
+    6,
+    6,
+    6,
+    6,
+    6,
+    3,
+    6,
+    6,
+    6,
+    4,
+    1,
+    6,
+    4,
+    1,
+    1,
+    1,
+    3,
+    1,
+    6,
+    4,
+    6,
+    6,
+    6,
+    6,
+    1,
+    3,
+    6,
+    6,
+    5,
+    6,
+    6,
 };
 // @gen:newfx_categories end
 
@@ -143,7 +207,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
         s_prefabStartPos = playerPos;
         s_beamStart = Vector3Add(playerPos, (Vector3){0.0f, 0.3f, 0.0f});
         s_beamEnd = Vector3Add(playerPos, (Vector3){3.0f, 0.0f, 0.0f});
-        
+
         for (int idx = 0; idx < TEST_PATH_POINT_COUNT; idx++)
         {
             float t = (float)idx / (float)(TEST_PATH_POINT_COUNT - 1);
@@ -272,8 +336,8 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             cfg.velocity = (Vector3){cosf(ang) * 0.15f, 0.0f, sinf(ang) * 0.15f};
             cfg.colorStart = (Color){80, 200, 255, 255};
             cfg.colorEnd = (Color){80, 200, 255, 0};
-            cfg.radius = 0.25f;  // 0.06f gần như dưới-pixel ở khoảng cách camera arena --
-                                 // GPU path chạy lần đầu (GL cũ dùng CPU) mới lộ ra
+            cfg.radius = 0.25f; // 0.06f gần như dưới-pixel ở khoảng cách camera arena --
+                                // GPU path chạy lần đầu (GL cũ dùng CPU) mới lộ ra
             cfg.lifetime = 2.5f;
             cfg.drag = 0.0f;
             cfg.forceField = &s_gpuTestField;
@@ -310,7 +374,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             ForceLayer vf = {0};
             vf.type = FORCE_VECTOR_TEXTURE;
             vf.origin = Vector3Add(playerPos, (Vector3){0.0f, 0.04f, 0.0f});
-            vf.direction = (Vector3){2.5f, 0.0f, 2.5f};   // hộp 5x5m phủ trọn hàng spawn + lối trôi
+            vf.direction = (Vector3){2.5f, 0.0f, 2.5f}; // hộp 5x5m phủ trọn hàng spawn + lối trôi
             vf.strength = 2.5f;
             vf.noiseScale = 0.0f;
             ForceField_AddLayer(&s_flowField, vf);
@@ -327,7 +391,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             cfg.velocity = (Vector3){0.0f, 0.0f, 0.0f};
             cfg.colorStart = (Color){255, 220, 100, 255};
             cfg.colorEnd = (Color){255, 220, 100, 0};
-            cfg.radius = 0.12f;  // 0.008f (8mm) vô hình ở khoảng cách camera -- xem ghi chú FF test
+            cfg.radius = 0.12f; // 0.008f (8mm) vô hình ở khoảng cách camera -- xem ghi chú FF test
             cfg.lifetime = 3.0f;
             cfg.drag = 0.0f;
             cfg.forceField = &s_flowField;
@@ -354,24 +418,28 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
     if (overToggleBtn)
     {
         s_clickedOnUI = true;
-        if (downNow) s_toggleArmed = true;
+        if (downNow)
+            s_toggleArmed = true;
     }
     if (s_toggleArmed && !downNow)
     {
         s_toggleArmed = false;
-        if (overToggleBtn) s_isPanelOpen = !s_isPanelOpen;
+        if (overToggleBtn)
+            s_isPanelOpen = !s_isPanelOpen;
     }
 
     bool overBackBtn = CheckCollisionPointRec(mousePos, backBtn);
     if (overBackBtn)
     {
         s_clickedOnUI = true;
-        if (downNow) s_backArmed = true;
+        if (downNow)
+            s_backArmed = true;
     }
     if (s_backArmed && !downNow)
     {
         s_backArmed = false;
-        if (overBackBtn) return true; // Request back to menu
+        if (overBackBtn)
+            return true; // Request back to menu
     }
 
     if (s_isPlayingMesh && s_testCategory == TEST_CAT_MESH)
@@ -462,7 +530,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             const char **names;
             int globalIdx;
             int visualIdx;
-            maxIdx = 35;
+            maxIdx = 37;
             names = s_newFxNames; // @gen:newfx_count
             visualIdx = 0;
             (void)names;
@@ -482,30 +550,49 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
                         s_testIndex = globalIdx;
                         s_isPlayingMesh = false;
                         // @gen:newfx_trigger begin
-          if (s_testIndex == 0) { /* SMOKE PUFF */
-              VFX_ComposeSmokePuff(s_prefabStartPos, VC_MAT_EARTH, 1.0f, 1.0f);
-          } else if (s_testIndex == 1) { /* ENERGY BURST */
-              VFX_ComposeEnergyBurst(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 0.9f);
-          } else if (s_testIndex == 2) { /* IMPACT PKG */
-              VFX_ComposeImpactPackage(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_EARTH, 1.0f, 1.0f);
-          } else if (s_testIndex == 13) { /* CHARACTER AURA */
-              VFX_ComposeCharacterAura(0, VC_MAT_FIRE, 1.0f);
-          } else if (s_testIndex == 17) { /* PARTICLE UPGRADES TEST */
-              VFX_ComposeParticleUpgradesTest(s_prefabStartPos);
-          } else if (s_testIndex == 26) { /* IMPACT FLASH */
-              VFX_ComposeImpactFlash(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 0.8f);
-          } else if (s_testIndex == 27) { /* IMPACT DISTORT */
-              VFX_ComposeImpactDistort(s_prefabStartPos, 1.0f, 0.8f);
-          } else if (s_testIndex == 28) { /* IMPACT DECAL */
-              VFX_ComposeImpactDecal(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 0.8f);
-          } else if (s_testIndex == 31) { /* DEBRIS SHARDS */
-              VFX_ComposeDebrisShards(s_prefabStartPos, (Vector3){2.5f, 3.0f, 0.0f}, VC_MAT_METAL, 0.09f, 14);
-          } else {
-              /* continuous — handled per-frame in VFXTest_Draw3D */
-              s_isPlayingMesh = true;
-              s_meshTime = 0.0f;
-          }
-// @gen:newfx_trigger end
+                        if (s_testIndex == 0)
+                        { /* SMOKE PUFF */
+                            VFX_ComposeSmokePuff(s_prefabStartPos, VC_MAT_EARTH, 1.0f, 1.0f);
+                        }
+                        else if (s_testIndex == 1)
+                        { /* ENERGY BURST */
+                            VFX_ComposeEnergyBurst(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 0.9f);
+                        }
+                        else if (s_testIndex == 2)
+                        { /* IMPACT PKG */
+                            VFX_ComposeImpactPackage(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_EARTH, 1.0f, 1.0f);
+                        }
+                        else if (s_testIndex == 13)
+                        { /* CHARACTER AURA */
+                            VFX_ComposeCharacterAura(0, VC_MAT_FIRE, 1.0f);
+                        }
+                        else if (s_testIndex == 17)
+                        { /* PARTICLE UPGRADES TEST */
+                            VFX_ComposeParticleUpgradesTest(s_prefabStartPos);
+                        }
+                        else if (s_testIndex == 26)
+                        { /* IMPACT FLASH */
+                            VFX_ComposeImpactFlash(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 0.8f);
+                        }
+                        else if (s_testIndex == 27)
+                        { /* IMPACT DISTORT */
+                            VFX_ComposeImpactDistort(s_prefabStartPos, 1.0f, 0.8f);
+                        }
+                        else if (s_testIndex == 28)
+                        { /* IMPACT DECAL */
+                            VFX_ComposeImpactDecal(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 0.8f);
+                        }
+                        else if (s_testIndex == 31)
+                        { /* DEBRIS SHARDS */
+                            VFX_ComposeDebrisShards(s_prefabStartPos, (Vector3){2.5f, 3.0f, 0.0f}, VC_MAT_METAL, 0.09f, 14);
+                        }
+                        else
+                        {
+                            /* continuous — handled per-frame in VFXTest_Draw3D */
+                            s_isPlayingMesh = true;
+                            s_meshTime = 0.0f;
+                        }
+                        // @gen:newfx_trigger end
                     }
                 }
                 visualIdx++;
@@ -527,19 +614,22 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
         s_prefabStartPos = mouseTarget3D;
         // BEAM: shoot from the character (chest height) to the click point.
         s_beamStart = Vector3Add(playerPos, (Vector3){0.0f, 0.3f, 0.0f});
-        s_beamEnd   = mouseTarget3D;
-        
+        s_beamEnd = mouseTarget3D;
+
         // Generate random spline path from playerPos (chest) to clicked ground
         Vector3 p0 = s_beamStart;
         Vector3 p3 = mouseTarget3D;
         float dist = Vector3Distance(p0, p3);
         float offsetScale = dist * 0.25f;
-        if (offsetScale < 0.5f) offsetScale = 0.5f;
+        if (offsetScale < 0.5f)
+            offsetScale = 0.5f;
 
-        if (dist > 0.01f) {
+        if (dist > 0.01f)
+        {
             Vector3 dir = Vector3Normalize(Vector3Subtract(p3, p0));
             Vector3 upVec = (Vector3){0.0f, 1.0f, 0.0f};
-            if (fabsf(dir.y) > 0.9f) upVec = (Vector3){1.0f, 0.0f, 0.0f};
+            if (fabsf(dir.y) > 0.9f)
+                upVec = (Vector3){1.0f, 0.0f, 0.0f};
             Vector3 right = Vector3Normalize(Vector3CrossProduct(upVec, dir));
             upVec = Vector3CrossProduct(dir, right);
 
@@ -561,8 +651,11 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
                 s_testPathPoints[idx] = GetBezierPoint(p0, p1, p2, p3, t);
             }
             s_hasTestPath = true;
-        } else {
-            for (int idx = 0; idx < TEST_PATH_POINT_COUNT; idx++) {
+        }
+        else
+        {
+            for (int idx = 0; idx < TEST_PATH_POINT_COUNT; idx++)
+            {
                 s_testPathPoints[idx] = p0;
             }
             s_hasTestPath = true;
@@ -577,30 +670,49 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
         {
             s_isPlayingMesh = false;
             // @gen:newfx_trigger begin
-          if (s_testIndex == 0) { /* SMOKE PUFF */
-              VFX_ComposeSmokePuff(s_prefabStartPos, VC_MAT_EARTH, 1.0f, 1.0f);
-          } else if (s_testIndex == 1) { /* ENERGY BURST */
-              VFX_ComposeEnergyBurst(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 0.9f);
-          } else if (s_testIndex == 2) { /* IMPACT PKG */
-              VFX_ComposeImpactPackage(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_EARTH, 1.0f, 1.0f);
-          } else if (s_testIndex == 13) { /* CHARACTER AURA */
-              VFX_ComposeCharacterAura(0, VC_MAT_FIRE, 1.0f);
-          } else if (s_testIndex == 17) { /* PARTICLE UPGRADES TEST */
-              VFX_ComposeParticleUpgradesTest(s_prefabStartPos);
-          } else if (s_testIndex == 26) { /* IMPACT FLASH */
-              VFX_ComposeImpactFlash(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 0.8f);
-          } else if (s_testIndex == 27) { /* IMPACT DISTORT */
-              VFX_ComposeImpactDistort(s_prefabStartPos, 1.0f, 0.8f);
-          } else if (s_testIndex == 28) { /* IMPACT DECAL */
-              VFX_ComposeImpactDecal(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 0.8f);
-          } else if (s_testIndex == 31) { /* DEBRIS SHARDS */
-              VFX_ComposeDebrisShards(s_prefabStartPos, (Vector3){2.5f, 3.0f, 0.0f}, VC_MAT_METAL, 0.09f, 14);
-          } else {
-              /* continuous — handled per-frame in VFXTest_Draw3D */
-              s_isPlayingMesh = true;
-              s_meshTime = 0.0f;
-          }
-// @gen:newfx_trigger end
+            if (s_testIndex == 0)
+            { /* SMOKE PUFF */
+                VFX_ComposeSmokePuff(s_prefabStartPos, VC_MAT_EARTH, 1.0f, 1.0f);
+            }
+            else if (s_testIndex == 1)
+            { /* ENERGY BURST */
+                VFX_ComposeEnergyBurst(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 0.9f);
+            }
+            else if (s_testIndex == 2)
+            { /* IMPACT PKG */
+                VFX_ComposeImpactPackage(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_EARTH, 1.0f, 1.0f);
+            }
+            else if (s_testIndex == 13)
+            { /* CHARACTER AURA */
+                VFX_ComposeCharacterAura(0, VC_MAT_FIRE, 1.0f);
+            }
+            else if (s_testIndex == 17)
+            { /* PARTICLE UPGRADES TEST */
+                VFX_ComposeParticleUpgradesTest(s_prefabStartPos);
+            }
+            else if (s_testIndex == 26)
+            { /* IMPACT FLASH */
+                VFX_ComposeImpactFlash(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 0.8f);
+            }
+            else if (s_testIndex == 27)
+            { /* IMPACT DISTORT */
+                VFX_ComposeImpactDistort(s_prefabStartPos, 1.0f, 0.8f);
+            }
+            else if (s_testIndex == 28)
+            { /* IMPACT DECAL */
+                VFX_ComposeImpactDecal(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 0.8f);
+            }
+            else if (s_testIndex == 31)
+            { /* DEBRIS SHARDS */
+                VFX_ComposeDebrisShards(s_prefabStartPos, (Vector3){2.5f, 3.0f, 0.0f}, VC_MAT_METAL, 0.09f, 14);
+            }
+            else
+            {
+                /* continuous — handled per-frame in VFXTest_Draw3D */
+                s_isPlayingMesh = true;
+                s_meshTime = 0.0f;
+            }
+            // @gen:newfx_trigger end
         }
     }
 
@@ -628,147 +740,253 @@ void VFXTest_Draw3D(void)
         else if (s_testCategory == TEST_CAT_NEWFX)
         {
             // @gen:newfx_draw begin
-          float progress = fminf(s_meshTime / 1.0f, 1.0f);
-          int posSeed = (int)(s_prefabStartPos.x * 17.0f + s_prefabStartPos.z * 31.0f) & 0xFFFF;
-          switch (s_testIndex) {
-              case 3: VFX_ComposeFlameVolume(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 1.0f); break;
-              case 4: VFX_ComposeGlintSparkle(s_prefabStartPos, VC_MAT_HOLY, 1.0f, s_meshTime); break;
-              case 5: VFX_ComposeRuneCircle(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.9f, 0.0f}), (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.6f, fmodf(s_meshTime, 3.0f) / 3.0f, 4); break;
-              case 6: VFX_ComposeDissolveExit(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.9f, 0.0f}), VC_MAT_FIRE, 1.0f, fmodf(s_meshTime, 2.5f) / 2.5f); break;
-              case 7: {
-                  float i01 = s_meshTime / 2.5f; if (i01 > 1.0f) i01 = 1.0f;
-                  VFX_ComposeCoreGlow(Vector3Add(s_prefabStartPos, (Vector3){-2.2f, 1.4f, 0.0f}), VC_MAT_FIRE, 1.0f, i01);
-                  break;
-              }
-              case 8: {
-                  float i01 = s_meshTime / 2.0f; if (i01 > 1.0f) i01 = 1.0f;
-                  VFX_ComposeEnergyOrb(Vector3Add(s_prefabStartPos, (Vector3){2.2f, 1.5f, 0.0f}), VC_MAT_WATER, 0.55f, i01);
-                  break;
-              }
-              case 9: {
-                  float mi01 = s_meshTime / 2.2f; if (mi01 > 1.0f) mi01 = 1.0f;
-                  VFX_ComposeConvergeMotes(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 1.4f, 0.0f}), VC_MAT_QI, 1.3f, mi01, 45);
-                  break;
-              }
-              case 10: VFX_ComposeChargeConverge(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.9f, 0.0f}), VC_MAT_LIGHTNING, 1.3f, fmodf(s_meshTime, 2.2f) / 2.2f, 45); break;
-              case 11: VFX_ComposeSweepSlash(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 1.2f, 0.0f}), (Vector3){0.0f, 0.0f, 1.0f}, VC_MAT_METAL, 1.8f, 2.2f, fmodf(s_meshTime, 1.6f) / 1.6f); break;
-              case 12: VFX_ComposeLightShaft(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 3.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.05f, 0.0f}), VC_MAT_HOLY, 2.0f, 0.9f); break;
-              case 14: VFX_ComposeBlackHole(VC_MAT_FIRE, s_prefabStartPos, 1.5f, s_meshTime); break;
-              case 15: VFX_ComposeFissureStreak(s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){3.0f, 0, 0}), 0.1f, fminf(progress, 0.99f), s_meshTime); break;
-              case 16: VFX_ComposeIceCrystal(s_prefabStartPos, posSeed); break;
-              case 18: VFX_ComposeStonePillar(s_prefabStartPos, fminf(progress, 0.99f)); break;
-              case 19: VFX_DrawIceCrystalBurst(s_prefabStartPos, 10, posSeed, fminf(fmodf(s_meshTime, 2.0f) / 1.2f, 1.0f)); break;
-              case 20: VFX_ComposeWaterStream(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.4f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){1.2f, 1.7f, 0.5f}), Vector3Add(s_prefabStartPos, (Vector3){2.6f, 1.3f, -0.5f}), Vector3Add(s_prefabStartPos, (Vector3){3.8f, 0.15f, 0.0f}), 0.22f, fminf(progress, 0.99f), s_meshTime); break;
-              case 21: VFX_ComposeWaterStreamOnPath(s_testPathPoints, TEST_PATH_POINT_COUNT, 0.25f, progress * 1.2f, 0.25f, s_meshTime); break;
-              case 22: {
-                  static Matrix sweptXf;
-                  static int sweptH = -1;
-                  static float sweptPrevT = -1.0f;
-                  float a = s_meshTime * 2.4f;
-                  Vector3 p = Vector3Add(s_prefabStartPos, (Vector3){ 3.0f * sinf(a), 1.7f + 0.45f * sinf(a * 0.7f), 2.1f * cosf(a) });
-                  if (s_meshTime < sweptPrevT) { VFX_KillSweptTrail(sweptH); sweptH = -1; }
-                  sweptPrevT = s_meshTime;
-                  sweptXf = MatrixTranslate(p.x, p.y, p.z);
-                  if (sweptH < 0) sweptH = VFX_ComposeSweptTrail(&sweptXf, VC_MAT_WATER, 1.60f, 0.85f, VFX_TRAIL_RIBBON);
-                  break;
-              }
-              case 23: {
-                  static Matrix tubeXf;
-                  static int tubeH = -1;
-                  static float tubePrevT = -1.0f;
-                  float a = s_meshTime * 1.8f;
-                  // A path that curves in all three axes — a straight or planar one lets a
-                  // broken cross-section frame pass, which is the whole trap in a tube.
-                  Vector3 p = Vector3Add(s_prefabStartPos, (Vector3){ 3.2f * sinf(a), 1.8f + 0.7f * sinf(a * 1.7f), 2.4f * cosf(a * 1.3f) });
-                  if (s_meshTime < tubePrevT) { VFX_KillSweptTrail(tubeH); tubeH = -1; }
-                  tubePrevT = s_meshTime;
-                  tubeXf = MatrixTranslate(p.x, p.y, p.z);
-                  if (tubeH < 0) tubeH = VFX_ComposeSweptTrail(&tubeXf, VC_MAT_WATER, 2.40f, 0.85f, VFX_TRAIL_HAZE);
-                  break;
-              }
-              case 24: {
-                  static Matrix volXf[3];
-                  static int volH[3] = { -1, -1, -1 };
-                  static float volPrevT = -1.0f;
-                  if (s_meshTime < volPrevT) { for (int vk = 0; vk < 3; vk++) { VFX_KillVolumeTrail(volH[vk]); volH[vk] = -1; } }
-                  volPrevT = s_meshTime;
-                  float volA = s_meshTime * 1.6f;
-                  for (int vk = 0; vk < 3; vk++)
-                  {
-                      // One path, three lateral offsets. Curved in ALL THREE axes: a straight or
-                      // planar path lets a broken cross-section frame pass, which is the whole
-                      // trap in a tube (core/docs/LANDMINES.md, 30/07).
-                      Vector3 vp = Vector3Add(s_prefabStartPos, (Vector3){ 3.0f * sinf(volA) + (float)(vk - 1) * 2.6f,
-                                                               1.9f + 0.7f * sinf(volA * 1.7f),
-                                                               2.2f * cosf(volA * 1.3f) });
-                      volXf[vk] = MatrixTranslate(vp.x, vp.y, vp.z);
-                      if (volH[vk] < 0)
-                          volH[vk] = VFX_ComposeVolumeTrail(&volXf[vk], (vk == 0) ? VC_MAT_LIGHTNING : ((vk == 1) ? VC_MAT_EARTH : VC_MAT_FIRE),
-                                                            0.45f, 0.85f, (VFX_VolumeKind)vk);
-                  }
-                  break;
-              }
-              case 25: VFX_ComposeGroundWave(s_prefabStartPos, VC_MAT_EARTH, 5.0f, fmodf(s_meshTime, 1.6f) / 1.6f, VFX_GroundHeightFromMap, NULL); break;
-              case 29: {
-                  static float acc = 0.0f;
-                  acc += GetFrameTime();
-                  if (acc > 0.55f) {
-                      acc = 0.0f;
-                      Vector3 c = Vector3Add(s_prefabStartPos, (Vector3){0.0f, 1.2f, 0.0f});
-                      float ang = s_meshTime * 1.3f;
-                      Vector3 sp = (Vector3){ c.x + cosf(ang) * 2.0f, c.y, c.z + sinf(ang) * 2.0f };
-                      Vector3 v = Vector3Scale(Vector3Normalize(Vector3Subtract(c, sp)), 3.0f);
-                      VFX_ComposeSparkTrail(sp, Vector3Add(v, (Vector3){ -sinf(ang) * 2.2f, 0.4f, cosf(ang) * 2.2f }), VC_MAT_LIGHTNING, 0.5f, 0.9f);
-                  }
-                  break;
-              }
-              case 30: {
-                  static Matrix projXf;
-                  static int projH = -1;
-                  static float projPrevT = -1.0f;
-                  if (s_meshTime < projPrevT) { VFX_KillProjectile(projH); projH = -1; }
-                  projPrevT = s_meshTime;
-                  float a = s_meshTime * 1.5f;
-                  Vector3 p = Vector3Add(s_prefabStartPos, (Vector3){ 4.0f * sinf(a), 1.8f + 0.6f * sinf(a * 0.8f), 3.0f * cosf(a * 0.7f) });
-                  projXf = MatrixTranslate(p.x, p.y, p.z);
-                  if (projH < 0) projH = VFX_ComposeProjectile(&projXf, VC_MAT_WATER, 0.34f);
-                  break;
-              }
-              case 32: {
-                  float bt = fmodf(s_meshTime, 2.6f) / 2.6f;
-                  // [A] the ordinary case: a held beam across the bench.
-                  VFX_ComposeBeam(Vector3Add(s_prefabStartPos, (Vector3){-3.5f, 1.5f, 0.0f}),
-                                  Vector3Add(s_prefabStartPos, (Vector3){ 3.5f, 2.1f, 0.0f}), VC_MAT_LIGHTNING, 0.30f, bt);
-                  // [B] END-ON. Nearly vertical, so from most bench angles you look down it.
-                  VFX_ComposeBeam(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.1f, 3.0f}),
-                                  Vector3Add(s_prefabStartPos, (Vector3){0.0f, 5.0f, 3.0f}), VC_MAT_HOLY, 0.30f, bt);
-                  // [C] DEGENERATE. The endpoints close to millimetres and reopen; it must thin
-                  // out and disappear, never inflate. It also logs once, then stays quiet.
-                  float bgap = 0.004f + 1.6f * (0.5f + 0.5f * sinf(s_meshTime * 1.1f));
-                  VFX_ComposeBeam(Vector3Add(s_prefabStartPos, (Vector3){3.0f, 1.5f, -2.5f}),
-                                  Vector3Add(s_prefabStartPos, (Vector3){3.0f + bgap, 1.5f, -2.5f}), VC_MAT_FIRE, 0.30f, 0.5f);
-                  break;
-              }
-              case 33: {
-                  float st = fmodf(s_meshTime, 1.6f) / 1.6f;
-                  // Horizontal — the ground wave's pose, without the ground.
-                  VFX_ComposeShockRing(Vector3Add(s_prefabStartPos, (Vector3){-3.0f, 1.6f, 0.0f}), (Vector3){0.0f, 1.0f, 0.0f},
-                                       VC_MAT_LIGHTNING, 3.0f, st);
-                  // VERTICAL — the case a flat annulus cannot survive.
-                  VFX_ComposeShockRing(Vector3Add(s_prefabStartPos, (Vector3){ 3.0f, 1.8f, 0.0f}), (Vector3){0.0f, 0.0f, 1.0f},
-                                       VC_MAT_METAL, 3.0f, st);
-                  break;
-              }
-              case 34: {
-                  float pt = fmodf(s_meshTime, 3.2f) / 3.2f;
-                  VFX_ComposePortalDisc(Vector3Add(s_prefabStartPos, (Vector3){-2.6f, 0.08f, 0.0f}), (Vector3){0.0f, 1.0f, 0.0f},
-                                        VC_MAT_VOID, 1.6f, pt);
-                  VFX_ComposePortalDisc(Vector3Add(s_prefabStartPos, (Vector3){ 2.6f, 1.9f, 0.0f}), (Vector3){0.0f, 0.0f, 1.0f},
-                                        VC_MAT_TAIJI, 1.6f, pt);
-                  break;
-              }
-          }
-// @gen:newfx_draw end
+            float progress = fminf(s_meshTime / 1.0f, 1.0f);
+            int posSeed = (int)(s_prefabStartPos.x * 17.0f + s_prefabStartPos.z * 31.0f) & 0xFFFF;
+            switch (s_testIndex)
+            {
+            case 3:
+                VFX_ComposeFlameVolume(s_prefabStartPos, VC_MAT_FIRE, 1.0f, 1.0f);
+                break;
+            case 4:
+                VFX_ComposeGlintSparkle(s_prefabStartPos, VC_MAT_HOLY, 1.0f, s_meshTime);
+                break;
+            case 5:
+                VFX_ComposeRuneCircle(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.9f, 0.0f}), (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.6f, fmodf(s_meshTime, 3.0f) / 3.0f, 4);
+                break;
+            case 6:
+                VFX_ComposeDissolveExit(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.9f, 0.0f}), VC_MAT_FIRE, 1.0f, fmodf(s_meshTime, 2.5f) / 2.5f);
+                break;
+            case 7:
+            {
+                float i01 = s_meshTime / 2.5f;
+                if (i01 > 1.0f)
+                    i01 = 1.0f;
+                VFX_ComposeCoreGlow(Vector3Add(s_prefabStartPos, (Vector3){-2.2f, 1.4f, 0.0f}), VC_MAT_FIRE, 1.0f, i01);
+                break;
+            }
+            case 8:
+            {
+                float i01 = s_meshTime / 2.0f;
+                if (i01 > 1.0f)
+                    i01 = 1.0f;
+                VFX_ComposeEnergyOrb(Vector3Add(s_prefabStartPos, (Vector3){2.2f, 1.5f, 0.0f}), VC_MAT_WATER, 0.55f, i01);
+                break;
+            }
+            case 9:
+            {
+                float mi01 = s_meshTime / 2.2f;
+                if (mi01 > 1.0f)
+                    mi01 = 1.0f;
+                VFX_ComposeConvergeMotes(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 1.4f, 0.0f}), VC_MAT_QI, 1.3f, mi01, 45);
+                break;
+            }
+            case 10:
+                VFX_ComposeChargeConverge(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.9f, 0.0f}), VC_MAT_LIGHTNING, 1.3f, fmodf(s_meshTime, 2.2f) / 2.2f, 45);
+                break;
+            case 11:
+                VFX_ComposeSweepSlash(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 1.2f, 0.0f}), (Vector3){0.0f, 0.0f, 1.0f}, VC_MAT_METAL, 1.8f, 2.2f, fmodf(s_meshTime, 1.6f) / 1.6f);
+                break;
+            case 12:
+                VFX_ComposeLightShaft(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 3.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.05f, 0.0f}), VC_MAT_HOLY, 2.0f, 0.9f);
+                break;
+            case 14:
+                VFX_ComposeBlackHole(VC_MAT_FIRE, s_prefabStartPos, 1.5f, s_meshTime);
+                break;
+            case 15:
+                VFX_ComposeFissureStreak(s_prefabStartPos, Vector3Add(s_prefabStartPos, (Vector3){3.0f, 0, 0}), 0.1f, fminf(progress, 0.99f), s_meshTime);
+                break;
+            case 16:
+                VFX_ComposeIceCrystal(s_prefabStartPos, posSeed);
+                break;
+            case 18:
+                VFX_ComposeStonePillar(s_prefabStartPos, fminf(progress, 0.99f));
+                break;
+            case 19:
+                VFX_DrawIceCrystalBurst(s_prefabStartPos, 10, posSeed, fminf(fmodf(s_meshTime, 2.0f) / 1.2f, 1.0f));
+                break;
+            case 20:
+                VFX_ComposeWaterStream(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.4f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){1.2f, 1.7f, 0.5f}), Vector3Add(s_prefabStartPos, (Vector3){2.6f, 1.3f, -0.5f}), Vector3Add(s_prefabStartPos, (Vector3){3.8f, 0.15f, 0.0f}), 0.22f, fminf(progress, 0.99f), s_meshTime);
+                break;
+            case 21:
+                VFX_ComposeWaterStreamOnPath(s_testPathPoints, TEST_PATH_POINT_COUNT, 0.25f, progress * 1.2f, 0.25f, s_meshTime);
+                break;
+            case 22:
+            {
+                static Matrix sweptXf;
+                static int sweptH = -1;
+                static float sweptPrevT = -1.0f;
+                float a = s_meshTime * 2.4f;
+                Vector3 p = Vector3Add(s_prefabStartPos, (Vector3){3.0f * sinf(a), 1.7f + 0.45f * sinf(a * 0.7f), 2.1f * cosf(a)});
+                if (s_meshTime < sweptPrevT)
+                {
+                    VFX_KillSweptTrail(sweptH);
+                    sweptH = -1;
+                }
+                sweptPrevT = s_meshTime;
+                sweptXf = MatrixTranslate(p.x, p.y, p.z);
+                if (sweptH < 0)
+                    sweptH = VFX_ComposeSweptTrail(&sweptXf, VC_MAT_WATER, 1.60f, 0.85f, VFX_TRAIL_RIBBON);
+                break;
+            }
+            case 23:
+            {
+                static Matrix tubeXf;
+                static int tubeH = -1;
+                static float tubePrevT = -1.0f;
+                float a = s_meshTime * 1.8f;
+                // A path that curves in all three axes — a straight or planar one lets a
+                // broken cross-section frame pass, which is the whole trap in a tube.
+                Vector3 p = Vector3Add(s_prefabStartPos, (Vector3){3.2f * sinf(a), 1.8f + 0.7f * sinf(a * 1.7f), 2.4f * cosf(a * 1.3f)});
+                if (s_meshTime < tubePrevT)
+                {
+                    VFX_KillSweptTrail(tubeH);
+                    tubeH = -1;
+                }
+                tubePrevT = s_meshTime;
+                tubeXf = MatrixTranslate(p.x, p.y, p.z);
+                if (tubeH < 0)
+                    tubeH = VFX_ComposeSweptTrail(&tubeXf, VC_MAT_WATER, 2.40f, 0.85f, VFX_TRAIL_HAZE);
+                break;
+            }
+            case 24:
+            {
+                static Matrix volXf[3];
+                static int volH[3] = {-1, -1, -1};
+                static float volPrevT = -1.0f;
+                if (s_meshTime < volPrevT)
+                {
+                    for (int vk = 0; vk < 3; vk++)
+                    {
+                        VFX_KillVolumeTrail(volH[vk]);
+                        volH[vk] = -1;
+                    }
+                }
+                volPrevT = s_meshTime;
+                float volA = s_meshTime * 1.6f;
+                for (int vk = 0; vk < 3; vk++)
+                {
+                    // One path, three lateral offsets. Curved in ALL THREE axes: a straight or
+                    // planar path lets a broken cross-section frame pass, which is the whole
+                    // trap in a tube (core/docs/LANDMINES.md, 30/07).
+                    Vector3 vp = Vector3Add(s_prefabStartPos, (Vector3){3.0f * sinf(volA) + (float)(vk - 1) * 2.6f,
+                                                                        1.9f + 0.7f * sinf(volA * 1.7f),
+                                                                        2.2f * cosf(volA * 1.3f)});
+                    volXf[vk] = MatrixTranslate(vp.x, vp.y, vp.z);
+                    if (volH[vk] < 0)
+                        volH[vk] = VFX_ComposeVolumeTrail(&volXf[vk], (vk == 0) ? VC_MAT_LIGHTNING : ((vk == 1) ? VC_MAT_EARTH : VC_MAT_FIRE),
+                                                          0.45f, 0.85f, (VFX_VolumeKind)vk);
+                }
+                break;
+            }
+            case 25:
+                VFX_ComposeGroundWave(s_prefabStartPos, VC_MAT_EARTH, 5.0f, fmodf(s_meshTime, 1.6f) / 1.6f, VFX_GroundHeightFromMap, NULL);
+                break;
+            case 29:
+            {
+                static float acc = 0.0f;
+                acc += GetFrameTime();
+                if (acc > 0.55f)
+                {
+                    acc = 0.0f;
+                    Vector3 c = Vector3Add(s_prefabStartPos, (Vector3){0.0f, 1.2f, 0.0f});
+                    float ang = s_meshTime * 1.3f;
+                    Vector3 sp = (Vector3){c.x + cosf(ang) * 2.0f, c.y, c.z + sinf(ang) * 2.0f};
+                    Vector3 v = Vector3Scale(Vector3Normalize(Vector3Subtract(c, sp)), 3.0f);
+                    VFX_ComposeSparkTrail(sp, Vector3Add(v, (Vector3){-sinf(ang) * 2.2f, 0.4f, cosf(ang) * 2.2f}), VC_MAT_LIGHTNING, 0.5f, 0.9f);
+                }
+                break;
+            }
+            case 30:
+            {
+                static Matrix projXf;
+                static int projH = -1;
+                static float projPrevT = -1.0f;
+                if (s_meshTime < projPrevT)
+                {
+                    VFX_KillProjectile(projH);
+                    projH = -1;
+                }
+                projPrevT = s_meshTime;
+                float a = s_meshTime * 1.5f;
+                Vector3 p = Vector3Add(s_prefabStartPos, (Vector3){4.0f * sinf(a), 1.8f + 0.6f * sinf(a * 0.8f), 3.0f * cosf(a * 0.7f)});
+                projXf = MatrixTranslate(p.x, p.y, p.z);
+                if (projH < 0)
+                    projH = VFX_ComposeProjectile(&projXf, VC_MAT_WATER, 0.34f);
+                break;
+            }
+            case 32:
+            {
+                float bt = fmodf(s_meshTime, 2.6f) / 2.6f;
+                // [A] the ordinary case: a held beam across the bench.
+                VFX_ComposeBeam(Vector3Add(s_prefabStartPos, (Vector3){-3.5f, 1.5f, 0.0f}),
+                                Vector3Add(s_prefabStartPos, (Vector3){3.5f, 2.1f, 0.0f}), VC_MAT_LIGHTNING, 0.30f, bt);
+                // [B] END-ON. Nearly vertical, so from most bench angles you look down it.
+                VFX_ComposeBeam(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.1f, 3.0f}),
+                                Vector3Add(s_prefabStartPos, (Vector3){0.0f, 5.0f, 3.0f}), VC_MAT_HOLY, 0.30f, bt);
+                // [C] DEGENERATE. The endpoints close to millimetres and reopen; it must thin
+                // out and disappear, never inflate. It also logs once, then stays quiet.
+                float bgap = 0.004f + 1.6f * (0.5f + 0.5f * sinf(s_meshTime * 1.1f));
+                VFX_ComposeBeam(Vector3Add(s_prefabStartPos, (Vector3){3.0f, 1.5f, -2.5f}),
+                                Vector3Add(s_prefabStartPos, (Vector3){3.0f + bgap, 1.5f, -2.5f}), VC_MAT_FIRE, 0.30f, 0.5f);
+                break;
+            }
+            case 33:
+            {
+                float st = fmodf(s_meshTime, 1.6f) / 1.6f;
+                // Horizontal — the ground wave's pose, without the ground.
+                VFX_ComposeShockRing(Vector3Add(s_prefabStartPos, (Vector3){-3.0f, 1.6f, 0.0f}), (Vector3){0.0f, 1.0f, 0.0f},
+                                     VC_MAT_LIGHTNING, 3.0f, st);
+                // VERTICAL — the case a flat annulus cannot survive.
+                VFX_ComposeShockRing(Vector3Add(s_prefabStartPos, (Vector3){3.0f, 1.8f, 0.0f}), (Vector3){0.0f, 0.0f, 1.0f},
+                                     VC_MAT_METAL, 3.0f, st);
+                break;
+            }
+            case 34:
+            {
+                float pt = fmodf(s_meshTime, 3.2f) / 3.2f;
+                VFX_ComposePortalDisc(Vector3Add(s_prefabStartPos, (Vector3){-2.6f, 0.08f, 0.0f}), (Vector3){0.0f, 1.0f, 0.0f},
+                                      VC_MAT_VOID, 1.6f, pt);
+                VFX_ComposePortalDisc(Vector3Add(s_prefabStartPos, (Vector3){2.6f, 1.9f, 0.0f}), (Vector3){0.0f, 0.0f, 1.0f},
+                                      VC_MAT_TAIJI, 1.6f, pt);
+                break;
+            }
+            case 35:
+            {
+                static Matrix sweptXf;
+                static int sweptTrailId = -1; // -1 = chưa spawn
+                static float sweptPrevT = -1.0f;
+                static Texture2D s_smokeTex;
+                static bool s_smokeTexLoaded = false;
+
+                float a = s_meshTime * 2.4f;
+                Vector3 p = Vector3Add(s_prefabStartPos,
+                                       (Vector3){3.0f * sinf(a), 1.7f + 0.45f * sinf(a * 0.7f), 2.1f * cosf(a)});
+                sweptXf = MatrixTranslate(p.x, p.y, p.z); // vẫn cập nhật mỗi frame — engine tự đọc lại
+
+                if (!s_smokeTexLoaded)
+                {
+                    s_smokeTex = ResourceManager_LoadTexture("assets/textures/smoke_flow.png");
+                    VFX_SmokeTrail_SetTexture(&s_smokeTex);
+                    s_smokeTexLoaded = true;
+                }
+
+                if (sweptTrailId < 0)
+                {
+                    // Spawn ĐÚNG MỘT LẦN. Gọi lại mỗi frame = restart ribbon mỗi frame,
+                    // không bao giờ tích lũy đủ lịch sử để cuộn.
+                    sweptTrailId = VFX_ComposeSmokeTrail(&sweptXf, VC_MAT_FIRE, 0.6f, 2.0f);
+                }
+
+                // reset khi loop demo quay vòng
+                if (s_meshTime < sweptPrevT && sweptTrailId >= 0)
+                {
+                    KillTrail(sweptTrailId);
+                    sweptTrailId = -1;
+                }
+                sweptPrevT = s_meshTime; // cập nhật SAU khi so sánh, không phải trước
+            }
+            }
+            // @gen:newfx_draw end
         }
     }
 }
@@ -911,7 +1129,7 @@ void VFXTest_DrawHUD(void)
         const char **names;
         int gi;
         int vIdx;
-        maxIdx = 35;
+        maxIdx = 37;
         names = s_newFxNames; // @gen:newfx_count
         vIdx = 0;
         (void)names;
@@ -944,17 +1162,37 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
 
     // Fire oneshots immediately for warmup rendering.
     // @gen:newfx_render_trigger begin
-    switch (newfxIndex) {
-    case 0: VFX_ComposeSmokePuff(pos, VC_MAT_EARTH, 1.0f, 1.0f); break;
-    case 1: VFX_ComposeEnergyBurst(pos, VC_MAT_FIRE, 1.0f, 0.9f); break;
-    case 2: VFX_ComposeImpactPackage(pos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_EARTH, 1.0f, 1.0f); break;
-    case 13: VFX_ComposeCharacterAura(0, VC_MAT_FIRE, 1.0f); break;
-    case 17: VFX_ComposeParticleUpgradesTest(pos); break;
-    case 26: VFX_ComposeImpactFlash(pos, VC_MAT_FIRE, 1.0f, 0.8f); break;
-    case 27: VFX_ComposeImpactDistort(pos, 1.0f, 0.8f); break;
-    case 28: VFX_ComposeImpactDecal(pos, VC_MAT_FIRE, 1.0f, 0.8f); break;
-    case 31: VFX_ComposeDebrisShards(pos, (Vector3){2.5f, 3.0f, 0.0f}, VC_MAT_METAL, 0.09f, 14); break;
-    default: break;
+    switch (newfxIndex)
+    {
+    case 0:
+        VFX_ComposeSmokePuff(pos, VC_MAT_EARTH, 1.0f, 1.0f);
+        break;
+    case 1:
+        VFX_ComposeEnergyBurst(pos, VC_MAT_FIRE, 1.0f, 0.9f);
+        break;
+    case 2:
+        VFX_ComposeImpactPackage(pos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_EARTH, 1.0f, 1.0f);
+        break;
+    case 13:
+        VFX_ComposeCharacterAura(0, VC_MAT_FIRE, 1.0f);
+        break;
+    case 17:
+        VFX_ComposeParticleUpgradesTest(pos);
+        break;
+    case 26:
+        VFX_ComposeImpactFlash(pos, VC_MAT_FIRE, 1.0f, 0.8f);
+        break;
+    case 27:
+        VFX_ComposeImpactDistort(pos, 1.0f, 0.8f);
+        break;
+    case 28:
+        VFX_ComposeImpactDecal(pos, VC_MAT_FIRE, 1.0f, 0.8f);
+        break;
+    case 31:
+        VFX_ComposeDebrisShards(pos, (Vector3){2.5f, 3.0f, 0.0f}, VC_MAT_METAL, 0.09f, 14);
+        break;
+    default:
+        break;
     }
-// @gen:newfx_render_trigger end
+    // @gen:newfx_render_trigger end
 }

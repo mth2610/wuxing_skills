@@ -33,7 +33,7 @@
 
 #include "core/tuning.h"
 
-#define PROJ_MAX 6      // concurrent projectiles
+#define PROJ_MAX 6 // concurrent projectiles
 #define PROJ_WISPS 2
 
 // Per-wisp: width x radius, tail memory in seconds, spiral radius x radius,
@@ -137,8 +137,9 @@ int VFX_ComposeProjectile(const Matrix *followTransform, VC_MaterialId mat,
     // THE FIELD, spawned FIRST so it is the backdrop the rest sits on. Its width
     // is a ceiling: the aspect rule caps it against the length actually
     // travelled, so a slow projectile gets a narrow field rather than a fat stub.
-    p->fieldH = VFX_ComposeSweptTrail(&p->headXf, mat, r * 7.0f,
+    p->fieldH = VFX_ComposeSweptTrail(&p->headXf, mat, r * 3.0f,
                                       0.55f * s_projFieldLen, VFX_TRAIL_HAZE);
+
     p->mainH = VFX_ComposeSweptTrail(&p->headXf, mat, r * 2.6f, 0.75f,
                                      VFX_TRAIL_RIBBON);
     // THE WISPS ARE NOT TWINS. Equal length, equal width and a fixed 180-degree

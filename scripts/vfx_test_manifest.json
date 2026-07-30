@@ -450,6 +450,22 @@
         "                      VC_MAT_TAIJI, 1.6f, pt);",
         "}"
       ]
+    },
+    {
+      "fn": "VFX_ComposeSmokeTrail",
+      "label": "SMOKE TRAIL",
+      "category": "util",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeSmokeTrail(/* TODO:const Matrix */, VC_MAT_FIRE, 1.5f, 2.0f)"
+    },
+    {
+      "fn": "VFX_SmokeTrail_SetTexture",
+      "label": "SMOKE TRAIL_ SET TEXTURE",
+      "category": "util",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_SmokeTrail_SetTexture(/* TODO:const Texture2D */)"
     }
   ],
   "overrides": {

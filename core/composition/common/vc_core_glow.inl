@@ -1,39 +1,4 @@
 // ── PRIMARY. VFX_ComposeCoreGlow — one hot point of light ───────────────────
-//
-// EXTRACTED from VFX_ComposeChargeConverge, 29/07. The look is already signed
-// off, so this costs no visual iteration — only its address changes. That is
-// the whole reason extraction comes before invention (VFX_PLAN §Part 4): a
-// primary invented from scratch costs three to five rounds of "write it blind,
-// owner looks, guess again", and H1's swept trail took more than that.
-//
-// WHAT IT IS. A single bright point that reads as *too bright to have a colour*,
-// with a falloff around it. Every composite that needs a destination or a source
-// needs exactly this and nothing else: a charge's centre, an orb's heart, an
-// impact's flash point, a beam's muzzle, a rune's hub. Before this it existed in
-// one place, buried 80 lines inside a composite, and could not be fired on its
-// own or judged on its own.
-//
-// WHY IT IS THREE SPRITES AND NOT ONE, and this is the part that is knowledge
-// rather than taste:
-//
-//   1. THE HOT CORE — small, near-white, high emissiveBoost. Whitened at the
-//      source because a saturated element hue stacks additively into more of the
-//      same hue and never reaches white, so the boost has nothing to lift.
-//   2. THE MID GLOW — wider, kept only just over the bloom threshold. The bright
-//      pass CLAMPS each pixel's contribution (`bloom_max_energy` = 4.0), so past
-//      that point raising the tiny core's boost adds nothing at all: **bloom
-//      size is driven by how many pixels clear the threshold, not by how far one
-//      pixel clears it.** This layer is the one that actually buys the bloom.
-//   3. THE WIDE HALO — no boost. This is the glow AROUND the hot spot, not a
-//      second hot spot, and it is what stops the core ending at a sprite edge.
-//
-// A single sprite cannot do all three: make it small and it has no falloff, make
-// it big and additive brightness spreads over AREA so it gets DIMMER as it
-// grows. That is also why the core's radius grows only gently with intensity.
-//
-// IMMEDIATE MODE. Call it every frame for as long as the glow should exist; it
-// emits by RATE with a fractional accumulator, so its density does not move with
-// the frame rate. It is not a one-shot and does not own a handle.
 
 #define CORE_GLOW_RATE_MIN 8.0f  // sprites/sec at intensity 0
 #define CORE_GLOW_RATE_MAX 30.0f // ...and at intensity 1
