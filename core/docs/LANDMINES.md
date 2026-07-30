@@ -911,3 +911,33 @@ never ran" are indistinguishable on screen, stop reading and print the value.**
 matches comments as well as code, so `!FileHas("style > VFX_TRAIL_FILAMENT")`
 failed against the comment explaining the fix — the test broke *because* the bug
 had been documented. Give a negative needle punctuation only the code can carry.
+
+## Normalising a near-zero vector collapses geometry SILENTLY (30/07/2026)
+
+**Symptom.** A swept tube rendered as a flat plane. No NaN, no crash, nothing in
+the log — just wrong geometry that looked like a deliberate ribbon.
+
+**Cause.** The parallel-transported cross-section frame is re-orthogonalised
+against the tangent every slice:
+
+```c
+right = Vector3Normalize(Vector3Subtract(
+    right, Vector3Scale(tangent, Vector3DotProduct(right, tangent))));
+```
+
+When the carried frame drifts parallel to the tangent — a path that doubles back,
+or two coincident nodes making the tangent garbage — that subtraction yields
+~zero, and normalising ~zero returns garbage. `right` and `up` then span nothing,
+so every ring's points fall on a LINE and the tube draws as a plane.
+
+**Rule.** Any `Normalize` whose input can degenerate needs a length check and a
+defined fallback. The fallback does not have to be as good as the normal path —
+here it is the less-stable reference frame — it only has to be *valid*, because
+the alternative is not a slightly worse result but a structurally different one.
+
+**And the reason it cost four rounds:** "the tube renders flat" had FOUR
+independent causes in this codebase (a ribbon sheet wrapped around a cylinder, a
+fix applied to one layer of two, a missing batch flush around the cull state, and
+this). Each fix was correct and none of them changed what was on screen, which
+read three times as "the fix didn't work". **When a symptom survives a fix you
+have verified is correct, look for a second cause rather than doubting the fix.**

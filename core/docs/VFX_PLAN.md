@@ -302,269 +302,173 @@ wrong thing.
 
 ---
 
-## Part 4 — The composition library: PRIMARY and COMPOSITE (29/07/2026)
+## Part 4 — The PRIMARY catalogue (rewritten 30/07/2026)
 
-The owner's direction, and it is right: split the library by **role**, not by
-element, and make the two tiers explicit.
+### 4.0 What changed: there is now a VOLUME primitive
 
-- **PRIMARY** — the smallest thing with a name. One visual idea, no timing
-  beyond its own envelope, callable on its own, its own bench entry, its own
-  tier gate and budget switch. `VFX_ComposeImpactFlash`, `VFX_ComposeGroundWave`.
-- **COMPOSITE** — a SCORE over primaries, and nothing else. Its content is
-  *which primaries, at what times, at what strength*. `VFX_ComposeImpactPackage`
-  is now exactly this and nothing more.
+Until 30/07 every visual this project owned was a camera-facing sprite or a flat
+strip, and §0.1 named that as the whole diagnosis. That is no longer true. The
+trail system can now sweep a **volume**, and the pieces are in and tested:
 
-`common/` is already the role-based folder; the element folders hold what is
-genuinely element-specific. That part of the structure does not need changing.
+| Capability | Where | State |
+|---|---|---|
+| `TRAIL_SHAPE_TUBE` — swept cross-section, layers, material UV, cloth | `core/trail_system.h` | landed, 16/16 suites |
+| Teardrop profile + apex caps + taper | `ProceduralMesh_DefaultTubeConfig` | pre-existing, now used |
+| **Parallel-transport frame** (`useTransportFrame`) | `core/geometry/pm_tube.inl` | landed; opt-in so water stream is untouched |
+| Scrolling UV along a tube (`ProceduralMesh_DrawTubeEx`) | same | landed |
+| Vertex deform sampled from `volume_noise.png` | same | landed |
+| Two-phase flow map, displacement **centred** | `core/shaders/flow_map.fs` | bug fixed, still **zero consumers** |
+| Tiling flow field generator | `FlowMap_CreateWithTrailTexture` | landed |
+| Seamless smoke / fire / energy / noise / flow / gradient sheets | `scripts/gen_volume_trail_textures.py` | landed, seams measured |
 
-### The rule that keeps the count honest
+**VERIFIED ON SCREEN 30/07.** It took four independent causes of one symptom
+("renders flat"), fixed in sequence, and it looked identical after the first
+three: a ribbon sheet wrapped around a tube; that fix applied to one layer only;
+a missing batch flush around the cull state; and finally the transported frame
+collapsing onto the tangent, where `Vector3Normalize` of ~zero flattened the
+whole cross-section into a line. The last one is the general lesson — see
+`docs/LANDMINES.md`.
 
-**A variation that differs only in numbers is a PARAMETER, not a function.**
-Small/Medium/Large Explosion, Vertical/Horizontal/Cross Slash, Fire/Void/Energy
-Orb, Inner/Outer/Breathing Aura — every one of those is one primary with an
-argument. Turning parameters into functions is how a 20-function library becomes
-120 without gaining a single new capability, and every one of them then costs
-its own bench entry, its own test and its own rounds of visual iteration.
+### 4.1 The two rules that decide what is a primary
 
-Judged that way, the proposed catalogue of ~120 collapses to roughly **30-35
-primaries**, of which we already have 14. That is the real target.
+1. **A variation that differs only in numbers is a PARAMETER.** Small/Medium/
+   Large explosion, Fire/Void/Energy orb, Inner/Outer aura — one function with an
+   argument. This is what keeps a 30-function library from becoming 120 without
+   gaining a capability.
+2. **Decompose before you invent.** A primary extracted from an approved
+   composite costs no visual iteration. One invented from scratch costs 3-5
+   rounds of write-blind → owner looks → guess again. This session spent most of
+   its rounds on the second kind, and every one of the cheap wins was the first.
 
-### The rule that decides the ORDER, and it is the expensive lesson of this week
+### 4.2 What exists (15 primaries + 2 composites)
 
-**Decompose before you invent.** A primary extracted from an approved composite
-costs no visual iteration — the look is already signed off, only its address
-changes. A primary invented from scratch costs 3-5 rounds of "write it blind,
-owner looks, guess again": H1's swept trail took four and is still not right.
+**Primaries:** `SmokePuff` `FlameVolume` `CharacterAura` `GlintSparkle`
+`RuneCircle` `DissolveExit` `SweepSlash` `EnergyBurst` `LightShaft`
+`ImpactFlash` `ImpactDistort` `ImpactDecal` `SweptTrail` `GroundWave`
+`SparkTrail` `CoreGlow` `EnergyOrb`
 
-So the queue is: (1) extract the primaries that already exist inside composites,
-(2) wire the primitives that exist and have no consumer (the VFX_PLAN §0 table:
-trail system, flow map, crystal/plasma materials, path spline), (3) only then
-invent.
+**Composites:** `ImpactPackage` `Projectile` (and `ChargeConverge`, which is one
+primary short of being a pure score — the converge motes still need extracting).
 
-**And extraction finds bugs, which is the second reason it comes first.** The
-first extraction, done today, found that `VFX_ComposeImpactPackage`'s DECAL beat
-had shipped with no texture in its `.ud`, so the sequencer's
-`if (b->ud != NULL)` skipped it every time: **every impact in the game has been
-leaving no mark at all**, while the `normal` the function takes was written into
-a static ring and never read. It failed silently, logged nothing, and survived
-every review — because a beat buried in a 169-line composite has no bench entry
-and cannot be fired on its own. That is the case for the whole split, made by
-the code rather than by argument.
+### 4.3 What is MISSING, in build order
 
-### Where the trail sheet fits
-
-The owner's reference sheet lists eight trail types. Five of the eight are the
-same primary with different material and width — H1's `VFX_TrailStyle` already
-covers BLADE / RIBBON / FILAMENT, and Beam / Projectile / Smoke / Flow /
-Lightning are (in order) `DrawRibbonEnergyField`, the trail system's PROJECTILE
-type, a particle emitter, a flow-mapped strip (H4), and `core/vfx_proc_ray.h` —
-**all of which already exist and four of which have no consumer.** Almost none
-of that sheet is new technology; it is wiring, and it belongs in step (2).
-
-**H1's BLADE is still broken, so no new trail work starts before it is fixed.**
-Adding five trail types on top of one that dashes multiplies the debt.
-
-### First two pieces of step (2), landed 29/07
-
-**`VFX_ComposeSparkTrail`** — one small moving thing with a CURVED tail, on
-`TRAIL_TYPE_WISP` (another trail-system entry point with no consumer). This is
-the piece the owner identified as blocking everything upstream: Charge Converge
-and the deleted Spirit Swarm read as DOTS, and a charge is a COMPOSITE whose
-quality is capped by the primaries it has to draw from. Not stretched sprites —
-`stretchStrength` streaks along the velocity, which is a straight segment, and a
-mote spiralling into a point is doing nothing but turning.
-
-The immediate follow-on is one line: Charge Converge spawns these instead of
-plain particles. It is deliberately NOT done in the same change — the trail has
-to be judged on its own first, or a bad result has two candidate causes.
+Each entry below is a spec. They are ordered so that nothing is blocked by
+anything after it.
 
 ---
 
-### H9. The reference PROJECTILE — the owner's build guide (29/07)
+#### P1. `VFX_ComposeVolumeTrail` — promote the tube to a named primary
 
-The owner supplied a full layer-breakdown guide, and it **corrects this section's
-previous answer**, which was over-pessimistic. That answer said the tail needed a
-new invent-tier primary, `VFX_ComposeFilamentPlume`, at 3-5 rounds of blind
-iteration. Two of the five reasons given for it do not survive the guide:
+**Why it is first:** the tube exists only as `VFX_TRAIL_HAZE`, a *style* of the
+swept trail, reachable only through a trail handle. Smoke, fire, a dragon's
+breath and a beam all want a swept volume without wanting a weapon trail's
+cloth, aspect cap or spark layer.
 
-- *"A trail has one end, a plume has many."* The guide does not build a plume. It
-  builds **one main ribbon trail plus 1-3 WISPS** — "1-3 is enough, offset from
-  main trail, animate freely". Three or four endpoints, not dozens, and each wisp
-  is its own ordinary ribbon.
-- *"The haze is a continuum with the streaks, not a separate puff."* True, and
-  the guide's answer is that the haze is **not a layer at all** — it is layer 8,
-  GLOW, i.e. bloom. Adding a smoke primary for it would have been the mistake.
+```c
+typedef enum { VOL_ENERGY = 0, VOL_SMOKE, VOL_FIRE } VFX_VolumeKind;
 
-The remaining three reasons stand and are now scoped correctly: they are
-arguments about the MAIN ribbon's shape (widen backward, release rather than
-anchor, twist), not arguments for a different primitive.
-
-#### ...and then wrong a SECOND time, in the opposite direction
-
-The owner then described the structure himself, and the reading here was wrong
-again — this time by making the connective field between orb and tail into
-geometry WELDED to the head, with no history, on the argument that a trail could
-never keep up through a hard turn. His correction: *"trường năng lượng nó cũng là
-1 trail, nó cũng uốn lượn theo quĩ đạo bay, giống `vc_swept_trail.inl` — nhưng
-khác là cái đuôi này nó mờ ảo, đóng vai trò làm nền."* It curves along the
-trajectory, so it HAS history, so it is a trail. It is simply faint, and it is a
-backdrop.
-
-**Why that mistake was available at all, which is the reusable part:** the
-reasoning was done from a STILL image, and in a still, a wedge welded to the head
-and a short faint trail are indistinguishable. The evidence that separates them —
-*does it lag through a turn?* — exists only in motion. When a structural argument
-turns on behaviour over time, a still cannot settle it, and the person who has
-watched it move can.
-
-**The structure that survives both corrections**, and it is the owner's:
-
-```
-orb (shell + core)
-  └─ HAZE trail   — wide, faint, soft-edged. The backdrop that gives the wake mass.
-  └─ main trail   — defined, textured, sharp. The shape.
-  └─ 1-3 wisps    — thin, offset, free. The silhouette breakers.
+int  VFX_ComposeVolumeTrail(const Matrix *followTransform, VC_MaterialId mat,
+                            float radius, float lifetime, VFX_VolumeKind kind);
+void VFX_KillVolumeTrail(int handle);
 ```
 
-All three follow the same trajectory and keep history. They differ in width
-profile, opacity, sheet, and how loosely they are anchored — which is the
-definition of a PARAMETER, so they are **styles of one primary**, not three
-functions (VFX_PLAN §Part 4's count rule). `VFX_TRAIL_HAZE` landed 29/07 as the
-fourth style; the wisps are `VFX_TRAIL_FILAMENT` on caller-driven matrices and
-need no new code at all.
+- `kind` selects the sheet (`smoke_volume` / `fire_volume` / `energy_volume`),
+  the noise amplitude and the flow swirl. Nothing else differs — that is the
+  point.
+- Reuse `TRAIL_SHAPE_TUBE` wholesale. Do NOT write a second tube.
+- **DoD:** bench entry `VOLUME TRAIL` with the three kinds on a curved path;
+  headless test pinning that the three kinds differ in sheet + noise + swirl and
+  in nothing else.
 
-#### The eight layers, against what exists
+#### P2. `VFX_ComposeConvergeMotes` — finish decomposing ChargeConverge
 
-| # | Guide layer | What it says | Ours | Gap |
-|---|---|---|---|---|
-| 1 | **CORE** | small, bright, additive + HDR, soft edges | `VFX_ComposeCoreGlow` | none |
-| 2 | **SHELL** | volume + surface; sphere mesh, **additive + Fresnel**, slight transparency | `VFX_ComposeEnergyOrb` | none |
-| 3 | **ENERGY FLOW** | flow texture, **UV scrolls OPPOSITE to travel**, distort with noise | orb scrolls its FBM at a fixed rate | **UV not tied to the travel direction**; `core/flow_map.c` + `flow_map.fs` still have zero consumers |
-| 4 | **RIBBON TRAIL** | width over length, alpha over length, noise, taper, **twist** | `VFX_ComposeSweptTrail` | no **twist**; spread is on the swing-plane normal, not the velocity |
-| 5 | **WISPS** | 1-3 thin ribbons offset from the main trail, animating freely | — | **none, and none needed**: three more `VFX_ComposeSweptTrail` handles on caller-driven matrices. This is score, not primary |
-| 6 | **PARTICLES** | small amount; spark, glow dot, ember, dust; "less is more" | swept-trail sparkles, `VFX_ComposeGlintSparkle` | none |
-| 7 | **DISTORTION** | warps the air around it | `VFX_ComposeImpactDistort` (one-shot at an impact) | needs a **travelling** variant, and the `distort_normal_*` maps are the one genuinely missing asset (PROGRESS §5) |
-| 8 | **GLOW** | bloom + intensity, "don't overdo it, control with HDR" | E1 bloom + `emissiveBoost` | none |
+The one visual idea `ChargeConverge` still owns: motes peeling off a shell and
+being drawn in along curved threads. Extract it verbatim; the composite then
+becomes a pure score (motes + `CoreGlow` + light).
 
-**So the projectile really is mostly a SCORE** — five of eight layers are done,
-one (WISPS) is score rather than code, and the two real gaps are small: a flow UV
-that knows the travel direction, and a travelling distortion that is waiting on
-two textures.
+```c
+void VFX_ComposeConvergeMotes(Vector3 center, VC_MaterialId mat, float radius,
+                              float t01, int moteCount);
+```
 
-#### The guide's COMMON MISTAKES list, scored against this week
+**DoD:** `ChargeConverge` shrinks to three calls; a headless test asserts every
+authored number arrived intact (copy the shape of `core_glow_test.c`, which
+exists precisely to make an extraction provable).
 
-It is worth copying out, because four of the six are bugs this project actually
-shipped and paid for:
+#### P3. `VFX_ComposeDebrisShards` — rewrite the restored scaffold
 
-| Guide's mistake | Us |
-|---|---|
-| Too bright / no contrast | the additive layer stack summed to 2.01 — see docs/LANDMINES.md |
-| Uniform width trail | the lens envelope exists because the first version was uniform |
-| No taper or fade | the first blade head was a flat cut-off |
-| Harsh edges | the halo carried the body's texture and came out scalloped |
-| Too many particles | not hit — the sparkle rate has been conservative |
-| Random chaos | hit, and named by the owner: "a snake being swung by the head", fixed by the home anchor |
+`VFX_ComposeShardDebris` is a pre-Đợt-E survivor, not a survivor of the purge.
+The reference projectile needs chips catching light in its wake.
 
-#### THE STRUCTURAL ERROR, found 30/07 — and it explains every failure above
+```c
+void VFX_ComposeDebrisShards(Vector3 pos, Vector3 vel, VC_MaterialId mat,
+                             float scale, int count);
+```
 
-The owner: *"đập lại xây lại từ đầu. Nó quá sai rồi."* He is right, and the
-diagnosis is one sentence: **every layer I built is a flat camera-facing ribbon.**
+- Angular flat-shaded chips (`DrawCoreCube` squashed, per-instance random), NOT
+  sprites: a chip that is the same shape from every angle is a spark.
+- Tumble on their own axis; the tumble is what catches light.
+- **DoD:** bench entry; test pinning count-vs-tier and that emission is a count
+  per CALL (one-shot) rather than a rate.
 
-Look at what the spec actually asks for, layer by layer:
+#### P4. `VFX_ComposeBeam` — the sustained line
 
-| Layer | Spec says | What I built |
-|---|---|---|
-| 2 Shell | sphere **mesh**, fresnel rim, UV scroll | sphere mesh — correct |
-| 3 Flow | **mesh dạng ống dài (tube/cylinder)** along the flight axis, scrolling noise | a flat ribbon (`VFX_TRAIL_HAZE`) |
-| 4 Ribbon | ribbon trail | ribbon — correct |
-| 5 Wisps | small ribbons | ribbons — correct |
+Nothing in the library draws a held beam. `DrawRibbonEnergyField` exists with one
+consumer and `vfx_proc_ray.h` has none.
 
-Layer 3 is a **TUBE**, and a tube is the one thing a flat strip can never imitate:
-it has a silhouette from every angle, it occludes and is occluded along its own
-length, and its scrolling texture wraps AROUND it instead of sliding across a
-card. That is why the field never read as volume however its alpha was tuned —
-three rounds were spent on brightness for a shape that was wrong.
+```c
+void VFX_ComposeBeam(Vector3 from, Vector3 to, VC_MaterialId mat,
+                     float width, float t01);
+```
 
-And this is not a new lesson. It is §0.1 of this very document, written before
-any of Đợt H was built: *"almost everything we own is a camera-facing sprite...
-a sprite cannot hold a silhouette from any angle."* Đợt H exists to build the
-GEOMETRY half of the toolkit, and I built the projectile's field out of the
-particle half anyway.
+- A swept tube between two points is the obvious build now that P1 exists.
+- **DoD:** must hold up when `from`/`to` are nearly coincident, and when the beam
+  is viewed end-on.
 
-**`ProceduralMesh_BuildTubeAlongPath` already exists** (core/geometry/
-procedural_mesh_utils.h): a tube along an arbitrary path with Frenet frames,
-taper and deform. Feed it a trail's history and layer 3 is geometry, not a card.
-It is another entry on the §0 list of primitives with no consumer.
+#### P5. `VFX_ComposeShockRing` — the expanding ring, off the ground
 
-#### The rebuild, in order
+`GroundWave` conforms to terrain. A ring in mid-air (an impact in the air, a
+parry, a barrier break) is a different primary and wants no height function.
 
-1. **Layer 3 as a real tube.** `VFX_ComposeEnergyTube` — a primary that builds a
-   tube along a path and scrolls noise along it. This replaces `VFX_TRAIL_HAZE`
-   in the projectile; the style itself can stay for cases that genuinely want a
-   flat wide backdrop.
-2. **A dedicated shell material.** `aura_shell.fs` is authored for buff-column
-   cylinders: it carries horizontal SCANLINE RINGS and a top-edge fade that mean
-   nothing on a projectile. `PlasmaMaterial` is not the answer either — the owner
-   ruled it out explicitly. The orb wants its own small shader: fresnel + scrolled
-   noise + HDR, nothing else.
-3. **Then re-judge the trails.** The ribbon layers may well be fine once they are
-   sitting on a tube instead of on another ribbon; changing them now would be
-   tuning against a broken backdrop.
+#### P6. `VFX_ComposePortalDisc` — the flat disc with a rim
 
-**A blocker I raised and then disproved, kept because the reasoning error is the
-reusable part.** I warned that `flow_map.fs` declares TWO samplers and that this
-engine has a proven rlvk landmine where a second sampler unbinds the first — so
-its zero consumers might mean it cannot work on the priority backend. The owner
-said he remembered the flow map working, and he is right. The counter-evidence
-was already in the tree and took one command to find:
-
-| Shader | Samplers | Consumers |
-|---|---|---|
-| `surface_lit.fs` | **4** | `core/surface_material.c` — shipping |
-| `decal_flow.fs` | **2** | 2 files — shipping |
-
-Multi-sampler shaders work fine here. Reading the landmine again, it says
-something narrower than I repeated: adding a *second* sampler to a shader that
-had *one* made shaderc **rebase the binding indices**, which moved `texture0` out
-from under raylib's implicit binding. A shader authored with two samplers from
-the start and binding both explicitly — which is what `decal_flow.fs`,
-`surface_lit.fs` and `flow_map.fs` all do — never relies on that implicit slot
-and is not affected.
-
-**The error to avoid repeating:** I turned a specific, mechanism-level landmine
-("adding a sampler shifts an implicit binding") into a general prohibition
-("shaders cannot have two samplers"), and then used it to block work. A landmine
-entry states its mechanism precisely for exactly this reason — re-read the
-mechanism before letting one veto a design, and check whether anything shipping
-already contradicts the general form.
-
-So `flow_map.fs`'s zero consumers are an oversight, not an incompatibility, and
-layer 3 can be built on it.
-
-#### Order
-
-(a) layer 3 — give the shell's flow UV the travel direction, and wire
-`flow_map.fs`, which has been sitting unused → (b) layer 4 — twist, and a
-velocity-aligned spread → (c) the composite, which spawns the orb, the main
-trail and 2 wisps and is a score over five calls → (d) layer 7 last, since it is
-blocked on art.
-
-### Why the orb went first, and what it cost
-
-`aura_shell.fs` was already in the tree with a `fresnelPower` its own header
-documents as *"higher = emptier center"* — and no consumer since it was written.
-That is the VFX_PLAN §0 list of unused primitives paying off exactly as the queue
-predicted: the orb is wiring, not invention.
-
-Two approaches were rejected before it, both already paid for once:
-- **Concentric additive shells alone** (the black-hole technique). Additive
-  stacking is brightest where you look through the most shells — the CENTRE —
-  which is precisely backwards for an orb. Shells buy turbulence, not a rim.
-- **A translucent EffectMaterial sphere.** Proposed once as a glass ball and
-  rejected: its translucency has a 0.3 alpha floor and cannot get out of its own
-  way (docs/LANDMINES.md).
+`TRAIL_TYPE_PORTAL` exists with no consumer.
 
 ---
+
+### 4.4 If the tube ever looks flat again
+
+There are exactly two causes and they need different fixes. The roundness line in
+`core/trail_system.c` separates them in one run:
+
+```
+TRAIL tube: 24 rings x 8 radial, section 1.550 x 1.480 m (roundness 0.95 ...)
+```
+
+- **no line at all** → the tube branch never ran and a ribbon is drawing. Check
+  `shape` in the `VFX_SWEPT` spawn line and the `GfxQuality_Get() >= GFX_MED`
+  gate.
+- **roundness < 0.2** → the section collapsed. The degenerate-frame guard in
+  `pm_tube.inl` is missing a case.
+
+Do not guess between them. Four rounds went on exactly that.
+
+### 4.5 The dials that exist, so nobody re-derives them
+
+`tuning.cfg`, all live, no rebuild:
+
+```
+haze_solid = 0    # 1 = opaque white — judge SHAPE with no additive confusion
+haze_layers = 1   # 1 or 2
+haze_tex = 0      # 0 bare / 1 energy / 2 smoke / 3 fire
+haze_rim = 1      # 1 = both walls (free rim), 0 = near wall only
+haze_noise = 0.18 # vertex deform amplitude, fraction of radius
+swept_flow = -1.0 # tiles/sec over the cloth; NEGATIVE runs against travel
+swept_tile = 1.10 # metres per texture repeat
+swept_alpha = 1.0
+orb_rim / orb_core / orb_size
+proj_spiral_turns / proj_spiral_r / proj_scale
+```
 
 ## What is deliberately out of scope
 

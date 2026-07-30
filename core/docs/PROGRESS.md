@@ -54,6 +54,18 @@ to go through a log line, a tunable, or arithmetic.
 
 ## Open items
 
+### 0. VOLUMETRIC TRAIL — the geometry half now exists (30/07)
+
+`TRAIL_SHAPE_TUBE` landed: the trail system sweeps a volume, not only a strip.
+Full account, the specs for what comes next, and a ready-to-paste prompt for a
+fresh session are in **`docs/HANDOFF_VOLUME_VFX.md`** — read that rather than
+this entry if you are picking the work up.
+
+**Verified on screen 30/07.** Four independent causes of one symptom ("renders
+flat") had to be fixed in sequence; the last was the transported frame collapsing
+onto the tangent, where normalising a ~zero vector flattens the whole section into
+a line — silent, no NaN, no log. The general lesson is in `docs/LANDMINES.md`.
+
 ### 0. H1 swept trail — REBUILT against the owner's ribbon-trail guide (29/07)
 
 The draw was replaced wholesale: the composition now renders its own three-layer

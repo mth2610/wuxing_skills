@@ -306,6 +306,7 @@
 ```c
   FlowMap FlowMap_Create(Shader shader, Texture2D flowTex, const char *timeUniformName);
   FlowMap FlowMap_CreateWithVortexTexture(Shader shader, int texSize, const char *timeUniformName);
+  FlowMap FlowMap_CreateWithTrailTexture(Shader shader, int texSize, float swirl, const char *timeUniformName);
   void FlowMap_Apply(const FlowMap *fm, Shader shader, float time);
   void FlowMap_Unload(FlowMap *fm);
 ```
@@ -506,6 +507,7 @@
   void ProceduralMesh_BuildTube(TubeMeshData *out, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float baseRadius, float flowProgress, float time, int segments, int radialSegs, const TubeMeshConfig *cfg);
   void ProceduralMesh_BuildTubeAlongPath(TubeMeshData *out, const Vector3 *pathPoints, int pathCount, float baseRadius, float startT, float endT, float time, int segments, int radialSegs, const TubeMeshConfig *cfg);
   void ProceduralMesh_DrawTube(const TubeMeshData *data, float uvLengthScale);
+  void ProceduralMesh_DrawTubeEx(const TubeMeshData *data, float uvLengthScale, float uvOffset);
   WavePlaneConfig ProceduralMesh_DefaultWavePlaneConfig(void);
   void ProceduralMesh_BuildWavePlane(WavePlaneMeshData *out, Vector3 center, float width, float length, int segmentsX, int segmentsZ, float time, const WavePlaneConfig *cfg);
   void ProceduralMesh_DrawWavePlane(const WavePlaneMeshData *data, Color color);
