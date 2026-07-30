@@ -234,84 +234,18 @@ void VFX_ComposeChargeConverge(Vector3 center, VC_MaterialId mat, float radius,
         });
     }
 
-    // The hot core the threads are feeding. Without it the centre is the one
-    // empty spot in the composition and the convergence has no destination.
+    // THE DESTINATION, now a primary call. This used to be eighty lines of
+    // three stacked sprites plus a point light, inlined here — which meant the
+    // one place in the tree that knew how to make a hot point of light could not
+    // be fired on its own, judged on its own, or reused by anything that was not
+    // a charge. `VFX_ComposeCoreGlow` is that code verbatim; only its address
+    // changed, so the look is unchanged.
+    //
+    // What is left in THIS function is the one visual idea it owns: motes
+    // peeling off a shell and being drawn in along curved threads. A composite
+    // should be a score over primaries and nothing else (VFX_PLAN §Part 4), and
+    // this is one primary short of that — the converge itself still wants
+    // extracting.
     if (s_chargeCore > 0.5f && t01 > 0.05f)
-    {
-        static float s_coreAccum = 0.0f;
-        s_coreAccum += GetFrameTime() * (8.0f + 22.0f * t01);
-        int coreSpawn = (int)s_coreAccum;
-        if (coreSpawn > 4) coreSpawn = 4;
-        s_coreAccum -= (float)coreSpawn;
-
-        for (int c = 0; c < coreSpawn; c++)
-        {
-            SpawnParticle((ParticleConfig){
-                .position = center,
-                // Grows only gently: additive brightness is energy spread over
-                // AREA, so a core that scales fast gets DIMMER as it fills.
-                .radius   = (0.045f + 0.075f * t01) * radius * s_chargeSize,
-                .lifetime = Math_Mix(0.10f, 0.18f, Random01()),
-                // Nearly white — the one place the charge is too bright to have
-                // a colour.
-                .colorStart = VC_WithAlpha(VC_Whiten(m->glow, 0.75f), 255),
-                .colorEnd   = VC_WithAlpha(m->glow, 0),
-                .alphaCurve = &s_chargeFade,
-                .render.blendMode = VFX_BLEND_ADDITIVE,
-                .render.unlit     = 1,
-                .render.emissiveBoost = Math_Mix(4.0f, 14.0f, t01),
-            });
-
-            // MID GLOW — the layer that actually buys bloom. The bright pass
-            // clamps each pixel's contribution (bloom_max_energy, 4.0), so past
-            // that point raising emissiveBoost on the tiny core adds nothing:
-            // bloom size is driven by HOW MANY pixels clear the threshold, not
-            // how far one pixel clears it. This is a wider sprite kept just over
-            // the line rather than a second white-hot point.
-            if (c == 0)
-            {
-                SpawnParticle((ParticleConfig){
-                    .position = center,
-                    .radius   = (0.10f + 0.16f * t01) * radius * s_chargeSize,
-                    .lifetime = 0.13f,
-                    .colorStart = VC_WithAlpha(VC_Whiten(m->glow, 0.5f), 200),
-                    .colorEnd   = VC_WithAlpha(m->glow, 0),
-                    .alphaCurve = &s_chargeFade,
-                    .render.blendMode = VFX_BLEND_ADDITIVE,
-                    .render.unlit     = 1,
-                    .render.emissiveBoost = Math_Mix(1.6f, 3.2f, t01),
-                });
-            }
-
-            // A wide faint halo on the same point so the core has a falloff
-            // instead of ending at the sprite edge. No boost: this is the glow
-            // AROUND the hot spot, not a second hot spot.
-            if (c == 0)
-            {
-                SpawnParticle((ParticleConfig){
-                    .position = center,
-                    .radius   = (0.22f + 0.30f * t01) * radius * s_chargeSize,
-                    .lifetime = 0.14f,
-                    .colorStart = VC_WithAlpha(m->soft, (unsigned char)(40 + 90 * t01)),
-                    .colorEnd   = VC_WithAlpha(m->soft, 0),
-                    .alphaCurve = &s_chargeFade,
-                    .render.blendMode = VFX_BLEND_ADDITIVE,
-                    .render.unlit     = 1,
-                });
-            }
-        }
-    }
-
-    // E2 point light, radius growing with t01 as the spec asks. On a timer, not
-    // every frame: the pool is 16 slots and a 0.09 s light spawned at 60 fps
-    // would hold five of them for this one effect.
-    static float s_lightAccum = 0.0f;
-    s_lightAccum += GetFrameTime();
-    if (s_lightAccum >= 0.07f)
-    {
-        s_lightAccum = 0.0f;
-        VFXLight_Spawn(center, m->soft,
-                       radius * Math_Mix(0.7f, 2.1f, t01),
-                       0.09f, VFX_PRIORITY_LOW);
-    }
+        VFX_ComposeCoreGlow(center, mat, radius * s_chargeSize, t01);
 }

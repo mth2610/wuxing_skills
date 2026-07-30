@@ -838,3 +838,33 @@ arithmetic and drift silently otherwise (`Test_AdditiveBudget`).
 whether the bug was supplying contrast. Dashes, flicker, gaps and folds all read
 as detail; removing them can expose a saturation or flatness problem that was
 there the whole time.
+
+## A hand-written #include silently defeats the archetype generator (29/07/2026)
+
+**Symptom.** `VFX_ComposeProjectile` was completely invisible — no orb, no
+trails, nothing in the log, and a clean build.
+
+**Cause.** A stateful composition declares itself by defining
+`VC_<Name>_Update(float)` and `VC_<Name>_Draw3D(Camera3D)`;
+`scripts/sync_vfx_test.py` then generates three things into
+`visual_composer.c` — the `#include` and the two per-frame dispatch calls.
+
+I added the `#include` **by hand**. The generator's early-out was
+`if not dropped and not added: return False`, computed from the include list
+alone — so with the include already present it decided there was nothing to do
+and never wrote either dispatch call. `VC_Projectile_Update` never ran, the
+trails were fed a transform that never moved, the idle gate stopped feeding them,
+and the orb was never drawn because `Draw3D` never ran either.
+
+That is precisely the failure the function's own docstring says it exists to
+prevent: *"a missed call there is worse: it compiles clean and the VFX simply
+never appears, because its pool is never ticked."*
+
+**Rule.** Never hand-edit a `@gen:` block — run the generator. And when a
+generator's early-out is computed from its TRIGGER rather than from its OUTPUT,
+any hand-edit of the trigger silently disables it. `sync_vfx_test.py` now
+verifies the dispatch calls themselves and regenerates when they are missing, so
+a hand-written include is merely redundant instead of destructive.
+
+**Generalisable:** an idempotence check must compare against what the tool
+PRODUCES, not against what tells it to run.

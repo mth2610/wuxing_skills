@@ -21,6 +21,8 @@
 #include "vc_impact_package.inl"
 #include "vc_glint_sparkle.inl"
 #include "vc_rune_circle.inl"
+#include "vc_core_glow.inl"        // PRIMARY — extracted from charge_converge, so it comes first
+#include "vc_energy_orb.inl"         // PRIMARY — consumes vc_core_glow, so it comes after it
 #include "vc_charge_converge.inl"
 #include "vc_dissolve_exit.inl"
 #include "vc_sweep_slash.inl"

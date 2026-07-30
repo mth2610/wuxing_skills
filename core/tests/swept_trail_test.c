@@ -285,7 +285,7 @@ static float Curve2(const Stop2 *s, int n, float t)
 
 static void Test_AdditiveBudget(void)
 {
-    const float alpha[3] = {0.14f, 0.62f, 0.55f};   // halo, body, core
+    const float alpha[3] = {0.07f, 0.31f, 0.28f};   // halo, body, core
     const float headPow[3] = {0.0f, 0.0f, 3.4f};
     // BLADE alpha curve, and the width curve that also scales alpha.
     const Stop2 aCurve[] = {{0.00f,0.00f},{0.25f,0.32f},{0.70f,0.82f},{1.00f,1.00f}};
@@ -304,18 +304,23 @@ static void Test_AdditiveBudget(void)
         if (sum > worst) { worst = sum; worstS = sr; }
         if (sr < 0.80f && sum > bodyPeak) bodyPeak = sum;
     }
-    CHECK_MSG(bodyPeak < 1.0f,
-              "along the BODY the layers stay under saturation, so the sheet survives",
-              "peaks at %.2f of full white", bodyPeak);
-    CHECK_MSG(worst < 1.6f, "and even the hottest point is not several times over",
+    // 0.5, not 1.0. The first pass at this test used 1.0 as the ceiling, passed,
+    // and the effect still burned out: E1's streak bloom lifts anything near the
+    // threshold, so the point at which the eye reads "clipped" sits well under
+    // full white. The owner measured it at half — this is that number, not a
+    // guess about it.
+    CHECK_MSG(bodyPeak < 0.5f,
+              "along the BODY the layers stay well under the BLOOM's ceiling",
+              "peaks at %.2f, ceiling 0.50", bodyPeak);
+    CHECK_MSG(worst < 0.8f, "and even the hottest point is not several times over",
               "%.2f at segRatio %.2f", worst, worstS);
 
     // The head is ALLOWED to blow out — that is the one place a trail should.
     float headSum = 0.0f;
     for (int L = 0; L < 3; L++)
-        headSum += alpha[L] * ((headPow[L] > 0.0f) ? 1.0f : 1.0f);
-    CHECK_MSG(headSum > 1.0f, "the head still blows out on purpose",
-              "%.2f at the tip", headSum);
+        headSum += alpha[L];
+    CHECK_MSG(headSum > 0.5f, "the head still blows out on purpose",
+              "%.2f at the tip, vs a 0.50 body ceiling", headSum);
 
     // What the old numbers did, kept as the regression this test exists for.
     const float oldAlpha[3] = {0.16f, 0.85f, 1.00f};
@@ -325,6 +330,141 @@ static void Test_AdditiveBudget(void)
     CHECK_MSG(oldAlpha[1] + oldAlpha[2] > 1.5f,
               "...and body+core alone clipped wherever they overlapped",
               "%.2f", oldAlpha[1] + oldAlpha[2]);
+}
+
+// ── 0b4. HAZE is a BACKDROP, and that is an arithmetic claim ────────────────
+//
+// The owner's structure for a projectile (29/07): the wake is at least TWO
+// trails on the same trajectory — a wide faint field that gives it mass, and a
+// defined ribbon on top that gives it shape. Drawing only the sharp one reads as
+// a wire; drawing only the hazy one reads as smoke.
+//
+// HAZE is a STYLE rather than its own function, which is the project's own count
+// rule (VFX_PLAN §Part 4): it follows the same trajectory, keeps the same
+// history and lags with the same cloth, and differs only in width profile,
+// opacity, sheet and how loosely it is anchored. What that rule does NOT excuse
+// is shipping numbers that fail to make it a backdrop, which is what this checks.
+
+static void Test_HazeSitsUnderTheSharpTrail(void)
+{
+    // It has to be much broader — a wake spreads, a struck arc does not.
+    const float aspectRibbon = 0.0715f, aspectHaze = 0.1600f;
+    CHECK_MSG(aspectHaze > 2.0f * aspectRibbon,
+              "the haze is far broader than the trail it backs",
+              "1:%.1f vs 1:%.1f", 0.5f / aspectHaze, 0.5f / aspectRibbon);
+
+    // ...and much fainter, because additive cost is AREA x ALPHA. Being both
+    // wider and as bright is exactly how the backdrop would bury the thing it is
+    // supposed to sit behind.
+    const float sharpSum = 0.07f + 0.31f + 0.28f;   // halo + body + core
+    const float hazeSum = 0.10f + 0.22f;            // halo + body, no core
+    CHECK_MSG(hazeSum < sharpSum,
+              "and fainter, so it backs the trail instead of burying it",
+              "%.2f vs %.2f", hazeSum, sharpSum);
+    // The product is the real budget: width x alpha is what lands on the frame.
+    float sharpLoad = aspectRibbon * sharpSum, hazeLoad = aspectHaze * hazeSum;
+    CHECK_MSG(hazeLoad < 1.5f * sharpLoad,
+              "the two layers cost a comparable amount of frame, not 5x",
+              "haze %.4f vs sharp %.4f", hazeLoad, sharpLoad);
+
+    // (No hot core: a backdrop with a bright line down its middle gives the wake
+    // two spines, and the sharp trail already owns that job. The two-layer stack
+    // itself is pinned in the mirror below, where it can actually be checked.)
+
+    // THE CURVE THAT IS NOT A LENS. Every other style is thin-wide-thin because
+    // it is a struck arc. A wake is widest at the TAIL and narrows toward the
+    // head, because it spreads as it ages.
+    const Stop2 hazeW[] = {{0.00f,0.00f},{0.20f,1.00f},{0.65f,0.72f},{1.00f,0.38f}};
+    const Stop2 hazeA[] = {{0.00f,0.00f},{0.22f,0.62f},{0.70f,0.90f},{1.00f,1.00f}};
+    float peakS = 0.0f, peak = 0.0f;
+    for (float t = 0.0f; t <= 1.0f; t += 0.002f) {
+        float w = Curve2(hazeW, 4, t);
+        if (w > peak) { peak = w; peakS = t; }
+    }
+    CHECK_MSG(peakS < 0.35f, "the haze is widest near the TAIL, unlike every other style",
+              "peak at %.3f (0 = tail)", peakS);
+    CHECK_MSG(Curve2(hazeW, 4, 1.0f) > 0.15f,
+              "...but it still reaches the head, or the projectile floats free of its wake",
+              "%.2f at the head", Curve2(hazeW, 4, 1.0f));
+
+    // ALPHA MUST FALL AT LEAST AS FAST AS WIDTH toward the tail, or the last
+    // stretch is sub-pixel while still visible and breaks into dashes. Against a
+    // curve that WIDENS backward this is a sharper constraint than usual, which
+    // is the whole reason it is checked here separately.
+    float worstS = -1.0f, gap = 0.0f;
+    for (float t = 0.01f; t <= 0.30f; t += 0.005f) {
+        float w = Curve2(hazeW, 4, t), a = Curve2(hazeA, 4, t);
+        if (a > w && (a - w) > gap) { gap = a - w; worstS = t; }
+    }
+    CHECK_MSG(worstS < 0.0f, "haze alpha never leads haze width near the tail",
+              "alpha leads by %.3f at t = %.2f", gap, worstS);
+}
+
+// ── 0b5. The trail keeps the ELEMENT's hue ──────────────────────────────────
+//
+// THE BUG THIS EXISTS FOR (owner, 30/07): "quả cầu và màu của trail không ăn gì
+// nhau" — the orb was saturated blue and the trail was near-white, and they
+// looked like two unrelated effects sharing a screen.
+//
+// It was arithmetic, and it slipped through because nothing pinned it. The core
+// layer whitened to 1.00 and carried 0.28 of the total emitted energy, so the
+// three layers summed to a hue 66% desaturated toward white — while the orb,
+// which does not whiten at all, stayed fully saturated. Two halves of one effect
+// with two different colour rules.
+//
+// Whitening at the source is still correct: a saturated hue stacks additively
+// into more of itself and never reaches white, so emissiveBoost has nothing to
+// lift. It is a seasoning. This bounds how much of one it is allowed to be.
+
+static void Test_TrailKeepsTheElementHue(void)
+{
+    // VC_MAT_WATER's glow, the colour the head is supposed to read as.
+    const float glow[3] = {80.0f, 180.0f, 255.0f};
+    // alphaMul, whiten — halo, body, core.
+    const float a[3] = {0.07f, 0.31f, 0.28f};
+    const float w[3] = {0.00f, 0.06f, 0.20f};
+
+    float sum[3] = {0.0f, 0.0f, 0.0f};
+    for (int L = 0; L < 3; L++)
+        for (int c = 0; c < 3; c++)
+            sum[c] += (glow[c] + (255.0f - glow[c]) * w[L]) * a[L];
+
+    float mx = sum[0], mn = sum[0];
+    for (int c = 1; c < 3; c++) {
+        if (sum[c] > mx) mx = sum[c];
+        if (sum[c] < mn) mn = sum[c];
+    }
+    float kept = (mx - mn) / mx;             // 1 = the pure element hue, 0 = white
+    float orbKept = (glow[2] - glow[0]) / glow[2];
+
+    CHECK_MSG(kept > 0.55f,
+              "the trail still reads as the ELEMENT, not as white",
+              "%.0f%% of the hue survives the whitening", 100.0f * kept);
+    // And it must be in the same family as the ORB, which is the thing it is
+    // attached to. This is the assertion that would have caught the bug: the
+    // trail alone looked defensible, the pair did not.
+    CHECK_MSG(kept > 0.5f * orbKept,
+              "and it is in the same colour family as the orb it trails from",
+              "trail keeps %.0f%%, orb keeps %.0f%%", 100.0f * kept, 100.0f * orbKept);
+
+    // What the old numbers did, kept as the regression this test exists for.
+    const float wOld[3] = {0.00f, 0.18f, 1.00f};
+    float old[3] = {0.0f, 0.0f, 0.0f};
+    for (int L = 0; L < 3; L++)
+        for (int c = 0; c < 3; c++)
+            old[c] += (glow[c] + (255.0f - glow[c]) * wOld[L]) * a[L];
+    float omx = old[2], omn = old[0];
+    float oldKept = (omx - omn) / omx;
+    CHECK_MSG(oldKept < 0.4f, "the old stack really did wash the hue out",
+              "only %.0f%% survived", 100.0f * oldKept);
+
+    // The core is the layer that decides this: it is the only one whitened hard
+    // AND a large share of the energy. Bound its contribution directly, so the
+    // next person to raise it sees why they should not.
+    float total = a[0] + a[1] + a[2];
+    CHECK_MSG(a[2] * w[2] / total < 0.20f,
+              "no single layer contributes more than a fifth of the energy as pure white",
+              "the core contributes %.0f%%", 100.0f * a[2] * w[2] / total);
 }
 
 // ── 0c. The authored flow sheet is USABLE as a trail sheet ───────────────────
@@ -1220,12 +1360,18 @@ static void Test_MirrorStillMatchesSource(void)
     //
     // The three-strip idea used to be a hand-rolled pass loop in this file. It
     // is now a TrailLayer table, and the ratios have to survive the move.
-    CHECK(FileHas(inl, ".widthMul = 1.55f, .alphaMul = 0.14f"),
+    CHECK(FileHas(inl, ".widthMul = 1.55f, .alphaMul = 0.07f"),
           "the halo is still faint and wide");
-    CHECK(FileHas(inl, ".widthMul = 0.26f, .alphaMul = 0.55f"),
+    CHECK(FileHas(inl, ".widthMul = 0.26f, .alphaMul = 0.28f"),
           "and the core still thin, and no longer a second saturated band");
     CHECK(FileHas(inl, ".whiten = 0.00f"),
           "the hue-carrying glow layer is still NOT whitened");
+    CHECK(FileHas(inl, ".alphaMul = 0.31f, .whiten = 0.06f"),
+          "the body layer is barely whitened, so it keeps the element's hue");
+    CHECK(FileHas(inl, ".alphaMul = 0.28f, .whiten = 0.20f"),
+          "and the core is a SEASONING of white, not a colourless band");
+    CHECK(FileHas(inl, "return lowTier ? 1 : 2;"),
+          "FILAMENT is still 2 strands — the caller owns how many wisps there are");
     CHECK(FileHas(inl, ".headAlphaPow = 3.4f"),
           "the white-hot core is still concentrated at the head, and now more tightly");
     // THE RULE, not a preference: several additive copies of one textured
@@ -1233,6 +1379,22 @@ static void Test_MirrorStillMatchesSource(void)
     // throw the sheet's edge detail outward as spikes.
     CHECK(FileHas(inl, ".scrollMul = 1.05f, .headAlphaPow = 0.0f, .texture = &s_sweptBodyTex"),
           "exactly ONE layer carries the texture, and it is the body");
+    // HAZE: a SECOND stack, two layers, no core, on the structure-free sheet.
+    CHECK(FileHas(inl, "static TrailLayer s_sweptHazeLayers[2] = {"),
+          "the haze still has its own TWO-layer stack — no white-hot core");
+    CHECK(FileHas(inl, "cfg.layers = s_sweptHazeLayers;"),
+          "and the HAZE style still selects it");
+    // THE FIELD CARRIES THE FLOW. This shipped twice with the haze stripped of
+    // its texture, on a rule that only applies WITHIN one trail's layer stack —
+    // and a featureless band cannot be seen to scroll, which is the field's one
+    // job. Its outer layer is a bare shape; its body keeps the flow sheet.
+    CHECK(FileHas(inl, ".scrollMul = 1.00f,\n     .headAlphaPow = 0.0f, .texture = &s_sweptBodyTex"),
+          "the haze BODY still carries the flow sheet — the field has to be seen flowing");
+    CHECK(FileHas(inl, "s_sweptHazeLayers[0].texture = s_sweptLayers[0].texture;") &&
+          !FileHas(inl, "s_sweptHazeLayers[1].texture ="),
+          "and only its outer layer is a bare shape");
+    CHECK(FileHas(inl, "return 0.1600f;"),
+          "the haze aspect is still 1:3 — a wake is BROAD");
     CHECK(FileHas(inl, "s_sweptLayers[0].texture = (s_sweptHaloTex.id != 0) ? &s_sweptHaloTex : NULL;"),
           "the halo still gets the structure-free sheet");
     CHECK(FileHas(inl, "s_sweptLayers[2].texture = s_sweptLayers[0].texture;"),
@@ -1345,6 +1507,8 @@ int main(void)
     Test_NodesCannotCrossTheirNeighbour();
     Test_FlowIsDecoupledFromTheSwing();
     Test_AdditiveBudget();
+    Test_HazeSitsUnderTheSharpTrail();
+    Test_TrailKeepsTheElementHue();
     Test_AssetSheetGeometry();
     Test_Aspect();
     Test_WidthEnvelope();

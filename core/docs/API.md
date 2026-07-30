@@ -554,6 +554,8 @@
   void VFX_KillCharacterAura(int handle);
   void VFX_ComposeGlintSparkle(Vector3 center, VC_MaterialId mat, float scale, float time);
   void VFX_ComposeRuneCircle(Vector3 center, Vector3 normal, VC_MaterialId mat, float radius, float t01, int ringCount);
+  void VFX_ComposeCoreGlow(Vector3 center, VC_MaterialId mat, float radius, float intensity01);
+  void VFX_ComposeEnergyOrb(Vector3 center, VC_MaterialId mat, float radius, float intensity01);
   void VFX_ComposeChargeConverge(Vector3 center, VC_MaterialId mat, float radius, float t01, int moteCount);
   void VFX_ComposeDissolveExit(Vector3 pos, VC_MaterialId mat, float scale, float t01);
   void VFX_ComposeSweepSlash(Vector3 origin, Vector3 dir, VC_MaterialId mat, float length, float arcRad, float t01);
@@ -569,6 +571,8 @@
   void VFX_ComposeGroundWave(Vector3 center, VC_MaterialId mat, float radius, float t01, GroundHeightSampleFn heightFn, void *ud);
   float VFX_GroundHeightFromMap(float worldX, float worldZ, void *unused);
   int VFX_ComposeSparkTrail(Vector3 pos, Vector3 vel, VC_MaterialId matId, float length, float life);
+  int VFX_ComposeProjectile(const Matrix *followTransform, VC_MaterialId mat, float radius);
+  void VFX_KillProjectile(int handle);
   void VFX_BeginWaterStreams(float time);
   void VFX_EndWaterStreams(void);
   void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
@@ -581,7 +585,7 @@
   void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
   void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
 ```
-**Enums:** VFX_TrailStyle { VFX_TRAIL_BLADE,VFX_TRAIL_RIBBON,VFX_TRAIL_FILAMENT }
+**Enums:** VFX_TrailStyle { VFX_TRAIL_BLADE,VFX_TRAIL_RIBBON,VFX_TRAIL_FILAMENT,VFX_TRAIL_HAZE }
 
 ### `core/composition/vfx_sequence.h`
 ```c

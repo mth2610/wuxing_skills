@@ -87,6 +87,31 @@ void VFX_ComposeGlintSparkle(Vector3 center, VC_MaterialId mat, float scale, flo
 // ground). `t01` 0→1 drives open/hold/close. Continuous.
 void VFX_ComposeRuneCircle(Vector3 center, Vector3 normal, VC_MaterialId mat, float radius, float t01, int ringCount);
 
+// ── PRIMARY. Core glow ──────────────────────────────────────────────────────
+// One hot point of light: a near-white core, a mid glow kept just over the bloom
+// threshold, and a wide falloff around them. Every composite that needs a
+// destination or a source wants exactly this — a charge's centre, an orb's
+// heart, a muzzle, a rune's hub.
+//
+// THREE sprites and not one, and the reason is not taste: the bright pass clamps
+// each pixel's contribution, so bloom SIZE comes from how many pixels clear the
+// threshold, not how far one clears it. The mid layer is the one that buys the
+// bloom; the core supplies the white; the halo stops it ending at a sprite edge.
+//
+// Immediate mode — call every frame while the glow should exist. Emits by rate.
+// `intensity01` drives brightness, size and the point light together.
+void VFX_ComposeCoreGlow(Vector3 center, VC_MaterialId mat, float radius, float intensity01);
+
+// ── PRIMARY. Energy orb ─────────────────────────────────────────────────────
+// A sphere that reads as a VOLUME: dark interior, bright limb, filaments
+// crawling over the surface, white-hot point at the centre. The head of a
+// projectile, an orb skill, a held charge.
+//
+// The rim is a fresnel term (`aura_shell.fs`), not stacked additive shells —
+// additive stacking is brightest through the CENTRE, which is exactly backwards
+// for an orb. Immediate mode; call every frame it should exist.
+void VFX_ComposeEnergyOrb(Vector3 center, VC_MaterialId mat, float radius, float intensity01);
+
 // ── E5.3. Charge converge ───────────────────────────────────────────────────
 // The anticipation beat: motes spiralling INTO a point while it brightens.
 // Continuous, `t01` 0→1 over the wind-up.
@@ -173,8 +198,21 @@ typedef enum {
     VFX_TRAIL_BLADE = 0,   // thin, hard outer edge, lies in the plane of the
                            // swing (holds a real silhouette), SweepSlash mask
     VFX_TRAIL_RIBBON = 1,  // soft, wide, cloth-like, camera-facing
-    VFX_TRAIL_FILAMENT = 2 // several thin strands at staggered lags — the "many
-                           // threads" look; sheds strands below GFX_MED
+    VFX_TRAIL_FILAMENT = 2, // several thin strands — the "many threads" look;
+                            // sheds strands below GFX_MED
+    // WIDE, FAINT, SOFT-EDGED — the BACKDROP behind a sharper trail, not a trail
+    // in its own right. A projectile is at least two trails: a hazy field that
+    // gives the wake mass, and a defined ribbon on top of it that gives it a
+    // shape. Drawing only the sharp one reads as a wire; drawing only the hazy
+    // one reads as smoke.
+    //
+    // It is a STYLE and not its own function on purpose. It follows the same
+    // trajectory, keeps the same history, and lags with the same cloth — it
+    // differs in width profile, opacity, sheet and how loosely it is anchored,
+    // and "differs only in numbers" is the definition of a parameter
+    // (VFX_PLAN §Part 4, the rule that keeps the library from reaching 120
+    // functions without gaining a capability).
+    VFX_TRAIL_HAZE = 3
 } VFX_TrailStyle;
 
 int  VFX_ComposeSweptTrail(const Matrix *followTransform, VC_MaterialId mat,
@@ -213,6 +251,18 @@ float VFX_GroundHeightFromMap(float worldX, float worldZ, void *unused);
 // per mote.
 int VFX_ComposeSparkTrail(Vector3 pos, Vector3 vel, VC_MaterialId matId,
                           float length, float life);
+
+// ── COMPOSITE. Projectile ───────────────────────────────────────────────────
+// The reference bolt, and a SCORE over primaries with no visual idea of its own:
+// an energy orb, a wide faint HAZE field whose base meets the orb and whose apex
+// trails behind, one defined RIBBON tail, and two FILAMENT wisps spiralling
+// around the flight axis with one end anchored at the ball.
+//
+// ONE-SHOT + POOLED: call once when the projectile spawns, keep the handle,
+// release it on impact. `followTransform` is caller-owned and must outlive the
+// handle — typically a static Matrix on the owning skill.
+int  VFX_ComposeProjectile(const Matrix *followTransform, VC_MaterialId mat, float radius);
+void VFX_KillProjectile(int handle);
 
 // Batch helpers for the restored water stream: bind the tube shader once and
 // draw N streams inside, instead of a Begin/End per projectile. Not generated —

@@ -380,6 +380,116 @@ to be judged on its own first, or a bad result has two candidate causes.
 
 ---
 
+### H9. The reference PROJECTILE — the owner's build guide (29/07)
+
+The owner supplied a full layer-breakdown guide, and it **corrects this section's
+previous answer**, which was over-pessimistic. That answer said the tail needed a
+new invent-tier primary, `VFX_ComposeFilamentPlume`, at 3-5 rounds of blind
+iteration. Two of the five reasons given for it do not survive the guide:
+
+- *"A trail has one end, a plume has many."* The guide does not build a plume. It
+  builds **one main ribbon trail plus 1-3 WISPS** — "1-3 is enough, offset from
+  main trail, animate freely". Three or four endpoints, not dozens, and each wisp
+  is its own ordinary ribbon.
+- *"The haze is a continuum with the streaks, not a separate puff."* True, and
+  the guide's answer is that the haze is **not a layer at all** — it is layer 8,
+  GLOW, i.e. bloom. Adding a smoke primary for it would have been the mistake.
+
+The remaining three reasons stand and are now scoped correctly: they are
+arguments about the MAIN ribbon's shape (widen backward, release rather than
+anchor, twist), not arguments for a different primitive.
+
+#### ...and then wrong a SECOND time, in the opposite direction
+
+The owner then described the structure himself, and the reading here was wrong
+again — this time by making the connective field between orb and tail into
+geometry WELDED to the head, with no history, on the argument that a trail could
+never keep up through a hard turn. His correction: *"trường năng lượng nó cũng là
+1 trail, nó cũng uốn lượn theo quĩ đạo bay, giống `vc_swept_trail.inl` — nhưng
+khác là cái đuôi này nó mờ ảo, đóng vai trò làm nền."* It curves along the
+trajectory, so it HAS history, so it is a trail. It is simply faint, and it is a
+backdrop.
+
+**Why that mistake was available at all, which is the reusable part:** the
+reasoning was done from a STILL image, and in a still, a wedge welded to the head
+and a short faint trail are indistinguishable. The evidence that separates them —
+*does it lag through a turn?* — exists only in motion. When a structural argument
+turns on behaviour over time, a still cannot settle it, and the person who has
+watched it move can.
+
+**The structure that survives both corrections**, and it is the owner's:
+
+```
+orb (shell + core)
+  └─ HAZE trail   — wide, faint, soft-edged. The backdrop that gives the wake mass.
+  └─ main trail   — defined, textured, sharp. The shape.
+  └─ 1-3 wisps    — thin, offset, free. The silhouette breakers.
+```
+
+All three follow the same trajectory and keep history. They differ in width
+profile, opacity, sheet, and how loosely they are anchored — which is the
+definition of a PARAMETER, so they are **styles of one primary**, not three
+functions (VFX_PLAN §Part 4's count rule). `VFX_TRAIL_HAZE` landed 29/07 as the
+fourth style; the wisps are `VFX_TRAIL_FILAMENT` on caller-driven matrices and
+need no new code at all.
+
+#### The eight layers, against what exists
+
+| # | Guide layer | What it says | Ours | Gap |
+|---|---|---|---|---|
+| 1 | **CORE** | small, bright, additive + HDR, soft edges | `VFX_ComposeCoreGlow` | none |
+| 2 | **SHELL** | volume + surface; sphere mesh, **additive + Fresnel**, slight transparency | `VFX_ComposeEnergyOrb` | none |
+| 3 | **ENERGY FLOW** | flow texture, **UV scrolls OPPOSITE to travel**, distort with noise | orb scrolls its FBM at a fixed rate | **UV not tied to the travel direction**; `core/flow_map.c` + `flow_map.fs` still have zero consumers |
+| 4 | **RIBBON TRAIL** | width over length, alpha over length, noise, taper, **twist** | `VFX_ComposeSweptTrail` | no **twist**; spread is on the swing-plane normal, not the velocity |
+| 5 | **WISPS** | 1-3 thin ribbons offset from the main trail, animating freely | — | **none, and none needed**: three more `VFX_ComposeSweptTrail` handles on caller-driven matrices. This is score, not primary |
+| 6 | **PARTICLES** | small amount; spark, glow dot, ember, dust; "less is more" | swept-trail sparkles, `VFX_ComposeGlintSparkle` | none |
+| 7 | **DISTORTION** | warps the air around it | `VFX_ComposeImpactDistort` (one-shot at an impact) | needs a **travelling** variant, and the `distort_normal_*` maps are the one genuinely missing asset (PROGRESS §5) |
+| 8 | **GLOW** | bloom + intensity, "don't overdo it, control with HDR" | E1 bloom + `emissiveBoost` | none |
+
+**So the projectile really is mostly a SCORE** — five of eight layers are done,
+one (WISPS) is score rather than code, and the two real gaps are small: a flow UV
+that knows the travel direction, and a travelling distortion that is waiting on
+two textures.
+
+#### The guide's COMMON MISTAKES list, scored against this week
+
+It is worth copying out, because four of the six are bugs this project actually
+shipped and paid for:
+
+| Guide's mistake | Us |
+|---|---|
+| Too bright / no contrast | the additive layer stack summed to 2.01 — see docs/LANDMINES.md |
+| Uniform width trail | the lens envelope exists because the first version was uniform |
+| No taper or fade | the first blade head was a flat cut-off |
+| Harsh edges | the halo carried the body's texture and came out scalloped |
+| Too many particles | not hit — the sparkle rate has been conservative |
+| Random chaos | hit, and named by the owner: "a snake being swung by the head", fixed by the home anchor |
+
+#### Order
+
+(a) layer 3 — give the shell's flow UV the travel direction, and wire
+`flow_map.fs`, which has been sitting unused → (b) layer 4 — twist, and a
+velocity-aligned spread → (c) the composite, which spawns the orb, the main
+trail and 2 wisps and is a score over five calls → (d) layer 7 last, since it is
+blocked on art.
+
+### Why the orb went first, and what it cost
+
+`aura_shell.fs` was already in the tree with a `fresnelPower` its own header
+documents as *"higher = emptier center"* — and no consumer since it was written.
+That is the VFX_PLAN §0 list of unused primitives paying off exactly as the queue
+predicted: the orb is wiring, not invention.
+
+Two approaches were rejected before it, both already paid for once:
+- **Concentric additive shells alone** (the black-hole technique). Additive
+  stacking is brightest where you look through the most shells — the CENTRE —
+  which is precisely backwards for an orb. Shells buy turbulence, not a rim.
+- **A translucent EffectMaterial sphere.** Proposed once as a glass ball and
+  rejected: its translucency has a 0.3 alpha floor and cannot get out of its own
+  way (docs/LANDMINES.md).
+
+---
+
 ## What is deliberately out of scope
 
 Skinned/animated VFX meshes (ER leans on them heavily; we have no pipeline and it

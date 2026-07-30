@@ -627,7 +627,39 @@ def update_archetype_dispatch(comp_dir, dry_run=False):
     added   = sorted(p for p in arch if p not in current)
     order   = kept + added
 
-    if not dropped and not added:
+    # THE INCLUDE IS THE TRIGGER, so it cannot be the only thing checked.
+    #
+    # This returned early whenever the include list already matched, on the
+    # reasonable-looking assumption that a matching include run means matching
+    # dispatch. It does not: add the #include BY HAND and the include list is
+    # already correct, so this bails before generating either dispatch call —
+    # and the result is exactly the failure this whole function exists to
+    # prevent. It compiles clean, the pool is never ticked, and the VFX is
+    # invisible with nothing in the log. Cost one debugging round on
+    # vc_projectile.inl, 29/07.
+    #
+    # So verify what actually matters: that every archetype's two dispatch calls
+    # are present. Cheap, and it makes a hand-written include harmless instead
+    # of silently destructive.
+    dispatch_ok = True
+    for key, call in (("archetype_update", "{n}_Update(dt);"),
+                      ("archetype_draw", "{n}_Draw3D(cam);")):
+        blk = re.search(r'// @gen:' + key + r' begin.*?// @gen:' + key + r' end',
+                        src, re.DOTALL)
+        if not blk:
+            dispatch_ok = False
+            break
+        for name in arch.values():
+            if call.format(n="VC_" + name) not in blk.group(0):
+                print(f"[sync_vfx_test] visual_composer.c: VC_{name} is included but "
+                      f"its {key.split('_')[1]} dispatch is missing — regenerating "
+                      f"(a hand-written #include does not tick the pool)")
+                dispatch_ok = False
+                break
+        if not dispatch_ok:
+            break
+
+    if not dropped and not added and dispatch_ok:
         return False
 
     for p in dropped:
