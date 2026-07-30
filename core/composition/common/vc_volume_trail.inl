@@ -37,10 +37,10 @@
 
 #include "core/tuning.h"
 
-#define VOL_MAX 8               // concurrent volumes
-#define VOL_SAMPLE_HZ 60.0f     // nodes/sec, sub-frame interpolated
-#define VOL_IDLE_SPEED 0.10f    // m/s below which the emitter counts as stopped
-#define VOL_MIN_VERTEX 0.005f   // metres; rejects exact duplicate nodes only
+#define VOL_MAX 8             // concurrent volumes
+#define VOL_SAMPLE_HZ 60.0f   // nodes/sec, sub-frame interpolated
+#define VOL_IDLE_SPEED 0.10f  // m/s below which the emitter counts as stopped
+#define VOL_MIN_VERTEX 0.005f // metres; rejects exact duplicate nodes only
 // A TELEPORT is not fast travel. Above this the emitter did not move, it was
 // MOVED — a respawn, a blink — and laying nodes along the gap draws a straight
 // streak bridging two places, the one artefact that can never read as motion.
@@ -132,8 +132,10 @@ static bool VolumeTrail_Emits(VFX_VolumeKind kind)
 // header — deliberately dark, brightness comes from the light that reaches it.
 static Color VolumeTrail_Darken(Color c, float t)
 {
-    if (t <= 0.0f) return c;
-    if (t > 1.0f) t = 1.0f;
+    if (t <= 0.0f)
+        return c;
+    if (t > 1.0f)
+        t = 1.0f;
     float k = 1.0f - t;
     c.r = (unsigned char)((float)c.r * k);
     c.g = (unsigned char)((float)c.g * k);
@@ -191,18 +193,12 @@ static const ColorGradient *VolumeTrail_Ramp(VFX_VolumeKind kind, VC_MaterialId 
 // Per-kind only in `.texture`: three tables that differ in one pointer, because
 // TrailLayer holds the sheet and a trail holds one layer array.
 static TrailLayer s_volLayers[VFX_VOLUME_KIND_COUNT][2] = {
-    {{.widthMul = 1.30f, .alphaMul = 0.16f, .whiten = 0.00f, .scrollMul = 0.55f,
-      .headAlphaPow = 0.0f, .texture = NULL},
-     {.widthMul = 1.00f, .alphaMul = 0.46f, .whiten = 0.08f, .scrollMul = 1.00f,
-      .headAlphaPow = 0.0f, .texture = &s_volSheet[VOL_ENERGY]}},
-    {{.widthMul = 1.30f, .alphaMul = 0.16f, .whiten = 0.00f, .scrollMul = 0.55f,
-      .headAlphaPow = 0.0f, .texture = NULL},
-     {.widthMul = 1.00f, .alphaMul = 0.46f, .whiten = 0.08f, .scrollMul = 1.00f,
-      .headAlphaPow = 0.0f, .texture = &s_volSheet[VOL_SMOKE]}},
-    {{.widthMul = 1.30f, .alphaMul = 0.16f, .whiten = 0.00f, .scrollMul = 0.55f,
-      .headAlphaPow = 0.0f, .texture = NULL},
-     {.widthMul = 1.00f, .alphaMul = 0.46f, .whiten = 0.08f, .scrollMul = 1.00f,
-      .headAlphaPow = 0.0f, .texture = &s_volSheet[VOL_FIRE]}},
+    {{.widthMul = 1.30f, .alphaMul = 0.16f, .whiten = 0.00f, .scrollMul = 0.55f, .headAlphaPow = 0.0f, .texture = NULL},
+     {.widthMul = 1.00f, .alphaMul = 0.46f, .whiten = 0.08f, .scrollMul = 1.00f, .headAlphaPow = 0.0f, .texture = &s_volSheet[VOL_ENERGY]}},
+    {{.widthMul = 1.30f, .alphaMul = 0.16f, .whiten = 0.00f, .scrollMul = 0.55f, .headAlphaPow = 0.0f, .texture = NULL},
+     {.widthMul = 1.00f, .alphaMul = 0.46f, .whiten = 0.08f, .scrollMul = 1.00f, .headAlphaPow = 0.0f, .texture = &s_volSheet[VOL_SMOKE]}},
+    {{.widthMul = 1.30f, .alphaMul = 0.16f, .whiten = 0.00f, .scrollMul = 0.55f, .headAlphaPow = 0.0f, .texture = NULL},
+     {.widthMul = 1.00f, .alphaMul = 0.46f, .whiten = 0.08f, .scrollMul = 1.00f, .headAlphaPow = 0.0f, .texture = &s_volSheet[VOL_FIRE]}},
 };
 
 // ── The tier ladder — it may only ever clamp DOWN ───────────────────────────
@@ -216,20 +212,28 @@ static int VolumeTrail_RadialSegs(void)
 {
     switch (GfxQuality_Get())
     {
-    case GFX_HIGH: return 8;
-    case GFX_MED:  return 8;
-    case GFX_LOW:  return 6;
-    default:       return 5; // still closed, still round enough to hold a rim
+    case GFX_HIGH:
+        return 8;
+    case GFX_MED:
+        return 8;
+    case GFX_LOW:
+        return 6;
+    default:
+        return 5; // still closed, still round enough to hold a rim
     }
 }
 static int VolumeTrail_Rings(void)
 {
     switch (GfxQuality_Get())
     {
-    case GFX_HIGH: return 24;
-    case GFX_MED:  return 20;
-    case GFX_LOW:  return 14;
-    default:       return 10;
+    case GFX_HIGH:
+        return 24;
+    case GFX_MED:
+        return 20;
+    case GFX_LOW:
+        return 14;
+    default:
+        return 10;
     }
 }
 // The outer shell is the first thing to go: it is the widest fill in the effect
@@ -334,6 +338,7 @@ static TrailEntity *VolumeTrail_Entity(const VC_VolumeTrail *v, int slot)
 
 static int VolumeTrail_Spawn(const VC_VolumeTrail *v, int slot)
 {
+
     TrailConfig cfg = {0};
     cfg.type = TRAIL_TYPE_FOLLOWER;
     cfg.pos = Vector3Transform((Vector3){0.0f, 0.0f, 0.0f}, *v->xf);
@@ -356,7 +361,7 @@ static int VolumeTrail_Spawn(const VC_VolumeTrail *v, int slot)
     cfg.blendMode = VolumeTrail_Emits(v->kind) ? BLEND_ADDITIVE : BLEND_ALPHA;
     cfg.useCustomBlendMode = true; // BLEND_ALPHA is 0 and cannot be detected by >0
     cfg.minVertexDistance = VOL_MIN_VERTEX;
-    cfg.disableInnerCore = true;   // superseded by the layer stack
+    cfg.disableInnerCore = true; // superseded by the layer stack
     cfg.shape = TRAIL_SHAPE_TUBE;
     cfg.tubeRadialSegs = VolumeTrail_RadialSegs();
     cfg.tubeMaxRings = VolumeTrail_Rings();
@@ -377,6 +382,12 @@ static int VolumeTrail_Spawn(const VC_VolumeTrail *v, int slot)
     cfg.teleportSpeed = VOL_TELEPORT_SPEED;
     cfg.idleSpeed = VOL_IDLE_SPEED;
     cfg.trailLength = (float)VolumeTrail_MaxNodes(v->lifetime);
+    cfg.useFlowMap = true;
+    cfg.flowMap = &s_volSheet[v->kind]; // Texture2D chứa vector flow (R, G)
+    cfg.flowSpeed = 1.5f;               // Tốc độ dòng chảy chạy nhanh hay chậm
+    cfg.flowStrength = 0.2f;            // Độ bóp méo/uốn lượn mạnh hay yếu
+    cfg.flowTiling = 2.0f;              // Độ lặp lại UV của dòng chảy
+
     int id = SpawnTrailEntity(cfg);
     if (id >= 0)
         Trail_AttachToTransform(id, v->xf, (Vector3){0.0f, 0.0f, 0.0f});

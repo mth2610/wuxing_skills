@@ -3,45 +3,104 @@
 in vec2 fragTexCoord;
 in vec4 fragColor;
 
-uniform sampler2D texture0;
+// ==========================================
+// TEXTURE SLOTS
+// ==========================================
+uniform sampler2D texture0;   // Slot 0: Main Trail Texture
+uniform sampler2D flowTex;    // Slot 1: Flow / Direction Map
+uniform sampler2D maskTex;    // Slot 2: Noise / Dissolve Mask Map
 
-uniform float u_coreStrength; // 0 = no core, 1 = full HDR core (set by disableInnerCore)
+// ==========================================
+// UNIFORMS
+// ==========================================
+// Flow Map Controls
+uniform float u_flowTime;
+uniform float uSpeed;
+uniform float uStrength;      // = 0.0 nếu không dùng Flow Map
+uniform float uTiling;
+
+// Glow & HDR Core Controls
+uniform float uCoreStrength;  // 0.0 = Không lõi, > 0.0 = Lõi rực sáng HDR
+
+// Noise Dissolve / Erosion Controls (XÉ RÁCH VỆT KHÓI)
+uniform float uDissolve;      // Dải [0.0 - 1.0]: Độ tan biến/xé rách (0 = nguyên vẹn, 1 = biến mất)
+uniform float uMaskTiling;    // Tiling riêng cho Noise Map
+uniform vec3  uBurnColor;     // Màu viền rực sáng nơi bị xé rách (Ví dụ: HDR Orange/Blue)
 
 out vec4 finalColor;
 
 void main() {
-    // Sample texture
-    vec4 texColor = texture(texture0, fragTexCoord);
+    // 1. Tính toán Tiling UV
+    float mainTiling = (uTiling > 0.0) ? uTiling : 1.0;
+    float maskTiling = (uMaskTiling > 0.0) ? uMaskTiling : 1.0;
     
-    // Calculate distance from center across the ribbon width (X coordinate)
-    // fragTexCoord.x goes from 0.0 on one edge to 1.0 on the other edge.
+    vec2 uvMain = fragTexCoord * mainTiling;
+    vec2 uvMask = fragTexCoord * maskTiling;
+    vec4 texColor;
+
+    // ==========================================
+    // BƯỚC 1: FLOW MAP (DISTORTION)
+    // ==========================================
+    if (uStrength > 0.0) {
+        vec2 flow = texture(flowTex, fragTexCoord).rg * 2.0 - 1.0;
+
+        float phase0 = fract(uTime * uSpeed);
+        float phase1 = fract(uTime * uSpeed + 0.5);
+        float blend = abs(phase0 * 2.0 - 1.0);
+
+        vec4 col0 = texture(texture0, uvMain + flow * (phase0 - 0.5) * uStrength);
+        vec4 col1 = texture(texture0, uvMain + flow * (phase1 - 0.5) * uStrength);
+        texColor = mix(col0, col1, blend);
+        
+        // Biến dạng luôn cả Noise Map theo Flow Map để vết rách cuộn tự nhiên
+        uvMask += flow * (phase0 - 0.5) * (uStrength * 0.5);
+    } else {
+        texColor = texture(texture0, uvMain);
+    }
+
+    // ==========================================
+    // BƯỚC 2: NOISE DISSOLVE / EROSION (XÉ RÁCH)
+    // ==========================================
+    float noiseVal = texture(maskTex, uvMask).r; // Lấy độ nhiễu kênh Red
+    float alphaMask = 1.0;
+    vec3 burnGlow = vec3(0.0);
+
+    if (uDissolve > 0.0) {
+        // Cắt bớt Alpha dựa trên Noise Map và uDissolve
+        // Đuôi vệt khói sẽ bị xé thành các vệt lởm chởm
+        float dissolveThreshold = uDissolve;
+        
+        // Tạo mặt nạ đục/trong suốt sắc nét
+        alphaMask = smoothstep(dissolveThreshold, dissolveThreshold + 0.12, noiseVal);
+
+        // Tạo hiệu ứng viền cháy HDR (Edge Burn) ngay ranh giới xé rách
+        float edge = smoothstep(dissolveThreshold - 0.05, dissolveThreshold, noiseVal) - alphaMask;
+        vec3 defaultBurn = (uBurnColor != vec3(0.0)) ? uBurnColor : vec3(3.0, 1.2, 0.3); // HDR Orange
+        burnGlow = edge * defaultBurn * 2.5; 
+    }
+
+    // ==========================================
+    // BƯỚC 3: GLOW & HDR CORE (LÕI SÁNG)
+    // ==========================================
     float centerDist = abs(fragTexCoord.x - 0.5) * 2.0;
-    
-    // Glow mask: soft falloff from center to edges
     float glowMask = pow(clamp(1.0 - centerDist, 0.0, 1.0), 1.25);
-    
-    // Smoke alpha (soft, translucent, modulated by texture)
-    float smokeAlpha = texColor.a * fragColor.a * glowMask;
-    
-    // Core — only when u_coreStrength > 0
-    vec3 finalRGB = fragColor.rgb * texColor.rgb * 1.5;
+
+    // Alpha tổng hợp (kết hợp Noise Dissolve)
+    float smokeAlpha = texColor.a * fragColor.a * glowMask * alphaMask;
+
+    vec3 finalRGB = (fragColor.rgb * texColor.rgb * 1.5) + burnGlow;
     float finalAlpha = smokeAlpha;
-    
-    if (u_coreStrength > 0.0)
-    {
-        // Core mask: tight bright filament in center
-        float coreMask = pow(clamp(1.0 - centerDist, 0.0, 1.0), 5.5) * u_coreStrength;
-        
-        // Core alpha (opaque, independent of texture)
-        float coreAlpha = clamp(fragColor.a * 1.6, 0.0, 1.0);
-        
-        // Blend alpha
+
+    // Lõi rực sáng ở giữa
+    if (uCoreStrength > 0.0) {
+        float coreMask = pow(clamp(1.0 - centerDist, 0.0, 1.0), 5.5) * uCoreStrength;
+        float coreAlpha = clamp(fragColor.a * 1.6, 0.0, 1.0) * alphaMask;
+
         finalAlpha = mix(smokeAlpha, coreAlpha, coreMask);
-        
-        // Blend color with HDR white core
-        vec3 coreColor = vec3(3.6, 3.6, 3.6);
+
+        vec3 coreColor = vec3(3.6, 3.6, 3.6); // White HDR Overbright
         finalRGB = mix(finalRGB, coreColor, coreMask);
     }
-    
+
     finalColor = vec4(finalRGB, finalAlpha);
 }

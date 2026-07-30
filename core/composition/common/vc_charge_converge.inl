@@ -26,8 +26,8 @@
 // The one dial the SCORE owns, as opposed to the dials that belong to the pieces:
 // whether this converge has a destination at all. A drain or an absorb is the
 // same motes with no hot core, and that is a composition-level decision.
-static float s_chargeCore = 1.0f;   // 0 = no hot core at the centre
-static bool  s_chargeCoreInit = false;
+static float s_chargeCore = 1.0f; // 0 = no hot core at the centre
+static bool s_chargeCoreInit = false;
 
 // Continuous: call once per frame while the charge is winding up.
 // `radius`    = the emitter sphere's radius in metres (where threads are born).
@@ -43,9 +43,12 @@ void VFX_ComposeChargeConverge(Vector3 center, VC_MaterialId mat, float radius,
         Tuning_RegisterFloat("charge_core", &s_chargeCore, 1.0f);
         s_chargeCoreInit = true;
     }
-    if (radius <= 0.0f) radius = 1.0f;
-    if (t01 < 0.0f) t01 = 0.0f;
-    if (t01 > 1.0f) t01 = 1.0f;
+    if (radius <= 0.0f)
+        radius = 1.0f;
+    if (t01 < 0.0f)
+        t01 = 0.0f;
+    if (t01 > 1.0f)
+        t01 = 1.0f;
 
     // 1. THE MOTES — qi peeling off the shell and falling inward along threads.
     VFX_ComposeConvergeMotes(center, mat, radius, t01, moteCount);

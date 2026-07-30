@@ -1,13 +1,13 @@
 #ifndef TRAIL_SYSTEM_H
 #define TRAIL_SYSTEM_H
 
-#include "core/force_field.h"
 #include "core/color_gradient.h"
+#include "core/force_field.h"
+#include "core/ribbon_strip.h"
 #include "core/sprite_anim.h"
 #include "core/vfx_config.h"
-#include "raylib.h"
-#include "core/ribbon_strip.h"
 #include "core/vfx_light.h"
+#include "raylib.h"
 
 #define MAX_TRAIL_PARTICLES 500
 #define TRAIL_HISTORY_COUNT 60
@@ -45,471 +45,365 @@
 
 #define TRAIL_FOLLOWER_IDLE_FADE_TIME 0.15f
 #define TRAIL_FOLLOWER_FADE_RATE_PER_SEC 40.0f
-// Ceiling on sub-frame node samples per frame, so a hitch cannot lay a hundred
-// nodes in one update and burn the whole history on a single stutter.
 #define TRAIL_SAMPLE_STEPS_MAX 6
 #define TRAIL_CLOTH_CONSTRAIN_ITERS 2
-// A node may bunch to this fraction of its rest spacing but no closer. Cloth
-// gathers; nodes that COLLAPSE give a zero-length segment, and the tangent —
-// a central difference over the neighbours — is then fabricated outright.
 #define TRAIL_CLOTH_MIN_SPACING 0.60f
 
-typedef enum {
-  TRAIL_TYPE_PROJECTILE = 0,
-  TRAIL_TYPE_WISP = 1,
-  TRAIL_TYPE_PORTAL = 2,
-  TRAIL_TYPE_FOLLOWER = 3
+typedef enum
+{
+    TRAIL_TYPE_PROJECTILE = 0,
+    TRAIL_TYPE_WISP = 1,
+    TRAIL_TYPE_PORTAL = 2,
+    TRAIL_TYPE_FOLLOWER = 3
 } TrailType;
 
 // ── Layered ribbons ─────────────────────────────────────────────────────────
-//
-// A trail that reads as ENERGY is not one strip; it is a faint wide glow BEHIND
-// a textured body with a hot line THROUGH it. The system used to hard-code
-// exactly that idea at exactly one setting — an outer strip at 1.5x thickness
-// and alpha 180, plus an optional inner strip at 0.4x, pure white, alpha 255 —
-// which is why `disableInnerCore` exists: the one hard-coded core was wrong
-// often enough to need an escape hatch.
-//
-// Declare the layers instead. Order is draw order, so index 0 is the backmost.
-// Leave `layers` NULL and nothing changes: the legacy outer + inner pair is
-// still what you get.
-//
-// THE TRAP THE HARD-CODED VERSION HID, and it costs a day when you meet it:
-// **the structure must live in exactly ONE layer.** Several additive copies of
-// the same textured pattern at different scroll phases average into something
-// FLAT, and the wider layers throw the texture's edge detail outward as spikes.
-// Give the body the texture; give the glow and the core `texture = NULL`.
 #define TRAIL_MAX_LAYERS 4
 
-typedef struct {
-  float widthMul;    // x the entity's thickness
-  float alphaMul;    // x the node's alpha
-  float whiten;      // 0 = the node's own colour, 1 = white
-  float scrollMul;   // x uvScrollSpeed — parallax between layers
-  // Alpha *= pow(segRatio, headAlphaPow) when > 0. A layer that burns at the
-  // head and is gone by mid-tail, so the trail has ONE bright spot instead of
-  // three layers all bright in the same places.
-  float headAlphaPow;
-  // NULL = a flat untextured shape (what a glow or a core should be). Non-NULL
-  // = this layer carries the structure. At most one layer should set it.
-  const Texture2D *texture;
+typedef struct
+{
+    float widthMul;           // x the entity's thickness
+    float alphaMul;           // x the node's alpha
+    float whiten;             // 0 = the node's own colour, 1 = white
+    float scrollMul;          // x uvScrollSpeed — parallax between layers
+    float headAlphaPow;       // Alpha *= pow(segRatio, headAlphaPow)
+    const Texture2D *texture; // Texture cho layer này (NULL = flat color/glow)
+
+    // ── MAP FLOW (FLOWMAP) NÂNG CAO CHO LAYER ───────────────────────────────
+    const Texture2D *flowMap; // Flowmap riêng cho layer (NULL = dùng chung hoặc tắt)
+    float flowSpeed;          // Tốc độ cuộn/biến dạng dòng chảy cho layer này
+    float flowStrength;       // Cường độ làm lệch UV (UV Distortion scale)
 } TrailLayer;
 
-// ── The trail's CROSS-SECTION ───────────────────────────────────────────────
-//
-// A trail is a shape swept along a path, and the shape is a parameter. A flat
-// ribbon is the two-point cross-section; a tube is the N-point one. Same
-// history, same width curve, same layers, same material UV — only the section
-// changes, which is why this is an enum and not a second trail type.
-//
-// WHY A TUBE IS WORTH THE TRIANGLES. It holds a silhouette from every angle,
-// where a camera-facing strip is the same shape from everywhere and a
-// plane-locked one vanishes edge-on. Drawn additively with backface culling off
-// you see the far wall through the near one, so grazing angles accumulate more
-// material and the edges brighten on their own — a fresnel rim for free, which
-// is most of what makes an energy volume read as a volume.
-typedef enum {
-  TRAIL_SHAPE_RIBBON = 0, // flat strip (the default, and every existing caller)
-  TRAIL_SHAPE_TUBE = 1    // swept tube — a volume with a real silhouette
+// ── Trail Cross-section ─────────────────────────────────────────────────────
+typedef enum
+{
+    TRAIL_SHAPE_RIBBON = 0, // Flat strip
+    TRAIL_SHAPE_TUBE = 1    // Swept tube (Volume)
 } TrailShape;
 
-// ── The cross-section itself ────────────────────────────────────────────────
-//
-// A closed loop of offsets in the section plane, in units of the trail's radius,
-// swept along the path. This is the generalisation that makes the tube path
-// worth having: the SHAPE is data, so the same sweep draws a round bolt, a
-// flattened plume, a crescent of smoke or a ragged flame profile without a line
-// of new drawing code.
-//
-//   x is along the transported frame's first axis, y along its second.
-//   A unit circle is the default and is generated when `section` is NULL.
-//
-// Radius per node still scales the whole section, so the width curve, the aspect
-// cap and the layer width multipliers all keep working unchanged.
-//
-// WHAT IT DOES NOT SOLVE: u is distributed evenly by INDEX around the loop, not
-// by arc length, so a section with very uneven spacing will stretch the texture
-// where its points are sparse. Space the points roughly evenly, or accept it —
-// for a smoke or flame profile the texture is noise and nobody can tell.
-typedef struct {
-  float x, y;
+typedef struct
+{
+    float x, y;
 } TrailSectionPoint;
 
-// Radial slices around a tube. 8 is plenty: the section is small on screen and
-// additive, so faceting hides in the falloff. Cost is segments x radial x 2
-// triangles PER LAYER, so this is the number to cut first if a tube trail is
-// ever the thing dropping frames.
 #define TRAIL_TUBE_RADIAL_DEFAULT 8
 #define TRAIL_TUBE_RADIAL_MAX 16
-
-// A tube does NOT need one ring per history node, and this is the cheapest real
-// saving available. The history is sampled at 60 Hz, so a 5 m tube gets a ring
-// every 10 cm — far finer than the silhouette can show, since the path between
-// two nodes is nearly straight at that scale. Rings are decimated to this many,
-// evenly along the history and always including both ends, which more than
-// halves the vertex count for no visible change.
-//
-// Measured, not guessed: 50 rings x 8 radial x 4 verts = 1600 vertices per layer
-// per trail per frame; 24 rings is 768.
 #define TRAIL_TUBE_RINGS_DEFAULT 24
-// Below this the ring contributes nothing but still costs a full circle of
-// quads. The tail's width envelope goes to zero, so about a third of a trail's
-// rings are invisible by construction.
 #define TRAIL_TUBE_MIN_ALPHA 3
 
-typedef enum {
-  TRAIL_WIDTH_ENVELOPE_UNIFORM = 0,
-  TRAIL_WIDTH_ENVELOPE_TAPER_TAIL = 1,
-  TRAIL_WIDTH_ENVELOPE_TAPER_BOTH = 2,
-  TRAIL_WIDTH_ENVELOPE_PULSE = 3
+typedef enum
+{
+    TRAIL_WIDTH_ENVELOPE_UNIFORM = 0,
+    TRAIL_WIDTH_ENVELOPE_TAPER_TAIL = 1,
+    TRAIL_WIDTH_ENVELOPE_TAPER_BOTH = 2,
+    TRAIL_WIDTH_ENVELOPE_PULSE = 3
 } TrailWidthEnvelopeType;
 
 typedef void (*TrailUpdateCallback)(int trailId, float dt);
 typedef void (*TrailDeathCallback)(Vector3 pos, float scale);
 typedef bool (*TrailCollisionCheckCallback)(int trailId, Vector3 currentPos);
 
-typedef struct {
-  TrailType type;
-  Vector3 pos;
-  Vector3 vel;
-  float len;
-  float thick;
-  float trailLength;
-  float life;
-  Vector3 target;
-  float initialAngle;
-  float wobblePhase;
-  float scale;
-  Texture2D tex;
-  Color tint;
-  Shader shader;
-  TrailUpdateCallback onUpdate;
-  TrailDeathCallback onDeath;
-  int ownerTag;
-  // Per-instance TRAIL_TYPE_PROJECTILE overrides. >0 = override the global
-  // TRAIL_PROJECTILE_* default; <=0 (default when TrailConfig is {0}) = use
-  // the global macro default. Does NOT change the global macros themselves.
-  float wobbleAmplitudeOverride;
-  float curveRangeOverride;
-  const ForceField *forceField;
-  const ColorGradient *gradient;
-  const SpriteAnim *spriteAnim;
-  // Pool-eviction priority (CORE_ISSUES.md Item 12). Defaults to
-  // VFX_PRIORITY_LOW (0) when TrailConfig is zero-initialized with {0} —
-  // fully backward compatible. When the MAX_TRAIL_PARTICLES pool is full,
-  // SpawnTrailEntity() evicts the lowest-priority active trail (ties broken
-  // by shortest remaining lifetime) instead of rejecting the new spawn.
-  VFXPriority priority;
-  
-  // Orbit parameters for TRAIL_TYPE_FOLLOWER
-  float orbitRadius;
-  float orbitSpeed;
-  Vector3 orbitAxis;
-  float orbitPhase;
-  BlendMode blendMode;
+typedef struct
+{
+    TrailType type;
+    Vector3 pos;
+    Vector3 vel;
+    float len;
+    float thick;
+    float trailLength;
+    float life;
+    Vector3 target;
+    float initialAngle;
+    float wobblePhase;
+    float scale;
+    Texture2D tex;
+    Color tint;
+    Shader shader;
+    TrailUpdateCallback onUpdate;
+    TrailDeathCallback onDeath;
+    int ownerTag;
 
-  // 5 New Upgrades configuration
-  TrailCollisionCheckCallback collisionCheck;
-  float uvTiling;
-  float uvScrollSpeed;
-  float minVertexDistance;
-  TrailWidthEnvelopeType widthEnvelope;
-  bool smoothSpline;
-  bool disableInnerCore; // Set true to disable the extra bright core layer (PROJECTILE/FOLLOWER only)
-  // blendMode defaults to BLEND_ADDITIVE. Set useCustomBlendMode=true to override
-  // with any value including BLEND_ALPHA (=0), which cannot be detected via >0 check.
-  bool useCustomBlendMode;
+    float wobbleAmplitudeOverride;
+    float curveRangeOverride;
+    const ForceField *forceField;
+    const ColorGradient *gradient;
+    const SpriteAnim *spriteAnim;
+    VFXPriority priority;
 
-  const SkillCurve *widthCurve;
-  const SkillCurve *alphaCurve;
-  float distortionStrength;
-  float distortionSpeed;
+    // Follower orbit
+    float orbitRadius;
+    float orbitSpeed;
+    Vector3 orbitAxis;
+    float orbitPhase;
+    BlendMode blendMode;
 
-  // ── FOLLOWER extensions. Every one of these is inert at 0, so a config that
-  // does not mention them behaves exactly as before. ───────────────────────
-  //
-  // Layered draw. NULL/0 = the legacy outer + inner pair.
-  const TrailLayer *layers;
-  int layerCount;
+    // Callbacks & Basic UV
+    TrailCollisionCheckCallback collisionCheck;
+    float uvTiling;
+    float uvScrollSpeed;
+    float minVertexDistance;
+    TrailWidthEnvelopeType widthEnvelope;
+    bool smoothSpline;
+    bool disableInnerCore;
+    bool useCustomBlendMode;
 
-  // METRES OF RIBBON PER TEXTURE REPEAT. > 0 switches the UV from the legacy
-  // `segRatio * uvTiling` to a MATERIAL coordinate, and the difference is not a
-  // refinement — the legacy form has two defects that no amount of
-  // `uvScrollSpeed` can cover:
-  //   1. `segRatio` is the node's INDEX normalised over the strip, so the
-  //      texture stretches and squashes as the trail grows and shortens.
-  //   2. It is measured from the HEAD, which is moving. Once the history is
-  //      full, a fixed piece of ribbon sees its own segRatio change at the
-  //      emitter's speed, so most of the apparent scroll is the motion leaking
-  //      in — locked to the emitter, and usually far too fast to read. See
-  //      core/docs/LANDMINES.md, "A scroll built on a MOVING origin".
-  // With this set, each node is stamped with the metres of path travelled when
-  // it was laid, and `uvScrollSpeed` is then exactly the flow rate over the
-  // cloth, in tiles per second, whatever the emitter is doing.
-  float uvMetresPerTile;
+    const SkillCurve *widthCurve;
+    const SkillCurve *alphaCurve;
+    float distortionStrength;
+    float distortionSpeed;
 
-  // Cloth. > 0 springs each node back toward where it was LAID, so the force
-  // field perturbs the swept path instead of replacing it (without this a
-  // FOLLOWER under any force field writhes free of its own trail).
-  float nodeHomeSpring;
-  float nodeHomeMaxDev;   // metres, ACROSS the path — the loose safety bound
-  // ALONG the path, as a fraction of the node spacing. MUST be < 0.5: both ends
-  // of a segment move, so the gap can close by twice this, and at 0.5 or above
-  // two nodes can swap places. That is a FOLD, the polyline reverses, the strip
-  // pinches into a wedge — and no distance constraint can undo it, because
-  // distance is a scalar and a node that has passed THROUGH its neighbour just
-  // reads as "slightly too close". 0.45 is a good value; 0 disables the bound.
-  float nodeOrderFrac;
+    // Layer & Physics
+    const TrailLayer *layers;
+    int layerCount;
+    float uvMetresPerTile;
+    float nodeHomeSpring;
+    float nodeHomeMaxDev;
+    float nodeOrderFrac;
+    float sampleHz;
+    float teleportSpeed;
 
-  // > 0: lay nodes at a fixed RATE with sub-frame interpolation, instead of one
-  // per frame. One per frame makes the trail's length in metres a function of
-  // the frame rate, and at 30 fps consecutive nodes land on top of each other.
-  float sampleHz;
-  // > 0 (metres/sec): a jump faster than this is a TELEPORT, and the trail is
-  // cut and restarted rather than drawing a straight bridge through space the
-  // emitter never swept.
-  float teleportSpeed;
-  // The swept cross-section. Zero (RIBBON) is what every existing caller gets.
-  TrailShape shape;
-  int tubeRadialSegs; // 0 = TRAIL_TUBE_RADIAL_DEFAULT (ignored when section != NULL)
-  int tubeMaxRings;   // 0 = TRAIL_TUBE_RINGS_DEFAULT
-  // NULL = a circle. Caller-owned and must outlive the trail — a static table.
-  const TrailSectionPoint *section;
-  int sectionCount;
-  // A swept tube is OPEN at both ends unless capped: the side quads alone leave
-  // a hole you can see the inside through, which on a trail whose head is wide
-  // reads as a bowl rather than a volume. A ring whose radius has tapered to
-  // nothing needs no cap and gets none.
-  bool tubeCaps;
-  // Both walls are drawn by default, which is what gives a tube its free rim:
-  // at grazing angles the view ray crosses more material, so the silhouette
-  // brightens on its own. Set this to draw only the near wall — cheaper, and
-  // sometimes the rim is not wanted.
-  bool tubeSingleSided;
-  // Vertex deformation by NOISE, as a fraction of the local radius. This is the
-  // layer that stops a swept tube reading as extruded plastic: without it the
-  // surface is mathematically smooth, and no sheet drawn on a smooth surface
-  // will convince anyone it is smoke or fire. 0 = off, ~0.18 = a live surface,
-  // ~0.4 = billowing.
-  float tubeNoiseAmp;
+    // Tube & Geometry
+    TrailShape shape;
+    int tubeRadialSegs;
+    int tubeMaxRings;
+    const TrailSectionPoint *section;
+    int sectionCount;
+    bool tubeCaps;
+    bool tubeSingleSided;
+    float tubeNoiseAmp;
+    float idleSpeed;
 
-  // > 0 (metres/sec): below this the attach path stops laying nodes, so the idle
-  // fade runs and the trail DECAYS. Without it an attached trail re-stamps its
-  // idle timer every frame, and a weapon standing still holds a frozen
-  // full-length ribbon forever — which is the single most "decal, not object"
-  // thing a trail can do.
-  float idleSpeed;
+    RibbonMode ribbonMode;
+    Vector3 fixedNormal;
 
-  // Ribbon orientation mode (anti-pinching). Default RIBBON_CAMERA_FACING for
-  // backward compatibility. Set to RIBBON_WORLD_UP or RIBBON_FIXED_NORMAL for
-  // normal-aligned trails that avoid camera-pinching artefacts.
-  // fixedNormal is only used when ribbonMode == RIBBON_FIXED_NORMAL.
-  RibbonMode ribbonMode;
-  Vector3 fixedNormal;
+    // ── MAP FLOW (FLOWMAP) GLOBAL CONFIG ────────────────────────────────────
+    const Texture2D *flowMap; // Flowmap texture (RG channels contain flow vectors)
+    float flowSpeed;          // Tốc độ chu kỳ dòng chảy
+    float flowStrength;       // Độ biến dạng / dịch chuyển UV
+    float flowTiling;         // UV Tiling riêng cho Flowmap
+    bool useFlowMap;          // Bật chế độ Flowmap shader pipeline
 
-  // Unified Config representation (Phase 3)
-  VFX_GeneralConfig general;
-  VFX_GeometryConfig geometry;
-  VFX_PhysicsConfig physics;
-  VFX_AnimationConfig animation;
-  VFX_RenderConfig render;
+    // Unified Config
+    VFX_GeneralConfig general;
+    VFX_GeometryConfig geometry;
+    VFX_PhysicsConfig physics;
+    VFX_AnimationConfig animation;
+    VFX_RenderConfig render;
 } TrailConfig;
 
-static inline void TrailConfig_Unify(TrailConfig *cfg) {
-  // 1. Populate unified from legacy flat fields if legacy is set and unified is empty
-  if (cfg->general.life == 0.0f && cfg->life != 0.0f) {
-    cfg->general.life = cfg->life;
-    cfg->general.priority = cfg->priority;
-    cfg->general.tag = cfg->ownerTag;
-  }
-  if (cfg->geometry.scale == 0.0f && cfg->scale != 0.0f) {
-    cfg->geometry.scale = cfg->scale;
-    cfg->geometry.radius = 0.0f;
-    cfg->geometry.width = cfg->thick;
-    cfg->geometry.length = cfg->len;
-  }
-  if (cfg->physics.position.x == 0.0f && cfg->physics.position.y == 0.0f && cfg->physics.position.z == 0.0f) {
-    cfg->physics.position = cfg->pos;
-    cfg->physics.velocity = cfg->vel;
-    cfg->physics.speed = 0.0f;
-    cfg->physics.forceField = cfg->forceField;
-  }
-  if (cfg->animation.spriteAnim == NULL && cfg->spriteAnim != NULL) {
-    cfg->animation.spriteAnim = cfg->spriteAnim;
-    cfg->animation.radiusCurve = NULL;
-    cfg->animation.speedCurve = NULL;
-    cfg->animation.alphaCurve = cfg->alphaCurve;
-    cfg->animation.emissiveCurve = NULL;
-    cfg->animation.widthCurve = cfg->widthCurve;
-  }
-  if (cfg->render.gradient == NULL && cfg->gradient != NULL) {
-    cfg->render.gradient = cfg->gradient;
-    cfg->render.colorStart = cfg->tint;
-    cfg->render.colorEnd = cfg->tint;
-    cfg->render.tint = cfg->tint;
-    cfg->render.shader = cfg->shader;
-    cfg->render.distortionStrength = cfg->distortionStrength;
-    cfg->render.distortionSpeed = cfg->distortionSpeed;
-  } else if (cfg->render.tint.a == 0 && cfg->tint.a != 0) {
-    cfg->render.tint = cfg->tint;
-    cfg->render.colorStart = cfg->tint;
-    cfg->render.colorEnd = cfg->tint;
-    cfg->render.gradient = cfg->gradient;
-    cfg->render.shader = cfg->shader;
-    cfg->render.distortionStrength = cfg->distortionStrength;
-    cfg->render.distortionSpeed = cfg->distortionSpeed;
-  }
+static inline void TrailConfig_Unify(TrailConfig *cfg)
+{
+    // 1. Unify legacy to unified
+    if (cfg->general.life == 0.0f && cfg->life != 0.0f)
+    {
+        cfg->general.life = cfg->life;
+        cfg->general.priority = cfg->priority;
+        cfg->general.tag = cfg->ownerTag;
+    }
+    if (cfg->geometry.scale == 0.0f && cfg->scale != 0.0f)
+    {
+        cfg->geometry.scale = cfg->scale;
+        cfg->geometry.radius = 0.0f;
+        cfg->geometry.width = cfg->thick;
+        cfg->geometry.length = cfg->len;
+    }
+    if (cfg->physics.position.x == 0.0f && cfg->physics.position.y == 0.0f && cfg->physics.position.z == 0.0f)
+    {
+        cfg->physics.position = cfg->pos;
+        cfg->physics.velocity = cfg->vel;
+        cfg->physics.speed = 0.0f;
+        cfg->physics.forceField = cfg->forceField;
+    }
+    if (cfg->animation.spriteAnim == NULL && cfg->spriteAnim != NULL)
+    {
+        cfg->animation.spriteAnim = cfg->spriteAnim;
+        cfg->animation.radiusCurve = NULL;
+        cfg->animation.speedCurve = NULL;
+        cfg->animation.alphaCurve = cfg->alphaCurve;
+        cfg->animation.emissiveCurve = NULL;
+        cfg->animation.widthCurve = cfg->widthCurve;
+    }
+    if (cfg->render.gradient == NULL && cfg->gradient != NULL)
+    {
+        cfg->render.gradient = cfg->gradient;
+        cfg->render.colorStart = cfg->tint;
+        cfg->render.colorEnd = cfg->tint;
+        cfg->render.tint = cfg->tint;
+        cfg->render.shader = cfg->shader;
+        cfg->render.distortionStrength = cfg->distortionStrength;
+        cfg->render.distortionSpeed = cfg->distortionSpeed;
+    }
+    else if (cfg->render.tint.a == 0 && cfg->tint.a != 0)
+    {
+        cfg->render.tint = cfg->tint;
+        cfg->render.colorStart = cfg->tint;
+        cfg->render.colorEnd = cfg->tint;
+        cfg->render.gradient = cfg->gradient;
+        cfg->render.shader = cfg->shader;
+        cfg->render.distortionStrength = cfg->distortionStrength;
+        cfg->render.distortionSpeed = cfg->distortionSpeed;
+    }
 
-  // 2. Populate legacy flat fields from unified if unified is set and legacy is empty
-  if (cfg->life == 0.0f && cfg->general.life != 0.0f) {
-    cfg->life = cfg->general.life;
-    cfg->priority = cfg->general.priority;
-    cfg->ownerTag = cfg->general.tag;
-  }
-  if (cfg->scale == 0.0f && cfg->geometry.scale != 0.0f) {
-    cfg->scale = cfg->geometry.scale;
-    cfg->thick = cfg->geometry.width;
-    cfg->len = cfg->geometry.length;
-  }
-  if (cfg->forceField == NULL && cfg->physics.forceField != NULL) {
-    cfg->forceField = cfg->physics.forceField;
-  }
-  if (cfg->pos.x == 0.0f && cfg->pos.y == 0.0f && cfg->pos.z == 0.0f) {
-    cfg->pos = cfg->physics.position;
-    cfg->vel = cfg->physics.velocity;
-  }
-  if (cfg->spriteAnim == NULL && cfg->animation.spriteAnim != NULL) {
-    cfg->spriteAnim = cfg->animation.spriteAnim;
-  }
-  if (cfg->widthCurve == NULL && cfg->animation.widthCurve != NULL) {
-    cfg->widthCurve = cfg->animation.widthCurve;
-  }
-  if (cfg->alphaCurve == NULL && cfg->animation.alphaCurve != NULL) {
-    cfg->alphaCurve = cfg->animation.alphaCurve;
-  }
-  if (cfg->gradient == NULL && cfg->render.gradient != NULL) {
-    cfg->gradient = cfg->render.gradient;
-  }
-  if (cfg->distortionStrength == 0.0f && cfg->render.distortionStrength != 0.0f) {
-    cfg->distortionStrength = cfg->render.distortionStrength;
-    cfg->distortionSpeed = cfg->render.distortionSpeed;
-  }
-  if (cfg->tint.a == 0 && cfg->render.tint.a != 0) {
-    cfg->tint = cfg->render.tint;
-    cfg->shader = cfg->render.shader;
-  }
+    // 2. Unify unified to legacy
+    if (cfg->life == 0.0f && cfg->general.life != 0.0f)
+    {
+        cfg->life = cfg->general.life;
+        cfg->priority = cfg->general.priority;
+        cfg->ownerTag = cfg->general.tag;
+    }
+    if (cfg->scale == 0.0f && cfg->geometry.scale != 0.0f)
+    {
+        cfg->scale = cfg->geometry.scale;
+        cfg->thick = cfg->geometry.width;
+        cfg->len = cfg->geometry.length;
+    }
+    if (cfg->forceField == NULL && cfg->physics.forceField != NULL)
+    {
+        cfg->forceField = cfg->physics.forceField;
+    }
+    if (cfg->pos.x == 0.0f && cfg->pos.y == 0.0f && cfg->pos.z == 0.0f)
+    {
+        cfg->pos = cfg->physics.position;
+        cfg->vel = cfg->physics.velocity;
+    }
+    if (cfg->spriteAnim == NULL && cfg->animation.spriteAnim != NULL)
+    {
+        cfg->spriteAnim = cfg->animation.spriteAnim;
+    }
+    if (cfg->widthCurve == NULL && cfg->animation.widthCurve != NULL)
+    {
+        cfg->widthCurve = cfg->animation.widthCurve;
+    }
+    if (cfg->alphaCurve == NULL && cfg->animation.alphaCurve != NULL)
+    {
+        cfg->alphaCurve = cfg->animation.alphaCurve;
+    }
+    if (cfg->gradient == NULL && cfg->render.gradient != NULL)
+    {
+        cfg->gradient = cfg->render.gradient;
+    }
+    if (cfg->distortionStrength == 0.0f && cfg->render.distortionStrength != 0.0f)
+    {
+        cfg->distortionStrength = cfg->render.distortionStrength;
+        cfg->distortionSpeed = cfg->render.distortionSpeed;
+    }
+    if (cfg->tint.a == 0 && cfg->render.tint.a != 0)
+    {
+        cfg->tint = cfg->render.tint;
+        cfg->shader = cfg->render.shader;
+    }
 }
 
-// Đã tối ưu Struct Padding: Sắp xếp theo kích thước dữ liệu giảm dần
-typedef struct {
-  // 1. Con trỏ (Pointers) - 8 bytes mỗi biến
-  TrailUpdateCallback onUpdate;
-  TrailDeathCallback onDeath;
-  const ForceField *forceField;
-  const ColorGradient *gradient;
-  const SpriteAnim *spriteAnim;
-  const SkillCurve *widthCurve;
-  const SkillCurve *alphaCurve;
-  // Non-NULL: tip position driven each frame by Vector3Transform(attachLocalOffset, *attachedTransform).
-  // Caller owns the Matrix and must keep it valid for the trail's lifetime.
-  const Matrix *attachedTransform;
-  TrailCollisionCheckCallback collisionCheck;
+// ── OPTIMIZED STRUCT PADDING (Đã sắp xếp theo kích thước dữ liệu giảm dần) ────
+typedef struct
+{
+    // 1. Con trỏ (Pointers) - 8 bytes mỗi biến
+    TrailUpdateCallback onUpdate;
+    TrailDeathCallback onDeath;
+    const ForceField *forceField;
+    const ColorGradient *gradient;
+    const SpriteAnim *spriteAnim;
+    const SkillCurve *widthCurve;
+    const SkillCurve *alphaCurve;
+    const Matrix *attachedTransform;
+    TrailCollisionCheckCallback collisionCheck;
+    const TrailLayer *layers;
+    const TrailSectionPoint *section;
 
-  // 2. Mảng và Struct lớn (Vectors)
-  Vector3 history[TRAIL_HISTORY_COUNT];
-  Vector3 nodeVelocity[TRAIL_HISTORY_COUNT];
-  // Where each node was LAID — the path itself, which the cloth is sprung back
-  // toward. Only meaningful when nodeHomeSpring > 0.
-  Vector3 nodeHome[TRAIL_HISTORY_COUNT];
-  // Spacing at which each node was laid, metres. The order bound is a fraction
-  // of THIS, not an absolute distance, which is the whole point of it.
-  float nodeRest[TRAIL_HISTORY_COUNT];
-  // The MATERIAL coordinate: metres of emitter path when this node was laid.
-  // Stamped once, never revisited. Only meaningful when uvMetresPerTile > 0.
-  float nodeUV[TRAIL_HISTORY_COUNT];
+    // 2. Mảng và Struct lớn (Vectors, Raylib Textures/Shaders)
+    Vector3 history[TRAIL_HISTORY_COUNT];
+    Vector3 nodeVelocity[TRAIL_HISTORY_COUNT];
+    Vector3 nodeHome[TRAIL_HISTORY_COUNT];
+    float nodeRest[TRAIL_HISTORY_COUNT];
+    float nodeUV[TRAIL_HISTORY_COUNT];
 
-  Vector3 position;
-  Vector3 velocity;
-  Vector3 target;
-  Vector3 driftVelocity;
-  Vector3 axisOrigin; // CHỈ có ý nghĩa khi type == TRAIL_TYPE_FOLLOWER và
-                      // forceField chứa layer FORCE_RADIAL_AXIS. Set bởi
-                      // SetFollowerAxis().
-  Vector3 axisDir; // Hướng trục, PHẢI là vector đơn vị khi truyền vào
-                   // SetFollowerAxis().
-  Vector3 attachLocalOffset; // Local-space offset transformed by attachedTransform each frame.
-  Vector3 fixedNormal; // Normal vector for RIBBON_FIXED_NORMAL mode.
+    Vector3 position;
+    Vector3 velocity;
+    Vector3 target;
+    Vector3 driftVelocity;
+    Vector3 axisOrigin;
+    Vector3 axisDir;
+    Vector3 attachLocalOffset;
+    Vector3 fixedNormal;
+    Vector3 orbitAxis;
+    Vector3 prevAttachPos;
+    Vector3 lateralOffset;
 
-  // 3. Texture và Color
-  Texture2D sprite;
-  Color tint;
-  Shader shader;
+    Texture2D sprite;  // 20 bytes
+    Texture2D flowMap; // 20 bytes (Thêm Flowmap Texture vào Entity)
+    Shader shader;     // 12/16 bytes
+    Color tint;        // 4 bytes
 
-  // 4. Các biến thực (Floats) - 4 bytes
-  float length;
-  float thickness;
-  float trailLength;
-  float lifetime;
-  float maxLifetime;
-  float angle;
-  float wobblePhase;
-  float scale;
-  float wobbleAmplitudeOverride;
-  float curveRangeOverride;
-  float timeSinceLastFollowerUpdate;
-  float fadeAccumulator;
-  float nodeRestLen;
-  float orbitRadius;
-  float orbitSpeed;
-  float orbitPhase;
-  Vector3 orbitAxis;
-  float uvTiling;
-  float uvScrollSpeed;
-  float uvScrollOffset;
-  float minVertexDistance;
-  float distortionStrength;
-  float distortionSpeed;
-  float uvMetresPerTile;
-  float laidDist;        // running total the nodeUV stamps come from, metres
-  float nodeHomeSpring;
-  float nodeHomeMaxDev;
-  float nodeOrderFrac;
-  float sampleHz;
-  float sampleAcc;
-  float teleportSpeed;
-  float idleSpeed;
-  Vector3 prevAttachPos; // last frame's tip, for sub-frame interpolation
-  Vector3 lateralOffset; // world-space offset added to the attach point
-  bool hasPrevAttach;
+    // 3. Các biến thực (Floats) - 4 bytes
+    float length;
+    float thickness;
+    float trailLength;
+    float lifetime;
+    float maxLifetime;
+    float angle;
+    float wobblePhase;
+    float scale;
+    float wobbleAmplitudeOverride;
+    float curveRangeOverride;
+    float timeSinceLastFollowerUpdate;
+    float fadeAccumulator;
+    float nodeRestLen;
+    float orbitRadius;
+    float orbitSpeed;
+    float orbitPhase;
+    float uvTiling;
+    float uvScrollSpeed;
+    float uvScrollOffset;
+    float minVertexDistance;
+    float distortionStrength;
+    float distortionSpeed;
+    float uvMetresPerTile;
+    float laidDist;
+    float nodeHomeSpring;
+    float nodeHomeMaxDev;
+    float nodeOrderFrac;
+    float sampleHz;
+    float sampleAcc;
+    float teleportSpeed;
+    float idleSpeed;
+    float tubeNoiseAmp;
 
-  // 5. Số nguyên và Enum (Int/Enum) - 4 bytes
-  TrailType type;
-  VFXPriority priority;
-  int historyCount;
-  int historyHead;
-  int ownerTag;
-  int nextFree;
-  BlendMode blendMode;
-  TrailWidthEnvelopeType widthEnvelope;
-  RibbonMode ribbonMode;
-  const TrailLayer *layers;
-  int layerCount;
-  TrailShape shape;
-  int tubeRadialSegs;
-  int tubeMaxRings;
-  const TrailSectionPoint *section;
-  int sectionCount;
-  bool tubeCaps;
-  bool tubeSingleSided;
-  float tubeNoiseAmp;
+    // Các tham số biến đổi Flowmap thời gian thực (Floats)
+    float flowSpeed;
+    float flowStrength;
+    float flowTiling;
+    float flowTimeAccumulator; // Bộ đếm thời gian riêng cho phase cuộn flowmap
 
-  // 6. Kiểu Boolean - 1 byte
-  bool active;
-  bool smoothSpline;
-  bool disableInnerCore;
-  bool useCustomBlendMode;
-  bool frozen;
+    // 4. Số nguyên và Enum (Int/Enum) - 4 bytes
+    TrailType type;
+    VFXPriority priority;
+    int historyCount;
+    int historyHead;
+    int ownerTag;
+    int nextFree;
+    BlendMode blendMode;
+    TrailWidthEnvelopeType widthEnvelope;
+    RibbonMode ribbonMode;
+    int layerCount;
+    TrailShape shape;
+    int tubeRadialSegs;
+    int tubeMaxRings;
+    int sectionCount;
+
+    // 5. Kiểu Boolean - 1 byte
+    bool active;
+    bool smoothSpline;
+    bool disableInnerCore;
+    bool useCustomBlendMode;
+    bool frozen;
+    bool hasPrevAttach;
+    bool tubeCaps;
+    bool tubeSingleSided;
+    bool useFlowMap; // Bật/Tắt tính năng Flowmap
 } TrailEntity;
+
+// ── Function Declarations ───────────────────────────────────────────────────
 
 void TrailSystem_SetGlobalTexture(Texture2D tex);
 void InitTrailSystem(Shader defaultShader);
@@ -520,42 +414,16 @@ void UpdateTrailSystem(float dt);
 void DrawTrailEntities(Camera3D camera);
 void UnloadTrailSystem(void);
 int GetActiveTrailCount(void);
-void TrailSystem_GetStats(int *active, int *max); // Item 32
+void TrailSystem_GetStats(int *active, int *max);
 
 void UpdateFollowerPosition(int id, Vector3 newTipPos);
-
-// Attach a TRAIL_TYPE_FOLLOWER trail to an external Matrix (e.g. a bone
-// transform). Each frame in UpdateTrailSystem the tip is recomputed as
-// Vector3Transform(localOffset, *targetTransform). Pass localOffset={0,0,0}
-// to track the matrix origin directly. The Matrix must stay valid for the
-// trail's lifetime — typically a static field on the owning skill.
-// Pass targetTransform=NULL to detach.
-void Trail_AttachToTransform(int id, const Matrix *targetTransform,
-                             Vector3 localOffset);
-
+void Trail_AttachToTransform(int id, const Matrix *targetTransform, Vector3 localOffset);
 void Trail_SetFollowerOrbit(int id, float radius, float speed, Vector3 axis, float phase);
-
-// Set trục động (axisOrigin + axisDir, axisDir PHẢI normalize trước khi
-// gọi) dùng cho lực FORCE_RADIAL_AXIS trong forceField của entity FOLLOWER
-// này. PHẢI gọi mỗi frame TRƯỚC UpdateTrailSystem() nếu trục di chuyển.
 void SetFollowerAxis(int id, Vector3 axisOrigin, Vector3 axisDir);
-
-// A WORLD-space offset added to the attach point before the node is laid, for a
-// bundle of trails that must spread apart along an axis the caller works out per
-// frame — a swing-plane normal, say, which is not expressible as a fixed local
-// offset because it is derived from the path the trail has already travelled.
-// Call before UpdateTrailSystem(). Zero (the default) is no offset.
 void Trail_SetLateralOffset(int id, Vector3 worldOffset);
-
-// Hold a FOLLOWER's shape completely still — no new nodes, no cloth step, the
-// head left where it is — while the UV scroll keeps running. `elapsed` for the
-// flow is unaffected, so THE ONLY THING THAT MOVES IS THE FLOW.
-//
-// This exists because "is the energy actually flowing?" cannot be answered by
-// looking at a trail that is simultaneously being swung: a moving shape with a
-// moving texture and a moving shape with a painted-on one look the same. Freeze
-// the shape and the question answers itself. Debug instrument, not a gameplay
-// pause — a frozen trail still ages and still dies on its lifetime.
 void Trail_SetFrozen(int id, bool frozen);
+
+// API mở rộng hỗ trợ cập nhật FlowMap động thời gian thực
+void Trail_SetFlowMap(int id, Texture2D flowMap, float speed, float strength, float tiling);
 
 #endif // TRAIL_SYSTEM_H
