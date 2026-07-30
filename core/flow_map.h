@@ -55,8 +55,31 @@ FlowMap FlowMap_Create(Shader shader, Texture2D flowTex,
 
 // Tiện ích: tự sinh một flow texture xoáy (vortex) procedural, FlowMap sẽ
 // SỞ HỮU texture này (FlowMap_Unload sẽ giải phóng nó).
+//
+// LƯU Ý: vortex KHÔNG lát liền được. Nó có một tâm và các cạnh không khớp
+// nhau, nên chỉ dùng cho một mảnh phẳng phủ đúng một lần (khiên, vũng xoáy).
+// Quấn quanh ống hoặc lát dọc trail sẽ lộ đường ghép và một điểm kỳ dị ở tâm.
 FlowMap FlowMap_CreateWithVortexTexture(Shader shader, int texSize,
                                          const char *timeUniformName);
+
+// Flow field cho TRAIL THỂ TÍCH — dòng chảy DỌC trục cộng nhiễu động xoắn
+// quanh chu vi, và LÁT LIỀN được trên CẢ HAI trục.
+//
+// Vì sao cần một hàm riêng thay vì dùng lại vortex: trong không gian UV của
+// một ống quét, `u` quấn quanh chu vi và `v` chạy dọc thân. Dòng chảy phải
+// chủ yếu theo -v (ngược chiều bay — xem hướng dẫn projectile) với nhiễu
+// xoắn theo u. Một trường xoáy quanh MỘT TÂM không mô tả được điều đó, và
+// tệ hơn, nó không lát liền: đường ghép sẽ chạy suốt chiều dài ống.
+//
+// Liền mạch được bảo đảm bằng cấu trúc chứ không bằng cross-fade: mọi thành
+// phần đều là sóng hài với tần số NGUYÊN theo cả u và v, nên giá trị tại
+// u=0 và u=1 bằng nhau theo định nghĩa.
+//
+//   swirl 0.0 = chảy thẳng, không xoắn
+//   swirl ~0.4 = cuộn trào (khói, năng lượng)
+//   swirl > 1.0 = hỗn loạn
+FlowMap FlowMap_CreateWithTrailTexture(Shader shader, int texSize, float swirl,
+                                        const char *timeUniformName);
 
 // Set các uniform speed/strength/tiling/time (nếu có) lên `shader`.
 // PHẢI gọi sau BeginShaderMode(shader) - và `shader` PHẢI là đúng shader mà

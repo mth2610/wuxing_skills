@@ -99,6 +99,60 @@ typedef struct
 
   /* --- End-cap apex: khoảng đẩy ra của đỉnh chóp bo đầu/đuôi, theo % bán kính
    * tại đó --- */
+  /* PARALLEL TRANSPORT cho khung mặt cắt. Mặc định false = giữ nguyên hành vi
+   * cũ (dựng lại khung từ world-up ở MỖI lát) cho water stream đang chạy.
+   *
+   * Vì sao cần: khung dựng lại từ một vector tham chiếu toàn cục làm ROLL của
+   * mặt cắt trở thành hàm của hướng tangent so với world-up. Trên đường CONG,
+   * các lát liên tiếp có roll khác nhau -> UV quấn ở góc khác nhau -> texture
+   * bị cắt xoắn dọc thân. Đo được: 14% một vòng quấn trên đường cong 3 trục,
+   * và giật gần 1/4 vòng khi tangent vượt ngưỡng |y| > 0.99.
+   *
+   * Water stream chạy trên Bezier gần thẳng nên chưa bao giờ lộ. Trail thì
+   * cong nhiều — bật cái này cho mọi path cong. */
+  bool useTransportFrame;
+
+  /* --- Biến dạng đỉnh bằng NOISE, thay cho hai lớp sin ở trên ---
+   *
+   * deform1/deform2 là hai sóng sin: rẻ, nhưng chúng TUẦN HOÀN, nên bề mặt lăn
+   * tăn theo một nhịp đều mà mắt bắt được ngay là nhân tạo. Noise không có nhịp.
+   *
+   * Trường noise dựng bằng lattice có chu kỳ (giống scripts/gen_volume_trail_
+   * textures.py), nên nó LÁT LIỀN quanh mặt cắt — biến dạng không tạo đường nối
+   * dọc thân ống. Đó là lý do nó nằm ở đây chứ không phải một hàm rand() tại chỗ.
+   *
+   * noiseAmp 0 = tắt. ~0.15 = gợn nhẹ. ~0.4 = cuộn trào rõ. */
+  float noiseAmp;   /* biên độ, theo tỉ lệ bán kính tại điểm đó */
+  float noiseScale; /* số ô lattice dọc thân; cao hơn = chi tiết nhỏ hơn */
+  float noiseSpeed; /* tốc độ trôi của trường theo thời gian */
+  /* Dịch trường noise DỌC THÂN ống, tính bằng số ô lattice.
+   *
+   * Không có nó, noise được lấy mẫu tại t = i/segments — VỊ TRÍ CHUẨN HOÁ dọc
+   * ống — nên các chỗ phình nằm ở tỉ lệ cố định (luôn ở 30%, 60%...) và đi theo
+   * ống như một hình đã bị bóp sẵn rồi kéo lê. Trục thời gian làm nó thở, nhưng
+   * thở không phải chảy.
+   *
+   * Cho caller đẩy giá trị này theo quãng đường đã đi thì các chỗ phình chạy
+   * DỌC ống, tức vật chất đi qua chứ không phải hình bị biến dạng cố định. Cùng
+   * một bài học với UV: bất cứ thứ gì neo vào một đầu ĐANG DI CHUYỂN đều bị đọc
+   * là vẽ dán lên. */
+  float noiseOffset;
+
+  /* Nguồn noise: ẢNH đã load, thay cho trường băm thủ tục.
+   *
+   * Vì sao đáng đổi, ngoài chuyện "dùng asset cho đúng":
+   *  - Ba KÊNH của volume_noise.png là ba trường ĐỘC LẬP, sinh ra để không
+   *    tương quan. Một lần lấy mẫu cho ra cả hai octave (R lớn, G mịn), thay
+   *    vì hai lần gọi hàm băm với hai hạt giống khác nhau.
+   *  - Nghệ sĩ thay được file mà không đụng code.
+   *  - Và đây là ĐÚNG dữ liệu mà đường bake + vertex shader sẽ dùng, nên khi
+   *    chuyển sang GPU thì hình dạng không đổi — chỉ chỗ tính đổi.
+   *
+   * NULL = quay về trường băm thủ tục, giữ nguyên hành vi cũ. Ảnh phải là
+   * R8G8B8A8 và LÁT LIỀN cả hai trục (script sinh ra đã bảo đảm điều đó). */
+  const unsigned char *noisePixels;
+  int noiseImgW, noiseImgH;
+
   float tailApexFactor; /* VD 0.25 = đuôi nhọn vừa. Số nhỏ -> đuôi nhọn hơn */
   float headApexFactor; /* VD 0.8  = đầu bo tròn đầy. Số lớn -> đầu phồng tròn
                            hơn */
@@ -170,6 +224,21 @@ void ProceduralMesh_BuildTubeAlongPath(TubeMeshData *out, const Vector3 *pathPoi
  *   texture flow trong fragment shader (giống TUBE_UV_LENGTH_SCALE gốc).
  */
 void ProceduralMesh_DrawTube(const TubeMeshData *data, float uvLengthScale);
+
+/*
+ * Như trên, cộng thêm OFFSET cho UV.v — thứ làm texture CUỘN dọc thân ống.
+ *
+ * Bản gốc tính v = i/segments cứng, nên một cái ống không bao giờ có thể được
+ * nhìn thấy là đang chảy: texture dán chết vào mesh và chỉ đi theo mesh. Với
+ * water stream (tia nước bay tới đích rồi tắt) điều đó không lộ; với một trail
+ * thể tích thì dòng chảy CHÍNH LÀ hiệu ứng.
+ *
+ * uvOffset tính bằng số lần lặp texture, cộng thẳng vào v. Cho nó chạy theo
+ * thời gian là có dòng cuộn; cho nó ÂM là cuộn ngược chiều bay, thứ đọc ra là
+ * "bị bỏ lại phía sau" thay vì "bị đẩy đi trước mặt".
+ */
+void ProceduralMesh_DrawTubeEx(const TubeMeshData *data, float uvLengthScale,
+                               float uvOffset);
 
 /* ============================================================================
  * WAVE PLANE MESH SYSTEM (MỚI)

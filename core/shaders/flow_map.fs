@@ -27,9 +27,16 @@ void main() {
     // Tính toán trọng số Blend dạng sóng tam giác (Đỉnh cao nhất tại 0.5)
     float blend = abs(phase0 * 2.0 - 1.0);
 
-    // Lấy mẫu kết cấu bề mặt dịch chuyển qua 2 pha độc lập
-    vec4 col0 = texture(texture0, uv + flow * phase0 * uStrength);
-    vec4 col1 = texture(texture0, uv + flow * phase1 * uStrength);
+    // DỊCH CHUYỂN CĂN GIỮA quanh 0: (phase - 0.5), không phải phase.
+    //
+    // Đây là chỗ kỹ thuật này hỏng suốt từ đầu. Trọng số blend abs(2*p - 1)
+    // giả định pha 0.5 là pha KHÔNG méo — đó là quy ước của Valve. Nếu dịch
+    // chuyển tính bằng `phase` thay vì `phase - 0.5` thì lớp đang được ưu
+    // tiên hoàn toàn lại chính là lớp méo NHIỀU NHẤT, còn lớp méo bằng 0
+    // luôn nhận trọng số 0. Cross-fade khi đó nhấp nháy độ méo thay vì giấu
+    // nó đi — tức nó làm đúng điều ngược lại với mục đích tồn tại.
+    vec4 col0 = texture(texture0, uv + flow * (phase0 - 0.5) * uStrength);
+    vec4 col1 = texture(texture0, uv + flow * (phase1 - 0.5) * uStrength);
 
     // Đạt hiệu ứng cuộn chảy năng lượng mượt mà, vô tận bằng phép nội suy pha
     finalColor = mix(col0, col1, blend) * colDiffuse * fragColor;

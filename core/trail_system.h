@@ -276,6 +276,22 @@ typedef struct {
   // NULL = a circle. Caller-owned and must outlive the trail — a static table.
   const TrailSectionPoint *section;
   int sectionCount;
+  // A swept tube is OPEN at both ends unless capped: the side quads alone leave
+  // a hole you can see the inside through, which on a trail whose head is wide
+  // reads as a bowl rather than a volume. A ring whose radius has tapered to
+  // nothing needs no cap and gets none.
+  bool tubeCaps;
+  // Both walls are drawn by default, which is what gives a tube its free rim:
+  // at grazing angles the view ray crosses more material, so the silhouette
+  // brightens on its own. Set this to draw only the near wall — cheaper, and
+  // sometimes the rim is not wanted.
+  bool tubeSingleSided;
+  // Vertex deformation by NOISE, as a fraction of the local radius. This is the
+  // layer that stops a swept tube reading as extruded plastic: without it the
+  // surface is mathematically smooth, and no sheet drawn on a smooth surface
+  // will convince anyone it is smoke or fire. 0 = off, ~0.18 = a live surface,
+  // ~0.4 = billowing.
+  float tubeNoiseAmp;
 
   // > 0 (metres/sec): below this the attach path stops laying nodes, so the idle
   // fade runs and the trail DECAYS. Without it an attached trail re-stamps its
@@ -483,6 +499,9 @@ typedef struct {
   int tubeMaxRings;
   const TrailSectionPoint *section;
   int sectionCount;
+  bool tubeCaps;
+  bool tubeSingleSided;
+  float tubeNoiseAmp;
 
   // 6. Kiểu Boolean - 1 byte
   bool active;

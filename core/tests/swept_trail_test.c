@@ -215,7 +215,7 @@ static void Test_NodesCannotCrossTheirNeighbour(void)
 // its own arc value change at the tip speed whether or not anything is scrolling.
 // That is not a scroll — it is the swing leaking into the texture.
 
-#define SWEPT_FLOW_SPEED 2.10f
+#define SWEPT_FLOW_SPEED 3.60f
 #define SWEPT_FLOW_TILE  1.10f
 
 static void Test_FlowIsDecoupledFromTheSwing(void)
@@ -223,10 +223,15 @@ static void Test_FlowIsDecoupledFromTheSwing(void)
     const float armLen = 3.0f, omega = 2.4f;
     float tipSpeed = armLen * omega;                        // 7.2 m/s
     float bodyPass = 0.50f + 0.55f * 1.0f;                  // the textured layer
+    // The scroll constant AS IT WAS when the bug existed, not as it is now.
+    // This test documents a past defect, so it has to be evaluated against the
+    // numbers of that time — pinning it to the live constant made it fail the
+    // day the base speed was raised, which would have read as the bug returning.
+    const float SCROLL_THEN = 2.10f;
 
     // What the OLD formula did, at a fixed point of cloth, in tiles/sec.
     float fromSwing  = tipSpeed / SWEPT_FLOW_TILE;
-    float fromScroll = SWEPT_FLOW_SPEED * bodyPass;
+    float fromScroll = SCROLL_THEN * bodyPass;
     float oldTotal   = fromSwing + fromScroll;
     CHECK_MSG(fromSwing > 2.0f * fromScroll,
               "the swing really did dominate the old UV motion",
@@ -245,7 +250,7 @@ static void Test_FlowIsDecoupledFromTheSwing(void)
               "%.1f strip-lengths/sec", oldTotal / stripTiles);
 
     // The new rate, at a fixed point of cloth, is the scroll term ALONE.
-    float newRate = fromScroll;
+    float newRate = SWEPT_FLOW_SPEED * bodyPass;
     CHECK_MSG(newRate / stripTiles > 0.4f && newRate / stripTiles < 1.5f,
               "the new flow crosses the strip about once a second — trackable",
               "%.2f strip-lengths/sec", newRate / stripTiles);
@@ -532,6 +537,67 @@ static void Test_StyleValidatorCoversEveryStyle(void)
     for (int i = 0; i < 4; i++)
         CHECK_MSG(aspect[i] > 0.0f, "every style has a real aspect",
                   "%s is %.4f", nm[i], aspect[i]);
+}
+
+// ── 0b7. The haze profile is a TEARDROP ─────────────────────────────────────
+//
+// The owner's call: make it the shape the water stream tube already uses, which
+// is `sqrt(sin(t*PI))` times a taper rising toward the head — a needle at the
+// tail swelling to its widest around t = 0.7, then rounding off.
+//
+// This profile has now shipped wrong twice, both times because it was derived
+// from an analogy instead of from the thing being copied: first BACKWARDS
+// (widest at the tail, on the reasoning that "a wake spreads as it ages", which
+// describes smoke and not an energy field), then as a straight triangle. Pinned
+// against the reference profile so the third version cannot drift either.
+
+static void Test_HazeProfileIsATeardrop(void)
+{
+    const Stop2 W[] = {{0.00f,0.00f},{0.20f,0.37f},{0.45f,0.79f},
+                       {0.70f,1.00f},{0.88f,0.95f},{1.00f,0.86f}};
+    const Stop2 A[] = {{0.00f,0.00f},{0.20f,0.26f},{0.45f,0.62f},
+                       {0.70f,0.88f},{1.00f,1.00f}};
+
+    // The reference: the water stream's own capsule profile.
+    float bestT = 0.0f, best = 0.0f;
+    for (int i = 0; i <= 100; i++) {
+        float t = (float)i / 100.0f;
+        float v = sqrtf(fmaxf(0.0f, sinf(t * 3.14159265f))) * (0.15f + 0.85f * t);
+        if (v > best) { best = v; bestT = t; }
+    }
+    float ourPeakT = 0.0f, ourPeak = 0.0f;
+    for (float t = 0.0f; t <= 1.0f; t += 0.002f) {
+        float w = Curve2(W, 6, t);
+        if (w > ourPeak) { ourPeak = w; ourPeakT = t; }
+    }
+    CHECK_MSG(fabsf(ourPeakT - bestT) < 0.08f,
+              "the widest point sits where the water stream's does",
+              "ours %.2f, reference %.2f", ourPeakT, bestT);
+
+    // A needle at the tail — which is also what makes the tube's end-cap
+    // degenerate to a point instead of a visible flat disc.
+    CHECK_MSG(Curve2(W, 6, 0.0f) < 0.01f, "the tail comes to a point",
+              "%.3f at the tail", Curve2(W, 6, 0.0f));
+    // ...but NOT at the head: the orb sits on that end, and a taper there opens
+    // a gap between the ball and its own field. The water stream closes itself
+    // with a rounded cap instead; we cannot, so we stop short.
+    CHECK_MSG(Curve2(W, 6, 1.0f) > 0.7f,
+              "the head stays broad, or the orb floats free of its own field",
+              "%.2f at the head", Curve2(W, 6, 1.0f));
+    // ...and it still ROUNDS rather than ending square.
+    CHECK_MSG(Curve2(W, 6, 1.0f) < ourPeak,
+              "and it rounds off rather than ending on a cylinder cut",
+              "%.2f at the head vs %.2f peak", Curve2(W, 6, 1.0f), ourPeak);
+
+    // The rule that survives every reshape: alpha must not lead width near the
+    // tail, or the last stretch is sub-pixel while still visible.
+    float worstS = -1.0f, gap = 0.0f;
+    for (float t = 0.01f; t <= 0.40f; t += 0.005f) {
+        float w = Curve2(W, 6, t), a = Curve2(A, 5, t);
+        if (a > w && (a - w) > gap) { gap = a - w; worstS = t; }
+    }
+    CHECK_MSG(worstS < 0.0f, "haze alpha still never leads haze width near the tail",
+              "alpha leads by %.3f at t = %.2f", gap, worstS);
 }
 
 // ── 0c. The authored flow sheet is USABLE as a trail sheet ───────────────────
@@ -1463,8 +1529,12 @@ static void Test_MirrorStillMatchesSource(void)
     // that can be wrong.
     CHECK(FileHas(inl, "s_sweptHazeLayers[1].texture = NULL;"),
           "no haze layer is handed a ribbon band sheet — those seam on a tube");
-    CHECK(FileHas(inl, "(s_hazeTex >= 0.5f && s_sweptTubeTex.id != 0) ? &s_sweptTubeTex : NULL"),
-          "and only the u-SEAMLESS sheet can ever go on the tube, on request");
+    CHECK(FileHas(inl, "if (s_hazeTex >= 2.5f && s_volFireTex.id != 0) volSheet = &s_volFireTex;"),
+          "the tube sheet is chosen per element family, not one noise for all three");
+    CHECK(FileHas(inl, "assets/textures/energy_volume.png"),
+          "and it is the purpose-built volume sheet, seamless by construction");
+    CHECK(FileHas(inl, "SetTextureWrap(s_volEnergyTex, TEXTURE_WRAP_REPEAT);"),
+          "wrapping on BOTH axes — u around the section, v along the length");
     CHECK(FileHas(inl, "t->layerCount = (s_hazeLayers >= 1.5f) ? 2 : 1;"),
           "the layer count is a live dial, so one-vs-two costs no rebuild");
     CHECK(FileHas(inl, "return 0.1600f;"),
@@ -1588,6 +1658,7 @@ int main(void)
     Test_FlowIsDecoupledFromTheSwing();
     Test_AdditiveBudget();
     Test_HazeSitsUnderTheSharpTrail();
+    Test_HazeProfileIsATeardrop();
     Test_TrailKeepsTheElementHue();
     Test_StyleValidatorCoversEveryStyle();
     Test_AssetSheetGeometry();

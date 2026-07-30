@@ -239,6 +239,12 @@ static void VC_Projectile_Draw3D(Camera3D cam)
         if (!p->active || !p->xf)
             continue;
         Vector3 head = Vector3Transform((Vector3){0.0f, 0.0f, 0.0f}, *p->xf);
-        VFX_ComposeEnergyOrb(head, p->matId, p->radius, 1.0f);
+        // NO SHELL. The fresnel sphere is off while the volume mesh is what is
+        // being built: it is the brightest thing in the effect and it sits
+        // exactly where the tube's head is, so every judgement about the tube's
+        // silhouette was being made through it. The hot core stays — a
+        // projectile still needs a source — but the shell comes back only once
+        // the mesh underneath it is agreed.
+        VFX_ComposeCoreGlow(head, p->matId, p->radius * 0.9f, 1.0f);
     }
 }

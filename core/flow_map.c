@@ -24,6 +24,74 @@ FlowMap FlowMap_Create(Shader shader, Texture2D flowTex,
   return fm;
 }
 
+FlowMap FlowMap_CreateWithTrailTexture(Shader shader, int texSize, float swirl,
+                                        const char *timeUniformName) {
+  if (texSize <= 0)
+    texSize = 128;
+  if (swirl < 0.0f)
+    swirl = 0.0f;
+
+  Image img = GenImageColor(texSize, texSize, BLANK);
+
+  // Harmonics with INTEGER frequencies in both axes. That is what makes the
+  // field tile: sin(2*PI*(k*u + m*v)) has the same value at u=0 and u=1 for any
+  // integers k, m, so the seam is exact rather than cross-faded. A flow map
+  // cross-faded at its seam would blend two DIRECTIONS, and the average of two
+  // opposing directions is no flow at all — a dead band across the tube.
+  //
+  // Deliberately uneven amplitudes and frequencies: equal harmonics produce a
+  // regular lattice, and a regular flow field reads as a machined pattern
+  // travelling, not as something billowing.
+  const float amp[3]  = {0.55f, 0.30f, 0.18f};
+  const int   ku[3]   = {1, 2, 3};
+  const int   kv[3]   = {2, 1, 3};
+  const float phase[3] = {0.0f, 1.9f, 3.7f};
+
+  for (int y = 0; y < texSize; y++) {
+    float v = ((float)y + 0.5f) / (float)texSize;
+    for (int x = 0; x < texSize; x++) {
+      float u = ((float)x + 0.5f) / (float)texSize;
+
+      // ALONG the tube is the base flow, and it is NEGATIVE: the guide's rule is
+      // that a projectile's energy runs against its direction of travel, which
+      // is what reads as something being left behind.
+      float fu = 0.0f;
+      float fv = -1.0f;
+      for (int h = 0; h < 3; h++) {
+        float a = 2.0f * PI * ((float)ku[h] * u + (float)kv[h] * v) + phase[h];
+        // The swirl component goes AROUND the section; the along component only
+        // modulates the base speed, so the flow never reverses into itself.
+        fu += swirl * amp[h] * sinf(a);
+        fv += 0.35f * amp[h] * cosf(a);
+      }
+
+      // Normalise so the encoding never clips. A clipped flow vector is a
+      // direction silently bent toward the axis it clipped on.
+      float len = sqrtf(fu * fu + fv * fv);
+      float maxLen = 1.0f + 0.35f * (amp[0] + amp[1] + amp[2]) +
+                     swirl * (amp[0] + amp[1] + amp[2]);
+      if (maxLen < 1e-4f)
+        maxLen = 1e-4f;
+      fu /= maxLen;
+      fv /= maxLen;
+      (void)len;
+
+      unsigned char r = (unsigned char)((fu * 0.5f + 0.5f) * 255.0f);
+      unsigned char g = (unsigned char)((fv * 0.5f + 0.5f) * 255.0f);
+      ImageDrawPixel(&img, x, y, (Color){r, g, 0, 255});
+    }
+  }
+
+  Texture2D tex = LoadTextureFromImage(img);
+  UnloadImage(img);
+  SetTextureFilter(tex, TEXTURE_FILTER_BILINEAR);
+  SetTextureWrap(tex, TEXTURE_WRAP_REPEAT);
+
+  FlowMap fm = FlowMap_Create(shader, tex, timeUniformName);
+  fm.ownsTexture = true;
+  return fm;
+}
+
 FlowMap FlowMap_CreateWithVortexTexture(Shader shader, int texSize,
                                          const char *timeUniformName) {
   if (texSize <= 0)

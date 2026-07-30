@@ -80,7 +80,13 @@
 // flow. Metres per tile, and tiles per second OVER THE CLOTH — with the material
 // UV that rate is exactly what it says, whatever the emitter is doing.
 #define SWEPT_FLOW_TILE 1.10f
-#define SWEPT_FLOW_SPEED 2.10f
+// Tiles per second over the cloth. 2.10 was bracketed on the flat RIBBON, where
+// one tile is 1.10 m of a 3 m strip — under three tiles visible, so two a second
+// crosses it quickly. A TUBE is longer and its texture wraps, so the same number
+// reads as barely moving on it; the dial carries the difference rather than a
+// second constant, but the base is raised so `swept_flow = 1` is already a flow
+// rather than a drift.
+#define SWEPT_FLOW_SPEED 3.60f
 // Trails are tagged so a handle can be VALIDATED rather than trusted. Trail ids
 // are recycled and the pool evicts by priority, so "our" id can silently become
 // somebody else's entity — writing a thickness or a normal into that would
@@ -131,6 +137,19 @@ static Texture2D s_sweptBodyTex = {0};
 // So the tube gets its own sheet: no edge kill, and cross-faded in BOTH axes so
 // it tiles along the length AND wraps around the circumference.
 static Texture2D s_sweptTubeTex = {0};
+// The purpose-built volume sheets (scripts/gen_volume_trail_textures.py). These
+// REPLACE the tube variant derived from energy_flow.png: that one was a ribbon
+// asset rotated, cropped and cross-faded into tiling, and a cross-faded seam
+// blurs exactly the detail the sheet exists to carry. These are seamless on both
+// axes BY CONSTRUCTION — the noise lattice wraps — so nothing is softened.
+//
+// One per material family, because they are not interchangeable: smoke has no
+// edges, flame is stretched along its travel and has a hot core, energy is
+// strands. A single "nice noise" for all three is how every element ends up
+// looking like the same effect tinted differently.
+static Texture2D s_volEnergyTex = {0};
+static Texture2D s_volSmokeTex = {0};
+static Texture2D s_volFireTex = {0};
 
 // How much the ribbon behaves like cloth. BLADE is nearly a record (a sword's
 // trail is struck, not draped); RIBBON is silk and is allowed to sag, lag and
@@ -185,6 +204,30 @@ static float s_sweptFreeze = 0.0f;
 //   haze_tex    = 1 -> put the flow sheet on the tube
 static float s_hazeLayers = 1.0f;
 static float s_hazeTex = 0.0f;
+// 1 = draw both walls, so grazing angles accumulate more material and the
+// silhouette brightens on its own. 0 = near wall only: no rim, and half the
+// fill. Not a fresnel term — there is no fresnel on a trail — but it is what
+// produces the same read, and it is the thing to turn off when the edges are
+// too hot.
+static float s_hazeRim = 1.0f;
+// SOLID WHITE, for judging the SHAPE and nothing else.
+//
+// "Turn everything off" does not give an opaque surface, because the thing that
+// makes a trail see-through is not a setting that was left on — it is
+// BLEND_ADDITIVE, which is what the blend law requires of anything that emits
+// light. Additive never occludes: it adds to whatever is behind it, so the stars
+// show through a fully opaque-alpha tube. Judging a silhouette through it is
+// reading a shape through frosted glass.
+//
+// This flips the whole path to opaque alpha, white, no gradient, single-sided —
+// a matte cast of the geometry. It is a DEBUG view and deliberately breaks the
+// blend law; nothing that emits should ship this way.
+static float s_hazeSolid = 0.0f;
+// Vertex deformation by noise, as a fraction of the local radius. This is the
+// layer that makes a swept tube stop being a swept tube: without it the surface
+// is mathematically smooth and reads as extruded plastic however good the sheet
+// on it is. 0.18 is a live surface; 0.4 billows.
+static float s_hazeNoise = 0.18f;
 
 // Uneven by design: evenly spaced strands of equal width read as a comb, no
 // amount of colour fixes it, and the regularity is the thing the eye picks up.
@@ -600,6 +643,14 @@ static void SweptTrail_InitShared(void)
 
     SweptTrail_BuildBladeMask();
     SweptTrail_BuildAssetSheet();
+    s_volEnergyTex = ResourceManager_LoadTexture("assets/textures/energy_volume.png");
+    s_volSmokeTex = ResourceManager_LoadTexture("assets/textures/smoke_volume.png");
+    s_volFireTex = ResourceManager_LoadTexture("assets/textures/fire_volume.png");
+    // REPEAT on both axes: a tube wraps u around the section and tiles v along
+    // the length, and these sheets were generated to survive exactly that.
+    if (s_volEnergyTex.id != 0) { SetTextureFilter(s_volEnergyTex, TEXTURE_FILTER_BILINEAR); SetTextureWrap(s_volEnergyTex, TEXTURE_WRAP_REPEAT); }
+    if (s_volSmokeTex.id != 0) { SetTextureFilter(s_volSmokeTex, TEXTURE_FILTER_BILINEAR); SetTextureWrap(s_volSmokeTex, TEXTURE_WRAP_REPEAT); }
+    if (s_volFireTex.id != 0) { SetTextureFilter(s_volFireTex, TEXTURE_FILTER_BILINEAR); SetTextureWrap(s_volFireTex, TEXTURE_WRAP_REPEAT); }
 
     FloatCurve_AddStop(&s_sweptTwinkle, 0.00f, 0.00f);
     FloatCurve_AddStop(&s_sweptTwinkle, 0.10f, 1.00f);
@@ -700,31 +751,35 @@ static void SweptTrail_InitShared(void)
     FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_FILAMENT], 0.25f, 0.70f);
     FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_FILAMENT], 1.00f, 1.00f);
 
-    // HAZE. A TRIANGLE, base at the head and apex behind — the owner's words:
-    // "trail hình tam giác, cạnh gắn vào đầu tròn, đỉnh nhọn phía sau".
+    // HAZE. A TEARDROP, on the owner's call — the same profile the water stream
+    // tube uses, which is `sqrt(sin(t*PI))` times a taper rising toward the head:
+    // a needle at the tail, swelling to its widest around t = 0.7, then rounding
+    // off. That shape is why a droplet reads as a droplet and a cone reads as a
+    // cone, and it is worth copying rather than re-deriving.
     //
-    // This shipped BACKWARDS for one round. I reasoned it as a wake that spreads
-    // as it ages, so I made it widest at the TAIL, and that is a smoke plume, not
-    // an energy field. A field is welded to its source: it is broadest where it
-    // touches the orb and comes to a point where it runs out. The difference is
-    // legible instantly on screen and cost a round because I derived the shape
-    // from an analogy instead of from what the owner drew.
+    // TWO DEPARTURES FROM THE WATER STREAM, both because of what sits on the end:
     //
-    // Note the head is 1.00, not tapered. Every other style in this file needles
-    // its head to avoid a flat cut-off; this one must NOT, because the orb sits
-    // on top of that end and hides it. A taper there would leave a visible gap
-    // between the ball and its own field.
+    //  - It does NOT return to zero at the head. The stream closes itself with a
+    //    rounded end-cap; this one has the orb sitting on it, so a taper there
+    //    would open a gap between the ball and its own field. It rounds to 0.86
+    //    and the orb covers the rest.
+    //  - The tail goes to zero rather than to the stream's 0.15 floor, which
+    //    makes the tube's end-cap degenerate to a point instead of a flat disc.
+    //
+    // This shipped as a straight triangle for one round, and before that
+    // BACKWARDS — widest at the tail — because I derived the shape from an
+    // analogy ("a wake spreads as it ages") instead of from what was drawn.
     FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_HAZE], 0.00f, 0.00f);
-    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_HAZE], 0.35f, 0.30f);
-    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_HAZE], 0.75f, 0.72f);
-    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_HAZE], 1.00f, 1.00f);
-    // ...and its alpha still falls at least as fast as its width toward the
-    // tail, or the last stretch is sub-pixel while visible and breaks into
-    // dashes (docs/LANDMINES.md). Against a curve that WIDENS backward that is a
-    // sharper constraint than usual, hence the early collapse.
+    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_HAZE], 0.20f, 0.37f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_HAZE], 0.45f, 0.79f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_HAZE], 0.70f, 1.00f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_HAZE], 0.88f, 0.95f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_HAZE], 1.00f, 0.86f);
+
     FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_HAZE], 0.00f, 0.00f);
-    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_HAZE], 0.35f, 0.22f);
-    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_HAZE], 0.75f, 0.66f);
+    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_HAZE], 0.20f, 0.26f);
+    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_HAZE], 0.45f, 0.62f);
+    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_HAZE], 0.70f, 0.88f);
     FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_HAZE], 1.00f, 1.00f);
 
     // Lazily, never from a subsystem Init — Tuning_Init runs after those and an
@@ -747,6 +802,9 @@ static void SweptTrail_InitShared(void)
     Tuning_RegisterFloat("swept_freeze", &s_sweptFreeze, 0.0f);
     Tuning_RegisterFloat("haze_layers", &s_hazeLayers, 1.0f);
     Tuning_RegisterFloat("haze_tex", &s_hazeTex, 0.0f);
+    Tuning_RegisterFloat("haze_rim", &s_hazeRim, 1.0f);
+    Tuning_RegisterFloat("haze_solid", &s_hazeSolid, 0.0f);
+    Tuning_RegisterFloat("haze_noise", &s_hazeNoise, 0.18f);
 
     s_sweptInit = true;
 }
@@ -933,6 +991,14 @@ static int SweptTrail_SpawnStrand(const VC_SweptTrail *s, int slot, int strand)
     {
         cfg.shape = TRAIL_SHAPE_TUBE;
         cfg.tubeRadialSegs = 8;
+        // CAPPED. The side quads alone leave the head open and you look straight
+        // down the inside of the field — a bowl, not a volume. The teardrop
+        // profile ends in a needle, so only the head actually gets a cap.
+        cfg.tubeCaps = true;
+        // The double wall is what gives a tube its rim for free, so it is the
+        // default; `haze_rim = 0` turns it off for a flatter, cheaper read.
+        cfg.tubeSingleSided = (s_hazeRim < 0.5f);
+        cfg.tubeNoiseAmp = s_hazeNoise;
     }
     if (s->style == VFX_TRAIL_HAZE)
     {
@@ -1178,8 +1244,15 @@ static void VC_SweptTrail_Update(float dt)
     // those edges are the same line — so any band sheet leaves a transparent seam
     // running the whole length. Only the u-seamless variant may ever go on a
     // tube, and only when the dial asks for it.
-    s_sweptHazeLayers[0].texture =
-        (s_hazeTex >= 0.5f && s_sweptTubeTex.id != 0) ? &s_sweptTubeTex : NULL;
+    // haze_tex: 0 = bare geometry, 1 = energy strands, 2 = smoke, 3 = fire.
+    // One dial rather than three, because they are the same slot — and having to
+    // pick makes it explicit that the sheet is part of the element's identity
+    // rather than a generic prettifier.
+    Texture2D *volSheet = NULL;
+    if (s_hazeTex >= 2.5f && s_volFireTex.id != 0) volSheet = &s_volFireTex;
+    else if (s_hazeTex >= 1.5f && s_volSmokeTex.id != 0) volSheet = &s_volSmokeTex;
+    else if (s_hazeTex >= 0.5f && s_volEnergyTex.id != 0) volSheet = &s_volEnergyTex;
+    s_sweptHazeLayers[0].texture = volSheet;
     s_sweptHazeLayers[1].texture = NULL;
 
     for (int i = 0; i < SWEPT_MAX; i++)
@@ -1238,7 +1311,35 @@ static void VC_SweptTrail_Update(float dt)
             // frame rather than baked at spawn — otherwise judging one layer
             // against two costs a rebuild each way.
             if (s->style == VFX_TRAIL_HAZE)
+            {
                 t->layerCount = (s_hazeLayers >= 1.5f) ? 2 : 1;
+                // Live, like the layer count: judging rim-on against rim-off is
+                // the kind of comparison that must not cost a rebuild each way.
+                t->tubeSingleSided = (s_hazeRim < 0.5f);
+                t->tubeNoiseAmp = s_hazeNoise;
+                if (s_hazeSolid >= 0.5f)
+                {
+                    // Opaque alpha, pure white, no element gradient, near wall
+                    // only. Every one of those is needed: additive alone would
+                    // still let the background through, and the gradient would
+                    // still tint what is meant to be a matte cast.
+                    t->blendMode = BLEND_ALPHA;
+                    t->useCustomBlendMode = true;
+                    t->gradient = NULL;
+                    t->tint = WHITE;
+                    t->tubeSingleSided = true;
+                    s_sweptHazeLayers[0].alphaMul = 1.0f;
+                    s_sweptHazeLayers[0].whiten = 1.0f;
+                }
+                else
+                {
+                    t->blendMode = BLEND_ADDITIVE;
+                    t->useCustomBlendMode = true;
+                    t->gradient = SweptTrail_Gradient(s->matId);
+                    s_sweptHazeLayers[0].alphaMul = 0.45f;
+                    s_sweptHazeLayers[0].whiten = 0.00f;
+                }
+            }
             t->uvScrollSpeed = SWEPT_FLOW_SPEED * s_sweptFlow;
 
             if (c == 0)

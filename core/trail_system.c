@@ -1,6 +1,7 @@
 #include "core/trail_system.h"
 #include "core/force_field.h"
 #include "core/composition/visual_composer.h"
+#include "core/geometry/procedural_mesh_utils.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <math.h>
@@ -31,6 +32,15 @@ typedef struct
 // vertex alpha and the geometry alone. Substituted here rather than in each
 // caller: a composition that forgets is a bug that looks like a design.
 static Texture2D s_tubeFlatTex = {0};
+// The noise field the tube's vertices are pushed by, kept as CPU pixels because
+// the mesh is built on the CPU. Loaded once; ~256 KB for a 256x256 RGBA, shared
+// by every tube in the game.
+//
+// This is the same file a vertex-shader version would sample, so moving the
+// deformation to the GPU later changes where it is computed and not what it
+// looks like — which is the whole reason to use the asset rather than a second
+// procedural field that happens to resemble it.
+static Image s_tubeNoiseImg = {0};
 static Texture2D s_globalTrailTex = {0};
 void TrailSystem_SetGlobalTexture(Texture2D tex) { s_globalTrailTex = tex; }
 static Shader defaultShader;
@@ -618,6 +628,15 @@ void InitTrailSystem(Shader defaultShaderIn)
   freeListHead = 0;
   activeCount = 0;
 
+  if (s_tubeNoiseImg.data == NULL)
+  {
+    s_tubeNoiseImg = LoadImage("assets/textures/volume_noise.png");
+    if (s_tubeNoiseImg.data != NULL)
+      ImageFormat(&s_tubeNoiseImg, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    else
+      TraceLog(LOG_WARNING, "TRAIL: volume_noise.png missing — tube deformation "
+                            "falls back to the procedural field");
+  }
   if (s_tubeFlatTex.id == 0)
   {
     Image flat = GenImageColor(2, 2, WHITE);
@@ -769,6 +788,9 @@ int SpawnTrailEntity(TrailConfig config)
   t->sectionCount = (t->section != NULL) ? config.sectionCount : 0;
   if (t->sectionCount > TRAIL_TUBE_RADIAL_MAX)
     t->sectionCount = TRAIL_TUBE_RADIAL_MAX;
+  t->tubeCaps = config.tubeCaps;
+  t->tubeSingleSided = config.tubeSingleSided;
+  t->tubeNoiseAmp = config.tubeNoiseAmp;
   t->prevAttachPos = config.pos;
   t->lateralOffset = (Vector3){0, 0, 0};
   t->hasPrevAttach = false;
@@ -1091,196 +1113,166 @@ static void DrawLayeredRibbon(const TrailEntity *t, int drawCount,
   }
 }
 
-// Sweep a circular cross-section along the node polyline.
+// Sweep the trail's nodes as a VOLUME, using the procedural mesh module.
 //
-// THE FRAME IS PARALLEL-TRANSPORTED, and that is the whole difficulty. The
-// obvious construction — rebuild the cross-section at every node from a global
-// up vector, which is what `ProceduralMesh_BuildTubeAlongPath` does — makes the
-// section's ROLL a function of the tangent's direction relative to world up. On
-// a curving path consecutive rings then sit at different rolls, the UV wraps at
-// different angles, and the texture shears along the length. That is the same
-// self-twist that cost four rounds on the flat ribbon, in a new primitive: a
-// frame rebuilt from a global reference is not a frame, it is a lookup.
+// WHAT THIS USED TO BE, and why it is worth recording: a hand-rolled ring loop
+// right here — its own frame, its own quads, its own end caps — sitting next to
+// `ProceduralMesh_BuildTubeAlongPath`, which already had the teardrop profile,
+// the apex caps, wobble and two layers of surface deform, and which the water
+// stream has shipped on for months. That is the SECOND time in this module a
+// second implementation was written beside a working one; the first was this
+// file's own trail machinery being duplicated inside a composition.
 //
-// It also snaps outright wherever the tangent passes the reference vector, which
-// on a near-vertical shot rotates the entire section a quarter turn in one node.
+// The one thing the existing builder genuinely got wrong is the cross-section
+// FRAME, which it rebuilt from world-up at every slice — fine on the water
+// stream's near-straight Bezier, and a texture that shears along its length on
+// anything that curves. That is fixed at the source (`useTransportFrame`), so
+// there is one tube in the tree again.
 //
-// Parallel transport instead: carry the frame forward by the MINIMAL rotation
-// that takes the previous tangent onto this one, and never consult a global
-// vector again after the first ring. The roll then changes only as much as the
-// path genuinely twists, which is the definition of rotation-minimizing.
+// WHAT IS LOST BY USING IT: per-node colour. The module draws with whatever
+// rlColor4ub is current, so the alpha curve along the length cannot be applied
+// per ring. That is acceptable and deliberate while the SHAPE is what is being
+// judged — the owner's call — and it is the reason the layer stack collapses to
+// a single tint here.
 static void DrawLayeredTube(const TrailEntity *t, int drawCount,
                             Texture2D fallbackTex)
 {
   if (drawCount < 2)
     return;
-  // The section: the caller's loop, or a unit circle built once.
-  static TrailSectionPoint circleSect[TRAIL_TUBE_RADIAL_MAX];
-  static int circleSectN = 0;
-  const TrailSectionPoint *sect;
-  int radial;
-  if (t->section != NULL && t->sectionCount >= 3) {
-    sect = t->section;
-    radial = t->sectionCount;
-  } else {
-    radial = t->tubeRadialSegs;
-    if (radial < 3) radial = 3;
-    if (radial > TRAIL_TUBE_RADIAL_MAX) radial = TRAIL_TUBE_RADIAL_MAX;
-    if (circleSectN != radial) {
-      for (int j = 0; j < radial; j++) {
-        float phi = (float)j * (2.0f * PI) / (float)radial;
-        circleSect[j].x = cosf(phi);
-        circleSect[j].y = sinf(phi);
-      }
-      circleSectN = radial;
-    }
-    sect = circleSect;
-  }
 
-  // DECIMATE FIRST. One ring per history node is finer than the silhouette can
-  // show — see TRAIL_TUBE_RINGS_DEFAULT — so the rings are chosen evenly along
-  // the history with both ends always kept, and everything below works on that
-  // list. Doing it here rather than at the emit loop means the transport chain
-  // is shorter too, which is the sequential part.
-  static int ring[TRAIL_HISTORY_COUNT];
-  int nRings = 0;
-  int maxRings = (t->tubeMaxRings > 0) ? t->tubeMaxRings : TRAIL_TUBE_RINGS_DEFAULT;
-  if (drawCount <= maxRings) {
-    for (int i = 0; i < drawCount; i++) ring[nRings++] = i;
-  } else {
-    for (int k = 0; k < maxRings; k++) {
-      int idx = (int)((float)k * (float)(drawCount - 1) / (float)(maxRings - 1) + 0.5f);
-      if (nRings == 0 || idx > ring[nRings - 1]) ring[nRings++] = idx;
-    }
-    if (ring[nRings - 1] != drawCount - 1) ring[nRings++] = drawCount - 1;
-  }
-  if (nRings < 2)
+  static Vector3 path[TRAIL_HISTORY_COUNT];
+  int n = drawCount;
+  if (n > TRAIL_HISTORY_COUNT)
+    n = TRAIL_HISTORY_COUNT;
+  // REVERSED. scratchOuter is filled head-first — h = 0 is segRatio 1, the head
+  // — while the tube builder's t = 0 is the TAIL end of its profile, where
+  // tailApexFactor puts the point. Fed in the array's own order the teardrop
+  // comes out backwards, with its needle at the ball.
+  for (int i = 0; i < n; i++)
+    path[i] = scratchOuter[n - 1 - i].position;
+
+  int radial = t->tubeRadialSegs;
+  if (radial < 3) radial = 3;
+  if (radial > TUBE_MESH_MAX_RADIAL) radial = TUBE_MESH_MAX_RADIAL;
+  int segs = (t->tubeMaxRings > 0) ? t->tubeMaxRings : TRAIL_TUBE_RINGS_DEFAULT;
+  if (segs > TUBE_MESH_MAX_SEGMENTS) segs = TUBE_MESH_MAX_SEGMENTS;
+  if (segs < 2) segs = 2;
+
+  // A SMOOTH teardrop: the default profile with every animated deformation off.
+  // The owner asked for the shape alone first, and that is the right order —
+  // wobble and surface deform on a shape nobody has agreed to yet give two
+  // things to blame when it looks wrong.
+  TubeMeshConfig cfg = ProceduralMesh_DefaultTubeConfig();
+  cfg.wobbleAmplitude = 0.0f;
+  // The two sine deform layers stay OFF and the noise one replaces them: sines
+  // are periodic, so the surface ripples on a beat the eye reads as machinery.
+  // Noise has no beat, and this field is periodic around the SECTION only — so
+  // the deformation cannot leave a crease running the tube's length where
+  // u = 0 meets u = 1.
+  cfg.deform1Amp = 0.0f;
+  cfg.deform2Amp = 0.0f;
+  cfg.noiseAmp = t->tubeNoiseAmp;
+  cfg.noiseScale = 5.0f;
+  cfg.noiseSpeed = 1.6f;
+  // The field travels ALONG the tube with the same clock the texture scrolls on,
+  // so the surface's bulges and the sheet's features move together instead of
+  // one sliding over a shape that is merely breathing. Without this the noise is
+  // pinned to the tube's own parameterisation — bumps at a fixed 30%, 60% of its
+  // length — which is a pre-squeezed shape being dragged, the same failure the
+  // UV had at the start of this work.
+  cfg.noiseOffset = -t->uvScrollOffset * 0.5f;
+  cfg.noisePixels = (const unsigned char *)s_tubeNoiseImg.data;
+  cfg.noiseImgW = s_tubeNoiseImg.width;
+  cfg.noiseImgH = s_tubeNoiseImg.height;
+  cfg.useTransportFrame = true;
+
+  // The head's radius is the trail's own earned width; the profile shapes the
+  // rest of the length around it.
+  //
+  // scratchOuter[0], NOT [drawCount - 1]. The array is filled head-first, so the
+  // last entry is the TAIL — and a teardrop's tail radius is zero, so reading it
+  // here tripped the guard below and drew nothing at all. An invisible effect
+  // and an effect that was never queued look identical, which is exactly the
+  // failure mode this module keeps meeting.
+  float headR = scratchOuter[0].halfWidth;
+  if (headR <= 1e-4f)
     return;
 
-  // Tangents first, so the transport can look ahead as well as behind.
-  static Vector3 tang[TRAIL_HISTORY_COUNT];
-  for (int i = 0; i < drawCount; i++) {
-    Vector3 a = scratchOuter[i > 0 ? i - 1 : 0].position;
-    Vector3 b = scratchOuter[i < drawCount - 1 ? i + 1 : drawCount - 1].position;
-    Vector3 d = Vector3Subtract(b, a);
-    tang[i] = (Vector3LengthSqr(d) > 1e-12f) ? Vector3Normalize(d)
-                                             : (i > 0 ? tang[i - 1]
-                                                      : (Vector3){0.0f, 0.0f, 1.0f});
-  }
+  // ARC LENGTH, so the texture can be tiled by METRES. The mesh is
+  // parameterised 0..1 over its whole length however long that is, so a fixed
+  // repeat count makes the texel density drift as the trail grows — the texture
+  // stretches with the tube instead of flowing through it, which on its own is
+  // enough to kill the sense of flow. Same rule the ribbon already follows.
+  float arcLen = 0.0f;
+  for (int i = 1; i < n; i++)
+    arcLen += Vector3Distance(path[i], path[i - 1]);
 
-  // The FIRST ring is the only one allowed a global reference, and it picks the
-  // axis least parallel to the tangent so the cross product cannot collapse.
-  Vector3 up = (fabsf(tang[0].y) > 0.9f) ? (Vector3){1.0f, 0.0f, 0.0f}
-                                         : (Vector3){0.0f, 1.0f, 0.0f};
-  Vector3 fu = Vector3Normalize(Vector3CrossProduct(up, tang[0]));
-  Vector3 fv = Vector3CrossProduct(tang[0], fu);
+  static TubeMeshData mesh;
+  ProceduralMesh_BuildTubeAlongPath(&mesh, path, n, headR, 0.0f, 1.0f,
+                                    (float)GetTime(), segs, radial, &cfg);
 
-  // Only the NORMALS are cached. The ring positions depend on the layer's width
-  // multiplier, so caching them would be caching one layer's answer and
-  // recomputing it anyway — the first version did exactly that and threw away
-  // 400 vector ops per trail per frame.
-  static Vector3 ringNrm[TRAIL_HISTORY_COUNT][TRAIL_TUBE_RADIAL_MAX];
-
-  for (int rI = 0; rI < nRings; rI++) {
-    int i = ring[rI];
-    if (rI > 0) {
-      int iPrev = ring[rI - 1];
-      // Minimal rotation from the previous RING's tangent to this one, applied to the carried
-      // frame. Skipped when they are parallel — the axis is then meaningless
-      // and rotating by a fabricated one is how the twist gets back in.
-      Vector3 axis = Vector3CrossProduct(tang[iPrev], tang[i]);
-      float sinA = Vector3Length(axis);
-      if (sinA > 1e-6f) {
-        float cosA = Vector3DotProduct(tang[iPrev], tang[i]);
-        if (cosA > 1.0f) cosA = 1.0f;
-        if (cosA < -1.0f) cosA = -1.0f;
-        float ang = atan2f(sinA, cosA);
-        axis = Vector3Scale(axis, 1.0f / sinA);
-        fu = Vector3RotateByAxisAngle(fu, axis, ang);
-      }
-      // Re-orthogonalise against the tangent every ring. Without it the carried
-      // frame drifts out of the section plane over 60 nodes of float error and
-      // the tube slowly shears.
-      fu = Vector3Normalize(Vector3Subtract(
-          fu, Vector3Scale(tang[i], Vector3DotProduct(fu, tang[i]))));
-      fv = Vector3CrossProduct(tang[i], fu);
-    }
-    for (int j = 0; j < radial; j++) {
-      ringNrm[rI][j] = Vector3Add(Vector3Scale(fu, sect[j].x),
-                                  Vector3Scale(fv, sect[j].y));
+  // WHAT THE SECTION ACTUALLY CAME OUT AS, once per trail.
+  //
+  // "The tube renders flat" has two causes that look identical on screen and
+  // cannot be told apart by reading code: the section COLLAPSED to a line
+  // (frame degenerate), or the tube path never ran and a ribbon drew instead.
+  // One measures the built mesh directly and settles it.
+  //
+  // The number is the ratio of the section's two principal spans. A circle is
+  // 1.0; anything under ~0.2 is a line wearing a tube's name.
+  {
+    static bool logged = false;
+    if (!logged && mesh.radialSegs >= 4) {
+      int mid = mesh.segments / 2;
+      int q = mesh.radialSegs / 4;
+      float dA = Vector3Distance(mesh.rings[mid][0], mesh.rings[mid][mesh.radialSegs / 2]);
+      float dB = Vector3Distance(mesh.rings[mid][q], mesh.rings[mid][q + mesh.radialSegs / 2]);
+      float lo = (dA < dB) ? dA : dB, hi = (dA < dB) ? dB : dA;
+      TraceLog(LOG_INFO,
+               "TRAIL tube: %d rings x %d radial, section %.3f x %.3f m "
+               "(roundness %.2f — 1.00 is a circle, under 0.20 is a flat line)",
+               mesh.segments, mesh.radialSegs, hi, lo,
+               (hi > 1e-5f) ? lo / hi : 0.0f);
+      logged = true;
     }
   }
 
   for (int L = 0; L < t->layerCount; L++) {
     const TrailLayer *ly = &t->layers[L];
-    float wMul = (ly->widthMul > 0.0f) ? ly->widthMul : 1.0f;
     float aMul = (ly->alphaMul > 0.0f) ? ly->alphaMul : 1.0f;
-    float sMul = (ly->scrollMul != 0.0f) ? ly->scrollMul : 1.0f;
-    // A tube layer with no sheet of its own gets FLAT WHITE, never the ribbon
-    // fallback — see s_tubeFlatTex. `id == 0` counts as no sheet too: a texture
-    // that failed to load would otherwise draw as an untextured white quad
-    // anyway, and going through the same path makes that deliberate.
+    Color col = scratchOuter[0].tint; // the head's, for the same reason
+    float a = (float)col.a * aMul;
+    if (a > 255.0f) a = 255.0f;
+    if (ly->whiten > 0.0f) {
+      float w = (ly->whiten > 1.0f) ? 1.0f : ly->whiten;
+      col.r = (unsigned char)(col.r + (255 - col.r) * w);
+      col.g = (unsigned char)(col.g + (255 - col.g) * w);
+      col.b = (unsigned char)(col.b + (255 - col.b) * w);
+    }
     Texture2D tex = (ly->texture != NULL && ly->texture->id != 0)
                         ? *ly->texture
                         : ((s_tubeFlatTex.id != 0) ? s_tubeFlatTex : fallbackTex);
-
+    // TILED BY METRES and SCROLLED. uvLengthScale turns the tube's normalised
+    // length into texture repeats, so texel density does not change as the trail
+    // grows; uvOffset is what makes the flow visible at all.
+    //
+    // Per-layer scroll rates on purpose: layers moving at the same rate read as
+    // one thick surface however many there are, and the PARALLAX between them is
+    // most of what sells a volume as moving rather than sliding.
+    float sMul = (ly->scrollMul != 0.0f) ? ly->scrollMul : 1.0f;
+    // Repeats along the tube = its length in metres divided by the metres each
+    // repeat should cover. Constant texel density, and — the reason it matters
+    // here — a scroll rate that means the same thing whatever the trail's
+    // length, so `uvScrollSpeed` is finally a speed rather than a ratio.
+    float mpt = (t->uvMetresPerTile > 0.01f) ? t->uvMetresPerTile : 1.0f;
+    float tiles = arcLen / mpt;
+    if (tiles < 0.5f) tiles = 0.5f;
     rlSetTexture(tex.id);
-    rlBegin(RL_QUADS);
-    for (int rI = 0; rI + 1 < nRings; rI++) {
-      int i = ring[rI], iNext = ring[rI + 1];
-      // A ring whose neighbours are both invisible costs a full circle of quads
-      // and contributes nothing. The tail's width envelope goes to zero, so this
-      // is about a third of them.
-      if (scratchOuter[i].tint.a < TRAIL_TUBE_MIN_ALPHA &&
-          scratchOuter[iNext].tint.a < TRAIL_TUBE_MIN_ALPHA)
-        continue;
-      for (int k = 0; k < 2; k++) {
-        int idx = (k == 0) ? i : iNext;
-        Color col = scratchOuter[idx].tint;
-        float a = (float)col.a * aMul;
-        if (ly->headAlphaPow > 0.0f)
-          a *= powf(scratchSegRatio[idx], ly->headAlphaPow);
-        if (a < 0.0f) a = 0.0f;
-        if (a > 255.0f) a = 255.0f;
-        if (ly->whiten > 0.0f) {
-          float w = (ly->whiten > 1.0f) ? 1.0f : ly->whiten;
-          col.r = (unsigned char)(col.r + (255 - col.r) * w);
-          col.g = (unsigned char)(col.g + (255 - col.g) * w);
-          col.b = (unsigned char)(col.b + (255 - col.b) * w);
-        }
-        scratchInner[idx].tint = col;
-        scratchInner[idx].tint.a = (unsigned char)a;
-        scratchInner[idx].v = scratchOuter[idx].v - t->uvScrollOffset * sMul;
-      }
-      for (int j = 0; j < radial; j++) {
-        int j2 = (j + 1) % radial;
-        // u wraps AROUND the tube: 0 at seam, 1 back at the seam. The last
-        // quad uses 1.0 rather than 0.0 so the texture does not run backwards
-        // across the seam quad.
-        float u0 = (float)j / (float)radial;
-        float u1 = (float)(j + 1) / (float)radial;
-        float r0 = scratchOuter[i].halfWidth * wMul;
-        float r1 = scratchOuter[iNext].halfWidth * wMul;
-        Vector3 p00 = Vector3Add(scratchOuter[i].position, Vector3Scale(ringNrm[rI][j], r0));
-        Vector3 p01 = Vector3Add(scratchOuter[i].position, Vector3Scale(ringNrm[rI][j2], r0));
-        Vector3 p10 = Vector3Add(scratchOuter[iNext].position, Vector3Scale(ringNrm[rI + 1][j], r1));
-        Vector3 p11 = Vector3Add(scratchOuter[iNext].position, Vector3Scale(ringNrm[rI + 1][j2], r1));
-        Color c0 = scratchInner[i].tint, c1 = scratchInner[iNext].tint;
-        float v0 = scratchInner[i].v, v1 = scratchInner[iNext].v;
-
-        rlColor4ub(c0.r, c0.g, c0.b, c0.a);
-        rlTexCoord2f(u0, v0); rlVertex3f(p00.x, p00.y, p00.z);
-        rlColor4ub(c0.r, c0.g, c0.b, c0.a);
-        rlTexCoord2f(u1, v0); rlVertex3f(p01.x, p01.y, p01.z);
-        rlColor4ub(c1.r, c1.g, c1.b, c1.a);
-        rlTexCoord2f(u1, v1); rlVertex3f(p11.x, p11.y, p11.z);
-        rlColor4ub(c1.r, c1.g, c1.b, c1.a);
-        rlTexCoord2f(u0, v1); rlVertex3f(p10.x, p10.y, p10.z);
-      }
-    }
-    rlEnd();
+    rlColor4ub(col.r, col.g, col.b, (unsigned char)a);
+    ProceduralMesh_DrawTubeEx(&mesh, tiles, -t->uvScrollOffset * sMul);
   }
   rlSetTexture(0); // must not leak the binding into whatever draws next
+  rlColor4ub(255, 255, 255, 255);
 }
 
 static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCameraBasis *camBasis, float time)
@@ -1515,7 +1507,8 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
         // This is ENGINE_LANDMINES rule 1, quoted verbatim in the swept trail's
         // own draw a few hundred lines away, and I did not apply it here.
         rlDrawRenderBatchActive();
-        rlDisableBackfaceCulling();
+        if (!t->tubeSingleSided)
+          rlDisableBackfaceCulling();
         DrawLayeredTube(t, drawCount, ribbonTex);
         rlDrawRenderBatchActive();
         rlEnableBackfaceCulling();

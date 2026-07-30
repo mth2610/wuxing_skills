@@ -366,11 +366,13 @@ static void Test_SectionIsData(void)
     }
     CHECK(1, "section scaling stays proportional at every radius");
 
-    CHECK(FileHas("core/trail_system.c",
-                  "ringNrm[rI][j] = Vector3Add(Vector3Scale(fu, sect[j].x),"),
-          "the ring is still built from the SECTION, not from a hard-coded circle");
-    CHECK(FileHas("core/trail_system.c", "sect = circleSect;"),
-          "...with the circle generated once as the default, not per ring");
+    // The arbitrary cross-section went with the hand-rolled loop. It is still
+    // the right generalisation — a shape as data is what lets one sweep draw
+    // smoke, flame and a bolt — but it belongs in the SHARED builder, not in a
+    // second one, and adding it there is the next step rather than a reason to
+    // keep two tubes. Recorded here so it is not quietly forgotten.
+    CHECK(!FileHas("core/trail_system.c", "sect = circleSect;"),
+          "the duplicate section code went with the duplicate tube");
     CHECK(FileHas("core/trail_system.h", "typedef struct {\n  float x, y;\n} TrailSectionPoint;"),
           "and the section type is public, so callers can author profiles");
 }
@@ -406,34 +408,78 @@ static int FileHas(const char *path, const char *needle)
 
 static void Test_MirrorStillMatchesSource(void)
 {
+    const char *pm = "core/geometry/pm_tube.inl";
     const char *c = "core/trail_system.c";
 
-    CHECK(FileHas(c, "fu = Vector3RotateByAxisAngle(fu, axis, ang);"),
-          "the frame is still CARRIED by a rotation, not rebuilt");
-    CHECK(!FileHas(c, "Vector3 up = (fabsf(tang[i].y)"),
-          "and no ring after the first consults a global up vector");
-    CHECK(FileHas(c, "if (sinA > 1e-6f)"),
+    // THE FRAME, which now lives in the one tube builder the tree has. The trail
+    // system used to carry a second hand-rolled tube beside this one — its own
+    // frame, its own quads, its own caps — while this module already had the
+    // teardrop profile, the apex caps and two layers of deform, and had shipped
+    // on the water stream for months. Same mistake as the composition growing a
+    // second trail system inside itself, one file over.
+    CHECK(FileHas(pm, "right = Vector3RotateByAxisAngle(right, axis, atan2f(sinA, cosA));"),
+          "the frame is CARRIED by a minimal rotation, not rebuilt per slice");
+    CHECK(FileHas(pm, "if (sinA > 1e-6f)"),
           "parallel tangents still skip the rotation — a fabricated axis is how twist returns");
-    CHECK(FileHas(c, "Vector3Scale(tang[i], Vector3DotProduct(fu, tang[i]))"),
-          "the frame is still re-orthogonalised against the tangent each ring");
-    CHECK(FileHas(c, "rlDisableBackfaceCulling(); DrawLayeredTube(t, drawCount, ribbonTex);"),
-          "the tube still shows its far wall — that free rim is the point of it");
-    CHECK(!FileHas(c, "ringPos[i][j] ="),
-          "the per-ring positions are no longer computed and thrown away");
-    CHECK(FileHas(c, "int maxRings = (t->tubeMaxRings > 0) ? t->tubeMaxRings : TRAIL_TUBE_RINGS_DEFAULT;"),
-          "rings are still decimated rather than one per history node");
-    CHECK(FileHas(c, "scratchOuter[iNext].tint.a < TRAIL_TUBE_MIN_ALPHA)"),
-          "and invisible rings are still skipped outright");
-    // THE STATE-CHANGE FLUSH. rlgl batches, so the cull state at DRAW time is
-    // what applies — not the state when the quads were queued. Without this the
-    // tube was submitted with culling off and drawn with it back on, so one wall
-    // of every ring survived: a tube that renders as half a shell.
-    CHECK(FileHas(c, "rlDrawRenderBatchActive(); rlDisableBackfaceCulling();"),
-          "the cull change is still flushed BEFORE the tube is queued");
-    CHECK(FileHas(c, "rlDrawRenderBatchActive(); rlEnableBackfaceCulling();"),
-          "...and again before it is restored");
+    CHECK(FileHas(pm, "Vector3Scale(tangent, Vector3DotProduct(right, tangent))"),
+          "and it is re-orthogonalised against the tangent every slice");
+    // Opt-in, so the shipping water stream is byte-identical: it runs on a
+    // near-straight Bezier where the old frame never misbehaved, and changing
+    // it silently would be changing an effect nobody asked to change.
+    CHECK(FileHas(pm, "if (cfg->useTransportFrame && haveCarried)"),
+          "transport is opt-in, so existing consumers are untouched");
+    CHECK(FileHas("core/geometry/procedural_mesh_utils.h", "bool useTransportFrame;"),
+          "and the flag is public, with the reason it exists written beside it");
+
+    // THE TRAIL USES THAT BUILDER — there is one tube in the tree again.
+    CHECK(FileHas(c, "ProceduralMesh_BuildTubeAlongPath(&mesh, path, n, headR"),
+          "the trail's volume path calls the shared builder");
+    CHECK(FileHas(c, "ProceduralMesh_DrawTubeEx(&mesh, tiles, -t->uvScrollOffset * sMul);"),
+          "...and its draw, rather than emitting its own quads");
+    // THE SCROLL. The original DrawTube computed v = i/segments with no offset,
+    // so a tube could never be SEEN to flow — the texture was nailed to the mesh
+    // and only travelled with it. Invisible on the water stream, which fires and
+    // stops; fatal on a volumetric trail, where the flow IS the effect.
+    CHECK(FileHas("core/geometry/pm_tube.inl", "+ uvOffset;"),
+          "the tube's v coordinate can still be offset, which is what makes it flow");
+    CHECK(FileHas("core/geometry/pm_tube.inl",
+                  "ProceduralMesh_DrawTubeEx(data, uvLengthScale, 0.0f);"),
+          "and the old entry point still forwards, so existing callers are unchanged");
+    CHECK(FileHas(c, "cfg.useTransportFrame = true;"),
+          "with transport on, because a trail's path genuinely curves");
+    CHECK(!FileHas(c, "ringNrm[rI][j] = Vector3Add"),
+          "the hand-rolled ring loop is gone");
+
+    // A SMOOTH teardrop first: the shape alone, with every animated deformation
+    // off. Judging a shape and its wobble at once gives two things to blame.
+    CHECK(FileHas(c, "cfg.wobbleAmplitude = 0.0f;") &&
+          FileHas(c, "cfg.deform1Amp = 0.0f;") &&
+          FileHas(c, "cfg.deform2Amp = 0.0f;"),
+          "wobble and surface deform are OFF while the shape is being judged");
+
+    // The teardrop and its caps come from the module's own default, which is
+    // where they already were.
+    CHECK(FileHas("core/geometry/pm_tube.inl", "cfg.tailApexFactor = 0.25f;"),
+          "the tail still comes to a point");
+    CHECK(FileHas("core/geometry/pm_tube.inl", "cfg.headApexFactor = 0.80f;"),
+          "and the head is still capped and rounded");
+
+    // THE DEFORMATION READS THE ASSET. A second procedural field that merely
+    // resembles volume_noise.png would look right and then diverge the moment
+    // the file is re-authored or the work moves to a vertex shader — the shape
+    // would change with no edit to explain it.
+    CHECK(FileHas(c, "cfg.noisePixels = (const unsigned char *)s_tubeNoiseImg.data;"),
+          "the tube's vertex deform samples volume_noise.png, not a lookalike");
+    CHECK(FileHas("core/geometry/pm_tube.inl", "if (cfg->noisePixels != NULL)"),
+          "...with the procedural field kept only as the fallback");
+    CHECK(FileHas("core/geometry/pm_tube.inl", "int x1 = ((x0 + 1) % w + w) % w"),
+          "and sampled with WRAP on both axes — clamping creases a closed section");
+    CHECK(FileHas(c, "if (!t->tubeSingleSided) rlDisableBackfaceCulling();"),
+          "the double wall — the tube's free rim — is switchable");
+    CHECK(FileHas(c, "rlDrawRenderBatchActive(); if (!t->tubeSingleSided)"),
+          "and the cull change is still flushed before the tube is queued");
     CHECK(FileHas(c, "rlSetTexture(0); // must not leak the binding"),
-          "and it still releases the texture binding");
+          "the texture binding is still released");
     CHECK(FileHas("core/trail_system.h", "TRAIL_SHAPE_RIBBON = 0,"),
           "RIBBON is still the zero value, so every existing caller is unchanged");
 }
