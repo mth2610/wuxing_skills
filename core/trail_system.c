@@ -29,23 +29,38 @@ static Shader defaultShader;
 #define TRAIL_SHADER_CACHE_SIZE 16
 static unsigned int shaderCacheIds[TRAIL_SHADER_CACHE_SIZE];
 static int shaderCacheTimeLocs[TRAIL_SHADER_CACHE_SIZE];
+static int shaderCacheCoreStrLocs[TRAIL_SHADER_CACHE_SIZE];
 static int shaderCacheCount = 0;
+
+static void CacheShaderLocs(Shader shader)
+{
+  if (shaderCacheCount >= TRAIL_SHADER_CACHE_SIZE)
+    return;
+  for (int i = 0; i < shaderCacheCount; i++)
+    if (shaderCacheIds[i] == shader.id)
+      return;
+  shaderCacheIds[shaderCacheCount] = shader.id;
+  shaderCacheTimeLocs[shaderCacheCount] = GetShaderLocation(shader, "u_time");
+  shaderCacheCoreStrLocs[shaderCacheCount] = GetShaderLocation(shader, "u_coreStrength");
+  shaderCacheCount++;
+}
 
 static int GetCachedTimeLoc(Shader shader)
 {
+  CacheShaderLocs(shader);
   for (int i = 0; i < shaderCacheCount; i++)
-  {
     if (shaderCacheIds[i] == shader.id)
       return shaderCacheTimeLocs[i];
-  }
-  int loc = GetShaderLocation(shader, "u_time");
-  if (shaderCacheCount < TRAIL_SHADER_CACHE_SIZE)
-  {
-    shaderCacheIds[shaderCacheCount] = shader.id;
-    shaderCacheTimeLocs[shaderCacheCount] = loc;
-    shaderCacheCount++;
-  }
-  return loc;
+  return -1;
+}
+
+static int GetCachedCoreStrLoc(Shader shader)
+{
+  CacheShaderLocs(shader);
+  for (int i = 0; i < shaderCacheCount; i++)
+    if (shaderCacheIds[i] == shader.id)
+      return shaderCacheCoreStrLocs[i];
+  return -1;
 }
 
 static RibbonPoint scratchOuter[TRAIL_HISTORY_COUNT];
@@ -1172,6 +1187,16 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
 {
   float lifeRatio = t->lifetime / t->maxLifetime;
   Color c = t->tint;
+
+  { // u_coreStrength: 0 khi disableInnerCore, 1 khi có core
+    Shader sh = ResolveShader(t);
+    int loc = GetCachedCoreStrLoc(sh);
+    if (loc >= 0)
+    {
+      float v = t->disableInnerCore ? 0.0f : 1.0f;
+      SetShaderValue(sh, loc, &v, SHADER_UNIFORM_FLOAT);
+    }
+  }
 
   if (t->type == TRAIL_TYPE_PROJECTILE)
   {

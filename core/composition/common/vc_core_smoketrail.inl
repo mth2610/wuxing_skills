@@ -37,8 +37,8 @@ static ForceField s_smokeTrailUpdraft;
 static TrailLayer s_smokeTrailLayers[2];
 static bool s_smokeTrailInit = false;
 
-static float s_smokeTrailCurlStrength = 1.0f;  // 0 = straight ribbon, 1 = full updraft curl
-static float s_smokeTrailScrollSpeed = 0.35f;  // tiles/sec — slow reads as smoke, fast reads as water
+static float s_smokeTrailCurlStrength = 1.0f; // 0 = straight ribbon, 1 = full updraft curl
+static float s_smokeTrailScrollSpeed = 0.35f; // tiles/sec — slow reads as smoke, fast reads as water
 
 // Optional tileable flow/noise smoke texture for the body layer (point 3 of
 // the guide). NULL (the default) means the body layer draws untextured —
@@ -72,14 +72,22 @@ static void SmokeTrail_InitShared(void)
     // Layer 0 (backmost): a faint, wide, UNTEXTURED glow — the soft halo
     // around the body. No texture: this layer carries no structure.
     s_smokeTrailLayers[0] = (TrailLayer){
-        .widthMul = 1.6f, .alphaMul = 0.35f, .whiten = 0.0f,
-        .scrollMul = 0.6f, .headAlphaPow = 0.0f, .texture = NULL,
+        .widthMul = 1.6f,
+        .alphaMul = 0.35f,
+        .whiten = 0.0f,
+        .scrollMul = 0.6f,
+        .headAlphaPow = 0.0f,
+        .texture = NULL,
     };
     // Layer 1: the body. The ONLY layer with `texture` set — this is what
     // carries the flowing smoke pattern (point 3 of the guide).
     s_smokeTrailLayers[1] = (TrailLayer){
-        .widthMul = 1.0f, .alphaMul = 1.0f, .whiten = 0.1f,
-        .scrollMul = 1.0f, .headAlphaPow = 0.0f, .texture = s_smokeTrailTexture,
+        .widthMul = 1.0f,
+        .alphaMul = 1.0f,
+        .whiten = 0.1f,
+        .scrollMul = 1.0f,
+        .headAlphaPow = 0.0f,
+        .texture = s_smokeTrailTexture,
     };
     // No hot-core layer — the smoke reads as smoke, not as a projectile with
     // a glowing edge riding inside it. Add VFX_ComposeCoreGlow separately at
@@ -118,7 +126,7 @@ int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat,
         lifetime = 1.2f; // smoke lingers longer than a typical energy trail
 
     const VFX_ElementMaterial *m = VFX_Material(mat);
-    Vector3 headPos = { followTransform->m12, followTransform->m13, followTransform->m14 };
+    Vector3 headPos = {followTransform->m12, followTransform->m13, followTransform->m14};
 
     TrailConfig cfg = {0};
     cfg.type = TRAIL_TYPE_FOLLOWER;
@@ -126,9 +134,10 @@ int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat,
     cfg.pos = headPos; // seeds the first history node before attach kicks in
     cfg.thick = radius;
     cfg.life = lifetime;
-    cfg.tint = m->soft;                                   // smoke tint, not the hot glow tone
-    cfg.blendMode = BLEND_ADDITIVE;                       // additive glow, per the guide
-    cfg.widthEnvelope = TRAIL_WIDTH_ENVELOPE_TAPER_TAIL;   // wide+bright head -> thin tail
+    cfg.tint = m->soft;
+    cfg.disableInnerCore = true;                         // smoke tint, not the hot glow tone
+    cfg.blendMode = BLEND_ADDITIVE;                      // additive glow, per the guide
+    cfg.widthEnvelope = TRAIL_WIDTH_ENVELOPE_TAPER_TAIL; // wide+bright head -> thin tail
     cfg.layers = s_smokeTrailLayers;
     cfg.layerCount = 2;
     cfg.uvMetresPerTile = radius * 6.0f;         // tile size scales with the trail's own width
@@ -147,7 +156,7 @@ int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat,
         cfg.forceField = &s_smokeTrailUpdraft;
         cfg.nodeHomeSpring = Math_Mix(0.05f, 0.35f, s_smokeTrailCurlStrength);
         cfg.nodeHomeMaxDev = 0.25f; // metres, ACROSS the path — the loose safety bound
-        cfg.nodeOrderFrac = 0.45f; // stays < 0.5 -> no folded/pinched segments
+        cfg.nodeOrderFrac = 0.45f;  // stays < 0.5 -> no folded/pinched segments
     }
 
     int id = SpawnTrailEntity(cfg);

@@ -5,6 +5,8 @@ in vec4 fragColor;
 
 uniform sampler2D texture0;
 
+uniform float u_coreStrength; // 0 = no core, 1 = full HDR core (set by disableInnerCore)
+
 out vec4 finalColor;
 
 void main() {
@@ -15,26 +17,31 @@ void main() {
     // fragTexCoord.x goes from 0.0 on one edge to 1.0 on the other edge.
     float centerDist = abs(fragTexCoord.x - 0.5) * 2.0;
     
-    // Core mask: extremely tight, bright white filament in the center (exponent 5.5)
-    float coreMask = pow(clamp(1.0 - centerDist, 0.0, 1.0), 5.5);
-    
     // Glow mask: soft falloff from center to edges
     float glowMask = pow(clamp(1.0 - centerDist, 0.0, 1.0), 1.25);
     
     // Smoke alpha (soft, translucent, modulated by texture)
     float smokeAlpha = texColor.a * fragColor.a * glowMask;
     
-    // Core alpha (highly opaque, independent of texture transparency to keep core bright)
-    float coreAlpha = clamp(fragColor.a * 1.6, 0.0, 1.0);
+    // Core — only when u_coreStrength > 0
+    vec3 finalRGB = fragColor.rgb * texColor.rgb * 1.5;
+    float finalAlpha = smokeAlpha;
     
-    // Smoothly blend the alphas based on coreMask
-    float finalAlpha = mix(smokeAlpha, coreAlpha, coreMask);
-    
-    // Blend outer glow color with pure white core
-    vec3 glowColor = fragColor.rgb * texColor.rgb * 1.5;
-    vec3 coreColor = vec3(3.6, 3.6, 3.6); // Extreme HDR brightness for intense bloom
-    
-    vec3 finalRGB = mix(glowColor, coreColor, coreMask);
+    if (u_coreStrength > 0.0)
+    {
+        // Core mask: tight bright filament in center
+        float coreMask = pow(clamp(1.0 - centerDist, 0.0, 1.0), 5.5) * u_coreStrength;
+        
+        // Core alpha (opaque, independent of texture)
+        float coreAlpha = clamp(fragColor.a * 1.6, 0.0, 1.0);
+        
+        // Blend alpha
+        finalAlpha = mix(smokeAlpha, coreAlpha, coreMask);
+        
+        // Blend color with HDR white core
+        vec3 coreColor = vec3(3.6, 3.6, 3.6);
+        finalRGB = mix(finalRGB, coreColor, coreMask);
+    }
     
     finalColor = vec4(finalRGB, finalAlpha);
 }
