@@ -282,9 +282,9 @@ static void Test_TubeNeedsASeamlessSheet(void)
     CHECK(FileHas("core/composition/common/vc_volume_trail.inl",
                   "cfg.layers = s_volLayers[v->kind];"),
           "the volume owns its tube layer stack");
-    CHECK(FileHas("core/trail_system.c", "static Texture2D s_tubeFlatTex = {0};"),
+    CHECK(FileHas("core/trails/trail_system.c", "static Texture2D s_tubeFlatTex = {0};"),
           "the trail system owns a flat fallback so a tube cannot get a banded one");
-    CHECK(FileHas("core/trail_system.c",
+    CHECK(FileHas("core/trails/trail_system.c",
                   "? *ly->texture : ((s_tubeFlatTex.id != 0) ? s_tubeFlatTex : fallbackTex);"),
           "...and substitutes it by construction, not by each caller remembering");
     CHECK(FileHas("core/composition/common/vc_volume_trail.inl",
@@ -371,9 +371,9 @@ static void Test_SectionIsData(void)
     // smoke, flame and a bolt — but it belongs in the SHARED builder, not in a
     // second one, and adding it there is the next step rather than a reason to
     // keep two tubes. Recorded here so it is not quietly forgotten.
-    CHECK(!FileHas("core/trail_system.c", "sect = circleSect;"),
+    CHECK(!FileHas("core/trails/trail_system.c", "sect = circleSect;"),
           "the duplicate section code went with the duplicate tube");
-    CHECK(FileHas("core/trail_system.h", "typedef struct {\n  float x, y;\n} TrailSectionPoint;"),
+    CHECK(FileHas("core/trails/trail_system.h", "typedef struct {\n  float x, y;\n} TrailSectionPoint;"),
           "and the section type is public, so callers can author profiles");
 }
 
@@ -409,7 +409,7 @@ static int FileHas(const char *path, const char *needle)
 static void Test_MirrorStillMatchesSource(void)
 {
     const char *pm = "core/geometry/pm_tube.inl";
-    const char *c = "core/trail_system.c";
+    const char *c = "core/trails/trail_system.c";
 
     // THE FRAME, which now lives in the one tube builder the tree has. The trail
     // system used to carry a second hand-rolled tube beside this one — its own
@@ -480,7 +480,7 @@ static void Test_MirrorStillMatchesSource(void)
           "and the cull change is still flushed before the tube is queued");
     CHECK(FileHas(c, "rlSetTexture(0); // must not leak the binding"),
           "the texture binding is still released");
-    CHECK(FileHas("core/trail_system.h", "TRAIL_SHAPE_RIBBON = 0,"),
+    CHECK(FileHas("core/trails/trail_system.h", "TRAIL_SHAPE_RIBBON = 0,"),
           "RIBBON is still the zero value, so every existing caller is unchanged");
 }
 

@@ -2,8 +2,8 @@
 #include "core/color_gradient.h"
 #include "core/force_field.h"
 #include "core/skill_helper.h"
-#include "core/decal_system.h"
-#include "core/particle_system.h"
+#include "core/decals/decal_system.h"
+#include "core/particles/particle_system.h"
 #include <stdbool.h>
 
 #ifndef PI

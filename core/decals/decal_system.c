@@ -1,5 +1,5 @@
 #include "decal_system.h"
-#include "resource_manager.h"
+#include "core/resource_manager.h"
 #include "rlgl.h"
 #include "raymath.h"
 #include <stddef.h>
@@ -13,8 +13,10 @@ static int s_slotListIndex[MAX_DECALS];
 
 // Gom 2 shader thành 1 shader duy nhất để tránh switch trạng thái shader (Shader State Changes)
 static Shader g_DecalShader;
+static Shader g_MaterialDecalShader;
 // Uniform locations của uber-shader (decal_flow.fs), cache 1 lần ở Init
 static int s_locFlowTime = -1, s_locFlowSpeed = -1, s_locFlowStrength = -1, s_locGlow = -1;
+static int s_locMaterialErosion = -1;
 
 // Camera compensation
 static float g_cam_yaw = 0.0f;
@@ -139,11 +141,13 @@ void DecalSystem_Init(void)
     // uniform = 0 rút gọn ĐÚNG về decal.fs (cùng edge mask radial, texture
     // đứng yên) — không cần file decal_uber.fs riêng (chưa từng tồn tại;
     // trước đây load hụt → rơi về default shader, mất edge fade + flow).
-    g_DecalShader   = ResourceManager_LoadShader(NULL, "core/shaders/decal_flow.fs");
+    g_DecalShader   = ResourceManager_LoadShader(NULL, "core/decals/shaders/decal_flow.fs");
+    g_MaterialDecalShader = ResourceManager_LoadShader(NULL, "core/decals/shaders/decal_material.fs");
     s_locFlowTime     = GetShaderLocation(g_DecalShader, "u_time");
     s_locFlowSpeed    = GetShaderLocation(g_DecalShader, "u_flowSpeed");
     s_locFlowStrength = GetShaderLocation(g_DecalShader, "u_flowStrength");
     s_locGlow         = GetShaderLocation(g_DecalShader, "u_glowIntensity");
+    s_locMaterialErosion = GetShaderLocation(g_MaterialDecalShader, "u_erosion");
 }
 
 static int FindSlot(void)
@@ -187,9 +191,29 @@ static int SpawnDecalCommon(Vector3 pos, float rotation, float rotSpeed,
     d->flowSpeed = 0.0f;
     d->flowStrength = 0.0f;
     d->glowIntensity = 0.0f;
+    d->conformalStamp = false;
+    d->heightFn = NULL;
+    d->heightUserData = NULL;
+    d->edgePhase = 0.0f;
     g_LastSpawnedIndex = (idx + 1) % MAX_DECALS;
     Decal_Activate(idx);
     return idx;
+}
+
+void DecalSystem_AddConformalEx(Vector3 pos, float rotation, float rotSpeed,
+                                float scaleStart, float scaleEnd,
+                                Texture2D texture, float lifetime, Color tint,
+                                BlendMode blendMode, float yOffset,
+                                GroundHeightSampleFn heightFn, void *heightUserData,
+                                float edgePhase)
+{
+    int idx = SpawnDecalCommon(pos, rotation, rotSpeed, scaleStart, scaleEnd, texture,
+                               lifetime, tint, blendMode, yOffset);
+    DecalEntity *d = &g_DecalPool[idx];
+    d->conformalStamp = true;
+    d->heightFn = heightFn;
+    d->heightUserData = heightUserData;
+    d->edgePhase = edgePhase;
 }
 
 void DecalSystem_AddEx(Vector3 pos, float rotation, float rotSpeed,
@@ -271,7 +295,7 @@ static void DrawGroup(BlendMode mode, bool flowOnly)
         int idx = s_activeIds[a];
         DecalEntity *d = &g_DecalPool[idx];
 
-        if (d->blendMode != mode || d->flowScroll != flowOnly)
+        if (d->conformalStamp || d->blendMode != mode || d->flowScroll != flowOnly)
             continue;
 
         // Trì hoãn việc kích hoạt Shader và BlendMode cho tới khi thực sự tìm thấy decal hợp lệ đầu tiên
@@ -350,6 +374,87 @@ static void DrawGroup(BlendMode mode, bool flowOnly)
     }
 }
 
+#define DECAL_STAMP_SECTORS 24
+#define DECAL_STAMP_RINGS 4
+
+static float Decal_StampRadius(const DecalEntity *d, float angle)
+{
+    return 1.0f + 0.075f * sinf(angle * 7.0f + d->edgePhase) +
+           0.045f * sinf(angle * 13.0f - d->edgePhase * 1.7f);
+}
+
+static Vector3 Decal_StampVertex(const DecalEntity *d, float radial, float angle)
+{
+    float radius = d->scale * radial * Decal_StampRadius(d, angle);
+    float rot = angle + d->rotation * DEG2RAD;
+    float x = d->position.x + cosf(rot) * radius;
+    float z = d->position.z + sinf(rot) * radius;
+    float y = d->position.y;
+    if (d->heightFn != NULL)
+        y = d->heightFn(x, z, d->heightUserData) + d->yOffset;
+    return (Vector3){x, y, z};
+}
+
+static void Decal_StampEmitVertex(const DecalEntity *d, float radial, float angle)
+{
+    Vector3 v = Decal_StampVertex(d, radial, angle);
+    float edge = Decal_StampRadius(d, angle);
+    float u = 0.5f + cosf(angle) * radial * edge * 0.5f;
+    float w = 0.5f + sinf(angle) * radial * edge * 0.5f;
+    rlTexCoord2f(u, w);
+    rlVertex3f(v.x, v.y, v.z);
+}
+
+static void DrawConformalGroup(BlendMode mode)
+{
+    bool active = false;
+    rlDrawRenderBatchActive();
+    BeginBlendMode(mode);
+    rlDrawRenderBatchActive();
+    rlDisableDepthMask();
+    rlDrawRenderBatchActive();
+    BeginShaderMode(g_MaterialDecalShader);
+
+    for (int a = 0; a < s_activeCount; ++a)
+    {
+        DecalEntity *d = &g_DecalPool[s_activeIds[a]];
+        if (!d->conformalStamp || d->blendMode != mode || d->texture.id == 0)
+            continue;
+        active = true;
+        float erosion = 1.0f - d->lifetime / d->maxLifetime;
+        Color c = d->tint;
+        c.a = (unsigned char)(c.a * (1.0f - erosion * erosion));
+        SetShaderValue(g_MaterialDecalShader, s_locMaterialErosion, &erosion, SHADER_UNIFORM_FLOAT);
+        rlSetTexture(d->texture.id);
+        rlColor4ub(c.r, c.g, c.b, c.a);
+        rlBegin(RL_TRIANGLES);
+        for (int ring = 0; ring < DECAL_STAMP_RINGS; ++ring)
+        {
+            float r0 = (float)ring / DECAL_STAMP_RINGS;
+            float r1 = (float)(ring + 1) / DECAL_STAMP_RINGS;
+            for (int sector = 0; sector < DECAL_STAMP_SECTORS; ++sector)
+            {
+                float a0 = 2.0f * PI * sector / DECAL_STAMP_SECTORS;
+                float a1 = 2.0f * PI * (sector + 1) / DECAL_STAMP_SECTORS;
+                Decal_StampEmitVertex(d, r0, a0); Decal_StampEmitVertex(d, r1, a0);
+                Decal_StampEmitVertex(d, r1, a1); Decal_StampEmitVertex(d, r0, a0);
+                Decal_StampEmitVertex(d, r1, a1); Decal_StampEmitVertex(d, r0, a1);
+            }
+        }
+        rlEnd();
+    }
+
+    rlSetTexture(0);
+    rlDrawRenderBatchActive();
+    EndShaderMode();
+    rlDrawRenderBatchActive();
+    rlEnableDepthMask();
+    rlDrawRenderBatchActive();
+    EndBlendMode();
+    rlDrawRenderBatchActive();
+    (void)active;
+}
+
 void DecalSystem_Draw(void)
 {
     // 6 Lượt vẽ phân tách theo logic chặt chẽ nhưng giảm thiểu chi phí tìm kiếm O(N)
@@ -359,6 +464,9 @@ void DecalSystem_Draw(void)
     DrawGroup(BLEND_ADDITIVE, true);
     DrawGroup(BLEND_MULTIPLIED, false);
     DrawGroup(BLEND_MULTIPLIED, true);
+    DrawConformalGroup(BLEND_ALPHA);
+    DrawConformalGroup(BLEND_ADDITIVE);
+    DrawConformalGroup(BLEND_MULTIPLIED);
 }
 
 void DecalSystem_Unload(void)

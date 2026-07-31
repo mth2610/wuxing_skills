@@ -1,5 +1,5 @@
 #include "particle_system.h"
-#include "mesh_adjacency.h"
+#include "core/mesh_adjacency.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include "core/utils_math.h"
@@ -604,8 +604,8 @@ static void ParticleLighting_Begin(Camera3D camera)
   if (!s_litShaderTried)
   {
     s_litShaderTried = true;
-    s_litShader = ResourceManager_LoadShader("core/shaders/particle_lit.vs",
-                                             "core/shaders/particle_lit.fs");
+    s_litShader = ResourceManager_LoadShader("core/particles/shaders/particle_lit.vs",
+                                             "core/particles/shaders/particle_lit.fs");
     if (s_litShader.id != 0)
     {
       s_locSunToLight      = GetShaderLocation(s_litShader, "u_sunToLight");

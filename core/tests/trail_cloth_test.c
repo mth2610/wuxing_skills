@@ -252,8 +252,8 @@ static int FileHas(const char *path, const char *needle)
 
 static void Test_MirrorStillMatchesSource(void)
 {
-    const char *c = "core/trail_system.c";
-    const char *h = "core/trail_system.h";
+    const char *c = "core/trails/trail_system.c";
+    const char *h = "core/trails/trail_system.h";
 
     CHECK(FileHas(h, "#define TRAIL_SAMPLE_STEPS_MAX 6"),
           "the sub-frame step cap still matches this mirror");

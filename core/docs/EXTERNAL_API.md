@@ -136,7 +136,7 @@ typedef struct {
 
 ## 4. Core Systems
 
-### A. Particle System (`core/particle_system.h`)
+### A. Particle System (`core/particles/particle_system.h`)
 
 Pool size: **2000** particles. Overflow = silent drop.
 
@@ -307,7 +307,7 @@ VFXLight_Spawn(impactPos, ELEMENT_COLOR_FIRE, 3.0f, 0.4f, VFX_PRIORITY_LOW);
 
 ---
 
-### E. Decal System (`core/decal_system.h`)
+### E. Decal System (`core/decals/decal_system.h`)
 
 Pool size: **64** decals.
 
@@ -1070,11 +1070,11 @@ if (s_active) {
 #include "raymath.h"
 #include "rlgl.h"                          // if using rlDisableDepthMask etc.
 #include "core/skill_manager.h"            // SkillParams, SkillProjectile, tunables
-#include "core/particle_system.h"
+#include "core/particles/particle_system.h"
 #include "core/force_field.h"
 #include "core/color_gradient.h"
 #include "core/vfx_light.h"
-#include "core/decal_system.h"
+#include "core/decals/decal_system.h"
 #include "core/screen_distort.h"
 #include "core/camera_fx.h"
 #include "core/skill_helper.h"

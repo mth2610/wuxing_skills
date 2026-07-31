@@ -1,4 +1,4 @@
-#include "core/trail_system.h"
+#include "trail_system.h"
 #include "core/force_field.h"
 #include "core/composition/visual_composer.h"
 #include "core/geometry/procedural_mesh_utils.h"

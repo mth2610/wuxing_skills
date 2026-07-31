@@ -15,3 +15,27 @@ Rebuild decals by surface role, not element name:
 Every candidate needs: source/provenance, intended blend mode, wrap/filter,
 channel semantics, tiling/seam result, and a visual owner approval. Do not use a
 generic circular stamp as a substitute for a residue primitive.
+
+## P4 surface-material contract
+
+P4 is not a textured ground quad. A shipping Residue/Scorch mark is a
+subdivided conformal mesh stamp: it follows the receiver height/normal and is
+rejected on unsuitable receiver angles. Its material stack has optional body,
+mask and gradient inputs with distinct channel meanings: body supplies char or
+albedo, mask supplies opacity/edge erosion, and gradient supplies material
+ramp/emissive control. Normal/height and roughness are authored into that stack
+when the approved source needs them; no channel is inferred from a filename.
+
+The pass keeps depth test enabled and depth writes disabled. Any future rlgl
+state change flushes before and after it. Lifetime fades through the erosion
+mask, not an alpha-only disappearance. Each profile declares draw/texture
+budget, blend law, filter, seam, projection, provenance and owner approval in
+`vfx_surface_profiles.json`.
+
+The current legacy review is deliberately conservative: `scorch_mark.png` is a
+circular rock/crater stamp and must be replaced; it is temporarily approved as
+the semantic **review source** for `VFX_ComposeScorch`, never as shipping art.
+`decal_moss_stain.png` and
+`decal_lightning_char.png` remain legacy candidates that also must be replaced
+until an owner approves a source with the required channels. `impact_ring.png`
+is rejected for residue. No legacy decal is an approved P4 shipping fallback.

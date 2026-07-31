@@ -22,7 +22,7 @@
 // repeated in every map shader and would drift apart the moment one was edited.
 //
 // The falloff and the half-Lambert wrap here MUST stay identical to
-// core/shaders/particle_lit.fs, or smoke and the ground it sits on will disagree
+// core/particles/shaders/particle_lit.fs, or smoke and the ground it sits on will disagree
 // about where the light is — which reads as the effect being pasted on rather
 // than being in the scene.
 // ============================================================

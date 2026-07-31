@@ -363,7 +363,7 @@ back an agentPool snapshot. No other module is aware of networking. *(Later full
 | **Game Agent** | `game/` | every public `.h` |
 | **AI Agent** | `ai/` | `entities/entities.h`, `combat/combat.h` |
 | **UI Agent** | `ui/` | `entities/entities.h`, `combat/combat.h`, `control/control.h` |
-| **Formations Agent** | `formations/` | `entities/entities.h`, `core/decal_system.h`, `core/map_manager.h` |
+| **Formations Agent** | `formations/` | `entities/entities.h`, `core/decals/decal_system.h`, `core/map_manager.h` |
 
 (These entries have since been folded into root `CLAUDE.md`'s Module Agents table.)
 

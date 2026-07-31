@@ -1,7 +1,7 @@
 #ifndef EMITTER_SYSTEM_H
 #define EMITTER_SYSTEM_H
 
-#include "core/particle_system.h"
+#include "core/particles/particle_system.h"
 #include "raylib.h"
 
 #define MAX_EMITTER_ENTITIES 256

@@ -4,7 +4,7 @@
 #include "core/time_fx.h"
 #include "core/screen_distort.h"
 #include "core/post_fx.h"
-#include "core/decal_system.h"
+#include "core/decals/decal_system.h"
 #include "core/presets/vfx_presets.h"
 #include <stddef.h>
 

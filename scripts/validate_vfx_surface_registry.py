@@ -8,9 +8,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "assets" / "vfx_surface_profiles.json"
 INDEX = ROOT / "assets" / "INDEX.md"
-PRIMITIVES = {"ribbon", "tube", "puff", "fire_tongue"}
+PRIMITIVES = {"ribbon", "tube", "puff", "fire_tongue", "decal"}
 WRAPS = {"clamp", "repeat"}
 TILE_SEAMS = {"tileable_both_axes", "crossfade_runtime"}
+ROLES = {"trail", "residue", "scorch", "impact", "rune"}
+FILTERS = {"bilinear", "point"}
+BLENDS = {"consumer_defined", "alpha", "additive", "multiplied"}
+APPROVALS = {"approved", "preview_only", "blocked_visual_owner"}
 
 
 def fail(message):
@@ -33,8 +37,14 @@ def main():
             values.add(value)
         if profile.get("primitive") not in PRIMITIVES:
             failures += fail(f"{name}: invalid primitive")
+        if profile.get("role") not in ROLES:
+            failures += fail(f"{name}: invalid semantic role")
         if profile.get("wrap") not in WRAPS:
             failures += fail(f"{name}: invalid wrap")
+        if profile.get("filter") not in FILTERS or profile.get("blend") not in BLENDS:
+            failures += fail(f"{name}: invalid filter or blend law")
+        if not profile.get("projection") or profile.get("approval") not in APPROVALS:
+            failures += fail(f"{name}: projection and approval are required")
         if not profile.get("provenance") or not profile.get("consumers"):
             failures += fail(f"{name}: provenance and consumer are required (no unused profile assets)")
         flipbook = profile.get("flipbook")
@@ -42,11 +52,17 @@ def main():
             failures += fail(f"{name}: flipbook must be [columns, rows, frames]")
         if profile.get("wrap") == "repeat" and profile.get("seam") not in TILE_SEAMS:
             failures += fail(f"{name}: repeating surface needs tileable/crossfade seam provenance")
-        if profile.get("wrap") == "clamp" and profile.get("seam") != "not_applicable":
+        if (profile.get("wrap") == "clamp" and profile.get("primitive") != "decal" and
+                profile.get("seam") != "not_applicable"):
             failures += fail(f"{name}: clamp flipbook must declare seam not_applicable")
         assets = profile.get("assets", {})
-        if "body" not in assets:
+        blocked_decal = profile.get("primitive") == "decal" and profile.get("approval") == "blocked_visual_owner"
+        if not blocked_decal and "body" not in assets:
             failures += fail(f"{name}: missing body role")
+        if blocked_decal and assets:
+            failures += fail(f"{name}: blocked decal must not acquire runtime assets before approval")
+        if blocked_decal and not profile.get("fallback_candidates"):
+            failures += fail(f"{name}: blocked decal requires a migration/fallback decision")
         for role, asset in assets.items():
             path, channels = asset.get("path"), asset.get("channels")
             if role not in {"body", "flow", "mask", "gradient", "fallback_body"}:
@@ -67,7 +83,36 @@ def main():
             failures += fail(f"{name}/flow: flow map must document RG direction channels")
         if "mask" in assets and "R" not in assets["mask"].get("channels", ""):
             failures += fail(f"{name}/mask: mask must document scalar R channel")
-    expected = {"VFX_SURFACE_SMOKE_RIBBON", "VFX_SURFACE_ENERGY_RIBBON", "VFX_SURFACE_ENERGY_TUBE", "VFX_SURFACE_SMOKE_PUFF", "VFX_SURFACE_FIRE_TONGUE"}
+        if "gradient" in assets and "RGBA" not in assets["gradient"].get("channels", ""):
+            failures += fail(f"{name}/gradient: gradient must document RGBA material ramp")
+        lifecycle = profile.get("lifecycle", {})
+        budget = profile.get("budget", {})
+        life = lifecycle.get("seconds")
+        fade_in, fade_out = lifecycle.get("fade_in"), lifecycle.get("fade_out")
+        if not all(isinstance(v, (int, float)) and v >= 0 for v in (life, fade_in, fade_out)):
+            failures += fail(f"{name}: lifecycle needs non-negative seconds/fades")
+        elif fade_in + fade_out > life and life > 0:
+            failures += fail(f"{name}: fades exceed lifetime")
+        if not all(isinstance(budget.get(k), int) and budget[k] >= 0 for k in ("max_draw_calls", "max_textures")):
+            failures += fail(f"{name}: budget needs non-negative draw/texture limits")
+        elif budget["max_textures"] and len(assets) > budget["max_textures"]:
+            failures += fail(f"{name}: assets exceed texture cost budget")
+        if profile.get("primitive") == "decal":
+            if profile.get("role") not in {"residue", "scorch", "impact", "rune"}:
+                failures += fail(f"{name}: decal needs a decal semantic role")
+            if profile.get("blend") == "consumer_defined":
+                failures += fail(f"{name}: decal needs an explicit blend law")
+            if "conformal_mesh_stamp" not in profile.get("projection", ""):
+                failures += fail(f"{name}: decal needs conformal mesh projection")
+            if profile.get("seam") != "edge_breakup_mask_required":
+                failures += fail(f"{name}: decal needs edge-breakup seam behavior")
+        for candidate in profile.get("fallback_candidates", []):
+            path = candidate.get("path")
+            if not path or not (ROOT / path).is_file() or Path(path).name not in index:
+                failures += fail(f"{name}: fallback candidate is missing or uncataloged")
+            if candidate.get("status") not in {"must_replace", "rejected", "owner_review"} or not candidate.get("reason"):
+                failures += fail(f"{name}: fallback candidate lacks review decision/provenance")
+    expected = {"VFX_SURFACE_SMOKE_RIBBON", "VFX_SURFACE_ENERGY_RIBBON", "VFX_SURFACE_ENERGY_TUBE", "VFX_SURFACE_SMOKE_PUFF", "VFX_SURFACE_FIRE_TONGUE", "VFX_SURFACE_DECAL_RESIDUE", "VFX_SURFACE_DECAL_SCORCH"}
     if not expected.issubset(ids):
         failures += fail("profile IDs do not cover every P1 required primary surface")
     if failures:

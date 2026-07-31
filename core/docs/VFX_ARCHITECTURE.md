@@ -21,9 +21,9 @@ wuxing_skills/
 │   ├── skill_manager.c/.h          # Skill lifecycle management & registration (Skill Registry)
 │   ├── map_manager.c/.h            # Dynamic map loading & rendering management (Map Registry)
 │   ├── skill_helper.c/.h           # Utility function library (VFX Light, Decal, AoE DoT, Mesh)
-│   ├── particle_system.c/.h        # Particle management (GPU Compute & CPU Fallback)
-│   ├── trail_system.c/.h           # Trail/streak & self-guided projectile management
-│   ├── decal_system.c/.h           # Ground-hugging crack/ring decal projection
+│   ├── particles/particle_system.c/.h # CPU particle pool + surface shaders
+│   ├── trails/trail_system.c/.h    # Trail/streak & self-guided projectile management
+│   ├── decals/decal_system.c/.h    # Ground-hugging crack/ring decal projection
 │   ├── camera_fx.c/.h              # Camera effects (shake, physical impulse)
 │   ├── screen_distort.c/.h         # Screen lens distortion (Refraction/Distortion)
 │   ├── force_field.c/.h            # Particle force field (Gravity, Wind, Curl Noise)
@@ -110,4 +110,4 @@ For the Python auto-scan scripts that generate registry configuration to work co
 
 ### 4. Token Efficiency (Protect the Context Window):
 - Never grep-scan the entire project. Never read the excluded directories: `_deps/`, `build/`, `android.wuxing_skills/`.
-- When needing to understand a core API, **only read the `.h` header file** (e.g. `core/particle_system.h`). Never open and read the core system's `.c` implementation file.
+- When needing to understand a core API, **only read the `.h` header file** (e.g. `core/particles/particle_system.h`). Never open and read the core system's `.c` implementation file.

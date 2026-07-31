@@ -263,6 +263,17 @@
       "draw_call": "VFX_ComposeRuneCircle($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, $PROG, 5)"
     },
     {
+      "source": "common/vc_scorch.inl",
+      "fn": "VFX_ComposeScorch",
+      "label": "SCORCH",
+      "category": "fire",
+      "fixture": "burst",
+      "lifecycle": "event",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeScorch($POS, VC_MAT_FIRE, 1.5f, $PROG)"
+    },
+    {
       "source": "common/vc_shield_shell.inl",
       "fn": "VFX_ComposeShieldShell",
       "label": "SHIELD SHELL",

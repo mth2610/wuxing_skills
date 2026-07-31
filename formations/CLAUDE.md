@@ -20,7 +20,7 @@ split identical to boss/:
 ## Scope
 - **Read/write:** everything under `formations/`
 - **Read (interface only):** `entities/entities.h`, `combat/combat.h`,
-  `core/map_manager.h`, `core/decal_system.h` + core VFX `.h` (in `_def.c` only)
+  `core/map_manager.h`, `core/decals/decal_system.h` + core VFX `.h` (in `_def.c` only)
 
 ## Directories FULLY FORBIDDEN
 - `build/`, `_deps/`, `android.wuxing_skills/`

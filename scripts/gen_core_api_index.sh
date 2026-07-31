@@ -13,8 +13,8 @@ cd "$(dirname "$0")/.."
 HEADERS=(
   core/resource_manager.h core/tuning.h
   core/skill_manager.h core/skill_helper.h core/skill_curve.h
-  core/force_field.h core/particle_system.h core/mesh_adjacency.h
-  core/trail_system.h core/ribbon_strip.h core/decal_system.h
+  core/force_field.h core/particles/particle_system.h core/mesh_adjacency.h
+  core/trails/trail_system.h core/ribbon_strip.h core/decals/decal_system.h
   core/screen_distort.h core/metaball_fx.h core/color_gradient.h
   core/float_curve.h core/flow_map.h core/path_spline.h core/sprite_anim.h
   core/vfx_light.h core/post_fx.h core/camera_fx.h

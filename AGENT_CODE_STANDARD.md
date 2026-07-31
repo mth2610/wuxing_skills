@@ -11,7 +11,7 @@
 
 ## 1. C99 / Compile
 - Strict **C99**; Raylib 6.0. Rendering backend: **Vulkan 1.1 via `rlvk` is the priority** (see `third_party/vulkan/docs/HANDOFF.md` / `third_party/vulkan/`); OpenGL 3.3 Core (desktop) and GLES 3.x (Android) are the fallback/legacy paths. Skill/draw code stays backend-agnostic — use `rlgl`/raylib calls, never raw GL or raw Vulkan.
-- Relative include paths from repo root: `#include "core/particle_system.h"`.
+- Relative include paths from repo root: `#include "core/particles/particle_system.h"`.
 - `.c` skill files: must `#include <stddef.h> <stdlib.h> <stdio.h>` (for `NULL`/`snprintf` — not implicitly included).
 - Never bare `#define PI` — always `#ifndef PI / #define PI ... / #endif` (bare redef = `-Wmacro-redefined`, a hard error in strict builds).
 - No `malloc/calloc/realloc/free` anywhere in skill code — static arrays + flags only (stack vars/structs OK).

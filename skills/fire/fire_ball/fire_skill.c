@@ -1,6 +1,6 @@
 #include "skills/fire/fire_ball/fire_skill.h"
 #include "core/force_field.h"
-#include "core/particle_system.h"
+#include "core/particles/particle_system.h"
 #include "core/path_spline.h"
 #include "raymath.h"
 #include "core/ribbon_strip.h"

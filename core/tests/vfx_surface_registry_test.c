@@ -24,13 +24,24 @@ int main(void)
           Has(header, "VFX_SURFACE_ENERGY_RIBBON") &&
           Has(header, "VFX_SURFACE_ENERGY_TUBE") &&
           Has(header, "VFX_SURFACE_SMOKE_PUFF") &&
-          Has(header, "VFX_SURFACE_FIRE_TONGUE"),
+          Has(header, "VFX_SURFACE_FIRE_TONGUE") &&
+          Has(header, "VFX_SURFACE_DECAL_RESIDUE") &&
+          Has(header, "VFX_SURFACE_DECAL_SCORCH"),
           "P1 exposes every required semantic primary surface");
     CHECK(Has(header, "VFX_SurfaceRegistry_Get") && Has(source, "ResourceManager_LoadTexture"),
           "registry is the only runtime loader for profile assets");
     CHECK(Has(manifest, "\"primitive\"") && Has(manifest, "\"channels\"") &&
-          Has(manifest, "\"seam\"") && Has(manifest, "\"provenance\""),
-          "manifest records primitive, channels, seam and provenance");
+          Has(manifest, "\"seam\"") && Has(manifest, "\"provenance\"") &&
+          Has(manifest, "\"role\"") && Has(manifest, "\"projection\"") &&
+          Has(manifest, "\"lifecycle\"") && Has(manifest, "\"budget\""),
+          "manifest records semantic role, material contract, lifecycle and budget");
+    CHECK(Has(manifest, "\"decal_residue_material_blocked\"") &&
+          Has(manifest, "\"decal_scorch_material_preview\"") &&
+          Has(manifest, "\"blocked_visual_owner\"") &&
+          Has(manifest, "\"preview_only\"") &&
+          Has(manifest, "\"fallback_candidates\"") &&
+          Has(header, "VFX_SURFACE_PRIMITIVE_DECAL"),
+          "P4 blocks residue while Scorch uses an owner-approved review source only");
     CHECK(Has("core/composition/common/vc_smoke_puff.inl", "VFX_SurfaceRegistry_Get(VFX_SURFACE_SMOKE_PUFF)") &&
           Has("core/composition/fire/flame_volume.inl", "VFX_SurfaceRegistry_Get(VFX_SURFACE_FIRE_TONGUE)") &&
           Has("core/composition/common/vc_core_smoketrail.inl", "VFX_SurfaceRegistry_Get(VFX_SURFACE_SMOKE_RIBBON)") &&

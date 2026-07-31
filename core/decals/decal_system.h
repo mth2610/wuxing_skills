@@ -2,6 +2,7 @@
 #define DECAL_SYSTEM_H
 
 #include "raylib.h"
+#include "core/geometry/procedural_mesh_utils.h"
 #include <stdbool.h>
 
 #define MAX_DECALS 64
@@ -24,6 +25,10 @@ typedef struct {
     float flowSpeed;      // tốc độ cuộn radial, thường 0.3-1.0
     float flowStrength;   // trộn flow vs texture gốc [0,1], thường 0.5-1.0
     float glowIntensity;  // boost HDR cho texel sáng (khe nứt) để bloom bắt được; 0 = tắt glow
+    bool conformalStamp;  // subdivided terrain-following material stamp (P4)
+    GroundHeightSampleFn heightFn;
+    void *heightUserData;
+    float edgePhase;
 } DecalEntity;
 
 // Khởi tạo hệ thống Decal
@@ -52,6 +57,16 @@ void DecalSystem_AddFlowEx(Vector3 pos, float rotation, float rotSpeed,
                            Color tint, BlendMode blendMode, float yOffset,
                            float flowSpeed, float flowStrength,
                            float glowIntensity);
+
+// P4 material stamp: a subdivided disc follows the supplied ground-height
+// receiver. It never emits a camera-compensated quad, so its silhouette cannot
+// expose a square texture boundary. `heightFn` may be NULL for a flat receiver.
+void DecalSystem_AddConformalEx(Vector3 pos, float rotation, float rotSpeed,
+                                float scaleStart, float scaleEnd,
+                                Texture2D texture, float lifetime, Color tint,
+                                BlendMode blendMode, float yOffset,
+                                GroundHeightSampleFn heightFn, void *heightUserData,
+                                float edgePhase);
 
 // Batch helper — đặt 1 decal tại mỗi điểm trong points[0..count-1], dùng cho hiệu ứng
 // theo đường đi (vd. gai mọc dọc đường, vệt cháy). Wrap quanh DecalSystem_Add, không

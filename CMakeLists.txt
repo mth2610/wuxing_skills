@@ -114,7 +114,7 @@ add_executable(wuxing
     core/force_field.c
     core/camera_fx.c
     core/audio_system.c
-    core/particle_system.c
+    core/particles/particle_system.c
     compute/gpu_particle_system.c
     core/path_spline.c
     core/post_fx.c
@@ -125,10 +125,10 @@ add_executable(wuxing
     core/atmosphere.c
     core/skill_manager.c
     core/sprite_anim.c
-    core/trail_system.c
+    core/trails/trail_system.c
     core/utils_math.c
     core/vfx_light.c
-    core/decal_system.c
+    core/decals/decal_system.c
     core/geometry/procedural_mesh_utils.c
     core/geometry/mesh_cache.c
     core/material/material_system.c
@@ -245,7 +245,8 @@ configure_file(core/shaders/distortion.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shade
 configure_file(core/shaders/bloom_bright.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/bloom_bright.fs COPYONLY)
 configure_file(core/shaders/bloom_blur.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/bloom_blur.fs COPYONLY)
 configure_file(core/shaders/post_process.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/post_process.fs COPYONLY)
-configure_file(core/shaders/trail_glow.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/trail_glow.fs COPYONLY)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/core/trails/shaders)
+configure_file(core/trails/shaders/trail_glow.fs ${CMAKE_CURRENT_BINARY_DIR}/core/trails/shaders/trail_glow.fs COPYONLY)
 configure_file(core/shaders/water_splash.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/water_splash.fs COPYONLY)
 configure_file(core/shaders/water_splash.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/water_splash.vs COPYONLY)
 

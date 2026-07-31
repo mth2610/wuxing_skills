@@ -1,6 +1,6 @@
 #include "gpu_particle_system.h"
 #include "core/resource_manager.h"
-#include "core/particle_system.h"
+#include "core/particles/particle_system.h"
 #if defined(GRAPHICS_API_VULKAN) || defined(WUXING_USE_VULKAN)
 #include "third_party/vulkan/rlvk.h"
 #else

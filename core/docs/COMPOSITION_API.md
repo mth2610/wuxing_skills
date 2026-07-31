@@ -259,7 +259,7 @@ Pure particle/decal/light, **doesn't touch the post-process pipeline** (see `PRO
 - `VFX_ComposeShockwaveRing(pos, radius, life, tint)`: a ground shockwave ring — an expanding ring decal (`assets/textures/generic/impact_ring.png`, `BLEND_ADDITIVE`) + a flash light.
 - `VFX_ComposeGlintBurst(pos, count, spread, tint)`: a small burst of sparkling streaks that expand quickly then fade (~0.12-0.22s/particle) — used as a "sparkle" accent for any effect, including attaching it to other archetypes.
 - `VFX_ComposeEmberDrift(pos, radius, count, tint)`: drifting ember/dust particles (noise-curl + light upward gravity), long lifetime (~1.2-2.2s) — used for continuous auras/ambience.
-- `VFX_ComposeStreakFlare(pos, scale, tint)`: a bright flash burst at a point (an extremely short-lived round particle + a flash light) — reads as a "flash," not a star shape (the particle system only uses a single shared global texture, see `core/particle_system.h`).
+- `VFX_ComposeStreakFlare(pos, scale, tint)`: a bright flash burst at a point (an extremely short-lived round particle + a flash light) — reads as a "flash," not a star shape (the particle system only uses a single shared global texture, see `core/particles/particle_system.h`).
 
 Internal primitives (static within the `visual_composer.c` translation unit, not public — callable from every `.inl`):
 - `VC_DrawGroundQuadXZ(tex, halfX, halfZ, tint)`: a horizontal textured quad centered at the current transform origin (called inside the caller's push/translate/rotate). The caller manages blend/depth. The foundation of every `GROUND_*` pattern.

@@ -13,8 +13,23 @@ PRIMITIVES = {
     "tube": "VFX_SURFACE_PRIMITIVE_TUBE",
     "puff": "VFX_SURFACE_PRIMITIVE_PUFF",
     "fire_tongue": "VFX_SURFACE_PRIMITIVE_FIRE_TONGUE",
+    "decal": "VFX_SURFACE_PRIMITIVE_DECAL",
 }
 WRAPS = {"clamp": "VFX_SURFACE_WRAP_CLAMP", "repeat": "VFX_SURFACE_WRAP_REPEAT"}
+FILTERS = {"bilinear": "VFX_SURFACE_FILTER_BILINEAR", "point": "VFX_SURFACE_FILTER_POINT"}
+BLENDS = {
+    "consumer_defined": "VFX_SURFACE_BLEND_CONSUMER_DEFINED",
+    "alpha": "VFX_SURFACE_BLEND_ALPHA",
+    "additive": "VFX_SURFACE_BLEND_ADDITIVE",
+    "multiplied": "VFX_SURFACE_BLEND_MULTIPLIED",
+}
+ROLES = {
+    "trail": "VFX_SURFACE_ROLE_TRAIL",
+    "residue": "VFX_SURFACE_ROLE_RESIDUE",
+    "scorch": "VFX_SURFACE_ROLE_SCORCH",
+    "impact": "VFX_SURFACE_ROLE_IMPACT",
+    "rune": "VFX_SURFACE_ROLE_RUNE",
+}
 
 
 def c_string(value):
@@ -37,19 +52,31 @@ def main():
         columns, rows, frames = profile["flipbook"]
         lines.extend([
             f"    [{profile['id']}] = {{",
-            f"        .id = {profile['id']},",
-            f"        .primitive = {PRIMITIVES[profile['primitive']]},",
-            f"        .wrap = {WRAPS[profile['wrap']]},",
+        f"        .id = {profile['id']},",
+        f"        .primitive = {PRIMITIVES[profile['primitive']]},",
+        f"        .role = {ROLES[profile['role']]},",
+        f"        .wrap = {WRAPS[profile['wrap']]},",
+        f"        .filter = {FILTERS[profile['filter']]},",
+        f"        .blend = {BLENDS[profile['blend']]},",
             f"        .name = {c_string(profile['name'])},",
             f"        .bodyPath = {c_string(asset(profile, 'body', 'path'))},",
             f"        .flowPath = {c_string(asset(profile, 'flow', 'path'))},",
-            f"        .maskPath = {c_string(asset(profile, 'mask', 'path'))},",
+        f"        .maskPath = {c_string(asset(profile, 'mask', 'path'))},",
+        f"        .gradientPath = {c_string(asset(profile, 'gradient', 'path'))},",
             f"        .fallbackBodyPath = {c_string(asset(profile, 'fallback_body', 'path'))},",
             f"        .bodyChannels = {c_string(asset(profile, 'body', 'channels'))},",
             f"        .flowChannels = {c_string(asset(profile, 'flow', 'channels'))},",
-            f"        .maskChannels = {c_string(asset(profile, 'mask', 'channels'))},",
-            f"        .seam = {c_string(profile['seam'])},",
-            f"        .provenance = {c_string(profile['provenance'])},",
+        f"        .maskChannels = {c_string(asset(profile, 'mask', 'channels'))},",
+        f"        .gradientChannels = {c_string(asset(profile, 'gradient', 'channels'))},",
+        f"        .seam = {c_string(profile['seam'])},",
+        f"        .projection = {c_string(profile['projection'])},",
+        f"        .provenance = {c_string(profile['provenance'])},",
+        f"        .approval = {c_string(profile['approval'])},",
+        f"        .lifetimeSeconds = {profile['lifecycle']['seconds']}f,",
+        f"        .fadeInSeconds = {profile['lifecycle']['fade_in']}f,",
+        f"        .fadeOutSeconds = {profile['lifecycle']['fade_out']}f,",
+        f"        .maxDrawCalls = {profile['budget']['max_draw_calls']},",
+        f"        .maxTextures = {profile['budget']['max_textures']},",
             f"        .flipbookColumns = {columns},",
             f"        .flipbookRows = {rows},",
             f"        .flipbookFrames = {frames},",

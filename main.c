@@ -1,8 +1,8 @@
 #include "core/camera_fx.h"
 #include "core/audio_system.h"
-#include "core/decal_system.h"
+#include "core/decals/decal_system.h"
 #include "core/metaball_fx.h"
-#include "core/particle_system.h"
+#include "core/particles/particle_system.h"
 #include "compute/gpu_particle_system.h"
 #include "core/post_fx.h"
 #include "sandbox/sandbox_core.h"
@@ -12,7 +12,7 @@
 #include "core/atmosphere.h"
 #include "sandbox/skill_debugger.h"
 #include "core/skill_manager.h"
-#include "core/trail_system.h"
+#include "core/trails/trail_system.h"
 #include "sandbox/ui_panel.h"
 #include "core/vfx_light.h"
 #include "sandbox/vfx_test.h" // MỚI: Chỉ giữ duy nhất file test này để điều phối
@@ -1016,7 +1016,7 @@ int main(int argc, char **argv) {
   // -----------------------------------------------------------------
   InitParticleSystem();
   GpuParticleSystem_Init();
-  Shader defaultTrailShader = LoadShader(0, "core/shaders/trail_glow.fs");
+  Shader defaultTrailShader = LoadShader(0, "core/trails/shaders/trail_glow.fs");
   InitTrailSystem(defaultTrailShader);
   VFXLight_Init();
   DecalSystem_Init();

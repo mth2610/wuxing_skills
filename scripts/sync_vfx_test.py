@@ -102,6 +102,7 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeContactSpark":       ("event",   "burst",      "oneshot"),
     "VFX_ComposeEmberTrail":         ("emitter", "persistent", "persistent"),
     "VFX_ComposeShieldShell":        ("emitter", "persistent", "persistent"),
+    "VFX_ComposeScorch":             ("event",   "burst",      "oneshot"),
     "VFX_ComposeLightShaft":         ("draw",    "timed",      "continuous"),
     "VFX_ComposePortalDisc":         ("draw",    "timed",      "continuous"),
     "VFX_ComposeProjectile":         ("trail",   "follower",   "continuous"),

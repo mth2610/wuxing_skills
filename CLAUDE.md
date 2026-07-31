@@ -58,7 +58,7 @@ Never edit another module's files — ask that module's agent. Never read/list/t
 | **Compute Agent** | `compute/` | `compute/docs/API.md`, `core/resource_manager.h` |
 | **Skills Agent** | `skills/`, `core/docs/API.md` (shared write w/ Core Agent) | `core/*.h`, `compute/gpu_particle_system.h`, `environment/environment_system.h`, `assets/` |
 | **Map Agent** | `maps/` | `environment/environment_system.h`, `core/skill_manager.h`, `assets/` |
-| **Environment Agent** | `environment/` | `core/decal_system.h`, `core/skill_manager.h`, `compute/gpu_particle_system.h` |
+| **Environment Agent** | `environment/` | `core/decals/decal_system.h`, `core/skill_manager.h`, `compute/gpu_particle_system.h` |
 | **Entities Agent** | `entities/` | `core/skill_manager.h`, `entities/docs/API.md` — teams/mana/Vô Hệ/Thái Cực state, see `entities/CLAUDE.md` |
 | **Combat Agent** | `combat/` | `entities/entities.h`, `core/map_manager.h`, `combat/docs/API.md` — Đấu Pháp registry + clash matrix, see `combat/CLAUDE.md` |
 | **Control Agent** | `control/` | `entities/entities.h`, `core/skill_manager.h`, `combat/combat.h`, `control/docs/API.md` — PlayerIntent layer, see `control/CLAUDE.md` |

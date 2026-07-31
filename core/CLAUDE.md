@@ -109,7 +109,7 @@ missing shader) must log why it opted out. Log **on change**, not once at
 startup: `tuning.cfg` hot-reloads, so a one-shot line scrolls away before the
 values that matter arrive, and then "my edit didn't apply" is indistinguishable
 from "my edit applied and did nothing". Pattern to copy: `ParticleLighting_Begin`
-in `core/particle_system.c`.
+in `core/particles/particle_system.c`.
 
 ### 5. Prefer a tunable over a rebuild
 

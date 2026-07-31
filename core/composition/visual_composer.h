@@ -32,7 +32,7 @@
 // ============================================================================
 
 #include "raylib.h"
-#include "core/particle_system.h"
+#include "core/particles/particle_system.h"
 #include "core/composition/common/vc_motion.h"   // Motion Library (orbit/helix/jitter/breathe)
 #include "core/presets/vc_material.h"            // Element Material Table (VC_MaterialId)
 #include "core/geometry/procedural_mesh_utils.h" // GroundHeightSampleFn (H2 ground wave)
@@ -526,6 +526,7 @@ void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float pro
 void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
 void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
 void VFX_ComposeParticleUpgradesTest(Vector3 pos);
+void VFX_ComposeScorch(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
 int VFX_ComposeShieldShell(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
 int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime);
 void VFX_ComposeStonePillar(Vector3 basePos, float progress);

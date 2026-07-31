@@ -206,7 +206,7 @@ ForceField_AddLayer(&s_forceField, (ForceLayer){
 
 ---
 
-## 6. PARTICLE SYSTEM (`#include "core/particle_system.h"`)
+## 6. PARTICLE SYSTEM (`#include "core/particles/particle_system.h"`)
 ParticleConfig should be initialized with {0}.
 `void SpawnParticle(ParticleConfig config);` triggers particle emission in the engine.
 ### Configuration API
@@ -244,7 +244,7 @@ Used to construct topological adjacency graphs of 3D meshes (welding vertices wi
 
 ---
 
-## 7. TRAIL & RIBBON SYSTEM (`#include "core/trail_system.h"`)
+## 7. TRAIL & RIBBON SYSTEM (`#include "core/trails/trail_system.h"`)
 TrailConfig should be initialized with {0}.
 `int SpawnTrailEntity(TrailConfig config);` spawns ribbon-based trail components.
 
@@ -346,7 +346,7 @@ typedef struct {
 
 ## 8. Graphics & VFX API
 
-### Ground Decals (`core/decal_system.h`)
+### Ground Decals (`core/decals/decal_system.h`)
 ```c
 void DecalSystem_Init(void);
 void DecalSystem_Add(Vector3 pos, float rot, float scale, Texture2D tex, float life, Color tint);
@@ -360,7 +360,7 @@ void DecalSystem_Unload(void);
 * `rot`: yaw around Y axis (degrees). Alpha fades internally as `lifetime / maxLifetime` decays to 0.
 * Static pool, `MAX_DECALS = 64`, no malloc.
 * `DecalSystem_AddStreak`: thin wrapper that calls `DecalSystem_Add` once per point in `points[0..count-1]` — for path-shaped effects (thorn lines, scorch trails) instead of hand-rolling a loop. Caller's responsibility to pass a reasonable `count` (e.g. up to 32, matching `SkillParams.pathPoints[32]`); not auto-clamped against `MAX_DECALS` headroom, same convention as `SamplePath`'s `maxSegments` in `core/path_spline.h`.
-* **`DecalSystem_AddFlowEx`**: same params as `AddEx` plus `flowSpeed`/`flowStrength`. Texture radially scrolls outward from the decal center over time (`core/shaders/decal_flow.fs`) instead of staying static — for lava-crack-crawl / ripple-spreading visuals. `flowSpeed` ~0.3–1.0 (radial units/sec), `flowStrength` ~0.5–1.0 (0 = looks identical to a static decal, 1 = fully replaced by the scrolled sample). Draws via a separate shader pass from static decals — does not affect `Add`/`AddEx` behavior or performance. Already wired into `SpawnGroundDecal` for `DECAL_PRESET_FIRE_LAVA`/`DECAL_PRESET_WATER_RIPPLE` (see Ground Decal Preset section); every other preset is unaffected (static).
+* **`DecalSystem_AddFlowEx`**: same params as `AddEx` plus `flowSpeed`/`flowStrength`. Texture radially scrolls outward from the decal center over time (`core/decals/shaders/decal_flow.fs`) instead of staying static — for lava-crack-crawl / ripple-spreading visuals. `flowSpeed` ~0.3–1.0 (radial units/sec), `flowStrength` ~0.5–1.0 (0 = looks identical to a static decal, 1 = fully replaced by the scrolled sample). Draws via a separate shader pass from static decals — does not affect `Add`/`AddEx` behavior or performance. Already wired into `SpawnGroundDecal` for `DECAL_PRESET_FIRE_LAVA`/`DECAL_PRESET_WATER_RIPPLE` (see Ground Decal Preset section); every other preset is unaffected (static).
 
 Rules:
 - Call `DecalSystem_Init()` once at startup, `DecalSystem_Update(dt)` every frame to age out decals.
@@ -572,7 +572,7 @@ Rectangle SpriteAnim_CalculateUV(const SpriteAnim *template, float age, int *out
 * **Stateful (instances):** For standalone UI/decal/billboard, call `SpriteAnim_Init` then `Update` every frame, read UV via `GetUVRect`.
 * `ANIM_RANDOM_START`: starts at a random frame, useful so particles sharing one atlas don't animate in visible lockstep.
 
-### Particle Radial Burst (`core/particle_system.h`)
+### Particle Radial Burst (`core/particles/particle_system.h`)
 ```c
 typedef struct {
     int countMin, countMax;

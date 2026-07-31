@@ -178,7 +178,7 @@ void DrawCoreCrossQuads(Vector3 base, float halfWidth, float height, int planeCo
 // REQUIRED to be > 0 whenever the patch sits on/near real ground geometry:
 // a translucent quad exactly coplanar with an opaque ground mesh z-fights
 // against it, which reads as a jagged, hard-edged clip through the smoke
-// (not a shader bug — confirmed by core/decal_system.c:214 needing the same
+// (not a shader bug — confirmed by core/decals/decal_system.c:214 needing the same
 // 0.02f lift for ground decals). ~0.02-0.05 is enough at this project's
 // close VFX viewing distances; 0.0 only if the caller has already biased
 // `heightFn` itself.

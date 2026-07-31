@@ -246,10 +246,10 @@ int main(void)
     // (u_cameraDepthTex/Near/Far, u_resolution) are uploaded by
     // ScreenDistort_BindDepthForSoftParticles, not by the particle system
     // itself — the check stays strict, it just knows where to look.
-    static const char *particleSrc[] = { "core/particle_system.c", "core/vfx_light.c",
+    static const char *particleSrc[] = { "core/particles/particle_system.c", "core/vfx_light.c",
                                          "core/screen_distort.c", NULL };
     static const char *surfaceSrc[]  = { "core/surface_material.c", "core/vfx_light.c", NULL };
-    CheckPairMulti("core/shaders/particle_lit.fs", particleSrc);
+    CheckPairMulti("core/particles/shaders/particle_lit.fs", particleSrc);
     CheckPairMulti("core/shaders/surface_lit.fs", surfaceSrc);
     static const char *grassSrc[] = { "maps/toolkit/grass_material.c", "core/vfx_light.c", NULL };
     CheckPairMulti("maps/toolkit/shaders/grass_material.fs", grassSrc);

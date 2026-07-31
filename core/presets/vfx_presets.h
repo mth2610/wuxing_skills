@@ -3,8 +3,8 @@
 
 #include "raylib.h"
 #include "core/skill_helper.h" // for EffectPresetType (also defines DecalPresetType)
-#include "core/decal_system.h"
-#include "core/particle_system.h" // for ParticleRadialBurstConfig
+#include "core/decals/decal_system.h"
+#include "core/particles/particle_system.h" // for ParticleRadialBurstConfig
 #include "core/presets/vc_material.h" // VC_MaterialId + VFX_ElementMaterial + VFX_Material()
 
 // 1. Cấu hình preset va chạm (Impact)

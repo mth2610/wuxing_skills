@@ -82,6 +82,17 @@ semantic profile; the registry owns the runtime path and sampler contract.
 | EnergyTube | tube | `VFX_ComposeVolumeTrail` | migrated, shipping |
 | SmokePuff | puff/card | `VFX_ComposeSmokePuff`, `SmokeEmitter` | migrated |
 | FireTongue | alpha tongue | `VFX_FlameEmitter` | migrated |
+
+### P4 decal semantic migration map — visual-owner gate
+
+No decal file is moved or selected by filename in this phase. The canonical
+registry has blocked material contracts only; their runtime paths remain empty
+until the visual owner approves authored source art.
+
+| Profile | Role / projection | Legacy assessment | State |
+|---|---|---|---|
+| DecalResidue | conformal mesh stamp, alpha / edge erosion | `decal_moss_stain.png` must replace; `impact_ring.png` rejected as circular impact stamp | blocked, no fallback |
+| DecalScorch | conformal mesh stamp, multiply char + optional ember ramp | `scorch_mark.png` is owner-approved review source only; it and `decal_lightning_char.png` must replace for shipping | visual primary; no shipping fallback |
 | SmokeTube / FireTube | tube | `VFX_ComposeVolumeTrail` | registry-only preview; spawn remains blocked pending P3 visual approval |
 
 ---

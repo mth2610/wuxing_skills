@@ -26,7 +26,7 @@ typedef float (*GroundHeightSampleFn)(float worldX, float worldZ, void *userData
 // flat, all vertices at center.y). `yLift` (meters) pushes every vertex
 // above the sampled height — needed to avoid z-fighting against real ground
 // geometry (see comment at definition in pm_core_shapes.inl; same fix as
-// core/decal_system.c's yOffset for ground decals).
+// core/decals/decal_system.c's yOffset for ground decals).
 void DrawCoreGroundPatch(Vector3 center, float halfSize, int subdiv, float yLift,
                          GroundHeightSampleFn heightFn, void *userData, Color color);
 void DrawCoreCylinder(Vector3 bottom, Vector3 top, float radiusBottom,

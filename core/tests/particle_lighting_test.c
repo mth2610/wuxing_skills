@@ -295,7 +295,7 @@ static void Test_ShaderSourceMatchesMirror(void)
     // These are the load-bearing expressions; if one is edited, this test fails
     // loudly and whoever changed it must update the mirror above rather than
     // let the suite quietly start testing fiction.
-    const char *path = "core/shaders/particle_lit.fs";
+    const char *path = "core/particles/shaders/particle_lit.fs";
     struct { const char *needle, *why; } req[] = {
         // E4: the quad-local UV is now RECOVERED from the atlas grid before this
         // step, because with a SpriteAnim atlas fragTexCoord is a sub-rect and

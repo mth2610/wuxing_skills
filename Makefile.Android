@@ -60,7 +60,7 @@ PROJECT_SOURCE_FILES   := main.c \
                           core/flow_map.c \
                           core/force_field.c \
                           core/camera_fx.c \
-                          core/particle_system.c \
+                          core/particles/particle_system.c \
                           compute/gpu_particle_system.c \
                           core/path_spline.c \
                           core/post_fx.c \
@@ -68,10 +68,10 @@ PROJECT_SOURCE_FILES   := main.c \
                           core/screen_distort.c \
                           core/skill_manager.c \
                           core/sprite_anim.c \
-                          core/trail_system.c \
+                          core/trails/trail_system.c \
                           core/utils_math.c \
                           core/vfx_light.c \
-                          core/decal_system.c \
+                          core/decals/decal_system.c \
                           core/geometry/procedural_mesh_utils.c \
                           core/geometry/mesh_cache.c \
                           core/material/material_system.c \

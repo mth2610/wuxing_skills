@@ -186,7 +186,7 @@
 **Enums:** ForceType { FORCE_GRAVITY_DIR,FORCE_GRAVITY_POINT,FORCE_VORTEX,FORCE_WIND,FORCE_NOISE_PERLIN,FORCE_NOISE_CURL,FORCE_DRAG,FORCE_VISCOSITY,FORCE_RADIAL_AXIS,FORCE_VORTEX_AXIS,FORCE_VECTOR_TEXTURE }
 **Structs** (fields in header): ForceLayer, ForceField, ForceLayerGPU, ForceFieldGPU
 
-### `core/particle_system.h`
+### `core/particles/particle_system.h`
 ```c
   void InitParticleSystem(void);
   void SpawnParticle(ParticleConfig config);
@@ -212,7 +212,7 @@
 ```
 **Structs** (fields in header): MeshAdjacency
 
-### `core/trail_system.h`
+### `core/trails/trail_system.h`
 ```c
   void TrailSystem_SetGlobalTexture(Texture2D tex);
   void InitTrailSystem(Shader defaultShader);
@@ -248,12 +248,13 @@
 **Enums:** RibbonMode { RIBBON_CAMERA_FACING,RIBBON_WORLD_UP,RIBBON_FIXED_NORMAL };RibbonConstrainMode { RIBBON_CONSTRAIN_EXACT,RIBBON_CONSTRAIN_MAX,RIBBON_CONSTRAIN_MIN }
 **Structs** (fields in header): RibbonPoint, RibbonEnergyFieldLayer
 
-### `core/decal_system.h`
+### `core/decals/decal_system.h`
 ```c
   void DecalSystem_Init(void);
   void DecalSystem_Add(Vector3 pos, float rotation, float scale, Texture2D texture, float lifetime, Color tint);
   void DecalSystem_AddEx(Vector3 pos, float rotation, float rotSpeed, float scaleStart, float scaleEnd, Texture2D texture, float lifetime, Color tint, BlendMode blendMode, float yOffset);
   void DecalSystem_AddFlowEx(Vector3 pos, float rotation, float rotSpeed, float scaleStart, float scaleEnd, Texture2D texture, float lifetime, Color tint, BlendMode blendMode, float yOffset, float flowSpeed, float flowStrength, float glowIntensity);
+  void DecalSystem_AddConformalEx(Vector3 pos, float rotation, float rotSpeed, float scaleStart, float scaleEnd, Texture2D texture, float lifetime, Color tint, BlendMode blendMode, float yOffset, GroundHeightSampleFn heightFn, void *heightUserData, float edgePhase);
   void DecalSystem_AddStreak(const Vector3 *points, int count, float rotation, float scale, Texture2D texture, float lifetime, Color tint);
   void DecalSystem_Update(float dt);
   void DecalSystem_SetCamera(Camera3D camera);
@@ -621,6 +622,7 @@
   void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
   void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   void VFX_ComposeParticleUpgradesTest(Vector3 pos);
+  void VFX_ComposeScorch(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   int VFX_ComposeShieldShell(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
   int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime);
   void VFX_ComposeStonePillar(Vector3 basePos, float progress);

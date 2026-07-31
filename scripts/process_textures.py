@@ -11,7 +11,7 @@ Modes:
   luma-alpha   White/gray art on black background -> RGBA with the art's
                luminosity converted to the alpha channel and RGB forced to
                pure white, so the engine can tint it via Color at runtime
-               (e.g. DecalSystem_Add, SpawnGroundDecal in core/decal_system.h).
+               (e.g. DecalSystem_Add, SpawnGroundDecal in core/decals/decal_system.h).
                Typical for decals, masks, glow sprites.
   resize-only  Just resize/re-export, no alpha manipulation. Typical for
                opaque textures (skyboxes, tileable surface diffuse maps).
