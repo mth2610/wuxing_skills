@@ -368,7 +368,7 @@ static void Test_MirrorMatchesTheSource(void)
 {
     const char *inl = "core/composition/common/vc_volume_trail.inl";
     const char *cmn = "core/composition/common/vc_common.inl";
-    const char *swp = "core/composition/common/vc_swept_trail.inl";
+    const char *swp = "core/composition/common/vc_ribbon_trail.inl";
     const char *hdr = "core/composition/visual_composer.h";
 
     // The three columns, exactly as mirrored above.
@@ -439,6 +439,11 @@ static void Test_MirrorMatchesTheSource(void)
           "result, which is the worst failure mode available");
     CHECK(FileHas(hdr, "VFX_VOLUME_KIND_COUNT"),
           "the count sentinel is in the enum itself, so no check can go stale");
+    CHECK(FileHas(hdr, "VFX_ComposeVolumeTrailEx") &&
+              FileHas(inl, "v->surface = surface ? *surface : (VFX_TrailSurface){0};"),
+          "a volume may own a caller-supplied sheet, flow map and mask per instance");
+    CHECK(FileHas(inl, "const Texture2D *flowMap = v->hasSurface ? &v->surface.flowMap"),
+          "a supplied flow map replaces the kind default rather than sharing it globally");
 
     // Kill detaches rather than cutting the volume out of existence — and it is
     // not optional: the entity holds the CALLER'S Matrix.

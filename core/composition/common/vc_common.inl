@@ -45,7 +45,7 @@ static Color VC_MixColor(Color a, Color b, float t)
 
 // ── Shared by every SWEPT primary ───────────────────────────────────────────
 //
-// Both of these lived inside vc_swept_trail.inl until P1 needed them. They are
+// Both of these lived inside vc_ribbon_trail.inl until P1 needed them. They are
 // here rather than copied because the copy is the failure mode this module keeps
 // repeating: a composition grew its own history ring beside core/trail_system.h,
 // then the trail system grew its own tube beside ProceduralMesh_BuildTubeAlongPath.

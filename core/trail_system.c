@@ -267,6 +267,28 @@ static Vector3 GetInterpolatedPosition(const TrailEntity *t, float segRatio)
     return CatmullRom(t->history[idxP0], t->history[idxP1], t->history[idxP2], t->history[idxP3], f);
 }
 
+// Render-time only: history, attachment and UV distance retain the real path.
+// At the newest node (segRatio == 1), grow is exactly zero, welding the visible
+// filament to its source even when the rest of the tail has a large radius.
+static Vector3 ApplyAnchoredHelix(const TrailEntity *t, Vector3 pos, float segRatio)
+{
+    if (t->helixRadius <= 0.0f || t->helixTurns == 0.0f ||
+        Vector3LengthSqr(t->helixAxis) < 1e-8f)
+        return pos;
+
+    Vector3 axis = Vector3Normalize(t->helixAxis);
+    Vector3 ref = (fabsf(axis.y) > 0.9f) ? (Vector3){1.0f, 0.0f, 0.0f}
+                                          : (Vector3){0.0f, 1.0f, 0.0f};
+    Vector3 u = Vector3Normalize(Vector3CrossProduct(axis, ref));
+    Vector3 v = Vector3CrossProduct(axis, u);
+    float age = 1.0f - segRatio;
+    float grow = Clamp(age * 5.5f, 0.0f, 1.0f);
+    float phase = t->helixPhase + age * t->helixTurns * 2.0f * PI;
+    Vector3 offset = Vector3Add(Vector3Scale(u, cosf(phase)),
+                                Vector3Scale(v, sinf(phase)));
+    return Vector3Add(pos, Vector3Scale(offset, t->helixRadius * grow));
+}
+
 // [TỐI ƯU PERFORMANCE] Frustum & Distance Culling loại bỏ vẽ trail ngoài màn hình
 static inline bool IsTrailVisible(const TrailEntity *t, Camera3D camera)
 {
@@ -871,6 +893,10 @@ int SpawnTrailEntity(TrailConfig config)
     t->alphaCurve = config.alphaCurve;
     t->distortionStrength = config.distortionStrength;
     t->distortionSpeed = (config.distortionSpeed != 0.0f) ? config.distortionSpeed : 1.0f;
+    t->helixAxis = config.helixAxis;
+    t->helixRadius = config.helixRadius;
+    t->helixTurns = config.helixTurns;
+    t->helixPhase = config.helixPhase;
     t->ribbonMode = config.ribbonMode;
     t->fixedNormal = config.fixedNormal;
 
@@ -1525,6 +1551,7 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
                     posNode.y += nY * t->distortionStrength;
                     posNode.z += nZ * t->distortionStrength;
                 }
+                posNode = ApplyAnchoredHelix(t, posNode, segRatio);
                 scratchOuter[h].position = posNode;
                 scratchOuter[h].halfWidth = t->thickness * taper;
                 scratchOuter[h].v = (t->uvMetresPerTile > 0.0f)

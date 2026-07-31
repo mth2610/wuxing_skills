@@ -7,25 +7,22 @@
 //
 // The structure is the owner's, 29/07:
 //
-//     quả cầu  ── 1 trường năng lượng (tam giác, cạnh gắn vào đầu tròn,
-//                 đỉnh nhọn phía sau)
+//     quả cầu  ── 1 trường năng lượng nhỏ, cạnh gắn vào đầu tròn,
+//                 đỉnh nhọn phía sau
 //              ── 1 đuôi chính
 //              ── 2 đuôi phụ, chuyển động xoắn spiral, một đầu đính vào quả cầu
 //
 //   1. THE ORB      `VFX_ComposeEnergyOrb` — fresnel shell + hot core.
-//   2. THE FIELD    `VFX_TRAIL_HAZE` — wide where it meets the orb, pointed
-//                   behind. Faint: it is the backdrop that gives the wake mass.
-//   3. THE MAIN TAIL `VFX_TRAIL_RIBBON` — defined and textured. The shape.
-//   4. TWO WISPS    `VFX_TRAIL_FILAMENT` on matrices this file spirals around
-//                   the flight axis, each anchored at the orb.
+//   2. THE FIELD    `VFX_ComposeVolumeTrail` — small, faint tube behind the tail.
+//   3. THE MAIN TAIL `VFX_RIBBON_MAIN` — defined and textured. The shape.
+//   4. TWO WISPS    `VFX_RIBBON_WISP`, bent into a render helix around the
+//                   flight axis; their emitters orbit only inside the hot core.
 //
-// WHY THE WISPS NEED THIS FILE AT ALL, when everything else is a plain call: a
-// trail follows a Matrix, and a spiralling wisp needs a Matrix that orbits the
-// head around the axis of travel. That axis is only known here — it comes from
-// where the projectile has been, not from anything the caller passes. So the
-// four child transforms are owned by this pool, and their ADDRESSES have to stay
-// stable for the trails' whole lives, which is why they live in the slot rather
-// than on the stack.
+// WHY THE WISPS NEED THIS FILE AT ALL, when everything else is a plain call:
+// their render helix needs the flight axis, which only exists here — it comes
+// from where the projectile has been, not from anything the caller passes. The
+// child transforms are owned by this pool and stay inside the head, so their
+// ADDRESSES must remain stable for the trails' whole lives.
 //
 // ONE-SHOT + POOLED. Call once when the projectile spawns, keep the handle,
 // release it on impact. Calling it every frame stacks projectiles until the pool
@@ -47,13 +44,18 @@
 // in and out of phase on their own, so the pattern never repeats.
 static const float k_wispWidth[PROJ_WISPS] = {0.95f, 0.68f};
 static const float k_wispLife[PROJ_WISPS] = {0.88f, 0.61f};
-static const float k_wispRadius[PROJ_WISPS] = {0.55f, 0.82f};
+static const float k_wispRadius[PROJ_WISPS] = {0.62f, 0.88f};
 static const float k_wispPhase[PROJ_WISPS] = {0.00f, 2.10f}; // ~120 deg, not 180
 static const float k_wispRate[PROJ_WISPS] = {1.00f, 0.73f};
 
 static float s_projSpiralTurns = 1.35f; // revolutions per second
-static float s_projSpiralR = 0.55f;     // x the orb radius
-static float s_projFieldLen = 1.0f;     // x on the field's memory
+// Radius relative to the orb. This bends the already-laid trail, never the
+// emitter itself, so 0.5–0.8 stays visibly wide but begins at the core.
+static float s_projSpiralR = 0.65f;
+// A tiny real orbit makes newly-laid nodes inherit live motion. It is separate
+// from the visible helix radius and remains fully inside the hot core.
+static float s_projSpiralHeadR = 0.14f;
+static float s_projFieldLen = 0.82f;    // x on the field's memory
 static float s_projScale = 1.0f;
 
 typedef struct
@@ -84,8 +86,9 @@ static void Proj_InitShared(void)
     // Lazily, never from a subsystem Init — Tuning_Init runs after those and an
     // early registration silently keeps the default (core/docs/LANDMINES.md).
     Tuning_RegisterFloat("proj_spiral_turns", &s_projSpiralTurns, 1.35f);
-    Tuning_RegisterFloat("proj_spiral_r", &s_projSpiralR, 0.55f);
-    Tuning_RegisterFloat("proj_field_len", &s_projFieldLen, 1.0f);
+    Tuning_RegisterFloat("proj_spiral_r", &s_projSpiralR, 0.65f);
+    Tuning_RegisterFloat("proj_spiral_head_r", &s_projSpiralHeadR, 0.14f);
+    Tuning_RegisterFloat("proj_field_len", &s_projFieldLen, 0.82f);
     Tuning_RegisterFloat("proj_scale", &s_projScale, 1.0f);
     s_projInit = true;
 }
@@ -134,23 +137,27 @@ int VFX_ComposeProjectile(const Matrix *followTransform, VC_MaterialId mat,
         p->wispXf[w] = p->headXf;
 
     float r = p->radius;
-    // THE FIELD, spawned FIRST so it is the backdrop the rest sits on. Its width
-    // is a ceiling: the aspect rule caps it against the length actually
-    // travelled, so a slow projectile gets a narrow field rather than a fat stub.
-    p->fieldH = VFX_ComposeSweptTrail(&p->headXf, mat, r * 3.0f,
-                                      0.55f * s_projFieldLen, VFX_TRAIL_HAZE);
+    // THE FIELD stays deliberately smaller than the main ribbon. It is only a
+    // soft wake mass, never a second large projectile around the real one.
+    p->fieldH = VFX_ComposeVolumeTrail(&p->headXf, mat, r * 0.78f,
+                                       0.48f * s_projFieldLen, VOL_ENERGY);
 
-    p->mainH = VFX_ComposeSweptTrail(&p->headXf, mat, r * 2.6f, 0.75f,
-                                     VFX_TRAIL_RIBBON);
+    p->mainH = VFX_ComposeRibbonTrail(&p->headXf, mat, r * 2.6f, 0.75f,
+                                      VFX_RIBBON_MAIN);
     // THE WISPS ARE NOT TWINS. Equal length, equal width and a fixed 180-degree
     // phase offset make two threads that mirror each other exactly, and a mirror
     // pair reads as a mechanism — the guide's "too straight and uniform". Every
     // property below is deliberately unequal, and the phases are NOT evenly
     // spaced around the circle for the same reason.
     for (int w = 0; w < PROJ_WISPS; w++)
-        p->wispH[w] = VFX_ComposeSweptTrail(&p->wispXf[w], mat,
-                                            r * k_wispWidth[w], k_wispLife[w],
-                                            VFX_TRAIL_FILAMENT);
+    {
+        p->wispH[w] = VFX_ComposeRibbonTrail(&p->wispXf[w], mat,
+                                             r * k_wispWidth[w], k_wispLife[w],
+                                             VFX_RIBBON_WISP);
+        SweptTrail_SetAnchoredHelix(p->wispH[w], p->axis,
+                                    r * s_projSpiralR * k_wispRadius[w],
+                                    1.10f * k_wispRate[w], k_wispPhase[w]);
+    }
     return slot;
 }
 
@@ -164,10 +171,10 @@ void VFX_KillProjectile(int handle)
     // Kill, not cut. Each trail stops being fed and drains its own history, which
     // is the wind-down — and killing DETACHES, so nothing holds this slot's
     // matrices after the slot is reused.
-    VFX_KillSweptTrail(p->fieldH);
-    VFX_KillSweptTrail(p->mainH);
+    VFX_KillVolumeTrail(p->fieldH);
+    VFX_KillRibbonTrail(p->mainH);
     for (int w = 0; w < PROJ_WISPS; w++)
-        VFX_KillSweptTrail(p->wispH[w]);
+        VFX_KillRibbonTrail(p->wispH[w]);
     p->active = false;
     p->xf = NULL;
 }
@@ -200,30 +207,25 @@ static void VC_Projectile_Update(float dt)
         }
         p->prevHead = head;
 
-        // A basis across the flight axis. The reference vector is chosen to be
-        // the LEAST parallel to the axis available, because cross() with a nearly
-        // parallel vector is near-zero and the basis collapses — which draws both
-        // wisps on top of each other along one line.
-        Vector3 ref = (fabsf(p->axis.y) > 0.9f) ? (Vector3){1.0f, 0.0f, 0.0f}
-                                                : (Vector3){0.0f, 1.0f, 0.0f};
-        Vector3 u = Vector3Normalize(Vector3CrossProduct(p->axis, ref));
-        Vector3 v = Vector3CrossProduct(p->axis, u);
-
         p->phase += dt * s_projSpiralTurns * 2.0f * PI;
         for (int w = 0; w < PROJ_WISPS; w++)
         {
-            // Its OWN turn rate, so the two drift in and out of phase forever
-            // instead of holding a fixed offset.
+            // Its own rate and radius keep the pair organic. The emitter gets
+            // only a tiny physical orbit, safely inside the core; that records
+            // local motion in history without visually detaching from the source.
+            Vector3 ref = (fabsf(p->axis.y) > 0.9f) ? (Vector3){1.0f, 0.0f, 0.0f}
+                                                    : (Vector3){0.0f, 1.0f, 0.0f};
+            Vector3 u = Vector3Normalize(Vector3CrossProduct(p->axis, ref));
+            Vector3 v = Vector3CrossProduct(p->axis, u);
             float ph = p->phase * k_wispRate[w] + k_wispPhase[w];
             float rad = p->radius * s_projSpiralR * k_wispRadius[w];
-            Vector3 off = Vector3Add(Vector3Scale(u, cosf(ph) * rad),
-                                     Vector3Scale(v, sinf(ph) * rad));
-            // ONE END ANCHORED AT THE ORB, per the owner's description: the
-            // emitter orbits, but it orbits AROUND the head rather than trailing
-            // behind it, so every wisp's newest node is at the ball and only its
-            // history spirals away.
-            Vector3 wp = Vector3Add(head, off);
-            p->wispXf[w] = MatrixTranslate(wp.x, wp.y, wp.z);
+            float headRad = p->radius * s_projSpiralHeadR * k_wispRadius[w];
+            Vector3 headOffset = Vector3Add(Vector3Scale(u, cosf(ph) * headRad),
+                                            Vector3Scale(v, sinf(ph) * headRad));
+            Vector3 emitter = Vector3Add(head, headOffset);
+            p->wispXf[w] = MatrixTranslate(emitter.x, emitter.y, emitter.z);
+            SweptTrail_SetAnchoredHelix(p->wispH[w], p->axis, rad,
+                                        1.10f * k_wispRate[w], ph * 0.16f);
         }
     }
 }
@@ -240,12 +242,8 @@ static void VC_Projectile_Draw3D(Camera3D cam)
         if (!p->active || !p->xf)
             continue;
         Vector3 head = Vector3Transform((Vector3){0.0f, 0.0f, 0.0f}, *p->xf);
-        // NO SHELL. The fresnel sphere is off while the volume mesh is what is
-        // being built: it is the brightest thing in the effect and it sits
-        // exactly where the tube's head is, so every judgement about the tube's
-        // silhouette was being made through it. The hot core stays — a
-        // projectile still needs a source — but the shell comes back only once
-        // the mesh underneath it is agreed.
-        VFX_ComposeCoreGlow(head, p->matId, p->radius * 0.9f, 1.0f);
+        // No shell: a small hot point marks the source without competing with
+        // the trails' silhouette.
+        VFX_ComposeCoreGlow(head, p->matId, p->radius * 0.78f, 0.90f);
     }
 }

@@ -279,16 +279,16 @@ static void Test_TubeNeedsASeamlessSheet(void)
     // around a complete inner one — two nested tubes, one of them split. The
     // owner named that shape from the picture twice before anyone read the UV,
     // and the second time only because the first fix had been reported as done.
-    CHECK(FileHas("core/composition/common/vc_swept_trail.inl",
-                  "s_sweptHazeLayers[1].texture = NULL;"),
-          "no tube layer is handed a ribbon band sheet");
+    CHECK(FileHas("core/composition/common/vc_volume_trail.inl",
+                  "cfg.layers = s_volLayers[v->kind];"),
+          "the volume owns its tube layer stack");
     CHECK(FileHas("core/trail_system.c", "static Texture2D s_tubeFlatTex = {0};"),
           "the trail system owns a flat fallback so a tube cannot get a banded one");
     CHECK(FileHas("core/trail_system.c",
                   "? *ly->texture : ((s_tubeFlatTex.id != 0) ? s_tubeFlatTex : fallbackTex);"),
           "...and substitutes it by construction, not by each caller remembering");
-    CHECK(FileHas("core/composition/common/vc_swept_trail.inl",
-                  "SetTextureWrap(s_sweptTubeTex, TEXTURE_WRAP_REPEAT);"),
+    CHECK(FileHas("core/composition/common/vc_volume_trail.inl",
+                  "SetTextureWrap(s_volSheet[k], TEXTURE_WRAP_REPEAT);"),
           "which wraps on BOTH axes — around the section as well as along it");
 }
 

@@ -156,6 +156,14 @@ typedef struct
     float distortionStrength;
     float distortionSpeed;
 
+    // Render-only helix deformation. The head stays on its sampled path; the
+    // radius grows behind it, so a filament can corkscrew without its emitter
+    // orbiting away from the source.
+    Vector3 helixAxis;
+    float helixRadius;
+    float helixTurns;
+    float helixPhase;
+
     // Layer & Physics
     const TrailLayer *layers;
     int layerCount;
@@ -339,6 +347,7 @@ typedef struct
     Vector3 orbitAxis;
     Vector3 prevAttachPos;
     Vector3 lateralOffset;
+    Vector3 helixAxis;
 
     Texture2D sprite;  // 20 bytes
     Texture2D flowMap; // 20 bytes (Thêm Flowmap Texture vào Entity)
@@ -369,6 +378,9 @@ typedef struct
     float minVertexDistance;
     float distortionStrength;
     float distortionSpeed;
+    float helixRadius;
+    float helixTurns;
+    float helixPhase;
     float uvMetresPerTile;
     float laidDist;
     float nodeHomeSpring;

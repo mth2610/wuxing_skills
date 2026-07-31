@@ -1,4 +1,4 @@
-// core headless test — VFX_ComposeSweptTrail's geometry and schedules.
+// core headless test — VFX_ComposeRibbonTrail's geometry and schedules.
 //
 // Almost everything that decides whether a swept trail reads as a blade is
 // arithmetic: the aspect ratio against the length the tip travelled, the width
@@ -7,7 +7,7 @@
 // the mask's hot edge lands on. None of those needs a GPU, and every one of them
 // would otherwise be answered by build → screenshot → guess (core/CLAUDE.md §1).
 //
-// This mirrors core/composition/common/vc_swept_trail.inl. A mirror rots into
+// This mirrors core/composition/common/vc_ribbon_trail.inl. A mirror rots into
 // fiction the moment the source moves, so Test_MirrorStillMatchesSource pins the
 // load-bearing expressions.
 //
@@ -516,19 +516,19 @@ static void Test_StyleValidatorCoversEveryStyle(void)
     // leave a range check behind.
     CHECK(FileHas("core/composition/visual_composer.h", "VFX_TRAIL_STYLE_COUNT"),
           "the enum still carries a count for range checks to use");
-    CHECK(FileHas("core/composition/common/vc_swept_trail.inl",
-                  "style >= VFX_TRAIL_STYLE_COUNT"),
+    CHECK(FileHas("core/composition/common/vc_ribbon_trail.inl",
+                  "kind >= VFX_RIBBON_KIND_COUNT"),
           "and the validator still checks against it, not against the last style by name");
     // The needle carries the surrounding punctuation on purpose. Written as the
     // bare expression it also matched the COMMENT that explains the fix — so the
     // test failed precisely because the bug had been documented. A negative
     // FileHas cannot tell code from prose about code; give it something only the
     // code can contain.
-    CHECK(!FileHas("core/composition/common/vc_swept_trail.inl",
+    CHECK(!FileHas("core/composition/common/vc_ribbon_trail.inl",
                    "|| style > VFX_TRAIL_FILAMENT)"),
           "the stale by-name check is gone");
     // A clamp that says nothing is how this survived a day.
-    CHECK(FileHas("core/composition/common/vc_swept_trail.inl",
+    CHECK(FileHas("core/composition/common/vc_ribbon_trail.inl",
                   "is out of range — clamped to BLADE"),
           "and an out-of-range style still announces itself");
 
@@ -1464,7 +1464,7 @@ static int FileHas(const char *path, const char *needle)
 
 static void Test_MirrorStillMatchesSource(void)
 {
-    const char *inl = "core/composition/common/vc_swept_trail.inl";
+    const char *inl = "core/composition/common/vc_ribbon_trail.inl";
 
     // ── What this file still OWNS ───────────────────────────────────────────
     //
@@ -1482,9 +1482,9 @@ static void Test_MirrorStillMatchesSource(void)
     CHECK(FileHas(inl, "return (cap < want) ? cap : want;"),
           "the caller's width is still a CEILING, not a value");
 
-    CHECK(FileHas(inl, "FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_BLADE], 0.60f, 1.00f);"),
+    CHECK(FileHas(inl, "FloatCurve_AddStop(&s_sweptWidthCurve[VFX_RIBBON_BLADE], 0.60f, 1.00f);"),
           "the blade width envelope peaks in the BODY, not at the head");
-    CHECK(FileHas(inl, "FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_BLADE], 1.00f, 0.18f);"),
+    CHECK(FileHas(inl, "FloatCurve_AddStop(&s_sweptWidthCurve[VFX_RIBBON_BLADE], 1.00f, 0.18f);"),
           "the blade's head still tapers to a needle");
     CHECK(FileHas(inl, "{-1.00f, -0.50f, 0.38f, 1.00f}"),
           "the filament spread table still matches this mirror");
@@ -1493,15 +1493,15 @@ static void Test_MirrorStillMatchesSource(void)
     //
     // The three-strip idea used to be a hand-rolled pass loop in this file. It
     // is now a TrailLayer table, and the ratios have to survive the move.
-    CHECK(FileHas(inl, ".widthMul = 1.55f, .alphaMul = 0.07f"),
+    CHECK(FileHas(inl, ".widthMul = 1.55f, .alphaMul = 0.10f"),
           "the halo is still faint and wide");
-    CHECK(FileHas(inl, ".widthMul = 0.26f, .alphaMul = 0.28f"),
+    CHECK(FileHas(inl, ".widthMul = 0.26f, .alphaMul = 0.30f"),
           "and the core still thin, and no longer a second saturated band");
     CHECK(FileHas(inl, ".whiten = 0.00f"),
           "the hue-carrying glow layer is still NOT whitened");
-    CHECK(FileHas(inl, ".alphaMul = 0.31f, .whiten = 0.06f"),
+    CHECK(FileHas(inl, ".alphaMul = 0.36f, .whiten = 0.06f"),
           "the body layer is barely whitened, so it keeps the element's hue");
-    CHECK(FileHas(inl, ".alphaMul = 0.28f, .whiten = 0.20f"),
+    CHECK(FileHas(inl, ".alphaMul = 0.30f, .whiten = 0.20f"),
           "and the core is a SEASONING of white, not a colourless band");
     CHECK(FileHas(inl, "return lowTier ? 1 : 2;"),
           "FILAMENT is still 2 strands — the caller owns how many wisps there are");
@@ -1510,45 +1510,14 @@ static void Test_MirrorStillMatchesSource(void)
     // THE RULE, not a preference: several additive copies of one textured
     // pattern at different phases sum to something FLAT, and the wider layers
     // throw the sheet's edge detail outward as spikes.
-    CHECK(FileHas(inl, ".scrollMul = 1.05f, .headAlphaPow = 0.0f, .texture = &s_sweptBodyTex"),
+    CHECK(FileHas(inl, "s->layers[1].texture = body;"),
           "exactly ONE layer carries the texture, and it is the body");
-    // HAZE: a SECOND stack, two layers, no core, on the structure-free sheet.
-    CHECK(FileHas(inl, "static TrailLayer s_sweptHazeLayers[2] = {"),
-          "the haze still has its own TWO-layer stack — no white-hot core");
-    CHECK(FileHas(inl, "cfg.layers = s_sweptHazeLayers;"),
-          "and the HAZE style still selects it");
-    // THE FIELD CARRIES THE FLOW. This shipped twice with the haze stripped of
-    // its texture, on a rule that only applies WITHIN one trail's layer stack —
-    // and a featureless band cannot be seen to scroll, which is the field's one
-    // job. Its outer layer is a bare shape; its body keeps the flow sheet.
-
-    // STRIPPED BACK, on the owner's call: one untextured tube while the SHAPE is
-    // being judged. Three wrong silhouettes in a row each had two candidate
-    // causes — the second layer or the wrapped sheet — and neither could be
-    // ruled out without removing the other. A bare tube has exactly one thing
-    // that can be wrong.
-    CHECK(FileHas(inl, "s_sweptHazeLayers[1].texture = NULL;"),
-          "no haze layer is handed a ribbon band sheet — those seam on a tube");
-    CHECK(FileHas(inl, "if (s_hazeTex >= 2.5f && s_volFireTex.id != 0) volSheet = &s_volFireTex;"),
-          "the tube sheet is chosen per element family, not one noise for all three");
-    CHECK(FileHas(inl, "assets/textures/energy_volume.png"),
-          "and it is the purpose-built volume sheet, seamless by construction");
-    CHECK(FileHas(inl, "SetTextureWrap(s_volEnergyTex, TEXTURE_WRAP_REPEAT);"),
-          "wrapping on BOTH axes — u around the section, v along the length");
-    CHECK(FileHas(inl, "t->layerCount = (s_hazeLayers >= 1.5f) ? 2 : 1;"),
-          "the layer count is a live dial, so one-vs-two costs no rebuild");
-    CHECK(FileHas(inl, "return 0.1600f;"),
-          "the haze aspect is still 1:3 — a wake is BROAD");
-    // THE FIELD IS A VOLUME. A flat card can be made wide and faint and still
-    // reads as a decal of a field; a swept tube has a silhouette from anywhere.
-    CHECK(FileHas(inl, "cfg.shape = TRAIL_SHAPE_TUBE;"),
-          "the haze field is still swept as a TUBE, not a flat strip");
-    CHECK(FileHas(inl, "s->style == VFX_TRAIL_HAZE && GfxQuality_Get() >= GFX_MED"),
-          "and the tube is still tier-gated — the gate may only clamp DOWN");
-    CHECK(FileHas(inl, "s_sweptLayers[0].texture = (s_sweptHaloTex.id != 0) ? &s_sweptHaloTex : NULL;"),
-          "the halo still gets the structure-free sheet");
-    CHECK(FileHas(inl, "s_sweptLayers[2].texture = s_sweptLayers[0].texture;"),
-          "...and so does the core");
+    CHECK(FileHas(inl, "[VFX_RIBBON_BACKDROP]"),
+          "BACKDROP is a dedicated wide recipe, not a disguised main ribbon");
+    CHECK(FileHas(inl, "return (kind == VFX_RIBBON_BACKDROP) ? 2 : 3;"),
+          "BACKDROP has no inner core layer");
+    CHECK(FileHas(inl, "A wisp has a CONTINUOUS inner core."),
+          "WISP keeps a continuous, thinner inner core");
 
     // ── The sheets ──────────────────────────────────────────────────────────
     CHECK(FileHas(inl, "#define SWEPT_STREAKS 16"),
@@ -1592,7 +1561,7 @@ static void Test_MirrorStillMatchesSource(void)
           "nodes are still sprung back toward the path they were LAID on");
     CHECK(FileHas(inl, "cfg.nodeOrderFrac = SWEPT_ORDER_FRAC;"),
           "and the order bound is still asked for — the fix for the self-twist");
-    CHECK(FileHas(inl, "cfg.forceField = &s_sweptCloth[s->style];"),
+    CHECK(FileHas(inl, "cfg.forceField = &s_sweptCloth[s->kind];"),
           "node motion still comes from a ForceField, not hand-written sin()");
     CHECK(FileHas(inl, "cfg.uvMetresPerTile"),
           "the flow UV is still the MATERIAL one, not segRatio");
@@ -1603,8 +1572,11 @@ static void Test_MirrorStillMatchesSource(void)
           "the engine's legacy sub-pixel core is still off — the stack replaces it");
     CHECK(FileHas(inl, "cfg.gradient = SweptTrail_Gradient(s->matId);"),
           "colour along the strip still comes from the element material");
-    CHECK(FileHas(inl, "cfg.ribbonMode = (s->style == VFX_TRAIL_BLADE) ? RIBBON_FIXED_NORMAL"),
+    CHECK(FileHas(inl, "cfg.ribbonMode = (s->kind == VFX_RIBBON_BLADE) ? RIBBON_FIXED_NORMAL"),
           "BLADE still lies in the swing plane; the others stay camera-facing");
+    CHECK(FileHas(inl, "VFX_ComposeRibbonTrailEx") &&
+              FileHas(inl, "cfg.flowMap = cfg.useFlowMap ? &s->surface.flowMap : NULL;"),
+          "each ribbon may bring its own texture, flow map and mask input");
 
     // Handle safety. Trail ids are recycled and the pool evicts by priority, so
     // a stored id can silently become somebody else's entity.

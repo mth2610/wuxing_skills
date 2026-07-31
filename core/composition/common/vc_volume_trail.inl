@@ -72,6 +72,9 @@ typedef struct
     const Matrix *xf; // caller-owned; must outlive the handle
     VC_MaterialId matId;
     VFX_VolumeKind kind;
+    VFX_TrailSurface surface;
+    bool hasSurface;
+    TrailLayer layers[2]; // instance-owned: TrailEntity retains this pointer
     float radius;   // ceiling, metres
     float lifetime; // tail memory, seconds
     int trailId;
@@ -211,6 +214,14 @@ static TrailLayer s_volLayers[VFX_VOLUME_KIND_COUNT][2] = {
      {.widthMul = 1.00f, .alphaMul = 0.46f, .whiten = 0.08f, .scrollMul = 1.00f, .headAlphaPow = 0.0f, .texture = &s_volSheet[VOL_FIRE]}},
 };
 
+static void VolumeTrail_ConfigureLayers(VC_VolumeTrail *v)
+{
+    for (int L = 0; L < 2; L++)
+        v->layers[L] = s_volLayers[v->kind][L];
+    if (v->hasSurface && v->surface.texture.id != 0)
+        v->layers[1].texture = &v->surface.texture;
+}
+
 // ── The tier ladder — it may only ever clamp DOWN ───────────────────────────
 //
 // And the volume stays a VOLUME at every tier. Falling back to a flat strip on a
@@ -268,10 +279,10 @@ static float s_volMapStrength = 0.20f;
 static float s_volMapTiling = 2.0f;
 static float s_volTile = VOL_TILE;  // metres per texture repeat
 static float s_volLayerMul = 1.0f;  // 0 = body only; may only clamp DOWN
-// Diagnostic default: static geometry makes UV scroll and flow-map distortion
-// visible without confusing them with a moving emitter. Set vol_static = 0 to
-// restore swept follower behaviour.
-static float s_volStatic = 1.0f;
+// Static geometry is a diagnostic probe for UV scroll and flow-map distortion.
+// Shipping/default behaviour is the moving follower; set vol_static = 1 only
+// while isolating texture motion.
+static float s_volStatic = 0.0f;
 // SOLID WHITE, for judging the SHAPE and nothing else.
 //
 // "Turn everything off" does not give an opaque surface, because what makes an
@@ -333,7 +344,7 @@ static void VolumeTrail_InitShared(void)
     Tuning_RegisterFloat("vol_tile", &s_volTile, VOL_TILE);
     Tuning_RegisterFloat("vol_layers", &s_volLayerMul, 1.0f);
     Tuning_RegisterFloat("vol_solid", &s_volSolid, 0.0f);
-    Tuning_RegisterFloat("vol_static", &s_volStatic, 1.0f);
+    Tuning_RegisterFloat("vol_static", &s_volStatic, 0.0f);
     s_volInit = true;
 }
 
@@ -410,7 +421,7 @@ static int VolumeTrail_Spawn(const VC_VolumeTrail *v, int slot)
     // — a fresnel read with no fresnel term.
     cfg.tubeSingleSided = false;
     cfg.tubeNoiseAmp = k_volNoise[v->kind] * s_volNoiseMul;
-    cfg.layers = s_volLayers[v->kind];
+    cfg.layers = v->layers;
     cfg.layerCount = VolumeTrail_LayerCount();
     cfg.uvMetresPerTile = (s_volTile > 0.05f) ? s_volTile : 0.05f;
     cfg.uvScrollSpeed = k_volSwirl[v->kind] * s_volFlowMul;
@@ -418,11 +429,19 @@ static int VolumeTrail_Spawn(const VC_VolumeTrail *v, int slot)
     cfg.teleportSpeed = VOL_TELEPORT_SPEED;
     cfg.idleSpeed = VOL_IDLE_SPEED;
     cfg.trailLength = (float)VolumeTrail_MaxNodes(v->lifetime);
-    cfg.useFlowMap = (s_volFlowMap[v->kind].id != 0);
-    cfg.flowMap = &s_volFlowMap[v->kind]; // RG vector field, separate from display sheet
-    cfg.flowSpeed = s_volMapSpeed;
-    cfg.flowStrength = s_volMapStrength;
-    cfg.flowTiling = s_volMapTiling;
+    const Texture2D *flowMap = v->hasSurface ? &v->surface.flowMap
+                                               : &s_volFlowMap[v->kind];
+    cfg.useFlowMap = (flowMap->id != 0);
+    cfg.flowMap = flowMap; // RG vector field, separate from display sheet
+    cfg.flowSpeed = v->hasSurface ? v->surface.flowSpeed : s_volMapSpeed;
+    cfg.flowStrength = v->hasSurface ? v->surface.flowStrength : s_volMapStrength;
+    cfg.flowTiling = (v->hasSurface && v->surface.flowTiling > 0.0f)
+                         ? v->surface.flowTiling : s_volMapTiling;
+    cfg.noiseMask = (v->hasSurface && v->surface.noiseMask.id != 0)
+                        ? &v->surface.noiseMask : NULL;
+    cfg.dissolve = v->hasSurface ? v->surface.dissolve : 0.0f;
+    cfg.maskTiling = (v->hasSurface && v->surface.maskTiling > 0.0f)
+                         ? v->surface.maskTiling : 1.0f;
 
     int id = SpawnTrailEntity(cfg);
     if (id >= 0)
@@ -455,8 +474,9 @@ static int VolumeTrail_Spawn(const VC_VolumeTrail *v, int slot)
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
-int VFX_ComposeVolumeTrail(const Matrix *followTransform, VC_MaterialId mat,
-                           float radius, float lifetime, VFX_VolumeKind kind)
+int VFX_ComposeVolumeTrailEx(const Matrix *followTransform, VC_MaterialId mat,
+                             float radius, float lifetime, VFX_VolumeKind kind,
+                             const VFX_TrailSurface *surface)
 {
     VolumeTrail_InitShared();
     if (!followTransform)
@@ -507,11 +527,20 @@ int VFX_ComposeVolumeTrail(const Matrix *followTransform, VC_MaterialId mat,
     v->xf = followTransform;
     v->matId = mat;
     v->kind = kind;
+    v->hasSurface = (surface != NULL);
+    v->surface = surface ? *surface : (VFX_TrailSurface){0};
     v->radius = radius;
     v->lifetime = lifetime;
     v->widthLogged = false;
+    VolumeTrail_ConfigureLayers(v);
     v->trailId = VolumeTrail_Spawn(v, slot);
     return slot;
+}
+
+int VFX_ComposeVolumeTrail(const Matrix *followTransform, VC_MaterialId mat,
+                           float radius, float lifetime, VFX_VolumeKind kind)
+{
+    return VFX_ComposeVolumeTrailEx(followTransform, mat, radius, lifetime, kind, NULL);
 }
 
 void VFX_KillVolumeTrail(int handle)
@@ -612,9 +641,14 @@ static void VC_VolumeTrail_Update(float dt)
         t->uvMetresPerTile = (s_volTile > 0.05f) ? s_volTile : 0.05f;
         t->uvScrollSpeed = k_volSwirl[v->kind] * s_volFlowMul;
         t->tubeNoiseAmp = k_volNoise[v->kind] * s_volNoiseMul;
-        t->flowSpeed = s_volMapSpeed;
-        t->flowStrength = s_volMapStrength;
-        t->flowTiling = (s_volMapTiling > 0.0f) ? s_volMapTiling : 1.0f;
+        t->flowSpeed = v->hasSurface ? v->surface.flowSpeed : s_volMapSpeed;
+        t->flowStrength = v->hasSurface ? v->surface.flowStrength : s_volMapStrength;
+        t->flowTiling = (v->hasSurface && v->surface.flowTiling > 0.0f)
+                             ? v->surface.flowTiling
+                             : ((s_volMapTiling > 0.0f) ? s_volMapTiling : 1.0f);
+        t->dissolve = v->hasSurface ? v->surface.dissolve : 0.0f;
+        t->maskTiling = (v->hasSurface && v->surface.maskTiling > 0.0f)
+                            ? v->surface.maskTiling : 1.0f;
         // The ladder still owns the ceiling; the dial may only take it DOWN.
         int layers = VolumeTrail_LayerCount();
         if (s_volLayerMul < 0.5f)

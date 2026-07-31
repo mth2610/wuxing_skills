@@ -712,7 +712,7 @@ and only along the chain. Split the displacement:
 - **across** it: the loose absolute bound. Sag, curl and flutter are almost
   entirely lateral, so the look lives here and the fix costs no motion.
 
-See `SWEPT_ORDER_FRAC` in `core/composition/common/vc_swept_trail.inl` and
+See `SWEPT_ORDER_FRAC` in `core/composition/common/vc_ribbon_trail.inl` and
 `Test_NodesCannotCrossTheirNeighbour` in `core/tests/swept_trail_test.c`.
 
 ## A scrolling texture made of CONTINUOUS features reads as static (29/07/2026)
@@ -789,7 +789,7 @@ fast the emitter is driven. Anything measured from a *moving* end of the geometr
 
 ## A mirror needle must pin the CODE, not the FORMATTING (29/07/2026)
 
-**Symptom.** A formatter reflowed `vc_swept_trail.inl` and **seventeen** mirror
+**Symptom.** A formatter reflowed `vc_ribbon_trail.inl` and **seventeen** mirror
 assertions failed in one run, with nothing about the behaviour changed.
 
 **Cause.** The needles were written by copying source lines complete with their

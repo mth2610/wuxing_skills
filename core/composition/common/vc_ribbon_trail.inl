@@ -1,4 +1,4 @@
-// ── H1. VFX_ComposeSweptTrail — the swept weapon/body trail ──────────────────
+// ── H1. VFX_ComposeRibbonTrail — the swept ribbon/body trail ────────────────
 //
 // PORTED ONTO core/trail_system.h, 29/07. The first version of this file grew
 // its own history ring, its own fixed-rate sample clock, its own cloth
@@ -57,6 +57,7 @@
 
 #define SWEPT_MAX 8         // concurrent trails
 #define SWEPT_STRANDS_MAX 4 // strands per trail (FILAMENT uses all of them)
+#define VFX_LEGACY_VOLUME_HANDLE_FLAG 0x40000000
 #define SWEPT_SAMPLE_HZ 60.0f
 #define SWEPT_IDLE_SPEED 0.12f  // m/s below which the tip counts as stationary
 #define SWEPT_MIN_VERTEX 0.005f // metres; rejects exact duplicate nodes only
@@ -99,7 +100,10 @@ typedef struct
     bool active;
     const Matrix *xf; // caller-owned; must outlive the handle
     VC_MaterialId matId;
-    VFX_TrailStyle style;
+    VFX_RibbonTrailKind kind;
+    VFX_TrailSurface surface;
+    bool hasSurface;
+    TrailLayer layers[3]; // instance-owned: TrailEntity retains this pointer
     float width;       // full width in metres, before the aspect cap
     float widthTarget; // 0..1, set by VFX_TrailSetWidth
     float widthLevel;  // what is actually drawn — ramps toward target
@@ -126,35 +130,10 @@ static Texture2D s_sweptAssetTex = {0}; // energy_flow.png, rotated + made to ti
 static Texture2D s_sweptBodyTex = {0};
 // THE SAME FILAMENTS, SEAMLESS ACROSS u — for a swept TUBE.
 //
-// A ribbon sheet cannot be wrapped around a tube, and the reason is structural
-// rather than a matter of tuning. On a strip, u = 0 and u = 1 are the two EDGES,
-// and the sheet fades to zero at both so the silhouette closes. Wrap that around
-// a cylinder and those two edges are THE SAME LINE: the tube goes fully
-// transparent along one seam and opaque on the opposite side, i.e. it draws as
-// half a tube. With two layers, two nested half-shells — which is exactly what
-// the owner described seeing, before anyone had looked at the UV.
-//
-// So the tube gets its own sheet: no edge kill, and cross-faded in BOTH axes so
-// it tiles along the length AND wraps around the circumference.
-static Texture2D s_sweptTubeTex = {0};
-// The purpose-built volume sheets (scripts/gen_volume_trail_textures.py). These
-// REPLACE the tube variant derived from energy_flow.png: that one was a ribbon
-// asset rotated, cropped and cross-faded into tiling, and a cross-faded seam
-// blurs exactly the detail the sheet exists to carry. These are seamless on both
-// axes BY CONSTRUCTION — the noise lattice wraps — so nothing is softened.
-//
-// One per material family, because they are not interchangeable: smoke has no
-// edges, flame is stretched along its travel and has a hot core, energy is
-// strands. A single "nice noise" for all three is how every element ends up
-// looking like the same effect tinted differently.
-static Texture2D s_volEnergyTex = {0};
-static Texture2D s_volSmokeTex = {0};
-static Texture2D s_volFireTex = {0};
-
 // How much the ribbon behaves like cloth. BLADE is nearly a record (a sword's
-// trail is struck, not draped); RIBBON is silk and is allowed to sag, lag and
-// overshoot; FILAMENT sits between.
-#define SWEPT_STYLES 4
+// trail is struck, not draped); MAIN is silk; WISP is more controlled; and a
+// BACKDROP stays broad, soft and close to the travelled path.
+#define SWEPT_STYLES VFX_RIBBON_KIND_COUNT
 static ForceField s_sweptCloth[SWEPT_STYLES];
 
 // The dust's twinkle: three beats inside one life, so a mote pulses instead of
@@ -176,51 +155,18 @@ static float s_sweptAlphaMul = 1.0f;  // x on the whole trail's opacity
 // direction of travel, which is what reads as something being left behind rather
 // than as a pattern being pushed along in front.
 static float s_sweptFlow = -1.0f;
-static float s_sweptSag = 1.0f;       // x on how much the ribbon sags
-static float s_sweptCoreHot = 1.0f;   // x on the white-hot head
-// WHICH SHEET, and HOW LONG A TILE OF IT IS — the two dials that decide whether
-// the flow reads as surging energy. `swept_sheet` 1 = the authored
-// energy_flow.png, 0 = the procedural streaks. `swept_tile` is metres per
-// repeat: the asset is authored 4.4:1 along:across, and a 1.10 m tile on a 3 m
-// blade draws it at 7.3:1, so strands come out 1.7x longer than they were
-// painted. Mild, and that stretch reads as speed.
-static float s_sweptSheet = 1.0f;
+static float s_sweptSag = 1.0f;     // x on how much the ribbon sags
+static float s_sweptCoreHot = 1.0f; // x on the white-hot head
+// The procedural finite-streak sheet is the neutral default. The old authored
+// `energy_flow.png` has a strong ornamental rhythm, so it is now opt-in only:
+// it must be chosen intentionally by a look-dev dial or supplied per-instance
+// through VFX_TrailSurface, never imposed on every element trail.
+static float s_sweptSheet = 0.0f; // 0 = procedural, 1 = legacy energy_flow.png
 static float s_sweptTile = SWEPT_FLOW_TILE;
 // Hold the shape still and let ONLY the flow move. The decisive instrument for
 // "is the energy actually flowing": a moving shape with a moving texture and a
 // moving shape with a painted-on one look exactly the same.
 static float s_sweptFreeze = 0.0f;
-// Both are DIAGNOSTIC, and both default to the stripped-back state. Turn them up
-// only once the bare tube is agreed to be the right shape.
-//   haze_layers = 2 -> add the outer bloom back
-//   haze_tex    = 1 -> put the flow sheet on the tube
-static float s_hazeLayers = 1.0f;
-static float s_hazeTex = 0.0f;
-// 1 = draw both walls, so grazing angles accumulate more material and the
-// silhouette brightens on its own. 0 = near wall only: no rim, and half the
-// fill. Not a fresnel term — there is no fresnel on a trail — but it is what
-// produces the same read, and it is the thing to turn off when the edges are
-// too hot.
-static float s_hazeRim = 1.0f;
-// SOLID WHITE, for judging the SHAPE and nothing else.
-//
-// "Turn everything off" does not give an opaque surface, because the thing that
-// makes a trail see-through is not a setting that was left on — it is
-// BLEND_ADDITIVE, which is what the blend law requires of anything that emits
-// light. Additive never occludes: it adds to whatever is behind it, so the stars
-// show through a fully opaque-alpha tube. Judging a silhouette through it is
-// reading a shape through frosted glass.
-//
-// This flips the whole path to opaque alpha, white, no gradient, single-sided —
-// a matte cast of the geometry. It is a DEBUG view and deliberately breaks the
-// blend law; nothing that emits should ship this way.
-static float s_hazeSolid = 0.0f;
-// Vertex deformation by noise, as a fraction of the local radius. This is the
-// layer that makes a swept tube stop being a swept tube: without it the surface
-// is mathematically smooth and reads as extruded plastic however good the sheet
-// on it is. 0.18 is a live surface; 0.4 billows.
-static float s_hazeNoise = 0.18f;
-
 // Uneven by design: evenly spaced strands of equal width read as a comb, no
 // amount of colour fixes it, and the regularity is the thing the eye picks up.
 static const float k_sweptSpread[SWEPT_STRANDS_MAX] = {-1.00f, -0.50f, 0.38f, 1.00f};
@@ -233,19 +179,17 @@ static const float k_sweptSpread[SWEPT_STRANDS_MAX] = {-1.00f, -0.50f, 0.38f, 1.
 // 1:40 here (core/docs/LANDMINES.md, "Thickness is a ratio against the thing's
 // OWN length"; the 1:20 blade figure is the one VFX_ComposeSweepSlash landed on).
 // Half-width is half of that, hence 0.025 / 0.05 / 0.0125.
-static float SweptTrail_AspectK(VFX_TrailStyle style)
+static float SweptTrail_AspectK(VFX_RibbonTrailKind kind)
 {
-    switch (style)
+    switch (kind)
     {
-    case VFX_TRAIL_RIBBON:
+    case VFX_RIBBON_MAIN:
         return 0.0715f; // 1:7 — cloth, and cloth is BROAD
-    case VFX_TRAIL_FILAMENT:
+    case VFX_RIBBON_WISP:
         return 0.0125f; // 1:40 — thread
-    case VFX_TRAIL_HAZE:
-        return 0.1600f; // 1:3 — a wake, and a wake is BROAD. This is the widest
-                        // additive surface in a projectile, which is exactly why
-                        // its alpha ceiling below is the lowest.
-    case VFX_TRAIL_BLADE:
+    case VFX_RIBBON_BACKDROP:
+        return 0.1000f; // 1:5 — wide mass, still bounded on hard turns
+    case VFX_RIBBON_BLADE:
     default:
         return 0.0250f; // 1:20 — blade
     }
@@ -256,10 +200,10 @@ static float SweptTrail_AspectK(VFX_TrailStyle style)
 // whole fix for the classic failure this DoD names: on a hard turn the tail
 // shortens, and a band that keeps its width through that becomes a blob.
 static float SweptTrail_HalfWidth(float widthMetres, float level01,
-                                  float travelLen, VFX_TrailStyle style)
+                                  float travelLen, VFX_RibbonTrailKind kind)
 {
     float want = widthMetres * 0.5f * level01;
-    float cap = travelLen * SweptTrail_AspectK(style) * s_sweptAspectMul;
+    float cap = travelLen * SweptTrail_AspectK(kind) * s_sweptAspectMul;
     if (want < 0.0f)
         want = 0.0f;
     return (cap < want) ? cap : want;
@@ -268,48 +212,54 @@ static float SweptTrail_HalfWidth(float widthMetres, float level01,
 // How much the ribbon behaves like cloth. BLADE is nearly a record (a sword's
 // trail is struck, not draped); RIBBON is silk and is allowed to sag, lag and
 // overshoot; FILAMENT sits between.
-static float SweptTrail_Sag(VFX_TrailStyle style)
+static float SweptTrail_Sag(VFX_RibbonTrailKind kind)
 {
-    switch (style)
+    switch (kind)
     {
-    case VFX_TRAIL_RIBBON:
+    case VFX_RIBBON_MAIN:
         return 2.60f; // m/s^2 downward
-    case VFX_TRAIL_FILAMENT:
+    case VFX_RIBBON_WISP:
         return 0.90f;
+    case VFX_RIBBON_BACKDROP:
+        return 1.35f;
     default:
         return 0.70f;
     }
 }
-static float SweptTrail_Drag(VFX_TrailStyle style)
+static float SweptTrail_Drag(VFX_RibbonTrailKind kind)
 {
     // Higher = the node settles faster = stiffer. Low drag is what lets the tail
     // keep travelling after the head has stopped.
-    switch (style)
+    switch (kind)
     {
-    case VFX_TRAIL_RIBBON:
+    case VFX_RIBBON_MAIN:
         return 1.9f;
-    case VFX_TRAIL_FILAMENT:
+    case VFX_RIBBON_WISP:
         return 3.0f;
+    case VFX_RIBBON_BACKDROP:
+        return 4.4f;
     default:
         return 5.0f;
     }
 }
-static float SweptTrail_Wind(VFX_TrailStyle style)
+static float SweptTrail_Wind(VFX_RibbonTrailKind kind)
 {
-    switch (style)
+    switch (kind)
     {
-    case VFX_TRAIL_RIBBON:
+    case VFX_RIBBON_MAIN:
         return 1.70f;
-    case VFX_TRAIL_FILAMENT:
+    case VFX_RIBBON_WISP:
         return 1.10f;
+    case VFX_RIBBON_BACKDROP:
+        return 0.75f;
     default:
         return 0.55f;
     }
 }
 
-static int SweptTrail_StrandCount(VFX_TrailStyle style, bool lowTier)
+static int SweptTrail_StrandCount(VFX_RibbonTrailKind kind, bool lowTier)
 {
-    if (style != VFX_TRAIL_FILAMENT)
+    if (kind != VFX_RIBBON_WISP)
         return 1;
     // E8 tier budget: each strand is its own ribbon submission. The gate only
     // ever clamps DOWN — a low tier loses threads, never gains them.
@@ -567,53 +517,8 @@ static void SweptTrail_BuildAssetSheet(void)
     }
     s_sweptAssetTex = LoadTextureFromImage(out);
 
-    // The tube variant, from the same rotated source: cross-faded in u as well
-    // as v, and with NO edge kill — a rim that fades to nothing is a hole when
-    // the two rims meet.
-    int G = W / 6;
-    if (G < 2) G = 2;
-    if (G > W / 3) G = W / 3;
-    int outW = W - G;
-    Image tube = GenImageColor(outW, outH, BLANK);
-    for (int y = 0; y < outH; y++)
-    {
-        for (int x = 0; x < outW; x++)
-        {
-            float a = (float)sp[y * W + x].r / 255.0f;
-            if (y < F)
-            {
-                float t = 0.5f * (1.0f - cosf(PI * (float)y / (float)F));
-                a = ((float)sp[(H - F + y) * W + x].r / 255.0f) * (1.0f - t) + a * t;
-            }
-            if (x < G)
-            {
-                // The same raised-cosine wrap, around the circumference.
-                float t = 0.5f * (1.0f - cosf(PI * (float)x / (float)G));
-                float b = (float)sp[y * W + (W - G + x)].r / 255.0f;
-                if (y < F)
-                {
-                    float tv = 0.5f * (1.0f - cosf(PI * (float)y / (float)F));
-                    b = ((float)sp[(H - F + y) * W + (W - G + x)].r / 255.0f) * (1.0f - tv) + b * tv;
-                }
-                a = b * (1.0f - t) + a * t;
-            }
-            // Lifted, not edge-killed: every point around the tube must carry
-            // some material or the silhouette has a gap in it.
-            a = a * SWEPT_ASSET_GAIN + SWEPT_ASSET_FLOOR;
-            a = a < 0.0f ? 0.0f : (a > 1.0f ? 1.0f : a);
-            ImageDrawPixel(&tube, x, y, (Color){255, 255, 255,
-                                                (unsigned char)(a * 255.0f)});
-        }
-    }
-    s_sweptTubeTex = LoadTextureFromImage(tube);
-    UnloadImage(tube);
     UnloadImage(src);
     UnloadImage(out);
-    if (s_sweptTubeTex.id != 0)
-    {
-        SetTextureFilter(s_sweptTubeTex, TEXTURE_FILTER_BILINEAR);
-        SetTextureWrap(s_sweptTubeTex, TEXTURE_WRAP_REPEAT); // both axes wrap now
-    }
     if (s_sweptAssetTex.id != 0)
     {
         SetTextureFilter(s_sweptAssetTex, TEXTURE_FILTER_BILINEAR);
@@ -630,14 +535,6 @@ static void SweptTrail_InitShared(void)
 
     SweptTrail_BuildBladeMask();
     SweptTrail_BuildAssetSheet();
-    s_volEnergyTex = ResourceManager_LoadTexture("assets/textures/energy_volume.png");
-    s_volSmokeTex = ResourceManager_LoadTexture("assets/textures/smoke_volume.png");
-    s_volFireTex = ResourceManager_LoadTexture("assets/textures/fire_volume.png");
-    // REPEAT on both axes: a tube wraps u around the section and tiles v along
-    // the length, and these sheets were generated to survive exactly that.
-    if (s_volEnergyTex.id != 0) { SetTextureFilter(s_volEnergyTex, TEXTURE_FILTER_BILINEAR); SetTextureWrap(s_volEnergyTex, TEXTURE_WRAP_REPEAT); }
-    if (s_volSmokeTex.id != 0) { SetTextureFilter(s_volSmokeTex, TEXTURE_FILTER_BILINEAR); SetTextureWrap(s_volSmokeTex, TEXTURE_WRAP_REPEAT); }
-    if (s_volFireTex.id != 0) { SetTextureFilter(s_volFireTex, TEXTURE_FILTER_BILINEAR); SetTextureWrap(s_volFireTex, TEXTURE_WRAP_REPEAT); }
 
     FloatCurve_AddStop(&s_sweptTwinkle, 0.00f, 0.00f);
     FloatCurve_AddStop(&s_sweptTwinkle, 0.10f, 1.00f);
@@ -658,15 +555,11 @@ static void SweptTrail_InitShared(void)
     // AROUND the path it was dragged along; it does not leave it. These are a
     // perturbation — see `nodeHomeSpring` in core/trail_system.c, which is what
     // actually bounds the deviation.
-    // BLADE, RIBBON, FILAMENT, HAZE.
-    //
-    // HAZE barely holds its path: high curl, almost no drag, so it billows and
-    // spreads instead of following. That is the whole difference between a
-    // backdrop and a trail — and it is still ANCHORED (see the home spring), or
-    // it would stop reading as the wake of anything.
-    static const float sag[SWEPT_STYLES] = {0.40f, 0.95f, 0.55f, 0.30f};
-    static const float curl[SWEPT_STYLES] = {0.30f, 0.55f, 0.40f, 0.95f};
-    static const float drag[SWEPT_STYLES] = {5.50f, 3.40f, 4.20f, 2.20f};
+    // BLADE, MAIN, WISP, BACKDROP. A backdrop does not become a second main
+    // tail: it settles quickly and only supplies soft mass behind the shape.
+    static const float sag[SWEPT_STYLES] = {0.40f, 0.95f, 0.55f, 0.65f};
+    static const float curl[SWEPT_STYLES] = {0.30f, 0.55f, 0.40f, 0.28f};
+    static const float drag[SWEPT_STYLES] = {5.50f, 3.40f, 4.20f, 5.10f};
     for (int st = 0; st < SWEPT_STYLES; st++)
     {
         ForceField_AddLayer(&s_sweptCloth[st], (ForceLayer){
@@ -705,69 +598,48 @@ static void SweptTrail_InitShared(void)
     // flat vertical edge where the trail ends, and "no taper" is item three on
     // the guide's list of common mistakes. A trail is emitted at a point, so its
     // newest end is a needle, not a wall.
-    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_BLADE], 0.00f, 0.00f);
-    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_BLADE], 0.25f, 0.55f);
-    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_BLADE], 0.60f, 1.00f);
-    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_BLADE], 0.88f, 0.72f);
-    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_BLADE], 1.00f, 0.18f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_RIBBON_BLADE], 0.00f, 0.00f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_RIBBON_BLADE], 0.25f, 0.55f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_RIBBON_BLADE], 0.60f, 1.00f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_RIBBON_BLADE], 0.88f, 0.72f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_RIBBON_BLADE], 1.00f, 0.18f);
 
-    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_RIBBON], 0.00f, 0.00f);
-    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_RIBBON], 0.30f, 0.70f);
-    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_RIBBON], 0.62f, 1.00f);
-    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_RIBBON], 0.90f, 0.78f);
-    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_RIBBON], 1.00f, 0.22f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_RIBBON_MAIN], 0.00f, 0.00f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_RIBBON_MAIN], 0.30f, 0.70f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_RIBBON_MAIN], 0.62f, 1.00f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_RIBBON_MAIN], 0.90f, 0.78f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_RIBBON_MAIN], 1.00f, 0.22f);
 
-    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_FILAMENT], 0.00f, 0.00f);
-    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_FILAMENT], 0.22f, 0.78f);
-    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_FILAMENT], 0.85f, 1.00f);
-    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_FILAMENT], 1.00f, 0.20f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_RIBBON_WISP], 0.00f, 0.00f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_RIBBON_WISP], 0.22f, 0.78f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_RIBBON_WISP], 0.85f, 1.00f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_RIBBON_WISP], 1.00f, 0.20f);
+
+    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_RIBBON_BACKDROP], 0.00f, 0.00f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_RIBBON_BACKDROP], 0.24f, 0.82f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_RIBBON_BACKDROP], 0.70f, 1.00f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_RIBBON_BACKDROP], 1.00f, 0.38f);
 
     // Brightness rides toward the head, and — the rule that is not taste — the
     // tail's alpha must fall at least as fast as its width, or the last stretch
     // is sub-pixel while still visible and breaks into dashes (LANDMINES 29/07).
-    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_BLADE], 0.00f, 0.00f);
-    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_BLADE], 0.25f, 0.32f);
-    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_BLADE], 0.70f, 0.82f);
-    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_BLADE], 1.00f, 1.00f);
+    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_RIBBON_BLADE], 0.00f, 0.00f);
+    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_RIBBON_BLADE], 0.25f, 0.32f);
+    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_RIBBON_BLADE], 0.70f, 0.82f);
+    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_RIBBON_BLADE], 1.00f, 1.00f);
 
-    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_RIBBON], 0.00f, 0.00f);
-    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_RIBBON], 0.30f, 0.55f);
-    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_RIBBON], 1.00f, 1.00f);
+    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_RIBBON_MAIN], 0.00f, 0.00f);
+    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_RIBBON_MAIN], 0.30f, 0.62f);
+    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_RIBBON_MAIN], 1.00f, 1.00f);
 
-    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_FILAMENT], 0.00f, 0.00f);
-    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_FILAMENT], 0.25f, 0.70f);
-    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_FILAMENT], 1.00f, 1.00f);
+    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_RIBBON_WISP], 0.00f, 0.00f);
+    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_RIBBON_WISP], 0.25f, 0.62f);
+    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_RIBBON_WISP], 1.00f, 0.90f);
 
-    // HAZE. A TEARDROP, on the owner's call — the same profile the water stream
-    // tube uses, which is `sqrt(sin(t*PI))` times a taper rising toward the head:
-    // a needle at the tail, swelling to its widest around t = 0.7, then rounding
-    // off. That shape is why a droplet reads as a droplet and a cone reads as a
-    // cone, and it is worth copying rather than re-deriving.
-    //
-    // TWO DEPARTURES FROM THE WATER STREAM, both because of what sits on the end:
-    //
-    //  - It does NOT return to zero at the head. The stream closes itself with a
-    //    rounded end-cap; this one has the orb sitting on it, so a taper there
-    //    would open a gap between the ball and its own field. It rounds to 0.86
-    //    and the orb covers the rest.
-    //  - The tail goes to zero rather than to the stream's 0.15 floor, which
-    //    makes the tube's end-cap degenerate to a point instead of a flat disc.
-    //
-    // This shipped as a straight triangle for one round, and before that
-    // BACKWARDS — widest at the tail — because I derived the shape from an
-    // analogy ("a wake spreads as it ages") instead of from what was drawn.
-    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_HAZE], 0.00f, 0.00f);
-    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_HAZE], 0.20f, 0.37f);
-    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_HAZE], 0.45f, 0.79f);
-    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_HAZE], 0.70f, 1.00f);
-    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_HAZE], 0.88f, 0.95f);
-    FloatCurve_AddStop(&s_sweptWidthCurve[VFX_TRAIL_HAZE], 1.00f, 0.86f);
-
-    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_HAZE], 0.00f, 0.00f);
-    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_HAZE], 0.20f, 0.26f);
-    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_HAZE], 0.45f, 0.62f);
-    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_HAZE], 0.70f, 0.88f);
-    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_TRAIL_HAZE], 1.00f, 1.00f);
+    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_RIBBON_BACKDROP], 0.00f, 0.00f);
+    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_RIBBON_BACKDROP], 0.28f, 0.28f);
+    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_RIBBON_BACKDROP], 0.72f, 0.38f);
+    FloatCurve_AddStop(&s_sweptAlphaCurve[VFX_RIBBON_BACKDROP], 1.00f, 0.18f);
 
     // Lazily, never from a subsystem Init — Tuning_Init runs after those and an
     // early registration silently keeps the default (core/docs/LANDMINES.md).
@@ -784,15 +656,9 @@ static void SweptTrail_InitShared(void)
     Tuning_RegisterFloat("swept_flow", &s_sweptFlow, -1.0f);
     Tuning_RegisterFloat("swept_sag", &s_sweptSag, 1.0f);
     Tuning_RegisterFloat("swept_corehot", &s_sweptCoreHot, 1.0f);
-    Tuning_RegisterFloat("swept_sheet", &s_sweptSheet, 1.0f);
+    Tuning_RegisterFloat("swept_sheet", &s_sweptSheet, 0.0f);
     Tuning_RegisterFloat("swept_tile", &s_sweptTile, SWEPT_FLOW_TILE);
     Tuning_RegisterFloat("swept_freeze", &s_sweptFreeze, 0.0f);
-    Tuning_RegisterFloat("haze_layers", &s_hazeLayers, 1.0f);
-    Tuning_RegisterFloat("haze_tex", &s_hazeTex, 0.0f);
-    Tuning_RegisterFloat("haze_rim", &s_hazeRim, 1.0f);
-    Tuning_RegisterFloat("haze_solid", &s_hazeSolid, 0.0f);
-    Tuning_RegisterFloat("haze_noise", &s_hazeNoise, 0.18f);
-
     s_sweptInit = true;
 }
 // ── The layer stack ─────────────────────────────────────────────────────────
@@ -840,62 +706,53 @@ static void SweptTrail_InitShared(void)
 // effective saturation point is well under 1.0 and a "safe" 0.86 is not safe at
 // all. These are the owner's 0.5 folded in, so the default ships correct instead
 // of relying on a tuning.cfg override.
-static TrailLayer s_sweptLayers[3] = {
-    {.widthMul = 1.55f, .alphaMul = 0.07f, .whiten = 0.00f, .scrollMul = 0.50f,
-     .headAlphaPow = 0.0f, .texture = NULL},
-    {.widthMul = 1.00f, .alphaMul = 0.31f, .whiten = 0.06f, .scrollMul = 1.05f,
-     .headAlphaPow = 0.0f, .texture = &s_sweptBodyTex},
-    // The core burns at the head and is gone by mid-tail, so the ribbon has ONE
-    // bright spot rather than three layers bright in the same places.
-    // 0.40 WHITEN, not 1.00 — and this is the fix for "the trail's colour has
-    // nothing to do with the orb's" (owner, 30/07). The numbers say it outright:
-    // this layer contributes 0.28 of the total emitted energy and, at whiten 1.0,
-    // ALL of it colourless, so the three layers summed to a hue 66% desaturated
-    // toward white while the orb — which does not whiten at all — stayed fully
-    // saturated. Two things in one effect, colour-managed by two different rules.
-    //
-    // Whitening at the source is still right: a saturated hue stacks additively
-    // into more of itself and never reaches white, so emissiveBoost has nothing
-    // to lift. But it is a seasoning, not a base. At 0.40 the head keeps 55% of
-    // its saturation and still reads hot.
-    //
-    // A STEEPER head power (3.4, not 2.6) shortens the hot spot instead of
-    // running it down half the ribbon.
-    {.widthMul = 0.26f, .alphaMul = 0.28f, .whiten = 0.20f, .scrollMul = 1.60f,
-     .headAlphaPow = 3.4f, .texture = NULL},
+static const TrailLayer k_sweptLayers[VFX_RIBBON_KIND_COUNT][3] = {
+    [VFX_RIBBON_BLADE] = {
+        {.widthMul = 1.30f, .alphaMul = 0.07f, .whiten = 0.00f, .scrollMul = 0.50f, .headAlphaPow = 0.0f, .texture = NULL},
+        {.widthMul = 1.00f, .alphaMul = 0.28f, .whiten = 0.06f, .scrollMul = 1.05f, .headAlphaPow = 0.0f, .texture = NULL},
+        {.widthMul = 0.20f, .alphaMul = 0.22f, .whiten = 0.18f, .scrollMul = 1.60f, .headAlphaPow = 3.4f, .texture = NULL},
+    },
+    [VFX_RIBBON_MAIN] = {
+        {.widthMul = 1.55f, .alphaMul = 0.10f, .whiten = 0.00f, .scrollMul = 0.50f, .headAlphaPow = 0.0f, .texture = NULL},
+        {.widthMul = 1.00f, .alphaMul = 0.36f, .whiten = 0.06f, .scrollMul = 1.05f, .headAlphaPow = 0.0f, .texture = NULL},
+        {.widthMul = 0.26f, .alphaMul = 0.30f, .whiten = 0.20f, .scrollMul = 1.60f, .headAlphaPow = 3.4f, .texture = NULL},
+    },
+    [VFX_RIBBON_WISP] = {
+        {.widthMul = 1.30f, .alphaMul = 0.035f, .whiten = 0.00f, .scrollMul = 0.55f, .headAlphaPow = 0.0f, .texture = NULL},
+        {.widthMul = 1.00f, .alphaMul = 0.19f, .whiten = 0.04f, .scrollMul = 1.10f, .headAlphaPow = 0.0f, .texture = NULL},
+        // A wisp has a CONTINUOUS inner core. It is thinner and dimmer than
+        // MAIN, but never gated by a head-only exponent or broken texture.
+        {.widthMul = 0.18f, .alphaMul = 0.17f, .whiten = 0.12f, .scrollMul = 1.35f, .headAlphaPow = 0.0f, .texture = NULL},
+    },
+    [VFX_RIBBON_BACKDROP] = {
+        {.widthMul = 1.65f, .alphaMul = 0.055f, .whiten = 0.00f, .scrollMul = 0.45f, .headAlphaPow = 0.0f, .texture = NULL},
+        {.widthMul = 1.00f, .alphaMul = 0.14f, .whiten = 0.02f, .scrollMul = 0.85f, .headAlphaPow = 0.0f, .texture = NULL},
+        {0},
+    },
 };
 
-// THE HAZE STACK — the WIDE ENERGY FIELD, and it carries the flow texture.
-//
-// This shipped twice with the same mistake, so the reasoning is worth keeping.
-// I gave both its layers the STRUCTURE-FREE sheet, citing the rule that the
-// structure belongs to exactly ONE layer. That rule is real, and it does not
-// apply here: it exists because several layers of ONE trail draw the SAME
-// pattern at different scroll phases, and averaging shifted copies of a pattern
-// is how you remove it. The haze is a SEPARATE TRAIL with its own history and
-// its own UV — nothing of it is a shifted copy of anything.
-//
-// So applying an intra-stack rule across trails stripped the flow texture from
-// the exact layer whose entire job is to be seen flowing. The owner, twice:
-// "trường năng lượng cuộn chảy mờ ảo, đâu?" — it was there, faint and
-// featureless, and a featureless band cannot be seen to scroll.
-//
-// AND IT WAS TOO FAINT TO SEE AT ALL. Measured against the main trail: 3.6x
-// dimmer per pixel and spread over 2.2x the width, so 8x dimmer in effect. That
-// is not "faint", that is absent. "Mờ ảo" means hazy, not invisible — this layer
-// is what gives the wake its MASS, and mass you cannot see is not mass.
-static TrailLayer s_sweptHazeLayers[2] = {
-    // [0] THE TUBE ITSELF. Untextured and single by default while the SHAPE is
-    // still being judged — the owner's call, and the right one: two layers and a
-    // wrapped sheet have now produced three different wrong silhouettes, and
-    // every diagnosis had to guess which of the two was at fault. Flat white on
-    // one tube has exactly one thing that can be wrong, and it is the geometry.
-    {.widthMul = 1.00f, .alphaMul = 0.45f, .whiten = 0.00f, .scrollMul = 1.00f,
-     .headAlphaPow = 0.0f, .texture = NULL},
-    // [1] The soft outer bloom, restored by haze_layers = 2.
-    {.widthMul = 1.35f, .alphaMul = 0.16f, .whiten = 0.00f, .scrollMul = 0.55f,
-     .headAlphaPow = 0.0f, .texture = NULL},
-};
+static int SweptTrail_LayerCount(VFX_RibbonTrailKind kind)
+{
+    return (kind == VFX_RIBBON_BACKDROP) ? 2 : 3;
+}
+
+static void SweptTrail_ConfigureLayers(VC_SweptTrail *s)
+{
+    int count = SweptTrail_LayerCount(s->kind);
+    for (int L = 0; L < count; L++)
+        s->layers[L] = k_sweptLayers[s->kind][L];
+
+    const Texture2D *body = &s_sweptBodyTex;
+    if (s->hasSurface && s->surface.texture.id != 0)
+        body = &s->surface.texture;
+    s->layers[1].texture = body;
+    s->layers[0].texture = (s_sweptHaloTex.id != 0) ? &s_sweptHaloTex : NULL;
+    if (count == 3)
+    {
+        s->layers[2].texture = s->layers[0].texture;
+        s->layers[2].alphaMul *= s_sweptCoreHot;
+    }
+}
 
 // The tail→head colour ramp, one per material, built on first use. MOVED to
 // vc_common.inl when VFX_ComposeVolumeTrail became its second caller — the ramp
@@ -922,6 +779,28 @@ static TrailEntity *SweptTrail_Strand(const VC_SweptTrail *s, int slot, int stra
     return t;
 }
 
+// A composition may request a visual helix without moving its attached Matrix.
+// The public swept-trail contract stays a path follower; this is private
+// composition plumbing for effects that know their flight axis.
+static void SweptTrail_SetAnchoredHelix(int handle, Vector3 axis, float radius,
+                                        float turns, float phase)
+{
+    if (handle < 0 || handle >= SWEPT_MAX || !s_swept[handle].active)
+        return;
+
+    VC_SweptTrail *s = &s_swept[handle];
+    for (int strand = 0; strand < s->strands; strand++)
+    {
+        TrailEntity *t = SweptTrail_Strand(s, handle, strand);
+        if (!t)
+            continue;
+        t->helixAxis = axis;
+        t->helixRadius = radius;
+        t->helixTurns = turns;
+        t->helixPhase = phase;
+    }
+}
+
 static int SweptTrail_SpawnStrand(const VC_SweptTrail *s, int slot, int strand)
 {
     const VFX_ElementMaterial *m = VFX_Material(s->matId);
@@ -935,10 +814,10 @@ static int SweptTrail_SpawnStrand(const VC_SweptTrail *s, int slot, int strand)
     cfg.thick = 0.05f; // real value written every frame from the aspect cap
     cfg.tint = WHITE;  // the gradient carries the colour
     cfg.gradient = SweptTrail_Gradient(s->matId);
-    cfg.widthCurve = &s_sweptWidthCurve[s->style];
-    cfg.alphaCurve = &s_sweptAlphaCurve[s->style];
+    cfg.widthCurve = &s_sweptWidthCurve[s->kind];
+    cfg.alphaCurve = &s_sweptAlphaCurve[s->kind];
     cfg.widthEnvelope = TRAIL_WIDTH_ENVELOPE_TAPER_BOTH;
-    cfg.forceField = &s_sweptCloth[s->style];
+    cfg.forceField = &s_sweptCloth[s->kind];
     cfg.ownerTag = SWEPT_TAG_BASE | (slot << 4) | strand;
     cfg.priority = VFX_PRIORITY_LOW;
     cfg.blendMode = BLEND_ADDITIVE;
@@ -947,48 +826,12 @@ static int SweptTrail_SpawnStrand(const VC_SweptTrail *s, int slot, int strand)
     // BLADE lies in the plane of the swing — a broad sheet from the front and a
     // thin edge from the side, which IS the sense of a real object moving. The
     // other two are camera-facing, the mode that never pinches on a curve.
-    cfg.ribbonMode = (s->style == VFX_TRAIL_BLADE) ? RIBBON_FIXED_NORMAL
+    cfg.ribbonMode = (s->kind == VFX_RIBBON_BLADE) ? RIBBON_FIXED_NORMAL
                                                    : RIBBON_CAMERA_FACING;
     cfg.fixedNormal = (Vector3){0.0f, 1.0f, 0.0f};
     cfg.disableInnerCore = true; // superseded by the layer stack
-    // THE FIELD IS A VOLUME, not a card. Everything else here is a flat strip,
-    // which is right for a struck arc and wrong for the mass a projectile drags:
-    // a card is the same shape from every angle, so it can be made wide and
-    // faint and still read as a decal of a field rather than a field. A swept
-    // tube has a silhouette from anywhere, occludes along its own length, and —
-    // drawn additively with the far wall showing through the near one —
-    // brightens at its own edges without a fresnel term.
-    //
-    // Its width curve is already the funnel the owner drew (base at the orb,
-    // point behind), and that shape pays for itself twice here: a tube's end-cap
-    // would otherwise be a flat disc sitting across the tail, and a radius that
-    // goes to zero makes the cap degenerate to a point instead.
-    //
-    // TIER GATE: below GFX_MED it falls back to the flat strip. ~2k triangles
-    // per field is not free, and the gate may only ever clamp DOWN.
-    if (s->style == VFX_TRAIL_HAZE && GfxQuality_Get() >= GFX_MED)
-    {
-        cfg.shape = TRAIL_SHAPE_TUBE;
-        cfg.tubeRadialSegs = 8;
-        // CAPPED. The side quads alone leave the head open and you look straight
-        // down the inside of the field — a bowl, not a volume. The teardrop
-        // profile ends in a needle, so only the head actually gets a cap.
-        cfg.tubeCaps = true;
-        // The double wall is what gives a tube its rim for free, so it is the
-        // default; `haze_rim = 0` turns it off for a flatter, cheaper read.
-        cfg.tubeSingleSided = (s_hazeRim < 0.5f);
-        cfg.tubeNoiseAmp = s_hazeNoise;
-    }
-    if (s->style == VFX_TRAIL_HAZE)
-    {
-        cfg.layers = s_sweptHazeLayers;
-        cfg.layerCount = (s_hazeLayers >= 1.5f) ? 2 : 1;
-    }
-    else
-    {
-        cfg.layers = s_sweptLayers;
-        cfg.layerCount = 3;
-    }
+    cfg.layers = s->layers;
+    cfg.layerCount = SweptTrail_LayerCount(s->kind);
     cfg.uvMetresPerTile = (s_sweptTile > 0.05f) ? s_sweptTile : 0.05f;
     cfg.uvScrollSpeed = SWEPT_FLOW_SPEED * s_sweptFlow;
     cfg.nodeHomeSpring = SWEPT_HOME_SPRING;
@@ -998,6 +841,17 @@ static int SweptTrail_SpawnStrand(const VC_SweptTrail *s, int slot, int strand)
     cfg.teleportSpeed = SWEPT_TELEPORT_SPEED;
     cfg.idleSpeed = SWEPT_IDLE_SPEED;
     cfg.trailLength = (float)SweptTrail_MaxNodes(s->lifetime);
+    cfg.useFlowMap = s->hasSurface && s->surface.flowMap.id != 0;
+    cfg.flowMap = cfg.useFlowMap ? &s->surface.flowMap : NULL;
+    cfg.flowSpeed = s->hasSurface ? s->surface.flowSpeed : 0.0f;
+    cfg.flowStrength = s->hasSurface ? s->surface.flowStrength : 0.0f;
+    cfg.flowTiling = (s->hasSurface && s->surface.flowTiling > 0.0f)
+                         ? s->surface.flowTiling : 1.0f;
+    cfg.noiseMask = (s->hasSurface && s->surface.noiseMask.id != 0)
+                        ? &s->surface.noiseMask : NULL;
+    cfg.dissolve = s->hasSurface ? s->surface.dissolve : 0.0f;
+    cfg.maskTiling = (s->hasSurface && s->surface.maskTiling > 0.0f)
+                         ? s->surface.maskTiling : 1.0f;
     (void)m;
     int id = SpawnTrailEntity(cfg);
     if (id >= 0)
@@ -1008,16 +862,17 @@ static int SweptTrail_SpawnStrand(const VC_SweptTrail *s, int slot, int strand)
     TraceLog(LOG_INFO,
              "VFX_SWEPT: slot %d strand %d — style %d, shape %s, radial %d, "
              "tier %d, requested width %.2f m",
-             slot, strand, (int)s->style,
-             (cfg.shape == TRAIL_SHAPE_TUBE) ? "TUBE" : "ribbon",
+             slot, strand, (int)s->kind,
+             "ribbon",
              cfg.tubeRadialSegs, (int)GfxQuality_Get(), s->width);
     return id;
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-int VFX_ComposeSweptTrail(const Matrix *followTransform, VC_MaterialId mat,
-                          float width, float lifetime, VFX_TrailStyle style)
+int VFX_ComposeRibbonTrailEx(const Matrix *followTransform, VC_MaterialId mat,
+                             float width, float lifetime, VFX_RibbonTrailKind kind,
+                             const VFX_TrailSurface *surface)
 {
     SweptTrail_InitShared();
     if (!followTransform)
@@ -1025,22 +880,12 @@ int VFX_ComposeSweptTrail(const Matrix *followTransform, VC_MaterialId mat,
         TraceLog(LOG_WARNING, "VFX_SWEPT: NULL transform — no trail created");
         return -1;
     }
-    // AGAINST THE COUNT, never against the last style by name. This check read
-    // `style > VFX_TRAIL_FILAMENT` and was not updated when VFX_TRAIL_HAZE was
-    // added, so every request for the wide energy field was quietly turned into
-    // a BLADE — the narrowest, sharpest style in the file, which is why the
-    // field "looked exactly like a normal trail". It did: it WAS one.
-    //
-    // And it said nothing. A silent clamp is the worst possible failure mode
-    // here, because it produces a plausible result rather than an absent one, so
-    // there is nothing to notice. It announces itself now.
-    if (style < VFX_TRAIL_BLADE || style >= VFX_TRAIL_STYLE_COUNT)
+    if (kind < VFX_RIBBON_BLADE || kind >= VFX_RIBBON_KIND_COUNT)
     {
         TraceLog(LOG_WARNING,
-                 "VFX_SWEPT: style %d is out of range — clamped to BLADE. "
-                 "A new style was probably added without updating this check.",
-                 (int)style);
-        style = VFX_TRAIL_BLADE;
+                 "VFX_RIBBON: kind %d is out of range — clamped to BLADE.",
+                 (int)kind);
+        kind = VFX_RIBBON_BLADE;
     }
     if (width <= 0.0f)
         width = 0.22f;
@@ -1063,7 +908,7 @@ int VFX_ComposeSweptTrail(const Matrix *followTransform, VC_MaterialId mat,
         slot = s_sweptNextSerial % SWEPT_MAX;
         TraceLog(LOG_WARNING, "VFX_SWEPT: pool full (%d) — recycling slot %d",
                  SWEPT_MAX, slot);
-        VFX_KillSweptTrail(slot);
+        VFX_KillRibbonTrail(slot);
     }
     s_sweptNextSerial++;
 
@@ -1071,7 +916,9 @@ int VFX_ComposeSweptTrail(const Matrix *followTransform, VC_MaterialId mat,
     s->active = true;
     s->xf = followTransform;
     s->matId = mat;
-    s->style = style;
+    s->kind = kind;
+    s->hasSurface = (surface != NULL);
+    s->surface = surface ? *surface : (VFX_TrailSurface){0};
     s->width = width;
     s->lifetime = lifetime;
     s->widthTarget = 1.0f;
@@ -1083,7 +930,8 @@ int VFX_ComposeSweptTrail(const Matrix *followTransform, VC_MaterialId mat,
     s->hasLateral = false;
     s->wasFrozen = false;
     s->widthLogged = false;
-    s->strands = SweptTrail_StrandCount(style, GfxQuality_Get() < GFX_MED);
+    s->strands = SweptTrail_StrandCount(kind, GfxQuality_Get() < GFX_MED);
+    SweptTrail_ConfigureLayers(s);
     for (int k = 0; k < SWEPT_STRANDS_MAX; k++)
         s->strandId[k] = -1;
     for (int k = 0; k < s->strands; k++)
@@ -1091,7 +939,13 @@ int VFX_ComposeSweptTrail(const Matrix *followTransform, VC_MaterialId mat,
     return slot;
 }
 
-void VFX_TrailSetWidth(int handle, float width01)
+int VFX_ComposeRibbonTrail(const Matrix *followTransform, VC_MaterialId mat,
+                           float width, float lifetime, VFX_RibbonTrailKind kind)
+{
+    return VFX_ComposeRibbonTrailEx(followTransform, mat, width, lifetime, kind, NULL);
+}
+
+void VFX_RibbonTrailSetWidth(int handle, float width01)
 {
     if (handle < 0 || handle >= SWEPT_MAX || !s_swept[handle].active)
         return;
@@ -1104,7 +958,7 @@ void VFX_TrailSetWidth(int handle, float width01)
     s_swept[handle].widthTarget = width01;
 }
 
-void VFX_KillSweptTrail(int handle)
+void VFX_KillRibbonTrail(int handle)
 {
     if (handle < 0 || handle >= SWEPT_MAX)
         return;
@@ -1125,6 +979,48 @@ void VFX_KillSweptTrail(int handle)
     }
     s->active = false;
     s->xf = NULL;
+}
+
+// Legacy bridge while external callers migrate. A former HAZE request is a
+// volume request now; tagging its small pool handle keeps the old kill API from
+// accidentally addressing the ribbon pool.
+int VFX_ComposeSweptTrail(const Matrix *followTransform, VC_MaterialId mat,
+                           float width, float lifetime, VFX_TrailStyle style)
+{
+    if (style == VFX_TRAIL_HAZE)
+    {
+        int volume = VFX_ComposeVolumeTrail(followTransform, mat, width * 0.5f,
+                                            lifetime, VOL_ENERGY);
+        return (volume >= 0) ? (volume | VFX_LEGACY_VOLUME_HANDLE_FLAG) : -1;
+    }
+    return VFX_ComposeRibbonTrail(followTransform, mat, width, lifetime,
+                                  (VFX_RibbonTrailKind)style);
+}
+
+void VFX_TrailSetWidth(int handle, float width01)
+{
+    if (handle < 0)
+        return;
+    if ((handle & VFX_LEGACY_VOLUME_HANDLE_FLAG) != 0)
+    {
+        TraceLog(LOG_WARNING,
+                 "VFX_TRAIL: legacy HAZE handle does not support width ramp; "
+                 "use VFX_ComposeVolumeTrail for new effects.");
+        return;
+    }
+    VFX_RibbonTrailSetWidth(handle, width01);
+}
+
+void VFX_KillSweptTrail(int handle)
+{
+    if (handle < 0)
+        return;
+    if ((handle & VFX_LEGACY_VOLUME_HANDLE_FLAG) != 0)
+    {
+        VFX_KillVolumeTrail(handle & ~VFX_LEGACY_VOLUME_HANDLE_FLAG);
+        return;
+    }
+    VFX_KillRibbonTrail(handle);
 }
 
 // ── Per-frame ────────────────────────────────────────────────────────────────
@@ -1205,40 +1101,19 @@ static void VC_SweptTrail_Update(float dt)
     if (dt <= 0.0f)
         return;
 
-    // The two shared dials, applied once for everything: which sheet the body
-    // draws, and how hot the core burns. The layer table holds the texture's
-    // ADDRESS, so the swap needs no per-trail work.
+    // The default sheet stays live-tunable. Custom surfaces are instance data,
+    // so a fire wisp cannot accidentally change when an energy trail swaps its
+    // fallback sheet.
     s_sweptBodyTex = (s_sweptSheet >= 0.5f && s_sweptAssetTex.id != 0)
                          ? s_sweptAssetTex
                          : s_sweptBladeTex;
-    s_sweptLayers[2].alphaMul = 0.28f * s_sweptCoreHot;
-    // The halo and the core are lit shapes; the fibre-less sheet is what makes
-    // them shapes rather than second silhouettes.
-    s_sweptLayers[0].texture = (s_sweptHaloTex.id != 0) ? &s_sweptHaloTex : NULL;
-    s_sweptLayers[2].texture = s_sweptLayers[0].texture;
-    // The haze's OUTER layer is a bare shape and takes the structure-free sheet;
-    // its BODY keeps the flow sheet, which is the whole point of the field.
-    // NULL is the default for BOTH haze layers now. A sheet authored for a strip
-    // fades at u = 0 and u = 1 because those are its two edges, and on a tube
-    // those edges are the same line — so any band sheet leaves a transparent seam
-    // running the whole length. Only the u-seamless variant may ever go on a
-    // tube, and only when the dial asks for it.
-    // haze_tex: 0 = bare geometry, 1 = energy strands, 2 = smoke, 3 = fire.
-    // One dial rather than three, because they are the same slot — and having to
-    // pick makes it explicit that the sheet is part of the element's identity
-    // rather than a generic prettifier.
-    Texture2D *volSheet = NULL;
-    if (s_hazeTex >= 2.5f && s_volFireTex.id != 0) volSheet = &s_volFireTex;
-    else if (s_hazeTex >= 1.5f && s_volSmokeTex.id != 0) volSheet = &s_volSmokeTex;
-    else if (s_hazeTex >= 0.5f && s_volEnergyTex.id != 0) volSheet = &s_volEnergyTex;
-    s_sweptHazeLayers[0].texture = volSheet;
-    s_sweptHazeLayers[1].texture = NULL;
 
     for (int i = 0; i < SWEPT_MAX; i++)
     {
         VC_SweptTrail *s = &s_swept[i];
         if (!s->active)
             continue;
+        SweptTrail_ConfigureLayers(s);
 
         // Ramped width — never popped.
         float k = 1.0f - expf(-dt * 6.0f);
@@ -1270,7 +1145,7 @@ static void VC_SweptTrail_Update(float dt)
             // caller's width as a ceiling.
             float travel = SweptTrail_TravelLength(t);
             t->thickness = SweptTrail_HalfWidth(s->width * s_sweptWidthMul,
-                                                s->widthLevel, travel, s->style);
+                                                s->widthLevel, travel, s->kind);
             // THE NUMBER THAT DECIDES WHETHER ANY OF THIS IS VISIBLE. The width
             // is EARNED from the length the tip travelled, so a trail can be
             // configured perfectly and still draw as a hairline if the aspect
@@ -1286,44 +1161,18 @@ static void VC_SweptTrail_Update(float dt)
             }
             t->tint = VC_WithAlpha(WHITE, (unsigned char)(255.0f * Clamp(s_sweptAlphaMul, 0.0f, 1.0f)));
             t->uvMetresPerTile = (s_sweptTile > 0.05f) ? s_sweptTile : 0.05f;
-            // The haze's layer count is a live dial, so it is written every
-            // frame rather than baked at spawn — otherwise judging one layer
-            // against two costs a rebuild each way.
-            if (s->style == VFX_TRAIL_HAZE)
-            {
-                t->layerCount = (s_hazeLayers >= 1.5f) ? 2 : 1;
-                // Live, like the layer count: judging rim-on against rim-off is
-                // the kind of comparison that must not cost a rebuild each way.
-                t->tubeSingleSided = (s_hazeRim < 0.5f);
-                t->tubeNoiseAmp = s_hazeNoise;
-                if (s_hazeSolid >= 0.5f)
-                {
-                    // Opaque alpha, pure white, no element gradient, near wall
-                    // only. Every one of those is needed: additive alone would
-                    // still let the background through, and the gradient would
-                    // still tint what is meant to be a matte cast.
-                    t->blendMode = BLEND_ALPHA;
-                    t->useCustomBlendMode = true;
-                    t->gradient = NULL;
-                    t->tint = WHITE;
-                    t->tubeSingleSided = true;
-                    s_sweptHazeLayers[0].alphaMul = 1.0f;
-                    s_sweptHazeLayers[0].whiten = 1.0f;
-                }
-                else
-                {
-                    t->blendMode = BLEND_ADDITIVE;
-                    t->useCustomBlendMode = true;
-                    t->gradient = SweptTrail_Gradient(s->matId);
-                    s_sweptHazeLayers[0].alphaMul = 0.45f;
-                    s_sweptHazeLayers[0].whiten = 0.00f;
-                }
-            }
             t->uvScrollSpeed = SWEPT_FLOW_SPEED * s_sweptFlow;
+            t->flowSpeed = s->hasSurface ? s->surface.flowSpeed : 0.0f;
+            t->flowStrength = s->hasSurface ? s->surface.flowStrength : 0.0f;
+            t->flowTiling = (s->hasSurface && s->surface.flowTiling > 0.0f)
+                                ? s->surface.flowTiling : 1.0f;
+            t->dissolve = s->hasSurface ? s->surface.dissolve : 0.0f;
+            t->maskTiling = (s->hasSurface && s->surface.maskTiling > 0.0f)
+                                ? s->surface.maskTiling : 1.0f;
 
             if (c == 0)
                 SweptTrail_UpdateNormal(s, t);
-            if (s->style == VFX_TRAIL_BLADE)
+            if (s->kind == VFX_RIBBON_BLADE)
                 t->fixedNormal = s->normal;
 
             // FILAMENT's strands are spread along the swing-plane axis. Not a

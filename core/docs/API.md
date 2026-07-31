@@ -575,10 +575,15 @@
   void VFX_ComposeImpactDistort(Vector3 pos, float scale, float severity01);
   void VFX_ComposeImpactDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   void VFX_ComposeLightShaft(Vector3 from, Vector3 to, VC_MaterialId mat, float width, float intensity);
+  int VFX_ComposeRibbonTrail(const Matrix *followTransform, VC_MaterialId mat, float width, float lifetime, VFX_RibbonTrailKind kind);
+  int VFX_ComposeRibbonTrailEx(const Matrix *followTransform, VC_MaterialId mat, float width, float lifetime, VFX_RibbonTrailKind kind, const VFX_TrailSurface *surface);
+  void VFX_RibbonTrailSetWidth(int handle, float width01);
+  void VFX_KillRibbonTrail(int handle);
   int VFX_ComposeSweptTrail(const Matrix *followTransform, VC_MaterialId mat, float width, float lifetime, VFX_TrailStyle style);
   void VFX_TrailSetWidth(int handle, float width01);
   void VFX_KillSweptTrail(int handle);
   int VFX_ComposeVolumeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime, VFX_VolumeKind kind);
+  int VFX_ComposeVolumeTrailEx(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime, VFX_VolumeKind kind, const VFX_TrailSurface *surface);
   void VFX_KillVolumeTrail(int handle);
   void VFX_ComposeGroundWave(Vector3 center, VC_MaterialId mat, float radius, float t01, GroundHeightSampleFn heightFn, void *ud);
   float VFX_GroundHeightFromMap(float worldX, float worldZ, void *unused);
@@ -597,9 +602,11 @@
   void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
   void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
   void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
+  void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time, float phaseOffset);
   void VFX_SmokeTrail_SetTexture(const Texture2D *smokeTex);
 ```
-**Enums:** VFX_TrailStyle { VFX_TRAIL_BLADE,VFX_TRAIL_RIBBON,VFX_TRAIL_FILAMENT,VFX_TRAIL_HAZE,VFX_TRAIL_STYLE_COUNT };VFX_VolumeKind { VOL_ENERGY,VOL_SMOKE,VOL_FIRE,VFX_VOLUME_KIND_COUNT }
+**Enums:** VFX_RibbonTrailKind { VFX_RIBBON_BLADE,VFX_RIBBON_MAIN,VFX_RIBBON_WISP,VFX_RIBBON_BACKDROP,VFX_RIBBON_KIND_COUNT,VFX_RIBBON_FLOW,VFX_RIBBON_FILAMENT };VFX_TrailStyle { VFX_TRAIL_BLADE,VFX_TRAIL_RIBBON,VFX_TRAIL_FILAMENT,VFX_TRAIL_HAZE,VFX_TRAIL_STYLE_COUNT } VFX_VolumeKind { VOL_ENERGY,VOL_SMOKE,VOL_FIRE,VFX_VOLUME_KIND_COUNT }
+**Structs** (fields in header): VFX_TrailSurface
 
 ### `core/composition/vfx_sequence.h`
 ```c

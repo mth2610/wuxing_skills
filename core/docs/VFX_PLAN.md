@@ -88,10 +88,10 @@ Carried forward, unchanged, because each was paid for:
 
 ## Part 1 — The geometry half
 
-### H1. `VFX_ComposeSweptTrail` — the swept weapon/body trail
+### H1. `VFX_ComposeRibbonTrail` — the swept ribbon/body trail
 
 **Owner:** Core Agent · **Size:** M · **Depends on:** nothing · **Do first**
-> **LANDED 29/07/2026** — `core/composition/common/vc_swept_trail.inl`, bench
+> **LANDED 29/07/2026** — `core/composition/common/vc_ribbon_trail.inl`, bench
 > entry `SWEPT TRAIL` (figure-eight, cycles the three styles), 57 assertions in
 > `core/tests/swept_trail_test.c`. Two DoD items are outstanding and belong to
 > other owners: no skill consumes it yet (Skills Agent, folded into H8).
@@ -112,13 +112,13 @@ orbit followers, `RibbonMode`, arc-length UV, inner/outer double strips — and
 
 ```c
 // Attaches to a moving transform and owns a trail handle.
-int  VFX_ComposeSweptTrail(const Matrix *followTransform, VC_MaterialId mat,
-                           float width, float lifetime, VFX_TrailStyle style);
-void VFX_TrailSetWidth(int handle, float width01);   // ramped, for wind-down
-void VFX_KillSweptTrail(int handle);
+int  VFX_ComposeRibbonTrail(const Matrix *followTransform, VC_MaterialId mat,
+                             float width, float lifetime, VFX_RibbonTrailKind kind);
+void VFX_RibbonTrailSetWidth(int handle, float width01); // ramped, for wind-down
+void VFX_KillRibbonTrail(int handle);
 ```
 
-`VFX_TrailStyle` is the point of the task: BLADE (thin, hard outer edge, the
+`VFX_RibbonTrailKind` is the point of the task: BLADE (thin, hard outer edge, the
 `SweepSlash` mask reused as a scrolling sheet), RIBBON (soft, wide, cloth-like),
 FILAMENT (several thin strands at slightly different lags — the "many threads"
 look ER uses for magic).

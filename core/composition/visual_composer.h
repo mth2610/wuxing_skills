@@ -296,7 +296,7 @@ void VFX_ComposeLightShaft(Vector3 from, Vector3 to, VC_MaterialId mat,
 // `core/trail_system.h` was 18 shipping entry points that no composition used.
 //
 // `followTransform` is sampled at its ORIGIN every frame and must stay valid
-// until VFX_KillSweptTrail (typically a static Matrix on the owning skill).
+// until VFX_KillRibbonTrail (typically a static Matrix on the owning skill).
 // `width` is the FULL width in metres at its widest — a CEILING, not a value:
 // the drawn width is also capped against the length the tip actually travelled
 // (1:20 blade, 1:10 ribbon, 1:40 filament), so a slow or hard-turning weapon
@@ -308,36 +308,65 @@ void VFX_ComposeLightShaft(Vector3 from, Vector3 to, VC_MaterialId mat,
 // release it. Calling it every frame stacks trails until the pool (8) recycles.
 // Kill does not cut the strip out of existence — it stops the feed, and the
 // strip drains its own history and fades, which is the wind-down.
-typedef enum {
-    VFX_TRAIL_BLADE = 0,   // thin, hard outer edge, lies in the plane of the
-                           // swing (holds a real silhouette), SweepSlash mask
-    VFX_TRAIL_RIBBON = 1,  // soft, wide, cloth-like, camera-facing
-    VFX_TRAIL_FILAMENT = 2, // several thin strands — the "many threads" look;
-                            // sheds strands below GFX_MED
-    // WIDE, FAINT, and a VOLUME — the swept-tube backdrop behind a sharper
-    // trail, not a trail in its own right. Drawn as a funnel: broad where it
-    // meets the emitter, coming to a point behind it. A projectile is at least two trails: a hazy field that
-    // gives the wake mass, and a defined ribbon on top of it that gives it a
-    // shape. Drawing only the sharp one reads as a wire; drawing only the hazy
-    // one reads as smoke.
-    //
-    // It is a STYLE and not its own function on purpose. It follows the same
-    // trajectory, keeps the same history, and lags with the same cloth — it
-    // differs in width profile, opacity, sheet and how loosely it is anchored,
-    // and "differs only in numbers" is the definition of a parameter
-    // (VFX_PLAN §Part 4, the rule that keeps the library from reaching 120
-    // functions without gaining a capability).
-    VFX_TRAIL_HAZE = 3,
-    // Not a style — the count, so range checks cannot go stale when a style is
-    // added. `VFX_ComposeSweptTrail` validated against VFX_TRAIL_FILAMENT and
-    // was never updated when HAZE landed, so every HAZE request in the tree was
-    // silently clamped to BLADE for a day. Validate against this.
-    VFX_TRAIL_STYLE_COUNT
-} VFX_TrailStyle;
+//
+// Per-instance sheet inputs. A recipe owns geometry, layer ratios and blend;
+// the caller owns its visual identity. Pass NULL to the `Ex` functions to use
+// the recipe defaults. A non-NULL value has no hidden fallback for flow/mask:
+// a zero texture id disables that pass deliberately.
+//
+// Example:
+//   VFX_TrailSurface s = {.texture = body, .flowMap = flow,
+//                         .flowSpeed = 0.7f, .flowStrength = 0.18f,
+//                         .flowTiling = 1.5f};
+//   VFX_ComposeRibbonTrailEx(&xf, VC_MAT_WATER, 0.35f, 0.7f,
+//                             VFX_RIBBON_MAIN, &s);
+typedef struct {
+    Texture2D texture;   // body sheet; id == 0 keeps the recipe default sheet
+    Texture2D flowMap;   // RG direction map; id == 0 disables flow distortion
+    Texture2D noiseMask; // R erosion mask; id == 0 disables dissolve erosion
+    float flowSpeed;
+    float flowStrength;
+    float flowTiling;
+    float dissolve;
+    float maskTiling;
+} VFX_TrailSurface;
 
+typedef enum {
+    VFX_RIBBON_BLADE = 0,  // thin, hard outer edge, lies in the plane of the
+                           // swing (holds a real silhouette), SweepSlash mask
+    VFX_RIBBON_MAIN = 1,   // defined flowing body + continuous hot inner core
+    VFX_RIBBON_WISP = 2,   // thin secondary energy thread, also continuously lit
+    VFX_RIBBON_BACKDROP = 3, // wide soft mass; deliberately has no inner core
+    VFX_RIBBON_KIND_COUNT,
+
+    // Names used by the first ribbon split. Keep source compatibility, but new
+    // compositions should select the visual role above, not an implementation.
+    VFX_RIBBON_FLOW = VFX_RIBBON_MAIN,
+    VFX_RIBBON_FILAMENT = VFX_RIBBON_WISP
+} VFX_RibbonTrailKind;
+
+int  VFX_ComposeRibbonTrail(const Matrix *followTransform, VC_MaterialId mat,
+                             float width, float lifetime, VFX_RibbonTrailKind kind);
+int  VFX_ComposeRibbonTrailEx(const Matrix *followTransform, VC_MaterialId mat,
+                               float width, float lifetime, VFX_RibbonTrailKind kind,
+                               const VFX_TrailSurface *surface);
+void VFX_RibbonTrailSetWidth(int handle, float width01); // ramped, for wind-down
+void VFX_KillRibbonTrail(int handle);
+
+// Transitional compatibility only. New code must select its primitive first:
+// ribbon via VFX_ComposeRibbonTrail, tube via VFX_ComposeVolumeTrail.  HAZE
+// maps to an energy volume so old callers retain their lifecycle while the
+// ribbon implementation no longer owns tube authoring.
+typedef enum {
+    VFX_TRAIL_BLADE = VFX_RIBBON_BLADE,
+    VFX_TRAIL_RIBBON = VFX_RIBBON_MAIN,
+    VFX_TRAIL_FILAMENT = VFX_RIBBON_WISP,
+    VFX_TRAIL_HAZE = 3,
+    VFX_TRAIL_STYLE_COUNT = 4
+} VFX_TrailStyle;
 int  VFX_ComposeSweptTrail(const Matrix *followTransform, VC_MaterialId mat,
-                           float width, float lifetime, VFX_TrailStyle style);
-void VFX_TrailSetWidth(int handle, float width01);   // ramped, for wind-down
+                            float width, float lifetime, VFX_TrailStyle style);
+void VFX_TrailSetWidth(int handle, float width01);
 void VFX_KillSweptTrail(int handle);
 
 // ── PRIMARY. Volume trail ───────────────────────────────────────────────────
@@ -386,6 +415,9 @@ typedef enum {
 
 int  VFX_ComposeVolumeTrail(const Matrix *followTransform, VC_MaterialId mat,
                             float radius, float lifetime, VFX_VolumeKind kind);
+int  VFX_ComposeVolumeTrailEx(const Matrix *followTransform, VC_MaterialId mat,
+                               float radius, float lifetime, VFX_VolumeKind kind,
+                               const VFX_TrailSurface *surface);
 void VFX_KillVolumeTrail(int handle);
 
 // ── H2. Ground wave ─────────────────────────────────────────────────────────
@@ -422,9 +454,8 @@ int VFX_ComposeSparkTrail(Vector3 pos, Vector3 vel, VC_MaterialId matId,
 
 // ── COMPOSITE. Projectile ───────────────────────────────────────────────────
 // The reference bolt, and a SCORE over primaries with no visual idea of its own:
-// an energy orb, a wide faint HAZE field whose base meets the orb and whose apex
-// trails behind, one defined RIBBON tail, and two FILAMENT wisps spiralling
-// around the flight axis with one end anchored at the ball.
+// a small hot orb, a faint HAZE field, one defined RIBBON tail, and two FILAMENT
+// wisps spiralling inside the source before trailing behind it.
 //
 // ONE-SHOT + POOLED: call once when the projectile spawns, keep the handle,
 // release it on impact. `followTransform` is caller-owned and must outlive the
@@ -451,6 +482,7 @@ void VFX_ComposeStonePillar(Vector3 basePos, float progress);
 void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
 void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
 void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
+void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time, float phaseOffset);
 void VFX_SmokeTrail_SetTexture(const Texture2D *smokeTex);
 // @gen:vc_declarations end
 #endif // VISUAL_COMPOSER_H

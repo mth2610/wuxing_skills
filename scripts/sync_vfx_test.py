@@ -29,10 +29,11 @@ even when the include sits outside the @gen block.
 Include ORDER inside a master is preserved, never sorted — .inl bodies land in
 one translation unit and some rely on statics from an earlier sibling.
 
-No JSON editing needed for new simple functions.
-For complex functions (pointer arrays, custom colors, etc.) add to:
-  "excluded" — skip entirely
-  "overrides" — provide a hand-crafted draw_call / trigger_call
+Each `.inl` gets exactly ONE fixture in the NEW FX tab. The generated fixture
+uses a standard scene contract: bursts fire at the clicked point, timed VFX
+loop progress, line VFX span a default source→target, and follower VFX travel a
+single stable 3D curve. New compositions therefore get a usable bench entry
+without writing C or JSON by hand.
 
 Usage:
   python3 scripts/sync_vfx_test.py          # apply sync
@@ -49,15 +50,38 @@ MANIFEST_PATH = os.path.join(REPO_ROOT, "scripts/vfx_test_manifest.json")
 VFX_TEST_PATH = os.path.join(REPO_ROOT, "sandbox/vfx_test.c")
 
 PLACEHOLDERS = {
-    "$POS":  "s_prefabStartPos",
-    "$TIME": "s_meshTime",
-    "$PROG": "progress",
-    "$SEED": "posSeed",
+    "$POS":      "s_prefabStartPos",
+    "$SOURCE":   "Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f})",
+    "$TARGET":   "Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f})",
+    "$CONTROL1": "Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.33f), (Vector3){0.0f, 0.9f, 0.7f})",
+    "$CONTROL2": "Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.66f), (Vector3){0.0f, 0.5f, -0.7f})",
+    "$VELOCITY": "(Vector3){1.4f, 2.2f, 0.5f}",
+    "$TIME":     "s_meshTime",
+    "$PROG":     "progress",
+    "$SEED":     "posSeed",
+    "$XFORM":    "&s_vfxFixtureXf[s_testIndex]",
+}
+MANIFEST_PLACEHOLDERS = {
+    "$POS": "spawn origin / clicked point",
+    "$SOURCE": "default line start, offset behind the origin",
+    "$TARGET": "default line end, offset ahead of the origin",
+    "$CONTROL1": "first elevated Bezier control point",
+    "$CONTROL2": "second elevated Bezier control point",
+    "$VELOCITY": "default launch velocity",
+    "$TIME": "running fixture time",
+    "$PROG": "looping normalized progress (0→1 over 2 seconds)",
+    "$SEED": "position-derived deterministic seed",
+    "$XFORM": "stable transform for follower effects",
 }
 INDENT  = "          "   # 10 spaces — matches surrounding code in vfx_test.c
-CAT_IDS = {"fire": 0, "water": 1, "wood": 2, "metal": 3, "earth": 4, "taiji": 5, "util": 6}
+CAT_IDS = {"fire": 0, "water": 1, "wood": 2, "metal": 3, "earth": 4, "taiji": 5, "common": 6}
+MANIFEST_CATEGORIES = ["fire", "water", "wood", "metal", "earth", "taiji", "common"]
 
-ELEM_SUFFIXES = ("_FIRE", "_WATER", "_WOOD", "_METAL", "_EARTH", "_TAIJI")
+# Signature names alone cannot distinguish an event track from a frame-drawn
+# composition: both may take a normalized float. Keep only documented lifecycle
+# exceptions here; the safe default remains a one-shot for unknown handle APIs.
+FIXTURE_ONE_SHOT = {"VFX_ComposeImpactPackage"}
+FIXTURE_CONTINUOUS = {"VFX_ComposeLightShaft"}
 
 # ── Element / category inference ──────────────────────────────────────────────
 
@@ -76,19 +100,27 @@ _PRESET_MAP = {
     "metal": "EFFECT_PRESET_METAL_SHARD",
     "earth": "EFFECT_PRESET_EARTH_CRACK",
     "taiji": "EFFECT_PRESET_TAIJI_BURST",
-    "util":  "EFFECT_PRESET_FIRE_EXPLOSION",
+    "common": "EFFECT_PRESET_FIRE_EXPLOSION",
 }
 
 def infer_category(fn_name):
     low = fn_name.lower()
+    # Source path carries stronger intent than broad words such as "wave".
+    # A ground wave belongs to earth, not water, and an element folder always
+    # wins over a generic common-composition name.
+    for cat in ("fire", "water", "wood", "metal", "earth", "taiji"):
+        if f"/{cat}/" in low or f" {cat}/" in low:
+            return cat
+    if any(k in low for k in ("ground", "earth", "rock", "fissure", "stone", "soil", "crack", "quake", "boulder", "pillar")):
+        return "earth"
     for cat, kws in _ELEM_KW.items():
         if any(k in low for k in kws):
             return cat
-    return "util"
+    return "common"
 
 def infer_mat_id(fn_name):
     cat = infer_category(fn_name)
-    if cat == "util":
+    if cat == "common":
         return "VC_MAT_FIRE"
     return f"VC_MAT_{cat.upper()}"
 
@@ -117,33 +149,66 @@ def parse_params(params_str):
         tokens = p.split()
         if len(tokens) < 2:
             continue
+        is_pointer = tokens[-1].startswith('*')
         raw_name = tokens[-1].lstrip('*').rstrip('[]')
         raw_type = ' '.join(tokens[:-1])
+        if is_pointer:
+            raw_type += ' *'
         result.append((raw_type.strip(), raw_name.strip()))
     return result
-
-def _is_complex_param(type_str, name):
-    """Return True for params that can't be reasonably auto-generated."""
-    return '*' in type_str or '[' in name or 'const ' in type_str and '*' in name
 
 def infer_arg(type_str, name, fn_name):
     t, n = type_str.strip(), name.lower()
 
     if 'Vector3' in t and '*' not in t:
+        if any(k in n for k in ('velocity', 'vel', 'launch', 'impulse')):
+            return '$VELOCITY'
+        if n in ('p0', 'from', 'start', 'source') or any(k in n for k in ('from', 'start', 'source')):
+            return '$SOURCE'
+        if n in ('p1', 'control1', 'control_a'):
+            return '$CONTROL1'
+        if n in ('p2', 'control2', 'control_b'):
+            return '$CONTROL2'
+        if n in ('p3', 'to', 'end', 'target', 'dest', 'destination') or any(k in n for k in ('end', 'target', 'dest')):
+            return '$TARGET'
+        if 'normal' in n:
+            return '(Vector3){0.0f, 1.0f, 0.0f}'
+        if any(k in n for k in ('dir', 'direction', 'forward')):
+            return '(Vector3){1.0f, 0.0f, 0.0f}'
         if any(k in n for k in ('pos', 'origin', 'center', 'location', 'spawn', 'base')):
             return '$POS'
-        if any(k in n for k in ('dir', 'direction', 'forward', 'normal')):
-            return '(Vector3){1.0f, 0.0f, 0.0f}'
-        if any(k in n for k in ('end', 'target', 'dest')):
-            return 'Vector3Add($POS, (Vector3){3.0f, 0, 0})'
         return '$POS'
 
+    if 'Matrix' in t and '*' in t:
+        return '$XFORM'
+    if 'Vector3' in t and '*' in t:
+        return 's_testPathPoints'
+    if 'GroundHeightSampleFn' in t:
+        return 'VFX_GroundHeightFromMap'
+    if 'VFX_RibbonTrailKind' in t:
+        return 'VFX_RIBBON_MAIN'
+    if 'VFX_VolumeKind' in t:
+        return 'VOL_ENERGY'
+    if 'VFX_TrailStyle' in t:
+        return 'VFX_TRAIL_RIBBON'
+    if 'VFX_TrailSurface' in t:
+        return 'NULL'
+
     if t == 'float':
+        if fn_name == 'VFX_ComposeImpactPackage' and 'severity' in n:
+            # A bench click is an actual impact event, not a timeline draw.
+            # Stay below the package's hit-stop threshold (0.45).
+            return '0.4f'
+        if fn_name == 'VFX_ComposeLightShaft' and any(k in n for k in ('width', 'thick')):
+            return '0.8f'
+        if fn_name == 'VFX_ComposeLightShaft' and any(k in n for k in ('intensity', 'strength', 'power')):
+            return '1.35f'
         if n in ('time', 't', 'elapsed', 'elapsedtime'):
             return '$TIME'
-        if n in ('progress', 'prog', 'phase', 'normalized'):
-            # Clamp to avoid >= 1.0 guards that halt rendering
-            return 'fminf($PROG, 0.99f)'
+        if n in ('progress', 'prog', 'phase', 'normalized') or n.endswith('01'):
+            # Loop rather than freeze at the end state; fixture progress is a
+            # visual probe, not a gameplay clock.
+            return '$PROG'
         if any(k in n for k in ('radius', 'size', 'scale')):
             return '1.5f'
         if any(k in n for k in ('width', 'thick')):
@@ -163,6 +228,8 @@ def infer_arg(type_str, name, fn_name):
         return '1.0f'
 
     if t == 'int':
+        if 'agent' in n:
+            return 'Sandbox_GetPlayerAgentId()'
         if 'seed' in n:
             return '$SEED'
         if any(k in n for k in ('count', 'num')):
@@ -182,46 +249,98 @@ def infer_arg(type_str, name, fn_name):
     if 'PathStyle' in t:
         return 'PATH_STONE_PILLAR'
 
-    # Pointer / array → can't auto-gen
+    # The fixture owns no external assets or user data. NULL is a valid default
+    # for optional texture/data inputs and gives new VFX a compiling first bench.
+    if '*' in t or '[' in name:
+        return 'NULL'
+    return '0'
+
+def infer_fixture_kind(fn_name, params, return_type):
+    """Choose a deterministic default scene, not a hand-written demo."""
+    if fn_name in FIXTURE_ONE_SHOT:
+        return 'burst'
+    if fn_name in FIXTURE_CONTINUOUS:
+        return 'timed'
+    has_matrix = any('Matrix' in t and '*' in t for t, _ in params)
+    if return_type == 'int' and has_matrix:
+        return 'follower'
+    if any(n.lower() in ('time', 't', 'elapsed', 'progress', 'prog', 'phase')
+           or n.lower().endswith('01')
+           for _, n in params):
+        return 'timed'
+    if any(k in fn_name.lower() for k in ('beam', 'stream', 'trail', 'orb', 'ring')):
+        return 'timed'
+    return 'burst'
+
+def infer_kill_fn(fn_name, available_fns):
+    """Resolve the conventional ComposeFoo → KillFoo lifecycle automatically.
+
+    SmokeTrail is the one legacy exception: it owns a raw TrailSystem handle,
+    so its public release function is KillTrail rather than VFX_KillSmokeTrail.
+    """
+    if fn_name == 'VFX_ComposeSmokeTrail':
+        return 'KillTrail'
+    if fn_name.startswith('VFX_Compose'):
+        candidate = 'VFX_Kill' + fn_name[len('VFX_Compose'):]
+        if candidate in available_fns:
+            return candidate
     return None
 
-def infer_entry(fn_name, params_str):
+def infer_entry(fn_name, info, available_fns):
     """
     Auto-generate a manifest entry dict from a function signature.
     Returns (entry_dict, is_complex) where is_complex=True means some params
     couldn't be inferred and the call may need a manual override.
     """
+    params_str, return_type, source = info
     params = parse_params(params_str)
-
-    has_time     = any(n.lower() in ('time', 't', 'elapsed') for _, n in params)
-    has_progress = any(n.lower() in ('progress', 'prog', 'phase') for _, n in params)
-    is_continuous = has_time or has_progress
-
-    args, is_complex = [], False
+    fixture = infer_fixture_kind(fn_name, params, return_type)
+    args = []
     for type_str, name in params:
         arg = infer_arg(type_str, name, fn_name)
-        if arg is None:
-            args.append(f"/* TODO:{type_str} */")
-            is_complex = True
-        else:
-            args.append(arg)
+        args.append(arg)
 
     call = f"{fn_name}({', '.join(args)})"
-
     entry = {
-        "fn":       fn_name,
-        "label":    camel_to_label(fn_name),
-        "category": infer_category(fn_name),
-        "_auto":    True,
+        "source": source,
+        "fn": fn_name,
+        "label": camel_to_label(fn_name),
+        "category": infer_category(source + ' ' + fn_name),
+        "fixture": fixture,
+        "_auto": True,
     }
-    if is_continuous:
-        entry["type"]      = "continuous"
+    kill_fn = infer_kill_fn(fn_name, available_fns)
+    if fixture == 'follower':
+        if kill_fn:
+            entry["type"] = "continuous"
+            entry["spawn_call"] = call
+            entry["kill_fn"] = kill_fn
+        else:
+            entry["fixture"] = 'burst'
+            entry["type"] = "oneshot"
+            entry["trigger_call"] = call
+    elif return_type == 'int' and kill_fn:
+        # Attached/persistent compositions have no transform to drive here
+        # (aura follows its agent internally), but must be explicitly released
+        # when the user switches fixture. Keep the returned handle for that.
+        entry["fixture"] = 'persistent'
+        entry["type"] = 'persistent'
+        entry["spawn_call"] = call
+        entry["kill_fn"] = kill_fn
+    elif return_type == 'int':
+        # A returned handle without a matching public Kill API is conservatively
+        # treated as one-shot. Calling it once is safe; calling it every frame
+        # would silently fill its pool (SparkTrail is the current example).
+        entry["fixture"] = 'burst'
+        entry["type"] = "oneshot"
+        entry["trigger_call"] = call
+    elif fixture == 'timed':
+        entry["type"] = "continuous"
         entry["draw_call"] = call
     else:
-        entry["type"]         = "oneshot"
+        entry["type"] = "oneshot"
         entry["trigger_call"] = call
-
-    return entry, is_complex
+    return entry
 
 
 # ── .inl scanner ──────────────────────────────────────────────────────────────
@@ -257,6 +376,32 @@ def scan_inl_functions(comp_dir):
                     rel_path,                                  # source file
                 )
     return result
+
+def is_fixture_candidate(fn_name):
+    """Public composition/draw API only. Setters, lifecycle and compatibility
+    helpers never deserve their own button."""
+    if fn_name.endswith('Ex') or 'Test' in fn_name:
+        return False
+    return fn_name.startswith('VFX_Compose') or fn_name.startswith('VFX_Draw')
+
+def source_fixture_entries(inl_fns, excluded):
+    """Choose one primary API per source `.inl`, preferring the function whose
+    name mirrors `vc_<name>.inl`. This is the one-entry-per-VFX invariant."""
+    by_source = {}
+    for fn, info in inl_fns.items():
+        if fn in excluded or not is_fixture_candidate(fn):
+            continue
+        by_source.setdefault(info[2], []).append((fn, info))
+
+    entries = []
+    for source in sorted(by_source):
+        candidates = by_source[source]
+        stem = os.path.basename(source)[3:-4] if os.path.basename(source).startswith('vc_') else ''
+        expected = 'VFX_Compose' + ''.join(part.title() for part in stem.split('_'))
+        candidates.sort(key=lambda item: (item[0] != expected,
+                                          not item[0].startswith('VFX_Compose'), item[0]))
+        entries.append(infer_entry(candidates[0][0], candidates[0][1], inl_fns))
+    return entries
 
 
 # ── visual_composer.c / .h helpers ───────────────────────────────────────────
@@ -691,47 +836,6 @@ def update_archetype_dispatch(comp_dir, dry_run=False):
     return True
 
 
-def prune_manifest_cruft(manifest, inl_fns, dry_run=False):
-    """
-    A deleted VFX leaves its `overrides` key and any `excluded` listing behind.
-    They are inert but they accumulate, and a later function reusing the name
-    silently inherits a stale override. Drop overrides for functions that no
-    longer exist; only WARN about `excluded`/`exclude_from_auto_include`, which
-    are hand-curated and may intentionally name things not yet written.
-    """
-    changed = False
-    stale_ov = [fn for fn in manifest.get("overrides", {}) if fn not in inl_fns]
-    if stale_ov:
-        changed = True
-        verb = "would drop" if dry_run else "dropping"
-        print(f"[sync_vfx_test] manifest: {verb} {len(stale_ov)} stale override(s): "
-              f"{', '.join(stale_ov)}")
-        if not dry_run:
-            for fn in stale_ov:
-                del manifest["overrides"][fn]
-
-    for group, v in manifest.get("excluded", {}).items():
-        if not isinstance(v, list):
-            continue
-        stale = [fn for fn in v if fn.startswith("VFX_") and fn not in inl_fns]
-        if stale:
-            print(f"[sync_vfx_test] NOTE: excluded.{group} names "
-                  f"{len(stale)} function(s) that no longer exist: {', '.join(stale)}")
-
-    for sub, files in manifest.get("exclude_from_auto_include", {}).items():
-        if not isinstance(files, list):
-            continue
-        d = os.path.join(COMP_DIR, sub)
-        if not os.path.isdir(d):
-            continue
-        stale = [f for f in files if not os.path.isfile(os.path.join(d, f))]
-        if stale:
-            print(f"[sync_vfx_test] NOTE: exclude_from_auto_include.{sub} names "
-                  f"{len(stale)} missing file(s): {', '.join(stale)}")
-
-    return changed
-
-
 def update_vc_h(inl_fns, excluded, dry_run=False):
     """
     Sync the @gen:vc_declarations section in visual_composer.h.
@@ -808,71 +912,113 @@ def gen_names_array(entries):
     ] + rows + ["};", "// @gen:newfx_names end"])
 
 def gen_categories_array(entries):
-    ids = [CAT_IDS.get(e.get("category", "util"), 6) for e in entries]
+    ids = [CAT_IDS.get(e.get("category", "common"), 6) for e in entries]
     rows = []
     for i in range(0, len(ids), 10):
         rows.append("    " + ", ".join(str(x) for x in ids[i:i+10]) + ",")
     return "\n".join([
         "// @gen:newfx_categories begin",
-        "// NEWFX_CAT_FIRE=0 WATER=1 WOOD=2 METAL=3 EARTH=4 TAIJI=5 UTIL=6",
+        "// NEWFX_CAT_FIRE=0 WATER=1 WOOD=2 METAL=3 EARTH=4 TAIJI=5 COMMON=6",
         "static const int s_newFxCategories[] = {",
     ] + rows + ["};", "// @gen:newfx_categories end"])
 
+def gen_fire_function(entries):
+    """One owner for all one-shot calls.
+
+    Both UI activation and headless warm-up call this function, so a source
+    fixture's compose call exists once in vfx_test.c rather than being copied
+    into every input path.
+    """
+    fire_entries = [(i, e) for i, e in enumerate(entries)
+                    if e["type"] in ("oneshot", "persistent")]
+    rmap = {
+        "$POS": "pos",
+        "$SOURCE": "Vector3Add(pos, (Vector3){-2.0f, 1.2f, 0.0f})",
+        "$TARGET": "Vector3Add(pos, (Vector3){2.5f, 1.8f, 0.8f})",
+        "$CONTROL1": "Vector3Add(Vector3Lerp(Vector3Add(pos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(pos, (Vector3){2.5f, 1.8f, 0.8f}), 0.33f), (Vector3){0.0f, 0.9f, 0.7f})",
+        "$CONTROL2": "Vector3Add(Vector3Lerp(Vector3Add(pos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(pos, (Vector3){2.5f, 1.8f, 0.8f}), 0.66f), (Vector3){0.0f, 0.5f, -0.7f})",
+        "$VELOCITY": "(Vector3){1.4f, 2.2f, 0.5f}",
+        "$TIME": "0.0f", "$PROG": "0.0f", "$SEED": "posSeed",
+        "$XFORM": "NULL",
+    }
+    def rexpand(t):
+        for k, v in rmap.items():
+            t = t.replace(k, v)
+        return t
+
+    lines = ["// @gen:newfx_fire begin"]
+    if any("$SEED" in e.get("trigger_call", e.get("spawn_call", ""))
+           for _, e in fire_entries):
+        lines.append("    int posSeed = (int)(pos.x * 17.0f + pos.z * 31.0f) & 0xFFFF;")
+    lines.append("    switch (newfxIndex) {")
+    for idx, e in fire_entries:
+        if e["type"] == "persistent":
+            lines += [f"    case {idx}:",
+                      f"        if (s_vfxFixtureHandle[{idx}] >= 0) {e['kill_fn']}(s_vfxFixtureHandle[{idx}]);",
+                      f"        s_vfxFixtureHandle[{idx}] = {rexpand(e['spawn_call'])};",
+                      "        return true;"]
+        else:
+            lines.append(f"    case {idx}: {rexpand(e['trigger_call'])}; return true;")
+    lines += ["    default: return false;", "    }", "// @gen:newfx_fire end"]
+    return "\n".join(lines)
+
+def gen_stop_function(entries):
+    """Generate the one release point for every fixture that owns a handle."""
+    owned = [(i, e) for i, e in enumerate(entries)
+             if e["type"] in ("continuous", "persistent") and e.get("kill_fn")]
+    lines = ["// @gen:newfx_stop begin"]
+    for idx, e in owned:
+        lines += [f"    if (s_vfxFixtureHandle[{idx}] >= 0)",
+                  f"        {e['kill_fn']}(s_vfxFixtureHandle[{idx}]);",
+                  f"    s_vfxFixtureHandle[{idx}] = -1;",
+                  f"    s_vfxFixtureLastTime[{idx}] = -1.0f;"]
+    lines.append("// @gen:newfx_stop end")
+    return "\n".join(lines)
+
 def gen_trigger_block(entries):
-    oneshots = [(i, e) for i, e in enumerate(entries) if e["type"] == "oneshot"]
     lines = ["// @gen:newfx_trigger begin"]
-    if not oneshots:
-        lines += [f"{INDENT}{{", f"{INDENT}    s_isPlayingMesh = true;",
-                  f"{INDENT}    s_meshTime = 0.0f;", f"{INDENT}}}"]
-    else:
-        # $SEED expands to the `posSeed` local — only declare it here (this
-        # block is a standalone if/else chain, not inside gen_draw_block's
-        # switch scope where posSeed is already declared) when at least one
-        # oneshot trigger_call actually references it, else it's an unused
-        # local. Bug found 2026-07: previously always expanded $SEED but
-        # never declared posSeed here, producing an undeclared-identifier
-        # compile error the moment any oneshot entry used $SEED.
-        if any("$SEED" in e["trigger_call"] for _, e in oneshots):
-            lines.append(f"{INDENT}int posSeed = (int)(s_prefabStartPos.x * 17.0f + s_prefabStartPos.z * 31.0f) & 0xFFFF;")
-        first = True
-        for idx, e in oneshots:
-            kw = "if" if first else "} else if"
-            first = False
-            lines.append(f"{INDENT}{kw} (s_testIndex == {idx}) {{ /* {e['label']} */")
-            lines.append(f"{INDENT}    {expand(e['trigger_call'])};")
-        lines += [f"{INDENT}}} else {{",
-                  f"{INDENT}    /* continuous — handled per-frame in VFXTest_Draw3D */",
-                  f"{INDENT}    s_isPlayingMesh = true;",
-                  f"{INDENT}    s_meshTime = 0.0f;",
-                  f"{INDENT}}}"]
+    lines += [f"{INDENT}if (!VFXTest_FireNewFx(s_testIndex, s_prefabStartPos)) {{",
+              f"{INDENT}    /* continuous — handled per-frame in VFXTest_Draw3D */",
+              f"{INDENT}    s_isPlayingMesh = true;",
+              f"{INDENT}    s_meshTime = 0.0f;",
+              f"{INDENT}}}"]
     lines.append("// @gen:newfx_trigger end")
     return "\n".join(lines)
 
 def gen_render_trigger_block(entries):
-    rmap = {"$POS": "pos", "$TIME": "0.0f", "$PROG": "0.0f", "$SEED": "0"}
-    def rexpand(t):
-        for k, v in rmap.items(): t = t.replace(k, v)
-        return t
     RINDENT = "    "
     lines = ["// @gen:newfx_render_trigger begin",
-             f"{RINDENT}switch (newfxIndex) {{"]
-    for idx, e in enumerate(entries):
-        if e["type"] != "oneshot": continue
-        lines.append(f"{RINDENT}case {idx}: {rexpand(e['trigger_call'])}; break;")
-    lines += [f"{RINDENT}default: break;", f"{RINDENT}}}",
+             f"{RINDENT}(void)VFXTest_FireNewFx(newfxIndex, spawnPos);",
               "// @gen:newfx_render_trigger end"]
     return "\n".join(lines)
 
 def gen_draw_block(entries):
     lines = [
         "// @gen:newfx_draw begin",
-        f"{INDENT}float progress = fminf(s_meshTime / 1.0f, 1.0f);",
-        f"{INDENT}int posSeed = (int)(s_prefabStartPos.x * 17.0f + s_prefabStartPos.z * 31.0f) & 0xFFFF;",
-        f"{INDENT}switch (s_testIndex) {{",
+        f"{INDENT}float progress = fmodf(s_meshTime, 2.0f) * 0.5f;",
     ]
+    continuous = [e for e in entries if e["type"] == "continuous"]
+    if any("$SEED" in e.get("draw_call", e.get("spawn_call", "")) for e in continuous):
+        lines.append(f"{INDENT}int posSeed = (int)(s_prefabStartPos.x * 17.0f + s_prefabStartPos.z * 31.0f) & 0xFFFF;")
+    lines.append(f"{INDENT}switch (s_testIndex) {{")
     for idx, e in enumerate(entries):
         if e["type"] != "continuous": continue
-        if "draw_block" in e:
+        if e.get("fixture") == "follower":
+            spawn_call = expand(e['spawn_call']).replace(
+                "&s_vfxFixtureXf[s_testIndex]", f"&s_vfxFixtureXf[{idx}]")
+            lines += [f"{INDENT}    case {idx}:", f"{INDENT}    {{",
+                      f"{INDENT}        float a = s_meshTime * 1.35f;",
+                      f"{INDENT}        Vector3 fixturePos = Vector3Add(s_prefabStartPos,",
+                      f"{INDENT}            (Vector3){{3.0f * sinf(a), 1.5f + 0.45f * sinf(a * 0.7f), 2.1f * cosf(a * 1.3f)}});",
+                      f"{INDENT}        if (s_meshTime < s_vfxFixtureLastTime[{idx}] && s_vfxFixtureHandle[{idx}] >= 0)",
+                      f"{INDENT}            {e['kill_fn']}(s_vfxFixtureHandle[{idx}]);",
+                      f"{INDENT}        if (s_meshTime < s_vfxFixtureLastTime[{idx}]) s_vfxFixtureHandle[{idx}] = -1;",
+                      f"{INDENT}        s_vfxFixtureLastTime[{idx}] = s_meshTime;",
+                      f"{INDENT}        s_vfxFixtureXf[{idx}] = MatrixTranslate(fixturePos.x, fixturePos.y, fixturePos.z);",
+                      f"{INDENT}        if (s_vfxFixtureHandle[{idx}] < 0)",
+                      f"{INDENT}            s_vfxFixtureHandle[{idx}] = {spawn_call};",
+                      f"{INDENT}        break;", f"{INDENT}    }}"]
+        elif "draw_block" in e:
             blines = e["draw_block"]
             lines.append(f"{INDENT}    case {idx}: {expand(blines[0])}")
             for bl in blines[1:-1]:
@@ -901,24 +1047,6 @@ def all_excluded(manifest):
             result.update(k for k in v if not k.startswith("_"))
     return result
 
-def base_fn(fn):
-    for s in ELEM_SUFFIXES:
-        if fn.endswith(s): return fn[:-len(s)]
-    return fn
-
-def is_synthetic(fn):
-    return any(fn.endswith(s) for s in ELEM_SUFFIXES)
-
-
-def is_manual(entry):
-    """Hand-written entry for something that is NOT a composition function in a
-    .inl — e.g. a post-FX or engine API you still want a button for in the NEW FX
-    tab. Without this the removal pass below deletes it on the next run, because
-    it cannot find the name among the scanned .inl files, and it does so
-    silently. Set "_manual": true in the manifest entry to keep it."""
-    return bool(entry.get("_manual"))
-
-
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -935,84 +1063,65 @@ def main():
     # ── 2. Load manifest ──────────────────────────────────────────────────────
     with open(MANIFEST_PATH) as f:
         manifest = json.load(f)
-    entries   = manifest.get("entries", [])
-    excluded  = all_excluded(manifest)
-    overrides = manifest.get("overrides", {})
+    entries = manifest.get("entries", [])
+    excluded = all_excluded(manifest)
 
-    # ── 3. Compute entry diff ─────────────────────────────────────────────────
-    entry_base_fns = {base_fn(e["fn"]) for e in entries}
-    testable_fns   = {fn for fn in inl_fns if fn not in excluded}
-
-    # New real functions not covered by any existing entry (incl. synthetic aliases)
-    new_fns = sorted(testable_fns - entry_base_fns - {base_fn(fn) for fn in excluded})
-
-    # Entries to remove: function deleted from .inl OR moved to excluded
-    removed = [e for e in entries
-               if not is_synthetic(e["fn"]) and not is_manual(e)
-               and (base_fn(e["fn"]) not in inl_fns
-                    or base_fn(e["fn"]) in excluded)]
+    # ── 3. One fixture per source `.inl` ──────────────────────────────────────
+    new_entries = source_fixture_entries(inl_fns, excluded)
+    if len(new_entries) > 96:
+        raise SystemExit("[sync_vfx_test] fixture slot capacity exceeded (96); increase VFXTEST_FIXTURE_SLOTS first")
+    old_by_source = {e.get("source", e.get("fn", "")): e for e in entries}
+    new_by_source = {e["source"]: e for e in new_entries}
+    added = [e for src, e in new_by_source.items() if src not in old_by_source]
+    removed = [e for src, e in old_by_source.items() if src not in new_by_source]
+    changed = (entries != new_entries or manifest.get("schema") != 2
+               or manifest.get("_placeholders") != MANIFEST_PLACEHOLDERS
+               or manifest.get("_categories") != MANIFEST_CATEGORIES
+               or manifest.get("excluded") != {} or "overrides" in manifest)
 
     # ── 4. Report ─────────────────────────────────────────────────────────────
-    complex_fns = []
-    if new_fns:
-        print(f"[sync_vfx_test] Auto-adding {len(new_fns)} new function(s):")
-        for fn in new_fns:
-            _, _, is_cplx = (lambda e, c: (e, e, c))(*infer_entry(fn, inl_fns[fn][0]))
-            tag = "  (complex — check call)" if is_cplx else ""
-            print(f"  + {fn}{tag}")
-            if is_cplx:
-                complex_fns.append(fn)
+    if added:
+        print(f"[sync_vfx_test] Adding {len(added)} default fixture(s):")
+        for e in added:
+            print(f"  + {e['source']} → {e['fn']} ({e['fixture']})")
     if removed:
-        print(f"[sync_vfx_test] Removing {len(removed)} deleted function(s):")
+        print(f"[sync_vfx_test] Removing {len(removed)} stale/duplicate fixture(s):")
         for e in removed:
-            print(f"  - {e['fn']}")
-    if not new_fns and not removed:
-        print("[sync_vfx_test] manifest entries in sync with .inl files.")
+            print(f"  - {e.get('source', e['fn'])}")
+    if not added and not removed and not changed:
+        print("[sync_vfx_test] one-fixture-per-.inl manifest is in sync.")
 
     if dry:
         # Still check visual_composer files + the element master includes.
-        drift = bool(new_fns or removed)
+        drift = changed
         drift |= bool(update_vc_c(COMP_DIR, dry_run=True))
         drift |= bool(update_vc_h(inl_fns, excluded, dry_run=True))
         arch = scan_archetypes(COMP_DIR)
         drift |= bool(update_subdir_includes(COMP_DIR, manifest=manifest,
                                              dry_run=True, archetypes=arch))
         drift |= bool(update_archetype_dispatch(COMP_DIR, dry_run=True))
-        drift |= bool(prune_manifest_cruft(manifest, inl_fns, dry_run=True))
         if not drift:
             print("[sync_vfx_test] everything in sync.")
         sys.exit(1 if drift else 0)
 
-    # ── 5. Update entries ─────────────────────────────────────────────────────
-    removed_fns  = {e["fn"] for e in removed}
-    new_entries  = [e for e in entries if e["fn"] not in removed_fns]
-
-    # Apply overrides to existing entries
-    for e in new_entries:
-        if e["fn"] in overrides:
-            e.update({k: v for k, v in overrides[e["fn"]].items() if k != "fn"})
-
-    # Auto-generate and append new entries
-    for fn in new_fns:
-        if fn in overrides:
-            e = {"fn": fn, **overrides[fn]}
-        else:
-            e, _ = infer_entry(fn, inl_fns[fn][0])
-        new_entries.append(e)
-
-    if complex_fns:
-        print(f"\n[sync_vfx_test] TIP — these auto-generated calls may need tuning:")
-        print(f"  Add to \"overrides\" in {os.path.basename(MANIFEST_PATH)} to customize.")
-
-    # ── 6. Save manifest ──────────────────────────────────────────────────────
-    pruned = prune_manifest_cruft(manifest, inl_fns)
-    if new_fns or removed or pruned:
+    # ── 5. Save the source-keyed manifest ─────────────────────────────────────
+    if changed:
+        manifest["schema"] = 2
+        manifest["_comment"] = (
+            "Generated fixture registry. One source .inl owns one NEW FX entry; "
+            "sync_vfx_test.py supplies the default scene and inputs for new compositions."
+        )
+        manifest["_placeholders"] = MANIFEST_PLACEHOLDERS
+        manifest["_categories"] = MANIFEST_CATEGORIES
         manifest["entries"] = new_entries
-        if "overrides" not in manifest:
-            manifest["overrides"] = {}
+        # Composition discovery is now deliberately complete: a new .inl must
+        # get a bench fixture automatically, never vanish behind a stale list.
+        manifest["excluded"] = {}
+        manifest.pop("overrides", None)
         with open(MANIFEST_PATH, "w") as f:
             json.dump(manifest, f, indent=2, ensure_ascii=False)
             f.write("\n")
+        excluded = all_excluded(manifest)
 
     # ── 7. Update visual_composer.c and .h ───────────────────────────────────
     update_vc_c(COMP_DIR)
@@ -1032,6 +1141,8 @@ def main():
     for key, gen in [
         ("newfx_names",          gen_names_array(new_entries)),
         ("newfx_categories",     gen_categories_array(new_entries)),
+        ("newfx_stop",           gen_stop_function(new_entries)),
+        ("newfx_fire",           gen_fire_function(new_entries)),
         ("newfx_trigger",        gen_trigger_block(new_entries)),
         ("newfx_render_trigger", gen_render_trigger_block(new_entries)),
         ("newfx_draw",           gen_draw_block(new_entries)),

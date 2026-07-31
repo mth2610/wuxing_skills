@@ -1,10 +1,16 @@
 {
-  "_comment": "F0 purge, 28/07/2026: every composition predating the Đợt E/F rebuild was deleted, plus the two spirit components. This manifest lists the survivors. Add a new VFX by hand here FIRST, then run scripts/sync_vfx_test.py.",
+  "_comment": "Generated fixture registry. One source .inl owns one NEW FX entry; sync_vfx_test.py supplies the default scene and inputs for new compositions.",
   "_placeholders": {
-    "$POS": "s_prefabStartPos  (VFX spawn origin)",
-    "$TIME": "s_meshTime        (running time for continuous effects)",
-    "$PROG": "progress          (fminf(s_meshTime/1.0f, 1.0f), pre-computed in draw block)",
-    "$SEED": "posSeed           (position-derived int seed, pre-computed in draw block)"
+    "$POS": "spawn origin / clicked point",
+    "$SOURCE": "default line start, offset behind the origin",
+    "$TARGET": "default line end, offset ahead of the origin",
+    "$CONTROL1": "first elevated Bezier control point",
+    "$CONTROL2": "second elevated Bezier control point",
+    "$VELOCITY": "default launch velocity",
+    "$TIME": "running fixture time",
+    "$PROG": "looping normalized progress (0→1 over 2 seconds)",
+    "$SEED": "position-derived deterministic seed",
+    "$XFORM": "stable transform for follower effects"
   },
   "_categories": [
     "fire",
@@ -13,503 +19,308 @@
     "metal",
     "earth",
     "taiji",
-    "util"
+    "common"
   ],
-  "excluded": {
-    "_comment": "Functions intentionally NOT in NEWFX — complex lifecycle or test-harness-only",
-    "lifecycle": [
-      "VFX_AttachQiAura",
-      "VFX_DetachQiAura",
-      "VFX_UpdateQiAuras",
-      "VFX_Compose_Update",
-      "VFX_Compose_Draw3D",
-      "VFX_KillProcBeam",
-      "VFX_KillAuraRing",
-      "VFX_KillSmokeColumn",
-      "VFX_SpawnMeshElectricity",
-      "VFX_UpdateMeshElectricity",
-      "VFX_KillMeshElectricity",
-      "VFX_BeginEnergySmokeBatch",
-      "VFX_EndEnergySmokeBatch",
-      "VFX_BeginMagicFilamentsBatch",
-      "VFX_EndMagicFilamentsBatch",
-      "VFX_BeginSmokeColumnBatch",
-      "VFX_EndSmokeColumnBatch",
-      "VFX_BeginWaterStreams",
-      "VFX_EndWaterStreams",
-      "VFX_AuraSetIntensity",
-      "VFX_KillCharacterAura",
-      "VFX_TrailSetWidth",
-      "VFX_KillSweptTrail",
-      "VFX_KillVolumeTrail",
-      "VFX_GroundHeightFromMap",
-      "VFX_KillProjectile"
-    ],
-    "complex_multi_arg": [
-      "VFX_ComposeTriggerImpactBurst",
-      "VFX_ChainLightning",
-      "VFX_ComposePathMistWave",
-      "VFX_PathWave",
-      "VFX_ComposePathLink",
-      "VFX_DrawWaterStreamOnPath"
-    ]
-  },
+  "excluded": {},
   "exclude_from_auto_include": {
     "common": []
   },
   "entries": [
     {
-      "fn": "VFX_ComposeSmokePuff",
-      "label": "SMOKE PUFF",
-      "category": "util",
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeSmokePuff($POS, VC_MAT_EARTH, 1.0f, 1.0f)"
-    },
-    {
-      "fn": "VFX_ComposeEnergyBurst",
-      "label": "ENERGY BURST",
-      "category": "util",
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeEnergyBurst($POS, VC_MAT_FIRE, 1.0f, 0.9f)"
-    },
-    {
-      "fn": "VFX_ComposeImpactPackage",
-      "label": "IMPACT PKG",
-      "category": "util",
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeImpactPackage($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_EARTH, 1.0f, 1.0f)"
-    },
-    {
-      "fn": "VFX_ComposeFlameVolume",
-      "label": "FLAME VOLUME",
-      "category": "fire",
+      "source": "common/vc_beam.inl",
+      "fn": "VFX_ComposeBeam",
+      "label": "BEAM",
+      "category": "common",
+      "fixture": "timed",
+      "_auto": true,
       "type": "continuous",
-      "draw_call": "VFX_ComposeFlameVolume($POS, VC_MAT_FIRE, 1.0f, 1.0f)"
+      "draw_call": "VFX_ComposeBeam($SOURCE, $TARGET, VC_MAT_FIRE, 0.1f, $PROG)"
     },
     {
-      "fn": "VFX_ComposeGlintSparkle",
-      "label": "GLINT SPARKLE",
-      "category": "metal",
+      "source": "common/vc_character_aura.inl",
+      "fn": "VFX_ComposeCharacterAura",
+      "label": "CHARACTER AURA",
+      "category": "common",
+      "fixture": "persistent",
+      "_auto": true,
+      "type": "persistent",
+      "spawn_call": "VFX_ComposeCharacterAura(Sandbox_GetPlayerAgentId(), VC_MAT_FIRE, 1.0f)",
+      "kill_fn": "VFX_KillCharacterAura"
+    },
+    {
+      "source": "common/vc_charge_converge.inl",
+      "fn": "VFX_ComposeChargeConverge",
+      "label": "CHARGE CONVERGE",
+      "category": "common",
+      "fixture": "timed",
+      "_auto": true,
       "type": "continuous",
-      "draw_call": "VFX_ComposeGlintSparkle($POS, VC_MAT_HOLY, 1.0f, $TIME)"
+      "draw_call": "VFX_ComposeChargeConverge($POS, VC_MAT_FIRE, 1.5f, $PROG, 5)"
     },
     {
-      "fn": "VFX_ComposeRuneCircle",
-      "label": "RUNE CIRCLE",
-      "category": "taiji",
+      "source": "common/vc_converge_motes.inl",
+      "fn": "VFX_ComposeConvergeMotes",
+      "label": "CONVERGE MOTES",
+      "category": "common",
+      "fixture": "timed",
+      "_auto": true,
       "type": "continuous",
-      "draw_call": "VFX_ComposeRuneCircle(Vector3Add($POS, (Vector3){0.0f, 0.9f, 0.0f}), (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.6f, fmodf($TIME, 3.0f) / 3.0f, 4)"
+      "draw_call": "VFX_ComposeConvergeMotes($POS, VC_MAT_FIRE, 1.5f, $PROG, 5)"
     },
     {
-      "fn": "VFX_ComposeDissolveExit",
-      "label": "DISSOLVE EXIT",
-      "category": "util",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeDissolveExit(Vector3Add($POS, (Vector3){0.0f, 0.9f, 0.0f}), VC_MAT_FIRE, 1.0f, fmodf($TIME, 2.5f) / 2.5f)"
-    },
-    {
+      "source": "common/vc_core_glow.inl",
       "fn": "VFX_ComposeCoreGlow",
       "label": "CORE GLOW",
       "category": "common",
+      "fixture": "timed",
+      "_auto": true,
       "type": "continuous",
-      "_comment": "PRIMARY, extracted from ChargeConverge. Immediate-mode: called every frame while the glow should exist. intensity01 is swept 0->1 over the play window so the bench shows the whole range in one trigger rather than one point of it.",
-      "draw_block": [
-        "{",
-        "float i01 = $TIME / 2.5f; if (i01 > 1.0f) i01 = 1.0f;",
-        "VFX_ComposeCoreGlow(Vector3Add($POS, (Vector3){-2.2f, 1.4f, 0.0f}), VC_MAT_FIRE, 1.0f, i01);",
-        "}"
-      ]
+      "draw_call": "VFX_ComposeCoreGlow($POS, VC_MAT_FIRE, 1.5f, $PROG)"
     },
     {
+      "source": "common/vc_core_smoketrail.inl",
+      "fn": "VFX_ComposeSmokeTrail",
+      "label": "SMOKE TRAIL",
+      "category": "common",
+      "fixture": "follower",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeSmokeTrail($XFORM, VC_MAT_FIRE, 1.5f, 2.0f)",
+      "kill_fn": "KillTrail"
+    },
+    {
+      "source": "common/vc_debris_shards.inl",
+      "fn": "VFX_ComposeDebrisShards",
+      "label": "DEBRIS SHARDS",
+      "category": "metal",
+      "fixture": "burst",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeDebrisShards($POS, $VELOCITY, VC_MAT_METAL, 1.5f, 5)"
+    },
+    {
+      "source": "common/vc_dissolve_exit.inl",
+      "fn": "VFX_ComposeDissolveExit",
+      "label": "DISSOLVE EXIT",
+      "category": "common",
+      "fixture": "timed",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeDissolveExit($POS, VC_MAT_FIRE, 1.5f, $PROG)"
+    },
+    {
+      "source": "common/vc_energy_burst.inl",
+      "fn": "VFX_ComposeEnergyBurst",
+      "label": "ENERGY BURST",
+      "category": "common",
+      "fixture": "burst",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeEnergyBurst($POS, VC_MAT_FIRE, 1.5f, 1.0f)"
+    },
+    {
+      "source": "common/vc_energy_orb.inl",
       "fn": "VFX_ComposeEnergyOrb",
       "label": "ENERGY ORB",
       "category": "common",
+      "fixture": "timed",
+      "_auto": true,
       "type": "continuous",
-      "_comment": "PRIMARY, judged ALONE — orb_core = 0 in tuning.cfg strips the core glow so the SHELL can be judged on its own silhouette. Look from a low angle: dark middle, bright limb. If the middle is the bright part, the fresnel is not reaching the shader.",
-      "draw_block": [
-        "{",
-        "float i01 = $TIME / 2.0f; if (i01 > 1.0f) i01 = 1.0f;",
-        "VFX_ComposeEnergyOrb(Vector3Add($POS, (Vector3){2.2f, 1.5f, 0.0f}), VC_MAT_WATER, 0.55f, i01);",
-        "}"
-      ]
+      "draw_call": "VFX_ComposeEnergyOrb($POS, VC_MAT_FIRE, 1.5f, $PROG)"
     },
     {
-      "fn": "VFX_ComposeConvergeMotes",
-      "label": "CONVERGE MOTES",
-      "category": "util",
+      "source": "common/vc_glint_sparkle.inl",
+      "fn": "VFX_ComposeGlintSparkle",
+      "label": "GLINT SPARKLE",
+      "category": "common",
+      "fixture": "timed",
+      "_auto": true,
       "type": "continuous",
-      "_comment": "P2. The primary EXTRACTED from ChargeConverge, judged ALONE — no core glow, because a primary next to a bright destination is judged against the destination. What to look for: threads leave the whole SURFACE of a shell (not a band or a ring), no two sweep the same arc, and the last stretch of every thread bends the same way (the vortex) so N attractor falls do not read as N straight lines converging. Compare with the CHARGE CONVERGE entry, which is this plus VFX_ComposeCoreGlow — the two must look identical apart from the hot point.",
-      "draw_block": [
-        "{",
-        "float mi01 = $TIME / 2.2f; if (mi01 > 1.0f) mi01 = 1.0f;",
-        "VFX_ComposeConvergeMotes(Vector3Add($POS, (Vector3){0.0f, 1.4f, 0.0f}), VC_MAT_QI, 1.3f, mi01, 45);",
-        "}"
-      ]
+      "draw_call": "VFX_ComposeGlintSparkle($POS, VC_MAT_FIRE, 1.5f, $TIME)"
     },
     {
-      "fn": "VFX_ComposeChargeConverge",
-      "label": "CHARGE CONVERGE",
-      "category": "util",
+      "source": "common/vc_ground_wave.inl",
+      "fn": "VFX_ComposeGroundWave",
+      "label": "GROUND WAVE",
+      "category": "earth",
+      "fixture": "timed",
+      "_auto": true,
       "type": "continuous",
-      "draw_call": "VFX_ComposeChargeConverge(Vector3Add($POS, (Vector3){0.0f, 0.9f, 0.0f}), VC_MAT_LIGHTNING, 1.3f, fmodf($TIME, 2.2f) / 2.2f, 45)"
+      "draw_call": "VFX_ComposeGroundWave($POS, VC_MAT_EARTH, 1.5f, $PROG, VFX_GroundHeightFromMap, NULL)"
     },
     {
-      "fn": "VFX_ComposeSweepSlash",
-      "label": "SWEEP SLASH",
-      "category": "metal",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeSweepSlash(Vector3Add($POS, (Vector3){0.0f, 1.2f, 0.0f}), (Vector3){0.0f, 0.0f, 1.0f}, VC_MAT_METAL, 1.8f, 2.2f, fmodf($TIME, 1.6f) / 1.6f)"
-    },
-    {
-      "fn": "VFX_ComposeLightShaft",
-      "label": "LIGHT SHAFT",
-      "category": "util",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeLightShaft(Vector3Add($POS, (Vector3){0.0f, 3.2f, 0.0f}), Vector3Add($POS, (Vector3){0.0f, 0.05f, 0.0f}), VC_MAT_HOLY, 2.0f, 0.9f)"
-    },
-    {
-      "fn": "VFX_ComposeCharacterAura",
-      "label": "CHARACTER AURA",
-      "category": "util",
+      "source": "common/vc_impact_package.inl",
+      "fn": "VFX_ComposeImpactPackage",
+      "label": "IMPACT PACKAGE",
+      "category": "common",
+      "fixture": "burst",
       "_auto": true,
       "type": "oneshot",
-      "trigger_call": "VFX_ComposeCharacterAura(0, VC_MAT_FIRE, 1.0f)"
+      "trigger_call": "VFX_ComposeImpactPackage($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, 0.4f)"
     },
     {
+      "source": "common/vc_light_shaft.inl",
+      "fn": "VFX_ComposeLightShaft",
+      "label": "LIGHT SHAFT",
+      "category": "common",
+      "fixture": "timed",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeLightShaft($SOURCE, $TARGET, VC_MAT_FIRE, 0.8f, 1.35f)"
+    },
+    {
+      "source": "common/vc_portal_disc.inl",
+      "fn": "VFX_ComposePortalDisc",
+      "label": "PORTAL DISC",
+      "category": "common",
+      "fixture": "timed",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposePortalDisc($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, $PROG)"
+    },
+    {
+      "source": "common/vc_projectile.inl",
+      "fn": "VFX_ComposeProjectile",
+      "label": "PROJECTILE",
+      "category": "common",
+      "fixture": "follower",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeProjectile($XFORM, VC_MAT_FIRE, 1.5f)",
+      "kill_fn": "VFX_KillProjectile"
+    },
+    {
+      "source": "common/vc_ribbon_trail.inl",
+      "fn": "VFX_ComposeRibbonTrail",
+      "label": "RIBBON TRAIL",
+      "category": "common",
+      "fixture": "follower",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeRibbonTrail($XFORM, VC_MAT_FIRE, 0.1f, 2.0f, VFX_RIBBON_MAIN)",
+      "kill_fn": "VFX_KillRibbonTrail"
+    },
+    {
+      "source": "common/vc_rune_circle.inl",
+      "fn": "VFX_ComposeRuneCircle",
+      "label": "RUNE CIRCLE",
+      "category": "common",
+      "fixture": "timed",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeRuneCircle($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, $PROG, 5)"
+    },
+    {
+      "source": "common/vc_shock_ring.inl",
+      "fn": "VFX_ComposeShockRing",
+      "label": "SHOCK RING",
+      "category": "common",
+      "fixture": "timed",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeShockRing($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, $PROG)"
+    },
+    {
+      "source": "common/vc_smoke_puff.inl",
+      "fn": "VFX_ComposeSmokePuff",
+      "label": "SMOKE PUFF",
+      "category": "common",
+      "fixture": "burst",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeSmokePuff($POS, VC_MAT_FIRE, 1.5f, 1.0f)"
+    },
+    {
+      "source": "common/vc_spark_trail.inl",
+      "fn": "VFX_ComposeSparkTrail",
+      "label": "SPARK TRAIL",
+      "category": "common",
+      "fixture": "burst",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeSparkTrail($POS, $VELOCITY, VC_MAT_FIRE, 1.0f, 2.0f)"
+    },
+    {
+      "source": "common/vc_sweep_slash.inl",
+      "fn": "VFX_ComposeSweepSlash",
+      "label": "SWEEP SLASH",
+      "category": "common",
+      "fixture": "timed",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeSweepSlash($POS, (Vector3){1.0f, 0.0f, 0.0f}, VC_MAT_FIRE, 1.0f, 90.0f, $PROG)"
+    },
+    {
+      "source": "common/vc_volume_trail.inl",
+      "fn": "VFX_ComposeVolumeTrail",
+      "label": "VOLUME TRAIL",
+      "category": "common",
+      "fixture": "follower",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeVolumeTrail($XFORM, VC_MAT_FIRE, 1.5f, 2.0f, VOL_ENERGY)",
+      "kill_fn": "VFX_KillVolumeTrail"
+    },
+    {
+      "source": "earth/fissure_streak.inl",
+      "fn": "VFX_ComposeFissureStreak",
+      "label": "FISSURE STREAK",
+      "category": "earth",
+      "fixture": "timed",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeFissureStreak($SOURCE, $TARGET, 0.1f, $PROG, $TIME)"
+    },
+    {
+      "source": "earth/stone_pillar.inl",
+      "fn": "VFX_ComposeStonePillar",
+      "label": "STONE PILLAR",
+      "category": "earth",
+      "fixture": "timed",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeStonePillar($POS, $PROG)"
+    },
+    {
+      "source": "fire/flame_volume.inl",
+      "fn": "VFX_ComposeFlameVolume",
+      "label": "FLAME VOLUME",
+      "category": "fire",
+      "fixture": "burst",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeFlameVolume($POS, VC_MAT_FIRE, 1.5f, 1.0f)"
+    },
+    {
+      "source": "taiji/vc_black_hole.inl",
       "fn": "VFX_ComposeBlackHole",
       "label": "BLACK HOLE",
-      "category": "util",
+      "category": "taiji",
+      "fixture": "timed",
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeBlackHole(VC_MAT_FIRE, $POS, 1.5f, $TIME)"
     },
     {
-      "fn": "VFX_ComposeFissureStreak",
-      "label": "FISSURE STREAK",
-      "category": "earth",
-      "_auto": true,
-      "type": "continuous",
-      "draw_call": "VFX_ComposeFissureStreak($POS, Vector3Add($POS, (Vector3){3.0f, 0, 0}), 0.1f, fminf($PROG, 0.99f), $TIME)"
-    },
-    {
+      "source": "water/ice_crystal.inl",
       "fn": "VFX_ComposeIceCrystal",
       "label": "ICE CRYSTAL",
       "category": "water",
-      "_auto": true,
-      "type": "continuous",
-      "trigger_call": "VFX_ComposeIceCrystal($POS, $SEED)",
-      "draw_call": "VFX_ComposeIceCrystal($POS, $SEED)"
-    },
-    {
-      "fn": "VFX_ComposeParticleUpgradesTest",
-      "label": "PARTICLE UPGRADES TEST",
-      "category": "util",
+      "fixture": "burst",
       "_auto": true,
       "type": "oneshot",
-      "trigger_call": "VFX_ComposeParticleUpgradesTest($POS)"
+      "trigger_call": "VFX_ComposeIceCrystal($POS, $SEED)"
     },
     {
-      "fn": "VFX_ComposeStonePillar",
-      "label": "STONE PILLAR",
-      "category": "earth",
-      "_auto": true,
-      "type": "continuous",
-      "draw_call": "VFX_ComposeStonePillar($POS, fminf($PROG, 0.99f))"
-    },
-    {
-      "fn": "VFX_DrawIceCrystalBurst",
-      "label": "ICE CRYSTAL BURST",
-      "category": "water",
-      "_auto": true,
-      "type": "continuous",
-      "trigger_call": "VFX_DrawIceCrystalBurst($POS, 5, $SEED, 1.0f)",
-      "draw_call": "VFX_DrawIceCrystalBurst($POS, 10, $SEED, fminf(fmodf($TIME, 2.0f) / 1.2f, 1.0f))"
-    },
-    {
+      "source": "water/water_stream.inl",
       "fn": "VFX_ComposeWaterStream",
       "label": "WATER STREAM",
       "category": "water",
+      "fixture": "timed",
       "_auto": true,
       "type": "continuous",
-      "draw_call": "VFX_ComposeWaterStream(Vector3Add($POS, (Vector3){0.0f, 0.4f, 0.0f}), Vector3Add($POS, (Vector3){1.2f, 1.7f, 0.5f}), Vector3Add($POS, (Vector3){2.6f, 1.3f, -0.5f}), Vector3Add($POS, (Vector3){3.8f, 0.15f, 0.0f}), 0.22f, fminf($PROG, 0.99f), $TIME)"
-    },
-    {
-      "fn": "VFX_ComposeWaterStreamOnPath",
-      "label": "WATER STREAM ON PATH",
-      "category": "water",
-      "_auto": true,
-      "type": "continuous",
-      "draw_call": "VFX_ComposeWaterStreamOnPath(s_testPathPoints, TEST_PATH_POINT_COUNT, 0.25f, $PROG * 1.2f, 0.25f, $TIME)"
-    },
-    {
-      "fn": "VFX_ComposeSweptTrail",
-      "label": "SWEPT TRAIL",
-      "category": "metal",
-      "type": "continuous",
-      "_comment": "H1 bench. ONE trail, one style — a primary is judged ALONE or a bad result has two candidate causes. Set swept_style in the block below by hand to compare styles. The HAZE + RIBBON pairing now lives in the PROJECTILE entry, where it belongs.",
-      "draw_block": [
-        "{",
-        "static Matrix sweptXf;",
-        "static int sweptH = -1;",
-        "static float sweptPrevT = -1.0f;",
-        "float a = $TIME * 2.4f;",
-        "Vector3 p = Vector3Add($POS, (Vector3){ 3.0f * sinf(a), 1.7f + 0.45f * sinf(a * 0.7f), 2.1f * cosf(a) });",
-        "if ($TIME < sweptPrevT) { VFX_KillSweptTrail(sweptH); sweptH = -1; }",
-        "sweptPrevT = $TIME;",
-        "sweptXf = MatrixTranslate(p.x, p.y, p.z);",
-        "if (sweptH < 0) sweptH = VFX_ComposeSweptTrail(&sweptXf, VC_MAT_WATER, 1.60f, 0.85f, VFX_TRAIL_RIBBON);",
-        "}"
-      ]
-    },
-    {
-      "fn": "VFX_ComposeSweptTrail",
-      "label": "ENERGY TUBE",
-      "category": "water",
-      "type": "continuous",
-      "_comment": "The HAZE style ALONE, and it is now a swept TUBE rather than a flat strip — the first consumer of TRAIL_SHAPE_TUBE. What to look for, in order: (1) does it have VOLUME from a low angle, i.e. is its silhouette a rounded funnel rather than a band that thins as the camera comes level with it; (2) do the filaments run ALONG it and scroll, rather than sitting still; (3) is the tail a POINT rather than a flat disc. If (1) fails the tier gate dropped it to a ribbon (needs GFX_MED); if (3) fails the width curve is not reaching zero at the tail.",
-      "draw_block": [
-        "{",
-        "static Matrix tubeXf;",
-        "static int tubeH = -1;",
-        "static float tubePrevT = -1.0f;",
-        "float a = $TIME * 1.8f;",
-        "// A path that curves in all three axes — a straight or planar one lets a",
-        "// broken cross-section frame pass, which is the whole trap in a tube.",
-        "Vector3 p = Vector3Add($POS, (Vector3){ 3.2f * sinf(a), 1.8f + 0.7f * sinf(a * 1.7f), 2.4f * cosf(a * 1.3f) });",
-        "if ($TIME < tubePrevT) { VFX_KillSweptTrail(tubeH); tubeH = -1; }",
-        "tubePrevT = $TIME;",
-        "tubeXf = MatrixTranslate(p.x, p.y, p.z);",
-        "if (tubeH < 0) tubeH = VFX_ComposeSweptTrail(&tubeXf, VC_MAT_WATER, 2.40f, 0.85f, VFX_TRAIL_HAZE);",
-        "}"
-      ]
-    },
-    {
-      "fn": "VFX_ComposeVolumeTrail",
-      "label": "VOLUME TRAIL",
-      "category": "util",
-      "type": "continuous",
-      "_comment": "P1. The swept TUBE promoted to a primary — the SAME tube the ENERGY TUBE entry shows, reached without a weapon trail's cloth, aspect table or sparks. All three kinds fly the SAME curved path side by side, because the whole claim of P1 is that they differ in three things and nothing else, and that is only judgeable next to each other. What to look for, in order: (1) all three are ROUND from a low angle — a rounded funnel, not a band that thins as the camera comes level; if any is flat, read the TRAIL tube roundness line (VFX_PLAN 4.4). (2) SMOKE OCCLUDES and the other two GLOW — smoke should darken what is behind it, energy and fire should only ever brighten. If smoke glows, the blend law broke. (3) the surfaces differ: smoke billows, energy holds its shape, fire sits between. (4) the sheets flow AGAINST travel at three visibly different rates. Dials: vol_solid=1 for a matte white cast when judging shape alone, vol_noise / vol_flow / vol_radius.",
-      "draw_block": [
-        "{",
-        "static Matrix volXf[3];",
-        "static int volH[3] = { -1, -1, -1 };",
-        "static float volPrevT = -1.0f;",
-        "if ($TIME < volPrevT) { for (int vk = 0; vk < 3; vk++) { VFX_KillVolumeTrail(volH[vk]); volH[vk] = -1; } }",
-        "volPrevT = $TIME;",
-        "float volA = $TIME * 1.6f;",
-        "for (int vk = 0; vk < 3; vk++)",
-        "{",
-        "    // One path, three lateral offsets. Curved in ALL THREE axes: a straight or",
-        "    // planar path lets a broken cross-section frame pass, which is the whole",
-        "    // trap in a tube (core/docs/LANDMINES.md, 30/07).",
-        "    Vector3 vp = Vector3Add($POS, (Vector3){ 3.0f * sinf(volA) + (float)(vk - 1) * 2.6f,",
-        "                                             1.9f + 0.7f * sinf(volA * 1.7f),",
-        "                                             2.2f * cosf(volA * 1.3f) });",
-        "    volXf[vk] = MatrixTranslate(vp.x, vp.y, vp.z);",
-        "    if (volH[vk] < 0)",
-        "        volH[vk] = VFX_ComposeVolumeTrail(&volXf[vk], (vk == 0) ? VC_MAT_LIGHTNING : ((vk == 1) ? VC_MAT_EARTH : VC_MAT_FIRE),",
-        "                                          0.45f, 0.85f, (VFX_VolumeKind)vk);",
-        "}",
-        "}"
-      ]
-    },
-    {
-      "fn": "VFX_ComposeGroundWave",
-      "label": "GROUND WAVE",
-      "category": "earth",
-      "type": "continuous",
-      "_comment": "H2 bench. Loops a 1.6 s shockwave so the expansion, the leading crest and the fade are all visible without re-triggering. Uses VFX_GroundHeightFromMap, NOT NULL: the first version passed NULL 'because the sandbox floor is flat', which on a heightmap map draws a FLAT ring that happens to sit on the ground where the ground is level and floats or sinks everywhere else — i.e. the bench could not show the one thing H2 exists to do.",
-      "draw_call": "VFX_ComposeGroundWave($POS, VC_MAT_EARTH, 5.0f, fmodf($TIME, 1.6f) / 1.6f, VFX_GroundHeightFromMap, NULL)"
-    },
-    {
-      "fn": "VFX_ComposeImpactFlash",
-      "label": "IMPACT FLASH",
-      "category": "util",
-      "type": "oneshot",
-      "_comment": "Impact primary, benched ALONE. The decal beat inside VFX_ComposeImpactPackage shipped dead (no texture in .ud) and nobody noticed for a month because it had no bench entry of its own — a primary that cannot be fired on its own cannot be seen to be missing.",
-      "trigger_call": "VFX_ComposeImpactFlash($POS, VC_MAT_FIRE, 1.0f, 0.8f)"
-    },
-    {
-      "fn": "VFX_ComposeImpactDistort",
-      "label": "IMPACT DISTORT",
-      "category": "util",
-      "type": "oneshot",
-      "_comment": "Impact primary, benched ALONE. The decal beat inside VFX_ComposeImpactPackage shipped dead (no texture in .ud) and nobody noticed for a month because it had no bench entry of its own — a primary that cannot be fired on its own cannot be seen to be missing.",
-      "trigger_call": "VFX_ComposeImpactDistort($POS, 1.0f, 0.8f)"
-    },
-    {
-      "fn": "VFX_ComposeImpactDecal",
-      "label": "IMPACT DECAL",
-      "category": "util",
-      "type": "oneshot",
-      "_comment": "Impact primary, benched ALONE. The decal beat inside VFX_ComposeImpactPackage shipped dead (no texture in .ud) and nobody noticed for a month because it had no bench entry of its own — a primary that cannot be fired on its own cannot be seen to be missing.",
-      "trigger_call": "VFX_ComposeImpactDecal($POS, VC_MAT_FIRE, 1.0f, 0.8f)"
-    },
-    {
-      "fn": "VFX_ComposeSparkTrail",
-      "label": "SPARK TRAIL",
-      "category": "util",
-      "type": "continuous",
-      "_comment": "Benched as ONE spark on a loop, not a swarm. The first version emitted 40/s and the owner could only see 'a pile of strands' — a primary has to be judgeable alone before it is judgeable in a crowd.",
-      "draw_block": [
-        "{",
-        "static float acc = 0.0f;",
-        "acc += GetFrameTime();",
-        "if (acc > 0.55f) {",
-        "    acc = 0.0f;",
-        "    Vector3 c = Vector3Add($POS, (Vector3){0.0f, 1.2f, 0.0f});",
-        "    float ang = $TIME * 1.3f;",
-        "    Vector3 sp = (Vector3){ c.x + cosf(ang) * 2.0f, c.y, c.z + sinf(ang) * 2.0f };",
-        "    Vector3 v = Vector3Scale(Vector3Normalize(Vector3Subtract(c, sp)), 3.0f);",
-        "    VFX_ComposeSparkTrail(sp, Vector3Add(v, (Vector3){ -sinf(ang) * 2.2f, 0.4f, cosf(ang) * 2.2f }), VC_MAT_LIGHTNING, 0.5f, 0.9f);",
-        "}",
-        "}"
-      ]
-    },
-    {
-      "fn": "VFX_ComposeProjectile",
-      "label": "PROJECTILE",
-      "category": "water",
-      "type": "continuous",
-      "_comment": "COMPOSITE. Orb + haze field + main tail + 2 spiralling wisps, flying a long curved path so the wisps' spiral and the field's lag are both visible. Killed and respawned on re-trigger because the bench clock jumps backwards.",
-      "draw_block": [
-        "{",
-        "static Matrix projXf;",
-        "static int projH = -1;",
-        "static float projPrevT = -1.0f;",
-        "if ($TIME < projPrevT) { VFX_KillProjectile(projH); projH = -1; }",
-        "projPrevT = $TIME;",
-        "float a = $TIME * 1.5f;",
-        "Vector3 p = Vector3Add($POS, (Vector3){ 4.0f * sinf(a), 1.8f + 0.6f * sinf(a * 0.8f), 3.0f * cosf(a * 0.7f) });",
-        "projXf = MatrixTranslate(p.x, p.y, p.z);",
-        "if (projH < 0) projH = VFX_ComposeProjectile(&projXf, VC_MAT_WATER, 0.34f);",
-        "}"
-      ]
-    },
-    {
-      "fn": "VFX_ComposeDebrisShards",
-      "label": "DEBRIS SHARDS",
-      "category": "metal",
-      "type": "oneshot",
-      "_comment": "P3. Rewritten from the pre-Dot-E VFX_ComposeShardDebris scaffold, which drew LIT EffectMaterial boxes (black-on-black in the night arena) and flipped backface culling with no batch flush. ONE-SHOT: chips per CALL, so it is on the trigger key, not the draw path. What to look for: (1) the chips are ANGULAR and FLATTER than they are wide, and you can tell one face from another; (2) as each tumbles its faces change brightness and occasionally FLASH — that specular pop is the whole point, and if every chip is one flat value the per-face shading is not running; (3) they are the ELEMENT's colour, not white; (4) they bounce once and settle. Dials: debris_scale / debris_spin / debris_dust / debris_life.",
-      "trigger_call": "VFX_ComposeDebrisShards($POS, (Vector3){2.5f, 3.0f, 0.0f}, VC_MAT_METAL, 0.09f, 14)"
-    },
-    {
-      "fn": "VFX_ComposeBeam",
-      "label": "BEAM",
-      "category": "util",
-      "type": "continuous",
-      "_comment": "P4. The sustained line, built as a TUBE (P1's tube, not a second one). Three beams at once, and that is the DoD rather than decoration: [A] a normal beam across the bench; [B] one aimed straight AT the camera-ish vertical, to check the end-on view is a bright disc and not a hole; [C] one whose endpoints close to within a few millimetres, to check it thins to nothing and vanishes instead of inflating into a ball. What to look for: (1) beam A fires UP from its source over the first moments rather than appearing at full length; (2) the shaft wanders slightly but MEETS both endpoints exactly — a gap at either end means the sin(PI*t) envelope is not pinning the deviation; (3) no half-shell (that is the culling flush); (4) beam C never becomes a blob. Dials: beam_width / beam_alpha / beam_wander / beam_flow.",
-      "draw_block": [
-        "{",
-        "float bt = fmodf($TIME, 2.6f) / 2.6f;",
-        "// [A] the ordinary case: a held beam across the bench.",
-        "VFX_ComposeBeam(Vector3Add($POS, (Vector3){-3.5f, 1.5f, 0.0f}),",
-        "                Vector3Add($POS, (Vector3){ 3.5f, 2.1f, 0.0f}), VC_MAT_LIGHTNING, 0.30f, bt);",
-        "// [B] END-ON. Nearly vertical, so from most bench angles you look down it.",
-        "VFX_ComposeBeam(Vector3Add($POS, (Vector3){0.0f, 0.1f, 3.0f}),",
-        "                Vector3Add($POS, (Vector3){0.0f, 5.0f, 3.0f}), VC_MAT_HOLY, 0.30f, bt);",
-        "// [C] DEGENERATE. The endpoints close to millimetres and reopen; it must thin",
-        "// out and disappear, never inflate. It also logs once, then stays quiet.",
-        "float bgap = 0.004f + 1.6f * (0.5f + 0.5f * sinf($TIME * 1.1f));",
-        "VFX_ComposeBeam(Vector3Add($POS, (Vector3){3.0f, 1.5f, -2.5f}),",
-        "                Vector3Add($POS, (Vector3){3.0f + bgap, 1.5f, -2.5f}), VC_MAT_FIRE, 0.30f, 0.5f);",
-        "}"
-      ]
-    },
-    {
-      "fn": "VFX_ComposeShockRing",
-      "label": "SHOCK RING",
-      "category": "util",
-      "type": "continuous",
-      "_comment": "P5. The expanding ring OFF the ground. TWO rings at once, at right angles, and that pairing IS the test: one horizontal (the pose a ground wave would take) and one VERTICAL, which from a normal bench camera is seen close to edge-on. What to look for: (1) the vertical ring does NOT disappear when you line up with its plane — it has a lens section, so edge-on you see its silhouette; if it vanishes the out-of-plane thickness is zero. (2) the crest LEADS: the bright line sits toward the outer edge with the long slope trailing inside, not a symmetric doughnut. (3) the inner face is brighter than the outer at the same height. (4) it decelerates as it expands. Dials: shock_band / shock_thick / shock_alpha.",
-      "draw_block": [
-        "{",
-        "float st = fmodf($TIME, 1.6f) / 1.6f;",
-        "// Horizontal — the ground wave's pose, without the ground.",
-        "VFX_ComposeShockRing(Vector3Add($POS, (Vector3){-3.0f, 1.6f, 0.0f}), (Vector3){0.0f, 1.0f, 0.0f},",
-        "                     VC_MAT_LIGHTNING, 3.0f, st);",
-        "// VERTICAL — the case a flat annulus cannot survive.",
-        "VFX_ComposeShockRing(Vector3Add($POS, (Vector3){ 3.0f, 1.8f, 0.0f}), (Vector3){0.0f, 0.0f, 1.0f},",
-        "                     VC_MAT_METAL, 3.0f, st);",
-        "}"
-      ]
-    },
-    {
-      "fn": "VFX_ComposePortalDisc",
-      "label": "PORTAL DISC",
-      "category": "taiji",
-      "type": "continuous",
-      "_comment": "P6. The flat disc with a rim. TWO discs: one flat on the ground (the summoning-seal pose) and one standing vertically, so the foreshortening and the edge-on rim are both visible from one camera. What to look for: (1) the MIDDLE IS DARK — you should see the arena through it; if the disc glows evenly it is a coin, not a hole, and the interior falloff is too flat. (2) the RIM is the hottest thing and it survives edge-on (it has a lens section). (3) the interior swirls while the disc's OUTLINE stays perfectly still — the swirl is a UV scroll, so any wobble of the silhouette means geometry is being rotated. (4) it collapses shut faster than it opened. Dials: portal_alpha / portal_swirl / portal_rim.",
-      "draw_block": [
-        "{",
-        "float pt = fmodf($TIME, 3.2f) / 3.2f;",
-        "VFX_ComposePortalDisc(Vector3Add($POS, (Vector3){-2.6f, 0.08f, 0.0f}), (Vector3){0.0f, 1.0f, 0.0f},",
-        "                      VC_MAT_VOID, 1.6f, pt);",
-        "VFX_ComposePortalDisc(Vector3Add($POS, (Vector3){ 2.6f, 1.9f, 0.0f}), (Vector3){0.0f, 0.0f, 1.0f},",
-        "                      VC_MAT_TAIJI, 1.6f, pt);",
-        "}"
-      ]
-    },
-    {
-      "fn": "VFX_ComposeSmokeTrail",
-      "label": "SMOKE TRAIL",
-      "category": "util",
-      "_auto": true,
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeSmokeTrail(/* TODO:const Matrix */, VC_MAT_FIRE, 1.5f, 2.0f)"
-    },
-    {
-      "fn": "VFX_SmokeTrail_SetTexture",
-      "label": "SMOKE TRAIL_ SET TEXTURE",
-      "category": "util",
-      "_auto": true,
-      "type": "oneshot",
-      "trigger_call": "VFX_SmokeTrail_SetTexture(/* TODO:const Texture2D */)"
+      "draw_call": "VFX_ComposeWaterStream($SOURCE, $CONTROL1, $CONTROL2, $TARGET, 1.5f, $PROG, $TIME)"
     }
   ],
-  "overrides": {
-    "VFX_ComposeSmokePuff": {
-      "label": "SMOKE PUFF",
-      "category": "util",
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeSmokePuff($POS, VC_MAT_EARTH, 1.0f, 1.0f)"
-    },
-    "VFX_ComposeFlameVolume": {
-      "label": "FLAME VOLUME",
-      "category": "fire",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeFlameVolume($POS, VC_MAT_FIRE, 1.0f, 1.0f)"
-    },
-    "VFX_ComposeGlintSparkle": {
-      "label": "GLINT SPARKLE",
-      "category": "metal",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeGlintSparkle($POS, VC_MAT_HOLY, 1.0f, $TIME)"
-    },
-    "VFX_ComposeWaterStreamOnPath": {
-      "label": "WATER STREAM ON PATH",
-      "category": "water",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeWaterStreamOnPath(s_testPathPoints, TEST_PATH_POINT_COUNT, 0.25f, $PROG * 1.2f, 0.25f, $TIME)"
-    },
-    "VFX_ComposeWaterStream": {
-      "label": "WATER STREAM",
-      "category": "water",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeWaterStream(Vector3Add($POS, (Vector3){0.0f, 0.4f, 0.0f}), Vector3Add($POS, (Vector3){1.2f, 1.7f, 0.5f}), Vector3Add($POS, (Vector3){2.6f, 1.3f, -0.5f}), Vector3Add($POS, (Vector3){3.8f, 0.15f, 0.0f}), 0.22f, fminf($PROG, 0.99f), $TIME)"
-    },
-    "VFX_ComposeIceCrystal": {
-      "label": "ICE CRYSTAL",
-      "category": "water",
-      "type": "continuous",
-      "draw_call": "VFX_ComposeIceCrystal($POS, $SEED)"
-    },
-    "VFX_DrawIceCrystalBurst": {
-      "label": "ICE CRYSTAL BURST",
-      "category": "water",
-      "type": "continuous",
-      "draw_call": "VFX_DrawIceCrystalBurst($POS, 10, $SEED, fminf(fmodf($TIME, 2.0f) / 1.2f, 1.0f))"
-    }
-  }
+  "schema": 2
 }

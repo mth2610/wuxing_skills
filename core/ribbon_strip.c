@@ -25,7 +25,7 @@
 // strip to **0.08 at the other — a 13x change along a single band**, at many
 // camera angles. The thin end is sub-pixel, so it renders as dashes while the
 // wide end is solid. That is the artefact the swept BLADE trail was chased
-// through four rounds for (core/composition/common/vc_swept_trail.inl,
+// through four rounds for (core/composition/common/vc_ribbon_trail.inl,
 // 29/07/2026): dashed only in the plane-pinned style, dashed only where the path
 // bent, worse zoomed out, and absent from the camera-facing styles drawn by the
 // same code on the same paths — including one with THINNER geometry, which is

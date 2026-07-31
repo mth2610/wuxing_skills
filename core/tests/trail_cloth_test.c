@@ -1,7 +1,7 @@
 // core headless test — the FOLLOWER extensions added to core/trail_system.c so
 // that a composition does not have to reimplement a trail to get a good one.
 //
-// Every one of these was first written inside `vc_swept_trail.inl`, which is the
+// Every one of these was first written inside `vc_ribbon_trail.inl`, which is the
 // bug: the composition layer had grown its own history ring, its own sample
 // clock, its own cloth and its own layered draw, and `core/trail_system.h` — 18
 // public entry points — had zero consumers. They are here now, and this file

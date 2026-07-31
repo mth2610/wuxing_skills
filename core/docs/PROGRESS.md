@@ -23,7 +23,7 @@ DissolveExit, SweepSlash, EnergyBurst, ImpactPackage, LightShaft.
 `core/composition/visual_composer.h` documents each one and is the index.
 
 **Đợt H:** H1 `VFX_ComposeSweptTrail` has landed (BLADE / RIBBON / FILAMENT,
-`core/composition/common/vc_swept_trail.inl`) — the first consumer of
+`core/composition/common/vc_ribbon_trail.inl`) — the first consumer of
 `core/trail_system.h`, which the purge left at zero users. Bench entry
 `SWEPT TRAIL` drives a figure-eight and cycles the three styles every 4 s;
 arithmetic covered by `core/tests/swept_trail_test.c`.
@@ -104,7 +104,7 @@ rather than opinion (`docs/LANDMINES.md` has the write-ups):**
 Still unverified on screen — all of it needs the owner's eye.
 
 **Audit that changed the plan (29/07).** The owner asked whether H1 reused the
-engine. It did not: `vc_swept_trail.inl` used `DrawRibbonStripEx`,
+engine. It did not: `vc_ribbon_trail.inl` used `DrawRibbonStripEx`,
 `Ribbon_ConstrainSegment`, `ForceField_*` and the curve types — but **zero** of
 `core/trail_system.h`, whose empty consumer list was H1's stated reason for
 existing. 849 lines of code (plus 637 of comment) had grown a private history
@@ -128,7 +128,7 @@ along an axis the caller derives) and `Trail_SetFrozen` (hold the shape, keep th
 flow — the instrument that settles "is it actually flowing"). Arithmetic covered
 by `core/tests/trail_cloth_test.c` (40 assertions). 13/13 suites green.
 
-**Step 2 — DONE: `vc_swept_trail.inl` ported onto it.** 849 lines of code down
+**Step 2 — DONE: `vc_ribbon_trail.inl` ported onto it.** 849 lines of code down
 to 625, and what is left is authoring: styles, aspect cap, width/alpha curves,
 the two sheets, the layer table, the swing-plane normal, the sparkles. The ring,
 `Push`, `Cut`, `Simulate`, `BuildPoints`, the sample clock, the teleport check
