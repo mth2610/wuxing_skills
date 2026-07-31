@@ -401,12 +401,9 @@ void VFX_KillSweptTrail(int handle);
 // is shared, and that is the point: three kinds are a PARAMETER, not three
 // implementations (VFX_PLAN §4.1).
 //
-// The fourth thing `kind` decides is the BLEND, and it is not a fourth knob —
-// it is the blend law applied. Smoke BLOCKS light, so VOL_SMOKE draws
-// BLEND_ALPHA over a dark ramp; energy and fire EMIT, so they draw
-// BLEND_ADDITIVE over the element's body→glow ramp. Blend and ramp come from one
-// predicate so they cannot drift apart. **Glowing smoke is VOL_SMOKE plus a
-// SECOND additive draw**, never VOL_SMOKE flipped to additive.
+// Shipping currently accepts only VOL_ENERGY. VOL_SMOKE and VOL_FIRE remain
+// reserved compatibility values until owner visual approval; P2 SmokeEmitter
+// and FlameEmitter own those primitives instead.
 //
 // `radius` is the tube's radius in METRES at its widest, and it is a CEILING:
 // it is also capped against the length the emitter has actually travelled (a
@@ -421,8 +418,8 @@ void VFX_KillSweptTrail(int handle);
 // existence, so it drains its own history and fades.
 typedef enum {
     VOL_ENERGY = 0, // strands, tight surface, fast flow — a bolt's wake
-    VOL_SMOKE  = 1, // no edges, billowing surface, slow churn — and it OCCLUDES
-    VOL_FIRE   = 2, // stretched along travel, hot core, fastest flow
+    VOL_SMOKE  = 1, // reserved: P2 SmokeEmitter, not a shipping tube
+    VOL_FIRE   = 2, // reserved: P2 FlameEmitter, not a shipping tube
     // Not a kind — the count. Range-check against THIS. `VFX_ComposeSweptTrail`
     // validated against the last style by name and silently clamped every HAZE
     // request to BLADE for a day (core/docs/LANDMINES.md, 30/07).

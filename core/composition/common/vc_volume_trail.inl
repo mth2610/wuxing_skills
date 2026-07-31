@@ -497,6 +497,13 @@ int VFX_ComposeVolumeTrailEx(const Matrix *followTransform, VC_MaterialId mat,
                  (int)kind);
         kind = VOL_ENERGY;
     }
+    if (kind != VOL_ENERGY)
+    {
+        TraceLog(LOG_WARNING,
+                 "VFX_VOLUME: kind %d is preview-only; use P2 SmokeEmitter/FlameEmitter "
+                 "until owner approves smoke/fire tubes.", kind);
+        return -1;
+    }
     if (radius <= 0.0f)
         radius = 0.30f;
     if (lifetime <= 0.0f)
