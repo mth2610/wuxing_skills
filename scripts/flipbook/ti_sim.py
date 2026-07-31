@@ -109,12 +109,20 @@ PRESETS = {
     # stops evolving sooner (higher viscosity, shorter impulse) because the
     # particles are heavy and the parcel loses its momentum quickly. Smoke keeps
     # rolling for the whole sheet.
-    "dust_puff": dict(dt=0.9, gravity=0.0, flat=1.0, shell=0.0, impulse=0.22, fuel_dens=1.0, 
-        fuel_radius=0.06, fuel_frames=0.10,
-        radial=7.0, curl=3.4, swirl=4.5,
-        diffuse=0.035, eddy=48.0,
-        viscosity=0.85, buoyancy=0.0,
-        cool=3.0, soot=1.0),
+    "dust_puff": dict(dt=0.9, gravity=0.0, flat=1.0, shell=0.0, fuel_dens=1.0,
+        # Smaller seed and earlier breakup: a dust card is one parcel, never a
+        # self-contained smoke cloud. The cloud-scale flattening stays in the
+        # emitter; this parcel only needs grain and a short rolling breakup.
+        fuel_radius=0.040, fuel_frames=0.060, impulse=0.12,
+        radial=4.4, curl=3.8, swirl=3.8,
+        diffuse=0.020, eddy=54.0,
+        viscosity=0.95, buoyancy=0.0,
+        # Dust loses visibility quickly; leaving smoke's 0.06 decay here is
+        # why the final atlas rows became one static white cloud.
+        # Leave a faint but usable tail at f064. The prior 0.11 made the last
+        # three sampled atlas cells empty; a flipbook is a timed event, not a
+        # 13-frame effect padded with transparent slots.
+        dissipate=0.075, cool=3.0, soot=1.0),
 
     # ENERGY EXPLOSION — the one preset that is NOT composed from parcels.
     #
@@ -162,6 +170,8 @@ def main():
     ap.add_argument("--substeps", type=int, default=3)
     ap.add_argument("--jacobi", type=int, default=40)
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--arch", default="gpu", choices=["gpu", "cpu"],
+                    help="Taichi backend; use cpu when Metal shader/cache setup fails")
     # Every physical term is a flag: this is the loop an artist runs.
     ap.add_argument("--radial", type=float, default=None, help="outward push from the centre")
     ap.add_argument("--curl", type=float, default=None, help="curl-noise forcing")
@@ -203,6 +213,8 @@ def main():
     ap.add_argument("--fuel-frames", type=float, default=None,
                     help="fraction of the sheet over which fuel is injected; the "
                          "lever that decides how much of the sheet is still FIRE")
+    ap.add_argument("--dissipate", type=float, default=None,
+                    help="density loss per simulated second; dust needs a short visual tail")
     args = ap.parse_args()
 
     p = dict(PRESETS[args.preset])
@@ -210,7 +222,7 @@ def main():
     # means the same shape whatever --res it is applied at.
     for k in ("radial", "curl", "viscosity", "buoyancy", "cool", "swirl",
               "diffuse", "soot", "fuel_frames", "eddy", "gravity", "flat",
-              "shell", "impulse", "fuel_dens", "dt"):
+              "shell", "impulse", "fuel_dens", "dt", "dissipate"):
         if getattr(args, k) is not None:
             p[k] = getattr(args, k)
 
@@ -256,7 +268,7 @@ def main():
         if f.endswith(".npz"):
             os.remove(os.path.join(out_dir, f))
 
-    ti.init(arch=ti.gpu, random_seed=args.seed)
+    ti.init(arch=ti.gpu if args.arch == "gpu" else ti.cpu, random_seed=args.seed)
 
     u = ti.Vector.field(3, ti.f32, shape=(N, N, N))
     u_tmp = ti.Vector.field(3, ti.f32, shape=(N, N, N))
@@ -499,7 +511,7 @@ def main():
             temp[I] = div[I]
 
     @ti.kernel
-    def cool(dt: ti.f32, rate: ti.f32, soot: ti.f32):
+    def cool(dt: ti.f32, rate: ti.f32, soot: ti.f32, dissipate: ti.f32):
         for I in ti.grouped(temp):
             # T^4 radiative loss, and what it loses becomes soot: this is the
             # hand-off that makes fire read as fire rather than orange smoke.
@@ -511,7 +523,7 @@ def main():
             temp[I] = ti.max(0.0, temp[I] - loss)
             # 0.25 emptied the last three rows of a 64-frame sheet; soot should
             # outlive the flame by a long way.
-            dens[I] = (dens[I] + loss * soot) * (1.0 - 0.06 * dt)
+            dens[I] = (dens[I] + loss * soot) * ti.max(0.0, 1.0 - dissipate * dt)
 
     # Simulated time per FRAME. The sheet always has --frames cells, so this is
     # what decides how much of an EVENT they cover: a puff drifting for a second
@@ -554,7 +566,7 @@ def main():
                 jacobi(pre2, pre)
             subtract_gradient()
             advect(dt / args.substeps)
-            cool(dt / args.substeps, p["cool"], p["soot"])
+            cool(dt / args.substeps, p["cool"], p["soot"], p.get("dissipate", 0.06))
             diffuse(p["diffuse"])
 
         d = dens.to_numpy()

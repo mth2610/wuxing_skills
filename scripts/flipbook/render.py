@@ -83,6 +83,10 @@ def main():
                     help="floor under the self-shadow, so the underside of a "
                          "thick puff goes dark rather than black")
     ap.add_argument("--arch", default="gpu", choices=["gpu", "cpu"])
+    ap.add_argument("--profile", default="volume", choices=["volume", "dust"],
+                    help="volume keeps the smoke/fire lighting channels. dust writes a "
+                         "cold, eroded alpha parcel: it deliberately has no volume "
+                         "self-shadow, which otherwise shows up as horizontal bands.")
     args = ap.parse_args()
 
     files = sorted(glob.glob(os.path.join(args.cache_dir, "f*.npz")))
@@ -219,7 +223,10 @@ def main():
         if len(ys):
             reach = max(abs(ys.max() + 0.5 - half), abs(ys.min() + 0.5 - half),
                         abs(xs.max() + 0.5 - half), abs(xs.min() + 0.5 - half)) / half
-            zoom = 0.98 / max(reach, 1e-3)
+            # Pack audits after filtering/quantising, which can expand the
+            # measured alpha by one or two pixels. Keep a real 6% margin here;
+            # 2% repeatedly produced "auto-fit" sheets that still clipped.
+            zoom = 0.94 / max(reach, 1e-3)
             fit_w, fit_h = min(1.0, aspect) * zoom, min(1.0, 1.0 / aspect) * zoom
             print("RENDER: autofit reach %.3f of the domain half-width -> zoom %.2f"
                   % (reach, zoom))
@@ -264,6 +271,33 @@ def main():
         # rather than as a second, differently-scaled density.
         rgba[..., 2] = np.clip(img[..., 3] / s_max, 0, 1)      # self-shadowed value
         rgba[..., 3] = np.clip(img[..., 2], 0, 1)              # true opacity
+        if args.profile == "dust":
+            # Dust is a cold particulate card, not a mini lit smoke volume.
+            # Keeping B/G's volume-light ratio exposes ray-step/self-shadow
+            # bands in the first dense cells.  Shape it from the integrated
+            # density instead, then erode it with stable coarse grain so the
+            # parcel tears as it expands without temporal glitter.
+            base = rgba[..., 1]
+            rng = np.random.default_rng(0xD057 + i)
+            coarse_size = max(5, args.cell // 24)
+            fine_size = max(9, args.cell // 11)
+            coarse = rng.random((coarse_size, coarse_size), dtype=np.float32)
+            fine = rng.random((fine_size, fine_size), dtype=np.float32)
+            coarse = np.asarray(Image.fromarray((coarse * 255).astype(np.uint8)).resize(
+                (args.cell, args.cell), Image.Resampling.BICUBIC), np.float32) / 255.0
+            fine = np.asarray(Image.fromarray((fine * 255).astype(np.uint8)).resize(
+                (args.cell, args.cell), Image.Resampling.BICUBIC), np.float32) / 255.0
+            grain = coarse * 0.68 + fine * 0.32
+            # A dust parcel must never begin as an opaque white stamp.  Preserve
+            # its dense core, but keep headroom for the material tint and let
+            # the per-card alpha stack build the impact cloud.
+            # Put the grain into the THRESHOLD, not only opacity. That breaks
+            # the silhouette into particulate lobes instead of painting noise
+            # over one smooth smoke blob.
+            soft = np.clip((base - 0.16 + (grain - 0.5) * 0.23) / 0.66, 0.0, 1.0)
+            rgba[..., 1] = soft
+            rgba[..., 2] = 0.0
+            rgba[..., 3] = soft * np.clip(0.46 + grain * 0.50, 0.0, 1.0)
         # Rows: image Y already runs down from the grid's top, so no flip here.
         Image.fromarray((rgba * 255).astype(np.uint8), "RGBA").save(
             os.path.join(out_dir, "f%03d.png" % (i + 1)))

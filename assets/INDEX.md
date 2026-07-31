@@ -12,8 +12,8 @@ these files.
 
 ## Textures — Decals (`assets/textures/decals/`)
 
-Used via `SpawnGroundDecal(DECAL_PRESET_*)` / `DecalSystem_Add*`. All are
-white/greyscale with alpha so `Color tint` fully controls hue.
+Legacy catalog only. New primary work must follow [DECAL_REWORK.md](DECAL_REWORK.md)
+and select a semantic surface profile; do not add new filename-based decal use.
 
 | File | DECAL_PRESET constant | Visual description |
 |---|---|---|
@@ -145,17 +145,15 @@ gradient path used for the static sprites) is a measured 33/255 black smudge.
 
 ## dust_puff_4x4.png + _smoke (Đợt E / E4 — flipbook)
 
-1024×1024 RGBA, 4×4 = 16 frames. Simulated at the full 64 frames and subsampled
-with `pack.py --stride 4`: `--frames` is a PHYSICS axis in this solver (dt is
-per frame), so simulating 16 frames would have produced an earlier MOMENT of the
-event, not a coarser sampling of it.
+1024×1024 RGBA, 4×4 = 16 frames. Rebuild through the same Taichi
+smoke/fire pipeline: `python3 scripts/gen_dust_flipbook.py`. It simulates
+the full 64-frame event, skips its two ignition frames, then subsamples with
+`pack.py --offset 2 --stride 4`: `--frames` is a PHYSICS axis, not a coarser
+sampling knob.
 
-Impact dust, so two terms no other preset uses: the radial push is squashed
-vertically (`flat 0.20` → measured height/width **0.87**, wider than tall, the
-shape that reads as "something hit the floor") and a small `gravity` on density.
-Gravity is deliberately small — at 4.0 the dust piled onto the domain floor and
-the boundary clamp manufactured 16% of the mass there; the FALL belongs to the
-particle, the sheet only carries the internal asymmetry.
+The old sheet is pending replacement. The new bake keeps the parcel isotropic;
+impact flattening/fall belong to the particle placement and force field, not to
+every card inside the cloud.
 
 No `_flame` split: the channel is spurious for a cold effect and `pack.py` skips
 writing it. Audited: coverage 18.1%, lobes 1.02, 0/16 clipped, wall-shell 0.0%,

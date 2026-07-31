@@ -88,6 +88,9 @@ def main():
                          "PHYSICS axis (dt is per frame), so a 16-frame sim is an "
                          "earlier MOMENT of the effect, not a coarser sampling of "
                          "it. Simulate the full event, then subsample here.")
+    ap.add_argument("--offset", type=int, default=0,
+                    help="skip this many rendered frames before subsampling. Use it "
+                         "when f000 is an ignition seed rather than a drawable frame.")
     ap.add_argument("--split", action="store_true",
                     help="also write <out>_flame.png and <out>_smoke.png. The "
                          "engine's particle shader multiplies the WHOLE rgb by "
@@ -119,6 +122,10 @@ def main():
         return 0
 
     files = sorted(glob.glob(os.path.join(args.frames_dir, "*.png")))
+    if args.offset < 0:
+        print("--offset must be >= 0")
+        return 1
+    files = files[args.offset:]
     if args.stride > 1:
         files = files[::args.stride]
     want = args.grid * args.grid
