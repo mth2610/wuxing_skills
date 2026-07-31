@@ -15,6 +15,7 @@
 #include "core/geometry/mesh_cache.h"
 #include "core/material/material_system.h"
 #include "core/resource_manager.h"
+#include "core/vfx_surface_registry.h"
 #include "core/skill_manager.h"
 #include "core/map_manager.h"   // H2 ground wave: VFX_GroundHeightFromMap
 #include "core/gfx_quality.h"
@@ -60,6 +61,8 @@
 #include "common/vc_projectile.inl"
 #include "common/vc_volume_trail.inl"
 #include "common/vc_debris_shards.inl"
+#include "common/vc_ember_trail.inl"
+#include "common/vc_shield_shell.inl"
 // @gen:archetype_includes end
 
 void VFX_Compose_Update(float dt)
@@ -71,6 +74,8 @@ void VFX_Compose_Update(float dt)
     VC_Projectile_Update(dt);
     VC_VolumeTrail_Update(dt);
     VC_DebrisShards_Update(dt);
+    VC_EmberTrail_Update(dt);
+    VC_ShieldShell_Update(dt);
     VC_FlameEmitter_Update(dt);
 // @gen:archetype_update end
     SmokeEmitter_Update(dt);
@@ -92,6 +97,8 @@ void VFX_Compose_Draw3D(Camera3D cam)
     VC_Projectile_Draw3D(cam);
     VC_VolumeTrail_Draw3D(cam);
     VC_DebrisShards_Draw3D(cam);
+    VC_EmberTrail_Draw3D(cam);
+    VC_ShieldShell_Draw3D(cam);
     VC_FlameEmitter_Draw3D(cam);
 // @gen:archetype_draw end
     SmokeEmitter_Draw3D(cam);

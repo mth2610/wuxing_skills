@@ -61,6 +61,17 @@
       "draw_call": "VFX_ComposeChargeConverge($POS, VC_MAT_FIRE, 1.5f, $PROG, 5)"
     },
     {
+      "source": "common/vc_contact_spark.inl",
+      "fn": "VFX_ComposeContactSpark",
+      "label": "CONTACT SPARK",
+      "category": "common",
+      "fixture": "burst",
+      "lifecycle": "event",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeContactSpark($POS, VC_MAT_FIRE, 1.5f, $PROG)"
+    },
+    {
       "source": "common/vc_converge_motes.inl",
       "fn": "VFX_ComposeConvergeMotes",
       "label": "CONVERGE MOTES",
@@ -117,6 +128,18 @@
       "draw_call": "VFX_ComposeDissolveExit($POS, VC_MAT_FIRE, 1.5f, $PROG)"
     },
     {
+      "source": "common/vc_ember_trail.inl",
+      "fn": "VFX_ComposeEmberTrail",
+      "label": "EMBER TRAIL",
+      "category": "fire",
+      "fixture": "persistent",
+      "lifecycle": "emitter",
+      "_auto": true,
+      "type": "persistent",
+      "spawn_call": "VFX_ComposeEmberTrail($POS, $VELOCITY, VC_MAT_FIRE, 1.5f, 14.0f)",
+      "kill_fn": "VFX_KillEmberTrail"
+    },
+    {
       "source": "common/vc_energy_burst.inl",
       "fn": "VFX_ComposeEnergyBurst",
       "label": "ENERGY BURST",
@@ -159,6 +182,17 @@
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeGroundWave($POS, VC_MAT_EARTH, 1.5f, $PROG, VFX_GroundHeightFromMap, NULL)"
+    },
+    {
+      "source": "common/vc_impact_dust.inl",
+      "fn": "VFX_ComposeImpactDust",
+      "label": "IMPACT DUST",
+      "category": "common",
+      "fixture": "burst",
+      "lifecycle": "event",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeImpactDust($POS, VC_MAT_EARTH, 1.5f, $PROG)"
     },
     {
       "source": "common/vc_impact_package.inl",
@@ -227,6 +261,18 @@
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeRuneCircle($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, $PROG, 5)"
+    },
+    {
+      "source": "common/vc_shield_shell.inl",
+      "fn": "VFX_ComposeShieldShell",
+      "label": "SHIELD SHELL",
+      "category": "common",
+      "fixture": "persistent",
+      "lifecycle": "emitter",
+      "_auto": true,
+      "type": "persistent",
+      "spawn_call": "VFX_ShieldShell_SpawnEx($POS, VC_MAT_FIRE, 1.5f, 1.0f, VFXTest_ShieldFlowSurface())",
+      "kill_fn": "VFX_KillShieldShell"
     },
     {
       "source": "common/vc_shock_ring.inl",

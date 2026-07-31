@@ -89,6 +89,7 @@ FetchContent_MakeAvailable(enet)
 # Tự động quét và sinh registry cho skill mới trước khi build
 execute_process(COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_registry.py)
 execute_process(COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_map_registry.py)
+execute_process(COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_vfx_surface_registry.py)
 
 # Tự động quét toàn bộ mã nguồn của kỹ năng trong thư mục skills/
 file(GLOB_RECURSE SKILL_SOURCES CONFIGURE_DEPENDS "skills/**/*.c")
@@ -135,6 +136,7 @@ add_executable(wuxing
     core/composition/vfx_sequence.c
     core/presets/vfx_presets.c
     core/skill_helper.c
+    core/vfx_surface_registry.c
     core/time_fx.c
     core/motion_controller.c
     core/status_vfx.c

@@ -563,6 +563,17 @@
   void VFX_FlameEmitter_SetIntensity(int handle, float intensity01);
   void VFX_FlameEmitter_Stop(int handle);
   void VFX_KillFlameEmitter(int handle);
+  int VFX_EmberTrail_Spawn(Vector3 pos, Vector3 velocity, VC_MaterialId mat, float scale, float embersPerSecond);
+  void VFX_EmberTrail_SetTransform(int handle, Vector3 pos, Vector3 velocity);
+  void VFX_EmberTrail_Stop(int handle);
+  void VFX_KillEmberTrail(int handle);
+  int VFX_ShieldShell_Spawn(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
+  int VFX_ShieldShell_SpawnEx(Vector3 pos, VC_MaterialId mat, float radius, float intensity, const VFX_ShieldSurface *surface);
+  void VFX_ShieldShell_SetTransform(int handle, Vector3 pos);
+  void VFX_ShieldShell_SetIntensity(int handle, float intensity01);
+  void VFX_ShieldShell_SetSurface(int handle, const VFX_ShieldSurface *surface);
+  void VFX_ShieldShell_Stop(int handle);
+  void VFX_KillShieldShell(int handle);
   int VFX_ComposeCharacterAura(int agentId, VC_MaterialId matId, float intensity);
   void VFX_AuraSetIntensity(int handle, float intensity01);
   void VFX_KillCharacterAura(int handle);
@@ -604,9 +615,13 @@
   void VFX_EndWaterStreams(void);
   void VFX_SmokeTrail_Stop(int trailId);
   void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
+  void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
+  int VFX_ComposeEmberTrail(Vector3 pos, Vector3 velocity, VC_MaterialId mat, float scale, float embersPerSecond);
   void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
   void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
+  void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   void VFX_ComposeParticleUpgradesTest(Vector3 pos);
+  int VFX_ComposeShieldShell(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
   int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime);
   void VFX_ComposeStonePillar(Vector3 basePos, float progress);
   void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
@@ -616,7 +631,7 @@
   void VFX_SmokeTrail_SetTexture(const Texture2D *smokeTex);
 ```
 **Enums:** VFX_RibbonTrailKind { VFX_RIBBON_BLADE,VFX_RIBBON_MAIN,VFX_RIBBON_WISP,VFX_RIBBON_BACKDROP,VFX_RIBBON_KIND_COUNT,VFX_RIBBON_FLOW,VFX_RIBBON_FILAMENT };VFX_TrailStyle { VFX_TRAIL_BLADE,VFX_TRAIL_RIBBON,VFX_TRAIL_FILAMENT,VFX_TRAIL_HAZE,VFX_TRAIL_STYLE_COUNT } VFX_VolumeKind { VOL_ENERGY,VOL_SMOKE,VOL_FIRE,VFX_VOLUME_KIND_COUNT }
-**Structs** (fields in header): VFX_TrailSurface
+**Structs** (fields in header): VFX_ShieldSurface, VFX_TrailSurface
 
 ### `core/composition/vfx_sequence.h`
 ```c

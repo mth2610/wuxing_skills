@@ -99,23 +99,15 @@ static bool s_volInit = false;
 // "nice noise" for all three is how every element ends up looking like the same
 // effect tinted differently.
 //
-// ResourceManager_LoadTexture caches by path, so the swept trail's HAZE style
-// and this share one GPU texture per sheet rather than two.
-static const char *k_volSheetPath[VFX_VOLUME_KIND_COUNT] = {
-    "assets/textures/energy_volume.png",
-    "assets/textures/smoke_volume.png",
-    "assets/textures/fire_volume.png",
+// P1: the composition names a semantic tube surface, never an asset path.
+// Smoke/fire entries remain preview-only at Spawn; their profiles are retained
+// so a rejected tube cannot silently grow a second local asset table.
+static const VFX_SurfaceId k_volSurface[VFX_VOLUME_KIND_COUNT] = {
+    VFX_SURFACE_ENERGY_TUBE,
+    VFX_SURFACE_SMOKE_TUBE,
+    VFX_SURFACE_FIRE_TUBE,
 };
 static Texture2D s_volSheet[VFX_VOLUME_KIND_COUNT];
-
-// Flow maps are data textures, not display sheets.  Keeping this table separate
-// prevents the visible RGBA volume texture from being decoded as a direction
-// field (which was the reason volume flow never had a coherent direction).
-static const char *k_volFlowPath[VFX_VOLUME_KIND_COUNT] = {
-    "assets/textures/energy_volume_flow.png",
-    "assets/textures/smoke_volume_flow.png",
-    "assets/textures/fire_volume_flow.png",
-};
 static Texture2D s_volFlowMap[VFX_VOLUME_KIND_COUNT];
 
 // COLUMN 2 — vertex deformation, as a fraction of the local radius. This is the
@@ -300,13 +292,12 @@ static void VolumeTrail_InitShared(void)
         return;
     for (int k = 0; k < VFX_VOLUME_KIND_COUNT; k++)
     {
-        s_volSheet[k] = ResourceManager_LoadTexture(k_volSheetPath[k]);
+        const VFX_SurfaceProfile *profile = VFX_SurfaceRegistry_Get(k_volSurface[k]);
+        s_volSheet[k] = profile != NULL ? profile->body : (Texture2D){0};
         if (s_volSheet[k].id != 0)
         {
-            SetTextureFilter(s_volSheet[k], TEXTURE_FILTER_BILINEAR);
-            // REPEAT on BOTH axes: a tube wraps u around the section and tiles v
-            // along the length, and these sheets were generated to survive it.
-            SetTextureWrap(s_volSheet[k], TEXTURE_WRAP_REPEAT);
+            // Registry owns repeat + bilinear: a tube closes around U and tiles
+            // along V, so a non-seam-safe source may not enter this path.
         }
         else
         {
@@ -314,21 +305,19 @@ static void VolumeTrail_InitShared(void)
             // like a deliberate bare tube — "the sheet did not load" and "the
             // sheet has no detail" are indistinguishable on screen.
             TraceLog(LOG_WARNING,
-                     "VFX_VOLUME: %s missing — kind %d falls back to a bare tube",
-                     k_volSheetPath[k], k);
+                     "VFX_VOLUME: %s body missing — kind %d falls back to a bare tube",
+                     profile != NULL ? profile->name : "surface profile", k);
         }
 
-        s_volFlowMap[k] = ResourceManager_LoadTexture(k_volFlowPath[k]);
+        s_volFlowMap[k] = profile != NULL ? profile->flowMap : (Texture2D){0};
         if (s_volFlowMap[k].id != 0)
         {
-            SetTextureFilter(s_volFlowMap[k], TEXTURE_FILTER_BILINEAR);
-            SetTextureWrap(s_volFlowMap[k], TEXTURE_WRAP_REPEAT);
         }
         else
         {
             TraceLog(LOG_WARNING,
-                     "VFX_VOLUME: %s missing — flow distortion disabled for kind %d",
-                     k_volFlowPath[k], k);
+                     "VFX_VOLUME: %s flow missing — distortion disabled for kind %d",
+                     profile != NULL ? profile->name : "surface profile", k);
         }
     }
     // Lazily, never from a subsystem Init — Tuning_Init runs after those and an

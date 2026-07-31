@@ -91,6 +91,11 @@ def main():
     ap.add_argument("--offset", type=int, default=0,
                     help="skip this many rendered frames before subsampling. Use it "
                          "when f000 is an ignition seed rather than a drawable frame.")
+    ap.add_argument("--hold-after", type=int, default=0,
+                    help="use the first N sampled frames, then repeat frame N for "
+                         "the remaining atlas cells. For dust this prevents a solver "
+                         "dissipation tail from visibly shrinking the parcel; runtime "
+                         "alpha owns the fade.")
     ap.add_argument("--split", action="store_true",
                     help="also write <out>_flame.png and <out>_smoke.png. The "
                          "engine's particle shader multiplies the WHOLE rgb by "
@@ -129,10 +134,20 @@ def main():
     if args.stride > 1:
         files = files[::args.stride]
     want = args.grid * args.grid
+    if args.hold_after < 0 or args.hold_after > want:
+        print("--hold-after must be in 0..%d" % want)
+        return 1
     if len(files) < want:
         print("only %d frames in %s, need %d" % (len(files), args.frames_dir, want))
         return 1
-    files = files[:want]
+    if args.hold_after:
+        if len(files) < args.hold_after:
+            print("only %d frames in %s, need %d before --hold-after" %
+                  (len(files), args.frames_dir, args.hold_after))
+            return 1
+        files = files[:args.hold_after] + [files[args.hold_after - 1]] * (want - args.hold_after)
+    else:
+        files = files[:want]
 
     first = Image.open(files[0]).convert("RGBA")
     cell = args.cell or first.size[0]

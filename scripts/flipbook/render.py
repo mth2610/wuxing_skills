@@ -35,7 +35,7 @@ import sys
 import time
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 
 import taichi as ti
 
@@ -278,6 +278,10 @@ def main():
             # density instead, then erode it with stable coarse grain so the
             # parcel tears as it expands without temporal glitter.
             base = rgba[..., 1]
+            # B/G before the dust rewrite is the marched internal light just
+            # like SmokePuff's contract. The old dust path threw it away and
+            # replaced it with an 11px density blur, flattening every parcel.
+            volume_value = np.clip(rgba[..., 2] / np.maximum(base, 1e-3), 0.0, 1.0)
             rng = np.random.default_rng(0xD057 + i)
             coarse_size = max(5, args.cell // 24)
             fine_size = max(9, args.cell // 11)
@@ -296,7 +300,23 @@ def main():
             # over one smooth smoke blob.
             soft = np.clip((base - 0.16 + (grain - 0.5) * 0.23) / 0.66, 0.0, 1.0)
             rgba[..., 1] = soft
-            rgba[..., 2] = 0.0
+            # Same B/G contract consumed by pack.py and SmokePuff: B is the
+            # density integral with a VALUE term, so B/G becomes the sprite's
+            # internal light. Do not use the ray-marched overhead shadow here —
+            # it banded in dense early dust frames. A broad density blur gives
+            # a stable bright body / darker broken rim instead.
+            shadow = np.asarray(Image.fromarray((volume_value * 255).astype(np.uint8)).filter(
+                ImageFilter.GaussianBlur(radius=max(1.0, args.cell * 0.006))),
+                np.float32) / 255.0
+            local = np.asarray(Image.fromarray((base * 255).astype(np.uint8)).filter(
+                ImageFilter.GaussianBlur(radius=max(1.0, args.cell * 0.010))),
+                np.float32) / 255.0
+            # Preserve the broad dynamic range that makes SmokePuff read as a
+            # volume (measured p10≈0.25). The previous 0.18 + 0.64 floor made
+            # Dust p10≈0.55, mathematically flattening every card before the
+            # particle renderer ever saw it.
+            value = np.clip(0.04 + 0.86 * shadow + 0.10 * local, 0.0, 1.0)
+            rgba[..., 2] = soft * value
             rgba[..., 3] = soft * np.clip(0.46 + grain * 0.50, 0.0, 1.0)
         # Rows: image Y already runs down from the grid's top, so no flip here.
         Image.fromarray((rgba * 255).astype(np.uint8), "RGBA").save(

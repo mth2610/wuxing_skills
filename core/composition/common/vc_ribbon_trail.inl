@@ -455,7 +455,6 @@ static void SweptTrail_BuildBladeMask(void)
 // The procedural streak sheet is kept as the fallback, and `swept_sheet` swaps
 // between them live — the asset is a look decision, and the owner is the one who
 // can see it.
-#define SWEPT_ASSET_PATH "assets/textures/energy_flow.png"
 #define SWEPT_ASSET_CROP0 0.30f // where filaments start, as a fraction of height
 #define SWEPT_ASSET_CROP1 0.70f
 #define SWEPT_ASSET_FADE 0.125f // of the tile length, spent cross-fading the wrap
@@ -465,12 +464,22 @@ static void SweptTrail_BuildBladeMask(void)
 
 static void SweptTrail_BuildAssetSheet(void)
 {
-    Image src = LoadImage(SWEPT_ASSET_PATH);
+    const VFX_SurfaceProfile *profile =
+        VFX_SurfaceRegistry_Get(VFX_SURFACE_ENERGY_RIBBON);
+    // ResourceManager owns the source texture. This CPU readback exists only
+    // for the one-time crop/rotation that turns the authored sideways sheet
+    // into a seamless ribbon; the runtime composition never owns a filename.
+    if (profile == NULL || profile->body.id == 0)
+    {
+        TraceLog(LOG_WARNING, "VFX_SWEPT: EnergyRibbon profile missing — procedural fallback");
+        return;
+    }
+    Image src = LoadImageFromTexture(profile->body);
     if (src.data == NULL)
     {
         TraceLog(LOG_WARNING,
-                 "VFX_SWEPT: %s missing — falling back to the procedural streak sheet",
-                 SWEPT_ASSET_PATH);
+                 "VFX_SWEPT: %s source image unavailable — procedural fallback",
+                 profile->name);
         return;
     }
     ImageFormat(&src, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
@@ -524,7 +533,7 @@ static void SweptTrail_BuildAssetSheet(void)
         SetTextureFilter(s_sweptAssetTex, TEXTURE_FILTER_BILINEAR);
         SetTextureWrap(s_sweptAssetTex, TEXTURE_WRAP_REPEAT);
         TraceLog(LOG_INFO, "VFX_SWEPT: flow sheet from %s (%dx%d, wrap cross-faded)",
-                 SWEPT_ASSET_PATH, W, outH);
+                 profile->name, W, outH);
     }
 }
 

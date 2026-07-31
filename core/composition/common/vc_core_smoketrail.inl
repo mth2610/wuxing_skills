@@ -110,9 +110,11 @@ static void SmokeTrail_InitShared(void)
         return;
 
     s_smokeTrailUpdraft = ForceField_CreatePreset(FORCE_PRESET_FIRE_UPDRAFT);
-    s_smokeTrailSheet = ResourceManager_LoadTexture("assets/textures/smoke_ribbon.png");
-    s_smokeTrailFlowMap = ResourceManager_LoadTexture("assets/textures/smoke_ribbon_flow.png");
-    s_smokeTrailMask = ResourceManager_LoadTexture("assets/textures/smoke_ribbon_mask.png");
+    const VFX_SurfaceProfile *smokeProfile =
+        VFX_SurfaceRegistry_Get(VFX_SURFACE_SMOKE_RIBBON);
+    s_smokeTrailSheet = smokeProfile != NULL ? smokeProfile->body : (Texture2D){0};
+    s_smokeTrailFlowMap = smokeProfile != NULL ? smokeProfile->flowMap : (Texture2D){0};
+    s_smokeTrailMask = smokeProfile != NULL ? smokeProfile->mask : (Texture2D){0};
     if (s_smokeTrailSheet.id > 0)
     {
         SetTextureFilter(s_smokeTrailSheet, TEXTURE_FILTER_BILINEAR);

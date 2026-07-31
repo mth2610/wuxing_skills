@@ -350,6 +350,20 @@ whole cross-section into a line. The last one is the general lesson — see
 **Composites:** `ImpactPackage` `Projectile` (and `ChargeConverge`, which is one
 primary short of being a pure score — the converge motes still need extracting).
 
+#### Visual review hold — ShieldShell and Residue/Scorch (31/07)
+
+- **ShieldShell:** authored flow-surface now has a separate body and RG flow
+  map, alpha composition, strand-driven face alpha and triplanar sphere mapping.
+  It still loses contrast on a bright environment. This is a visual-owner review
+  item; do not compensate by reintroducing additive haze, a darkening blend, or
+  a Fresnel half-sphere gradient.
+- **Residue/Scorch:** blocked by `assets/DECAL_REWORK.md`. The current decal
+  catalog is legacy and has no approved residue/scorch profile; `DecalSystem`
+  also has no semantic profile or per-primary handle. Do not implement a new
+  primary by selecting a legacy filename. Resume only with the Decal Rework
+  surface registry (role, channels, provenance, wrap/filter, blend) and visual
+  approval.
+
 ### 4.3 What is MISSING, in build order
 
 Each entry below is a spec. They are ordered so that nothing is blocked by

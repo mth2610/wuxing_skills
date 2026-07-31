@@ -205,15 +205,18 @@ static int FileHas(const char *path, const char *needle)
 
 static void Test_MirrorStillMatchesSource(void)
 {
-    const char *fs = "core/shaders/flow_map.fs";
-    CHECK(FileHas(fs, "uv + flow * (phase0 - 0.5) * uStrength"),
+    const char *shared = "core/shaders/common/flow_map.glsl";
+    CHECK(FileHas(shared, "tiledUV + flow * (phase0 - 0.5) * strength"),
           "the displacement is still CENTRED on the undisplaced phase");
-    CHECK(!FileHas(fs, "uv + flow * phase0 * uStrength"),
+    CHECK(!FileHas(shared, "tiledUV + flow * phase0 * strength"),
           "and the uncentred form, which inverted the whole technique, is gone");
-    CHECK(FileHas(fs, "float blend = abs(phase0 * 2.0 - 1.0);"),
+    CHECK(FileHas(shared, "float blend = abs(phase0 * 2.0 - 1.0);"),
           "the triangle-wave weight still matches the centring it assumes");
-    CHECK(FileHas(fs, "texture(flowTex, fragTexCoord).rg * 2.0 - 1.0"),
+    CHECK(FileHas(shared, "texture(flowTex, uv).rg * 2.0 - 1.0"),
           "the field is still decoded from RG as a signed direction");
+    CHECK(FileHas("core/shaders/flow_map.fs", "FlowMap_SampleTwoPhase") &&
+          FileHas("core/shaders/shield_shell.fs", "FlowMap_SampleTwoPhase"),
+          "flat and shield materials share exactly one flow operation");
 
     const char *c = "core/flow_map.c";
     CHECK(FileHas(c, "FlowMap_CreateWithTrailTexture"),

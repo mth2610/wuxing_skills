@@ -243,9 +243,11 @@ static void SmokePuff_InitShared(void)
     // the lighting pass shades a BILLBOARD and knows nothing about the depth
     // inside the puff, so an unshaded sheet stacks into flat cards — measured at
     // value spread 0.00, which is what "những mảng màu riêng biệt" was.
-    s_smokeFbTex = ResourceManager_LoadTexture("assets/textures/smoke_puff_8x8_smoke.png");
-    if (s_smokeFbTex.id == 0)
-        s_smokeFbTex = ResourceManager_LoadTexture("assets/textures/smoke_atlas_8x8.png");
+    const VFX_SurfaceProfile *smokeProfile =
+        VFX_SurfaceRegistry_Get(VFX_SURFACE_SMOKE_PUFF);
+    s_smokeFbTex = smokeProfile != NULL ? smokeProfile->body : (Texture2D){0};
+    if (s_smokeFbTex.id == 0 && smokeProfile != NULL)
+        s_smokeFbTex = smokeProfile->fallbackBody;
     // WHICH sheet loaded, said out loud. Until now a silent fallback from the
     // new sheet to the old one — or from either to the three static sprites —
     // looked identical on screen to a working flipbook, and "the sprites hold

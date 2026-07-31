@@ -56,8 +56,33 @@ Used via `SpawnGroundDecal(DECAL_PRESET_GENERIC_*)`. White/tintable.
 | `water_caustics.png` | `DECAL_PRESET_WATER` | Animated caustic light pattern | white/tintable |
 | `water_flow.png` | Flow-map shaders (`core/flow_map.h`) | Scrolling direction field for water surface | greyscale vectors |
 | `dust_wind.png` | Emitter / particle texture | Soft wispy dust/smoke puff | white/tintable |
-| `flare.png` | VFX lens-flare, light glow | Star-burst flare with halo ring | white/tintable |
+| `flare.png` | `VFX_EmberTrail`, VFX light glow | Soft radial white falloff; the EmberTrail core comes from white additive vertex colour | white/additive bloom |
 | `noise.png` | Shader noise sampling (`core/shaders/common/noise.glsl`) | Tileable blue-noise / Perlin field | greyscale |
+| `energy_volume.png` | Shield tester flow-surface body; `VolumeTrail` energy body | Tileable white energy filaments; use as a display/body sheet, never decode as flow | white/tintable |
+| `energy_volume_flow.png` | Shield tester flow-surface map; `VolumeTrail` energy flow | Tileable RG direction field paired with `energy_volume.png`; repeat + bilinear | data, RG direction |
+| `energy_flow.png` | `VFX_SurfaceRegistry` EnergyRibbon profile | Legacy filament sheet; crop/rotate/crossfade preprocessing is recorded in the profile before repeat use | white/additive |
+| `smoke_ribbon.png` | `VFX_SurfaceRegistry` SmokeRibbon body | Lit smoke body with opacity; repeat only through the semantic profile | pre-lit RGBA |
+| `smoke_ribbon_flow.png` | `VFX_SurfaceRegistry` SmokeRibbon flow | RG signed UV direction field paired with smoke ribbon | data, RG direction |
+| `smoke_ribbon_mask.png` | `VFX_SurfaceRegistry` SmokeRibbon mask | R-only erosion field; never decode as a flow vector | data, R scalar |
+| `smoke_volume.png` | `VFX_SurfaceRegistry` SmokeTube preview profile | Seamless smoke tube body; preview-only until P3 approval | pre-lit RGBA |
+| `smoke_volume_flow.png` | `VFX_SurfaceRegistry` SmokeTube preview profile | Tileable RG direction field | data, RG direction |
+| `fire_volume.png` | `VFX_SurfaceRegistry` FireTube preview profile | Seamless fire tube body; preview-only until P3 approval | emissive RGBA |
+| `fire_volume_flow.png` | `VFX_SurfaceRegistry` FireTube preview profile | Tileable RG direction field | data, RG direction |
+| `fire_atlas_8x8_flame.png` | FireTongue fallback profile | Legacy 8×8 flame-only column fallback | white flame + alpha |
+
+### P1 semantic-surface migration map
+
+No files are moved in this phase. New or refactored composition code asks for a
+semantic profile; the registry owns the runtime path and sampler contract.
+
+| Profile | Primitive | Current consumer | Migration state |
+|---|---|---|---|
+| SmokeRibbon | ribbon | `VFX_ComposeSmokeTrail` | migrated |
+| EnergyRibbon | ribbon | `VFX_ComposeRibbonTrail` | migrated; retains one-time crop/rotate bake |
+| EnergyTube | tube | `VFX_ComposeVolumeTrail` | migrated, shipping |
+| SmokePuff | puff/card | `VFX_ComposeSmokePuff`, `SmokeEmitter` | migrated |
+| FireTongue | alpha tongue | `VFX_FlameEmitter` | migrated |
+| SmokeTube / FireTube | tube | `VFX_ComposeVolumeTrail` | registry-only preview; spawn remains blocked pending P3 visual approval |
 
 ---
 
@@ -105,7 +130,7 @@ variants because one sprite repeated 28 times reads as stamps however much each
 is rotated. Replaces the stock radial gradient, which has no outline at all —
 see ELDEN_VFX_SPEC.md §0.1b cause 3.
 
-## fire_puff_8x8.png + _flame / _smoke (Đợt E / E4 — flipbook) — IN USE
+## fire_puff_8x8.png + fire_puff_8x8_flame.png / _smoke (Đợt E / E4 — flipbook) — IN USE
 
 2048×2048 RGBA, 8×8 = 64 frames of one simulated FIRE puff. Produced by
 `scripts/flipbook/` (`ti_sim.py fire_puff --res 112 --frames 64` → `render.py
@@ -145,11 +170,16 @@ gradient path used for the static sprites) is a measured 33/255 black smudge.
 
 ## dust_puff_4x4.png + _smoke (Đợt E / E4 — flipbook)
 
-1024×1024 RGBA, 4×4 = 16 frames. Rebuild through the same Taichi
-smoke/fire pipeline: `python3 scripts/gen_dust_flipbook.py`. It simulates
-the full 64-frame event, skips its two ignition frames, then subsamples with
-`pack.py --offset 2 --stride 4`: `--frames` is a PHYSICS axis, not a coarser
+Rebuild through the same Taichi smoke/fire pipeline:
+`python3 scripts/gen_dust_flipbook.py`. It simulates the full 64-frame event;
+the 8×8 master keeps every frame and the 4×4 runtime sheet samples its complete
+timeline at a stride of four. `--frames` is a PHYSICS axis, not a coarser
 sampling knob.
+
+Current rebuild contract: the script packs the same 64-frame simulation twice.
+`dust_puff_8x8.png` is the full temporal master; `dust_puff_4x4.png` samples
+frames 1, 5, 9 … 61 across that same arc. A 4×4 runtime sheet must never be
+made from the first sixteen near-identical physics frames.
 
 The old sheet is pending replacement. The new bake keeps the parcel isotropic;
 impact flattening/fall belong to the particle placement and force field, not to
@@ -162,6 +192,11 @@ value spread 0.73.
 **Consumed by** nothing yet — intended for `VFX_ComposeImpactPackage` (E6 #6),
 footfalls, landings and Earth skills. Falls back to the static smoke sprites
 wherever a consumer follows the `vc_smoke_puff.inl` pattern.
+
+**Visual review pending (31/07/2026):** `ImpactDust` currently uses the
+occluding alpha contract and a lifted off-white tint. Owner may prefer an
+additive stylisation; keep this as an explicit A/B decision, not an accidental
+blend change while tuning the atlas.
 
 ## smoke_atlas_8x8.png (Đợt E / E4 — flipbook) — SUPERSEDED, kept as fallback only
 

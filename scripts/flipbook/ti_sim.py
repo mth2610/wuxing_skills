@@ -114,6 +114,10 @@ PRESETS = {
         # self-contained smoke cloud. The cloud-scale flattening stays in the
         # emitter; this parcel only needs grain and a short rolling breakup.
         fuel_radius=0.040, fuel_frames=0.060, impulse=0.12,
+        # A dust parcel starts as several touching clumps, not one perfectly
+        # smooth fuel ball. The renderer can shade real lobes; it cannot invent
+        # them from a uniform density field after the fact.
+        source_lobes=5,
         radial=4.4, curl=3.8, swirl=3.8,
         diffuse=0.020, eddy=54.0,
         viscosity=0.95, buoyancy=0.0,
@@ -215,6 +219,8 @@ def main():
                          "lever that decides how much of the sheet is still FIRE")
     ap.add_argument("--dissipate", type=float, default=None,
                     help="density loss per simulated second; dust needs a short visual tail")
+    ap.add_argument("--source-lobes", type=int, default=None,
+                    help="number of overlapping seed lobes (1 = legacy smooth ball)")
     args = ap.parse_args()
 
     p = dict(PRESETS[args.preset])
@@ -225,6 +231,9 @@ def main():
               "shell", "impulse", "fuel_dens", "dt", "dissipate"):
         if getattr(args, k) is not None:
             p[k] = getattr(args, k)
+    if args.source_lobes is not None:
+        p["source_lobes"] = args.source_lobes
+    p.setdefault("source_lobes", 1)
 
     # RESOLUTION-INDEPENDENT FORCES. Velocities here are in VOXELS per step, so
     # the same number moves gas further in relative terms on a finer grid: the
@@ -344,17 +353,33 @@ def main():
 
     @ti.kernel
     def add_fuel(t: ti.f32, dt: ti.f32, rad: ti.f32, radial: ti.f32,
-                 shell: ti.f32, kdens: ti.f32):
+                 shell: ti.f32, kdens: ti.f32, source_lobes: ti.i32):
         c = ti.Vector([N * 0.5, N * 0.5, N * 0.5])
         r = rad * N
         for I in ti.grouped(dens):
             d = (ti.cast(I, ti.f32) - c).norm()
-            if d < r:
+            m = 0.0
+            if source_lobes <= 1:
+                if d < r:
+                    m = (1.0 - d / r) ** 0.7
+            else:
+                # Five overlapping, asymmetric seed clumps. Their locations
+                # are fixed in local space so the event evolves coherently
+                # frame-to-frame; only the existing cell jitter is random.
+                for l in ti.static(range(5)):
+                    off = ti.Vector([0.0, 0.0, 0.0])
+                    if ti.static(l == 0): off = ti.Vector([-0.48, 0.10, -0.12])
+                    if ti.static(l == 1): off = ti.Vector([ 0.42,-0.18,  0.16])
+                    if ti.static(l == 2): off = ti.Vector([ 0.08, 0.44, -0.28])
+                    if ti.static(l == 3): off = ti.Vector([-0.16,-0.36,  0.40])
+                    if ti.static(l == 4): off = ti.Vector([ 0.34, 0.22,  0.36])
+                    dl = (ti.cast(I, ti.f32) - (c + off * r)).norm()
+                    m = ti.max(m, ti.max(0.0, 1.0 - dl / (r * 0.68)) ** 0.7)
+            if m > 0.0:
                 # SOLID BALL (shell = 0) or a HOLLOW SHELL. A detonation ignites
                 # a surface, not a volume: the reference the owner gave is dark
                 # in the middle with a bright, filamented rim, and that hole is
                 # not the flame dying — it is where the fuel never was.
-                m = (1.0 - d / r) ** 0.7
                 if shell > 0.0:
                     w = r * (1.0 - shell)
                     m = ti.max(0.0, 1.0 - ti.abs(d - r * shell) / ti.max(w, 1e-3))
@@ -550,7 +575,7 @@ def main():
             frac = f / max(1, args.frames - 1)
             if frac < p["fuel_frames"]:
                 add_fuel(frac, dt / args.substeps, p["fuel_radius"], p["radial"],
-                         p["shell"], p["fuel_dens"])
+                         p["shell"], p["fuel_dens"], p["source_lobes"])
             # Impulse envelope: full push while the fuel burns, then off.
             # How long the radial impulse lasts, as a fraction of the sheet.
             # A puff coasts after a gentle shove (0.22); a DETONATION is over in

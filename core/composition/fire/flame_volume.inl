@@ -142,7 +142,9 @@ static void FVol_InitShared(void)
     // The FLAME channel only — the sheet's smoke channel is a separate file.
     // The particle shader multiplies the whole of rgb by the vertex colour, so a
     // two-channel sheet would tint the fire with its own smoke.
-    s_fvolFlameTex = ResourceManager_LoadTexture("assets/textures/fire_atlas_8x8_flame.png");
+    const VFX_SurfaceProfile *fireProfile =
+        VFX_SurfaceRegistry_Get(VFX_SURFACE_FIRE_TONGUE);
+    s_fvolFlameTex = fireProfile != NULL ? fireProfile->fallbackBody : (Texture2D){0};
     if (s_fvolFlameTex.id != 0)
     {
         SetTextureFilter(s_fvolFlameTex, TEXTURE_FILTER_BILINEAR);
@@ -157,7 +159,7 @@ static void FVol_InitShared(void)
         TraceLog(LOG_WARNING, "FlameVolume: fire_atlas_8x8_flame.png missing — "
                               "using F2 sprites (run scripts/flipbook/make.py fire)");
 
-    s_fvolPuffTex = ResourceManager_LoadTexture("assets/textures/fire_puff_8x8_flame.png");
+    s_fvolPuffTex = fireProfile != NULL ? fireProfile->body : (Texture2D){0};
     if (s_fvolPuffTex.id != 0)
     {
         SetTextureFilter(s_fvolPuffTex, TEXTURE_FILTER_BILINEAR);

@@ -63,6 +63,32 @@ static Matrix s_vfxFixtureXf[VFXTEST_FIXTURE_SLOTS];
 static int s_vfxFixtureHandle[VFXTEST_FIXTURE_SLOTS];
 static float s_vfxFixtureLastTime[VFXTEST_FIXTURE_SLOTS];
 static bool s_vfxFixturesReady = false;
+static VFX_ShieldSurface s_shieldFlowPreview = {0};
+static bool s_shieldFlowPreviewLoaded = false;
+
+// Tester-only semantic profile. Production compositions still receive a
+// VFX_ShieldSurface from their owner and never invent asset paths.
+static const VFX_ShieldSurface *VFXTest_ShieldFlowSurface(void)
+{
+    if (!s_shieldFlowPreviewLoaded)
+    {
+        s_shieldFlowPreviewLoaded = true;
+        s_shieldFlowPreview.body = ResourceManager_LoadTexture("assets/textures/energy_volume.png");
+        s_shieldFlowPreview.flowMap = ResourceManager_LoadTexture("assets/textures/energy_volume_flow.png");
+        if (s_shieldFlowPreview.body.id != 0 && s_shieldFlowPreview.flowMap.id != 0)
+        {
+            SetTextureFilter(s_shieldFlowPreview.body, TEXTURE_FILTER_BILINEAR);
+            SetTextureWrap(s_shieldFlowPreview.body, TEXTURE_WRAP_REPEAT);
+            SetTextureFilter(s_shieldFlowPreview.flowMap, TEXTURE_FILTER_BILINEAR);
+            SetTextureWrap(s_shieldFlowPreview.flowMap, TEXTURE_WRAP_REPEAT);
+            s_shieldFlowPreview.flowSpeed = 0.85f;
+            s_shieldFlowPreview.flowStrength = 0.12f;
+            s_shieldFlowPreview.flowTiling = 1.25f;
+            s_shieldFlowPreview.maskTiling = 1.0f;
+        }
+    }
+    return s_shieldFlowPreview.body.id != 0 ? &s_shieldFlowPreview : NULL;
+}
 
 static void VFXTest_InitFixtures(void)
 {
@@ -86,22 +112,30 @@ static void VFXTest_StopFixtures(void)
         VFX_KillCharacterAura(s_vfxFixtureHandle[1]);
     s_vfxFixtureHandle[1] = -1;
     s_vfxFixtureLastTime[1] = -1.0f;
-    if (s_vfxFixtureHandle[5] >= 0)
-        KillTrail(s_vfxFixtureHandle[5]);
-    s_vfxFixtureHandle[5] = -1;
-    s_vfxFixtureLastTime[5] = -1.0f;
-    if (s_vfxFixtureHandle[15] >= 0)
-        VFX_KillProjectile(s_vfxFixtureHandle[15]);
-    s_vfxFixtureHandle[15] = -1;
-    s_vfxFixtureLastTime[15] = -1.0f;
-    if (s_vfxFixtureHandle[16] >= 0)
-        VFX_KillRibbonTrail(s_vfxFixtureHandle[16]);
-    s_vfxFixtureHandle[16] = -1;
-    s_vfxFixtureLastTime[16] = -1.0f;
-    if (s_vfxFixtureHandle[22] >= 0)
-        VFX_KillVolumeTrail(s_vfxFixtureHandle[22]);
-    s_vfxFixtureHandle[22] = -1;
-    s_vfxFixtureLastTime[22] = -1.0f;
+    if (s_vfxFixtureHandle[6] >= 0)
+        KillTrail(s_vfxFixtureHandle[6]);
+    s_vfxFixtureHandle[6] = -1;
+    s_vfxFixtureLastTime[6] = -1.0f;
+    if (s_vfxFixtureHandle[9] >= 0)
+        VFX_KillEmberTrail(s_vfxFixtureHandle[9]);
+    s_vfxFixtureHandle[9] = -1;
+    s_vfxFixtureLastTime[9] = -1.0f;
+    if (s_vfxFixtureHandle[18] >= 0)
+        VFX_KillProjectile(s_vfxFixtureHandle[18]);
+    s_vfxFixtureHandle[18] = -1;
+    s_vfxFixtureLastTime[18] = -1.0f;
+    if (s_vfxFixtureHandle[19] >= 0)
+        VFX_KillRibbonTrail(s_vfxFixtureHandle[19]);
+    s_vfxFixtureHandle[19] = -1;
+    s_vfxFixtureLastTime[19] = -1.0f;
+    if (s_vfxFixtureHandle[21] >= 0)
+        VFX_KillShieldShell(s_vfxFixtureHandle[21]);
+    s_vfxFixtureHandle[21] = -1;
+    s_vfxFixtureLastTime[21] = -1.0f;
+    if (s_vfxFixtureHandle[26] >= 0)
+        VFX_KillVolumeTrail(s_vfxFixtureHandle[26]);
+    s_vfxFixtureHandle[26] = -1;
+    s_vfxFixtureLastTime[26] = -1.0f;
 // @gen:newfx_stop end
 }
 
@@ -117,12 +151,22 @@ static bool VFXTest_FireNewFx(int newfxIndex, Vector3 pos)
         if (s_vfxFixtureHandle[1] >= 0) VFX_KillCharacterAura(s_vfxFixtureHandle[1]);
         s_vfxFixtureHandle[1] = VFX_ComposeCharacterAura(Sandbox_GetPlayerAgentId(), VC_MAT_FIRE, 1.0f);
         return true;
-    case 6: VFX_ComposeDebrisShards(pos, (Vector3){1.4f, 2.2f, 0.5f}, VC_MAT_METAL, 1.5f, 5); return true;
-    case 8: VFX_ComposeEnergyBurst(pos, VC_MAT_FIRE, 1.5f, 1.0f); return true;
-    case 12: VFX_ComposeImpactPackage(pos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, 0.4f); return true;
-    case 19: VFX_ComposeSmokePuff(pos, VC_MAT_FIRE, 1.5f, 1.0f); return true;
-    case 20: VFX_ComposeSparkTrail(pos, (Vector3){1.4f, 2.2f, 0.5f}, VC_MAT_FIRE, 1.0f, 2.0f); return true;
-    case 27: VFX_ComposeIceCrystal(pos, posSeed); return true;
+    case 3: VFX_ComposeContactSpark(pos, VC_MAT_FIRE, 1.5f, 0.0f); return true;
+    case 7: VFX_ComposeDebrisShards(pos, (Vector3){1.4f, 2.2f, 0.5f}, VC_MAT_METAL, 1.5f, 5); return true;
+    case 9:
+        if (s_vfxFixtureHandle[9] >= 0) VFX_KillEmberTrail(s_vfxFixtureHandle[9]);
+        s_vfxFixtureHandle[9] = VFX_ComposeEmberTrail(pos, (Vector3){1.4f, 2.2f, 0.5f}, VC_MAT_FIRE, 1.5f, 14.0f);
+        return true;
+    case 10: VFX_ComposeEnergyBurst(pos, VC_MAT_FIRE, 1.5f, 1.0f); return true;
+    case 14: VFX_ComposeImpactDust(pos, VC_MAT_EARTH, 1.5f, 0.0f); return true;
+    case 15: VFX_ComposeImpactPackage(pos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, 0.4f); return true;
+    case 21:
+        if (s_vfxFixtureHandle[21] >= 0) VFX_KillShieldShell(s_vfxFixtureHandle[21]);
+        s_vfxFixtureHandle[21] = VFX_ShieldShell_SpawnEx(pos, VC_MAT_FIRE, 1.5f, 1.0f, VFXTest_ShieldFlowSurface());
+        return true;
+    case 23: VFX_ComposeSmokePuff(pos, VC_MAT_FIRE, 1.5f, 1.0f); return true;
+    case 24: VFX_ComposeSparkTrail(pos, (Vector3){1.4f, 2.2f, 0.5f}, VC_MAT_FIRE, 1.0f, 2.0f); return true;
+    case 31: VFX_ComposeIceCrystal(pos, posSeed); return true;
     default: return false;
     }
 // @gen:newfx_fire end
@@ -137,22 +181,24 @@ static const char *s_meshNames[] = {
     "DISC", "RING", "CONE", "TORNADO", "CYLINDER", "SPHERE", "SHOCKWAVE", "PYRAMID", "TETRAHEDRON"};
 
 // @gen:newfx_names begin
-// 29 entries — auto-managed by sync_vfx_test.py
+// 33 entries — auto-managed by sync_vfx_test.py
 static const char* s_newFxNames[] = {
-    "BEAM", "CHARACTER AURA", "CHARGE CONVERGE", "CONVERGE MOTES", "CORE GLOW", "SMOKE TRAIL",
-    "DEBRIS SHARDS", "DISSOLVE EXIT", "ENERGY BURST", "ENERGY ORB", "GLINT SPARKLE", "GROUND WAVE",
-    "IMPACT PACKAGE", "LIGHT SHAFT", "PORTAL DISC", "PROJECTILE", "RIBBON TRAIL", "RUNE CIRCLE",
-    "SHOCK RING", "SMOKE PUFF", "SPARK TRAIL", "SWEEP SLASH", "VOLUME TRAIL", "FISSURE STREAK",
-    "STONE PILLAR", "FLAME VOLUME", "BLACK HOLE", "ICE CRYSTAL", "WATER STREAM",
+    "BEAM", "CHARACTER AURA", "CHARGE CONVERGE", "CONTACT SPARK", "CONVERGE MOTES", "CORE GLOW",
+    "SMOKE TRAIL", "DEBRIS SHARDS", "DISSOLVE EXIT", "EMBER TRAIL", "ENERGY BURST", "ENERGY ORB",
+    "GLINT SPARKLE", "GROUND WAVE", "IMPACT DUST", "IMPACT PACKAGE", "LIGHT SHAFT", "PORTAL DISC",
+    "PROJECTILE", "RIBBON TRAIL", "RUNE CIRCLE", "SHIELD SHELL", "SHOCK RING", "SMOKE PUFF",
+    "SPARK TRAIL", "SWEEP SLASH", "VOLUME TRAIL", "FISSURE STREAK", "STONE PILLAR", "FLAME VOLUME",
+    "BLACK HOLE", "ICE CRYSTAL", "WATER STREAM",
 };
 // @gen:newfx_names end
 
 // @gen:newfx_categories begin
 // NEWFX_CAT_FIRE=0 WATER=1 WOOD=2 METAL=3 EARTH=4 TAIJI=5 COMMON=6
 static const int s_newFxCategories[] = {
-    6, 6, 6, 6, 6, 6, 3, 6, 6, 6,
-    6, 4, 6, 6, 6, 6, 6, 6, 6, 6,
-    6, 6, 6, 4, 4, 0, 5, 1, 1,
+    6, 6, 6, 6, 6, 6, 6, 3, 6, 0,
+    6, 6, 6, 4, 6, 6, 6, 6, 6, 6,
+    6, 6, 6, 6, 6, 6, 6, 4, 4, 0,
+    5, 1, 1,
 };
 // @gen:newfx_categories end
 
@@ -519,7 +565,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             const char **names;
             int globalIdx;
             int visualIdx;
-            maxIdx = 29;
+            maxIdx = 33;
             names = s_newFxNames; // @gen:newfx_count
             visualIdx = 0;
             (void)names;
@@ -659,78 +705,78 @@ void VFXTest_Draw3D(void)
           switch (s_testIndex) {
               case 0: VFX_ComposeBeam(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), VC_MAT_FIRE, 0.1f, progress); break;
               case 2: VFX_ComposeChargeConverge(s_prefabStartPos, VC_MAT_FIRE, 1.5f, progress, 5); break;
-              case 3: VFX_ComposeConvergeMotes(s_prefabStartPos, VC_MAT_FIRE, 1.5f, progress, 5); break;
-              case 4: VFX_ComposeCoreGlow(s_prefabStartPos, VC_MAT_FIRE, 1.5f, progress); break;
-              case 5:
+              case 4: VFX_ComposeConvergeMotes(s_prefabStartPos, VC_MAT_FIRE, 1.5f, progress, 5); break;
+              case 5: VFX_ComposeCoreGlow(s_prefabStartPos, VC_MAT_FIRE, 1.5f, progress); break;
+              case 6:
               {
                   float a = s_meshTime * 1.35f;
                   Vector3 fixturePos = Vector3Add(s_prefabStartPos,
                       (Vector3){3.0f * sinf(a), 1.5f + 0.45f * sinf(a * 0.7f), 2.1f * cosf(a * 1.3f)});
-                  if (s_meshTime < s_vfxFixtureLastTime[5] && s_vfxFixtureHandle[5] >= 0)
-                      KillTrail(s_vfxFixtureHandle[5]);
-                  if (s_meshTime < s_vfxFixtureLastTime[5]) s_vfxFixtureHandle[5] = -1;
-                  s_vfxFixtureLastTime[5] = s_meshTime;
-                  s_vfxFixtureXf[5] = MatrixTranslate(fixturePos.x, fixturePos.y, fixturePos.z);
-                  if (s_vfxFixtureHandle[5] < 0)
-                      s_vfxFixtureHandle[5] = VFX_ComposeSmokeTrail(&s_vfxFixtureXf[5], VC_MAT_FIRE, 1.5f, 2.0f);
+                  if (s_meshTime < s_vfxFixtureLastTime[6] && s_vfxFixtureHandle[6] >= 0)
+                      KillTrail(s_vfxFixtureHandle[6]);
+                  if (s_meshTime < s_vfxFixtureLastTime[6]) s_vfxFixtureHandle[6] = -1;
+                  s_vfxFixtureLastTime[6] = s_meshTime;
+                  s_vfxFixtureXf[6] = MatrixTranslate(fixturePos.x, fixturePos.y, fixturePos.z);
+                  if (s_vfxFixtureHandle[6] < 0)
+                      s_vfxFixtureHandle[6] = VFX_ComposeSmokeTrail(&s_vfxFixtureXf[6], VC_MAT_FIRE, 1.5f, 2.0f);
                   break;
               }
-              case 7: VFX_ComposeDissolveExit(s_prefabStartPos, VC_MAT_FIRE, 1.5f, progress); break;
-              case 9: VFX_ComposeEnergyOrb(s_prefabStartPos, VC_MAT_FIRE, 1.5f, progress); break;
-              case 10: VFX_ComposeGlintSparkle(s_prefabStartPos, VC_MAT_FIRE, 1.5f, s_meshTime); break;
-              case 11: VFX_ComposeGroundWave(s_prefabStartPos, VC_MAT_EARTH, 1.5f, progress, VFX_GroundHeightFromMap, NULL); break;
-              case 13: VFX_ComposeLightShaft(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), VC_MAT_FIRE, 0.8f, 1.35f); break;
-              case 14: VFX_ComposePortalDisc(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, progress); break;
-              case 15:
+              case 8: VFX_ComposeDissolveExit(s_prefabStartPos, VC_MAT_FIRE, 1.5f, progress); break;
+              case 11: VFX_ComposeEnergyOrb(s_prefabStartPos, VC_MAT_FIRE, 1.5f, progress); break;
+              case 12: VFX_ComposeGlintSparkle(s_prefabStartPos, VC_MAT_FIRE, 1.5f, s_meshTime); break;
+              case 13: VFX_ComposeGroundWave(s_prefabStartPos, VC_MAT_EARTH, 1.5f, progress, VFX_GroundHeightFromMap, NULL); break;
+              case 16: VFX_ComposeLightShaft(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), VC_MAT_FIRE, 0.8f, 1.35f); break;
+              case 17: VFX_ComposePortalDisc(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, progress); break;
+              case 18:
               {
                   float a = s_meshTime * 1.35f;
                   Vector3 fixturePos = Vector3Add(s_prefabStartPos,
                       (Vector3){3.0f * sinf(a), 1.5f + 0.45f * sinf(a * 0.7f), 2.1f * cosf(a * 1.3f)});
-                  if (s_meshTime < s_vfxFixtureLastTime[15] && s_vfxFixtureHandle[15] >= 0)
-                      VFX_KillProjectile(s_vfxFixtureHandle[15]);
-                  if (s_meshTime < s_vfxFixtureLastTime[15]) s_vfxFixtureHandle[15] = -1;
-                  s_vfxFixtureLastTime[15] = s_meshTime;
-                  s_vfxFixtureXf[15] = MatrixTranslate(fixturePos.x, fixturePos.y, fixturePos.z);
-                  if (s_vfxFixtureHandle[15] < 0)
-                      s_vfxFixtureHandle[15] = VFX_ComposeProjectile(&s_vfxFixtureXf[15], VC_MAT_FIRE, 1.5f);
+                  if (s_meshTime < s_vfxFixtureLastTime[18] && s_vfxFixtureHandle[18] >= 0)
+                      VFX_KillProjectile(s_vfxFixtureHandle[18]);
+                  if (s_meshTime < s_vfxFixtureLastTime[18]) s_vfxFixtureHandle[18] = -1;
+                  s_vfxFixtureLastTime[18] = s_meshTime;
+                  s_vfxFixtureXf[18] = MatrixTranslate(fixturePos.x, fixturePos.y, fixturePos.z);
+                  if (s_vfxFixtureHandle[18] < 0)
+                      s_vfxFixtureHandle[18] = VFX_ComposeProjectile(&s_vfxFixtureXf[18], VC_MAT_FIRE, 1.5f);
                   break;
               }
-              case 16:
+              case 19:
               {
                   float a = s_meshTime * 1.35f;
                   Vector3 fixturePos = Vector3Add(s_prefabStartPos,
                       (Vector3){3.0f * sinf(a), 1.5f + 0.45f * sinf(a * 0.7f), 2.1f * cosf(a * 1.3f)});
-                  if (s_meshTime < s_vfxFixtureLastTime[16] && s_vfxFixtureHandle[16] >= 0)
-                      VFX_KillRibbonTrail(s_vfxFixtureHandle[16]);
-                  if (s_meshTime < s_vfxFixtureLastTime[16]) s_vfxFixtureHandle[16] = -1;
-                  s_vfxFixtureLastTime[16] = s_meshTime;
-                  s_vfxFixtureXf[16] = MatrixTranslate(fixturePos.x, fixturePos.y, fixturePos.z);
-                  if (s_vfxFixtureHandle[16] < 0)
-                      s_vfxFixtureHandle[16] = VFX_ComposeRibbonTrail(&s_vfxFixtureXf[16], VC_MAT_FIRE, 0.1f, 2.0f, VFX_RIBBON_MAIN);
+                  if (s_meshTime < s_vfxFixtureLastTime[19] && s_vfxFixtureHandle[19] >= 0)
+                      VFX_KillRibbonTrail(s_vfxFixtureHandle[19]);
+                  if (s_meshTime < s_vfxFixtureLastTime[19]) s_vfxFixtureHandle[19] = -1;
+                  s_vfxFixtureLastTime[19] = s_meshTime;
+                  s_vfxFixtureXf[19] = MatrixTranslate(fixturePos.x, fixturePos.y, fixturePos.z);
+                  if (s_vfxFixtureHandle[19] < 0)
+                      s_vfxFixtureHandle[19] = VFX_ComposeRibbonTrail(&s_vfxFixtureXf[19], VC_MAT_FIRE, 0.1f, 2.0f, VFX_RIBBON_MAIN);
                   break;
               }
-              case 17: VFX_ComposeRuneCircle(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, progress, 5); break;
-              case 18: VFX_ComposeShockRing(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, progress); break;
-              case 21: VFX_ComposeSweepSlash(s_prefabStartPos, (Vector3){1.0f, 0.0f, 0.0f}, VC_MAT_FIRE, 1.0f, 90.0f, progress); break;
-              case 22:
+              case 20: VFX_ComposeRuneCircle(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, progress, 5); break;
+              case 22: VFX_ComposeShockRing(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, progress); break;
+              case 25: VFX_ComposeSweepSlash(s_prefabStartPos, (Vector3){1.0f, 0.0f, 0.0f}, VC_MAT_FIRE, 1.0f, 90.0f, progress); break;
+              case 26:
               {
                   float a = s_meshTime * 1.35f;
                   Vector3 fixturePos = Vector3Add(s_prefabStartPos,
                       (Vector3){3.0f * sinf(a), 1.5f + 0.45f * sinf(a * 0.7f), 2.1f * cosf(a * 1.3f)});
-                  if (s_meshTime < s_vfxFixtureLastTime[22] && s_vfxFixtureHandle[22] >= 0)
-                      VFX_KillVolumeTrail(s_vfxFixtureHandle[22]);
-                  if (s_meshTime < s_vfxFixtureLastTime[22]) s_vfxFixtureHandle[22] = -1;
-                  s_vfxFixtureLastTime[22] = s_meshTime;
-                  s_vfxFixtureXf[22] = MatrixTranslate(fixturePos.x, fixturePos.y, fixturePos.z);
-                  if (s_vfxFixtureHandle[22] < 0)
-                      s_vfxFixtureHandle[22] = VFX_ComposeVolumeTrail(&s_vfxFixtureXf[22], VC_MAT_FIRE, 1.5f, 2.0f, VOL_ENERGY);
+                  if (s_meshTime < s_vfxFixtureLastTime[26] && s_vfxFixtureHandle[26] >= 0)
+                      VFX_KillVolumeTrail(s_vfxFixtureHandle[26]);
+                  if (s_meshTime < s_vfxFixtureLastTime[26]) s_vfxFixtureHandle[26] = -1;
+                  s_vfxFixtureLastTime[26] = s_meshTime;
+                  s_vfxFixtureXf[26] = MatrixTranslate(fixturePos.x, fixturePos.y, fixturePos.z);
+                  if (s_vfxFixtureHandle[26] < 0)
+                      s_vfxFixtureHandle[26] = VFX_ComposeVolumeTrail(&s_vfxFixtureXf[26], VC_MAT_FIRE, 1.5f, 2.0f, VOL_ENERGY);
                   break;
               }
-              case 23: VFX_ComposeFissureStreak(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.1f, progress, s_meshTime); break;
-              case 24: VFX_ComposeStonePillar(s_prefabStartPos, progress); break;
-              case 25: VFX_ComposeFlameVolume(s_prefabStartPos, VC_MAT_FIRE, 1.5f, 1.0f); break;
-              case 26: VFX_ComposeBlackHole(VC_MAT_FIRE, s_prefabStartPos, 1.5f, s_meshTime); break;
-              case 28: VFX_ComposeWaterStream(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.33f), (Vector3){0.0f, 0.9f, 0.7f}), Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.66f), (Vector3){0.0f, 0.5f, -0.7f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 1.5f, progress, s_meshTime); break;
+              case 27: VFX_ComposeFissureStreak(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.1f, progress, s_meshTime); break;
+              case 28: VFX_ComposeStonePillar(s_prefabStartPos, progress); break;
+              case 29: VFX_ComposeFlameVolume(s_prefabStartPos, VC_MAT_FIRE, 1.5f, 1.0f); break;
+              case 30: VFX_ComposeBlackHole(VC_MAT_FIRE, s_prefabStartPos, 1.5f, s_meshTime); break;
+              case 32: VFX_ComposeWaterStream(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.33f), (Vector3){0.0f, 0.9f, 0.7f}), Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.66f), (Vector3){0.0f, 0.5f, -0.7f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 1.5f, progress, s_meshTime); break;
           }
 // @gen:newfx_draw end
         }
@@ -875,7 +921,7 @@ void VFXTest_DrawHUD(void)
         const char **names;
         int gi;
         int vIdx;
-        maxIdx = 29;
+        maxIdx = 33;
         names = s_newFxNames; // @gen:newfx_count
         vIdx = 0;
         (void)names;

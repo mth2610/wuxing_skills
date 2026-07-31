@@ -11,7 +11,7 @@
 // drifting filament wisps instead of a solid glass ball (the
 // EffectMaterial translucency path has an alpha floor of 0.3 at the
 // center — this shader exists specifically to avoid that).
-// Draw with BLEND_ADDITIVE: alpha -> 0 means "adds nothing".
+// ShieldShell alpha-composites this membrane over the scene.
 // ============================================================
 
 uniform vec4  u_baseColor;    // deep body tint of the membrane
@@ -74,12 +74,19 @@ void main() {
     // this is what empties the center of the orb.
     float fresnel = calcFresnel(normal, viewDir, u_fresnelPower);
 
-    float alpha = wisp * mix(0.06, 1.0, fresnel) * u_opacity * u_baseColor.a;
+    // A shield must retain a visible carrier face-on. At 0.06 the front-facing
+    // flow is multiplied below the HDR bloom threshold in daylight, leaving
+    // only a rim. The wisp still gates it, so this is flowing plasma, not glass.
+    float alpha = wisp * mix(0.18, 1.0, fresnel) * u_opacity * u_baseColor.a;
 
     // Body -> crest color ramp; crests also get the rim boost.
     vec3 color = mix(u_baseColor.rgb, u_wispColor.rgb, wisp * wisp);
     color += u_wispColor.rgb * fresnel * u_rimStrength * wisp;
-    color *= (1.0 + u_emissive);
+    // Only thin crest pixels enter HDR/bloom. A minimum gain over the whole
+    // wisp makes ACES roll the entire membrane toward white on a lit scene.
+    float crest = smoothstep(0.74, 0.94, wisp);
+    float interiorCrest = crest * mix(0.35, 1.0, 1.0 - fresnel);
+    color += u_wispColor.rgb * (u_emissive * interiorCrest);
 
     finalColor = vec4(color, alpha);
 }

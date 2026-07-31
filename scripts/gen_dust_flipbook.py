@@ -2,10 +2,10 @@
 """Build the shipping dust parcel through the smoke/fire Taichi pipeline.
 
 The former Blender script made a white volume independently of the accepted
-smoke/fire channel contract.  Dust is now the ``dust_puff`` preset in
-scripts/flipbook/ti_sim.py: simulate the full 64-frame event, ray-march it,
-then subsample into a 4x4 atlas.  Do not simulate only 16 frames: frame count
-is physics time, while --stride is presentation sampling.
+smoke/fire channel contract. Dust is now the ``dust_puff`` preset in
+scripts/flipbook/ti_sim.py. One 64-frame simulation is packed twice: a full
+8x8 inspection/master atlas and a 4x4 runtime atlas sampled across the SAME
+timeline (frames 1, 5, 9 … 61), never from just its first 16 frames.
 
     python3 scripts/gen_dust_flipbook.py
     python3 scripts/gen_dust_flipbook.py --arch cpu  # fallback when Metal is unavailable
@@ -45,15 +45,15 @@ def main():
     p.add_argument("--dry-run", action="store_true", help="print the reproducible pipeline without executing it")
     p.add_argument("--res", type=int, default=112)
     p.add_argument("--frames", type=int, default=64)
-    p.add_argument("--grid", type=int, default=4)
     p.add_argument("--cell", type=int, default=256)
     p.add_argument("--seed", type=int, default=31)
     p.add_argument("--arch", choices=("gpu", "cpu"), default="gpu",
                    help="GPU is the normal fast path; use cpu only when Taichi/Metal is unavailable")
-    p.add_argument("--out", default="dust_puff_4x4.png")
+    p.add_argument("--out4", default="dust_puff_4x4.png")
+    p.add_argument("--out8", default="dust_puff_8x8.png")
     a = p.parse_args()
-    if a.frames != 64 or a.grid != 4:
-        p.error("shipping dust is a 64-frame simulation subsampled to 4x4")
+    if a.frames != 64:
+        p.error("shipping dust uses one 64-frame simulation for both atlases")
     py = pipeline_python()
     print("flipbook interpreter:", py)
 
@@ -65,11 +65,13 @@ def main():
           # Dust's eroded alpha is much tighter than the raw volume used by
           # render.py --zoom auto. Frame the drawable parcel, not its invisible
           # simulation haze; 3.0 leaves margin while avoiding a tiny card.
-          "--profile", "dust", "--light", "0", "--ambient", "1", "--zoom", "3.0", "--arch", a.arch], not a.dry_run)
+          "--profile", "dust", "--light", "0.90", "--ambient", "0.00", "--zoom", "3.0", "--arch", a.arch], not a.dry_run)
     call([py, os.path.join(FLIP, "pack.py"), os.path.join(CACHE, "frames"),
-          "--grid", str(a.grid), "--stride", "4", "--alpha-from-luma", "0",
-          "--offset", "2",
-          "--split", "--shape", "puff", "--out", a.out], not a.dry_run)
+          "--grid", "8", "--stride", "1", "--alpha-from-luma", "0",
+          "--split", "--shape", "puff", "--out", a.out8], not a.dry_run)
+    call([py, os.path.join(FLIP, "pack.py"), os.path.join(CACHE, "frames"),
+          "--grid", "4", "--stride", "4", "--alpha-from-luma", "0",
+          "--split", "--shape", "puff", "--out", a.out4], not a.dry_run)
 
 if __name__ == "__main__":
     main()

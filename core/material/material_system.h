@@ -204,8 +204,7 @@ void CrystalMaterialInstanced_End(void);
  * Wispy energy membrane (plasma_shell.vs/.fs): fresnel × animated fbm alpha,
  * fully transparent at the center — the shell look EffectMaterial's
  * translucency cannot do (it has a 0.3 alpha floor face-on). Draw spheres
- * with it under BLEND_ADDITIVE; backface culling off gives a second, deeper
- * membrane layer for free.
+ * with alpha blend for translucent shields; the caller owns the blend mode.
  * ==========================================================================*/
 
 typedef struct
@@ -216,7 +215,7 @@ typedef struct
     float noiseSpeed;   // wisp scroll speed (try 0.3-0.8)
     float fresnelPower; // rim sharpness 1..8 (higher = emptier center)
     float rimStrength;  // extra rim brightness 0..~2
-    float emissive;     // self-illumination boost 0..~2
+    float emissive;     // HDR gain 0..8, applied only to narrow filament crests
     float opacity;      // master alpha multiplier 0..1
     float displaceAmp;  // world-units vertex undulation amplitude
 } PlasmaMaterialParams;

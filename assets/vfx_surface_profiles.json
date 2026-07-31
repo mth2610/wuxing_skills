@@ -1,0 +1,102 @@
+{
+  "profiles": [
+    {
+      "id": "VFX_SURFACE_SMOKE_RIBBON",
+      "name": "smoke_ribbon",
+      "primitive": "ribbon",
+      "wrap": "repeat",
+      "flipbook": [0, 0, 0],
+      "seam": "crossfade_runtime",
+      "provenance": "purpose-built smoke ribbon triplet",
+      "consumers": ["VFX_ComposeSmokeTrail"],
+      "assets": {
+        "body": {"path": "assets/textures/smoke_ribbon.png", "channels": "RGBA lit body and opacity"},
+        "flow": {"path": "assets/textures/smoke_ribbon_flow.png", "channels": "RG signed flow direction"},
+        "mask": {"path": "assets/textures/smoke_ribbon_mask.png", "channels": "R scalar erosion"}
+      }
+    },
+    {
+      "id": "VFX_SURFACE_ENERGY_RIBBON",
+      "name": "energy_ribbon",
+      "primitive": "ribbon",
+      "wrap": "repeat",
+      "flipbook": [0, 0, 0],
+      "seam": "crossfade_runtime",
+      "provenance": "legacy energy-flow sheet, rotated/cropped into a ribbon at load",
+      "consumers": ["VFX_ComposeRibbonTrail (preprocess migration pending)"],
+      "assets": {
+        "body": {"path": "assets/textures/energy_flow.png", "channels": "RGBA emissive filament opacity"}
+      }
+    },
+    {
+      "id": "VFX_SURFACE_ENERGY_TUBE",
+      "name": "energy_tube",
+      "primitive": "tube",
+      "wrap": "repeat",
+      "flipbook": [0, 0, 0],
+      "seam": "tileable_both_axes",
+      "provenance": "scripts/gen_volume_trail_textures.py energy pair",
+      "consumers": ["VFX_ComposeVolumeTrail energy"],
+      "assets": {
+        "body": {"path": "assets/textures/energy_volume.png", "channels": "RGBA tintable energy filaments"},
+        "flow": {"path": "assets/textures/energy_volume_flow.png", "channels": "RG signed flow direction"}
+      }
+    },
+    {
+      "id": "VFX_SURFACE_SMOKE_TUBE",
+      "name": "smoke_tube_preview",
+      "primitive": "tube",
+      "wrap": "repeat",
+      "flipbook": [0, 0, 0],
+      "seam": "tileable_both_axes",
+      "provenance": "scripts/gen_volume_trail_textures.py smoke pair; P3 preview-only",
+      "consumers": ["VFX_ComposeVolumeTrail smoke preview only"],
+      "assets": {
+        "body": {"path": "assets/textures/smoke_volume.png", "channels": "RGBA lit smoke density"},
+        "flow": {"path": "assets/textures/smoke_volume_flow.png", "channels": "RG signed flow direction"}
+      }
+    },
+    {
+      "id": "VFX_SURFACE_FIRE_TUBE",
+      "name": "fire_tube_preview",
+      "primitive": "tube",
+      "wrap": "repeat",
+      "flipbook": [0, 0, 0],
+      "seam": "tileable_both_axes",
+      "provenance": "scripts/gen_volume_trail_textures.py fire pair; P3 preview-only",
+      "consumers": ["VFX_ComposeVolumeTrail fire preview only"],
+      "assets": {
+        "body": {"path": "assets/textures/fire_volume.png", "channels": "RGBA emissive fire body"},
+        "flow": {"path": "assets/textures/fire_volume_flow.png", "channels": "RG signed flow direction"}
+      }
+    },
+    {
+      "id": "VFX_SURFACE_SMOKE_PUFF",
+      "name": "smoke_puff",
+      "primitive": "puff",
+      "wrap": "clamp",
+      "flipbook": [8, 8, 64],
+      "seam": "not_applicable",
+      "provenance": "Taichi smoke puff bake with pre-lit RGB and alpha density",
+      "consumers": ["VFX_ComposeSmokePuff", "SmokeEmitter"],
+      "assets": {
+        "body": {"path": "assets/textures/smoke_puff_8x8_smoke.png", "channels": "RGB baked self-shadow, A true opacity"},
+        "fallback_body": {"path": "assets/textures/smoke_atlas_8x8.png", "channels": "RGBA legacy smoke fallback"}
+      }
+    },
+    {
+      "id": "VFX_SURFACE_FIRE_TONGUE",
+      "name": "fire_tongue",
+      "primitive": "fire_tongue",
+      "wrap": "clamp",
+      "flipbook": [8, 8, 64],
+      "seam": "not_applicable",
+      "provenance": "Taichi fire puff split into flame and smoke populations",
+      "consumers": ["VFX_FlameEmitter body"],
+      "assets": {
+        "body": {"path": "assets/textures/fire_puff_8x8_flame.png", "channels": "RGB white flame core, A opacity"},
+        "fallback_body": {"path": "assets/textures/fire_atlas_8x8_flame.png", "channels": "RGBA legacy flame column fallback"}
+      }
+    }
+  ]
+}

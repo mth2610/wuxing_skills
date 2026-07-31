@@ -98,6 +98,10 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeGlintSparkle":       ("draw",    "timed",      "continuous"),
     "VFX_ComposeGroundWave":         ("draw",    "timed",      "continuous"),
     "VFX_ComposeImpactPackage":      ("event",   "burst",      "oneshot"),
+    "VFX_ComposeImpactDust":         ("event",   "burst",      "oneshot"),
+    "VFX_ComposeContactSpark":       ("event",   "burst",      "oneshot"),
+    "VFX_ComposeEmberTrail":         ("emitter", "persistent", "persistent"),
+    "VFX_ComposeShieldShell":        ("emitter", "persistent", "persistent"),
     "VFX_ComposeLightShaft":         ("draw",    "timed",      "continuous"),
     "VFX_ComposePortalDisc":         ("draw",    "timed",      "continuous"),
     "VFX_ComposeProjectile":         ("trail",   "follower",   "continuous"),
@@ -114,6 +118,14 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeBlackHole":          ("draw",    "timed",      "continuous"),
     "VFX_ComposeIceCrystal":         ("event",   "burst",      "oneshot"),
     "VFX_ComposeWaterStream":        ("draw",    "timed",      "continuous"),
+}
+
+# A fixture may supply a semantic preview surface while the public composition
+# stays asset-agnostic. These are generated-call overrides, never edits inside
+# sandbox/vfx_test.c's @gen block.
+FIXTURE_SPAWN_OVERRIDES = {
+    "VFX_ComposeShieldShell":
+        "VFX_ShieldShell_SpawnEx($POS, VC_MAT_FIRE, 1.5f, 1.0f, VFXTest_ShieldFlowSurface())",
 }
 
 # ── Element / category inference ──────────────────────────────────────────────
@@ -152,6 +164,11 @@ def infer_category(fn_name):
     return "common"
 
 def infer_mat_id(fn_name):
+    # Contact dust describes displaced ground, not the element that hit it.
+    # A generic Common fixture used FIRE here, turning the neutral dust test
+    # orange and hiding the actual texture/material read.
+    if fn_name == "VFX_ComposeImpactDust":
+        return "VC_MAT_EARTH"
     cat = infer_category(fn_name)
     if cat == "common":
         return "VC_MAT_FIRE"
@@ -228,6 +245,10 @@ def infer_arg(type_str, name, fn_name):
         return 'NULL'
 
     if t == 'float':
+        if fn_name == 'VFX_ComposeEmberTrail' and 'ember' in n and 'second' in n:
+            # A one-per-second persistent fixture only proves that the handle
+            # exists. EmberTrail needs a readable stream for visual review.
+            return '14.0f'
         if fn_name == 'VFX_ComposeImpactPackage' and 'severity' in n:
             # A bench click is an actual impact event, not a timeline draw.
             # Stay below the package's hit-stop threshold (0.45).
@@ -377,6 +398,10 @@ def infer_entry(fn_name, info, available_fns):
     else:
         entry["type"] = "oneshot"
         entry["trigger_call"] = call
+    if fn_name in FIXTURE_SPAWN_OVERRIDES:
+        if "spawn_call" not in entry:
+            raise SystemExit(f"[sync_vfx_test] {fn_name}: spawn override requires a persistent fixture")
+        entry["spawn_call"] = FIXTURE_SPAWN_OVERRIDES[fn_name]
     return entry
 
 
