@@ -438,6 +438,9 @@ void VFX_KillProjectile(int handle);
 void VFX_BeginWaterStreams(float time);
 void VFX_EndWaterStreams(void);
 
+// Ends smoke emission while preserving the laid ribbon for built-in dissolve.
+void VFX_SmokeTrail_Stop(int trailId);
+
 // @gen:vc_declarations begin
 void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
 void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);

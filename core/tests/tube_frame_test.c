@@ -434,7 +434,7 @@ static void Test_MirrorStillMatchesSource(void)
     // THE TRAIL USES THAT BUILDER — there is one tube in the tree again.
     CHECK(FileHas(c, "ProceduralMesh_BuildTubeAlongPath(&mesh, path, n, headR"),
           "the trail's volume path calls the shared builder");
-    CHECK(FileHas(c, "ProceduralMesh_DrawTubeEx(&mesh, tiles, -t->uvScrollOffset * sMul);"),
+    CHECK(FileHas(c, "uvBase - t->uvScrollOffset * sMul"),
           "...and its draw, rather than emitting its own quads");
     // THE SCROLL. The original DrawTube computed v = i/segments with no offset,
     // so a tube could never be SEEN to flow — the texture was nailed to the mesh

@@ -105,6 +105,16 @@ static const char *k_volSheetPath[VFX_VOLUME_KIND_COUNT] = {
 };
 static Texture2D s_volSheet[VFX_VOLUME_KIND_COUNT];
 
+// Flow maps are data textures, not display sheets.  Keeping this table separate
+// prevents the visible RGBA volume texture from being decoded as a direction
+// field (which was the reason volume flow never had a coherent direction).
+static const char *k_volFlowPath[VFX_VOLUME_KIND_COUNT] = {
+    "assets/textures/energy_volume_flow.png",
+    "assets/textures/smoke_volume_flow.png",
+    "assets/textures/fire_volume_flow.png",
+};
+static Texture2D s_volFlowMap[VFX_VOLUME_KIND_COUNT];
+
 // COLUMN 2 — vertex deformation, as a fraction of the local radius. This is the
 // layer that stops a swept tube being a swept tube: without it the surface is
 // mathematically smooth and reads as extruded plastic however good the sheet on
@@ -250,9 +260,18 @@ static float s_volRadiusMul = 1.0f; // x the caller's radius
 static float s_volAspectMul = 1.0f; // x the aspect cap
 static float s_volAlphaMul = 1.0f;  // x the whole volume's opacity
 static float s_volNoiseMul = 1.0f;  // x the kind's noise amplitude
-static float s_volFlowMul = 1.0f;   // x the kind's swirl (negative flips it)
+// Legacy key `vol_flow`: controls only sheet UV scroll / tube-noise travel.
+// Flow-map distortion has independent controls below.
+static float s_volFlowMul = 1.0f;
+static float s_volMapSpeed = 1.5f;
+static float s_volMapStrength = 0.20f;
+static float s_volMapTiling = 2.0f;
 static float s_volTile = VOL_TILE;  // metres per texture repeat
 static float s_volLayerMul = 1.0f;  // 0 = body only; may only clamp DOWN
+// Diagnostic default: static geometry makes UV scroll and flow-map distortion
+// visible without confusing them with a moving emitter. Set vol_static = 0 to
+// restore swept follower behaviour.
+static float s_volStatic = 1.0f;
 // SOLID WHITE, for judging the SHAPE and nothing else.
 //
 // "Turn everything off" does not give an opaque surface, because what makes an
@@ -287,6 +306,19 @@ static void VolumeTrail_InitShared(void)
                      "VFX_VOLUME: %s missing — kind %d falls back to a bare tube",
                      k_volSheetPath[k], k);
         }
+
+        s_volFlowMap[k] = ResourceManager_LoadTexture(k_volFlowPath[k]);
+        if (s_volFlowMap[k].id != 0)
+        {
+            SetTextureFilter(s_volFlowMap[k], TEXTURE_FILTER_BILINEAR);
+            SetTextureWrap(s_volFlowMap[k], TEXTURE_WRAP_REPEAT);
+        }
+        else
+        {
+            TraceLog(LOG_WARNING,
+                     "VFX_VOLUME: %s missing — flow distortion disabled for kind %d",
+                     k_volFlowPath[k], k);
+        }
     }
     // Lazily, never from a subsystem Init — Tuning_Init runs after those and an
     // early registration silently keeps the default (core/docs/LANDMINES.md).
@@ -295,9 +327,13 @@ static void VolumeTrail_InitShared(void)
     Tuning_RegisterFloat("vol_alpha", &s_volAlphaMul, 1.0f);
     Tuning_RegisterFloat("vol_noise", &s_volNoiseMul, 1.0f);
     Tuning_RegisterFloat("vol_flow", &s_volFlowMul, 1.0f);
+    Tuning_RegisterFloat("vol_map_speed", &s_volMapSpeed, 1.5f);
+    Tuning_RegisterFloat("vol_map_strength", &s_volMapStrength, 0.20f);
+    Tuning_RegisterFloat("vol_map_tiling", &s_volMapTiling, 2.0f);
     Tuning_RegisterFloat("vol_tile", &s_volTile, VOL_TILE);
     Tuning_RegisterFloat("vol_layers", &s_volLayerMul, 1.0f);
     Tuning_RegisterFloat("vol_solid", &s_volSolid, 0.0f);
+    Tuning_RegisterFloat("vol_static", &s_volStatic, 1.0f);
     s_volInit = true;
 }
 
@@ -382,25 +418,38 @@ static int VolumeTrail_Spawn(const VC_VolumeTrail *v, int slot)
     cfg.teleportSpeed = VOL_TELEPORT_SPEED;
     cfg.idleSpeed = VOL_IDLE_SPEED;
     cfg.trailLength = (float)VolumeTrail_MaxNodes(v->lifetime);
-    cfg.useFlowMap = true;
-    cfg.flowMap = &s_volSheet[v->kind]; // Texture2D chứa vector flow (R, G)
-    cfg.flowSpeed = 1.5f;               // Tốc độ dòng chảy chạy nhanh hay chậm
-    cfg.flowStrength = 0.2f;            // Độ bóp méo/uốn lượn mạnh hay yếu
-    cfg.flowTiling = 2.0f;              // Độ lặp lại UV của dòng chảy
+    cfg.useFlowMap = (s_volFlowMap[v->kind].id != 0);
+    cfg.flowMap = &s_volFlowMap[v->kind]; // RG vector field, separate from display sheet
+    cfg.flowSpeed = s_volMapSpeed;
+    cfg.flowStrength = s_volMapStrength;
+    cfg.flowTiling = s_volMapTiling;
 
     int id = SpawnTrailEntity(cfg);
     if (id >= 0)
-        Trail_AttachToTransform(id, v->xf, (Vector3){0.0f, 0.0f, 0.0f});
+    {
+        if (s_volStatic >= 0.5f)
+        {
+            // A vertical, world-space test segment: the mesh stays still while
+            // UpdateTrailSystem continues its UV and flow-map clocks.
+            Vector3 tail = Vector3Add(cfg.pos, (Vector3){0.0f, 0.0f, -1.20f});
+            Trail_SetStaticPath(id, tail, cfg.pos, VolumeTrail_MaxNodes(v->lifetime));
+        }
+        else
+        {
+            Trail_AttachToTransform(id, v->xf, (Vector3){0.0f, 0.0f, 0.0f});
+        }
+    }
     // ONE LINE PER SPAWN, unconditional. "It looks the same as before" and "the
     // new path never ran" are indistinguishable on screen, and the swept trail
     // spent four rounds learning that (core/docs/VFX_PLAN.md §4.4).
     TraceLog(LOG_INFO,
              "VFX_VOLUME: slot %d — kind %d, TUBE %d radial x %d rings, %d layer(s), "
-             "tier %d, noise %.2f, swirl %.2f tiles/s, %s",
+             "tier %d, noise %.2f, swirl %.2f tiles/s, %s, %s",
              slot, (int)v->kind, cfg.tubeRadialSegs, cfg.tubeMaxRings,
              cfg.layerCount, (int)GfxQuality_Get(), cfg.tubeNoiseAmp,
              cfg.uvScrollSpeed,
-             VolumeTrail_Emits(v->kind) ? "ADDITIVE (emits)" : "ALPHA (occludes)");
+             VolumeTrail_Emits(v->kind) ? "ADDITIVE (emits)" : "ALPHA (occludes)",
+             (s_volStatic >= 0.5f) ? "STATIC FLOW PROBE" : "FOLLOWER");
     return id;
 }
 
@@ -524,6 +573,23 @@ static void VC_VolumeTrail_Update(float dt)
             continue;
         }
 
+        // `vol_static` is a live diagnostic dial. Existing probes must be
+        // reattached when it is turned off; evaluating it only at spawn left
+        // their frozen flag latched forever.
+        if (s_volStatic >= 0.5f && !t->frozen)
+        {
+            Vector3 head = Vector3Transform((Vector3){0.0f, 0.0f, 0.0f}, *v->xf);
+            Vector3 tail = Vector3Add(head, (Vector3){0.0f, 0.0f, -1.20f});
+            Trail_SetStaticPath(v->trailId, tail, head, VolumeTrail_MaxNodes(v->lifetime));
+        }
+        else if (s_volStatic < 0.5f && t->frozen)
+        {
+            Trail_SetFrozen(v->trailId, false);
+            Trail_AttachToTransform(v->trailId, v->xf, (Vector3){0.0f, 0.0f, 0.0f});
+            v->widthLogged = false;
+            TraceLog(LOG_INFO, "VFX_VOLUME: slot %d — static flow probe disabled; follower restored", i);
+        }
+
         float travel = VolumeTrail_TravelLength(t);
         t->thickness = VolumeTrail_Radius(v->radius, travel);
         // THE NUMBER THAT DECIDES WHETHER ANY OF THIS IS VISIBLE. The radius is
@@ -546,6 +612,9 @@ static void VC_VolumeTrail_Update(float dt)
         t->uvMetresPerTile = (s_volTile > 0.05f) ? s_volTile : 0.05f;
         t->uvScrollSpeed = k_volSwirl[v->kind] * s_volFlowMul;
         t->tubeNoiseAmp = k_volNoise[v->kind] * s_volNoiseMul;
+        t->flowSpeed = s_volMapSpeed;
+        t->flowStrength = s_volMapStrength;
+        t->flowTiling = (s_volMapTiling > 0.0f) ? s_volMapTiling : 1.0f;
         // The ladder still owns the ceiling; the dial may only take it DOWN.
         int layers = VolumeTrail_LayerCount();
         if (s_volLayerMul < 0.5f)

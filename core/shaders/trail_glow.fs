@@ -44,8 +44,8 @@ void main() {
     if (uStrength > 0.0) {
         vec2 flow = texture(flowTex, fragTexCoord).rg * 2.0 - 1.0;
 
-        float phase0 = fract(uTime * uSpeed);
-        float phase1 = fract(uTime * uSpeed + 0.5);
+        float phase0 = fract(u_flowTime * uSpeed);
+        float phase1 = fract(u_flowTime * uSpeed + 0.5);
         float blend = abs(phase0 * 2.0 - 1.0);
 
         vec4 col0 = texture(texture0, uvMain + flow * (phase0 - 0.5) * uStrength);
@@ -75,8 +75,10 @@ void main() {
 
         // Tạo hiệu ứng viền cháy HDR (Edge Burn) ngay ranh giới xé rách
         float edge = smoothstep(dissolveThreshold - 0.05, dissolveThreshold, noiseVal) - alphaMask;
-        vec3 defaultBurn = (uBurnColor != vec3(0.0)) ? uBurnColor : vec3(3.0, 1.2, 0.3); // HDR Orange
-        burnGlow = edge * defaultBurn * 2.5; 
+        // Smoke supplies no burn colour: erosion should make soft gaps, not
+        // create an accidental orange energy rim. Effects that want a hot edge
+        // must opt in by setting uBurnColor explicitly.
+        burnGlow = edge * max(uBurnColor, vec3(0.0)) * 2.5;
     }
 
     // ==========================================

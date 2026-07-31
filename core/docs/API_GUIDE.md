@@ -263,7 +263,8 @@ typedef enum {
     TRAIL_WIDTH_ENVELOPE_UNIFORM = 0, // Uniform width multiplier (1.0)
     TRAIL_WIDTH_ENVELOPE_TAPER_TAIL = 1, // Needle tail (segRatio ^ 1.2)
     TRAIL_WIDTH_ENVELOPE_TAPER_BOTH = 2, // Needle head & tail (leaf shape)
-    TRAIL_WIDTH_ENVELOPE_PULSE       = 3  // Breathing wave along path
+    TRAIL_WIDTH_ENVELOPE_PULSE       = 3, // Breathing wave along path
+    TRAIL_WIDTH_ENVELOPE_SMOKE_LIFECYCLE = 4 // small source -> body -> dissolve
 } TrailWidthEnvelopeType;
 
 typedef void (*TrailUpdateCallback)(int trailId, float dt);
@@ -309,7 +310,7 @@ typedef struct {
   - **Dynamic Orbit:** call `Trail_SetFollowerOrbit(trailId, radius, speed, axis, phase);` to make a matrix-attached trail automatically orbit its `localOffset` point! Orbit rotates around `axis` (must be normalized) at distance `radius`, advancing `speed * dt` radians per frame. Starts at angle `phase`. Set `radius` or `speed` to `0.0f` to disable.
   - `SetFollowerAxis(trailId, basePos, normalizedDir);` sets the optional radial-axis orientation for `FORCE_RADIAL_AXIS` in `forceField` — unrelated to tip position.
   - **`trailLength` for FOLLOWER = integer node count** (e.g. `20.0f` = 20 history nodes). Not a fractional ratio — `(int)trailLength` is taken directly. Trail only renders when `historyCount > 1`, so values < 2.0f result in no visible trail.
-* **Lifecycle:** Free active trails when complete by calling `KillTrail(trailId);`.
+* **Lifecycle:** Free active trails when complete by calling `KillTrail(trailId);`. For `VFX_ComposeSmokeTrail`, prefer `VFX_SmokeTrail_Stop(trailId)`: it detaches the emitter and lets the already-laid ribbon grow, billow, and dissolve through its smoke-lifecycle envelope. `KillTrail` remains the intentional immediate cut.
 * **`onDeath`:** Fired once when a trail dies — either its `life` timer expires, or (for `TRAIL_TYPE_PROJECTILE`) it auto-detects a hit on `target`. Use it to spawn an impact effect exactly at the trail's last position without separately tracking when the projectile arrived:
   ```c
   static void OnQiBladeDeath(Vector3 pos, float scale) {
@@ -331,7 +332,7 @@ typedef struct {
   Leave both at `0` (default from `{0}` zero-init) to keep the existing global-macro behavior — fully backward compatible.
 * **New 5 Upgrades Features:**
   - **`uvTiling` & `uvScrollSpeed`:** Enables automatic texture coordinates scrolling along the trail path length. E.g., `cfg.uvTiling = 2.0f; cfg.uvScrollSpeed = 1.5f;` tiles the texture 2 times and scrolls it at 1.5 units/sec.
-  - **`widthEnvelope`:** Modifies the shape of the trail using `TrailWidthEnvelopeType`. E.g., `TRAIL_WIDTH_ENVELOPE_TAPER_BOTH` creates a double-pointed long leaf shape. `TRAIL_WIDTH_ENVELOPE_PULSE` generates breathing waves.
+  - **`widthEnvelope`:** Modifies the shape of the trail using `TrailWidthEnvelopeType`. E.g., `TRAIL_WIDTH_ENVELOPE_TAPER_BOTH` creates a double-pointed long leaf shape. `TRAIL_WIDTH_ENVELOPE_PULSE` generates breathing waves. `TRAIL_WIDTH_ENVELOPE_SMOKE_LIFECYCLE` grows from a narrow source into a broad body then transparently dissolves at the tail; it is the default for `VFX_ComposeSmokeTrail`.
   - **`minVertexDistance`:** Optimizes performance by filtering node insertion. A new node is only recorded in history if the head moves at least `minVertexDistance` (world units) away from the last node.
   - **`smoothSpline`:** Smooths out segments via Catmull-Rom spline interpolation if `historyCount >= 4`. Dense points (minimum 30) are interpolated dynamically to avoid angular corners at low FPS.
   - **`collisionCheck`:** Accepts a custom callback `collisionCheck(trailId, pos)`. For `TRAIL_TYPE_PROJECTILE`, if this callback returns `true`, it immediately triggers a collision impact hit (`onDeath`) and transitions to the follower decay stage.

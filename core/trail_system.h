@@ -97,7 +97,10 @@ typedef enum
     TRAIL_WIDTH_ENVELOPE_UNIFORM = 0,
     TRAIL_WIDTH_ENVELOPE_TAPER_TAIL = 1,
     TRAIL_WIDTH_ENVELOPE_TAPER_BOTH = 2,
-    TRAIL_WIDTH_ENVELOPE_PULSE = 3
+    TRAIL_WIDTH_ENVELOPE_PULSE = 3,
+    // Small at the source, full in the body, then expands and dissolves.
+    // Width and alpha share this envelope, so a smoke ribbon has no hard end.
+    TRAIL_WIDTH_ENVELOPE_SMOKE_LIFECYCLE = 4
 } TrailWidthEnvelopeType;
 
 typedef void (*TrailUpdateCallback)(int trailId, float dt);
@@ -183,6 +186,13 @@ typedef struct
     float flowStrength;       // Độ biến dạng / dịch chuyển UV
     float flowTiling;         // UV Tiling riêng cho Flowmap
     bool useFlowMap;          // Bật chế độ Flowmap shader pipeline
+
+    // Independent scalar mask (R channel): erodes alpha after the main sheet
+    // and flow-map pass. Keep it separate from flow direction so smoke can
+    // break into irregular puffs without making UV motion look turbulent.
+    const Texture2D *noiseMask;
+    float dissolve;
+    float maskTiling;
 
     // Unified Config
     VFX_GeneralConfig general;
@@ -332,6 +342,7 @@ typedef struct
 
     Texture2D sprite;  // 20 bytes
     Texture2D flowMap; // 20 bytes (Thêm Flowmap Texture vào Entity)
+    Texture2D noiseMask;
     Shader shader;     // 12/16 bytes
     Color tint;        // 4 bytes
 
@@ -374,6 +385,8 @@ typedef struct
     float flowStrength;
     float flowTiling;
     float flowTimeAccumulator; // Bộ đếm thời gian riêng cho phase cuộn flowmap
+    float dissolve;
+    float maskTiling;
 
     // 4. Số nguyên và Enum (Int/Enum) - 4 bytes
     TrailType type;
@@ -422,6 +435,10 @@ void Trail_SetFollowerOrbit(int id, float radius, float speed, Vector3 axis, flo
 void SetFollowerAxis(int id, Vector3 axisOrigin, Vector3 axisDir);
 void Trail_SetLateralOffset(int id, Vector3 worldOffset);
 void Trail_SetFrozen(int id, bool frozen);
+// Replaces a follower's history with a fixed world-space segment and freezes it.
+// UV/flow clocks still advance in UpdateTrailSystem, making this useful for
+// isolating texture motion from emitter movement.
+void Trail_SetStaticPath(int id, Vector3 tail, Vector3 head, int nodeCount);
 
 // API mở rộng hỗ trợ cập nhật FlowMap động thời gian thực
 void Trail_SetFlowMap(int id, Texture2D flowMap, float speed, float strength, float tiling);

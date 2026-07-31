@@ -35,6 +35,14 @@ static Shader defaultShader;
 static unsigned int shaderCacheIds[TRAIL_SHADER_CACHE_SIZE];
 static int shaderCacheTimeLocs[TRAIL_SHADER_CACHE_SIZE];
 static int shaderCacheCoreStrLocs[TRAIL_SHADER_CACHE_SIZE];
+static int shaderCacheFlowTimeLocs[TRAIL_SHADER_CACHE_SIZE];
+static int shaderCacheFlowSpeedLocs[TRAIL_SHADER_CACHE_SIZE];
+static int shaderCacheFlowStrengthLocs[TRAIL_SHADER_CACHE_SIZE];
+static int shaderCacheFlowTilingLocs[TRAIL_SHADER_CACHE_SIZE];
+static int shaderCacheFlowTexLocs[TRAIL_SHADER_CACHE_SIZE];
+static int shaderCacheDissolveLocs[TRAIL_SHADER_CACHE_SIZE];
+static int shaderCacheMaskTilingLocs[TRAIL_SHADER_CACHE_SIZE];
+static int shaderCacheMaskTexLocs[TRAIL_SHADER_CACHE_SIZE];
 static int shaderCacheCount = 0;
 
 static void CacheShaderLocs(Shader shader)
@@ -47,50 +55,76 @@ static void CacheShaderLocs(Shader shader)
     shaderCacheIds[shaderCacheCount] = shader.id;
     shaderCacheTimeLocs[shaderCacheCount] = GetShaderLocation(shader, "u_time");
     shaderCacheCoreStrLocs[shaderCacheCount] = GetShaderLocation(shader, "u_coreStrength");
+    shaderCacheFlowTimeLocs[shaderCacheCount] = GetShaderLocation(shader, "u_flowTime");
+    shaderCacheFlowSpeedLocs[shaderCacheCount] = GetShaderLocation(shader, "uSpeed");
+    shaderCacheFlowStrengthLocs[shaderCacheCount] = GetShaderLocation(shader, "uStrength");
+    shaderCacheFlowTilingLocs[shaderCacheCount] = GetShaderLocation(shader, "uTiling");
+    shaderCacheFlowTexLocs[shaderCacheCount] = GetShaderLocation(shader, "flowTex");
+    shaderCacheDissolveLocs[shaderCacheCount] = GetShaderLocation(shader, "uDissolve");
+    shaderCacheMaskTilingLocs[shaderCacheCount] = GetShaderLocation(shader, "uMaskTiling");
+    shaderCacheMaskTexLocs[shaderCacheCount] = GetShaderLocation(shader, "maskTex");
     shaderCacheCount++;
+}
+
+static int GetCachedShaderLoc(Shader shader, const int *locs, const char *name)
+{
+    CacheShaderLocs(shader);
+    for (int i = 0; i < shaderCacheCount; i++)
+        if (shaderCacheIds[i] == shader.id)
+            return locs[i];
+    // The small cache is deliberately bounded; preserve correctness if a scene
+    // uses more than its shader budget.
+    return GetShaderLocation(shader, name);
 }
 
 static int GetCachedTimeLoc(Shader shader)
 {
-    CacheShaderLocs(shader);
-    for (int i = 0; i < shaderCacheCount; i++)
-        if (shaderCacheIds[i] == shader.id)
-            return shaderCacheTimeLocs[i];
-    return -1;
+    return GetCachedShaderLoc(shader, shaderCacheTimeLocs, "u_time");
 }
 
 static int GetCachedCoreStrLoc(Shader shader)
 {
-    CacheShaderLocs(shader);
-    for (int i = 0; i < shaderCacheCount; i++)
-        if (shaderCacheIds[i] == shader.id)
-            return shaderCacheCoreStrLocs[i];
-    return -1;
+    return GetCachedShaderLoc(shader, shaderCacheCoreStrLocs, "u_coreStrength");
 }
 
 static int GetCachedFlowTimeLoc(Shader sh)
 {
-    return GetShaderLocation(sh, "uTime");
+    return GetCachedShaderLoc(sh, shaderCacheFlowTimeLocs, "u_flowTime");
 }
 
 static int GetCachedFlowSpeedLoc(Shader sh)
 {
-    return GetShaderLocation(sh, "uSpeed");
+    return GetCachedShaderLoc(sh, shaderCacheFlowSpeedLocs, "uSpeed");
 }
 
 static int GetCachedFlowStrengthLoc(Shader sh)
 {
-    return GetShaderLocation(sh, "uStrength");
+    return GetCachedShaderLoc(sh, shaderCacheFlowStrengthLocs, "uStrength");
 }
 
 static int GetCachedFlowTilingLoc(Shader sh)
 {
-    return GetShaderLocation(sh, "uTiling");
+    return GetCachedShaderLoc(sh, shaderCacheFlowTilingLocs, "uTiling");
 }
 
 static int GetCachedFlowTexLoc(Shader sh)
 {
-    return GetShaderLocation(sh, "flowTex");
+    return GetCachedShaderLoc(sh, shaderCacheFlowTexLocs, "flowTex");
+}
+
+static int GetCachedDissolveLoc(Shader sh)
+{
+    return GetCachedShaderLoc(sh, shaderCacheDissolveLocs, "uDissolve");
+}
+
+static int GetCachedMaskTilingLoc(Shader sh)
+{
+    return GetCachedShaderLoc(sh, shaderCacheMaskTilingLocs, "uMaskTiling");
+}
+
+static int GetCachedMaskTexLoc(Shader sh)
+{
+    return GetCachedShaderLoc(sh, shaderCacheMaskTexLocs, "maskTex");
 }
 
 static RibbonPoint scratchOuter[TRAIL_HISTORY_COUNT];
@@ -143,6 +177,16 @@ static float ComputeWidthEnvelopeFast(const TrailEntity *t, float segRatio, floa
     }
     case TRAIL_WIDTH_ENVELOPE_PULSE:
         return 1.0f + 0.25f * sinf(segRatio * 12.0f - time * 10.0f);
+    case TRAIL_WIDTH_ENVELOPE_SMOKE_LIFECYCLE:
+    {
+        // segRatio runs tail->head in reverse: age 0 is fresh source smoke;
+        // age 1 is the oldest tail. It grows first, billows in the middle and
+        // reaches zero before the tail is culled by follower idle fade.
+        float age = 1.0f - segRatio;
+        float grow = SmoothStepC(0.0f, 0.22f, age);
+        float dissolve = 1.0f - SmoothStepC(0.66f, 1.0f, age);
+        return (0.18f + 0.82f * grow) * (0.70f + 0.30f * age) * dissolve;
+    }
     case TRAIL_WIDTH_ENVELOPE_UNIFORM:
     default:
         return 1.0f;
@@ -594,6 +638,11 @@ static void ClampFollowerDeviation(TrailEntity *t, int idx, int h)
 
 static void UpdateFollowerPhysics(int i, TrailEntity *t, float dt, float time)
 {
+    // A static diagnostic path is intentionally not fed by a transform. Do not
+    // treat that as an idle trail which should drain away.
+    if (t->frozen)
+        return;
+
     t->timeSinceLastFollowerUpdate += dt;
     if (t->timeSinceLastFollowerUpdate > TRAIL_FOLLOWER_IDLE_FADE_TIME)
     {
@@ -612,8 +661,6 @@ static void UpdateFollowerPhysics(int i, TrailEntity *t, float dt, float time)
     }
 
     const bool windActive = WindZone_IsActive();
-    if (t->frozen)
-        return;
     if ((!t->forceField && !windActive) || t->historyCount < 2)
         return;
     float viscDamp = t->forceField ? ForceField_GetViscosityDamping(t->forceField, dt) : 1.0f;
@@ -865,6 +912,9 @@ int SpawnTrailEntity(TrailConfig config)
     t->flowStrength = config.flowStrength;
     t->flowTiling = (config.flowTiling != 0.0f) ? config.flowTiling : 1.0f;
     t->useFlowMap = config.useFlowMap || (t->flowMap.id > 0);
+    t->noiseMask = (config.noiseMask != NULL) ? *config.noiseMask : (Texture2D){0};
+    t->dissolve = config.dissolve;
+    t->maskTiling = (config.maskTiling > 0.0f) ? config.maskTiling : 1.0f;
     t->flowTimeAccumulator = 0.0f;
     // ────────────────────────────────────────────────────────────────────
 
@@ -981,6 +1031,42 @@ void Trail_SetFrozen(int id, bool frozen)
     trailPool[id].frozen = frozen;
 }
 
+void Trail_SetStaticPath(int id, Vector3 tail, Vector3 head, int nodeCount)
+{
+    if (id < 0 || id >= MAX_TRAIL_PARTICLES || !trailPool[id].active)
+        return;
+
+    TrailEntity *t = &trailPool[id];
+    if (t->type != TRAIL_TYPE_FOLLOWER)
+        return;
+    if (nodeCount < 2)
+        nodeCount = 2;
+    if (nodeCount > TRAIL_HISTORY_COUNT)
+        nodeCount = TRAIL_HISTORY_COUNT;
+
+    float length = Vector3Distance(tail, head);
+    t->historyCount = nodeCount;
+    t->historyHead = nodeCount - 1;
+    t->laidDist = length;
+    for (int i = 0; i < nodeCount; i++)
+    {
+        float u = (float)i / (float)(nodeCount - 1);
+        Vector3 p = Vector3Lerp(tail, head, u);
+        t->history[i] = p;
+        t->nodeHome[i] = p;
+        t->nodeVelocity[i] = (Vector3){0, 0, 0};
+        t->nodeRest[i] = (i > 0) ? length / (float)(nodeCount - 1) : 0.0f;
+        t->nodeUV[i] = length * u;
+    }
+    t->position = head;
+    t->prevAttachPos = head;
+    t->hasPrevAttach = true;
+    t->attachedTransform = NULL;
+    t->sampleAcc = 0.0f;
+    t->fadeAccumulator = 0.0f;
+    t->frozen = true;
+}
+
 void SetFollowerAxis(int id, Vector3 axisOrigin, Vector3 axisDir)
 {
     if (id >= 0 && id < MAX_TRAIL_PARTICLES && trailPool[id].active && trailPool[id].type == TRAIL_TYPE_FOLLOWER)
@@ -1026,10 +1112,11 @@ void UpdateTrailSystem(float dt)
             continue;
         }
 
-        // Cập nhật bộ đếm dòng chảy Flowmap
+        // Keep an unscaled clock. The shader applies uSpeed exactly once;
+        // scaling here too made flow-map speed unintentionally quadratic.
         if (t->useFlowMap)
         {
-            t->flowTimeAccumulator += dt * t->flowSpeed;
+            t->flowTimeAccumulator += dt;
         }
         t->uvScrollOffset += t->uvScrollSpeed * dt;
 
@@ -1199,6 +1286,14 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
     for (int i = 1; i < n; i++)
         arcLen += Vector3Distance(path[i], path[i - 1]);
 
+    // The mesh is rebuilt from a sliding history window every frame.  Its
+    // local arc length therefore changes as nodes enter at the head and leave
+    // at the tail.  Anchor UVs in accumulated trail distance instead of that
+    // transient local range, otherwise the reparameterisation can visually
+    // cancel uvScrollOffset whenever the follower moves.
+    int tailNode = NodeIndexForSegRatio(t, drawCount, drawCount - 1);
+    int headNode = NodeIndexForSegRatio(t, drawCount, 0);
+
     static TubeMeshData mesh;
     ProceduralMesh_BuildTubeAlongPath(&mesh, path, n, headR, 0.0f, 1.0f,
                                       (float)GetTime(), segs, radial, &cfg);
@@ -1223,12 +1318,18 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
                             : ((s_tubeFlatTex.id != 0) ? s_tubeFlatTex : fallbackTex);
         float sMul = (ly->scrollMul != 0.0f) ? ly->scrollMul : 1.0f;
         float mpt = (t->uvMetresPerTile > 0.01f) ? t->uvMetresPerTile : 1.0f;
-        float tiles = arcLen / mpt;
+        float uvBase = t->nodeUV[tailNode] / mpt;
+        float tiles = (t->nodeUV[headNode] - t->nodeUV[tailNode]) / mpt;
+        // A just-spawned follower can have a one-node/near-zero-distance
+        // window; keep a visible first tile until accumulated distance exists.
+        if (tiles <= 0.0f)
+            tiles = arcLen / mpt;
         if (tiles < 0.5f)
             tiles = 0.5f;
         rlSetTexture(tex.id);
         rlColor4ub(col.r, col.g, col.b, (unsigned char)a);
-        ProceduralMesh_DrawTubeEx(&mesh, tiles, -t->uvScrollOffset * sMul);
+        ProceduralMesh_DrawTubeEx(&mesh, tiles,
+                                  uvBase - t->uvScrollOffset * sMul);
     }
     rlSetTexture(0);
     rlColor4ub(255, 255, 255, 255);
@@ -1482,7 +1583,31 @@ typedef struct
     BlendMode bm;
     Shader sh;
     Texture2D tex;
+    Texture2D flowMap;
+    Texture2D noiseMask;
+    float flowSpeed;
+    float flowStrength;
+    float flowTiling;
+    float dissolve;
+    float maskTiling;
+    bool useFlowMap;
 } RenderGroup;
+
+static bool TrailMatchesRenderGroup(const TrailEntity *t, const RenderGroup *g,
+                                    BlendMode bm, Shader sh, Texture2D tex)
+{
+    if (g->bm != bm || g->sh.id != sh.id || g->tex.id != tex.id ||
+        g->useFlowMap != t->useFlowMap ||
+        g->noiseMask.id != t->noiseMask.id ||
+        g->dissolve != t->dissolve || g->maskTiling != t->maskTiling)
+        return false;
+    if (!t->useFlowMap)
+        return true;
+    return g->flowMap.id == t->flowMap.id &&
+           g->flowSpeed == t->flowSpeed &&
+           g->flowStrength == t->flowStrength &&
+           g->flowTiling == t->flowTiling;
+}
 
 void DrawTrailEntities(Camera3D camera)
 {
@@ -1519,7 +1644,7 @@ void DrawTrailEntities(Camera3D camera)
         bool found = false;
         for (int g = 0; g < groupCount; g++)
         {
-            if (groups[g].bm == bm && groups[g].sh.id == sh.id && groups[g].tex.id == tex.id)
+            if (TrailMatchesRenderGroup(t, &groups[g], bm, sh, tex))
             {
                 found = true;
                 break;
@@ -1530,6 +1655,14 @@ void DrawTrailEntities(Camera3D camera)
             groups[groupCount].bm = bm;
             groups[groupCount].sh = sh;
             groups[groupCount].tex = tex;
+            groups[groupCount].flowMap = t->flowMap;
+            groups[groupCount].noiseMask = t->noiseMask;
+            groups[groupCount].flowSpeed = t->flowSpeed;
+            groups[groupCount].flowStrength = t->flowStrength;
+            groups[groupCount].flowTiling = t->flowTiling;
+            groups[groupCount].dissolve = t->dissolve;
+            groups[groupCount].maskTiling = t->maskTiling;
+            groups[groupCount].useFlowMap = t->useFlowMap;
             groupCount++;
         }
     }
@@ -1539,10 +1672,56 @@ void DrawTrailEntities(Camera3D camera)
         BeginBlendMode(groups[g].bm);
 
         Shader fullShader = groups[g].sh;
+        BeginShaderMode(fullShader);
+        // rlvk writes to the currently active shader, not the Shader argument.
         int timeLoc = GetCachedTimeLoc(fullShader);
         if (timeLoc >= 0)
             SetShaderValue(fullShader, timeLoc, &time, SHADER_UNIFORM_FLOAT);
-        BeginShaderMode(fullShader);
+        // Locations are shader-level state, not per-trail state. Resolve them
+        // once per pass; several simultaneous smoke trails previously repeated
+        // five GetShaderLocation calls for every instance, every frame.
+        int flowTimeLoc = GetCachedFlowTimeLoc(fullShader);
+        int flowSpeedLoc = GetCachedFlowSpeedLoc(fullShader);
+        int flowStrengthLoc = GetCachedFlowStrengthLoc(fullShader);
+        int flowTilingLoc = GetCachedFlowTilingLoc(fullShader);
+        int flowTexLoc = GetCachedFlowTexLoc(fullShader);
+        int dissolveLoc = GetCachedDissolveLoc(fullShader);
+        int maskTilingLoc = GetCachedMaskTilingLoc(fullShader);
+        int maskTexLoc = GetCachedMaskTexLoc(fullShader);
+        if (groups[g].useFlowMap)
+        {
+            // Keep one clock for the batch. Flow phase is visual state, not
+            // per-instance geometry, so grouping it prevents rlvk UBO churn.
+            if (flowTimeLoc >= 0)
+                SetShaderValue(fullShader, flowTimeLoc, &time, SHADER_UNIFORM_FLOAT);
+            if (flowSpeedLoc >= 0)
+                SetShaderValue(fullShader, flowSpeedLoc, &groups[g].flowSpeed, SHADER_UNIFORM_FLOAT);
+            if (flowStrengthLoc >= 0)
+                SetShaderValue(fullShader, flowStrengthLoc, &groups[g].flowStrength, SHADER_UNIFORM_FLOAT);
+            if (flowTilingLoc >= 0)
+                SetShaderValue(fullShader, flowTilingLoc, &groups[g].flowTiling, SHADER_UNIFORM_FLOAT);
+            if (flowTexLoc >= 0 && groups[g].flowMap.id > 0)
+                SetShaderValueTexture(fullShader, flowTexLoc, groups[g].flowMap);
+        }
+        else if (flowStrengthLoc >= 0)
+        {
+            // Shader uniforms persist across draw groups.  Explicitly clear a
+            // previous flow-enabled batch so ordinary ribbons never inherit
+            // UV distortion from the group rendered just before them.
+            const float noFlow = 0.0f;
+            SetShaderValue(fullShader, flowStrengthLoc, &noFlow, SHADER_UNIFORM_FLOAT);
+        }
+        if (dissolveLoc >= 0)
+            SetShaderValue(fullShader, dissolveLoc, &groups[g].dissolve, SHADER_UNIFORM_FLOAT);
+        if (maskTilingLoc >= 0)
+            SetShaderValue(fullShader, maskTilingLoc, &groups[g].maskTiling, SHADER_UNIFORM_FLOAT);
+        if (maskTexLoc >= 0)
+        {
+            Texture2D maskTex = (groups[g].noiseMask.id != 0)
+                                    ? groups[g].noiseMask : s_tubeFlatTex;
+            if (maskTex.id != 0)
+                SetShaderValueTexture(fullShader, maskTexLoc, maskTex);
+        }
 
         for (int a = 0; a < activeCount; a++)
         {
@@ -1554,27 +1733,8 @@ void DrawTrailEntities(Camera3D camera)
                                                         : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
             Texture2D currentTex = t->sprite.id > 0 ? t->sprite : s_globalTrailTex;
 
-            if (ResolveShader(t).id == fullShader.id && currentBm == groups[g].bm && currentTex.id == groups[g].tex.id)
+            if (TrailMatchesRenderGroup(t, &groups[g], currentBm, ResolveShader(t), currentTex))
             {
-                if (t->useFlowMap)
-                {
-                    int locTime = GetCachedFlowTimeLoc(fullShader);
-                    int locSpeed = GetCachedFlowSpeedLoc(fullShader);
-                    int locStrength = GetCachedFlowStrengthLoc(fullShader);
-                    int locTiling = GetCachedFlowTilingLoc(fullShader);
-                    int locTex = GetCachedFlowTexLoc(fullShader);
-
-                    if (locTime >= 0)
-                        SetShaderValue(fullShader, locTime, &t->flowTimeAccumulator, SHADER_UNIFORM_FLOAT);
-                    if (locSpeed >= 0)
-                        SetShaderValue(fullShader, locSpeed, &t->flowSpeed, SHADER_UNIFORM_FLOAT);
-                    if (locStrength >= 0)
-                        SetShaderValue(fullShader, locStrength, &t->flowStrength, SHADER_UNIFORM_FLOAT);
-                    if (locTiling >= 0)
-                        SetShaderValue(fullShader, locTiling, &t->flowTiling, SHADER_UNIFORM_FLOAT);
-                    if (locTex >= 0 && t->flowMap.id > 0)
-                        SetShaderValueTexture(fullShader, locTex, t->flowMap);
-                }
                 DrawTrailGeometry(t, camera, &camBasis, time);
             }
         }
