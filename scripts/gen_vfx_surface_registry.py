@@ -75,6 +75,7 @@ def main():
         f"        .lifetimeSeconds = {profile['lifecycle']['seconds']}f,",
         f"        .fadeInSeconds = {profile['lifecycle']['fade_in']}f,",
         f"        .fadeOutSeconds = {profile['lifecycle']['fade_out']}f,",
+        f"        .maxSlopeDegrees = {profile.get('max_slope_degrees', 90.0)}f,",
         f"        .maxDrawCalls = {profile['budget']['max_draw_calls']},",
         f"        .maxTextures = {profile['budget']['max_textures']},",
             f"        .flipbookColumns = {columns},",

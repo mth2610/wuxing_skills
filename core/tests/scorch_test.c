@@ -33,6 +33,8 @@ int main(void)
           Has("core/decals/shaders/decal_material.fs", "1.0 - smoothstep") &&
           Has("core/decals/decal_system.c", "conformalCount >= 12") &&
           Has("core/decals/decal_system.c", "stampHeightsCached") &&
+          Has("core/decals/decal_system.c", "Decal_ConformalFadeAlpha") &&
+          Has("core/decals/decal_system.c", "normalY < cosf") &&
           Has("core/decals/decal_system.c", "rlDisableDepthTest") &&
           Has("core/decals/decal_system.c", "rlDisableBackfaceCulling") &&
           Has("core/decals/decal_system.c", "s_locMaterialEmissivePass") &&
@@ -45,5 +47,16 @@ int main(void)
     CHECK(Has("core/composition/common/vc_impact_package.inl", "matId == VC_MAT_FIRE") &&
           Has("core/composition/common/vc_impact_package.inl", "VFX_ComposeScorch(pos"),
           "Fire impacts route their decal beat to Scorch");
+    CHECK(Has("core/composition/common/vc_impact_package.inl", "VFX_SURFACE_DECAL_IMPACT") &&
+          Has("core/composition/common/vc_impact_package.inl", "DecalSystem_AddConformalEx") &&
+          !Has("core/composition/common/vc_impact_package.inl", "SpawnGroundDecal(preset"),
+          "Non-fire impacts use the semantic conformal material primary, not a legacy preset");
+    CHECK(Has("core/composition/common/vc_impact_package.inl", "impact_surface_life") &&
+          Has("core/composition/common/vc_impact_package.inl", "impact_surface_radius") &&
+          Has("core/composition/common/vc_impact_package.inl", "surface->fadeInSeconds") &&
+          Has("core/composition/common/vc_impact_package.inl", "surface->maxSlopeDegrees") &&
+          Has("assets/vfx_surface_profiles.json", "impact_material_v1.png") &&
+          Has("assets/vfx_surface_profiles.json", "\"approval\": \"preview_only\""),
+          "Impact preview exposes lifecycle tunables and an owner-approved registry source");
     return failures ? 1 : 0;
 }

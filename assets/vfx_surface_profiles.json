@@ -156,6 +156,7 @@
       "filter": "bilinear",
       "blend": "alpha",
       "projection": "conformal_mesh_stamp_receiver_normal",
+      "max_slope_degrees": 42.0,
       "seam": "edge_breakup_mask_required",
       "provenance": "P4 Decal Rework contract; no approved authored surface material",
       "approval": "blocked_visual_owner",
@@ -164,10 +165,7 @@
       "budget": {"max_draw_calls": 1, "max_textures": 3},
       "flipbook": [0, 0, 0],
       "assets": {},
-      "fallback_candidates": [
-        {"path": "assets/textures/decals/decal_moss_stain.png", "status": "must_replace", "reason": "legacy element stamp; alpha/channel and terrain seam require owner review"},
-        {"path": "assets/textures/generic/impact_ring.png", "status": "rejected", "reason": "generic circular impact stamp is not a residue primitive"}
-      ]
+      "fallback_policy": {"status": "no_legacy_fallback", "reason": "owner rejected every legacy decal as a P4 source; wait for a newly authored residue material"}
     },
     {
       "id": "VFX_SURFACE_DECAL_SCORCH",
@@ -178,6 +176,7 @@
       "filter": "bilinear",
       "blend": "alpha",
       "projection": "conformal_mesh_stamp_receiver_normal",
+      "max_slope_degrees": 38.0,
       "seam": "edge_breakup_mask_required",
       "provenance": "P4 ImageGen scorch material v1, magenta chroma-key removed with soft alpha matte; preview owner review required",
       "approval": "preview_only",
@@ -188,32 +187,29 @@
       "assets": {
         "body": {"path": "assets/textures/surfaces/scorch_material_v1.png", "channels": "RGBA authored charcoal body, true organic opacity, sparse ember veins"}
       },
-      "fallback_candidates": [
-        {"path": "assets/textures/scorch_mark.png", "status": "must_replace", "reason": "technical visual inspection: circular rock/crater stamp, not a reusable scorch material"},
-        {"path": "assets/textures/decals/decal_lightning_char.png", "status": "must_replace", "reason": "legacy element-specific art; owner review and separate char/ember channels still required"}
-      ]
+      "fallback_policy": {"status": "no_legacy_fallback", "reason": "owner rejected every legacy decal; replace this preview only with newly authored Scorch art"}
     },
     {
       "id": "VFX_SURFACE_DECAL_IMPACT",
-      "name": "decal_impact_material_blocked",
+      "name": "decal_impact_material_preview",
       "primitive": "decal",
       "role": "impact",
       "wrap": "clamp",
       "filter": "bilinear",
       "blend": "alpha",
       "projection": "conformal_mesh_stamp_receiver_normal",
+      "max_slope_degrees": 46.0,
       "seam": "edge_breakup_mask_required",
-      "provenance": "P4 Decal Rework contract; no approved generic impact material stack",
-      "approval": "blocked_visual_owner",
-      "consumers": ["VFX_ComposeImpactDecal (migration blocked)"],
-      "lifecycle": {"seconds": 1.6, "fade_in": 0.04, "fade_out": 0.45},
+      "provenance": "P4 ImageGen flat soil-impact v1, magenta chroma-key removed to authored alpha; replaceable preview source approved by owner",
+      "approval": "preview_only",
+      "consumers": ["VFX_ComposeImpactDecal"],
+      "lifecycle": {"seconds": 2.8, "fade_in": 0.04, "fade_out": 0.65},
       "budget": {"max_draw_calls": 1, "max_textures": 3},
       "flipbook": [0, 0, 0],
-      "assets": {},
-      "fallback_candidates": [
-        {"path": "assets/textures/decals/decal_impact_crater.png", "status": "must_replace", "reason": "legacy metal-specific crater stamp; channel and visual review missing"},
-        {"path": "assets/textures/generic/impact_ring.png", "status": "rejected", "reason": "circular ring is a hit cue, not a surface-impact material"}
-      ]
+      "assets": {
+        "body": {"path": "assets/textures/surfaces/impact_material_v1.png", "channels": "RGBA compacted soil/cracks and organic alpha; RGB is not a normal or height map"}
+      },
+      "fallback_policy": {"status": "no_legacy_fallback", "reason": "owner rejected every legacy decal; replace this preview only with newly authored Impact art"}
     },
     {
       "id": "VFX_SURFACE_DECAL_RUNE",
@@ -224,6 +220,7 @@
       "filter": "bilinear",
       "blend": "alpha",
       "projection": "conformal_mesh_stamp_receiver_normal",
+      "max_slope_degrees": 34.0,
       "seam": "symbol_boundary_alpha_required",
       "provenance": "P4 Decal Rework contract; rune glyph needs authored alpha and radial-symbol review",
       "approval": "blocked_visual_owner",
@@ -232,10 +229,7 @@
       "budget": {"max_draw_calls": 1, "max_textures": 3},
       "flipbook": [0, 0, 0],
       "assets": {},
-      "fallback_candidates": [
-        {"path": "assets/textures/decals/decal_earth_rune.png", "status": "owner_review", "reason": "legacy element glyph; alpha, symbol legibility and terrain seam need owner review"},
-        {"path": "assets/textures/decals/decal_metal_rune.png", "status": "owner_review", "reason": "legacy element glyph; alpha, symbol legibility and terrain seam need owner review"}
-      ]
+      "fallback_policy": {"status": "no_legacy_fallback", "reason": "owner rejected every legacy decal; wait for a newly authored rune glyph with true boundary alpha"}
     }
   ]
 }

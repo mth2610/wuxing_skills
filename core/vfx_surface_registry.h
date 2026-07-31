@@ -82,6 +82,7 @@ typedef struct {
     float lifetimeSeconds;
     float fadeInSeconds;
     float fadeOutSeconds;
+    float maxSlopeDegrees;
     int maxDrawCalls;
     int maxTextures;
     int flipbookColumns;

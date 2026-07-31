@@ -200,6 +200,11 @@ float GetGroundHeightVerdantPathMap(float x, float z)
     return MapProp_SampleGroundHeight(&s_ground, kMapCenter, x, z);
 }
 
+bool SampleGroundSurfaceVerdantPathMap(float x, float z, Vector3 *outPosition, Vector3 *outNormal)
+{
+    return MapProp_SampleGroundSurface(&s_ground, kMapCenter, x, z, outPosition, outNormal);
+}
+
 void DrawVerdantPathMap(void)
 {
     if (!s_ready)

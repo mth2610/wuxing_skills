@@ -78,6 +78,12 @@ void MapProp_UnloadGround(MapGroundSurface *ground);
 // GroundHeightSampleFn signature this is meant to be wrapped for.
 float MapProp_SampleGroundHeight(const MapGroundSurface *ground, Vector3 worldCenter, float x, float z);
 
+// Same real-mesh raycast as MapProp_SampleGroundHeight, but preserves the
+// triangle position/normal for conformal VFX receivers. Returns false outside
+// the mesh footprint; outputs then remain safe flat-ground defaults.
+bool MapProp_SampleGroundSurface(const MapGroundSurface *ground, Vector3 worldCenter,
+                                 float x, float z, Vector3 *outPosition, Vector3 *outNormal);
+
 // --- Flat strip (stone path, road, bridge deck, ...) --------------------
 
 typedef struct

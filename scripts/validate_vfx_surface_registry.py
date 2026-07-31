@@ -15,6 +15,7 @@ ROLES = {"trail", "residue", "scorch", "impact", "rune"}
 FILTERS = {"bilinear", "point"}
 BLENDS = {"consumer_defined", "alpha", "additive", "multiplied"}
 APPROVALS = {"approved", "preview_only", "blocked_visual_owner"}
+FALLBACK_POLICIES = {"no_legacy_fallback"}
 
 
 def fail(message):
@@ -61,7 +62,15 @@ def main():
             failures += fail(f"{name}: missing body role")
         if blocked_decal and assets:
             failures += fail(f"{name}: blocked decal must not acquire runtime assets before approval")
-        if blocked_decal and not profile.get("fallback_candidates"):
+        fallback_candidates = profile.get("fallback_candidates", [])
+        fallback_policy = profile.get("fallback_policy", {})
+        if fallback_candidates and fallback_policy:
+            failures += fail(f"{name}: choose candidate fallbacks or an explicit no-fallback policy, not both")
+        if fallback_policy:
+            if (fallback_policy.get("status") not in FALLBACK_POLICIES or
+                    not fallback_policy.get("reason")):
+                failures += fail(f"{name}: fallback policy needs a recognized decision and reason")
+        if blocked_decal and not fallback_candidates and not fallback_policy:
             failures += fail(f"{name}: blocked decal requires a migration/fallback decision")
         for role, asset in assets.items():
             path, channels = asset.get("path"), asset.get("channels")
@@ -108,7 +117,10 @@ def main():
                              else "edge_breakup_mask_required")
             if profile.get("seam") != required_seam:
                 failures += fail(f"{name}: decal needs role-appropriate seam behavior")
-        for candidate in profile.get("fallback_candidates", []):
+            max_slope = profile.get("max_slope_degrees")
+            if not isinstance(max_slope, (int, float)) or not 0.0 <= max_slope <= 90.0:
+                failures += fail(f"{name}: decal needs max_slope_degrees in [0, 90]")
+        for candidate in fallback_candidates:
             path = candidate.get("path")
             if not path or not (ROOT / path).is_file() or Path(path).name not in index:
                 failures += fail(f"{name}: fallback candidate is missing or uncataloged")

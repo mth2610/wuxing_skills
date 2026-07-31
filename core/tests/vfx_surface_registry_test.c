@@ -41,9 +41,13 @@ int main(void)
           Has(manifest, "\"decal_scorch_material_preview\"") &&
           Has(manifest, "\"blocked_visual_owner\"") &&
           Has(manifest, "\"preview_only\"") &&
-          Has(manifest, "\"fallback_candidates\"") &&
+          Has(manifest, "\"fallback_policy\"") &&
+          Has(manifest, "\"no_legacy_fallback\"") &&
+          !Has(manifest, "\"fallback_candidates\"") &&
+          !Has(manifest, "decal_moss_stain.png") &&
+          !Has(manifest, "decal_impact_crater.png") &&
           Has(header, "VFX_SURFACE_PRIMITIVE_DECAL"),
-          "P4 blocks residue while Scorch uses an owner-approved review source only");
+          "P4 blocks missing roles with an explicit no-legacy-fallback policy");
     CHECK(Has("core/composition/common/vc_smoke_puff.inl", "VFX_SurfaceRegistry_Get(VFX_SURFACE_SMOKE_PUFF)") &&
           Has("core/composition/fire/flame_volume.inl", "VFX_SurfaceRegistry_Get(VFX_SURFACE_FIRE_TONGUE)") &&
           Has("core/composition/common/vc_core_smoketrail.inl", "VFX_SurfaceRegistry_Get(VFX_SURFACE_SMOKE_RIBBON)") &&

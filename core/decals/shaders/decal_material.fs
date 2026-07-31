@@ -2,6 +2,7 @@
 
 in vec2 fragTexCoord;
 in vec4 fragColor;
+in vec3 fragNormal;
 uniform sampler2D texture0;
 uniform float u_erosion;
 uniform int u_emissivePass;
@@ -47,7 +48,8 @@ void main()
         float charOpacity = alpha * denseChar * 0.58;
         // Alpha occlusion is invariant across receiver brightness. Multiply
         // would turn source grey into a visible veil on sunlit terrain.
-        vec3 charcoal = vec3(0.028, 0.016, 0.010);
+        float receiverLight = mix(0.64, 1.0, clamp(fragNormal.y, 0.0, 1.0));
+        vec3 charcoal = vec3(0.028, 0.016, 0.010) * receiverLight;
         finalColor = vec4(charcoal * fragColor.rgb, charOpacity * fragColor.a);
     }
 }

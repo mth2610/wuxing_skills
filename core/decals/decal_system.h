@@ -9,6 +9,9 @@
 #define DECAL_STAMP_SECTORS 16
 #define DECAL_STAMP_RINGS 3
 
+typedef bool (*GroundSurfaceSampleFn)(float x, float z, Vector3 *outPosition,
+                                      Vector3 *outNormal, void *userData);
+
 typedef struct {
     Vector3 position;
     float rotation;       // Góc quay ban đầu quanh trục Y (độ)
@@ -20,6 +23,8 @@ typedef struct {
     Texture2D texture;
     float lifetime;       // Thời gian tồn tại còn lại (giây)
     float maxLifetime;
+    float fadeInSeconds;  // 0 = visible immediately
+    float fadeOutSeconds; // 0 = only material erosion controls the end
     Color tint;
     BlendMode blendMode;  // BLEND_ALPHA | BLEND_ADDITIVE | BLEND_MULTIPLIED
     bool active;
@@ -33,6 +38,9 @@ typedef struct {
     float edgePhase;
     bool stampHeightsCached;
     float stampHeights[DECAL_STAMP_RINGS + 1][DECAL_STAMP_SECTORS];
+    bool stampSurfaceCached;
+    Vector3 stampSurfacePositions[DECAL_STAMP_RINGS + 1][DECAL_STAMP_SECTORS];
+    Vector3 stampSurfaceNormals[DECAL_STAMP_RINGS + 1][DECAL_STAMP_SECTORS];
 } DecalEntity;
 
 // Khởi tạo hệ thống Decal
@@ -64,13 +72,17 @@ void DecalSystem_AddFlowEx(Vector3 pos, float rotation, float rotSpeed,
 
 // P4 material stamp: a subdivided disc follows the supplied ground-height
 // receiver. It never emits a camera-compensated quad, so its silhouette cannot
-// expose a square texture boundary. `heightFn` may be NULL for a flat receiver.
+// expose a square texture boundary. `fadeInSeconds`/`fadeOutSeconds` are
+// applied to the actual draw alpha. `maxSlopeDegrees` rejects steep receivers
+// from a spawn-time height probe; `heightFn` may be NULL for a flat receiver.
 void DecalSystem_AddConformalEx(Vector3 pos, float rotation, float rotSpeed,
                                 float scaleStart, float scaleEnd,
                                 Texture2D texture, float lifetime, Color tint,
                                 BlendMode blendMode, float yOffset,
                                 GroundHeightSampleFn heightFn, void *heightUserData,
-                                float edgePhase);
+                                GroundSurfaceSampleFn surfaceFn,
+                                float edgePhase, float fadeInSeconds,
+                                float fadeOutSeconds, float maxSlopeDegrees);
 
 // Batch helper — đặt 1 decal tại mỗi điểm trong points[0..count-1], dùng cho hiệu ứng
 // theo đường đi (vd. gai mọc dọc đường, vệt cháy). Wrap quanh DecalSystem_Add, không

@@ -41,11 +41,12 @@ void MapManager_Init(void) {
 }
 
 void MapManager_Register(const char* name, void (*init)(void), void (*update)(float), void (*draw)(void), void (*unload)(void)) {
-    MapManager_RegisterEx(name, init, update, draw, unload, NULL);
+    MapManager_RegisterEx(name, init, update, draw, unload, NULL, NULL);
 }
 
 void MapManager_RegisterEx(const char* name, void (*init)(void), void (*update)(float), void (*draw)(void),
-                           void (*unload)(void), float (*getGroundHeight)(float x, float z)) {
+                           void (*unload)(void), float (*getGroundHeight)(float x, float z),
+                           MapGroundSurfaceSampleFn sampleGroundSurface) {
     if (s_mapCount >= MAX_MAPS) return;
     s_maps[s_mapCount++] = (MapDefinition){
         .name = name,
@@ -53,8 +54,17 @@ void MapManager_RegisterEx(const char* name, void (*init)(void), void (*update)(
         .Update = update,
         .Draw = draw,
         .Unload = unload,
-        .GetGroundHeight = getGroundHeight
+        .GetGroundHeight = getGroundHeight,
+        .SampleGroundSurface = sampleGroundSurface
     };
+}
+
+bool MapManager_SampleGroundSurfaceAt(float x, float z, Vector3 *outPosition, Vector3 *outNormal) {
+    if (outPosition) *outPosition = (Vector3){x, MapManager_GetGroundHeightAt(x, z), z};
+    if (outNormal) *outNormal = (Vector3){0.0f, 1.0f, 0.0f};
+    if (s_mapCount == 0) return false;
+    MapGroundSurfaceSampleFn fn = s_maps[s_activeMapIndex].SampleGroundSurface;
+    return fn ? fn(x, z, outPosition, outNormal) : false;
 }
 
 float MapManager_GetGroundHeightAt(float x, float z) {

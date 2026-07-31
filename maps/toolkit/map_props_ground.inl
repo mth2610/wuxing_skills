@@ -158,6 +158,23 @@ float MapProp_SampleGroundHeight(const MapGroundSurface *ground, Vector3 worldCe
     return worldCenter.y; // (x,z) outside the mesh's footprint
 }
 
+bool MapProp_SampleGroundSurface(const MapGroundSurface *ground, Vector3 worldCenter,
+                                 float x, float z, Vector3 *outPosition, Vector3 *outNormal)
+{
+    if (outPosition) *outPosition = (Vector3){x, worldCenter.y, z};
+    if (outNormal) *outNormal = (Vector3){0.0f, 1.0f, 0.0f};
+    if (!ground->ready || ground->model.meshCount < 1) return false;
+    Vector3 pos = {worldCenter.x + ground->drawOffset.x, worldCenter.y + ground->drawOffset.y,
+                   worldCenter.z + ground->drawOffset.z};
+    Ray ray = {(Vector3){x, worldCenter.y + 1000.0f, z}, (Vector3){0.0f, -1.0f, 0.0f}};
+    RayCollision hit = GetRayCollisionMesh(ray, ground->model.meshes[0],
+                                            MatrixTranslate(pos.x, pos.y, pos.z));
+    if (!hit.hit) return false;
+    if (outPosition) *outPosition = hit.point;
+    if (outNormal) *outNormal = Vector3Normalize(hit.normal);
+    return true;
+}
+
 void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
 {
     if (!ground->ready)

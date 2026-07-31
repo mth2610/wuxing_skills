@@ -143,7 +143,8 @@ void DecalSystem_Init(void)
     // đứng yên) — không cần file decal_uber.fs riêng (chưa từng tồn tại;
     // trước đây load hụt → rơi về default shader, mất edge fade + flow).
     g_DecalShader   = ResourceManager_LoadShader(NULL, "core/decals/shaders/decal_flow.fs");
-    g_MaterialDecalShader = ResourceManager_LoadShader(NULL, "core/decals/shaders/decal_material.fs");
+    g_MaterialDecalShader = ResourceManager_LoadShader("core/decals/shaders/decal_material.vs",
+                                                        "core/decals/shaders/decal_material.fs");
     s_locFlowTime     = GetShaderLocation(g_DecalShader, "u_time");
     s_locFlowSpeed    = GetShaderLocation(g_DecalShader, "u_flowSpeed");
     s_locFlowStrength = GetShaderLocation(g_DecalShader, "u_flowStrength");
@@ -186,6 +187,8 @@ static int SpawnDecalCommon(Vector3 pos, float rotation, float rotSpeed,
     d->texture = texture;
     d->lifetime = lifetime;
     d->maxLifetime = lifetime;
+    d->fadeInSeconds = 0.0f;
+    d->fadeOutSeconds = 0.0f;
     d->tint = tint;
     d->blendMode = blendMode;
     d->active = true;
@@ -198,6 +201,7 @@ static int SpawnDecalCommon(Vector3 pos, float rotation, float rotSpeed,
     d->heightUserData = NULL;
     d->edgePhase = 0.0f;
     d->stampHeightsCached = false;
+    d->stampSurfaceCached = false;
     g_LastSpawnedIndex = (idx + 1) % MAX_DECALS;
     Decal_Activate(idx);
     return idx;
@@ -208,8 +212,28 @@ void DecalSystem_AddConformalEx(Vector3 pos, float rotation, float rotSpeed,
                                 Texture2D texture, float lifetime, Color tint,
                                 BlendMode blendMode, float yOffset,
                                 GroundHeightSampleFn heightFn, void *heightUserData,
-                                float edgePhase)
+                                GroundSurfaceSampleFn surfaceFn,
+                                float edgePhase, float fadeInSeconds,
+                                float fadeOutSeconds, float maxSlopeDegrees)
 {
+    if (surfaceFn != NULL && maxSlopeDegrees < 90.0f)
+    {
+        Vector3 receiverPos, receiverNormal;
+        if (surfaceFn(pos.x, pos.z, &receiverPos, &receiverNormal, heightUserData) &&
+            receiverNormal.y < cosf(Clamp(maxSlopeDegrees, 0.0f, 90.0f) * DEG2RAD))
+            return;
+    }
+    else if (heightFn != NULL && maxSlopeDegrees < 90.0f)
+    {
+        float probe = fmaxf(scaleEnd * 0.5f, 0.10f);
+        float dx = (heightFn(pos.x + probe, pos.z, heightUserData) -
+                    heightFn(pos.x - probe, pos.z, heightUserData)) / (2.0f * probe);
+        float dz = (heightFn(pos.x, pos.z + probe, heightUserData) -
+                    heightFn(pos.x, pos.z - probe, heightUserData)) / (2.0f * probe);
+        float normalY = 1.0f / sqrtf(1.0f + dx * dx + dz * dz);
+        if (normalY < cosf(Clamp(maxSlopeDegrees, 0.0f, 90.0f) * DEG2RAD))
+            return;
+    }
     int conformalCount = 0;
     int oldest = -1;
     float shortestLife = 0.0f;
@@ -236,6 +260,31 @@ void DecalSystem_AddConformalEx(Vector3 pos, float rotation, float rotSpeed,
     d->heightFn = heightFn;
     d->heightUserData = heightUserData;
     d->edgePhase = edgePhase;
+    d->fadeInSeconds = fadeInSeconds > 0.0f ? fadeInSeconds : 0.0f;
+    d->fadeOutSeconds = fadeOutSeconds > 0.0f ? fadeOutSeconds : 0.0f;
+    if (surfaceFn != NULL)
+    {
+        bool complete = true;
+        for (int ring = 0; ring <= DECAL_STAMP_RINGS; ++ring)
+        {
+            float radial = (float)ring / DECAL_STAMP_RINGS;
+            for (int sector = 0; sector < DECAL_STAMP_SECTORS; ++sector)
+            {
+                float angle = 2.0f * PI * sector / DECAL_STAMP_SECTORS;
+                float radius = scaleEnd * radial * (1.0f + 0.075f * sinf(angle * 7.0f + edgePhase) +
+                               0.045f * sinf(angle * 13.0f - edgePhase * 1.7f));
+                float rot = angle + rotation * DEG2RAD;
+                Vector3 point, normal;
+                if (!surfaceFn(pos.x + cosf(rot) * radius, pos.z + sinf(rot) * radius,
+                               &point, &normal, heightUserData)) { complete = false; break; }
+                normal = Vector3Normalize(normal);
+                d->stampSurfaceNormals[ring][sector] = normal;
+                d->stampSurfacePositions[ring][sector] = Vector3Add(point, Vector3Scale(normal, yOffset));
+            }
+            if (!complete) break;
+        }
+        d->stampSurfaceCached = complete;
+    }
     if (heightFn != NULL)
     {
         for (int ring = 0; ring <= DECAL_STAMP_RINGS; ++ring)
@@ -421,6 +470,17 @@ static float Decal_StampRadius(const DecalEntity *d, float angle)
            0.045f * sinf(angle * 13.0f - d->edgePhase * 1.7f);
 }
 
+static float Decal_ConformalFadeAlpha(const DecalEntity *d)
+{
+    float elapsed = d->maxLifetime - d->lifetime;
+    float alpha = 1.0f;
+    if (d->fadeInSeconds > 0.0f)
+        alpha = fminf(alpha, elapsed / d->fadeInSeconds);
+    if (d->fadeOutSeconds > 0.0f)
+        alpha = fminf(alpha, d->lifetime / d->fadeOutSeconds);
+    return Clamp(alpha, 0.0f, 1.0f);
+}
+
 static Vector3 Decal_StampVertex(const DecalEntity *d, float radial, float angle,
                                  int ring, int sector)
 {
@@ -429,6 +489,8 @@ static Vector3 Decal_StampVertex(const DecalEntity *d, float radial, float angle
     float x = d->position.x + cosf(rot) * radius;
     float z = d->position.z + sinf(rot) * radius;
     float y = d->position.y;
+    if (d->stampSurfaceCached)
+        return d->stampSurfacePositions[ring][sector % DECAL_STAMP_SECTORS];
     if (d->stampHeightsCached)
         y = d->stampHeights[ring][sector % DECAL_STAMP_SECTORS] + d->yOffset;
     else if (d->heightFn != NULL)
@@ -443,6 +505,9 @@ static void Decal_StampEmitVertex(const DecalEntity *d, float radial, float angl
     float edge = Decal_StampRadius(d, angle);
     float u = 0.5f + cosf(angle) * radial * edge * 0.5f;
     float w = 0.5f + sinf(angle) * radial * edge * 0.5f;
+    Vector3 normal = d->stampSurfaceCached ?
+        d->stampSurfaceNormals[ring][sector % DECAL_STAMP_SECTORS] : (Vector3){0.0f, 1.0f, 0.0f};
+    rlNormal3f(normal.x, normal.y, normal.z);
     rlTexCoord2f(u, w);
     rlVertex3f(v.x, v.y, v.z);
 }
@@ -484,7 +549,8 @@ static void DrawConformalGroup(BlendMode renderMode, BlendMode sourceMode, bool 
             continue;
         float erosion = 1.0f - d->lifetime / d->maxLifetime;
         Color c = d->tint;
-        c.a = (unsigned char)(c.a * (1.0f - erosion * erosion));
+        c.a = (unsigned char)(c.a * (1.0f - erosion * erosion) *
+                              Decal_ConformalFadeAlpha(d));
         SetShaderValue(g_MaterialDecalShader, s_locMaterialErosion, &erosion, SHADER_UNIFORM_FLOAT);
         rlSetTexture(d->texture.id);
         rlColor4ub(c.r, c.g, c.b, c.a);

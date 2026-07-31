@@ -3,6 +3,8 @@
 
 #include "raylib.h"
 
+typedef bool (*MapGroundSurfaceSampleFn)(float x, float z, Vector3 *outPosition, Vector3 *outNormal);
+
 typedef struct {
     const char* name;
     void (*Init)(void);
@@ -10,6 +12,7 @@ typedef struct {
     void (*Draw)(void);
     void (*Unload)(void);
     float (*GetGroundHeight)(float x, float z); // optional, NULL = flat (Y=0)
+    MapGroundSurfaceSampleFn SampleGroundSurface; // optional exact mesh receiver
 } MapDefinition;
 
 void MapManager_Init(void);
@@ -19,7 +22,8 @@ void MapManager_Register(const char* name, void (*init)(void), void (*update)(fl
 // for the toolkit helper a heightmap map wraps to implement this).
 // getGroundHeight may be NULL (flat Y=0, same as MapManager_Register).
 void MapManager_RegisterEx(const char* name, void (*init)(void), void (*update)(float), void (*draw)(void),
-                           void (*unload)(void), float (*getGroundHeight)(float x, float z));
+                           void (*unload)(void), float (*getGroundHeight)(float x, float z),
+                           MapGroundSurfaceSampleFn sampleGroundSurface);
 void MapManager_Update(float dt);
 void MapManager_DrawActive(void);
 void MapManager_Unload(void);
@@ -28,6 +32,7 @@ void MapManager_Unload(void);
 // (this project's flat-ground convention) if the active map has no
 // GetGroundHeight hook registered.
 float MapManager_GetGroundHeightAt(float x, float z);
+bool MapManager_SampleGroundSurfaceAt(float x, float z, Vector3 *outPosition, Vector3 *outNormal);
 
 int MapManager_GetCount(void);
 const char* MapManager_GetName(int index);

@@ -45,6 +45,8 @@ static float s_ipLight   = 1.0f;
 static float s_ipDistort = 1.0f;
 static float s_ipDecal   = 1.0f;
 static float s_ipHitstop = 1.0f;
+static float s_ipSurfaceLife = 1.0f;
+static float s_ipSurfaceRadius = 1.0f;
 
 static void ImpactPkg_InitShared(void)
 {
@@ -56,6 +58,8 @@ static void ImpactPkg_InitShared(void)
     Tuning_RegisterFloat("impact_distort", &s_ipDistort, 1.0f);
     Tuning_RegisterFloat("impact_decal", &s_ipDecal, 1.0f);
     Tuning_RegisterFloat("impact_hitstop", &s_ipHitstop, 1.0f);
+    Tuning_RegisterFloat("impact_surface_life", &s_ipSurfaceLife, 1.0f);
+    Tuning_RegisterFloat("impact_surface_radius", &s_ipSurfaceRadius, 1.0f);
     s_ipInit = true;
 }
 
@@ -88,7 +92,6 @@ static float ImpactDistort_Radius(void)           { return 2.1f; }
 static float ImpactDistort_Strength(float sev)    { return Math_Mix(0.18f, 0.42f, sev); }
 static float ImpactDistort_Life(void)             { return 0.35f; }
 static float ImpactDecal_Radius(void)             { return 1.5f; }
-static float ImpactDecal_Life(float sev)          { return Math_Mix(1.6f, 4.5f, sev); }
 
 // The tier gates travel WITH the primaries, not with the package. A caller
 // reaching for the primary directly gets the same budget protection, which is
@@ -132,14 +135,20 @@ void VFX_ComposeImpactDecal(Vector3 pos, VC_MaterialId matId, float scale, float
         VFX_ComposeScorch(pos, matId, ImpactDecal_Radius() * scale, sev);
         return;
     }
-    // Routed through SpawnGroundDecal, which RESOLVES the preset to a real
-    // texture. The dead beat this replaces passed no texture at all — that is
-    // exactly the failure a preset enum prevents and a raw Texture2D field
-    // invites.
+    // P4: every non-fire impact now selects the semantic profile. The profile,
+    // not this composition, owns the replaceable source path and sampler law.
+    const VFX_SurfaceProfile *surface = VFX_SurfaceRegistry_Get(VFX_SURFACE_DECAL_IMPACT);
+    if (surface == NULL || surface->body.id == 0) return;
     const VFX_ElementMaterial *m = VFX_Material(matId);
-    DecalPresetType preset = (m && m->blendMode == BLEND_ALPHA) ? DECAL_PRESET_CRACK
-                                                                : DECAL_PRESET_BURN;
-    SpawnGroundDecal(preset, pos, ImpactDecal_Radius() * scale, ImpactDecal_Life(sev));
+    Color tint = m ? m->body : WHITE;
+    tint.a = (unsigned char)(155.0f + 65.0f * sev);
+    float radius = ImpactDecal_Radius() * scale * s_ipSurfaceRadius;
+    float life = surface->lifetimeSeconds * Math_Mix(0.72f, 1.0f, sev) * s_ipSurfaceLife;
+    DecalSystem_AddConformalEx(pos, Random01() * 360.0f, 0.0f, radius * 0.92f, radius,
+                               surface->body, life, tint, BLEND_ALPHA, 0.035f,
+                               VFX_GroundHeightFromMap, NULL, VFX_GroundSurfaceFromMap, Random01() * 6.2831853f,
+                               surface->fadeInSeconds, surface->fadeOutSeconds,
+                               surface->maxSlopeDegrees);
 }
 
 // Sequence adapters — the package fires the primaries THROUGH the score, so

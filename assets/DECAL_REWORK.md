@@ -32,17 +32,17 @@ mask, not an alpha-only disappearance. Each profile declares draw/texture
 budget, blend law, filter, seam, projection, provenance and owner approval in
 `vfx_surface_profiles.json`.
 
-The current legacy review is deliberately conservative: `scorch_mark.png` is a
-circular rock/crater stamp and must be replaced. `VFX_ComposeScorch` now uses
-the versioned ImageGen preview material `surfaces/scorch_material_v1.png`, whose
-magenta key has been removed to a soft alpha matte; it remains visual-review
-only, never shipping art. `decal_moss_stain.png` and
-`decal_lightning_char.png` remain legacy candidates that also must be replaced
-until an owner approves a source with the required channels. `impact_ring.png`
-is rejected for residue. No legacy decal is an approved P4 shipping fallback.
+The owner has rejected the entire legacy decal library as a P4 source. It is not
+scanned, scored or retained as a fallback candidate. Every decal profile now
+declares `fallback_policy: no_legacy_fallback` with its reason; only a newly
+authored, approved source may replace a preview primary.
 
-Impact and Rune have the same registry-first gate. Impact requires organic edge
-erosion, not a generic hit ring. Rune uses a separate `symbol_boundary_alpha_required`
+Impact and Rune have the same registry-first gate. `surfaces/impact_material_v1.png`
+is a newly authored flat soil-impact preview primary: its chroma-keyed corners are
+alpha zero and it contains no raised rock/debris. The owner approved it as a
+replaceable runtime source; its broad rounded footprint remains a known art-quality
+constraint, not a claim of shipping quality.
+Impact requires organic edge erosion, not a generic hit ring. Rune uses a separate `symbol_boundary_alpha_required`
 seam contract: a glyph must stay legible under terrain projection rather than
 being treated as an irregular soot mark. Neither profile has a runtime asset
 until visual owner review completes.

@@ -205,6 +205,13 @@ float VFX_GroundHeightFromMap(float worldX, float worldZ, void *unused)
     return MapManager_GetGroundHeightAt(worldX, worldZ);
 }
 
+bool VFX_GroundSurfaceFromMap(float worldX, float worldZ, Vector3 *outPosition,
+                              Vector3 *outNormal, void *unused)
+{
+    (void)unused;
+    return MapManager_SampleGroundSurfaceAt(worldX, worldZ, outPosition, outNormal);
+}
+
 // `radius` = the radius the front reaches at t01 = 1, in metres. `heightFn` may
 // be NULL, in which case the ring is flat at `center.y` — the callback is what
 // makes it follow a slope instead of clipping through it, and the map layer

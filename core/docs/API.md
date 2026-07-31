@@ -254,7 +254,7 @@
   void DecalSystem_Add(Vector3 pos, float rotation, float scale, Texture2D texture, float lifetime, Color tint);
   void DecalSystem_AddEx(Vector3 pos, float rotation, float rotSpeed, float scaleStart, float scaleEnd, Texture2D texture, float lifetime, Color tint, BlendMode blendMode, float yOffset);
   void DecalSystem_AddFlowEx(Vector3 pos, float rotation, float rotSpeed, float scaleStart, float scaleEnd, Texture2D texture, float lifetime, Color tint, BlendMode blendMode, float yOffset, float flowSpeed, float flowStrength, float glowIntensity);
-  void DecalSystem_AddConformalEx(Vector3 pos, float rotation, float rotSpeed, float scaleStart, float scaleEnd, Texture2D texture, float lifetime, Color tint, BlendMode blendMode, float yOffset, GroundHeightSampleFn heightFn, void *heightUserData, float edgePhase);
+  void DecalSystem_AddConformalEx(Vector3 pos, float rotation, float rotSpeed, float scaleStart, float scaleEnd, Texture2D texture, float lifetime, Color tint, BlendMode blendMode, float yOffset, GroundHeightSampleFn heightFn, void *heightUserData, GroundSurfaceSampleFn surfaceFn, float edgePhase, float fadeInSeconds, float fadeOutSeconds, float maxSlopeDegrees);
   void DecalSystem_AddStreak(const Vector3 *points, int count, float rotation, float scale, Texture2D texture, float lifetime, Color tint);
   void DecalSystem_Update(float dt);
   void DecalSystem_SetCamera(Camera3D camera);
@@ -609,6 +609,7 @@
   void VFX_KillVolumeTrail(int handle);
   void VFX_ComposeGroundWave(Vector3 center, VC_MaterialId mat, float radius, float t01, GroundHeightSampleFn heightFn, void *ud);
   float VFX_GroundHeightFromMap(float worldX, float worldZ, void *unused);
+  bool VFX_GroundSurfaceFromMap(float worldX, float worldZ, Vector3 *outPosition, Vector3 *outNormal, void *unused);
   int VFX_ComposeSparkTrail(Vector3 pos, Vector3 vel, VC_MaterialId matId, float length, float life);
   int VFX_ComposeProjectile(const Matrix *followTransform, VC_MaterialId mat, float radius);
   void VFX_KillProjectile(int handle);

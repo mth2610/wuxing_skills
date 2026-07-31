@@ -34,5 +34,7 @@ void VFX_ComposeScorch(Vector3 pos, VC_MaterialId matId, float scale, float seve
     float phase = Random01() * 6.2831853f + (material ? material->body.r * 0.01f : 0.0f);
     DecalSystem_AddConformalEx(pos, Random01() * 360.0f, 0.0f, radius * 0.88f, radius,
                                surface->body, life, tint, BLEND_ALPHA, 0.045f,
-                               VFX_GroundHeightFromMap, NULL, phase);
+                               VFX_GroundHeightFromMap, NULL, VFX_GroundSurfaceFromMap, phase,
+                               surface->fadeInSeconds, surface->fadeOutSeconds,
+                               surface->maxSlopeDegrees);
 }

@@ -484,6 +484,8 @@ void VFX_ComposeGroundWave(Vector3 center, VC_MaterialId mat, float radius,
 // Pass it as `heightFn` (with ud = NULL). Passing NULL instead gives a flat ring
 // at center.y, which looks correct on level ground and wrong on any slope.
 float VFX_GroundHeightFromMap(float worldX, float worldZ, void *unused);
+bool VFX_GroundSurfaceFromMap(float worldX, float worldZ, Vector3 *outPosition,
+                              Vector3 *outNormal, void *unused);
 
 // ── PRIMARY: spark trail ────────────────────────────────────────────────────
 // ONE small moving thing with a CURVED tail, self-terminating. The piece Charge
