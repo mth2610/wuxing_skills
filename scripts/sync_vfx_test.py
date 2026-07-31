@@ -77,11 +77,44 @@ INDENT  = "          "   # 10 spaces — matches surrounding code in vfx_test.c
 CAT_IDS = {"fire": 0, "water": 1, "wood": 2, "metal": 3, "earth": 4, "taiji": 5, "common": 6}
 MANIFEST_CATEGORIES = ["fire", "water", "wood", "metal", "earth", "taiji", "common"]
 
-# Signature names alone cannot distinguish an event track from a frame-drawn
-# composition: both may take a normalized float. Keep only documented lifecycle
-# exceptions here; the safe default remains a one-shot for unknown handle APIs.
-FIXTURE_ONE_SHOT = {"VFX_ComposeImpactPackage"}
-FIXTURE_CONTINUOUS = {"VFX_ComposeLightShaft"}
+# P0 lifecycle catalogue.  A signature cannot say whether a function is an
+# event, a per-frame draw, an emitter, or a history trail; fixture inference
+# must never guess that contract.  Add every new fixture source here first.
+#
+# `type` is the sandbox implementation detail; `lifecycle` is the public
+# contract shown in the manifest. FlameVolume is deliberately marked legacy:
+# P2 replaces its frame-fed emitter with Spawn/Stop/Kill handles.
+LIFECYCLE_SPECS = {
+    "VFX_ComposeBeam":               ("draw",    "timed",      "continuous"),
+    "VFX_ComposeCharacterAura":      ("emitter", "persistent", "persistent"),
+    "VFX_ComposeChargeConverge":     ("draw",    "timed",      "continuous"),
+    "VFX_ComposeConvergeMotes":      ("draw",    "timed",      "continuous"),
+    "VFX_ComposeCoreGlow":           ("draw",    "timed",      "continuous"),
+    "VFX_ComposeSmokeTrail":         ("trail",   "follower",   "continuous"),
+    "VFX_ComposeDebrisShards":       ("event",   "burst",      "oneshot"),
+    "VFX_ComposeDissolveExit":       ("draw",    "timed",      "continuous"),
+    "VFX_ComposeEnergyBurst":        ("event",   "burst",      "oneshot"),
+    "VFX_ComposeEnergyOrb":          ("draw",    "timed",      "continuous"),
+    "VFX_ComposeGlintSparkle":       ("draw",    "timed",      "continuous"),
+    "VFX_ComposeGroundWave":         ("draw",    "timed",      "continuous"),
+    "VFX_ComposeImpactPackage":      ("event",   "burst",      "oneshot"),
+    "VFX_ComposeLightShaft":         ("draw",    "timed",      "continuous"),
+    "VFX_ComposePortalDisc":         ("draw",    "timed",      "continuous"),
+    "VFX_ComposeProjectile":         ("trail",   "follower",   "continuous"),
+    "VFX_ComposeRibbonTrail":        ("trail",   "follower",   "continuous"),
+    "VFX_ComposeRuneCircle":         ("draw",    "timed",      "continuous"),
+    "VFX_ComposeShockRing":          ("draw",    "timed",      "continuous"),
+    "VFX_ComposeSmokePuff":          ("event",   "burst",      "oneshot"),
+    "VFX_ComposeSparkTrail":         ("event",   "burst",      "oneshot"),
+    "VFX_ComposeSweepSlash":         ("draw",    "timed",      "continuous"),
+    "VFX_ComposeVolumeTrail":        ("trail",   "follower",   "continuous"),
+    "VFX_ComposeFissureStreak":      ("draw",    "timed",      "continuous"),
+    "VFX_ComposeStonePillar":        ("draw",    "timed",      "continuous"),
+    "VFX_ComposeFlameVolume":        ("emitter", "timed",      "continuous"),
+    "VFX_ComposeBlackHole":          ("draw",    "timed",      "continuous"),
+    "VFX_ComposeIceCrystal":         ("event",   "burst",      "oneshot"),
+    "VFX_ComposeWaterStream":        ("draw",    "timed",      "continuous"),
+}
 
 # ── Element / category inference ──────────────────────────────────────────────
 
@@ -257,10 +290,9 @@ def infer_arg(type_str, name, fn_name):
 
 def infer_fixture_kind(fn_name, params, return_type):
     """Choose a deterministic default scene, not a hand-written demo."""
-    if fn_name in FIXTURE_ONE_SHOT:
-        return 'burst'
-    if fn_name in FIXTURE_CONTINUOUS:
-        return 'timed'
+    spec = LIFECYCLE_SPECS.get(fn_name)
+    if spec:
+        return spec[1]
     has_matrix = any('Matrix' in t and '*' in t for t, _ in params)
     if return_type == 'int' and has_matrix:
         return 'follower'
@@ -294,7 +326,11 @@ def infer_entry(fn_name, info, available_fns):
     """
     params_str, return_type, source = info
     params = parse_params(params_str)
-    fixture = infer_fixture_kind(fn_name, params, return_type)
+    spec = LIFECYCLE_SPECS.get(fn_name)
+    if spec is None:
+        raise SystemExit(f"[sync_vfx_test] missing P0 lifecycle metadata for {fn_name}; "
+                         "add it to LIFECYCLE_SPECS before generating a fixture")
+    lifecycle, fixture, fixture_type = spec
     args = []
     for type_str, name in params:
         arg = infer_arg(type_str, name, fn_name)
@@ -307,12 +343,13 @@ def infer_entry(fn_name, info, available_fns):
         "label": camel_to_label(fn_name),
         "category": infer_category(source + ' ' + fn_name),
         "fixture": fixture,
+        "lifecycle": lifecycle,
         "_auto": True,
     }
     kill_fn = infer_kill_fn(fn_name, available_fns)
     if fixture == 'follower':
         if kill_fn:
-            entry["type"] = "continuous"
+            entry["type"] = fixture_type
             entry["spawn_call"] = call
             entry["kill_fn"] = kill_fn
         else:
@@ -324,7 +361,7 @@ def infer_entry(fn_name, info, available_fns):
         # (aura follows its agent internally), but must be explicitly released
         # when the user switches fixture. Keep the returned handle for that.
         entry["fixture"] = 'persistent'
-        entry["type"] = 'persistent'
+        entry["type"] = fixture_type
         entry["spawn_call"] = call
         entry["kill_fn"] = kill_fn
     elif return_type == 'int':
@@ -335,7 +372,7 @@ def infer_entry(fn_name, info, available_fns):
         entry["type"] = "oneshot"
         entry["trigger_call"] = call
     elif fixture == 'timed':
-        entry["type"] = "continuous"
+        entry["type"] = fixture_type
         entry["draw_call"] = call
     else:
         entry["type"] = "oneshot"
@@ -587,8 +624,14 @@ def update_subdir_includes(comp_dir, manifest=None, dry_run=False, archetypes=No
         appended = sorted(f for f in on_disk
                           if f not in referenced and f not in exclude)
         want = kept + appended
+        # SmokePuff exports shared sheet state consumed by EnergyBurst and
+        # ImpactPackage. It must precede those .inl bodies in the common TU.
+        if subdir == "common" and "vc_smoke_puff.inl" in want:
+            want.remove("vc_smoke_puff.inl")
+            smoke_at = 1 if want and want[0] == "vc_common.inl" else 0
+            want.insert(smoke_at, "vc_smoke_puff.inl")
 
-        if not (adopted or appended or dangling_gen or dangling_manual or excluded_out):
+        if not (adopted or appended or dangling_gen or dangling_manual or excluded_out) and want == cur_gen:
             continue
         changed = True
 
@@ -767,10 +810,16 @@ def update_archetype_dispatch(comp_dir, dry_run=False):
         return False
 
     current = [p for p in INCLUDE_LINE_RE.findall(m.group(0))]
-    kept    = [p for p in current if p in arch]
-    dropped = [p for p in current if p not in arch]
-    added   = sorted(p for p in arch if p not in current)
+    # Some stateful survivors are intentionally included by a parent/master
+    # before this generated run. Dispatch them, but never include their .inl a
+    # second time: all composition files share one translation unit.
+    source_without_gen = inc_pat.sub('', src)
+    manual_arch = set(INCLUDE_LINE_RE.findall(source_without_gen))
+    kept    = [p for p in current if p in arch and p not in manual_arch]
+    dropped = [p for p in current if p not in arch or p in manual_arch]
+    added   = sorted(p for p in arch if p not in current and p not in manual_arch)
     order   = kept + added
+    dispatch_paths = list(dict.fromkeys(order + sorted(p for p in manual_arch if p in arch)))
 
     # THE INCLUDE IS THE TRIGGER, so it cannot be the only thing checked.
     #
@@ -804,6 +853,18 @@ def update_archetype_dispatch(comp_dir, dry_run=False):
         if not dispatch_ok:
             break
 
+    # A renamed/deleted archetype may leave an old generated dispatch behind.
+    # Presence-only validation misses that stale call and the TU then fails.
+    if dispatch_ok:
+        for key, call in (("archetype_update", "_Update(dt);"),
+                          ("archetype_draw", "_Draw3D(cam);")):
+            blk = re.search(r'// @gen:' + key + r' begin.*?// @gen:' + key + r' end', src, re.DOTALL)
+            expected = {"VC_" + arch[p] + call for p in dispatch_paths}
+            actual = set(re.findall(r'VC_\w+' + re.escape(call), blk.group(0))) if blk else set()
+            if actual != expected:
+                dispatch_ok = False
+                break
+
     if not dropped and not added and dispatch_ok:
         return False
 
@@ -828,7 +889,7 @@ def update_archetype_dispatch(comp_dir, dry_run=False):
             print(f"[sync_vfx_test] WARNING: @gen:{key} markers missing in "
                   f"visual_composer.c — calls not synced", file=sys.stderr)
             continue
-        body = "".join("    VC_" + call.format(n=arch[p]) + "\n" for p in order)
+        body = "".join("    VC_" + call.format(n=arch[p]) + "\n" for p in dispatch_paths)
         src = pat.sub(f"// @gen:{key} begin\n{body}// @gen:{key} end", src)
 
     with open(VC_C_PATH, "w") as f:
@@ -1047,6 +1108,32 @@ def all_excluded(manifest):
             result.update(k for k in v if not k.startswith("_"))
     return result
 
+def validate_lifecycle_catalog(entries):
+    """Fail before writing when a fixture can violate its primary contract."""
+    valid = {"event", "draw", "emitter", "trail"}
+    for e in entries:
+        fn = e["fn"]
+        lifecycle = e.get("lifecycle")
+        if lifecycle not in valid:
+            raise SystemExit(f"[sync_vfx_test] {fn}: invalid P0 lifecycle {lifecycle!r}")
+        if lifecycle == "event":
+            if e.get("fixture") != "burst" or e.get("type") != "oneshot" or "trigger_call" not in e:
+                raise SystemExit(f"[sync_vfx_test] {fn}: Event must be a one-shot burst fixture")
+        elif lifecycle == "draw":
+            if e.get("fixture") != "timed" or e.get("type") != "continuous" or "draw_call" not in e:
+                raise SystemExit(f"[sync_vfx_test] {fn}: Draw must be a timed per-frame fixture")
+        elif lifecycle == "trail":
+            if e.get("fixture") != "follower" or not e.get("kill_fn"):
+                raise SystemExit(f"[sync_vfx_test] {fn}: Trail requires follower fixture + Kill")
+        elif lifecycle == "emitter" and e.get("fixture") == "persistent" and not e.get("kill_fn"):
+            raise SystemExit(f"[sync_vfx_test] {fn}: persistent Emitter requires Kill")
+
+    by_fn = {e["fn"]: e for e in entries}
+    for event_fn in ("VFX_ComposeImpactPackage", "VFX_ComposeSparkTrail"):
+        e = by_fn.get(event_fn)
+        if not e or e.get("type") != "oneshot" or "draw_call" in e:
+            raise SystemExit(f"[sync_vfx_test] {event_fn}: Event must never be emitted every frame")
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -1070,6 +1157,7 @@ def main():
     new_entries = source_fixture_entries(inl_fns, excluded)
     if len(new_entries) > 96:
         raise SystemExit("[sync_vfx_test] fixture slot capacity exceeded (96); increase VFXTEST_FIXTURE_SLOTS first")
+    validate_lifecycle_catalog(new_entries)
     old_by_source = {e.get("source", e.get("fn", "")): e for e in entries}
     new_by_source = {e["source"]: e for e in new_entries}
     added = [e for src, e in new_by_source.items() if src not in old_by_source]

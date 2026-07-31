@@ -32,6 +32,7 @@
       "label": "BEAM",
       "category": "common",
       "fixture": "timed",
+      "lifecycle": "draw",
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeBeam($SOURCE, $TARGET, VC_MAT_FIRE, 0.1f, $PROG)"
@@ -42,6 +43,7 @@
       "label": "CHARACTER AURA",
       "category": "common",
       "fixture": "persistent",
+      "lifecycle": "emitter",
       "_auto": true,
       "type": "persistent",
       "spawn_call": "VFX_ComposeCharacterAura(Sandbox_GetPlayerAgentId(), VC_MAT_FIRE, 1.0f)",
@@ -53,6 +55,7 @@
       "label": "CHARGE CONVERGE",
       "category": "common",
       "fixture": "timed",
+      "lifecycle": "draw",
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeChargeConverge($POS, VC_MAT_FIRE, 1.5f, $PROG, 5)"
@@ -63,6 +66,7 @@
       "label": "CONVERGE MOTES",
       "category": "common",
       "fixture": "timed",
+      "lifecycle": "draw",
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeConvergeMotes($POS, VC_MAT_FIRE, 1.5f, $PROG, 5)"
@@ -73,6 +77,7 @@
       "label": "CORE GLOW",
       "category": "common",
       "fixture": "timed",
+      "lifecycle": "draw",
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeCoreGlow($POS, VC_MAT_FIRE, 1.5f, $PROG)"
@@ -83,6 +88,7 @@
       "label": "SMOKE TRAIL",
       "category": "common",
       "fixture": "follower",
+      "lifecycle": "trail",
       "_auto": true,
       "type": "continuous",
       "spawn_call": "VFX_ComposeSmokeTrail($XFORM, VC_MAT_FIRE, 1.5f, 2.0f)",
@@ -94,6 +100,7 @@
       "label": "DEBRIS SHARDS",
       "category": "metal",
       "fixture": "burst",
+      "lifecycle": "event",
       "_auto": true,
       "type": "oneshot",
       "trigger_call": "VFX_ComposeDebrisShards($POS, $VELOCITY, VC_MAT_METAL, 1.5f, 5)"
@@ -104,6 +111,7 @@
       "label": "DISSOLVE EXIT",
       "category": "common",
       "fixture": "timed",
+      "lifecycle": "draw",
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeDissolveExit($POS, VC_MAT_FIRE, 1.5f, $PROG)"
@@ -114,6 +122,7 @@
       "label": "ENERGY BURST",
       "category": "common",
       "fixture": "burst",
+      "lifecycle": "event",
       "_auto": true,
       "type": "oneshot",
       "trigger_call": "VFX_ComposeEnergyBurst($POS, VC_MAT_FIRE, 1.5f, 1.0f)"
@@ -124,6 +133,7 @@
       "label": "ENERGY ORB",
       "category": "common",
       "fixture": "timed",
+      "lifecycle": "draw",
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeEnergyOrb($POS, VC_MAT_FIRE, 1.5f, $PROG)"
@@ -134,6 +144,7 @@
       "label": "GLINT SPARKLE",
       "category": "common",
       "fixture": "timed",
+      "lifecycle": "draw",
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeGlintSparkle($POS, VC_MAT_FIRE, 1.5f, $TIME)"
@@ -144,6 +155,7 @@
       "label": "GROUND WAVE",
       "category": "earth",
       "fixture": "timed",
+      "lifecycle": "draw",
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeGroundWave($POS, VC_MAT_EARTH, 1.5f, $PROG, VFX_GroundHeightFromMap, NULL)"
@@ -154,6 +166,7 @@
       "label": "IMPACT PACKAGE",
       "category": "common",
       "fixture": "burst",
+      "lifecycle": "event",
       "_auto": true,
       "type": "oneshot",
       "trigger_call": "VFX_ComposeImpactPackage($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, 0.4f)"
@@ -164,6 +177,7 @@
       "label": "LIGHT SHAFT",
       "category": "common",
       "fixture": "timed",
+      "lifecycle": "draw",
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeLightShaft($SOURCE, $TARGET, VC_MAT_FIRE, 0.8f, 1.35f)"
@@ -174,6 +188,7 @@
       "label": "PORTAL DISC",
       "category": "common",
       "fixture": "timed",
+      "lifecycle": "draw",
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposePortalDisc($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, $PROG)"
@@ -184,6 +199,7 @@
       "label": "PROJECTILE",
       "category": "common",
       "fixture": "follower",
+      "lifecycle": "trail",
       "_auto": true,
       "type": "continuous",
       "spawn_call": "VFX_ComposeProjectile($XFORM, VC_MAT_FIRE, 1.5f)",
@@ -195,6 +211,7 @@
       "label": "RIBBON TRAIL",
       "category": "common",
       "fixture": "follower",
+      "lifecycle": "trail",
       "_auto": true,
       "type": "continuous",
       "spawn_call": "VFX_ComposeRibbonTrail($XFORM, VC_MAT_FIRE, 0.1f, 2.0f, VFX_RIBBON_MAIN)",
@@ -206,6 +223,7 @@
       "label": "RUNE CIRCLE",
       "category": "common",
       "fixture": "timed",
+      "lifecycle": "draw",
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeRuneCircle($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, $PROG, 5)"
@@ -216,6 +234,7 @@
       "label": "SHOCK RING",
       "category": "common",
       "fixture": "timed",
+      "lifecycle": "draw",
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeShockRing($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, $PROG)"
@@ -226,6 +245,7 @@
       "label": "SMOKE PUFF",
       "category": "common",
       "fixture": "burst",
+      "lifecycle": "event",
       "_auto": true,
       "type": "oneshot",
       "trigger_call": "VFX_ComposeSmokePuff($POS, VC_MAT_FIRE, 1.5f, 1.0f)"
@@ -236,6 +256,7 @@
       "label": "SPARK TRAIL",
       "category": "common",
       "fixture": "burst",
+      "lifecycle": "event",
       "_auto": true,
       "type": "oneshot",
       "trigger_call": "VFX_ComposeSparkTrail($POS, $VELOCITY, VC_MAT_FIRE, 1.0f, 2.0f)"
@@ -246,6 +267,7 @@
       "label": "SWEEP SLASH",
       "category": "common",
       "fixture": "timed",
+      "lifecycle": "draw",
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeSweepSlash($POS, (Vector3){1.0f, 0.0f, 0.0f}, VC_MAT_FIRE, 1.0f, 90.0f, $PROG)"
@@ -256,6 +278,7 @@
       "label": "VOLUME TRAIL",
       "category": "common",
       "fixture": "follower",
+      "lifecycle": "trail",
       "_auto": true,
       "type": "continuous",
       "spawn_call": "VFX_ComposeVolumeTrail($XFORM, VC_MAT_FIRE, 1.5f, 2.0f, VOL_ENERGY)",
@@ -267,6 +290,7 @@
       "label": "FISSURE STREAK",
       "category": "earth",
       "fixture": "timed",
+      "lifecycle": "draw",
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeFissureStreak($SOURCE, $TARGET, 0.1f, $PROG, $TIME)"
@@ -277,6 +301,7 @@
       "label": "STONE PILLAR",
       "category": "earth",
       "fixture": "timed",
+      "lifecycle": "draw",
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeStonePillar($POS, $PROG)"
@@ -286,10 +311,11 @@
       "fn": "VFX_ComposeFlameVolume",
       "label": "FLAME VOLUME",
       "category": "fire",
-      "fixture": "burst",
+      "fixture": "timed",
+      "lifecycle": "emitter",
       "_auto": true,
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeFlameVolume($POS, VC_MAT_FIRE, 1.5f, 1.0f)"
+      "type": "continuous",
+      "draw_call": "VFX_ComposeFlameVolume($POS, VC_MAT_FIRE, 1.5f, 1.0f)"
     },
     {
       "source": "taiji/vc_black_hole.inl",
@@ -297,6 +323,7 @@
       "label": "BLACK HOLE",
       "category": "taiji",
       "fixture": "timed",
+      "lifecycle": "draw",
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeBlackHole(VC_MAT_FIRE, $POS, 1.5f, $TIME)"
@@ -307,6 +334,7 @@
       "label": "ICE CRYSTAL",
       "category": "water",
       "fixture": "burst",
+      "lifecycle": "event",
       "_auto": true,
       "type": "oneshot",
       "trigger_call": "VFX_ComposeIceCrystal($POS, $SEED)"
@@ -317,6 +345,7 @@
       "label": "WATER STREAM",
       "category": "water",
       "fixture": "timed",
+      "lifecycle": "draw",
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeWaterStream($SOURCE, $CONTROL1, $CONTROL2, $TARGET, 1.5f, $PROG, $TIME)"

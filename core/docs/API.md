@@ -552,7 +552,17 @@
   void VFX_Compose_Update(float dt);
   void VFX_Compose_Draw3D(Camera3D cam);
   void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float density);
+  int VFX_SmokeEmitter_Spawn(Vector3 pos, VC_MaterialId matId, float scale, float density);
+  void VFX_SmokeEmitter_SetTransform(int handle, Vector3 pos, Vector3 wind);
+  void VFX_SmokeEmitter_SetDensity(int handle, float density01);
+  void VFX_SmokeEmitter_Stop(int handle);
+  void VFX_KillSmokeEmitter(int handle);
   void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
+  int VFX_FlameEmitter_Spawn(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
+  void VFX_FlameEmitter_SetTransform(int handle, Vector3 pos, Vector3 wind);
+  void VFX_FlameEmitter_SetIntensity(int handle, float intensity01);
+  void VFX_FlameEmitter_Stop(int handle);
+  void VFX_KillFlameEmitter(int handle);
   int VFX_ComposeCharacterAura(int agentId, VC_MaterialId matId, float intensity);
   void VFX_AuraSetIntensity(int handle, float intensity01);
   void VFX_KillCharacterAura(int handle);

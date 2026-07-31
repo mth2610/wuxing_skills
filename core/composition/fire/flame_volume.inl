@@ -102,6 +102,25 @@ static SpriteAnim s_fvolPuffAnim = {0};
 #define FVOL_BODY_PHASE_MAX 0.50f
 #define FVOL_BODY_LIFE_AVG 1.075f   // Mix(0.75, 1.40)
 #define FVOL_CORE_LIFE_AVG 0.30f
+#define FVOL_MAX_EMITTERS 12
+
+typedef struct {
+    bool active;
+    bool stopping;
+    Vector3 pos;
+    Vector3 wind;
+    VC_MaterialId matId;
+    float scale;
+    float intensity;
+    float bodyAccum;
+    float coreAccum;
+    float lightTimer;
+    float legacyFeedAge;
+    float seed;
+} VC_FlameEmitter;
+
+static VC_FlameEmitter s_fvolEmitters[FVOL_MAX_EMITTERS];
+static int s_fvolNextEmitter = 0;
 
 static void FVol_InitShared(void)
 {
@@ -239,9 +258,12 @@ static void FVol_InitShared(void)
 // VFX_BLEND_ALPHA and the core VFX_BLEND_ADDITIVE, and DrawParticles reopens the
 // batch when the mode changes while keeping the depth order intact. That is F1b
 // in practice — a glowing body is two populations, never one additive draw.
-void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale,
-                            float intensity)
+static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
 {
+    Vector3 pos = emitter->pos;
+    VC_MaterialId matId = emitter->matId;
+    float scale = emitter->scale;
+    float intensity = emitter->intensity;
     FVol_InitShared();
     SmokePuff_InitShared(); // the flame's smoke reuses F2's sprites
     // Which sheet, resolved once. A missing file must fall THROUGH to the other
@@ -280,9 +302,9 @@ void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale,
     // see, and the rate is derived from it: rate = live / averageLifetime. The
     // accumulator carries the fraction, so 0.25 sprites per frame at 60 fps
     // emits one every fourth frame instead of rounding to zero or to one.
-    const float dtNow = GetFrameTime();
-    static float s_fvolBodyAccum = 0.0f;
-    static float s_fvolCoreAccum = 0.0f;
+    const float dtNow = dt;
+    float *bodyAccum = &emitter->bodyAccum;
+    float *coreAccum = &emitter->coreAccum;
 
     int nCore, nBody;
     if (useAtlas)
@@ -304,23 +326,23 @@ void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale,
         // the right value is a judgement about the look, not arithmetic.
         const float bodyLive = s_fvolBodyLive * intensity * s_fvolBodyCount;
         const float coreLive = s_fvolBodyLive * 0.22f * intensity;
-        s_fvolBodyAccum += dtNow * (bodyLive / FVOL_BODY_LIFE_AVG);
-        s_fvolCoreAccum += dtNow * (coreLive / FVOL_CORE_LIFE_AVG);
+        *bodyAccum += dtNow * (bodyLive / FVOL_BODY_LIFE_AVG);
+        *coreAccum += dtNow * (coreLive / FVOL_CORE_LIFE_AVG);
     }
     else
     {
         // The pre-atlas path keeps its own densities, expressed the same way.
-        s_fvolBodyAccum += dtNow * (FVOL_MAX_BODY * intensity / FVOL_BODY_LIFE_AVG);
-        s_fvolCoreAccum += dtNow * (FVOL_MAX_CORE * intensity / FVOL_CORE_LIFE_AVG);
+        *bodyAccum += dtNow * (FVOL_MAX_BODY * intensity / FVOL_BODY_LIFE_AVG);
+        *coreAccum += dtNow * (FVOL_MAX_CORE * intensity / FVOL_CORE_LIFE_AVG);
     }
-    nBody = (int)s_fvolBodyAccum;
-    nCore = (int)s_fvolCoreAccum;
-    s_fvolBodyAccum -= (float)nBody;
-    s_fvolCoreAccum -= (float)nCore;
+    nBody = (int)*bodyAccum;
+    nCore = (int)*coreAccum;
+    *bodyAccum -= (float)nBody;
+    *coreAccum -= (float)nCore;
     // A long hitch must not dump a hundred sprites in one frame — that is the
     // spike the budget exists to prevent.
-    if (nBody > 24) { nBody = 24; s_fvolBodyAccum = 0.0f; }
-    if (nCore > 8)  { nCore = 8;  s_fvolCoreAccum = 0.0f; }
+    if (nBody > 24) { nBody = 24; *bodyAccum = 0.0f; }
+    if (nCore > 8)  { nCore = 8;  *coreAccum = 0.0f; }
     if (nBody < 0) nBody = 0;
     if (nCore < 0) nCore = 0;
 
@@ -467,12 +489,11 @@ void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale,
     // ~7 duplicates alive at once, all at the same spot: they filled the 16-slot
     // pool, starved every other effect, and still lit the scene like a single
     // lamp. The refresh interval only has to beat the lifetime.
-    static float s_lightTimer = 0.0f;
-    s_lightTimer -= GetFrameTime();
-    if (s_lightTimer <= 0.0f)
+    emitter->lightTimer -= dtNow;
+    if (emitter->lightTimer <= 0.0f)
     {
-        s_lightTimer = 0.10f;
-        float flick = 0.85f + VC_Flicker01((float)GetTime() * 7.0f, pos.x) * 0.3f;
+        emitter->lightTimer = 0.10f;
+        float flick = 0.85f + VC_Flicker01((float)GetTime() * 7.0f, emitter->seed) * 0.3f;
         // Lifted to mid-flame height. At the base the light sits IN the ground
         // plane, so the vector to it is nearly parallel to the floor and
         // dot(N, toL) collapses to ~0.1 — the ground receives almost nothing no
@@ -481,4 +502,78 @@ void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale,
         VFXLight_Spawn(lightPos, (Color){255, 150, 60, 255},
                        4.0f * scale * flick, 0.13f, VFX_PRIORITY_LOW);
     }
+}
+
+int VFX_FlameEmitter_Spawn(Vector3 pos, VC_MaterialId matId, float scale, float intensity)
+{
+    FVol_InitShared();
+    int slot = -1;
+    for (int i = 0; i < FVOL_MAX_EMITTERS; ++i)
+        if (!s_fvolEmitters[i].active) { slot = i; break; }
+    if (slot < 0) slot = s_fvolNextEmitter++ % FVOL_MAX_EMITTERS;
+    s_fvolEmitters[slot] = (VC_FlameEmitter){
+        .active = true, .pos = pos, .matId = matId,
+        .scale = scale > 0.0f ? scale : 1.0f,
+        .intensity = intensity < 0.0f ? 0.0f : (intensity > 1.0f ? 1.0f : intensity),
+        .legacyFeedAge = -1.0f,
+        .seed = (float)slot * 1.6180339f + pos.x * 0.37f + pos.z * 0.71f,
+    };
+    return slot;
+}
+
+void VFX_FlameEmitter_SetTransform(int handle, Vector3 pos, Vector3 wind)
+{
+    if (handle < 0 || handle >= FVOL_MAX_EMITTERS || !s_fvolEmitters[handle].active) return;
+    s_fvolEmitters[handle].pos = pos;
+    s_fvolEmitters[handle].wind = wind;
+}
+
+void VFX_FlameEmitter_SetIntensity(int handle, float intensity01)
+{
+    if (handle < 0 || handle >= FVOL_MAX_EMITTERS || !s_fvolEmitters[handle].active) return;
+    s_fvolEmitters[handle].intensity = intensity01 < 0.0f ? 0.0f : (intensity01 > 1.0f ? 1.0f : intensity01);
+}
+
+void VFX_FlameEmitter_Stop(int handle)
+{
+    if (handle >= 0 && handle < FVOL_MAX_EMITTERS) s_fvolEmitters[handle].stopping = true;
+}
+
+void VFX_KillFlameEmitter(int handle)
+{
+    if (handle >= 0 && handle < FVOL_MAX_EMITTERS) s_fvolEmitters[handle].active = false;
+}
+
+static void VC_FlameEmitter_Update(float dt)
+{
+    for (int i = 0; i < FVOL_MAX_EMITTERS; ++i) {
+        VC_FlameEmitter *emitter = &s_fvolEmitters[i];
+        if (!emitter->active) continue;
+        // The compatibility wrapper is frame-fed. Once its caller leaves the
+        // draw/state path, release the slot rather than retaining one hidden
+        // fire forever. Native handle emitters remain explicitly Stop/Kill.
+        if (emitter->legacyFeedAge >= 0.0f) {
+            emitter->legacyFeedAge += dt;
+            if (emitter->legacyFeedAge > 0.25f) {
+                emitter->active = false;
+                continue;
+            }
+        }
+        if (emitter->stopping) { emitter->active = false; continue; }
+        FVol_Emit(emitter, dt);
+    }
+}
+
+static void VC_FlameEmitter_Draw3D(Camera3D cam) { (void)cam; }
+
+// Compatibility only. New code owns an emitter handle. This avoids a global
+// accumulator while preserving old frame-fed callers until their P5 scores move.
+void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale, float intensity)
+{
+    static int legacyHandle = -1;
+    if (legacyHandle < 0 || !s_fvolEmitters[legacyHandle].active)
+        legacyHandle = VFX_FlameEmitter_Spawn(pos, matId, scale, intensity);
+    s_fvolEmitters[legacyHandle].legacyFeedAge = 0.0f;
+    VFX_FlameEmitter_SetTransform(legacyHandle, pos, (Vector3){0});
+    VFX_FlameEmitter_SetIntensity(legacyHandle, intensity);
 }

@@ -71,7 +71,9 @@ void VFX_Compose_Update(float dt)
     VC_Projectile_Update(dt);
     VC_VolumeTrail_Update(dt);
     VC_DebrisShards_Update(dt);
+    VC_FlameEmitter_Update(dt);
 // @gen:archetype_update end
+    SmokeEmitter_Update(dt);
     // E3 — the choreography layer rides the same single main.c wiring. Kept
     // OUTSIDE the generated block on purpose: sync_vfx_test.py rewrites what is
     // between the markers from the archetype scan, so a hand-written call in
@@ -90,5 +92,7 @@ void VFX_Compose_Draw3D(Camera3D cam)
     VC_Projectile_Draw3D(cam);
     VC_VolumeTrail_Draw3D(cam);
     VC_DebrisShards_Draw3D(cam);
+    VC_FlameEmitter_Draw3D(cam);
 // @gen:archetype_draw end
+    SmokeEmitter_Draw3D(cam);
 }

@@ -397,3 +397,65 @@ void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float d
         });
     }
 }
+
+// P2 persistent smoke source. The puff above remains the Event primary; this
+// pool owns rate, fractional carry, seed and wind for sustained plumes.
+#define VFX_SMOKE_EMITTER_MAX 16
+typedef struct {
+    bool active;
+    bool stopping;
+    Vector3 pos, wind;
+    VC_MaterialId matId;
+    float scale, density, accum, elapsed, seed;
+} VC_SmokeEmitter;
+static VC_SmokeEmitter s_smokeEmitters[VFX_SMOKE_EMITTER_MAX];
+static int s_smokeEmitterSerial = 0;
+
+int VFX_SmokeEmitter_Spawn(Vector3 pos, VC_MaterialId matId, float scale, float density)
+{
+    SmokePuff_InitShared();
+    int slot = -1;
+    for (int i = 0; i < VFX_SMOKE_EMITTER_MAX; ++i)
+        if (!s_smokeEmitters[i].active) { slot = i; break; }
+    if (slot < 0) slot = s_smokeEmitterSerial++ % VFX_SMOKE_EMITTER_MAX;
+    s_smokeEmitters[slot] = (VC_SmokeEmitter){
+        .active = true, .pos = pos, .matId = matId,
+        .scale = scale > 0.0f ? scale : 1.0f,
+        .density = density < 0.0f ? 0.0f : (density > 1.0f ? 1.0f : density),
+        .seed = (float)slot * 2.399963f + pos.x * 0.23f + pos.z * 0.59f,
+    };
+    return slot;
+}
+void VFX_SmokeEmitter_SetTransform(int handle, Vector3 pos, Vector3 wind)
+{
+    if (handle < 0 || handle >= VFX_SMOKE_EMITTER_MAX || !s_smokeEmitters[handle].active) return;
+    s_smokeEmitters[handle].pos = pos; s_smokeEmitters[handle].wind = wind;
+}
+void VFX_SmokeEmitter_SetDensity(int handle, float density01)
+{
+    if (handle < 0 || handle >= VFX_SMOKE_EMITTER_MAX || !s_smokeEmitters[handle].active) return;
+    s_smokeEmitters[handle].density = density01 < 0.0f ? 0.0f : (density01 > 1.0f ? 1.0f : density01);
+}
+void VFX_SmokeEmitter_Stop(int handle) { if (handle >= 0 && handle < VFX_SMOKE_EMITTER_MAX) s_smokeEmitters[handle].stopping = true; }
+void VFX_KillSmokeEmitter(int handle) { if (handle >= 0 && handle < VFX_SMOKE_EMITTER_MAX) s_smokeEmitters[handle].active = false; }
+static void SmokeEmitter_Update(float dt)
+{
+    for (int i = 0; i < VFX_SMOKE_EMITTER_MAX; ++i) {
+        VC_SmokeEmitter *e = &s_smokeEmitters[i];
+        if (!e->active) continue;
+        if (e->stopping) { e->active = false; continue; }
+        e->elapsed += dt;
+        e->accum += dt * (2.0f + 7.0f * e->density);
+        int count = (int)e->accum;
+        if (count > 3) { count = 3; e->accum = 0.0f; } else e->accum -= (float)count;
+        for (int n = 0; n < count; ++n) {
+            float phase = e->seed + e->elapsed * 1.7f + (float)n * 2.399963f;
+            Vector3 p = Vector3Add(e->pos, Vector3Scale(e->wind, 0.12f));
+            Vector3 orbit = VC_TangentXZ(phase, 0.0f);
+            p.x += orbit.x * 0.08f * e->scale;
+            p.z += orbit.z * 0.08f * e->scale;
+            VFX_ComposeSmokePuff(p, e->matId, e->scale, 0.06f + 0.08f * e->density);
+        }
+    }
+}
+static void SmokeEmitter_Draw3D(Camera3D cam) { (void)cam; }

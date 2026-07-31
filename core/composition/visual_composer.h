@@ -43,6 +43,12 @@
 void VFX_Compose_Update(float dt);
 void VFX_Compose_Draw3D(Camera3D cam);
 
+// ── P0 primary lifecycle vocabulary ─────────────────────────────────────────
+// Event: call once and it self-dissipates. Draw: call each frame, no owned pool.
+// Emitter/Trail: Spawn returns a handle; Update/Set may retune it; Stop/Kill
+// releases it. FlameVolume is the documented legacy exception until P2 turns it
+// into a per-instance FlameEmitter; its sandbox fixture is therefore timed.
+
 // ── F2. Smoke / dust puff ───────────────────────────────────────────────────
 // Layered alpha sprites with per-sprite spin that grow while they fade,
 // deliberately dark so the lighting pass supplies the brightness. Draw with
@@ -50,13 +56,23 @@ void VFX_Compose_Draw3D(Camera3D cam);
 // one flipped to additive. `density` 0..1 scales the sprite count. Needs
 // particle lighting on: tuning.cfg → particle_lighting_strength.
 void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float density);
+int  VFX_SmokeEmitter_Spawn(Vector3 pos, VC_MaterialId matId, float scale, float density);
+void VFX_SmokeEmitter_SetTransform(int handle, Vector3 pos, Vector3 wind);
+void VFX_SmokeEmitter_SetDensity(int handle, float density01);
+void VFX_SmokeEmitter_Stop(int handle);
+void VFX_KillSmokeEmitter(int handle);
 
 // ── F3. Flame volume ────────────────────────────────────────────────────────
-// A fire that is a VOLUME rather than a sprite fan: black-body ramp, a core that
+// Legacy Emitter (P2 migration target): a fire that is a VOLUME rather than a sprite fan: black-body ramp, a core that
 // stays at the base, and a smoke hand-off as the body cools. Continuous — call
 // every frame; emission is a RATE derived from a live-count target, so density
 // does not move with the frame rate. `intensity` 0..1.
 void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
+int  VFX_FlameEmitter_Spawn(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
+void VFX_FlameEmitter_SetTransform(int handle, Vector3 pos, Vector3 wind);
+void VFX_FlameEmitter_SetIntensity(int handle, float intensity01);
+void VFX_FlameEmitter_Stop(int handle);
+void VFX_KillFlameEmitter(int handle);
 
 // ── F4. Character aura ──────────────────────────────────────────────────────
 // Three layers: discrete motes crossing the silhouette (the layer that actually
