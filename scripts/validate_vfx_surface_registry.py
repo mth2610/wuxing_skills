@@ -104,15 +104,17 @@ def main():
                 failures += fail(f"{name}: decal needs an explicit blend law")
             if "conformal_mesh_stamp" not in profile.get("projection", ""):
                 failures += fail(f"{name}: decal needs conformal mesh projection")
-            if profile.get("seam") != "edge_breakup_mask_required":
-                failures += fail(f"{name}: decal needs edge-breakup seam behavior")
+            required_seam = ("symbol_boundary_alpha_required" if profile.get("role") == "rune"
+                             else "edge_breakup_mask_required")
+            if profile.get("seam") != required_seam:
+                failures += fail(f"{name}: decal needs role-appropriate seam behavior")
         for candidate in profile.get("fallback_candidates", []):
             path = candidate.get("path")
             if not path or not (ROOT / path).is_file() or Path(path).name not in index:
                 failures += fail(f"{name}: fallback candidate is missing or uncataloged")
             if candidate.get("status") not in {"must_replace", "rejected", "owner_review"} or not candidate.get("reason"):
                 failures += fail(f"{name}: fallback candidate lacks review decision/provenance")
-    expected = {"VFX_SURFACE_SMOKE_RIBBON", "VFX_SURFACE_ENERGY_RIBBON", "VFX_SURFACE_ENERGY_TUBE", "VFX_SURFACE_SMOKE_PUFF", "VFX_SURFACE_FIRE_TONGUE", "VFX_SURFACE_DECAL_RESIDUE", "VFX_SURFACE_DECAL_SCORCH"}
+    expected = {"VFX_SURFACE_SMOKE_RIBBON", "VFX_SURFACE_ENERGY_RIBBON", "VFX_SURFACE_ENERGY_TUBE", "VFX_SURFACE_SMOKE_PUFF", "VFX_SURFACE_FIRE_TONGUE", "VFX_SURFACE_DECAL_RESIDUE", "VFX_SURFACE_DECAL_SCORCH", "VFX_SURFACE_DECAL_IMPACT", "VFX_SURFACE_DECAL_RUNE"}
     if not expected.issubset(ids):
         failures += fail("profile IDs do not cover every P1 required primary surface")
     if failures:

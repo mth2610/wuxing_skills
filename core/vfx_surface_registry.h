@@ -53,6 +53,8 @@ typedef enum {
     // P4 contracts contain no runtime asset until visual-owner approval.
     VFX_SURFACE_DECAL_RESIDUE,
     VFX_SURFACE_DECAL_SCORCH,
+    VFX_SURFACE_DECAL_IMPACT,
+    VFX_SURFACE_DECAL_RUNE,
     VFX_SURFACE_COUNT
 } VFX_SurfaceId;
 

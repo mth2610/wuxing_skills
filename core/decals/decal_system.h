@@ -6,6 +6,8 @@
 #include <stdbool.h>
 
 #define MAX_DECALS 64
+#define DECAL_STAMP_SECTORS 16
+#define DECAL_STAMP_RINGS 3
 
 typedef struct {
     Vector3 position;
@@ -29,6 +31,8 @@ typedef struct {
     GroundHeightSampleFn heightFn;
     void *heightUserData;
     float edgePhase;
+    bool stampHeightsCached;
+    float stampHeights[DECAL_STAMP_RINGS + 1][DECAL_STAMP_SECTORS];
 } DecalEntity;
 
 // Khởi tạo hệ thống Decal

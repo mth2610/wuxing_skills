@@ -363,6 +363,13 @@ primary short of being a pure score — the converge motes still need extracting
   primary by selecting a legacy filename. Resume only with the Decal Rework
   surface registry (role, channels, provenance, wrap/filter, blend) and visual
   approval.
+  - **Scorch render investigation hold (31/07):** the P4 review material has
+    clean organic alpha, a conformal mesh, alpha and multiply A/B base passes,
+    plus an independent HDR ember pass. It remains washed-out on both grass and
+    bright ground; stacked instances become readable. This may be a blend/state
+    or backend interaction (including Vulkan), but is not proven. Do not keep
+    tuning source thresholds or ShieldShell by analogy. Resume with a minimal
+    backend A/B capture of the decal pass and its blend/depth state.
 
 ### 4.3 What is MISSING, in build order
 

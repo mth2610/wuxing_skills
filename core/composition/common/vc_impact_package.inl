@@ -125,6 +125,13 @@ void VFX_ComposeImpactDecal(Vector3 pos, VC_MaterialId matId, float scale, float
     ImpactPkg_InitShared();
     if (s_ipDecal <= 0.5f) return;
     float sev = Clamp(severity01, 0.0f, 1.0f);
+    // P4 Scorch owns Fire's ground mark. It is invoked from the event score,
+    // never a per-frame draw path, so one impact creates exactly one lifecycle.
+    if (matId == VC_MAT_FIRE)
+    {
+        VFX_ComposeScorch(pos, matId, ImpactDecal_Radius() * scale, sev);
+        return;
+    }
     // Routed through SpawnGroundDecal, which RESOLVES the preset to a real
     // texture. The dead beat this replaces passed no texture at all — that is
     // exactly the failure a preset enum prevents and a raw Texture2D field

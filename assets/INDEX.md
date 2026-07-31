@@ -64,6 +64,7 @@ Used via `SpawnGroundDecal(DECAL_PRESET_GENERIC_*)`. White/tintable.
 | `smoke_ribbon.png` | `VFX_SurfaceRegistry` SmokeRibbon body | Lit smoke body with opacity; repeat only through the semantic profile | pre-lit RGBA |
 | `smoke_ribbon_flow.png` | `VFX_SurfaceRegistry` SmokeRibbon flow | RG signed UV direction field paired with smoke ribbon | data, RG direction |
 | `smoke_ribbon_mask.png` | `VFX_SurfaceRegistry` SmokeRibbon mask | R-only erosion field; never decode as a flow vector | data, R scalar |
+| `surfaces/scorch_material_v1.png` | `VFX_SurfaceRegistry` DecalScorch preview body | ImageGen-charcoal scorch material with chroma-key-derived organic alpha; visual-review only | RGBA charcoal/ember/opacity |
 | `smoke_volume.png` | `VFX_SurfaceRegistry` SmokeTube preview profile | Seamless smoke tube body; preview-only until P3 approval | pre-lit RGBA |
 | `smoke_volume_flow.png` | `VFX_SurfaceRegistry` SmokeTube preview profile | Tileable RG direction field | data, RG direction |
 | `fire_volume.png` | `VFX_SurfaceRegistry` FireTube preview profile | Seamless fire tube body; preview-only until P3 approval | emissive RGBA |
@@ -92,7 +93,9 @@ until the visual owner approves authored source art.
 | Profile | Role / projection | Legacy assessment | State |
 |---|---|---|---|
 | DecalResidue | conformal mesh stamp, alpha / edge erosion | `decal_moss_stain.png` must replace; `impact_ring.png` rejected as circular impact stamp | blocked, no fallback |
-| DecalScorch | conformal mesh stamp, multiply char + optional ember ramp | `scorch_mark.png` is owner-approved review source only; it and `decal_lightning_char.png` must replace for shipping | visual primary; no shipping fallback |
+| DecalScorch | conformal mesh stamp, alpha charcoal + additive ember ramp | `scorch_mark.png` is owner-approved review source only; it and `decal_lightning_char.png` must replace for shipping | visual primary; no shipping fallback |
+| DecalImpact | conformal mesh stamp, alpha / edge erosion | `decal_impact_crater.png` must replace; `impact_ring.png` rejected as a cue rather than a material | blocked, no fallback |
+| DecalRune | conformal mesh stamp, alpha / glyph boundary | `decal_earth_rune.png` and `decal_metal_rune.png` await owner review of alpha, legibility and terrain seam | blocked, owner-review candidates |
 | SmokeTube / FireTube | tube | `VFX_ComposeVolumeTrail` | registry-only preview; spawn remains blocked pending P3 visual approval |
 
 ---

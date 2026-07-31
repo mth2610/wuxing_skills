@@ -26,7 +26,9 @@ int main(void)
           Has(header, "VFX_SURFACE_SMOKE_PUFF") &&
           Has(header, "VFX_SURFACE_FIRE_TONGUE") &&
           Has(header, "VFX_SURFACE_DECAL_RESIDUE") &&
-          Has(header, "VFX_SURFACE_DECAL_SCORCH"),
+          Has(header, "VFX_SURFACE_DECAL_SCORCH") &&
+          Has(header, "VFX_SURFACE_DECAL_IMPACT") &&
+          Has(header, "VFX_SURFACE_DECAL_RUNE"),
           "P1 exposes every required semantic primary surface");
     CHECK(Has(header, "VFX_SurfaceRegistry_Get") && Has(source, "ResourceManager_LoadTexture"),
           "registry is the only runtime loader for profile assets");

@@ -17,6 +17,7 @@ static Shader g_MaterialDecalShader;
 // Uniform locations của uber-shader (decal_flow.fs), cache 1 lần ở Init
 static int s_locFlowTime = -1, s_locFlowSpeed = -1, s_locFlowStrength = -1, s_locGlow = -1;
 static int s_locMaterialErosion = -1;
+static int s_locMaterialEmissivePass = -1;
 
 // Camera compensation
 static float g_cam_yaw = 0.0f;
@@ -148,6 +149,7 @@ void DecalSystem_Init(void)
     s_locFlowStrength = GetShaderLocation(g_DecalShader, "u_flowStrength");
     s_locGlow         = GetShaderLocation(g_DecalShader, "u_glowIntensity");
     s_locMaterialErosion = GetShaderLocation(g_MaterialDecalShader, "u_erosion");
+    s_locMaterialEmissivePass = GetShaderLocation(g_MaterialDecalShader, "u_emissivePass");
 }
 
 static int FindSlot(void)
@@ -195,6 +197,7 @@ static int SpawnDecalCommon(Vector3 pos, float rotation, float rotSpeed,
     d->heightFn = NULL;
     d->heightUserData = NULL;
     d->edgePhase = 0.0f;
+    d->stampHeightsCached = false;
     g_LastSpawnedIndex = (idx + 1) % MAX_DECALS;
     Decal_Activate(idx);
     return idx;
@@ -207,6 +210,25 @@ void DecalSystem_AddConformalEx(Vector3 pos, float rotation, float rotSpeed,
                                 GroundHeightSampleFn heightFn, void *heightUserData,
                                 float edgePhase)
 {
+    int conformalCount = 0;
+    int oldest = -1;
+    float shortestLife = 0.0f;
+    for (int a = 0; a < s_activeCount; ++a)
+    {
+        int id = s_activeIds[a];
+        DecalEntity *candidate = &g_DecalPool[id];
+        if (!candidate->conformalStamp) continue;
+        conformalCount++;
+        if (oldest < 0 || candidate->lifetime < shortestLife)
+        {
+            oldest = id;
+            shortestLife = candidate->lifetime;
+        }
+    }
+    // Material stamps are considerably denser than legacy quads. Keep a hard
+    // independent budget so repeated impact events cannot consume a frame.
+    if (conformalCount >= 12 && oldest >= 0)
+        Decal_Deactivate(oldest);
     int idx = SpawnDecalCommon(pos, rotation, rotSpeed, scaleStart, scaleEnd, texture,
                                lifetime, tint, blendMode, yOffset);
     DecalEntity *d = &g_DecalPool[idx];
@@ -214,6 +236,25 @@ void DecalSystem_AddConformalEx(Vector3 pos, float rotation, float rotSpeed,
     d->heightFn = heightFn;
     d->heightUserData = heightUserData;
     d->edgePhase = edgePhase;
+    if (heightFn != NULL)
+    {
+        for (int ring = 0; ring <= DECAL_STAMP_RINGS; ++ring)
+        {
+            float radial = (float)ring / DECAL_STAMP_RINGS;
+            for (int sector = 0; sector < DECAL_STAMP_SECTORS; ++sector)
+            {
+                float angle = 2.0f * PI * sector / DECAL_STAMP_SECTORS;
+                float edge = 1.0f + 0.075f * sinf(angle * 7.0f + edgePhase) +
+                             0.045f * sinf(angle * 13.0f - edgePhase * 1.7f);
+                float radius = scaleEnd * radial * edge;
+                float rot = angle + rotation * DEG2RAD;
+                d->stampHeights[ring][sector] = heightFn(pos.x + cosf(rot) * radius,
+                                                          pos.z + sinf(rot) * radius,
+                                                          heightUserData);
+            }
+        }
+        d->stampHeightsCached = true;
+    }
 }
 
 void DecalSystem_AddEx(Vector3 pos, float rotation, float rotSpeed,
@@ -374,30 +415,31 @@ static void DrawGroup(BlendMode mode, bool flowOnly)
     }
 }
 
-#define DECAL_STAMP_SECTORS 24
-#define DECAL_STAMP_RINGS 4
-
 static float Decal_StampRadius(const DecalEntity *d, float angle)
 {
     return 1.0f + 0.075f * sinf(angle * 7.0f + d->edgePhase) +
            0.045f * sinf(angle * 13.0f - d->edgePhase * 1.7f);
 }
 
-static Vector3 Decal_StampVertex(const DecalEntity *d, float radial, float angle)
+static Vector3 Decal_StampVertex(const DecalEntity *d, float radial, float angle,
+                                 int ring, int sector)
 {
     float radius = d->scale * radial * Decal_StampRadius(d, angle);
     float rot = angle + d->rotation * DEG2RAD;
     float x = d->position.x + cosf(rot) * radius;
     float z = d->position.z + sinf(rot) * radius;
     float y = d->position.y;
-    if (d->heightFn != NULL)
+    if (d->stampHeightsCached)
+        y = d->stampHeights[ring][sector % DECAL_STAMP_SECTORS] + d->yOffset;
+    else if (d->heightFn != NULL)
         y = d->heightFn(x, z, d->heightUserData) + d->yOffset;
     return (Vector3){x, y, z};
 }
 
-static void Decal_StampEmitVertex(const DecalEntity *d, float radial, float angle)
+static void Decal_StampEmitVertex(const DecalEntity *d, float radial, float angle,
+                                  int ring, int sector)
 {
-    Vector3 v = Decal_StampVertex(d, radial, angle);
+    Vector3 v = Decal_StampVertex(d, radial, angle, ring, sector);
     float edge = Decal_StampRadius(d, angle);
     float u = 0.5f + cosf(angle) * radial * edge * 0.5f;
     float w = 0.5f + sinf(angle) * radial * edge * 0.5f;
@@ -405,22 +447,41 @@ static void Decal_StampEmitVertex(const DecalEntity *d, float radial, float angl
     rlVertex3f(v.x, v.y, v.z);
 }
 
-static void DrawConformalGroup(BlendMode mode)
+static void DrawConformalGroup(BlendMode renderMode, BlendMode sourceMode, bool emissivePass)
 {
     bool active = false;
+    for (int a = 0; a < s_activeCount; ++a)
+    {
+        DecalEntity *d = &g_DecalPool[s_activeIds[a]];
+        if (d->conformalStamp && d->blendMode == sourceMode &&
+            d->texture.id != 0)
+        {
+            active = true;
+            break;
+        }
+    }
+    if (!active) return;
     rlDrawRenderBatchActive();
-    BeginBlendMode(mode);
+    BeginBlendMode(renderMode);
     rlDrawRenderBatchActive();
     rlDisableDepthMask();
     rlDrawRenderBatchActive();
+    // Same terrain-surface rule as FissureStreak: the map's depth prepass can
+    // otherwise reject a coplanar conformal stamp before its tiny lift helps.
+    rlDisableDepthTest();
+    rlDrawRenderBatchActive();
+    rlDisableBackfaceCulling();
+    rlDrawRenderBatchActive();
     BeginShaderMode(g_MaterialDecalShader);
+    int useEmissive = emissivePass ? 1 : 0;
+    SetShaderValue(g_MaterialDecalShader, s_locMaterialEmissivePass, &useEmissive,
+                   SHADER_UNIFORM_INT);
 
     for (int a = 0; a < s_activeCount; ++a)
     {
         DecalEntity *d = &g_DecalPool[s_activeIds[a]];
-        if (!d->conformalStamp || d->blendMode != mode || d->texture.id == 0)
+        if (!d->conformalStamp || d->blendMode != sourceMode || d->texture.id == 0)
             continue;
-        active = true;
         float erosion = 1.0f - d->lifetime / d->maxLifetime;
         Color c = d->tint;
         c.a = (unsigned char)(c.a * (1.0f - erosion * erosion));
@@ -436,9 +497,12 @@ static void DrawConformalGroup(BlendMode mode)
             {
                 float a0 = 2.0f * PI * sector / DECAL_STAMP_SECTORS;
                 float a1 = 2.0f * PI * (sector + 1) / DECAL_STAMP_SECTORS;
-                Decal_StampEmitVertex(d, r0, a0); Decal_StampEmitVertex(d, r1, a0);
-                Decal_StampEmitVertex(d, r1, a1); Decal_StampEmitVertex(d, r0, a0);
-                Decal_StampEmitVertex(d, r1, a1); Decal_StampEmitVertex(d, r0, a1);
+                Decal_StampEmitVertex(d, r0, a0, ring, sector);
+                Decal_StampEmitVertex(d, r1, a0, ring + 1, sector);
+                Decal_StampEmitVertex(d, r1, a1, ring + 1, sector + 1);
+                Decal_StampEmitVertex(d, r0, a0, ring, sector);
+                Decal_StampEmitVertex(d, r1, a1, ring + 1, sector + 1);
+                Decal_StampEmitVertex(d, r0, a1, ring, sector + 1);
             }
         }
         rlEnd();
@@ -448,11 +512,14 @@ static void DrawConformalGroup(BlendMode mode)
     rlDrawRenderBatchActive();
     EndShaderMode();
     rlDrawRenderBatchActive();
+    rlEnableBackfaceCulling();
+    rlDrawRenderBatchActive();
+    rlEnableDepthTest();
+    rlDrawRenderBatchActive();
     rlEnableDepthMask();
     rlDrawRenderBatchActive();
     EndBlendMode();
     rlDrawRenderBatchActive();
-    (void)active;
 }
 
 void DecalSystem_Draw(void)
@@ -464,9 +531,8 @@ void DecalSystem_Draw(void)
     DrawGroup(BLEND_ADDITIVE, true);
     DrawGroup(BLEND_MULTIPLIED, false);
     DrawGroup(BLEND_MULTIPLIED, true);
-    DrawConformalGroup(BLEND_ALPHA);
-    DrawConformalGroup(BLEND_ADDITIVE);
-    DrawConformalGroup(BLEND_MULTIPLIED);
+    DrawConformalGroup(BLEND_ALPHA, BLEND_ALPHA, false);
+    DrawConformalGroup(BLEND_ADDITIVE, BLEND_ALPHA, true);
 }
 
 void DecalSystem_Unload(void)
