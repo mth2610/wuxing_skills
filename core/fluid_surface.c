@@ -12,15 +12,17 @@ static ParticleRenderStream s_gpuStreams[16];
 static int s_gpuStreamCount;
 static Texture2D s_surfaceTex;
 static RenderTexture2D s_capture, s_smoothA, s_smoothB;
-static Shader s_smooth, s_composite;
+static Shader s_captureShader, s_smooth, s_composite;
 static int s_texelLoc, s_thicknessLoc, s_sceneLoc, s_sceneDepthLoc, s_hasDepthLoc;
 
 static RenderTexture2D FluidSurface_LoadDepthTarget(int w, int h) {
     RenderTexture2D t = {0}; t.id = rlLoadFramebuffer();
     if (!t.id) return t;
     rlEnableFramebuffer(t.id);
-    t.texture.id = rlLoadTexture(NULL,w,h,RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8,1);
-    t.texture.width=w; t.texture.height=h; t.texture.format=RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8; t.texture.mipmaps=1;
+    // Capture depth in colour, rather than sampling the FBO depth attachment.
+    // MoltenVK (used by rlvk on macOS) does not expose sampled FBO depth textures.
+    t.texture.id = rlLoadTexture(NULL,w,h,RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16,1);
+    t.texture.width=w; t.texture.height=h; t.texture.format=RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16; t.texture.mipmaps=1;
     t.depth.id=rlLoadTextureDepth(w,h,false); t.depth.width=w; t.depth.height=h; t.depth.mipmaps=1;
     rlFramebufferAttach(t.id,t.texture.id,RL_ATTACHMENT_COLOR_CHANNEL0,RL_ATTACHMENT_TEXTURE2D,0);
     rlFramebufferAttach(t.id,t.depth.id,RL_ATTACHMENT_DEPTH,RL_ATTACHMENT_TEXTURE2D,0);
@@ -30,6 +32,7 @@ static RenderTexture2D FluidSurface_LoadDepthTarget(int w, int h) {
 void FluidSurface_Init(int width,int height) {
     int w = width/2, h=height/2;
     s_capture=FluidSurface_LoadDepthTarget(w,h); s_smoothA=LoadRenderTexture(w,h); s_smoothB=LoadRenderTexture(w,h);
+    s_captureShader=ResourceManager_LoadShader(NULL,"core/shaders/fluid_capture.fs");
     s_smooth=ResourceManager_LoadShader(NULL,"core/shaders/fluid_depth_smooth.fs");
     s_composite=ResourceManager_LoadShader(NULL,"core/shaders/fluid_surface.fs");
     Image img = GenImageGradientRadial(64, 64, 0.0f, WHITE, BLANK);
@@ -55,12 +58,14 @@ bool FluidSurface_SubmitParticleStream(const ParticleRenderStream *stream) {
 }
 void FluidSurface_Capture(Camera3D camera) {
     if(!s_count && !s_gpuStreamCount) return;
-    BeginTextureMode(s_capture); ClearBackground(BLANK); BeginMode3D(camera);
+    BeginTextureMode(s_capture); ClearBackground((Color){255,0,0,0}); BeginMode3D(camera);
+    if (s_count) BeginShaderMode(s_captureShader);
     for(int i=0;i<s_count;i++) DrawSphere(s_particles[i].position,s_particles[i].radius,WHITE);
+    if (s_count) EndShaderMode();
     for (int i=0;i<s_gpuStreamCount;i++) ParticleManager_DrawSurfaceStream(&s_gpuStreams[i], camera, s_surfaceTex);
     EndMode3D(); EndTextureMode();
     Vector2 texel={1.0f/s_capture.texture.width,1.0f/s_capture.texture.height};
-    BeginTextureMode(s_smoothA); ClearBackground(WHITE); BeginShaderMode(s_smooth); SetShaderValue(s_smooth,s_texelLoc,&texel,SHADER_UNIFORM_VEC2); DrawTextureRec(s_capture.depth,(Rectangle){0,0,s_capture.depth.width,-s_capture.depth.height},(Vector2){0,0},WHITE); EndShaderMode(); EndTextureMode();
+    BeginTextureMode(s_smoothA); ClearBackground(WHITE); BeginShaderMode(s_smooth); SetShaderValue(s_smooth,s_texelLoc,&texel,SHADER_UNIFORM_VEC2); DrawTextureRec(s_capture.texture,(Rectangle){0,0,s_capture.texture.width,-s_capture.texture.height},(Vector2){0,0},WHITE); EndShaderMode(); EndTextureMode();
     BeginTextureMode(s_smoothB); ClearBackground(WHITE); BeginShaderMode(s_smooth); DrawTextureRec(s_smoothA.texture,(Rectangle){0,0,s_smoothA.texture.width,-s_smoothA.texture.height},(Vector2){0,0},WHITE); EndShaderMode(); EndTextureMode();
 }
 void FluidSurface_Composite(void) {

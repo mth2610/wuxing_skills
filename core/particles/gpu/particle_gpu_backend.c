@@ -78,6 +78,8 @@ static unsigned int s_compute_prog = 0;
 static unsigned int s_draw_vao = 0;
 static unsigned int s_draw_quad_vbo = 0; // template quad, attribute 0
 static Shader s_draw_shader_gpu = {0};
+static Shader s_surface_capture_shader_gpu = {0};
+static Shader s_surface_capture_shader_cpu = {0};
 static float s_elapsed_time = 0.0f;
 
 static GpuParticleData s_cpu_pool[MAX_GPU_PARTICLES];
@@ -86,6 +88,7 @@ static int s_spawn_cursor = 0;
 static int s_spawn_start_this_frame = -1;
 static int s_spawn_count_this_frame = 0;
 static int s_filterEmitter = -1, s_filterRenderMode = -1;
+static bool s_surfaceCaptureDraw = false;
 
 // Vector field textures cho FORCE_VECTOR_TEXTURE — không sở hữu (không Unload
 // ở đây), chỉ bind vào texture unit trước mỗi dispatch khi slot đang set.
@@ -210,6 +213,11 @@ void GpuParticleSystem_Init(void)
             s_ff_ssbo = 0;
             goto cpu_path;
         }
+        s_surface_capture_shader_gpu = ResourceManager_LoadShader(ssbo_vs_path, "core/shaders/fluid_capture_particle.fs");
+        if (s_surface_capture_shader_gpu.id == 0)
+        {
+            TraceLog(LOG_WARNING, "GPU_PARTICLES: surface capture shader unavailable");
+        }
 
         // Template quad (2 tam giác, góc ±1, CCW = front-face) ở attribute 0.
         // Per-particle data đi qua SSBO binding 0 đọc bằng gl_InstanceID trong VS.
@@ -245,7 +253,8 @@ void GpuParticleSystem_Init(void)
     }
     else
     {
-    cpu_path:
+cpu_path:
+    s_surface_capture_shader_cpu = ResourceManager_LoadShader(NULL, "core/shaders/fluid_capture.fs");
         // ----- CPU/VBO PATH -----
         s_use_compute = false;
         TraceLog(LOG_INFO, "GPU_PARTICLES: CPU/VBO path active (%d particles)", MAX_GPU_PARTICLES);
@@ -514,22 +523,23 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
 
     if (s_use_compute)
     {
-        BeginShaderMode(s_draw_shader_gpu);
+        Shader drawShader = s_surfaceCaptureDraw && s_surface_capture_shader_gpu.id ? s_surface_capture_shader_gpu : s_draw_shader_gpu;
+        BeginShaderMode(drawShader);
 
-        int loc_right = GetShaderLocation(s_draw_shader_gpu, "u_right");
-        int loc_up = GetShaderLocation(s_draw_shader_gpu, "u_up");
-        int loc_mvp = GetShaderLocation(s_draw_shader_gpu, "mvp");
-        int loc_filterEmitter = GetShaderLocation(s_draw_shader_gpu, "u_filterEmitter");
-        int loc_filterMode = GetShaderLocation(s_draw_shader_gpu, "u_filterRenderMode");
+        int loc_right = GetShaderLocation(drawShader, "u_right");
+        int loc_up = GetShaderLocation(drawShader, "u_up");
+        int loc_mvp = GetShaderLocation(drawShader, "mvp");
+        int loc_filterEmitter = GetShaderLocation(drawShader, "u_filterEmitter");
+        int loc_filterMode = GetShaderLocation(drawShader, "u_filterRenderMode");
         if (loc_right >= 0)
-            SetShaderValue(s_draw_shader_gpu, loc_right, &right, SHADER_UNIFORM_VEC3);
+            SetShaderValue(drawShader, loc_right, &right, SHADER_UNIFORM_VEC3);
         if (loc_up >= 0)
-            SetShaderValue(s_draw_shader_gpu, loc_up, &up, SHADER_UNIFORM_VEC3);
+            SetShaderValue(drawShader, loc_up, &up, SHADER_UNIFORM_VEC3);
         if (loc_mvp >= 0)
-            SetShaderValueMatrix(s_draw_shader_gpu, loc_mvp, matMVP);
+            SetShaderValueMatrix(drawShader, loc_mvp, matMVP);
         float filterEmitter = (float)s_filterEmitter, filterMode = (float)s_filterRenderMode;
-        if (loc_filterEmitter >= 0) SetShaderValue(s_draw_shader_gpu, loc_filterEmitter, &filterEmitter, SHADER_UNIFORM_FLOAT);
-        if (loc_filterMode >= 0) SetShaderValue(s_draw_shader_gpu, loc_filterMode, &filterMode, SHADER_UNIFORM_FLOAT);
+        if (loc_filterEmitter >= 0) SetShaderValue(drawShader, loc_filterEmitter, &filterEmitter, SHADER_UNIFORM_FLOAT);
+        if (loc_filterMode >= 0) SetShaderValue(drawShader, loc_filterMode, &filterMode, SHADER_UNIFORM_FLOAT);
 
         rlBindShaderBuffer(s_ssbo, 0);
 
@@ -537,7 +547,7 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
         rlActiveTextureSlot(0);
         rlEnableTexture(texture.id);
 
-        rlEnableShader(s_draw_shader_gpu.id);
+        rlEnableShader(drawShader.id);
         rlEnableVertexArray(s_draw_vao);
         rlDrawVertexArrayInstanced(0, 6, MAX_GPU_PARTICLES);
         rlDisableVertexArray();
@@ -631,7 +641,11 @@ void GpuParticleSystem_DrawSurfaceEmitter(Camera3D camera, Texture2D texture, in
 {
     s_filterEmitter = emitterId;
     s_filterRenderMode = 3;
+    s_surfaceCaptureDraw = true;
+    if (!s_use_compute && s_surface_capture_shader_cpu.id) BeginShaderMode(s_surface_capture_shader_cpu);
     GpuParticleSystem_Draw(camera, texture);
+    if (!s_use_compute && s_surface_capture_shader_cpu.id) EndShaderMode();
+    s_surfaceCaptureDraw = false;
     s_filterEmitter = s_filterRenderMode = -1;
 }
 

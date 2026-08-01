@@ -74,6 +74,9 @@ typedef struct ParticleRenderStream {
     ParticleRenderMode mode;
     ParticleRenderBackend backend;
     ParticleEmitterHandle emitter;
+    /* Monotonic owner id. This remains valid after an emitter slot is reused,
+     * so a retired splash can never be captured as part of a later one. */
+    int ownerId;
     /* Backend-private stream. Consumers must rasterize through the manager;
      * they must never map/read back GPU particle buffers. */
     const void *privateData;

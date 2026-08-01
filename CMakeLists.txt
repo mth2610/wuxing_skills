@@ -253,6 +253,8 @@ configure_file(core/trails/shaders/trail_glow.fs ${CMAKE_CURRENT_BINARY_DIR}/cor
 configure_file(core/shaders/water_splash.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/water_splash.fs COPYONLY)
 configure_file(core/shaders/water_splash.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/water_splash.vs COPYONLY)
 configure_file(core/shaders/fluid_depth_smooth.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/fluid_depth_smooth.fs COPYONLY)
+configure_file(core/shaders/fluid_capture.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/fluid_capture.fs COPYONLY)
+configure_file(core/shaders/fluid_capture_particle.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/fluid_capture_particle.fs COPYONLY)
 configure_file(core/shaders/fluid_surface.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/fluid_surface.fs COPYONLY)
 
 configure_file(core/shaders/common/vs_header.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/vs_header.glsl COPYONLY)

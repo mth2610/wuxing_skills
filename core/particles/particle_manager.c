@@ -5,6 +5,7 @@
 
 typedef struct ParticleEmitterRuntime {
     bool active, gpu, warned;
+    int ownerId;
     ParticleEmitterStatus status;
     ParticleEmitterDesc desc;
 } ParticleEmitterRuntime;
@@ -13,6 +14,14 @@ static ParticleEmitterRuntime s_emitters[PARTICLE_MANAGER_MAX_EMITTERS];
 static ParticleGPUCaps s_caps;
 static ParticleManagerStats s_stats;
 static bool s_initialized;
+static int s_nextOwnerId = 1;
+
+static int ParticleManager_NextOwnerId(void)
+{
+    int id = s_nextOwnerId++;
+    if (s_nextOwnerId <= 0) s_nextOwnerId = 1;
+    return id;
+}
 
 static bool ParticleManager_GPUCanRun(unsigned int modules)
 {
@@ -35,6 +44,7 @@ void ParticleManager_Init(void)
     if (s_initialized) return;
     memset(s_emitters, 0, sizeof(s_emitters));
     memset(&s_stats, 0, sizeof(s_stats));
+    s_nextOwnerId = 1;
     InitParticleSystem();
     GpuParticleSystem_Init();
     /* Probe once, after renderer/backend initialization. The compute system
@@ -65,7 +75,7 @@ ParticleEmitterHandle ParticleManager_CreateEmitter(const ParticleEmitterDesc *d
     for (int i = 0; i < PARTICLE_MANAGER_MAX_EMITTERS; ++i) {
         ParticleEmitterRuntime *e = &s_emitters[i];
         if (e->active) continue;
-        memset(e, 0, sizeof(*e)); e->active = true; e->desc = *desc;
+        memset(e, 0, sizeof(*e)); e->active = true; e->ownerId = ParticleManager_NextOwnerId(); e->desc = *desc;
         bool gpuOK = ParticleManager_GPUCanRun(desc->moduleFlags);
         e->gpu = desc->simulationPolicy == PARTICLE_SIM_GPU_ONLY ||
                  (desc->simulationPolicy == PARTICLE_SIM_AUTO && gpuOK);
@@ -107,9 +117,9 @@ void ParticleManager_Emit(ParticleEmitterHandle handle, int count)
                 .lifetime=p->lifetime, .forceField=p->forceField, .stretchStrength=p->stretchStrength,
                 .stretchMinSpeed=p->stretchMinSpeed, .collisionEnabled=p->collisionEnabled,
                 .collisionElasticity=p->collisionElasticity, .collisionFloorY=p->collisionFloorY,
-                .emissiveBoost=p->render.emissiveBoost, .emitterId=handle,
+                .emissiveBoost=p->render.emissiveBoost, .emitterId=e->ownerId,
                 .renderMode=(int)e->desc.renderMode });
-        } else ParticleSystem_SpawnFromEmitter(e->desc.particle, handle, (int)e->desc.renderMode);
+        } else ParticleSystem_SpawnFromEmitter(e->desc.particle, e->ownerId, (int)e->desc.renderMode);
     }
 }
 
@@ -121,7 +131,7 @@ bool ParticleManager_GetSurfaceStream(ParticleEmitterHandle handle, ParticleRend
     if (!outStream || handle < 0 || handle >= PARTICLE_MANAGER_MAX_EMITTERS || !s_emitters[handle].active) return false;
     ParticleEmitterRuntime *e = &s_emitters[handle];
     if (e->desc.renderMode != PARTICLE_RENDER_SURFACE_INPUT || e->status != PARTICLE_EMITTER_OK) return false;
-    *outStream = (ParticleRenderStream){ e->desc.renderMode, e->gpu ? PARTICLE_RENDER_BACKEND_GPU : PARTICLE_RENDER_BACKEND_CPU, handle, e };
+    *outStream = (ParticleRenderStream){ e->desc.renderMode, e->gpu ? PARTICLE_RENDER_BACKEND_GPU : PARTICLE_RENDER_BACKEND_CPU, handle, e->ownerId, e };
     return true;
 }
 
@@ -129,13 +139,13 @@ int ParticleManager_CopySurfaceSamples(const ParticleRenderStream *stream, Parti
 {
     if (!stream || !outSamples || maxSamples <= 0 || stream->mode != PARTICLE_RENDER_SURFACE_INPUT) return 0;
     if (stream->backend != PARTICLE_RENDER_BACKEND_CPU) return 0; /* GPU raster path owns GPU samples. */
-    return ParticleSystem_GetSurfaceSamples(stream->emitter, outSamples, maxSamples);
+    return ParticleSystem_GetSurfaceSamples(stream->ownerId, outSamples, maxSamples);
 }
 
 bool ParticleManager_DrawSurfaceStream(const ParticleRenderStream *stream, Camera3D camera, Texture2D texture)
 {
     if (!stream || stream->mode != PARTICLE_RENDER_SURFACE_INPUT || stream->backend != PARTICLE_RENDER_BACKEND_GPU) return false;
-    GpuParticleSystem_DrawSurfaceEmitter(camera, texture, stream->emitter);
+    GpuParticleSystem_DrawSurfaceEmitter(camera, texture, stream->ownerId);
     return true;
 }
 

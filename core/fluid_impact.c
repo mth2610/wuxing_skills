@@ -198,6 +198,8 @@ void FluidImpact_SpawnWater(const FluidImpactEvent *event)
         Vector3 radial = Vector3Add(Vector3Scale(tangent, cosf(angle)), Vector3Scale(bitangent, sinf(angle)));
         float speed = scale * (1.8f + 3.2f * force01) * spread;
         FluidHeroDroplet *d = &s_hero[s_nextHero++ % FLUID_IMPACT_MAX_HERO_DROPLETS];
+        if (d->active && d->surfaceEmitter != PARTICLE_EMITTER_INVALID)
+            ParticleManager_DestroyEmitter(d->surfaceEmitter);
         Vector3 start = Vector3Add(event->hitPoint, Vector3Scale(normal, 0.03f));
         Vector3 velocity = Vector3Add(Vector3Add(Vector3Scale(impulse, speed * 0.75f),
                                                   Vector3Scale(radial, speed * 0.65f)),
