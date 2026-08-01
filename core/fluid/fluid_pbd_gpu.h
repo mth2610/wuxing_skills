@@ -9,4 +9,8 @@ void FluidPBDGPU_Unload(void);
 bool FluidPBDGPU_IsActive(void);
 void FluidPBDGPU_SpawnImpact(Vector3 point, Vector3 normal, Vector3 impulse, float force01, float scale);
 void FluidPBDGPU_Update(float dt, float groundY);
+unsigned int FluidPBDGPU_GetStateBuffer(void);
+int FluidPBDGPU_GetParticleCount(void);
+void FluidPBDGPU_DrawSurfaceDepth(Camera3D camera);
+void FluidPBDGPU_DrawSurfaceThickness(Camera3D camera);
 #endif

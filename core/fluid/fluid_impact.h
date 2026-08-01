@@ -25,6 +25,7 @@ typedef struct {
     Vector3 hitPoint;
     Vector3 hitNormal;         // normalized internally; zero means world up
     Vector3 impulseDirection;  // splash bias; zero derives from hitNormal
+    Vector3 initialVelocity;   // incoming water-body velocity in m/s; zero uses legacy bias
     float force01;             // clamped [0,1], controls count and radius
     float scale;               // metres; <= 0 selects 1.0
 } FluidImpactEvent;

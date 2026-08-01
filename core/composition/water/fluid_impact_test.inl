@@ -7,6 +7,7 @@ void VFX_ComposeFluidImpact(Vector3 pos)
         .hitPoint = pos,
         .hitNormal = (Vector3){0.0f, 1.0f, 0.0f},
         .impulseDirection = Vector3Normalize((Vector3){0.35f, 1.0f, 0.20f}),
+        .initialVelocity = (Vector3){1.4f, -6.5f, 0.8f},
         .force01 = 1.0f,
         .scale = 1.15f
     };

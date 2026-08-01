@@ -239,6 +239,7 @@ configure_file(core/particles/shaders/gpu/particle_gpu.comp    ${CMAKE_CURRENT_B
 configure_file(core/particles/shaders/gpu/particle_gpu_ssbo.vs ${CMAKE_CURRENT_BINARY_DIR}/core/particles/shaders/gpu/particle_gpu_ssbo.vs COPYONLY)
 configure_file(core/particles/shaders/gpu/fluid_surface_capture.vs ${CMAKE_CURRENT_BINARY_DIR}/core/particles/shaders/gpu/fluid_surface_capture.vs COPYONLY)
 configure_file(core/fluid/shaders/fluid_pbd_gpu.comp ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_pbd_gpu.comp COPYONLY)
+configure_file(core/fluid/shaders/fluid_pbd_surface.vs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_pbd_surface.vs COPYONLY)
 configure_file(core/particles/shaders/gpu/particle_gpu_vbo.vs  ${CMAKE_CURRENT_BINARY_DIR}/core/particles/shaders/gpu/particle_gpu_vbo.vs  COPYONLY)
 configure_file(core/particles/shaders/gpu/particle_gpu.fs      ${CMAKE_CURRENT_BINARY_DIR}/core/particles/shaders/gpu/particle_gpu.fs      COPYONLY)
 configure_file(core/shaders/taiji.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/taiji.fs COPYONLY)

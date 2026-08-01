@@ -4,6 +4,7 @@
 #include "core/decals/decal_system.h"
 #include "core/force_field.h"
 #include "core/fluid/fluid_surface.h"
+#include "core/fluid/fluid_pbd_gpu.h"
 #include "core/gfx_quality.h"
 #include "core/map_manager.h"
 #include "core/presets/vc_material.h"
@@ -189,11 +190,20 @@ void FluidImpact_SpawnWater(const FluidImpactEvent *event)
     impulse = Vector3Normalize(impulse);
     float force01 = Clamp(event->force01, 0.0f, 1.0f);
     float scale = event->scale > 0.0f ? event->scale : 1.0f;
+    Vector3 incoming = event->initialVelocity;
+    if (Vector3LengthSqr(incoming) < 0.0001f)
+        incoming = Vector3Scale(impulse, scale*(2.0f + force01*4.0f));
+    /* Preserve the actual momentum magnitude, then apply an inelastic splash
+     * rebound only when the water body was travelling into the receiver. */
+    float intoSurface = Vector3DotProduct(incoming, normal);
+    Vector3 outgoing = intoSurface < 0.0f ? Vector3Subtract(incoming, Vector3Scale(normal, intoSurface*1.35f)) : incoming;
+    bool gpuFluid = FluidPBDGPU_Init();
+    if (gpuFluid) FluidPBDGPU_SpawnImpact(event->hitPoint, normal, outgoing, force01, scale);
     Vector3 tangent, bitangent;
     FluidImpact_Basis(normal, &tangent, &bitangent);
     FluidImpact_AddResidue(event->hitPoint, normal, scale * (0.30f + 0.65f * force01), force01);
 
-    for (int i = 0, n = FluidImpact_HeroCount(force01); i < n; ++i) {
+    for (int i = 0, n = gpuFluid ? 0 : FluidImpact_HeroCount(force01); i < n; ++i) {
         float angle = ((float)GetRandomValue(0, 359)) * DEG2RAD;
         float spread = 0.35f + ((float)GetRandomValue(0, 1000) / 1000.0f) * 0.65f;
         Vector3 radial = Vector3Add(Vector3Scale(tangent, cosf(angle)), Vector3Scale(bitangent, sinf(angle)));
@@ -215,7 +225,7 @@ void FluidImpact_SpawnWater(const FluidImpactEvent *event)
     }
 
     const VFX_ElementMaterial *water = VFX_Material(VC_MAT_WATER);
-    for (int i = 0, n = FluidImpact_BackgroundCount(force01); i < n; ++i) {
+    for (int i = 0, n = gpuFluid ? 0 : FluidImpact_BackgroundCount(force01); i < n; ++i) {
         float angle = ((float)GetRandomValue(0, 359)) * DEG2RAD;
         Vector3 radial = Vector3Add(Vector3Scale(tangent, cosf(angle)), Vector3Scale(bitangent, sinf(angle)));
         ParticleConfig p = {0};
@@ -233,6 +243,7 @@ void FluidImpact_SpawnWater(const FluidImpactEvent *event)
 void FluidImpact_Update(float dt)
 {
     FluidImpact_InitGravity();
+    if (FluidPBDGPU_IsActive()) FluidPBDGPU_Update(dt, 0.0f);
     s_secondaryMarksThisFrame = 0;
     for (int i = 0; i < FLUID_IMPACT_MAX_HERO_DROPLETS; ++i) {
         FluidHeroDroplet *d = &s_hero[i];

@@ -168,7 +168,7 @@
   float SkillCurve_Eval(const SkillCurve *curve, float t01);
 ```
 
-### `core/fluid_impact.h`
+### `core/fluid/fluid_impact.h`
 ```c
   void FluidImpact_SpawnWater(const FluidImpactEvent *event);
   void FluidImpact_SetCollisionQuery(FluidImpactCollisionQueryFn query, void *userData);

@@ -2,6 +2,7 @@
 #include "core/resource_manager.h"
 #include "core/screen_distort.h"
 #include "core/particles/particle_manager.h"
+#include "core/fluid/fluid_pbd_gpu.h"
 #include "rlgl.h"
 #include <stddef.h>
 
@@ -59,13 +60,15 @@ bool FluidSurface_SubmitParticleStream(const ParticleRenderStream *stream) {
     return true;
 }
 void FluidSurface_Capture(Camera3D camera) {
-    if(!s_count && !s_gpuStreamCount) return;
+    if(!s_count && !s_gpuStreamCount && !FluidPBDGPU_IsActive()) return;
     BeginTextureMode(s_capture); ClearBackground((Color){255,0,0,0}); BeginMode3D(camera);
     for (int i=0;i<s_gpuStreamCount;i++) ParticleManager_DrawSurfaceStream(&s_gpuStreams[i], camera, s_surfaceTex);
+    FluidPBDGPU_DrawSurfaceDepth(camera);
     EndMode3D(); EndTextureMode();
     BeginTextureMode(s_thickness); ClearBackground(BLANK); BeginMode3D(camera);
     rlDrawRenderBatchActive(); rlDisableDepthMask(); rlDisableDepthTest(); BeginBlendMode(BLEND_ADDITIVE);
     for (int i=0;i<s_gpuStreamCount;i++) ParticleManager_DrawSurfaceThicknessStream(&s_gpuStreams[i], camera);
+    FluidPBDGPU_DrawSurfaceThickness(camera);
     EndBlendMode(); rlDrawRenderBatchActive(); rlEnableDepthTest(); rlEnableDepthMask(); EndMode3D(); EndTextureMode();
     Vector2 texel={1.0f/s_capture.texture.width,1.0f/s_capture.texture.height};
     float sigma = 0.035f;
@@ -77,7 +80,7 @@ void FluidSurface_Capture(Camera3D camera) {
     }
 }
 void FluidSurface_Composite(void) {
-    if(!s_count && !s_gpuStreamCount) return;
+    if(!s_count && !s_gpuStreamCount && !FluidPBDGPU_IsActive()) return;
     Vector2 texel={1.0f/s_smoothB.texture.width,1.0f/s_smoothB.texture.height}; int slot1=1,slot2=2,slot3=3;
     Texture2D scene=ScreenDistort_GetSceneTexture(), sceneDepth=ScreenDistort_GetRawDepthTexture(); int has=sceneDepth.id?1:0;
     BeginBlendMode(BLEND_ALPHA); BeginShaderMode(s_composite); SetShaderValue(s_composite,GetShaderLocation(s_composite,"u_texel"),&texel,SHADER_UNIFORM_VEC2); SetShaderValue(s_composite,s_thicknessLoc,&slot1,SHADER_UNIFORM_INT); SetShaderValue(s_composite,s_sceneLoc,&slot2,SHADER_UNIFORM_INT); SetShaderValue(s_composite,s_sceneDepthLoc,&slot3,SHADER_UNIFORM_INT); SetShaderValue(s_composite,s_hasDepthLoc,&has,SHADER_UNIFORM_INT);
