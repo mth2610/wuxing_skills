@@ -92,7 +92,9 @@ GpuParticleSystem_Spawn(rain);
 Update physics. COMPUTE path: dispatch the compute shader. CPU/VBO path: CPU loop.
 
 ### `GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)`
-Draw billboard particles. Call in the 3D draw phase.
+Draw billboard particles. Call in the 3D draw phase. On the compute path, normal
+billboards use the previous-frame ScreenDistort depth snapshot and fade over 0.35 m
+where they intersect scene geometry; fluid surface capture/thickness passes are excluded.
 
 ### `GpuParticleSystem_Unload(void)`
 Free GPU buffers and shaders. Call at shutdown.
@@ -155,7 +157,7 @@ All shaders live in `core/particles/shaders/gpu/`:
 |---|---|---|
 | `gpu_particles.comp` | COMPUTE path | Physics update: lifetime, drag, integrate |
 | `gpu_particles_ssbo.vs` | COMPUTE path | Vertex: billboard from SSBO + gl_VertexID |
-| `gpu_particles.fs` | Both paths | Fragment: texture * color interpolate |
+| `gpu_particles.fs` | Compute path | Fragment: texture * color interpolate + previous-frame scene-depth soft fade |
 | `gpu_particles_vbo.vs` | CPU/VBO path | Vertex: consumes the VBO built on the CPU |
 
 ---

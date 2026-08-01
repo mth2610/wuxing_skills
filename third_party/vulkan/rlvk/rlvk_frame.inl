@@ -781,26 +781,40 @@ static void rlvkPushSet0Batch(VkCommandBuffer cmdBuffer, rlvkShaderSlot *shader,
     u32 n = rlvkAppendUboWrites(shader, uboInfos, writes); // 0..2 UBO stage writes
     u32 img = 0;
 
-    // binding 0 = this draw's texture0 (rlSetTexture / drawCall texture), always (re)written so it
-    // never rides on a prior push surviving.
+    // shaderc auto-binding is allowed to move texture0 when a shader declares
+    // another sampler. Raylib's draw-call texture still belongs to the sampler
+    // named texture0, not necessarily descriptor binding 0 (soft particles are
+    // the important two-sampler case).
+    int texture0Binding = 0;
+    for (int i = 0; i < shader->uniformCount; i++)
+        if (shader->uniforms[i].samplerBinding >= 0 &&
+            strcmp(shader->uniforms[i].name, "texture0") == 0)
+        {
+            texture0Binding = shader->uniforms[i].samplerBinding;
+            break;
+        }
+
+    // The reflected texture0 binding = this draw's texture0 (rlSetTexture /
+    // drawCall texture), always (re)written so it never rides on a prior push
+    // surviving.
     {
         VkImageView v; VkSampler s;
         rlvkResolveTexBinding(tex0Slot, &v, &s);
         if (getenv("RLVK_EXP_DEFAULT_SAMPLER")) s = RLVK.textureSlots[RLVK.defaultTextureSlot].sampler;
         VkImageLayout l0 = getenv("RLVK_EXP_BARRIER_BEFORE") ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         imgInfos[img] = (VkDescriptorImageInfo){.sampler = s, .imageView = v, .imageLayout = l0};
-        writes[n++] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstBinding = 0, .descriptorCount = 1,
+        writes[n++] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstBinding = (u32)texture0Binding, .descriptorCount = 1,
                                              .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &imgInfos[img]};
         img++;
-        RLVK.pushedView[0] = v;
-        RLVK.pushedSampler[0] = s;
+        RLVK.pushedView[texture0Binding] = v;
+        RLVK.pushedSampler[texture0Binding] = s;
     }
 
-    // Samplers the shader declares at bindings > 0 (resolve exactly like rlvkBindShaderSamplers).
+    // Other samplers (resolve exactly like rlvkBindShaderSamplers).
     for (int i = 0; i < shader->uniformCount; i++)
     {
         int b = shader->uniforms[i].samplerBinding;
-        if (b <= 0 || b >= RLVK_MAX_TEXTURE_UNITS)
+        if (b < 0 || b >= RLVK_MAX_TEXTURE_UNITS || b == texture0Binding)
             continue;
         u32 tex = shader->bindingTexture[b];
         if (tex == 0)

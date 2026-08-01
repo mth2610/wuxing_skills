@@ -1,6 +1,7 @@
 #include "particle_gpu_legacy.h"
 #include "core/resource_manager.h"
 #include "core/particles/particle_system.h"
+#include "core/screen_distort.h"
 #if defined(GRAPHICS_API_VULKAN) || defined(WUXING_USE_VULKAN)
 #include "third_party/vulkan/rlvk.h"
 #else
@@ -94,6 +95,12 @@ static int s_surfacePass = 0; /* 0 normal, 1 depth, 2 thickness */
 // Vector field textures cho FORCE_VECTOR_TEXTURE — không sở hữu (không Unload
 // ở đây), chỉ bind vào texture unit trước mỗi dispatch khi slot đang set.
 static Texture2D s_vectorFieldTex[GPU_VECTOR_FIELD_SLOTS] = {0};
+
+// Matches the CPU particle default. GPU billboards sample the prior frame's
+// linear scene-depth snapshot, so their intersection with terrain fades rather
+// than being clipped by a hard depth-test rail.
+#define GPU_PARTICLE_SOFT_DEPTH_SLOT 3
+#define GPU_PARTICLE_SOFT_FADE_METERS 0.35f
 
 // ---------------------------------------------------------------------------
 // Compute shader loader
@@ -525,6 +532,7 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
 
     if (s_use_compute)
     {
+        bool softParticlePass = false;
         Shader drawShader = s_draw_shader_gpu;
         if (s_surfacePass == 1 && s_surface_capture_shader_gpu.id) drawShader = s_surface_capture_shader_gpu;
         if (s_surfacePass == 2 && s_surface_thickness_shader_gpu.id) drawShader = s_surface_thickness_shader_gpu;
@@ -549,7 +557,34 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
         if (loc_filterEmitter >= 0) SetShaderValue(drawShader, loc_filterEmitter, &filterEmitter, SHADER_UNIFORM_FLOAT);
         if (loc_filterMode >= 0) SetShaderValue(drawShader, loc_filterMode, &filterMode, SHADER_UNIFORM_FLOAT);
 
+        // Fluid capture/thickness shaders do not draw visible billboards and
+        // must not sample the scene depth. The ordinary GPU particle pass uses
+        // the same previous-frame depth contract as CPU particles.
+        if (s_surfacePass == 0)
+        {
+            Texture2D depthTex = ScreenDistort_GetDepthTexture();
+            float softFade = depthTex.id != 0 ? GPU_PARTICLE_SOFT_FADE_METERS : 0.0f;
+            int loc_softFade = GetShaderLocation(drawShader, "u_softFade");
+            if (softFade > 0.0f)
+            {
+                ScreenDistort_BindDepthForSoftParticles(drawShader, GPU_PARTICLE_SOFT_DEPTH_SLOT);
+                softParticlePass = true;
+            }
+            if (loc_softFade >= 0)
+                SetShaderValue(drawShader, loc_softFade, &softFade, SHADER_UNIFORM_FLOAT);
+        }
+
         rlBindShaderBuffer(s_ssbo, 0);
+
+        // A soft-particle fragment behind the ground must reach the shader so
+        // its alpha can fade. Flush around both depth state changes: queued
+        // raylib geometry otherwise receives the wrong raster state.
+        if (softParticlePass)
+        {
+            rlDrawRenderBatchActive();
+            rlDisableDepthMask();
+            rlDisableDepthTest();
+        }
 
         // Đảm bảo kết nối texture đúng khe và báo hiệu rõ cho Vulkan/OpenGL
         rlActiveTextureSlot(0);
@@ -562,9 +597,18 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
 
         rlDisableShader();
 
+        if (softParticlePass)
+        {
+            rlDrawRenderBatchActive();
+            rlEnableDepthMask();
+            rlEnableDepthTest();
+        }
+
         // Gỡ texture bằng API tường minh thay vì rlSetTexture(0)
         rlActiveTextureSlot(0);
         rlDisableTexture();
+        if (s_surfacePass == 0)
+            ScreenDistort_UnbindSoftParticleDepth(GPU_PARTICLE_SOFT_DEPTH_SLOT);
         EndShaderMode();
     }
     else

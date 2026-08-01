@@ -1223,7 +1223,8 @@ static void rlvkBindShaderSamplers(VkCommandBuffer cmdBuffer, rlvkShaderSlot *sh
     for (int i = 0; i < shader->uniformCount; i++)
     {
         int b = shader->uniforms[i].samplerBinding;
-        if (b < 0 || b >= RLVK_MAX_TEXTURE_UNITS || (b == 0 && !includeBinding0))
+        bool isTexture0 = (strcmp(shader->uniforms[i].name, "texture0") == 0);
+        if (b < 0 || b >= RLVK_MAX_TEXTURE_UNITS || (isTexture0 && !includeBinding0))
             continue;
         u32 tex = shader->bindingTexture[b];
         if (tex == 0)
@@ -1231,7 +1232,7 @@ static void rlvkBindShaderSamplers(VkCommandBuffer cmdBuffer, rlvkShaderSlot *sh
             int unit = shader->bindingUnit[b];
             if (unit >= 0 && unit < RLVK_MAX_TEXTURE_UNITS)
                 tex = RLVK.State.activeTextureSlots[unit];
-            if (tex == 0 && b == 0)
+            if (tex == 0 && isTexture0)
                 tex = RLVK.State.currentTextureSlot; // mesh diffuse fallback
         }
         if (tex == 0 || tex >= RLVK_MAX_TEXTURE_SLOTS || !RLVK.textureSlots[tex].view)

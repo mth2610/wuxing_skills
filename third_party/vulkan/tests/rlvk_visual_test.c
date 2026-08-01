@@ -133,6 +133,33 @@ static const char *sc_shader_uniform(void)
     return NULL;
 }
 
+// shaderc may assign texture0 to a non-zero descriptor binding once another
+// sampler exists. The draw-call texture must still land in texture0, while the
+// explicitly bound second sampler remains independent (soft-particle contract).
+static const char *sc_sampler_pair(void)
+{
+    const char *FS = "#version 330\n"
+        "in vec2 fragTexCoord; out vec4 finalColor;\n"
+        "uniform sampler2D texture0; uniform sampler2D u_cameraDepthTex;\n"
+        "void main(){ vec4 a=texture(texture0,fragTexCoord); vec4 b=texture(u_cameraDepthTex,fragTexCoord); finalColor=vec4(a.r,b.g,0.0,1.0); }\n";
+    Shader sh = LoadShaderFromMemory(NULL, FS);
+    Image ri = GenImageColor(8, 8, RED), gi = GenImageColor(8, 8, GREEN);
+    Texture2D red = LoadTextureFromImage(ri), green = LoadTextureFromImage(gi);
+    UnloadImage(ri); UnloadImage(gi);
+    SetShaderValueTexture(sh, GetShaderLocation(sh, "u_cameraDepthTex"), green);
+    for (int f = 0; f < 3; f++)
+    {
+        BeginDrawing(); ClearBackground(BLACK);
+        BeginShaderMode(sh);
+            DrawTexturePro(red, (Rectangle){0,0,8,8}, (Rectangle){W/2-60,H/2-60,120,120}, (Vector2){0,0}, 0, WHITE);
+        EndShaderMode();
+        EndDrawing();
+    }
+    Image im = snap(); Color c = at(im, W/2, H/2);
+    UnloadImage(im); UnloadTexture(red); UnloadTexture(green); UnloadShader(sh);
+    return (c.r > 200 && c.g > 90 && c.b < 30) ? NULL : "two samplers crossed: texture0 or soft-depth sampler is unbound";
+}
+
 // Near opaque cube drawn FIRST, far bright wall drawn SECOND (additive, depth mask off,
 // depth TEST still on). Depth test must keep the wall behind the cube (black-hole class).
 static void drawOcclusionScene(void)
@@ -1365,6 +1392,7 @@ static const Scenario SCENARIOS[] = {
     { "batch_alpha",    sc_batch_alpha },
     { "additive3d",     sc_additive3d },
     { "shader_uniform", sc_shader_uniform },
+    { "sampler_pair",   sc_sampler_pair },
     { "depth",          sc_depth },
     { "depth_rt",       sc_depth_rt },
     { "soft_depth",     sc_soft_depth },

@@ -1,17 +1,7 @@
 #version 330
-// NO SOFT-PARTICLE SAMPLER HERE — this shader must keep exactly ONE sampler.
-//
-// Adding `u_cameraDepthTex` (via common/soft_particle.glsl) made every particle
-// draw as a flat white SQUARE: the signature of `texture0` not being bound at
-// all, since an unbound sampler reads a 1x1 white texel. Confirmed by the
-// cleanest test available — the squares appear with the fade uniform at ZERO,
-// so the sampler is never read and the mere DECLARATION is what moves the
-// binding. rlvk's shaderc pass rebases binding indices, and one sampler
-// becoming two is exactly the change that shifts the first.
-//
-// The C-side machinery stays and is inert: its uniform locations resolve to -1,
-// so nothing binds and nothing uploads. Re-enabling needs the rlvk binding
-// fixed, or a SEPARATE shader variant used only where it works.
+// The rlvk sampler resolver maps the draw-call texture by reflected name, not a
+// presumed descriptor binding, so this shader may safely use texture0 plus the
+// soft-particle scene-depth sampler (HANDOFF §7.30).
 
 // Đợt E / F1 — lit CPU particles. See core/docs/ELDEN_VFX_SPEC.md §0.1b:
 // flat-shaded smoke can only ever look like a decal OF smoke. Volume reads
@@ -42,6 +32,12 @@ in vec3 fragPosition;
 out vec4 finalColor;
 
 uniform sampler2D texture0;
+uniform vec2 u_resolution;
+
+#include "core/shaders/common/soft_particle.glsl"
+
+uniform float u_softFade;
+uniform float u_softDebug;
 
 // NOTE: deliberately does NOT use `colDiffuse`. rlgl only guarantees to push
 // that uniform for its own shape/texture draw paths — through a raw
@@ -102,8 +98,15 @@ void main()
 {
     vec4 texelColor = texture(texture0, fragTexCoord);
     vec4 base = texelColor * fragColor;
+    float soft = (u_softFade > 0.0) ? SoftParticle_Factor(u_softFade) : 1.0;
 
     if (base.a < 0.01) discard;   // fillrate: drop fully transparent edges
+
+    if (u_softDebug > 0.5)
+    {
+        finalColor = vec4(vec3(soft), 1.0);
+        return;
+    }
 
     if (u_lightingStrength <= 0.0)
     {
@@ -113,7 +116,7 @@ void main()
         // nothing despite the uniform arriving: sparks and glints are exactly
         // the population that never reaches the lit path.
         // At boost 1.0 this is still byte-identical to the pre-F1 shader.
-        finalColor = vec4(base.rgb * u_emissiveBoost, base.a);
+        finalColor = vec4(base.rgb * u_emissiveBoost, base.a * soft);
         return;
     }
 
@@ -253,5 +256,5 @@ void main()
     // exactly the bright rim this whole shader exists to produce.
     vec3 shaded = base.rgb * lit;
     // Boost is 1.0 for lit batches, so this is a no-op for smoke and dust.
-    finalColor = vec4(mix(base.rgb, shaded, u_lightingStrength) * u_emissiveBoost, base.a);
+    finalColor = vec4(mix(base.rgb, shaded, u_lightingStrength) * u_emissiveBoost, base.a * soft);
 }

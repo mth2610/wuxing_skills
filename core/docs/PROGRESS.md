@@ -209,15 +209,14 @@ degrees of foreshortening and measured correct on its own terms, but it has
 never been seen on screen. If either of those two changes appearance, that is
 where to look first.
 
-### 1. Soft particles — the cut between particles and geometry is still visible
+### 1. Soft particles — fixed (2026-08-01)
 
-Cause is known and proven: `particle_lit.fs` may declare exactly ONE sampler
-under rlvk; a second silently unbinds `texture0` (`ENGINE_LANDMINES.md`). The
-C-side machinery is still there and inert (`s_locSoftFade == -1`).
-
-Two routes, in order of value: fix the binding in `third_party/vulkan/` (Renderer
-Agent — it also unblocks flow maps, `VFX_PLAN.md` H4), or ship a separate shader
-variant used only where the binding behaves.
+rlvk now resolves the draw-call texture by reflected sampler name rather than
+assuming descriptor binding 0 (`third_party/vulkan/docs/HANDOFF.md` §7.30).
+`particle_lit.fs` again declares and samples `u_cameraDepthTex`; the existing
+depth-bind path is live with a conservative default `particle_soft_fade = 0.35`
+metres. GPU compute billboards use the same 0.35 m fade; fluid capture/thickness
+passes remain unmodified. The `sampler_pair` visual scenario guards the backend contract.
 
 ### 2. ImpactPackage cost at high severity
 

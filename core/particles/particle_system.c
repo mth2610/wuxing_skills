@@ -170,20 +170,9 @@ static float s_analyticUV       = 1.0f;  // 0 only if a SpriteAnim atlas is in u
 // translucent while nowhere near anything, which reads as the effect dimming
 // for no reason. Sized against the sprites that show it worst — the 0.2-1.0 m
 // smoke billows.
-// DEFAULT OFF, and the default is the evidence. Adding the depth sampler to
-// this shader coincided with every particle drawing as a flat white SQUARE —
-// the signature of `texture0` not being bound at all, since an unbound sampler
-// reads a 1x1 white texel and a quad of constant colour is a square. rlvk has
-// previous form here (shaderc rebases explicit bindings; see the project's
-// Vulkan landmines), and a SECOND sampler in a shader that had one is exactly
-// the change that would shift it.
-//
-// Off by default until that is settled: the fade is a polish feature and the
-// particles are the game. `particle_soft_fade` turns it on, and doing so is
-// also the experiment — if the squares come back with it at 0, the mere
-// DECLARATION of the sampler is the problem and the fix is a shader variant,
-// not a uniform.
-static float s_softFade         = 0.0f;
+// rlvk now resolves texture0 by reflected sampler name, so its second depth
+// sampler no longer displaces the sprite texture (HANDOFF §7.30).
+static float s_softFade         = 0.35f;
 static float s_softDebug        = 0.0f;
 static int   s_locSoftFade      = -1;
 static int   s_locSoftDebug     = -1;
@@ -572,7 +561,7 @@ static void ParticleLighting_Begin(Camera3D camera)
     Tuning_RegisterFloat("particle_light_azimuth", &s_lightAzimuth, s_lightAzimuth);
     Tuning_RegisterFloat("particle_analytic_uv", &s_analyticUV, s_analyticUV);
     Tuning_RegisterFloat("particle_emissive_boost", &s_emissiveBoost, 1.0f);
-    Tuning_RegisterFloat("particle_soft_fade", &s_softFade, 0.0f);
+    Tuning_RegisterFloat("particle_soft_fade", &s_softFade, 0.35f);
     Tuning_RegisterFloat("particle_soft_debug", &s_softDebug, 0.0f);
   }
 
@@ -611,11 +600,14 @@ static void ParticleLighting_Begin(Camera3D camera)
     }
   }
 
-  if (s_lightingStrength <= 0.0f)
+  // The shader's unlit branch is also the soft-particle path. Do not make the
+  // ground-intersection fade depend on optional lighting being enabled.
+  bool wantSoftParticles = (s_softFade > 0.0f && ScreenDistort_GetDepthTexture().id != 0);
+  if (s_lightingStrength <= 0.0f && !wantSoftParticles)
     return;
   // Per-fragment lighting on every particle is real fill-rate; the Mali devices
   // are the constraint (ENGINE_LANDMINES.md). LOW/UNLIT keep the cheap path.
-  if (GfxQuality_Get() <= GFX_LOW)
+  if (GfxQuality_Get() <= GFX_LOW && !wantSoftParticles)
     return;
 
   if (!s_litShaderTried)
@@ -704,10 +696,6 @@ static void ParticleLighting_Begin(Camera3D camera)
   // decides, and the shader treats 0 as "feature off" rather than "fully
   // occluded".
   {
-    // Also gated on the shader actually HAVING the uniform: particle_lit.fs
-    // carries no depth sampler under rlvk (see the note at its top), so the
-    // locations are -1 and this whole block must stay inert rather than binding
-    // a texture nothing will read.
     Texture2D depthTex = ScreenDistort_GetDepthTexture();
     float fade = (depthTex.id != 0 && s_softFade > 0.0f && s_locSoftFade >= 0)
                      ? s_softFade : 0.0f;
@@ -724,7 +712,7 @@ static void ParticleLighting_Begin(Camera3D camera)
       ScreenDistort_BindDepthForSoftParticles(s_litShader, PARTICLE_SOFT_DEPTH_SLOT);
       s_softBound = true;
     }
-    s_softBound = (fade > 0.0f);
+    s_softBound = (fade > 0.0f || (s_softDebug > 0.5f && depthTex.id != 0));
     // Announce on CHANGE: "the cut is still there" has to be separable from
     // "the fade is running and is too small".
     static int lastState = -1;

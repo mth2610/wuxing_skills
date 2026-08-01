@@ -476,6 +476,20 @@ bugs will rhyme with these. **Check this list before starting a new hunt.**
 - **Guard**: the `perf_*` probes are skipped in a full run (measurement, not assertion); ask for
   them by name with `UNCAPPED=1`.
 
+### 7.30 Soft particles stayed hard-cut: a second sampler moved `texture0` (2026-08-01)
+- **Symptom**: particles that intersect the ground retained a sharp clipped rail instead of fading.
+  The game had consequently disabled its `u_cameraDepthTex` sampler: merely declaring it made the
+  particle sprite render as a flat square.
+- **Root cause**: shaderc auto-binding may assign the sampler named `texture0` to a descriptor
+  binding other than zero when another sampler is present. rlvk's batch path nevertheless pushed
+  the draw-call texture to binding 0, and its mesh path treated binding 0 as the diffuse fallback.
+  The shader therefore read the depth texture/default texture where it expected the sprite.
+- **Fix**: resolve raylib's draw-call texture by the reflected sampler name `texture0`, not a
+  presumed binding number, in both batch and mesh sampler paths. Other reflected samplers retain
+  their own explicit texture/unit binding.
+- **Guard**: `run_rlvk_visual_test.sh sampler_pair` draws with a red `texture0` plus a separately
+  bound green `u_cameraDepthTex` and requires both channels at the output.
+
 ## 8. What remains
 
 ### 8.1 Confirm in-game — **DONE (2026-07-17, user-confirmed)**

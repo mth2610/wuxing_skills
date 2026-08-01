@@ -106,6 +106,15 @@ static float LitAt(float u, float v, V3 L, float bulge)
     return Wrap(WorldNormal(ScreenNormal(u, v, bulge), TestViewDir()), L);
 }
 
+// Mirrors SoftParticle_Factor's final fade calculation once both depths are
+// linearized. A fragment at or behind the scene surface must disappear; one
+// fade distance in front must remain fully visible.
+static float SoftFactor(float sceneLinear, float fragLinear, float fadeDistance)
+{
+    float f = (sceneLinear - fragLinear) / (fadeDistance > 0.0001f ? fadeDistance : 0.0001f);
+    return f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f);
+}
+
 // ── cases ────────────────────────────────────────────────────────────────────
 
 static void Test_NormalIsUnitLength(void)
@@ -276,6 +285,15 @@ static void Test_AmbientGainFlattens(void)
               "lowAmb=%.2fx highAmb=%.2fx", lowAmb, highAmb);
 }
 
+static void Test_SoftParticleFade(void)
+{
+    const float fade = 0.35f;
+    CHECK_MSG(SoftFactor(8.0f, 8.0f, fade) == 0.0f,
+              "particle at scene surface fades fully", "factor=%.3f", SoftFactor(8.0f, 8.0f, fade));
+    CHECK_MSG(SoftFactor(8.0f, 7.65f, fade) > 0.99f,
+              "particle one fade distance in front stays visible", "factor=%.3f", SoftFactor(8.0f, 7.65f, fade));
+}
+
 // ── anti-drift guard ─────────────────────────────────────────────────────────
 
 static int FileContains(const char *path, const char *needle)
@@ -307,6 +325,8 @@ static void Test_ShaderSourceMatchesMirror(void)
         { "sqrt(clamp(1.0 - a, 0.0, 1.0))",       "derivative-fallback radius r" },
         { "pow(ndl * 0.5 + 0.5, 1.5)",            "half-Lambert wrap" },
         { "u_ambient * u_ambientGain + u_sunColor * u_sunGain * wrap", "gain formula" },
+        { "#include \"core/shaders/common/soft_particle.glsl\"", "soft-depth shader block" },
+        { "SoftParticle_Factor(u_softFade)",       "soft-particle alpha factor" },
     };
     int missing = 0;
     for (unsigned i = 0; i < sizeof(req)/sizeof(req[0]); i++)
@@ -331,6 +351,7 @@ int main(void)
     Test_BulgeIncreasesContrast();
     Test_ScatterIsUniformAcrossSprite();
     Test_AmbientGainFlattens();
+    Test_SoftParticleFade();
     Test_ShaderSourceMatchesMirror();
 
     printf("---\n%d/%d checks passed\n", g_checks - g_failures, g_checks);

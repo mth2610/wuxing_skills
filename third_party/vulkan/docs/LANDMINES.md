@@ -42,6 +42,7 @@
 
 ### Layout / soft-depth
 - **Soft particles hard-cut against geometry under `Caps.noSampledDepth`** — the shadow-copy twin of §7.1. → §7.10
+- **Adding a soft-depth sampler turns particles into squares / leaves hard intersections** — never assume raylib's `texture0` is descriptor binding 0; shaderc may move it when another sampler exists. Resolve it by reflected name. → §7.30 (`sampler_pair`)
 
 ### Bisection discipline
 - **Invisible GPU particles — a masterclass in confounded bisection** (multiple overlapping causes; how to un-confound). → §7.7
