@@ -2,39 +2,163 @@
 // Dedicated GPU PBD pipeline. Dispatch phases: clear grid, integrate/build,
 // then Jacobi solve. State is ping-ponged so neighbour reads are race-free.
 layout(local_size_x=256) in;
-struct FluidParticle { vec4 position_radius; vec4 velocity_life; };
+struct FluidParticle {
+    vec4 position_radius;
+    vec4 velocity_life;
+    vec4 phase_seed_impact_pad;
+};
 layout(std430,binding=0) readonly buffer SourceState { FluidParticle source[]; };
 layout(std430,binding=1) writeonly buffer DestState { FluidParticle dest[]; };
 layout(std430,binding=2) buffer GridHeads { int heads[]; };
 layout(std430,binding=3) buffer GridNext { int next[]; };
 uniform int u_phase, u_particleCount, u_gridCellCount;
-uniform float u_dt, u_cellSize, u_groundY;
+uniform float u_dt, u_cellSize;
+uniform float u_impactAge;
+uniform vec3 u_receiverPoint, u_receiverNormal, u_gridOrigin;
+
+void collideReceiver(inout FluidParticle p, uint particleId) {
+    float distance = dot(p.position_radius.xyz - u_receiverPoint, u_receiverNormal);
+    /* Rendering expands each physical kernel to 2.10x for SSF overlap.  Using
+     * only the physical radius here left the optical sphere buried in the
+     * receiver, so scene-depth clipped it into zoom-dependent stripes/discs. */
+    float surfaceClearance = p.position_radius.w * 2.10 + 0.0025;
+    float penetration = surfaceClearance - distance;
+    if (penetration <= 0.0) return;
+    p.position_radius.xyz += u_receiverNormal * penetration;
+    float normalSpeed = dot(p.velocity_life.xyz, u_receiverNormal);
+    vec3 tangent = p.velocity_life.xyz - u_receiverNormal * normalSpeed;
+    /* This function is also called after every Jacobi pass.  Never apply
+     * friction to an already-contacted particle here: at High quality that
+     * used to multiply tangent speed by 0.28 five times per frame, freezing
+     * the body at its spherical seed footprint.  Per-frame settling below is
+     * the single owner of viscous damping. */
+    if (-normalSpeed < 0.80 || p.phase_seed_impact_pad.z > 0.5) {
+        p.velocity_life.xyz = tangent
+                            + u_receiverNormal * max(normalSpeed, 0.0);
+        return;
+    }
+    p.phase_seed_impact_pad.z = 1.0;
+    /* Inelastic normal rebound plus tangential friction: a splash first,
+     * then bounded settlement on the actual receiver plane. */
+    vec3 radial = p.position_radius.xyz - u_receiverPoint;
+    radial -= u_receiverNormal * dot(radial, u_receiverNormal);
+    float radialLength = length(radial);
+    /* At the first true contact, redirect part of the incoming normal momentum
+     * into the receiver plane.  This creates an annular crown, not a cone; a
+     * particle at the exact centre stays in the body and rises minimally. */
+    /* Only the outer shell becomes a crown.  Applying radial flow to the
+     * entire volume turns water into a flat, expanding particle disc. */
+    float rim = smoothstep(0.025, 0.125, radialLength);
+    float random = p.phase_seed_impact_pad.y;
+    float random2 = fract(sin(float(particleId)*39.3467 + random*17.31)*24634.6345);
+    vec3 basisRef = abs(u_receiverNormal.y) < 0.95 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 basisA = normalize(cross(basisRef, u_receiverNormal));
+    vec3 basisB = normalize(cross(u_receiverNormal, basisA));
+    float fallbackAngle = random*6.2831853;
+    vec3 radialDir = radialLength > 0.002 ? radial/radialLength
+        : basisA*cos(fallbackAngle) + basisB*sin(fallbackAngle);
+    float angle = atan(dot(radialDir, basisB), dot(radialDir, basisA));
+    float angularField = 0.50 + 0.31*sin(angle*3.0 + 1.17)
+                              + 0.19*sin(angle*5.0 - 0.73);
+    float lobeMask = smoothstep(0.43, 0.70, angularField);
+    vec3 around = normalize(cross(u_receiverNormal, radialDir) + vec3(1e-5));
+    radialDir = normalize(radialDir + around*(random2-0.5)*0.72);
+    float downstream = length(tangent) > 0.05 ? max(dot(radialDir, normalize(tangent)), 0.0) : 0.0;
+    /* Only part of the rim tears free.  A continuous radial impulse creates
+     * the mechanically perfect ring seen in the fixture. */
+    float phase = p.phase_seed_impact_pad.x;
+    float isCrown = 1.0-step(1.5, phase);
+    isCrown *= step(0.5, phase);
+    float isJet = step(1.5, phase);
+    float tear = lobeMask * smoothstep(0.18, 0.66, random);
+    /* The heavy body still has to leave the source footprint.  Give it one
+     * short, irregular sheet impulse: weak sectors remain as puddle mass,
+     * strong sectors tear the silhouette open.  Because this happens only on
+     * first contact it cannot turn into perpetual radial crawling. */
+    float bodySector = mix(0.20, 1.15, lobeMask)
+                     * mix(0.42, 1.0, random2);
+    float bodyFlow = (0.035 + 0.145*rim) * bodySector;
+    float crownFlowGain = (0.10 + 0.25*rim) * mix(0.28, 1.48, tear)
+                        * (0.58 + 0.78*downstream);
+    float jetFlowGain = (0.06 + 0.10*random2);
+    float flowGain = mix(bodyFlow, crownFlowGain, isCrown);
+    flowGain = mix(flowGain, jetFlowGain, isJet);
+    vec3 crownFlow = radialDir * max(-normalSpeed, 0.0) * flowGain;
+    /* The fast outer rim becomes the airborne crown; the centre is a heavy,
+     * low rebound body.  A constant tiny normal response was why the previous
+     * revision only spread across the ground. */
+    float bodyLift = mix(0.018, 0.065, random) * mix(0.45, 1.0, lobeMask);
+    float crownLift = mix(0.18, 0.48, rim) * mix(0.38, 1.34, tear);
+    float jetLift = mix(0.48, 0.68, random2);
+    float liftGain = mix(bodyLift, crownLift, isCrown);
+    liftGain = mix(liftGain, jetLift, isJet);
+    float normalRebound = max(-normalSpeed, 0.0) * liftGain;
+    float tangentRetention = mix(0.66, 0.84, isCrown);
+    p.velocity_life.xyz = tangent * tangentRetention + crownFlow
+                        + u_receiverNormal * normalRebound;
+}
 
 int cellIndex(vec3 p) {
-    ivec3 c=ivec3(floor(p/u_cellSize))+ivec3(32,8,32);
-    c=clamp(c,ivec3(0),ivec3(63,31,63));
-    return (c.z*32+c.y)*64+c.x;
+    ivec3 c=ivec3(floor((p-u_gridOrigin)/u_cellSize))+ivec3(16,4,16);
+    c=clamp(c,ivec3(0),ivec3(31,15,31));
+    return (c.z*16+c.y)*32+c.x;
 }
 void main() {
     uint id=gl_GlobalInvocationID.x;
     if(u_phase==0) { if(id<uint(u_gridCellCount)) heads[id]=-1; return; }
     if(id>=uint(u_particleCount)) return;
     FluidParticle p=source[id];
+    if(u_phase==3) {
+        int cell=cellIndex(p.position_radius.xyz);
+        next[id]=atomicExchange(heads[cell],int(id));
+        return;
+    }
     if(u_phase==1) {
-        p.velocity_life.y-=9.81*u_dt;
-        p.position_radius.xyz+=p.velocity_life.xyz*u_dt;
-        if(p.position_radius.y-p.position_radius.w<u_groundY) { p.position_radius.y=u_groundY+p.position_radius.w; p.velocity_life.y=0.0; }
+        float particlePhase = p.phase_seed_impact_pad.x;
+        bool airborneSplash = particlePhase > 0.5 && u_impactAge < 0.90;
+        bool viscousTail = (particlePhase < 0.5 && u_impactAge < 0.60)
+                        || (particlePhase > 0.5 && u_impactAge < 1.15);
+        if (u_impactAge < 0.32 || airborneSplash) {
+            p.velocity_life.y-=9.81*u_dt;
+            p.position_radius.xyz+=p.velocity_life.xyz*u_dt;
+        } else if (viscousTail) {
+            // Viscous settling: retain a short deceleration tail, then let the
+            // PBD constraints converge to a stationary puddle.
+            float settleDamping = particlePhase < 0.5 ? 0.82 : 0.68;
+            p.velocity_life.xyz*=settleDamping;
+            p.position_radius.xyz+=p.velocity_life.xyz*u_dt;
+            float planeDistance=dot(p.position_radius.xyz-u_receiverPoint,u_receiverNormal);
+            float surfaceClearance=p.position_radius.w*2.10+0.0025;
+            p.position_radius.xyz-=u_receiverNormal*(planeDistance-surfaceClearance)*0.45;
+        } else {
+            p.velocity_life.xyz=vec3(0.0);
+            // Random volume seeding makes this projected resting distribution
+            // a puddle rather than the striped rings produced by the former
+            // correlated Fibonacci seed.
+            float planeDistance=dot(p.position_radius.xyz-u_receiverPoint,u_receiverNormal);
+            float surfaceClearance=p.position_radius.w*2.10+0.0025;
+            p.position_radius.xyz-=u_receiverNormal*(planeDistance-surfaceClearance);
+        }
+        p.velocity_life.w-=u_dt;
+        collideReceiver(p, id);
         int cell=cellIndex(p.position_radius.xyz); next[id]=atomicExchange(heads[cell],int(id)); dest[id]=p; return;
     }
     // Jacobi density/separation pass; grid was built from the previous state.
     vec3 correction=vec3(0.0); int cell=cellIndex(p.position_radius.xyz);
-    ivec3 base=ivec3(cell%64,(cell/64)%32,cell/(64*32));
+    ivec3 base=ivec3(cell%32,(cell/32)%16,cell/(32*16));
     for(int z=-1;z<=1;z++) for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++) {
-        ivec3 c=base+ivec3(x,y,z); if(any(lessThan(c,ivec3(0)))||any(greaterThan(c,ivec3(63,31,63)))) continue;
-        int n=heads[(c.z*32+c.y)*64+c.x];
-        while(n>=0) { if(n!=int(id)) { vec3 d=p.position_radius.xyz-source[n].position_radius.xyz; float l=length(d); float rest=(p.position_radius.w+source[n].position_radius.w)*0.88; if(l>0.0001&&l<rest) correction+=normalize(d)*(rest-l)*0.42; } n=next[n]; }
+        ivec3 c=base+ivec3(x,y,z); if(any(lessThan(c,ivec3(0)))||any(greaterThan(c,ivec3(31,15,31)))) continue;
+        int n=heads[(c.z*16+c.y)*32+c.x];
+        while(n>=0) { if(n!=int(id)) {
+            vec3 d=p.position_radius.xyz-source[n].position_radius.xyz;
+            float l=length(d);
+            float rest=(p.position_radius.w+source[n].position_radius.w)*0.88;
+            if(l>0.0001 && l<rest) {
+                correction+=normalize(d)*(rest-l)*0.42;
+            }
+        } n=next[n]; }
     }
     p.position_radius.xyz+=correction;
-    if(p.position_radius.y-p.position_radius.w<u_groundY) p.position_radius.y=u_groundY+p.position_radius.w;
+    collideReceiver(p, id);
     dest[id]=p;
 }

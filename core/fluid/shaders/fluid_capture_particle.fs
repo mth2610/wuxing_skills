@@ -2,12 +2,14 @@
 in vec3 v_centerView;
 in vec2 v_corner;
 in float v_radius;
+in float v_life;
 out vec4 finalColor;
 uniform mat4 u_projection;
 
 // GPU surface particles are billboards. Produce a filled circular splat here,
 // independent of the artist texture and its alpha convention.
 void main() {
+    if (v_life <= 0.0) discard;
     vec2 q = v_corner;
     float r2 = dot(q, q);
     if (r2 >= 1.0) discard;

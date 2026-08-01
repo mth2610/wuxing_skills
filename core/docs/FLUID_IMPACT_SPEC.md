@@ -15,16 +15,20 @@ becomes the normal.
 
 ## Pipeline
 
-1. Build a tangent/bitangent frame from the supplied normal.
+1. Build a tangent/bitangent frame from the supplied normal. The GPU PBD seed
+   is a compact volume/crown in that frame, rather than a world-XZ disc.
 2. Create one pooled residue mark for 3.5 seconds. Horizontal receivers use the
    existing radial flow decal; walls and ceilings use an oriented surface quad.
 3. Spawn a fixed pool of CPU-authoritative **hero droplets**. Each integrates
    gravity, drag and up to two bounced contacts through a swept collision query.
    It draws as a small alpha sphere, so its contact response is identical on
    compute and non-compute machines.
-4. Spawn a separate background population through `GpuParticleSystem`. This uses
-   compute/SSBO where available and CPU/VBO elsewhere; it adds density but never
-   owns collision correctness.
+4. On compute-capable hardware, simulate the crown in a 2,048-particle GPU PBD
+   pool. Collision is against the submitted receiver plane (`hitPoint`,
+   `hitNormal`): it reflects only incoming normal velocity and damps tangent
+   velocity for settlement. The incoming `initialVelocity` retains its tangent
+   component, so oblique shots retain their travel direction. Legacy hardware
+   continues to use the bounded hero/background fallback.
 5. Every hero-droplet contact emits three micro droplets and, under a global
    two-marks-per-frame cap, a smaller wet residue.
 

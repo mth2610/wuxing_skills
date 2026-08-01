@@ -2,16 +2,36 @@
 #include "rlgl.h"
 #include "raymath.h"
 #include "core/resource_manager.h"
+#include "core/gfx_quality.h"
 #include <math.h>
 #include <string.h>
 
-#define GPU_GRID_CELLS (64*32*64)
-typedef struct { float px,py,pz,radius, vx,vy,vz,life; } GPUFluidParticle;
+#define GPU_GRID_CELLS (32*16*32)
+#define FLUID_PBD_LIFETIME 2.50f
+/* Three vec4s: keep the C stride identical to GLSL std430. */
+typedef struct {
+    float px,py,pz,radius;
+    float vx,vy,vz,life;
+    float phase,seed,hasImpacted,pad;
+} GPUFluidParticle;
 static unsigned int s_stateA,s_stateB,s_heads,s_next,s_program;
 static bool s_active;
+static bool s_initAttempted;
 static int s_particleCount;
+static Vector3 s_receiverPoint, s_receiverNormal;
+static float s_impactAge;
 static unsigned int s_vao,s_vbo;
 static Shader s_depthShader,s_thicknessShader;
+
+static float FluidPBDGPU_Rand01(unsigned int value)
+{
+    value ^= value >> 16;
+    value *= 0x7feb352dU;
+    value ^= value >> 15;
+    value *= 0x846ca68bU;
+    value ^= value >> 16;
+    return (float)(value & 0x00ffffffU) / 16777216.0f;
+}
 
 static unsigned int FluidPBDGPU_LoadCompute(void)
 {
@@ -22,6 +42,8 @@ static unsigned int FluidPBDGPU_LoadCompute(void)
 bool FluidPBDGPU_Init(void)
 {
     if(s_active) return true;
+    if(s_initAttempted) return false;
+    s_initAttempted=true;
     s_program=FluidPBDGPU_LoadCompute(); if(!s_program) return false;
     s_stateA=rlLoadShaderBuffer(sizeof(GPUFluidParticle)*FLUID_PBD_GPU_MAX_PARTICLES,NULL,RL_DYNAMIC_DRAW);
     s_stateB=rlLoadShaderBuffer(sizeof(GPUFluidParticle)*FLUID_PBD_GPU_MAX_PARTICLES,NULL,RL_DYNAMIC_DRAW);
@@ -33,40 +55,107 @@ bool FluidPBDGPU_Init(void)
     s_vao=rlLoadVertexArray(); rlEnableVertexArray(s_vao); s_vbo=rlLoadVertexBuffer(quad,sizeof(quad),false); rlSetVertexAttribute(0,3,RL_FLOAT,0,0,0); rlEnableVertexAttribute(0); rlDisableVertexArray();
     s_active=s_stateA&&s_stateB&&s_heads&&s_next; return s_active;
 }
-bool FluidPBDGPU_IsActive(void) { return s_active; }
+/* `s_active` means resources exist.  SSF must instead follow live particles:
+ * otherwise a dead impact still pays two capture passes plus six filters every
+ * frame forever. */
+bool FluidPBDGPU_IsActive(void) { return s_active && s_particleCount > 0; }
 void FluidPBDGPU_SpawnImpact(Vector3 point, Vector3 normal, Vector3 impulse, float force01, float scale)
 {
     if(!s_active) return;
     GPUFluidParticle particles[FLUID_PBD_GPU_MAX_PARTICLES]; memset(particles,0,sizeof(particles));
-    int count=2048; s_particleCount=count; float radius=scale*0.012f;
+    GfxQuality quality=GfxQuality_Get();
+    int count=quality<=GFX_LOW?1024:(quality>=GFX_HIGH?2048:1536);
+    s_particleCount=count;
+    /* Keep PBD kernels below random-close-packing density.  The old 0.012 m
+     * radius injected separation energy at spawn, which looked like a boiling
+     * source sphere.  Surface rendering expands these kernels independently. */
+    float radius=scale*(quality<=GFX_LOW?0.010f:(quality>=GFX_HIGH?0.0085f:0.0092f));
     normal=Vector3LengthSqr(normal)>0.00001f?Vector3Normalize(normal):(Vector3){0,1,0};
+    s_receiverPoint=point;
+    s_receiverNormal=normal;
+    s_impactAge=0.0f;
+    /* The volume and crown live in the receiver's tangent frame.  Keeping this
+     * basis here (rather than in the surface shader) makes impacts on walls,
+     * slopes and ceilings physically coherent. */
+    Vector3 reference=fabsf(normal.y)<0.95f?(Vector3){0,1,0}:(Vector3){1,0,0};
+    Vector3 tangent=Vector3Normalize(Vector3CrossProduct(reference,normal));
+    Vector3 bitangent=Vector3Normalize(Vector3CrossProduct(normal,tangent));
+    /* 2,048 splats of this radius occupy roughly a 0.15 m sphere.  Starting
+     * with less space forces the Jacobi separation to explode the volume. */
+    float volumeRadius=scale*(0.145f+0.035f*force01);
+    /* The event is submitted at contact, but seed the complete virtual water
+     * body a few frames upstream.  It then reaches the receiver as one mass
+     * instead of materialising as a symmetric sphere at the hit point. */
+    float speed=Vector3Length(impulse);
+    Vector3 travelDir=speed>0.001f?Vector3Scale(impulse,1.0f/speed):Vector3Negate(normal);
+    float preImpactDistance=Clamp(speed*0.055f,scale*0.18f,scale*0.45f);
+    Vector3 seedCenter=Vector3Subtract(point,Vector3Scale(travelDir,preImpactDistance));
     for(int i=0;i<count;i++) {
-        float t=(float)i/(float)(count-1), a=(float)i*2.39996323f;
-        float ring=sqrtf(t), radialSpeed=scale*(0.7f+2.8f*ring*force01);
-        float lift=scale*(2.0f+3.8f*(1.0f-ring)+force01*1.6f);
-        /* Dense core + rising crown: never seed the volume as a ground disc. */
-        float x=point.x+cosf(a)*ring*scale*0.20f;
-        float z=point.z+sinf(a)*ring*scale*0.20f;
-        float y=point.y+radius*2.0f+ring*scale*0.20f+(1.0f-ring)*scale*0.08f;
-        particles[i]=(GPUFluidParticle){x,y,z,radius,
-            impulse.x+cosf(a)*radialSpeed+normal.x*lift,
-            impulse.y+normal.y*lift,
-            impulse.z+sinf(a)*radialSpeed+normal.z*lift,4.0f};
+        /* Low-discrepancy points fill a compact ball, rather than placing every
+         * particle on a ring.  It is deliberately a short distance above the
+         * receiver so the supplied incoming velocity produces the first impact. */
+        unsigned int seed=(unsigned int)i*747796405U + 2891336453U;
+        float z=1.0f-2.0f*FluidPBDGPU_Rand01(seed);
+        float a=FluidPBDGPU_Rand01(seed+1U)*2.0f*PI;
+        float shell=cbrtf(FluidPBDGPU_Rand01(seed+2U));
+        float xy=sqrtf(fmaxf(0.0f,1.0f-z*z));
+        Vector3 volumeDirection=Vector3Add(Vector3Add(Vector3Scale(tangent,cosf(a)*xy),
+            Vector3Scale(bitangent,sinf(a)*xy)),Vector3Scale(normal,z));
+        Vector3 offset=Vector3Scale(volumeDirection,shell*volumeRadius);
+        /* A perfectly isotropic seed survives as a screen-space circle because
+         * this lightweight solver has separation but no full density pressure.
+         * Compress it along travel and perturb the shell so the incoming mass
+         * already has an authored, liquid-like irregular silhouette. */
+        float axial=Vector3DotProduct(offset,travelDir);
+        Vector3 lateral=Vector3Subtract(offset,Vector3Scale(travelDir,axial));
+        float lobe=0.82f+0.30f*FluidPBDGPU_Rand01(seed+3U);
+        offset=Vector3Add(Vector3Scale(lateral,lobe),
+                          Vector3Scale(travelDir,axial*0.58f));
+        Vector3 position=Vector3Add(seedCenter,offset);
+        /* Do not manufacture lift or radial velocity at spawn.  The collision
+         * phase converts the real normal impulse into a crown at contact. */
+        Vector3 velocity=impulse;
+        float phaseRoll=FluidPBDGPU_Rand01(seed+4U);
+        /* Most of the incoming mass belongs to the broken crown.  Keeping a
+         * large 30% body made the SSF merge a stationary source disc even
+         * after the crown had torn away. */
+        float phase=phaseRoll<0.18f?0.0f:(phaseRoll<0.86f?1.0f:2.0f);
+        float particleSeed=FluidPBDGPU_Rand01(seed+5U);
+        particles[i]=(GPUFluidParticle){position.x,position.y,position.z,radius,
+            velocity.x,velocity.y,velocity.z,FLUID_PBD_LIFETIME,
+            phase,particleSeed,0.0f,0.0f};
     }
     rlUpdateShaderBuffer(s_stateA,particles,sizeof(GPUFluidParticle)*count,0);
     rlUpdateShaderBuffer(s_stateB,particles,sizeof(GPUFluidParticle)*count,0);
 }
 void FluidPBDGPU_Update(float dt,float groundY)
 {
-    if(!s_active) return; unsigned int groups=(FLUID_PBD_GPU_MAX_PARTICLES+255)/256;
-    rlEnableShader(s_program); int phase=0,count=2048,cells=GPU_GRID_CELLS; float cell=.095f;
+    (void)groundY;
+    if(!s_active || s_particleCount<=0) return;
+    s_impactAge+=dt;
+    if(s_impactAge >= FLUID_PBD_LIFETIME) { s_particleCount=0; return; }
+    unsigned int groups=(s_particleCount+255)/256;
+    rlEnableShader(s_program); int phase=0,count=s_particleCount,cells=GPU_GRID_CELLS; float cell=.095f;
     rlBindShaderBuffer(s_stateA,0); rlBindShaderBuffer(s_stateB,1); rlBindShaderBuffer(s_heads,2); rlBindShaderBuffer(s_next,3);
     int loc=rlGetLocationUniform(s_program,"u_phase"); rlSetUniform(loc,&phase,RL_SHADER_UNIFORM_INT,1); loc=rlGetLocationUniform(s_program,"u_gridCellCount"); rlSetUniform(loc,&cells,RL_SHADER_UNIFORM_INT,1); rlComputeShaderDispatch((cells+255)/256,1,1);
-    phase=1; rlSetUniform(rlGetLocationUniform(s_program,"u_phase"),&phase,RL_SHADER_UNIFORM_INT,1); rlSetUniform(rlGetLocationUniform(s_program,"u_particleCount"),&count,RL_SHADER_UNIFORM_INT,1); rlSetUniform(rlGetLocationUniform(s_program,"u_dt"),&dt,RL_SHADER_UNIFORM_FLOAT,1); rlSetUniform(rlGetLocationUniform(s_program,"u_cellSize"),&cell,RL_SHADER_UNIFORM_FLOAT,1); rlSetUniform(rlGetLocationUniform(s_program,"u_groundY"),&groundY,RL_SHADER_UNIFORM_FLOAT,1); rlComputeShaderDispatch(groups,1,1);
-    for(int i=0;i<4;i++){ phase=2; rlSetUniform(rlGetLocationUniform(s_program,"u_phase"),&phase,RL_SHADER_UNIFORM_INT,1); rlComputeShaderDispatch(groups,1,1); unsigned int t=s_stateA;s_stateA=s_stateB;s_stateB=t; rlBindShaderBuffer(s_stateA,0);rlBindShaderBuffer(s_stateB,1); }
+    phase=1; rlSetUniform(rlGetLocationUniform(s_program,"u_phase"),&phase,RL_SHADER_UNIFORM_INT,1); rlSetUniform(rlGetLocationUniform(s_program,"u_particleCount"),&count,RL_SHADER_UNIFORM_INT,1); rlSetUniform(rlGetLocationUniform(s_program,"u_dt"),&dt,RL_SHADER_UNIFORM_FLOAT,1); rlSetUniform(rlGetLocationUniform(s_program,"u_cellSize"),&cell,RL_SHADER_UNIFORM_FLOAT,1);
+    rlSetUniform(rlGetLocationUniform(s_program,"u_receiverPoint"),&s_receiverPoint.x,RL_SHADER_UNIFORM_VEC3,1); rlSetUniform(rlGetLocationUniform(s_program,"u_receiverNormal"),&s_receiverNormal.x,RL_SHADER_UNIFORM_VEC3,1); rlSetUniform(rlGetLocationUniform(s_program,"u_gridOrigin"),&s_receiverPoint.x,RL_SHADER_UNIFORM_VEC3,1); rlSetUniform(rlGetLocationUniform(s_program,"u_impactAge"),&s_impactAge,RL_SHADER_UNIFORM_FLOAT,1); rlComputeShaderDispatch(groups,1,1);
+    /* The grid is built from B during integration, so B must become the solver
+     * source before Jacobi reads it.  This was previously one state behind. */
+    unsigned int t=s_stateA;s_stateA=s_stateB;s_stateB=t; rlBindShaderBuffer(s_stateA,0);rlBindShaderBuffer(s_stateB,1);
+    int iterations=GfxQuality_Get()<=GFX_LOW?2:(GfxQuality_Get()>=GFX_HIGH?4:3);
+    for(int i=0;i<iterations;i++){
+        /* Rebuild from the current ping-pong source before every Jacobi pass.
+         * The old code reused heads from an earlier buffer, creating unstable
+         * force at the original impact point. */
+        phase=0; rlSetUniform(rlGetLocationUniform(s_program,"u_phase"),&phase,RL_SHADER_UNIFORM_INT,1); rlComputeShaderDispatch((cells+255)/256,1,1);
+        phase=3; rlSetUniform(rlGetLocationUniform(s_program,"u_phase"),&phase,RL_SHADER_UNIFORM_INT,1); rlComputeShaderDispatch(groups,1,1);
+        phase=2; rlSetUniform(rlGetLocationUniform(s_program,"u_phase"),&phase,RL_SHADER_UNIFORM_INT,1); rlComputeShaderDispatch(groups,1,1);
+        t=s_stateA;s_stateA=s_stateB;s_stateB=t; rlBindShaderBuffer(s_stateA,0);rlBindShaderBuffer(s_stateB,1);
+    }
     rlDisableShader();
 }
-void FluidPBDGPU_Unload(void) { if(s_stateA)rlUnloadShaderBuffer(s_stateA);if(s_stateB)rlUnloadShaderBuffer(s_stateB);if(s_heads)rlUnloadShaderBuffer(s_heads);if(s_next)rlUnloadShaderBuffer(s_next);if(s_program)rlUnloadShaderProgram(s_program);s_stateA=s_stateB=s_heads=s_next=s_program=0;s_active=false; }
+void FluidPBDGPU_Unload(void) { if(s_stateA)rlUnloadShaderBuffer(s_stateA);if(s_stateB)rlUnloadShaderBuffer(s_stateB);if(s_heads)rlUnloadShaderBuffer(s_heads);if(s_next)rlUnloadShaderBuffer(s_next);if(s_program)rlUnloadShaderProgram(s_program);s_stateA=s_stateB=s_heads=s_next=s_program=0;s_active=false;s_initAttempted=false; }
 unsigned int FluidPBDGPU_GetStateBuffer(void) { return s_stateA; }
 int FluidPBDGPU_GetParticleCount(void) { return s_particleCount; }
 

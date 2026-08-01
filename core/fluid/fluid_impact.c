@@ -117,12 +117,12 @@ static ParticleEmitterHandle FluidImpact_CreateSurfaceEmitter(Vector3 position, 
 
 static void FluidImpact_AddResidue(Vector3 point, Vector3 normal, float radius, float opacity)
 {
-    (void)opacity;
     if (Vector3LengthSqr(normal) < 0.0001f) normal = (Vector3){0.0f, 1.0f, 0.0f};
     FluidWetMark *mark = &s_wetMarks[s_nextWetMark++ % FLUID_WET_MARK_MAX];
     *mark = (FluidWetMark){.position = Vector3Add(point, Vector3Scale(Vector3Normalize(normal), 0.008f)),
                             .normal = Vector3Normalize(normal), .radius = radius,
                             .life = 3.5f, .maxLife = 3.5f, .active = true};
+    (void)opacity;
 }
 
 static bool FluidImpact_DefaultGroundHit(Vector3 from, Vector3 to, float radius,
@@ -198,11 +198,17 @@ void FluidImpact_SpawnWater(const FluidImpactEvent *event)
     float intoSurface = Vector3DotProduct(incoming, normal);
     Vector3 outgoing = intoSurface < 0.0f ? Vector3Subtract(incoming, Vector3Scale(normal, intoSurface*1.35f)) : incoming;
     bool gpuFluid = FluidPBDGPU_Init();
-    if (gpuFluid) FluidPBDGPU_SpawnImpact(event->hitPoint, normal, outgoing, force01, scale);
+    /* GPU PBD owns the receiver response.  Feeding it `outgoing` here made the
+     * seed rebound before it touched the plane, which reads as a conical blast
+     * instead of an incoming water body striking the receiver. */
+    if (gpuFluid) FluidPBDGPU_SpawnImpact(event->hitPoint, normal, incoming, force01, scale);
     Vector3 tangent, bitangent;
     FluidImpact_Basis(normal, &tangent, &bitangent);
     FluidImpact_AddResidue(event->hitPoint, normal, scale * (0.30f + 0.65f * force01), force01);
 
+    /* PBD carries the coherent body, but a real impact also sheds a small,
+     * bounded ballistic population.  Keeping these on GPU systems restores
+     * the readable spray silhouette without increasing the PBD budget. */
     for (int i = 0, n = gpuFluid ? 0 : FluidImpact_HeroCount(force01); i < n; ++i) {
         float angle = ((float)GetRandomValue(0, 359)) * DEG2RAD;
         float spread = 0.35f + ((float)GetRandomValue(0, 1000) / 1000.0f) * 0.65f;
@@ -243,6 +249,12 @@ void FluidImpact_SpawnWater(const FluidImpactEvent *event)
 void FluidImpact_Update(float dt)
 {
     FluidImpact_InitGravity();
+    /* Prewarm compute program, surface shaders and SSBOs during the normal
+     * update loop.  Creating them from SpawnWater made the first impact stall
+     * while every following impact was fast from driver cache.  An inactive
+     * PBD allocation has zero SSF cost because IsActive also requires live
+     * particles. */
+    (void)FluidPBDGPU_Init();
     if (FluidPBDGPU_IsActive()) FluidPBDGPU_Update(dt, 0.0f);
     s_secondaryMarksThisFrame = 0;
     for (int i = 0; i < FLUID_IMPACT_MAX_HERO_DROPLETS; ++i) {

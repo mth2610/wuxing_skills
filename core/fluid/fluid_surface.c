@@ -3,6 +3,7 @@
 #include "core/screen_distort.h"
 #include "core/particles/particle_manager.h"
 #include "core/fluid/fluid_pbd_gpu.h"
+#include "core/gfx_quality.h"
 #include "rlgl.h"
 #include <stddef.h>
 
@@ -14,7 +15,7 @@ static int s_gpuStreamCount;
 static Texture2D s_surfaceTex;
 static RenderTexture2D s_capture, s_thickness, s_smoothA, s_smoothB;
 static Shader s_captureShader, s_thicknessShader, s_smooth, s_composite;
-static int s_texelLoc, s_dirLoc, s_sigmaLoc, s_thicknessLoc, s_sceneLoc, s_sceneDepthLoc, s_hasDepthLoc;
+static int s_texelLoc, s_dirLoc, s_sigmaLoc, s_fillLoc, s_thicknessLoc, s_sceneLoc, s_sceneDepthLoc, s_hasDepthLoc;
 
 static RenderTexture2D FluidSurface_LoadDepthTarget(int w, int h) {
     RenderTexture2D t = {0}; t.id = rlLoadFramebuffer();
@@ -31,7 +32,11 @@ static RenderTexture2D FluidSurface_LoadDepthTarget(int w, int h) {
     rlDisableFramebuffer(); SetTextureFilter(t.texture,TEXTURE_FILTER_BILINEAR); return t;
 }
 void FluidSurface_Init(int width,int height) {
-    int w = width/2, h=height/2;
+    /* SSF depth is view-dependent.  Half-res is a viable LOW fallback but
+     * aliases into zoom-dependent bands for small water kernels. */
+    float scale = GfxQuality_Get() >= GFX_HIGH ? 1.0f :
+                  (GfxQuality_Get() >= GFX_MED ? 0.75f : 0.50f);
+    int w = (int)(width*scale), h=(int)(height*scale);
     s_capture=FluidSurface_LoadDepthTarget(w,h); s_thickness=LoadRenderTexture(w,h); s_smoothA=LoadRenderTexture(w,h); s_smoothB=LoadRenderTexture(w,h);
     s_captureShader=ResourceManager_LoadShader(NULL,"core/fluid/shaders/fluid_capture.fs");
     s_thicknessShader=ResourceManager_LoadShader(NULL,"core/fluid/shaders/fluid_surface_thickness_mesh.fs");
@@ -40,7 +45,7 @@ void FluidSurface_Init(int width,int height) {
     Image img = GenImageGradientRadial(64, 64, 0.0f, WHITE, BLANK);
     s_surfaceTex = LoadTextureFromImage(img); UnloadImage(img);
     SetTextureFilter(s_surfaceTex, TEXTURE_FILTER_BILINEAR);
-    s_texelLoc=GetShaderLocation(s_smooth,"u_texel"); s_dirLoc=GetShaderLocation(s_smooth,"u_direction"); s_sigmaLoc=GetShaderLocation(s_smooth,"u_depthSigma");
+    s_texelLoc=GetShaderLocation(s_smooth,"u_texel"); s_dirLoc=GetShaderLocation(s_smooth,"u_direction"); s_sigmaLoc=GetShaderLocation(s_smooth,"u_depthSigma"); s_fillLoc=GetShaderLocation(s_smooth,"u_fillHoles");
     s_thicknessLoc=GetShaderLocation(s_composite,"u_thicknessTex"); s_sceneLoc=GetShaderLocation(s_composite,"u_sceneTex");
     s_sceneDepthLoc=GetShaderLocation(s_composite,"u_sceneDepthTex"); s_hasDepthLoc=GetShaderLocation(s_composite,"u_hasSceneDepth");
 }
@@ -73,11 +78,15 @@ void FluidSurface_Capture(Camera3D camera) {
     EndBlendMode(); rlDrawRenderBatchActive(); rlEnableDepthTest(); rlEnableDepthMask(); EndMode3D(); EndTextureMode();
     Vector2 texel={1.0f/s_capture.texture.width,1.0f/s_capture.texture.height};
     float sigma = 0.035f;
-    for (int iteration=0; iteration<3; ++iteration) {
+    /* One separable round joins optical kernels without erasing the authored
+     * impact lobes.  Repeated bilateral rounds circularized the dense body. */
+    for (int iteration=0; iteration<1; ++iteration) {
         Vector2 horizontal={1.0f,0.0f}, vertical={0.0f,1.0f};
         Texture2D source = iteration ? s_smoothB.texture : s_capture.texture;
-        BeginTextureMode(s_smoothA); ClearBackground(WHITE); BeginShaderMode(s_smooth); SetShaderValue(s_smooth,s_texelLoc,&texel,SHADER_UNIFORM_VEC2); SetShaderValue(s_smooth,s_dirLoc,&horizontal,SHADER_UNIFORM_VEC2); SetShaderValue(s_smooth,s_sigmaLoc,&sigma,SHADER_UNIFORM_FLOAT); DrawTextureRec(source,(Rectangle){0,0,source.width,-source.height},(Vector2){0,0},WHITE); EndShaderMode(); EndTextureMode();
-        BeginTextureMode(s_smoothB); ClearBackground(WHITE); BeginShaderMode(s_smooth); SetShaderValue(s_smooth,s_dirLoc,&vertical,SHADER_UNIFORM_VEC2); DrawTextureRec(s_smoothA.texture,(Rectangle){0,0,s_smoothA.texture.width,-s_smoothA.texture.height},(Vector2){0,0},WHITE); EndShaderMode(); EndTextureMode();
+        int fillHoles=iteration==0;
+        BeginTextureMode(s_smoothA); ClearBackground(WHITE); BeginShaderMode(s_smooth); SetShaderValue(s_smooth,s_texelLoc,&texel,SHADER_UNIFORM_VEC2); SetShaderValue(s_smooth,s_dirLoc,&horizontal,SHADER_UNIFORM_VEC2); SetShaderValue(s_smooth,s_sigmaLoc,&sigma,SHADER_UNIFORM_FLOAT); SetShaderValue(s_smooth,s_fillLoc,&fillHoles,SHADER_UNIFORM_INT); DrawTextureRec(source,(Rectangle){0,0,source.width,-source.height},(Vector2){0,0},WHITE); EndShaderMode(); EndTextureMode();
+        fillHoles=0;
+        BeginTextureMode(s_smoothB); ClearBackground(WHITE); BeginShaderMode(s_smooth); SetShaderValue(s_smooth,s_dirLoc,&vertical,SHADER_UNIFORM_VEC2); SetShaderValue(s_smooth,s_fillLoc,&fillHoles,SHADER_UNIFORM_INT); DrawTextureRec(s_smoothA.texture,(Rectangle){0,0,s_smoothA.texture.width,-s_smoothA.texture.height},(Vector2){0,0},WHITE); EndShaderMode(); EndTextureMode();
     }
 }
 void FluidSurface_Composite(void) {
