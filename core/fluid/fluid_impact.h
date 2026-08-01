@@ -28,6 +28,11 @@ typedef struct {
     Vector3 initialVelocity;   // incoming water-body velocity in m/s; zero uses legacy bias
     float force01;             // clamped [0,1], controls count and radius
     float scale;               // metres; <= 0 selects 1.0
+    /* Optical identity supplied by the VFX material owner. All-zero RGB
+     * fields fall back to VC_MAT_WATER for source compatibility. */
+    Color bodyColor;
+    Color glowColor;
+    Color softColor;
 } FluidImpactEvent;
 
 // One-shot water impact. Safe on both compute/SSBO and CPU/VBO particle paths.

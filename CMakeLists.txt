@@ -263,7 +263,7 @@ configure_file(core/fluid/shaders/fluid_capture.fs ${CMAKE_CURRENT_BINARY_DIR}/c
 configure_file(core/fluid/shaders/fluid_capture_particle.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_capture_particle.fs COPYONLY)
 configure_file(core/fluid/shaders/fluid_surface_thickness.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_surface_thickness.fs COPYONLY)
 configure_file(core/fluid/shaders/fluid_surface_thickness_mesh.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_surface_thickness_mesh.fs COPYONLY)
-configure_file(core/fluid/shaders/fluid_depth_bilateral.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_depth_bilateral.fs COPYONLY)
+configure_file(core/fluid/shaders/fluid_depth_narrow_range.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_depth_narrow_range.fs COPYONLY)
 configure_file(core/fluid/shaders/fluid_surface.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_surface.fs COPYONLY)
 
 configure_file(core/shaders/common/vs_header.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/vs_header.glsl COPYONLY)

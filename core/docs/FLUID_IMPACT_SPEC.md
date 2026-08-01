@@ -10,8 +10,10 @@ supplies the authoritative collision; VFX never performs gameplay collision.
 `FluidImpact_SpawnWater(const FluidImpactEvent *)` is a one-shot call from a
 collision/state transition. `hitPoint` and `hitNormal` identify the receiver;
 `impulseDirection` controls ballistic bias; `force01` controls density and mark
-radius; `scale` is metres. A zero normal becomes world up and a zero impulse
-becomes the normal.
+radius; `scale` is metres. `bodyColor`, `glowColor` and `softColor` are the
+caller-owned optical identity; VFX compositions forward these from
+`VFX_Material(VC_MAT_WATER)`. All-zero RGB retains the water preset fallback.
+A zero normal becomes world up and a zero impulse becomes the normal.
 
 ## Pipeline
 
@@ -31,6 +33,46 @@ becomes the normal.
    continues to use the bounded hero/background fallback.
 5. Every hero-droplet contact emits three micro droplets and, under a global
    two-marks-per-frame cap, a smaller wet residue.
+
+## Screen-space optics
+
+Particles are never shaded individually while they belong to one connected
+mass. They first rasterize nearest spherical front-depth into R32F and additive
+thickness into a separate R32F target. A separable narrow-range filter
+(Truong/Yuksel 2018) reconstructs the shared surface: HIGH uses two rounds,
+MED/LOW one. It rejects disconnected foreground sheets, clamps deeper samples
+at the local kernel range and preserves detached spray. Normals and all lighting
+are evaluated only after that reconstruction. R32F is mandatory: the old RGBA8
+intermediate quantized non-linear device depth into horizontal, zoom-dependent
+contour bands.
+
+The SSF composite reconstructs view-space position and normals from that shared
+depth using the same projection as `MyBeginMode3D`. Additive particle thickness
+is converted back to metres and bounded by the raw scene depth behind the water
+before applying Beer-Lambert absorption. Absorption and scattering derive from
+the submitted material colours rather than a hard-coded water hue. Environment
+lighting scales scattering energy without multiplying its RGB identity; real
+light colour remains on reflection/specular.
+
+Refraction follows Snell's law (`IOR = 1.333`) and samples the current HDR scene
+colour. The refracted UV is rejected when raw scene depth says it crossed onto
+geometry in front of the fluid, preventing foreground-edge colour bleeding.
+HIGH uses depth-scaled four-tap scattering blur plus small spectral dispersion;
+MED uses three colour samples; LOW uses one.
+
+Water specular is a dielectric GGX response plus a broad micro-ripple lobe. Both
+use the real Environment sun direction/colour. MED/HIGH also consume up to two
+or four active VFX point lights respectively, transformed into the captured
+camera's view space; LOW pays no point-light loop. Unresolved particle
+silhouettes attenuate grazing Fresnel so individual splats do not regain white
+halos.
+
+The PBD population is polydisperse (stable physical and optical radius
+variation), which prevents equal-radius Jacobi constraints from crystallizing
+the resting sheet into rows. Per-particle settle age is staggered; fully resting
+particles no longer receive Jacobi corrections, and the global solve stops once
+all viscous tails have ended. This preserves the irregular impact footprint and
+removes late-life solver cost.
 
 ## Budgets
 

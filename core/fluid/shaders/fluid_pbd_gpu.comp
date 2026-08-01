@@ -16,12 +16,30 @@ uniform float u_dt, u_cellSize;
 uniform float u_impactAge;
 uniform vec3 u_receiverPoint, u_receiverNormal, u_gridOrigin;
 
+float particleAge(FluidParticle p) {
+    return u_impactAge+(p.phase_seed_impact_pad.y-0.5)*0.14;
+}
+
+bool particleIsResting(FluidParticle p) {
+    float age=particleAge(p);
+    return (p.phase_seed_impact_pad.x<0.5 && age>=0.60)
+        || (p.phase_seed_impact_pad.x>0.5 && age>=1.15);
+}
+
+float receiverClearance(FluidParticle p) {
+    /* Preserve the anti-z-fighting buffer, but avoid placing every optical
+     * centre on one mathematically identical depth layer. */
+    float heightJitter=(p.phase_seed_impact_pad.w-0.5)
+                      *p.position_radius.w*0.18;
+    return p.position_radius.w*2.10+0.0025+heightJitter;
+}
+
 void collideReceiver(inout FluidParticle p, uint particleId) {
     float distance = dot(p.position_radius.xyz - u_receiverPoint, u_receiverNormal);
     /* Rendering expands each physical kernel to 2.10x for SSF overlap.  Using
      * only the physical radius here left the optical sphere buried in the
      * receiver, so scene-depth clipped it into zoom-dependent stripes/discs. */
-    float surfaceClearance = p.position_radius.w * 2.10 + 0.0025;
+    float surfaceClearance = receiverClearance(p);
     float penetration = surfaceClearance - distance;
     if (penetration <= 0.0) return;
     p.position_radius.xyz += u_receiverNormal * penetration;
@@ -115,20 +133,22 @@ void main() {
     }
     if(u_phase==1) {
         float particlePhase = p.phase_seed_impact_pad.x;
-        bool airborneSplash = particlePhase > 0.5 && u_impactAge < 0.90;
-        bool viscousTail = (particlePhase < 0.5 && u_impactAge < 0.60)
-                        || (particlePhase > 0.5 && u_impactAge < 1.15);
-        if (u_impactAge < 0.32 || airborneSplash) {
+        float localAge=particleAge(p);
+        bool airborneSplash = particlePhase > 0.5 && localAge < 0.90;
+        bool viscousTail = (particlePhase < 0.5 && localAge < 0.60)
+                        || (particlePhase > 0.5 && localAge < 1.15);
+        if (localAge < 0.32 || airborneSplash) {
             p.velocity_life.y-=9.81*u_dt;
             p.position_radius.xyz+=p.velocity_life.xyz*u_dt;
         } else if (viscousTail) {
             // Viscous settling: retain a short deceleration tail, then let the
             // PBD constraints converge to a stationary puddle.
-            float settleDamping = particlePhase < 0.5 ? 0.82 : 0.68;
+            float dampingRate = particlePhase < 0.5 ? 12.0 : 23.0;
+            float settleDamping = exp(-dampingRate*u_dt);
             p.velocity_life.xyz*=settleDamping;
             p.position_radius.xyz+=p.velocity_life.xyz*u_dt;
             float planeDistance=dot(p.position_radius.xyz-u_receiverPoint,u_receiverNormal);
-            float surfaceClearance=p.position_radius.w*2.10+0.0025;
+            float surfaceClearance=receiverClearance(p);
             p.position_radius.xyz-=u_receiverNormal*(planeDistance-surfaceClearance)*0.45;
         } else {
             p.velocity_life.xyz=vec3(0.0);
@@ -136,7 +156,7 @@ void main() {
             // a puddle rather than the striped rings produced by the former
             // correlated Fibonacci seed.
             float planeDistance=dot(p.position_radius.xyz-u_receiverPoint,u_receiverNormal);
-            float surfaceClearance=p.position_radius.w*2.10+0.0025;
+            float surfaceClearance=receiverClearance(p);
             p.position_radius.xyz-=u_receiverNormal*(planeDistance-surfaceClearance);
         }
         p.velocity_life.w-=u_dt;
@@ -144,6 +164,11 @@ void main() {
         int cell=cellIndex(p.position_radius.xyz); next[id]=atomicExchange(heads[cell],int(id)); dest[id]=p; return;
     }
     // Jacobi density/separation pass; grid was built from the previous state.
+    if(particleIsResting(p)) {
+        collideReceiver(p,id);
+        dest[id]=p;
+        return;
+    }
     vec3 correction=vec3(0.0); int cell=cellIndex(p.position_radius.xyz);
     ivec3 base=ivec3(cell%32,(cell/32)%16,cell/(32*16));
     for(int z=-1;z<=1;z++) for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++) {

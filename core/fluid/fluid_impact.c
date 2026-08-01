@@ -41,6 +41,14 @@ static FluidImpactCollisionQueryFn s_collisionQuery = NULL;
 static void *s_collisionUserData = NULL;
 static ForceField s_gravity;
 static bool s_gravityReady = false;
+static Color s_fluidBody;
+static Color s_fluidGlow;
+static Color s_fluidSoft;
+
+static bool FluidImpact_ColorIsUnset(Color color)
+{
+    return color.r == 0 && color.g == 0 && color.b == 0;
+}
 
 static void FluidImpact_Basis(Vector3 normal, Vector3 *outTangent, Vector3 *outBitangent)
 {
@@ -151,6 +159,8 @@ static bool FluidImpact_QueryCollision(Vector3 from, Vector3 to, float radius,
 static void FluidImpact_SpawnMicroSplash(Vector3 point, Vector3 normal, float radius)
 {
     const VFX_ElementMaterial *water = VFX_Material(VC_MAT_WATER);
+    Color body = FluidImpact_ColorIsUnset(s_fluidBody) ? water->body : s_fluidBody;
+    Color soft = FluidImpact_ColorIsUnset(s_fluidSoft) ? water->soft : s_fluidSoft;
     Vector3 tangent, bitangent;
     FluidImpact_Basis(normal, &tangent, &bitangent);
     for (int i = 0; i < 3; ++i) {
@@ -161,8 +171,8 @@ static void FluidImpact_SpawnMicroSplash(Vector3 point, Vector3 normal, float ra
         p.position = Vector3Add(point, Vector3Scale(normal, radius + 0.01f));
         p.velocity = Vector3Add(Vector3Scale(normal, 1.0f + 0.4f * i),
                                 Vector3Scale(radial, 0.8f + 0.25f * i));
-        p.colorStart = VC_WithAlpha(water->soft, 150);
-        p.colorEnd = VC_WithAlpha(water->body, 0);
+        p.colorStart = VC_WithAlpha(soft, 150);
+        p.colorEnd = VC_WithAlpha(body, 0);
         p.radius = radius * 0.55f;
         p.lifetime = 0.22f;
         p.forceField = &s_gravity;
@@ -190,6 +200,15 @@ void FluidImpact_SpawnWater(const FluidImpactEvent *event)
     impulse = Vector3Normalize(impulse);
     float force01 = Clamp(event->force01, 0.0f, 1.0f);
     float scale = event->scale > 0.0f ? event->scale : 1.0f;
+    const VFX_ElementMaterial *water = VFX_Material(VC_MAT_WATER);
+    s_fluidBody = FluidImpact_ColorIsUnset(event->bodyColor)
+                ? water->body : event->bodyColor;
+    s_fluidGlow = FluidImpact_ColorIsUnset(event->glowColor)
+                ? water->glow : event->glowColor;
+    s_fluidSoft = FluidImpact_ColorIsUnset(event->softColor)
+                ? water->soft : event->softColor;
+    FluidSurface_SetMaterialColors(s_fluidBody, s_fluidGlow, s_fluidSoft);
+    FluidSurface_SetReconstructionRadius(scale*0.022f);
     Vector3 incoming = event->initialVelocity;
     if (Vector3LengthSqr(incoming) < 0.0001f)
         incoming = Vector3Scale(impulse, scale*(2.0f + force01*4.0f));
@@ -230,7 +249,6 @@ void FluidImpact_SpawnWater(const FluidImpactEvent *event)
         };
     }
 
-    const VFX_ElementMaterial *water = VFX_Material(VC_MAT_WATER);
     for (int i = 0, n = gpuFluid ? 0 : FluidImpact_BackgroundCount(force01); i < n; ++i) {
         float angle = ((float)GetRandomValue(0, 359)) * DEG2RAD;
         Vector3 radial = Vector3Add(Vector3Scale(tangent, cosf(angle)), Vector3Scale(bitangent, sinf(angle)));
@@ -239,7 +257,8 @@ void FluidImpact_SpawnWater(const FluidImpactEvent *event)
         p.velocity = Vector3Add(Vector3Scale(impulse, scale * (1.2f + force01 * 2.0f)),
                                 Vector3Add(Vector3Scale(radial, scale * (0.8f + force01)),
                                            Vector3Scale(normal, scale * 1.0f)));
-        p.colorStart = VC_WithAlpha(water->soft, 170); p.colorEnd = VC_WithAlpha(water->body, 0);
+        p.colorStart = VC_WithAlpha(s_fluidSoft, 170);
+        p.colorEnd = VC_WithAlpha(s_fluidBody, 0);
         p.radius = scale * 0.022f; p.lifetime = 0.35f;
         p.forceField = &s_gravity; p.stretchStrength = 0.18f; p.stretchMinSpeed = 0.20f;
         FluidImpact_EmitBackground(&p);

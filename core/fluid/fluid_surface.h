@@ -11,6 +11,12 @@
  * body layer before its HDR scene composite. */
 void FluidSurface_Init(int width, int height);
 void FluidSurface_Unload(void);
+/* Sets the optical identity used by absorption, scattering and highlights.
+ * Callers normally forward body/glow/soft from VFX_Material(...). */
+void FluidSurface_SetMaterialColors(Color body, Color glow, Color soft);
+/* Approximate world-space radius of one optical kernel. It controls the
+ * depth range used by screen-space surface reconstruction. */
+void FluidSurface_SetReconstructionRadius(float radius);
 void FluidSurface_RegisterParticle(Vector3 position, float radius);
 void FluidSurface_RegisterEllipsoid(Vector3 position, Vector3 radii);
 /* Accepts the same opaque stream from either particle backend. The GPU path

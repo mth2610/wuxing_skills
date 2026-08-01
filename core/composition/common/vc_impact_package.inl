@@ -189,7 +189,10 @@ void VFX_ComposeImpactPackage(Vector3 pos, Vector3 normal, VC_MaterialId matId,
             .hitNormal = normal,
             .impulseDirection = normal,
             .force01 = sev,
-            .scale = scale
+            .scale = scale,
+            .bodyColor = mat->body,
+            .glowColor = mat->glow,
+            .softColor = mat->soft
         };
         FluidImpact_SpawnWater(&fluid);
     }

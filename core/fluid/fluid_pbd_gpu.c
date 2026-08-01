@@ -121,9 +121,17 @@ void FluidPBDGPU_SpawnImpact(Vector3 point, Vector3 normal, Vector3 impulse, flo
          * after the crown had torn away. */
         float phase=phaseRoll<0.18f?0.0f:(phaseRoll<0.86f?1.0f:2.0f);
         float particleSeed=FluidPBDGPU_Rand01(seed+5U);
-        particles[i]=(GPUFluidParticle){position.x,position.y,position.z,radius,
+        /* A monodisperse PBD population crystallises into near-hexagonal rows
+         * after repeated separation solves. Those rows line up the identical
+         * per-splat highlights into the visible parallel bands. Real spray is
+         * polydisperse, so vary the physical constraint radius as well as the
+         * independent optical kernel. */
+        float physicalScale=0.80f+0.40f*FluidPBDGPU_Rand01(seed+6U);
+        float particleRadius=radius*physicalScale;
+        float opticalJitter=FluidPBDGPU_Rand01(seed+7U);
+        particles[i]=(GPUFluidParticle){position.x,position.y,position.z,particleRadius,
             velocity.x,velocity.y,velocity.z,FLUID_PBD_LIFETIME,
-            phase,particleSeed,0.0f,0.0f};
+            phase,particleSeed,0.0f,opticalJitter};
     }
     rlUpdateShaderBuffer(s_stateA,particles,sizeof(GPUFluidParticle)*count,0);
     rlUpdateShaderBuffer(s_stateB,particles,sizeof(GPUFluidParticle)*count,0);
@@ -144,6 +152,10 @@ void FluidPBDGPU_Update(float dt,float groundY)
      * source before Jacobi reads it.  This was previously one state behind. */
     unsigned int t=s_stateA;s_stateA=s_stateB;s_stateB=t; rlBindShaderBuffer(s_stateA,0);rlBindShaderBuffer(s_stateB,1);
     int iterations=GfxQuality_Get()<=GFX_LOW?2:(GfxQuality_Get()>=GFX_HIGH?4:3);
+    /* Once every per-particle viscous tail has ended, continuing Jacobi only
+     * crystallises equal-radius kernels into visible rows. Integration still
+     * owns lifetime, but the stationary puddle no longer pays grid solves. */
+    if(s_impactAge>=1.24f) iterations=0;
     for(int i=0;i<iterations;i++){
         /* Rebuild from the current ping-pong source before every Jacobi pass.
          * The old code reused heads from an earlier buffer, creating unstable
@@ -162,7 +174,16 @@ int FluidPBDGPU_GetParticleCount(void) { return s_particleCount; }
 static void FluidPBDGPU_Draw(Camera3D camera, Shader shader)
 {
     if(!s_active||s_particleCount<=0) return;
-    Matrix view=MatrixLookAt(camera.position,camera.target,camera.up); float aspect=(float)GetScreenWidth()/(float)GetScreenHeight(); double top=tan(camera.fovy*0.5*DEG2RAD); Matrix projection=MatrixFrustum(-top*aspect,top*aspect,-top,top,1.0,1000.0);
+    Matrix view=MatrixLookAt(camera.position,camera.target,camera.up);
+    float aspect=(float)GetScreenWidth()/(float)GetScreenHeight();
+    Matrix projection;
+    if(camera.projection==CAMERA_ORTHOGRAPHIC) {
+        double top=camera.fovy*0.5;
+        projection=MatrixOrtho(-top*aspect,top*aspect,-top,top,0.0001,150.0);
+    } else {
+        double top=tan(camera.fovy*0.5*DEG2RAD);
+        projection=MatrixFrustum(-top*aspect,top*aspect,-top,top,1.0,1000.0);
+    }
     BeginShaderMode(shader); int loc=GetShaderLocation(shader,"u_view"); if(loc>=0)SetShaderValueMatrix(shader,loc,view); loc=GetShaderLocation(shader,"u_projection");if(loc>=0)SetShaderValueMatrix(shader,loc,projection);
     rlBindShaderBuffer(s_stateA,0); rlEnableShader(shader.id); rlEnableVertexArray(s_vao); rlDrawVertexArrayInstanced(0,6,s_particleCount); rlDisableVertexArray(); rlDisableShader(); EndShaderMode();
 }
