@@ -6,7 +6,7 @@
 #include <math.h>
 #include <string.h>
 
-#define GPU_GRID_CELLS (32*16*32)
+#define GPU_GRID_CELLS (32*32*32)
 #define FLUID_PBD_LIFETIME 2.50f
 /* Three vec4s: keep the C stride identical to GLSL std430. */
 typedef struct {
@@ -20,6 +20,7 @@ static bool s_initAttempted;
 static int s_particleCount;
 static Vector3 s_receiverPoint, s_receiverNormal;
 static float s_impactAge;
+static float s_gridCellSize;
 static unsigned int s_vao,s_vbo;
 static Shader s_depthShader,s_thicknessShader;
 
@@ -70,6 +71,11 @@ void FluidPBDGPU_SpawnImpact(Vector3 point, Vector3 normal, Vector3 impulse, flo
      * radius injected separation energy at spawn, which looked like a boiling
      * source sphere.  Surface rendering expands these kernels independently. */
     float radius=scale*(quality<=GFX_LOW?0.010f:(quality>=GFX_HIGH?0.0085f:0.0092f));
+    /* The largest pair support is < 0.044*scale.  A 0.046*scale cell still
+     * guarantees that all interacting neighbours are in the surrounding 27
+     * cells, while avoiding the old 9.5 cm cell's dense O(n^2)-like buckets.
+     * A symmetric 32^3 domain keeps this valid for walls and ceilings too. */
+    s_gridCellSize=fmaxf(scale,0.10f)*0.046f;
     normal=Vector3LengthSqr(normal)>0.00001f?Vector3Normalize(normal):(Vector3){0,1,0};
     s_receiverPoint=point;
     s_receiverNormal=normal;
@@ -115,11 +121,12 @@ void FluidPBDGPU_SpawnImpact(Vector3 point, Vector3 normal, Vector3 impulse, flo
         /* Do not manufacture lift or radial velocity at spawn.  The collision
          * phase converts the real normal impulse into a crown at contact. */
         Vector3 velocity=impulse;
-        float phaseRoll=FluidPBDGPU_Rand01(seed+4U);
-        /* Most of the incoming mass belongs to the broken crown.  Keeping a
-         * large 30% body made the SSF merge a stationary source disc even
-         * after the crown had torn away. */
-        float phase=phaseRoll<0.18f?0.0f:(phaseRoll<0.86f?1.0f:2.0f);
+        /* Phase follows the water volume instead of an unrelated random roll:
+         * a coherent 42% core remains the body, the surrounding 50% shell
+         * forms the crown, and only the outer 8% becomes fast hero droplets.
+         * Randomly marking 82% of the entire ball as crown/jet made even its
+         * centre disperse and left too few samples for a connected surface. */
+        float phase=shell<0.749f?0.0f:(shell<0.973f?1.0f:2.0f);
         float particleSeed=FluidPBDGPU_Rand01(seed+5U);
         /* A monodisperse PBD population crystallises into near-hexagonal rows
          * after repeated separation solves. Those rows line up the identical
@@ -143,7 +150,7 @@ void FluidPBDGPU_Update(float dt,float groundY)
     s_impactAge+=dt;
     if(s_impactAge >= FLUID_PBD_LIFETIME) { s_particleCount=0; return; }
     unsigned int groups=(s_particleCount+255)/256;
-    rlEnableShader(s_program); int phase=0,count=s_particleCount,cells=GPU_GRID_CELLS; float cell=.095f;
+    rlEnableShader(s_program); int phase=0,count=s_particleCount,cells=GPU_GRID_CELLS; float cell=s_gridCellSize;
     rlBindShaderBuffer(s_stateA,0); rlBindShaderBuffer(s_stateB,1); rlBindShaderBuffer(s_heads,2); rlBindShaderBuffer(s_next,3);
     int loc=rlGetLocationUniform(s_program,"u_phase"); rlSetUniform(loc,&phase,RL_SHADER_UNIFORM_INT,1); loc=rlGetLocationUniform(s_program,"u_gridCellCount"); rlSetUniform(loc,&cells,RL_SHADER_UNIFORM_INT,1); rlComputeShaderDispatch((cells+255)/256,1,1);
     phase=1; rlSetUniform(rlGetLocationUniform(s_program,"u_phase"),&phase,RL_SHADER_UNIFORM_INT,1); rlSetUniform(rlGetLocationUniform(s_program,"u_particleCount"),&count,RL_SHADER_UNIFORM_INT,1); rlSetUniform(rlGetLocationUniform(s_program,"u_dt"),&dt,RL_SHADER_UNIFORM_FLOAT,1); rlSetUniform(rlGetLocationUniform(s_program,"u_cellSize"),&cell,RL_SHADER_UNIFORM_FLOAT,1);
@@ -156,13 +163,14 @@ void FluidPBDGPU_Update(float dt,float groundY)
      * crystallises equal-radius kernels into visible rows. Integration still
      * owns lifetime, but the stationary puddle no longer pays grid solves. */
     if(s_impactAge>=1.24f) iterations=0;
+    int solverIterationLoc=rlGetLocationUniform(s_program,"u_solverIteration");
     for(int i=0;i<iterations;i++){
         /* Rebuild from the current ping-pong source before every Jacobi pass.
          * The old code reused heads from an earlier buffer, creating unstable
          * force at the original impact point. */
         phase=0; rlSetUniform(rlGetLocationUniform(s_program,"u_phase"),&phase,RL_SHADER_UNIFORM_INT,1); rlComputeShaderDispatch((cells+255)/256,1,1);
         phase=3; rlSetUniform(rlGetLocationUniform(s_program,"u_phase"),&phase,RL_SHADER_UNIFORM_INT,1); rlComputeShaderDispatch(groups,1,1);
-        phase=2; rlSetUniform(rlGetLocationUniform(s_program,"u_phase"),&phase,RL_SHADER_UNIFORM_INT,1); rlComputeShaderDispatch(groups,1,1);
+        phase=2; rlSetUniform(rlGetLocationUniform(s_program,"u_phase"),&phase,RL_SHADER_UNIFORM_INT,1); rlSetUniform(solverIterationLoc,&i,RL_SHADER_UNIFORM_INT,1); rlComputeShaderDispatch(groups,1,1);
         t=s_stateA;s_stateA=s_stateB;s_stateB=t; rlBindShaderBuffer(s_stateA,0);rlBindShaderBuffer(s_stateB,1);
     }
     rlDisableShader();

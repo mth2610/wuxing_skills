@@ -11,7 +11,7 @@ layout(std430,binding=0) readonly buffer SourceState { FluidParticle source[]; }
 layout(std430,binding=1) writeonly buffer DestState { FluidParticle dest[]; };
 layout(std430,binding=2) buffer GridHeads { int heads[]; };
 layout(std430,binding=3) buffer GridNext { int next[]; };
-uniform int u_phase, u_particleCount, u_gridCellCount;
+uniform int u_phase, u_particleCount, u_gridCellCount, u_solverIteration;
 uniform float u_dt, u_cellSize;
 uniform float u_impactAge;
 uniform vec3 u_receiverPoint, u_receiverNormal, u_gridOrigin;
@@ -23,7 +23,8 @@ float particleAge(FluidParticle p) {
 bool particleIsResting(FluidParticle p) {
     float age=particleAge(p);
     return (p.phase_seed_impact_pad.x<0.5 && age>=0.60)
-        || (p.phase_seed_impact_pad.x>0.5 && age>=1.15);
+        || (p.phase_seed_impact_pad.x>0.5
+            && age>=mix(0.94, 1.04, step(1.5, p.phase_seed_impact_pad.x)));
 }
 
 float receiverClearance(FluidParticle p) {
@@ -95,31 +96,36 @@ void collideReceiver(inout FluidParticle p, uint particleId) {
      * first contact it cannot turn into perpetual radial crawling. */
     float bodySector = mix(0.20, 1.15, lobeMask)
                      * mix(0.42, 1.0, random2);
-    float bodyFlow = (0.035 + 0.145*rim) * bodySector;
-    float crownFlowGain = (0.10 + 0.25*rim) * mix(0.28, 1.48, tear)
-                        * (0.58 + 0.78*downstream);
-    float jetFlowGain = (0.06 + 0.10*random2);
+    float bodyFlow = (0.020 + 0.080*rim) * bodySector;
+    float crownFlowGain = (0.070 + 0.150*rim) * mix(0.35, 0.95, tear)
+                        * (0.72 + 0.45*downstream);
+    float jetFlowGain = (0.055 + 0.080*random2);
     float flowGain = mix(bodyFlow, crownFlowGain, isCrown);
     flowGain = mix(flowGain, jetFlowGain, isJet);
-    vec3 crownFlow = radialDir * max(-normalSpeed, 0.0) * flowGain;
+    /* A linear response sends a fixed particle budget over an area that grows
+     * quadratically with impact speed.  Saturate the converted momentum while
+     * preserving the real incoming tangential velocity. */
+    float impactSpeed = max(-normalSpeed, 0.0);
+    float impactMomentum = 7.0*(1.0-exp(-impactSpeed/7.0));
+    vec3 crownFlow = radialDir * impactMomentum * flowGain;
     /* The fast outer rim becomes the airborne crown; the centre is a heavy,
      * low rebound body.  A constant tiny normal response was why the previous
      * revision only spread across the ground. */
-    float bodyLift = mix(0.018, 0.065, random) * mix(0.45, 1.0, lobeMask);
-    float crownLift = mix(0.18, 0.48, rim) * mix(0.38, 1.34, tear);
-    float jetLift = mix(0.48, 0.68, random2);
+    float bodyLift = mix(0.014, 0.045, random) * mix(0.45, 1.0, lobeMask);
+    float crownLift = mix(0.14, 0.36, rim) * mix(0.45, 1.05, tear);
+    float jetLift = mix(0.42, 0.60, random2);
     float liftGain = mix(bodyLift, crownLift, isCrown);
     liftGain = mix(liftGain, jetLift, isJet);
-    float normalRebound = max(-normalSpeed, 0.0) * liftGain;
+    float normalRebound = impactMomentum * liftGain;
     float tangentRetention = mix(0.66, 0.84, isCrown);
     p.velocity_life.xyz = tangent * tangentRetention + crownFlow
                         + u_receiverNormal * normalRebound;
 }
 
 int cellIndex(vec3 p) {
-    ivec3 c=ivec3(floor((p-u_gridOrigin)/u_cellSize))+ivec3(16,4,16);
-    c=clamp(c,ivec3(0),ivec3(31,15,31));
-    return (c.z*16+c.y)*32+c.x;
+    ivec3 c=ivec3(floor((p-u_gridOrigin)/u_cellSize))+ivec3(16);
+    c=clamp(c,ivec3(0),ivec3(31));
+    return (c.z*32+c.y)*32+c.x;
 }
 void main() {
     uint id=gl_GlobalInvocationID.x;
@@ -134,9 +140,11 @@ void main() {
     if(u_phase==1) {
         float particlePhase = p.phase_seed_impact_pad.x;
         float localAge=particleAge(p);
-        bool airborneSplash = particlePhase > 0.5 && localAge < 0.90;
+        float airborneEnd = mix(0.62, 0.76, step(1.5, particlePhase));
+        float viscousEnd = mix(0.94, 1.04, step(1.5, particlePhase));
+        bool airborneSplash = particlePhase > 0.5 && localAge < airborneEnd;
         bool viscousTail = (particlePhase < 0.5 && localAge < 0.60)
-                        || (particlePhase > 0.5 && localAge < 1.15);
+                        || (particlePhase > 0.5 && localAge < viscousEnd);
         if (localAge < 0.32 || airborneSplash) {
             p.velocity_life.y-=9.81*u_dt;
             p.position_radius.xyz+=p.velocity_life.xyz*u_dt;
@@ -169,21 +177,53 @@ void main() {
         dest[id]=p;
         return;
     }
-    vec3 correction=vec3(0.0); int cell=cellIndex(p.position_radius.xyz);
-    ivec3 base=ivec3(cell%32,(cell/32)%16,cell/(32*16));
+    vec3 correction=vec3(0.0);
+    vec3 velocityDelta=vec3(0.0);
+    float velocityWeight=0.0;
+    bool solveCohesion=u_solverIteration==0;
+    int cell=cellIndex(p.position_radius.xyz);
+    ivec3 base=ivec3(cell%32,(cell/32)%32,cell/(32*32));
     for(int z=-1;z<=1;z++) for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++) {
-        ivec3 c=base+ivec3(x,y,z); if(any(lessThan(c,ivec3(0)))||any(greaterThan(c,ivec3(31,15,31)))) continue;
-        int n=heads[(c.z*16+c.y)*32+c.x];
+        ivec3 c=base+ivec3(x,y,z); if(any(lessThan(c,ivec3(0)))||any(greaterThan(c,ivec3(31)))) continue;
+        int n=heads[(c.z*32+c.y)*32+c.x];
         while(n>=0) { if(n!=int(id)) {
             vec3 d=p.position_radius.xyz-source[n].position_radius.xyz;
             float l=length(d);
             float rest=(p.position_radius.w+source[n].position_radius.w)*0.88;
             if(l>0.0001 && l<rest) {
                 correction+=normalize(d)*(rest-l)*0.42;
+            } else if(solveCohesion && l>=rest && l<rest*2.05) {
+                /* Cheap surface cohesion inside the existing grid/Jacobi pass.
+                 * It has finite support, so detached hero droplets stay
+                 * detached, while neighbouring crown samples retain a sheet
+                 * long enough for SSF to reconstruct one shared surface. */
+                float q=(l-rest)/(rest*1.05);
+                float falloff=(1.0-q)*(1.0-q);
+                float pairPhase=max(p.phase_seed_impact_pad.x,
+                                    source[n].phase_seed_impact_pad.x);
+                float cohesion=pairPhase<0.5?0.16:
+                               (pairPhase<1.5?0.11:0.035);
+                float ageFade=1.0-smoothstep(0.48, 0.96, particleAge(p));
+                correction-=normalize(d)*(l-rest)*cohesion*falloff*ageFade;
+            }
+            if(solveCohesion && l>0.0001 && l<rest*2.05) {
+                /* XSPH-style velocity blending supplies viscosity/coherent
+                 * motion without another GPU dispatch or a CPU readback. */
+                float w=1.0-l/(rest*2.05);
+                w=w*w*w;
+                velocityDelta+=(source[n].velocity_life.xyz
+                              - p.velocity_life.xyz)*w;
+                velocityWeight+=w;
             }
         } n=next[n]; }
     }
     p.position_radius.xyz+=correction;
+    if(velocityWeight>0.00001) {
+        float phase=p.phase_seed_impact_pad.x;
+        float xsph=phase<0.5?0.16:(phase<1.5?0.13:0.055);
+        float ageFade=1.0-smoothstep(0.55, 1.02, particleAge(p));
+        p.velocity_life.xyz+=velocityDelta/velocityWeight*xsph*ageFade;
+    }
     collideReceiver(p, id);
     dest[id]=p;
 }

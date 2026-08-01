@@ -24,7 +24,7 @@ static Shader s_captureShader, s_thicknessShader, s_smooth, s_composite;
 static int s_texelLoc, s_dirLoc, s_depthRangeLoc, s_fillLoc;
 static int s_smoothProjectionLoc, s_smoothInverseProjectionLoc;
 static int s_kernelRadiusLoc, s_filterRadiusLoc;
-static int s_compositeTexelLoc, s_thicknessLoc, s_sceneLoc, s_sceneDepthLoc, s_hasDepthLoc;
+static int s_compositeTexelLoc, s_sceneTexelLoc, s_thicknessLoc, s_sceneLoc, s_sceneDepthLoc, s_hasDepthLoc;
 static int s_inverseProjectionLoc, s_viewToWorldLoc, s_qualityTierLoc;
 static int s_sunDirectionLoc, s_sunColorLoc, s_skyAmbientLoc, s_groundAmbientLoc;
 static int s_pointLightCountLoc, s_pointLightPosLoc, s_pointLightColorLoc;
@@ -103,8 +103,9 @@ static RenderTexture2D FluidSurface_LoadScalarTarget(int w, int h) {
 }
 
 void FluidSurface_Init(int width,int height) {
-    /* SSF depth is view-dependent.  Half-res is a viable LOW fallback but
-     * aliases into zoom-dependent bands for small water kernels. */
+    /* Keep the authored High surface at native resolution while its optical
+     * look is being judged. R32F prevents the former zoom-dependent depth
+     * bands; lower tiers retain the cheaper reconstruction path. */
     float scale = GfxQuality_Get() >= GFX_HIGH ? 1.0f :
                   (GfxQuality_Get() >= GFX_MED ? 0.75f : 0.50f);
     int w = (int)(width*scale), h=(int)(height*scale);
@@ -131,6 +132,7 @@ void FluidSurface_Init(int width,int height) {
     s_kernelRadiusLoc=GetShaderLocation(s_smooth,"u_kernelRadius");
     s_filterRadiusLoc=GetShaderLocation(s_smooth,"u_filterRadius");
     s_compositeTexelLoc=GetShaderLocation(s_composite,"u_texel");
+    s_sceneTexelLoc=GetShaderLocation(s_composite,"u_sceneTexel");
     s_thicknessLoc=GetShaderLocation(s_composite,"u_thicknessTex"); s_sceneLoc=GetShaderLocation(s_composite,"u_sceneTex");
     s_sceneDepthLoc=GetShaderLocation(s_composite,"u_sceneDepthTex"); s_hasDepthLoc=GetShaderLocation(s_composite,"u_hasSceneDepth");
     s_inverseProjectionLoc=GetShaderLocation(s_composite,"u_inverseProjection");
@@ -205,6 +207,7 @@ void FluidSurface_Capture(Camera3D camera) {
 void FluidSurface_Composite(void) {
     if(!FluidSurface_HasPending()) return;
     Vector2 texel={1.0f/s_smoothB.texture.width,1.0f/s_smoothB.texture.height};
+    Vector2 sceneTexel={1.0f/GetRenderWidth(),1.0f/GetRenderHeight()};
     Texture2D scene=ScreenDistort_GetSceneTexture(), sceneDepth=ScreenDistort_GetRawDepthTexture(); int has=sceneDepth.id?1:0;
     Matrix inverseProjection=MatrixInvert(s_fluidProjection);
     Matrix viewToWorld=MatrixInvert(s_fluidView);
@@ -245,6 +248,7 @@ void FluidSurface_Composite(void) {
     BeginBlendMode(BLEND_ALPHA);
     BeginShaderMode(s_composite);
     SetShaderValue(s_composite,s_compositeTexelLoc,&texel,SHADER_UNIFORM_VEC2);
+    SetShaderValue(s_composite,s_sceneTexelLoc,&sceneTexel,SHADER_UNIFORM_VEC2);
     SetShaderValue(s_composite,s_hasDepthLoc,&has,SHADER_UNIFORM_INT);
     SetShaderValueMatrix(s_composite,s_inverseProjectionLoc,inverseProjection);
     SetShaderValueMatrix(s_composite,s_viewToWorldLoc,viewToWorld);
