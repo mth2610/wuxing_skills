@@ -95,6 +95,8 @@ void ParticleManager_DestroyEmitter(ParticleEmitterHandle handle);
 void ParticleManager_Emit(ParticleEmitterHandle handle, int count);
 ParticleEmitterStatus ParticleManager_GetEmitterStatus(ParticleEmitterHandle handle);
 bool ParticleManager_GetSurfaceStream(ParticleEmitterHandle handle, ParticleRenderStream *outStream);
+int ParticleManager_CopySurfaceSamples(const ParticleRenderStream *stream, ParticleSurfaceSample *outSamples, int maxSamples);
+bool ParticleManager_DrawSurfaceStream(const ParticleRenderStream *stream, Camera3D camera, Texture2D texture);
 void ParticleManager_Update(float dt);
 void ParticleManager_Draw(Camera3D camera, Texture2D fallbackTexture);
 void ParticleManager_GetStats(ParticleManagerStats *outStats);

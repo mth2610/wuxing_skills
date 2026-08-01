@@ -23,6 +23,7 @@ typedef struct
     float cer, ceg, ceb, cea;
     float life_rem, life_max, phase, active;
     float ff_index, ff_pad0, ff_pad1, ff_pad2; // ff_index: slot vào ForceFieldBuffer, -1 = none
+    float emitter_id, render_mode, route_pad0, route_pad1;
 } GpuParticleData;
 
 // ---------------------------------------------------------------------------
@@ -84,6 +85,7 @@ static GpuParticleData s_cpu_pool[MAX_GPU_PARTICLES];
 static int s_spawn_cursor = 0;
 static int s_spawn_start_this_frame = -1;
 static int s_spawn_count_this_frame = 0;
+static int s_filterEmitter = -1, s_filterRenderMode = -1;
 
 // Vector field textures cho FORCE_VECTOR_TEXTURE — không sở hữu (không Unload
 // ở đây), chỉ bind vào texture unit trước mỗi dispatch khi slot đang set.
@@ -289,6 +291,9 @@ void GpuParticleSystem_Spawn(GpuParticleConfig cfg)
     d.ff_pad0 = cfg.stretchStrength;
     d.ff_pad1 = cfg.collisionEnabled ? cfg.collisionElasticity : -1.0f;
     d.ff_pad2 = cfg.collisionFloorY;
+    d.emitter_id = (float)cfg.emitterId;
+    d.render_mode = (float)cfg.renderMode;
+    d.route_pad0 = d.route_pad1 = 0.0f;
 
     s_cpu_pool[idx] = d;
 
@@ -514,12 +519,17 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
         int loc_right = GetShaderLocation(s_draw_shader_gpu, "u_right");
         int loc_up = GetShaderLocation(s_draw_shader_gpu, "u_up");
         int loc_mvp = GetShaderLocation(s_draw_shader_gpu, "mvp");
+        int loc_filterEmitter = GetShaderLocation(s_draw_shader_gpu, "u_filterEmitter");
+        int loc_filterMode = GetShaderLocation(s_draw_shader_gpu, "u_filterRenderMode");
         if (loc_right >= 0)
             SetShaderValue(s_draw_shader_gpu, loc_right, &right, SHADER_UNIFORM_VEC3);
         if (loc_up >= 0)
             SetShaderValue(s_draw_shader_gpu, loc_up, &up, SHADER_UNIFORM_VEC3);
         if (loc_mvp >= 0)
             SetShaderValueMatrix(s_draw_shader_gpu, loc_mvp, matMVP);
+        float filterEmitter = (float)s_filterEmitter, filterMode = (float)s_filterRenderMode;
+        if (loc_filterEmitter >= 0) SetShaderValue(s_draw_shader_gpu, loc_filterEmitter, &filterEmitter, SHADER_UNIFORM_FLOAT);
+        if (loc_filterMode >= 0) SetShaderValue(s_draw_shader_gpu, loc_filterMode, &filterMode, SHADER_UNIFORM_FLOAT);
 
         rlBindShaderBuffer(s_ssbo, 0);
 
@@ -549,6 +559,9 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
             GpuParticleData *p = &s_cpu_pool[i];
             if (p->active < 0.5f)
                 continue;
+            if (s_filterRenderMode < 0 && (int)p->render_mode == 3) continue;
+            if (s_filterEmitter >= 0 && (int)p->emitter_id != s_filterEmitter) continue;
+            if (s_filterRenderMode >= 0 && (int)p->render_mode != s_filterRenderMode) continue;
 
             float t = 1.0f - (p->life_rem / p->life_max);
 
@@ -612,6 +625,14 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
         }
         rlEnd();
     }
+}
+
+void GpuParticleSystem_DrawSurfaceEmitter(Camera3D camera, Texture2D texture, int emitterId)
+{
+    s_filterEmitter = emitterId;
+    s_filterRenderMode = 3;
+    GpuParticleSystem_Draw(camera, texture);
+    s_filterEmitter = s_filterRenderMode = -1;
 }
 
 // ---------------------------------------------------------------------------

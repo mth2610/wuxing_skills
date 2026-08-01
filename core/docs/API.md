@@ -200,6 +200,8 @@
 ```c
   void InitParticleSystem(void);
   void ParticleSystem_SpawnLegacy(ParticleConfig config);
+  void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int renderMode);
+  int ParticleSystem_GetSurfaceSamples(int emitterId, ParticleSurfaceSample *outSamples, int maxSamples);
   void SpawnParticle(ParticleConfig config);
   void ParticleSystem_GetStats(int *active, int *max);
   void UpdateParticles(float dt);
@@ -212,7 +214,7 @@
   void SpawnParticleOnMesh(const struct MeshAdjacency *adj, Matrix transform, ParticleConfig config);
   void ParticleSystem_ResetForceFieldRegistry(void);
 ```
-**Structs** (fields in header): ParticleRadialBurstConfig, ParticleConfig
+**Structs** (fields in header): ParticleSurfaceSample, ParticleRadialBurstConfig, ParticleConfig
 
 ### `core/particles/particle_manager.h`
 ```c
@@ -224,6 +226,8 @@
   void ParticleManager_Emit(ParticleEmitterHandle handle, int count);
   ParticleEmitterStatus ParticleManager_GetEmitterStatus(ParticleEmitterHandle handle);
   bool ParticleManager_GetSurfaceStream(ParticleEmitterHandle handle, ParticleRenderStream *outStream);
+  int ParticleManager_CopySurfaceSamples(const ParticleRenderStream *stream, ParticleSurfaceSample *outSamples, int maxSamples);
+  bool ParticleManager_DrawSurfaceStream(const ParticleRenderStream *stream, Camera3D camera, Texture2D texture);
   void ParticleManager_Update(float dt);
   void ParticleManager_Draw(Camera3D camera, Texture2D fallbackTexture);
   void ParticleManager_GetStats(ParticleManagerStats *outStats);

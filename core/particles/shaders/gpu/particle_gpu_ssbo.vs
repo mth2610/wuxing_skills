@@ -17,6 +17,7 @@ struct GpuParticleData {
     vec4 color_end;
     vec4 life_data;
     vec4 ff_data; // không dùng ở VS, giữ để khớp stride với GPU/CPU struct
+    vec4 route_data;
 };
 
 layout(std430, binding = 0) readonly buffer ParticleBuffer {
@@ -28,6 +29,8 @@ in vec3 vertexPosition;   // template quad corner, xy trong [-1, 1]
 uniform mat4 mvp;
 uniform vec3 u_right;   // camera right vector
 uniform vec3 u_up;      // camera up vector
+uniform float u_filterEmitter; // < 0 = all
+uniform float u_filterRenderMode; // < 0 = all
 
 out vec2 fragTexCoord;
 out vec4 fragColor;
@@ -35,9 +38,13 @@ out vec4 fragColor;
 void main() {
     // TỐI ƯU HÓA: Chỉ đọc vector life_data, không copy toàn bộ struct
     vec4 life = particles[gl_InstanceID].life_data;
+    vec4 route = particles[gl_InstanceID].route_data;
 
     // Invisible nếu inactive hoặc vừa mới chết
-    if (life.w < 0.5 || life.y <= 0.0) {
+    if (life.w < 0.5 || life.y <= 0.0 ||
+        (u_filterRenderMode < 0.0 && abs(route.y - 3.0) < 0.25) ||
+        (u_filterEmitter >= 0.0 && abs(route.x - u_filterEmitter) > 0.25) ||
+        (u_filterRenderMode >= 0.0 && abs(route.y - u_filterRenderMode) > 0.25)) {
         // SỬA LỖI: Tạo Degenerate Vertex (w = 0.0). 
         // Bị culling tuyệt đối ở bước Perspective Divide của Rasterizer.
         gl_Position  = vec4(0.0); 

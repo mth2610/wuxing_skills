@@ -1,12 +1,16 @@
 #include "core/fluid_surface.h"
 #include "core/resource_manager.h"
 #include "core/screen_distort.h"
+#include "core/particles/particle_manager.h"
 #include "rlgl.h"
 #include <stddef.h>
 
 typedef struct { Vector3 position; float radius; } FluidSurfaceParticle;
 static FluidSurfaceParticle s_particles[FLUID_SURFACE_MAX_PARTICLES];
 static int s_count;
+static ParticleRenderStream s_gpuStreams[16];
+static int s_gpuStreamCount;
+static Texture2D s_surfaceTex;
 static RenderTexture2D s_capture, s_smoothA, s_smoothB;
 static Shader s_smooth, s_composite;
 static int s_texelLoc, s_thicknessLoc, s_sceneLoc, s_sceneDepthLoc, s_hasDepthLoc;
@@ -28,33 +32,42 @@ void FluidSurface_Init(int width,int height) {
     s_capture=FluidSurface_LoadDepthTarget(w,h); s_smoothA=LoadRenderTexture(w,h); s_smoothB=LoadRenderTexture(w,h);
     s_smooth=ResourceManager_LoadShader(NULL,"core/shaders/fluid_depth_smooth.fs");
     s_composite=ResourceManager_LoadShader(NULL,"core/shaders/fluid_surface.fs");
+    Image img = GenImageGradientRadial(64, 64, 0.0f, WHITE, BLANK);
+    s_surfaceTex = LoadTextureFromImage(img); UnloadImage(img);
+    SetTextureFilter(s_surfaceTex, TEXTURE_FILTER_BILINEAR);
     s_texelLoc=GetShaderLocation(s_smooth,"u_texel");
     s_thicknessLoc=GetShaderLocation(s_composite,"u_thicknessTex"); s_sceneLoc=GetShaderLocation(s_composite,"u_sceneTex");
     s_sceneDepthLoc=GetShaderLocation(s_composite,"u_sceneDepthTex"); s_hasDepthLoc=GetShaderLocation(s_composite,"u_hasSceneDepth");
 }
-void FluidSurface_Unload(void) { UnloadRenderTexture(s_capture); UnloadRenderTexture(s_smoothA); UnloadRenderTexture(s_smoothB); }
+void FluidSurface_Unload(void) { UnloadTexture(s_surfaceTex); UnloadRenderTexture(s_capture); UnloadRenderTexture(s_smoothA); UnloadRenderTexture(s_smoothB); }
 void FluidSurface_RegisterParticle(Vector3 p,float r) { if(s_count<FLUID_SURFACE_MAX_PARTICLES) s_particles[s_count++]=(FluidSurfaceParticle){p,r}; }
 bool FluidSurface_SubmitParticleStream(const ParticleRenderStream *stream) {
     if (!stream || stream->mode != PARTICLE_RENDER_SURFACE_INPUT) return false;
-    /* The stream stays opaque. CPU positions are registered through the
-     * existing surface path; GPU streams are consumed by their raster path,
-     * never copied into s_particles. GPU raster wiring lands with Phase C. */
+    if (stream->backend == PARTICLE_RENDER_BACKEND_CPU) {
+        ParticleSurfaceSample samples[FLUID_SURFACE_MAX_PARTICLES];
+        int count = ParticleManager_CopySurfaceSamples(stream, samples, FLUID_SURFACE_MAX_PARTICLES);
+        for (int i = 0; i < count; ++i) FluidSurface_RegisterParticle(samples[i].position, samples[i].radius);
+        return count > 0;
+    }
+    if (s_gpuStreamCount >= (int)(sizeof(s_gpuStreams)/sizeof(s_gpuStreams[0]))) return false;
+    s_gpuStreams[s_gpuStreamCount++] = *stream;
     return true;
 }
 void FluidSurface_Capture(Camera3D camera) {
-    if(!s_count) return;
+    if(!s_count && !s_gpuStreamCount) return;
     BeginTextureMode(s_capture); ClearBackground(BLANK); BeginMode3D(camera);
     for(int i=0;i<s_count;i++) DrawSphere(s_particles[i].position,s_particles[i].radius,WHITE);
+    for (int i=0;i<s_gpuStreamCount;i++) ParticleManager_DrawSurfaceStream(&s_gpuStreams[i], camera, s_surfaceTex);
     EndMode3D(); EndTextureMode();
     Vector2 texel={1.0f/s_capture.texture.width,1.0f/s_capture.texture.height};
     BeginTextureMode(s_smoothA); ClearBackground(WHITE); BeginShaderMode(s_smooth); SetShaderValue(s_smooth,s_texelLoc,&texel,SHADER_UNIFORM_VEC2); DrawTextureRec(s_capture.depth,(Rectangle){0,0,s_capture.depth.width,-s_capture.depth.height},(Vector2){0,0},WHITE); EndShaderMode(); EndTextureMode();
     BeginTextureMode(s_smoothB); ClearBackground(WHITE); BeginShaderMode(s_smooth); DrawTextureRec(s_smoothA.texture,(Rectangle){0,0,s_smoothA.texture.width,-s_smoothA.texture.height},(Vector2){0,0},WHITE); EndShaderMode(); EndTextureMode();
 }
 void FluidSurface_Composite(void) {
-    if(!s_count) return;
+    if(!s_count && !s_gpuStreamCount) return;
     Vector2 texel={1.0f/s_smoothB.texture.width,1.0f/s_smoothB.texture.height}; int slot1=1,slot2=2,slot3=3;
     Texture2D scene=ScreenDistort_GetSceneTexture(), sceneDepth=ScreenDistort_GetRawDepthTexture(); int has=sceneDepth.id?1:0;
     BeginBlendMode(BLEND_ALPHA); BeginShaderMode(s_composite); SetShaderValue(s_composite,GetShaderLocation(s_composite,"u_texel"),&texel,SHADER_UNIFORM_VEC2); SetShaderValue(s_composite,s_thicknessLoc,&slot1,SHADER_UNIFORM_INT); SetShaderValue(s_composite,s_sceneLoc,&slot2,SHADER_UNIFORM_INT); SetShaderValue(s_composite,s_sceneDepthLoc,&slot3,SHADER_UNIFORM_INT); SetShaderValue(s_composite,s_hasDepthLoc,&has,SHADER_UNIFORM_INT);
     rlActiveTextureSlot(slot1); rlEnableTexture(s_capture.texture.id); rlActiveTextureSlot(slot2); rlEnableTexture(scene.id); if(has){rlActiveTextureSlot(slot3);rlEnableTexture(sceneDepth.id);} rlActiveTextureSlot(0);
-    DrawTexturePro(s_smoothB.texture,(Rectangle){0,0,s_smoothB.texture.width,-s_smoothB.texture.height},(Rectangle){0,0,GetRenderWidth(),GetRenderHeight()},(Vector2){0,0},0,WHITE); EndShaderMode(); EndBlendMode(); s_count=0;
+    DrawTexturePro(s_smoothB.texture,(Rectangle){0,0,s_smoothB.texture.width,-s_smoothB.texture.height},(Rectangle){0,0,GetRenderWidth(),GetRenderHeight()},(Vector2){0,0},0,WHITE); EndShaderMode(); EndBlendMode(); s_count=0; s_gpuStreamCount=0;
 }

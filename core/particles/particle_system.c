@@ -57,6 +57,8 @@ typedef struct
   Color colorEnd;
   float radius;
   bool active;
+  int emitterId;
+  int renderMode;
 
   // --- COLD DATA (Con trỏ, ít khi rẽ nhánh) ---
   const ForceField *forceField;
@@ -218,6 +220,11 @@ void SpawnParticle(ParticleConfig config)
 
 void ParticleSystem_SpawnLegacy(ParticleConfig config)
 {
+  ParticleSystem_SpawnFromEmitter(config, -1, 0);
+}
+
+void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int renderMode)
+{
   ParticleConfig_Unify(&config);
   int targetIdx = Particle_AllocSlot();
   if (targetIdx == -1)
@@ -236,6 +243,8 @@ void ParticleSystem_SpawnLegacy(ParticleConfig config)
   p->radius = config.radius;
   p->lifetime = config.lifetime;
   p->maxLifetime = config.lifetime;
+  p->emitterId = emitterId;
+  p->renderMode = renderMode;
 
   p->forceField = config.forceField;
   p->gradient = config.gradient;
@@ -877,6 +886,9 @@ void DrawParticles(Camera3D camera, Texture2D texture)
   for (int a = 0; a < s_activeCount; a++)
   {
     ParticleInternal *p = &g_Particles[s_activeIds[a]];
+    // SURFACE_INPUT is rendered exclusively by FluidSurface; drawing it here
+    // would reveal its source particles as billboards as well.
+    if (p->renderMode == 3) continue;
     // Headless wisp: the particle exists to carry a path, not to be a sprite.
     // Skipped before the batching decision so it cannot split a batch either.
     if (p->trailOnly) continue;
@@ -1256,6 +1268,18 @@ void ParticleSystem_GetStats(int *active, int *max)
 {
   *active = s_activeCount;
   *max = MAX_PARTICLES;
+}
+
+int ParticleSystem_GetSurfaceSamples(int emitterId, ParticleSurfaceSample *outSamples, int maxSamples)
+{
+  if (!outSamples || maxSamples <= 0) return 0;
+  int count = 0;
+  for (int i = 0; i < MAX_PARTICLES && count < maxSamples; ++i) {
+    ParticleInternal *p = &g_Particles[i];
+    if (!p->active || p->emitterId != emitterId || p->renderMode != 3) continue;
+    outSamples[count++] = (ParticleSurfaceSample){ {p->x, p->y, p->z}, p->radius };
+  }
+  return count;
 }
 
 #ifndef PI

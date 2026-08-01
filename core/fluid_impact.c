@@ -21,6 +21,7 @@ typedef struct {
     Vector3 position, velocity;
     float radius, life;
     unsigned char bounces;
+    ParticleEmitterHandle surfaceEmitter;
     bool active;
 } FluidHeroDroplet;
 
@@ -71,7 +72,7 @@ static void FluidImpact_EmitBackground(const ParticleConfig *particle)
 {
     ParticleEmitterDesc desc = {0};
     desc.simulationPolicy = PARTICLE_SIM_AUTO;
-    desc.renderMode = PARTICLE_RENDER_SURFACE_INPUT;
+    desc.renderMode = PARTICLE_RENDER_BILLBOARD; /* detached micro-spray */
     desc.particle = *particle;
     desc.moduleFlags = PARTICLE_MODULE_GRAVITY | PARTICLE_MODULE_DRAG |
                        PARTICLE_MODULE_COLOR_OVER_LIFE | PARTICLE_MODULE_SIZE_OVER_LIFE |
@@ -89,6 +90,25 @@ static int FluidImpact_HeroCount(float force01)
     int base = GfxQuality_Get() <= GFX_LOW ? 3 : 5;
     int extra = GfxQuality_Get() >= GFX_HIGH ? 9 : 5;
     return base + (int)(extra * force01);
+}
+
+static ParticleEmitterHandle FluidImpact_CreateSurfaceEmitter(Vector3 position, Vector3 velocity,
+                                                               float radius, float lifetime)
+{
+    const VFX_ElementMaterial *water = VFX_Material(VC_MAT_WATER);
+    ParticleEmitterDesc desc = {0};
+    desc.simulationPolicy = PARTICLE_SIM_AUTO;
+    desc.renderMode = PARTICLE_RENDER_SURFACE_INPUT;
+    /* The separate hero pool owns gameplay collision/residue. The visual
+     * surface is therefore free to use direct GPU raster on capable devices. */
+    desc.moduleFlags = PARTICLE_MODULE_GRAVITY | PARTICLE_MODULE_DRAG;
+    desc.debugName = "FluidImpact hero surface";
+    desc.particle = (ParticleConfig){ .position=position, .velocity=velocity,
+        .colorStart=water->soft, .colorEnd=VC_WithAlpha(water->body, 0), .radius=radius,
+        .lifetime=lifetime, .forceField=&s_gravity };
+    ParticleEmitterHandle h = ParticleManager_CreateEmitter(&desc);
+    if (h != PARTICLE_EMITTER_INVALID) ParticleManager_Emit(h, 1);
+    return h;
 }
 
 static void FluidImpact_AddResidue(Vector3 point, Vector3 normal, float radius, float opacity)
@@ -178,13 +198,15 @@ void FluidImpact_SpawnWater(const FluidImpactEvent *event)
         Vector3 radial = Vector3Add(Vector3Scale(tangent, cosf(angle)), Vector3Scale(bitangent, sinf(angle)));
         float speed = scale * (1.8f + 3.2f * force01) * spread;
         FluidHeroDroplet *d = &s_hero[s_nextHero++ % FLUID_IMPACT_MAX_HERO_DROPLETS];
+        Vector3 start = Vector3Add(event->hitPoint, Vector3Scale(normal, 0.03f));
+        Vector3 velocity = Vector3Add(Vector3Add(Vector3Scale(impulse, speed * 0.75f),
+                                                  Vector3Scale(radial, speed * 0.65f)),
+                                      Vector3Scale(normal, speed * 0.45f));
+        float radius = scale * (0.025f + ((float)GetRandomValue(0, 1000) / 1000.0f) * 0.04f);
+        float lifetime = 0.35f + ((float)GetRandomValue(0, 1000) / 1000.0f) * 0.45f;
         *d = (FluidHeroDroplet){
-            .position = Vector3Add(event->hitPoint, Vector3Scale(normal, 0.03f)),
-            .velocity = Vector3Add(Vector3Add(Vector3Scale(impulse, speed * 0.75f),
-                                               Vector3Scale(radial, speed * 0.65f)),
-                                   Vector3Scale(normal, speed * 0.45f)),
-            .radius = scale * (0.025f + ((float)GetRandomValue(0, 1000) / 1000.0f) * 0.04f),
-            .life = 0.35f + ((float)GetRandomValue(0, 1000) / 1000.0f) * 0.45f,
+            .position = start, .velocity = velocity, .radius = radius, .life = lifetime,
+            .surfaceEmitter = FluidImpact_CreateSurfaceEmitter(start, velocity, radius * 1.75f, lifetime),
             .active = true
         };
     }
@@ -213,7 +235,7 @@ void FluidImpact_Update(float dt)
         FluidHeroDroplet *d = &s_hero[i];
         if (!d->active) continue;
         d->life -= dt;
-        if (d->life <= 0.0f) { d->active = false; continue; }
+        if (d->life <= 0.0f) { if (d->surfaceEmitter != PARTICLE_EMITTER_INVALID) ParticleManager_DestroyEmitter(d->surfaceEmitter); d->active = false; continue; }
         Vector3 from = d->position;
         d->velocity.y -= 9.81f * dt;
         d->velocity = Vector3Scale(d->velocity, fmaxf(0.0f, 1.0f - 1.4f * dt));
@@ -233,15 +255,21 @@ void FluidImpact_Update(float dt)
             FluidImpact_AddResidue(hit.position, hit.normal, d->radius * 5.0f, 0.35f);
             s_secondaryMarksThisFrame++;
         }
-        if (d->bounces >= FLUID_HERO_MAX_BOUNCES || Vector3Length(d->velocity) < 0.45f)
+        if (d->bounces >= FLUID_HERO_MAX_BOUNCES || Vector3Length(d->velocity) < 0.45f) {
+            if (d->surfaceEmitter != PARTICLE_EMITTER_INVALID) ParticleManager_DestroyEmitter(d->surfaceEmitter);
             d->active = false;
+        }
     }
 }
 
 void FluidImpact_Draw(void)
 {
-    for (int i = 0; i < FLUID_IMPACT_MAX_HERO_DROPLETS; ++i)
-        if (s_hero[i].active) FluidSurface_RegisterParticle(s_hero[i].position, s_hero[i].radius * 1.75f);
+    for (int i = 0; i < FLUID_IMPACT_MAX_HERO_DROPLETS; ++i) {
+        FluidHeroDroplet *d = &s_hero[i];
+        if (!d->active || d->surfaceEmitter == PARTICLE_EMITTER_INVALID) continue;
+        ParticleRenderStream stream;
+        if (ParticleManager_GetSurfaceStream(d->surfaceEmitter, &stream)) FluidSurface_SubmitParticleStream(&stream);
+    }
 }
 
 void FluidImpact_GetStats(int *active, int *max)

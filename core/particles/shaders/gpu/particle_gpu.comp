@@ -17,6 +17,7 @@ struct GpuParticleData {
     vec4 color_end;      // rgba normalized (0..1)
     vec4 life_data;      // x = life_remaining, y = life_max, z = phase, w = active (0/1)
     vec4 ff_data;        // x = force field slot (-1 = none), yzw = reserved
+    vec4 route_data;     // x = emitter id, y = ParticleRenderMode
 };
 
 layout(std430, binding = 0) buffer ParticleBuffer {

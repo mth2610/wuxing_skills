@@ -107,8 +107,9 @@ void ParticleManager_Emit(ParticleEmitterHandle handle, int count)
                 .lifetime=p->lifetime, .forceField=p->forceField, .stretchStrength=p->stretchStrength,
                 .stretchMinSpeed=p->stretchMinSpeed, .collisionEnabled=p->collisionEnabled,
                 .collisionElasticity=p->collisionElasticity, .collisionFloorY=p->collisionFloorY,
-                .emissiveBoost=p->render.emissiveBoost });
-        } else ParticleSystem_SpawnLegacy(e->desc.particle);
+                .emissiveBoost=p->render.emissiveBoost, .emitterId=handle,
+                .renderMode=(int)e->desc.renderMode });
+        } else ParticleSystem_SpawnFromEmitter(e->desc.particle, handle, (int)e->desc.renderMode);
     }
 }
 
@@ -121,6 +122,20 @@ bool ParticleManager_GetSurfaceStream(ParticleEmitterHandle handle, ParticleRend
     ParticleEmitterRuntime *e = &s_emitters[handle];
     if (e->desc.renderMode != PARTICLE_RENDER_SURFACE_INPUT || e->status != PARTICLE_EMITTER_OK) return false;
     *outStream = (ParticleRenderStream){ e->desc.renderMode, e->gpu ? PARTICLE_RENDER_BACKEND_GPU : PARTICLE_RENDER_BACKEND_CPU, handle, e };
+    return true;
+}
+
+int ParticleManager_CopySurfaceSamples(const ParticleRenderStream *stream, ParticleSurfaceSample *outSamples, int maxSamples)
+{
+    if (!stream || !outSamples || maxSamples <= 0 || stream->mode != PARTICLE_RENDER_SURFACE_INPUT) return 0;
+    if (stream->backend != PARTICLE_RENDER_BACKEND_CPU) return 0; /* GPU raster path owns GPU samples. */
+    return ParticleSystem_GetSurfaceSamples(stream->emitter, outSamples, maxSamples);
+}
+
+bool ParticleManager_DrawSurfaceStream(const ParticleRenderStream *stream, Camera3D camera, Texture2D texture)
+{
+    if (!stream || stream->mode != PARTICLE_RENDER_SURFACE_INPUT || stream->backend != PARTICLE_RENDER_BACKEND_GPU) return false;
+    GpuParticleSystem_DrawSurfaceEmitter(camera, texture, stream->emitter);
     return true;
 }
 

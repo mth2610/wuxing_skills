@@ -67,6 +67,9 @@ typedef struct {
 
     // Emissive intensity boost for HDR Bloom (1.0 = default, >1.0 = glowing core)
     float   emissiveBoost;
+    /* Manager-owned routing metadata. Never authored by VFX code. */
+    int     emitterId;
+    int     renderMode;
 } GpuParticleConfig;
 
 // Khởi tạo — detect compute capability, tạo buffer/shader
@@ -80,6 +83,7 @@ void GpuParticleSystem_Update(float dt);
 
 // Vẽ tất cả particle dưới dạng camera-facing billboard
 void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture);
+void GpuParticleSystem_DrawSurfaceEmitter(Camera3D camera, Texture2D texture, int emitterId);
 
 // Cleanup
 void GpuParticleSystem_Unload(void);
