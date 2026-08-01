@@ -1,5 +1,6 @@
 #include "core/screen_distort.h"
 #include "rlgl.h"
+#include <math.h>
 #include <string.h>
 #include <stdlib.h> // getenv (WUXING_NO_HDR)
 
@@ -28,6 +29,8 @@ static bool s_vfxBodyCleared;
 static bool s_vfxEmissionCleared;
 static bool s_vfxBodyUsed;
 static bool s_vfxEmissionUsed;
+static Rectangle s_softDepthRegion;
+static bool s_softDepthRegionValid;
 static bool s_vfxLayersActive;
 static void ScreenDistort_BeginLayer(RenderTexture2D target, bool *cleared);
 static Shader distortShader;
@@ -347,6 +350,7 @@ void ScreenDistort_Begin(void)
   // two HDR full-screen clears and four framebuffer switches every frame.
   s_vfxBodyUsed = false;
   s_vfxEmissionUsed = false;
+  s_softDepthRegionValid = false;
 }
 
 void ScreenDistort_End(void)
@@ -527,20 +531,51 @@ void ScreenDistort_Draw(Camera3D camera)
 #define SOFT_DEPTH_KEEPALIVE_FRAMES 20
 static int s_softDepthIdleFrames = SOFT_DEPTH_KEEPALIVE_FRAMES + 1; // start idle: nothing has asked yet
 
+void ScreenDistort_RequestSoftDepthRegion(Rectangle screenRegion)
+{
+  const float maxW = (float)renderTex.texture.width;
+  const float maxH = (float)renderTex.texture.height;
+  if (screenRegion.width <= 0.0f || screenRegion.height <= 0.0f || maxW <= 0.0f || maxH <= 0.0f)
+    return;
+  const float margin = 48.0f;
+  float x0 = fmaxf(0.0f, screenRegion.x - margin);
+  float y0 = fmaxf(0.0f, screenRegion.y - margin);
+  float x1 = fminf(maxW, screenRegion.x + screenRegion.width + margin);
+  float y1 = fminf(maxH, screenRegion.y + screenRegion.height + margin);
+  if (x1 <= x0 || y1 <= y0) return;
+  if (!s_softDepthRegionValid) {
+    s_softDepthRegion = (Rectangle){x0, y0, x1 - x0, y1 - y0};
+    s_softDepthRegionValid = true;
+  } else {
+    float oldX1 = s_softDepthRegion.x + s_softDepthRegion.width;
+    float oldY1 = s_softDepthRegion.y + s_softDepthRegion.height;
+    s_softDepthRegion.x = fminf(s_softDepthRegion.x, x0);
+    s_softDepthRegion.y = fminf(s_softDepthRegion.y, y0);
+    s_softDepthRegion.width = fmaxf(oldX1, x1) - s_softDepthRegion.x;
+    s_softDepthRegion.height = fmaxf(oldY1, y1) - s_softDepthRegion.y;
+  }
+}
+
 void ScreenDistort_SnapshotDepth(void)
 {
   if (!s_depthTextureActive)
     return;
   if (s_softDepthIdleFrames > SOFT_DEPTH_KEEPALIVE_FRAMES)
     return;             // nobody has wanted soft-particle depth for a while: skip the whole pass
+  if (!s_softDepthRegionValid)
+    return;
   s_softDepthIdleFrames++;
   // [TỐI ƯU HÓA]: Lược bỏ hoàn toàn khối lệnh SetShaderValue(u_near, u_far) ở đây
   // vì đã được gán chết trên GPU ở hàm _Init, giảm API Draw Call.
   BeginTextureMode(prevDepthTex);
   BeginShaderMode(depthCopyShader);
-  DrawTextureRec(renderTex.depth,
-                 (Rectangle){0, 0, (float)renderTex.texture.width, -(float)renderTex.texture.height},
-                 (Vector2){0, 0}, WHITE);
+  Rectangle source = {s_softDepthRegion.x, s_softDepthRegion.y,
+                      s_softDepthRegion.width, -s_softDepthRegion.height};
+  Rectangle destination = {s_softDepthRegion.x / SOFT_DEPTH_DOWNSCALE,
+                           s_softDepthRegion.y / SOFT_DEPTH_DOWNSCALE,
+                           s_softDepthRegion.width / SOFT_DEPTH_DOWNSCALE,
+                           s_softDepthRegion.height / SOFT_DEPTH_DOWNSCALE};
+  DrawTexturePro(renderTex.depth, source, destination, (Vector2){0, 0}, 0.0f, WHITE);
   EndShaderMode();
   EndTextureMode();
 }

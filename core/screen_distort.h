@@ -84,6 +84,9 @@ void ScreenDistort_Draw(Camera3D camera);
 // (frame vừa render xong) sang prevDepthTex để frame KẾ TIẾP particle sample
 // an toàn (không feedback loop).
 void ScreenDistort_SnapshotDepth(void);
+/* Submit the full-resolution screen region required by soft particles this
+ * frame. Multiple requests are unioned; the next snapshot copies only it. */
+void ScreenDistort_RequestSoftDepthRegion(Rectangle screenRegion);
 
 // Texture độ sâu của frame TRƯỚC (trễ 1 frame) — sample được. Giá trị đã
 // LINEARIZED (world-space distance), KHÔNG phải NDC [0..1] thô.

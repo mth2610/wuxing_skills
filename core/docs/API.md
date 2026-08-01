@@ -212,6 +212,7 @@
   void ParticleSystem_SetLighting(float strength01, float scatter01);
   void ParticleSystem_GetLighting(float *outStrength, float *outScatter);
   bool IsParticleSystemActive(void);
+  bool ParticleSystem_HasAdditiveParticles(void);
   void ParticleSystem_SpawnRadialBurst(Vector3 origin, float sizeScale, const ParticleRadialBurstConfig *cfg);
   void SpawnParticleOnMesh(const struct MeshAdjacency *adj, Matrix transform, ParticleConfig config);
   void ParticleSystem_ResetForceFieldRegistry(void);
@@ -235,6 +236,7 @@
   void ParticleManager_Draw(Camera3D camera, Texture2D fallbackTexture);
   void ParticleManager_DrawBody(Camera3D camera, Texture2D fallbackTexture);
   void ParticleManager_DrawEmission(Camera3D camera, Texture2D fallbackTexture);
+  bool ParticleManager_HasEmissionParticles(void);
   void ParticleManager_GetStats(ParticleManagerStats *outStats);
   void ParticleManager_SpawnCompatibility(ParticleConfig config);
 ```
@@ -318,6 +320,7 @@
   void ScreenDistort_Update(float dt);
   void ScreenDistort_Draw(Camera3D camera);
   void ScreenDistort_SnapshotDepth(void);
+  void ScreenDistort_RequestSoftDepthRegion(Rectangle screenRegion);
   Texture2D ScreenDistort_GetDepthTexture(void);
   Texture2D ScreenDistort_GetSceneTexture(void);
   Texture2D ScreenDistort_GetRawDepthTexture(void);

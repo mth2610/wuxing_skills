@@ -248,6 +248,7 @@ void UnloadParticleSystem(void);
 void ParticleSystem_SetLighting(float strength01, float scatter01);
 void ParticleSystem_GetLighting(float *outStrength, float *outScatter);
 bool IsParticleSystemActive(void);
+bool ParticleSystem_HasAdditiveParticles(void);
 
 // ============================================================
 // PARTICLE RADIAL BURST SYSTEM (Hợp nhất từ Phase 5)

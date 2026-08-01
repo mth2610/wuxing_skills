@@ -192,6 +192,10 @@ void ParticleManager_DrawEmission(Camera3D c, Texture2D t)
     rlDrawRenderBatchActive();
     EndBlendMode();
 }
+bool ParticleManager_HasEmissionParticles(void)
+{
+    return ParticleSystem_HasAdditiveParticles() || GpuParticleSystem_ActiveCount() > 0;
+}
 void ParticleManager_GetStats(ParticleManagerStats *outStats) { if (!outStats) return; ParticleManager_RefreshStats(); *outStats = s_stats; }
 
 void ParticleManager_SpawnCompatibility(ParticleConfig config)

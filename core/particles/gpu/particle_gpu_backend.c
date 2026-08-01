@@ -567,6 +567,12 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
             int loc_softFade = GetShaderLocation(drawShader, "u_softFade");
             if (softFade > 0.0f)
             {
+                /* GPU particles are buffer-resident, so the CPU cannot cheaply
+                 * derive their screen union. Preserve correctness with a full
+                 * request; CPU particles use their much tighter bounds. */
+                ScreenDistort_RequestSoftDepthRegion((Rectangle){0.0f, 0.0f,
+                                                       (float)GetScreenWidth(),
+                                                       (float)GetScreenHeight()});
                 ScreenDistort_BindDepthForSoftParticles(drawShader, GPU_PARTICLE_SOFT_DEPTH_SLOT);
                 softParticlePass = true;
             }

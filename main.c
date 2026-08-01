@@ -145,9 +145,13 @@ static void DrawParticleTrailVFXLayers(Camera3D camera, Texture2D particleTextur
   bool hasTrails = !g_debugHideTrails && GetActiveTrailCount() > 0;
   bool hasParticles = !g_debugHideParticles &&
                       (particleStats.activeCpuParticles > 0 || particleStats.activeGpuParticles > 0);
+  bool hasEmissionParticles = hasParticles && ParticleManager_HasEmissionParticles();
   if (!hasTrails && !hasParticles) return;
 
-  ScreenDistort_BeginVFXBody();
+  // Particle/trail bodies use ordinary alpha-over into the HDR scene target.
+  // This preserves material hue without allocating a full-screen body buffer
+  // for every small puff or ribbon.  Only actual light remains in the
+  // separate emission target below.
   if (hasTrails) DrawTrailEntitiesBody(camera);
   rlDrawRenderBatchActive();
   rlDisableDepthMask();
@@ -159,14 +163,14 @@ static void DrawParticleTrailVFXLayers(Camera3D camera, Texture2D particleTextur
   // normal post-FX bloom. Rendering them into a second full-resolution
   // emission target duplicates the geometry and costs an extra fullscreen
   // composite even for a single trail.
-  if (hasParticles) {
+  if (hasEmissionParticles) {
     ScreenDistort_BeginVFXEmission();
     rlDisableDepthMask();
     ParticleManager_DrawEmission(camera, particleTexture);
     rlDrawRenderBatchActive();
     rlEnableDepthMask();
   }
-  ScreenDistort_EndVFXLayer();
+  if (hasEmissionParticles) ScreenDistort_EndVFXLayer();
 }
 
 /* Post-scene VFX that need screen-space preparation before their body pass. */

@@ -36,6 +36,7 @@ int main(void)
     bad += !Has("core/screen_distort.c", "vfxEmissionTex");
     bad += !Has("core/screen_distort.c", "UnloadColorLayerTarget");
     bad += !Has("core/screen_distort.c", "SOFT_DEPTH_DOWNSCALE 2");
+    bad += !Has("core/screen_distort.c", "ScreenDistort_RequestSoftDepthRegion");
     bad += !Has("core/screen_distort.c", "s_vfxLayersActive");
     bad += !Has("core/screen_distort.c", "ScreenDistort_BeginLayer(vfxEmissionTex, &s_vfxEmissionCleared);");
     bad += !Has("core/screen_distort.c", "s_vfxBodyUsed = false;");
@@ -84,7 +85,7 @@ int main(void)
     bad += !Has("main.c", "DrawDecalVFXLayer(camera);");
     bad += !Has("main.c", "DrawParticleTrailVFXLayers(camera, globalParticleTex);");
     bad += !Has("main.c", "if (g_debugHideParticles && g_debugHideTrails) return;");
-    bad += !Has("main.c", "DrawTrailEntitiesBody(camera);");
+    bad += !Has("main.c", "Particle/trail bodies use ordinary alpha-over into the HDR scene target.");
     bad += !Has("main.c", "Ribbons are already lifted in the HDR body shader");
     bad += !Has("main.c", "DecalSystem_Draw();");
 

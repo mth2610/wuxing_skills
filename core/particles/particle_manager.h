@@ -105,6 +105,8 @@ void ParticleManager_Update(float dt);
 void ParticleManager_Draw(Camera3D camera, Texture2D fallbackTexture);
 void ParticleManager_DrawBody(Camera3D camera, Texture2D fallbackTexture);
 void ParticleManager_DrawEmission(Camera3D camera, Texture2D fallbackTexture);
+/* Whether drawing the emission target would submit any CPU/GPU billboard. */
+bool ParticleManager_HasEmissionParticles(void);
 void ParticleManager_GetStats(ParticleManagerStats *outStats);
 
 /* Compatibility bridge used exclusively by SpawnParticle. */

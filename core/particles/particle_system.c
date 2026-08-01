@@ -839,6 +839,35 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
                 viewDir.z * right.x - viewDir.x * right.z,
                 viewDir.x * right.y - viewDir.y * right.x};
 
+  /* Request only the region soft particles can occupy next frame.  The depth
+   * copy is therefore proportional to visible VFX coverage, not display size. */
+  if (s_softFade > 0.0f)
+  {
+    Rectangle bounds = {0};
+    bool hasBounds = false;
+    float screenH = (float)GetScreenHeight();
+    float halfFovy = camera.fovy * DEG2RAD * 0.5f;
+    for (int a = 0; a < s_activeCount; ++a)
+    {
+      ParticleInternal *p = &g_Particles[s_activeIds[a]];
+      if (p->renderMode == 3 || p->trailOnly) continue;
+      Vector3 pos = {p->x, p->y, p->z};
+      float distance = Vector3Distance(camera.position, pos);
+      if (distance <= 0.01f) continue;
+      Vector2 center = GetWorldToScreen(pos, camera);
+      float radiusPx = p->radius * screenH / (2.0f * distance * tanf(halfFovy));
+      Rectangle r = {center.x - radiusPx, center.y - radiusPx, radiusPx * 2.0f, radiusPx * 2.0f};
+      if (!hasBounds) { bounds = r; hasBounds = true; }
+      else {
+        float x1 = fmaxf(bounds.x + bounds.width, r.x + r.width);
+        float y1 = fmaxf(bounds.y + bounds.height, r.y + r.height);
+        bounds.x = fminf(bounds.x, r.x); bounds.y = fminf(bounds.y, r.y);
+        bounds.width = x1 - bounds.x; bounds.height = y1 - bounds.y;
+      }
+    }
+    if (hasBounds) ScreenDistort_RequestSoftDepthRegion(bounds);
+  }
+
   // Sắp xếp các hạt từ xa đến gần (Back-to-Front Depth Sorting)
   for (int a = 0; a < s_activeCount; a++)
   {
@@ -1273,6 +1302,17 @@ void DrawParticlesEmission(Camera3D camera, Texture2D texture)
 void UnloadParticleSystem(void) { InitParticleSystem(); }
 
 bool IsParticleSystemActive(void) { return s_activeCount > 0; }
+
+bool ParticleSystem_HasAdditiveParticles(void)
+{
+  for (int i = 0; i < s_activeCount; ++i)
+  {
+    const ParticleInternal *p = &g_Particles[s_activeIds[i]];
+    if (p->blendMode == VFX_BLEND_ADDITIVE && p->renderMode != 3 && !p->trailOnly)
+      return true;
+  }
+  return false;
+}
 
 void ParticleSystem_ResetForceFieldRegistry(void) {}
 
