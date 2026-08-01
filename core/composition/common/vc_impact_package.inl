@@ -179,13 +179,26 @@ void VFX_ComposeImpactPackage(Vector3 pos, Vector3 normal, VC_MaterialId matId,
         normal = (Vector3){0.0f, 1.0f, 0.0f};
     normal = Vector3Normalize(normal);
 
+    // Water owns a physical-looking secondary layer: the gameplay collision
+    // normal aligns its residue, while FluidImpact chooses compute or CPU/VBO
+    // droplets internally. Other element packages remain unchanged.
+    if (matId == VC_MAT_WATER)
+    {
+        FluidImpactEvent fluid = {
+            .hitPoint = pos,
+            .hitNormal = normal,
+            .impulseDirection = normal,
+            .force01 = sev,
+            .scale = scale
+        };
+        FluidImpact_SpawnWater(&fluid);
+    }
+
     // The beat parameters have to outlive this call: the sequence fires over the
     // next fraction of a second, long after this stack frame is gone. One slot
-    // per sequence, so a burst of impacts cannot alias each other. (This ring
-    // used to hold the `normal` for a decal beat that never fired — see the
-    // primaries above. `normal` is still taken because callers pass a surface
-    // and the API should not churn, but nothing consumes it yet: the decal path
-    // is ground-projected, so there is no orientation to give it.)
+    // per sequence, so a burst of impacts cannot alias each other. Water has
+    // already consumed `normal` above for its surface-aligned residue; the
+    // generic scheduled decal remains ground-projected for every material.
     ImpactPkgParams *prm = &s_ipParams[s_ipParamNext];
     s_ipParamNext = (s_ipParamNext + 1) % VFX_SEQ_MAX;
     prm->mat = matId;

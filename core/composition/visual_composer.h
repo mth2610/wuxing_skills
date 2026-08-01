@@ -525,6 +525,7 @@ void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float 
 void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
 int VFX_ComposeEmberTrail(Vector3 pos, Vector3 velocity, VC_MaterialId mat, float scale, float embersPerSecond);
 void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
+void VFX_ComposeFluidImpact(Vector3 pos);
 void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
 void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
 void VFX_ComposeParticleUpgradesTest(Vector3 pos);

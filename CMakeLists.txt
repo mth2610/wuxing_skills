@@ -116,6 +116,8 @@ add_executable(wuxing
     core/audio_system.c
     core/particles/particle_system.c
     compute/gpu_particle_system.c
+    core/fluid_impact.c
+    core/fluid_surface.c
     core/path_spline.c
     core/post_fx.c
     core/ribbon_strip.c
@@ -249,6 +251,8 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/core/trails/shaders)
 configure_file(core/trails/shaders/trail_glow.fs ${CMAKE_CURRENT_BINARY_DIR}/core/trails/shaders/trail_glow.fs COPYONLY)
 configure_file(core/shaders/water_splash.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/water_splash.fs COPYONLY)
 configure_file(core/shaders/water_splash.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/water_splash.vs COPYONLY)
+configure_file(core/shaders/fluid_depth_smooth.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/fluid_depth_smooth.fs COPYONLY)
+configure_file(core/shaders/fluid_surface.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/fluid_surface.fs COPYONLY)
 
 configure_file(core/shaders/common/vs_header.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/vs_header.glsl COPYONLY)
 configure_file(core/shaders/common/fs_header.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/fs_header.glsl COPYONLY)

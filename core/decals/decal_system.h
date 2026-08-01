@@ -32,6 +32,11 @@ typedef struct {
     float flowSpeed;      // tốc độ cuộn radial, thường 0.3-1.0
     float flowStrength;   // trộn flow vs texture gốc [0,1], thường 0.5-1.0
     float glowIntensity;  // boost HDR cho texel sáng (khe nứt) để bloom bắt được; 0 = tắt glow
+    // An oriented decal is a true surface-aligned quad.  It is used for marks
+    // on walls/ceilings where the legacy ground projection is invalid.
+    bool oriented;
+    Vector3 surfaceNormal;
+    Vector3 surfaceTangent;
     bool conformalStamp;  // subdivided terrain-following material stamp (P4)
     GroundHeightSampleFn heightFn;
     void *heightUserData;
@@ -69,6 +74,14 @@ void DecalSystem_AddFlowEx(Vector3 pos, float rotation, float rotSpeed,
                            Color tint, BlendMode blendMode, float yOffset,
                            float flowSpeed, float flowStrength,
                            float glowIntensity);
+
+// Surface-aligned counterpart to AddEx. `normal` is normalized internally;
+// `rotation` is a roll in degrees around it. `yOffset` is applied along the
+// normal, never along world Y. This is a one-shot event API, not a projector.
+void DecalSystem_AddOrientedEx(Vector3 pos, Vector3 normal, float rotation,
+                               float rotSpeed, float scaleStart, float scaleEnd,
+                               Texture2D texture, float lifetime, Color tint,
+                               BlendMode blendMode, float yOffset);
 
 // P4 material stamp: a subdivided disc follows the supplied ground-height
 // receiver. It never emits a camera-compensated quad, so its silhouette cannot

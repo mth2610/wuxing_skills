@@ -352,6 +352,7 @@ void DecalSystem_Init(void);
 void DecalSystem_Add(Vector3 pos, float rot, float scale, Texture2D tex, float life, Color tint);
 void DecalSystem_AddEx(Vector3 pos, float rot, float rotSpeed, float scaleStart, float scaleEnd, Texture2D tex, float life, Color tint, BlendMode blendMode, float yOffset);
 void DecalSystem_AddFlowEx(Vector3 pos, float rot, float rotSpeed, float scaleStart, float scaleEnd, Texture2D tex, float life, Color tint, BlendMode blendMode, float yOffset, float flowSpeed, float flowStrength);
+void DecalSystem_AddOrientedEx(Vector3 pos, Vector3 normal, float rotation, float rotSpeed, float scaleStart, float scaleEnd, Texture2D texture, float lifetime, Color tint, BlendMode blendMode, float yOffset);
 void DecalSystem_AddStreak(const Vector3 *points, int count, float rot, float scale, Texture2D tex, float life, Color tint);
 void DecalSystem_Update(float dt);
 void DecalSystem_Draw(void);
@@ -361,6 +362,16 @@ void DecalSystem_Unload(void);
 * Static pool, `MAX_DECALS = 64`, no malloc.
 * `DecalSystem_AddStreak`: thin wrapper that calls `DecalSystem_Add` once per point in `points[0..count-1]` — for path-shaped effects (thorn lines, scorch trails) instead of hand-rolling a loop. Caller's responsibility to pass a reasonable `count` (e.g. up to 32, matching `SkillParams.pathPoints[32]`); not auto-clamped against `MAX_DECALS` headroom, same convention as `SamplePath`'s `maxSegments` in `core/path_spline.h`.
 * **`DecalSystem_AddFlowEx`**: same params as `AddEx` plus `flowSpeed`/`flowStrength`. Texture radially scrolls outward from the decal center over time (`core/decals/shaders/decal_flow.fs`) instead of staying static — for lava-crack-crawl / ripple-spreading visuals. `flowSpeed` ~0.3–1.0 (radial units/sec), `flowStrength` ~0.5–1.0 (0 = looks identical to a static decal, 1 = fully replaced by the scrolled sample). Draws via a separate shader pass from static decals — does not affect `Add`/`AddEx` behavior or performance. Already wired into `SpawnGroundDecal` for `DECAL_PRESET_FIRE_LAVA`/`DECAL_PRESET_WATER_RIPPLE` (see Ground Decal Preset section); every other preset is unaffected (static).
+* **`DecalSystem_AddOrientedEx`**: a surface-aligned static quad for a known hit normal. Use it for walls/ceilings; `rotation` rolls around `normal`, and `yOffset` lifts along the normal. Do not use it as an every-frame projector.
+
+### Fluid Impacts (`core/fluid_impact.h`)
+
+```c
+void FluidImpact_SpawnWater(const FluidImpactEvent *event);
+void FluidImpact_SetCollisionQuery(FluidImpactCollisionQueryFn query, void *userData);
+```
+
+Gameplay submits `hitPoint`/`hitNormal`; hero droplets perform deterministic swept collision through `FluidImpact_SetCollisionQuery`, while compute/CPU-VBO particles are background density only. Without a provider, Core collides against the active map ground; walls/props require the world/physics owner to register its query. Full budget and wetness fallback contract: [`FLUID_IMPACT_SPEC.md`](FLUID_IMPACT_SPEC.md).
 
 Rules:
 - Call `DecalSystem_Init()` once at startup, `DecalSystem_Update(dt)` every frame to age out decals.

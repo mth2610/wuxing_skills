@@ -168,6 +168,16 @@
   float SkillCurve_Eval(const SkillCurve *curve, float t01);
 ```
 
+### `core/fluid_impact.h`
+```c
+  void FluidImpact_SpawnWater(const FluidImpactEvent *event);
+  void FluidImpact_SetCollisionQuery(FluidImpactCollisionQueryFn query, void *userData);
+  void FluidImpact_Update(float dt);
+  void FluidImpact_Draw(void);
+  void FluidImpact_GetStats(int *active, int *max);
+```
+**Structs** (fields in header): FluidImpactCollision, FluidImpactEvent
+
 ### `core/force_field.h`
 ```c
   float Noise_Perlin3D(float x, float y, float z);
@@ -254,6 +264,7 @@
   void DecalSystem_Add(Vector3 pos, float rotation, float scale, Texture2D texture, float lifetime, Color tint);
   void DecalSystem_AddEx(Vector3 pos, float rotation, float rotSpeed, float scaleStart, float scaleEnd, Texture2D texture, float lifetime, Color tint, BlendMode blendMode, float yOffset);
   void DecalSystem_AddFlowEx(Vector3 pos, float rotation, float rotSpeed, float scaleStart, float scaleEnd, Texture2D texture, float lifetime, Color tint, BlendMode blendMode, float yOffset, float flowSpeed, float flowStrength, float glowIntensity);
+  void DecalSystem_AddOrientedEx(Vector3 pos, Vector3 normal, float rotation, float rotSpeed, float scaleStart, float scaleEnd, Texture2D texture, float lifetime, Color tint, BlendMode blendMode, float yOffset);
   void DecalSystem_AddConformalEx(Vector3 pos, float rotation, float rotSpeed, float scaleStart, float scaleEnd, Texture2D texture, float lifetime, Color tint, BlendMode blendMode, float yOffset, GroundHeightSampleFn heightFn, void *heightUserData, GroundSurfaceSampleFn surfaceFn, float edgePhase, float fadeInSeconds, float fadeOutSeconds, float maxSlopeDegrees);
   void DecalSystem_AddStreak(const Vector3 *points, int count, float rotation, float scale, Texture2D texture, float lifetime, Color tint);
   void DecalSystem_Update(float dt);
@@ -276,6 +287,8 @@
   void ScreenDistort_Draw(Camera3D camera);
   void ScreenDistort_SnapshotDepth(void);
   Texture2D ScreenDistort_GetDepthTexture(void);
+  Texture2D ScreenDistort_GetSceneTexture(void);
+  Texture2D ScreenDistort_GetRawDepthTexture(void);
   void ScreenDistort_BindDepthForSoftParticles(Shader shader, int textureSlot);
   void ScreenDistort_UnbindSoftParticleDepth(int textureSlot);
 ```
@@ -620,6 +633,7 @@
   void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   int VFX_ComposeEmberTrail(Vector3 pos, Vector3 velocity, VC_MaterialId mat, float scale, float embersPerSecond);
   void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
+  void VFX_ComposeFluidImpact(Vector3 pos);
   void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
   void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   void VFX_ComposeParticleUpgradesTest(Vector3 pos);

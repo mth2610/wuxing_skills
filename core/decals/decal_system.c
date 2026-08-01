@@ -59,6 +59,15 @@ static inline Vector3 Decal_TransformCornerOpt(const DecalEntity *d, float lx, f
     float rx = x * cy + z * sy;
     float rz = -x * sy + z * cy;
 
+    if (d->oriented)
+    {
+        Vector3 bitangent = Vector3Normalize(Vector3CrossProduct(d->surfaceNormal,
+                                                                   d->surfaceTangent));
+        return Vector3Add(d->position,
+                          Vector3Add(Vector3Scale(d->surfaceTangent, rx),
+                                     Vector3Scale(bitangent, rz)));
+    }
+
     // Rotate theo camera yaw (sử dụng cache toàn cục)
     float tx = rx * g_cos_cam_yaw + rz * g_sin_cam_yaw;
     float tz = -rx * g_sin_cam_yaw + rz * g_cos_cam_yaw;
@@ -75,7 +84,10 @@ static void Decal_AppendQuad(const DecalEntity *d, Color c, float elapsed)
     float rad = d->rotation * DEG2RAD;
     float cy = cosf(rad);
     float sy = sinf(rad);
-    float scale_z = d->scale * g_cam_stretch;
+    // Camera foreshortening is only a readability correction for legacy
+    // horizontal ground decals. A surface-aligned mark has real geometry and
+    // must preserve its authored aspect ratio.
+    float scale_z = d->scale * (d->oriented ? 1.0f : g_cam_stretch);
 
     Vector3 v0 = Decal_TransformCornerOpt(d, -0.5f, -0.5f, cy, sy, scale_z);
     Vector3 v1 = Decal_TransformCornerOpt(d, -0.5f, 0.5f, cy, sy, scale_z);
@@ -196,6 +208,9 @@ static int SpawnDecalCommon(Vector3 pos, float rotation, float rotSpeed,
     d->flowSpeed = 0.0f;
     d->flowStrength = 0.0f;
     d->glowIntensity = 0.0f;
+    d->oriented = false;
+    d->surfaceNormal = (Vector3){0.0f, 1.0f, 0.0f};
+    d->surfaceTangent = (Vector3){1.0f, 0.0f, 0.0f};
     d->conformalStamp = false;
     d->heightFn = NULL;
     d->heightUserData = NULL;
@@ -328,6 +343,27 @@ void DecalSystem_AddFlowEx(Vector3 pos, float rotation, float rotSpeed,
     g_DecalPool[idx].flowSpeed = flowSpeed;
     g_DecalPool[idx].flowStrength = flowStrength;
     g_DecalPool[idx].glowIntensity = glowIntensity;
+}
+
+void DecalSystem_AddOrientedEx(Vector3 pos, Vector3 normal, float rotation,
+                               float rotSpeed, float scaleStart, float scaleEnd,
+                               Texture2D texture, float lifetime, Color tint,
+                               BlendMode blendMode, float yOffset)
+{
+    if (Vector3LengthSqr(normal) < 0.0001f)
+        normal = (Vector3){0.0f, 1.0f, 0.0f};
+    normal = Vector3Normalize(normal);
+
+    Vector3 reference = fabsf(normal.y) < 0.95f ? (Vector3){0.0f, 1.0f, 0.0f}
+                                                  : (Vector3){1.0f, 0.0f, 0.0f};
+    Vector3 tangent = Vector3Normalize(Vector3CrossProduct(reference, normal));
+    int idx = SpawnDecalCommon(pos, rotation, rotSpeed, scaleStart, scaleEnd, texture,
+                               lifetime, tint, blendMode, 0.0f);
+    DecalEntity *d = &g_DecalPool[idx];
+    d->oriented = true;
+    d->surfaceNormal = normal;
+    d->surfaceTangent = tangent;
+    d->position = Vector3Add(pos, Vector3Scale(normal, yOffset));
 }
 
 void DecalSystem_Add(Vector3 pos, float rotation, float scale,

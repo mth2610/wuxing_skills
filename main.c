@@ -1,6 +1,8 @@
 #include "core/camera_fx.h"
 #include "core/audio_system.h"
 #include "core/decals/decal_system.h"
+#include "core/fluid_impact.h"
+#include "core/fluid_surface.h"
 #include "core/metaball_fx.h"
 #include "core/particles/particle_system.h"
 #include "compute/gpu_particle_system.h"
@@ -1021,6 +1023,7 @@ int main(int argc, char **argv) {
   VFXLight_Init();
   DecalSystem_Init();
   ScreenDistort_Init(screenWidth, screenHeight);
+  FluidSurface_Init(screenWidth, screenHeight);
   PostFX_Init(screenWidth, screenHeight);
   SurfaceMaterial_Init(); // G2 — must precede InitSandbox (CharacterModel_Load applies it)
   GfxQuality_Set(GfxQuality_Default()); // Real Shading P0 — platform-appropriate tier
@@ -1715,6 +1718,7 @@ int main(int argc, char **argv) {
     Afterimage_Update(dt);
     UpdateParticles(dt);
     GpuParticleSystem_Update(dt);
+    FluidImpact_Update(dt);
     UpdateTrailSystem(dt);
     VFXLight_Update(dt);
     // Đợt E1a — decay any live radial burst and project its focal point.
@@ -1800,6 +1804,7 @@ int main(int argc, char **argv) {
     if (!g_debugHideDecals) {
         DecalSystem_SetCamera(camera);
         DecalSystem_Draw();
+        FluidImpact_Draw();
     }
 
     if (!g_debugHideMeshes) {
@@ -1859,10 +1864,12 @@ int main(int argc, char **argv) {
     MyEndMode3D();
     ScreenDistort_End();
     ScreenDistort_SnapshotDepth(); // soft particles: snapshot this frame's depth for next frame's sampling
+    FluidSurface_Capture(camera);
 
     PostFX_Begin();
     ClearBackground(BLACK);
     ScreenDistort_Draw(camera);
+    FluidSurface_Composite();
     PostFX_End();
 
     ClearBackground(BLACK);
@@ -2004,6 +2011,7 @@ int main(int argc, char **argv) {
   UnloadTrailSystem();
   DecalSystem_Unload();
   ScreenDistort_Unload();
+  FluidSurface_Unload();
   Atmosphere_Unload();
   MetaballFX_Unload();
   UnloadSkillManager();

@@ -386,6 +386,17 @@
       "draw_call": "VFX_ComposeBlackHole(VC_MAT_FIRE, $POS, 1.5f, $TIME)"
     },
     {
+      "source": "water/fluid_impact_test.inl",
+      "fn": "VFX_ComposeFluidImpact",
+      "label": "FLUID IMPACT",
+      "category": "water",
+      "fixture": "burst",
+      "lifecycle": "event",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeFluidImpact($POS)"
+    },
+    {
       "source": "water/ice_crystal.inl",
       "fn": "VFX_ComposeIceCrystal",
       "label": "ICE CRYSTAL",

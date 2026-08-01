@@ -81,6 +81,9 @@ void ScreenDistort_SnapshotDepth(void);
 // Texture độ sâu của frame TRƯỚC (trễ 1 frame) — sample được. Giá trị đã
 // LINEARIZED (world-space distance), KHÔNG phải NDC [0..1] thô.
 Texture2D ScreenDistort_GetDepthTexture(void);
+// Current frame's raw scene attachments. Valid after ScreenDistort_End().
+Texture2D ScreenDistort_GetSceneTexture(void);
+Texture2D ScreenDistort_GetRawDepthTexture(void);
 
 // Bind depth texture vào textureSlot + set u_cameraDepthTex/u_cameraNear/
 // u_cameraFar/u_resolution lên shader (bỏ qua an toàn nếu shader không khai

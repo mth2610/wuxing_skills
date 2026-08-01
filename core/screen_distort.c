@@ -410,6 +410,8 @@ void ScreenDistort_SnapshotDepth(void)
 }
 
 Texture2D ScreenDistort_GetDepthTexture(void) { return prevDepthTex.texture; }
+Texture2D ScreenDistort_GetSceneTexture(void) { return renderTex.texture; }
+Texture2D ScreenDistort_GetRawDepthTexture(void) { return s_depthTextureActive ? renderTex.depth : (Texture2D){0}; }
 
 void ScreenDistort_BindDepthForSoftParticles(Shader shader, int textureSlot)
 {
