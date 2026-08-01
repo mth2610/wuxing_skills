@@ -13,9 +13,10 @@
   a Vulkan sampler or lighting defect.
 - **Rule:** author a shaped emissive effect as an unlit alpha **core** (to retain
   its element hue) plus a larger, lower-energy additive **halo** (to emit). Do
-  not use one high-energy additive quad for both jobs. The headless
-  `emissive_background_test.c` reproduces the failure with FlameVolume's real
-  default alpha/overlap values.
+  not use one high-energy additive quad for both jobs. Submit the core through
+  `ScreenDistort_BeginVFXBody()` and the halo through
+  `ScreenDistort_BeginVFXEmission()`; `bright_vfx_isolation_test.c` is the
+  renderer-independent regression probe for this blend law.
 
 ### GPU particle blend state must not inherit the CPU particle pass
 - **Symptom:** a GPU VFX appears additive in some frames/scenes but alpha-blended

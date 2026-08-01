@@ -28,8 +28,8 @@ int main(void)
     bad += !Has("core/particles/particle_manager.c", "GpuParticleSystem_Draw(c, t);");
     bad += !Has("main.c", "ScreenDistort_BeginVFXBody();");
     bad += !Has("main.c", "ScreenDistort_BeginVFXEmission();");
-    bad += !Has("main.c", "ParticleManager_DrawBody(camera, globalParticleTex);");
-    bad += !Has("main.c", "ParticleManager_DrawEmission(camera, globalParticleTex);");
+    bad += !Has("main.c", "ParticleManager_DrawBody(camera, particleTexture);");
+    bad += !Has("main.c", "ParticleManager_DrawEmission(camera, particleTexture);");
     bad += !Has("core/particles/particle_system.c", "ParticleManager_SpawnCompatibility(config)");
     bad += !Has("core/particles/gpu/particle_gpu_backend.c", "ScreenDistort_BindDepthForSoftParticles(drawShader, GPU_PARTICLE_SOFT_DEPTH_SLOT)");
     bad += !Has("core/particles/gpu/particle_gpu_backend.c", "rlDisableDepthMask();");

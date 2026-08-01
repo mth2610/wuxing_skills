@@ -430,6 +430,31 @@ void ScreenDistort_Draw(Camera3D camera);        // Draw the result with distort
 void ScreenDistort_Unload(void);                 // Free (engine shutdown; not called from a skill)
 ```
 
+**VFX render-layer contract (required for new render code):** `main.c` owns
+the scene target and shared manager passes. A self-contained skill or
+composition must route its own draw through one of these pairs:
+
+```c
+ScreenDistort_BeginVFXBody();     // coloured, translucent material
+/* draw with BLEND_ALPHA */
+ScreenDistort_EndVFXLayer();
+
+ScreenDistort_BeginVFXEmission(); // light/halo only
+/* draw with BLEND_ADDITIVE */
+ScreenDistort_EndVFXLayer();
+```
+
+- Put smoke, decal pigment, trail/particle cores, and any surface whose hue
+  must survive a bright map in the **body** layer.
+- Put only low-energy glow, sparks, and bloom halos in the **emission** layer.
+  An effect needing both must draw its body first and halo separately.
+- Do not add per-skill branches to `main.c`, render directly into the scene
+  target, or assume an additive sprite can keep hue on a bright destination.
+  The compositor alpha-overlays body, then adds emission.
+- Flush pending rlgl batches before changing layers when mixing raylib batched
+  drawing with immediate rendering. Set custom shader uniforms inside
+  `BeginShaderMode`.
+
 **Skill API — only call Add:**
 ```c
 void ScreenDistort_Add(Vector3 worldPos, float radius, float strength, float lifetime, float speed);

@@ -178,14 +178,9 @@ void ParticleManager_DrawBody(Camera3D c, Texture2D t)
 {
     if (!s_initialized) return;
     DrawParticlesBody(c, t);
-    // GPU particles share the same generic body/emission law as CPU
-    // particles: alpha body carries hue over bright terrain, additive pass
-    // remains the physical light bloom.
-    rlDrawRenderBatchActive();
-    BeginBlendMode(BLEND_ALPHA);
-    GpuParticleSystem_Draw(c, t);
-    rlDrawRenderBatchActive();
-    EndBlendMode();
+    // GPU billboards currently have an emissive-only material contract. Do
+    // not force their glow sheets through alpha body compositing; black RGB in
+    // a soft glow border would become a visible dark halo.
 }
 void ParticleManager_DrawEmission(Camera3D c, Texture2D t)
 {

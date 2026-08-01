@@ -649,6 +649,6 @@ void DecalSystem_Unload(void)
 
 void DecalSystem_GetStats(int *active, int *max)
 {
-    *active = s_activeCount;
-    *max = MAX_DECALS;
+    if (active != NULL) *active = s_activeCount;
+    if (max != NULL) *max = MAX_DECALS;
 }

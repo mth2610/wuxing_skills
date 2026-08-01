@@ -33,11 +33,14 @@ visible window was tried first and rejected, see `main.c`'s comment at the
 top of `main()`), runs with a fixed `1/60` `dt` instead of real time (fast,
 deterministic), and exits automatically once all registered cases resolve.
 
-**Registering a case**: call `AutoTest_Register(name, step, maxFrames)` from
-inside your module's own existing `Init*()` function, guarded by
-`if (AutoTest_IsEnabled())` — no central registry file to touch. `step` is a
-single function matching the codebase's existing `Update(dt)`-with-internal-
-state-machine idiom (e.g. `ThornState` in `wood_thorns_skill.c`):
+**Registering a case**: game-loop integration cases belong in
+`sandbox/auto_test_cases.c` and are registered by
+`AutoTestCases_Register()` after the player and game systems exist. A
+self-contained module may instead call `AutoTest_Register(name, step,
+maxFrames)` from its own `Init*()` function, guarded by
+`if (AutoTest_IsEnabled())`. `step` is a single function matching the
+codebase's existing `Update(dt)`-with-internal-state-machine idiom (e.g.
+`ThornState` in `wood_thorns_skill.c`):
 
 ```c
 typedef AutoTestResult (*AutoTestStepFn)(int frameInCase, char *outReason, int outReasonSize);

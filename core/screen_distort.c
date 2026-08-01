@@ -26,6 +26,8 @@ static RenderTexture2D vfxBodyTex;
 static RenderTexture2D vfxEmissionTex;
 static bool s_vfxBodyCleared;
 static bool s_vfxEmissionCleared;
+static bool s_vfxBodyUsed;
+static bool s_vfxEmissionUsed;
 static bool s_vfxLayersActive;
 static void ScreenDistort_BeginLayer(RenderTexture2D target, bool *cleared);
 static Shader distortShader;
@@ -168,6 +170,11 @@ static void UnloadColorLayerTarget(RenderTexture2D target)
 // snapshot LINEARIZED scene depth: an 8-bit RGBA copy crushes all far depths
 // (near=0.1, far=15000) to 255, making scene vs particle depth
 // indistinguishable. R32F keeps full precision.
+/* Soft fade is deliberately low-frequency: it removes a hard intersection,
+ * not a geometric edge.  Half-resolution depth cuts the only full-screen
+ * soft-particle pass to one quarter of its former pixel cost. */
+#define SOFT_DEPTH_DOWNSCALE 2
+
 static RenderTexture2D LoadLinearDepthTarget(int width, int height)
 {
   RenderTexture2D target = {0};
@@ -244,7 +251,9 @@ void ScreenDistort_Init(int width, int height)
 
   if (s_depthTextureActive)
   {
-    prevDepthTex = LoadLinearDepthTarget(width, height);
+    int softDepthWidth = (width + SOFT_DEPTH_DOWNSCALE - 1) / SOFT_DEPTH_DOWNSCALE;
+    int softDepthHeight = (height + SOFT_DEPTH_DOWNSCALE - 1) / SOFT_DEPTH_DOWNSCALE;
+    prevDepthTex = LoadLinearDepthTarget(softDepthWidth, softDepthHeight);
     if (prevDepthTex.id == 0 || !rlFramebufferComplete(prevDepthTex.id))
     {
       TraceLog(LOG_WARNING, "ScreenDistort: linear-depth framebuffer incomplete, falling back to standard FBO");
@@ -334,16 +343,10 @@ void ScreenDistort_Begin(void)
   BeginTextureMode(renderTex);
   s_vfxBodyCleared = false;
   s_vfxEmissionCleared = false;
-  // The compositor samples both VFX targets every frame. Clear both before
-  // any screen-specific draw path can choose not to submit one of them;
-  // otherwise an unused HDR target contributes uninitialised/stale light to
-  // the entire screen.
-  if (s_vfxLayersActive)
-  {
-    ScreenDistort_BeginLayer(vfxBodyTex, &s_vfxBodyCleared);
-    ScreenDistort_BeginLayer(vfxEmissionTex, &s_vfxEmissionCleared);
-    rlEnableFramebuffer(renderTex.id);
-  }
+  // Layers are cleared lazily by their producer.  On an idle scene this avoids
+  // two HDR full-screen clears and four framebuffer switches every frame.
+  s_vfxBodyUsed = false;
+  s_vfxEmissionUsed = false;
 }
 
 void ScreenDistort_End(void)
@@ -373,8 +376,16 @@ static void ScreenDistort_BeginLayer(RenderTexture2D target, bool *cleared)
     *cleared = true;
   }
 }
-void ScreenDistort_BeginVFXBody(void) { ScreenDistort_BeginLayer(vfxBodyTex, &s_vfxBodyCleared); }
-void ScreenDistort_BeginVFXEmission(void) { ScreenDistort_BeginLayer(vfxEmissionTex, &s_vfxEmissionCleared); }
+void ScreenDistort_BeginVFXBody(void)
+{
+  s_vfxBodyUsed = true;
+  ScreenDistort_BeginLayer(vfxBodyTex, &s_vfxBodyCleared);
+}
+void ScreenDistort_BeginVFXEmission(void)
+{
+  s_vfxEmissionUsed = true;
+  ScreenDistort_BeginLayer(vfxEmissionTex, &s_vfxEmissionCleared);
+}
 void ScreenDistort_EndVFXLayer(void)
 {
   rlDrawRenderBatchActive();
@@ -474,9 +485,9 @@ void ScreenDistort_Draw(Camera3D camera)
 
   BeginShaderMode(distortShader);
   int hasVfxLayersLoc = GetShaderLocation(distortShader, "u_hasVfxLayers");
-  int hasVfxLayers = s_vfxLayersActive ? 1 : 0;
+  int hasVfxLayers = (s_vfxLayersActive && s_vfxBodyUsed) ? 1 : 0;
   SetShaderValue(distortShader, hasVfxLayersLoc, &hasVfxLayers, SHADER_UNIFORM_INT);
-  if (s_vfxLayersActive)
+  if (s_vfxLayersActive && s_vfxBodyUsed)
   {
     SetShaderValueTexture(distortShader, GetShaderLocation(distortShader, "u_vfxBodyTex"), vfxBodyTex.texture);
   }
@@ -495,7 +506,7 @@ void ScreenDistort_Draw(Camera3D camera)
   // Body composition intentionally has only scene + body samplers. Add the
   // already-premultiplied emission RGB with an ordinary fullscreen pass; this
   // avoids the fragile three-sampler descriptor path on MoltenVK/Intel.
-  if (s_vfxLayersActive)
+  if (s_vfxLayersActive && s_vfxEmissionUsed)
   {
     BeginBlendMode(BLEND_ADD_COLORS);
     DrawTexturePro(vfxEmissionTex.texture,

@@ -2,6 +2,7 @@
 #include "core/force_field.h"
 #include "core/composition/visual_composer.h"
 #include "core/geometry/procedural_mesh_utils.h"
+#include "core/resource_manager.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <math.h>
@@ -30,6 +31,11 @@ static Image s_tubeNoiseImg = {0};
 static Texture2D s_globalTrailTex = {0};
 void TrailSystem_SetGlobalTexture(Texture2D tex) { s_globalTrailTex = tex; }
 static Shader defaultShader;
+static Shader s_bodyShader;
+static bool s_bodyShaderTried = false;
+/* Set only while DrawTrailEntitiesLayer owns the draw; layered helpers use it
+ * to keep alpha body to the one textured material layer. */
+static int s_drawLayerFilter = -1;
 
 #define TRAIL_SHADER_CACHE_SIZE 16
 static unsigned int shaderCacheIds[TRAIL_SHADER_CACHE_SIZE];
@@ -139,6 +145,20 @@ static float scratchSegRatio[TRAIL_HISTORY_COUNT];
 static inline Shader ResolveShader(const TrailEntity *t)
 {
     return (t->shader.id != 0) ? t->shader : defaultShader;
+}
+
+static bool TrailUsesAdditiveBlend(const TrailEntity *t)
+{
+    BlendMode blend = t->useCustomBlendMode ? t->blendMode
+                                             : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
+    return blend != BLEND_ALPHA;
+}
+
+static void EnsureTrailBodyShader(void)
+{
+    if (s_bodyShaderTried) return;
+    s_bodyShaderTried = true;
+    s_bodyShader = ResourceManager_LoadShader(NULL, "core/trails/shaders/trail_body.fs");
 }
 
 static inline float SmoothStepC(float edge0, float edge1, float x)
@@ -1236,6 +1256,10 @@ static void DrawLayeredRibbon(const TrailEntity *t, int drawCount, Texture2D fal
 {
     for (int L = 0; L < t->layerCount; L++)
     {
+        // Halo/core are emission energy. Putting them into the alpha body
+        // stacks three soft quads and erases the authored flow texture.
+        if (s_drawLayerFilter == 0 && TrailUsesAdditiveBlend(t) &&
+            t->layerCount >= 2 && L != 1) continue;
         const TrailLayer *ly = &t->layers[L];
         float wMul = (ly->widthMul > 0.0f) ? ly->widthMul : 1.0f;
         float aMul = (ly->alphaMul > 0.0f) ? ly->alphaMul : 1.0f;
@@ -1326,6 +1350,8 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
 
     for (int L = 0; L < t->layerCount; L++)
     {
+        if (s_drawLayerFilter == 0 && TrailUsesAdditiveBlend(t) &&
+            t->layerCount >= 2 && L != 1) continue;
         const TrailLayer *ly = &t->layers[L];
         float aMul = (ly->alphaMul > 0.0f) ? ly->alphaMul : 1.0f;
         Color col = scratchOuter[0].tint;
@@ -1641,6 +1667,9 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
     if (activeCount == 0)
         return;
 
+    s_drawLayerFilter = layerFilter;
+    if (layerFilter == 0) EnsureTrailBodyShader();
+
     float time = (float)GetTime();
     Matrix matView = GetCameraMatrix(camera);
     TrailCameraBasis camBasis = {
@@ -1663,7 +1692,8 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
         if (!IsTrailVisible(t, camera))
             continue;
 
-        Shader sh = ResolveShader(t);
+        Shader sh = (layerFilter == 0 && TrailUsesAdditiveBlend(t) && s_bodyShader.id != 0)
+                        ? s_bodyShader : ResolveShader(t);
         BlendMode sourceBm = t->useCustomBlendMode ? t->blendMode
                                                    : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
         if (layerFilter == 1 && sourceBm == BLEND_ALPHA) continue;
@@ -1764,7 +1794,9 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
             BlendMode currentBm = (layerFilter == 0) ? BLEND_ALPHA : sourceBm;
             Texture2D currentTex = t->sprite.id > 0 ? t->sprite : s_globalTrailTex;
 
-            if (TrailMatchesRenderGroup(t, &groups[g], currentBm, ResolveShader(t), currentTex))
+            Shader currentShader = (layerFilter == 0 && TrailUsesAdditiveBlend(t) && s_bodyShader.id != 0)
+                                     ? s_bodyShader : ResolveShader(t);
+            if (TrailMatchesRenderGroup(t, &groups[g], currentBm, currentShader, currentTex))
             {
                 DrawTrailGeometry(t, camera, &camBasis, time);
             }
@@ -1777,6 +1809,7 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
     rlSetTexture(0);
     rlDrawRenderBatchActive();
     rlEnableDepthMask();
+    s_drawLayerFilter = -1;
 }
 
 void DrawTrailEntities(Camera3D camera) { DrawTrailEntitiesLayer(camera, -1); }

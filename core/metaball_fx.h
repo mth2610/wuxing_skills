@@ -35,6 +35,8 @@ void MetaballFX_Unload(void);
 
 // Gọi từ skill Draw (an toàn gọi trong 3D pass — không có lệnh GL).
 void MetaballFX_RegisterBlob(Vector3 worldPos, float radius);
+/* True only until Prepare consumes this frame's registrations. */
+bool MetaballFX_HasRegisteredBlobs(void);
 
 // Gọi từ main.c, NGOÀI BeginMode3D/EndMode3D, 1 lần/frame. Chuẩn bị mask và
 // blur, đồng thời tự xoá registry. Ngay sau đó gọi Composite trong VFX body.

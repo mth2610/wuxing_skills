@@ -331,6 +331,7 @@
   void MetaballFX_Init(int width, int height);
   void MetaballFX_Unload(void);
   void MetaballFX_RegisterBlob(Vector3 worldPos, float radius);
+  bool MetaballFX_HasRegisteredBlobs(void);
   void MetaballFX_Prepare(Camera3D camera, Color tint, float threshold, float smoothness);
   void MetaballFX_Composite(void);
   void MetaballFX_DrawRegistered(Camera3D camera, Color tint, float threshold, float smoothness);

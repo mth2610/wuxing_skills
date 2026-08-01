@@ -80,6 +80,27 @@ OpenGL is a state machine, and Raylib uses a deferred batch renderer. Modifying 
 ## 5. Shader Coding Standards
 All custom shaders (`.vs` and `.fs`) must adhere to project-wide guidelines for compatibility and visual consistency.
 
+### Bright-Background VFX Contract (Mandatory)
+The scene destination can already be bright. A single additive sprite therefore
+cannot retain its hue: source + destination is inherently driven toward white.
+This is a blend-law constraint, not a lighting or Vulkan-backend issue.
+
+1. Draw coloured material (smoke, pigment, particle/trail cores, decal bodies)
+   into `ScreenDistort_BeginVFXBody()` / `ScreenDistort_EndVFXLayer()` with
+   `BLEND_ALPHA`.
+2. Draw only low-energy glow/halo into
+   `ScreenDistort_BeginVFXEmission()` / `ScreenDistort_EndVFXLayer()` with
+   `BLEND_ADDITIVE`.
+3. An effect that needs both must submit the alpha body first and the additive
+   halo separately. Never solve this by increasing additive intensity or by
+   adding a per-skill render branch to `main.c`.
+4. Flush the active rlgl batch immediately before switching layer or state;
+   custom shader uniforms are set inside `BeginShaderMode`.
+
+The shared managers and scene target are owned by `main.c`. See
+`core/docs/API_GUIDE.md` “VFX render-layer contract” and
+`core/tests/bright_vfx_isolation_test.c` before changing this architecture.
+
 ### Uniforms & Environment Mapping:
 - **Never hardcode viewPos / cameraPos:** Use `viewPos` (auto-bound by the core skill manager) inside fragment shaders.
 - **Never hardcode light directions:** Use the uniform `u_lightDir` (auto-bound, real sun direction) rather than static vectors like `vec3(0.5, 1.0, 0.5)`.

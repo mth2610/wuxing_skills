@@ -39,10 +39,11 @@ Do not build new work on them.
 streak bloom, tier-gated), E2 VFX light bleed onto surfaces, E3 `VFX_Sequence`,
 E8 quality tiers + `postfx_perf_log`.
 
-**Bright-background VFX contrast:** glints now use an unlit alpha core plus a
-low-energy additive halo. The previous all-additive 4.5x sprite was guaranteed
-to wash toward white over bright scenery; the core preserves element hue while
-the halo still blooms in darkness. Guard: `core/tests/glint_contrast_test.c`.
+**Bright-background VFX contrast:** the renderer now separates coloured VFX
+bodies from additive emission. Every new VFX must follow the body/emission
+contract in `API_GUIDE.md`; the renderer-independent guard is
+`core/tests/bright_vfx_isolation_test.c` and wiring is covered by
+`core/tests/vfx_render_layers_contract_test.c`.
 
 **Skills:** deliberately bare wherever the purge took their visuals — logic,
 timing, damage and clash untouched. The two water skills are rebuilt
@@ -229,7 +230,8 @@ Ordinary bright surfaces were entering the bloom extractor at the old 0.8 thresh
 then receiving the extractor's 2.2x gain before bloom was mixed back into the entire
 frame and tone-mapped. Default bloom now begins at 1.25 (HDR emitters still qualify),
 mixes at 0.12, and uses neutral exposure 1.00; this preserves local VFX/material contrast
-on light maps. Guard: `postfx_contrast_test`.
+on light maps. Bright-background VFX hue is protected by the separate VFX body/emission
+compositor, not by this post-processing budget.
 
 ### 2. ImpactPackage cost at high severity
 

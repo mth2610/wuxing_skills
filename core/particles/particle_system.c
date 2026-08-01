@@ -874,6 +874,11 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
   for (int a = 0; a < s_activeCount; a++)
   {
     ParticleInternal *p = &g_Particles[s_activeIds[a]];
+    // A glow sheet often stores black RGB outside its luminous core. It is
+    // valid under additive blending, but becomes a dark halo when forced into
+    // an alpha body. Only particles authored as alpha material enter body;
+    // additive particles remain in their emission pass.
+    if (layerFilter == 0 && p->blendMode == VFX_BLEND_ADDITIVE) continue;
     if (layerFilter == 1 && p->blendMode != VFX_BLEND_ADDITIVE) continue;
     // SURFACE_INPUT is rendered exclusively by FluidSurface; drawing it here
     // would reveal its source particles as billboards as well.
@@ -1167,6 +1172,7 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     ParticleInternal *p = &g_Particles[s_activeIds[a]];
     if (p->trailLength > 0 && p->trailHistoryCount >= 2)
     {
+      if (layerFilter == 0 && p->blendMode == VFX_BLEND_ADDITIVE) continue;
       if (layerFilter == 1 && p->blendMode != VFX_BLEND_ADDITIVE) continue;
       int want = (layerFilter == 0 || p->blendMode != VFX_BLEND_ADDITIVE) ? BLEND_ALPHA : BLEND_ADDITIVE;
       if (want != trailBlend)

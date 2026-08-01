@@ -61,10 +61,16 @@ void MetaballFX_RegisterBlob(Vector3 worldPos, float radius) {
   s_registryCount++;
 }
 
+bool MetaballFX_HasRegisteredBlobs(void) { return s_registryCount > 0; }
+
 void MetaballFX_Prepare(Camera3D camera, Color tint, float threshold,
                         float smoothness) {
   int blobCount = s_registryCount;
   s_registryCount = 0; // registry tồn tại đúng 1 frame, xoá ngay cả khi blobCount==0
+  if (blobCount == 0) {
+    s_prepared = false;
+    return;
+  }
 
   int w = maskTex.texture.width;
   int h = maskTex.texture.height;

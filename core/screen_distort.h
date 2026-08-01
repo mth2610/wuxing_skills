@@ -60,7 +60,7 @@ void ScreenDistort_Draw(Camera3D camera);
  * Không thể sample trực tiếp renderTex.depth trong CÙNG frame đang ghi vào
  * nó (feedback loop — đọc/ghi cùng 1 framebuffer attachment là undefined
  * behavior theo spec OpenGL). Giải pháp: snapshot depth của frame TRƯỚC vào
- * 1 texture riêng (`prevDepthTex`) ngay sau ScreenDistort_End() mỗi frame —
+ * 1 texture riêng half-resolution (`prevDepthTex`) ngay sau ScreenDistort_End() mỗi frame —
  * particle vẽ trong frame N sample depth của frame N-1 (trễ 1 frame, không
  * đáng kể với soft-particle fade).
  *

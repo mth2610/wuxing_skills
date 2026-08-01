@@ -16,6 +16,8 @@ void FluidSurface_RegisterEllipsoid(Vector3 position, Vector3 radii);
 /* Accepts the same opaque stream from either particle backend. The GPU path
  * is rasterized by the owning renderer and is never read back to CPU. */
 bool FluidSurface_SubmitParticleStream(const ParticleRenderStream *stream);
+/* Whether the current frame has any surface input to capture/composite. */
+bool FluidSurface_HasPending(void);
 void FluidSurface_Capture(Camera3D camera);
 void FluidSurface_Composite(void);
 

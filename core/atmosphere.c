@@ -101,7 +101,10 @@ void Atmosphere_Update(float dt, Camera3D camera) {
 void Atmosphere_Draw(Camera3D camera) {
     if (!s_ready || s_count <= 0) return;
 
-    ScreenDistort_BeginVFXEmission();
+    // Ambient motes are low-energy background decoration, not authored VFX
+    // material.  Keeping them in the scene pass means an otherwise idle frame
+    // does not allocate/clear/composite the full-resolution HDR emission layer.
+    // Active skills still opt into ScreenDistort's VFX layers themselves.
     rlDrawRenderBatchActive();
     rlDisableDepthMask(); // motes never occlude; depth TEST still hides them behind geometry
     BeginBlendMode(BLEND_ADDITIVE);
@@ -118,7 +121,6 @@ void Atmosphere_Draw(Camera3D camera) {
     EndBlendMode();
     rlDrawRenderBatchActive();
     rlEnableDepthMask();
-    ScreenDistort_EndVFXLayer();
 }
 
 void Atmosphere_Unload(void) {
