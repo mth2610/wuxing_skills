@@ -117,8 +117,10 @@ add_executable(wuxing
     core/particles/particle_system.c
     core/particles/particle_manager.c
     core/particles/gpu/particle_gpu_backend.c
-    core/fluid_impact.c
-    core/fluid_surface.c
+    core/fluid/fluid_impact.c
+    core/fluid/fluid_pbd.c
+    core/fluid/fluid_pbd_gpu.c
+    core/fluid/fluid_surface.c
     core/path_spline.c
     core/post_fx.c
     core/ribbon_strip.c
@@ -235,6 +237,8 @@ endforeach()
 # --- compute module shaders ---
 configure_file(core/particles/shaders/gpu/particle_gpu.comp    ${CMAKE_CURRENT_BINARY_DIR}/core/particles/shaders/gpu/particle_gpu.comp    COPYONLY)
 configure_file(core/particles/shaders/gpu/particle_gpu_ssbo.vs ${CMAKE_CURRENT_BINARY_DIR}/core/particles/shaders/gpu/particle_gpu_ssbo.vs COPYONLY)
+configure_file(core/particles/shaders/gpu/fluid_surface_capture.vs ${CMAKE_CURRENT_BINARY_DIR}/core/particles/shaders/gpu/fluid_surface_capture.vs COPYONLY)
+configure_file(core/fluid/shaders/fluid_pbd_gpu.comp ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_pbd_gpu.comp COPYONLY)
 configure_file(core/particles/shaders/gpu/particle_gpu_vbo.vs  ${CMAKE_CURRENT_BINARY_DIR}/core/particles/shaders/gpu/particle_gpu_vbo.vs  COPYONLY)
 configure_file(core/particles/shaders/gpu/particle_gpu.fs      ${CMAKE_CURRENT_BINARY_DIR}/core/particles/shaders/gpu/particle_gpu.fs      COPYONLY)
 configure_file(core/shaders/taiji.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/taiji.fs COPYONLY)
@@ -252,10 +256,13 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/core/trails/shaders)
 configure_file(core/trails/shaders/trail_glow.fs ${CMAKE_CURRENT_BINARY_DIR}/core/trails/shaders/trail_glow.fs COPYONLY)
 configure_file(core/shaders/water_splash.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/water_splash.fs COPYONLY)
 configure_file(core/shaders/water_splash.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/water_splash.vs COPYONLY)
-configure_file(core/shaders/fluid_depth_smooth.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/fluid_depth_smooth.fs COPYONLY)
-configure_file(core/shaders/fluid_capture.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/fluid_capture.fs COPYONLY)
-configure_file(core/shaders/fluid_capture_particle.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/fluid_capture_particle.fs COPYONLY)
-configure_file(core/shaders/fluid_surface.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/fluid_surface.fs COPYONLY)
+configure_file(core/fluid/shaders/fluid_depth_smooth.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_depth_smooth.fs COPYONLY)
+configure_file(core/fluid/shaders/fluid_capture.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_capture.fs COPYONLY)
+configure_file(core/fluid/shaders/fluid_capture_particle.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_capture_particle.fs COPYONLY)
+configure_file(core/fluid/shaders/fluid_surface_thickness.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_surface_thickness.fs COPYONLY)
+configure_file(core/fluid/shaders/fluid_surface_thickness_mesh.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_surface_thickness_mesh.fs COPYONLY)
+configure_file(core/fluid/shaders/fluid_depth_bilateral.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_depth_bilateral.fs COPYONLY)
+configure_file(core/fluid/shaders/fluid_surface.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_surface.fs COPYONLY)
 
 configure_file(core/shaders/common/vs_header.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/vs_header.glsl COPYONLY)
 configure_file(core/shaders/common/fs_header.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/fs_header.glsl COPYONLY)

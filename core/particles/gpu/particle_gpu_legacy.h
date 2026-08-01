@@ -84,6 +84,7 @@ void GpuParticleSystem_Update(float dt);
 // Vẽ tất cả particle dưới dạng camera-facing billboard
 void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture);
 void GpuParticleSystem_DrawSurfaceEmitter(Camera3D camera, Texture2D texture, int emitterId);
+void GpuParticleSystem_DrawSurfaceThicknessEmitter(Camera3D camera, int emitterId);
 
 // Cleanup
 void GpuParticleSystem_Unload(void);

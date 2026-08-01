@@ -1,0 +1,40 @@
+#version 430 core
+// Dedicated GPU PBD pipeline. Dispatch phases: clear grid, integrate/build,
+// then Jacobi solve. State is ping-ponged so neighbour reads are race-free.
+layout(local_size_x=256) in;
+struct FluidParticle { vec4 position_radius; vec4 velocity_life; };
+layout(std430,binding=0) readonly buffer SourceState { FluidParticle source[]; };
+layout(std430,binding=1) writeonly buffer DestState { FluidParticle dest[]; };
+layout(std430,binding=2) buffer GridHeads { int heads[]; };
+layout(std430,binding=3) buffer GridNext { int next[]; };
+uniform int u_phase, u_particleCount, u_gridCellCount;
+uniform float u_dt, u_cellSize, u_groundY;
+
+int cellIndex(vec3 p) {
+    ivec3 c=ivec3(floor(p/u_cellSize))+ivec3(32,8,32);
+    c=clamp(c,ivec3(0),ivec3(63,31,63));
+    return (c.z*32+c.y)*64+c.x;
+}
+void main() {
+    uint id=gl_GlobalInvocationID.x;
+    if(u_phase==0) { if(id<uint(u_gridCellCount)) heads[id]=-1; return; }
+    if(id>=uint(u_particleCount)) return;
+    FluidParticle p=source[id];
+    if(u_phase==1) {
+        p.velocity_life.y-=9.81*u_dt;
+        p.position_radius.xyz+=p.velocity_life.xyz*u_dt;
+        if(p.position_radius.y-p.position_radius.w<u_groundY) { p.position_radius.y=u_groundY+p.position_radius.w; p.velocity_life.y=0.0; }
+        int cell=cellIndex(p.position_radius.xyz); next[id]=atomicExchange(heads[cell],int(id)); dest[id]=p; return;
+    }
+    // Jacobi density/separation pass; grid was built from the previous state.
+    vec3 correction=vec3(0.0); int cell=cellIndex(p.position_radius.xyz);
+    ivec3 base=ivec3(cell%64,(cell/64)%32,cell/(64*32));
+    for(int z=-1;z<=1;z++) for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++) {
+        ivec3 c=base+ivec3(x,y,z); if(any(lessThan(c,ivec3(0)))||any(greaterThan(c,ivec3(63,31,63)))) continue;
+        int n=heads[(c.z*32+c.y)*64+c.x];
+        while(n>=0) { if(n!=int(id)) { vec3 d=p.position_radius.xyz-source[n].position_radius.xyz; float l=length(d); float rest=(p.position_radius.w+source[n].position_radius.w)*0.88; if(l>0.0001&&l<rest) correction+=normalize(d)*(rest-l)*0.42; } n=next[n]; }
+    }
+    p.position_radius.xyz+=correction;
+    if(p.position_radius.y-p.position_radius.w<u_groundY) p.position_radius.y=u_groundY+p.position_radius.w;
+    dest[id]=p;
+}

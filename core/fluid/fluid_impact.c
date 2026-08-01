@@ -1,9 +1,9 @@
-#include "core/fluid_impact.h"
+#include "core/fluid/fluid_impact.h"
 
 #include "core/particles/particle_manager.h"
 #include "core/decals/decal_system.h"
 #include "core/force_field.h"
-#include "core/fluid_surface.h"
+#include "core/fluid/fluid_surface.h"
 #include "core/gfx_quality.h"
 #include "core/map_manager.h"
 #include "core/presets/vc_material.h"
@@ -103,8 +103,11 @@ static ParticleEmitterHandle FluidImpact_CreateSurfaceEmitter(Vector3 position, 
      * surface is therefore free to use direct GPU raster on capable devices. */
     desc.moduleFlags = PARTICLE_MODULE_GRAVITY | PARTICLE_MODULE_DRAG;
     desc.debugName = "FluidImpact hero surface";
+    /* Surface input is capture-only. Alpha must remain zero so a routing
+     * failure cannot ever expose its underlying billboard quad in the main
+     * particle pass; the SSF capture shader writes its own procedural disc. */
     desc.particle = (ParticleConfig){ .position=position, .velocity=velocity,
-        .colorStart=water->soft, .colorEnd=VC_WithAlpha(water->body, 0), .radius=radius,
+        .colorStart=VC_WithAlpha(water->soft, 0), .colorEnd=VC_WithAlpha(water->body, 0), .radius=radius,
         .lifetime=lifetime, .forceField=&s_gravity };
     ParticleEmitterHandle h = ParticleManager_CreateEmitter(&desc);
     if (h != PARTICLE_EMITTER_INVALID) ParticleManager_Emit(h, 1);
@@ -190,8 +193,6 @@ void FluidImpact_SpawnWater(const FluidImpactEvent *event)
     FluidImpact_Basis(normal, &tangent, &bitangent);
     FluidImpact_AddResidue(event->hitPoint, normal, scale * (0.30f + 0.65f * force01), force01);
 
-    // Hero droplets are CPU-authoritative so collision behavior is identical on
-    // compute and CPU/VBO devices. Their small fixed pool evicts oldest slots.
     for (int i = 0, n = FluidImpact_HeroCount(force01); i < n; ++i) {
         float angle = ((float)GetRandomValue(0, 359)) * DEG2RAD;
         float spread = 0.35f + ((float)GetRandomValue(0, 1000) / 1000.0f) * 0.65f;

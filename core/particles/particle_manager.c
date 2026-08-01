@@ -149,6 +149,13 @@ bool ParticleManager_DrawSurfaceStream(const ParticleRenderStream *stream, Camer
     return true;
 }
 
+bool ParticleManager_DrawSurfaceThicknessStream(const ParticleRenderStream *stream, Camera3D camera)
+{
+    if (!stream || stream->mode != PARTICLE_RENDER_SURFACE_INPUT || stream->backend != PARTICLE_RENDER_BACKEND_GPU) return false;
+    GpuParticleSystem_DrawSurfaceThicknessEmitter(camera, stream->ownerId);
+    return true;
+}
+
 void ParticleManager_Update(float dt) { if (!s_initialized) return; UpdateParticles(dt); GpuParticleSystem_Update(dt); ParticleManager_RefreshStats(); }
 void ParticleManager_Draw(Camera3D c, Texture2D t) { if (!s_initialized) return; DrawParticles(c, t); GpuParticleSystem_Draw(c, t); }
 void ParticleManager_GetStats(ParticleManagerStats *outStats) { if (!outStats) return; ParticleManager_RefreshStats(); *outStats = s_stats; }

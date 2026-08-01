@@ -79,6 +79,7 @@ static unsigned int s_draw_vao = 0;
 static unsigned int s_draw_quad_vbo = 0; // template quad, attribute 0
 static Shader s_draw_shader_gpu = {0};
 static Shader s_surface_capture_shader_gpu = {0};
+static Shader s_surface_thickness_shader_gpu = {0};
 static Shader s_surface_capture_shader_cpu = {0};
 static float s_elapsed_time = 0.0f;
 
@@ -88,7 +89,7 @@ static int s_spawn_cursor = 0;
 static int s_spawn_start_this_frame = -1;
 static int s_spawn_count_this_frame = 0;
 static int s_filterEmitter = -1, s_filterRenderMode = -1;
-static bool s_surfaceCaptureDraw = false;
+static int s_surfacePass = 0; /* 0 normal, 1 depth, 2 thickness */
 
 // Vector field textures cho FORCE_VECTOR_TEXTURE — không sở hữu (không Unload
 // ở đây), chỉ bind vào texture unit trước mỗi dispatch khi slot đang set.
@@ -213,7 +214,8 @@ void GpuParticleSystem_Init(void)
             s_ff_ssbo = 0;
             goto cpu_path;
         }
-        s_surface_capture_shader_gpu = ResourceManager_LoadShader(ssbo_vs_path, "core/shaders/fluid_capture_particle.fs");
+        s_surface_capture_shader_gpu = ResourceManager_LoadShader("core/particles/shaders/gpu/fluid_surface_capture.vs", "core/fluid/shaders/fluid_capture_particle.fs");
+        s_surface_thickness_shader_gpu = ResourceManager_LoadShader("core/particles/shaders/gpu/fluid_surface_capture.vs", "core/fluid/shaders/fluid_surface_thickness.fs");
         if (s_surface_capture_shader_gpu.id == 0)
         {
             TraceLog(LOG_WARNING, "GPU_PARTICLES: surface capture shader unavailable");
@@ -254,7 +256,7 @@ void GpuParticleSystem_Init(void)
     else
     {
 cpu_path:
-    s_surface_capture_shader_cpu = ResourceManager_LoadShader(NULL, "core/shaders/fluid_capture.fs");
+    s_surface_capture_shader_cpu = ResourceManager_LoadShader(NULL, "core/fluid/shaders/fluid_capture.fs");
         // ----- CPU/VBO PATH -----
         s_use_compute = false;
         TraceLog(LOG_INFO, "GPU_PARTICLES: CPU/VBO path active (%d particles)", MAX_GPU_PARTICLES);
@@ -523,7 +525,9 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
 
     if (s_use_compute)
     {
-        Shader drawShader = s_surfaceCaptureDraw && s_surface_capture_shader_gpu.id ? s_surface_capture_shader_gpu : s_draw_shader_gpu;
+        Shader drawShader = s_draw_shader_gpu;
+        if (s_surfacePass == 1 && s_surface_capture_shader_gpu.id) drawShader = s_surface_capture_shader_gpu;
+        if (s_surfacePass == 2 && s_surface_thickness_shader_gpu.id) drawShader = s_surface_thickness_shader_gpu;
         BeginShaderMode(drawShader);
 
         int loc_right = GetShaderLocation(drawShader, "u_right");
@@ -537,6 +541,10 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
             SetShaderValue(drawShader, loc_up, &up, SHADER_UNIFORM_VEC3);
         if (loc_mvp >= 0)
             SetShaderValueMatrix(drawShader, loc_mvp, matMVP);
+        int loc_view = GetShaderLocation(drawShader, "u_view");
+        int loc_projection = GetShaderLocation(drawShader, "u_projection");
+        if (loc_view >= 0) SetShaderValueMatrix(drawShader, loc_view, matView);
+        if (loc_projection >= 0) SetShaderValueMatrix(drawShader, loc_projection, matProjMVP);
         float filterEmitter = (float)s_filterEmitter, filterMode = (float)s_filterRenderMode;
         if (loc_filterEmitter >= 0) SetShaderValue(drawShader, loc_filterEmitter, &filterEmitter, SHADER_UNIFORM_FLOAT);
         if (loc_filterMode >= 0) SetShaderValue(drawShader, loc_filterMode, &filterMode, SHADER_UNIFORM_FLOAT);
@@ -641,11 +649,22 @@ void GpuParticleSystem_DrawSurfaceEmitter(Camera3D camera, Texture2D texture, in
 {
     s_filterEmitter = emitterId;
     s_filterRenderMode = 3;
-    s_surfaceCaptureDraw = true;
+    s_surfacePass = 1;
     if (!s_use_compute && s_surface_capture_shader_cpu.id) BeginShaderMode(s_surface_capture_shader_cpu);
     GpuParticleSystem_Draw(camera, texture);
     if (!s_use_compute && s_surface_capture_shader_cpu.id) EndShaderMode();
-    s_surfaceCaptureDraw = false;
+    s_surfacePass = 0;
+    s_filterEmitter = s_filterRenderMode = -1;
+}
+
+void GpuParticleSystem_DrawSurfaceThicknessEmitter(Camera3D camera, int emitterId)
+{
+    s_filterEmitter = emitterId;
+    s_filterRenderMode = 3;
+    s_surfacePass = 2;
+    /* texture0 is unused by the analytic thickness shader. */
+    GpuParticleSystem_Draw(camera, (Texture2D){0});
+    s_surfacePass = 0;
     s_filterEmitter = s_filterRenderMode = -1;
 }
 

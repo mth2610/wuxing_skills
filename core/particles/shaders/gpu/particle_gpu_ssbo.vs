@@ -45,9 +45,11 @@ void main() {
         (u_filterRenderMode < 0.0 && abs(route.y - 3.0) < 0.25) ||
         (u_filterEmitter >= 0.0 && abs(route.x - u_filterEmitter) > 0.25) ||
         (u_filterRenderMode >= 0.0 && abs(route.y - u_filterRenderMode) > 0.25)) {
-        // SỬA LỖI: Tạo Degenerate Vertex (w = 0.0). 
-        // Bị culling tuyệt đối ở bước Perspective Divide của Rasterizer.
-        gl_Position  = vec4(0.0); 
+        // Do not use w = 0 here: Vulkan rasterizers may still produce an
+        // undefined clipped primitive. A point outside every clip plane is
+        // deterministic and prevents SURFACE_INPUT particles leaking into
+        // the normal billboard pass as square sprites.
+        gl_Position  = vec4(2.0, 2.0, 2.0, 1.0);
         fragColor    = vec4(0.0);
         fragTexCoord = vec2(0.0);
         return;
