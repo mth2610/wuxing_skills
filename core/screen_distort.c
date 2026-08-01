@@ -22,6 +22,12 @@
 #define SOFT_PARTICLE_SCENE_FAR 1000.0f
 
 static RenderTexture2D renderTex;
+static RenderTexture2D vfxBodyTex;
+static RenderTexture2D vfxEmissionTex;
+static bool s_vfxBodyCleared;
+static bool s_vfxEmissionCleared;
+static bool s_vfxLayersActive;
+static void ScreenDistort_BeginLayer(RenderTexture2D target, bool *cleared);
 static Shader distortShader;
 static DistortionSource sources[MAX_DISTORTION_SOURCES];
 static int activeSourcesCount = 0;
@@ -126,6 +132,36 @@ static RenderTexture2D LoadRenderTextureWithDepthTexture(int width, int height, 
     rlDisableFramebuffer();
   }
   return target;
+}
+
+static RenderTexture2D LoadColorLayerTarget(int width, int height, int colorFormat)
+{
+  RenderTexture2D target = {0};
+  target.id = rlLoadFramebuffer();
+  if (target.id == 0) return target;
+  rlEnableFramebuffer(target.id);
+  target.texture.id = rlLoadTexture(NULL, width, height, colorFormat, 1);
+  target.texture.width = width;
+  target.texture.height = height;
+  target.texture.format = colorFormat;
+  target.texture.mipmaps = 1;
+  rlFramebufferAttach(target.id, target.texture.id, RL_ATTACHMENT_COLOR_CHANNEL0, RL_ATTACHMENT_TEXTURE2D, 0);
+  rlDisableFramebuffer();
+  return target;
+}
+
+// The VFX targets borrow renderTex.depth. Detach it before UnloadRenderTexture:
+// raylib/rlvk owns and destroys a framebuffer's attached depth texture, while
+// this target must only destroy its own colour attachment and framebuffer.
+static void UnloadColorLayerTarget(RenderTexture2D target)
+{
+  if (target.id != 0)
+  {
+    rlEnableFramebuffer(target.id);
+    rlFramebufferAttach(target.id, 0, RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D, 0);
+    rlDisableFramebuffer();
+  }
+  UnloadRenderTexture(target);
 }
 
 // Single-channel 32-bit FLOAT color target (no depth attachment). Used to
@@ -251,12 +287,39 @@ void ScreenDistort_Init(int width, int height)
 
   activeSourcesCount = 0;
   memset(sources, 0, sizeof(sources));
+
+  // Layer targets deliberately share renderTex.depth. They are not nested
+  // BeginTextureMode calls: changing only the framebuffer preserves the active
+  // 3D matrices and gives custom VFX the same depth test as the scene.
+  const int layerFmt = s_hdrActive ? RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16
+                                   : RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+  vfxBodyTex = LoadColorLayerTarget(width, height, layerFmt);
+  vfxEmissionTex = LoadColorLayerTarget(width, height, layerFmt);
+  if (vfxBodyTex.id > 0 && renderTex.depth.id > 0) {
+    rlEnableFramebuffer(vfxBodyTex.id);
+    rlFramebufferAttach(vfxBodyTex.id, renderTex.depth.id, RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D, 0);
+    rlDisableFramebuffer();
+  }
+  if (vfxEmissionTex.id > 0 && renderTex.depth.id > 0) {
+    rlEnableFramebuffer(vfxEmissionTex.id);
+    rlFramebufferAttach(vfxEmissionTex.id, renderTex.depth.id, RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D, 0);
+    rlDisableFramebuffer();
+  }
+  s_vfxLayersActive = vfxBodyTex.id > 0 && vfxBodyTex.texture.id > 0 &&
+                      vfxEmissionTex.id > 0 && vfxEmissionTex.texture.id > 0 &&
+                      renderTex.depth.id > 0 &&
+                      rlFramebufferComplete(vfxBodyTex.id) &&
+                      rlFramebufferComplete(vfxEmissionTex.id);
+  if (!s_vfxLayersActive)
+    TraceLog(LOG_WARNING, "ScreenDistort: VFX layers unavailable; using scene-target fallback");
 }
 
 bool ScreenDistort_IsHDR(void) { return s_hdrActive; }
 
 void ScreenDistort_Unload(void)
 {
+  UnloadColorLayerTarget(vfxBodyTex);
+  UnloadColorLayerTarget(vfxEmissionTex);
   UnloadRenderTexture(renderTex);
   if (s_depthTextureActive)
   {
@@ -269,11 +332,53 @@ void ScreenDistort_Unload(void)
 void ScreenDistort_Begin(void)
 {
   BeginTextureMode(renderTex);
+  s_vfxBodyCleared = false;
+  s_vfxEmissionCleared = false;
+  // The compositor samples both VFX targets every frame. Clear both before
+  // any screen-specific draw path can choose not to submit one of them;
+  // otherwise an unused HDR target contributes uninitialised/stale light to
+  // the entire screen.
+  if (s_vfxLayersActive)
+  {
+    ScreenDistort_BeginLayer(vfxBodyTex, &s_vfxBodyCleared);
+    ScreenDistort_BeginLayer(vfxEmissionTex, &s_vfxEmissionCleared);
+    rlEnableFramebuffer(renderTex.id);
+  }
 }
 
 void ScreenDistort_End(void)
 {
   EndTextureMode();
+}
+
+static void ScreenDistort_BeginLayer(RenderTexture2D target, bool *cleared)
+{
+  if (!s_vfxLayersActive)
+  {
+    // Keep every producer visible on devices where the additional HDR targets
+    // could not be created. This preserves the former scene-target behaviour.
+    rlDrawRenderBatchActive();
+    rlEnableFramebuffer(renderTex.id);
+    return;
+  }
+  rlDrawRenderBatchActive();
+  rlEnableFramebuffer(target.id);
+  if (!*cleared)
+  {
+    // The layer FBO shares scene depth for correct VFX occlusion. Clear only
+    // its colour attachment once per frame; depth mask protects scene depth.
+    rlDisableDepthMask();
+    ClearBackground(BLANK);
+    rlEnableDepthMask();
+    *cleared = true;
+  }
+}
+void ScreenDistort_BeginVFXBody(void) { ScreenDistort_BeginLayer(vfxBodyTex, &s_vfxBodyCleared); }
+void ScreenDistort_BeginVFXEmission(void) { ScreenDistort_BeginLayer(vfxEmissionTex, &s_vfxEmissionCleared); }
+void ScreenDistort_EndVFXLayer(void)
+{
+  rlDrawRenderBatchActive();
+  rlEnableFramebuffer(renderTex.id);
 }
 
 void ScreenDistort_Add(Vector3 worldPos, float radius, float strength, float lifetime, float speed)
@@ -368,6 +473,13 @@ void ScreenDistort_Draw(Camera3D camera)
   }
 
   BeginShaderMode(distortShader);
+  int hasVfxLayersLoc = GetShaderLocation(distortShader, "u_hasVfxLayers");
+  int hasVfxLayers = s_vfxLayersActive ? 1 : 0;
+  SetShaderValue(distortShader, hasVfxLayersLoc, &hasVfxLayers, SHADER_UNIFORM_INT);
+  if (s_vfxLayersActive)
+  {
+    SetShaderValueTexture(distortShader, GetShaderLocation(distortShader, "u_vfxBodyTex"), vfxBodyTex.texture);
+  }
   // DrawTexturePro (dest sized to GetRenderWidth/Height, not DrawTextureRec's implicit 1:1) -
   // renderTex is created at GetScreenWidth/Height (the logical window size); on backends where
   // the real render/swapchain target is a DIFFERENT size (rlvk/Vulkan on Android: the display's
@@ -379,6 +491,19 @@ void ScreenDistort_Draw(Camera3D camera)
                  (Rectangle){0, 0, (float)GetRenderWidth(), (float)GetRenderHeight()},
                  (Vector2){0, 0}, 0.0f, WHITE);
   EndShaderMode();
+
+  // Body composition intentionally has only scene + body samplers. Add the
+  // already-premultiplied emission RGB with an ordinary fullscreen pass; this
+  // avoids the fragile three-sampler descriptor path on MoltenVK/Intel.
+  if (s_vfxLayersActive)
+  {
+    BeginBlendMode(BLEND_ADD_COLORS);
+    DrawTexturePro(vfxEmissionTex.texture,
+                   (Rectangle){0, 0, (float)vfxEmissionTex.texture.width, -(float)vfxEmissionTex.texture.height},
+                   (Rectangle){0, 0, (float)GetRenderWidth(), (float)GetRenderHeight()},
+                   (Vector2){0, 0}, 0.0f, WHITE);
+    EndBlendMode();
+  }
 }
 
 // PERF (2026-07-22): frames since anything last called ScreenDistort_BindDepthForSoftParticles.

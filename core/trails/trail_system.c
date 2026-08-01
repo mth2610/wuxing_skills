@@ -1636,7 +1636,7 @@ static bool TrailMatchesRenderGroup(const TrailEntity *t, const RenderGroup *g,
            g->flowTiling == t->flowTiling;
 }
 
-void DrawTrailEntities(Camera3D camera)
+static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
 {
     if (activeCount == 0)
         return;
@@ -1664,8 +1664,10 @@ void DrawTrailEntities(Camera3D camera)
             continue;
 
         Shader sh = ResolveShader(t);
-        BlendMode bm = t->useCustomBlendMode ? t->blendMode
-                                             : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
+        BlendMode sourceBm = t->useCustomBlendMode ? t->blendMode
+                                                   : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
+        if (layerFilter == 1 && sourceBm == BLEND_ALPHA) continue;
+        BlendMode bm = (layerFilter == 0) ? BLEND_ALPHA : sourceBm;
         Texture2D tex = t->sprite.id > 0 ? t->sprite : s_globalTrailTex;
 
         bool found = false;
@@ -1756,8 +1758,10 @@ void DrawTrailEntities(Camera3D camera)
             if (!IsTrailVisible(t, camera))
                 continue;
 
-            BlendMode currentBm = t->useCustomBlendMode ? t->blendMode
-                                                        : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
+            BlendMode sourceBm = t->useCustomBlendMode ? t->blendMode
+                                                       : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
+            if (layerFilter == 1 && sourceBm == BLEND_ALPHA) continue;
+            BlendMode currentBm = (layerFilter == 0) ? BLEND_ALPHA : sourceBm;
             Texture2D currentTex = t->sprite.id > 0 ? t->sprite : s_globalTrailTex;
 
             if (TrailMatchesRenderGroup(t, &groups[g], currentBm, ResolveShader(t), currentTex))
@@ -1774,6 +1778,10 @@ void DrawTrailEntities(Camera3D camera)
     rlDrawRenderBatchActive();
     rlEnableDepthMask();
 }
+
+void DrawTrailEntities(Camera3D camera) { DrawTrailEntitiesLayer(camera, -1); }
+void DrawTrailEntitiesBody(Camera3D camera) { DrawTrailEntitiesLayer(camera, 0); }
+void DrawTrailEntitiesEmission(Camera3D camera) { DrawTrailEntitiesLayer(camera, 1); }
 
 void UnloadTrailSystem(void)
 {

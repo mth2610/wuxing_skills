@@ -444,12 +444,13 @@ void ScreenDistort_Add(Vector3 worldPos, float radius, float strength, float lif
 void MetaballFX_Init(int width, int height);   // engine-internal
 void MetaballFX_Unload(void);                  // engine-internal
 void MetaballFX_RegisterBlob(Vector3 worldPos, float radius);
-void MetaballFX_DrawRegistered(Camera3D camera, Color tint, float threshold, float smoothness); // engine-internal, main.c calls once/frame
+void MetaballFX_Prepare(Camera3D camera, Color tint, float threshold, float smoothness); // engine-internal, main.c calls once/frame
+void MetaballFX_Composite(void); // engine-internal, into the VFX body target
 ```
 Rules:
 - **Skill API — only call `MetaballFX_RegisterBlob`** each frame for every blob you want visible (water projectile head, lava droplet...) — a blob lives exactly one frame and must be re-registered continuously. `MAX = METABALL_MAX_BLOBS = 32` engine-wide (one shared registry across all skills, not a per-skill pool).
-- **Do NOT call `MetaballFX_DrawRegistered` from skill code** — it runs GL directly (BeginTextureMode/EndTextureMode) and **MUST** run outside `BeginMode3D`/`EndMode3D` (raylib's render-texture Begin/End don't nest — calling it while a skill is drawing into `screen_distort.c`'s 3D buffer breaks the binding). Already wired into `main.c`, after `PostFX_Draw()`.
-- The effect is **pure 2D screen-space** — blobs always draw on top of the screen, no depth-test against the 3D scene (never occluded by terrain/entities).
+- **Do NOT call `MetaballFX_Prepare` or `MetaballFX_Composite` from skill code** — the former runs GL directly and must stay outside `BeginMode3D`/`EndMode3D`; `main.c` prepares its mask/blur after the scene, then composites it into `ScreenDistort`'s VFX body before PostFX.
+- The effect is **2D screen-space**, but its final alpha body now uses the shared VFX compositor, so bright scenery cannot bleach its tint. It still does not depth-test individual blobs.
 - **Tint is currently one fixed engine-wide color** (`main.c` passes `ELEMENT_COLOR_WATER` for every blob of every skill) — not per-skill/per-element. Multiple colors at once would need the registry extended to carry a per-blob `Color`.
 - `threshold`/`smoothness` control how "sticky" blobs are as they merge — low threshold + high smoothness = merges more easily/smoothly.
 

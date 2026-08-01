@@ -321,6 +321,7 @@ void VFX_ComposeBeam(Vector3 from, Vector3 to, VC_MaterialId mat,
     //                    a tube its rim for free: grazing angles cross more
     //                    material, so the silhouette brightens with no fresnel.
     //   ADDITIVE       — the blend law, the other half of the same sentence.
+    ScreenDistort_BeginVFXEmission();
     rlDrawRenderBatchActive();
     rlDisableDepthMask();
     rlDisableBackfaceCulling();
@@ -358,4 +359,5 @@ void VFX_ComposeBeam(Vector3 from, Vector3 to, VC_MaterialId mat,
     rlEnableBackfaceCulling();
     rlEnableDepthMask();
     rlDrawRenderBatchActive();
+    ScreenDistort_EndVFXLayer();
 }

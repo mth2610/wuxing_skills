@@ -72,7 +72,7 @@ static float s_fvolBodyLive = 90.0f;
 // a look judgement, so both are tunables.
 static float s_fvolBodySize = 1.0f;
 static float s_fvolSpread = 1.0f;      // x on how wide the licks are spread
-// Body blend: 1 = ADDITIVE (default with the atlas), 0 = the original ALPHA.
+// Body blend: 0 = ALPHA (default), 1 = ADDITIVE.
 //
 // F3 chose ALPHA for the body so the flame could be DARKER than its background —
 // the old fire_funnel was one additive draw and read as glowing gas. That was
@@ -82,7 +82,7 @@ static float s_fvolSpread = 1.0f;      // x on how wide the licks are spread
 // accumulates (owner: "lửa mới có độ trong nhất định... còn cái này màu giống
 // theo từng mảng"). The cooling tail that needs to occlude is the SMOKE layer,
 // which stays alpha and stays lit.
-static float s_fvolBodyBlend = 1.0f;
+static float s_fvolBodyBlend = 0.0f;
 // Per-sprite contribution when the body is additive. Additive ACCUMULATES, so
 // this is the knob that decides whether overlapping tongues keep their orange or
 // clip to white — and it interacts with the background: the test arena's sky
@@ -136,7 +136,7 @@ static void FVol_InitShared(void)
     Tuning_RegisterFloat("flame_body_live", &s_fvolBodyLive, 90.0f);
     Tuning_RegisterFloat("flame_body_size", &s_fvolBodySize, 1.0f);
     Tuning_RegisterFloat("flame_spread", &s_fvolSpread, 1.0f);
-    Tuning_RegisterFloat("flame_body_blend", &s_fvolBodyBlend, 1.0f);
+    Tuning_RegisterFloat("flame_body_blend", &s_fvolBodyBlend, 0.0f);
     Tuning_RegisterFloat("flame_body_alpha", &s_fvolBodyAlpha, 0.18f);
 
     // The FLAME channel only — the sheet's smoke channel is a separate file.
@@ -407,9 +407,11 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
                        : useAtlas ? Math_Mix(0.30f, 0.46f, Random01())
                                   : Math_Mix(0.09f, 0.20f, powf(Random01(), 1.5f))) * scale,
             .lifetime = life,
-            .colorStart = (useAtlas && s_fvolBodyBlend > 0.5f)
-                              ? VC_WithAlpha(WHITE, (unsigned char)(255.0f * s_fvolBodyAlpha))
-                              : WHITE,
+            // alphaCurve uses colorStart.a as its multiplier even when the RGB
+            // comes from a gradient. Keep the body contribution modest in BOTH
+            // modes; otherwise alpha mode becomes an opaque patch and additive
+            // mode washes a bright destination toward white.
+            .colorStart = VC_WithAlpha(WHITE, (unsigned char)(255.0f * s_fvolBodyAlpha)),
             .colorEnd = (Color){44, 40, 38, 0},
             .gradient = &s_fvolBodyGrad,
             .forceField = &s_fvolFld,

@@ -21,9 +21,10 @@
  * của render target 3D đang dùng). Vì vậy:
  *   1) Trong Draw[Name]Skill(): chỉ gọi MetaballFX_RegisterBlob() (không có
  *      lệnh GL nào, chỉ ghi vào mảng tĩnh) cho mỗi blob muốn hiện frame này.
- *   2) main.c gọi MetaballFX_DrawRegistered() đúng 1 lần/frame, NGOÀI
- *      BeginMode3D/EndMode3D (cùng vị trí PostFX_Draw) — vẽ toàn bộ blob đã
- *      đăng ký rồi tự xoá registry cho frame kế tiếp.
+ *   2) main.c gọi MetaballFX_Prepare() đúng 1 lần/frame, NGOÀI
+ *      BeginMode3D/EndMode3D, rồi MetaballFX_Composite() vào VFX body layer.
+ *      Tách pass giúp mask/blur không lồng render target, nhưng body vẫn được
+ *      compositor HDR xử lý như mọi VFX khác.
  * Blob chỉ tồn tại 1 frame — skill phải RegisterBlob lại mỗi frame.
  * ==========================================================================*/
 
@@ -35,9 +36,13 @@ void MetaballFX_Unload(void);
 // Gọi từ skill Draw (an toàn gọi trong 3D pass — không có lệnh GL).
 void MetaballFX_RegisterBlob(Vector3 worldPos, float radius);
 
-// Gọi từ main.c, NGOÀI BeginMode3D/EndMode3D, 1 lần/frame. tint là màu khối
-// lỏng (dùng ELEMENT_COLOR_*); threshold/smoothness ~ [0.3, 0.1] là điểm
-// khởi đầu hợp lý. Tự xoá registry sau khi vẽ xong.
+// Gọi từ main.c, NGOÀI BeginMode3D/EndMode3D, 1 lần/frame. Chuẩn bị mask và
+// blur, đồng thời tự xoá registry. Ngay sau đó gọi Composite trong VFX body.
+void MetaballFX_Prepare(Camera3D camera, Color tint, float threshold,
+                        float smoothness);
+void MetaballFX_Composite(void);
+
+// Compatibility helper: Prepare + Composite onto the current target.
 void MetaballFX_DrawRegistered(Camera3D camera, Color tint, float threshold,
                                float smoothness);
 

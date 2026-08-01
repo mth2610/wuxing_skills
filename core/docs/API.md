@@ -15,7 +15,7 @@
 - **A system's `*_Init`/`*_Update`/`*_Draw`/`*_Unload` are the engine-loop lifecycle** — skill code does not call them; it calls the spawn/add entry points only. Exceptions are called out below.
 - **Trails:** `SpawnTrailEntity` returns an id. `TRAIL_TYPE_PROJECTILE` and `SpawnLightningTrail` self-terminate; **`TRAIL_TYPE_FOLLOWER` and manually-driven trails: the caller MUST `KillTrail(id)`.** Drive electric followers with `Lightning_UpdateFollowerTip`, not raw `UpdateFollowerPosition`.
 - **`VFXLight_Spawn` requires a `VFXPriority`** — a full pool evicts the lowest priority. Use `VFX_PRIORITY_HIGH_ULTIMATE` for casts that must not drop.
-- **Metaballs:** call `MetaballFX_RegisterBlob` every frame per blob (1-frame lifetime); never call `MetaballFX_DrawRegistered` from skill code.
+- **Metaballs:** call `MetaballFX_RegisterBlob` every frame per blob (1-frame lifetime); never call `MetaballFX_Prepare`, `MetaballFX_Composite`, or `MetaballFX_DrawRegistered` from skill code.
 - **ScreenDistort:** skills only call `ScreenDistort_Add` (auto-expires after `lifetime`); the rest is engine lifecycle.
 - **Depth-state changes** must flush the batch (`rlDrawRenderBatchActive()`) before AND after — see `ENGINE_LANDMINES.md` §1.
 - **Custom shader textures:** bind via `SetShaderValueTexture`, not `rlActiveTextureSlot`/`rlEnableTexture` — see `LANDMINES.md`.
@@ -206,6 +206,8 @@
   void ParticleSystem_GetStats(int *active, int *max);
   void UpdateParticles(float dt);
   void DrawParticles(Camera3D camera, Texture2D texture);
+  void DrawParticlesBody(Camera3D camera, Texture2D texture);
+  void DrawParticlesEmission(Camera3D camera, Texture2D texture);
   void UnloadParticleSystem(void);
   void ParticleSystem_SetLighting(float strength01, float scatter01);
   void ParticleSystem_GetLighting(float *outStrength, float *outScatter);
@@ -231,6 +233,8 @@
   bool ParticleManager_DrawSurfaceThicknessStream(const ParticleRenderStream *stream, Camera3D camera);
   void ParticleManager_Update(float dt);
   void ParticleManager_Draw(Camera3D camera, Texture2D fallbackTexture);
+  void ParticleManager_DrawBody(Camera3D camera, Texture2D fallbackTexture);
+  void ParticleManager_DrawEmission(Camera3D camera, Texture2D fallbackTexture);
   void ParticleManager_GetStats(ParticleManagerStats *outStats);
   void ParticleManager_SpawnCompatibility(ParticleConfig config);
 ```
@@ -254,6 +258,8 @@
   void KillTrail(int id);
   void UpdateTrailSystem(float dt);
   void DrawTrailEntities(Camera3D camera);
+  void DrawTrailEntitiesBody(Camera3D camera);
+  void DrawTrailEntitiesEmission(Camera3D camera);
   void UnloadTrailSystem(void);
   int GetActiveTrailCount(void);
   void TrailSystem_GetStats(int *active, int *max);
@@ -305,6 +311,9 @@
   void ScreenDistort_Unload(void);
   void ScreenDistort_Begin(void);
   void ScreenDistort_End(void);
+  void ScreenDistort_BeginVFXBody(void);
+  void ScreenDistort_BeginVFXEmission(void);
+  void ScreenDistort_EndVFXLayer(void);
   void ScreenDistort_Add(Vector3 worldPos, float radius, float strength, float lifetime, float speed);
   void ScreenDistort_Update(float dt);
   void ScreenDistort_Draw(Camera3D camera);
@@ -322,6 +331,8 @@
   void MetaballFX_Init(int width, int height);
   void MetaballFX_Unload(void);
   void MetaballFX_RegisterBlob(Vector3 worldPos, float radius);
+  void MetaballFX_Prepare(Camera3D camera, Color tint, float threshold, float smoothness);
+  void MetaballFX_Composite(void);
   void MetaballFX_DrawRegistered(Camera3D camera, Color tint, float threshold, float smoothness);
 ```
 

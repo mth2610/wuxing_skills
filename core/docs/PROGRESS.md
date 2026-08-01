@@ -39,6 +39,11 @@ Do not build new work on them.
 streak bloom, tier-gated), E2 VFX light bleed onto surfaces, E3 `VFX_Sequence`,
 E8 quality tiers + `postfx_perf_log`.
 
+**Bright-background VFX contrast:** glints now use an unlit alpha core plus a
+low-energy additive halo. The previous all-additive 4.5x sprite was guaranteed
+to wash toward white over bright scenery; the core preserves element hue while
+the halo still blooms in darkness. Guard: `core/tests/glint_contrast_test.c`.
+
 **Skills:** deliberately bare wherever the purge took their visuals — logic,
 timing, damage and clash untouched. The two water skills are rebuilt
 (`tube_skill.c`, `glacial_cannon_skill.c`); the rest wait for H8.
@@ -217,6 +222,14 @@ assuming descriptor binding 0 (`third_party/vulkan/docs/HANDOFF.md` §7.30).
 depth-bind path is live with a conservative default `particle_soft_fade = 0.35`
 metres. GPU compute billboards use the same 0.35 m fade; fluid capture/thickness
 passes remain unmodified. The `sampler_pair` visual scenario guards the backend contract.
+
+### HDR composite contrast — fixed (2026-08-01)
+
+Ordinary bright surfaces were entering the bloom extractor at the old 0.8 threshold,
+then receiving the extractor's 2.2x gain before bloom was mixed back into the entire
+frame and tone-mapped. Default bloom now begins at 1.25 (HDR emitters still qualify),
+mixes at 0.12, and uses neutral exposure 1.00; this preserves local VFX/material contrast
+on light maps. Guard: `postfx_contrast_test`.
 
 ### 2. ImpactPackage cost at high severity
 

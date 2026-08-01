@@ -10,6 +10,9 @@ static Shader thresholdShader;
 
 static int blurDirectionLoc;
 static int thresholdTintLoc, thresholdValueLoc, thresholdSmoothnessLoc;
+static bool s_prepared = false;
+static Vector4 s_preparedTint;
+static float s_preparedThreshold, s_preparedSmoothness;
 
 typedef struct {
   Vector3 worldPos;
@@ -58,8 +61,8 @@ void MetaballFX_RegisterBlob(Vector3 worldPos, float radius) {
   s_registryCount++;
 }
 
-void MetaballFX_DrawRegistered(Camera3D camera, Color tint, float threshold,
-                               float smoothness) {
+void MetaballFX_Prepare(Camera3D camera, Color tint, float threshold,
+                        float smoothness) {
   int blobCount = s_registryCount;
   s_registryCount = 0; // registry tồn tại đúng 1 frame, xoá ngay cả khi blobCount==0
 
@@ -110,16 +113,29 @@ void MetaballFX_DrawRegistered(Camera3D camera, Color tint, float threshold,
   EndShaderMode();
   EndTextureMode();
 
-  // PASS 4: threshold + composite lên render target hiện tại (màn hình).
+  s_preparedTint = ColorNormalize(tint);
+  s_preparedThreshold = threshold;
+  s_preparedSmoothness = smoothness;
+  s_prepared = true;
+}
+
+void MetaballFX_Composite(void) {
+  if (!s_prepared) return;
+  s_prepared = false;
+
+  // PASS 4: threshold + composite lên render target hiện tại. main.c sends
+  // this pass to the VFX body target, where the HDR compositor protects its
+  // tint from a bright destination.
+  int w = maskTex.texture.width;
+  int h = maskTex.texture.height;
   // maskTex ở NỬA độ phân giải — phải kéo giãn (DrawTexturePro) phủ TOÀN
   // màn hình, không DrawTextureRec ở kích thước gốc (sẽ chỉ phủ 1/4 góc
   // trên-trái, làm blob bị dồn/lệch về góc — chính là lỗi "blob bắn xa").
-  Vector4 tintVec = ColorNormalize(tint);
   BeginBlendMode(BLEND_ALPHA);
   BeginShaderMode(thresholdShader);
-  SetShaderValue(thresholdShader, thresholdTintLoc, &tintVec, SHADER_UNIFORM_VEC4);
-  SetShaderValue(thresholdShader, thresholdValueLoc, &threshold, SHADER_UNIFORM_FLOAT);
-  SetShaderValue(thresholdShader, thresholdSmoothnessLoc, &smoothness,
+  SetShaderValue(thresholdShader, thresholdTintLoc, &s_preparedTint, SHADER_UNIFORM_VEC4);
+  SetShaderValue(thresholdShader, thresholdValueLoc, &s_preparedThreshold, SHADER_UNIFORM_FLOAT);
+  SetShaderValue(thresholdShader, thresholdSmoothnessLoc, &s_preparedSmoothness,
                  SHADER_UNIFORM_FLOAT);
   DrawTexturePro(maskTex.texture,
                  (Rectangle){0, 0, (float)w, -(float)h}, // source (flip Y)
@@ -128,4 +144,10 @@ void MetaballFX_DrawRegistered(Camera3D camera, Color tint, float threshold,
                  (Vector2){0, 0}, 0.0f, WHITE);
   EndShaderMode();
   EndBlendMode();
+}
+
+void MetaballFX_DrawRegistered(Camera3D camera, Color tint, float threshold,
+                               float smoothness) {
+  MetaballFX_Prepare(camera, tint, threshold, smoothness);
+  MetaballFX_Composite();
 }

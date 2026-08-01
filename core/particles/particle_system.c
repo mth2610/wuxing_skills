@@ -807,7 +807,7 @@ static int   s_perfBatches = 0;
 static int   s_perfQuads   = 0;
 static float s_perfLog     = 0.0f;
 
-void DrawParticles(Camera3D camera, Texture2D texture)
+static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilter)
 {
   if (s_activeCount == 0)
     return;
@@ -874,6 +874,7 @@ void DrawParticles(Camera3D camera, Texture2D texture)
   for (int a = 0; a < s_activeCount; a++)
   {
     ParticleInternal *p = &g_Particles[s_activeIds[a]];
+    if (layerFilter == 1 && p->blendMode != VFX_BLEND_ADDITIVE) continue;
     // SURFACE_INPUT is rendered exclusively by FluidSurface; drawing it here
     // would reveal its source particles as billboards as well.
     if (p->renderMode == 3) continue;
@@ -887,20 +888,21 @@ void DrawParticles(Camera3D camera, Texture2D texture)
     // Global multiplier on top of the per-particle value, so the whole look can
     // be dialled without touching every call site.
     float wantBoost = p->emissiveBoost * s_emissiveBoost;
-    if (want != curTex || p->blendMode != curBlend || p->unlit != curUnlit ||
+    int drawBlend = (layerFilter == 0) ? VFX_BLEND_ALPHA : p->blendMode;
+    if (want != curTex || drawBlend != curBlend || p->unlit != curUnlit ||
         wantGridC != curGridC || wantGridR != curGridR || wantBoost != curBoost)
     {
       if (curTex != 0xFFFFFFFFu) rlEnd();
       s_perfBatches++;
-      if (p->blendMode != curBlend)
+      if (drawBlend != curBlend)
       {
         // Blend state must be flushed either side or it leaks across the batch
         // boundary — ENGINE_LANDMINES.md §1, the raylib batching hazard.
         rlDrawRenderBatchActive();
         if (curBlend >= 0) EndBlendMode();
-        BeginBlendMode(p->blendMode == VFX_BLEND_ADDITIVE ? BLEND_ADDITIVE : BLEND_ALPHA);
+        BeginBlendMode(drawBlend == VFX_BLEND_ADDITIVE ? BLEND_ADDITIVE : BLEND_ALPHA);
         rlDrawRenderBatchActive();
-        curBlend = p->blendMode;
+        curBlend = drawBlend;
       }
       if (p->unlit != curUnlit)
       {
@@ -1165,7 +1167,8 @@ void DrawParticles(Camera3D camera, Texture2D texture)
     ParticleInternal *p = &g_Particles[s_activeIds[a]];
     if (p->trailLength > 0 && p->trailHistoryCount >= 2)
     {
-      int want = (p->blendMode == VFX_BLEND_ADDITIVE) ? BLEND_ADDITIVE : BLEND_ALPHA;
+      if (layerFilter == 1 && p->blendMode != VFX_BLEND_ADDITIVE) continue;
+      int want = (layerFilter == 0 || p->blendMode != VFX_BLEND_ADDITIVE) ? BLEND_ALPHA : BLEND_ADDITIVE;
       if (want != trailBlend)
       {
         if (trailBlend >= 0) EndBlendMode();
@@ -1244,6 +1247,21 @@ void DrawParticles(Camera3D camera, Texture2D texture)
   if (trailBlend >= 0) EndBlendMode();
 
   rlSetTexture(0);
+}
+
+void DrawParticles(Camera3D camera, Texture2D texture)
+{
+  DrawParticlesLayer(camera, texture, -1);
+}
+
+void DrawParticlesBody(Camera3D camera, Texture2D texture)
+{
+  DrawParticlesLayer(camera, texture, 0);
+}
+
+void DrawParticlesEmission(Camera3D camera, Texture2D texture)
+{
+  DrawParticlesLayer(camera, texture, 1);
 }
 
 void UnloadParticleSystem(void) { InitParticleSystem(); }

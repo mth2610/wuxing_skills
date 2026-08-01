@@ -1,6 +1,7 @@
 #include "core/afterimage.h"
 #include "core/resource_manager.h"
 #include "core/skill_helper.h"
+#include "core/screen_distort.h"
 #include "rlgl.h"
 #include <math.h>
 
@@ -57,6 +58,7 @@ void Afterimage_Update(float dt) {
 void Afterimage_Draw(void) {
     if (!s_matLoaded) return;
 
+    ScreenDistort_BeginVFXBody();
     rlDrawRenderBatchActive();
     rlDisableDepthMask();
     BeginBlendMode(BLEND_ALPHA);
@@ -83,6 +85,7 @@ void Afterimage_Draw(void) {
     EndBlendMode();
     rlDrawRenderBatchActive();
     rlEnableDepthMask();
+    ScreenDistort_EndVFXLayer();
 }
 
 void Afterimage_GetStats(int *active, int *max) {

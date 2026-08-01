@@ -166,6 +166,7 @@ void VFX_ComposeRuneCircle(Vector3 center, Vector3 normal, VC_MaterialId mat,
     // Additive, depth-test on / depth-write off, batch flushed either side —
     // ENGINE_LANDMINES §1: a depth-state change that is not flushed leaks into
     // whatever the batch was already holding.
+    ScreenDistort_BeginVFXEmission();
     rlDrawRenderBatchActive();
     BeginBlendMode(BLEND_ADDITIVE);
     rlDisableDepthMask();
@@ -266,5 +267,6 @@ void VFX_ComposeRuneCircle(Vector3 center, Vector3 normal, VC_MaterialId mat,
     rlEnableDepthMask();
     EndBlendMode();
     rlDrawRenderBatchActive();
+    ScreenDistort_EndVFXLayer();
 
 }

@@ -213,6 +213,12 @@ void SpawnParticle(ParticleConfig config);
 void ParticleSystem_GetStats(int *active, int *max); // Item 32
 void UpdateParticles(float dt);
 void DrawParticles(Camera3D camera, Texture2D texture);
+// Render-layer entry points. BODY contains occluding/coloured alpha particles;
+// EMISSION contains additive HDR particles. The caller composites the two
+// buffers after scene rendering, so a bright destination cannot wash out body
+// colour before tone mapping.
+void DrawParticlesBody(Camera3D camera, Texture2D texture);
+void DrawParticlesEmission(Camera3D camera, Texture2D texture);
 void UnloadParticleSystem(void);
 
 // ─── Đợt E / F1 — lit particles (core/docs/ELDEN_VFX_SPEC.md §0.1b, F1) ──────

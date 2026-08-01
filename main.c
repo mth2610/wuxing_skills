@@ -1137,15 +1137,19 @@ int main(int argc, char **argv) {
   uiState.isPanelOpen = false;
 
   PostFXConfig postFXConfig = {.bloomEnabled = true,
-                               .bloomThreshold = 0.8f,
-                               .bloomIntensity = 0.25f,
+                               // Diffuse surfaces live in the 0..1 range. Keeping the
+                               // bloom threshold above that range prevents a bright map
+                               // from feeding its own full-screen haze into the composite;
+                               // HDR emissive VFX still exceed it and bloom normally.
+                               .bloomThreshold = 1.25f,
+                               .bloomIntensity = 0.12f,
                                .chromaticEnabled = true,
                                .chromaticStrength = 0.15f,
                                .vignetteEnabled = true,
                                .vignetteRadius = 0.85f,
                                .vignetteSoftness = 0.45f,
                                .colorGradeEnabled = true,
-                               .contrast = 1.08f,
+                               .contrast = 1.12f,
                                .saturation = 1.28f, // ACES desaturates — lift richness back
                                .colorTint = {1.0f, 1.0f, 1.0f},
                                // Split-tone: cool moonlit shadows, warm highlights (Moonlight Blade mood).
@@ -1153,7 +1157,7 @@ int main(int argc, char **argv) {
                                .highlightTint = {1.10f, 1.02f, 0.90f},
                                // Đợt G1 — cinematic tone mapping on by default.
                                .tonemapEnabled = true,
-                               .exposure = 1.12f};
+                               .exposure = 1.00f};
 
   if (visualVerifyMode) {
       VisualVerify_Init(Skill_GetIndexByName(VisualVerify_GetSkillName()));
@@ -1800,7 +1804,12 @@ int main(int argc, char **argv) {
     // Vẽ Decal hệ thống sát sàn đấu
     if (!g_debugHideDecals) {
         DecalSystem_SetCamera(camera);
+        // Decals are VFX material bodies (including fire scorch), not scene
+        // lighting. Route their alpha/additive marks through the same contrast
+        // compositor as particles so bright ground cannot bleach their tint.
+        ScreenDistort_BeginVFXBody();
         DecalSystem_Draw();
+        ScreenDistort_EndVFXLayer();
         FluidImpact_Draw();
     }
 
@@ -1841,40 +1850,55 @@ int main(int argc, char **argv) {
     }
     Afterimage_Draw();
 
-    if (!g_debugHideTrails) {
-        DrawTrailEntities(camera);
-    }
-
-    if (!g_debugHideParticles) {
+    if (!g_debugHideParticles || !g_debugHideTrails) {
+        // Body and emission are now submitted into independent HDR layers.
+        // The final ScreenDistort composite alpha-overlays body then adds
+        // emission, retaining VFX hue over bright scene colour.
+        ScreenDistort_BeginVFXBody();
+        if (!g_debugHideTrails)
+            DrawTrailEntitiesBody(camera);
         rlDrawRenderBatchActive();
         rlDisableDepthMask();
-        BeginBlendMode(BLEND_ADDITIVE);
-        ParticleManager_Draw(camera, globalParticleTex);
-        EndBlendMode();
+        if (!g_debugHideParticles)
+            ParticleManager_DrawBody(camera, globalParticleTex);
         rlDrawRenderBatchActive();
         rlEnableDepthMask();
+
+        ScreenDistort_BeginVFXEmission();
+        if (!g_debugHideTrails)
+            DrawTrailEntitiesEmission(camera);
+        rlDisableDepthMask();
+        if (!g_debugHideParticles)
+            ParticleManager_DrawEmission(camera, globalParticleTex);
+        rlDrawRenderBatchActive();
+        rlEnableDepthMask();
+        ScreenDistort_EndVFXLayer();
     }
 
-    Atmosphere_Draw(camera); // G3 — ambient dust motes (additive, in HDR scene)
+    Atmosphere_Draw(camera); // G3 — owns its emission layer, including debug-only frames
 
     MyEndMode3D();
     ScreenDistort_End();
     ScreenDistort_SnapshotDepth(); // soft particles: snapshot this frame's depth for next frame's sampling
     FluidSurface_Capture(camera);
 
+    // These screen-space effects prepare outside the scene target, then put
+    // their real shaded alpha bodies into the shared VFX layer before the HDR
+    // compositor. They therefore retain scene/depth shading without letting a
+    // bright destination bleach their hue.
+    MetaballFX_Prepare(camera, ELEMENT_COLOR_WATER, 0.3f, 0.12f);
+    ScreenDistort_BeginVFXBody();
+    FluidSurface_Composite();
+    MetaballFX_Composite();
+    ScreenDistort_EndVFXLayer();
+
     PostFX_Begin();
     ClearBackground(BLACK);
     ScreenDistort_Draw(camera);
-    FluidSurface_Composite();
     PostFX_End();
 
     ClearBackground(BLACK);
     PostFX_Draw(&postFXConfig);
-
-    // Metaballs: composite directly onto the screen, after post-process —
-    // must run outside PostFX_Begin/End (BeginTextureMode can't nest) and
-    // after PostFX_Draw (which would otherwise overwrite it).
-    MetaballFX_DrawRegistered(camera, ELEMENT_COLOR_WATER, 0.3f, 0.12f);
 
     // These are dev/debug overlays — skip them entirely on SCREEN_GAME so it
     // reads as a real production screen, not a test environment. Untouched

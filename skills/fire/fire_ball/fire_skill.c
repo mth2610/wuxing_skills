@@ -9,6 +9,7 @@
 #include "core/skill_helper.h"
 #include "combat/combat.h"
 #include "core/resource_manager.h"
+#include "core/screen_distort.h"
 #include "core/tuning.h"
 #include "core/utils_math.h"
 #include <math.h>
@@ -647,11 +648,12 @@ void DrawFireSkill(void) {
     return;
 
   float time = GetTime();
+  ScreenDistort_BeginVFXEmission();
   rlDrawRenderBatchActive();
   rlDisableDepthMask();
 
-  SetShaderValue(fireShader, timeLoc, &time, SHADER_UNIFORM_FLOAT);
   BeginShaderMode(fireShader);
+  SetShaderValue(fireShader, timeLoc, &time, SHADER_UNIFORM_FLOAT);
   BeginBlendMode(BLEND_ADDITIVE);
 
   for (int e = 0; e < MAX_EMITTERS; e++) {
@@ -732,6 +734,7 @@ void DrawFireSkill(void) {
   EndBlendMode();
   rlDrawRenderBatchActive();
   rlEnableDepthMask();
+  ScreenDistort_EndVFXLayer();
 }
 
 void UnloadFireSkill(void) {

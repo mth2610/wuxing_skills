@@ -299,6 +299,7 @@ void VFX_ComposeSweepSlash(Vector3 origin, Vector3 dir, VC_MaterialId mat,
     // Additive, depth-test on / depth-write off, batch flushed either side —
     // ENGINE_LANDMINES §1: an unflushed depth-state change leaks into whatever
     // the batch was already holding.
+    ScreenDistort_BeginVFXEmission();
     rlDrawRenderBatchActive();
     BeginBlendMode(BLEND_ADDITIVE);
     rlDisableDepthMask();
@@ -373,6 +374,7 @@ void VFX_ComposeSweepSlash(Vector3 origin, Vector3 dir, VC_MaterialId mat,
     rlEnableDepthMask();
     EndBlendMode();
     rlDrawRenderBatchActive();
+    ScreenDistort_EndVFXLayer();
 
     // ── Refraction behind the edge ──────────────────────────────────────────
     // A RATE, not one per call: this function runs every frame, and a source per

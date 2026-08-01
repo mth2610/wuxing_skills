@@ -5,6 +5,7 @@
 #include "skills/metal/volume_smoke_skill/volume_smoke_skill.h"
 #include "core/resource_manager.h"
 #include "core/procedural_mesh_utils.h"
+#include "core/screen_distort.h"
 
 #define MAX_SMOKES 16
 
@@ -81,6 +82,9 @@ void UpdateVolumeSmokeSkill(float dt, Vector3 enemyPos, float enemyRadius)
 
 void DrawVolumeSmokeSkill(void)
 {
+    // Volumetric smoke is matter, not only emitted light. Draw it into the
+    // shared VFX body target so bright scenery cannot bleach its shading.
+    ScreenDistort_BeginVFXBody();
     BeginBlendMode(BLEND_ALPHA);
 
     for (int i = 0; i < MAX_SMOKES; i++)
@@ -107,6 +111,7 @@ void DrawVolumeSmokeSkill(void)
     }
 
     EndBlendMode();
+    ScreenDistort_EndVFXLayer();
 }
 
 void UnloadVolumeSmokeSkill(void)

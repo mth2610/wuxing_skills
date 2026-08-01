@@ -178,6 +178,7 @@ static void ShieldShell_DrawPass(void)
 static void VC_ShieldShell_Draw3D(Camera3D cam)
 {
     (void)cam;
+    ScreenDistort_BeginVFXBody();
     rlDrawRenderBatchActive();
     rlDisableDepthMask();
     // A translucent shell must only draw the camera-facing membrane. Rendering
@@ -191,4 +192,5 @@ static void VC_ShieldShell_Draw3D(Camera3D cam)
     rlEnableDepthMask();
     EndBlendMode();
     rlDrawRenderBatchActive();
+    ScreenDistort_EndVFXLayer();
 }

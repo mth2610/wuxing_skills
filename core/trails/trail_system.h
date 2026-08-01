@@ -437,6 +437,8 @@ TrailEntity *GetTrail(int id);
 void KillTrail(int id);
 void UpdateTrailSystem(float dt);
 void DrawTrailEntities(Camera3D camera);
+void DrawTrailEntitiesBody(Camera3D camera);
+void DrawTrailEntitiesEmission(Camera3D camera);
 void UnloadTrailSystem(void);
 int GetActiveTrailCount(void);
 void TrailSystem_GetStats(int *active, int *max);

@@ -258,6 +258,7 @@ void VFX_ComposeGroundWave(Vector3 center, VC_MaterialId mat, float radius,
     // write off, and the batch flushed on BOTH sides of every state change —
     // an unflushed change leaks into whatever the batch was already holding
     // (ENGINE_LANDMINES §1).
+    ScreenDistort_BeginVFXEmission();
     rlDrawRenderBatchActive();
     BeginBlendMode(BLEND_ADDITIVE);
     rlDisableDepthMask();
@@ -342,4 +343,5 @@ void VFX_ComposeGroundWave(Vector3 center, VC_MaterialId mat, float radius,
     rlEnableDepthMask();
     EndBlendMode();
     rlDrawRenderBatchActive();
+    ScreenDistort_EndVFXLayer();
 }

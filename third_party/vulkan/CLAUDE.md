@@ -57,6 +57,7 @@ significant, statics span them. Never include a fragment directly, never reorder
    compute, shaderc). For init/compute/upload changes.
 3. `./scripts/run_rlvk_visual_test.sh [scenario|--list]` — windowed scenario suite, one
    PASS/FAIL line each (clear, batch_alpha, additive3d, shader_uniform, depth, depth_rt,
+   depth_mask_clear,
    soft_depth, winding_rt, instanced, ssbo_vs, readback, stress). For anything touching
    draw/present/blend/depth.
    `VALIDATE=1` prepends Khronos validation. First run builds a raylib cache (~2 min),

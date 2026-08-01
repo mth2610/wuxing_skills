@@ -4,6 +4,28 @@
 > Cross-cutting traps (batching hazard, depth-test-vs-mask, `rlFrustum near<1.0`, lit-material-dark, emitter collision) live in root `ENGINE_LANDMINES.md` — read that too.
 > Long session logs and open backlog are in `PROGRESS.md`, not here.
 
+### An additive sprite cannot retain contrast over a bright destination
+- **Symptom:** an orange/yellow emitter looks rich against black but its centre
+  becomes pale or almost white over a bright sky, terrain, or area light.
+- **Cause:** `VFX_BLEND_ADDITIVE` computes source + destination. It never
+  replaces or darkens the already-bright destination, while HDR/bloom compresses
+  the resulting high values further toward white. This is a blend-law limit, not
+  a Vulkan sampler or lighting defect.
+- **Rule:** author a shaped emissive effect as an unlit alpha **core** (to retain
+  its element hue) plus a larger, lower-energy additive **halo** (to emit). Do
+  not use one high-energy additive quad for both jobs. The headless
+  `emissive_background_test.c` reproduces the failure with FlameVolume's real
+  default alpha/overlap values.
+
+### GPU particle blend state must not inherit the CPU particle pass
+- **Symptom:** a GPU VFX appears additive in some frames/scenes but alpha-blended
+  in others, especially when CPU particles are present too.
+- **Cause:** CPU particle drawing changes blend mode per batch and restores alpha
+  afterwards. An outer additive scope is not a stack; it cannot restore GPU
+  state after that inner change.
+- **Rule:** `ParticleManager_Draw` owns the GPU additive scope explicitly after
+  CPU drawing. Never wrap the manager in a presumed blend mode at its call site.
+
 ### Custom texture binding must go through `SetShaderValueTexture`
 - **Symptom:** `texture(u_myTex, ...)` reads back 0 in a shader no matter which slot you bind, for a custom multi-texture shader.
 - **Cause:** manual `rlActiveTextureSlot()`/`rlEnableTexture()` binding silently doesn't reach a raylib `Shader`. Hit independently by `flow_map.c` and the soft-particle depth bind.

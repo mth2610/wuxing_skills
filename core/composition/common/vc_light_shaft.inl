@@ -135,6 +135,7 @@ void VFX_ComposeLightShaft(Vector3 from, Vector3 to, VC_MaterialId mat,
     Color glow = m->glow;
     float time = (float)GetTime();
 
+    ScreenDistort_BeginVFXEmission();
     rlDrawRenderBatchActive();
     BeginBlendMode(BLEND_ADDITIVE);
     rlDisableDepthMask();
@@ -200,4 +201,5 @@ void VFX_ComposeLightShaft(Vector3 from, Vector3 to, VC_MaterialId mat,
     rlEnableDepthMask();
     EndBlendMode();
     rlDrawRenderBatchActive();
+    ScreenDistort_EndVFXLayer();
 }

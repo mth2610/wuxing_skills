@@ -134,6 +134,7 @@ void VFX_ComposeDissolveExit(Vector3 pos, VC_MaterialId mat, float scale, float 
         // ALPHA, not additive: a body that still occludes is the only reason
         // the erosion reads as matter being eaten away rather than a light
         // going out.
+        ScreenDistort_BeginVFXBody();
         BeginBlendMode(BLEND_ALPHA);
         rlDisableDepthMask();
         rlDrawRenderBatchActive();
@@ -177,6 +178,7 @@ void VFX_ComposeDissolveExit(Vector3 pos, VC_MaterialId mat, float scale, float 
         EndBlendMode();
         EndShaderMode();
         rlDrawRenderBatchActive();
+        ScreenDistort_EndVFXLayer();
     }
 
     // ── Embers: what the erosion sheds ───────────────────────────────────────

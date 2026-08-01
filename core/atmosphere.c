@@ -1,4 +1,5 @@
 #include "core/atmosphere.h"
+#include "core/screen_distort.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <math.h>
@@ -100,6 +101,7 @@ void Atmosphere_Update(float dt, Camera3D camera) {
 void Atmosphere_Draw(Camera3D camera) {
     if (!s_ready || s_count <= 0) return;
 
+    ScreenDistort_BeginVFXEmission();
     rlDrawRenderBatchActive();
     rlDisableDepthMask(); // motes never occlude; depth TEST still hides them behind geometry
     BeginBlendMode(BLEND_ADDITIVE);
@@ -116,6 +118,7 @@ void Atmosphere_Draw(Camera3D camera) {
     EndBlendMode();
     rlDrawRenderBatchActive();
     rlEnableDepthMask();
+    ScreenDistort_EndVFXLayer();
 }
 
 void Atmosphere_Unload(void) {

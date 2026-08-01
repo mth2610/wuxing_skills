@@ -32,6 +32,13 @@ void ScreenDistort_Begin(void);
 // Kết thúc vẽ cảnh 3D
 void ScreenDistort_End(void);
 
+// General VFX render layers. Begin/End may be used by any skill, map or custom
+// renderer while a ScreenDistort scene is active. Both layers share the scene
+// depth attachment: body remains depth-occluded and emission remains HDR.
+void ScreenDistort_BeginVFXBody(void);
+void ScreenDistort_BeginVFXEmission(void);
+void ScreenDistort_EndVFXLayer(void);
+
 // Thêm một nguồn biến dạng màn hình (sóng xung kích) tại toạ độ World 3D
 void ScreenDistort_Add(Vector3 worldPos, float radius, float strength, float lifetime, float speed);
 

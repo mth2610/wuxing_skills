@@ -103,6 +103,8 @@ bool ParticleManager_DrawSurfaceStream(const ParticleRenderStream *stream, Camer
 bool ParticleManager_DrawSurfaceThicknessStream(const ParticleRenderStream *stream, Camera3D camera);
 void ParticleManager_Update(float dt);
 void ParticleManager_Draw(Camera3D camera, Texture2D fallbackTexture);
+void ParticleManager_DrawBody(Camera3D camera, Texture2D fallbackTexture);
+void ParticleManager_DrawEmission(Camera3D camera, Texture2D fallbackTexture);
 void ParticleManager_GetStats(ParticleManagerStats *outStats);
 
 /* Compatibility bridge used exclusively by SpawnParticle. */

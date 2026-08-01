@@ -476,6 +476,42 @@ bugs will rhyme with these. **Check this list before starting a new hunt.**
 - **Guard**: the `perf_*` probes are skipped in a full run (measurement, not assertion); ask for
   them by name with `UNCAPPED=1`.
 
+### 7.32 FBO-to-FBO scope switch left outgoing colour unreadable (2026-08-01)
+
+**Symptom.** A scene rendered normally for its first frame, then its VFX compositor
+sampled white or black after switching through a transparent layer. Every screen was
+affected, including screens without visible VFX.
+
+**Root cause.** `rlEnableFramebuffer()` ended the prior Vulkan render pass but did not
+transition its colour attachments from `COLOR_ATTACHMENT_OPTIMAL` to
+`SHADER_READ_ONLY_OPTIMAL`. `rlDisableFramebuffer()` performed that transition only when
+returning to the swapchain, so FBO-to-FBO composition sampled an image in the wrong layout.
+
+**Fix.** Close the outgoing user-FBO colours with the same write→fragment-read barrier
+before opening the next FBO. Shared depth remains in its depth-attachment layout because
+the next FBO uses it for depth testing.
+
+**Guard.** `run_rlvk_visual_test.sh fbo_switch`: clear a layer red, switch back to the
+scene FBO, then sample the layer. The output must remain red on every frame.
+
+### 7.31 VFX colour-layer clear erased shared scene depth (2026-08-01)
+
+**Symptom.** A separate VFX target that shares the scene render texture's depth buffer
+lost occlusion after clearing its colour to transparent. The bug looked like a VFX
+blend/compositor problem because particles behind geometry appeared through it.
+
+**Root cause.** `rlClearScreenBuffers()` unconditionally included a depth clear whenever
+the active framebuffer had depth. Its caller correctly disabled depth writes around
+`ClearBackground(BLANK)`, but rlvk ignored `RLVK.State.depthWrite`. OpenGL clear semantics
+honour active buffer write masks.
+
+**Fix.** Only append the depth attachment to Vulkan's `vkCmdClearAttachments` list when
+`RLVK.State.depthWrite` is true. Colour attachment clears remain unaffected.
+
+**Guard.** `run_rlvk_visual_test.sh depth_mask_clear`: write a near cube depth, clear a
+render texture with depth writes disabled, then draw a far additive wall. The wall must
+remain occluded at the centre.
+
 ### 7.30 Soft particles stayed hard-cut: a second sampler moved `texture0` (2026-08-01)
 - **Symptom**: particles that intersect the ground retained a sharp clipped rail instead of fading.
   The game had consequently disabled its `u_cameraDepthTex` sampler: merely declaring it made the

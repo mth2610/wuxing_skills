@@ -19,8 +19,12 @@
 // from short lifetimes on a fade curve rather than a per-frame alpha: a glint
 // that fades in and out IS a spawn/death cycle.
 //
-// BLEND LAW (§F1b): a glint EMITS light, so it is additive and unlit. Running it
-// through the lighting multiply would brown it out against a night sky.
+// BLEND LAW (§F1b): the *halo* emits light, so it is additive and unlit.  The
+// star's shaped core is an alpha layer underneath it.  Additive output cannot
+// replace a bright destination; using it for the entire sprite therefore turns
+// an orange glint pale on a sunlit surface.  This is the same alpha-body plus
+// additive-glow construction used by glowing smoke, here kept deliberately
+// tight so the core stays a crisp specular catch rather than a soft billboard.
 
 #define GLINT_MAX_POINTS 24
 
@@ -155,28 +159,52 @@ void VFX_ComposeGlintSparkle(Vector3 center, VC_MaterialId mat, float scale, flo
         // Sized so the constellation reads at a body-scale cloud without the
         // stars merging into a blob. Verified in the NEW FX tab.
         float radius = (0.085f + 0.13f * pulse) * scale * s_glintSize;
+        float rotation = Random01() * 2.0f * PI;
 
+        float lifetime = Math_Mix(0.22f, 0.46f, Random01());
+
+        // The contrast-preserving core. Its centre is alpha-composited, so a
+        // bright sky/ground cannot leak through and wash its element hue out.
         SpawnParticle((ParticleConfig){
             .position = p,
             // Barely drifting: a glint is a highlight on something, not a spark
             // thrown off it. Motion would turn it into an ember.
             .velocity = { dir.x * 0.10f, dir.y * 0.10f + 0.05f, dir.z * 0.10f },
-            .radius   = radius,
-            .lifetime = Math_Mix(0.22f, 0.46f, Random01()),
-            // glow, not body: a glint is the hot specular colour of the element.
+            .radius   = radius * 0.72f,
+            .lifetime = lifetime,
             .colorStart = VC_WithAlpha(m->glow, 255),
             .colorEnd   = VC_WithAlpha(m->soft, 0),
             .alphaCurve = &s_glintFade,
             .render.texture   = s_glintTex,
-            .render.blendMode = VFX_BLEND_ADDITIVE,  // emits...
-            .render.unlit     = 1,                   // ...so it skips the lighting multiply
-            // The white-hot core. 4.5 is the value the GPU particle upgrades
-            // test already uses, so both paths agree on what "glowing" means.
-            .render.emissiveBoost = 4.5f,
+            .render.blendMode = VFX_BLEND_ALPHA,
+            .render.unlit     = 1,
+            // 2.2x is high enough to survive ACES as a vivid gold/orange catch
+            // on a light map, but unlike the old 4.5x full sprite it does not
+            // drive the whole star silhouette into white clipping.
+            .render.emissiveBoost = 2.2f,
             // A star has an orientation; leaving every one axis-aligned reads as
             // a repeated stamp. Static per glint — spinning a star looks like a
             // pinwheel, not a highlight.
-            .rotation = Random01() * 2.0f * PI,
+            .rotation = rotation,
+        });
+
+        // The physically emissive fringe remains additive. It is deliberately
+        // larger and lower-energy than the old single 4.5x sprite: this keeps
+        // the attractive night bloom without painting a wide white veil over
+        // the alpha core on bright maps.
+        SpawnParticle((ParticleConfig){
+            .position = p,
+            .velocity = { dir.x * 0.10f, dir.y * 0.10f + 0.05f, dir.z * 0.10f },
+            .radius   = radius * 1.25f,
+            .lifetime = lifetime,
+            .colorStart = VC_WithAlpha(m->glow, 105),
+            .colorEnd   = VC_WithAlpha(m->soft, 0),
+            .alphaCurve = &s_glintFade,
+            .render.texture       = s_glintTex,
+            .render.blendMode     = VFX_BLEND_ADDITIVE,
+            .render.unlit         = 1,
+            .render.emissiveBoost = 1.6f,
+            .rotation = rotation,
         });
     }
 }

@@ -95,6 +95,7 @@ void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float 
         s_swirlInit     = true;
     }
 
+    ScreenDistort_BeginVFXEmission();
     rlDrawRenderBatchActive();
     SkillManager_BeginShader(s_swirlSh);
 
@@ -137,6 +138,7 @@ void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float 
     rlEnableBackfaceCulling();
     rlEnableDepthMask();
     EndBlendMode();
+    ScreenDistort_EndVFXLayer();
     SkillManager_EndShader();
 
     // ─────────────────────────────────────────────────────────────────────
@@ -210,12 +212,14 @@ void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float 
         if (runePath != NULL)
         {
             Texture2D runeTex = ResourceManager_LoadTexture(runePath);
+            ScreenDistort_BeginVFXEmission();
             rlDrawRenderBatchActive();
             BeginBlendMode(BLEND_ADDITIVE);
             VC_DrawGroundRune(runeTex, (Vector3){pos.x, 0.02f, pos.z},
                               radius * 1.6f, time * 14.0f, VC_WithAlpha(mat->glow, 160));
             rlDrawRenderBatchActive();
             EndBlendMode();
+            ScreenDistort_EndVFXLayer();
         }
     }
 

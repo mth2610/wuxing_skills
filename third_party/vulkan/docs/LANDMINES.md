@@ -22,6 +22,8 @@
 - **Vertex attribute fetch reads zeros / GPU timeout on a tiny dummy buffer.** → §7.5
 
 ### Pipeline / draw safety
+- **Rendering into an FBO, switching to another FBO, then sampling the first gives white/black output.** Closing a Vulkan render pass is not a layout transition; switch the outgoing colour image to shader-read first. → §7.32 (`fbo_switch`)
+- **A colour-layer `ClearBackground()` erases scene occlusion despite `rlDisableDepthMask()`.** rlvk's explicit clear must honour the active depth write mask, just as `glClear` does. → §7.31 (`depth_mask_clear`)
 - **Particles/VFX render as opaque squares with black borders** — looked like a blend/alpha bug; was a *stale pipeline* (failed build left the old one bound, wrong shader). Skip the draw when bind fails. → §7.2
 - **`MODELVIEW rlPushMatrix()/rlPopMatrix()` inside a non-swapchain framebuffer corrupts a later unrelated draw.** → §7.25
 - **A VFX comes out as small rectangles in scrambled positions/colors, intermittently, worse with more instances or while the camera moves** — NOT a geometry or blend bug: the per-frame arena filled up and the UBO push was **skipped**, so the draw ran on the previous push (stale `mvp` + stale uniforms). Any effect that changes a uniform *per instance* (one flush per instance) triggers it first. Call sites that can drain must reserve the UBO block up front. → §7.28, scenario `ubo_arena`

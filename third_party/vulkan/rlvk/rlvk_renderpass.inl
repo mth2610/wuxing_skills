@@ -217,6 +217,43 @@ static void rlvkBeginScopeRenderPass(VkCommandBuffer cmdBuffer, const rlvkRender
 
 // Switch the rendering scope to a user framebuffer (render texture). The pending batch
 // was already flushed by raylib's BeginTextureMode/EndTextureMode before this is called.
+// Unlike rlDisableFramebuffer(), this keeps us inside an offscreen scope. The outgoing
+// FBO's colours nevertheless become shader inputs before the next FBO opens: without
+// this transition an FBO-to-FBO switch leaves the previous colour image in
+// COLOR_ATTACHMENT_OPTIMAL and any compositor sampling it is undefined.
+static void rlvkCloseFramebufferColorsForSwitch(VkCommandBuffer cmdBuffer, u32 id)
+{
+    if (id == 0 || id >= RLVK_MAX_FRAMEBUFFER_SLOTS)
+        return;
+    rlvkFramebufferSlot *old = &RLVK.fbSlots[id];
+    VkImageMemoryBarrier2 barriers[8];
+    u32 count = 0;
+    for (u32 c = 0; c < old->colorCount && c < 8; c++)
+    {
+        rlvkTextureSlot *color = &RLVK.textureSlots[old->colorTextures[c]];
+        if (!color->image || color->currentLayout != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+            continue;
+        barriers[count++] = (VkImageMemoryBarrier2){
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            .image = color->image,
+            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+        };
+        color->currentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    }
+    if (count)
+        vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
+            VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .imageMemoryBarrierCount = count,
+            .pImageMemoryBarriers = barriers,
+        });
+}
+
 void rlEnableFramebuffer(unsigned int id)
 {
     if (RLVK.State.currentFramebufferSlot != id)
@@ -248,7 +285,9 @@ void rlEnableFramebuffer(unsigned int id)
     if (!color && !(fbDepth && fbDepth->image))
         return; // nothing attached yet
 
+    u32 previousId = RLVK.scope.fbSlot;
     vkCmdEndRenderPass(cmdBuffer);
+    rlvkCloseFramebufferColorsForSwitch(cmdBuffer, previousId);
 
     // OPTIMIZATION: Batched Pipeline Barriers
     // Instead of calling CmdPipelineBarrier2 multiple times in loops, collect them into one single submission.
@@ -962,7 +1001,8 @@ void rlClearColor(unsigned char r, unsigned char g, unsigned char b, unsigned ch
     RLVK.State.clearA = a;
 }
 
-// Clear used screen buffers (color and depth)
+// Clear used screen buffers.  Like glClear(), the active write masks apply:
+// a colour-only layer clear must not erase a shared scene depth attachment.
 void rlClearScreenBuffers(void)
 {
     // Frame not open yet: the scope's loadOp CLEAR (with State.clear*) handles it lazily.
@@ -990,7 +1030,7 @@ void rlClearScreenBuffers(void)
                 .clearValue = {.color = {.float32 = {
                                              RLVK.State.clearR / 255.0f, RLVK.State.clearG / 255.0f,
                                              RLVK.State.clearB / 255.0f, RLVK.State.clearA / 255.0f}}}};
-    if (hasDepth)
+    if (hasDepth && RLVK.State.depthWrite)
         clears[clearCount++] = (VkClearAttachment){
             .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
             .clearValue = {.depthStencil = {1.0f, 0}}};

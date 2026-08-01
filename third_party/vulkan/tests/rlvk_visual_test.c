@@ -11,6 +11,8 @@
 //   depth          batch-path occlusion: near opaque drawn FIRST, far bright drawn
 //                  SECOND additive+maskoff must NOT overlay it (black-hole swirl class)
 //   depth_rt       the same occlusion inside a render texture (PostFX scene path)
+//   depth_mask_clear depth-mask-off ClearBackground preserves shared RT depth (VFX layer path)
+//   fbo_switch     FBO-to-FBO scope switch makes the outgoing colour sampleable
 //   winding_rt     front-face triangle visible on screen AND inside a render texture
 //                  (flip-Y winding/culling class - mesh see-through)
 //   instanced      DrawMeshInstanced + instanceTransform attribute
@@ -205,6 +207,72 @@ static const char *sc_depth_rt(void)
     if (c.r > 130) return "occlusion broken INSIDE render texture (PostFX scene path)";
     if (s.r < 150) return "far wall missing inside render texture";
     return NULL;
+}
+
+// A VFX colour layer shares the scene RT depth so particles still occlude correctly.
+// It clears its own colour target with depth writes disabled.  The clear must honour
+// that mask; otherwise every later VFX draw sees a freshly-cleared depth buffer.
+static const char *sc_depth_mask_clear(void)
+{
+    RenderTexture2D rt = LoadRenderTexture(W, H);
+    Camera3D cam = cam3d();
+    for (int f = 0; f < 3; f++)
+    {
+        BeginDrawing(); ClearBackground(BLACK);
+        BeginTextureMode(rt);
+            ClearBackground(BLACK);
+            BeginMode3D(cam);
+                DrawCube((Vector3){0,0,2}, 1.6f, 1.6f, 1.6f, (Color){40,40,48,255});
+                rlDrawRenderBatchActive();
+                rlDisableDepthMask();
+                ClearBackground(BLANK); // colour only: preserve the near cube's depth
+                BeginBlendMode(BLEND_ADDITIVE);
+                    DrawCube((Vector3){0,0,-2}, 8.0f, 6.0f, 0.05f, (Color){255,220,60,255});
+                EndBlendMode();
+                rlDrawRenderBatchActive();
+                rlEnableDepthMask();
+            EndMode3D();
+        EndTextureMode();
+        DrawTextureRec(rt.texture, (Rectangle){0,0,W,-H}, (Vector2){0,0}, WHITE);
+        EndDrawing();
+    }
+    Image im = snap(); Color c = at(im, W/2, H/2); UnloadImage(im); UnloadRenderTexture(rt);
+    return (c.r < 80 && c.g < 80) ? NULL : "depth-mask-off ClearBackground erased shared RT depth";
+}
+
+// The VFX compositor renders the scene, switches to a colour layer, then back
+// to the scene before sampling that layer. A scope switch must transition the
+// outgoing layer colour to SHADER_READ_ONLY; ending only its render pass leaves
+// a legal-looking but unreadable attachment on Vulkan.
+static const char *sc_fbo_switch(void)
+{
+    RenderTexture2D scene = LoadRenderTexture(W, H);
+    RenderTexture2D layer = {0};
+    layer.id = rlLoadFramebuffer();
+    layer.texture.id = rlLoadTexture(NULL, W, H, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8, 1);
+    layer.texture.width = W; layer.texture.height = H;
+    layer.texture.format = RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8; layer.texture.mipmaps = 1;
+    rlEnableFramebuffer(layer.id);
+    rlFramebufferAttach(layer.id, layer.texture.id, RL_ATTACHMENT_COLOR_CHANNEL0, RL_ATTACHMENT_TEXTURE2D, 0);
+    rlFramebufferAttach(layer.id, scene.depth.id, RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D, 0);
+    rlDisableFramebuffer();
+    for (int f = 0; f < 3; f++)
+    {
+        BeginDrawing(); ClearBackground(BLACK);
+        BeginTextureMode(scene); ClearBackground(BLUE);
+        rlEnableFramebuffer(layer.id); ClearBackground(RED);
+        rlEnableFramebuffer(scene.id);
+        EndTextureMode();
+        DrawTextureRec(layer.texture, (Rectangle){0,0,W,-H}, (Vector2){0,0}, WHITE);
+        EndDrawing();
+    }
+    Image im = snap(); Color c = at(im, W/2, H/2); UnloadImage(im);
+    rlEnableFramebuffer(layer.id);
+    rlFramebufferAttach(layer.id, 0, RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D, 0);
+    rlDisableFramebuffer();
+    rlUnloadTexture(layer.texture.id); rlUnloadFramebuffer(layer.id);
+    UnloadRenderTexture(scene);
+    return near3(c, 255, 0, 0, 16) ? NULL : "outgoing FBO colour was not transitioned for sampling";
 }
 
 // Sample a render texture's DEPTH attachment in a shader and linearize it, exactly like the
@@ -1395,6 +1463,8 @@ static const Scenario SCENARIOS[] = {
     { "sampler_pair",   sc_sampler_pair },
     { "depth",          sc_depth },
     { "depth_rt",       sc_depth_rt },
+    { "depth_mask_clear", sc_depth_mask_clear },
+    { "fbo_switch",     sc_fbo_switch },
     { "soft_depth",     sc_soft_depth },
     { "soft_ground",    sc_soft_ground },
     { "winding_rt",     sc_winding_rt },

@@ -1,6 +1,7 @@
 #include "core/particles/particle_manager.h"
 
 #include "core/particles/gpu/particle_gpu_legacy.h"
+#include "rlgl.h"
 #include <string.h>
 
 typedef struct ParticleEmitterRuntime {
@@ -157,7 +158,45 @@ bool ParticleManager_DrawSurfaceThicknessStream(const ParticleRenderStream *stre
 }
 
 void ParticleManager_Update(float dt) { if (!s_initialized) return; UpdateParticles(dt); GpuParticleSystem_Update(dt); ParticleManager_RefreshStats(); }
-void ParticleManager_Draw(Camera3D c, Texture2D t) { if (!s_initialized) return; DrawParticles(c, t); GpuParticleSystem_Draw(c, t); }
+void ParticleManager_Draw(Camera3D c, Texture2D t)
+{
+    if (!s_initialized) return;
+
+    // CPU particles select alpha/additive per particle and restore the default
+    // alpha state when finished. GPU billboards currently have one emissive
+    // blend law, so bind it explicitly here instead of inheriting whichever
+    // mode the CPU path happened to leave behind. Without this ownership split,
+    // GPU VFX switched between alpha and additive based on CPU activity.
+    DrawParticles(c, t);
+    rlDrawRenderBatchActive();
+    BeginBlendMode(BLEND_ADDITIVE);
+    GpuParticleSystem_Draw(c, t);
+    rlDrawRenderBatchActive();
+    EndBlendMode();
+}
+void ParticleManager_DrawBody(Camera3D c, Texture2D t)
+{
+    if (!s_initialized) return;
+    DrawParticlesBody(c, t);
+    // GPU particles share the same generic body/emission law as CPU
+    // particles: alpha body carries hue over bright terrain, additive pass
+    // remains the physical light bloom.
+    rlDrawRenderBatchActive();
+    BeginBlendMode(BLEND_ALPHA);
+    GpuParticleSystem_Draw(c, t);
+    rlDrawRenderBatchActive();
+    EndBlendMode();
+}
+void ParticleManager_DrawEmission(Camera3D c, Texture2D t)
+{
+    if (!s_initialized) return;
+    rlDrawRenderBatchActive();
+    BeginBlendMode(BLEND_ADDITIVE);
+    DrawParticlesEmission(c, t);
+    GpuParticleSystem_Draw(c, t);
+    rlDrawRenderBatchActive();
+    EndBlendMode();
+}
 void ParticleManager_GetStats(ParticleManagerStats *outStats) { if (!outStats) return; ParticleManager_RefreshStats(); *outStats = s_stats; }
 
 void ParticleManager_SpawnCompatibility(ParticleConfig config)

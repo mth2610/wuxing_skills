@@ -23,7 +23,13 @@ int main(void)
     bad += !Has("core/particles/particle_manager.c", "ParticleManager_GPUCanRun");
     bad += !Has("core/particles/particle_manager.c", "PARTICLE_SIM_GPU_ONLY && !gpuOK");
     bad += !Has("core/particles/particle_manager.c", "ParticleManager_Update(float dt) { if (!s_initialized) return; UpdateParticles(dt); GpuParticleSystem_Update(dt);");
-    bad += !Has("core/particles/particle_manager.c", "ParticleManager_Draw(Camera3D c, Texture2D t) { if (!s_initialized) return; DrawParticles(c, t); GpuParticleSystem_Draw(c, t);");
+    bad += !Has("core/particles/particle_manager.c", "void ParticleManager_DrawBody(Camera3D c, Texture2D t)");
+    bad += !Has("core/particles/particle_manager.c", "void ParticleManager_DrawEmission(Camera3D c, Texture2D t)");
+    bad += !Has("core/particles/particle_manager.c", "GpuParticleSystem_Draw(c, t);");
+    bad += !Has("main.c", "ScreenDistort_BeginVFXBody();");
+    bad += !Has("main.c", "ScreenDistort_BeginVFXEmission();");
+    bad += !Has("main.c", "ParticleManager_DrawBody(camera, globalParticleTex);");
+    bad += !Has("main.c", "ParticleManager_DrawEmission(camera, globalParticleTex);");
     bad += !Has("core/particles/particle_system.c", "ParticleManager_SpawnCompatibility(config)");
     bad += !Has("core/particles/gpu/particle_gpu_backend.c", "ScreenDistort_BindDepthForSoftParticles(drawShader, GPU_PARTICLE_SOFT_DEPTH_SLOT)");
     bad += !Has("core/particles/gpu/particle_gpu_backend.c", "rlDisableDepthMask();");

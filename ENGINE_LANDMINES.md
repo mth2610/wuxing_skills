@@ -18,6 +18,15 @@
 | 8 | Per-instance uniform changes → stale-UBO scrambling (rlvk) | Any VFX that calls `SetShaderValue` between instances |
 | 9 | `matModel` is model×**view** → `fragPosition` is NOT world space | Any shader doing positional lighting/effects |
 | 10 | `SetShaderValue` writes to the **active** shader under rlvk | Anyone setting uniforms outside `BeginShaderMode` |
+| 11 | Colour-only VFX layer clear must preserve shared depth | Anyone adding a render layer over scene depth |
+
+---
+
+## 11. Colour-only VFX layer clear must preserve shared depth
+
+- **Symptom:** VFX rendered into a transparent layer appears through geometry, although it was depth-tested correctly before the layer clear.
+- **Cause:** clearing a framebuffer that shares scene depth clears both attachments unless depth writes are disabled and the backend honours that mask.
+- **Rule:** flush, call `rlDisableDepthMask()`, clear the colour layer, then restore the mask. The rlvk guard is `depth_mask_clear`; do not replace it with an unconditional depth clear.
 
 ---
 

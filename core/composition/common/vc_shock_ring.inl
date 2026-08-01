@@ -205,6 +205,7 @@ void VFX_ComposeShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat,
     // BOTH sides, because rlgl draws the queued geometry LATER and the state at
     // DRAW time is what applies (ENGINE_LANDMINES §1 and its 30/07 postscript on
     // culling, which is exactly how a swept tube came out as half a shell).
+    ScreenDistort_BeginVFXEmission();
     rlDrawRenderBatchActive();
     BeginBlendMode(BLEND_ADDITIVE);
     rlDisableDepthMask();
@@ -259,4 +260,5 @@ void VFX_ComposeShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat,
     rlEnableDepthMask();
     EndBlendMode();
     rlDrawRenderBatchActive();
+    ScreenDistort_EndVFXLayer();
 }

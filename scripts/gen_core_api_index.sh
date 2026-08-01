@@ -51,7 +51,7 @@ cat <<'PREAMBLE'
 - **A system's `*_Init`/`*_Update`/`*_Draw`/`*_Unload` are the engine-loop lifecycle** — skill code does not call them; it calls the spawn/add entry points only. Exceptions are called out below.
 - **Trails:** `SpawnTrailEntity` returns an id. `TRAIL_TYPE_PROJECTILE` and `SpawnLightningTrail` self-terminate; **`TRAIL_TYPE_FOLLOWER` and manually-driven trails: the caller MUST `KillTrail(id)`.** Drive electric followers with `Lightning_UpdateFollowerTip`, not raw `UpdateFollowerPosition`.
 - **`VFXLight_Spawn` requires a `VFXPriority`** — a full pool evicts the lowest priority. Use `VFX_PRIORITY_HIGH_ULTIMATE` for casts that must not drop.
-- **Metaballs:** call `MetaballFX_RegisterBlob` every frame per blob (1-frame lifetime); never call `MetaballFX_DrawRegistered` from skill code.
+- **Metaballs:** call `MetaballFX_RegisterBlob` every frame per blob (1-frame lifetime); never call `MetaballFX_Prepare`, `MetaballFX_Composite`, or `MetaballFX_DrawRegistered` from skill code.
 - **ScreenDistort:** skills only call `ScreenDistort_Add` (auto-expires after `lifetime`); the rest is engine lifecycle.
 - **Depth-state changes** must flush the batch (`rlDrawRenderBatchActive()`) before AND after — see `ENGINE_LANDMINES.md` §1.
 - **Custom shader textures:** bind via `SetShaderValueTexture`, not `rlActiveTextureSlot`/`rlEnableTexture` — see `LANDMINES.md`.

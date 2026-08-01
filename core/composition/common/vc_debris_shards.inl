@@ -413,6 +413,7 @@ static void VC_DebrisShards_Draw3D(Camera3D cam)
     //   BLEND_ALPHA    — a chip BLOCKS light. The blend law. Its dust is the
     //                    additive half of the pair and is drawn by the particle
     //                    system, not here.
+    ScreenDistort_BeginVFXBody();
     rlDrawRenderBatchActive();
     rlEnableDepthMask();
     rlEnableBackfaceCulling();
@@ -444,4 +445,5 @@ static void VC_DebrisShards_Draw3D(Camera3D cam)
     rlDrawRenderBatchActive();
     EndBlendMode();
     rlDrawRenderBatchActive();
+    ScreenDistort_EndVFXLayer();
 }
