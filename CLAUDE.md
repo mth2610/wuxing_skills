@@ -12,7 +12,7 @@ C / Raylib 6.0 game project. Rendering backend: **Vulkan 1.1 via `rlvk` (priorit
   the ordered task list. `core/docs/ELDEN_VFX_SPEC.md` is now history.
 - `core/docs/API.md` — Full engine API (particle, trail, force field, shader, mesh...)
 - `skills/docs/RECIPE.md` — **One-prompt skill creation guide** (archetype picker, command sequence, element presets, scale rules, aesthetic checklist)
-- `compute/docs/API.md` — GPU compute particle system (shared by skills + environment)
+- `core/particles/docs/GPU_BACKEND_API.md` — internal GPU particle backend
 - `environment/docs/API.md` — Lighting, shadow, fog system
 - `maps/docs/API.md` — Map creation & management
 - `entities/docs/API.md` — Agent pool, teams, mana/Thiền Định, Vô Hệ, Thái Cực state, vertical physics, damage entry point
@@ -55,10 +55,10 @@ Never edit another module's files — ask that module's agent. Never read/list/t
 | Agent | Owns | Extra read access |
 |---|---|---|
 | **Core Agent** | `core/` | `.h` headers of skills, maps, environment |
-| **Compute Agent** | `compute/` | `compute/docs/API.md`, `core/resource_manager.h` |
-| **Skills Agent** | `skills/`, `core/docs/API.md` (shared write w/ Core Agent) | `core/*.h`, `compute/gpu_particle_system.h`, `environment/environment_system.h`, `assets/` |
+| **Core Agent** | `core/particles/` | `core/particles/docs/GPU_BACKEND_API.md`, `core/resource_manager.h` |
+| **Skills Agent** | `skills/`, `core/docs/API.md` (shared write w/ Core Agent) | `core/*.h`, `environment/environment_system.h`, `assets/` |
 | **Map Agent** | `maps/` | `environment/environment_system.h`, `core/skill_manager.h`, `assets/` |
-| **Environment Agent** | `environment/` | `core/decals/decal_system.h`, `core/skill_manager.h`, `compute/gpu_particle_system.h` |
+| **Environment Agent** | `environment/` | `core/decals/decal_system.h`, `core/skill_manager.h`, `core/particles/particle_manager.h` |
 | **Entities Agent** | `entities/` | `core/skill_manager.h`, `entities/docs/API.md` — teams/mana/Vô Hệ/Thái Cực state, see `entities/CLAUDE.md` |
 | **Combat Agent** | `combat/` | `entities/entities.h`, `core/map_manager.h`, `combat/docs/API.md` — Đấu Pháp registry + clash matrix, see `combat/CLAUDE.md` |
 | **Control Agent** | `control/` | `entities/entities.h`, `core/skill_manager.h`, `combat/combat.h`, `control/docs/API.md` — PlayerIntent layer, see `control/CLAUDE.md` |
@@ -107,7 +107,7 @@ Conversion complete engine-wide: `entities/entities.c`, `sandbox/sandbox_core.c`
 
 ## Token-efficiency rules for every agent (MANDATORY)
 
-Each sub-module `CLAUDE.md` (`core/`, `compute/`, `skills/`, `maps/`, `environment/`) has its own "Token-efficiency rules" block — always apply it. General principles for cross-agent coordination:
+Each sub-module `CLAUDE.md` (`core/`, `skills/`, `maps/`, `environment/`) has its own "Token-efficiency rules" block — always apply it. General principles for cross-agent coordination:
 
 1. **Read with intent, not exploratory reads.** Grep/find the symbol first, read the full file only if truly needed.
 2. **Don't re-read a file already read this session** unless it was edited or may have changed externally.

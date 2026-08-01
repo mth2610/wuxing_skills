@@ -1,6 +1,6 @@
 # AGENT_CODE_STANDARD.md — Self-Check Rules (Agent-Maintained)
 
-> Not API docs (see `core/docs/API.md`, `compute/docs/API.md`, `environment/docs/API.md`, `maps/docs/API.md`). This is a terse mistake-prevention checklist for ALL code layers: skills (`skills/`), core engine (`core/`, `compute/`, `environment/`, `maps/`), common shaders (`core/shaders/common/*.glsl`).
+> Not API docs (see `core/docs/API.md`, `core/particles/docs/GPU_BACKEND_API.md`, `environment/docs/API.md`, `maps/docs/API.md`). This is a terse mistake-prevention checklist for ALL code layers: skills (`skills/`), core engine (`core/`, `environment/`, `maps/`), common shaders (`core/shaders/common/*.glsl`).
 > Sections 1-9 = skill code. Section 10 = core layer (incl. common shader functions).
 > **Update rule:** any time an API doc changes, or you learn a new lesson from a bug, edit this file in the same turn. Keep entries terse — bullet + one-line reason max.
 
@@ -72,7 +72,7 @@
 - Re-check §1-8 as a literal checklist; don't skip §7a if the skill has a custom shader.
 - New core API found in `.h` but missing from `core/docs/API.md` → report it, don't guess behavior.
 
-## 10. Core layer (`core/`, `compute/`, `environment/`, `maps/`, common shaders)
+## 10. Core layer (`core/`, `environment/`, `maps/`, common shaders)
 
 ### 10.1 General
 - New/changed core API must stay backward compatible with every skill caller — don't change existing signatures; add new functions or append-only struct fields instead.
@@ -90,8 +90,8 @@
 - Keep `highp` precision for any uniform shared between VS+FS (lesson: `mediump`→`highp` fix was required for Android, see commit "fs_header.glsl — đổi precision mediump float → precision highp float"). Don't introduce `mediump`/`lowp` regressions.
 - New common code only runs through the `#include` path (runtime-rewritten to `#version 300 es`) — must stay valid under both `#version 330` (desktop) and `#version 300 es` (Android) syntax.
 
-### 10.3 Compute (`compute/`)
-- Read `compute/docs/API.md` first — GPU particle system is shared by skills AND environment; bugs here hit both.
+### 10.3 GPU particle backend (`core/particles/gpu/`)
+- Read `core/particles/docs/GPU_BACKEND_API.md` first. New VFX code uses `core/particles/particle_manager.h`.
 - SSBO/buffer layout changes must stay in sync with C-side structs — verify std140/std430 alignment before committing.
 
 ### 10.4 Definition of done (core change)

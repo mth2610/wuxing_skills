@@ -1,10 +1,10 @@
-#ifndef GPU_PARTICLE_SYSTEM_H
-#define GPU_PARTICLE_SYSTEM_H
+#ifndef CORE_PARTICLES_GPU_PARTICLE_GPU_BACKEND_H
+#define CORE_PARTICLES_GPU_PARTICLE_GPU_BACKEND_H
 
 /*
- * compute/gpu_particle_system — Hệ thống particle GPU dùng chung.
+ * core/particles/gpu/particle_gpu_backend — internal GPU particle backend.
  *
- * Module độc lập, nằm ngoài core/. Cả skills lẫn environment đều có thể dùng.
+ * Private implementation behind core/particles/particle_manager.h.
  *
  * Hai path, tự detect runtime:
  *   COMPUTE path  (GL 4.3+ / GLES 3.1+, Android Mali-G68+)
@@ -13,7 +13,7 @@
  *                 — physics trên CPU, upload VBO mỗi frame
  *
  * Tích hợp vào main.c:
- *   1. #include "compute/gpu_particle_system.h"
+ *   Legacy API only. New VFX code includes core/particles/particle_manager.h.
  *   2. GpuParticleSystem_Init()  — sau InitWindow()
  *   3. GpuParticleSystem_Update(dt) — trong game loop (Update)
  *   4. GpuParticleSystem_Draw(camera, tex) — trong game loop (Draw, sau 3D Begin)
@@ -28,7 +28,7 @@
 
 // Số slot texture "vector field" đồng thời hỗ trợ cho FORCE_VECTOR_TEXTURE
 // (xem core/force_field.h) — PHẢI khớp uVectorField0/uVectorField1 trong
-// compute/shaders/gpu_particles.comp.
+// core/particles/shaders/gpu/particle_gpu.comp.
 #define GPU_VECTOR_FIELD_SLOTS 2
 
 typedef struct {
@@ -100,4 +100,4 @@ int  GpuParticleSystem_ActiveCount(void);
 // Debug overlay — vẽ thẳng lên màn hình, gọi trong 2D draw phase
 void GpuParticleSystem_DrawDebug(int x, int y);
 
-#endif // GPU_PARTICLE_SYSTEM_H
+#endif // CORE_PARTICLES_GPU_PARTICLE_GPU_BACKEND_H

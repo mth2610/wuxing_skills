@@ -5,7 +5,7 @@ Manages the **Compute** module — the GPU compute system shared across the whol
 Provides GPU-side particle physics, designed to be extensible for rain, fog, and other simulations.
 
 ## Scope
-- **Read/write:** The entire `compute/` directory (`.c`, `.h`, `shaders/`)
+- **Read/write:** `core/particles/gpu/` and `core/particles/shaders/gpu/`
 - **Read (reference):** `docs/API.md`, `../core/docs/API.md` (§ Android/GLES rules), `CMakeLists.txt`
 - **Read (interface only):** `core/resource_manager.h` (for shader loading), `environment/environment_system.h` (if needed)
 
@@ -18,7 +18,7 @@ Provides GPU-side particle physics, designed to be extensible for rain, fog, and
 - `core/*.c`, `skills/`, `maps/`, `environment/*.c` — read `.h` only if needed
 
 ## Responsibilities
-1. **GPU Particle System:** Maintain `gpu_particle_system.c/.h` and shaders under `compute/shaders/`
+1. **GPU Particle Backend:** Maintain `particle_gpu_backend.c/.h` and shaders under `core/particles/shaders/gpu/`
 2. **Dual path:** Keep both the COMPUTE path (GL 4.3+ / GLES 3.1+) and the CPU/VBO path (GL 3.3 / macOS) correct
 3. **GLES compatibility:** Compute shaders must use `#version 310 es`. The runtime patcher in `CompileComputeShader()` bumps it to `#version 430 core` on desktop
 4. **API stability:** Don't change `GpuParticleSystem_*` signatures without advance notice
@@ -38,19 +38,19 @@ Provides GPU-side particle physics, designed to be extensible for rain, fog, and
 - `gpu_particles_ssbo.vs` uses `#version 430 core` → build script converts it → `#version 310 es` in the APK
 
 ### Precision rule (strict GLES 3.x)
-- Every shader under `compute/shaders/` must declare `precision highp float; precision highp int;` in GLES mode
+- Every shader under `core/particles/shaders/gpu/` must declare `precision highp float; precision highp int;` in GLES mode
 - A uniform used in both VS and FS must use the same precision — see ../core/docs/API.md Rule E
 
 ## Code rules
 - No direct `malloc`/`calloc`/`free`. Use `RL_MALLOC`/`RL_FREE` if needed (only inside `CompileComputeShader` for version patching)
-- Shader paths must start with `compute/shaders/...`
+- Shader paths must start with `core/particles/shaders/gpu/...`
 - No dependency on `core/` beyond `resource_manager.h`
 - No dependency on `skills/` or `environment/`
 
 ## Cross-module communication
-- **Skills / Environment want to spawn particles:** call `GpuParticleSystem_Spawn(cfg)` — just `#include "compute/gpu_particle_system.h"`
+- **Skills / Environment want particles:** use `ParticleManager_*` from `core/particles/particle_manager.h`.
 - **Core Agent:** if a new API is needed from `core/`, ask the Core Agent to add it to a header
-- **CMakeLists.txt changes:** update the `compute/` section of CMakeLists yourself
+- **CMakeLists.txt changes:** update the particle backend section of CMakeLists yourself
 
 ---
 

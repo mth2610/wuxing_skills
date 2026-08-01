@@ -1,7 +1,7 @@
 # COMPUTE MODULE API
 
 > Shared GPU compute module — particle physics, rain, simulation.
-> Lives in `compute/`, independent of `core/`, usable from skills, environment, maps.
+> Lives in `core/particles/gpu/` and is private to the particle manager.
 
 ---
 
@@ -21,7 +21,7 @@ The caller doesn't need to check the path — the API is identical on both.
 ## 2. Game-loop integration (main.c)
 
 ```c
-#include "compute/gpu_particle_system.h"
+#include "core/particles/gpu/particle_gpu_legacy.h"
 
 // After InitWindow():
 GpuParticleSystem_Init();
@@ -149,7 +149,7 @@ Each particle occupies 80 bytes in the SSBO. Fixed-size pool, no malloc.
 
 ## 5. Shader files
 
-All shaders live in `compute/shaders/`:
+All shaders live in `core/particles/shaders/gpu/`:
 
 | File | Used by | Description |
 |---|---|---|
@@ -193,7 +193,7 @@ precision highp sampler2D;  // required if the compute shader has a sampler2D un
 
 For environment to make rain:
 ```c
-#include "compute/gpu_particle_system.h"
+#include "core/particles/gpu/particle_gpu_legacy.h"
 
 // In Environment_Update(dt):
 for (int i = 0; i < rain_spawn_count; i++) {

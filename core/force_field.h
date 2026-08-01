@@ -81,7 +81,7 @@ typedef struct {
 //                  (direction.y bỏ qua)
 //   strength     = hệ số nhân lên vector đọc được từ texture
 //   noiseScale   = (float)texture slot index — cast sang int, xem
-//                  GPU_VECTOR_FIELD_SLOTS trong compute/gpu_particle_system.h
+//                  GPU_VECTOR_FIELD_SLOTS trong core/particles/gpu/particle_gpu_legacy.h
 //   radius, falloff, noiseSpeed = KHÔNG dùng, PHẢI để 0 (radius > 0 sẽ áp
 //                  thêm attenuation hình cầu quanh origin đè lên box-cutoff)
 //

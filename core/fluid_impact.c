@@ -1,6 +1,6 @@
 #include "core/fluid_impact.h"
 
-#include "compute/gpu_particle_system.h"
+#include "core/particles/particle_manager.h"
 #include "core/decals/decal_system.h"
 #include "core/force_field.h"
 #include "core/fluid_surface.h"
@@ -60,10 +60,28 @@ static void FluidImpact_InitGravity(void)
 
 static int FluidImpact_BackgroundCount(float force01)
 {
-    int base = GpuParticleSystem_IsComputeActive() ? 12 : 4;
-    int extra = GpuParticleSystem_IsComputeActive() ? 20 : 8;
+    const ParticleGPUCaps *caps = ParticleSystem_GetGPUCaps();
+    int base = caps->computeShader ? 12 : 4;
+    int extra = caps->computeShader ? 20 : 8;
     if (GfxQuality_Get() <= GFX_LOW) { base = 3; extra = 5; }
     return base + (int)(extra * force01);
+}
+
+static void FluidImpact_EmitBackground(const ParticleConfig *particle)
+{
+    ParticleEmitterDesc desc = {0};
+    desc.simulationPolicy = PARTICLE_SIM_AUTO;
+    desc.renderMode = PARTICLE_RENDER_SURFACE_INPUT;
+    desc.particle = *particle;
+    desc.moduleFlags = PARTICLE_MODULE_GRAVITY | PARTICLE_MODULE_DRAG |
+                       PARTICLE_MODULE_COLOR_OVER_LIFE | PARTICLE_MODULE_SIZE_OVER_LIFE |
+                       PARTICLE_MODULE_VELOCITY_STRETCH | PARTICLE_MODULE_FORCE_FIELD;
+    desc.debugName = "FluidImpact background";
+    ParticleEmitterHandle emitter = ParticleManager_CreateEmitter(&desc);
+    if (emitter != PARTICLE_EMITTER_INVALID) {
+        ParticleManager_Emit(emitter, 1);
+        ParticleManager_DestroyEmitter(emitter);
+    }
 }
 
 static int FluidImpact_HeroCount(float force01)
@@ -115,7 +133,7 @@ static void FluidImpact_SpawnMicroSplash(Vector3 point, Vector3 normal, float ra
         float angle = ((float)GetRandomValue(0, 359)) * DEG2RAD;
         Vector3 radial = Vector3Add(Vector3Scale(tangent, cosf(angle)),
                                     Vector3Scale(bitangent, sinf(angle)));
-        GpuParticleConfig p = {0};
+        ParticleConfig p = {0};
         p.position = Vector3Add(point, Vector3Scale(normal, radius + 0.01f));
         p.velocity = Vector3Add(Vector3Scale(normal, 1.0f + 0.4f * i),
                                 Vector3Scale(radial, 0.8f + 0.25f * i));
@@ -123,11 +141,10 @@ static void FluidImpact_SpawnMicroSplash(Vector3 point, Vector3 normal, float ra
         p.colorEnd = VC_WithAlpha(water->body, 0);
         p.radius = radius * 0.55f;
         p.lifetime = 0.22f;
-        p.drag = 0.65f;
         p.forceField = &s_gravity;
         p.stretchStrength = 0.12f;
         p.stretchMinSpeed = 0.20f;
-        GpuParticleSystem_Spawn(p);
+        FluidImpact_EmitBackground(&p);
     }
 }
 
@@ -176,15 +193,15 @@ void FluidImpact_SpawnWater(const FluidImpactEvent *event)
     for (int i = 0, n = FluidImpact_BackgroundCount(force01); i < n; ++i) {
         float angle = ((float)GetRandomValue(0, 359)) * DEG2RAD;
         Vector3 radial = Vector3Add(Vector3Scale(tangent, cosf(angle)), Vector3Scale(bitangent, sinf(angle)));
-        GpuParticleConfig p = {0};
+        ParticleConfig p = {0};
         p.position = Vector3Add(event->hitPoint, Vector3Scale(normal, 0.025f));
         p.velocity = Vector3Add(Vector3Scale(impulse, scale * (1.2f + force01 * 2.0f)),
                                 Vector3Add(Vector3Scale(radial, scale * (0.8f + force01)),
                                            Vector3Scale(normal, scale * 1.0f)));
         p.colorStart = VC_WithAlpha(water->soft, 170); p.colorEnd = VC_WithAlpha(water->body, 0);
-        p.radius = scale * 0.022f; p.lifetime = 0.35f; p.drag = 0.55f;
+        p.radius = scale * 0.022f; p.lifetime = 0.35f;
         p.forceField = &s_gravity; p.stretchStrength = 0.18f; p.stretchMinSpeed = 0.20f;
-        GpuParticleSystem_Spawn(p);
+        FluidImpact_EmitBackground(&p);
     }
 }
 

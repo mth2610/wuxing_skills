@@ -115,7 +115,8 @@ add_executable(wuxing
     core/camera_fx.c
     core/audio_system.c
     core/particles/particle_system.c
-    compute/gpu_particle_system.c
+    core/particles/particle_manager.c
+    core/particles/gpu/particle_gpu_backend.c
     core/fluid_impact.c
     core/fluid_surface.c
     core/path_spline.c
@@ -232,10 +233,10 @@ foreach(asset_path ${MAP_ASSETS})
 endforeach()
 
 # --- compute module shaders ---
-configure_file(compute/shaders/gpu_particles.comp     ${CMAKE_CURRENT_BINARY_DIR}/compute/shaders/gpu_particles.comp     COPYONLY)
-configure_file(compute/shaders/gpu_particles_ssbo.vs  ${CMAKE_CURRENT_BINARY_DIR}/compute/shaders/gpu_particles_ssbo.vs  COPYONLY)
-configure_file(compute/shaders/gpu_particles_vbo.vs   ${CMAKE_CURRENT_BINARY_DIR}/compute/shaders/gpu_particles_vbo.vs   COPYONLY)
-configure_file(compute/shaders/gpu_particles.fs       ${CMAKE_CURRENT_BINARY_DIR}/compute/shaders/gpu_particles.fs       COPYONLY)
+configure_file(core/particles/shaders/gpu/particle_gpu.comp    ${CMAKE_CURRENT_BINARY_DIR}/core/particles/shaders/gpu/particle_gpu.comp    COPYONLY)
+configure_file(core/particles/shaders/gpu/particle_gpu_ssbo.vs ${CMAKE_CURRENT_BINARY_DIR}/core/particles/shaders/gpu/particle_gpu_ssbo.vs COPYONLY)
+configure_file(core/particles/shaders/gpu/particle_gpu_vbo.vs  ${CMAKE_CURRENT_BINARY_DIR}/core/particles/shaders/gpu/particle_gpu_vbo.vs  COPYONLY)
+configure_file(core/particles/shaders/gpu/particle_gpu.fs      ${CMAKE_CURRENT_BINARY_DIR}/core/particles/shaders/gpu/particle_gpu.fs      COPYONLY)
 configure_file(core/shaders/taiji.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/taiji.fs COPYONLY)
 
 # --- Cập nhật: Sao chép thư viện Shaders chuyên dụng Phase 1 và 2 vào thư mục shaders/ ---

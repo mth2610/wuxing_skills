@@ -80,7 +80,7 @@ real need comes up — this field's only job right now is ownership tracking.
 - Need a new API from Core: ask the Core Agent to add it to `core/` (Skills never edits `core/*.c`/`*.h`)
 - Need to document a usage note/convention for an existing API: edit `../core/docs/API.md` directly (see below), no need to ask Core Agent
 - Need environment info (sun direction, shadow): use the `environment/environment_system.h` API
-- Need to spawn a GPU particle: use `compute/gpu_particle_system.h` — don't edit `compute/` directly
+- Need particles: use `core/particles/particle_manager.h` — do not call a backend directly
 - Need to deal damage or apply a buff to agents: use `entities/entities.h`'s `Entity_ApplyAoEDamage`/`Entity_ApplyAoEBuff` (radius-based, works for single-target via small radius or true AoE via large radius — see `../entities/docs/API.md` §9). Do NOT call `core/skill_manager.h`'s `ApplyAoEDamage()` for agent-targeted damage — superseded, no HP bookkeeping.
 - Never edit `core/`, `environment/`, or `entities/` directly
 

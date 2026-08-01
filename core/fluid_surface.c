@@ -34,6 +34,13 @@ void FluidSurface_Init(int width,int height) {
 }
 void FluidSurface_Unload(void) { UnloadRenderTexture(s_capture); UnloadRenderTexture(s_smoothA); UnloadRenderTexture(s_smoothB); }
 void FluidSurface_RegisterParticle(Vector3 p,float r) { if(s_count<FLUID_SURFACE_MAX_PARTICLES) s_particles[s_count++]=(FluidSurfaceParticle){p,r}; }
+bool FluidSurface_SubmitParticleStream(const ParticleRenderStream *stream) {
+    if (!stream || stream->mode != PARTICLE_RENDER_SURFACE_INPUT) return false;
+    /* The stream stays opaque. CPU positions are registered through the
+     * existing surface path; GPU streams are consumed by their raster path,
+     * never copied into s_particles. GPU raster wiring lands with Phase C. */
+    return true;
+}
 void FluidSurface_Capture(Camera3D camera) {
     if(!s_count) return;
     BeginTextureMode(s_capture); ClearBackground(BLANK); BeginMode3D(camera);

@@ -1,4 +1,4 @@
-#include "gpu_particle_system.h"
+#include "particle_gpu_legacy.h"
 #include "core/resource_manager.h"
 #include "core/particles/particle_system.h"
 #if defined(GRAPHICS_API_VULKAN) || defined(WUXING_USE_VULKAN)
@@ -180,9 +180,9 @@ void GpuParticleSystem_Init(void)
     if (gl43)
     {
         // ----- COMPUTE PATH -----
-        const char *comp_path = "compute/shaders/gpu_particles.comp";
-        const char *ssbo_vs_path = "compute/shaders/gpu_particles_ssbo.vs";
-        const char *fs_path = "compute/shaders/gpu_particles.fs";
+        const char *comp_path = "core/particles/shaders/gpu/particle_gpu.comp";
+        const char *ssbo_vs_path = "core/particles/shaders/gpu/particle_gpu_ssbo.vs";
+        const char *fs_path = "core/particles/shaders/gpu/particle_gpu.fs";
 
         s_compute_prog = CompileComputeShader(comp_path);
         if (!s_compute_prog)

@@ -4,8 +4,7 @@
 #include "core/fluid_impact.h"
 #include "core/fluid_surface.h"
 #include "core/metaball_fx.h"
-#include "core/particles/particle_system.h"
-#include "compute/gpu_particle_system.h"
+#include "core/particles/particle_manager.h"
 #include "core/post_fx.h"
 #include "sandbox/sandbox_core.h"
 #include "core/screen_distort.h"
@@ -1016,8 +1015,7 @@ int main(int argc, char **argv) {
   // -----------------------------------------------------------------
   // KHỞI TẠO CÁC HỆ THỐNG ĐỒ HỌA VFX
   // -----------------------------------------------------------------
-  InitParticleSystem();
-  GpuParticleSystem_Init();
+  ParticleManager_Init();
   Shader defaultTrailShader = LoadShader(0, "core/trails/shaders/trail_glow.fs");
   InitTrailSystem(defaultTrailShader);
   VFXLight_Init();
@@ -1716,8 +1714,7 @@ int main(int argc, char **argv) {
     EmitterSystem_Update(dt);
     StatusVFX_Update(dt);
     Afterimage_Update(dt);
-    UpdateParticles(dt);
-    GpuParticleSystem_Update(dt);
+    ParticleManager_Update(dt);
     FluidImpact_Update(dt);
     UpdateTrailSystem(dt);
     VFXLight_Update(dt);
@@ -1852,8 +1849,7 @@ int main(int argc, char **argv) {
         rlDrawRenderBatchActive();
         rlDisableDepthMask();
         BeginBlendMode(BLEND_ADDITIVE);
-        DrawParticles(camera, globalParticleTex);
-        GpuParticleSystem_Draw(camera, globalParticleTex);
+        ParticleManager_Draw(camera, globalParticleTex);
         EndBlendMode();
         rlDrawRenderBatchActive();
         rlEnableDepthMask();
@@ -2006,8 +2002,7 @@ int main(int argc, char **argv) {
 
   UnloadTexture(globalParticleTex);
   UnloadTexture(testAtlasTex);
-  UnloadParticleSystem();
-  GpuParticleSystem_Unload();
+  ParticleManager_Unload();
   UnloadTrailSystem();
   DecalSystem_Unload();
   ScreenDistort_Unload();

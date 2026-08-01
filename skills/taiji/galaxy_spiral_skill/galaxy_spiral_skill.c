@@ -4,7 +4,7 @@
 #include <math.h>
 
 #include "skills/taiji/galaxy_spiral_skill/galaxy_spiral_skill.h"
-#include "compute/gpu_particle_system.h"
+#include "core/particles/gpu/particle_gpu_legacy.h"
 #include "core/force_field.h"
 
 // --- tunables (meter-scaled: 1 unit = 1 m) ---------------------------------

@@ -1,5 +1,5 @@
 #include "vfx_test.h"
-#include "compute/gpu_particle_system.h"
+#include "core/particles/gpu/particle_gpu_legacy.h"
 #include "core/camera_fx.h"
 #include "core/decals/decal_system.h"
 #include "core/particles/particle_system.h"

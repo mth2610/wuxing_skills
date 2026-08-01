@@ -61,7 +61,7 @@ PROJECT_SOURCE_FILES   := main.c \
                           core/force_field.c \
                           core/camera_fx.c \
                           core/particles/particle_system.c \
-                          compute/gpu_particle_system.c \
+                          core/particles/gpu/particle_gpu_backend.c \
                           core/path_spline.c \
                           core/post_fx.c \
                           core/ribbon_strip.c \
@@ -394,10 +394,10 @@ copy_project_resources: create_temp_project_dirs
 	cp -f core/shaders/*.vs $(PROJECT_BUILD_PATH)/assets/core/shaders/ 2>/dev/null || true
 	cp -f core/shaders/*.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/ 2>/dev/null || true
 	cp -f core/shaders/common/*.glsl $(PROJECT_BUILD_PATH)/assets/core/shaders/common/ 2>/dev/null || true
-	mkdir -p $(PROJECT_BUILD_PATH)/assets/compute/shaders
-	cp -f compute/shaders/*.comp $(PROJECT_BUILD_PATH)/assets/compute/shaders/ 2>/dev/null || true
-	cp -f compute/shaders/*.vs $(PROJECT_BUILD_PATH)/assets/compute/shaders/ 2>/dev/null || true
-	cp -f compute/shaders/*.fs $(PROJECT_BUILD_PATH)/assets/compute/shaders/ 2>/dev/null || true
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/core/particles/shaders/gpu
+	cp -f core/particles/shaders/gpu/*.comp $(PROJECT_BUILD_PATH)/assets/core/particles/shaders/gpu/ 2>/dev/null || true
+	cp -f core/particles/shaders/gpu/*.vs $(PROJECT_BUILD_PATH)/assets/core/particles/shaders/gpu/ 2>/dev/null || true
+	cp -f core/particles/shaders/gpu/*.fs $(PROJECT_BUILD_PATH)/assets/core/particles/shaders/gpu/ 2>/dev/null || true
 	
 	@# Tự động quét và sao chép cấu trúc thư mục của skills/ cùng các asset liên quan (.fs, .vs, .png)
 	mkdir -p $(PROJECT_BUILD_PATH)/assets/skills

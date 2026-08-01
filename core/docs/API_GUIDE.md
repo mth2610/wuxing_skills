@@ -202,11 +202,48 @@ ForceField_AddLayer(&s_forceField, (ForceLayer){
 
 * **Falloff Semantic:** `0.0` = constant force throughout, `1.0` = linear decrease to zero at radius boundary, `2.0` = quadratic decrease (natural gravitational/magnetic falloff).
 * **Viscosity Damping:** Use `ForceField_GetViscosityDamping(&s_forceField, dt)` inside manual update loops to damp velocity: `myVel = Vector3Scale(myVel, dampFactor);`.
-* **`FORCE_VECTOR_TEXTURE` (GPU-only):** Samples a world-space flow texture instead of a procedural formula — for geometry-authored vector fields (smoke hugging a wall, fire wrapping a body) that noise/vortex layers can't express. `origin.xz`/`direction.xz` define a world-space sample box (`direction.xz` = half-extent, `origin.y`/`direction.y` ignored). Texture RG channels = XZ flow direction remapped `[-1,1] -> [0,1]`. Particles outside the box get zero acceleration (hard cutoff, no edge-clamp). **CPU path (`ForceField_Evaluate`, `particle_system.c`, `trail_system.c`) treats this as a no-op** — only `GpuParticleSystem` (COMPUTE path) actually samples the texture, via `GpuParticleSystem_SetVectorFieldTexture()` (see ../../compute/docs/API.md §3). Not yet verified on real GPU hardware (macOS caps at GL 4.1 and never exercises the COMPUTE path) — treat as unverified until confirmed on an Android/GL4.3+ device.
+* **`FORCE_VECTOR_TEXTURE` (GPU-only):** Samples a world-space flow texture instead of a procedural formula — for geometry-authored vector fields (smoke hugging a wall, fire wrapping a body) that noise/vortex layers can't express. `origin.xz`/`direction.xz` define a world-space sample box (`direction.xz` = half-extent, `origin.y`/`direction.y` ignored). Texture RG channels = XZ flow direction remapped `[-1,1] -> [0,1]`. Particles outside the box get zero acceleration (hard cutoff, no edge-clamp). **CPU path (`ForceField_Evaluate`, `particle_system.c`, `trail_system.c`) treats this as a no-op** — only the internal GPU backend samples the texture. New code declares this module through `ParticleEmitterDesc`; it does not call the backend directly.
 
 ---
 
 ## 6. PARTICLE SYSTEM (`#include "core/particles/particle_system.h"`)
+
+### Hybrid particle façade (`#include "core/particles/particle_manager.h"`)
+
+New gameplay and VFX code creates `ParticleEmitterDesc` and only calls
+`ParticleManager_CreateEmitter`, `ParticleManager_Emit`, `ParticleManager_Update`,
+and `ParticleManager_Draw`. It must not select or call a CPU/GPU implementation.
+`ParticleSystem_GetGPUCaps()` is a read-only snapshot probed once during
+`ParticleManager_Init`; never query graphics capability in an effect update.
+
+`PARTICLE_SIM_AUTO` selects compute only when the probe and every declared module
+permit it; otherwise it uses the CPU pool and increments the fallback statistic.
+`PARTICLE_SIM_CPU_ONLY` is mandatory for gameplay callbacks, authoritative
+collision, and bone-attached authoring. `PARTICLE_SIM_GPU_ONLY` rejects emission
+when unavailable or unsupported: inspect `ParticleManager_GetEmitterStatus`; the
+manager logs a warning once per emitter and exposes the rejection counter.
+
+| Module | CPU | GPU |
+| --- | --- | --- |
+| Gravity, drag, colour/size over life, velocity stretch, basic force field | yes | yes |
+| Vector-field texture | no | yes |
+| Gameplay callback/collision | yes | no |
+| Depth collision | fallback raycast/disable by policy | preferred |
+| Ribbon/trail | authoring | stream consumer when supported |
+| Fluid SSF input | surface stream | direct raster stream |
+
+Descriptors are copied into a fixed 128-emitter pool. Their pointer members
+(`ForceField`, gradients, curves, sprite animation, and textures) are borrowed:
+they must outlive every emitted particle. No allocation or shader compilation is
+performed by emit/update. `SpawnParticle` remains a compatibility AUTO burst and
+currently carries the legacy-compat module, so existing CPU effects retain their
+behaviour while their descriptors are migrated.
+
+Fluid renderers consume `ParticleRenderStream` from
+`ParticleManager_GetSurfaceStream`. The stream is opaque; consumers must never
+map it or request GPU-to-CPU readback. `FluidSurface_SubmitParticleStream` is the
+backend-neutral handoff point.
+
 ParticleConfig should be initialized with {0}.
 `void SpawnParticle(ParticleConfig config);` triggers particle emission in the engine.
 ### Configuration API

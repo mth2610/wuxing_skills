@@ -1,4 +1,5 @@
 #include "particle_system.h"
+#include "core/particles/particle_manager.h"
 #include "core/mesh_adjacency.h"
 #include "raymath.h"
 #include "rlgl.h"
@@ -209,6 +210,13 @@ void InitParticleSystem(void)
 }
 
 void SpawnParticle(ParticleConfig config)
+{
+  /* Phase-A compatibility wrapper: legacy call sites become AUTO one-shot
+   * emitters without exposing a backend selection to their authors. */
+  ParticleManager_SpawnCompatibility(config);
+}
+
+void ParticleSystem_SpawnLegacy(ParticleConfig config)
 {
   ParticleConfig_Unify(&config);
   int targetIdx = Particle_AllocSlot();

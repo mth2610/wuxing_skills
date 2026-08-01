@@ -1,7 +1,7 @@
 #include "sandbox/ui_panel.h"
 #include "sandbox/sandbox_core.h"
 #include "entities/entities.h"
-#include "compute/gpu_particle_system.h"
+#include "core/particles/gpu/particle_gpu_legacy.h"
 #include "core/tuning.h"
 #include "core/resource_manager.h"
 #include "rlgl.h"

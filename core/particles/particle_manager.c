@@ -1,0 +1,138 @@
+#include "core/particles/particle_manager.h"
+
+#include "core/particles/gpu/particle_gpu_legacy.h"
+#include <string.h>
+
+typedef struct ParticleEmitterRuntime {
+    bool active, gpu, warned;
+    ParticleEmitterStatus status;
+    ParticleEmitterDesc desc;
+} ParticleEmitterRuntime;
+
+static ParticleEmitterRuntime s_emitters[PARTICLE_MANAGER_MAX_EMITTERS];
+static ParticleGPUCaps s_caps;
+static ParticleManagerStats s_stats;
+static bool s_initialized;
+
+static bool ParticleManager_GPUCanRun(unsigned int modules)
+{
+    const unsigned int cpuOnly = PARTICLE_MODULE_GAMEPLAY_CALLBACK | PARTICLE_MODULE_GAMEPLAY_COLLISION |
+                                 PARTICLE_MODULE_LEGACY_COMPAT;
+    return s_caps.computeShader && s_caps.storageBuffer && (modules & cpuOnly) == 0;
+}
+
+static void ParticleManager_RefreshStats(void)
+{
+    int cpu = 0, max = 0;
+    ParticleSystem_GetStats(&cpu, &max);
+    (void)max;
+    s_stats.activeCpuParticles = cpu;
+    s_stats.activeGpuParticles = GpuParticleSystem_ActiveCount();
+}
+
+void ParticleManager_Init(void)
+{
+    if (s_initialized) return;
+    memset(s_emitters, 0, sizeof(s_emitters));
+    memset(&s_stats, 0, sizeof(s_stats));
+    InitParticleSystem();
+    GpuParticleSystem_Init();
+    /* Probe once, after renderer/backend initialization. The compute system
+     * already validates shader/buffer creation, so these are usable caps. */
+    s_caps.computeShader = GpuParticleSystem_IsComputeActive();
+    s_caps.storageBuffer = s_caps.computeShader;
+    s_caps.indirectDraw = false; /* current raylib stream uses instanced draw */
+    s_caps.instancing = s_caps.computeShader;
+    s_caps.maxWorkGroupSize = s_caps.computeShader ? 256 : 0;
+    s_caps.maxStorageBufferBytes = s_caps.computeShader ? MAX_GPU_PARTICLES * 64 : 0;
+    s_initialized = true;
+}
+
+void ParticleManager_Unload(void)
+{
+    if (!s_initialized) return;
+    GpuParticleSystem_Unload();
+    UnloadParticleSystem();
+    memset(s_emitters, 0, sizeof(s_emitters));
+    s_initialized = false;
+}
+
+const ParticleGPUCaps *ParticleSystem_GetGPUCaps(void) { return &s_caps; }
+
+ParticleEmitterHandle ParticleManager_CreateEmitter(const ParticleEmitterDesc *desc)
+{
+    if (!s_initialized || !desc) return PARTICLE_EMITTER_INVALID;
+    for (int i = 0; i < PARTICLE_MANAGER_MAX_EMITTERS; ++i) {
+        ParticleEmitterRuntime *e = &s_emitters[i];
+        if (e->active) continue;
+        memset(e, 0, sizeof(*e)); e->active = true; e->desc = *desc;
+        bool gpuOK = ParticleManager_GPUCanRun(desc->moduleFlags);
+        e->gpu = desc->simulationPolicy == PARTICLE_SIM_GPU_ONLY ||
+                 (desc->simulationPolicy == PARTICLE_SIM_AUTO && gpuOK);
+        e->status = PARTICLE_EMITTER_OK;
+        if (desc->simulationPolicy == PARTICLE_SIM_GPU_ONLY && !gpuOK) {
+            e->gpu = false;
+            e->status = (desc->moduleFlags & (PARTICLE_MODULE_GAMEPLAY_CALLBACK | PARTICLE_MODULE_GAMEPLAY_COLLISION))
+                            ? PARTICLE_EMITTER_UNSUPPORTED_MODULE : PARTICLE_EMITTER_GPU_UNAVAILABLE;
+            s_stats.rejectedGpuOnlyEmitters++;
+        } else if (desc->simulationPolicy == PARTICLE_SIM_AUTO && !gpuOK && desc->moduleFlags) {
+            s_stats.fallbackCount++;
+        }
+        s_stats.emitterCount++;
+        return i;
+    }
+    return PARTICLE_EMITTER_INVALID;
+}
+
+void ParticleManager_DestroyEmitter(ParticleEmitterHandle handle)
+{
+    if (handle < 0 || handle >= PARTICLE_MANAGER_MAX_EMITTERS || !s_emitters[handle].active) return;
+    s_emitters[handle].active = false;
+    if (s_stats.emitterCount > 0) s_stats.emitterCount--;
+}
+
+void ParticleManager_Emit(ParticleEmitterHandle handle, int count)
+{
+    if (handle < 0 || handle >= PARTICLE_MANAGER_MAX_EMITTERS || count <= 0) return;
+    ParticleEmitterRuntime *e = &s_emitters[handle];
+    if (!e->active || e->status != PARTICLE_EMITTER_OK) {
+        if (e->active && !e->warned) { TraceLog(LOG_WARNING, "ParticleManager: GPU_ONLY emitter '%s' rejected (%d)", e->desc.debugName ? e->desc.debugName : "unnamed", e->status); e->warned = true; }
+        return;
+    }
+    for (int i = 0; i < count; ++i) {
+        if (e->gpu) {
+            const ParticleConfig *p = &e->desc.particle;
+            GpuParticleSystem_Spawn((GpuParticleConfig){ .position=p->position, .velocity=p->velocity,
+                .colorStart=p->colorStart, .colorEnd=p->colorEnd, .radius=p->radius,
+                .lifetime=p->lifetime, .forceField=p->forceField, .stretchStrength=p->stretchStrength,
+                .stretchMinSpeed=p->stretchMinSpeed, .collisionEnabled=p->collisionEnabled,
+                .collisionElasticity=p->collisionElasticity, .collisionFloorY=p->collisionFloorY,
+                .emissiveBoost=p->render.emissiveBoost });
+        } else ParticleSystem_SpawnLegacy(e->desc.particle);
+    }
+}
+
+ParticleEmitterStatus ParticleManager_GetEmitterStatus(ParticleEmitterHandle handle)
+{ return (handle < 0 || handle >= PARTICLE_MANAGER_MAX_EMITTERS || !s_emitters[handle].active) ? PARTICLE_EMITTER_INVALID_HANDLE : s_emitters[handle].status; }
+
+bool ParticleManager_GetSurfaceStream(ParticleEmitterHandle handle, ParticleRenderStream *outStream)
+{
+    if (!outStream || handle < 0 || handle >= PARTICLE_MANAGER_MAX_EMITTERS || !s_emitters[handle].active) return false;
+    ParticleEmitterRuntime *e = &s_emitters[handle];
+    if (e->desc.renderMode != PARTICLE_RENDER_SURFACE_INPUT || e->status != PARTICLE_EMITTER_OK) return false;
+    *outStream = (ParticleRenderStream){ e->desc.renderMode, e->gpu ? PARTICLE_RENDER_BACKEND_GPU : PARTICLE_RENDER_BACKEND_CPU, handle, e };
+    return true;
+}
+
+void ParticleManager_Update(float dt) { if (!s_initialized) return; UpdateParticles(dt); GpuParticleSystem_Update(dt); ParticleManager_RefreshStats(); }
+void ParticleManager_Draw(Camera3D c, Texture2D t) { if (!s_initialized) return; DrawParticles(c, t); GpuParticleSystem_Draw(c, t); }
+void ParticleManager_GetStats(ParticleManagerStats *outStats) { if (!outStats) return; ParticleManager_RefreshStats(); *outStats = s_stats; }
+
+void ParticleManager_SpawnCompatibility(ParticleConfig config)
+{
+    if (!s_initialized) { ParticleSystem_SpawnLegacy(config); return; }
+    ParticleEmitterDesc desc = { PARTICLE_SIM_AUTO, PARTICLE_RENDER_BILLBOARD, config,
+                                 PARTICLE_MODULE_LEGACY_COMPAT, "SpawnParticle compatibility" };
+    ParticleEmitterHandle h = ParticleManager_CreateEmitter(&desc);
+    if (h != PARTICLE_EMITTER_INVALID) { ParticleManager_Emit(h, 1); ParticleManager_DestroyEmitter(h); }
+}

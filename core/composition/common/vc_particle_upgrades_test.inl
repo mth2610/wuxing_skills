@@ -1,7 +1,7 @@
 #include "core/particles/particle_system.h"
 #include "core/resource_manager.h"
 #include "core/force_field.h"
-#include "compute/gpu_particle_system.h"
+#include "core/particles/gpu/particle_gpu_legacy.h"
 #include "raylib.h"
 #include "raymath.h"
 #include <stdbool.h>

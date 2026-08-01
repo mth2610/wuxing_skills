@@ -204,6 +204,8 @@ static inline void ParticleConfig_Unify(ParticleConfig *cfg) {
 }
 
 void InitParticleSystem(void);
+/* Internal backend entry point. New gameplay/VFX code uses particle_manager.h. */
+void ParticleSystem_SpawnLegacy(ParticleConfig config);
 void SpawnParticle(ParticleConfig config);
 void ParticleSystem_GetStats(int *active, int *max); // Item 32
 void UpdateParticles(float dt);

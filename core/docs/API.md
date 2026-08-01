@@ -199,6 +199,7 @@
 ### `core/particles/particle_system.h`
 ```c
   void InitParticleSystem(void);
+  void ParticleSystem_SpawnLegacy(ParticleConfig config);
   void SpawnParticle(ParticleConfig config);
   void ParticleSystem_GetStats(int *active, int *max);
   void UpdateParticles(float dt);
@@ -212,6 +213,23 @@
   void ParticleSystem_ResetForceFieldRegistry(void);
 ```
 **Structs** (fields in header): ParticleRadialBurstConfig, ParticleConfig
+
+### `core/particles/particle_manager.h`
+```c
+  void ParticleManager_Init(void);
+  void ParticleManager_Unload(void);
+  const ParticleGPUCaps *ParticleSystem_GetGPUCaps(void);
+  ParticleEmitterHandle ParticleManager_CreateEmitter(const ParticleEmitterDesc *desc);
+  void ParticleManager_DestroyEmitter(ParticleEmitterHandle handle);
+  void ParticleManager_Emit(ParticleEmitterHandle handle, int count);
+  ParticleEmitterStatus ParticleManager_GetEmitterStatus(ParticleEmitterHandle handle);
+  bool ParticleManager_GetSurfaceStream(ParticleEmitterHandle handle, ParticleRenderStream *outStream);
+  void ParticleManager_Update(float dt);
+  void ParticleManager_Draw(Camera3D camera, Texture2D fallbackTexture);
+  void ParticleManager_GetStats(ParticleManagerStats *outStats);
+  void ParticleManager_SpawnCompatibility(ParticleConfig config);
+```
+**Structs** (fields in header): ParticleGPUCaps, ParticleEmitterDesc, ParticleRenderStream, ParticleManagerStats
 
 ### `core/mesh_adjacency.h`
 ```c
