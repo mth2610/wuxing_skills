@@ -26,6 +26,21 @@ Status: complete for the public-lifecycle slice.
   receiver mesh is cached at spawn; receiver reprojection belongs to a later
   projection-provider phase.
 
+## D2 — Data-driven material library
+
+Status: initial migration complete.
+
+- Canonical policy data lives in `core/decals/decal_materials.json` and is
+  generated into `decal_materials.generated.inl`.
+- `DecalMaterialDesc` owns semantic surface selection, tint policy, lifecycle
+  and radius curves, opacity, and emissive controls.
+- `VFX_ElementMaterial` selects a decal material ID; Fire, Ice, and the shared
+  impact policy are migrated.
+- `VFX_ComposeDecal()` no longer branches on Fire or Ice to select renderer
+  behavior.
+- Future D2 work: expand the material schema with receiver/feature policy once
+  D3 introduces render buckets.
+
 ## Verification
 
 - `bash scripts/run_core_tests.sh decal_system`: passing.

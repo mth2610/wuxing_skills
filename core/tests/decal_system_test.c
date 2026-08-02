@@ -39,10 +39,15 @@ int main(void)
           Has(compose, "DecalSystem_AddConformalMaterialEx") &&
           !Has(compose, "SetLastConformalMaterial"),
           "Composition uses the atomic generic decal spawn path");
-    CHECK(Has(compose, "VFX_SURFACE_DECAL_FROST") &&
+    CHECK(Has(compose, "DecalMaterial_Get") &&
+          !Has(compose, "matId == VC_MAT_ICE") &&
           Has("core/vfx_surface_registry.h", "VFX_SURFACE_DECAL_FROST") &&
-          Has("assets/vfx_surface_profiles.json", "frost_decal_v1.png"),
-          "Ice selects a dedicated semantic frost surface");
+          Has("core/decals/decal_materials.json", "DECAL_MATERIAL_FROST"),
+          "Material data selects the dedicated semantic frost surface");
+    CHECK(Has("core/decals/decal_materials.json", "DECAL_MATERIAL_SCORCH") &&
+          Has("core/decals/decal_materials.json", "DECAL_MATERIAL_IMPACT") &&
+          Has("scripts/gen_decal_materials.py", "decal_materials.generated.inl"),
+          "Decal render policy is generated from canonical material data");
     CHECK(!Has(impl, "rlDisableDepthTest") &&
           Has(impl, "rlDisableDepthMask") &&
           Has(impl, "rlEnableDepthMask"),

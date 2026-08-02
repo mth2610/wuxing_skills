@@ -11,6 +11,7 @@
 #include "raylib.h"
 #include "core/color_gradient.h"
 #include "core/force_field.h"
+#include "core/decals/decal_material_types.h"
 
 typedef enum {
     VC_MAT_FIRE,
@@ -37,6 +38,7 @@ typedef struct {
     const ColorGradient *hotGrad; // biến thể sáng hơn (đảo chiều); nếu không có thì trỏ về grad
     const ForceField *fld;        // trường lực chuẩn của nguyên tố
     const char *runeDecal;        // texture vòng rune dưới đất (shield/charge)
+    DecalMaterialId decalMaterial; // policy-only decal material; no texture path
 } VFX_ElementMaterial;
 
 // Luôn trả về entry hợp lệ (id sai → VC_MAT_TAIJI); mọi con trỏ trong entry đều non-NULL.

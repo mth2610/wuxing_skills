@@ -371,19 +371,22 @@ void VFX_Presets_Init(void) {
         .body = ELEMENT_COLOR_FIRE, .glow = (Color){ 255, 90, 20, 255 },
         .soft = (Color){ 255, 110, 30, 255 },
         .blendMode = BLEND_ADDITIVE, .grad = &s_fireGrad, .hotGrad = &s_fireGrad,
-        .fld = &s_fireFld, .runeDecal = "assets/textures/decals/decal_lava_crack.png"
+        .fld = &s_fireFld, .runeDecal = "assets/textures/decals/decal_lava_crack.png",
+        .decalMaterial = DECAL_MATERIAL_SCORCH
     };
     s_Materials[VC_MAT_ICE] = (VFX_ElementMaterial){
         .body = (Color){ 150, 220, 255, 255 }, .glow = (Color){ 160, 225, 255, 255 },
         .soft = (Color){ 160, 225, 255, 255 },
         .blendMode = BLEND_ALPHA, .grad = &s_snowGrad, .hotGrad = &s_snowGrad,
-        .fld = &s_snowFld, .runeDecal = "assets/textures/decals/decal_crack.png"
+        .fld = &s_snowFld, .runeDecal = "assets/textures/decals/decal_crack.png",
+        .decalMaterial = DECAL_MATERIAL_FROST
     };
     s_Materials[VC_MAT_WATER] = (VFX_ElementMaterial){
         .body = ELEMENT_COLOR_WATER, .glow = (Color){ 80, 180, 255, 255 },
         .soft = (Color){ 160, 225, 255, 255 },
         .blendMode = BLEND_ADDITIVE, .grad = &s_waterGrad, .hotGrad = &s_waterGrad,
-        .fld = &s_waterFld, .runeDecal = "assets/textures/decals/decal_water_ripple.png"
+        .fld = &s_waterFld, .runeDecal = "assets/textures/decals/decal_water_ripple.png",
+        .decalMaterial = DECAL_MATERIAL_IMPACT
     };
     // Lightning có hai bản sắc cùng tồn tại: glow cyan điện cho hồ quang/beam,
     // body tím cho ambient (khớp s_lightningGrad + aura cũ).
@@ -391,19 +394,22 @@ void VFX_Presets_Init(void) {
         .body = (Color){ 175, 45, 255, 255 }, .glow = (Color){ 0, 185, 255, 255 },
         .soft = (Color){ 180, 110, 255, 255 },
         .blendMode = BLEND_ADDITIVE, .grad = &s_lightningGrad, .hotGrad = &s_lightningFollowerGrad,
-        .fld = &s_lightningFld, .runeDecal = "assets/textures/decals/decal_metal_rune.png"
+        .fld = &s_lightningFld, .runeDecal = "assets/textures/decals/decal_metal_rune.png",
+        .decalMaterial = DECAL_MATERIAL_IMPACT
     };
     s_Materials[VC_MAT_EARTH] = (VFX_ElementMaterial){
         .body = ELEMENT_COLOR_EARTH, .glow = (Color){ 180, 140, 100, 255 },
         .soft = (Color){ 215, 170, 115, 255 },
         .blendMode = BLEND_ADDITIVE, .grad = &s_earthGrad, .hotGrad = &s_earthGrad,
-        .fld = &s_earthFld, .runeDecal = "assets/textures/decals/decal_earth_rune.png"
+        .fld = &s_earthFld, .runeDecal = "assets/textures/decals/decal_earth_rune.png",
+        .decalMaterial = DECAL_MATERIAL_IMPACT
     };
     s_Materials[VC_MAT_WOOD] = (VFX_ElementMaterial){
         .body = ELEMENT_COLOR_WOOD, .glow = (Color){ 0, 230, 90, 255 },
         .soft = (Color){ 100, 225, 140, 255 },
         .blendMode = BLEND_ADDITIVE, .grad = &s_woodGrad, .hotGrad = &s_woodGrad,
-        .fld = &s_woodFld, .runeDecal = "assets/textures/decals/decal_root_mark.png"
+        .fld = &s_woodFld, .runeDecal = "assets/textures/decals/decal_root_mark.png",
+        .decalMaterial = DECAL_MATERIAL_IMPACT
     };
     // Metal trong wuxing mang hơi hướng lôi/điện: glow xanh điện trắng
     // (giữ nguyên "electric blue-white" của CHARGE_METAL cũ).
@@ -411,38 +417,44 @@ void VFX_Presets_Init(void) {
         .body = ELEMENT_COLOR_METAL, .glow = (Color){ 120, 200, 255, 255 },
         .soft = (Color){ 225, 240, 255, 255 },
         .blendMode = BLEND_ADDITIVE, .grad = &s_metalGrad, .hotGrad = &s_metalGrad,
-        .fld = &s_metalFld, .runeDecal = "assets/textures/decals/decal_metal_rune.png"
+        .fld = &s_metalFld, .runeDecal = "assets/textures/decals/decal_metal_rune.png",
+        .decalMaterial = DECAL_MATERIAL_IMPACT
     };
     // Taiji: body tím, glow vàng gold (giữ aura gold có chủ ý của AURA_TAIJI cũ).
     s_Materials[VC_MAT_TAIJI] = (VFX_ElementMaterial){
         .body = ELEMENT_COLOR_TAIJI, .glow = (Color){ 255, 180, 0, 255 },
         .soft = (Color){ 220, 240, 255, 255 },
         .blendMode = BLEND_ADDITIVE, .grad = &s_taijiGrad, .hotGrad = &s_taijiGrad,
-        .fld = &s_taijiFld, .runeDecal = "assets/textures/decals/decal_taiji_ring.png"
+        .fld = &s_taijiFld, .runeDecal = "assets/textures/decals/decal_taiji_ring.png",
+        .decalMaterial = DECAL_MATERIAL_IMPACT
     };
     s_Materials[VC_MAT_HOLY] = (VFX_ElementMaterial){
         .body = (Color){ 255, 220, 80, 255 }, .glow = (Color){ 255, 235, 150, 255 },
         .soft = (Color){ 255, 245, 200, 255 },
         .blendMode = BLEND_ADDITIVE, .grad = &s_holyGrad, .hotGrad = &s_holyGrad,
-        .fld = &s_taijiFld, .runeDecal = "assets/textures/decals/decal_taiji_ring.png"
+        .fld = &s_taijiFld, .runeDecal = "assets/textures/decals/decal_taiji_ring.png",
+        .decalMaterial = DECAL_MATERIAL_IMPACT
     };
     s_Materials[VC_MAT_VOID] = (VFX_ElementMaterial){
         .body = (Color){ 120, 20, 200, 255 }, .glow = (Color){ 140, 40, 200, 255 },
         .soft = (Color){ 190, 130, 255, 255 },
         .blendMode = BLEND_ALPHA, .grad = &s_voidGrad, .hotGrad = &s_voidGrad,
-        .fld = &s_taijiFld, .runeDecal = "assets/textures/decals/decal_taiji_ring.png"
+        .fld = &s_taijiFld, .runeDecal = "assets/textures/decals/decal_taiji_ring.png",
+        .decalMaterial = DECAL_MATERIAL_IMPACT
     };
     s_Materials[VC_MAT_POISON] = (VFX_ElementMaterial){
         .body = (Color){ 120, 220, 90, 255 }, .glow = (Color){ 120, 220, 90, 255 },
         .soft = (Color){ 180, 240, 150, 255 },
         .blendMode = BLEND_ADDITIVE, .grad = &s_poisonGrad, .hotGrad = &s_poisonGrad,
-        .fld = &s_woodFld, .runeDecal = "assets/textures/decals/decal_root_mark.png"
+        .fld = &s_woodFld, .runeDecal = "assets/textures/decals/decal_root_mark.png",
+        .decalMaterial = DECAL_MATERIAL_IMPACT
     };
     s_Materials[VC_MAT_QI] = (VFX_ElementMaterial){
         .body = (Color){ 0, 165, 255, 255 }, .glow = (Color){ 0, 165, 255, 255 },
         .soft = (Color){ 220, 240, 255, 255 },
         .blendMode = BLEND_ADDITIVE, .grad = &s_qiGradMat, .hotGrad = &s_qiGradMat,
-        .fld = &s_woodFld, .runeDecal = "assets/textures/decals/decal_taiji_ring.png"
+        .fld = &s_woodFld, .runeDecal = "assets/textures/decals/decal_taiji_ring.png",
+        .decalMaterial = DECAL_MATERIAL_IMPACT
     };
 
     s_presetsInitialized = true;
