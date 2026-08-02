@@ -74,6 +74,10 @@ typedef struct {
     int distanceCulled;
     float baseCoverage;
     float emissiveCoverage;
+    int legacySubmissions;
+    int conformalSubmissions;
+    int materialSwitches;
+    int textureSwitches;
 } DecalRenderStats;
 
 // Khởi tạo hệ thống Decal

@@ -3,14 +3,12 @@
 // Input vertex attributes (from vertex shader)
 in vec2 fragTexCoord;
 in vec4 fragColor;
+in vec3 fragFlow;
 
 // Input uniform values
 uniform sampler2D texture0;
-uniform float u_time;         // elapsed giây kể từ lúc decal spawn
-uniform float u_flowSpeed;    // tốc độ cuộn ra ngoài tâm
-uniform float u_flowStrength;  // trộn giữa texture gốc và texture đã cuộn [0,1]
+uniform float u_time;         // time shared by the current decal pass
 uniform float u_texScale;      // Scale UV cho vân nước (mặc định 1.0)
-uniform float u_glowIntensity; // boost HDR vùng sáng nhất (khe nứt); 0 = tắt glow
 uniform int u_useFlowTex;      // có dùng texture1 (water_flow) không?
 uniform sampler2D texture1;    // water_flow.png
 
@@ -30,7 +28,7 @@ void main()
     // Cuộn toạ độ radial ra ngoài tâm theo thời gian rồi fract về [0,1] ->
     // texture lặp lại tỏa dần ra mép (lava crawl / ripple spreading) thay vì
     // đứng yên như decal tĩnh.
-    float scrollDist = fract(dist * scale - u_time * u_flowSpeed);
+    float scrollDist = fract(dist * scale - u_time * fragFlow.x);
     vec2 flowUV = vec2(0.5) + dir * scrollDist * 0.5;
 
     vec4 texelColor;
@@ -44,7 +42,7 @@ void main()
     } else {
         vec4 baseColor = texture(texture0, scaledUV);
         vec4 flowColor = texture(texture0, flowUV);
-        texelColor = mix(baseColor, flowColor, clamp(u_flowStrength, 0.0, 1.0));
+        texelColor = mix(baseColor, flowColor, clamp(fragFlow.y, 0.0, 1.0));
     }
 
     // Glow tuỳ chọn (u_glowIntensity == 0 -> glowAmount luôn 0, không đổi gì
@@ -56,7 +54,7 @@ void main()
     // (PostFX bloomThreshold = 0.65, main.c).
     float luma = dot(texelColor.rgb, vec3(0.2126, 0.7152, 0.0722));
     float glowMask = smoothstep(0.5, 0.85, luma);
-    float glowAmount = clamp(glowMask * u_glowIntensity, 0.0, 1.0);
+    float glowAmount = clamp(glowMask * fragFlow.z, 0.0, 1.0);
     vec3 glowColor = fragColor.rgb * 2.5;
 
     vec3 tintedColor = texelColor.rgb * fragColor.rgb;

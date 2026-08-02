@@ -54,8 +54,8 @@ Status: initial state-correctness slice complete.
   depth-mask/blend state is restored at pass end.
 - The conformal emissive pass is not opened unless at least one queued stamp
   has non-zero emissive intensity and alpha.
-- CPU frustum culling, LOD/budget admission, and per-material uniform bucketing
-  remain later D4/D5 work.
+- CPU frustum culling, LOD admission, and material bucketing are now tracked in
+  D4/D5 below; PC Vulkan/OpenGL and Android visual captures remain required.
 
 ## D4 — CPU culling, LOD, priority, and coverage
 
@@ -86,12 +86,22 @@ Status: conservative frustum-admission slice complete.
 
 ## D5 — Batch and mobile optimization
 
-Status: conformal uniform-churn slice complete.
+Status: renderer optimization slice complete; backend capture validation pending.
 
 - Per-stamp erosion no longer uses `SetShaderValue()`: the material shader reads
   erosion from vertex-color red and opacity from vertex-color alpha.
 - Base/emissive tint, threshold, and intensity are applied only when the
   conformal material/tint bucket changes, inside the active shader scope.
+- Adjacent decals with the same material bucket and texture now share one rlgl
+  triangle submission; vertex color keeps their erosion/opacity independent.
+- Legacy flow quads pack speed, strength, and glow in their otherwise-unused
+  normal attribute; the flow shader receives one frame-time uniform per pass,
+  not four uniforms per decal.
+- `DecalRenderStats` records legacy/conformal submission estimates plus material
+  and texture switches for backend captures and mobile tuning.
+- Remaining D5 work is measurement on PC OpenGL/Vulkan and Android Vulkan, then
+  tuning the data values from captures. Bounded forward projection is deferred
+  to D6 because it is a new feature, not a prerequisite for ground stamps.
 - This preserves the one-sampler shader interface and avoids the rlvk
   per-instance UBO pressure pattern. Instance-buffer batching and capture-based
   backend measurements remain outstanding.

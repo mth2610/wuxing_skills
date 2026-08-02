@@ -21,12 +21,16 @@ static unsigned char s_renderLod[MAX_DECALS];
 static bool s_renderEmissiveAllowed[MAX_DECALS];
 static float s_renderBaseCoverage = 0.0f;
 static float s_renderEmissiveCoverage = 0.0f;
+static int s_renderLegacySubmissions = 0;
+static int s_renderConformalSubmissions = 0;
+static int s_renderMaterialSwitches = 0;
+static int s_renderTextureSwitches = 0;
 
 // Gom 2 shader thành 1 shader duy nhất để tránh switch trạng thái shader (Shader State Changes)
 static Shader g_DecalShader;
 static Shader g_MaterialDecalShader;
 // Uniform locations của uber-shader (decal_flow.fs), cache 1 lần ở Init
-static int s_locFlowTime = -1, s_locFlowSpeed = -1, s_locFlowStrength = -1, s_locGlow = -1;
+static int s_locFlowTime = -1;
 static int s_locMaterialEmissivePass = -1;
 static int s_locMaterialBaseTint = -1;
 static int s_locMaterialEmissiveTint = -1;
@@ -80,6 +84,30 @@ static void Decal_EndWorldPass(void)
     rlDrawRenderBatchActive();
 }
 
+static int Decal_CompareMaterialBucket(const DecalEntity *a, const DecalEntity *b)
+{
+    const unsigned char aValues[] = {
+        a->material.baseTint.r, a->material.baseTint.g, a->material.baseTint.b,
+        a->material.emissiveTint.r, a->material.emissiveTint.g, a->material.emissiveTint.b,
+        a->tint.r, a->tint.g, a->tint.b
+    };
+    const unsigned char bValues[] = {
+        b->material.baseTint.r, b->material.baseTint.g, b->material.baseTint.b,
+        b->material.emissiveTint.r, b->material.emissiveTint.g, b->material.emissiveTint.b,
+        b->tint.r, b->tint.g, b->tint.b
+    };
+    for (int i = 0; i < 9; ++i)
+    {
+        if (aValues[i] != bValues[i])
+            return aValues[i] < bValues[i] ? -1 : 1;
+    }
+    if (a->material.emissiveThreshold != b->material.emissiveThreshold)
+        return a->material.emissiveThreshold < b->material.emissiveThreshold ? -1 : 1;
+    if (a->material.emissiveIntensity != b->material.emissiveIntensity)
+        return a->material.emissiveIntensity < b->material.emissiveIntensity ? -1 : 1;
+    return 0;
+}
+
 static bool Decal_RenderBefore(int lhs, int rhs)
 {
     const DecalEntity *a = &g_DecalPool[lhs];
@@ -87,6 +115,8 @@ static bool Decal_RenderBefore(int lhs, int rhs)
     if (a->conformalStamp != b->conformalStamp) return !a->conformalStamp;
     if (a->blendMode != b->blendMode) return a->blendMode < b->blendMode;
     if (a->flowScroll != b->flowScroll) return !a->flowScroll;
+    int materialOrder = Decal_CompareMaterialBucket(a, b);
+    if (materialOrder != 0) return materialOrder < 0;
     if (a->texture.id != b->texture.id) return a->texture.id < b->texture.id;
     return lhs < rhs;
 }
@@ -211,6 +241,10 @@ static void Decal_BuildRenderQueue(void)
     s_renderDistanceCulledCount = 0;
     s_renderBaseCoverage = 0.0f;
     s_renderEmissiveCoverage = 0.0f;
+    s_renderLegacySubmissions = 0;
+    s_renderConformalSubmissions = 0;
+    s_renderMaterialSwitches = 0;
+    s_renderTextureSwitches = 0;
     for (int a = 0; a < s_activeCount; ++a)
     {
         int idx = s_activeIds[a];
@@ -340,7 +374,7 @@ static inline Vector3 Decal_TransformCornerOpt(const DecalEntity *d, float lx, f
 }
 
 // Đưa toàn bộ dữ liệu hiệu ứng vào Đỉnh (Vertex Attributes) thay vì Uniform
-static void Decal_AppendQuad(const DecalEntity *d, Color c, float elapsed)
+static void Decal_AppendQuad(const DecalEntity *d, Color c)
 {
     float rad = d->rotation * DEG2RAD;
     float cy = cosf(rad);
@@ -354,6 +388,12 @@ static void Decal_AppendQuad(const DecalEntity *d, Color c, float elapsed)
     Vector3 v1 = Decal_TransformCornerOpt(d, -0.5f, 0.5f, cy, sy, scale_z);
     Vector3 v2 = Decal_TransformCornerOpt(d, 0.5f, 0.5f, cy, sy, scale_z);
     Vector3 v3 = Decal_TransformCornerOpt(d, 0.5f, -0.5f, cy, sy, scale_z);
+
+    // Legacy quad normals are otherwise unused. Pack flow speed/strength/glow
+    // there so the flow shader does not need per-decal uniform updates.
+    rlNormal3f(d->flowScroll ? d->flowSpeed : 0.0f,
+               d->flowScroll ? d->flowStrength : 0.0f,
+               d->flowScroll ? d->glowIntensity : 0.0f);
 
     // Sử dụng rlColor4ub để truyền Màu sắc + Alpha gốc
     rlColor4ub(c.r, c.g, c.b, c.a);
@@ -426,13 +466,11 @@ void DecalSystem_Init(void)
     // uniform = 0 rút gọn ĐÚNG về decal.fs (cùng edge mask radial, texture
     // đứng yên) — không cần file decal_uber.fs riêng (chưa từng tồn tại;
     // trước đây load hụt → rơi về default shader, mất edge fade + flow).
-    g_DecalShader   = ResourceManager_LoadShader(NULL, "core/decals/shaders/decal_flow.fs");
+    g_DecalShader   = ResourceManager_LoadShader("core/decals/shaders/decal_material.vs",
+                                                 "core/decals/shaders/decal_flow.fs");
     g_MaterialDecalShader = ResourceManager_LoadShader("core/decals/shaders/decal_material.vs",
                                                         "core/decals/shaders/decal_material.fs");
     s_locFlowTime     = GetShaderLocation(g_DecalShader, "u_time");
-    s_locFlowSpeed    = GetShaderLocation(g_DecalShader, "u_flowSpeed");
-    s_locFlowStrength = GetShaderLocation(g_DecalShader, "u_flowStrength");
-    s_locGlow         = GetShaderLocation(g_DecalShader, "u_glowIntensity");
     s_locMaterialEmissivePass = GetShaderLocation(g_MaterialDecalShader, "u_emissivePass");
     s_locMaterialBaseTint = GetShaderLocation(g_MaterialDecalShader, "u_baseTint");
     s_locMaterialEmissiveTint = GetShaderLocation(g_MaterialDecalShader, "u_emissiveTint");
@@ -796,34 +834,9 @@ static void DrawGroup(BlendMode mode, bool flowOnly)
         {
             Decal_BeginWorldPass(mode);
             BeginShaderMode(g_DecalShader);
-            // Nhóm tĩnh dùng CHUNG program với nhóm flow → phải reset 2 uniform
-            // "chế độ" về 0 (flowStrength 0 vô hiệu cuộn, glow 0 tắt boost),
-            // nếu không giá trị của nhóm flow vẽ trước đó rò sang decal tĩnh.
-            if (!flowOnly)
-            {
-                float zero = 0.0f;
-                SetShaderValue(g_DecalShader, s_locFlowStrength, &zero, SHADER_UNIFORM_FLOAT);
-                SetShaderValue(g_DecalShader, s_locGlow, &zero, SHADER_UNIFORM_FLOAT);
-            }
+            float frameTime = (float)GetTime();
+            SetShaderValue(g_DecalShader, s_locFlowTime, &frameTime, SHADER_UNIFORM_FLOAT);
             shaderActive = true;
-        }
-
-        // Tối ưu Uniform: Nếu bắt buộc phải dùng Uniform cho Flow, chỉ cập nhật khi thông số thay đổi
-        if (flowOnly)
-        {
-            // Nếu bạn chỉnh sửa Shader nhận dữ liệu qua Vertex, đoạn code SetShaderValue dưới đây sẽ biến mất, giúp tăng tốc X10.
-            // Còn nếu giữ nguyên Uniform, dòng code dưới đây bắt buộc phải bẻ gãy batch:
-            float elapsed = d->maxLifetime - d->lifetime;
-            if (drawing)
-            {
-                rlEnd();
-                drawing = false;
-            } // Ép kết thúc cấu trúc hình cũ để nạp Uniform mới
-
-            SetShaderValue(g_DecalShader, s_locFlowTime, &elapsed, SHADER_UNIFORM_FLOAT);
-            SetShaderValue(g_DecalShader, s_locFlowSpeed, &d->flowSpeed, SHADER_UNIFORM_FLOAT);
-            SetShaderValue(g_DecalShader, s_locFlowStrength, &d->flowStrength, SHADER_UNIFORM_FLOAT);
-            SetShaderValue(g_DecalShader, s_locGlow, &d->glowIntensity, SHADER_UNIFORM_FLOAT);
         }
 
         // Thay đổi Texture: Chỉ ngắt kết nối Quads vẽ khi ID texture thay đổi
@@ -836,19 +849,21 @@ static void DrawGroup(BlendMode mode, bool flowOnly)
             }
             rlSetTexture(d->texture.id);
             boundTex = d->texture.id;
+            ++s_renderTextureSwitches;
         }
 
         if (!drawing)
         {
             rlBegin(RL_QUADS);
             drawing = true;
+            ++s_renderLegacySubmissions;
         }
 
         float alphaRatio = d->lifetime / d->maxLifetime;
         Color c = d->tint;
         c.a = (unsigned char)(d->tint.a * alphaRatio);
 
-        Decal_AppendQuad(d, c, d->maxLifetime - d->lifetime);
+        Decal_AppendQuad(d, c);
     }
 
     // Dọn dẹp trạng thái sau khi kết thúc loop của nhóm nếu có vẽ
@@ -889,15 +904,7 @@ static bool Decal_HasEmissive(const DecalEntity *d, int lod, int idx)
 
 static bool Decal_SameMaterialBucket(const DecalEntity *a, const DecalEntity *b)
 {
-    return a->material.baseTint.r == b->material.baseTint.r &&
-           a->material.baseTint.g == b->material.baseTint.g &&
-           a->material.baseTint.b == b->material.baseTint.b &&
-           a->material.emissiveTint.r == b->material.emissiveTint.r &&
-           a->material.emissiveTint.g == b->material.emissiveTint.g &&
-           a->material.emissiveTint.b == b->material.emissiveTint.b &&
-           a->material.emissiveThreshold == b->material.emissiveThreshold &&
-           a->material.emissiveIntensity == b->material.emissiveIntensity &&
-           a->tint.r == b->tint.r && a->tint.g == b->tint.g && a->tint.b == b->tint.b;
+    return Decal_CompareMaterialBucket(a, b) == 0;
 }
 
 static void Decal_ApplyMaterialBucket(const DecalEntity *d)
@@ -1002,6 +1009,8 @@ static void DrawConformalGroup(BlendMode renderMode, BlendMode sourceMode, bool 
     SetShaderValue(g_MaterialDecalShader, s_locMaterialEmissivePass, &useEmissive,
                    SHADER_UNIFORM_INT);
     const DecalEntity *bucketMaterial = NULL;
+    unsigned int bucketTextureId = 0;
+    bool drawing = false;
 
     for (int a = 0; a < s_renderCount; ++a)
     {
@@ -1013,19 +1022,41 @@ static void DrawConformalGroup(BlendMode renderMode, BlendMode sourceMode, bool 
         Color c = d->tint;
         c.a = (unsigned char)(c.a * (1.0f - erosion * erosion) *
                               Decal_ConformalFadeAlpha(d));
-        if (bucketMaterial == NULL || !Decal_SameMaterialBucket(bucketMaterial, d))
+        bool materialChanged = bucketMaterial == NULL || !Decal_SameMaterialBucket(bucketMaterial, d);
+        bool textureChanged = bucketTextureId != d->texture.id;
+        if (materialChanged || textureChanged)
         {
+            if (drawing)
+            {
+                rlEnd();
+                drawing = false;
+            }
             rlDrawRenderBatchActive();
+        }
+        if (materialChanged)
+        {
             Decal_ApplyMaterialBucket(d);
             bucketMaterial = d;
+            ++s_renderMaterialSwitches;
         }
-        rlSetTexture(d->texture.id);
+        if (textureChanged)
+        {
+            rlSetTexture(d->texture.id);
+            bucketTextureId = d->texture.id;
+            ++s_renderTextureSwitches;
+        }
+        if (!drawing)
+        {
+            rlBegin(RL_TRIANGLES);
+            drawing = true;
+            ++s_renderConformalSubmissions;
+        }
         rlColor4ub((unsigned char)(erosion * 255.0f), 255, 255, c.a);
-        rlBegin(RL_TRIANGLES);
         Decal_DrawConformalMesh(d, s_renderLod[s_renderIds[a]]);
-        rlEnd();
     }
 
+    if (drawing)
+        rlEnd();
     rlSetTexture(0);
     rlDrawRenderBatchActive();
     EndShaderMode();
@@ -1060,6 +1091,10 @@ void DecalSystem_Unload(void)
     s_renderDistanceCulledCount = 0;
     s_renderBaseCoverage = 0.0f;
     s_renderEmissiveCoverage = 0.0f;
+    s_renderLegacySubmissions = 0;
+    s_renderConformalSubmissions = 0;
+    s_renderMaterialSwitches = 0;
+    s_renderTextureSwitches = 0;
     s_hasCamera = false;
     for (int i = 0; i < MAX_DECALS; i++)
     {
@@ -1087,4 +1122,8 @@ void DecalSystem_GetRenderStats(DecalRenderStats *outStats)
     outStats->distanceCulled = s_renderDistanceCulledCount;
     outStats->baseCoverage = s_renderBaseCoverage;
     outStats->emissiveCoverage = s_renderEmissiveCoverage;
+    outStats->legacySubmissions = s_renderLegacySubmissions;
+    outStats->conformalSubmissions = s_renderConformalSubmissions;
+    outStats->materialSwitches = s_renderMaterialSwitches;
+    outStats->textureSwitches = s_renderTextureSwitches;
 }

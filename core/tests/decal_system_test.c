@@ -102,8 +102,23 @@ int main(void)
           "One material shader accepts generic base and emissive parameters");
     CHECK(!Has(shader, "u_erosion") && Has(shader, "fragColor.r * 0.24") &&
           Has(impl, "Decal_ApplyMaterialBucket") && Has(impl, "Decal_SameMaterialBucket") &&
+          Has(impl, "Decal_CompareMaterialBucket") && Has(impl, "int materialOrder") &&
           Has(impl, "rlColor4ub((unsigned char)(erosion * 255.0f)") &&
           !Has(impl, "s_locMaterialErosion"),
           "Conformal erosion is vertex data; uniforms change only by material bucket");
+    CHECK(Has(impl, "unsigned int bucketTextureId") && Has(impl, "bool materialChanged") &&
+          Has(impl, "if (drawing)") && Has(impl, "Decal_DrawConformalMesh(d"),
+          "Adjacent conformal meshes share one material/texture triangle submission");
+    CHECK(Has("core/decals/shaders/decal_flow.fs", "in vec3 fragFlow") &&
+          Has("core/decals/shaders/decal_flow.fs", "fragFlow.x") &&
+          !Has("core/decals/shaders/decal_flow.fs", "u_flowSpeed") &&
+          Has(impl, "rlNormal3f(d->flowScroll ? d->flowSpeed") &&
+          Has(impl, "ResourceManager_LoadShader(\"core/decals/shaders/decal_material.vs\"") &&
+          !Has(impl, "s_locFlowSpeed"),
+          "Legacy flow parameters use vertex data instead of per-decal uniforms");
+    CHECK(Has(api, "conformalSubmissions") && Has(api, "materialSwitches") &&
+          Has(impl, "++s_renderConformalSubmissions") &&
+          Has(impl, "++s_renderMaterialSwitches"),
+          "Render statistics expose submission and state-switch pressure");
     return failures ? 1 : 0;
 }
