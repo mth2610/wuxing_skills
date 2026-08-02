@@ -59,16 +59,21 @@ int main(void)
           Has(impl, "Decal_BuildRenderQueue();"),
           "Draw builds a fixed compatible-state render queue before decal passes");
     CHECK(Has(impl, "Decal_HasEmissive") &&
-          Has(impl, "!emissivePass || Decal_HasEmissive(d)"),
+          Has(impl, "!emissivePass || Decal_HasEmissive(d, s_renderLod"),
           "Conformal emissive pass is skipped when no queued decal can emit");
     CHECK(Has(impl, "Decal_IsVisible") && Has(impl, "Decal_BoundsRadius") &&
           Has(impl, "CAMERA_ORTHOGRAPHIC") && Has(impl, "s_hasCamera") &&
-          Has(impl, "Decal_IsVisible(&g_DecalPool[idx])"),
+          Has(impl, "Decal_IsVisible(d)"),
           "Queue uses conservative camera-frustum admission when camera data exists");
     CHECK(Has(api, "DecalRenderStats") && Has(api, "DecalSystem_GetRenderStats") &&
           Has(impl, "outStats->visible = s_renderCount") &&
-          Has(impl, "outStats->culled = s_renderCulledCount"),
+          Has(impl, "outStats->culled = s_renderCulledCount") &&
+          Has(impl, "outStats->lodCulled = s_renderLodCulledCount"),
           "Read-only render statistics expose CPU culling results");
+    CHECK(Has(impl, "Decal_SelectLod") && Has(impl, "diameterPixels < 12.0f") &&
+          Has(impl, "Decal_DrawConformalMesh") &&
+          Has(impl, "lod < 2 && d->material.emissiveIntensity"),
+          "Projected-size LOD removes tiny decals and reduces conformal work");
     CHECK(Has(shader, "fwidth(radius)") &&
           !Has(shader, "floor(fragTexCoord * 96.0)"),
           "Decal erosion has no quantized pixel-grid boundary");

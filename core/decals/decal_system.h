@@ -66,6 +66,8 @@ typedef struct {
     int active;
     int visible;
     int culled;
+    int frustumCulled;
+    int lodCulled;
 } DecalRenderStats;
 
 // Khởi tạo hệ thống Decal

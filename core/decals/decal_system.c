@@ -13,6 +13,9 @@ static int s_slotListIndex[MAX_DECALS];
 static int s_renderIds[MAX_DECALS];
 static int s_renderCount = 0;
 static int s_renderCulledCount = 0;
+static int s_renderFrustumCulledCount = 0;
+static int s_renderLodCulledCount = 0;
+static unsigned char s_renderLod[MAX_DECALS];
 
 // Gom 2 shader thành 1 shader duy nhất để tránh switch trạng thái shader (Shader State Changes)
 static Shader g_DecalShader;
@@ -134,17 +137,60 @@ static bool Decal_IsVisible(const DecalEntity *d)
            horizontal <= halfHeightAtDepth * aspect + radius;
 }
 
+static int Decal_SelectLod(const DecalEntity *d)
+{
+    if (!s_hasCamera)
+        return 0;
+    Vector3 forward = Vector3Subtract(s_camera.target, s_camera.position);
+    float forwardLength = Vector3Length(forward);
+    if (forwardLength <= 0.0001f)
+        return 0;
+    forward = Vector3Scale(forward, 1.0f / forwardLength);
+    float depth = Vector3DotProduct(Vector3Subtract(d->position, s_camera.position), forward);
+    if (depth <= 0.0001f)
+        return 0;
+
+    float radius = Decal_BoundsRadius(d);
+    float pixelsPerWorld;
+    if (s_camera.projection == CAMERA_ORTHOGRAPHIC)
+        pixelsPerWorld = (float)GetScreenHeight() / fmaxf(s_camera.fovy, 0.01f);
+    else
+        pixelsPerWorld = ((float)GetScreenHeight() * 0.5f) /
+                         (depth * tanf(fmaxf(s_camera.fovy * DEG2RAD * 0.5f, 0.001f)));
+    float diameterPixels = radius * 2.0f * pixelsPerWorld;
+    if (diameterPixels < 12.0f) return 3;
+    if (diameterPixels < 40.0f) return 2;
+    if (diameterPixels < 96.0f) return 1;
+    return 0;
+}
+
 static void Decal_BuildRenderQueue(void)
 {
     s_renderCount = 0;
     s_renderCulledCount = 0;
+    s_renderFrustumCulledCount = 0;
+    s_renderLodCulledCount = 0;
     for (int a = 0; a < s_activeCount; ++a)
     {
         int idx = s_activeIds[a];
-        if (g_DecalPool[idx].texture.id != 0 && Decal_IsVisible(&g_DecalPool[idx]))
-            s_renderIds[s_renderCount++] = idx;
-        else if (g_DecalPool[idx].texture.id != 0)
+        DecalEntity *d = &g_DecalPool[idx];
+        if (d->texture.id == 0)
+            continue;
+        if (!Decal_IsVisible(d))
+        {
             ++s_renderCulledCount;
+            ++s_renderFrustumCulledCount;
+            continue;
+        }
+        int lod = Decal_SelectLod(d);
+        if (lod >= 3)
+        {
+            ++s_renderCulledCount;
+            ++s_renderLodCulledCount;
+            continue;
+        }
+        s_renderLod[idx] = (unsigned char)lod;
+        s_renderIds[s_renderCount++] = idx;
     }
     // Small fixed pool: insertion sort avoids allocations and has lower
     // overhead than a general-purpose sort at the usual active counts.
@@ -283,6 +329,8 @@ void DecalSystem_Init(void)
     s_activeCount = 0;
     s_renderCount = 0;
     s_renderCulledCount = 0;
+    s_renderFrustumCulledCount = 0;
+    s_renderLodCulledCount = 0;
     s_hasCamera = false;
     for (int i = 0; i < MAX_DECALS; i++)
     {
@@ -714,10 +762,40 @@ static float Decal_ConformalFadeAlpha(const DecalEntity *d)
     return Clamp(alpha, 0.0f, 1.0f);
 }
 
-static bool Decal_HasEmissive(const DecalEntity *d)
+static bool Decal_HasEmissive(const DecalEntity *d, int lod)
 {
-    return d->material.emissiveIntensity > 0.0f &&
+    return lod < 2 && d->material.emissiveIntensity > 0.0f &&
            d->material.emissiveTint.a > 0;
+}
+
+static void Decal_StampEmitVertex(const DecalEntity *d, float radial, float angle,
+                                  int ring, int sector);
+
+static void Decal_DrawConformalMesh(const DecalEntity *d, int lod)
+{
+    static const int ringStarts[3][3] = {{0, 1, 2}, {0, 2, 0}, {0, 0, 0}};
+    static const int ringEnds[3][3] = {{1, 2, 3}, {2, 3, 0}, {3, 0, 0}};
+    static const int ringCounts[3] = {3, 2, 1};
+    int sectorStep = lod == 0 ? 1 : 2;
+    for (int ring = 0; ring < ringCounts[lod]; ++ring)
+    {
+        int r0Index = ringStarts[lod][ring];
+        int r1Index = ringEnds[lod][ring];
+        float r0 = (float)r0Index / DECAL_STAMP_RINGS;
+        float r1 = (float)r1Index / DECAL_STAMP_RINGS;
+        for (int sector = 0; sector < DECAL_STAMP_SECTORS; sector += sectorStep)
+        {
+            int nextSector = sector + sectorStep;
+            float a0 = 2.0f * PI * sector / DECAL_STAMP_SECTORS;
+            float a1 = 2.0f * PI * nextSector / DECAL_STAMP_SECTORS;
+            Decal_StampEmitVertex(d, r0, a0, r0Index, sector);
+            Decal_StampEmitVertex(d, r1, a0, r1Index, sector);
+            Decal_StampEmitVertex(d, r1, a1, r1Index, nextSector);
+            Decal_StampEmitVertex(d, r0, a0, r0Index, sector);
+            Decal_StampEmitVertex(d, r1, a1, r1Index, nextSector);
+            Decal_StampEmitVertex(d, r0, a1, r0Index, nextSector);
+        }
+    }
 }
 
 static Vector3 Decal_StampVertex(const DecalEntity *d, float radial, float angle,
@@ -758,7 +836,7 @@ static void DrawConformalGroup(BlendMode renderMode, BlendMode sourceMode, bool 
     {
         DecalEntity *d = &g_DecalPool[s_renderIds[a]];
         if (d->conformalStamp && d->blendMode == sourceMode &&
-            d->texture.id != 0 && (!emissivePass || Decal_HasEmissive(d)))
+            d->texture.id != 0 && (!emissivePass || Decal_HasEmissive(d, s_renderLod[s_renderIds[a]])))
         {
             active = true;
             break;
@@ -779,7 +857,7 @@ static void DrawConformalGroup(BlendMode renderMode, BlendMode sourceMode, bool 
     {
         DecalEntity *d = &g_DecalPool[s_renderIds[a]];
         if (!d->conformalStamp || d->blendMode != sourceMode || d->texture.id == 0 ||
-            (emissivePass && !Decal_HasEmissive(d)))
+            (emissivePass && !Decal_HasEmissive(d, s_renderLod[s_renderIds[a]])))
             continue;
         float erosion = 1.0f - d->lifetime / d->maxLifetime;
         Color c = d->tint;
@@ -797,22 +875,7 @@ static void DrawConformalGroup(BlendMode renderMode, BlendMode sourceMode, bool 
         rlSetTexture(d->texture.id);
         rlColor4ub(c.r, c.g, c.b, c.a);
         rlBegin(RL_TRIANGLES);
-        for (int ring = 0; ring < DECAL_STAMP_RINGS; ++ring)
-        {
-            float r0 = (float)ring / DECAL_STAMP_RINGS;
-            float r1 = (float)(ring + 1) / DECAL_STAMP_RINGS;
-            for (int sector = 0; sector < DECAL_STAMP_SECTORS; ++sector)
-            {
-                float a0 = 2.0f * PI * sector / DECAL_STAMP_SECTORS;
-                float a1 = 2.0f * PI * (sector + 1) / DECAL_STAMP_SECTORS;
-                Decal_StampEmitVertex(d, r0, a0, ring, sector);
-                Decal_StampEmitVertex(d, r1, a0, ring + 1, sector);
-                Decal_StampEmitVertex(d, r1, a1, ring + 1, sector + 1);
-                Decal_StampEmitVertex(d, r0, a0, ring, sector);
-                Decal_StampEmitVertex(d, r1, a1, ring + 1, sector + 1);
-                Decal_StampEmitVertex(d, r0, a1, ring, sector + 1);
-            }
-        }
+        Decal_DrawConformalMesh(d, s_renderLod[s_renderIds[a]]);
         rlEnd();
     }
 
@@ -844,6 +907,8 @@ void DecalSystem_Unload(void)
     s_activeCount = 0;
     s_renderCount = 0;
     s_renderCulledCount = 0;
+    s_renderFrustumCulledCount = 0;
+    s_renderLodCulledCount = 0;
     s_hasCamera = false;
     for (int i = 0; i < MAX_DECALS; i++)
     {
@@ -865,4 +930,6 @@ void DecalSystem_GetRenderStats(DecalRenderStats *outStats)
     outStats->active = s_activeCount;
     outStats->visible = s_renderCount;
     outStats->culled = s_renderCulledCount;
+    outStats->frustumCulled = s_renderFrustumCulledCount;
+    outStats->lodCulled = s_renderLodCulledCount;
 }

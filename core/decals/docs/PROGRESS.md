@@ -67,8 +67,10 @@ Status: conservative frustum-admission slice complete.
   camera basis, decals remain visible rather than risking a false rejection.
 - `DecalSystem_GetRenderStats()` exposes active, visible, and CPU-culled counts
   from the latest queue build without exposing decal storage.
-- Distance cutoffs, projected-size LOD, priority eviction, coverage budgets,
-  and public render statistics remain outstanding.
+- Projected-size LOD uses the current camera: stamps below 12 pixels are
+  rejected, the 12–40 pixel tier uses a reduced conformal mesh and base pass
+  only, and the 40–96 pixel tier uses a reduced mesh with emissive allowed.
+- Distance cutoffs, priority eviction, and coverage budgets remain outstanding.
 
 ## Verification
 
