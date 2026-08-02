@@ -60,6 +60,14 @@ typedef struct {
     Vector3 stampSurfaceNormals[DECAL_STAMP_RINGS + 1][DECAL_STAMP_SECTORS];
 } DecalEntity;
 
+// Snapshot of the most recently built render queue. `culled` counts drawable
+// decals rejected by CPU camera admission; it is zero until the first Draw.
+typedef struct {
+    int active;
+    int visible;
+    int culled;
+} DecalRenderStats;
+
 // Khởi tạo hệ thống Decal
 void DecalSystem_Init(void);
 
@@ -147,5 +155,6 @@ void DecalSystem_Draw(void);
 // Giải phóng hệ thống
 void DecalSystem_Unload(void);
 void DecalSystem_GetStats(int *active, int *max); // Item 32
+void DecalSystem_GetRenderStats(DecalRenderStats *outStats);
 
 #endif // DECAL_SYSTEM_H

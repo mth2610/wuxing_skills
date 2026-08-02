@@ -55,7 +55,20 @@ Status: initial state-correctness slice complete.
 - The conformal emissive pass is not opened unless at least one queued stamp
   has non-zero emissive intensity and alpha.
 - CPU frustum culling, LOD/budget admission, and per-material uniform bucketing
-  remain later D3/D4/D5 work.
+  remain later D4/D5 work.
+
+## D4 — CPU culling, LOD, priority, and coverage
+
+Status: conservative frustum-admission slice complete.
+
+- `DecalSystem_SetCamera()` retains the current `Camera3D` for queue admission.
+- The queue rejects only decals whose conservative bounding sphere is clearly
+  behind or outside the perspective/orthographic side planes. With no valid
+  camera basis, decals remain visible rather than risking a false rejection.
+- `DecalSystem_GetRenderStats()` exposes active, visible, and CPU-culled counts
+  from the latest queue build without exposing decal storage.
+- Distance cutoffs, projected-size LOD, priority eviction, coverage budgets,
+  and public render statistics remain outstanding.
 
 ## Verification
 

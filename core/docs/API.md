@@ -317,8 +317,9 @@
   void DecalSystem_Draw(void);
   void DecalSystem_Unload(void);
   void DecalSystem_GetStats(int *active, int *max);
+  void DecalSystem_GetRenderStats(DecalRenderStats *outStats);
 ```
-**Structs** (fields in header): DecalMaterialParams, DecalEntity
+**Structs** (fields in header): DecalMaterialParams, DecalEntity, DecalRenderStats
 
 ### `core/screen_distort.h`
 ```c

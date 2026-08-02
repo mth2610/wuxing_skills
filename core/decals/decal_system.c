@@ -12,6 +12,7 @@ static int s_activeCount = 0;
 static int s_slotListIndex[MAX_DECALS];
 static int s_renderIds[MAX_DECALS];
 static int s_renderCount = 0;
+static int s_renderCulledCount = 0;
 
 // Gom 2 shader thành 1 shader duy nhất để tránh switch trạng thái shader (Shader State Changes)
 static Shader g_DecalShader;
@@ -32,6 +33,8 @@ static float g_cam_stretch = 1.0f;
 // Cache lượng giác của camera để không phải tính lại ở mỗi decal
 static float g_cos_cam_yaw = 1.0f;
 static float g_sin_cam_yaw = 0.0f;
+static Camera3D s_camera;
+static bool s_hasCamera = false;
 
 static DecalHandle Decal_MakeHandle(int idx)
 {
@@ -81,14 +84,67 @@ static bool Decal_RenderBefore(int lhs, int rhs)
     return lhs < rhs;
 }
 
+static float Decal_BoundsRadius(const DecalEntity *d)
+{
+    float maximumScale = fmaxf(d->scale, fmaxf(d->scaleStart, d->scaleEnd));
+    // The base primitive is a square and conformal stamps perturb their rim.
+    // This deliberately overestimates the sphere so CPU admission never clips
+    // a visible texel at a frustum boundary.
+    return fmaxf(maximumScale * 1.6f, 0.01f);
+}
+
+static bool Decal_IsVisible(const DecalEntity *d)
+{
+    if (!s_hasCamera)
+        return true;
+
+    Vector3 forward = Vector3Subtract(s_camera.target, s_camera.position);
+    float forwardLength = Vector3Length(forward);
+    if (forwardLength <= 0.0001f)
+        return true;
+    forward = Vector3Scale(forward, 1.0f / forwardLength);
+
+    Vector3 up = Vector3Normalize(s_camera.up);
+    Vector3 right = Vector3CrossProduct(forward, up);
+    float rightLength = Vector3Length(right);
+    if (rightLength <= 0.0001f)
+        return true;
+    right = Vector3Scale(right, 1.0f / rightLength);
+    up = Vector3Normalize(Vector3CrossProduct(right, forward));
+
+    Vector3 toDecal = Vector3Subtract(d->position, s_camera.position);
+    float depth = Vector3DotProduct(toDecal, forward);
+    float radius = Decal_BoundsRadius(d);
+    if (depth + radius <= 0.0f)
+        return false;
+
+    float vertical = fabsf(Vector3DotProduct(toDecal, up));
+    float horizontal = fabsf(Vector3DotProduct(toDecal, right));
+    float aspect = (float)GetScreenWidth() / fmaxf((float)GetScreenHeight(), 1.0f);
+    if (s_camera.projection == CAMERA_ORTHOGRAPHIC)
+    {
+        float halfHeight = fmaxf(s_camera.fovy * 0.5f, 0.01f);
+        return vertical <= halfHeight + radius &&
+               horizontal <= halfHeight * aspect + radius;
+    }
+
+    float halfVerticalFov = fmaxf(s_camera.fovy * DEG2RAD * 0.5f, 0.001f);
+    float halfHeightAtDepth = depth * tanf(halfVerticalFov);
+    return vertical <= halfHeightAtDepth + radius &&
+           horizontal <= halfHeightAtDepth * aspect + radius;
+}
+
 static void Decal_BuildRenderQueue(void)
 {
     s_renderCount = 0;
+    s_renderCulledCount = 0;
     for (int a = 0; a < s_activeCount; ++a)
     {
         int idx = s_activeIds[a];
-        if (g_DecalPool[idx].texture.id != 0)
+        if (g_DecalPool[idx].texture.id != 0 && Decal_IsVisible(&g_DecalPool[idx]))
             s_renderIds[s_renderCount++] = idx;
+        else if (g_DecalPool[idx].texture.id != 0)
+            ++s_renderCulledCount;
     }
     // Small fixed pool: insertion sort avoids allocations and has lower
     // overhead than a general-purpose sort at the usual active counts.
@@ -196,6 +252,8 @@ static void Decal_AppendQuad(const DecalEntity *d, Color c, float elapsed)
 
 void DecalSystem_SetCamera(Camera3D camera)
 {
+    s_camera = camera;
+    s_hasCamera = true;
     float dx = camera.target.x - camera.position.x;
     float dz = camera.target.z - camera.position.z;
     float dy = camera.target.y - camera.position.y;
@@ -223,6 +281,9 @@ void DecalSystem_SetCamera(Camera3D camera)
 void DecalSystem_Init(void)
 {
     s_activeCount = 0;
+    s_renderCount = 0;
+    s_renderCulledCount = 0;
+    s_hasCamera = false;
     for (int i = 0; i < MAX_DECALS; i++)
     {
         g_DecalPool[i].active = false;
@@ -781,6 +842,9 @@ void DecalSystem_Draw(void)
 void DecalSystem_Unload(void)
 {
     s_activeCount = 0;
+    s_renderCount = 0;
+    s_renderCulledCount = 0;
+    s_hasCamera = false;
     for (int i = 0; i < MAX_DECALS; i++)
     {
         g_DecalPool[i].active = false;
@@ -792,4 +856,13 @@ void DecalSystem_GetStats(int *active, int *max)
 {
     if (active != NULL) *active = s_activeCount;
     if (max != NULL) *max = MAX_DECALS;
+}
+
+void DecalSystem_GetRenderStats(DecalRenderStats *outStats)
+{
+    if (outStats == NULL)
+        return;
+    outStats->active = s_activeCount;
+    outStats->visible = s_renderCount;
+    outStats->culled = s_renderCulledCount;
 }

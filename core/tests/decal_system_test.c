@@ -61,6 +61,14 @@ int main(void)
     CHECK(Has(impl, "Decal_HasEmissive") &&
           Has(impl, "!emissivePass || Decal_HasEmissive(d)"),
           "Conformal emissive pass is skipped when no queued decal can emit");
+    CHECK(Has(impl, "Decal_IsVisible") && Has(impl, "Decal_BoundsRadius") &&
+          Has(impl, "CAMERA_ORTHOGRAPHIC") && Has(impl, "s_hasCamera") &&
+          Has(impl, "Decal_IsVisible(&g_DecalPool[idx])"),
+          "Queue uses conservative camera-frustum admission when camera data exists");
+    CHECK(Has(api, "DecalRenderStats") && Has(api, "DecalSystem_GetRenderStats") &&
+          Has(impl, "outStats->visible = s_renderCount") &&
+          Has(impl, "outStats->culled = s_renderCulledCount"),
+          "Read-only render statistics expose CPU culling results");
     CHECK(Has(shader, "fwidth(radius)") &&
           !Has(shader, "floor(fragTexCoord * 96.0)"),
           "Decal erosion has no quantized pixel-grid boundary");
