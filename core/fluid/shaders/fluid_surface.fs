@@ -76,12 +76,23 @@ float WaterSpecularBRDF(vec3 N, vec3 V, vec3 L, float roughness) {
     return min(D*gv*gl*F/max(4.0*ndl*ndv,1e-4),8.0);
 }
 
-bool SceneSampleIsBehindFluid(vec2 uv, float fluidDistance) {
+bool SceneSampleMatchesBase(vec2 uv, float baseSceneDistance,
+                            float fluidDistance) {
     if(u_hasSceneDepth==0) return true;
     float sceneDepth=texture(u_sceneDepthTex,uv).r;
-    if(sceneDepth>=0.99999) return true;
+    bool baseHasGeometry=baseSceneDistance<1e19;
+    bool sampleHasGeometry=sceneDepth<0.99999;
+    /* A refracted lookup crossing a character silhouette used to fetch the
+     * distant background. The resulting dark/bright strip inherited every
+     * particle normal and exposed individual splats. Keep refraction within
+     * the same opaque depth layer as the undisplaced screen sample. */
+    if(baseHasGeometry!=sampleHasGeometry) return false;
+    if(!sampleHasGeometry) return true;
     vec3 scenePosition=ReconstructViewPosition(uv,sceneDepth);
-    return -scenePosition.z>fluidDistance+0.002;
+    float sampleDistance=-scenePosition.z;
+    if(sampleDistance<=fluidDistance+0.002) return false;
+    float layerTolerance=max(0.060,baseSceneDistance*0.018);
+    return abs(sampleDistance-baseSceneDistance)<=layerTolerance;
 }
 
 void main() {
@@ -90,6 +101,27 @@ void main() {
 
     vec3 positionView=ReconstructViewPosition(fragTexCoord,fluidDepth);
     vec3 V=normalize(-positionView);
+    float fluidDistance=-positionView.z;
+
+    /* The fluid capture owns only fluid depth; it is not depth-tested against
+     * the already-rendered opaque scene. Resolve that ordering here before
+     * refraction/shading so water behind a character cannot draw a dark
+     * particle silhouette over the character. A narrow positive fade removes
+     * one-pixel depth disagreement at a true intersection. */
+    float sceneDepthAtSurface=1.0;
+    float sceneDistanceAtSurface=1e20;
+    float intersectionVisibility=1.0;
+    if(u_hasSceneDepth!=0) {
+        sceneDepthAtSurface=texture(u_sceneDepthTex,fragTexCoord).r;
+        if(sceneDepthAtSurface<0.99999) {
+            vec3 sceneAtSurface=ReconstructViewPosition(
+                fragTexCoord,sceneDepthAtSurface);
+            sceneDistanceAtSurface=-sceneAtSurface.z;
+            float frontGap=sceneDistanceAtSurface-fluidDistance;
+            if(frontGap<=-0.002) discard;
+            intersectionVisibility=smoothstep(-0.002,0.012,frontGap);
+        }
+    }
 
     /* Reconstruct a perspective-correct normal from four fluid neighbours.
      * A background texel is placed at the centre depth instead of depth 1:
@@ -126,7 +158,7 @@ void main() {
         sin(dot(worldPosition,vec3(-11.9,17.3,8.7))-u_time*1.27),
         sin(dot(worldPosition,vec3(7.7,-9.1,23.9))+u_time*1.43));
     rippleVector-=worldNormal*dot(rippleVector,worldNormal);
-    worldNormal=normalize(worldNormal+rippleVector*0.025);
+    worldNormal=normalize(worldNormal+rippleVector*0.040);
     N=normalize(transpose(mat3(u_viewToWorld))*worldNormal);
     if(dot(N,V)<0.0) N=-N;
     float ndv=clamp(dot(N,V),0.0,1.0);
@@ -136,23 +168,24 @@ void main() {
      * metres before applying Beer-Lambert, then cap it by the actual distance
      * from the visible water surface to opaque scene geometry. */
     float kernelThickness=DecodeOpticalThickness(thicknessProxy);
-    float surfaceCoverage=smoothstep(0.0004,0.010,kernelThickness);
+    float surfaceCoverage=smoothstep(0.0004,0.010,kernelThickness)
+                         *intersectionVisibility;
     float geometricThickness=kernelThickness;
-    float sceneGap=kernelThickness;
-    if(u_hasSceneDepth!=0) {
-        float sceneDepth=texture(u_sceneDepthTex,fragTexCoord).r;
-        if(sceneDepth<0.99999) {
-            vec3 scenePosition=ReconstructViewPosition(fragTexCoord,sceneDepth);
-            float depthGap=max((-scenePosition.z)-(-positionView.z),0.0);
-            sceneGap=depthGap;
-            /* A receiver directly beneath the reconstructed surface can have
-             * a sub-centimetre depth gap even though several optical kernels
-             * overlap.  Preserve a thin 2.2 cm sheet instead of making the
-             * puddle nearly invisible. */
-            geometricThickness=min(kernelThickness,max(0.022,depthGap*1.25));
-        }
+    /* No opaque depth means the liquid is suspended against the sky, not
+     * resting on a receiver. The old kernel-thickness fallback classified
+     * isolated airborne droplets as shoreline and shaded every splat rim. */
+    float sceneGap=1.0;
+    if(sceneDepthAtSurface<0.99999) {
+        float depthGap=max(sceneDistanceAtSurface-fluidDistance,0.0);
+        sceneGap=depthGap;
+        /* A receiver directly beneath the reconstructed surface can have
+         * a sub-centimetre depth gap even though several optical kernels
+         * overlap.  Preserve a thin 2.2 cm sheet instead of making the
+         * puddle nearly invisible. */
+        geometricThickness=min(kernelThickness,max(0.022,depthGap*1.25));
     }
     float opticalPath=min(geometricThickness/max(ndv,0.28),0.42);
+    float airborneWeight=smoothstep(0.070,0.220,sceneGap);
 
     /* Snell refraction in view space.  Offset is expressed in pixels so the
      * distortion remains stable across resolution changes. */
@@ -165,20 +198,30 @@ void main() {
                       *travelPixels*u_sceneTexel;
     vec2 refractUV=clamp(fragTexCoord+refractOffset,
                          u_sceneTexel,vec2(1.0)-u_sceneTexel);
-    float fluidDistance=-positionView.z;
-    if(!SceneSampleIsBehindFluid(refractUV,fluidDistance)) refractUV=fragTexCoord;
+    if(!SceneSampleMatchesBase(refractUV,sceneDistanceAtSurface,
+                               fluidDistance)) {
+        refractUV=fragTexCoord;
+    }
 
     vec3 refractedScene;
     if(u_qualityTier>=2) {
         // Tiny wavelength split; it is driven by the physical bend, not noise.
         vec2 dispersion=refractOffset*mix(0.018,0.045,1.0-ndv);
-        refractedScene.r=texture(u_sceneTex,
-            clamp(refractUV+dispersion,u_sceneTexel,
-                  vec2(1.0)-u_sceneTexel)).r;
+        vec2 refractUVRed=clamp(refractUV+dispersion,u_sceneTexel,
+                                vec2(1.0)-u_sceneTexel);
+        vec2 refractUVBlue=clamp(refractUV-dispersion,u_sceneTexel,
+                                 vec2(1.0)-u_sceneTexel);
+        if(!SceneSampleMatchesBase(refractUVRed,sceneDistanceAtSurface,
+                                   fluidDistance)) {
+            refractUVRed=refractUV;
+        }
+        if(!SceneSampleMatchesBase(refractUVBlue,sceneDistanceAtSurface,
+                                   fluidDistance)) {
+            refractUVBlue=refractUV;
+        }
+        refractedScene.r=texture(u_sceneTex,refractUVRed).r;
         refractedScene.g=texture(u_sceneTex,refractUV).g;
-        refractedScene.b=texture(u_sceneTex,
-            clamp(refractUV-dispersion,u_sceneTexel,
-                  vec2(1.0)-u_sceneTexel)).b;
+        refractedScene.b=texture(u_sceneTex,refractUVBlue).b;
     } else {
         refractedScene=texture(u_sceneTex,refractUV).rgb;
     }
@@ -218,14 +261,15 @@ void main() {
     float illuminationEnergy=dot(illumination,vec3(0.2126,0.7152,0.0722));
     float scatterAmount=1.0-dot(transmittance,vec3(0.2126,0.7152,0.0722));
     vec3 inScatter=waterScatterColor*scatterAmount
-                  *(0.34+illuminationEnergy*0.46);
+                  *(0.20+illuminationEnergy*0.31);
 
     float fresnel=FresnelSchlick(ndv);
     float volumeWeight=smoothstep(0.016,0.095,kernelThickness);
-    /* Screen-space droplets can be only one or two pixels wide.  Preserve the
-     * dielectric response but attenuate unresolved grazing energy so a whole
-     * splat does not collapse into a white ring. */
-    float visibleFresnel=fresnel*mix(0.42,1.0,volumeWeight);
+    /* A reconstructed splat silhouette has a mathematically grazing normal
+     * before it has enough neighbouring thickness to represent a continuous
+     * liquid surface. Suppress that unresolved Fresnel ring; coherent volume
+     * still receives the full dielectric response. */
+    float visibleFresnel=fresnel*mix(0.060,1.0,volumeWeight);
     vec3 viewWorld=normalize(mat3(u_viewToWorld)*V);
     vec3 reflectedWorld=reflect(-viewWorld,worldNormal);
     float skyReflection=smoothstep(-0.18,0.62,reflectedWorld.y);
@@ -233,17 +277,26 @@ void main() {
                         skyReflection);
     float horizonReflection=pow(1.0-abs(reflectedWorld.y),3.0);
     reflection+=u_materialSoft*(0.045+horizonReflection*0.10);
+    /* Environment has no cubemap yet. On an airborne sphere the lower
+     * hemisphere therefore used only the deliberately dim ground ambient and
+     * produced a black circular rim. The already captured scene is the best
+     * local reflection proxy; mix in sky fill only for suspended liquid and
+     * only where the reflection points below the horizon. */
+    vec3 localReflectionFill=mix(refractedScene,u_skyAmbient,0.32)*0.68;
+    float lowerHemisphere=1.0-skyReflection;
+    reflection=mix(reflection,max(reflection,localReflectionFill),
+                   airborneWeight*lowerHemisphere);
     vec3 dielectricBase=mix(transmitted+inScatter,reflection,
                             visibleFresnel);
 
     /* All highlights now come from engine lights.  Stable micro-roughness
      * breaks up the lobe without inventing an unrelated screen-space sparkle. */
     float surfaceNoise=WaterSurfaceNoise(worldPosition);
-    float roughness=mix(0.045,0.088,surfaceNoise);
+    float roughness=mix(0.035,0.075,surfaceNoise);
     vec3 sunHalf=normalize(V+L);
-    float broadSunLobe=pow(max(dot(N,sunHalf),0.0),42.0)*0.11;
+    float broadSunLobe=pow(max(dot(N,sunHalf),0.0),54.0)*0.045;
     float sharpGlint=pow(max(dot(N,sunHalf),0.0),128.0)
-                    *smoothstep(0.58,0.88,surfaceNoise)*0.32;
+                    *smoothstep(0.55,0.86,surfaceNoise)*0.38;
     vec3 specular=u_sunColor
                  *(WaterSpecularBRDF(N,V,L,roughness)*1.18
                    +broadSunLobe+sharpGlint)*ndl;
@@ -260,7 +313,7 @@ void main() {
         vec3 pointL=toLight/max(distanceToLight,0.001);
         float pointNdl=max(dot(N,pointL),0.0);
         vec3 pointHalf=normalize(V+pointL);
-        float broadPointLobe=pow(max(dot(N,pointHalf),0.0),30.0)*0.16;
+        float broadPointLobe=pow(max(dot(N,pointHalf),0.0),44.0)*0.070;
         specular+=u_pointLightColor[i].rgb
                  *(WaterSpecularBRDF(N,V,pointL,roughness)*1.12
                    +broadPointLobe)
@@ -293,7 +346,8 @@ void main() {
                    *receiverProximity
                    *smoothstep(0.018,0.080,kernelThickness);
     float crest=curvature*smoothstep(0.025,0.085,kernelThickness)
-               *(1.0-smoothstep(0.16,0.30,kernelThickness))*0.55;
+               *(1.0-smoothstep(0.16,0.30,kernelThickness))*0.55
+               *mix(1.0,0.16,airborneWeight);
     float foamPattern=smoothstep(0.48,0.76,
         WaterSurfaceNoise(worldPosition*1.73+vec3(3.1,-1.7,2.4)));
     float foamMask=clamp(max(shoreline,crest)*foamPattern,0.0,0.72);
