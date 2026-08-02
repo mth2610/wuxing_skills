@@ -285,11 +285,12 @@
   void Trail_SetFlowMap(int id, Texture2D flowMap, float speed, float strength, float tiling);
 ```
 **Enums:** TrailType { TRAIL_TYPE_PROJECTILE,TRAIL_TYPE_WISP,TRAIL_TYPE_PORTAL,TRAIL_TYPE_FOLLOWER };TrailShape { TRAIL_SHAPE_RIBBON,TRAIL_SHAPE_TUBE } TrailWidthEnvelopeType { TRAIL_WIDTH_ENVELOPE_UNIFORM,TRAIL_WIDTH_ENVELOPE_TAPER_TAIL,TRAIL_WIDTH_ENVELOPE_TAPER_BOTH,TRAIL_WIDTH_ENVELOPE_PULSE,TRAIL_WIDTH_ENVELOPE_SMOKE_LIFECYCLE }
-**Structs** (fields in header): TrailLayer, TrailSectionPoint, TrailConfig, TrailEntity
+**Structs** (fields in header): TrailLayer, TrailDeformConfig, TrailMaterialConfig, TrailSectionPoint, TrailConfig, TrailEntity
 
 ### `core/ribbon_strip.h`
 ```c
   void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture, Camera3D camera, RibbonMode mode, Vector3 fixedNormal);
+  void DrawRibbonStripDeformedEx(const RibbonPoint *points, int count, Texture2D texture, Camera3D camera, RibbonMode mode, Vector3 fixedNormal);
   void DrawRibbonStrip(const RibbonPoint *points, int count, Texture2D texture, Camera3D camera);
   void Ribbon_ConstrainSegment(Vector3 *a, Vector3 *b, float restLen, bool pinnedA, RibbonConstrainMode mode);
   void Ribbon_ComputeArcLengthUV(RibbonPoint *points, int count);
@@ -682,6 +683,7 @@
   void VFX_BeginWaterStreams(float time);
   void VFX_EndWaterStreams(void);
   void VFX_SmokeTrail_Stop(int trailId);
+  int VFX_ComposeEnergyTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime);
   void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
   void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   int VFX_ComposeEmberTrail(Vector3 pos, Vector3 velocity, VC_MaterialId mat, float scale, float embersPerSecond);

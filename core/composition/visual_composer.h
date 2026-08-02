@@ -520,6 +520,14 @@ void VFX_EndWaterStreams(void);
 // Ends smoke emission while preserving the laid ribbon for built-in dissolve.
 void VFX_SmokeTrail_Stop(int trailId);
 
+// Sin-Wave Energy Ribbon: the flat ribbon strip, the per-vertex waves and the
+// packed 4-channel wisp material all live in the trail system's own GPU
+// pipeline (trail_deform.vs/.fs) — this is the preset picker. CPU cloth is
+// deliberately OFF: the swept path stays the spine, the shape comes from the
+// vertex shader. Same stop/release semantics as the smoke trail.
+int VFX_ComposeEnergyTrail(const Matrix *followTransform, VC_MaterialId mat,
+                           float radius, float lifetime);
+
 // @gen:vc_declarations begin
 void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
 void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01);

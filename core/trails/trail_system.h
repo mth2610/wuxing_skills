@@ -75,6 +75,51 @@ typedef struct
     float flowStrength;       // Cường độ làm lệch UV (UV Distortion scale)
 } TrailLayer;
 
+// ── GPU DEFORM (trail_deform.vs) — shape from the vertex shader ─────────────
+// The ribbon strip itself stays a flat camera-facing band; trail_deform.vs
+// displaces its vertices in the strip's own (side, stripNormal) frame. One
+// uber shader, five uniform-selected modes, per-instance params — so a single
+// program becomes a fire wisp, a smoking blade, a corkscrew filament or a
+// lightning swirl by changing params, not code. mode == 0 leaves the classic
+// CPU-cloth pipeline untouched (and the classic shaders selected).
+typedef struct
+{
+    float mode;       // 0 = off, 1 = sin-multi, 2 = curl3, 3 = helix, 4 = noise
+    float ampA[3];    // per-octave amplitude along the ribbon side (across width)
+    float ampB[3];    // per-octave amplitude along the strip normal
+    float freq[3];    // per-octave frequency (cycles along the path, seg 0..1)
+    float speed[3];   // per-octave travel speed
+    float phase;      // per-spawn random phase — desyncs simultaneous casts
+    float envHead;    // wave amplitude -> 0 at the head over this seg fraction
+    float envTail;    // wave amplitude -> 0 at the tail over this seg fraction
+    float strength;   // global multiplier
+    float curlScale;  // noise frequency for curl3 / noise modes
+} TrailDeformConfig;
+
+// ── PACKED 4-CHANNEL MATERIAL (trail_deform.fs) ─────────────────────────────
+// One RGBA texture carries four roles — R = coarse wisp, G = fine wisp,
+// B = dissolve noise, A = turbulence — so one bind and one asset replace the
+// sheet + flow map + mask trio. Two samples of the same texture pan R+B and
+// G+A at different speeds (u_panSpeed) for internal motion. The same final
+// colour feeds BLEND_ALPHA body and BLEND_ADDITIVE emission passes.
+typedef struct
+{
+    float mode;         // 0 = passthrough, 1 = packed wisp
+    float wispMix;      // coarse(R) -> fine(G)
+    float dissolve;     // B-channel dissolve threshold
+    float dissolveSoft; // dissolve edge softness
+    float turbStrength; // A-channel mix jitter
+    float tilingX;      // texture tiles along the path
+    float tilingY;      // texture tiles across the width
+    float panCoarse;    // coarse-channel pan (UV units/sec)
+    float panFine;      // fine-channel pan (UV units/sec)
+    float edgeTear;     // fine-noise jitter of the dissolve threshold at the
+                        // band edges (0 = off) — torn/ragged silhouette
+    float tailFadeA;    // segment fade start (0 = head, 1 = tail)
+    float tailFadeB;    // segment fade end — the tail dissolves to zero here;
+                        // tailFadeA >= tailFadeB disables the fade
+} TrailMaterialConfig;
+
 // ── Trail Cross-section ─────────────────────────────────────────────────────
 typedef enum
 {
@@ -100,7 +145,11 @@ typedef enum
     TRAIL_WIDTH_ENVELOPE_PULSE = 3,
     // Small at the source, full in the body, then expands and dissolves.
     // Width and alpha share this envelope, so a smoke ribbon has no hard end.
-    TRAIL_WIDTH_ENVELOPE_SMOKE_LIFECYCLE = 4
+    TRAIL_WIDTH_ENVELOPE_SMOKE_LIFECYCLE = 4,
+    // Thin at the source, monotonically widening to FULL width at the tail —
+    // a plume that rolls out and stays broad; the material tail ramp
+    // (tailFadeA/B) evaporates the very tip instead of a hard band.
+    TRAIL_WIDTH_ENVELOPE_SMOKE_WIDEN = 5
 } TrailWidthEnvelopeType;
 
 typedef void (*TrailUpdateCallback)(int trailId, float dt);
@@ -201,6 +250,11 @@ typedef struct
     const Texture2D *noiseMask;
     float dissolve;
     float maskTiling;
+
+    // GPU deform + packed material (trail_deform.vs/.fs). mode == 0 keeps the
+    // classic CPU-cloth + sheet/flow/mask pipeline and shaders untouched.
+    TrailDeformConfig deform;
+    TrailMaterialConfig material;
 
     // Unified Config
     VFX_GeneralConfig general;
@@ -399,6 +453,10 @@ typedef struct
     float flowTimeAccumulator; // Bộ đếm thời gian riêng cho phase cuộn flowmap
     float dissolve;
     float maskTiling;
+
+    // GPU deform + packed material (trail_deform.vs/.fs); mode 0 = classic.
+    TrailDeformConfig deform;
+    TrailMaterialConfig material;
 
     // 4. Số nguyên và Enum (Int/Enum) - 4 bytes
     TrailType type;

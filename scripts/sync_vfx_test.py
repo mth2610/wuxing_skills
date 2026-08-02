@@ -91,6 +91,7 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeConvergeMotes":      ("draw",    "timed",      "continuous"),
     "VFX_ComposeCoreGlow":           ("draw",    "timed",      "continuous"),
     "VFX_ComposeSmokeTrail":         ("trail",   "follower",   "continuous"),
+    "VFX_ComposeEnergyTrail":        ("trail",   "follower",   "continuous"),
     "VFX_ComposeDebrisShards":       ("event",   "burst",      "oneshot"),
     "VFX_ComposeDissolveExit":       ("draw",    "timed",      "continuous"),
     "VFX_ComposeEnergyBurst":        ("event",   "burst",      "oneshot"),
@@ -333,8 +334,9 @@ def infer_kill_fn(fn_name, available_fns):
 
     SmokeTrail is the one legacy exception: it owns a raw TrailSystem handle,
     so its public release function is KillTrail rather than VFX_KillSmokeTrail.
+    EnergyTrail shares the same handle and stop semantics.
     """
-    if fn_name == 'VFX_ComposeSmokeTrail':
+    if fn_name in ('VFX_ComposeSmokeTrail', 'VFX_ComposeEnergyTrail'):
         return 'KillTrail'
     if fn_name.startswith('VFX_Compose'):
         candidate = 'VFX_Kill' + fn_name[len('VFX_Compose'):]

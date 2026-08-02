@@ -33,9 +33,21 @@ void TrailSystem_SetGlobalTexture(Texture2D tex) { s_globalTrailTex = tex; }
 static Shader defaultShader;
 static Shader s_bodyShader;
 static bool s_bodyShaderTried = false;
+/* Uber deform shader (trail_deform.vs/.fs): five uniform-selected vertex
+ * deform modes + the packed 4-channel wisp material. Trails route here if
+ * they use EITHER half: deform.mode 0 + material.mode 1 is a FLAT ribbon
+ * with the wisp material (the "deform off" energy trail — the material's
+ * dissolve/tear/tail fade still run, only the vertex waves are off). */
+static Shader s_deformShader;
+static bool s_deformShaderTried = false;
 /* Set only while DrawTrailEntitiesLayer owns the draw; layered helpers use it
  * to keep alpha body to the one textured material layer. */
 static int s_drawLayerFilter = -1;
+
+static bool TrailUsesDeformShader(const TrailEntity *t)
+{
+    return (t->deform.mode > 0.0f || t->material.mode > 0.0f) && s_deformShader.id != 0;
+}
 
 #define TRAIL_SHADER_CACHE_SIZE 16
 static unsigned int shaderCacheIds[TRAIL_SHADER_CACHE_SIZE];
@@ -50,6 +62,58 @@ static int shaderCacheDissolveLocs[TRAIL_SHADER_CACHE_SIZE];
 static int shaderCacheMaskTilingLocs[TRAIL_SHADER_CACHE_SIZE];
 static int shaderCacheMaskTexLocs[TRAIL_SHADER_CACHE_SIZE];
 static int shaderCacheCount = 0;
+
+// Deform/material uniform locations, one struct per cached shader. The
+// per-name arrays above cover the legacy uniforms; these 19 ride a single
+// cache entry because they are always set together (ApplyDeformUniforms).
+typedef struct
+{
+    int deformMode, waveAmpA, waveAmpB, waveFreq, waveSpeed;
+    int wavePhase, waveEnv, waveStrength, curlScale, stripNormal;
+    int matMode, wispMix, dissolve, dissolveSoft, turbStrength;
+    int tiling, panSpeed, edgeTear, tailFadeA, tailFadeB;
+} DeformLocs;
+
+static DeformLocs shaderCacheDeformLocs[TRAIL_SHADER_CACHE_SIZE];
+static DeformLocs s_fallbackDeformLocs;
+
+static void CacheShaderLocs(Shader shader);   // defined below; called first by GetCachedDeformLocs
+
+static void FillDeformLocs(Shader shader, DeformLocs *l)
+{
+    l->deformMode    = GetShaderLocation(shader, "u_deformMode");
+    l->waveAmpA      = GetShaderLocation(shader, "u_waveAmpA");
+    l->waveAmpB      = GetShaderLocation(shader, "u_waveAmpB");
+    l->waveFreq      = GetShaderLocation(shader, "u_waveFreq");
+    l->waveSpeed     = GetShaderLocation(shader, "u_waveSpeed");
+    l->wavePhase     = GetShaderLocation(shader, "u_wavePhase");
+    l->waveEnv       = GetShaderLocation(shader, "u_waveEnv");
+    l->waveStrength  = GetShaderLocation(shader, "u_waveStrength");
+    l->curlScale     = GetShaderLocation(shader, "u_curlScale");
+    l->stripNormal   = GetShaderLocation(shader, "u_stripNormal");
+    l->matMode       = GetShaderLocation(shader, "u_matMode");
+    l->wispMix       = GetShaderLocation(shader, "u_wispMix");
+    l->dissolve      = GetShaderLocation(shader, "u_dissolve");
+    l->dissolveSoft  = GetShaderLocation(shader, "u_dissolveSoft");
+    l->turbStrength  = GetShaderLocation(shader, "u_turbStrength");
+    l->tiling        = GetShaderLocation(shader, "u_tiling");
+    l->panSpeed      = GetShaderLocation(shader, "u_panSpeed");
+    l->edgeTear      = GetShaderLocation(shader, "u_edgeTear");
+    l->tailFadeA     = GetShaderLocation(shader, "u_tailFadeA");
+    l->tailFadeB     = GetShaderLocation(shader, "u_tailFadeB");
+}
+
+static const DeformLocs *GetCachedDeformLocs(Shader shader)
+{
+    CacheShaderLocs(shader);
+    for (int i = 0; i < shaderCacheCount; i++)
+        if (shaderCacheIds[i] == shader.id)
+            return &shaderCacheDeformLocs[i];
+    // Cache miss (over budget): compute into the fallback slot — still once
+    // per shader, never per instance.
+    FillDeformLocs(shader, &s_fallbackDeformLocs);
+    return &s_fallbackDeformLocs;
+}
 
 static void CacheShaderLocs(Shader shader)
 {
@@ -69,6 +133,7 @@ static void CacheShaderLocs(Shader shader)
     shaderCacheDissolveLocs[shaderCacheCount] = GetShaderLocation(shader, "uDissolve");
     shaderCacheMaskTilingLocs[shaderCacheCount] = GetShaderLocation(shader, "uMaskTiling");
     shaderCacheMaskTexLocs[shaderCacheCount] = GetShaderLocation(shader, "maskTex");
+    FillDeformLocs(shader, &shaderCacheDeformLocs[shaderCacheCount]);
     shaderCacheCount++;
 }
 
@@ -161,6 +226,16 @@ static void EnsureTrailBodyShader(void)
     s_bodyShader = ResourceManager_LoadShader(NULL, "core/trails/shaders/trail_body.fs");
 }
 
+static void EnsureTrailDeformShader(void)
+{
+    if (s_deformShaderTried) return;
+    s_deformShaderTried = true;
+    s_deformShader = ResourceManager_LoadShader("core/trails/shaders/trail_deform.vs",
+                                                "core/trails/shaders/trail_deform.fs");
+    if (s_deformShader.id == 0)
+        TraceLog(LOG_WARNING, "TRAIL: trail_deform.vs/.fs failed to load — deform modes fall back to flat ribbons");
+}
+
 static inline float SmoothStepC(float edge0, float edge1, float x)
 {
     float t = (x - edge0) / (edge1 - edge0);
@@ -206,6 +281,15 @@ static float ComputeWidthEnvelopeFast(const TrailEntity *t, float segRatio, floa
         float grow = SmoothStepC(0.0f, 0.22f, age);
         float dissolve = 1.0f - SmoothStepC(0.66f, 1.0f, age);
         return (0.18f + 0.82f * grow) * (0.70f + 0.30f * age) * dissolve;
+    }
+    case TRAIL_WIDTH_ENVELOPE_SMOKE_WIDEN:
+    {
+        // Widen-only: a compact plume head that spreads monotonically to FULL
+        // width at the tail. The width itself never collapses — the material
+        // tail ramp (tailFadeA/B in the fragment shader) evaporates the tip.
+        float age = 1.0f - segRatio;
+        float grow = SmoothStepC(0.0f, 0.25f, age);
+        return 0.15f + 0.85f * grow;
     }
     case TRAIL_WIDTH_ENVELOPE_UNIFORM:
     default:
@@ -962,6 +1046,10 @@ int SpawnTrailEntity(TrailConfig config)
     t->dissolve = config.dissolve;
     t->maskTiling = (config.maskTiling > 0.0f) ? config.maskTiling : 1.0f;
     t->flowTimeAccumulator = 0.0f;
+
+    // GPU deform + packed material (mode 0 = classic pipeline untouched).
+    t->deform = config.deform;
+    t->material = config.material;
     // ────────────────────────────────────────────────────────────────────
 
     for (int h = 0; h < TRAIL_HISTORY_COUNT; h++)
@@ -1252,11 +1340,15 @@ void UpdateTrailSystem(float dt)
     }
 }
 
+// Forward declaration — DrawTrailRibbon is defined after the layered draw
+// functions but called from DrawLayeredRibbon.
+static void DrawTrailRibbon(const TrailEntity *t, const RibbonPoint *points,
+                            int count, Texture2D texture, Camera3D camera);
+
 static void DrawLayeredRibbon(const TrailEntity *t, int drawCount, Texture2D fallbackTex, Camera3D camera)
 {
     for (int L = 0; L < t->layerCount; L++)
-    {
-        // Halo/core are emission energy. Putting them into the alpha body
+    {        // Halo/core are emission energy. Putting them into the alpha body
         // stacks three soft quads and erases the authored flow texture.
         if (s_drawLayerFilter == 0 && TrailUsesAdditiveBlend(t) &&
             t->layerCount >= 2 && L != 1) continue;
@@ -1268,7 +1360,10 @@ static void DrawLayeredRibbon(const TrailEntity *t, int drawCount, Texture2D fal
         {
             scratchLayer[h] = scratchOuter[h];
             scratchLayer[h].halfWidth *= wMul;
-            scratchLayer[h].v -= t->uvScrollOffset * sMul;
+            // Deform trails keep texcoord.y = normalized seg (wave envelope);
+            // their texture scroll lives in the packed-material shader.
+            if (!TrailUsesDeformShader(t))
+                scratchLayer[h].v -= t->uvScrollOffset * sMul;
             float a = (float)scratchOuter[h].tint.a * aMul;
             if (ly->headAlphaPow > 0.0f)
                 a *= powf(scratchSegRatio[h], ly->headAlphaPow);
@@ -1288,7 +1383,7 @@ static void DrawLayeredRibbon(const TrailEntity *t, int drawCount, Texture2D fal
             scratchLayer[h].tint = col;
         }
         Texture2D tex = (ly->texture != NULL) ? *ly->texture : fallbackTex;
-        DrawRibbonStripEx(scratchLayer, drawCount, tex, camera, t->ribbonMode, t->fixedNormal);
+        DrawTrailRibbon(t, scratchLayer, drawCount, tex, camera);
     }
 }
 
@@ -1387,6 +1482,78 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
     rlColor4ub(255, 255, 255, 255);
 }
 
+// Per-instance deform + packed-material uniforms, pushed just before this
+// trail's geometry inside its render group. Wave params are per-trail state,
+// so they live here — only the shared u_time clock stays at group level.
+static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
+{
+    if (s_deformShader.id == 0)
+        return;
+    const DeformLocs *L = GetCachedDeformLocs(s_deformShader);
+    const TrailDeformConfig *d = &t->deform;
+    const TrailMaterialConfig *m = &t->material;
+
+    if (L->deformMode >= 0) SetShaderValue(s_deformShader, L->deformMode, &d->mode, SHADER_UNIFORM_FLOAT);
+    if (L->waveAmpA >= 0) SetShaderValue(s_deformShader, L->waveAmpA, d->ampA, SHADER_UNIFORM_VEC3);
+    if (L->waveAmpB >= 0) SetShaderValue(s_deformShader, L->waveAmpB, d->ampB, SHADER_UNIFORM_VEC3);
+    if (L->waveFreq >= 0) SetShaderValue(s_deformShader, L->waveFreq, d->freq, SHADER_UNIFORM_VEC3);
+    if (L->waveSpeed >= 0) SetShaderValue(s_deformShader, L->waveSpeed, d->speed, SHADER_UNIFORM_VEC3);
+    if (L->wavePhase >= 0) SetShaderValue(s_deformShader, L->wavePhase, &d->phase, SHADER_UNIFORM_FLOAT);
+    if (L->waveStrength >= 0) SetShaderValue(s_deformShader, L->waveStrength, &d->strength, SHADER_UNIFORM_FLOAT);
+    if (L->curlScale >= 0) SetShaderValue(s_deformShader, L->curlScale, &d->curlScale, SHADER_UNIFORM_FLOAT);
+    {
+        float env[2] = {d->envHead, d->envTail};
+        if (L->waveEnv >= 0) SetShaderValue(s_deformShader, L->waveEnv, env, SHADER_UNIFORM_VEC2);
+    }
+    {
+        // Strip plane normal, mirroring ribbon_strip.c's ResolveFrameNormals:
+        // view direction for camera-facing, world-up for RIBBON_WORLD_UP,
+        // fixedNormal for RIBBON_FIXED_NORMAL.
+        Vector3 n;
+        if (t->ribbonMode == RIBBON_WORLD_UP)
+            n = (Vector3){0.0f, 1.0f, 0.0f};
+        else if (t->ribbonMode == RIBBON_FIXED_NORMAL)
+            n = Vector3Normalize(t->fixedNormal);
+        else
+            n = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+        if (L->stripNormal >= 0) SetShaderValue(s_deformShader, L->stripNormal, &n, SHADER_UNIFORM_VEC3);
+    }
+
+    if (L->matMode >= 0) SetShaderValue(s_deformShader, L->matMode, &m->mode, SHADER_UNIFORM_FLOAT);
+    if (L->wispMix >= 0) SetShaderValue(s_deformShader, L->wispMix, &m->wispMix, SHADER_UNIFORM_FLOAT);
+    if (L->dissolve >= 0) SetShaderValue(s_deformShader, L->dissolve, &m->dissolve, SHADER_UNIFORM_FLOAT);
+    if (L->dissolveSoft >= 0) SetShaderValue(s_deformShader, L->dissolveSoft, &m->dissolveSoft, SHADER_UNIFORM_FLOAT);
+    if (L->edgeTear >= 0) SetShaderValue(s_deformShader, L->edgeTear, &m->edgeTear, SHADER_UNIFORM_FLOAT);
+    if (L->turbStrength >= 0) SetShaderValue(s_deformShader, L->turbStrength, &m->turbStrength, SHADER_UNIFORM_FLOAT);
+    {
+        float tiling[2] = {m->tilingX, m->tilingY};
+        if (L->tiling >= 0) SetShaderValue(s_deformShader, L->tiling, tiling, SHADER_UNIFORM_VEC2);
+    }
+    {
+        float pan[4] = {m->panCoarse, m->panFine, 0.0f, 0.0f};
+        if (L->panSpeed >= 0) SetShaderValue(s_deformShader, L->panSpeed, pan, SHADER_UNIFORM_VEC4);
+    }
+    {
+        // Tail dissolve ramp in segment space; disabled when start >= end.
+        float a = m->tailFadeA >= m->tailFadeB ? 1.0f : m->tailFadeA;
+        float b = m->tailFadeA >= m->tailFadeB ? 1.0f : m->tailFadeB;
+        if (L->tailFadeA >= 0) SetShaderValue(s_deformShader, L->tailFadeA, &a, SHADER_UNIFORM_FLOAT);
+        if (L->tailFadeB >= 0) SetShaderValue(s_deformShader, L->tailFadeB, &b, SHADER_UNIFORM_FLOAT);
+    }
+}
+
+// Ribbon submission router: deform trails go through the Deformed variant
+// (side vector in the normal slot, seg in texcoord.y), classic trails keep
+// the old path untouched.
+static void DrawTrailRibbon(const TrailEntity *t, const RibbonPoint *points, int count,
+                            Texture2D texture, Camera3D camera)
+{
+    if (TrailUsesDeformShader(t))
+        DrawRibbonStripDeformedEx(points, count, texture, camera, t->ribbonMode, t->fixedNormal);
+    else
+        DrawRibbonStripEx(points, count, texture, camera, t->ribbonMode, t->fixedNormal);
+}
+
 static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCameraBasis *camBasis, float time)
 {
     float lifeRatio = t->lifetime / t->maxLifetime;
@@ -1401,6 +1568,9 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
             SetShaderValue(sh, loc, &v, SHADER_UNIFORM_FLOAT);
         }
     }
+
+    if (TrailUsesDeformShader(t))
+        ApplyDeformUniforms(t, camera);
 
     if (t->type == TRAIL_TYPE_PROJECTILE)
     {
@@ -1435,7 +1605,12 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
 
                 scratchOuter[h].position = posNode;
                 scratchOuter[h].halfWidth = t->thickness * TRAIL_PROJECTILE_OUTER_WIDTH_MUL * taper;
-                scratchOuter[h].v = segRatio * t->uvTiling - t->uvScrollOffset;
+                // Deform trails carry the normalized segment (0 = head, 1 = tail)
+                // in texcoord.y — the deform VS needs it for the wave envelope;
+                // texture tiling/scroll moves into the packed-material shader.
+                scratchOuter[h].v = TrailUsesDeformShader(t)
+                                        ? (float)h / (float)(drawCount - 1)
+                                        : (segRatio * t->uvTiling - t->uvScrollOffset);
                 scratchOuter[h].tint = (Color){(unsigned char)(segRatio * nodeColor.r), nodeColor.g, nodeColor.b, (unsigned char)((nodeColor.a / 255.0f) * TRAIL_PROJECTILE_OUTER_ALPHA_MAX * lifeRatio)};
 
                 scratchInner[h].position = scratchOuter[h].position;
@@ -1444,10 +1619,10 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
                 scratchInner[h].tint = (Color){(unsigned char)(segRatio * nodeColor.r), nodeColor.g, nodeColor.b, (unsigned char)(nodeColor.a * lifeRatio)};
             }
             Texture2D ribbonTex = t->sprite.id > 0 ? t->sprite : s_globalTrailTex;
-            DrawRibbonStripEx(scratchOuter, drawCount, ribbonTex, camera, t->ribbonMode, t->fixedNormal);
+            DrawTrailRibbon(t, scratchOuter, drawCount, ribbonTex, camera);
             if (!t->disableInnerCore)
             {
-                DrawRibbonStripEx(scratchInner, drawCount, ribbonTex, camera, t->ribbonMode, t->fixedNormal);
+                DrawTrailRibbon(t, scratchInner, drawCount, ribbonTex, camera);
             }
         }
 
@@ -1511,10 +1686,12 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
 
                 scratchOuter[h].position = posNode;
                 scratchOuter[h].halfWidth = t->thickness * taper;
-                scratchOuter[h].v = segRatio * t->uvTiling - t->uvScrollOffset;
+                scratchOuter[h].v = TrailUsesDeformShader(t)
+                                        ? (float)h / (float)(drawCount - 1)
+                                        : (segRatio * t->uvTiling - t->uvScrollOffset);
                 scratchOuter[h].tint = (Color){nodeColor.r, nodeColor.g, nodeColor.b, (unsigned char)((nodeColor.a / 255.0f) * 180.0f * lifeRatio * taper)};
             }
-            DrawRibbonStripEx(scratchOuter, drawCount, t->sprite.id > 0 ? t->sprite : s_globalTrailTex, camera, t->ribbonMode, t->fixedNormal);
+            DrawTrailRibbon(t, scratchOuter, drawCount, t->sprite.id > 0 ? t->sprite : s_globalTrailTex, camera);
 
             if (!t->disableInnerCore)
             {
@@ -1529,7 +1706,7 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
                     scratchInner[h].v = scratchOuter[h].v;
                     scratchInner[h].tint = (Color){255, 255, 255, (unsigned char)(180.0f * lifeRatio * taper)};
                 }
-                DrawRibbonStripEx(scratchInner, drawCount, t->sprite.id > 0 ? t->sprite : s_globalTrailTex, camera, t->ribbonMode, t->fixedNormal);
+                DrawTrailRibbon(t, scratchInner, drawCount, t->sprite.id > 0 ? t->sprite : s_globalTrailTex, camera);
             }
         }
     }
@@ -1580,9 +1757,14 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
                 posNode = ApplyAnchoredHelix(t, posNode, segRatio);
                 scratchOuter[h].position = posNode;
                 scratchOuter[h].halfWidth = t->thickness * taper;
-                scratchOuter[h].v = (t->uvMetresPerTile > 0.0f)
-                                        ? (t->nodeUV[NodeIndexForSegRatio(t, drawCount, h)] / t->uvMetresPerTile)
-                                        : (segRatio * t->uvTiling);
+                // Deform trails: texcoord.y carries the normalized segment
+                // (0 = head, 1 = tail) for the wave envelope; tiling/scroll
+                // live in the packed-material shader.
+                scratchOuter[h].v = TrailUsesDeformShader(t)
+                                        ? (float)h / (float)(drawCount - 1)
+                                        : ((t->uvMetresPerTile > 0.0f)
+                                               ? (t->nodeUV[NodeIndexForSegRatio(t, drawCount, h)] / t->uvMetresPerTile)
+                                               : (segRatio * t->uvTiling));
                 scratchOuter[h].tint = (Color){nodeColor.r, nodeColor.g, nodeColor.b,
                                                (unsigned char)(nodeColor.a * lifeRatio * taper)};
                 scratchTaper[h] = taper;
@@ -1614,17 +1796,20 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
                     // Outer Strip adjustments
                     scratchOuter[h].halfWidth = t->thickness * 1.5f * taper;
                     scratchOuter[h].tint.a = (unsigned char)((float)scratchOuter[h].tint.a * (180.0f / 255.0f));
-                    scratchOuter[h].v -= t->uvScrollOffset;
+                    // Deform trails keep texcoord.y = normalized seg; the scroll
+                    // for texture motion is applied in the material shader.
+                    if (!TrailUsesDeformShader(t))
+                        scratchOuter[h].v -= t->uvScrollOffset;
 
                     // Inner Strip adjustments
                     scratchInner[h].v = scratchOuter[h].v;
                     scratchInner[h].halfWidth = t->thickness * 0.4f * taper;
                     scratchInner[h].tint = (Color){255, 255, 255, (unsigned char)(255.0f * lifeRatio * taper)};
                 }
-                DrawRibbonStripEx(scratchOuter, drawCount, ribbonTex, camera, t->ribbonMode, t->fixedNormal);
+                DrawTrailRibbon(t, scratchOuter, drawCount, ribbonTex, camera);
                 if (!t->disableInnerCore)
                 {
-                    DrawRibbonStripEx(scratchInner, drawCount, ribbonTex, camera, t->ribbonMode, t->fixedNormal);
+                    DrawTrailRibbon(t, scratchInner, drawCount, ribbonTex, camera);
                 }
             }
         }
@@ -1669,6 +1854,7 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
 
     s_drawLayerFilter = layerFilter;
     if (layerFilter == 0) EnsureTrailBodyShader();
+    EnsureTrailDeformShader();
 
     float time = (float)GetTime();
     Matrix matView = GetCameraMatrix(camera);
@@ -1692,8 +1878,12 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
         if (!IsTrailVisible(t, camera))
             continue;
 
-        Shader sh = (layerFilter == 0 && TrailUsesAdditiveBlend(t) && s_bodyShader.id != 0)
-                        ? s_bodyShader : ResolveShader(t);
+        Shader sh;
+        if (TrailUsesDeformShader(t))
+            sh = s_deformShader;
+        else
+            sh = (layerFilter == 0 && TrailUsesAdditiveBlend(t) && s_bodyShader.id != 0)
+                     ? s_bodyShader : ResolveShader(t);
         BlendMode sourceBm = t->useCustomBlendMode ? t->blendMode
                                                    : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
         if (layerFilter == 1 && sourceBm == BLEND_ALPHA) continue;
@@ -1794,7 +1984,11 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
             BlendMode currentBm = (layerFilter == 0) ? BLEND_ALPHA : sourceBm;
             Texture2D currentTex = t->sprite.id > 0 ? t->sprite : s_globalTrailTex;
 
-            Shader currentShader = (layerFilter == 0 && TrailUsesAdditiveBlend(t) && s_bodyShader.id != 0)
+            Shader currentShader;
+            if (TrailUsesDeformShader(t))
+                currentShader = s_deformShader;
+            else
+                currentShader = (layerFilter == 0 && TrailUsesAdditiveBlend(t) && s_bodyShader.id != 0)
                                      ? s_bodyShader : ResolveShader(t);
             if (TrailMatchesRenderGroup(t, &groups[g], currentBm, currentShader, currentTex))
             {

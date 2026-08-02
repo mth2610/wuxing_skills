@@ -95,14 +95,14 @@
     },
     {
       "source": "common/vc_core_smoketrail.inl",
-      "fn": "VFX_ComposeSmokeTrail",
-      "label": "SMOKE TRAIL",
+      "fn": "VFX_ComposeEnergyTrail",
+      "label": "ENERGY TRAIL",
       "category": "common",
       "fixture": "follower",
       "lifecycle": "trail",
       "_auto": true,
       "type": "continuous",
-      "spawn_call": "VFX_ComposeSmokeTrail($XFORM, VC_MAT_FIRE, 1.5f, 2.0f)",
+      "spawn_call": "VFX_ComposeEnergyTrail($XFORM, VC_MAT_FIRE, 1.5f, 2.0f)",
       "kill_fn": "KillTrail"
     },
     {

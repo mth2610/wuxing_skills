@@ -168,8 +168,17 @@ void Ribbon_ComputeCrossFrame(const Vector3 *points, int count,
   }
 }
 
-void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture,
-                       Camera3D camera, RibbonMode mode, Vector3 fixedNormal) {
+// One geometry loop, two public entry points. `writeNormals` makes the strip
+// carry its per-vertex SIDE vector (the across-width unit vector) in the
+// normal attribute slot, where the trail deform vertex shader
+// (trail_deform.vs) reinterprets it as the wave basis. Classic ribbons never
+// write normals, so raylib's lit default shader (which would modulate
+// brightness by dot(normal, lightDir)) is untouched for every existing
+// consumer — only deform trails route through the Deformed entry point.
+static void DrawRibbonStripInternal(const RibbonPoint *points, int count,
+                                    Texture2D texture, Camera3D camera,
+                                    RibbonMode mode, Vector3 fixedNormal,
+                                    bool writeNormals) {
   if (points == NULL || count < 2)
     return;
 
@@ -329,35 +338,43 @@ void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture,
 
     if (i > 0) {
       // Left Quad (U: 0.0 -> 0.5)
+      if (writeNormals) rlNormal3f(prevSide.x, prevSide.y, prevSide.z);
       rlColor4ub(prevTint.r, prevTint.g, prevTint.b, prevTint.a);
       rlTexCoord2f(0.0f, prevV);
       rlVertex3f(prevLeft.x, prevLeft.y, prevLeft.z);
 
+      if (writeNormals) rlNormal3f(prevSide.x, prevSide.y, prevSide.z);
       rlColor4ub(prevTint.r, prevTint.g, prevTint.b, prevTint.a);
       rlTexCoord2f(0.5f, prevV);
       rlVertex3f(prevCenter.x, prevCenter.y, prevCenter.z);
 
+      if (writeNormals) rlNormal3f(side.x, side.y, side.z);
       rlColor4ub(tint.r, tint.g, tint.b, tint.a);
       rlTexCoord2f(0.5f, points[i].v);
       rlVertex3f(center.x, center.y, center.z);
 
+      if (writeNormals) rlNormal3f(side.x, side.y, side.z);
       rlColor4ub(tint.r, tint.g, tint.b, tint.a);
       rlTexCoord2f(0.0f, points[i].v);
       rlVertex3f(left.x, left.y, left.z);
 
       // Right Quad (U: 0.5 -> 1.0)
+      if (writeNormals) rlNormal3f(prevSide.x, prevSide.y, prevSide.z);
       rlColor4ub(prevTint.r, prevTint.g, prevTint.b, prevTint.a);
       rlTexCoord2f(0.5f, prevV);
       rlVertex3f(prevCenter.x, prevCenter.y, prevCenter.z);
 
+      if (writeNormals) rlNormal3f(prevSide.x, prevSide.y, prevSide.z);
       rlColor4ub(prevTint.r, prevTint.g, prevTint.b, prevTint.a);
       rlTexCoord2f(1.0f, prevV);
       rlVertex3f(prevRight.x, prevRight.y, prevRight.z);
 
+      if (writeNormals) rlNormal3f(side.x, side.y, side.z);
       rlColor4ub(tint.r, tint.g, tint.b, tint.a);
       rlTexCoord2f(1.0f, points[i].v);
       rlVertex3f(right.x, right.y, right.z);
 
+      if (writeNormals) rlNormal3f(side.x, side.y, side.z);
       rlColor4ub(tint.r, tint.g, tint.b, tint.a);
       rlTexCoord2f(0.5f, points[i].v);
       rlVertex3f(center.x, center.y, center.z);
@@ -375,6 +392,21 @@ void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture,
   rlDrawRenderBatchActive();   // flush before restoring, same reason as above
   rlEnableBackfaceCulling();
   rlDrawRenderBatchActive();
+}
+
+void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture,
+                       Camera3D camera, RibbonMode mode, Vector3 fixedNormal) {
+  DrawRibbonStripInternal(points, count, texture, camera, mode, fixedNormal, false);
+}
+
+// Deform variant: additionally writes the per-vertex SIDE vector into the
+// normal attribute slot, where trail_deform.vs reinterprets it as the wave
+// basis. Only trails with a deform mode > 0 route through this — classic
+// ribbons must keep the normal slot empty so lit default shaders are
+// unaffected. See the comment on DrawRibbonStripInternal.
+void DrawRibbonStripDeformedEx(const RibbonPoint *points, int count, Texture2D texture,
+                               Camera3D camera, RibbonMode mode, Vector3 fixedNormal) {
+  DrawRibbonStripInternal(points, count, texture, camera, mode, fixedNormal, true);
 }
 
 void Ribbon_ConstrainSegment(Vector3 *a, Vector3 *b, float restLen,

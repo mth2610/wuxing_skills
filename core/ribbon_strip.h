@@ -61,6 +61,17 @@ typedef enum {
 void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture,
                        Camera3D camera, RibbonMode mode, Vector3 fixedNormal);
 
+// Same as DrawRibbonStripEx, but additionally writes each point's unit SIDE
+// vector (the across-width offset direction) into the VERTEX NORMAL attribute
+// slot. The trail deform vertex shader (core/trails/shaders/trail_deform.vs)
+// reinterprets that slot as the wave basis. ONLY use this for trails whose
+// TrailDeformConfig.mode > 0: they render with the deform shader, which does
+// not light from normals. Classic ribbons must keep using DrawRibbonStripEx
+// — writing normals under a lit default shader would modulate brightness by
+// dot(side, lightDir).
+void DrawRibbonStripDeformedEx(const RibbonPoint *points, int count, Texture2D texture,
+                               Camera3D camera, RibbonMode mode, Vector3 fixedNormal);
+
 // Tiện ích: DrawRibbonStripEx với mode = RIBBON_CAMERA_FACING (hành vi cũ,
 // đa số ribbon trong project - tia sét, beam, trail - đều camera-facing).
 void DrawRibbonStrip(const RibbonPoint *points, int count, Texture2D texture,
