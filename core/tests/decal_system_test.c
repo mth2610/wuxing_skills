@@ -48,6 +48,22 @@ int main(void)
           Has("core/decals/decal_materials.json", "DECAL_MATERIAL_IMPACT") &&
           Has("scripts/gen_decal_materials.py", "decal_materials.generated.inl"),
           "Decal render policy is generated from canonical material data");
+    CHECK(Has("core/decals/decal_materials.json", "\"priority\"") &&
+          Has("core/decals/decal_material.h", "int priority") &&
+          Has(compose, ".priority = decal->priority") &&
+          Has(impl, "incomingPriority < lowestPriority") &&
+          Has(impl, "Decal_ClampPriority"),
+          "Material priority controls conformal-budget admission and eviction");
+    CHECK(Has("core/decals/decal_materials.json", "\"max_draw_distance\"") &&
+          Has("core/decals/decal_material.h", "maxDrawDistance") &&
+          Has(impl, "Decal_IsWithinDrawDistance") &&
+          Has(impl, "s_renderDistanceCulledCount"),
+          "Material draw-distance policy is applied conservatively in the queue");
+    CHECK(Has(impl, "FindSlot(int incomingPriority)") &&
+          Has(impl, "bool culled = !Decal_IsVisible(candidate)") &&
+          Has(impl, "incomingPriority < g_DecalPool[target].material.priority") &&
+          Has(impl, "return DECAL_HANDLE_INVALID;"),
+          "Pool pressure preserves higher-priority live decals before spawning");
     CHECK(!Has(impl, "rlDisableDepthTest") &&
           Has(impl, "Decal_BeginWorldPass") && Has(impl, "Decal_EndWorldPass") &&
           Has(impl, "rlEnableDepthTest") && Has(impl, "rlDisableDepthMask") &&
@@ -74,11 +90,20 @@ int main(void)
           Has(impl, "Decal_DrawConformalMesh") &&
           Has(impl, "lod < 2 && d->material.emissiveIntensity"),
           "Projected-size LOD removes tiny decals and reduces conformal work");
+    CHECK(Has(impl, "Decal_EstimatedCoverage") && !Has(impl, "s_renderBaseCoverage + coverage > 0.20f") &&
+          Has(impl, "s_renderEmissiveCoverage + coverage <= 0.08f") &&
+          Has(api, "emissiveSuppressed") && Has(api, "emissiveCoverage"),
+          "Base decals remain visible while only excess emissive coverage is suppressed");
     CHECK(Has(shader, "fwidth(radius)") &&
           !Has(shader, "floor(fragTexCoord * 96.0)"),
           "Decal erosion has no quantized pixel-grid boundary");
     CHECK(Has(shader, "u_baseTint") && Has(shader, "u_emissiveTint") &&
           Has(shader, "u_emissiveThreshold") && Has(shader, "u_emissiveIntensity"),
           "One material shader accepts generic base and emissive parameters");
+    CHECK(!Has(shader, "u_erosion") && Has(shader, "fragColor.r * 0.24") &&
+          Has(impl, "Decal_ApplyMaterialBucket") && Has(impl, "Decal_SameMaterialBucket") &&
+          Has(impl, "rlColor4ub((unsigned char)(erosion * 255.0f)") &&
+          !Has(impl, "s_locMaterialErosion"),
+          "Conformal erosion is vertex data; uniforms change only by material bucket");
     return failures ? 1 : 0;
 }

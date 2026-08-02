@@ -12,7 +12,9 @@
       "alpha_base": 155.0,
       "alpha_severity": 65.0,
       "emissive_threshold": 0.78,
-      "emissive_intensity": 1.85
+      "emissive_intensity": 1.85,
+      "priority": 160,
+      "max_draw_distance": 35.0
     },
     {
       "id": "DECAL_MATERIAL_SCORCH",
@@ -26,7 +28,9 @@
       "alpha_base": 120.0,
       "alpha_severity": 75.0,
       "emissive_threshold": 0.78,
-      "emissive_intensity": 1.85
+      "emissive_intensity": 1.85,
+      "priority": 120,
+      "max_draw_distance": 30.0
     },
     {
       "id": "DECAL_MATERIAL_FROST",
@@ -40,7 +44,9 @@
       "alpha_base": 135.0,
       "alpha_severity": 80.0,
       "emissive_threshold": 0.78,
-      "emissive_intensity": 1.85
+      "emissive_intensity": 1.85,
+      "priority": 180,
+      "max_draw_distance": 38.0
     }
   ]
 }

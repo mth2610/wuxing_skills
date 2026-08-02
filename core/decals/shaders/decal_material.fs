@@ -4,7 +4,6 @@ in vec2 fragTexCoord;
 in vec4 fragColor;
 in vec3 fragNormal;
 uniform sampler2D texture0;
-uniform float u_erosion;
 uniform int u_emissivePass;
 uniform vec4 u_baseTint;
 uniform vec4 u_emissiveTint;
@@ -16,8 +15,8 @@ void main()
 {
     vec2 q = fragTexCoord - vec2(0.5);
     float radius = length(q) * 2.0;
-    float edgeStart = 0.58 - u_erosion * 0.24;
-    float edgeEnd = 1.02 - u_erosion * 0.45;
+    float edgeStart = 0.58 - fragColor.r * 0.24;
+    float edgeEnd = 1.02 - fragColor.r * 0.45;
     // The authored alpha owns the fractured silhouette. A quantized UV-noise
     // erosion produced visible 96x96 pixel cells while a decal shrank; use
     // derivative smoothing so this lifetime fade stays resolution-independent.
@@ -34,7 +33,7 @@ void main()
     else
     {
         float receiverLight = mix(0.64, 1.0, clamp(fragNormal.y, 0.0, 1.0));
-        finalColor = vec4(body.rgb * u_baseTint.rgb * fragColor.rgb * receiverLight,
+        finalColor = vec4(body.rgb * u_baseTint.rgb * receiverLight,
                           alpha * fragColor.a);
     }
 }

@@ -12,6 +12,8 @@
         .alphaSeverity = 65.0f,
         .emissiveThreshold = 0.78f,
         .emissiveIntensity = 1.85f,
+        .priority = 160,
+        .maxDrawDistance = 35.0f,
     },
     [DECAL_MATERIAL_SCORCH] = {
         .surface = VFX_SURFACE_DECAL_SCORCH,
@@ -25,6 +27,8 @@
         .alphaSeverity = 75.0f,
         .emissiveThreshold = 0.78f,
         .emissiveIntensity = 1.85f,
+        .priority = 120,
+        .maxDrawDistance = 30.0f,
     },
     [DECAL_MATERIAL_FROST] = {
         .surface = VFX_SURFACE_DECAL_FROST,
@@ -38,4 +42,6 @@
         .alphaSeverity = 80.0f,
         .emissiveThreshold = 0.78f,
         .emissiveIntensity = 1.85f,
+        .priority = 180,
+        .maxDrawDistance = 38.0f,
     },

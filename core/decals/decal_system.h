@@ -20,6 +20,8 @@ typedef struct {
     Color emissiveTint;
     float emissiveThreshold;
     float emissiveIntensity;
+    int priority; // 0..255; higher survives conformal-budget pressure first
+    float maxDrawDistance; // <= 0 means unlimited
 } DecalMaterialParams;
 
 typedef struct {
@@ -68,6 +70,10 @@ typedef struct {
     int culled;
     int frustumCulled;
     int lodCulled;
+    int emissiveSuppressed;
+    int distanceCulled;
+    float baseCoverage;
+    float emissiveCoverage;
 } DecalRenderStats;
 
 // Khởi tạo hệ thống Decal

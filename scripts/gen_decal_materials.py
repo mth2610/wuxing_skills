@@ -34,6 +34,8 @@ def main():
             f"        .alphaSeverity = {material['alpha_severity']}f,",
             f"        .emissiveThreshold = {material['emissive_threshold']}f,",
             f"        .emissiveIntensity = {material['emissive_intensity']}f,",
+            f"        .priority = {material['priority']},",
+            f"        .maxDrawDistance = {material['max_draw_distance']}f,",
             "    },",
         ])
     OUTPUT.write_text("\n".join(lines) + "\n", encoding="utf-8")

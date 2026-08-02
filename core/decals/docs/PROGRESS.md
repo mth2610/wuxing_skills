@@ -70,7 +70,31 @@ Status: conservative frustum-admission slice complete.
 - Projected-size LOD uses the current camera: stamps below 12 pixels are
   rejected, the 12–40 pixel tier uses a reduced conformal mesh and base pass
   only, and the 40–96 pixel tier uses a reduced mesh with emissive allowed.
-- Distance cutoffs, priority eviction, and coverage budgets remain outstanding.
+- Material descriptors now supply a 0–255 priority. At the independent
+  conformal-stamp cap, an incoming lower-priority stamp is rejected; otherwise
+  the lowest-priority, shortest-lived stamp is replaced.
+- Queue records estimated base/emissive screen coverage for tuning. Base decals
+  are never rejected by this telemetry: normal combat may legitimately contain
+  100–200 simultaneous marks. The 8% emissive budget only suppresses extra
+  emissive passes; those decals still render their base pass.
+- Material descriptors supply a conservative maximum draw distance; the queue
+  keeps a decal while any part of its bounding sphere remains in range.
+- At full global-pool capacity, spawn eviction prefers decals already culled by
+  camera/distance admission, then the lowest priority and shortest lifetime.
+  An incoming lower-priority decal is safely rejected instead of evicting a
+  more important live decal.
+
+## D5 — Batch and mobile optimization
+
+Status: conformal uniform-churn slice complete.
+
+- Per-stamp erosion no longer uses `SetShaderValue()`: the material shader reads
+  erosion from vertex-color red and opacity from vertex-color alpha.
+- Base/emissive tint, threshold, and intensity are applied only when the
+  conformal material/tint bucket changes, inside the active shader scope.
+- This preserves the one-sampler shader interface and avoids the rlvk
+  per-instance UBO pressure pattern. Instance-buffer batching and capture-based
+  backend measurements remain outstanding.
 
 ## Verification
 

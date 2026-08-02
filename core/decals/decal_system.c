@@ -15,14 +15,18 @@ static int s_renderCount = 0;
 static int s_renderCulledCount = 0;
 static int s_renderFrustumCulledCount = 0;
 static int s_renderLodCulledCount = 0;
+static int s_renderEmissiveSuppressedCount = 0;
+static int s_renderDistanceCulledCount = 0;
 static unsigned char s_renderLod[MAX_DECALS];
+static bool s_renderEmissiveAllowed[MAX_DECALS];
+static float s_renderBaseCoverage = 0.0f;
+static float s_renderEmissiveCoverage = 0.0f;
 
 // Gom 2 shader thành 1 shader duy nhất để tránh switch trạng thái shader (Shader State Changes)
 static Shader g_DecalShader;
 static Shader g_MaterialDecalShader;
 // Uniform locations của uber-shader (decal_flow.fs), cache 1 lần ở Init
 static int s_locFlowTime = -1, s_locFlowSpeed = -1, s_locFlowStrength = -1, s_locGlow = -1;
-static int s_locMaterialErosion = -1;
 static int s_locMaterialEmissivePass = -1;
 static int s_locMaterialBaseTint = -1;
 static int s_locMaterialEmissiveTint = -1;
@@ -96,6 +100,21 @@ static float Decal_BoundsRadius(const DecalEntity *d)
     return fmaxf(maximumScale * 1.6f, 0.01f);
 }
 
+static int Decal_ClampPriority(int priority)
+{
+    if (priority < 0) return 0;
+    if (priority > 255) return 255;
+    return priority;
+}
+
+static bool Decal_IsWithinDrawDistance(const DecalEntity *d)
+{
+    if (!s_hasCamera || d->material.maxDrawDistance <= 0.0f)
+        return true;
+    return Vector3Distance(d->position, s_camera.position) - Decal_BoundsRadius(d) <=
+           d->material.maxDrawDistance;
+}
+
 static bool Decal_IsVisible(const DecalEntity *d)
 {
     if (!s_hasCamera)
@@ -164,12 +183,34 @@ static int Decal_SelectLod(const DecalEntity *d)
     return 0;
 }
 
+static float Decal_EstimatedCoverage(const DecalEntity *d)
+{
+    if (!s_hasCamera) return 0.0f;
+    Vector3 forward = Vector3Subtract(s_camera.target, s_camera.position);
+    float length = Vector3Length(forward);
+    if (length <= 0.0001f) return 0.0f;
+    forward = Vector3Scale(forward, 1.0f / length);
+    float depth = Vector3DotProduct(Vector3Subtract(d->position, s_camera.position), forward);
+    if (depth <= 0.0001f) return 0.0f;
+    float pixelsPerWorld = s_camera.projection == CAMERA_ORTHOGRAPHIC ?
+        (float)GetScreenHeight() / fmaxf(s_camera.fovy, 0.01f) :
+        ((float)GetScreenHeight() * 0.5f) /
+        (depth * tanf(fmaxf(s_camera.fovy * DEG2RAD * 0.5f, 0.001f)));
+    float radiusPixels = Decal_BoundsRadius(d) * pixelsPerWorld;
+    float screenPixels = fmaxf((float)GetScreenWidth() * (float)GetScreenHeight(), 1.0f);
+    return fminf(PI * radiusPixels * radiusPixels / screenPixels, 1.0f);
+}
+
 static void Decal_BuildRenderQueue(void)
 {
     s_renderCount = 0;
     s_renderCulledCount = 0;
     s_renderFrustumCulledCount = 0;
     s_renderLodCulledCount = 0;
+    s_renderEmissiveSuppressedCount = 0;
+    s_renderDistanceCulledCount = 0;
+    s_renderBaseCoverage = 0.0f;
+    s_renderEmissiveCoverage = 0.0f;
     for (int a = 0; a < s_activeCount; ++a)
     {
         int idx = s_activeIds[a];
@@ -182,6 +223,12 @@ static void Decal_BuildRenderQueue(void)
             ++s_renderFrustumCulledCount;
             continue;
         }
+        if (!Decal_IsWithinDrawDistance(d))
+        {
+            ++s_renderCulledCount;
+            ++s_renderDistanceCulledCount;
+            continue;
+        }
         int lod = Decal_SelectLod(d);
         if (lod >= 3)
         {
@@ -190,7 +237,41 @@ static void Decal_BuildRenderQueue(void)
             continue;
         }
         s_renderLod[idx] = (unsigned char)lod;
+        s_renderEmissiveAllowed[idx] = d->material.emissiveIntensity > 0.0f &&
+                                       d->material.emissiveTint.a > 0;
         s_renderIds[s_renderCount++] = idx;
+    }
+    // Admit higher-priority candidates first under the mobile coverage budget.
+    for (int i = 1; i < s_renderCount; ++i)
+    {
+        int value = s_renderIds[i];
+        int j = i - 1;
+        while (j >= 0 && g_DecalPool[value].material.priority > g_DecalPool[s_renderIds[j]].material.priority)
+        {
+            s_renderIds[j + 1] = s_renderIds[j];
+            --j;
+        }
+        s_renderIds[j + 1] = value;
+    }
+    if (s_hasCamera)
+    {
+        int admitted = 0;
+        for (int i = 0; i < s_renderCount; ++i)
+        {
+            int idx = s_renderIds[i];
+            float coverage = Decal_EstimatedCoverage(&g_DecalPool[idx]);
+            s_renderBaseCoverage += coverage;
+            if (s_renderEmissiveAllowed[idx] &&
+                s_renderEmissiveCoverage + coverage <= 0.08f)
+                s_renderEmissiveCoverage += coverage;
+            else
+            {
+                s_renderEmissiveAllowed[idx] = false;
+                ++s_renderEmissiveSuppressedCount;
+            }
+            s_renderIds[admitted++] = idx;
+        }
+        s_renderCount = admitted;
     }
     // Small fixed pool: insertion sort avoids allocations and has lower
     // overhead than a general-purpose sort at the usual active counts.
@@ -331,6 +412,10 @@ void DecalSystem_Init(void)
     s_renderCulledCount = 0;
     s_renderFrustumCulledCount = 0;
     s_renderLodCulledCount = 0;
+    s_renderEmissiveSuppressedCount = 0;
+    s_renderDistanceCulledCount = 0;
+    s_renderBaseCoverage = 0.0f;
+    s_renderEmissiveCoverage = 0.0f;
     s_hasCamera = false;
     for (int i = 0; i < MAX_DECALS; i++)
     {
@@ -348,7 +433,6 @@ void DecalSystem_Init(void)
     s_locFlowSpeed    = GetShaderLocation(g_DecalShader, "u_flowSpeed");
     s_locFlowStrength = GetShaderLocation(g_DecalShader, "u_flowStrength");
     s_locGlow         = GetShaderLocation(g_DecalShader, "u_glowIntensity");
-    s_locMaterialErosion = GetShaderLocation(g_MaterialDecalShader, "u_erosion");
     s_locMaterialEmissivePass = GetShaderLocation(g_MaterialDecalShader, "u_emissivePass");
     s_locMaterialBaseTint = GetShaderLocation(g_MaterialDecalShader, "u_baseTint");
     s_locMaterialEmissiveTint = GetShaderLocation(g_MaterialDecalShader, "u_emissiveTint");
@@ -356,7 +440,7 @@ void DecalSystem_Init(void)
     s_locMaterialIntensity = GetShaderLocation(g_MaterialDecalShader, "u_emissiveIntensity");
 }
 
-static int FindSlot(void)
+static int FindSlot(int incomingPriority)
 {
     if (s_activeCount < MAX_DECALS)
     {
@@ -367,8 +451,24 @@ static int FindSlot(void)
                 return idx;
         }
     }
-    // Pool đầy — O(1) Tối ưu: Không duyệt tìm kiếm nữa, lấy trực tiếp slot "già nhất" trong s_activeIds (vị trí đầu mảng)
-    int target = s_activeIds[0];
+    int target = -1;
+    bool targetCulled = false;
+    for (int a = 0; a < s_activeCount; ++a)
+    {
+        int id = s_activeIds[a];
+        DecalEntity *candidate = &g_DecalPool[id];
+        bool culled = !Decal_IsVisible(candidate) || !Decal_IsWithinDrawDistance(candidate);
+        if (target < 0 || (culled && !targetCulled) ||
+            (culled == targetCulled && candidate->material.priority < g_DecalPool[target].material.priority) ||
+            (culled == targetCulled && candidate->material.priority == g_DecalPool[target].material.priority &&
+             candidate->lifetime < g_DecalPool[target].lifetime))
+        {
+            target = id;
+            targetCulled = culled;
+        }
+    }
+    if (target < 0 || incomingPriority < g_DecalPool[target].material.priority)
+        return -1;
     Decal_Deactivate(target);
     return target;
 }
@@ -376,9 +476,11 @@ static int FindSlot(void)
 static int SpawnDecalCommon(Vector3 pos, float rotation, float rotSpeed,
                             float scaleStart, float scaleEnd,
                             Texture2D texture, float lifetime,
-                            Color tint, BlendMode blendMode, float yOffset)
+                            Color tint, BlendMode blendMode, float yOffset, int priority)
 {
-    int idx = FindSlot();
+    int idx = FindSlot(Decal_ClampPriority(priority));
+    if (idx < 0)
+        return -1;
     DecalEntity *d = &g_DecalPool[idx];
     d->generation = (d->generation + 1u) & 0x00ffffffu;
     if (d->generation == 0u) d->generation = 1u;
@@ -396,7 +498,8 @@ static int SpawnDecalCommon(Vector3 pos, float rotation, float rotSpeed,
     d->fadeOutSeconds = 0.0f;
     d->tint = tint;
     d->material = (DecalMaterialParams){ .baseTint = WHITE, .emissiveTint = WHITE,
-                                         .emissiveThreshold = 1.1f, .emissiveIntensity = 0.0f };
+                                         .emissiveThreshold = 1.1f, .emissiveIntensity = 0.0f,
+                                         .priority = Decal_ClampPriority(priority), .maxDrawDistance = 0.0f };
     d->blendMode = blendMode;
     d->active = true;
     d->flowScroll = false;
@@ -446,7 +549,8 @@ DecalHandle DecalSystem_AddConformalMaterialEx(Vector3 pos, float rotation, floa
             return DECAL_HANDLE_INVALID;
     }
     int conformalCount = 0;
-    int oldest = -1;
+    int evictionCandidate = -1;
+    int lowestPriority = 256;
     float shortestLife = 0.0f;
     for (int a = 0; a < s_activeCount; ++a)
     {
@@ -454,22 +558,35 @@ DecalHandle DecalSystem_AddConformalMaterialEx(Vector3 pos, float rotation, floa
         DecalEntity *candidate = &g_DecalPool[id];
         if (!candidate->conformalStamp) continue;
         conformalCount++;
-        if (oldest < 0 || candidate->lifetime < shortestLife)
+        if (evictionCandidate < 0 || candidate->material.priority < lowestPriority ||
+            (candidate->material.priority == lowestPriority && candidate->lifetime < shortestLife))
         {
-            oldest = id;
+            evictionCandidate = id;
+            lowestPriority = candidate->material.priority;
             shortestLife = candidate->lifetime;
         }
     }
     // Material stamps are considerably denser than legacy quads. Keep a hard
     // independent budget so repeated impact events cannot consume a frame.
-    if (conformalCount >= 12 && oldest >= 0)
-        Decal_Deactivate(oldest);
+    if (conformalCount >= 12 && evictionCandidate >= 0)
+    {
+        int incomingPriority = material != NULL ? Decal_ClampPriority(material->priority) : 128;
+        if (incomingPriority < lowestPriority)
+            return DECAL_HANDLE_INVALID;
+        Decal_Deactivate(evictionCandidate);
+    }
+    int incomingPriority = material != NULL ? Decal_ClampPriority(material->priority) : 128;
     int idx = SpawnDecalCommon(pos, rotation, rotSpeed, scaleStart, scaleEnd, texture,
-                               lifetime, tint, blendMode, yOffset);
+                               lifetime, tint, blendMode, yOffset, incomingPriority);
+    if (idx < 0)
+        return DECAL_HANDLE_INVALID;
     DecalEntity *d = &g_DecalPool[idx];
     d->conformalStamp = true;
     if (material != NULL)
+    {
         d->material = *material;
+        d->material.priority = Decal_ClampPriority(d->material.priority);
+    }
     d->heightFn = heightFn;
     d->heightUserData = heightUserData;
     d->edgePhase = edgePhase;
@@ -575,7 +692,7 @@ void DecalSystem_AddEx(Vector3 pos, float rotation, float rotSpeed,
                        Color tint, BlendMode blendMode, float yOffset)
 {
     SpawnDecalCommon(pos, rotation, rotSpeed, scaleStart, scaleEnd, texture,
-                     lifetime, tint, blendMode, yOffset);
+                     lifetime, tint, blendMode, yOffset, 128);
 }
 
 void DecalSystem_AddFlowEx(Vector3 pos, float rotation, float rotSpeed,
@@ -586,7 +703,8 @@ void DecalSystem_AddFlowEx(Vector3 pos, float rotation, float rotSpeed,
                            float glowIntensity)
 {
     int idx = SpawnDecalCommon(pos, rotation, rotSpeed, scaleStart, scaleEnd,
-                               texture, lifetime, tint, blendMode, yOffset);
+                               texture, lifetime, tint, blendMode, yOffset, 128);
+    if (idx < 0) return;
     g_DecalPool[idx].flowScroll = true;
     g_DecalPool[idx].flowSpeed = flowSpeed;
     g_DecalPool[idx].flowStrength = flowStrength;
@@ -606,7 +724,8 @@ void DecalSystem_AddOrientedEx(Vector3 pos, Vector3 normal, float rotation,
                                                   : (Vector3){1.0f, 0.0f, 0.0f};
     Vector3 tangent = Vector3Normalize(Vector3CrossProduct(reference, normal));
     int idx = SpawnDecalCommon(pos, rotation, rotSpeed, scaleStart, scaleEnd, texture,
-                               lifetime, tint, blendMode, 0.0f);
+                               lifetime, tint, blendMode, 0.0f, 128);
+    if (idx < 0) return;
     DecalEntity *d = &g_DecalPool[idx];
     d->oriented = true;
     d->surfaceNormal = normal;
@@ -762,10 +881,40 @@ static float Decal_ConformalFadeAlpha(const DecalEntity *d)
     return Clamp(alpha, 0.0f, 1.0f);
 }
 
-static bool Decal_HasEmissive(const DecalEntity *d, int lod)
+static bool Decal_HasEmissive(const DecalEntity *d, int lod, int idx)
 {
     return lod < 2 && d->material.emissiveIntensity > 0.0f &&
-           d->material.emissiveTint.a > 0;
+           d->material.emissiveTint.a > 0 && s_renderEmissiveAllowed[idx];
+}
+
+static bool Decal_SameMaterialBucket(const DecalEntity *a, const DecalEntity *b)
+{
+    return a->material.baseTint.r == b->material.baseTint.r &&
+           a->material.baseTint.g == b->material.baseTint.g &&
+           a->material.baseTint.b == b->material.baseTint.b &&
+           a->material.emissiveTint.r == b->material.emissiveTint.r &&
+           a->material.emissiveTint.g == b->material.emissiveTint.g &&
+           a->material.emissiveTint.b == b->material.emissiveTint.b &&
+           a->material.emissiveThreshold == b->material.emissiveThreshold &&
+           a->material.emissiveIntensity == b->material.emissiveIntensity &&
+           a->tint.r == b->tint.r && a->tint.g == b->tint.g && a->tint.b == b->tint.b;
+}
+
+static void Decal_ApplyMaterialBucket(const DecalEntity *d)
+{
+    float baseTint[4] = {
+        d->material.baseTint.r * d->tint.r / (255.0f * 255.0f),
+        d->material.baseTint.g * d->tint.g / (255.0f * 255.0f),
+        d->material.baseTint.b * d->tint.b / (255.0f * 255.0f), 1.0f
+    };
+    float emissiveTint[4] = {
+        d->material.emissiveTint.r / 255.0f, d->material.emissiveTint.g / 255.0f,
+        d->material.emissiveTint.b / 255.0f, 1.0f
+    };
+    SetShaderValue(g_MaterialDecalShader, s_locMaterialBaseTint, baseTint, SHADER_UNIFORM_VEC4);
+    SetShaderValue(g_MaterialDecalShader, s_locMaterialEmissiveTint, emissiveTint, SHADER_UNIFORM_VEC4);
+    SetShaderValue(g_MaterialDecalShader, s_locMaterialThreshold, &d->material.emissiveThreshold, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(g_MaterialDecalShader, s_locMaterialIntensity, &d->material.emissiveIntensity, SHADER_UNIFORM_FLOAT);
 }
 
 static void Decal_StampEmitVertex(const DecalEntity *d, float radial, float angle,
@@ -836,7 +985,7 @@ static void DrawConformalGroup(BlendMode renderMode, BlendMode sourceMode, bool 
     {
         DecalEntity *d = &g_DecalPool[s_renderIds[a]];
         if (d->conformalStamp && d->blendMode == sourceMode &&
-            d->texture.id != 0 && (!emissivePass || Decal_HasEmissive(d, s_renderLod[s_renderIds[a]])))
+            d->texture.id != 0 && (!emissivePass || Decal_HasEmissive(d, s_renderLod[s_renderIds[a]], s_renderIds[a])))
         {
             active = true;
             break;
@@ -852,28 +1001,26 @@ static void DrawConformalGroup(BlendMode renderMode, BlendMode sourceMode, bool 
     int useEmissive = emissivePass ? 1 : 0;
     SetShaderValue(g_MaterialDecalShader, s_locMaterialEmissivePass, &useEmissive,
                    SHADER_UNIFORM_INT);
+    const DecalEntity *bucketMaterial = NULL;
 
     for (int a = 0; a < s_renderCount; ++a)
     {
         DecalEntity *d = &g_DecalPool[s_renderIds[a]];
         if (!d->conformalStamp || d->blendMode != sourceMode || d->texture.id == 0 ||
-            (emissivePass && !Decal_HasEmissive(d, s_renderLod[s_renderIds[a]])))
+            (emissivePass && !Decal_HasEmissive(d, s_renderLod[s_renderIds[a]], s_renderIds[a])))
             continue;
         float erosion = 1.0f - d->lifetime / d->maxLifetime;
         Color c = d->tint;
         c.a = (unsigned char)(c.a * (1.0f - erosion * erosion) *
                               Decal_ConformalFadeAlpha(d));
-        SetShaderValue(g_MaterialDecalShader, s_locMaterialErosion, &erosion, SHADER_UNIFORM_FLOAT);
-        float baseTint[4] = { d->material.baseTint.r / 255.0f, d->material.baseTint.g / 255.0f,
-                              d->material.baseTint.b / 255.0f, d->material.baseTint.a / 255.0f };
-        float emissiveTint[4] = { d->material.emissiveTint.r / 255.0f, d->material.emissiveTint.g / 255.0f,
-                                  d->material.emissiveTint.b / 255.0f, d->material.emissiveTint.a / 255.0f };
-        SetShaderValue(g_MaterialDecalShader, s_locMaterialBaseTint, baseTint, SHADER_UNIFORM_VEC4);
-        SetShaderValue(g_MaterialDecalShader, s_locMaterialEmissiveTint, emissiveTint, SHADER_UNIFORM_VEC4);
-        SetShaderValue(g_MaterialDecalShader, s_locMaterialThreshold, &d->material.emissiveThreshold, SHADER_UNIFORM_FLOAT);
-        SetShaderValue(g_MaterialDecalShader, s_locMaterialIntensity, &d->material.emissiveIntensity, SHADER_UNIFORM_FLOAT);
+        if (bucketMaterial == NULL || !Decal_SameMaterialBucket(bucketMaterial, d))
+        {
+            rlDrawRenderBatchActive();
+            Decal_ApplyMaterialBucket(d);
+            bucketMaterial = d;
+        }
         rlSetTexture(d->texture.id);
-        rlColor4ub(c.r, c.g, c.b, c.a);
+        rlColor4ub((unsigned char)(erosion * 255.0f), 255, 255, c.a);
         rlBegin(RL_TRIANGLES);
         Decal_DrawConformalMesh(d, s_renderLod[s_renderIds[a]]);
         rlEnd();
@@ -909,6 +1056,10 @@ void DecalSystem_Unload(void)
     s_renderCulledCount = 0;
     s_renderFrustumCulledCount = 0;
     s_renderLodCulledCount = 0;
+    s_renderEmissiveSuppressedCount = 0;
+    s_renderDistanceCulledCount = 0;
+    s_renderBaseCoverage = 0.0f;
+    s_renderEmissiveCoverage = 0.0f;
     s_hasCamera = false;
     for (int i = 0; i < MAX_DECALS; i++)
     {
@@ -932,4 +1083,8 @@ void DecalSystem_GetRenderStats(DecalRenderStats *outStats)
     outStats->culled = s_renderCulledCount;
     outStats->frustumCulled = s_renderFrustumCulledCount;
     outStats->lodCulled = s_renderLodCulledCount;
+    outStats->emissiveSuppressed = s_renderEmissiveSuppressedCount;
+    outStats->distanceCulled = s_renderDistanceCulledCount;
+    outStats->baseCoverage = s_renderBaseCoverage;
+    outStats->emissiveCoverage = s_renderEmissiveCoverage;
 }

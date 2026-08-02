@@ -22,6 +22,8 @@ typedef struct {
     float alphaSeverity;
     float emissiveThreshold;
     float emissiveIntensity;
+    int priority;
+    float maxDrawDistance;
 } DecalMaterialDesc;
 
 static const DecalMaterialDesc s_DecalMaterials[DECAL_MATERIAL_COUNT] = {

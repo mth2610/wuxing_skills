@@ -26,7 +26,9 @@ void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale,
         .baseTint = material ? material->body : WHITE,
         .emissiveTint = material ? material->glow : WHITE,
         .emissiveThreshold = decal->emissiveThreshold,
-        .emissiveIntensity = decal->emissiveIntensity
+        .emissiveIntensity = decal->emissiveIntensity,
+        .priority = decal->priority,
+        .maxDrawDistance = decal->maxDrawDistance
     };
     DecalSystem_AddConformalMaterialEx(pos, Random01() * 360.0f, 0.0f,
                                        radius * 0.90f, radius, surface->body, life,
