@@ -36,6 +36,14 @@ A zero normal becomes world up and a zero impulse becomes the normal.
 
 ## Screen-space optics
 
+### Render-graph submission rule
+
+`FluidImpact_Draw()` is a **surface-input submission**, not a decal draw. The
+engine calls it immediately before `FluidSurface_HasPending()` in the
+screen-space VFX composite pass. Never put it behind an active-decal, regular
+particle, trail, or debug visibility gate: airborne SSF effects (including
+`FluidWaterOrb`) may be the only producer in that frame.
+
 Particles are never shaded individually while they belong to one connected
 mass. They first rasterize nearest spherical front-depth into R32F and additive
 thickness into a separate R32F target. A separable narrow-range filter
@@ -91,6 +99,18 @@ ceilings, props and moving receivers. With no callback installed, Core uses the
 active map's ground-surface query: terrain and heightmaps collide correctly, but
 walls/props do not. This makes the current fallback explicit rather than silently
 pretending the map provides full 3D collision.
+
+## SSF-only water orb
+
+`FluidWaterOrb_Spawn(const FluidWaterOrbEvent *)` is the authored projectile
+path for a coherent water sphere that must not use PBD. It launches one
+2,000-particle SSF stream, held together by a moving point-attraction field. At
+the target, those same particles receive a centrifugal `FORCE_RADIAL_AXIS`
+field around `hitNormal` plus an angle-aware velocity impulse (preserved
+tangent + damped normal rebound), vortex and viscosity fields to make the
+crown; no replacement impact population is spawned. One orb therefore costs
+one emitter and one depth/thickness stream.
+
 
 ## Wetness
 

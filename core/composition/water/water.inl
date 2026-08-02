@@ -131,4 +131,5 @@ static void WaterFx_InitShared(void)
 // 2 include(s) — auto-managed by sync_vfx_test.py
 #include "water_stream.inl"
 #include "fluid_impact_test.inl"
+#include "water_orb_test.inl"
 // @gen:water_includes end

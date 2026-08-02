@@ -27,6 +27,11 @@ struct ParticleConfig {
   // ForceField tùy chọn: NULL = không dùng; non-NULL = apply force field mỗi
   // frame
   const ForceField *forceField;
+  // Dynamic axis for FORCE_RADIAL_AXIS/FORCE_VORTEX_AXIS layers. The GPU
+  // backend packs this with the registered force field; zero is the legacy
+  // no-axis default.
+  Vector3 forceAxisOrigin;
+  Vector3 forceAxisDir;
 
   // Tùy chọn chuyển màu dải stop và ảnh hoạt cảnh atlas
   const ColorGradient *gradient;

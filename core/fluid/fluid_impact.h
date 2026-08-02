@@ -33,6 +33,13 @@ typedef struct {
     Color bodyColor;
     Color glowColor;
     Color softColor;
+    /* Selects the bounded force-field/SSF fallback even on compute hardware.
+     * Use this for authored fluid projectiles that intentionally do not use
+     * a PBD solve. Zero preserves the legacy GPU-PBD impact path. */
+    bool forceFieldOnly;
+    /* The caller continues to render the same incoming particle body. Core
+     * only creates residue/material state; it must not seed another volume. */
+    bool externalBody;
 } FluidImpactEvent;
 
 // One-shot water impact. Safe on both compute/SSBO and CPU/VBO particle paths.

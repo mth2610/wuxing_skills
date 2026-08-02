@@ -14,6 +14,7 @@ HEADERS=(
   core/resource_manager.h core/tuning.h
   core/skill_manager.h core/skill_helper.h core/skill_curve.h
   core/fluid/fluid_impact.h
+  core/fluid/fluid_orb.h
   core/force_field.h core/particles/particle_system.h core/particles/particle_manager.h core/mesh_adjacency.h
   core/trails/trail_system.h core/ribbon_strip.h core/decals/decal_system.h
   core/screen_distort.h core/metaball_fx.h core/color_gradient.h

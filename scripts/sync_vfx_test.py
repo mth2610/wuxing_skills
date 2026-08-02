@@ -120,6 +120,7 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeIceCrystal":         ("event",   "burst",      "oneshot"),
     "VFX_ComposeWaterStream":        ("draw",    "timed",      "continuous"),
     "VFX_ComposeFluidImpact":        ("event",   "burst",      "oneshot"),
+    "VFX_ComposeWaterOrb":           ("event",   "burst",      "oneshot"),
 }
 
 # A fixture may supply a semantic preview surface while the public composition

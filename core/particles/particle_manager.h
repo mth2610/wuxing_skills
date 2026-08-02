@@ -96,6 +96,11 @@ const ParticleGPUCaps *ParticleSystem_GetGPUCaps(void);
 ParticleEmitterHandle ParticleManager_CreateEmitter(const ParticleEmitterDesc *desc);
 void ParticleManager_DestroyEmitter(ParticleEmitterHandle handle);
 void ParticleManager_Emit(ParticleEmitterHandle handle, int count);
+/* Emit individually initialized particles into one emitter/stream. All
+ * configs retain the emitter's simulation and render policy, so an SSF volume
+ * remains one instanced capture stream instead of N emitter submissions. */
+void ParticleManager_EmitBatch(ParticleEmitterHandle handle,
+                               const ParticleConfig *particles, int count);
 ParticleEmitterStatus ParticleManager_GetEmitterStatus(ParticleEmitterHandle handle);
 bool ParticleManager_GetSurfaceStream(ParticleEmitterHandle handle, ParticleRenderStream *outStream);
 int ParticleManager_CopySurfaceSamples(const ParticleRenderStream *stream, ParticleSurfaceSample *outSamples, int maxSamples);

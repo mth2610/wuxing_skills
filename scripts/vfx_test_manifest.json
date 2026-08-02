@@ -408,6 +408,17 @@
       "trigger_call": "VFX_ComposeIceCrystal($POS, $SEED)"
     },
     {
+      "source": "water/water_orb_test.inl",
+      "fn": "VFX_ComposeWaterOrb",
+      "label": "WATER ORB",
+      "category": "water",
+      "fixture": "burst",
+      "lifecycle": "event",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeWaterOrb($SOURCE, $TARGET)"
+    },
+    {
       "source": "water/water_stream.inl",
       "fn": "VFX_ComposeWaterStream",
       "label": "WATER STREAM",

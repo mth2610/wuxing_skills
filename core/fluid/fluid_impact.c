@@ -5,6 +5,7 @@
 #include "core/force_field.h"
 #include "core/fluid/fluid_surface.h"
 #include "core/fluid/fluid_pbd_gpu.h"
+#include "core/fluid/fluid_orb.h"
 #include "core/gfx_quality.h"
 #include "core/map_manager.h"
 #include "core/presets/vc_material.h"
@@ -216,7 +217,7 @@ void FluidImpact_SpawnWater(const FluidImpactEvent *event)
      * rebound only when the water body was travelling into the receiver. */
     float intoSurface = Vector3DotProduct(incoming, normal);
     Vector3 outgoing = intoSurface < 0.0f ? Vector3Subtract(incoming, Vector3Scale(normal, intoSurface*1.35f)) : incoming;
-    bool gpuFluid = FluidPBDGPU_Init();
+    bool gpuFluid = !event->forceFieldOnly && FluidPBDGPU_Init();
     /* GPU PBD owns the receiver response.  Feeding it `outgoing` here made the
      * seed rebound before it touched the plane, which reads as a conical blast
      * instead of an incoming water body striking the receiver. */
@@ -224,6 +225,7 @@ void FluidImpact_SpawnWater(const FluidImpactEvent *event)
     Vector3 tangent, bitangent;
     FluidImpact_Basis(normal, &tangent, &bitangent);
     FluidImpact_AddResidue(event->hitPoint, normal, scale * (0.30f + 0.65f * force01), force01);
+    if (event->externalBody) return;
 
     /* PBD carries the coherent body, but a real impact also sheds a small,
      * bounded ballistic population.  Keeping these on GPU systems restores
@@ -275,6 +277,7 @@ void FluidImpact_Update(float dt)
      * particles. */
     (void)FluidPBDGPU_Init();
     if (FluidPBDGPU_IsActive()) FluidPBDGPU_Update(dt, 0.0f);
+    FluidWaterOrb_Update(dt);
     s_secondaryMarksThisFrame = 0;
     for (int i = 0; i < FLUID_IMPACT_MAX_HERO_DROPLETS; ++i) {
         FluidHeroDroplet *d = &s_hero[i];
@@ -309,6 +312,7 @@ void FluidImpact_Update(float dt)
 
 void FluidImpact_Draw(void)
 {
+    FluidWaterOrb_Draw();
     for (int i = 0; i < FLUID_IMPACT_MAX_HERO_DROPLETS; ++i) {
         FluidHeroDroplet *d = &s_hero[i];
         if (!d->active || d->surfaceEmitter == PARTICLE_EMITTER_INVALID) continue;

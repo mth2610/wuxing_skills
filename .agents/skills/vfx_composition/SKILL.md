@@ -101,6 +101,11 @@ The shared managers and scene target are owned by `main.c`. See
 `core/docs/API_GUIDE.md` “VFX render-layer contract” and
 `core/tests/bright_vfx_isolation_test.c` before changing this architecture.
 
+For SSF liquids, compositions submit only through the Fluid public API. The
+engine collects those surface streams before its `FluidSurface_HasPending()`
+check in the screen-space composite pass; never couple a liquid's submission
+to a decal or regular-particle pass.
+
 ### Uniforms & Environment Mapping:
 - **Never hardcode viewPos / cameraPos:** Use `viewPos` (auto-bound by the core skill manager) inside fragment shaders.
 - **Never hardcode light directions:** Use the uniform `u_lightDir` (auto-bound, real sun direction) rather than static vectors like `vec3(0.5, 1.0, 0.5)`.

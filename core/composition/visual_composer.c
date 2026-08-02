@@ -3,6 +3,7 @@
 #include "core/particles/particle_system.h"
 #include "core/decals/decal_system.h"
 #include "core/fluid/fluid_impact.h"
+#include "core/fluid/fluid_orb.h"
 #include "core/vfx_light.h"
 #include "core/trails/trail_system.h"
 #include "core/camera_fx.h"

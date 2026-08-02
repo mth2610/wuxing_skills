@@ -118,9 +118,33 @@ void ParticleManager_Emit(ParticleEmitterHandle handle, int count)
                 .lifetime=p->lifetime, .forceField=p->forceField, .stretchStrength=p->stretchStrength,
                 .stretchMinSpeed=p->stretchMinSpeed, .collisionEnabled=p->collisionEnabled,
                 .collisionElasticity=p->collisionElasticity, .collisionFloorY=p->collisionFloorY,
+                .axisOrigin=p->forceAxisOrigin, .axisDir=p->forceAxisDir,
                 .emissiveBoost=p->render.emissiveBoost, .emitterId=e->ownerId,
                 .renderMode=(int)e->desc.renderMode });
         } else ParticleSystem_SpawnFromEmitter(e->desc.particle, e->ownerId, (int)e->desc.renderMode);
+    }
+}
+
+void ParticleManager_EmitBatch(ParticleEmitterHandle handle,
+                               const ParticleConfig *particles, int count)
+{
+    if (handle < 0 || handle >= PARTICLE_MANAGER_MAX_EMITTERS || !particles || count <= 0) return;
+    ParticleEmitterRuntime *e = &s_emitters[handle];
+    if (!e->active || e->status != PARTICLE_EMITTER_OK) return;
+    for (int i = 0; i < count; ++i) {
+        const ParticleConfig *p = &particles[i];
+        if (e->gpu) {
+            GpuParticleSystem_Spawn((GpuParticleConfig){ .position=p->position, .velocity=p->velocity,
+                .colorStart=p->colorStart, .colorEnd=p->colorEnd, .radius=p->radius,
+                .lifetime=p->lifetime, .forceField=p->forceField, .stretchStrength=p->stretchStrength,
+                .stretchMinSpeed=p->stretchMinSpeed, .collisionEnabled=p->collisionEnabled,
+                .collisionElasticity=p->collisionElasticity, .collisionFloorY=p->collisionFloorY,
+                .axisOrigin=p->forceAxisOrigin, .axisDir=p->forceAxisDir,
+                .emissiveBoost=p->render.emissiveBoost, .emitterId=e->ownerId,
+                .renderMode=(int)e->desc.renderMode });
+        } else {
+            ParticleSystem_SpawnFromEmitter(*p, e->ownerId, (int)e->desc.renderMode);
+        }
     }
 }
 

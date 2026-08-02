@@ -22,6 +22,10 @@ Fluid has four separable layers. Never use SSF to hide a broken simulation.
 
 Before editing, identify the failing layer: simulation, collision/settlement, surface capture, smoothing, or shading. Make changes in that layer first.
 
+### Current SSF render-graph workflow
+
+SSF input is submitted separately from ordinary VFX rendering. `FluidImpact_Draw()` is a submission step (it does not shade the liquid): call it immediately before `FluidSurface_HasPending()` inside the screen-space composite phase. It must not sit inside decal, particle, trail, or debug-category gates. Then run `FluidSurface_Capture(camera)` and `FluidSurface_Composite()` only when the submitted surface has pending input. A flight-only water orb therefore remains visible before it has produced any decal or impact.
+
 For GPU PBD, validate all of these before claiming completion:
 
 - SSBO ping-pong bindings match GLSL layouts exactly.

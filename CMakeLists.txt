@@ -118,6 +118,7 @@ add_executable(wuxing
     core/particles/particle_manager.c
     core/particles/gpu/particle_gpu_backend.c
     core/fluid/fluid_impact.c
+    core/fluid/fluid_orb.c
     core/fluid/fluid_pbd.c
     core/fluid/fluid_pbd_gpu.c
     core/fluid/fluid_surface.c

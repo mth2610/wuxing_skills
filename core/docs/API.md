@@ -178,6 +178,15 @@
 ```
 **Structs** (fields in header): FluidImpactCollision, FluidImpactEvent
 
+### `core/fluid/fluid_orb.h`
+```c
+  void FluidWaterOrb_Spawn(const FluidWaterOrbEvent *event);
+  void FluidWaterOrb_Update(float dt);
+  void FluidWaterOrb_Draw(void);
+  void FluidWaterOrb_GetStats(int *active, int *max);
+```
+**Structs** (fields in header): FluidWaterOrbEvent
+
 ### `core/force_field.h`
 ```c
   float Noise_Perlin3D(float x, float y, float z);
@@ -227,6 +236,7 @@
   ParticleEmitterHandle ParticleManager_CreateEmitter(const ParticleEmitterDesc *desc);
   void ParticleManager_DestroyEmitter(ParticleEmitterHandle handle);
   void ParticleManager_Emit(ParticleEmitterHandle handle, int count);
+  void ParticleManager_EmitBatch(ParticleEmitterHandle handle, const ParticleConfig *particles, int count);
   ParticleEmitterStatus ParticleManager_GetEmitterStatus(ParticleEmitterHandle handle);
   bool ParticleManager_GetSurfaceStream(ParticleEmitterHandle handle, ParticleRenderStream *outStream);
   int ParticleManager_CopySurfaceSamples(const ParticleRenderStream *stream, ParticleSurfaceSample *outSamples, int maxSamples);
@@ -672,6 +682,7 @@
   int VFX_ComposeEmberTrail(Vector3 pos, Vector3 velocity, VC_MaterialId mat, float scale, float embersPerSecond);
   void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
   void VFX_ComposeFluidImpact(Vector3 pos);
+  void VFX_ComposeWaterOrb(Vector3 start, Vector3 target);
   void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
   void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   void VFX_ComposeParticleUpgradesTest(Vector3 pos);

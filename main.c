@@ -132,7 +132,6 @@ static void DrawDecalVFXLayer(Camera3D camera)
     ScreenDistort_BeginVFXBody();
     DecalSystem_Draw();
     ScreenDistort_EndVFXLayer();
-    FluidImpact_Draw();
   }
 }
 
@@ -176,6 +175,9 @@ static void DrawParticleTrailVFXLayers(Camera3D camera, Texture2D particleTextur
 /* Post-scene VFX that need screen-space preparation before their body pass. */
 static void CompositeScreenSpaceVFX(Camera3D camera)
 {
+  /* SSF producers submit before the pending check. They must never be gated
+   * by decal or ordinary-particle passes: an airborne water orb has neither. */
+  FluidImpact_Draw();
   bool hasFluid = FluidSurface_HasPending();
   bool hasMetaballs = MetaballFX_HasRegisteredBlobs();
   if (!hasFluid && !hasMetaballs) return;
