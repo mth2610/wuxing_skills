@@ -10,6 +10,8 @@ static int g_LastSpawnedIndex = 0;
 static int s_activeIds[MAX_DECALS];
 static int s_activeCount = 0;
 static int s_slotListIndex[MAX_DECALS];
+static int s_renderIds[MAX_DECALS];
+static int s_renderCount = 0;
 
 // Gom 2 shader thành 1 shader duy nhất để tránh switch trạng thái shader (Shader State Changes)
 static Shader g_DecalShader;
@@ -44,6 +46,63 @@ static int Decal_ResolveHandle(DecalHandle handle)
         !g_DecalPool[idx].active || g_DecalPool[idx].generation != generation)
         return -1;
     return idx;
+}
+
+static void Decal_BeginWorldPass(BlendMode blendMode)
+{
+    rlDrawRenderBatchActive();
+    BeginBlendMode(blendMode);
+    rlDrawRenderBatchActive();
+    rlEnableDepthTest();
+    rlDrawRenderBatchActive();
+    rlDisableDepthMask();
+    rlDrawRenderBatchActive();
+}
+
+static void Decal_EndWorldPass(void)
+{
+    rlDrawRenderBatchActive();
+    rlEnableDepthMask();
+    rlDrawRenderBatchActive();
+    rlEnableDepthTest();
+    rlDrawRenderBatchActive();
+    EndBlendMode();
+    rlDrawRenderBatchActive();
+}
+
+static bool Decal_RenderBefore(int lhs, int rhs)
+{
+    const DecalEntity *a = &g_DecalPool[lhs];
+    const DecalEntity *b = &g_DecalPool[rhs];
+    if (a->conformalStamp != b->conformalStamp) return !a->conformalStamp;
+    if (a->blendMode != b->blendMode) return a->blendMode < b->blendMode;
+    if (a->flowScroll != b->flowScroll) return !a->flowScroll;
+    if (a->texture.id != b->texture.id) return a->texture.id < b->texture.id;
+    return lhs < rhs;
+}
+
+static void Decal_BuildRenderQueue(void)
+{
+    s_renderCount = 0;
+    for (int a = 0; a < s_activeCount; ++a)
+    {
+        int idx = s_activeIds[a];
+        if (g_DecalPool[idx].texture.id != 0)
+            s_renderIds[s_renderCount++] = idx;
+    }
+    // Small fixed pool: insertion sort avoids allocations and has lower
+    // overhead than a general-purpose sort at the usual active counts.
+    for (int i = 1; i < s_renderCount; ++i)
+    {
+        int value = s_renderIds[i];
+        int j = i - 1;
+        while (j >= 0 && Decal_RenderBefore(value, s_renderIds[j]))
+        {
+            s_renderIds[j + 1] = s_renderIds[j];
+            --j;
+        }
+        s_renderIds[j + 1] = value;
+    }
 }
 
 static void Decal_Activate(int idx)
@@ -496,9 +555,9 @@ static void DrawGroup(BlendMode mode, bool flowOnly)
     bool drawing = false;
 
     // Chỉ thực hiện lặp ĐÚNG 1 LẦN duy nhất cho mảng active
-    for (int a = 0; a < s_activeCount; a++)
+    for (int a = 0; a < s_renderCount; a++)
     {
-        int idx = s_activeIds[a];
+        int idx = s_renderIds[a];
         DecalEntity *d = &g_DecalPool[idx];
 
         if (d->conformalStamp || d->blendMode != mode || d->flowScroll != flowOnly)
@@ -507,9 +566,7 @@ static void DrawGroup(BlendMode mode, bool flowOnly)
         // Trì hoãn việc kích hoạt Shader và BlendMode cho tới khi thực sự tìm thấy decal hợp lệ đầu tiên
         if (!shaderActive)
         {
-            BeginBlendMode(mode);
-            rlDrawRenderBatchActive(); // Flash batch hiện tại của Raylib
-            rlDisableDepthMask();
+            Decal_BeginWorldPass(mode);
             BeginShaderMode(g_DecalShader);
             // Nhóm tĩnh dùng CHUNG program với nhóm flow → phải reset 2 uniform
             // "chế độ" về 0 (flowStrength 0 vô hiệu cuộn, glow 0 tắt boost),
@@ -575,8 +632,7 @@ static void DrawGroup(BlendMode mode, bool flowOnly)
         rlSetTexture(0);
         EndShaderMode();
         rlDrawRenderBatchActive();
-        rlEnableDepthMask();
-        EndBlendMode();
+        Decal_EndWorldPass();
     }
 }
 
@@ -595,6 +651,12 @@ static float Decal_ConformalFadeAlpha(const DecalEntity *d)
     if (d->fadeOutSeconds > 0.0f)
         alpha = fminf(alpha, d->lifetime / d->fadeOutSeconds);
     return Clamp(alpha, 0.0f, 1.0f);
+}
+
+static bool Decal_HasEmissive(const DecalEntity *d)
+{
+    return d->material.emissiveIntensity > 0.0f &&
+           d->material.emissiveTint.a > 0;
 }
 
 static Vector3 Decal_StampVertex(const DecalEntity *d, float radial, float angle,
@@ -631,22 +693,18 @@ static void Decal_StampEmitVertex(const DecalEntity *d, float radial, float angl
 static void DrawConformalGroup(BlendMode renderMode, BlendMode sourceMode, bool emissivePass)
 {
     bool active = false;
-    for (int a = 0; a < s_activeCount; ++a)
+    for (int a = 0; a < s_renderCount; ++a)
     {
-        DecalEntity *d = &g_DecalPool[s_activeIds[a]];
+        DecalEntity *d = &g_DecalPool[s_renderIds[a]];
         if (d->conformalStamp && d->blendMode == sourceMode &&
-            d->texture.id != 0)
+            d->texture.id != 0 && (!emissivePass || Decal_HasEmissive(d)))
         {
             active = true;
             break;
         }
     }
     if (!active) return;
-    rlDrawRenderBatchActive();
-    BeginBlendMode(renderMode);
-    rlDrawRenderBatchActive();
-    rlDisableDepthMask();
-    rlDrawRenderBatchActive();
+    Decal_BeginWorldPass(renderMode);
     // Depth testing must remain enabled: a ground decal may sit fractionally
     // above terrain, but it must never paint through characters or props.
     rlDisableBackfaceCulling();
@@ -656,10 +714,11 @@ static void DrawConformalGroup(BlendMode renderMode, BlendMode sourceMode, bool 
     SetShaderValue(g_MaterialDecalShader, s_locMaterialEmissivePass, &useEmissive,
                    SHADER_UNIFORM_INT);
 
-    for (int a = 0; a < s_activeCount; ++a)
+    for (int a = 0; a < s_renderCount; ++a)
     {
-        DecalEntity *d = &g_DecalPool[s_activeIds[a]];
-        if (!d->conformalStamp || d->blendMode != sourceMode || d->texture.id == 0)
+        DecalEntity *d = &g_DecalPool[s_renderIds[a]];
+        if (!d->conformalStamp || d->blendMode != sourceMode || d->texture.id == 0 ||
+            (emissivePass && !Decal_HasEmissive(d)))
             continue;
         float erosion = 1.0f - d->lifetime / d->maxLifetime;
         Color c = d->tint;
@@ -702,14 +761,12 @@ static void DrawConformalGroup(BlendMode renderMode, BlendMode sourceMode, bool 
     rlDrawRenderBatchActive();
     rlEnableBackfaceCulling();
     rlDrawRenderBatchActive();
-    rlEnableDepthMask();
-    rlDrawRenderBatchActive();
-    EndBlendMode();
-    rlDrawRenderBatchActive();
+    Decal_EndWorldPass();
 }
 
 void DecalSystem_Draw(void)
 {
+    Decal_BuildRenderQueue();
     // 6 Lượt vẽ phân tách theo logic chặt chẽ nhưng giảm thiểu chi phí tìm kiếm O(N)
     DrawGroup(BLEND_ALPHA, false);
     DrawGroup(BLEND_ALPHA, true);

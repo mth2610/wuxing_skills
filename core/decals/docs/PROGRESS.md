@@ -41,6 +41,22 @@ Status: initial migration complete.
 - Future D2 work: expand the material schema with receiver/feature policy once
   D3 introduces render buckets.
 
+## D3 — Renderer queue and state ownership
+
+Status: initial state-correctness slice complete.
+
+- `DecalSystem_Draw()` builds a fixed-capacity queue of drawable decals before
+  issuing world passes; no allocation is introduced.
+- Queue order groups compatible conformal decals by pass state, blend mode,
+  flow mode, and texture.
+- Both decal passes now use one flushed world-pass helper: depth testing stays
+  enabled, depth writes are disabled for transparent decals, and the prior
+  depth-mask/blend state is restored at pass end.
+- The conformal emissive pass is not opened unless at least one queued stamp
+  has non-zero emissive intensity and alpha.
+- CPU frustum culling, LOD/budget admission, and per-material uniform bucketing
+  remain later D3/D4/D5 work.
+
 ## Verification
 
 - `bash scripts/run_core_tests.sh decal_system`: passing.

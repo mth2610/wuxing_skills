@@ -49,9 +49,18 @@ int main(void)
           Has("scripts/gen_decal_materials.py", "decal_materials.generated.inl"),
           "Decal render policy is generated from canonical material data");
     CHECK(!Has(impl, "rlDisableDepthTest") &&
-          Has(impl, "rlDisableDepthMask") &&
+          Has(impl, "Decal_BeginWorldPass") && Has(impl, "Decal_EndWorldPass") &&
+          Has(impl, "rlEnableDepthTest") && Has(impl, "rlDisableDepthMask") &&
           Has(impl, "rlEnableDepthMask"),
-          "World decals preserve depth testing and restore depth writes");
+          "World decals use one flushed helper to preserve depth state");
+    CHECK(Has(impl, "static int s_renderIds[MAX_DECALS]") &&
+          Has(impl, "Decal_BuildRenderQueue") &&
+          Has(impl, "Decal_RenderBefore") &&
+          Has(impl, "Decal_BuildRenderQueue();"),
+          "Draw builds a fixed compatible-state render queue before decal passes");
+    CHECK(Has(impl, "Decal_HasEmissive") &&
+          Has(impl, "!emissivePass || Decal_HasEmissive(d)"),
+          "Conformal emissive pass is skipped when no queued decal can emit");
     CHECK(Has(shader, "fwidth(radius)") &&
           !Has(shader, "floor(fragTexCoord * 96.0)"),
           "Decal erosion has no quantized pixel-grid boundary");
