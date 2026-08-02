@@ -190,6 +190,28 @@
       "fallback_policy": {"status": "no_legacy_fallback", "reason": "owner rejected every legacy decal; replace this preview only with newly authored Scorch art"}
     },
     {
+      "id": "VFX_SURFACE_DECAL_FROST",
+      "name": "decal_frost_material",
+      "primitive": "decal",
+      "role": "impact",
+      "wrap": "clamp",
+      "filter": "bilinear",
+      "blend": "alpha",
+      "projection": "conformal_mesh_stamp_receiver_normal",
+      "max_slope_degrees": 42.0,
+      "seam": "irregular fractured alpha perimeter",
+      "provenance": "ImageGen frost impact v1; neutral grayscale albedo with chroma-key alpha extraction",
+      "approval": "preview_only",
+      "consumers": ["VFX_ComposeDecal VC_MAT_ICE"],
+      "lifecycle": {"seconds": 4.0, "fade_in": 0.06, "fade_out": 1.10},
+      "budget": {"max_draw_calls": 1, "max_textures": 1},
+      "flipbook": [0, 0, 0],
+      "assets": {
+        "body": {"path": "assets/textures/surfaces/frost_decal_v1.png", "channels": "RGBA neutral ice albedo and true alpha; bright crack lines feed generic emissive extraction"}
+      },
+      "fallback_policy": {"status": "no_legacy_fallback", "reason": "Ice uses its dedicated authored frost material"}
+    },
+    {
       "id": "VFX_SURFACE_DECAL_IMPACT",
       "name": "decal_impact_material_preview",
       "primitive": "decal",

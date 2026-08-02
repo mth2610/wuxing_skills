@@ -9,10 +9,21 @@
 #define DECAL_STAMP_SECTORS 16
 #define DECAL_STAMP_RINGS 3
 
+typedef unsigned int DecalHandle;
+#define DECAL_HANDLE_INVALID ((DecalHandle)0u)
+
 typedef bool (*GroundSurfaceSampleFn)(float x, float z, Vector3 *outPosition,
                                       Vector3 *outNormal, void *userData);
 
 typedef struct {
+    Color baseTint;
+    Color emissiveTint;
+    float emissiveThreshold;
+    float emissiveIntensity;
+} DecalMaterialParams;
+
+typedef struct {
+    unsigned int generation;
     Vector3 position;
     float rotation;       // Góc quay ban đầu quanh trục Y (độ)
     float rotSpeed;       // Tốc độ xoay liên tục (độ/giây), 0 = tĩnh
@@ -26,6 +37,7 @@ typedef struct {
     float fadeInSeconds;  // 0 = visible immediately
     float fadeOutSeconds; // 0 = only material erosion controls the end
     Color tint;
+    DecalMaterialParams material;
     BlendMode blendMode;  // BLEND_ALPHA | BLEND_ADDITIVE | BLEND_MULTIPLIED
     bool active;
     bool flowScroll;      // true: vẽ bằng decal_flow.fs, cuộn ra ngoài tâm theo thời gian
@@ -96,6 +108,24 @@ void DecalSystem_AddConformalEx(Vector3 pos, float rotation, float rotSpeed,
                                 GroundSurfaceSampleFn surfaceFn,
                                 float edgePhase, float fadeInSeconds,
                                 float fadeOutSeconds, float maxSlopeDegrees);
+
+// Atomic material-stamp spawn. Prefer this over AddConformalEx whenever the
+// decal uses the material shader; the material cannot race with another spawn.
+DecalHandle DecalSystem_AddConformalMaterialEx(Vector3 pos, float rotation, float rotSpeed,
+                                                float scaleStart, float scaleEnd,
+                                                Texture2D texture, float lifetime, Color tint,
+                                                BlendMode blendMode, float yOffset,
+                                                GroundHeightSampleFn heightFn, void *heightUserData,
+                                                GroundSurfaceSampleFn surfaceFn,
+                                                float edgePhase, float fadeInSeconds,
+                                                float fadeOutSeconds, float maxSlopeDegrees,
+                                                const DecalMaterialParams *material);
+
+bool DecalSystem_Destroy(DecalHandle handle);
+bool DecalSystem_IsAlive(DecalHandle handle);
+// Conformal stamps cache their receiver at spawn; moving one is unsupported.
+bool DecalSystem_SetTransform(DecalHandle handle, Vector3 position,
+                              Vector3 normal, float rotationRadians);
 
 // Batch helper — đặt 1 decal tại mỗi điểm trong points[0..count-1], dùng cho hiệu ứng
 // theo đường đi (vd. gai mọc dọc đường, vệt cháy). Wrap quanh DecalSystem_Add, không

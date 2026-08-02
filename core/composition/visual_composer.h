@@ -530,7 +530,7 @@ void VFX_ComposeWaterOrb(Vector3 start, Vector3 target);
 void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
 void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
 void VFX_ComposeParticleUpgradesTest(Vector3 pos);
-void VFX_ComposeScorch(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
+void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01, float lifetimeScale);
 int VFX_ComposeShieldShell(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
 int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime);
 void VFX_ComposeStonePillar(Vector3 basePos, float progress);

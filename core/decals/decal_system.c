@@ -18,6 +18,10 @@ static Shader g_MaterialDecalShader;
 static int s_locFlowTime = -1, s_locFlowSpeed = -1, s_locFlowStrength = -1, s_locGlow = -1;
 static int s_locMaterialErosion = -1;
 static int s_locMaterialEmissivePass = -1;
+static int s_locMaterialBaseTint = -1;
+static int s_locMaterialEmissiveTint = -1;
+static int s_locMaterialThreshold = -1;
+static int s_locMaterialIntensity = -1;
 
 // Camera compensation
 static float g_cam_yaw = 0.0f;
@@ -26,6 +30,21 @@ static float g_cam_stretch = 1.0f;
 // Cache lượng giác của camera để không phải tính lại ở mỗi decal
 static float g_cos_cam_yaw = 1.0f;
 static float g_sin_cam_yaw = 0.0f;
+
+static DecalHandle Decal_MakeHandle(int idx)
+{
+    return ((g_DecalPool[idx].generation & 0x00ffffffu) << 8) | (unsigned int)(idx + 1);
+}
+
+static int Decal_ResolveHandle(DecalHandle handle)
+{
+    int idx = (int)(handle & 0xffu) - 1;
+    unsigned int generation = handle >> 8;
+    if (handle == DECAL_HANDLE_INVALID || idx < 0 || idx >= MAX_DECALS ||
+        !g_DecalPool[idx].active || g_DecalPool[idx].generation != generation)
+        return -1;
+    return idx;
+}
 
 static void Decal_Activate(int idx)
 {
@@ -163,6 +182,10 @@ void DecalSystem_Init(void)
     s_locGlow         = GetShaderLocation(g_DecalShader, "u_glowIntensity");
     s_locMaterialErosion = GetShaderLocation(g_MaterialDecalShader, "u_erosion");
     s_locMaterialEmissivePass = GetShaderLocation(g_MaterialDecalShader, "u_emissivePass");
+    s_locMaterialBaseTint = GetShaderLocation(g_MaterialDecalShader, "u_baseTint");
+    s_locMaterialEmissiveTint = GetShaderLocation(g_MaterialDecalShader, "u_emissiveTint");
+    s_locMaterialThreshold = GetShaderLocation(g_MaterialDecalShader, "u_emissiveThreshold");
+    s_locMaterialIntensity = GetShaderLocation(g_MaterialDecalShader, "u_emissiveIntensity");
 }
 
 static int FindSlot(void)
@@ -189,6 +212,8 @@ static int SpawnDecalCommon(Vector3 pos, float rotation, float rotSpeed,
 {
     int idx = FindSlot();
     DecalEntity *d = &g_DecalPool[idx];
+    d->generation = (d->generation + 1u) & 0x00ffffffu;
+    if (d->generation == 0u) d->generation = 1u;
     d->position = (Vector3){pos.x, pos.y + yOffset, pos.z};
     d->rotation = rotation;
     d->rotSpeed = rotSpeed;
@@ -202,6 +227,8 @@ static int SpawnDecalCommon(Vector3 pos, float rotation, float rotSpeed,
     d->fadeInSeconds = 0.0f;
     d->fadeOutSeconds = 0.0f;
     d->tint = tint;
+    d->material = (DecalMaterialParams){ .baseTint = WHITE, .emissiveTint = WHITE,
+                                         .emissiveThreshold = 1.1f, .emissiveIntensity = 0.0f };
     d->blendMode = blendMode;
     d->active = true;
     d->flowScroll = false;
@@ -222,21 +249,22 @@ static int SpawnDecalCommon(Vector3 pos, float rotation, float rotSpeed,
     return idx;
 }
 
-void DecalSystem_AddConformalEx(Vector3 pos, float rotation, float rotSpeed,
-                                float scaleStart, float scaleEnd,
-                                Texture2D texture, float lifetime, Color tint,
-                                BlendMode blendMode, float yOffset,
-                                GroundHeightSampleFn heightFn, void *heightUserData,
-                                GroundSurfaceSampleFn surfaceFn,
-                                float edgePhase, float fadeInSeconds,
-                                float fadeOutSeconds, float maxSlopeDegrees)
+DecalHandle DecalSystem_AddConformalMaterialEx(Vector3 pos, float rotation, float rotSpeed,
+                                                float scaleStart, float scaleEnd,
+                                                Texture2D texture, float lifetime, Color tint,
+                                                BlendMode blendMode, float yOffset,
+                                                GroundHeightSampleFn heightFn, void *heightUserData,
+                                                GroundSurfaceSampleFn surfaceFn,
+                                                float edgePhase, float fadeInSeconds,
+                                                float fadeOutSeconds, float maxSlopeDegrees,
+                                                const DecalMaterialParams *material)
 {
     if (surfaceFn != NULL && maxSlopeDegrees < 90.0f)
     {
         Vector3 receiverPos, receiverNormal;
         if (surfaceFn(pos.x, pos.z, &receiverPos, &receiverNormal, heightUserData) &&
             receiverNormal.y < cosf(Clamp(maxSlopeDegrees, 0.0f, 90.0f) * DEG2RAD))
-            return;
+            return DECAL_HANDLE_INVALID;
     }
     else if (heightFn != NULL && maxSlopeDegrees < 90.0f)
     {
@@ -247,7 +275,7 @@ void DecalSystem_AddConformalEx(Vector3 pos, float rotation, float rotSpeed,
                     heightFn(pos.x, pos.z - probe, heightUserData)) / (2.0f * probe);
         float normalY = 1.0f / sqrtf(1.0f + dx * dx + dz * dz);
         if (normalY < cosf(Clamp(maxSlopeDegrees, 0.0f, 90.0f) * DEG2RAD))
-            return;
+            return DECAL_HANDLE_INVALID;
     }
     int conformalCount = 0;
     int oldest = -1;
@@ -272,6 +300,8 @@ void DecalSystem_AddConformalEx(Vector3 pos, float rotation, float rotSpeed,
                                lifetime, tint, blendMode, yOffset);
     DecalEntity *d = &g_DecalPool[idx];
     d->conformalStamp = true;
+    if (material != NULL)
+        d->material = *material;
     d->heightFn = heightFn;
     d->heightUserData = heightUserData;
     d->edgePhase = edgePhase;
@@ -319,6 +349,56 @@ void DecalSystem_AddConformalEx(Vector3 pos, float rotation, float rotSpeed,
         }
         d->stampHeightsCached = true;
     }
+    return Decal_MakeHandle(idx);
+}
+
+void DecalSystem_AddConformalEx(Vector3 pos, float rotation, float rotSpeed,
+                                float scaleStart, float scaleEnd,
+                                Texture2D texture, float lifetime, Color tint,
+                                BlendMode blendMode, float yOffset,
+                                GroundHeightSampleFn heightFn, void *heightUserData,
+                                GroundSurfaceSampleFn surfaceFn,
+                                float edgePhase, float fadeInSeconds,
+                                float fadeOutSeconds, float maxSlopeDegrees)
+{
+    DecalSystem_AddConformalMaterialEx(pos, rotation, rotSpeed, scaleStart, scaleEnd,
+                                       texture, lifetime, tint, blendMode, yOffset,
+                                       heightFn, heightUserData, surfaceFn, edgePhase,
+                                       fadeInSeconds, fadeOutSeconds, maxSlopeDegrees, NULL);
+}
+
+bool DecalSystem_Destroy(DecalHandle handle)
+{
+    int idx = Decal_ResolveHandle(handle);
+    if (idx < 0) return false;
+    Decal_Deactivate(idx);
+    return true;
+}
+
+bool DecalSystem_IsAlive(DecalHandle handle)
+{
+    return Decal_ResolveHandle(handle) >= 0;
+}
+
+bool DecalSystem_SetTransform(DecalHandle handle, Vector3 position,
+                              Vector3 normal, float rotationRadians)
+{
+    int idx = Decal_ResolveHandle(handle);
+    if (idx < 0 || g_DecalPool[idx].conformalStamp) return false;
+    DecalEntity *d = &g_DecalPool[idx];
+    d->rotation = rotationRadians * RAD2DEG;
+    if (d->oriented)
+    {
+        if (Vector3LengthSqr(normal) < 0.0001f) return false;
+        d->surfaceNormal = Vector3Normalize(normal);
+        Vector3 reference = fabsf(d->surfaceNormal.y) < 0.95f ?
+            (Vector3){0.0f, 1.0f, 0.0f} : (Vector3){1.0f, 0.0f, 0.0f};
+        d->surfaceTangent = Vector3Normalize(Vector3CrossProduct(reference, d->surfaceNormal));
+        d->position = Vector3Add(position, Vector3Scale(d->surfaceNormal, d->yOffset));
+    }
+    else
+        d->position = (Vector3){position.x, position.y + d->yOffset, position.z};
+    return true;
 }
 
 void DecalSystem_AddEx(Vector3 pos, float rotation, float rotSpeed,
@@ -567,10 +647,8 @@ static void DrawConformalGroup(BlendMode renderMode, BlendMode sourceMode, bool 
     rlDrawRenderBatchActive();
     rlDisableDepthMask();
     rlDrawRenderBatchActive();
-    // Same terrain-surface rule as FissureStreak: the map's depth prepass can
-    // otherwise reject a coplanar conformal stamp before its tiny lift helps.
-    rlDisableDepthTest();
-    rlDrawRenderBatchActive();
+    // Depth testing must remain enabled: a ground decal may sit fractionally
+    // above terrain, but it must never paint through characters or props.
     rlDisableBackfaceCulling();
     rlDrawRenderBatchActive();
     BeginShaderMode(g_MaterialDecalShader);
@@ -588,6 +666,14 @@ static void DrawConformalGroup(BlendMode renderMode, BlendMode sourceMode, bool 
         c.a = (unsigned char)(c.a * (1.0f - erosion * erosion) *
                               Decal_ConformalFadeAlpha(d));
         SetShaderValue(g_MaterialDecalShader, s_locMaterialErosion, &erosion, SHADER_UNIFORM_FLOAT);
+        float baseTint[4] = { d->material.baseTint.r / 255.0f, d->material.baseTint.g / 255.0f,
+                              d->material.baseTint.b / 255.0f, d->material.baseTint.a / 255.0f };
+        float emissiveTint[4] = { d->material.emissiveTint.r / 255.0f, d->material.emissiveTint.g / 255.0f,
+                                  d->material.emissiveTint.b / 255.0f, d->material.emissiveTint.a / 255.0f };
+        SetShaderValue(g_MaterialDecalShader, s_locMaterialBaseTint, baseTint, SHADER_UNIFORM_VEC4);
+        SetShaderValue(g_MaterialDecalShader, s_locMaterialEmissiveTint, emissiveTint, SHADER_UNIFORM_VEC4);
+        SetShaderValue(g_MaterialDecalShader, s_locMaterialThreshold, &d->material.emissiveThreshold, SHADER_UNIFORM_FLOAT);
+        SetShaderValue(g_MaterialDecalShader, s_locMaterialIntensity, &d->material.emissiveIntensity, SHADER_UNIFORM_FLOAT);
         rlSetTexture(d->texture.id);
         rlColor4ub(c.r, c.g, c.b, c.a);
         rlBegin(RL_TRIANGLES);
@@ -615,8 +701,6 @@ static void DrawConformalGroup(BlendMode renderMode, BlendMode sourceMode, bool 
     EndShaderMode();
     rlDrawRenderBatchActive();
     rlEnableBackfaceCulling();
-    rlDrawRenderBatchActive();
-    rlEnableDepthTest();
     rlDrawRenderBatchActive();
     rlEnableDepthMask();
     rlDrawRenderBatchActive();

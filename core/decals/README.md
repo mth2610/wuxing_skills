@@ -6,6 +6,9 @@ remain under `core/shaders/common/` only.
 
 Public entry point: `core/decals/decal_system.h`.
 
+Rebuild architecture, constraints, ordered AI work packages, and acceptance
+criteria: `core/docs/DECAL_SYSTEM_SPEC.md`.
+
 `shaders/decal_flow.fs` is the legacy-compatible flow pass. `shaders/decal_material.fs`
 is the P4 conformal material-stamp pass. Both are loaded exclusively through
 `ResourceManager_LoadShader()` by `decal_system.c`.

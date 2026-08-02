@@ -23,6 +23,11 @@
 
 static bool s_ipInit = false;
 
+// Implemented in vc_decal.inl, which is included later in the common
+// composition translation unit. The material selects the decal style.
+void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale,
+                      float severity01, float lifetimeScale);
+
 // PER-BEAT KILL SWITCHES, added to settle a performance question by measurement
 // instead of argument. The burst on its own holds ~60 fps under continuous
 // fire; the package does not. The burst is the only beat made of particles, so
@@ -128,27 +133,8 @@ void VFX_ComposeImpactDecal(Vector3 pos, VC_MaterialId matId, float scale, float
     ImpactPkg_InitShared();
     if (s_ipDecal <= 0.5f) return;
     float sev = Clamp(severity01, 0.0f, 1.0f);
-    // P4 Scorch owns Fire's ground mark. It is invoked from the event score,
-    // never a per-frame draw path, so one impact creates exactly one lifecycle.
-    if (matId == VC_MAT_FIRE)
-    {
-        VFX_ComposeScorch(pos, matId, ImpactDecal_Radius() * scale, sev);
-        return;
-    }
-    // P4: every non-fire impact now selects the semantic profile. The profile,
-    // not this composition, owns the replaceable source path and sampler law.
-    const VFX_SurfaceProfile *surface = VFX_SurfaceRegistry_Get(VFX_SURFACE_DECAL_IMPACT);
-    if (surface == NULL || surface->body.id == 0) return;
-    const VFX_ElementMaterial *m = VFX_Material(matId);
-    Color tint = m ? m->body : WHITE;
-    tint.a = (unsigned char)(155.0f + 65.0f * sev);
-    float radius = ImpactDecal_Radius() * scale * s_ipSurfaceRadius;
-    float life = surface->lifetimeSeconds * Math_Mix(0.72f, 1.0f, sev) * s_ipSurfaceLife;
-    DecalSystem_AddConformalEx(pos, Random01() * 360.0f, 0.0f, radius * 0.92f, radius,
-                               surface->body, life, tint, BLEND_ALPHA, 0.035f,
-                               VFX_GroundHeightFromMap, NULL, VFX_GroundSurfaceFromMap, Random01() * 6.2831853f,
-                               surface->fadeInSeconds, surface->fadeOutSeconds,
-                               surface->maxSlopeDegrees);
+    VFX_ComposeDecal(pos, matId, ImpactDecal_Radius() * scale * s_ipSurfaceRadius,
+                     sev, s_ipSurfaceLife);
 }
 
 // Sequence adapters — the package fires the primaries THROUGH the score, so

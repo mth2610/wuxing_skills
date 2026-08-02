@@ -307,6 +307,10 @@
   void DecalSystem_AddFlowEx(Vector3 pos, float rotation, float rotSpeed, float scaleStart, float scaleEnd, Texture2D texture, float lifetime, Color tint, BlendMode blendMode, float yOffset, float flowSpeed, float flowStrength, float glowIntensity);
   void DecalSystem_AddOrientedEx(Vector3 pos, Vector3 normal, float rotation, float rotSpeed, float scaleStart, float scaleEnd, Texture2D texture, float lifetime, Color tint, BlendMode blendMode, float yOffset);
   void DecalSystem_AddConformalEx(Vector3 pos, float rotation, float rotSpeed, float scaleStart, float scaleEnd, Texture2D texture, float lifetime, Color tint, BlendMode blendMode, float yOffset, GroundHeightSampleFn heightFn, void *heightUserData, GroundSurfaceSampleFn surfaceFn, float edgePhase, float fadeInSeconds, float fadeOutSeconds, float maxSlopeDegrees);
+  DecalHandle DecalSystem_AddConformalMaterialEx(Vector3 pos, float rotation, float rotSpeed, float scaleStart, float scaleEnd, Texture2D texture, float lifetime, Color tint, BlendMode blendMode, float yOffset, GroundHeightSampleFn heightFn, void *heightUserData, GroundSurfaceSampleFn surfaceFn, float edgePhase, float fadeInSeconds, float fadeOutSeconds, float maxSlopeDegrees, const DecalMaterialParams *material);
+  bool DecalSystem_Destroy(DecalHandle handle);
+  bool DecalSystem_IsAlive(DecalHandle handle);
+  bool DecalSystem_SetTransform(DecalHandle handle, Vector3 position, Vector3 normal, float rotationRadians);
   void DecalSystem_AddStreak(const Vector3 *points, int count, float rotation, float scale, Texture2D texture, float lifetime, Color tint);
   void DecalSystem_Update(float dt);
   void DecalSystem_SetCamera(Camera3D camera);
@@ -314,7 +318,7 @@
   void DecalSystem_Unload(void);
   void DecalSystem_GetStats(int *active, int *max);
 ```
-**Structs** (fields in header): DecalEntity
+**Structs** (fields in header): DecalMaterialParams, DecalEntity
 
 ### `core/screen_distort.h`
 ```c
@@ -686,7 +690,7 @@
   void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
   void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   void VFX_ComposeParticleUpgradesTest(Vector3 pos);
-  void VFX_ComposeScorch(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
+  void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01, float lifetimeScale);
   int VFX_ComposeShieldShell(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
   int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime);
   void VFX_ComposeStonePillar(Vector3 basePos, float progress);

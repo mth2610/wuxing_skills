@@ -37,6 +37,5 @@
 #include "vc_core_smoketrail.inl"
 #include "vc_impact_dust.inl"
 #include "vc_contact_spark.inl"
-#include "vc_scorch.inl"
+#include "vc_decal.inl"
 // @gen:common_includes end
-
