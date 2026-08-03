@@ -187,7 +187,7 @@ void main() {
     vec3 worldPosition = (u_viewToWorld * vec4(positionView, 1.0)).xyz;
     vec3 worldNormal = normalize(mat3(u_viewToWorld) * N);
     vec3 waveNorm = WaterMultiOctaveWaves(worldPosition);
-    worldNormal = normalize(worldNormal + waveNorm * 0.045);
+    worldNormal = normalize(worldNormal + waveNorm * 0.029);
     N = normalize(transpose(mat3(u_viewToWorld)) * worldNormal);
     if (dot(N, V) < 0.0) N = -N;
     float ndv = clamp(dot(N, V), 0.0, 1.0);
@@ -259,12 +259,18 @@ void main() {
     vec3 illumination = ambient + u_sunColor * (0.12 + 0.30 * ndl);
     vec3 transmitted = refractedScene * transmittance;
     float illuminationEnergy = dot(illumination, vec3(0.2126, 0.7152, 0.0722));
-    float scatterAmount = 1.0 - dot(transmittance, vec3(0.2126, 0.7152, 0.0722));
-    vec3 inScatter = waterScatterColor * scatterAmount * (0.20 + illuminationEnergy * 0.31);
+    float backgroundScatter = 1.0 - dot(transmittance, vec3(0.2126, 0.7152, 0.0722));
+    float scatterAmount = clamp(0.30 + 0.70 * backgroundScatter, 0.0, 1.0);
+    vec3 inScatter = waterScatterColor * scatterAmount * (0.34 + illuminationEnergy * 0.42);
 
     float fresnel = FresnelSchlick(ndv);
     float volumeWeight = smoothstep(0.016, 0.095, kernelThickness);
-    float visibleFresnel = fresnel * mix(0.060, 1.0, volumeWeight);
+    float visibleFresnel = fresnel * mix(0.045, 1.0, volumeWeight);
+    // Fresnel rim: keeps the silhouette legible on any background (bright
+    // grass included) without painting a cartoon outline - it fades to zero
+    // on thin edges and is lit by the sun.
+    float rimStrength = pow(1.0 - ndv, 2.0) * smoothstep(0.012, 0.10, kernelThickness);
+    vec3 rimLight = u_materialGlow * rimStrength * (0.12 + 0.55 * illuminationEnergy) * (0.30 + 0.70 * ndl);
     vec3 viewWorld = normalize(mat3(u_viewToWorld) * V);
     vec3 reflectedWorld = reflect(-viewWorld, worldNormal);
     float skyReflection = smoothstep(-0.18, 0.62, reflectedWorld.y);
@@ -281,7 +287,7 @@ void main() {
         }
     }
 
-    vec3 localReflectionFill = mix(refractedScene, u_skyAmbient, 0.32) * 0.68;
+    vec3 localReflectionFill = mix(refractedScene, u_skyAmbient, 0.42) * 0.55;
     float lowerHemisphere = 1.0 - skyReflection;
     reflection = mix(reflection, max(reflection, localReflectionFill), airborneWeight * lowerHemisphere);
     vec3 dielectricBase = mix(transmitted + inScatter, reflection, visibleFresnel);
@@ -290,9 +296,9 @@ void main() {
     float surfaceNoise = sin(dot(worldPosition, vec3(12.3, 7.1, -9.5)) + u_time * 1.1) * 0.5 + 0.5;
     float roughness = mix(0.035, 0.075, surfaceNoise);
     vec3 sunHalf = normalize(V + L);
-    float broadSunLobe = pow(max(dot(N, sunHalf), 0.0), 54.0) * 0.045;
-    float sharpGlint = pow(max(dot(N, sunHalf), 0.0), 128.0) * smoothstep(0.55, 0.86, surfaceNoise) * 0.38;
-    vec3 specular = u_sunColor * (WaterSpecularBRDF(N, V, L, roughness) * 1.18 + broadSunLobe + sharpGlint) * ndl;
+    float broadSunLobe = pow(max(dot(N, sunHalf), 0.0), 110.0) * 0.020;
+    float sharpGlint = pow(max(dot(N, sunHalf), 0.0), 256.0) * smoothstep(0.55, 0.86, surfaceNoise) * 0.26;
+    vec3 specular = u_sunColor * (WaterSpecularBRDF(N, V, L, roughness) * 1.0 + broadSunLobe + sharpGlint) * ndl;
     specular *= mix(vec3(1.0), u_materialGlow, 0.08);
 
     for (int i = 0; i < FLUID_POINT_LIGHTS; i++) {
@@ -326,6 +332,6 @@ void main() {
     vec3 foamColor = mix(u_materialSoft, vec3(1.0), 0.20);
     vec3 foam = foamColor * foamMask * (0.38 + 0.62 * dot(ambient, vec3(0.333333)));
 
-    vec3 water = dielectricBase + specular + foam;
+    vec3 water = dielectricBase + specular + foam + rimLight;
     finalColor = vec4(water, surfaceCoverage);
 }
