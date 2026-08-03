@@ -1,9 +1,9 @@
 /* ===========================================================================
- * ỐNG NƯỚC — mesh độc lập
+ * CON NHỘNG — mesh độc lập
  *
- * Bán kính hằng, hai đầu MỞ. Mọi hình dạng nhìn thấy đều đến từ deform.
+ * Thân TRỤ + hai NỬA CẦU. Đối xứng, tự khép, mặt liền tại hai chỗ nối.
  *
- *      r(t) = 1
+ *      r(t) = sqrt(1-u^2) | 1 | sqrt(1-u^2)
  *
  * ĐỘC LẬP HOÀN TOÀN. File này không dùng chung gì với pm_tube/pm_droplet/
  * pm_capsule còn lại: cấu hình, dữ liệu mesh, dựng và vẽ đều của riêng nó. Một
@@ -11,10 +11,12 @@
  * bị thay thế — nó không cho ra hình nào đúng cả.
  *
  * KHÔNG CÓ NẮP. Nắp cũ là hai quạt tam giác có đỉnh đẩy ra theo tiếp tuyến,
- * tức hai hình NÓN — cái "đầu bút chì". Hình này mở hai đầu theo định nghĩa.
+ * tức hai hình NÓN — cái "đầu bút chì". Hình này tự khép bằng chính đường bao.
  * ===========================================================================*/
 
-static float PMTubeShapeDeformNoise(const PMTubeConfig *cfg, int radialSegs, int j,
+#include "pm_capsule_math.inl"
+
+static float PMCapsuleDeformNoise(const PMCapsuleConfig *cfg, int radialSegs, int j,
                                float t, float time, Vector3 normal, Vector3 tangent,
                                Vector3 *outOffset) {
     outOffset->x = outOffset->y = outOffset->z = 0.0f;
@@ -51,7 +53,7 @@ static float PMTubeShapeDeformNoise(const PMTubeConfig *cfg, int radialSegs, int
     return d.radiusDelta;
 }
 
-static void PMTubeSamplePath(const Vector3 *path, int pathCount, float t, Vector3 *outPos, Vector3 *outTangent) {
+static void PMCapsuleSamplePath(const Vector3 *path, int pathCount, float t, Vector3 *outPos, Vector3 *outTangent) {
     if (pathCount <= 0) return;
     if (pathCount == 1) {
         *outPos = path[0];
@@ -92,15 +94,15 @@ static void PMTubeSamplePath(const Vector3 *path, int pathCount, float t, Vector
     *outTangent = Vector3Normalize(Vector3Subtract(path[pathCount - 1], path[pathCount - 2]));
 }
 
-void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
+void PMCapsule_BuildAlongPath(PMCapsuleMesh *out, const Vector3 *pathPoints,
                                       int pathCount, float baseRadius,
                                       float startT, float endT, float time,
                                       int segments, int radialSegs,
-                                      const PMTubeConfig *cfg) {
+                                      const PMCapsuleConfig *cfg) {
     if (out == NULL || pathPoints == NULL || pathCount <= 0) return;
 
-    PMTubeConfig defaultCfg;
-    if (cfg == NULL) { defaultCfg = PMTube_DefaultConfig(); cfg = &defaultCfg; }
+    PMCapsuleConfig defaultCfg;
+    if (cfg == NULL) { defaultCfg = PMCapsule_DefaultConfig(); cfg = &defaultCfg; }
 
     if (segments > TUBE_MESH_MAX_SEGMENTS) segments = TUBE_MESH_MAX_SEGMENTS;
     if (radialSegs > TUBE_MESH_MAX_RADIAL) radialSegs = TUBE_MESH_MAX_RADIAL;
@@ -126,7 +128,7 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
 
         Vector3 pos;
         Vector3 tangent;
-        PMTubeSamplePath(pathPoints, pathCount, currentT, &pos, &tangent);
+        PMCapsuleSamplePath(pathPoints, pathCount, currentT, &pos, &tangent);
 
         Vector3 right, up;
         if (cfg->useTransportFrame && haveCarried) {
@@ -176,7 +178,7 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
         prevTangent = tangent;
         haveCarried = true;
 
-        float baseCapsule = 1.0f;
+        float baseCapsule = PMCapsuleRadius(t, cfg->capFrac);
         float tailTaper = 1.0f;
         float capsuleCurve = baseCapsule * tailTaper;
         float headWeight = 1.0f;
@@ -197,7 +199,7 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
             float deform2 = sinf(t * cfg->deform2FreqT - phi * cfg->deform2FreqPhi - time * cfg->deform2Speed);
             float deform = 1.0f + deform1 * cfg->deform1Amp + deform2 * cfg->deform2Amp;
             Vector3 dOffset;
-            deform += PMTubeShapeDeformNoise(cfg, radialSegs, j, t, time, normal,
+            deform += PMCapsuleDeformNoise(cfg, radialSegs, j, t, time, normal,
                                         tangent, &dOffset);
 
             float finalRadius = baseRadius * capsuleCurve * headWeight * deform;
@@ -211,11 +213,11 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
 }
 
 
-void PMTube_Draw(const PMTubeMesh *data, float uvLengthScale) {
-    PMTube_DrawEx(data, uvLengthScale, 0.0f);
+void PMCapsule_Draw(const PMCapsuleMesh *data, float uvLengthScale) {
+    PMCapsule_DrawEx(data, uvLengthScale, 0.0f);
 }
 
-void PMTube_DrawEx(const PMTubeMesh *data, float uvLengthScale,
+void PMCapsule_DrawEx(const PMCapsuleMesh *data, float uvLengthScale,
                                float uvOffset) {
     if (data == NULL) return;
 
@@ -257,8 +259,9 @@ void PMTube_DrawEx(const PMTubeMesh *data, float uvLengthScale,
 
     rlPopMatrix();
 }
-PMTubeConfig PMTube_DefaultConfig(void) {
-  PMTubeConfig cfg = {0};
+PMCapsuleConfig PMCapsule_DefaultConfig(void) {
+  PMCapsuleConfig cfg = {0};
+  cfg.capFrac = 0.25f;
   cfg.useTransportFrame = true;
   return cfg;
 }

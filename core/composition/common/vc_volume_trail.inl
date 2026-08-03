@@ -81,6 +81,30 @@ typedef struct
     bool widthLogged;
 } VC_VolumeTrail;
 
+/* HÌNH DẠNG của ống, do composition sở hữu. DrawLayeredTube từng quyết định
+ * thay mọi consumer và luôn cho ra thấu kính đối xứng + nắp nón; một vệt thể
+ * tích đúng ra là GIỌT NƯỚC — đầu tròn đầy, đuôi vuốt nhọn. Static vì con trỏ
+ * phải sống lâu hơn mọi trail trong pool. */
+static PMDropletConfig s_volTube;
+static bool s_volTubeBuilt = false;
+
+static const PMDropletConfig *VolumeTrail_Shape(void)
+{
+    if (!s_volTubeBuilt)
+    {
+        s_volTube = PMDroplet_DefaultConfig();
+        /* Hai lớp sóng sin tắt: chúng TUẦN HOÀN theo cả t và phi, tức một
+         * đường xoắn — gờ xoắn ốc chạy dọc thân, đọc ra là lốc xoáy. */
+        s_volTube.wobbleAmplitude = 0.0f;
+        s_volTube.deform1Amp = 0.0f;
+        s_volTube.deform2Amp = 0.0f;
+        s_volTube.noiseScale = 5.0f;
+        s_volTube.noiseSpeed = 1.6f;
+        s_volTubeBuilt = true;
+    }
+    return &s_volTube;
+}
+
 static VC_VolumeTrail s_vol[VOL_MAX];
 static int s_volNextSerial = 0;
 static bool s_volInit = false;
@@ -410,6 +434,7 @@ static int VolumeTrail_Spawn(const VC_VolumeTrail *v, int slot)
     // — a fresnel read with no fresnel term.
     cfg.tubeSingleSided = false;
     cfg.tubeNoiseAmp = k_volNoise[v->kind] * s_volNoiseMul;
+    cfg.dropletConfig = VolumeTrail_Shape();
     cfg.layers = v->layers;
     cfg.layerCount = VolumeTrail_LayerCount();
     cfg.uvMetresPerTile = (s_volTile > 0.05f) ? s_volTile : 0.05f;

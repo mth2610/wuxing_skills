@@ -65,6 +65,7 @@
 #include "common/vc_debris_shards.inl"
 #include "common/vc_ember_trail.inl"
 #include "common/vc_shield_shell.inl"
+#include "common/vc_smoke_column.inl"
 // @gen:archetype_includes end
 
 void VFX_Compose_Update(float dt)
@@ -78,6 +79,7 @@ void VFX_Compose_Update(float dt)
     VC_DebrisShards_Update(dt);
     VC_EmberTrail_Update(dt);
     VC_ShieldShell_Update(dt);
+    VC_SmokeColumn_Update(dt);
     VC_FlameEmitter_Update(dt);
 // @gen:archetype_update end
     SmokeEmitter_Update(dt);
@@ -101,6 +103,7 @@ void VFX_Compose_Draw3D(Camera3D cam)
     VC_DebrisShards_Draw3D(cam);
     VC_EmberTrail_Draw3D(cam);
     VC_ShieldShell_Draw3D(cam);
+    VC_SmokeColumn_Draw3D(cam);
     VC_FlameEmitter_Draw3D(cam);
 // @gen:archetype_draw end
     SmokeEmitter_Draw3D(cam);

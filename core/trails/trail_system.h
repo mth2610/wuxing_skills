@@ -7,6 +7,7 @@
 #include "core/sprite_anim.h"
 #include "core/vfx_config.h"
 #include "core/vfx_light.h"
+#include "core/geometry/procedural_mesh_utils.h"
 #include "raylib.h"
 
 #define MAX_TRAIL_PARTICLES 500
@@ -309,6 +310,26 @@ typedef struct
     bool tubeCaps;
     bool tubeSingleSided;
     float tubeNoiseAmp;
+    /* HÌNH DẠNG của ống — do CALLER quyết định, không phải DrawLayeredTube.
+     *
+     * NULL = giữ nguyên bản mặc định cũ (profile capsule "giọt nước" của water
+     * stream: bóp cả hai đầu, phình giữa). Đúng cho tia nước và beam, SAI cho
+     * bất cứ thứ gì cần trụ hay phễu — và trước 03/08/2026 không caller nào
+     * đổi được, vì DrawLayeredTube gọi ProceduralMesh_DefaultTubeConfig() rồi
+     * ghi đè cứng. Một cột khói dựng qua đó ra hình giọt nước xoáy lốc.
+     *
+     * Trỏ vào TubeMeshConfig của riêng mình là caller sở hữu toàn bộ: đường bao
+     * bán kính (capsuleFloor/tailTaper/headGrowth), khung vận chuyển, và trường
+     * biến dạng core/deform (noiseField). Con trỏ phải sống lâu hơn trail.
+     *
+     * Các trường THEO THỜI GIAN CHẠY vẫn do trail điền đè lên: noiseAmp từ
+     * tubeNoiseAmp, noiseOffset từ uvScrollOffset. Đó là trạng thái, không phải
+     * hình dạng. */
+    const PMDropletConfig *dropletConfig;
+    /* ...hoặc ỐNG. Ba hình là ba module độc lập (pm_tube/pm_droplet/pm_capsule),
+     * nên caller chọn LOẠI MESH chứ không chọn tham số của một đường bao dùng
+     * chung. Cả hai NULL = bộ máy cũ (pm_sweep_legacy.inl). */
+    const PMTubeConfig *tubeShapeConfig;
     float idleSpeed;
 
     RibbonMode ribbonMode;
@@ -522,6 +543,26 @@ typedef struct
     float teleportSpeed;
     float idleSpeed;
     float tubeNoiseAmp;
+    /* HÌNH DẠNG của ống — do CALLER quyết định, không phải DrawLayeredTube.
+     *
+     * NULL = giữ nguyên bản mặc định cũ (profile capsule "giọt nước" của water
+     * stream: bóp cả hai đầu, phình giữa). Đúng cho tia nước và beam, SAI cho
+     * bất cứ thứ gì cần trụ hay phễu — và trước 03/08/2026 không caller nào
+     * đổi được, vì DrawLayeredTube gọi ProceduralMesh_DefaultTubeConfig() rồi
+     * ghi đè cứng. Một cột khói dựng qua đó ra hình giọt nước xoáy lốc.
+     *
+     * Trỏ vào TubeMeshConfig của riêng mình là caller sở hữu toàn bộ: đường bao
+     * bán kính (capsuleFloor/tailTaper/headGrowth), khung vận chuyển, và trường
+     * biến dạng core/deform (noiseField). Con trỏ phải sống lâu hơn trail.
+     *
+     * Các trường THEO THỜI GIAN CHẠY vẫn do trail điền đè lên: noiseAmp từ
+     * tubeNoiseAmp, noiseOffset từ uvScrollOffset. Đó là trạng thái, không phải
+     * hình dạng. */
+    const PMDropletConfig *dropletConfig;
+    /* ...hoặc ỐNG. Ba hình là ba module độc lập (pm_tube/pm_droplet/pm_capsule),
+     * nên caller chọn LOẠI MESH chứ không chọn tham số của một đường bao dùng
+     * chung. Cả hai NULL = bộ máy cũ (pm_sweep_legacy.inl). */
+    const PMTubeConfig *tubeShapeConfig;
 
     // Các tham số biến đổi Flowmap thời gian thực (Floats)
     float flowSpeed;

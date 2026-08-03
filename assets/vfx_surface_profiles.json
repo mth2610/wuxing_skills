@@ -513,6 +513,156 @@
         "status": "no_legacy_fallback",
         "reason": "owner rejected every legacy decal; wait for a newly authored rune glyph with true boundary alpha"
       }
+    },
+    {
+      "id": "VFX_SURFACE_VOLUME_SMOKE",
+      "name": "volume_surface_smoke",
+      "primitive": "tube",
+      "role": "trail",
+      "wrap": "repeat",
+      "filter": "bilinear",
+      "blend": "consumer_defined",
+      "projection": "primitive_defined",
+      "approval": "preview_only",
+      "lifecycle": {
+        "seconds": 0.0,
+        "fade_in": 0.0,
+        "fade_out": 0.0
+      },
+      "budget": {
+        "max_draw_calls": 0,
+        "max_textures": 1
+      },
+      "flipbook": [
+        0,
+        0,
+        0
+      ],
+      "seam": "tileable_both_axes",
+      "provenance": "packed 4-channel STRAND material sheet, all channels TILE. NOT interchangeable with smoke_strand.png, which is a SHAPE stretched once over a trail. Built by scripts/gen_volume_surface.py.",
+      "consumers": [],
+      "orphaned": {
+        "since": "2026-08-03",
+        "reason": "Generated ahead of its consumer: the volume smoke/fire column that core/deform was built for is not composed yet. Delete this profile and its sheet if that consumer does not land — the validator will keep printing this line until then."
+      },
+      "assets": {
+        "body": {
+          "path": "assets/textures/volume_surface_smoke.png",
+          "channels": "OPAQUE | R:color/TILE | G:color/TILE | B:color/TILE | A:opacity/TILE — GREY luminance in RGB so the caller's VFX_Material tint survives, real coverage in A. Consumed as an ordinary colour read by core/trails/shaders/trail_body.fs; it was shipped as STRAND once and sampled as colour, which is rainbow mush (TEXTURE_PACKING.md R4). Repeating MATERIAL: the silhouette comes from the geometry, this is surface detail only. Seamless both axes by construction. Built by scripts/gen_volume_surface.py."
+        }
+      }
+    },
+    {
+      "id": "VFX_SURFACE_VOLUME_FIRE",
+      "name": "volume_surface_fire",
+      "primitive": "tube",
+      "role": "trail",
+      "wrap": "repeat",
+      "filter": "bilinear",
+      "blend": "consumer_defined",
+      "projection": "primitive_defined",
+      "approval": "preview_only",
+      "lifecycle": {
+        "seconds": 0.0,
+        "fade_in": 0.0,
+        "fade_out": 0.0
+      },
+      "budget": {
+        "max_draw_calls": 0,
+        "max_textures": 1
+      },
+      "flipbook": [
+        0,
+        0,
+        0
+      ],
+      "seam": "tileable_both_axes",
+      "provenance": "packed 4-channel STRAND material sheet, fire profile. Built by scripts/gen_volume_surface.py.",
+      "consumers": [],
+      "orphaned": {
+        "since": "2026-08-03",
+        "reason": "Generated ahead of its consumer: the volume smoke/fire column that core/deform was built for is not composed yet. Delete this profile and its sheet if that consumer does not land — the validator will keep printing this line until then."
+      },
+      "assets": {
+        "body": {
+          "path": "assets/textures/volume_surface_fire.png",
+          "channels": "OPAQUE | R:color/TILE | G:color/TILE | B:color/TILE | A:opacity/TILE — GREY luminance in RGB so the caller's VFX_Material tint survives, real coverage in A. Consumed as an ordinary colour read by core/trails/shaders/trail_body.fs; it was shipped as STRAND once and sampled as colour, which is rainbow mush (TEXTURE_PACKING.md R4). Repeating MATERIAL: the silhouette comes from the geometry, this is surface detail only. Seamless both axes by construction. Built by scripts/gen_volume_surface.py."
+        }
+      }
+    },
+    {
+      "id": "VFX_SURFACE_VOLUME_STEAM",
+      "name": "volume_surface_steam",
+      "primitive": "tube",
+      "role": "trail",
+      "wrap": "repeat",
+      "filter": "bilinear",
+      "blend": "consumer_defined",
+      "projection": "primitive_defined",
+      "approval": "preview_only",
+      "lifecycle": {
+        "seconds": 0.0,
+        "fade_in": 0.0,
+        "fade_out": 0.0
+      },
+      "budget": {
+        "max_draw_calls": 0,
+        "max_textures": 1
+      },
+      "flipbook": [
+        0,
+        0,
+        0
+      ],
+      "seam": "tileable_both_axes",
+      "provenance": "packed 4-channel STRAND material sheet, steam profile. Built by scripts/gen_volume_surface.py.",
+      "consumers": [],
+      "orphaned": {
+        "since": "2026-08-03",
+        "reason": "Generated ahead of its consumer: the volume smoke/fire column that core/deform was built for is not composed yet. Delete this profile and its sheet if that consumer does not land — the validator will keep printing this line until then."
+      },
+      "assets": {
+        "body": {
+          "path": "assets/textures/volume_surface_steam.png",
+          "channels": "OPAQUE | R:color/TILE | G:color/TILE | B:color/TILE | A:opacity/TILE — GREY luminance in RGB so the caller's VFX_Material tint survives, real coverage in A. Consumed as an ordinary colour read by core/trails/shaders/trail_body.fs; it was shipped as STRAND once and sampled as colour, which is rainbow mush (TEXTURE_PACKING.md R4). Repeating MATERIAL: the silhouette comes from the geometry, this is surface detail only. Seamless both axes by construction. Built by scripts/gen_volume_surface.py."
+        }
+      }
+    },
+    {
+      "id": "VFX_SURFACE_VOLUME_NOISE",
+      "name": "volume_noise",
+      "primitive": "tube",
+      "role": "trail",
+      "wrap": "repeat",
+      "filter": "bilinear",
+      "blend": "consumer_defined",
+      "projection": "primitive_defined",
+      "approval": "approved",
+      "lifecycle": {
+        "seconds": 0.0,
+        "fade_in": 0.0,
+        "fade_out": 0.0
+      },
+      "budget": {
+        "max_draw_calls": 0,
+        "max_textures": 1
+      },
+      "flipbook": [
+        0,
+        0,
+        0
+      ],
+      "seam": "tileable_both_axes",
+      "provenance": "Displacement noise for core/deform/mesh_deform.h — four decorrelated scalar fields, one per channel, so a single bilinear fetch feeds one deform layer. Loaded by core/trails/trail_system.c as an Image (CPU), not as a Texture: the deform runs at mesh-build time. Was outside the registry entirely until 03/08/2026. Built by scripts/gen_volume_trail_textures.py.",
+      "consumers": [
+        "ProceduralMesh_BuildTube / BuildTubeAlongPath via TubeMeshConfig.noisePixels"
+      ],
+      "assets": {
+        "body": {
+          "path": "assets/textures/volume_noise.png",
+          "channels": "NOISE | R:field/TILE | G:field/TILE | B:field/TILE | A:field/TILE — pure DATA, never drawn. Four independent fields; core/deform reads R and G as its two octaves. Seamless on both axes: the section is closed, so a non-periodic field creases the whole length of the body."
+        }
+      }
     }
   ]
 }

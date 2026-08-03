@@ -37,11 +37,15 @@ in R G B A order, even when a channel is unused.
 | `FLOW` | `body` | `mask` or `dissolve` | `flowx` | `flowy` |
 | `OPAQUE` | `color` | `color` | `color` | `opacity` |
 | `FLIPBOOK` | `color` | `color` | `color` | `opacity` |
+| `NOISE` | `field` | `field` | `field` | `field` |
 
 `STRAND` is the trail sheet read by `core/trails/shaders/trail_deform.fs` mode 2.
 `FLOW` is a body that carries its own flow vector — the layout that collapses a
 body+flow(+mask) group into one file. `OPAQUE` is a conventional colour sheet.
-`FLIPBOOK` is `OPAQUE` with cells, and every channel must be `CLAMP`.
+`FLIPBOOK` is `OPAQUE` with cells, and every channel must be `CLAMP`. `NOISE`
+is a pure DATA sheet: four independent scalar fields, decorrelated by
+construction, so one fetch feeds several layers of a displacement or a warp.
+It carries no colour and no coverage — never draw it.
 
 ### Modes
 

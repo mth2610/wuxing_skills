@@ -92,6 +92,10 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeCoreGlow":           ("draw",    "timed",      "continuous"),
     "VFX_ComposeEnergyTrail":        ("trail",   "follower",   "continuous"),
     "VFX_ComposeStrandTrail":        ("trail",   "follower",   "continuous"),
+    # Handle-owning like the trails, but its source does NOT move: the column
+    # rises from a fixed point, so the fixture is a position rather than a
+    # follower transform.
+    "VFX_ComposeSmokeColumn":        ("trail",   "static",     "continuous"),
     "VFX_ComposeDebrisShards":       ("event",   "burst",      "oneshot"),
     "VFX_ComposeDissolveExit":       ("draw",    "timed",      "continuous"),
     "VFX_ComposeEnergyBurst":        ("event",   "burst",      "oneshot"),
@@ -134,6 +138,12 @@ FIXTURE_SPAWN_OVERRIDES = {
         "VFX_ComposeStrandTrail($XFORM, VC_MAT_FIRE, 0.0f, 2.0f, VFX_STRAND_ENERGY)",
     "VFX_ComposeShieldShell":
         "VFX_ShieldShell_SpawnEx($POS, VC_MAT_FIRE, 1.5f, 1.0f, VFXTest_ShieldFlowSurface())",
+    # The kind is an enum and the inferred call would pass a bare 0; the
+    # inferred radius (1.5 m) is a fireball, not a column. Funnel ON, because
+    # cylinder first, per the owner: judge the churn on a shape with no
+    # profile of its own before adding a taper on top of it.
+    "VFX_ComposeSmokeColumn":
+        "VFX_ComposeSmokeColumn($POS, VC_MAT_METAL, 0.55f, 3.0f, VFX_COLUMN_SMOKE, false)",
 }
 
 # ── Element / category inference ──────────────────────────────────────────────
@@ -343,6 +353,11 @@ def infer_kill_fn(fn_name, available_fns):
     if fn_name in ('VFX_ComposeEnergyTrail', 'VFX_ComposeStrandTrail',
                    'VFX_ComposeSmokeStrandTrail'):
         return 'KillTrail'
+    # The column releases by stopping its FEED and letting the laid material
+    # drain — cutting it out of existence pops. No VFX_KillSmokeColumn exists
+    # and inventing one here would generate a call to a missing symbol.
+    if fn_name == 'VFX_ComposeSmokeColumn':
+        return 'VFX_SmokeColumn_Stop'
     if fn_name.startswith('VFX_Compose'):
         candidate = 'VFX_Kill' + fn_name[len('VFX_Compose'):]
         if candidate in available_fns:
@@ -387,6 +402,16 @@ def infer_entry(fn_name, info, available_fns):
             entry["fixture"] = 'burst'
             entry["type"] = "oneshot"
             entry["trigger_call"] = call
+    elif fixture == 'static' and kill_fn:
+        # A handle-owning composition spawned at a FIXED point. It is not
+        # 'persistent': that branch below exists for effects which follow
+        # something internally (an aura on its agent) and it rewrites the
+        # fixture, which would silently undo the declaration in LIFECYCLE_SPECS.
+        # A rising column's whole subject is that its source does not move, so
+        # the spawn point is the fixture.
+        entry["type"] = fixture_type
+        entry["spawn_call"] = call
+        entry["kill_fn"] = kill_fn
     elif return_type == 'int' and kill_fn:
         # Attached/persistent compositions have no transform to drive here
         # (aura follows its agent internally), but must be explicitly released
@@ -1114,6 +1139,19 @@ def gen_draw_block(entries):
                       f"{INDENT}        if (s_vfxFixtureHandle[{idx}] < 0)",
                       f"{INDENT}            s_vfxFixtureHandle[{idx}] = {spawn_call};",
                       f"{INDENT}        break;", f"{INDENT}    }}"]
+        elif e.get("fixture") == "static":
+            # Spawn ONCE at the fixture origin and hold the handle. Same
+            # spawn/reset bookkeeping as the follower branch, minus the
+            # figure-eight: a fixed source is the whole point of this fixture,
+            # and driving it around would hide the only thing it demonstrates.
+            lines += [f"{INDENT}    case {idx}:", f"{INDENT}    {{",
+                      f"{INDENT}        if (s_meshTime < s_vfxFixtureLastTime[{idx}] && s_vfxFixtureHandle[{idx}] >= 0)",
+                      f"{INDENT}            {e['kill_fn']}(s_vfxFixtureHandle[{idx}]);",
+                      f"{INDENT}        if (s_meshTime < s_vfxFixtureLastTime[{idx}]) s_vfxFixtureHandle[{idx}] = -1;",
+                      f"{INDENT}        s_vfxFixtureLastTime[{idx}] = s_meshTime;",
+                      f"{INDENT}        if (s_vfxFixtureHandle[{idx}] < 0)",
+                      f"{INDENT}            s_vfxFixtureHandle[{idx}] = {expand(e['spawn_call'])};",
+                      f"{INDENT}        break;", f"{INDENT}    }}"]
         elif "draw_block" in e:
             blines = e["draw_block"]
             lines.append(f"{INDENT}    case {idx}: {expand(blines[0])}")
@@ -1158,8 +1196,17 @@ def validate_lifecycle_catalog(entries):
             if e.get("fixture") != "timed" or e.get("type") != "continuous" or "draw_call" not in e:
                 raise SystemExit(f"[sync_vfx_test] {fn}: Draw must be a timed per-frame fixture")
         elif lifecycle == "trail":
-            if e.get("fixture") != "follower" or not e.get("kill_fn"):
-                raise SystemExit(f"[sync_vfx_test] {fn}: Trail requires follower fixture + Kill")
+            # A trail must own a release, always. The FIXTURE may be either:
+            #   follower — the source moves and the shape is its path
+            #   static   — the source is fixed and the shape is what happens to
+            #              the material after emission (a rising column)
+            # The second is not a loophole: driving a column with the bench's
+            # figure-eight follower would hide the only thing it is testing,
+            # which is that material laid at a still point still climbs.
+            if e.get("fixture") not in ("follower", "static") or not e.get("kill_fn"):
+                raise SystemExit(
+                    f"[sync_vfx_test] {fn}: Trail requires a follower or static "
+                    f"fixture + a release")
         elif lifecycle == "emitter" and e.get("fixture") == "persistent" and not e.get("kill_fn"):
             raise SystemExit(f"[sync_vfx_test] {fn}: persistent Emitter requires Kill")
 

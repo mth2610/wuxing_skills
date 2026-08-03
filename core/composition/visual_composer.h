@@ -459,6 +459,37 @@ typedef enum {
     VFX_VOLUME_KIND_COUNT
 } VFX_VolumeKind;
 
+// ── H. Smoke / fire COLUMN — a volume that rises from a FIXED source ────────
+//
+// Not VFX_ComposeVolumeTrail with different numbers. A volume trail is what a
+// MOVING emitter leaves behind — its shape is the path, and it deliberately has
+// no force field. A column's emitter does not move at all: the whole shape is
+// what happens to the material after it is emitted, so the force field IS the
+// effect. Two archetypes over one primitive (TRAIL_SHAPE_TUBE).
+//
+// `pos` is the source, in world metres. `radius` is the tube radius at the
+// source; `funnel` decides whether it stays that width (cylinder) or widens
+// with height (TRAIL_WIDTH_ENVELOPE_SMOKE_WIDEN). `height` is advisory — the
+// column's real reach is rise speed x history length, and the value is logged
+// so the two can be compared.
+//
+// ONE-SHOT + POOLED. Call once, keep the handle, release it with
+// VFX_SmokeColumn_Stop — which stops the FEED and lets the laid material drain
+// and fade. Calling it every frame stacks columns until the pool (6) recycles.
+typedef enum {
+    VFX_COLUMN_SMOKE = 0,
+    VFX_COLUMN_FIRE,
+    VFX_COLUMN_STEAM,
+    // Not a kind — the count. Range-check against THIS, never the last kind by
+    // name: a check written against a named member starts clamping silently the
+    // day someone appends one (core/docs/LANDMINES.md).
+    VFX_COLUMN_KIND_COUNT
+} VFX_ColumnKind;
+
+int  VFX_ComposeSmokeColumn(Vector3 pos, VC_MaterialId mat, float radius,
+                            float height, VFX_ColumnKind kind, bool funnel);
+void VFX_SmokeColumn_Stop(int handle);
+
 int  VFX_ComposeVolumeTrail(const Matrix *followTransform, VC_MaterialId mat,
                             float radius, float lifetime, VFX_VolumeKind kind);
 int  VFX_ComposeVolumeTrailEx(const Matrix *followTransform, VC_MaterialId mat,

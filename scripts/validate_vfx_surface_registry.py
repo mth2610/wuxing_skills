@@ -35,6 +35,8 @@ LAYOUTS = {
     "FLOW":     {"R": {"body"}, "G": {"mask", "dissolve"}, "B": {"flowx"}, "A": {"flowy"}},
     "OPAQUE":   {"R": {"color"}, "G": {"color"}, "B": {"color"}, "A": {"opacity"}},
     "FLIPBOOK": {"R": {"color"}, "G": {"color"}, "B": {"color"}, "A": {"opacity"}},
+    # Pure data: four decorrelated scalar fields. Never drawn.
+    "NOISE":    {"R": {"field"}, "G": {"field"}, "B": {"field"}, "A": {"field"}},
     # Pre-spec files: a standalone flow map or mask that leaves channels
     # constant. Tolerated so the build is not held hostage to a migration, but
     # ALWAYS reported — see report_debt() — because R6 forbids a constant

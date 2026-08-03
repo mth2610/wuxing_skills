@@ -393,6 +393,67 @@ whole field jump once per cycle (see the two adjacent, deliberately different
 lines in `core/shaders/aura_shell.fs`). Proof and both measurements:
 `core/tests/uv_deform_test.c` `Test_FoldingASineIsExact`.
 
+## A ForceField with no VISCOSITY layer accelerates forever
+
+**Symptom.** A VFX driven by a force field drifts off the map. It often looks
+like three separate bugs: it flies away, then it "stops", then its head stretches
+into a long thin spike. Nothing errors, and the spawn log looks healthy.
+
+**Cause.** `ForceField_GetViscosityDamping` (`core/force_field.c`) multiplies a
+factor only for `FORCE_VISCOSITY` layers and returns **1.0** for a field that
+declares none. Node integration is `v = (v + a*dt) * viscDamp`, so with no
+viscosity layer nothing damps anything and `v = a*t` without bound. A modest
+2.2 m/s^2 updraft puts a node 10 m out by t=3s and 27 m by t=5s — past the
+18 m arena radius. The "stop" and the "stretch" are the same event seen twice:
+the history ring fills, the oldest node is recycled, and the geometry is then
+strung between a stationary emitter and a departing front.
+
+**Rule.** Any force field whose consumer lives longer than a second or two must
+declare a `FORCE_VISCOSITY` layer. Pick it from the terminal speed you actually
+want — `terminal = strength_of_wind / strength_of_viscosity` — and LOG that
+derived number rather than the two inputs: "rise 2.2 m/s2" does not say whether
+the effect stays on screen, and "terminal 1.30 m/s" does. Worked example and the
+arithmetic: `core/composition/common/vc_smoke_column.inl`,
+`core/tests/smoke_column_test.c`.
+
+**Related, same file:** a parameter that is logged but never reaches the
+geometry is worse than an absent one. `height` was printed on every spawn while
+node spacing was a constant, so the column was capped near 1 m whatever the
+caller asked for, and the log actively argued against the symptom.
+
+## A setter that early-returns on a precondition you did not set
+
+**Symptom.** A composition built entirely around one API call renders as a flat
+sliver floating in space. The call is right there in the source, it compiled, it
+executed, and the spawn log looks healthy.
+
+**Cause.** The setter validated a precondition and returned in silence.
+`Trail_SetStaticPath` opens with `if (t->type != TRAIL_TYPE_FOLLOWER) return;`,
+and `TrailConfig cfg = {0}` means `TRAIL_TYPE_PROJECTILE` — zero is a valid enum
+member, not an "unset" marker. So the path was never seeded, the trail laid
+coincident nodes at one point, the tangent between two identical points is
+garbage, and the tube's cross-section collapsed to a line: a plane, drawn where
+a volume should be. No NaN, no warning, nothing in the log.
+
+It survived a rewrite because the FIRST version happened to call
+`Trail_AttachToTransform`, which sets the type as a side effect. Removing the
+attach removed the only thing that made the later call legal.
+
+**Rule.** Two parts, and the second is the one that generalises:
+
+1. A `= {0}` config gets its enums set EXPLICITLY when zero is a real member.
+   Grep the setter you are about to call for its early returns first.
+2. **Log the EFFECT, not the inputs.** A spawn line listing radius, height and
+   speed cannot distinguish a correct tube from a collapsed one — every input
+   was fine in all three failed builds of this effect. Read the state back after
+   the call (`GetTrail(id)->historyCount`) and warn when it disagrees with what
+   was asked. Worked example: `core/composition/common/vc_smoke_column.inl`,
+   which now prints `nodes N` and raises a WARNING naming the likely cause when
+   `N` is wrong.
+
+Same family as the missing-shader trap below: a precondition failure that
+degrades into a plausible-looking wrong result instead of an absent one.
+
 ## A missing shader file does not report as a shader problem
 
 **Symptom.** Edits to a `.vs`/`.fs` appear to do nothing at all. The effect still

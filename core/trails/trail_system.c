@@ -1053,6 +1053,8 @@ int SpawnTrailEntity(TrailConfig config)
     t->tubeCaps = config.tubeCaps;
     t->tubeSingleSided = config.tubeSingleSided;
     t->tubeNoiseAmp = config.tubeNoiseAmp;
+    t->dropletConfig = config.dropletConfig;
+    t->tubeShapeConfig = config.tubeShapeConfig;
     t->prevAttachPos = config.pos;
     t->lateralOffset = (Vector3){0, 0, 0};
     t->hasPrevAttach = false;
@@ -1432,18 +1434,61 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
     if (segs < 2)
         segs = 2;
 
-    TubeMeshConfig cfg = ProceduralMesh_DefaultTubeConfig();
-    cfg.wobbleAmplitude = 0.0f;
-    cfg.deform1Amp = 0.0f;
-    cfg.deform2Amp = 0.0f;
+    /* SHAPE belongs to the caller; only the runtime state below is ours.
+     *
+     * This block used to be the whole config, hard-coded, so every volume trail
+     * in the engine inherited the water-stream capsule profile — pinched at both
+     * ends, bulging in the middle. Correct for a jet of water, a teardrop for
+     * anything meant to be a column. There was no way to say otherwise. */
+    TubeMeshConfig cfg;
+    {
+        cfg = ProceduralMesh_DefaultTubeConfig();
+        cfg.wobbleAmplitude = 0.0f;
+        cfg.deform1Amp = 0.0f;
+        cfg.deform2Amp = 0.0f;
+        cfg.noiseScale = 5.0f;
+        cfg.noiseSpeed = 1.6f;
+        cfg.useTransportFrame = true;
+    }
+    /* RUNTIME STATE, always ours: these track the trail's own clock, not the
+     * caller's authoring. noiseOffset is what walks the churn ALONG the body on
+     * the same clock the sheet scrolls on. */
     cfg.noiseAmp = t->tubeNoiseAmp;
-    cfg.noiseScale = 5.0f;
-    cfg.noiseSpeed = 1.6f;
     cfg.noiseOffset = -t->uvScrollOffset * 0.5f;
-    cfg.noisePixels = (const unsigned char *)s_tubeNoiseImg.data;
-    cfg.noiseImgW = s_tubeNoiseImg.width;
-    cfg.noiseImgH = s_tubeNoiseImg.height;
-    cfg.useTransportFrame = true;
+    if (cfg.noisePixels == NULL)
+    {
+        cfg.noisePixels = (const unsigned char *)s_tubeNoiseImg.data;
+        cfg.noiseImgW = s_tubeNoiseImg.width;
+        cfg.noiseImgH = s_tubeNoiseImg.height;
+    }
+
+    /* MỘT trong ba loại mesh, do caller chọn. Trạng thái theo thời gian
+     * (noiseAmp, noiseOffset) vẫn của trail; HÌNH DẠNG là của caller. */
+    static PMDropletMesh dropMesh;
+    static PMTubeMesh tubeMesh;
+    PMDropletConfig dropCfg;
+    PMTubeConfig tubeCfg;
+    int shape = 0; /* 0 = legacy, 1 = droplet, 2 = tube */
+    if (t->dropletConfig != NULL)
+    {
+        shape = 1;
+        dropCfg = *t->dropletConfig;
+        dropCfg.noiseAmp = cfg.noiseAmp;
+        dropCfg.noiseOffset = cfg.noiseOffset;
+        dropCfg.noisePixels = cfg.noisePixels;
+        dropCfg.noiseImgW = cfg.noiseImgW;
+        dropCfg.noiseImgH = cfg.noiseImgH;
+    }
+    else if (t->tubeShapeConfig != NULL)
+    {
+        shape = 2;
+        tubeCfg = *t->tubeShapeConfig;
+        tubeCfg.noiseAmp = cfg.noiseAmp;
+        tubeCfg.noiseOffset = cfg.noiseOffset;
+        tubeCfg.noisePixels = cfg.noisePixels;
+        tubeCfg.noiseImgW = cfg.noiseImgW;
+        tubeCfg.noiseImgH = cfg.noiseImgH;
+    }
 
     float headR = scratchOuter[0].halfWidth;
     if (headR <= 1e-4f)
@@ -1462,8 +1507,15 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
     int headNode = NodeIndexForSegRatio(t, drawCount, 0);
 
     static TubeMeshData mesh;
-    ProceduralMesh_BuildTubeAlongPath(&mesh, path, n, headR, 0.0f, 1.0f,
-                                      (float)GetTime(), segs, radial, &cfg);
+    if (shape == 1)
+        PMDroplet_BuildAlongPath(&dropMesh, path, n, headR, 0.0f, 1.0f,
+                                 (float)GetTime(), segs, radial, &dropCfg);
+    else if (shape == 2)
+        PMTube_BuildAlongPath(&tubeMesh, path, n, headR, 0.0f, 1.0f,
+                              (float)GetTime(), segs, radial, &tubeCfg);
+    else
+        ProceduralMesh_BuildTubeAlongPath(&mesh, path, n, headR, 0.0f, 1.0f,
+                                          (float)GetTime(), segs, radial, &cfg);
 
     for (int L = 0; L < t->layerCount; L++)
     {
@@ -1497,6 +1549,13 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
             tiles = 0.5f;
         rlSetTexture(tex.id);
         rlColor4ub(col.r, col.g, col.b, (unsigned char)a);
+        if (shape == 1)
+            PMDroplet_DrawEx(&dropMesh, tiles,
+                                  uvBase - t->uvScrollOffset * sMul);
+        else if (shape == 2)
+            PMTube_DrawEx(&tubeMesh, tiles,
+                                  uvBase - t->uvScrollOffset * sMul);
+        else
         ProceduralMesh_DrawTubeEx(&mesh, tiles,
                                   uvBase - t->uvScrollOffset * sMul);
     }

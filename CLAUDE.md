@@ -27,6 +27,7 @@ C / Raylib 6.0 game project. Rendering backend: **Vulkan 1.1 via `rlvk` (priorit
 - `third_party/vulkan/docs/HANDOFF.md` — rlvk Vulkan 1.1 backend (architecture + §7 debugging case studies); `docs/LANDMINES.md` = trap index, `docs/PROGRESS.md` = status
 - `core/docs/VFX_ARCHITECTURE.md` — Overall VFX architecture
 - `WUXING_ART_DIRECTION.md` — Art style and aesthetic laws
+- `assets/TEXTURE_PACKING.md` — **What each RGBA channel of a VFX sheet may carry.** Normative and machine-enforced (`scripts/validate_vfx_surface_registry.py` runs at CMake configure time and fails the build). Read before adding or changing any texture in `assets/vfx_surface_profiles.json`.
 - `nguhanhtyvo_kehoach.md` — Game design doc (source of truth for gameplay intent)
 
 ## Agent working protocol

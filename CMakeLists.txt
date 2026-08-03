@@ -126,6 +126,7 @@ add_executable(wuxing
     core/tuning.c
     core/emitter_system.c
     core/uv/flow_map.c
+    core/deform/mesh_deform.c
     core/uv/uv_deform.c
     core/uv/surface_flow.c
     core/force_field.c

@@ -90,6 +90,8 @@ static void Test_SpecIsPresentAndComplete(void) {
         "STRAND layout is defined");
   CHECK(FileHas(spec, "| `FLOW` | `body` | `mask` or `dissolve` | `flowx` | `flowy` |"),
         "FLOW layout is defined — the one that folds a body+flow pair into one file");
+  CHECK(FileHas(spec, "| `NOISE` | `field` | `field` | `field` | `field` |"),
+        "NOISE layout is defined — pure data, four decorrelated fields, never drawn");
   CHECK(FileHas(spec, "`STRETCH` and `TILE` cannot be the same channel"),
         "R1: the SHAPE-vs-MATERIAL law is stated at channel granularity");
   CHECK(FileHas(spec, "A sheet MAY mix modes across channels"),
@@ -139,8 +141,8 @@ static void Test_EveryAssetDeclaresALayout(void) {
     return;
   }
 
-  static const char *kLayouts[] = {"STRAND", "FLOW", "OPAQUE", "FLIPBOOK",
-                                   "SPLIT_LEGACY"};
+  static const char *kLayouts[] = {"STRAND", "FLOW",  "OPAQUE",
+                                   "FLIPBOOK", "NOISE", "SPLIT_LEGACY"};
   const char *needle = "\"channels\": \"";
   int total = 0, ok = 0, packed = 0, legacy = 0;
   const char *p = manifest;
@@ -183,6 +185,19 @@ static void Test_ReferenceSheetsMatchTheSpecsClaim(void) {
         "opposite authoring decision on the same layout");
   CHECK(FileHas("core/trails/shaders/trail_deform.fs", "bool stretch = u_strandFlow.z > 0.5;"),
         "and the consumer carries the switch that tells the two apart");
+
+  // R4, learned the expensive way. trail_body.fs does `sheet.rgb * fragColor.rgb`
+  // and `alpha = sheet.a` — an ordinary colour read. The volume sheets were
+  // registered as STRAND (R/G/B = three unrelated noise FIELDS, A = a dissolve
+  // mask) and sampled by it, which is rainbow mush at an arbitrary opacity. A
+  // sheet's layout must match how its consumer actually reads it.
+  CHECK(FileHas(m, "\"name\": \"volume_surface_smoke\"") &&
+            !FileHas(m, "STRAND | R:pattern1/TILE | G:pattern2/TILE | B:distort/TILE | A:dissolve/TILE — repeating smoke MATERIAL"),
+        "the volume sheets are no longer STRAND — their consumer reads colour, "
+        "and STRAND's channels are data");
+  CHECK(FileHas("scripts/gen_volume_surface.py", "r = g = b = lum"),
+        "...they are grey luminance, so the caller's VFX_Material tint survives "
+        "instead of fighting a colour baked into the sheet");
 }
 
 // ── 5. R5's ground truth: nothing generates mipmaps ─────────────────────────

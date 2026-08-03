@@ -40,21 +40,22 @@ float FresnelSchlick(float ndv) {
     return waterF0 + (1.0 - waterF0) * pow(1.0 - ndv, 5.0);
 }
 
-// Multi-octave procedural wave generator for realistic dynamic liquid shimmer
+// Multi-octave procedural wave generator for realistic dynamic liquid shimmer.
+// Ripples roll in all three axes (a planar XZ sheet smears on a sphere
+// silhouette), and a patchy high-frequency capillary term adds droplet
+// detail that swell alone cannot reproduce.
 vec3 WaterMultiOctaveWaves(vec3 worldPosition) {
     float t = u_time * 1.2;
-    vec2 p1 = worldPosition.xz * 8.5 + vec2(t * 0.8, t * 0.6);
-    vec2 p2 = worldPosition.xz * 18.0 - vec2(t * 0.6, -t * 0.9);
-    vec2 p3 = worldPosition.xz * 36.0 + vec2(-t * 1.1, t * 1.4);
-
-    float w1 = sin(p1.x + sin(p1.y * 1.2));
-    float w2 = sin(p2.y + sin(p2.x * 1.1));
-    float w3 = sin(p3.x * 0.7 + p3.y * 0.7);
-
-    vec2 dh = vec2(
-        cos(p1.x) * 0.025 + cos(p2.x) * 0.015 + cos(p3.x) * 0.008,
-        cos(p1.y) * 0.025 + cos(p2.y) * 0.015 + cos(p3.y) * 0.008
-    );
+    vec3 p = worldPosition;
+    float s1 = sin(p.x * 6.0 + t * 0.8 + sin(p.y * 4.0 + t * 0.6));
+    float s2 = sin(p.y * 7.0 - t * 0.7 + sin(p.z * 5.0 + t * 0.9));
+    float s3 = sin(p.z * 5.5 + t * 1.1 + sin(p.x * 6.5 - t * 0.5));
+    vec2 swell = vec2(s1 + s2, s2 + s3);
+    float capFade = 0.5 + 0.5 * sin(dot(p, vec3(3.7, 5.1, 4.3)) + t * 0.7);
+    vec2 capillary = vec2(
+        sin(p.x * 47.0 + p.y * 29.0 + t * 2.4) + cos(p.z * 41.0 + t * 1.8),
+        sin(p.z * 53.0 + p.y * 33.0 + t * 2.1) + cos(p.x * 37.0 + t * 1.6));
+    vec2 dh = swell * 0.016 + capillary * 0.012 * capFade;
     return vec3(-dh.x, 1.0, -dh.y);
 }
 
@@ -100,10 +101,10 @@ bool SceneSampleMatchesBase(vec2 uv, float baseSceneDistance, float fluidDistanc
 vec4 TraceSSR(vec3 rayOrigin, vec3 rayDir, float fluidDistance) {
     if (u_hasSceneDepth == 0 || rayDir.z >= 0.05) return vec4(0.0);
     
-    float stepSize = 0.04;
+    float stepSize = 0.035;
     vec3 currentRay = rayOrigin + rayDir * stepSize;
     
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < 14; i++) {
         vec4 clip = u_projection * vec4(currentRay, 1.0);
         if (clip.w <= 0.0) break;
         vec2 sampleUV = clip.xy / clip.w * 0.5 + 0.5;
@@ -187,7 +188,7 @@ void main() {
     vec3 worldPosition = (u_viewToWorld * vec4(positionView, 1.0)).xyz;
     vec3 worldNormal = normalize(mat3(u_viewToWorld) * N);
     vec3 waveNorm = WaterMultiOctaveWaves(worldPosition);
-    worldNormal = normalize(worldNormal + waveNorm * 0.029);
+    worldNormal = normalize(worldNormal + waveNorm * 0.045);
     N = normalize(transpose(mat3(u_viewToWorld)) * worldNormal);
     if (dot(N, V) < 0.0) N = -N;
     float ndv = clamp(dot(N, V), 0.0, 1.0);
@@ -212,7 +213,7 @@ void main() {
     vec3 refractedDirection = refract(incident, N, 1.0 / 1.333);
     vec2 incidentSlope = incident.xy / max(abs(incident.z), 0.25);
     vec2 refractedSlope = refractedDirection.xy / max(abs(refractedDirection.z), 0.25);
-    float travelPixels = clamp(opticalPath * 92.0, 0.35, 10.0);
+    float travelPixels = clamp(opticalPath * 100.0, 0.35, 13.0);
     vec2 refractOffset = (refractedSlope - incidentSlope) * travelPixels * u_sceneTexel;
     vec2 refractUV = clamp(fragTexCoord + refractOffset, u_sceneTexel, vec2(1.0) - u_sceneTexel);
 
@@ -236,10 +237,14 @@ void main() {
     if (sceneDepthAtSurface < 0.99999 && opticalPath > 0.005) {
         vec3 underPosView = ReconstructViewPosition(fragTexCoord, sceneDepthAtSurface);
         vec3 underPosWorld = (u_viewToWorld * vec4(underPosView, 1.0)).xyz;
-        vec2 cUV = underPosWorld.xz * 5.0 + u_sunDirectionView.xz * 1.5 + vec2(u_time * 1.1, u_time * 0.85);
+        // A flying orb focuses sunlight like a lens: the caustic pool below
+        // keeps shrinking and fading with height, anchored to the ground.
+        float heightFalloff = 1.0 / (1.0 + sceneGap * 1.5);
+        float heightScale = clamp(0.9 / (0.35 + sceneGap), 0.22, 1.5);
+        vec2 cUV = underPosWorld.xz * 5.0 * heightScale + u_sunDirectionView.xz * 1.5 + vec2(u_time * 1.1, u_time * 0.85);
         float causticNoise = sin(cUV.x + sin(cUV.y * 1.4)) * sin(cUV.y + sin(cUV.x * 1.3));
         float causticPattern = pow(max(0.0, 0.5 + 0.5 * causticNoise), 3.0) * 1.6;
-        float causticFade = smoothstep(0.0, 0.03, sceneGap) * smoothstep(0.40, 0.05, sceneGap);
+        float causticFade = smoothstep(0.0, 0.03, sceneGap) * smoothstep(0.90, 0.05, sceneGap) * heightFalloff;
         vec3 causticColor = u_sunColor * causticPattern * causticFade * 0.40;
         refractedScene += causticColor;
     }
@@ -310,6 +315,11 @@ void main() {
     float sharpGlint = pow(max(dot(N, sunHalf), 0.0), 256.0) * smoothstep(0.55, 0.86, surfaceNoise) * 0.30;
     vec3 specular = u_sunColor * (WaterSpecularBRDF(N, V, L, roughness) * 1.0 + broadSunLobe + sharpGlint) * ndl;
     specular *= mix(vec3(1.0), u_materialGlow, 0.08);
+    // Cell-hash sparkle: sub-centimetre glints that break the smooth
+    // highlight into the micro-facet flicker of real water.
+    vec3 sparkleCell = floor(worldPosition * 90.0 + vec3(u_time * 2.5, u_time * 1.7, u_time * 3.1));
+    float sparkleHash = fract(sin(dot(sparkleCell, vec3(12.9898, 78.233, 45.164))) * 43758.5453);
+    specular += u_sunColor * smoothstep(0.985, 1.0, sparkleHash) * 0.12 * ndl;
 
     for (int i = 0; i < FLUID_POINT_LIGHTS; i++) {
         if (i >= u_pointLightCount) break;

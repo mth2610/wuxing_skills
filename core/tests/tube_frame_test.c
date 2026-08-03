@@ -408,7 +408,7 @@ static int FileHas(const char *path, const char *needle)
 
 static void Test_MirrorStillMatchesSource(void)
 {
-    const char *pm = "core/geometry/pm_tube.inl";
+    const char *pm = "core/geometry/pm_sweep_legacy.inl";
     const char *c = "core/trails/trail_system.c";
 
     // THE FRAME, which now lives in the one tube builder the tree has. The trail
@@ -440,9 +440,9 @@ static void Test_MirrorStillMatchesSource(void)
     // so a tube could never be SEEN to flow — the texture was nailed to the mesh
     // and only travelled with it. Invisible on the water stream, which fires and
     // stops; fatal on a volumetric trail, where the flow IS the effect.
-    CHECK(FileHas("core/geometry/pm_tube.inl", "+ uvOffset;"),
+    CHECK(FileHas("core/geometry/pm_sweep_legacy.inl", "+ uvOffset;"),
           "the tube's v coordinate can still be offset, which is what makes it flow");
-    CHECK(FileHas("core/geometry/pm_tube.inl",
+    CHECK(FileHas("core/geometry/pm_sweep_legacy.inl",
                   "ProceduralMesh_DrawTubeEx(data, uvLengthScale, 0.0f);"),
           "and the old entry point still forwards, so existing callers are unchanged");
     CHECK(FileHas(c, "cfg.useTransportFrame = true;"),
@@ -459,9 +459,9 @@ static void Test_MirrorStillMatchesSource(void)
 
     // The teardrop and its caps come from the module's own default, which is
     // where they already were.
-    CHECK(FileHas("core/geometry/pm_tube.inl", "cfg.tailApexFactor = 0.25f;"),
+    CHECK(FileHas("core/geometry/pm_sweep_legacy.inl", "cfg.tailApexFactor = 0.25f;"),
           "the tail still comes to a point");
-    CHECK(FileHas("core/geometry/pm_tube.inl", "cfg.headApexFactor = 0.80f;"),
+    CHECK(FileHas("core/geometry/pm_sweep_legacy.inl", "cfg.headApexFactor = 0.80f;"),
           "and the head is still capped and rounded");
 
     // THE DEFORMATION READS THE ASSET. A second procedural field that merely
@@ -470,10 +470,31 @@ static void Test_MirrorStillMatchesSource(void)
     // would change with no edit to explain it.
     CHECK(FileHas(c, "cfg.noisePixels = (const unsigned char *)s_tubeNoiseImg.data;"),
           "the tube's vertex deform samples volume_noise.png, not a lookalike");
-    CHECK(FileHas("core/geometry/pm_tube.inl", "if (cfg->noisePixels != NULL)"),
+    // The deform itself moved to core/deform/mesh_deform.h (03/08/2026): the
+    // tube is a consumer now, not the owner. Pin it at BOTH ends — the tube
+    // still choosing image-over-procedural, and the module still wrapping —
+    // because asserting only the call site would let the sampler be rewritten
+    // underneath every consumer with no test going red.
+    // The shape is the caller's now. This block used to be the whole config,
+    // hard-coded, so every volume trail inherited the water-stream teardrop.
+    CHECK(FileHas(c, "if (t->tubeConfig != NULL)") &&
+              FileHas(c, "cfg = *t->tubeConfig;"),
+          "a caller can supply the tube's whole shape");
+    CHECK(FileHas(c, "cfg.noiseAmp = t->tubeNoiseAmp;") &&
+              FileHas(c, "cfg.noiseOffset = -t->uvScrollOffset * 0.5f;"),
+          "...while the RUNTIME fields stay the trail's — those track its clock, "
+          "not the caller's authoring");
+    CHECK(FileHas("core/geometry/procedural_mesh_utils.h", "float capsuleFloor;"),
+          "and capsuleFloor can switch the teardrop profile off entirely");
+    CHECK(FileHas("core/geometry/pm_sweep_legacy.inl", "cfg->noisePixels != NULL") &&
+              FileHas("core/geometry/pm_sweep_legacy.inl", "MESH_DEFORM_PRESET_TUBE_CHURN"),
           "...with the procedural field kept only as the fallback");
-    CHECK(FileHas("core/geometry/pm_tube.inl", "int x1 = ((x0 + 1) % w + w) % w"),
+    CHECK(FileHas("core/deform/mesh_deform.c", "int x1 = ((x0 + 1) % w + w) % w"),
           "and sampled with WRAP on both axes — clamping creases a closed section");
+    CHECK(FileHas("core/geometry/pm_sweep_legacy.inl", "deform += PMTubeDeformNoise(") &&
+              FileHas("core/geometry/pm_sweep_legacy.inl", "return d.radiusDelta;"),
+          "the tube adds the module's radiusDelta, not (radiusScale - 1) — that "
+          "subtraction loses the low bits whenever the term is small against 1");
     CHECK(FileHas(c, "if (!t->tubeSingleSided) rlDisableBackfaceCulling();"),
           "the double wall — the tube's free rim — is switchable");
     CHECK(FileHas(c, "rlDrawRenderBatchActive(); if (!t->tubeSingleSided)"),

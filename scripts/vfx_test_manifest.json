@@ -285,6 +285,18 @@
       "draw_call": "VFX_ComposeShockRing($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, $PROG)"
     },
     {
+      "source": "common/vc_smoke_column.inl",
+      "fn": "VFX_ComposeSmokeColumn",
+      "label": "SMOKE COLUMN",
+      "category": "common",
+      "fixture": "static",
+      "lifecycle": "trail",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeSmokeColumn($POS, VC_MAT_METAL, 0.55f, 3.0f, VFX_COLUMN_SMOKE, false)",
+      "kill_fn": "VFX_SmokeColumn_Stop"
+    },
+    {
       "source": "common/vc_smoke_puff.inl",
       "fn": "VFX_ComposeSmokePuff",
       "label": "SMOKE PUFF",

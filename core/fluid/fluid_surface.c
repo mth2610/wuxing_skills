@@ -216,12 +216,12 @@ void FluidSurface_Capture(Camera3D camera) {
     EndBlendMode(); rlDrawRenderBatchActive(); rlEnableDepthTest(); rlEnableDepthMask(); EndMode3D(); EndTextureMode();
     Vector2 texel={1.0f/s_capture.texture.width,1.0f/s_capture.texture.height};
     float depthRange=s_reconstructionRadius*9.0f;
-    int filterRadius=GfxQuality_Get()>=GFX_HIGH?8:
+    int filterRadius=GfxQuality_Get()>=GFX_HIGH?10:
                      (GfxQuality_Get()>=GFX_MED?5:3);
     Matrix inverseProjection=MatrixInvert(s_fluidProjection);
-    /* HIGH spends three separable rounds to fully merge dense orb particles.
+    /* HIGH spends four separable rounds to fully merge dense orb particles.
      * MED/LOW keep fewer rounds for splash and detached spray. */
-    int reconstructionRounds=GfxQuality_Get()>=GFX_HIGH?3:
+    int reconstructionRounds=GfxQuality_Get()>=GFX_HIGH?4:
                              (GfxQuality_Get()>=GFX_MED?2:1);
     for (int iteration=0; iteration<reconstructionRounds; ++iteration) {
         Vector2 horizontal={1.0f,0.0f}, vertical={0.0f,1.0f};

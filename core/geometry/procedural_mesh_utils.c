@@ -39,7 +39,10 @@ static float ProceduralMesh__Noise2(int ix, int iz, int seed)
  * =========================================================================*/
 
 #include "pm_core_shapes.inl"   // Hình học cơ bản (Sphere, Cylinder, Plane...)
-#include "pm_tube.inl"          // Dòng chảy, Vòi rồng (Bezier, TubeMesh)
+#include "pm_sweep_legacy.inl"
+#include "pm_tube.inl"
+#include "pm_droplet.inl"
+#include "pm_capsule.inl"          // Dòng chảy, Vòi rồng (Bezier, TubeMesh)
 #include "pm_water_waves.inl"   // Mặt nước, Sóng cuộn (WavePlane, CurlingWave)
 #include "pm_rocks.inl"         // Đá Low-poly, Mảnh vỡ (Rock, ShardCluster)
 #include "pm_magic_effects.inl" // Hiệu ứng phép (VortexFunnel, Fissure nứt đất)

@@ -49,7 +49,7 @@ typedef struct {
 static TubeEmitter emitters[MAX_TUBE_EMITTERS];
 static int s_skillIndex = -1;
 
-static TubeMeshConfig s_waterTubeConfig;
+static PMDropletConfig s_waterTubeConfig;
 // F0 purge: ImpactBurstConfig and VFX_TriggerImpactBurst are deleted. The
 // successor takes no config struct — the E6 package IS the tuning, and
 // `severity01` is the only dial it exposes on purpose.
@@ -130,7 +130,10 @@ void InitTubeSkill(int screenWidth, int screenHeight) {
   SkillCurve_SetConstant(&s_mistAlphaCurve,    1.0f);
   SkillCurve_SetConstant(&s_mistEmissiveCurve, 1.0f);
 
-  s_waterTubeConfig = ProceduralMesh_DefaultTubeConfig();
+  /* Giọt nước — module riêng core/geometry/pm_droplet.inl. Mũi nhọn ở đuôi,
+   * chỏm cầu ở đầu, tự khép. Trước 04/08/2026 mọi ống đều nhận chung một thấu
+   * kính đối xứng có nắp nón: không phải giọt nước, cũng không phải ống. */
+  s_waterTubeConfig = PMDroplet_DefaultConfig();
 
   RebuildSplashField();
   // s_tubeMistField is kept for backward compat (not used in Update — we use

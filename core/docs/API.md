@@ -382,6 +382,22 @@
 ```
 **Structs** (fields in header): FlowMapConfig, FlowMap
 
+### `core/deform/mesh_deform.h`
+```c
+  void MeshDeform_Clear(MeshDeformField *f);
+  bool MeshDeform_AddLayer(MeshDeformField *f, MeshDeformLayer layer);
+  MeshDeformField MeshDeform_CreatePreset(MeshDeformPreset preset);
+  MeshDeformResult MeshDeform_Evaluate(const MeshDeformField *f, Vector2 surf, Vector2 mat, float time, Vector3 normal, Vector3 axis, Vector3 tangent);
+  float MeshDeform_EvaluateLayer(const MeshDeformField *f, const MeshDeformLayer *L, Vector2 surf, Vector2 mat, float time);
+  float MeshDeform_SampleImage(const unsigned char *px, int w, int h, int channel, float u, float v);
+  float MeshDeform_SampleLattice(float u, float v, float w, int periodU, int periodV);
+  void MeshDeform_PackGPU(const MeshDeformField *f, float *outFloats , float *outMeta );
+  MeshDeformLocs MeshDeform_CacheLocations(Shader shader);
+  void MeshDeform_Apply(const MeshDeformField *f, Shader shader, const MeshDeformLocs *locs);
+```
+**Enums:** MeshDeformKind { MESH_DEFORM_NOISE_CHANNEL,MESH_DEFORM_SINE,MESH_DEFORM_CURL,MESH_DEFORM_KIND_COUNT };MeshDeformDirection { MESH_DEFORM_DIR_NORMAL_SCALE,MESH_DEFORM_DIR_NORMAL_OFFSET,MESH_DEFORM_DIR_AXIS,MESH_DEFORM_DIR_TANGENT,MESH_DEFORM_DIR_COUNT } MeshDeformPreset { MESH_DEFORM_PRESET_TUBE_CHURN,MESH_DEFORM_PRESET_BEAM_RIPPLE,MESH_DEFORM_PRESET_SMOKE_COLUMN,MESH_DEFORM_PRESET_COUNT }
+**Structs** (fields in header): MeshDeformLayer, MeshDeformField, MeshDeformResult, MeshDeformLocs
+
 ### `core/uv/uv_deform.h`
 ```c
   void UVDeform_Clear(UVDeformField *f);

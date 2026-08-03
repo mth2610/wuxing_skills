@@ -342,7 +342,7 @@ static int FileHas(const char *path, const char *needle)
 static void Test_MirrorMatchesTheSource(void)
 {
     const char *inl = "core/composition/common/vc_beam.inl";
-    const char *pmt = "core/geometry/pm_tube.inl";
+    const char *pmt = "core/geometry/pm_sweep_legacy.inl";
 
     CHECK(FileHas(inl, "#define BEAM_ASPECT_K 0.05f"), "the aspect is what this test mirrors");
     CHECK(FileHas(inl, "#define BEAM_WANDER 1.15f"), "so is the wander");
@@ -351,8 +351,24 @@ static void Test_MirrorMatchesTheSource(void)
     // THE BORROWED CONSTANT. If pm_tube.inl's profile floor ever moves, every
     // beam rescales silently — so the needle is on the BUILDER's line, not on
     // this file's copy of the number.
-    CHECK(FileHas(pmt, "float baseCapsule = 0.3f + 0.7f * sqrtf(fmaxf(0.0f, sinf(t * PI))) * cfg->capsuleTailExp;"),
-          "the builder's profile floor is still 0.3, which BEAM_PROFILE_BASE mirrors");
+    //
+    // The single hard-coded envelope became a set of named PROFILES on
+    // 03/08/2026, because one formula was serving three different shapes: a
+    // water droplet, a pipe, and whatever a volume trail needed. The beam is on
+    // none of the new ones — it stays on PM_PROFILE_LEGACY_CAPSULE, which is
+    // enum value 0, so a `= {0}` config still lands there and the beam's numbers
+    // still mean what they meant. Pin all three halves of that claim.
+    CHECK(FileHas(pmt, "float capFloor = (cfg->capsuleFloor > 0.0f) ? cfg->capsuleFloor : 0.3f;"),
+          "the builder's profile floor still DEFAULTS to 0.3, which BEAM_PROFILE_BASE mirrors");
+    CHECK(FileHas(pmt, "return capFloor + (1.0f - capFloor) *") &&
+              FileHas(pmt, "sqrtf(fmaxf(0.0f, sinf(t * PI))) * cfg->capsuleTailExp;"),
+          "...and the hump it scales is unchanged, so an unconfigured tube is "
+          "the same shape it was");
+    CHECK(FileHas("core/geometry/procedural_mesh_utils.h", "PM_PROFILE_LEGACY_CAPSULE = 0,"),
+          "...and the legacy profile is enum 0, so a {0} config keeps it");
+    CHECK(!FileHas("core/composition/common/vc_beam.inl", "capsuleFloor") &&
+              !FileHas("core/composition/common/vc_beam.inl", "PM_PROFILE_"),
+          "the beam asks for neither, so it is still on the legacy path");
     CHECK(FileHas(inl, "cfg.capsuleTailExp = 0.0f;"),
           "and the beam switches the capsule off, so that floor is the whole profile");
     CHECK(FileHas(inl, "cfg.tailTaperMin = 1.0f; cfg.tailTaperMax = 1.0f;"),

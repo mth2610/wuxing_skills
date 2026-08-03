@@ -1,9 +1,9 @@
 /* ===========================================================================
- * ỐNG NƯỚC — mesh độc lập
+ * GIỌT NƯỚC — mesh độc lập
  *
- * Bán kính hằng, hai đầu MỞ. Mọi hình dạng nhìn thấy đều đến từ deform.
+ * Mũi nhọn ở ĐUÔI (luật luỹ thừa) nối liền CHỎM CẦU ở đầu. Bất đối xứng — đó là thứ làm nó là giọt nước. Tự khép hai đầu nên KHÔNG có nắp.
  *
- *      r(t) = 1
+ *      r(t) = (t/h)^p  |  sqrt(1-u^2)
  *
  * ĐỘC LẬP HOÀN TOÀN. File này không dùng chung gì với pm_tube/pm_droplet/
  * pm_capsule còn lại: cấu hình, dữ liệu mesh, dựng và vẽ đều của riêng nó. Một
@@ -11,10 +11,12 @@
  * bị thay thế — nó không cho ra hình nào đúng cả.
  *
  * KHÔNG CÓ NẮP. Nắp cũ là hai quạt tam giác có đỉnh đẩy ra theo tiếp tuyến,
- * tức hai hình NÓN — cái "đầu bút chì". Hình này mở hai đầu theo định nghĩa.
+ * tức hai hình NÓN — cái "đầu bút chì". Hình này tự khép bằng chính đường bao.
  * ===========================================================================*/
 
-static float PMTubeShapeDeformNoise(const PMTubeConfig *cfg, int radialSegs, int j,
+#include "pm_droplet_math.inl"
+
+static float PMDropletDeformNoise(const PMDropletConfig *cfg, int radialSegs, int j,
                                float t, float time, Vector3 normal, Vector3 tangent,
                                Vector3 *outOffset) {
     outOffset->x = outOffset->y = outOffset->z = 0.0f;
@@ -51,7 +53,74 @@ static float PMTubeShapeDeformNoise(const PMTubeConfig *cfg, int radialSegs, int
     return d.radiusDelta;
 }
 
-static void PMTubeSamplePath(const Vector3 *path, int pathCount, float t, Vector3 *outPos, Vector3 *outTangent) {
+void PMDroplet_BuildBezier(PMDropletMesh *out, Vector3 p0, Vector3 p1,
+                              Vector3 p2, Vector3 p3, float baseRadius,
+                              float flowProgress, float time, int segments,
+                              int radialSegs, const PMDropletConfig *cfg) {
+    if (out == NULL) return;
+
+    PMDropletConfig defaultCfg;
+    if (cfg == NULL) { defaultCfg = PMDroplet_DefaultConfig(); cfg = &defaultCfg; }
+
+    if (segments > TUBE_MESH_MAX_SEGMENTS) segments = TUBE_MESH_MAX_SEGMENTS;
+    if (radialSegs > TUBE_MESH_MAX_RADIAL) radialSegs = TUBE_MESH_MAX_RADIAL;
+    out->segments = segments;
+    out->radialSegs = radialSegs;
+
+    float sinPhi[TUBE_MESH_MAX_RADIAL];
+    float cosPhi[TUBE_MESH_MAX_RADIAL];
+    for (int j = 0; j < radialSegs; j++) {
+        float phi = (float)j * (2.0f * PI) / (float)radialSegs;
+        sinPhi[j] = sinf(phi); cosPhi[j] = cosf(phi);
+    }
+
+    for (int i = 0; i <= segments; i++) {
+        float t = (float)i / (float)segments;
+        float currentT = t * flowProgress;
+
+        Vector3 pos = ProceduralMesh_BezierPoint(p0, p1, p2, p3, currentT);
+        Vector3 tangent = Vector3Normalize(ProceduralMesh_BezierTangent(p0, p1, p2, p3, currentT));
+
+        Vector3 up = (Vector3){0.0f, 1.0f, 0.0f};
+        if (fabsf(tangent.y) > 0.99f) up = (Vector3){1.0f, 0.0f, 0.0f};
+        Vector3 right = Vector3Normalize(Vector3CrossProduct(up, tangent));
+        up = Vector3CrossProduct(tangent, right);
+
+        float baseCapsule = PMDropletRadius(t, cfg->tailSharp, cfg->headFrac);
+        float tailTaper = 1.0f;
+        float capsuleCurve = baseCapsule * tailTaper;
+        float headWeight = 1.0f;
+
+        if (i == 0) { out->tailTangent = tangent; out->tailCenter = pos; }
+        if (i == segments) { out->headTangent = tangent; out->headCenter = pos; }
+
+        float wobble = cfg->wobbleAmplitude * sinf(t * PI * cfg->wobbleFrequency + time * cfg->wobbleSpeed);
+        Vector3 twistedUp = Vector3Add(Vector3Scale(up, cosf(wobble)), Vector3Scale(right, sinf(wobble)));
+        Vector3 twistedRight = Vector3Normalize(Vector3CrossProduct(twistedUp, tangent));
+
+        for (int j = 0; j < radialSegs; j++) {
+            Vector3 normal = Vector3Add(Vector3Scale(twistedRight, cosPhi[j]), Vector3Scale(twistedUp, sinPhi[j]));
+            out->normals[i][j] = normal;
+
+            float phi = (float)j * (2.0f * PI) / (float)radialSegs;
+            float deform1 = sinf(t * cfg->deform1FreqT + phi * cfg->deform1FreqPhi + time * cfg->deform1Speed);
+            float deform2 = sinf(t * cfg->deform2FreqT - phi * cfg->deform2FreqPhi - time * cfg->deform2Speed);
+            float deform = 1.0f + deform1 * cfg->deform1Amp + deform2 * cfg->deform2Amp;
+            Vector3 dOffset;
+            deform += PMDropletDeformNoise(cfg, radialSegs, j, t, time, normal,
+                                        tangent, &dOffset);
+
+            float finalRadius = baseRadius * capsuleCurve * headWeight * deform;
+            out->rings[i][j] = Vector3Add(
+                Vector3Add(pos, Vector3Scale(normal, finalRadius)), dOffset);
+        }
+
+        if (i == 0) out->tailRadius = baseRadius * capsuleCurve * headWeight;
+        if (i == segments) out->headRadius = baseRadius * capsuleCurve * headWeight;
+    }
+}
+
+static void PMDropletSamplePath(const Vector3 *path, int pathCount, float t, Vector3 *outPos, Vector3 *outTangent) {
     if (pathCount <= 0) return;
     if (pathCount == 1) {
         *outPos = path[0];
@@ -92,15 +161,15 @@ static void PMTubeSamplePath(const Vector3 *path, int pathCount, float t, Vector
     *outTangent = Vector3Normalize(Vector3Subtract(path[pathCount - 1], path[pathCount - 2]));
 }
 
-void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
+void PMDroplet_BuildAlongPath(PMDropletMesh *out, const Vector3 *pathPoints,
                                       int pathCount, float baseRadius,
                                       float startT, float endT, float time,
                                       int segments, int radialSegs,
-                                      const PMTubeConfig *cfg) {
+                                      const PMDropletConfig *cfg) {
     if (out == NULL || pathPoints == NULL || pathCount <= 0) return;
 
-    PMTubeConfig defaultCfg;
-    if (cfg == NULL) { defaultCfg = PMTube_DefaultConfig(); cfg = &defaultCfg; }
+    PMDropletConfig defaultCfg;
+    if (cfg == NULL) { defaultCfg = PMDroplet_DefaultConfig(); cfg = &defaultCfg; }
 
     if (segments > TUBE_MESH_MAX_SEGMENTS) segments = TUBE_MESH_MAX_SEGMENTS;
     if (radialSegs > TUBE_MESH_MAX_RADIAL) radialSegs = TUBE_MESH_MAX_RADIAL;
@@ -126,7 +195,7 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
 
         Vector3 pos;
         Vector3 tangent;
-        PMTubeSamplePath(pathPoints, pathCount, currentT, &pos, &tangent);
+        PMDropletSamplePath(pathPoints, pathCount, currentT, &pos, &tangent);
 
         Vector3 right, up;
         if (cfg->useTransportFrame && haveCarried) {
@@ -176,7 +245,7 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
         prevTangent = tangent;
         haveCarried = true;
 
-        float baseCapsule = 1.0f;
+        float baseCapsule = PMDropletRadius(t, cfg->tailSharp, cfg->headFrac);
         float tailTaper = 1.0f;
         float capsuleCurve = baseCapsule * tailTaper;
         float headWeight = 1.0f;
@@ -197,7 +266,7 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
             float deform2 = sinf(t * cfg->deform2FreqT - phi * cfg->deform2FreqPhi - time * cfg->deform2Speed);
             float deform = 1.0f + deform1 * cfg->deform1Amp + deform2 * cfg->deform2Amp;
             Vector3 dOffset;
-            deform += PMTubeShapeDeformNoise(cfg, radialSegs, j, t, time, normal,
+            deform += PMDropletDeformNoise(cfg, radialSegs, j, t, time, normal,
                                         tangent, &dOffset);
 
             float finalRadius = baseRadius * capsuleCurve * headWeight * deform;
@@ -211,11 +280,11 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
 }
 
 
-void PMTube_Draw(const PMTubeMesh *data, float uvLengthScale) {
-    PMTube_DrawEx(data, uvLengthScale, 0.0f);
+void PMDroplet_Draw(const PMDropletMesh *data, float uvLengthScale) {
+    PMDroplet_DrawEx(data, uvLengthScale, 0.0f);
 }
 
-void PMTube_DrawEx(const PMTubeMesh *data, float uvLengthScale,
+void PMDroplet_DrawEx(const PMDropletMesh *data, float uvLengthScale,
                                float uvOffset) {
     if (data == NULL) return;
 
@@ -257,8 +326,10 @@ void PMTube_DrawEx(const PMTubeMesh *data, float uvLengthScale,
 
     rlPopMatrix();
 }
-PMTubeConfig PMTube_DefaultConfig(void) {
-  PMTubeConfig cfg = {0};
+PMDropletConfig PMDroplet_DefaultConfig(void) {
+  PMDropletConfig cfg = {0};
+  cfg.tailSharp = 1.6f;
+  cfg.headFrac = 0.34f;
   cfg.useTransportFrame = true;
   return cfg;
 }

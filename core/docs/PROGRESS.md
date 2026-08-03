@@ -40,6 +40,111 @@ consumers: `trail_deform.fs` mode 2 (proved bit-identical over ~60k samples,
 `u_useFlow` branch is now a property of the flow), and `aura_shell.fs`.
 Usage prose: `API_GUIDE.md` "UV module".
 
+**`VFX_ComposeSmokeColumn` (03/08/2026)** — the consumer `core/deform` was built
+for, and the answer to "is the reference technique reproducible here". It is
+assembled entirely from parts that already existed: `TRAIL_SHAPE_TUBE` for the
+volume, a `ForceField` (wind + curl) on the history nodes for buoyancy and
+wander, `core/deform` via `tubeNoiseAmp` for the surface churn, the new
+`volume_surface_*.png` sheets scrolled over it, and
+`TRAIL_WIDTH_ENVELOPE_SMOKE_WIDEN` vs `UNIFORM` for funnel vs cylinder — the
+shape question turned out to be one enum, not new code.
+
+Not a variant of `VFX_ComposeVolumeTrail`: that one is what a MOVING emitter
+leaves behind and sets `forceField = NULL` on purpose. A column's emitter does
+not move, so the force field is the entire effect. Two archetypes, one primitive.
+
+Bench: NEW FX tab, `SMOKE COLUMN`, index 23. Knobs `smokecolumn_rise/curl/
+noise/scroll/alpha/tile` hot-reload from `tuning.cfg`.
+
+**Three sandbox-generator gaps this surfaced**, all now fixed in
+`scripts/sync_vfx_test.py`: a `trail` lifecycle was hard-coded to require a
+`follower` fixture (a column is a trail with a STILL source); `infer_entry` had
+no `static` branch, so it fell through to `persistent` and silently rewrote the
+fixture declared in `LIFECYCLE_SPECS`; and `gen_draw_block` could only emit
+`draw_call` or follower spawn blocks.
+
+**And one landmine re-earned the hard way:** `VC_SmokeColumn_Update` was written
+without `static`, so `ARCH_UPDATE_RE` did not match, `scan_archetypes` did not
+see an archetype pair, and the generator moved the include to `common.inl` and
+emitted NO update dispatch — the pool would never have ticked. It compiles
+clean and the effect is simply absent. The `Update`/`Draw3D` pair IS the
+declaration; `VC_SmokeColumn_Draw3D` is an empty stub for exactly that reason,
+as `vc_volume_trail.inl`'s already was.
+
+NOT VERIFIED ON SCREEN — no Vulkan instance on this machine. Specifically
+unknown: whether a stationary emitter actually lays nodes (the design relies on
+the last node RISING away from the source past `minVertexDistance = 0.045`), and
+whether the result reads as smoke or as a churning pipe. The spawn log line
+prints kind/shape/rise/curl/noise/scroll so the first question is answerable
+from the log alone.
+
+**`core/deform/` — mesh displacement (03/08/2026, landed).** The vertex-space
+twin of `core/uv/`: `P' = P + D(P, N, mat, t)`. `MeshDeformField` with typed
+layers (NOISE_CHANNEL / SINE / CURL), four direction modes — `NORMAL_SCALE`
+(radius breathes, silhouette preserved) vs `NORMAL_OFFSET` (pushed off the
+normal, wider and asymmetric) vs AXIS / TANGENT — and the envelope **shared with
+`core/uv`** rather than re-declared, because the along-surface gate that weights
+a wave, blends a texture layer and scales a displacement is one concept.
+
+It is a MOVE, not a rewrite. The formula lived hard-coded inside
+`core/geometry/pm_tube.inl` — two octaves, fixed channels, fixed weights, tubes
+only, and the block was **copy-pasted into both builders**. Now one call site,
+and any mesh can use it. Two shipped effects depend on those exact numbers
+(trail tubes on the image source, the beam on the procedural lattice);
+`core/tests/mesh_deform_test.c` proves both are bit-identical after the move,
+plus a negative control showing the wrong grouping really would have differed.
+`TubeMeshConfig.noiseField` is append-only, so every existing caller is untouched.
+
+**No GLSL mirror, deliberately.** No vertex shader in this engine samples a
+texture, so vertex texture fetch is unproven on rlvk; a mirror written now would
+be a shader nobody can run and nobody can verify. The pack is GPU-shaped
+(`vec4`-only, enum-as-float, location cache) so the move stays a port.
+
+**Volume surface sheets (03/08/2026).** `scripts/gen_volume_surface.py` — one
+parameterised script, three sheets (smoke / fire / steam), STRAND layout with
+every channel TILE. They are a MATERIAL wrapped around a deformed volume, not a
+SHAPE like `smoke_strand.png`: the silhouette comes from the geometry, the sheet
+supplies detail only. Registered along with `volume_noise.png`, which had been
+outside the registry entirely. The `NOISE` layout was added to
+`TEXTURE_PACKING.md` for it — four decorrelated scalar fields, pure data.
+
+All four are marked `orphaned` on purpose: their consumer, a composed volume
+smoke/fire column, is not built. The validator prints them every configure until
+one exists or they are deleted.
+
+**A bug the seam instrument caught immediately:** the first generator scaled the
+sample coordinate (`u * 1.7`), which breaks the integer-harmonic construction
+that makes the sheet seamless — `u` is periodic with period 1, `u * 1.7` is not.
+The wrap read 3.4x the interior variation. Channels are differentiated by
+frequency RANGE now, and the measurement itself had to be fixed first: comparing
+column 0 with column SIZE-1 for equality treats two *adjacent* columns as
+duplicates and reports a healthy texture as broken. The honest test is the wrap
+step against the texture's own local variation.
+
+**Texture packing is now a hard rule (03/08/2026).** `assets/TEXTURE_PACKING.md`
+defines what each RGBA channel of a VFX sheet may carry: four layouts (`STRAND`,
+`FLOW`, `OPAQUE`, `FLIPBOOK`) plus an explicitly deprecated `SPLIT_LEGACY`
+bucket, a machine-checkable channel grammar in every profile's `channels`
+string, and nine numbered rules. `smoke_strand.png` is the reference sheet.
+
+It is enforced, not merely written: `scripts/validate_vfx_surface_registry.py`
+now parses the grammar and runs from `CMakeLists.txt` at configure time with
+`FATAL_ERROR` on failure. Verified by deliberately breaking the manifest twice
+(wrong slot; a packed profile regrowing a second file) — both blocked the
+configure. `core/tests/texture_packing_test.c` pins the wiring itself.
+
+**Why that mattered:** the validator already existed, was wired to nothing, and
+had been failing on five profiles for an unknown length of time — two of them
+being that `energy_wisp.png` and `smoke_strand.png`, the two best sheets in the
+repo, were not catalogued in `assets/INDEX.md` at all. A rule nothing runs is
+not a rule.
+
+**Open debt, now counted:** the validator reports 11 constant channels across 5
+`SPLIT_LEGACY` assets (`smoke_ribbon` flow+mask, `energy_tube`/`smoke_tube`/
+`fire_tube` flow). Each is a standalone RG flow map wasting B and A — exactly
+what the `FLOW` layout exists to reclaim, folding 9 files into 4. Not done here:
+it changes live rendering and this machine cannot see the result.
+
 **Consequence worth a decision:** `vc_shield_shell.inl` was `FlowMap`'s only C
 consumer, so moving it to `SurfaceFlow` leaves the `FlowMap` *C* API
 (`Create`/`Apply`/`Unload`, the two texture generators) with **zero callers**.

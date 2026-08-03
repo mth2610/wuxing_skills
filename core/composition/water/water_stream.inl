@@ -23,11 +23,15 @@ void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, floa
 
     rlColor4ub(255, 255, 255, 255);
 
-    TubeMeshData mesh;
-    TubeMeshConfig config = ProceduralMesh_DefaultTubeConfig();
-    ProceduralMesh_BuildTube(&mesh, p0, p1, p2, p3, radius,
-                             progress, time, 24, 16, &config);
-    ProceduralMesh_DrawTube(&mesh, 2.0f);
+    /* GIỌT NƯỚC — module riêng (core/geometry/pm_droplet.inl): mũi nhọn ở đuôi,
+     * chỏm cầu ở đầu, tự khép nên không có nắp nón. Đây là hình hiệu ứng này
+     * vẫn luôn ĐỊNH là vẽ; trước 04/08/2026 nó chỉ nhận được một thấu kính đối
+     * xứng có đầu bút chì, vì một đường bao duy nhất phục vụ mọi consumer. */
+    PMDropletMesh mesh;
+    PMDropletConfig config = PMDroplet_DefaultConfig();
+    PMDroplet_BuildBezier(&mesh, p0, p1, p2, p3, radius,
+                          progress, time, 24, 16, &config);
+    PMDroplet_Draw(&mesh, 2.0f);
 
     SkillManager_EndShader();
     EndShaderMode();
@@ -82,13 +86,13 @@ void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float r
 
     float individualTime = time + phaseOffset;
 
-    TubeMeshData mesh;
-    TubeMeshConfig config = ProceduralMesh_DefaultTubeConfig();
+    PMDropletMesh mesh;
+    PMDropletConfig config = PMDroplet_DefaultConfig();
 
-    ProceduralMesh_BuildTubeAlongPath(&mesh, pathPoints, pathCount, radius,
-                                      clampedStartT, clampedEndT, individualTime,
-                                      24, 16, &config);
-    ProceduralMesh_DrawTube(&mesh, 2.0f);
+    PMDroplet_BuildAlongPath(&mesh, pathPoints, pathCount, radius,
+                             clampedStartT, clampedEndT, individualTime,
+                             24, 16, &config);
+    PMDroplet_Draw(&mesh, 2.0f);
 }
 
 void VFX_EndWaterStreams(void)

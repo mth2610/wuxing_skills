@@ -1,6 +1,7 @@
 #ifndef PROCEDURAL_MESH_UTILS_H
 #define PROCEDURAL_MESH_UTILS_H
 
+#include "core/deform/mesh_deform.h"
 #include "raylib.h"
 
 // Procedural drawing utilities utilizing raw rlgl calls
@@ -75,11 +76,65 @@ Vector3 ProceduralMesh_BezierTangent(Vector3 p0, Vector3 p1, Vector3 p2,
  * RenderCustom3DTube gốc, chỉ là được tham số hóa để mỗi skill có "chữ ký"
  * riêng.
  */
+/* HỒ SƠ HÌNH DẠNG — mỗi cái một công thức, không phải một công thức bị bẻ.
+ *
+ * Trước 03/08/2026 chỉ có MỘT đường bao, `0.3 + 0.7*sqrt(sin(t*PI))`, cộng hai
+ * chóp nón dán vào hai đầu. Đó là thấu kính ĐỐI XỨNG với đầu bút chì: không
+ * phải giọt nước (giọt nước bất đối xứng), cũng không phải ống nước (ống có bán
+ * kính hằng và hai đầu mở). Mọi consumer đều nhận đúng hình đó dù cần hình gì. */
+typedef enum
+{
+  /* Đường bao cũ, giữ nguyên từng float. Giá trị 0 nên caller không khai báo
+   * gì thì không đổi gì. */
+  PM_PROFILE_LEGACY_CAPSULE = 0,
+  /* GIỌT NƯỚC thật: mũi nhọn ở ĐUÔI thon theo luật luỹ thừa, nối liền vào CHỎM
+   * CẦU ở đầu. Bất đối xứng — đó là thứ làm nó là giọt nước. Chỏm cầu tự khép,
+   * nên hình này KHÔNG cần nắp: cái nắp nón chính là đầu bút chì nó thay thế. */
+  PM_PROFILE_DROPLET,
+  /* ỐNG: bán kính hằng, hai đầu MỞ. Mọi hình dạng còn lại đến từ deform. */
+  PM_PROFILE_TUBE,
+  /* CON NHỘNG thật: thân TRỤ + hai NỬA CẦU. Đối xứng, tự khép, mặt liền tại
+   * hai chỗ nối. Đừng nhầm với PM_PROFILE_LEGACY_CAPSULE, vốn là thấu kính. */
+  PM_PROFILE_CAPSULE,
+  /* Không phải hồ sơ — là SỐ LƯỢNG. Kiểm biên với cái này, đừng kiểm với hồ sơ
+   * cuối cùng theo tên. */
+  PM_PROFILE_COUNT
+} PMShapeProfile;
+
 typedef struct
 {
+  /* Hồ sơ hình dạng. 0 = PM_PROFILE_LEGACY_CAPSULE. DROPLET và TUBE là đường
+   * bao HOÀN CHỈNH: tailTaper/headGrowth/capsule* bên dưới bị bỏ qua, vì nhân
+   * thêm vào là bẻ lại đúng cái hình vừa định nghĩa. */
+  PMShapeProfile profile;
+  /* DROPLET: độ nhọn mũi đuôi (1 = tuyến tính, >1 = nhọn hơn). 0 = 1.6. */
+  float dropletTailSharp;
+  /* DROPLET: phần chiều dài dành cho chỏm cầu ở đầu. 0 = 0.34. */
+  float dropletHeadFrac;
+  /* CAPSULE: phần chiều dài mỗi chỏm cầu chiếm. 0 = 0.25; 0.5 = hình cầu. */
+  float capsuleCapFrac;
+
   /* --- Profile bán kính theo chiều dài ống (capsule + taper) --- */
   float capsuleTailExp; /* hệ số mũ trong sqrtf(sin(t*PI)) bo đuôi. 1.0 = mặc
                            định (nước) */
+  /* Sàn của đường bao capsule. 0 = giữ 0.3 như cũ (GIỌT NƯỚC: bóp cả hai đầu,
+   * phình giữa — đúng cho dòng nước và beam, SAI cho một cột khói, vốn phải là
+   * ống hoặc phễu). Đặt 1.0 để TẮT hẳn phần bo, cho ống thành trụ thật.
+   *
+   *   baseCapsule = floor + (1 - floor) * sqrt(sin(t*PI)) * capsuleTailExp
+   *
+   * Append-only và mặc định 0, nên mọi caller cũ không đổi một float nào. */
+  float capsuleFloor;
+
+  /* TẮT hai nắp đầu/đuôi. false (mặc định, kể cả với config {0}) = vẽ nắp như
+   * trước, nên mọi caller cũ không đổi gì.
+   *
+   * Cờ NGHỊCH đảo là cố ý: `drawCaps` mặc định false sẽ âm thầm bỏ nắp của mọi
+   * config khởi tạo bằng {0}. Một ống khói mở hai đầu cần cái này; một tia nước
+   * thì không. LƯU Ý: TrailEntity.tubeCaps là một trường CHẾT — nó được lưu ở
+   * SpawnTrailEntity rồi không ai đọc, nên nắp vẫn luôn được vẽ. Điều khiển
+   * thật nằm ở đây. */
+  bool suppressCaps;
   float tailTaperMin;   /* tỉ lệ bán kính tối thiểu ở đuôi (t=0). VD 0.15 = đuôi
                            còn 15% */
   float tailTaperMax;   /* tỉ lệ bán kính ở đầu khi taper áp dụng hết (t=1),
@@ -153,6 +208,13 @@ typedef struct
   const unsigned char *noisePixels;
   int noiseImgW, noiseImgH;
 
+  /* Trường biến dạng đầy đủ (core/deform/mesh_deform.h). NULL = dựng tại chỗ
+   * từ noiseAmp/noiseScale/noiseSpeed/noisePixels ở trên, giữ nguyên hành vi
+   * cũ từng float. Cấp trường riêng khi cần nhiều hơn hai octave, cần envelope
+   * dọc thân (khói hàn ở gốc, xoè lên cao), hoặc cần đẩy lệch khỏi normal thay
+   * vì co giãn bán kính. */
+  const MeshDeformField *noiseField;
+
   float tailApexFactor; /* VD 0.25 = đuôi nhọn vừa. Số nhỏ -> đuôi nhọn hơn */
   float headApexFactor; /* VD 0.8  = đầu bo tròn đầy. Số lớn -> đầu phồng tròn
                            hơn */
@@ -183,6 +245,7 @@ typedef struct
    * skill đã chọn (đuôi nhọn/tù, đầu bo nhiều/ít) mà không cần truyền lại cfg.
    */
   float tailApexFactor;
+  bool suppressCaps;
   float headApexFactor;
 } TubeMeshData;
 
@@ -239,6 +302,160 @@ void ProceduralMesh_DrawTube(const TubeMeshData *data, float uvLengthScale);
  */
 void ProceduralMesh_DrawTubeEx(const TubeMeshData *data, float uvLengthScale,
                                float uvOffset);
+
+/* ===========================================================================
+ * BA LOẠI MESH QUÉT ĐỘC LẬP — mỗi hình một module, không dùng chung gì
+ *
+ *   pm_tube.inl     ống nước — bán kính hằng, hai đầu mở
+ *   pm_droplet.inl  giọt nước — mũi nhọn ở đuôi, chỏm cầu ở đầu
+ *   pm_capsule.inl  con nhộng — thân trụ, hai nửa cầu
+ *
+ * KHÔNG hình nào có nắp. Nắp cũ là hai quạt tam giác có đỉnh đẩy ra theo
+ * tiếp tuyến — hai hình NÓN, cái "đầu bút chì". Ống mở hai đầu theo định
+ * nghĩa; giọt nước và con nhộng tự khép bằng chính đường bao của chúng.
+ * ===========================================================================*/
+
+/* ỐNG NƯỚC — r(t) = 1 — hai đầu MỞ */
+typedef struct
+{
+  /* Nhiễu động khung mặt cắt quanh trục tiếp tuyến. */
+  float wobbleAmplitude, wobbleFrequency, wobbleSpeed;
+  /* Hai lớp sóng sin trên bề mặt. TUẦN HOÀN theo cả t và phi, tức một đường
+   * XOẮN — bật lên là có gờ xoắn ốc chạy dọc thân, đọc ra là lốc xoáy. Để 0
+   * trừ khi thực sự muốn thế. */
+  float deform1Amp, deform1FreqT, deform1FreqPhi, deform1Speed;
+  float deform2Amp, deform2FreqT, deform2FreqPhi, deform2Speed;
+
+  /* Biến dạng bằng noise — core/deform/mesh_deform.h. */
+  float noiseAmp;    /* biên độ, theo tỉ lệ bán kính tại điểm đó */
+  float noiseScale;  /* số ô lattice dọc thân (nguồn thủ tục) */
+  float noiseSpeed;  /* tốc độ trôi của trường theo thời gian */
+  float noiseOffset; /* dịch trường DỌC thân — toạ độ vật chất, không phải hình học */
+  const unsigned char *noisePixels; /* R8G8B8A8, lát liền hai trục. NULL = lattice thủ tục */
+  int noiseImgW, noiseImgH;
+  const MeshDeformField *noiseField; /* trường đầy đủ. NULL = hai octave mặc định */
+
+  /* Khung vận chuyển song song. Bắt buộc cho đường CONG: khung dựng lại từ một
+   * vector tham chiếu toàn cục làm roll mặt cắt đổi theo hướng tiếp tuyến, nên
+   * UV bị xoắn dọc thân (đo được 14% một vòng quấn). */
+  bool useTransportFrame;
+} PMTubeConfig;
+
+typedef struct
+{
+  Vector3 rings[TUBE_MESH_MAX_SEGMENTS + 1][TUBE_MESH_MAX_RADIAL];
+  Vector3 normals[TUBE_MESH_MAX_SEGMENTS + 1][TUBE_MESH_MAX_RADIAL];
+  Vector3 tailCenter, headCenter;
+  Vector3 tailTangent, headTangent;
+  float tailRadius, headRadius;
+  int segments;
+  int radialSegs;
+} PMTubeMesh;
+
+PMTubeConfig PMTube_DefaultConfig(void);
+void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints, int pathCount,
+                          float baseRadius, float startT, float endT, float time,
+                          int segments, int radialSegs, const PMTubeConfig *cfg);
+void PMTube_Draw(const PMTubeMesh *data, float uvLengthScale);
+void PMTube_DrawEx(const PMTubeMesh *data, float uvLengthScale, float uvOffset);
+
+/* GIỌT NƯỚC — mũi nhọn ở đuôi + chỏm cầu ở đầu, tự khép */
+typedef struct
+{
+  float tailSharp; /* độ nhọn mũi đuôi. 0 = 1.6 */
+  float headFrac;  /* phần chiều dài cho chỏm cầu ở đầu. 0 = 0.34 */
+  /* Nhiễu động khung mặt cắt quanh trục tiếp tuyến. */
+  float wobbleAmplitude, wobbleFrequency, wobbleSpeed;
+  /* Hai lớp sóng sin trên bề mặt. TUẦN HOÀN theo cả t và phi, tức một đường
+   * XOẮN — bật lên là có gờ xoắn ốc chạy dọc thân, đọc ra là lốc xoáy. Để 0
+   * trừ khi thực sự muốn thế. */
+  float deform1Amp, deform1FreqT, deform1FreqPhi, deform1Speed;
+  float deform2Amp, deform2FreqT, deform2FreqPhi, deform2Speed;
+
+  /* Biến dạng bằng noise — core/deform/mesh_deform.h. */
+  float noiseAmp;    /* biên độ, theo tỉ lệ bán kính tại điểm đó */
+  float noiseScale;  /* số ô lattice dọc thân (nguồn thủ tục) */
+  float noiseSpeed;  /* tốc độ trôi của trường theo thời gian */
+  float noiseOffset; /* dịch trường DỌC thân — toạ độ vật chất, không phải hình học */
+  const unsigned char *noisePixels; /* R8G8B8A8, lát liền hai trục. NULL = lattice thủ tục */
+  int noiseImgW, noiseImgH;
+  const MeshDeformField *noiseField; /* trường đầy đủ. NULL = hai octave mặc định */
+
+  /* Khung vận chuyển song song. Bắt buộc cho đường CONG: khung dựng lại từ một
+   * vector tham chiếu toàn cục làm roll mặt cắt đổi theo hướng tiếp tuyến, nên
+   * UV bị xoắn dọc thân (đo được 14% một vòng quấn). */
+  bool useTransportFrame;
+} PMDropletConfig;
+
+typedef struct
+{
+  Vector3 rings[TUBE_MESH_MAX_SEGMENTS + 1][TUBE_MESH_MAX_RADIAL];
+  Vector3 normals[TUBE_MESH_MAX_SEGMENTS + 1][TUBE_MESH_MAX_RADIAL];
+  Vector3 tailCenter, headCenter;
+  Vector3 tailTangent, headTangent;
+  float tailRadius, headRadius;
+  int segments;
+  int radialSegs;
+} PMDropletMesh;
+
+PMDropletConfig PMDroplet_DefaultConfig(void);
+void PMDroplet_BuildAlongPath(PMDropletMesh *out, const Vector3 *pathPoints, int pathCount,
+                          float baseRadius, float startT, float endT, float time,
+                          int segments, int radialSegs, const PMDropletConfig *cfg);
+void PMDroplet_Draw(const PMDropletMesh *data, float uvLengthScale);
+void PMDroplet_DrawEx(const PMDropletMesh *data, float uvLengthScale, float uvOffset);
+
+/* CON NHỘNG — trụ + hai nửa cầu, tự khép */
+typedef struct
+{
+  float capFrac; /* phần chiều dài mỗi chỏm cầu. 0 = 0.25; 0.5 = hình cầu */
+  /* Nhiễu động khung mặt cắt quanh trục tiếp tuyến. */
+  float wobbleAmplitude, wobbleFrequency, wobbleSpeed;
+  /* Hai lớp sóng sin trên bề mặt. TUẦN HOÀN theo cả t và phi, tức một đường
+   * XOẮN — bật lên là có gờ xoắn ốc chạy dọc thân, đọc ra là lốc xoáy. Để 0
+   * trừ khi thực sự muốn thế. */
+  float deform1Amp, deform1FreqT, deform1FreqPhi, deform1Speed;
+  float deform2Amp, deform2FreqT, deform2FreqPhi, deform2Speed;
+
+  /* Biến dạng bằng noise — core/deform/mesh_deform.h. */
+  float noiseAmp;    /* biên độ, theo tỉ lệ bán kính tại điểm đó */
+  float noiseScale;  /* số ô lattice dọc thân (nguồn thủ tục) */
+  float noiseSpeed;  /* tốc độ trôi của trường theo thời gian */
+  float noiseOffset; /* dịch trường DỌC thân — toạ độ vật chất, không phải hình học */
+  const unsigned char *noisePixels; /* R8G8B8A8, lát liền hai trục. NULL = lattice thủ tục */
+  int noiseImgW, noiseImgH;
+  const MeshDeformField *noiseField; /* trường đầy đủ. NULL = hai octave mặc định */
+
+  /* Khung vận chuyển song song. Bắt buộc cho đường CONG: khung dựng lại từ một
+   * vector tham chiếu toàn cục làm roll mặt cắt đổi theo hướng tiếp tuyến, nên
+   * UV bị xoắn dọc thân (đo được 14% một vòng quấn). */
+  bool useTransportFrame;
+} PMCapsuleConfig;
+
+typedef struct
+{
+  Vector3 rings[TUBE_MESH_MAX_SEGMENTS + 1][TUBE_MESH_MAX_RADIAL];
+  Vector3 normals[TUBE_MESH_MAX_SEGMENTS + 1][TUBE_MESH_MAX_RADIAL];
+  Vector3 tailCenter, headCenter;
+  Vector3 tailTangent, headTangent;
+  float tailRadius, headRadius;
+  int segments;
+  int radialSegs;
+} PMCapsuleMesh;
+
+PMCapsuleConfig PMCapsule_DefaultConfig(void);
+void PMCapsule_BuildAlongPath(PMCapsuleMesh *out, const Vector3 *pathPoints, int pathCount,
+                          float baseRadius, float startT, float endT, float time,
+                          int segments, int radialSegs, const PMCapsuleConfig *cfg);
+void PMCapsule_Draw(const PMCapsuleMesh *data, float uvLengthScale);
+void PMCapsule_DrawEx(const PMCapsuleMesh *data, float uvLengthScale, float uvOffset);
+
+/* Giọt nước còn dựng được dọc một đường Bezier — water stream dùng đường này. */
+void PMDroplet_BuildBezier(PMDropletMesh *out, Vector3 p0, Vector3 p1, Vector3 p2,
+                           Vector3 p3, float baseRadius, float flowProgress,
+                           float time, int segments, int radialSegs,
+                           const PMDropletConfig *cfg);
+
 
 /* ============================================================================
  * WAVE PLANE MESH SYSTEM (MỚI)
