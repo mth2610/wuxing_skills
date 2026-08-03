@@ -82,6 +82,10 @@ static Shader s_draw_shader_gpu = {0};
 static Shader s_surface_capture_shader_gpu = {0};
 static Shader s_surface_thickness_shader_gpu = {0};
 static Shader s_surface_capture_shader_cpu = {0};
+static Shader s_surface_thickness_shader_cpu = {0};
+static int s_cpu_capture_params_loc = -1;
+static int s_cpu_capture_proj_loc = -1;
+static int s_cpu_thick_params_loc = -1;
 static float s_elapsed_time = 0.0f;
 
 static GpuParticleData s_cpu_pool[MAX_GPU_PARTICLES];
@@ -263,7 +267,12 @@ void GpuParticleSystem_Init(void)
     else
     {
 cpu_path:
-    s_surface_capture_shader_cpu = ResourceManager_LoadShader(NULL, "core/fluid/shaders/fluid_capture.fs");
+        // Sphere impostor shaders for CPU SSF capture/thickness.
+        s_surface_capture_shader_cpu = ResourceManager_LoadShader(NULL, "core/fluid/shaders/fluid_capture_cpu.fs");
+        s_surface_thickness_shader_cpu = ResourceManager_LoadShader(NULL, "core/fluid/shaders/fluid_capture_cpu_thickness.fs");
+        s_cpu_capture_params_loc  = GetShaderLocation(s_surface_capture_shader_cpu,  "u_capture_params");
+        s_cpu_capture_proj_loc    = GetShaderLocation(s_surface_capture_shader_cpu,  "u_projection");
+        s_cpu_thick_params_loc    = GetShaderLocation(s_surface_thickness_shader_cpu, "u_capture_params");
         // ----- CPU/VBO PATH -----
         s_use_compute = false;
         TraceLog(LOG_INFO, "GPU_PARTICLES: CPU/VBO path active (%d particles)", MAX_GPU_PARTICLES);
@@ -700,9 +709,61 @@ void GpuParticleSystem_DrawSurfaceEmitter(Camera3D camera, Texture2D texture, in
     s_filterEmitter = emitterId;
     s_filterRenderMode = 3;
     s_surfacePass = 1;
-    if (!s_use_compute && s_surface_capture_shader_cpu.id) BeginShaderMode(s_surface_capture_shader_cpu);
-    GpuParticleSystem_Draw(camera, texture);
-    if (!s_use_compute && s_surface_capture_shader_cpu.id) EndShaderMode();
+    if (s_use_compute) {
+        GpuParticleSystem_Draw(camera, texture);
+    } else if (s_surface_capture_shader_cpu.id) {
+        /* CPU path: draw each particle as a billboard with sphere-impostor depth.
+         * The shader reconstructs depth from texcoord, so we submit per-particle
+         * center+radius via u_capture_params before every quad. */
+        Matrix matView = MatrixLookAt(camera.position, camera.target, camera.up);
+        Matrix matProj;
+        float aspect = (float)GetScreenWidth() / (float)GetScreenHeight();
+        double top = tan(camera.fovy * 0.5 * DEG2RAD);
+        double right_f = top * aspect;
+        matProj = MatrixFrustum(-right_f, right_f, -top, top, 0.01, 1000.0);
+
+        /* Camera basis for billboard quads */
+        Vector3 viewDir = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+        Vector3 camRight = Vector3Normalize(Vector3CrossProduct(viewDir, camera.up));
+        Vector3 camUp    = Vector3CrossProduct(camRight, viewDir);
+
+        if (s_cpu_capture_proj_loc >= 0)
+            SetShaderValueMatrix(s_surface_capture_shader_cpu, s_cpu_capture_proj_loc, matProj);
+
+        for (int i = 0; i < MAX_GPU_PARTICLES; i++) {
+            GpuParticleData *p = &s_cpu_pool[i];
+            if (p->active < 0.5f) continue;
+            if ((int)p->render_mode != 3) continue;
+            if ((int)p->emitter_id != emitterId) continue;
+            if (p->life_rem <= 0.0f) continue;
+
+            Vector3 worldPos = {p->px, p->py, p->pz};
+            float r = p->radius;
+
+            /* Transform center to view space for the shader */
+            Vector3 viewPos = Vector3Transform(worldPos, matView);
+
+            float params[4] = {viewPos.x, viewPos.y, viewPos.z, r};
+            BeginShaderMode(s_surface_capture_shader_cpu);
+            if (s_cpu_capture_proj_loc >= 0)
+                SetShaderValueMatrix(s_surface_capture_shader_cpu, s_cpu_capture_proj_loc, matProj);
+            if (s_cpu_capture_params_loc >= 0)
+                SetShaderValue(s_surface_capture_shader_cpu, s_cpu_capture_params_loc,
+                               params, SHADER_UNIFORM_VEC4);
+
+            Vector3 rx = {camRight.x * r, camRight.y * r, camRight.z * r};
+            Vector3 uy = {camUp.x * r,    camUp.y * r,    camUp.z * r};
+            float x0 = worldPos.x, y0 = worldPos.y, z0 = worldPos.z;
+
+            rlBegin(RL_QUADS);
+            rlTexCoord2f(0.0f, 0.0f); rlVertex3f(x0 - rx.x + uy.x, y0 - rx.y + uy.y, z0 - rx.z + uy.z);
+            rlTexCoord2f(1.0f, 0.0f); rlVertex3f(x0 + rx.x + uy.x, y0 + rx.y + uy.y, z0 + rx.z + uy.z);
+            rlTexCoord2f(1.0f, 1.0f); rlVertex3f(x0 + rx.x - uy.x, y0 + rx.y - uy.y, z0 + rx.z - uy.z);
+            rlTexCoord2f(0.0f, 1.0f); rlVertex3f(x0 - rx.x - uy.x, y0 - rx.y - uy.y, z0 - rx.z - uy.z);
+            rlEnd();
+            EndShaderMode();
+        }
+    }
     s_surfacePass = 0;
     s_filterEmitter = s_filterRenderMode = -1;
 }
@@ -712,8 +773,41 @@ void GpuParticleSystem_DrawSurfaceThicknessEmitter(Camera3D camera, int emitterI
     s_filterEmitter = emitterId;
     s_filterRenderMode = 3;
     s_surfacePass = 2;
-    /* texture0 is unused by the analytic thickness shader. */
-    GpuParticleSystem_Draw(camera, (Texture2D){0});
+    if (s_use_compute) {
+        GpuParticleSystem_Draw(camera, (Texture2D){0});
+    } else if (s_surface_thickness_shader_cpu.id) {
+        /* CPU thickness: same per-particle billboard loop with chord-length shader. */
+        Vector3 viewDir = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+        Vector3 camRight = Vector3Normalize(Vector3CrossProduct(viewDir, camera.up));
+        Vector3 camUp    = Vector3CrossProduct(camRight, viewDir);
+
+        for (int i = 0; i < MAX_GPU_PARTICLES; i++) {
+            GpuParticleData *p = &s_cpu_pool[i];
+            if (p->active < 0.5f) continue;
+            if ((int)p->render_mode != 3) continue;
+            if ((int)p->emitter_id != emitterId) continue;
+            if (p->life_rem <= 0.0f) continue;
+
+            float r = p->radius;
+            float params[4] = {0.0f, 0.0f, 0.0f, r};
+            BeginShaderMode(s_surface_thickness_shader_cpu);
+            if (s_cpu_thick_params_loc >= 0)
+                SetShaderValue(s_surface_thickness_shader_cpu, s_cpu_thick_params_loc,
+                               params, SHADER_UNIFORM_VEC4);
+
+            Vector3 rx = {camRight.x * r, camRight.y * r, camRight.z * r};
+            Vector3 uy = {camUp.x * r,    camUp.y * r,    camUp.z * r};
+            float x0 = p->px, y0 = p->py, z0 = p->pz;
+
+            rlBegin(RL_QUADS);
+            rlTexCoord2f(0.0f, 0.0f); rlVertex3f(x0 - rx.x + uy.x, y0 - rx.y + uy.y, z0 - rx.z + uy.z);
+            rlTexCoord2f(1.0f, 0.0f); rlVertex3f(x0 + rx.x + uy.x, y0 + rx.y + uy.y, z0 + rx.z + uy.z);
+            rlTexCoord2f(1.0f, 1.0f); rlVertex3f(x0 + rx.x - uy.x, y0 + rx.y - uy.y, z0 + rx.z - uy.z);
+            rlTexCoord2f(0.0f, 1.0f); rlVertex3f(x0 - rx.x - uy.x, y0 - rx.y - uy.y, z0 - rx.z - uy.z);
+            rlEnd();
+            EndShaderMode();
+        }
+    }
     s_surfacePass = 0;
     s_filterEmitter = s_filterRenderMode = -1;
 }

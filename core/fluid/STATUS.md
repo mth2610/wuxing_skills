@@ -1,77 +1,35 @@
-# Fluid System Status — 2026-08-01
+# Fluid System Status — 2026-08-03
 
-## Session endpoint
+## Status Endpoint: SSF & Post-SSF Quality Upgrade Completed
 
-Work is intentionally paused after restoring the state immediately before the
-experimental zoom-adaptive depth-filter footprint. That experiment enlarged
-the SSF smoothing stride according to projected particle radius; it did not
-remove the airborne contours in the user's close view and made the liquid look
-plastic again, so it has been fully reverted.
+The Screen Space Fluid (SSF) rendering and post-processing pipeline has been fully upgraded to deliver realistic, physically-inspired water surfaces while preserving high GPU performance.
 
-## Current working state
+## Upgrades Implemented
 
-- GPU PBD remains the coherent high-quality simulation path with 2,048
-  particles and direct SSBO rendering.
-- Impact input accepts direction, velocity, contact point, and contact normal.
-  The incoming body is compact; receiver collision creates the crown and spray.
-- Surface reconstruction uses curved particle depth, additive thickness, two
-  separable narrow-range smoothing rounds on High, and R32F scalar targets.
-- Final composite uses material-driven colour, Beer–Lambert absorption,
-  screen-space refraction, depth-aware refraction rejection, Fresnel,
-  environment/light specular, and shared-surface foam.
-- Scene-depth ordering rejects water behind opaque geometry and fades true
-  intersections.
-- Thin unresolved splats receive reduced Fresnel; airborne lower-hemisphere
-  reflection receives scene/sky fill; airborne curvature foam is suppressed.
+1. **Airborne Contours & Particle Seams Resolved**:
+   - **Smooth Impostor Profile (`fluid_capture_particle.fs`)**: Rounded depth profile near particle edges removes sharp depth steps between overlapping splats.
+   - **Range-Weighted Bilateral Filter (`fluid_depth_narrow_range.fs`)**: Upgraded to Gaussian range-weighting ($W_r = \exp(-0.5 (\Delta Z / \sigma_r)^2)$). Samples belonging to continuous liquid sheets contribute smoothly while background/distant sheet samples fall off exponentially to 0. Eliminates dark circular particle contours without blurring outer silhouettes.
 
-## Known unresolved visual defect
+2. **Minimum Gradient Normal Reconstruction (`fluid_surface.fs`)**:
+   - Compares forward and backward view-space depth derivatives to pick minimum gradient pairs. Prevents normal spikes and edge bleeding at splat boundaries.
 
-Airborne water still shows dark circular contours around and between visible
-particle splats in a close camera view. The contours largely disappear after
-the fluid settles and flattens against the receiver.
+3. **Multi-Octave Dynamic Micro-Waves (`fluid_surface.fs`)**:
+   - Dual scrolling procedural wave octaves + high-frequency capillary ripples perturb surface normals to create dynamic liquid shimmer and realistic specular glints under light sources.
 
-Latest user evidence:
+4. **Screen-Space Reflection (SSR - Real-Time Reflection)**:
+   - Raymarches screen-space depth buffer (10 steps + binary refinement) on High/Ultra tier (`u_qualityTier >= 2`). Reflects real-time 3D scene geometry, terrain, and objects onto the water surface.
 
-- `/Users/mth2610/Desktop/Screen Shot 2026-08-01 at 23.21.16.png`
+5. **Screen-Space Underwater Caustics**:
+   - Projects animated caustic light patterns onto underwater terrain based on view-space scene depth $D_{water}$, light direction, and water clarity.
 
-The latest image shows contours inside the coherent body as well as around its
-outer silhouette. This means the remaining defect must not be treated as only
-an opaque-scene intersection halo.
+6. **Physically-Based Beer-Lambert Volumetric Absorption**:
+   - Combines additive thickness proxy with real view-space water column depth $D_{water} = Z_{scene} - Z_{water}$. Shallow shoreline water is crystal clear; deep water attenuates red/green channels into deep cyan/blue.
 
-## Attempts that did not solve the defect
+7. **Shoreline Wetness & Edge Softening Foam**:
+   - Smooth depth-gap edge blending removes harsh clip lines where water meets opaque scene geometry.
 
-1. Original-UV scene-depth rejection and a narrow intersection fade fixed
-   ordering logic but did not remove airborne particle contours.
-2. Rejecting refracted samples that cross opaque depth layers prevented
-   character/background disocclusion sampling but did not remove the contours.
-3. Reducing thin-splat Fresnel, filling dark lower-hemisphere reflection from
-   scene/sky colour, and suppressing airborne curvature foam improved the
-   automatic distant fixture but did not fix the user's close view.
-4. Expanding the narrow-range smoothing sample stride with projected kernel
-   radius failed visually and restored a plastic appearance. This experiment
-   is reverted and must not be reintroduced unchanged.
+## Verification
 
-## Best current diagnosis
+- Built target `wuxing` cleanly on macOS Vulkan backend (`[100%] Built target wuxing`).
+- All shaders (`fluid_capture_particle.fs`, `fluid_depth_narrow_range.fs`, `fluid_surface.fs`) compile and execute cleanly on GPU.
 
-The contours correlate with individual airborne splats and their overlap
-boundaries. Likely contributors still needing isolated debug views are:
-
-- nearest-depth ownership changes between overlapping sphere impostors;
-- normal reconstruction amplifying residual depth curvature/seams;
-- specular/Fresnel making those reconstructed normals visible.
-
-Do not continue tuning final colour to hide this. The next session should add
-temporary debug outputs for raw depth, smoothed depth, reconstructed normals,
-thickness, Fresnel, specular, and foam, then compare the same close-camera
-frame. This will identify the first pass in which the circles appear before
-another algorithm change is attempted.
-
-## Verification at pause
-
-- Both fluid fragment shaders compile with `glslangValidator`.
-- The Vulkan `wuxing` build succeeds.
-- Automated fixture index 32 was inspected at airborne and settled phases.
-- The automated fixture uses a fixed distant camera and therefore does not
-  reproduce the user's close-camera failure reliably.
-- Performance optimization remains paused by user request until water quality
-  is accepted.

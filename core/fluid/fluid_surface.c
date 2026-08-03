@@ -25,7 +25,7 @@ static int s_texelLoc, s_dirLoc, s_depthRangeLoc, s_fillLoc;
 static int s_smoothProjectionLoc, s_smoothInverseProjectionLoc;
 static int s_kernelRadiusLoc, s_filterRadiusLoc;
 static int s_compositeTexelLoc, s_sceneTexelLoc, s_thicknessLoc, s_sceneLoc, s_sceneDepthLoc, s_hasDepthLoc;
-static int s_inverseProjectionLoc, s_viewToWorldLoc, s_qualityTierLoc;
+static int s_projectionLoc, s_inverseProjectionLoc, s_viewToWorldLoc, s_qualityTierLoc;
 static int s_sunDirectionLoc, s_sunColorLoc, s_skyAmbientLoc, s_groundAmbientLoc;
 static int s_pointLightCountLoc, s_pointLightPosLoc, s_pointLightColorLoc;
 static int s_materialBodyLoc, s_materialGlowLoc, s_materialSoftLoc;
@@ -135,6 +135,7 @@ void FluidSurface_Init(int width,int height) {
     s_sceneTexelLoc=GetShaderLocation(s_composite,"u_sceneTexel");
     s_thicknessLoc=GetShaderLocation(s_composite,"u_thicknessTex"); s_sceneLoc=GetShaderLocation(s_composite,"u_sceneTex");
     s_sceneDepthLoc=GetShaderLocation(s_composite,"u_sceneDepthTex"); s_hasDepthLoc=GetShaderLocation(s_composite,"u_hasSceneDepth");
+    s_projectionLoc=GetShaderLocation(s_composite,"u_projection");
     s_inverseProjectionLoc=GetShaderLocation(s_composite,"u_inverseProjection");
     s_viewToWorldLoc=GetShaderLocation(s_composite,"u_viewToWorld");
     s_qualityTierLoc=GetShaderLocation(s_composite,"u_qualityTier");
@@ -181,20 +182,47 @@ void FluidSurface_Capture(Camera3D camera) {
     BeginTextureMode(s_capture); ClearBackground((Color){255,0,0,0}); BeginMode3D(camera);
     for (int i=0;i<s_gpuStreamCount;i++) ParticleManager_DrawSurfaceStream(&s_gpuStreams[i], camera, s_surfaceTex);
     FluidPBDGPU_DrawSurfaceDepth(camera);
+    /* --- CPU particles registered via FluidSurface_RegisterParticle --- */
+    /* These were previously stored but never rasterised into the FBO.    */
+    if (s_count > 0) {
+        /* Sphere impostors: draw screen-aligned quads per particle.       */
+        /* The default fluid_capture.fs outputs gl_FragCoord.z which is   */
+        /* the correct depth for geometry pushed through BeginMode3D,      */
+        /* but we need the sphere front surface, not the flat quad.        */
+        /* Use DrawSphereEx to rasterise correct sphere geometry per hemi. */
+        /* Lower-LOD sphere is fast enough for O(100s) CPU particles.      */
+        BeginShaderMode(s_captureShader);
+        for (int i = 0; i < s_count; i++) {
+            FluidSurfaceParticle *sp = &s_particles[i];
+            float r = (sp->radii.x + sp->radii.y + sp->radii.z) / 3.0f;
+            DrawSphereEx(sp->position, r, 6, 6, WHITE);
+        }
+        EndShaderMode();
+    }
     EndMode3D(); EndTextureMode();
     BeginTextureMode(s_thickness); ClearBackground(BLANK); BeginMode3D(camera);
     rlDrawRenderBatchActive(); rlDisableDepthMask(); rlDisableDepthTest(); BeginBlendMode(BLEND_ADDITIVE);
     for (int i=0;i<s_gpuStreamCount;i++) ParticleManager_DrawSurfaceThicknessStream(&s_gpuStreams[i], camera);
     FluidPBDGPU_DrawSurfaceThickness(camera);
+    if (s_count > 0) {
+        BeginShaderMode(s_thicknessShader);
+        for (int i = 0; i < s_count; i++) {
+            FluidSurfaceParticle *sp = &s_particles[i];
+            float r = (sp->radii.x + sp->radii.y + sp->radii.z) / 3.0f;
+            DrawSphereEx(sp->position, r, 6, 6, WHITE);
+        }
+        EndShaderMode();
+    }
     EndBlendMode(); rlDrawRenderBatchActive(); rlEnableDepthTest(); rlEnableDepthMask(); EndMode3D(); EndTextureMode();
     Vector2 texel={1.0f/s_capture.texture.width,1.0f/s_capture.texture.height};
-    float depthRange=s_reconstructionRadius*4.5f;
-    int filterRadius=GfxQuality_Get()>=GFX_HIGH?4:
-                     (GfxQuality_Get()>=GFX_MED?3:2);
+    float depthRange=s_reconstructionRadius*9.0f;
+    int filterRadius=GfxQuality_Get()>=GFX_HIGH?8:
+                     (GfxQuality_Get()>=GFX_MED?5:3);
     Matrix inverseProjection=MatrixInvert(s_fluidProjection);
-    /* HIGH spends a second separable round to remove per-kernel curvature.
-     * MED/LOW keep one round so detached spray remains cheap and crisp. */
-    int reconstructionRounds=GfxQuality_Get()>=GFX_HIGH?2:1;
+    /* HIGH spends three separable rounds to fully merge dense orb particles.
+     * MED/LOW keep fewer rounds for splash and detached spray. */
+    int reconstructionRounds=GfxQuality_Get()>=GFX_HIGH?3:
+                             (GfxQuality_Get()>=GFX_MED?2:1);
     for (int iteration=0; iteration<reconstructionRounds; ++iteration) {
         Vector2 horizontal={1.0f,0.0f}, vertical={0.0f,1.0f};
         Texture2D source = iteration ? s_smoothB.texture : s_capture.texture;
@@ -250,6 +278,7 @@ void FluidSurface_Composite(void) {
     SetShaderValue(s_composite,s_compositeTexelLoc,&texel,SHADER_UNIFORM_VEC2);
     SetShaderValue(s_composite,s_sceneTexelLoc,&sceneTexel,SHADER_UNIFORM_VEC2);
     SetShaderValue(s_composite,s_hasDepthLoc,&has,SHADER_UNIFORM_INT);
+    SetShaderValueMatrix(s_composite,s_projectionLoc,s_fluidProjection);
     SetShaderValueMatrix(s_composite,s_inverseProjectionLoc,inverseProjection);
     SetShaderValueMatrix(s_composite,s_viewToWorldLoc,viewToWorld);
     SetShaderValue(s_composite,s_qualityTierLoc,&qualityTier,SHADER_UNIFORM_INT);
