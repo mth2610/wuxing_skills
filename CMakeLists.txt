@@ -91,6 +91,21 @@ execute_process(COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_reg
 execute_process(COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_map_registry.py)
 execute_process(COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_vfx_surface_registry.py)
 
+# Texture packing is a HARD rule, not a convention: assets/TEXTURE_PACKING.md is
+# enforced here, at configure time, so a non-conforming sheet cannot reach a
+# build. The validator existed before this line and was wired to nothing — it
+# had been failing on five profiles for an unknown length of time with nobody
+# looking. Do not demote this to a warning.
+execute_process(
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/validate_vfx_surface_registry.py
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    RESULT_VARIABLE WUXING_VFX_SURFACE_VALID)
+if(NOT WUXING_VFX_SURFACE_VALID EQUAL 0)
+    message(FATAL_ERROR
+        "VFX surface registry failed validation — see the FAIL lines above and "
+        "assets/TEXTURE_PACKING.md")
+endif()
+
 # Tự động quét toàn bộ mã nguồn của kỹ năng trong thư mục skills/
 file(GLOB_RECURSE SKILL_SOURCES CONFIGURE_DEPENDS "skills/**/*.c")
 # Tự động quét toàn bộ mã nguồn của map trong thư mục maps/

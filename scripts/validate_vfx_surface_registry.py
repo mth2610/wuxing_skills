@@ -1,13 +1,55 @@
 #!/usr/bin/env python3
-"""Validate canonical VFX surface profiles before they reach composition."""
+"""Validate canonical VFX surface profiles before they reach composition.
+
+The channel-grammar half of this file enforces assets/TEXTURE_PACKING.md. Read
+that document before loosening anything here: every rule it states exists
+because the alternative already cost a debugging session.
+"""
 
 import json
+import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "assets" / "vfx_surface_profiles.json"
 INDEX = ROOT / "assets" / "INDEX.md"
+PACKING_SPEC = ROOT / "assets" / "TEXTURE_PACKING.md"
+
+# ── The channel grammar (assets/TEXTURE_PACKING.md §2) ──────────────────────
+# <LAYOUT> | R:<slot>/<mode> | G:... | B:... | A:...  [— free prose]
+CHANNEL_RE = re.compile(
+    r"^(?P<layout>[A-Z_]+)\s*\|\s*"
+    r"R:(?P<r_slot>\w+)/(?P<r_mode>\w+)\s*\|\s*"
+    r"G:(?P<g_slot>\w+)/(?P<g_mode>\w+)\s*\|\s*"
+    r"B:(?P<b_slot>\w+)/(?P<b_mode>\w+)\s*\|\s*"
+    r"A:(?P<a_slot>\w+)/(?P<a_mode>\w+)\s*(?:—.*)?$",
+    re.DOTALL,
+)
+
+MODES = {"TILE", "STRETCH", "CLAMP"}
+
+# Permitted slot per channel per layout. A set means any one of them.
+LAYOUTS = {
+    "STRAND":   {"R": {"pattern1"}, "G": {"pattern2"}, "B": {"distort"}, "A": {"dissolve"}},
+    "FLOW":     {"R": {"body"}, "G": {"mask", "dissolve"}, "B": {"flowx"}, "A": {"flowy"}},
+    "OPAQUE":   {"R": {"color"}, "G": {"color"}, "B": {"color"}, "A": {"opacity"}},
+    "FLIPBOOK": {"R": {"color"}, "G": {"color"}, "B": {"color"}, "A": {"opacity"}},
+    # Pre-spec files: a standalone flow map or mask that leaves channels
+    # constant. Tolerated so the build is not held hostage to a migration, but
+    # ALWAYS reported — see report_debt() — because R6 forbids a constant
+    # channel and these are precisely the files the FLOW layout exists to
+    # absorb. Never label a new sheet SPLIT_LEGACY.
+    "SPLIT_LEGACY": {
+        "R": {"flowx", "mask", "color"},
+        "G": {"flowy", "unused", "color"},
+        "B": {"unused", "color"},
+        "A": {"unused", "opacity"},
+    },
+}
+
+# R3: signed slots encode 128 as neutral and decode c*2-1.
+SIGNED_SLOTS = {"distort", "flowx", "flowy"}
 PRIMITIVES = {"ribbon", "tube", "puff", "fire_tongue", "decal"}
 WRAPS = {"clamp", "repeat"}
 TILE_SEAMS = {"tileable_both_axes", "crossfade_runtime"}
@@ -21,6 +63,71 @@ FALLBACK_POLICIES = {"no_legacy_fallback"}
 def fail(message):
     print(f"FAIL: {message}", file=sys.stderr)
     return 1
+
+
+DEBT = []
+
+
+def check_channels(label, text, flipbook):
+    """Enforce assets/TEXTURE_PACKING.md §2 on one channels string."""
+    failures = 0
+    match = CHANNEL_RE.match((text or "").strip())
+    if not match:
+        return fail(
+            f"{label}: channels must start with the grammar of "
+            f"assets/TEXTURE_PACKING.md §2 — "
+            f"'<LAYOUT> | R:<slot>/<mode> | G:... | B:... | A:...'; got {text!r}"
+        )
+
+    layout = match.group("layout")
+    if layout not in LAYOUTS:
+        return fail(f"{label}: unknown layout {layout} (expected one of {sorted(LAYOUTS)})")
+
+    permitted = LAYOUTS[layout]
+    for channel in ("R", "G", "B", "A"):
+        slot = match.group(f"{channel.lower()}_slot")
+        mode = match.group(f"{channel.lower()}_mode")
+        if slot not in permitted[channel]:
+            failures += fail(
+                f"{label}: {layout}.{channel} must be one of "
+                f"{sorted(permitted[channel])}, got {slot!r}"
+            )
+        if mode not in MODES:
+            failures += fail(f"{label}: {channel} has unknown mode {mode!r}")
+        # R6 — a packed sheet exists to use all four channels. Only the
+        # explicitly deprecated bucket may carry a constant one, and it is
+        # counted as debt rather than waved through.
+        if slot == "unused":
+            if layout == "SPLIT_LEGACY":
+                DEBT.append(f"{label}: {channel} constant (R6)")
+            else:
+                failures += fail(
+                    f"{label}: {channel} is 'unused'; TEXTURE_PACKING.md R6 forbids a "
+                    f"constant channel in a packed layout"
+                )
+        # A flipbook cell is never wrapped.
+        if layout == "FLIPBOOK" and mode != "CLAMP":
+            failures += fail(f"{label}: FLIPBOOK.{channel} must be CLAMP, got {mode}")
+
+    # R1 — a channel cannot be both a shape and a seamless material. The
+    # grammar makes this structurally impossible per channel; what is still
+    # worth checking is that a STRETCH channel never appears in a layout whose
+    # consumer has no stretch switch.
+    modes = {match.group(f"{c}_mode") for c in "rgba"}
+    if "STRETCH" in modes and layout not in ("STRAND", "FLOW"):
+        failures += fail(
+            f"{label}: STRETCH is only meaningful for STRAND/FLOW, whose consumers "
+            f"carry an explicit stretch switch; {layout} has none"
+        )
+
+    # A declared flipbook must use a flipbook layout, and vice versa.
+    has_cells = isinstance(flipbook, list) and len(flipbook) == 3 and flipbook[2] > 0
+    if has_cells and layout != "FLIPBOOK":
+        failures += fail(f"{label}: profile declares flipbook cells but layout is {layout}")
+    if layout == "FLIPBOOK" and not has_cells:
+        failures += fail(f"{label}: FLIPBOOK layout but the profile declares no cells")
+
+    return failures
 
 
 def main():
@@ -46,8 +153,24 @@ def main():
             failures += fail(f"{name}: invalid filter or blend law")
         if not profile.get("projection") or profile.get("approval") not in APPROVALS:
             failures += fail(f"{name}: projection and approval are required")
-        if not profile.get("provenance") or not profile.get("consumers"):
-            failures += fail(f"{name}: provenance and consumer are required (no unused profile assets)")
+        # R9 — a profile with no consumer is deleted, not kept. Deferring the
+        # deletion is allowed, but only on the record: an "orphaned" block with
+        # a date and a reason. Nothing sits in the registry unexplained.
+        orphaned = profile.get("orphaned")
+        if not profile.get("provenance"):
+            failures += fail(f"{name}: provenance is required")
+        if not profile.get("consumers"):
+            if not orphaned:
+                failures += fail(
+                    f"{name}: no consumer — delete the profile and its assets, or declare "
+                    f'"orphaned": {{"since": ..., "reason": ...}} (TEXTURE_PACKING.md R9)'
+                )
+            elif not orphaned.get("since") or not orphaned.get("reason"):
+                failures += fail(f"{name}: orphaned block needs both 'since' and 'reason'")
+            else:
+                print(f"ORPHANED since {orphaned['since']}: {name} — {orphaned['reason'][:80]}...")
+        elif orphaned:
+            failures += fail(f"{name}: has consumers but is still marked orphaned — drop the block")
         flipbook = profile.get("flipbook")
         if not isinstance(flipbook, list) or len(flipbook) != 3 or any(not isinstance(v, int) or v < 0 for v in flipbook):
             failures += fail(f"{name}: flipbook must be [columns, rows, frames]")
@@ -83,17 +206,34 @@ def main():
                 failures += fail(f"{name}/{role}: missing file {path}")
             if not channels:
                 failures += fail(f"{name}/{role}: missing channel semantics")
+            else:
+                failures += check_channels(f"{name}/{role}", channels, profile.get("flipbook"))
             if path in paths:
                 failures += fail(f"{name}/{role}: duplicate registered asset {path}")
             paths.add(path)
             if Path(path).name not in index:
                 failures += fail(f"{name}/{role}: {path} is not cataloged in assets/INDEX.md")
-        if "flow" in assets and "RG" not in assets["flow"].get("channels", ""):
-            failures += fail(f"{name}/flow: flow map must document RG direction channels")
-        if "mask" in assets and "R" not in assets["mask"].get("channels", ""):
-            failures += fail(f"{name}/mask: mask must document scalar R channel")
-        if "gradient" in assets and "RGBA" not in assets["gradient"].get("channels", ""):
-            failures += fail(f"{name}/gradient: gradient must document RGBA material ramp")
+        # The old substring checks on "RG"/"R"/"RGBA" here were replaced by
+        # check_channels(): the grammar states the slot of every channel, so a
+        # flow map that forgot its direction encoding now fails on the slot
+        # name rather than on whether the prose happened to contain "RG".
+        #
+        # R8 — a PACKED profile is exactly one file. max_textures elsewhere is
+        # a ceiling, not a count, so this applies only where packing is the
+        # whole point: it is what stops a STRAND/FLOW profile quietly regrowing
+        # the second and third file it was created to eliminate.
+        body_layout = (assets.get("body", {}).get("channels", "").split("|")[0].strip())
+        if body_layout in ("STRAND", "FLOW"):
+            if len(assets) != 1:
+                failures += fail(
+                    f"{name}: body is {body_layout} (packed) but {len(assets)} assets are "
+                    f"registered — a packed sheet is one file (TEXTURE_PACKING.md R8)"
+                )
+            if profile.get("budget", {}).get("max_textures") != 1:
+                failures += fail(
+                    f"{name}: body is {body_layout} (packed) so budget.max_textures must be 1 "
+                    f"(TEXTURE_PACKING.md R8)"
+                )
         lifecycle = profile.get("lifecycle", {})
         budget = profile.get("budget", {})
         life = lifecycle.get("seconds")
@@ -132,6 +272,14 @@ def main():
     if failures:
         return 1
     print(f"VFX surface registry: {len(profiles)} profiles, {len(paths)} semantic assets validated")
+    if DEBT:
+        # Not a failure — but never silent either. These are the channels the
+        # FLOW layout exists to reclaim, and the count is the migration's
+        # progress bar.
+        print(f"\nPACKING DEBT — {len(DEBT)} constant channels across SPLIT_LEGACY assets:")
+        for item in DEBT:
+            print(f"  · {item}")
+        print("  Fold each into its body sheet as FLOW (assets/TEXTURE_PACKING.md §4).")
     return 0
 
 

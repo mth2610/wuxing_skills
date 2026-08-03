@@ -25,21 +25,25 @@
         0
       ],
       "seam": "crossfade_runtime",
-      "provenance": "purpose-built smoke ribbon triplet | ORPHANED 03/08/2026: its only consumer, VFX_ComposeSmokeTrail, was deleted in favour of VFX_ComposeStrandTrail(VFX_STRAND_SMOKE). The profile and its assets are kept because the sheet is authored and reusable, but nothing loads it today \u2014 delete both if no new consumer appears.",
+      "provenance": "purpose-built smoke ribbon triplet | ORPHANED 03/08/2026: its only consumer, VFX_ComposeSmokeTrail, was deleted in favour of VFX_ComposeStrandTrail(VFX_STRAND_SMOKE). The profile and its assets are kept because the sheet is authored and reusable, but nothing loads it today — delete both if no new consumer appears.",
       "consumers": [],
       "assets": {
         "body": {
           "path": "assets/textures/smoke_ribbon.png",
-          "channels": "RGBA lit body and opacity"
+          "channels": "OPAQUE | R:color/TILE | G:color/TILE | B:color/TILE | A:opacity/TILE — lit smoke body and opacity"
         },
         "flow": {
           "path": "assets/textures/smoke_ribbon_flow.png",
-          "channels": "RG signed flow direction"
+          "channels": "SPLIT_LEGACY | R:flowx/TILE | G:flowy/TILE | B:unused/TILE | A:unused/TILE — standalone RG signed direction field; B/A constant. Migration target: fold into the body sheet as FLOW."
         },
         "mask": {
           "path": "assets/textures/smoke_ribbon_mask.png",
-          "channels": "R scalar erosion"
+          "channels": "SPLIT_LEGACY | R:mask/TILE | G:unused/TILE | B:unused/TILE | A:unused/TILE — standalone scalar erosion in R; never decode as a flow vector. Migration target: FLOW.G of the body sheet."
         }
+      },
+      "orphaned": {
+        "since": "2026-08-03",
+        "reason": "Its only consumer, VFX_ComposeSmokeTrail, was deleted in favour of VFX_ComposeStrandTrail(VFX_STRAND_SMOKE). Kept because the trio is authored and reusable; it is also the clearest candidate for the FLOW layout (3 files -> 1) if a consumer returns. Delete profile + all three textures if none does."
       }
     },
     {
@@ -74,7 +78,7 @@
       "assets": {
         "body": {
           "path": "assets/textures/energy_wisp.png",
-          "channels": "RGBA packed strands: R trail pattern 1 (coarse filaments), G trail pattern 2 (fine filaments), B flow distortion, A dissolve"
+          "channels": "STRAND | R:pattern1/TILE | G:pattern2/TILE | B:distort/TILE | A:dissolve/TILE — repeating filament MATERIAL: every channel tiles by metres of laid path"
         }
       }
     },
@@ -103,14 +107,14 @@
         0
       ],
       "seam": "crossfade_runtime",
-      "provenance": "packed 4-channel sheet for trail_deform.fs mode 2, SMOKE style. R and G are each ONE COMPLETE SMOKE WISP (head/tail taper painted in, a few curls rolling through), matching the reference sheet's \u62d6\u5c3e\u7d0b\u7406 channels \u2014 NOT a tileable filament material. It is STRETCHED once over the whole trail; tiling it produces a rope of identical segments with no silhouette. B = flow distortion, A = dissolve, both seamless because those two are panned. Built by scripts/gen_smoke_strand_texture.py.",
+      "provenance": "packed 4-channel sheet for trail_deform.fs mode 2, SMOKE style. R and G are each ONE COMPLETE SMOKE WISP (head/tail taper painted in, a few curls rolling through), matching the reference sheet's 拖尾紋理 channels — NOT a tileable filament material. It is STRETCHED once over the whole trail; tiling it produces a rope of identical segments with no silhouette. B = flow distortion, A = dissolve, both seamless because those two are panned. Built by scripts/gen_smoke_strand_texture.py.",
       "consumers": [
         "VFX_ComposeStrandTrail (VFX_STRAND_SMOKE)"
       ],
       "assets": {
         "body": {
           "path": "assets/textures/smoke_strand.png",
-          "channels": "RGBA: R trail wisp 1 (4 curls), G trail wisp 2 (6 curls), B flow distortion (seamless), A dissolve (seamless)"
+          "channels": "STRAND | R:pattern1/STRETCH | G:pattern2/STRETCH | B:distort/TILE | A:dissolve/TILE — R/G are one complete wisp each with head and tail taper painted in (SHAPE, maps once); B/A are panned every frame so they must be seamless"
         }
       }
     },
@@ -146,11 +150,11 @@
       "assets": {
         "body": {
           "path": "assets/textures/energy_volume.png",
-          "channels": "RGBA tintable energy filaments"
+          "channels": "OPAQUE | R:color/TILE | G:color/TILE | B:color/TILE | A:opacity/TILE — tintable energy filaments"
         },
         "flow": {
           "path": "assets/textures/energy_volume_flow.png",
-          "channels": "RG signed flow direction"
+          "channels": "SPLIT_LEGACY | R:flowx/TILE | G:flowy/TILE | B:unused/TILE | A:unused/TILE — standalone RG signed direction field; B/A constant. Migration target: fold into the body sheet as FLOW."
         }
       }
     },
@@ -186,11 +190,11 @@
       "assets": {
         "body": {
           "path": "assets/textures/smoke_volume.png",
-          "channels": "RGBA lit smoke density"
+          "channels": "OPAQUE | R:color/TILE | G:color/TILE | B:color/TILE | A:opacity/TILE — lit smoke density"
         },
         "flow": {
           "path": "assets/textures/smoke_volume_flow.png",
-          "channels": "RG signed flow direction"
+          "channels": "SPLIT_LEGACY | R:flowx/TILE | G:flowy/TILE | B:unused/TILE | A:unused/TILE — standalone RG signed direction field; B/A constant. Migration target: fold into the body sheet as FLOW."
         }
       }
     },
@@ -226,11 +230,11 @@
       "assets": {
         "body": {
           "path": "assets/textures/fire_volume.png",
-          "channels": "RGBA emissive fire body"
+          "channels": "OPAQUE | R:color/TILE | G:color/TILE | B:color/TILE | A:opacity/TILE — emissive fire body"
         },
         "flow": {
           "path": "assets/textures/fire_volume_flow.png",
-          "channels": "RG signed flow direction"
+          "channels": "SPLIT_LEGACY | R:flowx/TILE | G:flowy/TILE | B:unused/TILE | A:unused/TILE — standalone RG signed direction field; B/A constant. Migration target: fold into the body sheet as FLOW."
         }
       }
     },
@@ -267,11 +271,11 @@
       "assets": {
         "body": {
           "path": "assets/textures/smoke_puff_8x8_smoke.png",
-          "channels": "RGB baked self-shadow, A true opacity"
+          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — RGB baked self-shadow, A true opacity"
         },
         "fallback_body": {
           "path": "assets/textures/smoke_atlas_8x8.png",
-          "channels": "RGBA legacy smoke fallback"
+          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — legacy smoke fallback"
         }
       }
     },
@@ -307,11 +311,11 @@
       "assets": {
         "body": {
           "path": "assets/textures/fire_puff_8x8_flame.png",
-          "channels": "RGB white flame core, A opacity"
+          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — white flame core, A opacity"
         },
         "fallback_body": {
           "path": "assets/textures/fire_atlas_8x8_flame.png",
-          "channels": "RGBA legacy flame column fallback"
+          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — legacy flame column fallback"
         }
       }
     },
@@ -384,7 +388,7 @@
       "assets": {
         "body": {
           "path": "assets/textures/surfaces/scorch_material_v1.png",
-          "channels": "RGBA authored charcoal body, true organic opacity, sparse ember veins"
+          "channels": "OPAQUE | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — authored charcoal body, true organic opacity, sparse ember veins"
         }
       },
       "fallback_policy": {
@@ -402,8 +406,8 @@
       "blend": "alpha",
       "projection": "conformal_mesh_stamp_receiver_normal",
       "max_slope_degrees": 42.0,
-      "seam": "irregular fractured alpha perimeter",
-      "provenance": "ImageGen frost impact v1; neutral grayscale albedo with chroma-key alpha extraction",
+      "seam": "edge_breakup_mask_required",
+      "provenance": "ImageGen frost impact v1; neutral grayscale albedo with chroma-key alpha extraction Seam token is edge_breakup_mask_required (role=impact); the authored perimeter is an irregular fractured alpha.",
       "approval": "preview_only",
       "consumers": [
         "VFX_ComposeDecal VC_MAT_ICE"
@@ -425,7 +429,7 @@
       "assets": {
         "body": {
           "path": "assets/textures/surfaces/frost_decal_v1.png",
-          "channels": "RGBA neutral ice albedo and true alpha; bright crack lines feed generic emissive extraction"
+          "channels": "OPAQUE | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — neutral ice albedo and true alpha; bright crack lines feed generic emissive extraction; RGB is not a normal or height map"
         }
       },
       "fallback_policy": {
@@ -466,7 +470,7 @@
       "assets": {
         "body": {
           "path": "assets/textures/surfaces/impact_material_v1.png",
-          "channels": "RGBA compacted soil/cracks and organic alpha; RGB is not a normal or height map"
+          "channels": "OPAQUE | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — compacted soil/cracks and organic alpha; RGB is not a normal or height map"
         }
       },
       "fallback_policy": {

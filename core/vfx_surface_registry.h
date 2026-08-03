@@ -76,6 +76,14 @@ typedef struct {
     const char *maskPath;
     const char *gradientPath;
     const char *fallbackBodyPath;
+    // Channel declarations. These are NOT free prose: each must match the
+    // grammar in assets/TEXTURE_PACKING.md §2 —
+    //   "<LAYOUT> | R:<slot>/<mode> | G:... | B:... | A:...  — <prose>"
+    // and scripts/validate_vfx_surface_registry.py rejects anything else at
+    // CMake configure time. Read that spec before adding a sheet; the layout
+    // decides which channel may carry what, and R1 (a channel cannot be both a
+    // stretched SHAPE and a seamless MATERIAL) is the one that has already
+    // cost debugging time.
     const char *bodyChannels;
     const char *flowChannels;
     const char *maskChannels;

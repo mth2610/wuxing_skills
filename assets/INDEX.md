@@ -8,6 +8,11 @@ these files.
 > **Rule:** never invent an asset path. Use the exact filenames below, or add
 > a skill-local PNG to the skill directory.
 
+> **Packing:** what each RGBA channel of a VFX sheet may carry is not a matter
+> of taste — see **`assets/TEXTURE_PACKING.md`**. It is enforced by
+> `scripts/validate_vfx_surface_registry.py`, which runs at CMake configure
+> time and fails the build. `smoke_strand.png` is the reference sheet.
+
 ---
 
 ## Textures — Decals (`assets/textures/decals/`)
@@ -64,6 +69,9 @@ Used via `SpawnGroundDecal(DECAL_PRESET_GENERIC_*)`. White/tintable.
 | `smoke_ribbon.png` | `VFX_SurfaceRegistry` SmokeRibbon body | Lit smoke body with opacity; repeat only through the semantic profile | pre-lit RGBA |
 | `smoke_ribbon_flow.png` | `VFX_SurfaceRegistry` SmokeRibbon flow | RG signed UV direction field paired with smoke ribbon | data, RG direction |
 | `smoke_ribbon_mask.png` | `VFX_SurfaceRegistry` SmokeRibbon mask | R-only erosion field; never decode as a flow vector | data, R scalar |
+| `energy_wisp.png` | `VFX_SurfaceRegistry` EnergyRibbon body | **STRAND packed sheet** — R/G repeating filament patterns, B distortion, A dissolve; tiles by metres (MATERIAL). Built by `scripts/gen_energy_wisp_texture.py` | data, 4-channel packed |
+| `smoke_strand.png` | `VFX_SurfaceRegistry` SmokeStrand body | **STRAND packed sheet, the reference for `assets/TEXTURE_PACKING.md`** — R/G one complete wisp each with taper baked in (SHAPE, stretched once), B distortion + A dissolve seamless. Built by `scripts/gen_smoke_strand_texture.py` | data, 4-channel packed |
+| `surfaces/frost_decal_v1.png` | `VFX_SurfaceRegistry` DecalFrost preview body | Neutral ice albedo with true alpha; bright crack lines feed generic emissive extraction; visual-review only | RGBA ice/crack/opacity |
 | `surfaces/scorch_material_v1.png` | `VFX_SurfaceRegistry` DecalScorch preview body | ImageGen-charcoal scorch material with chroma-key-derived organic alpha; visual-review only | RGBA charcoal/ember/opacity |
 | `surfaces/impact_material_v1.png` | `VFX_SurfaceRegistry` DecalImpact preview body | ImageGen flat soil-impact mark with chroma-key-derived alpha; owner-approved replaceable runtime preview, no raised debris, broad rounded footprint remains known limitation | RGBA soil/cracks/opacity |
 | `smoke_volume.png` | `VFX_SurfaceRegistry` SmokeTube preview profile | Seamless smoke tube body; preview-only until P3 approval | pre-lit RGBA |
