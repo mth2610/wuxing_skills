@@ -13,7 +13,7 @@ uniform float     uTiling;
 
 out vec4 finalColor;
 
-#include "core/shaders/common/flow_map.glsl"
+#include "core/uv/shaders/flow_map.glsl"
 
 void main() {
     finalColor = FlowMap_SampleTwoPhase(texture0, flowTex, fragTexCoord,

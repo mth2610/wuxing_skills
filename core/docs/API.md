@@ -372,7 +372,7 @@
 ```
 **Structs** (fields in header): FloatCurveStop, FloatCurve
 
-### `core/flow_map.h`
+### `core/uv/flow_map.h`
 ```c
   FlowMap FlowMap_Create(Shader shader, Texture2D flowTex, const char *timeUniformName);
   FlowMap FlowMap_CreateWithVortexTexture(Shader shader, int texSize, const char *timeUniformName);
@@ -381,6 +381,45 @@
   void FlowMap_Unload(FlowMap *fm);
 ```
 **Structs** (fields in header): FlowMapConfig, FlowMap
+
+### `core/uv/uv_deform.h`
+```c
+  void UVDeform_Clear(UVDeformField *f);
+  bool UVDeform_AddLayer(UVDeformField *f, UVDeformLayer layer);
+  UVDeformField UVDeform_CreatePreset(UVDeformPreset preset);
+  void UVDeform_SetPhase(UVDeformField *f, float basePhase);
+  float UVDeform_Envelope(UVEnvelopeKind kind, float c, float start, float end);
+  float UVDeform_SinePhase(float turns, float phase, float amp);
+  float UVDeform_Sine(float drive, float t, float freq, float speed, float phase, float amp);
+  float UVDeform_FoldAngle(float radians);
+  float UVDeform_NoiseFlow(float sA, float sB, float amp);
+  Vector2 UVDeform_EvaluateLayer(const UVDeformLayer *L, Vector2 uv, Vector2 mat, float t, Vector2 noisePair);
+  Vector2 UVDeform_Evaluate(const UVDeformField *f, Vector2 uv, Vector2 mat, float t, Vector2 noisePair);
+  void UVDeform_PackGPU(const UVDeformField *f, float *outFloats , float *outMeta );
+  UVDeformLocs UVDeform_CacheLocations(Shader shader);
+  void UVDeform_Apply(const UVDeformField *f, Shader shader, const UVDeformLocs *locs);
+```
+**Enums:** UVDeformKind { UV_DEFORM_SINE,UV_DEFORM_NOISE_FLOW,UV_DEFORM_FLOWMAP,UV_DEFORM_SWIRL,UV_DEFORM_KIND_COUNT };UVEnvelopeKind { UV_ENV_NONE,UV_ENV_RAMP,UV_ENV_BELL,UV_ENV_SMOOTHSTEP,UV_ENV_HEAD_WELD,UV_ENV_KIND_COUNT } UVDeformPreset { UV_DEFORM_PRESET_SIN_WAVE_TRAIL,UV_DEFORM_PRESET_SCROLL_V,UV_DEFORM_PRESET_VORTEX,UV_DEFORM_PRESET_COUNT }
+**Structs** (fields in header): UVDeformLayer, UVDeformField, UVDeformLocs
+
+### `core/uv/surface_flow.h`
+```c
+  void SurfaceFlow_Clear(SurfaceFlow *sf);
+  bool SurfaceFlow_AddLayer(SurfaceFlow *sf, SurfaceFlowLayer layer);
+  float SurfaceFlow_Pan(float t, float speed);
+  float SurfaceFlow_AlongV(float stretched, float base, float scale, float pan, bool stretch);
+  float SurfaceFlow_AcrossU(float across, float centre, float halfWidth);
+  Vector2 SurfaceFlow_LayerUV(const SurfaceFlow *sf, int layer, Vector2 uv, Vector2 mat, float t);
+  void SurfaceFlow_PackGPU(const SurfaceFlow *sf, float t, float *outFloats, float *outMeta );
+  SurfaceFlowLocs SurfaceFlow_CacheLocations(Shader shader);
+  void SurfaceFlow_Apply(const SurfaceFlow *sf, Shader shader, const SurfaceFlowLocs *locs, float t);
+```
+**Enums:** SurfaceFlowBlend { SURFACE_FLOW_MUL,SURFACE_FLOW_ADD,SURFACE_FLOW_MAX,SURFACE_FLOW_BLEND_COUNT }
+**Structs** (fields in header): SurfaceFlowLayer, SurfaceFlow, SurfaceFlowLocs
+
+### `core/uv/uv_fx.h`
+_Inline helpers / macros only — see header._
+**Structs** (fields in header): UVFxLocs
 
 ### `core/path_spline.h`
 ```c

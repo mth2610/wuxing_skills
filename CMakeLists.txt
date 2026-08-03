@@ -110,7 +110,9 @@ add_executable(wuxing
     core/skill_curve.c
     core/tuning.c
     core/emitter_system.c
-    core/flow_map.c
+    core/uv/flow_map.c
+    core/uv/uv_deform.c
+    core/uv/surface_flow.c
     core/force_field.c
     core/camera_fx.c
     core/audio_system.c
@@ -277,6 +279,18 @@ configure_file(core/fluid/shaders/fluid_surface.fs ${CMAKE_CURRENT_BINARY_DIR}/c
 configure_file(core/shaders/common/vs_header.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/vs_header.glsl COPYONLY)
 configure_file(core/shaders/common/fs_header.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/fs_header.glsl COPYONLY)
 configure_file(core/shaders/common/lighting.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/lighting.glsl COPYONLY)
+
+# core/uv shared includes. Same trap as the trails block above: these are
+# #include'd by trail_deform.fs, shield_shell.fs and aura_shell.fs, and a
+# missing include does NOT announce itself as a shader problem — the shader
+# fails to compile, raylib hands back the DEFAULT shader with a nonzero id, and
+# the consumer's capability check passes while the effect renders as something
+# else entirely. flow_map.glsl moved here from core/shaders/common/.
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/core/uv/shaders)
+configure_file(core/uv/shaders/uv_deform.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/uv/shaders/uv_deform.glsl COPYONLY)
+configure_file(core/uv/shaders/surface_flow.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/uv/shaders/surface_flow.glsl COPYONLY)
+configure_file(core/uv/shaders/uv_field.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/uv/shaders/uv_field.glsl COPYONLY)
+configure_file(core/uv/shaders/flow_map.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/uv/shaders/flow_map.glsl COPYONLY)
 
 
 # Liên kết tĩnh với thư viện Raylib vừa tải về

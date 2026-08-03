@@ -1,4 +1,4 @@
-#include "core/flow_map.h"
+#include "core/uv/flow_map.h"
 #include <math.h>
 
 FlowMap FlowMap_Create(Shader shader, Texture2D flowTex,

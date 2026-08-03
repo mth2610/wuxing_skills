@@ -4,6 +4,15 @@
 #include "raylib.h"
 
 // -----------------------------------------------------------------------------
+// STATUS (03/08/2026): the ONE-LAYER convenience alongside core/uv/surface_flow.h.
+// Its GLSL half is live — core/uv/shaders/flow_map.glsl's FlowMap_SampleTwoPhase
+// is what uv_field.glsl calls for layer 0 — but this C API currently has NO
+// callers: vc_shield_shell.inl, its only one, moved to SurfaceFlow. Prefer
+// SurfaceFlow for new work (a one-layer SurfaceFlow with twoPhase on is exactly
+// a FlowMap, and it shares the envelope with the deform half).
+// -----------------------------------------------------------------------------
+
+// -----------------------------------------------------------------------------
 // FLOW MAP MODULE (reusable cho nhiều skill: shield, fire, fluid, tornado...)
 //
 // Kiến trúc: MỖI hiệu ứng dùng flow map sở hữu riêng một FlowMap instance

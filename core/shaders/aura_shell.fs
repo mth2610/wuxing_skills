@@ -2,6 +2,7 @@
 #include "core/shaders/common/fs_header.glsl"
 #include "core/shaders/common/lighting.glsl"
 #include "core/shaders/common/noise.glsl"
+#include "core/uv/shaders/uv_deform.glsl"
 
 uniform vec4  u_bodyColor;
 uniform vec4  u_glowColor;
@@ -47,6 +48,10 @@ void main() {
     vec3 viewDir = normalize(viewPos - fragPosition);
     float fresnel = calcFresnel(nrm, viewDir, u_fresnelPower);
 
+    // NOT folded, deliberately. This feeds fbm3 — an APERIODIC domain — so
+    // wrapping the clock would make the whole wisp field jump once per cycle.
+    // The fold that core/uv offers is exact for a sine and for a REPEAT-wrapped
+    // sampler, and for nothing else; the scan below qualifies and this does not.
     float yScroll = fragPosition.y * u_heightScale - u_time * u_scrollSpeed;
     vec3 dom = vec3(nrm.x * u_noiseScale, yScroll, nrm.z * u_noiseScale);
 
@@ -56,7 +61,11 @@ void main() {
     float wisp  = ridge * (0.3 + 0.7 * n2);
     wisp = smoothstep(0.25, 0.75, wisp);
     
-    float scanRaw = 0.5 + 0.5 * sin(fragPosition.y * u_scanFreq - u_time * u_scanSpeed);
+    // Periodic, so the clock CAN be folded — and must be, or u_time*u_scanSpeed
+    // outgrows float32's ability to resolve a fraction of a cycle and the scan
+    // stutters after a long session. Keeps the shader's own radian units.
+    float scanRaw = 0.5 + 0.5 * sin(UVDeform_FoldAngle(
+                        fragPosition.y * u_scanFreq - u_time * u_scanSpeed));
     float scan    = scanRaw * scanRaw * u_scanStrength;
     float filmAlpha = wisp * 0.75 + scan * 0.30 + fresnel * 0.20;
     filmAlpha = clamp(filmAlpha, 0.0, 1.0);

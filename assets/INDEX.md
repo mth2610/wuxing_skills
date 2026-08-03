@@ -54,7 +54,7 @@ Used via `SpawnGroundDecal(DECAL_PRESET_GENERIC_*)`. White/tintable.
 | `crack.png` | `DECAL_PRESET_CRACK` | Simple branching crack, symmetric | white/tintable |
 | `scorch_mark.png` | `DECAL_PRESET_BURN` | Circular burn/scorch with charred edges | white/tintable |
 | `water_caustics.png` | `DECAL_PRESET_WATER` | Animated caustic light pattern | white/tintable |
-| `water_flow.png` | Flow-map shaders (`core/flow_map.h`) | Scrolling direction field for water surface | greyscale vectors |
+| `water_flow.png` | Flow-map shaders (`core/uv/flow_map.h`) | Scrolling direction field for water surface | greyscale vectors |
 | `dust_wind.png` | Emitter / particle texture | Soft wispy dust/smoke puff | white/tintable |
 | `flare.png` | `VFX_EmberTrail`, VFX light glow | Soft radial white falloff; the EmberTrail core comes from white additive vertex colour | white/additive bloom |
 | `noise.png` | Shader noise sampling (`core/shaders/common/noise.glsl`) | Tileable blue-noise / Perlin field | greyscale |

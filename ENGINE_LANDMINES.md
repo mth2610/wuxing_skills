@@ -368,6 +368,31 @@ cumulative distances — as close to their origin as possible, on the C side whe
 you can pick the modulus deliberately. Folding is exact for a sine (period 2pi)
 and for a REPEAT-wrapped sampler; it is not exact for anything you then scale.
 
+## An in-shader `fract()` cannot fix a stutter — only folding at the ORIGIN can
+
+**Symptom.** An animation driven by `u_time * speed` visibly steps rather than
+moving smoothly after a long session. Wrapping the argument with `fract()` in the
+shader does not help, which then reads as "the fold didn't work" and invites a
+second, wronger fix.
+
+**Cause.** Two different problems wear the same fix. Folding a product that was
+*already computed* at full magnitude improves the accuracy of `sin`'s argument
+reduction — real, and measurable against a double-precision reference — but it
+cannot recover bits the product has already lost. For frame-to-frame resolution
+the phase step is `speed*dt` and the quantum at the argument is
+`(t*speed)*2^-23`, so **the speed cancels out of their ratio**: no downstream
+fold changes it, and only the magnitude of `t` itself matters.
+
+**Rule.** Fold the unbounded source where it is *born*, on the C side, where the
+modulus is a deliberate choice — `SurfaceFlow_PackGPU` folds every pan before
+upload, `trail_system.c` folds cumulative arc length with `fmodf(..., 8192)`. Use
+an in-shader fold (`UVDeform_SinePhase`, `UVDeform_FoldAngle`) for argument
+accuracy, and never reach for one to fix a stutter. Also: an aperiodic consumer
+must not be folded at all — folding the time term of an `fbm` domain makes the
+whole field jump once per cycle (see the two adjacent, deliberately different
+lines in `core/shaders/aura_shell.fs`). Proof and both measurements:
+`core/tests/uv_deform_test.c` `Test_FoldingASineIsExact`.
+
 ## A missing shader file does not report as a shader problem
 
 **Symptom.** Edits to a `.vs`/`.fs` appear to do nothing at all. The effect still

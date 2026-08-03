@@ -28,6 +28,39 @@ DissolveExit, SweepSlash, EnergyBurst, ImpactPackage, LightShaft.
 `SWEPT TRAIL` drives a figure-eight and cycles the three styles every 4 s;
 arithmetic covered by `core/tests/swept_trail_test.c`.
 
+**`core/uv/` — UV deformation + surface flow (03/08/2026, landed).** `UV' = UV +
+W(UV, t)` used to exist only inside `trail_deform.fs` mode 2. It is now a module:
+`uv_deform.h` (4 layer kinds, 5 envelopes, presets, CPU mirror, `vec4[]` GPU
+pack), `surface_flow.h` (N texture layers, tiling/pan/envelope/blend), `uv_fx.h`
+(binds both), and `flow_map.h` **moved here from `core/`** with its API unchanged.
+GLSL comes in two tiers — `shaders/uv_deform.glsl` and `shaders/surface_flow.glsl`
+declare no uniforms, `shaders/uv_field.glsl` adds the packed blocks. Three
+consumers: `trail_deform.fs` mode 2 (proved bit-identical over ~60k samples,
+`core/tests/uv_deform_test.c`), `shield_shell.fs` (FlowMap → SurfaceFlow, its
+`u_useFlow` branch is now a property of the flow), and `aura_shell.fs`.
+Usage prose: `API_GUIDE.md` "UV module".
+
+**Consequence worth a decision:** `vc_shield_shell.inl` was `FlowMap`'s only C
+consumer, so moving it to `SurfaceFlow` leaves the `FlowMap` *C* API
+(`Create`/`Apply`/`Unload`, the two texture generators) with **zero callers**.
+Kept anyway, because the brief chose "move, API unchanged" and deleting a
+documented public API with its own test suite is a separate call. Its GLSL half
+is very much alive — `FlowMap_SampleTwoPhase` is what `uv_field.glsl` calls for
+layer 0. Delete or keep is the owner's; `core/docs/VFX_PLAN.md` §Flow map still
+describes it as an unused module to build on, which is now more true, not less.
+
+Two things deliberately left undone inside `trail_deform.fs`, both because that
+shader's output had to be provably unchanged and neither is worth an optional
+edit there: the `flow` variable at the Phase-3 block is computed from three
+texture samples and **never used** (so the `flowStr` / `TrailMaterialConfig
+.flowStrength` knob does nothing), and mode 1's pan at the bottom of the file is
+still un-`fract()`ed while mode 2's is folded. Both are safe to fix in a change
+that owns a visual check.
+
+Not verified visually — this machine cannot create a Vulkan instance. The
+"rendered result unchanged" claim for the trail is arithmetic (bit-identity plus
+a negative control proving the test is not vacuous), not a look at the screen.
+
 **Restored scaffold (NOT survivors):** the owner brought back a set of
 pre-Đợt-E effects to rewrite the two water skills against — water stream and
 on-path, ice crystal + burst, stone pillar, fissure streak, black hole, shard
@@ -49,7 +82,7 @@ contract in `API_GUIDE.md`; the renderer-independent guard is
 timing, damage and clash untouched. The two water skills are rebuilt
 (`tube_skill.c`, `glacial_cannon_skill.c`); the rest wait for H8.
 
-**Verification available to an agent:** `./scripts/run_core_tests.sh` (10 suites),
+**Verification available to an agent:** `./scripts/run_core_tests.sh` (32 suites; `swept_trail`, `tube_frame`, `volume_trail` fail on main already),
 `scripts/check_rlvk_compile.sh`, `scripts/run_rlvk_runtime_test.sh` (20 headless
 scenarios). **Not available:** anything needing a window — `./build/wuxing` dies
 with `FATAL: RLVK: instance creation failed` outside the owner's graphics

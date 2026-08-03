@@ -60,8 +60,15 @@ int main(void)
     CHECK(Has(src, "ResourceManager_LoadShader"), "authored shield shader goes through ResourceManager");
     CHECK(Has(src, "VFX_Material(shield->mat)"), "element colour comes from VFX_Material");
     CHECK(Has(src, "SetShaderValueTexture"), "surface body/flow/mask bind as shader inputs");
-    CHECK(Has(src, "FlowMap_Apply") && Has(src, "FlowMap_Create"),
-          "shield delegates two-phase flow binding to the shared FlowMap module");
+    // Migrated from FlowMap to core/uv's SurfaceFlow: same two-phase read, but
+    // as layer 0 of an N-layer flow, so the membrane can be given more layers
+    // from VFX_ShieldSurface data without editing the shader. The clock check
+    // is not incidental — FlowMap_Apply used to push the time uniform as a
+    // side effect and SurfaceFlow has no such hook, so losing that line would
+    // freeze the membrane while every other assertion here stayed green.
+    CHECK(Has(src, "SurfaceFlow_Apply") && Has(src, "SurfaceFlow_CacheLocations") &&
+          Has(src, "s_shieldShader.time = GetShaderLocation(shader, \"uTime\");"),
+          "shield delegates two-phase flow binding to core/uv, and still drives its own clock");
     CHECK(Has(src, "rlDrawRenderBatchActive"), "render-state changes are bracketed by flushes");
     CHECK(Has(src, "BeginBlendMode(BLEND_ALPHA)") &&
           !Has(src, "BLEND_MULTIPLIED") && !Has(src, "BeginBlendMode(BLEND_ADDITIVE)"),
@@ -71,7 +78,7 @@ int main(void)
     CHECK(Has("core/shaders/plasma_shell.fs", "float crest = smoothstep(0.74, 0.94, wisp)") &&
           !Has("core/shaders/plasma_shell.fs", "mix(0.20, 1.0, interiorFlow)"),
           "HDR is restricted to filament crests before ACES tone mapping");
-    CHECK(Has("core/shaders/shield_shell.fs", "FlowMap_SampleTwoPhase") &&
+    CHECK(Has("core/shaders/shield_shell.fs", "SurfaceFlow_FieldSample") &&
           Has("core/shaders/shield_shell.fs", "u_maskTex"),
           "authored path has distinct flow and mask channels");
     CHECK(Has("core/shaders/shield_shell.fs", "float strand = smoothstep(0.16, 0.62, detail)") &&

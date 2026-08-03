@@ -57,7 +57,9 @@ PROJECT_SOURCE_FILES   := main.c \
                           core/skill_curve.c \
                           core/tuning.c \
                           core/emitter_system.c \
-                          core/flow_map.c \
+                          core/uv/flow_map.c \
+                          core/uv/uv_deform.c \
+                          core/uv/surface_flow.c \
                           core/force_field.c \
                           core/camera_fx.c \
                           core/particles/particle_system.c \
@@ -394,6 +396,14 @@ copy_project_resources: create_temp_project_dirs
 	cp -f core/shaders/*.vs $(PROJECT_BUILD_PATH)/assets/core/shaders/ 2>/dev/null || true
 	cp -f core/shaders/*.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/ 2>/dev/null || true
 	cp -f core/shaders/common/*.glsl $(PROJECT_BUILD_PATH)/assets/core/shaders/common/ 2>/dev/null || true
+	@# core/uv shared includes (flow_map.glsl moved here from core/shaders/common).
+	@# These are #include'd by shield_shell.fs and aura_shell.fs, which ARE copied
+	@# above — without this pair they resolve to nothing and the shader fails to
+	@# compile, which raylib answers with the DEFAULT shader at a nonzero id.
+	@# NOTE: core/trails/shaders/ is still not copied here at all (pre-existing),
+	@# so trail_deform.fs already falls back to the classic pipeline on Android.
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/core/uv/shaders
+	cp -f core/uv/shaders/*.glsl $(PROJECT_BUILD_PATH)/assets/core/uv/shaders/ 2>/dev/null || true
 	mkdir -p $(PROJECT_BUILD_PATH)/assets/core/particles/shaders/gpu
 	cp -f core/particles/shaders/gpu/*.comp $(PROJECT_BUILD_PATH)/assets/core/particles/shaders/gpu/ 2>/dev/null || true
 	cp -f core/particles/shaders/gpu/*.vs $(PROJECT_BUILD_PATH)/assets/core/particles/shaders/gpu/ 2>/dev/null || true

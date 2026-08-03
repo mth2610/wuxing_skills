@@ -205,7 +205,7 @@ static int FileHas(const char *path, const char *needle)
 
 static void Test_MirrorStillMatchesSource(void)
 {
-    const char *shared = "core/shaders/common/flow_map.glsl";
+    const char *shared = "core/uv/shaders/flow_map.glsl";
     CHECK(FileHas(shared, "tiledUV + flow * (phase0 - 0.5) * strength"),
           "the displacement is still CENTRED on the undisplaced phase");
     CHECK(!FileHas(shared, "tiledUV + flow * phase0 * strength"),
@@ -214,11 +214,16 @@ static void Test_MirrorStillMatchesSource(void)
           "the triangle-wave weight still matches the centring it assumes");
     CHECK(FileHas(shared, "texture(flowTex, uv).rg * 2.0 - 1.0"),
           "the field is still decoded from RG as a signed direction");
+    // The shield now reaches the same operation through core/uv's SurfaceFlow
+    // (a one-layer flow with twoPhase on IS a FlowMap), so it names the field
+    // sampler rather than the primitive. Still exactly one flow operation
+    // shared between them — one more indirection deep on the shield's side.
     CHECK(FileHas("core/shaders/flow_map.fs", "FlowMap_SampleTwoPhase") &&
-          FileHas("core/shaders/shield_shell.fs", "FlowMap_SampleTwoPhase"),
+          FileHas("core/uv/shaders/uv_field.glsl", "FlowMap_SampleTwoPhase") &&
+          FileHas("core/shaders/shield_shell.fs", "SurfaceFlow_FieldSample"),
           "flat and shield materials share exactly one flow operation");
 
-    const char *c = "core/flow_map.c";
+    const char *c = "core/uv/flow_map.c";
     CHECK(FileHas(c, "FlowMap_CreateWithTrailTexture"),
           "there is still a generator for the TUBE case, not only a vortex");
     CHECK(FileHas(c, "float fv = -1.0f;"),

@@ -582,8 +582,74 @@ Rules:
 - This is the **only** ribbon/long-body primitive in the engine. `VFX_ComposeBeam` migrated `DrawRibbonStripEx` → `DrawRibbonEnergyField` 2026-07-10 once the "+" cross-section technique needed to generalize beyond a straight 2-point line; `EnergyFlow` (`core/vfx_proc_ray.c`) migrated the same day for visual consistency with Beam (both now read as real 3D energy fields, not a flat camera-facing ribbon).
 - `DrawRibbonStripEx` resets to `rlSetTexture(0)` before returning (fixed 2026-07-10) — matters now that real textures are bound, not just the `(Texture2D){0}` every earlier caller used.
 
-### Flow Map (`core/flow_map.h`)
-Shared module for UV flow effects (shield, fire, water, tornado...). Each skill owns its own `FlowMap` instance (location cache + config + texture) — no global state, so multiple skills can use flow maps concurrently with different shaders/textures.
+### UV module (`core/uv/`)
+
+`mesh + UVDeformField + SurfaceFlow = effect`. Warp the coordinate, then sample it.
+`core/uv/uv_deform.h` is the warp, `core/uv/surface_flow.h` the sampling, `core/uv/uv_fx.h`
+binds both in one call, and `core/uv/flow_map.h` (moved here 2026-08-03) stays as the
+one-layer convenience. They are one module because they share the **envelope**: the
+along-surface gate that weights a wave's amplitude is the same weight that blends a
+texture layer.
+
+**Two GLSL tiers, and the choice matters.**
+
+* `core/uv/shaders/uv_deform.glsl` and `surface_flow.glsl` declare **no uniforms** — the
+  `flow_map.glsl` contract. A shader with its own uniform naming calls them without
+  renaming anything, which is how `trail_deform.fs` migrated onto the module with its
+  output unchanged to the last bit.
+* `core/uv/shaders/uv_field.glsl` declares the standard packed `vec4[]` blocks that
+  `UVFx_Apply()` binds. Include this **or** the pure files, not as a matter of taste:
+  including it costs the uniform blocks whether or not you fill them.
+
+```c
+UVDeformField field = UVDeform_CreatePreset(UV_DEFORM_PRESET_SIN_WAVE_TRAIL);
+UVDeform_SetPhase(&field, myRandomPhase);   // preserves each layer's detuned phase
+SurfaceFlow flow; SurfaceFlow_Clear(&flow);
+SurfaceFlow_AddLayer(&flow, (SurfaceFlowLayer){ .tiling = {2,2}, .env = UV_ENV_NONE });
+UVFx_SyncStretch(&field, &flow, false);     // one asset, one answer about SHAPE/MATERIAL
+
+UVFxLocs locs = UVFx_CacheLocations(shader);   // once
+BeginShaderMode(shader);
+UVFx_Apply(&field, &flow, shader, &locs, (float)GetTime());
+```
+
+**Layers run summed OR in parallel, and they are not interchangeable.**
+`UVDeform_Evaluate` / `UVDeform_ApplyField` sum every layer into one displaced coordinate —
+the reference decomposition, and what a warped flat quad wants. `UVDeform_EvaluateLayer` /
+`UVDeform_ApplyFieldLayer` give one layer alone, for effects where each layer carries its
+own sample of the sheet and the samples are combined afterwards with `max`. That is what
+makes a trail read as three braided strand bundles; summing those three gives back the one
+smooth band the mode exists to avoid.
+
+**Pass a material coordinate, not a uv.** Every entry point takes the driving coordinate
+(`mat`) separately from the coordinate being warped. A scroll built on anything measured
+from a *moving* end of the geometry — a trail's tail, the first live particle — reads as
+frozen however fast you scroll it, because the geometry slides under the coordinate at the
+scroll speed. Pass a label stamped on the geometry when it was created (metres of emitter
+path at the moment a node was laid). A flat quad may pass its own uv.
+
+**Folding.** `UVDeform_SinePhase` takes whole **turns**, not radians — that is what makes
+the fold exact and leaves the multiply grouping with the caller, so an existing shader can
+migrate onto it bit-identically. `UVDeform_FoldAngle` serves shaders already written in
+radians. Neither fixes frame-to-frame stutter: folding a product already computed at full
+magnitude cannot recover bits it has lost. Fold at the origin instead — `SurfaceFlow_PackGPU`
+folds every pan on the C side before upload, which is where the modulus can be chosen
+deliberately. And never nest folds: `fract(fract(x)*k) != fract(x*k)` changes the tiling
+rate.
+
+**`stretchUV` is an authoring fact, not an inferable one.** A sheet with head/tail taper
+painted in is one complete SHAPE and must be stretched once; a repeating filament sheet is
+a MATERIAL and must be tiled by metres. Tiling a shape sheet gives a rope with no
+silhouette. Both halves carry the flag; `UVFx_SyncStretch` keeps them from disagreeing.
+
+Adding a `.glsl` here means adding its `configure_file` line in `CMakeLists.txt` **and** its
+`cp -f` in `Makefile.Android` — `Makefile.Android` globs `core/shaders/common/*.glsl` only,
+and a missing shader file does not report as a shader problem.
+
+Headless test: `core/tests/uv_deform_test.c`.
+
+### Flow Map (`core/uv/flow_map.h`)
+Shared module for UV flow effects (shield, fire, water, tornado...). Each skill owns its own `FlowMap` instance (location cache + config + texture) — no global state, so multiple skills can use flow maps concurrently with different shaders/textures. For more than one layer, or to reuse the envelope the deform half uses, reach for `SurfaceFlow` above instead — a one-layer `SurfaceFlow` with `twoPhase` on is exactly a `FlowMap`.
 ```c
 typedef struct {
     float speed;    // UV scroll speed over time

@@ -9,26 +9,29 @@ uniform vec4 u_glowColor;
 uniform sampler2D u_bodyTex;
 uniform sampler2D flowTex;
 uniform sampler2D u_maskTex;
-uniform int u_useFlow;
 uniform int u_useMask;
 uniform float uTime;
-uniform float uFlowSpeed;
-uniform float uFlowStrength;
-uniform float uFlowTiling;
 uniform float u_maskTiling;
 uniform float u_opacity;
 
-#include "core/shaders/common/flow_map.glsl"
+#include "core/uv/shaders/uv_field.glsl"
 
 // A 2D sheet on equirectangular sphere UVs pinches into a visible star at each
 // pole. Project the same tile from the three local normal planes instead; the
 // weighted transition is continuous and has no pole or longitude seam.
+//
+// The flow is now a core/uv SurfaceFlow bound by SurfaceFlow_Apply(), not the
+// shader's own uFlowSpeed/Strength/Tiling/u_useFlow quartet. A one-layer flow
+// with twoPhase on is exactly what this shader did before — but the shield can
+// now be given a second or third layer from data without touching this file,
+// which is the point of the module.
+//
+// mat == uv here: a triplanar projection's plane coordinate IS the material
+// coordinate, stamped on the geometry by its own normal and not measured from
+// anything that moves.
 vec4 Shield_SurfaceSample(vec2 uv)
 {
-    return (u_useFlow != 0)
-        ? FlowMap_SampleTwoPhase(u_bodyTex, flowTex, uv,
-                                 uTime, uFlowSpeed, uFlowStrength, uFlowTiling)
-        : texture(u_bodyTex, uv * uFlowTiling);
+    return SurfaceFlow_FieldSample(u_bodyTex, flowTex, uv, uv, uTime);
 }
 
 vec4 Shield_TriplanarBody(vec3 normal)

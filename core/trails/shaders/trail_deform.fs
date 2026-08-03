@@ -1,5 +1,7 @@
 #version 330
 #include "core/shaders/common/fs_header.glsl"
+#include "core/uv/shaders/uv_deform.glsl"
+#include "core/uv/shaders/surface_flow.glsl"
 
 // ── TRAIL DEFORM FRAGMENT — packed 4-channel wisp material ──────────────────
 // ONE RGBA texture carries four roles (the "packed" convention), so one bind
@@ -178,7 +180,12 @@ void main()
         // only comes apart behind it. Without it the head frays too and the
         // effect loses its anchor. The smoothstep is the head weld: excursion
         // is exactly 0 at the emitter.
-        float ramp = smoothstep(0.0, max(u_waveEnv.x, 0.001), along) * along;
+        //
+        // This is UV_ENV_HEAD_WELD in core/uv/shaders/uv_deform.glsl — the
+        // shape was general enough to name, so the module names it and this
+        // shader is one of its callers rather than its only implementation.
+        float ramp = UVDeform_Envelope(UV_ENV_HEAD_WELD, along, 0.0,
+                                       max(u_waveEnv.x, 0.001));
 
         // ── Phase 3: flow distortion from the B channel ──────────────────
         // Two samples at different pan offsets, subtracted from 0.5 so the
@@ -190,8 +197,8 @@ void main()
         // float32 loses its low bits long before the effect is retired; the
         // sheet wraps REPEAT and sine has period 2pi, so folding changes
         // nothing visible while it keeps the arithmetic in [0,1].
-        float panA = fract(u_time * u_panSpeed.x);
-        float panB = fract(u_time * u_panSpeed.y);
+        float panA = SurfaceFlow_Pan(u_time, u_panSpeed.x);
+        float panB = SurfaceFlow_Pan(u_time, u_panSpeed.y);
 
         vec2 fuv = vec2(vSegUV.x, fract(metres * u_tiling.x * 0.5));
         float b1 = texture(texture0, fuv + vec2(0.0, -panA)).b;
@@ -207,13 +214,20 @@ void main()
         // sin(2pi*(n + x)) == sin(2pi*x) for integer n, so dropping the whole
         // turns cannot change the result — it only stops the argument growing
         // until float32 can no longer resolve a fraction of a cycle.
+        //
+        // UVDeform_SinePhase (core/uv/shaders/uv_deform.glsl) takes its
+        // argument in whole TURNS rather than radians, which is what keeps the
+        // fold exact and leaves the multiply grouping here — so these three
+        // lines are bit-identical to the hand-rolled sin(fract(...)*TAU + ph)
+        // they replaced, not merely equivalent. The detune stays outside the
+        // call for the same reason: sin(x)*amp*k is not sin(x)*(amp*k).
         float spread = u_sinWave.w;
         float f = u_sinWave.y, sp = u_sinWave.z, amp = u_sinWave.x * ramp;
-        float w0 = sin(fract(metres * f + u_time * sp) * TAU + ph) * amp;
-        float w1 = sin(fract(metres * f * (1.0 + 0.73 * spread) + u_time * sp * 1.41) * TAU + ph * 2.3)
-                   * amp * (1.0 - 0.28 * spread);
-        float w2 = sin(fract(metres * f * (1.0 - 0.39 * spread) + u_time * sp * 0.67) * TAU + ph * 4.1)
-                   * amp * (1.0 + 0.25 * spread);
+        float w0 = UVDeform_SinePhase(metres * f + u_time * sp, ph, amp);
+        float w1 = UVDeform_SinePhase(metres * f * (1.0 + 0.73 * spread) + u_time * sp * 1.41,
+                                      ph * 2.3, amp) * (1.0 - 0.28 * spread);
+        float w2 = UVDeform_SinePhase(metres * f * (1.0 - 0.39 * spread) + u_time * sp * 0.67,
+                                      ph * 4.1, amp) * (1.0 + 0.25 * spread);
 
         // ── Sample one strand bundle per wave field ──────────────────────
         // Each bundle is the sheet's strand density mapped across
@@ -250,14 +264,18 @@ void main()
         // real smoke thins to threads before it disappears.
         float bundleHW = max(u_bandShape.x, 0.02) *
                          mix(1.0, clamp(u_tailShape.z, 0.05, 1.0), dying);
+        //
+        // SurfaceFlow_AlongV (core/uv/shaders/surface_flow.glsl) IS this rule:
+        // it takes vBase unfolded and folds it once together with the layer's
+        // own scale, which is the non-nesting the comment above demands.
         float vBase = metres * u_tiling.x;
         bool stretch = u_strandFlow.z > 0.5;
-        float v0 = stretch ? along : fract(vBase) - panA;
-        float v1 = stretch ? along : fract(vBase * 1.60) - panB;
-        float v2 = stretch ? along : fract(vBase * 0.70) - panA * 0.55;
-        float s0 = texture(texture0, vec2(0.5 + (across - w0) / (2.0 * bundleHW), v0)).r;
-        float s1 = texture(texture0, vec2(0.5 + (across - w1) / (2.0 * bundleHW * 0.72), v1)).g;
-        float s2 = texture(texture0, vec2(0.5 + (across - w2) / (2.0 * bundleHW * 1.35), v2)).r;
+        float v0 = SurfaceFlow_AlongV(along, vBase, 1.00, panA, stretch);
+        float v1 = SurfaceFlow_AlongV(along, vBase, 1.60, panB, stretch);
+        float v2 = SurfaceFlow_AlongV(along, vBase, 0.70, panA * 0.55, stretch);
+        float s0 = texture(texture0, vec2(SurfaceFlow_AcrossU(across, w0, bundleHW), v0)).r;
+        float s1 = texture(texture0, vec2(SurfaceFlow_AcrossU(across, w1, bundleHW * 0.72), v1)).g;
+        float s2 = texture(texture0, vec2(SurfaceFlow_AcrossU(across, w2, bundleHW * 1.35), v2)).r;
 
         // A bundle whose centre has swung far enough that this fragment falls
         // outside it must contribute NOTHING. The sampler wraps (the sheet has
@@ -288,8 +306,14 @@ void main()
         // ── Phase 5: dissolve (A channel), biting hardest at the tail ─────
         // The threshold climbs with `ramp`, so the head is untouched and the
         // tail erodes into separate wisps instead of fading out as a whole.
+        // NOTE the `false`: the dissolve channel ALWAYS tiles by metres, even
+        // for a stretch-authored sheet whose R/G carry one complete streak.
+        // That predates this module and is preserved exactly; it is passed
+        // explicitly here rather than left implicit so the asymmetry is
+        // visible instead of hiding in a missing branch.
         float dis = texture(texture0, vec2(vSegUV.x * 0.83 + 0.17,
-                                           fract(vBase * 0.45) - panB * 0.35)).a;
+                                           SurfaceFlow_AlongV(along, vBase, 0.45,
+                                                              panB * 0.35, false))).a;
         // The threshold climbs with `ramp` down the whole trail, then climbs
         // FASTER over the dying stretch. That second term is what turns the
         // end into holes and islands instead of a uniform dimming: the noise

@@ -19,7 +19,7 @@ counted rather than estimated:
 | **Trail system** (18 entry points, attach-to-transform, orbit followers, ribbon modes) | `core/trail_system.h` | **0** |
 | **Procedural mesh** — tube, wave plane, crystal (53 entry points) | `core/geometry/procedural_mesh_utils.h` | **0** |
 | **Path spline** | `core/path_spline.h` | **0** |
-| **Flow map** | `core/flow_map.h` | **0** |
+| **Flow map** | `core/uv/flow_map.h` | **0** |
 | **Crystal / Plasma materials** | `core/material/material_system.h` | **0** |
 | Mesh adjacency / on-mesh spawning | `core/mesh_adjacency.h` | 1 |
 
@@ -184,7 +184,7 @@ vertex colour, never in a uniform.
 
 **Owner:** Core Agent · **Size:** S · **Depends on:** H2/H3 (needs a surface)
 
-`core/flow_map.h` is unused. Real UV advection is what makes energy look like it
+`core/uv/flow_map.h` is unused. Real UV advection is what makes energy look like it
 is *moving through* a surface rather than sliding across it.
 
 **The constraint that decides the design:** under rlvk a second `sampler2D` in a

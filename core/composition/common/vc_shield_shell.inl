@@ -1,6 +1,6 @@
 // P4 — ShieldShell: a handle-owned 3D membrane, not a billboard sphere.
 #include "core/tuning.h"
-#include "core/flow_map.h"
+#include "core/uv/surface_flow.h"
 
 #define VFX_SHIELD_SHELL_MAX 8
 #define SHIELD_SHELL_RINGS 20
@@ -11,15 +11,25 @@ typedef struct {
     Vector3 pos;
     VC_MaterialId mat;
     VFX_ShieldSurface surface;
-    FlowMap flow;
+    // A one-layer SurfaceFlow with twoPhase on is exactly the FlowMap this
+    // used to hold. It is a SurfaceFlow so the shield can be given a second or
+    // third layer from VFX_ShieldSurface data without touching the shader.
+    SurfaceFlow flow;
+    Texture2D flowTex; // not owned — SurfaceFlow binds no textures itself
     float radius, target, level, elapsed, phase;
 } VC_ShieldShell;
 
 typedef struct {
     Shader shader;
-    int bodyColor, glowColor, bodyTex, maskTex, useFlow, useMask;
+    int bodyColor, glowColor, bodyTex, maskTex, useMask;
+    int flowTex;
     int maskTiling;
     int opacity;
+    // FlowMap_Apply used to push the time uniform as a side effect of its
+    // timeUniformName argument. SurfaceFlow has no such hook — a flow module
+    // has no business owning the surface's clock — so the shield sets it.
+    int time;
+    SurfaceFlowLocs flow;
 } VC_ShieldShader;
 
 static VC_ShieldShell s_shieldShells[VFX_SHIELD_SHELL_MAX];
@@ -51,7 +61,9 @@ static void ShieldShell_InitShared(void)
     s_shieldShader.glowColor = GetShaderLocation(shader, "u_glowColor");
     s_shieldShader.bodyTex = GetShaderLocation(shader, "u_bodyTex");
     s_shieldShader.maskTex = GetShaderLocation(shader, "u_maskTex");
-    s_shieldShader.useFlow = GetShaderLocation(shader, "u_useFlow");
+    s_shieldShader.flowTex = GetShaderLocation(shader, "flowTex");
+    s_shieldShader.flow = SurfaceFlow_CacheLocations(shader);
+    s_shieldShader.time = GetShaderLocation(shader, "uTime");
     s_shieldShader.useMask = GetShaderLocation(shader, "u_useMask");
     s_shieldShader.maskTiling = GetShaderLocation(shader, "u_maskTiling");
     s_shieldShader.opacity = GetShaderLocation(shader, "u_opacity");
@@ -65,16 +77,26 @@ static void ShieldShell_SetSurface(VC_ShieldShell *shield, const VFX_ShieldSurfa
 {
     shield->surface = surface ? *surface : (VFX_ShieldSurface){0};
     shield->hasSurface = surface != NULL && surface->body.id != 0;
-    shield->flow = (FlowMap){0};
+    SurfaceFlow_Clear(&shield->flow);
+    shield->flowTex = (Texture2D){0};
     if (!shield->hasSurface) return;
 
-    Texture2D flowTex = shield->surface.flowMap.id != 0
+    shield->flowTex = shield->surface.flowMap.id != 0
         ? shield->surface.flowMap : shield->surface.body;
-    shield->flow = FlowMap_Create(s_shieldShader.shader, flowTex, "uTime");
-    shield->flow.cfg.speed = shield->surface.flowSpeed;
-    shield->flow.cfg.strength = shield->surface.flowStrength;
-    shield->flow.cfg.tiling = shield->surface.flowTiling > 0.0f
+
+    // A surface with no dedicated flow map gets a plain tiled read instead of
+    // the two-phase cross-fade — the same branch the shader's old u_useFlow
+    // int selected, now expressed as a property of the flow rather than a
+    // second code path in the .fs.
+    shield->flow.twoPhase = shield->surface.flowMap.id != 0;
+    shield->flow.twoPhaseSpeed = shield->surface.flowSpeed;
+    shield->flow.twoPhaseStrength = shield->surface.flowStrength;
+
+    float tiling = shield->surface.flowTiling > 0.0f
         ? shield->surface.flowTiling : 1.0f;
+    SurfaceFlow_AddLayer(&shield->flow, (SurfaceFlowLayer){
+        .tiling = {tiling, tiling}, .pan = {0.0f, 0.0f},
+        .blend = SURFACE_FLOW_MUL, .env = UV_ENV_NONE});
 }
 
 int VFX_ShieldShell_SpawnEx(Vector3 pos, VC_MaterialId mat, float radius,
@@ -128,18 +150,23 @@ static void ShieldShell_BeginTextured(const VC_ShieldShell *shield, const VFX_El
     Shader shader = s_shieldShader.shader;
     SkillManager_BeginShader(shader);
     Vector4 body = ColorNormalize(mat->body), glow = ColorNormalize(VC_Whiten(mat->glow, 0.35f));
-    int useFlow = shield->surface.flowMap.id != 0, useMask = shield->surface.mask.id != 0;
+    int useMask = shield->surface.mask.id != 0;
     Texture2D maskTex = useMask ? shield->surface.mask : shield->surface.body;
     float maskTiling = shield->surface.maskTiling > 0.0f ? shield->surface.maskTiling : 1.0f;
     if (s_shieldShader.bodyColor >= 0) SetShaderValue(shader, s_shieldShader.bodyColor, &body, SHADER_UNIFORM_VEC4);
     if (s_shieldShader.glowColor >= 0) SetShaderValue(shader, s_shieldShader.glowColor, &glow, SHADER_UNIFORM_VEC4);
     if (s_shieldShader.bodyTex >= 0) SetShaderValueTexture(shader, s_shieldShader.bodyTex, shield->surface.body);
     if (s_shieldShader.maskTex >= 0) SetShaderValueTexture(shader, s_shieldShader.maskTex, maskTex);
-    if (s_shieldShader.useFlow >= 0) SetShaderValue(shader, s_shieldShader.useFlow, &useFlow, SHADER_UNIFORM_INT);
     if (s_shieldShader.useMask >= 0) SetShaderValue(shader, s_shieldShader.useMask, &useMask, SHADER_UNIFORM_INT);
     if (s_shieldShader.maskTiling >= 0) SetShaderValue(shader, s_shieldShader.maskTiling, &maskTiling, SHADER_UNIFORM_FLOAT);
     if (s_shieldShader.opacity >= 0) SetShaderValue(shader, s_shieldShader.opacity, &opacity, SHADER_UNIFORM_FLOAT);
-    FlowMap_Apply(&shield->flow, shader, (float)GetTime());
+    // SurfaceFlow_Apply deliberately binds no textures — it must not touch a
+    // slot the caller is already using — so the flow sheet is bound here, by
+    // name, and raylib manages the unit.
+    if (s_shieldShader.flowTex >= 0) SetShaderValueTexture(shader, s_shieldShader.flowTex, shield->flowTex);
+    float now = (float)GetTime();
+    if (s_shieldShader.time >= 0) SetShaderValue(shader, s_shieldShader.time, &now, SHADER_UNIFORM_FLOAT);
+    SurfaceFlow_Apply(&shield->flow, shader, &s_shieldShader.flow, now);
     // Immediate rlgl geometry needs its current material texture set as well
     // as the named sampler bindings above; otherwise a backend may batch it as
     // an untextured sphere while the flow uniforms are technically valid.

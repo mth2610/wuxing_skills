@@ -668,17 +668,32 @@ static void Test_MirrorStillMatchesSource(void)
     CHECK(FileHas(fs, "if (u_matMode >= 1.5)"), "the strand branch is still reachable");
     CHECK(FileHas(fs, "float metres = u_pathArc.x - along * u_pathArc.y;"),
           "the trail is still anchored in metres of laid path, not in segment space");
-    CHECK(FileHas(fs, "float ramp = smoothstep(0.0, max(u_waveEnv.x, 0.001), along) * along;"),
+    // The ramp moved into core/uv as UV_ENV_HEAD_WELD — the shape was general
+    // enough to name. Pin it at BOTH ends: the call here, and the formula
+    // there. Asserting only the call would let the envelope be redefined
+    // underneath this shader without a single test going red.
+    CHECK(FileHas(fs, "float ramp = UVDeform_Envelope(UV_ENV_HEAD_WELD, along, 0.0,") &&
+          FileHas(fs, "max(u_waveEnv.x, 0.001));"),
           "disorder is still ramped by the along-trail coordinate — tight head, frayed tail");
+    CHECK(FileHas("core/uv/shaders/uv_deform.glsl",
+                  "if (kind == UV_ENV_HEAD_WELD) return smoothstep(start, end, c) * c;"),
+          "...and HEAD_WELD is still smoothstep * c, which is what that ramp WAS");
     CHECK(FileHas(fs, "float flow = ((b1 - 0.5) + (b2 - 0.5)) * u_strandFlow.x * ramp;"),
           "the B-channel flow warp is still zero-mean and still ramped to the tail");
     // Three SEPARATE fields, three SEPARATE samples. Summing the waves into one
     // centreline, or summing the samples, collapses the braid into one smooth
     // band — the "biên và đuôi liền mạch" failure this mode replaced.
-    CHECK(FileHas(fs, "float w1 = sin(fract(metres * f * (1.0 + 0.73 * spread)"),
+    CHECK(FileHas(fs, "float w1 = UVDeform_SinePhase(metres * f * (1.0 + 0.73 * spread)"),
           "the second wave field is still detuned from the first");
-    CHECK(FileHas(fs, "float w2 = sin(fract(metres * f * (1.0 - 0.39 * spread)"),
+    CHECK(FileHas(fs, "float w2 = UVDeform_SinePhase(metres * f * (1.0 - 0.39 * spread)"),
           "and the third from both");
+    // The amplitude detune stays OUTSIDE the call. sin(x)*amp*k and
+    // sin(x)*(amp*k) are not the same float, so folding it into the amp
+    // argument would have been "equivalent" and would have changed the pixels
+    // of an effect that took eight rounds to land.
+    CHECK(FileHas(fs, "ph * 2.3, amp) * (1.0 - 0.28 * spread);") &&
+          FileHas(fs, "ph * 4.1, amp) * (1.0 + 0.25 * spread);"),
+          "and the amplitude detune is still applied after the call, not folded into it");
     CHECK(FileHas(fs, "float strand = max(max(s0, s1 * clamp(u_wispMix, 0.0, 1.0)), s2 * clamp(u_strandFlow.y, 0.0, 1.0));"),
           "the bundles still combine with MAX — summing would fill the gaps between hairs");
     CHECK(FileHas(fs, "s0 *= 1.0 - smoothstep(0.80, 1.0, abs(across - w0) / bundleHW);"),
@@ -689,15 +704,20 @@ static void Test_MirrorStillMatchesSource(void)
     // u_time and the arc length both grow without bound; folding is EXACT for a
     // sine (sin(2pi(n+x)) == sin(2pi x)) and for a REPEAT-wrapped sampler, so it
     // costs nothing and stops float32 from losing a fraction of a cycle.
-    CHECK(FileHas(fs, "float panA = fract(u_time * u_panSpeed.x);"),
+    CHECK(FileHas(fs, "float panA = SurfaceFlow_Pan(u_time, u_panSpeed.x);") &&
+          FileHas("core/uv/shaders/surface_flow.glsl", "return fract(t * speed);"),
           "the time-driven pans are still folded to [0,1]");
-    CHECK(FileHas(fs, "float w0 = sin(fract(metres * f + u_time * sp) * TAU + ph) * amp;"),
+    CHECK(FileHas(fs, "float w0 = UVDeform_SinePhase(metres * f + u_time * sp, ph, amp);") &&
+          FileHas("core/uv/shaders/uv_deform.glsl",
+                  "return sin(fract(turns) * UV_TAU + phase) * amp;"),
           "the sine phase is still folded before it is scaled to radians");
     CHECK(FileHas(fs, "float vBase = metres * u_tiling.x;"),
           "the arc-length texture coordinate is kept unfolded as the shared base");
     // fract(fract(x)*k) != fract(x*k): folding before scaling changes the
     // tiling RATE and chops the strands into mismatched runs.
-    CHECK(FileHas(fs, "fract(vBase * 1.60) - panB"),
+    CHECK(FileHas(fs, "SurfaceFlow_AlongV(along, vBase, 1.60, panB, stretch)") &&
+          FileHas("core/uv/shaders/surface_flow.glsl",
+                  "return stretch ? stretched : fract(base * scale) - pan;"),
           "each bundle folds its OWN product — the folds are never nested");
     CHECK(!FileHas(fs, "fract(vs *"),
           "and no fold is applied on top of an already-folded coordinate");
@@ -810,7 +830,7 @@ static void Test_MirrorStillMatchesSource(void)
           "the generator states that the smoke sheet cannot tile");
     CHECK(FileHas(fs, "bool stretch = u_strandFlow.z > 0.5;"),
           "the shader still chooses tile-vs-stretch per style");
-    CHECK(FileHas(fs, "float v0 = stretch ? along : fract(vBase) - panA;"),
+    CHECK(FileHas(fs, "float v0 = SurfaceFlow_AlongV(along, vBase, 1.00, panA, stretch);"),
           "and a stretched sheet still maps once across the whole trail");
     CHECK(FileHas(inl, ".stretchUV = true, // smoke_strand.png is one whole wisp, head to tail"),
           "the smoke style still stretches its shape sheet");
