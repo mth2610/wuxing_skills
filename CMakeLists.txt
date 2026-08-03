@@ -257,6 +257,13 @@ configure_file(core/shaders/bloom_blur.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shade
 configure_file(core/shaders/post_process.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/post_process.fs COPYONLY)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/core/trails/shaders)
 configure_file(core/trails/shaders/trail_glow.fs ${CMAKE_CURRENT_BINARY_DIR}/core/trails/shaders/trail_glow.fs COPYONLY)
+# trail_body/trail_deform were missing here. A missing shader does NOT announce
+# itself as a shader problem: TrailUsesDeformShader() falls back to the classic
+# pipeline, so the trail keeps rendering — as the OLD effect — and every edit to
+# trail_deform.fs appears to do nothing at all.
+configure_file(core/trails/shaders/trail_body.fs ${CMAKE_CURRENT_BINARY_DIR}/core/trails/shaders/trail_body.fs COPYONLY)
+configure_file(core/trails/shaders/trail_deform.vs ${CMAKE_CURRENT_BINARY_DIR}/core/trails/shaders/trail_deform.vs COPYONLY)
+configure_file(core/trails/shaders/trail_deform.fs ${CMAKE_CURRENT_BINARY_DIR}/core/trails/shaders/trail_deform.fs COPYONLY)
 configure_file(core/shaders/water_splash.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/water_splash.fs COPYONLY)
 configure_file(core/shaders/water_splash.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/water_splash.vs COPYONLY)
 configure_file(core/fluid/shaders/fluid_depth_smooth.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_depth_smooth.fs COPYONLY)

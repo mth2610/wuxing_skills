@@ -267,6 +267,352 @@ substitute is the tangent-space distortion normal maps
 (`distort_normal_swirl`, `_shock`). See `VFX_PLAN.md` H6 — it is no longer the
 bottleneck the old spec called it.
 
+
+## Energy trail — the sin-wave band (03/08/2026)
+
+Target: the RzFX "sin wave trail" look (a glowing ribbon that snakes as it
+flows, tapering to a needle tail, HDR into bloom). The previous attempt was a
+flat SMOKE_WIDEN plume with vertex waves switched off, so it read as neither.
+
+**What changed, and why each one mattered.**
+
+1. **The wave moved from the VERTEX stage to the FRAGMENT stage**
+   (`trail_deform.fs` material mode 2, `TrailMaterialConfig.wave*`/`band*`).
+   Vertex displacement folds the strip through itself on a turn and — the real
+   killer — keyed off NORMALIZED segment, so the whole waveform stretched every
+   time the trail grew or the head changed speed. That stretch is what "the
+   waves read as rigid" actually was. In UV space the band snakes inside a flat
+   quad and the geometry is untouchable.
+2. **The wave is anchored in METRES of laid path** (`u_pathArc`, fed from
+   `nodeUV[headNode]` and the head-minus-tail span). Crests now stand still on
+   the trail the emitter laid; only `waveTravel` walks them. This is the single
+   change that separates "flowing energy" from "a swinging rope".
+3. **`TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE`** — compact head, widest just behind
+   it, long taper to a needle. The old SMOKE_WIDEN is its exact opposite and is
+   why the effect read as a plume. The taper also pinches the wave's excursion
+   toward the tail for free.
+4. **HDR heat ramp** (`hotColor`, `hdrGain`): element hue at the fringe, burning
+   to white-hot at the core, gain > 1 so bloom has something to catch. A single
+   flat tint is what made the old band read as a neon sticker.
+5. **Its own `onUpdate`.** It had been sharing `SmokeTrail_OnUpdate`, which was
+   re-installing the fire updraft force field and the cloth spring on it every
+   frame. See `LANDMINES.md`.
+
+### Round 2 — one band was never going to be enough
+
+Motion was accepted; the texture was not ("biên và đuôi liền mạch" — the edge and
+tail stayed smooth and continuous instead of breaking into strands). Read the
+original article (ryanzengvfx.blogspot.com, 2019-04) rather than guessing again,
+and it names the thing the first pass got wrong: **Sin01/02/03 are three
+independent wave fields, each sampling its own trail-pattern channel.** The
+trail is a braid of overlapping bundles. A single analytic band, however well
+eroded, can only ever be one smooth-edged ribbon.
+
+Two halves, and the asset half was the bigger one:
+
+- **The sheet.** `energy_wisp.png` was isotropic cloud noise in every channel.
+  Cloud noise modulates a shape's brightness; it cannot split it into hairs.
+  `gen_energy_wisp_texture.py` now builds actual filaments — narrow Gaussian
+  ridges whose centres wander on integer-frequency sines in V (seamless), broken
+  up lengthwise, combined **brightest-wins** (summing fills the gaps between
+  hairs, and the gaps are the effect). Channel layout follows the article:
+  R/G = trail patterns 1/2, B = flow distortion, A = dissolve. Measured: 5
+  separate bright runs across the width in R, 17 in G, 42% of R near-black.
+- **The shader.** Mode 2 has NO band function any more. Three detuned wave
+  fields, three strand-bundle samples, combined with `max`, each with a wrap
+  window so a crest cannot smear its strands back in from the far edge. Then the
+  article's Phase 3 (zero-mean B-channel flow warp), Phase 4 (edge mask) and
+  Phase 5 (A-channel dissolve). **Everything that frays is multiplied by
+  `ramp`** — the along-trail coordinate — which is the article's "multiply by
+  the U coordinate": tight coherent head, fanning frayed tail.
+
+Also fixed: the A channel was generated into [0.5, 1.0], so no sane dissolve
+threshold could bite it.
+
+**Verified:** `trail_deform_test.c` (111 checks, 0 failures) — the bundle fits
+inside the quad, the three fields diverge AND their spacing opens and closes
+(a braid, not two rails), the disorder ramp is monotonic and zero at the
+emitter, the arc anchor holds, plus source mirrors on the max-combine, the wrap
+windows and the generator's filament construction. Both stages compile and LINK
+clean under `glslangValidator` (the cross-stage `u_wavePhase`/`u_waveEnv`
+sharing is deliberate — one program, one location).
+**Not verified on screen:** this machine cannot bring up the Vulkan instance
+(`FATAL: RLVK: instance creation failed`), so the look itself is unjudged. Bench
+it at NEW FX -> ENERGY TRAIL.
+
+**A test-writing note worth keeping:** "the crests travel with time" first
+failed because it probed a single later time, and the two samples happened to
+land either side of a trough. A moving wave and a frozen one are
+indistinguishable at one sample pair — sweep and measure the swing.
+
+**Live knobs** (`tuning.cfg`, hot-reload). Most useful first:
+`energytrail_flow_str` (how hard the tail frays), `_strand_gain` (>1 thins the
+hairs and opens the gaps), `_wave_spread` (0 stacks the three bundles into one
+thick band, higher = wider braid), `_dissolve` / `_dissolve_soft`,
+`_bundle_width`, `_bundle_wt`, `_wisp_mix` (weight of the fine-strand layer),
+`_wave_amp` / `_wave_freq` (cycles per metre) / `_wave_travel`, `_tiling_x`
+(sheet tiles per metre), `_pan_coarse` / `_pan_fine`, `_hdr_gain`, `_edge_soft`,
+`_env_head`. `_wave_amp + _bundle_width` must stay under 1.0 or the outermost
+bundle is cut flat by the edge mask.
+
+
+### Round 3 — generalised, plus the bright-background bug
+
+Three things, in the order they matter:
+
+**1. The render split was wrong, and it is a cross-cutting bug.** The trail
+looked faded over anything bright. Cause: `trail_deform.fs` emitted ONE colour
+for both VFX passes, asserting in its own header that "both consume
+`src.rgb * src.a`". Only additive does — `BLEND_ALPHA` is
+`glBlendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA)`, not premultiplied — so the body
+pass multiplied by alpha a second time, collapsed to ~intensity², contributed no
+coverage, and the effect survived only in the additive pass, which by blend law
+cannot create contrast over a bright destination. Fixed with `u_renderPass` +
+one `ResolvePass()` resolver both material modes route through, and an authored
+`TrailMaterialConfig.bodyOpacity`. **Promoted to `ENGINE_LANDMINES.md`** — any
+module using `ScreenDistort_BeginVFXBody/Emission` can hit this.
+
+Note the shape of the failure: the wrong belief was written down as a comment,
+so every later reader confirmed it instead of checking it.
+
+**2. Generalised into `VFX_ComposeStrandTrail(..., VFX_StrandStyle)`.** Styles
+are a DATA table (`s_strandStyles`), not copied composers — a second composer
+would re-acquire the render-split and arc-anchor bugs this one has been through.
+`VFX_ComposeEnergyTrail` is now a thin alias; `VFX_ComposeSmokeStrandTrail` is
+the other row. Split into its own `core/composition/common/vc_strand_trail.inl`:
+it shares nothing with `VFX_ComposeSmokeTrail` (puffs on the classic CPU-cloth
+pipeline) but a name, and living in that file is how it ended up calling the
+smoke's shared init and wearing the smoke's updraft force field.
+
+**3. A SMOKE style.** Same shader, three levers: `strandGain` **below** 1
+(fattens each hair until neighbours merge into mass instead of reading as wire),
+`bundleWidth` roughly doubled (magnifies the sheet's filaments in world space),
+and `additive` off with `bodyOpacity` 0.92 — smoke must occlude; an additive
+plume is a glow whatever colour you give it. Everything else slows down.
+
+**Bench.** One entry per source `.inl` is the VFX bench's invariant, so both
+styles share the NEW FX -> STRAND TRAIL button and are A/B'd live with the
+`strandtrail_style` tunable (-1 = as spawned, 0 = energy, 1 = smoke). The
+per-frame callback re-pushes blend mode, width envelope and tint as well as the
+material, so the swap is complete without a respawn.
+
+**Verified:** `trail_deform_test.c` 118 checks / 0 failures; full core suite
+28/31 (the 3 failures are pre-existing, confirmed against a stashed tree).
+Shader stages compile and LINK clean under `glslangValidator`.
+**Not verified on screen** — no Vulkan instance on this machine.
+
+
+### Round 4 — re-read the reference, found two real gaps
+
+Went back to the algorithm write-up step by step instead of trusting the earlier
+reading. Two genuine contradictions with the implementation, one deliberate
+divergence.
+
+**Gap 1 — Step 12, `frac()`, was missing entirely.** The reference folds its
+noise UVs because `time * speed` grows without bound and float32 stops resolving
+a fraction of a cycle. This implementation had TWO unbounded inputs: `u_time`
+(`GetTime()`) and `metres` (the trail's cumulative `laidDist`). At one hour of
+uptime `u_time * pan` is in the tens of thousands, where a float32 step is
+~0.004 — visible stepping in the panned sheet and a juddering wave. Folded in
+three places now: `fmod(GetTime(), 4096)` on the C side, `fract()` on every
+time-driven pan, and `fract()` on the sine phase before it is scaled to radians.
+The last one is EXACT, not an approximation: `sin(2pi(n+x)) == sin(2pi x)`.
+Latent, not yet observed — bench trails are far too short-lived to reach it.
+
+**Gap 2 — Step 13, the ALONG-trail colour ramp, was missing.** The reference
+lerps head colour -> tail colour by `u`. This had only an intensity ramp (dense
+strand centre -> hot core), which is a different axis and leaves the whole
+ribbon one flat hue down its length. Both now stack: `tailColor` on
+`TrailMaterialConfig`, authored per style as a blend toward the material's own
+body tone (never toward black — a trail ramping to black reads as dirt, not as
+cooling).
+
+**Deliberate divergence — Step 4.** The reference NORMALISES the offset V back
+into [-1,1] (compress). This clamps with a per-bundle window instead (cut).
+Compressing squeezes the strand bundle as the wave peaks, which visibly thins
+the trail at its crests; cutting keeps the bundle's shape and loses only what
+leaves the quad, which the edge mask would remove anyway. Kept the cut, on
+purpose.
+
+Everything else lines up: centred V, sine offset, amplitude x U, three separate
+sample sets (not three meshes), two-sample zero-mean flow noise, distortion x U,
+edge mask, dissolve threshold rising with U.
+
+**Verified:** `trail_deform_test.c` 125 checks / 0 failures — Steps 12 and 13
+now have their own source mirrors. Full core suite 28/31 (same 3 pre-existing).
+
+**Bench note:** after the file split, the old button index 6 is `SMOKE TRAIL` —
+the ORIGINAL CPU-cloth puff trail, not this one. The strand trail is
+`STRAND TRAIL`. Anyone reporting "it went back to the old ugly version" is
+looking at the wrong button.
+
+
+### Round 5 — two regressions I introduced, both found by the user
+
+**Regression A: I moved the HDR gain into a branch nothing runs.** `main.c`
+calls `DrawTrailEntitiesBody()` and never `DrawTrailEntitiesEmission()` — by
+design, ribbons are HDR-lifted inside the body pass and picked up by ordinary
+bloom, because a second full-res emission target duplicates the geometry per
+trail. Round 3's "correct" split put the gain in the emission branch, i.e. in
+dead code, and every trail went pale over dark and bright backgrounds alike.
+The body pass has to carry BOTH jobs. Fixed, and `bodyOpacity` defaults raised
+(0.45 -> 0.90 energy, 0.96 smoke): under a one-pass subsystem that knob is plain
+visibility, not a body-vs-glow balance. Promoted to `ENGINE_LANDMINES.md`.
+
+**Regression B: nested `fract()`.** Round 4's precision folds wrote
+`fract(vs * 1.60)` where `vs` was already folded. `fract(fract(x)*k) != fract(x*k)`
+— it changes each bundle's tiling RATE and chops the strands into short
+mismatched runs, so the filaments read as fine mush. Now one shared unfolded
+base with each consumer folding its own product once. Also promoted.
+
+The arc length is now bounded on the C side instead (`fmodf(nodeUV, 8192)`),
+where the modulus is a deliberate choice: ~30 min of continuous movement, and
+the wrap re-phases the waves once — the honest cost of not letting the
+arithmetic quietly decay.
+
+`strandtrail_style` now logs on change (and warns on an out-of-range value),
+per the "silent paths must announce themselves" rule — a knob that appears to do
+nothing and a knob that is doing nothing look identical from the outside.
+
+**Verified:** 130 checks / 0 failures, including mirrors pinning that `main.c`
+runs the body pass and NOT the emission one, and that no fold sits on top of an
+already-folded coordinate. Full suite 28/31 (same 3 pre-existing).
+
+
+### Round 6 — deleted the old smoke trail, and found a real reason edits could vanish
+
+**`VFX_ComposeSmokeTrail` is gone** (with `VFX_SmokeTrail_SetTexture`;
+`VFX_SmokeTrail_Stop` became `VFX_StrandTrail_Stop` on the new file). It was the
+classic CPU-cloth puff plume, and after the file split it occupied the VFX bench
+slot the strand trail used to sit in — so the wrong effect kept getting judged.
+Deleted rather than deprecated: two similar-looking buttons IS the bug.
+`VFX_SURFACE_SMOKE_RIBBON` is now orphaned-but-kept (sheet is authored and
+reusable); its provenance says so and the registry test no longer asserts a live
+consumer for it.
+
+**CMakeLists was missing `trail_deform.vs/.fs`.** Every shader the game loads at
+runtime is `configure_file`'d into the build tree, and these two never were
+(nor `trail_body.fs`). Whether that bites depends on the working directory the
+binary is launched from — but the failure mode is nasty either way, and worth
+recording: a missing deform shader does NOT report as a shader problem.
+`TrailUsesDeformShader()` returns false, the trail silently renders through the
+classic pipeline, and every edit to `trail_deform.fs` appears to do nothing.
+That is indistinguishable from "the change had no effect", which is exactly how
+it was reported. Now copied.
+
+Also: `strandtrail_style` logs on change and warns on an out-of-range value, so
+"the knob does nothing" and "the knob is doing nothing" stop looking alike.
+
+**Verified:** 131 checks / 0 failures on the trail suite; full core suite back to
+28/31 after fixing the registry test the deletion broke (same 3 pre-existing
+failures). Still not verified on screen — no Vulkan instance on this machine,
+which is why these last rounds have leaned on structural mirrors instead.
+
+
+### Round 7 — the smoke style needed its own ASSET, not its own numbers
+
+**Why `strandtrail_style=1` still looked like the energy trail.** Two reasons,
+and the first one is the interesting one.
+
+1. **Strand density lives in the asset.** `energy_wisp.png` has 34 coarse + 96
+   fine hairs, authored thick and strong. Reference smoke is the opposite
+   shape of problem: MANY MORE, THINNER, FAINTER strands piling up until the
+   overlap reads as mass. No shader parameter turns 34 hairs into 300. The
+   smoke row's `strandGain = 0.55` was not the wrong direction (below 1 lifts
+   each hair's faint Gaussian skirt until neighbours touch — exactly right for
+   smoke); it was the right operation applied to the wrong sheet, where it just
+   fattened 34 thick hairs into glowing worms.
+   New `scripts/gen_smoke_strand_texture.py` -> `assets/textures/smoke_strand.png`
+   (registered as `VFX_SURFACE_SMOKE_STRAND`): 110 coarse + 260 fine hairs at
+   about half the width, brightness skewed hard toward the faint end
+   (`gain**2.2`), softer and wider density falloff, stronger wander. `surface`
+   is now a per-style field — the two styles are NOT interchangeable on one
+   sheet, and the struct says so.
+
+2. **A live style swap never changed the texture.** The layer (and therefore
+   the sheet) was chosen at spawn, so `strandtrail_style` swapped every number
+   and left the other style's texture bound — producing neither look, which is
+   indistinguishable from "the knob does nothing". `StrandTrail_EnsureSheet()`
+   is split out for exactly this, and the per-frame callback now re-points
+   `trail->layers` too.
+
+Also clarified for the next reader: `-1` and `0` are IDENTICAL on the VFX bench,
+because the bench spawns with `VFX_STRAND_ENERGY`. Only `1` changes anything
+there. That is not a bug, but it looks like one.
+
+**Verified:** 136 checks / 0 failures on the trail suite (new mirrors on the
+per-style surface field and on the live layer re-point); full core suite 28/31
+after updating the registry test, which asserted a literal profile id at a call
+site that now resolves `st->surface`.
+
+
+### Round 8 — the reference's R/G are a SHAPE, not a material
+
+User posted the actual reference sheet. R and G are each **one complete smoke
+streak**: a soft band, thick through the middle, tapering to nothing at both
+ends, with a few curls rolling through it. The label is 拖尾紋理 — "trail
+texture", singular. Its U axis maps ONCE across the whole trail.
+
+Both previous sheets were built as tileable filament MATERIALS and the shader
+tiled them by metres of laid path. That can only ever be a rope: uniform density
+end to end, no head, no tail, no silhouette of its own. And three sin-offset
+samples of a rope are three ropes — which is precisely what every version so far
+rendered. The wave machinery, the flow warp, the disorder ramp and the dissolve
+were all correct; they were being applied to the wrong KIND of asset.
+
+- `gen_smoke_strand_texture.py` rewritten: R = 4 broad curls, G = 6 narrower
+  ones, each a whole wisp running along +V, tapered at both ends and at both
+  sides. Non-tiling by construction (drift frequencies are non-integer). B and A
+  stay seamless — those two really are panned every frame.
+- New per-style `stretchUV`. `false` = tile by metres (energy, a filament
+  material). `true` = stretch once over the trail (smoke, a shape). This is
+  decided by how the sheet was AUTHORED, not by taste: a tiled shape sheet is a
+  rope, a stretched material sheet is a smear.
+- Smoke row retuned for a shape sheet: `tailFadeA` 0.80 -> 0.94 (the sheet
+  already tapers; fading twice thins the plume away), `wispMix` 0.60 (R and G
+  are two DIFFERENT wisps now — blend them rather than favour one),
+  `strandGain` 0.75, `flowStr` 0.65.
+
+**The pattern worth naming:** four rounds of tuning maths that was already
+right, because nobody checked what the source asset actually WAS. When an
+effect's structure refuses to appear no matter how the parameters move, the
+question is not "which knob" — it is "is the input the kind of thing this
+algorithm consumes".
+
+**Verified:** 141 checks / 0 failures (new mirrors on tile-vs-stretch and on the
+generator building a wisp rather than hairs); full suite 28/31, same 3
+pre-existing.
+
+
+### Round 9 — the tail
+
+Accepted look; the tail was the remaining coarse part. It ended on ONE segment:
+all three bundles, the width envelope and the material fade all stopped at the
+same place, so however soft the ramp over it, the eye still read a cut. Softness
+blurs an edge, it does not remove one.
+
+Three mechanisms, all per-style data (`tailStagger` / `tailDissolve` /
+`tailNarrow`, packed into `u_tailShape`):
+
+1. **Staggered ends.** The three bundles finish at `tailFadeA - stagger`,
+   `tailFadeA`, `tailFadeA + stagger`. Applied PER BUNDLE, before the `max` —
+   after it, a single cut would just clip the combined result again. The trail
+   now unravels across a stretch: the earliest bundle thins out first and the
+   last carries a few surviving wisps past it.
+2. **Dissolve bites harder while dying.** The threshold already climbed with
+   `ramp`; it now gets `+ tailDissolve * dying` over the final stretch, so the
+   noise eats through the thin parts first and leaves the dense ones a moment
+   longer — holes and islands instead of uniform dimming.
+3. **Bundles narrow as they die.** A band that only fades keeps full width to
+   the end and reads as a rectangle going transparent. Energy narrows hard
+   (0.55 — ends as a few threads), smoke barely (0.78 — a plume stays broad).
+
+All four tail knobs are live-tunable per style (`*_tail_stagger`,
+`*_tail_dissolve`, `*_tail_narrow`, `*_tail_fade`).
+
+**Verified:** 146 checks / 0 failures; full suite 28/31, same 3 pre-existing.
+Not verified on screen — no Vulkan instance here.
+
 ---
 
 ## Pointers

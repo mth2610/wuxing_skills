@@ -1,27 +1,35 @@
 #!/usr/bin/env python3
-"""Generate the 4-channel packed wisp sheet used by GPU deform trails.
+"""Generate the 4-channel packed STRAND sheet used by GPU deform trails.
 
-trail_deform.fs reinterprets ONE RGBA texture as four independent roles:
-    R = coarse wisp body    (low-frequency shape)
-    G = fine wisp detail    (high-frequency texture, mixed in by u_wispMix)
-    B = dissolve noise      (panning field the dissolve smoothstep erodes on)
-    A = turbulence          (zero-mean jitter on the coarse<->fine mix)
+Channel layout follows the RzFX "Sin Wave Trail" breakdown
+(ryanzengvfx.blogspot.com, 2019-04), which trail_deform.fs mode 2 implements:
 
-Why this file exists: the trail system's smoke sheet (smoke_ribbon.png) is
-single-channel — R=G=B, edge fade carried only in alpha — so the packed
-material read three identical greys, had no internal structure to flow, and
-the hard band lost its soft U edges. A packed sheet must bake the edge fade
-into EVERY channel, because the packed shader never reads the texture alpha.
+    R = trail pattern 1   (coarse filaments — the readable strands)
+    G = trail pattern 2   (finer, denser filaments — detail layer)
+    B = distortion noise  (smooth flow field; two offset samples warp the UV)
+    A = dissolve noise    (mid-frequency; erodes hardest toward the tail)
 
-Conventions (must match trail_deform.fs):
-  * V (texture .y) is the seam direction — analytic periodic noise, seamless.
-  * U (texture .x) is the cross-strip direction — edges reach 0 at U=0/1 so
-    the wrapped band fades out at its physical edges, never a hard cut.
-  * Each channel is a DIFFERENT noise instance (decorrelated R vs G vs B).
-  * B is centred on 0.5 with a wide spread; the FS does
-    smoothstep(u_dissolve, u_dissolve + edge, B) — chunks erode, not a haze.
-  * A is centred on 0.5 with a NARROW spread; the FS does
-    (A - 0.5) * 2 * u_turbStrength — a jitter, not a full-range flicker.
+WHY FILAMENTS, NOT CLOUDS. The previous sheet was isotropic cloud noise in
+every channel. Cloud noise can only ever modulate the BRIGHTNESS of a band —
+it cannot split one band into many, so the trail rendered as a smooth glowing
+ribbon with a clean edge and a clean tail, which is exactly the "texture chưa
+đúng, biên và đuôi liền mạch" complaint. The strand structure has to exist in
+the asset: a hair is a narrow ridge in U that persists for a long stretch of V,
+and no amount of shader work conjures that out of blobs.
+
+SHAPE LIVES IN THE SHEET, ON PURPOSE. R and G carry a soft density falloff
+toward U=0 and U=1, so the bundle thins into separate hairs at its edges
+instead of ending at a drawn boundary. Mode 2 therefore has NO analytic band —
+it samples this sheet three times at three wave offsets and lets the overlap be
+the silhouette. (Mode 1, the older packed-wisp path, wanted the opposite: an
+edge fade baked into every channel because it never reads texture alpha. The
+two conventions cannot share a sheet; mode 1 has no consumers left.)
+
+SEAMLESS IN BOTH AXES. V is panned and wrapped every frame, and U wraps when a
+wave crest pushes a sample past the strip edge, so every field here is built
+from terms periodic in both — hair centres wander on sums of sines in V, and
+their distance to a texel is measured on the CIRCLE in U.
+
 Uses only the Python standard library.
 """
 
@@ -59,7 +67,7 @@ def make_modes(rng: random.Random, octaves: list[int], count: int) -> list[tuple
 
 
 def field(u: float, v: float, modes: list[tuple[int, int, float, float]]) -> float:
-    """Periodic on V (the seam), quasi-random on U; zero-centred, -1..1."""
+    """Periodic in BOTH axes; zero-centred, -1..1."""
     value = 0.0
     weight = 0.0
     for m, n, amp, phase in modes:
@@ -68,51 +76,136 @@ def field(u: float, v: float, modes: list[tuple[int, int, float, float]]) -> flo
     return value / weight
 
 
+class Hair:
+    """One filament: a narrow ridge in U whose centre wanders slowly along V.
+
+    `wander` is a sum of sines with INTEGER frequencies in v, so the hair
+    returns to where it started at v=1 and the sheet tiles along the path. The
+    lengthwise `breaks` term thins the hair in places, so a bundle reads as
+    overlapping broken fibres rather than as ruled lines.
+    """
+
+    __slots__ = ("u0", "width", "gain", "wander", "breaks")
+
+    def __init__(self, rng: random.Random, width: float, wander_amp: float):
+        self.u0 = rng.random()
+        self.width = width * rng.uniform(0.55, 1.7)
+        self.gain = rng.uniform(0.55, 1.0)
+        self.wander = [
+            (rng.randint(1, 2), wander_amp * rng.uniform(0.6, 1.0), rng.random() * TAU),
+            (rng.randint(2, 5), wander_amp * rng.uniform(0.2, 0.5), rng.random() * TAU),
+        ]
+        self.breaks = [
+            (rng.randint(1, 3), rng.random() * TAU),
+            (rng.randint(4, 9), rng.random() * TAU),
+        ]
+
+    def centre(self, v: float) -> float:
+        c = self.u0
+        for n, amp, ph in self.wander:
+            c += amp * math.sin(TAU * n * v + ph)
+        return c
+
+    def intensity(self, v: float) -> float:
+        # 0..1, dipping to near zero a few times along the length so the hair
+        # breaks into segments instead of running the whole sheet unbroken.
+        a = math.sin(TAU * self.breaks[0][0] * v + self.breaks[0][1])
+        b = math.sin(TAU * self.breaks[1][0] * v + self.breaks[1][1])
+        return self.gain * smoothstep(-0.75, 0.55, 0.65 * a + 0.35 * b)
+
+
+def hair_field(u: float, v: float, hairs: list[Hair]) -> float:
+    """Brightest hair wins — hairs OVERLAP, they do not sum into a solid band.
+
+    Summing was the first attempt and it filled the gaps between neighbours
+    back in, which is the whole failure being fixed here: the gaps ARE the
+    effect. `max` keeps a bright hair bright and leaves the space beside it
+    empty.
+    """
+    best = 0.0
+    for h in hairs:
+        c = h.centre(v)
+        # Distance on the circle: a hair whose centre has wandered past U=1
+        # must still light texels near U=0, or the wrap shows as a seam.
+        d = abs(u - c)
+        d = min(d, 1.0 - d) if d < 1.0 else d % 1.0
+        d = min(d, 1.0 - d)
+        if d > h.width * 3.0:
+            continue
+        val = math.exp(-(d / h.width) ** 2) * h.intensity(v)
+        if val > best:
+            best = val
+    return best
+
+
 def main() -> None:
     rng = random.Random(0xE6E7C0)
 
-    # Decorrelated instances per role: coarse (low), fine (high), mid (erosion),
-    # mid-high (turbulence). Same octave ladder each time but different seeds
-    # means the four channels read as independent layers, which is the point.
-    coarse = make_modes(rng, [1, 2, 4], 6)
-    fine = make_modes(rng, [4, 8, 16], 6)
-    mid = make_modes(rng, [2, 4, 8], 5)
-    turb = make_modes(rng, [4, 8], 5)
+    # R: readable strands — few, wide, lazy wander. This is the layer the eye
+    # actually resolves as "the trail is made of threads".
+    coarse_hairs = [Hair(rng, 0.016, 0.075) for _ in range(34)]
+    # G: detail — many, thin, livelier wander. Mixed in at partial weight.
+    fine_hairs = [Hair(rng, 0.0065, 0.11) for _ in range(96)]
+
+    flow = make_modes(rng, [1, 2, 4], 6)   # B — smooth, low frequency
+    dissolve = make_modes(rng, [2, 4, 8], 5)  # A — mid frequency
 
     pixels = bytearray(SIZE * SIZE * 4)
     for y in range(SIZE):
         v = y / SIZE
+        coarse_row = [(h.centre(v), h.intensity(v), h.width) for h in coarse_hairs]
+        fine_row = [(h.centre(v), h.intensity(v), h.width) for h in fine_hairs]
         for x in range(SIZE):
             u = x / SIZE
-            # Edge fade baked into EVERY channel: at U=0/1 the band must be
-            # transparent in the packed path, which never reads texture alpha.
+
+            # Bundle density: the hair field is modulated so the middle is
+            # dense and the two edges thin out into stragglers. This is the
+            # silhouette — mode 2 draws no band of its own.
             edge = math.sin(math.pi * u)
-            edge = max(0.0, edge) ** 0.72
+            density = max(0.0, edge) ** 1.35
 
-            # R — coarse wisp: big billows, shaped for a soft body. Brightened
-            # so the additive glow is clearly visible (R rides the alpha as
-            # alpha = wisp * mask * vColor.a — a dim sheet makes a dim trail).
-            c = 0.5 + 0.5 * field(u, v, coarse)
-            r = edge * (0.32 + 0.68 * smoothstep(0.20, 0.85, c))
+            best_c = 0.0
+            for c, inten, w in coarse_row:
+                d = abs(u - c) % 1.0
+                d = min(d, 1.0 - d)
+                if d > w * 3.0:
+                    continue
+                val = math.exp(-(d / w) ** 2) * inten
+                if val > best_c:
+                    best_c = val
 
-            # G — fine wisp: high-frequency detail, mixed in by u_wispMix.
-            f = 0.5 + 0.5 * field(u, v, fine)
-            g = edge * (0.28 + 0.72 * smoothstep(0.25, 0.88, f))
+            best_f = 0.0
+            for c, inten, w in fine_row:
+                d = abs(u - c) % 1.0
+                d = min(d, 1.0 - d)
+                if d > w * 3.0:
+                    continue
+                val = math.exp(-(d / w) ** 2) * inten
+                if val > best_f:
+                    best_f = val
 
-            # B — dissolve noise: centred near 0.5 with a WIDE spread, so with
-            # a modest threshold most of the sheet survives and only low B
-            # regions erode (a B mean of ~0.35 made the whole band vanish).
-            m = 0.5 + 0.5 * field(u, v, mid)
-            b = edge * (0.5 + 0.5 * smoothstep(0.10, 0.90, m))
+            r = best_c * density
+            g = best_f * density
 
-            # A — turbulence: moderate spread around 0.5, so (A-0.5)*2*strength
-            # ripples the coarse<->fine mix without slamming the clamp.
-            t = 0.5 + 0.35 * field(u, v, turb)
-            a = edge * max(0.0, min(1.0, t))
+            # B — flow/distortion noise. Smooth and zero-centred: the shader
+            # reads (B - 0.5) twice at different pan offsets and adds the pair
+            # to the across coordinate, so a biased mean would push the whole
+            # trail sideways instead of wobbling it.
+            b = 0.5 + 0.5 * field(u, v, flow)
+
+            # A — dissolve noise. Must span the FULL 0..1 range: the shader
+            # sweeps a threshold across it, so a channel confined to the top
+            # half (the `0.5 + 0.5 * smoothstep(...)` this replaced) can only
+            # ever be eroded by a threshold above 0.5 and reads as "the
+            # dissolve does nothing" for every reasonable setting.
+            a = smoothstep(-0.85, 0.85, field(u, v, dissolve))
 
             i = (y * SIZE + x) * 4
-            pixels[i:i + 4] = bytes((round(r * 255.0), round(g * 255.0),
-                                     round(b * 255.0), 255))
+            pixels[i:i + 4] = bytes((
+                round(max(0.0, min(1.0, r)) * 255.0),
+                round(max(0.0, min(1.0, g)) * 255.0),
+                round(max(0.0, min(1.0, b)) * 255.0),
+                round(max(0.0, min(1.0, a)) * 255.0)))
 
     raw = bytearray(SIZE * (1 + SIZE * 4))
     for y in range(SIZE):
@@ -130,7 +223,8 @@ def main() -> None:
            chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b""))
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_bytes(png)
-    print(f"{OUT}: {SIZE}x{SIZE} RGBA8 (R coarse, G fine, B dissolve, A turbulence)")
+    print(f"{OUT}: {SIZE}x{SIZE} RGBA8 "
+          f"(R strands, G fine strands, B flow, A dissolve)")
 
 
 if __name__ == "__main__":

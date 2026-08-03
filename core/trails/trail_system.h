@@ -102,9 +102,21 @@ typedef struct
 // sheet + flow map + mask trio. Two samples of the same texture pan R+B and
 // G+A at different speeds (u_panSpeed) for internal motion. The same final
 // colour feeds BLEND_ALPHA body and BLEND_ADDITIVE emission passes.
+//
+// MODE 2 (sin-wave strand trail) reads the SAME texture with different channel
+// meanings — R/G are filament patterns, B is flow distortion, A is dissolve —
+// and builds the trail from three overlapping strand bundles, each riding its
+// own wave field. Put the wave here, not in the vertex stage: UV-space waves
+// cannot fold the geometry, and the arc-length anchor (waveFreq is cycles per
+// METRE) keeps the crests standing on the laid path while only time moves
+// them, which is what separates "flowing energy" from "a rigid swinging rope".
+//
+// The two modes' sheets are NOT interchangeable. Mode 1 needs an edge fade
+// baked into every channel (it never reads texture alpha); mode 2 needs strand
+// density and no baked band, because the strands ARE its silhouette.
 typedef struct
 {
-    float mode;         // 0 = passthrough, 1 = packed wisp
+    float mode;         // 0 = passthrough, 1 = packed wisp, 2 = sin-wave strands
     float wispMix;      // coarse(R) -> fine(G)
     float dissolve;     // B-channel dissolve threshold
     float dissolveSoft; // dissolve edge softness
@@ -118,6 +130,66 @@ typedef struct
     float tailFadeA;    // segment fade start (0 = head, 1 = tail)
     float tailFadeB;    // segment fade end — the tail dissolves to zero here;
                         // tailFadeA >= tailFadeB disables the fade
+
+    // ── SIN-WAVE STRAND TRAIL (mode 2 only) ─────────────────────────────────
+    // waveAmp + bundleWidth must stay under 1.0: both are in units of the
+    // strip HALF-width, so a sum over 1 pushes a bundle past the quad edge
+    // where the edge mask cuts it flat. Give the ribbon a radius ~3x the
+    // thickness you want to see — the extra width is the room the waves swing
+    // in, not visible mass.
+    //
+    // There is no band silhouette to configure: the trail is THREE strand
+    // bundles sampled from the sheet's own filament density, crossing each
+    // other. The sheet must therefore be strand-authored
+    // (scripts/gen_energy_wisp_texture.py) — cloud noise can only modulate a
+    // shape's brightness, never split it into hairs.
+    float waveAmp;      // wave excursion across the strip (0..1 of half-width)
+    float waveFreq;     // cycles per METRE of laid path (arc-anchored)
+    float waveTravel;   // cycles/sec the crests travel toward the tail
+    float waveSpread;   // detune between the three wave fields; 0 = they stack
+                        // into one thick bundle, higher = a wider braid
+    float bundleWidth;  // one strand bundle's half-width (0..1 of half-width)
+    float edgeSoft;     // quad edge-mask softness — the hard clamp on the waves
+    float hdrGain;      // output multiplier; > 1 is what bloom catches
+    float strandGain;   // strand contrast exponent; < 1 fattens the hairs,
+                        // > 1 thins them and opens the gaps between them
+    float flowStrength; // B-channel UV distortion; ramps to the tail, so this
+                        // is the knob that makes the TAIL fan out and fray
+    float bundleWeight; // weight of the third (widest) bundle, 0..1
+    // 0 = the sheet is a repeating filament MATERIAL, tiled by metres of path
+    //     (tilingX = tiles per metre).
+    // 1 = the sheet is one complete TRAIL SHAPE, head/tail taper painted in,
+    //     stretched once over the whole trail. Tiling a shape sheet gives a
+    //     rope of identical segments; stretching a material sheet smears it.
+    //     The sheet's authoring decides this, not taste.
+    float stretchUV;
+
+    // ── HOW THE TAIL COMES APART ────────────────────────────────────────────
+    // A tail whose every layer stops at the same segment reads as clipped
+    // however soft the fade over it — softness blurs a cut, it does not remove
+    // one. These three make it unravel instead.
+    float tailStagger;  // spread between the three bundles' end points, in
+                        // segment space. 0 = they all stop together.
+    float tailDissolve; // extra dissolve threshold over the dying stretch, so
+                        // the end breaks into holes rather than dimming evenly
+    float tailNarrow;   // bundle half-width multiplier at the tip (1 = none).
+                        // Below 1 the trail thins to threads before it goes.
+    Color hotColor;     // HDR core colour (the hot centre of a strand)
+    // Colour at the TAIL of the trail; the head uses the entity tint. The
+    // along-trail ramp is what makes a trail read as cooling (or as smoke
+    // thinning); without it the whole ribbon is one flat hue. Leave black to
+    // disable — the head colour is then used end to end.
+    Color tailColor;
+
+    // ── RENDER SPLIT (both material modes) ──────────────────────────────────
+    // How much this trail OCCLUDES in the BLEND_ALPHA body pass. Additive
+    // energy alone cannot hold contrast over a bright destination — it can only
+    // add — so a trail with bodyOpacity 0 is legible over the night arena and
+    // washes out over a lit floor or a daylit sky. This is the knob for that,
+    // and it is the only one: 0 = pure emissive (correct for sparks and
+    // glints), ~0.5 = a coloured core inside a glow, ~0.9 = smoke, which must
+    // occlude what is behind it.
+    float bodyOpacity;
 } TrailMaterialConfig;
 
 // ── Trail Cross-section ─────────────────────────────────────────────────────
@@ -149,7 +221,12 @@ typedef enum
     // Thin at the source, monotonically widening to FULL width at the tail —
     // a plume that rolls out and stays broad; the material tail ramp
     // (tailFadeA/B) evaporates the very tip instead of a hard band.
-    TRAIL_WIDTH_ENVELOPE_SMOKE_WIDEN = 5
+    TRAIL_WIDTH_ENVELOPE_SMOKE_WIDEN = 5,
+    // The reference "Width over Trail" curve for an energy ribbon: a compact
+    // head, the widest point just BEHIND it, then a long smooth taper to a
+    // needle-fine tail. The opposite of SMOKE_WIDEN — use this one whenever
+    // the trail should read as a blade/comet streak rather than a plume.
+    TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE = 6
 } TrailWidthEnvelopeType;
 
 typedef void (*TrailUpdateCallback)(int trailId, float dt);

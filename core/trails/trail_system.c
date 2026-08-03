@@ -72,6 +72,8 @@ typedef struct
     int wavePhase, waveEnv, waveStrength, curlScale, stripNormal;
     int matMode, wispMix, dissolve, dissolveSoft, turbStrength;
     int tiling, panSpeed, edgeTear, tailFadeA, tailFadeB;
+    int sinWave, bandShape, pathArc, colHot, strandFlow;
+    int renderPass, bodyOpacity, colTail, tailShape;
 } DeformLocs;
 
 static DeformLocs shaderCacheDeformLocs[TRAIL_SHADER_CACHE_SIZE];
@@ -101,6 +103,15 @@ static void FillDeformLocs(Shader shader, DeformLocs *l)
     l->edgeTear      = GetShaderLocation(shader, "u_edgeTear");
     l->tailFadeA     = GetShaderLocation(shader, "u_tailFadeA");
     l->tailFadeB     = GetShaderLocation(shader, "u_tailFadeB");
+    l->sinWave       = GetShaderLocation(shader, "u_sinWave");
+    l->bandShape     = GetShaderLocation(shader, "u_bandShape");
+    l->pathArc       = GetShaderLocation(shader, "u_pathArc");
+    l->colHot        = GetShaderLocation(shader, "u_colHot");
+    l->strandFlow    = GetShaderLocation(shader, "u_strandFlow");
+    l->renderPass    = GetShaderLocation(shader, "u_renderPass");
+    l->bodyOpacity   = GetShaderLocation(shader, "u_bodyOpacity");
+    l->colTail       = GetShaderLocation(shader, "u_colTail");
+    l->tailShape     = GetShaderLocation(shader, "u_tailShape");
 }
 
 static const DeformLocs *GetCachedDeformLocs(Shader shader)
@@ -290,6 +301,17 @@ static float ComputeWidthEnvelopeFast(const TrailEntity *t, float segRatio, floa
         float age = 1.0f - segRatio;
         float grow = SmoothStepC(0.0f, 0.25f, age);
         return 0.15f + 0.85f * grow;
+    }
+    case TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE:
+    {
+        // Compact head -> widest just behind it -> long taper to a needle.
+        // The tail floor is deliberately non-zero: a width of exactly 0 makes
+        // the last quad degenerate, which renders as a dark wedge rather than
+        // as nothing (the same trap documented on SmokeTrail's radius).
+        float age = 1.0f - segRatio; // 0 at the head, 1 at the tail
+        float lead = SmoothStepC(0.0f, 0.14f, age);
+        float body = 1.0f - SmoothStepC(0.14f, 1.0f, age);
+        return (0.35f + 0.65f * lead) * (0.06f + 0.94f * body * body);
     }
     case TRAIL_WIDTH_ENVELOPE_UNIFORM:
     default:
@@ -1519,6 +1541,19 @@ static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
         if (L->stripNormal >= 0) SetShaderValue(s_deformShader, L->stripNormal, &n, SHADER_UNIFORM_VEC3);
     }
 
+    {
+        // Which of the two render passes this draw belongs to. DrawTrailEntities
+        // (the combined, non-split entry point) reports -1; treat that as the
+        // EMISSION formula, which is what the combined path has always drawn.
+        // Getting this wrong is invisible in a dark scene and washes the whole
+        // effect out in a bright one — see trail_deform.fs's header.
+        float pass = (s_drawLayerFilter == 0) ? 0.0f : 1.0f;
+        float bodyOpacity = (m->bodyOpacity > 0.0f) ? m->bodyOpacity : 0.0f;
+        if (bodyOpacity > 1.0f) bodyOpacity = 1.0f;
+        if (L->renderPass >= 0) SetShaderValue(s_deformShader, L->renderPass, &pass, SHADER_UNIFORM_FLOAT);
+        if (L->bodyOpacity >= 0) SetShaderValue(s_deformShader, L->bodyOpacity, &bodyOpacity, SHADER_UNIFORM_FLOAT);
+    }
+
     if (L->matMode >= 0) SetShaderValue(s_deformShader, L->matMode, &m->mode, SHADER_UNIFORM_FLOAT);
     if (L->wispMix >= 0) SetShaderValue(s_deformShader, L->wispMix, &m->wispMix, SHADER_UNIFORM_FLOAT);
     if (L->dissolve >= 0) SetShaderValue(s_deformShader, L->dissolve, &m->dissolve, SHADER_UNIFORM_FLOAT);
@@ -1539,6 +1574,77 @@ static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
         float b = m->tailFadeA >= m->tailFadeB ? 1.0f : m->tailFadeB;
         if (L->tailFadeA >= 0) SetShaderValue(s_deformShader, L->tailFadeA, &a, SHADER_UNIFORM_FLOAT);
         if (L->tailFadeB >= 0) SetShaderValue(s_deformShader, L->tailFadeB, &b, SHADER_UNIFORM_FLOAT);
+    }
+
+    // ── SIN-WAVE STRAND TRAIL (material mode 2) ─────────────────────────────
+    if (m->mode >= 1.5f)
+    {
+        float sinWave[4] = {m->waveAmp, m->waveFreq, m->waveTravel, m->waveSpread};
+        float band[4] = {m->bundleWidth, m->edgeSoft,
+                         (m->hdrGain > 0.0f) ? m->hdrGain : 1.0f,
+                         (m->strandGain > 0.0f) ? m->strandGain : 1.0f};
+        float strandFlow[4] = {m->flowStrength, m->bundleWeight, m->stretchUV, 0.0f};
+        if (L->sinWave >= 0) SetShaderValue(s_deformShader, L->sinWave, sinWave, SHADER_UNIFORM_VEC4);
+        if (L->bandShape >= 0) SetShaderValue(s_deformShader, L->bandShape, band, SHADER_UNIFORM_VEC4);
+        if (L->strandFlow >= 0) SetShaderValue(s_deformShader, L->strandFlow, strandFlow, SHADER_UNIFORM_VEC4);
+
+        float tailShape[4] = {m->tailStagger, m->tailDissolve,
+                              (m->tailNarrow > 0.0f) ? m->tailNarrow : 1.0f, 0.0f};
+        if (L->tailShape >= 0) SetShaderValue(s_deformShader, L->tailShape, tailShape, SHADER_UNIFORM_VEC4);
+
+        // The wave is anchored in METRES of the path the emitter actually
+        // laid, not in normalized segment space: nodeUV[] already carries the
+        // cumulative distance per node, so the tail node's distance is the
+        // arc origin and the head-minus-tail span is the length the fragment
+        // stage interpolates across (texcoord.y grows head -> tail, so the
+        // shader SUBTRACTS the span from the head distance). Anchoring here is
+        // the whole reason the crests stand still on the path while only time
+        // moves them — in segment space a growing trail stretches the entire
+        // waveform and the ribbon reads as a rigid rope being swung.
+        float arc[2] = {0.0f, 1.0f};
+        if (t->historyCount > 1)
+        {
+            int drawCount = CalculateDrawCount(t);
+            if (drawCount > 1)
+            {
+                int headNode = NodeIndexForSegRatio(t, drawCount, 0);
+                int tailNode = NodeIndexForSegRatio(t, drawCount, drawCount - 1);
+                float span = t->nodeUV[headNode] - t->nodeUV[tailNode];
+                if (span > 0.001f)
+                {
+                    // nodeUV is CUMULATIVE distance and never resets, so a
+                    // long-lived trail on a moving emitter walks it into the
+                    // tens of thousands of metres, where a float32 can no
+                    // longer resolve a fraction of a texture tile. Fold it.
+                    // 8192 m keeps the shader's fract() inputs precise and is
+                    // ~30 minutes of continuous movement; the fold re-phases
+                    // the waves once when it wraps, which is the honest cost
+                    // of not letting the arithmetic decay instead.
+                    arc[0] = fmodf(t->nodeUV[headNode], 8192.0f);
+                    arc[1] = span;
+                }
+            }
+        }
+        if (L->pathArc >= 0) SetShaderValue(s_deformShader, L->pathArc, arc, SHADER_UNIFORM_VEC2);
+
+        float hot[3] = {m->hotColor.r / 255.0f, m->hotColor.g / 255.0f,
+                        m->hotColor.b / 255.0f};
+        if (m->hotColor.r == 0 && m->hotColor.g == 0 && m->hotColor.b == 0)
+            hot[0] = hot[1] = hot[2] = 1.0f; // unset -> white-hot, never a black core
+        if (L->colHot >= 0) SetShaderValue(s_deformShader, L->colHot, hot, SHADER_UNIFORM_VEC3);
+
+        // Tail colour. Unset (black) means "no along-trail ramp": fall back to
+        // the head tint so an author who never sets it gets a flat hue rather
+        // than a trail that fades into black.
+        float tailCol[3] = {m->tailColor.r / 255.0f, m->tailColor.g / 255.0f,
+                            m->tailColor.b / 255.0f};
+        if (m->tailColor.r == 0 && m->tailColor.g == 0 && m->tailColor.b == 0)
+        {
+            tailCol[0] = t->tint.r / 255.0f;
+            tailCol[1] = t->tint.g / 255.0f;
+            tailCol[2] = t->tint.b / 255.0f;
+        }
+        if (L->colTail >= 0) SetShaderValue(s_deformShader, L->colTail, tailCol, SHADER_UNIFORM_VEC3);
     }
 }
 
@@ -1856,7 +1962,16 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
     if (layerFilter == 0) EnsureTrailBodyShader();
     EnsureTrailDeformShader();
 
-    float time = (float)GetTime();
+    // WRAPPED clock. GetTime() grows without bound, and every trail shader
+    // multiplies it by a pan/travel speed before using it as a UV or a sine
+    // phase. After an hour that product is in the tens of thousands, where a
+    // float32 step is ~0.004 — visible stepping in a panned texture and a
+    // juddering wave. Both consumers are periodic (sampler wrap is REPEAT, sine
+    // has period 2pi), so folding the clock is invisible while it lasts. This is
+    // the C-side half of the reference's frac() rule; the shader folds again
+    // after each multiply. WRAP is a multiple of 8 so the fold lands on a clean
+    // binary boundary for the common integer-ish speeds.
+    float time = (float)fmod(GetTime(), 4096.0);
     Matrix matView = GetCameraMatrix(camera);
     TrailCameraBasis camBasis = {
         {matView.m0, matView.m4, matView.m8},

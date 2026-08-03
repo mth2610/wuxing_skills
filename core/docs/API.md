@@ -284,7 +284,7 @@
   void Trail_SetStaticPath(int id, Vector3 tail, Vector3 head, int nodeCount);
   void Trail_SetFlowMap(int id, Texture2D flowMap, float speed, float strength, float tiling);
 ```
-**Enums:** TrailType { TRAIL_TYPE_PROJECTILE,TRAIL_TYPE_WISP,TRAIL_TYPE_PORTAL,TRAIL_TYPE_FOLLOWER };TrailShape { TRAIL_SHAPE_RIBBON,TRAIL_SHAPE_TUBE } TrailWidthEnvelopeType { TRAIL_WIDTH_ENVELOPE_UNIFORM,TRAIL_WIDTH_ENVELOPE_TAPER_TAIL,TRAIL_WIDTH_ENVELOPE_TAPER_BOTH,TRAIL_WIDTH_ENVELOPE_PULSE,TRAIL_WIDTH_ENVELOPE_SMOKE_LIFECYCLE }
+**Enums:** TrailType { TRAIL_TYPE_PROJECTILE,TRAIL_TYPE_WISP,TRAIL_TYPE_PORTAL,TRAIL_TYPE_FOLLOWER };TrailShape { TRAIL_SHAPE_RIBBON,TRAIL_SHAPE_TUBE } TrailWidthEnvelopeType { TRAIL_WIDTH_ENVELOPE_UNIFORM,TRAIL_WIDTH_ENVELOPE_TAPER_TAIL,TRAIL_WIDTH_ENVELOPE_TAPER_BOTH,TRAIL_WIDTH_ENVELOPE_PULSE,TRAIL_WIDTH_ENVELOPE_SMOKE_LIFECYCLE,TRAIL_WIDTH_ENVELOPE_SMOKE_WIDEN,TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE }
 **Structs** (fields in header): TrailLayer, TrailDeformConfig, TrailMaterialConfig, TrailSectionPoint, TrailConfig, TrailEntity
 
 ### `core/ribbon_strip.h`
@@ -682,8 +682,10 @@
   void VFX_KillProjectile(int handle);
   void VFX_BeginWaterStreams(float time);
   void VFX_EndWaterStreams(void);
-  void VFX_SmokeTrail_Stop(int trailId);
+  void VFX_StrandTrail_Stop(int trailId);
+  int VFX_ComposeStrandTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime, VFX_StrandStyle style);
   int VFX_ComposeEnergyTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime);
+  int VFX_ComposeSmokeStrandTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime);
   void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
   void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   int VFX_ComposeEmberTrail(Vector3 pos, Vector3 velocity, VC_MaterialId mat, float scale, float embersPerSecond);
@@ -695,15 +697,13 @@
   void VFX_ComposeParticleUpgradesTest(Vector3 pos);
   void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01, float lifetimeScale);
   int VFX_ComposeShieldShell(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
-  int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime);
   void VFX_ComposeStonePillar(Vector3 basePos, float progress);
   void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
   void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
   void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
   void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time, float phaseOffset);
-  void VFX_SmokeTrail_SetTexture(const Texture2D *smokeTex);
 ```
-**Enums:** VFX_RibbonTrailKind { VFX_RIBBON_BLADE,VFX_RIBBON_MAIN,VFX_RIBBON_WISP,VFX_RIBBON_BACKDROP,VFX_RIBBON_KIND_COUNT,VFX_RIBBON_FLOW,VFX_RIBBON_FILAMENT };VFX_TrailStyle { VFX_TRAIL_BLADE,VFX_TRAIL_RIBBON,VFX_TRAIL_FILAMENT,VFX_TRAIL_HAZE,VFX_TRAIL_STYLE_COUNT } VFX_VolumeKind { VOL_ENERGY,VOL_SMOKE,VOL_FIRE,VFX_VOLUME_KIND_COUNT }
+**Enums:** VFX_RibbonTrailKind { VFX_RIBBON_BLADE,VFX_RIBBON_MAIN,VFX_RIBBON_WISP,VFX_RIBBON_BACKDROP,VFX_RIBBON_KIND_COUNT,VFX_RIBBON_FLOW,VFX_RIBBON_FILAMENT };VFX_TrailStyle { VFX_TRAIL_BLADE,VFX_TRAIL_RIBBON,VFX_TRAIL_FILAMENT,VFX_TRAIL_HAZE,VFX_TRAIL_STYLE_COUNT } VFX_VolumeKind { VOL_ENERGY,VOL_SMOKE,VOL_FIRE,VFX_VOLUME_KIND_COUNT };VFX_StrandStyle { VFX_STRAND_ENERGY,VFX_STRAND_SMOKE,VFX_STRAND_STYLE_COUNT }
 **Structs** (fields in header): VFX_ShieldSurface, VFX_TrailSurface
 
 ### `core/composition/vfx_sequence.h`

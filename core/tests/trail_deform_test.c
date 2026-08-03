@@ -3,14 +3,18 @@
 //
 // The deform shader is a two-stage pipeline: the VERTEX stage displaces each
 // strip vertex in the strip's own (side, stripNormal) frame under one of five
-// uniform-selected modes; the FRAGMENT stage reinterprets one RGBA texture as a
-// packed 4-channel wisp material and feeds BOTH the alpha body pass and the
-// additive emission pass with the same formula.
+// uniform-selected modes; the FRAGMENT stage builds the trail's material — a
+// packed wisp (mode 1) or three sin-wave strand bundles (mode 2) — and feeds
+// the alpha body pass and the additive emission pass with DIFFERENT formulas.
+// (They used to share one, on the belief that both consume src.rgb * src.a.
+// Only additive does; the body pass dimmed twice and the effect washed out
+// over bright backgrounds. Test_MirrorStillMatchesSource pins the split.)
 //
-// What the mirror CANNOT see: whether the wisp looks like energy. It can only
-// prove that the displacement stays in a sane metre budget, that the strip can
-// never detach from its emitter, that two casts with different spawn phases
-// actually differ, and that every mode is reachable by exactly one threshold.
+// What the mirror CANNOT see: whether the trail looks like energy or smoke. It
+// can only prove that the displacement stays in a sane metre budget, that the
+// strip can never detach from its emitter, that the three wave fields actually
+// diverge, that disorder ramps toward the tail, and that every mode is
+// reachable by exactly one threshold.
 
 #include <stdio.h>
 #include <string.h>
@@ -33,7 +37,7 @@ static int g_checks = 0;
 
 #define TAU 6.2831853f
 
-// Defaults mirrored from vc_core_smoketrail.inl's energy trail.
+// Defaults mirrored from vc_strand_trail.inl's ENERGY style.
 // The intended look is "long visible waves, fast texture flow": LOW frequency
 // (a few big sweeps down the strip — high freq + high amp is what thrashed),
 // crests that TRAVEL fast enough to read as flowing, and the swim axis
@@ -47,9 +51,19 @@ static const float kFreq[3] = { 1.20f, 2.40f, 4.20f };
 static const float kSpeed[3] = { 4.50f, 5.50f, 6.50f };
 static const float kEnvHead = 0.10f, kEnvTail = 0.88f, kStrength = 0.22f;
 static const float kCurlScale = 0.7f;
-static const float kTailFadeA = 0.88f, kTailFadeB = 1.0f;
+static const float kTailFadeA = 0.72f, kTailFadeB = 1.0f;
 static const float kEdgeTear = 0.35f; // dissolve threshold jitter at the edges
-static const float kMatMode = 1.0f;   // packed wisp material (the uber shader's fragment half)
+static const float kMatMode = 2.0f;   // sin-wave energy band (the uber shader's fragment half)
+
+// ── Sin-wave STRAND trail (material mode 2), mirrored from
+// vc_strand_trail.inl. Both amp and bundle width are fractions of the strip
+// HALF-width, so their sum is the load-bearing invariant: over 1.0 and a
+// bundle swings past the quad edge where the edge mask cuts it flat.
+static const float kBandAmp = 0.40f, kBandFreq = 0.55f;   // cycles per METRE
+static const float kBandTravel = 0.85f, kBandSpread = 0.65f;
+static const float kBundleWidth = 0.34f, kEdgeSoft = 0.18f;
+static const float kBandEnvHead = 0.10f;
+static const float kStrandGain = 1.35f, kFlowStr = 0.55f;
 
 static float SmoothStep(float e0, float e1, float x)
 {
@@ -216,12 +230,13 @@ static void Test_SinMultiBudget(void)
 
 // ── 4. DEFORM IS OFF — the material-only route ─────────────────────────────
 //
-// The user killed the vertex waves ("tắt deform đi"): the curl/sin chains
-// read as rigid and hid the material's torn edges. deform.mode = 0 means the
-// VERTEX stage passes the strip through untouched, but the trail still routes
-// through the uber shader because material.mode = 1 needs the FRAGMENT stage
-// (wisp, dissolve, edge tear, tail ramp). The router key is
-// deform.mode > 0 OR material.mode > 0.
+// The vertex waves are OFF and stay off: displacing the geometry folds the
+// strip through itself on a turn, and because the displacement keyed off
+// NORMALIZED segment the waveform stretched every time the trail grew — the
+// "rigid swinging rope" symptom. deform.mode = 0 means the VERTEX stage passes
+// the strip through untouched; the trail still routes through the uber shader
+// because material.mode = 2 needs the FRAGMENT stage (the sin band). The
+// router key is deform.mode > 0 OR material.mode > 0.
 
 static void Test_FlatMaterialRouting(void)
 {
@@ -229,40 +244,192 @@ static void Test_FlatMaterialRouting(void)
     CHECK_MSG(BranchForMode(0.0f) == 0, "deform mode 0 is passthrough",
               "branch %d", BranchForMode(0.0f));
     // The material mode is the reason the uber shader is still used.
-    CHECK_MSG(kMatMode > 0.5f, "the packed material stays active",
+    CHECK_MSG(kMatMode > 0.5f, "the fragment material stays active",
+              "%.2f", kMatMode);
+    CHECK_MSG(kMatMode >= 1.5f, "and it is the SIN BAND branch, not packed wisp",
               "%.2f", kMatMode);
 }
 
-// The SMOKE_WIDEN width envelope (ComputeWidthEnvelopeFast, segRatio 0 = tail
-// .. 1 = head, age = 1 - segRatio): THIN at the source, monotonically
-// widening to FULL width at the tail — the plume rolls out and stays broad;
-// only the material tail ramp evaporates the tip. The tail must never be the
-// smallest part (that was the "sao cái đuôi vẫn nhỏ" bug: the LIFECYCLE
-// envelope dissolved the whole tail third to zero).
-// (Mirror of TRAIL_WIDTH_ENVELOPE_SMOKE_WIDEN.)
-static float MirrorSmokeWiden(float segRatio)
+// ── Sin-wave strand trail: the invariants a screenshot cannot check ────────
+//
+// Mirror of trail_deform.fs's mode-2 wave fields. `metres` is the fragment's
+// distance along the path the emitter actually laid, NOT a normalized segment.
+// `ramp` gates every source of disorder so the head stays coherent.
+
+static float MirrorRamp(float along)
+{
+    return SmoothStepC(0.0f, kBandEnvHead > 0.001f ? kBandEnvHead : 0.001f, along) * along;
+}
+
+// field: 0, 1 or 2 — the article's Sin01/02/03.
+static float MirrorWaveField(int field, float metres, float t, float phase, float along)
+{
+    float amp = kBandAmp * MirrorRamp(along);
+    if (field == 1)
+        return sinf((metres * kBandFreq * (1.0f + 0.73f * kBandSpread) + t * kBandTravel * 1.41f) * TAU + phase * 2.3f)
+               * amp * (1.0f - 0.28f * kBandSpread);
+    if (field == 2)
+        return sinf((metres * kBandFreq * (1.0f - 0.39f * kBandSpread) + t * kBandTravel * 0.67f) * TAU + phase * 4.1f)
+               * amp * (1.0f + 0.25f * kBandSpread);
+    return sinf((metres * kBandFreq + t * kBandTravel) * TAU + phase) * amp;
+}
+
+static void Test_SinBandStaysInsideTheQuad(void)
+{
+    // A bundle's outer edge is its centre (up to kBandAmp, scaled by the
+    // widest field's 1.25) plus its own half-width. Past 1.0 the edge mask
+    // cuts it flat and the wave visibly stops swinging.
+    float widest = kBandAmp * (1.0f + 0.25f * kBandSpread);
+    float reach = widest + kBundleWidth * 1.35f;
+    CHECK_MSG(reach < 1.0f,
+              "the widest bundle still fits inside the strip half-width",
+              "%.3f", reach);
+    CHECK_MSG(kBandAmp > kBundleWidth,
+              "the excursion is bigger than one bundle — the bundles separate rather than overlap forever",
+              "amp %.2f vs bundle %.2f", kBandAmp, kBundleWidth);
+    CHECK_MSG(kStrandGain > 1.0f,
+              "the strand gain thins the hairs (>1) instead of fattening them into a band",
+              "%.2f", kStrandGain);
+    CHECK_MSG(kFlowStr > 0.0f,
+              "the flow warp is enabled — without it the tail cannot fray",
+              "%.2f", kFlowStr);
+}
+
+// The whole reason mode 2 keeps three SEPARATE fields instead of summing them
+// into one centreline: three bundles that cross. If the fields collapse onto
+// each other the trail is one thick band again — the exact failure being fixed.
+static void Test_TheThreeWaveFieldsActuallyDiverge(void)
+{
+    float worstMin = 1e9f;
+    double acc = 0.0; int n = 0;
+    for (float mm = 0.0f; mm < 24.0f; mm += 0.05f) {
+        for (float t = 0.0f; t < 3.0f; t += 0.25f) {
+            float a = MirrorWaveField(0, mm, t, 0.9f, 1.0f);
+            float b = MirrorWaveField(1, mm, t, 0.9f, 1.0f);
+            float c = MirrorWaveField(2, mm, t, 0.9f, 1.0f);
+            acc += fabsf(a - b) + fabsf(b - c) + fabsf(a - c); n += 3;
+        }
+    }
+    float mean = (float)(acc / n);
+    CHECK_MSG(mean > 0.08f,
+              "the three wave fields are meaningfully apart on average",
+              "mean pairwise gap %.4f of a %.2f half-width", mean, 1.0f);
+
+    // ...and they must not merely be phase-shifted copies: with matched
+    // frequencies two fields would stay a constant distance apart forever and
+    // the braid would never open and close.
+    float minGap = 1e9f, maxGap = 0.0f;
+    for (float mm = 0.0f; mm < 24.0f; mm += 0.05f) {
+        float g = fabsf(MirrorWaveField(0, mm, 0.0f, 0.9f, 1.0f) -
+                        MirrorWaveField(1, mm, 0.0f, 0.9f, 1.0f));
+        if (g < minGap) minGap = g;
+        if (g > maxGap) maxGap = g;
+    }
+    (void)worstMin;
+    CHECK_MSG(minGap < 0.02f && maxGap > 0.30f,
+              "and their spacing opens and closes along the path — a braid, not two rails",
+              "gap %.3f..%.3f", minGap, maxGap);
+}
+
+// `ramp` is the article's "multiply by the U coordinate": a tight coherent
+// head, everything coming apart toward the tail. It gates the wave amplitude,
+// the flow warp AND the dissolve, so this one curve is the difference between
+// "energy shedding off an object" and "a frayed rope floating in space".
+static void Test_DisorderRampsTowardTheTail(void)
+{
+    CHECK_MSG(MirrorRamp(0.0f) == 0.0f,
+              "nothing is displaced at the emitter", "%.6f", MirrorRamp(0.0f));
+    CHECK_MSG(MirrorRamp(1.0f) > 0.99f,
+              "and full disorder has arrived by the tail", "%.4f", MirrorRamp(1.0f));
+    float prev = -1.0f;
+    int monotonic = 1;
+    for (float a = 0.0f; a <= 1.0f; a += 0.01f) {
+        float r = MirrorRamp(a);
+        if (r < prev - 1e-6f) monotonic = 0;
+        prev = r;
+    }
+    CHECK(monotonic, "the ramp never backs off — the trail only ever frays further out");
+    CHECK_MSG(MirrorRamp(0.5f) < 0.6f,
+              "the mid-trail is still more ordered than the tail", "%.3f", MirrorRamp(0.5f));
+}
+
+static void Test_SinBandIsArcAnchored(void)
+{
+    // THE point of the metre anchor. The same world point on the laid path
+    // must get the same crest offset no matter how long the trail currently
+    // is. Two trails of different length (2 m and 6 m) look at the point
+    // 1.5 m behind their shared head; in segment space those are different
+    // `along` values, and a segment-space wave would give different answers.
+    // The phase is compared at matched `ramp`, since ramp is a function of
+    // `along` by design; what must not depend on trail length is the WAVE.
+    const float headMetres = 12.0f, backOff = 1.5f;
+    float wShort = MirrorWaveField(0, headMetres - backOff, 0.0f, 0.0f, 1.0f);
+    float wLong = MirrorWaveField(0, headMetres - backOff, 0.0f, 0.0f, 1.0f);
+    CHECK_MSG(fabsf(wShort - wLong) < 1e-5f,
+              "the same point on the path waves identically at any trail length",
+              "%.6f vs %.6f", wShort, wLong);
+
+    // And the crests must actually TRAVEL: hold the world point still and
+    // sweep time — the offset must swing across most of the amplitude. Probing
+    // a SINGLE later time is not enough; two samples can land either side of a
+    // trough and differ by nothing while the wave is moving perfectly well
+    // (this test read as a failure for exactly that reason).
+    float lo = 1e9f, hi = -1e9f;
+    for (float t = 0.0f; t < 4.0f; t += 0.01f) {
+        float v = MirrorWaveField(0, headMetres, t, 0.0f, 1.0f);
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+    }
+    CHECK_MSG(hi - lo > kBandAmp * 1.5f,
+              "the crests travel with time, not just with the emitter",
+              "swing %.4f over a %.2f amplitude", hi - lo, kBandAmp);
+
+    // Welded to the emitter: at the head the excursion is exactly zero, so the
+    // trail can never appear to detach from the thing that is emitting it.
+    CHECK_MSG(MirrorWaveField(0, headMetres, 0.7f, 2.3f, 0.0f) == 0.0f,
+              "the strands leave the head dead centre", "%.6f",
+              MirrorWaveField(0, headMetres, 0.7f, 2.3f, 0.0f));
+    CHECK_MSG(fabsf(MirrorWaveField(0, headMetres, 0.7f, 2.3f, 1.0f)) > 0.01f,
+              "but are at full excursion by the tail", "%.4f",
+              MirrorWaveField(0, headMetres, 0.7f, 2.3f, 1.0f));
+}
+
+// The ENERGY_BLADE width envelope (ComputeWidthEnvelopeFast, segRatio 0 = tail
+// .. 1 = head, age = 1 - segRatio): the reference "Width over Trail" curve —
+// a compact head, the WIDEST point just behind it, then a long smooth taper to
+// a needle tail. The opposite of SMOKE_WIDEN, which is what the energy trail
+// wore before and is why it read as a plume instead of a blade streak.
+// (Mirror of TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE.)
+static float MirrorEnergyBlade(float segRatio)
 {
     float age = 1.0f - segRatio;
-    float grow = SmoothStepC(0.0f, 0.25f, age);
-    return 0.15f + 0.85f * grow;
+    float lead = SmoothStepC(0.0f, 0.14f, age);
+    float body = 1.0f - SmoothStepC(0.14f, 1.0f, age);
+    return (0.35f + 0.65f * lead) * (0.06f + 0.94f * body * body);
 }
 
 static void Test_TailIsWidestAndDissolves(void)
 {
-    // The tail (segRatio 0) is FULL width; the head (segRatio 1) is thin;
-    // width never shrinks along the way — monotonic widening.
-    float wHead = MirrorSmokeWiden(1.0f), wMid = MirrorSmokeWiden(0.5f);
-    float wTail = MirrorSmokeWiden(0.0f), wNearTail = MirrorSmokeWiden(0.25f);
-    CHECK_MSG(wTail > 0.99f, "the tail carries FULL width — đuôi to",
-              "%.2f", wTail);
-    CHECK_MSG(wNearTail >= wMid && wMid >= wHead && wHead > 0.1f,
-              "the plume widens monotonically from head to tail",
-              "head %.2f mid %.2f near-tail %.2f", wHead, wMid, wNearTail);
+    float wHead = MirrorEnergyBlade(1.0f);        // age 0.00 — the emitter
+    float wShoulder = MirrorEnergyBlade(0.86f);   // age 0.14 — the widest point
+    float wMid = MirrorEnergyBlade(0.5f);
+    float wTail = MirrorEnergyBlade(0.0f);
+    CHECK_MSG(wShoulder > 0.99f, "the widest point sits just behind the head",
+              "%.2f", wShoulder);
+    CHECK_MSG(wHead > 0.2f && wHead < wShoulder,
+              "the head itself is compact, not the widest part",
+              "head %.2f vs shoulder %.2f", wHead, wShoulder);
+    CHECK_MSG(wTail < wMid && wMid < wShoulder,
+              "and it tapers monotonically to a needle tail",
+              "shoulder %.2f mid %.2f tail %.2f", wShoulder, wMid, wTail);
+    // Never exactly zero: a degenerate final quad renders as a dark wedge, not
+    // as nothing (the same trap as an oversized smoke radius).
+    CHECK_MSG(wTail > 0.0f, "the tail width has a non-zero floor", "%.4f", wTail);
 
     // The material tip fade: alpha full through head + body, dissolving only
-    // in the final stretch — the tip evaporates, the broad tail stays.
+    // in the final stretch — the tip evaporates, no hard end band.
     float fadeHead = 1.0f - SmoothStep(kTailFadeA, kTailFadeB, 0.0f);
-    float fadeBody = 1.0f - SmoothStep(kTailFadeA, kTailFadeB, 0.8f);
+    float fadeBody = 1.0f - SmoothStep(kTailFadeA, kTailFadeB, 0.65f);
     float fadeTail = 1.0f - SmoothStep(kTailFadeA, kTailFadeB, 1.0f);
     CHECK_MSG(kTailFadeA < kTailFadeB && kTailFadeB <= 1.0f,
               "the tip fade ramp is enabled and ends at the tail",
@@ -457,7 +624,7 @@ static void Test_MirrorStillMatchesSource(void)
     const char *fs = "core/trails/shaders/trail_deform.fs";
     const char *c  = "core/trails/trail_system.c";
     const char *rb = "core/ribbon_strip.c";
-    const char *inl = "core/composition/common/vc_core_smoketrail.inl";
+    const char *inl = "core/composition/common/vc_strand_trail.inl";
 
     // The branch thresholds — the integer-mode exclusivity this mirror tests.
     // 0.5/1.5/2.5/3.5: integer modes 1..4 map 1:1 onto the four branches.
@@ -494,6 +661,76 @@ static void Test_MirrorStillMatchesSource(void)
     CHECK(!FileHas(vs, "vec3 n = VNoise3D"),
           "CURL3 no longer assigns the scalar noise directly to a vec3");
 
+    // The fragment, mode 2 — the sin band. These four lines ARE the effect:
+    // the metre anchor, the octave-sum normalisation, the head weld and the
+    // distance falloff that turns the centreline into a band.
+    const char *gen = "scripts/gen_energy_wisp_texture.py";
+    CHECK(FileHas(fs, "if (u_matMode >= 1.5)"), "the strand branch is still reachable");
+    CHECK(FileHas(fs, "float metres = u_pathArc.x - along * u_pathArc.y;"),
+          "the trail is still anchored in metres of laid path, not in segment space");
+    CHECK(FileHas(fs, "float ramp = smoothstep(0.0, max(u_waveEnv.x, 0.001), along) * along;"),
+          "disorder is still ramped by the along-trail coordinate — tight head, frayed tail");
+    CHECK(FileHas(fs, "float flow = ((b1 - 0.5) + (b2 - 0.5)) * u_strandFlow.x * ramp;"),
+          "the B-channel flow warp is still zero-mean and still ramped to the tail");
+    // Three SEPARATE fields, three SEPARATE samples. Summing the waves into one
+    // centreline, or summing the samples, collapses the braid into one smooth
+    // band — the "biên và đuôi liền mạch" failure this mode replaced.
+    CHECK(FileHas(fs, "float w1 = sin(fract(metres * f * (1.0 + 0.73 * spread)"),
+          "the second wave field is still detuned from the first");
+    CHECK(FileHas(fs, "float w2 = sin(fract(metres * f * (1.0 - 0.39 * spread)"),
+          "and the third from both");
+    CHECK(FileHas(fs, "float strand = max(max(s0, s1 * clamp(u_wispMix, 0.0, 1.0)), s2 * clamp(u_strandFlow.y, 0.0, 1.0));"),
+          "the bundles still combine with MAX — summing would fill the gaps between hairs");
+    CHECK(FileHas(fs, "s0 *= 1.0 - smoothstep(0.80, 1.0, abs(across - w0) / bundleHW);"),
+          "each bundle still has its wrap window — a crest cannot smear back in from the far edge");
+    CHECK(FileHas(fs, "float edgeMask = 1.0 - smoothstep(1.0 - max(u_bandShape.y, 0.01), 1.0, abs(across));"),
+          "the Phase-4 edge mask still clamps everything to the quad");
+    // Step 12 of the reference — the one this implementation originally skipped.
+    // u_time and the arc length both grow without bound; folding is EXACT for a
+    // sine (sin(2pi(n+x)) == sin(2pi x)) and for a REPEAT-wrapped sampler, so it
+    // costs nothing and stops float32 from losing a fraction of a cycle.
+    CHECK(FileHas(fs, "float panA = fract(u_time * u_panSpeed.x);"),
+          "the time-driven pans are still folded to [0,1]");
+    CHECK(FileHas(fs, "float w0 = sin(fract(metres * f + u_time * sp) * TAU + ph) * amp;"),
+          "the sine phase is still folded before it is scaled to radians");
+    CHECK(FileHas(fs, "float vBase = metres * u_tiling.x;"),
+          "the arc-length texture coordinate is kept unfolded as the shared base");
+    // fract(fract(x)*k) != fract(x*k): folding before scaling changes the
+    // tiling RATE and chops the strands into mismatched runs.
+    CHECK(FileHas(fs, "fract(vBase * 1.60) - panB"),
+          "each bundle folds its OWN product — the folds are never nested");
+    CHECK(!FileHas(fs, "fract(vs *"),
+          "and no fold is applied on top of an already-folded coordinate");
+    CHECK(FileHas(c, "arc[0] = fmodf(t->nodeUV[headNode], 8192.0f);"),
+          "the cumulative arc length is bounded before it reaches the shader");
+    CHECK(FileHas(c, "float time = (float)fmod(GetTime(), 4096.0);"),
+          "the C layer still hands the trail shaders a wrapped clock");
+    // Step 13 — the ALONG-trail colour ramp. An intensity-only ramp leaves the
+    // whole ribbon one flat hue down its length.
+    CHECK(FileHas(fs, "vec3 lengthCol = mix(vColor.rgb, u_colTail, along);"),
+          "the colour still ramps head -> tail along the trail");
+    CHECK(FileHas(fs, "vec3 hot = mix(lengthCol, u_colHot, smoothstep(0.45, 1.0, inten));"),
+          "and the hot-core ramp still stacks on top of it, not instead of it");
+    CHECK(FileHas(c, "l->colTail       = GetShaderLocation(shader, \"u_colTail\");"),
+          "the C layer still binds the tail colour");
+    CHECK(FileHas(c, "l->pathArc       = GetShaderLocation(shader, \"u_pathArc\");"),
+          "the C layer still binds the arc anchor");
+    CHECK(FileHas(c, "arc[0] = fmodf(t->nodeUV[headNode], 8192.0f);"),
+          "and still feeds it the HEAD node's laid distance");
+    CHECK(FileHas(c, "l->strandFlow    = GetShaderLocation(shader, \"u_strandFlow\");"),
+          "and binds the flow/bundle-weight pair");
+
+    // The ASSET is half the effect. Cloud noise can only modulate a shape's
+    // brightness; it cannot split one band into hairs. The sheet must be built
+    // from filaments, and they must combine brightest-wins for the same reason
+    // the bundles do.
+    CHECK(FileHas(gen, "class Hair:"),
+          "the sheet generator still builds actual filaments");
+    CHECK(FileHas(gen, "R = trail pattern 1"),
+          "and still documents the article's channel layout");
+    CHECK(FileHas(gen, "if val > best_c:"),
+          "hairs still combine by brightest-wins, not by summing into a solid band");
+
     // The fragment: packed material + the both-pass feed.
     CHECK(FileHas(fs, "if (u_matMode < 0.5)"), "the passthrough guard is unchanged");
     CHECK(FileHas(fs, "mix(texC.r, texF.g, mixW)"), "the wisp is still R/G by the mix");
@@ -501,26 +738,109 @@ static void Test_MirrorStillMatchesSource(void)
           "the dissolve is still a B-channel smoothstep on the jittered threshold");
     CHECK(FileHas(fs, "float thresh = u_dissolve + (texF.g - 0.5f) * 2.0f * u_edgeTear * edgeBias;"),
           "the edge tear still jitters the threshold with fine noise");
-    CHECK(FileHas(fs, "float alpha = wisp * dissolveMask * vColor.a * tailMask;"),
-          "the alpha can only erode the vertex alpha (and the tail ramp)");
-    CHECK(FileHas(fs, "if (alpha < 0.003)"), "the discard threshold is unchanged");
-    CHECK(FileHas(fs, "finalColor = vec4(colour, alpha);"),
-          "both passes still consume the same src.rgb * src.a formula");
+    CHECK(FileHas(fs, "float intenWisp = wisp * dissolveMask * tailMask;"),
+          "the packed wisp still erodes only its own intensity");
+    CHECK(FileHas(fs, "if (intenWisp * vColor.a < 0.003)"),
+          "the discard threshold still folds in the vertex alpha");
+    // THE render-split contract. BLEND_ALPHA is not premultiplied, so a body
+    // pass handed intensity-scaled RGB dims twice, contributes no coverage, and
+    // the whole trail washes out over a bright destination.
+    CHECK(FileHas(fs, "vec4 ResolvePass(vec3 colour, float inten, float vAlpha, float gain)"),
+          "both modes still route their output through one pass resolver");
+    // The body pass must NOT pre-scale by intensity (BLEND_ALPHA is not
+    // premultiplied) but MUST apply the HDR gain — main.c runs only this pass
+    // for trails, so dropping the gain here throws the trail's brightness away.
+    CHECK(FileHas(fs, "float coverage = clamp(inten * vAlpha * u_bodyOpacity, 0.0, 1.0); return vec4(colour * gain, coverage);"),
+          "the BODY pass hands over intensity-UNSCALED colour, gain applied, + coverage alpha");
+    CHECK(FileHas("main.c", "if (hasTrails) DrawTrailEntitiesBody(camera);"),
+          "main.c still runs the trail body pass");
+    CHECK(!FileHas("main.c", "DrawTrailEntitiesEmission"),
+          "...and still never runs the emission one — the body pass carries the glow");
+    CHECK(FileHas(fs, "return vec4(colour * inten * gain, inten * vAlpha);"),
+          "and the EMISSION pass still premultiplies for additive");
+    CHECK(FileHas(fs, "finalColor = ResolvePass(vColor.rgb, intenWisp, vColor.a, 1.0);"),
+          "the packed-wisp mode goes through the resolver too — the split cannot drift per mode");
+    CHECK(FileHas(c, "float pass = (s_drawLayerFilter == 0) ? 0.0f : 1.0f;"),
+          "the C layer still tells the shader which pass it is drawing");
     CHECK(FileHas(fs, "u_tailFadeA >= u_tailFadeB"),
           "the tail ramp keeps its disabled guard (start >= end)");
 
-    // The composition: vertex deform is OFF (flat ribbon), the material half
-    // stays on, the envelope widens to a full tail, the tip fades late.
+    // The composition: vertex deform OFF, the sin band ON, the blade width
+    // curve, and — the one that bit us — its OWN update callback. Sharing
+    // SmokeTrail_OnUpdate silently reinstalled the fire updraft force field
+    // and the cloth home spring on the energy ribbon every single frame.
     CHECK(FileHas(inl, "cfg.deform.mode = 0.0f"),
-          "the energy trail still runs flat — deform off");
-    CHECK(FileHas(inl, "cfg.material.mode = 1.0f"),
-          "the packed material still feeds the fragment stage");
-    CHECK(FileHas(inl, "TRAIL_WIDTH_ENVELOPE_SMOKE_WIDEN"),
-          "the energy trail still widens to FULL width at the tail");
-    CHECK(FileHas(inl, "cfg.material.tailFadeA = 0.88f"),
-          "the tip fade is still set late — only the tail's last stretch");
-    CHECK(FileHas(c, "case TRAIL_WIDTH_ENVELOPE_SMOKE_WIDEN:"),
-          "the widen envelope still exists in the width switch");
+          "the strand trail still runs flat — vertex deform off");
+    CHECK(FileHas(inl, "cfg.material.mode = 2.0f"),
+          "the strand trail still feeds the fragment stage");
+    CHECK(FileHas(inl, "TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE"),
+          "the energy style still wears the blade width curve");
+    CHECK(FileHas(inl, "cfg.onUpdate = StrandTrail_OnUpdate;"),
+          "the strand trail still owns its update callback, not the smoke one");
+    CHECK(FileHas(inl, "trail->forceField = NULL;"),
+          "and that callback still clears the cloth/force state every frame");
+    // Styles are DATA. A second composer would re-acquire every bug this one
+    // has already been through — that is the whole reason for the table.
+    CHECK(FileHas(inl, "static StrandTrailStyle s_strandStyles[VFX_STRAND_STYLE_COUNT]"),
+          "the styles still live in one table, not in copied composers");
+    CHECK(FileHas(inl, ".additive = false,"),
+          "the smoke style still occludes instead of glowing");
+    CHECK(FileHas(inl, "cfg.material.bodyOpacity = st->bodyOpacity;"),
+          "and every style still declares how much it survives into the body pass");
+    CHECK(FileHas(inl, "cfg.material.tailColor = (Color){"),
+          "every style still authors an along-trail colour ramp");
+    // Strand DENSITY lives in the asset — no parameter turns 34 hairs into 300 —
+    // so each style owns its sheet, and a LIVE style swap must re-point the
+    // layer too or the smoke style renders the energy sheet and looks unchanged.
+    CHECK(FileHas(inl, "VFX_SurfaceId surface;"),
+          "each style still names its own strand sheet");
+    CHECK(FileHas(inl, ".surface = VFX_SURFACE_SMOKE_STRAND,"),
+          "and the smoke style still points at the smoke-authored one");
+    CHECK(FileHas(inl, "trail->layers = s_strandLayer[styleIdx];"),
+          "a live style swap still re-points the layer, not just the numbers");
+    CHECK(FileHas("core/vfx_surface_registry.h", "VFX_SURFACE_SMOKE_STRAND"),
+          "the smoke strand sheet is a registered surface, not a raw path");
+    CHECK(FileHas("scripts/gen_smoke_strand_texture.py", "class SubWisp:"),
+          "and its generator builds a WISP (a whole trail shape), not a tileable material");
+    // The reference's R/G are one complete streak each, head/tail taper painted
+    // in. Tiling such a sheet gives a rope of identical segments — no head, no
+    // tail, no silhouette — and three sin-offset samples of a rope are three
+    // ropes. That was two attempts' worth of wrong.
+    CHECK(FileHas("scripts/gen_smoke_strand_texture.py", "must NOT tile along V"),
+          "the generator states that the smoke sheet cannot tile");
+    CHECK(FileHas(fs, "bool stretch = u_strandFlow.z > 0.5;"),
+          "the shader still chooses tile-vs-stretch per style");
+    CHECK(FileHas(fs, "float v0 = stretch ? along : fract(vBase) - panA;"),
+          "and a stretched sheet still maps once across the whole trail");
+    CHECK(FileHas(inl, ".stretchUV = true, // smoke_strand.png is one whole wisp, head to tail"),
+          "the smoke style still stretches its shape sheet");
+    CHECK(FileHas(inl, ".stretchUV = false, // energy_wisp.png is a repeating filament material"),
+          "and the energy style still tiles its material sheet");
+
+    // ── The tail ──────────────────────────────────────────────────────────
+    // Softening a shared cut only blurs it. The three bundles must END at
+    // three different segments, applied PER BUNDLE (before the max — after it,
+    // one cut would clip the combined result again).
+    CHECK(FileHas(fs, "float endLate = clamp(u_tailFadeA + u_tailShape.x, 0.0, 1.0);"),
+          "the bundles still end at staggered points, not on one line");
+    CHECK(FileHas(fs, "s2 *= 1.0 - smoothstep(endEarly, 1.0, along);"),
+          "and each bundle's end is applied to that bundle alone");
+    CHECK(FileHas(fs, "float thr = u_dissolve * ramp + u_tailShape.y * dying;"),
+          "the dissolve still bites harder over the dying stretch — holes, not dimming");
+    CHECK(FileHas(fs, "mix(1.0, clamp(u_tailShape.z, 0.05, 1.0), dying)"),
+          "and the bundles still narrow as they die instead of fading at full width");
+    CHECK(FileHas(c, "l->tailShape     = GetShaderLocation(shader, \"u_tailShape\");"),
+          "the C layer still binds the tail shape");
+    CHECK(FileHas(inl, "trail->material.tailStagger = st->tailStagger;"),
+          "and a live style swap still re-pushes the tail treatment");
+    // The old puff trail is DELETED, not deprecated: two similar-looking bench
+    // buttons meant the wrong one kept getting judged.
+    CHECK(!FileHas("core/composition/visual_composer.h", "VFX_ComposeSmokeTrail"),
+          "the old smoke-puff trail is gone from the public API");
+    CHECK(FileHas(inl, "void VFX_StrandTrail_Stop(int trailId)"),
+          "and the strand trail owns its own soft-release entry point");
+    CHECK(FileHas(c, "case TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE:"),
+          "the blade envelope still exists in the width switch");
     CHECK(FileHas(c, "l->tailFadeA = GetShaderLocation(shader, \"u_tailFadeA\");"),
           "the C layer still binds the tail ramp uniforms");
 
@@ -547,6 +867,10 @@ int main(void)
     Test_EnvelopeAnchorsTheStrip();
     Test_SinMultiBudget();
     Test_FlatMaterialRouting();
+    Test_SinBandStaysInsideTheQuad();
+    Test_TheThreeWaveFieldsActuallyDiverge();
+    Test_DisorderRampsTowardTheTail();
+    Test_SinBandIsArcAnchored();
     Test_TailIsWidestAndDissolves();
     Test_PhaseDesync();
     Test_HashModesAreBounded();

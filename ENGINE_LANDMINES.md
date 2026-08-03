@@ -295,3 +295,96 @@ independent causes here, and fixing each one in turn produced no change, which
 read each time as "the fix did not work". When a symptom survives a correct fix,
 consider that the pipeline has more than one way to produce it rather than that
 the fix was wrong.
+
+## BLEND_ALPHA is NOT premultiplied — one colour cannot serve both VFX passes
+
+**Symptom.** A VFX looks right over the night arena and washes out to nothing
+over a bright sky, a lit floor, or a light-coloured wall. Tuning its colour,
+alpha or HDR gain moves the brightness but never restores the contrast.
+
+**Cause.** The body/emission split (`ScreenDistort_BeginVFXBody()` /
+`ScreenDistort_BeginVFXEmission()`) exists precisely so an effect keeps its hue
+over a bright destination: the BODY pass occludes, the EMISSION pass glows. But
+raylib's `BLEND_ALPHA` is `glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)` —
+**not** premultiplied — so the hardware multiplies RGB by alpha itself. A shader
+that emits one already-intensity-scaled colour for both passes gets it scaled a
+SECOND time in the body pass, which collapses to ~intensity² and contributes
+almost no coverage. The effect then exists only in the additive pass, and
+additive over a bright destination can only add: it cannot darken, and it cannot
+create contrast. `trail_deform.fs` shipped with a header comment asserting that
+"both passes consume src.rgb * src.a" — true of additive, false of alpha, and
+the assertion is what kept the bug invisible.
+
+**Rule.** A shader used by both passes must know which one it is in, and emit
+different things:
+
+- BODY (`BLEND_ALPHA`): **unpremultiplied** colour + a coverage alpha.
+- EMISSION (`BLEND_ADDITIVE`): colour × intensity × HDR gain.
+
+Route every mode of a multi-mode shader through ONE resolver function (see
+`ResolvePass` in `core/trails/shaders/trail_deform.fs`) so the two passes cannot
+drift apart per mode, and give the effect an authored `bodyOpacity`: 0 = pure
+emissive (correct only for sparks and glints, which may legitimately vanish over
+bright ground), ~0.5 = a coloured core inside a glow, ~0.9 = smoke, which must
+occlude. An effect with no body-pass contribution is not "tuned for a dark
+scene"; it is invisible in a bright one.
+
+## A render pass that nothing calls is dead code — check the call site before you split work across passes
+
+**Symptom.** A VFX goes pale over dark AND bright backgrounds after a change
+that was supposed to *improve* its bright-background legibility. Every uniform
+arrives, the maths is right, the shader compiles.
+
+**Cause.** The body/emission split is an API, not a guarantee that both halves
+run. `main.c` calls `DrawTrailEntitiesBody()` and deliberately never calls
+`DrawTrailEntitiesEmission()`: ribbons are lifted into HDR inside the body pass
+and picked up by ordinary post-FX bloom, because a second full-resolution
+emission target duplicates the geometry for every trail. A change that moved the
+HDR gain into the emission branch — correct in the abstract — moved it into a
+branch nothing executes, and every trail lost its brightness at once.
+
+**Rule.** Before dividing an effect's output between the body and emission
+passes, `grep` for the pass functions and confirm BOTH are actually called for
+that subsystem. Where only one runs, that pass must carry both jobs: coverage
+*and* the HDR lift. And an "opacity"/"body strength" knob under a one-pass
+subsystem is not a body-vs-glow balance — it is a plain visibility multiplier,
+so treating a low value as "more emissive" just makes the effect fainter.
+
+## `fract()` for float precision: fold each product ONCE, never nest
+
+**Symptom.** A layered texture effect loses its structure — distinct features
+turn into fine uniform mush — after adding `fract()` folds for numerical
+precision.
+
+**Cause.** `fract(fract(x) * k) != fract(x * k)`. Folding a coordinate and then
+scaling it changes the effective TILING RATE of every layer that reuses the
+folded value, and chops each layer into short runs that no longer line up with
+the others.
+
+**Rule.** Keep the unfolded value as a shared base and fold each consumer's own
+final product exactly once (`fract(base * 1.6)`, not `fract(fract(base) * 1.6)`).
+Fold the sources that actually grow without bound — accumulated clocks and
+cumulative distances — as close to their origin as possible, on the C side where
+you can pick the modulus deliberately. Folding is exact for a sine (period 2pi)
+and for a REPEAT-wrapped sampler; it is not exact for anything you then scale.
+
+## A missing shader file does not report as a shader problem
+
+**Symptom.** Edits to a `.vs`/`.fs` appear to do nothing at all. The effect still
+renders — as its older, simpler self — and no error or warning stands out.
+
+**Cause.** Every runtime-loaded shader must be `configure_file`'d into the build
+tree by `CMakeLists.txt`. When one is missing, `ResourceManager_LoadShader`
+returns id 0, and the consumer's capability check (e.g.
+`TrailUsesDeformShader()`, which requires `s_deformShader.id != 0`) quietly
+returns false. The subsystem then takes its fallback path and keeps drawing.
+Nothing crashes, nothing is blank — which is why this reads as "my change had no
+effect" rather than as a missing asset. Whether it bites at all depends on the
+working directory the binary is launched from, so it can also work on one
+machine and not another.
+
+**Rule.** When you add a shader, add its `configure_file` line in the same
+change. When an edit to a shader seems to do nothing, check that the file is
+copied and that the load succeeded BEFORE re-reading the maths — and make every
+capability fallback log why it opted out, on change rather than once at startup
+(`core/CLAUDE.md` §4).

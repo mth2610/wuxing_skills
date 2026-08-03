@@ -79,7 +79,7 @@ semantic profile; the registry owns the runtime path and sampler contract.
 
 | Profile | Primitive | Current consumer | Migration state |
 |---|---|---|---|
-| SmokeRibbon | ribbon | `VFX_ComposeSmokeTrail` | migrated |
+| SmokeRibbon | ribbon | *(none — consumer deleted 03/08/2026)* | orphaned |
 | EnergyRibbon | ribbon | `VFX_ComposeRibbonTrail` | migrated; retains one-time crop/rotate bake |
 | EnergyTube | tube | `VFX_ComposeVolumeTrail` | migrated, shipping |
 | SmokePuff | puff/card | `VFX_ComposeSmokePuff`, `SmokeEmitter` | migrated |

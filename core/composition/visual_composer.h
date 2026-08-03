@@ -517,16 +517,45 @@ void VFX_KillProjectile(int handle);
 void VFX_BeginWaterStreams(float time);
 void VFX_EndWaterStreams(void);
 
-// Ends smoke emission while preserving the laid ribbon for built-in dissolve.
-void VFX_SmokeTrail_Stop(int trailId);
+// Ends strand-trail emission while preserving the laid ribbon for built-in
+// dissolve. KillTrail(handle) remains available for an immediate cut.
+void VFX_StrandTrail_Stop(int trailId);
 
-// Sin-Wave Energy Ribbon: the flat ribbon strip, the per-vertex waves and the
-// packed 4-channel wisp material all live in the trail system's own GPU
-// pipeline (trail_deform.vs/.fs) — this is the preset picker. CPU cloth is
-// deliberately OFF: the swept path stays the spine, the shape comes from the
-// vertex shader. Same stop/release semantics as the smoke trail.
+// ── STRAND TRAIL — the one sin-wave trail, in several styles ────────────────
+// The whole technique (flat ribbon strip + three UV-space wave fields + three
+// strand bundles from a filament sheet, trail_deform.fs mode 2) is ONE material
+// with a parameter set. What separates a bright energy filament from a heavy
+// smoke plume is entirely in those numbers — bundle width, strand contrast,
+// flow warp, dissolve, blend mode and how much the trail occludes — so styles
+// are DATA (a table in vc_strand_trail.inl), not code.
+//
+// To add a style: add a row to that table and a name here. Do NOT copy the
+// composer — every copy re-acquires the render-split and arc-anchor bugs this
+// one has already been through.
+typedef enum
+{
+    // Thin bright filaments, additive-dominant, white-hot cores for bloom.
+    VFX_STRAND_ENERGY = 0,
+    // Heavy, soft, wide strands that OCCLUDE — alpha-dominant, no hot core.
+    VFX_STRAND_SMOKE = 1,
+    VFX_STRAND_STYLE_COUNT
+} VFX_StrandStyle;
+
+// followTransform is caller-owned and must outlive the handle (the engine
+// re-samples it every frame). radius is the QUAD half-width in metres — the
+// waves swing inside it, so it is ~3x the thickness you actually see. Release
+// with VFX_StrandTrail_Stop(handle) (lets the laid ribbon dissolve) or
+// KillTrail(handle) (immediate cut).
+int VFX_ComposeStrandTrail(const Matrix *followTransform, VC_MaterialId mat,
+                           float radius, float lifetime, VFX_StrandStyle style);
+
+// Back-compat alias: VFX_ComposeStrandTrail(..., VFX_STRAND_ENERGY).
 int VFX_ComposeEnergyTrail(const Matrix *followTransform, VC_MaterialId mat,
                            float radius, float lifetime);
+
+// Same technique in the SMOKE style: heavy soft strands that occlude instead of
+int VFX_ComposeSmokeStrandTrail(const Matrix *followTransform, VC_MaterialId mat,
+                                float radius, float lifetime);
 
 // @gen:vc_declarations begin
 void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
@@ -540,12 +569,10 @@ void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float 
 void VFX_ComposeParticleUpgradesTest(Vector3 pos);
 void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01, float lifetimeScale);
 int VFX_ComposeShieldShell(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
-int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime);
 void VFX_ComposeStonePillar(Vector3 basePos, float progress);
 void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
 void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
 void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
 void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time, float phaseOffset);
-void VFX_SmokeTrail_SetTexture(const Texture2D *smokeTex);
 // @gen:vc_declarations end
 #endif // VISUAL_COMPOSER_H

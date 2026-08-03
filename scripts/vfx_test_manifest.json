@@ -94,18 +94,6 @@
       "draw_call": "VFX_ComposeCoreGlow($POS, VC_MAT_FIRE, 1.5f, $PROG)"
     },
     {
-      "source": "common/vc_core_smoketrail.inl",
-      "fn": "VFX_ComposeEnergyTrail",
-      "label": "ENERGY TRAIL",
-      "category": "common",
-      "fixture": "follower",
-      "lifecycle": "trail",
-      "_auto": true,
-      "type": "continuous",
-      "spawn_call": "VFX_ComposeEnergyTrail($XFORM, VC_MAT_FIRE, 1.5f, 2.0f)",
-      "kill_fn": "KillTrail"
-    },
-    {
       "source": "common/vc_debris_shards.inl",
       "fn": "VFX_ComposeDebrisShards",
       "label": "DEBRIS SHARDS",
@@ -317,6 +305,18 @@
       "_auto": true,
       "type": "oneshot",
       "trigger_call": "VFX_ComposeSparkTrail($POS, $VELOCITY, VC_MAT_FIRE, 1.0f, 2.0f)"
+    },
+    {
+      "source": "common/vc_strand_trail.inl",
+      "fn": "VFX_ComposeStrandTrail",
+      "label": "STRAND TRAIL",
+      "category": "common",
+      "fixture": "follower",
+      "lifecycle": "trail",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeStrandTrail($XFORM, VC_MAT_FIRE, 0.0f, 2.0f, VFX_STRAND_ENERGY)",
+      "kill_fn": "KillTrail"
     },
     {
       "source": "common/vc_sweep_slash.inl",

@@ -964,3 +964,82 @@ fix applied to one layer of two, a missing batch flush around the cull state, an
 this). Each fix was correct and none of them changed what was on screen, which
 read three times as "the fix didn't work". **When a symptom survives a fix you
 have verified is correct, look for a second cause rather than doubting the fix.**
+
+## A shared `onUpdate` callback silently re-installs the OTHER effect's physics (03/08/2026)
+
+**Symptom.** The energy trail's own source comment says "no forceField, no
+nodeHomeSpring — the swept path stays the spine". Every value it was asked to
+render was correct, every uniform arrived, and the ribbon still wandered and
+would not hold a clean shape.
+
+**Cause.** `VFX_ComposeEnergyTrail` set `cfg.onUpdate = SmokeTrail_OnUpdate` to
+reuse the smoke trail's live-tuning copy. That callback does not only copy
+tunables — it ends with the smoke's cloth block, and `smoketrail_curl_strength`
+defaults to `1.0`, so every frame it wrote `forceField = &s_smokeTrailUpdraft`,
+`nodeHomeSpring`, `nodeHomeMaxDev` and `nodeOrderFrac` onto the energy trail.
+The spawn config's omissions were re-filled with a fire updraft one frame later.
+
+**Rule.** A `TrailConfig.onUpdate` (and any other per-frame "apply live tuning"
+callback) is not a pure function of tunables — it is authority over the entity's
+whole state. Never share one between two effects. If two effects want the same
+knobs, share a helper that copies ONLY those fields and give each effect its own
+callback. And when a spawn-time field refuses to stay at the value you set,
+suspect a per-frame writer before you suspect the field.
+
+## Two shader modes cannot share one authored sheet if they disagree about where the SHAPE lives
+
+**Symptom.** First seen as a band that snakes across a ribbon correctly in the
+middle of the strip and blinks out at the crests of its own wave. The deeper
+version of the same conflict: the trail rendered as one smooth glowing ribbon
+with a clean edge and a clean tail, no matter how the erosion was tuned.
+
+**Cause.** `energy_wisp.png` was authored for the packed-wisp path
+(`u_matMode == 1`), which never reads texture alpha and therefore needs an edge
+fade baked into every channel. Mode 2 draws its own silhouette, so that baked
+fade multiplied its shape by ~0 exactly where the shape reached the strip edge.
+Centring the sample on the band's own frame worked around it — but the sheet was
+still isotropic CLOUD noise, and cloud noise can only modulate a shape's
+BRIGHTNESS. It cannot split one band into many. No shader change can make a
+smooth-edged ribbon read as a bundle of hairs when the asset has no hairs in it.
+
+**Rule.** Decide per mode whether the SHAPE lives in the shader or in the sheet,
+and do not let two modes share an asset across that line. If the mode draws its
+own silhouette, the texture may only be *detail* and must be sampled in the
+silhouette's own frame. If the effect needs discrete filaments, they have to
+exist in the asset (`scripts/gen_energy_wisp_texture.py` builds them as narrow
+Gaussian ridges wandering along V) — and combine with **max**, never a sum:
+summing overlapping hairs fills the gaps between them back in, which is the one
+thing that must not happen. The gaps ARE the effect.
+
+## The body/emission split — promoted to `ENGINE_LANDMINES.md`
+
+`BLEND_ALPHA` is not premultiplied, so a shader that emits one colour for both
+VFX passes dims twice in the body pass and the effect washes out over bright
+backgrounds. Any module drawing through `ScreenDistort_BeginVFXBody()` /
+`...Emission()` can hit it — see **"BLEND_ALPHA is NOT premultiplied"** in root
+`ENGINE_LANDMINES.md`. The trail system's fix is `ResolvePass` in
+`core/trails/shaders/trail_deform.fs` plus `TrailMaterialConfig.bodyOpacity`.
+
+## A shared `onUpdate` is authority over the whole entity — see above
+
+Also worth stating as a general shape: the energy trail read the smoke trail's
+`onUpdate` for its tunables and silently inherited the smoke's force field. Any
+"apply live tuning" callback owns everything it touches, so two effects must
+never share one. Give each its own and factor the shared *copy* into a helper.
+
+## A "trail texture" is a SHAPE; a filament sheet is a MATERIAL. Tiling decides which
+
+- **Symptom:** a trail effect renders as a uniform rope — no head, no tail, no
+  silhouette — however the wave, flow, dissolve and colour parameters are tuned.
+- **Cause:** the sheet was authored as a repeating material and sampled with a
+  tiling coordinate, when the algorithm expects one complete trail shape whose
+  head/tail taper is painted into the texture and whose U maps ONCE across the
+  whole trail (the RzFX reference's 拖尾紋理 channels). Every downstream stage
+  behaves correctly and still cannot produce a silhouette the input does not
+  contain. Three sin-offset samples of a rope are three ropes.
+- **Rule:** decide per sheet whether it is a SHAPE (stretch once; taper baked in;
+  must not tile) or a MATERIAL (tile by metres; uniform by design), record it
+  next to the asset, and give the consumer an explicit switch —
+  `TrailMaterialConfig.stretchUV`. Then, when an effect's structure refuses to
+  appear no matter how the parameters move, stop turning knobs and ask whether
+  the input is the KIND of thing the algorithm consumes.

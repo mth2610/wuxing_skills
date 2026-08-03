@@ -50,12 +50,21 @@ int main(void)
           "P4 blocks missing roles with an explicit no-legacy-fallback policy");
     CHECK(Has("core/composition/common/vc_smoke_puff.inl", "VFX_SurfaceRegistry_Get(VFX_SURFACE_SMOKE_PUFF)") &&
           Has("core/composition/fire/flame_volume.inl", "VFX_SurfaceRegistry_Get(VFX_SURFACE_FIRE_TONGUE)") &&
-          Has("core/composition/common/vc_core_smoketrail.inl", "VFX_SurfaceRegistry_Get(VFX_SURFACE_SMOKE_RIBBON)") &&
           Has("core/composition/common/vc_ribbon_trail.inl", "VFX_SurfaceRegistry_Get(VFX_SURFACE_ENERGY_RIBBON)") &&
+          // VFX_SURFACE_SMOKE_RIBBON is deliberately absent: its only consumer,
+          // VFX_ComposeSmokeTrail, was deleted (see docs/PROGRESS.md). The
+          // profile is orphaned-but-kept, so it must NOT be asserted live.
+          // The strand trail resolves its sheet through a per-STYLE surface id
+          // (st->surface), so the literal never appears at the call site — the
+          // contract to check is that it goes through the registry at all, and
+          // that both sheets it names are real profiles.
+          Has("core/composition/common/vc_strand_trail.inl", "VFX_SurfaceRegistry_Get(st->surface)") &&
+          Has("core/composition/common/vc_strand_trail.inl", ".surface = VFX_SURFACE_ENERGY_RIBBON,") &&
+          Has("core/composition/common/vc_strand_trail.inl", ".surface = VFX_SURFACE_SMOKE_STRAND,") &&
+          !Has("core/composition/common/vc_strand_trail.inl", "assets/textures/") &&
           Has("core/composition/common/vc_volume_trail.inl", "VFX_SURFACE_ENERGY_TUBE"),
           "live compositions request semantic profiles instead of paths");
     CHECK(!Has("core/composition/common/vc_volume_trail.inl", "k_volSheetPath") &&
-          !Has("core/composition/common/vc_core_smoketrail.inl", "ResourceManager_LoadTexture(\"assets/textures/smoke_ribbon") &&
           !Has("core/composition/common/vc_ribbon_trail.inl", "LoadImage(profile->bodyPath)"),
           "migrated trail consumers retain no local texture path table");
     return failures ? 1 : 0;

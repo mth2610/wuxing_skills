@@ -43,6 +43,10 @@ typedef enum {
 typedef enum {
     VFX_SURFACE_SMOKE_RIBBON = 0,
     VFX_SURFACE_ENERGY_RIBBON,
+    // Same primitive and channel contract as ENERGY_RIBBON, different
+    // authoring: many thin faint hairs instead of few strong ones. The two
+    // strand-trail styles are not interchangeable on one sheet.
+    VFX_SURFACE_SMOKE_STRAND,
     VFX_SURFACE_ENERGY_TUBE,
     // Preview-only until P3 visual approval: kept here so VolumeTrail never
     // owns a texture path even while those kinds stay blocked from shipping.

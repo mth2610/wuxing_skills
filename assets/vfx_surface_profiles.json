@@ -25,10 +25,8 @@
         0
       ],
       "seam": "crossfade_runtime",
-      "provenance": "purpose-built smoke ribbon triplet",
-      "consumers": [
-        "VFX_ComposeSmokeTrail"
-      ],
+      "provenance": "purpose-built smoke ribbon triplet | ORPHANED 03/08/2026: its only consumer, VFX_ComposeSmokeTrail, was deleted in favour of VFX_ComposeStrandTrail(VFX_STRAND_SMOKE). The profile and its assets are kept because the sheet is authored and reusable, but nothing loads it today \u2014 delete both if no new consumer appears.",
+      "consumers": [],
       "assets": {
         "body": {
           "path": "assets/textures/smoke_ribbon.png",
@@ -69,14 +67,50 @@
         0
       ],
       "seam": "crossfade_runtime",
-      "provenance": "packed 4-channel wisp sheet (R coarse, G fine, B dissolve, A turbulence) for trail_deform.fs; energy_flow.png was a degenerate single-channel stand-in",
+      "provenance": "packed 4-channel STRAND sheet for trail_deform.fs mode 2 (RzFX Sin Wave Trail layout): R/G are filament patterns, B is flow distortion, A is dissolve. Built by scripts/gen_energy_wisp_texture.py. NOT interchangeable with a mode-1 packed-wisp sheet, which needs an edge fade baked into every channel and no strand structure.",
       "consumers": [
-        "VFX_ComposeEnergyTrail"
+        "VFX_ComposeStrandTrail (VFX_STRAND_ENERGY)"
       ],
       "assets": {
         "body": {
           "path": "assets/textures/energy_wisp.png",
-          "channels": "RGBA packed wisp: R coarse, G fine, B dissolve, A turbulence"
+          "channels": "RGBA packed strands: R trail pattern 1 (coarse filaments), G trail pattern 2 (fine filaments), B flow distortion, A dissolve"
+        }
+      }
+    },
+    {
+      "id": "VFX_SURFACE_SMOKE_STRAND",
+      "name": "smoke_strand",
+      "primitive": "ribbon",
+      "role": "trail",
+      "wrap": "repeat",
+      "filter": "bilinear",
+      "blend": "consumer_defined",
+      "projection": "primitive_defined",
+      "approval": "approved",
+      "lifecycle": {
+        "seconds": 0.0,
+        "fade_in": 0.0,
+        "fade_out": 0.0
+      },
+      "budget": {
+        "max_draw_calls": 0,
+        "max_textures": 1
+      },
+      "flipbook": [
+        0,
+        0,
+        0
+      ],
+      "seam": "crossfade_runtime",
+      "provenance": "packed 4-channel sheet for trail_deform.fs mode 2, SMOKE style. R and G are each ONE COMPLETE SMOKE WISP (head/tail taper painted in, a few curls rolling through), matching the reference sheet's \u62d6\u5c3e\u7d0b\u7406 channels \u2014 NOT a tileable filament material. It is STRETCHED once over the whole trail; tiling it produces a rope of identical segments with no silhouette. B = flow distortion, A = dissolve, both seamless because those two are panned. Built by scripts/gen_smoke_strand_texture.py.",
+      "consumers": [
+        "VFX_ComposeStrandTrail (VFX_STRAND_SMOKE)"
+      ],
+      "assets": {
+        "body": {
+          "path": "assets/textures/smoke_strand.png",
+          "channels": "RGBA: R trail wisp 1 (4 curls), G trail wisp 2 (6 curls), B flow distortion (seamless), A dissolve (seamless)"
         }
       }
     },

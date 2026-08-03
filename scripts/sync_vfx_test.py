@@ -90,8 +90,8 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeChargeConverge":     ("draw",    "timed",      "continuous"),
     "VFX_ComposeConvergeMotes":      ("draw",    "timed",      "continuous"),
     "VFX_ComposeCoreGlow":           ("draw",    "timed",      "continuous"),
-    "VFX_ComposeSmokeTrail":         ("trail",   "follower",   "continuous"),
     "VFX_ComposeEnergyTrail":        ("trail",   "follower",   "continuous"),
+    "VFX_ComposeStrandTrail":        ("trail",   "follower",   "continuous"),
     "VFX_ComposeDebrisShards":       ("event",   "burst",      "oneshot"),
     "VFX_ComposeDissolveExit":       ("draw",    "timed",      "continuous"),
     "VFX_ComposeEnergyBurst":        ("event",   "burst",      "oneshot"),
@@ -128,6 +128,10 @@ LIFECYCLE_SPECS = {
 # stays asset-agnostic. These are generated-call overrides, never edits inside
 # sandbox/vfx_test.c's @gen block.
 FIXTURE_SPAWN_OVERRIDES = {
+    # The style is an enum; the inferred call would pass a bare 0. Flip it live
+    # instead with the `strandtrail_style` tunable (-1 = as spawned, 0/1 = force).
+    "VFX_ComposeStrandTrail":
+        "VFX_ComposeStrandTrail($XFORM, VC_MAT_FIRE, 0.0f, 2.0f, VFX_STRAND_ENERGY)",
     "VFX_ComposeShieldShell":
         "VFX_ShieldShell_SpawnEx($POS, VC_MAT_FIRE, 1.5f, 1.0f, VFXTest_ShieldFlowSurface())",
 }
@@ -332,11 +336,12 @@ def infer_fixture_kind(fn_name, params, return_type):
 def infer_kill_fn(fn_name, available_fns):
     """Resolve the conventional ComposeFoo → KillFoo lifecycle automatically.
 
-    SmokeTrail is the one legacy exception: it owns a raw TrailSystem handle,
-    so its public release function is KillTrail rather than VFX_KillSmokeTrail.
-    EnergyTrail shares the same handle and stop semantics.
+    The strand trails are the exception: they own a raw TrailSystem handle, so
+    their public release is KillTrail (or VFX_StrandTrail_Stop for a soft
+    release) rather than a VFX_Kill* of their own.
     """
-    if fn_name in ('VFX_ComposeSmokeTrail', 'VFX_ComposeEnergyTrail'):
+    if fn_name in ('VFX_ComposeEnergyTrail', 'VFX_ComposeStrandTrail',
+                   'VFX_ComposeSmokeStrandTrail'):
         return 'KillTrail'
     if fn_name.startswith('VFX_Compose'):
         candidate = 'VFX_Kill' + fn_name[len('VFX_Compose'):]

@@ -34,8 +34,8 @@
 #include "vc_beam.inl"
 #include "vc_portal_disc.inl"
 #include "vc_shock_ring.inl"
-#include "vc_core_smoketrail.inl"
 #include "vc_impact_dust.inl"
 #include "vc_contact_spark.inl"
 #include "vc_decal.inl"
+#include "vc_strand_trail.inl"
 // @gen:common_includes end
