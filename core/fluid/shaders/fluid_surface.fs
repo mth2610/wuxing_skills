@@ -261,7 +261,11 @@ void main() {
     float illuminationEnergy = dot(illumination, vec3(0.2126, 0.7152, 0.0722));
     float backgroundScatter = 1.0 - dot(transmittance, vec3(0.2126, 0.7152, 0.0722));
     float scatterAmount = clamp(0.30 + 0.70 * backgroundScatter, 0.0, 1.0);
-    vec3 inScatter = waterScatterColor * scatterAmount * (0.34 + illuminationEnergy * 0.42);
+    // Grazing modulation: edge-on water scatters more (long apparent optical
+    // path) while the centre stays clearer so the background reads through.
+    // Uniform body fill is what makes a water sphere read as a plastic ball.
+    float grazingWeight = mix(0.32, 1.0, pow(1.0 - ndv, 1.5));
+    vec3 inScatter = waterScatterColor * scatterAmount * (0.34 + illuminationEnergy * 0.42) * grazingWeight;
 
     float fresnel = FresnelSchlick(ndv);
     float volumeWeight = smoothstep(0.016, 0.095, kernelThickness);
@@ -274,7 +278,13 @@ void main() {
     vec3 viewWorld = normalize(mat3(u_viewToWorld) * V);
     vec3 reflectedWorld = reflect(-viewWorld, worldNormal);
     float skyReflection = smoothstep(-0.18, 0.62, reflectedWorld.y);
-    vec3 reflection = mix(u_groundAmbient * 0.68, u_skyAmbient * 1.38, skyReflection);
+    // Night arenas have a dark sky ambient: without a glow floor the grazing
+    // Fresnel edge reflects near-black and the ball gets a dark glossy rim -
+    // the "plastic toy" silhouette. Boost the sky side with the material glow
+    // only when the actual sky is dark; bright-sky maps stay unchanged.
+    float skyLuma = dot(u_skyAmbient, vec3(0.2126, 0.7152, 0.0722));
+    vec3 skyReflectionColor = u_skyAmbient * 1.38 + u_materialGlow * 0.65 * clamp(1.0 - skyLuma, 0.0, 1.0);
+    vec3 reflection = mix(u_groundAmbient * 0.68, skyReflectionColor, skyReflection);
     float horizonReflection = pow(1.0 - abs(reflectedWorld.y), 3.0);
     reflection += u_materialSoft * (0.045 + horizonReflection * 0.10);
 
@@ -287,7 +297,7 @@ void main() {
         }
     }
 
-    vec3 localReflectionFill = mix(refractedScene, u_skyAmbient, 0.42) * 0.55;
+    vec3 localReflectionFill = mix(refractedScene, u_skyAmbient, 0.30) * 0.42;
     float lowerHemisphere = 1.0 - skyReflection;
     reflection = mix(reflection, max(reflection, localReflectionFill), airborneWeight * lowerHemisphere);
     vec3 dielectricBase = mix(transmitted + inScatter, reflection, visibleFresnel);
@@ -296,8 +306,8 @@ void main() {
     float surfaceNoise = sin(dot(worldPosition, vec3(12.3, 7.1, -9.5)) + u_time * 1.1) * 0.5 + 0.5;
     float roughness = mix(0.035, 0.075, surfaceNoise);
     vec3 sunHalf = normalize(V + L);
-    float broadSunLobe = pow(max(dot(N, sunHalf), 0.0), 110.0) * 0.020;
-    float sharpGlint = pow(max(dot(N, sunHalf), 0.0), 256.0) * smoothstep(0.55, 0.86, surfaceNoise) * 0.26;
+    float broadSunLobe = pow(max(dot(N, sunHalf), 0.0), 190.0) * 0.012;
+    float sharpGlint = pow(max(dot(N, sunHalf), 0.0), 256.0) * smoothstep(0.55, 0.86, surfaceNoise) * 0.30;
     vec3 specular = u_sunColor * (WaterSpecularBRDF(N, V, L, roughness) * 1.0 + broadSunLobe + sharpGlint) * ndl;
     specular *= mix(vec3(1.0), u_materialGlow, 0.08);
 
