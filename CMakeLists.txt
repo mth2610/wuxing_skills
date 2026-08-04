@@ -216,6 +216,7 @@ add_executable(wuxing
     sandbox/skill_debugger.c
     sandbox/auto_test.c
     sandbox/colour_probe.c
+    sandbox/fresnel_probe.c
     sandbox/auto_test_cases.c
     sandbox/visual_verify.c
     sandbox/pool_stats.c

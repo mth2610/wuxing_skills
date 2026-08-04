@@ -3,6 +3,7 @@
 #include "core/camera_fx.h"
 #include "sandbox/auto_test.h"
 #include "sandbox/colour_probe.h"
+#include "sandbox/fresnel_probe.h"
 #include <stdio.h>
 #include "core/decals/decal_system.h"
 #include "core/particles/particle_system.h"
@@ -64,6 +65,13 @@ static Camera3D s_lastCam = {0};
 static bool s_shotWanted = false;
 static int s_shotSerial = 0;
 static float s_shotRadius = 3.2f;
+
+/* Mặc định ẨN — xem lời giải thích tại khai báo trong vfx_test.h. */
+static bool s_hideCharacterRef = true;
+bool VFXTest_ShouldHideCharacterRef(void) { return s_hideCharacterRef; }
+
+static bool s_hideDebugOverlays = true;
+bool VFXTest_ShouldHideDebugOverlays(void) { return s_hideDebugOverlays; }
 
 void VFXTest_SetCamera(Camera3D cam) { s_lastCam = cam; }
 
@@ -269,6 +277,14 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
     if (IsKeyPressed(KEY_P)) s_shotWanted = true;
     /* O — thăm dò đường ống màu. Xem sandbox/colour_probe.c. */
     if (IsKeyPressed(KEY_O)) ColourProbe_Arm();
+    /* I — thăm dò quy ước fresnel |N.V|. Xem sandbox/fresnel_probe.c. */
+    if (IsKeyPressed(KEY_I)) FresnelProbe_Arm();
+    /* C — hiện/ẩn mannequin tham chiếu tỉ lệ. Mặc định ẩn: nó đứng đúng chỗ
+     * camera xoay quanh và hiệu ứng sinh ra, nên luôn che/lẫn vào VFX đang test
+     * (xem fresnel_probe.c — nó chính là thứ đã làm nhiễu phép đo lần trước). */
+    if (IsKeyPressed(KEY_C)) s_hideCharacterRef = !s_hideCharacterRef;
+    /* TAB — hiện/ẩn HUD debug (pool GPU particle, skill manager, core-test). */
+    if (IsKeyPressed(KEY_TAB)) s_hideDebugOverlays = !s_hideDebugOverlays;
 
     if (IsKeyPressed(KEY_T))
     {
@@ -822,6 +838,8 @@ void VFXTest_Draw3D(void)
 // @gen:newfx_draw end
         }
     }
+
+    FresnelProbe_Draw3D(s_lastCam);
 }
 
 void VFXTest_DrawHUD(void)
@@ -829,6 +847,7 @@ void VFXTest_DrawHUD(void)
     /* Vẽ trước, đọc sau — cả hai trong pass 2D, trên khung hình đã có pass 3D. */
     ColourProbe_Draw2D();
     ColourProbe_Readback();
+    FresnelProbe_Readback();
 
     /* ĐẦU hàm, trước khi HUD được vẽ — nếu không thì chữ HUD lọt vào ảnh và
      * lại thành một thứ nữa để phán đoán nhầm. */
@@ -840,12 +859,18 @@ void VFXTest_DrawHUD(void)
         AutoTest_SaveScreenshotWorld(nm, s_lastCam, s_prefabStartPos, s_shotRadius);
     }
 
-    VFXLightData activeLights[MAX_VFX_LIGHTS];
-    int activeCount = 0;
-    VFXLight_GetActive(activeLights, &activeCount, MAX_VFX_LIGHTS);
-    DrawText(TextFormat("Active VFX Lights: %d / 8", activeCount), 10, 610,
-             20, ORANGE);
-    GpuParticleSystem_DrawDebug(10, 635);
+    DrawText(TextFormat("C: character ref %s | TAB: debug HUD %s | N: dark bg | R: reset view",
+                        s_hideCharacterRef ? "hidden" : "shown",
+                        s_hideDebugOverlays ? "hidden" : "shown"),
+             10, 590, 16, GRAY);
+    if (!s_hideDebugOverlays) {
+        VFXLightData activeLights[MAX_VFX_LIGHTS];
+        int activeCount = 0;
+        VFXLight_GetActive(activeLights, &activeCount, MAX_VFX_LIGHTS);
+        DrawText(TextFormat("Active VFX Lights: %d / 8", activeCount), 10, 610,
+                 20, ORANGE);
+        GpuParticleSystem_DrawDebug(10, 635);
+    }
 
     // FF TEST button
     DrawCircle((int)FF_TEST_BTN_X, (int)FF_TEST_BTN_Y, FF_TEST_BTN_RADIUS,

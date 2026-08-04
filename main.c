@@ -747,6 +747,21 @@ int main(int argc, char **argv) {
 
     Vector3 mouseTarget3D = {0};
 
+    // Edge-triggered: true only on the frame the VFX Tester screen is entered
+    // (fresh launch or coming back from another screen), so the reset below
+    // fires every time, not just once per process lifetime.
+    static GameScreen s_prevScreenForVFXReset = SCREEN_MAIN_MENU;
+    bool enteredVFXTester = (currentScreen == SCREEN_VFX_TESTER &&
+                             s_prevScreenForVFXReset != SCREEN_VFX_TESTER);
+    s_prevScreenForVFXReset = currentScreen;
+
+    // VFX Tester "hoàn toàn tối" mode: N toggles ambient/sun to black and skips
+    // MapManager_DrawActive() (ground + skybox), isolating whatever a fixture
+    // emits on its own — the other setting is the normal lit scene, unchanged.
+    static bool s_vfxDarkMode = false;
+    static bool s_vfxLightingSaved = false;
+    static Color s_vfxSavedAmbient, s_vfxSavedSun;
+
     if (currentScreen == SCREEN_SKILL_SANDBOX) {
         UpdateUIPanel(GetMousePosition(), &uiState);
         if (uiState.requestedBackToMenu) currentScreen = SCREEN_MAIN_MENU;
@@ -755,6 +770,35 @@ int main(int argc, char **argv) {
         CameraFX_Update(&camera, dt);
     } else if (currentScreen == SCREEN_VFX_TESTER) {
         static float vfxCameraAngle = 0.0f;
+        static float vfxCamDist = 8.4f;
+
+        // Most convenient default for testing: pivot at the arena centre (root
+        // CLAUDE.md), not wherever the player last stood — fixtures spawn at
+        // this pivot (vfx_test.c: s_prefabStartPos = playerPos), so this is
+        // also where every new fixture appears. Re-fires on R so the view can
+        // be recovered after WASD/QE/scroll drift without leaving the screen.
+        if (enteredVFXTester || IsKeyPressed(KEY_R)) {
+            player.position = (Vector3){6.0f, 0.0f, 4.4f};
+            vfxCameraAngle = 0.6f;
+            vfxCamDist = 6.0f;
+        }
+
+        if (IsKeyPressed(KEY_N)) {
+            s_vfxDarkMode = !s_vfxDarkMode;
+            if (s_vfxDarkMode) {
+                if (!s_vfxLightingSaved) {
+                    s_vfxSavedAmbient = Environment_GetAmbientColor();
+                    s_vfxSavedSun = Environment_GetSunColor();
+                    s_vfxLightingSaved = true;
+                }
+                Environment_SetAmbientColor(BLACK);
+                Environment_SetSunColor(BLACK);
+            } else if (s_vfxLightingSaved) {
+                Environment_SetAmbientColor(s_vfxSavedAmbient);
+                Environment_SetSunColor(s_vfxSavedSun);
+            }
+        }
+
         float speed = 20.0f;
         float s = sinf(vfxCameraAngle);
         float c = cosf(vfxCameraAngle);
@@ -767,7 +811,6 @@ int main(int argc, char **argv) {
         if (IsKeyDown(KEY_Q)) vfxCameraAngle -= 2.5f * dt;
         if (IsKeyDown(KEY_E)) vfxCameraAngle += 2.5f * dt;
 
-        static float vfxCamDist = 8.4f;
         vfxCamDist -= GetMouseWheelMove() * 0.5f;
         if (vfxCamDist < 2.0f) vfxCamDist = 2.0f;
         if (vfxCamDist > 30.0f) vfxCamDist = 30.0f;
@@ -1024,7 +1067,7 @@ int main(int argc, char **argv) {
     }
 
     ScreenDistort_Begin();
-    if (g_isDebuggerCapturing) {
+    if (g_isDebuggerCapturing || (currentScreen == SCREEN_VFX_TESTER && s_vfxDarkMode)) {
         ClearBackground(BLACK);
     } else {
         ClearBackground(GetColor(0x111111FF));
@@ -1045,7 +1088,9 @@ int main(int argc, char **argv) {
     VFXLight_BindAll(GfxQuality_Get() >= GFX_HIGH ? 4 : (GfxQuality_Get() >= GFX_MED ? 2 : 0));
     SurfaceMaterial_UpdateFrame(camera); // G2 — push sun/ambient/fog to lit models
     GroundShadow_UpdateFrame(); // Real Shading P6 — push shadow map to raw-immediate ground draws
-    MapManager_DrawActive();
+    if (!(currentScreen == SCREEN_VFX_TESTER && s_vfxDarkMode)) {
+        MapManager_DrawActive();
+    }
     if (!g_isDebuggerCapturing && currentScreen == SCREEN_SKILL_SANDBOX) {
         DrawSandbox3D(&player, &enemy, mouseTarget3D, &uiState);
     }
@@ -1064,7 +1109,7 @@ int main(int argc, char **argv) {
         VFXTest_SetCamera(camera); // để phím P chụp đúng vùng hiệu ứng
         VFXTest_Draw3D();
 
-        if (!renderVFXMode) {
+        if (!renderVFXMode && !VFXTest_ShouldHideCharacterRef()) {
             Environment_DrawSmartShadow(player.position, ENV_SHAPE_SPHERE, 0.25f, 0.25f);
             DrawCharacter3D(player.position, 0.25f, GetColor(0xFFD39BFF), GetColor(0x3B5998FF), GetColor(0xCCCCCCFF), true, mouseTarget3D);
         }
@@ -1108,14 +1153,17 @@ int main(int argc, char **argv) {
 
     // These are dev/debug overlays — skip them entirely on SCREEN_GAME so it
     // reads as a real production screen, not a test environment. Untouched
-    // for every other screen.
-    if (currentScreen != SCREEN_GAME) {
+    // for every other screen. On the VFX Tester specifically, TAB
+    // (VFXTest_ShouldHideDebugOverlays) also hides them by default — pure
+    // clutter while judging how an effect looks.
+    if (currentScreen != SCREEN_GAME &&
+        !(currentScreen == SCREEN_VFX_TESTER && VFXTest_ShouldHideDebugOverlays())) {
         DrawSkillManagerOverlay();
         DrawCoreTestSkillDebugHUD();
         PoolStats_DrawOverlay(); // CORE_ISSUES.md Item 3 test — on-screen depth readback (press L)
     }
 
-    if (!renderVFXMode && currentScreen != SCREEN_GAME) {
+    if (!renderVFXMode && currentScreen != SCREEN_GAME && currentScreen != SCREEN_VFX_TESTER) {
         Vector2 enemyScreenHead = GetWorldToScreen(
             (Vector3){enemy.position.x, enemy.position.y + 0.55f, enemy.position.z},
             camera);
