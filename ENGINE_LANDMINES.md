@@ -16,7 +16,7 @@
 | 6 | Android: black screen / crash on device | Anyone changing the Android build flags |
 | 7 | `CreateEmitter` needs per-frame target update; name collision | Anyone using the emitter systems |
 | 8 | Per-instance uniform changes → stale-UBO scrambling (rlvk) | Any VFX that calls `SetShaderValue` between instances |
-| 9 | `matModel` is model×**view** → `fragPosition` is NOT world space | Any shader doing positional lighting/effects |
+| 9 | `matModel` is model×**view** → `fragPosition` is NOT world space | Any shader doing positional lighting/effects, incl. `viewPos - fragPosition` fresnel |
 | 10 | `SetShaderValue` writes to the **active** shader under rlvk | Anyone setting uniforms outside `BeginShaderMode` |
 | 11 | Colour-only VFX layer clear must preserve shared depth | Anyone adding a render layer over scene depth |
 
@@ -64,6 +64,16 @@
   produces a **view-space** position. Compare it against anything genuinely in world space and the distance is roughly the camera distance, so every falloff clamps to zero. Directional lighting never notices, because it uses no position.
 - **Rule:** never assume `matModel` gives world space. Put both operands in the *same* space and say which one in a comment. Two working precedents: `core/vfx_light.c` converts light positions with `rlGetMatrixTransform()` before upload (so lights meet the surfaces in view space), and `maps/toolkit/ground_shadow.c` folds `MatrixInvert(rlGetMatrixTransform())` into its light-VP matrix (so the shader gets back to world). Anything reading that matrix must run **inside** the 3D pass — outside it the matrix is identity and the correction silently becomes a no-op.
 - **The decoy — do not repeat it:** `fract(fragPosition)` was used to "prove" the coordinates were world space, and it painted a clean 1 m grid. It always will: `fract()` of a *translated* position is an identical grid. A debug view that cannot distinguish the failure from success is worse than none (core/`CLAUDE.md` §6). Paint a quantity that depends on the ORIGIN — the distance to a known point — or assert it numerically. Full chain + regression test: `core/tests/vfx_light_space_test.c`, `core/docs/LANDMINES.md`.
+
+### §9 also breaks fresnel, not just positional lighting (04/08/2026)
+
+- **Symptom:** `normalize(viewPos - fragPosition)` — the near-universal fresnel/rim-light term in `plasma_shell`, `crystal`, `aura_shell`, `effect_material`, `water_splash` — looks *plausible* on screen (a bright/dark gradient that does move with the camera) but is not the fresnel it appears to be.
+- **Confirmed empirically**, not just by re-reading §9's cause: `sandbox/fresnel_probe.c` (key **I** on the VFX Tester screen) draws a cylinder through the SAME mechanism these materials use — `DrawMesh` with a real `Mesh`/`Material`, not immediate-mode `rlBegin/rlVertex3f` (an earlier version of the probe used `DrawCoreCylinder`, immediate-mode, and got the *opposite*, wrong answer — see the probe's own file-header postmortem for why that draw path doesn't represent `DrawMesh`-based materials at all). Three readings, same frame, same camera:
+  - `viewPos - fragPosition` (the shipped convention): a monotonic ramp across the visible face, no symmetric falloff — not a valid fresnel shape at all.
+  - `-fragPosition` alone: a clean, symmetric dome — 214/255 at centre, 12–14/255 at both true silhouette edges, peak within 1% of the geometric centre.
+  - `length(fragPosition)` at the centre vertex, judged against two literal reference markers (not a hand-inverted tonemap guess): read 15x closer to "distance to camera" than to "distance to world origin".
+- **Conclusion:** `fragPosition` is view space here too, exactly as §9 says, and the shipped `viewPos - fragPosition` line is wrong for the same reason positional lighting was — it subtracts a world-space `viewPos` from a view-space `fragPosition`. The fix in view space needs no uniform at all: `normalize(-fragPosition)`. **Not yet applied to the 5 shaders** — this entry is the recorded evidence; the shader edits are a separate, deliberate change against shipped effects, not sandbox code.
+- **Rule:** if reproducing this on a NEW immediate-mode probe/test, draw with `DrawMesh` (`GenMesh*` + `Material`), not `rlBegin/rlVertex3f` — the two code paths populate `matModel` differently and only one matches how the real shaders draw.
 
 ---
 

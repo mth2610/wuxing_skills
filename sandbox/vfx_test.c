@@ -73,6 +73,11 @@ bool VFXTest_ShouldHideCharacterRef(void) { return s_hideCharacterRef; }
 static bool s_hideDebugOverlays = true;
 bool VFXTest_ShouldHideDebugOverlays(void) { return s_hideDebugOverlays; }
 
+/* Master switch — tabs, mesh/newfx buttons, FF/VF TEST circles, toggle/back
+ * buttons, all of it. C/TAB/N/R above still work while this is on (they're
+ * handled in UpdateAndHandleInput, not gated here), only the 2D drawing stops. */
+static bool s_hideAllUI = false;
+
 void VFXTest_SetCamera(Camera3D cam) { s_lastCam = cam; }
 
 // Shared state for generated FOLLOWER fixtures. Every `.inl` gets one bench
@@ -285,6 +290,13 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
     if (IsKeyPressed(KEY_C)) s_hideCharacterRef = !s_hideCharacterRef;
     /* TAB — hiện/ẩn HUD debug (pool GPU particle, skill manager, core-test). */
     if (IsKeyPressed(KEY_TAB)) s_hideDebugOverlays = !s_hideDebugOverlays;
+    /* U — tắt/bật TOÀN BỘ UI của màn hình này (tabs, nút mesh/newfx, 2 hình
+     * tròn FF/VF TEST, nút toggle/back). Dùng khi cần chụp/quan sát VFX hoàn
+     * toàn sạch — bấm lại U để lấy control panel về chọn hiệu ứng khác. */
+    if (IsKeyPressed(KEY_U)) {
+        s_hideAllUI = !s_hideAllUI;
+        TraceLog(LOG_INFO, "[VFXTest] UI %s (U de doi lai)", s_hideAllUI ? "AN" : "HIEN");
+    }
 
     if (IsKeyPressed(KEY_T))
     {
@@ -373,6 +385,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
     // Test GPU compute force field
     // -------------------------------------------------------------------------
     bool ffTestTouched =
+        !s_hideAllUI &&
         IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
         CheckCollisionPointCircle(GetMousePosition(),
                                   (Vector2){FF_TEST_BTN_X, FF_TEST_BTN_Y},
@@ -416,6 +429,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
     // Test FORCE_VECTOR_TEXTURE
     // -------------------------------------------------------------------------
     bool vfTestTouched =
+        !s_hideAllUI &&
         IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
         CheckCollisionPointCircle(GetMousePosition(),
                                   (Vector2){VF_TEST_BTN_X, VF_TEST_BTN_Y},
@@ -858,6 +872,8 @@ void VFXTest_DrawHUD(void)
         snprintf(nm, sizeof(nm), "vfx_%d_%02d", s_testIndex, ++s_shotSerial);
         AutoTest_SaveScreenshotWorld(nm, s_lastCam, s_prefabStartPos, s_shotRadius);
     }
+
+    if (s_hideAllUI) return; // U — see UpdateAndHandleInput. Nothing below draws.
 
     DrawText(TextFormat("C: character ref %s | TAB: debug HUD %s | N: dark bg | R: reset view",
                         s_hideCharacterRef ? "hidden" : "shown",

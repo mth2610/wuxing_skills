@@ -2175,17 +2175,18 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
             // ratio, or the two layers relock into one pattern), .y depth
             // power, .z silhouette softness, .w master density.
             //
-            // .y = 0.75: the volume power. On a cylinder the fragment at
-            // screen distance x from the axis has |N.V| = sqrt(1-(x/R)^2), so
-            // |N.V|^0.75 runs 1.00 on the axis -> 0.62 at 85% -> 0.00 at the
-            // edge. A soft blob. The term it replaced ran 0.00 -> 0.42 -> 0.00,
-            // peaking AT the boundary, which is what drew the hard edge.
-            //
-            // Restored to the values the column last looked right at.
-            // Everything tried after that was driven by debug images that were
-            // measuring a discard rather than a surface; the shader is back to
-            // depth * rim, so these are back too.
-            float mask[4] = {1.63f, 0.85f, 0.34f, 1.75f};
+            // .y = 2.0: the volume power. core/tests/silhouette_test.c
+            // (Test_ThePowerMustBeAtLeastTwo) proved a power below 1 CANNOT
+            // dissolve the edge at any constant — |N.V| leaves the silhouette
+            // with an infinite derivative (~sqrt of screen distance), and
+            // squaring cancels that root so the falloff is linear in screen
+            // distance, which is what reads as soft. The 0.85 this used to be
+            // was tried alongside a two-sided mesh with no cull, which the
+            // same test file (Test_CullingIsWhatMakesItWork) showed cannot
+            // work regardless of power — a grazing ray crosses an unbounded
+            // number of two-sided facets. Both fixes are now in: this power,
+            // and trail_volume.fs's `if (facing < 0.0) discard;`.
+            float mask[4] = {1.63f, 2.0f, 0.34f, 1.75f};
             if (panLoc >= 0) SetShaderValue(fullShader, panLoc, pan, SHADER_UNIFORM_VEC4);
             if (maskLoc >= 0) SetShaderValue(fullShader, maskLoc, mask, SHADER_UNIFORM_VEC4);
             int dbgLoc = GetShaderLocation(fullShader, "u_volDebug");

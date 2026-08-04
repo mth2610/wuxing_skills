@@ -29,7 +29,7 @@
 // 0, then mode 1, then the |fragNormal| sanity check), so each reading gets the
 // undistorted case instead of three shapes fighting for one screenshot.
 //
-// THREE MORE BUGS FOUND WHILE BUILDING THIS PROBE, all worth remembering
+// FOUR MORE BUGS FOUND WHILE BUILDING THIS PROBE, all worth remembering
 // because they are exactly the kind of thing this shader was built to catch
 // in OTHER code, caught here in the test instead:
 //
@@ -63,6 +63,22 @@
 //      toward cam.position instead of sitting at cam.target — still on-axis
 //      (the WHOLE ray projects to screen centre, not just the target point),
 //      but floating above the player's head and clear of the ground.
+//   4. THE BIG ONE. A mode-3 decisive test (length(fragPosition) vs two
+//      literal reference markers, see below) read fragPosition as WORLD
+//      space, contradicting ENGINE_LANDMINES §9. Re-reading §9 before
+//      trusting that reversal: its mechanism is `matModel = modelTransform *
+//      rlGetMatrixTransform()`, which is specifically what raylib's DrawMesh
+//      does — and this probe drew its cylinder with DrawCoreCylinder
+//      (core/geometry/pm_core_shapes.inl), rlBegin(RL_QUADS)/rlVertex3f
+//      IMMEDIATE MODE, a different rlgl code path for populating matModel.
+//      Checking what the REAL fresnel shaders draw with:
+//      core/material/material_system.h:162-163 — CrystalMaterial builds a
+//      Mesh (ProceduralMesh_BuildCrystalClusterMesh) and draws it via
+//      ProceduralMesh_DrawBakedCrystalCluster(Mesh, Material, Matrix), a
+//      DrawMesh wrapper. The production shaders go through DrawMesh; this
+//      probe did not, so its world-space reading did not transfer to them.
+//      Fixed by switching the probe to DrawMesh (GenMeshCylinder + a real
+//      Material) — see EnsureMesh/ProbeCylinderTransform.
 //
 // HOW TO READ IT
 //   peak near the centre, ~0 at both ends, symmetric   -> that reading is right
@@ -75,7 +91,6 @@
 #include "sandbox/fresnel_probe.h"
 
 #include "core/resource_manager.h"
-#include "core/geometry/procedural_mesh_utils.h"
 #include "raylib.h"
 #include "raymath.h"
 #include "rlgl.h"
@@ -89,6 +104,7 @@ typedef enum {
     PROBE_MODE0,   // normalize(viewPos - fragPosition)
     PROBE_MODE1,   // normalize(-fragPosition)
     PROBE_MODE2,   // length(fragNormal) sanity check
+    PROBE_MODE3,   // length(fragPosition) — decisive world-vs-view space test
 } ProbeStage;
 
 static ProbeStage s_stage = PROBE_IDLE;
@@ -98,9 +114,27 @@ static Shader s_shader = {0};
 static bool s_tried = false;
 
 // ON THE CAMERA'S OWN AXIS, not in arena coordinates — see file header.
-static const float PROBE_R = 0.9f;
-static const float PROBE_H = 2.4f;
+//
+// SMALL RELATIVE TO ITS DISTANCE FROM THE CAMERA — this matters now in a way
+// it did not before. ReportScan's edge points (centre ± PROBE_R along the
+// camera's right vector) are an ORTHOGRAPHIC approximation of the true
+// perspective tangent point; the two coincide only as PROBE_R/distance -> 0.
+// At radius 0.9 and the probe sitting ~3.4 m from camera (new default zoom +
+// the 45%-back placement from the player fix), that ratio is ~0.26 — a
+// mode1 (-fragPosition) run at that ratio came back a lopsided ramp instead
+// of a symmetric dome: real dot-product values, measured against a silhouette
+// assumption that was measurably wrong at this range. Shrunk 3x so the
+// approximation error shrinks with it; raise it back only alongside a real
+// perspective-correct tangent formula, not by feel.
+static const float PROBE_R = 0.3f;
+static const float PROBE_H = 1.0f;
 static Vector3 s_probePos = {0};
+
+// Mode 3's two reference markers (world-hypothesis / view-hypothesis), and
+// where they land on screen so Readback can sample them without recomputing
+// GetWorldToScreen from scratch.
+static Vector3 s_refWorldPos = {0}, s_refCamPos = {0};
+static float s_distWorld = 0.0f, s_distCam = 0.0f;
 
 typedef struct {
     bool valid;
@@ -112,6 +146,10 @@ static ScanResult s_result[3];
 
 void FresnelProbe_Arm(void) { s_stage = PROBE_MODE0; }
 
+static Mesh s_mesh = {0};       // unit cylinder: radius 1, height 1, base at local y=0
+static Material s_material = {0};
+static bool s_meshReady = false;
+
 static void EnsureShader(void)
 {
     if (s_tried) return;
@@ -122,6 +160,37 @@ static void EnsureShader(void)
         TraceLog(LOG_WARNING, "[FRESNEL] probe_fresnel.vs/.fs failed to load");
 }
 
+// DRAWN VIA DrawMesh, NOT immediate-mode rlBegin/rlVertex3f — this was itself
+// a bug, found by checking what the REAL fresnel shaders actually draw with.
+// core/material/material_system.h:162-163: CrystalMaterial builds a Mesh via
+// ProceduralMesh_BuildCrystalClusterMesh, then draws it with
+// ProceduralMesh_DrawBakedCrystalCluster(Mesh, Material, Matrix) — the
+// signature of a DrawMesh wrapper. That is EXACTLY the mechanism
+// ENGINE_LANDMINES §9 describes (matModel = modelTransform *
+// rlGetMatrixTransform() inside DrawMesh). This probe's first version used
+// DrawCoreCylinder (core/geometry/pm_core_shapes.inl), which is
+// rlBegin(RL_QUADS)/rlVertex3f immediate-mode — a DIFFERENT rlgl code path
+// for populating matModel than DrawMesh uses. Its mode-3 result (fragPosition
+// reads as WORLD space) does not transfer to the DrawMesh-based production
+// shaders; only a DrawMesh-based probe does.
+static void EnsureMesh(void)
+{
+    if (s_meshReady) return;
+    s_meshReady = true;
+    s_mesh = GenMeshCylinder(1.0f, 1.0f, 48);
+    s_material = LoadMaterialDefault();
+}
+
+// transform for a cylinder of the given radius/height, CENTRE at `pos`
+// (matching the old DrawCoreCylinder(bottom, top, ...) call sites, which
+// took bottom = pos - h/2, top = pos + h/2).
+static Matrix ProbeCylinderTransform(Vector3 pos, float radius, float height)
+{
+    Matrix scale = MatrixScale(radius, height, radius);
+    Matrix translate = MatrixTranslate(pos.x, pos.y - height * 0.5f, pos.z);
+    return MatrixMultiply(scale, translate);
+}
+
 void FresnelProbe_Draw3D(Camera3D cam)
 {
     if (s_stage == PROBE_IDLE) return;
@@ -130,6 +199,8 @@ void FresnelProbe_Draw3D(Camera3D cam)
 
     EnsureShader();
     if (s_shader.id == 0) { s_stage = PROBE_IDLE; s_pending = false; return; }
+    EnsureMesh();
+    s_material.shader = s_shader;
 
     // NOT cam.target itself — main.c:775 sets camera.target = player.position
     // (+0.2 up), so a cylinder placed there enclosed the player character.
@@ -168,20 +239,46 @@ void FresnelProbe_Draw3D(Camera3D cam)
 
     float mode = (s_stage == PROBE_MODE0) ? 0.0f
                : (s_stage == PROBE_MODE1) ? 1.0f
-                                           : 2.0f;
+               : (s_stage == PROBE_MODE2) ? 2.0f
+                                           : 3.0f;
 
-    // Flush whatever the rest of the 3D pass has queued before these uniforms
-    // are set — rlgl batches draws and a batch flushes with only the LAST
-    // uniform value, same trap as ENGINE_LANDMINES §1.
-    BeginShaderMode(s_shader);
+    // Flush whatever the rest of the 3D pass has queued via the immediate-mode
+    // batch before we touch shader state — same trap as ENGINE_LANDMINES §1.
+    // DrawMesh below draws its OWN VAO (not through that batch), but setting a
+    // uniform requires enabling our shader first, and doing that while an
+    // unrelated batch is still pending would flush it under the wrong shader.
     rlDrawRenderBatchActive();
     if (modeLoc >= 0) SetShaderValue(s_shader, modeLoc, &mode, SHADER_UNIFORM_FLOAT);
     if (viewPosLoc >= 0) SetShaderValue(s_shader, viewPosLoc, &cam.position, SHADER_UNIFORM_VEC3);
-    DrawCoreCylinder((Vector3){s_probePos.x, s_probePos.y - PROBE_H * 0.5f, s_probePos.z},
-                     (Vector3){s_probePos.x, s_probePos.y + PROBE_H * 0.5f, s_probePos.z},
-                     PROBE_R, PROBE_R, 64, WHITE);
-    rlDrawRenderBatchActive();
-    EndShaderMode();
+    DrawMesh(s_mesh, s_material, ProbeCylinderTransform(s_probePos, PROBE_R, PROBE_H));
+
+    if (s_stage == PROBE_MODE3) {
+        // Two LITERAL reference markers (mode 4, u_refValue), beside the main
+        // cylinder, in the SAME frame — so they pass through the identical
+        // tonemap/colour-grade curve the cylinder's own readback did. Judging
+        // one readback against a hand-guessed tonemap inverse is a guess;
+        // judging it against two markers that went through the same unknown
+        // curve is not.
+        s_distWorld = Vector3Length(s_probePos);
+        s_distCam = Vector3Distance(s_probePos, cam.position);
+        Vector3 right = Vector3Normalize(Vector3CrossProduct(fwd, cam.up));
+        s_refWorldPos = Vector3Add(s_probePos, Vector3Scale(right, 1.2f));
+        s_refCamPos = Vector3Subtract(s_probePos, Vector3Scale(right, 1.2f));
+
+        int refLoc = GetShaderLocation(s_shader, "u_refValue");
+        float m4 = 4.0f;
+        float refW = s_distWorld / 20.0f;
+        float refC = s_distCam / 20.0f;
+
+        if (modeLoc >= 0) SetShaderValue(s_shader, modeLoc, &m4, SHADER_UNIFORM_FLOAT);
+        if (refLoc >= 0) SetShaderValue(s_shader, refLoc, &refW, SHADER_UNIFORM_FLOAT);
+        DrawMesh(s_mesh, s_material,
+                ProbeCylinderTransform(s_refWorldPos, PROBE_R * 0.6f, PROBE_H * 0.5f));
+
+        if (refLoc >= 0) SetShaderValue(s_shader, refLoc, &refC, SHADER_UNIFORM_FLOAT);
+        DrawMesh(s_mesh, s_material,
+                ProbeCylinderTransform(s_refCamPos, PROBE_R * 0.6f, PROBE_H * 0.5f));
+    }
 }
 
 // Read one horizontal scanline across the on-axis cylinder and report the shape
@@ -267,12 +364,82 @@ static ScanResult ReportScan(Image img, const char *label)
     return r;
 }
 
+// Split out of FresnelProbe_Readback so mode 3's early-exit path can call it
+// directly instead of a goto (a label in C cannot be followed by a
+// declaration — `print_verdict: ScanResult m0 = ...;` does not compile,
+// declarations are not statements in C the way they are in C++).
+static void PrintVerdict(void)
+{
+    ScanResult m0 = s_result[0], m1 = s_result[1], m2 = s_result[2];
+    if (!m0.valid || !m1.valid) {
+        TraceLog(LOG_WARNING, "[FRESNEL] mode0/mode1 khong doc duoc — xem canh bao ben tren");
+        return;
+    }
+    if (m2.valid && !(m2.lv > 200 && m2.cv > 200 && m2.rv > 200))
+        TraceLog(LOG_WARNING, "[FRESNEL] |fragNormal| khong phang gan 255 khap mat "
+                              "(trai %d giua %d phai %d) — N co the la rac, hai ket qua tren khong dang tin",
+                 m2.lv, m2.cv, m2.rv);
+
+    if (m0.verdict && !m1.verdict)
+        TraceLog(LOG_INFO, "[FRESNEL] VERDICT: normalize(viewPos - fragPosition) DUNG — quy uoc hien tai cua du an la dung");
+    else if (m1.verdict && !m0.verdict)
+        TraceLog(LOG_INFO, "[FRESNEL] VERDICT: normalize(-fragPosition) DUNG, normalize(viewPos - fragPosition) SAI — "
+                           "TAT CA fresnel dung 'viewPos - fragPosition' (plasma_shell, crystal, aura_shell, "
+                           "effect_material, water_splash) dang sai, can ghi vao ENGINE_LANDMINES.md");
+    else if (m0.verdict && m1.verdict)
+        TraceLog(LOG_WARNING, "[FRESNEL] VERDICT: CA HAI deu doc DUNG — khong the ca hai dung cung luc, kiem tra lai tieu chi cham diem");
+    else
+        TraceLog(LOG_WARNING, "[FRESNEL] VERDICT tu dome-shape: KHONG cach doc nao dat — nhung xem dong "
+                              "length(fragPosition) ben tren, do la phep do dut diem, tin no hon hinh dang vom");
+}
+
 void FresnelProbe_Readback(void)
 {
     if (!s_pending) return;
     s_pending = false;
 
     Image img = LoadImageFromScreen();
+
+    if (s_stage == PROBE_MODE3) {
+        // The decisive test fs_header.glsl itself describes: length(fragPosition)
+        // must equal distance-to-ORIGIN if fragPosition is world space, or
+        // distance-to-CAMERA if view space. distWorld/distCam/s_ref*Pos were
+        // computed in Draw3D (same frame), alongside two LITERAL reference
+        // markers carrying exactly those two f values — judged against them
+        // instead of a hand-guessed tonemap inverse.
+        float dpi = (GetScreenWidth() > 0) ? ((float)img.width / (float)GetScreenWidth()) : 1.0f;
+        Vector2 sC = GetWorldToScreen(s_probePos, s_cam);
+        Vector2 sW = GetWorldToScreen(s_refWorldPos, s_cam);
+        Vector2 sV = GetWorldToScreen(s_refCamPos, s_cam);
+        int cx = (int)(sC.x * dpi), cy = (int)(sC.y * dpi);
+        int wx = (int)(sW.x * dpi), wy = (int)(sW.y * dpi);
+        int vx = (int)(sV.x * dpi), vy = (int)(sV.y * dpi);
+        bool cOk = cx >= 0 && cx < img.width && cy >= 0 && cy < img.height;
+        bool wOk = wx >= 0 && wx < img.width && wy >= 0 && wy < img.height;
+        bool vOk = vx >= 0 && vx < img.width && vy >= 0 && vy < img.height;
+        if (cOk && wOk && vOk) {
+            int centerV = GetImageColor(img, cx, cy).r;
+            int worldRefV = GetImageColor(img, wx, wy).r;
+            int camRefV = GetImageColor(img, vx, vy).r;
+            int dWorld = abs(centerV - worldRefV), dCam = abs(centerV - camRefV);
+            const char *closer = (dWorld < dCam) ? "WORLD" : (dCam < dWorld) ? "VIEW" : "HOA (khong phan biet duoc)";
+            TraceLog(LOG_INFO,
+                     "[FRESNEL] length(fragPosition) tai tam: %3d  |  moc WORLD (f=%.2f): %3d (lech %d)  |  "
+                     "moc VIEW (f=%.2f): %3d (lech %d)  ->  GAN %s HON",
+                     centerV, (double)(s_distWorld / 20.0f), worldRefV, dWorld,
+                     (double)(s_distCam / 20.0f), camRefV, dCam, closer);
+        } else {
+            TraceLog(LOG_WARNING, "[FRESNEL] length(fragPosition): tam hoac moc tham chieu chieu ra ngoai man hinh "
+                                  "(tam %s, moc world %s, moc view %s)",
+                     cOk ? "OK" : "NGOAI", wOk ? "OK" : "NGOAI", vOk ? "OK" : "NGOAI");
+        }
+        if (!DirectoryExists("autotest_output")) MakeDirectory("autotest_output");
+        ExportImage(img, "autotest_output/fresnel_probe_mode3.png");
+        UnloadImage(img);
+        s_stage = PROBE_IDLE;
+        PrintVerdict();
+        return;
+    }
 
     const char *label;
     int idx;
@@ -299,27 +466,8 @@ void FresnelProbe_Readback(void)
         s_stage = PROBE_MODE2;
         return;
     }
-
-    // PROBE_MODE2 just finished — print the combined verdict.
-    s_stage = PROBE_IDLE;
-    ScanResult m0 = s_result[0], m1 = s_result[1], m2 = s_result[2];
-    if (!m0.valid || !m1.valid) {
-        TraceLog(LOG_WARNING, "[FRESNEL] mode0/mode1 khong doc duoc — xem canh bao ben tren");
+    if (s_stage == PROBE_MODE2) {
+        s_stage = PROBE_MODE3; // next frame's Draw3D picks this up; PrintVerdict() runs after it, above
         return;
     }
-    if (m2.valid && !(m2.lv > 200 && m2.cv > 200 && m2.rv > 200))
-        TraceLog(LOG_WARNING, "[FRESNEL] |fragNormal| khong phang gan 255 khap mat "
-                              "(trai %d giua %d phai %d) — N co the la rac, hai ket qua tren khong dang tin",
-                 m2.lv, m2.cv, m2.rv);
-
-    if (m0.verdict && !m1.verdict)
-        TraceLog(LOG_INFO, "[FRESNEL] VERDICT: normalize(viewPos - fragPosition) DUNG — quy uoc hien tai cua du an la dung");
-    else if (m1.verdict && !m0.verdict)
-        TraceLog(LOG_INFO, "[FRESNEL] VERDICT: normalize(-fragPosition) DUNG, normalize(viewPos - fragPosition) SAI — "
-                           "TAT CA fresnel dung 'viewPos - fragPosition' (plasma_shell, crystal, aura_shell, "
-                           "effect_material, water_splash) dang sai, can ghi vao ENGINE_LANDMINES.md");
-    else if (m0.verdict && m1.verdict)
-        TraceLog(LOG_WARNING, "[FRESNEL] VERDICT: CA HAI deu doc DUNG — khong the ca hai dung cung luc, kiem tra lai tieu chi cham diem");
-    else
-        TraceLog(LOG_WARNING, "[FRESNEL] VERDICT: KHONG cach doc nao dat — kiem tra shader/camera truoc khi ket luan");
 }

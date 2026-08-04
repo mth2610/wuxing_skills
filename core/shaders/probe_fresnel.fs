@@ -28,6 +28,12 @@
 // 0 = world reading:  normalize(viewPos - fragPosition)
 // 1 = view reading:   normalize(-fragPosition)
 // 2 = length(fragNormal) — DOES THE ATTRIBUTE ARRIVE AT ALL?
+// 3 = length(fragPosition) / 20.0 — fs_header.glsl's own decisive test: this
+//     must read as the distance from the object to the WORLD ORIGIN if
+//     fragPosition is world space, or to the CAMERA if it is view space. The
+//     harness knows both expected distances (computed in C from the same
+//     probe/camera positions) and logs them alongside this readback — no
+//     dome-shape inference needed, just two numbers that cannot tie.
 //
 // Mode 2 exists because both fresnel readings came back as a monotone ramp
 // across the body rather than a dome, which is the signature of dot(constant,
@@ -35,12 +41,24 @@
 // normal (pm_core_shapes.inl), so if the shader is not seeing one, the loss is
 // between the vertex buffer and here. No normalize, no dot — this cannot go NaN
 // and cannot be confused with a numerical accident.
+//
+// 4 = a LITERAL constant (u_refValue), no scene math at all. Mode 3's readback
+// (216) had to be judged against distWorld/20 and distCam/20 by mentally
+// inverting ACES + display gamma — guesswork. Two mode-4 markers, drawn with
+// EXACTLY those two f values as plain literals, go through the identical
+// tonemap/grade the cylinder does; comparing three numbers that all passed
+// through the same unknown curve needs no knowledge of that curve's shape.
 uniform float u_probeMode;
+uniform float u_refValue;
 
 void main()
 {
     float f;
-    if (u_probeMode > 1.5) {
+    if (u_probeMode > 3.5) {
+        f = clamp(u_refValue, 0.0, 1.0);
+    } else if (u_probeMode > 2.5) {
+        f = clamp(length(fragPosition) / 20.0, 0.0, 1.0);
+    } else if (u_probeMode > 1.5) {
         f = clamp(length(fragNormal), 0.0, 1.0);
     } else {
         vec3 N = normalize(fragNormal);

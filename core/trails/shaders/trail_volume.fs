@@ -14,16 +14,18 @@
 // two masks is sparser than either factor, so the same two samples carve holes
 // instead of filling them. That is the whole difference.
 //
-// SPACE. fragPosition/fragNormal come through vs_header's VS_FinalOutput, and
-// every fresnel that ships in this engine — plasma_shell, crystal, aura_shell,
-// effect_material, water_splash — pairs them with `viewPos` exactly like this.
-//
-// This was changed to a view-space reading mid-session and changed back: the
-// evidence for the change came from debug views that were sitting BELOW two
-// discards and therefore only ever painted the fragments those discards let
-// through. Nothing measured through them can be trusted, so the engine's own
-// convention stands until something better than a contaminated reading says
-// otherwise.
+// SPACE. fragPosition/fragNormal come through vs_header's VS_FinalOutput.
+// `viewPos - fragPosition` was suspect for a session (ENGINE_LANDMINES §9:
+// matModel = model×view inside a 3D pass, so fragPosition is view space, and
+// subtracting a world-space viewPos from it is wrong) — confirmed for one
+// draw path and NOT the other (postscript, 04/08/2026, sandbox/fresnel_probe.c):
+// `DrawMesh` (crystal's real draw call) genuinely gives view-space
+// fragPosition, so crystal's `viewPos - fragPosition` IS broken. Immediate-mode
+// (`rlBegin`/`rlVertex3f` — 8 of the 9 files in core/geometry/pm_*.inl,
+// including PMTube_DrawFaded, what draws THIS column) gives WORLD-space
+// fragPosition instead, so `viewPos - fragPosition` (both world) is correct
+// here. The two draw paths do not share a matModel convention; do not port a
+// fix from one to the other by analogy.
 
 in vec4 vColor;
 
@@ -45,19 +47,19 @@ uniform vec4 u_volPan;
 uniform vec4 u_volMask;
 // DEBUG VIEW — 0 = off. Paints one intermediate quantity as opaque greyscale
 // so a screenshot answers what the term actually does across the column,
-// instead of another round of guessing at its constants.
-//   1 = the thickness term `edge`      2 = |N.V| raw
+// instead of another round of guessing at its constants. None of these sit
+// below the CULL discard (facing < 0.0) below, so they see the WHOLE tube,
+// front and back — the cull only applies to the real, non-debug render.
+//   1 = the thickness term `edge`      2 = |facing| (= |N.V|)
 //   3 = the sheet product `pattern`    4 = the vertex fade
-//   5 = length(fragNormal): WHITE = the vertex attribute arrives, BLACK = it
-//       does not. No normalize, no dot, so it cannot produce NaN.
-//   6 = length of the derivative normal before normalising, x8: BLACK = the
-//       triangle is degenerate in screen space and cross() collapsed.
-//   7 = |fragPosition| / 40 — WORLD space or VIEW space, decisively
+//   5 = fragNormal as colour, so a wrong one is READABLE: a correct radial
+//       normal sweeps the full hue circle around the body.
+//   6 = the view vector V as colour — correct V barely changes across the body.
+//   7 = |fragPosition| / 40, greyscale — WORLD space or VIEW space, decisively
+//       (see the comment at that branch for the exact magnitudes expected).
 //   8 = constant mid grey, 9 = constant red. Nothing computed, nothing
 //       interpolated: if these do not arrive as written, no other reading from
 //       this shader means anything. See sandbox/colour_probe.c.
-//   5 = fragNormal as colour           6 = the view vector V as colour
-//   7 = |fragPosition| / 40, greyscale — WORLD or VIEW space, decisively
 uniform float u_volDebug;
 
 void main()
@@ -108,20 +110,25 @@ void main()
 
     // EDGE — an optical-depth term times a silhouette rolloff.
     //
-    // This is the state the effect was in when it last read as "close, only the
-    // edges are hard". Everything tried after that point was justified by debug
-    // images that turned out to be measuring a discard rather than a surface,
-    // so it has all been reverted rather than kept on a guess.
-    //
-    // What core/tests/silhouette_test.c established independently of any of
-    // those images still stands and is written up there: a per-fragment term
-    // cannot dissolve a boundary while a grazing ray crosses an unbounded
-    // number of facets, and the power has to be at least 2 because |N.V| leaves
-    // the silhouette with an infinite derivative. Applying either of those
-    // needs a reading this session has not honestly obtained yet.
+    // core/tests/silhouette_test.c established two things a per-fragment term
+    // alone cannot fix: a grazing ray crosses an unbounded number of facets on
+    // TWO-SIDED geometry (fixed below with `facing`/discard, not GL backface
+    // culling — see there), and the power has to be at least 2 because |N.V|
+    // leaves the silhouette with an infinite derivative (fixed in
+    // trail_system.c's mask.y). Both are applied now, against a clean reading
+    // this time — see ENGINE_LANDMINES §9's postscript (04/08/2026) for how
+    // that reading was obtained: sandbox/fresnel_probe.c, drawn via DrawMesh
+    // (matching this file's own DrawMesh comparison point, crystal) AND via
+    // immediate-mode (matching PMTube_DrawFaded, what actually draws this
+    // column). The two draw paths do not share a `matModel` convention:
+    // immediate-mode's fragPosition reads as WORLD space, so `viewPos -
+    // fragPosition` (both world) is correct HERE — do not "fix" it to
+    // `-fragPosition` by analogy with crystal, which is DrawMesh and genuinely
+    // different.
     vec3 N = normalize(fragNormal);
     vec3 V = normalize(viewPos - fragPosition);
-    float d = abs(dot(N, V));
+    float facing = dot(N, V);
+    float d = abs(facing);
     float depth = pow(clamp(1.0 - d, 0.0, 1.0), max(u_volMask.y, 0.001));
     float rim = smoothstep(0.0, max(u_volMask.z, 0.001), d);
     float edge = depth * rim;
@@ -159,44 +166,6 @@ void main()
             float q7 = clamp(length(fragPosition) / 40.0, 0.0, 1.0);
             finalColor = vec4(q7, q7, q7, 1.0); return;
         }
-        // MODES 8 / 9 — the instrument check, and it comes FIRST because
-        // every other mode is only meaningful if this one passes. Grey has
-        // R == G == B so any channel swap or per-channel curve shows; red is
-        // one channel so a swizzle is unmistakable.
-        // MODE 5 — is the vertex normal attribute actually arriving? Paints
-        // |dot(attribute, derivative)|: 1 where they agree, 0 where they do
-        // not. The effect no longer depends on the answer, but the answer is
-        // worth having: a silently-absent attribute would explain several
-        // other shaders too.
-        if (u_volDebug > 4.5 && u_volDebug < 5.5) {
-            // Raw magnitude. If the attribute never arrives this is 0 and the
-            // column is black; if it arrives it is ~1 and the column is white.
-            // No normalize and no dot, so NaN is impossible and the answer
-            // cannot be confused with a numerical accident.
-            float q5 = clamp(length(fragNormal), 0.0, 1.0);
-            finalColor = vec4(q5, q5, q5, 1.0);
-            return;
-        }
-        if (u_volDebug > 5.5 && u_volDebug < 6.5) {
-            float q6 = clamp(ngLen * 8.0, 0.0, 1.0);
-            finalColor = vec4(q6, q6, q6, 1.0);
-            return;
-        }
-        // MODE 7 — the one that settles the space question by MAGNITUDE
-        // rather than by pattern. The column stands near the arena centre
-        // (6, 0, 4.4), so |fragPosition| is about 7 m if matModel left it in
-        // world space, and the camera distance — tens of metres — if matModel
-        // was model x view. Divided by 40: world reads dark grey, view reads
-        // near white, and the two cannot be confused.
-        //
-        // ENGINE_LANDMINES §9 records that fract(fragPosition) was once used
-        // for this and painted a clean grid either way. A debug view that
-        // cannot tell the failure from success is worse than none.
-        if (u_volDebug > 6.5) {
-            float q7 = clamp(length(fragPosition) / 40.0, 0.0, 1.0);
-            finalColor = vec4(q7, q7, q7, 1.0);
-            return;
-        }
         float q = (u_volDebug < 1.5) ? edge
                 : (u_volDebug < 2.5) ? abs(facing)
                 : (u_volDebug < 3.5) ? pattern
@@ -204,6 +173,21 @@ void main()
         finalColor = vec4(q, q, q, 1.0);
         return;
     }
+
+    // CULL — drop the fragment whose GEOMETRIC normal faces away from the
+    // camera, exactly what core/tests/silhouette_test.c proved is required:
+    // without it, a ray near the silhouette grazes the tube and crosses an
+    // unbounded number of two-sided facets, and accumulated alpha ends up
+    // HIGHER at the rim than at the centre — no per-fragment term can survive
+    // that. NOT GL backface culling (winding-based): PMTube_DrawFaded's
+    // winding is inward, so `rlEnableBackfaceCulling` would keep the INSIDE
+    // of the tube and discard the outside — the shader checks the real
+    // surface normal instead, which cannot be fooled by winding.
+    //
+    // Only in the non-debug path: a discard here would hide the back-facing
+    // half of the tube from every debug view above, which is exactly the
+    // "measuring what survived a discard" trap this file's header warns about.
+    if (facing < 0.0) discard;
 
     float alpha = pattern * fade * edge * u_volMask.w;
     if (u_volDebug < 0.5 && alpha < 0.003) discard;
