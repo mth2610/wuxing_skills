@@ -3,6 +3,7 @@
 #include "core/composition/visual_composer.h"
 #include "core/geometry/procedural_mesh_utils.h"
 #include "core/resource_manager.h"
+#include "core/tuning.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <math.h>
@@ -40,6 +41,11 @@ static bool s_bodyShaderTried = false;
  * dissolve/tear/tail fade still run, only the vertex waves are off). */
 static Shader s_deformShader;
 static bool s_deformShaderTried = false;
+static Shader s_volumeShader;
+static bool s_volumeShaderTried = false;
+/* Debug view for the volume tube — see trail_volume.fs. Live in tuning.cfg so a
+ * term can be inspected without a rebuild. */
+static float s_volDebug = 0.0f;
 /* Set only while DrawTrailEntitiesLayer owns the draw; layered helpers use it
  * to keep alpha body to the one textured material layer. */
 static int s_drawLayerFilter = -1;
@@ -245,6 +251,52 @@ static void EnsureTrailDeformShader(void)
                                                 "core/trails/shaders/trail_deform.fs");
     if (s_deformShader.id == 0)
         TraceLog(LOG_WARNING, "TRAIL: trail_deform.vs/.fs failed to load — deform modes fall back to flat ribbons");
+}
+
+static void EnsureTrailVolumeShader(void)
+{
+    if (s_volumeShaderTried) return;
+    s_volumeShaderTried = true;
+    s_volumeShader = ResourceManager_LoadShader("core/trails/shaders/trail_volume.vs",
+                                                "core/trails/shaders/trail_volume.fs");
+    if (s_volumeShader.id == 0)
+    {
+        TraceLog(LOG_WARNING,
+                 "TRAIL: trail_volume.vs/.fs failed to load — volume tubes fall "
+                 "back to the default shader, i.e. an opaque lumpy solid with no "
+                 "fade and no edge falloff. That looks like polished stone, not "
+                 "gas, and nothing else will say why.");
+        return;
+    }
+    /* UNCONDITIONAL, and it prints the UNIFORM LOCATIONS, not just the id.
+     *
+     * A shader that loads and a shader whose uniforms resolve are different
+     * facts. If u_volMask comes back -1 the pushes below are skipped in silence
+     * and every constant in it reads as ZERO — which makes the edge rolloff
+     * `smoothstep(0, 0.001, d)`, i.e. a hard edge, and no amount of retuning
+     * that constant changes anything on screen. That is indistinguishable from
+     * "the value is wrong" unless the location is printed. */
+    Tuning_RegisterFloat("volume_debug", &s_volDebug, 0.0f);
+    TraceLog(LOG_INFO,
+             "TRAIL: trail_volume loaded — shader id %u, u_volPan loc %d, "
+             "u_volMask loc %d%s",
+             (unsigned)s_volumeShader.id,
+             GetShaderLocation(s_volumeShader, "u_volPan"),
+             GetShaderLocation(s_volumeShader, "u_volMask"),
+             (GetShaderLocation(s_volumeShader, "u_volMask") < 0)
+                 ? "  <-- MISSING: every mask constant reads as 0, edge goes hard"
+                 : "");
+}
+
+Shader Trail_GetVolumeShader(void)
+{
+    EnsureTrailVolumeShader();
+    return s_volumeShader;
+}
+
+static bool TrailUsesVolumeShader(const TrailEntity *t)
+{
+    return t->tubeVolumeShading && s_volumeShader.id != 0;
 }
 
 static inline float SmoothStepC(float edge0, float edge1, float x)
@@ -1051,6 +1103,9 @@ int SpawnTrailEntity(TrailConfig config)
     if (t->sectionCount > TRAIL_TUBE_RADIAL_MAX)
         t->sectionCount = TRAIL_TUBE_RADIAL_MAX;
     t->tubeCaps = config.tubeCaps;
+    t->tubeVolumeShading = config.tubeVolumeShading;
+    t->tubeDeformFrozen = config.tubeDeformFrozen;
+    if (config.tubeVolumeShading) EnsureTrailVolumeShader();
     t->tubeSingleSided = config.tubeSingleSided;
     t->tubeNoiseAmp = config.tubeNoiseAmp;
     t->dropletConfig = config.dropletConfig;
@@ -1434,60 +1489,54 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
     if (segs < 2)
         segs = 2;
 
-    /* SHAPE belongs to the caller; only the runtime state below is ours.
+    /* MỘT trong ba loại mesh, do CALLER chọn — ba module hình là độc lập với
+     * nhau, nên caller chọn LOẠI MESH chứ không chọn tham số của một đường bao
+     * dùng chung. Không có mặc định: trail nào bật TRAIL_SHAPE_TUBE mà không
+     * khai báo hình thì không có hình để dựng, và nói ra điều đó.
      *
-     * This block used to be the whole config, hard-coded, so every volume trail
-     * in the engine inherited the water-stream capsule profile — pinched at both
-     * ends, bulging in the middle. Correct for a jet of water, a teardrop for
-     * anything meant to be a column. There was no way to say otherwise. */
-    TubeMeshConfig cfg;
-    {
-        cfg = ProceduralMesh_DefaultTubeConfig();
-        cfg.wobbleAmplitude = 0.0f;
-        cfg.deform1Amp = 0.0f;
-        cfg.deform2Amp = 0.0f;
-        cfg.noiseScale = 5.0f;
-        cfg.noiseSpeed = 1.6f;
-        cfg.useTransportFrame = true;
-    }
-    /* RUNTIME STATE, always ours: these track the trail's own clock, not the
-     * caller's authoring. noiseOffset is what walks the churn ALONG the body on
-     * the same clock the sheet scrolls on. */
-    cfg.noiseAmp = t->tubeNoiseAmp;
-    cfg.noiseOffset = -t->uvScrollOffset * 0.5f;
-    if (cfg.noisePixels == NULL)
-    {
-        cfg.noisePixels = (const unsigned char *)s_tubeNoiseImg.data;
-        cfg.noiseImgW = s_tubeNoiseImg.width;
-        cfg.noiseImgH = s_tubeNoiseImg.height;
-    }
+     * Trạng thái THEO THỜI GIAN (noiseAmp, noiseOffset) vẫn của trail —
+     * noiseOffset là thứ đẩy vùng cuộn trào chạy DỌC thân trên cùng đồng hồ mà
+     * sheet đang cuộn. HÌNH DẠNG là của caller. */
+    float runNoiseAmp = t->tubeNoiseAmp;
+    /* Cả hai đồng hồ của deform bị chặn cùng lúc, nếu không thì "đóng băng" chỉ
+     * dừng một nửa: noiseOffset đẩy trường DỌC thân, còn buildTime chạy trục W
+     * của noise (nó cuộn tại chỗ). Dừng một cái vẫn còn chuyển động, và đó lại
+     * đúng là thứ nhìn giống hệt "vẫn xoay". */
+    float runNoiseOffset = t->tubeDeformFrozen ? 0.0f : (-t->uvScrollOffset * 0.5f);
+    float buildTime = t->tubeDeformFrozen ? 0.0f : (float)GetTime();
+    const unsigned char *runPixels = (const unsigned char *)s_tubeNoiseImg.data;
+    int runW = s_tubeNoiseImg.width, runH = s_tubeNoiseImg.height;
 
-    /* MỘT trong ba loại mesh, do caller chọn. Trạng thái theo thời gian
-     * (noiseAmp, noiseOffset) vẫn của trail; HÌNH DẠNG là của caller. */
     static PMDropletMesh dropMesh;
     static PMTubeMesh tubeMesh;
     PMDropletConfig dropCfg;
     PMTubeConfig tubeCfg;
-    int shape = 0; /* 0 = legacy, 1 = droplet, 2 = tube */
+    int shape = 0; /* 1 = giọt nước, 2 = ống */
     if (t->dropletConfig != NULL)
     {
         shape = 1;
         dropCfg = *t->dropletConfig;
-        dropCfg.noiseAmp = cfg.noiseAmp;
-        dropCfg.noiseOffset = cfg.noiseOffset;
-        dropCfg.noisePixels = cfg.noisePixels;
-        dropCfg.noiseImgW = cfg.noiseImgW;
-        dropCfg.noiseImgH = cfg.noiseImgH;
+        dropCfg.noiseAmp = runNoiseAmp;
+        dropCfg.noiseOffset = runNoiseOffset;
+        if (dropCfg.noisePixels == NULL)
+        { dropCfg.noisePixels = runPixels; dropCfg.noiseImgW = runW; dropCfg.noiseImgH = runH; }
     }
     else if (t->tubeShapeConfig != NULL)
     {
         shape = 2;
         tubeCfg = *t->tubeShapeConfig;
-        tubeCfg.noiseAmp = cfg.noiseAmp;
-        tubeCfg.noiseOffset = cfg.noiseOffset;
-        tubeCfg.noisePixels = cfg.noisePixels;
-        tubeCfg.noiseImgW = cfg.noiseImgW;
-        tubeCfg.noiseImgH = cfg.noiseImgH;
+        tubeCfg.noiseAmp = runNoiseAmp;
+        tubeCfg.noiseOffset = runNoiseOffset;
+        if (tubeCfg.noisePixels == NULL)
+        { tubeCfg.noisePixels = runPixels; tubeCfg.noiseImgW = runW; tubeCfg.noiseImgH = runH; }
+    }
+    else
+    {
+        /* Im lặng ở đây là chỗ mọi lỗi hình học của module này từng trốn. */
+        TraceLog(LOG_WARNING,
+                 "TRAIL: TRAIL_SHAPE_TUBE nhưng không có dropletConfig lẫn "
+                 "tubeShapeConfig — không có hình để dựng, bỏ qua");
+        return;
     }
 
     float headR = scratchOuter[0].halfWidth;
@@ -1505,17 +1554,12 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
     // cancel uvScrollOffset whenever the follower moves.
     int tailNode = NodeIndexForSegRatio(t, drawCount, drawCount - 1);
     int headNode = NodeIndexForSegRatio(t, drawCount, 0);
-
-    static TubeMeshData mesh;
     if (shape == 1)
         PMDroplet_BuildAlongPath(&dropMesh, path, n, headR, 0.0f, 1.0f,
-                                 (float)GetTime(), segs, radial, &dropCfg);
+                                 buildTime, segs, radial, &dropCfg);
     else if (shape == 2)
         PMTube_BuildAlongPath(&tubeMesh, path, n, headR, 0.0f, 1.0f,
-                              (float)GetTime(), segs, radial, &tubeCfg);
-    else
-        ProceduralMesh_BuildTubeAlongPath(&mesh, path, n, headR, 0.0f, 1.0f,
-                                          (float)GetTime(), segs, radial, &cfg);
+                              buildTime, segs, radial, &tubeCfg);
 
     for (int L = 0; L < t->layerCount; L++)
     {
@@ -1548,16 +1592,23 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
         if (tiles < 0.5f)
             tiles = 0.5f;
         rlSetTexture(tex.id);
-        rlColor4ub(col.r, col.g, col.b, (unsigned char)a);
-        if (shape == 1)
-            PMDroplet_DrawEx(&dropMesh, tiles,
-                                  uvBase - t->uvScrollOffset * sMul);
-        else if (shape == 2)
-            PMTube_DrawEx(&tubeMesh, tiles,
-                                  uvBase - t->uvScrollOffset * sMul);
+        float uvOff = uvBase - t->uvScrollOffset * sMul;
+        if (shape == 2 && TrailUsesVolumeShader(t))
+        {
+            /* Mặt nạ tắt dần hai đầu đi bằng MÀU ĐỈNH, nên không gọi
+             * rlColor4ub ở đây — màu nền đi vào qua tham số. Chân tắt nhanh
+             * (khói phải dính vào nguồn), ngọn tan chậm hơn. */
+            Color base = (Color){col.r, col.g, col.b, (unsigned char)a};
+            PMTube_DrawFaded(&tubeMesh, tiles, uvOff, base, 0.10f, 0.72f, mpt);
+        }
         else
-        ProceduralMesh_DrawTubeEx(&mesh, tiles,
-                                  uvBase - t->uvScrollOffset * sMul);
+        {
+            rlColor4ub(col.r, col.g, col.b, (unsigned char)a);
+            if (shape == 1)
+                PMDroplet_DrawEx(&dropMesh, tiles, uvOff);
+            else if (shape == 2)
+                PMTube_DrawEx(&tubeMesh, tiles, uvOff);
+        }
     }
     rlSetTexture(0);
     rlColor4ub(255, 255, 255, 255);
@@ -2052,8 +2103,13 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
         if (!IsTrailVisible(t, camera))
             continue;
 
+        // MUST mirror the selection in the draw loop below, exactly. The two
+        // are what put a trail in a group and what checks it belongs there; if
+        // they disagree the trail matches no group and is silently never drawn.
         Shader sh;
-        if (TrailUsesDeformShader(t))
+        if (TrailUsesVolumeShader(t))
+            sh = s_volumeShader;
+        else if (TrailUsesDeformShader(t))
             sh = s_deformShader;
         else
             sh = (layerFilter == 0 && TrailUsesAdditiveBlend(t) && s_bodyShader.id != 0)
@@ -2100,6 +2156,54 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
         int timeLoc = GetCachedTimeLoc(fullShader);
         if (timeLoc >= 0)
             SetShaderValue(fullShader, timeLoc, &time, SHADER_UNIFORM_FLOAT);
+        // Volume-tube constants, pushed ONCE PER GROUP and never between
+        // instances. Per-instance uniform writes are the pattern that empties
+        // rlvk's UBO arena (ENGINE_LANDMINES §8); everything that genuinely
+        // varies per column already rides in a vertex attribute.
+        if (s_volumeShader.id != 0 && fullShader.id == s_volumeShader.id)
+        {
+            int panLoc = GetShaderLocation(fullShader, "u_volPan");
+            int maskLoc = GetShaderLocation(fullShader, "u_volMask");
+            // Opposite signs on the two pans: same-direction layers at merely
+            // different speeds keep a beat that the eye locks onto.
+            // .x/.z = ALONG pan, .y/.w = AROUND pan. The around components are
+            // ZERO on purpose: panning u rotates the sheet about the tube's
+            // axis, and with any along-pan the sum is a diagonal — a screw
+            // thread. Smoke rises, it does not spin.
+            float pan[4] = {-0.085f, 0.0f, 0.043f, 0.0f};
+            // .x sheet-2 ALONG tiling (1.63 — deliberately not a small integer
+            // ratio, or the two layers relock into one pattern), .y depth
+            // power, .z silhouette softness, .w master density.
+            //
+            // .y = 0.75: the volume power. On a cylinder the fragment at
+            // screen distance x from the axis has |N.V| = sqrt(1-(x/R)^2), so
+            // |N.V|^0.75 runs 1.00 on the axis -> 0.62 at 85% -> 0.00 at the
+            // edge. A soft blob. The term it replaced ran 0.00 -> 0.42 -> 0.00,
+            // peaking AT the boundary, which is what drew the hard edge.
+            //
+            // Restored to the values the column last looked right at.
+            // Everything tried after that was driven by debug images that were
+            // measuring a discard rather than a surface; the shader is back to
+            // depth * rim, so these are back too.
+            float mask[4] = {1.63f, 0.85f, 0.34f, 1.75f};
+            if (panLoc >= 0) SetShaderValue(fullShader, panLoc, pan, SHADER_UNIFORM_VEC4);
+            if (maskLoc >= 0) SetShaderValue(fullShader, maskLoc, mask, SHADER_UNIFORM_VEC4);
+            int dbgLoc = GetShaderLocation(fullShader, "u_volDebug");
+            if (dbgLoc >= 0)
+                SetShaderValue(fullShader, dbgLoc, &s_volDebug, SHADER_UNIFORM_FLOAT);
+            /* ONCE. Proves the volume path is the one drawing, and with what —
+             * "it looks the same" and "this code never ran" are the same
+             * picture. */
+            static bool announced = false;
+            if (!announced)
+            {
+                announced = true;
+                TraceLog(LOG_INFO,
+                         "TRAIL: volume group DRAWING — shader %u, mask loc %d, "
+                         "VIEW space (no viewPos), floor %.2f, density %.2f",
+                         (unsigned)fullShader.id, maskLoc, mask[2], mask[3]);
+            }
+        }
         // Locations are shader-level state, not per-trail state. Resolve them
         // once per pass; several simultaneous smoke trails previously repeated
         // five GetShaderLocation calls for every instance, every frame.
@@ -2159,7 +2263,9 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
             Texture2D currentTex = t->sprite.id > 0 ? t->sprite : s_globalTrailTex;
 
             Shader currentShader;
-            if (TrailUsesDeformShader(t))
+            if (TrailUsesVolumeShader(t))
+                currentShader = s_volumeShader;
+            else if (TrailUsesDeformShader(t))
                 currentShader = s_deformShader;
             else
                 currentShader = (layerFilter == 0 && TrailUsesAdditiveBlend(t) && s_bodyShader.id != 0)

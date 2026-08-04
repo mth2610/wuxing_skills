@@ -1061,6 +1061,7 @@ int main(int argc, char **argv) {
     // + ĐƯỢC BỔ SUNG THÊM VIỆC VẼ MESH TỪ PREFAB TESTER
     // =========================================================================
     if (currentScreen == SCREEN_VFX_TESTER) {
+        VFXTest_SetCamera(camera); // để phím P chụp đúng vùng hiệu ứng
         VFXTest_Draw3D();
 
         if (!renderVFXMode) {

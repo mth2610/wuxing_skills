@@ -309,6 +309,25 @@ typedef struct
     int sectionCount;
     bool tubeCaps;
     bool tubeSingleSided;
+    /* Đổ bóng KHỐI cho ống: trail_volume.vs/.fs thay vì shader mặc định.
+     *
+     * Hình học chỉ dựng ra được một khối ĐẶC lồi lõm. Ba thừa số biến nó thành
+     * khí — hai lớp sheet NHÂN nhau (chồng alpha-over chỉ làm đục thêm), mặt nạ
+     * tắt dần hai đầu, và fresnel xoá vùng phẳng đang quay vào mắt. Xem
+     * core/trails/shaders/trail_volume.fs. */
+    bool tubeVolumeShading;
+    /* ĐÓNG BĂNG BIẾN DẠNG — công cụ chẩn đoán, và nó có thật một lý do.
+     *
+     * Ống khối có ĐÚNG hai thứ chuyển động: lưới cuộn (vertex) và sheet trượt
+     * (texture). Nhìn vào kết quả thì không tách được cái nào gây ra cái gì —
+     * "trông như lốc xoáy" đúng với cả hai. Tệ hơn: hai đồng hồ đang DÍNH nhau,
+     * vì noiseOffset của deform lấy từ uvScrollOffset, nên vặn scroll về 0 là
+     * đứng cả hai và vẫn không phân biệt được.
+     *
+     * Cờ này đóng băng RIÊNG lưới: hình dạng giữ nguyên, thời gian của nó dừng,
+     * sheet vẫn trượt. Bật lên mà vẫn thấy xoáy thì thủ phạm là texture; hết
+     * xoáy thì là deform. Một lần chạy thay cho một chuỗi phỏng đoán. */
+    bool tubeDeformFrozen;
     float tubeNoiseAmp;
     /* HÌNH DẠNG của ống — do CALLER quyết định, không phải DrawLayeredTube.
      *
@@ -601,10 +620,16 @@ typedef struct
     bool hasPrevAttach;
     bool tubeCaps;
     bool tubeSingleSided;
+    bool tubeVolumeShading;
+    bool tubeDeformFrozen;
     bool useFlowMap; // Bật/Tắt tính năng Flowmap
 } TrailEntity;
 
 // ── Function Declarations ───────────────────────────────────────────────────
+
+/* Shader khối, để test cô lập dựng được đúng đường ống mà cột khói đi qua.
+ * id == 0 nghĩa là chưa nạp. */
+Shader Trail_GetVolumeShader(void);
 
 void TrailSystem_SetGlobalTexture(Texture2D tex);
 void InitTrailSystem(Shader defaultShader);

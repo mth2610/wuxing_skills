@@ -156,23 +156,111 @@ static void Test_MirrorStillMatchesSource(void) {
   // The cone on top. The caps are triangle FANS with an apex pushed out along
   // the tangent by head/tailApexFactor, so they are not a flat lid — they are a
   // point. And TrailEntity.tubeCaps is dead: stored at spawn, read by nobody.
-  // WRAPPED, not returned. DrawTubeEx opens with rlPushMatrix() and closes with
-  // rlPopMatrix(); an early return between them skips the pop, and since the
-  // function runs every frame the matrix stack overflows within seconds —
-  // "RLVK: Matrix stack overflow", black screen, nothing pointing at the tube.
-  // That shipped for exactly one build.
-  CHECK(FileHas("core/geometry/pm_sweep_legacy.inl", "if (!data->suppressCaps) {"),
-        "...and the draw honours it with a guarded BLOCK");
-  CHECK(!FileHas("core/geometry/pm_sweep_legacy.inl", "if (data->suppressCaps) return;"),
-        "...never an early return: it would jump over rlPopMatrix and overflow "
-        "the matrix stack");
-  // The tornado. One or two lobes around the ring is an ellipse; an ellipse
-  // whose phase drifts with height is a helix by construction.
-  CHECK(FileHas(c, "c->churn.latticeAround = 6;"),
-        "the churn has enough lobes per ring to be lumps, not a rotating ellipse");
-  CHECK(FileHas(c, "cfg.tubeRadialSegs = 18;"),
-        "...and enough segments to resolve them — 10 against 6 lobes is under "
-        "two samples per lobe, which renders as a spinning polygon");
+  // The whole cap apparatus is gone with the legacy sweep: no flag, no early
+  // return, no rlPushMatrix to jump over. The bug it once caused (an early
+  // return past rlPopMatrix, matrix-stack overflow, black screen) cannot recur
+  // because there is no branch there at all.
+  // The draw's ONLY early return sits before rlPushMatrix. Pinned as an
+  // ordering, because the bug it replaces was exactly a return placed after it:
+  // the pop was skipped, the matrix stack overflowed within seconds, and the
+  // screen went black with nothing naming the tube.
+  // There is no rlPushMatrix left to jump over — and removing it was not
+  // tidying. The pair wrapped no transform at all, so its only effect was to
+  // put rlgl into transformRequired, which folds the VIEW matrix into matModel
+  // (ENGINE_LANDMINES §9). fragPosition/fragNormal then land in view space
+  // while viewPos is a world-space camera position, and the shader's dot
+  // product mixes the two: a valid number, a plausible gradient, and an object
+  // that appears to shadow itself, shifts with the camera, and changes entirely
+  // on a different map because the world coordinates changed.
+  // The tornado, take two. Lobe COUNT was not the whole story: both octaves
+  // shared f->latticeAround, and value noise seats its extrema on lattice
+  // nodes, so the two piled onto the same meridians and reinforced into a fixed
+  // set of ribs. Ribs that slide along the body read as a screw thread. The fix
+  // is a per-layer around-period, so pin that the two layers actually differ.
+  CHECK(FileHas(c, "c->churn.latticeAround = 3;") && FileHas(c, "c->churn.latticeAlong = 3;"),
+        "the churn is LOW frequency — the reference deforms in a few sweeping "
+        "bends over the whole height, not a ripple field");
+  CHECK(FileHas(c, ".latticeAroundMul = 2.0f,"),
+        "and the fine octave has its OWN around-period — two octaves sharing one "
+        "are one octave with a wobble, which is the spinning read");
+  // Reference proportions: the shape lives ALONG the column, so rings are what
+  // it needs sampled. 24 x 28 had it backwards.
+  CHECK(FileHas(c, "cfg.tubeMaxRings = 40;"),
+        "...many rings — the shape lives ALONG the column, so that is what "
+        "needs sampling (24 x 28 had it backwards)");
+  // The snake. No amount of surface displacement bends a straight tube; it only
+  // roughens it. The reference wireframe's sections stay round while the whole
+  // body sweeps sideways, which means the CENTRELINE moves.
+  CHECK(FileHas(c, "c->tube.centerlineAmp = c->radius * 1.6f;") &&
+            FileHas("core/geometry/pm_tube.inl",
+                    "pos = Vector3Add(pos, Vector3Add(Vector3Scale(right, bendA * w),"),
+        "the centreline itself bends, not just the surface");
+  CHECK(FileHas("core/geometry/pm_tube.inl", "float w = cfg->centerlineAmp * t * t;"),
+        "...and it is pinned to zero at the base — a source that sways reads as "
+        "a flying object, not as something being emitted");
+  // A single low-frequency arc sliding rigidly along the body is a snake made
+  // of wire. Two scales, and most of the motion coming from the field evolving
+  // IN PLACE rather than translating, is what makes it read as gas.
+  CHECK(FileHas("core/geometry/pm_tube.inl", "float nvC = t + cfg->noiseOffset * 0.45f;") &&
+            FileHas("core/geometry/pm_tube.inl", "0.30f * PMTubeAxisScalar(cfg->noiseField, 0.41f, t, nvC * 2.6f, time, right)"),
+        "the bend has two scales and drifts slowly, so the sway is not stiff");
+  // The texture. sin(TAU*(ku*u + kv*v)) is a plane wave in direction (ku, kv),
+  // so drawing both from one range makes most modes DIAGONAL — 45-degree
+  // corduroy, which wrapped on a column is a barber pole. Rising smoke is
+  // streaks drawn out ALONG the flow: fast across it, slow along it.
+  const char *gen = "scripts/gen_volume_surface.py";
+  CHECK(FileHas(gen, "ku = rng.randint(2, max_freq)") &&
+            FileHas(gen, "lo = int(round(va * ku / aspect_hi))"),
+        "elongation is specified in WORLD space (aspect = 4*ku/kv), so it stays "
+        "true if the sheet's proportions change");
+  // The lean, which survived a correct magnitude. Every mode drawn with kv > 0
+  // tilts the same way and their sum is a sheared field — diagonal corduroy,
+  // the exact artefact the anisotropy was meant to remove. Alternating rather
+  // than coin-flipping, because a fair coin over ~20 modes still lands lopsided
+  // often enough to see: measured +0.245 gradient correlation on a random draw
+  // against +0.053 when the split is exact.
+  CHECK(FileHas(gen, "if idx % 2 == 1:") && FileHas(gen, "kv = -kv"),
+        "...and the sign of kv is split EXACTLY in half, so the leans cancel");
+  // A 1:4 sheet covers four times the metres along as around at the same texel
+  // density. The consumer has to know that or texels come out 4x wide, which is
+  // the shear this whole thread has been about.
+  // ONE WRAP. The sheet is the column's SKIN, not a tiling material: its tongue
+  // count is authored for the whole circumference, and only half a cylinder
+  // faces the camera — 4 tongues around render as 2. Metre-matching the
+  // around-axis gave 2 wraps, so 8 around and 4 visible, double the reference.
+  CHECK(FileHas(gen, "SIZE_V = 1024") &&
+            FileHas("core/geometry/pm_tube.inl", "#define PM_TUBE_UV_AROUND_WRAPS 1") &&
+            !FileHas("core/geometry/pm_tube.inl", "PM_TUBE_UV_ASPECT"),
+        "the sheet wraps the column exactly once");
+  CHECK(FileHas("core/trails/shaders/trail_volume.fs",
+                "vec2 uv2 = vec2(fragTexCoord.x, fragTexCoord.y * u_volMask.x);"),
+        "...and sheet 2 wraps once as well — scaling ITS u doubled the count "
+        "again, which is the same bug one layer down");
+  // billow() has its crest on a CONTOUR LINE, not over an area, so everything
+  // it makes is a topographic map — a fishnet of hairs read one way, a solid
+  // felt with hairline gaps read the other. Measured on the sheet it shipped:
+  // 0.0% of texels below A=30, i.e. NOTHING was transparent, so no monotone
+  // remap of it could open a hole. Five opacity curves were compared on the
+  // same field; two came out entirely black and the rest were the same hatching.
+  // The curve was never the lever.
+  CHECK(!FileHas(gen, "cov = billow(detail") && FileHas(gen, "cov = sample(detail, u, v)"),
+        "the coverage is a plain field, not billow — billow cannot make areas");
+  CHECK(FileHas(gen, "cov_f = stretch(cov_f)") &&
+            FileHas(gen, "a = smoothstep(cfg[\"cov_lo\"], cfg[\"cov_hi\"], cov_f[i_px])"),
+        "...normalised, then thresholded, so what is below the cut is a TRUE "
+        "zero and the tongues are separated by real black");
+  // THE POLARITY. billow's crest is a CURVE, not an area, so the raw field is
+  // thin lines. Read as opacity directly it renders as wire wool — a fishnet of
+  // bright hairs. What looked like smoke in that render were the DARK bands
+  // BETWEEN the ridges: broad, elongated, moving right. Those are 1 - cov.
+  // Same field, same motion, opacity read the other way round.
+  // And the gamma has to follow it across 1.0. billow of a field clustered at
+  // its mean lands near 1, so 1-cov lands near 0; a gamma above 1 crushes that
+  // to nothing. 2.6 produced a 1% sheet.
+  // Aim ONE sheet near 58%, never the final density: the shader multiplies two
+  // samples. Thresholding each sheet down to the target gave 34% x 34% = 10%.
+  CHECK(FileHas(gen, "cov_lo=0.16, cov_hi=0.72,"),
+        "...aimed so the PRODUCT lands near 30%, not each sheet");
   CHECK(FileHas(c, "MESH_DEFORM_DIR_NORMAL_OFFSET"),
         "and the reference's Normal+RGB term is present: scaling alone can only "
         "make the same section rounder or thinner, never asymmetric");
@@ -195,10 +283,11 @@ static void Test_MirrorStillMatchesSource(void) {
 // ── The shape profiles ──────────────────────────────────────────────────────
 // One formula was serving three different shapes. These are the three, as
 // numbers, so "it still looks like a teardrop" is answerable without a GPU.
-static float ProfDroplet(float t, float sharp, float headFrac) {
-  float hs = 1.0f - headFrac;
-  if (t >= hs) { float u = (t - hs) / headFrac; return sqrtf(fmaxf(0.0f, 1.0f - u * u)); }
-  return powf((hs > 1e-5f) ? (t / hs) : 1.0f, sharp);
+static float ProfDroplet(float t, float a) {
+  if (t <= 0.0f || t >= 1.0f) return 0.0f;
+  float pk = sqrtf(a / (a + 1.0f));
+  float norm = powf(pk, a) * sqrtf(fmaxf(0.0f, 1.0f - pk * pk));
+  return powf(t, a) * sqrtf(fmaxf(0.0f, 1.0f - t * t)) / norm;
 }
 static float ProfCapsule(float t, float c) {
   if (c <= 0.0f) c = 0.25f;
@@ -221,25 +310,25 @@ static void Test_ProfilesAreThreeDifferentShapes(void) {
 
   // DROPLET is asymmetric: a POINT at the tail, a round shoulder past the
   // middle, closing on itself at the head. Asymmetry is what makes it a drop.
-  float tail = ProfDroplet(0.0f, 1.6f, 0.34f);
-  float head = ProfDroplet(1.0f, 1.6f, 0.34f);
+  float tail = ProfDroplet(0.0f, 1.6f);
+  float head = ProfDroplet(1.0f, 1.6f);
   CHECK_MSG(tail < 1e-6f && head < 1e-6f,
             "the droplet closes at BOTH ends by itself — so it needs no cap, "
             "and the cone cap it replaces was the pencil tip",
             "tail %.4f head %.4f", (double)tail, (double)head);
   float peak = 0.0f, peakT = 0.0f;
   for (int i = 0; i <= 100; i++) {
-    float t = (float)i / 100.0f, r = ProfDroplet(t, 1.6f, 0.34f);
+    float t = (float)i / 100.0f, r = ProfDroplet(t, 1.6f);
     if (r > peak) { peak = r; peakT = t; }
   }
   CHECK_MSG(peakT > 0.55f && fabsf(peak - 1.0f) < 0.02f,
             "...and its widest point sits PAST the middle, toward the head",
             "peak %.3f at t=%.2f", (double)peak, (double)peakT);
-  CHECK_MSG(ProfDroplet(0.25f, 1.6f, 0.34f) < ProfDroplet(0.75f, 1.6f, 0.34f) * 0.5f,
+  CHECK_MSG(ProfDroplet(0.25f, 1.6f) < ProfDroplet(0.75f, 1.6f) * 0.5f,
             "which makes it genuinely asymmetric, unlike the lens it replaces",
             "%.3f at t=0.25 vs %.3f at t=0.75",
-            (double)ProfDroplet(0.25f, 1.6f, 0.34f),
-            (double)ProfDroplet(0.75f, 1.6f, 0.34f));
+            (double)ProfDroplet(0.25f, 1.6f),
+            (double)ProfDroplet(0.75f, 1.6f));
 
   // CAPSULE is a cylinder with two hemispheres — a STRAIGHT body and round
   // ends. The legacy profile named "capsule" has neither: it is a lens.
@@ -268,22 +357,106 @@ static void Test_ProfilesAreThreeDifferentShapes(void) {
   CHECK(FileHas("core/geometry/pm_droplet_math.inl", "static float PMDropletRadius(") &&
             FileHas("core/geometry/pm_capsule_math.inl", "static float PMCapsuleRadius("),
         "droplet and capsule each own their formula in their own file");
-  CHECK(FileHas("core/geometry/pm_sweep_legacy.inl", "return PMDropletRadius(") &&
-            FileHas("core/geometry/pm_sweep_legacy.inl", "return PMCapsuleRadius("),
-        "...and the sweep delegates to them rather than re-deriving");
-  CHECK(FileHas("core/geometry/pm_sweep_legacy.inl",
-                "out->suppressCaps = cfg->suppressCaps || (cfg->profile != PM_PROFILE_LEGACY_CAPSULE);"),
-        "caps are a CONSEQUENCE of the shape: every self-closing profile "
-        "refuses them, and only the legacy lens still needs its cones");
+  CHECK(FileHas("core/geometry/pm_droplet.inl", "PMDropletRadius(t, cfg->tailSharp)") &&
+            FileHas("core/geometry/pm_capsule.inl", "PMCapsuleRadius(t, cfg->capFrac)"),
+        "...and each module uses only its OWN formula");
+  CHECK(!FileHas("core/geometry/pm_tube.inl", "suppressCaps") &&
+            !FileHas("core/geometry/pm_droplet.inl", "suppressCaps") &&
+            !FileHas("core/geometry/pm_capsule.inl", "suppressCaps"),
+        "no cap flag exists either — the cone is gone by construction");
 
-  // TUBE is flat. Anything the column shows is then the deform, which is the
-  // only way to judge the deform at all.
-  CHECK(FileHas("core/geometry/pm_sweep_legacy.inl", "case PM_PROFILE_TUBE:") &&
-            FileHas("core/geometry/pm_sweep_legacy.inl", "return 1.0f;"),
-        "the tube profile is constant — a pipe, open at both ends");
-  CHECK(FileHas("core/geometry/pm_sweep_legacy.inl", "bool ownsSilhouette = (cfg->profile != PM_PROFILE_LEGACY_CAPSULE);"),
-        "and DROPLET/TUBE own their whole silhouette — stacking the legacy "
-        "taper on top would bend the shape just defined");
+  // The tube's envelope is r(t) = tailFrac + (1-tailFrac)*t^p, and it collapses
+  // to the constant 1 on the defaults — still a pipe unless a caller asks for
+  // the flare. Smoke does widen with height (the reference's S(V) = V^p), and
+  // `funnel` was the parameter that was supposed to say so: taken by the public
+  // entry point, threaded through two calls, read by nothing, and still printed
+  // in the spawn log. Pin that it now reaches the geometry.
+  CHECK(FileHas("core/geometry/pm_tube.inl",
+                "capsuleCurve = cfg->radiusTailFrac + (1.0f - cfg->radiusTailFrac) * grow;"),
+        "the tube has a radius envelope that can open with height");
+  CHECK(FileHas("core/composition/common/vc_smoke_column.inl", "if (funnel) { c->tube.radiusTailFrac = 0.12f;"),
+        "...and `funnel` actually drives it, instead of only reaching the log");
+  // S(V) = V^p with p > 1: the displacement stays tight at the source and opens
+  // out near the top. HEAD_WELD alone is p = 1, which churns as hard at knee
+  // height as at the crown.
+  CHECK(FileHas("core/composition/common/vc_smoke_column.inl", "UV_ENV_HEAD_WELD_SQ") &&
+            FileHas("core/uv/uv_deform.c",
+                    "if (kind == UV_ENV_HEAD_WELD_SQ) return SmoothStep(start, end, c) * c * c;"),
+        "the displacement envelope is p = 2, not the linear weld");
+
+  // ── BƯỚC 4: the three opacity terms geometry cannot supply ────────────────
+  // Without these the column draws under raylib's default shader: an opaque
+  // lumpy solid. It still renders, so nothing reports a problem.
+  const char *vfs = "core/trails/shaders/trail_volume.fs";
+  CHECK(FileHas("core/composition/common/vc_smoke_column.inl", "cfg.tubeVolumeShading = true;"),
+        "the column asks for volume shading");
+  CHECK(FileHas(vfs, "float pattern = s1.a * s2.a;"),
+        "two sheets MULTIPLIED — alpha-over layering can only add coverage, "
+        "which is why two passes read as polished stone");
+  // |N.V|, NOT 1-|N.V|. The shell reading puts opacity 0.000 on the column's
+  // axis and its PEAK at 85% of the radius — a bright band hugging the
+  // boundary, which IS the hard edge. A rolloff constant cannot move a peak
+  // that sits at the edge by construction, which is why retuning it from 0.34
+  // to 0.75 changed nothing on screen. The mesh is the hull of a VOLUME and a
+  // ray travels furthest through the middle.
+  // The space rule, and it cuts the other way here. ENGINE_LANDMINES §9 scopes
+  // matModel = model x view to DrawMesh; this tube goes out through immediate
+  // mode, where matModel is identity and fragPosition is WORLD. Pin the form
+  // every shipping fresnel in this engine uses, so nobody "fixes" it back to
+  // the view-space reading the first draft of this shader had.
+  CHECK(FileHas("core/geometry/pm_tube.inl", "void PMTube_DrawFaded(") &&
+            FileHas(vfs, "float fade = vColor.a * colDiffuse.a;"),
+        "the vertical fade rides in a VERTEX ATTRIBUTE, not a per-draw uniform "
+        "(ENGINE_LANDMINES §8)");
+  // THE SPIRAL, source three. Panning u moves the sheet AROUND the tube's
+  // circumference — rotation, by definition — and any along-pan on top makes
+  // the sum a diagonal, i.e. a screw. The first draft of trail_volume.fs panned
+  // both axes and manufactured the exact artefact it was written to remove.
+  CHECK(FileHas("core/trails/trail_system.c", "float pan[4] = {-0.085f, 0.0f, 0.043f, 0.0f};"),
+        "the sheet pans ALONG the body only — the around components are zero");
+  // And source four: u wraps at 1.0, so a non-integer around-scale leaves a
+  // hard seam running the full length of the column. Same rule already stated
+  // for the deform lattice in core/deform/mesh_deform.h.
+
+  // The bisect tool. The column's two motions share one clock (noiseOffset is
+  // derived from uvScrollOffset), so turning the scroll off stops both and
+  // proves nothing. Freezing the MESH alone is what separates them.
+  CHECK(FileHas("core/trails/trail_system.c",
+                "float runNoiseOffset = t->tubeDeformFrozen ? 0.0f : (-t->uvScrollOffset * 0.5f);") &&
+            FileHas("core/trails/trail_system.c",
+                    "float buildTime = t->tubeDeformFrozen ? 0.0f : (float)GetTime();"),
+        "freezing the deform stops BOTH its clocks — the along-offset and the "
+        "noise's own time axis; stopping one still leaves motion");
+  CHECK(FileHas("core/composition/common/vc_smoke_column.inl", "\"smokecolumn_freeze\"") &&
+            FileHas("core/composition/common/vc_smoke_column.inl", "deform %s — sheet vẫn trượt"),
+        "...it is a live tunable and it logs ON CHANGE, because a frozen column "
+        "and a broken one look identical");
+
+  // THE SPIRAL, source five — the one that actually survived to the screen.
+  // u spans 0..1 around the section whatever its size, so on a funnel whose
+  // circumference changes 3.3x the texel aspect changes with it: square at the
+  // base, three times as wide at the top. Any diagonal feature is progressively
+  // sheared, which the eye reads as twist. Raising smokecolumn_tile to 3.0 made
+  // it go away by leaving barely one tile along the whole body — it hid the
+  // shear, it did not remove it.
+  CHECK(FileHas("core/geometry/pm_tube.inl",
+                "float u1 = (float)j * (float)aroundTiles / (float)radialSegs;"),
+        "...and it is an INTEGER count, so u still wraps exactly at the seam");
+
+  // NOTHING IS PINNED ABOUT THE EDGE TERM ANY MORE, and that is deliberate.
+  //
+  // Six rounds of constants were tried here and every one of them was justified
+  // by a debug image that turned out to be painting only the fragments two
+  // discards had let through. The shader is back to what it was when the column
+  // last read as "close, only the edges are hard", and it will not be changed
+  // again on the strength of a reading this session has not honestly obtained.
+  //
+  // What survives is in core/tests/silhouette_test.c, which rasterises the
+  // geometry on the CPU and owes nothing to those images.
+  // A shader that is not deployed does not report as a shader problem.
+  CHECK(FileHas("CMakeLists.txt", "core/trails/shaders/trail_volume.fs") &&
+            FileHas("Makefile.Android", "core/trails/shaders/*.fs"),
+        "and both build systems actually copy it");
 
   // The three consumers the owner named.
   CHECK(FileHas("core/composition/water/water_stream.inl", "PMDroplet_BuildBezier(") &&

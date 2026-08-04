@@ -49,7 +49,6 @@ int main(void)
     bad += !Has("core/shaders/distortion.fs", "bodyColor * bodyCoverage");
     bad += !Has("core/screen_distort.c", "BeginBlendMode(BLEND_ADD_COLORS);");
 
-    bad += !Has("core/composition/common/vc_beam.inl", "ScreenDistort_BeginVFXEmission();");
     bad += !Has("core/composition/common/vc_light_shaft.inl", "ScreenDistort_BeginVFXEmission();");
     bad += !Has("core/composition/common/vc_rune_circle.inl", "ScreenDistort_BeginVFXEmission();");
     bad += !Has("core/composition/common/vc_ground_wave.inl", "ScreenDistort_BeginVFXEmission();");

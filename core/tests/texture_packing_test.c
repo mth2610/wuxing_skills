@@ -195,7 +195,7 @@ static void Test_ReferenceSheetsMatchTheSpecsClaim(void) {
             !FileHas(m, "STRAND | R:pattern1/TILE | G:pattern2/TILE | B:distort/TILE | A:dissolve/TILE — repeating smoke MATERIAL"),
         "the volume sheets are no longer STRAND — their consumer reads colour, "
         "and STRAND's channels are data");
-  CHECK(FileHas("scripts/gen_volume_surface.py", "r = g = b = lum"),
+  CHECK(FileHas("scripts/gen_volume_surface.py", "r = g = b = min(1.0, max(0.0, lum))"),
         "...they are grey luminance, so the caller's VFX_Material tint survives "
         "instead of fighting a colour baked into the sheet");
 }

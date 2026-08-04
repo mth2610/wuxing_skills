@@ -116,6 +116,54 @@ bool AutoTest_ExpectFloatNear(float actual, float expected, float tol, const cha
     return ok;
 }
 
+void AutoTest_SaveScreenshotWorld(const char *name, Camera3D cam, Vector3 center,
+                                  float radius) {
+    if (!DirectoryExists("autotest_output")) {
+        MakeDirectory("autotest_output");
+    }
+    /* Project six points on the bounding sphere rather than the centre alone:
+     * the centre plus a radius in screen units assumes the projection is
+     * isotropic, and under a tilted isometric camera it is not. */
+    const Vector3 probe[6] = {
+        {center.x + radius, center.y, center.z}, {center.x - radius, center.y, center.z},
+        {center.x, center.y + radius, center.z}, {center.x, center.y - radius, center.z},
+        {center.x, center.y, center.z + radius}, {center.x, center.y, center.z - radius},
+    };
+    float minX = 1e9f, minY = 1e9f, maxX = -1e9f, maxY = -1e9f;
+    for (int i = 0; i < 6; i++) {
+        Vector2 s = GetWorldToScreen(probe[i], cam);
+        if (s.x < minX) minX = s.x;
+        if (s.x > maxX) maxX = s.x;
+        if (s.y < minY) minY = s.y;
+        if (s.y > maxY) maxY = s.y;
+    }
+    const float pad = 24.0f; /* a little background, so the edge has something to be an edge AGAINST */
+    minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+
+    int sw = GetScreenWidth(), sh = GetScreenHeight();
+    if (minX < 0.0f) minX = 0.0f;
+    if (minY < 0.0f) minY = 0.0f;
+    if (maxX > (float)sw) maxX = (float)sw;
+    if (maxY > (float)sh) maxY = (float)sh;
+    if (maxX - minX < 8.0f || maxY - minY < 8.0f) {
+        /* Off screen or degenerate — save the whole frame rather than nothing,
+         * and say so, because an empty crop and a missing effect look alike. */
+        TraceLog(LOG_WARNING,
+                 "[AUTOTEST] '%s': effect projects to %.0fx%.0f px — saving the "
+                 "full frame instead. Is it behind the camera?",
+                 name, (double)(maxX - minX), (double)(maxY - minY));
+        AutoTest_SaveScreenshot(name);
+        return;
+    }
+
+    Image img = LoadImageFromScreen();
+    ImageCrop(&img, (Rectangle){minX, minY, maxX - minX, maxY - minY});
+    ExportImage(img, TextFormat("autotest_output/%s.png", name));
+    TraceLog(LOG_INFO, "[AUTOTEST] '%s' -> autotest_output/%s.png  (%dx%d px, cropped)",
+             name, name, img.width, img.height);
+    UnloadImage(img);
+}
+
 void AutoTest_SaveScreenshot(const char *name) {
     if (!DirectoryExists("autotest_output")) {
         MakeDirectory("autotest_output");

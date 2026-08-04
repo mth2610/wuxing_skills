@@ -215,6 +215,7 @@ add_executable(wuxing
     sandbox/vfx_test.c
     sandbox/skill_debugger.c
     sandbox/auto_test.c
+    sandbox/colour_probe.c
     sandbox/auto_test_cases.c
     sandbox/visual_verify.c
     sandbox/pool_stats.c
@@ -282,6 +283,8 @@ configure_file(core/trails/shaders/trail_glow.fs ${CMAKE_CURRENT_BINARY_DIR}/cor
 configure_file(core/trails/shaders/trail_body.fs ${CMAKE_CURRENT_BINARY_DIR}/core/trails/shaders/trail_body.fs COPYONLY)
 configure_file(core/trails/shaders/trail_deform.vs ${CMAKE_CURRENT_BINARY_DIR}/core/trails/shaders/trail_deform.vs COPYONLY)
 configure_file(core/trails/shaders/trail_deform.fs ${CMAKE_CURRENT_BINARY_DIR}/core/trails/shaders/trail_deform.fs COPYONLY)
+configure_file(core/trails/shaders/trail_volume.vs ${CMAKE_CURRENT_BINARY_DIR}/core/trails/shaders/trail_volume.vs COPYONLY)
+configure_file(core/trails/shaders/trail_volume.fs ${CMAKE_CURRENT_BINARY_DIR}/core/trails/shaders/trail_volume.fs COPYONLY)
 configure_file(core/shaders/water_splash.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/water_splash.fs COPYONLY)
 configure_file(core/shaders/water_splash.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/water_splash.vs COPYONLY)
 configure_file(core/fluid/shaders/fluid_depth_smooth.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_depth_smooth.fs COPYONLY)

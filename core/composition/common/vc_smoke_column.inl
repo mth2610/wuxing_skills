@@ -77,7 +77,15 @@ static Texture2D s_columnSheet[VFX_COLUMN_KIND_COUNT];
 // How fast the surface churns and how fast the sheet climbs. These two ARE the
 // effect: with the path frozen, nothing else moves.
 static const float k_columnNoise[VFX_COLUMN_KIND_COUNT] = {0.34f, 0.30f, 0.22f};
-static const float k_columnScroll[VFX_COLUMN_KIND_COUNT] = {-0.55f, -0.95f, -0.40f};
+// POSITIVE, and the sign is the whole point: the column was flowing DOWNWARD.
+//
+// DrawLayeredTube passes `uvBase - uvScrollOffset` as the tube's v offset, so a
+// negative scroll speed makes the sampled v GROW with time, and a feature sitting
+// at a fixed v is then found ever lower on the body. The churn inherits the same
+// clock through `runNoiseOffset = -uvScrollOffset * 0.5`, so both the sheet and
+// the lumps marched toward the base. Smoke that sinks reads as wrong long before
+// anyone can say why. Water is the effect where the old sign was right.
+static const float k_columnScroll[VFX_COLUMN_KIND_COUNT] = {0.55f, 0.95f, 0.40f};
 
 // Live knobs. Registered lazily on first use, never from an Init: Tuning_Init
 // runs after subsystem inits in main.c, so early registration silently keeps
@@ -85,7 +93,15 @@ static const float k_columnScroll[VFX_COLUMN_KIND_COUNT] = {-0.55f, -0.95f, -0.4
 static float s_columnNoiseMul = 1.0f;
 static float s_columnScrollMul = 1.0f;
 static float s_columnAlphaMul = 1.0f;
-static float s_columnTile = 1.10f; // metres per texture repeat
+// 3.0, because that is the value you found by hand — 1.10 packed 4.5 tiles
+// along a 5 m column and the UV shear had that many features to twist. The
+// around-axis is metre-matched now, so this can come back down; it is a live
+// tunable for exactly that reason.
+static float s_columnTile = 3.00f; // metres per texture repeat
+// 1 = đóng băng lưới, sheet vẫn trượt. Xem TrailConfig.tubeDeformFrozen: hai
+// chuyển động của cột dính chung một đồng hồ, nên đây là cách duy nhất tách
+// chúng ra mà nhìn. Sửa trong tuning.cfg, không cần build lại.
+static float s_columnFreezeDeform = 0.0f;
 
 static void SmokeColumn_EnsureTuning(void)
 {
@@ -95,7 +111,8 @@ static void SmokeColumn_EnsureTuning(void)
     Tuning_RegisterFloat("smokecolumn_noise", &s_columnNoiseMul, 1.0f);
     Tuning_RegisterFloat("smokecolumn_scroll", &s_columnScrollMul, 1.0f);
     Tuning_RegisterFloat("smokecolumn_alpha", &s_columnAlphaMul, 1.0f);
-    Tuning_RegisterFloat("smokecolumn_tile", &s_columnTile, 1.10f);
+    Tuning_RegisterFloat("smokecolumn_tile", &s_columnTile, 3.00f);
+    Tuning_RegisterFloat("smokecolumn_freeze", &s_columnFreezeDeform, 0.0f);
 }
 
 static void SmokeColumn_InitShared(void)
@@ -157,6 +174,24 @@ static void SmokeColumn_BuildShape(VC_SmokeColumn *c, bool funnel)
     c->tube.wobbleAmplitude = 0.0f;
     c->tube.deform1Amp = 0.0f;
     c->tube.deform2Amp = 0.0f;
+
+    // THE FUNNEL, FINALLY CONNECTED. `funnel` was taken by the public entry
+    // point, threaded through two calls and read by NOTHING — it survived only
+    // in the spawn log, which therefore printed "FUNNEL" while a cylinder was
+    // built. A parameter that is merely ignored is a bug; one that is ignored
+    // while the log claims otherwise costs a debugging session.
+    //
+    // r(t) = tailFrac + (1 - tailFrac) * t^p, tail = the base. p = 2 puts the
+    // opening near the top, which is what smoke does: it stays a stalk over the
+    // source and spreads once it has risen. A cylinder keeps its width.
+    if (funnel) { c->tube.radiusTailFrac = 0.12f; c->tube.radiusPow = 1.7f; }
+    else        { c->tube.radiusTailFrac = 0.55f; c->tube.radiusPow = 1.4f; }
+
+    // THE SNAKE. The reference wireframe's body is not a straight pipe with a
+    // bumpy skin — the whole cross-section slides sideways, two or three big
+    // bends over the height, sections still round. Surface displacement cannot
+    // produce that no matter how hard it is driven: it roughens a straight tube.
+    c->tube.centerlineAmp = c->radius * 1.6f;
     // MỞ hai đầu. Nắp là hai quạt tam giác có đỉnh đẩy ra theo
     // tail/headApexFactor, nên nó không phải một mặt phẳng bịt lại mà là một
     // chóp NÓN — đúng cái chóp nhọn trên đỉnh cột. Khói không có nắp.
@@ -168,28 +203,56 @@ static void SmokeColumn_BuildShape(VC_SmokeColumn *c, bool funnel)
     // height is a twisting spiral by construction. Lumps need more lobes than
     // that, decorrelated between layers.
     MeshDeform_Clear(&c->churn);
-    c->churn.amplitude = 1.0f; // the trail supplies the real amplitude
+    // 1.0 HERE IS CORRECT, and it did not used to be. The trail's tubeNoiseAmp
+    // is the real amplitude and pm_tube.inl now actually applies it to a
+    // caller-supplied field; before 04/08/2026 that branch dropped it, so this
+    // field ran at 1.0 instead of 0.34 and the mesh tore itself apart. Leave
+    // this at 1.0 and tune through k_columnNoise / the smokecolumn_noise knob.
+    c->churn.amplitude = 1.0f;
     c->churn.timeScale = 0.75f;
-    c->churn.latticeAround = 6; // lobes per ring — 1..2 is an ellipse, i.e. a helix
-    c->churn.latticeAlong = 7;
+    // 5 broad swells, and the fine octave gets its OWN around-period below.
+    // Sharing one period stacks both octaves' extrema on the same meridians —
+    // value noise puts them on lattice nodes — and a fixed set of ribs sliding
+    // along the body is exactly the "spinning" read. 6 ribs is what shipped.
+    // 3 cells along the body, not 7. The reference's deformation is LOW
+    // frequency — a few sweeping bends over the whole height, not a ripple
+    // field. 7 cells over 5 m is a corrugation every 70 cm, which reads as a
+    // hose rather than as gas.
+    c->churn.latticeAround = 3;
+    c->churn.latticeAlong = 3;
+
 
     // SCALE breathes the section and keeps the silhouette proportional.
+    //
+    // PLAIN WELD (p = 1) HERE, NOT THE SQUARED ONE — and that is the whole
+    // reason the body came out nearly smooth. This layer scales the RADIUS, so
+    // its absolute excursion is already proportional to the local radius, and
+    // the funnel profile above already makes the base narrow. Putting S(V)=V^2
+    // on top suppressed it a SECOND time: measured 3% ripple at mid-body, which
+    // is a cone with a texture on it. The reference's V^p belongs on the layer
+    // that displaces in absolute metres, which is the OFFSET one below.
+    // Split envelope, measured at mid-body: 3% -> 11%.
     MeshDeform_AddLayer(&c->churn, (MeshDeformLayer){
         .kind = MESH_DEFORM_NOISE_CHANNEL,
         .direction = MESH_DEFORM_DIR_NORMAL_SCALE,
-        .tiling = {1.0f, 1.0f}, .amplitude = 2.0f, .speed = 1.0f,
-        .latticeMul = 1.0f, .env = UV_ENV_HEAD_WELD,
+        .tiling = {1.0f, 1.0f}, .amplitude = 4.2f, .speed = 1.0f,
+        .latticeMul = 1.0f, .latticeAroundMul = 1.0f, .env = UV_ENV_HEAD_WELD,
         .envStart = 0.0f, .envEnd = 0.22f,
     });
     // OFFSET pushes the surface OFF its own normal — the reference's
     // "Normal + RGB". This is the one that breaks the symmetry: scaling alone
     // can only ever produce a rounder or thinner version of the same section.
+    //
+    // Amplitude 0.45, not 1.1. This layer displaces in METRES, and pm_tube.inl
+    // now caps it at 60% of the ring gap; at 1.1 the cap would be clipping
+    // almost every vertex, which is a flat-topped field, not a soft one. Sized
+    // so the cap stays what it is meant to be — a backstop, not the shape.
     MeshDeform_AddLayer(&c->churn, (MeshDeformLayer){
         .kind = MESH_DEFORM_NOISE_CHANNEL,
         .direction = MESH_DEFORM_DIR_NORMAL_OFFSET,
-        .tiling = {1.0f, 1.9f}, .amplitude = 1.1f, .speed = 1.7f,
-        .timeOffset = 11.0f, .latticeMul = 3.0f, .env = UV_ENV_HEAD_WELD,
-        .envStart = 0.0f, .envEnd = 0.35f,
+        .tiling = {1.0f, 1.9f}, .amplitude = 1.30f, .speed = 1.7f,
+        .timeOffset = 11.0f, .latticeMul = 3.0f, .latticeAroundMul = 2.0f,
+        .env = UV_ENV_HEAD_WELD_SQ, .envStart = 0.0f, .envEnd = 0.35f,
     });
     c->tube.noiseField = &c->churn;
 }
@@ -237,17 +300,48 @@ static int SmokeColumn_Spawn(VC_SmokeColumn *c, int slot, float height, bool fun
 
     cfg.shape = TRAIL_SHAPE_TUBE;
     cfg.tubeShapeConfig = &c->tube; // the shape is ours, not DrawLayeredTube's
-    // 10 segments cannot show a lump: with 6 lobes around it is under two
-    // samples per lobe, so the section reads as a polygon being rotated.
-    cfg.tubeRadialSegs = 18;
-    cfg.tubeMaxRings = 24;
-    cfg.tubeCaps = true;
-    // Double-walled: at grazing angles the view ray crosses more material, so
-    // the silhouette brightens by itself — a fresnel read with no fresnel term.
-    // This is why the column does not need the reference's Fresnel edge fade in
-    // an isometric camera; in VR, where the viewer can put their face next to
-    // it, it would.
+    // The fine octave carries 10 lobes around (5 x latticeAroundMul 2), and a
+    // lobe needs ~2.5 samples before it stops aliasing into a rotating polygon.
+    // 18 segments gave 1.8 and the section visibly turned; 28 gives 2.8.
+    // MANY rings, FEW radial — the reference wireframe's proportions, and the
+    // opposite of what shipped (24 x 28). The shape lives ALONG the column: a
+    // sweeping bend needs rings to be sampled on, while the section is close to
+    // a circle and needs few. 16 radial against 6 fine lobes is 2.7 samples per
+    // lobe, still above the ~2.5 where a lobe aliases into a rotating polygon.
+    // Back to 16. It was doubled only to pay for flat per-triangle normals,
+    // and that change has been reverted — see the REVERT note in
+    // trail_volume.fs. The extra segments bought nothing on their own:
+    // core/tests/silhouette_test.c measured 6 -> 48 radial moving the boundary
+    // metric the WRONG way while the real faults were still in place.
+    cfg.tubeRadialSegs = 16;
+    cfg.tubeMaxRings = 40;
+    // Left FALSE on purpose: the far wall is dropped in trail_volume.fs by
+    // its normal, not by winding — see the ONE WALL PER RAY block there.
+    // rlEnableBackfaceCulling would key off the emission winding, which works
+    // out INWARD for this tube, so it would keep the inside and discard the
+    // outside with nothing to announce it.
+    //
+    // The reasoning that used to justify two-sided was exactly backwards.
+    //
+    // It said drawing both walls "brightens the silhouette by itself". It does
+    // — and that IS the hard outline. Near the boundary a view ray grazes the
+    // tube and crosses MANY facets; each contributes little, but the crossing
+    // count rises faster than the per-fragment term falls, so accumulated alpha
+    // ends up HIGHER at the rim than at the centre. No per-fragment formula
+    // survives that, which is why six rounds of retuning the edge constants
+    // changed nothing on screen.
+    //
+    // Culling bounds the crossings to one, so the accumulated alpha IS the
+    // term, and a term that goes to zero at the silhouette finally reaches the
+    // screen. Measured in core/tests/silhouette_test.c: 0.365 -> 0.274 from
+    // culling alone, and 0.119 once the power is also corrected. Neither fix
+    // works without the other.
     cfg.tubeSingleSided = false;
+    // The three opacity terms the geometry cannot supply — see
+    // core/trails/shaders/trail_volume.fs. Without this the column draws under
+    // raylib's default shader and comes out an opaque lumpy solid.
+    cfg.tubeVolumeShading = true;
+    cfg.tubeDeformFrozen = (s_columnFreezeDeform > 0.5f);
     cfg.tubeNoiseAmp = k_columnNoise[c->kind] * s_columnNoiseMul;
 
     cfg.layers = c->layers;
@@ -398,6 +492,17 @@ static void VC_SmokeColumn_Update(float dt)
         // respawn.
         SmokeColumn_ConfigureLayers(c);
         t->tubeNoiseAmp = k_columnNoise[c->kind] * s_columnNoiseMul;
+        // Đẩy lại mỗi khung hình để tuning.cfg đổi được lúc đang chạy — cả
+        // điểm của cái phanh này là không phải spawn lại để thử.
+        bool freeze = (s_columnFreezeDeform > 0.5f);
+        if (freeze != t->tubeDeformFrozen)
+        {
+            t->tubeDeformFrozen = freeze;
+            // LOG ON CHANGE. Một cột đứng im vì đã đóng băng và một cột đứng im
+            // vì deform hỏng trông giống hệt nhau.
+            TraceLog(LOG_INFO, "VFX_SMOKE_COLUMN: deform %s — sheet vẫn trượt",
+                     freeze ? "ĐÓNG BĂNG (smokecolumn_freeze=1)" : "chạy lại");
+        }
         t->uvScrollSpeed = k_columnScroll[c->kind] * s_columnScrollMul;
         t->uvMetresPerTile = (s_columnTile > 0.05f) ? s_columnTile : 0.05f;
 

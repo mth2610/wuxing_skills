@@ -6,6 +6,9 @@
 bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Texture2D testAtlasTex,
                                   Texture2D globalParticleTex);
 void VFXTest_Draw3D(void);
+/* Nhớ camera của khung hình này, để ảnh chụp biết chiếu vùng hiệu ứng ra đâu.
+ * Gọi trong pass 3D, trước VFXTest_Draw3D. */
+void VFXTest_SetCamera(Camera3D cam);
 void VFXTest_DrawHUD(void);
 
 // Headless render mode: jump to NEWFX tab at `newfxIndex`, set spawn position.

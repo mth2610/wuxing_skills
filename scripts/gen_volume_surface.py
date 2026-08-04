@@ -52,7 +52,25 @@ import struct
 import zlib
 from pathlib import Path
 
-SIZE = 256
+# NON-SQUARE ON PURPOSE — 1 wide x 4 tall.
+#
+# A square tile makes every part of the column statistically identical: the
+# same wisp density at the base as at the crown, forever. A real plume has
+# structure over its whole length — a tight root, a broadening middle, a torn
+# top — and that structure is metres long, not centimetres.
+#
+# Four times the texels along the flow is what buys it. Stretching a square
+# sheet 4x in v would cover the same metres but at a quarter of the resolution,
+# so the long features it is supposed to carry come out blurred. The sheet still
+# tiles exactly in BOTH axes (every harmonic is an integer over its own axis),
+# because it scrolls forever and a plume that visibly restarts is worse than one
+# with no large structure at all.
+#
+# The consumer must know the aspect to keep texels square — see
+# PM_TUBE_UV_ASPECT in core/geometry/pm_tube.inl.
+SIZE_U = 256
+SIZE_V = 1024
+SIZE = SIZE_U  # kept for the seam instrument below, which walks columns
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "assets" / "textures"
 TAU = math.tau
@@ -80,13 +98,57 @@ def write_png(path: Path, pixels: bytes, width: int, height: int) -> None:
 
 # --- Periodic field ----------------------------------------------------------
 
-def make_modes(rng: random.Random, count: int, max_freq: int) -> list:
-    """Harmonics with INTEGER frequency in both axes — the seamlessness."""
+def make_modes(rng: random.Random, count: int, max_freq: int,
+               aspect_lo: float = 3.0, aspect_hi: float = 8.0) -> list:
+    """Harmonics with INTEGER frequency in both axes — the seamlessness.
+
+    ELONGATION IS SPECIFIED IN WORLD SPACE, NOT IN TEXELS.
+
+    sin(TAU*(ku*u + kv*v)) is a plane wave travelling in direction (ku, kv).
+    Drawing ku and kv from the SAME range makes most modes DIAGONAL, so the
+    original sheet was 45-degree corduroy; wrapped on a column that is a barber
+    pole, and it is why raising smokecolumn_tile "fixed" the swirl.
+
+    But capping kv near zero — the first correction — is just as wrong once the
+    sheet is 1:4. Work it out: the tile covers Cu metres around and Cv = 4*Cu
+    metres along, so phase = TAU/Cu * (ku*X + (kv/4)*Y) and the WORLD wave
+    vector is (ku, kv/4). World elongation is therefore
+
+        aspect = 4 * ku / kv          (4 = SIZE_V / SIZE_U)
+
+    kv near zero means aspect near infinity: strands that run the full frame
+    with no end, which renders as combed hair. Real tongues terminate. Solving
+    for kv gives the range below, so `aspect_lo/hi` say what they mean —
+    3:1 to 8:1 — and stay true if the sheet's proportions ever change.
+
+    Both stay integers, so the sheet still tiles exactly on both axes.
+    """
+    va = SIZE_V / SIZE_U
     modes = []
-    for _ in range(count):
-        ku = rng.randint(1, max_freq)
-        kv = rng.randint(1, max_freq)
-        modes.append((ku, kv, rng.uniform(0.0, TAU), 1.0 / (ku + kv)))
+    for idx in range(count):
+        ku = rng.randint(2, max_freq)
+        lo = int(round(va * ku / aspect_hi))
+        hi = int(round(va * ku / aspect_lo))
+        if hi < 1:
+            hi = 1
+        if lo > hi:
+            lo = hi
+        kv = rng.randint(lo, hi)
+        # SIGN, and it is not cosmetic. A wave (ku, +kv) leans one way; if every
+        # mode is drawn positive they ALL lean the same way and their sum is a
+        # sheared field — visibly diagonal corduroy, exactly the artefact this
+        # function was rewritten to remove, surviving a correct magnitude.
+        # Mixing the signs makes the leans cancel: elongated tongues with no net
+        # direction. Frequency stays integral either way, so the tiling holds.
+        #
+        # ALTERNATING, not coin-flipped. A fair coin over 14-24 modes still
+        # lands lopsided often enough to matter — the measured lean was +0.245
+        # on a random draw, which is a visible slant. Splitting the set exactly
+        # in half costs nothing and makes the balance a property of the code
+        # rather than of the seed. ku is already random, so the pairing is.
+        if idx % 2 == 1:
+            kv = -kv
+        modes.append((ku, kv, rng.uniform(0.0, TAU), 1.0 / (ku + abs(kv) + 1)))
     return modes
 
 
@@ -106,62 +168,126 @@ def billow(modes: list, u: float, v: float) -> float:
 
 # --- The family --------------------------------------------------------------
 # Only these numbers differ between the three sheets.
+# `detail` is the number of TONGUES ACROSS THE TILE, and the tile wraps the
+# column exactly once (PM_TUBE_UV_AROUND_WRAPS). So it is the tongue count
+# around the WHOLE circumference — and only half a cylinder faces the camera, so
+# roughly half of them are ever visible. The reference sheet carries 4 and its
+# render shows 2. Authoring for the visible count instead doubles it.
+#
+# `cov_lo/cov_hi` threshold the normalised coverage field. Aim ONE SHEET near
+# 58%, not the final density: the fragment shader multiplies two samples, so
+# what is seen is the product. Thresholding each sheet down to the target
+# instead gave 34% x 34% = 10%, a column that reads as empty.
+#
+# `aspect` is the WORLD-space elongation of a feature, low..high — how many
+# times longer than wide a wisp is once it is on the column. Not a texel count:
+# see make_modes. Steam gets the longest tongues, fire the shortest, because
+# flame breaks up faster than smoke does.
 PROFILES = {
-    "smoke": dict(seed=20260803, coarse=5, fine=13, detail=17,
+    "smoke": dict(seed=20260803, coarse=5, fine=9, detail=4,
+                  aspect=(3.5, 9.0), cov_lo=0.16, cov_hi=0.72,
                   coarse_gain=1.00, fine_gain=0.85, contrast=1.15,
-                  distort=1.0, note="soft rolling billows"),
-    "fire":  dict(seed=20260804, coarse=7, fine=19, detail=23,
+                  distort=1.0, note="long vertical wisps"),
+    "fire":  dict(seed=20260804, coarse=6, fine=12, detail=5,
+                  aspect=(2.5, 6.0), cov_lo=0.20, cov_hi=0.70,
                   coarse_gain=1.15, fine_gain=1.05, contrast=1.55,
                   distort=1.35, note="tighter, higher contrast tongues"),
-    "steam": dict(seed=20260805, coarse=3, fine=9, detail=11,
+    "steam": dict(seed=20260805, coarse=4, fine=7, detail=3,
+                  aspect=(4.5, 12.0), cov_lo=0.12, cov_hi=0.74,
                   coarse_gain=0.85, fine_gain=0.60, contrast=0.80,
                   distort=0.7, note="wide, low-contrast, almost translucent"),
 }
 
 
+def smoothstep(e0: float, e1: float, x: float) -> float:
+    k = (x - e0) / (e1 - e0) if abs(e1 - e0) > 1e-9 else (0.0 if x < e0 else 1.0)
+    k = min(1.0, max(0.0, k))
+    return k * k * (3.0 - 2.0 * k)
+
+
 def build(name: str, cfg: dict) -> None:
     rng = random.Random(cfg["seed"])
-    coarse = make_modes(rng, 14, cfg["coarse"])
-    fine = make_modes(rng, 20, cfg["fine"])
-    dist_u = make_modes(rng, 10, cfg["coarse"])
-    detail = make_modes(rng, 24, cfg["detail"])
+    alo, ahi = cfg["aspect"]
+    coarse = make_modes(rng, 14, cfg["coarse"], alo, ahi)
+    fine = make_modes(rng, 20, cfg["fine"], alo, ahi)
+    detail = make_modes(rng, 24, cfg["detail"], alo * 0.8, ahi * 0.8)
 
-    px = bytearray(SIZE * SIZE * 4)
-    for y in range(SIZE):
-        v = y / SIZE
-        for x in range(SIZE):
-            u = x / SIZE
+    px = bytearray(SIZE_U * SIZE_V * 4)
+    lum_f = [0.0] * (SIZE_U * SIZE_V)
+    cov_f = [0.0] * (SIZE_U * SIZE_V)
+    for y in range(SIZE_V):
+        v = y / SIZE_V
+        for x in range(SIZE_U):
+            u = x / SIZE_U
 
             # NOTHING may scale u or v here. The seamlessness comes from every
-            # component having an INTEGER frequency in both axes, and u * 1.7 is
-            # not periodic with period 1 — it lands at 1.7 where it started at
-            # 0, and the wrap develops a crease. (It did: the wrap/interior
-            # instrument below read 3.4x before this was fixed.) Channels are
-            # differentiated by their FREQUENCY RANGE instead, which keeps every
-            # harmonic integer.
-            # LUMINANCE — two octaves of billow, combined into ONE grey value.
-            # Smoke is lit matter, not three independent fields.
-            lum = billow(coarse, u, v) * cfg["coarse_gain"] * 0.65 \
-                + billow(fine, u, v) * cfg["fine_gain"] * 0.35
-            lum = min(1.0, max(0.0, (lum - 0.5) * cfg["contrast"] + 0.55))
-            r = g = b = lum
+            # component having an INTEGER frequency in both axes.
+            # LUMINANCE — two octaves, ONE grey value. Smoke is lit matter, not
+            # three independent fields.
+            au_, av_ = u, v
+            # sample(), not billow() — same reason as the coverage below. A
+            # billow crest is a contour LINE, so it drew the colour channel as a
+            # topographic map too, and that map survived every fix aimed at the
+            # alpha because none of them touched this line.
+            lum = sample(coarse, au_, av_) * cfg["coarse_gain"] * 0.65 \
+                + sample(fine, au_, av_) * cfg["fine_gain"] * 0.35
 
-            # COVERAGE — the silhouette's detail. Multiplied by the luminance so
-            # thin wisps are both dimmer AND more transparent, which is what
-            # stops the sheet reading as a printed pattern on a solid tube. A
-            # gamma above 1 keeps most of it fairly open, or the volume closes
-            # into a painted cylinder.
+            # COVERAGE — sample(), NOT billow(), and this is the correction
+            # that took four rounds to find.
+            #
+            # billow(x) = 1 - |2x-1| has its crest on a CONTOUR LINE, not over an
+            # area. Everything it produces is a topographic map, and reading it
+            # from either side changes only which side is bright: as opacity it
+            # was a fishnet of hairs, and inverted it was a solid felt with
+            # hairline gaps. Measured on the shipped sheet, NOTHING was actually
+            # transparent — 0.0% of texels below A=30 — so no monotone remap of
+            # it could ever open a hole. Five different opacity curves were
+            # compared on the same field and two came out entirely black while
+            # the other three were the same hatching; the curve was never the
+            # lever.
+            #
+            # A plain field thresholded keeps AREAS above the cut and sends
+            # everything below it to a true zero, which is what the reference
+            # sheet is: black ground, a few separated tongues.
             cov = sample(detail, u, v) * (0.45 + 0.55 * lum)
-            a = min(1.0, max(0.0, cov)) ** 1.35
 
-            i = (y * SIZE + x) * 4
-            px[i + 0] = int(r * 255.0 + 0.5)
-            px[i + 1] = int(g * 255.0 + 0.5)
-            px[i + 2] = int(b * 255.0 + 0.5)
-            px[i + 3] = int(a * 255.0 + 0.5)
+            lum_f[y * SIZE_U + x] = lum
+            cov_f[y * SIZE_U + x] = cov
+
+    # NORMALISE, then shape. Fixing the range by hand cannot work when the
+    # profiles differ in mode count and frequency — each field lands wherever
+    # its harmonics happen to sum. Stretching the measured range to [0,1] makes
+    # contrast/gamma mean the same thing for all three sheets.
+    def stretch(buf):
+        lo, hi = min(buf), max(buf)
+        span = (hi - lo) if (hi - lo) > 1e-6 else 1.0
+        return [(x - lo) / span for x in buf]
+
+    lum_f = stretch(lum_f)
+    cov_f = stretch(cov_f)
+
+    for i_px in range(SIZE_U * SIZE_V):
+        # GREY, but not near-white. It stays grey so VFX_Material's tint
+        # survives — that requirement is about HUE, not about brightness, and
+        # reading it as "keep it bright" left a 0.55 floor and a 218/255 mean:
+        # a flat wash with no internal shading, which is half of why the column
+        # read as felt. Thin smoke really is dimmer AND more transparent, so
+        # coupling the two is what makes it read as volume.
+        lum = 0.28 + 0.72 * (lum_f[i_px] ** (1.0 / cfg["contrast"]))
+        # THRESHOLD, in normalised space. Aim each sheet near 55%: the fragment
+        # shader multiplies two samples, so what is seen is the product, ~30%.
+        # Thresholding each sheet down to the target instead gives 20% x 20% = 4%
+        # and the column reads as empty.
+        a = smoothstep(cfg["cov_lo"], cfg["cov_hi"], cov_f[i_px])
+        r = g = b = min(1.0, max(0.0, lum))
+        i = i_px * 4
+        px[i + 0] = int(r * 255.0 + 0.5)
+        px[i + 1] = int(g * 255.0 + 0.5)
+        px[i + 2] = int(b * 255.0 + 0.5)
+        px[i + 3] = int(min(1.0, max(0.0, a)) * 255.0 + 0.5)
 
     out = OUT_DIR / f"volume_surface_{name}.png"
-    write_png(out, bytes(px), SIZE, SIZE)
+    write_png(out, bytes(px), SIZE_U, SIZE_V)
 
     # Measure the seam rather than asserting it — but measure the RIGHT thing.
     #
@@ -175,15 +301,15 @@ def build(name: str, cfg: dict) -> None:
     # is what seamless means. A ratio of several means there is a visible crease.
     def mean_step(a_col: int, b_col: int) -> float:
         total = 0
-        for y in range(SIZE):
+        for y in range(SIZE_V):
             for c in range(4):
-                total += abs(px[(y * SIZE + a_col) * 4 + c] -
-                             px[(y * SIZE + b_col) * 4 + c])
-        return total / (SIZE * 4)
+                total += abs(px[(y * SIZE_U + a_col) * 4 + c] -
+                             px[(y * SIZE_U + b_col) * 4 + c])
+        return total / (SIZE_V * 4)
 
-    wrap = mean_step(SIZE - 1, 0)
-    interior = sum(mean_step(x, x + 1) for x in range(0, SIZE - 1, 8))
-    interior /= len(range(0, SIZE - 1, 8))
+    wrap = mean_step(SIZE_U - 1, 0)
+    interior = sum(mean_step(x, x + 1) for x in range(0, SIZE_U - 1, 8))
+    interior /= len(range(0, SIZE_U - 1, 8))
     ratio = wrap / interior if interior > 0.0 else 0.0
     verdict = "seamless" if ratio < 1.5 else "CREASE"
     print(f"  {out.name:32s} {cfg['note']:38s} "
@@ -192,7 +318,7 @@ def build(name: str, cfg: dict) -> None:
 
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"volume surface sheets ({SIZE}x{SIZE}, OPAQUE layout, all channels TILE):")
+    print(f"volume surface sheets ({SIZE_U}x{SIZE_V}, OPAQUE layout, all channels TILE):")
     for name, cfg in PROFILES.items():
         build(name, cfg)
     print("\nRegistered in assets/vfx_surface_profiles.json; run "

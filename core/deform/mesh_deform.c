@@ -221,9 +221,13 @@ float MeshDeform_EvaluateLayer(const MeshDeformField *f, const MeshDeformLayer *
     // the section leaves a seam running the whole length of the body.
     int periodV = (int)((float)f->latticeAlong *
                         (L->latticeMul > 0.0f ? L->latticeMul : 1.0f));
+    // Around-period is per-layer so octaves can be decorrelated. Defaulting the
+    // multiplier to 1 keeps every existing caller on the exact floats it had.
+    int periodU = (int)((float)f->latticeAround *
+                        (L->latticeAroundMul > 0.0f ? L->latticeAroundMul : 1.0f));
     raw = MeshDeform_SampleLattice(mat.x, mat.y * L->tiling.y,
                                    wt * L->speed + L->timeOffset,
-                                   f->latticeAround, periodV);
+                                   periodU, periodV);
   }
 
   // Remap [0,1] -> [-1,1] scaled by this layer's weight. Without the bias the

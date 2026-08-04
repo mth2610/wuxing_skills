@@ -8,10 +8,30 @@
 //   - Output finalColor
 //
 // Uniforms u_time / viewPos / u_resolution / u_lightDir được auto-bind bởi
-// SkillManager_BeginShader() — không cần set thủ công. (Skill dùng raw
-// BeginShaderMode() thay vì SkillManager_BeginShader() phải tự set
-// u_lightDir = normalize hướng đối của Environment_GetSunDirection(), xem
-// CORE_ISSUES.md Item 10 và ví dụ trong tube_skill.c/stone_prison_skill.c.)
+// SkillManager_BeginShader() — VÀ CHỈ BỞI NÓ.
+//
+// Ai dùng raw BeginShaderMode() phải TỰ SET, và cái hay bị quên nhất là
+// `viewPos`, vì nó không hỏng theo kiểu dễ thấy: uniform chưa set đọc ra
+// (0,0,0), nên `normalize(viewPos - fragPosition)` trở thành hướng tới GỐC THẾ
+// GIỚI. Kết quả vẫn là một vector đơn vị hợp lệ, vẫn cho ra một dải fresnel
+// trông hợp lý — chỉ là nó nằm sai chỗ và ĐỨNG YÊN khi camera xoay. Không có
+// cảnh báo nào cả.
+//
+// Đã mất một buổi vào đúng cái này. VÀ CÓ MỘT CÁI BẪY THỨ HAI Ở NGAY SAU:
+// `fragPosition` mà VS_FinalOutput dựng ra KHÔNG phải world space. MyBeginMode3D
+// nhân matView vào transform của rlgl, nên matModel = model × view cho MỌI draw
+// trong pass 3D — kể cả immediate mode (ENGINE_LANDMINES §9). Set đúng viewPos
+// rồi vẫn sai, vì lúc đó là world trừ view.
+//
+// Trong view space camera Ở GỐC, nên vector nhìn là normalize(-fragPosition) và
+// không cần uniform nào. Cách kiểm dứt điểm: vẽ length(fragPosition) — nó phải
+// bằng khoảng cách từ vật tới GỐC nếu là world, và tới CAMERA nếu là view. Hai
+// giá trị chênh nhau hàng chục mét nên không thể nhầm; fract(fragPosition) thì
+// vẽ ra lưới đẹp trong cả hai trường hợp và không phân biệt được gì.
+//
+// u_lightDir cũng vậy: set = normalize hướng đối của
+// Environment_GetSunDirection(), xem CORE_ISSUES.md Item 10 và ví dụ trong
+// tube_skill.c/stone_prison_skill.c.
 // ============================================================
 
 #ifdef GL_ES

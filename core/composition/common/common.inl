@@ -31,7 +31,6 @@
 #include "vc_ground_wave.inl"
 #include "vc_spark_trail.inl"
 #include "vc_converge_motes.inl"
-#include "vc_beam.inl"
 #include "vc_portal_disc.inl"
 #include "vc_shock_ring.inl"
 #include "vc_impact_dust.inl"

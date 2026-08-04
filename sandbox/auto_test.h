@@ -1,6 +1,8 @@
 #ifndef SANDBOX_AUTO_TEST_H
 #define SANDBOX_AUTO_TEST_H
 
+#include "raylib.h"
+
 #include <stdbool.h>
 
 // Automated self-test harness, active only when the env var WUXING_AUTOTEST
@@ -36,5 +38,16 @@ bool AutoTest_ExpectFloatNear(float actual, float expected, float tol, const cha
 // Optional visual artifact for later inspection (e.g. via Read on the PNG) —
 // saved under autotest_output/<name>.png.
 void AutoTest_SaveScreenshot(const char *name);
+
+// CROPPED to the effect, and prefer this one.
+//
+// A full-screen grab of a 1.6 m column in a 1280 px arena shot is a few dozen
+// pixels of subject in a field of black, and judging an EDGE off that is how
+// several wrong calls got made: at that scale a soft gradient and a hard step
+// are the same handful of pixels. This projects a world-space sphere
+// (centre + radius) through the camera, pads it, clamps to the screen and
+// crops, so the saved PNG is the effect and nothing else.
+void AutoTest_SaveScreenshotWorld(const char *name, Camera3D cam, Vector3 center,
+                                  float radius);
 
 #endif // SANDBOX_AUTO_TEST_H

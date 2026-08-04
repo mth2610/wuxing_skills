@@ -107,6 +107,19 @@ typedef struct {
   float phase;
   float timeOffset; // procedural only — decorrelates octaves in the time axis
   float latticeMul; // procedural only — period multiplier along the body
+  // Procedural only — period multiplier AROUND the section. 0 means 1.
+  //
+  // Without this, every layer shares f->latticeAround, and value noise puts its
+  // extrema ON lattice nodes: two octaves then pile their bumps onto the SAME
+  // meridians and reinforce into a fixed set of ribs running the length of the
+  // body. Ribs that slide are read as a screw thread, not as churn — the smoke
+  // column shipped with 6 of them and looked like it was spinning. Two octaves
+  // that share an around-period are not two octaves.
+  //
+  // Keep the product an integer count the section can resolve: the lattice
+  // wraps at u = 1 for any integer, but fewer than ~2.5 radial segments per
+  // lobe aliases into a rotating polygon.
+  float latticeAroundMul;
   UVEnvelopeKind env;
   float envStart;
   float envEnd;

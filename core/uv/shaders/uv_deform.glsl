@@ -69,6 +69,7 @@
 #define UV_ENV_BELL       2
 #define UV_ENV_SMOOTHSTEP 3
 #define UV_ENV_HEAD_WELD  4
+#define UV_ENV_HEAD_WELD_SQ 5
 
 // ------------------------------------------------------------------
 // ENVELOPE — the along-surface gate. Weights the wave amplitude here and the
@@ -93,6 +94,8 @@ float UVDeform_Envelope(int kind, float c, float start, float end)
     if (kind == UV_ENV_NONE) return 1.0;
     if (kind == UV_ENV_SMOOTHSTEP) return smoothstep(start, end, c);
     if (kind == UV_ENV_HEAD_WELD) return smoothstep(start, end, c) * c;
+    // S(V) = V^p with p = 2 — see UV_ENV_HEAD_WELD_SQ in core/uv/uv_deform.h.
+    if (kind == UV_ENV_HEAD_WELD_SQ) return smoothstep(start, end, c) * c * c;
 
     float span = end - start;
     float k = clamp((c - start) / (abs(span) < 0.000001 ? 0.000001 : span), 0.0, 1.0);

@@ -85,7 +85,6 @@ MANIFEST_CATEGORIES = ["fire", "water", "wood", "metal", "earth", "taiji", "comm
 # contract shown in the manifest. FlameVolume is deliberately marked legacy:
 # P2 replaces its frame-fed emitter with Spawn/Stop/Kill handles.
 LIFECYCLE_SPECS = {
-    "VFX_ComposeBeam":               ("draw",    "timed",      "continuous"),
     "VFX_ComposeCharacterAura":      ("emitter", "persistent", "persistent"),
     "VFX_ComposeChargeConverge":     ("draw",    "timed",      "continuous"),
     "VFX_ComposeConvergeMotes":      ("draw",    "timed",      "continuous"),

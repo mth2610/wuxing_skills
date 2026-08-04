@@ -95,6 +95,7 @@ PROJECT_SOURCE_FILES   := main.c \
                           sandbox/vfx_test.c \
                           sandbox/skill_debugger.c \
                           sandbox/auto_test.c \
+    sandbox/colour_probe.c \
                           sandbox/visual_verify.c \
                           sandbox/pool_stats.c \
                           core/atmosphere.c \
@@ -401,8 +402,13 @@ copy_project_resources: create_temp_project_dirs
 	@# These are #include'd by shield_shell.fs and aura_shell.fs, which ARE copied
 	@# above — without this pair they resolve to nothing and the shader fails to
 	@# compile, which raylib answers with the DEFAULT shader at a nonzero id.
-	@# NOTE: core/trails/shaders/ is still not copied here at all (pre-existing),
-	@# so trail_deform.fs already falls back to the classic pipeline on Android.
+	@# core/trails/shaders IS copied now — trail_volume.vs/.fs is not optional the
+	@# way trail_deform.fs was. Missing, the volume tube falls back to the default
+	@# shader and renders as an opaque solid: no pattern product, no end fade, no
+	@# edge falloff. The effect still draws, so nothing reports a shader problem.
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/core/trails/shaders
+	cp -f core/trails/shaders/*.vs $(PROJECT_BUILD_PATH)/assets/core/trails/shaders/ 2>/dev/null || true
+	cp -f core/trails/shaders/*.fs $(PROJECT_BUILD_PATH)/assets/core/trails/shaders/ 2>/dev/null || true
 	mkdir -p $(PROJECT_BUILD_PATH)/assets/core/uv/shaders
 	cp -f core/uv/shaders/*.glsl $(PROJECT_BUILD_PATH)/assets/core/uv/shaders/ 2>/dev/null || true
 	mkdir -p $(PROJECT_BUILD_PATH)/assets/core/particles/shaders/gpu

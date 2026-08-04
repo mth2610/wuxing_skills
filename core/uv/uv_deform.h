@@ -60,6 +60,15 @@ typedef enum {
   UV_ENV_BELL,       // raised cosine: zero value AND zero slope at both ends
   UV_ENV_SMOOTHSTEP, // the GLSL builtin
   UV_ENV_HEAD_WELD,  // smoothstep(start, end, c) * c — excursion exactly 0 at c=0
+  // Same weld, but c^2 — the reference's S(V) = V^p with p > 1.
+  //
+  // HEAD_WELD is p = 1: past `end` the smoothstep saturates and what remains is
+  // exactly c. A linear ramp spreads the excursion evenly over the whole body,
+  // which is right for welding a trail to its emitter and wrong for anything
+  // that is supposed to stay tight at the source and open out near the far end.
+  // A rising column is the second case: p = 1 gave a body that churned as hard
+  // at knee height as at the top.
+  UV_ENV_HEAD_WELD_SQ,
   UV_ENV_KIND_COUNT
 } UVEnvelopeKind;
 

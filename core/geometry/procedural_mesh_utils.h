@@ -76,232 +76,9 @@ Vector3 ProceduralMesh_BezierTangent(Vector3 p0, Vector3 p1, Vector3 p2,
  * RenderCustom3DTube gốc, chỉ là được tham số hóa để mỗi skill có "chữ ký"
  * riêng.
  */
-/* HỒ SƠ HÌNH DẠNG — mỗi cái một công thức, không phải một công thức bị bẻ.
- *
- * Trước 03/08/2026 chỉ có MỘT đường bao, `0.3 + 0.7*sqrt(sin(t*PI))`, cộng hai
- * chóp nón dán vào hai đầu. Đó là thấu kính ĐỐI XỨNG với đầu bút chì: không
- * phải giọt nước (giọt nước bất đối xứng), cũng không phải ống nước (ống có bán
- * kính hằng và hai đầu mở). Mọi consumer đều nhận đúng hình đó dù cần hình gì. */
-typedef enum
-{
-  /* Đường bao cũ, giữ nguyên từng float. Giá trị 0 nên caller không khai báo
-   * gì thì không đổi gì. */
-  PM_PROFILE_LEGACY_CAPSULE = 0,
-  /* GIỌT NƯỚC thật: mũi nhọn ở ĐUÔI thon theo luật luỹ thừa, nối liền vào CHỎM
-   * CẦU ở đầu. Bất đối xứng — đó là thứ làm nó là giọt nước. Chỏm cầu tự khép,
-   * nên hình này KHÔNG cần nắp: cái nắp nón chính là đầu bút chì nó thay thế. */
-  PM_PROFILE_DROPLET,
-  /* ỐNG: bán kính hằng, hai đầu MỞ. Mọi hình dạng còn lại đến từ deform. */
-  PM_PROFILE_TUBE,
-  /* CON NHỘNG thật: thân TRỤ + hai NỬA CẦU. Đối xứng, tự khép, mặt liền tại
-   * hai chỗ nối. Đừng nhầm với PM_PROFILE_LEGACY_CAPSULE, vốn là thấu kính. */
-  PM_PROFILE_CAPSULE,
-  /* Không phải hồ sơ — là SỐ LƯỢNG. Kiểm biên với cái này, đừng kiểm với hồ sơ
-   * cuối cùng theo tên. */
-  PM_PROFILE_COUNT
-} PMShapeProfile;
-
-typedef struct
-{
-  /* Hồ sơ hình dạng. 0 = PM_PROFILE_LEGACY_CAPSULE. DROPLET và TUBE là đường
-   * bao HOÀN CHỈNH: tailTaper/headGrowth/capsule* bên dưới bị bỏ qua, vì nhân
-   * thêm vào là bẻ lại đúng cái hình vừa định nghĩa. */
-  PMShapeProfile profile;
-  /* DROPLET: độ nhọn mũi đuôi (1 = tuyến tính, >1 = nhọn hơn). 0 = 1.6. */
-  float dropletTailSharp;
-  /* DROPLET: phần chiều dài dành cho chỏm cầu ở đầu. 0 = 0.34. */
-  float dropletHeadFrac;
-  /* CAPSULE: phần chiều dài mỗi chỏm cầu chiếm. 0 = 0.25; 0.5 = hình cầu. */
-  float capsuleCapFrac;
-
-  /* --- Profile bán kính theo chiều dài ống (capsule + taper) --- */
-  float capsuleTailExp; /* hệ số mũ trong sqrtf(sin(t*PI)) bo đuôi. 1.0 = mặc
-                           định (nước) */
-  /* Sàn của đường bao capsule. 0 = giữ 0.3 như cũ (GIỌT NƯỚC: bóp cả hai đầu,
-   * phình giữa — đúng cho dòng nước và beam, SAI cho một cột khói, vốn phải là
-   * ống hoặc phễu). Đặt 1.0 để TẮT hẳn phần bo, cho ống thành trụ thật.
-   *
-   *   baseCapsule = floor + (1 - floor) * sqrt(sin(t*PI)) * capsuleTailExp
-   *
-   * Append-only và mặc định 0, nên mọi caller cũ không đổi một float nào. */
-  float capsuleFloor;
-
-  /* TẮT hai nắp đầu/đuôi. false (mặc định, kể cả với config {0}) = vẽ nắp như
-   * trước, nên mọi caller cũ không đổi gì.
-   *
-   * Cờ NGHỊCH đảo là cố ý: `drawCaps` mặc định false sẽ âm thầm bỏ nắp của mọi
-   * config khởi tạo bằng {0}. Một ống khói mở hai đầu cần cái này; một tia nước
-   * thì không. LƯU Ý: TrailEntity.tubeCaps là một trường CHẾT — nó được lưu ở
-   * SpawnTrailEntity rồi không ai đọc, nên nắp vẫn luôn được vẽ. Điều khiển
-   * thật nằm ở đây. */
-  bool suppressCaps;
-  float tailTaperMin;   /* tỉ lệ bán kính tối thiểu ở đuôi (t=0). VD 0.15 = đuôi
-                           còn 15% */
-  float tailTaperMax;   /* tỉ lệ bán kính ở đầu khi taper áp dụng hết (t=1),
-                           thường 1.0 */
-  float headGrowth;     /* headWeight = 1 + headGrowth * t. 0 = không phình đầu */
-
-  /* --- Wobble: xoay frame (Right/Up) quanh trục tangent dọc path + theo thời
-   * gian --- */
-  float wobbleAmplitude; /* biên độ góc xoay (radian) */
-  float wobbleFrequency; /* tần số dao động theo t (dọc path) */
-  float wobbleSpeed;     /* tốc độ animate theo thời gian */
-
-  /* --- Deform bề mặt: 2 lớp sóng sin chồng lên nhau (tạo gợn nước/lửa lăn tăn)
-   * --- */
-  float deform1Amp, deform1FreqT, deform1FreqPhi, deform1Speed;
-  float deform2Amp, deform2FreqT, deform2FreqPhi, deform2Speed;
-
-  /* --- End-cap apex: khoảng đẩy ra của đỉnh chóp bo đầu/đuôi, theo % bán kính
-   * tại đó --- */
-  /* PARALLEL TRANSPORT cho khung mặt cắt. Mặc định false = giữ nguyên hành vi
-   * cũ (dựng lại khung từ world-up ở MỖI lát) cho water stream đang chạy.
-   *
-   * Vì sao cần: khung dựng lại từ một vector tham chiếu toàn cục làm ROLL của
-   * mặt cắt trở thành hàm của hướng tangent so với world-up. Trên đường CONG,
-   * các lát liên tiếp có roll khác nhau -> UV quấn ở góc khác nhau -> texture
-   * bị cắt xoắn dọc thân. Đo được: 14% một vòng quấn trên đường cong 3 trục,
-   * và giật gần 1/4 vòng khi tangent vượt ngưỡng |y| > 0.99.
-   *
-   * Water stream chạy trên Bezier gần thẳng nên chưa bao giờ lộ. Trail thì
-   * cong nhiều — bật cái này cho mọi path cong. */
-  bool useTransportFrame;
-
-  /* --- Biến dạng đỉnh bằng NOISE, thay cho hai lớp sin ở trên ---
-   *
-   * deform1/deform2 là hai sóng sin: rẻ, nhưng chúng TUẦN HOÀN, nên bề mặt lăn
-   * tăn theo một nhịp đều mà mắt bắt được ngay là nhân tạo. Noise không có nhịp.
-   *
-   * Trường noise dựng bằng lattice có chu kỳ (giống scripts/gen_volume_trail_
-   * textures.py), nên nó LÁT LIỀN quanh mặt cắt — biến dạng không tạo đường nối
-   * dọc thân ống. Đó là lý do nó nằm ở đây chứ không phải một hàm rand() tại chỗ.
-   *
-   * noiseAmp 0 = tắt. ~0.15 = gợn nhẹ. ~0.4 = cuộn trào rõ. */
-  float noiseAmp;   /* biên độ, theo tỉ lệ bán kính tại điểm đó */
-  float noiseScale; /* số ô lattice dọc thân; cao hơn = chi tiết nhỏ hơn */
-  float noiseSpeed; /* tốc độ trôi của trường theo thời gian */
-  /* Dịch trường noise DỌC THÂN ống, tính bằng số ô lattice.
-   *
-   * Không có nó, noise được lấy mẫu tại t = i/segments — VỊ TRÍ CHUẨN HOÁ dọc
-   * ống — nên các chỗ phình nằm ở tỉ lệ cố định (luôn ở 30%, 60%...) và đi theo
-   * ống như một hình đã bị bóp sẵn rồi kéo lê. Trục thời gian làm nó thở, nhưng
-   * thở không phải chảy.
-   *
-   * Cho caller đẩy giá trị này theo quãng đường đã đi thì các chỗ phình chạy
-   * DỌC ống, tức vật chất đi qua chứ không phải hình bị biến dạng cố định. Cùng
-   * một bài học với UV: bất cứ thứ gì neo vào một đầu ĐANG DI CHUYỂN đều bị đọc
-   * là vẽ dán lên. */
-  float noiseOffset;
-
-  /* Nguồn noise: ẢNH đã load, thay cho trường băm thủ tục.
-   *
-   * Vì sao đáng đổi, ngoài chuyện "dùng asset cho đúng":
-   *  - Ba KÊNH của volume_noise.png là ba trường ĐỘC LẬP, sinh ra để không
-   *    tương quan. Một lần lấy mẫu cho ra cả hai octave (R lớn, G mịn), thay
-   *    vì hai lần gọi hàm băm với hai hạt giống khác nhau.
-   *  - Nghệ sĩ thay được file mà không đụng code.
-   *  - Và đây là ĐÚNG dữ liệu mà đường bake + vertex shader sẽ dùng, nên khi
-   *    chuyển sang GPU thì hình dạng không đổi — chỉ chỗ tính đổi.
-   *
-   * NULL = quay về trường băm thủ tục, giữ nguyên hành vi cũ. Ảnh phải là
-   * R8G8B8A8 và LÁT LIỀN cả hai trục (script sinh ra đã bảo đảm điều đó). */
-  const unsigned char *noisePixels;
-  int noiseImgW, noiseImgH;
-
-  /* Trường biến dạng đầy đủ (core/deform/mesh_deform.h). NULL = dựng tại chỗ
-   * từ noiseAmp/noiseScale/noiseSpeed/noisePixels ở trên, giữ nguyên hành vi
-   * cũ từng float. Cấp trường riêng khi cần nhiều hơn hai octave, cần envelope
-   * dọc thân (khói hàn ở gốc, xoè lên cao), hoặc cần đẩy lệch khỏi normal thay
-   * vì co giãn bán kính. */
-  const MeshDeformField *noiseField;
-
-  float tailApexFactor; /* VD 0.25 = đuôi nhọn vừa. Số nhỏ -> đuôi nhọn hơn */
-  float headApexFactor; /* VD 0.8  = đầu bo tròn đầy. Số lớn -> đầu phồng tròn
-                           hơn */
-} TubeMeshConfig;
-
-/* Trả về config mặc định khớp với hành vi gốc của Water Stream (tube_skill.c).
- */
-TubeMeshConfig ProceduralMesh_DefaultTubeConfig(void);
-
-/*
- * --- Lớp 3: Dữ liệu mesh đã build (ring/normal + thông tin 2 đầu) ---
- * Build 1 lần/frame/emitter, rồi đưa vào Draw. Tách Build/Draw để skill có thể
- * build trước rồi xử lý thêm (vd raycast theo ring) nếu cần, trước khi vẽ.
- * tailApexFactor/headApexFactor được copy từ TubeMeshConfig lúc Build, nên
- * Draw không cần nhận lại cfg — mỗi skill vẫn giữ "hình dáng" apex riêng.
- */
-typedef struct
-{
-  Vector3 rings[TUBE_MESH_MAX_SEGMENTS + 1][TUBE_MESH_MAX_RADIAL];
-  Vector3 normals[TUBE_MESH_MAX_SEGMENTS + 1][TUBE_MESH_MAX_RADIAL];
-  Vector3 tailCenter, headCenter;
-  Vector3 tailTangent, headTangent;
-  float tailRadius, headRadius;
-  int segments;   /* số lát dọc thực tế dùng (<= TUBE_MESH_MAX_SEGMENTS) */
-  int radialSegs; /* số lát quanh thực tế dùng (<= TUBE_MESH_MAX_RADIAL) */
-
-  /* Lưu lại từ TubeMeshConfig lúc Build, để Draw dựng end-cap đúng "hình dáng"
-   * skill đã chọn (đuôi nhọn/tù, đầu bo nhiều/ít) mà không cần truyền lại cfg.
-   */
-  float tailApexFactor;
-  bool suppressCaps;
-  float headApexFactor;
-} TubeMeshData;
-
-/*
- * Build toàn bộ ring + normal dọc theo đường Bezier p0..p3, áp dụng config
- * biến đổi hữu cơ. Đây là phần thay thế toàn bộ loop "for i <= TUBE_SEGMENTS"
- * trong RenderCustom3DTube gốc.
- *
- * - baseRadius:    bán kính gốc (chưa nhân hệ số profile/taper/deform)
- * - flowProgress:  0..1, phần đường đã "chảy" tới (vd tia nước đang bay tới
- * đích)
- * - time:          thời gian hiện tại (GetTime()) dùng để animate wobble/deform
- * - segments/radialSegs: độ chi tiết mesh (phải <= giới hạn MAX ở trên)
- * - cfg: NULL để dùng ProceduralMesh_DefaultTubeConfig()
- */
-void ProceduralMesh_BuildTube(TubeMeshData *out, Vector3 p0, Vector3 p1,
-                              Vector3 p2, Vector3 p3, float baseRadius,
-                              float flowProgress, float time, int segments,
-                              int radialSegs, const TubeMeshConfig *cfg);
-
-/*
- * Build tube chạy dọc theo một phân đoạn từ startT đến endT của một đường đi (path)
- * gồm nhiều điểm (pathPoints). Tự động tính toán Frenet frame và deform.
- */
-void ProceduralMesh_BuildTubeAlongPath(TubeMeshData *out, const Vector3 *pathPoints,
-                                      int pathCount, float baseRadius,
-                                      float startT, float endT, float time,
-                                      int segments, int radialSegs,
-                                      const TubeMeshConfig *cfg);
-
-
-/*
- * Vẽ tube đã build: quad strip dọc thân + 2 end-cap triangle fan (đuôi + đầu).
- * Phải gọi giữa BeginShaderMode()/EndShaderMode() và
- * rlColor4ub(255,255,255,255) đã được set trước đó theo quy tắc 9.1 trong API
- * doc.
- *
- * - uvLengthScale: độ dài UV.v dọc thân ống, dùng để chỉnh tốc độ "trôi" của
- *   texture flow trong fragment shader (giống TUBE_UV_LENGTH_SCALE gốc).
- */
-void ProceduralMesh_DrawTube(const TubeMeshData *data, float uvLengthScale);
-
-/*
- * Như trên, cộng thêm OFFSET cho UV.v — thứ làm texture CUỘN dọc thân ống.
- *
- * Bản gốc tính v = i/segments cứng, nên một cái ống không bao giờ có thể được
- * nhìn thấy là đang chảy: texture dán chết vào mesh và chỉ đi theo mesh. Với
- * water stream (tia nước bay tới đích rồi tắt) điều đó không lộ; với một trail
- * thể tích thì dòng chảy CHÍNH LÀ hiệu ứng.
- *
- * uvOffset tính bằng số lần lặp texture, cộng thẳng vào v. Cho nó chạy theo
- * thời gian là có dòng cuộn; cho nó ÂM là cuộn ngược chiều bay, thứ đọc ra là
- * "bị bỏ lại phía sau" thay vì "bị đẩy đi trước mặt".
- */
-void ProceduralMesh_DrawTubeEx(const TubeMeshData *data, float uvLengthScale,
-                               float uvOffset);
+/* Bezier — tiện ích đường cong dùng chung, không thuộc hình nào. */
+Vector3 ProceduralMesh_BezierPoint(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t);
+Vector3 ProceduralMesh_BezierTangent(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t);
 
 /* ===========================================================================
  * BA LOẠI MESH QUÉT ĐỘC LẬP — mỗi hình một module, không dùng chung gì
@@ -318,6 +95,29 @@ void ProceduralMesh_DrawTubeEx(const TubeMeshData *data, float uvLengthScale,
 /* ỐNG NƯỚC — r(t) = 1 — hai đầu MỞ */
 typedef struct
 {
+  /* ĐƯỜNG BAO BÁN KÍNH — r(t) = tailFrac + (1 - tailFrac) * t^pow
+   *
+   * Mặc định 0/0 nghĩa là tailFrac = 1, tức r(t) = 1: ống thẳng, đúng như
+   * trước. Đặt tailFrac < 1 thì hình nở ra từ đuôi (t=0) lên đầu (t=1), và
+   * radiusPow > 1 dồn chỗ nở về phía đầu — cái phễu.
+   *
+   * Đây là chỗ ĐÚNG để làm phễu. Width envelope của trail thì không: nó dựng
+   * cả ống ở MỘT bán kính (halfWidth của đầu), nên một envelope mỏng-ở-đầu co
+   * toàn bộ khối lại chứ không tạo hình. */
+  float radiusTailFrac; /* bán kính ở đuôi, tỉ lệ so với đầu. 0 = 1.0 */
+  float radiusPow;      /* p trong t^p. 0 = 1.0 (tuyến tính) */
+
+  /* UỐN TRỤC — mét. Đẩy CẢ MẶT CẮT sang ngang, không phải đẩy từng đỉnh.
+   *
+   * Đây là thứ mà biến dạng bề mặt không bao giờ làm được. Bề mặt gợn thì cái
+   * ống vẫn thẳng, chỉ sần lên; muốn thân uốn lượn như cột khói thật thì phải
+   * dịch chính cái TRỤC. Ảnh khung dây của bản gốc cho thấy rõ: hai ba khúc
+   * uốn lớn suốt chiều cao, mặt cắt vẫn tròn đều.
+   *
+   * Cần noiseField (không dùng preset): lấy hai lát u cố định của cùng trường
+   * đó làm hai vô hướng khử tương quan cho hai trục ngang. 0 = tắt. */
+  float centerlineAmp;
+
   /* Nhiễu động khung mặt cắt quanh trục tiếp tuyến. */
   float wobbleAmplitude, wobbleFrequency, wobbleSpeed;
   /* Hai lớp sóng sin trên bề mặt. TUẦN HOÀN theo cả t và phi, tức một đường
@@ -348,6 +148,9 @@ typedef struct
   Vector3 tailCenter, headCenter;
   Vector3 tailTangent, headTangent;
   float tailRadius, headRadius;
+  /* Bán kính danh nghĩa (trước biến dạng) của từng vành — để chỗ vẽ biết chu
+   * vi thật mà chọn số lát texture QUANH thân cho khớp mét. */
+  float ringRadius[TUBE_MESH_MAX_SEGMENTS + 1];
   int segments;
   int radialSegs;
 } PMTubeMesh;
@@ -358,12 +161,17 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints, int pathC
                           int segments, int radialSegs, const PMTubeConfig *cfg);
 void PMTube_Draw(const PMTubeMesh *data, float uvLengthScale);
 void PMTube_DrawEx(const PMTubeMesh *data, float uvLengthScale, float uvOffset);
+/* Như DrawEx nhưng alpha tắt dần ở hai đầu, mang bằng MÀU ĐỈNH (không phải
+ * uniform — xem chú thích tại chỗ định nghĩa). Caller không gọi rlColor4ub
+ * trước: màu nền đi vào qua `base`. */
+void PMTube_DrawFaded(const PMTubeMesh *data, float uvLengthScale, float uvOffset,
+                      Color base, float fadeInEnd, float fadeOutStart,
+                      float metresPerTile);
 
 /* GIỌT NƯỚC — mũi nhọn ở đuôi + chỏm cầu ở đầu, tự khép */
 typedef struct
 {
   float tailSharp; /* độ nhọn mũi đuôi. 0 = 1.6 */
-  float headFrac;  /* phần chiều dài cho chỏm cầu ở đầu. 0 = 0.34 */
   /* Nhiễu động khung mặt cắt quanh trục tiếp tuyến. */
   float wobbleAmplitude, wobbleFrequency, wobbleSpeed;
   /* Hai lớp sóng sin trên bề mặt. TUẦN HOÀN theo cả t và phi, tức một đường

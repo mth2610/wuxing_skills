@@ -200,30 +200,6 @@ void VFX_ComposeShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat,
 void VFX_ComposePortalDisc(Vector3 center, Vector3 normal, VC_MaterialId mat,
                            float radius, float t01);
 
-// ── PRIMARY. Beam ───────────────────────────────────────────────────────────
-// The sustained line, and the library had nothing that drew one:
-// `DrawRibbonEnergyField` had one consumer and `core/vfx_proc_ray.h` had none,
-// and both are STRIPS — a beam of camera-facing cards is the same shape from
-// every angle and vanishes when you look along it, which is exactly when a beam
-// aimed at you should be at its most emphatic.
-//
-// So it is a swept TUBE, the same one P1 promoted. It is not
-// `VFX_ComposeVolumeTrail` with different arguments because a volume trail's
-// path is HISTORY — where an emitter has been — and a beam's is a straight line
-// between two points that both exist right now. No emitter, nothing to remember,
-// so no pool and no handle.
-//
-// IMMEDIATE MODE: call every frame the beam is held, `t01` running 0→1 over its
-// life. It FIRES UP over the first 14% (the far end travels out from `from`, so
-// the beam has a source), holds, and cuts out over the last 14%.
-//
-// `width` is the shaft's FULL width in metres at its widest — a CEILING: the
-// drawn width is also capped against the beam's OWN length at 1:10, so a short
-// beam is a thin lance rather than a stub, and the fire-up extends instead of
-// inflating. Below 2 cm of separation nothing is drawn (announced once): a beam
-// with no length has no direction, and normalising it returns garbage silently.
-void VFX_ComposeBeam(Vector3 from, Vector3 to, VC_MaterialId mat,
-                     float width, float t01);
 
 // ── PRIMARY. Debris shards ──────────────────────────────────────────────────
 // Angular chips thrown off an impact or a break. NOT sprites, and that is the

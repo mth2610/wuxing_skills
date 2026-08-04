@@ -153,6 +153,7 @@ float UVDeform_Envelope(UVEnvelopeKind kind, float c, float start, float end) {
   if (kind == UV_ENV_NONE) return 1.0f;
   if (kind == UV_ENV_SMOOTHSTEP) return SmoothStep(start, end, c);
   if (kind == UV_ENV_HEAD_WELD) return SmoothStep(start, end, c) * c;
+  if (kind == UV_ENV_HEAD_WELD_SQ) return SmoothStep(start, end, c) * c * c;
 
   float span = end - start;
   float k = (c - start) / (fabsf(span) < 0.000001f ? 0.000001f : span);

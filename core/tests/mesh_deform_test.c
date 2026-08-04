@@ -1,7 +1,7 @@
 // core/deform — mesh displacement, the vertex-space twin of core/uv.
 //
 // WHAT THIS CAN SEE: the arithmetic, and specifically the one claim the move
-// rests on — that lifting the noise deform out of core/geometry/pm_sweep_legacy.inl and
+// rests on — that lifting the noise deform out of core/geometry/pm_tube.inl and
 // into a module did not change a single float, for BOTH live noise sources:
 // the image path (the trail system's tubes) and the procedural lattice (the
 // beam). Two shipped effects depend on those numbers.
@@ -104,7 +104,7 @@ static void BuildNoise(void) {
 
 // ── 1. The pm_tube migration is BIT-IDENTICAL, on both noise sources ─────────
 //
-// OLD is core/geometry/pm_sweep_legacy.inl as it stood before core/deform existed:
+// OLD is core/geometry/pm_tube.inl as it stood before core/deform existed:
 //   deform += noiseAmp * ((n1 - 0.5) * 2.0 + (n2 - 0.5) * 0.9)
 //
 // NEW routes the same two octaves through MeshDeform_Evaluate. The grouping is
@@ -310,21 +310,46 @@ static void Test_MirrorStillMatchesSource(void) {
         "concept, one enum");
 
   // The consumer.
-  const char *pm = "core/geometry/pm_sweep_legacy.inl";
-  CHECK(FileHas(pm, "deform += PMTubeDeformNoise("),
-        "pm_tube.inl calls the module");
-  CHECK(FileHas(pm, "return d.radiusDelta;"),
-        "...and adds radiusDelta, never (radiusScale - 1)");
+  // Each shape module carries its own deform hookup — the shapes are
+  // independent, so there is no shared sweep left to hold it.
+  const char *pm = "core/geometry/pm_tube.inl";
+  CHECK(FileHas(pm, "deform += PMTubeShapeDeformNoise(") &&
+            FileHas("core/geometry/pm_droplet.inl", "deform += PMDropletDeformNoise(") &&
+            FileHas("core/geometry/pm_capsule.inl", "deform += PMCapsuleDeformNoise("),
+        "all three shape modules call the deform module");
+  CHECK(FileHas(pm, "return d.radiusDelta * extAmp;") &&
+            !FileHas(pm, "d.radiusScale - 1"),
+        "...and add radiusDelta, never (radiusScale - 1)");
+  // noiseAmp is documented as THE amplitude. The `field != NULL` branch used to
+  // drop it, so the smoke column's 0.34 (re-pushed every frame, and exposed as
+  // a tunable) reached nothing and the field ran at 1.0 — the mesh then pinched
+  // to zero radius and threw vertices four ring-gaps out. A parameter accepted
+  // and silently ignored has no symptom but "it looks wrong".
+  CHECK(FileHas(pm, "} else if (cfg->noiseAmp > 0.0f) { extAmp = cfg->noiseAmp; }"),
+        "a caller-supplied field is scaled by noiseAmp too, not just the preset");
+  // And the two brakes. A deform field knows nothing about the mesh it bends:
+  // it returns [-1,1] whether the rings are 5 cm or 5 m apart. Without a budget
+  // measured in the GEOMETRY's units the surface self-intersects.
+  CHECK(FileHas(pm, "if (deform < PM_TUBE_MIN_RADIUS_FRAC) deform = PM_TUBE_MIN_RADIUS_FRAC;"),
+        "the section cannot be pinched shut or turned inside out");
+  CHECK(FileHas(pm, "float offsetLimit = ringGap * PM_TUBE_MAX_OFFSET_RINGS;"),
+        "and the offset is capped against the RING GAP, not the radius — "
+        "crossing rings is what tears the surface into flat plates");
+  // Normals are written before the deform runs, so they describe the smooth
+  // cylinder rather than the bent surface: lighting says one shape, the
+  // silhouette says another, and the body reads as polished stone.
+  CHECK(FileHas(pm, "Vector3 n = Vector3CrossProduct(along, around);") &&
+            FileHas(pm, "if (Vector3DotProduct(n, out->normals[i][j]) < 0.0f)"),
+        "normals are rebuilt from the deformed grid, with the outward sign kept");
   CHECK(!FileHas(pm, "static float PMTubeSampleImg") &&
             !FileHas(pm, "static float PMTubeNoise"),
         "the samplers MOVED, they were not copied — a copy would drift and the "
         "two would silently stop agreeing");
   CHECK(FileHas(pm, "MESH_DEFORM_PRESET_TUBE_CHURN") &&
             FileHas(pm, "MESH_DEFORM_PRESET_BEAM_RIPPLE"),
-        "both live noise sources are served by named presets");
+        "both noise sources are served by named presets");
   CHECK(FileHas("core/geometry/procedural_mesh_utils.h", "const MeshDeformField *noiseField;"),
-        "TubeMeshConfig can be handed a full field — append-only, so every "
-        "existing caller is untouched");
+        "every shape config can be handed a full deform field");
 
   // Build wiring: a source that is not compiled is not a module.
   CHECK(FileHas("CMakeLists.txt", "core/deform/mesh_deform.c") &&

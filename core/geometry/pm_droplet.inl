@@ -86,7 +86,7 @@ void PMDroplet_BuildBezier(PMDropletMesh *out, Vector3 p0, Vector3 p1,
         Vector3 right = Vector3Normalize(Vector3CrossProduct(up, tangent));
         up = Vector3CrossProduct(tangent, right);
 
-        float baseCapsule = PMDropletRadius(t, cfg->tailSharp, cfg->headFrac);
+        float baseCapsule = PMDropletRadius(t, cfg->tailSharp);
         float tailTaper = 1.0f;
         float capsuleCurve = baseCapsule * tailTaper;
         float headWeight = 1.0f;
@@ -245,7 +245,7 @@ void PMDroplet_BuildAlongPath(PMDropletMesh *out, const Vector3 *pathPoints,
         prevTangent = tangent;
         haveCarried = true;
 
-        float baseCapsule = PMDropletRadius(t, cfg->tailSharp, cfg->headFrac);
+        float baseCapsule = PMDropletRadius(t, cfg->tailSharp);
         float tailTaper = 1.0f;
         float capsuleCurve = baseCapsule * tailTaper;
         float headWeight = 1.0f;
@@ -329,7 +329,6 @@ void PMDroplet_DrawEx(const PMDropletMesh *data, float uvLengthScale,
 PMDropletConfig PMDroplet_DefaultConfig(void) {
   PMDropletConfig cfg = {0};
   cfg.tailSharp = 1.6f;
-  cfg.headFrac = 0.34f;
   cfg.useTransportFrame = true;
   return cfg;
 }
