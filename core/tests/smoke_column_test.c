@@ -207,8 +207,22 @@ static void Test_MirrorStillMatchesSource(void) {
   // noise coordinate in real metres instead of a fraction of its own
   // currently-fluctuating length. See noiseWavelength's doc comment in
   // procedural_mesh_utils.h.
+  //
+  // `t` back for the SURF argument, 05/08/2026 (same day, second patch) —
+  // the rename above went one variable too far: PMTubeAxisScalar's third
+  // argument lands in surf.y, which MeshDeformLayer.env/envStart/envEnd
+  // read as the along-body ENVELOPE gate and must stay the true geometric
+  // fraction. Passing tNoise there too (this test asserted exactly that)
+  // let the trail's first live noiseWavelength user prove the bug: with
+  // tNoise < 1, UV_ENV_HEAD_WELD_SQ = smoothstep(...)*c*c reads a shrunk
+  // `c`, squaring the shrink into the envelope's magnitude everywhere
+  // along the body, not just delaying where it opens — see
+  // core/tests/pm_tube_envelope_coordinate_test.c for the numbers. `nvC`
+  // (mat.y, the material/noise coordinate) is correctly still built from
+  // tNoise — only the surf.y slot moves back to `t`. Column is unaffected
+  // either way (tNoise == t here, noiseWavelength stays 0).
   CHECK(FileHas("core/geometry/pm_tube.inl", "float nvC = tNoise + cfg->noiseOffset * 0.45f;") &&
-            FileHas("core/geometry/pm_tube.inl", "0.30f * PMTubeAxisScalar(cfg->noiseField, 0.41f, tNoise, nvC * 2.6f, time, right)"),
+            FileHas("core/geometry/pm_tube.inl", "0.30f * PMTubeAxisScalar(cfg->noiseField, 0.41f, t, nvC * 2.6f, time, right)"),
         "the bend has two scales and drifts slowly, so the sway is not stiff");
   // The texture. sin(TAU*(ku*u + kv*v)) is a plane wave in direction (ku, kv),
   // so drawing both from one range makes most modes DIAGONAL — 45-degree

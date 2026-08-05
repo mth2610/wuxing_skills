@@ -838,7 +838,19 @@ void VFXTest_Draw3D(void)
                   s_vfxFixtureLastTime[24] = s_meshTime;
                   s_vfxFixtureXf[24] = MatrixTranslate(fixturePos.x, fixturePos.y, fixturePos.z);
                   if (s_vfxFixtureHandle[24] < 0)
-                      s_vfxFixtureHandle[24] = VFX_ComposeSmokeTrail(&s_vfxFixtureXf[24], VC_MAT_METAL, 0.18f, 1.0f, VFX_COLUMN_SMOKE, true);
+                      // TẠM THỜI 0.55f — vẫn đang CHẨN ĐOÁN, chưa phải giá trị
+                      // cuối: NORMAL_OFFSET churn dùng biên độ MÉT tuyệt đối
+                      // (1.30), không tỉ lệ theo bán kính — ở 0.18f gốc tỉ lệ
+                      // biên độ/bán kính cao gấp ~3 lần column, đọc ra "phẳng".
+                      // Đã xác nhận bằng mắt.
+                      //
+                      // lifetime TRẢ VỀ 1.0f — thử nâng lên 3.0f KHÔNG có tác
+                      // dụng gì: VC_TrailNodesForLifetime (vc_common.inl) trần
+                      // cứng ở TRAIL_HISTORY_COUNT=60 (đúng 1.0s @ 60Hz,
+                      // trail_system.h), nên 1.0f và 3.0f cho ra CÙNG MỘT
+                      // tubeMaxRings=60 — trail này không bao giờ vượt quá ~1s
+                      // lịch sử thật, bất kể lifetime xin bao nhiêu.
+                      s_vfxFixtureHandle[24] = VFX_ComposeSmokeTrail(&s_vfxFixtureXf[24], VC_MAT_METAL, 0.55f, 1.0f, VFX_COLUMN_SMOKE, true);
                   break;
               }
               case 26:

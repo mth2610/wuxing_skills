@@ -92,6 +92,27 @@ Vector3 ProceduralMesh_BezierTangent(Vector3 p0, Vector3 p1, Vector3 p2, Vector3
  * nghĩa; giọt nước và con nhộng tự khép bằng chính đường bao của chúng.
  * ===========================================================================*/
 
+/* Kẹp offset đỉnh của một MẶT CẮT QUÉT (tube/droplet/capsule) sao cho không
+ * bao giờ đẩy đỉnh qua tâm mặt cắt hay quá gần vành liền kề — DÙNG CHUNG cho
+ * cả ba hình trên, sống ở đây (không phải file riêng của hình nào) đúng lý
+ * do Bezier utilities ở trên cũng sống ở đây. Hiện chỉ pm_tube.inl gọi;
+ * pm_droplet.inl/pm_capsule.inl áp dụng dOffset hoàn toàn KHÔNG kẹp — một
+ * khoảng trống riêng, chưa đụng tới.
+ *
+ * localRadius PHẢI là bán kính ĐÃ BIẾN DẠNG tại đúng đỉnh này (sau khi đã áp
+ * sàn/trần của kênh SCALE nếu có) — KHÔNG phải bán kính danh nghĩa của cả
+ * vành. Xem comment đầy đủ tại định nghĩa (procedural_mesh_utils.c) và
+ * core/tests/pm_tube_offset_clamp_test.c cho chứng minh bằng số của vì sao
+ * điều này bắt buộc.
+ *
+ * ringGapLimit — trần THỨ HAI đo bằng khoảng cách hai vành (chặn hai vành
+ * cắt nhau). Trần dùng là trần THẤP HƠN giữa hai cái. maxRadiusFrac ∈ (0,1).
+ *
+ * "Soft knee" (tanh), không phải kẹp cứng — dưới 70% trần giữ nguyên y = x,
+ * trên đó bo mượt tiệm cận trần, không gãy đạo hàm. */
+Vector3 PMSweptSection_ClampOffset(Vector3 rawOffset, float localRadius,
+                                   float maxRadiusFrac, float ringGapLimit);
+
 /* ỐNG NƯỚC — r(t) = 1 — hai đầu MỞ */
 typedef struct
 {

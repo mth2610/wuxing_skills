@@ -47,17 +47,35 @@
  * sửa đúng biến dạng đó nhưng phá số lưỡi, và số lưỡi mới là thứ nhìn thấy. */
 #define PM_TUBE_UV_AROUND_WRAPS 1
 
+/* tGeo và tNoise TÁCH RIÊNG, sửa 05/08/2026 — landmine vừa dính khi bật
+ * noiseWavelength cho smoke trail (xem core/deform/README.md's "the drive
+ * coordinate is not the raw parametric position"). Trước đó hàm này chỉ
+ * nhận MỘT giá trị `t` dùng cho CẢ HAI vai trò — surf.y (cổng envelope,
+ * MeshDeformLayer.env/envStart/envEnd, PHẢI là phân số hình học [0,1] thật
+ * dọc thân) VÀ vế của mat.y qua `nv` (toạ độ VẬT CHẤT lái trường nhiễu, thứ
+ * noiseWavelength cố ý SCALE xuống dưới 1 để tách khỏi tổng chiều dài path
+ * đang dao động). Với mọi caller cũ (noiseWavelength=0) hai giá trị đó luôn
+ * bằng nhau nên không lộ ra gì. Bật noiseWavelength cho trail thì tNoise <
+ * 1 (thường 0.4-0.9) — surf.y bị lây giá trị đó, và UV_ENV_HEAD_WELD_SQ =
+ * smoothstep(start,end,c)*c*c bị CẢ MỘT LŨY THỪA BÌNH PHƯƠNG của cái c bị
+ * co đó ăn vào: biên độ hiệu dụng còn scale² (~0.25-0.81), suốt DỌC THÂN,
+ * không chỉ trễ điểm mở — đúng "biến đổi ít quá" quan sát được. Đo bằng số
+ * ở core/tests/pm_tube_envelope_coordinate_test.c.
+ *
+ * tGeo = phân số hình học THẬT (i/segments ở caller) — luôn dùng cho
+ * surf.y. tNoise = toạ độ đã qua noiseWavelength (hoặc bằng tGeo nếu tắt) —
+ * chỉ dùng cho mat.y qua `nv`. */
 static float PMTubeShapeDeformNoise(const PMTubeConfig *cfg, int radialSegs, int j,
-                               float t, float time, Vector3 normal, Vector3 tangent,
-                               Vector3 *outOffset) {
+                               float tGeo, float tNoise, float time, Vector3 normal,
+                               Vector3 tangent, Vector3 *outOffset) {
     outOffset->x = outOffset->y = outOffset->z = 0.0f;
     if (cfg->noiseAmp <= 0.0f && cfg->noiseField == NULL) return 0.0f;
 
     float uu = (float)j / (float)radialSegs;
-    /* t + offset: chỗ phình chạy DỌC ống thay vì đứng ở một tỉ lệ cố định của
-     * nó — toạ độ VẬT CHẤT, không phải toạ độ hình học. Thiếu nó thì ống trông
-     * như một hình đã bị bóp sẵn rồi kéo lê. */
-    float nv = t + cfg->noiseOffset;
+    /* tNoise + offset: chỗ phình chạy DỌC ống thay vì đứng ở một tỉ lệ cố
+     * định của nó — toạ độ VẬT CHẤT, không phải toạ độ hình học. Thiếu nó
+     * thì ống trông như một hình đã bị bóp sẵn rồi kéo lê. */
+    float nv = tNoise + cfg->noiseOffset;
 
     MeshDeformField local;
     const MeshDeformField *field = cfg->noiseField;
@@ -90,7 +108,7 @@ static float PMTubeShapeDeformNoise(const PMTubeConfig *cfg, int radialSegs, int
         extAmp = cfg->noiseAmp;
     }
 
-    MeshDeformResult d = MeshDeform_Evaluate(field, (Vector2){uu, t},
+    MeshDeformResult d = MeshDeform_Evaluate(field, (Vector2){uu, tGeo},
                                              (Vector2){uu, nv}, time, normal,
                                              tangent, tangent);
     outOffset->x = d.offset.x * extAmp;
@@ -279,18 +297,6 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
         }
         float headWeight = 1.0f;
 
-        /* Trần offset CỦA RIÊNG VÀNH NÀY — xem PM_TUBE_MAX_OFFSET_RADIUS_FRAC.
-         * Lấy trần THẤP HƠN giữa "60% khoảng cách hai vành" (chặn hai vành cắt
-         * nhau) và "55% bán kính TẠI VÀNH NÀY" (chặn mặt cắt tự lộn qua tâm) —
-         * trên thân dày hai trần gần bằng nhau nên không đổi gì; ở đầu funnel
-         * mỏng thì trần thứ hai mới là cái thật sự chặn. */
-        float ringRadius = baseRadius * capsuleCurve * headWeight;
-        float ringOffsetLimit = offsetLimit;
-        {
-            float radiusLimit = ringRadius * PM_TUBE_MAX_OFFSET_RADIUS_FRAC;
-            if (radiusLimit < ringOffsetLimit) ringOffsetLimit = radiusLimit;
-        }
-
         if (i == 0) { out->tailTangent = tangent; out->tailCenter = pos; }
         if (i == segments) { out->headTangent = tangent; out->headCenter = pos; }
 
@@ -311,11 +317,18 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
              * tức máy móc. Giảm phần TRÔI xuống làm trục W (trường tự biến đổi
              * TẠI CHỖ) chiếm ưu thế, và biến đổi tại chỗ mới là thứ trông như
              * chất khí. */
+            // t (hình học thật), KHÔNG PHẢI tNoise, cho tham số surf.y —
+            // cùng lỗi/cùng sửa 05/08/2026 như PMTubeShapeDeformNoise ở
+            // trên (xem comment ở đó). Chưa có caller nào bật cả
+            // centerlineAmp lẫn noiseWavelength cùng lúc nên nhánh này
+            // hiện không lộ triệu chứng, nhưng cùng landmine nếu sau này
+            // có — sửa ngay trong lúc đang ở đây, bit-identical với mọi
+            // caller cũ (tNoise == t khi noiseWavelength == 0).
             float nvC = tNoise + cfg->noiseOffset * 0.45f;
-            float bendA = 0.70f * PMTubeAxisScalar(cfg->noiseField, 0.13f, tNoise, nvC, time, right)
-                        + 0.30f * PMTubeAxisScalar(cfg->noiseField, 0.41f, tNoise, nvC * 2.6f, time, right);
-            float bendB = 0.70f * PMTubeAxisScalar(cfg->noiseField, 0.61f, tNoise, nvC, time, up)
-                        + 0.30f * PMTubeAxisScalar(cfg->noiseField, 0.87f, tNoise, nvC * 2.6f, time, up);
+            float bendA = 0.70f * PMTubeAxisScalar(cfg->noiseField, 0.13f, t, nvC, time, right)
+                        + 0.30f * PMTubeAxisScalar(cfg->noiseField, 0.41f, t, nvC * 2.6f, time, right);
+            float bendB = 0.70f * PMTubeAxisScalar(cfg->noiseField, 0.61f, t, nvC, time, up)
+                        + 0.30f * PMTubeAxisScalar(cfg->noiseField, 0.87f, t, nvC * 2.6f, time, up);
             float w = cfg->centerlineAmp * t * t;
             pos = Vector3Add(pos, Vector3Add(Vector3Scale(right, bendA * w),
                                              Vector3Scale(up, bendB * w)));
@@ -334,7 +347,7 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
             float deform2 = sinf(t * cfg->deform2FreqT - phi * cfg->deform2FreqPhi - time * cfg->deform2Speed);
             float deform = 1.0f + deform1 * cfg->deform1Amp + deform2 * cfg->deform2Amp;
             Vector3 dOffset;
-            deform += PMTubeShapeDeformNoise(cfg, radialSegs, j, tNoise, time, normal,
+            deform += PMTubeShapeDeformNoise(cfg, radialSegs, j, t, tNoise, time, normal,
                                         tangent, &dOffset);
 
             /* SÀN BÁN KÍNH. deform là 1 + nhiễu, và không có gì chặn nhiễu ở
@@ -342,47 +355,55 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
              * ngược ra ngoài. Một cái ống bị thắt nút không phải khói, nó là
              * chuỗi hạt cườm. */
             if (deform < PM_TUBE_MIN_RADIUS_FRAC) deform = PM_TUBE_MIN_RADIUS_FRAC;
-
-            /* TRẦN OFFSET — thấp hơn giữa khoảng cách hai vành (chặn hai vành
-             * CẮT NHAU, mặt lộn ra thành mảng phẳng bay ngang, đúng cái từng
-             * thấy ở đỉnh cột khói) VÀ bán kính tại VÀNH NÀY (chặn mặt cắt tự
-             * lộn qua tâm — đúng cái thấy ở đầu mỏng của trail, xem
-             * ringOffsetLimit/PM_TUBE_MAX_OFFSET_RADIUS_FRAC).
-             *
-             * "SOFT KNEE", KHÔNG PHẢI KẸP CỨNG — sửa 05/08/2026. Bản kẹp cứng
-             * cũ (scale-về-đúng-limit khi vượt) tạo một MẶT TƯỜNG: hai đỉnh
-             * sát nhau, một đỉnh nhiễu ra 0.9x limit (chưa chạm, giữ nguyên
-             * 100%) và đỉnh kia 1.1x limit (chạm, bị ép về ĐÚNG limit) — hai
-             * kết quả CÁCH XA NHAU dù đầu vào gần như nhau, đúng cái đọc ra
-             * "bậc thang" + "có gì ép nó lại không cho bung ra". Nhiễu biến
-             * thiên MƯỢT quanh limit; cái kẹp phải mượt theo.
-             *
-             * KHÔNG dùng tanh(x/limit)*limit thẳng từ gốc — tanh cong ngay từ
-             * giá trị NHỎ (tanh(0.9) = 0.716, tức một đỉnh còn cách limit 10%
-             * cũng đã bị co gần 30%), co bớt cả những chỗ nhiễu vốn dĩ ổn,
-             * chưa từng chạm limit bao giờ — đổi luôn cả những phần cột khói
-             * vẫn đang đẹp, không ai muốn.
-             *
-             * "KNEE" giữ THẲNG (không đổi gì) dưới knee (70% limit — đúng
-             * ngưỡng những chỗ chưa từng chạm limit cũ), CHỈ bo tròn phần VƯỢT
-             * quá knee bằng tanh, tiệm cận limit chứ không cắt phẳng. Dưới
-             * knee: y = x hệt như không có kẹp. Trên knee: mượt, không gãy
-             * đạo hàm tại knee lẫn khi tiến tới limit. */
-            float offSqr = dOffset.x * dOffset.x + dOffset.y * dOffset.y +
-                           dOffset.z * dOffset.z;
-            float knee = ringOffsetLimit * 0.70f;
-            if (knee > 1e-6f && offSqr > knee * knee) {
-                float offLen = sqrtf(offSqr);
-                float range = ringOffsetLimit - knee; // > 0: limit luôn > knee
-                float excess = offLen - knee;
-                float softLen = knee + range * tanhf(excess / range);
-                float s = softLen / offLen;
-                dOffset.x *= s; dOffset.y *= s; dOffset.z *= s;
-            }
-
             float finalRadius = baseRadius * capsuleCurve * headWeight * deform;
+
+            /* TRẦN OFFSET — PMSweptSection_ClampOffset (procedural_mesh_utils.c),
+             * DÙNG CHUNG với pm_droplet/pm_capsule khi cần, xem doc đầy đủ ở
+             * khai báo trong procedural_mesh_utils.h. Trần THẤP HƠN giữa
+             * "60% khoảng cách hai vành" (offsetLimit, chặn hai vành CẮT
+             * NHAU) và "55% bán kính ĐÃ BIẾN DẠNG tại đúng đỉnh này" (chặn
+             * mặt cắt tự lộn qua tâm) — cố ý truyền `finalRadius` (đã qua sàn
+             * ở trên), KHÔNG phải bán kính danh nghĩa của vành: đó chính là
+             * điều làm bất biến "bán kính hiệu dụng luôn > 0" đúng theo cấu
+             * trúc công thức, không phải nhờ may mắn không rơi đúng trường
+             * hợp xấu — xem comment tại định nghĩa hàm. */
+            dOffset = PMSweptSection_ClampOffset(dOffset, finalRadius,
+                                                 PM_TUBE_MAX_OFFSET_RADIUS_FRAC,
+                                                 offsetLimit);
+
             out->rings[i][j] = Vector3Add(
                 Vector3Add(pos, Vector3Scale(normal, finalRadius)), dOffset);
+
+            // DEBUG TẠM THỜI, 05/08/2026 (vòng 3) — chẩn đoán "vẫn phẳng dù
+            // đã sửa 2 lỗi" cho smoke trail. Log THỐNG KÊ bán kính hiệu dụng
+            // THẬT của mesh vừa dựng — so với ước lượng bằng Python đã làm
+            // trước đó (dự đoán stdev ~0.20, min~0.10, max~0.99 ở extAmp
+            // hiện tại của tuning.cfg) để biết lệch nằm ở hình học hay ở
+            // chỗ khác (render/shading). Chỉ log khi noiseWavelength>0 (hiện
+            // chỉ smoke trail) để không lẫn với cột khói/spark/ember. XOÁ
+            // khi chẩn đoán xong.
+            if (cfg->noiseWavelength > 0.0f) {
+                static float s_min = 1e9f, s_max = -1e9f, s_sum = 0.0f, s_sumSq = 0.0f;
+                static int s_n = 0;
+                static int s_calls = 0;
+                float eff = Vector3Distance(pos, out->rings[i][j]);
+                if (eff < s_min) s_min = eff;
+                if (eff > s_max) s_max = eff;
+                s_sum += eff; s_sumSq += eff * eff; s_n++;
+                if (i == segments && j == radialSegs - 1) {
+                    s_calls++;
+                    if (s_calls % 30 == 0) {
+                        float mean = s_sum / (float)s_n;
+                        float var = s_sumSq / (float)s_n - mean * mean;
+                        if (var < 0.0f) var = 0.0f;
+                        TraceLog(LOG_INFO,
+                            "TUBE_RADIUS_STATS_DEBUG: baseRadius=%.3f n=%d "
+                            "min=%.4f max=%.4f mean=%.4f stdev=%.4f",
+                            baseRadius, s_n, s_min, s_max, mean, sqrtf(var));
+                    }
+                    s_min = 1e9f; s_max = -1e9f; s_sum = 0.0f; s_sumSq = 0.0f; s_n = 0;
+                }
+            }
         }
 
         out->ringRadius[i] = baseRadius * capsuleCurve * headWeight;

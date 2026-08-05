@@ -1043,3 +1043,98 @@ never share one. Give each its own and factor the shared *copy* into a helper.
   `TrailMaterialConfig.stretchUV`. Then, when an effect's structure refuses to
   appear no matter how the parameters move, stop turning knobs and ask whether
   the input is the KIND of thing the algorithm consumes.
+
+## Two independent safety clamps computed against different radii can still combine into an unsafe result (05/08/2026)
+
+**Symptom.** A swept tube's vertex deform (`core/geometry/pm_tube.inl`), with
+BOTH a radius-scale channel and a vertex-offset channel active, kept
+producing stair-stepping / self-intersection on a steeply tapered, moving
+tube (`vc_smoke_trail.inl`'s funnel, `radiusTailFrac` 0.12) no matter how the
+offset clamp's own shape was tuned (hard clamp → soft-knee tanh clamp, both
+tried). 4 rounds of visual-only patches, none of which touched the actual
+cause.
+
+**Cause.** Two clamps each individually correct in isolation:
+- `PM_TUBE_MIN_RADIUS_FRAC` floors the SCALE channel's `deform` at 0.25 of
+  nominal.
+- The OFFSET channel's clamp capped `|dOffset|` at `0.55 * ringRadius` —
+  but `ringRadius` was the ring's **nominal, undeformed** radius, computed
+  independently of how far the SCALE channel had already shrunk that exact
+  vertex.
+
+Both channels are separate, uncorrelated noise fields sampled continuously
+across the whole mesh, so nothing prevents SCALE hitting its floor at a
+vertex while OFFSET simultaneously pushes near its own (nominal-radius-based)
+cap at the *same* vertex. Measured
+(`core/tests/pm_tube_offset_clamp_test.c`): `finalRadius(0.25x) +
+offset(-0.55x of NOMINAL, i.e. of 1.0x) ≈ -0.30x` — negative, the
+cross-section folds through its own centreline. This ratio is
+**scale-invariant**: it exists identically at `radiusTailFrac=1.0` (no
+taper at all), a steeply tapered funnel just makes the absolute artifact
+size large relative to the (already small) local geometry, and therefore
+visible, while a thick column's texture and distance hide the same defect.
+
+**Rule.** When two independent clamps each bound a *different* quantity that
+gets summed into one final result (here: a radius floor and an offset cap,
+summed into `finalRadius + dOffset`), each clamp must be expressed in terms
+of the *other's already-applied output*, not a value computed in parallel
+from the same nominal inputs. Concretely: the offset clamp must take the
+SCALE-channel's post-floor radius as its basis
+(`PMSweptSection_ClampOffset(rawOffset, finalRadius, ...)`,
+`core/geometry/procedural_mesh_utils.c`), not the nominal per-ring radius —
+that ordering makes `effectiveRadius > localRadius*(1-maxRadiusFrac) > 0`
+true **by construction**, not by hoping the two clamps' worst cases never
+coincide. Never assume two safety clamps compose safely just because each
+one is independently proven safe — prove the *combination* by number
+(sweep both channels' full amplitude range together, not each alone).
+
+## Reusing one coordinate for both the ENVELOPE gate and the NOISE-SAMPLING position couples two unrelated concerns (05/08/2026)
+
+**Symptom.** After fixing the offset-clamp landmine above and enabling
+`PMTubeConfig.noiseWavelength` on the smoke trail for the first time
+(`vc_smoke_trail.inl`), the churn read as visibly flatter/less varied than
+the smoke column using the *identical* layer amplitudes — not the
+self-intersection/stair-step symptom from the other landmine, a different
+one: "biến đổi ít quá" (too little variation), confirmed even once the
+trail's real length had reached steady state (ruled out by a temporary
+`TraceLog` of the actual `rawSpanLen`/`tubeNoiseSpanLen` values, which
+looked perfectly healthy — the bug was NOT in that number).
+
+**Cause.** `core/geometry/pm_tube.inl`'s `PMTubeShapeDeformNoise` (and
+`PMTubeAxisScalar`) called `MeshDeform_Evaluate(field, (Vector2){uu, t}, ...)`
+where `t` was **the same value** used for two different things a swept-tube
+ring computes:
+- the true geometric fraction along the body (`i/segments` in the caller),
+  which `MeshDeformLayer.env`/`envStart`/`envEnd` read as `surf.y` — the
+  ALONG-BODY ENVELOPE gate, and
+- `tNoise` — the material/noise coordinate `noiseWavelength` deliberately
+  SCALES to real metres, which is `< t` whenever the tube's current real
+  extent is shorter than `noiseWavelength` (the normal case: any
+  `core/trails/` follower is hard-capped at `TRAIL_HISTORY_COUNT=60` = 1s of
+  history regardless of what `lifetime` asks for).
+
+Every existing caller (`noiseWavelength == 0`) has `tNoise == t` always, so
+the coupling was invisible until the trail became the first live consumer
+to set `noiseWavelength > 0`. Once `tNoise < t`, the envelope's `surf.y`
+input shrank too — and the smoke churn's own envelope kind,
+`UV_ENV_HEAD_WELD_SQ = smoothstep(start,end,c) * c * c`, keeps growing with
+`c²` **past its ramp zone**, not plateauing at 1.0. Feeding it a
+globally-shrunk `c` therefore squares the shrink into the envelope's
+magnitude across the ENTIRE body, not merely delaying where it opens —
+measured (`core/tests/pm_tube_envelope_coordinate_test.c`): at the trail's
+front ring with a typical `tNoise/t` ratio of 0.2-0.5 (matching the values
+actually logged), the envelope was suppressed to 4-25% of what the same
+ring should carry.
+
+**Rule.** `mesh_deform.h`'s own doc already names half of this principle —
+"passing surf.y [into mat] is the mistake that makes a churning body read as
+a pre-squeezed shape being dragged." The other half, learned here: it goes
+wrong in the OPPOSITE direction too — passing the intentionally-rescaled
+MATERIAL coordinate into the ENVELOPE's `surf.y` slot silently scales every
+envelope-gated layer's magnitude by however much that rescaling shrank the
+coordinate, everywhere, not just at the gate's threshold. Whenever a
+function computes more than one coordinate meaning from one input (a
+geometric position vs. a rescaled/drifted "material" position), give each
+meaning its OWN parameter all the way to the `MeshDeform_Evaluate` call —
+never let a rename or a refactor collapse them back into one variable just
+because they happen to be equal for every caller tested so far.

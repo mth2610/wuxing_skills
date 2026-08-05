@@ -54,13 +54,7 @@ typedef struct {
     float lifetime;
     TrailLayer layers[2];
     PMTubeConfig tube;     // owned: the SHAPE, not the trail's business
-    // UNUSED as of 05/08/2026 — tube.noiseField stays NULL (see the "NO
-    // VERTEX DEFORM" block in SmokeTrail_BuildShape). Kept declared rather
-    // than deleted: the struct still needs SOME field of this type if a
-    // future revision ever wants a CPU-side field for something other than
-    // pm_tube.inl's vertex deform (unlikely) — delete outright if that
-    // hasn't happened by the time the shader churn work starts.
-    MeshDeformField churn;
+    MeshDeformField churn; // owned: pointed at by tube.noiseField
 } VC_SmokeTrail;
 
 static VC_SmokeTrail s_smokeTrails[VFX_SMOKE_TRAIL_MAX];
@@ -76,34 +70,29 @@ static const VFX_SurfaceId k_smokeTrailSurface[VFX_COLUMN_KIND_COUNT] = {
 };
 static Texture2D s_smokeTrailSheet[VFX_COLUMN_KIND_COUNT];
 
-// k_smokeTrailNoise removed 05/08/2026 with the vertex-deform amplitude it
-// fed (cfg.tubeNoiseAmp is now hardcoded 0 — see "NO VERTEX DEFORM" in
-// SmokeTrail_BuildShape). Re-add a per-kind table when the shader churn
-// lands, since its amplitude will likely want to differ by kind too.
+// Same numbers as the column's k_columnNoise — re-added 05/08/2026 once
+// core/geometry/pm_tube.inl's offset clamp was fixed to be basis-correct
+// (PMSweptSection_ClampOffset, procedural_mesh_utils.c; proven by
+// core/tests/pm_tube_offset_clamp_test.c) — see the churn block in
+// SmokeTrail_BuildShape for why only the CLAMP MECHANISM differs from the
+// column now, not these amplitudes.
+static const float k_smokeTrailNoise[VFX_COLUMN_KIND_COUNT] = {0.34f, 0.30f, 0.22f};
 static const float k_smokeTrailScroll[VFX_COLUMN_KIND_COUNT] = {0.55f, 0.95f, 0.40f};
 
 // Live knobs, own namespace from the column's (smokecolumn_*) so tuning one
 // archetype never silently retunes the other. Registered lazily on first use
 // — never from an Init, Tuning_Init runs after subsystem inits in main.c
 // (core/docs/LANDMINES.md).
+static float s_smokeTrailNoiseMul = 1.0f;
 static float s_smokeTrailScrollMul = 1.0f;
 static float s_smokeTrailAlphaMul = 1.0f;
 static float s_smokeTrailTile = 3.00f;
-// smoketrail2_noise/_freeze/_bend/_wavelength/_agescroll REMOVED 05/08/2026,
-// not just left at neutral — a registered tunable that no longer drives
-// anything is a "silent knob does nothing" landmine (see vc_strand_trail.inl
-// for the same principle applied to its own style-override guard). They
-// drove pm_tube.inl vertex-deform math (centerlineAmp bend, noise churn
-// amplitude/coordinate) that this shape no longer uses at all — see the "NO
-// VERTEX DEFORM" block in SmokeTrail_BuildShape for why. Re-add fresh
-// tunables (new names, since these concepts don't map 1:1) when the
-// shader-side churn (trail_volume.fs, arc-length-anchored like
-// trail_deform.fs mode 2) actually lands.
 static void SmokeTrail_EnsureTuning(void)
 {
     static bool done = false;
     if (done) return;
     done = true;
+    Tuning_RegisterFloat("smoketrail2_noise", &s_smokeTrailNoiseMul, 1.0f);
     Tuning_RegisterFloat("smoketrail2_scroll", &s_smokeTrailScrollMul, 1.0f);
     Tuning_RegisterFloat("smoketrail2_alpha", &s_smokeTrailAlphaMul, 1.0f);
     Tuning_RegisterFloat("smoketrail2_tile", &s_smokeTrailTile, 3.00f);
@@ -196,45 +185,82 @@ static void SmokeTrail_BuildShape(VC_SmokeTrail *c, bool funnel)
     c->tube.radiusAnchorAtTail = true;
     c->tube.useTransportFrame = true;
 
-    // NO VERTEX DEFORM ON THIS SHAPE — ARCHITECTURE DECISION, 05/08/2026,
-    // reverses the four previous fixes on this file (centerlineAmp bend,
-    // noiseWavelength, noiseOffsetScrollMul, the pm_tube.inl offset clamps).
-    // Every one of those was patching the SAME underlying mistake from a
-    // different angle, each patch only moving where the artifact showed up:
-    //   1. centerlineAmp=column's value -> "dragged decal" (real motion +
-    //      synthetic bend fighting each other)
-    //   2. centerlineAmp=0, noiseWavelength fix -> "chaotic, doesn't blend"
-    //      (raising noise amplitude just made the remaining offset noise
-    //      louder, not more alive)
-    //   3. radius-relative offset clamp -> "sharp stair-step edges, feels
-    //      squeezed" (a HARD clamp forces every over-limit vertex onto the
-    //      exact same sphere, creating a wall between clamped and free
-    //      vertices)
-    //   4. soft-knee clamp -> same category of artifact, softer
-    // vc_strand_trail.inl already diagnosed this exact failure mode and
-    // solved it correctly, for the same reason: "displacing the VERTICES
-    // read as a rigid rope... folds through itself on a tight turn... the
-    // wave belongs in the FRAGMENT stage, where it is arc-length anchored
-    // and cannot touch the geometry." Vertex-space noise displacement on a
-    // TUBE that both TAPERS steeply (0.12x at the front) AND MOVES through
-    // real, curving space cannot be made to not self-intersect/wall/stair-
-    // step by clamping harder — the clamp itself is what creates the visible
-    // edge, no matter how it is shaped.
+    // VERTEX DEFORM RE-ENABLED, 05/08/2026 — after 4 prior visual-only patch
+    // rounds on THIS file all failed (centerlineAmp bend -> "dragged decal";
+    // noiseWavelength -> "chaotic, doesn't blend"; hard offset clamp ->
+    // "stair-step, squeezed"; soft-knee clamp -> same category, never
+    // confirmed), the mechanism was found to have a real, numerically-
+    // provable defect: core/geometry/pm_tube.inl's offset clamp based its
+    // cap on the ring's NOMINAL (undeformed) radius instead of the vertex's
+    // OWN deformed radius, which let the independent SCALE and OFFSET noise
+    // channels combine at a single vertex to push the effective radius to
+    // roughly -0.30x the nominal radius — the mesh folding through its own
+    // centreline. Proven and fixed (core/geometry/procedural_mesh_utils.c's
+    // PMSweptSection_ClampOffset, basis = deformed radius; verified by
+    // core/tests/pm_tube_offset_clamp_test.c) BEFORE this block was
+    // re-enabled, not after — see that test file for the numbers.
     //
-    // So: pm_tube.inl builds PURE, UNDEFORMED geometry for this shape —
-    // radius taper only, no noiseField, no centerlineAmp, no offset, nothing
-    // for any clamp to ever have to fight. c->churn is deliberately left
-    // unbuilt (not just unused) — there is nothing here for it to drive.
-    // The organic surface churn belongs in trail_volume.fs instead (a UV-
-    // space warp anchored to real metres of laid path, mirroring
-    // trail_deform.fs mode 2's technique) — NOT YET IMPLEMENTED. Until it
-    // is, this shape's only surface motion is the existing sheet pan
-    // (SmokeTrail_ConfigureLayers' scrollMul) — flatter than the column,
-    // stable, no artifacts. Do not re-wire c->tube.noiseField/centerlineAmp
-    // to "bring the detail back" without building the shader-side churn
-    // first, or every artifact above comes back.
-    c->tube.noiseField = NULL;
-    c->tube.centerlineAmp = 0.0f;
+    // The churn LAYERS below are a VERBATIM COPY of SmokeColumn_BuildShape's
+    // churn (core/composition/common/vc_smoke_column.inl) — same amplitude,
+    // timeScale, lattice, both MeshDeform_AddLayer calls unchanged. Retuning
+    // amplitude/frequency would re-conflate this fix with an unverified
+    // second variable, exactly what went wrong across the 4 prior rounds.
+    // centerlineAmp (the axis bend implicated in patch #1) is still NOT
+    // re-added — a separate concern, out of scope here.
+    //
+    // noiseWavelength/noiseOffsetScrollMul ARE now wired, 05/08/2026 — after
+    // the radius fix above was confirmed (visually, by the user, matching
+    // the column's own radius) to fix SHAPE, but MOTION still did not read
+    // like the column. That is exactly patch #2's already-diagnosed,
+    // SEPARATE problem (core/deform/README.md's "the drive coordinate is
+    // not the raw parametric position"): pm_tube.inl's per-ring `t` is a
+    // fraction of the CURRENT total path length, and on a moving/looping
+    // emitter that length pulses every frame — the same 3 lattice cells
+    // stretch and squash with instantaneous speed instead of spanning a
+    // fixed number of metres, reading as pumping/breathing rather than the
+    // column's stable "boiling in place". core/trails/trail_system.c
+    // already computes and smooths the real span length (`tubeNoiseSpanLen`)
+    // and feeds it into `noiseSpanLenOverride` EVERY FRAME, fully
+    // automatically, the instant `noiseWavelength > 0` — no additional
+    // wiring needed here beyond setting it.
+    //
+    // 5.0f is not a new number — it is the column's own `height` (its
+    // frozen path is 5 m; SmokeColumn_Spawn's `height` argument, sandbox
+    // fixture uses 5.0f), i.e. the column's implicit "one full 3-cell
+    // lattice pass = 5 m". Reusing it means the trail's churn has the SAME
+    // physical grain as the column regardless of how long the trail
+    // currently is, rather than a newly-invented tuning constant.
+    //
+    // noiseOffsetScrollMul = 0 turns OFF the clock-driven "fake drift"
+    // PMTube_DefaultConfig() sets to 1.0 for a FROZEN path (the column has
+    // no other way to look like it's moving). A moving trail already gets
+    // real material-age motion for free from the history buffer advancing
+    // — adding the independent clock on top is a second, unrelated motion
+    // source fighting the first one (see the field's own doc in
+    // procedural_mesh_utils.h for the full "two clocks" rationale).
+    MeshDeform_Clear(&c->churn);
+    c->churn.amplitude = 1.0f;
+    c->churn.timeScale = 0.75f;
+    c->churn.latticeAround = 3;
+    c->churn.latticeAlong = 3;
+    MeshDeform_AddLayer(&c->churn, (MeshDeformLayer){
+        .kind = MESH_DEFORM_NOISE_CHANNEL,
+        .direction = MESH_DEFORM_DIR_NORMAL_SCALE,
+        .tiling = {1.0f, 1.0f}, .amplitude = 4.2f, .speed = 1.0f,
+        .latticeMul = 1.0f, .latticeAroundMul = 1.0f, .env = UV_ENV_HEAD_WELD,
+        .envStart = 0.0f, .envEnd = 0.22f,
+    });
+    MeshDeform_AddLayer(&c->churn, (MeshDeformLayer){
+        .kind = MESH_DEFORM_NOISE_CHANNEL,
+        .direction = MESH_DEFORM_DIR_NORMAL_OFFSET,
+        .tiling = {1.0f, 1.9f}, .amplitude = 1.30f, .speed = 1.7f,
+        .timeOffset = 11.0f, .latticeMul = 3.0f, .latticeAroundMul = 2.0f,
+        .env = UV_ENV_HEAD_WELD_SQ, .envStart = 0.0f, .envEnd = 0.35f,
+    });
+    c->tube.noiseField = &c->churn;
+    c->tube.centerlineAmp = 0.0f; // NOT re-added — see block comment above
+    c->tube.noiseWavelength = 5.0f;      // column's own height — see above
+    c->tube.noiseOffsetScrollMul = 0.0f; // no fake clock-drift on a real mover
 }
 
 static int SmokeTrail_Spawn(VC_SmokeTrail *c, int slot, const Matrix *followTransform)
@@ -271,13 +297,14 @@ static int SmokeTrail_Spawn(VC_SmokeTrail *c, int slot, const Matrix *followTran
     // winding is inward, so GL backface culling would keep the wrong side.
     cfg.tubeSingleSided = false;
     cfg.tubeVolumeShading = true;
-    // 0, deliberately — see the "NO VERTEX DEFORM" block in
-    // SmokeTrail_BuildShape. tubeNoiseAmp>0 with noiseField==NULL still
-    // builds an internal preset field in PMTubeShapeDeformNoise and deforms
-    // anyway (pm_tube.inl's field==NULL branch) — both have to be off
-    // together, not just noiseField.
+    // FALSE, not the column's live freeze toggle — this trail is always
+    // moving, so there is no "frozen path, still churning" state to debug
+    // here the way the column has (smokecolumn_freeze).
     cfg.tubeDeformFrozen = false;
-    cfg.tubeNoiseAmp = 0.0f;
+    // Same amplitude the column uses per kind — see the churn block in
+    // SmokeTrail_BuildShape for why re-enabling this only needed the
+    // pm_tube.inl clamp fix, not a new number.
+    cfg.tubeNoiseAmp = k_smokeTrailNoise[c->kind] * s_smokeTrailNoiseMul;
 
     cfg.layers = c->layers;
     cfg.layerCount = 2;
@@ -392,12 +419,7 @@ static void VC_SmokeTrail_Update(float dt)
         // Re-push every live knob so a tuning.cfg reload takes effect without
         // a respawn — same pattern as VC_SmokeColumn_Update.
         SmokeTrail_ConfigureLayers(c);
-        // NO vertex deform to re-push — see the "NO VERTEX DEFORM" block in
-        // SmokeTrail_BuildShape. tubeNoiseAmp/tubeDeformFrozen/centerlineAmp/
-        // noiseWavelength/noiseOffsetScrollMul all stay at the geometry-only
-        // defaults set at spawn (0 / false / 0 / whatever / whatever — the
-        // last two are moot with noiseAmp 0). Only the sheet PAN below is
-        // this shape's live surface motion right now.
+        t->tubeNoiseAmp = k_smokeTrailNoise[c->kind] * s_smokeTrailNoiseMul;
         t->uvScrollSpeed = k_smokeTrailScroll[c->kind] * s_smokeTrailScrollMul;
         t->uvMetresPerTile = (s_smokeTrailTile > 0.05f) ? s_smokeTrailTile : 0.05f;
 
