@@ -546,6 +546,14 @@ typedef struct
     float uvTiling;
     float uvScrollSpeed;
     float uvScrollOffset;
+    /* Bản LÀM MỊN theo thời gian của tổng chiều dài path thật — nguồn cho
+     * PMTubeConfig.noiseSpanLenOverride (xem doc field ở
+     * procedural_mesh_utils.h). Chỉ cập nhật khi tubeShapeConfig->
+     * noiseWavelength > 0 (UpdateTrailSystem tự lọc). 0 = chưa có mẫu nào,
+     * dùng thô. RIÊNG CỦA TỌA ĐỘ NHIỄU — ringGap/offsetLimit hình học vẫn
+     * đọc chiều dài THẬT (không làm mịn), vì kẹp hình học cần chính xác
+     * ngay-khung-này để tránh tự cắt, còn tọa độ nhiễu chỉ cần ổn định. */
+    float tubeNoiseSpanLen;
     float minVertexDistance;
     float distortionStrength;
     float distortionSpeed;

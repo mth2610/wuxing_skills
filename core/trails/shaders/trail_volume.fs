@@ -1,5 +1,6 @@
 #version 330
 #include "core/shaders/common/fs_header.glsl"
+#include "core/uv/shaders/uv_field.glsl"
 
 // ── TRAIL VOLUME — opacity for a swept tube that has to read as gas ─────────
 //
@@ -32,15 +33,28 @@ in vec4 vColor;
 uniform sampler2D texture0;
 uniform vec4 colDiffuse;
 
-// .x/.z = ALONG-body pan of sheet 1 / sheet 2 (tiles per second).
-// .y/.w = AROUND-the-body pan. KEEP THESE AT ZERO unless a swirl is wanted.
+// THE TWO-SHEET PAN — GENERALISED, 05/08/2026. This used to be a bespoke
+// `u_volPan` uniform + hand-rolled `pan1/pan2/s1/s2` block, unique to this
+// shader. It is now core/uv's `SurfaceFlow` (core/uv/surface_flow.h),
+// applied through the packed uniform block in uv_field.glsl
+// (u_flowLayer/u_flowMeta, declared by that include, not here) — the SAME
+// "N-layer sample, tile-or-stretch, MUL/ADD/MAX blend" mechanism
+// trail_deform.fs (ribbon) already uses. See core/uv/README.md:
+// `mesh + UVDeformField + SurfaceFlow = effect` — this file's pan was never
+// tube-specific, it was just never plumbed into the shared module. Reusing
+// it here is the whole point: the NEXT consumer that needs "two sheets,
+// multiplied, panned at different rates" (ribbon or volume or anything else)
+// configures a SurfaceFlow instead of re-deriving this block.
 //
-// Panning in u moves the texture around the circumference — that is literally
-// rotation, and combined with any along-pan the net motion is a diagonal, i.e.
-// a screw thread climbing the body. The first draft of this file panned both
-// axes and manufactured exactly the tornado this effect was being fixed for.
-// Smoke rises; it does not spin.
-uniform vec4 u_volPan;
+// Values pushed from trail_system.c reproduce this file's OLD constants
+// exactly (2 layers, MUL blend, sheet 2 scaled 1.63x along) — see the
+// SurfaceFlow_Apply call site there for the exact numbers, including why the
+// pan SIGN differs from the old `fragTexCoord + pan` code (SurfaceFlow's
+// formula subtracts pan). AROUND pan stays zero for the same reason the old
+// comment gave: panning u rotates the sheet about the tube's axis, and
+// combined with any along-pan the net motion is a screw thread climbing the
+// body — smoke rises, it does not spin.
+//
 // .x = ALONG tiling of the second sheet. Its AROUND tiling is fixed at 1 wrap
 //      below and is not exposed.
 // .y = depth power, .z = silhouette softness, .w = master density.
@@ -82,31 +96,36 @@ void main()
         finalColor = vec4(1.0, 0.0, 0.0, 1.0);
         return;
     }
-    // fract() the pan and nothing else. u_time is unbounded, and a noise
-    // domain fed an unbounded value degenerates into flat blocks after a long
-    // session (ENGINE_LANDMINES §8). The fold is EXACT here and only here: the
-    // sheet tiles on both axes (assets/TEXTURE_PACKING.md), so the sampler
-    // repeats with period 1 and dropping whole periods cannot change a texel.
-    // Never fold the sum as well — fract(fract(x) * k) is not fract(x * k).
-    vec2 pan1 = fract(vec2(u_volPan.y, u_volPan.x) * u_time);
-    vec2 pan2 = fract(vec2(u_volPan.w, u_volPan.z) * u_time);
-
-    // Sheet 2 wraps ONCE around too — same as sheet 1, deliberately.
+    // TWO SHEETS, TILED, PANNED AT DIFFERENT RATES, MULTIPLIED — now
+    // core/uv's SurfaceFlow (u_flowLayer/u_flowMeta from uv_field.glsl,
+    // pushed once per group from trail_system.c) instead of a hand-rolled
+    // pan1/pan2/s1/s2 block. See u_volMask's own comment above for why this
+    // exists and why MUL, not add. The fold-before-upload discipline
+    // (ENGINE_LANDMINES §8: an unbounded u_time degenerates a noise domain
+    // into flat blocks) is SurfaceFlow_PackGPU's job now, on the C side —
+    // same rule, moved to where the fields it protects are packed.
     //
-    // It used to scale u by 2, which doubles the tongue count for that layer:
-    // 4 tongues around became 8, and since only half a cylinder faces the
+    // Sheet 2 wraps ONCE around too — same as sheet 1, deliberately. It used
+    // to scale u by 2, which doubles the tongue count for that layer: 4
+    // tongues around became 8, and since only half a cylinder faces the
     // camera the render showed 4 where the reference shows 2. The two layers
-    // are decorrelated by their ALONG scale and their pan instead, which leaves
-    // the tongues lined up in u and lets the product make them breathe — which
-    // is what the reference's two strands actually do.
-    vec2 uv2 = vec2(fragTexCoord.x, fragTexCoord.y * u_volMask.x);
-
-    vec4 s1 = texture(texture0, fragTexCoord + pan1);
-    vec4 s2 = texture(texture0, uv2 + pan2);
-
+    // are decorrelated by their ALONG scale and their pan instead (pushed as
+    // each SurfaceFlowLayer's own tiling/pan), which leaves the tongues
+    // lined up in u and lets the product make them breathe — which is what
+    // the reference's two strands actually do.
+    vec2 mat = fragTexCoord;
+    vec4 flowSample = SurfaceFlow_FieldSample(texture0, texture0, fragTexCoord, mat, u_time);
     // A = coverage in the OPAQUE layout; RGB is grey luminance kept grey so
     // the caller's tint survives.
-    float pattern = s1.a * s2.a;
+    float pattern = flowSample.a;
+
+    // COLOUR comes from sheet 1 ALONE, unmultiplied by sheet 2 — the blended
+    // `flowSample` above multiplies rgb together too (SurfaceFlow's MUL
+    // blend is component-wise on the whole vec4), which is right for
+    // `pattern` (the alpha product IS the effect) but would tint the colour
+    // by the second sheet's own grey value, which this file has never done.
+    // Sample layer 0's own uv directly instead of reusing flowSample.rgb.
+    vec4 s1 = texture(texture0, SurfaceFlow_FieldLayerUV(fragTexCoord, mat, 0));
 
     // EDGE — an optical-depth term times a silhouette rolloff.
     //

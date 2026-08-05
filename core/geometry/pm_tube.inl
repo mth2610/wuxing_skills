@@ -199,8 +199,14 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
         /* Toạ độ nhiễu tính theo MÉT THẬT, không theo phân số của tổng chiều
          * dài path hiện tại — xem doc field noiseWavelength ở
          * procedural_mesh_utils.h. 0 (mặc định) giữ nguyên hành vi cũ (= t),
-         * nên mọi caller khác không set field này không đổi gì cả. */
-        float tNoise = (cfg->noiseWavelength > 0.0f) ? ((t * spanLen) / cfg->noiseWavelength) : t;
+         * nên mọi caller khác không set field này không đổi gì cả.
+         *
+         * noiseSpanLenOverride thay spanLen THÔ bằng bản đã làm mịn của caller
+         * nếu có (xem doc field) — chỉ cho TỌA ĐỘ NHIỄU. spanLen thô vẫn dùng
+         * nguyên cho ringGap/offsetLimit ở trên, vì kẹp hình học cần chính xác
+         * ngay khung này. */
+        float noiseSpanLen = (cfg->noiseSpanLenOverride > 0.0f) ? cfg->noiseSpanLenOverride : spanLen;
+        float tNoise = (cfg->noiseWavelength > 0.0f) ? ((t * noiseSpanLen) / cfg->noiseWavelength) : t;
 
         Vector3 pos;
         Vector3 tangent;
@@ -341,11 +347,36 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
              * CẮT NHAU, mặt lộn ra thành mảng phẳng bay ngang, đúng cái từng
              * thấy ở đỉnh cột khói) VÀ bán kính tại VÀNH NÀY (chặn mặt cắt tự
              * lộn qua tâm — đúng cái thấy ở đầu mỏng của trail, xem
-             * ringOffsetLimit/PM_TUBE_MAX_OFFSET_RADIUS_FRAC). */
+             * ringOffsetLimit/PM_TUBE_MAX_OFFSET_RADIUS_FRAC).
+             *
+             * "SOFT KNEE", KHÔNG PHẢI KẸP CỨNG — sửa 05/08/2026. Bản kẹp cứng
+             * cũ (scale-về-đúng-limit khi vượt) tạo một MẶT TƯỜNG: hai đỉnh
+             * sát nhau, một đỉnh nhiễu ra 0.9x limit (chưa chạm, giữ nguyên
+             * 100%) và đỉnh kia 1.1x limit (chạm, bị ép về ĐÚNG limit) — hai
+             * kết quả CÁCH XA NHAU dù đầu vào gần như nhau, đúng cái đọc ra
+             * "bậc thang" + "có gì ép nó lại không cho bung ra". Nhiễu biến
+             * thiên MƯỢT quanh limit; cái kẹp phải mượt theo.
+             *
+             * KHÔNG dùng tanh(x/limit)*limit thẳng từ gốc — tanh cong ngay từ
+             * giá trị NHỎ (tanh(0.9) = 0.716, tức một đỉnh còn cách limit 10%
+             * cũng đã bị co gần 30%), co bớt cả những chỗ nhiễu vốn dĩ ổn,
+             * chưa từng chạm limit bao giờ — đổi luôn cả những phần cột khói
+             * vẫn đang đẹp, không ai muốn.
+             *
+             * "KNEE" giữ THẲNG (không đổi gì) dưới knee (70% limit — đúng
+             * ngưỡng những chỗ chưa từng chạm limit cũ), CHỈ bo tròn phần VƯỢT
+             * quá knee bằng tanh, tiệm cận limit chứ không cắt phẳng. Dưới
+             * knee: y = x hệt như không có kẹp. Trên knee: mượt, không gãy
+             * đạo hàm tại knee lẫn khi tiến tới limit. */
             float offSqr = dOffset.x * dOffset.x + dOffset.y * dOffset.y +
                            dOffset.z * dOffset.z;
-            if (offSqr > ringOffsetLimit * ringOffsetLimit) {
-                float s = ringOffsetLimit / sqrtf(offSqr);
+            float knee = ringOffsetLimit * 0.70f;
+            if (knee > 1e-6f && offSqr > knee * knee) {
+                float offLen = sqrtf(offSqr);
+                float range = ringOffsetLimit - knee; // > 0: limit luôn > knee
+                float excess = offLen - knee;
+                float softLen = knee + range * tanhf(excess / range);
+                float s = softLen / offLen;
                 dOffset.x *= s; dOffset.y *= s; dOffset.z *= s;
             }
 

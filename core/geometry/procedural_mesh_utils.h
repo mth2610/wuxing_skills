@@ -155,6 +155,29 @@ typedef struct
    * theo toàn thân, đúng ý muốn dù thân dài hay ngắn). */
   float noiseWavelength;
 
+  /* GHI ĐÈ chiều dài path dùng cho tọa độ nhiễu (tNoise = t*L/noiseWavelength)
+   * bằng một giá trị caller tự cấp thay vì spanLen tính THÔ lại mỗi khung
+   * hình trong PMTube_BuildAlongPath. 0 (mặc định qua {0}) = dùng spanLen thô
+   * như cũ — không set field này thì không đổi gì.
+   *
+   * LÝ DO CẦN, xác nhận 05/08/2026: spanLen thô là MỘT giá trị lái tọa độ
+   * nhiễu của TOÀN BỘ mesh cùng lúc (mọi vành dùng chung nó qua t*spanLen).
+   * Trên một trail ĐANG DI CHUYỂN, spanLen thô có thể nhảy đáng kể chỉ trong
+   * MỘT khung hình (buffer lịch sử đầy lên/vơi đi khi tốc độ emitter đổi đột
+   * ngột) — và vì mọi vành cùng đọc lại toạ độ nhiễu từ giá trị mới đó CÙNG
+   * LÚC, một bước nhảy đủ lớn để vượt ranh giới ô lattice khiến CẢ mesh
+   * "chớp" sang một mảng giá trị nhiễu không tương quan trong đúng một khung
+   * — quan sát được là "những vùng lồi lõm đổi pha cho nhau một cái rụp".
+   *
+   * core/trails/trail_system.c cấp giá trị này từ `TrailEntity.
+   * tubeNoiseSpanLen` — một bản LÀM MỊN theo thời gian (low-pass, hằng số
+   * ~0.35s) của cùng phép đo, cập nhật trong UpdateTrailSystem() nơi có dt
+   * thật. Chỉ áp cho TỌA ĐỘ NHIỄU: capsuleCurve (hình dạng phễu) và
+   * ringGap/offsetLimit (kẹp hình học chống tự cắt) vẫn đọc chiều dài THẬT
+   * của khung hiện tại, không làm mịn — hình dạng/kẹp an toàn cần chính xác
+   * NGAY, chỉ tọa độ nhiễu mới cần ổn định qua thời gian. */
+  float noiseSpanLenOverride;
+
   /* NHÂN trên phần "cuộn theo THỜI GIAN THẬT" của toạ độ nhiễu
    * (core/trails/trail_system.c: `tubeCfg.noiseOffset = runNoiseOffset *
    * noiseOffsetScrollMul`, runNoiseOffset = -uvScrollOffset*0.5, đồng hồ

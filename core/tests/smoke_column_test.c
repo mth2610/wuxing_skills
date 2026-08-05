@@ -238,8 +238,13 @@ static void Test_MirrorStillMatchesSource(void) {
             FileHas("core/geometry/pm_tube.inl", "#define PM_TUBE_UV_AROUND_WRAPS 1") &&
             !FileHas("core/geometry/pm_tube.inl", "PM_TUBE_UV_ASPECT"),
         "the sheet wraps the column exactly once");
-  CHECK(FileHas("core/trails/shaders/trail_volume.fs",
-                "vec2 uv2 = vec2(fragTexCoord.x, fragTexCoord.y * u_volMask.x);"),
+  // Generalised 05/08/2026 onto core/uv's SurfaceFlow (core/uv/surface_flow.h)
+  // — same fact, now expressed as layer 1's tiling instead of a hand-rolled
+  // `uv2 = (u, v * u_volMask.x)`: {1.0, 1.63} tiles AROUND (u) exactly once
+  // (unscaled) and ALONG (v) by 1.63x, so sheet 2 wraps the circumference
+  // once too — scaling u would double the count again, the same bug one
+  // layer down.
+  CHECK(FileHas("core/trails/trail_system.c", ".tiling = {1.0f, 1.63f}"),
         "...and sheet 2 wraps once as well — scaling ITS u doubled the count "
         "again, which is the same bug one layer down");
   // billow() has its crest on a CONTOUR LINE, not over an area, so everything
@@ -396,9 +401,20 @@ static void Test_ProfilesAreThreeDifferentShapes(void) {
   const char *vfs = "core/trails/shaders/trail_volume.fs";
   CHECK(FileHas("core/composition/common/vc_smoke_column.inl", "cfg.tubeVolumeShading = true;"),
         "the column asks for volume shading");
-  CHECK(FileHas(vfs, "float pattern = s1.a * s2.a;"),
+  // Generalised 05/08/2026: the multiply itself now happens inside
+  // core/uv's SurfaceFlow_Blend (SURFACE_FLOW_MUL), driven by a SurfaceFlow
+  // whose layer 1 asks for that blend — trail_volume.fs just reads the
+  // already-blended alpha back out. Pin both halves: the shader takes
+  // `.a` off the generic sample (not a hand-rolled `s1.a * s2.a` anymore),
+  // and the C side actually asks for MUL, not ADD/MAX — either alone could
+  // silently regress to alpha-over coverage-adding, which is the "polished
+  // stone" bug this exists to avoid.
+  CHECK(FileHas(vfs, "float pattern = flowSample.a;"),
         "two sheets MULTIPLIED — alpha-over layering can only add coverage, "
         "which is why two passes read as polished stone");
+  CHECK(FileHas("core/trails/trail_system.c", ".blend = SURFACE_FLOW_MUL"),
+        "...and the C side actually asks core/uv's SurfaceFlow for MUL, not "
+        "ADD or MAX");
   // |N.V|, NOT 1-|N.V|. The shell reading puts opacity 0.000 on the column's
   // axis and its PEAK at 85% of the radius — a bright band hugging the
   // boundary, which IS the hard edge. A rolloff constant cannot move a peak
@@ -418,7 +434,13 @@ static void Test_ProfilesAreThreeDifferentShapes(void) {
   // circumference — rotation, by definition — and any along-pan on top makes
   // the sum a diagonal, i.e. a screw. The first draft of trail_volume.fs panned
   // both axes and manufactured the exact artefact it was written to remove.
-  CHECK(FileHas("core/trails/trail_system.c", "float pan[4] = {-0.085f, 0.0f, 0.043f, 0.0f};"),
+  // Generalised 05/08/2026: the pan constants now live in s_volFlow's two
+  // SurfaceFlowLayer.pan fields instead of a raw `pan[4]`. AROUND stays the
+  // FIRST component of Vector2 pan (.x) on both layers — pin it at 0 on
+  // each literal so a future edit cannot reintroduce the screw thread by
+  // giving one layer a nonzero .x.
+  CHECK(FileHas("core/trails/trail_system.c", ".pan = {0.0f, 0.085f}") &&
+            FileHas("core/trails/trail_system.c", ".pan = {0.0f, -0.043f}"),
         "the sheet pans ALONG the body only — the around components are zero");
   // And source four: u wraps at 1.0, so a non-integer around-scale leaves a
   // hard seam running the full length of the column. Same rule already stated

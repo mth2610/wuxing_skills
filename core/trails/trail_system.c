@@ -4,6 +4,7 @@
 #include "core/geometry/procedural_mesh_utils.h"
 #include "core/resource_manager.h"
 #include "core/tuning.h"
+#include "core/uv/surface_flow.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <math.h>
@@ -43,6 +44,17 @@ static Shader s_deformShader;
 static bool s_deformShaderTried = false;
 static Shader s_volumeShader;
 static bool s_volumeShaderTried = false;
+/* THE VOLUME TUBE'S TWO-SHEET PAN, GENERALISED 05/08/2026 — was a bespoke
+ * u_volPan uniform + hand-rolled shader math, now core/uv's SurfaceFlow
+ * (core/uv/surface_flow.h), the same "mesh + UVDeformField + SurfaceFlow =
+ * effect" module core/composition/common/vc_shield_shell.inl already uses
+ * for its own flow — see there for the reference pattern this copies
+ * (SurfaceFlow_CacheLocations once, SurfaceFlow_Clear/AddLayer to build,
+ * SurfaceFlow_Apply per draw). Built ONCE (the two layers are constants,
+ * not per-frame data) rather than per group like the old pan[4] literal was
+ * — nothing here varies frame to frame, so there is nothing to rebuild. */
+static SurfaceFlow s_volFlow;
+static SurfaceFlowLocs s_volFlowLocs;
 /* Debug view for the volume tube — see trail_volume.fs. Live in tuning.cfg so a
  * term can be inspected without a rebuild. */
 static float s_volDebug = 0.0f;
@@ -277,11 +289,48 @@ static void EnsureTrailVolumeShader(void)
      * that constant changes anything on screen. That is indistinguishable from
      * "the value is wrong" unless the location is printed. */
     Tuning_RegisterFloat("volume_debug", &s_volDebug, 0.0f);
+    s_volFlowLocs = SurfaceFlow_CacheLocations(s_volumeShader);
+
+    /* Reproduces the OLD u_volPan/u_volMask.x constants exactly —
+     * pan[4] = {-0.085, 0, 0.043, 0}, mask[4].x = 1.63 — see
+     * trail_volume.fs's own comment on the SurfaceFlow that replaced it.
+     *
+     * SurfaceFlow_LayerUV's tile-mode formula is `mat*tiling - pan`
+     * (SUBTRACT), where the old code SAMPLED at `fragTexCoord + pan1/2`
+     * (ADD). Reproducing the same net scroll direction under a repeat-
+     * wrapped sampler (mod 1, so `x - fract(k*t) == x + fract(-k*t)` on the
+     * screen) means negating the old pan CONSTANT, not the formula:
+     *   sheet 1 (layer 0): old `pan1.y = fract(-0.085*t)`, sampled ADDED ->
+     *     net v - 0.085t. New: tiling (1,1) [no scale, matches old
+     *     fragTexCoord unscaled], pan.y = +0.085 -> v*1 - fract(0.085t) ==
+     *     v - 0.085t (mod 1). Around (.x) pan/tiling stay at their
+     *     identity values (0 pan, 1 tiling) on BOTH layers — panning u
+     *     rotates the sheet about the tube's axis, and with any along-pan
+     *     the sum is a screw thread; smoke rises, it does not spin.
+     *   sheet 2 (layer 1): old `pan2.y = fract(0.043*t)`, sampled ADDED
+     *     onto `v*1.63` -> net v*1.63 + 0.043t. New: tiling (1,1.63)
+     *     [reproduces mask[4].x], pan.y = -0.043 -> v*1.63 -
+     *     fract(-0.043t) == v*1.63 + 0.043t (mod 1). MUL blend against
+     *     layer 0 reproduces the old `s1.a * s2.a`.
+     * env = NONE on both (UVDeform_Envelope(NONE,...) == 1.0, i.e. no
+     * gating) — the old code never gated pattern by anything either. */
+    SurfaceFlow_Clear(&s_volFlow);
+    SurfaceFlow_AddLayer(&s_volFlow, (SurfaceFlowLayer){
+        .tiling = {1.0f, 1.0f}, .pan = {0.0f, 0.085f},
+        .blend = SURFACE_FLOW_MUL, .env = UV_ENV_NONE});
+    SurfaceFlow_AddLayer(&s_volFlow, (SurfaceFlowLayer){
+        .tiling = {1.0f, 1.63f}, .pan = {0.0f, -0.043f},
+        .blend = SURFACE_FLOW_MUL, .env = UV_ENV_NONE});
+    s_volFlow.stretchUV = false; // TILE mode — layer 1 needs its 1.63x scale,
+                                 // which STRETCH mode ignores entirely
+    s_volFlow.envAxis = 1;      // inert (env = NONE on both layers), set for
+                                 // sanity: 1 = along the body, not around it
+
     TraceLog(LOG_INFO,
-             "TRAIL: trail_volume loaded — shader id %u, u_volPan loc %d, "
+             "TRAIL: trail_volume loaded — shader id %u, u_flowLayer loc %d, "
              "u_volMask loc %d%s",
              (unsigned)s_volumeShader.id,
-             GetShaderLocation(s_volumeShader, "u_volPan"),
+             s_volFlowLocs.layerLoc,
              GetShaderLocation(s_volumeShader, "u_volMask"),
              (GetShaderLocation(s_volumeShader, "u_volMask") < 0)
                  ? "  <-- MISSING: every mask constant reads as 0, edge goes hard"
@@ -1062,6 +1111,7 @@ int SpawnTrailEntity(TrailConfig config)
     t->uvTiling = (config.uvTiling != 0.0f) ? config.uvTiling : 1.0f;
     t->uvScrollSpeed = config.uvScrollSpeed;
     t->uvScrollOffset = 0.0f;
+    t->tubeNoiseSpanLen = 0.0f;
     t->minVertexDistance = config.minVertexDistance;
     t->widthEnvelope = config.widthEnvelope;
     t->smoothSpline = config.smoothSpline;
@@ -1333,6 +1383,44 @@ void UpdateTrailSystem(float dt)
         }
         t->uvScrollOffset += t->uvScrollSpeed * dt;
 
+        /* LÀM MỊN chiều dài path thật cho tọa độ nhiễu — nguồn của
+         * "đổi pha một cái rụp" báo 05/08/2026: PMTube_BuildAlongPath tính
+         * spanLen THÔ lại từ đầu MỖI KHUNG HÌNH, và MỘT giá trị đó lái toạ độ
+         * nhiễu của TOÀN BỘ mesh cùng lúc (tNoise = t*spanLen/noiseWavelength
+         * cho MỌI vành) — spanLen nhảy dù chỉ một khung là mọi vành cùng nhảy
+         * tọa độ đọc trường nhiễu CÙNG LÚC, có thể xuyên qua ranh giới ô
+         * lattice và đổi hẳn sang một mảng giá trị không tương quan — cả mesh
+         * "chớp" sang một hình dạng khác trong một khung, đúng cảm giác "rụp".
+         *
+         * Chỉ tính khi caller thật sự cần (đã bật noiseWavelength) — tránh
+         * tốn cho cột khói/spark trail/ember trail không dùng cờ này. Đi từ
+         * history THÔ (không phải path đã resample bằng Catmull-Rom lúc vẽ)
+         * vì Update có dt thật để làm mịn đúng — Draw thì không, và chỉ cần
+         * MỘT ước lượng ổn định, không cần khớp chính xác mét. */
+        if (t->tubeShapeConfig != NULL && t->tubeShapeConfig->noiseWavelength > 0.0f &&
+            t->historyCount > 1)
+        {
+            float rawSpanLen = 0.0f;
+            int limit = t->historyCount - 1;
+            if (limit > TRAIL_HISTORY_COUNT - 1) limit = TRAIL_HISTORY_COUNT - 1;
+            for (int k = 0; k < limit; k++)
+            {
+                int i0 = GetHistoryNodeIndex(t, k);
+                int i1 = GetHistoryNodeIndex(t, k + 1);
+                rawSpanLen += Vector3Distance(t->history[i0], t->history[i1]);
+            }
+            if (t->tubeNoiseSpanLen <= 0.0f)
+                t->tubeNoiseSpanLen = rawSpanLen; // mẫu đầu tiên — không có gì để trễ theo
+            else
+            {
+                // Hằng số thời gian ~0.35s: đủ chậm để chặn cú nhảy-một-khung,
+                // đủ nhanh để vẫn bám kịp một pha tăng/giảm tốc thật của emitter.
+                float tau = 0.35f;
+                float alpha = 1.0f - expf(-dt / tau);
+                t->tubeNoiseSpanLen += (rawSpanLen - t->tubeNoiseSpanLen) * alpha;
+            }
+        }
+
         if (t->type == TRAIL_TYPE_FOLLOWER && t->attachedTransform != NULL)
         {
             Vector3 localPos = t->attachLocalOffset;
@@ -1533,6 +1621,12 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
         // là hai nguồn chuyển động không ăn khớp — nhân 0 tắt hẳn, không đổi
         // gì cho ai đang để mặc định 1.0 (PMTube_DefaultConfig).
         tubeCfg.noiseOffset = runNoiseOffset * tubeCfg.noiseOffsetScrollMul;
+        // Bản làm mịn theo thời gian (UpdateTrailSystem, dt thật) thay cho
+        // spanLen thô mỗi khung — xem doc noiseSpanLenOverride ở
+        // procedural_mesh_utils.h và tubeNoiseSpanLen ở trail_system.h. 0 khi
+        // noiseWavelength chưa bật (UpdateTrailSystem không tính) nên không
+        // đổi gì cho caller không dùng cờ này.
+        tubeCfg.noiseSpanLenOverride = t->tubeNoiseSpanLen;
         if (tubeCfg.noisePixels == NULL)
         { tubeCfg.noisePixels = runPixels; tubeCfg.noiseImgW = runW; tubeCfg.noiseImgH = runH; }
     }
@@ -2168,18 +2262,18 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
         // varies per column already rides in a vertex attribute.
         if (s_volumeShader.id != 0 && fullShader.id == s_volumeShader.id)
         {
-            int panLoc = GetShaderLocation(fullShader, "u_volPan");
             int maskLoc = GetShaderLocation(fullShader, "u_volMask");
-            // Opposite signs on the two pans: same-direction layers at merely
-            // different speeds keep a beat that the eye locks onto.
-            // .x/.z = ALONG pan, .y/.w = AROUND pan. The around components are
-            // ZERO on purpose: panning u rotates the sheet about the tube's
-            // axis, and with any along-pan the sum is a diagonal — a screw
-            // thread. Smoke rises, it does not spin.
-            float pan[4] = {-0.085f, 0.0f, 0.043f, 0.0f};
-            // .x sheet-2 ALONG tiling (1.63 — deliberately not a small integer
-            // ratio, or the two layers relock into one pattern), .y depth
-            // power, .z silhouette softness, .w master density.
+            // The two-sheet pan itself is now s_volFlow (built once in
+            // EnsureTrailVolumeShader — see the exact-reproduction comment
+            // there), pushed exactly like vc_shield_shell.inl pushes its own
+            // SurfaceFlow. Still once per group, still no per-instance
+            // uniform write — s_volFlow never changes, so there is nothing
+            // instance-specific to push in the first place.
+            SurfaceFlow_Apply(&s_volFlow, fullShader, &s_volFlowLocs, time);
+            // .x is now UNUSED by the shader (sheet-2's along tiling moved
+            // into s_volFlow's own layer 1) — kept in the array only so this
+            // diff stays minimal; .y depth power, .z silhouette softness,
+            // .w master density are still load-bearing.
             //
             // .y = 2.0: the volume power. core/tests/silhouette_test.c
             // (Test_ThePowerMustBeAtLeastTwo) proved a power below 1 CANNOT
@@ -2193,7 +2287,6 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
             // number of two-sided facets. Both fixes are now in: this power,
             // and trail_volume.fs's `if (facing < 0.0) discard;`.
             float mask[4] = {1.63f, 2.0f, 0.34f, 1.75f};
-            if (panLoc >= 0) SetShaderValue(fullShader, panLoc, pan, SHADER_UNIFORM_VEC4);
             if (maskLoc >= 0) SetShaderValue(fullShader, maskLoc, mask, SHADER_UNIFORM_VEC4);
             int dbgLoc = GetShaderLocation(fullShader, "u_volDebug");
             if (dbgLoc >= 0)
