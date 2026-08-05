@@ -178,15 +178,6 @@
 ```
 **Structs** (fields in header): FluidImpactCollision, FluidImpactEvent
 
-### `core/fluid/fluid_orb.h`
-```c
-  void FluidWaterOrb_Spawn(const FluidWaterOrbEvent *event);
-  void FluidWaterOrb_Update(float dt);
-  void FluidWaterOrb_Draw(void);
-  void FluidWaterOrb_GetStats(int *active, int *max);
-```
-**Structs** (fields in header): FluidWaterOrbEvent
-
 ### `core/force_field.h`
 ```c
   float Noise_Perlin3D(float x, float y, float z);
@@ -263,6 +254,7 @@
 
 ### `core/trails/trail_system.h`
 ```c
+  Shader Trail_GetVolumeShader(void);
   void TrailSystem_SetGlobalTexture(Texture2D tex);
   void InitTrailSystem(Shader defaultShader);
   int SpawnTrailEntity(TrailConfig config);
@@ -415,7 +407,7 @@
   UVDeformLocs UVDeform_CacheLocations(Shader shader);
   void UVDeform_Apply(const UVDeformField *f, Shader shader, const UVDeformLocs *locs);
 ```
-**Enums:** UVDeformKind { UV_DEFORM_SINE,UV_DEFORM_NOISE_FLOW,UV_DEFORM_FLOWMAP,UV_DEFORM_SWIRL,UV_DEFORM_KIND_COUNT };UVEnvelopeKind { UV_ENV_NONE,UV_ENV_RAMP,UV_ENV_BELL,UV_ENV_SMOOTHSTEP,UV_ENV_HEAD_WELD,UV_ENV_KIND_COUNT } UVDeformPreset { UV_DEFORM_PRESET_SIN_WAVE_TRAIL,UV_DEFORM_PRESET_SCROLL_V,UV_DEFORM_PRESET_VORTEX,UV_DEFORM_PRESET_COUNT }
+**Enums:** UVDeformKind { UV_DEFORM_SINE,UV_DEFORM_NOISE_FLOW,UV_DEFORM_FLOWMAP,UV_DEFORM_SWIRL,UV_DEFORM_KIND_COUNT };UVEnvelopeKind { UV_ENV_NONE,UV_ENV_RAMP,UV_ENV_BELL,UV_ENV_SMOOTHSTEP,UV_ENV_HEAD_WELD,UV_ENV_HEAD_WELD_SQ,UV_ENV_KIND_COUNT } UVDeformPreset { UV_DEFORM_PRESET_SIN_WAVE_TRAIL,UV_DEFORM_PRESET_SCROLL_V,UV_DEFORM_PRESET_VORTEX,UV_DEFORM_PRESET_COUNT }
 **Structs** (fields in header): UVDeformLayer, UVDeformField, UVDeformLocs
 
 ### `core/uv/surface_flow.h`
@@ -628,11 +620,22 @@ _Inline helpers / macros only — see header._
   void DrawCorePrism(Vector3 bottom, Vector3 top, float radius, int sides, Color color);
   Vector3 ProceduralMesh_BezierPoint(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t);
   Vector3 ProceduralMesh_BezierTangent(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t);
-  TubeMeshConfig ProceduralMesh_DefaultTubeConfig(void);
-  void ProceduralMesh_BuildTube(TubeMeshData *out, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float baseRadius, float flowProgress, float time, int segments, int radialSegs, const TubeMeshConfig *cfg);
-  void ProceduralMesh_BuildTubeAlongPath(TubeMeshData *out, const Vector3 *pathPoints, int pathCount, float baseRadius, float startT, float endT, float time, int segments, int radialSegs, const TubeMeshConfig *cfg);
-  void ProceduralMesh_DrawTube(const TubeMeshData *data, float uvLengthScale);
-  void ProceduralMesh_DrawTubeEx(const TubeMeshData *data, float uvLengthScale, float uvOffset);
+  Vector3 ProceduralMesh_BezierPoint(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t);
+  Vector3 ProceduralMesh_BezierTangent(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t);
+  PMTubeConfig PMTube_DefaultConfig(void);
+  void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints, int pathCount, float baseRadius, float startT, float endT, float time, int segments, int radialSegs, const PMTubeConfig *cfg);
+  void PMTube_Draw(const PMTubeMesh *data, float uvLengthScale);
+  void PMTube_DrawEx(const PMTubeMesh *data, float uvLengthScale, float uvOffset);
+  void PMTube_DrawFaded(const PMTubeMesh *data, float uvLengthScale, float uvOffset, Color base, float fadeInEnd, float fadeOutStart, float metresPerTile);
+  PMDropletConfig PMDroplet_DefaultConfig(void);
+  void PMDroplet_BuildAlongPath(PMDropletMesh *out, const Vector3 *pathPoints, int pathCount, float baseRadius, float startT, float endT, float time, int segments, int radialSegs, const PMDropletConfig *cfg);
+  void PMDroplet_Draw(const PMDropletMesh *data, float uvLengthScale);
+  void PMDroplet_DrawEx(const PMDropletMesh *data, float uvLengthScale, float uvOffset);
+  PMCapsuleConfig PMCapsule_DefaultConfig(void);
+  void PMCapsule_BuildAlongPath(PMCapsuleMesh *out, const Vector3 *pathPoints, int pathCount, float baseRadius, float startT, float endT, float time, int segments, int radialSegs, const PMCapsuleConfig *cfg);
+  void PMCapsule_Draw(const PMCapsuleMesh *data, float uvLengthScale);
+  void PMCapsule_DrawEx(const PMCapsuleMesh *data, float uvLengthScale, float uvOffset);
+  void PMDroplet_BuildBezier(PMDropletMesh *out, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float baseRadius, float flowProgress, float time, int segments, int radialSegs, const PMDropletConfig *cfg);
   WavePlaneConfig ProceduralMesh_DefaultWavePlaneConfig(void);
   void ProceduralMesh_BuildWavePlane(WavePlaneMeshData *out, Vector3 center, float width, float length, int segmentsX, int segmentsZ, float time, const WavePlaneConfig *cfg);
   void ProceduralMesh_DrawWavePlane(const WavePlaneMeshData *data, Color color);
@@ -668,7 +671,7 @@ _Inline helpers / macros only — see header._
   void ProceduralMesh_DrawBakedCrystalCluster(Mesh mesh, Material material, Matrix transform);
   Material ProceduralMesh_GetPassthroughMaterial(Shader shader);
 ```
-**Structs** (fields in header): TubeMeshConfig, TubeMeshData, WavePlaneConfig, WavePlaneMeshData, CurlingWaveConfig, CurlingWaveMeshData, RockMeshData, ShardClusterConfig, ShardClusterMeshData, VortexFunnelConfig, VortexFunnelMeshData, FissureMeshData, MeshDisplacementParams, CrystalDesc, CrystalClusterMeshData
+**Structs** (fields in header): PMTubeConfig, PMTubeMesh, PMDropletConfig, PMDropletMesh, PMCapsuleConfig, PMCapsuleMesh, WavePlaneConfig, WavePlaneMeshData, CurlingWaveConfig, CurlingWaveMeshData, RockMeshData, ShardClusterConfig, ShardClusterMeshData, VortexFunnelConfig, VortexFunnelMeshData, FissureMeshData, MeshDisplacementParams, CrystalDesc, CrystalClusterMeshData
 
 ### `core/composition/visual_composer.h`
 ```c
@@ -706,7 +709,6 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeEnergyOrb(Vector3 center, VC_MaterialId mat, float radius, float intensity01);
   void VFX_ComposeShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat, float radius, float t01);
   void VFX_ComposePortalDisc(Vector3 center, Vector3 normal, VC_MaterialId mat, float radius, float t01);
-  void VFX_ComposeBeam(Vector3 from, Vector3 to, VC_MaterialId mat, float width, float t01);
   void VFX_ComposeDebrisShards(Vector3 pos, Vector3 vel, VC_MaterialId mat, float scale, int count);
   void VFX_ComposeConvergeMotes(Vector3 center, VC_MaterialId mat, float radius, float t01, int moteCount);
   float VC_ConvergeMotesSizeMul(void);
@@ -726,6 +728,8 @@ _Inline helpers / macros only — see header._
   int VFX_ComposeSweptTrail(const Matrix *followTransform, VC_MaterialId mat, float width, float lifetime, VFX_TrailStyle style);
   void VFX_TrailSetWidth(int handle, float width01);
   void VFX_KillSweptTrail(int handle);
+  int VFX_ComposeSmokeColumn(Vector3 pos, VC_MaterialId mat, float radius, float height, VFX_ColumnKind kind, bool funnel);
+  void VFX_SmokeColumn_Stop(int handle);
   int VFX_ComposeVolumeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime, VFX_VolumeKind kind);
   int VFX_ComposeVolumeTrailEx(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime, VFX_VolumeKind kind, const VFX_TrailSurface *surface);
   void VFX_KillVolumeTrail(int handle);
@@ -743,22 +747,25 @@ _Inline helpers / macros only — see header._
   int VFX_ComposeSmokeStrandTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime);
   void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
   void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
+  void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01, float lifetimeScale);
   int VFX_ComposeEmberTrail(Vector3 pos, Vector3 velocity, VC_MaterialId mat, float scale, float embersPerSecond);
   void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
   void VFX_ComposeFluidImpact(Vector3 pos);
-  void VFX_ComposeWaterOrb(Vector3 start, Vector3 target);
   void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
   void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   void VFX_ComposeParticleUpgradesTest(Vector3 pos);
-  void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01, float lifetimeScale);
   int VFX_ComposeShieldShell(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
+  int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime, VFX_ColumnKind kind, bool funnel);
   void VFX_ComposeStonePillar(Vector3 basePos, float progress);
+  void VFX_ComposeWaterOrb(Vector3 start, Vector3 target);
   void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
   void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
   void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
   void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time, float phaseOffset);
+  void VFX_SmokeTrail_Stop(int handle);
+  void VFX_Compose_SubmitScreenSpaceVFX(void);
 ```
-**Enums:** VFX_RibbonTrailKind { VFX_RIBBON_BLADE,VFX_RIBBON_MAIN,VFX_RIBBON_WISP,VFX_RIBBON_BACKDROP,VFX_RIBBON_KIND_COUNT,VFX_RIBBON_FLOW,VFX_RIBBON_FILAMENT };VFX_TrailStyle { VFX_TRAIL_BLADE,VFX_TRAIL_RIBBON,VFX_TRAIL_FILAMENT,VFX_TRAIL_HAZE,VFX_TRAIL_STYLE_COUNT } VFX_VolumeKind { VOL_ENERGY,VOL_SMOKE,VOL_FIRE,VFX_VOLUME_KIND_COUNT };VFX_StrandStyle { VFX_STRAND_ENERGY,VFX_STRAND_SMOKE,VFX_STRAND_STYLE_COUNT }
+**Enums:** VFX_RibbonTrailKind { VFX_RIBBON_BLADE,VFX_RIBBON_MAIN,VFX_RIBBON_WISP,VFX_RIBBON_BACKDROP,VFX_RIBBON_KIND_COUNT,VFX_RIBBON_FLOW,VFX_RIBBON_FILAMENT };VFX_TrailStyle { VFX_TRAIL_BLADE,VFX_TRAIL_RIBBON,VFX_TRAIL_FILAMENT,VFX_TRAIL_HAZE,VFX_TRAIL_STYLE_COUNT } VFX_VolumeKind { VOL_ENERGY,VOL_SMOKE,VOL_FIRE,VFX_VOLUME_KIND_COUNT };VFX_ColumnKind { VFX_COLUMN_SMOKE,VFX_COLUMN_FIRE,VFX_COLUMN_STEAM,VFX_COLUMN_KIND_COUNT } VFX_StrandStyle { VFX_STRAND_ENERGY,VFX_STRAND_SMOKE,VFX_STRAND_STYLE_COUNT }
 **Structs** (fields in header): VFX_ShieldSurface, VFX_TrailSurface
 
 ### `core/composition/vfx_sequence.h`

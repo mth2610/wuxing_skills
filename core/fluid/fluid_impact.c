@@ -5,7 +5,6 @@
 #include "core/force_field.h"
 #include "core/fluid/fluid_surface.h"
 #include "core/fluid/fluid_pbd_gpu.h"
-#include "core/fluid/fluid_orb.h"
 #include "core/gfx_quality.h"
 #include "core/map_manager.h"
 #include "core/presets/vc_material.h"
@@ -277,7 +276,6 @@ void FluidImpact_Update(float dt)
      * particles. */
     (void)FluidPBDGPU_Init();
     if (FluidPBDGPU_IsActive()) FluidPBDGPU_Update(dt, 0.0f);
-    FluidWaterOrb_Update(dt);
     s_secondaryMarksThisFrame = 0;
     for (int i = 0; i < FLUID_IMPACT_MAX_HERO_DROPLETS; ++i) {
         FluidHeroDroplet *d = &s_hero[i];
@@ -312,7 +310,6 @@ void FluidImpact_Update(float dt)
 
 void FluidImpact_Draw(void)
 {
-    FluidWaterOrb_Draw();
     for (int i = 0; i < FLUID_IMPACT_MAX_HERO_DROPLETS; ++i) {
         FluidHeroDroplet *d = &s_hero[i];
         if (!d->active || d->surfaceEmitter == PARTICLE_EMITTER_INVALID) continue;

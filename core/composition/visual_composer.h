@@ -584,4 +584,7 @@ void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float g
 void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time, float phaseOffset);
 void VFX_SmokeTrail_Stop(int handle);
 // @gen:vc_declarations end
+
+// Screen-space producers that submit SSF streams before FluidSurface_HasPending().
+void VFX_Compose_SubmitScreenSpaceVFX(void);
 #endif // VISUAL_COMPOSER_H

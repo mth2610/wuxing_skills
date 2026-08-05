@@ -178,6 +178,7 @@ static void CompositeScreenSpaceVFX(Camera3D camera)
   /* SSF producers submit before the pending check. They must never be gated
    * by decal or ordinary-particle passes: an airborne water orb has neither. */
   FluidImpact_Draw();
+  VFX_Compose_SubmitScreenSpaceVFX();
   bool hasFluid = FluidSurface_HasPending();
   bool hasMetaballs = MetaballFX_HasRegisteredBlobs();
   if (!hasFluid && !hasMetaballs) return;

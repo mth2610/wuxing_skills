@@ -421,7 +421,7 @@
       "trigger_call": "VFX_ComposeIceCrystal($POS, $SEED)"
     },
     {
-      "source": "water/water_orb_test.inl",
+      "source": "water/water_orb.inl",
       "fn": "VFX_ComposeWaterOrb",
       "label": "WATER ORB",
       "category": "water",
