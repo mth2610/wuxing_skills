@@ -82,6 +82,60 @@ static float s_smokeTrailScrollMul = 1.0f;
 static float s_smokeTrailAlphaMul = 1.0f;
 static float s_smokeTrailTile = 3.00f;
 static float s_smokeTrailFreezeDeform = 0.0f;
+// LIVE DIAL for the "dragged decal, not venting smoke" read reported
+// 05/08/2026. Hypothesis: centerlineAmp is a SYNTHETIC lateral bend, copied
+// verbatim from the column, where it is the ONLY source of shape motion (the
+// column never moves, so the bend IS the motion cue). The trail already gets
+// real shape variation for free from the emitter's actual path — an
+// independent noise bend competing with genuine motion is what a rigid
+// shape riding along a spline (a decal) looks like, not what material
+// genuinely trailing behind motion looks like. 0 = bend off, pure real-path
+// shape; 1 = the column's amount, unchanged. Tune down first before touching
+// anything else — this is the cheapest lever to test the hypothesis with.
+static float s_smokeTrailBendMul = 1.0f;
+// TRAIL SYSTEM FIX, 05/08/2026 — core/geometry/pm_tube.inl's noiseWavelength.
+// Confirmed from actual test footage (fixture 24's Lissajous path): a moving
+// trail's recorded path length pulses with the emitter's instantaneous speed
+// (minVertexDistance gates node-adding by real distance, but tubeMaxRings —
+// the mesh's ring COUNT — is fixed), so sampling the churn at a raw [0,1]
+// fraction of "current path length" stretches/squashes the noise's spatial
+// grain in sync with speed — a pure geometry-pumping artifact with nothing
+// to do with real smoke, and the root of the "dragged decal" read. 5.0
+// matches the column's own height in the live fixture — same latticeAlong=3
+// churn, same ~1.67 m per cell, so the two archetypes read as the same
+// material regardless of which one happens to be moving.
+static float s_smokeTrailWavelength = 5.0f;
+// TRAIL SYSTEM FIX #2, 05/08/2026 — pm_tube.inl's noiseOffsetScrollMul.
+// Raising smoketrail2_noise made the trail MORE chaotic, not more alive —
+// it did not "blend" with the trail's own motion. Root cause, reasoned from
+// first principles (the column's IDENTICAL noise formula — normal vector +
+// RGB-channel field + time — already looks correct when the mesh doesn't
+// translate, so the formula itself was never the problem):
+//
+// runNoiseOffset (core/trails/trail_system.c) is a noise-coordinate scroll
+// driven by a REAL-TIME clock (-uvScrollOffset*0.5), unconditionally applied
+// to every TUBE trail. The column NEEDS it: its path is frozen, so t carries
+// no notion of material age (t=0 is forever the fixed source) — the ONLY way
+// its noise can look like it's evolving is to scroll the sampling coordinate
+// against wall-clock time. That is its one and only motion source, so it
+// reads as coherent.
+//
+// A MOVING trail's t already means something else: t tracks a ring's
+// position in the live history buffer, i.e. its MATERIAL AGE — old material
+// sits near t=0, freshly emitted material near t=1, driven by the emitter's
+// REAL motion, for free. Layering runNoiseOffset's independent, constant-
+// rate clock on top of that is two uncorrelated motions driving the same
+// field: the noise pattern marches at a fixed rate while the material's own
+// age is marching at whatever rate real motion dictates. Raising amplitude
+// just makes that mismatch louder — exactly the "more chaotic, doesn't
+// blend" symptom.
+//
+// 0.0 = fully decoupled: the trail's OWN t-to-age mapping supplies
+// "material changes as it ages" for free, with no synthetic scroll fighting
+// it. `time` alone (MeshDeform_Evaluate's own parameter, not this scroll)
+// still lets the field breathe in place. 1.0 = the column's mechanism,
+// unchanged, if this turns out to be wrong.
+static float s_smokeTrailAgeScrollMul = 0.0f;
 
 static void SmokeTrail_EnsureTuning(void)
 {
@@ -93,6 +147,9 @@ static void SmokeTrail_EnsureTuning(void)
     Tuning_RegisterFloat("smoketrail2_alpha", &s_smokeTrailAlphaMul, 1.0f);
     Tuning_RegisterFloat("smoketrail2_tile", &s_smokeTrailTile, 3.00f);
     Tuning_RegisterFloat("smoketrail2_freeze", &s_smokeTrailFreezeDeform, 0.0f);
+    Tuning_RegisterFloat("smoketrail2_bend", &s_smokeTrailBendMul, 1.0f);
+    Tuning_RegisterFloat("smoketrail2_wavelength", &s_smokeTrailWavelength, 5.0f);
+    Tuning_RegisterFloat("smoketrail2_agescroll", &s_smokeTrailAgeScrollMul, 0.0f);
 }
 
 static void SmokeTrail_InitShared(void)
@@ -181,8 +238,17 @@ static void SmokeTrail_BuildShape(VC_SmokeTrail *c, bool funnel)
     // header comment above.
     c->tube.radiusAnchorAtTail = true;
 
-    c->tube.centerlineAmp = c->radius * 1.6f;
+    // s_smokeTrailBendMul re-applied every frame in VC_SmokeTrail_Update too
+    // (tuning.cfg live-reload) — set here so frame 1, before the first
+    // Update tick, already reflects the current dial.
+    c->tube.centerlineAmp = c->radius * 1.6f * s_smokeTrailBendMul;
     c->tube.useTransportFrame = true;
+    // THE fix for "moves like a dragged picture" — see s_smokeTrailWavelength's
+    // own comment. Re-pushed in Update too.
+    c->tube.noiseWavelength = s_smokeTrailWavelength;
+    // THE fix for "raising noise makes it more chaotic, not alive" — see
+    // s_smokeTrailAgeScrollMul's own comment. Re-pushed in Update too.
+    c->tube.noiseOffsetScrollMul = s_smokeTrailAgeScrollMul;
 
     MeshDeform_Clear(&c->churn);
     c->churn.amplitude = 1.0f;
@@ -379,6 +445,13 @@ static void VC_SmokeTrail_Update(float dt)
         }
         t->uvScrollSpeed = k_smokeTrailScroll[c->kind] * s_smokeTrailScrollMul;
         t->uvMetresPerTile = (s_smokeTrailTile > 0.05f) ? s_smokeTrailTile : 0.05f;
+        // c->tube is the SAME struct t->tubeShapeConfig points at (set once
+        // in SmokeTrail_Spawn), so writing here reaches the live geometry
+        // next draw — no respawn needed to sweep smoketrail2_bend/wavelength/
+        // agescroll.
+        c->tube.centerlineAmp = c->radius * 1.6f * s_smokeTrailBendMul;
+        c->tube.noiseWavelength = s_smokeTrailWavelength;
+        c->tube.noiseOffsetScrollMul = s_smokeTrailAgeScrollMul;
 
         if (c->stopping)
         {

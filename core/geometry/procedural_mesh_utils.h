@@ -126,6 +126,71 @@ typedef struct
    * neo ở t=1. */
   bool radiusAnchorAtTail;
 
+  /* MÉT cho MỘT chu kỳ [0,1] của tọa độ nhiễu (churn + uốn trục), thay vì
+   * dùng thẳng t (phân số dọc TOÀN BỘ path hiện có). 0 = hành vi cũ, dùng t.
+   *
+   * VẤN ĐỀ t GIẢI QUYẾT SAI cho một path đang DI CHUYỂN: PMTubeSamplePath
+   * đặt vành i ở khoảng cách `t * tổng-chiều-dài-path-hiện-tại`. Với cột
+   * đứng yên (path đông cứng, chiều dài không đổi) thì t <=> một vị trí THẬT
+   * cố định mãi mãi — không sao. Với một trail đang chạy, minVertexDistance
+   * chỉ thêm node theo QUÃNG ĐƯỜNG thật đã đi, còn SỐ VÀNH của mesh
+   * (tubeMaxRings) là HẰNG SỐ đặt lúc spawn — nên khi emitter chạy nhanh,
+   * path thật DÀI ra và cùng chừng đó vành bị KÉO GIÃN; khi emitter chậm lại
+   * (hay đảo hướng, như quỹ đạo Lissajous của fixture test), path thật NGẮN
+   * lại và cùng chừng đó vành bị DỒN NÉN. Trường nhiễu có latticeAlong cố
+   * định (vd. "3 ô dọc thân") thì 3 ô đó CO GIÃN theo vận tốc emitter — một
+   * kiểu "thở phồng-xẹp" thuần hình học, chẳng liên quan gì khói thật, và là
+   * lý do một trail di chuyển đọc ra như một tấm ảnh bị kéo lê thay vì khói
+   * đang tan — xem core/composition/common/vc_smoke_trail.inl, phiên
+   * 05/08/2026 xác nhận từ chính video test.
+   *
+   * >0 THÌ tọa độ nhiễu = (t * spanLen) / noiseWavelength — spanLen là chiều
+   * dài THẬT (mét) mà [startT,endT] hiện đang trải, đã tính sẵn ở đầu
+   * PMTube_BuildAlongPath. Nghĩa là "1 ô lattice" luôn rộng đúng chừng đó
+   * mét, bất kể trail đang dài hay ngắn lúc này — tách nghĩa vật lý của toạ
+   * độ nhiễu ra khỏi tổng chiều dài path đang dao động theo tốc độ.
+   *
+   * CHỈ áp cho toạ độ NHIỄU (uốn trục + churn bề mặt) — KHÔNG áp cho
+   * capsuleCurve (r(t) vẫn dùng t thô, vì hình dạng phễu là tỉ lệ TƯƠNG ĐỐI
+   * theo toàn thân, đúng ý muốn dù thân dài hay ngắn). */
+  float noiseWavelength;
+
+  /* NHÂN trên phần "cuộn theo THỜI GIAN THẬT" của toạ độ nhiễu
+   * (core/trails/trail_system.c: `tubeCfg.noiseOffset = runNoiseOffset *
+   * noiseOffsetScrollMul`, runNoiseOffset = -uvScrollOffset*0.5, đồng hồ
+   * DUY NHẤT chạy theo giây). Mặc định 1.0 — PMTube_DefaultConfig() đặt rõ,
+   * không dựa vào {0} — giữ nguyên hành vi cũ cho MỌI caller không set field
+   * này (cột khói, spark trail, ember trail...).
+   *
+   * SAO CẦN TẮT NÓ CHO MỘT TRAIL DI CHUYỂN, xác nhận 05/08/2026 sau khi tăng
+   * smoketrail2_noise làm nó HỖN LOẠN hơn chứ không "hoà quyện" với chuyển
+   * động — cái cột đứng yên đã ĐÚNG và ĐẸP với đúng công thức này, vấn đề chỉ
+   * lộ ra khi mesh di chuyển dọc path, nên phải là DI CHUYỂN xung đột với
+   * chính cơ chế "cuộn theo thời gian", không phải công thức nhiễu sai:
+   *
+   * Cơ chế runNoiseOffset ra đời để cho CỘT — path đông cứng, t KHÔNG mang
+   * nghĩa "tuổi vật chất" (t=0 mãi mãi là nguồn, bất kể cột đã tồn tại bao
+   * lâu) — một cách duy nhất để trông như "đang trôi": cuộn toạ độ nhiễu
+   * theo ĐỒNG HỒ THẬT. Đó là NGUỒN CHUYỂN ĐỘNG DUY NHẤT của nó, nên mạch lạc.
+   *
+   * Một trail ĐANG DI CHUYỂN thì khác về bản chất: t CỦA NÓ đã mang nghĩa
+   * "tuổi vật chất" rồi — vành ở t nhỏ là vật chất CŨ (đã lùi về cuối buffer
+   * lịch sử), vành ở t lớn là vật chất MỚI (vừa phát ra) — do CHÍNH chuyển
+   * động thật của emitter quyết định, không cần giả lập gì thêm. Cộng thêm
+   * runNoiseOffset (một đồng hồ ĐỘC LẬP, tốc độ cố định, không liên quan gì
+   * tốc độ emitter) vào CÙNG toạ độ đó là hai nguồn chuyển động không ăn khớp
+   * cùng lái một trường — mẫu nhiễu cứ trôi tới trong khi vật chất thật đang
+   * "già đi" lùi ra sau, không tương ứng gì nhau. Tăng biên độ nhiễu chỉ làm
+   * cái xung đột đó TO hơn, ồn hơn — đúng triệu chứng "cao hơn = hỗn loạn
+   * hơn" quan sát được, không phải noise amplitude sai.
+   *
+   * 0.0 THÌ tắt hẳn — vật chất vẫn "biến đổi khi già đi" hoàn toàn tự nhiên,
+   * hoàn toàn miễn phí, chỉ nhờ chuyển động thật (t đổi theo buffer lịch sử);
+   * phần thời gian thuần (không gắn toạ độ, đến từ tham số `time` của
+   * MeshDeform_Evaluate — trường tự "thở" tại chỗ) vẫn còn nguyên, không mất
+   * hẳn chuyển động nội bộ. */
+  float noiseOffsetScrollMul;
+
   /* UỐN TRỤC — mét. Đẩy CẢ MẶT CẮT sang ngang, không phải đẩy từng đỉnh.
    *
    * Đây là thứ mà biến dạng bề mặt không bao giờ làm được. Bề mặt gợn thì cái

@@ -20,6 +20,18 @@
  * ngoài "trông kỳ lạ". */
 #define PM_TUBE_MIN_RADIUS_FRAC 0.25f   /* mặt cắt không bao giờ dưới 25% danh nghĩa */
 #define PM_TUBE_MAX_OFFSET_RINGS 0.60f  /* đỉnh dịch tối đa 60% khoảng cách hai vành */
+/* PHANH THỨ BA, 05/08/2026 — trần offset cũ chỉ đo theo KHOẢNG CÁCH HAI VÀNH,
+ * không theo BÁN KÍNH CỤC BỘ. Trên một thân gần như đều (cột khói: 0.12x..1.0x
+ * trên một trục KHÔNG di chuyển, đầu mỏng là nguồn phát — thường bị che/ít
+ * soi) thì không sao. Nhưng đầu funnel của trail giờ neo ngược
+ * (radiusAnchorAtTail) để mỏng đúng ở ĐẦU ĐƯỜNG ĐI — đầu dễ thấy nhất, luôn
+ * hướng ra phía camera vì nó là đầu MỚI. Tại đó bán kính thật có thể chỉ còn
+ * 0.12 x 0.35 m ~ 4 cm, trong khi offsetLimit vẫn tính theo ringGap của CẢ
+ * THÂN dày — cùng một trần dịch chuyển đó giờ lớn hơn bán kính thật nhiều
+ * lần, mặt cắt bị đẩy lộn qua tâm rồi ngược trở lại, vỡ thành mảng phẳng —
+ * đúng "bậc thang" + "vuông vuông" quan sát được, và CHỈ lộ ra ở đầu mỏng vì
+ * offsetLimit không hề biết bán kính tại đó đã co lại. */
+#define PM_TUBE_MAX_OFFSET_RADIUS_FRAC 0.55f  /* HOẶC 55% bán kính cục bộ, lấy trần THẤP HƠN */
 
 /* Sheet khối quấn quanh thân ĐÚNG MỘT VÒNG.
  *
@@ -184,6 +196,12 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
         if (currentT < 0.0f) currentT = 0.0f;
         if (currentT > 1.0f) currentT = 1.0f;
 
+        /* Toạ độ nhiễu tính theo MÉT THẬT, không theo phân số của tổng chiều
+         * dài path hiện tại — xem doc field noiseWavelength ở
+         * procedural_mesh_utils.h. 0 (mặc định) giữ nguyên hành vi cũ (= t),
+         * nên mọi caller khác không set field này không đổi gì cả. */
+        float tNoise = (cfg->noiseWavelength > 0.0f) ? ((t * spanLen) / cfg->noiseWavelength) : t;
+
         Vector3 pos;
         Vector3 tangent;
         PMTubeSamplePath(pathPoints, pathCount, currentT, &pos, &tangent);
@@ -255,6 +273,18 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
         }
         float headWeight = 1.0f;
 
+        /* Trần offset CỦA RIÊNG VÀNH NÀY — xem PM_TUBE_MAX_OFFSET_RADIUS_FRAC.
+         * Lấy trần THẤP HƠN giữa "60% khoảng cách hai vành" (chặn hai vành cắt
+         * nhau) và "55% bán kính TẠI VÀNH NÀY" (chặn mặt cắt tự lộn qua tâm) —
+         * trên thân dày hai trần gần bằng nhau nên không đổi gì; ở đầu funnel
+         * mỏng thì trần thứ hai mới là cái thật sự chặn. */
+        float ringRadius = baseRadius * capsuleCurve * headWeight;
+        float ringOffsetLimit = offsetLimit;
+        {
+            float radiusLimit = ringRadius * PM_TUBE_MAX_OFFSET_RADIUS_FRAC;
+            if (radiusLimit < ringOffsetLimit) ringOffsetLimit = radiusLimit;
+        }
+
         if (i == 0) { out->tailTangent = tangent; out->tailCenter = pos; }
         if (i == segments) { out->headTangent = tangent; out->headCenter = pos; }
 
@@ -275,11 +305,11 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
              * tức máy móc. Giảm phần TRÔI xuống làm trục W (trường tự biến đổi
              * TẠI CHỖ) chiếm ưu thế, và biến đổi tại chỗ mới là thứ trông như
              * chất khí. */
-            float nvC = t + cfg->noiseOffset * 0.45f;
-            float bendA = 0.70f * PMTubeAxisScalar(cfg->noiseField, 0.13f, t, nvC, time, right)
-                        + 0.30f * PMTubeAxisScalar(cfg->noiseField, 0.41f, t, nvC * 2.6f, time, right);
-            float bendB = 0.70f * PMTubeAxisScalar(cfg->noiseField, 0.61f, t, nvC, time, up)
-                        + 0.30f * PMTubeAxisScalar(cfg->noiseField, 0.87f, t, nvC * 2.6f, time, up);
+            float nvC = tNoise + cfg->noiseOffset * 0.45f;
+            float bendA = 0.70f * PMTubeAxisScalar(cfg->noiseField, 0.13f, tNoise, nvC, time, right)
+                        + 0.30f * PMTubeAxisScalar(cfg->noiseField, 0.41f, tNoise, nvC * 2.6f, time, right);
+            float bendB = 0.70f * PMTubeAxisScalar(cfg->noiseField, 0.61f, tNoise, nvC, time, up)
+                        + 0.30f * PMTubeAxisScalar(cfg->noiseField, 0.87f, tNoise, nvC * 2.6f, time, up);
             float w = cfg->centerlineAmp * t * t;
             pos = Vector3Add(pos, Vector3Add(Vector3Scale(right, bendA * w),
                                              Vector3Scale(up, bendB * w)));
@@ -298,7 +328,7 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
             float deform2 = sinf(t * cfg->deform2FreqT - phi * cfg->deform2FreqPhi - time * cfg->deform2Speed);
             float deform = 1.0f + deform1 * cfg->deform1Amp + deform2 * cfg->deform2Amp;
             Vector3 dOffset;
-            deform += PMTubeShapeDeformNoise(cfg, radialSegs, j, t, time, normal,
+            deform += PMTubeShapeDeformNoise(cfg, radialSegs, j, tNoise, time, normal,
                                         tangent, &dOffset);
 
             /* SÀN BÁN KÍNH. deform là 1 + nhiễu, và không có gì chặn nhiễu ở
@@ -307,14 +337,15 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
              * chuỗi hạt cườm. */
             if (deform < PM_TUBE_MIN_RADIUS_FRAC) deform = PM_TUBE_MIN_RADIUS_FRAC;
 
-            /* TRẦN OFFSET, đo bằng khoảng cách giữa hai vành chứ không phải
-             * bằng bán kính. Đỉnh bị đẩy xa hơn vành kế tiếp thì hai vành CẮT
-             * NHAU, mặt lộn ra và vẽ thành những mảng phẳng bay ngang — đúng
-             * cái nhìn thấy ở đỉnh cột khói. */
+            /* TRẦN OFFSET — thấp hơn giữa khoảng cách hai vành (chặn hai vành
+             * CẮT NHAU, mặt lộn ra thành mảng phẳng bay ngang, đúng cái từng
+             * thấy ở đỉnh cột khói) VÀ bán kính tại VÀNH NÀY (chặn mặt cắt tự
+             * lộn qua tâm — đúng cái thấy ở đầu mỏng của trail, xem
+             * ringOffsetLimit/PM_TUBE_MAX_OFFSET_RADIUS_FRAC). */
             float offSqr = dOffset.x * dOffset.x + dOffset.y * dOffset.y +
                            dOffset.z * dOffset.z;
-            if (offSqr > offsetLimit * offsetLimit) {
-                float s = offsetLimit / sqrtf(offSqr);
+            if (offSqr > ringOffsetLimit * ringOffsetLimit) {
+                float s = ringOffsetLimit / sqrtf(offSqr);
                 dOffset.x *= s; dOffset.y *= s; dOffset.z *= s;
             }
 
@@ -483,5 +514,9 @@ void PMTube_DrawEx(const PMTubeMesh *data, float uvLengthScale,
 PMTubeConfig PMTube_DefaultConfig(void) {
   PMTubeConfig cfg = {0};
   cfg.useTransportFrame = true;
+  // Đặt RÕ, không dựa vào {0}: 0 nghĩa là TẮT cuộn theo thời gian thật (xem
+  // doc field ở procedural_mesh_utils.h) — mặc định phải là 1.0 để mọi
+  // caller có sẵn (cột khói, spark trail, ember trail...) không đổi hành vi.
+  cfg.noiseOffsetScrollMul = 1.0f;
   return cfg;
 }

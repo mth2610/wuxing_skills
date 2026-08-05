@@ -1526,7 +1526,13 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
         shape = 2;
         tubeCfg = *t->tubeShapeConfig;
         tubeCfg.noiseAmp = runNoiseAmp;
-        tubeCfg.noiseOffset = runNoiseOffset;
+        // *tubeCfg.noiseOffsetScrollMul: caller-decided (PMTubeConfig doc ở
+        // procedural_mesh_utils.h). Cột đứng yên cần đồng hồ THẬT này vì t
+        // của nó không mang nghĩa tuổi vật chất; một trail đang di chuyển đã
+        // có tuổi vật chất THẬT từ chính chuyển động, cộng thêm đồng hồ này
+        // là hai nguồn chuyển động không ăn khớp — nhân 0 tắt hẳn, không đổi
+        // gì cho ai đang để mặc định 1.0 (PMTube_DefaultConfig).
+        tubeCfg.noiseOffset = runNoiseOffset * tubeCfg.noiseOffsetScrollMul;
         if (tubeCfg.noisePixels == NULL)
         { tubeCfg.noisePixels = runPixels; tubeCfg.noiseImgW = runW; tubeCfg.noiseImgH = runH; }
     }

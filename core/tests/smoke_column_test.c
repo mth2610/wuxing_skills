@@ -201,8 +201,14 @@ static void Test_MirrorStillMatchesSource(void) {
   // A single low-frequency arc sliding rigidly along the body is a snake made
   // of wire. Two scales, and most of the motion coming from the field evolving
   // IN PLACE rather than translating, is what makes it read as gas.
-  CHECK(FileHas("core/geometry/pm_tube.inl", "float nvC = t + cfg->noiseOffset * 0.45f;") &&
-            FileHas("core/geometry/pm_tube.inl", "0.30f * PMTubeAxisScalar(cfg->noiseField, 0.41f, t, nvC * 2.6f, time, right)"),
+  // `t` -> `tNoise` 05/08/2026: tNoise falls back to plain t whenever
+  // noiseWavelength is 0 (every caller that doesn't opt in, including the
+  // column) — same behaviour, renamed so a moving trail can ask for the
+  // noise coordinate in real metres instead of a fraction of its own
+  // currently-fluctuating length. See noiseWavelength's doc comment in
+  // procedural_mesh_utils.h.
+  CHECK(FileHas("core/geometry/pm_tube.inl", "float nvC = tNoise + cfg->noiseOffset * 0.45f;") &&
+            FileHas("core/geometry/pm_tube.inl", "0.30f * PMTubeAxisScalar(cfg->noiseField, 0.41f, tNoise, nvC * 2.6f, time, right)"),
         "the bend has two scales and drifts slowly, so the sway is not stiff");
   // The texture. sin(TAU*(ku*u + kv*v)) is a plane wave in direction (ku, kv),
   // so drawing both from one range makes most modes DIAGONAL — 45-degree
