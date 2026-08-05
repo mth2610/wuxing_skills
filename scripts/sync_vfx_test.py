@@ -95,6 +95,9 @@ LIFECYCLE_SPECS = {
     # rises from a fixed point, so the fixture is a position rather than a
     # follower transform.
     "VFX_ComposeSmokeColumn":        ("trail",   "static",     "continuous"),
+    # The moving counterpart (vc_smoke_trail.inl) — first arg is a
+    # followTransform like VFX_ComposeVolumeTrail, unlike the column above.
+    "VFX_ComposeSmokeTrail":         ("trail",   "follower",   "continuous"),
     "VFX_ComposeDebrisShards":       ("event",   "burst",      "oneshot"),
     "VFX_ComposeDissolveExit":       ("draw",    "timed",      "continuous"),
     "VFX_ComposeEnergyBurst":        ("event",   "burst",      "oneshot"),
@@ -138,11 +141,22 @@ FIXTURE_SPAWN_OVERRIDES = {
     "VFX_ComposeShieldShell":
         "VFX_ShieldShell_SpawnEx($POS, VC_MAT_FIRE, 1.5f, 1.0f, VFXTest_ShieldFlowSurface())",
     # The kind is an enum and the inferred call would pass a bare 0; the
-    # inferred radius (1.5 m) is a fireball, not a column. Funnel ON, because
-    # cylinder first, per the owner: judge the churn on a shape with no
-    # profile of its own before adding a taper on top of it.
+    # inferred radius (1.5 m) is a fireball, not a column. funnel=true,
+    # height=5.0 — the owner's own hand-tuned values (05/08/2026); do not
+    # revert these to "cylinder first" defaults on a future sync without
+    # checking with them first. A sync silently reverting a hand-tuned
+    # override to a stale default is exactly the confusion that prompted
+    # this comment: the shape function was untouched, only this fixture's
+    # test parameters regressed.
     "VFX_ComposeSmokeColumn":
-        "VFX_ComposeSmokeColumn($POS, VC_MAT_METAL, 0.55f, 3.0f, VFX_COLUMN_SMOKE, false)",
+        "VFX_ComposeSmokeColumn($POS, VC_MAT_METAL, 0.55f, 5.0f, VFX_COLUMN_SMOKE, true)",
+    # Same "cylinder first" reasoning as the column above, and radius sized
+    # per root CLAUDE.md's mesh convention (0.10-0.20f) rather than copying
+    # the column's 0.55f (right for a standing pillar, oversized for a
+    # moving trail — the funnel's "head" always pins to exactly 1.0x this
+    # value, so an oversized radius reads as fat even with the taper working).
+    "VFX_ComposeSmokeTrail":
+        "VFX_ComposeSmokeTrail($XFORM, VC_MAT_METAL, 0.18f, 1.0f, VFX_COLUMN_SMOKE, false)",
 }
 
 # ── Element / category inference ──────────────────────────────────────────────
@@ -357,6 +371,10 @@ def infer_kill_fn(fn_name, available_fns):
     # and inventing one here would generate a call to a missing symbol.
     if fn_name == 'VFX_ComposeSmokeColumn':
         return 'VFX_SmokeColumn_Stop'
+    # Same reasoning, own pool/handle space (vc_smoke_trail.inl) — no
+    # VFX_KillSmokeTrail exists, the release is VFX_SmokeTrail_Stop.
+    if fn_name == 'VFX_ComposeSmokeTrail':
+        return 'VFX_SmokeTrail_Stop'
     if fn_name.startswith('VFX_Compose'):
         candidate = 'VFX_Kill' + fn_name[len('VFX_Compose'):]
         if candidate in available_fns:

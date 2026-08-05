@@ -282,7 +282,7 @@
       "lifecycle": "trail",
       "_auto": true,
       "type": "continuous",
-      "spawn_call": "VFX_ComposeSmokeColumn($POS, VC_MAT_METAL, 0.55f, 3.0f, VFX_COLUMN_SMOKE, false)",
+      "spawn_call": "VFX_ComposeSmokeColumn($POS, VC_MAT_METAL, 0.55f, 5.0f, VFX_COLUMN_SMOKE, true)",
       "kill_fn": "VFX_SmokeColumn_Stop"
     },
     {
@@ -295,6 +295,18 @@
       "_auto": true,
       "type": "oneshot",
       "trigger_call": "VFX_ComposeSmokePuff($POS, VC_MAT_FIRE, 1.5f, 1.0f)"
+    },
+    {
+      "source": "common/vc_smoke_trail.inl",
+      "fn": "VFX_ComposeSmokeTrail",
+      "label": "SMOKE TRAIL",
+      "category": "common",
+      "fixture": "follower",
+      "lifecycle": "trail",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeSmokeTrail($XFORM, VC_MAT_METAL, 0.18f, 1.0f, VFX_COLUMN_SMOKE, false)",
+      "kill_fn": "VFX_SmokeTrail_Stop"
     },
     {
       "source": "common/vc_spark_trail.inl",

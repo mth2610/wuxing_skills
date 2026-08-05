@@ -567,19 +567,21 @@ int VFX_ComposeSmokeStrandTrail(const Matrix *followTransform, VC_MaterialId mat
 // @gen:vc_declarations begin
 void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
 void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
+void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01, float lifetimeScale);
 int VFX_ComposeEmberTrail(Vector3 pos, Vector3 velocity, VC_MaterialId mat, float scale, float embersPerSecond);
 void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
 void VFX_ComposeFluidImpact(Vector3 pos);
-void VFX_ComposeWaterOrb(Vector3 start, Vector3 target);
 void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
 void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
 void VFX_ComposeParticleUpgradesTest(Vector3 pos);
-void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01, float lifetimeScale);
 int VFX_ComposeShieldShell(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
+int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime, VFX_ColumnKind kind, bool funnel);
 void VFX_ComposeStonePillar(Vector3 basePos, float progress);
+void VFX_ComposeWaterOrb(Vector3 start, Vector3 target);
 void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
 void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
 void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
 void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time, float phaseOffset);
+void VFX_SmokeTrail_Stop(int handle);
 // @gen:vc_declarations end
 #endif // VISUAL_COMPOSER_H

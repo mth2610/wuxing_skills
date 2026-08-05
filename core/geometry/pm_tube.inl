@@ -237,9 +237,16 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
         haveCarried = true;
 
         /* r(t) = tailFrac + (1 - tailFrac) * t^pow. Với mặc định (tailFrac 1)
-         * biểu thức rút gọn về đúng 1 và ống thẳng như cũ. */
+         * biểu thức rút gọn về đúng 1 và ống thẳng như cũ.
+         *
+         * Guard nới từ `< 1.0f` thành `!= 1.0f`: công thức vẫn đúng khi
+         * tailFrac > 1 (t=0 phình to hơn, t=1 luôn = đúng 1.0x bất kể
+         * tailFrac — số hạng (1-tailFrac) triệt tiêu tại đó) — dùng cho
+         * trường hợp "đầu" hình học (t=1) lại là đầu MỚI cần hẹp, như một
+         * trail di chuyển thay vì cột đứng yên. Caller hiện tại (0,1) không
+         * đổi hành vi. */
         float capsuleCurve = 1.0f;
-        if (cfg->radiusTailFrac > 0.0f && cfg->radiusTailFrac < 1.0f) {
+        if (cfg->radiusTailFrac > 0.0f && cfg->radiusTailFrac != 1.0f) {
             float p = (cfg->radiusPow > 0.0f) ? cfg->radiusPow : 1.0f;
             float grow = (p == 1.0f) ? t : powf(t, p);
             capsuleCurve = cfg->radiusTailFrac + (1.0f - cfg->radiusTailFrac) * grow;
