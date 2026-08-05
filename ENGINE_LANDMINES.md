@@ -484,3 +484,46 @@ change. When an edit to a shader seems to do nothing, check that the file is
 copied and that the load succeeded BEFORE re-reading the maths — and make every
 capability fallback log why it opted out, on change rather than once at startup
 (`core/CLAUDE.md` §4).
+
+## Writing an include directive INSIDE A COMMENT still includes the file (05/08/2026)
+
+**Symptom.** A `.vs`/`.fs` that compiled fine suddenly fails with a confusing
+GLSL-compiler error — "Missing entry point" (no `void main()` found) or
+`'#endif' : mismatched statements` — right after an edit that, read as C or
+any real preprocessor would read it, changed nothing executable: a comment
+was added, or an existing `#include` line was removed and replaced with prose
+*describing* what used to be there.
+
+**Cause.** `core/shader_preprocessor.c`'s `ProcessIncludes` resolves
+`#include` because raylib's GLSL loader has no `#include` support of its own —
+but it finds its target with a bare `strstr(cursor, "#include")` over the RAW
+file text, with **zero comment-awareness** and **no per-path deduplication**.
+It does not run a real preprocessor pass first; it does not know `//` or
+`/* */` exist. Writing the eight-character token `#include` followed later in
+the file by a quoted string — even inside a `//` line explaining *why not* to
+include something, even as a "don't write this" example — makes the loader
+splice that file's full text in for real, exactly as if the directive were
+live code. If the named file is already included elsewhere (directly, or
+transitively through another include), its body now appears twice in the
+flattened output. GLSL's own `#ifndef` guards are supposed to make a second
+textual copy of a header a no-op — and often do — but this project has now
+observed two DIFFERENT ways the specific combination broke a real rlvk/
+shaderc compile instead: a `void main()` that stops resolving, and a
+`#ifndef`/`#endif` pair that comes out unbalanced. Do not assume the guards
+save you; the real bug is that the include happened in the first place.
+
+**Rule.** Never write the literal token `#include` in a shader comment,
+including to name a file you are deliberately NOT including, even inside
+backticks or quotes. Describe it in prose instead ("pulls in the uv_field
+module", not `` `#include "core/uv/shaders/uv_field.glsl"` ``). This applies
+to every `.vs`/`.fs`/`.glsl` in the tree — the preprocessor runs on all of
+them identically, comment or not. Separately: before pulling a bundling
+header (like `core/uv/shaders/uv_field.glsl`) into a file that already
+includes pieces of what it bundles directly, check whether it re-includes
+those same pieces — if so, declare only the specific uniforms/functions you
+are missing instead of the whole bundle (see
+`core/trails/shaders/trail_deform.fs`'s `u_uvField`/`u_uvMeta` declarations
+for a worked example). No compiler was available in the session that hit
+this twice — a `TraceLog` printing the actual uniform LOCATION after load
+(not just whether the shader "loaded") is what surfaced it; see
+`trail_volume.fs`'s load-site log for the pattern to copy.

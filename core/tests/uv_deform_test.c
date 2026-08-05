@@ -564,12 +564,34 @@ static void Test_MirrorStillMatchesSource(void) {
   CHECK(FileHas(trail, "#include \"core/uv/shaders/uv_deform.glsl\"") &&
             FileHas(trail, "#include \"core/uv/shaders/surface_flow.glsl\""),
         "trail_deform.fs includes the module");
-  CHECK(FileHas(trail, "float w0 = UVDeform_SinePhase(metres * f + u_time * sp, ph, amp);"),
-        "w0 goes through the module");
-  CHECK(FileHas(trail, "ph * 2.3, amp) * (1.0 - 0.28 * spread);") &&
-            FileHas(trail, "ph * 4.1, amp) * (1.0 + 0.25 * spread);"),
-        "the detune stays OUTSIDE the call — folding it into amp would regroup "
-        "the multiply and stop being bit-identical");
+  // NOT "#include uv_field.glsl" — confirmed on a real build 05/08/2026 that
+  // combination breaks compilation (rlvk/shaderc: "Missing entry point"),
+  // because this file ALREADY includes uv_deform.glsl/surface_flow.glsl
+  // directly above and uv_field.glsl re-includes both — ShaderPreprocessor_Load
+  // (core/shader_preprocessor.c) is a naive recursive text substitution with
+  // NO include-path dedup, so their bodies land in the flattened source
+  // twice. u_uvField/u_uvMeta are declared directly instead (see there).
+  CHECK(!FileHasCode(trail, "#include \"core/uv/shaders/uv_field.glsl\"") &&
+            FileHas(trail, "uniform vec4 u_uvField[UV_DEFORM_MAX_LAYERS * 3];") &&
+            FileHas(trail, "uniform vec4 u_uvMeta;"),
+        "u_uvField/u_uvMeta are declared directly, not pulled in via "
+        "uv_field.glsl's include (which broke a real build)");
+  // 05/08/2026: w0/w1/w2 generalised a step further, off UVDeform_SinePhase
+  // called inline onto UVDeform_LayerOffset reading the PACKED field
+  // (u_uvField, declared directly above) — trail_system.c's ApplyDeformUniforms
+  // now builds all three bundles' detune into the packed layers rather than
+  // this file detuning them inline. No longer bit-identical to the pre-
+  // packed version (the generic path fixes amplitude*envelope's
+  // multiplication order) — algebraically identical, and nothing here can
+  // assert bit-identity across that boundary the way the earlier migration
+  // (SurfaceFlow_AlongV, below) could.
+  CHECK(FileHas(trail, "float w0 = UVDeform_LayerOffset(u_uvField[0], u_uvField[1], u_uvField[2],") &&
+            FileHas(trail, "float w1 = UVDeform_LayerOffset(u_uvField[3], u_uvField[4], u_uvField[5],") &&
+            FileHas(trail, "float w2 = UVDeform_LayerOffset(u_uvField[6], u_uvField[7], u_uvField[8],"),
+        "w0/w1/w2 each read their own packed UVDeformField layer");
+  CHECK(!FileHasCode(trail, "uniform vec4  u_sinWave;") &&
+            !FileHasCode("core/trails/trail_system.c", "float sinWave[4] ="),
+        "u_sinWave is gone on both sides, not merely unused");
   CHECK(FileHas(trail, "float v0 = SurfaceFlow_AlongV(along, vBase, 1.00, panA, stretch);"),
         "the along-surface coordinate goes through the module");
   CHECK(FileHas(trail, "SurfaceFlow_AlongV(along, vBase, 0.45, panB * 0.35, false)"),

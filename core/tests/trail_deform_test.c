@@ -683,17 +683,22 @@ static void Test_MirrorStillMatchesSource(void)
     // Three SEPARATE fields, three SEPARATE samples. Summing the waves into one
     // centreline, or summing the samples, collapses the braid into one smooth
     // band — the "biên và đuôi liền mạch" failure this mode replaced.
-    CHECK(FileHas(fs, "float w1 = UVDeform_SinePhase(metres * f * (1.0 + 0.73 * spread)"),
-          "the second wave field is still detuned from the first");
-    CHECK(FileHas(fs, "float w2 = UVDeform_SinePhase(metres * f * (1.0 - 0.39 * spread)"),
-          "and the third from both");
-    // The amplitude detune stays OUTSIDE the call. sin(x)*amp*k and
-    // sin(x)*(amp*k) are not the same float, so folding it into the amp
-    // argument would have been "equivalent" and would have changed the pixels
-    // of an effect that took eight rounds to land.
-    CHECK(FileHas(fs, "ph * 2.3, amp) * (1.0 - 0.28 * spread);") &&
-          FileHas(fs, "ph * 4.1, amp) * (1.0 + 0.25 * spread);"),
-          "and the amplitude detune is still applied after the call, not folded into it");
+    //
+    // 05/08/2026: the detune (freq/speed/phase/amplitude scaled by `spread`)
+    // moved OFF this file entirely, onto the C side — trail_system.c's
+    // ApplyDeformUniforms packs three separately-detuned UVDeformLayers
+    // once, instead of this shader detuning one shared `amp`/`f`/`sp` inline
+    // per bundle. w1/w2 are still SEPARATE reads (their own packed layer,
+    // u_uvField[3..5]/[6..8]) — still three fields, still not summed — just
+    // sourced from data instead of an inline expression.
+    CHECK(FileHas(fs, "float w1 = UVDeform_LayerOffset(u_uvField[3], u_uvField[4], u_uvField[5],"),
+          "the second wave field still reads its OWN packed layer");
+    CHECK(FileHas(fs, "float w2 = UVDeform_LayerOffset(u_uvField[6], u_uvField[7], u_uvField[8],"),
+          "and the third its own, separate from both");
+    CHECK(FileHas(c, ".frequency = m->waveFreq * (1.0f + 0.73f * spread)") &&
+          FileHas(c, ".frequency = m->waveFreq * (1.0f - 0.39f * spread)"),
+          "the detune is still applied — now packed into each layer's own "
+          "frequency/amplitude on the C side instead of inline in the shader");
     CHECK(FileHas(fs, "float strand = max(max(s0, s1 * clamp(u_wispMix, 0.0, 1.0)), s2 * clamp(u_strandFlow.y, 0.0, 1.0));"),
           "the bundles still combine with MAX — summing would fill the gaps between hairs");
     CHECK(FileHas(fs, "s0 *= 1.0 - smoothstep(0.80, 1.0, abs(across - w0) / bundleHW);"),
@@ -707,10 +712,11 @@ static void Test_MirrorStillMatchesSource(void)
     CHECK(FileHas(fs, "float panA = SurfaceFlow_Pan(u_time, u_panSpeed.x);") &&
           FileHas("core/uv/shaders/surface_flow.glsl", "return fract(t * speed);"),
           "the time-driven pans are still folded to [0,1]");
-    CHECK(FileHas(fs, "float w0 = UVDeform_SinePhase(metres * f + u_time * sp, ph, amp);") &&
+    CHECK(FileHas(fs, "float w0 = UVDeform_LayerOffset(u_uvField[0], u_uvField[1], u_uvField[2],") &&
           FileHas("core/uv/shaders/uv_deform.glsl",
                   "return sin(fract(turns) * UV_TAU + phase) * amp;"),
-          "the sine phase is still folded before it is scaled to radians");
+          "the sine phase is still folded before it is scaled to radians — "
+          "now inside UVDeform_LayerOffset's own UVDeform_Sine call");
     CHECK(FileHas(fs, "float vBase = metres * u_tiling.x;"),
           "the arc-length texture coordinate is kept unfolded as the shared base");
     // fract(fract(x)*k) != fract(x*k): folding before scaling changes the

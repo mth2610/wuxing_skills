@@ -126,7 +126,13 @@ typedef struct
    * neo ở t=1. */
   bool radiusAnchorAtTail;
 
-  /* MÉT cho MỘT chu kỳ [0,1] của tọa độ nhiễu (churn + uốn trục), thay vì
+  /* NGUYÊN TẮC CHUNG trước, chi tiết sau — xem core/deform/README.md: "the
+   * drive coordinate is not the raw parametric position", cùng nguyên tắc
+   * core/uv/uv_deform.h đã đặt tên cho toạ độ UV, áp dụng ở đây cho toạ độ
+   * hình học/vertex. Hai field này (+ noiseSpanLenOverride bên dưới) là bản
+   * cụ thể của nguyên tắc đó cho pm_tube.inl.
+   *
+   * MÉT cho MỘT chu kỳ [0,1] của tọa độ nhiễu (churn + uốn trục), thay vì
    * dùng thẳng t (phân số dọc TOÀN BỘ path hiện có). 0 = hành vi cũ, dùng t.
    *
    * VẤN ĐỀ t GIẢI QUYẾT SAI cho một path đang DI CHUYỂN: PMTubeSamplePath

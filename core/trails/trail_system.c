@@ -90,8 +90,14 @@ typedef struct
     int wavePhase, waveEnv, waveStrength, curlScale, stripNormal;
     int matMode, wispMix, dissolve, dissolveSoft, turbStrength;
     int tiling, panSpeed, edgeTear, tailFadeA, tailFadeB;
-    int sinWave, bandShape, pathArc, colHot, strandFlow;
+    int bandShape, pathArc, colHot, strandFlow;
     int renderPass, bodyOpacity, colTail, tailShape;
+    // The mode-2 sine warp's coordinate half, generalised 05/08/2026 onto
+    // core/uv's UVDeformField (u_sinWave is GONE — see the "SIN-WAVE STRAND
+    // TRAIL" push site for the reproduction). uv_field.glsl is shape-neutral
+    // uniform naming (u_uvField/u_uvMeta), so this cache is exactly
+    // UVDeform_CacheLocations(shader), same as SurfaceFlowLocs elsewhere.
+    UVDeformLocs uvWarp;
 } DeformLocs;
 
 static DeformLocs shaderCacheDeformLocs[TRAIL_SHADER_CACHE_SIZE];
@@ -121,7 +127,7 @@ static void FillDeformLocs(Shader shader, DeformLocs *l)
     l->edgeTear      = GetShaderLocation(shader, "u_edgeTear");
     l->tailFadeA     = GetShaderLocation(shader, "u_tailFadeA");
     l->tailFadeB     = GetShaderLocation(shader, "u_tailFadeB");
-    l->sinWave       = GetShaderLocation(shader, "u_sinWave");
+    l->uvWarp        = UVDeform_CacheLocations(shader);
     l->bandShape     = GetShaderLocation(shader, "u_bandShape");
     l->pathArc       = GetShaderLocation(shader, "u_pathArc");
     l->colHot        = GetShaderLocation(shader, "u_colHot");
@@ -262,7 +268,30 @@ static void EnsureTrailDeformShader(void)
     s_deformShader = ResourceManager_LoadShader("core/trails/shaders/trail_deform.vs",
                                                 "core/trails/shaders/trail_deform.fs");
     if (s_deformShader.id == 0)
+    {
         TraceLog(LOG_WARNING, "TRAIL: trail_deform.vs/.fs failed to load — deform modes fall back to flat ribbons");
+        return;
+    }
+    /* DIAGNOSTIC, 05/08/2026 — mode 2's w0/w1/w2 came off trail_deform.fs's
+     * own uniforms onto u_uvField/u_uvMeta (uv_field.glsl) this session, and
+     * strand trail came out wrong (a smooth wide rainbow smear, no braided
+     * bundles) on the very next real build. "The shader loaded" and "its
+     * uniforms resolved" are different facts — see trail_volume.fs's own
+     * precedent for this exact print. If fieldLoc/metaLoc come back -1, every
+     * SetShaderValueV in UVDeform_Apply is silently skipped and the shader
+     * reads whatever u_uvField already held (compiled-in zero, most likely —
+     * kind=0 IS UV_DEFORM_SINE, amplitude=0 collapses all three bundles onto
+     * the SAME centre, losing the crossing/braiding this mode exists for). */
+    const DeformLocs *diagLocs = GetCachedDeformLocs(s_deformShader);
+    TraceLog(LOG_INFO,
+             "TRAIL: trail_deform loaded — shader id %u, u_uvField loc %d, "
+             "u_uvMeta loc %d%s",
+             (unsigned)s_deformShader.id, diagLocs->uvWarp.fieldLoc,
+             diagLocs->uvWarp.metaLoc,
+             (diagLocs->uvWarp.fieldLoc < 0)
+                 ? "  <-- MISSING: mode 2's wave layers never reach the GPU, "
+                   "every bundle collapses onto the same centre"
+                 : "");
 }
 
 static void EnsureTrailVolumeShader(void)
@@ -1789,12 +1818,61 @@ static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
     // ── SIN-WAVE STRAND TRAIL (material mode 2) ─────────────────────────────
     if (m->mode >= 1.5f)
     {
-        float sinWave[4] = {m->waveAmp, m->waveFreq, m->waveTravel, m->waveSpread};
+        // THE WARP HALF (w0/w1/w2), generalised 05/08/2026 onto core/uv's
+        // UVDeformField — was a raw u_sinWave vec4 the shader detuned by hand
+        // per bundle. UVDeform_LayerOffset (uv_deform.glsl) already computes
+        // exactly `sin(fract(drive*freq + t*speed)*TAU + phase) * amp`, with
+        // `amp = layerAmplitude * envelope(mat.y)` built in — i.e. `ramp`
+        // (the head-weld gate) was always this function's own envelope term,
+        // not something mode 2 had to hand-roll. The three bundles' detune
+        // (spread) is a per-instance CONSTANT, so it folds into each layer's
+        // packed freq/speed/phase/amplitude once here instead of being
+        // reapplied per fragment — algebraically identical to the old
+        // per-bundle multiply, though not guaranteed bit-identical (the
+        // generic path multiplies amplitude*envelope in a fixed order, so a
+        // detuned layer's final product can differ by up to 1 ULP from the
+        // old `(amp*ramp)*detune` grouping — invisible on screen, unlike the
+        // structural bit-identity trail_volume.fs's migration required).
+        UVDeformField warp;
+        UVDeform_Clear(&warp);
+        float spread = m->waveSpread;
+        UVDeform_AddLayer(&warp, (UVDeformLayer){
+            .kind = UV_DEFORM_SINE, .driveAxis = 0, .outAxis = 0,
+            .amplitude = m->waveAmp, .frequency = m->waveFreq,
+            .speed = m->waveTravel, .phase = d->phase,
+            .env = UV_ENV_HEAD_WELD, .envAxis = 1,
+            .envStart = 0.0f, .envEnd = d->envHead});
+        UVDeform_AddLayer(&warp, (UVDeformLayer){
+            .kind = UV_DEFORM_SINE, .driveAxis = 0, .outAxis = 0,
+            .amplitude = m->waveAmp * (1.0f - 0.28f * spread),
+            .frequency = m->waveFreq * (1.0f + 0.73f * spread),
+            .speed = m->waveTravel * 1.41f, .phase = d->phase * 2.3f,
+            .env = UV_ENV_HEAD_WELD, .envAxis = 1,
+            .envStart = 0.0f, .envEnd = d->envHead});
+        UVDeform_AddLayer(&warp, (UVDeformLayer){
+            .kind = UV_DEFORM_SINE, .driveAxis = 0, .outAxis = 0,
+            .amplitude = m->waveAmp * (1.0f + 0.25f * spread),
+            .frequency = m->waveFreq * (1.0f - 0.39f * spread),
+            .speed = m->waveTravel * 0.67f, .phase = d->phase * 4.1f,
+            .env = UV_ENV_HEAD_WELD, .envAxis = 1,
+            .envStart = 0.0f, .envEnd = d->envHead});
+        UVDeform_Apply(&warp, s_deformShader, &L->uvWarp);
+        // FIXED INDICES 0/1/2 IN THE SHADER, NOT LOOPED — trail_deform.fs
+        // reads u_uvField[0..2]/[3..5]/[6..8] directly (w0/w1/w2 each feed a
+        // SPECIFIC sheet channel downstream, r/g/r — they are named bundles,
+        // not an interchangeable summed stack). UVDeform_PackGPU COMPACTS: a
+        // layer whose amplitude rounds to ~0 is dropped and every later
+        // layer's GPU index shifts down (core/uv/uv_deform.c, "GPU indices
+        // are therefore NOT CPU indices"). All three amplitudes here are
+        // waveAmp scaled by a factor near 1 (1 ± ~0.3*spread, spread < 1), so
+        // none of the three known styles (ENERGY/SMOKE) ever get close to
+        // that threshold — but a FUTURE style must keep waveAmp meaningfully
+        // non-zero, or the fixed-index read on the shader side silently
+        // pairs the wrong bundle's detune with the wrong sampled channel.
         float band[4] = {m->bundleWidth, m->edgeSoft,
                          (m->hdrGain > 0.0f) ? m->hdrGain : 1.0f,
                          (m->strandGain > 0.0f) ? m->strandGain : 1.0f};
         float strandFlow[4] = {m->flowStrength, m->bundleWeight, m->stretchUV, 0.0f};
-        if (L->sinWave >= 0) SetShaderValue(s_deformShader, L->sinWave, sinWave, SHADER_UNIFORM_VEC4);
         if (L->bandShape >= 0) SetShaderValue(s_deformShader, L->bandShape, band, SHADER_UNIFORM_VEC4);
         if (L->strandFlow >= 0) SetShaderValue(s_deformShader, L->strandFlow, strandFlow, SHADER_UNIFORM_VEC4);
 

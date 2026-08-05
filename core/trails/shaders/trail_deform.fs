@@ -3,6 +3,33 @@
 #include "core/uv/shaders/uv_deform.glsl"
 #include "core/uv/shaders/surface_flow.glsl"
 
+// u_uvField/u_uvMeta ONLY — declared directly, NOT pulled in from the
+// uv_field GLSL module. That module's own job is bundling these
+// declarations with helper functions (UVDeform_ApplyField,
+// SurfaceFlow_FieldSample) this shader does not need — w0/w1/w2 below call
+// UVDeform_LayerOffset directly (already available from the uv_deform
+// module, pulled in two lines up) with manually-sliced u_uvField[i] ranges,
+// so the ONLY thing missing was the uniform declaration itself.
+//
+// LANDMINE, hit twice on a real build, 05/08/2026 — read this before
+// changing anything above this comment, and see core/shader_preprocessor.c
+// for the mechanism: that loader finds its target by bare text search, with
+// NO awareness of GLSL comments and NO per-path dedup (unlike a real C
+// preprocessor). The uv_field module re-pulls in the uv_deform and
+// surface_flow modules itself, and this file already pulls both in
+// directly two lines up, so naming that third module by writing the
+// directive keyword immediately followed by its quoted path — ANYWHERE in
+// this file, even inside a prose comment explaining not to — makes the
+// loader pull it in for real, duplicating the uv_deform/surface_flow
+// bodies in the flattened output and breaking compilation two different
+// ways depending on exactly how the duplication lands. This paragraph
+// itself deliberately never spells that keyword-plus-quoted-path pattern
+// for that reason — describe the mechanism in prose, never write the
+// literal pattern, not even as a "don't do this" example.
+#define UV_DEFORM_MAX_LAYERS 4
+uniform vec4 u_uvField[UV_DEFORM_MAX_LAYERS * 3];
+uniform vec4 u_uvMeta;
+
 // ── TRAIL DEFORM FRAGMENT — packed 4-channel wisp material ──────────────────
 // ONE RGBA texture carries four roles (the "packed" convention), so one bind
 // and one asset replace the sheet + flow map + mask trio:
@@ -93,10 +120,11 @@ uniform float u_tailFadeB;      // segment fade end — tail dissolves to zero h
 // purpose: one program, one uniform location, so the C layer keeps setting
 // them once and the band's phase/head-fade stay in lockstep with the vertex
 // stage's (which mode 2 leaves in passthrough anyway).
-uniform vec4  u_sinWave;    // x = amplitude, in units of the strip half-width
-                            // y = cycles per METRE of laid path
-                            // z = cycles/sec the crests travel toward the tail
-                            // w = spread between the three wave fields
+//
+// u_sinWave is GONE, 05/08/2026 — the three wave fields' amplitude/frequency
+// /speed/spread now live in u_uvField/u_uvMeta (uv_field.glsl, included
+// above), pushed as a 3-layer core/uv UVDeformField from
+// trail_system.c's ApplyDeformUniforms. See the w0/w1/w2 block below.
 uniform vec4  u_bandShape;  // x = strand bundle half-width (0..1 of half-width)
                             // y = quad edge-mask softness
                             // z = HDR gain (> 1 feeds bloom)
@@ -172,7 +200,13 @@ void main()
         // toward the TAIL (constant phase => metres decreasing), which is the
         // direction energy sheds from a moving emitter.
         float metres = u_pathArc.x - along * u_pathArc.y;
-        float ph = u_wavePhase;
+        // ph (u_wavePhase) is no longer read here — the per-spawn phase is
+        // now baked into each packed SINE layer's own `phase` field
+        // (trail_system.c's ApplyDeformUniforms: d->phase, d->phase*2.3,
+        // d->phase*4.1), same as freq/speed/amplitude. Still declared as a
+        // uniform above and still read by the VERTEX stage (mode 2 leaves
+        // that in passthrough, but the uniform is shared with the other
+        // modes) — just no longer needed as a local here.
 
         // `ramp` is the article's "multiply by the U coordinate". It gates
         // EVERY source of disorder — wave amplitude, flow distortion, dissolve
@@ -206,28 +240,36 @@ void main()
         float flow = ((b1 - 0.5) + (b2 - 0.5)) * u_strandFlow.x * ramp;
 
         // ── Phase 1/2: three independent wave fields (Sin01/02/03) ────────
-        // Detuned by u_sinWave.w in both frequency and amplitude. Keeping them
-        // as SEPARATE fields — rather than summing them into one centreline —
-        // is the entire point: each carries its own strand bundle, and the
-        // bundles cross.
-        // fract() before TAU is EXACT here, not an approximation:
-        // sin(2pi*(n + x)) == sin(2pi*x) for integer n, so dropping the whole
-        // turns cannot change the result — it only stops the argument growing
-        // until float32 can no longer resolve a fraction of a cycle.
+        // GENERALISED 05/08/2026 onto core/uv's packed UVDeformField
+        // (u_uvField/u_uvMeta from uv_field.glsl) — was u_sinWave, hand-
+        // detuned per bundle right here. Each bundle is now its own packed
+        // SINE layer (trail_system.c's ApplyDeformUniforms builds all three
+        // from the SAME numbers this file used to detune by hand: freq/speed
+        // /phase/amplitude scaled by `spread` once, on the C side, not per
+        // fragment). Keeping them as SEPARATE layers — rather than summing
+        // into one centreline — is still the entire point: each carries its
+        // own strand bundle, and the bundles cross.
         //
-        // UVDeform_SinePhase (core/uv/shaders/uv_deform.glsl) takes its
-        // argument in whole TURNS rather than radians, which is what keeps the
-        // fold exact and leaves the multiply grouping here — so these three
-        // lines are bit-identical to the hand-rolled sin(fract(...)*TAU + ph)
-        // they replaced, not merely equivalent. The detune stays outside the
-        // call for the same reason: sin(x)*amp*k is not sin(x)*(amp*k).
-        float spread = u_sinWave.w;
-        float f = u_sinWave.y, sp = u_sinWave.z, amp = u_sinWave.x * ramp;
-        float w0 = UVDeform_SinePhase(metres * f + u_time * sp, ph, amp);
-        float w1 = UVDeform_SinePhase(metres * f * (1.0 + 0.73 * spread) + u_time * sp * 1.41,
-                                      ph * 2.3, amp) * (1.0 - 0.28 * spread);
-        float w2 = UVDeform_SinePhase(metres * f * (1.0 - 0.39 * spread) + u_time * sp * 0.67,
-                                      ph * 4.1, amp) * (1.0 + 0.25 * spread);
+        // `ramp` is no longer computed into `amp` by hand either — it is
+        // UVDeform_LayerOffset's OWN envelope term (env=HEAD_WELD, envAxis=1
+        // reads mat.y=along), the same UV_ENV_HEAD_WELD this file already
+        // used for `ramp` above — so mat.y must carry `along` for the
+        // envelope to gate correctly, and mat.x carries `metres` to drive the
+        // sine, matching driveAxis=0 packed on the C side.
+        //
+        // Algebraically identical to the old per-bundle detune, not
+        // guaranteed bit-identical — the generic path always multiplies
+        // amplitude*envelope in that fixed order, so a detuned layer's
+        // product can differ from the old `(amp*ramp)*detune` grouping by up
+        // to 1 ULP. Invisible on screen; see trail_system.c's own note at the
+        // push site for why that bar is different from trail_volume.fs's.
+        vec2 driveMat = vec2(metres, along);
+        float w0 = UVDeform_LayerOffset(u_uvField[0], u_uvField[1], u_uvField[2],
+                                        vSegUV, driveMat, u_time, vec2(0.5)).x;
+        float w1 = UVDeform_LayerOffset(u_uvField[3], u_uvField[4], u_uvField[5],
+                                        vSegUV, driveMat, u_time, vec2(0.5)).x;
+        float w2 = UVDeform_LayerOffset(u_uvField[6], u_uvField[7], u_uvField[8],
+                                        vSegUV, driveMat, u_time, vec2(0.5)).x;
 
         // ── Sample one strand bundle per wave field ──────────────────────
         // Each bundle is the sheet's strand density mapped across
