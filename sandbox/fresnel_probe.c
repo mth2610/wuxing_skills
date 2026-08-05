@@ -95,6 +95,7 @@
 #include "raymath.h"
 #include "rlgl.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -115,19 +116,41 @@ static bool s_tried = false;
 
 // ON THE CAMERA'S OWN AXIS, not in arena coordinates — see file header.
 //
-// SMALL RELATIVE TO ITS DISTANCE FROM THE CAMERA — this matters now in a way
-// it did not before. ReportScan's edge points (centre ± PROBE_R along the
-// camera's right vector) are an ORTHOGRAPHIC approximation of the true
-// perspective tangent point; the two coincide only as PROBE_R/distance -> 0.
-// At radius 0.9 and the probe sitting ~3.4 m from camera (new default zoom +
-// the 45%-back placement from the player fix), that ratio is ~0.26 — a
-// mode1 (-fragPosition) run at that ratio came back a lopsided ramp instead
-// of a symmetric dome: real dot-product values, measured against a silhouette
-// assumption that was measurably wrong at this range. Shrunk 3x so the
-// approximation error shrinks with it; raise it back only alongside a real
-// perspective-correct tangent formula, not by feel.
-static const float PROBE_R = 0.3f;
-static const float PROBE_H = 1.0f;
+// AND THE SAME SHAPE AS THE SMOKE COLUMN, because a probe that is not the
+// subject does not answer questions about the subject.
+//
+// It was a squat cylinder — radius 0.3, height 1.0, aspect 1.7:1 — while the
+// column is radius 0.55, height 5.0, aspect 9:1, and tapered. It had been
+// shrunk 3x deliberately, to keep PROBE_R/distance small enough that
+// ReportScan's ORTHOGRAPHIC tangent approximation stayed honest. That is
+// bending the subject to fit a broken instrument. ReportScan now computes the
+// exact perspective tangent (see there), so the probe can be the real size.
+//
+// Numbers taken from the live fixture, not invented:
+//   sandbox/vfx_test.c:945   VFX_ComposeSmokeColumn(pos, MAT_METAL, 0.55, 5.0, SMOKE, funnel=true)
+//   vc_smoke_column.inl:187  funnel -> radiusTailFrac 0.12, radiusPow 1.7
+//   vc_smoke_column.inl:316  tubeRadialSegs 16, tubeMaxRings 40
+//
+// The tessellation is copied too. Silhouette behaviour depends on how many
+// facets there are; a 48-slice probe standing in for a 16-slice column would
+// flatter the reading.
+static const float PROBE_R = 0.55f;       // ban kinh o NGON
+static const float PROBE_H = 5.0f;        // chieu cao
+static const float PROBE_TAIL = 0.12f;    // ban kinh o GOC, ti le so voi ngon
+static const float PROBE_POW = 1.7f;      // r(t) = tail + (1-tail) * t^pow
+#define PROBE_RADIAL 16
+#define PROBE_RINGS 40
+// Chieu cao lay mau, tinh theo ti le than. 0.6 nam tren phan than no ra, tranh
+// ca cai cuong manh o goc lan mep tren.
+static const float PROBE_SCAN_T = 0.6f;
+
+static float ProbeRadiusAt(float t)
+{
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    return PROBE_R * (PROBE_TAIL + (1.0f - PROBE_TAIL) * powf(t, PROBE_POW));
+}
+
 static Vector3 s_probePos = {0};
 
 // Mode 3's two reference markers (world-hypothesis / view-hypothesis), and
@@ -173,20 +196,79 @@ static void EnsureShader(void)
 // for populating matModel than DrawMesh uses. Its mode-3 result (fragPosition
 // reads as WORLD space) does not transfer to the DrawMesh-based production
 // shaders; only a DrawMesh-based probe does.
+// The column's own surface of revolution, built by hand. GenMeshCylinder only
+// makes straight tubes, and the taper is half of what the user was pointing at.
+//
+// Normals are analytic, not guessed. For P(t,phi) = (r(t)cos, H t, r(t)sin),
+//     dP/dphi x dP/dt  ->  N proportional to (H cos, -dr/dt, H sin)
+// so on a tapered body the normal LEANS by the slope; a purely radial normal
+// would be wrong exactly where the taper is strongest, which is the base.
 static void EnsureMesh(void)
 {
     if (s_meshReady) return;
     s_meshReady = true;
-    s_mesh = GenMeshCylinder(1.0f, 1.0f, 48);
+
+    const int cols = PROBE_RADIAL + 1; /* cot lap lai o duong khep, de UV chay tiep */
+    const int rows = PROBE_RINGS + 1;
+    Mesh m = {0};
+    m.vertexCount = rows * cols;
+    m.triangleCount = PROBE_RINGS * PROBE_RADIAL * 2;
+    m.vertices = (float *)MemAlloc(sizeof(float) * 3 * m.vertexCount);
+    m.normals = (float *)MemAlloc(sizeof(float) * 3 * m.vertexCount);
+    m.texcoords = (float *)MemAlloc(sizeof(float) * 2 * m.vertexCount);
+    m.indices = (unsigned short *)MemAlloc(sizeof(unsigned short) * 3 * m.triangleCount);
+
+    const float dRdT_k = PROBE_R * (1.0f - PROBE_TAIL) * PROBE_POW;
+    for (int i = 0; i < rows; i++) {
+        float t = (float)i / (float)PROBE_RINGS;
+        float r = ProbeRadiusAt(t);
+        float drdt = dRdT_k * powf(t > 0.0f ? t : 1e-6f, PROBE_POW - 1.0f);
+        for (int j = 0; j < cols; j++) {
+            float phi = (float)j * (2.0f * PI) / (float)PROBE_RADIAL;
+            float c = cosf(phi), sn = sinf(phi);
+            int v = i * cols + j;
+            m.vertices[v * 3 + 0] = r * c;
+            m.vertices[v * 3 + 1] = t * PROBE_H;
+            m.vertices[v * 3 + 2] = r * sn;
+            Vector3 n = Vector3Normalize((Vector3){PROBE_H * c, -drdt, PROBE_H * sn});
+            m.normals[v * 3 + 0] = n.x;
+            m.normals[v * 3 + 1] = n.y;
+            m.normals[v * 3 + 2] = n.z;
+            m.texcoords[v * 2 + 0] = (float)j / (float)PROBE_RADIAL;
+            m.texcoords[v * 2 + 1] = t;
+        }
+    }
+    int k = 0;
+    for (int i = 0; i < PROBE_RINGS; i++) {
+        for (int j = 0; j < PROBE_RADIAL; j++) {
+            unsigned short a = (unsigned short)(i * cols + j);
+            unsigned short b = (unsigned short)(i * cols + j + 1);
+            unsigned short cc = (unsigned short)((i + 1) * cols + j + 1);
+            unsigned short d = (unsigned short)((i + 1) * cols + j);
+            m.indices[k++] = a; m.indices[k++] = b; m.indices[k++] = cc;
+            m.indices[k++] = a; m.indices[k++] = cc; m.indices[k++] = d;
+        }
+    }
+    UploadMesh(&m, false);
+    s_mesh = m;
     s_material = LoadMaterialDefault();
+    TraceLog(LOG_INFO,
+             "[FRESNEL] probe = hinh cot khoi that: R %.2f m, cao %.1f m, "
+             "thuon %.2f..1.00 (pow %.1f), %d lat x %d vanh",
+             (double)PROBE_R, (double)PROBE_H, (double)PROBE_TAIL,
+             (double)PROBE_POW, PROBE_RADIAL, PROBE_RINGS);
 }
 
-// transform for a cylinder of the given radius/height, CENTRE at `pos`
-// (matching the old DrawCoreCylinder(bottom, top, ...) call sites, which
-// took bottom = pos - h/2, top = pos + h/2).
+// The mesh is built with its BASE at y = 0, so placing it only needs a
+// translation — no scale, because the shape already carries its real metres.
 static Matrix ProbeCylinderTransform(Vector3 pos, float radius, float height)
 {
-    Matrix scale = MatrixScale(radius, height, radius);
+    /* Lưới dựng sẵn theo mét thật (đáy ở y = 0, cao PROBE_H, ngọn PROBE_R), nên
+     * scale ở đây là TỈ LỆ so với bản gốc — mấy cột mốc của mode 3 gọi hàm này
+     * với 0.6R/0.5H và phải nhỏ đi thật, nếu không chúng che mất probe. */
+    float sx = (radius > 0.0f) ? (radius / PROBE_R) : 1.0f;
+    float sy = (height > 0.0f) ? (height / PROBE_H) : 1.0f;
+    Matrix scale = MatrixScale(sx, sy, sx);
     Matrix translate = MatrixTranslate(pos.x, pos.y - height * 0.5f, pos.z);
     return MatrixMultiply(scale, translate);
 }
@@ -215,9 +297,21 @@ void FresnelProbe_Draw3D(Camera3D cam)
     // the player (camera.position.y = 5 vs target.y = 0 in the default
     // sandbox rig), so this lands the cylinder floating well above the
     // player's head and clear of the ground, still dead-centre on screen.
+    //
+    // AT THE COLUMN'S OWN DISTANCE, not 45% of the way in. The 0.45 factor was
+    // sized for a 1 m probe; once the probe became the real 5 m column it sat
+    // 3.4 m from the camera and filled the frame — the wide top seen from close
+    // up, which reads as squat and round. Size and distance are one setting,
+    // not two: changing the first without the second changes the apparent
+    // shape, which is exactly what the geometry test must not do.
+    //
+    // Clearing the player instead by lifting it: the probe's axis stays in the
+    // vertical plane through the view ray, so the HORIZONTAL scan stays
+    // symmetric. Only a LATERAL offset would skew it, and this is not one.
     Vector3 fwd = Vector3Normalize(Vector3Subtract(cam.target, cam.position));
     float camDist = Vector3Distance(cam.position, cam.target);
-    s_probePos = Vector3Add(cam.position, Vector3Scale(fwd, camDist * 0.45f));
+    s_probePos = Vector3Add(cam.position, Vector3Scale(fwd, camDist));
+    s_probePos = Vector3Add(s_probePos, Vector3Scale(cam.up, PROBE_H * 0.5f + 2.2f));
 
     int modeLoc = GetShaderLocation(s_shader, "u_probeMode");
     if (modeLoc < 0)
@@ -291,26 +385,47 @@ static ScanResult ReportScan(Image img, const char *label)
 {
     ScanResult r = {0};
 
-    /* The edge points must be offset along the CAMERA's right vector, not raw
-     * world X. The cylinder is rotationally symmetric about world Y, so its
-     * true silhouette sits wherever is tangent to the view direction — for an
-     * isometric camera (forward has both X and Z components) that is nowhere
-     * near centre.x ± PROBE_R. Sampling the wrong span puts background/other
-     * geometry inside the assumed body and the body's real edge somewhere in
-     * the middle of the row — which is exactly the "0 at index 11, high at
-     * both true edges" shape the first on-axis run produced. */
+    /* TIẾP TUYẾN PHỐI CẢNH ĐÚNG, không phải xấp xỉ trực giao.
+     *
+     * `tâm ± R` theo trục ngang camera là điểm tiếp tuyến chỉ khi R/khoảng cách
+     * → 0. Ở R = 0.55 và khoảng cách vài mét thì tỉ số đó cỡ 0.2, và sai số đo
+     * được: một lần chạy trả về dốc lệch thay vì vòm cân, tức số liệu thật đọ
+     * với một giả định về đường bao đã sai. Cách chữa cũ là **thu nhỏ vật đo**
+     * cho vừa cái thước — đó là lý do probe thành hình trụ lùn 0.3 x 1.0 trong
+     * khi cột thật là 0.55 x 5.0.
+     *
+     * Hình học đúng cho đường tròn bán kính r, tâm C, mắt E, d = |C−E|:
+     *   lệch vuông góc = r·√(d²−r²)/d      lùi về phía mắt = r²/d
+     * Khi r ≪ d nó rút về `± r` như cũ, nên đây là bản tổng quát chứ không phải
+     * bản khác.
+     *
+     * Lấy ở ĐÚNG chiều cao quét, vì thân thuôn nên bán kính đổi theo độ cao. */
     Vector3 fwd = Vector3Normalize(Vector3Subtract(s_cam.target, s_cam.position));
     Vector3 right = Vector3Normalize(Vector3CrossProduct(fwd, s_cam.up));
-    Vector3 pL = Vector3Subtract(s_probePos, Vector3Scale(right, PROBE_R));
-    Vector3 pR = Vector3Add(s_probePos, Vector3Scale(right, PROBE_R));
 
-    /* GetWorldToScreen speaks WINDOW coordinates, LoadImageFromScreen returns
-     * FRAMEBUFFER pixels — on Retina they differ by exactly 2x. Take the ratio
-     * from real data, not an assumption. */
+    float rLocal = ProbeRadiusAt(PROBE_SCAN_T);
+    Vector3 scanC = (Vector3){s_probePos.x,
+                              s_probePos.y - PROBE_H * 0.5f + PROBE_SCAN_T * PROBE_H,
+                              s_probePos.z};
+    Vector3 toEye = Vector3Subtract(s_cam.position, scanC);
+    float dEye = Vector3Length(toEye);
+    if (dEye <= rLocal * 1.001f) {
+        TraceLog(LOG_WARNING, "[FRESNEL] %s: camera nam trong than probe", label);
+        return r;
+    }
+    toEye = Vector3Scale(toEye, 1.0f / dEye);
+    float off = rLocal * sqrtf(dEye * dEye - rLocal * rLocal) / dEye;
+    float back = rLocal * rLocal / dEye;
+    Vector3 perp = Vector3Normalize(Vector3CrossProduct(s_cam.up, toEye));
+    if (Vector3LengthSqr(perp) < 1e-8f) perp = right;
+    Vector3 base = Vector3Add(scanC, Vector3Scale(toEye, back));
+    Vector3 pL = Vector3Subtract(base, Vector3Scale(perp, off));
+    Vector3 pR = Vector3Add(base, Vector3Scale(perp, off));
+
     float dpi = (GetScreenWidth() > 0) ? ((float)img.width / (float)GetScreenWidth()) : 1.0f;
     Vector2 sL = GetWorldToScreen(pL, s_cam);
     Vector2 sR = GetWorldToScreen(pR, s_cam);
-    Vector2 sC = GetWorldToScreen(s_probePos, s_cam);
+    Vector2 sC = GetWorldToScreen(scanC, s_cam);
     int x0 = (int)(((sL.x < sR.x) ? sL.x : sR.x) * dpi);
     int x1 = (int)(((sL.x < sR.x) ? sR.x : sL.x) * dpi);
     int row = (int)(sC.y * dpi);

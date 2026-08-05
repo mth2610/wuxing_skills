@@ -156,7 +156,7 @@ FIXTURE_SPAWN_OVERRIDES = {
     # moving trail — the funnel's "head" always pins to exactly 1.0x this
     # value, so an oversized radius reads as fat even with the taper working).
     "VFX_ComposeSmokeTrail":
-        "VFX_ComposeSmokeTrail($XFORM, VC_MAT_METAL, 0.18f, 1.0f, VFX_COLUMN_SMOKE, false)",
+        "VFX_ComposeSmokeTrail($XFORM, VC_MAT_METAL, 0.18f, 1.0f, VFX_COLUMN_SMOKE, true)",
 }
 
 # ── Element / category inference ──────────────────────────────────────────────

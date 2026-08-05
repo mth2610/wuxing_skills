@@ -107,6 +107,25 @@ typedef struct
   float radiusTailFrac; /* bán kính ở đuôi, tỉ lệ so với đầu. 0 = 1.0 */
   float radiusPow;      /* p trong t^p. 0 = 1.0 (tuyến tính) */
 
+  /* r(t) LUÔN chốt đầu (t=1) đúng 1.0x — số hạng (1-tailFrac) triệt tiêu tại
+   * đó bất kể tailFrac. Nghĩa là "đầu" hình học (t=1, đầu ĐƯỜNG ĐI, không
+   * phải khái niệm to/nhỏ) luôn LÀ bán kính gọi hàm yêu cầu (headR), và chỉ
+   * có ĐUÔI (t=0) co giãn quanh nó — dùng tailFrac > 1 để đuôi phình to hơn
+   * headR thay vì < 1 để đuôi hẹp lại là CÙNG một cơ chế, chỉ đổi hướng.
+   *
+   * Vấn đề: với một trail DI CHUYỂN, đầu đường đi (t=1) là ĐẦU HIỆN TẠI —
+   * cái cần NHỎ, không phải cái nên giữ nguyên headR. Ép nó nhỏ bằng
+   * tailFrac chỉ đẩy đuôi phình to hơn headR (đo được: tailFrac=8.33 x
+   * headR=0.35 cho đuôi 2.9 m — to gấp nhiều lần bán kính người gọi thật sự
+   * xin), vì headR luôn bị neo ở t=1 bất kể ai muốn nó nhỏ ở đó.
+   *
+   * Cờ này đổi t dùng trong r(t) thành (1-t): NEO đổi sang t=0 (đuôi), nên
+   * headR — đúng bán kính người gọi xin — nằm ở t=0, và t=1 (đầu đường đi)
+   * co lại còn tailFrac x headR, tailFrac vẫn ở miền [0,1] tự nhiên như tài
+   * liệu field trên nói (không cần bẻ nó vượt 1 để lách). false = hành vi cũ,
+   * neo ở t=1. */
+  bool radiusAnchorAtTail;
+
   /* UỐN TRỤC — mét. Đẩy CẢ MẶT CẮT sang ngang, không phải đẩy từng đỉnh.
    *
    * Đây là thứ mà biến dạng bề mặt không bao giờ làm được. Bề mặt gợn thì cái

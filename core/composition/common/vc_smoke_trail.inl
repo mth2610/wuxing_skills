@@ -3,23 +3,38 @@
 // SPLIT INTO ITS OWN FILE, not a mode flag on VC_SmokeColumn — two archetypes,
 // two files, same reasoning as the column/vc_volume_trail.inl split it mirrors.
 //
-// EVERYTHING SHAPE-RELATED IS A VERBATIM COPY of SmokeColumn_ConfigureLayers/
-// BuildShape — same textures, same noise churn, same funnel taper direction
-// (radiusTailFrac 0.12/0.55, radiusPow 1.7/1.4, untouched), same blend law.
-// Deliberately NOT reworked or inverted: the shape is the column's, proven
-// and already tuned: the ONLY thing this file changes is how the path is fed
-// to it. A stationary column and a moving trail should look like the same
-// material behaving two different ways, not two different materials.
+// TEXTURE/CHURN TASTE IS A VERBATIM COPY of SmokeColumn_ConfigureLayers —
+// same sheets, same noise amplitude/timescale/lattice, same blend law. A
+// stationary column and a moving trail should look like the same material
+// behaving two different ways, not two different materials.
 //
-// THE ONE DIFFERENCE: SmokeColumn_Spawn ends with `Trail_SetStaticPath` — a
-// frozen vertical segment, seeded once (see vc_smoke_column.inl's own header
-// for why: a real ForceField-driven moving column was tried once and cost
-// three bugs in a row before being abandoned). This file ends with
-// `Trail_AttachToTransform` instead — the exact mechanism
-// vc_volume_trail.inl uses for a moving emitter: the trail system itself
-// lays new history nodes as the caller's transform moves, and drops old ones
-// past `lifetime`. Real trail-follower behaviour, not a frozen shape dragged
-// around.
+// THE TAPER NUMBERS ARE ALSO A VERBATIM COPY (radiusTailFrac/radiusPow,
+// 0.12/1.7 funnel, 0.55/1.4 cylinder) — what differs from the column is
+// which physical end they anchor to, via `tube.radiusAnchorAtTail`
+// (core/geometry/procedural_mesh_utils.h, wired in pm_tube.inl). The column
+// is small at its fixed source and widens toward the far end; this file
+// needs small at the FRONT (current/leading position) and large at the BACK
+// (old, dispersing end) — "smoke rolls from front to back" on a moving
+// emitter. trail_system.c's tube parametrisation for a follower runs the
+// OPPOSITE way from the column's static path (t=1 is the column's far end
+// but the trail's current/leading end — see the derivation at
+// SmokeTrail_BuildShape), so reaching the same visual intent with the SAME
+// numbers needs the anchor flipped, not the numbers changed. An earlier
+// version of this file tried to reach the same shape by pushing
+// radiusTailFrac past 1 instead (bending a parameter documented as [0,1] to
+// fight the formula's fixed anchor) and it ballooned the back end to
+// several times the requested radius — see git history. That is what
+// `radiusAnchorAtTail` now exists in pm_tube.inl to fix properly.
+//
+// THE PATH MECHANISM IS THE OTHER DIFFERENCE: SmokeColumn_Spawn ends with
+// `Trail_SetStaticPath` — a frozen vertical segment, seeded once (see
+// vc_smoke_column.inl's own header for why: a real ForceField-driven moving
+// column was tried once and cost three bugs in a row before being
+// abandoned). This file ends with `Trail_AttachToTransform` instead — the
+// exact mechanism vc_volume_trail.inl uses for a moving emitter: the trail
+// system itself lays new history nodes as the caller's transform moves, and
+// drops old ones past `lifetime`. Real trail-follower behaviour, not a
+// frozen shape dragged around.
 
 #include "core/deform/mesh_deform.h"
 #include "core/tuning.h"
@@ -111,8 +126,43 @@ static void SmokeTrail_ConfigureLayers(VC_SmokeTrail *c)
     };
 }
 
-// Verbatim copy of SmokeColumn_BuildShape — same taper direction, same churn.
-// See this file's header for why nothing here is inverted or retuned.
+// Shares the column's texture/churn taste AND the column's exact taper
+// numbers (SmokeColumn_ConfigureLayers is still called verbatim, and
+// radiusTailFrac/radiusPow below are copy-pasted, not retuned) — what
+// differs is which PHYSICAL end they are anchored to, via
+// `tube.radiusAnchorAtTail` (core/geometry/procedural_mesh_utils.h).
+//
+// A moving trail is not a stationary column: freshly emitted smoke is a
+// tight puff at the emitter and billows out into a wide wake behind it as
+// it disperses — small at the FRONT (current/leading position), large at
+// the BACK (old, dispersing end). Confirmed directly from
+// core/trails/trail_system.c, not assumed: DrawLayeredTube's
+// `path[i] = scratchOuter[n-1-i]` (:1479), and the projectile-node loop
+// tagging h=0 "head" / h=drawCount-1 "tail" (:1826), put the tube's t=0 at
+// the OLD/trailing end (the back) and t=1 at the CURRENT/leading end (the
+// front) — the opposite of the column's static path, where t=0 is the
+// fixed source and t=1 is the far/old end.
+//
+// pm_tube.inl's r(t) = tailFrac + (1-tailFrac)*t^p always pins t=1 to
+// EXACTLY headR (the (1-tailFrac) term cancels there), so with the column's
+// plain formula the trail's FRONT (t=1) would be stuck at the caller's full
+// requested radius and only the BACK (t=0) could move — shrinking the front
+// is not reachable that way, and forcing it by pushing tailFrac past 1
+// instead balloons the back to `tailFrac x headR` (measured: 8.33 x 0.35 m
+// = a 2.9 m back end — visibly bloated, not proportionally tapered; see
+// this file's git history, that version shipped and was wrong). That is a
+// caller bending a parameter outside the domain its own doc describes
+// ("bán kính ở đuôi, tỉ lệ so với đầu") to fight the formula's fixed anchor,
+// not a fix.
+//
+// The actual fix lives in pm_tube.inl/procedural_mesh_utils.h:
+// `radiusAnchorAtTail` re-derives r(t) from (1-t) instead of t, moving the
+// pinned-at-headR point from t=1 to t=0. With it set, headR — the radius the
+// CALLER asked for — lands on the BACK (t=0, correct: that is the "full"
+// dispersed size), and the FRONT (t=1) becomes `tailFrac x headR`, with
+// tailFrac staying in its documented [0,1] domain, same 0.12/0.55 the
+// column already uses. No number here differs from the column's; only the
+// anchor does.
 static void SmokeTrail_BuildShape(VC_SmokeTrail *c, bool funnel)
 {
     c->tube = PMTube_DefaultConfig();
@@ -121,10 +171,15 @@ static void SmokeTrail_BuildShape(VC_SmokeTrail *c, bool funnel)
     c->tube.deform1Amp = 0.0f;
     c->tube.deform2Amp = 0.0f;
 
-    // r(t) = tailFrac + (1 - tailFrac) * t^p, tail = the base — same numbers
-    // as vc_smoke_column.inl's SmokeColumn_BuildShape, unchanged.
+    // Same numbers as vc_smoke_column.inl's SmokeColumn_BuildShape,
+    // unchanged — see the header comment above for why only the anchor,
+    // not the numbers, needs to differ from the column.
     if (funnel) { c->tube.radiusTailFrac = 0.12f; c->tube.radiusPow = 1.7f; }
     else        { c->tube.radiusTailFrac = 0.55f; c->tube.radiusPow = 1.4f; }
+    // THE re-anchor. headR (the caller's requested radius) lands on the
+    // BACK (t=0) instead of pm_tube.inl's default FRONT (t=1) — see the
+    // header comment above.
+    c->tube.radiusAnchorAtTail = true;
 
     c->tube.centerlineAmp = c->radius * 1.6f;
     c->tube.useTransportFrame = true;
@@ -135,19 +190,31 @@ static void SmokeTrail_BuildShape(VC_SmokeTrail *c, bool funnel)
     c->churn.latticeAround = 3;
     c->churn.latticeAlong = 3;
 
+    // ENVELOPE MIRRORED TOO, same t=0/t=1 mapping as radiusTailFrac above,
+    // and for the same visual reason: "smoke rolls from front to back" means
+    // the surface should be QUIET at the front (t=1, fresh) and churn
+    // increasingly toward the back (t=0, old) as it disperses. UV_ENV_HEAD_WELD
+    // / _SQ (mesh_deform.h) are `smoothstep(start,end,c) * c` / `* c*c` — that
+    // trailing `* c` factor pins the excursion to exactly zero at c=0
+    // regardless of start/end, so they can only ever weld at t=0 and cannot
+    // be pointed at t=1. UV_ENV_SMOOTHSTEP has no such anchor — plain
+    // `clamp((c-start)/(end-start), 0, 1)` — and DOES invert when
+    // start > end (core/uv/uv_deform.c). envStart=1.0f/envEnd=0.78f|0.65f
+    // welds it at the front and lets it run free toward the back, mirroring
+    // the column's start=0.0f/end=0.22f|0.35f (welded at ITS t=0, the source).
     MeshDeform_AddLayer(&c->churn, (MeshDeformLayer){
         .kind = MESH_DEFORM_NOISE_CHANNEL,
         .direction = MESH_DEFORM_DIR_NORMAL_SCALE,
         .tiling = {1.0f, 1.0f}, .amplitude = 4.2f, .speed = 1.0f,
-        .latticeMul = 1.0f, .latticeAroundMul = 1.0f, .env = UV_ENV_HEAD_WELD,
-        .envStart = 0.0f, .envEnd = 0.22f,
+        .latticeMul = 1.0f, .latticeAroundMul = 1.0f, .env = UV_ENV_SMOOTHSTEP,
+        .envStart = 1.0f, .envEnd = 0.78f,
     });
     MeshDeform_AddLayer(&c->churn, (MeshDeformLayer){
         .kind = MESH_DEFORM_NOISE_CHANNEL,
         .direction = MESH_DEFORM_DIR_NORMAL_OFFSET,
         .tiling = {1.0f, 1.9f}, .amplitude = 1.30f, .speed = 1.7f,
         .timeOffset = 11.0f, .latticeMul = 3.0f, .latticeAroundMul = 2.0f,
-        .env = UV_ENV_HEAD_WELD_SQ, .envStart = 0.0f, .envEnd = 0.35f,
+        .env = UV_ENV_SMOOTHSTEP, .envStart = 1.0f, .envEnd = 0.65f,
     });
     c->tube.noiseField = &c->churn;
 }

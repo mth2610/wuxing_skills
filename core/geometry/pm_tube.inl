@@ -239,16 +239,18 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
         /* r(t) = tailFrac + (1 - tailFrac) * t^pow. Với mặc định (tailFrac 1)
          * biểu thức rút gọn về đúng 1 và ống thẳng như cũ.
          *
-         * Guard nới từ `< 1.0f` thành `!= 1.0f`: công thức vẫn đúng khi
-         * tailFrac > 1 (t=0 phình to hơn, t=1 luôn = đúng 1.0x bất kể
-         * tailFrac — số hạng (1-tailFrac) triệt tiêu tại đó) — dùng cho
-         * trường hợp "đầu" hình học (t=1) lại là đầu MỚI cần hẹp, như một
-         * trail di chuyển thay vì cột đứng yên. Caller hiện tại (0,1) không
-         * đổi hành vi. */
+         * radiusAnchorAtTail lật NEO của công thức từ t=1 (mặc định) sang
+         * t=0: chạy trên (1-t) thay vì t, nên headR — bán kính người gọi xin
+         * — luôn nằm ở t=0 (đuôi) và t=1 (đầu ĐƯỜNG ĐI) co lại còn
+         * tailFrac x headR. Có cờ này để tailFrac chỉ cần ở miền [0,1] tự
+         * nhiên (xem doc field ở procedural_mesh_utils.h) — không phải bẻ nó
+         * vượt 1 để ép đầu đường đi hẹp lại, cách đó thổi phồng đầu kia vượt
+         * xa headR mà người gọi xin. */
         float capsuleCurve = 1.0f;
         if (cfg->radiusTailFrac > 0.0f && cfg->radiusTailFrac != 1.0f) {
             float p = (cfg->radiusPow > 0.0f) ? cfg->radiusPow : 1.0f;
-            float grow = (p == 1.0f) ? t : powf(t, p);
+            float tCurve = cfg->radiusAnchorAtTail ? (1.0f - t) : t;
+            float grow = (p == 1.0f) ? tCurve : powf(tCurve, p);
             capsuleCurve = cfg->radiusTailFrac + (1.0f - cfg->radiusTailFrac) * grow;
         }
         float headWeight = 1.0f;
