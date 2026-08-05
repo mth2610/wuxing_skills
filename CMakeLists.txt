@@ -311,6 +311,11 @@ configure_file(core/uv/shaders/surface_flow.glsl ${CMAKE_CURRENT_BINARY_DIR}/cor
 configure_file(core/uv/shaders/uv_field.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/uv/shaders/uv_field.glsl COPYONLY)
 configure_file(core/uv/shaders/flow_map.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/uv/shaders/flow_map.glsl COPYONLY)
 
+# core/deform's own GLSL mirror (05/08/2026, first one — see that file's own
+# header). Same missing-shader-file trap as the core/uv includes above.
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/core/deform/shaders)
+configure_file(core/deform/shaders/mesh_deform.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/deform/shaders/mesh_deform.glsl COPYONLY)
+
 
 # Liên kết tĩnh với thư viện Raylib vừa tải về
 target_link_libraries(wuxing PRIVATE raylib enet)

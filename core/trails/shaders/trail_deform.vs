@@ -1,5 +1,6 @@
 #version 330
 #include "core/shaders/common/vs_header.glsl"
+#include "core/deform/shaders/mesh_deform.glsl"
 
 // ── TRAIL DEFORM — uber vertex deformation for ribbon trails ────────────────
 // One shader, five deform modes selected by a uniform (a uniform branch costs
@@ -114,16 +115,34 @@ void main()
     }
     else if (u_deformMode >= 0.5)
     {
-        // SIN_MULTI — the workhorse: 3 octaves along `side` + 3 along the strip
-        // normal, each with its own frequency and travel speed, all phase-shifted
-        // per spawn so no two casts look identical.
-        vec3 d = vec3(0.0);
-        d += side * (u_waveAmpA.x * sin(seg * u_waveFreq.x * TAU + t * u_waveSpeed.x + phase));
-        d += side * (u_waveAmpA.y * sin(seg * u_waveFreq.y * TAU + t * u_waveSpeed.y + phase * 2.31));
-        d += side * (u_waveAmpA.z * sin(seg * u_waveFreq.z * TAU + t * u_waveSpeed.z + phase * 4.67));
-        d += u_stripNormal * (u_waveAmpB.x * sin(seg * u_waveFreq.x * 3.77 + t * u_waveSpeed.x * 1.31 + phase));
-        d += u_stripNormal * (u_waveAmpB.y * sin(seg * u_waveFreq.y * 5.13 + t * u_waveSpeed.y * 0.63 + phase * 1.71));
-        d += u_stripNormal * (u_waveAmpB.z * sin(seg * u_waveFreq.z * 2.89 + t * u_waveSpeed.z * 1.87 + phase * 3.13));
+        // SIN_MULTI — generalised onto core/deform, 05/08/2026 (see
+        // core/deform/shaders/mesh_deform.glsl, that module's first GLSL
+        // mirror). Was 3 hand-written octaves along `side` + 3 along
+        // u_stripNormal, each carrying its own hardcoded harmonic multiplier
+        // (phase*2.31/4.67, freq*3.77/5.13/2.89, speed*1.31/0.63/1.87) baked
+        // into this file. Now: trail_system.c's ApplyDeformUniforms packs
+        // 2 octaves per axis (MeshDeformField's MESH_DEFORM_MAX_LAYERS=4
+        // budget — 2+2, down from 3+3) as plain MeshDeformLayer entries
+        // (kind=SINE, direction=AXIS for `side` / TANGENT for
+        // u_stripNormal) from TrailDeformConfig's ampA[0..1]/ampB[0..1]/
+        // freq[0..1]/speed[0..1]/phase — NOT reproducing the old hardcoded
+        // per-octave multipliers, which were shader-side flavour on top of
+        // whatever the caller supplied, not part of the generic per-layer
+        // schema. Nothing currently spawns this mode
+        // (core/composition/common/vc_strand_trail.inl always sets
+        // deform.mode = 0), so there is no existing look to preserve
+        // fidelity against — see that file's mode=0 comment for why, and
+        // ENGINE_LANDMINES.md / core/deform/README.md for the rest of this
+        // decision's reasoning.
+        //
+        // The double-sided head/tail `env` computed above still owns the
+        // fade exactly as before: MeshDeformField's own per-layer envelope
+        // is ONE-SIDED (HEAD_WELD and friends), and cannot express a shape
+        // that is zero at BOTH ends and full in the middle — so every
+        // packed layer here carries env=NONE, and this file keeps gating
+        // the result itself, same as it always has.
+        vec3 d = MeshDeform_ApplyField(vec2(seg, seg), vec2(seg, seg), t,
+                                       side, u_stripNormal, 3, 3);
         pos += d * env * u_waveStrength;
     }
 

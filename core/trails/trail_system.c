@@ -5,6 +5,9 @@
 #include "core/resource_manager.h"
 #include "core/tuning.h"
 #include "core/uv/surface_flow.h"
+// core/deform/mesh_deform.h already arrives transitively via
+// core/geometry/procedural_mesh_utils.h (included above) — MeshDeformField/
+// MeshDeform_Apply/MeshDeformLocs are all in scope without a fresh include.
 #include "raymath.h"
 #include "rlgl.h"
 #include <math.h>
@@ -98,6 +101,10 @@ typedef struct
     // uniform naming (u_uvField/u_uvMeta), so this cache is exactly
     // UVDeform_CacheLocations(shader), same as SurfaceFlowLocs elsewhere.
     UVDeformLocs uvWarp;
+    // Mode 1's (sin-multi) vertex wave — core/deform's FIRST GLSL mirror,
+    // 05/08/2026 (core/deform/shaders/mesh_deform.glsl). u_meshDeform/
+    // u_meshDeformMeta, cached exactly like uvWarp above.
+    MeshDeformLocs meshWarp;
 } DeformLocs;
 
 static DeformLocs shaderCacheDeformLocs[TRAIL_SHADER_CACHE_SIZE];
@@ -128,6 +135,7 @@ static void FillDeformLocs(Shader shader, DeformLocs *l)
     l->tailFadeA     = GetShaderLocation(shader, "u_tailFadeA");
     l->tailFadeB     = GetShaderLocation(shader, "u_tailFadeB");
     l->uvWarp        = UVDeform_CacheLocations(shader);
+    l->meshWarp      = MeshDeform_CacheLocations(shader);
     l->bandShape     = GetShaderLocation(shader, "u_bandShape");
     l->pathArc       = GetShaderLocation(shader, "u_pathArc");
     l->colHot        = GetShaderLocation(shader, "u_colHot");
@@ -1765,6 +1773,55 @@ static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
     {
         float env[2] = {d->envHead, d->envTail};
         if (L->waveEnv >= 0) SetShaderValue(s_deformShader, L->waveEnv, env, SHADER_UNIFORM_VEC2);
+    }
+    // MODE 1 (sin-multi) ONLY — core/deform's first GLSL mirror,
+    // 05/08/2026 (core/deform/shaders/mesh_deform.glsl). 2 octaves along
+    // `side` (MESH_DEFORM_DIR_AXIS) + 2 along u_stripNormal
+    // (MESH_DEFORM_DIR_TANGENT) — down from the shader's old hardcoded 3+3,
+    // to fit MeshDeformField's MESH_DEFORM_MAX_LAYERS=4 budget without
+    // changing that shared layout. Modes 2-4 (curl3/helix/noise) still read
+    // the plain u_waveAmpA/u_waveFreq/u_waveSpeed/u_curlScale pushed above
+    // — untouched, still bespoke, see trail_deform.vs's own comment on why
+    // they do not fit this module's layer-sum model.
+    if (d->mode >= 0.5f && d->mode < 1.5f)
+    {
+        // amplitude = 2x the caller's ampA/ampB: MESH_DEFORM_SINE's own
+        // formula is `raw = 0.5 + 0.5*sin(...)`, so `(raw-0.5)*amplitude`
+        // works out to `0.5*sin(...)*amplitude` — HALF the amplitude a
+        // naive `amplitude*sin(...)` would give. Doubling here is what
+        // makes the packed layer's FINAL contribution equal
+        // `ampA.x*sin(...)`, matching what the old inline code wrote
+        // directly. See core/deform/mesh_deform.c's MeshDeform_EvaluateLayer
+        // SINE branch — this is a property of that formula, not something
+        // specific to this call site.
+        //
+        // speed is in TURNS/second here (core/uv/uv_deform.h's convention,
+        // shared via UVDeform_SinePhase), not the old inline code's
+        // radians/second — a deliberate, documented deviation (see
+        // trail_deform.vs's own comment at the call site) since nothing
+        // currently spawns mode 1 to have a fidelity bar to clear.
+        MeshDeformField warp;
+        MeshDeform_Clear(&warp);
+        MeshDeform_AddLayer(&warp, (MeshDeformLayer){
+            .kind = MESH_DEFORM_SINE, .direction = MESH_DEFORM_DIR_AXIS,
+            .tiling = {0.0f, d->freq[0]}, .amplitude = 2.0f * d->ampA[0],
+            .speed = d->speed[0], .phase = d->phase, .env = UV_ENV_NONE});
+        MeshDeform_AddLayer(&warp, (MeshDeformLayer){
+            .kind = MESH_DEFORM_SINE, .direction = MESH_DEFORM_DIR_AXIS,
+            .tiling = {0.0f, d->freq[1]}, .amplitude = 2.0f * d->ampA[1],
+            .speed = d->speed[1], .phase = d->phase, .env = UV_ENV_NONE});
+        MeshDeform_AddLayer(&warp, (MeshDeformLayer){
+            .kind = MESH_DEFORM_SINE, .direction = MESH_DEFORM_DIR_TANGENT,
+            .tiling = {0.0f, d->freq[0]}, .amplitude = 2.0f * d->ampB[0],
+            .speed = d->speed[0], .phase = d->phase, .env = UV_ENV_NONE});
+        MeshDeform_AddLayer(&warp, (MeshDeformLayer){
+            .kind = MESH_DEFORM_SINE, .direction = MESH_DEFORM_DIR_TANGENT,
+            .tiling = {0.0f, d->freq[1]}, .amplitude = 2.0f * d->ampB[1],
+            .speed = d->speed[1], .phase = d->phase, .env = UV_ENV_NONE});
+        // Field-level amplitude/timeScale stay neutral (1.0/default-via-
+        // Clear) — the x2 compensation and per-octave speed already live
+        // in each layer, so nothing should scale them again here.
+        MeshDeform_Apply(&warp, s_deformShader, &L->meshWarp);
     }
     {
         // Strip plane normal, mirroring ribbon_strip.c's ResolveFrameNormals:

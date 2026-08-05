@@ -357,6 +357,65 @@ static void Test_MirrorStillMatchesSource(void) {
         "the module is in both build systems");
 }
 
+// core/deform's FIRST GLSL mirror, 05/08/2026 — mesh_deform.glsl, consumed
+// by trail_deform.vs's mode 1 (sin-multi). Scoped to what needs no
+// texture(): SINE + the procedural lattice, NOT the image-source branch —
+// see that file's own header for why, and core/deform/README.md.
+static void Test_GLSLMirrorScopeAndWiring(void) {
+  const char *g = "core/deform/shaders/mesh_deform.glsl";
+  const char *c = "core/deform/mesh_deform.c";
+
+  // The hash — every constant, matching MD_Hash in mesh_deform.c exactly.
+  // A single mistyped digit here still compiles and still LOOKS like noise,
+  // which is exactly why a text-mirror check exists instead of trusting a
+  // read-through.
+  CHECK(FileHas(c, "x * 374761393 + y * 668265263 + z * 2147483647") &&
+            FileHas(g, "x * 374761393 + y * 668265263 + z * 2147483647"),
+        "the hash's mixing constants agree, CPU and GLSL");
+  CHECK(FileHas(c, "(h ^ (h >> 13)) * 1274126177u") &&
+            FileHas(g, "(h ^ (h >> 13u)) * 1274126177u"),
+        "the hash's second mix step agrees (u-suffix is GLSL's uint literal, "
+        "not a formula change)");
+  CHECK(FileHas(c, "t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f)") &&
+            FileHas(g, "t * t * t * (t * (t * 6.0 - 15.0) + 10.0)"),
+        "the smoothstep polynomial agrees (f-suffix is C's float literal "
+        "marker, not present or needed in GLSL)");
+
+  // Deliberately NOT mirrored — the one thing core/deform/README.md's "No
+  // GLSL mirror, deliberately" caution actually applies to.
+  CHECK(!FileHas(g, "MeshDeform_SampleImage") && !FileHas(g, "texture("),
+        "the image-source branch (needs texture() in the VERTEX stage, "
+        "unproven on rlvk) is not in this mirror — only SINE and the "
+        "procedural lattice are");
+  CHECK(!FileHas(g, "kind == MESH_DEFORM_CURL"),
+        "CURL is not evaluated here either — it has no formula on the CPU "
+        "side yet (mesh_deform.c never implemented it), so there is nothing "
+        "to port. The #define exists (for the packing contract) but no "
+        "branch compares against it");
+
+  // The packing contract — must match MeshDeform_PackGPU's field order
+  // exactly, or the two sides silently disagree about which float means
+  // which uniform.
+  CHECK(FileHas(c, "p[0] = (float)L->kind;") && FileHas(c, "p[1] = (float)L->direction;") &&
+            FileHas(c, "p[3] = L->amplitude;"),
+        "kind/direction/amplitude pack at the offsets this mirror reads");
+  CHECK(FileHas(g, "int kind = int(p0.x);") && FileHas(g, "float amplitude = p0.w;"),
+        "...and the mirror reads them from the same positions");
+
+  // Build wiring — the missing-shader-file trap (ENGINE_LANDMINES.md).
+  CHECK(FileHas("CMakeLists.txt", "core/deform/shaders/mesh_deform.glsl") &&
+            FileHas("Makefile.Android", "core/deform/shaders"),
+        "the new shader is registered in both build systems, not just "
+        "sitting on disk");
+
+  // The consumer.
+  const char *vs = "core/trails/shaders/trail_deform.vs";
+  const char *ts = "core/trails/trail_system.c";
+  CHECK(FileHas(vs, "MeshDeform_ApplyField("), "trail_deform.vs mode 1 calls the mirror");
+  CHECK(FileHas(ts, "MeshDeform_Apply(&warp, s_deformShader, &L->meshWarp);"),
+        "trail_system.c pushes the packed field for mode 1");
+}
+
 int main(void) {
   printf("=== core/deform: pm_tube bit-identity, grouping, directions, wrap, mirror ===\n");
   Test_TubeMigrationIsBitIdentical();
@@ -364,6 +423,7 @@ int main(void) {
   Test_ScaleAndOffsetAreNotTheSame();
   Test_SamplersWrapBothAxes();
   Test_MirrorStillMatchesSource();
+  Test_GLSLMirrorScopeAndWiring();
   printf("---- %d checks, %d failures\n", g_checks, g_failures);
   return g_failures ? 1 : 0;
 }

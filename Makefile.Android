@@ -411,6 +411,8 @@ copy_project_resources: create_temp_project_dirs
 	cp -f core/trails/shaders/*.fs $(PROJECT_BUILD_PATH)/assets/core/trails/shaders/ 2>/dev/null || true
 	mkdir -p $(PROJECT_BUILD_PATH)/assets/core/uv/shaders
 	cp -f core/uv/shaders/*.glsl $(PROJECT_BUILD_PATH)/assets/core/uv/shaders/ 2>/dev/null || true
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/core/deform/shaders
+	cp -f core/deform/shaders/*.glsl $(PROJECT_BUILD_PATH)/assets/core/deform/shaders/ 2>/dev/null || true
 	mkdir -p $(PROJECT_BUILD_PATH)/assets/core/particles/shaders/gpu
 	cp -f core/particles/shaders/gpu/*.comp $(PROJECT_BUILD_PATH)/assets/core/particles/shaders/gpu/ 2>/dev/null || true
 	cp -f core/particles/shaders/gpu/*.vs $(PROJECT_BUILD_PATH)/assets/core/particles/shaders/gpu/ 2>/dev/null || true

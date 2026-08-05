@@ -639,11 +639,28 @@ static void Test_MirrorStillMatchesSource(void)
     CHECK(FileHas(vs, "(1.0 - smoothstep(tailStart, 1.0, seg))"),
           "the tail fade still subtracts to zero at seg = 1");
 
-    // The sin-multi octaves — the budget and desync arithmetic.
-    CHECK(FileHas(vs, "u_waveAmpA.x * sin(seg * u_waveFreq.x * TAU + t * u_waveSpeed.x + phase)"),
-          "the side octave-0 term is unchanged");
-    CHECK(FileHas(vs, "u_waveFreq.x * 3.77"), "the normal octave-0 detune is unchanged");
-    CHECK(FileHas(vs, "phase * 4.67"), "the side phase desync factor is unchanged");
+    // The sin-multi octaves — 05/08/2026, generalised onto core/deform's
+    // first GLSL mirror (core/deform/shaders/mesh_deform.glsl). The old
+    // inline hand-written octaves (and their hardcoded per-octave detune —
+    // freq*3.77, phase*4.67, etc.) are GONE from this file; the reduced
+    // 2+2-octave field is built in trail_system.c's ApplyDeformUniforms and
+    // read back here through MeshDeform_ApplyField. See that push site's
+    // own comment for why the old hardcoded harmonics are not reproduced
+    // (nothing spawns this mode, so there is no fidelity bar to clear).
+    const char *deform = "core/deform/shaders/mesh_deform.glsl";
+    CHECK(FileHas(vs, "vec3 d = MeshDeform_ApplyField(vec2(seg, seg), vec2(seg, seg), t,") &&
+              FileHas(vs, "side, u_stripNormal, 3, 3);"),
+          "SIN_MULTI reads the packed field through the shared mirror, not an inline formula");
+    CHECK(!FileHas(vs, "u_waveFreq.x * 3.77") && !FileHas(vs, "phase * 4.67"),
+          "the old hardcoded per-octave detune is gone, not merely unreachable");
+    CHECK(FileHas(c, "MeshDeform_AddLayer(&warp, (MeshDeformLayer){") &&
+              FileHas(c, ".kind = MESH_DEFORM_SINE, .direction = MESH_DEFORM_DIR_AXIS,") &&
+              FileHas(c, ".kind = MESH_DEFORM_SINE, .direction = MESH_DEFORM_DIR_TANGENT,"),
+          "trail_system.c packs the octaves as plain MeshDeformLayer entries, "
+          "AXIS for side and TANGENT for stripNormal");
+    CHECK(FileHas(deform, "float MeshDeform_EvaluateLayer(") &&
+              FileHas(deform, "vec3 MeshDeform_ApplyField("),
+          "the mirror's two entry points exist");
     CHECK(FileHas(vs, "pos += d * env * u_waveStrength;"),
           "the sin-multi result still lands inside the envelope * strength");
 
