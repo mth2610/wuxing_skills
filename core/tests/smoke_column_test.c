@@ -195,7 +195,12 @@ static void Test_MirrorStillMatchesSource(void) {
             FileHas("core/geometry/pm_tube.inl",
                     "pos = Vector3Add(pos, Vector3Add(Vector3Scale(right, bendA * w),"),
         "the centreline itself bends, not just the surface");
-  CHECK(FileHas("core/geometry/pm_tube.inl", "float w = cfg->centerlineAmp * t * t;"),
+  // `tEnv` (05/08/2026) is the emitter-relative geometric coordinate: `t` for
+  // the column (anchorAtTail false — bit-identical to what this line said
+  // before), `1-t` for a caller whose emitter is at the far end of the swept
+  // path. "Pinned to zero at the base" is the invariant; which end the base
+  // is on is the caller's to state. See pm_tube_envelope_anchor_test.c.
+  CHECK(FileHas("core/geometry/pm_tube.inl", "float w = cfg->centerlineAmp * tEnv * tEnv;"),
         "...and it is pinned to zero at the base — a source that sways reads as "
         "a flying object, not as something being emitted");
   // A single low-frequency arc sliding rigidly along the body is a snake made
@@ -222,7 +227,7 @@ static void Test_MirrorStillMatchesSource(void) {
   // tNoise — only the surf.y slot moves back to `t`. Column is unaffected
   // either way (tNoise == t here, noiseWavelength stays 0).
   CHECK(FileHas("core/geometry/pm_tube.inl", "float nvC = tNoise + cfg->noiseOffset * 0.45f;") &&
-            FileHas("core/geometry/pm_tube.inl", "0.30f * PMTubeAxisScalar(cfg->noiseField, 0.41f, t, nvC * 2.6f, time, right)"),
+            FileHas("core/geometry/pm_tube.inl", "0.30f * PMTubeAxisScalar(cfg->noiseField, 0.41f, tEnv, nvC * 2.6f, time, right)"),
         "the bend has two scales and drifts slowly, so the sway is not stiff");
   // The texture. sin(TAU*(ku*u + kv*v)) is a plane wave in direction (ku, kv),
   // so drawing both from one range makes most modes DIAGONAL — 45-degree

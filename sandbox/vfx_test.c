@@ -838,11 +838,29 @@ void VFXTest_Draw3D(void)
                   s_vfxFixtureLastTime[24] = s_meshTime;
                   s_vfxFixtureXf[24] = MatrixTranslate(fixturePos.x, fixturePos.y, fixturePos.z);
                   if (s_vfxFixtureHandle[24] < 0)
-                      // TẠM THỜI 0.55f — vẫn đang CHẨN ĐOÁN, chưa phải giá trị
-                      // cuối: NORMAL_OFFSET churn dùng biên độ MÉT tuyệt đối
-                      // (1.30), không tỉ lệ theo bán kính — ở 0.18f gốc tỉ lệ
-                      // biên độ/bán kính cao gấp ~3 lần column, đọc ra "phẳng".
-                      // Đã xác nhận bằng mắt.
+                      // 0.55f = bán kính của cột khói (fixture 22), GIỮ NGUYÊN
+                      // cho đúng MỘT vòng kiểm tra nữa rồi mới trả về 0.18f.
+                      //
+                      // Lý do giữ: bản sửa 05/08/2026 (PMTubeConfig.anchorAtTail
+                      // nay neo CẢ envelope của deform, không chỉ bán kính —
+                      // core/tests/pm_tube_envelope_anchor_test.c) cần được
+                      // xác nhận bằng cách so TRỰC TIẾP với fixture 22 ở CÙNG
+                      // bán kính. Đổi bán kính cùng lúc với bản sửa là đổi hai
+                      // biến một lượt, đúng cái đã ngốn mấy vòng của phiên này.
+                      // Xác nhận xong -> trả 0.18f trong MỘT bước riêng.
+                      //
+                      // SỬA LẠI GIẢI THÍCH CŨ ở đây (nó SAI, và sai theo hướng
+                      // dễ dẫn nhầm): "0.18f làm tỉ lệ biên độ/bán kính cao gấp
+                      // 3 lần column" không phải nguyên nhân "phẳng". Tầng
+                      // NORMAL_SCALE — tầng chi phối phình — nhân THẲNG vào bán
+                      // kính cục bộ, nên phình TƯƠNG ĐỐI của nó độc lập hoàn
+                      // toàn với bán kính. Tầng NORMAL_OFFSET tuy tính bằng mét
+                      // tuyệt đối thì lại bị trần min(0.55 x bán kính, 0.6 x
+                      // khoảng cách hai vành) cắt, và ở trail khoảng-cách-hai-
+                      // vành mới là trần thấp hơn — nên nó cũng không phụ thuộc
+                      // bán kính, thậm chí còn MẠNH hơn tương đối khi ống mảnh.
+                      // Nguyên nhân "phẳng" là lỗi neo envelope, và lỗi đó
+                      // không phụ thuộc bán kính chút nào.
                       //
                       // lifetime TRẢ VỀ 1.0f — thử nâng lên 3.0f KHÔNG có tác
                       // dụng gì: VC_TrailNodesForLifetime (vc_common.inl) trần

@@ -162,15 +162,24 @@ static void Test_MirrorMatchesSource(void) {
         "...while mat.y (via nv) still correctly uses tNoise — only the "
         "envelope coordinate moved, not the noise-sampling one");
 
-  // The call site: both t (geometric) and tNoise passed, in that order.
-  CHECK(FileHas(pm, "deform += PMTubeShapeDeformNoise(cfg, radialSegs, j, t, tNoise, time, normal,"),
-        "pm_tube.inl's ring loop passes its own true `t` first, `tNoise` second");
+  // The call site: the GEOMETRIC coordinate first, tNoise second. `tEnv` (see
+  // pm_tube_envelope_anchor_test.c) is that geometric coordinate after the
+  // caller's own anchor — `t` or `1-t`, never the material coordinate. The
+  // assertion this file makes is unchanged: what reaches surf.y is a pure
+  // function of i/segments, independent of noiseWavelength/spanLen.
+  CHECK(FileHas(pm, "float tEnv = cfg->anchorAtTail ? (1.0f - t) : t;"),
+        "the envelope coordinate is still derived from the geometric t only "
+        "— no spanLen, no noiseWavelength term in it");
+  CHECK(FileHas(pm, "deform += PMTubeShapeDeformNoise(cfg, radialSegs, j, tEnv, tNoise, time, normal,"),
+        "pm_tube.inl's ring loop passes the geometric coordinate first, "
+        "`tNoise` second");
 
   // The dormant centerlineAmp/PMTubeAxisScalar sibling, fixed alongside for
   // consistency even though no current caller combines centerlineAmp>0 with
   // noiseWavelength>0 — see the block comment at its call site.
-  CHECK(FileHas(pm, "0.30f * PMTubeAxisScalar(cfg->noiseField, 0.41f, t, nvC * 2.6f, time, right)"),
-        "the axis-bend scalar's surf argument is also the geometric t, not tNoise");
+  CHECK(FileHas(pm, "0.30f * PMTubeAxisScalar(cfg->noiseField, 0.41f, tEnv, nvC * 2.6f, time, right)"),
+        "the axis-bend scalar's surf argument is also the geometric "
+        "coordinate, not tNoise");
 
   // The regression guard: the OLD, buggy call text must be gone.
   CHECK(!FileHas(pm, "PMTubeShapeDeformNoise(cfg, radialSegs, j, tNoise, time, normal,"),

@@ -10,7 +10,7 @@
 //
 // THE TAPER NUMBERS ARE ALSO A VERBATIM COPY (radiusTailFrac/radiusPow,
 // 0.12/1.7 funnel, 0.55/1.4 cylinder) — what differs from the column is
-// which physical end they anchor to, via `tube.radiusAnchorAtTail`
+// which physical end they anchor to, via `tube.anchorAtTail`
 // (core/geometry/procedural_mesh_utils.h, wired in pm_tube.inl). The column
 // is small at its fixed source and widens toward the far end; this file
 // needs small at the FRONT (current/leading position) and large at the BACK
@@ -24,7 +24,7 @@
 // radiusTailFrac past 1 instead (bending a parameter documented as [0,1] to
 // fight the formula's fixed anchor) and it ballooned the back end to
 // several times the requested radius — see git history. That is what
-// `radiusAnchorAtTail` now exists in pm_tube.inl to fix properly.
+// `anchorAtTail` now exists in pm_tube.inl to fix properly.
 //
 // THE PATH MECHANISM IS THE OTHER DIFFERENCE: SmokeColumn_Spawn ends with
 // `Trail_SetStaticPath` — a frozen vertical segment, seeded once (see
@@ -133,7 +133,7 @@ static void SmokeTrail_ConfigureLayers(VC_SmokeTrail *c)
 // numbers (SmokeColumn_ConfigureLayers is still called verbatim, and
 // radiusTailFrac/radiusPow below are copy-pasted, not retuned) — what
 // differs is which PHYSICAL end they are anchored to, via
-// `tube.radiusAnchorAtTail` (core/geometry/procedural_mesh_utils.h).
+// `tube.anchorAtTail` (core/geometry/procedural_mesh_utils.h).
 //
 // A moving trail is not a stationary column: freshly emitted smoke is a
 // tight puff at the emitter and billows out into a wide wake behind it as
@@ -159,7 +159,7 @@ static void SmokeTrail_ConfigureLayers(VC_SmokeTrail *c)
 // not a fix.
 //
 // The actual fix lives in pm_tube.inl/procedural_mesh_utils.h:
-// `radiusAnchorAtTail` re-derives r(t) from (1-t) instead of t, moving the
+// `anchorAtTail` re-derives r(t) from (1-t) instead of t, moving the
 // pinned-at-headR point from t=1 to t=0. With it set, headR — the radius the
 // CALLER asked for — lands on the BACK (t=0, correct: that is the "full"
 // dispersed size), and the FRONT (t=1) becomes `tailFrac x headR`, with
@@ -182,7 +182,23 @@ static void SmokeTrail_BuildShape(VC_SmokeTrail *c, bool funnel)
     // THE re-anchor. headR (the caller's requested radius) lands on the
     // BACK (t=0) instead of pm_tube.inl's default FRONT (t=1) — see the
     // header comment above.
-    c->tube.radiusAnchorAtTail = true;
+    //
+    // RENAMED from `radiusAnchorAtTail` 05/08/2026, and the rename IS the
+    // third fix of this session: the flag never was about the radius alone.
+    // It states one fact — "my emitter is at t=0 of this path" — and THREE
+    // things anchor to the emitter: the radius profile, the deform
+    // ENVELOPE (UV_ENV_HEAD_WELD = "no excursion at the source"), and the
+    // centreline weld. While it re-anchored only the radius, this file got
+    // the two anchors pointing at OPPOSITE ends: the churn envelope stayed
+    // welded at t=0 — which, after the radius flip, is the FAT back — so
+    // the widest part of the tube carried zero churn, while full churn
+    // (env=1) landed at t=1, the 0.12x-radius front tip where there is
+    // nothing to bulge. Product capsuleCurve x env — the absolute bulge
+    // actually visible — peaked at 0.197 against the column's 1.000 with
+    // the identical layer numbers. That is the "still flat" symptom, and no
+    // amplitude could fix it: it scales both sides equally. Measured in
+    // core/tests/pm_tube_envelope_anchor_test.c.
+    c->tube.anchorAtTail = true;
     c->tube.useTransportFrame = true;
 
     // VERTEX DEFORM RE-ENABLED, 05/08/2026 — after 4 prior visual-only patch

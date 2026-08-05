@@ -337,8 +337,12 @@ static void Test_MirrorMatchesSource(void) {
             FileHas(pmu, "float softLen = knee + range * tanhf(excess / range);"),
         "the soft-knee shape this file mirrors is still the tanh-past-70% one");
 
-  CHECK(FileHas(pm, "if (deform < PM_TUBE_MIN_RADIUS_FRAC) deform = PM_TUBE_MIN_RADIUS_FRAC;") &&
-            FileHas(pm, "float finalRadius = baseRadius * capsuleCurve * headWeight * deform;"),
+  // nominalRadius is hoisted out of the j loop (05/08/2026) — the product is
+  // unchanged, so what matters here is still the ORDER: floor the scale
+  // channel, fold it into finalRadius, and only then clamp the offset.
+  CHECK(FileHas(pm, "float nominalRadius = baseRadius * capsuleCurve * headWeight;") &&
+            FileHas(pm, "if (deform < PM_TUBE_MIN_RADIUS_FRAC) deform = PM_TUBE_MIN_RADIUS_FRAC;") &&
+            FileHas(pm, "float finalRadius = nominalRadius * deform;"),
         "pm_tube.inl still floors deform and computes finalRadius BEFORE "
         "the offset clamp — the ordering this fix depends on");
 

@@ -144,8 +144,26 @@ typedef struct
    * headR — đúng bán kính người gọi xin — nằm ở t=0, và t=1 (đầu đường đi)
    * co lại còn tailFrac x headR, tailFrac vẫn ở miền [0,1] tự nhiên như tài
    * liệu field trên nói (không cần bẻ nó vượt 1 để lách). false = hành vi cũ,
-   * neo ở t=1. */
-  bool radiusAnchorAtTail;
+   * neo ở t=1.
+   *
+   * MỘT CỜ, KHÔNG PHẢI HAI — đổi tên từ `radiusAnchorAtTail` 05/08/2026 sau
+   * khi cái tên cũ chính là lỗi. Cờ này KHÔNG chỉ nói về bán kính; nó nói
+   * MỘT sự thật về caller: "đầu phát của tôi nằm ở t=0 của path này, không
+   * phải t=1". Từ sự thật đó suy ra BA thứ neo cùng một chỗ, và pm_tube.inl
+   * áp cả ba qua đúng một biến `tEnv = anchorAtTail ? (1-t) : t`:
+   *   1. đường bao bán kính r(t)      — mảnh ở đầu phát
+   *   2. toạ độ ENVELOPE của deform    — MeshDeformLayer.env/envStart/envEnd,
+   *      tức UV_ENV_HEAD_WELD: "không xê dịch tại nguồn phát"
+   *   3. trọng số uốn trục centerlineAmp (t*t) — gốc đứng yên tại nguồn phát
+   * Khi cờ này chỉ neo (1) mà bỏ (2), hai cái neo chạy NGƯỢC nhau: chỗ ống
+   * dày nhất (t=0) có envelope = 0 (không churn) còn chỗ envelope = 1 (t=1)
+   * lại là chỗ ống mảnh nhất (tailFrac x headR). Tích capsuleCurve x env —
+   * biên độ phình TUYỆT ĐỐI thật sự nhìn thấy — đạt đỉnh chỉ 0.197 so với
+   * 1.000 của cùng bộ số trên cột khói: gấp 5 lần yếu hơn, ở MỌI biên độ.
+   * Đó đúng là triệu chứng "vẫn phẳng" của smoke trail, và là lý do cờ này
+   * mang tên chung thay vì tên riêng của bán kính — đo bằng số ở
+   * core/tests/pm_tube_envelope_anchor_test.c. */
+  bool anchorAtTail;
 
   /* NGUYÊN TẮC CHUNG trước, chi tiết sau — xem core/deform/README.md: "the
    * drive coordinate is not the raw parametric position", cùng nguyên tắc

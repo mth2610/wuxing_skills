@@ -24,7 +24,7 @@
  * không theo BÁN KÍNH CỤC BỘ. Trên một thân gần như đều (cột khói: 0.12x..1.0x
  * trên một trục KHÔNG di chuyển, đầu mỏng là nguồn phát — thường bị che/ít
  * soi) thì không sao. Nhưng đầu funnel của trail giờ neo ngược
- * (radiusAnchorAtTail) để mỏng đúng ở ĐẦU ĐƯỜNG ĐI — đầu dễ thấy nhất, luôn
+ * (anchorAtTail) để mỏng đúng ở ĐẦU ĐƯỜNG ĐI — đầu dễ thấy nhất, luôn
  * hướng ra phía camera vì nó là đầu MỚI. Tại đó bán kính thật có thể chỉ còn
  * 0.12 x 0.35 m ~ 4 cm, trong khi offsetLimit vẫn tính theo ringGap của CẢ
  * THÂN dày — cùng một trần dịch chuyển đó giờ lớn hơn bán kính thật nhiều
@@ -62,9 +62,10 @@
  * không chỉ trễ điểm mở — đúng "biến đổi ít quá" quan sát được. Đo bằng số
  * ở core/tests/pm_tube_envelope_coordinate_test.c.
  *
- * tGeo = phân số hình học THẬT (i/segments ở caller) — luôn dùng cho
- * surf.y. tNoise = toạ độ đã qua noiseWavelength (hoặc bằng tGeo nếu tắt) —
- * chỉ dùng cho mat.y qua `nv`. */
+ * tGeo = phân số HÌNH HỌC thật (caller đưa `tEnv`: i/segments, đảo chiều
+ * nếu anchorAtTail — vẫn thuần hình học, không bao giờ là toạ độ vật chất)
+ * — luôn dùng cho surf.y. tNoise = toạ độ đã qua noiseWavelength (hoặc bằng
+ * t nếu tắt) — chỉ dùng cho mat.y qua `nv`. */
 static float PMTubeShapeDeformNoise(const PMTubeConfig *cfg, int radialSegs, int j,
                                float tGeo, float tNoise, float time, Vector3 normal,
                                Vector3 tangent, Vector3 *outOffset) {
@@ -226,6 +227,17 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
         float noiseSpanLen = (cfg->noiseSpanLenOverride > 0.0f) ? cfg->noiseSpanLenOverride : spanLen;
         float tNoise = (cfg->noiseWavelength > 0.0f) ? ((t * noiseSpanLen) / cfg->noiseWavelength) : t;
 
+        /* TOẠ ĐỘ "TÍNH TỪ NGUỒN PHÁT", 05/08/2026 — MỘT biến cho CẢ BA chỗ
+         * neo vào nguồn phát: đường bao bán kính, cổng envelope của deform,
+         * và trọng số uốn trục. Xem doc field `anchorAtTail` ở
+         * procedural_mesh_utils.h: để cờ neo bán kính mà KHÔNG neo envelope
+         * thì hai neo chạy ngược nhau và biên độ phình tuyệt đối tụt còn
+         * 1/5 — đúng lỗi vừa dính của smoke trail. Không tách ba biến: ba
+         * chỗ đó là ba hệ quả của MỘT sự thật, tách ra là mời lỗi cũ quay
+         * lại. tGeo vẫn là phân số HÌNH HỌC thật (chỉ đảo chiều), không bao
+         * giờ là toạ độ vật chất tNoise. */
+        float tEnv = cfg->anchorAtTail ? (1.0f - t) : t;
+
         Vector3 pos;
         Vector3 tangent;
         PMTubeSamplePath(pathPoints, pathCount, currentT, &pos, &tangent);
@@ -281,7 +293,7 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
         /* r(t) = tailFrac + (1 - tailFrac) * t^pow. Với mặc định (tailFrac 1)
          * biểu thức rút gọn về đúng 1 và ống thẳng như cũ.
          *
-         * radiusAnchorAtTail lật NEO của công thức từ t=1 (mặc định) sang
+         * anchorAtTail lật NEO của công thức từ t=1 (mặc định) sang
          * t=0: chạy trên (1-t) thay vì t, nên headR — bán kính người gọi xin
          * — luôn nằm ở t=0 (đuôi) và t=1 (đầu ĐƯỜNG ĐI) co lại còn
          * tailFrac x headR. Có cờ này để tailFrac chỉ cần ở miền [0,1] tự
@@ -291,8 +303,7 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
         float capsuleCurve = 1.0f;
         if (cfg->radiusTailFrac > 0.0f && cfg->radiusTailFrac != 1.0f) {
             float p = (cfg->radiusPow > 0.0f) ? cfg->radiusPow : 1.0f;
-            float tCurve = cfg->radiusAnchorAtTail ? (1.0f - t) : t;
-            float grow = (p == 1.0f) ? tCurve : powf(tCurve, p);
+            float grow = (p == 1.0f) ? tEnv : powf(tEnv, p);
             capsuleCurve = cfg->radiusTailFrac + (1.0f - cfg->radiusTailFrac) * grow;
         }
         float headWeight = 1.0f;
@@ -317,22 +328,26 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
              * tức máy móc. Giảm phần TRÔI xuống làm trục W (trường tự biến đổi
              * TẠI CHỖ) chiếm ưu thế, và biến đổi tại chỗ mới là thứ trông như
              * chất khí. */
-            // t (hình học thật), KHÔNG PHẢI tNoise, cho tham số surf.y —
-            // cùng lỗi/cùng sửa 05/08/2026 như PMTubeShapeDeformNoise ở
-            // trên (xem comment ở đó). Chưa có caller nào bật cả
+            // tEnv (hình học thật, đã theo neo của caller), KHÔNG PHẢI
+            // tNoise, cho tham số surf.y — cùng lỗi/cùng sửa 05/08/2026 như
+            // PMTubeShapeDeformNoise ở trên (xem comment ở đó). Chưa có caller nào bật cả
             // centerlineAmp lẫn noiseWavelength cùng lúc nên nhánh này
             // hiện không lộ triệu chứng, nhưng cùng landmine nếu sau này
             // có — sửa ngay trong lúc đang ở đây, bit-identical với mọi
             // caller cũ (tNoise == t khi noiseWavelength == 0).
             float nvC = tNoise + cfg->noiseOffset * 0.45f;
-            float bendA = 0.70f * PMTubeAxisScalar(cfg->noiseField, 0.13f, t, nvC, time, right)
-                        + 0.30f * PMTubeAxisScalar(cfg->noiseField, 0.41f, t, nvC * 2.6f, time, right);
-            float bendB = 0.70f * PMTubeAxisScalar(cfg->noiseField, 0.61f, t, nvC, time, up)
-                        + 0.30f * PMTubeAxisScalar(cfg->noiseField, 0.87f, t, nvC * 2.6f, time, up);
-            float w = cfg->centerlineAmp * t * t;
+            float bendA = 0.70f * PMTubeAxisScalar(cfg->noiseField, 0.13f, tEnv, nvC, time, right)
+                        + 0.30f * PMTubeAxisScalar(cfg->noiseField, 0.41f, tEnv, nvC * 2.6f, time, right);
+            float bendB = 0.70f * PMTubeAxisScalar(cfg->noiseField, 0.61f, tEnv, nvC, time, up)
+                        + 0.30f * PMTubeAxisScalar(cfg->noiseField, 0.87f, tEnv, nvC * 2.6f, time, up);
+            float w = cfg->centerlineAmp * tEnv * tEnv;
             pos = Vector3Add(pos, Vector3Add(Vector3Scale(right, bendA * w),
                                              Vector3Scale(up, bendB * w)));
         }
+
+        /* Bán kính DANH NGHĨA của vành — tính MỘT lần trước vòng j, không lặp
+         * lại ở ba chỗ. Cũng là mẫu số để đo biên độ churn tách khỏi taper. */
+        float nominalRadius = baseRadius * capsuleCurve * headWeight;
 
         float wobble = cfg->wobbleAmplitude * sinf(t * PI * cfg->wobbleFrequency + time * cfg->wobbleSpeed);
         Vector3 twistedUp = Vector3Add(Vector3Scale(up, cosf(wobble)), Vector3Scale(right, sinf(wobble)));
@@ -347,7 +362,7 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
             float deform2 = sinf(t * cfg->deform2FreqT - phi * cfg->deform2FreqPhi - time * cfg->deform2Speed);
             float deform = 1.0f + deform1 * cfg->deform1Amp + deform2 * cfg->deform2Amp;
             Vector3 dOffset;
-            deform += PMTubeShapeDeformNoise(cfg, radialSegs, j, t, tNoise, time, normal,
+            deform += PMTubeShapeDeformNoise(cfg, radialSegs, j, tEnv, tNoise, time, normal,
                                         tangent, &dOffset);
 
             /* SÀN BÁN KÍNH. deform là 1 + nhiễu, và không có gì chặn nhiễu ở
@@ -355,7 +370,7 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
              * ngược ra ngoài. Một cái ống bị thắt nút không phải khói, nó là
              * chuỗi hạt cườm. */
             if (deform < PM_TUBE_MIN_RADIUS_FRAC) deform = PM_TUBE_MIN_RADIUS_FRAC;
-            float finalRadius = baseRadius * capsuleCurve * headWeight * deform;
+            float finalRadius = nominalRadius * deform;
 
             /* TRẦN OFFSET — PMSweptSection_ClampOffset (procedural_mesh_utils.c),
              * DÙNG CHUNG với pm_droplet/pm_capsule khi cần, xem doc đầy đủ ở
@@ -375,40 +390,42 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
                 Vector3Add(pos, Vector3Scale(normal, finalRadius)), dOffset);
 
             // DEBUG TẠM THỜI, 05/08/2026 (vòng 3) — chẩn đoán "vẫn phẳng dù
-            // đã sửa 2 lỗi" cho smoke trail. Log THỐNG KÊ bán kính hiệu dụng
-            // THẬT của mesh vừa dựng — so với ước lượng bằng Python đã làm
-            // trước đó (dự đoán stdev ~0.20, min~0.10, max~0.99 ở extAmp
-            // hiện tại của tuning.cfg) để biết lệch nằm ở hình học hay ở
-            // chỗ khác (render/shading). Chỉ log khi noiseWavelength>0 (hiện
-            // chỉ smoke trail) để không lẫn với cột khói/spark/ember. XOÁ
-            // khi chẩn đoán xong.
+            // đã sửa 2 lỗi" cho smoke trail. XOÁ khi chẩn đoán xong.
+            //
+            // ĐO ĐỘ LỆCH TUYỆT ĐỐI |eff - danh nghĩa| (mét), KHÔNG phải bán
+            // kính hiệu dụng: bán kính hiệu dụng bị taper (0.12x..1.0x) chi
+            // phối nên min/max/stdev của nó gần như chỉ đo cái phễu, không
+            // phân biệt được churn mạnh hay yếu. Tỉ lệ eff/danh-nghĩa cũng
+            // KHÔNG phân biệt được đúng lỗi neo envelope: lật neo chỉ đảo
+            // chiều envelope nên phân bố tương đối giữ nguyên — thứ thay đổi
+            // là churn có rơi vào chỗ ống DÀY hay không, tức độ lệch TUYỆT
+            // ĐỐI. Dự đoán trước khi sửa (bộ số hiện tại, headR 0.55):
+            // đỉnh capsuleCurve x env = 0.197; sau khi sửa = 1.000, tức max
+            // phải tăng khoảng 5 lần và mean khoảng 2.2 lần. Nếu log KHÔNG
+            // tăng như vậy thì bản sửa này không phải nguyên nhân — số này
+            // là để bác bỏ, không phải để xác nhận.
             if (cfg->noiseWavelength > 0.0f) {
-                static float s_min = 1e9f, s_max = -1e9f, s_sum = 0.0f, s_sumSq = 0.0f;
+                static float s_max = -1e9f, s_sum = 0.0f;
                 static int s_n = 0;
                 static int s_calls = 0;
-                float eff = Vector3Distance(pos, out->rings[i][j]);
-                if (eff < s_min) s_min = eff;
-                if (eff > s_max) s_max = eff;
-                s_sum += eff; s_sumSq += eff * eff; s_n++;
+                float dev = fabsf(Vector3Distance(pos, out->rings[i][j]) - nominalRadius);
+                if (dev > s_max) s_max = dev;
+                s_sum += dev; s_n++;
                 if (i == segments && j == radialSegs - 1) {
                     s_calls++;
-                    if (s_calls % 30 == 0) {
-                        float mean = s_sum / (float)s_n;
-                        float var = s_sumSq / (float)s_n - mean * mean;
-                        if (var < 0.0f) var = 0.0f;
+                    if (s_calls % 30 == 0)
                         TraceLog(LOG_INFO,
-                            "TUBE_RADIUS_STATS_DEBUG: baseRadius=%.3f n=%d "
-                            "min=%.4f max=%.4f mean=%.4f stdev=%.4f",
-                            baseRadius, s_n, s_min, s_max, mean, sqrtf(var));
-                    }
-                    s_min = 1e9f; s_max = -1e9f; s_sum = 0.0f; s_sumSq = 0.0f; s_n = 0;
+                            "TUBE_CHURN_DEV_DEBUG: baseRadius=%.3f n=%d "
+                            "meanDev=%.4f m  maxDev=%.4f m",
+                            baseRadius, s_n, s_sum / (float)s_n, s_max);
+                    s_max = -1e9f; s_sum = 0.0f; s_n = 0;
                 }
             }
         }
 
-        out->ringRadius[i] = baseRadius * capsuleCurve * headWeight;
-        if (i == 0) out->tailRadius = baseRadius * capsuleCurve * headWeight;
-        if (i == segments) out->headRadius = baseRadius * capsuleCurve * headWeight;
+        out->ringRadius[i] = nominalRadius;
+        if (i == 0) out->tailRadius = nominalRadius;
+        if (i == segments) out->headRadius = nominalRadius;
     }
 
     /* PHÁP TUYẾN PHẢI DỰNG LẠI SAU KHI BIẾN DẠNG.

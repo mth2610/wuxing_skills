@@ -1138,3 +1138,65 @@ geometric position vs. a rescaled/drifted "material" position), give each
 meaning its OWN parameter all the way to the `MeshDeform_Evaluate` call —
 never let a rename or a refactor collapse them back into one variable just
 because they happen to be equal for every caller tested so far.
+
+## One flag that re-anchors ONE of several emitter-relative quantities is a bug with a plausible name (05/08/2026)
+
+**Symptom.** The smoke trail's churn still read as flat/thin next to the smoke
+column after BOTH landmines above were found and fixed, on layer numbers that
+are a verbatim copy of the column's. Raising the amplitude knob to 3x
+(`smoketrail2_noise = 3.0` in `tuning.cfg`, which silently stayed set for
+several rounds of visual comparison) did not close the gap either.
+
+**Cause.** `PMTubeConfig` had a flag named `radiusAnchorAtTail`, added earlier
+in the same session to give a moving trail a taper that is thin at its
+*leading* end — the trail lays its newest node at `t=1` of the swept path,
+the opposite of the column's static path, so `r(t)` had to run on `1-t`. The
+name was the bug. The flag does not state a fact about the radius; it states
+one fact about the caller — **"my emitter is at the other end of this path"** —
+and THREE independent quantities in `pm_tube.inl` anchor to the emitter:
+
+1. the radius profile `r(t)` — thin at the source,
+2. the deform ENVELOPE (`MeshDeformLayer.env`, i.e. `UV_ENV_HEAD_WELD` =
+   "zero excursion at the source"),
+3. the centreline weld (`centerlineAmp * t * t`) — the base does not fidget.
+
+Only (1) was re-anchored. After the flip, `t=0` is the trail's FAT back — so
+the widest ring of the tube got envelope **exactly 0** (no churn at all, at
+any amplitude), while envelope 1 landed at `t=1`, the `0.12x`-radius front
+tip where there is nothing to bulge and where both offset clamps are
+tightest. The absolute excursion a viewer sees is
+`baseRadius * capsuleCurve(t) * envelope(t) * noise`, so `capsuleCurve x
+envelope` is the entire shape of the available churn; measured
+(`core/tests/pm_tube_envelope_anchor_test.c`) its peak was **0.197 against
+the column's 1.000** on the identical layers — 5x on the scale layer, 8x on
+the offset layer whose envelope is squared.
+
+**Why the knob could not rescue it, and why that matters diagnostically.**
+Amplitude is a uniform factor on that product, so the deficit is a *ratio*,
+invariant under the knob — the trail at 3x still peaked below the column at
+2x. A whole round of "it looks the same, turn it up" was therefore
+guaranteed to be uninformative before it started. When a knob provably
+cannot move the quantity you are looking at, sweeping it is not a weak
+experiment, it is a null one.
+
+**Rule.** When a flag re-anchors, mirrors, or reverses a parametrisation,
+enumerate every quantity derived from that parametrisation **before**
+naming the flag, and derive them all from ONE named intermediate
+(`float tEnv = cfg->anchorAtTail ? (1.0f - t) : t;`) rather than repeating
+the conditional per consumer. Name the flag after the FACT
+(`anchorAtTail`), never after the first consumer you happened to need
+(`radiusAnchorAtTail`) — a consumer-shaped name makes the other consumers
+look like somebody else's concern, and they will silently keep the old
+anchor. A test that asserts each consumer reads the shared intermediate
+(3 checks, one per consumer) is what stops a later refactor from
+un-anchoring one of them again.
+
+**Corollary on tuning.cfg.** Persisted overrides survive across sessions and
+are invisible in code review. Every round of visual comparison in this
+session ran at 3x the code default without anyone noticing, and the file
+also still carried `smoketrail2_freeze`, a key nothing has registered since
+the code that read it was deleted. Before any visual A/B, read the whole
+`tuning.cfg` block for the effect under test and state the multipliers in
+the report — or log the post-multiplication value, as
+`VFX_SMOKE_TRAIL`'s spawn line does (`churn 1.02` vs. the code's 0.34 was
+what finally exposed it).
