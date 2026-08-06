@@ -1352,3 +1352,207 @@ trạng (`u_volMask.x`: 0 = dạng cũ, 1 = độ dày quang học), và để h
 nó bật lên. Chi phí là một nhánh `mix()`; chi phí của cách kia là bắt người
 dùng nhận một hồi quy trên thứ họ không hề hỏi. Và nếu ô uniform cũ còn trống
 thì tái dùng nó thay vì nới mảng — tránh luôn landmine layout UBO của rlvk.
+
+## Một con số trả lời hai câu hỏi khác nhau: số node lịch sử vs. số lát hình học (06/08/2026)
+
+**Triệu chứng.** Smoke trail nhìn ở `volume_debug = 5` (vẽ pháp tuyến thành
+màu) cho ra các sọc magenta/lục **xen kẽ TỪNG VÀNH** ở đoạn đuôi mảnh — pháp
+tuyến đảo hướng giữa hai vành liền kề. Kèm theo: `offsetClamped` 20-65% mỗi
+khung, và với số hạng độ dày quang học (`vol_depth_mode = 1`) thì độ đục dồn
+lệch hẳn về một bên thay vì bám thân.
+
+**Nguyên nhân.** `trail_system.c` dùng đúng MỘT số, `tubeMaxRings`, cho hai
+câu hỏi không liên quan gì nhau:
+- "giữ bao nhiêu NODE LỊCH SỬ" → đuôi dài bao lâu
+- "dựng hình bằng bao nhiêu LÁT" → lưới mịn tới đâu
+
+Một follower muốn đuôi 1 s thì cần 60 node ở 60 Hz, nên nó **bị buộc** dựng
+lưới 60 lát (bị `TUBE_MESH_MAX_SEGMENTS` kẹp còn 48), dù hình chỉ cần 24.
+
+**Vì sao mịn hơn lại XẤU hơn — phần phản trực giác.** Biến dạng churn đo bằng
+MÉT và không biết gì về khoảng cách hai vành, nên nhồi vành khít lại không làm
+bề mặt mượt hơn, nó làm bề mặt **DỐC hơn** giữa hai vành. Đo được (span
+~3.9 m, churn maxDev 0.30-0.66 m):
+
+| | ringGap | độ dốc (dev/ringGap) |
+|---|---|---|
+| trail, 48 lát | 8.1 cm | **5.54** |
+| trail, 24 lát | 16.3 cm | 2.77 |
+| cột khói, 40 lát / 5 m | 12.5 cm | 2.40 |
+
+Pháp tuyến trong `pm_tube.inl` dựng lại bằng **sai phân trung tâm dọc thân**,
+nên ở độ dốc đó nó gần như nằm ngang và đổi dấu giữa các vành — đúng cái sọc
+xen kẽ nhìn thấy. Cột khói chưa bao giờ dính lỗi này không phải vì churn của
+nó nhẹ hơn, mà vì vành của nó luôn thưa hơn.
+
+**MỘT NGUYÊN NHÂN, HAI TRIỆU CHỨNG.** Hai cái phanh biến dạng cũng đo theo
+ringGap (`PM_TUBE_MAX_OFFSET_RINGS = 0.60 * ringGap`), nên vành khít đồng thời
+siết tầng NORMAL_OFFSET: trần offset ở 48 lát là 4.9 cm, thấp xa so với trần
+theo bán kính (11.8 cm) — tức trần ringGap mới là cái đang ràng buộc, và đó
+chính là `offsetClamped` 20-65%. Tách số lát ra (`tubeGeomSegs = 24`) nới nó
+gấp đôi cùng lúc với việc hạ độ dốc một nửa.
+
+**Luật.** Khi một trường cấu hình bị đọc ở hai chỗ trả lời hai câu hỏi khác
+nhau, nó là hai trường đang trùng tên — tách ra, và cho cái mới giá trị `0 =
+chưa đặt` rơi về cái cũ để mọi caller có sẵn không đổi một bit. Dấu hiệu nhận
+ra sớm: khi bạn thấy mình giải thích một hằng số bằng chữ "và" ("60 vành, tức
+1 giây đuôi **và** đủ mịn"), đó là hai yêu cầu đang bị ép vào một con số, và
+chỉ cần một trong hai đổi là cái kia thành nạn nhân.
+
+**Về phép đo trong test.** Bản nháp đầu của `trail_geom_segs_test.c` khẳng
+định "giảm ít nhất 10 độ" và đo được 9.7 — ngưỡng là con số bịa, nhưng vấn đề
+lớn hơn là ĐƠN VỊ: `atan` bão hoà, nên trên 70° một thay đổi lớn về độ dốc
+thật gần như không làm góc nhúc nhích. Đại lượng đúng là `dev/ringGap`, và
+gấp đôi ringGap thì nó giảm ĐÚNG một nửa — không còn ngưỡng tuỳ tiện nào. Khi
+một assert suýt trượt, hãy hỏi mình đang đo đúng đại lượng chưa trước khi nới
+ngưỡng.
+
+## Một harness đo đúng, nhưng đo NHẦM công thức, thì mọi kết luận của nó nói về một thứ không tồn tại (06/08/2026)
+
+**Bối cảnh.** `core/tests/silhouette_test.c` là một rasteriser phần mềm dựng ra
+để trả lời "làm sao cho biên của một khối tan mềm". Nó đo cẩn thận, kết luận
+chắc: **phải cull mặt sau**, và **số mũ phải >= 2**. Cả hai đều đúng — cho số
+hạng nó mô hình hoá, `EDGE_NDOTV = |N·V|^p`.
+
+**Nhưng shader không ship số hạng đó.** `trail_volume.fs` chạy dạng RIM,
+`(1-|N·V|)^p`. Suốt nhiều tháng, mọi khẳng định của harness về việc cull được
+đọc như luật chung, trong khi nó chưa bao giờ chạy qua công thức thật. Thêm
+`EDGE_RIM` vào harness và đo lại (p=2, ngưỡng "biên còn cứng" = 0.15):
+
+| | một mặt | hai mặt |
+|---|---|---|
+| **RIM `(1-N·V)^p` — ĐANG SHIP** | **0.252** | 0.384 |
+| NDOTV `(N·V)^p` | 0.119 | 0.153 |
+
+Hai điều lật lại cùng lúc:
+
+1. **Cấu hình đang chạy vượt ngưỡng NGAY CẢ KHI ĐÃ CULL** (0.252 so với 0.15).
+   Đó chính là "răng cưa" người dùng báo — nó là **số hạng**, không phải khử
+   răng cưa hình học. Điều này cũng khớp với việc quét số lát quanh thân 8→48
+   chỉ nhích hardness 0.013: đúng, vì cái đang làm biên cứng không nằm ở đó.
+2. **"Bắt buộc phải cull" là tính chất của SỐ HẠNG RIM, không phải của hình học
+   hai mặt.** Hai mặt + độ dày quang học (0.153) MỀM HƠN một mặt + rim (0.252).
+   Lý do có thể suy ra trước khi đo: hai số hạng đạt đỉnh ở hai đầu ĐỐI NHAU của
+   thân. Tia sượt rìa cắt qua nhiều facet; với RIM mỗi lát cắt mang giá trị gần
+   ĐỈNH, với NDOTV mỗi lát mang gần KHÔNG.
+
+**Luật.**
+- Một harness mô hình hoá công thức nào thì kết luận của nó chỉ có giá trị cho
+  công thức đó. Khi shader và harness dùng hai dạng khác nhau, hãy **thêm dạng
+  của shader vào harness** trước khi trích dẫn bất kỳ kết luận nào — đừng suy
+  rộng. Dấu hiệu nhận ra: harness tự ghi "NOT PINNED TO THE SHADER" (file này
+  có ghi) mà vẫn được viện dẫn như luật.
+- Khi hai lựa chọn đối nhau về hình dạng (đỉnh ở tâm vs đỉnh ở rìa), **mọi kết
+  luận phụ thuộc vị trí đỉnh đều đảo dấu theo** — cull, tessellation, thứ tự
+  vẽ. Kiểm lại từng cái, đừng mang sang.
+- Và nói rõ cho lần sau: hai knob `vol_cull` + `vol_depth_mode` phải đi CÙNG
+  nhau. Hai mặt + rim (0.384) là ô tệ nhất bảng, tức đúng cái người ta sẽ vô
+  tình chọn khi chỉ bật một trong hai.
+
+## `alphaMul = 0` nghĩa là "ĐẦY", không phải "tắt" — một sentinel làm mọi lệnh ẩn chạy ngược (06/08/2026)
+
+**Triệu chứng.** `beam_probe` được viết để gỡ mọi lớp chồng lên nhau, trong đó
+có lõi additive, bằng `.alphaMul = probe ? 0.0f : ...`. Trên màn hình lõi vẫn
+sáng nguyên — chủ dự án phải hỏi thẳng "sao không xoá cái lõi luôn".
+
+**Nguyên nhân.** `core/trails/trail_system.c` có, ở HAI chỗ:
+
+```c
+float aMul = (ly->alphaMul > 0.0f) ? ly->alphaMul : 1.0f;
+```
+
+0 được đọc là "caller chưa đặt" và thay bằng **alpha ĐẦY**. Nên mọi lệnh ẩn
+viết là `* 0.0f` làm **đúng điều ngược lại** với thứ nó nói.
+
+**Cái này còn phá một thứ nữa, âm thầm.** Cơ chế self-hide của beam khi hai
+đầu gần trùng nhau (DoD case 1 của P4) cũng nhân `live = 0.0f` — nghĩa là một
+beam đáng lẽ ẩn thì lại vẽ ở alpha đầy. Nó "pass" trong
+`core/tests/beam_geometry_test.c` vì test đó là source-drift guard: nó xác
+nhận DÒNG CODE tồn tại, không xác nhận HÀNH VI. Đúng giới hạn mà
+`core/CLAUDE.md` §3 đã cảnh báo về mirror test, ở một dạng khác.
+
+**Không sửa ở gốc, và nói rõ vì sao.** Vô số `TrailConfig`/`TrailLayer` khắp
+codebase khởi tạo bằng `{0}` và dựa vào việc 0 nghĩa là 1.0; đổi sentinel sẽ
+làm mọi trail chưa từng đặt `alphaMul` biến mất cùng lúc. Sentinel này sai
+nhưng nó đang gánh. Beam dùng `1e-4f`, và test khoá thêm một assert rằng
+sentinel kia còn nguyên — nếu ngày nào nó được sửa, epsilon có thể quay về 0.
+
+**Luật.**
+- Một sentinel kiểu "0 = chưa đặt" biến 0 thành giá trị DUY NHẤT không thể
+  biểu đạt. Khi 0 cũng là một giá trị hợp lệ và có nghĩa (ẩn, im lặng, đứng
+  yên), sentinel đó là một cái bẫy — hãy tra `> 0.0f ?` ở phía consumer TRƯỚC
+  khi viết `* 0.0f` để tắt một thứ gì.
+- Và: một source-drift guard chứng minh dòng code còn đó, không chứng minh nó
+  làm đúng việc. Với những giá trị mà consumer có thể diễn giải lại (0, -1,
+  chuỗi rỗng), hãy khoá cả PHÍA CONSUMER trong cùng test — như assert
+  `aMul = (ly->alphaMul > 0.0f) ...` vừa thêm.
+
+## Một nhánh debug KHÔNG có cận trên nuốt mọi mode thêm sau nó — và triệu chứng của nó giả dạng một bug hệ thống (06/08/2026)
+
+**Triệu chứng.** `volume_debug = 10` (dải màu `|N·V|`) cho ra một màn hình
+**TOÀN ĐỎ** — và nó **không đổi** khi bật/tắt cull, khi đổi nguồn pháp tuyến
+(attribute ↔ `dFdx`), khi đổi nguồn vector nhìn (`viewPos - P` ↔ `-P`), khi
+set `viewPos` từ camera. Bốn vòng chẩn đoán đi tìm một lỗi ở `N` và `V`.
+
+**Nguyên nhân.** `trail_volume.fs` có:
+
+```glsl
+if (u_volDebug > 8.5) { finalColor = vec4(1.0, 0.0, 0.0, 1.0); return; }
+```
+
+Không có cận trên. Đúng vào thời điểm viết — nó là nhánh CUỐI, nên "từ 8.5 trở
+lên" là mode 9. Khi mode 10 và 11 được thêm vào bên dưới, `volume_debug = 10`
+rơi thẳng vào đây, vẽ **hằng số đỏ** rồi `return`. Mode 10 không bao giờ chạy.
+Mode 11 cũng vậy.
+
+**Vì sao nó tốn tới bốn vòng.** Triệu chứng là dạng tệ nhất có thể: một hình
+ảnh **bất biến** trước mọi công tắc. Sự bất biến đó đọc lên rất giống "lỗi nằm
+sâu, ở cả N lẫn V", trong khi nó thật ra nghĩa là **phép đo không chạy**. Một
+hằng số thì không thể phân biệt với một đại lượng thật luôn bằng đúng hằng số
+đó — và mọi suy luận loại trừ ("N đúng rồi thì phải là V") đều dựa trên tiền
+đề rằng ảnh phản ánh một phép tính nào đó.
+
+Chua hơn: shader đã có sẵn mode 8/9 với đúng comment giải thích chúng tồn tại
+để làm gì — *"Nothing computed, nothing interpolated: if these do not arrive
+as written, no other reading from this shader means anything"* — và không
+vòng nào chạy chúng trước. Công cụ phân định nằm ngay đó, được ghi rõ là phải
+chạy TRƯỚC mọi phép đọc khác.
+
+**Luật.**
+1. **Mọi nhánh debug phải có CẢ HAI cận.** Nhánh cuối cùng không được hưởng
+   đặc quyền "mở về phía trên": người thêm mode tiếp theo sẽ không đọc lại nó.
+   Đã khoá bằng assert trong `core/tests/beam_geometry_test.c` cho từng mode.
+2. **Khi một ảnh chẩn đoán KHÔNG ĐỔI qua nhiều công tắc độc lập, nghi phép đo
+   trước khi nghi đối tượng đo.** Bất biến là bằng chứng mạnh cho "không chạy",
+   không phải cho "hỏng sâu". Chạy mode hằng số trước — nếu hằng số không tới
+   nơi như đã viết thì mọi số đọc khác đều vô nghĩa.
+3. **Log phải in cả GIÁ TRỊ lẫn LOCATION của uniform điều khiển debug.** Dòng
+   log giờ có `debug %.0f loc %d`; nếu location là -1 thì `SetShaderValue` bỏ
+   qua im lặng và debug view chạy ở giá trị mặc định — lại đúng một hằng số
+   giả dạng phép đo.
+
+**LẶP LẠI TRONG CÙNG MỘT PHIÊN, và đó mới là phần đáng ghi.** Ngay sau khi
+luật trên được viết, cùng hình dạng lỗi xuất hiện lần thứ hai — lần này không
+phải ở một *nhánh* mà ở cả *khối bao*:
+
+```glsl
+if (u_volDebug > 0.5) {        // <- không cận trên
+    ... mode 5, 6, 7, 10 ...
+    float q = ... : fade;      // fallback bắt hết phần còn lại
+    finalColor = vec4(q,q,q,1.0); return;
+}
+if (facing < 0.0) discard;
+... mode 11, 12 ...            // KHÔNG BAO GIỜ TỚI
+```
+
+`volume_debug = 12` vẽ ra ảnh xám (`fade`) thay vì dải màu, và nó trông đủ
+"hợp lý" để không ai nghi. Luật §1 ở trên nói "mọi nhánh phải có hai cận" —
+chưa đủ: **cái nuốt mode mới không nhất thiết là một nhánh, nó có thể là
+phạm vi của cả khối, hoặc một `default`, hoặc một `else` cuối.** Diễn đạt lại
+cho đúng:
+
+> Bất kỳ cấu trúc nào "bắt hết phần còn lại" trong một hệ đánh số — nhánh mở,
+> khối mở, `else` cuối, `default:` — đều đúng vào lúc viết và sai vĩnh viễn
+> sau đó. Đánh số mode mà không đóng khung TỪNG số là một cái bẫy tích luỹ:
+> mỗi mode thêm vào lại rơi vào cái bẫy cũ, im lặng, và triệu chứng là một
+> ảnh trông hợp lý của một đại lượng khác.

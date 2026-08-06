@@ -199,24 +199,46 @@ static void Test_MirrorMatchesSource(void) {
   // it was a visible regression ("khong tu nhien nhu truoc"), and a correct
   // formula that costs an approved look is still a regression. What this
   // guards is that the SELECTOR exists and that mode 1 really is |N.V|.
-  CHECK(FileHas(fs, "float thickBase = mix(1.0 - d, d, clamp(u_volMask.x, 0.0, 1.0));"),
-        "mode 1 selects |N.V| (optical depth) and mode 0 the old rim form — "
-        "and mix(a, b, 1.0) == b, so mode 1 IS the term measured above");
-  CHECK(FileHas(fs, "float depth = pow(clamp(thickBase, 0.0, 1.0), max(u_volMask.y, 0.001));"),
-        "...and the power still applies to whichever form was selected");
-  CHECK(FileHas("core/trails/trail_system.c", "Tuning_RegisterFloat(\"vol_depth_mode\", &s_volDepthMode, 0.0f);"),
-        "the selector is a live tunable defaulting to the column's existing "
-        "look — the physics fix is opt-in until the column is retuned for it");
-  CHECK(FileHas(fs, "float d = abs(facing);") &&
+  // ADDED, not mixed. A binary switch gave two unusable looks; mix() between
+  // two OPPOSING terms is flat in the middle, so the useful region — body
+  // thickness WITH a rim accent — was unreachable by construction.
+  CHECK(FileHas(fs, "float body = pow(clamp(d, 0.0, 1.0), max(u_volMask.y, 0.001));") &&
+            FileHas(fs, "float rimTerm = pow(clamp(1.0 - d, 0.0, 1.0), max(u_volMask.y, 0.001));") &&
+            FileHas(fs, "float thickBase = clamp(u_volMask.x * body + u_volRim * rimTerm, 0.0, 1.0);"),
+        "the body term (|N.V|^p, measured above) and the rim term are summed "
+        "with independent gains, so 'thick core AND rim accent' is reachable");
+  CHECK(!FileHas(fs, "mix(1.0 - d, d,"),
+        "the interpolating form is gone — it could not express the useful "
+        "middle, which is the whole reason it was replaced");
+  CHECK(FileHas("core/trails/trail_system.c", "Tuning_RegisterFloat(\"vol_depth_mode\", &s_volDepthMode, 0.0f);") &&
+            FileHas("core/trails/trail_system.c", "Tuning_RegisterFloat(\"vol_rim\", &s_volRim, 1.0f);"),
+        "both gains are live tunables, defaulting to body 0 / rim 1 — which "
+        "is bit-for-bit the pre-06/08/2026 formula, so nothing moves until "
+        "someone deliberately turns it");
+  CHECK(FileHas(fs, "float d = abs(dot(N, V));") &&
             FileHas(fs, "float rim = smoothstep(0.0, max(u_volMask.z, 0.001), d);"),
         "d is still |N.V| and rim still softens the silhouette — only the "
         "thickness term's direction changed");
 
-  // The cull is the other half and must not be lost: silhouette_test.c proved
-  // neither fix works alone.
-  CHECK(FileHas(fs, "if (facing < 0.0) discard;"),
-        "back-face rejection by NORMAL is still in place — silhouette_test.c "
-        "showed the term cannot reach the screen without it");
+  // The cull, now a SWITCH rather than a law — and the claim this assertion
+  // used to make ("the term cannot reach the screen without it") was retired
+  // on 06/08 by measurement, not by preference. silhouette_test.c's
+  // Test_TwoSidedDependsOnWhichTerm finally ran the SHIPPING term through the
+  // harness instead of only |N.V|^p, and got (p=2, edge hardness, limit 0.15):
+  //         one-sided   two-sided
+  //   RIM     0.252       0.384
+  //   NDOTV   0.119       0.153
+  // Two-sided with optical depth (0.153) is SOFTER than the one-sided rim
+  // configuration that ships (0.252), because its extra silhouette crossings
+  // each carry ~0. So culling is mandatory for the RIM term, not for
+  // two-sided geometry — and the switch defaults to on, which preserves every
+  // existing effect.
+  CHECK(FileHas(fs, "if (u_volCull > 0.5 && facing < 0.0) discard;"),
+        "back-face rejection is still there and still by NORMAL (not by "
+        "winding, which PMTube_DrawFaded would get backwards)");
+  CHECK(FileHas("core/trails/trail_system.c", "Tuning_RegisterFloat(\"vol_cull\", &s_volCull, 1.0f);"),
+        "...and it defaults to ON, so making it switchable changed nothing for "
+        "any existing caller");
 
   // The form this file agrees with, in the suite that measured it first. If
   // silhouette_test.c's own term is ever rewritten, this file's premise dies
@@ -228,9 +250,10 @@ static void Test_MirrorMatchesSource(void) {
 
   // The power. silhouette_test.c's Test_ThePowerMustBeAtLeastTwo is what
   // makes 2.0 the floor, so the constant that feeds u_volMask.y matters here.
-  CHECK(FileHas("core/trails/trail_system.c", "float mask[4] = {s_volDepthMode, 2.0f, 0.34f, s_volDensity};"),
-        "u_volMask.y is still 2.0 — at a power below 1 the boundary is a step "
-        "again, whichever direction the term runs");
+  CHECK(FileHas("core/trails/trail_system.c", "float mask[4] = {s_volDepthMode, s_volDepthPow, 0.34f, s_volDensity};") &&
+            FileHas("core/trails/trail_system.c", "Tuning_RegisterFloat(\"vol_depth_pow\", &s_volDepthPow, 2.0f);"),
+        "the power defaults to 2.0 — silhouette_test.c showed that below 1 "
+        "the boundary is a step again, whichever direction the term runs");
   // .w became a tunable in the same change, because the 8x rise measured
   // above makes the old constant burn out. A hard-coded .w here again would
   // mean someone re-baked a number the fix specifically un-baked.

@@ -62,7 +62,12 @@ static SurfaceFlowLocs s_volFlowLocs;
  * term can be inspected without a rebuild. */
 static float s_volDebug = 0.0f;
 static float s_volDensity = 1.75f;   /* u_volMask.w — xem chỗ đăng ký tunable */
-static float s_volDepthMode = 0.0f;  /* u_volMask.x — 0 = viền cũ, 1 = độ dày */
+static float s_volDepthMode = 0.0f;  /* u_volMask.x — hệ số số hạng THÂN */
+static float s_volRim = 1.0f;        /* u_volRim    — hệ số số hạng RÌA */
+static float s_volDepthPow = 2.0f;   /* u_volMask.y — số mũ chung của cả hai */
+static float s_volCull = 1.0f;       /* u_volCull   — 0 = vẽ cả hai mặt */
+static float s_volNormalSrc = 0.0f;  /* u_volNormalSrc — 1 = dFdx thay attribute */
+static float s_volViewSrc = 0.0f;    /* u_volViewSrc — 1 = -fragPosition, no uniform */
 /* Set only while DrawTrailEntitiesLayer owns the draw; layered helpers use it
  * to keep alpha body to the one textured material layer. */
 static int s_drawLayerFilter = -1;
@@ -348,6 +353,18 @@ static void EnsureTrailVolumeShader(void)
      * đó. Một bản sửa đúng về vật lý vẫn là hồi quy nếu nó lấy mất cái nhìn
      * người dùng đã ưng — nên nó là công tắc, không phải bản thay thế. */
     Tuning_RegisterFloat("vol_depth_mode", &s_volDepthMode, 0.0f);
+    /* Hai knob còn lại của cùng công thức. Mặc định (mode 0 / rim 1 / pow 2)
+     * cho lại ĐÚNG TỪNG BIT công thức trước 06/08/2026, nên không caller nào
+     * đổi hình cho tới khi có người cố ý vặn. */
+    Tuning_RegisterFloat("vol_rim", &s_volRim, 1.0f);
+    Tuning_RegisterFloat("vol_depth_pow", &s_volDepthPow, 2.0f);
+    /* Xem doc dài ở u_volCull trong trail_volume.fs. Mặc định 1 = hành vi cũ;
+     * chỉ có nghĩa khi đi cùng vol_depth_mode, số đo ở silhouette_test.c. */
+    Tuning_RegisterFloat("vol_cull", &s_volCull, 1.0f);
+    /* Xem doc dai o u_volNormalSrc trong trail_volume.fs. Mac dinh 0 = duong
+     * cu, nen bat cong tac la mot lan luu file chu khong phai mot lan build. */
+    Tuning_RegisterFloat("vol_normal_src", &s_volNormalSrc, 0.0f);
+    Tuning_RegisterFloat("vol_view_src", &s_volViewSrc, 0.0f);
     s_volFlowLocs = SurfaceFlow_CacheLocations(s_volumeShader);
 
     /* Reproduces the OLD u_volPan/u_volMask.x constants exactly —
@@ -1207,6 +1224,9 @@ int SpawnTrailEntity(TrailConfig config)
         t->tubeRadialSegs = TRAIL_TUBE_RADIAL_MAX;
     t->tubeMaxRings = (config.tubeMaxRings > 0) ? config.tubeMaxRings
                                                 : TRAIL_TUBE_RINGS_DEFAULT;
+    /* 0 = rơi về tubeMaxRings, tức đúng hành vi trước 06/08/2026 cho mọi
+     * caller không khai báo. Xem doc field ở trail_system.h. */
+    t->tubeGeomSegs = (config.tubeGeomSegs > 0) ? config.tubeGeomSegs : 0;
     t->section = (config.sectionCount >= 3) ? config.section : NULL;
     t->sectionCount = (t->section != NULL) ? config.sectionCount : 0;
     if (t->sectionCount > TRAIL_TUBE_RADIAL_MAX)
@@ -1613,7 +1633,8 @@ static void DrawLayeredRibbon(const TrailEntity *t, int drawCount, Texture2D fal
     }
 }
 
-static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallbackTex)
+static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallbackTex,
+                            Camera3D dbgCam)
 {
     if (drawCount < 2)
         return;
@@ -1630,7 +1651,12 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
         radial = 3;
     if (radial > TUBE_MESH_MAX_RADIAL)
         radial = TUBE_MESH_MAX_RADIAL;
-    int segs = (t->tubeMaxRings > 0) ? t->tubeMaxRings : TRAIL_TUBE_RINGS_DEFAULT;
+    /* SỐ LÁT HÌNH HỌC, không phải số node lịch sử — hai câu hỏi khác nhau,
+     * xem doc `tubeGeomSegs` ở trail_system.h. 0 = rơi về tubeMaxRings như
+     * trước. Path vẫn có đủ n node; PMTubeSamplePath lấy mẫu lại theo chiều
+     * dài cung nên ít lát hơn số node là hoàn toàn hợp lệ. */
+    int segs = (t->tubeGeomSegs > 0) ? t->tubeGeomSegs
+             : ((t->tubeMaxRings > 0) ? t->tubeMaxRings : TRAIL_TUBE_RINGS_DEFAULT);
     if (segs > TUBE_MESH_MAX_SEGMENTS)
         segs = TUBE_MESH_MAX_SEGMENTS;
     if (segs < 2)
@@ -1748,6 +1774,50 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
     else if (shape == 2)
         PMTube_BuildAlongPath(&tubeMesh, path, n, headR, 0.0f, 1.0f,
                               buildTime, segs, radial, &tubeCfg);
+
+    /* ── DO |N.V| TREN CPU, 06/08/2026 — TAM THOI, XOA khi xong ────────────
+     *
+     * Muoi hai vong chan doan deu di qua shader, va dung cu do o do da hong
+     * BON lan khac nhau (nhanh debug nuot nhau hai lan, hai vach ong chong
+     * len nhau, dong ep dau vo hieu hoa cull). Moi ket luan rut ra tu chung
+     * deu phai bo. Phep do nay khong qua shader: no doc THANG mesh vua dung
+     * va camera that, tren CPU, roi in ra log — khong co nhanh nao nuot
+     * duoc no, khong co uniform nao roi, khong co thu tu raster nao doi.
+     *
+     * Voi mot hinh tru, |N.V| PHAI quet gan tron [0, 1]: ~1 o vanh dai huong
+     * thang vao camera, ~0 o hai mep suot. Neu CPU cho dung dai do ma man
+     * hinh khong, thi loi nam giua CPU va shader (attribute khong toi noi,
+     * hoac khong gian cua fragPosition). Neu CPU CUNG cho dai sai, thi loi
+     * nam o chinh mesh/phap tuyen va khong lien quan gi den shader. Hai kha
+     * nang do can hai ban sua hoan toan khac nhau, va 12 vong vua roi khong
+     * phan biet duoc chung. */
+    if (t->tubeVolumeShading && shape == 2)
+    {
+        static int s_dbgCall = 0;
+        if ((s_dbgCall++ % 60) == 0)
+        {
+            float mn = 1e9f, mx = -1e9f;
+            int nSamp = 0;
+            for (int i = 0; i <= tubeMesh.segments; i += 4)
+                for (int j = 0; j < tubeMesh.radialSegs; j++)
+                {
+                    Vector3 P = tubeMesh.rings[i][j];
+                    Vector3 N = tubeMesh.normals[i][j];
+                    Vector3 Vv = Vector3Normalize(Vector3Subtract(dbgCam.position, P));
+                    float dd = fabsf(Vector3DotProduct(Vector3Normalize(N), Vv));
+                    if (dd < mn) mn = dd;
+                    if (dd > mx) mx = dd;
+                    nSamp++;
+                }
+            TraceLog(LOG_INFO,
+                     "TUBE_NDOTV_CPU: n=%d  |N.V| min=%.3f max=%.3f  "
+                     "(hinh tru dung: min~0.0 max~1.0)  cam=(%.1f,%.1f,%.1f)  "
+                     "ring0=(%.1f,%.1f,%.1f)",
+                     nSamp, mn, mx, dbgCam.position.x, dbgCam.position.y,
+                     dbgCam.position.z, tubeMesh.rings[0][0].x,
+                     tubeMesh.rings[0][0].y, tubeMesh.rings[0][0].z);
+        }
+    }
 
     for (int L = 0; L < t->layerCount; L++)
     {
@@ -2279,7 +2349,7 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
                 rlDrawRenderBatchActive();
                 if (!t->tubeSingleSided)
                     rlDisableBackfaceCulling();
-                DrawLayeredTube(t, drawCount, ribbonTex);
+                DrawLayeredTube(t, drawCount, ribbonTex, camera);
                 rlDrawRenderBatchActive();
                 rlEnableBackfaceCulling();
             }
@@ -2456,10 +2526,10 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
             // uniform write — s_volFlow never changes, so there is nothing
             // instance-specific to push in the first place.
             SurfaceFlow_Apply(&s_volFlow, fullShader, &s_volFlowLocs, time);
-            // .x is now UNUSED by the shader (sheet-2's along tiling moved
-            // into s_volFlow's own layer 1) — kept in the array only so this
-            // diff stays minimal; .y depth power, .z silhouette softness,
-            // .w master density are still load-bearing.
+            // .x ĐÃ CÓ CHỦ LẠI, 06/08/2026 — nó từng bỏ trống (pan của sheet
+            // 2 dọn sang s_volFlow), giờ là hệ số số hạng THÂN. Cả 4 ô đều
+            // load-bearing: .x hệ số thân, .y số mũ, .z độ mềm viền, .w độ
+            // đậm chung; hệ số RÌA đi riêng qua u_volRim vì hết ô.
             //
             // .y = 2.0: the volume power. core/tests/silhouette_test.c
             // (Test_ThePowerMustBeAtLeastTwo) proved a power below 1 CANNOT
@@ -2472,12 +2542,61 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
             // work regardless of power — a grazing ray crosses an unbounded
             // number of two-sided facets. Both fixes are now in: this power,
             // and trail_volume.fs's `if (facing < 0.0) discard;`.
-            /* .x = dạng số hạng độ dày (0 = viền cũ, 1 = độ dày quang học),
-             * .w = độ đậm chung. Cả hai là tunable — xem chỗ đăng ký. Hai ô
-             * này ĐI CẶP: mode 1 làm độ đục trung bình tăng ~8 lần, nên đổi
-             * một cái mà quên cái kia là cháy trắng hoặc mờ tịt. */
-            float mask[4] = {s_volDepthMode, 2.0f, 0.34f, s_volDensity};
+            /* .x hệ số THÂN, .y số mũ, .z độ mềm viền, .w độ đậm chung —
+             * ba trong bốn là tunable, xem chỗ đăng ký. THÂN và ĐỘ ĐẬM ĐI
+             * CẶP: bật thân lên 1 làm độ đục trung bình tăng ~8 lần, đổi một
+             * cái mà quên cái kia là cháy trắng hoặc mờ tịt. */
+            float mask[4] = {s_volDepthMode, s_volDepthPow, 0.34f, s_volDensity};
             if (maskLoc >= 0) SetShaderValue(fullShader, maskLoc, mask, SHADER_UNIFORM_VEC4);
+            /* viewPos — KHONG AI SET NO, cho toi 06/08/2026.
+             *
+             * core/shaders/common/fs_header.glsl canh bao dung ca nay o ngay
+             * dong dau: "Ai dung raw BeginShaderMode() phai TU SET, va cai hay
+             * bi quen nhat la viewPos, vi no khong hong theo kieu de thay:
+             * uniform chua set doc ra (0,0,0), nen normalize(viewPos -
+             * fragPosition) tro thanh huong toi GOC THE GIOI." Ham nay dung
+             * BeginShaderMode tho (ngay tren), khong phai
+             * SkillManager_BeginShader, nen viewPos chua bao gio toi noi.
+             *
+             * TRIEU CHUNG DA DO DUOC: volume_debug = 10 (|N.V| thanh 5 dai
+             * mau) ve mot ong TRON, DUNG YEN ra TOAN MOT MAU DO, tuc |N.V| <
+             * 0.2 tren toan than. Voi mot hinh tru nhin ngang dieu do khong
+             * the dung — |N.V| phai quet tu 1.0 o tam silhouette xuong 0 o
+             * ria. Toan do = N vuong goc V o moi diem = V sai huong mot cach
+             * he thong, va "huong toi goc the gioi" giai thich dung the: truc
+             * beam trong bench gan song song voi huong tu no ve goc.
+             *
+             * Day nhieu kha nang la NGUYEN NHAN CHUNG cua ca chuoi trieu
+             * chung ca phien: khoi "mo va loang", "chi thay nua vo o mot so
+             * goc", "vi tri bien sai lech". Ca ba deu la hau qua cua |N.V|
+             * sai, va khong cai nao sua duoc bang cach chinh so hang do day.
+             *
+             * PHEP THU PHAN DINH, chay sau khi build: dat volume_debug = 10.
+             *   ra CAU VONG (do o ria, xanh duong o giua) -> dung, da sua
+             *   van TOAN DO                               -> sai, fragPosition
+             *      la VIEW space chu khong phai WORLD, va viewPos phai quay ve
+             *      (0,0,0). Doi dung MOT dong nay va thu lai.
+             * Khong doan giua hai kha nang do — trail_volume.fs's own comment
+             * says immediate-mode (PMTube_DrawFaded, what draws this) gives
+             * WORLD fragPosition, do bang sandbox/fresnel_probe.c 04/08. */
+            int viewPosLoc = GetShaderLocation(fullShader, "viewPos");
+            if (viewPosLoc >= 0)
+            {
+                Vector3 vp = camera.position;
+                SetShaderValue(fullShader, viewPosLoc, &vp, SHADER_UNIFORM_VEC3);
+            }
+            int vsrcLoc = GetShaderLocation(fullShader, "u_volViewSrc");
+            if (vsrcLoc >= 0)
+                SetShaderValue(fullShader, vsrcLoc, &s_volViewSrc, SHADER_UNIFORM_FLOAT);
+            int nsrcLoc = GetShaderLocation(fullShader, "u_volNormalSrc");
+            if (nsrcLoc >= 0)
+                SetShaderValue(fullShader, nsrcLoc, &s_volNormalSrc, SHADER_UNIFORM_FLOAT);
+            int cullLoc = GetShaderLocation(fullShader, "u_volCull");
+            if (cullLoc >= 0)
+                SetShaderValue(fullShader, cullLoc, &s_volCull, SHADER_UNIFORM_FLOAT);
+            int rimLoc = GetShaderLocation(fullShader, "u_volRim");
+            if (rimLoc >= 0)
+                SetShaderValue(fullShader, rimLoc, &s_volRim, SHADER_UNIFORM_FLOAT);
             int dbgLoc = GetShaderLocation(fullShader, "u_volDebug");
             if (dbgLoc >= 0)
                 SetShaderValue(fullShader, dbgLoc, &s_volDebug, SHADER_UNIFORM_FLOAT);
@@ -2490,8 +2609,13 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
                 announced = true;
                 TraceLog(LOG_INFO,
                          "TRAIL: volume group DRAWING — shader %u, mask loc %d, "
-                         "VIEW space (no viewPos), floor %.2f, density %.2f",
-                         (unsigned)fullShader.id, maskLoc, mask[2], mask[3]);
+                         "viewPos loc %d, debug %.0f loc %d (-1 = KHONG TOI NOI), "
+                         "floor %.2f, density %.2f",
+                         (unsigned)fullShader.id, maskLoc,
+                         GetShaderLocation(fullShader, "viewPos"),
+                         (double)s_volDebug,
+                         GetShaderLocation(fullShader, "u_volDebug"),
+                         mask[2], mask[3]);
             }
         }
         // Locations are shader-level state, not per-trail state. Resolve them

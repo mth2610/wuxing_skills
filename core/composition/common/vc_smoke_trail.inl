@@ -308,6 +308,25 @@ static int SmokeTrail_Spawn(VC_SmokeTrail *c, int slot, const Matrix *followTran
     // 40 like the column: there is no fixed "height" here, the trail's
     // reach is however far the emitter has travelled in `lifetime` seconds.
     cfg.tubeMaxRings = VC_TrailNodesForLifetime(c->lifetime, 60.0f);
+    // 24 LÁT HÌNH HỌC, tách khỏi 60 node lịch sử ở trên — 06/08/2026, và
+    // hai con số này trả lời hai câu hỏi khác nhau (doc đầy đủ ở
+    // trail_system.h's `tubeGeomSegs`): 60 node = "đuôi dài 1 s", 24 lát =
+    // "dựng hình mịn tới đâu". Trước đây một số làm cả hai, nên đuôi dài bắt
+    // buộc kéo theo lưới dày.
+    //
+    // Vì sao dày lại HẠI chứ không phải mịn hơn thì đẹp hơn: churn đo bằng
+    // MÉT và không biết khoảng cách hai vành. Ở 48 lát (TUBE_MESH_MAX_SEGMENTS
+    // kẹp 60 xuống 48) trên ~3.9 m thì ringGap chỉ 8.1 cm, trong khi churn
+    // đẩy vành lệch 0.30-0.66 m — bề mặt giữa hai vành liền kề dốc 75-80°,
+    // pháp tuyến dựng bằng sai phân trung tâm gần như nằm ngang và đảo dấu
+    // liên tục (nhìn thấy trực tiếp ở volume_debug=5: sọc magenta/lục xen kẽ
+    // TỪNG VÀNH ở đoạn đuôi mảnh). Cột khói cùng biên độ chỉ dốc 50° vì
+    // ringGap của nó là 12.5 cm — nó chưa bao giờ dính lỗi này.
+    //
+    // 24 lát cho ringGap ~16 cm, tức THOÁNG HƠN cả cột khói, và vì trần
+    // offset cũng đo theo ringGap (PM_TUBE_MAX_OFFSET_RINGS) nên nó đồng
+    // thời nới gấp đôi cho tầng NORMAL_OFFSET đang bị kẹp 20-65% thời gian.
+    cfg.tubeGeomSegs = 24;
     // FALSE on purpose — trail_volume.fs drops the far wall by its normal
     // (`if (facing < 0.0) discard;`), not by winding: PMTube_DrawFaded's
     // winding is inward, so GL backface culling would keep the wrong side.
@@ -350,9 +369,10 @@ static int SmokeTrail_Spawn(VC_SmokeTrail *c, int slot, const Matrix *followTran
 
     TraceLog(LOG_INFO,
              "VFX_SMOKE_TRAIL: slot %d — kind %d, FOLLOWING, tail %.2f s over "
-             "%d rings, TUBE %d radial | churn %.2f, scroll %.2f tiles/s, "
+             "%d nodes, MESH %d x %d radial | churn %.2f, scroll %.2f tiles/s, "
              "tile %.2f m, sheet id %u",
-             slot, (int)c->kind, c->lifetime, cfg.tubeMaxRings, cfg.tubeRadialSegs,
+             slot, (int)c->kind, c->lifetime, cfg.tubeMaxRings,
+             cfg.tubeGeomSegs, cfg.tubeRadialSegs,
              cfg.tubeNoiseAmp, cfg.uvScrollSpeed, cfg.uvMetresPerTile,
              (unsigned)s_smokeTrailSheet[c->kind].id);
     return id;

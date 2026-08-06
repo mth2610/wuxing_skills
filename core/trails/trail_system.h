@@ -305,6 +305,27 @@ typedef struct
     TrailShape shape;
     int tubeRadialSegs;
     int tubeMaxRings;
+    /* SỐ LÁT DỌC của MESH, tách khỏi tubeMaxRings — 06/08/2026.
+     *
+     * `tubeMaxRings` trả lời "giữ bao nhiêu NODE LỊCH SỬ", tức ĐUÔI DÀI BAO
+     * LÂU. `tubeGeomSegs` trả lời "dựng hình bằng bao nhiêu LÁT", tức ĐỘ MỊN
+     * HÌNH HỌC. Trước đây một con số làm cả hai việc, nên muốn đuôi dài 1 s
+     * là buộc phải có 60 lát — dù hình chỉ cần 24.
+     *
+     * TẠI SAO DÀY VÀNH LẠI LÀ VẤN ĐỀ, chứ không phải "mịn hơn thì tốt hơn":
+     * biến dạng churn đo bằng MÉT và không biết gì về khoảng cách hai vành,
+     * nên vành càng khít thì độ dốc bề mặt giữa hai vành liền kề càng đứng.
+     * Đo trên smoke trail (48 lát / ~3.9 m = ringGap 8.1 cm, churn maxDev
+     * 0.30-0.66 m): dốc 75-80° so với trục, và pháp tuyến dựng lại bằng sai
+     * phân trung tâm ở đó gần như nằm ngang, đảo dấu giữa các vành liền kề —
+     * thấy rõ thành sọc xen kẽ ở volume_debug=5. Cột khói cùng biên độ chỉ
+     * dốc 50° vì ringGap của nó là 12.5 cm. Hai cái phanh biến dạng cũng đo
+     * theo ringGap (PM_TUBE_MAX_OFFSET_RINGS), nên vành khít còn siết luôn
+     * tầng NORMAL_OFFSET: đo được offsetClamped 20-65%.
+     *
+     * 0 = giữ nguyên hành vi cũ (dùng tubeMaxRings). Mọi caller có sẵn không
+     * đổi một bit nào. */
+    int tubeGeomSegs;
     const TrailSectionPoint *section;
     int sectionCount;
     bool tubeCaps;
@@ -617,6 +638,7 @@ typedef struct
     TrailShape shape;
     int tubeRadialSegs;
     int tubeMaxRings;
+    int tubeGeomSegs; /* 0 = dùng tubeMaxRings — xem doc ở TrailConfig */
     int sectionCount;
 
     // 5. Kiểu Boolean - 1 byte

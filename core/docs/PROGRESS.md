@@ -762,3 +762,193 @@ Not verified on screen — no Vulkan instance here.
 | What trap will I step on? | `docs/LANDMINES.md`, root `ENGINE_LANDMINES.md` |
 | What does this API do? | `docs/API.md` (generated), `docs/API_GUIDE.md` (prose) |
 | How do I add a VFX to the bench? | manifest entry by hand, then `scripts/sync_vfx_test.py` |
+
+## MỞ — Khói volume: mờ và loãng (06/08/2026)
+
+**Trạng thái:** chốt tạm ở bộ cũ, chưa giải quyết. `tuning.cfg`:
+`vol_depth_mode = 0 / vol_rim = 1 / vol_depth_pow = 2 / vol_density = 1.75`
+— tức đúng công thức trước 06/08/2026. Người dùng thử qua cả ba mốc và bộ này
+"vẫn là ổn nhất" về mặt *giống khói*.
+
+**Còn nợ:** khói vẫn **mờ** và **loãng**, thỉnh thoảng dồn sang một hoặc hai
+bên tuỳ góc camera.
+
+**Đã LOẠI TRỪ được — đừng đo lại:**
+- `viewPos` / không gian toạ độ: `volume_debug = 6` cho một màu V đồng nhất
+  tuyệt đối trên toàn thân. `fragPosition` và `fragNormal` đi qua CÙNG
+  `matModel` (`vs_header.glsl:34-35`) nên cùng không gian. Không phải
+  ENGINE_LANDMINES §9.
+- Attribute pháp tuyến thiếu (cái `silhouette_test.c` cảnh báo): `volume_debug
+  = 5` cho hue quét trọn quanh thân ở đoạn dày. Attribute tới nơi.
+- Biên độ churn: `floored` đã về vùng của cột khói (0-10%), không còn bão hoà.
+- Neo (4 chỗ): bán kính / envelope deform / uốn trục / mặt nạ alpha đều đã
+  cùng một `anchorAtTail`.
+- Số lát lưới: đã tách khỏi số node lịch sử (`tubeGeomSegs = 24`), độ dốc giữa
+  hai vành giảm đúng một nửa, xuống dưới mức của cột khói.
+
+**Hai hướng chưa thử:**
+1. **Số hạng độ dày không phải là chỗ sửa.** Cả `(1-|N·V|)^p`, `|N·V|^p` và
+   tổng có trọng số của hai cái đều đã thử — không cái nào vừa đặc vừa tự
+   nhiên. Nghi ngờ: cấu trúc phải đến từ `pattern` (tích hai sheet noise) chứ
+   không phải từ số hạng hình học, và pattern hiện đang quá đều/quá mờ. Kiểm
+   bằng `volume_debug = 3` (vẽ riêng `pattern`) — nếu nó gần như phẳng thì đó
+   là chỗ sửa, và câu trả lời nằm ở tấm sheet / `uvMetresPerTile`, không nằm
+   trong shader.
+2. **Một vỏ không làm ra khối.** Ống hiện là MỘT lớp vỏ kín, cull mặt xa. Khói
+   thật là nhiều lớp chồng. Rẻ nhất để thử: hai ống lồng nhau lệch pha churn
+   (đã có sẵn `TrailLayer.widthMul` 1.0/0.72 nhưng cả hai dùng CHUNG một mesh,
+   nên chúng không phải hai lớp thật — chỉ là hai lần vẽ cùng một hình).
+
+**Sọc xen kẽ ở đuôi mảnh:** chưa kết luận. `volume_debug = 5` vẽ TRƯỚC
+`discard` nên chồng cả hai mặt ống — nghi là artefact của chính debug view.
+Đã thêm `volume_debug = 8` (cùng pháp tuyến, vẽ SAU `discard`) để phân định:
+5 có sọc mà 8 không thì hình học sạch. Chưa ai chạy.
+
+## MỞ — VolumeTrail bản "energy" vẽ ra vệt ĐEN ĐỤC (06/08/2026)
+
+**Không sửa ở đây, và cố ý.** Đổi nó là đổi một hiệu ứng đang chạy mà không ai
+yêu cầu đổi — đúng bài học của mục "một bản sửa đúng vật lý vẫn là hồi quy"
+trong `docs/LANDMINES.md`. Ghi lại để lần sau không phải chẩn đoán lại.
+
+**Triệu chứng:** thân ống có màu lai kỳ quặc, và những chỗ đáng lẽ trong suốt
+lại ra ĐEN ĐỤC. Người dùng phát hiện trên beam bước 1 rồi nhận ra volume trail
+cũng vậy.
+
+**Nguyên nhân — vi phạm hợp đồng KÊNH TEXTURE, không phải blend.**
+`core/trails/shaders/trail_volume.fs` khai hợp đồng ngay trong mã nguồn của nó:
+
+> "A = coverage in the OPAQUE layout; RGB is grey luminance **kept grey so the
+> caller's tint survives**"
+
+rồi tính `colour = s1.rgb * vColor.rgb * colDiffuse.rgb`. Đối chiếu
+`assets/vfx_surface_profiles.json`:
+
+| sheet | khai báo kênh |
+|---|---|
+| `VOLUME_SMOKE` / `FIRE` / `STEAM` | "**GREY luminance in RGB** so the caller's VFX_Material tint survives" ✅ |
+| `ENERGY_TUBE` (`energy_volume.png`) | "tintable energy filaments" — **không hứa gì về grey** ❌ |
+
+`energy_volume.png` là sheet MÀU thật: sợi sáng trên nền tối, còn kênh A
+(coverage) vẫn cao **giữa** các sợi. Nhân với tint thì hai chuyện xảy ra cùng
+lúc: sợi ra màu lai giữa sheet và nguyên tố, và nền tối giữa các sợi ra **đen
+đục** — vì alpha cao trong khi RGB gần 0. "Trong suốt → thành màu đen" không
+phải lỗi blend; fragment đó thật sự đục và thật sự đen.
+
+`consumers` của `ENERGY_TUBE` trong registry chỉ có một dòng:
+`VFX_ComposeVolumeTrail energy`.
+
+**Ba cách sửa, chưa chọn:**
+1. Đổi consumer sang `VOLUME_FIRE` (grey, đúng hợp đồng) — rẻ nhất, mất "vân
+   sợi năng lượng" của sheet cũ. Đây là cái beam đã làm.
+2. Sinh một sheet năng lượng GREY-luminance mới (`scripts/gen_volume_surface.py`
+   đã làm đúng việc đó cho smoke/fire/steam) — đúng nhất, tốn asset mới.
+3. Cho `trail_volume.fs` tự lấy luminance của `s1.rgb` — chữa được màu lai
+   nhưng **không** chữa được vệt đen (luminance ở đó cũng ~0 trong khi A vẫn
+   cao), nên một mình nó không đủ.
+
+**Đã chặn tái diễn:** `core/tests/beam_geometry_test.c` giờ đọc thẳng
+`assets/vfx_surface_profiles.json` và bắt buộc sheet mà beam dùng phải khai
+"GREY luminance in RGB". Hiệu ứng khối tiếp theo chọn nhầm sheet sẽ đỏ ngay ở
+suite chứ không phải sau một vòng build-and-look.
+
+## MỞ — Hai lỗi CŨ của trail, xác nhận lại trên beam (06/08/2026)
+
+Chủ dự án nêu: "lỗi răng cưa, lỗi blend màu của trail (**trước giờ chưa sửa
+được**)". Không phải hồi quy của P4 — beam chỉ là chỗ chúng lộ rõ, vì beam
+mảnh, dài và nhìn xiên.
+
+### A. Răng cưa ở mép — và số đo đã LOẠI hướng sửa hiển nhiên nhất
+
+Phản xạ đầu tiên là tăng số lát quanh thân. `core/tests/silhouette_test.c`
+(`Test_CombinedAndResolution`, cull + p=2) đo sẵn:
+
+| radial | hardness |
+|---|---|
+| 8 | 0.130 |
+| 16 | 0.125 |
+| 24 | 0.119 |
+| 32 | 0.120 |
+| 48 | 0.117 |
+
+Toàn dải đã dưới `HARD_LIMIT` 0.15, và 8 → 48 chỉ nhích 0.013. **Tăng radial
+không phải câu trả lời** — đừng làm lại phép thử đó.
+
+**NHƯNG biết giới hạn của phép đo này:** harness dựng một hình trụ NGẮN nhìn
+NGANG (`BuildTube(&m, 0.55f, 1.1f, ...)` — bán kính 0.55 m, nửa chiều dài
+1.1 m). Beam là trụ rất DÀI, rất MẢNH, nhìn XIÊN. Đó là một tỉ lệ khác hẳn và
+harness chưa mô hình hoá nó, nên bảng trên chứng minh "radial không cứu được
+ca ĐÃ ĐO", không chứng minh "răng cưa của beam không liên quan hình học". Bước
+tiếp theo nếu ai truy tiếp: thêm một ca trụ dài/mảnh/xiên vào `silhouette_test.c`
+TRƯỚC khi đụng vào bất cứ thứ gì — đây đúng là loại câu hỏi số học mà
+`core/CLAUDE.md` §1 nói không được trả bằng ảnh chụp.
+
+### B. Blend màu — nhiều lớp alpha không sort theo độ sâu
+
+Trail vẽ từng layer nối tiếp không có depth sort giữa chúng, nên hai lớp alpha
+trên CÙNG một mesh không thể composite đúng — chỉ chồng thêm một pass nữa.
+Phạm vi thật của bản sửa là sorting trong `trail_system.c`, ảnh hưởng mọi
+trail; chưa làm.
+
+**Đã làm được phần không gây hồi quy:** beam bỏ lớp alpha thứ hai (còn 1 lớp
+body + 1 lõi additive). Việc này KHÔNG sửa lỗi — nó chỉ khiến beam thôi đóng
+góp vào lỗi. Ghi rõ để không ai đọc nhầm là đã xong.
+
+### C. Lõi — đơn giản hoá theo yêu cầu chủ dự án
+
+Lõi giờ: không sheet (`texture = NULL` → trail_system rơi về flat trắng),
+không scroll, không volume shader, 8 radial x 8 lát. Nhiệm vụ duy nhất của nó
+là sống sót cú nhìn dọc trục; mọi thứ thêm vào nó là thêm một pass alpha không
+sort chồng lên thân mà không được thêm chút silhouette nào. Đã khoá bằng
+assert trong `core/tests/beam_geometry_test.c`.
+
+## Bằng chứng TRỰC TIẾP cho "một vỏ không làm ra khối" (06/08/2026)
+
+Chủ dự án, khi nhìn beam bước 1: *"có những góc nhìn, chỉ thấy 1 nửa vỏ năng
+lượng, có hay không đây là 1 lỗi từ lâu gây ra khói mỏng và loãng trong smoke
+trail"*.
+
+**Có, cùng một gốc** — và quan sát này là bằng chứng trực tiếp cho hướng 2 của
+mục "Khói volume: mờ và loãng" ở trên, nên hướng đó được nâng lên thành hướng
+CHÍNH. Nhưng phải tách hai cơ chế, vì chúng cộng lại chứ không phải một:
+
+1. **Cull mặt xa** — `trail_volume.fs`'s `if (facing < 0.0) discard;`. CỐ Ý và
+   bắt buộc: `silhouette_test.c` chứng minh không có nó thì tia sượt rìa cắt
+   qua vô số facet và alpha ở rìa CAO hơn ở giữa. Cái giá là ta chỉ bao giờ vẽ
+   NỬA GẦN của vỏ.
+2. **Số hạng rim rỗng ruột** — với `vol_depth_mode = 0` (bộ đang chốt), độ đục
+   ĐÚNG BẰNG 0 tại tâm thân và đạt đỉnh ở 0.9 bán kính
+   (`volume_optical_depth_test.c`). Nửa vỏ gần đó vì thế chỉ hiện ra thành HAI
+   VỆT RÌA, không phải một mặt.
+
+Ghép lại: cả một khối khí đang được biểu diễn bằng **hai đường viền của một
+nửa vỏ**. Đó chính xác là "mỏng và loãng", và nó giải thích luôn vì sao tăng
+`vol_density`/`alpha` không bao giờ đủ — chúng làm hai đường viền đó đậm hơn
+chứ không thêm vật chất vào giữa.
+
+**Vì sao không sửa bằng `vol_depth_mode = 1`:** đã thử, cả ba mốc; nó lấp được
+giữa nhưng đọc ra "như sáp" và mất tự nhiên. Cơ chế (2) không sửa được một
+mình vì cơ chế (1) vẫn chỉ cho một lớp.
+
+**Hướng còn lại, chưa thử:** nhiều vỏ LỒNG NHAU lệch pha. `MeshDeformField` là
+struct rời nên hai ống cùng path với `timeOffset` khác nhau là hai lớp khói
+THẬT — khác hẳn `TrailLayer` (nhiều lần vẽ cùng MỘT mesh, không thêm chiều sâu
+nào, và còn nuôi lỗi blend không-sort). Đây là chỗ nên tiêu tiền tiếp theo cho
+khói.
+
+
+## MỞ — `|N·V|` của volume tube bị ĐẢO NGƯỢC → `docs/VOLUME_SHADING_HANDOFF.md`
+
+Toàn bộ điều tra 06/08/2026 đã được viết thành một file handoff riêng:
+**`core/docs/VOLUME_SHADING_HANDOFF.md`**. Đọc file đó trước khi đụng
+`trail_volume.fs`, cách xử lý không gian toạ độ, hay pháp tuyến của `PMTube`.
+
+Tóm tắt một dòng: trên một hình trụ trơn đứng yên, `|N·V|` đo ra **ngược** —
+≈0 ở tâm silhouette, ≈1 ở rìa — trong khi CPU đọc thẳng cùng mesh và cùng
+camera lại cho dải đúng (`0.049..0.990`). Mesh, pháp tuyến, attribute, uniform
+`viewPos` và đường debug đều đã được loại trừ bằng phép đo. Không gian của
+`fragPosition` đã xác định được là **VIEW space** (bác bỏ comment cũ trong
+shader). Mâu thuẫn còn lại và ba ứng viên nằm ở §4 của file handoff.
+
+Phần đắt nhất của file đó là **§5 — chín cái bẫy DỤNG CỤ ĐO** đã phát hiện
+trong phiên, mỗi cái đều cho ra một ảnh hợp lý nhưng hoàn toàn sai. Đọc §5
+trước khi viết bất kỳ debug view nào cho module này.

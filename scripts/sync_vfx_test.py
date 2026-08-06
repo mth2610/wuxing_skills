@@ -95,6 +95,11 @@ LIFECYCLE_SPECS = {
     # rises from a fixed point, so the fixture is a position rather than a
     # follower transform.
     "VFX_ComposeSmokeColumn":        ("trail",   "static",     "continuous"),
+    # P4 beam. "static" like the column and for the same reason: it owns a
+    # handle and its endpoints are POSITIONS, not a follower transform. The
+    # heuristic below would have guessed "timed" off the name alone, which is
+    # wrong — a beam is sustained, and it has no t01 to be timed by.
+    "VFX_ComposeBeam":               ("trail",   "static",     "continuous"),
     # The moving counterpart (vc_smoke_trail.inl) — first arg is a
     # followTransform like VFX_ComposeVolumeTrail, unlike the column above.
     "VFX_ComposeSmokeTrail":         ("trail",   "follower",   "continuous"),
@@ -375,6 +380,10 @@ def infer_kill_fn(fn_name, available_fns):
     # VFX_KillSmokeTrail exists, the release is VFX_SmokeTrail_Stop.
     if fn_name == 'VFX_ComposeSmokeTrail':
         return 'VFX_SmokeTrail_Stop'
+    # P4 beam (vc_beam.inl), same convention again: a sustained effect is
+    # STOPPED, not killed, so the pool can release its two trails in order.
+    if fn_name == 'VFX_ComposeBeam':
+        return 'VFX_Beam_Stop'
     if fn_name.startswith('VFX_Compose'):
         candidate = 'VFX_Kill' + fn_name[len('VFX_Compose'):]
         if candidate in available_fns:

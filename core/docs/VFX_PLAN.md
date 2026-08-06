@@ -456,19 +456,135 @@ void VFX_ComposeDebrisShards(Vector3 pos, Vector3 vel, VC_MaterialId mat,
 - **DoD:** bench entry; test pinning count-vs-tier and that emission is a count
   per CALL (one-shot) rather than a rate.
 
-#### P4. `VFX_ComposeBeam` — the sustained line
+#### P4. `VFX_ComposeBeam` — the sustained line — **SPEC, 06/08/2026**
 
-Nothing in the library draws a held beam. `DrawRibbonEnergyField` exists with one
-consumer and `vfx_proc_ray.h` has none.
+Nothing in the library draws a held beam. A `vc_beam.inl` existed once and was
+removed; `core/ribbon_strip.h` still carries its scaffolding
+(`Ribbon_ComputeCrossFrame`, `DrawRibbonEnergyField`, both documented as being
+there because "vc_beam.inl's VFX_ComposeBeam need it").
+
+**That scaffolding is what we are NOT rebuilding.** It draws two crossed
+*planes* along the path — a flat strip, which §0.1 names as the entire
+diagnosis. Keep the functions (EnergyFlow uses them), do not make the beam out
+of them. If a flat flare is wanted at the contact point, that is
+`ImpactFlash`, a different primary.
+
+**Why this one goes first of the three primaries being rebuilt (Beam,
+Projectile, Aura):** it is the only one with nothing to regress — no owner has
+approved a look for it — and its path is a straight two-point segment, so it
+uses `Trail_SetStaticPath` and skips the entire class of bugs that cost
+04-06/08 (history window, moving anchor, `noiseSpanLenOverride`). It is
+therefore the clean test of whether the volume foundation is good enough,
+answered *before* touching a Projectile the owner can compare against.
+
+##### API — a handle, not a `t01`
 
 ```c
-void VFX_ComposeBeam(Vector3 from, Vector3 to, VC_MaterialId mat,
-                     float width, float t01);
+int  VFX_ComposeBeam(Vector3 from, Vector3 to, VC_MaterialId mat, float width);
+void VFX_Beam_SetEndpoints(int handle, Vector3 from, Vector3 to);
+void VFX_Beam_Stop(int handle);
 ```
 
-- A swept tube between two points is the obvious build now that P1 exists.
-- **DoD:** must hold up when `from`/`to` are nearly coincident, and when the beam
-  is viewed end-on.
+This deliberately differs from the one-line sketch this entry used to carry
+(`void ..., float t01`). A beam is SUSTAINED: a void function called every
+frame either stacks pool entries or rebuilds from scratch, and either way it
+throws away the time state — churn phase and UV scroll — that makes a beam
+boil in place instead of sitting there. `SmokeColumn` already solved exactly
+this shape; copy its managed-pool archetype, and per §0.3 wire the
+`VC_Beam_Update` / `VC_Beam_Draw3D` pair (a manifest `type` of `continuous` is
+NOT sufficient — `core/docs/LANDMINES.md`).
+
+##### Layers
+
+1. **BODY** — swept tube, `Trail_SetStaticPath(id, from, to, nodes)`,
+   `tubeVolumeShading = true`. Occludes, so `BLEND_ALPHA` and lit (§0.3 blend
+   law).
+   - `tubeGeomSegs` set explicitly, NOT inherited from the node count — see
+     `trail_system.h`'s field doc. A straight beam needs slices for the deform,
+     not for the path; start at 24 and keep ringGap comfortably above the
+     radius.
+   - `radiusTailFrac`/`radiusPow` for a slight taper toward the far end;
+     `anchorAtTail = false` so the emitter end is `from` (t=0) and all four
+     anchored quantities — radius, deform envelope, centreline weld, alpha
+     mask — weld there together.
+2. **PULSE** — this is the new thing, and the reason the beam is worth building
+   on this foundation rather than as a textured cylinder: `MESH_DEFORM_SINE` +
+   `MESH_DEFORM_DIR_NORMAL_SCALE`, a travelling swell running down the beam.
+   A flat strip cannot express that outline at any camera angle.
+
+   **CORRECTED 06/08 during step 2** — this entry originally said
+   `MESH_DEFORM_DIR_TANGENT`, and that is wrong for a straight beam.
+   `mesh_deform.c`'s TANGENT branch adds `tangent * w`, and `pm_tube.inl`
+   passes the PATH tangent, so on a straight tube it slides each ring along
+   its own axis: vertices move, the OUTLINE does not. The outline is the
+   entire quantity that distinguishes a volume from a billboard, so TANGENT
+   would have spent the step and proved nothing. It earns its keep on a
+   CURVED sweep (peristalsis down a bent body) — keep it in mind for
+   Projectile, not here.
+3. **BODY NOISE** — one `NOISE_CHANNEL` + `NORMAL_SCALE` layer at small
+   amplitude so the body breathes. Set `noiseWavelength` in metres, which is
+   what makes a 3 m beam and a 30 m beam carry the SAME grain — the dividend
+   from 05/08's work, and something no length-fraction coordinate can do.
+4. **HOT CORE** — a second, thinner draw. Emits, so `BLEND_ADDITIVE` and unlit,
+   per the blend law. See the end-on risk below for why this layer is not
+   optional.
+
+##### Known risks, both measurable before any build
+
+- **End-on the beam may vanish.** `trail_volume.fs` weights by `|N·V|`, and
+  looking down the axis of a tube gives `N ⊥ V` everywhere, so `d ≈ 0` and
+  `rim = smoothstep(0, 0.34, d)` takes alpha to zero. A beam fired at the
+  camera is exactly the case that must not disappear. Measure it first (the
+  arithmetic is one line), and expect the HOT CORE layer — which does not use
+  `|N·V|` — to be the answer.
+- **Coincident endpoints.** `PMTubeSamplePath` returns early when total length
+  is 0, and `ringGap` falls back to `baseRadius`; the result is not a crash but
+  it is not a shape either. Beam must self-hide below a length threshold rather
+  than draw garbage.
+- **The `PROGRESS.md` debt rides along.** "Khói volume: mờ và loãng" applies to
+  anything drawn with `trail_volume.fs`. A beam SHOULD be dense and bright, so
+  it is the better place to attack that: if the beam is also washed out, the
+  cause is `pattern`/the sheet, not smoke-specific tuning — which settles the
+  open question in `PROGRESS.md` as a side effect.
+
+##### DoD
+
+- Holds up when `from`/`to` are nearly coincident (no garbage geometry).
+- Holds up viewed end-on (does not disappear).
+- Grain is invariant to beam length — a 3 m and a 30 m beam look like the same
+  material.
+- Bench entry in `scripts/vfx_test_manifest.json` **by hand**, then
+  `scripts/sync_vfx_test.py` (§0.3; the script does not invent the entry).
+- Headless test `core/tests/beam_geometry_test.c` covering the two risks above
+  plus the length-invariance of the grain. Whatever is arithmetic must not need
+  an eyeball.
+
+##### Build order — one look per step, not three
+
+1. Body tube + hot core, no deform, flat colour. Answers "is the swept segment
+   the right shape and does it survive both DoD cases".
+2. Add the three deform layers. Answers **"is a volume worth it for a beam at
+   all"** — see the note below.
+3. Material/element identity pass.
+
+**A MIS-CUT WORTH RECORDING, found by running it (06/08).** Step 1 shipped, and
+the owner's verdict was: a straight axially-symmetric tube gives nothing a flat
+billboard does not — cheaper, no aliasing, no cull, no `|N.V|`. That is
+correct, and it is correct *because step 1 deliberately withheld the one
+capability that separates a volume from a strip*: a non-cylindrical outline.
+So step 1 could not possibly justify its own architecture, and the first look
+turned into a referendum the step was not built to answer.
+
+Splitting steps to avoid confounding variables is right. Splitting them so the
+FIRST one cannot answer the question it will be judged on is not. When ordering
+the steps of a rebuild, put the capability that justifies the approach in step
+one, even if it costs a variable — the same trap is available on Projectile and
+Aura, whose first steps would naturally be "swap the ribbon for a tube".
+
+Step 2 therefore carries an explicit failure condition, agreed before it was
+built: if a deformed beam still reads no better than a strip, volume is not
+worth it FOR A BEAM and P4 drops back to a ribbon. `beam_deform = 0` in
+`tuning.cfg` reproduces step 1 exactly, so the A/B is a file save.
 
 #### P5. `VFX_ComposeShockRing` — the expanding ring, off the ground
 

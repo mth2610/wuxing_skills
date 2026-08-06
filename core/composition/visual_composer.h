@@ -572,6 +572,14 @@ int VFX_ComposeEmberTrail(Vector3 pos, Vector3 velocity, VC_MaterialId mat, floa
 void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
 void VFX_ComposeFluidImpact(Vector3 pos);
 void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
+// P4 — the sustained line (core/docs/VFX_PLAN.md §4.3, spec 06/08/2026).
+// HANDLE, not a fire-and-forget void: a beam is sustained, so it owns time
+// state (UV scroll, and from step 2 the churn phase) that a per-frame void call
+// would throw away. Keep the handle, move it with SetEndpoints, release it with
+// Stop. Hides itself below 5 cm rather than drawing a degenerate tube.
+int  VFX_ComposeBeam(Vector3 from, Vector3 to, VC_MaterialId mat, float width);
+void VFX_Beam_SetEndpoints(int handle, Vector3 from, Vector3 to);
+void VFX_Beam_Stop(int handle);
 void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
 void VFX_ComposeParticleUpgradesTest(Vector3 pos);
 int VFX_ComposeShieldShell(Vector3 pos, VC_MaterialId mat, float radius, float intensity);

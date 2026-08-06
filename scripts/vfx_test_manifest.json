@@ -27,6 +27,18 @@
   },
   "entries": [
     {
+      "source": "common/vc_beam.inl",
+      "fn": "VFX_ComposeBeam",
+      "label": "BEAM",
+      "category": "common",
+      "fixture": "static",
+      "lifecycle": "trail",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeBeam($SOURCE, $TARGET, VC_MAT_FIRE, 0.1f)",
+      "kill_fn": "VFX_Beam_Stop"
+    },
+    {
       "source": "common/vc_character_aura.inl",
       "fn": "VFX_ComposeCharacterAura",
       "label": "CHARACTER AURA",

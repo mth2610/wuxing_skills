@@ -111,6 +111,10 @@ static int ProjY(float y) { return (int)((-y / g_halfExtent * 0.5f + 0.5f) * RH)
 typedef enum {
   EDGE_NONE = 0,     // no treatment — the baseline hard edge
   EDGE_NDOTV,        // |N.V|^p, the smoke column's current term
+  EDGE_RIM,          // (1-|N.V|)^p * smoothstep(0,soft,|N.V|) — the old ship
+  EDGE_NDOTV_SOFT,   // |N.V|^p * smoothstep(0,soft,|N.V|) — optical depth AND
+                     // the silhouette-softness factor, i.e. what actually runs
+                     // once vol_depth_mode=1. Never measured before 06/08.
   EDGE_NDOTV_FLOOR,  // ...with a floor subtracted
   EDGE_SCREEN_FADE,  // fade by SCREEN-SPACE distance to the silhouette
   EDGE_FACET,        // |Ng.V| from the TRIANGLE's own normal, no attribute
@@ -118,6 +122,7 @@ typedef enum {
 
 static int g_cull = 0;
 static float g_power = 0.75f;
+static float g_soft = 0.34f; /* u_volMask.z, the silhouette-softness edge */
 static float g_floor = 0.30f;
 
 static float EdgeTerm(EdgeMethod m, V3 P, V3 N, float dSil) {
@@ -126,6 +131,21 @@ static float EdgeTerm(EdgeMethod m, V3 P, V3 N, float dSil) {
   switch (m) {
   case EDGE_NONE: return 1.0f;
   case EDGE_NDOTV: return powf(f, g_power);
+  case EDGE_NDOTV_SOFT: {
+    float t = (g_soft > 1e-6f) ? (f / g_soft) : 1.0f;
+    if (t > 1.0f) t = 1.0f;
+    return powf(f, g_power) * (t * t * (3.0f - 2.0f * t));
+  }
+  case EDGE_RIM: {
+    /* The form trail_volume.fs actually ships (vol_depth_mode 0). Added
+     * 06/08/2026 because this harness only ever modelled |N.V|^p, so every
+     * conclusion it drew about culling was drawn about a term the shader
+     * does not use — and the two peak at OPPOSITE ends of the body. */
+    float soft = 0.34f;
+    float t = f / soft;
+    if (t > 1.0f) t = 1.0f;
+    return powf(1.0f - f, g_power) * (t * t * (3.0f - 2.0f * t));
+  }
   case EDGE_NDOTV_FLOOR: {
     float t = (f - g_floor) / (1.0f - g_floor);
     if (t < 0.0f) t = 0.0f;
@@ -554,6 +574,183 @@ static void Test_CullingIsWhatMakesItWork(void) {
             "hardness %.3f still above %.2f", (double)hCull, (double)HARD_LIMIT);
 }
 
+// ── Two-sided, per TERM. The owner asked (06/08): what if we draw BOTH walls?
+//
+// This harness's culling conclusion was measured on |N.V|^p only, and that is
+// the term the shader does NOT ship. The distinction matters more than it
+// looks, because the two terms peak at opposite ends of the body:
+//
+//   RIM   (1-|N.V|)^p  peaks AT the silhouette  -> a grazing ray crosses many
+//                      facets, each carrying near-PEAK alpha. Catastrophic.
+//   NDOTV |N.V|^p      peaks at the AXIS, and is ~0 at the silhouette -> the
+//                      extra crossings each carry ~0. Adding the far wall is
+//                      then physically right: the ray really does pass through
+//                      two thicknesses of shell.
+//
+// So "culling is mandatory" may be a property of the RIM term rather than of
+// two-sided geometry. Measure it rather than assume it either way.
+static void Test_TwoSidedDependsOnWhichTerm(void) {
+  Mesh m;
+  g_power = 2.0f;
+  BuildTube(&m, 0.55f, 1.1f, 24, 8, 6.0f);
+
+  Render(&m, EDGE_RIM, 0.6f, 1);   float rimCull  = EdgeHardness(H / 2);
+  Render(&m, EDGE_RIM, 0.6f, 0);   float rimBoth  = EdgeHardness(H / 2);
+  Render(&m, EDGE_NDOTV, 0.6f, 1); float ndvCull  = EdgeHardness(H / 2);
+  Render(&m, EDGE_NDOTV, 0.6f, 0); float ndvBoth  = EdgeHardness(H / 2);
+  g_power = 0.75f;
+
+  printf("  hardness, p=2      one-sided   two-sided\n");
+  printf("    RIM   (1-N.V)^p    %.3f       %.3f\n", rimCull, rimBoth);
+  printf("    NDOTV  (N.V)^p     %.3f       %.3f\n", ndvCull, ndvBoth);
+
+  // THE MEASUREMENT THIS FILE EXISTED FOR YEARS WITHOUT TAKING. Every earlier
+  // conclusion here was drawn on |N.V|^p; the shader ships the rim term, and
+  // the rim term is over the limit ALREADY, one-sided. That is a hard edge on
+  // the shipping configuration, i.e. the "răng cưa" the owner reports — not
+  // geometric aliasing, and not fixable by segment count (the radial sweep
+  // above moves it by 0.013).
+  CHECK_MSG(rimCull > HARD_LIMIT,
+            "the SHIPPING term leaves a hard boundary even WITH culling — the "
+            "harness never measured it because it only ever modelled |N.V|^p, "
+            "and the two terms are not variants of each other",
+            "shipping (rim, one-sided) hardness %.3f, limit %.2f",
+            (double)rimCull, (double)HARD_LIMIT);
+
+  // So the owner's suggestion — draw both walls — is not the reckless option
+  // it looks like. Paired with the optical-depth term it is SOFTER than what
+  // ships today, because its extra crossings all happen where the term is ~0.
+  CHECK_MSG(ndvBoth < rimCull,
+            "two-sided WITH optical depth is softer than the one-sided rim "
+            "configuration currently shipping — 'culling is mandatory' turns "
+            "out to be a property of the rim TERM, not of two-sided geometry",
+            "two-sided |N.V|^2 %.3f vs shipping rim %.3f",
+            (double)ndvBoth, (double)rimCull);
+
+  CHECK_MSG(rimBoth > rimCull,
+            "...but two-sided with the RIM term is worse still, because that "
+            "term peaks exactly where the extra crossings happen — the two "
+            "knobs must move together or not at all",
+            "rim two-sided %.3f vs rim one-sided %.3f",
+            (double)rimBoth, (double)rimCull);
+}
+
+// ── Is the silhouette-softness factor helping or hurting?
+//
+// The owner's read after switching to two-sided optical depth (06/08): quality
+// improved a lot, dropping a wall was never the answer, "cách xử lý biên đang
+// chưa chính xác" — the EDGE handling is what is off.
+//
+// That points at a factor this harness had also never modelled. `EDGE_NDOTV`
+// is `powf(f, p)` bare, but the shader multiplies by
+// `smoothstep(0, u_volMask.z, d)` on top. With the RIM term that factor was
+// load-bearing: (1-d)^p PEAKS at the silhouette, so without it the boundary is
+// a cliff. With optical depth, d^p already goes to zero there — and its
+// derivative goes to zero too, at p >= 2. So the factor may now be a second
+// attenuation stacked on one that already did the job, eating material near
+// the rim for nothing.
+//
+// Measure across the range instead of arguing. Two-sided throughout, since
+// that is now the configuration in question.
+static void Test_SilhouetteSoftnessIsRedundantUnderOpticalDepth(void) {
+  Mesh m;
+  g_power = 2.0f;
+  BuildTube(&m, 0.55f, 1.1f, 24, 8, 6.0f);
+
+  Render(&m, EDGE_NDOTV, 0.6f, 0);
+  float bare = EdgeHardness(H / 2);
+
+  printf("  soft   hardness (two-sided, |N.V|^2 x smoothstep)\n");
+  const float softs[] = {0.05f, 0.15f, 0.25f, 0.34f, 0.50f};
+  float best = 9.0f, bestSoft = 0.0f, atShipped = 0.0f;
+  for (int i = 0; i < 5; i++) {
+    g_soft = softs[i];
+    Render(&m, EDGE_NDOTV_SOFT, 0.6f, 0);
+    float h = EdgeHardness(H / 2);
+    printf("   %.2f    %.3f\n", (double)softs[i], (double)h);
+    if (h < best) { best = h; bestSoft = softs[i]; }
+    if (softs[i] == 0.34f) atShipped = h;
+  }
+  printf("   none    %.3f  (smoothstep factor removed entirely)\n", (double)bare);
+  g_soft = 0.34f;
+  g_power = 0.75f;
+
+  CHECK_MSG(bare <= atShipped + 1e-3f,
+            "under OPTICAL DEPTH the silhouette-softness factor buys nothing: "
+            "d^2 already reaches the boundary at zero value AND zero slope, so "
+            "multiplying by smoothstep only removes material near the rim",
+            "bare %.3f vs shipped soft=0.34 %.3f (best %.3f at soft=%.2f)",
+            (double)bare, (double)atShipped, (double)best, (double)bestSoft);
+}
+
+// ── WHERE IS THE EDGE, in numbers. The owner's actual question ──────────────
+//
+// Asked 06/08 looking at a beam: there is a thin bright line at the rim and a
+// hollow inside it, "toi nghi day la bien moi dung, nen vi tri bien no dang bi
+// sai lech". Seven rounds then went into GPU debug views, which is the wrong
+// instrument: this is arithmetic, and core/CLAUDE.md §1 puts arithmetic in
+// this file at a cost of milliseconds. A software rasteriser has no uniforms
+// to drop, no debug branch to swallow another, no second wall compositing in
+// raster order, and no camera angle to change the answer.
+//
+// So: print WHERE the opacity actually peaks, in units the eye can check
+// against a screenshot — fraction of the radius from the axis.
+static void Test_WhereTheOpacityActuallyPeaks(void) {
+  printf("  b/R = distance from the axis, 1.0 = the geometric silhouette\n");
+  printf("  term        peak at b/R   value at axis   value at rim\n");
+
+  struct { const char *name; EdgeMethod m; } cases[] = {
+    {"RIM   (1-N.V)^2", EDGE_RIM},
+    {"NDOTV   (N.V)^2", EDGE_NDOTV},
+  };
+  float rimPeakB = -1.0f, ndvPeakB = -1.0f;
+  for (int c = 0; c < 2; c++) {
+    g_power = 2.0f;
+    g_soft = 0.34f;
+    float peak = -1.0f, peakB = 0.0f;
+    for (int i = 0; i <= 1000; i++) {
+      float b = (float)i / 1000.0f;
+      /* |N.V| for a ray at offset b through a unit cylinder, seen far away. */
+      float f = sqrtf(fmaxf(0.0f, 1.0f - b * b));
+      float v;
+      if (cases[c].m == EDGE_RIM) {
+        float t = f / g_soft; if (t > 1.0f) t = 1.0f;
+        v = powf(1.0f - f, g_power) * (t * t * (3.0f - 2.0f * t));
+      } else {
+        v = powf(f, g_power);
+      }
+      if (v > peak) { peak = v; peakB = b; }
+    }
+    printf("  %-16s  %.3f         ", cases[c].name, (double)peakB);
+    {
+      float fa = 1.0f, fr = 0.0f, va, vr;
+      if (cases[c].m == EDGE_RIM) {
+        float ta = fa / g_soft; if (ta > 1.0f) ta = 1.0f;
+        va = powf(1.0f - fa, g_power) * (ta * ta * (3.0f - 2.0f * ta));
+        float tr = fr / g_soft; if (tr > 1.0f) tr = 1.0f;
+        vr = powf(1.0f - fr, g_power) * (tr * tr * (3.0f - 2.0f * tr));
+      } else { va = powf(fa, g_power); vr = powf(fr, g_power); }
+      printf("%.3f           %.3f\n", (double)va, (double)vr);
+    }
+    if (cases[c].m == EDGE_RIM) rimPeakB = peakB; else ndvPeakB = peakB;
+    g_power = 0.75f;
+  }
+
+  CHECK_MSG(rimPeakB > 0.85f,
+            "the SHIPPING term puts its brightest pixels at more than 0.85 of "
+            "the radius — a thin line hugging the silhouette with a hollow "
+            "inside it, which is exactly what the owner described. The edge is "
+            "not mislocated: the term is a RIM term and a rim is all it can "
+            "draw",
+            "rim peaks at b/R = %.3f", (double)rimPeakB);
+
+  CHECK_MSG(ndvPeakB < 0.05f,
+            "...while the optical-depth term peaks ON the axis and falls to "
+            "zero at the silhouette — body first, edge last, which is what a "
+            "volume looks like",
+            "ndotv peaks at b/R = %.3f", (double)ndvPeakB);
+}
+
 // NOT PINNED TO THE SHADER, and that is the honest state.
 //
 // This harness found two real things — a per-fragment term cannot dissolve a
@@ -574,6 +771,9 @@ static void Test_CullingIsWhatMakesItWork(void) {
 int main(void) {
   printf("=== silhouette: how a projected edge is made to dissolve ===\n");
   Test_CullingIsWhatMakesItWork();
+  Test_TwoSidedDependsOnWhichTerm();
+  Test_SilhouetteSoftnessIsRedundantUnderOpticalDepth();
+  Test_WhereTheOpacityActuallyPeaks();
   Test_ThePowerMustBeAtLeastTwo();
   Test_CombinedAndResolution();
   Test_FacetNormalsAreEnough();
