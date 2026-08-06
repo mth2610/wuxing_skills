@@ -15,30 +15,26 @@
 // two masks is sparser than either factor, so the same two samples carve holes
 // instead of filling them. That is the whole difference.
 //
-// SPACE. fragPosition/fragNormal come through vs_header's VS_FinalOutput.
+// SPACE — SETTLED 06/08/2026 BY A NUMERIC READBACK. RESOLVED.
 //
-// *** THE PARAGRAPH THAT USED TO BE HERE WAS WRONG. MEASURED 06/08/2026. ***
+// fragPosition and fragNormal are VIEW SPACE, and they get here WITHOUT going
+// through matModel: trail_volume.vs deliberately does not call vs_header's
+// VS_FinalOutput. Read that file's header for the why and the measured
+// numbers; the one-paragraph version is that this tube is drawn in IMMEDIATE
+// MODE, rlgl has already view-transformed its vertices and normals on the CPU,
+// and matModel on that path is the view matrix again — so VS_FinalOutput was
+// applying the view rotation TWICE.
 //
-// It claimed that immediate-mode draws (rlBegin/rlVertex3f — PMTube_DrawFaded,
-// what draws this tube) give WORLD-space fragPosition, so `viewPos -
-// fragPosition` was correct here. `volume_debug = 16` (|fragPosition| as
-// discrete magnitude bands) disproves it: the magnitude CHANGES as the camera
-// orbits, and a long tube shows TWO bands at once with the boundary cutting
-// across it — the |P| = 10 m plane. A world position does not move when the
-// camera does. fragPosition is VIEW SPACE, exactly as ENGINE_LANDMINES §9
-// says for every draw inside the 3D pass.
-//
-// `volume_debug = 15` shows |viewPos| also changing with the camera, i.e. the
-// uniform DOES arrive and it is a WORLD coordinate. So `viewPos -
-// fragPosition` mixes world with view and is meaningless. The view vector for
-// this path is `normalize(-fragPosition)` (u_volViewSrc = 1), because in view
-// space the camera sits at the origin.
-//
-// NOT YET RESOLVED: even with u_volViewSrc = 1 the measured |N.V| still comes
-// out INVERTED (small at the silhouette centre, large at the rim). See
-// core/docs/VOLUME_SHADING_HANDOFF.md for everything that has been ruled out
-// and the three candidates that remain. Do not "fix" the space handling from
-// this comment alone — read that file first.
+// That double transform was the entire |N.V| inversion this shader spent a
+// session chasing (the whole ruled-out list is in
+// core/docs/VOLUME_SHADING_HANDOFF.md, now closed). The consequences here:
+//   - the view vector is `normalize(-fragPosition)`; the camera is the origin
+//     of view space and no uniform is involved
+//   - `viewPos` is a WORLD coordinate and must NOT be mixed into it
+//   - the attribute normal is fine — `rlNormal3f` was never the problem
+// The regression tripwire is third_party/vulkan/tests/rlvk_visual_test.c
+// scenario `imm_normal`; run it before believing any new claim about which
+// space this shader is in.
 
 in vec4 vColor;
 
@@ -117,11 +113,6 @@ uniform float u_volCull;
  * Xem chỗ dùng. Đây vừa là phép thử ("attribute có tới nơi không") vừa là bản
  * sửa ứng viên, nên nó là công tắc chứ không phải hai lần build. */
 uniform float u_volNormalSrc;
-/* 0 = V từ `viewPos - fragPosition` (cần uniform viewPos), 1 = V từ
- * `-fragPosition` (view space, camera ở gốc — KHÔNG cần uniform nào).
- * Xem chỗ dùng: đây là phép thử tách "fragPosition sai không gian" khỏi
- * "uniform viewPos không tới nơi", hai thứ cho ra cùng một triệu chứng. */
-uniform float u_volViewSrc;
 
 void main()
 {
@@ -199,30 +190,26 @@ void main()
     // culling — see there), and the power has to be at least 2 because |N.V|
     // leaves the silhouette with an infinite derivative (fixed in
     // trail_system.c's mask.y). Both are applied now, against a clean reading
-    // this time — see ENGINE_LANDMINES §9's postscript (04/08/2026) for how
-    // that reading was obtained: sandbox/fresnel_probe.c, drawn via DrawMesh
-    // (matching this file's own DrawMesh comparison point, crystal) AND via
-    // immediate-mode (matching PMTube_DrawFaded, what actually draws this
-    // column). The two draw paths do not share a `matModel` convention:
-    // immediate-mode's fragPosition reads as WORLD space, so `viewPos -
-    // fragPosition` (both world) is correct HERE — do not "fix" it to
-    // `-fragPosition` by analogy with crystal, which is DrawMesh and genuinely
-    // different.
-    // NGUON VECTOR NHIN — cong tac, them 06/08/2026, vi CA HAI cau hinh
-    // viewPos deu cho ra cung mot ket qua sai (toan do o volume_debug = 10),
-    // ma chung la hai kha nang loai tru nhau:
-    //   viewPos = (0,0,0)          dung NEU fragPosition o VIEW space
-    //   viewPos = camera.position  dung NEU fragPosition o WORLD space
-    // Hai cai cung sai co nghia la hoac fragPosition khong o khong gian nao
-    // ta nghi, hoac chinh UNIFORM viewPos khong toi noi (raw BeginShaderMode
-    // + UBO arena cua rlvk, ENGINE_LANDMINES §8).
+    // this time.
     //
-    // Nhanh 1 duoi day KHONG DUNG UNIFORM NAO. Trong view space camera nam o
-    // goc, nen vector nhin la normalize(-fragPosition) va khong co gi de
-    // "khong toi noi". No tach hai gia thuyet do ra khoi nhau: neu nhanh 1
-    // cho cau vong thi fragPosition la VIEW space va thu hong la viewPos.
-    vec3 V = (u_volViewSrc > 0.5) ? normalize(-fragPosition)
-                                  : normalize(viewPos - fragPosition);
+    // THE VIEW VECTOR. SETTLED 06/08/2026 BY MEASUREMENT — do not re-open it
+    // from a debug view.
+    //
+    // fragPosition arrives from trail_volume.vs, which writes the vertex
+    // attribute straight through WITHOUT matModel. On this draw path
+    // (PMTube_DrawFaded = immediate mode, inside main.c's MyBeginMode3D) rlgl
+    // has already transformed every vertex into VIEW space on the CPU. Read
+    // trail_volume.vs's header for the numbers; the tripwire that proves it is
+    // third_party/vulkan/tests/rlvk_visual_test.c `imm_normal`.
+    //
+    // In view space the camera sits at the origin, so the view vector is
+    // -fragPosition and NO uniform is involved — nothing here can "fail to
+    // arrive". `viewPos` is a WORLD coordinate and subtracting a view-space
+    // position from it is what produced the inverted |N.V| this file spent a
+    // session on. There used to be a `u_volViewSrc` switch between the two;
+    // it is gone, because one of its two options is now known-wrong and a
+    // permanent switch over a settled question only rots.
+    vec3 V = normalize(-fragPosition);
     // NGUON PHAP TUYEN — cong tac, them 06/08/2026.
     //
     // 0 = attribute `fragNormal` (duong cu). 1 = dao ham man hinh cua chinh

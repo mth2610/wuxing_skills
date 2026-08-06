@@ -49,6 +49,7 @@
 ### Bisection discipline
 - **Invisible GPU particles — a masterclass in confounded bisection** (multiple overlapping causes; how to un-confound). → §7.7
 - **False alarms not to re-chase** — things that look like rlvk bugs but aren't. → §7.8
+- **"'rlNormal3f doesn't deliver normals' is a FALSE ALARM"** — immediate-mode normals arrive fine, just **view-transformed**: `MyBeginMode3D`'s MODELVIEW `rlPushMatrix` arms `transformRequired`, so `rlVertex3f`/`rlNormal3f` CPU-rotate into view space AND the flush uploads `matModel = State.transform` = the same view matrix → a shader's `matModel * N` double-rotates. "Many colours" probe was a debug-view compositing trap. → §7.8, scenario `imm_normal`
 
 ### Android bring-up (Vulkan on NDK/Mali)
 - **Swapchain rotated / mispresented on first real-hardware run.** → §7.12, §7.21, and the real cause: **recreate-on-`SUBOPTIMAL` every-frame loop** → §7.22

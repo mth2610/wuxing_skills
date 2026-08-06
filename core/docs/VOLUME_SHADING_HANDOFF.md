@@ -1,75 +1,75 @@
-# Volume tube shading — ROOT CAUSE FOUND. Handoff, 06/08/2026
+# Volume tube shading — RESOLVED. Handoff, 06/08/2026
 
 **Read this before touching `core/trails/shaders/trail_volume.fs`, its space
 handling, or `PMTube` normals.**
 
-## ROOT CAUSE (found on the last round, 06/08/2026)
+## RESOLVED — the session's root cause was WRONG; the fix is in and verified
 
-**`rlNormal3f` does not deliver per-vertex normals through rlgl's
-immediate-mode batch.** `PMTube_DrawFaded` was made to emit
-`rlNormal3f(0, 1, 0)` for *every* vertex — a known constant. The shader should
-then paint one flat colour under `volume_debug = 5`. It painted **many
-colours**. What arrives in `fragNormal` is therefore **not what the draw code
-sends**.
+The last round ended on the conclusion **"`rlNormal3f` does not deliver
+per-vertex normals through rlgl's immediate-mode batch." It does.** The rlvk
+`imm_normal` scenario (`third_party/vulkan/tests/rlvk_visual_test.c`) sends a
+KNOWN normal down this exact draw path and reads it back numerically:
 
-That single fact explains the whole investigation: `|N·V|` is computed from a
-`fragNormal` that has no relationship to the surface, so it comes out
-inverted, changes with camera angle, and cannot be fixed by any amount of
-tuning, space-handling or term reshaping.
+```
+Nworld = (0.30, 0.90, -0.32)
+raw vertexNormal      -> (0.43, 0.85, 0.30) = view * N        (d 0.002)
+matModel*vertexNormal -> (0.18, 0.56, 0.80) = view * view * N (d 0.005)
+```
 
-It also reconciles the contradiction that stalled §4: the CPU sweep was right
-(the mesh IS correct), and mode 14 was white **not** because the attribute was
-correct but because `Ndfdx` is derived from `fragPosition` and both were being
-compared inside the same wrong frame — mode 14 could never tell "correct" from
-"consistently wrong", which §4 candidate (a) predicted.
+So the attribute **arrives**, correctly — and the old shader used it
+**twice** view-rotated. `main.c`'s `MyBeginMode3D` calls `rlPushMatrix()` in
+RL_MODELVIEW, which arms rlgl's `transformRequired` and parks the VIEW matrix
+in `State.transform` (`ENGINE_LANDMINES §9`). For an immediate-mode draw
+(what `PMTube_DrawFaded` uses):
+- `rlVertex3f` / `rlNormal3f` transform on the CPU by `State.transform`
+  (rlgl.h:1529/1612) → the attributes reaching the shader are **already VIEW
+  space**;
+- the batch flush then uploads `matModel = State.transform` = that same view
+  matrix (rlgl.h:3082, mirrored in `rlvk_core.inl:595`);
+- so `vs_header.glsl`'s `matModel * vec4(vertexNormal, 0)` applies the view
+  rotation a **second** time — the whole of the `|N·V|` inversion. Mode 14
+  came back white for the same reason: both `Nattr` and `Ndfdx` were doubly
+  transformed by the same matrix, so they agreed while being jointly wrong.
 
-### The fix, not yet applied
+The "many colours" probe that seemed to prove the attribute was missing
+(`rlNormal3f(0,1,0)` on every vertex, read back via `volume_debug = 5`) was
+itself a victim of §5 trap 3: that debug view sits ABOVE the `discard`,
+compositing both tube walls with opaque alpha and no depth sort, so a pixel's
+colour is raster-order — camera-angle — dependent. A constant normal still
+reads back "many colours".
 
-Volume shading must stop reading `fragNormal` on this draw path. Two options:
+### The fix — APPLIED (core-side, 06/08/2026)
 
-1. **`dFdx/dFdy` of `fragPosition`** — already wired as `vol_normal_src = 1`.
-   `core/tests/silhouette_test.c`'s `Test_FacetNormalsAreEnough` measured flat
-   normals as sufficient (edge hardness under the limit at >= 24 radial). But
-   note `TRAIL_TUBE_RADIAL_MAX = 16` currently clamps below that, and flat
-   normals give 16 discrete values on a 16-sided tube.
-2. **Stop using immediate mode for the tube** — build a real `Mesh` with a
-   normal buffer and `DrawMesh`. Larger change; also changes the `matModel`
-   convention (see §3), so it must be done together with the space handling.
+`trail_volume.vs` no longer calls `VS_FinalOutput`: it passes the attributes
+through untouched (they are already view space) and only `gl_Position` goes
+through `mvp`. `trail_volume.fs` takes the view vector as
+`normalize(-fragPosition)` (in view space the camera IS the origin — no
+uniform can fail to arrive). `u_volViewSrc` / `vol_view_src` are gone; a
+switch over a settled question rots.
 
-### Where the beam was left, and why
+**Guards:** `core/tests/volume_space_contract_test.c` (headless, pins the
+contract in source — `VS_FinalOutput` must never be "restored" on this draw
+path) + the rlvk `imm_normal` scenario (the only instrument that can decide a
+space question: it sends a known value and reads it back).
 
-`VFX_ComposeBeam` now draws as **ONE PLAIN CYLINDER** — `beam_probe = 1` is
-the shipped default (`tuning.cfg` and `vc_beam.inl`). No taper, no deform, no
-additive core, no sheet, no UV scroll.
+### Follow-up state
 
-That is deliberate and it is where the next session should start. Everything
-the beam would otherwise layer on — the taper's shading, the churn's
-silhouette, the rim term — is a function of `|N·V|`, which is currently
-meaningless on this draw path. Tuning any of it now would bake the noise into
-the numbers, and those numbers would then have to be thrown away twice: once
-when the normals are fixed, once when someone notices they were fitted to
-garbage.
+- The beam stays **ONE PLAIN CYLINDER** (`beam_probe = 1`, the shipped
+  default). The layered version (steps 1–2 of the P4 spec, intact below the
+  switch) can be turned back on with `beam_probe = 0` — the `|N·V|` it layers
+  on is now meaningful.
+- `vol_depth_mode` / `vol_rim` (§7) were tuned against a broken `|N·V|`; that
+  decision should be re-judged.
+- §7's separate, independently-measured defect — the shipping `(1-|N·V|)²`
+  term peaks at `b/R = 0.960`, i.e. it is a RIM term, not a volume term — is
+  independent of this and still open.
 
-The layered version (steps 1–2 of the P4 spec) is written and intact below the
-switch. Turn it back on with `beam_probe = 0` **after** the normal path is
-fixed and `volume_debug = 13` shows the `b/R` contour landing on the real
-silhouette rather than down the middle of the tube.
-
-**Suggested order for the next session:**
-1. Fix the normal path (option 1 or 2 above) on the plain cylinder.
-2. Verify with `volume_debug = 13` + `14` — contour on the silhouette, and a
-   constant-normal probe reading back constant.
-3. Only then revisit `vol_depth_mode` / `vol_rim` (§7) — that decision was
-   made against a broken `|N·V|` and is not trustworthy.
-4. Only then `beam_probe = 0` and judge the layered beam.
-
-Everything else in this file is the ruled-out ground and, in §5, the nine
-instrument traps that cost most of the session. Read §5 before writing any
-debug view for this module.
+Everything below (§1–§8) is the historical trail. §5 is the nine instrument
+traps — read it before writing any debug view for this module.
 
 ---
 
-## 1. The symptom
+## 1. The symptom (historical — superseded by RESOLVED above)
 
 On a **plain, stationary, untextured, undeformed cylinder** (the `beam_probe`
 fixture, §4), the shader's `d = |N·V|` is **inverted**:
@@ -159,10 +159,13 @@ else, the attribute is being routed to the wrong slot.
 defects were found this session (§5). Assume nothing that has not been
 re-verified since the last of them was fixed.
 
-**RESOLVED: it was (b), and (a) explains why mode 14 did not catch it.**
+**RESOLVED: it was NONE of (a)/(b)/(c) — see the RESOLVED section at the top.**
 The constant-normal probe (emit `rlNormal3f(0,1,0)` everywhere, read back with
-`volume_debug = 5`) returned many colours instead of one — see the ROOT CAUSE
-section at the top. The probe has since been removed from the source; it was
+`volume_debug = 5`) returned many colours — but that was §5 trap 3 (the debug
+view composites both walls above the discard), NOT evidence that the attribute
+was missing. The `imm_normal` scenario later proved the attribute arrives fine;
+the real defect was the double view-transform (`matModel * N` on a view-space
+attribute). The probe has since been removed from the source; it was
 `PMTube_DebugSetConstantNormal` in `pm_tube.inl`, trivially re-addable from
 this description if it is ever needed again.
 
@@ -252,15 +255,18 @@ that shader's own comment instructs.
 
 ```
 beam_probe      = 1   # DEFAULT NOW — beam is one plain cylinder; 0 = full stack
-vol_cull        = 1   # 0 = draw both walls
+vol_cull        = 0   # 0 = draw both walls (default flipped 06/08; cull reads the attribute normal)
 vol_normal_src  = 0   # 1 = normal from dFdx instead of the attribute
-vol_view_src    = 0   # 1 = V from -fragPosition (no uniform involved)
 vol_depth_mode  = 0   # gain on the |N.V|^p BODY term
 vol_rim         = 1   # gain on the (1-|N.V|)^p RIM term
 vol_depth_pow   = 2.0
 vol_density     = 1.75
 volume_debug    = 0
 ```
+
+`vol_view_src` is GONE (06/08/2026): the view vector is settled at
+`normalize(-fragPosition)` — a switch over a settled question rots
+(`third_party/vulkan/CLAUDE.md` methodology rule 3).
 
 `volume_debug` modes:
 
@@ -281,9 +287,10 @@ volume_debug    = 0
 **Removed at the end of the session** (re-add from this description if needed):
 `TUBE_NDOTV_CPU` (CPU-side `|N·V|` off the built mesh — this is what proved the
 mesh correct), `TUBE_CHURN_DEV_DEBUG` (churn deviation stats), and
-`PMTube_DebugSetConstantNormal` (the constant-normal probe that found the root
-cause). The `volume_debug` modes and the `vol_*` tunables all remain; they are
-inert at their defaults.
+`PMTube_DebugSetConstantNormal` (the constant-normal probe — its "many
+colours" result was a §5 trap 3 artefact, and the attribute was later proven
+fine by `imm_normal`). The `volume_debug` modes and the remaining `vol_*`
+tunables all persist; they are inert at their defaults.
 
 Headless: `core/tests/silhouette_test.c` is a software rasteriser that models
 both terms (`EDGE_RIM`, `EDGE_NDOTV`), culling, power sweeps and the
@@ -312,11 +319,19 @@ long-standing trail defects (aliasing, unsorted alpha layers).
 ## 8. Files touched by this investigation
 
 - `core/trails/shaders/trail_volume.fs` — debug modes 10–16, bounded branches,
-  `facing`/`d` split, `u_volCull`/`u_volNormalSrc`/`u_volViewSrc`, corrected
-  space comment
-- `core/trails/trail_system.c` — `viewPos` now set from the camera; the
-  tunables above; `TUBE_NDOTV_CPU`; spawn log reads values back
+  `facing`/`d` split, `u_volCull`/`u_volNormalSrc`, corrected space comment,
+  `V = normalize(-fragPosition)` (06/08, the fix); `u_volViewSrc` removed
+- `core/trails/shaders/trail_volume.vs` — rewritten 06/08/2026: passes the
+  attributes through untouched (they are view space on this draw path), only
+  `gl_Position` goes through `mvp`; full reasoning in its header
+- `core/trails/trail_system.c` — `viewPos` still set from the camera (mode 15
+  reads it back); the remaining tunables; `TUBE_NDOTV_CPU`; spawn log reads
+  values back
 - `core/composition/common/vc_beam.inl` — `beam_probe`
+- `third_party/vulkan/tests/rlvk_visual_test.c` — `imm_normal` scenario (the
+  instrument that decided the question)
+- `core/tests/volume_space_contract_test.c` — pins the space contract in
+  source (06/08/2026, new)
 - `core/tests/beam_geometry_test.c` — asserts pinning every trap in §5 that can
   be pinned from source
 - `core/tests/silhouette_test.c` — `EDGE_RIM`, two-sided comparison, softness

@@ -16,6 +16,8 @@
 //   winding_rt     front-face triangle visible on screen AND inside a render texture
 //                  (flip-Y winding/culling class - mesh see-through)
 //   instanced      DrawMeshInstanced + instanceTransform attribute
+//   imm_normal     immediate-mode rlNormal3f round-trip + what matModel really is
+//                  inside MyBeginMode3D (volume-tube |N.V| inversion class)
 //   readback       LoadImageFromScreen after EndDrawing, then keep rendering
 //                  (frameConsumed/present lifecycle class - GPU-fault regression)
 //   stress         many additive billboards x frames: arena-exhaustion mid-frame
@@ -440,6 +442,149 @@ static const char *sc_instanced(void)
     if (l.r < 180 || r.r < 180)          return "side instances missing: per-instance transform not applied";
     if (gapL.r > 120 || gapR.r > 120)    return "instances smeared: instance rate/stride wrong";
     return NULL;
+}
+
+// IMMEDIATE-MODE NORMAL/POSITION SPACE PROBE (added 06/08/2026).
+//
+// The game's volume-tube shading (core/trails/shaders/trail_volume.fs) measured
+// |N.V| INVERTED on a plain cylinder and spent a whole session on it, ending on
+// the conclusion "rlNormal3f does not deliver per-vertex normals through the
+// immediate-mode batch" (core/docs/VOLUME_SHADING_HANDOFF.md). That conclusion
+// was drawn from a GPU debug view, i.e. from the same suspect data path.
+//
+// This scenario sends a KNOWN normal and reads it back numerically, and it
+// separates the two questions that view could not:
+//   A. does the attribute ARRIVE? -> a shader that outputs raw `vertexNormal`
+//   B. what does vs_header.glsl's `matModel * vec4(vertexNormal, 0)` produce?
+//
+// It reproduces main.c's MyBeginMode3D EXACTLY, and that is the whole point:
+// MyBeginMode3D calls rlPushMatrix() in RL_MODELVIEW mode, which flips rlgl/rlvk
+// into `transformRequired` and redirects the view matrix into State.transform
+// (ENGINE_LANDMINES 9). From there, for an immediate-mode draw:
+//   - rlVertex3f / rlNormal3f transform on the CPU by State.transform  -> the
+//     batch buffer already holds VIEW-space positions and normals
+//   - the batch flush uploads matModel = State.transform = the VIEW matrix
+//     (rlgl.h:3082, mirrored at rlvk_core.inl:595)
+//   - so `matModel * vertexNormal` in the VS applies the view rotation a
+//     SECOND time.
+// Expected result: A matches view*N, B matches view*view*N. If so, the
+// attribute path is fine and vs_header double-transforms on this draw path.
+static void immRotByTransform(Matrix m, Vector3 v, Vector3 *out)
+{
+    // Byte-for-byte rlNormal3f's arithmetic (rlgl.h:1612, rlvk_matrix.inl:300).
+    out->x = m.m0*v.x + m.m4*v.y + m.m8 *v.z;
+    out->y = m.m1*v.x + m.m5*v.y + m.m9 *v.z;
+    out->z = m.m2*v.x + m.m6*v.y + m.m10*v.z;
+}
+static void immReadNormal(bool throughMatModel, Vector3 nWorld, Matrix matView, Vector3 *out)
+{
+    const char *vsRaw =
+        "#version 330\n"
+        "in vec3 vertexPosition; in vec2 vertexTexCoord; in vec3 vertexNormal;\n"
+        "uniform mat4 mvp;\n"
+        "out vec3 vN;\n"
+        "void main(){ vN = vertexNormal; gl_Position = mvp*vec4(vertexPosition,1.0); }\n";
+    // Character-for-character vs_header.glsl's VS_FinalOutput normal line.
+    const char *vsModel =
+        "#version 330\n"
+        "in vec3 vertexPosition; in vec2 vertexTexCoord; in vec3 vertexNormal;\n"
+        "uniform mat4 mvp; uniform mat4 matModel;\n"
+        "out vec3 vN;\n"
+        "void main(){ vN = normalize(vec3(matModel*vec4(vertexNormal,0.0)));\n"
+        "             gl_Position = mvp*vec4(vertexPosition,1.0); }\n";
+    const char *fs =
+        "#version 330\n"
+        "in vec3 vN; out vec4 finalColor;\n"
+        "void main(){ finalColor = vec4(normalize(vN)*0.5+0.5, 1.0); }\n";
+    Shader sh = LoadShaderFromMemory(throughMatModel ? vsModel : vsRaw, fs);
+
+    Camera3D cam = { 0 };
+    cam.position = (Vector3){ 5, 4, 7 }; cam.target = (Vector3){ 0, 0, 0 };
+    cam.up = (Vector3){ 0, 1, 0 }; cam.fovy = 45.0f; cam.projection = CAMERA_PERSPECTIVE;
+
+    for (int f = 0; f < 3; f++)
+    {
+        BeginDrawing();
+        ClearBackground(BLACK);
+
+        // ---- MyBeginMode3D (main.c:60), reproduced exactly ----
+        rlDrawRenderBatchActive();
+        rlMatrixMode(RL_PROJECTION);
+        rlPushMatrix();
+        rlLoadIdentity();
+        double top = 1.0*tan(cam.fovy*0.5*DEG2RAD), right = top*((double)W/(double)H);
+        rlFrustum(-right, right, -top, top, 1.0, 1000.0);
+        rlMatrixMode(RL_MODELVIEW);
+        rlPushMatrix();                       // <-- the line that arms transformRequired
+        rlLoadIdentity();
+        rlMultMatrixf(MatrixToFloat(matView));
+        rlEnableDepthTest();
+
+        BeginShaderMode(sh);
+        rlDisableBackfaceCulling();           // the probe quad's winding is not the subject
+        rlBegin(RL_QUADS);
+        rlColor4ub(255, 255, 255, 255);
+        for (int i = 0; i < 4; i++)
+        {
+            const float qx[4] = { -1.5f,  1.5f,  1.5f, -1.5f };
+            const float qy[4] = { -1.5f, -1.5f,  1.5f,  1.5f };
+            rlNormal3f(nWorld.x, nWorld.y, nWorld.z);   // THE KNOWN VALUE, same on every vertex
+            rlTexCoord2f(0.0f, 0.0f);
+            rlVertex3f(qx[i], qy[i], 0.0f);
+        }
+        rlEnd();
+        EndShaderMode();
+        rlEnableBackfaceCulling();
+
+        // ---- MyEndMode3D ----
+        rlDrawRenderBatchActive();
+        rlMatrixMode(RL_PROJECTION); rlPopMatrix();
+        rlMatrixMode(RL_MODELVIEW);  rlPopMatrix(); rlLoadIdentity();
+        rlDisableDepthTest();
+
+        EndDrawing();
+    }
+    Image im = snap(); Color c = at(im, W/2, H/2); UnloadImage(im);
+    UnloadShader(sh);
+    out->x = c.r/255.0f*2.0f - 1.0f;
+    out->y = c.g/255.0f*2.0f - 1.0f;
+    out->z = c.b/255.0f*2.0f - 1.0f;
+}
+static const char *sc_imm_normal(void)
+{
+    Matrix matView = MatrixLookAt((Vector3){5,4,7}, (Vector3){0,0,0}, (Vector3){0,1,0});
+    Vector3 nWorld = Vector3Normalize((Vector3){ 0.30f, 0.90f, -0.32f });
+
+    Vector3 once, twice;
+    immRotByTransform(matView, nWorld, &once);          // what the CPU already baked in
+    immRotByTransform(matView, once,   &twice);         // what the VS would add on top
+    once  = Vector3Normalize(once);
+    twice = Vector3Normalize(twice);
+
+    Vector3 gotRaw, gotModel;
+    immReadNormal(false, nWorld, matView, &gotRaw);
+    immReadNormal(true,  nWorld, matView, &gotModel);
+
+    float dRawOnce   = Vector3Length(Vector3Subtract(gotRaw,   once));
+    float dRawWorld  = Vector3Length(Vector3Subtract(gotRaw,   nWorld));
+    float dModelOnce = Vector3Length(Vector3Subtract(gotModel, once));
+    float dModelTwice= Vector3Length(Vector3Subtract(gotModel, twice));
+
+    printf("  [imm_normal] Nworld=(%.2f,%.2f,%.2f) view*N=(%.2f,%.2f,%.2f) view*view*N=(%.2f,%.2f,%.2f)\n",
+           nWorld.x, nWorld.y, nWorld.z, once.x, once.y, once.z, twice.x, twice.y, twice.z);
+    printf("  [imm_normal] raw vertexNormal=(%.2f,%.2f,%.2f) d(view*N)=%.3f d(world)=%.3f\n",
+           gotRaw.x, gotRaw.y, gotRaw.z, dRawOnce, dRawWorld);
+    printf("  [imm_normal] matModel*vertexNormal=(%.2f,%.2f,%.2f) d(view*N)=%.3f d(view*view*N)=%.3f\n",
+           gotModel.x, gotModel.y, gotModel.z, dModelOnce, dModelTwice);
+
+    const float TOL = 0.06f;    // 8-bit readback of a signed-encoded unit vector
+    if (dRawOnce > TOL)
+        return (dRawWorld < TOL) ? "attribute arrives UNTRANSFORMED (rlNormal3f CPU transform missing)"
+                                 : "rlNormal3f attribute does NOT arrive (constant read back wrong)";
+    if (dModelTwice > TOL)
+        return (dModelOnce < TOL) ? "matModel is identity here - vs_header would be correct"
+                                  : "matModel is neither identity nor the view matrix";
+    return NULL;   // attribute path intact; matModel = view => vs_header double-transforms
 }
 
 static const char *sc_readback(void)
@@ -1470,6 +1615,7 @@ static const Scenario SCENARIOS[] = {
     { "winding_rt",     sc_winding_rt },
     { "instanced",      sc_instanced },
     { "ssbo_vs",        sc_ssbo_vs },
+    { "imm_normal",     sc_imm_normal },
     { "readback",       sc_readback },
     { "ui_after_rt",    sc_ui_after_rt },
     { "stress",         sc_stress },

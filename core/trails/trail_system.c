@@ -67,7 +67,6 @@ static float s_volRim = 1.0f;        /* u_volRim    — hệ số số hạng R�
 static float s_volDepthPow = 2.0f;   /* u_volMask.y — số mũ chung của cả hai */
 static float s_volCull = 1.0f;       /* u_volCull   — 0 = vẽ cả hai mặt */
 static float s_volNormalSrc = 0.0f;  /* u_volNormalSrc — 1 = dFdx thay attribute */
-static float s_volViewSrc = 0.0f;    /* u_volViewSrc — 1 = -fragPosition, no uniform */
 /* Set only while DrawTrailEntitiesLayer owns the draw; layered helpers use it
  * to keep alpha body to the one textured material layer. */
 static int s_drawLayerFilter = -1;
@@ -364,7 +363,9 @@ static void EnsureTrailVolumeShader(void)
     /* Xem doc dai o u_volNormalSrc trong trail_volume.fs. Mac dinh 0 = duong
      * cu, nen bat cong tac la mot lan luu file chu khong phai mot lan build. */
     Tuning_RegisterFloat("vol_normal_src", &s_volNormalSrc, 0.0f);
-    Tuning_RegisterFloat("vol_view_src", &s_volViewSrc, 0.0f);
+    /* `vol_view_src` is GONE (06/08/2026): the view vector is settled at
+     * normalize(-fragPosition) — see the viewPos comment further down and
+     * trail_volume.vs's header. A switch over a settled question only rots. */
     s_volFlowLocs = SurfaceFlow_CacheLocations(s_volumeShader);
 
     /* Reproduces the OLD u_volPan/u_volMask.x constants exactly —
@@ -2503,46 +2504,28 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
              * cái mà quên cái kia là cháy trắng hoặc mờ tịt. */
             float mask[4] = {s_volDepthMode, s_volDepthPow, 0.34f, s_volDensity};
             if (maskLoc >= 0) SetShaderValue(fullShader, maskLoc, mask, SHADER_UNIFORM_VEC4);
-            /* viewPos — KHONG AI SET NO, cho toi 06/08/2026.
+            /* viewPos — the volume shader NO LONGER USES IT for shading, and
+             * that is the fix, not an oversight (06/08/2026).
              *
-             * core/shaders/common/fs_header.glsl canh bao dung ca nay o ngay
-             * dong dau: "Ai dung raw BeginShaderMode() phai TU SET, va cai hay
-             * bi quen nhat la viewPos, vi no khong hong theo kieu de thay:
-             * uniform chua set doc ra (0,0,0), nen normalize(viewPos -
-             * fragPosition) tro thanh huong toi GOC THE GIOI." Ham nay dung
-             * BeginShaderMode tho (ngay tren), khong phai
-             * SkillManager_BeginShader, nen viewPos chua bao gio toi noi.
+             * The tube is drawn in IMMEDIATE MODE, so rlgl has already
+             * view-transformed its vertices on the CPU and trail_volume.vs
+             * passes them straight through: fragPosition is VIEW space, where
+             * the camera IS the origin. The view vector is normalize(-fragPos)
+             * and no uniform can fail to arrive. Mixing a world-space viewPos
+             * into that is exactly what produced the inverted |N.V| that cost
+             * a whole session — full chain in trail_volume.vs's header and
+             * core/docs/VOLUME_SHADING_HANDOFF.md.
              *
-             * TRIEU CHUNG DA DO DUOC: volume_debug = 10 (|N.V| thanh 5 dai
-             * mau) ve mot ong TRON, DUNG YEN ra TOAN MOT MAU DO, tuc |N.V| <
-             * 0.2 tren toan than. Voi mot hinh tru nhin ngang dieu do khong
-             * the dung — |N.V| phai quet tu 1.0 o tam silhouette xuong 0 o
-             * ria. Toan do = N vuong goc V o moi diem = V sai huong mot cach
-             * he thong, va "huong toi goc the gioi" giai thich dung the: truc
-             * beam trong bench gan song song voi huong tu no ve goc.
-             *
-             * Day nhieu kha nang la NGUYEN NHAN CHUNG cua ca chuoi trieu
-             * chung ca phien: khoi "mo va loang", "chi thay nua vo o mot so
-             * goc", "vi tri bien sai lech". Ca ba deu la hau qua cua |N.V|
-             * sai, va khong cai nao sua duoc bang cach chinh so hang do day.
-             *
-             * PHEP THU PHAN DINH, chay sau khi build: dat volume_debug = 10.
-             *   ra CAU VONG (do o ria, xanh duong o giua) -> dung, da sua
-             *   van TOAN DO                               -> sai, fragPosition
-             *      la VIEW space chu khong phai WORLD, va viewPos phai quay ve
-             *      (0,0,0). Doi dung MOT dong nay va thu lai.
-             * Khong doan giua hai kha nang do — trail_volume.fs's own comment
-             * says immediate-mode (PMTube_DrawFaded, what draws this) gives
-             * WORLD fragPosition, do bang sandbox/fresnel_probe.c 04/08. */
+             * Still pushed because volume_debug = 15 reads it back as a
+             * diagnostic band, and because fs_header.glsl declares it for
+             * every consumer; a raw BeginShaderMode (what this function uses,
+             * not SkillManager_BeginShader) never sets it otherwise. */
             int viewPosLoc = GetShaderLocation(fullShader, "viewPos");
             if (viewPosLoc >= 0)
             {
                 Vector3 vp = camera.position;
                 SetShaderValue(fullShader, viewPosLoc, &vp, SHADER_UNIFORM_VEC3);
             }
-            int vsrcLoc = GetShaderLocation(fullShader, "u_volViewSrc");
-            if (vsrcLoc >= 0)
-                SetShaderValue(fullShader, vsrcLoc, &s_volViewSrc, SHADER_UNIFORM_FLOAT);
             int nsrcLoc = GetShaderLocation(fullShader, "u_volNormalSrc");
             if (nsrcLoc >= 0)
                 SetShaderValue(fullShader, nsrcLoc, &s_volNormalSrc, SHADER_UNIFORM_FLOAT);

@@ -325,6 +325,22 @@ bugs will rhyme with these. **Check this list before starting a new hunt.**
   under ADDITIVE blend; a black square from one of these under ALPHA blend is a *caller*
   bug (wrong blend mode), not a backend alpha bug. All backend blend paths are verified by
   `batch_alpha`/`additive3d`/`shader_uniform`.
+- **"`rlNormal3f` does not deliver per-vertex normals through the immediate-mode batch"
+  is a FALSE ALARM** (volume-tube `|N·V|` inversion class, 06/08/2026). The attributes
+  ARRIVE — but they arrive *view-transformed*, and that is the point: `main.c`'s
+  `MyBeginMode3D` calls `rlPushMatrix()` in RL_MODELVIEW, which arms `transformRequired`
+  and parks the VIEW matrix in `State.transform`, so `rlVertex3f`/`rlNormal3f`
+  CPU-transform every vertex into view space (rlgl.h:1529/1612), and the batch flush then
+  uploads `matModel = State.transform` = the same view matrix (rlvk_core.inl:595). A
+  shader that does `matModel * vertexNormal` on this draw path applies the view rotation
+  a **second** time — which is the whole defect. The session's constant-normal probe read
+  back "many colours" not because the attribute was missing but because its debug view
+  (mode 5) sits above the `discard` and composites BOTH tube walls with no depth sort, so
+  a pixel's colour is raster-order — camera-angle — dependent even for a constant normal.
+  The core fix (`trail_volume.vs` passes attributes through; frag stage uses
+  `normalize(-fragPosition)`) is guarded by the `imm_normal` scenario, which sends a
+  KNOWN normal down this exact path and reads it back: raw = `view*N` (d 0.002),
+  `matModel*` = `view*view*N` (d 0.005). Do not re-chase this as a backend bug.
 
 ### 7.9 `VUID-...-oldLayout-01211` ×30 in the validated suite (two independent causes)
 - **Symptom**: 30 `01211` errors under `VALIDATE=1` (never a wrong pixel — all scenarios

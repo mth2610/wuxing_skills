@@ -85,6 +85,17 @@ unmeasured.
 ## State
 Retarget 1.3→1.1-core complete. Headless suite runtime-verified on MoltenVK (20/20, zero validation errors); visual suite 14/14. **In-game confirmed on desktop** (character self-occlusion, black-hole occlusion, soft-particle fade). **Runs on real Android/Mali hardware** (2026-07-17); the Android bring-up bugs (HANDOFF §7.11–7.23) are fixed.
 
+## Immediate-mode normals verified faithful (`imm_normal`, 2026-08-06)
+Closed the volume-tube `|N·V|` investigation from the backend side: the handoff's
+conclusion ("rlNormal3f does not deliver per-vertex normals") is a **false alarm**. The
+`imm_normal` scenario sends a known normal down the game's exact immediate-mode draw path
+and reads it back numerically: raw attribute = `view*N` (d 0.002), `matModel*` =
+`view*view*N` (d 0.005). The backend is provably faithful — `transformRequired` CPU-rotates
+attributes into view space and the flush uploads `matModel = State.transform`, so the old
+`matModel * vertexNormal` double-rotated. Core-side fix (attributes passed through, frag
+stage takes `V = normalize(-fragPosition)`) landed and is guarded by
+`imm_normal` + `core/tests/volume_space_contract_test.c`. → HANDOFF §7.8.
+
 ## Done
 - **Depth / occlusion in render textures** (§7.1) + **soft-particle soft-cut** (§7.10) — user-confirmed in-game.
 - **Graphics-stage SSBO** (§8.2) — `ssbo_vs` 11/11, zero validation errors; read-only graphics SSBOs on weak 1.1 devices via `Caps.graphicsSsboStores`.
