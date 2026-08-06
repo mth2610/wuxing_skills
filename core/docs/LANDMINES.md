@@ -1200,3 +1200,52 @@ the code that read it was deleted. Before any visual A/B, read the whole
 the report — or log the post-multiplication value, as
 `VFX_SMOKE_TRAIL`'s spawn line does (`churn 1.02` vs. the code's 0.34 was
 what finally exposed it).
+
+## A coordinate measured from the oldest surviving node is measured from a moving origin (06/08/2026)
+
+**Symptom.** After the anchor fix above landed, the smoke trail's churn stopped
+being flat but read as **"đơ đơ"** — stiff, wooden, a rigid embossed pattern
+being towed rather than gas moving.
+
+**Cause, part 1 (the loud one, and it was in the log).** `tuning.cfg` carried
+`smoketrail2_noise = 5.0` — churn `1.70` against the column's `0.68`. Measured
+at that amplitude, **15% of all vertices sat exactly on `PM_TUBE_MIN_RADIUS_FRAC`**
+and 3% ballooned past 2.5x nominal. A surface pinned to its clamp over a
+seventh of its area is not churning there at all; the clamp *is* the shape,
+and a clamp-shaped surface is rigid by definition. At the column's own 2.0x
+the floor-hit rate is 2.8% vs the column's 2.1% — i.e. the shapes match, and
+everything above that is saturation. **Over-driven and under-driven look
+equally "wrong" and are opposite fixes** — which is why the debug line now
+reports `floored=%` and `offsetClamped=%` instead of amplitude alone: those
+two numbers tell the two apart without a screenshot.
+
+**Cause, part 2.** `pm_tube.inl` computes `tNoise = t * spanLen / wavelength`
+— arc distance from the tube's `t=0` end. On a static path that end is a fixed
+world point and the coordinate is a true material label. On a **follower**
+trail it is the OLDEST SURVIVING NODE, which is dropped and replaced every
+frame: the origin slides forward at the emitter's own speed. Measured
+(`core/tests/trail_noise_material_anchor_test.c`): one parcel of material is
+dragged across **2.34 lattice cells** during its life, so the noise value it
+samples is fully re-rolled several times over — the pattern belongs to the
+tube, not to the gas. And the drift is exactly `windowLength / wavelength`
+cells, a property of the geometry: raising the wavelength to reduce it also
+flattens the grain, so no knob removes it.
+
+Fixed by adding `nodeUV[tailNode]` (accumulated distance travelled at lay
+time) to `noiseOffset`, in wavelengths — which is precisely what the UV path
+in the same function already did, one block earlier, for the same stated
+reason ("Anchor UVs in accumulated trail distance instead of that transient
+local range").
+
+**Rule.** Two rules, one per half:
+1. Any coordinate on a sliding-window buffer must be anchored in an
+   accumulating quantity, never in an index or a distance from whichever
+   element currently happens to be at the end. If one consumer in a function
+   already anchors that way (here, the UVs), a second consumer that does not
+   is a bug, not a variation — grep the function for the existing anchor
+   before inventing a coordinate.
+2. When an effect "looks wrong", establish *which direction* before tuning.
+   Instrument the SATURATION of every clamp in the path, not just the output
+   magnitude: `meanDev` alone cannot distinguish "too little movement" from
+   "so much movement that the safety clamps have become the geometry", and
+   those two get opposite corrections.

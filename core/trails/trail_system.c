@@ -1691,6 +1691,35 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
     // cancel uvScrollOffset whenever the follower moves.
     int tailNode = NodeIndexForSegRatio(t, drawCount, drawCount - 1);
     int headNode = NodeIndexForSegRatio(t, drawCount, 0);
+
+    /* NEO VẬT CHẤT CHO TRƯỜNG NHIỄU — cùng đúng một cách UV ngay trên đã neo,
+     * và vì đúng một lý do (comment ngay trên: cửa sổ history trượt mỗi khung
+     * nên phạm vi CỤC BỘ là tạm thời, phải neo vào QUÃNG ĐƯỜNG TÍCH LUỸ).
+     *
+     * Thiếu nó, toạ độ nhiễu là `tNoise = t * spanLen / wavelength`, tức
+     * "khoảng cách tính từ node CŨ NHẤT" — mà node cũ nhất bị bỏ đi liên tục,
+     * nên cái mốc đó TRƯỢT theo. Một cục phình vì thế đứng yên so với HÌNH
+     * ống chứ không so với KHỐI KHÍ: cả cụm hoa văn bị kéo lê nguyên khối
+     * cùng ống thay vì trôi ngược qua thân khi vật chất già đi. Đó đúng là
+     * cái mesh_deform.h cảnh báo ở doc tham số `mat`: "passing surf.y here
+     * instead is the mistake that makes a churning body read as a
+     * pre-squeezed shape being dragged" — ở đây không phải surf.y, nhưng là
+     * cùng một sai lầm: một toạ độ đo từ mốc di động.
+     *
+     * nodeUV[] = laidDist, quãng đường tích luỹ lúc node được đặt (:1295) —
+     * nhãn vật chất thật. Cộng nó vào biến tNoise (đo từ đuôi) cho ra quãng
+     * đường TUYỆT ĐỐI tại từng vành, chia cho wavelength là ra đúng toạ độ
+     * vật chất theo mét.
+     *
+     * Chỉ khi noiseWavelength > 0: caller không bật cờ đó thì tNoise = t
+     * (phân số), cộng một số đo bằng mét vào là vô nghĩa — và đó là mọi
+     * caller cũ (cột khói, spark, ember), không đổi một bit nào.
+     *
+     * fmodf 8192: nodeUV tăng không giới hạn, và phần thập phân của nó là
+     * thứ lattice đọc — cùng lý do và cùng hằng số dòng :1968 đã dùng. */
+    if (shape == 2 && tubeCfg.noiseWavelength > 0.0f)
+        tubeCfg.noiseOffset += fmodf(t->nodeUV[tailNode], 8192.0f) / tubeCfg.noiseWavelength;
+
     if (shape == 1)
         PMDroplet_BuildAlongPath(&dropMesh, path, n, headR, 0.0f, 1.0f,
                                  buildTime, segs, radial, &dropCfg);

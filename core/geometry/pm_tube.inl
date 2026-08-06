@@ -369,6 +369,11 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
              * dưới: đo được -1.000, tức mặt cắt thắt về đúng một điểm rồi lộn
              * ngược ra ngoài. Một cái ống bị thắt nút không phải khói, nó là
              * chuỗi hạt cườm. */
+            /* DEBUG TẠM THỜI — đọc TRƯỚC khi kẹp, và cố ý KHÔNG gộp vào câu
+             * lệnh kẹp bên dưới: ba test khác nhau khoá đúng dòng kẹp đó
+             * theo văn bản, và giàn giáo chẩn đoán tạm thời không có quyền
+             * làm dịch chuyển thứ đang được canh. */
+            bool floored = (deform < PM_TUBE_MIN_RADIUS_FRAC);
             if (deform < PM_TUBE_MIN_RADIUS_FRAC) deform = PM_TUBE_MIN_RADIUS_FRAC;
             float finalRadius = nominalRadius * deform;
 
@@ -382,9 +387,15 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
              * điều làm bất biến "bán kính hiệu dụng luôn > 0" đúng theo cấu
              * trúc công thức, không phải nhờ may mắn không rơi đúng trường
              * hợp xấu — xem comment tại định nghĩa hàm. */
+            float rawOffLen = Vector3Length(dOffset);
             dOffset = PMSweptSection_ClampOffset(dOffset, finalRadius,
                                                  PM_TUBE_MAX_OFFSET_RADIUS_FRAC,
                                                  offsetLimit);
+            /* DEBUG TẠM THỜI (xem khối log bên dưới) — "kẹp" tính là mất từ 5%
+             * chiều dài trở lên, không phải bất kỳ thay đổi nào: soft-knee bo
+             * mượt nên gần như mọi đỉnh đều lệch một chút. */
+            bool offsetWasClamped = (rawOffLen > 1e-6f) &&
+                                    (Vector3Length(dOffset) < rawOffLen * 0.95f);
 
             out->rings[i][j] = Vector3Add(
                 Vector3Add(pos, Vector3Scale(normal, finalRadius)), dOffset);
@@ -406,19 +417,25 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
             // là để bác bỏ, không phải để xác nhận.
             if (cfg->noiseWavelength > 0.0f) {
                 static float s_max = -1e9f, s_sum = 0.0f;
-                static int s_n = 0;
+                static int s_n = 0, s_floored = 0, s_clampedOff = 0;
                 static int s_calls = 0;
                 float dev = fabsf(Vector3Distance(pos, out->rings[i][j]) - nominalRadius);
                 if (dev > s_max) s_max = dev;
                 s_sum += dev; s_n++;
+                if (floored) s_floored++;
+                if (offsetWasClamped) s_clampedOff++;
                 if (i == segments && j == radialSegs - 1) {
                     s_calls++;
                     if (s_calls % 30 == 0)
                         TraceLog(LOG_INFO,
                             "TUBE_CHURN_DEV_DEBUG: baseRadius=%.3f n=%d "
-                            "meanDev=%.4f m  maxDev=%.4f m",
-                            baseRadius, s_n, s_sum / (float)s_n, s_max);
+                            "meanDev=%.4f m  maxDev=%.4f m  floored=%.1f%%  "
+                            "offsetClamped=%.1f%%",
+                            baseRadius, s_n, s_sum / (float)s_n, s_max,
+                            100.0f * (float)s_floored / (float)s_n,
+                            100.0f * (float)s_clampedOff / (float)s_n);
                     s_max = -1e9f; s_sum = 0.0f; s_n = 0;
+                    s_floored = 0; s_clampedOff = 0;
                 }
             }
         }
