@@ -113,6 +113,18 @@ uniform float u_volCull;
  * Xem chỗ dùng. Đây vừa là phép thử ("attribute có tới nơi không") vừa là bản
  * sửa ứng viên, nên nó là công tắc chứ không phải hai lần build. */
 uniform float u_volNormalSrc;
+/* Kỹ thuật 2 — NOISE EROSION của silhouette (thêm 06/08/2026).
+ *
+ * Biên mềm smooth `rim` để lại một gradient mượt bám đúng đường cong dẹt của
+ * mesh ("foggy blur") — bản này xói mòn nó bằng noise đang cuộn: ngưỡng
+ * dissolve dao động theo một mẫu texture, scale về 0 ở thân và đầy ở rìa, nên
+ * đường bao bị "cắn" lõm chỗ này chỗ kia thay vì một dải mờ đều — khói tưa ra
+ * không khí. Cùng hình dạng với trail_deform.fs's u_edgeTear, trên toạ độ b/R
+ * (1 = rìa silhouette) thay vì across-UV.
+ * Đẩy MỘT LẦN cho cả nhóm vẽ (cùng đường u_volRim/u_volDebug — xem landmine
+ * UBO của rlvk, ENGINE_LANDMINES §8). */
+uniform float u_volErode;       /* 0 = tắt (mặc định); 1 = cắn mạnh nhất */
+uniform float u_volErodeBand;   /* bề rộng vùng tưa tính ngược vào trong, theo b/R */
 
 void main()
 {
@@ -304,6 +316,22 @@ void main()
     // làm mềm thêm đúng vùng sát viền. u_volMask.z vẫn là "độ mềm viền".
     float rim = smoothstep(0.0, max(u_volMask.z, 0.001), d);
     float edge = depth * rim;
+
+    // TECHNIQUE 2 — noise erosion of the silhouette (added 06/08/2026). See
+    // the u_volErode uniform comment. `bR` = distance from the tube axis in
+    // units of radius (1 = rim); the torn band reaches inward by
+    // u_volErodeBand. The noise sample is the sheet itself at a higher
+    // tiling + its own scroll, so the tear moves decorrelated from `pattern`.
+    if (u_volErode > 0.001) {
+        float bR = sqrt(max(0.0, 1.0 - d * d));
+        float edgeBias = smoothstep(1.0 - u_volErodeBand, 1.0, bR);  // 0 thân, 1 rìa
+        vec2 nuv = fragTexCoord * 3.0 + vec2(0.15, 0.09) * u_time;
+        float n = texture(texture0, nuv).a;
+        float thresh = u_volErode * edgeBias;
+        float bite = smoothstep(thresh, thresh + 0.15, n);   // 1 = sống sót, 0 = bị ăn
+        float tear = max(bite, 1.0 - edgeBias);              // thân (edgeBias 0) luôn sống
+        edge *= mix(1.0, tear, u_volErode);
+    }
 
     // The vertical fade arrives as vertex alpha (PMTube_DrawFaded), already
     // multiplied by the layer's own alpha.

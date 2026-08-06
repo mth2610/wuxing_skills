@@ -261,6 +261,8 @@ vol_depth_mode  = 0   # gain on the |N.V|^p BODY term
 vol_rim         = 1   # gain on the (1-|N.V|)^p RIM term
 vol_depth_pow   = 2.0
 vol_density     = 1.75
+vol_erode       = 0     # noise erosion of the silhouette; 0 = off (soft rim)
+vol_erode_band  = 0.2   # width of the torn band, inward, in b/R units
 volume_debug    = 0
 ```
 

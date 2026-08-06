@@ -804,8 +804,34 @@ bên tuỳ góc camera.
 Đã thêm `volume_debug = 8` (cùng pháp tuyến, vẽ SAU `discard`) để phân định:
 5 có sọc mà 8 không thì hình học sạch. Chưa ai chạy.
 
-## MỞ — VolumeTrail bản "energy" vẽ ra vệt ĐEN ĐỤC (06/08/2026)
+## MỞ — kỹ thuật 2 (noise erosion biên) — code xong, chờ xác nhận thị giác (06/08/2026)
 
+**Trạng thái:** đã cài vào `trail_volume.fs` + `trail_system.c` + `tuning.cfg`,
+chưa được người dùng nhìn. Bật sẵn trong cfg: `vol_erode = 0.6`,
+`vol_erode_band = 0.2`. Người dùng báo nếu ổn thì giữ, không thì chỉnh hai
+knob (không cần build, hot-reload).
+
+**Cách hoạt động** — trong `main()` của `trail_volume.fs`, sau `edge = depth * rim`:
+- `bR = sqrt(max(0, 1 - d*d))` — khoảng cách tới trục ống theo đơn vị bán kính,
+  1 = rìa silhouette (không dùng UV.U vì U chạy vòng quanh).
+- `edgeBias = smoothstep(1 - vol_erode_band, 1, bR)` — 0 ở thân, 1 ở rìa.
+- `thresh = vol_erode * edgeBias`; `bite = smoothstep(thresh, thresh+0.15, noise)`
+  với noise = kênh A của texture0 tại `fragTexCoord*3 + (0.15,0.09)*u_time`
+  (scroll riêng, tách khỏi `pattern`).
+- `tear = max(bite, 1 - edgeBias)` — thân luôn sống (đúng yêu cầu "chỉ biên tưa").
+- `edge *= mix(1, tear, vol_erode)`.
+
+**Landmine đã tuân thủ:** uniform mới là uniform RIÊNG (`u_volErode`/
+`u_volErodeBand`), không nhét vào `u_volMask` (kín cả 4 ô); đẩy MỘT LẦN mỗi
+nhóm vẽ bên cạnh `u_volRim` (`trail_system.c:2541-2550`), không bao giờ
+per-instance — đúng ENGINE_LANDMINES §8. Kỹ thuật 1 (inverse fresnel) đã có
+sẵn = `body = pow(clamp(d,0,1), u_volMask.y)` (`vol_depth_pow`).
+
+**Test đã chạy:** `volume_space_contract` + `smoke_column` đều PASS. Cần chạy
+lại sau khi build game (human-run): xác nhận biên khói tưa, không đục lỗ thân,
+không ảnh hưởng beam đặc (`beam_probe` đang 0).
+
+## MỞ — VolumeTrail bản "energy" vẽ ra vệt ĐEN ĐỤC (06/08/2026)
 **Không sửa ở đây, và cố ý.** Đổi nó là đổi một hiệu ứng đang chạy mà không ai
 yêu cầu đổi — đúng bài học của mục "một bản sửa đúng vật lý vẫn là hồi quy"
 trong `docs/LANDMINES.md`. Ghi lại để lần sau không phải chẩn đoán lại.

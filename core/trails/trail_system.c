@@ -67,6 +67,8 @@ static float s_volRim = 1.0f;        /* u_volRim    — hệ số số hạng R�
 static float s_volDepthPow = 2.0f;   /* u_volMask.y — số mũ chung của cả hai */
 static float s_volCull = 1.0f;       /* u_volCull   — 0 = vẽ cả hai mặt */
 static float s_volNormalSrc = 0.0f;  /* u_volNormalSrc — 1 = dFdx thay attribute */
+static float s_volErode = 0.0f;      /* u_volErode    — noise erosion biên, 0 = tắt */
+static float s_volErodeBand = 0.2f;  /* u_volErodeBand — bề rộng vùng tưa theo b/R */
 /* Set only while DrawTrailEntitiesLayer owns the draw; layered helpers use it
  * to keep alpha body to the one textured material layer. */
 static int s_drawLayerFilter = -1;
@@ -363,6 +365,10 @@ static void EnsureTrailVolumeShader(void)
     /* Xem doc dai o u_volNormalSrc trong trail_volume.fs. Mac dinh 0 = duong
      * cu, nen bat cong tac la mot lan luu file chu khong phai mot lan build. */
     Tuning_RegisterFloat("vol_normal_src", &s_volNormalSrc, 0.0f);
+    /* Noise erosion biên (kỹ thuật 2) — xem doc dài ở u_volErode trong
+     * trail_volume.fs. Mặc định 0 = biên mềm như cũ; bật lên cho biên tưa. */
+    Tuning_RegisterFloat("vol_erode", &s_volErode, 0.0f);
+    Tuning_RegisterFloat("vol_erode_band", &s_volErodeBand, 0.2f);
     /* `vol_view_src` is GONE (06/08/2026): the view vector is settled at
      * normalize(-fragPosition) — see the viewPos comment further down and
      * trail_volume.vs's header. A switch over a settled question only rots. */
@@ -2535,6 +2541,12 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
             int rimLoc = GetShaderLocation(fullShader, "u_volRim");
             if (rimLoc >= 0)
                 SetShaderValue(fullShader, rimLoc, &s_volRim, SHADER_UNIFORM_FLOAT);
+            int erodeLoc = GetShaderLocation(fullShader, "u_volErode");
+            if (erodeLoc >= 0)
+                SetShaderValue(fullShader, erodeLoc, &s_volErode, SHADER_UNIFORM_FLOAT);
+            int bandLoc = GetShaderLocation(fullShader, "u_volErodeBand");
+            if (bandLoc >= 0)
+                SetShaderValue(fullShader, bandLoc, &s_volErodeBand, SHADER_UNIFORM_FLOAT);
             int dbgLoc = GetShaderLocation(fullShader, "u_volDebug");
             if (dbgLoc >= 0)
                 SetShaderValue(fullShader, dbgLoc, &s_volDebug, SHADER_UNIFORM_FLOAT);
