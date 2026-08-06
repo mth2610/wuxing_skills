@@ -1,10 +1,71 @@
-# Volume tube shading — `|N·V|` comes out INVERTED. Handoff, 06/08/2026
+# Volume tube shading — ROOT CAUSE FOUND. Handoff, 06/08/2026
 
 **Read this before touching `core/trails/shaders/trail_volume.fs`, its space
-handling, or `PMTube` normals.** One session spent ~13 diagnostic rounds on
-this and produced a lot of ruled-out ground plus one unresolved contradiction.
-Nearly every round was wasted on a *broken instrument*, not on the bug — the
-list of those traps is in §5 and it is the most valuable part of this file.
+handling, or `PMTube` normals.**
+
+## ROOT CAUSE (found on the last round, 06/08/2026)
+
+**`rlNormal3f` does not deliver per-vertex normals through rlgl's
+immediate-mode batch.** `PMTube_DrawFaded` was made to emit
+`rlNormal3f(0, 1, 0)` for *every* vertex — a known constant. The shader should
+then paint one flat colour under `volume_debug = 5`. It painted **many
+colours**. What arrives in `fragNormal` is therefore **not what the draw code
+sends**.
+
+That single fact explains the whole investigation: `|N·V|` is computed from a
+`fragNormal` that has no relationship to the surface, so it comes out
+inverted, changes with camera angle, and cannot be fixed by any amount of
+tuning, space-handling or term reshaping.
+
+It also reconciles the contradiction that stalled §4: the CPU sweep was right
+(the mesh IS correct), and mode 14 was white **not** because the attribute was
+correct but because `Ndfdx` is derived from `fragPosition` and both were being
+compared inside the same wrong frame — mode 14 could never tell "correct" from
+"consistently wrong", which §4 candidate (a) predicted.
+
+### The fix, not yet applied
+
+Volume shading must stop reading `fragNormal` on this draw path. Two options:
+
+1. **`dFdx/dFdy` of `fragPosition`** — already wired as `vol_normal_src = 1`.
+   `core/tests/silhouette_test.c`'s `Test_FacetNormalsAreEnough` measured flat
+   normals as sufficient (edge hardness under the limit at >= 24 radial). But
+   note `TRAIL_TUBE_RADIAL_MAX = 16` currently clamps below that, and flat
+   normals give 16 discrete values on a 16-sided tube.
+2. **Stop using immediate mode for the tube** — build a real `Mesh` with a
+   normal buffer and `DrawMesh`. Larger change; also changes the `matModel`
+   convention (see §3), so it must be done together with the space handling.
+
+### Where the beam was left, and why
+
+`VFX_ComposeBeam` now draws as **ONE PLAIN CYLINDER** — `beam_probe = 1` is
+the shipped default (`tuning.cfg` and `vc_beam.inl`). No taper, no deform, no
+additive core, no sheet, no UV scroll.
+
+That is deliberate and it is where the next session should start. Everything
+the beam would otherwise layer on — the taper's shading, the churn's
+silhouette, the rim term — is a function of `|N·V|`, which is currently
+meaningless on this draw path. Tuning any of it now would bake the noise into
+the numbers, and those numbers would then have to be thrown away twice: once
+when the normals are fixed, once when someone notices they were fitted to
+garbage.
+
+The layered version (steps 1–2 of the P4 spec) is written and intact below the
+switch. Turn it back on with `beam_probe = 0` **after** the normal path is
+fixed and `volume_debug = 13` shows the `b/R` contour landing on the real
+silhouette rather than down the middle of the tube.
+
+**Suggested order for the next session:**
+1. Fix the normal path (option 1 or 2 above) on the plain cylinder.
+2. Verify with `volume_debug = 13` + `14` — contour on the silhouette, and a
+   constant-normal probe reading back constant.
+3. Only then revisit `vol_depth_mode` / `vol_rim` (§7) — that decision was
+   made against a broken `|N·V|` and is not trustworthy.
+4. Only then `beam_probe = 0` and judge the layered beam.
+
+Everything else in this file is the ruled-out ground and, in §5, the nine
+instrument traps that cost most of the session. Read §5 before writing any
+debug view for this module.
 
 ---
 
@@ -63,7 +124,7 @@ góc", "biên sai vị trí" — because every one of them is `edge = f(|N·V|)`
    `|N·V|²` peaks **on the axis**. This is a separate, independently-confirmed
    defect — see §7.
 
-## 4. THE CONTRADICTION — this is what the next session must resolve
+## 4. THE CONTRADICTION — RESOLVED, kept for the reasoning trail
 
 With **all** of the above holding:
 
@@ -98,10 +159,16 @@ else, the attribute is being routed to the wrong slot.
 defects were found this session (§5). Assume nothing that has not been
 re-verified since the last of them was fixed.
 
-**Suggested first step:** (b). It is the cheapest, it is a direct test of the
-one link in the chain that has never been probed independently, and immediate
-mode (`rlNormal3f`) is a genuinely suspect path — `rlgl`'s default batch is
-not documented here as carrying per-vertex normals at all.
+**RESOLVED: it was (b), and (a) explains why mode 14 did not catch it.**
+The constant-normal probe (emit `rlNormal3f(0,1,0)` everywhere, read back with
+`volume_debug = 5`) returned many colours instead of one — see the ROOT CAUSE
+section at the top. The probe has since been removed from the source; it was
+`PMTube_DebugSetConstantNormal` in `pm_tube.inl`, trivially re-addable from
+this description if it is ever needed again.
+
+The general lesson worth carrying: **the only conclusive test of a data path
+is to send a KNOWN value and read it back.** Every earlier round compared two
+quantities that were *both* under suspicion, so none of them could conclude.
 
 ---
 
@@ -184,7 +251,7 @@ that shader's own comment instructs.
 `tuning.cfg`:
 
 ```
-beam_probe      = 1   # strip the beam to one fat, smooth, stationary cylinder
+beam_probe      = 1   # DEFAULT NOW — beam is one plain cylinder; 0 = full stack
 vol_cull        = 1   # 0 = draw both walls
 vol_normal_src  = 0   # 1 = normal from dFdx instead of the attribute
 vol_view_src    = 0   # 1 = V from -fragPosition (no uniform involved)
@@ -211,9 +278,12 @@ volume_debug    = 0
 | 14 | `\|dot(Nattr, Ndfdx)\|` — white = the two normal sources agree | **yes** |
 | 15 / 16 | `\|viewPos\|` / `\|fragPosition\|` as magnitude bands | **yes** |
 
-`TUBE_NDOTV_CPU` — a temporary `TraceLog` in `DrawLayeredTube` computing
-`|N·V|` on the CPU from the built mesh and the real camera. **Delete when this
-is resolved.** Same for `TUBE_CHURN_DEV_DEBUG`.
+**Removed at the end of the session** (re-add from this description if needed):
+`TUBE_NDOTV_CPU` (CPU-side `|N·V|` off the built mesh — this is what proved the
+mesh correct), `TUBE_CHURN_DEV_DEBUG` (churn deviation stats), and
+`PMTube_DebugSetConstantNormal` (the constant-normal probe that found the root
+cause). The `volume_debug` modes and the `vol_*` tunables all remain; they are
+inert at their defaults.
 
 Headless: `core/tests/silhouette_test.c` is a software rasteriser that models
 both terms (`EDGE_RIM`, `EDGE_NDOTV`), culling, power sweeps and the

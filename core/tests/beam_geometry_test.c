@@ -314,8 +314,15 @@ static void Test_ProbeStripsEverythingThatMovesTheEdge(void) {
   CHECK(FileHas(bm, "cfg.thick = isCore ? (b->width * 0.34f) : (probe ? (b->width * 6.0f) : b->width);"),
         "probe fattens the tube so each face covers several pixels — otherwise "
         "it measures the rasteriser instead of the shading");
-  CHECK(FileHas(bm, "Tuning_RegisterFloat(\"beam_probe\", &s_beamProbe, 0.0f);"),
-        "...and it is live and defaults OFF, so it costs nothing when unused");
+  // DEFAULTS ON as of the end of 06/08: the beam is parked as one plain
+  // cylinder because the volume shading it depends on reads a fragNormal that
+  // rlNormal3f never delivers (core/docs/VOLUME_SHADING_HANDOFF.md). Tuning
+  // the layered version against a meaningless |N.V| would bake noise into the
+  // numbers, so the stack stays off until the normal path is fixed.
+  CHECK(FileHas(bm, "Tuning_RegisterFloat(\"beam_probe\", &s_beamProbe, 1.0f);") &&
+            FileHas(bm, "static float s_beamProbe = 1.0f;"),
+        "...and it defaults ON, parking the beam as a plain cylinder until the "
+        "volume normal path is fixed");
 
   // The companion debug view. Bands, not a ramp: the eye cannot read a value
   // off a continuous grey, which is why volume_debug = 2 never settled this.

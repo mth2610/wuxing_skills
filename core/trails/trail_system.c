@@ -1633,8 +1633,7 @@ static void DrawLayeredRibbon(const TrailEntity *t, int drawCount, Texture2D fal
     }
 }
 
-static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallbackTex,
-                            Camera3D dbgCam)
+static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallbackTex)
 {
     if (drawCount < 2)
         return;
@@ -1774,50 +1773,6 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
     else if (shape == 2)
         PMTube_BuildAlongPath(&tubeMesh, path, n, headR, 0.0f, 1.0f,
                               buildTime, segs, radial, &tubeCfg);
-
-    /* ── DO |N.V| TREN CPU, 06/08/2026 — TAM THOI, XOA khi xong ────────────
-     *
-     * Muoi hai vong chan doan deu di qua shader, va dung cu do o do da hong
-     * BON lan khac nhau (nhanh debug nuot nhau hai lan, hai vach ong chong
-     * len nhau, dong ep dau vo hieu hoa cull). Moi ket luan rut ra tu chung
-     * deu phai bo. Phep do nay khong qua shader: no doc THANG mesh vua dung
-     * va camera that, tren CPU, roi in ra log — khong co nhanh nao nuot
-     * duoc no, khong co uniform nao roi, khong co thu tu raster nao doi.
-     *
-     * Voi mot hinh tru, |N.V| PHAI quet gan tron [0, 1]: ~1 o vanh dai huong
-     * thang vao camera, ~0 o hai mep suot. Neu CPU cho dung dai do ma man
-     * hinh khong, thi loi nam giua CPU va shader (attribute khong toi noi,
-     * hoac khong gian cua fragPosition). Neu CPU CUNG cho dai sai, thi loi
-     * nam o chinh mesh/phap tuyen va khong lien quan gi den shader. Hai kha
-     * nang do can hai ban sua hoan toan khac nhau, va 12 vong vua roi khong
-     * phan biet duoc chung. */
-    if (t->tubeVolumeShading && shape == 2)
-    {
-        static int s_dbgCall = 0;
-        if ((s_dbgCall++ % 60) == 0)
-        {
-            float mn = 1e9f, mx = -1e9f;
-            int nSamp = 0;
-            for (int i = 0; i <= tubeMesh.segments; i += 4)
-                for (int j = 0; j < tubeMesh.radialSegs; j++)
-                {
-                    Vector3 P = tubeMesh.rings[i][j];
-                    Vector3 N = tubeMesh.normals[i][j];
-                    Vector3 Vv = Vector3Normalize(Vector3Subtract(dbgCam.position, P));
-                    float dd = fabsf(Vector3DotProduct(Vector3Normalize(N), Vv));
-                    if (dd < mn) mn = dd;
-                    if (dd > mx) mx = dd;
-                    nSamp++;
-                }
-            TraceLog(LOG_INFO,
-                     "TUBE_NDOTV_CPU: n=%d  |N.V| min=%.3f max=%.3f  "
-                     "(hinh tru dung: min~0.0 max~1.0)  cam=(%.1f,%.1f,%.1f)  "
-                     "ring0=(%.1f,%.1f,%.1f)",
-                     nSamp, mn, mx, dbgCam.position.x, dbgCam.position.y,
-                     dbgCam.position.z, tubeMesh.rings[0][0].x,
-                     tubeMesh.rings[0][0].y, tubeMesh.rings[0][0].z);
-        }
-    }
 
     for (int L = 0; L < t->layerCount; L++)
     {
@@ -2349,7 +2304,7 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
                 rlDrawRenderBatchActive();
                 if (!t->tubeSingleSided)
                     rlDisableBackfaceCulling();
-                DrawLayeredTube(t, drawCount, ribbonTex, camera);
+                DrawLayeredTube(t, drawCount, ribbonTex);
                 rlDrawRenderBatchActive();
                 rlEnableBackfaceCulling();
             }

@@ -7,9 +7,15 @@
 //   STEP 1  DONE  body tube + hot core, no deform. Answered its own question
 //                 (shape + both DoD cases) and, unintentionally, showed that a
 //                 straight undeformed tube gives nothing a billboard does not.
-//   STEP 2  HERE  the three deform layers. This is the step that decides
-//                 whether P4 stays a volume at all — see Beam_BuildDeform.
+//   STEP 2  WRITTEN but PARKED — the three deform layers exist below and are
+//                 switched OFF by default. They cannot be judged until the
+//                 volume shading is fixed; see the note at s_beamProbe and
+//                 core/docs/VOLUME_SHADING_HANDOFF.md.
 //   STEP 3        material/element identity pass.
+//
+// CURRENT STATE, end of 06/08: the beam draws as ONE PLAIN CYLINDER
+// (`beam_probe = 1`, the default). That is deliberate — it is the shape the
+// next session needs to work on.
 //
 // Step 1 was a mis-cut: it withheld the ONE capability that distinguishes a
 // volume from a strip (a non-cylindrical outline), so it could not possibly
@@ -104,20 +110,26 @@ static float s_beamAlphaMul = 1.0f;
 static float s_beamCoreMul = 1.0f;
 static float s_beamTile = 2.0f;
 static float s_beamDeform = 1.0f;
-// PROBE MODE — owner's request, 06/08: "vẽ 1 hình tube đơn giản và làm nó đứng
-// yên rồi xác định biên cho nó -> coi đúng hay chưa (phải xác nhận được bằng
-// hình ảnh)".
+// PLAIN-CYLINDER MODE, and it is now the DEFAULT (owner's call, end of
+// 06/08). Started life as `beam_probe`, a diagnostic that stripped the beam
+// down to one smooth stationary cylinder so the edge could be located; it
+// stays on because the next session has to work on exactly that shape.
 //
-// The shipped beam stacks a taper, three deform layers, an additive core, a
-// scrolling sheet and a vertical alpha mask on top of each other. Every one of
-// those moves the apparent edge, so asking "is the boundary in the right
-// place" of that image is unanswerable — which is why several rounds of
-// looking at it produced descriptions rather than verdicts. Probe strips all
-// of it and leaves one smooth stationary cylinder, whose true silhouette is
-// known exactly: |N.V| = 0. Pair with volume_debug = 10 and the question
-// becomes "does the bright band coincide with the red band", which an image
-// CAN answer.
-static float s_beamProbe = 0.0f;
+// WHY THE BEAM IS PARKED HERE. The volume shading this beam depends on reads
+// `fragNormal`, and `rlNormal3f` does not deliver per-vertex normals through
+// rlgl's immediate-mode batch — proved by emitting a known constant normal and
+// reading back many colours. See core/docs/VOLUME_SHADING_HANDOFF.md. Until
+// that is fixed, `|N.V|` is meaningless on this draw path, so every layer that
+// consumes it (the taper's shading, the churn's silhouette, the rim term)
+// would be tuned against noise. Building on top of it would bake that noise
+// into whatever numbers came out.
+//
+// So: 1 (default) = one smooth cylinder — no taper, no deform, no additive
+// core, no sheet, no UV scroll, 32 radial requested. 0 = the full stack from
+// steps 1-2, which is worth switching back on ONLY after the normal path is
+// fixed and `volume_debug = 13` shows the b/R contour landing on the real
+// silhouette.
+static float s_beamProbe = 1.0f;
 static void Beam_EnsureTuning(void)
 {
     static bool done = false;
@@ -130,7 +142,7 @@ static void Beam_EnsureTuning(void)
     // step 2's verdict: sweep it to 0 and the beam is step 1 again, so the
     // comparison "does the outline earn the volume" costs a file save.
     Tuning_RegisterFloat("beam_deform", &s_beamDeform, 1.0f);
-    Tuning_RegisterFloat("beam_probe", &s_beamProbe, 0.0f);
+    Tuning_RegisterFloat("beam_probe", &s_beamProbe, 1.0f);
 }
 
 // VOLUME_FIRE, and NOT VFX_SURFACE_ENERGY_TUBE — which is what step 1 shipped
