@@ -148,7 +148,41 @@ void main()
     vec3 V = normalize(viewPos - fragPosition);
     float facing = dot(N, V);
     float d = abs(facing);
-    float depth = pow(clamp(1.0 - d, 0.0, 1.0), max(u_volMask.y, 0.001));
+    // `d`, NOT `1.0 - d` — sửa 06/08/2026, và cái dấu đó là cả con bọ.
+    //
+    // Đây là ĐỘ DÀY QUANG HỌC, không phải fresnel. Với một hình trụ nhìn từ
+    // xa, đoạn tia nằm TRONG khối dài nhất ở CHÍNH GIỮA thân (tia xuyên qua
+    // đường kính) và ngắn dần ra rìa (tia chỉ sượt mép) — và với mặt trụ,
+    // chiều dài đoạn đó tỉ lệ ĐÚNG với |N.V|. `1.0 - d` là công thức lớp vỏ
+    // phát sáng ở viền (bong bóng xà phòng), tức ngược hẳn chiều.
+    //
+    // Đo được (core/tests/volume_optical_depth_test.c): bản `1.0 - d` cho
+    // alpha = 0.000 ở ĐÚNG TÂM thân ống và đỉnh 0.318 ở 0.9 bán kính — một
+    // cái VÀNH rỗng ruột. Đó chính là "khói tập trung ở 2 bên, mật độ thưa"
+    // người dùng chụp lại được, và cũng là lý do phải kéo alpha lên mãi mà
+    // vẫn mờ: chỗ đáng lẽ đặc nhất đang bị nhân với 0.
+    //
+    // core/tests/silhouette_test.c đã đo đúng dạng `|N.V|^p` này ngay từ
+    // đầu (EDGE_NDOTV = powf(f, g_power), f = |dot(N,V)|) và chứng minh p>=2
+    // + cull làm tan được viền. File đó tự ghi ở cuối là nó KHÔNG khoá vào
+    // shader, vì lần áp trước bị revert do các quan sát kèm theo bị nhiễm
+    // (debug view chỉ vẽ những fragment đã lọt qua hai discard). Lần này số
+    // đọc đến từ ảnh chụp thật của người dùng, không qua debug view nào —
+    // và giờ thì CÓ khoá, ở volume_optical_depth_test.c.
+    // CHỌN ĐƯỢC, 06/08/2026, qua u_volMask.x (ô này đang BỎ TRỐNG — pan của
+    // sheet 2 đã dọn sang s_volFlow, xem comment ở trail_system.c; tái dùng
+    // ô cũ thay vì nới mảng để không đụng layout UBO của rlvk).
+    //   0 = (1 - |N.V|), dạng VIỀN cũ — cột khói đã được chỉnh nhiều vòng
+    //       quanh nó, và đổi đi làm cột "không tự nhiên như trước"
+    //   1 = |N.V|, ĐỘ DÀY QUANG HỌC đúng vật lý — thứ smoke trail cần, xem
+    //       core/tests/volume_optical_depth_test.c
+    // Mặc định 0: một bản sửa đúng về vật lý vẫn là hồi quy nếu nó lấy mất
+    // cái nhìn mà người dùng đã ưng. Bật `vol_depth_mode = 1` trong
+    // tuning.cfg (kèm hạ vol_density) để lấy bản khối đặc ruột.
+    float thickBase = mix(1.0 - d, d, clamp(u_volMask.x, 0.0, 1.0));
+    float depth = pow(clamp(thickBase, 0.0, 1.0), max(u_volMask.y, 0.001));
+    // rim vẫn giữ: cùng chiều tăng với depth nên không đục lỗ ở giữa, chỉ
+    // làm mềm thêm đúng vùng sát viền. u_volMask.z vẫn là "độ mềm viền".
     float rim = smoothstep(0.0, max(u_volMask.z, 0.001), d);
     float edge = depth * rim;
 

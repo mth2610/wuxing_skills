@@ -1249,3 +1249,106 @@ local range").
    magnitude: `meanDev` alone cannot distinguish "too little movement" from
    "so much movement that the safety clamps have become the geometry", and
    those two get opposite corrections.
+
+## Đếm HẾT các hệ quả của một cờ trước khi đặt tên cho nó — bản đếm lần 4 (06/08/2026)
+
+Bổ sung cho mục "One flag that re-anchors ONE of several emitter-relative
+quantities" ở trên. Sau khi gom ba hệ quả (bán kính, envelope deform, uốn
+trục) vào một biến `tEnv` và tưởng đã xong, hệ quả **thứ tư** lộ ra qua
+triệu chứng khác hẳn — "mờ quá" thay vì "phẳng": `PMTube_DrawFaded`'s
+vertical alpha mask,
+
+    m(t) = smoothstep(0, fadeInEnd, t) * (1 - smoothstep(fadeOutStart, 1, t))
+
+cũng chạy trên `t` thô. Hai đầu của nó mang hai nghĩa vật lý khác nhau (chỗ
+gọi tự ghi: "Chân tắt nhanh (khói phải dính vào nguồn), ngọn tan chậm hơn"),
+nên với trail có nguồn phát ở `t=1` thì hai nghĩa bị hoán vị: 28% chiều dài
+phía nguồn bị "ngọn tan" kéo alpha về 0 — khói vừa phát ra thì trong suốt —
+còn đuôi già nhất, rộng nhất lại đục hoàn toàn.
+
+**Điều làm nó không bị bắt cùng ba cái kia:** nó ở trong hàm VẼ, không phải
+hàm DỰNG. Ba consumer đầu đều đọc `cfg` nên khi sửa `cfg` là thấy hết; cái
+thứ tư đọc `data` (mesh đã dựng xong), một biên giới khác, nên grep theo
+`cfg->` không chạm tới.
+
+**Luật.** Khi một cờ nói một sự thật về HÌNH, hãy chép nó vào chính cấu trúc
+DỮ LIỆU của hình (`PMTubeMesh.anchorAtTail`), đừng để nó chỉ sống trong
+config. Mọi giai đoạn sau — vẽ, va chạm, cắt LOD — nhận dữ liệu chứ không
+nhận config, và mỗi giai đoạn như vậy là một chỗ nữa để quên. Và khi đã tìm
+ra consumer thứ N của một cờ, hãy grep theo *dữ liệu* nữa, không chỉ theo
+*config*: câu hỏi đúng không phải "chỗ nào đọc cfg->anchorAtTail" mà "chỗ
+nào giả định đầu nào là đầu phát".
+
+**Một ghi chú về chính bản sửa này.** Test đầu tiên viết ra khẳng định "hoán
+vị hai tham số KHÔNG tương đương lật toạ độ vì mặt nạ bất đối xứng" — đo ra
+sai lệch đúng 0.000000: hai cách bằng nhau từng bit
+(`smoothstep(0,a,1-t) == 1-smoothstep(1-a,1,t)`). Assert được sửa theo số
+đo, không phải số đo bị bỏ đi. Lựa chọn giữa hai cách là chuyện NGỮ NGHĨA
+(tên tham số phải tiếp tục đúng, và cột khói dùng chung hàm này mà không
+lật), và test giờ nói đúng như vậy — một lý do "vì tên gọi" được ghi lại
+trung thực có ích hơn một lý do "vì đúng sai" bịa ra.
+
+## Một số hạng "độ dày" chạy ngược dấu trông y hệt một hiệu ứng đang bị chỉnh sai (06/08/2026)
+
+**Triệu chứng.** Khói của smoke trail mờ, và mờ theo một kiểu rất riêng: đặc
+thành hai vệt dọc HAI BÊN thân ống, giữa rỗng. Người dùng nhìn ra trước
+("khói nó tập trung ở 2 bên, mật độ thưa"); trước đó nó bị đọc nhầm là "cần
+tăng alpha", và mọi lần tăng alpha đều không cứu được phần giữa.
+
+**Nguyên nhân.** `core/trails/shaders/trail_volume.fs` tính
+
+    depth = pow(1.0 - |N·V|, 2)
+
+Đó là công thức **fresnel / vỏ phát sáng ở viền** (bong bóng xà phòng), không
+phải công thức khối khí. Với khối khí, thứ cần tính là **ĐỘ DÀY QUANG HỌC**:
+đoạn tia nằm trong khối dài nhất khi xuyên qua TÂM và ngắn dần ra mép — và
+với mặt trụ, chiều dài đó tỉ lệ đúng với `|N·V|`. Hai công thức không phải hai
+cách chỉnh của một hình, chúng là hai hình **ngược nhau**.
+
+Đo được (`core/tests/volume_optical_depth_test.c`): bản cũ cho alpha **đúng
+bằng 0.000 tại tâm thân ống** và đỉnh 0.318 tại 0.9 bán kính — một cái vành
+rỗng ruột, khớp từng chi tiết với ảnh chụp. Sửa dấu xong, độ đục trung bình
+dọc thân tăng **8.02 lần**, nên hằng số density 1.75 cũ trở thành cháy trắng
+(đã chuyển thành tunable `vol_density`, mặc định 0.60).
+
+**Vì sao nó sống sót lâu đến vậy, và đây mới là bài học.**
+`core/tests/silhouette_test.c` đo ĐÚNG dạng `|N·V|^p` ngay từ đầu
+(`EDGE_NDOTV = powf(fabsf(dot(N,V)), p)`) và chứng minh `p >= 2` + cull làm
+tan được viền. Nhưng nó kết thúc bằng một ghi chú thành thật: **"NOT PINNED TO
+THE SHADER"** — các kết luận của nó từng được áp vào shader rồi **bị revert**,
+vì những quan sát đi kèm lần đó lấy từ debug view chỉ vẽ các fragment đã lọt
+qua hai `discard`. Test đúng, phép đo đúng, kết luận đúng — và vì không khoá
+vào shader, shader trôi ngược dấu mà suite vẫn xanh suốt nhiều tháng.
+
+**Luật.**
+1. Một test đo được điều đúng nhưng **không khoá vào chỗ triển khai** thì
+   không bảo vệ được gì. Nếu có lý do chính đáng để chưa khoá (như ở đây: số
+   đọc bị nhiễm), hãy ghi rõ **điều kiện gì sẽ cho phép khoá** — ghi chú ở
+   cuối `silhouette_test.c` làm đúng vậy, và đó là thứ khiến lần này biết
+   ngay là đủ điều kiện: một ảnh chụp thẳng từ app, không qua debug view,
+   không qua discard nào.
+2. Khi một hiệu ứng "mờ" hoặc "nhạt", hãy nhìn **HÌNH DẠNG của cái mờ** trước
+   khi vặn cường độ. Mờ đều là vấn đề cường độ; mờ ở giữa mà đặc ở rìa (hay
+   ngược lại) là một số hạng sai dấu, và không cường độ nào sửa được — nó
+   nhân cả hai vế như nhau. Ở đây chính người dùng đọc ra hình dạng đó trong
+   khi mấy vòng trước đó chỉ hỏi "đậm hơn hay nhạt hơn".
+3. Đặt tên biến theo ĐẠI LƯỢNG VẬT LÝ (`opticalDepth`), đừng theo vai trò
+   trong công thức (`edge`, `depth`): một biến tên `depth` mang giá trị lớn
+   nhất ở RÌA thì không ai đọc lướt mà thấy sai, còn `opticalDepth` lớn nhất
+   ở rìa thì sai hiển nhiên ngay trên một dòng.
+
+**HẬU KỲ, cùng ngày — và đây mới là phần đắt nhất.** Áp bản sửa cho CẢ nhóm
+volume trail lập tức làm CỘT KHÓI hồi quy: "không tự nhiên như trước, khói bị
+dồn qua bên trái". Cột đã được chỉnh qua nhiều vòng QUANH công thức cũ, và
+công thức cũ đối xứng theo cấu trúc (nó sáng ở CẢ HAI mép, nên mọi bất đối
+xứng của pháp tuyến đều bị hai mép che). Công thức mới dồn độ đục vào MỘT
+vùng duy nhất (nơi N ∥ V), nên đúng những bất đối xứng đó lộ ra thành "lệch
+một bên" — cùng một hình học, cùng một lỗi tiềm ẩn, chỉ khác cái đèn soi.
+
+Bài học: **một bản sửa đúng về vật lý vẫn là hồi quy nếu nó lấy mất cái nhìn
+người dùng đã duyệt.** Khi một công thức dùng chung nhiều hiệu ứng và chỉ MỘT
+hiệu ứng đang kêu, đừng thay thế — hãy làm CÔNG TẮC, mặc định giữ nguyên hiện
+trạng (`u_volMask.x`: 0 = dạng cũ, 1 = độ dày quang học), và để hiệu ứng cần
+nó bật lên. Chi phí là một nhánh `mix()`; chi phí của cách kia là bắt người
+dùng nhận một hồi quy trên thứ họ không hề hỏi. Và nếu ô uniform cũ còn trống
+thì tái dùng nó thay vì nới mảng — tránh luôn landmine layout UBO của rlvk.

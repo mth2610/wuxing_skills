@@ -61,6 +61,8 @@ static SurfaceFlowLocs s_volFlowLocs;
 /* Debug view for the volume tube — see trail_volume.fs. Live in tuning.cfg so a
  * term can be inspected without a rebuild. */
 static float s_volDebug = 0.0f;
+static float s_volDensity = 1.75f;   /* u_volMask.w — xem chỗ đăng ký tunable */
+static float s_volDepthMode = 0.0f;  /* u_volMask.x — 0 = viền cũ, 1 = độ dày */
 /* Set only while DrawTrailEntitiesLayer owns the draw; layered helpers use it
  * to keep alpha body to the one textured material layer. */
 static int s_drawLayerFilter = -1;
@@ -326,6 +328,26 @@ static void EnsureTrailVolumeShader(void)
      * that constant changes anything on screen. That is indistinguishable from
      * "the value is wrong" unless the location is printed. */
     Tuning_RegisterFloat("volume_debug", &s_volDebug, 0.0f);
+    /* u_volMask.w — ĐỘ ĐẬM CHUNG của mọi volume trail (cột khói, smoke trail,
+     * volume trail...). Thành tunable 06/08/2026, cùng lúc với bản sửa dấu
+     * của số hạng độ dày quang học trong trail_volume.fs: bản sửa đó nâng độ
+     * đục trung bình dọc thân lên 8.02 lần (đo ở
+     * core/tests/volume_optical_depth_test.c), nên 1.75 chỉ đúng cho
+     * `vol_depth_mode = 0`. Hai knob ĐI CẶP:
+     *     mode 0 (mặc định, dạng viền cũ)      -> density ~1.75
+     *     mode 1 (độ dày quang học đúng vật lý) -> density ~0.60
+     *
+     * LÀ TUNABLE chứ không phải hằng số mới, vì con số đúng là chuyện THẨM
+     * MỸ và nó dùng chung cho nhiều hiệu ứng: quét nó trong tuning.cfg lúc
+     * game đang chạy rẻ hơn nhiều so với đoán rồi build lại (core/CLAUDE.md
+     * §5). */
+    Tuning_RegisterFloat("vol_density", &s_volDensity, 1.75f);
+    /* u_volMask.x — DẠNG của số hạng độ dày. Mặc định 0 = giữ NGUYÊN hình
+     * cột khói đã có từ trước, vì đổi nó sang dạng đúng vật lý (mode 1) làm
+     * cột đọc ra "không tự nhiên như trước" dù smoke trail thì cần đúng dạng
+     * đó. Một bản sửa đúng về vật lý vẫn là hồi quy nếu nó lấy mất cái nhìn
+     * người dùng đã ưng — nên nó là công tắc, không phải bản thay thế. */
+    Tuning_RegisterFloat("vol_depth_mode", &s_volDepthMode, 0.0f);
     s_volFlowLocs = SurfaceFlow_CacheLocations(s_volumeShader);
 
     /* Reproduces the OLD u_volPan/u_volMask.x constants exactly —
@@ -2450,7 +2472,11 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
             // work regardless of power — a grazing ray crosses an unbounded
             // number of two-sided facets. Both fixes are now in: this power,
             // and trail_volume.fs's `if (facing < 0.0) discard;`.
-            float mask[4] = {1.63f, 2.0f, 0.34f, 1.75f};
+            /* .x = dạng số hạng độ dày (0 = viền cũ, 1 = độ dày quang học),
+             * .w = độ đậm chung. Cả hai là tunable — xem chỗ đăng ký. Hai ô
+             * này ĐI CẶP: mode 1 làm độ đục trung bình tăng ~8 lần, nên đổi
+             * một cái mà quên cái kia là cháy trắng hoặc mờ tịt. */
+            float mask[4] = {s_volDepthMode, 2.0f, 0.34f, s_volDensity};
             if (maskLoc >= 0) SetShaderValue(fullShader, maskLoc, mask, SHADER_UNIFORM_VEC4);
             int dbgLoc = GetShaderLocation(fullShader, "u_volDebug");
             if (dbgLoc >= 0)

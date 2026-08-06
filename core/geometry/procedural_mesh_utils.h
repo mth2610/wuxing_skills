@@ -305,6 +305,15 @@ typedef struct
   float ringRadius[TUBE_MESH_MAX_SEGMENTS + 1];
   int segments;
   int radialSegs;
+  /* Bản sao của PMTubeConfig.anchorAtTail, do BuildAlongPath ghi vào.
+   *
+   * NẰM TRONG MESH, KHÔNG PHẢI THAM SỐ CỦA HÀM VẼ — 06/08/2026, và đó là cả
+   * bài học. Cùng một cờ đã bị quên ở hai chỗ khác nhau trong hai ngày
+   * (đường bao deform, rồi mặt nạ alpha ở PMTube_DrawFaded), mỗi lần vì nó
+   * là thứ người gọi PHẢI NHỚ truyền đi tiếp. Gắn nó vào chính cái mesh thì
+   * không ai quên được nữa: hàm vẽ nhận mesh, và mesh tự khai đầu phát của
+   * nó nằm ở đâu. Xem doc `anchorAtTail` ở PMTubeConfig phía trên. */
+  bool anchorAtTail;
 } PMTubeMesh;
 
 PMTubeConfig PMTube_DefaultConfig(void);

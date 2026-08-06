@@ -185,6 +185,8 @@ void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints,
     if (radialSegs > TUBE_MESH_MAX_RADIAL) radialSegs = TUBE_MESH_MAX_RADIAL;
     out->segments = segments;
     out->radialSegs = radialSegs;
+    /* Cái neo đi THEO mesh — xem doc field ở procedural_mesh_utils.h. */
+    out->anchorAtTail = cfg->anchorAtTail;
 
     /* KHOẢNG CÁCH GIỮA HAI VÀNH — cái thước để chặn biến dạng. Một trường noise
      * không biết gì về lưới nó đang bẻ: nó trả về [-1,1] dù vành cách nhau 5 cm
@@ -523,10 +525,29 @@ void PMTube_DrawFaded(const PMTubeMesh *data, float uvLengthScale, float uvOffse
         float t2 = (float)(i + 1) / (float)segments;
         float v1 = t1 * uvLengthScale + uvOffset;
         float v2 = t2 * uvLengthScale + uvOffset;
-        float m1 = PMTubeSmoothStep(0.0f, fadeInEnd, t1) *
-                   (1.0f - PMTubeSmoothStep(fadeOutStart, 1.0f, t1));
-        float m2 = PMTubeSmoothStep(0.0f, fadeInEnd, t2) *
-                   (1.0f - PMTubeSmoothStep(fadeOutStart, 1.0f, t2));
+        /* MẶT NẠ CŨNG NEO VÀO NGUỒN PHÁT — sửa 06/08/2026, cái neo THỨ TƯ
+         * của đúng một sự thật (ba cái kia: đường bao bán kính, envelope
+         * deform, uốn trục — xem doc `anchorAtTail`).
+         *
+         * LẬT TOẠ ĐỘ chứ không hoán vị hai tham số ở chỗ gọi, dù hai cách
+         * cho ra ĐÚNG CÙNG MỘT SỐ (bản nháp đầu của test khẳng định ngược
+         * lại và sai — smoothstep(0,a,1-t) == 1-smoothstep(1-a,1,t)). Lý do
+         * là NGỮ NGHĨA, không phải số học: fadeInEnd nghĩa là "chân dính vào
+         * nguồn phát, tắt gấp", fadeOutStart nghĩa là "đầu già tan chậm".
+         * Đẩy 1-x qua chúng ở chỗ gọi thì cả hai cái TÊN nói dối, trong một
+         * hàm mà cột khói cũng dùng chung và cột thì không lật. Toạ độ nằm
+         * trong hàm được gọi, đúng chỗ đã biết cái neo.
+         *
+         * Với trail neo đuôi, nguồn phát ở t=1: trước bản sửa, 28% chiều dài
+         * PHÍA NGUỒN (t=0.72..1) bị "ngọn tan" kéo alpha về 0, tức khói vừa
+         * phát ra thì trong suốt, còn đuôi già nhất lại đặc — ngược hẳn. Đo
+         * ở core/tests/pm_tube_fade_anchor_test.c. */
+        float f1 = data->anchorAtTail ? (1.0f - t1) : t1;
+        float f2 = data->anchorAtTail ? (1.0f - t2) : t2;
+        float m1 = PMTubeSmoothStep(0.0f, fadeInEnd, f1) *
+                   (1.0f - PMTubeSmoothStep(fadeOutStart, 1.0f, f1));
+        float m2 = PMTubeSmoothStep(0.0f, fadeInEnd, f2) *
+                   (1.0f - PMTubeSmoothStep(fadeOutStart, 1.0f, f2));
         unsigned char a1 = (unsigned char)((float)base.a * m1);
         unsigned char a2 = (unsigned char)((float)base.a * m2);
 
