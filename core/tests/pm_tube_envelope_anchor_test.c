@@ -268,10 +268,13 @@ static void Test_MirrorMatchesSource(void) {
   CHECK(FileHas(st, "c->tube.anchorAtTail = true;"),
         "the smoke trail — the only caller that flips the anchor — is on the "
         "new field");
+  CHECK(FileHas(st, "c->tube.centerlineAmp = c->radius * 1.6f;"),
+        "the moving smoke trail keeps SmokeColumn's ring-scale billow, rather "
+        "than reducing the volume to a straight textured sweep");
 
   // The shipped numbers this file's arithmetic depends on.
-  CHECK(FileHas(st, "if (funnel) { c->tube.radiusTailFrac = 0.12f; c->tube.radiusPow = 1.7f; }"),
-        "the funnel taper numbers the measurement above assumes are current");
+  CHECK(FileHas(st, "if (funnel) { c->tube.radiusTailFrac = 0.08f; c->tube.radiusPow = 1.45f; }"),
+        "the moving funnel has a near-point mouth without disabling its taper");
   CHECK(FileHas(st, ".latticeMul = 1.0f, .latticeAroundMul = 1.0f, .env = UV_ENV_HEAD_WELD, .envStart = 0.0f, .envEnd = 0.22f,"),
         "layer 0's envelope (HEAD_WELD, 0..0.22) is current");
   CHECK(FileHas(st, ".env = UV_ENV_HEAD_WELD_SQ, .envStart = 0.0f, .envEnd = 0.35f,"),

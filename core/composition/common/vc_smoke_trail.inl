@@ -8,8 +8,8 @@
 // stationary column and a moving trail should look like the same material
 // behaving two different ways, not two different materials.
 //
-// THE TAPER NUMBERS ARE ALSO A VERBATIM COPY (radiusTailFrac/radiusPow,
-// 0.12/1.7 funnel, 0.55/1.4 cylinder) — what differs from the column is
+// THE TAPER DIRECTION matches the column, but the moving wake has a bounded
+// minimum radius — what differs from the column is
 // which physical end they anchor to, via `tube.anchorAtTail`
 // (core/geometry/procedural_mesh_utils.h, wired in pm_tube.inl). The column
 // is small at its fixed source and widens toward the far end; this file
@@ -18,8 +18,8 @@
 // emitter. trail_system.c's tube parametrisation for a follower runs the
 // OPPOSITE way from the column's static path (t=1 is the column's far end
 // but the trail's current/leading end — see the derivation at
-// SmokeTrail_BuildShape), so reaching the same visual intent with the SAME
-// numbers needs the anchor flipped, not the numbers changed. An earlier
+// SmokeTrail_BuildShape), so reaching the same visual intent needs the anchor
+// flipped. An earlier
 // version of this file tried to reach the same shape by pushing
 // radiusTailFrac past 1 instead (bending a parameter documented as [0,1] to
 // fight the formula's fixed anchor) and it ballooned the back end to
@@ -163,9 +163,9 @@ static void SmokeTrail_ConfigureLayers(VC_SmokeTrail *c)
 // pinned-at-headR point from t=1 to t=0. With it set, headR — the radius the
 // CALLER asked for — lands on the BACK (t=0, correct: that is the "full"
 // dispersed size), and the FRONT (t=1) becomes `tailFrac x headR`, with
-// tailFrac staying in its documented [0,1] domain, same 0.12/0.55 the
-// column already uses. No number here differs from the column's; only the
-// anchor does.
+// tailFrac staying in its documented [0,1] domain. The moving wake uses a
+// larger minimum fraction than the stationary column so it cannot become a
+// one-second needle; only the anchor and this minimum-width constraint differ.
 static void SmokeTrail_BuildShape(VC_SmokeTrail *c, bool funnel)
 {
     c->tube = PMTube_DefaultConfig();
@@ -174,11 +174,12 @@ static void SmokeTrail_BuildShape(VC_SmokeTrail *c, bool funnel)
     c->tube.deform1Amp = 0.0f;
     c->tube.deform2Amp = 0.0f;
 
-    // Same numbers as vc_smoke_column.inl's SmokeColumn_BuildShape,
-    // unchanged — see the header comment above for why only the anchor,
-    // not the numbers, needs to differ from the column.
-    if (funnel) { c->tube.radiusTailFrac = 0.12f; c->tube.radiusPow = 1.7f; }
-    else        { c->tube.radiusTailFrac = 0.55f; c->tube.radiusPow = 1.4f; }
+    /* Keep a near-point mouth for the funnel, but use the larger fixture
+     * radius and ring billow below so the rest of the moving wake remains a
+     * volume rather than a thin sheet. Zero is not valid here: pm_tube uses
+     * it as the sentinel for “no taper”. */
+    if (funnel) { c->tube.radiusTailFrac = 0.08f; c->tube.radiusPow = 1.45f; }
+    else        { c->tube.radiusTailFrac = 0.70f; c->tube.radiusPow = 1.15f; }
     // THE re-anchor. headR (the caller's requested radius) lands on the
     // BACK (t=0) instead of pm_tube.inl's default FRONT (t=1) — see the
     // header comment above.
@@ -192,7 +193,7 @@ static void SmokeTrail_BuildShape(VC_SmokeTrail *c, bool funnel)
     // the two anchors pointing at OPPOSITE ends: the churn envelope stayed
     // welded at t=0 — which, after the radius flip, is the FAT back — so
     // the widest part of the tube carried zero churn, while full churn
-    // (env=1) landed at t=1, the 0.12x-radius front tip where there is
+    // (env=1) landed at t=1, the narrow front tip where there is
     // nothing to bulge. Product capsuleCurve x env — the absolute bulge
     // actually visible — peaked at 0.197 against the column's 1.000 with
     // the identical layer numbers. That is the "still flat" symptom, and no
@@ -201,9 +202,8 @@ static void SmokeTrail_BuildShape(VC_SmokeTrail *c, bool funnel)
     c->tube.anchorAtTail = true;
     c->tube.useTransportFrame = true;
 
-    // VERTEX DEFORM RE-ENABLED, 05/08/2026 — after 4 prior visual-only patch
-    // rounds on THIS file all failed (centerlineAmp bend -> "dragged decal";
-    // noiseWavelength -> "chaotic, doesn't blend"; hard offset clamp ->
+    // VERTEX DEFORM RE-ENABLED, 05/08/2026 — after prior visual-only patch
+    // rounds on THIS file failed (noiseWavelength -> "chaotic, doesn't blend"; hard offset clamp ->
     // "stair-step, squeezed"; soft-knee clamp -> same category, never
     // confirmed), the mechanism was found to have a real, numerically-
     // provable defect: core/geometry/pm_tube.inl's offset clamp based its
@@ -221,8 +221,9 @@ static void SmokeTrail_BuildShape(VC_SmokeTrail *c, bool funnel)
     // timeScale, lattice, both MeshDeform_AddLayer calls unchanged. Retuning
     // amplitude/frequency would re-conflate this fix with an unverified
     // second variable, exactly what went wrong across the 4 prior rounds.
-    // centerlineAmp (the axis bend implicated in patch #1) is still NOT
-    // re-added — a separate concern, out of scope here.
+    // The centreline bend is restored below from SmokeColumn. It shifts whole
+    // rings, so it is the volume-forming motion that surface churn alone
+    // cannot provide.
     //
     // noiseWavelength/noiseOffsetScrollMul ARE now wired, 05/08/2026 — after
     // the radius fix above was confirmed (visually, by the user, matching
@@ -274,7 +275,11 @@ static void SmokeTrail_BuildShape(VC_SmokeTrail *c, bool funnel)
         .env = UV_ENV_HEAD_WELD_SQ, .envStart = 0.0f, .envEnd = 0.35f,
     });
     c->tube.noiseField = &c->churn;
-    c->tube.centerlineAmp = 0.0f; // NOT re-added — see block comment above
+    // Same centreline displacement as SmokeColumn. Surface churn only changes
+    // the skin of a straight sweep; this moves whole rings and is the large-
+    // scale bend that makes the column read as a volume. The follower path
+    // supplies the travelling direction, while this adds the column's billow.
+    c->tube.centerlineAmp = c->radius * 1.6f;
     c->tube.noiseWavelength = 5.0f;      // column's own height — see above
     c->tube.noiseOffsetScrollMul = 0.0f; // no fake clock-drift on a real mover
 }

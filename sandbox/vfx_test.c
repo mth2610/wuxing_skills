@@ -852,7 +852,11 @@ void VFXTest_Draw3D(void)
                   s_vfxFixtureLastTime[25] = s_meshTime;
                   s_vfxFixtureXf[25] = MatrixTranslate(fixturePos.x, fixturePos.y, fixturePos.z);
                   if (s_vfxFixtureHandle[25] < 0)
-                      s_vfxFixtureHandle[25] = VFX_ComposeSmokeTrail(&s_vfxFixtureXf[25], VC_MAT_METAL, 0.18f, 1.0f, VFX_COLUMN_SMOKE, true);
+                      // Match fixture 23's requested radius: this is the
+                      // moving counterpart of SmokeColumn, so judging it at
+                      // one third of the column's diameter turns the long
+                      // one-second wake into a visually thin filament.
+                      s_vfxFixtureHandle[25] = VFX_ComposeSmokeTrail(&s_vfxFixtureXf[25], VC_MAT_METAL, 0.55f, 1.0f, VFX_COLUMN_SMOKE, true);
                   break;
               }
               case 27:
