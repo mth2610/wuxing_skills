@@ -20,7 +20,7 @@
 |---|---|---|
 | `vs_header.glsl` | Every `.vs` | Attributes, uniforms, varyings, `VS_FinalOutput()` |
 | `fs_header.glsl` | Every `.fs` | Incoming varyings, environment uniforms, `finalColor` |
-| `lighting.glsl` | `.fs` needing lighting | `perturbNormal`, `calcFresnel`, `calcSpecular`, `calcDiffuse` |
+| `lighting.glsl` | `.fs` needing lighting | `perturbNormal`, one-/two-sided Fresnel, optical-depth body/rim, specular, diffuse |
 | `noise.glsl` | `.vs` / `.fs` needing noise | `hash2`, `hash3`, `vnoise`, `fbm2`, `fbm2N` |
 | `fx.glsl` | `.fs` needing effects | `dissolveCalc`, `flowBlend`, `emissiveMask`, edge-erosion macros |
 | `triplanar.glsl` | `.fs` for meshes without stable UVs | `triplanarWeights`, `triplanarNoise`, `triplanarSample` |
@@ -64,7 +64,7 @@ Fragment Shader — 3D mesh needing full lighting:
 #version 330
 #include "core/shaders/common/fs_header.glsl"
 #include "core/shaders/common/noise.glsl"    // if hash/fbm needed
-#include "core/shaders/common/lighting.glsl"  // perturbNormal, calcFresnel, calcSpecular, calcDiffuse
+#include "core/shaders/common/lighting.glsl"  // normals, Fresnel, optical depth, specular, diffuse
 #include "core/shaders/common/fx.glsl"        // dissolveCalc, flowBlend, emissiveMask
 ```
 
@@ -135,6 +135,10 @@ Provided automatically by the common headers — **do not redeclare** any of the
 ```glsl
 vec3  perturbNormal(vec3 baseNormal, vec2 heightDelta, float strength);
 float calcFresnel(vec3 normal, vec3 viewDir, float power);
+float calcTwoSidedFresnel(vec3 normal, vec3 viewDir, float power);
+float calcOpticalDepthBody(float absNdotV, float power);
+float calcOpticalDepthRim(float absNdotV, float power);
+float combineOpticalDepth(float body, float rim, float bodyWeight, float rimWeight);
 float calcSpecular(vec3 normal, vec3 lightDir, vec3 viewDir, float shininess);
 float calcDiffuse(vec3 normal, vec3 lightDir, float ambient);
 ```
@@ -143,7 +147,10 @@ float calcDiffuse(vec3 normal, vec3 lightDir, float ambient);
   - `baseNormal`: the mesh normal to perturb — typically `fragNormal` (already world-space, normalized).
   - `heightDelta`: `vec2(h(u-eps) - h(u+eps), h(v-eps) - h(v+eps))` — the **gradient** of your own height function, sampled at `±eps` around the current `fragTexCoord` in U and V respectively. The skill must implement its own height function (e.g. `tube.fs`'s `getIrregularity()`) and **must reuse the exact same formula as the vertex shader's displacement function**, or lighting and physical displacement will visually mismatch.
   - `strength`: deformation intensity, **typical range 0.3 – 0.8**.
-* **`calcFresnel(normal, viewDir, power)`** — Schlick-approximated rim term, returns `[0..1]` (`0` = surface viewed face-on, `1` = viewed edge-on). **Typical power: 2.0 – 5.0.**
+* **`calcFresnel(normal, viewDir, power)`** — one-sided, Schlick-approximated rim term for a closed surface with outward normals and back faces culled. Returns `[0..1]` (`0` = surface viewed face-on, `1` = viewed edge-on). **Typical power: 2.0 – 5.0.**
+* **`calcTwoSidedFresnel(normal, viewDir, power)`** — winding-independent rim for a genuinely two-sided sheet; uses `abs(N·V)`. It does not discard back-facing fragments.
+* **`calcOpticalDepthBody(absNdotV, power)`** / **`calcOpticalDepthRim(absNdotV, power)`** — volume density terms from `abs(N·V)`: the body is strongest face-on; the rim is strongest at the silhouette. They are not interchangeable with Fresnel.
+* **`combineOpticalDepth(body, rim, bodyWeight, rimWeight)`** — adds independently weighted body density and rim scattering, then clamps. Use this instead of interpolating the opposing terms.
 * **`calcSpecular(normal, lightDir, viewDir, shininess)`** — Blinn-Phong specular highlight, returns `[0..1]` — caller scales by intensity (e.g. `* 5.0`). **Typical shininess: 32 – 512.**
 * **`calcDiffuse(normal, lightDir, ambient)`** — Lambertian diffuse with an ambient floor, returns `[ambient..1.0]`.
   - `ambient`: minimum background light, typically `0.10 – 0.25`.

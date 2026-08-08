@@ -202,9 +202,11 @@ static void Test_MirrorMatchesSource(void) {
   // ADDED, not mixed. A binary switch gave two unusable looks; mix() between
   // two OPPOSING terms is flat in the middle, so the useful region — body
   // thickness WITH a rim accent — was unreachable by construction.
-  CHECK(FileHas(fs, "float body = pow(clamp(d, 0.0, 1.0), max(u_volMask.y, 0.001));") &&
-            FileHas(fs, "float rimTerm = pow(clamp(1.0 - d, 0.0, 1.0), max(u_volMask.y, 0.001));") &&
-            FileHas(fs, "float thickBase = clamp(u_volMask.x * body + u_volRim * rimTerm, 0.0, 1.0);"),
+  CHECK(FileHas(fs, "float body = calcOpticalDepthBody(d, u_volMask.y);") &&
+            FileHas(fs, "float rimTerm = calcOpticalDepthRim(d, u_volMask.y);") &&
+            FileHas(fs, "float thickBase = combineOpticalDepth(body, rimTerm, u_volMask.x, u_volRim);") &&
+            FileHas("core/shaders/common/lighting.glsl", "float calcOpticalDepthBody(float absNdotV, float power)") &&
+            FileHas("core/shaders/common/lighting.glsl", "float calcOpticalDepthRim(float absNdotV, float power)"),
         "the body term (|N.V|^p, measured above) and the rim term are summed "
         "with independent gains, so 'thick core AND rim accent' is reachable");
   CHECK(!FileHas(fs, "mix(1.0 - d, d,"),
@@ -215,7 +217,7 @@ static void Test_MirrorMatchesSource(void) {
         "both gains are live tunables, defaulting to body 0 / rim 1 — which "
         "is bit-for-bit the pre-06/08/2026 formula, so nothing moves until "
         "someone deliberately turns it");
-  CHECK(FileHas(fs, "float d = abs(dot(N, V));") &&
+  CHECK(FileHas(fs, "float d = clamp(abs(dot(N, V)), 0.0, 1.0);") &&
             FileHas(fs, "float rim = smoothstep(0.0, max(u_volMask.z, 0.001), d);"),
         "d is still |N.V| and rim still softens the silhouette — only the "
         "thickness term's direction changed");

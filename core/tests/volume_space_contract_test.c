@@ -185,7 +185,7 @@ static void Test_TheTwoStagesAgree(void) {
             FileHas(FS, "float facing = dot(Nattr, V);"),
         "the cull still reads the attribute normal against V — if either side "
         "changes space, this is where the silhouette breaks");
-  CHECK(FileHas(FS, "float d = abs(dot(N, V));"),
+  CHECK(FileHas(FS, "float d = clamp(abs(dot(N, V)), 0.0, 1.0);"),
         "the shading term is still |N.V| off the same V");
 
   // The tripwire that produced the numbers in the first place. If this

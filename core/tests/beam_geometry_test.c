@@ -230,7 +230,7 @@ static void Test_MirrorMatchesSource(void) {
 
   // The shipped volume constants this file mirrors.
   CHECK(FileHas(fs, "float rim = smoothstep(0.0, max(u_volMask.z, 0.001), d);") &&
-            FileHas(fs, "float d = abs(dot(N, V));"),
+            FileHas(fs, "float d = clamp(abs(dot(N, V)), 0.0, 1.0);"),
         "the |N.V| weighting this file models is still what the shader does");
 }
 
@@ -358,7 +358,7 @@ static void Test_ProbeStripsEverythingThatMovesTheEdge(void) {
   // below-discard view still composited both walls, defeating the reason
   // mode 12 was added at all.
   CHECK(FileHas("core/trails/shaders/trail_volume.fs", "float facing = dot(Nattr, V);") &&
-            FileHas("core/trails/shaders/trail_volume.fs", "float d = abs(dot(N, V));"),
+            FileHas("core/trails/shaders/trail_volume.fs", "float d = clamp(abs(dot(N, V)), 0.0, 1.0);"),
         "cull reads the ATTRIBUTE normal (whose outward sign pm_tube.inl "
         "enforces) while shading reads the selected one — one vector cannot "
         "serve both, because forcing its sign silently disables the cull");

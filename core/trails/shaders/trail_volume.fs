@@ -1,5 +1,6 @@
 #version 330
 #include "core/shaders/common/fs_header.glsl"
+#include "core/shaders/common/lighting.glsl"
 #include "core/shaders/common/fx.glsl"
 #include "core/uv/shaders/uv_field.glsl"
 
@@ -261,7 +262,7 @@ void main()
     vec3 N = (u_volNormalSrc > 0.5)
                  ? normalize(cross(dFdx(fragPosition), dFdy(fragPosition)))
                  : Nattr;
-    float d = abs(dot(N, V));
+    float d = clamp(abs(dot(N, V)), 0.0, 1.0);
     // `d`, NOT `1.0 - d` — sửa 06/08/2026, và cái dấu đó là cả con bọ.
     //
     // Đây là ĐỘ DÀY QUANG HỌC, không phải fresnel. Với một hình trụ nhìn từ
@@ -309,9 +310,9 @@ void main()
     // lại chính xác công thức cũ pow(1 - d, p). Đó là mặc định.
     //   mode 1 / rim 0    -> khối đặc thuần, không viền (cái "như sáp")
     //   mode 1 / rim ~0.4 -> khối CÓ viền, vùng mà công tắc nhị phân bỏ trống
-    float body = pow(clamp(d, 0.0, 1.0), max(u_volMask.y, 0.001));
-    float rimTerm = pow(clamp(1.0 - d, 0.0, 1.0), max(u_volMask.y, 0.001));
-    float thickBase = clamp(u_volMask.x * body + u_volRim * rimTerm, 0.0, 1.0);
+    float body = calcOpticalDepthBody(d, u_volMask.y);
+    float rimTerm = calcOpticalDepthRim(d, u_volMask.y);
+    float thickBase = combineOpticalDepth(body, rimTerm, u_volMask.x, u_volRim);
     float depth = thickBase;
     // rim vẫn giữ: cùng chiều tăng với depth nên không đục lỗ ở giữa, chỉ
     // làm mềm thêm đúng vùng sát viền. u_volMask.z vẫn là "độ mềm viền".

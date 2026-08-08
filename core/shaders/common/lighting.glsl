@@ -4,7 +4,9 @@
 //
 // Cung cấp:
 //   perturbNormal()  — Normal perturbation qua gradient height field
-//   calcFresnel()    — Fresnel rim effect (Schlick)
+//   calcFresnel()    — one-sided surface Fresnel rim
+//   calcTwoSidedFresnel() — winding-independent rim for two-sided sheets
+//   calcOpticalDepth*() — volume body/rim terms from |N.V|
 //   calcSpecular()   — Specular Blinn-Phong
 //   calcDiffuse()    — Lambertian diffuse với ambient floor
 //
@@ -35,11 +37,35 @@ vec3 perturbNormal(vec3 baseNormal, vec2 heightDelta, float strength) {
                      + (tangent * heightDelta.x + bitangent * heightDelta.y) * strength);
 }
 
-// Fresnel rim effect — Schlick approximation.
+// One-sided Fresnel rim for closed, outward-facing surfaces. Back faces must
+// be culled by the caller; treating them as a rim would light the whole back.
 // Trả về [0..1]: 0 = nhìn thẳng mặt, 1 = nhìn từ cạnh.
 //   power — cao hơn → viền mỏng & sắc hơn (thường 2.0 – 5.0)
 float calcFresnel(vec3 normal, vec3 viewDir, float power) {
     return pow(1.0 - max(dot(normal, viewDir), 0.0), power);
+}
+
+// Winding-independent Fresnel for a genuinely two-sided surface. This only
+// defines the scalar edge term; it deliberately does NOT decide whether a
+// back-facing fragment should be discarded.
+float calcTwoSidedFresnel(vec3 normal, vec3 viewDir, float power) {
+    float absNdotV = clamp(abs(dot(normal, viewDir)), 0.0, 1.0);
+    return pow(1.0 - absNdotV, power);
+}
+
+// Optical depth is not Fresnel: a convex volume is thickest face-on and
+// thinnest at its silhouette. Callers retain control over gains because body
+// density and rim scattering are independent artistic parameters.
+float calcOpticalDepthBody(float absNdotV, float power) {
+    return pow(clamp(absNdotV, 0.0, 1.0), max(power, 0.001));
+}
+
+float calcOpticalDepthRim(float absNdotV, float power) {
+    return pow(clamp(1.0 - absNdotV, 0.0, 1.0), max(power, 0.001));
+}
+
+float combineOpticalDepth(float body, float rim, float bodyWeight, float rimWeight) {
+    return clamp(bodyWeight * body + rimWeight * rim, 0.0, 1.0);
 }
 
 // Specular Blinn-Phong.
