@@ -10,7 +10,7 @@
 ### `#include` Is an Engine Preprocessing Step, Not Native GLSL
 
 > [!IMPORTANT]
-> GLSL has no native `#include` directive. The `#include "core/shaders/common/..."` lines below are resolved by **`shader_preprocessor.h/.c`** (`ShaderPreprocessor_Load()`), which is wired into `ResourceManager_LoadShader()`. It recursively reads the file, textually substitutes every `#include "..."` line with the target file's contents (up to `MAX_INCLUDE_DEPTH`), and only then hands the fully-expanded source to `LoadShaderFromMemory()`. The resulting buffer is heap-allocated with `RL_MALLOC`/freed with `RL_FREE` internally — skill code never touches this buffer and never calls `ShaderPreprocessor_Load()` directly; it is invoked automatically by `ResourceManager_LoadShader()`.
+> GLSL has no native `#include` directive. The `#include "core/shaders/common/..."` lines below are resolved by **`shader_preprocessor.h/.c`** (`ShaderPreprocessor_Load()`), which is wired into `ResourceManager_LoadShader()`. It recursively reads the file, textually substitutes every `#include "..."` line with the target file's contents (up to `MAX_INCLUDE_DEPTH`), and only then hands the fully-expanded source to `LoadShaderFromMemory()`. The expansion buffer is 128 KiB so composed volume shaders can safely combine shared headers, UV helpers, and FX helpers. It is heap-allocated with `RL_MALLOC`/freed with `RL_FREE` internally — skill code never touches this buffer and never calls `ShaderPreprocessor_Load()` directly; it is invoked automatically by `ResourceManager_LoadShader()`.
 >
 > Practical implication: a raw `glCompileShader` call (or any tool that lints `.vs`/`.fs` files standalone, e.g. an online GLSL validator) will fail on the `#include` line because it isn't valid core GLSL — this is expected and not a project bug. Only `ResourceManager_LoadShader()` produces compilable output.
 
@@ -22,7 +22,7 @@
 | `fs_header.glsl` | Every `.fs` | Incoming varyings, environment uniforms, `finalColor` |
 | `lighting.glsl` | `.fs` needing lighting | `perturbNormal`, `calcFresnel`, `calcSpecular`, `calcDiffuse` |
 | `noise.glsl` | `.vs` / `.fs` needing noise | `hash2`, `hash3`, `vnoise`, `fbm2`, `fbm2N` |
-| `fx.glsl` | `.fs` needing effects | `dissolveCalc`, `flowBlend`, `emissiveMask` |
+| `fx.glsl` | `.fs` needing effects | `dissolveCalc`, `flowBlend`, `emissiveMask`, edge-erosion macros |
 | `triplanar.glsl` | `.fs` for meshes without stable UVs | `triplanarWeights`, `triplanarNoise`, `triplanarSample` |
 
 **Include rules:**
@@ -186,6 +186,8 @@ vec2 warpedUV = uv + (distort - 0.5) * 0.008;
 float dissolveCalc(float noiseVal, float dissolve, float edgeWidth, out float edgeFactor);
 float flowBlend(sampler2D tex, vec2 uv, vec2 flowDir, float speed, float strength, float time);
 float emissiveMask(vec3 worldPos, float freq, float threshold);
+EDGE_EROSION_MASK(noiseVal, edgeWeight, strength);
+EDGE_EROSION_THRESHOLD_JITTER(noiseVal, edgeWeight, strength);
 ```
 
 * **`dissolveCalc`** — Noise-based dissolve + glowing burn edge. Returns `1.0` if the pixel should be discarded, `0.0` if it stays. `edgeFactor` (out) is how much edge to mix in the element color.
@@ -208,6 +210,16 @@ float emissiveMask(vec3 worldPos, float freq, float threshold);
   ```glsl
   float mask = emissiveMask(fragPosition, 1.5, 0.88);
   baseColor += elementGlowColor * mask * 2.5;
+  ```
+
+* **`EDGE_EROSION_MASK`** — Shared expression macro for silhouette erosion. It expands to the original smoke-tube arithmetic, including the fixed `0.15` mask-space transition and the final strength blend.
+  ```glsl
+  coverage *= EDGE_EROSION_MASK(noiseValue, silhouetteWeight, erosionStrength);
+  ```
+
+* **`EDGE_EROSION_THRESHOLD_JITTER`** — Shared expression macro for dissolve effects that own a threshold.
+  ```glsl
+  float threshold = dissolve + EDGE_EROSION_THRESHOLD_JITTER(noiseValue, silhouetteWeight, tearStrength);
   ```
 
 Do not reimplement these functions.

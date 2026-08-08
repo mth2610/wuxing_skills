@@ -1,5 +1,6 @@
 #version 330
 #include "core/shaders/common/fs_header.glsl"
+#include "core/shaders/common/fx.glsl"
 #include "core/uv/shaders/uv_field.glsl"
 
 // ── TRAIL VOLUME — opacity for a swept tube that has to read as gas ─────────
@@ -327,10 +328,7 @@ void main()
         float edgeBias = smoothstep(1.0 - u_volErodeBand, 1.0, bR);  // 0 thân, 1 rìa
         vec2 nuv = fragTexCoord * 3.0 + vec2(0.15, 0.09) * u_time;
         float n = texture(texture0, nuv).a;
-        float thresh = u_volErode * edgeBias;
-        float bite = smoothstep(thresh, thresh + 0.15, n);   // 1 = sống sót, 0 = bị ăn
-        float tear = max(bite, 1.0 - edgeBias);              // thân (edgeBias 0) luôn sống
-        edge *= mix(1.0, tear, u_volErode);
+        edge *= EDGE_EROSION_MASK(n, edgeBias, u_volErode);
     }
 
     // The vertical fade arrives as vertex alpha (PMTube_DrawFaded), already

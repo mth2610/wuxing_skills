@@ -1,5 +1,6 @@
 #version 330
 #include "core/shaders/common/fs_header.glsl"
+#include "core/shaders/common/fx.glsl"
 #include "core/uv/shaders/uv_deform.glsl"
 #include "core/uv/shaders/surface_flow.glsl"
 
@@ -403,7 +404,7 @@ void main()
     // boundaries the way the tail frays at its end.
     float across = abs(vSegUV.x - 0.5f) * 2.0f;
     float edgeBias = smoothstep(0.12f, 0.45f, across);
-    float thresh = u_dissolve + (texF.g - 0.5f) * 2.0f * u_edgeTear * edgeBias;
+    float thresh = u_dissolve + EDGE_EROSION_THRESHOLD_JITTER(texF.g, edgeBias, u_edgeTear);
     float dissolveMask = smoothstep(thresh, thresh + edge, texC.b);
 
     // Segment-space tail ramp: the smoke widens toward the tail, then the

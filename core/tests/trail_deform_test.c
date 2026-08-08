@@ -779,8 +779,8 @@ static void Test_MirrorStillMatchesSource(void)
     CHECK(FileHas(fs, "mix(texC.r, texF.g, mixW)"), "the wisp is still R/G by the mix");
     CHECK(FileHas(fs, "smoothstep(thresh, thresh + edge, texC.b)"),
           "the dissolve is still a B-channel smoothstep on the jittered threshold");
-    CHECK(FileHas(fs, "float thresh = u_dissolve + (texF.g - 0.5f) * 2.0f * u_edgeTear * edgeBias;"),
-          "the edge tear still jitters the threshold with fine noise");
+    CHECK(FileHas(fs, "EDGE_EROSION_THRESHOLD_JITTER(texF.g, edgeBias, u_edgeTear)"),
+          "the edge tear uses the shared, exact-expansion macro");
     CHECK(FileHas(fs, "float intenWisp = wisp * dissolveMask * tailMask;"),
           "the packed wisp still erodes only its own intensity");
     CHECK(FileHas(fs, "if (intenWisp * vColor.a < 0.003)"),

@@ -219,6 +219,13 @@ static void Test_MirrorMatchesSource(void) {
             FileHas(fs, "float rim = smoothstep(0.0, max(u_volMask.z, 0.001), d);"),
         "d is still |N.V| and rim still softens the silhouette — only the "
         "thickness term's direction changed");
+  CHECK(FileHas(fs, "edge *= EDGE_EROSION_MASK(n, edgeBias, u_volErode);") &&
+            FileHas("core/shaders/common/fx.glsl", "#define EDGE_EROSION_MASK(noiseVal, edgeWeight, strength)") &&
+            FileHas("core/shaders/common/fx.glsl", "smoothstep((strength) * (edgeWeight), (strength) * (edgeWeight) + 0.15, (noiseVal))") &&
+            FileHas("core/shaders/common/fx.glsl", "1.0 - (edgeWeight)), (strength))"),
+        "volume-edge erosion uses the shared macro with the shipped fixed-band arithmetic");
+  CHECK(FileHas("core/trails/shaders/trail_deform.fs", "EDGE_EROSION_THRESHOLD_JITTER(texF.g, edgeBias, u_edgeTear)"),
+        "ribbon trails share the same exact-expansion erosion convention");
   // The cull, now a SWITCH rather than a law — and the claim this assertion
   // used to make ("the term cannot reach the screen without it") was retired
   // on 06/08 by measurement, not by preference. silhouette_test.c's

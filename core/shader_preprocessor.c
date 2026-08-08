@@ -5,7 +5,11 @@
 #include <string.h>
 
 #define MAX_INCLUDE_DEPTH 8
-#define MAX_SHADER_SIZE (64 * 1024) // 64 KB — đủ cho shader GLSL phức tạp nhất
+/* Volume shaders compose common headers, UV deformation, SurfaceFlow and FX
+ * helpers in one source. 64 KiB silently truncated trail_volume.fs after the
+ * FX include, dropping main() and producing RLVK's misleading "Missing entry
+ * point" error. Keep generous headroom for future shared shader modules. */
+#define MAX_SHADER_SIZE (128 * 1024)
 
 static char *ProcessIncludes(const char *filePath, int depth);
 
@@ -43,6 +47,13 @@ static char *ProcessIncludes(const char *filePath, int depth) {
         outLen += rem;
         output[outLen] = '\0';
       }
+      else {
+        TraceLog(LOG_ERROR, "SHADER: expanded source exceeds %d bytes: %s",
+                 MAX_SHADER_SIZE, filePath);
+        RL_FREE(output);
+        UnloadFileText(src);
+        return NULL;
+      }
       break;
     }
 
@@ -52,6 +63,13 @@ static char *ProcessIncludes(const char *filePath, int depth) {
       memcpy(output + outLen, cursor, before);
       outLen += before;
       output[outLen] = '\0';
+    }
+    else {
+      TraceLog(LOG_ERROR, "SHADER: expanded source exceeds %d bytes: %s",
+               MAX_SHADER_SIZE, filePath);
+      RL_FREE(output);
+      UnloadFileText(src);
+      return NULL;
     }
 
     // Parse tên file: #include "path/to/file.glsl"
@@ -81,6 +99,14 @@ static char *ProcessIncludes(const char *filePath, int depth) {
         memcpy(output + outLen, included, incLen);
         outLen += incLen;
         output[outLen] = '\0';
+      }
+      else {
+        TraceLog(LOG_ERROR, "SHADER: expanded source exceeds %d bytes: %s",
+                 MAX_SHADER_SIZE, filePath);
+        RL_FREE(included);
+        RL_FREE(output);
+        UnloadFileText(src);
+        return NULL;
       }
       RL_FREE(included);
     }

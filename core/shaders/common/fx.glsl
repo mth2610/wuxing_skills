@@ -10,6 +10,8 @@
 //   dissolveCalc()  — noise-based dissolve + edge glow
 //   flowBlend()     — flow map 2-phase texture blend
 //   emissiveMask()  — world-space sine emissive pattern
+//   EDGE_EROSION_APPLY()         — fixed-band silhouette erosion statement
+//   EDGE_EROSION_THRESHOLD_JITTER() — silhouette-weighted dissolve offset
 //
 // Xem CORE_API.md §10 — Common Shader Files để biết cách dùng.
 // ============================================================
@@ -42,6 +44,13 @@ float dissolveCalc(float noiseVal, float dissolve, float edgeWidth, out float ed
         edgeFactor = 1.0 - smoothstep(dissolve, dissolve + edgeWidth, noiseVal);
     return 0.0;
 }
+
+// ------------------------------------------------------------------
+// EDGE EROSION — macro expansion is deliberately the shipped smoke formula.
+// GLSL 330 (including the Vulkan compiler) has no portable multi-line macro
+// continuation, so both macros must remain single physical source lines.
+#define EDGE_EROSION_MASK(noiseVal, edgeWeight, strength) mix(1.0, max(smoothstep((strength) * (edgeWeight), (strength) * (edgeWeight) + 0.15, (noiseVal)), 1.0 - (edgeWeight)), (strength))
+#define EDGE_EROSION_THRESHOLD_JITTER(noiseVal, edgeWeight, strength) (((noiseVal) - 0.5f) * 2.0f * (strength) * (edgeWeight))
 
 // ------------------------------------------------------------------
 // FLOW MAP 2-PHASE BLEND
