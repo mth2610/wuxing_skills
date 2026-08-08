@@ -255,7 +255,7 @@ that shader's own comment instructs.
 
 ```
 beam_probe      = 1   # DEFAULT NOW — beam is one plain cylinder; 0 = full stack
-vol_cull        = 0   # 0 = draw both walls (default flipped 06/08; cull reads the attribute normal)
+vol_cull        = 0   # draw both walls; the smoke materials are authored for this mode
 vol_normal_src  = 0   # 1 = normal from dFdx instead of the attribute
 vol_depth_mode  = 0   # gain on the |N.V|^p BODY term
 vol_rim         = 1   # gain on the (1-|N.V|)^p RIM term

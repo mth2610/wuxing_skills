@@ -219,7 +219,6 @@ static void Test_MirrorMatchesSource(void) {
             FileHas(fs, "float rim = smoothstep(0.0, max(u_volMask.z, 0.001), d);"),
         "d is still |N.V| and rim still softens the silhouette — only the "
         "thickness term's direction changed");
-
   // The cull, now a SWITCH rather than a law — and the claim this assertion
   // used to make ("the term cannot reach the screen without it") was retired
   // on 06/08 by measurement, not by preference. silhouette_test.c's
