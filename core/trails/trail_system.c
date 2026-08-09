@@ -1787,7 +1787,14 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
             t->layerCount >= 2 && L != 1) continue;
         const TrailLayer *ly = &t->layers[L];
         float aMul = (ly->alphaMul > 0.0f) ? ly->alphaMul : 1.0f;
-        Color col = scratchOuter[0].tint;
+        VFXContrastLayer contrastLayer =
+            (s_drawLayerFilter == 0 ||
+             (s_drawLayerFilter < 0 && !TrailUsesAdditiveBlend(t)))
+                ? VFX_CONTRAST_BODY
+                : VFX_CONTRAST_EMISSION;
+        Color col = VFXContrast_ApplyColor(scratchOuter[0].tint,
+                                            t->material.contrastProfile,
+                                            contrastLayer);
         float a = (float)col.a * aMul;
         if (a > 255.0f)
             a = 255.0f;
@@ -1927,6 +1934,9 @@ static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
         // Getting this wrong is invisible in a dark scene and washes the whole
         // effect out in a bright one — see trail_deform.fs's header.
         float pass = (s_drawLayerFilter == 0) ? 0.0f : 1.0f;
+        // Vertex colour already carries the profile's alpha multiplier. Keep
+        // the separately-authored body coverage unchanged so a deform trail
+        // does not apply the same opacity policy twice.
         float bodyOpacity = (m->bodyOpacity > 0.0f) ? m->bodyOpacity : 0.0f;
         if (bodyOpacity > 1.0f) bodyOpacity = 1.0f;
         if (L->renderPass >= 0) SetShaderValue(s_deformShader, L->renderPass, &pass, SHADER_UNIFORM_FLOAT);
@@ -2009,8 +2019,14 @@ static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
         // that threshold — but a FUTURE style must keep waveAmp meaningfully
         // non-zero, or the fixed-index read on the shader side silently
         // pairs the wrong bundle's detune with the wrong sampled channel.
-        float band[4] = {m->bundleWidth, m->edgeSoft,
-                         (m->hdrGain > 0.0f) ? m->hdrGain : 1.0f,
+        float hdrGain = (m->hdrGain > 0.0f) ? m->hdrGain : 1.0f;
+        // Energy trails keep their compact radiance inside the body shader to
+        // avoid a duplicate geometry pass; hdrGain is still an EMISSION
+        // property even when the render target is VFXBody.
+        if (TrailUsesAdditiveBlend(t))
+            hdrGain = VFXContrast_ApplyEmissionIntensity(
+                hdrGain, m->contrastProfile);
+        float band[4] = {m->bundleWidth, m->edgeSoft, hdrGain,
                          (m->strandGain > 0.0f) ? m->strandGain : 1.0f};
         float strandFlow[4] = {m->flowStrength, m->bundleWeight, m->stretchUV, 0.0f};
         if (L->bandShape >= 0) SetShaderValue(s_deformShader, L->bandShape, band, SHADER_UNIFORM_VEC4);
@@ -2055,22 +2071,37 @@ static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
         }
         if (L->pathArc >= 0) SetShaderValue(s_deformShader, L->pathArc, arc, SHADER_UNIFORM_VEC2);
 
-        float hot[3] = {m->hotColor.r / 255.0f, m->hotColor.g / 255.0f,
-                        m->hotColor.b / 255.0f};
+        VFXContrastLayer hotLayer = TrailUsesAdditiveBlend(t)
+                                        ? VFX_CONTRAST_EMISSION
+                                        : VFX_CONTRAST_BODY;
+        Color hotColor = VFXContrast_ApplyColor(
+            m->hotColor, m->contrastProfile, hotLayer);
+        float hot[3] = {hotColor.r / 255.0f, hotColor.g / 255.0f,
+                        hotColor.b / 255.0f};
         if (m->hotColor.r == 0 && m->hotColor.g == 0 && m->hotColor.b == 0)
-            hot[0] = hot[1] = hot[2] = 1.0f; // unset -> white-hot, never a black core
+        {
+            Color fallbackHot = VFXContrast_ApplyColor(
+                WHITE, m->contrastProfile, hotLayer);
+            hot[0] = fallbackHot.r / 255.0f;
+            hot[1] = fallbackHot.g / 255.0f;
+            hot[2] = fallbackHot.b / 255.0f;
+        }
         if (L->colHot >= 0) SetShaderValue(s_deformShader, L->colHot, hot, SHADER_UNIFORM_VEC3);
 
         // Tail colour. Unset (black) means "no along-trail ramp": fall back to
         // the head tint so an author who never sets it gets a flat hue rather
         // than a trail that fades into black.
-        float tailCol[3] = {m->tailColor.r / 255.0f, m->tailColor.g / 255.0f,
-                            m->tailColor.b / 255.0f};
+        Color tailColor = VFXContrast_ApplyColor(
+            m->tailColor, m->contrastProfile, VFX_CONTRAST_BODY);
+        float tailCol[3] = {tailColor.r / 255.0f, tailColor.g / 255.0f,
+                            tailColor.b / 255.0f};
         if (m->tailColor.r == 0 && m->tailColor.g == 0 && m->tailColor.b == 0)
         {
-            tailCol[0] = t->tint.r / 255.0f;
-            tailCol[1] = t->tint.g / 255.0f;
-            tailCol[2] = t->tint.b / 255.0f;
+            Color fallbackTail = VFXContrast_ApplyColor(
+                t->tint, m->contrastProfile, VFX_CONTRAST_BODY);
+            tailCol[0] = fallbackTail.r / 255.0f;
+            tailCol[1] = fallbackTail.g / 255.0f;
+            tailCol[2] = fallbackTail.b / 255.0f;
         }
         if (L->colTail >= 0) SetShaderValue(s_deformShader, L->colTail, tailCol, SHADER_UNIFORM_VEC3);
     }
@@ -2082,10 +2113,19 @@ static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
 static void DrawTrailRibbon(const TrailEntity *t, const RibbonPoint *points, int count,
                             Texture2D texture, Camera3D camera)
 {
+    VFXContrastLayer contrastLayer =
+        (s_drawLayerFilter == 0 ||
+         (s_drawLayerFilter < 0 && !TrailUsesAdditiveBlend(t)))
+            ? VFX_CONTRAST_BODY
+            : VFX_CONTRAST_EMISSION;
     if (TrailUsesDeformShader(t))
-        DrawRibbonStripDeformedEx(points, count, texture, camera, t->ribbonMode, t->fixedNormal);
+        DrawRibbonStripDeformedProfiledEx(
+            points, count, texture, camera, t->ribbonMode, t->fixedNormal,
+            t->material.contrastProfile, contrastLayer);
     else
-        DrawRibbonStripEx(points, count, texture, camera, t->ribbonMode, t->fixedNormal);
+        DrawRibbonStripProfiledEx(
+            points, count, texture, camera, t->ribbonMode, t->fixedNormal,
+            t->material.contrastProfile, contrastLayer);
 }
 
 static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCameraBasis *camBasis, float time)

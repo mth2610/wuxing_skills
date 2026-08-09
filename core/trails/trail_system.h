@@ -191,6 +191,10 @@ typedef struct
     // glints), ~0.5 = a coloured core inside a glow, ~0.9 = smoke, which must
     // occlude what is behind it.
     float bodyOpacity;
+
+    // Renderer-level readability policy shared with particles, ribbons and
+    // decals. Zero/NONE is identity for all existing trail materials.
+    VFXContrastProfileId contrastProfile;
 } TrailMaterialConfig;
 
 // ── Trail Cross-section ─────────────────────────────────────────────────────

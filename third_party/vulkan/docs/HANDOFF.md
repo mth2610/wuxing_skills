@@ -508,7 +508,8 @@ before opening the next FBO. Shared depth remains in its depth-attachment layout
 the next FBO uses it for depth testing.
 
 **Guard.** `run_rlvk_visual_test.sh fbo_switch`: clear a layer red, switch back to the
-scene FBO, then sample the layer. The output must remain red on every frame.
+scene FBO, then sample the layer. The output must remain strongly red-dominant on every
+frame; do not require literal `(255,0,0)` because macOS screen capture is colour-managed.
 
 ### 7.31 VFX colour-layer clear erased shared scene depth (2026-08-01)
 

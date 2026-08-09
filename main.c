@@ -122,16 +122,26 @@ static Rectangle DebugToggleRect(int index) {
 /* Manager-owned VFX uses the shared ScreenDistort layers. Individual skills
  * own their own BeginVFX* / EndVFXLayer pair, so main stays render-graph
  * orchestration rather than an effect list. */
-static void DrawDecalVFXLayer(Camera3D camera)
+static void DrawDecalVFXLayers(Camera3D camera)
 {
   if (!g_debugHideDecals) {
     int activeDecals = 0;
     DecalSystem_GetStats(&activeDecals, NULL);
     if (activeDecals == 0) return;
     DecalSystem_SetCamera(camera);
+
+    // Pigment/material coverage belongs to VFXBody. Emissive cracks/runes are
+    // submitted separately below; mixing additive radiance into this target
+    // breaks the body's premultiplied-colour contract at composite time.
     ScreenDistort_BeginVFXBody();
-    DecalSystem_Draw();
+    DecalSystem_DrawBody();
     ScreenDistort_EndVFXLayer();
+
+    if (DecalSystem_HasEmission()) {
+      ScreenDistort_BeginVFXEmission();
+      DecalSystem_DrawEmission();
+      ScreenDistort_EndVFXLayer();
+    }
   }
 }
 
@@ -147,16 +157,18 @@ static void DrawParticleTrailVFXLayers(Camera3D camera, Texture2D particleTextur
   bool hasEmissionParticles = hasParticles && ParticleManager_HasEmissionParticles();
   if (!hasTrails && !hasParticles) return;
 
-  // Particle/trail bodies use ordinary alpha-over into the HDR scene target.
-  // This preserves material hue without allocating a full-screen body buffer
-  // for every small puff or ribbon.  Only actual light remains in the
-  // separate emission target below.
+  // Particle/trail bodies share the same contrast-protected VFXBody target as
+  // decals, water and afterimages. Alpha-over straight into a bright HDR scene
+  // still inherits too much destination colour at feathered edges; the shared
+  // compositor resolves body coverage once, after every producer has drawn.
+  ScreenDistort_BeginVFXBody();
   if (hasTrails) DrawTrailEntitiesBody(camera);
   rlDrawRenderBatchActive();
   rlDisableDepthMask();
   if (hasParticles) ParticleManager_DrawBody(camera, particleTexture);
   rlDrawRenderBatchActive();
   rlEnableDepthMask();
+  ScreenDistort_EndVFXLayer();
 
   // Ribbons are already lifted in the HDR body shader and participate in the
   // normal post-FX bloom. Rendering them into a second full-resolution
@@ -1096,7 +1108,7 @@ int main(int argc, char **argv) {
         DrawSandbox3D(&player, &enemy, mouseTarget3D, &uiState);
     }
 
-    DrawDecalVFXLayer(camera);
+    DrawDecalVFXLayers(camera);
 
     if (!g_debugHideMeshes) {
         DrawSkillManagerWorld3D();

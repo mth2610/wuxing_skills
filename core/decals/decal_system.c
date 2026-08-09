@@ -537,7 +537,8 @@ static int SpawnDecalCommon(Vector3 pos, float rotation, float rotSpeed,
     d->tint = tint;
     d->material = (DecalMaterialParams){ .baseTint = WHITE, .emissiveTint = WHITE,
                                          .emissiveThreshold = 1.1f, .emissiveIntensity = 0.0f,
-                                         .priority = Decal_ClampPriority(priority), .maxDrawDistance = 0.0f };
+                                         .priority = Decal_ClampPriority(priority), .maxDrawDistance = 0.0f,
+                                         .contrastProfile = VFX_CONTRAST_NONE };
     d->blendMode = blendMode;
     d->active = true;
     d->flowScroll = false;
@@ -624,6 +625,19 @@ DecalHandle DecalSystem_AddConformalMaterialEx(Vector3 pos, float rotation, floa
     {
         d->material = *material;
         d->material.priority = Decal_ClampPriority(d->material.priority);
+        const VFXContrastProfile *profile = VFXContrast_Get(
+            d->material.contrastProfile);
+        d->material.baseTint = VFXContrast_ApplyColor(
+            d->material.baseTint, d->material.contrastProfile,
+            VFX_CONTRAST_BODY);
+        d->material.emissiveTint = VFXContrast_ApplyColor(
+            d->material.emissiveTint, d->material.contrastProfile,
+            VFX_CONTRAST_EMISSION);
+        d->material.emissiveThreshold = VFXContrast_ApplyEmissionThreshold(
+            d->material.emissiveThreshold, d->material.contrastProfile);
+        d->material.emissiveIntensity = VFXContrast_ApplyEmissionIntensity(
+            d->material.emissiveIntensity, d->material.contrastProfile);
+        d->tint.a = VFXContrast_ScaleAlpha(d->tint.a, profile->alpha);
     }
     d->heightFn = heightFn;
     d->heightUserData = heightUserData;
@@ -1066,18 +1080,44 @@ static void DrawConformalGroup(BlendMode renderMode, BlendMode sourceMode, bool 
     Decal_EndWorldPass();
 }
 
-void DecalSystem_Draw(void)
+void DecalSystem_DrawBody(void)
 {
     Decal_BuildRenderQueue();
-    // 6 Lượt vẽ phân tách theo logic chặt chẽ nhưng giảm thiểu chi phí tìm kiếm O(N)
+    // Material/pigment only. Additive groups are deliberately excluded: the
+    // VFXBody composite assumes ordinary alpha data and unpremultiplies it.
     DrawGroup(BLEND_ALPHA, false);
     DrawGroup(BLEND_ALPHA, true);
-    DrawGroup(BLEND_ADDITIVE, false);
-    DrawGroup(BLEND_ADDITIVE, true);
     DrawGroup(BLEND_MULTIPLIED, false);
     DrawGroup(BLEND_MULTIPLIED, true);
     DrawConformalGroup(BLEND_ALPHA, BLEND_ALPHA, false);
+}
+
+bool DecalSystem_HasEmission(void)
+{
+    for (int a = 0; a < s_renderCount; ++a)
+    {
+        int idx = s_renderIds[a];
+        const DecalEntity *d = &g_DecalPool[idx];
+        if (d->blendMode == BLEND_ADDITIVE)
+            return true;
+        if (d->conformalStamp &&
+            Decal_HasEmissive(d, s_renderLod[idx], idx))
+            return true;
+    }
+    return false;
+}
+
+void DecalSystem_DrawEmission(void)
+{
+    DrawGroup(BLEND_ADDITIVE, false);
+    DrawGroup(BLEND_ADDITIVE, true);
     DrawConformalGroup(BLEND_ADDITIVE, BLEND_ALPHA, true);
+}
+
+void DecalSystem_Draw(void)
+{
+    DecalSystem_DrawBody();
+    DecalSystem_DrawEmission();
 }
 
 void DecalSystem_Unload(void)

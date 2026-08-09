@@ -147,6 +147,7 @@ void VFX_ComposeEnergyBurst(Vector3 pos, VC_MaterialId matId, float scale,
 
     const float ity = Clamp(intensity, 0.0f, 1.0f);
     const VFX_ElementMaterial *mat = VFX_Material(matId);
+    Color body = mat ? mat->body : (Color){210, 70, 45, 255};
     Color glow = mat ? mat->glow : (Color){255, 120, 90, 255};
 
     ForceField *ff = EnergyBurst_Field(Math_Mix(0.6f, 1.3f, ity),   // a little noise
@@ -155,9 +156,9 @@ void VFX_ComposeEnergyBurst(Vector3 pos, VC_MaterialId matId, float scale,
     // SmokePuff spreads 28 across a DISC; a ring of the same radius has to
     // cover a circumference with them instead of an area, so it needs more to
     // reach the same density — and the burst wants to read as a continuous
-    // mass, not as countable puffs. Fill rate is the ceiling here: these are
-    // additive and the atlas cross-fade draws each one TWICE, so this is the
-    // first number to pull back if the frame rate drops.
+    // mass, not as countable puffs. Fill rate is the ceiling here: the atlas
+    // cross-fade draws every body TWICE and one quarter also owns an accent,
+    // so this is the first number to pull back if the frame rate drops.
     int count = (int)(60.0f * Math_Mix(0.75f, 1.3f, ity) * Clamp(scale, 0.3f, 2.0f));
     if (count < 6)
         count = 6;
@@ -191,7 +192,12 @@ void VFX_ComposeEnergyBurst(Vector3 pos, VC_MaterialId matId, float scale,
         // chaotic phase never happens on screen.
         float life = Math_Mix(1.0f, 1.7f, Random01());
 
-        SpawnParticle((ParticleConfig){
+        // Semantic BODY. This is pigment/energy density, not light: it alpha-
+        // occludes through the shared VFXBody target, which is what keeps the
+        // element hue legible over a bright floor or sky. The former single
+        // additive population could only add destination light and therefore
+        // converged toward white by blend law.
+        ParticleConfig bodyParticle = {
             .position = p,
             .velocity = vel,
             // SmokePuff's exact size law: mostly small with a long tail of
@@ -201,20 +207,20 @@ void VFX_ComposeEnergyBurst(Vector3 pos, VC_MaterialId matId, float scale,
             .radius = Math_Mix(0.14f, 0.14f + 0.42f * 1.4f,
                                powf(Random01(), 1.8f)) * scale * 1.45f,
             .lifetime = life,
-            // Energy EMITS, so additive — and additive ACCUMULATES, which is
-            // why each sprite contributes little (around SmokePuff's 0.28) and
-            // the OVERLAPS are what go bright. That is the whole mechanism:
-            // dark between the tongues, hot where they cross.
-            .colorStart = VC_WithAlpha(glow, (unsigned char)(255.0f * 0.28f
-                              * Math_Mix(0.55f, 1.35f, Random01())
+            .colorStart = VC_WithAlpha(body, (unsigned char)(255.0f * 0.16f
+                              * Math_Mix(0.70f, 1.25f, Random01())
                               * Math_Mix(0.7f, 1.0f, ity))),
-            .colorEnd = VC_WithAlpha(glow, 0),
+            .colorEnd = VC_WithAlpha(body, 0),
             .forceField = ff,
             .radiusCurve = &s_ebGrow,
             .alphaCurve = &s_ebFade,
-            .render.blendMode = VFX_BLEND_ADDITIVE,
+            .render.blendMode = VFX_BLEND_ALPHA,
+            // Energy density is self-coloured but does not radiate HDR. Keeping
+            // it unlit avoids a night environment multiplying cyan/orange into
+            // brown while the separate accent population below owns radiance.
             .render.unlit = 1,
-            .render.emissiveBoost = Math_Mix(1.1f, 1.6f, ity),
+            .render.emissiveBoost = 1.0f,
+            .render.contrastProfile = VFX_CONTRAST_ENERGY,
             // The smoke sheet.
             .render.texture = s_smokeFbReady ? s_smokeFbTex
                                              : s_smokePuffTex[i % SMOKE_PUFF_VARIANTS],
@@ -231,7 +237,25 @@ void VFX_ComposeEnergyBurst(Vector3 pos, VC_MaterialId matId, float scale,
             // already rolling is what reads as churning (SmokePuff records the
             // same, and turns its flipbook spin down to 0.12x for it).
             .rotation = Random01() * 2.0f * PI,
-        });
+        };
+        SpawnParticle(bodyParticle);
+
+        // Semantic ACCENT/EMISSION. Only one quarter of the body lobes receives
+        // a smaller aligned hot core; the two populations share position,
+        // motion, animation phase and rotation, so this reads as radiance from
+        // matter rather than a second unrelated cloud. Low coverage prevents
+        // additive overlap from flattening the entire annulus.
+        if ((i & 3) == 0)
+        {
+            ParticleConfig accentParticle = bodyParticle;
+            accentParticle.radius *= 0.58f;
+            accentParticle.colorStart = VC_WithAlpha(
+                glow, (unsigned char)(255.0f * 0.18f * Math_Mix(0.75f, 1.0f, ity)));
+            accentParticle.colorEnd = VC_WithAlpha(glow, 0);
+            accentParticle.render.blendMode = VFX_BLEND_ADDITIVE;
+            accentParticle.render.emissiveBoost = Math_Mix(1.25f, 1.65f, ity);
+            SpawnParticle(accentParticle);
+        }
     }
 
     // NO separate core flash: a cluster of motionless bright sprites at the

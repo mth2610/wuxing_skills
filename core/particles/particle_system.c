@@ -69,6 +69,7 @@ typedef struct
   int blendMode;        // VFX_BlendMode — see the blend law in vfx_config.h
   int unlit;            // 1 = emissive, skip the lighting multiply
   float emissiveBoost;  // >1 = HDR headroom for a glowing core (see vfx_config.h)
+  VFXContrastProfileId contrastProfile;
   const SkillCurve *radiusCurve;
   const SkillCurve *speedCurve;
   const SkillCurve *alphaCurve;
@@ -242,7 +243,11 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->texId = config.render.texture.id;
   p->blendMode = config.render.blendMode;
   p->unlit = config.render.unlit;
+  p->contrastProfile = config.render.contrastProfile;
   p->emissiveBoost = (config.render.emissiveBoost > 0.0f) ? config.render.emissiveBoost : 1.0f;
+  if (p->blendMode == VFX_BLEND_ADDITIVE)
+    p->emissiveBoost = VFXContrast_ApplyEmissionIntensity(
+        p->emissiveBoost, p->contrastProfile);
   p->radiusCurve = config.radiusCurve;
   p->speedCurve = config.speedCurve;
   p->alphaCurve = config.alphaCurve;
@@ -1009,6 +1014,12 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       c.b = (unsigned char)(b > 255 ? 255 : b);
     }
 
+    c = VFXContrast_ApplyColor(
+        c, p->contrastProfile,
+        p->blendMode == VFX_BLEND_ADDITIVE
+            ? VFX_CONTRAST_EMISSION
+            : VFX_CONTRAST_BODY);
+
     float drawRadius = p->radius;
     if (p->radiusCurve)
     {
@@ -1276,7 +1287,12 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         trailPoints[o].v = ageRatio;
       }
 
-      DrawRibbonStrip(trailPoints, outCount, texture, camera);
+      DrawRibbonStripProfiledEx(
+          trailPoints, outCount, texture, camera, RIBBON_CAMERA_FACING,
+          (Vector3){0.0f, 1.0f, 0.0f}, p->contrastProfile,
+          p->blendMode == VFX_BLEND_ADDITIVE
+              ? VFX_CONTRAST_EMISSION
+              : VFX_CONTRAST_BODY);
     }
   }
   if (trailBlend >= 0) EndBlendMode();

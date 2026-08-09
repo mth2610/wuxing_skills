@@ -472,6 +472,10 @@ int VFX_ComposeStrandTrail(const Matrix *followTransform, VC_MaterialId mat,
     // that must stay readable over a bright destination needs this above zero —
     // additive alone cannot hold contrast against a bright background.
     cfg.material.bodyOpacity = st->bodyOpacity;
+    cfg.material.contrastProfile =
+        styleIdx == (int)VFX_STRAND_SMOKE
+            ? VFX_CONTRAST_SMOKE
+            : VFX_CONTRAST_ENERGY;
     cfg.material.tailFadeA = st->tailFadeA;
     cfg.material.tailFadeB = 1.0f;
 

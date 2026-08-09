@@ -268,6 +268,29 @@ typedef struct {
 * **Sub-Emitter Lifecycle:** Sub-emitters (`onDeathEmit` and `onLiveEmit`) inherit the parent position but **do not** inherit velocity. Configs passed to sub-emitters **MUST** be declared static (persistent scope).
 * **Over-lifetime curves (`radiusCurve`/`speedCurve`/`alphaCurve`, `core/skill_curve.h`):** all three are `NULL` by default (today's exact legacy behavior — fixed radius, physics-only velocity, colorStart/colorEnd/gradient's own alpha). When set, each is sampled fresh every frame at `t01 = 1.0 - lifeRatio` (0 at spawn, 1 at death — same "age fraction" convention `gradient` already uses) via `SkillCurve_Eval`, and **multiplies** the corresponding base value: `radiusCurve` scales the drawn radius, `speedCurve` scales only this frame's position step from `velocity` (the stored velocity itself is untouched, so it composes cleanly with `forceField`/`WindZone` physics instead of compounding), `alphaCurve` scales `colorStart.a` and overrides whatever alpha `colorStart`/`colorEnd`/`gradient` would have produced (RGB is unaffected). This is the mechanism for a skill's per-phase "particle size/speed/opacity over its own short lifetime" tunables — see `fire_skill.c`/`thunder_orb_skill.c` for the pattern: one `static SkillCurve` per phase per property, seeded flat at `1.0` via `SkillCurve_SetConstant` (a no-op multiplier), registered as a curve-kind `SkillTunableEntry`, and pointed to by every `ParticleConfig` spawned in that phase.
 
+### Shared VFX Contrast Profiles (`core/vfx_contrast.h`)
+
+Đây là policy chống bệt màu dùng chung ở tầng renderer, không phải một post-effect.
+VFX chỉ chọn profile theo bản chất vật liệu; Core áp dụng cùng luật cho màu thân
+`BODY`, alpha che nền, màu lõi `EMISSION`, HDR gain và emissive threshold.
+
+```c
+particle.render.contrastProfile = VFX_CONTRAST_ENERGY;
+trail.material.contrastProfile = VFX_CONTRAST_SMOKE;
+decalMaterial.contrastProfile = VFX_CONTRAST_FIRE;
+```
+
+- `VFX_CONTRAST_NONE` bằng `0` và là identity chính xác; config `{0}` không đổi look cũ.
+- Các profile có sẵn: `SMOKE`, `FIRE`, `ENERGY`, `MAGIC`, `DUST`.
+- Profile không thay thế luật semantic layer: vật chất vẫn vẽ vào body/alpha,
+  radiance vẫn vẽ vào emission/additive. Profile chỉ resolve hai lớp nhất quán.
+- Particle CPU/GPU và particle-ribbon đọc `VFX_RenderConfig.contrastProfile`.
+  Trail ribbon/tube/deform đọc `TrailMaterialConfig.contrastProfile`.
+  Decal material đọc `DecalMaterialParams.contrastProfile`.
+- Raw ribbon dùng `DrawRibbonStripProfiledEx` hoặc
+  `DrawRibbonStripDeformedProfiledEx`; `RibbonEnergyFieldLayer` mang profile và
+  `VFXContrastLayer` riêng cho từng layer.
+
 ### Mesh-based Particle Emission
 * `void SpawnParticleOnMesh(const struct MeshAdjacency *adj, Matrix transform, ParticleConfig config);`
 Spawns a particle at a random edge position on the mesh, transforming its position into world space using the given transform matrix.
@@ -392,6 +415,9 @@ void DecalSystem_AddFlowEx(Vector3 pos, float rot, float rotSpeed, float scaleSt
 void DecalSystem_AddOrientedEx(Vector3 pos, Vector3 normal, float rotation, float rotSpeed, float scaleStart, float scaleEnd, Texture2D texture, float lifetime, Color tint, BlendMode blendMode, float yOffset);
 void DecalSystem_AddStreak(const Vector3 *points, int count, float rot, float scale, Texture2D tex, float life, Color tint);
 void DecalSystem_Update(float dt);
+void DecalSystem_DrawBody(void);
+void DecalSystem_DrawEmission(void);
+bool DecalSystem_HasEmission(void);
 void DecalSystem_Draw(void);
 void DecalSystem_Unload(void);
 ```
@@ -400,6 +426,12 @@ void DecalSystem_Unload(void);
 * `DecalSystem_AddStreak`: thin wrapper that calls `DecalSystem_Add` once per point in `points[0..count-1]` — for path-shaped effects (thorn lines, scorch trails) instead of hand-rolling a loop. Caller's responsibility to pass a reasonable `count` (e.g. up to 32, matching `SkillParams.pathPoints[32]`); not auto-clamped against `MAX_DECALS` headroom, same convention as `SamplePath`'s `maxSegments` in `core/path_spline.h`.
 * **`DecalSystem_AddFlowEx`**: same params as `AddEx` plus `flowSpeed`/`flowStrength`. Texture radially scrolls outward from the decal center over time (`core/decals/shaders/decal_flow.fs`) instead of staying static — for lava-crack-crawl / ripple-spreading visuals. `flowSpeed` ~0.3–1.0 (radial units/sec), `flowStrength` ~0.5–1.0 (0 = looks identical to a static decal, 1 = fully replaced by the scrolled sample). Draws via a separate shader pass from static decals — does not affect `Add`/`AddEx` behavior or performance. Already wired into `SpawnGroundDecal` for `DECAL_PRESET_FIRE_LAVA`/`DECAL_PRESET_WATER_RIPPLE` (see Ground Decal Preset section); every other preset is unaffected (static).
 * **`DecalSystem_AddOrientedEx`**: a surface-aligned static quad for a known hit normal. Use it for walls/ceilings; `rotation` rolls around `normal`, and `yOffset` lifts along the normal. Do not use it as an every-frame projector.
+* **Semantic draw split (engine render graph):** call `DrawBody` inside
+  `ScreenDistort_BeginVFXBody()` and, when `HasEmission` is true, call
+  `DrawEmission` inside `ScreenDistort_BeginVFXEmission()`. `DrawBody` prepares
+  the shared decal queue; `DrawEmission` reuses it. `DecalSystem_Draw()` remains
+  a compatibility entry point, but it cannot choose two render targets for its
+  caller and therefore is not suitable for the layered compositor.
 
 ### Fluid Impacts (`core/fluid_impact.h`)
 
@@ -454,6 +486,11 @@ ScreenDistort_EndVFXLayer();
 - Flush pending rlgl batches before changing layers when mixing raylib batched
   drawing with immediate rendering. Set custom shader uniforms inside
   `BeginShaderMode`.
+- Shared managers follow the same contract: particle and trail bodies are
+  collected into the single frame-wide VFXBody target; particle emission and
+  decal emission are collected into VFXEmission. A VFX that emits and has
+  visible coloured mass must author both populations rather than marking its
+  only population additive.
 
 **Skill API — only call Add:**
 ```c
@@ -545,6 +582,9 @@ typedef enum {
 
 void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture,
                        Camera3D camera, RibbonMode mode, Vector3 fixedNormal);
+void DrawRibbonStripProfiledEx(const RibbonPoint *points, int count, Texture2D texture,
+                               Camera3D camera, RibbonMode mode, Vector3 fixedNormal,
+                               VFXContrastProfileId profile, VFXContrastLayer layer);
 void DrawRibbonStrip(const RibbonPoint *points, int count, Texture2D texture, Camera3D camera);
 // ^ convenience wrapper: DrawRibbonStripEx(..., RIBBON_CAMERA_FACING, unused)
 
@@ -563,6 +603,8 @@ typedef struct {
     bool  vFlip;       // flip V — 2 layers at different scrollSpeed + one vFlip = cheap woven look
     bool  useTexture;  // false = flat color, ignores `texture` (e.g. hot core)
     Color color;
+    VFXContrastProfileId contrastProfile;
+    VFXContrastLayer contrastLayer;
 } RibbonEnergyFieldLayer;
 // max RIBBON_ENERGY_FIELD_MAX_LAYERS=4 layers, RIBBON_ENERGY_FIELD_MAX_PTS=64 points
 

@@ -3,6 +3,7 @@
 
 #include "raylib.h"
 #include "core/geometry/procedural_mesh_utils.h"
+#include "core/vfx_contrast.h"
 #include <stdbool.h>
 
 #define MAX_DECALS 64
@@ -22,6 +23,7 @@ typedef struct {
     float emissiveIntensity;
     int priority; // 0..255; higher survives conformal-budget pressure first
     float maxDrawDistance; // <= 0 means unlimited
+    VFXContrastProfileId contrastProfile; // NONE keeps legacy material exact
 } DecalMaterialParams;
 
 typedef struct {
@@ -161,7 +163,16 @@ void DecalSystem_Update(float dt);
 // Không gọi → decal bị ellipse vì camera nhìn từ góc nghiêng
 void DecalSystem_SetCamera(Camera3D camera);
 
-// Vẽ toàn bộ Decal, nhóm theo blendMode để giảm state switch
+// Semantic render-layer entry points. DrawBody rebuilds the shared render
+// queue, then submits pigment/material coverage only. DrawEmission reuses that
+// queue for additive radiance. This keeps the VFXBody target valid
+// premultiplied-alpha data instead of mixing additive RGB into it.
+void DecalSystem_DrawBody(void);
+void DecalSystem_DrawEmission(void);
+bool DecalSystem_HasEmission(void);
+
+// Legacy combined draw. New render graphs should use the semantic entry points
+// above so body and emission land in different targets.
 void DecalSystem_Draw(void);
 
 // Giải phóng hệ thống

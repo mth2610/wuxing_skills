@@ -12,6 +12,7 @@ typedef enum {
 #include "core/color_gradient.h"
 #include "core/sprite_anim.h"
 #include "core/skill_curve.h"
+#include "core/vfx_contrast.h"
 
 // 1. General Config
 typedef struct {
@@ -91,6 +92,11 @@ typedef struct {
     // globally. Smoke/dust/ash occlude and want lighting; fire, sparks, glow and
     // magic do not. 0 = lit (default, so existing effects are unaffected).
     int unlit;
+
+    // Shared contrast policy. NONE (0) is identity for every legacy effect;
+    // compositions select a semantic profile instead of hand-tuning each
+    // particle/ribbon/decal renderer independently.
+    VFXContrastProfileId contrastProfile;
 
     // Velocity stretch
     float stretchStrength; // 0.0 = disabled (default)

@@ -274,7 +274,11 @@ static const char *sc_fbo_switch(void)
     rlDisableFramebuffer();
     rlUnloadTexture(layer.texture.id); rlUnloadFramebuffer(layer.id);
     UnloadRenderTexture(scene);
-    return near3(c, 255, 0, 0, 16) ? NULL : "outgoing FBO colour was not transitioned for sampling";
+    // Screen capture on colour-managed macOS can map literal RED to roughly
+    // (230,41,55). The invariant is sampleability: red must dominate strongly,
+    // distinguishing the layer from the blue scene and white/black fallback.
+    bool sampledRed = c.r >= 180 && c.r > c.g * 3 && c.r > c.b * 3;
+    return sampledRed ? NULL : "outgoing FBO colour was not transitioned for sampling";
 }
 
 // Sample a render texture's DEPTH attachment in a shader and linearize it, exactly like the

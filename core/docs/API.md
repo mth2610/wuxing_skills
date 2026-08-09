@@ -17,6 +17,7 @@
 - **`VFXLight_Spawn` requires a `VFXPriority`** — a full pool evicts the lowest priority. Use `VFX_PRIORITY_HIGH_ULTIMATE` for casts that must not drop.
 - **Metaballs:** call `MetaballFX_RegisterBlob` every frame per blob (1-frame lifetime); never call `MetaballFX_Prepare`, `MetaballFX_Composite`, or `MetaballFX_DrawRegistered` from skill code.
 - **ScreenDistort:** skills only call `ScreenDistort_Add` (auto-expires after `lifetime`); the rest is engine lifecycle.
+- **VFX semantic layers:** manager body draws (particles, trails, decals) go to `ScreenDistort_BeginVFXBody`; actual radiance goes to `ScreenDistort_BeginVFXEmission`. Never mix additive decal RGB into the body target.
 - **Depth-state changes** must flush the batch (`rlDrawRenderBatchActive()`) before AND after — see `ENGINE_LANDMINES.md` §1.
 - **Custom shader textures:** bind via `SetShaderValueTexture`, not `rlActiveTextureSlot`/`rlEnableTexture` — see `LANDMINES.md`.
 - **Cooldowns** are keyed `(skillIndex, agentId)`; call `SkillManager_TriggerCooldown` at cast, `SkillManager_CanCast` to gate.
@@ -282,7 +283,9 @@
 ### `core/ribbon_strip.h`
 ```c
   void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture, Camera3D camera, RibbonMode mode, Vector3 fixedNormal);
+  void DrawRibbonStripProfiledEx(const RibbonPoint *points, int count, Texture2D texture, Camera3D camera, RibbonMode mode, Vector3 fixedNormal, VFXContrastProfileId contrastProfile, VFXContrastLayer contrastLayer);
   void DrawRibbonStripDeformedEx(const RibbonPoint *points, int count, Texture2D texture, Camera3D camera, RibbonMode mode, Vector3 fixedNormal);
+  void DrawRibbonStripDeformedProfiledEx(const RibbonPoint *points, int count, Texture2D texture, Camera3D camera, RibbonMode mode, Vector3 fixedNormal, VFXContrastProfileId contrastProfile, VFXContrastLayer contrastLayer);
   void DrawRibbonStrip(const RibbonPoint *points, int count, Texture2D texture, Camera3D camera);
   void Ribbon_ConstrainSegment(Vector3 *a, Vector3 *b, float restLen, bool pinnedA, RibbonConstrainMode mode);
   void Ribbon_ComputeArcLengthUV(RibbonPoint *points, int count);
@@ -307,12 +310,29 @@
   void DecalSystem_AddStreak(const Vector3 *points, int count, float rotation, float scale, Texture2D texture, float lifetime, Color tint);
   void DecalSystem_Update(float dt);
   void DecalSystem_SetCamera(Camera3D camera);
+  void DecalSystem_DrawBody(void);
+  void DecalSystem_DrawEmission(void);
+  bool DecalSystem_HasEmission(void);
   void DecalSystem_Draw(void);
   void DecalSystem_Unload(void);
   void DecalSystem_GetStats(int *active, int *max);
   void DecalSystem_GetRenderStats(DecalRenderStats *outStats);
 ```
 **Structs** (fields in header): DecalMaterialParams, DecalEntity, DecalRenderStats
+
+### `core/vfx_contrast.h`
+```c
+  const VFXContrastProfile *VFXContrast_Get(VFXContrastProfileId id);
+  Color VFXContrast_ApplyBodyColor(Color color, const VFXContrastProfile *profile);
+  Color VFXContrast_ApplyAccentColor(Color color, const VFXContrastProfile *profile);
+  unsigned char VFXContrast_ScaleAlpha(unsigned char alpha, float multiplier);
+  Color VFXContrast_ApplyColor(Color color, VFXContrastProfileId id, VFXContrastLayer layer);
+  float VFXContrast_ApplyBodyOpacity(float authoredOpacity, VFXContrastProfileId id);
+  float VFXContrast_ApplyEmissionIntensity(float authoredIntensity, VFXContrastProfileId id);
+  float VFXContrast_ApplyEmissionThreshold(float authoredThreshold, VFXContrastProfileId id);
+```
+**Enums:** VFXContrastProfileId { VFX_CONTRAST_NONE,VFX_CONTRAST_SMOKE,VFX_CONTRAST_FIRE,VFX_CONTRAST_ENERGY,VFX_CONTRAST_MAGIC,VFX_CONTRAST_DUST,VFX_CONTRAST_COUNT };VFXContrastLayer { VFX_CONTRAST_BODY,VFX_CONTRAST_EMISSION }
+**Structs** (fields in header): VFXContrastProfile
 
 ### `core/screen_distort.h`
 ```c
@@ -622,6 +642,7 @@ _Inline helpers / macros only — see header._
   Vector3 ProceduralMesh_BezierTangent(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t);
   Vector3 ProceduralMesh_BezierPoint(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t);
   Vector3 ProceduralMesh_BezierTangent(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t);
+  Vector3 PMSweptSection_ClampOffset(Vector3 rawOffset, float localRadius, float maxRadiusFrac, float ringGapLimit);
   PMTubeConfig PMTube_DefaultConfig(void);
   void PMTube_BuildAlongPath(PMTubeMesh *out, const Vector3 *pathPoints, int pathCount, float baseRadius, float startT, float endT, float time, int segments, int radialSegs, const PMTubeConfig *cfg);
   void PMTube_Draw(const PMTubeMesh *data, float uvLengthScale);
@@ -752,6 +773,9 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
   void VFX_ComposeFluidImpact(Vector3 pos);
   void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
+  int VFX_ComposeBeam(Vector3 from, Vector3 to, VC_MaterialId mat, float width);
+  void VFX_Beam_SetEndpoints(int handle, Vector3 from, Vector3 to);
+  void VFX_Beam_Stop(int handle);
   void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   void VFX_ComposeParticleUpgradesTest(Vector3 pos);
   int VFX_ComposeShieldShell(Vector3 pos, VC_MaterialId mat, float radius, float intensity);

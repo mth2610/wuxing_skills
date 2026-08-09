@@ -17,6 +17,12 @@
   `ScreenDistort_BeginVFXBody()` and the halo through
   `ScreenDistort_BeginVFXEmission()`; `bright_vfx_isolation_test.c` is the
   renderer-independent regression probe for this blend law.
+- **Manager rule:** `main.c` must route `ParticleManager_DrawBody()` and
+  `DrawTrailEntitiesBody()` through the shared VFXBody target. Drawing those
+  bodies straight into the HDR scene bypasses the compositor's coverage curve
+  and recreates the same washout at every feathered edge. Decals likewise use
+  `DecalSystem_DrawBody()`/`DrawEmission()` so additive cracks never contaminate
+  the premultiplied body buffer.
 
 ### GPU particle blend state must not inherit the CPU particle pass
 - **Symptom:** a GPU VFX appears additive in some frames/scenes but alpha-blended
@@ -1556,3 +1562,16 @@ cho đúng:
 > sau đó. Đánh số mode mà không đóng khung TỪNG số là một cái bẫy tích luỹ:
 > mỗi mode thêm vào lại rơi vào cái bẫy cũ, im lặng, và triệu chứng là một
 > ảnh trông hợp lý của một đại lượng khác.
+
+## Chống bệt màu không được triển khai lại ở từng VFX (09/08/2026)
+
+**Triệu chứng.** Particle, ribbon/trail và decal cùng màu nguyên tố nhưng mỗi
+loại lại có alpha, HDR gain và ngưỡng emissive riêng. Chỉnh để một loại đọc tốt
+trên nền sáng làm loại khác cháy trắng; chỉ tăng additive không thể tạo tương
+phản vì additive không bao giờ làm nền tối đi.
+
+**Luật.** Chọn `VFXContrastProfileId` ở composition, để renderer resolve qua
+`core/vfx_contrast.h`. Không chép các hệ số chống bệt vào từng skill. Vật chất
+phải ở `BODY`/alpha và radiance phải ở `EMISSION`/additive; profile không hợp
+thức hóa việc trộn hai semantic layer. `VFX_CONTRAST_NONE` là identity và là
+mặc định bắt buộc cho mọi config zero-init cũ.

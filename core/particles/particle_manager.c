@@ -113,13 +113,23 @@ void ParticleManager_Emit(ParticleEmitterHandle handle, int count)
     for (int i = 0; i < count; ++i) {
         if (e->gpu) {
             const ParticleConfig *p = &e->desc.particle;
+            VFXContrastLayer layer = p->render.blendMode == VFX_BLEND_ADDITIVE
+                                         ? VFX_CONTRAST_EMISSION
+                                         : VFX_CONTRAST_BODY;
+            float boost = p->render.emissiveBoost > 0.0f
+                              ? p->render.emissiveBoost
+                              : 1.0f;
+            if (layer == VFX_CONTRAST_EMISSION)
+                boost = VFXContrast_ApplyEmissionIntensity(
+                    boost, p->render.contrastProfile);
             GpuParticleSystem_Spawn((GpuParticleConfig){ .position=p->position, .velocity=p->velocity,
-                .colorStart=p->colorStart, .colorEnd=p->colorEnd, .radius=p->radius,
+                .colorStart=VFXContrast_ApplyColor(p->colorStart, p->render.contrastProfile, layer),
+                .colorEnd=VFXContrast_ApplyColor(p->colorEnd, p->render.contrastProfile, layer), .radius=p->radius,
                 .lifetime=p->lifetime, .forceField=p->forceField, .stretchStrength=p->stretchStrength,
                 .stretchMinSpeed=p->stretchMinSpeed, .collisionEnabled=p->collisionEnabled,
                 .collisionElasticity=p->collisionElasticity, .collisionFloorY=p->collisionFloorY,
                 .axisOrigin=p->forceAxisOrigin, .axisDir=p->forceAxisDir,
-                .emissiveBoost=p->render.emissiveBoost, .emitterId=e->ownerId,
+                .emissiveBoost=boost, .emitterId=e->ownerId,
                 .renderMode=(int)e->desc.renderMode });
         } else ParticleSystem_SpawnFromEmitter(e->desc.particle, e->ownerId, (int)e->desc.renderMode);
     }
@@ -134,13 +144,23 @@ void ParticleManager_EmitBatch(ParticleEmitterHandle handle,
     for (int i = 0; i < count; ++i) {
         const ParticleConfig *p = &particles[i];
         if (e->gpu) {
+            VFXContrastLayer layer = p->render.blendMode == VFX_BLEND_ADDITIVE
+                                         ? VFX_CONTRAST_EMISSION
+                                         : VFX_CONTRAST_BODY;
+            float boost = p->render.emissiveBoost > 0.0f
+                              ? p->render.emissiveBoost
+                              : 1.0f;
+            if (layer == VFX_CONTRAST_EMISSION)
+                boost = VFXContrast_ApplyEmissionIntensity(
+                    boost, p->render.contrastProfile);
             GpuParticleSystem_Spawn((GpuParticleConfig){ .position=p->position, .velocity=p->velocity,
-                .colorStart=p->colorStart, .colorEnd=p->colorEnd, .radius=p->radius,
+                .colorStart=VFXContrast_ApplyColor(p->colorStart, p->render.contrastProfile, layer),
+                .colorEnd=VFXContrast_ApplyColor(p->colorEnd, p->render.contrastProfile, layer), .radius=p->radius,
                 .lifetime=p->lifetime, .forceField=p->forceField, .stretchStrength=p->stretchStrength,
                 .stretchMinSpeed=p->stretchMinSpeed, .collisionEnabled=p->collisionEnabled,
                 .collisionElasticity=p->collisionElasticity, .collisionFloorY=p->collisionFloorY,
                 .axisOrigin=p->forceAxisOrigin, .axisDir=p->forceAxisDir,
-                .emissiveBoost=p->render.emissiveBoost, .emitterId=e->ownerId,
+                .emissiveBoost=boost, .emitterId=e->ownerId,
                 .renderMode=(int)e->desc.renderMode });
         } else {
             ParticleSystem_SpawnFromEmitter(*p, e->ownerId, (int)e->desc.renderMode);

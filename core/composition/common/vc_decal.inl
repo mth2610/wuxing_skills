@@ -22,13 +22,22 @@ void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale,
                  (decal->lifetimeBase + decal->lifetimeSeverity * severity01) * lifetimeScale;
     float phase = Random01() * 6.2831853f +
                   (material ? material->body.b * 0.01f : 0.0f);
+    VFXContrastProfileId contrastProfile = VFX_CONTRAST_ENERGY;
+    if (material != NULL)
+    {
+        if (material->decalMaterial == DECAL_MATERIAL_SCORCH)
+            contrastProfile = VFX_CONTRAST_FIRE;
+        else if (material->decalMaterial == DECAL_MATERIAL_FROST)
+            contrastProfile = VFX_CONTRAST_MAGIC;
+    }
     DecalMaterialParams params = {
         .baseTint = material ? material->body : WHITE,
         .emissiveTint = material ? material->glow : WHITE,
         .emissiveThreshold = decal->emissiveThreshold,
         .emissiveIntensity = decal->emissiveIntensity,
         .priority = decal->priority,
-        .maxDrawDistance = decal->maxDrawDistance
+        .maxDrawDistance = decal->maxDrawDistance,
+        .contrastProfile = contrastProfile
     };
     DecalSystem_AddConformalMaterialEx(pos, Random01() * 360.0f, 0.0f,
                                        radius * 0.90f, radius, surface->body, life,

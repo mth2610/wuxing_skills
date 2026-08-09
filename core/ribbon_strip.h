@@ -2,6 +2,7 @@
 #define RIBBON_STRIP_H
 
 #include "raylib.h"
+#include "core/vfx_contrast.h"
 #include <stdbool.h>
 
 // =============================================================================
@@ -61,6 +62,14 @@ typedef enum {
 void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture,
                        Camera3D camera, RibbonMode mode, Vector3 fixedNormal);
 
+// Material-aware variant. Geometry and blend state remain caller-owned; Core
+// only resolves the shared BODY/EMISSION contrast policy for vertex colours.
+void DrawRibbonStripProfiledEx(const RibbonPoint *points, int count,
+                               Texture2D texture, Camera3D camera,
+                               RibbonMode mode, Vector3 fixedNormal,
+                               VFXContrastProfileId contrastProfile,
+                               VFXContrastLayer contrastLayer);
+
 // Same as DrawRibbonStripEx, but additionally writes each point's unit SIDE
 // vector (the across-width offset direction) into the VERTEX NORMAL attribute
 // slot. The trail deform vertex shader (core/trails/shaders/trail_deform.vs)
@@ -71,6 +80,11 @@ void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture,
 // dot(side, lightDir).
 void DrawRibbonStripDeformedEx(const RibbonPoint *points, int count, Texture2D texture,
                                Camera3D camera, RibbonMode mode, Vector3 fixedNormal);
+void DrawRibbonStripDeformedProfiledEx(const RibbonPoint *points, int count,
+                                       Texture2D texture, Camera3D camera,
+                                       RibbonMode mode, Vector3 fixedNormal,
+                                       VFXContrastProfileId contrastProfile,
+                                       VFXContrastLayer contrastLayer);
 
 // Tiện ích: DrawRibbonStripEx với mode = RIBBON_CAMERA_FACING (hành vi cũ,
 // đa số ribbon trong project - tia sét, beam, trail - đều camera-facing).
@@ -150,6 +164,8 @@ typedef struct {
                      // look without real twisted geometry
   bool  useTexture;  // false = flat color, ignores `texture` (e.g. hot core)
   Color color;
+  VFXContrastProfileId contrastProfile; // NONE keeps authored colour unchanged
+  VFXContrastLayer contrastLayer;       // BODY mass or compact EMISSION accent
 } RibbonEnergyFieldLayer;
 
 #define RIBBON_ENERGY_FIELD_MAX_LAYERS 4

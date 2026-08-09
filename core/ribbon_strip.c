@@ -178,6 +178,8 @@ void Ribbon_ComputeCrossFrame(const Vector3 *points, int count,
 static void DrawRibbonStripInternal(const RibbonPoint *points, int count,
                                     Texture2D texture, Camera3D camera,
                                     RibbonMode mode, Vector3 fixedNormal,
+                                    VFXContrastProfileId contrastProfile,
+                                    VFXContrastLayer contrastLayer,
                                     bool writeNormals) {
   if (points == NULL || count < 2)
     return;
@@ -288,7 +290,8 @@ static void DrawRibbonStripInternal(const RibbonPoint *points, int count,
     // exempt: their side vector is already built perpendicular to the view, so
     // the factor is 1 by construction and this would be a no-op.
     float halfWidth = points[i].halfWidth;
-    Color tint = points[i].tint;
+    Color tint = VFXContrast_ApplyColor(points[i].tint, contrastProfile,
+                                        contrastLayer);
     if (mode != RIBBON_CAMERA_FACING) {
       Vector3 toCam = Vector3Subtract(points[i].position, camera.position);
       float camLen = Vector3Length(toCam);
@@ -396,7 +399,17 @@ static void DrawRibbonStripInternal(const RibbonPoint *points, int count,
 
 void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture,
                        Camera3D camera, RibbonMode mode, Vector3 fixedNormal) {
-  DrawRibbonStripInternal(points, count, texture, camera, mode, fixedNormal, false);
+  DrawRibbonStripInternal(points, count, texture, camera, mode, fixedNormal,
+                          VFX_CONTRAST_NONE, VFX_CONTRAST_BODY, false);
+}
+
+void DrawRibbonStripProfiledEx(const RibbonPoint *points, int count,
+                               Texture2D texture, Camera3D camera,
+                               RibbonMode mode, Vector3 fixedNormal,
+                               VFXContrastProfileId contrastProfile,
+                               VFXContrastLayer contrastLayer) {
+  DrawRibbonStripInternal(points, count, texture, camera, mode, fixedNormal,
+                          contrastProfile, contrastLayer, false);
 }
 
 // Deform variant: additionally writes the per-vertex SIDE vector into the
@@ -406,7 +419,17 @@ void DrawRibbonStripEx(const RibbonPoint *points, int count, Texture2D texture,
 // unaffected. See the comment on DrawRibbonStripInternal.
 void DrawRibbonStripDeformedEx(const RibbonPoint *points, int count, Texture2D texture,
                                Camera3D camera, RibbonMode mode, Vector3 fixedNormal) {
-  DrawRibbonStripInternal(points, count, texture, camera, mode, fixedNormal, true);
+  DrawRibbonStripInternal(points, count, texture, camera, mode, fixedNormal,
+                          VFX_CONTRAST_NONE, VFX_CONTRAST_BODY, true);
+}
+
+void DrawRibbonStripDeformedProfiledEx(const RibbonPoint *points, int count,
+                                       Texture2D texture, Camera3D camera,
+                                       RibbonMode mode, Vector3 fixedNormal,
+                                       VFXContrastProfileId contrastProfile,
+                                       VFXContrastLayer contrastLayer) {
+  DrawRibbonStripInternal(points, count, texture, camera, mode, fixedNormal,
+                          contrastProfile, contrastLayer, true);
 }
 
 void Ribbon_ConstrainSegment(Vector3 *a, Vector3 *b, float restLen,
@@ -508,7 +531,10 @@ void DrawRibbonEnergyField(const Vector3 *points, int count, float width,
 
     rlSetTexture(layer->useTexture ? texture.id : 0);
     rlBegin(RL_QUADS);
-    rlColor4ub(layer->color.r, layer->color.g, layer->color.b, layer->color.a);
+    Color layerColor = VFXContrast_ApplyColor(layer->color,
+                                               layer->contrastProfile,
+                                               layer->contrastLayer);
+    rlColor4ub(layerColor.r, layerColor.g, layerColor.b, layerColor.a);
 
     // 2 passes = the "+" cross-section: axisA plane, then axisB plane.
     for (int pass = 0; pass < 2; pass++) {
