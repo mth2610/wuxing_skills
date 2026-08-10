@@ -1686,3 +1686,86 @@ must be skipped too), and the VFX body/emission go to their own render targets,
 so the blend the user is complaining about happens in `distortion.fs`, not at
 draw time. A body-only render (skip `DrawTrailEntitiesEmission`) separates
 "the body carries no colour" from "the emission washes it out" in one frame.
+
+---
+
+## A new blend mode is invisible until every "does this layer have work?" predicate knows about it
+
+**Symptom.** `VFX_BLEND_PREMULTIPLIED` particles spawned, lived, sorted, and
+drew nothing. The volume shader compiled, its uniforms resolved, the composition
+logged that it was emitting, the sheet and the ramp LUT both had valid texture
+ids — and the screen showed a faint smudge where a fire should be.
+
+**Cause.** `main.c:157` runs the emission pass only when
+`ParticleManager_HasEmissionParticles()` says there is something in it, and that
+predicate bottomed out in `p->blendMode == VFX_BLEND_ADDITIVE`. The draw loop
+had already been taught to route PREMULTIPLIED into emission; the *gate* in
+front of the whole pass had not. So the particles were correctly filtered out of
+the body layer and then the emission layer was skipped as empty.
+
+**Rule.** Adding a blend mode means auditing every predicate that answers "is
+there anything to draw in this layer", not just the code that draws it. Write
+them as `!= VFX_BLEND_ALPHA` rather than `== VFX_BLEND_ADDITIVE`: the negative
+form makes a new emitting mode default to *visible and wrong* instead of
+*invisible and silent*, and wrong is the failure mode you can actually see.
+Same for `VFXContrast_ApplyColor`'s BODY/EMISSION selector and the draw loop's
+own layer filters — the three must agree or a mode falls between them.
+
+## The particle perf counters lied because they were reset once per LAYER
+
+**Symptom.** `particle_perf_log = 1` reported `batches=1` for a scene whose
+whole diagnosis rested on the batch count. Worse, turning the tunable on at all
+segfaulted: `VFXLight_GetStats(&lights, NULL)` wrote through the NULL `max`.
+
+**Cause.** `DrawParticlesLayer` is called twice a frame (body, then emission)
+and the log-and-reset block sat at the end of *both* calls. Whichever pass
+happened to cross the one-second boundary printed its own subtotal as the
+frame's, and the other pass's work had already been zeroed.
+
+**Rule.** A per-frame counter drained inside a function called more than once
+per frame reports a fraction and looks authoritative doing it. Reset on the LAST
+call (here `layerFilter == 1`), and give any optional out-param a NULL check —
+the instrument you reach for while debugging must not be the thing that crashes.
+
+**And do not benchmark in the headless harness.** `--render-vfx` runs a hidden
+window on a fixed `1.0f/60.0f` dt and never presents to a real surface, so
+`GetFPS()` there is not a frame rate. Measured on one unchanged scene it
+returned 2, 11, 20, 21, 23 and 278 across runs. It is fine for "did this path
+run" and for `live`/`quads`/`batches`, which are counted, not timed. Frame-rate
+judgements belong in the interactive app.
+
+## The EMISSION layer discards coverage — anything that must OCCLUDE belongs in BODY
+
+**Symptom.** Every emissive VFX looks like a milky white film over a bright
+background. Raising a premultiplied particle's alpha from ~0.38 to ~0.77 changed
+the composited frame *not at all*.
+
+**Cause.** `ScreenDistort_Composite` adds the emission target with
+`BLEND_ADD_COLORS`, whose factors are `(ONE, ONE)` on colour **and on alpha**
+(`rlvk_pipeline.inl`). The layer's alpha is never read as coverage, so nothing
+drawn into emission can be darker than what is behind it. Over a night sky pure
+addition passes for fire; over a bright sky it can only push the destination
+toward white, which strips the colour out — the milky film.
+
+**Rule.** Choose the layer by whether the effect must OCCLUDE, not by whether it
+emits. The BODY composite in `distortion.fs` is
+`scene*(1-a) + (rgb/a)*a`, i.e. premultiplied-over exactly, and `vfxBodyTex` is
+the same R16F format as emission — so an HDR emissive effect that also needs
+coverage goes in BODY with `VFX_BLEND_PREMULTIPLIED` and loses no headroom.
+EMISSION is for things with genuinely no silhouette: sparks, glints, bloom-only
+glow. This is what `VFX_ComposeFlameVolume` does.
+
+**Do not "fix" it by compositing emission premultiplied instead.** Additive
+producers accumulate `dst.a += src.a²` into that target, so the alpha there is
+meaningless-but-large; switching the composite would make every existing
+additive effect start punching a hole in the scene. Fixing it properly means
+every additive producer must first write `A = 0` via `BLEND_CUSTOM_SEPARATE`,
+and there are a dozen of them (`vc_light_shaft`, `vc_rune_circle`,
+`vc_ground_wave`, `vc_shock_ring`, `vc_portal_disc`, `vc_energy_orb`, the trail
+emission pass…).
+
+**And `rlColorMask` is not an escape hatch: it is a STUB under rlvk.**
+`rlvk_renderpass.inl` stores the four booleans in `RLVK.State.colorMask` and
+nothing ever reads them — no pipeline field, not in the pipeline key. It
+compiles, it runs, it silently does nothing. Masking alpha writes is not
+available on the Vulkan backend.

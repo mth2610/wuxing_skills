@@ -127,6 +127,17 @@ static SpriteAnim s_fvolVolumeAnim = {0};
 // percentile and has no idea how bright this effect should read, so this is
 // the knob that decides incandescent vs smouldering.
 static float s_fvolHeatGain = 1.6f;
+// Radiance gain on the flame half. SEPARATE from heatGain on purpose: heatGain
+// moves the sprite along the ramp (what COLOUR it is), this moves how much light
+// it throws (how BRIGHT it is). Conflating them means you cannot have a deep-red
+// flame that is genuinely bright, or a pale one that is dim.
+//
+// It has to be well above 1: the sheet's emission averages 0.13 of full scale
+// (it is normalised to its own 99.5th percentile), so at unity gain the whole
+// flame lands near black once ACES has had it. Above ~4 the hottest texels cross
+// 1.0 into the HDR buffer's headroom, which is what finally makes the core blow
+// out and bloom instead of clipping to a flat orange.
+static float s_fvolEmissive = 6.0f;
 // Ramp LUTs, one per material, baked lazily. THIS is where fire's colour lives
 // now — the sheet is greyscale on purpose, so pointing this at another gradient
 // turns the same simulation into purple or blue magic fire with no re-bake.
@@ -181,6 +192,7 @@ static void FVol_InitShared(void)
     Tuning_RegisterFloat("flame_body_alpha", &s_fvolBodyAlpha, 0.18f);
     Tuning_RegisterFloat("flame_volume", &s_fvolVolume, 1.0f);
     Tuning_RegisterFloat("flame_heat_gain", &s_fvolHeatGain, 1.6f);
+    Tuning_RegisterFloat("flame_emissive", &s_fvolEmissive, 6.0f);
 
     // The packed VOLUME sheet — the same sim as the split above, delivered with
     // its temperature field intact. Missing file falls through to the legacy
@@ -466,10 +478,10 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
                 lastMat = (int)matId;
                 TraceLog(LOG_INFO,
                          "FLAME volume path ACTIVE: sheet=%u ramp=%u heatGain=%.2f "
-                         "live=%.0f mat=%d blend=PREMULTIPLIED",
+                         "emissive=%.2f live=%.0f mat=%d blend=PREMULTIPLIED",
                          (unsigned)s_fvolVolumeTex.id,
                          (unsigned)FVol_RampLUT(matId).id, s_fvolHeatGain,
-                         s_fvolBodyLive, (int)matId);
+                         s_fvolEmissive, s_fvolBodyLive, (int)matId);
             }
         }
         const float live = s_fvolBodyLive * intensity * s_fvolBodyCount;
@@ -515,6 +527,7 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
                 .render.volumeSheet = 1,
                 .render.rampLUT = ramp,
                 .render.heatGain = s_fvolHeatGain,
+                .render.emissiveBoost = s_fvolEmissive,
                 .render.blendMode = VFX_BLEND_PREMULTIPLIED,
                 .render.texture = s_fvolVolumeTex,
                 // NOT unlit. The volume branch lights only the SOOT half and

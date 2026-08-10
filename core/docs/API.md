@@ -214,6 +214,7 @@
   void ParticleSystem_GetLighting(float *outStrength, float *outScatter);
   bool IsParticleSystemActive(void);
   bool ParticleSystem_HasAdditiveParticles(void);
+  bool ParticleSystem_HasVolumeParticles(void);
   void ParticleSystem_SpawnRadialBurst(Vector3 origin, float sizeScale, const ParticleRadialBurstConfig *cfg);
   void SpawnParticleOnMesh(const struct MeshAdjacency *adj, Matrix transform, ParticleConfig config);
   void ParticleSystem_ResetForceFieldRegistry(void);
@@ -375,6 +376,7 @@
   Color ColorGradient_Sample(const ColorGradient *g, float t);
   ColorGradient ColorGradient_MakeElectric(void);
   void ColorGradient_StandardFade(ColorGradient *grad, Color baseColor, float midT, float brightenAmount);
+  Texture2D ColorGradient_BakeLUT(const ColorGradient *g, int width);
 ```
 **Structs** (fields in header): GradientStop, ColorGradient
 
@@ -743,13 +745,10 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeImpactDistort(Vector3 pos, float scale, float severity01);
   void VFX_ComposeImpactDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   void VFX_ComposeLightShaft(Vector3 from, Vector3 to, VC_MaterialId mat, float width, float intensity);
-  int VFX_ComposeRibbonTrail(const Matrix *followTransform, VC_MaterialId mat, float width, float lifetime, VFX_RibbonTrailKind kind);
-  int VFX_ComposeRibbonTrailEx(const Matrix *followTransform, VC_MaterialId mat, float width, float lifetime, VFX_RibbonTrailKind kind, const VFX_TrailSurface *surface);
-  void VFX_RibbonTrailSetWidth(int handle, float width01);
-  void VFX_KillRibbonTrail(int handle);
-  int VFX_ComposeSweptTrail(const Matrix *followTransform, VC_MaterialId mat, float width, float lifetime, VFX_TrailStyle style);
+  int VFX_ComposeTrail(const Matrix *followTransform, VC_MaterialId mat, float width, float lifetime, TrailPresetId preset);
+  int VFX_ComposeTrailEx(const Matrix *followTransform, VC_MaterialId mat, float width, float lifetime, TrailPresetId preset, const VFX_TrailSurface *surface);
   void VFX_TrailSetWidth(int handle, float width01);
-  void VFX_KillSweptTrail(int handle);
+  void VFX_KillTrail(int handle);
   int VFX_ComposeSmokeColumn(Vector3 pos, VC_MaterialId mat, float radius, float height, VFX_ColumnKind kind, bool funnel);
   void VFX_SmokeColumn_Stop(int handle);
   int VFX_ComposeVolumeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime, VFX_VolumeKind kind);
@@ -763,10 +762,7 @@ _Inline helpers / macros only — see header._
   void VFX_KillProjectile(int handle);
   void VFX_BeginWaterStreams(float time);
   void VFX_EndWaterStreams(void);
-  void VFX_StrandTrail_Stop(int trailId);
-  int VFX_ComposeStrandTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime, VFX_StrandStyle style);
-  int VFX_ComposeEnergyTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime);
-  int VFX_ComposeSmokeStrandTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime);
+  void VFX_Trail_Stop(int trailId);
   void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
   void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01, float lifetimeScale);
@@ -790,7 +786,7 @@ _Inline helpers / macros only — see header._
   void VFX_SmokeTrail_Stop(int handle);
   void VFX_Compose_SubmitScreenSpaceVFX(void);
 ```
-**Enums:** VFX_RibbonTrailKind { VFX_RIBBON_BLADE,VFX_RIBBON_MAIN,VFX_RIBBON_WISP,VFX_RIBBON_BACKDROP,VFX_RIBBON_KIND_COUNT,VFX_RIBBON_FLOW,VFX_RIBBON_FILAMENT };VFX_TrailStyle { VFX_TRAIL_BLADE,VFX_TRAIL_RIBBON,VFX_TRAIL_FILAMENT,VFX_TRAIL_HAZE,VFX_TRAIL_STYLE_COUNT } VFX_VolumeKind { VOL_ENERGY,VOL_SMOKE,VOL_FIRE,VFX_VOLUME_KIND_COUNT };VFX_ColumnKind { VFX_COLUMN_SMOKE,VFX_COLUMN_FIRE,VFX_COLUMN_STEAM,VFX_COLUMN_KIND_COUNT } VFX_StrandStyle { VFX_STRAND_ENERGY,VFX_STRAND_SMOKE,VFX_STRAND_STYLE_COUNT }
+**Enums:** VFX_VolumeKind { VOL_ENERGY,VOL_SMOKE,VOL_FIRE,VFX_VOLUME_KIND_COUNT };VFX_ColumnKind { VFX_COLUMN_SMOKE,VFX_COLUMN_FIRE,VFX_COLUMN_STEAM,VFX_COLUMN_KIND_COUNT }
 **Structs** (fields in header): VFX_ShieldSurface, VFX_TrailSurface
 
 ### `core/composition/vfx_sequence.h`

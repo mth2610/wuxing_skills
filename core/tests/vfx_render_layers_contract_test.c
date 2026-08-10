@@ -77,13 +77,16 @@ int main(void)
     bad += !Has("main.c", "FluidSurface_Composite();");
     bad += !Has("core/trails/trail_system.c", "void DrawTrailEntitiesBody(Camera3D camera)");
     bad += !Has("core/trails/trail_system.c", "void DrawTrailEntitiesEmission(Camera3D camera)");
-    // Đợt H: the split is "is it plain ALPHA?", not "is it ADDITIVE?".
-    // PREMULTIPLIED joined the enum and carries an unbounded HDR contribution in
-    // RGB, so it belongs in EMISSION with additive — testing for != ALPHA keeps
-    // the contract right for any future blend mode that emits, whereas the old
-    // == ADDITIVE form silently routed every new mode into the body layer.
-    bad += !Has("core/particles/particle_system.c", "if (layerFilter == 0 && p->blendMode != VFX_BLEND_ALPHA) continue;");
-    bad += !Has("core/particles/particle_system.c", "if (layerFilter == 1 && p->blendMode == VFX_BLEND_ALPHA) continue;");
+    // Đợt H: ADDITIVE is the ONLY mode that goes to the emission layer.
+    // PREMULTIPLIED emits too but is drawn in the BODY pass, because the
+    // emission layer is composited with BLEND_ADD_COLORS and therefore discards
+    // coverage, while the body composite is already premultiplied-over. These
+    // two lines and ParticleSystem_HasAdditiveParticles must agree — when they
+    // disagreed, the particles were filtered out of body and then the emission
+    // pass was skipped as empty, and nothing drew at all.
+    bad += !Has("core/particles/particle_system.c", "if (layerFilter == 0 && p->blendMode == VFX_BLEND_ADDITIVE) continue;");
+    bad += !Has("core/particles/particle_system.c", "if (layerFilter == 1 && p->blendMode != VFX_BLEND_ADDITIVE) continue;");
+    bad += !Has("core/particles/particle_system.c", "? VFX_BLEND_PREMULTIPLIED");
     bad += !Has("core/trails/trail_system.c", "BlendMode bm = (layerFilter == 0) ? BLEND_ALPHA : sourceBm;");
     bad += !Has("core/trails/trail_system.c", "TrailUsesAdditiveBlend(t) &&");
     bad += !Has("core/trails/trail_system.c", "EnsureTrailBodyShader();");

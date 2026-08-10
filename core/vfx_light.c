@@ -101,12 +101,18 @@ void VFXLight_GetActive(VFXLightData *out, int *count, int maxCount) {
     }
     *count = activeCount;
 }
+// Either pointer may be NULL — callers routinely want only one of the two.
+// Writing through both unconditionally segfaulted the moment anything asked for
+// just the active count, which is exactly what particle_system.c's perf log
+// does: turning `particle_perf_log` on crashed the game rather than printing a
+// line, so the one instrument built for diagnosing particle cost could not be
+// switched on. An out-param that is documented as optional must be checked.
 void VFXLight_GetStats(int *active, int *max) {
     int n = 0;
     for (int i = 0; i < MAX_VFX_LIGHTS; i++)
         if (g_VFXLights[i].active) n++;
-    *active = n;
-    *max = MAX_VFX_LIGHTS;
+    if (active) *active = n;
+    if (max) *max = MAX_VFX_LIGHTS;
 }
 
 // ── Đợt E / E2 — bind the pool to any lit shader ─────────────────────────────

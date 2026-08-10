@@ -963,11 +963,24 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     // valid under additive blending, but becomes a dark halo when forced into
     // an alpha body. Only particles authored as alpha material enter body;
     // additive particles remain in their emission pass.
-    // PREMULTIPLIED counts as emission: it carries an unbounded HDR light
-    // contribution in RGB and needs the same tone-mapping headroom additive
-    // does. Only plain ALPHA is body.
-    if (layerFilter == 0 && p->blendMode != VFX_BLEND_ALPHA) continue;
-    if (layerFilter == 1 && p->blendMode == VFX_BLEND_ALPHA) continue;
+    // PREMULTIPLIED goes to BODY, not emission, even though it emits.
+    //
+    // The emission layer is composited with BLEND_ADD_COLORS
+    // (screen_distort.c) — factors (ONE, ONE) on colour AND alpha, so the
+    // layer's alpha is never read as coverage and nothing in it can darken the
+    // scene. A premultiplied particle put there loses exactly the half that
+    // justifies the mode: it would only ever add light, which over a bright sky
+    // is the milky wash the whole change exists to remove. Verified by raising
+    // the coverage substantially and watching the composited frame not change.
+    //
+    // The BODY composite already does the right thing. distortion.fs computes
+    // `scene*(1-a) + (rgb/a)*a`, which is algebraically `scene*(1-a) + rgb` —
+    // premultiplied-over exactly. And the body target is the same R16F format
+    // as emission, so the HDR headroom the blown-out core needs survives.
+    // Nothing about the shared composite has to change, and no other VFX is
+    // touched.
+    if (layerFilter == 0 && p->blendMode == VFX_BLEND_ADDITIVE) continue;
+    if (layerFilter == 1 && p->blendMode != VFX_BLEND_ADDITIVE) continue;
     // SURFACE_INPUT is rendered exclusively by FluidSurface; drawing it here
     // would reveal its source particles as billboards as well.
     if (p->renderMode == 3) continue;
@@ -981,7 +994,16 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     // Global multiplier on top of the per-particle value, so the whole look can
     // be dialled without touching every call site.
     float wantBoost = p->emissiveBoost * s_emissiveBoost;
-    int drawBlend = (layerFilter == 0) ? VFX_BLEND_ALPHA : p->blendMode;
+    // The body pass normally forces ALPHA so a glow sheet cannot smear its
+    // black surround into the body layer. PREMULTIPLIED is the exception it has
+    // to keep: its RGB is already scaled by its own coverage, so forcing it to
+    // ALPHA would make the hardware multiply by alpha a second time and the
+    // flame would come out roughly its own coverage darker.
+    int drawBlend = (layerFilter == 0)
+                        ? (p->blendMode == VFX_BLEND_PREMULTIPLIED
+                               ? VFX_BLEND_PREMULTIPLIED
+                               : VFX_BLEND_ALPHA)
+                        : p->blendMode;
     if (want != curTex || drawBlend != curBlend || p->unlit != curUnlit ||
         wantGridC != curGridC || wantGridR != curGridR || wantBoost != curBoost ||
         p->volumeSheet != curVolume || p->rampTexId != curRamp ||
@@ -1041,7 +1063,14 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       {
         // Occluding particles never emit: boosting smoke would make it give off
         // light it is supposed to block (the F1b blend law).
-        ParticleLighting_SetEmissive(p->unlit ? wantBoost : 1.0f);
+        //
+        // A VOLUME sheet is the exception, and it is not a loophole: it is not
+        // lit-or-emissive but BOTH, split per texel. The shader applies the
+        // boost to the emission channel only and leaves the soot half on the
+        // scene light, so gating on `unlit` here would silence exactly the
+        // flame it is meant to scale — while `unlit` must stay 0 or the soot
+        // would go unshaded.
+        ParticleLighting_SetEmissive((p->unlit || p->volumeSheet) ? wantBoost : 1.0f);
         curBoost = wantBoost;
       }
       if (wantGridC != curGridC || wantGridR != curGridR)
@@ -1289,21 +1318,31 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     static bool  s_perfReg = false;
     if (!s_perfReg) { s_perfReg = true;
       Tuning_RegisterFloat("particle_perf_log", &s_perfOn, 0.0f); }
-    if (s_perfOn > 0.5f)
+    // Report and reset ONLY after the emission pass, which is the last of the
+    // two layer calls. Doing it per call made the counters lie: the body pass
+    // zeroed them before emission ran, so whichever layer happened to cross the
+    // one-second boundary printed its own total as if it were the frame's — and
+    // "batches=1" looked identical whether the frame really cost one batch or
+    // one hundred split across the other layer. The whole point of this
+    // instrument is telling those two cases apart.
+    if (layerFilter == 1)
     {
-      s_perfLog += GetFrameTime();
-      if (s_perfLog >= 1.0f)
+      if (s_perfOn > 0.5f)
       {
-        s_perfLog = 0.0f;
-        int lights = 0;
-        VFXLight_GetStats(&lights, NULL);
-        TraceLog(LOG_INFO,
-                 "PARTICLE perf: live=%d quads=%d batches=%d vfxLights=%d fps=%d",
-                 s_activeCount, s_perfQuads, s_perfBatches, lights, GetFPS());
+        s_perfLog += GetFrameTime();
+        if (s_perfLog >= 1.0f)
+        {
+          s_perfLog = 0.0f;
+          int lights = 0;
+          VFXLight_GetStats(&lights, NULL);
+          TraceLog(LOG_INFO,
+                   "PARTICLE perf: live=%d quads=%d batches=%d vfxLights=%d fps=%d",
+                   s_activeCount, s_perfQuads, s_perfBatches, lights, GetFPS());
+        }
       }
+      s_perfBatches = 0;
+      s_perfQuads = 0;
     }
-    s_perfBatches = 0;
-    s_perfQuads = 0;
   }
 
   // Second pass: Draw Particle Ribbon Trails
@@ -1446,6 +1485,11 @@ bool ParticleSystem_HasAdditiveParticles(void)
   for (int i = 0; i < s_activeCount; ++i)
   {
     const ParticleInternal *p = &g_Particles[s_activeIds[i]];
+    // This gates whether main.c runs the EMISSION pass at all, so a mode
+    // missing from the test is not dimmed — it is never drawn. Keep it in step
+    // with the layer filter in DrawParticlesLayer: ADDITIVE is the only mode
+    // that goes to emission (PREMULTIPLIED is drawn in the body pass, see the
+    // note there). If the two ever disagree, particles vanish silently.
     if (p->blendMode == VFX_BLEND_ADDITIVE && p->renderMode != 3 && !p->trailOnly)
       return true;
   }

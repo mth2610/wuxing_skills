@@ -265,7 +265,16 @@ void main()
         // whole reason the volume path exists: the legacy path multiplies the
         // entire quad by ONE vertex colour and cannot zone colour at all.
         float heat  = clamp(emis * u_heatGain * fragColor.r, 0.0, 1.0);
-        vec3  flame = texture(u_rampLUT, vec2(heat, 0.5)).rgb * emis * u_emissiveBoost;
+        // Radiance is gated by COVERAGE as well as by emission. Without the
+        // `opac` factor a texel with a whisker of emission still radiates at
+        // full strength, so the faint tail of every cell lights up and each
+        // sprite shows as a glowing SQUARE — the quad's own boundary becomes
+        // visible because nothing makes the light fall off where the gas stops.
+        // Multiplying by opacity is also what the physics says: a ray radiates
+        // in proportion to how much hot gas it crossed, which is exactly what A
+        // integrates.
+        vec3  flame = texture(u_rampLUT, vec2(heat, 0.5)).rgb
+                      * emis * opac * u_emissiveBoost;
 
         // SMOKE — B/G is the fraction of light that survived to each texel,
         // baked at sim time. A billboard cannot compute that at runtime, and
@@ -276,13 +285,35 @@ void main()
         vec3  lit = ParticleLightTerm(N, ParticleLightDir(), wrap);
         vec3  smoke = u_smokeTint * lit * selfShadow;
 
-        // Only the SOOT occludes. The flame is a pure light contribution with no
-        // alpha of its own — that separation is exactly what premultiplied
-        // blending buys and what the two-population workaround could never do.
-        float alpha = clamp(soot * opac * fade, 0.0, 1.0);
+        // COVERAGE IS `opac`, NOT `soot * opac`.
+        //
+        // The first version gated alpha on soot, reasoning that only smoke
+        // occludes and flame is pure light. That is wrong twice over. The sim
+        // already answers the question: A is 1 - transmittance with the flame's
+        // own extinction folded in (render.py --flame-extinction), so hot gas
+        // DOES block what is behind it. And gating on soot put the LEAST alpha
+        // exactly where emission is strongest — hot gas carries little soot —
+        // so the bright core had almost no coverage and simply added light to
+        // whatever was behind it. Over a night sky that passes; over a bright
+        // sky the core turns milky and the whole flame washes out, because
+        // adding light to an already-bright destination only pushes it toward
+        // white and strips the colour out.
+        //
+        // With coverage from `opac` the core REPLACES its background instead of
+        // tinting it, so the flame holds the same colour on any sky — which is
+        // the actual requirement, and the thing the additive-core build could
+        // never satisfy at all.
+        float alpha = clamp(opac * fade, 0.0, 1.0);
+
+        // Split that coverage between the two populations by what is actually
+        // in the texel. The soot half is lit and can be DARKER than the sky;
+        // the flame half is emission, added on top of the background it just
+        // occluded — the pair is what premultiplied blending exists for.
+        float sootFrac = clamp(soot / max(soot + emis, 1e-4), 0.0, 1.0);
+
         // NOT clamped to 1: ACES in post_fx rolls the highlights off, and
         // clamping here would flatten the blown-out core and kill its bloom.
-        finalColor = vec4(flame * fade + smoke * alpha, alpha);
+        finalColor = vec4(flame * fade + smoke * alpha * sootFrac, alpha);
         return;
     }
 
