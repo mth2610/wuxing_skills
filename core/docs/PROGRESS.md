@@ -202,6 +202,21 @@ từ đuôi.
 **Đo được (chroma):** ENERGY 0.658 (bản duyệt 0.647) · MAIN 0.641 (0.656).
 Màu khớp; hình dạng đã thuôn hai đầu, hết vết cắt vuông.
 
+### 8.3a. Shader — mode 1 (packed wisp) ĐÃ XOÁ
+
+`trail_deform.fs` từng có 3 mode. **Không composer nào đặt `material.mode = 1`**
+kể từ khi strand trail thay thế nó — 30 dòng shader + 2 uniform
+(`u_turbStrength`, `u_edgeTear`) không đường nào chạm tới, nằm trong đúng file
+mà mọi trail phải debug qua. Đã xoá cùng với loc + upload phía C, và hai ngưỡng
+`< 0.5` / `>= 1.5` gộp thành MỘT: dưới 1.5 là passthrough, trên là strand.
+
+Test đã trỏ lại theo đúng kỷ luật cũ: assertion nay khẳng định **nhánh đó phải ở
+trạng thái đã xoá**, không phải im lặng bỏ đi. Render không đổi (chroma 27:
+0.658 = 0.658; 18: 0.878 vs 0.879).
+
+Còn lại của bước shader: đưa phần LẤY MẪU qua `SurfaceFlow_FieldSample`
+(`uv_field.glsl` đã có sẵn), để bỏ nốt `u_panSpeed`/`u_tiling` khỏi cầu tạm.
+
 ### 8.3. Cầu tạm — `TrailRecipe_ToLegacyMaterial`
 
 `trail_deform.fs` VẪN là 3 mode viết tay. Cầu tạm dịch recipe → uniform cũ ở

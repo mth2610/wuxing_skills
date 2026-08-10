@@ -226,8 +226,11 @@ static void Test_MirrorMatchesSource(void) {
             FileHas("core/shaders/common/fx.glsl", "smoothstep((strength) * (edgeWeight), (strength) * (edgeWeight) + 0.15, (noiseVal))") &&
             FileHas("core/shaders/common/fx.glsl", "1.0 - (edgeWeight)), (strength))"),
         "volume-edge erosion uses the shared macro with the shipped fixed-band arithmetic");
-  CHECK(FileHas("core/trails/shaders/trail_deform.fs", "EDGE_EROSION_THRESHOLD_JITTER(texF.g, edgeBias, u_edgeTear)"),
-        "ribbon trails share the same exact-expansion erosion convention");
+  // The trail's only consumer of this macro was the packed-wisp material, which
+  // was deleted 10/08/2026 (nothing set material.mode = 1). The macro itself is
+  // still shared — the volume path above is what pins its arithmetic now.
+  CHECK(!FileHas("core/trails/shaders/trail_deform.fs", "u_edgeTear"),
+        "the trail's deleted wisp material no longer claims the shared macro");
   // The cull, now a SWITCH rather than a law — and the claim this assertion
   // used to make ("the term cannot reach the screen without it") was retired
   // on 06/08 by measurement, not by preference. silhouette_test.c's

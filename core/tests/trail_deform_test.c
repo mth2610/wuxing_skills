@@ -724,7 +724,7 @@ static void Test_MirrorStillMatchesSource(void)
     // the metre anchor, the octave-sum normalisation, the head weld and the
     // distance falloff that turns the centreline into a band.
     const char *gen = "scripts/gen_energy_wisp_texture.py";
-    CHECK(FileHas(fs, "if (u_matMode >= 1.5)"), "the strand branch is still reachable");
+    CHECK(FileHas(fs, "if (u_matMode < 1.5)"), "the strand branch is still reachable past one threshold");
     CHECK(FileHas(fs, "float metres = u_pathArc.x - along * u_pathArc.y;"),
           "the trail is still anchored in metres of laid path, not in segment space");
     // The ramp moved into core/uv as UV_ENV_HEAD_WELD — the shape was general
@@ -825,16 +825,21 @@ static void Test_MirrorStillMatchesSource(void)
           "hairs still combine by brightest-wins, not by summing into a solid band");
 
     // The fragment: packed material + the both-pass feed.
-    CHECK(FileHas(fs, "if (u_matMode < 0.5)"), "the passthrough guard is unchanged");
-    CHECK(FileHas(fs, "mix(texC.r, texF.g, mixW)"), "the wisp is still R/G by the mix");
-    CHECK(FileHas(fs, "smoothstep(thresh, thresh + edge, texC.b)"),
-          "the dissolve is still a B-channel smoothstep on the jittered threshold");
-    CHECK(FileHas(fs, "EDGE_EROSION_THRESHOLD_JITTER(texF.g, edgeBias, u_edgeTear)"),
-          "the edge tear uses the shared, exact-expansion macro");
-    CHECK(FileHas(fs, "float intenWisp = wisp * dissolveMask * tailMask;"),
-          "the packed wisp still erodes only its own intensity");
-    CHECK(FileHas(fs, "if (intenWisp * vColor.a < 0.003)"),
-          "the discard threshold still folds in the vertex alpha");
+    // ── The PACKED WISP (mode 1) is DELETED, and that is the assertion ──────
+    // It cross-faded R/G of one sheet by an A-channel turbulence term and cut a
+    // B-channel dissolve — a complete material, with no composer setting
+    // `material.mode = 1` since the strand trail replaced it. Thirty unreachable
+    // lines and two unreachable uniforms in the one file every trail's look has
+    // to be debugged through is worse than no code at all, so the branch, the
+    // threshold that selected it, and u_turbStrength/u_edgeTear all went.
+    CHECK(!FileHas(fs, "u_matMode < 0.5"),
+          "the middle threshold is gone — passthrough and strand, nothing between");
+    CHECK(!FileHas(fs, "mix(texC.r, texF.g, mixW)"),
+          "and the packed-wisp material with it");
+    CHECK(!FileHas(fs, "u_turbStrength") && !FileHas(fs, "u_edgeTear"),
+          "and its two uniforms, which nothing could reach");
+    CHECK(!FileHas(c, "u_turbStrength") && !FileHas(c, "u_edgeTear"),
+          "and the C side no longer looks up or uploads them");
     // THE render-split contract. BLEND_ALPHA is not premultiplied, so a body
     // pass handed intensity-scaled RGB dims twice, contributes no coverage, and
     // the whole trail washes out over a bright destination.
@@ -858,8 +863,12 @@ static void Test_MirrorStillMatchesSource(void)
           "main.c runs the trail emission pass for HDR cores and halos");
     CHECK(FileHas(fs, "return vec4(colour * gain, inten * vAlpha);"),
           "the EMISSION pass lets additive blending apply intensity exactly once");
-    CHECK(FileHas(fs, "finalColor = ResolvePass(vColor.rgb, intenWisp, vColor.a, 1.0);"),
-          "the packed-wisp mode goes through the resolver too — the split cannot drift per mode");
+    // ONE caller left, and that is the point of deleting the other: the split
+    // between BODY and EMISSION cannot drift per mode when there is one mode.
+    CHECK(FileHas(fs, "finalColor = ResolvePass(hot, passIntensity, vColor.a, u_bandShape.z);"),
+          "the surviving material still routes its colour through the resolver");
+    CHECK(!FileHas(fs, "intenWisp"),
+          "and the mode that could have drifted from it is gone");
     CHECK(FileHas(c, "float pass = (s_drawLayerFilter == 0) ? 0.0f : 1.0f;"),
           "the C layer still tells the shader which pass it is drawing");
     CHECK(FileHas(fs, "u_tailFadeA >= u_tailFadeB"),

@@ -968,7 +968,6 @@ static void TrailRecipe_ToLegacyMaterial(const TrailRecipe *r,
 
     out->dissolve = r->mask.dissolve;
     out->dissolveSoft = r->mask.dissolveSoft;
-    out->edgeTear = r->mask.edgeTear;
     out->tailFadeA = r->mask.tailFadeA;
     out->tailFadeB = r->mask.tailFadeB;
     out->tailStagger = r->mask.tailStagger;

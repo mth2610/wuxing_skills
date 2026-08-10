@@ -91,14 +91,12 @@ uniform vec4 u_uvMeta;
 // the tail is where the strands fan apart and dissolve.
 
 uniform sampler2D texture0;
-uniform float u_matMode;        // 0 = passthrough, 1 = packed wisp, 2 = sin band
+uniform float u_matMode;        // < 1.5 = passthrough, >= 1.5 = strand material
 uniform float u_wispMix;        // coarse(R) -> fine(G)
 uniform float u_dissolve;       // B-channel dissolve threshold
 uniform float u_dissolveSoft;   // dissolve edge softness
-uniform float u_edgeTear;       // 0 = off; fine-noise jitter of the dissolve
                                 // threshold, strongest at the band edges —
                                 // the silhouette frays ("rách") like smoke
-uniform float u_turbStrength;   // A-channel mix jitter
 uniform vec2  u_tiling;         // x = tiles along path, y = tiles across width
 uniform vec4  u_panSpeed;       // x = coarse pan, y = fine pan (UV units/sec)
 uniform float u_tailFadeA;      // segment fade start (0 = head, 1 = tail)
@@ -167,13 +165,25 @@ vec4 ResolvePass(vec3 colour, float inten, float vAlpha, float gain)
 
 void main()
 {
-    if (u_matMode < 0.5)
+    // ── PASSTHROUGH ─────────────────────────────────────────────────────────
+    // A plain textured strip: the swept presets, whose shape comes from the
+    // CLOTH and whose look is painted into the sheet, plus every trail that has
+    // no recipe at all.
+    //
+    // ONE THRESHOLD, not two. There used to be a middle branch here — the
+    // PACKED-WISP material (mode 1: two pans of one sheet, R/G cross-faded by an
+    // A-channel turbulence term, B-channel dissolve). It was DELETED 10/08/2026:
+    // no composer had set `material.mode = 1` since the strand trail replaced
+    // it, so it was thirty lines of shader and two uniforms that could not be
+    // reached, sitting in the one file every trail's look gets debugged through.
+    // Its dissolve and edge-tear ideas survive in the strand path below, which
+    // is the material that actually ships.
+    if (u_matMode < 1.5)
     {
         finalColor = texture(texture0, vSegUV) * vColor;
         return;
     }
 
-    if (u_matMode >= 1.5)
     {
         float along = vSegUV.y;                   // 0 = head .. 1 = tail
         float across = (vSegUV.x - 0.5) * 2.0;    // -1 .. 1 across the width
@@ -416,32 +426,4 @@ void main()
         return;
     }
 
-    vec2 uv = vec2(vSegUV.x * u_tiling.y, vSegUV.y * u_tiling.x);
-    vec4 texC = texture(texture0, vec2(uv.x, uv.y + u_time * u_panSpeed.x));
-    vec4 texF = texture(texture0, vec2(uv.x, uv.y + u_time * u_panSpeed.y));
-
-    float turb = clamp(u_turbStrength * (texF.a - 0.5) * 2.0, -1.0, 1.0);
-    float mixW = clamp(u_wispMix + turb, 0.0, 1.0);
-    float wisp = mix(texC.r, texF.g, mixW);
-
-    float edge = max(u_dissolveSoft, 0.001);
-    // Torn silhouette: the dissolve threshold wobbles with fine noise, scaled
-    // to zero at the band CENTRE and full at both edges, so the outline gets
-    // irregular bites instead of a smooth gradient — the smoke frays at its
-    // boundaries the way the tail frays at its end.
-    float across = abs(vSegUV.x - 0.5f) * 2.0f;
-    float edgeBias = smoothstep(0.12f, 0.45f, across);
-    float thresh = u_dissolve + EDGE_EROSION_THRESHOLD_JITTER(texF.g, edgeBias, u_edgeTear);
-    float dissolveMask = smoothstep(thresh, thresh + edge, texC.b);
-
-    // Segment-space tail ramp: the smoke widens toward the tail, then the
-    // material dissolves it away instead of ending in a hard band.
-    float tailMask = (u_tailFadeA >= u_tailFadeB)
-                         ? 1.0
-                         : 1.0 - smoothstep(u_tailFadeA, u_tailFadeB, vSegUV.y);
-
-    float intenWisp = wisp * dissolveMask * tailMask;
-    if (intenWisp * vColor.a < 0.003)
-        discard;
-    finalColor = ResolvePass(vColor.rgb, intenWisp, vColor.a, 1.0);
 }

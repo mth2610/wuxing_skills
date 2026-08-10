@@ -121,13 +121,10 @@ typedef struct
     float wispMix;      // coarse(R) -> fine(G)
     float dissolve;     // B-channel dissolve threshold
     float dissolveSoft; // dissolve edge softness
-    float turbStrength; // A-channel mix jitter
     float tilingX;      // texture tiles along the path
     float tilingY;      // texture tiles across the width
     float panCoarse;    // coarse-channel pan (UV units/sec)
     float panFine;      // fine-channel pan (UV units/sec)
-    float edgeTear;     // fine-noise jitter of the dissolve threshold at the
-                        // band edges (0 = off) — torn/ragged silhouette
     float tailFadeA;    // segment fade start (0 = head, 1 = tail)
     float tailFadeB;    // segment fade end — the tail dissolves to zero here;
                         // tailFadeA >= tailFadeB disables the fade

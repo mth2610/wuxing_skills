@@ -67,9 +67,6 @@ typedef struct {
     // whole and the end erodes into islands instead of dimming evenly.
     float dissolve;
     float dissolveSoft;
-    // Fine-noise jitter of the dissolve threshold at the edges only — a torn
-    // silhouette rather than a smooth gradient. 0 = a clean edge.
-    float edgeTear;
     // Segment-space fade. tailFadeA >= tailFadeB disables it.
     float tailFadeA, tailFadeB;
     // ── HOW THE TAIL COMES APART ────────────────────────────────────────────

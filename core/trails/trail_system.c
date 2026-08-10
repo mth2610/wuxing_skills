@@ -100,8 +100,8 @@ typedef struct
 {
     int deformMode, waveAmpA, waveAmpB, waveFreq, waveSpeed;
     int wavePhase, waveEnv, waveStrength, curlScale, stripNormal;
-    int matMode, wispMix, dissolve, dissolveSoft, turbStrength;
-    int tiling, panSpeed, edgeTear, tailFadeA, tailFadeB;
+    int matMode, wispMix, dissolve, dissolveSoft;
+    int tiling, panSpeed, tailFadeA, tailFadeB;
     int bandShape, pathArc, colHot, strandFlow;
     int renderPass, bodyOpacity, contrastParams, colTail, tailShape;
     // The mode-2 sine warp's coordinate half, generalised 05/08/2026 onto
@@ -137,10 +137,8 @@ static void FillDeformLocs(Shader shader, DeformLocs *l)
     l->wispMix       = GetShaderLocation(shader, "u_wispMix");
     l->dissolve      = GetShaderLocation(shader, "u_dissolve");
     l->dissolveSoft  = GetShaderLocation(shader, "u_dissolveSoft");
-    l->turbStrength  = GetShaderLocation(shader, "u_turbStrength");
     l->tiling        = GetShaderLocation(shader, "u_tiling");
     l->panSpeed      = GetShaderLocation(shader, "u_panSpeed");
-    l->edgeTear      = GetShaderLocation(shader, "u_edgeTear");
     l->tailFadeA     = GetShaderLocation(shader, "u_tailFadeA");
     l->tailFadeB     = GetShaderLocation(shader, "u_tailFadeB");
     l->uvWarp        = UVDeform_CacheLocations(shader);
@@ -1992,8 +1990,6 @@ static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
     if (L->wispMix >= 0) SetShaderValue(s_deformShader, L->wispMix, &m->wispMix, SHADER_UNIFORM_FLOAT);
     if (L->dissolve >= 0) SetShaderValue(s_deformShader, L->dissolve, &m->dissolve, SHADER_UNIFORM_FLOAT);
     if (L->dissolveSoft >= 0) SetShaderValue(s_deformShader, L->dissolveSoft, &m->dissolveSoft, SHADER_UNIFORM_FLOAT);
-    if (L->edgeTear >= 0) SetShaderValue(s_deformShader, L->edgeTear, &m->edgeTear, SHADER_UNIFORM_FLOAT);
-    if (L->turbStrength >= 0) SetShaderValue(s_deformShader, L->turbStrength, &m->turbStrength, SHADER_UNIFORM_FLOAT);
     {
         float tiling[2] = {m->tilingX, m->tilingY};
         if (L->tiling >= 0) SetShaderValue(s_deformShader, L->tiling, tiling, SHADER_UNIFORM_VEC2);
