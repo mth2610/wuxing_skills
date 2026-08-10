@@ -831,11 +831,30 @@ int main(int argc, char **argv) {
         if (vfxCamDist > 30.0f) vfxCamDist = 30.0f;
 
         camera.target = (Vector3){ player.position.x, player.position.y + 0.2f, player.position.z };
-        camera.position = (Vector3){ 
-            player.position.x + sinf(vfxCameraAngle) * vfxCamDist, 
-            player.position.y + vfxCamDist * 0.8f, 
+        camera.position = (Vector3){
+            player.position.x + sinf(vfxCameraAngle) * vfxCamDist,
+            player.position.y + vfxCamDist * 0.8f,
             player.position.z + cosf(vfxCameraAngle) * vfxCamDist
         };
+
+        // WUXING_VFX_TOPDOWN=1 — steep overhead framing so the GROUND fills the
+        // frame instead of the sky. Judging anything that lives on a surface
+        // (decals above all) needs the receiver to BE the destination; the
+        // default orbit puts most of the frame on skybox, which is why a decal
+        // there is judged against the wrong background entirely.
+        {
+            static bool read = false, on = false;
+            if (!read) { read = true;
+                const char *v = getenv("WUXING_VFX_TOPDOWN");
+                on = (v != NULL && *v && *v != '0'); }
+            if (on) {
+                camera.position = (Vector3){ player.position.x + 0.001f,
+                                             player.position.y + vfxCamDist,
+                                             player.position.z + 0.001f };
+                camera.target = (Vector3){ player.position.x, player.position.y,
+                                           player.position.z };
+            }
+        }
 
         // Intersect against the flat Y=0 plane first (cheap, works for the
         // common flat-map case), then snap the result's Y to the ACTIVE
