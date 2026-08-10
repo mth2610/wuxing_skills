@@ -1081,8 +1081,36 @@ int main(int argc, char **argv) {
         EnvShadow_EndCapture();
     }
 
+    // ── BRIGHT-BACKGROUND HARNESS ────────────────────────────────────────────
+    //
+    //   WUXING_VFX_BG=0xRRGGBBFF   (e.g. 0xC8D2E6FF for an overcast sky)
+    //
+    // Clears to that colour and skips the map + skybox, the mirror image of the
+    // N-key dark mode above. It exists because "the VFX looks like a milky film
+    // over a bright background" was, for a long time, a complaint no test could
+    // reproduce: the tester's default sky is dark, and an effect that can only
+    // ADD light looks fine against dark and washes out against bright. Judging
+    // that class of defect needs a bright destination, and eyeballing the game
+    // is not a measurement. Pair it with --render-vfx for a headless A/B.
+    static bool  s_vfxBgRead = false;
+    static bool  s_vfxBgOn   = false;
+    static Color s_vfxBgColor;
+    if (!s_vfxBgRead) {
+        s_vfxBgRead = true;
+        const char *bg = getenv("WUXING_VFX_BG");
+        if (bg && *bg) {
+            s_vfxBgOn = true;
+            s_vfxBgColor = GetColor((unsigned int)strtoul(bg, NULL, 0));
+            TraceLog(LOG_INFO, "VFX BG override: 0x%08X (map + skybox skipped)",
+                     (unsigned)strtoul(bg, NULL, 0));
+        }
+    }
+    const bool vfxBgActive = s_vfxBgOn && currentScreen == SCREEN_VFX_TESTER;
+
     ScreenDistort_Begin();
-    if (g_isDebuggerCapturing || (currentScreen == SCREEN_VFX_TESTER && s_vfxDarkMode)) {
+    if (vfxBgActive) {
+        ClearBackground(s_vfxBgColor);
+    } else if (g_isDebuggerCapturing || (currentScreen == SCREEN_VFX_TESTER && s_vfxDarkMode)) {
         ClearBackground(BLACK);
     } else {
         ClearBackground(GetColor(0x111111FF));
@@ -1103,7 +1131,10 @@ int main(int argc, char **argv) {
     VFXLight_BindAll(GfxQuality_Get() >= GFX_HIGH ? 4 : (GfxQuality_Get() >= GFX_MED ? 2 : 0));
     SurfaceMaterial_UpdateFrame(camera); // G2 — push sun/ambient/fog to lit models
     GroundShadow_UpdateFrame(); // Real Shading P6 — push shadow map to raw-immediate ground draws
-    if (!(currentScreen == SCREEN_VFX_TESTER && s_vfxDarkMode)) {
+    if (!(currentScreen == SCREEN_VFX_TESTER && s_vfxDarkMode) && !vfxBgActive) {
+        // Skipping the map is not optional for the bright harness: the skybox
+        // paints over ClearBackground, so clearing alone leaves the same dark
+        // sky and the test silently measures nothing.
         MapManager_DrawActive();
     }
     if (!g_isDebuggerCapturing && currentScreen == SCREEN_SKILL_SANDBOX) {
