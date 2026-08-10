@@ -183,9 +183,9 @@ body layer, via `ParticleConfig.spriteAnim`. `tuning.cfg → flame_atlas`:
 engine intact.
 
 ```bash
-python3 scripts/flipbook/ti_sim.py fire_puff --res 112 --frames 64 --name fire_puff
-python3 scripts/flipbook/render.py build_cache/fire_puff --cell 256 --supersample 2 --zoom auto --light 1.0 --density-scale 9 --flame-extinction 1.5 --flame-scale 4.5
-python3 scripts/flipbook/pack.py build_cache/fire_puff/frames --grid 8 --alpha-from-luma 0 --shape puff --out fire_puff_8x8_volume.png
+python3 scripts/flipbook/ti_sim.py fire_puff --res 144 --frames 64 --name fire_wispy --curl 7.5 --viscosity 0.06 --radial 4.2
+python3 scripts/flipbook/render.py build_cache/fire_wispy --cell 256 --supersample 2 --zoom auto --light 1.0 --density-scale 6 --flame-extinction 1.5 --flame-scale 4.5
+python3 scripts/flipbook/pack.py build_cache/fire_wispy/frames --grid 8 --alpha-from-luma 0 --shape puff --out fire_puff_8x8_volume.png
 ```
 
 R emission · G smoke density · B self-shadow · A true opacity — **no colour in
@@ -195,8 +195,30 @@ purple magic fire or blue ghost-flame with no re-bake, and one sprite carries a
 white-hot core AND a dark rim, which the `_flame` split above physically cannot
 (its RGB is a flat 255/255/255 mask, so one vertex colour tints the whole quad).
 
-`--density-scale 9` (not the 28 default) and `--flame-extinction 1.5` are what
-make it TRANSLUCENT rather than a saturated plate: the default scale drives the
+── THE SINGLE SPRITE HAS TO BE RIGHT FIRST ──
+
+Found by setting `flame_body_live = 1` and looking at ONE particle: the sprite
+was a hard-edged lumpy cutout, and no number of them stacked can read as gas.
+Measured on the sheet, the transition band (0.05 < A < 0.95) was **6.9%** of the
+cell with an interior alpha plateau of 0.95 — a sticker, not a volume.
+
+`--curl 7.5 --viscosity 0.06` is what fixed it: **17.5%** transition band, with
+visible filaments in the silhouette. Turbulence has to be allowed to develop and
+viscosity is what smooths it away.
+
+MEASURED DEAD END: `--density-scale` is NOT this knob, exactly as the pipeline
+README warns. 9 -> 3.0 -> 1.5 moved the band only 6.9% -> 8.0% -> 9.0% and left
+the interior plateau at 0.92. Do not reach for it again.
+
+KNOWN TRADE: low viscosity lets turbulence develop AND lets the puff reach the
+domain wall (~6% wall shell), so the outer silhouette of late frames is partly
+the box. Raising viscosity to 0.10 and shortening `--dt` to 0.55 stays inside
+the box but collapses the band back to 5.6% — worse than the original. The two
+are coupled and the domain size is not exposed; the soft edge was judged worth
+the wall.
+
+`--density-scale 6` and `--flame-extinction 1.5` keep it TRANSLUCENT rather than
+a saturated plate: the default scale drives the
 puff's interior into a plateau, which reads as slabs of flat colour. Measured
 alpha mean fell 0.77 -> 0.71 and hot texels rose 3.8% -> 4.5% across that change.
 
