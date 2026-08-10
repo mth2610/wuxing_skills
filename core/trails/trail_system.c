@@ -38,6 +38,7 @@ void TrailSystem_SetGlobalTexture(Texture2D tex) { s_globalTrailTex = tex; }
 static Shader defaultShader;
 static Shader s_bodyShader;
 static bool s_bodyShaderTried = false;
+static int s_bodyContrastParamsLoc = -1;
 /* Uber deform shader (trail_deform.vs/.fs): five uniform-selected vertex
  * deform modes + the packed 4-channel wisp material. Trails route here if
  * they use EITHER half: deform.mode 0 + material.mode 1 is a FLAT ribbon
@@ -102,7 +103,7 @@ typedef struct
     int matMode, wispMix, dissolve, dissolveSoft, turbStrength;
     int tiling, panSpeed, edgeTear, tailFadeA, tailFadeB;
     int bandShape, pathArc, colHot, strandFlow;
-    int renderPass, bodyOpacity, colTail, tailShape;
+    int renderPass, bodyOpacity, contrastParams, colTail, tailShape;
     // The mode-2 sine warp's coordinate half, generalised 05/08/2026 onto
     // core/uv's UVDeformField (u_sinWave is GONE — see the "SIN-WAVE STRAND
     // TRAIL" push site for the reproduction). uv_field.glsl is shape-neutral
@@ -150,6 +151,7 @@ static void FillDeformLocs(Shader shader, DeformLocs *l)
     l->strandFlow    = GetShaderLocation(shader, "u_strandFlow");
     l->renderPass    = GetShaderLocation(shader, "u_renderPass");
     l->bodyOpacity   = GetShaderLocation(shader, "u_bodyOpacity");
+    l->contrastParams = GetShaderLocation(shader, "u_contrastParams");
     l->colTail       = GetShaderLocation(shader, "u_colTail");
     l->tailShape     = GetShaderLocation(shader, "u_tailShape");
 }
@@ -275,6 +277,9 @@ static void EnsureTrailBodyShader(void)
     if (s_bodyShaderTried) return;
     s_bodyShaderTried = true;
     s_bodyShader = ResourceManager_LoadShader(NULL, "core/trails/shaders/trail_body.fs");
+    if (s_bodyShader.id != 0)
+        s_bodyContrastParamsLoc = GetShaderLocation(s_bodyShader,
+                                                     "u_contrastParams");
 }
 
 static void EnsureTrailDeformShader(void)
@@ -1851,6 +1856,11 @@ static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
     const DeformLocs *L = GetCachedDeformLocs(s_deformShader);
     const TrailDeformConfig *d = &t->deform;
     const TrailMaterialConfig *m = &t->material;
+    float contrastParams[4];
+    VFXContrast_GetShaderParams(m->contrastProfile, contrastParams);
+    if (L->contrastParams >= 0)
+        SetShaderValue(s_deformShader, L->contrastParams, contrastParams,
+                       SHADER_UNIFORM_VEC4);
 
     if (L->deformMode >= 0) SetShaderValue(s_deformShader, L->deformMode, &d->mode, SHADER_UNIFORM_FLOAT);
     if (L->waveAmpA >= 0) SetShaderValue(s_deformShader, L->waveAmpA, d->ampA, SHADER_UNIFORM_VEC3);
@@ -2402,6 +2412,7 @@ typedef struct
     float flowTiling;
     float dissolve;
     float maskTiling;
+    VFXContrastProfileId contrastProfile;
     bool useFlowMap;
 } RenderGroup;
 
@@ -2412,6 +2423,8 @@ static bool TrailMatchesRenderGroup(const TrailEntity *t, const RenderGroup *g,
         g->useFlowMap != t->useFlowMap ||
         g->noiseMask.id != t->noiseMask.id ||
         g->dissolve != t->dissolve || g->maskTiling != t->maskTiling)
+        return false;
+    if (g->contrastProfile != t->material.contrastProfile)
         return false;
     if (!t->useFlowMap)
         return true;
@@ -2499,6 +2512,7 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
             groups[groupCount].flowTiling = t->flowTiling;
             groups[groupCount].dissolve = t->dissolve;
             groups[groupCount].maskTiling = t->maskTiling;
+            groups[groupCount].contrastProfile = t->material.contrastProfile;
             groups[groupCount].useFlowMap = t->useFlowMap;
             groupCount++;
         }
@@ -2514,6 +2528,15 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
         int timeLoc = GetCachedTimeLoc(fullShader);
         if (timeLoc >= 0)
             SetShaderValue(fullShader, timeLoc, &time, SHADER_UNIFORM_FLOAT);
+        if (s_bodyShader.id != 0 && fullShader.id == s_bodyShader.id &&
+            s_bodyContrastParamsLoc >= 0)
+        {
+            float contrastParams[4];
+            VFXContrast_GetShaderParams(groups[g].contrastProfile,
+                                        contrastParams);
+            SetShaderValue(fullShader, s_bodyContrastParamsLoc, contrastParams,
+                           SHADER_UNIFORM_VEC4);
+        }
         // Volume-tube constants, pushed ONCE PER GROUP and never between
         // instances. Per-instance uniform writes are the pattern that empties
         // rlvk's UBO arena (ENGINE_LANDMINES §8); everything that genuinely

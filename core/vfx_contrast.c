@@ -3,11 +3,11 @@
 
 static const VFXContrastProfile s_profiles[VFX_CONTRAST_COUNT] = {
     [VFX_CONTRAST_NONE]   = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f },
-    [VFX_CONTRAST_SMOKE]  = { 1.15f, 0.82f, 0.72f, 0.0f,  1.0f, 0.80f, 0.75f, 0.0f,  0.0f,  0.35f, 0.0f },
+    [VFX_CONTRAST_SMOKE]  = { 1.00f, 0.82f, 0.72f, 0.0f,  1.0f, 0.80f, 1.00f, 0.0f,  0.0f,  0.35f, 0.0f },
     [VFX_CONTRAST_FIRE]   = { 1.10f, 0.90f, 0.80f, 1.50f, 0.78f, 1.40f, 1.35f, 1.20f, 0.12f, 0.25f, 0.12f },
     [VFX_CONTRAST_ENERGY] = { 1.35f, 0.92f, 0.62f, 1.55f, 0.76f, 1.65f, 1.50f, 1.25f, 0.22f, 0.12f, 0.18f },
     [VFX_CONTRAST_MAGIC]  = { 1.25f, 0.90f, 0.70f, 1.35f, 0.80f, 1.25f, 1.10f, 1.15f, 0.30f, 0.20f, 0.10f },
-    [VFX_CONTRAST_DUST]   = { 1.10f, 0.80f, 0.65f, 0.0f,  1.0f, 0.75f, 0.65f, 0.0f,  0.0f,  0.30f, 0.0f }
+    [VFX_CONTRAST_DUST]   = { 1.00f, 0.80f, 0.65f, 0.0f,  1.0f, 0.75f, 1.00f, 0.0f,  0.0f,  0.30f, 0.0f }
 };
 
 const VFXContrastProfile *VFXContrast_Get(VFXContrastProfileId id)
@@ -83,4 +83,14 @@ float VFXContrast_ApplyEmissionThreshold(float authoredThreshold,
     return authoredThreshold < profile->emissionThreshold
                ? authoredThreshold
                : profile->emissionThreshold;
+}
+
+void VFXContrast_GetShaderParams(VFXContrastProfileId id, float outParams[4])
+{
+    if (outParams == NULL) return;
+    const VFXContrastProfile *profile = VFXContrast_Get(id);
+    outParams[0] = profile == &s_profiles[VFX_CONTRAST_NONE] ? 0.0f : 1.0f;
+    outParams[1] = profile->edgeSharpness;
+    outParams[2] = profile->coreSize;
+    outParams[3] = profile->coreIntensity;
 }

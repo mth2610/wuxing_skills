@@ -52,5 +52,6 @@ float VFXContrast_ApplyEmissionIntensity(float authoredIntensity,
                                          VFXContrastProfileId id);
 float VFXContrast_ApplyEmissionThreshold(float authoredThreshold,
                                          VFXContrastProfileId id);
+void VFXContrast_GetShaderParams(VFXContrastProfileId id, float outParams[4]);
 
 #endif

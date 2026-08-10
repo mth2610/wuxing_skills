@@ -77,14 +77,11 @@ void main() {
     vec4 scene = texture(texture0, sampleUv);
     vec4 body = (u_hasVfxLayers != 0) ? texture(u_vfxBodyTex, sampleUv) : vec4(0.0);
     // Body buffer is stored with regular alpha blending, hence RGB is
-    // premultiplied. A literal low sprite alpha would still let a bright map
-    // bleach the VFX colour. Recover straight body colour, then use a
-    // contrast-protecting coverage curve for the final alpha-over. This is a
-    // compositor rule shared by every VFX producer, not a per-skill tint hack.
-    // VFX sheets are deliberately feathered; a sixth-power coverage response
-    // preserves their saturated body over bright ground while retaining a soft
-    // edge from the texture alpha.
-    float bodyCoverage = 1.0 - pow(1.0 - body.a, 6.0);
+    // premultiplied. Recover straight colour, then composite with the STORED
+    // coverage. Coverage must stay linear here: a global nonlinear expansion
+    // turns every producer's soft 0.1 edge into a visible ~0.47 silhouette and
+    // defeats smoke/particle/decal edge masks after they have already run.
+    float bodyCoverage = body.a;
     vec3 bodyColor = (body.a > 0.0001) ? (body.rgb / body.a) : vec3(0.0);
     scene.rgb = scene.rgb * (1.0 - bodyCoverage) + bodyColor * bodyCoverage;
     vec3 hdr = min(scene.rgb, vec3(64.0));

@@ -18,9 +18,9 @@
   `ScreenDistort_BeginVFXEmission()`; `bright_vfx_isolation_test.c` is the
   renderer-independent regression probe for this blend law.
 - **Manager rule:** `main.c` must route `ParticleManager_DrawBody()` and
-  `DrawTrailEntitiesBody()` through the shared VFXBody target. Drawing those
-  bodies straight into the HDR scene bypasses the compositor's coverage curve
-  and recreates the same washout at every feathered edge. Decals likewise use
+  `DrawTrailEntitiesBody()` through the shared VFXBody target. The compositor
+  recovers straight body colour but preserves stored alpha linearly; a global
+  coverage power makes soft smoke/decal edges visible. Decals likewise use
   `DecalSystem_DrawBody()`/`DrawEmission()` so additive cracks never contaminate
   the premultiplied body buffer.
 
@@ -1025,6 +1025,37 @@ backgrounds. Any module drawing through `ScreenDistort_BeginVFXBody()` /
 `...Emission()` can hit it — see **"BLEND_ALPHA is NOT premultiplied"** in root
 `ENGINE_LANDMINES.md`. The trail system's fix is `ResolvePass` in
 `core/trails/shaders/trail_deform.fs` plus `TrailMaterialConfig.bodyOpacity`.
+
+The BODY pass still needs tonal separation inside the material. Multiplying
+`hdrGain` across the whole strand raises its dark support and hot core together;
+the trail keeps its hue but becomes one flat strip over a bright map. The inverse
+mistake is just as bad: moving HDR to one very narrow threshold leaves an opaque
+red support sheet and makes the yellow core disappear.
+
+For accent-bearing trails, pass coverage through
+`VFXContrast_BodyMask(intensity, profileParams)` at the producer, then preserve
+that alpha unchanged through the compositor. BODY keeps straight, non-HDR RGB;
+EMISSION owns gain and the hot core. `VFX_CONTRAST_NONE` remains identity.
+Smoke/dust use neutral alpha and edge sharpness so selecting a profile cannot
+reveal their authored soft silhouette.
+
+**Failure đã xảy ra:** compositor từng đổi `a` thành `1-(1-a)^6`. Alpha biên
+`0.10` vì thế thành `0.47`; mọi edge-soft/dissolve chạy trước đó đều có vẻ như
+không hoạt động. Không đặt nonlinear coverage policy sau khi nhiều loại producer
+đã author silhouette riêng.
+
+Một profile alpha không thể cứu strand nếu chính bundle mask có plateau rộng.
+Mode 2 từng dùng wrap guard chỉ fade ở 20% ngoài cùng; sheet R/G rộng hoặc fallback
+trắng vì thế tạo đúng ba ribbon đỏ đặc. Wrap guard phải đồng thời là cross-profile
+thuôn trên toàn bề rộng, và energy bundle phải có center-core hình học riêng được
+texture điều biến. Hot core không được phụ thuộc hoàn toàn vào việc asset tình cờ
+có texel đạt đúng ngưỡng density.
+
+Màu hot cũng phải lấy từ semantic material. Pha Fire glow `(255,90,20)` về
+trắng tạo hồng nhạt, không tạo lõi vàng. Strand lấy target từ
+`VFX_ElementMaterial.hotGrad`; với Fire, sample nóng là `(255,180,50)` và energy
+profile nâng nó thành gold. `glow` là màu phát sáng chung, không mặc nhiên là
+màu nhiệt độ cao nhất.
 
 ## A shared `onUpdate` is authority over the whole entity — see above
 

@@ -155,12 +155,12 @@ static void DrawParticleTrailVFXLayers(Camera3D camera, Texture2D particleTextur
   bool hasParticles = !g_debugHideParticles &&
                       (particleStats.activeCpuParticles > 0 || particleStats.activeGpuParticles > 0);
   bool hasEmissionParticles = hasParticles && ParticleManager_HasEmissionParticles();
+  bool hasEmissionTrails = hasTrails;
   if (!hasTrails && !hasParticles) return;
 
-  // Particle/trail bodies share the same contrast-protected VFXBody target as
-  // decals, water and afterimages. Alpha-over straight into a bright HDR scene
-  // still inherits too much destination colour at feathered edges; the shared
-  // compositor resolves body coverage once, after every producer has drawn.
+  // Particle/trail bodies share VFXBody with decals, water and afterimages.
+  // It stores alpha-blended RGB but preserves stored coverage linearly; edge
+  // shaping happens in each producer before this linear composite.
   ScreenDistort_BeginVFXBody();
   if (hasTrails) DrawTrailEntitiesBody(camera);
   rlDrawRenderBatchActive();
@@ -170,18 +170,20 @@ static void DrawParticleTrailVFXLayers(Camera3D camera, Texture2D particleTextur
   rlEnableDepthMask();
   ScreenDistort_EndVFXLayer();
 
-  // Ribbons are already lifted in the HDR body shader and participate in the
-  // normal post-FX bloom. Rendering them into a second full-resolution
-  // emission target duplicates the geometry and costs an extra fullscreen
-  // composite even for a single trail.
-  if (hasEmissionParticles) {
+  // Trail/particle radiance is a separate semantic layer. Keeping HDR out of
+  // VFXBody preserves soft smoke edges and lets energy trails carry a yellow
+  // core over their darker material body.
+  if (hasEmissionTrails || hasEmissionParticles) {
     ScreenDistort_BeginVFXEmission();
-    rlDisableDepthMask();
-    ParticleManager_DrawEmission(camera, particleTexture);
-    rlDrawRenderBatchActive();
-    rlEnableDepthMask();
+    if (hasEmissionTrails) DrawTrailEntitiesEmission(camera);
+    if (hasEmissionParticles) {
+      rlDisableDepthMask();
+      ParticleManager_DrawEmission(camera, particleTexture);
+      rlDrawRenderBatchActive();
+      rlEnableDepthMask();
+    }
   }
-  if (hasEmissionParticles) ScreenDistort_EndVFXLayer();
+  if (hasEmissionTrails || hasEmissionParticles) ScreenDistort_EndVFXLayer();
 }
 
 /* Post-scene VFX that need screen-space preparation before their body pass. */

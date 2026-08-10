@@ -21,18 +21,32 @@ int main(void)
         authored, VFX_CONTRAST_ENERGY, VFX_CONTRAST_BODY);
     Color energyEmission = VFXContrast_ApplyColor(
         authored, VFX_CONTRAST_ENERGY, VFX_CONTRAST_EMISSION);
+    Color smokeBody = VFXContrast_ApplyColor(
+        authored, VFX_CONTRAST_SMOKE, VFX_CONTRAST_BODY);
 
     CHECK(SameColor(authored, noneBody));
     CHECK(SameColor(authored, noneEmission));
     CHECK(energyBody.r < authored.r && energyBody.g < authored.g);
     CHECK(energyBody.a > authored.a);
     CHECK(energyEmission.r > authored.r && energyEmission.a > authored.a);
+    CHECK(smokeBody.a == authored.a);
+    CHECK(VFXContrast_Get(VFX_CONTRAST_SMOKE)->edgeSharpness == 1.0f);
+    CHECK(VFXContrast_Get(VFX_CONTRAST_DUST)->edgeSharpness == 1.0f);
     CHECK(fabsf(VFXContrast_ApplyBodyOpacity(0.5f, VFX_CONTRAST_NONE) - 0.5f) < 0.0001f);
     CHECK(VFXContrast_ApplyBodyOpacity(0.9f, VFX_CONTRAST_ENERGY) == 1.0f);
     CHECK(VFXContrast_ApplyEmissionIntensity(2.0f, VFX_CONTRAST_ENERGY) > 2.0f);
     CHECK(VFXContrast_ApplyEmissionIntensity(2.0f, VFX_CONTRAST_SMOKE) == 0.0f);
     CHECK(VFXContrast_ApplyEmissionThreshold(1.1f, VFX_CONTRAST_ENERGY) < 1.0f);
     CHECK(VFXContrast_ApplyEmissionThreshold(1.1f, VFX_CONTRAST_NONE) == 1.1f);
+    CHECK(VFXContrast_Get(VFX_CONTRAST_NONE)->coreSize == 1.0f);
+    CHECK(VFXContrast_Get(VFX_CONTRAST_ENERGY)->coreSize > 0.0f);
+    CHECK(VFXContrast_Get(VFX_CONTRAST_ENERGY)->coreSize < 0.5f);
+    float shaderParams[4] = {0};
+    VFXContrast_GetShaderParams(VFX_CONTRAST_NONE, shaderParams);
+    CHECK(shaderParams[0] == 0.0f && shaderParams[2] == 1.0f);
+    VFXContrast_GetShaderParams(VFX_CONTRAST_ENERGY, shaderParams);
+    CHECK(shaderParams[0] == 1.0f);
+    CHECK(shaderParams[2] == VFXContrast_Get(VFX_CONTRAST_ENERGY)->coreSize);
 
     puts(bad ? "vfx contrast: FAIL" : "vfx contrast: PASS");
     return bad ? 1 : 0;

@@ -1,6 +1,7 @@
 #version 330
 #include "core/shaders/common/fs_header.glsl"
 #include "core/shaders/common/fx.glsl"
+#include "core/shaders/common/vfx_contrast.glsl"
 #include "core/uv/shaders/uv_deform.glsl"
 #include "core/uv/shaders/surface_flow.glsl"
 
@@ -62,22 +63,9 @@ uniform vec4 u_uvMeta;
 //                    over a bright destination — it occludes.
 //   u_renderPass 1 = EMISSION (BLEND_ADDITIVE): colour * intensity * HDR gain.
 //
-// ── TRAILS ONLY EVER RUN THE BODY PASS. READ THIS BEFORE TUNING ─────────────
-// main.c calls DrawTrailEntitiesBody() and NEVER DrawTrailEntitiesEmission():
-// ribbons are lifted into HDR inside the body pass and picked up by the normal
-// post-FX bloom, because giving them a second full-resolution emission target
-// duplicates the geometry for every trail. DrawTrailEntitiesEmission() exists
-// and works, but nothing in the game calls it.
-//
-// So the BODY pass must carry BOTH jobs — coverage AND glow — and that is why
-// it applies the HDR gain too. Treating it as "the dull occluding half" and
-// putting the gain only in the emission branch silently threw away every trail's
-// brightness (it happened: the trail went pale over dark and bright alike, and
-// the emission branch it had been handed to was dead code).
-//
-// u_bodyOpacity therefore scales the ONLY pass there is: 0 makes a trail
-// invisible, not "emissive". Keep it high (0.85-1.0) for anything that should
-// read as bright; lower it only for a genuinely faint haze.
+// Trails run both semantic passes. BODY carries coloured coverage; EMISSION
+// carries HDR radiance. Keeping gain out of BODY prevents an energy trail from
+// becoming an opaque red material strip and lets smoke retain its soft edge.
 
 // ── MODE 2 — SIN-WAVE STRAND TRAIL ──────────────────────────────────────────
 // Implements the RzFX "Sin Wave Trail" breakdown (ryanzengvfx.blogspot.com,
@@ -148,6 +136,7 @@ uniform float u_wavePhase;  // per-spawn random phase — desyncs simultaneous c
 uniform vec2  u_waveEnv;    // x = head fade fraction (band welded to the emitter)
 uniform float u_renderPass; // 0 = BODY (alpha, occludes), 1 = EMISSION (additive)
 uniform float u_bodyOpacity;// coverage scale for the body pass, 0..1
+uniform vec4  u_contrastParams; // enabled, edgeSharpness, coreSize, coreIntensity
 
 in vec2 vSegUV;
 in vec4 vColor;
@@ -159,23 +148,21 @@ const float TAU = 6.2831853;
 //   colour : the material's own hue, NOT scaled by intensity
 //   inten  : 0..1 coverage/energy of this fragment
 //   vAlpha : the vertex alpha (width envelope, lifetime, layer alpha)
-//   gain   : HDR gain, emission pass only
+//   gain   : HDR lift request for EMISSION only
 vec4 ResolvePass(vec3 colour, float inten, float vAlpha, float gain)
 {
     if (u_renderPass < 0.5)
     {
-        // BODY. Two rules, and they pull in opposite directions:
-        //  * BLEND_ALPHA is not premultiplied — the hardware applies alpha, so
-        //    the colour must NOT be pre-scaled by intensity or it dims twice.
-        //  * This is the only pass trails actually run, so the HDR gain has to
-        //    be applied HERE or the trail never reaches the values bloom looks
-        //    for and reads as a flat, pale decal.
-        float coverage = clamp(inten * vAlpha * u_bodyOpacity, 0.0, 1.0);
-        return vec4(colour * gain, coverage);
+        // BLEND_ALPHA is not premultiplied: RGB stays straight and the hardware
+        // applies coverage once. Producer-side structure shapes the edge; the
+        // shared compositor deliberately does not reshape alpha again.
+        float bodyMask = VFXContrast_BodyMask(inten, u_contrastParams);
+        float coverage = clamp(bodyMask * vAlpha * u_bodyOpacity, 0.0, 1.0);
+        return vec4(colour, coverage);
     }
-    // EMISSION. Additive consumes src.rgb * src.a, so the intensity belongs in
-    // the colour here.
-    return vec4(colour * inten * gain, inten * vAlpha);
+    // Raylib additive blend applies src alpha. Keep intensity in alpha so it is
+    // applied exactly once; pre-scaling RGB here would square soft edges.
+    return vec4(colour * gain, inten * vAlpha);
 }
 
 void main()
@@ -320,19 +307,43 @@ void main()
         float s1 = texture(texture0, vec2(SurfaceFlow_AcrossU(across, w1, bundleHW * 0.72), v1)).g;
         float s2 = texture(texture0, vec2(SurfaceFlow_AcrossU(across, w2, bundleHW * 1.35), v2)).r;
 
-        // A bundle whose centre has swung far enough that this fragment falls
-        // outside it must contribute NOTHING. The sampler wraps (the sheet has
-        // to tile along the path), so without these windows a crest would
-        // smear its strands back in from the opposite edge.
-        s0 *= 1.0 - smoothstep(0.80, 1.0, abs(across - w0) / bundleHW);
-        s1 *= 1.0 - smoothstep(0.80, 1.0, abs(across - w1) / (bundleHW * 0.72));
-        s2 *= 1.0 - smoothstep(0.80, 1.0, abs(across - w2) / (bundleHW * 1.35));
+        // A wrap guard that stays flat across 80% of the bundle turns a white
+        // fallback texel (or any broad R/G patch) into three solid ribbons.
+        // Use a real cross-section instead: full only on the centreline, then
+        // taper continuously to zero. The authored sheet still supplies all
+        // fine hairs and gaps; this envelope guarantees that it can never
+        // inflate into a flat rectangular band.
+        float d0 = abs(across - w0) / bundleHW;
+        float d1 = abs(across - w1) / (bundleHW * 0.72);
+        float d2 = abs(across - w2) / (bundleHW * 1.35);
+        float env0 = 1.0 - smoothstep(0.04, 1.0, d0);
+        float env1 = 1.0 - smoothstep(0.04, 1.0, d1);
+        float env2 = 1.0 - smoothstep(0.04, 1.0, d2);
+        s0 *= env0;
+        s1 *= env1;
+        s2 *= env2;
 
         // Each bundle's own end. Applied per bundle, BEFORE the max: after it,
         // one shared cut would just clip the combined result again.
-        s0 *= 1.0 - smoothstep(endMid, 1.0, along);
-        s1 *= 1.0 - smoothstep(endLate, 1.0, along);
-        s2 *= 1.0 - smoothstep(endEarly, 1.0, along);
+        float end0 = 1.0 - smoothstep(endMid, 1.0, along);
+        float end1 = 1.0 - smoothstep(endLate, 1.0, along);
+        float end2 = 1.0 - smoothstep(endEarly, 1.0, along);
+        s0 *= end0;
+        s1 *= end1;
+        s2 *= end2;
+
+        // The hot core is a structural part of an energy strand, not an
+        // accidental threshold in the source texture. Do NOT multiply this
+        // by s0/s1/s2: the authored R/G hairs need not cross the exact bundle
+        // centre, and doing so made hotSignal identically zero while the red
+        // support remained visible. Texture owns fine gaps; geometry guarantees
+        // one narrow hot centreline for each live bundle.
+        float core0 = (1.0 - smoothstep(0.02, 0.18, d0)) * end0;
+        float core1 = (1.0 - smoothstep(0.02, 0.18, d1)) * end1 *
+                      clamp(u_wispMix, 0.0, 1.0);
+        float core2 = (1.0 - smoothstep(0.02, 0.18, d2)) * end2 *
+                      clamp(u_strandFlow.y, 0.0, 1.0);
+        float centreCore = max(max(core0, core1), core2);
 
         // MAX, not sum: overlapping hairs must stay hairs. Summing fills the
         // gaps between them back in and the three bundles merge into exactly
@@ -370,7 +381,12 @@ void main()
                              : 1.0 - smoothstep(u_tailFadeA, u_tailFadeB, along);
 
         float inten = strand * edgeMask * dissolveMask2 * tailBand;
-        if (inten < 0.004)
+        float hotSignal = centreCore * edgeMask * dissolveMask2 * tailBand;
+        // The structural core is deliberately independent of the R/G sheet.
+        // Its liveness test must be independent too: discarding on `inten`
+        // alone silently killed the yellow core wherever the source texture
+        // happened to be dark, leaving only the broad red support visible.
+        if (max(inten, hotSignal) < 0.004)
             discard;
 
         // ── Phase 6: colour ───────────────────────────────────────────────
@@ -384,8 +400,19 @@ void main()
         //     burns toward u_colHot. Without it a coloured strand is a neon
         //     stripe rather than something hot.
         vec3 lengthCol = mix(vColor.rgb, u_colTail, along);
-        vec3 hot = mix(lengthCol, u_colHot, smoothstep(0.45, 1.0, inten));
-        finalColor = ResolvePass(hot, inten, vColor.a, u_bandShape.z);
+        float hotMix = max(smoothstep(0.45, 1.0, inten),
+                           smoothstep(0.08, 0.45, hotSignal));
+        vec3 hot = mix(lengthCol, u_colHot, hotMix);
+        // Feed the structural centreline into radiance/coverage too. It is
+        // narrow, so this restores the hot filament without re-inflating the
+        // surrounding support band.
+        // BODY carries a narrower, lower-energy coloured core so its hue is
+        // readable on bright maps; EMISSION carries the full HDR copy. The
+        // hotSignal is geometric and thin, so this cannot refill the red body.
+        float passIntensity = (u_renderPass < 0.5)
+                                  ? max(inten, hotSignal * 0.65)
+                                  : max(inten, hotSignal);
+        finalColor = ResolvePass(hot, passIntensity, vColor.a, u_bandShape.z);
         return;
     }
 

@@ -19,6 +19,7 @@
 | 9 | `matModel` is model×**view** → `fragPosition` is NOT world space | Any shader doing positional lighting/effects, incl. `viewPos - fragPosition` fresnel |
 | 10 | `SetShaderValue` writes to the **active** shader under rlvk | Anyone setting uniforms outside `BeginShaderMode` |
 | 11 | Colour-only VFX layer clear must preserve shared depth | Anyone adding a render layer over scene depth |
+| 12 | Nonlinear shared body alpha reveals soft VFX edges | Every BODY producer: smoke, trail, particle, decal |
 
 ---
 
@@ -329,7 +330,8 @@ the assertion is what kept the bug invisible.
 different things:
 
 - BODY (`BLEND_ALPHA`): **unpremultiplied** colour + a coverage alpha.
-- EMISSION (`BLEND_ADDITIVE`): colour × intensity × HDR gain.
+- EMISSION (`BLEND_ADDITIVE`): straight colour × HDR gain, with intensity in
+  source alpha so the blend unit applies it exactly once.
 
 Route every mode of a multi-mode shader through ONE resolver function (see
 `ResolvePass` in `core/trails/shaders/trail_deform.fs`) so the two passes cannot
@@ -346,19 +348,33 @@ that was supposed to *improve* its bright-background legibility. Every uniform
 arrives, the maths is right, the shader compiles.
 
 **Cause.** The body/emission split is an API, not a guarantee that both halves
-run. `main.c` calls `DrawTrailEntitiesBody()` and deliberately never calls
-`DrawTrailEntitiesEmission()`: ribbons are lifted into HDR inside the body pass
-and picked up by ordinary post-FX bloom, because a second full-resolution
-emission target duplicates the geometry for every trail. A change that moved the
-HDR gain into the emission branch — correct in the abstract — moved it into a
-branch nothing executes, and every trail lost its brightness at once.
+run. At the time of this failure `main.c` called `DrawTrailEntitiesBody()` but
+not `DrawTrailEntitiesEmission()`. Moving gain into emission therefore moved it
+into dead code. The later attempt to keep both jobs in BODY combined with a
+global alpha expansion and produced solid red energy bands plus hard smoke
+edges. As of 10/08/2026 both trail passes run: BODY owns coverage, EMISSION owns
+HDR.
 
-**Rule.** Before dividing an effect's output between the body and emission
-passes, `grep` for the pass functions and confirm BOTH are actually called for
-that subsystem. Where only one runs, that pass must carry both jobs: coverage
-*and* the HDR lift. And an "opacity"/"body strength" knob under a one-pass
-subsystem is not a body-vs-glow balance — it is a plain visibility multiplier,
-so treating a low value as "more emissive" just makes the effect fainter.
+**Rule.** Before dividing output, confirm both pass functions are called. Do not
+silently compensate for a dead pass by mixing semantic jobs: wire the missing
+pass or explicitly document a truly one-pass subsystem. Body opacity remains
+coverage; it is never a substitute for emission strength.
+
+## 12. A global nonlinear body-alpha curve reveals every producer's soft edge
+
+**Symptom.** Smoke trail, smoke column, particles and decals simultaneously
+develop visible silhouettes; energy ribbons become solid material bands. Local
+edge-soft/dissolve knobs appear ineffective.
+
+**Cause.** The shared compositor changed stored body alpha with
+`1-(1-a)^6`. An authored edge at `a=0.10` became `0.47` after every producer had
+already finished shaping it. No local mask can compensate reliably because the
+same post-curve is applied to unrelated material classes.
+
+**Rule.** Composite VFXBody with its stored alpha linearly. Structure/edge masks
+belong to each producer or material profile. Use BODY/EMISSION separation to
+retain hue on bright backgrounds; never seek background invariance by globally
+inflating coverage.
 
 ## `fract()` for float precision: fold each product ONCE, never nest
 

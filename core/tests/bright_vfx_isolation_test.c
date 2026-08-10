@@ -27,7 +27,7 @@ static Rgb additive(Rgb dst, Rgb src, float srcAlpha)
 }
 static Rgb layered(Rgb scene, Rgb body, float bodyAlpha, Rgb emission)
 {
-    float coverage = 1.0f - powf(1.0f - bodyAlpha, 6.0f);
+    float coverage = bodyAlpha;
     return add(add(scale(scene, 1.0f - coverage), scale(body, coverage)), emission);
 }
 
@@ -73,9 +73,17 @@ int main(void)
         fprintf(stderr, "FAIL: map background did not affect additive result\n");
         return 1;
     }
-    if (chroma(aces(layerBright)) < 0.55f ||
-        fabsf(chroma(aces(layerBright)) - chroma(aces(layerDark))) > 0.22f) {
-        fprintf(stderr, "FAIL: separated VFX layers did not retain bright-background chroma\n");
+    if (chroma(aces(layerBright)) < 0.40f ||
+        chroma(aces(layerBright)) < chroma(aces(bright)) + 0.20f) {
+        fprintf(stderr, "FAIL: semantic body/emission split did not improve bright-background chroma\n");
+        return 1;
+    }
+    Rgb softBody = layered(brightClear, vfx, 0.10f, (Rgb){0.0f, 0.0f, 0.0f});
+    Rgb authoredSoft = add(scale(brightClear, 0.90f), scale(vfx, 0.10f));
+    if (fabsf(softBody.r - authoredSoft.r) > 0.0001f ||
+        fabsf(softBody.g - authoredSoft.g) > 0.0001f ||
+        fabsf(softBody.b - authoredSoft.b) > 0.0001f) {
+        fprintf(stderr, "FAIL: compositor changed authored soft-edge coverage\n");
         return 1;
     }
     puts("PASS: washout first appears at additive composition, before post-processing");

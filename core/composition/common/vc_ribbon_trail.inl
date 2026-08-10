@@ -839,6 +839,7 @@ static int SweptTrail_SpawnStrand(const VC_SweptTrail *s, int slot, int strand)
                                                    : RIBBON_CAMERA_FACING;
     cfg.fixedNormal = (Vector3){0.0f, 1.0f, 0.0f};
     cfg.disableInnerCore = true; // superseded by the layer stack
+    cfg.material.contrastProfile = VFX_CONTRAST_ENERGY;
     cfg.layers = s->layers;
     cfg.layerCount = SweptTrail_LayerCount(s->kind);
     cfg.uvMetresPerTile = (s_sweptTile > 0.05f) ? s_sweptTile : 0.05f;

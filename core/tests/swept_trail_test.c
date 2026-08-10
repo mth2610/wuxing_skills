@@ -1465,6 +1465,8 @@ static int FileHas(const char *path, const char *needle)
 static void Test_MirrorStillMatchesSource(void)
 {
     const char *inl = "core/composition/common/vc_ribbon_trail.inl";
+    const char *bodyFs = "core/trails/shaders/trail_body.fs";
+    const char *trailC = "core/trails/trail_system.c";
 
     // ── What this file still OWNS ───────────────────────────────────────────
     //
@@ -1570,6 +1572,16 @@ static void Test_MirrorStillMatchesSource(void)
           "a trail still EMITS: additive, per the blend law");
     CHECK(FileHas(inl, "cfg.disableInnerCore = true;"),
           "the engine's legacy sub-pixel core is still off — the stack replaces it");
+    CHECK(FileHas(inl, "cfg.material.contrastProfile = VFX_CONTRAST_ENERGY;"),
+          "swept ribbon selects the shared energy contrast profile");
+    CHECK(FileHas(bodyFs, "VFXContrast_CoreMask(sheet.a, u_contrastParams)"),
+          "classic ribbon limits HDR lift to the dense texture core");
+    CHECK(FileHas(bodyFs, "VFXContrast_BodyMask(sheet.a, u_contrastParams)"),
+          "classic ribbon compacts coverage before the VFX-body compositor");
+    CHECK(FileHas(bodyFs, "mix(1.0, coreGain, coreMask)"),
+          "classic ribbon keeps a darker support around that core");
+    CHECK(FileHas(trailC, "groups[groupCount].contrastProfile = t->material.contrastProfile;"),
+          "render groups separate profiles before uploading one uniform per group");
     CHECK(FileHas(inl, "cfg.gradient = SweptTrail_Gradient(s->matId);"),
           "colour along the strip still comes from the element material");
     CHECK(FileHas(inl, "cfg.ribbonMode = (s->kind == VFX_RIBBON_BLADE) ? RIBBON_FIXED_NORMAL"),

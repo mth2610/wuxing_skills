@@ -290,6 +290,19 @@ decalMaterial.contrastProfile = VFX_CONTRAST_FIRE;
 - Raw ribbon dùng `DrawRibbonStripProfiledEx` hoặc
   `DrawRibbonStripDeformedProfiledEx`; `RibbonEnergyFieldLayer` mang profile và
   `VFXContrastLayer` riêng cho từng layer.
+- Với strand trail lẫn classic/swept ribbon, `edgeSharpness` định hình coverage
+  ngay tại producer, nhờ vậy khe giữa filament không bị lấp thành một dải đặc.
+  Compositor giữ alpha tuyến tính; không được tăng coverage toàn cục vì việc đó
+  sẽ làm lộ biên của smoke, particle và decal. HDR/lõi nằm ở emission pass riêng,
+  không nhân vào body.
+- `SMOKE` và `DUST` giữ `alpha = 1`, `edgeSharpness = 1`: profile được phép đổi
+  sắc độ/mật độ thân nhưng không được thay silhouette mềm đã author.
+- Riêng strand mode 2 còn áp một cross-profile thuôn và center-core mảnh cho mỗi
+  bundle. Texture R/G điều biến chi tiết, nhưng không được quyền biến một bundle
+  thành hình chữ nhật đặc hoặc làm mất hot core khi sheet/fallback quá phẳng.
+- Màu center-core lấy từ `VFX_ElementMaterial.hotGrad` (sample vùng nóng), rồi
+  nội suy với `glow/body` bằng tuning `hot_whiten` cũ. Không whiten trực tiếp
+  màu đỏ-cam: Fire phải đi về gold/yellow, không đi về pink-white.
 
 ### Mesh-based Particle Emission
 * `void SpawnParticleOnMesh(const struct MeshAdjacency *adj, Matrix transform, ParticleConfig config);`

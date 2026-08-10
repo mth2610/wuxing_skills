@@ -45,7 +45,8 @@ int main(void)
     bad += !Has("core/screen_distort.c", "rlFramebufferAttach(target.id, 0, RL_ATTACHMENT_DEPTH");
     bad += !Has("core/shaders/distortion.fs", "u_vfxBodyTex");
     bad += Has("core/shaders/distortion.fs", "u_vfxEmissionTex");
-    bad += !Has("core/shaders/distortion.fs", "float bodyCoverage = 1.0 - pow(1.0 - body.a, 6.0);");
+    bad += !Has("core/shaders/distortion.fs", "float bodyCoverage = body.a;");
+    bad += Has("core/shaders/distortion.fs", "pow(1.0 - body.a");
     bad += !Has("core/shaders/distortion.fs", "bodyColor * bodyCoverage");
     bad += !Has("core/screen_distort.c", "BeginBlendMode(BLEND_ADD_COLORS);");
 
@@ -80,13 +81,14 @@ int main(void)
     bad += !Has("core/trails/trail_system.c", "BlendMode bm = (layerFilter == 0) ? BLEND_ALPHA : sourceBm;");
     bad += !Has("core/trails/trail_system.c", "TrailUsesAdditiveBlend(t) &&");
     bad += !Has("core/trails/trail_system.c", "EnsureTrailBodyShader();");
-    bad += !Has("core/trails/shaders/trail_body.fs", "sheet.rgb * fragColor.rgb * colDiffuse.rgb * 1.75");
+    bad += !Has("core/trails/shaders/trail_body.fs", "VFXContrast_CoreMask(sheet.a, u_contrastParams)");
+    bad += !Has("core/trails/shaders/trail_body.fs", "mix(1.0, coreGain, coreMask)");
     bad += !Has("main.c", "DrawDecalVFXLayers(camera);");
     bad += !Has("main.c", "DrawParticleTrailVFXLayers(camera, globalParticleTex);");
     bad += !Has("main.c", "if (g_debugHideParticles && g_debugHideTrails) return;");
-    bad += !Has("main.c", "Particle/trail bodies share the same contrast-protected VFXBody target");
+    bad += !Has("main.c", "preserves stored coverage linearly");
     bad += !Has("main.c", "ScreenDistort_BeginVFXBody();");
-    bad += !Has("main.c", "Ribbons are already lifted in the HDR body shader");
+    bad += !Has("main.c", "if (hasEmissionTrails) DrawTrailEntitiesEmission(camera);");
     bad += !Has("main.c", "DecalSystem_DrawBody();");
     bad += !Has("main.c", "DecalSystem_DrawEmission();");
     bad += !Has("core/decals/decal_system.c", "bool DecalSystem_HasEmission(void)");

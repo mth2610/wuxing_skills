@@ -61,7 +61,7 @@ typedef struct
     float envHead, wispMix;
     float tilingX, panCoarse, panFine;
     float bodyOpacity;        // how much the BLEND_ALPHA body pass occludes
-    float hotWhiten;          // 0 = core keeps the element hue, 1 = white-hot
+    float hotWhiten;          // legacy tuning name: 0 = base, 1 = material hotGrad
     float tailDarken;         // 0 = tail keeps the head colour, 1 = tail goes
                               // to the material's darkest tone. The along-trail
                               // ramp: energy cools, smoke thins to grey.
@@ -86,9 +86,9 @@ typedef struct
 static StrandTrailStyle s_strandStyles[VFX_STRAND_STYLE_COUNT] = {
     // ── ENERGY ── thin bright filaments with hot cores, lifted into HDR so
     // post-FX bloom picks them up. bodyOpacity is near 1 because the body pass
-    // is the ONLY pass trails run (main.c never calls the emission one): what
-    // it does not draw is simply not drawn. 0.45 here made the whole trail pale
-    // over dark and bright backgrounds alike.
+    // is the ONLY pass trails run (main.c never calls the emission one), but
+    // trail_deform.fs compacts the filament mask before the shared compositor
+    // expands alpha. This keeps gaps without making the whole support pale.
     [VFX_STRAND_ENERGY] = {
         .tuningPrefix = "energytrail",
         .surface = VFX_SURFACE_ENERGY_RIBBON,
@@ -271,10 +271,13 @@ static void StrandTrail_OnUpdate(int trailId, float dt)
         const VFX_ElementMaterial *lm = VFX_Material((VC_MaterialId)s_strandTrailMatOf[trailId]);
         Color lbase = st->useGlowTint ? lm->glow : lm->body;
         trail->tint = VC_WithAlpha(lbase, st->tintAlpha);
-        trail->material.hotColor = (Color){
-            (unsigned char)(lbase.r + (255 - lbase.r) * st->hotWhiten),
-            (unsigned char)(lbase.g + (255 - lbase.g) * st->hotWhiten),
-            (unsigned char)(lbase.b + (255 - lbase.b) * st->hotWhiten), 255};
+        // The material hot gradient carries hue-aware heat (Fire is gold,
+        // Lightning is blue-white, etc.). Whitening a red glow produces pink,
+        // not a yellow core, and discards the source of truth already authored
+        // in VFX_ElementMaterial.
+        Color hotTarget = ColorGradient_Sample(lm->hotGrad, 0.20f);
+        trail->material.hotColor = ColorLerp(lbase, hotTarget, st->hotWhiten);
+        trail->material.hotColor.a = 255;
         trail->material.tailColor = (Color){
             (unsigned char)(lbase.r * (1.0f - st->tailDarken) + lm->body.r * st->tailDarken),
             (unsigned char)(lbase.g * (1.0f - st->tailDarken) + lm->body.g * st->tailDarken),
@@ -448,14 +451,11 @@ int VFX_ComposeStrandTrail(const Matrix *followTransform, VC_MaterialId mat,
     cfg.material.tailNarrow = st->tailNarrow;
     cfg.material.dissolve = st->dissolve;
     cfg.material.dissolveSoft = st->dissolveSoft;
-    // The core colour. Derived from the material and whitened by the style, not
-    // hard-coded, so every element keeps its identity (Composition rule): an
-    // energy filament burns toward white in the middle of a strand, smoke keeps
-    // its own dim hue all the way through.
-    cfg.material.hotColor = (Color){
-        (unsigned char)(base.r + (255 - base.r) * st->hotWhiten),
-        (unsigned char)(base.g + (255 - base.g) * st->hotWhiten),
-        (unsigned char)(base.b + (255 - base.b) * st->hotWhiten), 255};
+    // The core colour comes from the material's authored hot gradient. For
+    // Fire this moves orange-red toward gold instead of toward pink-white.
+    Color hotTarget = ColorGradient_Sample(m->hotGrad, 0.20f);
+    cfg.material.hotColor = ColorLerp(base, hotTarget, st->hotWhiten);
+    cfg.material.hotColor.a = 255;
     // Along-trail ramp (the reference's Phase 6): the head is cfg.tint, the
     // tail is this. Toward the material's own dark body tone rather than toward
     // black — a trail that ramps to black reads as dirt, not as cooling.

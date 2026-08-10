@@ -330,6 +330,7 @@
   float VFXContrast_ApplyBodyOpacity(float authoredOpacity, VFXContrastProfileId id);
   float VFXContrast_ApplyEmissionIntensity(float authoredIntensity, VFXContrastProfileId id);
   float VFXContrast_ApplyEmissionThreshold(float authoredThreshold, VFXContrastProfileId id);
+  void VFXContrast_GetShaderParams(VFXContrastProfileId id, float outParams[4]);
 ```
 **Enums:** VFXContrastProfileId { VFX_CONTRAST_NONE,VFX_CONTRAST_SMOKE,VFX_CONTRAST_FIRE,VFX_CONTRAST_ENERGY,VFX_CONTRAST_MAGIC,VFX_CONTRAST_DUST,VFX_CONTRAST_COUNT };VFXContrastLayer { VFX_CONTRAST_BODY,VFX_CONTRAST_EMISSION }
 **Structs** (fields in header): VFXContrastProfile

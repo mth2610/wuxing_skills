@@ -618,6 +618,48 @@ static int FileHas(const char *path, const char *needle)
     return strstr(flat, want) != NULL;
 }
 
+static float EnergyStructure(float intensity)
+{
+    return powf(intensity, 1.50f);
+}
+
+static float EnergyBodyCoverage(float intensity)
+{
+    float structure = EnergyStructure(intensity);
+    return structure * 0.90f;
+}
+
+static void Test_ProfiledBodyKeepsFilamentStructure(void)
+{
+    float support = EnergyBodyCoverage(0.30f);
+    float middle = EnergyBodyCoverage(0.50f);
+    float core = EnergyBodyCoverage(0.80f);
+
+    CHECK(support < 0.20f,
+          "low-density support keeps its authored translucent edge");
+    CHECK(middle > 0.25f && middle < 0.40f,
+          "mid-density filament remains structured instead of opaque or absent");
+    CHECK(core > 0.60f && core < 0.70f,
+          "dense body coverage stays readable without becoming opaque");
+
+    float envelopeCentre = 1.0f - SmoothStepC(0.04f, 1.0f, 0.0f);
+    float envelopeMiddle = 1.0f - SmoothStepC(0.04f, 1.0f, 0.50f);
+    float envelopeOuter = 1.0f - SmoothStepC(0.04f, 1.0f, 0.80f);
+    float hotCentre = 1.0f - SmoothStepC(0.02f, 0.18f, 0.0f);
+    float hotOutside = 1.0f - SmoothStepC(0.02f, 0.18f, 0.20f);
+    CHECK(envelopeCentre == 1.0f && envelopeMiddle < 0.60f && envelopeOuter < 0.15f,
+          "a constant-white sheet still resolves to a tapered strand, not a solid band");
+    CHECK(hotCentre == 1.0f && hotOutside == 0.0f,
+          "the explicit hot core occupies only the inner fifth of each bundle");
+
+    // Fire glow (255,90,20) -> authored hotGrad stop (255,180,50), blended by
+    // energy style 0.72 then lifted by profile coreIntensity 1.25.
+    float fireHotG = (90.0f + (180.0f - 90.0f) * 0.72f) * 1.25f;
+    float fireHotB = (20.0f + (50.0f - 20.0f) * 0.72f) * 1.25f;
+    CHECK(fireHotG > 190.0f && fireHotB > 50.0f,
+          "fire strand hot colour resolves to gold instead of red or pink");
+}
+
 static void Test_MirrorStillMatchesSource(void)
 {
     const char *vs = "core/trails/shaders/trail_deform.vs";
@@ -718,8 +760,14 @@ static void Test_MirrorStillMatchesSource(void)
           "frequency/amplitude on the C side instead of inline in the shader");
     CHECK(FileHas(fs, "float strand = max(max(s0, s1 * clamp(u_wispMix, 0.0, 1.0)), s2 * clamp(u_strandFlow.y, 0.0, 1.0));"),
           "the bundles still combine with MAX — summing would fill the gaps between hairs");
-    CHECK(FileHas(fs, "s0 *= 1.0 - smoothstep(0.80, 1.0, abs(across - w0) / bundleHW);"),
-          "each bundle still has its wrap window — a crest cannot smear back in from the far edge");
+    CHECK(FileHas(fs, "float env0 = 1.0 - smoothstep(0.04, 1.0, d0);"),
+          "each bundle tapers across its full width instead of retaining an 80% solid plateau");
+    CHECK(FileHas(fs, "float centreCore = max(max(core0, core1), core2);"),
+          "strand bundles carry an explicit thin centre core independent of broad sheet density");
+    CHECK(FileHas(fs, "float core0 = (1.0 - smoothstep(0.02, 0.18, d0)) * end0;"),
+          "the primary hot core does not disappear when the texture centre is dark");
+    CHECK(!FileHas(fs, "float core0 = s0 *"),
+          "texture density no longer gates the guaranteed structural hot core");
     CHECK(FileHas(fs, "float edgeMask = 1.0 - smoothstep(1.0 - max(u_bandShape.y, 0.01), 1.0, abs(across));"),
           "the Phase-4 edge mask still clamps everything to the quad");
     // Step 12 of the reference — the one this implementation originally skipped.
@@ -752,8 +800,10 @@ static void Test_MirrorStillMatchesSource(void)
     // whole ribbon one flat hue down its length.
     CHECK(FileHas(fs, "vec3 lengthCol = mix(vColor.rgb, u_colTail, along);"),
           "the colour still ramps head -> tail along the trail");
-    CHECK(FileHas(fs, "vec3 hot = mix(lengthCol, u_colHot, smoothstep(0.45, 1.0, inten));"),
-          "and the hot-core ramp still stacks on top of it, not instead of it");
+    CHECK(FileHas(fs, "float hotMix = max(smoothstep(0.45, 1.0, inten), smoothstep(0.08, 0.45, hotSignal));"),
+          "the hot colour follows both texture density and the structural centreline");
+    CHECK(FileHas(fs, "? max(inten, hotSignal * 0.65) : max(inten, hotSignal);"),
+          "the hot centreline has a coloured BODY core plus a full EMISSION core");
     CHECK(FileHas(c, "l->colTail       = GetShaderLocation(shader, \"u_colTail\");"),
           "the C layer still binds the tail colour");
     CHECK(FileHas(c, "l->pathArc       = GetShaderLocation(shader, \"u_pathArc\");"),
@@ -790,17 +840,24 @@ static void Test_MirrorStillMatchesSource(void)
     // the whole trail washes out over a bright destination.
     CHECK(FileHas(fs, "vec4 ResolvePass(vec3 colour, float inten, float vAlpha, float gain)"),
           "both modes still route their output through one pass resolver");
-    // The body pass must NOT pre-scale by intensity (BLEND_ALPHA is not
-    // premultiplied) but MUST apply the HDR gain — main.c runs only this pass
-    // for trails, so dropping the gain here throws the trail's brightness away.
-    CHECK(FileHas(fs, "float coverage = clamp(inten * vAlpha * u_bodyOpacity, 0.0, 1.0); return vec4(colour * gain, coverage);"),
-          "the BODY pass hands over intensity-UNSCALED colour, gain applied, + coverage alpha");
+    // The body pass must NOT pre-scale RGB by intensity (BLEND_ALPHA already
+    // does that) and must not carry HDR; radiance belongs to emission.
+    CHECK(FileHas(fs, "float bodyMask = VFXContrast_BodyMask(inten, u_contrastParams);"),
+          "the BODY pass shapes coverage at the producer");
+    CHECK(FileHas(fs, "return vec4(colour, coverage);"),
+          "the BODY pass returns straight colour without HDR contamination");
+    CHECK(FileHas(fs, "#include \"core/shaders/common/vfx_contrast.glsl\""),
+          "trail material uses the shared contrast mask instead of a local copy");
+    CHECK(FileHas(c, "l->contrastParams = GetShaderLocation(shader, \"u_contrastParams\");"),
+          "the C layer caches the shared contrast profile uniform");
+    CHECK(FileHas(c, "VFXContrast_GetShaderParams(m->contrastProfile, contrastParams);"),
+          "the trail consumes the selected profile's shared shader parameters");
     CHECK(FileHas("main.c", "if (hasTrails) DrawTrailEntitiesBody(camera);"),
           "main.c still runs the trail body pass");
-    CHECK(!FileHas("main.c", "DrawTrailEntitiesEmission"),
-          "...and still never runs the emission one — the body pass carries the glow");
-    CHECK(FileHas(fs, "return vec4(colour * inten * gain, inten * vAlpha);"),
-          "and the EMISSION pass still premultiplies for additive");
+    CHECK(FileHas("main.c", "if (hasEmissionTrails) DrawTrailEntitiesEmission(camera);"),
+          "main.c runs the trail emission pass for HDR cores and halos");
+    CHECK(FileHas(fs, "return vec4(colour * gain, inten * vAlpha);"),
+          "the EMISSION pass lets additive blending apply intensity exactly once");
     CHECK(FileHas(fs, "finalColor = ResolvePass(vColor.rgb, intenWisp, vColor.a, 1.0);"),
           "the packed-wisp mode goes through the resolver too — the split cannot drift per mode");
     CHECK(FileHas(c, "float pass = (s_drawLayerFilter == 0) ? 0.0f : 1.0f;"),
@@ -830,6 +887,12 @@ static void Test_MirrorStillMatchesSource(void)
           "the smoke style still occludes instead of glowing");
     CHECK(FileHas(inl, "cfg.material.bodyOpacity = st->bodyOpacity;"),
           "and every style still declares how much it survives into the body pass");
+    CHECK(FileHas(inl, "Color hotTarget = ColorGradient_Sample(m->hotGrad, 0.20f);"),
+          "spawned strand cores use the material hot gradient");
+    CHECK(FileHas(inl, "Color hotTarget = ColorGradient_Sample(lm->hotGrad, 0.20f);"),
+          "live-tuned strand cores keep using the material hot gradient");
+    CHECK(!FileHas(inl, "255 - base.r") && !FileHas(inl, "255 - lbase.r"),
+          "strand no longer creates a pink core by whitening red glow");
     CHECK(FileHas(inl, "cfg.material.tailColor = (Color){"),
           "every style still authors an along-trail colour ramp");
     // Strand DENSITY lives in the asset — no parameter turns 34 hairs into 300 —
@@ -866,8 +929,12 @@ static void Test_MirrorStillMatchesSource(void)
     // one cut would clip the combined result again).
     CHECK(FileHas(fs, "float endLate = clamp(u_tailFadeA + u_tailShape.x, 0.0, 1.0);"),
           "the bundles still end at staggered points, not on one line");
-    CHECK(FileHas(fs, "s2 *= 1.0 - smoothstep(endEarly, 1.0, along);"),
+    CHECK(FileHas(fs, "s0 *= end0;") &&
+          FileHas(fs, "s1 *= end1;") &&
+          FileHas(fs, "s2 *= end2;"),
           "and each bundle's end is applied to that bundle alone");
+    CHECK(FileHas(fs, "if (max(inten, hotSignal) < 0.004)"),
+          "a dark strand texel cannot discard the independent hot core");
     CHECK(FileHas(fs, "float thr = u_dissolve * ramp + u_tailShape.y * dying;"),
           "the dissolve still bites harder over the dying stretch — holes, not dimming");
     CHECK(FileHas(fs, "mix(1.0, clamp(u_tailShape.z, 0.05, 1.0), dying)"),
@@ -919,6 +986,7 @@ int main(void)
     Test_HashModesAreBounded();
     Test_SideFallback();
     Test_PackedMaterialMath();
+    Test_ProfiledBodyKeepsFilamentStructure();
     Test_MirrorStillMatchesSource();
     printf("---- %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
