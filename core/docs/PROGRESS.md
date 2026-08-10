@@ -311,3 +311,76 @@ sinh biến thể sheet bằng script như `scripts/gen_energy_wisp_texture.py`.
   trước, rồi `scripts/sync_vfx_test.py`). Hiện bench vẫn 2 entry cũ.
 - SMOKE preset (`--render-vfx 25` vẫn là puff tube cũ) chưa được nhìn bằng mắt.
 - `trail_glow.fs` KHÔNG chết (có load lúc chạy) — bỏ khỏi danh sách xoá.
+
+## 9. Texture cho trail — thiết kế và audit (10/08/2026)
+
+Ghi lại để phiên sau chạy thẳng, không phải suy luận lại.
+
+### 9.1. Sheet sợi KHÔNG đúng cho mọi archetype
+
+Sau khi 4 preset swept chuyển sang vật liệu strand (§8), cả 6 preset đều đọc
+`energy_wisp.png`. Đó là lý do BACKDROP trông mảnh: nó đang mặc sheet của
+archetype khác. Năm archetype, năm nhu cầu khác nhau:
+
+| Archetype | Sheet phải mang gì | Hiện có |
+|---|---|---|
+| **Filament** (ENERGY, WISP) | sợi mảnh + **khe hở giữa chúng** — khe hở CHÍNH LÀ hiệu ứng | ✅ `energy_wisp.png` |
+| **Blade** (BLADE) | **biên ngoài sắc + lõi sáng**; một lưỡi kiếm phải đọc ra VẬT THỂ, sợi biến nó thành năng lượng | ❌ mượn sheet sợi |
+| **Cloth** (MAIN) | **nếp gấp rộng, tần số thấp**, liên tục dọc chiều dài | ❌ |
+| **Mass** (BACKDROP) | gần như mây: rất mờ, rất rộng, **không chi tiết** — chi tiết đánh nhau với trail phía trước | ❌ |
+| **Shape** (SMOKE) | MỘT vệt hoàn chỉnh, taper vẽ sẵn hai đầu, stretch một lần | ✅ `smoke_strand.png` |
+
+### 9.2. KHÔNG cần grammar mới — cần MỘT generator có tham số
+
+Layout `STRAND` (`R:pattern1 | G:pattern2 | B:distort | A:dissolve`) mô tả được
+cả bốn loại trên. Khác nhau chỉ là **tần số, tương phản, cách xử lý biên** —
+tức là NỘI DUNG, không phải hợp đồng kênh. Nên đây là một script có preset, chứ
+không phải bốn script rời (mỗi script rời lại là một bản sao của cùng một ý,
+đúng thứ §8 vừa xoá ở tầng composer).
+
+`scripts/gen_energy_wisp_texture.py` hiện hardcode: `SIZE`/`OUT` là hằng số
+module, không có argparse, sinh đúng một ảnh. Việc cần làm là tách các hằng số
+tạo hình thành preset (mật độ sợi, độ dày, tương phản biên, tần số nền) + CLI
+`--preset <name> --out <path>`.
+
+### 9.3. Audit `assets/textures/` — 69 file
+
+```
+69 .png  →  19 trong registry
+           26 chỉ code tham chiếu  (KHÔNG qua registry)
+           24 KHÔNG ai tham chiếu
+```
+
+**24 file mồ côi.** Có một cụm flipbook trùng lặp rõ rệt:
+`fire_atlas_8x8`, `fire_puff_8x8`, `fire_puff_8x8_smoke`, `smoke_puff_8x8`,
+`smoke_puff_8x8_flame`, `dust_puff_4x4`, `dust_puff_4x4_smoke`,
+`dust_puff_8x8`, `flame_tongue_8x8`; cộng `rune_glyphs_0..3`, một cụm
+ground/grass PBR (`grass_ground_*`, `ground_composed*`, `dirt_diffuse_soft`,
+`grass_detail`), và `gradient_alpha`, `petal_card`, `qi_wisp_soft`.
+
+**26 file "chỉ code tham chiếu" mới là vấn đề kiến trúc thật** — chúng đi vòng
+qua registry, nên KHÔNG ai kiểm channel grammar cho chúng. Đó đúng là loại nhầm
+đã làm `energy_flow.png` bị đọc sai suốt (§4.2/§8.3e).
+
+### 9.4. Việc phải làm, theo thứ tự
+
+1. Tham số hoá `gen_energy_wisp_texture.py` → `--preset {filament,blade,cloth,mass}`.
+   Giữ preset `filament` sinh ra ảnh BIT-IDENTICAL với `energy_wisp.png` hiện
+   tại, để chứng minh việc tách tham số không đổi cái đang chạy đúng.
+2. Sinh `trail_blade.png`, `trail_cloth.png`, `trail_mass.png`; đăng ký 3 profile
+   trong `assets/vfx_surface_profiles.json` với channel grammar STRAND
+   (`scripts/validate_vfx_surface_registry.py` chạy lúc cmake configure sẽ chặn
+   nếu khai sai).
+3. Trỏ `recipe.surface` của BLADE/MAIN/BACKDROP sang sheet mới; ENERGY/WISP giữ
+   `ENERGY_RIBBON`.
+4. Dọn 24 file mồ côi → `assets/textures/_unused/` (chuyển, KHÔNG xoá: git lấy
+   lại được nhưng một thư mục riêng cho người nhìn lại trước khi mất hẳn).
+5. Đưa dần 26 file code-tham-chiếu vào registry — đây là việc dài, làm theo từng
+   consumer, không làm một lượt.
+
+### 9.5. Hai quyết định còn treo
+
+- **Sheet riêng cho BLADE/MAIN/BACKDROP có thật sự cần?** Rẻ hơn nhiều là tune
+  `k_sweptStrand[]` trên sheet hiện tại trước — có thể đã đủ cho MAIN. Chỉ khi
+  tune không tới mới sinh ảnh mới. (Đề xuất: thử tune trước, ít nhất cho MAIN.)
+- **24 file mồ côi:** chuyển sang `_unused/` hay `git rm` thẳng.
