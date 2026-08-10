@@ -1355,6 +1355,19 @@ void UpdateFollowerPosition(int id, Vector3 newTipPos)
     t->fadeAccumulator = 0.0f;
 }
 
+// A cut throws the PATH away — the emitter is somewhere unrelated and the
+// laid history no longer describes anything. It must not also throw away where
+// the SURFACE had got to.
+//
+// `laidDist` is the odometer the strand material phases its texture against
+// (nodeUV[] is laidDist at the moment each node was laid, and the fragment
+// stage reads it as `u_pathArc.x`). Zeroing it here snapped that phase back to
+// the start, so a cut cost a stall AND an instant jump in the pattern — the
+// "stutters once, then changes phase" the owner reported. The stall is what a
+// cut IS and stays; the jump was never part of it. Keeping the odometer running
+// is safe because nothing else reads it: it is not the aspect cap's length
+// (that is measured against the drawn span), and the draw path already folds it
+// at 8192 m for float precision, so an unbounded value was always expected.
 static void FollowerCut(TrailEntity *t, Vector3 tip)
 {
     t->historyHead = 0;
@@ -1363,8 +1376,7 @@ static void FollowerCut(TrailEntity *t, Vector3 tip)
     t->nodeHome[0] = tip;
     t->nodeVelocity[0] = (Vector3){0, 0, 0};
     t->nodeRest[0] = 1e-4f;
-    t->laidDist = 0.0f;
-    t->nodeUV[0] = 0.0f;
+    t->nodeUV[0] = t->laidDist; // NOT 0 — see above
     t->prevAttachPos = tip;
     t->sampleAcc = 0.0f;
 }
@@ -1537,7 +1549,14 @@ void UpdateTrailSystem(float dt)
             float moved = Vector3Distance(tip, t->prevAttachPos);
             if (t->teleportSpeed > 0.0f && moved > t->teleportSpeed * dt)
             {
-                TraceLog(LOG_INFO, "TRAIL: follower %d cut — transform jumped %.2f m.", i, moved);
+                // Log the ODOMETER too: a cut is visible as a stall, and the
+                // question that always follows is whether the surface re-phased
+                // with it. Printing the value that answers that is cheaper than
+                // the bisection which found this in the first place.
+                TraceLog(LOG_INFO,
+                         "TRAIL: follower %d cut — transform jumped %.2f m "
+                         "(> %.1f m/s * %.4f s); path odometer held at %.2f m.",
+                         i, moved, t->teleportSpeed, dt, t->laidDist);
                 FollowerCut(t, tip);
             }
             else if (t->frozen)
