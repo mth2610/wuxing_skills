@@ -351,6 +351,25 @@ tạo hình thành preset (mật độ sợi, độ dày, tương phản biên, 
            24 KHÔNG ai tham chiếu
 ```
 
+> **ĐÍNH CHÍNH 10/08/2026 — con số 24 SAI, và sai theo hướng nguy hiểm.**
+> `rune_glyphs_0..3` bị đếm nhầm là mồ côi. Chúng **đang được dùng**, nạp bằng
+> đường dẫn dựng lúc chạy: `vc_rune_circle.inl:92` gọi
+> `snprintf(path, ..., "assets/textures/rune_glyphs_%d.png", g)`. `git rm` theo
+> danh sách cũ là gãy VFX vòng rune.
+>
+> **Quy tắc:** một lần grep theo tên file KHÔNG chứng minh được file mồ côi.
+> Phải quét luôn các chỗ dựng đường dẫn động (`snprintf`/`TextFormat` +
+> `assets/textures`) trước khi xoá bất cứ thứ gì. Trong repo này hiện chỉ có
+> đúng một chỗ như vậy — nhưng phải KIỂM, không phải nhớ.
+>
+> Số đúng: **22 file không có consumer lúc chạy** (không xuất hiện trong bất kỳ
+> `.c`/`.h`/`.inl`/`.json` nào). ĐÃ `git rm` (chủ repo chốt xoá thẳng, không qua
+> `_unused/`); 5 trong số đó sinh lại được bằng script (`gen_dust_flipbook.py`,
+> `sim_fire_flipbook.py`, `gen_volume_trail_textures.py`, `flipbook/pack.py`),
+> 17 file còn lại không ai tham chiếu ở đâu cả. `assets/textures/` còn 47 file.
+> Kiểm sau khi xoá: cmake configure qua (validator registry chạy ở đó), render
+> bench không có cảnh báo thiếu asset, test 43/47.
+
 **24 file mồ côi.** Có một cụm flipbook trùng lặp rõ rệt:
 `fire_atlas_8x8`, `fire_puff_8x8`, `fire_puff_8x8_smoke`, `smoke_puff_8x8`,
 `smoke_puff_8x8_flame`, `dust_puff_4x4`, `dust_puff_4x4_smoke`,
@@ -368,11 +387,10 @@ qua registry, nên KHÔNG ai kiểm channel grammar cho chúng. Đó đúng là 
 ~~3. Trỏ `recipe.surface` sang sheet mới~~ — **HUỶ, xem §9.6.** Đo rồi: sheet
 không phải biến số. Còn lại:
 
-4. Dọn 24 file mồ côi → `assets/textures/_unused/` (chuyển, KHÔNG xoá: git lấy
-   lại được nhưng một thư mục riêng cho người nhìn lại trước khi mất hẳn).
-   **CHỜ CHỦ REPO CHỐT** (`_unused/` hay `git rm`).
-5. Đưa dần 26 file code-tham-chiếu vào registry — đây là việc dài, làm theo từng
-   consumer, không làm một lượt.
+~~4. Dọn file mồ côi~~ — **XONG.** 22 file (không phải 24 — xem đính chính ở
+   §9.3), `git rm` thẳng theo quyết định của chủ repo.
+5. Đưa dần các file code-tham-chiếu vào registry — đây là việc dài, làm theo từng
+   consumer, không làm một lượt. **CÒN TREO.**
 
 ### 9.5. §9.5 ĐÃ TRẢ LỜI: tune tới nơi, KHÔNG cần sheet mới
 
