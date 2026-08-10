@@ -1037,6 +1037,28 @@ int main(int argc, char **argv) {
     DecalSystem_Update(dt);
     ScreenDistort_Update(dt);
     Environment_Update(dt);
+
+    // WUXING_VFX_DAYLIGHT=1 keeps the map and floods it with light instead of
+    // replacing the sky. Needed for anything that lives ON a surface: a decal is
+    // a conformal stamp projected onto a receiver, so WUXING_VFX_BG — which
+    // skips MapManager_DrawActive to get past the skybox — deletes the very
+    // thing it is stamped on, and the "washed out decal" it shows is the
+    // harness, not the effect. Bright ground, real receiver, judgeable decal.
+    static bool s_vfxDayRead = false, s_vfxDayOn = false;
+    if (!s_vfxDayRead) {
+        s_vfxDayRead = true;
+        const char *d = getenv("WUXING_VFX_DAYLIGHT");
+        s_vfxDayOn = (d != NULL && *d && *d != '0');
+        if (s_vfxDayOn)
+            TraceLog(LOG_INFO, "VFX DAYLIGHT: map kept, sun/ambient flooded");
+    }
+    if (s_vfxDayOn && currentScreen == SCREEN_VFX_TESTER) {
+        // Pushed every frame: the time-of-day system rewrites these, so setting
+        // them once at startup would be silently undone a frame later.
+        Environment_SetSunColor((Color){255, 250, 240, 255});
+        Environment_SetAmbientColor((Color){205, 214, 230, 255});
+    }
+
     MapManager_Update(dt);
     Atmosphere_Update(dt, camera); // G3 — drift dust motes
 
