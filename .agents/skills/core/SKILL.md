@@ -1,12 +1,29 @@
 ---
 name: core
-description: Agent chuyên tối ưu, sửa lỗi, cập nhật hệ thống lõi (Core API)
+description: Own, optimize, debug, test, and evolve the Wuxing Skills Core API and foundational VFX systems under core/. Use for particles, trails, force fields, shaders, decals, VFX lights, ribbons, flow maps, procedural meshes, sprite animation, composition primitives, Core API changes, and Core regressions.
 ---
 
 # Core Engine Agent
 
 ## Role
 Manages the entire **Core Engine** module of the Wuxing Skills project. Owns the foundational systems: particle, trail, force field, shader, decal, vfx light, ribbon, flow map, procedural mesh, sprite anim, etc.
+
+## Working protocol
+Follow the root `CLAUDE.md` "Agent working protocol". For Core work, read in this order and stop once sufficient:
+
+1. Root `CLAUDE.md` → this skill → `core/CLAUDE.md`.
+2. Grep the implicated symbol, then read the relevant `.h` contract and only the needed source region.
+3. Read `ENGINE_LANDMINES.md` before rendering, shader, Vulkan, or Android work; read `core/docs/LANDMINES.md` before any bug hunt. For GPU particles, also read `core/particles/docs/GPU_BACKEND_LANDMINES.md`.
+4. Read `AGENT_CODE_STANDARD.md` before editing code.
+
+Reproduce empirically before reading broadly. Do not start a Core bug hunt from the full game or from screenshots when a standalone numeric, contract, or wiring probe can answer the question.
+
+**Where to write:**
+- A root-caused regression → add the failing-then-passing guard under `core/tests/` and record **Symptom → Cause → Rule** in `core/docs/LANDMINES.md` when the lesson is reusable.
+- A cross-module lesson → promote it to `ENGINE_LANDMINES.md` and leave a pointer in the Core landmines.
+- Status, remaining work, performance notes, or known gaps → `core/docs/PROGRESS.md`.
+- API contracts → the owning `.h`; usage guidance → `core/docs/API_GUIDE.md`; generated API index → follow the regeneration workflow below.
+- Remove temporary experiment switches and noisy probes once the answer is known. Keep only diagnostics that remain useful, log on state change, and default them off.
 
 ## Scope
 - **Read/write:** All files under `core/` (`.c`, `.h`, `.glsl` shaders in `core/shaders/`)
@@ -44,6 +61,28 @@ Manages the entire **Core Engine** module of the Wuxing Skills project. Owns the
 - If the Skills Agent asks about an API: answer from the `.h` headers in `core/`
 - Need to know how a skill uses an API: read only its `.h`, never its `.c`
 - Any breaking change must be clearly documented
+
+## Debugging loop (MANDATORY)
+1. Classify the question: arithmetic/logic, C→shader wiring, runtime path/state, or visual quality.
+2. Before editing production code, create the smallest deterministic reproduction: usually a filtered `core/tests/*_test.c`; use a state-change `TraceLog` or discriminative debug view only when a headless test cannot observe the path.
+3. Form a hypothesis with a falsifiable prediction and run the cheapest experiment that separates it from alternatives.
+4. Patch the smallest source-of-truth location. Avoid compensating fixes at callers when the shared primitive or contract is wrong.
+5. Run the targeted test after every edit, then the full Core suite before handoff.
+6. Document the reusable lesson and remove temporary instrumentation.
+
+Every regression guard must fail on the pre-fix behavior and pass after the fix. Prefer behavioral assertions over source-string assertions. When a C test mirrors GLSL, also assert that the shader's load-bearing expressions still exist so the mirror cannot silently drift; explicitly state what the mirror cannot validate.
+
+## Verification ladder (MANDATORY — cheapest first)
+1. **Focused headless repro:** `./scripts/run_core_tests.sh <filename-filter>` — run after every edit to the implicated logic, shader contract, or wiring.
+2. **Full headless suite:** `./scripts/run_core_tests.sh` — run after Core changes before handoff. Tests are standalone, deterministic, and require no game, raylib, GL, GPU, or window.
+3. **Generated-contract checks, when relevant:**
+   - Public API changed → regenerate `core/docs/API.md` as described below and review the diff.
+   - `VFX_Compose*` added/removed → run `python3 scripts/sync_vfx_test.py --check`; coordinate with the Sandbox owner before applying changes under `sandbox/`.
+   - VFX surface registry changed → run `python3 scripts/validate_vfx_surface_registry.py`.
+4. **Visual confirmation:** Core has no automated visual tier yet. For appearance, integration, draw-order, or backend behavior, provide the exact sandbox fixture and expected observation for the human to run. Do not claim visual verification from green headless tests.
+5. **Full game build/run:** human-run only, final confirmation; never read or write `build/`.
+
+For a new behavior or bug fix, add the focused repro first. If a test is impossible, explain the missing observation boundary and use the narrowest available probe rather than silently skipping verification.
 
 ## Updating `docs/API.md` — it is GENERATED, do not hand-edit
 `docs/API.md` is an **index generated from the `core/*.h` headers** by `scripts/gen_core_api_index.sh`. The Signature Index never drifts because it is re-extracted from source.
