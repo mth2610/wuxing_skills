@@ -364,23 +364,98 @@ qua registry, nên KHÔNG ai kiểm channel grammar cho chúng. Đó đúng là 
 
 ### 9.4. Việc phải làm, theo thứ tự
 
-1. Tham số hoá `gen_energy_wisp_texture.py` → `--preset {filament,blade,cloth,mass}`.
-   Giữ preset `filament` sinh ra ảnh BIT-IDENTICAL với `energy_wisp.png` hiện
-   tại, để chứng minh việc tách tham số không đổi cái đang chạy đúng.
-2. Sinh `trail_blade.png`, `trail_cloth.png`, `trail_mass.png`; đăng ký 3 profile
-   trong `assets/vfx_surface_profiles.json` với channel grammar STRAND
-   (`scripts/validate_vfx_surface_registry.py` chạy lúc cmake configure sẽ chặn
-   nếu khai sai).
-3. Trỏ `recipe.surface` của BLADE/MAIN/BACKDROP sang sheet mới; ENERGY/WISP giữ
-   `ENERGY_RIBBON`.
+~~1. Tham số hoá `gen_energy_wisp_texture.py`~~ · ~~2. Sinh 3 sheet mới~~ ·
+~~3. Trỏ `recipe.surface` sang sheet mới~~ — **HUỶ, xem §9.6.** Đo rồi: sheet
+không phải biến số. Còn lại:
+
 4. Dọn 24 file mồ côi → `assets/textures/_unused/` (chuyển, KHÔNG xoá: git lấy
    lại được nhưng một thư mục riêng cho người nhìn lại trước khi mất hẳn).
+   **CHỜ CHỦ REPO CHỐT** (`_unused/` hay `git rm`).
 5. Đưa dần 26 file code-tham-chiếu vào registry — đây là việc dài, làm theo từng
    consumer, không làm một lượt.
 
-### 9.5. Hai quyết định còn treo
+### 9.5. §9.5 ĐÃ TRẢ LỜI: tune tới nơi, KHÔNG cần sheet mới
 
-- **Sheet riêng cho BLADE/MAIN/BACKDROP có thật sự cần?** Rẻ hơn nhiều là tune
-  `k_sweptStrand[]` trên sheet hiện tại trước — có thể đã đủ cho MAIN. Chỉ khi
-  tune không tới mới sinh ảnh mới. (Đề xuất: thử tune trước, ít nhất cho MAIN.)
-- **24 file mồ côi:** chuyển sang `_unused/` hay `git rm` thẳng.
+Đã sweep bằng 6 tunable tạm (`dbg_bundle/gain/edge/dissolve/wisp/third`) trên
+bench 27–32, render headless, so với **mặc định code** (`tuning.cfg` đã trung
+hoà — xem cảnh báo §8.3d). Kết quả: **blade, cloth và mass đều lấy được từ
+`energy_wisp.png`.** Ba file art trong §9.1 rơi khỏi kế hoạch.
+
+Knob quyết định là **`gain`** — số mũ `pow()` áp lên mật độ lấy mẫu:
+- `gain < 1` nâng các KHE HỞ giữa sợi lên cho tới khi chúng dính lại thành khối;
+- `gain > 1` đẩy chúng ra thành sợi rời.
+
+Tức archetype nằm ở CÁCH ĐỌC bề mặt, không nằm ở bức ảnh. Đúng tinh thần §9.2
+("cần một generator có tham số") nhưng rẻ hơn một bậc: tham số nằm ở phía đọc,
+không phải phía sinh ảnh.
+
+### 9.6. `TrailStrandConfig` — archetype là DỮ LIỆU, không phải suy diễn
+
+Năm số điều khiển việc lấy mẫu trước đây được **cầu tạm suy ra** từ những trường
+không liên quan gì tới chúng:
+
+| số | suy ra từ (cũ) | vì sao sai |
+|---|---|---|
+| `bundleWidth` | `waveAmp * 0.85` | buộc bề RỘNG của bó vào biên độ nó ĐUNG ĐƯA — hai thứ độc lập |
+| `thirdWeight` | `mask.tailNarrow` | sửa knob đuôi lại đổi cách lấy mẫu bề mặt |
+| `flowDistort` | `mask.dissolveSoft` | như trên |
+| `gain` | `colour.coreWidth > 0 ? 1.35 : 0.75` | archetype bị suy ra từ việc CÓ lõi nóng hay không |
+| `fineMix` | `flow.layerCount > 1 ? 0.6 : 0.7` | |
+
+Những ràng buộc đó được nghĩ ra chỉ để **khỏi phải viết một hằng số ra**, và giá
+phải trả rất cụ thể: trường `bundle` đã được khai trong `k_sweptStrand[]` NGAY TỪ
+ĐẦU rồi bị `(void)` vứt đi. Nên cả bốn preset swept bị ghim dưới **một phần tư
+quad của chính nó** → mảnh như sợi tóc ở mọi bán kính. **Đó chính là "quá mảnh"
+mà chủ repo báo** — không phải do sheet.
+
+Nay là `TrailStrandConfig` trên recipe, khai báo tường minh từng preset:
+
+| preset | bundle | gain | edge | ý đồ |
+|---|---|---|---|---|
+| BLADE | 0.36 | 0.34 | 0.06 | VẬT THỂ: đặc ruột, biên ngoài sắc |
+| MAIN | 0.65 | 0.61 | 0.32 | vải: nếp rộng, tần số thấp |
+| WISP | 0.22 | 1.35 | 0.14 | giữ nguyên chất sợi (`gain > 1`) |
+| BACKDROP | 0.95 | 0.19 | 0.75 | khối: không chi tiết để đánh nhau với trail trước |
+| ENERGY | 0.34 | 1.35 | 0.18 | **giữ NGUYÊN số cũ** |
+| SMOKE | 0.26 | 0.75 | 0.34 | **giữ NGUYÊN số cũ** |
+
+ENERGY là preset DUY NHẤT chủ repo đã duyệt bằng mắt, nên nó phải không đổi —
+render xác nhận không đổi. BACKDROP hạ trọng số layer (0.055/0.14 → 0.025/0.063):
+lấp khe hở làm diện tích phát sáng tăng vài lần, trọng số vừa đủ cho một sợi
+thưa thì chói khi thành dải đặc.
+
+Test: `swept_trail_test` khẳng định bridge **ĐỌC** archetype thay vì suy ra
+(`!FileHas("out->bundleWidth = L0->amplitude")`) — nếu ai đó khôi phục lối suy
+diễn, test đỏ. 43/47, đúng bốn suite đỏ cũ.
+
+### 9.7. "Khựng một cái rồi đổi pha" — ĐÃ CHẨN, ĐÃ SỬA
+
+`FollowerCut` (`core/trails/trail_system.c`). Cắt xảy ra khi transform được bám
+nhảy xa hơn `teleportSpeed * dt` trong một frame. Nó reset history về 1 node —
+**cái khựng đó CHÍNH LÀ định nghĩa của cắt, giữ nguyên**. Nhưng nó còn xoá
+`laidDist` = 0, mà `laidDist` là đồng hồ đo quãng đường `nodeUV[]` ghi lại theo
+từng node và fragment stage đọc lại qua `u_pathArc.x` để định pha texture strand.
+Nên hoa văn nhảy về đầu ĐÚNG frame trail khựng: hai triệu chứng, một nguyên nhân.
+
+Giữ đồng hồ là an toàn — không ai khác đọc `laidDist`, nó KHÔNG phải chiều dài
+của aspect cap, và đường vẽ đã tự gấp nó ở 8192 m cho độ chính xác float.
+
+**Kiểm bằng cách ÉP nhánh chạy, không phải bằng suy luận:** hạ tạm ngưỡng xuống
+4.6 m/s cho bench cắt liên tục → đồng hồ nay báo **giữ ở 4.32 m** qua các lần
+cắt, chỗ trước đây báo 0.00 m. Log của cắt nay in kèm giá trị đó vĩnh viễn.
+
+Chưa đụng vào ngưỡng 45 m/s: mọi lần cắt bench kích hoạt đều là nhảy thật lúc
+spawn (3–5 m trong một frame). Trong game có swing nào chạm ngưỡng không thì nay
+chỉ cần grep log một dòng.
+
+### 9.8. Quyết định còn treo
+
+- **24 file mồ côi:** chuyển sang `_unused/` hay `git rm` thẳng?
+- **`tuning.cfg`:** `swept_width = 3.0` / `swept_alpha = 1.5` / `swept_tile = 0.5`
+  / `swept_flow = +1.0` vẫn NGUYÊN, chưa đụng. Lưu ý mới: `swept_width = 3.0` có
+  lẽ **không phải rác** — nó đang bù đúng cho cái hairline mà §9.6 vừa sửa tận
+  gốc. Sửa xong gốc rồi thì ×3 đó nay là thừa và sẽ làm quad phình. Đề xuất: bỏ
+  cả 4 dòng về mặc định. `swept_sheet = 1` thì đã CHẾT hẳn (nhánh bị xoá ở §8.1).
+- **BLADE vẫn mỏng** sau khi tune, nhưng lý do là HÌNH HỌC chứ không phải bề mặt:
+  nó là `RIBBON_FIXED_NORMAL` với normal `(0,1,0)` nên gần như nhìn nghiêng từ
+  camera bench. Muốn dày hơn thì sửa hướng/bán kính, không phải sheet.
