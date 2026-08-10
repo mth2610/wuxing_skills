@@ -1519,8 +1519,22 @@ static void Test_MirrorStillMatchesSource(void)
     // The layer count moved into the swept table when those presets migrated
     // onto the strand material; BACKDROP still declares 2 (no inner core) and
     // still declares no hot core colour, which is the invariant that matters.
-    CHECK(FileHas(inl, "[TRAIL_PRESET_BACKDROP] = {0.26f, 0.35f, 0.45f, 0.46f, 0.30f, 2},"),
+    // The row grew `gain` and `dissolve` on 10/08/2026 — the archetype numbers
+    // stopped being inferred by the legacy bridge and became authored data.
+    CHECK(FileHas(inl, "[TRAIL_PRESET_BACKDROP] = {0.26f, 0.35f, 0.45f, 0.95f, 0.19f, 0.75f, 0.17f, 2},"),
           "BACKDROP has no inner core layer");
+    // THE ARCHETYPE IS THE SAMPLING, NOT THE SHEET. All four swept presets read
+    // energy_wisp.png; what makes one a blade and another a formless mass is
+    // `gain` — under 1 it fills the gaps between the authored hairs, over 1 it
+    // separates them. If this ordering ever inverts, the presets have swapped
+    // identities while every file name still looks right.
+    CHECK(FileHas(inl, "float amp, freq, travel, bundle, gain, edge, dissolve; int layers;"),
+          "the swept table carries the archetype, not just the motion");
+    CHECK(!FileHas(inl, "out->bundleWidth = L0->amplitude"),
+          "bundle width is authored, not tied to how far the wave swings");
+    CHECK(FileHas(inl, "out->strandGain = r->strand.gain;") &&
+              FileHas(inl, "out->bundleWeight = r->strand.thirdWeight;"),
+          "the bridge READS the archetype instead of inferring it from mask fields");
     CHECK(FileHas(inl, "r->colour.coreWidth = (p == TRAIL_PRESET_BACKDROP) ? 0.0f : 0.16f;"),
           "and no hot core at all — it is meant to sit BEHIND another trail");
     CHECK(FileHas(inl, "A wisp has a CONTINUOUS inner core."),

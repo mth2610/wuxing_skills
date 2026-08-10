@@ -78,6 +78,35 @@ typedef struct {
     float tailNarrow;   // layer half-width multiplier at the tip (1 = none)
 } TrailMaskConfig;
 
+// ── How densely the sheet's authored hairs are read across the strip ────────
+//
+// THIS IS WHERE AN ARCHETYPE LIVES. One strand sheet can read as a braid of
+// filaments, as a sharp-edged blade, as low-frequency cloth or as a formless
+// dim mass — and 10/08/2026's sweep showed the difference is entirely these
+// numbers, not the image. `gain` is the load-bearing one: it is the exponent on
+// the sampled density, so below 1 it lifts the gaps until the hairs merge into
+// a continuous body, and above 1 it pushes them apart into separate filaments.
+// A "mass" sheet was scoped before that was measured; it is not needed.
+//
+// These five used to be INFERRED by the legacy bridge from fields that have
+// nothing to do with them — the third bundle's weight from the tail's narrowing,
+// the flow distortion from the dissolve's softness. Those couplings were
+// invented to avoid a hardcode and are not real, so a change to a tail knob
+// silently re-sampled the surface. Authored per preset, they cannot.
+typedef struct {
+    // Half-width of ONE strand bundle, as a fraction of the strip half-width.
+    // Three bundles ride across the quad at this width; below ~0.2 they cover a
+    // quarter of the strip and the trail reads as a hairline whatever its
+    // radius, which is why every swept preset looked too thin.
+    float bundleWidth;
+    // pow() exponent on the sampled density. < 1 fills, > 1 separates. 0 is not
+    // a valid value — the shader clamps it to 0.05.
+    float gain;
+    float fineMix;     // weight of the sheet's fine (G) bundle
+    float thirdWeight; // weight of the widest (third) bundle
+    float flowDistort; // B-channel distortion strength
+} TrailStrandConfig;
+
 // ── What colour the surviving parts are ─────────────────────────────────────
 typedef struct {
     // The along-trail ramp. The head takes the entity tint; this is the far
@@ -162,6 +191,7 @@ typedef struct TrailRecipe {
     UVDeformField deform;     // the warp
     SurfaceFlow   flow;       // the sample
 
+    TrailStrandConfig strand; // how the sheet is read (the archetype)
     TrailMaskConfig  mask;
     TrailColorConfig colour;
 

@@ -731,9 +731,14 @@ static const TrailLayer k_sweptLayers[TRAIL_PRESET_COUNT][3] = {
         // MAIN, but never gated by a head-only exponent or broken texture.
         {.widthMul = 0.18f, .alphaMul = 0.17f, .whiten = 0.12f, .scrollMul = 1.35f, .headAlphaPow = 0.0f, .texture = NULL},
     },
+    // BACKDROP's weights are LOWER than the others', not by the same budget but
+    // for a different reason: filling its gaps (strand gain 0.19) multiplied the
+    // lit area several times over, so the weights that made a sparse hairline
+    // read correctly made a solid one glare. Dim is also its job — it is an
+    // underlay, and it is judged behind another trail, not alone.
     [TRAIL_PRESET_BACKDROP] = {
-        {.widthMul = 1.65f, .alphaMul = 0.055f, .whiten = 0.00f, .scrollMul = 0.45f, .headAlphaPow = 0.0f, .texture = NULL},
-        {.widthMul = 1.00f, .alphaMul = 0.14f, .whiten = 0.02f, .scrollMul = 0.85f, .headAlphaPow = 0.0f, .texture = NULL},
+        {.widthMul = 1.65f, .alphaMul = 0.025f, .whiten = 0.00f, .scrollMul = 0.45f, .headAlphaPow = 0.0f, .texture = NULL},
+        {.widthMul = 1.00f, .alphaMul = 0.063f, .whiten = 0.02f, .scrollMul = 0.85f, .headAlphaPow = 0.0f, .texture = NULL},
         {0},
     },
     // The strand presets are ONE quad: their waves swing inside it and the edge
@@ -782,6 +787,13 @@ static void TrailPresets_Build(void)
         // destination; 1.0 means "draw the sheet at the alpha it was authored
         // with", still shaped by the sheet's soft alpha and the width taper.
         r->bodyOpacity = 1.0f;
+        // A filament default, so a recipe that forgets to author its archetype
+        // still renders SOMETHING recognisable. `gain` at 0 would otherwise
+        // clamp to 0.05 in the shader and blow every sample to solid white,
+        // which is the failure a zeroed struct must not be able to produce.
+        r->strand = (TrailStrandConfig){.bundleWidth = 0.34f, .gain = 1.35f,
+                                        .fineMix = 0.70f, .thirdWeight = 0.80f,
+                                        .flowDistort = 0.55f};
         UVDeform_Clear(&r->deform);
         SurfaceFlow_Clear(&r->flow);
     }
@@ -797,17 +809,31 @@ static void TrailPresets_Build(void)
     // and they exist to give the sheet's filaments something to swim along, not
     // to bend the ribbon. That is the split the recipe is for — motion is the
     // motion table's business, surface is this one's.
-    static const struct { float amp, freq, travel, bundle, edge; int layers; }
+    // THE ARCHETYPE IS `gain` AND `bundle`, NOT THE IMAGE. All four wear
+    // `energy_wisp.png`, and a sweep on 10/08/2026 established that blade,
+    // cloth and mass are all reachable from it — `gain` below 1 lifts the gaps
+    // between the authored hairs until they merge into a body, above 1 pushes
+    // them apart into separate filaments, and `bundle` says how much of the
+    // quad that body is allowed to occupy. Three extra sheets were scoped for
+    // this (§9.1); the measurement says they are not needed.
+    //
+    // `bundle` was authored here from the start and then DISCARDED — the bridge
+    // recomputed it as `amp * 0.85`, so every preset was pinned under a quarter
+    // of its own quad and read as a hairline at any radius. It is read now.
+    static const struct { float amp, freq, travel, bundle, gain, edge, dissolve; int layers; }
     k_sweptStrand[TRAIL_PRESET_COUNT] = {
-        // A blade is struck: tight filaments, little swim.
-        [TRAIL_PRESET_BLADE]    = {0.14f, 0.90f, 1.20f, 0.26f, 0.16f, 3},
-        // Cloth is broad and slow.
-        [TRAIL_PRESET_MAIN]     = {0.22f, 0.55f, 0.80f, 0.34f, 0.20f, 3},
-        // A thread: narrow, and it keeps a continuous core.
-        [TRAIL_PRESET_WISP]     = {0.12f, 0.70f, 1.00f, 0.20f, 0.14f, 3},
-        // Wide dim mass meant to sit BEHIND another trail — soft edges, low
-        // frequency, no hot core.
-        [TRAIL_PRESET_BACKDROP] = {0.26f, 0.35f, 0.45f, 0.46f, 0.30f, 2},
+        // BLADE — an OBJECT, not energy: filled body, hard outer edge, tight
+        // swim. gain well under 1 is what stops it reading as loose hairs.
+        [TRAIL_PRESET_BLADE]    = {0.14f, 0.90f, 1.20f, 0.36f, 0.34f, 0.06f, 0.42f, 3},
+        // MAIN — cloth: broad, slow, folds you can follow along its length.
+        [TRAIL_PRESET_MAIN]     = {0.22f, 0.55f, 0.80f, 0.65f, 0.61f, 0.32f, 0.42f, 3},
+        // WISP — the one that stays filaments (gain > 1). Widened only enough
+        // that a thread is a thread rather than a single-pixel scratch.
+        [TRAIL_PRESET_WISP]     = {0.12f, 0.70f, 1.00f, 0.22f, 1.35f, 0.14f, 0.42f, 3},
+        // BACKDROP — mass: it sits BEHIND another trail, so detail here fights
+        // the trail in front. Nearly the whole quad, gaps filled flat, very soft
+        // edges, and a low dissolve so it stays one body instead of islands.
+        [TRAIL_PRESET_BACKDROP] = {0.26f, 0.35f, 0.45f, 0.95f, 0.19f, 0.75f, 0.17f, 2},
     };
     for (int p = TRAIL_PRESET_BLADE; p <= TRAIL_PRESET_BACKDROP; p++)
     {
@@ -821,8 +847,13 @@ static void TrailPresets_Build(void)
         r->colour.useElementRamp = true;      // the element's authored N-stop ramp
         r->colour.coreWidth = (p == TRAIL_PRESET_BACKDROP) ? 0.0f : 0.16f;
         r->colour.coreIntensity = (p == TRAIL_PRESET_BACKDROP) ? 0.0f : 0.55f;
+        r->strand.bundleWidth = k_sweptStrand[p].bundle;
+        r->strand.gain = k_sweptStrand[p].gain;
+        r->strand.fineMix = 0.70f;
+        r->strand.thirdWeight = 0.81f;
+        r->strand.flowDistort = 0.63f;
         r->mask.edgeSoft = k_sweptStrand[p].edge;
-        r->mask.dissolve = 0.42f;
+        r->mask.dissolve = k_sweptStrand[p].dissolve;
         r->mask.dissolveSoft = 0.30f;
         r->mask.tailFadeA = 0.78f;
         r->mask.tailFadeB = 1.0f;
@@ -844,11 +875,7 @@ static void TrailPresets_Build(void)
         SurfaceFlow_AddLayer(&r->flow, (SurfaceFlowLayer){
             .tiling = {1.0f, 0.65f}, .pan = {0.0f, 0.30f},
             .blend = SURFACE_FLOW_MAX, .env = UV_ENV_NONE});
-        // The bridge derives bundle width from amplitude; these presets author
-        // it directly because a blade and a backdrop want the same swim with
-        // very different filament weights.
         r->colour.tailDarken = 0.40f;
-        (void)k_sweptStrand[p].bundle;
     }
 
     // ── ENERGY — braided hot filaments with a gold core ─────────────────────
@@ -879,6 +906,12 @@ static void TrailPresets_Build(void)
         SurfaceFlow_AddLayer(&r->flow, (SurfaceFlowLayer){
             .tiling = {1.0f, 0.65f}, .pan = {0.0f, 0.35f},
             .blend = SURFACE_FLOW_MAX, .env = UV_ENV_NONE});
+        // Unchanged numbers, now written down instead of inferred: ENERGY is
+        // the one preset the owner has approved on screen, so the migration off
+        // the derived values must leave it bit-for-bit where it was.
+        r->strand = (TrailStrandConfig){.bundleWidth = 0.34f, .gain = 1.35f,
+                                        .fineMix = 0.70f, .thirdWeight = 0.80f,
+                                        .flowDistort = 0.55f};
         r->mask.edgeSoft = 0.18f;
         r->mask.dissolve = 0.55f;
         r->mask.dissolveSoft = 0.22f;
@@ -921,6 +954,12 @@ static void TrailPresets_Build(void)
         SurfaceFlow_AddLayer(&r->flow, (SurfaceFlowLayer){
             .tiling = {1.0f, 0.30f}, .pan = {0.0f, 0.12f},
             .blend = SURFACE_FLOW_MAX, .env = UV_ENV_NONE});
+        // Also unchanged, also now written down. Smoke's `gain` is already
+        // under 1 — a plume has no separate hairs — which is the same knob that
+        // turns BACKDROP into mass, from the other direction.
+        r->strand = (TrailStrandConfig){.bundleWidth = 0.26f, .gain = 0.75f,
+                                        .fineMix = 0.70f, .thirdWeight = 0.85f,
+                                        .flowDistort = 0.78f};
         r->mask.edgeSoft = 0.34f;
         r->mask.dissolve = 0.40f;
         r->mask.dissolveSoft = 0.45f;
@@ -998,10 +1037,11 @@ static void TrailRecipe_ToLegacyMaterial(const TrailRecipe *r,
     out->waveSpread = (r->deform.layerCount > 1 && L0->frequency > 0.0f)
                           ? (r->deform.layers[1].frequency / L0->frequency) - 1.0f
                           : 0.0f;
-    // Bundle half-width tracks the wave amplitude the preset authored: a
-    // heavier, slower field (smoke) carries correspondingly fatter bundles.
-    // Hardcoding ENERGY's 0.34 here gave the smoke preset energy-thin strands.
-    out->bundleWidth = L0->amplitude * 0.85f;
+    // AUTHORED, not inferred. This used to be `amplitude * 0.85`, which ties
+    // how WIDE a bundle is to how far it SWINGS — two independent things, and
+    // the tie is what capped every swept preset at a quarter of its own quad
+    // (a hairline however large the radius). See TrailStrandConfig.
+    out->bundleWidth = r->strand.bundleWidth;
     out->edgeSoft = r->mask.edgeSoft;
     out->hdrGain = r->hdrGain;
     out->stretchUV = r->deform.stretchUV ? 1.0f : 0.0f;
@@ -1043,13 +1083,13 @@ static void TrailRecipe_ToLegacyMaterial(const TrailRecipe *r,
             (unsigned char)(base.b * (1.0f - r->colour.tailDarken) + m->body.b * r->colour.tailDarken), 255};
     }
 
-    // Strand-sheet sampling details the collapsed shader will read from the flow
-    // layers directly. Until then they are derived, not hardcoded: a constant
-    // here silently gave every preset ENERGY's numbers.
-    out->wispMix = (r->flow.layerCount > 1) ? 0.60f : 0.70f;
-    out->strandGain = (r->colour.coreWidth > 0.0f) ? 1.35f : 0.75f;
-    out->flowStrength = 0.55f + (r->mask.dissolveSoft - 0.22f);
-    out->bundleWeight = 0.80f + (r->mask.tailNarrow - 0.55f) * 0.2f;
+    // The archetype, straight off the recipe. These were derived from unrelated
+    // mask/colour fields so that no constant had to be written down; the result
+    // was that editing a tail knob re-sampled the surface. TrailStrandConfig.
+    out->wispMix = r->strand.fineMix;
+    out->strandGain = r->strand.gain;
+    out->flowStrength = r->strand.flowDistort;
+    out->bundleWeight = r->strand.thirdWeight;
 }
 
 static const TrailRecipe *TrailPresetRecipe(TrailPresetId p)
