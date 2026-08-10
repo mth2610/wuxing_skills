@@ -241,23 +241,67 @@ chính là thứ khiến hai phiên render nhầm style mà không ai thấy đ�
 Bench nay có 6 nút: 27 MAIN · 28 ENERGY · 29 BLADE · 30 WISP · 31 BACKDROP ·
 32 SMOKE.
 
-### 8.3c. ⚠ `TRAIL_PRESET_SMOKE` HỎNG — chưa sửa
+### 8.3c. SMOKE — ĐÍNH CHÍNH, và đổi sang trắng
 
-Lần đầu preset này được render (trước đó không có nút nào gọi tới nó). Kết quả:
-**một dải đỏ phẳng, không có sợi** — đúng triệu chứng của §1, nhưng nguyên nhân
-khác.
+**Tôi đã ghi sai ở commit `c8cf913`.** Tôi viết "SMOKE HỎNG — dải đỏ phẳng,
+không có sợi". Sai: sợi, chuyển động và texture đều đúng. Kết luận đó dựa trên
+một render ở pha xấu, ở kích thước nhỏ, và tôi đã không kiểm lại trước khi ghi
+vào doc lẫn commit message.
 
-Đã loại trừ: sheet resolve đúng (`VFX_SURFACE_SMOKE_STRAND` qua registry, không
-có cảnh báo fallback); `stretchUV` được truyền đúng.
+Màu đỏ cũng **không phải lỗi**: bench truyền `VC_MAT_FIRE`, preset lấy tint từ
+material. Preset làm đúng điều nó được bảo.
 
-**Nghi chính: cầu tạm suy ra sai số cho SMOKE.** `TrailRecipe_ToLegacyMaterial`
-tính `bundleWidth = amplitude * 0.85` → 0.255, trong khi style SMOKE gốc là
-**0.62**. Các số suy diễn khác cũng lệch: `wispMix` 0.70 (gốc 0.60),
-`flowStrength` 0.78 (gốc 0.65). Suy diễn từ một trường khác chỉ vì recipe chưa
-có trường riêng là sai lầm — cầu tạm nên mang giá trị thật, hoặc recipe phải có
-trường cho chúng.
+Cái ĐÚNG là có, nhưng nhỏ hơn nhiều: `tailColor = lerp(base, m->body, tailDarken)`
+trở thành **vô nghĩa** khi `base` đã là `m->body` — đầu và đuôi cùng màu, ramp
+dọc trail bằng 0. Không phải hồi quy: `vc_strand_trail.inl` cũ có đúng công thức
+đó. Và `TrailColorConfig.tail` là trường khai báo cho đúng việc này nhưng **không
+ai đọc** — API chết.
 
-Bốn preset còn lại (MAIN/ENERGY/BLADE/WISP/BACKDROP) render hợp lý.
+Đã sửa (theo yêu cầu của người dùng, khói → trắng):
+- `bool useGlowTint` → `TrailTintSource {GLOW, BODY, NEUTRAL}`. Một bool không
+  nói được "trung tính", mà khói cần đúng thế: khói là SẢN PHẨM cháy, không phải
+  nguyên tố — khói của Fire không nên đỏ, của Lightning không nên xanh.
+- Cầu tạm nay đọc `colour.tail` khi được khai báo, rơi về phép trộn cũ khi không.
+- SMOKE: trắng ở đầu, nguội về xám trung tính.
+
+### 8.3d. Chuỗi chữ V ở BACKDROP — là `tuning.cfg`, lần thứ BA
+
+| khoá | tuning.cfg | mặc định code |
+|---|---|---|
+| `swept_tile` | 0.5 | 1.10 |
+| `swept_flow` | +1.0 | **−1.0** |
+
+Tile nửa lại ⇒ 16 vệt của mask procedural lặp gấp đôi mật độ ⇒ đúng "cái lược"
+mà chú thích trong `SweptTrail_BuildBladeMask` nói nó cố ý tránh. `swept_flow`
+đảo dấu ⇒ hoa văn trôi về phía đầu, vật chất trông như chảy NGƯỢC vào nguồn.
+Cùng build, chỉ khác tuning.cfg → khác hẳn. Cả 4 preset swept dùng chung hai
+knob này; BACKDROP rộng nhất nên lộ trước.
+
+CHƯA sửa tuning.cfg — có thể là lựa chọn cũ của người dùng.
+
+### 8.3e. QUYẾT ĐỊNH: swept chuyển sang vật liệu STRAND
+
+Nguyên nhân gốc của "texture xấu": preset swept chạy nhánh **passthrough**
+(`texture(texture0, vSegUV) * vColor`) và đang mặc **mask procedural sinh lúc
+chạy** — thứ mà code tự gọi là *fallback*. Đường art thật (`energy_flow.png`) đã
+bị xoá vì nó đã trỏ sai ảnh. Nên 4 preset swept đang mặc đồ dự phòng vĩnh viễn.
+
+`energy_wisp.png` KHÔNG dùng thẳng được cho passthrough: nó là sheet STRAND
+(`R:pattern1 | G:pattern2 | B:distort | A:dissolve`), đưa vào passthrough thì RGB
+bị hiểu là màu và A bị hiểu là độ đục — đúng loại nhầm mà
+`assets/TEXTURE_PACKING.md` được máy kiểm để chặn.
+
+**Hướng đã chốt:** bỏ nhánh passthrough cho preset swept, cho cả 6 preset dùng
+CHUNG vật liệu strand, chỉ khác nhau ở deform/flow layer. Khi đó:
+- `energy_wisp.png` dùng được ngay, đúng grammar;
+- `trail_deform.fs` còn đúng MỘT công thức (passthrough chỉ còn cho trail không
+  có recipe) — hoàn tất việc #3;
+- tune bằng layer, không bằng ảnh.
+
+Việc cần làm: cho 4 preset swept `topology = PARALLEL` + deform layer riêng (cloth
+vẫn giữ, nó là chuyển động chứ không phải bề mặt), `surface = ENERGY_RIBBON`, bỏ
+`sheetOverride` + `SweptTrail_BuildBladeMask`. Nếu cần gu sợi khác (dày/mảnh),
+sinh biến thể sheet bằng script như `scripts/gen_energy_wisp_texture.py`.
 
 ### 8.4. Còn lại
 

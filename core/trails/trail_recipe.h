@@ -112,6 +112,18 @@ typedef struct {
     VFXContrastProfileId contrast;
 } TrailColorConfig;
 
+// ── Where the head colour comes from ────────────────────────────────────────
+// Was a bool (glow or body). A bool cannot say NEUTRAL, and smoke needs to:
+// it is a combustion PRODUCT, not the element, so tinting it with the element's
+// body colour makes fire's smoke red and lightning's smoke blue. The element
+// belongs at the head of a HOT trail; a plume carries no element identity at all.
+typedef enum {
+    TRAIL_TINT_GLOW = 0, // the element's hot tone — energy, sparks, blades
+    TRAIL_TINT_BODY,     // the element's identity tone — coloured matter
+    TRAIL_TINT_NEUTRAL,  // element-independent; the material only shapes it
+    TRAIL_TINT_COUNT
+} TrailTintSource;
+
 // ── The recipe ──────────────────────────────────────────────────────────────
 // Tagged so trail_system.h can forward-declare it: the recipe includes that
 // header (for TrailLayer), so the dependency can only run one way.
@@ -169,7 +181,7 @@ typedef struct TrailRecipe {
     // look decisions, not motion ones.
     float radiusDefault;      // metres, when the caller passes 0
     unsigned char tintAlpha;
-    bool useGlowTint;         // true = VFX_Material glow (hot), false = body
+    TrailTintSource tintSource;
     bool additive;            // false = the trail occludes instead of glowing
 } TrailRecipe;
 

@@ -817,7 +817,7 @@ static void TrailPresets_Build(void)
         r->layerCount = 1;
         r->radiusDefault = 0.45f;
         r->hdrGain = 1.85f;
-        r->useGlowTint = true;
+        r->tintSource = TRAIL_TINT_GLOW;
         r->additive = true;
         // Three wave fields, detuned so they braid instead of stacking into one
         // thick bundle. Arc-anchored (cycles per METRE): the crests stand on the
@@ -862,7 +862,7 @@ static void TrailPresets_Build(void)
         r->layerCount = 1;
         r->radiusDefault = 0.70f;
         r->hdrGain = 1.0f;
-        r->useGlowTint = false;   // body tint: a plume is not hot
+        r->tintSource = TRAIL_TINT_NEUTRAL; // a plume carries no element identity
         r->additive = false;
         r->tintAlpha = 205;
         for (int i = 0; i < 3; i++)
@@ -891,6 +891,9 @@ static void TrailPresets_Build(void)
         r->colour.coreWidth = 0.0f;   // no hot core in smoke
         r->colour.coreIntensity = 0.0f;
         r->colour.tailDarken = 0.35f;
+        // White at the head, cooling to a neutral grey. No element hue either
+        // end: what tints a plume is the light on it, not what burned.
+        r->colour.tail = (Color){112, 112, 120, 255};
         r->colour.contrast = VFX_CONTRAST_SMOKE;
         r->bodyOpacity = 0.96f;
         // smoke_strand.png is ONE complete streak with its taper painted in,
@@ -980,10 +983,22 @@ static void TrailRecipe_ToLegacyMaterial(const TrailRecipe *r,
     Color hotTarget = ColorGradient_Sample(m->hotGrad, 0.20f);
     out->hotColor = ColorLerp(base, hotTarget, r->colour.coreIntensity);
     out->hotColor.a = 255;
-    out->tailColor = (Color){
-        (unsigned char)(base.r * (1.0f - r->colour.tailDarken) + m->body.r * r->colour.tailDarken),
-        (unsigned char)(base.g * (1.0f - r->colour.tailDarken) + m->body.g * r->colour.tailDarken),
-        (unsigned char)(base.b * (1.0f - r->colour.tailDarken) + m->body.b * r->colour.tailDarken), 255};
+    // An AUTHORED tail wins. The computed blend walks `base` toward `m->body`,
+    // so a preset whose head already IS `m->body` blends a colour toward itself
+    // and the ramp silently becomes a no-op — head and tail identical, which is
+    // one flat hue down the whole trail. `colour.tail` exists for that case.
+    if (r->colour.tail.a > 0)
+    {
+        out->tailColor = r->colour.tail;
+        out->tailColor.a = 255;
+    }
+    else
+    {
+        out->tailColor = (Color){
+            (unsigned char)(base.r * (1.0f - r->colour.tailDarken) + m->body.r * r->colour.tailDarken),
+            (unsigned char)(base.g * (1.0f - r->colour.tailDarken) + m->body.g * r->colour.tailDarken),
+            (unsigned char)(base.b * (1.0f - r->colour.tailDarken) + m->body.b * r->colour.tailDarken), 255};
+    }
 
     // Strand-sheet sampling details the collapsed shader will read from the flow
     // layers directly. Until then they are derived, not hardcoded: a constant
@@ -1158,7 +1173,13 @@ static int SweptTrail_SpawnStrand(const VC_SweptTrail *s, int slot, int strand)
     cfg.material.bodyOpacity = rec->bodyOpacity;
     {
         const VFX_ElementMaterial *em = VFX_Material(s->matId);
-        Color base = rec->useGlowTint ? em->glow : em->body;
+        Color base;
+        switch (rec->tintSource)
+        {
+        case TRAIL_TINT_NEUTRAL: base = (Color){236, 236, 240, 255}; break;
+        case TRAIL_TINT_BODY:    base = em->body; break;
+        default:                 base = em->glow; break;
+        }
         cfg.tint = VC_WithAlpha(base, rec->tintAlpha);
         TrailRecipe_ToLegacyMaterial(rec, em, base, &cfg.material, &cfg.deform);
     }
