@@ -85,10 +85,12 @@ typedef struct
 
 static StrandTrailStyle s_strandStyles[VFX_STRAND_STYLE_COUNT] = {
     // ── ENERGY ── thin bright filaments with hot cores, lifted into HDR so
-    // post-FX bloom picks them up. bodyOpacity is near 1 because the body pass
-    // is the ONLY pass trails run (main.c never calls the emission one), but
-    // trail_deform.fs compacts the filament mask before the shared compositor
-    // expands alpha. This keeps gaps without making the whole support pale.
+    // post-FX bloom picks them up. Trails run BOTH passes (main.c calls
+    // DrawTrailEntitiesBody then DrawTrailEntitiesEmission): bodyOpacity is
+    // high so the coloured body still holds hue over a bright destination,
+    // while the emission pass carries the HDR hot core. trail_deform.fs
+    // compacts the filament mask before the shared compositor, which keeps the
+    // gaps between hairs without making the whole support pale.
     [VFX_STRAND_ENERGY] = {
         .tuningPrefix = "energytrail",
         .surface = VFX_SURFACE_ENERGY_RIBBON,
@@ -219,6 +221,7 @@ static void StrandTrail_OnUpdate(int trailId, float dt)
     int styleIdx = s_strandTrailStyleOf[trailId];
     if (styleIdx < 0 || styleIdx >= VFX_STRAND_STYLE_COUNT)
         return;
+    const int askedStyle = styleIdx;
     if (s_strandStyleOverride >= -0.5f)
     {
         int forced = (int)(s_strandStyleOverride + 0.5f);
@@ -227,6 +230,26 @@ static void StrandTrail_OnUpdate(int trailId, float dt)
             styleIdx = forced;
             StrandTrail_EnsureTuning(styleIdx);
             StrandTrail_EnsureSheet(styleIdx);
+            // A/B knobs persist in tuning.cfg across sessions and outlive the
+            // comparison they were set for. A stale `strandtrail_style = 1`
+            // silently substitutes the SMOKE row (no hot core, body tint, no
+            // additive) for every ENERGY trail — which reads on screen as "the
+            // energy trail is a flat red band" and sends the next reader into
+            // the shader. WARNING, not INFO, and it names the file and the
+            // style that was ASKED for: the line below only says which row won.
+            static int s_lastForcedPair = -1;
+            if (s_lastForcedPair != askedStyle * 16 + styleIdx)
+            {
+                s_lastForcedPair = askedStyle * 16 + styleIdx;
+                if (styleIdx != askedStyle)
+                    TraceLog(LOG_WARNING,
+                             "STRAND TRAIL: tuning.cfg strandtrail_style=%.1f is FORCING "
+                             "'%s' over the requested '%s' — set it to -1 to honour the "
+                             "style each trail was spawned with",
+                             (double)s_strandStyleOverride,
+                             s_strandStyles[styleIdx].tuningPrefix,
+                             s_strandStyles[askedStyle].tuningPrefix);
+            }
         }
         else
         {

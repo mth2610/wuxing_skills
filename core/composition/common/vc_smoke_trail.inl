@@ -1,5 +1,15 @@
 // H2 — SmokeTrail: the MOVING counterpart of vc_smoke_column.inl's SmokeColumn.
 //
+// ⚠ SUPERSEDED, and still shipping. The intended smoke wake is now
+// VFX_ComposeStrandTrail(..., VFX_STRAND_SMOKE) in vc_strand_trail.inl — a
+// strand plume, not a puff tube. This file was slated for deletion 03/08/2026
+// (a test even asserted it was gone) but the deletion never happened, and it
+// is still wired to VFX bench entry 25 while the strand version has its own.
+// TWO SIMILAR-LOOKING BENCH BUTTONS IS THE HAZARD: judge, tune or bug-report
+// the wrong one and the session is spent on an effect nobody ships. Check
+// which composer a trail came from BEFORE reading its shader. Whether this
+// finally goes is an open decision in core/docs/PROGRESS.md.
+//
 // SPLIT INTO ITS OWN FILE, not a mode flag on VC_SmokeColumn — two archetypes,
 // two files, same reasoning as the column/vc_volume_trail.inl split it mirrors.
 //

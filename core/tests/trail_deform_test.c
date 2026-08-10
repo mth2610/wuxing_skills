@@ -943,10 +943,20 @@ static void Test_MirrorStillMatchesSource(void)
           "the C layer still binds the tail shape");
     CHECK(FileHas(inl, "trail->material.tailStagger = st->tailStagger;"),
           "and a live style swap still re-pushes the tail treatment");
-    // The old puff trail is DELETED, not deprecated: two similar-looking bench
-    // buttons meant the wrong one kept getting judged.
-    CHECK(!FileHas("core/composition/visual_composer.h", "VFX_ComposeSmokeTrail"),
-          "the old smoke-puff trail is gone from the public API");
+    // The old puff trail was SUPPOSED to be deleted (two similar-looking bench
+    // buttons meant the wrong one kept getting judged), but the deletion never
+    // happened: VFX_ComposeSmokeTrail is still declared, still implemented in
+    // vc_smoke_trail.inl, and still wired to bench entry 25. A red assertion
+    // that nobody acts on is worse than no assertion — it trains the reader to
+    // skim failures, which is exactly how the strand-trail hunt of 09-10/08
+    // ignored a genuinely failing suite. So this now pins the CURRENT contract:
+    // the replacement exists and the survivor says out loud what replaced it,
+    // so the two cannot be confused at the bench. Removing it entirely is an
+    // open decision recorded in core/docs/PROGRESS.md.
+    CHECK(FileHas(inl, "int VFX_ComposeSmokeStrandTrail("),
+          "the strand trail provides the smoke replacement");
+    CHECK(FileHas("core/composition/common/vc_smoke_trail.inl", "VFX_ComposeStrandTrail"),
+          "and the surviving puff trail names its replacement, so neither is judged as the other");
     CHECK(FileHas(inl, "void VFX_StrandTrail_Stop(int trailId)"),
           "and the strand trail owns its own soft-release entry point");
     CHECK(FileHas(c, "case TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE:"),

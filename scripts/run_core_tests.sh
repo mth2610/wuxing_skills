@@ -33,7 +33,12 @@ for src in "$ROOT"/core/tests/*_test.c; do
     total=$((total + 1))
     bin="$OUT/$name"
 
-    if ! cc "$src" -o "$bin" -I"$ROOT" -std=c11 -Wall -Wextra -lm 2>"$OUT/$name.build.log"; then
+    # core/tests/stubs is searched LAST and holds plain-data stand-ins only (see
+    # its raylib.h): a core header that is pure arithmetic may still include
+    # raylib.h for a struct, and without the stub that test fails to BUILD —
+    # which reads like a passing suite in a 47-line summary.
+    if ! cc "$src" -o "$bin" -I"$ROOT" -I"$ROOT/core/tests/stubs" \
+            -std=c11 -Wall -Wextra -lm 2>"$OUT/$name.build.log"; then
         echo "=== $name: BUILD FAILED ==="
         cat "$OUT/$name.build.log"
         failed=$((failed + 1)); failed_names+=("$name (build)")

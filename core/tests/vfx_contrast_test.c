@@ -1,4 +1,12 @@
+// core headless test — the shared VFX contrast profiles.
+//
+// The implementation is included as SOURCE, not linked: the headless tier
+// compiles one translation unit with no libraries, and core/vfx_contrast.c
+// depends on nothing but its own header (which needs only raylib's Color, met
+// by core/tests/stubs/raylib.h). Including it means these assertions run
+// against the real table, not a transliteration that can rot away from it.
 #include "core/vfx_contrast.h"
+#include "core/vfx_contrast.c"
 #include <math.h>
 #include <stdio.h>
 

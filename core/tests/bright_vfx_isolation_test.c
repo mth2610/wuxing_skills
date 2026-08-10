@@ -5,6 +5,7 @@
  */
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 typedef struct { float r, g, b; } Rgb;
 
@@ -87,5 +88,58 @@ int main(void)
         return 1;
     }
     puts("PASS: washout first appears at additive composition, before post-processing");
+
+    /* ── An EMISSION WEIGHT reused as body COVERAGE (10/08/2026) ─────────────
+     *
+     * VFX_RIBBON_MAIN's layers are 0.10 / 0.36 / 0.30 — they SUM as light, so
+     * they are emission weights, not coverage. The classic layered ribbon path
+     * fed them straight into the BLEND_ALPHA body pass, capping body coverage at
+     * 0.36: `scene*(1-0.36)` keeps 64% of the destination, so over anything
+     * bright the trail cannot hold its own hue no matter what colour it writes.
+     * `material.bodyOpacity` is the separately-authored coverage that fixes it.
+     * Measured in the app on a bright clear (peak chroma): 0.31 at bodyOpacity
+     * 0, 0.40 at 0.55, 0.72 at 1.0 — against 0.61 over the night sky. */
+    {
+        const float emissionWeight = 0.36f;   /* k_sweptLayers MAIN, layer 1 */
+        const float authoredBody   = 1.00f;   /* s_sweptBodyOpacity */
+        Rgb asWeight = layered(brightClear, vfx, emissionWeight, scale(vfx, 0.12f));
+        Rgb asCoverage = layered(brightClear, vfx, authoredBody, scale(vfx, 0.12f));
+        if (chroma(asWeight) >= chroma(asCoverage)) {
+            fprintf(stderr, "FAIL: authored body coverage did not beat the emission weight\n");
+            return 1;
+        }
+        /* And the gap must be worth the change, not a rounding win. */
+        if (chroma(asCoverage) - chroma(asWeight) < 0.20f) {
+            fprintf(stderr, "FAIL: body coverage barely moved chroma (%.3f -> %.3f)\n",
+                    chroma(asWeight), chroma(asCoverage));
+            return 1;
+        }
+        /* The renderer must actually route both layered paths through the one
+         * helper — a C mirror of a policy that the renderer no longer applies is
+         * fiction (core/CLAUDE.md §3). */
+        FILE *f = fopen("core/trails/trail_system.c", "rb");
+        static char src[400000];
+        if (f == NULL) {
+            fprintf(stderr, "FAIL: cannot read core/trails/trail_system.c\n");
+            return 1;
+        }
+        size_t n = fread(src, 1, sizeof(src) - 1, f);
+        src[n] = 0;
+        fclose(f);
+        if (strstr(src, "static float TrailLayerPassAlphaMul(") == NULL) {
+            fprintf(stderr, "FAIL: the pass-aware layer alpha helper is gone\n");
+            return 1;
+        }
+        if (strstr(src, "float aMul = TrailLayerPassAlphaMul(t, ly);") == NULL) {
+            fprintf(stderr, "FAIL: a layered path stopped asking the helper for its alpha\n");
+            return 1;
+        }
+        if (strstr(src, "ly->whiten > 0.0f && TrailLayerWhitensThisPass(t)") == NULL) {
+            fprintf(stderr, "FAIL: whitening is no longer gated out of the body pass\n");
+            return 1;
+        }
+        puts("PASS: body coverage is authored, not an emission weight reused as alpha");
+        puts("PASS: and whitening stays out of the pass that has to carry hue");
+    }
     return 0;
 }

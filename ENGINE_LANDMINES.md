@@ -20,6 +20,45 @@
 | 10 | `SetShaderValue` writes to the **active** shader under rlvk | Anyone setting uniforms outside `BeginShaderMode` |
 | 11 | Colour-only VFX layer clear must preserve shared depth | Anyone adding a render layer over scene depth |
 | 12 | Nonlinear shared body alpha reveals soft VFX edges | Every BODY producer: smoke, trail, particle, decal |
+| 13 | A stale `tuning.cfg` A/B knob substitutes a whole CODE PATH | Anyone debugging a visual against a preset/style/variant knob |
+
+---
+
+## 13. A persisted A/B knob that selects a VARIANT is not a tuning value — it silently runs different code (10/08/2026)
+
+**Symptom.** An effect renders as the wrong effect. Two sessions and roughly a
+dozen edits went into `trail_deform.fs` mode 2 chasing "the Fire energy trail is
+a flat red band with no yellow core": the hot-core colour source was rewritten,
+a geometric centreline was added independent of the sheet, the discard condition
+was fixed, BODY/EMISSION were split across two passes, and the user still
+reported "không được" after every one. Every change was correct. None of them
+could be seen, because the shader branch being edited was running with the
+**other style's** parameters, texture, tint source and blend mode.
+
+**Cause.** `tuning.cfg` carried `strandtrail_style = 1.0`, left over from an
+earlier A/B comparison. That knob does not scale a value — it **replaces the
+style row** for every live strand trail: SMOKE instead of ENERGY, i.e.
+`hotWhiten 0` (no hot core at all), body tint instead of glow tint, `BLEND_ALPHA`
+instead of additive, and a different sheet. The code asked for ENERGY and the
+file overruled it. The system did log which row won, at `LOG_INFO`, phrased as a
+normal selection (`STRAND TRAIL: style -> smoketrailfx`) — indistinguishable from
+a correct startup line in a wall of raylib INFO output, and it never said that
+something had been *overridden*.
+
+**Rule.** Separate the two kinds of knob and treat them differently.
+- A knob that scales a value is a tuning value. The existing corollary applies:
+  read the effect's `tuning.cfg` block before any visual A/B and state the
+  multipliers (`core/docs/LANDMINES.md`, "Corollary on tuning.cfg").
+- A knob that **selects a variant** — a style row, a preset id, a mode enum, a
+  quality tier, a shader path — changes which code runs. It must announce itself
+  at **`LOG_WARNING`, on change, naming the file, the forced variant AND the
+  variant the caller asked for**, whenever the two differ. A line that reports
+  only the winner is not a diagnostic: it reads identically whether the override
+  is on or off. Pattern to copy: `StrandTrail_OnUpdate` in
+  `core/composition/common/vc_strand_trail.inl`.
+- Diagnostically: before editing a shader branch because an effect looks wrong,
+  prove that branch is the one running — a headless render (`--render-vfx <n>`)
+  plus the selection log costs one command and rules out the entire class.
 
 ---
 

@@ -1603,6 +1603,41 @@ void UpdateTrailSystem(float dt)
 static void DrawTrailRibbon(const TrailEntity *t, const RibbonPoint *points,
                             int count, Texture2D texture, Camera3D camera);
 
+/* A layer stack authored for an ADDITIVE trail carries EMISSION WEIGHTS, not
+ * coverage. VFX_RIBBON_MAIN's three layers are 0.10 / 0.36 / 0.30 because they
+ * SUM as light; reused verbatim as BLEND_ALPHA coverage in the body pass they
+ * cap the body at ~0.36, so `scene*(1-cov)` keeps two thirds of the destination
+ * and the trail cannot hold its hue over anything bright — measured on a bright
+ * clear: peak chroma 0.32 against 0.61 on the night sky, and the body layer ALONE
+ * only reached 0.18. `material.bodyOpacity` is the separately-authored coverage
+ * for exactly this (see its comment in trail_system.h); the deform path has
+ * always honoured it and the classic layered path silently did not.
+ *
+ * Returns the alpha multiplier this layer should draw the CURRENT pass with.
+ * Left at the layer's own weight whenever bodyOpacity is unset (0), so every
+ * existing trail keeps its authored look. Deliberately does NOT apply the
+ * contrast profile's alpha: the vertex colour picks that up downstream, and
+ * applying it here would run the same opacity policy twice — the same reasoning
+ * the deform path states at its own bodyOpacity upload. */
+static float TrailLayerPassAlphaMul(const TrailEntity *t, const TrailLayer *ly)
+{
+    float aMul = (ly->alphaMul > 0.0f) ? ly->alphaMul : 1.0f;
+    if (s_drawLayerFilter != 0 || !TrailUsesAdditiveBlend(t)) return aMul;
+    if (t->material.bodyOpacity <= 0.0f) return aMul;
+    return (t->material.bodyOpacity > 1.0f) ? 1.0f : t->material.bodyOpacity;
+}
+
+/* Whitening a layer toward 255 is an EMISSION idea — it reads as "hotter than
+ * its own colour" only where the result is added to the scene. In the alpha body
+ * pass it desaturates the one layer whose whole job is to carry hue, so the body
+ * arrives at the compositor already washed out and no amount of coverage can put
+ * the colour back. Emission keeps it; body does not. */
+static bool TrailLayerWhitensThisPass(const TrailEntity *t)
+{
+    return !(s_drawLayerFilter == 0 && TrailUsesAdditiveBlend(t) &&
+             t->material.bodyOpacity > 0.0f);
+}
+
 static void DrawLayeredRibbon(const TrailEntity *t, int drawCount, Texture2D fallbackTex, Camera3D camera)
 {
     for (int L = 0; L < t->layerCount; L++)
@@ -1612,7 +1647,7 @@ static void DrawLayeredRibbon(const TrailEntity *t, int drawCount, Texture2D fal
             t->layerCount >= 2 && L != 1) continue;
         const TrailLayer *ly = &t->layers[L];
         float wMul = (ly->widthMul > 0.0f) ? ly->widthMul : 1.0f;
-        float aMul = (ly->alphaMul > 0.0f) ? ly->alphaMul : 1.0f;
+        float aMul = TrailLayerPassAlphaMul(t, ly);
         float sMul = (ly->scrollMul != 0.0f) ? ly->scrollMul : 1.0f;
         for (int h = 0; h < drawCount; h++)
         {
@@ -1630,7 +1665,7 @@ static void DrawLayeredRibbon(const TrailEntity *t, int drawCount, Texture2D fal
             if (a > 255.0f)
                 a = 255.0f;
             Color col = scratchOuter[h].tint;
-            if (ly->whiten > 0.0f)
+            if (ly->whiten > 0.0f && TrailLayerWhitensThisPass(t))
             {
                 float w = (ly->whiten > 1.0f) ? 1.0f : ly->whiten;
                 col.r = (unsigned char)(col.r + (255 - col.r) * w);
@@ -1791,7 +1826,7 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
         if (s_drawLayerFilter == 0 && TrailUsesAdditiveBlend(t) &&
             t->layerCount >= 2 && L != 1) continue;
         const TrailLayer *ly = &t->layers[L];
-        float aMul = (ly->alphaMul > 0.0f) ? ly->alphaMul : 1.0f;
+        float aMul = TrailLayerPassAlphaMul(t, ly);
         VFXContrastLayer contrastLayer =
             (s_drawLayerFilter == 0 ||
              (s_drawLayerFilter < 0 && !TrailUsesAdditiveBlend(t)))
@@ -1803,7 +1838,7 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
         float a = (float)col.a * aMul;
         if (a > 255.0f)
             a = 255.0f;
-        if (ly->whiten > 0.0f)
+        if (ly->whiten > 0.0f && TrailLayerWhitensThisPass(t))
         {
             float w = (ly->whiten > 1.0f) ? 1.0f : ly->whiten;
             col.r = (unsigned char)(col.r + (255 - col.r) * w);

@@ -1606,3 +1606,83 @@ phản vì additive không bao giờ làm nền tối đi.
 phải ở `BODY`/alpha và radiance phải ở `EMISSION`/additive; profile không hợp
 thức hóa việc trộn hai semantic layer. `VFX_CONTRAST_NONE` là identity và là
 mặc định bắt buộc cho mọi config zero-init cũ.
+
+## The style knob won: a debug override ran a different style row for two sessions (10/08/2026)
+
+**Symptom.** `VFX_ComposeStrandTrail(..., VC_MAT_FIRE, ..., VFX_STRAND_ENERGY)`
+rendered as a solid red band with no gold core, on a bright destination and a
+dark one alike. Two sessions of shader work on `trail_deform.fs` mode 2 — a new
+hot-colour source from `material->hotGrad`, a geometric centreline independent of
+the sheet's R/G, a corrected discard, a BODY/EMISSION pass split — every one of
+them correct, none of them visible.
+
+**Cause.** `tuning.cfg` still held `strandtrail_style = 1.0` from an earlier
+comparison. `s_strandStyleOverride` forces that row onto **every live strand
+trail** each frame in `StrandTrail_OnUpdate`, so the ENERGY row (`hotWhiten
+0.72`, glow tint, additive, `energy_wisp.png`) was replaced wholesale by SMOKE
+(`hotWhiten 0.0` — no hot core exists to colour, body tint, `BLEND_ALPHA`,
+`smoke_strand.png`). The red band was the SMOKE style of a Fire material,
+rendering exactly as designed.
+
+**Why it survived so long.** Everything that was checked was true and none of it
+was the question. The C code computed a gold `hotColor`; `u_colHot` was uploaded;
+the shader compiled; `VFX_ComposeStrandTrail` did set `mode = 2`; the regression
+tests passed. The unchecked premise was **which style row those correct values
+were being written from**. `core/docs/PROGRESS.md` even recorded the right next
+step ("prove the mode-2 shader is really running") but blocked on needing
+permission to read `sandbox/` — while the answer was in `tuning.cfg` at the repo
+root, and in a `LOG_INFO` line the run had already printed.
+
+**Rule.** Reproduce headlessly before editing a shader: `./build/wuxing
+--render-vfx <bench index>` renders one VFX bench fixture to a PNG in seconds and
+prints the selection log with it, so "is this even the effect I am editing" is
+answered before the first edit rather than after the tenth. And any override that
+selects a VARIANT (style/preset/mode/tier) must log at `LOG_WARNING`, on change,
+naming the file, the forced variant and the REQUESTED one — a line that names
+only the winner reads the same whether the override is set or not. Promoted to
+`ENGINE_LANDMINES.md` §13; see also the tuning.cfg corollary above, which covers
+the scaling-knob half of the same hazard.
+
+## An emission WEIGHT reused as body COVERAGE cannot hold hue on a bright background (10/08/2026)
+
+**Symptom.** The ribbon/swept trail reads as a pale washed-out thread over any
+bright destination — "bệt màu" — while looking correctly saturated over the night
+sky. Measured on a bright clear: peak chroma **0.31 against 0.61** on the night
+sky. Rendering the BODY layer alone made it *worse* (0.18), which is backwards:
+the body pass exists precisely so additive radiance is not the only thing holding
+the colour.
+
+**Cause.** `k_sweptLayers` authors its stack for an ADDITIVE trail, so
+`alphaMul` values (MAIN: 0.10 / 0.36 / 0.30) are **emission weights** — they sum
+as light, and being individually small is correct there. `DrawLayeredRibbon` and
+`DrawLayeredTube` fed the same numbers straight into the BLEND_ALPHA body pass as
+**coverage**, capping the body at 0.36. The compositor then does
+`scene*(1 - 0.36) + bodyColor*0.36`, so 64% of a bright destination survives and
+the trail's own hue is diluted by construction — no colour, gain or contrast
+profile downstream can recover it. `TrailMaterialConfig::bodyOpacity` is the
+separately-authored coverage documented for exactly this case, and only the
+DEFORM path ever honoured it; the classic layered path silently ignored it.
+
+Compounding it: `TrailLayer::whiten` (layer 1 = 0.06, layer 2 = 0.20) was applied
+in the body pass too. Whitening means "hotter than its own colour" **only** where
+the result is added to the scene; in the alpha body pass it desaturates the one
+layer whose entire job is to carry hue.
+
+**Rule.** An additive layer stack's `alphaMul` is a radiance weight and must
+never be reused as alpha coverage — the two passes need separately authored
+numbers, the same way BLEND_ALPHA and additive need separately authored colours
+(`ENGINE_LANDMINES.md`, "one colour cannot serve both VFX passes"). Route every
+layered path through `TrailLayerPassAlphaMul` / `TrailLayerWhitensThisPass` so
+the pass split is decided in ONE place; a new layered consumer that reads
+`ly->alphaMul` directly reintroduces this. Set `material.bodyOpacity` on any
+additive trail that must stay legible over a lit map, re-push it per frame if it
+is tunable, and remember 1.0 is not "opaque" — only the sheet-bearing layer draws
+in the body pass, still shaped by its own soft alpha, the width taper and the
+lifetime curve.
+
+**Diagnostically:** judge a bright-background complaint on a bright background.
+Clearing the scene is not enough — the skybox paints over it (`MapManager_DrawActive`
+must be skipped too), and the VFX body/emission go to their own render targets,
+so the blend the user is complaining about happens in `distortion.fs`, not at
+draw time. A body-only render (skip `DrawTrailEntitiesEmission`) separates
+"the body carries no colour" from "the emission washes it out" in one frame.

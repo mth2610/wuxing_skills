@@ -1532,8 +1532,18 @@ static void Test_MirrorStillMatchesSource(void)
           "the rigid continuous sine lanes are gone for good");
     CHECK(FileHas(inl, "a += st_amp[f] * expf(-d * d) * env * base * base;"),
           "streaks are still damped by the band profile SQUARED, away from the edge");
-    CHECK(FileHas(inl, "#define SWEPT_ASSET_PATH \"assets/textures/energy_flow.png\""),
-          "the body sheet still comes from the authored flow asset");
+    // The literal path is GONE on purpose: composition no longer owns filenames,
+    // the surface registry does (assets/vfx_surface_profiles.json). Asserting the
+    // old `#define SWEPT_ASSET_PATH` kept this suite red for a migration that had
+    // already landed correctly. What must stay true is the SOURCE, not the string.
+    CHECK(!FileHas(inl, "SWEPT_ASSET_PATH \""),
+          "composition owns no texture filename — the registry does");
+    CHECK(FileHas(inl, "VFX_SurfaceRegistry_Get(VFX_SURFACE_ENERGY_RIBBON)"),
+          "the body sheet is resolved through the surface registry");
+    // ...and it must not fail silently when that profile is absent, or the strip
+    // quietly reverts to the procedural sheet and the knob looks broken.
+    CHECK(FileHas(inl, "EnergyRibbon profile missing — procedural fallback"),
+          "a missing profile announces itself instead of silently falling back");
     CHECK(FileHas(inl, "ImageRotateCW(&src);"),
           "still rotated a quarter turn — the asset's flow runs across its WIDTH");
     CHECK(FileHas(inl, "ImageCrop(&src,"),

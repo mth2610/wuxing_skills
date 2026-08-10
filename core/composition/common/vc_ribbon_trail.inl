@@ -157,6 +157,20 @@ static float s_sweptAlphaMul = 1.0f;  // x on the whole trail's opacity
 static float s_sweptFlow = -1.0f;
 static float s_sweptSag = 1.0f;     // x on how much the ribbon sags
 static float s_sweptCoreHot = 1.0f; // x on the white-hot head
+// How much the swept trail OCCLUDES in the BLEND_ALPHA body pass. The layer
+// stack carries EMISSION weights (they sum as light); additive alone can only
+// ADD, so over a bright destination it pushes toward white and the trail loses
+// its hue — measured peak chroma 0.31 on a bright clear vs 0.61 on the night
+// sky. This is the separately-authored coverage the body pass draws with
+// instead (trail_system.h, TrailMaterialConfig::bodyOpacity).
+//
+// 1.0, and it is not "fully opaque": only layer 1 — the flow-sheet BODY layer —
+// draws in the body pass at all (the halo and the hot core stay emission-only),
+// and its coverage is still shaped by the sheet's own soft alpha, the width
+// taper and the lifetime curve. Measured peak chroma over a bright
+// destination: 0.31 at 0.0 (the old behaviour), 0.40 at 0.55, 0.72 at 1.0 —
+// against 0.61 over the night sky.
+static float s_sweptBodyOpacity = 1.0f;
 // The procedural finite-streak sheet is the neutral default. The old authored
 // `energy_flow.png` has a strong ornamental rhythm, so it is now opt-in only:
 // it must be chosen intentionally by a look-dev dial or supplied per-instance
@@ -666,6 +680,7 @@ static void SweptTrail_InitShared(void)
     Tuning_RegisterFloat("swept_sag", &s_sweptSag, 1.0f);
     Tuning_RegisterFloat("swept_corehot", &s_sweptCoreHot, 1.0f);
     Tuning_RegisterFloat("swept_sheet", &s_sweptSheet, 0.0f);
+    Tuning_RegisterFloat("swept_body", &s_sweptBodyOpacity, 1.0f);
     Tuning_RegisterFloat("swept_tile", &s_sweptTile, SWEPT_FLOW_TILE);
     Tuning_RegisterFloat("swept_freeze", &s_sweptFreeze, 0.0f);
     s_sweptInit = true;
@@ -840,6 +855,7 @@ static int SweptTrail_SpawnStrand(const VC_SweptTrail *s, int slot, int strand)
     cfg.fixedNormal = (Vector3){0.0f, 1.0f, 0.0f};
     cfg.disableInnerCore = true; // superseded by the layer stack
     cfg.material.contrastProfile = VFX_CONTRAST_ENERGY;
+    cfg.material.bodyOpacity = s_sweptBodyOpacity;
     cfg.layers = s->layers;
     cfg.layerCount = SweptTrail_LayerCount(s->kind);
     cfg.uvMetresPerTile = (s_sweptTile > 0.05f) ? s_sweptTile : 0.05f;
@@ -1144,6 +1160,12 @@ static void VC_SweptTrail_Update(float dt)
             }
             if (c == 0)
                 lead = t;
+
+            // Re-pushed every frame, not baked at spawn: bodyOpacity is a
+            // tunable, and a long-lived trail (cfg.life = 1e6) would otherwise
+            // hold the value it was born with — the sweep would move nothing
+            // until something respawned, which reads as "the knob is dead".
+            t->material.bodyOpacity = s_sweptBodyOpacity;
 
             // FREEZE, and it fills first: freezing a trail with one node holds
             // an EMPTY ribbon, and a dial that shows nothing reads as broken.
