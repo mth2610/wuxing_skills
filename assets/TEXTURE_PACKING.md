@@ -37,12 +37,27 @@ in R G B A order, even when a channel is unused.
 | `FLOW` | `body` | `mask` or `dissolve` | `flowx` | `flowy` |
 | `OPAQUE` | `color` | `color` | `color` | `opacity` |
 | `FLIPBOOK` | `color` | `color` | `color` | `opacity` |
+| `VOLUME` | `emission` | `density` | `shadow` | `opacity` |
 | `NOISE` | `field` | `field` | `field` | `field` |
 
 `STRAND` is the trail sheet read by `core/trails/shaders/trail_deform.fs` mode 2.
 `FLOW` is a body that carries its own flow vector — the layout that collapses a
 body+flow(+mask) group into one file. `OPAQUE` is a conventional colour sheet.
-`FLIPBOOK` is `OPAQUE` with cells, and every channel must be `CLAMP`. `NOISE`
+`FLIPBOOK` is `OPAQUE` with cells, and every channel must be `CLAMP`.
+
+`VOLUME` is the ray-marched sheet from `scripts/flipbook/` and it is the one
+layout that carries **no colour at all** — four scalar fields describing a gas:
+`emission` is how much light the texel radiates, `density` how much soot it
+holds, `shadow` the same density weighted by the light that reached it (so
+`shadow/density` is the surviving light fraction), and `opacity` the true
+`1 - transmittance`. Colour arrives at draw time from a ramp LUT indexed by
+`emission`, which is what lets ONE sheet be orange fire, purple magic fire or
+blue ghost-flame without a re-bake — and what lets a single sprite hold a
+white-hot core and a dark rim at once, which a `FLIPBOOK` tinted by one vertex
+colour cannot. Read by `core/particles/shaders/particle_lit.fs` (volume branch);
+its output is premultiplied, so the consumer must use `VFX_BLEND_PREMULTIPLIED`.
+
+`NOISE`
 is a pure DATA sheet: four independent scalar fields, decorrelated by
 construction, so one fetch feeds several layers of a displacement or a warp.
 It carries no colour and no coverage — never draw it.
@@ -88,8 +103,14 @@ opposite vectors is 128, i.e. no flow — which an unsigned encoding would not.
 ### R4 — In `STRAND` and `FLOW`, A is DATA, not coverage
 
 Such a sheet must never be handed to `BLEND_ALPHA` as-is; the shader computes
-coverage from the channels and emits it. Only `OPAQUE` and `FLIPBOOK` carry a
-true `opacity` in A.
+coverage from the channels and emits it. Only `OPAQUE`, `FLIPBOOK` and `VOLUME`
+carry a true `opacity` in A.
+
+`VOLUME`'s A is a real opacity, but it is still not the drawn alpha: only the
+`density` fraction of it occludes, because the `emission` fraction is light the
+texel adds rather than blocks. The shader computes the final alpha and emits
+premultiplied colour — handing a `VOLUME` sheet to `BLEND_ALPHA` would make the
+flame occlude in proportion to its brightness, which is backwards.
 
 This is load-bearing: raylib's `BLEND_ALPHA` is `glBlendFunc(SRC_ALPHA,
 ONE_MINUS_SRC_ALPHA)` and the hardware multiplies RGB by A itself. A sheet

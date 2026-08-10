@@ -110,6 +110,19 @@ void ParticleManager_Emit(ParticleEmitterHandle handle, int count)
         if (e->active && !e->warned) { TraceLog(LOG_WARNING, "ParticleManager: GPU_ONLY emitter '%s' rejected (%d)", e->desc.debugName ? e->desc.debugName : "unnamed", e->status); e->warned = true; }
         return;
     }
+    // A packed volume sheet is decoded by particle_lit.fs, which only the CPU
+    // billboard path binds — the GPU backend has its own shader and would read
+    // the sheet's three density channels as a colour, turning fire green. Route
+    // those emitters to the CPU path rather than rendering them wrong.
+    if (e->gpu && e->desc.particle.render.volumeSheet) {
+        if (!e->warned) {
+            e->warned = true;
+            TraceLog(LOG_INFO, "ParticleManager: emitter '%s' uses a volume sheet — "
+                               "forced onto the CPU path (no GPU-backend decoder)",
+                     e->desc.debugName ? e->desc.debugName : "unnamed");
+        }
+        e->gpu = false;
+    }
     for (int i = 0; i < count; ++i) {
         if (e->gpu) {
             const ParticleConfig *p = &e->desc.particle;

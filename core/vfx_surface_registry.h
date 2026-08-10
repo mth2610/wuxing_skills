@@ -54,6 +54,10 @@ typedef enum {
     VFX_SURFACE_FIRE_TUBE,
     VFX_SURFACE_SMOKE_PUFF,
     VFX_SURFACE_FIRE_TONGUE,
+    // Same simulation as FIRE_TONGUE, never split: the packed VOLUME layout
+    // (R emission / G density / B self-shadow / A opacity, no colour anywhere).
+    // Decoded by particle_lit.fs's volume branch, coloured by a ramp LUT.
+    VFX_SURFACE_FIRE_VOLUME,
     // P4 contracts contain no runtime asset until visual-owner approval.
     VFX_SURFACE_DECAL_RESIDUE,
     VFX_SURFACE_DECAL_SCORCH,

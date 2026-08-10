@@ -320,6 +320,42 @@
       }
     },
     {
+      "id": "VFX_SURFACE_FIRE_VOLUME",
+      "name": "fire_volume_sheet",
+      "primitive": "puff",
+      "role": "trail",
+      "wrap": "clamp",
+      "filter": "bilinear",
+      "blend": "consumer_defined",
+      "projection": "primitive_defined",
+      "approval": "approved",
+      "lifecycle": {
+        "seconds": 0.0,
+        "fade_in": 0.0,
+        "fade_out": 0.0
+      },
+      "budget": {
+        "max_draw_calls": 0,
+        "max_textures": 1
+      },
+      "flipbook": [
+        8,
+        8,
+        64
+      ],
+      "seam": "not_applicable",
+      "provenance": "Ray-marched Taichi fire puff kept PACKED — the four channels the scripts/flipbook/ pipeline has always produced, delivered to the engine intact for the first time. Its predecessor VFX_SURFACE_FIRE_TONGUE is the same sim run through pack.py --split, which collapses R to a white mask and throws the per-texel temperature field away; a sprite off that sheet can only ever be one flat hue. Built by: ti_sim.py fire_puff --res 112 --frames 64 | render.py --cell 256 --supersample 2 --zoom auto --light 1.0 | pack.py --grid 8 --alpha-from-luma 0 --shape puff (NO --split).",
+      "consumers": [
+        "VFX_FlameEmitter body (volume path)"
+      ],
+      "assets": {
+        "body": {
+          "path": "assets/textures/fire_puff_8x8_volume.png",
+          "channels": "VOLUME | R:emission/CLAMP | G:density/CLAMP | B:shadow/CLAMP | A:opacity/CLAMP — colourless by design: R is a temperature field that indexes the ramp LUT, so the same sheet serves fire, purple magic fire and blue ghost-flame. B/G is the light fraction that survived to each texel."
+        }
+      }
+    },
+    {
       "id": "VFX_SURFACE_DECAL_RESIDUE",
       "name": "decal_residue_material_blocked",
       "primitive": "decal",

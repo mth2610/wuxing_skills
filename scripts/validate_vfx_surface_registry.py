@@ -35,6 +35,10 @@ LAYOUTS = {
     "FLOW":     {"R": {"body"}, "G": {"mask", "dissolve"}, "B": {"flowx"}, "A": {"flowy"}},
     "OPAQUE":   {"R": {"color"}, "G": {"color"}, "B": {"color"}, "A": {"opacity"}},
     "FLIPBOOK": {"R": {"color"}, "G": {"color"}, "B": {"color"}, "A": {"opacity"}},
+    # Ray-marched gas: four scalar fields, NO colour. Colour comes from a ramp
+    # LUT indexed by emission at draw time, which is what keeps one sheet usable
+    # as orange fire and as purple magic fire.
+    "VOLUME": {"R": {"emission"}, "G": {"density"}, "B": {"shadow"}, "A": {"opacity"}},
     # Pure data: four decorrelated scalar fields. Never drawn.
     "NOISE":    {"R": {"field"}, "G": {"field"}, "B": {"field"}, "A": {"field"}},
     # Pre-spec files: a standalone flow map or mask that leaves channels
@@ -122,12 +126,16 @@ def check_channels(label, text, flipbook):
             f"carry an explicit stretch switch; {layout} has none"
         )
 
-    # A declared flipbook must use a flipbook layout, and vice versa.
+    # A declared flipbook must use a celled layout, and vice versa. VOLUME is
+    # celled too — it is the same ray-marched sheet as FLIPBOOK, differing in
+    # what the channels MEAN (four scalar fields, no colour), not in whether it
+    # is a grid of frames.
+    CELLED = ("FLIPBOOK", "VOLUME")
     has_cells = isinstance(flipbook, list) and len(flipbook) == 3 and flipbook[2] > 0
-    if has_cells and layout != "FLIPBOOK":
+    if has_cells and layout not in CELLED:
         failures += fail(f"{label}: profile declares flipbook cells but layout is {layout}")
-    if layout == "FLIPBOOK" and not has_cells:
-        failures += fail(f"{label}: FLIPBOOK layout but the profile declares no cells")
+    if layout in CELLED and not has_cells:
+        failures += fail(f"{label}: {layout} layout but the profile declares no cells")
 
     return failures
 

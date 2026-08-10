@@ -254,6 +254,11 @@ void ParticleSystem_SetLighting(float strength01, float scatter01);
 void ParticleSystem_GetLighting(float *outStrength, float *outScatter);
 bool IsParticleSystemActive(void);
 bool ParticleSystem_HasAdditiveParticles(void);
+// True while any drawable particle carries a packed 4-channel volume sheet.
+// Those particles can ONLY be decoded by particle_lit.fs, so this is what forces
+// that shader to bind even when lighting is off or the quality tier is LOW —
+// the default shader would read the sheet's density channels as a colour.
+bool ParticleSystem_HasVolumeParticles(void);
 
 // ============================================================
 // PARTICLE RADIAL BURST SYSTEM (Hợp nhất từ Phase 5)

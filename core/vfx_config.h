@@ -4,6 +4,17 @@
 typedef enum {
     VFX_BLEND_ALPHA = 0,   // DEFAULT — smoke, dust, ash: anything that occludes
     VFX_BLEND_ADDITIVE,    // embers, sparks, glow, the incandescent core of fire
+    // PREMULTIPLIED — the case the blend law's binary has no answer for: a thing
+    // that EMITS and OCCLUDES at once. Fire is exactly that (an incandescent
+    // core seen through its own soot), and splitting it into an additive core
+    // plus an alpha body is a workaround, not a model: the two populations
+    // interleave in the depth sort, so every alternation costs a batch flush.
+    //
+    // dst = src.rgb + dst.rgb * (1 - src.a). RGB is a light contribution that
+    // is INDEPENDENT of alpha, so one draw can add a blown-out core while its
+    // sooty rim darkens the background. The shader must output PREMULTIPLIED
+    // colour (rgb already scaled by its own coverage) or the result is doubled.
+    VFX_BLEND_PREMULTIPLIED,
 } VFX_BlendMode;
 
 #include "raylib.h"
@@ -92,6 +103,36 @@ typedef struct {
     // globally. Smoke/dust/ash occlude and want lighting; fire, sparks, glow and
     // magic do not. 0 = lit (default, so existing effects are unaffected).
     int unlit;
+
+    // ── PACKED VOLUME SHEET (the 4-channel flipbook) ─────────────────────────
+    //
+    // 1 = this particle's texture is a packed volume sheet from
+    // scripts/flipbook/ (R = flame emission, G = smoke density, B = self-shadow,
+    // A = true opacity) and the shader must decode all four channels instead of
+    // reading RGB as colour. 0 = legacy `texel * vertexColour` (default).
+    //
+    // WHY: the legacy path multiplies the WHOLE sprite by one vertex colour, so
+    // every texel shares a hue — a flame can have a bright centre but never a
+    // WHITE-hot core with an orange rim, which is most of what makes fire read
+    // as fire. In volume mode the sheet's R is a per-texel TEMPERATURE and the
+    // colour comes from `rampLUT` below, so the zoning is per pixel.
+    //
+    // The sheet stays greyscale on purpose. Hue lives in the LUT, so the same
+    // fire sheet becomes purple/blue magic fire by swapping the ramp — baking
+    // colour into the texture would forfeit that.
+    int volumeSheet;
+
+    // Black-body (or magic) ramp for `volumeSheet`, baked with
+    // ColorGradient_BakeLUT. id 0 = fall back to the flat vertex colour, so a
+    // missing LUT degrades to the legacy look instead of drawing black.
+    // Part of the draw batch key, like `unlit` — one ramp per batch.
+    Texture2D rampLUT;
+
+    // Multiplier on the sheet's emission before it indexes the ramp. This is
+    // the exposure knob for "how much of the sprite is white-hot": the sim
+    // normalises emission to its own 99.5th percentile, which has no idea how
+    // bright this particular effect should read. 0 = treat as 1.0.
+    float heatGain;
 
     // Shared contrast policy. NONE (0) is identity for every legacy effect;
     // compositions select a semantic profile instead of hand-tuning each

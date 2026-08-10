@@ -176,6 +176,33 @@ mass 0.1%. Re-audit any time with
 body layer, via `ParticleConfig.spriteAnim`. `tuning.cfg → flame_atlas`:
 0 = the F2 static sprites, 1 = this puff (default), 2 = `fire_atlas_8x8` (column).
 
+## fire_puff_8x8_volume.png (Đợt H — packed VOLUME sheet) — IN USE
+
+2048×2048 RGBA, 8×8 = 64 frames. Same simulation as the sheet above, but
+**never split**: this is the four-channel `VOLUME` layout delivered to the
+engine intact.
+
+```bash
+python3 scripts/flipbook/ti_sim.py fire_puff --res 112 --frames 64 --name fire_puff
+python3 scripts/flipbook/render.py build_cache/fire_puff --cell 256 --supersample 2 --zoom auto --light 1.0
+python3 scripts/flipbook/pack.py build_cache/fire_puff/frames --grid 8 --alpha-from-luma 0 --shape puff --out fire_puff_8x8_volume.png
+```
+
+R emission · G smoke density · B self-shadow · A true opacity — **no colour in
+any channel**. Colour comes from a ramp LUT (`ColorGradient_BakeLUT`) indexed by
+R at draw time, which is the point: the same greyscale sheet is orange fire,
+purple magic fire or blue ghost-flame with no re-bake, and one sprite carries a
+white-hot core AND a dark rim, which the `_flame` split above physically cannot
+(its RGB is a flat 255/255/255 mask, so one vertex colour tints the whole quad).
+
+Measured: R mean 34 / sd 44 (a real temperature field, 3.8% of texels hot),
+B/G 0.44 mean surviving-light fraction. Audited: cell coverage 23.2%, lobes
+1.13, 0/64 frames touch the border.
+
+**Consumed by** `VFX_FlameEmitter` (`core/composition/fire/flame_volume.inl`)
+when `tuning.cfg → flame_volume = 1` (the default), through
+`particle_lit.fs`'s volume branch with `VFX_BLEND_PREMULTIPLIED`.
+
 ## smoke_puff_8x8.png + _flame / _smoke (Đợt E / E4 — flipbook) — IN USE
 
 2048×2048 RGBA, 8×8 = 64 frames of one simulated SMOKE puff (`ti_sim.py

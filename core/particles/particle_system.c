@@ -69,6 +69,9 @@ typedef struct
   int blendMode;        // VFX_BlendMode — see the blend law in vfx_config.h
   int unlit;            // 1 = emissive, skip the lighting multiply
   float emissiveBoost;  // >1 = HDR headroom for a glowing core (see vfx_config.h)
+  int volumeSheet;      // 1 = texture is a packed 4-channel volume flipbook
+  unsigned int rampTexId; // black-body/magic LUT for volumeSheet; 0 = none
+  float heatGain;       // exposure on the sheet's emission before the ramp
   VFXContrastProfileId contrastProfile;
   const SkillCurve *radiusCurve;
   const SkillCurve *speedCurve;
@@ -245,6 +248,27 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->unlit = config.render.unlit;
   p->contrastProfile = config.render.contrastProfile;
   p->emissiveBoost = (config.render.emissiveBoost > 0.0f) ? config.render.emissiveBoost : 1.0f;
+  p->volumeSheet = config.render.volumeSheet;
+  p->rampTexId = config.render.rampLUT.id;
+  p->heatGain = (config.render.heatGain > 0.0f) ? config.render.heatGain : 1.0f;
+  // A volume sheet with no ramp would index an unbound sampler, which reads
+  // black — the flame would vanish while everything else said it was drawing.
+  // Fall back to the legacy path instead: the sprite looks wrong (its RGB is
+  // three density channels, not a colour) but it is VISIBLE and the warning
+  // says why, which is the difference between a bug you can see and one you
+  // spend an evening on.
+  if (p->volumeSheet && p->rampTexId == 0)
+  {
+    static bool warned = false;
+    if (!warned)
+    {
+      warned = true;
+      TraceLog(LOG_WARNING, "PARTICLE: volumeSheet particle spawned with no "
+                            "rampLUT — bake one with ColorGradient_BakeLUT. "
+                            "Falling back to the legacy colour path.");
+    }
+    p->volumeSheet = 0;
+  }
   if (p->blendMode == VFX_BLEND_ADDITIVE)
     p->emissiveBoost = VFXContrast_ApplyEmissionIntensity(
         p->emissiveBoost, p->contrastProfile);
@@ -524,6 +548,8 @@ static int s_locLightStrength, s_locScatterStrength;
 static int s_locVfxCount, s_locVfxPos, s_locVfxColor, s_locVfxRadius;
 static int s_locDebugNormal, s_locNormalBulge, s_locSunGain, s_locAmbientGain;
 static int s_locLightAzimuth, s_locAnalyticUV;
+static int s_locVolumeSheet = -1, s_locRampLUT = -1, s_locHeatGain = -1,
+           s_locSmokeTint = -1;
 
 #define PARTICLE_MAX_VFX_LIGHTS 4
 
@@ -608,11 +634,17 @@ static void ParticleLighting_Begin(Camera3D camera)
   // The shader's unlit branch is also the soft-particle path. Do not make the
   // ground-intersection fade depend on optional lighting being enabled.
   bool wantSoftParticles = (s_softFade > 0.0f && ScreenDistort_GetDepthTexture().id != 0);
-  if (s_lightingStrength <= 0.0f && !wantSoftParticles)
+  // A packed volume sheet is NOT an enhancement that may be gated away — it is
+  // the only thing that can decode the texture. Its RGB is three density
+  // channels, so the default shader would paint it as a colour and the fire
+  // would come out green. Whenever one is on screen this shader must bind,
+  // whatever the lighting strength or the quality tier says.
+  bool wantVolume = ParticleSystem_HasVolumeParticles();
+  if (s_lightingStrength <= 0.0f && !wantSoftParticles && !wantVolume)
     return;
   // Per-fragment lighting on every particle is real fill-rate; the Mali devices
   // are the constraint (ENGINE_LANDMINES.md). LOW/UNLIT keep the cheap path.
-  if (GfxQuality_Get() <= GFX_LOW && !wantSoftParticles)
+  if (GfxQuality_Get() <= GFX_LOW && !wantSoftParticles && !wantVolume)
     return;
 
   if (!s_litShaderTried)
@@ -642,6 +674,10 @@ static void ParticleLighting_Begin(Camera3D camera)
       s_locSoftDebug       = GetShaderLocation(s_litShader, "u_softDebug");
       s_locAtlasGrid       = GetShaderLocation(s_litShader, "u_atlasGrid");
       s_locEmissiveBoost   = GetShaderLocation(s_litShader, "u_emissiveBoost");
+      s_locVolumeSheet     = GetShaderLocation(s_litShader, "u_volumeSheet");
+      s_locRampLUT         = GetShaderLocation(s_litShader, "u_rampLUT");
+      s_locHeatGain        = GetShaderLocation(s_litShader, "u_heatGain");
+      s_locSmokeTint       = GetShaderLocation(s_litShader, "u_smokeTint");
     }
     else
     {
@@ -733,6 +769,18 @@ static void ParticleLighting_Begin(Camera3D camera)
   { // default: not an atlas. Flipped per batch in the draw loop.
     float grid[2] = {1.0f, 1.0f};
     if (s_locAtlasGrid >= 0) SetShaderValue(s_litShader, s_locAtlasGrid, grid, SHADER_UNIFORM_VEC2);
+  }
+  { // default: legacy colour sheet. Flipped per batch in the draw loop.
+    float off = 0.0f, one = 1.0f;
+    if (s_locVolumeSheet >= 0) SetShaderValue(s_litShader, s_locVolumeSheet, &off, SHADER_UNIFORM_FLOAT);
+    if (s_locHeatGain >= 0)    SetShaderValue(s_litShader, s_locHeatGain, &one, SHADER_UNIFORM_FLOAT);
+    if (s_locSmokeTint >= 0)
+    {
+      // Soot, not neutral grey. The volume path multiplies this by the scene
+      // light, so a white tint would make the smoke half read as steam.
+      float tint[3] = {0.32f, 0.29f, 0.27f};
+      SetShaderValue(s_litShader, s_locSmokeTint, tint, SHADER_UNIFORM_VEC3);
+    }
   }
 
   // VFX point lights — the caster's own fireball lighting the smoke inside it.
@@ -904,6 +952,9 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
   // this never splits a batch that would not have split anyway.
   int curGridC = -1, curGridR = -1;
   float curBoost = -1.0f;
+  int curVolume = -1;
+  unsigned int curRamp = 0xFFFFFFFFu;
+  float curHeat = -1.0f;
 
   for (int a = 0; a < s_activeCount; a++)
   {
@@ -912,8 +963,11 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     // valid under additive blending, but becomes a dark halo when forced into
     // an alpha body. Only particles authored as alpha material enter body;
     // additive particles remain in their emission pass.
-    if (layerFilter == 0 && p->blendMode == VFX_BLEND_ADDITIVE) continue;
-    if (layerFilter == 1 && p->blendMode != VFX_BLEND_ADDITIVE) continue;
+    // PREMULTIPLIED counts as emission: it carries an unbounded HDR light
+    // contribution in RGB and needs the same tone-mapping headroom additive
+    // does. Only plain ALPHA is body.
+    if (layerFilter == 0 && p->blendMode != VFX_BLEND_ALPHA) continue;
+    if (layerFilter == 1 && p->blendMode == VFX_BLEND_ALPHA) continue;
     // SURFACE_INPUT is rendered exclusively by FluidSurface; drawing it here
     // would reveal its source particles as billboards as well.
     if (p->renderMode == 3) continue;
@@ -929,7 +983,9 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     float wantBoost = p->emissiveBoost * s_emissiveBoost;
     int drawBlend = (layerFilter == 0) ? VFX_BLEND_ALPHA : p->blendMode;
     if (want != curTex || drawBlend != curBlend || p->unlit != curUnlit ||
-        wantGridC != curGridC || wantGridR != curGridR || wantBoost != curBoost)
+        wantGridC != curGridC || wantGridR != curGridR || wantBoost != curBoost ||
+        p->volumeSheet != curVolume || p->rampTexId != curRamp ||
+        p->heatGain != curHeat)
     {
       if (curTex != 0xFFFFFFFFu) rlEnd();
       s_perfBatches++;
@@ -939,9 +995,38 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         // boundary — ENGINE_LANDMINES.md §1, the raylib batching hazard.
         rlDrawRenderBatchActive();
         if (curBlend >= 0) EndBlendMode();
-        BeginBlendMode(drawBlend == VFX_BLEND_ADDITIVE ? BLEND_ADDITIVE : BLEND_ALPHA);
+        BeginBlendMode(drawBlend == VFX_BLEND_ADDITIVE      ? BLEND_ADDITIVE
+                       : drawBlend == VFX_BLEND_PREMULTIPLIED ? BLEND_ALPHA_PREMULTIPLY
+                                                              : BLEND_ALPHA);
         rlDrawRenderBatchActive();
         curBlend = drawBlend;
+      }
+      if (p->volumeSheet != curVolume || p->rampTexId != curRamp ||
+          p->heatGain != curHeat)
+      {
+        // The ramp is a SECOND sampler on the same shader. rlvk resolves
+        // samplers by reflected name rather than a presumed binding
+        // (HANDOFF §7.30), which is what makes texture0 + depth + ramp legal
+        // here; the flush is still required, because the uniform and the
+        // texture unit must not change under vertices already queued.
+        rlDrawRenderBatchActive();
+        float vs = p->volumeSheet ? 1.0f : 0.0f;
+        float hg = p->heatGain;
+        if (s_litActive && s_locVolumeSheet >= 0)
+          SetShaderValue(s_litShader, s_locVolumeSheet, &vs, SHADER_UNIFORM_FLOAT);
+        if (s_litActive && s_locHeatGain >= 0)
+          SetShaderValue(s_litShader, s_locHeatGain, &hg, SHADER_UNIFORM_FLOAT);
+        if (s_litActive && p->volumeSheet && p->rampTexId != 0 && s_locRampLUT >= 0)
+        {
+          Texture2D ramp = {0};
+          ramp.id = p->rampTexId;
+          ramp.width = 1; ramp.height = 1; ramp.mipmaps = 1;
+          ramp.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+          SetShaderValueTexture(s_litShader, s_locRampLUT, ramp);
+        }
+        curVolume = p->volumeSheet;
+        curRamp = p->rampTexId;
+        curHeat = p->heatGain;
       }
       if (p->unlit != curUnlit)
       {
@@ -1016,9 +1101,32 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
 
     c = VFXContrast_ApplyColor(
         c, p->contrastProfile,
-        p->blendMode == VFX_BLEND_ADDITIVE
+        p->blendMode != VFX_BLEND_ALPHA
             ? VFX_CONTRAST_EMISSION
             : VFX_CONTRAST_BODY);
+
+    // ── VOLUME SHEET: the vertex colour changes meaning ──────────────────────
+    //
+    // Hue now comes from the ramp LUT, sampled per texel, so the RGB slot is
+    // free — and it is the ONLY per-particle channel left (rlgl's immediate
+    // batch carries position/texcoord/colour and nothing else). It carries the
+    // particle's HEAT over its life instead: a grey level the shader multiplies
+    // into the sheet's emission before the ramp lookup, so a cooling ember
+    // slides down the ramp from white through orange to soot while the sheet
+    // supplies the spatial variation. Alpha keeps its usual meaning.
+    //
+    // Source is emissiveCurve, which in legacy mode scales RGB brightness — the
+    // same intent, so a composition that already authored one reads correctly.
+    if (p->volumeSheet)
+    {
+      float heat = 1.0f;
+      if (p->emissiveCurve)
+        heat = SkillCurve_Eval(p->emissiveCurve, invRatio);
+      if (heat < 0.0f) heat = 0.0f;
+      else if (heat > 1.0f) heat = 1.0f;
+      unsigned char h = (unsigned char)(heat * 255.0f);
+      c.r = c.g = c.b = h;
+    }
 
     float drawRadius = p->radius;
     if (p->radiusCurve)
@@ -1212,9 +1320,12 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     ParticleInternal *p = &g_Particles[s_activeIds[a]];
     if (p->trailLength > 0 && p->trailHistoryCount >= 2)
     {
-      if (layerFilter == 0 && p->blendMode == VFX_BLEND_ADDITIVE) continue;
-      if (layerFilter == 1 && p->blendMode != VFX_BLEND_ADDITIVE) continue;
-      int want = (layerFilter == 0 || p->blendMode != VFX_BLEND_ADDITIVE) ? BLEND_ALPHA : BLEND_ADDITIVE;
+      if (layerFilter == 0 && p->blendMode != VFX_BLEND_ALPHA) continue;
+      if (layerFilter == 1 && p->blendMode == VFX_BLEND_ALPHA) continue;
+      // Ribbon trails carry no volume sheet, so a PREMULTIPLIED head still
+      // trails in plain ADDITIVE — the trail is a solid-colour strip, and
+      // premultiplied output would need an alpha it does not compute.
+      int want = (layerFilter == 0 || p->blendMode == VFX_BLEND_ALPHA) ? BLEND_ALPHA : BLEND_ADDITIVE;
       if (want != trailBlend)
       {
         if (trailBlend >= 0) EndBlendMode();
@@ -1318,6 +1429,17 @@ void DrawParticlesEmission(Camera3D camera, Texture2D texture)
 void UnloadParticleSystem(void) { InitParticleSystem(); }
 
 bool IsParticleSystemActive(void) { return s_activeCount > 0; }
+
+bool ParticleSystem_HasVolumeParticles(void)
+{
+  for (int i = 0; i < s_activeCount; ++i)
+  {
+    const ParticleInternal *p = &g_Particles[s_activeIds[i]];
+    if (p->volumeSheet && p->renderMode != 3 && !p->trailOnly)
+      return true;
+  }
+  return false;
+}
 
 bool ParticleSystem_HasAdditiveParticles(void)
 {

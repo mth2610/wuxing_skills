@@ -141,8 +141,8 @@ static void Test_EveryAssetDeclaresALayout(void) {
     return;
   }
 
-  static const char *kLayouts[] = {"STRAND", "FLOW",  "OPAQUE",
-                                   "FLIPBOOK", "NOISE", "SPLIT_LEGACY"};
+  static const char *kLayouts[] = {"STRAND", "FLOW",   "OPAQUE", "FLIPBOOK",
+                                   "VOLUME", "NOISE",  "SPLIT_LEGACY"};
   const char *needle = "\"channels\": \"";
   int total = 0, ok = 0, packed = 0, legacy = 0;
   const char *p = manifest;

@@ -31,6 +31,10 @@ static ColorGradient s_fvolBodyGrad = {0}; // black-body body, ends dark
 static SkillCurve s_fvolRise = {0};
 static SkillCurve s_fvolFade = {0};
 static SkillCurve s_fvolGrow = {0};
+// Volume path only: the particle's HEAT over its life, multiplying the sheet's
+// emission before the ramp lookup. Hot at birth, cooling to nothing — this is
+// the axis the black-body ramp is travelled along.
+static SkillCurve s_fvolCool = {0};
 static ForceField s_fvolFld = {0};
 static ParticleConfig s_fvolSmokeSeed; // what a dying body ember becomes
 static bool s_fvolInit = false;
@@ -91,6 +95,43 @@ static float s_fvolBodyBlend = 0.0f;
 static float s_fvolBodyAlpha = 0.18f;
 static SpriteAnim s_fvolFlameAnim = {0};
 static SpriteAnim s_fvolPuffAnim = {0};
+
+// ── Đợt H — THE VOLUME PATH ─────────────────────────────────────────────────
+//
+// 1 (default) = ONE population off the packed 4-channel sheet, drawn
+// premultiplied. 0 = the F3 three-population build (additive core + alpha body
+// + smoke), kept for A/B because "which reads better" is a look judgement.
+//
+// It replaces the older build for two reasons that turn out to be one:
+//
+//   LOOK. The split sheet's RGB is a flat 255/255/255 mask, so the whole quad
+//   takes ONE vertex colour and a sprite can be bright in the middle but never
+//   WHITE-hot with an orange rim. Every zone of colour the eye looks for in
+//   fire had to be faked by placing differently-tinted sprites next to each
+//   other, which is why it read as tinted fog. The packed sheet's R is a real
+//   per-texel temperature field (mean 34, sd 44), so the zoning is per pixel.
+//
+//   COST. Three populations DEPTH-SORT INTO EACH OTHER, and the batch key is
+//   texture+blend+unlit+grid+boost — so every alternation between core, body
+//   and smoke is an rlEnd plus two rlDrawRenderBatchActive flushes. That is
+//   why "a few dozen particles" already cost frames while cutting 700 sprites
+//   to 18 barely moved them (particle_system.c's perf instrument records that
+//   measurement). One population, one texture, one blend mode collapses the
+//   batch count to ~1, and premultiplied is what makes one population able to
+//   emit and occlude at the same time.
+static float s_fvolVolume = 1.0f;
+static Texture2D s_fvolVolumeTex = {0};
+static SpriteAnim s_fvolVolumeAnim = {0};
+// Exposure on the sheet's emission before it indexes the ramp — "how much of
+// the flame is white-hot". The sim normalises emission to its own 99.5th
+// percentile and has no idea how bright this effect should read, so this is
+// the knob that decides incandescent vs smouldering.
+static float s_fvolHeatGain = 1.6f;
+// Ramp LUTs, one per material, baked lazily. THIS is where fire's colour lives
+// now — the sheet is greyscale on purpose, so pointing this at another gradient
+// turns the same simulation into purple or blue magic fire with no re-bake.
+static Texture2D s_fvolRampLUT[VC_MAT_COUNT];
+static ColorGradient s_fvolHeatGrad[VC_MAT_COUNT];
 // The longest life a BODY particle can be given below. The flipbook rate is
 // derived from it, so the two cannot drift apart.
 #define FVOL_BODY_LIFE_MAX 1.40f
@@ -138,6 +179,30 @@ static void FVol_InitShared(void)
     Tuning_RegisterFloat("flame_spread", &s_fvolSpread, 1.0f);
     Tuning_RegisterFloat("flame_body_blend", &s_fvolBodyBlend, 0.0f);
     Tuning_RegisterFloat("flame_body_alpha", &s_fvolBodyAlpha, 0.18f);
+    Tuning_RegisterFloat("flame_volume", &s_fvolVolume, 1.0f);
+    Tuning_RegisterFloat("flame_heat_gain", &s_fvolHeatGain, 1.6f);
+
+    // The packed VOLUME sheet — the same sim as the split above, delivered with
+    // its temperature field intact. Missing file falls through to the legacy
+    // path rather than drawing nothing.
+    const VFX_SurfaceProfile *volProfile =
+        VFX_SurfaceRegistry_Get(VFX_SURFACE_FIRE_VOLUME);
+    s_fvolVolumeTex = volProfile != NULL ? volProfile->body : (Texture2D){0};
+    if (s_fvolVolumeTex.id != 0)
+    {
+        SetTextureFilter(s_fvolVolumeTex, TEXTURE_FILTER_BILINEAR);
+        // Same derivation as the puff sheet: rate from the LONGEST life plus
+        // the largest phase, so no sprite ever runs past frame 64 into the
+        // empty tail (the E4 landmine — the flame would vanish while its alpha
+        // curve still said visible).
+        SpriteAnim_Init(&s_fvolVolumeAnim, 8, 8, 64,
+                        64.0f / (FVOL_BODY_LIFE_MAX + FVOL_BODY_PHASE_MAX),
+                        ANIM_ONCE);
+    }
+    else
+        TraceLog(LOG_WARNING, "FlameVolume: fire_puff_8x8_volume.png missing — "
+                              "volume path disabled, using the split sheets. Bake "
+                              "it per assets/INDEX.md (pack.py WITHOUT --split)");
 
     // The FLAME channel only — the sheet's smoke channel is a separate file.
     // The particle shader multiplies the whole of rgb by the vertex colour, so a
@@ -215,6 +280,14 @@ static void FVol_InitShared(void)
     FloatCurve_AddStop(&s_fvolFade, 0.6f, 0.8f);
     FloatCurve_AddStop(&s_fvolFade, 1.0f, 0.0f);
 
+    // Cooling. Stays near full heat for the first third — combustion does not
+    // start fading the instant fuel ignites — then falls away, which is what
+    // walks the sprite down the black-body ramp into soot.
+    FloatCurve_AddStop(&s_fvolCool, 0.0f, 1.0f);
+    FloatCurve_AddStop(&s_fvolCool, 0.30f, 0.92f);
+    FloatCurve_AddStop(&s_fvolCool, 0.65f, 0.45f);
+    FloatCurve_AddStop(&s_fvolCool, 1.0f, 0.05f);
+
     // Narrows as it rises — a flame tapers, unlike smoke which only expands.
     FloatCurve_AddStop(&s_fvolGrow, 0.0f, 0.7f);
     FloatCurve_AddStop(&s_fvolGrow, 0.3f, 1.0f);
@@ -252,6 +325,66 @@ static void FVol_InitShared(void)
     s_fvolInit = true;
 }
 
+// ── The heat ramp: temperature -> colour ────────────────────────────────────
+//
+// Indexed by the SHEET's emission channel, not by age: t=0 is the coolest texel
+// of a sprite and t=1 the hottest, so one billow spans the whole ramp at once.
+// That is the difference from s_fvolBodyGrad above, which is indexed by a
+// particle's age and therefore paints a whole sprite one colour.
+//
+// Keeping this in code rather than in the texture is what makes magic fire
+// cheap: VC_MAT_FIRE gets an authored black-body curve, and every other element
+// gets the same CURVE SHAPE re-coloured from its material — white-hot core,
+// element hue through the middle, near-black at the cold end. A purple flame is
+// still a flame because the shape of the falloff is what reads as combustion;
+// the hue is just paint.
+static const ColorGradient *FVol_HeatGradient(VC_MaterialId matId)
+{
+    if (matId < 0 || matId >= VC_MAT_COUNT)
+        matId = VC_MAT_FIRE;
+    ColorGradient *g = &s_fvolHeatGrad[matId];
+    if (g->count > 0)
+        return g;
+
+    if (matId == VC_MAT_FIRE)
+    {
+        // Authored black-body. Weighted so most of the range is orange and only
+        // the top lands on white — an even spread reads as a gradient swatch
+        // rather than as burning.
+        ColorGradient_AddStop(g, 0.00f, (Color){18, 6, 3, 255});      // cold soot
+        ColorGradient_AddStop(g, 0.18f, (Color){120, 26, 8, 255});    // dull red
+        ColorGradient_AddStop(g, 0.40f, (Color){214, 74, 18, 255});   // red-orange
+        ColorGradient_AddStop(g, 0.62f, (Color){255, 140, 34, 255});  // orange
+        ColorGradient_AddStop(g, 0.82f, (Color){255, 206, 104, 255}); // amber
+        ColorGradient_AddStop(g, 1.00f, (Color){255, 250, 232, 255}); // white-hot
+        return g;
+    }
+
+    // Derived: the same falloff shape carrying the element's own identity.
+    const VFX_ElementMaterial *mat = VFX_Material(matId);
+    Color body = mat->body;
+    Color glow = mat->glow;
+    ColorGradient_AddStop(g, 0.00f, (Color){(unsigned char)(body.r / 8),
+                                            (unsigned char)(body.g / 8),
+                                            (unsigned char)(body.b / 8), 255});
+    ColorGradient_AddStop(g, 0.18f, (Color){(unsigned char)(body.r / 3),
+                                            (unsigned char)(body.g / 3),
+                                            (unsigned char)(body.b / 3), 255});
+    ColorGradient_AddStop(g, 0.45f, VC_WithAlpha(body, 255));
+    ColorGradient_AddStop(g, 0.72f, VC_WithAlpha(glow, 255));
+    ColorGradient_AddStop(g, 1.00f, VC_WithAlpha(ColorLerp(glow, WHITE, 0.80f), 255));
+    return g;
+}
+
+static Texture2D FVol_RampLUT(VC_MaterialId matId)
+{
+    if (matId < 0 || matId >= VC_MAT_COUNT)
+        matId = VC_MAT_FIRE;
+    if (s_fvolRampLUT[matId].id == 0)
+        s_fvolRampLUT[matId] = ColorGradient_BakeLUT(FVol_HeatGradient(matId), 64);
+    return s_fvolRampLUT[matId];
+}
+
 // A volume of fire at `pos`. `scale` 1.0 ≈ a 1 m flame. `intensity` 0..1 scales
 // particle count and core brightness.
 //
@@ -271,6 +404,9 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
     // Which sheet, resolved once. A missing file must fall THROUGH to the other
     // sheet rather than to the F2 sprites: an effect that silently changes
     // scale is harder to diagnose than one that silently changes look.
+    // The volume path supersedes the atlas choice entirely: it is a different
+    // sheet with a different decoder, not another value of `flame_atlas`.
+    const bool useVolume = (s_fvolVolume > 0.5f) && (s_fvolVolumeTex.id != 0);
     const bool wantPuff = (s_fvolAtlas > 0.5f) && (s_fvolAtlas < 1.5f);
     const bool usePuff = wantPuff && (s_fvolPuffTex.id != 0);
     const bool useAtlas = (s_fvolAtlas > 0.5f)
@@ -307,6 +443,102 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
     const float dtNow = dt;
     float *bodyAccum = &emitter->bodyAccum;
     float *coreAccum = &emitter->coreAccum;
+
+    // ── VOLUME PATH — one population, one draw ───────────────────────────────
+    //
+    // No core and no separate smoke: the sheet carries emission, soot and
+    // self-shadow in the same texels, so what used to be three interleaved
+    // populations is one. That is the whole fps story — see the note on
+    // s_fvolVolume.
+    if (useVolume)
+    {
+        // Announce on CHANGE, never once at startup: `flame_volume` hot-reloads,
+        // so a one-shot line scrolls away long before the value that matters
+        // arrives — and then "my edit did nothing" is indistinguishable from
+        // "my edit never applied" (core/CLAUDE.md §4).
+        {
+            static float lastHeat = -1.0f, lastLive = -1.0f;
+            static int lastMat = -1;
+            if (lastHeat != s_fvolHeatGain || lastLive != s_fvolBodyLive ||
+                lastMat != (int)matId)
+            {
+                lastHeat = s_fvolHeatGain; lastLive = s_fvolBodyLive;
+                lastMat = (int)matId;
+                TraceLog(LOG_INFO,
+                         "FLAME volume path ACTIVE: sheet=%u ramp=%u heatGain=%.2f "
+                         "live=%.0f mat=%d blend=PREMULTIPLIED",
+                         (unsigned)s_fvolVolumeTex.id,
+                         (unsigned)FVol_RampLUT(matId).id, s_fvolHeatGain,
+                         s_fvolBodyLive, (int)matId);
+            }
+        }
+        const float live = s_fvolBodyLive * intensity * s_fvolBodyCount;
+        *bodyAccum += dtNow * (live / FVOL_BODY_LIFE_AVG);
+        int n = (int)*bodyAccum;
+        *bodyAccum -= (float)n;
+        if (n > 24) { n = 24; *bodyAccum = 0.0f; }
+        if (n < 0) n = 0;
+
+        const Texture2D ramp = FVol_RampLUT(matId);
+        for (int i = 0; i < n; i++)
+        {
+            float ang = Random01() * 2.0f * PI;
+            float rad = sqrtf(Random01()) * 0.34f * s_fvolSpread * scale * s_fvolWidthMul;
+            Vector3 p = {pos.x + cosf(ang) * rad,
+                         pos.y + Random01() * 0.10f * scale,
+                         pos.z + sinf(ang) * rad};
+            float life = Math_Mix(0.75f, FVOL_BODY_LIFE_MAX, Random01());
+
+            SpawnParticle((ParticleConfig){
+                .position = p,
+                .velocity = {cosf(ang) * 0.06f * scale,
+                             Math_Mix(0.45f, 0.75f, Random01()) * scale * s_fvolRiseMul,
+                             sinf(ang) * 0.06f * scale},
+                .radius = Math_Mix(0.22f, 0.62f, powf(Random01(), 1.6f))
+                          * s_fvolBodySize * scale,
+                .lifetime = life,
+                // In volume mode colorStart.a is the sprite's COVERAGE and its
+                // RGB is ignored — hue comes from the ramp. Alpha can therefore
+                // be much higher than the 0.18 the legacy body needed: there is
+                // no flat tint to stack into a patch, because the sheet's own
+                // density decides where the sprite is opaque.
+                .colorStart = VC_WithAlpha(WHITE, 200),
+                .alphaCurve = &s_fvolFade,
+                .speedCurve = &s_fvolRise,
+                // Cooling. In volume mode emissiveCurve is read as the particle's
+                // HEAT over life and multiplies the sheet's emission before the
+                // ramp lookup — so an ember genuinely slides white -> orange ->
+                // soot instead of cross-fading between two tinted sprites.
+                .emissiveCurve = &s_fvolCool,
+                .radiusCurve = &s_fvolGrow,
+                .forceField = &s_fvolFld,
+                .render.volumeSheet = 1,
+                .render.rampLUT = ramp,
+                .render.heatGain = s_fvolHeatGain,
+                .render.blendMode = VFX_BLEND_PREMULTIPLIED,
+                .render.texture = s_fvolVolumeTex,
+                // NOT unlit. The volume branch lights only the SOOT half and
+                // leaves emission alone, which is what the unlit flag existed to
+                // protect — the flag would now switch off the smoke's shading
+                // as well, and its whole job is to stop the tail reading flat.
+                .spriteAnim = &s_fvolVolumeAnim,
+                .spriteAnimPhase = Random01() * FVOL_BODY_PHASE_MAX,
+                .rotation = Random01() * 2.0f * PI,
+                .angularVelocity = (Random01() - 0.5f) * 0.5f,
+            });
+        }
+
+        emitter->lightTimer -= dtNow;
+        if (emitter->lightTimer <= 0.0f)
+        {
+            emitter->lightTimer = 0.10f;
+            float flick = 0.85f + VC_Flicker01((float)GetTime() * 7.0f, emitter->seed) * 0.3f;
+            Vector3 lightPos = {pos.x, pos.y + 0.55f * scale, pos.z};
+            VFXLight_Spawn(lightPos, (Color){255, 150, 60, 255},
+                           4.0f * scale * flick, 0.13f, VFX_PRIORITY_LOW);
+        }
+        return;
+    }
 
     int nCore, nBody;
     if (useAtlas)
