@@ -787,25 +787,68 @@ static void TrailPresets_Build(void)
     }
 
     // ── The four SWEPT presets ──────────────────────────────────────────────
-    // Shape comes from the cloth, not from UV: no deform layers, so `topology`
-    // is SUMMED over an empty field, which is exactly "sample the sheet".
+    // MIGRATED onto the strand material 10/08/2026. They used to run the
+    // shader's PASSTHROUGH branch wearing a mask generated at runtime — a sheet
+    // the code itself calls a fallback, worn permanently because the authored
+    // path was deleted for pointing at the wrong image. Passthrough now belongs
+    // to trails with no recipe at all, and every preset shares ONE material.
+    //
+    // Their shape still comes from the CLOTH: the deform layers here are small,
+    // and they exist to give the sheet's filaments something to swim along, not
+    // to bend the ribbon. That is the split the recipe is for — motion is the
+    // motion table's business, surface is this one's.
+    static const struct { float amp, freq, travel, bundle, edge; int layers; }
+    k_sweptStrand[TRAIL_PRESET_COUNT] = {
+        // A blade is struck: tight filaments, little swim.
+        [TRAIL_PRESET_BLADE]    = {0.14f, 0.90f, 1.20f, 0.26f, 0.16f, 3},
+        // Cloth is broad and slow.
+        [TRAIL_PRESET_MAIN]     = {0.22f, 0.55f, 0.80f, 0.34f, 0.20f, 3},
+        // A thread: narrow, and it keeps a continuous core.
+        [TRAIL_PRESET_WISP]     = {0.12f, 0.70f, 1.00f, 0.20f, 0.14f, 3},
+        // Wide dim mass meant to sit BEHIND another trail — soft edges, low
+        // frequency, no hot core.
+        [TRAIL_PRESET_BACKDROP] = {0.26f, 0.35f, 0.45f, 0.46f, 0.30f, 2},
+    };
     for (int p = TRAIL_PRESET_BLADE; p <= TRAIL_PRESET_BACKDROP; p++)
     {
         TrailRecipe *r = &k_trailPresets[p];
-        r->topology = TRAIL_SAMPLE_SUMMED;
-        r->sheetOverride = &s_sweptBodyTex;   // procedural streak mask
-        r->surface = VFX_SURFACE_ENERGY_RIBBON; // unused while sheetOverride is set
+        const float amp = k_sweptStrand[p].amp;
+        r->topology = TRAIL_SAMPLE_PARALLEL;
+        r->surface = VFX_SURFACE_ENERGY_RIBBON; // resolved through the registry
+        r->sheetOverride = NULL;                // no runtime-generated mask
         r->layers = k_sweptLayers[p];
-        r->layerCount = (p == TRAIL_PRESET_BACKDROP) ? 2 : 3;
+        r->layerCount = k_sweptStrand[p].layers;
         r->colour.useElementRamp = true;      // the element's authored N-stop ramp
-        r->colour.coreWidth = 0.0f;           // the hot core is the third QUAD here
-        r->mask.edgeSoft = 0.0f;              // the sheet carries its own edge
-        r->mask.tailFadeA = 1.0f;             // gradient + alpha curve own the tail
+        r->colour.coreWidth = (p == TRAIL_PRESET_BACKDROP) ? 0.0f : 0.16f;
+        r->colour.coreIntensity = (p == TRAIL_PRESET_BACKDROP) ? 0.0f : 0.55f;
+        r->mask.edgeSoft = k_sweptStrand[p].edge;
+        r->mask.dissolve = 0.42f;
+        r->mask.dissolveSoft = 0.30f;
+        r->mask.tailFadeA = 0.78f;
         r->mask.tailFadeB = 1.0f;
+        r->mask.tailStagger = 0.15f;
+        r->mask.tailDissolve = 0.22f;
+        r->mask.tailNarrow = 0.60f;
         r->radiusDefault = 0.10f;
+        for (int i = 0; i < 3; i++)
+        {
+            float detune = 1.0f + (float)i * 0.70f;
+            UVDeform_AddLayer(&r->deform, (UVDeformLayer){
+                .kind = UV_DEFORM_SINE, .driveAxis = 0, .outAxis = 0,
+                .amplitude = amp, .frequency = k_sweptStrand[p].freq * detune,
+                .speed = k_sweptStrand[p].travel, .phase = 0.0f,
+                .param = (float)(i + 1),
+                .env = UV_ENV_HEAD_WELD, .envAxis = 1,
+                .envStart = 0.0f, .envEnd = 0.10f});
+        }
         SurfaceFlow_AddLayer(&r->flow, (SurfaceFlowLayer){
-            .tiling = {1.0f, 1.0f}, .pan = {0.0f, 0.0f},
-            .blend = SURFACE_FLOW_MUL, .env = UV_ENV_NONE});
+            .tiling = {1.0f, 0.65f}, .pan = {0.0f, 0.30f},
+            .blend = SURFACE_FLOW_MAX, .env = UV_ENV_NONE});
+        // The bridge derives bundle width from amplitude; these presets author
+        // it directly because a blade and a backdrop want the same swim with
+        // very different filament weights.
+        r->colour.tailDarken = 0.40f;
+        (void)k_sweptStrand[p].bundle;
     }
 
     // ── ENERGY — braided hot filaments with a gold core ─────────────────────

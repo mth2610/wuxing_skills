@@ -1516,8 +1516,13 @@ static void Test_MirrorStillMatchesSource(void)
           "exactly ONE layer carries the texture, and it is the body");
     CHECK(FileHas(inl, "[TRAIL_PRESET_BACKDROP]"),
           "BACKDROP is a dedicated wide recipe, not a disguised main ribbon");
-    CHECK(FileHas(inl, "r->layerCount = (p == TRAIL_PRESET_BACKDROP) ? 2 : 3;"),
+    // The layer count moved into the swept table when those presets migrated
+    // onto the strand material; BACKDROP still declares 2 (no inner core) and
+    // still declares no hot core colour, which is the invariant that matters.
+    CHECK(FileHas(inl, "[TRAIL_PRESET_BACKDROP] = {0.26f, 0.35f, 0.45f, 0.46f, 0.30f, 2},"),
           "BACKDROP has no inner core layer");
+    CHECK(FileHas(inl, "r->colour.coreWidth = (p == TRAIL_PRESET_BACKDROP) ? 0.0f : 0.16f;"),
+          "and no hot core at all — it is meant to sit BEHIND another trail");
     CHECK(FileHas(inl, "A wisp has a CONTINUOUS inner core."),
           "WISP keeps a continuous, thinner inner core");
 
