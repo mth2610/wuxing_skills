@@ -240,18 +240,6 @@
       "kill_fn": "VFX_KillProjectile"
     },
     {
-      "source": "common/vc_ribbon_trail.inl",
-      "fn": "VFX_ComposeRibbonTrail",
-      "label": "RIBBON TRAIL",
-      "category": "common",
-      "fixture": "follower",
-      "lifecycle": "trail",
-      "_auto": true,
-      "type": "continuous",
-      "spawn_call": "VFX_ComposeRibbonTrail($XFORM, VC_MAT_FIRE, 0.1f, 2.0f, VFX_RIBBON_MAIN)",
-      "kill_fn": "VFX_KillRibbonTrail"
-    },
-    {
       "source": "common/vc_rune_circle.inl",
       "fn": "VFX_ComposeRuneCircle",
       "label": "RUNE CIRCLE",
@@ -332,18 +320,6 @@
       "trigger_call": "VFX_ComposeSparkTrail($POS, $VELOCITY, VC_MAT_FIRE, 1.0f, 2.0f)"
     },
     {
-      "source": "common/vc_strand_trail.inl",
-      "fn": "VFX_ComposeStrandTrail",
-      "label": "STRAND TRAIL",
-      "category": "common",
-      "fixture": "follower",
-      "lifecycle": "trail",
-      "_auto": true,
-      "type": "continuous",
-      "spawn_call": "VFX_ComposeStrandTrail($XFORM, VC_MAT_FIRE, 0.0f, 2.0f, VFX_STRAND_ENERGY)",
-      "kill_fn": "KillTrail"
-    },
-    {
       "source": "common/vc_sweep_slash.inl",
       "fn": "VFX_ComposeSweepSlash",
       "label": "SWEEP SLASH",
@@ -353,6 +329,84 @@
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeSweepSlash($POS, (Vector3){1.0f, 0.0f, 0.0f}, VC_MAT_FIRE, 1.0f, 90.0f, $PROG)"
+    },
+    {
+      "source": "common/vc_trail.inl",
+      "fn": "VFX_ComposeTrail",
+      "label": "TRAIL MAIN",
+      "category": "common",
+      "fixture": "follower",
+      "lifecycle": "trail",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeTrail($XFORM, VC_MAT_FIRE, 0.1f, 2.0f, TRAIL_PRESET_MAIN)",
+      "kill_fn": "VFX_KillTrail",
+      "_variant": "TRAIL_PRESET_MAIN"
+    },
+    {
+      "source": "common/vc_trail.inl",
+      "fn": "VFX_ComposeTrail",
+      "label": "TRAIL ENERGY",
+      "category": "common",
+      "fixture": "follower",
+      "lifecycle": "trail",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeTrail($XFORM, VC_MAT_FIRE, 0.0f, 2.0f, TRAIL_PRESET_ENERGY)",
+      "kill_fn": "VFX_KillTrail",
+      "_variant": "TRAIL_PRESET_ENERGY"
+    },
+    {
+      "source": "common/vc_trail.inl",
+      "fn": "VFX_ComposeTrail",
+      "label": "TRAIL BLADE",
+      "category": "common",
+      "fixture": "follower",
+      "lifecycle": "trail",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeTrail($XFORM, VC_MAT_FIRE, 0.1f, 2.0f, TRAIL_PRESET_BLADE)",
+      "kill_fn": "VFX_KillTrail",
+      "_variant": "TRAIL_PRESET_BLADE"
+    },
+    {
+      "source": "common/vc_trail.inl",
+      "fn": "VFX_ComposeTrail",
+      "label": "TRAIL WISP",
+      "category": "common",
+      "fixture": "follower",
+      "lifecycle": "trail",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeTrail($XFORM, VC_MAT_FIRE, 0.1f, 2.0f, TRAIL_PRESET_WISP)",
+      "kill_fn": "VFX_KillTrail",
+      "_variant": "TRAIL_PRESET_WISP"
+    },
+    {
+      "source": "common/vc_trail.inl",
+      "fn": "VFX_ComposeTrail",
+      "label": "TRAIL BACKDROP",
+      "category": "common",
+      "fixture": "follower",
+      "lifecycle": "trail",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeTrail($XFORM, VC_MAT_FIRE, 0.15f, 2.0f, TRAIL_PRESET_BACKDROP)",
+      "kill_fn": "VFX_KillTrail",
+      "_variant": "TRAIL_PRESET_BACKDROP"
+    },
+    {
+      "source": "common/vc_trail.inl",
+      "fn": "VFX_ComposeTrail",
+      "label": "TRAIL SMOKE",
+      "category": "common",
+      "fixture": "follower",
+      "lifecycle": "trail",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeTrail($XFORM, VC_MAT_FIRE, 0.0f, 2.0f, TRAIL_PRESET_SMOKE)",
+      "kill_fn": "VFX_KillTrail",
+      "_variant": "TRAIL_PRESET_SMOKE"
     },
     {
       "source": "common/vc_volume_trail.inl",

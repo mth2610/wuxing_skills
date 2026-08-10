@@ -84,13 +84,38 @@ MANIFEST_CATEGORIES = ["fire", "water", "wood", "metal", "earth", "taiji", "comm
 # `type` is the sandbox implementation detail; `lifecycle` is the public
 # contract shown in the manifest. FlameVolume is deliberately marked legacy:
 # P2 replaces its frame-fed emitter with Spawn/Stop/Kill handles.
+# ── PRESET VARIANTS — the ONE exception to one-entry-per-.inl ────────────────
+# A composition whose whole subject is "the same machine, several authored
+# looks" needs its looks side by side on the bench, not behind a knob. Hiding
+# the choice in a tuning value is exactly what let a stale `strandtrail_style`
+# render the wrong style for two sessions without anyone being able to see it
+# (core/docs/PROGRESS.md §1) — a visible button per preset kills that class.
+#
+# fn -> [(label suffix, the argument that selects the preset, radius), ...]
+# Each variant becomes its own bench entry, sharing the source file's fixture
+# and kill function. Keep this SMALL: it is for presets of one effect, never a
+# way to give an .inl several unrelated entries.
+FIXTURE_PRESET_VARIANTS = {
+    "VFX_ComposeTrail": [
+        ("MAIN",     "TRAIL_PRESET_MAIN",     "0.1f"),
+        ("ENERGY",   "TRAIL_PRESET_ENERGY",   "0.0f"),
+        ("BLADE",    "TRAIL_PRESET_BLADE",    "0.1f"),
+        ("WISP",     "TRAIL_PRESET_WISP",     "0.1f"),
+        ("BACKDROP", "TRAIL_PRESET_BACKDROP", "0.15f"),
+        ("SMOKE",    "TRAIL_PRESET_SMOKE",    "0.0f"),
+    ],
+}
+
 LIFECYCLE_SPECS = {
     "VFX_ComposeCharacterAura":      ("emitter", "persistent", "persistent"),
     "VFX_ComposeChargeConverge":     ("draw",    "timed",      "continuous"),
     "VFX_ComposeConvergeMotes":      ("draw",    "timed",      "continuous"),
     "VFX_ComposeCoreGlow":           ("draw",    "timed",      "continuous"),
-    "VFX_ComposeEnergyTrail":        ("trail",   "follower",   "continuous"),
-    "VFX_ComposeStrandTrail":        ("trail",   "follower",   "continuous"),
+    # THE trail (vc_trail.inl). One entry per PRESET rather than one per source
+    # file: the presets are what a reader compares, and hiding the choice behind
+    # a tuning knob is what let a stale `strandtrail_style` silently render the
+    # wrong style for two sessions (core/docs/PROGRESS.md §1).
+    "VFX_ComposeTrail":              ("trail",   "follower",   "continuous"),
     # Handle-owning like the trails, but its source does NOT move: the column
     # rises from a fixed point, so the fixture is a position rather than a
     # follower transform.
@@ -523,7 +548,22 @@ def source_fixture_entries(inl_fns, excluded):
         expected = 'VFX_Compose' + ''.join(part.title() for part in stem.split('_'))
         candidates.sort(key=lambda item: (item[0] != expected,
                                           not item[0].startswith('VFX_Compose'), item[0]))
-        entries.append(infer_entry(candidates[0][0], candidates[0][1], inl_fns))
+        base = infer_entry(candidates[0][0], candidates[0][1], inl_fns)
+        variants = FIXTURE_PRESET_VARIANTS.get(base["fn"])
+        if not variants:
+            entries.append(base)
+            continue
+        # One entry per preset. The spawn call is rebuilt rather than patched:
+        # infer_entry fills enum arguments with a default 0, which would point
+        # every variant at the same preset and quietly make the extra buttons
+        # duplicates of the first.
+        for label, preset, radius in variants:
+            e = dict(base)
+            e["label"] = "%s %s" % (base["label"], label)
+            e["spawn_call"] = ("%s($XFORM, VC_MAT_FIRE, %s, 2.0f, %s)"
+                               % (base["fn"], radius, preset))
+            e["_variant"] = preset
+            entries.append(e)
     return entries
 
 

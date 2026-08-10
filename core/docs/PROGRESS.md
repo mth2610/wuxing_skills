@@ -228,6 +228,37 @@ không phân biệt được lỗi composer hay lỗi shader. **Xoá cầu tạm
 Cầu tạm hiện suy ra `wispMix/strandGain/flowStrength/bundleWeight/bundleWidth`
 từ recipe thay vì hardcode — hardcode từng đưa số của ENERGY cho cả SMOKE.
 
+### 8.3b. Bench — một nút MỖI PRESET (đã xong)
+
+`scripts/sync_vfx_test.py` sinh lại toàn bộ manifest, khoá theo `.inl`, một file
+một entry — nên hàng thêm tay bị bỏ, và entry cũ quay ra spawn `0` = BLADE, tức
+**ENERGY không còn vào được từ bench**. Đã thêm `FIXTURE_PRESET_VARIANTS` vào
+script: một composition mà chủ đề chính là "cùng một máy, nhiều look được viết
+sẵn" thì các look phải nằm cạnh nhau trên bench. Đây là ngoại lệ DUY NHẤT của
+bất biến một-entry-một-`.inl`, và lý do là §1: giấu lựa chọn sau một tuning value
+chính là thứ khiến hai phiên render nhầm style mà không ai thấy được.
+
+Bench nay có 6 nút: 27 MAIN · 28 ENERGY · 29 BLADE · 30 WISP · 31 BACKDROP ·
+32 SMOKE.
+
+### 8.3c. ⚠ `TRAIL_PRESET_SMOKE` HỎNG — chưa sửa
+
+Lần đầu preset này được render (trước đó không có nút nào gọi tới nó). Kết quả:
+**một dải đỏ phẳng, không có sợi** — đúng triệu chứng của §1, nhưng nguyên nhân
+khác.
+
+Đã loại trừ: sheet resolve đúng (`VFX_SURFACE_SMOKE_STRAND` qua registry, không
+có cảnh báo fallback); `stretchUV` được truyền đúng.
+
+**Nghi chính: cầu tạm suy ra sai số cho SMOKE.** `TrailRecipe_ToLegacyMaterial`
+tính `bundleWidth = amplitude * 0.85` → 0.255, trong khi style SMOKE gốc là
+**0.62**. Các số suy diễn khác cũng lệch: `wispMix` 0.70 (gốc 0.60),
+`flowStrength` 0.78 (gốc 0.65). Suy diễn từ một trường khác chỉ vì recipe chưa
+có trường riêng là sai lầm — cầu tạm nên mang giá trị thật, hoặc recipe phải có
+trường cho chúng.
+
+Bốn preset còn lại (MAIN/ENERGY/BLADE/WISP/BACKDROP) render hợp lý.
+
 ### 8.4. Còn lại
 
 - Gộp `trail_deform.fs` về một công thức đọc `u_uvField`/`u_flowLayer`
