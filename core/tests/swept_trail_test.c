@@ -1477,7 +1477,12 @@ static void Test_MirrorStillMatchesSource(void)
     // cloth or a thread — and the WIRING, i.e. that the authored numbers are
     // actually handed to the engine.
 
-    CHECK(FileHas(inl, "{0.0250f, true,"), "the motion table still uses the 1:20 blade aspect");
+    // 0.055, raised from 0.025 on 10/08/2026. The old 1:20 was a CEILING low
+    // enough that a blade could never be broad: past ~0.15 m half-width on a
+    // 6 m sweep every caller width collapsed to the same hairline. What the
+    // check is for is unchanged — BLADE must stay tighter than MAIN (0.0715)
+    // and BACKDROP (0.1), because a blade is struck and cloth is draped.
+    CHECK(FileHas(inl, "{0.0550f, true,"), "the motion table still caps the blade tighter than cloth");
     CHECK(FileHas(inl, "{0.0715f, true,"),
           "source still uses the 1:7 ribbon aspect (cloth is BROAD)");
     CHECK(FileHas(inl, "{0.0125f, true,"), "the motion table still uses the 1:40 filament aspect");

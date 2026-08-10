@@ -274,7 +274,14 @@ typedef struct {
 } TrailMotion;
 
 static const TrailMotion k_trailMotion[TRAIL_PRESET_COUNT] = {
-    [TRAIL_PRESET_BLADE]    = {0.0250f, true, true, 0.70f, 0.30f, 5.0f, 0.55f, 1, true, true,
+    // aspectK 0.055 (1:9 width:length), was 0.025 (the old 1:20). At 1:20 a
+    // blade could not be broad however wide the caller asked: a 6 m sweep
+    // capped the half-width at 0.15 m, so every larger value collapsed to the
+    // same hairline and the width argument stopped meaning anything above it.
+    // Measured, not guessed — at the bench's own 0.1 m call the cap never binds
+    // and this changes nothing on screen; it raises a CEILING. Still tighter
+    // than MAIN (0.0715) and BACKDROP (0.1): a blade is struck, not draped.
+    [TRAIL_PRESET_BLADE]    = {0.0550f, true, true, 0.70f, 0.30f, 5.0f, 0.55f, 1, true, true,
                                SWEPT_SAMPLE_HZ, SWEPT_IDLE_SPEED, SWEPT_TELEPORT_SPEED,
                                true, TRAIL_WIDTH_ENVELOPE_TAPER_BOTH},
     [TRAIL_PRESET_MAIN]     = {0.0715f, true, true, 2.60f, 0.55f, 1.9f, 1.70f, 1, true, true,

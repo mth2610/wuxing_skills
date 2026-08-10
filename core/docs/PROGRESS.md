@@ -474,6 +474,34 @@ chỉ cần grep log một dòng.
   lẽ **không phải rác** — nó đang bù đúng cho cái hairline mà §9.6 vừa sửa tận
   gốc. Sửa xong gốc rồi thì ×3 đó nay là thừa và sẽ làm quad phình. Đề xuất: bỏ
   cả 4 dòng về mặc định. `swept_sheet = 1` thì đã CHẾT hẳn (nhánh bị xoá ở §8.1).
-- **BLADE vẫn mỏng** sau khi tune, nhưng lý do là HÌNH HỌC chứ không phải bề mặt:
-  nó là `RIBBON_FIXED_NORMAL` với normal `(0,1,0)` nên gần như nhìn nghiêng từ
-  camera bench. Muốn dày hơn thì sửa hướng/bán kính, không phải sheet.
+### 9.9. BLADE mỏng — ĐÍNH CHÍNH GIẢ THUYẾT CỦA CHÍNH TÔI, rồi đo ra thủ phạm
+
+Ở bản §9.8 đầu tiên tôi viết "BLADE mỏng vì hình học — `RIBBON_FIXED_NORMAL`
+normal `(0,1,0)` nên nhìn nghiêng". **Sai, và tôi viết ra khi chưa đo** — đúng
+loại lỗi §8.3c đã tự kiểm điểm. Mặt phẳng của BLADE không cố định `(0,1,0)`: nó
+được tính lại mỗi frame từ độ cong đường đi của mũi (`SweptTrail_UpdateNormal`,
+dòng 1620 ghi đè `t->fixedNormal = s->normal`). Ribbon nằm TRONG mặt phẳng vung,
+không nhìn nghiêng.
+
+Đo bằng cách tách biến trên fixture 29 (mỗi lần chỉ đổi MỘT knob):
+
+| render | knob | kết quả |
+|---|---|---|
+| `bw_c` | `swept_aspect = 4` một mình | **không đổi gì** → aspect cap KHÔNG chạm ở bề rộng bench |
+| `bw_d` | `swept_width = 3` một mình | rộng lên rõ → bề rộng CALLER mới là thứ đang chặn |
+| `bw_a` | `swept_width = 6` một mình | vẫn mảnh → tới đây thì cap MỚI chạm |
+| `bw_e` | `swept_width = 6` + `aspect = 2.2` | đọc ra lưỡi kiếm có bề bản |
+
+Tức có **HAI** ngưỡng nối tiếp, và trước đó tôi gộp làm một:
+1. Ở 0.1 m bench truyền vào → `want = 0.05 m` nửa-bề-rộng thắng. Mỏng vì
+   **người gọi xin mỏng**. Đúng thiết kế: bề rộng là việc của caller.
+2. Trên ~0.15 m nửa-bề-rộng (sweep 6 m) → **cap 1:20 thắng**, và mọi giá trị lớn
+   hơn đều sập về CÙNG một sợi. Tham số bề rộng mất hết ý nghĩa từ đó trở lên.
+
+Chỉ (2) là lỗi. Đã sửa `aspectK` 0.0250 → 0.0550 (1:20 → 1:9 theo bề rộng đầy
+đủ). **Nâng TRẦN, không tự nới cái gì**: bench 29 render y hệt, vì ở 0.1 m cap
+chưa bao giờ chạm. Vẫn chặt hơn MAIN (0.0715) và BACKDROP (0.1).
+
+Còn treo: `radiusDefault = 0.10f` dùng chung cho cả bốn preset swept — số một
+caller nhận khi truyền 0. Chưa đụng, vì bench truyền số riêng nên không có bằng
+chứng nào từ đây nói nó sai; muốn biết thì phải xem một skill thật gọi nó.
