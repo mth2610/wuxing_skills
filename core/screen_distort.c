@@ -23,16 +23,8 @@
 #define SOFT_PARTICLE_SCENE_FAR 1000.0f
 
 static RenderTexture2D renderTex;
-static RenderTexture2D vfxBodyTex;
-static RenderTexture2D vfxEmissionTex;
-static bool s_vfxBodyCleared;
-static bool s_vfxEmissionCleared;
-static bool s_vfxBodyUsed;
-static bool s_vfxEmissionUsed;
 static Rectangle s_softDepthRegion;
 static bool s_softDepthRegionValid;
-static bool s_vfxLayersActive;
-static void ScreenDistort_BeginLayer(RenderTexture2D target, bool *cleared);
 static Shader distortShader;
 static DistortionSource sources[MAX_DISTORTION_SOURCES];
 static int activeSourcesCount = 0;
@@ -137,36 +129,6 @@ static RenderTexture2D LoadRenderTextureWithDepthTexture(int width, int height, 
     rlDisableFramebuffer();
   }
   return target;
-}
-
-static RenderTexture2D LoadColorLayerTarget(int width, int height, int colorFormat)
-{
-  RenderTexture2D target = {0};
-  target.id = rlLoadFramebuffer();
-  if (target.id == 0) return target;
-  rlEnableFramebuffer(target.id);
-  target.texture.id = rlLoadTexture(NULL, width, height, colorFormat, 1);
-  target.texture.width = width;
-  target.texture.height = height;
-  target.texture.format = colorFormat;
-  target.texture.mipmaps = 1;
-  rlFramebufferAttach(target.id, target.texture.id, RL_ATTACHMENT_COLOR_CHANNEL0, RL_ATTACHMENT_TEXTURE2D, 0);
-  rlDisableFramebuffer();
-  return target;
-}
-
-// The VFX targets borrow renderTex.depth. Detach it before UnloadRenderTexture:
-// raylib/rlvk owns and destroys a framebuffer's attached depth texture, while
-// this target must only destroy its own colour attachment and framebuffer.
-static void UnloadColorLayerTarget(RenderTexture2D target)
-{
-  if (target.id != 0)
-  {
-    rlEnableFramebuffer(target.id);
-    rlFramebufferAttach(target.id, 0, RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D, 0);
-    rlDisableFramebuffer();
-  }
-  UnloadRenderTexture(target);
 }
 
 // Single-channel 32-bit FLOAT color target (no depth attachment). Used to
@@ -300,80 +262,18 @@ void ScreenDistort_Init(int width, int height)
   activeSourcesCount = 0;
   memset(sources, 0, sizeof(sources));
 
-  // ── THE SPLIT VFX LAYERS ARE RETIRED ────────────────────────────────────
-  //
-  // Two full-screen R16F targets (~15 MB at 1280x720), a clear and a composite
-  // pass every frame, for an image that measurably does not differ from drawing
-  // straight into the scene. Measured before removing, flame fixture, headless,
-  // bright and dark backgrounds:
-  //
-  //                                    maxdiff  mean   px>2
-  //   run-to-run noise (same config)      234   1.419  3.51%
-  //   layers vs scene target, bright      252   1.436  3.48%
-  //   layers vs scene target, dark        255   1.625  3.57%
-  //   mixed additive+alpha, layers vs     57    0.111  1.86%
-  //   mixed additive+alpha, noise floor   50    0.130  2.06%
-  //
-  // Below the noise floor on every metric — the effects use Random01()/GetTime()
-  // so no two runs place the same particles, and the path difference never rose
-  // above that.
-  //
-  // WHY IT COULD NOT HAVE WORKED, which the numbers only confirm: alpha-over is
-  // associative, and the composite's `rgb/a` divide is an exact round trip
-  // against the `*a` that follows it, so accumulating N sprites into a cleared
-  // buffer and compositing once IS blending them one at a time into the scene.
-  // The body layer was arithmetic that cancels.
-  //
-  // It was built to stop VFX washing out over a bright background. It could not:
-  // that wash comes from the EMISSION target being composited with
-  // BLEND_ADD_COLORS — factors (ONE, ONE) on colour AND alpha — which discards
-  // coverage. Splitting the body out never touched that path; if anything the
-  // split is what routes emissive content into the target that throws coverage
-  // away. It was later extended for contrast, but VFXContrast_ApplyColor is a
-  // CPU colour transform selected by an enum and never needed a second render
-  // target at all (and VFX_CONTRAST_NONE is identity — only 9 call sites in the
-  // tree use a non-identity profile).
-  //
-  // The producer API (BeginVFXBody/BeginVFXEmission/EndVFXLayer) is deliberately
-  // KEPT and still routes to the scene target, so no call site changes and the
-  // semantic body/emission distinction survives for the code that reasons about
-  // it. Set WUXING_VFX_LAYERS=1 to allocate them again and A/B for yourself.
-  const bool wantLayers = getenv("WUXING_VFX_LAYERS") != NULL;
-  const int layerFmt = s_hdrActive ? RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16
-                                   : RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
-  vfxBodyTex = wantLayers ? LoadColorLayerTarget(width, height, layerFmt)
-                          : (RenderTexture2D){0};
-  vfxEmissionTex = wantLayers ? LoadColorLayerTarget(width, height, layerFmt)
-                              : (RenderTexture2D){0};
-  if (vfxBodyTex.id > 0 && renderTex.depth.id > 0) {
-    rlEnableFramebuffer(vfxBodyTex.id);
-    rlFramebufferAttach(vfxBodyTex.id, renderTex.depth.id, RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D, 0);
-    rlDisableFramebuffer();
-  }
-  if (vfxEmissionTex.id > 0 && renderTex.depth.id > 0) {
-    rlEnableFramebuffer(vfxEmissionTex.id);
-    rlFramebufferAttach(vfxEmissionTex.id, renderTex.depth.id, RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D, 0);
-    rlDisableFramebuffer();
-  }
-  s_vfxLayersActive = vfxBodyTex.id > 0 && vfxBodyTex.texture.id > 0 &&
-                      vfxEmissionTex.id > 0 && vfxEmissionTex.texture.id > 0 &&
-                      renderTex.depth.id > 0 &&
-                      rlFramebufferComplete(vfxBodyTex.id) &&
-                      rlFramebufferComplete(vfxEmissionTex.id);
-  // Not a warning any more: the scene target is the normal path now, and this
-  // line used to fire only when something had gone wrong on the device.
-  TraceLog(LOG_INFO, "ScreenDistort: VFX %s",
-           s_vfxLayersActive
-               ? "split layers ACTIVE (WUXING_VFX_LAYERS set)"
-               : "drawn straight to the scene target (split layers retired)");
+  // The split VFX render layers were retired after measurement showed the
+  // composite is arithmetic that cancels — see the commit that removed them and
+  // core/docs/LANDMINES.md. VFX now draw straight into the scene target, which
+  // is what BeginVFXBody/BeginVFXEmission do below. The body/emission NAMES are
+  // kept because the distinction still means something to the code that reasons
+  // about which effects occlude; only the two render targets are gone.
 }
 
 bool ScreenDistort_IsHDR(void) { return s_hdrActive; }
 
 void ScreenDistort_Unload(void)
 {
-  UnloadColorLayerTarget(vfxBodyTex);
-  UnloadColorLayerTarget(vfxEmissionTex);
   UnloadRenderTexture(renderTex);
   if (s_depthTextureActive)
   {
@@ -386,12 +286,6 @@ void ScreenDistort_Unload(void)
 void ScreenDistort_Begin(void)
 {
   BeginTextureMode(renderTex);
-  s_vfxBodyCleared = false;
-  s_vfxEmissionCleared = false;
-  // Layers are cleared lazily by their producer.  On an idle scene this avoids
-  // two HDR full-screen clears and four framebuffer switches every frame.
-  s_vfxBodyUsed = false;
-  s_vfxEmissionUsed = false;
   s_softDepthRegionValid = false;
 }
 
@@ -400,37 +294,18 @@ void ScreenDistort_End(void)
   EndTextureMode();
 }
 
-static void ScreenDistort_BeginLayer(RenderTexture2D target, bool *cleared)
-{
-  if (!s_vfxLayersActive)
-  {
-    // Keep every producer visible on devices where the additional HDR targets
-    // could not be created. This preserves the former scene-target behaviour.
-    rlDrawRenderBatchActive();
-    rlEnableFramebuffer(renderTex.id);
-    return;
-  }
-  rlDrawRenderBatchActive();
-  rlEnableFramebuffer(target.id);
-  if (!*cleared)
-  {
-    // The layer FBO shares scene depth for correct VFX occlusion. Clear only
-    // its colour attachment once per frame; depth mask protects scene depth.
-    rlDisableDepthMask();
-    ClearBackground(BLANK);
-    rlEnableDepthMask();
-    *cleared = true;
-  }
-}
+// Both "layers" are the scene target. Kept as distinct entry points so call
+// sites still declare whether they occlude (body) or only add light (emission),
+// which is the distinction the particle and trail systems route on.
 void ScreenDistort_BeginVFXBody(void)
 {
-  s_vfxBodyUsed = true;
-  ScreenDistort_BeginLayer(vfxBodyTex, &s_vfxBodyCleared);
+  rlDrawRenderBatchActive();
+  rlEnableFramebuffer(renderTex.id);
 }
 void ScreenDistort_BeginVFXEmission(void)
 {
-  s_vfxEmissionUsed = true;
-  ScreenDistort_BeginLayer(vfxEmissionTex, &s_vfxEmissionCleared);
+  rlDrawRenderBatchActive();
+  rlEnableFramebuffer(renderTex.id);
 }
 void ScreenDistort_EndVFXLayer(void)
 {
@@ -530,13 +405,6 @@ void ScreenDistort_Draw(Camera3D camera)
   }
 
   BeginShaderMode(distortShader);
-  int hasVfxLayersLoc = GetShaderLocation(distortShader, "u_hasVfxLayers");
-  int hasVfxLayers = (s_vfxLayersActive && s_vfxBodyUsed) ? 1 : 0;
-  SetShaderValue(distortShader, hasVfxLayersLoc, &hasVfxLayers, SHADER_UNIFORM_INT);
-  if (s_vfxLayersActive && s_vfxBodyUsed)
-  {
-    SetShaderValueTexture(distortShader, GetShaderLocation(distortShader, "u_vfxBodyTex"), vfxBodyTex.texture);
-  }
   // DrawTexturePro (dest sized to GetRenderWidth/Height, not DrawTextureRec's implicit 1:1) -
   // renderTex is created at GetScreenWidth/Height (the logical window size); on backends where
   // the real render/swapchain target is a DIFFERENT size (rlvk/Vulkan on Android: the display's
@@ -548,19 +416,6 @@ void ScreenDistort_Draw(Camera3D camera)
                  (Rectangle){0, 0, (float)GetRenderWidth(), (float)GetRenderHeight()},
                  (Vector2){0, 0}, 0.0f, WHITE);
   EndShaderMode();
-
-  // Body composition intentionally has only scene + body samplers. Add the
-  // already-premultiplied emission RGB with an ordinary fullscreen pass; this
-  // avoids the fragile three-sampler descriptor path on MoltenVK/Intel.
-  if (s_vfxLayersActive && s_vfxEmissionUsed)
-  {
-    BeginBlendMode(BLEND_ADD_COLORS);
-    DrawTexturePro(vfxEmissionTex.texture,
-                   (Rectangle){0, 0, (float)vfxEmissionTex.texture.width, -(float)vfxEmissionTex.texture.height},
-                   (Rectangle){0, 0, (float)GetRenderWidth(), (float)GetRenderHeight()},
-                   (Vector2){0, 0}, 0.0f, WHITE);
-    EndBlendMode();
-  }
 }
 
 // PERF (2026-07-22): frames since anything last called ScreenDistort_BindDepthForSoftParticles.

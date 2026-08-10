@@ -6,8 +6,6 @@ in vec4 fragColor;
 
 // Input uniforms
 uniform sampler2D texture0; // Cảnh nền đã render (RenderTexture)
-uniform sampler2D u_vfxBodyTex;
-uniform int u_hasVfxLayers;
 uniform vec4 colDiffuse;
 
 // Danh sách các nguồn biến dạng màn hình (tối đa 8 nguồn đồng thời)
@@ -74,16 +72,11 @@ void main() {
     }
 
     vec2 sampleUv = uv + totalOffset;
+    // VFX are already IN the scene target: the separate body/emission layers
+    // and this composite were retired after measurement showed the round trip
+    // (accumulate into a cleared buffer, divide by alpha, multiply back) is
+    // exactly the alpha-over that drawing straight into the scene performs.
     vec4 scene = texture(texture0, sampleUv);
-    vec4 body = (u_hasVfxLayers != 0) ? texture(u_vfxBodyTex, sampleUv) : vec4(0.0);
-    // Body buffer is stored with regular alpha blending, hence RGB is
-    // premultiplied. Recover straight colour, then composite with the STORED
-    // coverage. Coverage must stay linear here: a global nonlinear expansion
-    // turns every producer's soft 0.1 edge into a visible ~0.47 silhouette and
-    // defeats smoke/particle/decal edge masks after they have already run.
-    float bodyCoverage = body.a;
-    vec3 bodyColor = (body.a > 0.0001) ? (body.rgb / body.a) : vec3(0.0);
-    scene.rgb = scene.rgb * (1.0 - bodyCoverage) + bodyColor * bodyCoverage;
     vec3 hdr = min(scene.rgb, vec3(64.0));
     finalColor = vec4(hdr * colDiffuse.rgb, 1.0);
 }
