@@ -184,7 +184,7 @@ engine intact.
 
 ```bash
 python3 scripts/flipbook/ti_sim.py fire_puff --res 112 --frames 64 --name fire_puff
-python3 scripts/flipbook/render.py build_cache/fire_puff --cell 256 --supersample 2 --zoom auto --light 1.0
+python3 scripts/flipbook/render.py build_cache/fire_puff --cell 256 --supersample 2 --zoom auto --light 1.0 --density-scale 9 --flame-extinction 1.5 --flame-scale 4.5
 python3 scripts/flipbook/pack.py build_cache/fire_puff/frames --grid 8 --alpha-from-luma 0 --shape puff --out fire_puff_8x8_volume.png
 ```
 
@@ -195,9 +195,24 @@ purple magic fire or blue ghost-flame with no re-bake, and one sprite carries a
 white-hot core AND a dark rim, which the `_flame` split above physically cannot
 (its RGB is a flat 255/255/255 mask, so one vertex colour tints the whole quad).
 
-Measured: R mean 34 / sd 44 (a real temperature field, 3.8% of texels hot),
-B/G 0.44 mean surviving-light fraction. Audited: cell coverage 23.2%, lobes
-1.13, 0/64 frames touch the border.
+`--density-scale 9` (not the 28 default) and `--flame-extinction 1.5` are what
+make it TRANSLUCENT rather than a saturated plate: the default scale drives the
+puff's interior into a plateau, which reads as slabs of flat colour. Measured
+alpha mean fell 0.77 -> 0.71 and hot texels rose 3.8% -> 4.5% across that change.
+
+Two knobs measured and REJECTED, recorded so they are not retried:
+`--fuel-dens` 1.0 -> 0.22 moved the flame/smoke split only 3.5% -> 3.3%, and
+dropping the sprite count 90 -> 26 made the effect WORSE, not lighter — each
+sprite's own silhouette becomes legible and the fire reads as stacked cards.
+
+What parameters CANNOT reach: `fire_puff` is a radially symmetric BALL by
+construction (gravity 0, buoyancy 0, flat 1.0), so no bake setting turns it into
+a torch tongue. That needs the `fire` COLUMN preset baked as a second VOLUME
+sheet — a separate asset, not a knob.
+
+Measured: R mean 38 / sd 47 (a real temperature field), B/G 0.44 mean
+surviving-light fraction. Audited: cell coverage 21.1%, lobes 1.14, 0/64 frames
+touch the border.
 
 **Consumed by** `VFX_FlameEmitter` (`core/composition/fire/flame_volume.inl`)
 when `tuning.cfg → flame_volume = 1` (the default), through
