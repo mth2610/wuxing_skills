@@ -72,6 +72,8 @@ typedef struct
   int volumeSheet;      // 1 = texture is a packed 4-channel volume flipbook
   unsigned int rampTexId; // black-body/magic LUT for volumeSheet; 0 = none
   float heatGain;       // exposure on the sheet's emission before the ramp
+  float smokeGain;      // multiplier on the sheet's soot density
+  Color smokeTint;      // colour of the soot half (black/white smoke)
   VFXContrastProfileId contrastProfile;
   const SkillCurve *radiusCurve;
   const SkillCurve *speedCurve;
@@ -251,6 +253,11 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->volumeSheet = config.render.volumeSheet;
   p->rampTexId = config.render.rampLUT.id;
   p->heatGain = (config.render.heatGain > 0.0f) ? config.render.heatGain : 1.0f;
+  p->smokeGain = (config.render.smokeGain > 0.0f) ? config.render.smokeGain : 1.0f;
+  // {0,0,0,0} means "unset" — fall back to soot rather than to black, which
+  // would silently delete the smoke half of every volume sheet.
+  p->smokeTint = (config.render.smokeTint.a != 0) ? config.render.smokeTint
+                                                  : (Color){82, 74, 69, 255};
   // A volume sheet with no ramp would index an unbound sampler, which reads
   // black — the flame would vanish while everything else said it was drawing.
   // Fall back to the legacy path instead: the sprite looks wrong (its RGB is
@@ -549,7 +556,7 @@ static int s_locVfxCount, s_locVfxPos, s_locVfxColor, s_locVfxRadius;
 static int s_locDebugNormal, s_locNormalBulge, s_locSunGain, s_locAmbientGain;
 static int s_locLightAzimuth, s_locAnalyticUV;
 static int s_locVolumeSheet = -1, s_locRampLUT = -1, s_locHeatGain = -1,
-           s_locSmokeTint = -1;
+           s_locSmokeTint = -1, s_locSmokeGain = -1;
 
 #define PARTICLE_MAX_VFX_LIGHTS 4
 
@@ -678,6 +685,7 @@ static void ParticleLighting_Begin(Camera3D camera)
       s_locRampLUT         = GetShaderLocation(s_litShader, "u_rampLUT");
       s_locHeatGain        = GetShaderLocation(s_litShader, "u_heatGain");
       s_locSmokeTint       = GetShaderLocation(s_litShader, "u_smokeTint");
+      s_locSmokeGain       = GetShaderLocation(s_litShader, "u_smokeGain");
     }
     else
     {
@@ -774,10 +782,12 @@ static void ParticleLighting_Begin(Camera3D camera)
     float off = 0.0f, one = 1.0f;
     if (s_locVolumeSheet >= 0) SetShaderValue(s_litShader, s_locVolumeSheet, &off, SHADER_UNIFORM_FLOAT);
     if (s_locHeatGain >= 0)    SetShaderValue(s_litShader, s_locHeatGain, &one, SHADER_UNIFORM_FLOAT);
+    if (s_locSmokeGain >= 0) SetShaderValue(s_litShader, s_locSmokeGain, &one, SHADER_UNIFORM_FLOAT);
     if (s_locSmokeTint >= 0)
     {
       // Soot, not neutral grey. The volume path multiplies this by the scene
-      // light, so a white tint would make the smoke half read as steam.
+      // light, so a white tint would make the smoke half read as steam. Flipped
+      // per batch below for effects that author their own smoke colour.
       float tint[3] = {0.32f, 0.29f, 0.27f};
       SetShaderValue(s_litShader, s_locSmokeTint, tint, SHADER_UNIFORM_VEC3);
     }
@@ -856,6 +866,14 @@ static void ParticleLighting_End(void)
 //             pool order, so populations INTERLEAVE, and every alternation is a
 //             flush. This is the number that would explain "10 bursts kill it
 //             but 700 sprites of one flame did not".
+// Colours are compared, not blended, in the batch key — pack to one word so a
+// changed smoke tint reopens the batch the same way a changed ramp does.
+static inline unsigned int VFXPackColor(Color c)
+{
+  return ((unsigned int)c.r << 24) | ((unsigned int)c.g << 16) |
+         ((unsigned int)c.b << 8) | (unsigned int)c.a;
+}
+
 static int   s_perfBatches = 0;
 static int   s_perfQuads   = 0;
 static float s_perfLog     = 0.0f;
@@ -955,6 +973,8 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
   int curVolume = -1;
   unsigned int curRamp = 0xFFFFFFFFu;
   float curHeat = -1.0f;
+  float curSmokeGain = -1.0f;
+  unsigned int curSmokeTint = 0xFFFFFFFFu;
 
   for (int a = 0; a < s_activeCount; a++)
   {
@@ -1007,7 +1027,8 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     if (want != curTex || drawBlend != curBlend || p->unlit != curUnlit ||
         wantGridC != curGridC || wantGridR != curGridR || wantBoost != curBoost ||
         p->volumeSheet != curVolume || p->rampTexId != curRamp ||
-        p->heatGain != curHeat)
+        p->heatGain != curHeat || p->smokeGain != curSmokeGain ||
+        VFXPackColor(p->smokeTint) != curSmokeTint)
     {
       if (curTex != 0xFFFFFFFFu) rlEnd();
       s_perfBatches++;
@@ -1024,7 +1045,8 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         curBlend = drawBlend;
       }
       if (p->volumeSheet != curVolume || p->rampTexId != curRamp ||
-          p->heatGain != curHeat)
+          p->heatGain != curHeat || p->smokeGain != curSmokeGain ||
+          VFXPackColor(p->smokeTint) != curSmokeTint)
       {
         // The ramp is a SECOND sampler on the same shader. rlvk resolves
         // samplers by reflected name rather than a presumed binding
@@ -1046,9 +1068,23 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
           ramp.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
           SetShaderValueTexture(s_litShader, s_locRampLUT, ramp);
         }
+        if (s_litActive && s_locSmokeGain >= 0)
+        {
+          float sg = p->smokeGain;
+          SetShaderValue(s_litShader, s_locSmokeGain, &sg, SHADER_UNIFORM_FLOAT);
+        }
+        if (s_litActive && s_locSmokeTint >= 0)
+        {
+          float st[3] = {(float)p->smokeTint.r / 255.0f,
+                         (float)p->smokeTint.g / 255.0f,
+                         (float)p->smokeTint.b / 255.0f};
+          SetShaderValue(s_litShader, s_locSmokeTint, st, SHADER_UNIFORM_VEC3);
+        }
         curVolume = p->volumeSheet;
         curRamp = p->rampTexId;
         curHeat = p->heatGain;
+        curSmokeGain = p->smokeGain;
+        curSmokeTint = VFXPackColor(p->smokeTint);
       }
       if (p->unlit != curUnlit)
       {

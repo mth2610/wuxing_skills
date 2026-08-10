@@ -134,6 +134,20 @@ typedef struct {
     // bright this particular effect should read. 0 = treat as 1.0.
     float heatGain;
 
+    // Colour of the soot half of a volume sheet. The sheet's G channel is a
+    // colourless density, so this is what makes the same puff read as a petrol
+    // fire's black smoke or burning leaves' white one — the same trick as
+    // rampLUT on the flame half. {0,0,0,0} = the renderer's soot default.
+    Color smokeTint;
+
+    // Multiplier on the sheet's soot density, the mirror of heatGain. This is
+    // what keeps SMOKINESS a composition decision instead of an asset one: the
+    // R:G ratio was the last thing still baked into the sheet, and baking it
+    // would have meant a second simulation for "fire with little smoke". 0 =
+    // treat as 1.0 (the sheet as simulated); below 1 thins the smoke and, with
+    // it, the coverage that smoke contributed.
+    float smokeGain;
+
     // Shared contrast policy. NONE (0) is identity for every legacy effect;
     // compositions select a semantic profile instead of hand-tuning each
     // particle/ribbon/decal renderer independently.

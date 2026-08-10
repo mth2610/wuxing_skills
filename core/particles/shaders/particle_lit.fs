@@ -110,6 +110,16 @@ uniform float u_volumeSheet;
 uniform sampler2D u_rampLUT;
 uniform float u_heatGain;         // exposure on emission before the ramp lookup
 uniform vec3  u_smokeTint;        // body colour of the soot half
+// Gain on the sheet's soot channel, the mirror of u_heatGain on emission.
+//
+// THE SHEET IS DIRECTIONLESS AND SO IS ITS SMOKINESS. R:G was the last thing
+// still baked into the asset, which would have meant a second sim for "fire
+// with little smoke" — and a second sheet is the wrong unit, because the same
+// greyscale puff has to serve a petrol fire (black, heavy) and burning leaves
+// (white, light) and a clean flame. Scaling G here makes that a composition
+// decision like every other: heat gain, ramp, tint, force field, spawn spread.
+// 1.0 is exactly today's look.
+uniform float u_smokeGain;
 
 uniform float u_lightAzimuth;     // <0 = use the real sun; >=0 = debug override
 uniform float u_sunGain;          // scales the directional term
@@ -247,8 +257,9 @@ void main()
     {
         if (u_softDebug > 0.5) { finalColor = vec4(vec3(soft), 1.0); return; }
 
-        float emis = texelColor.r;   // flame emission
-        float soot = texelColor.g;   // smoke density
+        float emis = texelColor.r;               // flame emission
+        float rawSoot = texelColor.g;            // smoke density, as simulated
+        float soot = clamp(rawSoot * u_smokeGain, 0.0, 1.0);
         float shad = texelColor.b;   // self-shadowed smoke (B/G = light surviving)
         float opac = texelColor.a;   // true opacity
 
@@ -303,13 +314,20 @@ void main()
         // tinting it, so the flame holds the same colour on any sky — which is
         // the actual requirement, and the thing the additive-core build could
         // never satisfy at all.
-        float alpha = clamp(opac * fade, 0.0, 1.0);
+        // Coverage has to follow the smoke dial too, or a flame with its soot
+        // turned off still occludes as if the soot were there. `opac` is the
+        // whole gas column's 1 - transmittance; scale it by how much material
+        // survives the dial. At u_smokeGain 1 the ratio is exactly 1, so this
+        // is an identity for everything already authored.
+        float matNow  = soot + emis;
+        float matOrig = max(rawSoot + emis, 1e-4);
+        float alpha = clamp(opac * clamp(matNow / matOrig, 0.0, 1.0) * fade, 0.0, 1.0);
 
         // Split that coverage between the two populations by what is actually
         // in the texel. The soot half is lit and can be DARKER than the sky;
         // the flame half is emission, added on top of the background it just
         // occluded — the pair is what premultiplied blending exists for.
-        float sootFrac = clamp(soot / max(soot + emis, 1e-4), 0.0, 1.0);
+        float sootFrac = clamp(soot / max(matNow, 1e-4), 0.0, 1.0);
 
         // NOT clamped to 1: ACES in post_fx rolls the highlights off, and
         // clamping here would flatten the blown-out core and kill its bloom.

@@ -138,6 +138,25 @@ static float s_fvolHeatGain = 1.6f;
 // 1.0 into the HDR buffer's headroom, which is what finally makes the core blow
 // out and bloom instead of clipping to a flat orange.
 static float s_fvolEmissive = 6.0f;
+// ── SMOKINESS IS A COMPOSITION DECISION, NOT AN ASSET ONE ───────────────────
+//
+// The sheet is directionless by construction (the puff sim runs at zero gravity
+// and zero buoyancy so sprites can be spun and scattered without reading as
+// copies), and these two keep its SMOKINESS directionless in the same sense:
+// nothing about "petrol fire" vs "burning leaves" vs "a clean flame" is baked
+// into the texture. The R:G ratio was the last thing that was, and a second
+// bake for it would have been the wrong unit — one greyscale puff has to serve
+// all three.
+//
+//   petrol      smokeGain 1.5  tint  20, 18, 17   (heavy, black)
+//   leaves      smokeGain 1.2  tint 214, 210, 198 (light, white)
+//   clean flame smokeGain 0.15 tint  90, 82, 76   (almost none)
+//
+// Measured on the shipping sheet: emission averages 37.5 against soot 155.1, a
+// ratio of 0.24 — heavily smoke-dominated, which is why the default reads as a
+// large sooty fire rather than a torch.
+static float s_fvolSmokeGain = 1.0f;
+static float s_fvolSmokeR = 82.0f, s_fvolSmokeG = 74.0f, s_fvolSmokeB = 69.0f;
 // Ramp LUTs, one per material, baked lazily. THIS is where fire's colour lives
 // now — the sheet is greyscale on purpose, so pointing this at another gradient
 // turns the same simulation into purple or blue magic fire with no re-bake.
@@ -193,6 +212,10 @@ static void FVol_InitShared(void)
     Tuning_RegisterFloat("flame_volume", &s_fvolVolume, 1.0f);
     Tuning_RegisterFloat("flame_heat_gain", &s_fvolHeatGain, 1.6f);
     Tuning_RegisterFloat("flame_emissive", &s_fvolEmissive, 6.0f);
+    Tuning_RegisterFloat("flame_smoke_gain", &s_fvolSmokeGain, 1.0f);
+    Tuning_RegisterFloat("flame_smoke_r", &s_fvolSmokeR, 82.0f);
+    Tuning_RegisterFloat("flame_smoke_g", &s_fvolSmokeG, 74.0f);
+    Tuning_RegisterFloat("flame_smoke_b", &s_fvolSmokeB, 69.0f);
 
     // The packed VOLUME sheet — the same sim as the split above, delivered with
     // its temperature field intact. Missing file falls through to the legacy
@@ -388,6 +411,17 @@ static const ColorGradient *FVol_HeatGradient(VC_MaterialId matId)
     return g;
 }
 
+// Clamped here rather than at each tunable: tuning.cfg hot-reloads raw floats
+// straight into these, so a typo would wrap the byte cast instead of saturating.
+static Color FVol_SmokeTint(void)
+{
+    float r = s_fvolSmokeR, g = s_fvolSmokeG, b = s_fvolSmokeB;
+    if (r < 0.0f) r = 0.0f; else if (r > 255.0f) r = 255.0f;
+    if (g < 0.0f) g = 0.0f; else if (g > 255.0f) g = 255.0f;
+    if (b < 0.0f) b = 0.0f; else if (b > 255.0f) b = 255.0f;
+    return (Color){(unsigned char)r, (unsigned char)g, (unsigned char)b, 255};
+}
+
 static Texture2D FVol_RampLUT(VC_MaterialId matId)
 {
     if (matId < 0 || matId >= VC_MAT_COUNT)
@@ -528,6 +562,8 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
                 .render.rampLUT = ramp,
                 .render.heatGain = s_fvolHeatGain,
                 .render.emissiveBoost = s_fvolEmissive,
+                .render.smokeGain = s_fvolSmokeGain,
+                .render.smokeTint = FVol_SmokeTint(),
                 .render.blendMode = VFX_BLEND_PREMULTIPLIED,
                 .render.texture = s_fvolVolumeTex,
                 // NOT unlit. The volume branch lights only the SOOT half and
