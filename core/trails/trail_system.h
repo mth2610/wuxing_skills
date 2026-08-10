@@ -195,6 +195,18 @@ typedef struct
     // Renderer-level readability policy shared with particles, ribbons and
     // decals. Zero/NONE is identity for all existing trail materials.
     VFXContrastProfileId contrastProfile;
+
+    // ── THE RECIPE (core/trails/trail_recipe.h) ─────────────────────────────
+    // Non-NULL = this trail is described by a recipe, and the renderer reads
+    // the warp, the layered sampling, the masks and the colour from there
+    // instead of from the per-mode fields above. Points into the composer's own
+    // pool slot, never at a caller's stack — the same lifetime contract as
+    // `TrailConfig.layers`.
+    //
+    // The fields above it are the pre-recipe encoding, kept only for the trails
+    // that have not moved (the volume tube and the smoke puff). A trail sets one
+    // or the other, never both; when a recipe is present `mode` is ignored.
+    const struct TrailRecipe *recipe;
 } TrailMaterialConfig;
 
 // ── Trail Cross-section ─────────────────────────────────────────────────────

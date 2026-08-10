@@ -103,7 +103,7 @@ int main(void)
     bad += !Has("core/trails/trail_system.h", "VFXContrastProfileId contrastProfile;");
     bad += !Has("core/decals/decal_system.h", "VFXContrastProfileId contrastProfile;");
     bad += !Has("core/composition/common/vc_energy_burst.inl", ".render.contrastProfile = VFX_CONTRAST_ENERGY");
-    bad += !Has("core/composition/common/vc_strand_trail.inl", "VFX_CONTRAST_SMOKE");
+    bad += !Has("core/composition/common/vc_trail.inl", "VFX_CONTRAST_SMOKE");
     bad += !Has("core/composition/common/vc_decal.inl", ".contrastProfile = contrastProfile");
 
     puts(bad ? "vfx render layers: FAIL" : "vfx render layers: PASS");

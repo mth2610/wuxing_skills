@@ -7,7 +7,7 @@
 // the mask's hot edge lands on. None of those needs a GPU, and every one of them
 // would otherwise be answered by build → screenshot → guess (core/CLAUDE.md §1).
 //
-// This mirrors core/composition/common/vc_ribbon_trail.inl. A mirror rots into
+// This mirrors core/composition/common/vc_trail.inl. A mirror rots into
 // fiction the moment the source moves, so Test_MirrorStillMatchesSource pins the
 // load-bearing expressions.
 //
@@ -514,21 +514,21 @@ static void Test_StyleValidatorCoversEveryStyle(void)
 
     // The structural fix: validate against a COUNT, so adding a style cannot
     // leave a range check behind.
-    CHECK(FileHas("core/composition/visual_composer.h", "VFX_TRAIL_STYLE_COUNT"),
+    CHECK(FileHas("core/trails/trail_recipe.h", "TRAIL_PRESET_COUNT"),
           "the enum still carries a count for range checks to use");
-    CHECK(FileHas("core/composition/common/vc_ribbon_trail.inl",
-                  "kind >= VFX_RIBBON_KIND_COUNT"),
+    CHECK(FileHas("core/composition/common/vc_trail.inl",
+                  "kind >= TRAIL_PRESET_COUNT"),
           "and the validator still checks against it, not against the last style by name");
     // The needle carries the surrounding punctuation on purpose. Written as the
     // bare expression it also matched the COMMENT that explains the fix — so the
     // test failed precisely because the bug had been documented. A negative
     // FileHas cannot tell code from prose about code; give it something only the
     // code can contain.
-    CHECK(!FileHas("core/composition/common/vc_ribbon_trail.inl",
+    CHECK(!FileHas("core/composition/common/vc_trail.inl",
                    "|| style > VFX_TRAIL_FILAMENT)"),
           "the stale by-name check is gone");
     // A clamp that says nothing is how this survived a day.
-    CHECK(FileHas("core/composition/common/vc_ribbon_trail.inl",
+    CHECK(FileHas("core/composition/common/vc_trail.inl",
                   "is out of range — clamped to BLADE"),
           "and an out-of-range style still announces itself");
 
@@ -1464,7 +1464,7 @@ static int FileHas(const char *path, const char *needle)
 
 static void Test_MirrorStillMatchesSource(void)
 {
-    const char *inl = "core/composition/common/vc_ribbon_trail.inl";
+    const char *inl = "core/composition/common/vc_trail.inl";
     const char *bodyFs = "core/trails/shaders/trail_body.fs";
     const char *trailC = "core/trails/trail_system.c";
 
@@ -1477,16 +1477,16 @@ static void Test_MirrorStillMatchesSource(void)
     // cloth or a thread — and the WIRING, i.e. that the authored numbers are
     // actually handed to the engine.
 
-    CHECK(FileHas(inl, "return 0.0250f;"), "source still uses the 1:20 blade aspect");
-    CHECK(FileHas(inl, "return 0.0715f;"),
+    CHECK(FileHas(inl, "{0.0250f, true,"), "the motion table still uses the 1:20 blade aspect");
+    CHECK(FileHas(inl, "{0.0715f, true,"),
           "source still uses the 1:7 ribbon aspect (cloth is BROAD)");
-    CHECK(FileHas(inl, "return 0.0125f;"), "source still uses the 1:40 filament aspect");
+    CHECK(FileHas(inl, "{0.0125f, true,"), "the motion table still uses the 1:40 filament aspect");
     CHECK(FileHas(inl, "return (cap < want) ? cap : want;"),
           "the caller's width is still a CEILING, not a value");
 
-    CHECK(FileHas(inl, "FloatCurve_AddStop(&s_sweptWidthCurve[VFX_RIBBON_BLADE], 0.60f, 1.00f);"),
+    CHECK(FileHas(inl, "FloatCurve_AddStop(&s_sweptWidthCurve[TRAIL_PRESET_BLADE], 0.60f, 1.00f);"),
           "the blade width envelope peaks in the BODY, not at the head");
-    CHECK(FileHas(inl, "FloatCurve_AddStop(&s_sweptWidthCurve[VFX_RIBBON_BLADE], 1.00f, 0.18f);"),
+    CHECK(FileHas(inl, "FloatCurve_AddStop(&s_sweptWidthCurve[TRAIL_PRESET_BLADE], 1.00f, 0.18f);"),
           "the blade's head still tapers to a needle");
     CHECK(FileHas(inl, "{-1.00f, -0.50f, 0.38f, 1.00f}"),
           "the filament spread table still matches this mirror");
@@ -1505,18 +1505,18 @@ static void Test_MirrorStillMatchesSource(void)
           "the body layer is barely whitened, so it keeps the element's hue");
     CHECK(FileHas(inl, ".alphaMul = 0.30f, .whiten = 0.20f"),
           "and the core is a SEASONING of white, not a colourless band");
-    CHECK(FileHas(inl, "return lowTier ? 1 : 2;"),
+    CHECK(FileHas(inl, "return lowTier ? 1 : TrailMotionOf(kind)->strands;"),
           "FILAMENT is still 2 strands — the caller owns how many wisps there are");
     CHECK(FileHas(inl, ".headAlphaPow = 3.4f"),
           "the white-hot core is still concentrated at the head, and now more tightly");
     // THE RULE, not a preference: several additive copies of one textured
     // pattern at different phases sum to something FLAT, and the wider layers
     // throw the sheet's edge detail outward as spikes.
-    CHECK(FileHas(inl, "s->layers[1].texture = body;"),
+    CHECK(FileHas(inl, "s->layers[count > 1 ? 1 : 0].texture = body;"),
           "exactly ONE layer carries the texture, and it is the body");
-    CHECK(FileHas(inl, "[VFX_RIBBON_BACKDROP]"),
+    CHECK(FileHas(inl, "[TRAIL_PRESET_BACKDROP]"),
           "BACKDROP is a dedicated wide recipe, not a disguised main ribbon");
-    CHECK(FileHas(inl, "return (kind == VFX_RIBBON_BACKDROP) ? 2 : 3;"),
+    CHECK(FileHas(inl, "r->layerCount = (p == TRAIL_PRESET_BACKDROP) ? 2 : 3;"),
           "BACKDROP has no inner core layer");
     CHECK(FileHas(inl, "A wisp has a CONTINUOUS inner core."),
           "WISP keeps a continuous, thinner inner core");
@@ -1538,51 +1538,47 @@ static void Test_MirrorStillMatchesSource(void)
     // already landed correctly. What must stay true is the SOURCE, not the string.
     CHECK(!FileHas(inl, "SWEPT_ASSET_PATH \""),
           "composition owns no texture filename — the registry does");
-    CHECK(FileHas(inl, "VFX_SurfaceRegistry_Get(VFX_SURFACE_ENERGY_RIBBON)"),
-          "the body sheet is resolved through the surface registry");
-    // ...and it must not fail silently when that profile is absent, or the strip
-    // quietly reverts to the procedural sheet and the knob looks broken.
-    CHECK(FileHas(inl, "EnergyRibbon profile missing — procedural fallback"),
-          "a missing profile announces itself instead of silently falling back");
-    CHECK(FileHas(inl, "ImageRotateCW(&src);"),
-          "still rotated a quarter turn — the asset's flow runs across its WIDTH");
-    CHECK(FileHas(inl, "ImageCrop(&src,"),
-          "still cropped to the band that actually carries filaments");
-    CHECK(FileHas(inl, "float t = 0.5f * (1.0f - cosf(PI * (float)y / (float)F));"),
-          "the wrap is still cross-faded, so the tiled sheet has no seam");
-    CHECK(FileHas(inl, "SetTextureWrap(s_sweptBladeTex, TEXTURE_WRAP_REPEAT);"),
-          "the sheet still WRAPS, so it can be tiled and scrolled");
-    CHECK(FileHas(inl, "s_sweptBodyTex = (s_sweptSheet >= 0.5f && s_sweptAssetTex.id != 0)"),
-          "and it still falls back to the procedural sheet if the asset is missing");
-    CHECK(FileHas(inl, "float d = fabsf(u - 0.5f) * 2.0f;"),
-          "the band profile still matches this mirror");
+    // ── The legacy asset sheet is GONE, and that is the assertion ───────────
+    // `SweptTrail_BuildAssetSheet` cropped and rotated `energy_flow.png` using
+    // constants measured against that image, then was migrated to read whatever
+    // VFX_SURFACE_ENERGY_RIBBON holds — which is `energy_wisp.png`, a different
+    // image entirely. A branch nothing ships, measured against an asset it no
+    // longer loads, is a trap rather than a fallback, so it was deleted.
+    // Re-adding it means registering the sheet as its own surface profile.
+    CHECK(!FileHas(inl, "SweptTrail_BuildAssetSheet"),
+          "the legacy crop/rotate asset path stays deleted");
+    CHECK(!FileHas(inl, "ImageRotateCW(&src);"),
+          "and so do the constants that were measured against the other image");
+    CHECK(!FileHas(inl, "s_sweptSheet"),
+          "and the knob that chose between them, which defaulted to the wrong one");
+    // Composition still owns no filename: a preset names a registry surface, or
+    // carries a runtime-generated sheet through the recipe.
+    CHECK(!FileHas(inl, "assets/textures/"),
+          "composition owns no texture path — the registry does");
+    CHECK(FileHas(inl, "r->surface = VFX_SURFACE_ENERGY_RIBBON;"),
+          "and a preset still names its surface semantically");
 
-    // ── The WIRING. Authored numbers are worthless if they are not handed over,
-    // and every one of these was a hand-rolled loop in this file yesterday. ──
-    CHECK(FileHas(inl, "cfg.type = TRAIL_TYPE_FOLLOWER;"),
-          "the trail is a real TrailEntity now, not a private ring");
-    CHECK(!FileHas(inl, "DrawRibbonStripEx"),
-          "and this file no longer draws a ribbon itself");
-    CHECK(FileHas(inl, "cfg.sampleHz = SWEPT_SAMPLE_HZ;"),
+    CHECK(FileHas(inl, "cfg.sampleHz = mot->sampleHz;"),
           "the fixed-rate sample clock is still asked for (a RATE, not per frame)");
-    CHECK(FileHas(inl, "cfg.teleportSpeed = SWEPT_TELEPORT_SPEED;"),
+    CHECK(FileHas(inl, "cfg.teleportSpeed = mot->teleportSpeed;"),
           "a teleport still CUTS the trail instead of bridging the gap");
-    CHECK(FileHas(inl, "cfg.idleSpeed = SWEPT_IDLE_SPEED;"),
+    CHECK(FileHas(inl, "cfg.idleSpeed = mot->idleSpeed;"),
           "a stationary weapon still lets its trail DECAY");
-    CHECK(FileHas(inl, "cfg.nodeHomeSpring = SWEPT_HOME_SPRING;"),
+    CHECK(FileHas(inl, "cfg.nodeHomeSpring = mot->cloth ? SWEPT_HOME_SPRING : 0.0f;"),
           "nodes are still sprung back toward the path they were LAID on");
-    CHECK(FileHas(inl, "cfg.nodeOrderFrac = SWEPT_ORDER_FRAC;"),
+    CHECK(FileHas(inl, "cfg.nodeOrderFrac = mot->cloth ? SWEPT_ORDER_FRAC : 0.0f;"),
           "and the order bound is still asked for — the fix for the self-twist");
-    CHECK(FileHas(inl, "cfg.forceField = &s_sweptCloth[s->kind];"),
+    CHECK(FileHas(inl, "cfg.forceField = mot->cloth ? &s_sweptCloth[s->kind] : NULL;"),
           "node motion still comes from a ForceField, not hand-written sin()");
     CHECK(FileHas(inl, "cfg.uvMetresPerTile"),
           "the flow UV is still the MATERIAL one, not segRatio");
-    CHECK(FileHas(inl, "cfg.blendMode = BLEND_ADDITIVE;") &&
+    CHECK(FileHas(inl, "cfg.blendMode = rec->additive ? BLEND_ADDITIVE : BLEND_ALPHA;") &&
           FileHas(inl, "cfg.useCustomBlendMode = true;"),
           "a trail still EMITS: additive, per the blend law");
     CHECK(FileHas(inl, "cfg.disableInnerCore = true;"),
           "the engine's legacy sub-pixel core is still off — the stack replaces it");
-    CHECK(FileHas(inl, "cfg.material.contrastProfile = VFX_CONTRAST_ENERGY;"),
+    CHECK(FileHas(inl, "cfg.material.contrastProfile = rec->colour.contrast;") &&
+          FileHas(inl, "r->colour.contrast = VFX_CONTRAST_ENERGY;"),
           "swept ribbon selects the shared energy contrast profile");
     CHECK(FileHas(bodyFs, "VFXContrast_CoreMask(sheet.a, u_contrastParams)"),
           "classic ribbon limits HDR lift to the dense texture core");
@@ -1594,9 +1590,10 @@ static void Test_MirrorStillMatchesSource(void)
           "render groups separate profiles before uploading one uniform per group");
     CHECK(FileHas(inl, "cfg.gradient = SweptTrail_Gradient(s->matId);"),
           "colour along the strip still comes from the element material");
-    CHECK(FileHas(inl, "cfg.ribbonMode = (s->kind == VFX_RIBBON_BLADE) ? RIBBON_FIXED_NORMAL"),
+    CHECK(FileHas(inl, "cfg.ribbonMode = rec->ribbonMode;") &&
+          FileHas(inl, "(p == TRAIL_PRESET_BLADE) ? RIBBON_FIXED_NORMAL"),
           "BLADE still lies in the swing plane; the others stay camera-facing");
-    CHECK(FileHas(inl, "VFX_ComposeRibbonTrailEx") &&
+    CHECK(FileHas(inl, "VFX_ComposeTrailEx") &&
               FileHas(inl, "cfg.flowMap = cfg.useFlowMap ? &s->surface.flowMap : NULL;"),
           "each ribbon may bring its own texture, flow map and mask input");
 
@@ -1627,7 +1624,7 @@ static void Test_MirrorStillMatchesSource(void)
 
     // The freeze, and the thing that makes it an instrument rather than a pause
     // button: it must wait for a FULL ribbon, or the dial shows nothing.
-    CHECK(FileHas(inl, "(t->historyCount >= SweptTrail_MaxNodes(s->lifetime))"),
+    CHECK(FileHas(inl, "(t->historyCount >= SweptTrail_MaxNodesFor(s->kind, s->lifetime))"),
           "the freeze still waits for a full ribbon before it holds");
     CHECK(FileHas(inl, "Trail_SetFrozen(s->strandId[c], frozen);"),
           "and it is still the engine's freeze, not a second one here");

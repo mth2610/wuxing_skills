@@ -150,7 +150,7 @@ static void VFXTest_StopFixtures(void)
     s_vfxFixtureHandle[18] = -1;
     s_vfxFixtureLastTime[18] = -1.0f;
     if (s_vfxFixtureHandle[19] >= 0)
-        VFX_KillRibbonTrail(s_vfxFixtureHandle[19]);
+        VFX_KillTrail(s_vfxFixtureHandle[19]);
     s_vfxFixtureHandle[19] = -1;
     s_vfxFixtureLastTime[19] = -1.0f;
     if (s_vfxFixtureHandle[21] >= 0)
@@ -821,12 +821,12 @@ void VFXTest_Draw3D(void)
                   Vector3 fixturePos = Vector3Add(s_prefabStartPos,
                       (Vector3){3.0f * sinf(a), 1.5f + 0.45f * sinf(a * 0.7f), 2.1f * cosf(a * 1.3f)});
                   if (s_meshTime < s_vfxFixtureLastTime[19] && s_vfxFixtureHandle[19] >= 0)
-                      VFX_KillRibbonTrail(s_vfxFixtureHandle[19]);
+                      VFX_KillTrail(s_vfxFixtureHandle[19]);
                   if (s_meshTime < s_vfxFixtureLastTime[19]) s_vfxFixtureHandle[19] = -1;
                   s_vfxFixtureLastTime[19] = s_meshTime;
                   s_vfxFixtureXf[19] = MatrixTranslate(fixturePos.x, fixturePos.y, fixturePos.z);
                   if (s_vfxFixtureHandle[19] < 0)
-                      s_vfxFixtureHandle[19] = VFX_ComposeRibbonTrail(&s_vfxFixtureXf[19], VC_MAT_FIRE, 0.1f, 2.0f, VFX_RIBBON_MAIN);
+                      s_vfxFixtureHandle[19] = VFX_ComposeTrail(&s_vfxFixtureXf[19], VC_MAT_FIRE, 0.1f, 2.0f, TRAIL_PRESET_MAIN);
                   break;
               }
               case 20: VFX_ComposeRuneCircle(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, progress, 5); break;
@@ -870,7 +870,7 @@ void VFXTest_Draw3D(void)
                   s_vfxFixtureLastTime[27] = s_meshTime;
                   s_vfxFixtureXf[27] = MatrixTranslate(fixturePos.x, fixturePos.y, fixturePos.z);
                   if (s_vfxFixtureHandle[27] < 0)
-                      s_vfxFixtureHandle[27] = VFX_ComposeStrandTrail(&s_vfxFixtureXf[27], VC_MAT_FIRE, 0.0f, 2.0f, VFX_STRAND_ENERGY);
+                      s_vfxFixtureHandle[27] = VFX_ComposeTrail(&s_vfxFixtureXf[27], VC_MAT_FIRE, 0.0f, 2.0f, TRAIL_PRESET_ENERGY);
                   break;
               }
               case 28: VFX_ComposeSweepSlash(s_prefabStartPos, (Vector3){1.0f, 0.0f, 0.0f}, VC_MAT_FIRE, 1.0f, 90.0f, progress); break;

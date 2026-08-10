@@ -666,7 +666,7 @@ static void Test_MirrorStillMatchesSource(void)
     const char *fs = "core/trails/shaders/trail_deform.fs";
     const char *c  = "core/trails/trail_system.c";
     const char *rb = "core/ribbon_strip.c";
-    const char *inl = "core/composition/common/vc_strand_trail.inl";
+    const char *inl = "core/composition/common/vc_trail.inl";
 
     // The branch thresholds — the integer-mode exclusivity this mirror tests.
     // 0.5/1.5/2.5/3.5: integer modes 1..4 map 1:1 onto the four branches.
@@ -869,40 +869,40 @@ static void Test_MirrorStillMatchesSource(void)
     // curve, and — the one that bit us — its OWN update callback. Sharing
     // SmokeTrail_OnUpdate silently reinstalled the fire updraft force field
     // and the cloth home spring on the energy ribbon every single frame.
-    CHECK(FileHas(inl, "cfg.deform.mode = 0.0f"),
+    CHECK(FileHas(inl, "outDeform->mode = 0.0f;"),
           "the strand trail still runs flat — vertex deform off");
-    CHECK(FileHas(inl, "cfg.material.mode = 2.0f"),
+    CHECK(FileHas(inl, "out->mode = (r->topology == TRAIL_SAMPLE_PARALLEL) ? 2.0f : 0.0f;"),
           "the strand trail still feeds the fragment stage");
     CHECK(FileHas(inl, "TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE"),
           "the energy style still wears the blade width curve");
-    CHECK(FileHas(inl, "cfg.onUpdate = StrandTrail_OnUpdate;"),
+    CHECK(FileHas(inl, "TrailRecipe_ToLegacyMaterial(rec, em, base, &cfg.material, &cfg.deform);"),
           "the strand trail still owns its update callback, not the smoke one");
-    CHECK(FileHas(inl, "trail->forceField = NULL;"),
+    CHECK(FileHas(inl, "cfg.forceField = mot->cloth ? &s_sweptCloth[s->kind] : NULL;"),
           "and that callback still clears the cloth/force state every frame");
     // Styles are DATA. A second composer would re-acquire every bug this one
     // has already been through — that is the whole reason for the table.
-    CHECK(FileHas(inl, "static StrandTrailStyle s_strandStyles[VFX_STRAND_STYLE_COUNT]"),
+    CHECK(FileHas(inl, "static TrailRecipe k_trailPresets[TRAIL_PRESET_COUNT];"),
           "the styles still live in one table, not in copied composers");
-    CHECK(FileHas(inl, ".additive = false,"),
+    CHECK(FileHas(inl, "r->additive = false;"),
           "the smoke style still occludes instead of glowing");
-    CHECK(FileHas(inl, "cfg.material.bodyOpacity = st->bodyOpacity;"),
+    CHECK(FileHas(inl, "cfg.material.bodyOpacity = rec->bodyOpacity;"),
           "and every style still declares how much it survives into the body pass");
     CHECK(FileHas(inl, "Color hotTarget = ColorGradient_Sample(m->hotGrad, 0.20f);"),
           "spawned strand cores use the material hot gradient");
-    CHECK(FileHas(inl, "Color hotTarget = ColorGradient_Sample(lm->hotGrad, 0.20f);"),
+    CHECK(FileHas(inl, "Color hotTarget = ColorGradient_Sample(m->hotGrad, 0.20f);"),
           "live-tuned strand cores keep using the material hot gradient");
     CHECK(!FileHas(inl, "255 - base.r") && !FileHas(inl, "255 - lbase.r"),
           "strand no longer creates a pink core by whitening red glow");
-    CHECK(FileHas(inl, "cfg.material.tailColor = (Color){"),
+    CHECK(FileHas(inl, "out->tailColor = (Color){"),
           "every style still authors an along-trail colour ramp");
     // Strand DENSITY lives in the asset — no parameter turns 34 hairs into 300 —
     // so each style owns its sheet, and a LIVE style swap must re-point the
     // layer too or the smoke style renders the energy sheet and looks unchanged.
-    CHECK(FileHas(inl, "VFX_SurfaceId surface;"),
+    CHECK(FileHas("core/trails/trail_recipe.h", "VFX_SurfaceId surface;"),
           "each style still names its own strand sheet");
-    CHECK(FileHas(inl, ".surface = VFX_SURFACE_SMOKE_STRAND,"),
+    CHECK(FileHas(inl, "r->surface = VFX_SURFACE_SMOKE_STRAND;"),
           "and the smoke style still points at the smoke-authored one");
-    CHECK(FileHas(inl, "trail->layers = s_strandLayer[styleIdx];"),
+    CHECK(FileHas(inl, "s->recipe.layers = s->layers;"),
           "a live style swap still re-points the layer, not just the numbers");
     CHECK(FileHas("core/vfx_surface_registry.h", "VFX_SURFACE_SMOKE_STRAND"),
           "the smoke strand sheet is a registered surface, not a raw path");
@@ -918,9 +918,9 @@ static void Test_MirrorStillMatchesSource(void)
           "the shader still chooses tile-vs-stretch per style");
     CHECK(FileHas(fs, "float v0 = SurfaceFlow_AlongV(along, vBase, 1.00, panA, stretch);"),
           "and a stretched sheet still maps once across the whole trail");
-    CHECK(FileHas(inl, ".stretchUV = true, // smoke_strand.png is one whole wisp, head to tail"),
+    CHECK(FileHas(inl, "UVFx_SyncStretch(&r->deform, &r->flow, true);"),
           "the smoke style still stretches its shape sheet");
-    CHECK(FileHas(inl, ".stretchUV = false, // energy_wisp.png is a repeating filament material"),
+    CHECK(!FileHas(inl, "UVFx_SyncStretch(&k_trailPresets[TRAIL_PRESET_ENERGY]"),
           "and the energy style still tiles its material sheet");
 
     // ── The tail ──────────────────────────────────────────────────────────
@@ -941,7 +941,7 @@ static void Test_MirrorStillMatchesSource(void)
           "and the bundles still narrow as they die instead of fading at full width");
     CHECK(FileHas(c, "l->tailShape     = GetShaderLocation(shader, \"u_tailShape\");"),
           "the C layer still binds the tail shape");
-    CHECK(FileHas(inl, "trail->material.tailStagger = st->tailStagger;"),
+    CHECK(FileHas(inl, "out->tailStagger = r->mask.tailStagger;"),
           "and a live style swap still re-pushes the tail treatment");
     // The old puff trail was SUPPOSED to be deleted (two similar-looking bench
     // buttons meant the wrong one kept getting judged), but the deletion never
@@ -953,11 +953,11 @@ static void Test_MirrorStillMatchesSource(void)
     // the replacement exists and the survivor says out loud what replaced it,
     // so the two cannot be confused at the bench. Removing it entirely is an
     // open decision recorded in core/docs/PROGRESS.md.
-    CHECK(FileHas(inl, "int VFX_ComposeSmokeStrandTrail("),
+    CHECK(FileHas(inl, "TRAIL_PRESET_SMOKE") && FileHas("core/trails/trail_recipe.h", "TRAIL_PRESET_SMOKE,"),
           "the strand trail provides the smoke replacement");
     CHECK(FileHas("core/composition/common/vc_smoke_trail.inl", "VFX_ComposeStrandTrail"),
           "and the surviving puff trail names its replacement, so neither is judged as the other");
-    CHECK(FileHas(inl, "void VFX_StrandTrail_Stop(int trailId)"),
+    CHECK(FileHas(inl, "void VFX_Trail_Stop(int trailId)"),
           "and the strand trail owns its own soft-release entry point");
     CHECK(FileHas(c, "case TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE:"),
           "the blade envelope still exists in the width switch");

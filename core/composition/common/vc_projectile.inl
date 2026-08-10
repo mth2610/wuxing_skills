@@ -14,8 +14,8 @@
 //
 //   1. THE ORB      `VFX_ComposeEnergyOrb` — fresnel shell + hot core.
 //   2. THE FIELD    `VFX_ComposeVolumeTrail` — small, faint tube behind the tail.
-//   3. THE MAIN TAIL `VFX_RIBBON_MAIN` — defined and textured. The shape.
-//   4. TWO WISPS    `VFX_RIBBON_WISP`, bent into a render helix around the
+//   3. THE MAIN TAIL `TRAIL_PRESET_MAIN` — defined and textured. The shape.
+//   4. TWO WISPS    `TRAIL_PRESET_WISP`, bent into a render helix around the
 //                   flight axis; their emitters orbit only inside the hot core.
 //
 // WHY THE WISPS NEED THIS FILE AT ALL, when everything else is a plain call:
@@ -142,8 +142,8 @@ int VFX_ComposeProjectile(const Matrix *followTransform, VC_MaterialId mat,
     p->fieldH = VFX_ComposeVolumeTrail(&p->headXf, mat, r * 0.78f,
                                        0.48f * s_projFieldLen, VOL_ENERGY);
 
-    p->mainH = VFX_ComposeRibbonTrail(&p->headXf, mat, r * 2.6f, 0.75f,
-                                      VFX_RIBBON_MAIN);
+    p->mainH = VFX_ComposeTrail(&p->headXf, mat, r * 2.6f, 0.75f,
+                                      TRAIL_PRESET_MAIN);
     // THE WISPS ARE NOT TWINS. Equal length, equal width and a fixed 180-degree
     // phase offset make two threads that mirror each other exactly, and a mirror
     // pair reads as a mechanism — the guide's "too straight and uniform". Every
@@ -151,9 +151,9 @@ int VFX_ComposeProjectile(const Matrix *followTransform, VC_MaterialId mat,
     // spaced around the circle for the same reason.
     for (int w = 0; w < PROJ_WISPS; w++)
     {
-        p->wispH[w] = VFX_ComposeRibbonTrail(&p->wispXf[w], mat,
+        p->wispH[w] = VFX_ComposeTrail(&p->wispXf[w], mat,
                                              r * k_wispWidth[w], k_wispLife[w],
-                                             VFX_RIBBON_WISP);
+                                             TRAIL_PRESET_WISP);
         SweptTrail_SetAnchoredHelix(p->wispH[w], p->axis,
                                     r * s_projSpiralR * k_wispRadius[w],
                                     1.10f * k_wispRate[w], k_wispPhase[w]);
@@ -172,9 +172,9 @@ void VFX_KillProjectile(int handle)
     // is the wind-down — and killing DETACHES, so nothing holds this slot's
     // matrices after the slot is reused.
     VFX_KillVolumeTrail(p->fieldH);
-    VFX_KillRibbonTrail(p->mainH);
+    VFX_KillTrail(p->mainH);
     for (int w = 0; w < PROJ_WISPS; w++)
-        VFX_KillRibbonTrail(p->wispH[w]);
+        VFX_KillTrail(p->wispH[w]);
     p->active = false;
     p->xf = NULL;
 }

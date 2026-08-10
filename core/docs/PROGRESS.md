@@ -150,45 +150,74 @@ target riêng nên phép trộn thật sự nằm ở `distortion.fs`, không ph
   **chỉnh giá trị** thì nêu hệ số trong báo cáo; knob **chọn biến thể** thì phải
   tự hét lên (nay đã có).
 
-## 8. Đợt hợp nhất trail — ĐANG NẰM TRONG `stash@{0}`, KHÔNG ở trong cây
+## 8. Đợt hợp nhất trail — ĐÃ CHẠY, test về 43/47
 
-10/08/2026: đã thử gộp ribbon + strand thành một trail mô tả bằng dữ liệu
-(`core/trails/trail_recipe.h` — file này vẫn còn vì untracked). Build sạch,
-`TRAIL_PRESET_MAIN` render đẹp hơn trước, nhưng **`TRAIL_PRESET_ENERGY` render
-ra rỗng**, nên đợt đó đã được `git stash` lại.
+Gộp ribbon + strand thành MỘT trail mô tả bằng dữ liệu
+(`core/trails/trail_recipe.h`), giữ nguyên nửa mô phỏng của `trail_system.c`.
+Kế hoạch: `~/.claude/plans/inherited-hugging-kettle.md`.
+Mốc an toàn NGAY TRƯỚC đợt này: commit `d372823` — bỏ đợt gộp =
+`git reset --hard d372823`, không cần stash theo thư mục.
 
-Kế hoạch đầy đủ: `~/.claude/plans/inherited-hugging-kettle.md`.
-Lấy lại: `git stash pop` (hoặc `git stash show -p stash@{0}` để xem trước).
+### 8.1. Đã xong
 
-### 8.1. Trong stash có gì
+- `trail_recipe.h` — `TrailRecipe` = geometry + `UVDeformField` + `SurfaceFlow`
+  + surface + mask + colour + pass policy, dựng từ `core/uv/` đúng như
+  `core/uv/README.md` tuyên bố (`mesh + UVDeformField + SurfaceFlow = effect`).
+- `vc_ribbon_trail.inl` → `vc_trail.inl`: `k_trailPresets[]` (6 preset) +
+  `k_trailMotion[]` (thay 5 switch theo kind — một bảng thì không quên cột).
+- Xoá `vc_strand_trail.inl`, `vc_smoke_ribbon_trail.inl` (392 dòng code chết,
+  không được include ở đâu), nhánh `SweptTrail_BuildAssetSheet` +
+  `swept_sheet` (đóng luôn mục 4.2), tầng alias `VFX_ComposeSweptTrail`.
+- API mới: `VFX_ComposeTrail` / `VFX_ComposeTrailEx` / `VFX_TrailSetWidth` /
+  `VFX_KillTrail` / `VFX_Trail_Stop`. `vc_projectile.inl` đã migrate.
+- Test: 43/47 — bằng mức trước đợt gộp. 4 suite đỏ còn lại
+  (`energy_burst_semantic_layers`, `tube_frame`, `vfx_layered_field_contract`,
+  `volume_trail`) đã đỏ từ trước, không liên quan.
 
-- `trail_recipe.h` + `vc_trail.inl` (`k_trailPresets[]` 6 preset +
-  `k_trailMotion[]` thay 5 switch theo kind).
-- Xoá `vc_strand_trail.inl`, `vc_smoke_ribbon_trail.inl` (392 dòng, KHÔNG được
-  include ở đâu — code chết, phát hiện này vẫn đúng), nhánh
-  `SweptTrail_BuildAssetSheet` + `swept_sheet` (đóng mục 4.2), tầng alias
-  `VFX_ComposeSweptTrail`.
-- API mới `VFX_ComposeTrail` / `VFX_ComposeTrailEx` / `VFX_KillTrail`.
-- `TrailRecipe_ToLegacyMaterial` — cầu tạm dịch recipe → uniform cũ ở ĐÚNG một
-  chỗ, để không phải viết lại shader cùng lượt.
+### 8.2. Năm lỗi "preset strand bị chạy qua đường của swept"
 
-### 8.2. Lỗi phải sửa đầu tiên khi lấy lại
+`TRAIL_PRESET_ENERGY` từng render ra rỗng. Tìm ra bằng **probe nhị phân**, không
+phải đọc code: ép mode 2 trả magenta → không pixel nào; ép ngay đầu `main()` trả
+xanh → đúng 4 pixel. Tức shader CÓ chạy, nhưng dải gần như không có diện tích.
 
-`TRAIL_PRESET_ENERGY` spawn đúng (log `style 4 ... width 0.45 m`) nhưng không có
-gì trên màn hình. **Đã loại trừ:** sheet (nay resolve qua registry, có fallback +
-cảnh báo); bề rộng (`aspectCap=false` đã được tôn trọng trong
-`SweptTrail_HalfWidth` — aspectK 0 từng ép nửa-bề-rộng về 0); `material.mode`
-(cầu tạm đặt 2.0 cho topology PARALLEL).
+| # | Lỗi | Sửa |
+|---|---|---|
+| 1 | `s_sweptWidthCurve/AlphaCurve` chỉ nạp cho 4 preset swept; **FloatCurve rỗng eval ra 0** → bề rộng 0, alpha 0 | cờ `motion.curves` |
+| 2 | `aspectCap=false` vẫn bị chia đôi bề rộng | radius LÀ nửa-bề-rộng |
+| 3 | `t->tint = WHITE` mỗi frame tẩy trắng preset mang màu trong tint | chỉ áp khi có gradient |
+| 4 | `MaxNodes` hardcode 60 Hz cho trail 30 Hz → giữ gấp đôi lịch sử, cắt đuôi vuông | `MaxNodesFor(kind, ...)` |
+| 5 | `nodeHomeSpring/MaxDev/OrderFrac` áp cho preset không cloth | gate theo `motion.cloth` |
 
-**Nghi tiếp theo, chưa kiểm:** đường update của composer swept ghi đè thứ gì đó
-mà strand cần — nó vốn viết cho follower có cloth, còn strand thì không.
-Kiểm theo thứ tự: trail có lay node không (`historyCount`), `cfg.shape`, và
-những trường mode-2 mà `ApplyDeformUniforms` THỰC SỰ đọc so với những gì cầu tạm
-điền vào.
+Cộng thêm **cùng lớp lỗi với §1**: `tuning.cfg` có `swept_width = 3.0` và
+`swept_alpha = 1.5` — knob GLOBAL của họ swept nhân vào preset strand vốn chưa
+bao giờ có knob đó (0.45 m → 1.35 m, thành cục phình). Nay `TrailMotion` có cờ
+`sweptKnobs`; **một knob global trong composer dùng chung PHẢI nêu rõ nó áp cho
+preset nào.**
 
-### 8.3. Hai điều đã học, giữ lại kể cả khi bỏ đợt gộp
+Và `cfg.deform.envHead/envTail/phase` bị bỏ sót — vertex deform tắt nhưng
+FRAGMENT vẫn đọc chúng (ramp disorder + phase mỗi lần spawn). `envHead = 0` làm
+cửa sổ head-weld sập, ramp bão hoà ngay segment đầu, dissolve cắn từ ĐẦU thay vì
+từ đuôi.
 
-- `vc_projectile.inl` CÓ gọi ribbon trail. Khảo sát "0 consumer" ban đầu chỉ quét
-  module gameplay, không quét `core/composition/` — tiền đề "gộp rẻ" là nói quá.
-- `trail_glow.fs` KHÔNG chết (có load lúc chạy). Chỉ `smoke_trail.fs` là chưa
-  thấy ai load.
+**Đo được (chroma):** ENERGY 0.658 (bản duyệt 0.647) · MAIN 0.641 (0.656).
+Màu khớp; hình dạng đã thuôn hai đầu, hết vết cắt vuông.
+
+### 8.3. Cầu tạm — `TrailRecipe_ToLegacyMaterial`
+
+`trail_deform.fs` VẪN là 3 mode viết tay. Cầu tạm dịch recipe → uniform cũ ở
+ĐÚNG MỘT chỗ. Cố ý không gộp shader cùng lượt: công thức mode 2 là ~150 dòng
+người dùng đã duyệt bằng mắt, viết lại cùng lúc với composer thì khi hỏng sẽ
+không phân biệt được lỗi composer hay lỗi shader. **Xoá cầu tạm = định nghĩa
+"xong" của bước shader.**
+
+Cầu tạm hiện suy ra `wispMix/strandGain/flowStrength/bundleWeight/bundleWidth`
+từ recipe thay vì hardcode — hardcode từng đưa số của ENERGY cho cả SMOKE.
+
+### 8.4. Còn lại
+
+- Gộp `trail_deform.fs` về một công thức đọc `u_uvField`/`u_flowLayer`
+  (`uv_field.glsl` đã sẵn cả hai lối SUMMED và PARALLEL).
+- Manifest bench: một entry mỗi preset (sửa tay `scripts/vfx_test_manifest.json`
+  trước, rồi `scripts/sync_vfx_test.py`). Hiện bench vẫn 2 entry cũ.
+- SMOKE preset (`--render-vfx 25` vẫn là puff tube cũ) chưa được nhìn bằng mắt.
+- `trail_glow.fs` KHÔNG chết (có load lúc chạy) — bỏ khỏi danh sách xoá.

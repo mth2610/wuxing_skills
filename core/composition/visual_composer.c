@@ -60,7 +60,7 @@
 // adjacent and in matching order, so a deletion cannot be half-done.
 // @gen:archetype_includes begin
 #include "common/vc_character_aura.inl"
-#include "common/vc_ribbon_trail.inl"
+#include "common/vc_trail.inl"
 #include "common/vc_projectile.inl"
 #include "common/vc_volume_trail.inl"
 #include "common/vc_debris_shards.inl"
