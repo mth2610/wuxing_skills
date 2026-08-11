@@ -62,6 +62,29 @@ static void PerturbNormal(float n[3], float dhx, float dhy, int projected, float
 static float Dot3(const float a[3], const float b[3])
 { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
 
+/* Mirror of the minimum-gradient pick in the normal reconstruction.
+ *
+ * `substitute` reproduces the defect: a missing neighbour was replaced with the
+ * CENTRE's own depth, which puts it at the same distance and therefore gives it
+ * a z-difference of ~0 — so the minimum-|z| rule picked the fabricated sample
+ * over the real one, every time. Returns the chosen gradient's z-component;
+ * 0 means "flat along this axis", i.e. the normal forced to face the camera. */
+static float PickGradientZ(float dzLeft, float dzRight, int hasLeft, int hasRight,
+                           int substitute)
+{
+    if (substitute)
+    {
+        /* The fabricated side sits at the centre's depth: dz = 0. */
+        float a = hasLeft ? dzLeft : 0.0f;
+        float b = hasRight ? dzRight : 0.0f;
+        return fabsf(a) < fabsf(b) ? a : b;
+    }
+    if (hasLeft && hasRight) return fabsf(dzLeft) < fabsf(dzRight) ? dzLeft : dzRight;
+    if (hasLeft) return dzLeft;
+    if (hasRight) return dzRight;
+    return 0.0f;
+}
+
 static char *ReadFile(const char *path)
 {
     FILE *f = fopen(path, "rb");
@@ -142,6 +165,29 @@ int main(void)
         CHECK(1.0f - Dot3(tilted, wall) > 1.0e-5f);
     }
 
+    /* The silhouette's normal. A missing neighbour must be EXCLUDED from the
+     * minimum-gradient pick, never substituted with the centre's depth: the
+     * substitute has a zero z-difference, so it wins the minimum every time and
+     * flattens the gradient along that axis. Whether left/right or up/down is
+     * the missing one changes along the edge, so the normal flips between real
+     * and view-facing — vertical stripes from the x axis, horizontal from the y. */
+    {
+        const float realSlope = 0.08f;   /* the surface genuinely tilts here */
+        /* Interior: both sides present, the smaller gradient wins as designed. */
+        CHECK(fabsf(PickGradientZ(realSlope, 0.02f, 1, 1, 0) - 0.02f) < 1e-6f);
+        CHECK(fabsf(PickGradientZ(realSlope, 0.02f, 1, 1, 1) - 0.02f) < 1e-6f);
+        /* Edge, right side missing: the real left gradient must be used... */
+        float excluded = PickGradientZ(realSlope, 0.0f, 1, 0, 0);
+        float substituted = PickGradientZ(realSlope, 0.0f, 1, 0, 1);
+        printf("      edge gradient, right neighbour missing: excluded %.4f  substituted %.4f\n",
+               excluded, substituted);
+        CHECK(fabsf(excluded - realSlope) < 1e-6f);
+        /* ...and the old substitution threw it away for a flat one. */
+        CHECK(fabsf(substituted) < 1e-6f);
+        /* Both sides missing is the only case with no answer; flat is honest. */
+        CHECK(fabsf(PickGradientZ(realSlope, 0.02f, 0, 0, 0)) < 1e-6f);
+    }
+
     /* Anti-drift: the shader must still carry the load-bearing expressions. */
     char *shader = ReadFile("core/fluid/shaders/fluid_surface.fs");
     if (!shader) {
@@ -157,6 +203,9 @@ int main(void)
         CHECK(strstr(shader, "vec3(-dh.x, 1.0") == NULL);
         /* The regression itself (0262068): the receiver creating a column. */
         CHECK(strstr(shader, "max(kernelThickness, min(0.40") == NULL);
+        /* The missing neighbour must be excluded, not substituted. */
+        CHECK(strstr(shader, "bool hasL = depthLeft < 0.99999;") != NULL);
+        CHECK(strstr(shader, "depthLeft >= 0.99999 ? fluidDepth") == NULL);
         /* The caustic lattice added into refractedScene: a sin*sin field cubed
          * is a thin-bright-line pattern, and it painted contour bands onto the
          * body. Caustics belong on the receiver, not in this term. */

@@ -201,10 +201,21 @@ void main() {
     float depthDown = texture(texture0, fragTexCoord - vec2(0.0, u_texel.y)).r;
     float depthUp = texture(texture0, fragTexCoord + vec2(0.0, u_texel.y)).r;
     
-    depthLeft = depthLeft >= 0.99999 ? fluidDepth : depthLeft;
-    depthRight = depthRight >= 0.99999 ? fluidDepth : depthRight;
-    depthDown = depthDown >= 0.99999 ? fluidDepth : depthDown;
-    depthUp = depthUp >= 0.99999 ? fluidDepth : depthUp;
+    /* A MISSING neighbour must be excluded from the choice, not substituted.
+     * Substituting the centre's own depth (what this did) puts the fabricated
+     * sample at the same distance as the centre, so its z-difference is ~0 — and
+     * the minimum-gradient rule below then picks it EVERY time, over the real
+     * one. Every silhouette pixel with one missing neighbour therefore had its
+     * gradient forced flat along that axis, i.e. its normal forced to face the
+     * camera; which neighbour is missing changes pixel to pixel along the edge,
+     * so the normal flips between real and view-facing and draws stripes. Left/
+     * right missing gives vertical stripes, up/down horizontal — both of which
+     * the sandbox showed, on the ring's rim and all over the orb, in the NORMAL
+     * view while the unfiltered capture was clean. */
+    bool hasL = depthLeft < 0.99999;
+    bool hasR = depthRight < 0.99999;
+    bool hasD = depthDown < 0.99999;
+    bool hasU = depthUp < 0.99999;
 
     vec3 posL = ReconstructViewPosition(fragTexCoord - vec2(u_texel.x, 0.0), depthLeft);
     vec3 posR = ReconstructViewPosition(fragTexCoord + vec2(u_texel.x, 0.0), depthRight);
@@ -216,8 +227,14 @@ void main() {
     vec3 dy1 = positionView - posD;
     vec3 dy2 = posU - positionView;
 
-    vec3 dx = abs(dx1.z) < abs(dx2.z) ? dx1 : dx2;
-    vec3 dy = abs(dy1.z) < abs(dy2.z) ? dy1 : dy2;
+    /* With both sides present, keep the minimum-gradient pick — that is what
+     * stops a splat's far edge bleeding into the normal. With one side missing,
+     * take the side that exists. With neither, fall back to a tangent that is
+     * flat along this axis, which is the honest answer for an isolated pixel. */
+    vec3 dx = (hasL && hasR) ? (abs(dx1.z) < abs(dx2.z) ? dx1 : dx2)
+            : (hasL ? dx1 : (hasR ? dx2 : vec3(positionView.x * u_texel.x, 0.0, 0.0)));
+    vec3 dy = (hasD && hasU) ? (abs(dy1.z) < abs(dy2.z) ? dy1 : dy2)
+            : (hasD ? dy1 : (hasU ? dy2 : vec3(0.0, positionView.y * u_texel.y, 0.0)));
 
     vec3 N = normalize(cross(dx, dy));
     if (dot(N, V) < 0.0) N = -N;

@@ -175,29 +175,6 @@ void main() {
         float positive = texture(texture0, fragTexCoord + u_direction * u_texel * fi).r;
         float negative = texture(texture0, fragTexCoord - u_direction * u_texel * fi).r;
 
-        /* EVEN REFLECTION at the boundary: a missing side takes the opposite
-         * side's value. Two weaker conditions were tried first and both left
-         * streaks along the pass axis:
-         *   - dropping the missing sample biases the average toward whichever
-         *     side still has surface;
-         *   - substituting the tangent-plane prediction removes that bias, but
-         *     the fabricated sample carries the CENTRE's own value, so an edge
-         *     pixel gets less smoothing than an interior one. How much less
-         *     depends on how many samples are missing, which varies along the
-         *     edge — and a filter strength that varies along the edge draws
-         *     stripes parallel to the pass axis. That is what debug view 1 still
-         *     showed on the ring's outer rim while the interior was smooth.
-         * Reflecting real data keeps BOTH properties: symmetric (no bias) and
-         * full strength (no stripes). It is the standard image-filter boundary
-         * condition, and it is what this should have been three attempts ago. */
-        bool posValid = positive < 0.99999;
-        bool negValid = negative < 0.99999;
-        /* Both sides empty is a symmetric gap — skipping it cannot bias, and
-         * continuing lets the run reach surface again past a hole. */
-        if (!posValid && !negValid) continue;
-        if (!posValid) positive = negative;
-        if (!negValid) negative = positive;
-
         AccumulateSample(positive, spatialWeight, weightedDepth, weightSum,
                          centerDistance, centerDistance + slope * fi);
         AccumulateSample(negative, spatialWeight, weightedDepth, weightSum,
