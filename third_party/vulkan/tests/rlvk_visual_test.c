@@ -830,6 +830,192 @@ static const char *sc_float_blend_rt(void)
     return NULL;
 }
 
+static void blit(Texture2D src, int dstW, int dstH);
+
+// What the screen-space fluid surface's separable filter chain actually costs, and
+// whether halving its internal resolution buys anything. core/fluid runs 4 rounds x 2
+// passes of core/fluid/shaders/fluid_depth_narrow_range.fs over R32F depth at NATIVE
+// resolution on the HIGH tier — 21 taps per pass at filterRadius 10. The early-out on
+// empty pixels means the cost should scale with fluid COVERAGE rather than screen area;
+// this measures whether that holds, by filtering the same synthetic blob at full and
+// half resolution, LCG-interleaved in one run (perf traps: docs/PROGRESS.md).
+static const char *sc_perf_ssf_filter(void)
+{
+    const int FW = 1280, FH = 720;
+    Shader filter = LoadShader(NULL, "core/fluid/shaders/fluid_depth_narrow_range.fs");
+    if (filter.id == 0) return "could not load fluid_depth_narrow_range.fs (run from the repo root)";
+
+    RenderTexture2D src[2], a[2], b[2];
+    for (int i = 0; i < 2; i++)
+    {
+        int w = i ? FW/2 : FW, h = i ? FH/2 : FH;
+        src[i] = fmtRT(w, h, RL_PIXELFORMAT_UNCOMPRESSED_R32);
+        a[i]   = fmtRT(w, h, RL_PIXELFORMAT_UNCOMPRESSED_R32);
+        b[i]   = fmtRT(w, h, RL_PIXELFORMAT_UNCOMPRESSED_R32);
+        // A blob of "fluid depth" over ~12% of the frame; everything else stays far,
+        // which is the branch the shader early-outs on.
+        BeginTextureMode(src[i]);
+            ClearBackground(WHITE);                      // 1.0 = empty
+            DrawCircle(w/2, h/2, (float)h*0.20f, (Color){128, 0, 0, 255});   // 0.502 = surface
+        EndTextureMode();
+    }
+
+    int locTexel = GetShaderLocation(filter, "u_texel");
+    int locDir   = GetShaderLocation(filter, "u_direction");
+    int locRange = GetShaderLocation(filter, "u_depthRange");
+    int locKern  = GetShaderLocation(filter, "u_kernelRadius");
+    int locRad   = GetShaderLocation(filter, "u_filterRadius");
+    int locFill  = GetShaderLocation(filter, "u_fillHoles");
+    int locProj  = GetShaderLocation(filter, "u_projection");
+    int locInv   = GetShaderLocation(filter, "u_inverseProjection");
+    Matrix proj = MatrixFrustum(-1, 1, -0.6, 0.6, 1.0, 1000.0);
+    Matrix inv = MatrixInvert(proj);
+    float depthRange = 0.022f*9.0f, kernelRadius = 0.022f;
+
+    unsigned int seed = 20260811u;
+    double acc[2] = {0, 0};
+    int cnt[2] = {0, 0};
+    const int WARM = 40, N = 400;
+    for (int f = 0; f < WARM + N; f++)
+    {
+        seed = seed*1103515245u + 12345u;
+        int v = (int)((seed >> 16) & 1u);            // 0 = native, 1 = half
+        int w = v ? FW/2 : FW, h = v ? FH/2 : FH;
+        int filterRadius = v ? 5 : 10;               // same world footprint either way
+        Vector2 texel = { 1.0f/(float)w, 1.0f/(float)h };
+
+        double t0 = GetTime();
+        BeginDrawing();
+        ClearBackground(BLACK);
+        for (int round = 0; round < 4; round++)
+        {
+            Vector2 horizontal = {1, 0}, vertical = {0, 1};
+            Texture2D source = round ? b[v].texture : src[v].texture;
+            int fill = (round == 0);
+            BeginTextureMode(a[v]);
+                ClearBackground(WHITE);
+                BeginShaderMode(filter);
+                    SetShaderValue(filter, locTexel, &texel, SHADER_UNIFORM_VEC2);
+                    SetShaderValue(filter, locDir, &horizontal, SHADER_UNIFORM_VEC2);
+                    SetShaderValue(filter, locRange, &depthRange, SHADER_UNIFORM_FLOAT);
+                    SetShaderValue(filter, locKern, &kernelRadius, SHADER_UNIFORM_FLOAT);
+                    SetShaderValue(filter, locRad, &filterRadius, SHADER_UNIFORM_INT);
+                    SetShaderValue(filter, locFill, &fill, SHADER_UNIFORM_INT);
+                    SetShaderValueMatrix(filter, locProj, proj);
+                    SetShaderValueMatrix(filter, locInv, inv);
+                    DrawTextureRec(source, (Rectangle){0,0,(float)w,-(float)h}, (Vector2){0,0}, WHITE);
+                EndShaderMode();
+            EndTextureMode();
+            fill = 0;
+            BeginTextureMode(b[v]);
+                ClearBackground(WHITE);
+                BeginShaderMode(filter);
+                    SetShaderValue(filter, locDir, &vertical, SHADER_UNIFORM_VEC2);
+                    SetShaderValue(filter, locFill, &fill, SHADER_UNIFORM_INT);
+                    DrawTextureRec(a[v].texture, (Rectangle){0,0,(float)w,-(float)h}, (Vector2){0,0}, WHITE);
+                EndShaderMode();
+            EndTextureMode();
+        }
+        blit(b[v].texture, W, H);
+        EndDrawing();
+        if (f >= WARM) { acc[v] += (GetTime() - t0)*1000.0; cnt[v]++; }
+    }
+
+    printf("  [perf ssf_filter] 8 passes native %dx%d r=10: %.3f ms | half %dx%d r=5: %.3f ms | delta %.3f ms\n",
+           FW, FH, acc[0]/cnt[0], FW/2, FH/2, acc[1]/cnt[1], acc[0]/cnt[0] - acc[1]/cnt[1]);
+    for (int i = 0; i < 2; i++) { UnloadRenderTexture(src[i]); UnloadRenderTexture(a[i]); UnloadRenderTexture(b[i]); }
+    UnloadShader(filter);
+    return NULL;
+}
+
+// What ONE compute dispatch costs, independent of the work inside it.
+//
+// core/fluid's PBD solver measured 4.4 ms in-game for 2,048 particles across 9
+// dispatches — 72 workgroups of actual work, which no GPU takes milliseconds
+// over. That points at per-CALL overhead rather than compute, and this file
+// already documents the same shape for uploads (§ PROGRESS: ~0.5-0.65 ms per
+// rlvkUploadBuffer CALL, because the render pass is torn down and rebuilt each
+// time). If dispatches pay that too, it is a backend cost that every compute
+// consumer pays — the GPU particle system included — and it belongs here, not
+// in the fluid module.
+//
+// Same trivial kernel either way; only the NUMBER of dispatches differs, and the
+// variants are LCG-interleaved because consecutive A/B blocks are worthless on
+// this platform (see docs/PROGRESS.md perf traps).
+static const char *sc_perf_dispatch_count(void)
+{
+    const char *cs =
+        "#version 430\n"
+        "layout(local_size_x = 256) in;\n"
+        "layout(std430, binding = 0) buffer B { float v[]; };\n"
+        "uniform float u_add;\n"
+        "void main(){ uint i = gl_GlobalInvocationID.x; if (i < 2048u) v[i] += u_add; }\n";
+    unsigned int shader = rlLoadShader(cs, RL_COMPUTE_SHADER);
+    if (shader == 0) return "compute shader would not compile";
+    unsigned int program = rlLoadShaderProgramCompute(shader);
+    rlUnloadShader(shader);
+    if (program == 0) return "compute program would not link";
+
+    static float seedData[2048];
+    unsigned int ssbo = rlLoadShaderBuffer(sizeof(seedData), seedData, RL_DYNAMIC_COPY);
+    if (ssbo == 0) { rlUnloadShaderProgram(program); return "SSBO would not allocate"; }
+
+    int loc = rlGetLocationUniform(program, "u_add");
+    float add = 1.0f;
+    unsigned int seed = 7771u;
+    double acc[2] = {0, 0};
+    int cnt[2] = {0, 0};
+    const int WARM = 60, N = 500;
+    const int few = 1, many = 9;              // 9 = the PBD solve's dispatch count
+
+    for (int f = 0; f < WARM + N; f++)
+    {
+        seed = seed*1103515245u + 12345u;
+        int variant = (int)((seed >> 16) & 1u);
+
+        /* Variant 0 dispatches INSIDE the frame (rlvk splits the render pass per
+         * call); variant 1 dispatches OUTSIDE it, which is where core/fluid's PBD
+         * actually runs — main.c updates it before BeginDrawing, so every call
+         * takes rlvk's one-shot path: allocate a pool, submit, vkQueueWaitIdle,
+         * destroy. Same kernel, same count; only the frame scope differs. */
+        double t0 = GetTime();
+        if (variant)
+        {
+            rlEnableShader(program);
+            rlBindShaderBuffer(ssbo, 0);
+            for (int d = 0; d < many; d++)
+            {
+                rlSetUniform(loc, &add, RL_SHADER_UNIFORM_FLOAT, 1);
+                rlComputeShaderDispatch(2048/256, 1, 1);
+            }
+            rlDisableShader();
+        }
+        BeginDrawing();
+        ClearBackground(BLACK);
+        if (!variant)
+        {
+            rlEnableShader(program);
+            rlBindShaderBuffer(ssbo, 0);
+            for (int d = 0; d < many; d++)
+            {
+                rlSetUniform(loc, &add, RL_SHADER_UNIFORM_FLOAT, 1);
+                rlComputeShaderDispatch(2048/256, 1, 1);
+            }
+            rlDisableShader();
+        }
+        EndDrawing();
+        if (f >= WARM) { acc[variant] += (GetTime() - t0)*1000.0; cnt[variant]++; }
+    }
+
+    double inFrame = acc[0]/cnt[0], outOfFrame = acc[1]/cnt[1];
+    printf("  [perf dispatch_count] %d dispatches IN frame %.3f ms | OUTSIDE frame %.3f ms | one-shot penalty %.3f ms (%.3f ms per call)\n",
+           many, inFrame, outOfFrame, outOfFrame - inFrame, (outOfFrame - inFrame)/(double)many);
+    (void)few;
+    rlUnloadShaderBuffer(ssbo);
+    rlUnloadShaderProgram(program);
+    return NULL;
+}
+
 static void blit(Texture2D src, int dstW, int dstH)
 {
     DrawTexturePro(src, (Rectangle){0, 0, (float)src.width, (float)src.height},
@@ -1672,6 +1858,8 @@ static const Scenario SCENARIOS[] = {
     { "perf_dynmesh",   sc_perf_dynmesh },
     { "perf_upload_fbo",sc_perf_upload_fbo },
     { "perf_fullres_ab",sc_perf_fullres_ab },
+    { "perf_ssf_filter", sc_perf_ssf_filter },
+    { "perf_dispatch_count", sc_perf_dispatch_count },
     { "perf_shadow_ab", sc_perf_shadow_ab },
     { "perf_pcf_ab",    sc_perf_pcf_ab },
     { "perf_switch1",   sc_perf_switch1 },
