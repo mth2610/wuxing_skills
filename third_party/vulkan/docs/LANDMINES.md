@@ -62,3 +62,6 @@
 
 ## Architecture invariants to preserve (HANDOFF §9)
 These are decisions, not accidents — don't "simplify" them away: driver quirks live behind `Caps.*` flags with a repro scenario; error paths produce nothing (never leftovers); the ring/lifecycle is the single owner of frame progression. Full list in `HANDOFF.md` §9.
+
+### Measurement traps
+- **A perf scenario cannot leave the frame from inside a render loop.** `perf_dispatch_count`'s "outside the frame" variant dispatches before `BeginDrawing`, and reported batching out-of-frame compute as noise — while the same change was worth **3.9 ms in the game**. `rlvkBeginFrame` is called lazily from several places (`rlEnableShader`, `rlClearBackground`, the render-pass helpers) with the comment "ensure a frame is active", so setting up dispatch state inside the loop very likely opens the frame first and the variant measures the in-frame path twice. A scenario that means to compare paths must PROVE which path it took (log it, or assert on a counter) before its numbers mean anything. Methodology rule 4, worked example.

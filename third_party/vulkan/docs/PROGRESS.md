@@ -125,16 +125,27 @@ paths share, and MoltenVK builds a Metal argument buffer per set. The experiment
 that would settle it: cache the set and re-use it while the bindings and the
 uniform generation are unchanged, then re-run `perf_dispatch_count`.
 
-**Landed meanwhile:** out-of-frame dispatches now batch into ONE command buffer
+**CORRECTION (same day, from the game): batching is worth ~3.9 ms and the
+synthetic scenario was WRONG about it.** In-game with the PBD fixture:
+5.6 ms of fluid before, **1.7 ms after** (60 -> 45 FPS became 60 -> 54-55).
+`perf_dispatch_count` reported the change as noise, so its "outside the frame"
+variant cannot be reaching the path the game reaches — `rlEnableShader` and
+friends call `rlvkBeginFrame` lazily ("ensure a frame is active"), so a scenario
+that sets up its dispatch state inside a render loop is probably in-frame no
+matter where the call sits. **Do not trust that scenario's out-of-frame column
+until it proves which path it took** (methodology rule 4: distrust your own
+probes — this is a worked example of it). The three ruled-out suspects above
+still stand: they were measured on the in-frame path, which the scenario does
+reach.
+
+**Landed:** out-of-frame dispatches now batch into ONE command buffer
 (`RLVK.computeBatch`) instead of each creating a command pool, submitting,
 waiting on the queue and destroying the pool. Correct by construction — the
 per-dispatch memory barriers still order the work — and flushed before anything
 that must observe it: any other one-shot submission (`rlvkOneShotBegin`), frame
 begin (**before** the compute descriptor-pool reset, which would otherwise free
-sets the pending buffer references), and `rlglClose`. Measured win is small
-(~0.1-0.6 ms across nine dispatches, at the edge of noise) because the submit was
-never the expensive part — it is kept because fewer queue drains is strictly
-better, not because it fixed the number.
+sets the pending buffer references), and `rlglClose`. Worth ~3.9 ms in the
+game, which is where it was finally measured correctly.
 
 ## State
 Retarget 1.3→1.1-core complete. Headless suite runtime-verified on MoltenVK (20/20, zero validation errors); visual suite 14/14. **In-game confirmed on desktop** (character self-occlusion, black-hole occlusion, soft-particle fade). **Runs on real Android/Mali hardware** (2026-07-17); the Android bring-up bugs (HANDOFF §7.11–7.23) are fixed.
