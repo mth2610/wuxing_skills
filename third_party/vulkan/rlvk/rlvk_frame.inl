@@ -324,6 +324,16 @@ static bool rlvkInitLogicalDevice(void)
     if (RLVK.Caps.noSampledDepth)
         TRACELOG(RL_LOG_INFO, "RLVK: quirk noSampledDepth active (MoltenVK/Intel) - FBO depth textures are not sampleable");
 
+    // Optional float-format features. Neither is guaranteed by the spec for R32_SFLOAT, and
+    // both are silently relied on by any screen-space pass that blends into, or bilinearly
+    // samples, an R32F target. Say it once at init: a driver without them produces wrong
+    // pixels, not an error the caller can see.
+    RLVK.Caps.floatBlendR32 = rlvkFormatSupportsBlend(RL_PIXELFORMAT_UNCOMPRESSED_R32);
+    RLVK.Caps.floatFilterR32 = rlvkFormatSupportsLinearFilter(RL_PIXELFORMAT_UNCOMPRESSED_R32);
+    if (!RLVK.Caps.floatBlendR32 || !RLVK.Caps.floatFilterR32)
+        TRACELOG(RL_LOG_WARNING, "RLVK: R32F is limited on this device (blend=%d linearFilter=%d) - use R16F/unorm for blended or filtered float targets",
+                 (int)RLVK.Caps.floatBlendR32, (int)RLVK.Caps.floatFilterR32);
+
     // Enable everything supported (spec: VK_KHR_portability_subset MUST be enabled when present)
     deviceExtensions[deviceExtensionCount++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
     if (hasPortabilitySubset)

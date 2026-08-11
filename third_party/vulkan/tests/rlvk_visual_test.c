@@ -790,6 +790,46 @@ static RenderTexture2D fmtRT(int w, int h, int format)
     return t;
 }
 
+// Screen-space fluid (core/fluid) additively blends per-splat thickness into an R32F
+// target. That is optional hardware behaviour: the Vulkan spec's Mandatory Format Support
+// tables require COLOR_ATTACHMENT_BLEND for R16_SFLOAT but NOT for R32_SFLOAT. A driver
+// without it does not raise an error the caller can see - the effect just comes out wrong.
+// So assert that Caps.floatBlendR32 agrees with what this device actually does. Three
+// full-coverage additive white quads: only a float target that really blends holds 3.0.
+// Declared here rather than by including rlvk.h: this suite links the patched raylib and
+// has no Vulkan headers on its include path.
+extern bool rlvkFormatSupportsBlend(int rlFormat);
+
+static const char *sc_float_blend_rt(void)
+{
+    RenderTexture2D rt = fmtRT(64, 64, RL_PIXELFORMAT_UNCOMPRESSED_R32);
+    if (rt.id == 0 || rt.texture.id == 0) return "could not create an R32F colour attachment";
+
+    BeginDrawing();
+        BeginTextureMode(rt);
+            ClearBackground(BLANK);
+            BeginBlendMode(BLEND_ADDITIVE);
+                for (int i = 0; i < 3; i++) DrawRectangle(0, 0, 64, 64, WHITE);
+            EndBlendMode();
+        EndTextureMode();
+    EndDrawing();
+
+    float *px = (float *)rlReadTexturePixels(rt.texture.id, 64, 64, RL_PIXELFORMAT_UNCOMPRESSED_R32);
+    if (px == NULL) { UnloadRenderTexture(rt); return "R32F readback returned nothing"; }
+    float centre = px[32*64 + 32];
+    RL_FREE(px);
+    UnloadRenderTexture(rt);
+
+    bool accumulated = fabsf(centre - 3.0f) < 0.05f;
+    bool blendCap = rlvkFormatSupportsBlend(RL_PIXELFORMAT_UNCOMPRESSED_R32);
+    printf("      R32F additive x3 -> %.3f (cap says blend=%d)\n", centre, (int)blendCap);
+    if (blendCap && !accumulated)
+        return "cap claims R32F blending but three additive writes did not accumulate";
+    if (!blendCap && accumulated)
+        return "cap denies R32F blending but the device accumulated anyway (cap is wrong)";
+    return NULL;
+}
+
 static void blit(Texture2D src, int dstW, int dstH)
 {
     DrawTexturePro(src, (Rectangle){0, 0, (float)src.width, (float)src.height},
@@ -1621,6 +1661,7 @@ static const Scenario SCENARIOS[] = {
     { "ssbo_vs",        sc_ssbo_vs },
     { "imm_normal",     sc_imm_normal },
     { "readback",       sc_readback },
+    { "float_blend_rt", sc_float_blend_rt },
     { "ui_after_rt",    sc_ui_after_rt },
     { "stress",         sc_stress },
     { "shadow_proj",    sc_shadow_proj },

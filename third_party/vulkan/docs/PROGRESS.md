@@ -82,6 +82,26 @@ the bloom pyramid and the HDR format were all free — **the dynmesh result cont
 "pass splits are free" part of that**, since the upload cost IS a pass split. Treat those as
 unmeasured.
 
+## Format capability query added — R32F blend/filter are no longer assumed (2026-08-11)
+
+rlvk called `vkGetPhysicalDeviceFormatProperties` **nowhere**: `rlvkGetVkTextureFormat`
+mapped `RL_PIXELFORMAT_UNCOMPRESSED_R32` to `VK_FORMAT_R32_SFLOAT` and every caller took
+the remaining features on faith. Per the spec's Mandatory Format Support tables that faith
+is misplaced for exactly the two features screen-space passes lean on: `R32_SFLOAT`
+guarantees `SAMPLED_IMAGE` + `COLOR_ATTACHMENT` but **not** `COLOR_ATTACHMENT_BLEND` and
+**not** `SAMPLED_IMAGE_FILTER_LINEAR`; `R16_SFLOAT` guarantees both.
+
+Added: `rlvkFormatSupportsColorAttachment/Blend/LinearFilter(int rlFormat)` (public,
+`rlvk_format.inl`), `Caps.floatBlendR32` / `Caps.floatFilterR32` cached at init with a
+one-time warning, 6 runtime-test checks, and visual scenario `float_blend_rt` asserting the
+cap matches observed behaviour (three additive writes must read back 3.0).
+
+Measured on MoltenVK/Metal here: `R32F blend=1 linearFilter=1`, additive x3 → 3.000. So the
+desktop path is genuinely fine — this is instrumentation for the driver that is not, and
+the caller-side decision (which format a pass should use) still belongs to the caller.
+Known consumer that relies on both today: `core/fluid/fluid_surface.c` (four R32F targets,
+additive thickness pass, BILINEAR filter) — Core's call.
+
 ## State
 Retarget 1.3→1.1-core complete. Headless suite runtime-verified on MoltenVK (20/20, zero validation errors); visual suite 14/14. **In-game confirmed on desktop** (character self-occlusion, black-hole occlusion, soft-particle fade). **Runs on real Android/Mali hardware** (2026-07-17); the Android bring-up bugs (HANDOFF §7.11–7.23) are fixed.
 

@@ -289,6 +289,25 @@ RLVKAPI void rlvkDetachSurface(void);                 // Tear down the swapchain
 RLVKAPI void rlvkSetMsaaSamples(int samples);       // Set MSAA sample count, call BEFORE rlvkAttachSurface (FLAG_MSAA_4X_HINT)
 RLVKAPI void rlvkPresent(void);                     // Present the current frame, called from SwapScreenBuffer()
 
+//------------------------------------------------------------------------------------
+// Functions Declaration - Format capability query
+//------------------------------------------------------------------------------------
+// Vulkan guarantees only a MINIMUM feature set per format, and the guarantee differs by
+// component width. From the spec's Mandatory Format Support tables:
+//   VK_FORMAT_R32_SFLOAT  - SAMPLED_IMAGE and COLOR_ATTACHMENT are mandatory;
+//                           SAMPLED_IMAGE_FILTER_LINEAR and COLOR_ATTACHMENT_BLEND are NOT.
+//   VK_FORMAT_R16_SFLOAT  - linear filtering AND blending are both mandatory.
+// So a full-precision float render target that gets additively blended into, or sampled
+// with a LINEAR sampler, is running on optional hardware behaviour. Desktop drivers
+// (and MoltenVK) generally expose it; that is exactly why it goes unnoticed until the
+// same code reaches a mobile driver that does not. Ask before you rely on it, and fall
+// back to a 16-bit float or unorm target when the answer is false.
+// `rlFormat` is an RL_PIXELFORMAT_* value; answers describe optimalTilingFeatures on the
+// selected physical device. Before rlglInit these return false.
+RLVKAPI bool rlvkFormatSupportsColorAttachment(int rlFormat); // usable as an FBO colour attachment
+RLVKAPI bool rlvkFormatSupportsBlend(int rlFormat);           // ...and blending works on it
+RLVKAPI bool rlvkFormatSupportsLinearFilter(int rlFormat);    // sampler magFilter/minFilter LINEAR
+
 #if defined(__cplusplus)
 }
 #endif

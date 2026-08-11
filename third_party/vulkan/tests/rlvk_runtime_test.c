@@ -202,6 +202,32 @@ int main(void)
         }
     }
 
+    // 8. Format capability query. The spec's Mandatory Format Support tables are the
+    //    oracle here: R16_SFLOAT must support linear filtering and blending, R32_SFLOAT
+    //    need not. So the R16 answers are conformance assertions (a false there means the
+    //    query is wired wrong, not that the device is exotic), while the R32 answers are
+    //    only required to be self-consistent with what init cached and to be honest about
+    //    an attachment format the engine's screen-space passes already use.
+    {
+        CHECK(rlvkFormatSupportsColorAttachment(RL_PIXELFORMAT_UNCOMPRESSED_R32),
+              "R32F is a colour attachment (spec-mandatory)");
+        CHECK(rlvkFormatSupportsColorAttachment(RL_PIXELFORMAT_UNCOMPRESSED_R16),
+              "R16F is a colour attachment (spec-mandatory)");
+        CHECK(rlvkFormatSupportsBlend(RL_PIXELFORMAT_UNCOMPRESSED_R16),
+              "R16F supports blending (spec-mandatory)");
+        CHECK(rlvkFormatSupportsLinearFilter(RL_PIXELFORMAT_UNCOMPRESSED_R16),
+              "R16F supports LINEAR filtering (spec-mandatory)");
+        CHECK(rlvkFormatSupportsBlend(RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8),
+              "RGBA8 supports blending (spec-mandatory)");
+        CHECK(rlvkFormatSupportsBlend(RL_PIXELFORMAT_UNCOMPRESSED_R32) == RLVK.Caps.floatBlendR32 &&
+              rlvkFormatSupportsLinearFilter(RL_PIXELFORMAT_UNCOMPRESSED_R32) == RLVK.Caps.floatFilterR32,
+              "R32F caps cached at init match a live query");
+        // Report the optional answers rather than asserting them: this line is the point
+        // of the whole section when the suite is later run on a mobile driver.
+        printf("      R32F on this device: blend=%d linearFilter=%d\n",
+               (int)RLVK.Caps.floatBlendR32, (int)RLVK.Caps.floatFilterR32);
+    }
+
     rlglClose();
     printf("=== done: %d failure(s) ===\n", g_failures);
     return g_failures ? 1 : 0;

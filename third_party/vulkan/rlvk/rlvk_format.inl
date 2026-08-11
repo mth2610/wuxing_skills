@@ -136,3 +136,33 @@ static VkFormat rlvkGetVkTextureFormat(int format)
     }
 }
 
+//----------------------------------------------------------------------------------
+// Format capability query
+//----------------------------------------------------------------------------------
+// The device's own answer, never a table baked in here: what a driver supports beyond
+// the spec's mandatory minimum is exactly the part that differs between the desktop this
+// was written on and the phone it has to run on. See rlvk.h for which bits the spec does
+// and does not guarantee for the float formats.
+static VkFormatFeatureFlags rlvkQueryFormatFeatures(int rlFormat)
+{
+    if (RLVK.physicalDevice == VK_NULL_HANDLE) return 0;
+    VkFormatProperties props = {0};
+    vkGetPhysicalDeviceFormatProperties(RLVK.physicalDevice, rlvkGetVkTextureFormat(rlFormat), &props);
+    return props.optimalTilingFeatures;
+}
+
+bool rlvkFormatSupportsColorAttachment(int rlFormat)
+{
+    return (rlvkQueryFormatFeatures(rlFormat) & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) != 0;
+}
+
+bool rlvkFormatSupportsBlend(int rlFormat)
+{
+    return (rlvkQueryFormatFeatures(rlFormat) & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT) != 0;
+}
+
+bool rlvkFormatSupportsLinearFilter(int rlFormat)
+{
+    return (rlvkQueryFormatFeatures(rlFormat) & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
+}
+

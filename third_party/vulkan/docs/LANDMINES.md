@@ -21,6 +21,9 @@
 - **Compute UBO reads all zeros** when the shader also declares storage images → MoltenVK quirk; split/rearrange bindings. → §7.4
 - **Vertex attribute fetch reads zeros / GPU timeout on a tiny dummy buffer.** → §7.5
 
+### Format capability (what the driver is allowed NOT to support)
+- **An R32F render target that is blended into or LINEAR-sampled is optional behaviour, and its absence is silent.** The spec's Mandatory Format Support tables require `COLOR_ATTACHMENT_BLEND` and `SAMPLED_IMAGE_FILTER_LINEAR` for `R16_SFLOAT` but **not** for `R32_SFLOAT` (only `SAMPLED_IMAGE` + `COLOR_ATTACHMENT` are guaranteed there). rlvk queried no format features at all until 2026-08-11, so `rlvkGetVkTextureFormat` handed out `VK_FORMAT_R32_SFLOAT` and every caller assumed the rest. Desktop drivers and MoltenVK do provide it — which is exactly why nothing catches it before a mobile driver. **Rule:** ask `rlvkFormatSupportsBlend()` / `rlvkFormatSupportsLinearFilter()` before relying on either, and fall back to R16F or unorm (both mandatory) when false. `Caps.floatBlendR32` / `Caps.floatFilterR32` are cached at init and the init log warns once. Scenario `float_blend_rt` asserts the caps agree with what the device actually does (3 additive writes must read back 3.0).
+
 ### Pipeline / draw safety
 - **Rendering into an FBO, switching to another FBO, then sampling the first gives white/black output.** Closing a Vulkan render pass is not a layout transition; switch the outgoing colour image to shader-read first. → §7.32 (`fbo_switch`)
 - **A colour-layer `ClearBackground()` erases scene occlusion despite `rlDisableDepthMask()`.** rlvk's explicit clear must honour the active depth write mask, just as `glClear` does. → §7.31 (`depth_mask_clear`)

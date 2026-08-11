@@ -16,6 +16,7 @@ static Matrix       rlvkMatrixInvert   (Matrix mat);               // Get invert
 
 static int          rlvkGetPixelDataSize     (int width, int height, int format);  // Get pixel data size in bytes
 static VkFormat     rlvkGetVkTextureFormat(int rlFormat);          // Get Vulkan format for a raylib pixel format
+static VkFormatFeatureFlags rlvkQueryFormatFeatures(int rlFormat); // optimalTilingFeatures of the selected device for a raylib pixel format
 
 static bool         rlvkInitInstance      (void);                  // Initialize Vulkan instance
 static bool         rlvkPickPhysicalDevice(void);                  // Pick a Vulkan 1.1+ capable physical device

@@ -58,8 +58,8 @@ significant, statics span them. Never include a fragment directly, never reorder
 3. `./scripts/run_rlvk_visual_test.sh [scenario|--list]` — windowed scenario suite, one
    PASS/FAIL line each (clear, batch_alpha, additive3d, shader_uniform, depth, depth_rt,
    depth_mask_clear,
-   soft_depth, winding_rt, instanced, ssbo_vs, readback, stress). For anything touching
-   draw/present/blend/depth.
+   soft_depth, winding_rt, instanced, ssbo_vs, readback, float_blend_rt, stress). For
+   anything touching draw/present/blend/depth.
    `VALIDATE=1` prepends Khronos validation. First run builds a raylib cache (~2 min),
    then ~20 s. **Every draw-path bug fix gets a scenario here reproducing it first.**
 4. Full game build (`cmake --build build`) — HUMAN-run only, final confirmation.
@@ -73,6 +73,11 @@ post-rebase `rlvk_rebased_vs.spv`, for spirv-dis).
 
 ## Known driver quirks (do not re-litigate; each has a Cap or a fixed workaround)
 > Quick list below; full case-study index + methodology in `docs/LANDMINES.md`.
+- **Format features are queried, not assumed.** `R32_SFLOAT` is spec-guaranteed only for
+  SAMPLED_IMAGE + COLOR_ATTACHMENT — **blending and LINEAR filtering are optional on it**,
+  while `R16_SFLOAT`/unorm guarantee both. `Caps.floatBlendR32` / `Caps.floatFilterR32` are
+  detected at init (warn once); callers ask via `rlvkFormatSupports{ColorAttachment,Blend,
+  LinearFilter}(rlFormat)`. Scenario `float_blend_rt` keeps the caps honest.
 - `Caps.noSampledDepth` (MoltenVK/Intel): SAMPLED usage on a depth image silently kills
   depth test/write on that attachment. FBO depth drops SAMPLED under the quirk; sampling of
   `renderTex.depth` is served by an R32F color shadow-copy twin filled at scope close

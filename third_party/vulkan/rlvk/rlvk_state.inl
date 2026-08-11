@@ -434,6 +434,15 @@ typedef struct rlvkData {
         bool        graphicsSsboStores; // vertexPipelineStoresAndAtomics: graphics-stage SSBOs may be written.
                                         // Absent -> rlvkRebaseStorageBuffers injects NonWritable (read-only SSBOs,
                                         // which is all the GPU-particle path needs; optional on many 1.1 devices)
+        // Optional format features. The spec makes SAMPLED_IMAGE_FILTER_LINEAR and
+        // COLOR_ATTACHMENT_BLEND mandatory for R16_SFLOAT but NOT for R32_SFLOAT, so an
+        // additively-blended or bilinearly-sampled R32F target is optional behaviour that
+        // desktop drivers happen to provide. Detected at init so the log says so once,
+        // rather than the caller discovering it as corrupt pixels on another device.
+        // Callers query per format through rlvkFormatSupports*(); these two are cached
+        // because R32F render targets are the case the engine actually leans on.
+        bool        floatBlendR32;      // R32_SFLOAT supports COLOR_ATTACHMENT_BLEND
+        bool        floatFilterR32;     // R32_SFLOAT supports SAMPLED_IMAGE_FILTER_LINEAR
         // Driver quirks (empirically bisected, see tests/rlvk_visual_test.c depth_rt scenario)
         bool        noSampledDepth;     // MoltenVK/Intel: SAMPLED usage on a depth image silently
                                         // disables depth test/write on that attachment. When set,
