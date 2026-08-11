@@ -706,3 +706,29 @@ chẵn, thứ trông tệ hơn hẳn trên màn hình. Test giờ chỉ khẳng 
 toán thật sự bảo đảm: **không lệch** (trọng số bị rút chứ không được thêm), và
 **lỗ hổng chỉ làm câm vòng của nó, không kết thúc cả dãy** (51 tap vs 7 nếu
 `break`) — đúng thứ khiến trường splat thưa sống được.
+
+## ĐÍNH CHÍNH: PBD **không** phải desktop-only (2026-08-11)
+
+Commit `87f77e3` viết rằng đường PBD chỉ chạy desktop vì shader là `#version 430`
++ SSBO nên `FluidPBDGPU_Init()` sẽ fail trên bản Android GLES 3.0. **Sai**, và
+sai vì tôi tin một ghi nhớ cũ thay vì đọc doc:
+
+- `third_party/vulkan/docs/PROGRESS.md:170` ghi rõ rlvk **đã chạy trên Android/Mali
+  thật** từ 2026-07-17, phần platform glue đã landed. Người dùng cũng đã tự test.
+- rlvk biên dịch GLSL qua **shaderc → SPIR-V** (`rlvk_shaderc.inl`), không có cổng
+  chặn phiên bản. `#version 430 core` compute chạy trên mọi thiết bị Vulkan.
+
+Nên phần so sánh PBD vs force field cũng phải sửa: **ràng buộc "PBD không chạy
+được trên Android" không tồn tại**. Cái còn lại là chi phí, và chi phí đó bị chi
+phối bởi overhead mỗi dispatch (đã đo, đã gộp batch trên desktop) — trên driver
+mobile thì phải đo riêng, chưa ai đo.
+
+Những lo ngại Android CÒN đứng vững, đều là chuyện Vulkan chứ không phải GLES:
+
+- `R32_SFLOAT` chỉ bảo đảm SAMPLED_IMAGE + COLOR_ATTACHMENT theo bảng Mandatory
+  Format Support; **BLEND và FILTER_LINEAR là tuỳ chọn**. rlvk giờ có
+  `rlvkFormatSupports*()` và runtime test in ra kết quả — một lần chạy trên máy
+  là biết. Riêng FILTER_LINEAR gần như vô hại vì bộ lọc separable lấy mẫu đúng
+  tâm texel, NEAREST mới là đúng ở đó.
+- `gl_FragDepth` + `discard` trong pass capture tắt early-Z trên Mali. Đây là
+  kiến trúc phần cứng, không phụ thuộc backend — vẫn là vấn đề **hiệu năng** thật.
