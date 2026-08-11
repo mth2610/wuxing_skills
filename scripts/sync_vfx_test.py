@@ -158,6 +158,13 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeWaterStream":        ("draw",    "timed",      "continuous"),
     "VFX_ComposeFluidImpact":        ("event",   "burst",      "oneshot"),
     "VFX_ComposeWaterOrb":           ("event",   "burst",      "oneshot"),
+    # SSF probe: per-frame like VFX_ComposeConvergeMotes, and for the same
+    # reason — a mesh emitter with no handle to hold. The fixture is "timed"
+    # because Draw fixtures are, but the bench call passes a CONSTANT t01
+    # rather than $PROG: the ring exists to be stood in front of and orbited
+    # while the surface is judged, and a density that loops 0->1 would hide
+    # exactly what it is there to show.
+    "VFX_ComposeWaterRing":          ("draw",    "timed",      "continuous"),
 }
 
 # A fixture may supply a semantic preview surface while the public composition
@@ -187,6 +194,20 @@ FIXTURE_SPAWN_OVERRIDES = {
     # value, so an oversized radius reads as fat even with the taper working).
     "VFX_ComposeSmokeTrail":
         "VFX_ComposeSmokeTrail($XFORM, VC_MAT_METAL, 0.18f, 1.0f, VFX_COLUMN_SMOKE, true)",
+}
+
+# The same idea for per-frame (Draw) fixtures, whose generated call is a
+# `draw_call` rather than a `spawn_call`. Kept as a second table instead of one
+# merged dict so the entry itself says which fixture kind it belongs to — the
+# spawn table's contract (persistent, handle-owning) is not this one's.
+FIXTURE_DRAW_OVERRIDES = {
+    # The inferred call passes $PROG for t01, looping the ring's density 0->1
+    # every two seconds. This fixture exists to JUDGE the fluid surface — you
+    # stand in front of it and orbit — so density is pinned at 1.0 and the only
+    # thing changing on screen is the water itself. Radius 0.9 m is for screen
+    # presence; splat coverage is scale-invariant, so it changes nothing else.
+    "VFX_ComposeWaterRing":
+        "VFX_ComposeWaterRing($POS, 0.9f, 1.0f)",
 }
 
 # ── Element / category inference ──────────────────────────────────────────────
@@ -488,6 +509,10 @@ def infer_entry(fn_name, info, available_fns):
         if "spawn_call" not in entry:
             raise SystemExit(f"[sync_vfx_test] {fn_name}: spawn override requires a persistent fixture")
         entry["spawn_call"] = FIXTURE_SPAWN_OVERRIDES[fn_name]
+    if fn_name in FIXTURE_DRAW_OVERRIDES:
+        if "draw_call" not in entry:
+            raise SystemExit(f"[sync_vfx_test] {fn_name}: draw override requires a per-frame fixture")
+        entry["draw_call"] = FIXTURE_DRAW_OVERRIDES[fn_name]
     return entry
 
 

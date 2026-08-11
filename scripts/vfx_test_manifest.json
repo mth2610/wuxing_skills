@@ -498,6 +498,17 @@
       "trigger_call": "VFX_ComposeWaterOrb($SOURCE, $TARGET)"
     },
     {
+      "source": "water/water_ring.inl",
+      "fn": "VFX_ComposeWaterRing",
+      "label": "WATER RING",
+      "category": "water",
+      "fixture": "timed",
+      "lifecycle": "draw",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeWaterRing($POS, 0.9f, 1.0f)"
+    },
+    {
       "source": "water/water_stream.inl",
       "fn": "VFX_ComposeWaterStream",
       "label": "WATER STREAM",

@@ -96,6 +96,7 @@ void VFX_Compose_Update(float dt)
     // VFX_Sequence_Update takes the raw one itself for `unscaled` beats.
     VFX_Sequence_Update(dt);
     WaterOrb_Update(dt);
+    WaterRing_Update(dt);
 }
 
 void VFX_Compose_Draw3D(Camera3D cam)
@@ -124,4 +125,5 @@ void VFX_Compose_Draw3D(Camera3D cam)
 void VFX_Compose_SubmitScreenSpaceVFX(void)
 {
     WaterOrb_SubmitSurface();
+    WaterRing_SubmitSurface();
 }

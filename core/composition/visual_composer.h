@@ -539,6 +539,22 @@ int VFX_ComposeShieldShell(Vector3 pos, VC_MaterialId mat, float radius, float i
 int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime, VFX_ColumnKind kind, bool funnel);
 void VFX_ComposeStonePillar(Vector3 basePos, float progress);
 void VFX_ComposeWaterOrb(Vector3 start, Vector3 target);
+
+// ── SSF probe. Water ring ───────────────────────────────────────────────────
+// A liquid torus whose silhouette comes from a real torus MESH sampled by the
+// engine's mesh emitter, moved by force fields alone (vortex + curl +
+// viscosity) and rendered ONLY through the screen-space fluid surface. It
+// exists to make SSF quality legible: the far wall is seen through the near
+// wall, the hole puts undistorted background right beside refracted background,
+// and the tube runs from a thin edge to its thickest point in a few centimetres
+// of screen space.
+// Continuous — call every frame; it releases itself shortly after the calls
+// stop, or immediately on VFX_WaterRing_Stop(). `radius` is the ring radius in
+// metres (tube = 0.22 of it), `t01` drives density and flow speed.
+// NOTE: the fluid surface carries ONE material at a time, so a second fluid
+// body in the same frame shares this one's optics.
+void VFX_ComposeWaterRing(Vector3 center, float radius, float t01);
+void VFX_WaterRing_Stop(void);
 void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
 void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
 void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
