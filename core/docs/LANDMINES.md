@@ -1769,3 +1769,88 @@ emission pass…).
 nothing ever reads them — no pipeline field, not in the pipeline key. It
 compiles, it runs, it silently does nothing. Masking alpha writes is not
 available on the Vulkan backend.
+
+## SSF water reads as opaque plastic — the receiver was CREATING the water column
+
+**Symptom.** A water body rendered through `FluidSurface` (water orb, fluid
+impact) shows as a flat, saturated, fully opaque blob. Nothing of the background
+comes through, and the silhouette has no internal depth. It used to look clear;
+no shader constant looks obviously wrong.
+
+**Cause.** Two independent ways of deleting the *thickness gradient*, which is
+the only thing that makes screen-space fluid read as liquid.
+
+1. `fluid_surface.fs` combined the measured kernel thickness with the distance
+   to the opaque receiver behind it as
+   `max(kernelThickness, min(0.40, depthGap * 0.90))` (introduced in `0262068`).
+   For anything airborne the gap is over a metre, so **every** pixel of the
+   silhouette got the same 0.40 m column — 2.5x the measured path, with the
+   variation gone. Absorbing a constant path with a constant coefficient
+   produces one constant colour: a moulded shell.
+2. `DecodeOpticalThickness` mapped the additive chord sum through
+   `0.16 * (1 - exp(-p / 0.11))`. A 2,000-splat orb accumulates p ≈ 1.3 m, i.e.
+   ~12 knee lengths, so every interior pixel clamped at the 0.16 m cap and the
+   decode returned the same number for 12 overlaps as for 24.
+
+**Rule.** In screen-space fluid, **absorption comes from the thickness pass and
+nothing else** (van der Laan et al. 2009; Green, GDC 2010). Scene depth behind
+the liquid may only *bound* the column — `min`, never `max`. And a saturating
+decode must place its knee above the range the authored populations actually
+produce; verify that with numbers before tuning colour, because a saturated
+thickness buffer is invisible in the final image. Guarded by
+`core/tests/fluid_surface_optics_test.c` (the pre-fix formula returns a
+core/rim ratio of 1.31 where the test demands > 2.0).
+
+## An FS input with no VS output is not an error — it is a silent `discard`
+
+**Symptom.** A screen-space effect renders patchy, blobby or not at all, with no
+shader error, no validation message, and no log line. Tuning the effect's own
+maths changes nothing, because the pass is throwing its fragments away before
+any of it runs.
+
+**Cause.** GL links varyings **by name** and leaves an unmatched fragment input
+*undefined* rather than failing the link; rlvk reproduces that leniency by
+demoting the unmatched input to a Private SPIR-V variable
+(`rlvk_shaderc.inl::rlvkMatchStageInterface`). `fluid_surface_capture.vs`
+declared `v_centerView`, `v_corner`, `v_radius` — while **both** fragment stages
+it is paired with (`fluid_capture_particle.fs`, `fluid_surface_thickness.fs`)
+open with `if (v_life <= 0.0) discard;`. Every GPU-backend fluid particle's depth
+and thickness therefore depended on whatever that undefined variable happened to
+contain. The PBD pool's own vertex stage (`fluid_pbd_surface.vs`) does write
+`v_life`, so only the particle-backend path was affected — and only in a way that
+looks like an art bug.
+
+**Rule.** When a fragment stage gates `discard` on a varying, that varying is a
+load-bearing contract: check the vertex stage actually writes it. Neither backend
+will tell you. `core/tests/shader_stage_interface_test.c` now checks every
+hand-paired VS/FS in the fluid/particle surface path, and asserts the pairings in
+`particle_gpu_backend.c` still exist so it cannot drift; extend the pair list when
+adding an explicit VS+FS pair. (Pairs where the VS is `NULL` use raylib's default
+vertex shader and are outside this test.)
+
+## The refraction tap sampled the target it was drawing into (10/08 → 11/08/2026)
+
+**Symptom.** Water rendered through `FluidSurface` lost its transparency and read
+as cyan plastic with a silver rim — nothing of the background came through, and no
+amount of tuning absorption, thickness or scattering brought it back. Nothing was
+logged; no shader or validation error.
+
+**Cause.** The SSF composite's whole notion of "see-through" is one sample:
+`u_sceneTex` in `fluid_surface.fs`. It used to be safe because
+`ScreenDistort_BeginVFXBody()` bound a **separate** `vfxBodyTex` layer, so the
+composite drew into one image and sampled another. Retiring the split VFX layers
+(`b03b7b6`, 10/08/2026) made the body pass bind `renderTex` itself — the exact
+texture `ScreenDistort_GetSceneTexture()` returns. From then on the composite
+sampled its own colour attachment: undefined in GL, a read/write hazard in Vulkan.
+With the tap returning nothing usable, only the shader's own opaque terms survived
+(in-scatter body colour + specular/foam), which is precisely a plastic shell.
+
+**Rule.** A screen-space effect that samples the scene **while drawing into it**
+must sample a snapshot, not the live target — and the snapshot must be taken while
+the scene is still only a source (for fluid: in `FluidSurface_Capture`, which runs
+before the body pass binds anything). Whenever a render-layer refactor changes what
+a pass binds, re-check every consumer that reads the scene texture inside that pass;
+the failure mode is a plausible-looking image, not an error. Guarded by
+`core/tests/fluid_refraction_source_test.c`, which detects the hazard condition
+itself and only then requires the private copy — restore separate layers and the
+requirement lapses. Promoted to `ENGINE_LANDMINES.md` #15.

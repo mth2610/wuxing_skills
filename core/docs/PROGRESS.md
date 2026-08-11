@@ -505,3 +505,78 @@ chưa bao giờ chạm. Vẫn chặt hơn MAIN (0.0715) và BACKDROP (0.1).
 Còn treo: `radiusDefault = 0.10f` dùng chung cho cả bốn preset swept — số một
 caller nhận khi truyền 0. Chưa đụng, vì bench truyền số riêng nên không có bằng
 chứng nào từ đây nói nó sai; muốn biết thì phải xem một skill thật gọi nó.
+
+## SSF nước hết "nhựa" — thickness lấy lại gradient (2026-08-11)
+
+Regression pin được về `0262068` ("update force field", 03/08): dòng gộp
+`depthGap` đổi từ `min(kernel, max(0.022, gap*1.25))` sang
+`max(kernel, min(0.40, gap*0.90))`. Với vật thể bay trên không, gap > 1 m nên
+CỘT NƯỚC bị ghim cứng 0.40 m trên toàn bộ silhouette — vừa dày gấp 2.5x, vừa
+mất sạch biến thiên độ dày. Đã trả lại ngữ nghĩa `min` (receiver chỉ CHẶN, không
+TẠO cột nước).
+
+Nguyên nhân thứ hai, có trước regression: `DecodeOpticalThickness` bão hoà ở cap
+0.16 m với knee 0.11 m, trong khi orb 2.000 splat cộng ra p ≈ 1.3 m → mọi pixel
+bên trong đều dính cap. Đã chia bù chồng lấn kernel (`/1.5`) và dời knee lên
+0.42 m; **giữ nguyên dải output 0..0.16** nên toàn bộ ngưỡng foam/rim/coverage ở
+hạ nguồn không phải chỉnh.
+
+Số đo (mirror trong test): tỉ lệ core/rim 1.31 → 4.28; cột nước của orb bay
+0.400 m → 0.152 m.
+
+Chưa làm, xếp theo giá trị:
+- **Mobile**: 4 render target đều R32F và pass thickness blend cộng vào R32F.
+  ES 3.0/3.1 báo `INVALID_OPERATION` khi blend với draw buffer float 32-bit
+  (cần `EXT_float_blend`), và lọc LINEAR trên float 32-bit cần
+  `OES_texture_float_linear`. Bộ lọc separable chỉ lấy mẫu đúng tâm texel nên
+  NEAREST là đủ → đường ra: linear view distance trong R16F/RGBA8-packed +
+  NEAREST, thickness sang unorm additive, capture nửa độ phân giải, 1 vòng lọc.
+- `fluid_capture_particle.fs` vừa ghi `gl_FragDepth` vừa `discard` → tắt early-Z
+  trên Mali (late-ZS), với overdraw rất nặng.
+- `fluid_depth_narrow_range.fs` thực chất đang là bilateral Gaussian, không phải
+  narrow-range: nó hạ trọng số mẫu ngoài dải thay vì KẸP vào `[z-r, z+r]` như
+  bài báo — đúng cái gây bướu hình hạt còn thấy trên bề mặt.
+- `s_materialBody` là static toàn cục → hai chất lỏng khác màu trong một frame
+  sẽ giành nhau. Cần material theo từng stream nếu muốn SSF phục vụ lửa/thuỷ
+  ngân/độc.
+
+## SSF: hạt GPU mất `v_life` — capture bị discard âm thầm (2026-08-11)
+
+`core/particles/shaders/gpu/fluid_surface_capture.vs` khai báo 3 output, trong khi
+CẢ HAI fragment shader ghép với nó (`fluid_capture_particle.fs`,
+`fluid_surface_thickness.fs`) mở đầu bằng `if (v_life <= 0.0) discard;`. GL nối
+varying theo TÊN và để input không khớp ở trạng thái *undefined* chứ không báo lỗi
+link; rlvk cũng vậy (hạ xuống biến Private). Nghĩa là toàn bộ depth + thickness của
+hạt chạy trên GPU backend phụ thuộc vào một giá trị rác — không log, không lỗi.
+Đây là ứng viên hàng đầu cho việc mặt nước không bao giờ liền khối mà luôn lỗ chỗ
+theo từng splat.
+
+Đã thêm `v_life = life_data.x` (life còn lại, khớp ngữ nghĩa của
+`fluid_pbd_surface.vs`) và guard `core/tests/shader_stage_interface_test.c` — guard
+này FAIL 2 lỗi trên shader trước khi sửa, PASS sau khi sửa.
+
+Chưa xác nhận bằng mắt: cần chạy sandbox NEW FX → WATER ORB. Nếu mặt nước vẫn trắng
+bạc sau bản sửa này thì nghi vấn tiếp theo là đường CPU (`FLUID_SURFACE_MAX_PARTICLES
+= 384` trong khi water orb phát 2.000 hạt → chỉ 384 hạt đầu vào được capture, phần
+còn lại biến mất) chứ không phải phần quang học.
+
+## Đã tìm ra vì sao nước mất độ trong: b03b7b6 (2026-08-11)
+
+Người dùng nhớ đúng — ở `0237c80` (05/08) fluid còn ổn. `b03b7b6` (10/08) rút bỏ hai
+lớp VFX tách rời; từ đó `ScreenDistort_BeginVFXBody()` bind thẳng `renderTex`, đúng
+cái texture mà `ScreenDistort_GetSceneTexture()` trả về. `FluidSurface_Composite()`
+chạy bên trong pass đó, nên nó **lấy mẫu chính colour attachment đang ghi** — undefined
+trong GL, read/write hazard trong Vulkan. Tap khúc xạ chết ⇒ chỉ còn các số hạng đục
+của shader (in-scatter + specular) ⇒ vỏ nhựa.
+
+Sửa: `FluidSurface_Capture()` chụp một bản sao scene riêng (đúng format, giữ HDR) rồi
+composite lấy mẫu bản sao. Không hồi sinh lớp đã bị rút, không đổi thứ tự trong main.c.
+Chi phí: một lần copy toàn màn hình, chỉ ở frame có fluid.
+
+Guard: `core/tests/fluid_refraction_source_test.c` — FAIL 4 lỗi trên mã trước khi sửa,
+PASS sau khi sửa. Nó kiểm tra ĐIỀU KIỆN hazard trước, nên nếu sau này khôi phục lớp
+riêng thì yêu cầu tự hết hiệu lực.
+
+Chưa xác nhận bằng mắt (Core không có tầng visual tự động). Hai chỉnh quang học trước
+đó — `min` thay `max` khi gộp depthGap, và knee của `DecodeOpticalThickness` — vẫn giữ;
+mỗi cái một dòng, dễ dial lại sau khi nhìn thấy kết quả thật.

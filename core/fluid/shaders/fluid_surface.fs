@@ -59,9 +59,20 @@ vec3 WaterMultiOctaveWaves(vec3 worldPosition) {
     return vec3(-dh.x, 1.0, -dh.y);
 }
 
+/* The thickness pass sums one sphere chord per splat, scaled by 16. Splats are
+ * reconstruction kernels that overlap, so the raw sum over-counts the real
+ * traversal by roughly (summed kernel volume / body volume) — about 1.5 for the
+ * authored orb populations. Divide that out, then place the saturation knee far
+ * above the body's own range. The old 0.11 m knee saturated EVERY interior pixel
+ * of a 2,000-splat orb at the 0.16 m cap, so the silhouette carried no thickness
+ * gradient at all: one constant optical depth across a body is exactly what
+ * reads as moulded plastic instead of liquid. The output range is unchanged, so
+ * every downstream mask threshold still means the same thing. */
+#define FLUID_KERNEL_OVERLAP 1.5
 float DecodeOpticalThickness(float encodedThickness) {
     float accumulatedPath = max(encodedThickness / 16.0, 0.0);
-    return 0.16 * (1.0 - exp(-accumulatedPath / 0.11));
+    float traversedPath = accumulatedPath / FLUID_KERNEL_OVERLAP;
+    return 0.16 * (1.0 - exp(-traversedPath / 0.42));
 }
 
 float WaterSpecularBRDF(vec3 N, vec3 V, vec3 L, float roughness) {
@@ -202,7 +213,14 @@ void main() {
     if (sceneDepthAtSurface < 0.99999) {
         float depthGap = max(sceneDistanceAtSurface - fluidDistance, 0.0);
         sceneGap = depthGap;
-        waterColumnDepth = max(kernelThickness, min(0.40, depthGap * 0.90));
+        /* The receiver BOUNDS the water column; it never creates one. The old
+         * max() against the gap pinned any airborne body at a constant 0.40 m
+         * across its whole silhouette — 2.5x the measured path, with the
+         * thickness variation deleted. Absorption follows the thickness pass
+         * alone (van der Laan et al. 2009 / Green 2010); the depth gap only
+         * shortens it where liquid rests on a receiver, with a 2.2 cm floor so
+         * a thin resting sheet does not become invisible. */
+        waterColumnDepth = min(kernelThickness, max(0.022, depthGap * 1.25));
     }
     
     float opticalPath = min(waterColumnDepth / max(ndv, 0.22), 0.50);

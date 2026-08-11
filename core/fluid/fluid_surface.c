@@ -20,6 +20,7 @@ static ParticleRenderStream s_gpuStreams[16];
 static int s_gpuStreamCount;
 static Texture2D s_surfaceTex;
 static RenderTexture2D s_capture, s_thickness, s_smoothA, s_smoothB;
+static RenderTexture2D s_sceneCopy;   // refraction source, see FluidSurface_LoadColorTarget
 static Shader s_captureShader, s_thicknessShader, s_smooth, s_composite;
 static int s_texelLoc, s_dirLoc, s_depthRangeLoc, s_fillLoc;
 static int s_smoothProjectionLoc, s_smoothInverseProjectionLoc;
@@ -81,6 +82,38 @@ static RenderTexture2D FluidSurface_LoadDepthTarget(int w, int h) {
     rlFramebufferAttach(t.id,t.depth.id,RL_ATTACHMENT_DEPTH,RL_ATTACHMENT_TEXTURE2D,0);
     if (!rlFramebufferComplete(t.id)) TraceLog(LOG_WARNING,"FluidSurface: depth target incomplete");
     rlDisableFramebuffer(); SetTextureFilter(t.texture,TEXTURE_FILTER_BILINEAR); return t;
+}
+
+/* A private copy of the scene, in the scene's own format, for the refraction tap.
+ *
+ * The SSF composite samples "what is behind the water" while it draws the water.
+ * Until 2026-08-10 those were two different images: `ScreenDistort_BeginVFXBody()`
+ * bound a separate `vfxBodyTex` layer, so sampling `renderTex.texture` was safe.
+ * Retiring the split layers (b03b7b6) made the body pass bind `renderTex` itself —
+ * the very texture `ScreenDistort_GetSceneTexture()` returns — so the composite
+ * began sampling its own colour attachment. That is undefined in GL and a
+ * read/write hazard in Vulkan; the refraction tap stops returning the background,
+ * and the water collapses to its own opaque terms (in-scatter + specular), i.e.
+ * cyan plastic with a silver rim. Copying the scene during Capture, which runs
+ * BEFORE the body pass binds anything, restores a well-defined source without
+ * resurrecting the retired layer targets. */
+static RenderTexture2D FluidSurface_LoadColorTarget(int w, int h, int format) {
+    RenderTexture2D t = {0};
+    t.id = rlLoadFramebuffer();
+    if (!t.id) return t;
+    rlEnableFramebuffer(t.id);
+    t.texture.id = rlLoadTexture(NULL, w, h, format, 1);
+    t.texture.width = w;
+    t.texture.height = h;
+    t.texture.format = format;
+    t.texture.mipmaps = 1;
+    rlFramebufferAttach(t.id, t.texture.id, RL_ATTACHMENT_COLOR_CHANNEL0,
+                        RL_ATTACHMENT_TEXTURE2D, 0);
+    if (!rlFramebufferComplete(t.id))
+        TraceLog(LOG_WARNING, "FluidSurface: scene copy target incomplete");
+    rlDisableFramebuffer();
+    SetTextureFilter(t.texture, TEXTURE_FILTER_BILINEAR);
+    return t;
 }
 
 static RenderTexture2D FluidSurface_LoadScalarTarget(int w, int h) {
@@ -151,7 +184,7 @@ void FluidSurface_Init(int width,int height) {
     s_materialSoftLoc=GetShaderLocation(s_composite,"u_materialSoft");
     s_timeLoc=GetShaderLocation(s_composite,"u_time");
 }
-void FluidSurface_Unload(void) { UnloadTexture(s_surfaceTex); UnloadRenderTexture(s_capture); UnloadRenderTexture(s_thickness); UnloadRenderTexture(s_smoothA); UnloadRenderTexture(s_smoothB); }
+void FluidSurface_Unload(void) { UnloadTexture(s_surfaceTex); UnloadRenderTexture(s_capture); UnloadRenderTexture(s_thickness); UnloadRenderTexture(s_smoothA); UnloadRenderTexture(s_smoothB); if(s_sceneCopy.id) { UnloadRenderTexture(s_sceneCopy); s_sceneCopy=(RenderTexture2D){0}; } }
 void FluidSurface_SetMaterialColors(Color body, Color glow, Color soft) {
     s_materialBody=body;
     s_materialGlow=glow;
@@ -177,6 +210,33 @@ bool FluidSurface_SubmitParticleStream(const ParticleRenderStream *stream) {
 bool FluidSurface_HasPending(void) { return s_count > 0 || s_gpuStreamCount > 0 || FluidPBDGPU_IsActive(); }
 void FluidSurface_Capture(Camera3D camera) {
     if(!FluidSurface_HasPending()) return;
+    /* Snapshot the scene for the refraction tap while it is still only a source.
+     * The composite runs inside ScreenDistort's body pass, which now binds the
+     * scene target itself, so sampling it there would be sampling the attachment
+     * being written. Keep the copy in the scene's own format so HDR survives. */
+    Texture2D liveScene=ScreenDistort_GetSceneTexture();
+    if(liveScene.id) {
+        if(s_sceneCopy.id==0 || s_sceneCopy.texture.width!=liveScene.width ||
+           s_sceneCopy.texture.height!=liveScene.height ||
+           s_sceneCopy.texture.format!=liveScene.format) {
+            if(s_sceneCopy.id) UnloadRenderTexture(s_sceneCopy);
+            s_sceneCopy=FluidSurface_LoadColorTarget(liveScene.width,liveScene.height,
+                                                     liveScene.format);
+        }
+        if(s_sceneCopy.id) {
+            BeginTextureMode(s_sceneCopy);
+            /* An exact copy: blending would fold the scene's own alpha into it,
+             * and the negative source height is this file's RT->RT convention,
+             * which leaves storage orientation identical to the source. */
+            rlDisableColorBlend();
+            DrawTextureRec(liveScene,
+                           (Rectangle){0,0,(float)liveScene.width,-(float)liveScene.height},
+                           (Vector2){0,0},WHITE);
+            rlDrawRenderBatchActive();
+            rlEnableColorBlend();
+            EndTextureMode();
+        }
+    }
     s_fluidView=MatrixLookAt(camera.position,camera.target,camera.up);
     s_fluidProjection=FluidSurface_MakeProjection(camera);
     BeginTextureMode(s_capture); ClearBackground((Color){255,0,0,0}); BeginMode3D(camera);
@@ -236,7 +296,10 @@ void FluidSurface_Composite(void) {
     if(!FluidSurface_HasPending()) return;
     Vector2 texel={1.0f/s_smoothB.texture.width,1.0f/s_smoothB.texture.height};
     Vector2 sceneTexel={1.0f/GetRenderWidth(),1.0f/GetRenderHeight()};
-    Texture2D scene=ScreenDistort_GetSceneTexture(), sceneDepth=ScreenDistort_GetRawDepthTexture(); int has=sceneDepth.id?1:0;
+    /* The snapshot from Capture, never the live scene target: the body pass we are
+     * drawing inside binds that same texture as its colour attachment. */
+    Texture2D scene=s_sceneCopy.id?s_sceneCopy.texture:ScreenDistort_GetSceneTexture();
+    Texture2D sceneDepth=ScreenDistort_GetRawDepthTexture(); int has=sceneDepth.id?1:0;
     Matrix inverseProjection=MatrixInvert(s_fluidProjection);
     Matrix viewToWorld=MatrixInvert(s_fluidView);
     int qualityTier=(int)GfxQuality_Get();

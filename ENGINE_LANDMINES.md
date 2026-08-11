@@ -21,6 +21,61 @@
 | 11 | Colour-only VFX layer clear must preserve shared depth | Anyone adding a render layer over scene depth |
 | 12 | Nonlinear shared body alpha reveals soft VFX edges | Every BODY producer: smoke, trail, particle, decal |
 | 13 | A stale `tuning.cfg` A/B knob substitutes a whole CODE PATH | Anyone debugging a visual against a preset/style/variant knob |
+| 14 | A float render target that is blended into / bilinearly sampled is OPTIONAL hardware | Anyone creating an R32F render target: postFX, particles, fluid, shadow |
+| 15 | Sampling the scene texture while drawing INTO it (refraction/distortion taps) | Any screen-space effect that reads the scene inside a pass that binds it |
+
+---
+
+## 15. A screen-space effect must not sample the target it is drawing into (11/08/2026)
+
+**Symptom.** A refractive/distorting effect stops showing the background and
+collapses to its own opaque colour — water reads as plastic, glass as a flat
+shell. No error, no log line, and every tuning knob (absorption, thickness,
+scattering) fails to bring the background back, because the background was never
+being read.
+
+**Cause.** The effect samples `ScreenDistort_GetSceneTexture()` inside a pass
+whose bound colour attachment IS that texture. GL calls the result undefined;
+Vulkan calls it a read/write hazard. This became true for `FluidSurface` the day
+the split VFX layers were retired (`b03b7b6`): the body pass had always bound a
+separate `vfxBodyTex`, and afterwards it bound `renderTex` itself.
+
+**Rule.** If a pass both reads and writes the scene, snapshot the scene first and
+sample the snapshot — taken at a point where the scene is still only a source. A
+render-layer refactor is never local: whatever changes which target a pass binds
+must be checked against every consumer that samples the scene inside it, because
+the failure looks like an art problem, not a bug. Core detail + guard in
+`core/docs/LANDMINES.md`.
+
+---
+
+## 14. R32F render targets: blending and LINEAR filtering are optional, and the absence is silent (11/08/2026)
+
+**Symptom.** A screen-space pass that additively accumulates into a 32-bit float
+target, or samples one bilinearly, is correct on desktop and produces wrong
+pixels (flat, black, or unaccumulated) on another device. No error, no warning,
+no validation message — the code path that "obviously works" simply does not.
+
+**Cause.** Neither API guarantees those two features for full-precision float.
+Vulkan's Mandatory Format Support tables require `COLOR_ATTACHMENT_BLEND` and
+`SAMPLED_IMAGE_FILTER_LINEAR` for `VK_FORMAT_R16_SFLOAT`, and require only
+`SAMPLED_IMAGE` + `COLOR_ATTACHMENT` for `VK_FORMAT_R32_SFLOAT`. The GLES story
+is the same limit with a louder failure: blending while any draw buffer has
+32-bit float components is `INVALID_OPERATION` without `EXT_float_blend`, and
+LINEAR filtering of 32-bit float needs `OES_texture_float_linear` (ES 3.0
+guarantees filterable float only at 16 bits). Desktop drivers and MoltenVK
+provide all of it, so nothing in the normal dev loop can catch the assumption.
+
+**Rule.** Pick the *narrowest* format that meets the precision need — R16F and
+unorm both guarantee blend + linear everywhere, and 8-bit-packed linear depth is
+filterable and blendable when precision allows. Reach for R32F only where the
+precision is genuinely required, and then ask before relying on the extras: under
+rlvk, `rlvkFormatSupportsBlend()` / `rlvkFormatSupportsLinearFilter()`
+(`Caps.floatBlendR32` / `Caps.floatFilterR32` are detected at init and warn once).
+Note that a separable screen-space filter sampling exact texel offsets needs no
+linear filtering at all — `NEAREST` is both correct and portable there. Full
+entry, with the repro scenario `float_blend_rt`, in
+`third_party/vulkan/docs/LANDMINES.md`.
 
 ---
 
