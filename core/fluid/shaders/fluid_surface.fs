@@ -11,11 +11,6 @@ uniform vec2 u_texel;      // fluid reconstruction texel
 uniform vec2 u_sceneTexel; // full-resolution scene texel
 uniform int u_hasSceneDepth;
 uniform int u_qualityTier;
-/* Diagnostic view selector, 0 = off. TEMPORARY instrumentation for the banding
- * hunt: four hypotheses were fixed without the bands moving, which means the
- * question "which buffer are they in" was never actually answered. Driven by
- * WUXING_FLUID_DEBUG; remove once the answer is known. */
-uniform int u_debugView;
 
 uniform mat4 u_projection;
 uniform mat4 u_inverseProjection;
@@ -272,10 +267,7 @@ void main() {
     vec2 refractOffset = (refractedSlope - incidentSlope) * travelPixels * u_sceneTexel;
     vec2 refractUV = clamp(fragTexCoord + refractOffset, u_sceneTexel, vec2(1.0) - u_sceneTexel);
 
-    /* Kept in a variable so the diagnostic view can report the test's verdict at
-     * the offset it was actually asked about, not at the UV after the snap-back. */
-    bool refractValid = SceneSampleMatchesBase(refractUV, sceneDistanceAtSurface, fluidDistance);
-    if (!refractValid) {
+    if (!SceneSampleMatchesBase(refractUV, sceneDistanceAtSurface, fluidDistance)) {
         refractUV = mix(refractUV, fragTexCoord, 0.70);
     }
 
@@ -439,49 +431,6 @@ void main() {
     float foamMask = clamp(max(shoreline, crest) * foamPattern, 0.0, 0.72);
     vec3 foamColor = mix(u_materialSoft, vec3(1.0), 0.20);
     vec3 foam = foamColor * foamMask * (0.38 + 0.62 * dot(ambient, vec3(0.333333)));
-
-    /* Each view isolates ONE stage, so the bands can be attributed instead of
-     * guessed at. Read them as a decision tree:
-     *   1 NORMAL     bands here => the reconstructed SURFACE is corrugated
-     *                (depth capture or the filter), not the shading
-     *   2 THICKNESS  bands here => the additive thickness pass
-     *   3 SPECULAR   bands here but NOT in 1 => shading aliasing on a smooth
-     *                surface (lobe width, wave perturbation)
-     *   4 WAVE       the perturbation alone, x20; bands here => the sine field
-     *   5 REFRACTION the scene tap alone; bands here => the refraction path,
-     *                which views 6-9 then split:
-     *   6 OFFSET     the refraction UV offset, x400 (red = x, green = y)
-     *   7 VALIDITY   the SceneSampleMatchesBase test as a mask; it is a BINARY
-     *                switch on a continuous field, so its boundary is an
-     *                iso-depth curve — a contour line by construction
-     *   8 PATH       the optical path that scales the offset
-     *  10 |OFFSET|    the offset's magnitude, wrapped for contrast
-     *   9 COPY       the scene copy sampled with NO offset: bands here mean the
-     *                copy itself carries them and the offset maths is innocent */
-    if (u_debugView != 0) {
-        vec3 dbg = vec3(0.0);
-        if (u_debugView == 1) dbg = N * 0.5 + 0.5;
-        else if (u_debugView == 2) dbg = vec3(kernelThickness / 0.16);
-        else if (u_debugView == 3) dbg = specular;
-        else if (u_debugView == 4) dbg = abs(waveSlope) * 20.0;
-        else if (u_debugView == 5) dbg = refractedScene;
-        /* Sub-views that split the refraction path itself. 9 is the decisive
-         * one: it samples the scene copy with NO offset at all, so if the bands
-         * are there the COPY is contaminated and no amount of offset maths will
-         * explain them; if it is clean, they come from where we sample. */
-        /* Offsets are ~13 texels, i.e. ~0.01 in UV: x20 puts that mid-grey and
-         * leaves room to see the sign. x400 saturated and showed nothing. */
-        else if (u_debugView == 6) dbg = vec3(refractOffset * 20.0 + 0.5, 0.5);
-        /* The offset's LENGTH alone, at high contrast — bands in the magnitude
-         * are what a banded sample pattern on a smooth background requires. */
-        else if (u_debugView == 10) dbg = vec3(fract(length(refractOffset) * 200.0));
-        else if (u_debugView == 7) dbg = vec3(refractValid ? 1.0 : 0.0);
-        else if (u_debugView == 8) dbg = vec3(opticalPath / 0.5);
-        else if (u_debugView == 9) dbg = texture(u_sceneTex, fragTexCoord).rgb;
-
-        finalColor = vec4(dbg, surfaceCoverage);
-        return;
-    }
 
     vec3 water = dielectricBase + specular + foam + rimLight;
     finalColor = vec4(water, surfaceCoverage);

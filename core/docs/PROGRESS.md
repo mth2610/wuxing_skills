@@ -610,3 +610,20 @@ trong khuôn khổ separable — và đó là việc đắt, cân nhắc cùng l
 
 Thiết bị đo `u_debugView` vẫn còn trong `fluid_surface.fs` và `fluid_surface.c`
 (mặc định tắt). Gỡ khi nào chốt là không đụng vào biên nữa.
+
+## Dọn dẹp thiết bị đo + nguyên nhân cái lỗ vòng xuyến (2026-08-11)
+
+Đã gỡ hết đồ đo tạm: `u_debugView` (11 chế độ màu trong `fluid_surface.fs` + phần
+nối ở `fluid_surface.c`), ba chế độ pipeline 12/13/14, và `WUXING_PBD_FREEZE`.
+Chúng đã trả lời xong câu hỏi của mình — vân = caustic, chấm vuông = cell hash,
+sọc biên = lấy mẫu một phía, và chi phí solver = overhead mỗi dispatch — nên theo
+quy tắc của module thì chúng phải đi.
+
+**Cái lỗ vòng xuyến, người dùng chẩn ra bằng mắt**: hạt quá to so với bán kính
+vòng. Tôi tính lỗ hình học 1.23 m và tưởng thế là đủ lớn để thấy, nhưng quên rằng
+bề mặt còn được *dựng lại* — mỗi kernel nở thêm 0.095 bán kính vòng, rồi bộ lọc
+bắc cầu nốt phần còn lại. Sửa là chuyện **tỉ lệ**, không phải kích thước: tỉ lệ
+phủ bất biến theo tỉ lệ nên phóng to vòng không giải quyết gì. Làm mỏng CẢ HAI
+(tube 0.12, kernel 0.070) giữ nguyên độ phủ 3.3/2.3/1.5 mà mở lỗ từ 1.23 lên
+1.46 m. Số đã có sẵn trong `water_ring_coverage_test.c`; chưa áp vì nó đổi hình
+ảnh và cần một lần chạy để nhìn.

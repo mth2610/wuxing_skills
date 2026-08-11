@@ -10,7 +10,6 @@
 #include "raymath.h"
 #include <math.h>
 #include <stddef.h>
-#include <stdlib.h>
 
 #define FLUID_OPTICAL_POINT_LIGHTS 4
 
@@ -32,7 +31,6 @@ static int s_sunDirectionLoc, s_sunColorLoc, s_skyAmbientLoc, s_groundAmbientLoc
 static int s_pointLightCountLoc, s_pointLightPosLoc, s_pointLightColorLoc;
 static int s_materialBodyLoc, s_materialGlowLoc, s_materialSoftLoc;
 static int s_timeLoc;
-static int s_debugViewLoc;
 static Matrix s_fluidView, s_fluidProjection;
 static Color s_materialBody = {41, 128, 185, 255};
 static Color s_materialGlow = {80, 180, 255, 255};
@@ -185,7 +183,6 @@ void FluidSurface_Init(int width,int height) {
     s_materialGlowLoc=GetShaderLocation(s_composite,"u_materialGlow");
     s_materialSoftLoc=GetShaderLocation(s_composite,"u_materialSoft");
     s_timeLoc=GetShaderLocation(s_composite,"u_time");
-    s_debugViewLoc=GetShaderLocation(s_composite,"u_debugView");
 }
 void FluidSurface_Unload(void) { UnloadTexture(s_surfaceTex); UnloadRenderTexture(s_capture); UnloadRenderTexture(s_thickness); UnloadRenderTexture(s_smoothA); UnloadRenderTexture(s_smoothB); if(s_sceneCopy.id) { UnloadRenderTexture(s_sceneCopy); s_sceneCopy=(RenderTexture2D){0}; } }
 void FluidSurface_SetMaterialColors(Color body, Color glow, Color soft) {
@@ -365,18 +362,6 @@ void FluidSurface_Composite(void) {
     SetShaderValue(s_composite,s_materialGlowLoc,&materialGlow,SHADER_UNIFORM_VEC3);
     SetShaderValue(s_composite,s_materialSoftLoc,&materialSoft,SHADER_UNIFORM_VEC3);
     SetShaderValue(s_composite,s_timeLoc,&opticalTime,SHADER_UNIFORM_FLOAT);
-    /* TEMPORARY: isolate one stage of the composite so a visual artefact can be
-     * attributed to a buffer instead of guessed at. WUXING_FLUID_DEBUG=1..5, see
-     * the view table in fluid_surface.fs. Remove with the shader block. */
-    {
-        static int s_debugView=-1;
-        if (s_debugView<0) {
-            const char *env=getenv("WUXING_FLUID_DEBUG");
-            s_debugView=env?atoi(env):0;
-            if (s_debugView) TraceLog(LOG_INFO,"FluidSurface: debug view %d active",s_debugView);
-        }
-        SetShaderValue(s_composite,s_debugViewLoc,&s_debugView,SHADER_UNIFORM_INT);
-    }
     SetShaderValue(s_composite,s_pointLightCountLoc,&pointLightCount,SHADER_UNIFORM_INT);
     SetShaderValueV(s_composite,s_pointLightPosLoc,pointLightPos,
                     SHADER_UNIFORM_VEC4,FLUID_OPTICAL_POINT_LIGHTS);

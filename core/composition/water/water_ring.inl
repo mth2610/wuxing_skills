@@ -22,6 +22,15 @@
 // silhouette is maintained by respawning on the mesh, which costs nothing and
 // never explodes.
 
+/* KNOWN: at these proportions the ring reads as a filled disc, not a ring. The
+ * splats are simply too fat for the hole — the tube is 0.22 of the ring radius,
+ * each kernel adds another 0.095, and the surface reconstruction then bridges
+ * what is left, so the 1.2 m of geometric hole never survives to the screen. The
+ * fix is a proportion, not a size: the coverage ratio is scale-invariant, so
+ * growing the ring changes nothing. Thinning BOTH (tube 0.12, kernel 0.070)
+ * holds the same 3.3 / 2.3 / 1.5 coverage while opening the hole from 1.23 m to
+ * 1.46 m — arithmetic already in water_ring_coverage_test.c, but it is a look
+ * change and wants a run in front of it. */
 #define WATER_RING_TUBE_RATIO 0.22f   /* tube radius as a fraction of the ring */
 #define WATER_RING_IDLE_RELEASE 0.25f /* seconds without a call before release */
 #define WATER_RING_MAX_SPAWN 48       /* per-frame ceiling after a hitch */
