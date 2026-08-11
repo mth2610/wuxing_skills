@@ -195,6 +195,11 @@ def main():
     # this. Lower it whenever the run warns about the wall — the fix is not
     # --radial, which was measured moving the 90th-percentile reach only
     # 1.28 -> 1.30 across 8.0 -> 3.0.
+    ap.add_argument("--domain", type=float, default=1.0,
+                    help="widen the simulated box by this factor at the SAME "
+                         "grid resolution. Use it when a run warns about the "
+                         "wall: >1 gives the gas room without weakening the "
+                         "turbulence that shapes its edge")
     ap.add_argument("--fuel-radius", type=float, default=None,
                     help="ignition ball radius as a fraction of the domain. "
                          "Smaller = more room to expand before hitting the wall")
@@ -254,8 +259,34 @@ def main():
     # from lying about the full bake (the trap that cost a 17-minute Mantaflow
     # run earlier).
     res_k = REF_RES / args.res
+
+    # A BIGGER DOMAIN, WITHOUT A BIGGER GRID (--domain).
+    #
+    # The puff overruns the box: 90th-percentile reach 1.26-1.30 of the domain
+    # half-width, ~6% wall shell, so the boundary clamp starts creating mass and
+    # the silhouette becomes partly the box. No crop repairs that — zooming in
+    # hides the clamped region, zooming out frames it.
+    #
+    # The knobs that should have fixed it do not: --radial 8.0 -> 3.0 moved the
+    # reach 1.28 -> 1.30, and --fuel-radius 0.05 -> 0.028 moved it 1.28 -> 1.26.
+    # What drives the expansion is --curl, which is also the only thing that
+    # makes the edge wispy rather than a cutout — one variable, two opposed
+    # consequences, impossible to tune apart.
+    #
+    # This separates them. `--domain D` means "the box is D times wider in
+    # physical terms at the same grid", so the SAME curl produces the same
+    # filaments while the gas covers a smaller fraction of the box. It is
+    # exactly the res normalisation above with one more factor, and it scales
+    # the same three quantities the same three ways:
+    #   advective forces are voxels/step        -> 1/D
+    #   diffusion smooths ~sqrt(k) voxels       -> 1/D^2 (one power apart, as
+    #                                              the note below already says)
+    #   fuel_radius is a fraction of the domain -> 1/D, so the ignition stays
+    #                                              the same PHYSICAL size
+    dom_k = 1.0 / max(args.domain, 1e-3)
     for k in ("radial", "curl", "buoyancy", "swirl", "gravity"):
-        p[k] *= res_k
+        p[k] *= res_k * dom_k
+    p["fuel_radius"] *= dom_k
 
     # DIFFUSION SCALES BY THE SQUARE, not linearly, and it was not scaled at all.
     # It is a per-step fraction of the 6-neighbour average, so over a fixed number
@@ -265,7 +296,7 @@ def main():
     # a velocity (voxels per step) only needs 64/N. Same trap as the forces, one
     # power apart: before this, a preset dialled in at res 64 came back at res 112
     # with different lobes and there was no way to tune cheaply.
-    diff_k = p["diffuse"] / (res_k * res_k)
+    diff_k = p["diffuse"] / (res_k * res_k) * (dom_k * dom_k)
     if diff_k > 0.9:
         # dens <- (1-k)*dens + k*avg is a convex blend only for k <= 1; past that
         # the explicit step oscillates and the field goes negative.

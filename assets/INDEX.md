@@ -183,9 +183,9 @@ body layer, via `ParticleConfig.spriteAnim`. `tuning.cfg → flame_atlas`:
 engine intact.
 
 ```bash
-python3 scripts/flipbook/ti_sim.py fire_puff --res 144 --frames 64 --name fire_wispy --curl 7.5 --viscosity 0.06 --radial 4.2
-python3 scripts/flipbook/render.py build_cache/fire_wispy --cell 256 --supersample 2 --zoom auto --light 1.0 --density-scale 6 --flame-extinction 1.5 --flame-scale 4.5
-python3 scripts/flipbook/pack.py build_cache/fire_wispy/frames --grid 8 --alpha-from-luma 0 --shape puff --out fire_puff_8x8_volume.png
+python3 scripts/flipbook/ti_sim.py fire_puff --res 112 --frames 64 --name fire_eddy --eddy 58 --viscosity 0.06
+python3 scripts/flipbook/render.py build_cache/fire_eddy --cell 256 --supersample 2 --zoom auto --light 1.0 --density-scale 6 --flame-extinction 1.5 --flame-scale 4.5
+python3 scripts/flipbook/pack.py build_cache/fire_eddy/frames --grid 8 --alpha-from-luma 0 --shape puff --out fire_puff_8x8_volume.png
 ```
 
 R emission · G smoke density · B self-shadow · A true opacity — **no colour in
@@ -199,23 +199,33 @@ white-hot core AND a dark rim, which the `_flame` split above physically cannot
 
 Found by setting `flame_body_live = 1` and looking at ONE particle: the sprite
 was a hard-edged lumpy cutout, and no number of them stacked can read as gas.
-Measured on the sheet, the transition band (0.05 < A < 0.95) was **6.9%** of the
-cell with an interior alpha plateau of 0.95 — a sticker, not a volume.
 
-`--curl 7.5 --viscosity 0.06` is what fixed it: **17.5%** transition band, with
-visible filaments in the silhouette. Turbulence has to be allowed to develop and
-viscosity is what smooths it away.
+Softness is measured as band area / covered area (0.05 < A < 0.95 over A > 0.05).
+NOT as a percentage of the cell — that is not scale-invariant, a bigger puff has
+a bigger band at identical softness, and an earlier pass of this work reported a
+~3x improvement that was mostly the puff getting bigger.
 
-MEASURED DEAD END: `--density-scale` is NOT this knob, exactly as the pipeline
-README warns. 9 -> 3.0 -> 1.5 moved the band only 6.9% -> 8.0% -> 9.0% and left
-the interior plateau at 0.92. Do not reach for it again.
+  viscosity 0.22 (original)   0.421     wall clean
+  curl 7.5, viscosity 0.06    0.506     ~6% wall shell  <- rejected
+  eddy 58,  viscosity 0.06    0.560     0.0% wall shell <- shipped
 
-KNOWN TRADE: low viscosity lets turbulence develop AND lets the puff reach the
-domain wall (~6% wall shell), so the outer silhouette of late frames is partly
-the box. Raising viscosity to 0.10 and shortening `--dt` to 0.55 stays inside
-the box but collapses the band back to 5.6% — worse than the original. The two
-are coupled and the domain size is not exposed; the soft edge was judged worth
-the wall.
+WISPS COME FROM `--eddy`, NOT `--curl`. The script's own --eddy help said so
+before any of this started: "curl sets how hard the field stirs, --eddy sets at
+what size. Raising curl to get more billows instead just transports the puff
+further and runs it into the wall." Raising curl to 7.5 did exactly that — 90th
+percentile reach 1.26-1.30 of the domain half-width, boundary clamp creating
+mass, and the silhouette partly the box. eddy is a spatial frequency (turbulence
+cells across the domain) and transports nothing: reach fell to 0.59.
+
+FOUR MEASURED DEAD ENDS on the wall contact, none of which is the lever:
+  --density-scale 9 -> 1.5      band 6.9% -> 9.0% of cell, interior still 0.92
+  --radial        8.0 -> 3.0    reach 1.28 -> 1.30
+  --fuel-radius   0.05 -> 0.028 reach 1.28 -> 1.26
+  --domain        1.0 -> 1.7    reach 1.28 -> 1.23
+  --dt            0.9 -> 0.5    coverage 61% -> 50%, but band collapses to 4.9%
+The last two exist because of this hunt: --fuel-radius and --domain were added
+to ti_sim.py to fix it and did not, which is worth knowing before reaching for
+them.
 
 `--density-scale 6` and `--flame-extinction 1.5` keep it TRANSLUCENT rather than
 a saturated plate: the default scale drives the
