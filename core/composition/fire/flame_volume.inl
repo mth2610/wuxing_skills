@@ -135,6 +135,10 @@ static SpriteAnim s_fvolPuffAnim = {0};
 static float s_fvolVolume = 1.0f;
 static Texture2D s_fvolVolumeTex = {0};
 static SpriteAnim s_fvolVolumeAnim = {0};
+// Generated occupied bounds for the directionless puff. They reduce the cost
+// of its transparent margins while SpriteAnim keeps the original cell pivot,
+// so this is not an authored direction or a silhouette change.
+#include "flame_volume_puff_metadata.inl"
 // Exposure on the sheet's emission before it indexes the ramp — "how much of
 // the flame is white-hot". The sim normalises emission to its own 99.5th
 // percentile and has no idea how bright this effect should read, so this is
@@ -201,10 +205,12 @@ typedef struct {
     float lightTimer;
     float legacyFeedAge;
     float seed;
+    unsigned int generation;
 } VC_FlameEmitter;
 
 static VC_FlameEmitter s_fvolEmitters[FVOL_MAX_EMITTERS];
 static int s_fvolNextEmitter = 0;
+static unsigned int s_fvolNextGeneration = 1;
 
 static void FVol_InitShared(void)
 {
@@ -246,6 +252,9 @@ static void FVol_InitShared(void)
         SpriteAnim_Init(&s_fvolVolumeAnim, 8, 8, 64,
                         64.0f / (FVOL_BODY_LIFE_MAX + FVOL_BODY_PHASE_MAX),
                         ANIM_ONCE);
+        SpriteAnim_SetFrameMetadata(&s_fvolVolumeAnim, s_fvolVolumeFrameMeta,
+                                    (int)(sizeof(s_fvolVolumeFrameMeta) /
+                                          sizeof(s_fvolVolumeFrameMeta[0])));
     }
     else
         TraceLog(LOG_WARNING, "FlameVolume: fire_puff_8x8_volume.png missing — "
@@ -585,6 +594,20 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
                 // as well, and its whole job is to stop the tail reading flat.
                 .spriteAnim = &s_fvolVolumeAnim,
                 .spriteAnimPhase = Random01() * FVOL_BODY_PHASE_MAX,
+                // Never faster than the derived sheet rate: phase + lifetime
+                // must stay inside its 64 authored frames. Slower variation,
+                // full phase and mirrors are enough to break clone-lockstep on
+                // a directionless asset without baking directional tongues.
+                .spriteAnimRate = Math_Mix(0.82f, 1.0f, Random01()),
+                .spriteFlipX = Random01() < 0.5f,
+                .spriteFlipY = Random01() < 0.5f,
+                // A moving source carries its youngest billows along, then
+                // releases them into the force field. Generation makes this
+                // safe when the 12-slot emitter pool is recycled.
+                .followTarget = &emitter->pos,
+                .followTargetGeneration = &emitter->generation,
+                .followGeneration = emitter->generation,
+                .followStrength = 0.70f,
                 .rotation = Random01() * 2.0f * PI,
                 .angularVelocity = (Random01() - 0.5f) * 0.5f,
             });
@@ -809,12 +832,15 @@ int VFX_FlameEmitter_Spawn(Vector3 pos, VC_MaterialId matId, float scale, float 
     for (int i = 0; i < FVOL_MAX_EMITTERS; ++i)
         if (!s_fvolEmitters[i].active) { slot = i; break; }
     if (slot < 0) slot = s_fvolNextEmitter++ % FVOL_MAX_EMITTERS;
+    unsigned int generation = s_fvolNextGeneration++;
+    if (generation == 0) generation = s_fvolNextGeneration++;
     s_fvolEmitters[slot] = (VC_FlameEmitter){
         .active = true, .pos = pos, .matId = matId,
         .scale = scale > 0.0f ? scale : 1.0f,
         .intensity = intensity < 0.0f ? 0.0f : (intensity > 1.0f ? 1.0f : intensity),
         .legacyFeedAge = -1.0f,
         .seed = (float)slot * 1.6180339f + pos.x * 0.37f + pos.z * 0.71f,
+        .generation = generation,
     };
     return slot;
 }

@@ -45,6 +45,24 @@ struct ParticleConfig {
   // templates, and they all still start at frame 0 together.
   // Randomise it over the sheet's duration; 0 keeps the old behaviour.
   float spriteAnimPhase;
+  // Per-particle temporal/spatial variation. A zero rate is treated as 1.0,
+  // so every existing aggregate initializer retains its old playback. Flip is
+  // deliberately applied at draw time: it does not alter an asset or make a
+  // directional sheet the default building block for a fire composition.
+  float spriteAnimRate;
+  bool spriteFlipX;
+  bool spriteFlipY;
+
+  // Optional emitter attachment. The particle inherits the target's movement,
+  // scaled by followStrength and a release curve (NULL = 1 -> 0 over life).
+  // Both pointers must refer to stable storage for the particle's lifetime.
+  // Supplying a generation pointer prevents particles from following a newly
+  // allocated effect that reuses the same pool slot.
+  const Vector3 *followTarget;
+  const unsigned int *followTargetGeneration;
+  unsigned int followGeneration;
+  float followStrength;
+  const SkillCurve *followCurve;
 
   // Optional over-lifetime multiplier curves (t01 = 0 at spawn, 1 at death —
   // same "age fraction" convention as `gradient` above). NULL = today's
@@ -123,6 +141,13 @@ static inline void ParticleConfig_Unify(ParticleConfig *cfg) {
     cfg->physics.speed = 0.0f;
     cfg->physics.forceField = cfg->forceField;
   }
+  if (cfg->physics.followTarget == NULL && cfg->followTarget != NULL) {
+    cfg->physics.followTarget = cfg->followTarget;
+    cfg->physics.followTargetGeneration = cfg->followTargetGeneration;
+    cfg->physics.followGeneration = cfg->followGeneration;
+    cfg->physics.followStrength = cfg->followStrength;
+    cfg->physics.followCurve = cfg->followCurve;
+  }
   if (cfg->physics.collisionEnabled == false && cfg->collisionEnabled != false) {
     cfg->physics.collisionEnabled = cfg->collisionEnabled;
     cfg->physics.collisionElasticity = cfg->collisionElasticity;
@@ -132,6 +157,9 @@ static inline void ParticleConfig_Unify(ParticleConfig *cfg) {
   }
   if (cfg->animation.spriteAnim == NULL && cfg->spriteAnim != NULL) {
     cfg->animation.spriteAnim = cfg->spriteAnim;
+    cfg->animation.spriteAnimRate = cfg->spriteAnimRate;
+    cfg->animation.spriteFlipX = cfg->spriteFlipX;
+    cfg->animation.spriteFlipY = cfg->spriteFlipY;
     cfg->animation.radiusCurve = cfg->radiusCurve;
     cfg->animation.speedCurve = cfg->speedCurve;
     cfg->animation.alphaCurve = cfg->alphaCurve;
@@ -169,6 +197,13 @@ static inline void ParticleConfig_Unify(ParticleConfig *cfg) {
   if (cfg->forceField == NULL && cfg->physics.forceField != NULL) {
     cfg->forceField = cfg->physics.forceField;
   }
+  if (cfg->followTarget == NULL && cfg->physics.followTarget != NULL) {
+    cfg->followTarget = cfg->physics.followTarget;
+    cfg->followTargetGeneration = cfg->physics.followTargetGeneration;
+    cfg->followGeneration = cfg->physics.followGeneration;
+    cfg->followStrength = cfg->physics.followStrength;
+    cfg->followCurve = cfg->physics.followCurve;
+  }
   if (cfg->position.x == 0.0f && cfg->position.y == 0.0f && cfg->position.z == 0.0f) {
     cfg->position = cfg->physics.position;
     cfg->velocity = cfg->physics.velocity;
@@ -182,6 +217,9 @@ static inline void ParticleConfig_Unify(ParticleConfig *cfg) {
   }
   if (cfg->spriteAnim == NULL && cfg->animation.spriteAnim != NULL) {
     cfg->spriteAnim = cfg->animation.spriteAnim;
+    cfg->spriteAnimRate = cfg->animation.spriteAnimRate;
+    cfg->spriteFlipX = cfg->animation.spriteFlipX;
+    cfg->spriteFlipY = cfg->animation.spriteFlipY;
   }
   if (cfg->radiusCurve == NULL && cfg->animation.radiusCurve != NULL) {
     cfg->radiusCurve = cfg->animation.radiusCurve;

@@ -466,11 +466,13 @@ _Inline helpers / macros only — see header._
   Rectangle SpriteAnim_GetUVRect(const SpriteAnim *anim);
   bool SpriteAnim_IsFinished(const SpriteAnim *anim);
   void SpriteAnim_Reset(SpriteAnim *anim);
+  void SpriteAnim_SetFrameMetadata(SpriteAnim *anim, const SpriteAnimFrameMeta *meta, int metaCount);
   Rectangle SpriteAnim_CalculateUV(const SpriteAnim *template, float age, int *outFrame);
   Rectangle SpriteAnim_CalculateUVBlend(const SpriteAnim *template, float age, Rectangle *outNext, float *outBlend);
+  SpriteAnimFrameSample SpriteAnim_CalculateFrameSampleBlend(const SpriteAnim *template, float age, SpriteAnimFrameSample *outNext, float *outBlend);
 ```
 **Enums:** AnimPlayMode { ANIM_ONCE,ANIM_LOOP,ANIM_RANDOM_START,ANIM_PING_PONG }
-**Structs** (fields in header): SpriteAnim
+**Structs** (fields in header): SpriteAnimFrameMeta, SpriteAnimFrameSample, SpriteAnim
 
 ### `core/vfx_light.h`
 ```c

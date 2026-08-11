@@ -30,5 +30,6 @@ typedef struct Color {
 typedef struct Vector2 { float x, y; } Vector2;
 typedef struct Vector3 { float x, y, z; } Vector3;
 typedef struct Vector4 { float x, y, z, w; } Vector4;
+typedef struct Rectangle { float x, y, width, height; } Rectangle;
 
 #endif // RAYLIB_H

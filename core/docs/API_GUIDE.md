@@ -255,6 +255,14 @@ typedef struct {
     const ForceField *forceField;        // Dynamic steering
     const ColorGradient *gradient;       // Overrides colorStart/colorEnd
     const SpriteAnim *spriteAnim;        // Optional sprite animation
+    float spriteAnimPhase;               // Per-particle time offset (seconds)
+    float spriteAnimRate;                // 0 = legacy 1.0x; use <= 1.0 for ANIM_ONCE sheets
+    bool spriteFlipX, spriteFlipY;       // UV variation; ideal for directionless puffs
+    const Vector3 *followTarget;         // Optional stable emitter position
+    const unsigned int *followTargetGeneration; // Optional recycled-slot guard
+    unsigned int followGeneration;
+    float followStrength;                // Target displacement inherited at birth
+    const SkillCurve *followCurve;       // NULL = releases linearly by death
     const SkillCurve *radiusCurve;       // Optional: multiplies `radius` when drawn
     const SkillCurve *speedCurve;        // Optional: multiplies velocity's contribution to position each Update frame
     const SkillCurve *alphaCurve;        // Optional: multiplies colorStart.a, overriding the colorStart/colorEnd/gradient alpha
@@ -266,6 +274,8 @@ typedef struct {
 ```
 * **Color Priority:** If `gradient` is not `NULL`, `colorStart` and `colorEnd` are ignored. Always prefer `ColorGradient` for multi-stage color shifts (e.g. fire core white -> orange -> dark ash).
 * **Sub-Emitter Lifecycle:** Sub-emitters (`onDeathEmit` and `onLiveEmit`) inherit the parent position but **do not** inherit velocity. Configs passed to sub-emitters **MUST** be declared static (persistent scope).
+* **Flipbook variation:** A reusable, directionless flipbook should use a randomized `spriteAnimPhase`, a slightly slower `spriteAnimRate` (never make an `ANIM_ONCE` sheet overrun its last authored frame), and X/Y flips. Shape still comes from emitter distribution, velocity and force fields.
+* **Emitter follow:** `followTarget` carries only source displacement, then releases the particle through `followCurve` (or a default linear release). Its target pointer must remain valid for the particle lifetime. For pooled emitters, provide `followTargetGeneration` and the captured `followGeneration`, otherwise particles can attach to an unrelated effect after the slot is reused.
 * **Over-lifetime curves (`radiusCurve`/`speedCurve`/`alphaCurve`, `core/skill_curve.h`):** all three are `NULL` by default (today's exact legacy behavior — fixed radius, physics-only velocity, colorStart/colorEnd/gradient's own alpha). When set, each is sampled fresh every frame at `t01 = 1.0 - lifeRatio` (0 at spawn, 1 at death — same "age fraction" convention `gradient` already uses) via `SkillCurve_Eval`, and **multiplies** the corresponding base value: `radiusCurve` scales the drawn radius, `speedCurve` scales only this frame's position step from `velocity` (the stored velocity itself is untouched, so it composes cleanly with `forceField`/`WindZone` physics instead of compounding), `alphaCurve` scales `colorStart.a` and overrides whatever alpha `colorStart`/`colorEnd`/`gradient` would have produced (RGB is unaffected). This is the mechanism for a skill's per-phase "particle size/speed/opacity over its own short lifetime" tunables — see `fire_skill.c`/`thunder_orb_skill.c` for the pattern: one `static SkillCurve` per phase per property, seeded flat at `1.0` via `SkillCurve_SetConstant` (a no-op multiplier), registered as a curve-kind `SkillTunableEntry`, and pointed to by every `ParticleConfig` spawned in that phase.
 
 ### Shared VFX Contrast Profiles (`core/vfx_contrast.h`)

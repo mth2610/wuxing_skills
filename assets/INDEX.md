@@ -182,10 +182,12 @@ body layer, via `ParticleConfig.spriteAnim`. `tuning.cfg → flame_atlas`:
 **never split**: this is the four-channel `VOLUME` layout delivered to the
 engine intact.
 
+The committed texture uses the directionless `fire_volume_puff` preset below.
+
 ```bash
-python3 scripts/flipbook/ti_sim.py fire_puff --res 112 --frames 64 --name fire_eddy --eddy 58 --viscosity 0.06
-python3 scripts/flipbook/render.py build_cache/fire_eddy --cell 256 --supersample 2 --zoom auto --light 1.0 --density-scale 6 --flame-extinction 1.5 --flame-scale 4.5
-python3 scripts/flipbook/pack.py build_cache/fire_eddy/frames --grid 8 --alpha-from-luma 0 --shape puff --out fire_puff_8x8_volume.png
+python3 scripts/flipbook/ti_sim.py fire_volume_puff --res 96 --frames 64 --name fire_volume_puff
+python3 scripts/flipbook/render.py build_cache/fire_volume_puff --cell 256 --supersample 2 --zoom auto --light 1.0 --density-scale 6 --flame-extinction 1.5 --flame-scale 4.5
+python3 scripts/flipbook/pack.py build_cache/fire_volume_puff/frames --grid 8 --alpha-from-luma 0 --shape puff --out fire_puff_8x8_volume.png --meta-out core/composition/fire/flame_volume_puff_metadata.inl --meta-symbol s_fvolVolumeFrameMeta
 ```
 
 R emission · G smoke density · B self-shadow · A true opacity — **no colour in
@@ -207,7 +209,8 @@ a bigger band at identical softness, and an earlier pass of this work reported a
 
   viscosity 0.22 (original)   0.421     wall clean
   curl 7.5, viscosity 0.06    0.506     ~6% wall shell  <- rejected
-  eddy 58,  viscosity 0.06    0.560     0.0% wall shell <- shipped
+  eddy 58,  viscosity 0.06    0.560     0.0% wall shell <- prior fire_eddy bake
+  fire_volume_puff             1.23 lobes, 0/64 clipped       <- current bake
 
 WISPS COME FROM `--eddy`, NOT `--curl`. The script's own --eddy help said so
 before any of this started: "curl sets how hard the field stirs, --eddy sets at
@@ -242,13 +245,16 @@ construction (gravity 0, buoyancy 0, flat 1.0), so no bake setting turns it into
 a torch tongue. That needs the `fire` COLUMN preset baked as a second VOLUME
 sheet — a separate asset, not a knob.
 
-Measured: R mean 38 / sd 47 (a real temperature field), B/G 0.44 mean
-surviving-light fraction. Audited: cell coverage 21.1%, lobes 1.14, 0/64 frames
-touch the border.
+Measured: R mean 0.068 / sd 0.159 (a real temperature field), G mean 0.149,
+B/G 0.643 mean surviving-light fraction. Audited: cell coverage 28.2%, flame
+coverage 10.7%, smoke coverage 19.8%, lobes 1.23, 0/64 frames touch the border.
 
 **Consumed by** `VFX_FlameEmitter` (`core/composition/fire/flame_volume.inl`)
 when `tuning.cfg → flame_volume = 1` (the default), through
 `particle_lit.fs`'s volume branch with `VFX_BLEND_PREMULTIPLIED`.
+The same pack command regenerates its per-frame crop metadata: Core samples
+only occupied texels while preserving the original cell pivot, reducing
+transparent fill-rate without changing the directionless asset.
 
 ## smoke_puff_8x8.png + _flame / _smoke (Đợt E / E4 — flipbook) — IN USE
 

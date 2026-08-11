@@ -72,6 +72,32 @@ PRESETS = {
         # sheet burns to the last frame. 0.5 put the flame out by frame 20 of 64.
         cool=0.22, soot=0.8),
 
+    # The packed VOLUME flame is one directionless combustion parcel.  It must
+    # stay free of lift, fall, and any baked tongue silhouette: those are
+    # emitter/force-field decisions.  Its job is a continuous local gas parcel
+    # with a hot porous interior and soot that appears during cooling, never a
+    # collection of visibly separate sub-puffs.
+    #
+    # This is intentionally separate from fire_puff.  The latter also feeds the
+    # legacy split FLIPBOOK, whose existing look must not change when the volume
+    # path is tuned.
+    "fire_volume_puff": dict(
+        dt=0.9, gravity=0.0, flat=1.0, shell=0.0, impulse=0.22,
+        fuel_dens=1.0, fuel_radius=0.05, fuel_frames=0.40,
+        # One connected ignition source.  Five explicit source lobes survived
+        # packing as five bright islands, so a dense emitter read as glued-together
+        # chunks instead of one turbulent volume.
+        source_lobes=1,
+        radial=8.0, curl=2.4, swirl=4.0,
+        # Fine eddies and low viscosity break the density into gas parcels.
+        # They do not pick an up direction; random billboard rotation preserves
+        # this primitive's use for any emitter orientation.
+        eddy=58.0, diffuse=0.045, viscosity=0.06, buoyancy=0.0,
+        # Keep incandescent gas present longer and convert less of its lost heat
+        # into soot.  The previous volume bake was soot-dominant, making a clean
+        # fire emitter read as a smoke explosion before composition could shape it.
+        cool=0.18, soot=0.45),
+
     # A SMOKE puff, as a sprite. Same radial-burst skeleton as fire_puff, with
     # the combustion turned into an instant hand-off: cool is high and soot is
     # 1.0, so the little heat that is injected becomes density within a few
@@ -405,9 +431,11 @@ def main():
                 if d < r:
                     m = (1.0 - d / r) ** 0.7
             else:
-                # Five overlapping, asymmetric seed clumps. Their locations
-                # are fixed in local space so the event evolves coherently
-                # frame-to-frame; only the existing cell jitter is random.
+                # Up to five overlapping seed clumps. Their locations are fixed
+                # in local space so the event evolves coherently frame-to-frame;
+                # only the existing cell jitter is random.  They create local
+                # porous structure, not an effect-level direction: this is a
+                # directionless parcel and the emitter owns its silhouette.
                 for l in ti.static(range(5)):
                     off = ti.Vector([0.0, 0.0, 0.0])
                     if ti.static(l == 0): off = ti.Vector([-0.48, 0.10, -0.12])
@@ -415,8 +443,9 @@ def main():
                     if ti.static(l == 2): off = ti.Vector([ 0.08, 0.44, -0.28])
                     if ti.static(l == 3): off = ti.Vector([-0.16,-0.36,  0.40])
                     if ti.static(l == 4): off = ti.Vector([ 0.34, 0.22,  0.36])
-                    dl = (ti.cast(I, ti.f32) - (c + off * r)).norm()
-                    m = ti.max(m, ti.max(0.0, 1.0 - dl / (r * 0.68)) ** 0.7)
+                    if l < source_lobes:
+                        dl = (ti.cast(I, ti.f32) - (c + off * r)).norm()
+                        m = ti.max(m, ti.max(0.0, 1.0 - dl / (r * 0.68)) ** 0.7)
             if m > 0.0:
                 # SOLID BALL (shell = 0) or a HOLLOW SHELL. A detonation ignites
                 # a surface, not a volume: the reference the owner gave is dark

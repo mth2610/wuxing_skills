@@ -54,11 +54,24 @@ typedef struct {
     float collisionFloorY;     // local floor level
     const struct ParticleConfig *onCollisionEmit; // sub-emitter spawned on bounce
     int onCollisionEmitCount;
+
+    // Optional emitter attachment. The target and generation pointers must stay
+    // valid for the particle's lifetime. A generation mismatch detaches the
+    // particle rather than following a recycled emitter slot.
+    const Vector3 *followTarget;
+    const unsigned int *followTargetGeneration;
+    unsigned int followGeneration;
+    float followStrength;              // 1 = inherit target displacement
+    const SkillCurve *followCurve;     // NULL = linear release over lifetime
 } VFX_PhysicsConfig;
 
 // 4. Animation Config
 typedef struct {
     const SpriteAnim *spriteAnim;
+    // Per-particle timing/mirroring. A zero rate means 1.0 for compatibility.
+    float spriteAnimRate;
+    bool spriteFlipX;
+    bool spriteFlipY;
     const SkillCurve *radiusCurve;
     const SkillCurve *speedCurve;
     const SkillCurve *alphaCurve;

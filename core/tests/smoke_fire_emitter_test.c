@@ -17,6 +17,17 @@ int main(void) {
     Check(Has(fire, "FVOL_MAX_EMITTERS") && Has(fire, "float *bodyAccum = &emitter->bodyAccum"), "fire has no shared accumulator");
     Check(Has(fire, "emitter->lightTimer") && Has(fire, "VFX_FlameEmitter_Stop"), "fire light timer and lifecycle are per instance");
     Check(Has(fire, "emitter->legacyFeedAge > 0.25f") && Has(fire, "legacyFeedAge = 0.0f"), "legacy FlameVolume self-kills after feed stops");
+    Check(Has(fire, "spriteAnimRate = Math_Mix(0.82f, 1.0f") &&
+          Has(fire, "spriteFlipX = Random01() < 0.5f") &&
+          Has(fire, "spriteFlipY = Random01() < 0.5f"),
+          "directionless fire varies phase rate and both UV mirrors per sprite");
+    Check(Has(fire, "followTarget = &emitter->pos") &&
+          Has(fire, "followTargetGeneration = &emitter->generation") &&
+          Has(fire, "generation = s_fvolNextGeneration"),
+          "young fire follows its source and detaches safely on slot reuse");
+    Check(Has(fire, "SpriteAnim_SetFrameMetadata(&s_fvolVolumeAnim") &&
+          Has(fire, "flame_volume_puff_metadata.inl"),
+          "volume flipbook binds bake-generated per-frame crop metadata");
     Check(Has("core/composition/visual_composer.c", "SmokeEmitter_Update(dt);") && Has("core/composition/visual_composer.c", "VC_FlameEmitter_Update(dt);"), "both pools are ticked");
     return fails ? 1 : 0;
 }

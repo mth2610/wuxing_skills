@@ -20,6 +20,12 @@ python3 scripts/flipbook/pack.py build_cache/smoke_puff/frames --grid 8 \
 Output lands in `assets/textures/`. `--split` also writes `<name>_flame.png` and
 `<name>_smoke.png`, the two single-population sheets the engine actually binds.
 
+For a Core consumer that supports `SpriteAnim` frame metadata, append
+`--meta-out <consumer>.inl --meta-symbol <symbol>`. It records each frame's
+occupied crop in local UV space. Runtime scales and offsets the billboard to
+retain the original pivot, so it saves transparent fill-rate without changing
+the asset's silhouette or directionality.
+
 Shipping presets: `fire_puff`, `smoke_puff` (both in use), `fire` (column),
 `smoke`.
 

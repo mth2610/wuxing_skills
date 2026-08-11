@@ -65,6 +65,15 @@ typedef struct
   const ColorGradient *gradient;
   const SpriteAnim *spriteAnim;
   float spriteAnimPhase;
+  float spriteAnimRate;
+  bool spriteFlipX;
+  bool spriteFlipY;
+  const Vector3 *followTarget;
+  const unsigned int *followTargetGeneration;
+  unsigned int followGeneration;
+  Vector3 followTargetLast;
+  float followStrength;
+  const SkillCurve *followCurve;
   unsigned int texId;   // 0 = use the batch default passed to DrawParticles
   int blendMode;        // VFX_BlendMode — see the blend law in vfx_config.h
   int unlit;            // 1 = emissive, skip the lighting multiply
@@ -245,6 +254,15 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->gradient = config.gradient;
   p->spriteAnim = config.spriteAnim;
   p->spriteAnimPhase = config.spriteAnimPhase;
+  p->spriteAnimRate = config.spriteAnimRate > 0.0f ? config.spriteAnimRate : 1.0f;
+  p->spriteFlipX = config.spriteFlipX;
+  p->spriteFlipY = config.spriteFlipY;
+  p->followTarget = config.followTarget;
+  p->followTargetGeneration = config.followTargetGeneration;
+  p->followGeneration = config.followGeneration;
+  p->followTargetLast = config.followTarget ? *config.followTarget : (Vector3){0};
+  p->followStrength = config.followStrength;
+  p->followCurve = config.followCurve;
   p->texId = config.render.texture.id;
   p->blendMode = config.render.blendMode;
   p->unlit = config.render.unlit;
@@ -385,6 +403,28 @@ void UpdateParticles(float dt)
       }
       Particle_Deactivate(i);
       continue;
+    }
+
+    // Follow carries the emitter's *displacement*, not its absolute position:
+    // the puff stays a puff after release instead of snapping back to the
+    // source every frame. A generation mismatch means a static pool slot has
+    // been recycled; detach safely rather than gluing old smoke to new fire.
+    if (p->followTarget != NULL &&
+        (p->followTargetGeneration == NULL ||
+         *p->followTargetGeneration == p->followGeneration))
+    {
+      Vector3 now = *p->followTarget;
+      float ageT = 1.0f - Clamp(p->lifetime / p->maxLifetime, 0.0f, 1.0f);
+      float strength = p->followStrength *
+          (p->followCurve ? SkillCurve_Eval(p->followCurve, ageT) : (1.0f - ageT));
+      p->x += (now.x - p->followTargetLast.x) * strength;
+      p->y += (now.y - p->followTargetLast.y) * strength;
+      p->z += (now.z - p->followTargetLast.z) * strength;
+      p->followTargetLast = now;
+    }
+    else if (p->followTargetGeneration != NULL)
+    {
+      p->followTarget = NULL;
     }
 
     if (p->hasLiveEmit)
@@ -1278,20 +1318,23 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     }
 
     // Đọc UV từ hoạt cảnh Sprite sheet atlas
-    Rectangle uv = { 0.0f, 0.0f, 1.0f, 1.0f };
-    Rectangle uvNext = uv;
+    SpriteAnimFrameSample sample = {
+        .uv = {0.0f, 0.0f, 1.0f, 1.0f}, .offset = {0}, .scale = {1.0f, 1.0f}};
+    SpriteAnimFrameSample sampleNext = sample;
     float     fbBlend = 0.0f;
     if (p->spriteAnim)
     {
       // Phase-shifted age: without the offset every sprite from one burst
       // holds the same frame as every other (see ParticleConfig.spriteAnimPhase).
-      float age = p->maxLifetime - p->lifetime + p->spriteAnimPhase;
+      float age = (p->maxLifetime - p->lifetime) * p->spriteAnimRate +
+                  p->spriteAnimPhase;
       // Đợt E / E4 — cross-faded flipbook. Snapping to whole frames makes an
       // authored sheet read as the sprites flipping back and forth (32 fps atlas
       // against a 60 fps render, ~2 render frames per atlas frame, then a jump to
       // a different simulation state). Blending the two adjacent frames removes
       // the jump entirely.
-      uv = SpriteAnim_CalculateUVBlend(p->spriteAnim, age, &uvNext, &fbBlend);
+      sample = SpriteAnim_CalculateFrameSampleBlend(p->spriteAnim, age,
+                                                     &sampleNext, &fbBlend);
       // Kill switch + A/B. Cross-fading emits TWO quads per particle, so this is
       // also the lever if the vertex cost ever matters on a weak device.
       // Registered lazily on first use, never from an Init (docs/LANDMINES.md).
@@ -1323,9 +1366,27 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     // The mid-blend coverage dip this causes (two alpha draws are not exactly a
     // lerp) is ~7% at smoke's 0.28 alpha and is not visible; it would matter for
     // near-opaque sprites, which flipbooks here are not.
-    #define PS_EMIT_QUAD(_uv, _a)                                                  \
+    #define PS_EMIT_QUAD(_sample, _a)                                              \
       do {                                                                         \
         if ((_a) > 0) {                                                            \
+          const SpriteAnimFrameSample psSample = (_sample);                       \
+          const Rectangle psUV = psSample.uv;                                     \
+          const float psU0 = p->spriteFlipX ? psUV.x + psUV.width : psUV.x;       \
+          const float psU1 = p->spriteFlipX ? psUV.x : psUV.x + psUV.width;       \
+          const float psV0 = p->spriteFlipY ? psUV.y + psUV.height : psUV.y;      \
+          const float psV1 = p->spriteFlipY ? psUV.y : psUV.y + psUV.height;      \
+          const float psRx = rx * psSample.scale.x;                               \
+          const float psRy = ry * psSample.scale.x;                               \
+          const float psRz = rz * psSample.scale.x;                               \
+          const float psUx = ux * psSample.scale.y;                               \
+          const float psUy = uy * psSample.scale.y;                               \
+          const float psUz = uz * psSample.scale.y;                               \
+          const float psX = p->x - 2.0f * (rx * psSample.offset.x +              \
+                                           ux * psSample.offset.y);                \
+          const float psY = p->y - 2.0f * (ry * psSample.offset.x +              \
+                                           uy * psSample.offset.y);                \
+          const float psZ = p->z - 2.0f * (rz * psSample.offset.x +              \
+                                           uz * psSample.offset.y);                \
           rlColor4ub(c.r, c.g, c.b, (unsigned char)(_a));                           \
           /* V runs DOWN the image while +up runs UP in the world, so the      \
              top-left texel must land on the TOP vertex. It used to be paired    \
@@ -1333,26 +1394,26 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
              vertically. Nobody noticed because every sprite this engine had was \
              round and symmetric; the E4 flame flipbook, which has an UP, came   \
              out upside down. */                                                 \
-          rlTexCoord2f((_uv).x, (_uv).y + (_uv).height);                          \
-          rlVertex3f(p->x + rx - ux, p->y + ry - uy, p->z + rz - uz);              \
-          rlTexCoord2f((_uv).x, (_uv).y);                                          \
-          rlVertex3f(p->x + rx + ux, p->y + ry + uy, p->z + rz + uz);              \
-          rlTexCoord2f((_uv).x + (_uv).width, (_uv).y);                            \
-          rlVertex3f(p->x - rx + ux, p->y - ry + uy, p->z - rz + uz);              \
-          rlTexCoord2f((_uv).x + (_uv).width, (_uv).y + (_uv).height);             \
-          rlVertex3f(p->x - rx - ux, p->y - ry - uy, p->z - rz - uz);              \
+          rlTexCoord2f(psU0, psV1);                                               \
+          rlVertex3f(psX + psRx - psUx, psY + psRy - psUy, psZ + psRz - psUz);    \
+          rlTexCoord2f(psU0, psV0);                                               \
+          rlVertex3f(psX + psRx + psUx, psY + psRy + psUy, psZ + psRz + psUz);    \
+          rlTexCoord2f(psU1, psV0);                                               \
+          rlVertex3f(psX - psRx + psUx, psY - psRy + psUy, psZ - psRz + psUz);    \
+          rlTexCoord2f(psU1, psV1);                                               \
+          rlVertex3f(psX - psRx - psUx, psY - psRy - psUy, psZ - psRz - psUz);    \
         }                                                                          \
       } while (0)
 
     if (fbBlend > 0.001f)
     {
-      PS_EMIT_QUAD(uv,     (float)c.a * (1.0f - fbBlend));
-      PS_EMIT_QUAD(uvNext, (float)c.a * fbBlend);
+      PS_EMIT_QUAD(sample,     (float)c.a * (1.0f - fbBlend));
+      PS_EMIT_QUAD(sampleNext, (float)c.a * fbBlend);
       s_perfQuads += 2;
     }
     else
     {
-      PS_EMIT_QUAD(uv, (float)c.a);
+      PS_EMIT_QUAD(sample, (float)c.a);
       s_perfQuads++;
     }
     #undef PS_EMIT_QUAD
