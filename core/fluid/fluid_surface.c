@@ -23,7 +23,7 @@ static Texture2D s_surfaceTex;
 static RenderTexture2D s_capture, s_thickness, s_smoothA, s_smoothB;
 static RenderTexture2D s_sceneCopy;   // refraction source, see FluidSurface_LoadColorTarget
 static Shader s_captureShader, s_thicknessShader, s_smooth, s_composite;
-static int s_texelLoc, s_dirLoc, s_depthRangeLoc, s_fillLoc;
+static int s_texelLoc, s_dirLoc, s_fillLoc;
 static int s_smoothProjectionLoc, s_smoothInverseProjectionLoc;
 static int s_kernelRadiusLoc, s_filterRadiusLoc;
 static int s_compositeTexelLoc, s_sceneTexelLoc, s_thicknessLoc, s_sceneLoc, s_sceneDepthLoc, s_hasDepthLoc;
@@ -172,7 +172,6 @@ void FluidSurface_Init(int width,int height) {
     SetTextureFilter(s_surfaceTex, TEXTURE_FILTER_BILINEAR);
     s_texelLoc=GetShaderLocation(s_smooth,"u_texel");
     s_dirLoc=GetShaderLocation(s_smooth,"u_direction");
-    s_depthRangeLoc=GetShaderLocation(s_smooth,"u_depthRange");
     s_fillLoc=GetShaderLocation(s_smooth,"u_fillHoles");
     s_smoothProjectionLoc=GetShaderLocation(s_smooth,"u_projection");
     s_smoothInverseProjectionLoc=GetShaderLocation(s_smooth,"u_inverseProjection");
@@ -290,7 +289,6 @@ void FluidSurface_Capture(Camera3D camera) {
     }
     EndBlendMode(); rlDrawRenderBatchActive(); rlEnableDepthTest(); rlEnableDepthMask(); EndMode3D(); EndTextureMode();
     Vector2 texel={1.0f/s_capture.texture.width,1.0f/s_capture.texture.height};
-    float depthRange=s_reconstructionRadius*9.0f;
     /* A CEILING now, not the radius itself: the filter derives its own reach per
      * pixel from the kernel's projected size (fluid_depth_narrow_range.fs), so
      * this only bounds what a close-up body may cost. The old values WERE the
@@ -311,7 +309,7 @@ void FluidSurface_Capture(Camera3D camera) {
         Vector2 horizontal={1.0f,0.0f}, vertical={0.0f,1.0f};
         Texture2D source = iteration ? s_smoothB.texture : s_capture.texture;
         int fillHoles=iteration==0;
-        BeginTextureMode(s_smoothA); ClearBackground(WHITE); BeginShaderMode(s_smooth); SetShaderValue(s_smooth,s_texelLoc,&texel,SHADER_UNIFORM_VEC2); SetShaderValue(s_smooth,s_dirLoc,&horizontal,SHADER_UNIFORM_VEC2); SetShaderValue(s_smooth,s_depthRangeLoc,&depthRange,SHADER_UNIFORM_FLOAT); SetShaderValue(s_smooth,s_kernelRadiusLoc,&s_reconstructionRadius,SHADER_UNIFORM_FLOAT); SetShaderValue(s_smooth,s_filterRadiusLoc,&filterRadius,SHADER_UNIFORM_INT); SetShaderValueMatrix(s_smooth,s_smoothProjectionLoc,s_fluidProjection); SetShaderValueMatrix(s_smooth,s_smoothInverseProjectionLoc,inverseProjection); SetShaderValue(s_smooth,s_fillLoc,&fillHoles,SHADER_UNIFORM_INT); DrawTextureRec(source,(Rectangle){0,0,source.width,-source.height},(Vector2){0,0},WHITE); EndShaderMode(); EndTextureMode();
+        BeginTextureMode(s_smoothA); ClearBackground(WHITE); BeginShaderMode(s_smooth); SetShaderValue(s_smooth,s_texelLoc,&texel,SHADER_UNIFORM_VEC2); SetShaderValue(s_smooth,s_dirLoc,&horizontal,SHADER_UNIFORM_VEC2); SetShaderValue(s_smooth,s_kernelRadiusLoc,&s_reconstructionRadius,SHADER_UNIFORM_FLOAT); SetShaderValue(s_smooth,s_filterRadiusLoc,&filterRadius,SHADER_UNIFORM_INT); SetShaderValueMatrix(s_smooth,s_smoothProjectionLoc,s_fluidProjection); SetShaderValueMatrix(s_smooth,s_smoothInverseProjectionLoc,inverseProjection); SetShaderValue(s_smooth,s_fillLoc,&fillHoles,SHADER_UNIFORM_INT); DrawTextureRec(source,(Rectangle){0,0,source.width,-source.height},(Vector2){0,0},WHITE); EndShaderMode(); EndTextureMode();
         fillHoles=0;
         BeginTextureMode(s_smoothB); ClearBackground(WHITE); BeginShaderMode(s_smooth); SetShaderValue(s_smooth,s_dirLoc,&vertical,SHADER_UNIFORM_VEC2); SetShaderValue(s_smooth,s_fillLoc,&fillHoles,SHADER_UNIFORM_INT); DrawTextureRec(s_smoothA.texture,(Rectangle){0,0,s_smoothA.texture.width,-s_smoothA.texture.height},(Vector2){0,0},WHITE); EndShaderMode(); EndTextureMode();
     }

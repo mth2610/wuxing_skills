@@ -673,3 +673,36 @@ chất cùng lúc: đối xứng nên không lệch, và dữ liệu thật nên
 Test giờ đo **bướu còn sót ở biên so với ở ruột**, không chỉ đo thiên lệch — đó
 mới là đại lượng quyết định, và nó bắt được cách "dự đoán" trong khi phép đo cũ
 cho nó điểm tuyệt đối.
+
+## Bộ lọc mặt: cài lại theo bài báo gốc thay vì tự nghĩ (2026-08-11)
+
+Sau **năm** điều kiện biên tự nghĩ (bỏ mẫu, `break`, kẹp theo tiếp tuyến, dự đoán
+tiếp tuyến, phản chiếu chẵn) mà sọc biên vẫn còn, đã tra mã tham chiếu của chính
+tác giả narrow-range filter (Truong & Yuksel 2018, `ttnghia/RealTimeFluidRendering`,
+`Shaders/filter-narrow-range.fs.glsl`) — **cài lại thuật toán từ bài báo, không
+chép mã** (mã đó ghi "All rights reserved").
+
+Hai thứ bản gốc làm mà tôi không nghĩ ra:
+
+1. **`FIX_OTHER_WEIGHT`** — mẫu là nền thì đặt trọng số 0 cho **cả mẫu đối xứng
+   bên kia**. Đây là điều tôi loay hoay suốt: bỏ một phía thì lệch; bịa dữ liệu
+   thay vào thì **thêm** trọng số mang giá trị TÂM, pha loãng phép làm phẳng. Bỏ
+   cả cặp là **rút** trọng số ra, nên phần còn lại vẫn làm phẳng đúng cường độ
+   tương đối sau khi chia `sum/wsum`.
+2. **`RANGE_EXTENSION`** — dải trên/dưới tự nới theo mẫu hợp lệ. Nó thay toàn bộ
+   bộ máy ước lượng độ dốc + dự đoán tiếp tuyến mà tôi tự dựng, và không có tham
+   số nào phải chỉnh.
+
+Đã xoá: `AccumulateSample` tự viết, ước lượng độ dốc `trust`, kẹp quanh mặt tiếp
+tuyến, uniform `u_depthRange` (giờ không ai đọc). Giữ lại hai thứ của mình vì bản
+gốc không có và chúng sửa lỗi thật: **sigma liên tục theo độ sâu** (bản gốc dùng
+`filterSize` nguyên rồi `sigma = filterSize/3`, tức vẫn nhảy bậc → đường đồng
+mức) và **trần bán kính theo tier**.
+
+**Điều đáng ghi nhất là về phép đo, không phải về mã.** Test cũ khẳng định "bướu
+còn sót ở biên phải BẰNG ruột". Đó **không phải** tính chất của phương pháp —
+kernel ở biên co lại thật — và chính khẳng định sai đó đã đẩy tôi tới phản chiếu
+chẵn, thứ trông tệ hơn hẳn trên màn hình. Test giờ chỉ khẳng định những gì thuật
+toán thật sự bảo đảm: **không lệch** (trọng số bị rút chứ không được thêm), và
+**lỗ hổng chỉ làm câm vòng của nó, không kết thúc cả dãy** (51 tap vs 7 nếu
+`break`) — đúng thứ khiến trường splat thưa sống được.

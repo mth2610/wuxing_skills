@@ -6,7 +6,6 @@ out vec4 finalColor;
 uniform sampler2D texture0;
 uniform vec2 u_texel;
 uniform vec2 u_direction;
-uniform float u_depthRange;
 uniform float u_kernelRadius;
 uniform int u_filterRadius;
 uniform int u_fillHoles;
@@ -22,52 +21,6 @@ float ViewDistance(float deviceDepth) {
 float DeviceDepth(float viewDistance) {
     vec4 clip=u_projection*vec4(0.0,0.0,-viewDistance,1.0);
     return clip.z/clip.w*0.5+0.5;
-}
-
-void AccumulateSample(float sampleDeviceDepth, float spatialWeight,
-                      inout float weightedDepth, inout float weightSum,
-                      float centerDistance, float predictedDistance) {
-    // Truong & Yuksel 2018: the range is NARROW and samples outside it are
-    // CLAMPED into it rather than down-weighted — the one thing that method is
-    // defined by. Clamped around the local tangent plane, not the centre depth,
-    // or a sloped surface terraces into steps.
-    float range = max(u_kernelRadius * 2.5, 0.006);
-    float sampleDistance;
-    if (sampleDeviceDepth >= 0.99999) {
-        /* No surface on this side — the silhouette. DROPPING the sample is what
-         * streaked the edges: the average then gathers only inward samples and
-         * leans toward the body, and because that happens for every pixel along
-         * the pass axis the lean smears into a streak ALONG that axis (measured:
-         * the horizontal pass alone streaked horizontally, the vertical alone
-         * vertically, the unfiltered capture not at all).
-         *
-         * Contribute the tangent-plane PREDICTION instead. The pair then stays
-         * symmetric — prediction at +i and at -i average back to the centre — so
-         * the filter cannot lean, and unlike simply stopping the run it keeps its
-         * full width. Two earlier attempts (break on the first missing side, and
-         * gating the hole fill on enclosure) both removed filtering instead of
-         * removing bias, and both made the edge WORSE; see core/docs/PROGRESS.md. */
-        sampleDistance = predictedDistance;
-    } else {
-        sampleDistance = ViewDistance(sampleDeviceDepth);
-        float deltaZ = sampleDistance - centerDistance;
-        // A genuinely separate sheet in FRONT is not part of this surface:
-        // clamping it in would drag the whole neighbourhood towards the camera.
-        // This is the one case that stays a rejection.
-        if (deltaZ < -u_depthRange * 1.5) return;
-    }
-
-    /* Clamp around the local TANGENT PLANE, not around the centre sample. A
-     * range centred on the centre depth terraces every sloped surface: past
-     * range/slope texels every remaining sample pins to the same bound, so the
-     * filter flattens the slope into steps and the body comes out corrugated —
-     * the parallel ridges that appeared the moment the radius grew wide enough
-     * for the slope to leave the range. Predicting along the surface makes the
-     * residual (not the depth) the thing being bounded, so a smooth slope
-     * passes through untouched while a splat's dome is still clipped away. */
-    float clamped = clamp(sampleDistance, predictedDistance - range, predictedDistance + range);
-    weightedDepth += clamped * spatialWeight;
-    weightSum += spatialWeight;
 }
 
 void main() {
@@ -127,58 +80,48 @@ void main() {
     float sigmaS = max(reachPixels * 0.5, 1.0);
     int adaptiveRadius = int(min(ceil(sigmaS * 3.0), float(u_filterRadius)));
 
-    /* Local slope along THIS pass's axis, in metres per texel, so the clamp can
-     * follow the surface instead of terracing it (see AccumulateSample). */
-    float slope = 0.0;
-    {
-        /* Two texels of baseline, not one: a one-texel difference measures the
-         * splat bumps this filter exists to remove, and feeding those back into
-         * the prediction is what turned four iterated rounds into standing
-         * ripples. */
-        float nearPlus = texture(texture0, fragTexCoord + u_direction * u_texel * 2.0).r;
-        float nearMinus = texture(texture0, fragTexCoord - u_direction * u_texel * 2.0).r;
-        float gPlus = nearPlus < 0.99999 ? (ViewDistance(nearPlus) - centerDistance) * 0.5 : 0.0;
-        float gMinus = nearMinus < 0.99999 ? (centerDistance - ViewDistance(nearMinus)) * 0.5 : 0.0;
-        /* The central difference, faded out where the two sides DISAGREE. The
-         * previous min-gradient pick was a hard switch between two estimates,
-         * and a discontinuous kernel iterated four times bands: the output
-         * alternates wherever the choice flips, in stripes perpendicular to the
-         * pass axis — which is exactly how the ridges lined up with the screen
-         * axes rather than with the water. Disagreement means a silhouette or a
-         * crease, where there is no tangent plane worth predicting along, so the
-         * slope fades smoothly to zero instead of jumping. */
-        float rangeTrust = max(u_kernelRadius * 2.5, 0.006);
-        float trust = 1.0 - smoothstep(rangeTrust * 0.25, rangeTrust * 0.75, abs(gPlus - gMinus));
-        slope = 0.5 * (gPlus + gMinus) * trust;
-        /* A prediction may not run away over a long radius, or a steep edge
-         * would drag the far end of the kernel off the surface entirely. The
-         * bound is on the TOTAL excursion across the run: six ranges covers
-         * every slope a real body shows short of the silhouette (measured in
-         * core/tests/fluid_depth_filter_test.c), and past that the samples
-         * simply clamp again — degrading to the old behaviour rather than
-         * inventing a surface. */
-        float rangeLimit = max(u_kernelRadius * 2.5, 0.006);
-        float maxSlope = rangeLimit * 6.0 / max(reachPixels, 1.0);   /* continuous, see above */
-        slope = clamp(slope, -maxSlope, maxSlope);
-    }
+    /* Narrow-range filter, Truong & Yuksel 2018, implemented from the paper.
+     *
+     *   - a sample FURTHER than `upper` is background or a separate sheet: its
+     *     weight goes to zero AND SO DOES ITS PARTNER'S on the opposite side.
+     *     That pairing is the part everything else here got wrong. Dropping one
+     *     side alone biases the average toward the side that still has surface;
+     *     substituting a fabricated value instead adds weight carrying the
+     *     CENTRE's own depth, which dilutes the smoothing and leaves the edge
+     *     stiffer than the interior. Zeroing the pair removes weight rather than
+     *     adding it, so the remaining rings still flatten at full strength after
+     *     the sum/weight normalisation — unbiased and undiluted.
+     *   - a sample NEARER than `lower` is clamped to one kernel radius in front
+     *     of the centre, not rejected, so a splat's near face still pulls.
+     *   - otherwise the range EXTENDS to follow it. This is what lets the filter
+     *     track a sloped surface, and it replaces the tangent-plane prediction
+     *     this file used to estimate from a finite difference.
+     *
+     * Each side carries its own bounds, exactly as the reference does. */
+    float threshold = u_kernelRadius * 10.5;
+    float lowerClamp = centerDistance - u_kernelRadius;
+    float upperPos = centerDistance + threshold, lowerPos = centerDistance - threshold;
+    float upperNeg = upperPos, lowerNeg = lowerPos;
 
-    // Loop up to adaptiveRadius (capped at 32 to satisfy GLSL constant loops).
     for (int i = 1; i <= 32; i++) {
         if (i > adaptiveRadius) break;
         float fi = float(i);
-        /* The sigma has to scale with the radius too. It was fixed at sqrt(6)
-         * ~= 2.4 texels, so a sample ten texels out weighed 0.0002 no matter how
-         * far the loop reached — raising the radius alone would have changed
-         * nothing and only cost taps. Half the adaptive radius puts the tail at
-         * exp(-2) ~= 0.14 exactly where the loop stops. */
-        float spatialWeight = exp(-0.5 * fi * fi / (sigmaS * sigmaS));
-        float positive = texture(texture0, fragTexCoord + u_direction * u_texel * fi).r;
-        float negative = texture(texture0, fragTexCoord - u_direction * u_texel * fi).r;
+        float w = exp(-0.5 * fi * fi / (sigmaS * sigmaS));
+        float wPos = w, wNeg = w;
 
-        AccumulateSample(positive, spatialWeight, weightedDepth, weightSum,
-                         centerDistance, centerDistance + slope * fi);
-        AccumulateSample(negative, spatialWeight, weightedDepth, weightSum,
-                         centerDistance, centerDistance - slope * fi);
+        float dPos = ViewDistance(texture(texture0, fragTexCoord + u_direction * u_texel * fi).r);
+        float dNeg = ViewDistance(texture(texture0, fragTexCoord - u_direction * u_texel * fi).r);
+
+        if (dPos > upperPos) { wPos = 0.0; wNeg = 0.0; }
+        else if (dPos < lowerPos) { dPos = lowerClamp; }
+        else { upperPos = max(upperPos, dPos + threshold); lowerPos = min(lowerPos, dPos - threshold); }
+
+        if (dNeg > upperNeg) { wNeg = 0.0; wPos = 0.0; }
+        else if (dNeg < lowerNeg) { dNeg = lowerClamp; }
+        else { upperNeg = max(upperNeg, dNeg + threshold); lowerNeg = min(lowerNeg, dNeg - threshold); }
+
+        weightedDepth += dPos * wPos + dNeg * wNeg;
+        weightSum += wPos + wNeg;
     }
 
     float filteredDistance = weightedDepth / max(weightSum, 0.0001);
