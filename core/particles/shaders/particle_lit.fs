@@ -319,6 +319,24 @@ void main()
         // whole gas column's 1 - transmittance; scale it by how much material
         // survives the dial. At u_smokeGain 1 the ratio is exactly 1, so this
         // is an identity for everything already authored.
+        // ── PURE LIGHT: no soot means no silhouette ──────────────────────
+        //
+        // u_smokeGain 0 declares an effect with no soot at all — an energy
+        // burst, not a fire. Such a thing cannot occlude, so it emits alpha 0,
+        // and premultiplied blending (`src.rgb + dst*(1-0)`) degenerates to
+        // EXACT addition. One blend mode therefore serves both: fire occludes
+        // with the coverage it earns, energy adds and never darkens anything.
+        //
+        // Taking the branch matters rather than just letting the arithmetic
+        // trend to zero: below, coverage is opac*(soot+emis)/(rawSoot+emis),
+        // which stays NON-zero at smokeGain 0 because emission is in both
+        // terms. An energy burst would keep punching a faint hole in the scene.
+        if (u_smokeGain <= 0.0)
+        {
+            finalColor = vec4(flame * fade, 0.0);
+            return;
+        }
+
         float matNow  = soot + emis;
         float matOrig = max(rawSoot + emis, 1e-4);
         float alpha = clamp(opac * clamp(matNow / matOrig, 0.0, 1.0) * fade, 0.0, 1.0);

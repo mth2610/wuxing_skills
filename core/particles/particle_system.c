@@ -926,7 +926,23 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       float distance = Vector3Distance(camera.position, pos);
       if (distance <= 0.01f) continue;
       Vector2 center = GetWorldToScreen(pos, camera);
-      float radiusPx = p->radius * screenH / (2.0f * distance * tanf(halfFovy));
+      // THE DRAWN radius, not the authored one. The draw loop scales by
+      // radiusCurve, so a growing sprite is larger than `p->radius` — up to
+      // 1.4x for the energy burst. Requesting the smaller region left the outer
+      // rim outside the copied depth, where prevDepthTex holds stale data, the
+      // soft factor collapses toward 0 and the sprite VANISHES there. The
+      // symptom is sharp horizontal and vertical bands cut out of an effect,
+      // bounded by the region rectangle, and it hid for as long as it did
+      // because a dim alpha body loses those bands invisibly — it only became
+      // obvious once an effect was bright and additive.
+      float drawRadius = p->radius;
+      if (p->radiusCurve)
+      {
+        float lr = p->lifetime / p->maxLifetime;
+        if (lr < 0.0f) lr = 0.0f; else if (lr > 1.0f) lr = 1.0f;
+        drawRadius *= SkillCurve_Eval(p->radiusCurve, 1.0f - lr);
+      }
+      float radiusPx = drawRadius * screenH / (2.0f * distance * tanf(halfFovy));
       Rectangle r = {center.x - radiusPx, center.y - radiusPx, radiusPx * 2.0f, radiusPx * 2.0f};
       if (!hasBounds) { bounds = r; hasBounds = true; }
       else {

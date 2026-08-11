@@ -107,10 +107,19 @@ int main(void)
     bad += !Has("main.c", "DecalSystem_DrawBody();");
     bad += !Has("main.c", "DecalSystem_DrawEmission();");
     bad += !Has("core/decals/decal_system.c", "bool DecalSystem_HasEmission(void)");
-    bad += !Has("core/composition/common/vc_energy_burst.inl", "ParticleConfig bodyParticle =");
-    bad += !Has("core/composition/common/vc_energy_burst.inl", ".render.blendMode = VFX_BLEND_ALPHA");
-    bad += !Has("core/composition/common/vc_energy_burst.inl", "ParticleConfig accentParticle = bodyParticle;");
-    bad += !Has("core/composition/common/vc_energy_burst.inl", "accentParticle.render.blendMode = VFX_BLEND_ADDITIVE;");
+    // Đợt H: the energy burst is ONE population of pure light. The alpha body
+    // plus additive accent it used to have is gone on purpose — an explosion of
+    // energy has no soot, so it must never occlude, and the coloured "contrast"
+    // body was a tinted smoke puff standing in for per-texel colour that the
+    // ramp LUT now provides properly. These are negative assertions: they fail
+    // if the two-population build comes back.
+    bad += Has("core/composition/common/vc_energy_burst.inl", "ParticleConfig accentParticle = bodyParticle;");
+    bad += Has("core/composition/common/vc_energy_burst.inl", "accentParticle.render.blendMode = VFX_BLEND_ADDITIVE;");
+    bad += !Has("core/composition/common/vc_energy_burst.inl", ".render.blendMode = VFX_BLEND_PREMULTIPLIED,");
+    // smokeGain 0 is the declaration that makes it pure light: the shader then
+    // emits alpha 0 and premultiplied blending degenerates to exact addition.
+    bad += !Has("core/composition/common/vc_energy_burst.inl", ".render.smokeGain = 0.0f,");
+    bad += !Has("core/particles/shaders/particle_lit.fs", "if (u_smokeGain <= 0.0)");
     bad += !Has("core/vfx_config.h", "VFXContrastProfileId contrastProfile;");
     bad += !Has("core/particles/particle_system.c", "VFXContrast_ApplyColor(");
     bad += !Has("core/particles/particle_manager.c", "VFXContrast_ApplyEmissionIntensity(");

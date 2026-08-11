@@ -39,6 +39,61 @@ static int        s_ebFldNext = 0;
 #define ENERGY_BURST_PHASE_MAX 0.60f
 static SpriteAnim s_ebAnim[ENERGY_BURST_RATES];
 static bool       s_ebAnimReady = false;
+// ── Đợt H — REBUILT ON THE VOLUME SHEET ─────────────────────────────────────
+//
+// The old build was an alpha smoke BODY tinted with the element colour plus a
+// separate additive ACCENT on one lobe in four. That is the wrong model for a
+// detonation of energy twice over:
+//
+//   1. It OCCLUDED. Alpha smoke tinted yellow is pigment, and the owner's note
+//      is exact — this event is light, so it must ADD, never darken. The old
+//      body existed to hold contrast over a bright destination, which is a real
+//      problem for fire and a non-problem for something with no soot in it.
+//   2. Colour came from ONE vertex tint per sprite, so a lobe could be bright
+//      in the middle but never white-hot with a coloured rim. Zoning had to be
+//      faked by placing differently-tinted sprites next to each other, which is
+//      what the yellow contrast blobs were.
+//
+// Both are fixed the same way fire was: the packed VOLUME sheet carries a
+// per-texel emission field, and a ramp LUT turns it into colour inside a single
+// sprite. What differs from fire is the blend contract — `smokeGain` 0 declares
+// no soot, the shader then emits alpha 0, and premultiplied blending degenerates
+// to exact addition. One population, pure light, never darker than its
+// background.
+static ColorGradient s_ebRampGrad[VC_MAT_COUNT];
+static Texture2D s_ebRampLUT[VC_MAT_COUNT];
+static float s_ebHeatGain = 1.0f;
+static float s_ebEmissive = 1.6f;
+
+// The ENERGY ramp, and it is not a black-body curve. Fire cools through red
+// into soot, so its ramp ends dark brown; energy has nothing to cool INTO — it
+// simply stops. The tail therefore runs to a deep saturated version of the
+// element rather than to grey, and the head goes to white through the material's
+// own glow colour, so a burst reads as the element at every intensity.
+static Texture2D EnergyBurst_RampLUT(VC_MaterialId matId)
+{
+    if (matId < 0 || matId >= VC_MAT_COUNT) matId = VC_MAT_TAIJI;
+    if (s_ebRampLUT[matId].id != 0) return s_ebRampLUT[matId];
+
+    const VFX_ElementMaterial *m = VFX_Material(matId);
+    Color body = m->body, glow = m->glow;
+    ColorGradient *g = &s_ebRampGrad[matId];
+    g->count = 0;
+    // NO DARK STOP. A black-body ramp ends dark because fire cools into soot;
+    // energy has no soot to cool into, and a dark tail here shows up as a dirty
+    // rim around a thing that is supposed to be pure light. It is also
+    // redundant: this ramp is multiplied by the sheet's own density before it
+    // is added, so "less material" is ALREADY less light. The ramp therefore
+    // carries HUE at roughly constant saturation and lets the multiply do the
+    // dimming — element colour at the thin edge, white at the dense core.
+    ColorGradient_AddStop(g, 0.00f, VC_WithAlpha(body, 255));
+    ColorGradient_AddStop(g, 0.45f, VC_WithAlpha(ColorLerp(body, glow, 0.75f), 255));
+    ColorGradient_AddStop(g, 0.75f, VC_WithAlpha(glow, 255));
+    ColorGradient_AddStop(g, 1.00f, VC_WithAlpha(ColorLerp(glow, WHITE, 0.85f), 255));
+    s_ebRampLUT[matId] = ColorGradient_BakeLUT(g, 64);
+    return s_ebRampLUT[matId];
+}
+
 static SkillCurve s_ebGrow = {0};
 static SkillCurve s_ebFade = {0};
 static bool       s_ebInit = false;
@@ -145,6 +200,15 @@ void VFX_ComposeEnergyBurst(Vector3 pos, VC_MaterialId matId, float scale,
         }
     }
 
+    // The two dials, registered lazily (never from an Init — Tuning_Init runs
+    // after subsystem inits, so an early registration silently keeps defaults).
+    {
+        static bool reg = false;
+        if (!reg) { reg = true;
+            Tuning_RegisterFloat("energy_heat_gain", &s_ebHeatGain, 1.0f);
+            Tuning_RegisterFloat("energy_emissive", &s_ebEmissive, 1.6f); }
+    }
+
     const float ity = Clamp(intensity, 0.0f, 1.0f);
     const VFX_ElementMaterial *mat = VFX_Material(matId);
     Color body = mat ? mat->body : (Color){210, 70, 45, 255};
@@ -192,71 +256,69 @@ void VFX_ComposeEnergyBurst(Vector3 pos, VC_MaterialId matId, float scale,
         // chaotic phase never happens on screen.
         float life = Math_Mix(1.0f, 1.7f, Random01());
 
-        // Semantic BODY. This is pigment/energy density, not light: it alpha-
-        // occludes through the shared VFXBody target, which is what keeps the
-        // element hue legible over a bright floor or sky. The former single
-        // additive population could only add destination light and therefore
-        // converged toward white by blend law.
-        ParticleConfig bodyParticle = {
+        // ONE POPULATION, PURE LIGHT. No body/accent split: the sheet's
+        // emission channel carries the intensity field and the ramp turns it
+        // into white-hot core, element mid and deep element rim WITHIN each
+        // sprite, which is exactly what the second population used to fake.
+        SpawnParticle((ParticleConfig){
             .position = p,
             .velocity = vel,
-            // SmokePuff's exact size law: mostly small with a long tail of
-            // large ones (the pow 1.8 weighting), times the flipbook size
-            // multiplier it uses because one simulated puff must be read at
-            // puff size. This is what makes neighbours overlap at all.
+            // SmokePuff's size law, unchanged: mostly small with a long tail of
+            // large ones, so neighbours overlap instead of reading as beads.
             .radius = Math_Mix(0.14f, 0.14f + 0.42f * 1.4f,
                                powf(Random01(), 1.8f)) * scale * 1.45f,
             .lifetime = life,
-            .colorStart = VC_WithAlpha(body, (unsigned char)(255.0f * 0.16f
-                              * Math_Mix(0.70f, 1.25f, Random01())
-                              * Math_Mix(0.7f, 1.0f, ity))),
-            .colorEnd = VC_WithAlpha(body, 0),
+            // In volume mode RGB is ignored (the ramp owns hue) and alpha is
+            // the sprite's own fade. Higher than the old 0.16 body because
+            // nothing is stacking opaque pigment any more — this scales light.
+            // Additive light ACCUMULATES across ~117 overlapping sprites, so
+            // per-sprite contribution has to stay small or the annulus clips to
+            // a white slab. This is the knob that decides "energy" vs "blown
+            // out", and it interacts with how many sprites overlap.
+            .colorStart = VC_WithAlpha(WHITE,
+                              (unsigned char)(255.0f * 0.42f * Math_Mix(0.75f, 1.0f, ity))),
             .forceField = ff,
             .radiusCurve = &s_ebGrow,
             .alphaCurve = &s_ebFade,
-            .render.blendMode = VFX_BLEND_ALPHA,
-            // Energy density is self-coloured but does not radiate HDR. Keeping
-            // it unlit avoids a night environment multiplying cyan/orange into
-            // brown while the separate accent population below owns radiance.
-            .render.unlit = 1,
-            .render.emissiveBoost = 1.0f,
+            // Cooling: emissiveCurve is read as HEAT in volume mode, so the
+            // burst walks DOWN the ramp as it expands — white at detonation,
+            // element colour through the middle, deep and dim at the end.
+            .emissiveCurve = &s_ebFade,
+            .render.volumeSheet = 1,
+            .render.rampLUT = EnergyBurst_RampLUT(matId),
+            .render.heatGain = s_ebHeatGain,
+            // ZERO SOOT. This is the declaration that makes it pure light: the
+            // shader emits alpha 0 and premultiplied blending becomes exact
+            // addition, so the burst can never be darker than what is behind
+            // it. Raising it above 0 would give this effect a silhouette.
+            .render.smokeGain = 0.0f,
+            .render.emissiveBoost = s_ebEmissive * Math_Mix(0.85f, 1.1f, ity),
+            .render.blendMode = VFX_BLEND_PREMULTIPLIED,
             .render.contrastProfile = VFX_CONTRAST_ENERGY,
-            // The smoke sheet.
+            // THE SMOKE PUFF SHEET, unchanged. Only the TECHNIQUE came from
+            // flame_volume — a ramp LUT indexed per texel — and that needs a
+            // scalar field, not a fire-specific emission channel. pack.py
+            // --split leaves exactly that here: RGB is one self-shadowed value
+            // (sd 64.7 over 28..255) and A is real coverage. Swapping in the
+            // fire volume sheet was an unasked-for asset change and it is also
+            // what blew the burst out to white, because that sheet's R is a
+            // combustion emission field scaled for a black-body ramp.
             .render.texture = s_smokeFbReady ? s_smokeFbTex
                                              : s_smokePuffTex[i % SMOKE_PUFF_VARIANTS],
             .spriteAnim = s_ebAnimReady ? &s_ebAnim[i % ENERGY_BURST_RATES] : NULL,
-            // THE FIX for "it looks like one image moving". SpriteAnim derives
-            // its frame from ABSOLUTE age, so sprites born in the same instant
-            // hold the same frame for their whole lives — a rate table only
-            // splits the burst into as many identical groups as it has rates.
-            // A random phase gives every sprite a different point in the sheet.
+            // A random phase into the sheet. Without it every sprite born in
+            // the same instant holds the SAME frame for its whole life, because
+            // SpriteAnim advances on absolute age.
             .spriteAnimPhase = Random01() * ENERGY_BURST_PHASE_MAX,
-            // A random angle at BIRTH, and no spin after it. The angle is what
-            // stops one sheet read sixty times from showing sixty copies of the
-            // same silhouette; continuous rotation on top of a billow that is
-            // already rolling is what reads as churning (SmokePuff records the
-            // same, and turns its flipbook spin down to 0.12x for it).
+            // Legal because the sheet is radially symmetric by construction
+            // (the puff sim runs at zero gravity and zero buoyancy). A sheet
+            // with an UP cannot be spun, and sixty unspun copies read as sixty
+            // stamps of one silhouette.
             .rotation = Random01() * 2.0f * PI,
-        };
-        SpawnParticle(bodyParticle);
-
-        // Semantic ACCENT/EMISSION. Only one quarter of the body lobes receives
-        // a smaller aligned hot core; the two populations share position,
-        // motion, animation phase and rotation, so this reads as radiance from
-        // matter rather than a second unrelated cloud. Low coverage prevents
-        // additive overlap from flattening the entire annulus.
-        if ((i & 3) == 0)
-        {
-            ParticleConfig accentParticle = bodyParticle;
-            accentParticle.radius *= 0.58f;
-            accentParticle.colorStart = VC_WithAlpha(
-                glow, (unsigned char)(255.0f * 0.18f * Math_Mix(0.75f, 1.0f, ity)));
-            accentParticle.colorEnd = VC_WithAlpha(glow, 0);
-            accentParticle.render.blendMode = VFX_BLEND_ADDITIVE;
-            accentParticle.render.emissiveBoost = Math_Mix(1.25f, 1.65f, ity);
-            SpawnParticle(accentParticle);
-        }
+            .angularVelocity = (Random01() - 0.5f) * 0.4f,
+        });
     }
+
 
     // NO separate core flash: a cluster of motionless bright sprites at the
     // origin is not part of this model, and a flash belongs to the LIGHT beat,
