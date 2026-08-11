@@ -115,7 +115,11 @@ int main(void)
     // if the two-population build comes back.
     bad += Has("core/composition/common/vc_energy_burst.inl", "ParticleConfig accentParticle = bodyParticle;");
     bad += Has("core/composition/common/vc_energy_burst.inl", "accentParticle.render.blendMode = VFX_BLEND_ADDITIVE;");
-    bad += !Has("core/composition/common/vc_energy_burst.inl", ".render.blendMode = VFX_BLEND_PREMULTIPLIED,");
+    // ADDITIVE, not premultiplied. Pure light has no silhouette, so it belongs
+    // in the emission pass; premultiplied is routed to BODY and drawing this
+    // there cut horizontal bands out of the burst.
+    bad += !Has("core/composition/common/vc_energy_burst.inl", ".render.blendMode = VFX_BLEND_ADDITIVE,");
+    bad += Has("core/composition/common/vc_energy_burst.inl", ".render.blendMode = VFX_BLEND_PREMULTIPLIED,");
     // smokeGain 0 is the declaration that makes it pure light: the shader then
     // emits alpha 0 and premultiplied blending degenerates to exact addition.
     bad += !Has("core/composition/common/vc_energy_burst.inl", ".render.smokeGain = 0.0f,");

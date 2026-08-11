@@ -293,7 +293,11 @@ void VFX_ComposeEnergyBurst(Vector3 pos, VC_MaterialId matId, float scale,
             // it. Raising it above 0 would give this effect a silhouette.
             .render.smokeGain = 0.0f,
             .render.emissiveBoost = s_ebEmissive * Math_Mix(0.85f, 1.1f, ity),
-            .render.blendMode = VFX_BLEND_PREMULTIPLIED,
+            // ADDITIVE, not premultiplied: pure light has no silhouette, so it
+            // belongs in the emission pass. Premultiplied is for something that
+            // emits AND occludes (fire), and routing this through the body pass
+            // is what cut horizontal bands out of the burst.
+            .render.blendMode = VFX_BLEND_ADDITIVE,
             .render.contrastProfile = VFX_CONTRAST_ENERGY,
             // THE SMOKE PUFF SHEET, unchanged. Only the TECHNIQUE came from
             // flame_volume — a ramp LUT indexed per texel — and that needs a

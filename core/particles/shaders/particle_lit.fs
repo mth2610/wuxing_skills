@@ -342,7 +342,25 @@ void main()
         // terms. An energy burst would keep punching a faint hole in the scene.
         if (u_smokeGain <= 0.0)
         {
-            finalColor = vec4(flame * fade, 0.0);
+            // ALPHA 1, NOT 0 — and the difference is the routing.
+            //
+            // Pure light belongs in the EMISSION pass with BLEND_ADDITIVE,
+            // which rlvk defines as `src*SRC_ALPHA + dst`: alpha SCALES the
+            // contribution, so emitting 0 here deletes the effect entirely.
+            // The intensity is already in rgb (flame * fade), so alpha 1 makes
+            // the hardware add exactly that.
+            //
+            // The first attempt emitted alpha 0 and asked for
+            // VFX_BLEND_PREMULTIPLIED instead, reasoning that `src.rgb +
+            // dst*(1-0)` is also exact addition. It is — but PREMULTIPLIED is
+            // routed to the BODY pass, alongside trails, decals and
+            // afterimages and inside their depth-mask handling, and drawn
+            // there this produced sharp horizontal bands cut out of the
+            // effect. Swapping the blend mode alone made them vanish, which is
+            // what identified it after six other causes had been eliminated.
+            // Emission is where something with no silhouette belongs anyway —
+            // it is the rule particle_system.h already states.
+            finalColor = vec4(flame * fade, 1.0);
             return;
         }
 
