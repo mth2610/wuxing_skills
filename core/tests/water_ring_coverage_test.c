@@ -20,8 +20,8 @@
 #define PI 3.1415926535f
 #endif
 
-#define TUBE_RATIO   0.22f      /* WATER_RING_TUBE_RATIO */
-#define KERNEL_RATIO 0.095f     /* kernel = radius * this */
+#define TUBE_RATIO   0.12f      /* WATER_RING_TUBE_RATIO */
+#define KERNEL_RATIO 0.070f     /* kernel = radius * this */
 
 /* Splat area over emitter-surface area. Both scale with radius^2, so the ratio
  * is scale-invariant — which is why the fixture may pick any ring size. */
@@ -69,12 +69,26 @@ int main(void)
      * or fading the effect in would tear it apart on the way. */
     CHECK(CoverageRatio(0.9f, low * 0.55f) > 0.80f);
 
+    /* The hole has to SURVIVE the reconstruction, not just exist in the geometry.
+     * Each splat inflates the tube by one kernel before the depth filter even
+     * starts bridging, and ignoring that is what left the ring reading as a
+     * filled disc at tube 0.22 / kernel 0.095. */
+    {
+        const float ring = 0.9f;
+        float inflatedTube = ring*TUBE_RATIO + ring*KERNEL_RATIO;
+        float holeDiameter = 2.0f*(ring - inflatedTube);
+        printf("      hole after kernel inflation: %.2f m across a %.2f m body\n",
+               holeDiameter, 2.0f*(ring + inflatedTube));
+        /* Comfortably more than one kernel wide, or the filter closes it. */
+        CHECK(holeDiameter > 6.0f*ring*KERNEL_RATIO);
+    }
+
     char *inl = ReadFile("core/composition/water/water_ring.inl");
     if (!inl) { printf("FAIL: cannot read water_ring.inl\n"); bad++; }
     else
     {
-        CHECK(strstr(inl, "#define WATER_RING_TUBE_RATIO 0.22f") != NULL);
-        CHECK(strstr(inl, "radius * 0.095f") != NULL);
+        CHECK(strstr(inl, "#define WATER_RING_TUBE_RATIO 0.12f") != NULL);
+        CHECK(strstr(inl, "radius * 0.070f") != NULL);
         CHECK(strstr(inl, "1000.0f") != NULL && strstr(inl, "700.0f") != NULL && strstr(inl, "460.0f") != NULL);
         /* Viscosity is what makes neighbouring splats travel together; without
          * it the reconstruction has nothing to merge and the ratio above stops

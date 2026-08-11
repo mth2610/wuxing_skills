@@ -22,16 +22,14 @@
 // silhouette is maintained by respawning on the mesh, which costs nothing and
 // never explodes.
 
-/* KNOWN: at these proportions the ring reads as a filled disc, not a ring. The
- * splats are simply too fat for the hole — the tube is 0.22 of the ring radius,
- * each kernel adds another 0.095, and the surface reconstruction then bridges
- * what is left, so the 1.2 m of geometric hole never survives to the screen. The
- * fix is a proportion, not a size: the coverage ratio is scale-invariant, so
- * growing the ring changes nothing. Thinning BOTH (tube 0.12, kernel 0.070)
- * holds the same 3.3 / 2.3 / 1.5 coverage while opening the hole from 1.23 m to
- * 1.46 m — arithmetic already in water_ring_coverage_test.c, but it is a look
- * change and wants a run in front of it. */
-#define WATER_RING_TUBE_RATIO 0.22f   /* tube radius as a fraction of the ring */
+/* The ring read as a filled disc at tube 0.22 / kernel 0.095: the splats were
+ * too fat for the hole. Geometric clearance was 1.23 m, which sounds ample until
+ * you count what the RECONSTRUCTION adds — each kernel inflates the tube by
+ * another 0.095 of the ring radius, and the depth filter bridges what is left.
+ * The fix is a PROPORTION, not a size: coverage is scale-invariant, so growing
+ * the ring changes nothing. Thinning both holds the same 3.3 / 2.3 / 1.5
+ * coverage and opens the hole to 1.46 m. */
+#define WATER_RING_TUBE_RATIO 0.12f   /* tube radius as a fraction of the ring */
 #define WATER_RING_IDLE_RELEASE 0.25f /* seconds without a call before release */
 #define WATER_RING_MAX_SPAWN 48       /* per-frame ceiling after a hitch */
 
@@ -79,7 +77,7 @@ static void WaterRing_SetField(Vector3 center, float radius, float t01)
 
 /* Continuous — call every frame while the ring should exist; it releases itself
  * a quarter second after the calls stop. `radius` is the ring radius in metres
- * (the tube is 0.22 of it), `t01` drives density and flow speed.
+ * (the tube is 0.12 of it), `t01` drives density and flow speed.
  *
  * SSF carries ONE material at a time (FluidSurface_SetMaterialColors is global),
  * so a second fluid body on screen in the same frame shares this one's optics. */
@@ -118,7 +116,7 @@ void VFX_ComposeWaterRing(Vector3 center, float radius, float t01)
     float alive = quality >= GFX_HIGH ? 1000.0f : (quality >= GFX_MED ? 700.0f : 460.0f);
     alive *= Math_Mix(0.55f, 1.0f, t01);
     const float lifetime = 0.95f;
-    const float kernel = radius * 0.095f;
+    const float kernel = radius * 0.070f;
 
     /* Framerate-independent budget carried between frames: a per-call COUNT
      * makes the body's density a function of the frame rate. */

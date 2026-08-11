@@ -550,7 +550,7 @@ void VFX_ComposeWaterOrb(Vector3 start, Vector3 target);
 // of screen space.
 // Continuous — call every frame; it releases itself shortly after the calls
 // stop, or immediately on VFX_WaterRing_Stop(). `radius` is the ring radius in
-// metres (tube = 0.22 of it), `t01` drives density and flow speed.
+// metres (tube = 0.12 of it), `t01` drives density and flow speed.
 // NOTE: the fluid surface carries ONE material at a time, so a second fluid
 // body in the same frame shares this one's optics.
 void VFX_ComposeWaterRing(Vector3 center, float radius, float t01);

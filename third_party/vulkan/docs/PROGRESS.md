@@ -118,12 +118,31 @@ Three hypotheses were tested and **all three are wrong**, so do not re-chase the
 | render-pass split per dispatch (in-frame path) | same measurement, other direction | same |
 | the full `CmdPipelineBarrier2` after every dispatch | `RLVK_EXP_NO_COMPUTE_BARRIER=1` (gate since removed) | within run-to-run noise (±0.5 ms) |
 
-**Next suspect, untested: the per-dispatch descriptor set.** Every dispatch calls
-`vkAllocateDescriptorSets` and rewrites the whole snapshot (SSBOs, storage
-images, samplers, uniform block). It is the only remaining heavyweight step both
-paths share, and MoltenVK builds a Metal argument buffer per set. The experiment
-that would settle it: cache the set and re-use it while the bindings and the
-uniform generation are unchanged, then re-run `perf_dispatch_count`.
+**The descriptor snapshot is ~0.20 ms of it — measured.** `RLVK_EXP_REUSE_COMPUTE_SET=1`
+(gate since removed) re-bound the previous set instead of allocating and
+rewriting one, reuse scoped to within a frame because the compute pool is reset
+at frame begin and a set kept across that boundary segfaults promptly:
+
+| | 9 dispatches, in frame | outside |
+|---|---|---|
+| snapshot per dispatch | 7.70 ms | 7.18 ms |
+| ONE snapshot per frame | 5.80 ms | 5.62 ms |
+
+i.e. **~0.20-0.24 ms per `vkAllocateDescriptorSets` + 15 `vkUpdateDescriptorSets`
+writes**. That leaves ~0.4 ms per dispatch still unattributed, and the remaining
+candidate is Metal's render-encoder/compute-encoder switch inside MoltenVK, which
+rlvk cannot avoid per dispatch.
+
+**Not implemented, and here is the honest reason.** The fix would be push
+descriptors for the compute set (the graphics path already uses them, so the
+`Caps.pushDescriptor` plumbing exists) or a pre-allocated per-frame set ring. But
+after the batching landed, the in-game PBD solve is ~0.5 ms TOTAL across nine
+dispatches — the consumers that were paying this already stopped. A naive
+signature cache would also miss on every PBD dispatch anyway, because each one
+rewrites `u_phase`, so the uniform block changes by construction. Worth doing
+when a consumer that dispatches heavily IN FRAME shows up; not worth the risk to
+the compute descriptor layout (see the MoltenVK storage-image quirk above) for a
+cost nobody is currently paying.
 
 **CORRECTION (same day, from the game): batching is worth ~3.9 ms and the
 synthetic scenario was WRONG about it.** In-game with the PBD fixture:
