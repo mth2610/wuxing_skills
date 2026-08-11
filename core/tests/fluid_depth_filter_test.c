@@ -11,6 +11,11 @@
 //      bilateral filter) instead of clamped into it, which is the one thing the
 //      narrow-range filter (Truong & Yuksel 2018) is defined by. Clamping lets a
 //      deeper neighbour pull the surface flat at full spatial weight.
+//   3. BOUNDARY. At the silhouette the outward samples do not exist, and DROPPING
+//      them leaves a one-sided average that leans into the body — along the pass
+//      axis that lean smears into a streak. Two fixes that removed filtering
+//      instead of removing bias made it worse; the third contributes the
+//      tangent-plane prediction and keeps the kernel's full width.
 //
 // Mirrors core/fluid/shaders/fluid_depth_narrow_range.fs. What it cannot check:
 // that the reconstructed surface LOOKS right — only the sandbox fixture shows
@@ -93,6 +98,54 @@ static float UnclampedFraction(float slopePerTexel, float kernelRadius, int radi
     return (float)untouched / (float)radius;
 }
 
+/* One filtered pixel near a SILHOUETTE: the surface continues on the + side and
+ * ends on the - side after `validNegative` texels. Returns the filtered depth's
+ * offset from the centre, and reports how many taps were accumulated.
+ *
+ * `mode` mirrors the three boundary conditions this filter has now seen:
+ *   0 DROP    the missing sample contributes nothing — the average then leans
+ *             toward whichever side still has surface, and along the pass axis
+ *             that lean smears into a streak. Measured in the sandbox: the
+ *             horizontal pass alone streaked horizontally, the vertical alone
+ *             vertically, the unfiltered capture not at all.
+ *   1 BREAK   stop the run at the first missing side. Unbiased, but it stops at
+ *             every interior GAP in a sparse splat field too, so it removes
+ *             filtering exactly where it is most needed — tried, made the edge
+ *             WORSE, reverted (core/docs/PROGRESS.md).
+ *   2 PREDICT the missing sample contributes the tangent-plane prediction: the
+ *             pair stays symmetric AND the kernel keeps its full width. */
+static float EdgeBias(float slopePerTexel, float kernelRadius, int radius,
+                      int validNegative, int mode, int *outTaps)
+{
+    float sigmaS = fmaxf((float)radius * 0.5f, 1.0f);
+    float range = fmaxf(kernelRadius * 2.5f, 0.006f);
+    float maxSlope = range * 6.0f / (float)radius;
+    float predSlope = Clampf(slopePerTexel, -maxSlope, maxSlope);
+    float weighted = 0.0f, weightSum = 1.0f;      /* the centre, at offset 0 */
+    int taps = 1;
+    for (int i = 1; i <= radius; ++i)
+    {
+        int negValid = (i <= validNegative);
+        if (mode == 1 && !negValid) break;
+        float spatial = expf(-0.5f * (float)i * (float)i / (sigmaS * sigmaS));
+        float predPlus = predSlope * (float)i, predMinus = -predSlope * (float)i;
+        weighted += Clampf(slopePerTexel * (float)i, predPlus - range, predPlus + range) * spatial;
+        weightSum += spatial; taps++;
+        if (negValid)
+        {
+            weighted += Clampf(-slopePerTexel * (float)i, predMinus - range, predMinus + range) * spatial;
+            weightSum += spatial; taps++;
+        }
+        else if (mode == 2)
+        {
+            weighted += predMinus * spatial;
+            weightSum += spatial; taps++;
+        }
+    }
+    if (outTaps) *outTaps = taps;
+    return weighted / weightSum;
+}
+
 static char *ReadFile(const char *path)
 {
     FILE *f = fopen(path, "rb");
@@ -109,7 +162,7 @@ int main(void)
 
     /* 720p, 45 deg fovy: proj[1][1] = 1/tan(22.5deg) = 2.414, height/2 = 360. */
     const float projScale = 2.414f * 360.0f;
-    const float kernel = 0.0855f;          /* the water ring's kernel at 0.9 m */
+    const float kernel = 0.0855f;          /* a representative splat kernel, metres */
     const int ceiling = 28;                /* HIGH tier */
 
     int near = AdaptiveRadius(kernel, projScale, 3.0f, ceiling);
@@ -190,6 +243,41 @@ int main(void)
         CHECK(worstJump < 0.01f);
     }
 
+    /* SILHOUETTE STREAKING. Everything above is about the interior; this is the
+     * edge, and it is where two previous fixes failed by removing filtering
+     * instead of removing bias. */
+    {
+        const float edgeSlope = 0.020f;
+        int dropTaps = 0, breakTaps = 0, predictTaps = 0;
+        float dropped   = EdgeBias(edgeSlope, kernel, near, 3, 0, &dropTaps);
+        float stopped   = EdgeBias(edgeSlope, kernel, near, 3, 1, &breakTaps);
+        float predicted = EdgeBias(edgeSlope, kernel, near, 3, 2, &predictTaps);
+        printf("      edge, 3 valid texels one side:  drop %+.4f m (%d taps) | "
+               "break %+.4f m (%d taps) | predict %+.4f m (%d taps)\n",
+               dropped, dropTaps, stopped, breakTaps, predicted, predictTaps);
+
+        /* Dropping leans on the side that still has surface — the streak. */
+        CHECK(fabsf(dropped) > 0.01f);
+        /* Both fixes remove the lean... */
+        CHECK(fabsf(stopped) < 1.0e-6f);
+        CHECK(fabsf(predicted) < 1.0e-6f);
+        /* ...but only one keeps the filter working. Breaking collapses the
+         * kernel to a handful of taps, which is why it made the edge worse in a
+         * sparse splat field: every interior gap stopped the run as well. */
+        CHECK(breakTaps < dropTaps / 2);
+        CHECK(predictTaps > dropTaps);
+
+        /* Well inside the body, where both sides have surface, all three agree —
+         * a boundary condition must change the EDGE and nothing else. */
+        int a = 0, b = 0, c = 0;
+        float interiorDrop    = EdgeBias(edgeSlope, kernel, near, near, 0, &a);
+        float interiorBreak   = EdgeBias(edgeSlope, kernel, near, near, 1, &b);
+        float interiorPredict = EdgeBias(edgeSlope, kernel, near, near, 2, &c);
+        CHECK(fabsf(interiorDrop - interiorBreak) < 1.0e-6f);
+        CHECK(fabsf(interiorDrop - interiorPredict) < 1.0e-6f);
+        CHECK(a == b && b == c);
+    }
+
     char *fs = ReadFile("core/fluid/shaders/fluid_depth_narrow_range.fs");
     char *c = ReadFile("core/fluid/fluid_surface.c");
     if (!fs || !c) { printf("FAIL: cannot read the filter shader or fluid_surface.c\n"); bad++; }
@@ -203,6 +291,10 @@ int main(void)
         CHECK(strstr(fs, "0.5 * (gPlus + gMinus) * trust") != NULL);
         CHECK(strstr(fs, "abs(gPlus) < abs(gMinus)") == NULL);
         CHECK(strstr(fs, "int adaptiveRadius") != NULL);
+        /* The boundary condition: a missing side contributes the prediction. It
+         * must not go back to dropping (streaks) or to breaking (no filtering). */
+        CHECK(strstr(fs, "sampleDistance = predictedDistance;") != NULL);
+        CHECK(strstr(fs, "|| negative >= 0.99999) break;") == NULL);
         /* The reach multiplier is mirrored above; assert it so the mirror cannot
          * drift away from the shader while still reporting green. */
         CHECK(strstr(fs, "kernelPixels * 1.25") != NULL);

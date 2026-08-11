@@ -627,3 +627,23 @@ phủ bất biến theo tỉ lệ nên phóng to vòng không giải quyết gì
 (tube 0.12, kernel 0.070) giữ nguyên độ phủ 3.3/2.3/1.5 mà mở lỗ từ 1.23 lên
 1.46 m. Số đã có sẵn trong `water_ring_coverage_test.c`; chưa áp vì nó đổi hình
 ảnh và cần một lần chạy để nhìn.
+
+## Sọc biên: điều kiện biên thứ ba, lần này giữ nguyên lượng lọc (2026-08-11)
+
+Hai lần trước hỏng vì cùng một lý do — **giảm lượng lọc thay vì giảm thiên lệch**.
+Lần này mẫu thiếu ở phía ngoài **đóng góp giá trị dự đoán theo mặt tiếp tuyến**,
+nên cặp mẫu vẫn đối xứng (không lệch) mà kernel vẫn đủ bề rộng (không mất mịn).
+
+Đo trong `core/tests/fluid_depth_filter_test.c`, biên còn 3 texel bề mặt một phía:
+
+| cách xử lý | thiên lệch | số tap |
+|---|---|---|
+| bỏ mẫu (cũ) | **+0.1631 m** | 32 |
+| `break` (đã thử, tệ hơn) | 0.0000 m | **7** |
+| dự đoán (hiện tại) | 0.0000 m | **57** |
+
+Cột "số tap" là cột giải thích vì sao `break` hỏng: nó cắt kernel còn một phần
+tư trong trường splat thưa, vì mọi lỗ bên trong cũng chặn vòng lặp. Test khoá cả
+ba: bỏ mẫu phải lệch, hai cách kia không được lệch, và chỉ cách dự đoán mới được
+phép giữ nhiều tap hơn cách bỏ mẫu. Sâu trong thân khối cả ba phải cho **kết quả
+và số tap giống hệt nhau** — điều kiện biên chỉ được đổi BIÊN.

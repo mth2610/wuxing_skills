@@ -27,24 +27,35 @@ float DeviceDepth(float viewDistance) {
 void AccumulateSample(float sampleDeviceDepth, float spatialWeight,
                       inout float weightedDepth, inout float weightSum,
                       float centerDistance, float predictedDistance) {
-    if (sampleDeviceDepth >= 0.99999) return;
-    float sampleDistance = ViewDistance(sampleDeviceDepth);
-    float deltaZ = sampleDistance - centerDistance;
-
-    // Truong & Yuksel 2018: the range is NARROW, and samples outside it are
-    // CLAMPED into it rather than down-weighted. That distinction is the whole
-    // method, and this function did not implement it despite the file's name —
-    // it was a Gaussian bilateral filter, which gives a neighbour one splat-depth
-    // away almost no vote. Each splat therefore kept its own dome and the body
-    // rendered as a heap of spheres instead of one surface. Clamping lets a
-    // deeper neighbour still pull the surface flat, at full spatial weight,
-    // which is what closes a cluster of splats into a sheet.
+    // Truong & Yuksel 2018: the range is NARROW and samples outside it are
+    // CLAMPED into it rather than down-weighted — the one thing that method is
+    // defined by. Clamped around the local tangent plane, not the centre depth,
+    // or a sloped surface terraces into steps.
     float range = max(u_kernelRadius * 2.5, 0.006);
-
-    // A genuinely separate sheet in FRONT is not part of this surface: clamping
-    // it in would drag the whole neighbourhood towards the camera. This is the
-    // one case that stays a rejection.
-    if (deltaZ < -u_depthRange * 1.5) return;
+    float sampleDistance;
+    if (sampleDeviceDepth >= 0.99999) {
+        /* No surface on this side — the silhouette. DROPPING the sample is what
+         * streaked the edges: the average then gathers only inward samples and
+         * leans toward the body, and because that happens for every pixel along
+         * the pass axis the lean smears into a streak ALONG that axis (measured:
+         * the horizontal pass alone streaked horizontally, the vertical alone
+         * vertically, the unfiltered capture not at all).
+         *
+         * Contribute the tangent-plane PREDICTION instead. The pair then stays
+         * symmetric — prediction at +i and at -i average back to the centre — so
+         * the filter cannot lean, and unlike simply stopping the run it keeps its
+         * full width. Two earlier attempts (break on the first missing side, and
+         * gating the hole fill on enclosure) both removed filtering instead of
+         * removing bias, and both made the edge WORSE; see core/docs/PROGRESS.md. */
+        sampleDistance = predictedDistance;
+    } else {
+        sampleDistance = ViewDistance(sampleDeviceDepth);
+        float deltaZ = sampleDistance - centerDistance;
+        // A genuinely separate sheet in FRONT is not part of this surface:
+        // clamping it in would drag the whole neighbourhood towards the camera.
+        // This is the one case that stays a rejection.
+        if (deltaZ < -u_depthRange * 1.5) return;
+    }
 
     /* Clamp around the local TANGENT PLANE, not around the centre sample. A
      * range centred on the centre depth terraces every sloped surface: past
