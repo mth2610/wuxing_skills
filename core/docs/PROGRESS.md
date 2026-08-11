@@ -647,3 +647,29 @@ tư trong trường splat thưa, vì mọi lỗ bên trong cũng chặn vòng l�
 ba: bỏ mẫu phải lệch, hai cách kia không được lệch, và chỉ cách dự đoán mới được
 phép giữ nhiều tap hơn cách bỏ mẫu. Sâu trong thân khối cả ba phải cho **kết quả
 và số tap giống hệt nhau** — điều kiện biên chỉ được đổi BIÊN.
+
+## Sọc biên: hoá ra không phải thiên lệch mà là CƯỜNG ĐỘ lọc (2026-08-11)
+
+Bốn điều kiện biên đã thử, và phép đo phân biệt chúng đã đổi hai lần vì tôi đo
+sai thứ:
+
+| cách | thiên lệch | số tap | bướu 5 cm còn sót ở biên |
+|---|---|---|---|
+| bỏ mẫu | +0.1631 m | 32 | — |
+| `break` | 0 | 7 | — (gần như không lọc) |
+| dự đoán tiếp tuyến | 0 | 57 | **0.02134** |
+| **phản chiếu chẵn** | 0 | 57 | **0.00149** = đúng bằng ruột |
+
+Ba cách đầu đều nhắm vào **thiên lệch**. Nhưng debug view 1 cho thấy ruột mượt
+hoàn hảo còn viền ngoài vẫn sọc, tức thiên lệch đã hết mà sọc vẫn còn — thứ còn
+lại là **cường độ**: pixel gần mép có một phần mẫu là bịa, mẫu bịa mang chính giá
+trị TÂM nên nó kéo về phía bướu, làm mép được làm mịn yếu hơn ruột. Mức yếu ấy
+biến thiên theo hình dáng mép ⇒ vạch song song trục pass.
+
+Phản chiếu chẵn (mẫu thiếu lấy giá trị THẬT của phía đối diện) giữ cả hai tính
+chất cùng lúc: đối xứng nên không lệch, và dữ liệu thật nên không yếu. Đây là
+điều kiện biên tiêu chuẩn của bộ lọc ảnh, và đáng ra phải là lựa chọn đầu tiên.
+
+Test giờ đo **bướu còn sót ở biên so với ở ruột**, không chỉ đo thiên lệch — đó
+mới là đại lượng quyết định, và nó bắt được cách "dự đoán" trong khi phép đo cũ
+cho nó điểm tuyệt đối.

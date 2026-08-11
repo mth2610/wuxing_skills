@@ -73,13 +73,19 @@ void AccumulateSample(float sampleDeviceDepth, float spatialWeight,
 void main() {
     float centerDevice = texture(texture0, fragTexCoord).r;
 
-    /* Seed a 5x5 capture hole to bridge gaps between densely packed small
-     * particles (e.g. force-field orb at high particle count). The wider
-     * region joins overlapping kernels without growing isolated droplets. */
+    /* Bridge gaps between densely packed small particles (e.g. a force-field orb
+     * at high particle count) by taking the nearest depth around an empty pixel.
+     *
+     * 3x3, not 5x5. This fill is a DILATION: it also grows the body outward at
+     * the silhouette, and every pixel it invents keeps its value as the centre
+     * of its own filter run — the centre is the one sample the clamp cannot
+     * correct, since the clamp only bounds neighbours. A 5x5 grew that invented
+     * fringe two texels deep all the way round; 3x3 halves it while still
+     * bridging the one-texel gaps this exists for. */
     if (centerDevice >= 0.99999 && u_fillHoles != 0) {
         float nearest = 1.0;
-        for (int y = -2; y <= 2; y++) {
-            for (int x = -2; x <= 2; x++) {
+        for (int y = -1; y <= 1; y++) {
+            for (int x = -1; x <= 1; x++) {
                 nearest = min(nearest, texture(texture0, fragTexCoord + vec2(x, y) * u_texel).r);
             }
         }
@@ -168,6 +174,30 @@ void main() {
         float spatialWeight = exp(-0.5 * fi * fi / (sigmaS * sigmaS));
         float positive = texture(texture0, fragTexCoord + u_direction * u_texel * fi).r;
         float negative = texture(texture0, fragTexCoord - u_direction * u_texel * fi).r;
+
+        /* EVEN REFLECTION at the boundary: a missing side takes the opposite
+         * side's value. Two weaker conditions were tried first and both left
+         * streaks along the pass axis:
+         *   - dropping the missing sample biases the average toward whichever
+         *     side still has surface;
+         *   - substituting the tangent-plane prediction removes that bias, but
+         *     the fabricated sample carries the CENTRE's own value, so an edge
+         *     pixel gets less smoothing than an interior one. How much less
+         *     depends on how many samples are missing, which varies along the
+         *     edge — and a filter strength that varies along the edge draws
+         *     stripes parallel to the pass axis. That is what debug view 1 still
+         *     showed on the ring's outer rim while the interior was smooth.
+         * Reflecting real data keeps BOTH properties: symmetric (no bias) and
+         * full strength (no stripes). It is the standard image-filter boundary
+         * condition, and it is what this should have been three attempts ago. */
+        bool posValid = positive < 0.99999;
+        bool negValid = negative < 0.99999;
+        /* Both sides empty is a symmetric gap — skipping it cannot bias, and
+         * continuing lets the run reach surface again past a hole. */
+        if (!posValid && !negValid) continue;
+        if (!posValid) positive = negative;
+        if (!negValid) negative = positive;
+
         AccumulateSample(positive, spatialWeight, weightedDepth, weightSum,
                          centerDistance, centerDistance + slope * fi);
         AccumulateSample(negative, spatialWeight, weightedDepth, weightSum,

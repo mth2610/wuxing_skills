@@ -146,6 +146,43 @@ static float EdgeBias(float slopePerTexel, float kernelRadius, int radius,
     return weighted / weightSum;
 }
 
+/* How hard the filter FLATTENS a bump, at an edge versus in the interior.
+ *
+ * The centre sits `bump` in front of an otherwise flat surface — a splat dome,
+ * which is exactly what the filter exists to remove. The surface ends on the -
+ * side after `validNegative` texels. Returns the bump that SURVIVES: lower is
+ * more smoothing. `mode` is the boundary condition:
+ *   0 DROP     missing sample contributes nothing (biased)
+ *   2 PREDICT  missing sample contributes the centre's own value, so it pulls
+ *              toward the bump — the edge is smoothed LESS than the interior,
+ *              and by an amount that varies along the edge. A filter strength
+ *              that varies along the edge draws stripes parallel to the pass.
+ *   3 REFLECT  missing sample takes the opposite side's real value: symmetric
+ *              AND full strength. */
+static float SurvivingBump(float bump, float kernelRadius, int radius,
+                           int validNegative, int mode)
+{
+    float sigmaS = fmaxf((float)radius * 0.5f, 1.0f);
+    float range = fmaxf(kernelRadius * 2.5f, 0.006f);
+    /* Depths relative to the flat surface: centre is +bump, neighbours are 0. */
+    float weighted = bump, weightSum = 1.0f;
+    for (int i = 1; i <= radius; ++i)
+    {
+        float spatial = expf(-0.5f * (float)i * (float)i / (sigmaS * sigmaS));
+        int negValid = (i <= validNegative);
+        float plus = 0.0f;                       /* + side always has surface */
+        float minus = negValid ? 0.0f : (mode == 3 ? plus : bump);
+        weighted += Clampf(plus, -range, range) * spatial;
+        weightSum += spatial;
+        if (negValid || mode != 0)
+        {
+            weighted += Clampf(minus, -range, range) * spatial;
+            weightSum += spatial;
+        }
+    }
+    return weighted / weightSum;
+}
+
 static char *ReadFile(const char *path)
 {
     FILE *f = fopen(path, "rb");
@@ -278,6 +315,26 @@ int main(void)
         CHECK(a == b && b == c);
     }
 
+    /* FILTER STRENGTH AT THE EDGE. Removing the bias is not enough: if an edge
+     * pixel is smoothed LESS than an interior one, and the shortfall varies
+     * along the edge, the difference draws stripes parallel to the pass axis.
+     * Debug view 1 showed exactly that on the ring's rim after the prediction
+     * fill removed the bias. */
+    {
+        const float bump = 0.05f;
+        float interior = SurvivingBump(bump, kernel, near, near, 3);
+        float edgePredict = SurvivingBump(bump, kernel, near, 3, 2);
+        float edgeReflect = SurvivingBump(bump, kernel, near, 3, 3);
+        printf("      bump %.3f m surviving:  interior %.5f | edge predict %.5f | edge reflect %.5f\n",
+               bump, interior, edgePredict, edgeReflect);
+        /* The filter must actually flatten a dome. */
+        CHECK(interior < bump * 0.2f);
+        /* Prediction leaves the edge visibly stiffer than the interior — the
+         * stripes. Reflection matches the interior exactly. */
+        CHECK(edgePredict > interior * 1.5f);
+        CHECK(fabsf(edgeReflect - interior) < 1.0e-6f);
+    }
+
     char *fs = ReadFile("core/fluid/shaders/fluid_depth_narrow_range.fs");
     char *c = ReadFile("core/fluid/fluid_surface.c");
     if (!fs || !c) { printf("FAIL: cannot read the filter shader or fluid_surface.c\n"); bad++; }
@@ -293,7 +350,10 @@ int main(void)
         CHECK(strstr(fs, "int adaptiveRadius") != NULL);
         /* The boundary condition: a missing side contributes the prediction. It
          * must not go back to dropping (streaks) or to breaking (no filtering). */
-        CHECK(strstr(fs, "sampleDistance = predictedDistance;") != NULL);
+        /* Even reflection: a missing side takes the opposite side's real value.
+         * Neither dropping it (bias) nor substituting the centre (weak edge). */
+        CHECK(strstr(fs, "if (!posValid) positive = negative;") != NULL);
+        CHECK(strstr(fs, "if (!negValid) negative = positive;") != NULL);
         CHECK(strstr(fs, "|| negative >= 0.99999) break;") == NULL);
         /* The reach multiplier is mirrored above; assert it so the mirror cannot
          * drift away from the shader while still reporting green. */

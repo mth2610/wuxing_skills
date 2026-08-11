@@ -11,6 +11,12 @@ uniform vec2 u_texel;      // fluid reconstruction texel
 uniform vec2 u_sceneTexel; // full-resolution scene texel
 uniform int u_hasSceneDepth;
 uniform int u_qualityTier;
+/* Diagnostic, 0 = off, driven by WUXING_FLUID_DEBUG. Only the two views that
+ * actually settled questions are kept: 1 shows the reconstructed NORMAL, which
+ * separates "the surface is wrong" from "the shading is wrong" in one look, and
+ * the host adds mode 12 (composite off the unfiltered capture) to separate the
+ * capture from the filter. Out again when the silhouette is signed off. */
+uniform int u_debugView;
 
 uniform mat4 u_projection;
 uniform mat4 u_inverseProjection;
@@ -431,6 +437,8 @@ void main() {
     float foamMask = clamp(max(shoreline, crest) * foamPattern, 0.0, 0.72);
     vec3 foamColor = mix(u_materialSoft, vec3(1.0), 0.20);
     vec3 foam = foamColor * foamMask * (0.38 + 0.62 * dot(ambient, vec3(0.333333)));
+
+    if (u_debugView == 1) { finalColor = vec4(N * 0.5 + 0.5, surfaceCoverage); return; }
 
     vec3 water = dielectricBase + specular + foam + rimLight;
     finalColor = vec4(water, surfaceCoverage);

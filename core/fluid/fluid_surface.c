@@ -10,6 +10,7 @@
 #include "raymath.h"
 #include <math.h>
 #include <stddef.h>
+#include <stdlib.h>
 
 #define FLUID_OPTICAL_POINT_LIGHTS 4
 
@@ -31,6 +32,7 @@ static int s_sunDirectionLoc, s_sunColorLoc, s_skyAmbientLoc, s_groundAmbientLoc
 static int s_pointLightCountLoc, s_pointLightPosLoc, s_pointLightColorLoc;
 static int s_materialBodyLoc, s_materialGlowLoc, s_materialSoftLoc;
 static int s_timeLoc;
+static int s_debugViewLoc;
 static Matrix s_fluidView, s_fluidProjection;
 static Color s_materialBody = {41, 128, 185, 255};
 static Color s_materialGlow = {80, 180, 255, 255};
@@ -135,6 +137,18 @@ static RenderTexture2D FluidSurface_LoadScalarTarget(int w, int h) {
     return t;
 }
 
+/* WUXING_FLUID_DEBUG: 1 = reconstructed normal (shader), 12 = composite off the
+ * UNFILTERED capture (host-side, no fragment shader can do it). Temporary. */
+static int FluidSurface_DebugView(void) {
+    static int s_view=-1;
+    if (s_view<0) {
+        const char *env=getenv("WUXING_FLUID_DEBUG");
+        s_view=env?atoi(env):0;
+        if (s_view) TraceLog(LOG_INFO,"FluidSurface: debug mode %d active",s_view);
+    }
+    return s_view;
+}
+
 void FluidSurface_Init(int width,int height) {
     /* Keep the authored High surface at native resolution while its optical
      * look is being judged. R32F prevents the former zoom-dependent depth
@@ -183,6 +197,7 @@ void FluidSurface_Init(int width,int height) {
     s_materialGlowLoc=GetShaderLocation(s_composite,"u_materialGlow");
     s_materialSoftLoc=GetShaderLocation(s_composite,"u_materialSoft");
     s_timeLoc=GetShaderLocation(s_composite,"u_time");
+    s_debugViewLoc=GetShaderLocation(s_composite,"u_debugView");
 }
 void FluidSurface_Unload(void) { UnloadTexture(s_surfaceTex); UnloadRenderTexture(s_capture); UnloadRenderTexture(s_thickness); UnloadRenderTexture(s_smoothA); UnloadRenderTexture(s_smoothB); if(s_sceneCopy.id) { UnloadRenderTexture(s_sceneCopy); s_sceneCopy=(RenderTexture2D){0}; } }
 void FluidSurface_SetMaterialColors(Color body, Color glow, Color soft) {
@@ -362,6 +377,8 @@ void FluidSurface_Composite(void) {
     SetShaderValue(s_composite,s_materialGlowLoc,&materialGlow,SHADER_UNIFORM_VEC3);
     SetShaderValue(s_composite,s_materialSoftLoc,&materialSoft,SHADER_UNIFORM_VEC3);
     SetShaderValue(s_composite,s_timeLoc,&opticalTime,SHADER_UNIFORM_FLOAT);
+    { int view=FluidSurface_DebugView(); int shaderView=(view==1)?1:0;
+      SetShaderValue(s_composite,s_debugViewLoc,&shaderView,SHADER_UNIFORM_INT); }
     SetShaderValue(s_composite,s_pointLightCountLoc,&pointLightCount,SHADER_UNIFORM_INT);
     SetShaderValueV(s_composite,s_pointLightPosLoc,pointLightPos,
                     SHADER_UNIFORM_VEC4,FLUID_OPTICAL_POINT_LIGHTS);
@@ -372,7 +389,8 @@ void FluidSurface_Composite(void) {
     SetShaderValueTexture(s_composite,s_thicknessLoc,s_thickness.texture);
     SetShaderValueTexture(s_composite,s_sceneLoc,scene);
     if(has) SetShaderValueTexture(s_composite,s_sceneDepthLoc,sceneDepth);
-    DrawTexturePro(s_smoothB.texture,(Rectangle){0,0,s_smoothB.texture.width,-s_smoothB.texture.height},(Rectangle){0,0,GetRenderWidth(),GetRenderHeight()},(Vector2){0,0},0,WHITE);
+    Texture2D depthSource=FluidSurface_DebugView()==12?s_capture.texture:s_smoothB.texture;
+    DrawTexturePro(depthSource,(Rectangle){0,0,depthSource.width,-depthSource.height},(Rectangle){0,0,GetRenderWidth(),GetRenderHeight()},(Vector2){0,0},0,WHITE);
     EndShaderMode();
     EndBlendMode();
     s_count=0;
