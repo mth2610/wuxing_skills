@@ -255,6 +255,15 @@ void main()
     // cannot express. Output is premultiplied; see VFX_BLEND_PREMULTIPLIED.
     if (u_volumeSheet > 0.5)
     {
+        // Debug 1 = the soft-particle factor. Debug 2 = the sheet's EMISSION,
+        // the quantity the discard below tests — painted opaque so a fully
+        // discarded quad shows as a hole in THIS view too, which is what tells
+        // "the sprite drew nothing" apart from "the sprite was never drawn".
+        if (u_softDebug > 1.5)
+        {
+            finalColor = vec4(texelColor.r, texelColor.a, 0.0, 1.0);
+            return;
+        }
         if (u_softDebug > 0.5) { finalColor = vec4(vec3(soft), 1.0); return; }
 
         float emis = texelColor.r;               // flame emission
