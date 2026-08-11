@@ -16,6 +16,11 @@
 
 static VkCommandBuffer rlvkOneShotBegin(VkCommandPool *outPool)
 {
+    /* Anything else submitting one-shot work (uploads, readbacks, layout
+     * transitions) must land AFTER any compute already recorded, exactly as it
+     * did when every dispatch submitted itself. Flushing here keeps that
+     * ordering automatic for every present and future caller. */
+    rlvkComputeBatchFlush();
     VkCommandPool pool = VK_NULL_HANDLE;
     if (vkCreateCommandPool(RLVK.device,
                             &(VkCommandPoolCreateInfo){

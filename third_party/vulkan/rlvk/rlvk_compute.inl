@@ -13,6 +13,39 @@
 // suspends the open render scope (dispatch is illegal inside a render pass), snapshots the
 // GL-style bind state into a fresh descriptor set, dispatches, and fences the writes so
 // later vertex/fragment/transfer reads observe them.
+/* Out-of-frame compute dispatches used to pay a full command pool + submit +
+ * vkQueueWaitIdle + pool destroy EACH. perf_dispatch_count measured ~0.6 ms per
+ * dispatch, which is what made a 9-dispatch PBD solve cost 4.4 ms for 72
+ * workgroups of real work. Batch them into one command buffer instead: the
+ * per-dispatch memory barriers already recorded between them give the same
+ * ordering the separate submits did, at pipeline-barrier cost rather than
+ * queue-drain cost. */
+static VkCommandBuffer rlvkComputeBatchAcquire(void)
+{
+    if (RLVK.computeBatch.open) return RLVK.computeBatch.cmd;
+    VkCommandPool pool = VK_NULL_HANDLE;
+    VkCommandBuffer cmd = rlvkOneShotBegin(&pool);
+    if (cmd == VK_NULL_HANDLE) return VK_NULL_HANDLE;
+    RLVK.computeBatch.pool = pool;
+    RLVK.computeBatch.cmd = cmd;
+    RLVK.computeBatch.open = true;
+    return cmd;
+}
+
+/* Submit and WAIT. Every caller either needs the results now or is about to free
+ * something the batch references — there is no lazy variant on purpose. */
+static void rlvkComputeBatchFlush(void)
+{
+    if (!RLVK.computeBatch.open) return;
+    VkCommandPool pool = RLVK.computeBatch.pool;
+    VkCommandBuffer cmd = RLVK.computeBatch.cmd;
+    /* Cleared BEFORE the submit: rlvkOneShotEnd must not see an open batch. */
+    RLVK.computeBatch.open = false;
+    RLVK.computeBatch.pool = VK_NULL_HANDLE;
+    RLVK.computeBatch.cmd = VK_NULL_HANDLE;
+    rlvkOneShotEnd(pool, cmd);
+}
+
 void rlComputeShaderDispatch(unsigned int gx, unsigned int gy, unsigned int gz)
 {
     rlvkShaderSlot *shader = &RLVK.shaderSlots[RLVK.State.activeShaderSlot];
@@ -45,7 +78,9 @@ void rlComputeShaderDispatch(unsigned int gx, unsigned int gy, unsigned int gz)
     }
     else
     {
-        cmdBuffer = rlvkOneShotBegin(&oneShotPool);   // init-time dispatch (seeding etc.)
+        /* Out of frame (init-time seeding, and every gameplay-update dispatch —
+         * main.c updates physics before BeginDrawing). Joins the open batch. */
+        cmdBuffer = rlvkComputeBatchAcquire();
         if (cmdBuffer == VK_NULL_HANDLE) return;
     }
 
@@ -147,7 +182,9 @@ void rlComputeShaderDispatch(unsigned int gx, unsigned int gy, unsigned int gz)
         rlvkResumeSwapchainScope(cmdBuffer);
         if (openFb) rlEnableFramebuffer(openFb);
     }
-    else rlvkOneShotEnd(oneShotPool, cmdBuffer);
+    /* Else: left OPEN in the batch. It is submitted by rlvkComputeBatchFlush,
+     * which every path that must observe the result already calls. */
+    (void)oneShotPool;
 }
 
 // Load shader storage buffer object (SSBO): DEVICE_LOCAL storage buffer, optional initial data

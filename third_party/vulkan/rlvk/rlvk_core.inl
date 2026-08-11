@@ -126,6 +126,9 @@ void rlglClose(void)
 {
     if (!isGpuReady)
         return;
+    /* A batch left open at shutdown owns a command pool that teardown would
+     * destroy while it still holds unsubmitted work. */
+    rlvkComputeBatchFlush();
     if (RLVK.device)
         vkDeviceWaitIdle(RLVK.device); // shutdown teardown: the one place a full device drain is the right tool
 

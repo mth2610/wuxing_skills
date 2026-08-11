@@ -518,6 +518,10 @@ static void rlvkBeginFrame(void)
         RLVK.set0CacheCount[frameIndex] = 0; // pool reset freed every cached snapshot set
         RLVK.boundSet0 = VK_NULL_HANDLE;
     }
+    /* BEFORE the reset, not after: a pending batch's command buffer still
+     * references descriptor sets allocated from this pool, and resetting it
+     * would free them out from under work that has not been submitted yet. */
+    rlvkComputeBatchFlush();
     if (RLVK.computeDescPools[frameIndex])
         vkResetDescriptorPool(RLVK.device, RLVK.computeDescPools[frameIndex], 0);
 

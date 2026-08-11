@@ -416,6 +416,20 @@ typedef struct rlvkData {
     // 4B-aligned tier - fbSlots (4B inner alignment)
     rlvkFramebufferSlot     fbSlots[RLVK_MAX_FRAMEBUFFER_SLOTS];
 
+    /* Out-of-frame compute dispatches accumulate here instead of each paying its
+     * own command pool + submit + vkQueueWaitIdle + pool destroy. Measured at
+     * ~0.6 ms PER DISPATCH (tests/rlvk_visual_test.c perf_dispatch_count), which
+     * is what made core/fluid's 9-dispatch PBD solve cost 4.4 ms for 72
+     * workgroups of actual work. The batch is flushed before anything that must
+     * observe its results: frame begin (ahead of the descriptor-pool reset that
+     * would free sets it still references), any other one-shot submission, and
+     * teardown. */
+    struct {
+        VkCommandPool   pool;
+        VkCommandBuffer cmd;
+        bool            open;
+    } computeBatch;
+
     // 4B-aligned nested struct
     struct {
         u32         apiVersion;         // Selected device's VkPhysicalDeviceProperties.apiVersion

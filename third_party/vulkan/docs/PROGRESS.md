@@ -102,6 +102,40 @@ the caller-side decision (which format a pass should use) still belongs to the c
 Known consumer that relies on both today: `core/fluid/fluid_surface.c` (four R32F targets,
 additive thickness pass, BILINEAR filter) — Core's call.
 
+## Compute dispatch costs ~0.6-0.9 ms per CALL — and it is none of the obvious three (2026-08-11)
+
+core/fluid's PBD solver measured **4.4 ms in-game** for 2,048 particles across 9
+dispatches — 72 workgroups of real work. `perf_dispatch_count` (visual suite,
+LCG-interleaved) reproduces the shape with a kernel that does nothing but add a
+float: **1 dispatch 1.316 ms, 9 dispatches 6.240 ms, i.e. 0.615 ms per extra
+dispatch.**
+
+Three hypotheses were tested and **all three are wrong**, so do not re-chase them:
+
+| suspect | test | result |
+|---|---|---|
+| one-shot submit + `vkQueueWaitIdle` (out-of-frame path) | 9 dispatches in-frame vs outside | 0.02 ms/call difference |
+| render-pass split per dispatch (in-frame path) | same measurement, other direction | same |
+| the full `CmdPipelineBarrier2` after every dispatch | `RLVK_EXP_NO_COMPUTE_BARRIER=1` (gate since removed) | within run-to-run noise (±0.5 ms) |
+
+**Next suspect, untested: the per-dispatch descriptor set.** Every dispatch calls
+`vkAllocateDescriptorSets` and rewrites the whole snapshot (SSBOs, storage
+images, samplers, uniform block). It is the only remaining heavyweight step both
+paths share, and MoltenVK builds a Metal argument buffer per set. The experiment
+that would settle it: cache the set and re-use it while the bindings and the
+uniform generation are unchanged, then re-run `perf_dispatch_count`.
+
+**Landed meanwhile:** out-of-frame dispatches now batch into ONE command buffer
+(`RLVK.computeBatch`) instead of each creating a command pool, submitting,
+waiting on the queue and destroying the pool. Correct by construction — the
+per-dispatch memory barriers still order the work — and flushed before anything
+that must observe it: any other one-shot submission (`rlvkOneShotBegin`), frame
+begin (**before** the compute descriptor-pool reset, which would otherwise free
+sets the pending buffer references), and `rlglClose`. Measured win is small
+(~0.1-0.6 ms across nine dispatches, at the edge of noise) because the submit was
+never the expensive part — it is kept because fewer queue drains is strictly
+better, not because it fixed the number.
+
 ## State
 Retarget 1.3→1.1-core complete. Headless suite runtime-verified on MoltenVK (20/20, zero validation errors); visual suite 14/14. **In-game confirmed on desktop** (character self-occlusion, black-hole occlusion, soft-particle fade). **Runs on real Android/Mali hardware** (2026-07-17); the Android bring-up bugs (HANDOFF §7.11–7.23) are fixed.
 
