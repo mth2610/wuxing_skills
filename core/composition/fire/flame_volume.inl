@@ -70,7 +70,20 @@ static Texture2D s_fvolPuffTex = {0};    // the PUFF sheet
 static float s_fvolBodyCount = 1.0f;   // x on atlas body sprites (perf lever)
 // How many body sprites are ALIVE at once — the quantity the eye judges, and
 // the one the emission rate is derived from (rate = live / average lifetime).
-static float s_fvolBodyLive = 90.0f;
+// TRANSLUCENCY AND COUNT ARE ONE DECISION, NOT TWO.
+//
+// The sheet was 41.8% opaque texels (A > 0.9) against the smoke puff's 6.0%,
+// and an opaque sprite HIDES the ones behind it — ninety of them stack as
+// ninety cards, which is the "mảng mảng" the owner kept reporting. Re-baking at
+// --density-scale 0.7 --flame-extinction 0.3 brings that to 15.6%, so sprites
+// accumulate instead of occluding.
+//
+// But a translucent sprite also carries less mass, and at the old 90 the flame
+// came out thin and small. The two numbers have to move together: lowering one
+// without raising the other is how this looked WORSE at each half-step. Note
+// the owner already measured the other direction — cutting the count to 26 made
+// the patchiness more visible, not less, because it exposes each silhouette.
+static float s_fvolBodyLive = 220.0f;
 // Multiplier on the puff body's radius. Count and size buy the same cohesion at
 // the same fill cost; size is the cheaper one in draw calls. Which is right is
 // a look judgement, so both are tunables.
@@ -126,7 +139,7 @@ static SpriteAnim s_fvolVolumeAnim = {0};
 // the flame is white-hot". The sim normalises emission to its own 99.5th
 // percentile and has no idea how bright this effect should read, so this is
 // the knob that decides incandescent vs smouldering.
-static float s_fvolHeatGain = 1.6f;
+static float s_fvolHeatGain = 1.9f;
 // Radiance gain on the flame half. SEPARATE from heatGain on purpose: heatGain
 // moves the sprite along the ramp (what COLOUR it is), this moves how much light
 // it throws (how BRIGHT it is). Conflating them means you cannot have a deep-red
@@ -155,7 +168,7 @@ static float s_fvolEmissive = 6.0f;
 // Measured on the shipping sheet: emission averages 37.5 against soot 155.1, a
 // ratio of 0.24 — heavily smoke-dominated, which is why the default reads as a
 // large sooty fire rather than a torch.
-static float s_fvolSmokeGain = 1.0f;
+static float s_fvolSmokeGain = 1.4f;
 static float s_fvolSmokeR = 82.0f, s_fvolSmokeG = 74.0f, s_fvolSmokeB = 69.0f;
 // Ramp LUTs, one per material, baked lazily. THIS is where fire's colour lives
 // now — the sheet is greyscale on purpose, so pointing this at another gradient
@@ -204,15 +217,15 @@ static void FVol_InitShared(void)
     Tuning_RegisterFloat("flame_width_mul", &s_fvolWidthMul, 1.0f);
     Tuning_RegisterFloat("flame_atlas", &s_fvolAtlas, 1.0f); // 0 sprites/1 puff/2 column
     Tuning_RegisterFloat("flame_body_count", &s_fvolBodyCount, 1.0f);
-    Tuning_RegisterFloat("flame_body_live", &s_fvolBodyLive, 90.0f);
+    Tuning_RegisterFloat("flame_body_live", &s_fvolBodyLive, 220.0f);
     Tuning_RegisterFloat("flame_body_size", &s_fvolBodySize, 1.0f);
     Tuning_RegisterFloat("flame_spread", &s_fvolSpread, 1.0f);
     Tuning_RegisterFloat("flame_body_blend", &s_fvolBodyBlend, 0.0f);
     Tuning_RegisterFloat("flame_body_alpha", &s_fvolBodyAlpha, 0.18f);
     Tuning_RegisterFloat("flame_volume", &s_fvolVolume, 1.0f);
-    Tuning_RegisterFloat("flame_heat_gain", &s_fvolHeatGain, 1.6f);
+    Tuning_RegisterFloat("flame_heat_gain", &s_fvolHeatGain, 1.9f);
     Tuning_RegisterFloat("flame_emissive", &s_fvolEmissive, 6.0f);
-    Tuning_RegisterFloat("flame_smoke_gain", &s_fvolSmokeGain, 1.0f);
+    Tuning_RegisterFloat("flame_smoke_gain", &s_fvolSmokeGain, 1.4f);
     Tuning_RegisterFloat("flame_smoke_r", &s_fvolSmokeR, 82.0f);
     Tuning_RegisterFloat("flame_smoke_g", &s_fvolSmokeG, 74.0f);
     Tuning_RegisterFloat("flame_smoke_b", &s_fvolSmokeB, 69.0f);
