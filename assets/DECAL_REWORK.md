@@ -37,11 +37,11 @@ scanned, scored or retained as a fallback candidate. Every decal profile now
 declares `fallback_policy: no_legacy_fallback` with its reason; only a newly
 authored, approved source may replace a preview primary.
 
-Impact and Rune have the same registry-first gate. `surfaces/impact_material_v1.png`
-is a newly authored flat soil-impact preview primary: its chroma-keyed corners are
-alpha zero and it contains no raised rock/debris. The owner approved it as a
-replaceable runtime source; its broad rounded footprint remains a known art-quality
-constraint, not a claim of shipping quality.
+Impact and Rune have the same registry-first gate. `surfaces/impact_material_v2.png`
+is a newly authored element-neutral fracture preview primary: its chroma-keyed
+corners are alpha zero, the grayscale plate body accepts runtime material tint,
+and near-white fissure cores feed the independent emissive tint. It contains no
+raised rock/debris and remains preview-only until an in-engine visual review.
 Impact requires organic edge erosion, not a generic hit ring. Rune uses a separate `symbol_boundary_alpha_required`
 seam contract: a glyph must stay legible under terrain projection rather than
 being treated as an irregular soot mark. Neither profile has a runtime asset

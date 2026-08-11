@@ -484,7 +484,7 @@
       "projection": "conformal_mesh_stamp_receiver_normal",
       "max_slope_degrees": 46.0,
       "seam": "edge_breakup_mask_required",
-      "provenance": "P4 ImageGen flat soil-impact v1, magenta chroma-key removed to authored alpha; replaceable preview source approved by owner",
+      "provenance": "P4 ImageGen element-neutral fracture impact v2, derived from the owner-provided glowing-crack reference on 10/08/2026; magenta chroma-key removed with soft alpha matte and one-pixel edge contraction; grayscale plate body plus near-white fissure cores support runtime body/emissive tinting",
       "approval": "preview_only",
       "consumers": [
         "VFX_ComposeImpactDecal"
@@ -505,8 +505,8 @@
       ],
       "assets": {
         "body": {
-          "path": "assets/textures/surfaces/impact_material_v1.png",
-          "channels": "OPAQUE | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — compacted soil/cracks and organic alpha; RGB is not a normal or height map"
+          "path": "assets/textures/surfaces/impact_material_v2.png",
+          "channels": "OPAQUE | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — element-neutral grayscale fracture plates, bright emissive-extraction fissures, and organic alpha; RGB is not a normal or height map"
         }
       },
       "fallback_policy": {

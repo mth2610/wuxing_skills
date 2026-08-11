@@ -16,6 +16,14 @@ static int Has(const char *path, const char *needle)
     return strstr(text, needle) != NULL;
 }
 
+static int Exists(const char *path)
+{
+    FILE *file = fopen(path, "rb");
+    if (!file) return 0;
+    fclose(file);
+    return 1;
+}
+
 int main(void)
 {
     const char *api = "core/decals/decal_system.h";
@@ -48,6 +56,13 @@ int main(void)
           Has("core/decals/decal_materials.json", "DECAL_MATERIAL_IMPACT") &&
           Has("scripts/gen_decal_materials.py", "decal_materials.generated.inl"),
           "Decal render policy is generated from canonical material data");
+    CHECK(Has("core/decals/decal_materials.json",
+              "\"surface\": \"VFX_SURFACE_DECAL_IMPACT\"") &&
+          Has(compose, "VFX_SurfaceRegistry_Get(decal->surface)") &&
+          Has("core/vfx_surface_registry.generated.inl",
+              ".bodyPath = \"assets/textures/surfaces/impact_material_v2.png\"") &&
+          Exists("assets/textures/surfaces/impact_material_v2.png"),
+          "Generic impact decals resolve the authored fracture texture through the semantic registry");
     CHECK(Has("core/decals/decal_materials.json", "\"priority\"") &&
           Has("core/decals/decal_material.h", "int priority") &&
           Has(compose, ".priority = decal->priority") &&

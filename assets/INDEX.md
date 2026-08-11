@@ -77,7 +77,7 @@ Used via `SpawnGroundDecal(DECAL_PRESET_GENERIC_*)`. White/tintable.
 | `volume_surface_steam.png` | `VFX_SurfaceRegistry` VolumeSteam body | As smoke, wide and low contrast — near translucent | data, 4-channel packed |
 | `volume_noise.png` | `core/deform/mesh_deform.h` displacement (via `TubeMeshConfig.noisePixels`) | **NOISE layout** — four decorrelated scalar fields, pure data, never drawn. Seamless both axes | data, greyscale fields |
 | `surfaces/scorch_material_v1.png` | `VFX_SurfaceRegistry` DecalScorch preview body | ImageGen-charcoal scorch material with chroma-key-derived organic alpha; visual-review only | RGBA charcoal/ember/opacity |
-| `surfaces/impact_material_v1.png` | `VFX_SurfaceRegistry` DecalImpact preview body | ImageGen flat soil-impact mark with chroma-key-derived alpha; owner-approved replaceable runtime preview, no raised debris, broad rounded footprint remains known limitation | RGBA soil/cracks/opacity |
+| `surfaces/impact_material_v2.png` | `VFX_SurfaceRegistry` DecalImpact preview body | ImageGen element-neutral fracture mark with chroma-key-derived alpha; grayscale plates and near-white fissure cores accept independent runtime body/emissive tinting | RGBA grayscale/cracks/opacity |
 | `smoke_volume.png` | `VFX_SurfaceRegistry` SmokeTube preview profile | Seamless smoke tube body; preview-only until P3 approval | pre-lit RGBA |
 | `smoke_volume_flow.png` | `VFX_SurfaceRegistry` SmokeTube preview profile | Tileable RG direction field | data, RG direction |
 | `fire_volume.png` | `VFX_SurfaceRegistry` FireTube preview profile | Seamless fire tube body; preview-only until P3 approval | emissive RGBA |
@@ -107,7 +107,7 @@ until the visual owner approves authored source art.
 |---|---|---|---|
 | DecalResidue | conformal mesh stamp, alpha / edge erosion | all legacy decals are rejected globally; wait for newly authored residue material | blocked, no fallback |
 | DecalScorch | conformal mesh stamp, alpha charcoal + additive ember ramp | `scorch_material_v1.png` is a replaceable preview primary; all legacy decals are rejected globally | visual primary; no shipping fallback |
-| DecalImpact | conformal mesh stamp, alpha / edge erosion | `impact_material_v1.png` is the owner-approved replaceable preview primary; all legacy decals are rejected globally | preview primary; no shipping fallback |
+| DecalImpact | conformal mesh stamp, alpha / edge erosion | `impact_material_v2.png` is the element-neutral glowing-fracture preview primary; all legacy decals are rejected globally | preview primary; no shipping fallback |
 | DecalRune | conformal mesh stamp, alpha / glyph boundary | all legacy decals are rejected globally; wait for a newly authored glyph source | blocked, no fallback |
 | SmokeTube / FireTube | tube | `VFX_ComposeVolumeTrail` | registry-only preview; spawn remains blocked pending P3 visual approval |
 
