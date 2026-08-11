@@ -64,12 +64,27 @@ static ColorGradient s_ebRampGrad[VC_MAT_COUNT];
 static Texture2D s_ebRampLUT[VC_MAT_COUNT];
 static float s_ebHeatGain = 1.0f;
 static float s_ebEmissive = 1.6f;
+// How much the hot gas OCCLUDES — the only thing that lets an energy burst keep
+// its hue over a bright sky, since addition alone cannot.
+static float s_ebDensity = 0.35f;
 
 // The ENERGY ramp, and it is not a black-body curve. Fire cools through red
 // into soot, so its ramp ends dark brown; energy has nothing to cool INTO — it
 // simply stops. The tail therefore runs to a deep saturated version of the
 // element rather than to grey, and the head goes to white through the material's
 // own glow colour, so a burst reads as the element at every intensity.
+// The occluding fraction's colour: a deep saturated element, never grey. Soot
+// grey here would be the "black smoke in an energy explosion" that has no
+// business in this effect; a dark element reads as dense glowing gas seen
+// against something brighter than itself.
+static Color EnergyBurst_DenseTint(VC_MaterialId matId)
+{
+    const VFX_ElementMaterial *m = VFX_Material(matId);
+    Color b = m->body;
+    return (Color){(unsigned char)(b.r * 0.55f), (unsigned char)(b.g * 0.55f),
+                   (unsigned char)(b.b * 0.55f), 255};
+}
+
 static Texture2D EnergyBurst_RampLUT(VC_MaterialId matId)
 {
     if (matId < 0 || matId >= VC_MAT_COUNT) matId = VC_MAT_TAIJI;
@@ -206,7 +221,8 @@ void VFX_ComposeEnergyBurst(Vector3 pos, VC_MaterialId matId, float scale,
         static bool reg = false;
         if (!reg) { reg = true;
             Tuning_RegisterFloat("energy_heat_gain", &s_ebHeatGain, 1.0f);
-            Tuning_RegisterFloat("energy_emissive", &s_ebEmissive, 1.6f); }
+            Tuning_RegisterFloat("energy_emissive", &s_ebEmissive, 1.6f);
+            Tuning_RegisterFloat("energy_density", &s_ebDensity, 0.35f); }
     }
 
     const float ity = Clamp(intensity, 0.0f, 1.0f);
@@ -287,17 +303,21 @@ void VFX_ComposeEnergyBurst(Vector3 pos, VC_MaterialId matId, float scale,
             .render.volumeSheet = 1,
             .render.rampLUT = EnergyBurst_RampLUT(matId),
             .render.heatGain = s_ebHeatGain,
-            // ZERO SOOT. This is the declaration that makes it pure light: the
-            // shader emits alpha 0 and premultiplied blending becomes exact
-            // addition, so the burst can never be darker than what is behind
-            // it. Raising it above 0 would give this effect a silhouette.
-            .render.smokeGain = 0.0f,
+            // A SMALL coverage, not zero. This is NOT smoke returning: the
+            // tint is a deep element colour, never soot, so what it adds is
+            // "hot gas thick enough to occlude a little" rather than a grey
+            // cloud. Zero is pure light and washes out over anything bright,
+            // because addition can only ever push the destination toward white;
+            // full would be a smoke puff. This is the dial between them, and it
+            // is the only thing that can carry hue on a bright sky.
+            .render.smokeGain = s_ebDensity,
+            .render.smokeTint = EnergyBurst_DenseTint(matId),
             .render.emissiveBoost = s_ebEmissive * Math_Mix(0.85f, 1.1f, ity),
-            // ADDITIVE, not premultiplied: pure light has no silhouette, so it
-            // belongs in the emission pass. Premultiplied is for something that
-            // emits AND occludes (fire), and routing this through the body pass
-            // is what cut horizontal bands out of the burst.
-            .render.blendMode = VFX_BLEND_ADDITIVE,
+            // PREMULTIPLIED, and now that it is routed to the EMISSION pass
+            // rather than BODY it no longer cuts bands. Body was only ever
+            // chosen because the old emission TARGET discarded coverage; that
+            // target is gone.
+            .render.blendMode = VFX_BLEND_PREMULTIPLIED,
             .render.contrastProfile = VFX_CONTRAST_ENERGY,
             // THE SMOKE PUFF SHEET, unchanged. Only the TECHNIQUE came from
             // flame_volume — a ramp LUT indexed per texel — and that needs a

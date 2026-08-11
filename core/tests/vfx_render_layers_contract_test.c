@@ -90,9 +90,11 @@ int main(void)
     // two lines and ParticleSystem_HasAdditiveParticles must agree — when they
     // disagreed, the particles were filtered out of body and then the emission
     // pass was skipped as empty, and nothing drew at all.
-    bad += !Has("core/particles/particle_system.c", "if (layerFilter == 0 && p->blendMode == VFX_BLEND_ADDITIVE) continue;");
-    bad += !Has("core/particles/particle_system.c", "if (layerFilter == 1 && p->blendMode != VFX_BLEND_ADDITIVE) continue;");
-    bad += !Has("core/particles/particle_system.c", "? VFX_BLEND_PREMULTIPLIED");
+    // PREMULTIPLIED belongs in EMISSION, not BODY. Body was only ever chosen
+    // because the old emission TARGET discarded coverage, and that target is
+    // retired; drawing it in body cut horizontal bands out of the effect.
+    bad += !Has("core/particles/particle_system.c", "if (layerFilter == 0 && p->blendMode != VFX_BLEND_ALPHA) continue;");
+    bad += !Has("core/particles/particle_system.c", "if (layerFilter == 1 && p->blendMode == VFX_BLEND_ALPHA) continue;");
     bad += !Has("core/trails/trail_system.c", "BlendMode bm = (layerFilter == 0) ? BLEND_ALPHA : sourceBm;");
     bad += !Has("core/trails/trail_system.c", "TrailUsesAdditiveBlend(t) &&");
     bad += !Has("core/trails/trail_system.c", "EnsureTrailBodyShader();");
@@ -118,11 +120,14 @@ int main(void)
     // ADDITIVE, not premultiplied. Pure light has no silhouette, so it belongs
     // in the emission pass; premultiplied is routed to BODY and drawing this
     // there cut horizontal bands out of the burst.
-    bad += !Has("core/composition/common/vc_energy_burst.inl", ".render.blendMode = VFX_BLEND_ADDITIVE,");
-    bad += Has("core/composition/common/vc_energy_burst.inl", ".render.blendMode = VFX_BLEND_PREMULTIPLIED,");
+    bad += !Has("core/composition/common/vc_energy_burst.inl", ".render.blendMode = VFX_BLEND_PREMULTIPLIED,");
     // smokeGain 0 is the declaration that makes it pure light: the shader then
     // emits alpha 0 and premultiplied blending degenerates to exact addition.
-    bad += !Has("core/composition/common/vc_energy_burst.inl", ".render.smokeGain = 0.0f,");
+    // A SMALL coverage, not zero: pure addition cannot hold hue over a bright
+    // destination, it only pushes toward white. The tint is a deep element
+    // colour rather than soot, so this is dense glowing gas, not smoke.
+    bad += !Has("core/composition/common/vc_energy_burst.inl", ".render.smokeGain = s_ebDensity,");
+    bad += !Has("core/composition/common/vc_energy_burst.inl", "EnergyBurst_DenseTint(matId)");
     bad += !Has("core/particles/shaders/particle_lit.fs", "if (u_smokeGain <= 0.0)");
     bad += !Has("core/vfx_config.h", "VFXContrastProfileId contrastProfile;");
     bad += !Has("core/particles/particle_system.c", "VFXContrast_ApplyColor(");

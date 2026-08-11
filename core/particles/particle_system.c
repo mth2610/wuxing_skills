@@ -1015,8 +1015,17 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     // as emission, so the HDR headroom the blown-out core needs survives.
     // Nothing about the shared composite has to change, and no other VFX is
     // touched.
-    if (layerFilter == 0 && p->blendMode == VFX_BLEND_ADDITIVE) continue;
-    if (layerFilter == 1 && p->blendMode != VFX_BLEND_ADDITIVE) continue;
+    // PREMULTIPLIED goes to EMISSION with additive, not to BODY.
+    //
+    // It was routed to BODY when the split VFX layers still existed, because
+    // the emission TARGET was composited with BLEND_ADD_COLORS and discarded
+    // coverage. Those layers were retired (they were arithmetic that cancels);
+    // emission now draws straight into the scene, so coverage survives there
+    // and the original reason is gone. Drawing it in BODY instead cost sharp
+    // horizontal bands — that pass also carries trails, decals and afterimages
+    // and their depth-mask handling.
+    if (layerFilter == 0 && p->blendMode != VFX_BLEND_ALPHA) continue;
+    if (layerFilter == 1 && p->blendMode == VFX_BLEND_ALPHA) continue;
     // SURFACE_INPUT is rendered exclusively by FluidSurface; drawing it here
     // would reveal its source particles as billboards as well.
     if (p->renderMode == 3) continue;
@@ -1035,11 +1044,7 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     // to keep: its RGB is already scaled by its own coverage, so forcing it to
     // ALPHA would make the hardware multiply by alpha a second time and the
     // flame would come out roughly its own coverage darker.
-    int drawBlend = (layerFilter == 0)
-                        ? (p->blendMode == VFX_BLEND_PREMULTIPLIED
-                               ? VFX_BLEND_PREMULTIPLIED
-                               : VFX_BLEND_ALPHA)
-                        : p->blendMode;
+    int drawBlend = (layerFilter == 0) ? VFX_BLEND_ALPHA : p->blendMode;
     if (want != curTex || drawBlend != curBlend || p->unlit != curUnlit ||
         wantGridC != curGridC || wantGridR != curGridR || wantBoost != curBoost ||
         p->volumeSheet != curVolume || p->rampTexId != curRamp ||
@@ -1542,7 +1547,7 @@ bool ParticleSystem_HasAdditiveParticles(void)
     // with the layer filter in DrawParticlesLayer: ADDITIVE is the only mode
     // that goes to emission (PREMULTIPLIED is drawn in the body pass, see the
     // note there). If the two ever disagree, particles vanish silently.
-    if (p->blendMode == VFX_BLEND_ADDITIVE && p->renderMode != 3 && !p->trailOnly)
+    if (p->blendMode != VFX_BLEND_ALPHA && p->renderMode != 3 && !p->trailOnly)
       return true;
   }
   return false;
