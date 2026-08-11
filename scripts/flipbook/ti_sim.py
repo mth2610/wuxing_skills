@@ -188,6 +188,16 @@ def main():
                     help="how long the radial impulse lasts, as a fraction of "
                          "the sheet. A puff coasts after a shove (0.22); a "
                          "detonation is over in a few frames")
+    # THE DOMAIN IS FIXED, SO THE IGNITION IS WHAT SETS THE HEADROOM.
+    # A puff that reaches the wall has its silhouette clamped into the box, and
+    # no crop repairs that: zooming in hides it and zooming out frames it. The
+    # only real remedy is to start smaller relative to the domain, which is
+    # this. Lower it whenever the run warns about the wall — the fix is not
+    # --radial, which was measured moving the 90th-percentile reach only
+    # 1.28 -> 1.30 across 8.0 -> 3.0.
+    ap.add_argument("--fuel-radius", type=float, default=None,
+                    help="ignition ball radius as a fraction of the domain. "
+                         "Smaller = more room to expand before hitting the wall")
     ap.add_argument("--fuel-dens", type=float, default=None,
                     help="density injected with the heat. Low = ENERGY (little "
                          "smoke left behind), high = fire that turns to soot")
@@ -228,7 +238,8 @@ def main():
     # means the same shape whatever --res it is applied at.
     for k in ("radial", "curl", "viscosity", "buoyancy", "cool", "swirl",
               "diffuse", "soot", "fuel_frames", "eddy", "gravity", "flat",
-              "shell", "impulse", "fuel_dens", "dt", "dissipate"):
+              "shell", "impulse", "fuel_dens", "dt", "dissipate",
+              "fuel_radius"):
         if getattr(args, k) is not None:
             p[k] = getattr(args, k)
     if args.source_lobes is not None:
