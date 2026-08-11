@@ -580,3 +580,33 @@ riêng thì yêu cầu tự hết hiệu lực.
 Chưa xác nhận bằng mắt (Core không có tầng visual tự động). Hai chỉnh quang học trước
 đó — `min` thay `max` khi gộp depthGap, và knee của `DecodeOpticalThickness` — vẫn giữ;
 mỗi cái một dòng, dễ dial lại sau khi nhìn thấy kết quả thật.
+
+## Biên tưa: hai bản sửa ĐÃ THỬ và ĐÃ HOÀN TÁC (2026-08-11)
+
+Trạng thái hiện tại = commit `279a115`. Vân đường-đồng-mức đã hết; còn lại **một
+chút sọc ở biên, phải nhìn rất kĩ mới thấy** — đây là mức được chấp nhận, không
+phải việc còn dở.
+
+Đã đo được (bằng `WUXING_FLUID_DEBUG`, xem `fluid_surface.c`): capture **sạch**
+(chế độ 12 không sọc), và mỗi pass lọc kéo bề mặt **theo đúng trục của nó** (chế
+độ 14 chỉ chạy pass ngang → sọc chuyển từ dọc sang ngang). Nguyên nhân đúng như
+vậy: ở gần silhouette phía ngoài không còn bề mặt, nên phép gom mẫu **một phía**
+kéo kết quả về phía thân khối.
+
+**Hai bản sửa đã thử, cả hai làm SỌC NHIỀU HƠN, đã hoàn tác — đừng thử lại:**
+
+1. Gom theo cặp, `break` khi một phía hết bề mặt. Đúng về mặt đối xứng (guard đo
+   được: lệch một phía +0.1176 m → theo cặp +0.0000 m), nhưng trong một trường
+   splat **thưa** thì bất kỳ lỗ nhỏ nào bên trong cũng chặn vòng lặp gần như
+   ngay lập tức, nên bộ lọc gần như không làm mịn ở đúng những chỗ cần nhất.
+2. Hole fill chỉ lấp khi bị bao quanh (`surfaceCount > 13` trên 24 hàng xóm).
+   Tách đúng "lỗ" khỏi "rìa" về mặt hình học, nhưng ngưỡng đó quá chặt với thân
+   khối thưa: nhiều pixel lỗ **bên trong** cũng không đủ 14 hàng xóm nên thôi
+   được lấp, để lại nhiều khoảng trống hơn trước.
+
+Cả hai đều **giảm lượng làm mịn đúng ở nơi cần nó nhất**. Muốn khử nốt phần dư
+này thì phải đổi kiểu lọc (lọc 2D thật, hoặc curvature-flow) chứ không vá được
+trong khuôn khổ separable — và đó là việc đắt, cân nhắc cùng lúc với đợt hiệu năng.
+
+Thiết bị đo `u_debugView` vẫn còn trong `fluid_surface.fs` và `fluid_surface.c`
+(mặc định tắt). Gỡ khi nào chốt là không đụng vào biên nữa.
