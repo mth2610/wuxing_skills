@@ -45,11 +45,19 @@ static const MeshAdjacency *WaterRing_Mesh(void)
 {
     if (!s_waterRingMeshReady)
     {
-        /* A UNIT ring: the caller's radius is a transform, so one mesh serves
-         * every scale. Segment counts are the sampling grid the emitter draws
-         * from — too few and the edges show as spokes in the reconstructed
+        /* GenMeshTorus(radius, size, ...) is (TUBE radius, overall scale) — NOT
+         * (ring radius, tube radius). par_shapes__torus fixes the major radius
+         * at 1 and takes the caller's value as the MINOR one, then raylib scales
+         * the result by size/2. Passing 1.0 first therefore asks for a tube as
+         * fat as the ring: a torus whose hole is exactly zero, which is why this
+         * body rendered as a filled disc no matter how thin the splats got. The
+         * hole was never in the mesh.
+         *
+         * So: tube ratio first, and size 2.0 to bring the unit major radius back
+         * to 1 after the size/2. Segment counts are the sampling grid the emitter
+         * draws from — too few and the edges show as spokes in the reconstructed
          * surface, too many only costs build time (welded vertices, once). */
-        Mesh m = GenMeshTorus(1.0f, WATER_RING_TUBE_RATIO, 40, 20);
+        Mesh m = GenMeshTorus(WATER_RING_TUBE_RATIO, 2.0f, 40, 20);
         MeshAdjacency_Build(&s_waterRingMesh, m);
         UnloadMesh(m);
         s_waterRingMeshReady = true;
@@ -126,7 +134,12 @@ void VFX_ComposeWaterRing(Vector3 center, float radius, float t01)
     s_waterRingAccum -= (float)spawn;
     if (spawn <= 0) return;
 
-    Matrix xform = MatrixMultiply(MatrixScale(radius, radius, radius),
+    /* par_shapes lays the ring in the XY plane with the tube axis along Z, so the
+     * mesh stands upright. Everything downstream — the vortex axis, the tangent
+     * launch, `spoke.y = 0` — assumes a ring lying flat in XZ, so rotate it
+     * there rather than special-casing four different places. */
+    Matrix xform = MatrixMultiply(MatrixMultiply(MatrixRotateX(-PI*0.5f),
+                                                 MatrixScale(radius, radius, radius)),
                                   MatrixTranslate(center.x, center.y, center.z));
     for (int i = 0; i < spawn; ++i)
     {

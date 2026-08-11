@@ -96,6 +96,14 @@ int main(void)
         CHECK(strstr(inl, "FORCE_VISCOSITY") != NULL);
         /* The shape must come from the mesh emitter, not a formula. */
         CHECK(strstr(inl, "MeshAdjacency_SampleEdge") != NULL);
+        /* GenMeshTorus's first argument is the TUBE radius (par_shapes fixes the
+         * major radius at 1), and its second is an overall scale applied as
+         * size/2. Passing 1.0 first asks for a tube as fat as the ring — a torus
+         * with no hole at all, which is exactly what this body rendered as. */
+        CHECK(strstr(inl, "GenMeshTorus(WATER_RING_TUBE_RATIO, 2.0f") != NULL);
+        CHECK(strstr(inl, "GenMeshTorus(1.0f") == NULL);
+        /* par_shapes puts the ring in XY; everything downstream assumes XZ. */
+        CHECK(strstr(inl, "MatrixRotateX(-PI*0.5f)") != NULL);
         /* SSF only — a billboard pass would hide what this effect is for. */
         CHECK(strstr(inl, "PARTICLE_RENDER_SURFACE_INPUT") != NULL);
         free(inl);

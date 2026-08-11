@@ -1888,3 +1888,30 @@ was pixel-exact, 7 proved the validity test never fired, and 11 showed the
 pattern alone. Four rounds of reasoning cost more than the view did. Guarded by
 `core/tests/fluid_surface_optics_test.c`, which now forbids anything being added
 into `refractedScene`.
+
+## `GenMeshTorus(radius, size, ...)` is (TUBE radius, overall scale)
+
+**Symptom.** A torus emitter produced a body with no hole. Thinning the tube
+ratio and shrinking the splat kernel changed the body's proportions but never
+opened a hole, and the arithmetic said the hole should be 1.46 m across a 2.14 m
+body.
+
+**Cause.** The parameters do not mean what the names suggest. raylib passes the
+first argument to `par_shapes_create_torus(slices, stacks, radius)`, where
+`par_shapes__torus` fixes the **major** radius at 1 and uses that value as the
+**minor** one; raylib then scales the whole mesh by `size/2`. So it is
+(tube radius, overall scale). `GenMeshTorus(1.0f, tubeRatio, ...)` asks for a
+tube exactly as fat as the ring — a torus whose hole is precisely zero — scaled
+down by `tubeRatio/2`. The hole was never in the mesh, so no amount of tuning
+downstream could reveal it. For a unit ring with tube ratio `t`, the call is
+`GenMeshTorus(t, 2.0f, ...)`.
+
+**Also**: par_shapes lays the ring in the **XY** plane with the tube axis along
+Z, i.e. standing upright. Code that assumes a ring lying flat in XZ has to rotate
+the mesh, not the ring's users.
+
+**Rule.** When a generated mesh does not look like its parameters, read the
+generator before tuning anything that consumes it — two sessions of splat-size
+and filter tuning here were spent on a shape that had already been ruled out by
+one line of par_shapes. Guarded by `core/tests/water_ring_coverage_test.c`, which
+now asserts the call form and rejects `GenMeshTorus(1.0f`.
