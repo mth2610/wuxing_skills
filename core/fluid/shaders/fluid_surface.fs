@@ -396,11 +396,18 @@ void main() {
     float sharpGlint = pow(max(dot(N, sunHalf), 0.0), 96.0) * smoothstep(0.55, 0.86, surfaceNoise) * 0.22;
     vec3 specular = u_sunColor * (WaterSpecularBRDF(N, V, L, roughness) * 1.0 + broadSunLobe + sharpGlint) * ndl;
     specular *= mix(vec3(1.0), u_materialGlow, 0.08);
-    // Cell-hash sparkle: sub-centimetre glints that break the smooth
-    // highlight into the micro-facet flicker of real water.
-    vec3 sparkleCell = floor(worldPosition * 90.0 + vec3(u_time * 2.5, u_time * 1.7, u_time * 3.1));
-    float sparkleHash = fract(sin(dot(sparkleCell, vec3(12.9898, 78.233, 45.164))) * 43758.5453);
-    specular += u_sunColor * smoothstep(0.985, 1.0, sparkleHash) * 0.12 * ndl;
+    /* The cell-hash sparkle that used to live here is GONE. It took the floor of
+     * the world position scaled by 90, quantising the surface into 1.1 cm CUBES,
+     * and painted each selected cell a flat block of sun colour — so the "sub-centimetre glint" it
+     * promised renders as axis-aligned SQUARE DOTS scattered over the body,
+     * which is what the sandbox showed. A glint is a point, and a point cannot
+     * be produced by a function that is constant across a cell.
+     *
+     * Its hash was `fract(sin(dot(...)))` as well, which ENGINE_LANDMINES #4
+     * records as dying outright on Mali at large domains — so this term was
+     * also wrong on every Android device. If micro-facet flicker is wanted
+     * back, it has to come from a smooth function with a round falloff, never
+     * from a cell index. */
 
     for (int i = 0; i < FLUID_POINT_LIGHTS; i++) {
         if (i >= u_pointLightCount) break;

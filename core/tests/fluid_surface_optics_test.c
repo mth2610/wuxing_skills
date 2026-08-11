@@ -161,6 +161,10 @@ int main(void)
          * is a thin-bright-line pattern, and it painted contour bands onto the
          * body. Caustics belong on the receiver, not in this term. */
         CHECK(strstr(shader, "refractedScene += ") == NULL);
+        /* Nothing in the composite may quantise world position into cells: a
+         * term that is constant across a cell renders as an axis-aligned square,
+         * never as the point-like glint it was meant to be. */
+        CHECK(strstr(shader, "floor(worldPosition") == NULL);
         free(shader);
     }
 
