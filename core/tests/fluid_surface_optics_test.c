@@ -27,7 +27,7 @@ static float DecodeOpticalThickness(float encodedThickness)
 {
     float accumulatedPath = fmaxf(encodedThickness / 16.0f, 0.0f);
     float traversedPath = accumulatedPath / FLUID_KERNEL_OVERLAP;
-    return 0.16f * (1.0f - expf(-traversedPath / 0.42f));
+    return 0.16f * (1.0f - expf(-traversedPath / 1.20f));
 }
 
 /* Mirror of the receiver-gap combination in main(). */
@@ -42,6 +42,25 @@ static float EncodedThickness(int overlaps, float radius)
 {
     return (float)overlaps * (2.0f * radius) * 16.0f;
 }
+
+/* Mirror of the wave perturbation, both ways round. `bias` reproduces the
+ * defect: a perturbation vector with a constant 1.0 in world Y, added straight
+ * to a world normal with no tangent-plane projection. */
+static void PerturbNormal(float n[3], float dhx, float dhy, int projected, float out[3])
+{
+    float w[3] = { -dhx, projected ? 0.0f : 1.0f, -dhy };
+    if (projected)
+    {
+        float d = w[0]*n[0] + w[1]*n[1] + w[2]*n[2];
+        w[0] -= n[0]*d; w[1] -= n[1]*d; w[2] -= n[2]*d;
+    }
+    float r[3] = { n[0] + w[0]*0.045f, n[1] + w[1]*0.045f, n[2] + w[2]*0.045f };
+    float len = sqrtf(r[0]*r[0] + r[1]*r[1] + r[2]*r[2]);
+    out[0] = r[0]/len; out[1] = r[1]/len; out[2] = r[2]/len;
+}
+
+static float Dot3(const float a[3], const float b[3])
+{ return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
 
 static char *ReadFile(const char *path)
 {
@@ -75,6 +94,16 @@ int main(void)
     CHECK(core < 0.16f && rim > 0.0f);
     CHECK(DecodeOpticalThickness(0.0f) == 0.0f);
     CHECK(DecodeOpticalThickness(1.0e6f) <= 0.16f);
+    /* The DENSEST body the tree authors must still sit clear of the cap, or the
+     * gradient is gone again: the water ring's thickest ray accumulates about
+     * 3.26 x 0.40 m of chord (coverage ratio x tube traversal). Debug view 2
+     * caught the previous knee failing exactly this. */
+    {
+        float ringCore = DecodeOpticalThickness(3.26f * 0.40f * 16.0f);
+        printf("      water ring's densest ray: %.4f m (%.0f%% of the cap)\n",
+               ringCore, ringCore / 0.16f * 100.0f);
+        CHECK(ringCore < 0.16f * 0.70f);
+    }
 
     /* An airborne body over distant ground: the receiver must not deepen it. */
     float airborneGap = 1.6f;   /* metres of empty space below the orb */
@@ -90,6 +119,29 @@ int main(void)
     /* No receiver at all leaves the measured thickness untouched. */
     CHECK(WaterColumnDepth(core, 0.0f, 0) == core);
 
+    /* The wave perturbation must be a TANGENTIAL tilt and nothing else. With the
+     * old (-dh.x, 1.0, -dh.y) vector, a surface whose normal is not world-up got
+     * a free push toward +Y even where the wave field was flat — a constant bias
+     * modulated by a sine field, which paints its iso-lines onto the body as the
+     * parallel ridges seen in the sandbox. */
+    {
+        float wall[3] = { 1.0f, 0.0f, 0.0f };          /* a vertical surface */
+        float flatWave[2] = { 0.0f, 0.0f };            /* no wave at this point */
+        float biased[3], projected[3];
+        PerturbNormal(wall, flatWave[0], flatWave[1], 0, biased);
+        PerturbNormal(wall, flatWave[0], flatWave[1], 1, projected);
+        printf("      flat wave on a vertical surface: biased n.y = %.4f  projected n.y = %.4f\n",
+               biased[1], projected[1]);
+        CHECK(fabsf(biased[1]) > 0.04f);        /* the defect: a tilt from nothing */
+        CHECK(fabsf(projected[1]) < 0.0001f);   /* the fix: no wave, no tilt */
+
+        /* And with a real wave, the perturbation still tilts the surface — the
+         * fix must not simply disable it. */
+        float tilted[3];
+        PerturbNormal(wall, 0.5f, 0.3f, 1, tilted);
+        CHECK(1.0f - Dot3(tilted, wall) > 1.0e-5f);
+    }
+
     /* Anti-drift: the shader must still carry the load-bearing expressions. */
     char *shader = ReadFile("core/fluid/shaders/fluid_surface.fs");
     if (!shader) {
@@ -97,10 +149,18 @@ int main(void)
         bad++;
     } else {
         CHECK(strstr(shader, "accumulatedPath / FLUID_KERNEL_OVERLAP") != NULL);
-        CHECK(strstr(shader, "exp(-traversedPath / 0.42)") != NULL);
+        CHECK(strstr(shader, "exp(-traversedPath / 1.20)") != NULL);
         CHECK(strstr(shader, "min(kernelThickness, max(0.022, depthGap * 1.25))") != NULL);
+        CHECK(strstr(shader, "return vec3(-dh.x, 0.0, -dh.y);") != NULL);
+        CHECK(strstr(shader, "waveSlope -= worldNormal * dot(waveSlope, worldNormal);") != NULL);
+        /* The tangent-space normal that was being added to a world normal. */
+        CHECK(strstr(shader, "vec3(-dh.x, 1.0") == NULL);
         /* The regression itself (0262068): the receiver creating a column. */
         CHECK(strstr(shader, "max(kernelThickness, min(0.40") == NULL);
+        /* The caustic lattice added into refractedScene: a sin*sin field cubed
+         * is a thin-bright-line pattern, and it painted contour bands onto the
+         * body. Caustics belong on the receiver, not in this term. */
+        CHECK(strstr(shader, "refractedScene += ") == NULL);
         free(shader);
     }
 

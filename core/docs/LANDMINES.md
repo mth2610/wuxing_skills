@@ -1854,3 +1854,37 @@ the failure mode is a plausible-looking image, not an error. Guarded by
 `core/tests/fluid_refraction_source_test.c`, which detects the hazard condition
 itself and only then requires the private copy — restore separate layers and the
 requirement lapses. Promoted to `ENGINE_LANDMINES.md` #15.
+
+## Four wrong diagnoses, and the debug view that ended it in one look
+
+**Symptom.** A water body drawn through SSF carried wavy parallel bands that
+looked exactly like contour lines on a topographic map. They survived four
+separate fixes, each of which corrected a genuine defect.
+
+**The four wrong answers**, all reasoned from plausible mechanism rather than
+observation: a discontinuous min-gradient selector in the depth filter (a
+discontinuous kernel iterated does band); four iterated filter rounds feeding
+their own output back (that is a feedback loop); `WaterMultiOctaveWaves`
+returning a tangent-space normal that the caller added to a WORLD normal without
+projection (a constant world-up bias, modulated by a sine field); and an integer
+adaptive filter radius making the smoothing amount a step function of depth
+(measurably 8 steps across a 2 m body). Every one was real. None was the cause.
+
+**The actual cause.** `refractedScene += u_sunColor * causticPattern * ...`,
+where `causticPattern = pow(sin(x + sin(y)) * sin(y + sin(x)), 3)`. A sin*sin
+lattice cubed **is** a set of thin bright lines, and its frequency was scaled by
+the water's height above the receiver, so the lines bent and re-spaced across the
+body. It was also physically misplaced: a caustic is light focused ONTO the
+receiver and belongs on the ground under the water, where it stays put as the
+water moves — added into the water's own refracted colour it is a decal stuck to
+the liquid.
+
+**Rule.** When a visual artifact survives one fix, stop fixing and build the
+observation. A `u_debugView` uniform splitting the composite into its stages
+(normal / thickness / specular / wave / refraction, then the refraction path into
+offset / validity / path / scene-copy / caustics) attributed it in a single
+build: views 1 and 3 cleared the surface and its shading, 9 proved the scene copy
+was pixel-exact, 7 proved the validity test never fired, and 11 showed the
+pattern alone. Four rounds of reasoning cost more than the view did. Guarded by
+`core/tests/fluid_surface_optics_test.c`, which now forbids anything being added
+into `refractedScene`.

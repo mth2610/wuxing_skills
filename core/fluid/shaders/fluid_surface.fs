@@ -11,6 +11,11 @@ uniform vec2 u_texel;      // fluid reconstruction texel
 uniform vec2 u_sceneTexel; // full-resolution scene texel
 uniform int u_hasSceneDepth;
 uniform int u_qualityTier;
+/* Diagnostic view selector, 0 = off. TEMPORARY instrumentation for the banding
+ * hunt: four hypotheses were fixed without the bands moving, which means the
+ * question "which buffer are they in" was never actually answered. Driven by
+ * WUXING_FLUID_DEBUG; remove once the answer is known. */
+uniform int u_debugView;
 
 uniform mat4 u_projection;
 uniform mat4 u_inverseProjection;
@@ -55,8 +60,23 @@ vec3 WaterMultiOctaveWaves(vec3 worldPosition) {
     vec2 capillary = vec2(
         sin(p.x * 47.0 + p.y * 29.0 + t * 2.4) + cos(p.z * 41.0 + t * 1.8),
         sin(p.z * 53.0 + p.y * 33.0 + t * 2.1) + cos(p.x * 37.0 + t * 1.6));
-    vec2 dh = swell * 0.016 + capillary * 0.012 * capFade;
-    return vec3(-dh.x, 1.0, -dh.y);
+    /* The capillary term is the finest detail on the surface and the one that
+     * aliases first: its wavelength is smaller than a splat, so at any real
+     * viewing distance several periods land inside one pixel. Kept, because it
+     * is what stops the body reading as polished plastic — but at a third of
+     * its former amplitude, which is below the point where the specular lobes
+     * above turn it into rings. */
+    vec2 dh = swell * 0.016 + capillary * 0.004 * capFade;
+    /* The SLOPE, with no Y component. This used to return a tangent-space NORMAL
+     * (the same two slopes, but with a constant 1.0 in Y), which the caller then
+     * added straight to a WORLD normal. That is only meaningful through a TBN basis, and there is none
+     * here, so what actually happened was a constant +1.0 world-up bias added to
+     * every surface normal, modulated by the sine field. On a curved body that
+     * paints the iso-lines of the swell onto the surface as ridges: the parallel
+     * bands. The pre-multi-octave version (2ce1a2e) got this right by projecting
+     * its ripple onto the tangent plane; the rewrite dropped the projection and
+     * kept the 1.0. */
+    return vec3(-dh.x, 0.0, -dh.y);
 }
 
 /* The thickness pass sums one sphere chord per splat, scaled by 16. Splats are
@@ -67,12 +87,18 @@ vec3 WaterMultiOctaveWaves(vec3 worldPosition) {
  * of a 2,000-splat orb at the 0.16 m cap, so the silhouette carried no thickness
  * gradient at all: one constant optical depth across a body is exactly what
  * reads as moulded plastic instead of liquid. The output range is unchanged, so
- * every downstream mask threshold still means the same thing. */
+ * every downstream mask threshold still means the same thing.
+ *
+ * 0.42 was not far enough: debug view 2 showed the water ring's thickness buffer
+ * still saturated to a flat white across the whole body, which is the "it lost
+ * its mass" complaint measured rather than argued. At 1.20 the ring's densest
+ * ray sits near half the cap, so there is room above it for a thicker body to
+ * still read as thicker. */
 #define FLUID_KERNEL_OVERLAP 1.5
 float DecodeOpticalThickness(float encodedThickness) {
     float accumulatedPath = max(encodedThickness / 16.0, 0.0);
     float traversedPath = accumulatedPath / FLUID_KERNEL_OVERLAP;
-    return 0.16 * (1.0 - exp(-traversedPath / 0.42));
+    return 0.16 * (1.0 - exp(-traversedPath / 1.20));
 }
 
 float WaterSpecularBRDF(vec3 N, vec3 V, vec3 L, float roughness) {
@@ -198,15 +224,26 @@ void main() {
     // Apply multi-octave dynamic wave perturbation
     vec3 worldPosition = (u_viewToWorld * vec4(positionView, 1.0)).xyz;
     vec3 worldNormal = normalize(mat3(u_viewToWorld) * N);
-    vec3 waveNorm = WaterMultiOctaveWaves(worldPosition);
-    worldNormal = normalize(worldNormal + waveNorm * 0.045);
+    /* Project the wave slope onto the surface's tangent plane before adding it.
+     * Without this the perturbation carries a component ALONG the normal, which
+     * does not tilt the surface at all — it just rescales the vector before the
+     * normalize, so the visible effect is whatever is left over, banded. A
+     * perturbation is only a perturbation in the tangent plane. */
+    vec3 waveSlope = WaterMultiOctaveWaves(worldPosition);
+    waveSlope -= worldNormal * dot(waveSlope, worldNormal);
+    worldNormal = normalize(worldNormal + waveSlope * 0.045);
     N = normalize(transpose(mat3(u_viewToWorld)) * worldNormal);
     if (dot(N, V) < 0.0) N = -N;
     float ndv = clamp(dot(N, V), 0.0, 1.0);
 
     float thicknessProxy = max(texture(u_thicknessTex, fragTexCoord).r, 0.0);
     float kernelThickness = DecodeOpticalThickness(thicknessProxy);
-    float surfaceCoverage = smoothstep(0.0004, 0.010, kernelThickness) * intersectionVisibility;
+    /* The silhouette must FADE, not end. Full opacity at 1 cm of water made a
+     * one-splat-deep rim as solid as the body's middle, so every kernel at the
+     * boundary drew its own hard dome against the background — the edge that
+     * does not match the smooth interior. Fading across a thicker band lets
+     * those lumps go translucent and stop competing with the body's shape. */
+    float surfaceCoverage = smoothstep(0.0004, 0.032, kernelThickness) * intersectionVisibility;
     
     float sceneGap = 1.0;
     float waterColumnDepth = kernelThickness;
@@ -235,7 +272,10 @@ void main() {
     vec2 refractOffset = (refractedSlope - incidentSlope) * travelPixels * u_sceneTexel;
     vec2 refractUV = clamp(fragTexCoord + refractOffset, u_sceneTexel, vec2(1.0) - u_sceneTexel);
 
-    if (!SceneSampleMatchesBase(refractUV, sceneDistanceAtSurface, fluidDistance)) {
+    /* Kept in a variable so the diagnostic view can report the test's verdict at
+     * the offset it was actually asked about, not at the UV after the snap-back. */
+    bool refractValid = SceneSampleMatchesBase(refractUV, sceneDistanceAtSurface, fluidDistance);
+    if (!refractValid) {
         refractUV = mix(refractUV, fragTexCoord, 0.70);
     }
 
@@ -251,26 +291,38 @@ void main() {
         refractedScene = texture(u_sceneTex, refractUV).rgb;
     }
 
-    // Underwater Caustics Projection
-    if (sceneDepthAtSurface < 0.99999 && opticalPath > 0.005) {
-        vec3 underPosView = ReconstructViewPosition(fragTexCoord, sceneDepthAtSurface);
-        vec3 underPosWorld = (u_viewToWorld * vec4(underPosView, 1.0)).xyz;
-        // A flying orb focuses sunlight like a lens: the caustic pool below
-        // keeps shrinking and fading with height, anchored to the ground.
-        float heightFalloff = 1.0 / (1.0 + sceneGap * 1.5);
-        float heightScale = clamp(0.9 / (0.35 + sceneGap), 0.22, 1.5);
-        vec2 cUV = underPosWorld.xz * 5.0 * heightScale + u_sunDirectionView.xz * 1.5 + vec2(u_time * 1.1, u_time * 0.85);
-        float causticNoise = sin(cUV.x + sin(cUV.y * 1.4)) * sin(cUV.y + sin(cUV.x * 1.3));
-        float causticPattern = pow(max(0.0, 0.5 + 0.5 * causticNoise), 3.0) * 1.6;
-        float causticFade = smoothstep(0.0, 0.03, sceneGap) * smoothstep(0.90, 0.05, sceneGap) * heightFalloff;
-        vec3 causticColor = u_sunColor * causticPattern * causticFade * 0.40;
-        refractedScene += causticColor;
-    }
+    /* The caustic projection that used to live here is GONE, and this note is
+     * why it must not come back in this form.
+     *
+     * It added `sin(x + sin(y)) * sin(y + sin(x))` raised to the third power
+     * straight into refractedScene. A sin*sin lattice cubed IS a set of thin
+     * bright lines — and because its frequency was scaled by the water's height
+     * above the receiver, those lines bent and re-spaced across the body. That
+     * is the topographic-contour banding that survived four wrong diagnoses
+     * (filter continuity, iterated feedback, the wave perturbation's missing
+     * tangent projection, the integer filter radius). Isolating it took a
+     * debug view: views 1 and 3 proved the surface and its shading were clean,
+     * 9 proved the scene copy was pixel-exact, 7 proved the validity test never
+     * fired — and 11 showed the pattern alone, unmistakably.
+     *
+     * It is also in the wrong place physically. A caustic is light focused ONTO
+     * the receiver; it belongs on the ground under the water, where it stays put
+     * as the water moves. Added into the water's own refracted colour it becomes
+     * a decal stuck to the liquid, sliding with the surface — which is exactly
+     * why it read as contour lines rather than as a pool of light. If caustics
+     * are wanted, they go on the receiver (the decal system already draws on
+     * ground), not into this term. */
 
     // Beer-Lambert Volumetric Absorption
     float materialPeak = max(max(u_materialBody.r, u_materialBody.g), max(u_materialBody.b, 0.001));
     vec3 materialTransmission = clamp(u_materialBody / materialPeak, vec3(0.035), vec3(1.0));
-    vec3 absorption = -log(materialTransmission) * 1.75 + vec3(0.06);
+    /* Volume is carried by ABSORPTION, not by geometry: what tells the eye a
+     * body has mass is its middle being deeper in colour than its rim. With the
+     * surface now correctly smooth, a weak absorption scale leaves the whole
+     * body one flat wash — the "lost its mass" complaint. The thickness range
+     * this multiplies is unchanged, so every downstream mask still means what
+     * it did; only the depth-of-colour across that range grows. */
+    vec3 absorption = -log(materialTransmission) * 2.60 + vec3(0.06);
     vec3 transmittance = exp(-absorption * opticalPath);
 
     float hemi = clamp(worldNormal.y * 0.5 + 0.5, 0.0, 1.0);
@@ -326,11 +378,22 @@ void main() {
     vec3 dielectricBase = mix(transmitted + inScatter, reflection, visibleFresnel);
 
     // Specular Highlights
+    //
+    // The lobes below used to be razor-thin (roughness 0.035, exponents 190 and
+    // 256) while the normal above carries the capillary ripple — whose shortest
+    // wavelength (2*PI/53 ~= 12 cm) is smaller than one splat. A highlight that
+    // narrow, swept across a rippled dome, crosses in and out of the lobe
+    // several times per splat and paints CONCENTRIC RINGS on every bulge: the
+    // onion pattern that showed up on the grass and bright-arena backgrounds and
+    // vanished on the dark one, where there was no specular contrast to alias.
+    // Widening the lobe is the fix that costs nothing: a real water surface at
+    // this scale is not a mirror, and the ripple then reads as shimmer instead
+    // of as contour lines.
     float surfaceNoise = sin(dot(worldPosition, vec3(12.3, 7.1, -9.5)) + u_time * 1.1) * 0.5 + 0.5;
-    float roughness = mix(0.035, 0.075, surfaceNoise);
+    float roughness = mix(0.090, 0.150, surfaceNoise);
     vec3 sunHalf = normalize(V + L);
-    float broadSunLobe = pow(max(dot(N, sunHalf), 0.0), 190.0) * 0.012;
-    float sharpGlint = pow(max(dot(N, sunHalf), 0.0), 256.0) * smoothstep(0.55, 0.86, surfaceNoise) * 0.30;
+    float broadSunLobe = pow(max(dot(N, sunHalf), 0.0), 48.0) * 0.020;
+    float sharpGlint = pow(max(dot(N, sunHalf), 0.0), 96.0) * smoothstep(0.55, 0.86, surfaceNoise) * 0.22;
     vec3 specular = u_sunColor * (WaterSpecularBRDF(N, V, L, roughness) * 1.0 + broadSunLobe + sharpGlint) * ndl;
     specular *= mix(vec3(1.0), u_materialGlow, 0.08);
     // Cell-hash sparkle: sub-centimetre glints that break the smooth
@@ -369,6 +432,49 @@ void main() {
     float foamMask = clamp(max(shoreline, crest) * foamPattern, 0.0, 0.72);
     vec3 foamColor = mix(u_materialSoft, vec3(1.0), 0.20);
     vec3 foam = foamColor * foamMask * (0.38 + 0.62 * dot(ambient, vec3(0.333333)));
+
+    /* Each view isolates ONE stage, so the bands can be attributed instead of
+     * guessed at. Read them as a decision tree:
+     *   1 NORMAL     bands here => the reconstructed SURFACE is corrugated
+     *                (depth capture or the filter), not the shading
+     *   2 THICKNESS  bands here => the additive thickness pass
+     *   3 SPECULAR   bands here but NOT in 1 => shading aliasing on a smooth
+     *                surface (lobe width, wave perturbation)
+     *   4 WAVE       the perturbation alone, x20; bands here => the sine field
+     *   5 REFRACTION the scene tap alone; bands here => the refraction path,
+     *                which views 6-9 then split:
+     *   6 OFFSET     the refraction UV offset, x400 (red = x, green = y)
+     *   7 VALIDITY   the SceneSampleMatchesBase test as a mask; it is a BINARY
+     *                switch on a continuous field, so its boundary is an
+     *                iso-depth curve — a contour line by construction
+     *   8 PATH       the optical path that scales the offset
+     *  10 |OFFSET|    the offset's magnitude, wrapped for contrast
+     *   9 COPY       the scene copy sampled with NO offset: bands here mean the
+     *                copy itself carries them and the offset maths is innocent */
+    if (u_debugView != 0) {
+        vec3 dbg = vec3(0.0);
+        if (u_debugView == 1) dbg = N * 0.5 + 0.5;
+        else if (u_debugView == 2) dbg = vec3(kernelThickness / 0.16);
+        else if (u_debugView == 3) dbg = specular;
+        else if (u_debugView == 4) dbg = abs(waveSlope) * 20.0;
+        else if (u_debugView == 5) dbg = refractedScene;
+        /* Sub-views that split the refraction path itself. 9 is the decisive
+         * one: it samples the scene copy with NO offset at all, so if the bands
+         * are there the COPY is contaminated and no amount of offset maths will
+         * explain them; if it is clean, they come from where we sample. */
+        /* Offsets are ~13 texels, i.e. ~0.01 in UV: x20 puts that mid-grey and
+         * leaves room to see the sign. x400 saturated and showed nothing. */
+        else if (u_debugView == 6) dbg = vec3(refractOffset * 20.0 + 0.5, 0.5);
+        /* The offset's LENGTH alone, at high contrast — bands in the magnitude
+         * are what a banded sample pattern on a smooth background requires. */
+        else if (u_debugView == 10) dbg = vec3(fract(length(refractOffset) * 200.0));
+        else if (u_debugView == 7) dbg = vec3(refractValid ? 1.0 : 0.0);
+        else if (u_debugView == 8) dbg = vec3(opticalPath / 0.5);
+        else if (u_debugView == 9) dbg = texture(u_sceneTex, fragTexCoord).rgb;
+
+        finalColor = vec4(dbg, surfaceCoverage);
+        return;
+    }
 
     vec3 water = dielectricBase + specular + foam + rimLight;
     finalColor = vec4(water, surfaceCoverage);

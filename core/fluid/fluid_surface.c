@@ -10,6 +10,7 @@
 #include "raymath.h"
 #include <math.h>
 #include <stddef.h>
+#include <stdlib.h>
 
 #define FLUID_OPTICAL_POINT_LIGHTS 4
 
@@ -31,6 +32,7 @@ static int s_sunDirectionLoc, s_sunColorLoc, s_skyAmbientLoc, s_groundAmbientLoc
 static int s_pointLightCountLoc, s_pointLightPosLoc, s_pointLightColorLoc;
 static int s_materialBodyLoc, s_materialGlowLoc, s_materialSoftLoc;
 static int s_timeLoc;
+static int s_debugViewLoc;
 static Matrix s_fluidView, s_fluidProjection;
 static Color s_materialBody = {41, 128, 185, 255};
 static Color s_materialGlow = {80, 180, 255, 255};
@@ -183,6 +185,7 @@ void FluidSurface_Init(int width,int height) {
     s_materialGlowLoc=GetShaderLocation(s_composite,"u_materialGlow");
     s_materialSoftLoc=GetShaderLocation(s_composite,"u_materialSoft");
     s_timeLoc=GetShaderLocation(s_composite,"u_time");
+    s_debugViewLoc=GetShaderLocation(s_composite,"u_debugView");
 }
 void FluidSurface_Unload(void) { UnloadTexture(s_surfaceTex); UnloadRenderTexture(s_capture); UnloadRenderTexture(s_thickness); UnloadRenderTexture(s_smoothA); UnloadRenderTexture(s_smoothB); if(s_sceneCopy.id) { UnloadRenderTexture(s_sceneCopy); s_sceneCopy=(RenderTexture2D){0}; } }
 void FluidSurface_SetMaterialColors(Color body, Color glow, Color soft) {
@@ -276,12 +279,21 @@ void FluidSurface_Capture(Camera3D camera) {
     EndBlendMode(); rlDrawRenderBatchActive(); rlEnableDepthTest(); rlEnableDepthMask(); EndMode3D(); EndTextureMode();
     Vector2 texel={1.0f/s_capture.texture.width,1.0f/s_capture.texture.height};
     float depthRange=s_reconstructionRadius*9.0f;
-    int filterRadius=GfxQuality_Get()>=GFX_HIGH?10:
-                     (GfxQuality_Get()>=GFX_MED?5:3);
+    /* A CEILING now, not the radius itself: the filter derives its own reach per
+     * pixel from the kernel's projected size (fluid_depth_narrow_range.fs), so
+     * this only bounds what a close-up body may cost. The old values WERE the
+     * radius, and 10 texels could not span a kernel that projects to forty —
+     * which is why a nearby body reconstructed as a heap of separate beads. */
+    int filterRadius=GfxQuality_Get()>=GFX_HIGH?28:
+                     (GfxQuality_Get()>=GFX_MED?14:7);
     Matrix inverseProjection=MatrixInvert(s_fluidProjection);
-    /* HIGH spends four separable rounds to fully merge dense orb particles.
-     * MED/LOW keep fewer rounds for splash and detached spray. */
-    int reconstructionRounds=GfxQuality_Get()>=GFX_HIGH?4:
+    /* Two rounds, not four. The filter's reach is now derived from the kernel's
+     * projected size rather than a fixed 10 texels, so one round already spans a
+     * splat — and each extra round re-estimates its own slope from the previous
+     * round's output, which is a feedback loop that amplifies whatever ripple
+     * survived the last pass. Four rounds of that is where the standing bands
+     * came from. Halving them also halves the filter's cost. */
+    int reconstructionRounds=GfxQuality_Get()>=GFX_HIGH?2:
                              (GfxQuality_Get()>=GFX_MED?2:1);
     for (int iteration=0; iteration<reconstructionRounds; ++iteration) {
         Vector2 horizontal={1.0f,0.0f}, vertical={0.0f,1.0f};
@@ -353,6 +365,18 @@ void FluidSurface_Composite(void) {
     SetShaderValue(s_composite,s_materialGlowLoc,&materialGlow,SHADER_UNIFORM_VEC3);
     SetShaderValue(s_composite,s_materialSoftLoc,&materialSoft,SHADER_UNIFORM_VEC3);
     SetShaderValue(s_composite,s_timeLoc,&opticalTime,SHADER_UNIFORM_FLOAT);
+    /* TEMPORARY: isolate one stage of the composite so a visual artefact can be
+     * attributed to a buffer instead of guessed at. WUXING_FLUID_DEBUG=1..5, see
+     * the view table in fluid_surface.fs. Remove with the shader block. */
+    {
+        static int s_debugView=-1;
+        if (s_debugView<0) {
+            const char *env=getenv("WUXING_FLUID_DEBUG");
+            s_debugView=env?atoi(env):0;
+            if (s_debugView) TraceLog(LOG_INFO,"FluidSurface: debug view %d active",s_debugView);
+        }
+        SetShaderValue(s_composite,s_debugViewLoc,&s_debugView,SHADER_UNIFORM_INT);
+    }
     SetShaderValue(s_composite,s_pointLightCountLoc,&pointLightCount,SHADER_UNIFORM_INT);
     SetShaderValueV(s_composite,s_pointLightPosLoc,pointLightPos,
                     SHADER_UNIFORM_VEC4,FLUID_OPTICAL_POINT_LIGHTS);
