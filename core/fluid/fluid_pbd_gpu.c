@@ -22,6 +22,19 @@ static Vector3 s_receiverPoint, s_receiverNormal;
 static float s_impactAge;
 static float s_gridCellSize;
 static unsigned int s_vao,s_vbo;
+/* Uniform locations, resolved once. They were being re-queried on EVERY dispatch
+ * — fourteen times a frame — inside the solve loop. */
+static struct {
+    int phase, particleCount, gridCellCount, solverIteration;
+    int dt, cellSize, impactAge, gridStamp;
+    int receiverPoint, receiverNormal, gridOrigin;
+} s_uniform;
+/* Generation stamp for the neighbour grid; see fluid_pbd_gpu.comp. Bumped before
+ * every rebuild so a stale cell identifies itself, which retires the per-rebuild
+ * clear of all 32,768 cells. */
+static int s_gridStamp;
+#define PBD_STAMP_WRAP 500000     /* re-clear well before int overflow at x4096 */
+static void FluidPBDGPU_ClearGrid(void);
 static Shader s_depthShader,s_thicknessShader;
 
 static float FluidPBDGPU_Rand01(unsigned int value)
@@ -54,6 +67,17 @@ bool FluidPBDGPU_Init(void)
     s_thicknessShader=ResourceManager_LoadShader("core/fluid/shaders/fluid_pbd_surface.vs","core/fluid/shaders/fluid_surface_thickness.fs");
     static const float quad[]={-1,-1,0,1,-1,0,1,1,0,-1,-1,0,1,1,0,-1,1,0};
     s_vao=rlLoadVertexArray(); rlEnableVertexArray(s_vao); s_vbo=rlLoadVertexBuffer(quad,sizeof(quad),false); rlSetVertexAttribute(0,3,RL_FLOAT,0,0,0); rlEnableVertexAttribute(0); rlDisableVertexArray();
+    s_uniform.phase=rlGetLocationUniform(s_program,"u_phase");
+    s_uniform.particleCount=rlGetLocationUniform(s_program,"u_particleCount");
+    s_uniform.gridCellCount=rlGetLocationUniform(s_program,"u_gridCellCount");
+    s_uniform.solverIteration=rlGetLocationUniform(s_program,"u_solverIteration");
+    s_uniform.dt=rlGetLocationUniform(s_program,"u_dt");
+    s_uniform.cellSize=rlGetLocationUniform(s_program,"u_cellSize");
+    s_uniform.impactAge=rlGetLocationUniform(s_program,"u_impactAge");
+    s_uniform.gridStamp=rlGetLocationUniform(s_program,"u_gridStamp");
+    s_uniform.receiverPoint=rlGetLocationUniform(s_program,"u_receiverPoint");
+    s_uniform.receiverNormal=rlGetLocationUniform(s_program,"u_receiverNormal");
+    s_uniform.gridOrigin=rlGetLocationUniform(s_program,"u_gridOrigin");
     s_active=s_stateA&&s_stateB&&s_heads&&s_next; return s_active;
 }
 /* `s_active` means resources exist.  SSF must instead follow live particles:
@@ -142,7 +166,25 @@ void FluidPBDGPU_SpawnImpact(Vector3 point, Vector3 normal, Vector3 impulse, flo
     }
     rlUpdateShaderBuffer(s_stateA,particles,sizeof(GPUFluidParticle)*count,0);
     rlUpdateShaderBuffer(s_stateB,particles,sizeof(GPUFluidParticle)*count,0);
+    /* The ONE real clear. A freshly allocated SSBO holds garbage, and garbage
+     * that happens to carry the current stamp would be read as a particle index,
+     * so the stamped grid needs a known-zero base exactly once per impact. */
+    FluidPBDGPU_ClearGrid();
 }
+/* Phase 0 writes 0 into every cell, which no stamp >= 1 can match. Costs 128
+ * workgroups, once per impact — where it used to cost 5 x 128 every frame. */
+static void FluidPBDGPU_ClearGrid(void)
+{
+    int phase=0,cells=GPU_GRID_CELLS;
+    rlEnableShader(s_program);
+    rlBindShaderBuffer(s_heads,2);
+    rlSetUniform(s_uniform.phase,&phase,RL_SHADER_UNIFORM_INT,1);
+    rlSetUniform(s_uniform.gridCellCount,&cells,RL_SHADER_UNIFORM_INT,1);
+    rlComputeShaderDispatch((cells+255)/256,1,1);
+    rlDisableShader();
+    s_gridStamp=1;
+}
+
 void FluidPBDGPU_Update(float dt,float groundY)
 {
     (void)groundY;
@@ -150,11 +192,28 @@ void FluidPBDGPU_Update(float dt,float groundY)
     s_impactAge+=dt;
     if(s_impactAge >= FLUID_PBD_LIFETIME) { s_particleCount=0; return; }
     unsigned int groups=(s_particleCount+255)/256;
-    rlEnableShader(s_program); int phase=0,count=s_particleCount,cells=GPU_GRID_CELLS; float cell=s_gridCellSize;
+    int phase,count=s_particleCount,cells=GPU_GRID_CELLS; float cell=s_gridCellSize;
+    /* The stamp is packed as stamp*4096 + id + 1, so it must be re-based long
+     * before int overflow. One clear buys another half million rebuilds. */
+    if(s_gridStamp>PBD_STAMP_WRAP) FluidPBDGPU_ClearGrid();
+
+    rlEnableShader(s_program);
     rlBindShaderBuffer(s_stateA,0); rlBindShaderBuffer(s_stateB,1); rlBindShaderBuffer(s_heads,2); rlBindShaderBuffer(s_next,3);
-    int loc=rlGetLocationUniform(s_program,"u_phase"); rlSetUniform(loc,&phase,RL_SHADER_UNIFORM_INT,1); loc=rlGetLocationUniform(s_program,"u_gridCellCount"); rlSetUniform(loc,&cells,RL_SHADER_UNIFORM_INT,1); rlComputeShaderDispatch((cells+255)/256,1,1);
-    phase=1; rlSetUniform(rlGetLocationUniform(s_program,"u_phase"),&phase,RL_SHADER_UNIFORM_INT,1); rlSetUniform(rlGetLocationUniform(s_program,"u_particleCount"),&count,RL_SHADER_UNIFORM_INT,1); rlSetUniform(rlGetLocationUniform(s_program,"u_dt"),&dt,RL_SHADER_UNIFORM_FLOAT,1); rlSetUniform(rlGetLocationUniform(s_program,"u_cellSize"),&cell,RL_SHADER_UNIFORM_FLOAT,1);
-    rlSetUniform(rlGetLocationUniform(s_program,"u_receiverPoint"),&s_receiverPoint.x,RL_SHADER_UNIFORM_VEC3,1); rlSetUniform(rlGetLocationUniform(s_program,"u_receiverNormal"),&s_receiverNormal.x,RL_SHADER_UNIFORM_VEC3,1); rlSetUniform(rlGetLocationUniform(s_program,"u_gridOrigin"),&s_receiverPoint.x,RL_SHADER_UNIFORM_VEC3,1); rlSetUniform(rlGetLocationUniform(s_program,"u_impactAge"),&s_impactAge,RL_SHADER_UNIFORM_FLOAT,1); rlComputeShaderDispatch(groups,1,1);
+    rlSetUniform(s_uniform.gridCellCount,&cells,RL_SHADER_UNIFORM_INT,1);
+    rlSetUniform(s_uniform.particleCount,&count,RL_SHADER_UNIFORM_INT,1);
+    rlSetUniform(s_uniform.dt,&dt,RL_SHADER_UNIFORM_FLOAT,1);
+    rlSetUniform(s_uniform.cellSize,&cell,RL_SHADER_UNIFORM_FLOAT,1);
+    rlSetUniform(s_uniform.receiverPoint,&s_receiverPoint.x,RL_SHADER_UNIFORM_VEC3,1);
+    rlSetUniform(s_uniform.receiverNormal,&s_receiverNormal.x,RL_SHADER_UNIFORM_VEC3,1);
+    rlSetUniform(s_uniform.gridOrigin,&s_receiverPoint.x,RL_SHADER_UNIFORM_VEC3,1);
+    rlSetUniform(s_uniform.impactAge,&s_impactAge,RL_SHADER_UNIFORM_FLOAT,1);
+
+    /* Integration also builds the grid, so it needs its own generation. */
+    s_gridStamp++;
+    rlSetUniform(s_uniform.gridStamp,&s_gridStamp,RL_SHADER_UNIFORM_INT,1);
+    phase=1; rlSetUniform(s_uniform.phase,&phase,RL_SHADER_UNIFORM_INT,1);
+    rlComputeShaderDispatch(groups,1,1);
+
     /* The grid is built from B during integration, so B must become the solver
      * source before Jacobi reads it.  This was previously one state behind. */
     unsigned int t=s_stateA;s_stateA=s_stateB;s_stateB=t; rlBindShaderBuffer(s_stateA,0);rlBindShaderBuffer(s_stateB,1);
@@ -163,14 +222,15 @@ void FluidPBDGPU_Update(float dt,float groundY)
      * crystallises equal-radius kernels into visible rows. Integration still
      * owns lifetime, but the stationary puddle no longer pays grid solves. */
     if(s_impactAge>=1.24f) iterations=0;
-    int solverIterationLoc=rlGetLocationUniform(s_program,"u_solverIteration");
     for(int i=0;i<iterations;i++){
         /* Rebuild from the current ping-pong source before every Jacobi pass.
          * The old code reused heads from an earlier buffer, creating unstable
-         * force at the original impact point. */
-        phase=0; rlSetUniform(rlGetLocationUniform(s_program,"u_phase"),&phase,RL_SHADER_UNIFORM_INT,1); rlComputeShaderDispatch((cells+255)/256,1,1);
-        phase=3; rlSetUniform(rlGetLocationUniform(s_program,"u_phase"),&phase,RL_SHADER_UNIFORM_INT,1); rlComputeShaderDispatch(groups,1,1);
-        phase=2; rlSetUniform(rlGetLocationUniform(s_program,"u_phase"),&phase,RL_SHADER_UNIFORM_INT,1); rlSetUniform(solverIterationLoc,&i,RL_SHADER_UNIFORM_INT,1); rlComputeShaderDispatch(groups,1,1);
+         * force at the original impact point. A bumped stamp IS the rebuild's
+         * clear: every cell written under an older generation reads as empty. */
+        s_gridStamp++;
+        rlSetUniform(s_uniform.gridStamp,&s_gridStamp,RL_SHADER_UNIFORM_INT,1);
+        phase=3; rlSetUniform(s_uniform.phase,&phase,RL_SHADER_UNIFORM_INT,1); rlComputeShaderDispatch(groups,1,1);
+        phase=2; rlSetUniform(s_uniform.phase,&phase,RL_SHADER_UNIFORM_INT,1); rlSetUniform(s_uniform.solverIteration,&i,RL_SHADER_UNIFORM_INT,1); rlComputeShaderDispatch(groups,1,1);
         t=s_stateA;s_stateA=s_stateB;s_stateB=t; rlBindShaderBuffer(s_stateA,0);rlBindShaderBuffer(s_stateB,1);
     }
     rlDisableShader();

@@ -12,6 +12,19 @@ layout(std430,binding=1) writeonly buffer DestState { FluidParticle dest[]; };
 layout(std430,binding=2) buffer GridHeads { int heads[]; };
 layout(std430,binding=3) buffer GridNext { int next[]; };
 uniform int u_phase, u_particleCount, u_gridCellCount, u_solverIteration;
+/* Generation stamp for the neighbour grid. Clearing 32,768 cells was 8.9x the
+ * workgroups of the actual particle solve — for a population that can occupy at
+ * most 6.2% of them — and it ran five times a frame, once before every Jacobi
+ * rebuild. Stamping the head instead makes a stale cell self-evident, so the
+ * clear happens once at spawn rather than per rebuild. */
+uniform int u_gridStamp;
+#define PBD_HEAD_STRIDE 4096      /* > FLUID_PBD_GPU_MAX_PARTICLES, leaves room for +1 */
+
+int encodeHead(uint particleId) { return u_gridStamp * PBD_HEAD_STRIDE + int(particleId) + 1; }
+/* A head written under an older stamp is an empty cell, not a particle. */
+int decodeHead(int stored) {
+    return (stored / PBD_HEAD_STRIDE == u_gridStamp) ? (stored % PBD_HEAD_STRIDE - 1) : -1;
+}
 uniform float u_dt, u_cellSize;
 uniform float u_impactAge;
 uniform vec3 u_receiverPoint, u_receiverNormal, u_gridOrigin;
@@ -129,12 +142,13 @@ int cellIndex(vec3 p) {
 }
 void main() {
     uint id=gl_GlobalInvocationID.x;
-    if(u_phase==0) { if(id<uint(u_gridCellCount)) heads[id]=-1; return; }
+    /* Phase 0 now runs ONCE at spawn (and on stamp wrap), not per rebuild. */
+    if(u_phase==0) { if(id<uint(u_gridCellCount)) heads[id]=0; return; }
     if(id>=uint(u_particleCount)) return;
     FluidParticle p=source[id];
     if(u_phase==3) {
         int cell=cellIndex(p.position_radius.xyz);
-        next[id]=atomicExchange(heads[cell],int(id));
+        next[id]=decodeHead(atomicExchange(heads[cell],encodeHead(id)));
         return;
     }
     if(u_phase==1) {
@@ -169,7 +183,7 @@ void main() {
         }
         p.velocity_life.w-=u_dt;
         collideReceiver(p, id);
-        int cell=cellIndex(p.position_radius.xyz); next[id]=atomicExchange(heads[cell],int(id)); dest[id]=p; return;
+        int cell=cellIndex(p.position_radius.xyz); next[id]=decodeHead(atomicExchange(heads[cell],encodeHead(id))); dest[id]=p; return;
     }
     // Jacobi density/separation pass; grid was built from the previous state.
     if(particleIsResting(p)) {
@@ -185,7 +199,7 @@ void main() {
     ivec3 base=ivec3(cell%32,(cell/32)%32,cell/(32*32));
     for(int z=-1;z<=1;z++) for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++) {
         ivec3 c=base+ivec3(x,y,z); if(any(lessThan(c,ivec3(0)))||any(greaterThan(c,ivec3(31)))) continue;
-        int n=heads[(c.z*32+c.y)*32+c.x];
+        int n=decodeHead(heads[(c.z*32+c.y)*32+c.x]);
         while(n>=0) { if(n!=int(id)) {
             vec3 d=p.position_radius.xyz-source[n].position_radius.xyz;
             float l=length(d);
