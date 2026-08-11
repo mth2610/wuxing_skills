@@ -329,8 +329,12 @@ int main(void)
                bump, interior, edgePredict, edgeReflect);
         /* The filter must actually flatten a dome. */
         CHECK(interior < bump * 0.2f);
-        /* Prediction leaves the edge visibly stiffer than the interior — the
-         * stripes. Reflection matches the interior exactly. */
+        /* Prediction leaves the edge stiffer than the interior; reflection matches
+         * it exactly. The shader is deliberately on PREDICTION right now: the
+         * visible difference between them was judged while the normal
+         * reconstruction still forced view-facing normals at the silhouette, so
+         * that comparison has to be redone. This assertion records the numbers,
+         * it does not pick the winner. */
         CHECK(edgePredict > interior * 1.5f);
         CHECK(fabsf(edgeReflect - interior) < 1.0e-6f);
     }
@@ -350,10 +354,16 @@ int main(void)
         CHECK(strstr(fs, "int adaptiveRadius") != NULL);
         /* The boundary condition: a missing side contributes the prediction. It
          * must not go back to dropping (streaks) or to breaking (no filtering). */
-        /* Even reflection: a missing side takes the opposite side's real value.
-         * Neither dropping it (bias) nor substituting the centre (weak edge). */
-        CHECK(strstr(fs, "if (!posValid) positive = negative;") != NULL);
-        CHECK(strstr(fs, "if (!negValid) negative = positive;") != NULL);
+        /* The boundary condition currently in the shader is the tangent-plane
+         * PREDICTION. Even reflection was tried after it and looked worse in the
+         * sandbox — but that judgement was made while the normal reconstruction
+         * still had its own silhouette bug (a missing neighbour won the
+         * minimum-gradient pick, fluid_surface_optics_test), which amplified
+         * whatever the filter did at the edge. Both conditions stay in the
+         * mirror above so the comparison can be re-run against a correct normal
+         * before either is called better. */
+        CHECK(strstr(fs, "sampleDistance = predictedDistance;") != NULL);
+        CHECK(strstr(fs, "|| negative >= 0.99999) break;") == NULL);
         CHECK(strstr(fs, "|| negative >= 0.99999) break;") == NULL);
         /* The reach multiplier is mirrored above; assert it so the mirror cannot
          * drift away from the shader while still reporting green. */
