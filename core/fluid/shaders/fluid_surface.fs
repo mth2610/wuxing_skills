@@ -220,7 +220,35 @@ vec4 TraceSSR(vec3 rayOrigin, vec3 rayDir, float fluidDistance) {
 
 void main() {
     float fluidDepth = texture(texture0, fragTexCoord).r;
-    if (fluidDepth >= 0.99999) discard;
+
+    /* The silhouette had no antialiasing at all: a binary discard on the depth
+     * mask cut it into a one-pixel staircase, which at any real zoom is the most
+     * visible thing left on the body.
+     *
+     * The soft ramp that should have feathered it already existed and was on the
+     * wrong side of this test. `surfaceCoverage` below fades with thickness, and
+     * thickness is Gaussian-blurred, so its ramp lands OUTSIDE the depth mask —
+     * inside the mask it has already reached full value, and every pixel the mask
+     * kept was therefore fully opaque right up to the cut.
+     *
+     * So dilate the mask by one texel into that ramp instead of adding a new
+     * coverage estimate. A fringe pixel with no depth of its own borrows the
+     * nearest cardinal neighbour's, and its alpha comes from the blurred
+     * thickness, which is small there by construction. Cost: the thickness tap
+     * moves up from where it was already being read, and the four neighbour taps
+     * only happen on the fringe, never on the 88% of the screen that is empty. */
+    float thicknessProxy = max(texture(u_thicknessTex, fragTexCoord).r, 0.0);
+    bool dilatedFringe = false;
+    if (fluidDepth >= 0.99999) {
+        if (thicknessProxy <= 0.0002) discard;
+        dilatedFringe = true;
+        float dilateL = texture(texture0, fragTexCoord - vec2(u_texel.x, 0.0)).r;
+        float dilateR = texture(texture0, fragTexCoord + vec2(u_texel.x, 0.0)).r;
+        float dilateD = texture(texture0, fragTexCoord - vec2(0.0, u_texel.y)).r;
+        float dilateU = texture(texture0, fragTexCoord + vec2(0.0, u_texel.y)).r;
+        fluidDepth = min(min(dilateL, dilateR), min(dilateD, dilateU));
+        if (fluidDepth >= 0.99999) discard;
+    }
 
     vec3 positionView = ReconstructViewPosition(fragTexCoord, fluidDepth);
     vec3 V = normalize(-positionView);
@@ -300,13 +328,29 @@ void main() {
     if (dot(N, V) < 0.0) N = -N;
     float ndv = clamp(dot(N, V), 0.0, 1.0);
 
-    float thicknessProxy = max(texture(u_thicknessTex, fragTexCoord).r, 0.0);
     float kernelThickness = DecodeOpticalThickness(thicknessProxy);
     /* The silhouette must FADE, not end. Full opacity at 1 cm of water made a
      * one-splat-deep rim as solid as the body's middle, so every kernel at the
      * boundary drew its own hard dome against the background — the edge that
      * does not match the smooth interior. Fading across a thicker band lets
      * those lumps go translucent and stop competing with the body's shape. */
+    /* Sub-pixel coverage of the SILHOUETTE, from the same four neighbour samples
+     * the normal reconstruction above already fetched.
+     *
+     * The thickness ramp cannot do this job. Thickness is Gaussian-blurred, so it
+     * only falls below full value several texels OUTSIDE the body — dilating the
+     * mask by one texel and taking alpha from thickness just moved the hard edge
+     * out by a pixel, which is what the first attempt at this did.
+     *
+     * A pixel whose centre is inside the surface is at least half covered, and
+     * its four neighbours estimate the rest; a dilated fringe pixel has its
+     * centre outside, so it gets only the neighbour fraction. Interior pixels
+     * come out at exactly 1 and pay nothing, since every tap is already loaded. */
+    float insideCount = (hasL ? 1.0 : 0.0) + (hasR ? 1.0 : 0.0)
+                      + (hasD ? 1.0 : 0.0) + (hasU ? 1.0 : 0.0);
+    float maskCoverage = dilatedFringe ? (0.25 * insideCount)
+                                       : (0.5 + 0.125 * insideCount);
+
     /* Full opacity is reached at one kernel DIAMETER of water — the thinnest
      * thing this reconstruction can represent is a single splat, so anything
      * below that is a rim and should be translucent. Tying the ramp to the
@@ -314,7 +358,7 @@ void main() {
      * radius; the previous literal band was calibrated against the saturating
      * decode and turns into a two-pixel cliff once thickness is metres. */
     float surfaceCoverage = smoothstep(0.0, 2.0 * u_kernelRadius, kernelThickness)
-                          * intersectionVisibility;
+                          * intersectionVisibility * maskCoverage;
     
     float sceneGap = 1.0;
     float waterColumnDepth = kernelThickness;

@@ -980,3 +980,39 @@ frame capture on macOS. The one number this session produced that reproduced
 across runs came from `perf_ssf_filter` — single process, uncapped, randomized
 variant, hundreds of samples per bucket — which is the shape any future in-game
 harness should copy.
+
+## Silhouette antialiasing (2026-08-12)
+
+The most visible defect left on the surface, found by looking at the ring's outer
+rim at 7x: a hard one-pixel staircase, no antialiasing at all.
+
+Fixed by dilating the depth mask one texel and deriving the fringe's alpha from
+the mask neighbourhood rather than from thickness — see the landmine for why the
+thickness route was tried first and only moved the cliff. Straight-edge ramp is
+now 1.0 → 0.875 → 0.25 → 0. Verified on WATER RING (the rim is a two-pixel
+gradient where it was a cut) and FLUID IMPACT (unchanged, its droplet boundary was
+already soft). Guard: `core/tests/fluid_silhouette_coverage_test.c`.
+
+**Not verified at LOW tier.** The game build is currently blocked by unrelated
+in-flight work — `scripts/validate_vfx_surface_registry.py` fails at CMake
+configure on `fire_tongue` (missing texture) and `fire_puff` (duplicate asset) —
+so the temporary tier override could not be rebuilt. The change is
+resolution-neutral by construction (offsets are `u_texel`, the one absolute is a
+0.2 mm thickness floor), but that is an argument, not an observation.
+
+### Remaining, in the order I would take them
+
+1. **PCA anisotropic kernels for the PBD crown.** Yu & Turk proper, replacing the
+   velocity proxy. Reachable now: `fluid_pbd_gpu.comp` already maintains a
+   neighbour grid (`heads[]`/`next[]`, 32^3 cells, rebuilt every Jacobi pass), so a
+   covariance accumulation rides along the loop the density constraint already
+   walks. Applies to FLUID IMPACT only — the ring's particles come from the
+   force-field path, which has no neighbour search.
+2. **Vertical striations** inside the crown and along the rim. Known-hard: five
+   boundary conditions were tried in a previous session and all reverted; the
+   conclusion on record is that it needs a different filter class (true 2D, or
+   curvature flow), not another patch to the separable one.
+3. **The half-sunk ring's waterline** — an authoring call, not a defect.
+4. **`capFade`** in `WaterMultiOctaveWaves` is still a plane wave. Amplitude 0.004
+   and disabling the whole term changed nothing visible; swap it to `fbm3` when
+   something else touches that function.
