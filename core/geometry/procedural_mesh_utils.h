@@ -477,12 +477,12 @@ void ProceduralMesh_DrawWavePlane(const WavePlaneMeshData *data, Color color);
  * --------------------------------------------------------------------------
  * A ground-conforming annulus whose cross-section has a leading raised lip.
  * Unlike a decal, this carries a real silhouette, normal field, and seam-safe
- * UVs: U goes around the circumference, V travels inner -> outer edge.  The
+ * UVs: U goes around the circumference, V travels inner -> outer edge. The
  * builder is CPU-side because the ground query is authoritative and the
  * large-scale irregular outline must participate in terrain conformance.
  *
  * `radialJitter` only affects the outer outline (in metres); `lipJitter` is
- * vertical (metres) and is constrained to the raised profile.  `angularLobes`
+ * vertical (metres) and is constrained to the raised profile. `angularLobes`
  * is intentionally integral so the deformation closes exactly at U=0/1.
  * ==========================================================================*/
 
@@ -521,6 +521,54 @@ void ProceduralMesh_BuildShockwave(ShockwaveMeshData *out, Vector3 center,
  * indexed by cross-band V. Draw inside the caller's chosen shader/blend pass. */
 void ProceduralMesh_DrawShockwave(const ShockwaveMeshData *data,
                                   const Color *radialColors);
+
+/* ============================================================================
+ * IMPACT SHOCKWAVE SHELL MESH
+ * --------------------------------------------------------------------------
+ * A free-space pressure shell for hit reactions: an expanding, vertically
+ * thick annulus around the impact centre. It deliberately has NO terrain query
+ * and no residual ground ripple. Two sides form a lens-like shell so it reads
+ * from an oblique camera, not merely as a flat disc.
+ *
+ * UV.x goes around the circumference and UV.y travels inner -> outer edge.
+ * `angularLobes` is integral so noise closes exactly at the UV seam.
+ * ==========================================================================*/
+
+#define IMPACT_SHOCKWAVE_MAX_SLICES 64
+#define IMPACT_SHOCKWAVE_MAX_RADIALS 8
+#define IMPACT_SHOCKWAVE_SIDES 2
+
+typedef struct
+{
+    float radius;            /* centre -> shell front, metres */
+    float bandWidth;         /* inner -> outer annulus span, metres */
+    float halfHeight;        /* lens thickness above/below impact plane, metres */
+    float radialJitter;      /* outer-silhouette variation, metres */
+    float heightJitter;      /* vertical shell variation, metres */
+    int angularLobes;        /* low-frequency, closed deformation count */
+    float angularPhase;      /* radians; caller advances it over time */
+} ImpactShockwaveMeshConfig;
+
+typedef struct
+{
+    Vector3 verts[IMPACT_SHOCKWAVE_SIDES][IMPACT_SHOCKWAVE_MAX_SLICES + 1]
+                 [IMPACT_SHOCKWAVE_MAX_RADIALS + 1];
+    Vector3 normals[IMPACT_SHOCKWAVE_SIDES][IMPACT_SHOCKWAVE_MAX_SLICES + 1]
+                   [IMPACT_SHOCKWAVE_MAX_RADIALS + 1];
+    Vector2 uv[IMPACT_SHOCKWAVE_MAX_SLICES + 1][IMPACT_SHOCKWAVE_MAX_RADIALS + 1];
+    int slices;
+    int radials;
+} ImpactShockwaveMeshData;
+
+ImpactShockwaveMeshConfig ProceduralMesh_DefaultImpactShockwaveConfig(void);
+void ProceduralMesh_BuildImpactShockwave(ImpactShockwaveMeshData *out,
+                                         Vector3 center,
+                                         const ImpactShockwaveMeshConfig *cfg,
+                                         int slices, int radials);
+/* `radialColors` is optional; when non-NULL it contains `radials + 1` colours
+ * indexed by cross-band V. Draw inside the caller's chosen shader/blend pass. */
+void ProceduralMesh_DrawImpactShockwave(const ImpactShockwaveMeshData *data,
+                                        const Color *radialColors);
 
 /* ============================================================================
  * CURLING WAVE MESH SYSTEM (MỚI)

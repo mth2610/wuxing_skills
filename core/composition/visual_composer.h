@@ -181,6 +181,13 @@ void VFX_ComposeEnergyOrb(Vector3 center, VC_MaterialId mat, float radius, float
 void VFX_ComposeShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat,
                           float radius, float t01);
 
+// ── PRIMARY. Impact shockwave ──────────────────────────────────────────────
+// A free-space, irregular pressure shell for a character or object being hit.
+// It expands around `center`, has real vertical thickness, and never samples or
+// leaves anything on terrain. CONTINUOUS: call every frame for t01 0 -> 1.
+void VFX_ComposeImpactShockwave(Vector3 center, VC_MaterialId mat,
+                                float radius, float t01);
+
 // ── PRIMARY. Portal disc ────────────────────────────────────────────────────
 // A flat disc lying in a plane the WORLD chose, with all its energy in the rim
 // and a dark middle — additive adds nothing through the centre, so the scene
