@@ -1,4 +1,5 @@
 #version 330
+#include "core/shaders/common/noise.glsl"
 
 in vec2 fragTexCoord;
 out vec4 finalColor;
@@ -462,7 +463,26 @@ void main() {
     // Widening the lobe is the fix that costs nothing: a real water surface at
     // this scale is not a mirror, and the ripple then reads as shimmer instead
     // of as contour lines.
-    float surfaceNoise = sin(dot(worldPosition, vec3(12.3, 7.1, -9.5)) + u_time * 1.1) * 0.5 + 0.5;
+    /* Irregular surface variation — value noise, NOT a sine of a dot product.
+     *
+     * `sin(dot(worldPosition, vec3(12.3, 7.1, -9.5)))` is a PLANE WAVE. Rendering
+     * it on its own over the water ring showed exactly what it is: a set of
+     * parallel black-and-white bands wrapped across the body. It drove three
+     * things at once — the specular roughness, the sharp-glint gate and the foam
+     * pattern — so those bands came out as alternating bright and dark stripes
+     * with foam dashes on the light ones, which is what "like optical
+     * interference fringes" means when a user reports it.
+     *
+     * This is the THIRD plane-wave-as-noise defect in this one file (the caustic
+     * lattice and the wave perturbation's up-bias were the others), which is why
+     * vnoise3/fbm3 now live in the shared noise.glsl rather than here.
+     *
+     * The frequency is chosen to keep the feature size the sine had — its
+     * wavelength was 2*PI/|k| = 0.37 m, and one fbm3 cell at 2.7 is the same
+     * 0.37 m — so only the regularity is gone, not the scale. Time translates
+     * the sample point instead of phase-shifting one wave, so the field drifts
+     * rather than pulsing in lockstep everywhere. */
+    float surfaceNoise = fbm3(worldPosition * 2.7 + vec3(0.0, u_time * 0.35, 0.0));
     float authoredRoughness = mix(0.090, 0.150, surfaceNoise);
     float roughness = NormalFilteredRoughness(N, authoredRoughness);
     float lobeScale = BlinnExponentScale(authoredRoughness, roughness);

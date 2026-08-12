@@ -867,3 +867,22 @@ fixture are not identical** (`cmp` on two `--render-vfx 41 --warmup 60` captures
 differs). Silhouette-scale detail must be compared across several runs before it
 is attributed to a change — a vertical-striping "regression" was chased once and
 turned out to move between runs.
+
+### Follow-up: the stripes were a plane wave (2026-08-12)
+
+The user, looking at the ring from further out, described "alternating bright and
+dark stripes, like optical interference". That is a different defect from the
+specular streaks fixed above, and the probe run found it in one build:
+`surfaceNoise` was `sin(dot(worldPosition, k))` — rendering the scalar on its own
+showed parallel bands painted across the tube. It fed roughness, the sharp-glint
+gate and the foam pattern together, which is why the bands, the white dashes and
+the "streaks up close" were all one thing.
+
+Replaced with `fbm3` at the same 0.37 m feature scale. `vnoise3` and `fbm3` are
+new in `core/shaders/common/noise.glsl` (it only had 2D value noise), built on
+the existing Mali-safe `hash3`. Guard:
+`core/tests/fluid_surface_noise_test.c`.
+
+Ruled out by the same probe, so do not re-investigate: the wave perturbation
+(`WaterMultiOctaveWaves`) and its capillary octave were disabled independently
+and the banding stayed.

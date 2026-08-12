@@ -2038,3 +2038,39 @@ is behaving correctly; dual-depth only made it visible.
 **Rule.** Before deciding a term is misfiring, check the fixture's geometry.
 Three plausible mechanism fixes were spent on a "silhouette artefact" that was a
 real intersection with the ground.
+
+## `sin(dot(worldPosition, k))` is a plane wave, not noise
+
+**Symptom.** A user reported "alternating bright and dark stripes, like optical
+interference fringes" on the water ring, most visible from far away, with the
+bright marks turning into streaks up close.
+
+**Cause.** `surfaceNoise = sin(dot(worldPosition, vec3(12.3, 7.1, -9.5)))` — a
+single plane wave. Rendered on its own it is literally a set of parallel
+black-and-white bands wrapped across the body; the bands are what the function
+IS, not an artefact of sampling it. One scalar drove three things at once (the
+specular roughness, the sharp-glint gate, and the foam pattern), so the same
+bands came out as light/dark stripes with foam dashes on the light ones.
+
+**Fix.** `fbm3(worldPosition * 2.7 + ...)` from `core/shaders/common/noise.glsl`,
+where `vnoise3`/`fbm3` were added for this. The frequency was chosen to keep the
+feature size the sine had (its wavelength and one fbm3 cell are both 0.37 m), so
+only the regularity changed, not the scale. Animate by translating the sample
+point, not by phase-shifting one wave — a phase shift makes the whole field pulse
+in lockstep.
+
+**Rule.** A single sine of a dot product is never "some noise"; it is a grating.
+This is the THIRD instance in `fluid_surface.fs` alone — a caustic
+`sin(x+sin(y))*sin(y+sin(x))` lattice and a wave perturbation with a constant
+up-bias were the other two, and both also presented as regular bands on a curved
+body. Anything wanting irregular spatial variation uses `noise.glsl`, which is
+also the file that carries the Mali-safe hash. Guarded by
+`core/tests/fluid_surface_noise_test.c`, which asserts the field does not repeat
+after one feature length along any direction — and mirrors the old expression to
+prove the guard can detect the defect.
+
+**Still there, below the visible threshold:** `capFade` inside
+`WaterMultiOctaveWaves` is the same construction. It was left alone because
+disabling the whole wave perturbation did NOT remove the banding (the probe run
+that identified `surfaceNoise` also ruled the wave out), and its amplitude is
+0.004. Swap it if it ever becomes visible.

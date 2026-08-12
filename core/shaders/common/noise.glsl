@@ -93,3 +93,36 @@ float fbm2N(vec2 p, int octaves) {
     }
     return v / total;
 }
+
+// 3D value noise → [0, 1]. The 3D companion to vnoise(), built on the same
+// mobile-safe hash3.
+//
+// Reach for this instead of `sin(dot(worldPosition, k))` whenever a shader wants
+// "some irregular variation over a 3D body". A single sine of a dot product is a
+// PLANE WAVE: it paints parallel bands across whatever it touches, and on a
+// curved body those bands read as interference fringes. That exact mistake has
+// been made three times in core/fluid/shaders/fluid_surface.fs alone (a caustic
+// lattice, a wave perturbation with a constant up-bias, and a "surfaceNoise"
+// term driving roughness, glints and foam).
+float vnoise3(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    vec3 u = f * f * (3.0 - 2.0 * f);
+    float n000 = hash3(i + vec3(0.0, 0.0, 0.0));
+    float n100 = hash3(i + vec3(1.0, 0.0, 0.0));
+    float n010 = hash3(i + vec3(0.0, 1.0, 0.0));
+    float n110 = hash3(i + vec3(1.0, 1.0, 0.0));
+    float n001 = hash3(i + vec3(0.0, 0.0, 1.0));
+    float n101 = hash3(i + vec3(1.0, 0.0, 1.0));
+    float n011 = hash3(i + vec3(0.0, 1.0, 1.0));
+    float n111 = hash3(i + vec3(1.0, 1.0, 1.0));
+    return mix(mix(mix(n000, n100, u.x), mix(n010, n110, u.x), u.y),
+               mix(mix(n001, n101, u.x), mix(n011, n111, u.x), u.y), u.z);
+}
+
+// 2-octave 3D value noise → [0, 1]. The second octave is offset as well as
+// scaled, so the value-noise lattice of the first does not line up with it and
+// the field has no axis-aligned grain.
+float fbm3(vec3 p) {
+    return (vnoise3(p) * 0.667 + vnoise3(p * 2.13 + vec3(17.3, 5.7, 11.1)) * 0.333);
+}
