@@ -291,8 +291,10 @@ configure_file(core/shaders/water_splash.vs ${CMAKE_CURRENT_BINARY_DIR}/core/sha
 configure_file(core/fluid/shaders/fluid_depth_smooth.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_depth_smooth.fs COPYONLY)
 configure_file(core/fluid/shaders/fluid_capture.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_capture.fs COPYONLY)
 configure_file(core/fluid/shaders/fluid_capture_particle.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_capture_particle.fs COPYONLY)
-configure_file(core/fluid/shaders/fluid_surface_thickness.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_surface_thickness.fs COPYONLY)
-configure_file(core/fluid/shaders/fluid_surface_thickness_mesh.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_surface_thickness_mesh.fs COPYONLY)
+configure_file(core/fluid/shaders/fluid_capture_back.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_capture_back.fs COPYONLY)
+configure_file(core/fluid/shaders/fluid_capture_particle_back.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_capture_particle_back.fs COPYONLY)
+configure_file(core/fluid/shaders/fluid_thickness_resolve.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_thickness_resolve.fs COPYONLY)
+configure_file(core/fluid/shaders/fluid_thickness_blur.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_thickness_blur.fs COPYONLY)
 configure_file(core/fluid/shaders/fluid_depth_narrow_range.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_depth_narrow_range.fs COPYONLY)
 configure_file(core/fluid/shaders/fluid_surface.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_surface.fs COPYONLY)
 

@@ -104,12 +104,12 @@ int main(void)
     bad += CheckPair("core/particles/shaders/gpu/fluid_surface_capture.vs",
                      "core/fluid/shaders/fluid_capture_particle.fs");
     bad += CheckPair("core/particles/shaders/gpu/fluid_surface_capture.vs",
-                     "core/fluid/shaders/fluid_surface_thickness.fs");
+                     "core/fluid/shaders/fluid_capture_particle_back.fs");
     // The GPU PBD pool's pair (fluid_pbd_gpu.c) — same fragment stages, other vertex stage.
     bad += CheckPair("core/fluid/shaders/fluid_pbd_surface.vs",
                      "core/fluid/shaders/fluid_capture_particle.fs");
     bad += CheckPair("core/fluid/shaders/fluid_pbd_surface.vs",
-                     "core/fluid/shaders/fluid_surface_thickness.fs");
+                     "core/fluid/shaders/fluid_capture_particle_back.fs");
 
     // The pairings themselves: if a call site moves, this test must be updated with it
     // rather than silently checking shaders nobody pairs any more.
@@ -118,7 +118,7 @@ int main(void)
     else
     {
         CHECK(strstr(backend, "\"core/particles/shaders/gpu/fluid_surface_capture.vs\", \"core/fluid/shaders/fluid_capture_particle.fs\"") != NULL);
-        CHECK(strstr(backend, "\"core/particles/shaders/gpu/fluid_surface_capture.vs\", \"core/fluid/shaders/fluid_surface_thickness.fs\"") != NULL);
+        CHECK(strstr(backend, "\"core/particles/shaders/gpu/fluid_surface_capture.vs\", \"core/fluid/shaders/fluid_capture_particle_back.fs\"") != NULL);
         free(backend);
     }
 

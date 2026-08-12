@@ -732,3 +732,107 @@ Những lo ngại Android CÒN đứng vững, đều là chuyện Vulkan chứ 
   tâm texel, NEAREST mới là đúng ở đó.
 - `gl_FragDepth` + `discard` trong pass capture tắt early-Z trên Mali. Đây là
   kiến trúc phần cứng, không phụ thuộc backend — vẫn là vấn đề **hiệu năng** thật.
+
+## Dual-depth thickness + anisotropic splats (2026-08-12)
+
+Executed `core/docs/HANDOFF_SSF_UPGRADE.md`. Both items landed; the accumulation
+path is deleted.
+
+### 1. Thickness is now measured, not accumulated
+
+`T = z_back − z_front`. A second capture pass rasterizes the FAR root of every
+splat into its own R32F depth target, `fluid_thickness_resolve.fs` subtracts the
+two in metres, and a plain separable Gaussian smooths the result (Green, GDC
+2010 — thickness is low-frequency and wants no bilateral filter). New shaders:
+`fluid_capture_particle_back.fs`, `fluid_capture_back.fs`,
+`fluid_capture_cpu_back.fs`, `fluid_thickness_resolve.fs`,
+`fluid_thickness_blur.fs`.
+
+**The MAX reduction without a MAX blend.** The back surface needs the farthest
+fragment, and the depth test keeps the nearest. Writing `gl_FragDepth = 1 - depth`
+inverts the reduction using nothing but an ordinary depth test — which matters,
+because a `GL_MAX` blend equation on R32F is optional (rlvk detects it as
+`Caps.floatBlendR32`) and rlgl exposes no depth-func setter at all. The two
+targets therefore clear in OPPOSITE directions: front to 1, back to 0.
+
+**Constants deleted.** `FLUID_KERNEL_OVERLAP 1.5` and the `exp(-p/1.20)` knee are
+gone, along with the absorption scale that had been re-tuned twice to compensate
+for them. Absorption is now one statement: one `FLUID_REFERENCE_DEPTH_M` (0.20 m)
+of liquid transmits exactly `materialTransmission`. 0.20 m is measured, not
+picked — the water ring's tube is 0.216 m across by construction and the PBD
+crown read 0.16–0.25 m under the thickness ruler.
+
+**The shell question, decided by measurement.** A ruler debug view (1 cm stripes
+over the decoded thickness) was built BEFORE any change and run on both fixtures:
+
+| fixture | accumulation | dual depth | ground truth |
+|---|---|---|---|
+| WATER RING (hollow tube) | ~10–12 cm, blotchy at splat scale | 16–21 cm, smooth | 21.6 cm tube diameter |
+| FLUID IMPACT (dense crown) | ~10 cm, blotchy | 16–25 cm | — |
+
+Dual depth does inflate the ring to its full tube diameter, exactly as the
+handoff predicted — and it looks BETTER, because the tube finally carries an
+interior gradient instead of one flat wash. It won on both fixtures at HIGH and
+LOW, so the accumulation path was deleted rather than kept behind an emitter flag.
+
+Also measured, and worth recording because it contradicted the handoff: the
+decode was **not** saturating any more. Zero pixels sat at the 0.16 m cap on
+either fixture. The earlier knee move to 1.20 had already fixed that; what was
+actually wrong was that an accumulated sum is blotchy at splat scale and is not a
+length.
+
+### 2. Velocity-aligned anisotropic splats
+
+Splats are ellipsoids stretched along the view-plane velocity, capped at 3:1, with
+both cross-axes shrunk by `1/sqrt(aspect)` so the volume is unchanged (Yu & Turk's
+determinant normalization; the velocity proxy for the PCA is not theirs and the
+shader says so). Both vertex stages (`fluid_surface_capture.vs`,
+`fluid_pbd_surface.vs`) and both fragment stages changed together — a stretched
+quad over an unstretched reconstruction draws a clipped circle. The deleted
+accumulation pass would have needed its chord length stretched by hand to match;
+dual depth gets it for free, since both roots come from the same kernel.
+
+The crown rim went from a row of scalloped blobs to a continuous sheet, and the
+vertical banding across the crown dropped sharply. `FluidSurface_RegisterEllipsoid`
+now honours its three radii too (a unit sphere under `rlScalef`) — it had been
+averaging them into one scalar, so the signature promised anisotropy the renderer
+never drew.
+
+### Verification
+
+`glslangValidator -S frag/vert` on every edited shader. Core suite 52/56 — the
+four reds (`energy_burst_semantic_layers`, `tube_frame`, `vfx_layered_field_contract`,
+`volume_trail`) were red before this work and are untouched by it. New guards:
+`core/tests/fluid_dual_depth_test.c`, `core/tests/fluid_anisotropic_splat_test.c`.
+`fluid_surface_optics_test.c` lost its decode mirror and the "densest body must
+sit clear of the cap" guard, which existed only because the decode saturated.
+Visual: both fixtures, both tiers, via `--render-vfx 41` / `--render-vfx 38`.
+
+All temporary instrumentation is out: `u_debugView` (views 1 and 2, and the
+host-side mode 12), `WUXING_FLUID_DEBUG`, `WUXING_FLUID_THICKNESS`,
+`WUXING_FLUID_ANISO`, and the two view knobs added to drive the headless
+capture (`WUXING_VFX_CAMDIST` in `main.c`, `WUXING_GFX_TIER` in `gfx_quality.c`).
+
+### Two things this session did NOT exercise
+
+- **The CPU/VBO particle fallback** (`fluid_capture_cpu_back.fs`) is wired and
+  compiles, but this machine takes the compute path, so its back capture has
+  never actually run. It is the GL-3.3-only route.
+- **Anisotropy is compute-path only.** The CPU fallback still builds its billboard
+  quad host-side and draws isotropic splats; making it match needs host work, not
+  a shader edit. Both paths still agree on thickness, which is what matters for
+  the optics.
+
+### Still parked (carried over from the handoff, reasons unchanged)
+
+- **Half-resolution + bilateral upsample** — ceiling ~0.6 ms; measure with
+  `perf_ssf_filter` (written, never run) first.
+- **Temporal accumulation** — nobody has observed the surface boiling.
+- **Curvature flow** — the streaks are sub-visible.
+- **Narrow-band SSFR (CGF 2022)** — wrong particle-count regime.
+- **Full PCA anisotropic kernels** — needs the neighbour search the architecture
+  avoids.
+- **One Android run** — still answers three questions at once (R32F blend, R32F
+  linear filtering, Mali early-Z cost of `gl_FragDepth` + `discard`). The back
+  capture pass adds a SECOND `gl_FragDepth` pass, so the third question now
+  matters more than it did.

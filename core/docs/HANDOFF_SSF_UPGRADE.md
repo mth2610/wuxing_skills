@@ -1,5 +1,13 @@
 # Handoff — SSF upgrade: dual-depth thickness + anisotropic splats
 
+> **STATUS: EXECUTED, 2026-08-12.** Both items landed and the accumulation path
+> is deleted. What actually happened, including where this document's premise
+> turned out to be stale (the decode was no longer saturating), is in
+> `core/docs/PROGRESS.md` under "Dual-depth thickness + anisotropic splats"; the
+> reusable lessons are in `core/docs/LANDMINES.md`. The "Parked, with reasons"
+> list at the bottom is still live and has been carried into PROGRESS.
+> Kept as the record of what was asked for and why.
+
 > Written at the end of the 2026-08-11 session, for a fresh session to execute.
 > **The user has assigned this to the rlvk / Renderer agent persona**, deliberately
 > crossing the ownership split in the root `CLAUDE.md` (this work lives in

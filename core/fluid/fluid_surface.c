@@ -20,9 +20,12 @@ static int s_count;
 static ParticleRenderStream s_gpuStreams[16];
 static int s_gpuStreamCount;
 static Texture2D s_surfaceTex;
-static RenderTexture2D s_capture, s_thickness, s_smoothA, s_smoothB;
+static RenderTexture2D s_capture, s_captureBack, s_thickness, s_smoothA, s_smoothB;
 static RenderTexture2D s_sceneCopy;   // refraction source, see FluidSurface_LoadColorTarget
-static Shader s_captureShader, s_thicknessShader, s_smooth, s_composite;
+static Shader s_captureShader, s_captureBackShader, s_smooth, s_composite;
+static Shader s_thicknessResolve, s_thicknessBlur;
+static int s_resolveBackLoc, s_resolveInverseProjectionLoc;
+static int s_blurTexelLoc, s_blurDirectionLoc, s_blurRadiusLoc;
 static int s_texelLoc, s_dirLoc, s_fillLoc;
 static int s_smoothProjectionLoc, s_smoothInverseProjectionLoc;
 static int s_kernelRadiusLoc, s_filterRadiusLoc;
@@ -32,7 +35,7 @@ static int s_sunDirectionLoc, s_sunColorLoc, s_skyAmbientLoc, s_groundAmbientLoc
 static int s_pointLightCountLoc, s_pointLightPosLoc, s_pointLightColorLoc;
 static int s_materialBodyLoc, s_materialGlowLoc, s_materialSoftLoc;
 static int s_timeLoc;
-static int s_debugViewLoc;
+static int s_compositeKernelRadiusLoc;
 static Matrix s_fluidView, s_fluidProjection;
 static Color s_materialBody = {41, 128, 185, 255};
 static Color s_materialGlow = {80, 180, 255, 255};
@@ -137,17 +140,20 @@ static RenderTexture2D FluidSurface_LoadScalarTarget(int w, int h) {
     return t;
 }
 
-/* WUXING_FLUID_DEBUG: 1 = reconstructed normal (shader), 12 = composite off the
- * UNFILTERED capture (host-side, no fragment shader can do it). Temporary. */
-static int FluidSurface_DebugView(void) {
-    static int s_view=-1;
-    if (s_view<0) {
-        const char *env=getenv("WUXING_FLUID_DEBUG");
-        s_view=env?atoi(env):0;
-        if (s_view) TraceLog(LOG_INFO,"FluidSurface: debug mode %d active",s_view);
-    }
-    return s_view;
+/* FluidSurface_RegisterEllipsoid takes three radii and the capture used to
+ * average them into one, so the API promised anisotropy and drew a sphere.
+ * A unit sphere under a non-uniform scale IS the ellipsoid, front and back —
+ * and the scale is positive on every axis, so the winding (and therefore the
+ * front-face cull the back pass relies on) is unaffected. */
+static void FluidSurface_DrawEllipsoid(const FluidSurfaceParticle *sp) {
+    rlPushMatrix();
+    rlTranslatef(sp->position.x, sp->position.y, sp->position.z);
+    rlScalef(sp->radii.x, sp->radii.y, sp->radii.z);
+    /* Lower-LOD sphere is fast enough for O(100s) CPU particles. */
+    DrawSphereEx((Vector3){0.0f, 0.0f, 0.0f}, 1.0f, 6, 6, WHITE);
+    rlPopMatrix();
 }
+
 
 void FluidSurface_Init(int width,int height) {
     /* Keep the authored High surface at native resolution while its optical
@@ -157,6 +163,9 @@ void FluidSurface_Init(int width,int height) {
                   (GfxQuality_Get() >= GFX_MED ? 0.75f : 0.50f);
     int w = (int)(width*scale), h=(int)(height*scale);
     s_capture=FluidSurface_LoadDepthTarget(w,h);
+    /* Same kind of target as the front capture: dual-depth thickness is the
+     * difference of two depth reductions over the same splat cloud. */
+    s_captureBack=FluidSurface_LoadDepthTarget(w,h);
     /* LoadRenderTexture defaults to RGBA8. That silently reduced smoothed
      * device depth to 256 levels, turning shallow liquid into zoom-dependent
      * horizontal contour bands. Scalar R32F costs the same four bytes/pixel. */
@@ -164,7 +173,9 @@ void FluidSurface_Init(int width,int height) {
     s_smoothA=FluidSurface_LoadScalarTarget(w,h);
     s_smoothB=FluidSurface_LoadScalarTarget(w,h);
     s_captureShader=ResourceManager_LoadShader(NULL,"core/fluid/shaders/fluid_capture.fs");
-    s_thicknessShader=ResourceManager_LoadShader(NULL,"core/fluid/shaders/fluid_surface_thickness_mesh.fs");
+    s_captureBackShader=ResourceManager_LoadShader(NULL,"core/fluid/shaders/fluid_capture_back.fs");
+    s_thicknessResolve=ResourceManager_LoadShader(NULL,"core/fluid/shaders/fluid_thickness_resolve.fs");
+    s_thicknessBlur=ResourceManager_LoadShader(NULL,"core/fluid/shaders/fluid_thickness_blur.fs");
     s_smooth=ResourceManager_LoadShader(NULL,"core/fluid/shaders/fluid_depth_narrow_range.fs");
     s_composite=ResourceManager_LoadShader(NULL,"core/fluid/shaders/fluid_surface.fs");
     Image img = GenImageGradientRadial(64, 64, 0.0f, WHITE, BLANK);
@@ -177,6 +188,11 @@ void FluidSurface_Init(int width,int height) {
     s_smoothInverseProjectionLoc=GetShaderLocation(s_smooth,"u_inverseProjection");
     s_kernelRadiusLoc=GetShaderLocation(s_smooth,"u_kernelRadius");
     s_filterRadiusLoc=GetShaderLocation(s_smooth,"u_filterRadius");
+    s_resolveBackLoc=GetShaderLocation(s_thicknessResolve,"u_backDepthTex");
+    s_resolveInverseProjectionLoc=GetShaderLocation(s_thicknessResolve,"u_inverseProjection");
+    s_blurTexelLoc=GetShaderLocation(s_thicknessBlur,"u_texel");
+    s_blurDirectionLoc=GetShaderLocation(s_thicknessBlur,"u_direction");
+    s_blurRadiusLoc=GetShaderLocation(s_thicknessBlur,"u_radius");
     s_compositeTexelLoc=GetShaderLocation(s_composite,"u_texel");
     s_sceneTexelLoc=GetShaderLocation(s_composite,"u_sceneTexel");
     s_thicknessLoc=GetShaderLocation(s_composite,"u_thicknessTex"); s_sceneLoc=GetShaderLocation(s_composite,"u_sceneTex");
@@ -185,6 +201,7 @@ void FluidSurface_Init(int width,int height) {
     s_inverseProjectionLoc=GetShaderLocation(s_composite,"u_inverseProjection");
     s_viewToWorldLoc=GetShaderLocation(s_composite,"u_viewToWorld");
     s_qualityTierLoc=GetShaderLocation(s_composite,"u_qualityTier");
+    s_compositeKernelRadiusLoc=GetShaderLocation(s_composite,"u_kernelRadius");
     s_sunDirectionLoc=GetShaderLocation(s_composite,"u_sunDirectionView");
     s_sunColorLoc=GetShaderLocation(s_composite,"u_sunColor");
     s_skyAmbientLoc=GetShaderLocation(s_composite,"u_skyAmbient");
@@ -196,9 +213,8 @@ void FluidSurface_Init(int width,int height) {
     s_materialGlowLoc=GetShaderLocation(s_composite,"u_materialGlow");
     s_materialSoftLoc=GetShaderLocation(s_composite,"u_materialSoft");
     s_timeLoc=GetShaderLocation(s_composite,"u_time");
-    s_debugViewLoc=GetShaderLocation(s_composite,"u_debugView");
 }
-void FluidSurface_Unload(void) { UnloadTexture(s_surfaceTex); UnloadRenderTexture(s_capture); UnloadRenderTexture(s_thickness); UnloadRenderTexture(s_smoothA); UnloadRenderTexture(s_smoothB); if(s_sceneCopy.id) { UnloadRenderTexture(s_sceneCopy); s_sceneCopy=(RenderTexture2D){0}; } }
+void FluidSurface_Unload(void) { UnloadTexture(s_surfaceTex); UnloadRenderTexture(s_capture); UnloadRenderTexture(s_captureBack); UnloadRenderTexture(s_thickness); UnloadRenderTexture(s_smoothA); UnloadRenderTexture(s_smoothB); if(s_sceneCopy.id) { UnloadRenderTexture(s_sceneCopy); s_sceneCopy=(RenderTexture2D){0}; } }
 void FluidSurface_SetMaterialColors(Color body, Color glow, Color soft) {
     s_materialBody=body;
     s_materialGlow=glow;
@@ -266,29 +282,62 @@ void FluidSurface_Capture(Camera3D camera) {
         /* Use DrawSphereEx to rasterise correct sphere geometry per hemi. */
         /* Lower-LOD sphere is fast enough for O(100s) CPU particles.      */
         BeginShaderMode(s_captureShader);
-        for (int i = 0; i < s_count; i++) {
-            FluidSurfaceParticle *sp = &s_particles[i];
-            float r = (sp->radii.x + sp->radii.y + sp->radii.z) / 3.0f;
-            DrawSphereEx(sp->position, r, 6, 6, WHITE);
-        }
+        for (int i = 0; i < s_count; i++) FluidSurface_DrawEllipsoid(&s_particles[i]);
         EndShaderMode();
     }
     EndMode3D(); EndTextureMode();
-    BeginTextureMode(s_thickness); ClearBackground(BLANK); BeginMode3D(camera);
-    rlDrawRenderBatchActive(); rlDisableDepthMask(); rlDisableDepthTest(); BeginBlendMode(BLEND_ADDITIVE);
-    for (int i=0;i<s_gpuStreamCount;i++) ParticleManager_DrawSurfaceThicknessStream(&s_gpuStreams[i], camera);
-    FluidPBDGPU_DrawSurfaceThickness(camera);
-    if (s_count > 0) {
-        BeginShaderMode(s_thicknessShader);
-        for (int i = 0; i < s_count; i++) {
-            FluidSurfaceParticle *sp = &s_particles[i];
-            float r = (sp->radii.x + sp->radii.y + sp->radii.z) / 3.0f;
-            DrawSphereEx(sp->position, r, 6, 6, WHITE);
-        }
-        EndShaderMode();
-    }
-    EndBlendMode(); rlDrawRenderBatchActive(); rlEnableDepthTest(); rlEnableDepthMask(); EndMode3D(); EndTextureMode();
+
     Vector2 texel={1.0f/s_capture.texture.width,1.0f/s_capture.texture.height};
+    Matrix captureInverseProjection=MatrixInvert(s_fluidProjection);
+
+    {
+        /* --- Back depth: the far side of the same cloud. ---
+         * Cleared to ZERO, not to 1: this pass reduces with MAX (the shaders
+         * write the complement of the depth so an ordinary depth test keeps the
+         * FARTHEST fragment), so "nothing here" must be the smallest possible
+         * value, the opposite of the front pass's convention. */
+        BeginTextureMode(s_captureBack); ClearBackground(BLANK); BeginMode3D(camera);
+        for (int i=0;i<s_gpuStreamCount;i++) ParticleManager_DrawSurfaceBackStream(&s_gpuStreams[i], camera);
+        FluidPBDGPU_DrawSurfaceBackDepth(camera);
+        if (s_count > 0) {
+            /* Real geometry, so the far surface is a culling choice rather than
+             * a second analytic root. The flush is required: raylib batches
+             * geometry and would otherwise rasterize these spheres under
+             * whichever cull state happened to be current at flush time. */
+            rlDrawRenderBatchActive();
+            rlSetCullFace(RL_CULL_FACE_FRONT);
+            BeginShaderMode(s_captureBackShader);
+            for (int i = 0; i < s_count; i++) FluidSurface_DrawEllipsoid(&s_particles[i]);
+            EndShaderMode();
+            rlDrawRenderBatchActive();
+            rlSetCullFace(RL_CULL_FACE_BACK);
+        }
+        EndMode3D(); EndTextureMode();
+
+        /* T = z_back - z_front, then a plain Gaussian (Green 2010). s_smoothA is
+         * free at this point — the depth filter below only starts using it
+         * afterwards — so the blur costs no extra target. */
+        BeginTextureMode(s_thickness); ClearBackground(BLANK);
+        BeginShaderMode(s_thicknessResolve);
+        SetShaderValueMatrix(s_thicknessResolve,s_resolveInverseProjectionLoc,captureInverseProjection);
+        SetShaderValueTexture(s_thicknessResolve,s_resolveBackLoc,s_captureBack.texture);
+        DrawTextureRec(s_capture.texture,(Rectangle){0,0,(float)s_capture.texture.width,-(float)s_capture.texture.height},(Vector2){0,0},WHITE);
+        EndShaderMode(); EndTextureMode();
+
+        int thicknessBlurRadius=GfxQuality_Get()>=GFX_HIGH?10:
+                                (GfxQuality_Get()>=GFX_MED?6:3);
+        Vector2 horizontal={1.0f,0.0f}, vertical={0.0f,1.0f};
+        BeginTextureMode(s_smoothA); ClearBackground(BLANK); BeginShaderMode(s_thicknessBlur);
+        SetShaderValue(s_thicknessBlur,s_blurTexelLoc,&texel,SHADER_UNIFORM_VEC2);
+        SetShaderValue(s_thicknessBlur,s_blurDirectionLoc,&horizontal,SHADER_UNIFORM_VEC2);
+        SetShaderValue(s_thicknessBlur,s_blurRadiusLoc,&thicknessBlurRadius,SHADER_UNIFORM_INT);
+        DrawTextureRec(s_thickness.texture,(Rectangle){0,0,(float)s_thickness.texture.width,-(float)s_thickness.texture.height},(Vector2){0,0},WHITE);
+        EndShaderMode(); EndTextureMode();
+        BeginTextureMode(s_thickness); ClearBackground(BLANK); BeginShaderMode(s_thicknessBlur);
+        SetShaderValue(s_thicknessBlur,s_blurDirectionLoc,&vertical,SHADER_UNIFORM_VEC2);
+        DrawTextureRec(s_smoothA.texture,(Rectangle){0,0,(float)s_smoothA.texture.width,-(float)s_smoothA.texture.height},(Vector2){0,0},WHITE);
+        EndShaderMode(); EndTextureMode();
+    }
     /* A CEILING now, not the radius itself: the filter derives its own reach per
      * pixel from the kernel's projected size (fluid_depth_narrow_range.fs), so
      * this only bounds what a close-up body may cost. The old values WERE the
@@ -296,7 +345,7 @@ void FluidSurface_Capture(Camera3D camera) {
      * which is why a nearby body reconstructed as a heap of separate beads. */
     int filterRadius=GfxQuality_Get()>=GFX_HIGH?28:
                      (GfxQuality_Get()>=GFX_MED?14:7);
-    Matrix inverseProjection=MatrixInvert(s_fluidProjection);
+    Matrix inverseProjection=captureInverseProjection;
     /* Two rounds, not four. The filter's reach is now derived from the kernel's
      * projected size rather than a fixed 10 texels, so one round already spans a
      * splat — and each extra round re-estimates its own slope from the previous
@@ -367,6 +416,7 @@ void FluidSurface_Composite(void) {
     SetShaderValueMatrix(s_composite,s_inverseProjectionLoc,inverseProjection);
     SetShaderValueMatrix(s_composite,s_viewToWorldLoc,viewToWorld);
     SetShaderValue(s_composite,s_qualityTierLoc,&qualityTier,SHADER_UNIFORM_INT);
+    SetShaderValue(s_composite,s_compositeKernelRadiusLoc,&s_reconstructionRadius,SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_composite,s_sunDirectionLoc,&sunDirectionView,SHADER_UNIFORM_VEC3);
     SetShaderValue(s_composite,s_sunColorLoc,&sunColor,SHADER_UNIFORM_VEC3);
     SetShaderValue(s_composite,s_skyAmbientLoc,&skyAmbient,SHADER_UNIFORM_VEC3);
@@ -375,8 +425,6 @@ void FluidSurface_Composite(void) {
     SetShaderValue(s_composite,s_materialGlowLoc,&materialGlow,SHADER_UNIFORM_VEC3);
     SetShaderValue(s_composite,s_materialSoftLoc,&materialSoft,SHADER_UNIFORM_VEC3);
     SetShaderValue(s_composite,s_timeLoc,&opticalTime,SHADER_UNIFORM_FLOAT);
-    { int view=FluidSurface_DebugView(); int shaderView=(view==1)?1:0;
-      SetShaderValue(s_composite,s_debugViewLoc,&shaderView,SHADER_UNIFORM_INT); }
     SetShaderValue(s_composite,s_pointLightCountLoc,&pointLightCount,SHADER_UNIFORM_INT);
     SetShaderValueV(s_composite,s_pointLightPosLoc,pointLightPos,
                     SHADER_UNIFORM_VEC4,FLUID_OPTICAL_POINT_LIGHTS);
@@ -387,7 +435,7 @@ void FluidSurface_Composite(void) {
     SetShaderValueTexture(s_composite,s_thicknessLoc,s_thickness.texture);
     SetShaderValueTexture(s_composite,s_sceneLoc,scene);
     if(has) SetShaderValueTexture(s_composite,s_sceneDepthLoc,sceneDepth);
-    Texture2D depthSource=FluidSurface_DebugView()==12?s_capture.texture:s_smoothB.texture;
+    Texture2D depthSource=s_smoothB.texture;
     DrawTexturePro(depthSource,(Rectangle){0,0,depthSource.width,-depthSource.height},(Rectangle){0,0,GetRenderWidth(),GetRenderHeight()},(Vector2){0,0},0,WHITE);
     EndShaderMode();
     EndBlendMode();

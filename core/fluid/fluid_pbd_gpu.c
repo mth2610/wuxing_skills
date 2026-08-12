@@ -35,7 +35,7 @@ static struct {
 static int s_gridStamp;
 #define PBD_STAMP_WRAP 500000     /* re-clear well before int overflow at x4096 */
 static void FluidPBDGPU_ClearGrid(void);
-static Shader s_depthShader,s_thicknessShader;
+static Shader s_depthShader,s_backShader;
 
 static float FluidPBDGPU_Rand01(unsigned int value)
 {
@@ -64,7 +64,7 @@ bool FluidPBDGPU_Init(void)
     s_heads=rlLoadShaderBuffer(sizeof(int)*GPU_GRID_CELLS,NULL,RL_DYNAMIC_DRAW);
     s_next=rlLoadShaderBuffer(sizeof(int)*FLUID_PBD_GPU_MAX_PARTICLES,NULL,RL_DYNAMIC_DRAW);
     s_depthShader=ResourceManager_LoadShader("core/fluid/shaders/fluid_pbd_surface.vs","core/fluid/shaders/fluid_capture_particle.fs");
-    s_thicknessShader=ResourceManager_LoadShader("core/fluid/shaders/fluid_pbd_surface.vs","core/fluid/shaders/fluid_surface_thickness.fs");
+    s_backShader=ResourceManager_LoadShader("core/fluid/shaders/fluid_pbd_surface.vs","core/fluid/shaders/fluid_capture_particle_back.fs");
     static const float quad[]={-1,-1,0,1,-1,0,1,1,0,-1,-1,0,1,1,0,-1,1,0};
     s_vao=rlLoadVertexArray(); rlEnableVertexArray(s_vao); s_vbo=rlLoadVertexBuffer(quad,sizeof(quad),false); rlSetVertexAttribute(0,3,RL_FLOAT,0,0,0); rlEnableVertexAttribute(0); rlDisableVertexArray();
     s_uniform.phase=rlGetLocationUniform(s_program,"u_phase");
@@ -252,8 +252,9 @@ static void FluidPBDGPU_Draw(Camera3D camera, Shader shader)
         double top=tan(camera.fovy*0.5*DEG2RAD);
         projection=MatrixFrustum(-top*aspect,top*aspect,-top,top,1.0,1000.0);
     }
-    BeginShaderMode(shader); int loc=GetShaderLocation(shader,"u_view"); if(loc>=0)SetShaderValueMatrix(shader,loc,view); loc=GetShaderLocation(shader,"u_projection");if(loc>=0)SetShaderValueMatrix(shader,loc,projection);
+    BeginShaderMode(shader);
+    int loc=GetShaderLocation(shader,"u_view"); if(loc>=0)SetShaderValueMatrix(shader,loc,view); loc=GetShaderLocation(shader,"u_projection");if(loc>=0)SetShaderValueMatrix(shader,loc,projection);
     rlBindShaderBuffer(s_stateA,0); rlEnableShader(shader.id); rlEnableVertexArray(s_vao); rlDrawVertexArrayInstanced(0,6,s_particleCount); rlDisableVertexArray(); rlDisableShader(); EndShaderMode();
 }
 void FluidPBDGPU_DrawSurfaceDepth(Camera3D camera){FluidPBDGPU_Draw(camera,s_depthShader);}
-void FluidPBDGPU_DrawSurfaceThickness(Camera3D camera){FluidPBDGPU_Draw(camera,s_thicknessShader);}
+void FluidPBDGPU_DrawSurfaceBackDepth(Camera3D camera){FluidPBDGPU_Draw(camera,s_backShader);}

@@ -234,7 +234,7 @@
   bool ParticleManager_GetSurfaceStream(ParticleEmitterHandle handle, ParticleRenderStream *outStream);
   int ParticleManager_CopySurfaceSamples(const ParticleRenderStream *stream, ParticleSurfaceSample *outSamples, int maxSamples);
   bool ParticleManager_DrawSurfaceStream(const ParticleRenderStream *stream, Camera3D camera, Texture2D texture);
-  bool ParticleManager_DrawSurfaceThicknessStream(const ParticleRenderStream *stream, Camera3D camera);
+  bool ParticleManager_DrawSurfaceBackStream(const ParticleRenderStream *stream, Camera3D camera);
   void ParticleManager_Update(float dt);
   void ParticleManager_Draw(Camera3D camera, Texture2D fallbackTexture);
   void ParticleManager_DrawBody(Camera3D camera, Texture2D fallbackTexture);
@@ -469,7 +469,7 @@ _Inline helpers / macros only — see header._
   void SpriteAnim_SetFrameMetadata(SpriteAnim *anim, const SpriteAnimFrameMeta *meta, int metaCount);
   Rectangle SpriteAnim_CalculateUV(const SpriteAnim *template, float age, int *outFrame);
   Rectangle SpriteAnim_CalculateUVBlend(const SpriteAnim *template, float age, Rectangle *outNext, float *outBlend);
-  SpriteAnimFrameSample SpriteAnim_CalculateFrameSampleBlend(const SpriteAnim *template, float age, SpriteAnimFrameSample *outNext, float *outBlend);
+  SpriteAnimFrameSample SpriteAnim_CalculateFrameSampleBlend( const SpriteAnim *template, float age, SpriteAnimFrameSample *outNext, float *outBlend);
 ```
 **Enums:** AnimPlayMode { ANIM_ONCE,ANIM_LOOP,ANIM_RANDOM_START,ANIM_PING_PONG }
 **Structs** (fields in header): SpriteAnimFrameMeta, SpriteAnimFrameSample, SpriteAnim
@@ -781,6 +781,8 @@ _Inline helpers / macros only — see header._
   int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime, VFX_ColumnKind kind, bool funnel);
   void VFX_ComposeStonePillar(Vector3 basePos, float progress);
   void VFX_ComposeWaterOrb(Vector3 start, Vector3 target);
+  void VFX_ComposeWaterRing(Vector3 center, float radius, float t01);
+  void VFX_WaterRing_Stop(void);
   void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
   void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
   void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);

@@ -105,7 +105,9 @@ ParticleEmitterStatus ParticleManager_GetEmitterStatus(ParticleEmitterHandle han
 bool ParticleManager_GetSurfaceStream(ParticleEmitterHandle handle, ParticleRenderStream *outStream);
 int ParticleManager_CopySurfaceSamples(const ParticleRenderStream *stream, ParticleSurfaceSample *outSamples, int maxSamples);
 bool ParticleManager_DrawSurfaceStream(const ParticleRenderStream *stream, Camera3D camera, Texture2D texture);
-bool ParticleManager_DrawSurfaceThicknessStream(const ParticleRenderStream *stream, Camera3D camera);
+/* Back (far) surface of the same stream, for dual-depth thickness. Must be
+ * drawn into its own depth target: the reduction is a MAX, not a MIN. */
+bool ParticleManager_DrawSurfaceBackStream(const ParticleRenderStream *stream, Camera3D camera);
 void ParticleManager_Update(float dt);
 void ParticleManager_Draw(Camera3D camera, Texture2D fallbackTexture);
 void ParticleManager_DrawBody(Camera3D camera, Texture2D fallbackTexture);

@@ -207,10 +207,10 @@ bool ParticleManager_DrawSurfaceStream(const ParticleRenderStream *stream, Camer
     return true;
 }
 
-bool ParticleManager_DrawSurfaceThicknessStream(const ParticleRenderStream *stream, Camera3D camera)
+bool ParticleManager_DrawSurfaceBackStream(const ParticleRenderStream *stream, Camera3D camera)
 {
     if (!stream || stream->mode != PARTICLE_RENDER_SURFACE_INPUT || stream->backend != PARTICLE_RENDER_BACKEND_GPU) return false;
-    GpuParticleSystem_DrawSurfaceThicknessEmitter(camera, stream->ownerId);
+    GpuParticleSystem_DrawSurfaceBackEmitter(camera, stream->ownerId);
     return true;
 }
 

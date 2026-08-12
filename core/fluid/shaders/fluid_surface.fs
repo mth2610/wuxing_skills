@@ -4,19 +4,15 @@ in vec2 fragTexCoord;
 out vec4 finalColor;
 
 uniform sampler2D texture0;       // smoothed nearest fluid depth
-uniform sampler2D u_thicknessTex; // additive optical path proxy
+uniform sampler2D u_thicknessTex; // dual-depth thickness, metres
 uniform sampler2D u_sceneTex;
 uniform sampler2D u_sceneDepthTex;
 uniform vec2 u_texel;      // fluid reconstruction texel
 uniform vec2 u_sceneTexel; // full-resolution scene texel
 uniform int u_hasSceneDepth;
 uniform int u_qualityTier;
-/* Diagnostic, 0 = off, driven by WUXING_FLUID_DEBUG. Only the two views that
- * actually settled questions are kept: 1 shows the reconstructed NORMAL, which
- * separates "the surface is wrong" from "the shading is wrong" in one look, and
- * the host adds mode 12 (composite off the unfiltered capture) to separate the
- * capture from the filter. Out again when the silhouette is signed off. */
-uniform int u_debugView;
+// World-space radius of one reconstruction kernel (FluidSurface_SetReconstructionRadius).
+uniform float u_kernelRadius;
 
 uniform mat4 u_projection;
 uniform mat4 u_inverseProjection;
@@ -80,26 +76,33 @@ vec3 WaterMultiOctaveWaves(vec3 worldPosition) {
     return vec3(-dh.x, 0.0, -dh.y);
 }
 
-/* The thickness pass sums one sphere chord per splat, scaled by 16. Splats are
- * reconstruction kernels that overlap, so the raw sum over-counts the real
- * traversal by roughly (summed kernel volume / body volume) — about 1.5 for the
- * authored orb populations. Divide that out, then place the saturation knee far
- * above the body's own range. The old 0.11 m knee saturated EVERY interior pixel
- * of a 2,000-splat orb at the 0.16 m cap, so the silhouette carried no thickness
- * gradient at all: one constant optical depth across a body is exactly what
- * reads as moulded plastic instead of liquid. The output range is unchanged, so
- * every downstream mask threshold still means the same thing.
+/* The depth at which this liquid reaches its authored colour, and the one scale
+ * the optics below are expressed in.
  *
- * 0.42 was not far enough: debug view 2 showed the water ring's thickness buffer
- * still saturated to a flat white across the whole body, which is the "it lost
- * its mass" complaint measured rather than argued. At 1.20 the ring's densest
- * ray sits near half the cap, so there is room above it for a thicker body to
- * still read as thicker. */
-#define FLUID_KERNEL_OVERLAP 1.5
-float DecodeOpticalThickness(float encodedThickness) {
-    float accumulatedPath = max(encodedThickness / 16.0, 0.0);
-    float traversedPath = accumulatedPath / FLUID_KERNEL_OVERLAP;
-    return 0.16 * (1.0 - exp(-traversedPath / 1.20));
+ * It is MEASURED, not chosen: with dual-depth thickness the debug-2 ruler puts
+ * both authored fixtures at about this path through their middle — the water
+ * ring's tube is 0.216 m across by construction (ring 0.9 m x
+ * WATER_RING_TUBE_RATIO 0.12, doubled), and the PBD crown reads 0.16-0.25 m.
+ * So "as deep as an authored body is through the middle" is 0.20 m, and
+ * Beer-Lambert at that depth should deliver exactly the material colour.
+ *
+ * This replaces a chain of hand-tuned constants that each had to compensate for
+ * the one before it: an invented kernel-overlap divisor, an invented saturation
+ * knee, and an absorption scale re-tuned by eye twice against both. */
+#define FLUID_REFERENCE_DEPTH_M 0.20
+/* Extinction that is not the body colour — the liquid's own turbidity. Set so
+ * that one reference depth of it costs 0.06 of optical depth, which is what the
+ * previous absorption term added at the same place. */
+#define FLUID_TURBIDITY_PER_M 0.30
+
+/* Thickness arrives from fluid_thickness_resolve.fs already in metres, measured
+ * as z_back - z_front over the same splat cloud the depth pass captured. There
+ * is nothing left to decode — which is the point. What stood here before was an
+ * additive sum of per-splat sphere chords divided by an invented overlap factor
+ * and pushed through an invented saturating knee, and every optical constant
+ * downstream had to be re-tuned whenever either moved. */
+float DecodeOpticalThickness(float measuredThicknessMetres) {
+    return max(measuredThicknessMetres, 0.0);
 }
 
 float WaterSpecularBRDF(vec3 N, vec3 V, vec3 L, float roughness) {
@@ -261,7 +264,14 @@ void main() {
      * boundary drew its own hard dome against the background — the edge that
      * does not match the smooth interior. Fading across a thicker band lets
      * those lumps go translucent and stop competing with the body's shape. */
-    float surfaceCoverage = smoothstep(0.0004, 0.032, kernelThickness) * intersectionVisibility;
+    /* Full opacity is reached at one kernel DIAMETER of water — the thinnest
+     * thing this reconstruction can represent is a single splat, so anything
+     * below that is a rim and should be translucent. Tying the ramp to the
+     * kernel keeps it correct when the caller changes the reconstruction
+     * radius; the previous literal band was calibrated against the saturating
+     * decode and turns into a two-pixel cliff once thickness is metres. */
+    float surfaceCoverage = smoothstep(0.0, 2.0 * u_kernelRadius, kernelThickness)
+                          * intersectionVisibility;
     
     float sceneGap = 1.0;
     float waterColumnDepth = kernelThickness;
@@ -278,7 +288,10 @@ void main() {
         waterColumnDepth = min(kernelThickness, max(0.022, depthGap * 1.25));
     }
     
-    float opticalPath = min(waterColumnDepth / max(ndv, 0.22), 0.50);
+    /* Grazing lengthens the path; the clamp bounds it at 2.5 reference depths so
+     * an edge-on pixel cannot run away to an arbitrary optical depth. */
+    float opticalPath = min(waterColumnDepth / max(ndv, 0.22),
+                            FLUID_REFERENCE_DEPTH_M * 2.5);
     float airborneWeight = smoothstep(0.070, 0.220, sceneGap);
 
     // Snell Refraction
@@ -331,13 +344,16 @@ void main() {
     // Beer-Lambert Volumetric Absorption
     float materialPeak = max(max(u_materialBody.r, u_materialBody.g), max(u_materialBody.b, 0.001));
     vec3 materialTransmission = clamp(u_materialBody / materialPeak, vec3(0.035), vec3(1.0));
-    /* Volume is carried by ABSORPTION, not by geometry: what tells the eye a
-     * body has mass is its middle being deeper in colour than its rim. With the
-     * surface now correctly smooth, a weak absorption scale leaves the whole
-     * body one flat wash — the "lost its mass" complaint. The thickness range
-     * this multiplies is unchanged, so every downstream mask still means what
-     * it did; only the depth-of-colour across that range grows. */
-    vec3 absorption = -log(materialTransmission) * 2.60 + vec3(0.06);
+    /* Beer-Lambert with a real path length, so the coefficient is a statement
+     * rather than a dial: one FLUID_REFERENCE_DEPTH_M of this liquid transmits
+     * exactly materialTransmission. Everything thinner is proportionally
+     * clearer, which is what makes a rim read as a rim.
+     *
+     * The old 2.60 multiplied a thickness that had already been squeezed
+     * through a saturating knee, so its value meant nothing on its own and had
+     * to be re-tuned whenever the knee moved. */
+    vec3 absorption = -log(materialTransmission) / FLUID_REFERENCE_DEPTH_M
+                    + vec3(FLUID_TURBIDITY_PER_M);
     vec3 transmittance = exp(-absorption * opticalPath);
 
     float hemi = clamp(worldNormal.y * 0.5 + 0.5, 0.0, 1.0);
@@ -455,7 +471,6 @@ void main() {
     vec3 foamColor = mix(u_materialSoft, vec3(1.0), 0.20);
     vec3 foam = foamColor * foamMask * (0.38 + 0.62 * dot(ambient, vec3(0.333333)));
 
-    if (u_debugView == 1) { finalColor = vec4(N * 0.5 + 0.5, surfaceCoverage); return; }
 
     vec3 water = dielectricBase + specular + foam + rimLight;
     finalColor = vec4(water, surfaceCoverage);

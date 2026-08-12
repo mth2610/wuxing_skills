@@ -1915,3 +1915,61 @@ generator before tuning anything that consumes it — two sessions of splat-size
 and filter tuning here were spent on a shape that had already been ruled out by
 one line of par_shapes. Guarded by `core/tests/water_ring_coverage_test.c`, which
 now asserts the call form and rejects `GenMeshTorus(1.0f`.
+
+## A depth buffer can do a MAX reduction — write the complement
+
+**Symptom.** Dual-depth thickness needs the FARTHEST fragment per pixel. The
+obvious routes are a `GL_MAX` blend equation or a reversed depth func, and
+neither is available here: blending on `R32_SFLOAT` is optional in Vulkan
+(rlvk detects it as `Caps.floatBlendR32`, see the root `ENGINE_LANDMINES.md`
+entry on format features) and rlgl exposes no depth-func setter at all.
+
+**Cause / fix.** The depth test always keeps the smallest `gl_FragDepth`. Writing
+`gl_FragDepth = 1.0 - depth` while storing `depth` in the colour attachment makes
+"smallest complement" mean "largest depth", so an ordinary depth test performs
+the MAX. `core/fluid/shaders/fluid_capture_particle_back.fs`.
+
+**The consequence that bites.** The two targets now clear in OPPOSITE directions:
+the front capture clears to 1 ("nothing in front"), the back to 0 ("nothing
+behind"). Clearing the back to 1 like its twin makes every untouched pixel read
+as fluid at the near plane and fills the screen. Guarded by
+`core/tests/fluid_dual_depth_test.c`.
+
+**Rule.** Before reaching for an optional blend equation or a state setter the
+backend does not expose, check whether the fixed-function test you already have
+can be inverted into the reduction you want.
+
+## A mirror test can assert a property the shader does not have
+
+**Symptom.** `fluid_dual_depth_test.c` asserted that a splat's chord closes to
+zero at its own rim — the textbook sphere property. It failed on correct code.
+
+**Cause.** The capture profile is `sqrt(1 - r2*0.90) * (1 - r2*0.10)`, not
+`sqrt(1 - r2)`. The 0.90 is deliberate: it leaves a floor at the disc edge so
+overlapping splats do not meet at a depth cliff. The real chord at the rim is 28%
+of the diameter, and that floor is *why* a one-splat rim still carries visible
+thickness.
+
+**Rule.** Assert what the implementation promises, not what the idealised version
+of it would. This is the second time here: a previous session demanded that the
+narrow-range filter smooth an edge pixel as hard as an interior one — not a
+property of that filter — and chasing it produced a change that looked worse. When
+a guard fails on code you believe is right, re-derive the guard's premise before
+touching the code.
+
+## Build the measurement before the fix — and let it contradict you
+
+**Symptom.** The SSF thickness work was handed over with "the decode saturates"
+as the stated cause of the flat, mass-less look.
+
+**Cause.** It did not, any more. A ruler debug view (1 cm stripes over the decoded
+thickness, a colour CODE rather than a grey ramp so it survives the HDR tonemap)
+showed **zero** pixels at the cap on either fixture. An earlier knee move had
+already fixed saturation; the surviving defect was that an accumulated sum of
+overlapping kernel chords is blotchy at splat scale and is not a length at all.
+
+**Rule.** A stripe/step encoding beats a continuous ramp for any debug view that
+is composited through tonemapping, and it turns "it looks flat" into a number you
+can compare against known geometry — the water ring's 21.6 cm tube diameter is
+what proved dual depth was reading the real envelope. Build it first; it costs one
+build and it is allowed to overturn the premise you were given.

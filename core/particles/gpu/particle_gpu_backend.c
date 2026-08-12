@@ -80,12 +80,13 @@ static unsigned int s_draw_vao = 0;
 static unsigned int s_draw_quad_vbo = 0; // template quad, attribute 0
 static Shader s_draw_shader_gpu = {0};
 static Shader s_surface_capture_shader_gpu = {0};
-static Shader s_surface_thickness_shader_gpu = {0};
 static Shader s_surface_capture_shader_cpu = {0};
-static Shader s_surface_thickness_shader_cpu = {0};
+static Shader s_surface_back_shader_gpu = {0};
+static Shader s_surface_back_shader_cpu = {0};
 static int s_cpu_capture_params_loc = -1;
 static int s_cpu_capture_proj_loc = -1;
-static int s_cpu_thick_params_loc = -1;
+static int s_cpu_back_params_loc = -1;
+static int s_cpu_back_proj_loc = -1;
 static float s_elapsed_time = 0.0f;
 
 static GpuParticleData s_cpu_pool[MAX_GPU_PARTICLES];
@@ -94,7 +95,8 @@ static int s_spawn_cursor = 0;
 static int s_spawn_start_this_frame = -1;
 static int s_spawn_count_this_frame = 0;
 static int s_filterEmitter = -1, s_filterRenderMode = -1;
-static int s_surfacePass = 0; /* 0 normal, 1 depth, 2 thickness */
+static int s_surfacePass = 0; /* 0 normal, 1 front depth, 3 back depth */
+
 
 // Vector field textures cho FORCE_VECTOR_TEXTURE — không sở hữu (không Unload
 // ở đây), chỉ bind vào texture unit trước mỗi dispatch khi slot đang set.
@@ -226,7 +228,7 @@ void GpuParticleSystem_Init(void)
             goto cpu_path;
         }
         s_surface_capture_shader_gpu = ResourceManager_LoadShader("core/particles/shaders/gpu/fluid_surface_capture.vs", "core/fluid/shaders/fluid_capture_particle.fs");
-        s_surface_thickness_shader_gpu = ResourceManager_LoadShader("core/particles/shaders/gpu/fluid_surface_capture.vs", "core/fluid/shaders/fluid_surface_thickness.fs");
+        s_surface_back_shader_gpu = ResourceManager_LoadShader("core/particles/shaders/gpu/fluid_surface_capture.vs", "core/fluid/shaders/fluid_capture_particle_back.fs");
         if (s_surface_capture_shader_gpu.id == 0)
         {
             TraceLog(LOG_WARNING, "GPU_PARTICLES: surface capture shader unavailable");
@@ -269,10 +271,11 @@ void GpuParticleSystem_Init(void)
 cpu_path:
         // Sphere impostor shaders for CPU SSF capture/thickness.
         s_surface_capture_shader_cpu = ResourceManager_LoadShader(NULL, "core/fluid/shaders/fluid_capture_cpu.fs");
-        s_surface_thickness_shader_cpu = ResourceManager_LoadShader(NULL, "core/fluid/shaders/fluid_capture_cpu_thickness.fs");
+        s_surface_back_shader_cpu = ResourceManager_LoadShader(NULL, "core/fluid/shaders/fluid_capture_cpu_back.fs");
         s_cpu_capture_params_loc  = GetShaderLocation(s_surface_capture_shader_cpu,  "u_capture_params");
         s_cpu_capture_proj_loc    = GetShaderLocation(s_surface_capture_shader_cpu,  "u_projection");
-        s_cpu_thick_params_loc    = GetShaderLocation(s_surface_thickness_shader_cpu, "u_capture_params");
+        s_cpu_back_params_loc     = GetShaderLocation(s_surface_back_shader_cpu, "u_capture_params");
+        s_cpu_back_proj_loc       = GetShaderLocation(s_surface_back_shader_cpu, "u_projection");
         // ----- CPU/VBO PATH -----
         s_use_compute = false;
         TraceLog(LOG_INFO, "GPU_PARTICLES: CPU/VBO path active (%d particles)", MAX_GPU_PARTICLES);
@@ -544,7 +547,7 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
         bool softParticlePass = false;
         Shader drawShader = s_draw_shader_gpu;
         if (s_surfacePass == 1 && s_surface_capture_shader_gpu.id) drawShader = s_surface_capture_shader_gpu;
-        if (s_surfacePass == 2 && s_surface_thickness_shader_gpu.id) drawShader = s_surface_thickness_shader_gpu;
+        if (s_surfacePass == 3 && s_surface_back_shader_gpu.id) drawShader = s_surface_back_shader_gpu;
         BeginShaderMode(drawShader);
 
         int loc_right = GetShaderLocation(drawShader, "u_right");
@@ -768,15 +771,24 @@ void GpuParticleSystem_DrawSurfaceEmitter(Camera3D camera, Texture2D texture, in
     s_filterEmitter = s_filterRenderMode = -1;
 }
 
-void GpuParticleSystem_DrawSurfaceThicknessEmitter(Camera3D camera, int emitterId)
+void GpuParticleSystem_DrawSurfaceBackEmitter(Camera3D camera, int emitterId)
 {
+    /* Far root of every splat, reduced with MAX (see
+     * fluid_capture_particle_back.fs). Same geometry, same filters and the same
+     * depth state as the front pass — only the shader differs, so the two
+     * captures are guaranteed to describe the same cloud. */
     s_filterEmitter = emitterId;
     s_filterRenderMode = 3;
-    s_surfacePass = 2;
+    s_surfacePass = 3;
     if (s_use_compute) {
         GpuParticleSystem_Draw(camera, (Texture2D){0});
-    } else if (s_surface_thickness_shader_cpu.id) {
-        /* CPU thickness: same per-particle billboard loop with chord-length shader. */
+    } else if (s_surface_back_shader_cpu.id) {
+        Matrix matView = MatrixLookAt(camera.position, camera.target, camera.up);
+        float aspect = (float)GetScreenWidth() / (float)GetScreenHeight();
+        double top = tan(camera.fovy * 0.5 * DEG2RAD);
+        double right_f = top * aspect;
+        Matrix matProj = MatrixFrustum(-right_f, right_f, -top, top, 0.01, 1000.0);
+
         Vector3 viewDir = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
         Vector3 camRight = Vector3Normalize(Vector3CrossProduct(viewDir, camera.up));
         Vector3 camUp    = Vector3CrossProduct(camRight, viewDir);
@@ -788,16 +800,21 @@ void GpuParticleSystem_DrawSurfaceThicknessEmitter(Camera3D camera, int emitterI
             if ((int)p->emitter_id != emitterId) continue;
             if (p->life_rem <= 0.0f) continue;
 
+            Vector3 worldPos = {p->px, p->py, p->pz};
             float r = p->radius;
-            float params[4] = {0.0f, 0.0f, 0.0f, r};
-            BeginShaderMode(s_surface_thickness_shader_cpu);
-            if (s_cpu_thick_params_loc >= 0)
-                SetShaderValue(s_surface_thickness_shader_cpu, s_cpu_thick_params_loc,
+            Vector3 viewPos = Vector3Transform(worldPos, matView);
+            float params[4] = {viewPos.x, viewPos.y, viewPos.z, r};
+
+            BeginShaderMode(s_surface_back_shader_cpu);
+            if (s_cpu_back_proj_loc >= 0)
+                SetShaderValueMatrix(s_surface_back_shader_cpu, s_cpu_back_proj_loc, matProj);
+            if (s_cpu_back_params_loc >= 0)
+                SetShaderValue(s_surface_back_shader_cpu, s_cpu_back_params_loc,
                                params, SHADER_UNIFORM_VEC4);
 
             Vector3 rx = {camRight.x * r, camRight.y * r, camRight.z * r};
             Vector3 uy = {camUp.x * r,    camUp.y * r,    camUp.z * r};
-            float x0 = p->px, y0 = p->py, z0 = p->pz;
+            float x0 = worldPos.x, y0 = worldPos.y, z0 = worldPos.z;
 
             rlBegin(RL_QUADS);
             rlTexCoord2f(0.0f, 0.0f); rlVertex3f(x0 - rx.x + uy.x, y0 - rx.y + uy.y, z0 - rx.z + uy.z);
@@ -811,6 +828,7 @@ void GpuParticleSystem_DrawSurfaceThicknessEmitter(Camera3D camera, int emitterI
     s_surfacePass = 0;
     s_filterEmitter = s_filterRenderMode = -1;
 }
+
 
 // ---------------------------------------------------------------------------
 // Unload
