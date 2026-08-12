@@ -637,3 +637,83 @@ for a worked example). No compiler was available in the session that hit
 this twice — a `TraceLog` printing the actual uniform LOCATION after load
 (not just whether the shader "loaded") is what surfaced it; see
 `trail_volume.fs`'s load-site log for the pattern to copy.
+
+## `rlPushMatrix()` does NOT hand back an identity matrix (12/08/2026)
+
+**Symptom.** Three fluid blobs registered at provably correct world positions
+(printed straight out of the capture: `(4.98, 0.16, 4.40)`, `(6.07, …)`,
+`(7.16, …)`, camera looking at `(6.00, 0.20, 4.40)`) rasterized at the very top
+and very bottom EDGES of the screen instead of in a row across the middle. Their
+on-screen SIZE was right, so it was not a scale problem — only their placement.
+
+**Cause.** In both rlgl and rlvk, `rlPushMatrix()` on the MODELVIEW stack does
+two things: it redirects subsequent matrix writes to the persistent global
+`State.transform`, and it saves whatever that global **already held**. Nothing
+ever clears it. The invariant people assume — "pop restores the pre-push value,
+so it recursively returns to identity" — only holds while pushes are strictly
+LIFO, and PROJECTION and MODELVIEW pushes share ONE stack and ONE counter. Any
+interleaving breaks it. Measured at the fluid capture, `State.transform` held a
+leftover VIEW matrix (translation `-13.25` on Z = the camera distance), so
+`rlPushMatrix(); rlTranslatef(...); DrawSphereEx(...)` drew every sphere
+view-transformed **twice**.
+
+**Fix.** State the identity instead of assuming it:
+
+```c
+rlPushMatrix();
+rlLoadIdentity();          /* <- the transform global is NOT clean */
+rlTranslatef(x, y, z);
+```
+
+**Rule.** Any immediate-mode 3D draw that builds its own transform with
+`rlPushMatrix` + `rlTranslatef`/`rlScalef`/`rlRotatef` must `rlLoadIdentity()`
+first. Most call sites get away without it only because whoever last used the
+transform stack happened to leave identity behind — that is luck, not a
+guarantee. Guarded by `core/tests/fluid_capture_projection_test.c`.
+
+## A screen-space pass must rasterize through the SAME frustum it later inverts (12/08/2026)
+
+**Symptom.** A fluid body that captured correctly (its depth and thickness
+targets both showed clean, correctly-placed geometry) rendered **nothing at all**
+in the composite. Every pixel was discarded. The few debug views that returned
+before the discards showed the body; every view after them was empty.
+
+**Cause.** `FluidSurface_Capture` rasterized through raylib's `BeginMode3D`,
+whose projection is built from `RL_CULL_DISTANCE_NEAR = 0.01`, while the
+composite reconstructs view positions by inverting a frustum with **near = 1.0**
+(matching `main.c::MyBeginMode3D`, which uses 1.0 because this project's
+`rlFrustum` renders blank below it). Device depth is wildly nonlinear in the near
+plane: a body 7.5 m away writes `0.99868` under near=0.01, and inverting that
+under near=1.0 places it at **428 m**. It then failed the composite's
+scene-occlusion test (`sceneDistance - fluidDistance <= -0.002`) everywhere.
+
+Only paths that let the RASTERIZER produce depth (`gl_FragCoord.z`) were
+affected. The GPU splat paths compute depth from their own near=1.0 projection
+and write `gl_FragDepth`, so they were correct throughout — which is why the
+defect survived: the only affected path had no test fixture.
+
+**Rule.** Any pass that writes depth for a later screen-space decode must build
+its projection from the same constants the decoder inverts — never from
+`BeginMode3D`, whose near plane is raylib's, not yours. And note the second half:
+a rendering path with no fixture is a path where this class of bug is invisible.
+Guarded by `core/tests/fluid_capture_projection_test.c`.
+
+## A gate whose input is refreshed BEHIND the gate latches shut (12/08/2026)
+
+**Symptom.** A newly-added SSF cost gate deleted the water ring outright — not
+intermittently, permanently, from the first frame onward.
+
+**Cause.** The gate rejected work when the previous frame ran over budget, and it
+read that frame time from a variable updated inside `FluidSurface_Composite`. But
+`main.c` only calls `Composite` when something was actually submitted. One slow
+start-up frame closed the gate; with the gate closed nothing was submitted;
+`Composite` was therefore never called; the frame time was never updated; the
+gate could never reopen.
+
+**Fix.** Read live (`GetFrameTime()`) and express "is it running" as an ageing
+wall-clock **stamp** rather than a per-frame flag, so the state decays on its own
+whether or not the function that sets it is ever reached.
+
+**Rule.** When adding a gate, ask what refreshes the state it reads and whether
+that refresh happens on the rejected path too. If it does not, the gate is a
+one-way latch. Guarded by `core/tests/fluid_cost_gate_test.c`.

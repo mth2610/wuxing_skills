@@ -1107,3 +1107,33 @@ Note the cost ratio (1.5x) is much smaller than the area ratio (6.3x): most of
 SSF is per-frame fixed work — the filter, the thickness blur and the composite are
 full-screen passes both fixtures pay in full. That is the same conclusion the
 stage attribution reached, from the other direction.
+
+## 2026-08-12 — SSF liquid materials + cost gates (Renderer/rlvk persona)
+
+All five items of `core/docs/HANDOFF_SSF_MATERIALS.md` executed; that file is now
+the record of what landed, what it cost, and what is left. Summary:
+
+- **Liquid table** (`FluidLiquidDesc`, 4 content-addressed slots, LRU eviction)
+  with a **per-pixel material id** rasterized into the front capture's `.b`
+  channel — the front target is now RGBA32F. Measured free (see the handoff's
+  interleaved A/B). This is what lets two liquids of different colours share a
+  frame; before it, `FluidSurface_SetMaterialColors` was global.
+- **Three optical classes**: dielectric (water, poison), emissive (lava —
+  thickness-driven blackbody emission plus a crust that subtracts it), conductor
+  (liquid metal — coloured F0, no transmission). Water's IOR is no longer
+  hardcoded in three places.
+- **Cost gates** (`FluidSurface_RequestBody`): priority ownership, projected-size
+  cull, frame budget. Wired into `VFX_ComposeWaterRing` and
+  `FluidImpact_SpawnWater`.
+- **New fixture**: NEW FX -> **LIQUID BENCH** (40). NEW FX indices after it
+  shifted — WATER RING is now **42**.
+
+Two long-standing engine defects found by that fixture, both in the CPU ellipsoid
+path (`FluidSurface_RegisterParticle`), both promoted to root
+`ENGINE_LANDMINES.md`: `rlPushMatrix()` does not return an identity transform,
+and the capture rasterized through a near=0.01 frustum the composite inverted as
+near=1.0. Neither was observable before, because the path had no fixture.
+
+New guards: `core/tests/fluid_capture_projection_test.c`,
+`fluid_liquid_material_test.c`, `fluid_cost_gate_test.c`. Suite 59/63 — the same
+four pre-existing failures as before this work.

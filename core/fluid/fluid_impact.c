@@ -207,8 +207,16 @@ void FluidImpact_SpawnWater(const FluidImpactEvent *event)
                 ? water->glow : event->glowColor;
     s_fluidSoft = FluidImpact_ColorIsUnset(event->softColor)
                 ? water->soft : event->softColor;
-    FluidSurface_SetMaterialColors(s_fluidBody, s_fluidGlow, s_fluidSoft);
-    FluidSurface_SetReconstructionRadius(scale*0.022f);
+    /* A hero cast by default. The gate decides whether this impact is worth a
+     * screen-space surface at all; when it says no, the ballistic droplets and
+     * residue below still render as ordinary particles, which is exactly the
+     * fallback the cost design asks for. */
+    bool useSurface = FluidSurface_RequestBody(FLUID_PRIORITY_CAST, event->hitPoint,
+                                               scale * 0.30f);
+    if (useSurface) {
+        FluidSurface_SetMaterialColors(s_fluidBody, s_fluidGlow, s_fluidSoft);
+        FluidSurface_SetReconstructionRadiusFor(FLUID_PRIORITY_CAST, scale*0.022f);
+    }
     Vector3 incoming = event->initialVelocity;
     if (Vector3LengthSqr(incoming) < 0.0001f)
         incoming = Vector3Scale(impulse, scale*(2.0f + force01*4.0f));
@@ -216,7 +224,9 @@ void FluidImpact_SpawnWater(const FluidImpactEvent *event)
      * rebound only when the water body was travelling into the receiver. */
     float intoSurface = Vector3DotProduct(incoming, normal);
     Vector3 outgoing = intoSurface < 0.0f ? Vector3Subtract(incoming, Vector3Scale(normal, intoSurface*1.35f)) : incoming;
-    bool gpuFluid = !event->forceFieldOnly && FluidPBDGPU_Init();
+    /* The PBD crown IS the screen-space body — it has no billboard form — so a
+     * rejected request skips the solve entirely rather than running it invisibly. */
+    bool gpuFluid = useSurface && !event->forceFieldOnly && FluidPBDGPU_Init();
     /* GPU PBD owns the receiver response.  Feeding it `outgoing` here made the
      * seed rebound before it touched the plane, which reads as a conical blast
      * instead of an incoming water body striking the receiver. */

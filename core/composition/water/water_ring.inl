@@ -37,6 +37,7 @@ static MeshAdjacency s_waterRingMesh;
 static bool s_waterRingMeshReady = false;
 static ForceField s_waterRingField;
 static ParticleEmitterHandle s_waterRingEmitter = PARTICLE_EMITTER_INVALID;
+static bool s_waterRingUsesSurface = true;
 static float s_waterRingIdle = 0.0f;
 static float s_waterRingAccum = 0.0f;
 static ParticleConfig s_waterRingSpawn[WATER_RING_MAX_SPAWN];
@@ -96,6 +97,14 @@ void VFX_ComposeWaterRing(Vector3 center, float radius, float t01)
 
     const VFX_ElementMaterial *water = VFX_Material(VC_MAT_WATER);
     const MeshAdjacency *mesh = WaterRing_Mesh();
+
+    /* Ask before spending the surface. A ring is a hero cast, so it MAY switch
+     * SSF on — but not when it is a speck on screen or the frame is already
+     * over budget. Rejected, it still exists: the same torus of particles is
+     * spawned with visible colours instead of the alpha-0 the SSF path uses,
+     * which is the ordinary-particle fallback the cost design calls for. */
+    bool useSurface = FluidSurface_RequestBody(FLUID_PRIORITY_CAST, center,
+                                               radius * (1.0f + WATER_RING_TUBE_RATIO));
     s_waterRingIdle = 0.0f;
     WaterRing_SetField(center, radius, t01);
 
@@ -157,10 +166,11 @@ void VFX_ComposeWaterRing(Vector3 center, float radius, float t01)
         s_waterRingSpawn[i] = (ParticleConfig){
             .position = position,
             .velocity = velocity,
-            /* SSF never reads particle colour, and alpha 0 means a stray
-             * billboard path could not draw these even if one appeared. */
-            .colorStart = VC_WithAlpha(water->soft, 0),
-            .colorEnd = VC_WithAlpha(water->body, 0),
+            /* SSF never reads particle colour, so alpha 0 there means a stray
+             * billboard path could not draw these. The fallback needs the
+             * opposite: these ARE the visible body. */
+            .colorStart = VC_WithAlpha(water->soft, useSurface ? 0 : 190),
+            .colorEnd = VC_WithAlpha(water->body, useSurface ? 0 : 0),
             /* Polydisperse: equal radii reconstruct into visible rows, the same
              * trap the PBD pool documents. */
             .radius = kernel * Math_Mix(0.82f, 1.18f, Random01()),
@@ -171,8 +181,11 @@ void VFX_ComposeWaterRing(Vector3 center, float radius, float t01)
     }
     ParticleManager_EmitBatch(s_waterRingEmitter, s_waterRingSpawn, spawn);
 
-    FluidSurface_SetMaterialColors(water->body, water->glow, water->soft);
-    FluidSurface_SetReconstructionRadius(kernel);
+    if (useSurface) {
+        FluidSurface_SetMaterialColors(water->body, water->glow, water->soft);
+        FluidSurface_SetReconstructionRadiusFor(FLUID_PRIORITY_CAST, kernel);
+    }
+    s_waterRingUsesSurface = useSurface;
 }
 
 /* Stop feeding it and it goes away by itself; call this to drop it now. */
@@ -197,6 +210,9 @@ static void WaterRing_Update(float dt)
  * FluidSurface_HasPending(). */
 static void WaterRing_SubmitSurface(void)
 {
+    /* Not submitting is the whole point of the gate: the frame's fixed SSF cost
+     * is only paid if something is actually in the capture. */
+    if (!s_waterRingUsesSurface) return;
     ParticleRenderStream stream;
     if (s_waterRingEmitter != PARTICLE_EMITTER_INVALID &&
         ParticleManager_GetSurfaceStream(s_waterRingEmitter, &stream))

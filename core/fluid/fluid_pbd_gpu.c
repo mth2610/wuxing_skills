@@ -3,6 +3,7 @@
 #include "raymath.h"
 #include "core/resource_manager.h"
 #include "core/gfx_quality.h"
+#include "core/fluid/fluid_surface.h"
 #include <math.h>
 #include <string.h>
 
@@ -20,6 +21,7 @@ static bool s_initAttempted;
 static int s_particleCount;
 static Vector3 s_receiverPoint, s_receiverNormal;
 static float s_impactAge;
+static int s_materialSlot;   /* liquid-table slot, captured at spawn */
 static float s_gridCellSize;
 static unsigned int s_vao,s_vbo;
 /* Uniform locations, resolved once. They were being re-queried on EVERY dispatch
@@ -83,6 +85,7 @@ bool FluidPBDGPU_Init(void)
 /* `s_active` means resources exist.  SSF must instead follow live particles:
  * otherwise a dead impact still pays two capture passes plus six filters every
  * frame forever. */
+int FluidPBDGPU_GetMaterial(void) { return s_materialSlot; }
 bool FluidPBDGPU_IsActive(void) { return s_active && s_particleCount > 0; }
 void FluidPBDGPU_SpawnImpact(Vector3 point, Vector3 normal, Vector3 impulse, float force01, float scale)
 {
@@ -104,6 +107,7 @@ void FluidPBDGPU_SpawnImpact(Vector3 point, Vector3 normal, Vector3 impulse, flo
     s_receiverPoint=point;
     s_receiverNormal=normal;
     s_impactAge=0.0f;
+    s_materialSlot=FluidSurface_CurrentMaterial();
     /* The volume and crown live in the receiver's tangent frame.  Keeping this
      * basis here (rather than in the surface shader) makes impacts on walls,
      * slopes and ceilings physically coherent. */

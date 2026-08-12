@@ -3,6 +3,7 @@
 #include "core/screen_distort.h"
 #include "core/particles/particle_manager.h"
 #include "core/fluid/fluid_pbd_gpu.h"
+#include "core/particles/gpu/particle_gpu_legacy.h"
 #include "core/gfx_quality.h"
 #include "core/vfx_light.h"
 #include "environment/environment_system.h"
@@ -14,11 +15,19 @@
 
 #define FLUID_OPTICAL_POINT_LIGHTS 4
 
-typedef struct { Vector3 position, radii; } FluidSurfaceParticle;
+typedef struct { Vector3 position, radii; int material; } FluidSurfaceParticle;
 static FluidSurfaceParticle s_particles[FLUID_SURFACE_MAX_PARTICLES];
 static int s_count;
 static ParticleRenderStream s_gpuStreams[16];
+static int s_gpuStreamMaterial[16];
 static int s_gpuStreamCount;
+
+/* --- The liquid table ---------------------------------------------------- */
+static FluidLiquidDesc s_materials[FLUID_SURFACE_MATERIAL_SLOTS];
+static unsigned int s_materialUse[FLUID_SURFACE_MATERIAL_SLOTS]; /* recency stamp */
+static unsigned int s_materialClock = 1;
+static int s_materialCount;
+static int s_currentMaterial;
 static Texture2D s_surfaceTex;
 static RenderTexture2D s_capture, s_captureBack, s_thickness, s_thicknessScratch, s_smoothA, s_smoothB;
 static RenderTexture2D s_sceneCopy;   // refraction source, see FluidSurface_LoadColorTarget
@@ -30,10 +39,11 @@ static int s_texelLoc, s_dirLoc, s_fillLoc;
 static int s_smoothProjectionLoc, s_smoothInverseProjectionLoc;
 static int s_kernelRadiusLoc, s_filterRadiusLoc, s_filter2DLoc;
 static int s_compositeTexelLoc, s_sceneTexelLoc, s_thicknessLoc, s_sceneLoc, s_sceneDepthLoc, s_hasDepthLoc;
+static int s_materialIdTexLoc;
 static int s_projectionLoc, s_inverseProjectionLoc, s_viewToWorldLoc, s_qualityTierLoc;
 static int s_sunDirectionLoc, s_sunColorLoc, s_skyAmbientLoc, s_groundAmbientLoc;
 static int s_pointLightCountLoc, s_pointLightPosLoc, s_pointLightColorLoc;
-static int s_materialBodyLoc, s_materialGlowLoc, s_materialSoftLoc;
+static int s_materialBodyLoc, s_materialGlowLoc, s_materialSoftLoc, s_materialOpticsLoc;
 static int s_timeLoc;
 static int s_compositeKernelRadiusLoc;
 static Matrix s_fluidView, s_fluidProjection;
@@ -41,6 +51,28 @@ static Color s_materialBody = {41, 128, 185, 255};
 static Color s_materialGlow = {80, 180, 255, 255};
 static Color s_materialSoft = {160, 225, 255, 255};
 static float s_reconstructionRadius = 0.022f;
+
+/* --- Cost gates (FluidSurface_RequestBody) ------------------------------- */
+static Camera3D s_lastCamera;          /* previous frame's, from Capture */
+static bool     s_hasCamera;
+/* Wall-clock stamp of the last COMPLETED composite, and of the last claim on
+ * the single-owner reconstruction radius.
+ *
+ * Deliberately timestamps rather than per-frame flags. A flag rolled inside
+ * FluidSurface_Composite LATCHES: main.c only calls Composite when something
+ * was submitted, so the moment the gate rejects everything, the state that
+ * feeds the gate stops being updated and the gate can never reopen. That is
+ * not hypothetical — it shipped for one build and deleted the water ring
+ * outright, because a single slow start-up frame tripped the budget test and
+ * nothing was ever able to clear it again. A stamp that ages out cannot latch,
+ * whether or not the function that sets it is reached. */
+static double   s_surfaceRunStamp = -1000.0;
+static double   s_radiusOwnerStamp = -1000.0;
+static int      s_frameOwnerPriority = -1;
+/* How long a stamp stays "current". Several frames at any playable rate, so a
+ * body that skips a frame does not lose its claim, and short enough that a
+ * finished effect releases it well inside a blink. */
+#define FLUID_GATE_STAMP_TTL 0.10
 
 static Vector3 FluidSurface_ColorToVec3(Color color) {
     return (Vector3){
@@ -72,7 +104,74 @@ static Matrix FluidSurface_MakeProjection(Camera3D camera) {
     return MatrixFrustum(-right,right,-top,top,1.0,1000.0);
 }
 
-static RenderTexture2D FluidSurface_LoadDepthTarget(int w, int h) {
+/* BeginMode3D's twin, with THIS module's frustum instead of raylib's.
+ *
+ * raylib's BeginMode3D builds its projection from RL_CULL_DISTANCE_NEAR, which
+ * is 0.01. FluidSurface_MakeProjection — the matrix the composite INVERTS to
+ * turn captured depth back into a view position — uses near = 1.0, matching
+ * main.c's MyBeginMode3D (which documents why: below ~1.0 this project's
+ * rlFrustum renders blank).
+ *
+ * Anything in the capture that lets the RASTERIZER produce its depth
+ * (gl_FragCoord.z — i.e. the CPU ellipsoid path) therefore wrote depth on a
+ * 0.01-near frustum and had it decoded on a 1.0-near one. The error is not
+ * subtle: a body 7.5 m from the camera writes 0.99868 under near=0.01, and
+ * inverting that under near=1.0 puts it at 428 m. Every pixel then failed the
+ * scene-occlusion test (`frontGap <= -0.002`) and was discarded, and the few
+ * that survived reconstructed their normals off a depth signal compressed into
+ * the last thousandth of the R32F range, which is the speckle.
+ *
+ * The GPU splat paths never noticed because they compute depth themselves from
+ * a u_projection built with near = 1.0 and write gl_FragDepth, so the water ring
+ * and the PBD crown were correct throughout and the defect stayed invisible —
+ * this CPU path had no fixture until LIQUID BENCH.
+ *
+ * rlFrustum is called with the same numbers rather than multiplying
+ * s_fluidProjection in: rlvk stores matrices transposed relative to raymath, so
+ * rlMultMatrixf(MatrixToFloat(MatrixFrustum(...))) is NOT the same matrix as
+ * rlFrustum(...) with those arguments. */
+static void FluidSurface_BeginCaptureMode3D(Camera3D camera) {
+    rlDrawRenderBatchActive();
+    rlMatrixMode(RL_PROJECTION);
+    rlPushMatrix();
+    rlLoadIdentity();
+    float aspect = (float)GetScreenWidth()/(float)GetScreenHeight();
+    if (camera.projection == CAMERA_ORTHOGRAPHIC) {
+        double top = camera.fovy*0.5;
+        double right = top*aspect;
+        rlOrtho(-right, right, -top, top, 0.0001, 150.0);
+    } else {
+        double top = tan(camera.fovy*0.5*DEG2RAD);
+        double right = top*aspect;
+        rlFrustum(-right, right, -top, top, 1.0, 1000.0);
+    }
+    rlMatrixMode(RL_MODELVIEW);
+    rlLoadIdentity();
+    rlMultMatrixf(MatrixToFloat(s_fluidView));
+    rlEnableDepthTest();
+}
+
+static void FluidSurface_EndCaptureMode3D(void) {
+    rlDrawRenderBatchActive();
+    rlMatrixMode(RL_PROJECTION);
+    rlPopMatrix();
+    rlMatrixMode(RL_MODELVIEW);
+    rlLoadIdentity();
+    rlDisableDepthTest();
+}
+
+/* `carriesMaterial` selects RGBA32F over R32F.
+ *
+ * Only the FRONT capture needs it: the composite reads the winning fragment's
+ * liquid-table slot out of .b, and the back capture is only ever subtracted
+ * from the front to get a thickness. The extra channels are 12 more bytes per
+ * pixel on ONE target, which is the price of two liquids on screen at once —
+ * the alternative (a second rasterization of the same splat cloud into a
+ * separate id target) costs a whole geometry pass.
+ *
+ * The format cannot be RG32F: raylib's pixel-format list has R32, RGB32 and
+ * RGBA32 and nothing in between. Nor can it be half-float — see below. */
+static RenderTexture2D FluidSurface_LoadDepthTargetEx(int w, int h, bool carriesMaterial) {
     RenderTexture2D t = {0}; t.id = rlLoadFramebuffer();
     if (!t.id) return t;
     rlEnableFramebuffer(t.id);
@@ -80,13 +179,23 @@ static RenderTexture2D FluidSurface_LoadDepthTarget(int w, int h) {
     // MoltenVK (used by rlvk on macOS) does not expose sampled FBO depth textures.
     // R32F is also essential here: non-linear device depth loses visible
     // surface gradients when stored in half-float near depth 1.
-    t.texture.id = rlLoadTexture(NULL,w,h,RL_PIXELFORMAT_UNCOMPRESSED_R32,1);
-    t.texture.width=w; t.texture.height=h; t.texture.format=RL_PIXELFORMAT_UNCOMPRESSED_R32; t.texture.mipmaps=1;
+    int format = carriesMaterial ? RL_PIXELFORMAT_UNCOMPRESSED_R32G32B32A32
+                                 : RL_PIXELFORMAT_UNCOMPRESSED_R32;
+    t.texture.id = rlLoadTexture(NULL,w,h,format,1);
+    t.texture.width=w; t.texture.height=h; t.texture.format=format; t.texture.mipmaps=1;
     t.depth.id=rlLoadTextureDepth(w,h,false); t.depth.width=w; t.depth.height=h; t.depth.mipmaps=1;
     rlFramebufferAttach(t.id,t.texture.id,RL_ATTACHMENT_COLOR_CHANNEL0,RL_ATTACHMENT_TEXTURE2D,0);
     rlFramebufferAttach(t.id,t.depth.id,RL_ATTACHMENT_DEPTH,RL_ATTACHMENT_TEXTURE2D,0);
     if (!rlFramebufferComplete(t.id)) TraceLog(LOG_WARNING,"FluidSurface: depth target incomplete");
-    rlDisableFramebuffer(); SetTextureFilter(t.texture,TEXTURE_FILTER_BILINEAR); return t;
+    rlDisableFramebuffer();
+    /* The material id must NOT be interpolated: a bilinear tap that straddles a
+     * boundary between slot 0 and slot 2 returns 1, which is a different liquid
+     * entirely. The composite rounds, so a POINT filter keeps every tap on a
+     * real slot. Depth loses nothing by it — every consumer samples texel
+     * centres. */
+    SetTextureFilter(t.texture, carriesMaterial ? TEXTURE_FILTER_POINT
+                                                : TEXTURE_FILTER_BILINEAR);
+    return t;
 }
 
 /* A private copy of the scene, in the scene's own format, for the refraction tap.
@@ -147,6 +256,23 @@ static RenderTexture2D FluidSurface_LoadScalarTarget(int w, int h) {
  * front-face cull the back pass relies on) is unaffected. */
 static void FluidSurface_DrawEllipsoid(const FluidSurfaceParticle *sp) {
     rlPushMatrix();
+    /* rlPushMatrix() does NOT hand back an identity. It only redirects writes to
+     * the software `transform` matrix and SAVES whatever that global already
+     * held; nothing ever clears it. Measured here: at this point in the frame it
+     * holds a leftover VIEW matrix (translation -13.25 on Z = the camera
+     * distance), so every sphere was drawn view-transformed TWICE and the three
+     * bench bodies landed off the top and bottom of the screen while their
+     * registered world positions were provably correct.
+     *
+     * The invariant "transform returns to identity because pop restores the
+     * pre-push value" only holds while pushes are strictly LIFO — and PROJECTION
+     * and MODELVIEW pushes share ONE stack in both rlgl and rlvk, so any
+     * interleaving breaks it. Do not rely on it: state the identity.
+     *
+     * Nothing else in the SSF capture noticed because every other input (GPU
+     * splat streams, PBD) is an immediate-mode billboard that never touches the
+     * matrix stack, and this CPU ellipsoid path had no fixture until now. */
+    rlLoadIdentity();
     rlTranslatef(sp->position.x, sp->position.y, sp->position.z);
     rlScalef(sp->radii.x, sp->radii.y, sp->radii.z);
     /* Lower-LOD sphere is fast enough for O(100s) CPU particles. */
@@ -162,10 +288,10 @@ void FluidSurface_Init(int width,int height) {
     float scale = GfxQuality_Get() >= GFX_HIGH ? 1.0f :
                   (GfxQuality_Get() >= GFX_MED ? 0.75f : 0.50f);
     int w = (int)(width*scale), h=(int)(height*scale);
-    s_capture=FluidSurface_LoadDepthTarget(w,h);
+    s_capture=FluidSurface_LoadDepthTargetEx(w,h,true);
     /* Same kind of target as the front capture: dual-depth thickness is the
      * difference of two depth reductions over the same splat cloud. */
-    s_captureBack=FluidSurface_LoadDepthTarget(w,h);
+    s_captureBack=FluidSurface_LoadDepthTargetEx(w,h,false);
     /* LoadRenderTexture defaults to RGBA8. That silently reduced smoothed
      * device depth to 256 levels, turning shallow liquid into zoom-dependent
      * horizontal contour bands. Scalar R32F costs the same four bytes/pixel. */
@@ -212,6 +338,7 @@ void FluidSurface_Init(int width,int height) {
     s_sceneTexelLoc=GetShaderLocation(s_composite,"u_sceneTexel");
     s_thicknessLoc=GetShaderLocation(s_composite,"u_thicknessTex"); s_sceneLoc=GetShaderLocation(s_composite,"u_sceneTex");
     s_sceneDepthLoc=GetShaderLocation(s_composite,"u_sceneDepthTex"); s_hasDepthLoc=GetShaderLocation(s_composite,"u_hasSceneDepth");
+    s_materialIdTexLoc=GetShaderLocation(s_composite,"u_materialIdTex");
     s_projectionLoc=GetShaderLocation(s_composite,"u_projection");
     s_inverseProjectionLoc=GetShaderLocation(s_composite,"u_inverseProjection");
     s_viewToWorldLoc=GetShaderLocation(s_composite,"u_viewToWorld");
@@ -227,19 +354,155 @@ void FluidSurface_Init(int width,int height) {
     s_materialBodyLoc=GetShaderLocation(s_composite,"u_materialBody");
     s_materialGlowLoc=GetShaderLocation(s_composite,"u_materialGlow");
     s_materialSoftLoc=GetShaderLocation(s_composite,"u_materialSoft");
+    s_materialOpticsLoc=GetShaderLocation(s_composite,"u_materialOptics");
     s_timeLoc=GetShaderLocation(s_composite,"u_time");
+    /* Seed the whole table with the default water, so a frame that binds nothing
+     * still has a valid liquid in every slot the capture could name. */
+    {
+        FluidLiquidDesc water=FluidSurface_DielectricDesc(s_materialBody,s_materialGlow,s_materialSoft);
+        for (int i=0;i<FLUID_SURFACE_MATERIAL_SLOTS;i++) { s_materials[i]=water; s_materialUse[i]=0; }
+        s_materialCount=1; s_currentMaterial=0; s_materialUse[0]=++s_materialClock;
+    }
 }
 void FluidSurface_Unload(void) { UnloadTexture(s_surfaceTex); UnloadRenderTexture(s_capture); UnloadRenderTexture(s_captureBack); UnloadRenderTexture(s_thickness); UnloadRenderTexture(s_thicknessScratch); UnloadRenderTexture(s_smoothA); UnloadRenderTexture(s_smoothB); if(s_sceneCopy.id) { UnloadRenderTexture(s_sceneCopy); s_sceneCopy=(RenderTexture2D){0}; } }
+/* Screen-space radius, in pixels, of a sphere of `worldRadius` at `center`.
+ *
+ * Uses the vertical field of view, which is the axis raylib's fovy names and
+ * the one that does not change with the window's aspect ratio. */
+static float FluidSurface_ProjectedRadiusPx(Vector3 center, float worldRadius) {
+    if (!s_hasCamera) return 1e9f;   /* no camera yet: admit, decide next frame */
+    Vector3 toBody = Vector3Subtract(center, s_lastCamera.position);
+    float distance = Vector3Length(toBody);
+    if (s_lastCamera.projection == CAMERA_ORTHOGRAPHIC) {
+        float halfHeight = s_lastCamera.fovy * 0.5f;
+        if (halfHeight <= 0.0001f) return 1e9f;
+        return worldRadius / halfHeight * (float)GetScreenHeight() * 0.5f;
+    }
+    /* Behind or through the camera: no meaningful projection, and a body the
+     * camera is inside is emphatically not small. */
+    if (distance <= worldRadius) return 1e9f;
+    float halfFovTan = tanf(s_lastCamera.fovy * 0.5f * DEG2RAD);
+    if (halfFovTan <= 0.0001f) return 1e9f;
+    return worldRadius / (distance * halfFovTan) * (float)GetScreenHeight() * 0.5f;
+}
+
+bool FluidSurface_RequestBody(FluidSurfacePriority priority, Vector3 center,
+                              float worldRadius) {
+    /* A minion never gets a screen-space surface, at any size, in any frame. */
+    if (priority <= FLUID_PRIORITY_MINION) return false;
+
+    /* Over budget: only a boss ultimate still gets one. Checked before size so
+     * an over-budget frame cannot be talked into SSF by a large body.
+     *
+     * GetFrameTime() is read live rather than cached at composite time — see
+     * the latch note on s_surfaceRunStamp. It already reports the PREVIOUS
+     * frame's duration, which is the number this test wants. */
+    if (GetFrameTime()*1000.0f > FLUID_SURFACE_BUDGET_MS && priority < FLUID_PRIORITY_ULTIMATE)
+        return false;
+
+    /* A basic attack may only JOIN a running surface — never switch one on.
+     * This is the rule that makes basic attacks affordable at all: the frame's
+     * fixed cost is already being paid by something else, so the marginal cost
+     * is the splat area. "Running" is measured on the PREVIOUS frame so the
+     * answer does not depend on which composer happens to be called first. */
+    if (priority <= FLUID_PRIORITY_BASIC &&
+        GetTime() - s_surfaceRunStamp > FLUID_GATE_STAMP_TTL) return false;
+
+    if (FluidSurface_ProjectedRadiusPx(center, worldRadius)
+        < FLUID_SURFACE_MIN_PROJECTED_RADIUS_PX) return false;
+
+    if ((int)priority > s_frameOwnerPriority) s_frameOwnerPriority = (int)priority;
+    return true;
+}
+
+FluidLiquidDesc FluidSurface_DielectricDesc(Color body, Color glow, Color soft) {
+    FluidLiquidDesc d = {0};
+    d.body=body; d.glow=glow; d.soft=soft;
+    d.liquidClass=FLUID_LIQUID_DIELECTRIC;
+    d.emission=0.0f;
+    d.ior=1.333f;            /* water */
+    d.roughnessScale=1.0f;
+    d.opacityPerMetre=0.0f;  /* the shader's own FLUID_TURBIDITY_PER_M is enough */
+    d.foam=1.0f;
+    return d;
+}
+
+static bool FluidSurface_DescEqual(const FluidLiquidDesc *a, const FluidLiquidDesc *b) {
+    return a->body.r==b->body.r && a->body.g==b->body.g && a->body.b==b->body.b &&
+           a->glow.r==b->glow.r && a->glow.g==b->glow.g && a->glow.b==b->glow.b &&
+           a->soft.r==b->soft.r && a->soft.g==b->soft.g && a->soft.b==b->soft.b &&
+           a->liquidClass==b->liquidClass &&
+           a->emission==b->emission && a->ior==b->ior &&
+           a->roughnessScale==b->roughnessScale &&
+           a->opacityPerMetre==b->opacityPerMetre && a->foam==b->foam;
+}
+
+int FluidSurface_BindMaterial(const FluidLiquidDesc *desc) {
+    if (!desc) return s_currentMaterial;
+    FluidLiquidDesc d = *desc;
+    if (d.ior <= 1.0f) d.ior = 1.333f;
+    if (d.roughnessScale <= 0.0f) d.roughnessScale = 1.0f;
+    if (d.opacityPerMetre < 0.0f) d.opacityPerMetre = 0.0f;
+    for (int i=0;i<s_materialCount;i++) {
+        if (FluidSurface_DescEqual(&s_materials[i], &d)) {
+            s_materialUse[i]=++s_materialClock;
+            s_currentMaterial=i;
+            return i;
+        }
+    }
+    int slot;
+    if (s_materialCount < FLUID_SURFACE_MATERIAL_SLOTS) {
+        slot = s_materialCount++;
+    } else {
+        /* Least recently used. A live body whose slot is stolen changes colour;
+         * it never reads out of range, because every slot always holds a valid
+         * liquid. Touching a slot happens on bind AND on submit (see Capture),
+         * so a body that is still on screen keeps its stamp fresh. */
+        slot = 0;
+        for (int i=1;i<FLUID_SURFACE_MATERIAL_SLOTS;i++)
+            if (s_materialUse[i] < s_materialUse[slot]) slot = i;
+    }
+    s_materials[slot]=d;
+    s_materialUse[slot]=++s_materialClock;
+    s_currentMaterial=slot;
+    return slot;
+}
+
+int FluidSurface_CurrentMaterial(void) { return s_currentMaterial; }
+
 void FluidSurface_SetMaterialColors(Color body, Color glow, Color soft) {
+    FluidLiquidDesc d = FluidSurface_DielectricDesc(body, glow, soft);
+    FluidSurface_BindMaterial(&d);
     s_materialBody=body;
     s_materialGlow=glow;
     s_materialSoft=soft;
 }
+/* Still ONE radius for the whole capture, so it needs an owner.
+ *
+ * The priority is passed in rather than read off the frame's running maximum:
+ * that maximum already includes every body admitted so far, so a LOWER-priority
+ * body submitting later would compare itself against its own frame's high-water
+ * mark and win. The caller states its own rank or does not participate. */
+static int s_radiusOwnerPriority = -1;
+void FluidSurface_SetReconstructionRadiusFor(FluidSurfacePriority priority, float radius) {
+    if(radius<=0.0001f) return;
+    /* An owner that has not claimed recently has stopped casting; its rank must
+     * not outrank a live body forever. Same anti-latch reasoning as the gates. */
+    bool ownerCurrent = (GetTime() - s_radiusOwnerStamp) <= FLUID_GATE_STAMP_TTL;
+    if(ownerCurrent && (int)priority < s_radiusOwnerPriority) return;
+    s_radiusOwnerPriority=(int)priority;
+    s_radiusOwnerStamp=GetTime();
+    s_reconstructionRadius=radius;
+}
+/* Ungated callers keep the old unconditional behaviour: last writer wins. */
 void FluidSurface_SetReconstructionRadius(float radius) {
-    if(radius>0.0001f) s_reconstructionRadius=radius;
+    if(radius<=0.0001f) return;
+    s_radiusOwnerPriority=-1;
+    s_radiusOwnerStamp=-1000.0;
+    s_reconstructionRadius=radius;
 }
 void FluidSurface_RegisterParticle(Vector3 p,float r) { FluidSurface_RegisterEllipsoid(p,(Vector3){r,r,r}); }
-void FluidSurface_RegisterEllipsoid(Vector3 p,Vector3 radii) { if(s_count<FLUID_SURFACE_MAX_PARTICLES) s_particles[s_count++]=(FluidSurfaceParticle){p,radii}; }
+void FluidSurface_RegisterEllipsoid(Vector3 p,Vector3 radii) { if(s_count<FLUID_SURFACE_MAX_PARTICLES) s_particles[s_count++]=(FluidSurfaceParticle){p,radii,s_currentMaterial}; }
 bool FluidSurface_SubmitParticleStream(const ParticleRenderStream *stream) {
     if (!stream || stream->mode != PARTICLE_RENDER_SURFACE_INPUT) return false;
     if (stream->backend == PARTICLE_RENDER_BACKEND_CPU) {
@@ -249,12 +512,32 @@ bool FluidSurface_SubmitParticleStream(const ParticleRenderStream *stream) {
         return count > 0;
     }
     if (s_gpuStreamCount >= (int)(sizeof(s_gpuStreams)/sizeof(s_gpuStreams[0]))) return false;
+    s_gpuStreamMaterial[s_gpuStreamCount] = s_currentMaterial;
     s_gpuStreams[s_gpuStreamCount++] = *stream;
     return true;
 }
 bool FluidSurface_HasPending(void) { return s_count > 0 || s_gpuStreamCount > 0 || FluidPBDGPU_IsActive(); }
+/* Keep the recency stamps of every slot that is actually on screen fresh, so
+ * FluidSurface_BindMaterial's LRU eviction can only ever take a liquid that
+ * nothing is drawing. Called once per capture, before any rasterization. */
+static void FluidSurface_TouchLiveMaterials(void) {
+    for (int i=0;i<s_gpuStreamCount;i++) {
+        int slot=s_gpuStreamMaterial[i];
+        if (slot>=0 && slot<FLUID_SURFACE_MATERIAL_SLOTS) s_materialUse[slot]=++s_materialClock;
+    }
+    for (int i=0;i<s_count;i++) {
+        int slot=s_particles[i].material;
+        if (slot>=0 && slot<FLUID_SURFACE_MATERIAL_SLOTS) s_materialUse[slot]=++s_materialClock;
+    }
+    if (FluidPBDGPU_IsActive()) {
+        int slot=FluidPBDGPU_GetMaterial();
+        if (slot>=0 && slot<FLUID_SURFACE_MATERIAL_SLOTS) s_materialUse[slot]=++s_materialClock;
+    }
+}
+
 void FluidSurface_Capture(Camera3D camera) {
     if(!FluidSurface_HasPending()) return;
+    FluidSurface_TouchLiveMaterials();
     /* Snapshot the scene for the refraction tap while it is still only a source.
      * The composite runs inside ScreenDistort's body pass, which now binds the
      * scene target itself, so sampling it there would be sampling the attachment
@@ -282,10 +565,17 @@ void FluidSurface_Capture(Camera3D camera) {
             EndTextureMode();
         }
     }
+    s_lastCamera=camera; s_hasCamera=true;
     s_fluidView=MatrixLookAt(camera.position,camera.target,camera.up);
     s_fluidProjection=FluidSurface_MakeProjection(camera);
-    BeginTextureMode(s_capture); ClearBackground((Color){255,0,0,0}); BeginMode3D(camera);
-    for (int i=0;i<s_gpuStreamCount;i++) ParticleManager_DrawSurfaceStream(&s_gpuStreams[i], camera, s_surfaceTex);
+    BeginTextureMode(s_capture); ClearBackground((Color){255,0,0,0}); FluidSurface_BeginCaptureMode3D(camera);
+    /* One uniform per stream, not per splat: each stream is one draw, and the
+     * slot it carries is fixed at submit time. */
+    for (int i=0;i<s_gpuStreamCount;i++) {
+        GpuParticleSystem_SetSurfaceMaterialId((float)s_gpuStreamMaterial[i]);
+        ParticleManager_DrawSurfaceStream(&s_gpuStreams[i], camera, s_surfaceTex);
+    }
+    GpuParticleSystem_SetSurfaceMaterialId((float)FluidPBDGPU_GetMaterial());
     FluidPBDGPU_DrawSurfaceDepth(camera);
     /* --- CPU particles registered via FluidSurface_RegisterParticle --- */
     /* These were previously stored but never rasterised into the FBO.    */
@@ -296,11 +586,25 @@ void FluidSurface_Capture(Camera3D camera) {
         /* but we need the sphere front surface, not the flat quad.        */
         /* Use DrawSphereEx to rasterise correct sphere geometry per hemi. */
         /* Lower-LOD sphere is fast enough for O(100s) CPU particles.      */
-        BeginShaderMode(s_captureShader);
-        for (int i = 0; i < s_count; i++) FluidSurface_DrawEllipsoid(&s_particles[i]);
-        EndShaderMode();
+        /* Grouped BY SLOT rather than drawn in registration order: u_materialId
+         * is a uniform, so a per-particle value would need a batch flush per
+         * sphere. Four passes over a list of at most 384 costs nothing next to
+         * that, and every pass draws only its own slot's particles. */
+        int materialLoc = GetShaderLocation(s_captureShader, "u_materialId");
+        for (int slot = 0; slot < FLUID_SURFACE_MATERIAL_SLOTS; ++slot) {
+            bool any = false;
+            for (int i = 0; i < s_count && !any; i++) any = (s_particles[i].material == slot);
+            if (!any) continue;
+            BeginShaderMode(s_captureShader);
+            float slotValue = (float)slot;
+            if (materialLoc >= 0)
+                SetShaderValue(s_captureShader, materialLoc, &slotValue, SHADER_UNIFORM_FLOAT);
+            for (int i = 0; i < s_count; i++)
+                if (s_particles[i].material == slot) FluidSurface_DrawEllipsoid(&s_particles[i]);
+            EndShaderMode();
+        }
     }
-    EndMode3D(); EndTextureMode();
+    FluidSurface_EndCaptureMode3D(); EndTextureMode();
 
     Vector2 texel={1.0f/s_capture.texture.width,1.0f/s_capture.texture.height};
     Matrix captureInverseProjection=MatrixInvert(s_fluidProjection);
@@ -311,7 +615,7 @@ void FluidSurface_Capture(Camera3D camera) {
          * write the complement of the depth so an ordinary depth test keeps the
          * FARTHEST fragment), so "nothing here" must be the smallest possible
          * value, the opposite of the front pass's convention. */
-        BeginTextureMode(s_captureBack); ClearBackground(BLANK); BeginMode3D(camera);
+        BeginTextureMode(s_captureBack); ClearBackground(BLANK); FluidSurface_BeginCaptureMode3D(camera);
         for (int i=0;i<s_gpuStreamCount;i++) ParticleManager_DrawSurfaceBackStream(&s_gpuStreams[i], camera);
         FluidPBDGPU_DrawSurfaceBackDepth(camera);
         if (s_count > 0) {
@@ -327,7 +631,7 @@ void FluidSurface_Capture(Camera3D camera) {
             rlDrawRenderBatchActive();
             rlSetCullFace(RL_CULL_FACE_BACK);
         }
-        EndMode3D(); EndTextureMode();
+        FluidSurface_EndCaptureMode3D(); EndTextureMode();
 
         /* T = z_back - z_front, then a plain Gaussian (Green 2010), both at the
          * thickness target's own half resolution. */
@@ -430,7 +734,7 @@ void FluidSurface_Capture(Camera3D camera) {
     }
 }
 void FluidSurface_Composite(void) {
-    if(!FluidSurface_HasPending()) return;
+    if(!FluidSurface_HasPending()) { s_frameOwnerPriority=-1; return; }
     Vector2 texel={1.0f/s_smoothB.texture.width,1.0f/s_smoothB.texture.height};
     Vector2 sceneTexel={1.0f/GetRenderWidth(),1.0f/GetRenderHeight()};
     /* The snapshot from Capture, never the live scene target: the body pass we are
@@ -447,9 +751,29 @@ void FluidSurface_Composite(void) {
     Vector3 sunColor=FluidSurface_ColorToVec3(Environment_GetSunColor());
     Vector3 skyAmbient=FluidSurface_ColorToVec3(Environment_GetSkyAmbient());
     Vector3 groundAmbient=FluidSurface_ColorToVec3(Environment_GetGroundAmbient());
-    Vector3 materialBody=FluidSurface_ColorToVec3(s_materialBody);
-    Vector3 materialGlow=FluidSurface_ColorToVec3(s_materialGlow);
-    Vector3 materialSoft=FluidSurface_ColorToVec3(s_materialSoft);
+    /* The whole table, every frame. Four slots of four vec4s is 256 bytes; the
+     * alternative (upload only what changed) would need the shader to know which
+     * slots are stale, and the capture names slots by index. */
+    float materialBody[FLUID_SURFACE_MATERIAL_SLOTS*4];
+    float materialGlow[FLUID_SURFACE_MATERIAL_SLOTS*4];
+    float materialSoft[FLUID_SURFACE_MATERIAL_SLOTS*4];
+    float materialOptics[FLUID_SURFACE_MATERIAL_SLOTS*4];
+    for (int i=0;i<FLUID_SURFACE_MATERIAL_SLOTS;i++) {
+        const FluidLiquidDesc *m=&s_materials[i];
+        Vector3 body=FluidSurface_ColorToVec3(m->body);
+        Vector3 glow=FluidSurface_ColorToVec3(m->glow);
+        Vector3 soft=FluidSurface_ColorToVec3(m->soft);
+        materialBody[i*4+0]=body.x; materialBody[i*4+1]=body.y; materialBody[i*4+2]=body.z;
+        materialBody[i*4+3]=(float)m->liquidClass;
+        materialGlow[i*4+0]=glow.x; materialGlow[i*4+1]=glow.y; materialGlow[i*4+2]=glow.z;
+        materialGlow[i*4+3]=m->emission;
+        materialSoft[i*4+0]=soft.x; materialSoft[i*4+1]=soft.y; materialSoft[i*4+2]=soft.z;
+        materialSoft[i*4+3]=m->foam;
+        materialOptics[i*4+0]=m->ior;
+        materialOptics[i*4+1]=m->roughnessScale;
+        materialOptics[i*4+2]=m->opacityPerMetre;
+        materialOptics[i*4+3]=0.0f;
+    }
     float opticalTime=(float)GetTime();
 
     int lightBudget=qualityTier>=GFX_HIGH?FLUID_OPTICAL_POINT_LIGHTS:
@@ -487,9 +811,10 @@ void FluidSurface_Composite(void) {
     SetShaderValue(s_composite,s_sunColorLoc,&sunColor,SHADER_UNIFORM_VEC3);
     SetShaderValue(s_composite,s_skyAmbientLoc,&skyAmbient,SHADER_UNIFORM_VEC3);
     SetShaderValue(s_composite,s_groundAmbientLoc,&groundAmbient,SHADER_UNIFORM_VEC3);
-    SetShaderValue(s_composite,s_materialBodyLoc,&materialBody,SHADER_UNIFORM_VEC3);
-    SetShaderValue(s_composite,s_materialGlowLoc,&materialGlow,SHADER_UNIFORM_VEC3);
-    SetShaderValue(s_composite,s_materialSoftLoc,&materialSoft,SHADER_UNIFORM_VEC3);
+    SetShaderValueV(s_composite,s_materialBodyLoc,materialBody,SHADER_UNIFORM_VEC4,FLUID_SURFACE_MATERIAL_SLOTS);
+    SetShaderValueV(s_composite,s_materialGlowLoc,materialGlow,SHADER_UNIFORM_VEC4,FLUID_SURFACE_MATERIAL_SLOTS);
+    SetShaderValueV(s_composite,s_materialSoftLoc,materialSoft,SHADER_UNIFORM_VEC4,FLUID_SURFACE_MATERIAL_SLOTS);
+    SetShaderValueV(s_composite,s_materialOpticsLoc,materialOptics,SHADER_UNIFORM_VEC4,FLUID_SURFACE_MATERIAL_SLOTS);
     SetShaderValue(s_composite,s_timeLoc,&opticalTime,SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_composite,s_pointLightCountLoc,&pointLightCount,SHADER_UNIFORM_INT);
     SetShaderValueV(s_composite,s_pointLightPosLoc,pointLightPos,
@@ -499,6 +824,7 @@ void FluidSurface_Composite(void) {
     /* Raylib owns the sampler slots.  Manual rlActiveTextureSlot bindings are
      * not reliably reflected into Shader objects on every backend. */
     SetShaderValueTexture(s_composite,s_thicknessLoc,s_thickness.texture);
+    SetShaderValueTexture(s_composite,s_materialIdTexLoc,s_capture.texture);
     SetShaderValueTexture(s_composite,s_sceneLoc,scene);
     if(has) SetShaderValueTexture(s_composite,s_sceneDepthLoc,sceneDepth);
     Texture2D depthSource=s_smoothB.texture;
@@ -507,4 +833,8 @@ void FluidSurface_Composite(void) {
     EndBlendMode();
     s_count=0;
     s_gpuStreamCount=0;
+    /* Reaching this line is what "the surface is running" means to a basic
+     * attack asking to join one. */
+    s_surfaceRunStamp=GetTime();
+    s_frameOwnerPriority=-1;
 }

@@ -79,8 +79,13 @@ static unsigned int s_compute_prog = 0;
 static unsigned int s_draw_vao = 0;
 static unsigned int s_draw_quad_vbo = 0; // template quad, attribute 0
 static Shader s_draw_shader_gpu = {0};
+/* Liquid-table slot the NEXT surface draw rasterizes into the capture's B
+ * channel. Set by core/fluid/fluid_surface.c before each stream so several
+ * liquids can share one capture; see FluidLiquidDesc in fluid_surface.h. */
+static float s_surfaceMaterialId = 0.0f;
 static Shader s_surface_capture_shader_gpu = {0};
 static Shader s_surface_capture_shader_cpu = {0};
+static int s_cpu_capture_material_loc = -1;
 static Shader s_surface_back_shader_gpu = {0};
 static Shader s_surface_back_shader_cpu = {0};
 static int s_cpu_capture_params_loc = -1;
@@ -273,6 +278,7 @@ cpu_path:
         s_surface_capture_shader_cpu = ResourceManager_LoadShader(NULL, "core/fluid/shaders/fluid_capture_cpu.fs");
         s_surface_back_shader_cpu = ResourceManager_LoadShader(NULL, "core/fluid/shaders/fluid_capture_cpu_back.fs");
         s_cpu_capture_params_loc  = GetShaderLocation(s_surface_capture_shader_cpu,  "u_capture_params");
+        s_cpu_capture_material_loc= GetShaderLocation(s_surface_capture_shader_cpu,  "u_materialId");
         s_cpu_capture_proj_loc    = GetShaderLocation(s_surface_capture_shader_cpu,  "u_projection");
         s_cpu_back_params_loc     = GetShaderLocation(s_surface_back_shader_cpu, "u_capture_params");
         s_cpu_back_proj_loc       = GetShaderLocation(s_surface_back_shader_cpu, "u_projection");
@@ -549,6 +555,12 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
         if (s_surfacePass == 1 && s_surface_capture_shader_gpu.id) drawShader = s_surface_capture_shader_gpu;
         if (s_surfacePass == 3 && s_surface_back_shader_gpu.id) drawShader = s_surface_back_shader_gpu;
         BeginShaderMode(drawShader);
+        if (s_surfacePass == 1)
+        {
+            int loc_material = GetShaderLocation(drawShader, "u_materialId");
+            if (loc_material >= 0)
+                SetShaderValue(drawShader, loc_material, &s_surfaceMaterialId, SHADER_UNIFORM_FLOAT);
+        }
 
         int loc_right = GetShaderLocation(drawShader, "u_right");
         int loc_up = GetShaderLocation(drawShader, "u_up");
@@ -707,6 +719,11 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
     }
 }
 
+void GpuParticleSystem_SetSurfaceMaterialId(float materialId)
+{
+    s_surfaceMaterialId = materialId;
+}
+
 void GpuParticleSystem_DrawSurfaceEmitter(Camera3D camera, Texture2D texture, int emitterId)
 {
     s_filterEmitter = emitterId;
@@ -753,6 +770,9 @@ void GpuParticleSystem_DrawSurfaceEmitter(Camera3D camera, Texture2D texture, in
             if (s_cpu_capture_params_loc >= 0)
                 SetShaderValue(s_surface_capture_shader_cpu, s_cpu_capture_params_loc,
                                params, SHADER_UNIFORM_VEC4);
+            if (s_cpu_capture_material_loc >= 0)
+                SetShaderValue(s_surface_capture_shader_cpu, s_cpu_capture_material_loc,
+                               &s_surfaceMaterialId, SHADER_UNIFORM_FLOAT);
 
             Vector3 rx = {camRight.x * r, camRight.y * r, camRight.z * r};
             Vector3 uy = {camUp.x * r,    camUp.y * r,    camUp.z * r};

@@ -8,6 +8,10 @@ bool FluidPBDGPU_Init(void);
 void FluidPBDGPU_Unload(void);
 bool FluidPBDGPU_IsActive(void);
 void FluidPBDGPU_SpawnImpact(Vector3 point, Vector3 normal, Vector3 impulse, float force01, float scale);
+/* The liquid-table slot this body was spawned with. The body outlives by ~2.5 s
+ * the frame that bound its material, so the slot has to travel with the body
+ * rather than being read off FluidSurface's "current" one at capture time. */
+int FluidPBDGPU_GetMaterial(void);
 void FluidPBDGPU_Update(float dt, float groundY);
 unsigned int FluidPBDGPU_GetStateBuffer(void);
 int FluidPBDGPU_GetParticleCount(void);

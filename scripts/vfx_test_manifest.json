@@ -487,6 +487,17 @@
       "trigger_call": "VFX_ComposeIceCrystal($POS, $SEED)"
     },
     {
+      "source": "water/liquid_bench.inl",
+      "fn": "VFX_ComposeLiquidBench",
+      "label": "LIQUID BENCH",
+      "category": "water",
+      "fixture": "timed",
+      "lifecycle": "draw",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeLiquidBench($POS, 1.1f, 1.0f)"
+    },
+    {
       "source": "water/water_orb.inl",
       "fn": "VFX_ComposeWaterOrb",
       "label": "WATER ORB",

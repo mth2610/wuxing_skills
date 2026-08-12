@@ -126,11 +126,89 @@ static void WaterFx_InitShared(void)
     s_waterFxInit = true;
 }
 
+/* --- SSF liquids ---------------------------------------------------------
+ *
+ * The screen-space fluid surface takes a FluidLiquidDesc, not a colour triple:
+ * which branch of the optics runs (dielectric / emissive / conductor) is not
+ * something a colour can express. These four build one from the element
+ * material table so a liquid stays recognisable as its element.
+ *
+ * Every constant below is stated against FLUID_REFERENCE_DEPTH_M (0.20 m), the
+ * one scale core/fluid/shaders/fluid_surface.fs expresses its optics in. */
+static FluidLiquidDesc VFX_LiquidWater(void)
+{
+    const VFX_ElementMaterial *m = VFX_Material(VC_MAT_WATER);
+    return FluidSurface_DielectricDesc(m->body, m->glow, m->soft);
+}
+
+/* Poison needs no code of its own — it is water's optics with green absorption,
+ * which Beer-Lambert already derives from the body colour. Kept as a named
+ * preset only so callers do not have to know that. */
+static FluidLiquidDesc VFX_LiquidPoison(void)
+{
+    const VFX_ElementMaterial *m = VFX_Material(VC_MAT_POISON);
+    return FluidSurface_DielectricDesc(m->body, m->glow, m->soft);
+}
+
+static FluidLiquidDesc VFX_LiquidLava(void)
+{
+    const VFX_ElementMaterial *m = VFX_Material(VC_MAT_FIRE);
+    /* The hot core is an authored INCANDESCENT colour, not VC_Whiten(glow).
+     * Whitening lifts every channel equally, so fire's (255,90,20) becomes
+     * (255,164,126) — a pale PEACH, because the blue it added is what the eye
+     * reads as "washed out". Measured on the bench: the body underneath was a
+     * rich crimson the whole time (the `water - emission` view proved it) and
+     * the peach was entirely this colour. A blackbody gets brighter by climbing
+     * red -> orange -> yellow -> white, so the core goes yellow and only reaches
+     * white where the tonemap clips it. */
+    FluidLiquidDesc d = FluidSurface_DielectricDesc(m->body, (Color){255, 200, 70, 255}, m->soft);
+    d.liquidClass = FLUID_LIQUID_EMISSIVE;
+    /* Above 1.0 on purpose — lava should survive the HDR tonemap as a light
+     * source, not as a bright surface — but only just. At 2.4 every channel of
+     * the whitened core clipped and the body rendered pale peach; the crimson
+     * skin that makes it read as lava was there underneath and was simply being
+     * buried. 1.6 blows out only the deepest core. */
+    d.emission = 1.6f;
+    /* Molten silicate, roughly. Also raises F0 from water's 2% to 5.5%, which is
+     * most of why a lava rim reads harder than a water one. */
+    d.ior = 1.60f;
+    /* A crust is not a mirror. */
+    d.roughnessScale = 3.2f;
+    /* The colour alone CANNOT make it opaque: the body is saturated, so its red
+     * channel transmits ~100% and the background reads straight through the
+     * middle of the body. 24/m puts one reference depth at e^-4.8 — background
+     * gone, and a genuinely thin sheet still translucent. */
+    d.opacityPerMetre = 24.0f;
+    d.foam = 1.0f;   /* re-read as crust by the emissive branch */
+    return d;
+}
+
+static FluidLiquidDesc VFX_LiquidMetal(void)
+{
+    const VFX_ElementMaterial *m = VFX_Material(VC_MAT_METAL);
+    /* A conductor's `body` IS its F0 — the fraction it reflects at normal
+     * incidence, per channel. Silver-grey at 149/165/166 is 0.58/0.65/0.65,
+     * which is a believable liquid metal (mercury sits near 0.78, aluminium
+     * 0.91) and stays recognisably the METAL element rather than a mirror. */
+    FluidLiquidDesc d = FluidSurface_DielectricDesc(m->body, m->glow, m->soft);
+    d.liquidClass = FLUID_LIQUID_CONDUCTOR;
+    /* Not a mirror either: a moving liquid metal surface is slightly rough, and
+     * a perfectly sharp reflection off a splat-reconstructed normal is where the
+     * reconstruction's own wobble becomes the most visible thing on the body. */
+    d.roughnessScale = 1.6f;
+    /* No transmission at all, so this only bounds the in-scatter the dielectric
+     * assembly would have produced; the conductor branch discards it anyway. */
+    d.opacityPerMetre = 60.0f;
+    d.foam = 0.0f;   /* a conductor has no foam */
+    return d;
+}
+
 #include "ice_crystal.inl"
 // @gen:water_includes begin
-// 4 include(s) — auto-managed by sync_vfx_test.py
+// 5 include(s) — auto-managed by sync_vfx_test.py
 #include "water_stream.inl"
 #include "fluid_impact_test.inl"
 #include "water_orb.inl"
 #include "water_ring.inl"
+#include "liquid_bench.inl"
 // @gen:water_includes end

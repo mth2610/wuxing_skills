@@ -165,6 +165,9 @@ LIFECYCLE_SPECS = {
     # while the surface is judged, and a density that loops 0->1 would hide
     # exactly what it is there to show.
     "VFX_ComposeWaterRing":          ("draw",    "timed",      "continuous"),
+    # Registers CPU ellipsoids straight into the SSF surface every frame, so
+    # it is a plain draw-phase composer with no handle and no emitter.
+    "VFX_ComposeLiquidBench":        ("draw",    "timed",      "continuous"),
 }
 
 # A fixture may supply a semantic preview surface while the public composition
@@ -208,6 +211,8 @@ FIXTURE_DRAW_OVERRIDES = {
     # presence; splat coverage is scale-invariant, so it changes nothing else.
     "VFX_ComposeWaterRing":
         "VFX_ComposeWaterRing($POS, 0.9f, 1.0f)",
+    "VFX_ComposeLiquidBench":
+        "VFX_ComposeLiquidBench($POS, 1.1f, 1.0f)",
 }
 
 # ── Element / category inference ──────────────────────────────────────────────

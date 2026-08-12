@@ -5,6 +5,8 @@ out vec4 finalColor;
 uniform mat4 u_projection;
 // u_capture_params: xy = view-space center XY, z = view Z (negative), w = radius
 uniform vec4 u_capture_params;
+/* Liquid-table slot of the emitter being rasterized; see fluid_capture.fs. */
+uniform float u_materialId;
 
 void main() {
     // fragTexCoord is [0,1] from the rlBegin quad. Convert to [-1,+1] local UV.
@@ -28,5 +30,5 @@ void main() {
     float depth = clip.z / clip.w * 0.5 + 0.5;
     gl_FragDepth = depth;
     float coverage = smoothstep(1.0, 0.75, r2);
-    finalColor = vec4(depth, coverage, 0.0, 1.0);
+    finalColor = vec4(depth, coverage, u_materialId, 1.0);
 }

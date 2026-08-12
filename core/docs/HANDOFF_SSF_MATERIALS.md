@@ -1,165 +1,144 @@
-# Handoff — SSF liquid materials (poison / lava / liquid metal) + the cost gates
+# Handoff — SSF liquid materials + the cost gates
 
-> Written at the end of the 2026-08-12 session. Successor to
-> `HANDOFF_SSF_UPGRADE.md`, which is now executed.
-> **Assigned to the rlvk / Renderer agent persona**, deliberately crossing the
-> ownership split in the root `CLAUDE.md` (this work lives in `core/fluid`, which
-> the table gives to Core). Take the work; do not stall on the boundary. Follow
-> the rlvk methodology (`third_party/vulkan/docs/LANDMINES.md` §"Debugging
-> methodology") — it is what cracked every defect in the last two sessions.
+> Rewritten at the end of the 2026-08-12 (second) session. The five tasks the
+> previous version of this file listed are **executed**; what follows records
+> what landed, what it cost, and what is genuinely left.
+> Method notes are at the bottom and are the most reusable part of this file.
 
-## What already landed (do not redo)
+## What landed this session
 
-| commit | what |
+| what | where |
 |---|---|
-| `a333eaf` | dual-depth thickness `T = z_back − z_front`; velocity-aligned anisotropic splats |
-| `0903620` | specular antialiasing by normal variance (Kaplanyan/Filament) |
-| `8128911` | `surfaceNoise` was a plane wave drawing bands → `fbm3`; `vnoise3`/`fbm3` added to `core/shaders/common/noise.glsl` |
-| `8b6ebe9` | thickness pipeline at half resolution; `--render-vfx` FPS uncapped; `perf_ssf_filter` repaired |
-| `30f53b8` | `RLVK_GPU_TRACE` now reports missing timestamps instead of averaging zeros |
-| `489790d` | silhouette antialiasing from the depth mask |
-| `4c2b0f6` | the depth filter runs as a **true 2D kernel**, not two 1D passes |
-| `6408c03` | the 2D reach is capped — uncapped it was 9 fps at close range |
-| `a26998b` | why the ring outcosts the PBD crown at half the particles |
+| **Liquid table**: `FluidLiquidDesc` + 4 content-addressed slots, LRU eviction | `core/fluid/fluid_surface.{h,c}` |
+| **Per-pixel material id**: front capture RGBA32F, slot in `.b`, composite looks it up | `fluid_capture*.fs`, `fluid_surface.fs` |
+| **Three optical classes**: dielectric / emissive / conductor | `fluid_surface.fs` |
+| **IOR unified**: the three hardcoded water constants are gone | `fluid_surface.fs` |
+| **Cost gates**: priority ownership + projected-size cull + frame budget | `FluidSurface_RequestBody` |
+| **LIQUID BENCH fixture** (NEW FX 40): water, lava, liquid metal in ONE capture | `core/composition/water/liquid_bench.inl` |
+| 3 new headless suites | `core/tests/fluid_{capture_projection,liquid_material,cost_gate}_test.c` |
 
-The user has confirmed by eye: the stripes are gone.
+### 1. Poison — confirmed, zero code
+`FluidSurface_SetMaterialColors` with `VFX_Material(VC_MAT_POISON)` renders a
+green ring with correct thickness-driven absorption. Beer-Lambert already derives
+everything from the body colour. Note for authoring: poison's `glow` **equals**
+its `body`, so its Fresnel rim is green-on-green and it reads flatter than water.
+That is an authoring consequence, not a defect.
 
-## Architecture facts that constrain everything below (all verified in source)
-
-1. **PBD is a SINGLE SLOT.** `s_particleCount`, `s_impactAge`, `s_receiverPoint`
-   are file statics in `fluid_pbd_gpu.c`; `FluidPBDGPU_SpawnImpact` overwrites
-   them. A second impact **deletes** the first mid-animation. 2048 particles at
-   HIGH, 2.5 s lifetime. There is no pool.
-2. **The SSF surface is a singleton with 16 input streams** (`s_gpuStreams[16]`
-   in `fluid_surface.c`). All streams rasterize into ONE capture, are filtered
-   once and composited once.
-3. **ONE material at a time.** `FluidSurface_SetMaterialColors` is global. Every
-   liquid on screen shares one colour. This is the single biggest blocker for the
-   material work below.
-4. **The capture target is `R32F` — one channel.** `fluid_capture_particle.fs`
-   computes a per-splat `coverage` into `.g` and it is discarded at the write,
-   because there is no green channel. Any per-pixel material id needs RG32F or a
-   second target.
-5. **Cost is mostly per-frame FIXED**, not per-body. Measured: the ring has 6.3x
-   the splat area and 3.2x the screen coverage of the crown and costs only 1.5x.
-   The second fluid body is nearly free; the first pays the whole bill.
-6. `MAX_GPU_PARTICLES` is **8192** shared across all emitters;
-   `WATER_RING_MAX_SPAWN` is 48/frame, which caps the ring at ~2700 alive at
-   60 fps regardless of what `alive` asks for.
-
-## Measured cost (VFX tester, 1280x720, HIGH, Intel Mac / MoltenVK)
-
-| | frame | SSF share |
-|---|---|---|
-| no fluid (NEW FX 0) | 9.8 ms — 102 fps | — |
-| FLUID IMPACT | 16.6 ms @f100, 14.6 @f200 (it decays at 2.5 s) | ~6.8 ms |
-| WATER RING | 20.1 ms, flat | ~10.3 ms |
-
-Close range (camera 2 m) before the 2D cap: **112 ms — 9 fps**. After the cap:
-26.8-31.4 ms, i.e. at or below the old separable path.
-
-**These numbers are from an EMPTY tester scene with one fixture.** Nobody has
-measured a populated match scene. Do not quote them as if they were.
-
-## The work, in order
-
-### 1. Poison water — free, do it first as a path check
-Nothing to write. Call `FluidSurface_SetMaterialColors` with the poison material
-from `VFX_Material(VC_MAT_*)`. Beer-Lambert absorption is already derived from
-`u_materialBody`, so "thicker = deeper colour" is already correct for any
-dielectric. Confirm on a fixture, then move on.
-
-### 2. Lava — one missing term
-The composite's result is `dielectricBase + specular + foam + rimLight`. There is
-**no emission term at all**. Lava needs emission driven by thickness (thick =
-glowing core, thin = cooled crust), and the refraction of the background turned
-down hard. Thickness is now a real measured path in metres, which is exactly the
-input this wants. `foam` must become crust, or be gated off.
+### 2. Lava — emission by thickness
+`FLUID_LIQUID_EMISSIVE` adds `emissionColor * (1 - exp(-k·path)) * strength`,
+with `k = ln(2)/FLUID_REFERENCE_DEPTH_M` — one reference depth emits half its
+source radiance. Crust is the foam term **re-read**: the same patchy field
+subtracts emission instead of adding a white cap, at its own frequency (7.0, a
+0.14 m cell) because `surfaceNoise`'s 0.37 m cell is most of a body.
+`opacityPerMetre` kills the refracted background; the body colour alone cannot,
+because a saturated orange transmits ~100% of red.
 
 ### 3. Per-pixel material id — the unlock
-Until this exists, poison and lava cannot coexist on screen (fact 3). The capture
-is single-channel (fact 4), so this means RG32F (depth + material id) or a small
-second target, plus a material table in the composite. Everything downstream is
-already parameterized by `u_materialBody/Glow/Soft`; what is missing is per-pixel
-selection.
+The slot rides the **same fragment that wins the depth test**, so the composite
+can never shade a surface with another surface's material. Read from the RAW
+capture, never from the filtered depth: the narrow-range filter averages its
+taps, and averaging slot 0 with slot 2 yields slot 1 — a third liquid that is not
+there. Known limit: at MED/LOW the composite and the capture differ in size, so a
+tap can land between texels and round to a neighbourless slot. That is a
+one-texel band at a boundary between two liquids, and the tests deliberately do
+**not** claim otherwise.
 
-### 4. Liquid metal — the biggest job, and probably the best-looking
-Metal is a **conductor**: high, coloured F0 and **no transmission**. Today the
-water IOR is hardcoded in three places — `FresnelSchlick`'s
-`waterF0 = 0.02037`, the same literal again inside `WaterSpecularBRDF`, and
-`refract(incident, N, 1.0 / 1.333)`. The whole transmission + Beer-Lambert branch
-must be switched off for it. The payoff: metal reads almost entirely through
-reflection, the SSR path already exists, and SSF's normals are good at it.
+### 4. Liquid metal — conductor branch
+Coloured F0 (the material's `body` **is** its F0), no transmission, no
+in-scatter, no foam, and the dielectric rim hack gated off — it double-counts the
+Fresnel and paints it METAL's blue `glow`. The un-normalized Blinn glint lobes
+are gated off too: they were authored against water's 0.02 F0 and the GGX term
+alone is already ~45x brighter once F0 is a metal's.
 
-### 5. Cost gates (needed before ANY of this ships into the arena)
-There is **no gate today** — nothing stops N skills submitting streams and
-nothing skips SSF when the frame is over budget.
-- **Ownership by priority**: a boss ultimate outranks a player cast; minions never
-  get SSF.
-- **Cull by projected size**: below N pixels, fall back to ordinary particles. The
-  fixed cost is absurd for a small splash.
-- The design that makes basic attacks affordable: they **contribute splats to an
-  already-active surface** rather than switching SSF on. Marginal cost is splat
-  area only (fact 5). If no hero-scale water is present, they fall back to
-  particles.
+### 5. Cost gates
+`FluidSurface_RequestBody(priority, center, worldRadius)` — ask before building.
+`MINION` never; `BASIC` only joins a surface already running; `CAST` may switch
+one on; `ULTIMATE` survives an over-budget frame. Below a 16 px projected radius
+nothing gets SSF. The reconstruction radius (still single-owner) goes through
+`FluidSurface_SetReconstructionRadiusFor`, highest priority wins.
+Wired into `VFX_ComposeWaterRing` (rejected -> spawns the same torus with
+**visible** particle colours instead of the SSF path's alpha-0) and
+`FluidImpact_SpawnWater` (rejected -> skips the PBD solve; the ballistic droplets
+and residue still render as ordinary particles).
 
-### 6. Perf, blocked on measurement
-- **Half/adaptive resolution for the depth chain** is the biggest remaining lever
-  (thickness is already half-res). `perf_ssf_filter` measures 1.2-2.0 ms saved
-  over 8 passes; the game runs 4.
-- **Dropping the redundant clears**: the filter/blur/resolve passes assign
-  `finalColor` on every path, so the `ClearBackground` before them is dead work —
-  but omitting it makes rlvk use `loadOp LOAD`, a full-target read, plausibly
-  worse on a tiler. Untested, and untestable here.
-- **Scissoring measured 0.72 ms SLOWER** — `ClearBackground` is a `loadOp CLEAR`
-  over the whole target and scissor cannot shrink it. Do not retry; a smaller
-  VIEWPORT or smaller targets would be a different experiment.
+## Two engine defects found on the way — both in the CPU ellipsoid path
 
-### 7. Parked, with reasons
-- **PCA anisotropic kernels** for the PBD crown. The old reason for parking
-  ("needs a neighbour search the architecture avoids") is **wrong for PBD**:
-  `fluid_pbd_gpu.comp` already keeps `heads[]`/`next[]` over 32³ cells, rebuilt
-  each Jacobi pass, so a covariance can ride the loop the density constraint
-  already walks. Only reachable for FLUID IMPACT, never for the ring.
-- **The half-sunk ring's waterline.** `VFX_ComposeWaterRing` spawns a torus
-  centred at the cast position, so with a 0.108 m tube at y=0 the lower half is
-  under the ground and the foam line is a genuine waterline. An authoring call,
-  not a bug. Three mechanism "fixes" were tried and reverted — see LANDMINES.
-- **`capFade`** in `WaterMultiOctaveWaves` is still a plane wave. Amplitude 0.004;
-  disabling the whole term changed nothing visible.
-- **2D filter on mobile.** HIGH only today. `GfxQuality_Default()` returns
-  **GFX_MED on Android**, and a several-hundred-tap dependent-fetch loop on a Mali
-  tiler cannot be judged from a desktop. One device run decides it.
+`FluidSurface_RegisterParticle`/`RegisterEllipsoid` is public API and it rendered
+**nothing**. Two independent bugs, both promoted to root `ENGINE_LANDMINES.md`:
 
-## Method — earned the hard way, twice. Read this before touching anything.
+1. **`rlPushMatrix()` does not hand back an identity.** It redirects writes to a
+   persistent global and saves whatever that already held; it held a leftover
+   VIEW matrix, so every sphere was view-transformed twice.
+2. **The capture rasterized through `BeginMode3D` (near = 0.01) while the
+   composite inverts near = 1.0.** A body at 7.5 m decoded to 428 m and every
+   pixel failed the scene-occlusion discard.
 
-1. **Build the observation before the fix.** It settled three defects in one build
-   each, after reasoning-from-mechanism had missed repeatedly: a 1 cm *ruler* over
-   thickness, *subtracting* one additive term at a time, and running each filter
-   pass *alone*. A stripe/step colour code survives the HDR tonemap; a grey ramp
-   does not.
-2. **Isolate additive terms by SUBTRACTION, not by display.** Every term rendered
-   alone looked innocent — foam is a dim teal fringe on black and white on top of
-   blue. `water - foam` found it in one look.
-3. **Check WHICH VARIANT of an algorithm you are running.** The filter was a
-   faithful narrow-range implementation — of the paper's `filter1D`, run twice,
-   which is the approximate separation the paper itself warns about. Five invented
-   boundary conditions had been spent before anyone checked.
-4. **A mirror test can assert a property the algorithm does not have.** It
-   happened again: a guard demanded a splat's chord close to zero at its rim, but
-   the capture profile deliberately keeps a floor there (the real value is 28% of
-   the diameter). Fix the guard, not the shader.
-5. **Verify the picture before trusting a perf number.** A half-resolution change
-   measured as a clean win because it had broken the surface and was rendering
-   nothing.
-6. **Runs are NOT deterministic.** Two captures of the same fixture differ. Compare
-   silhouette-scale detail across several runs before attributing it.
-7. **Do not ship a change the user cannot see.** The silhouette AA is real at 7x
-   and invisible at 1x; it was oversold. Compare at the framing the user actually
-   plays at.
-8. **Check the fixture's geometry before deciding a term misfires.** Three
-   mechanism fixes were spent on a "silhouette artifact" that was the real
-   waterline of a half-sunk ring.
+Both were invisible because every *other* SSF input is an immediate-mode
+billboard that computes its own depth, and this path had no fixture. It has one
+now, and the fixture found both on its first run.
+
+## Measured
+
+**Per-pixel material id is free.** Interleaved in ONE process, variant chosen at
+random per frame (the only method that works here — see below):
+
+| run | RGBA32F capture | R32F capture |
+|---|---|---|
+| 1 | 19.974 ms (447 f) | 20.333 ms (440 f) |
+| 2 | 20.183 ms (450 f) | 20.178 ms (442 f) |
+| 3 | 21.136 ms (441 f) | 21.194 ms (438 f) |
+
+Deltas −0.36 / +0.01 / −0.06 ms: the sign flips and every one is inside the
+1.2 ms drift *between* runs. Widening the front capture costs nothing measurable
+on this rig. The rendered image was checked on every run — the ring was present,
+so these are not empty frames.
+
+**Cross-process wall clock could not resolve this at all**: the same fixture
+measured 19.2 / 27.1 / 20.4 ms per frame across three process pairs. Do not
+bother with it.
+
+## What is genuinely left
+
+- **The gates have never run in a populated match scene.** Every number here and
+  in the previous handoff is from an empty tester with one fixture. The budget
+  constant (26 ms) and the 16 px cull are reasoned, not tuned against real play.
+- **`FLUID_SURFACE_MATERIAL_SLOTS` is 4 and eviction is LRU.** Nothing has yet
+  put more than three liquids on screen. The failure mode is a body changing
+  colour, never a crash.
+- **The water ring's rejected fallback is a bead ring**, not an authored
+  particle effect. It is honest but it is not pretty; a real fallback is the
+  composer author's job.
+- **Mobile.** The whole liquid table is untested on Mali. `GfxQuality_Default()`
+  returns GFX_MED on Android, which takes the separable filter path; the material
+  id path is tier-independent and its one risk is the MED/LOW size mismatch noted
+  above. One device run decides it.
+- Everything in the previous handoff's §6 (half/adaptive depth resolution) and §7
+  (PCA anisotropic kernels, the half-sunk ring's waterline, `capFade`, the 2D
+  filter on mobile) is untouched and still stands.
+
+## Method — this session's evidence for the rules
+
+1. **Build the observation before the fix.** Four temporary composite views
+   (raw depth, raw thickness, per-term subtraction, material slot) found three
+   defects in one build each. Reasoning from mechanism had produced four wrong
+   hypotheses about the CPU path before the first view was written.
+2. **Subtract, do not display.** `water - emission` showed a rich crimson lava
+   body underneath a peach one, which redirected the fix from *magnitude* to
+   *colour* — halving the magnitude first had changed almost nothing.
+3. **Two runs of the same fixture are NOT the same image.** The baseline
+   run-to-run difference on WATER RING is **2.17% of pixels, mean |dRGB| 0.35**.
+   Every regression check here is quoted against that floor; without it the
+   material-table refactor's 2.13% would have read as a regression.
+4. **A number that moves is worth a screenshot.** The cost gate's first version
+   showed 2.21% differing pixels — inside the floor — but mean |dRGB| 3.02,
+   7x the floor. The image showed the ring had been **deleted**. The pixel count
+   alone would have passed it.
+5. **Assert only what the algorithm promises.** The material-id test explicitly
+   does not claim a tap between two liquids resolves to either of them, because
+   it does not.
+6. **Ask what refreshes a gate's input.** The first cost gate latched shut
+   permanently because the state it read was only updated on the path it
+   blocked.
 
 ## Tooling
 
@@ -167,25 +146,15 @@ nothing skips SSF when the frame is over budget.
 # Headless capture. Without the ICD env the binary dies at instance creation.
 V=~/VulkanSDK/1.3.296.0/macOS
 VK_ICD_FILENAMES="$V/share/vulkan/icd.d/MoltenVK_icd.json" DYLD_LIBRARY_PATH="$V/lib" \
-  ./build/wuxing --render-vfx 41 --warmup 60 --out autotest_output/shot.png
+  ./build/wuxing --render-vfx 40 --warmup 60 --out autotest_output/shot.png
 ```
-- NEW FX indices come from `s_newFxNames[]` in `sandbox/vfx_test.c`, 0-based:
-  **FLUID IMPACT 38, WATER RING 41**. Pick the warmup per effect — the PBD crown
-  peaks near frame 16 and is gone by 45; the ring is steady.
-- The camera is fixed at `vfxCamDist = 6.0` with no CLI knob, and
-  `GfxQuality_Default()` has no override. Both are worth a TEMPORARY env in
-  `main.c` / `core/gfx_quality.c` when a close-up or a LOW-tier check is needed —
-  add, use, remove.
-- `glslangValidator` **rejects the project's `#include`**. Resolve the includes
-  into a temp file first, then validate; `fluid_surface.fs` now includes
-  `noise.glsl`.
-- `./scripts/run_core_tests.sh` is the headless tier. **Four suites are red and
-  have been for weeks** — `energy_burst_semantic_layers`, `tube_frame`,
-  `vfx_layered_field_contract`, `volume_trail`. Not yours.
-- rlvk perf scenarios need `UNCAPPED=1`, or they measure the display refresh and
-  report plausible nonsense.
-- **`RLVK_GPU_TRACE` does not work on macOS.** The queue family advertises
-  `timestampValidBits=64` and every query returns available with a value of zero.
-  Use wall clock sampled INSIDE the render loop, with variants interleaved
-  **randomly** per frame in ONE process — a fixed rotation puts the GPU's
-  pipelining bias on one bucket and the deltas flip sign between runs.
+- NEW FX indices come from `s_newFxNames[]` in `sandbox/vfx_test.c`, 0-based.
+  **They shifted this session**: FLUID IMPACT 38, **LIQUID BENCH 40**,
+  WATER ORB 41, **WATER RING 42** (was 41). The list is alphabetical within a
+  category, so any new water entry renumbers the ones after it.
+- `glslangValidator` **rejects the project's `#include`** — resolve includes into
+  a temp file first.
+- `./scripts/run_core_tests.sh` — 63 suites, **4 red and have been for weeks**
+  (`energy_burst_semantic_layers`, `tube_frame`, `vfx_layered_field_contract`,
+  `volume_trail`). Not yours.
+- **`RLVK_GPU_TRACE` does not work on macOS** — every query returns zero.

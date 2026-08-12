@@ -179,6 +179,27 @@
 ```
 **Structs** (fields in header): FluidImpactCollision, FluidImpactEvent
 
+### `core/fluid/fluid_surface.h`
+```c
+  FluidLiquidDesc FluidSurface_DielectricDesc(Color body, Color glow, Color soft);
+  int FluidSurface_BindMaterial(const FluidLiquidDesc *desc);
+  int FluidSurface_CurrentMaterial(void);
+  bool FluidSurface_RequestBody(FluidSurfacePriority priority, Vector3 center, float worldRadius);
+  void FluidSurface_SetReconstructionRadiusFor(FluidSurfacePriority priority, float radius);
+  void FluidSurface_Init(int width, int height);
+  void FluidSurface_Unload(void);
+  void FluidSurface_SetMaterialColors(Color body, Color glow, Color soft);
+  void FluidSurface_SetReconstructionRadius(float radius);
+  void FluidSurface_RegisterParticle(Vector3 position, float radius);
+  void FluidSurface_RegisterEllipsoid(Vector3 position, Vector3 radii);
+  bool FluidSurface_SubmitParticleStream(const ParticleRenderStream *stream);
+  bool FluidSurface_HasPending(void);
+  void FluidSurface_Capture(Camera3D camera);
+  void FluidSurface_Composite(void);
+```
+**Enums:** FluidLiquidClass { FLUID_LIQUID_DIELECTRIC,FLUID_LIQUID_EMISSIVE,FLUID_LIQUID_CONDUCTOR };FluidSurfacePriority { FLUID_PRIORITY_MINION,FLUID_PRIORITY_BASIC,FLUID_PRIORITY_CAST,FLUID_PRIORITY_ULTIMATE }
+**Structs** (fields in header): FluidLiquidDesc
+
 ### `core/force_field.h`
 ```c
   float Noise_Perlin3D(float x, float y, float z);
@@ -783,6 +804,7 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeWaterOrb(Vector3 start, Vector3 target);
   void VFX_ComposeWaterRing(Vector3 center, float radius, float t01);
   void VFX_WaterRing_Stop(void);
+  void VFX_ComposeLiquidBench(Vector3 center, float spacing, float t01);
   void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
   void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
   void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);

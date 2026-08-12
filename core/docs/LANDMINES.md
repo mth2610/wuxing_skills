@@ -2161,3 +2161,47 @@ own cost (31.4 ms against 30.9 at close range) with the stripes gone.
 must be measured at more than one camera distance, and a kernel with quadratic
 cost needs a hard reach cap, not just a tier ceiling. Guarded by
 `core/tests/fluid_filter_2d_test.c`, which asserts the tap count stops growing.
+
+## The SSF CPU ellipsoid path was broken twice over, and nothing could see it
+
+**Symptom.** `FluidSurface_RegisterParticle` / `FluidSurface_RegisterEllipsoid`
+— public API, part of `FluidSurface_SubmitParticleStream`'s CPU-backend branch —
+rendered nothing. Registering 78 kernels at correct world positions produced an
+empty screen.
+
+**Cause.** Two independent defects stacked, both cross-cutting enough to live in
+root `ENGINE_LANDMINES.md`: `rlPushMatrix()` does not give you an identity
+transform, and the capture rasterized through a near=0.01 frustum that the
+composite then inverted as near=1.0.
+
+**Why it survived.** Every other SSF input (GPU splat streams, the PBD crown) is
+an immediate-mode billboard that computes its own depth and never touches the
+matrix stack, so both defects were invisible to them. The CPU path had **no
+fixture** — no skill, no sandbox entry, nothing. It is now covered by
+NEW FX -> LIQUID BENCH (`core/composition/water/liquid_bench.inl`), which is
+built on it deliberately.
+
+**Rule.** A code path with no fixture is not "probably fine"; it is a path where
+defects are unobservable. When adding a fixture for a new feature, prefer the
+untested path over the well-trodden one — the LIQUID BENCH found both of these on
+its first run.
+
+## Isolate additive terms by SUBTRACTION, again: lava's washout was a COLOUR
+
+**Symptom.** The emissive liquid class rendered as pale peach rather than lava.
+The obvious reading — "the emission term is too strong" — was wrong: halving it
+from 2.4 to 1.6 changed almost nothing.
+
+**Cause.** Two things, and the subtraction view separated them in one look.
+`water - emission` showed a rich crimson body underneath the whole time, so the
+base was never the problem. The emission COLOUR was `VC_Whiten(glow, 0.45)`, and
+whitening lifts every channel equally — fire's `(255,90,20)` becomes
+`(255,164,126)`, and the blue it adds is exactly what the eye reads as "washed
+out". A blackbody gets brighter by climbing red -> orange -> yellow -> white, not
+by adding blue. Separately, the saturation constant (`2.0/ref`, "86% at one
+reference depth") saturated the term by 0.3 m, and an authored body is 0.3-0.6 m
+through the middle — so the whole body sat at full emission with no gradient.
+
+**Rule.** When an additive term looks wrong, subtract it before retuning it. A
+washed-out result is as often a desaturated COLOUR as an excessive magnitude, and
+the two need opposite fixes. Guarded by `core/tests/fluid_liquid_material_test.c`.

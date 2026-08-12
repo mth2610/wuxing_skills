@@ -8,6 +8,10 @@ uniform sampler2D texture0;       // smoothed nearest fluid depth
 uniform sampler2D u_thicknessTex; // dual-depth thickness, metres
 uniform sampler2D u_sceneTex;
 uniform sampler2D u_sceneDepthTex;
+/* The RAW front capture (RGBA32F): .r depth, .g coverage, .b liquid-table
+ * slot. Read unfiltered and unsmoothed on purpose — the depth filter averages
+ * its taps, and an averaged material id is a different material. */
+uniform sampler2D u_materialIdTex;
 uniform vec2 u_texel;      // fluid reconstruction texel
 uniform vec2 u_sceneTexel; // full-resolution scene texel
 uniform int u_hasSceneDepth;
@@ -22,10 +26,27 @@ uniform vec3 u_sunDirectionView;  // surface -> sun, view space
 uniform vec3 u_sunColor;
 uniform vec3 u_skyAmbient;
 uniform vec3 u_groundAmbient;
-uniform vec3 u_materialBody;
-uniform vec3 u_materialGlow;
-uniform vec3 u_materialSoft;
 uniform float u_time;
+
+/* --- The liquid table ----------------------------------------------------
+ *
+ * One entry per slot; `FluidLiquidDesc` in core/fluid/fluid_surface.h is the
+ * authoring side of exactly these lanes. The rgb lanes carry the optical
+ * identity the element materials already provide; the alpha lanes carry what a
+ * colour cannot say — which BRANCH of the optics this liquid takes, and how hot
+ * / how reflective / how crusted it is.
+ *
+ * vec4 throughout on purpose. A vec3 uniform ARRAY is the one shape whose std140
+ * stride (16 bytes, not 12) disagrees with what SetShaderValueV packs, and the
+ * point-light arrays above are already vec4 for the same reason. */
+#define FLUID_MATERIAL_SLOTS 4
+#define FLUID_CLASS_DIELECTRIC 0
+#define FLUID_CLASS_EMISSIVE   1
+#define FLUID_CLASS_CONDUCTOR  2
+uniform vec4 u_materialBody[FLUID_MATERIAL_SLOTS];   // rgb body, a = class
+uniform vec4 u_materialGlow[FLUID_MATERIAL_SLOTS];   // rgb glow, a = emission
+uniform vec4 u_materialSoft[FLUID_MATERIAL_SLOTS];   // rgb soft, a = crust/foam gain
+uniform vec4 u_materialOptics[FLUID_MATERIAL_SLOTS]; // x ior, y roughness, z opacity/m, w reserved
 
 #define FLUID_POINT_LIGHTS 4
 uniform int u_pointLightCount;
@@ -38,9 +59,17 @@ vec3 ReconstructViewPosition(vec2 uv, float depth) {
     return view.xyz / max(abs(view.w), 1e-6) * sign(view.w);
 }
 
-float FresnelSchlick(float ndv) {
-    const float waterF0 = 0.02037; // ((1.333 - 1)/(1.333 + 1))^2
-    return waterF0 + (1.0 - waterF0) * pow(1.0 - ndv, 5.0);
+/* Normal-incidence reflectance of a dielectric interface against air. Water's
+ * 0.02037 used to be a literal in three places (here, inside WaterSpecularBRDF,
+ * and as the 1.0/1.333 handed to refract) — which is why a liquid that is not
+ * water could not be expressed at all. */
+float IorToF0(float ior) {
+    float r = (ior - 1.0) / (ior + 1.0);
+    return r * r;
+}
+
+vec3 FresnelSchlick(float ndv, vec3 f0) {
+    return f0 + (vec3(1.0) - f0) * pow(1.0 - ndv, 5.0);
 }
 
 // Multi-octave procedural wave generator for realistic dynamic liquid shimmer.
@@ -148,10 +177,12 @@ float BlinnExponentScale(float perceptualRoughness, float filteredRoughness) {
     return clamp((alpha * alpha) / max(filteredAlpha * filteredAlpha, 1e-8), 0.02, 1.0);
 }
 
-float WaterSpecularBRDF(vec3 N, vec3 V, vec3 L, float roughness) {
+/* F0 is a COLOUR, not a scalar: a conductor's reflectance is wavelength
+ * dependent and that tint is most of what makes metal read as metal. */
+vec3 WaterSpecularBRDF(vec3 N, vec3 V, vec3 L, float roughness, vec3 f0) {
     float ndl = max(dot(N, L), 0.0);
     float ndv = max(dot(N, V), 0.0);
-    if (ndl <= 0.0 || ndv <= 0.0) return 0.0;
+    if (ndl <= 0.0 || ndv <= 0.0) return vec3(0.0);
     vec3 H = normalize(V + L);
     float ndh = max(dot(N, H), 0.0);
     float vdh = max(dot(V, H), 0.0);
@@ -163,8 +194,12 @@ float WaterSpecularBRDF(vec3 N, vec3 V, vec3 L, float roughness) {
     k = k * k * 0.125;
     float gv = ndv / (ndv * (1.0 - k) + k);
     float gl = ndl / (ndl * (1.0 - k) + k);
-    float F = 0.02037 + (1.0 - 0.02037) * pow(1.0 - vdh, 5.0);
-    return min(D * gv * gl * F / max(4.0 * ndl * ndv, 1e-4), 8.0);
+    vec3 F = FresnelSchlick(vdh, f0);
+    /* The clamp sits on the FULL product, F included, exactly where the scalar
+     * version had it. Clamping D*G first and multiplying F afterwards is a
+     * different (much tighter) limiter: at water's F0 the peak lobe would come
+     * out 50x dimmer. */
+    return min(D * gv * gl * F / max(4.0 * ndl * ndv, 1e-4), vec3(8.0));
 }
 
 bool SceneSampleMatchesBase(vec2 uv, float baseSceneDistance, float fluidDistance) {
@@ -249,6 +284,38 @@ void main() {
         fluidDepth = min(min(dilateL, dilateR), min(dilateD, dilateU));
         if (fluidDepth >= 0.99999) discard;
     }
+
+    /* Which liquid is this pixel?
+     *
+     * The id rides the same fragment that won the capture's depth test, so it is
+     * the material of the surface actually being shaded. It is read from the RAW
+     * capture rather than from the smoothed depth `texture0`: the narrow-range
+     * filter is an average over neighbours, and averaging slot 0 with slot 2
+     * yields slot 1 — a third liquid that is not there.
+     *
+     * A dilated fringe pixel has no capture of its own (that is what dilation
+     * means), so it borrows the nearest cardinal neighbour's slot, matching where
+     * its depth came from. Rounding, not truncation: the capture is POINT
+     * filtered, but the composite target and the capture are the same size only
+     * at HIGH — at MED/LOW the tap can land between texels. */
+    float rawSlot = texture(u_materialIdTex, fragTexCoord).b;
+    if (dilatedFringe) {
+        float sl = texture(u_materialIdTex, fragTexCoord - vec2(u_texel.x, 0.0)).b;
+        float sr = texture(u_materialIdTex, fragTexCoord + vec2(u_texel.x, 0.0)).b;
+        float sd = texture(u_materialIdTex, fragTexCoord - vec2(0.0, u_texel.y)).b;
+        float su = texture(u_materialIdTex, fragTexCoord + vec2(0.0, u_texel.y)).b;
+        rawSlot = max(max(sl, sr), max(sd, su));
+    }
+    int slot = clamp(int(rawSlot + 0.5), 0, FLUID_MATERIAL_SLOTS - 1);
+    vec3 materialBody = u_materialBody[slot].rgb;
+    vec3 materialGlow = u_materialGlow[slot].rgb;
+    vec3 materialSoft = u_materialSoft[slot].rgb;
+    int liquidClass = int(u_materialBody[slot].a + 0.5);
+    float emissionStrength = u_materialGlow[slot].a;
+    float crustGain = u_materialSoft[slot].a;
+    float materialIor = max(u_materialOptics[slot].x, 1.0001);
+    float roughnessScale = max(u_materialOptics[slot].y, 0.01);
+    float extraOpacityPerM = max(u_materialOptics[slot].z, 0.0);
 
     vec3 positionView = ReconstructViewPosition(fragTexCoord, fluidDepth);
     vec3 V = normalize(-positionView);
@@ -383,7 +450,7 @@ void main() {
 
     // Snell Refraction
     vec3 incident = -V;
-    vec3 refractedDirection = refract(incident, N, 1.0 / 1.333);
+    vec3 refractedDirection = refract(incident, N, 1.0 / materialIor);
     vec2 incidentSlope = incident.xy / max(abs(incident.z), 0.25);
     vec2 refractedSlope = refractedDirection.xy / max(abs(refractedDirection.z), 0.25);
     float travelPixels = clamp(opticalPath * 100.0, 0.35, 13.0);
@@ -429,8 +496,8 @@ void main() {
      * ground), not into this term. */
 
     // Beer-Lambert Volumetric Absorption
-    float materialPeak = max(max(u_materialBody.r, u_materialBody.g), max(u_materialBody.b, 0.001));
-    vec3 materialTransmission = clamp(u_materialBody / materialPeak, vec3(0.035), vec3(1.0));
+    float materialPeak = max(max(materialBody.r, materialBody.g), max(materialBody.b, 0.001));
+    vec3 materialTransmission = clamp(materialBody / materialPeak, vec3(0.035), vec3(1.0));
     /* Beer-Lambert with a real path length, so the coefficient is a statement
      * rather than a dial: one FLUID_REFERENCE_DEPTH_M of this liquid transmits
      * exactly materialTransmission. Everything thinner is proportionally
@@ -439,8 +506,14 @@ void main() {
      * The old 2.60 multiplied a thickness that had already been squeezed
      * through a saturating knee, so its value meant nothing on its own and had
      * to be re-tuned whenever the knee moved. */
+    /* `extraOpacityPerM` is the liquid's own grey extinction on top of its
+     * colour, and it is what separates a hot liquid from orange glass. Lava's
+     * body colour is saturated, so the RED channel of materialTransmission is
+     * 1.0 by construction and the background reads straight through the middle
+     * of the body — the colour alone cannot make a liquid opaque. Water keeps
+     * FLUID_TURBIDITY_PER_M and is unchanged. */
     vec3 absorption = -log(materialTransmission) / FLUID_REFERENCE_DEPTH_M
-                    + vec3(FLUID_TURBIDITY_PER_M);
+                    + vec3(FLUID_TURBIDITY_PER_M + extraOpacityPerM);
     vec3 transmittance = exp(-absorption * opticalPath);
 
     float hemi = clamp(worldNormal.y * 0.5 + 0.5, 0.0, 1.0);
@@ -448,7 +521,7 @@ void main() {
     vec3 L = normalize(u_sunDirectionView);
     float ndl = max(dot(N, L), 0.0);
 
-    vec3 waterScatterColor = u_materialBody;
+    vec3 waterScatterColor = materialBody;
     vec3 illumination = ambient + u_sunColor * (0.12 + 0.30 * ndl);
     vec3 transmitted = refractedScene * transmittance;
     float illuminationEnergy = dot(illumination, vec3(0.2126, 0.7152, 0.0722));
@@ -460,14 +533,23 @@ void main() {
     float grazingWeight = mix(0.32, 1.0, pow(1.0 - ndv, 1.5));
     vec3 inScatter = waterScatterColor * scatterAmount * (0.34 + illuminationEnergy * 0.42) * grazingWeight;
 
-    float fresnel = FresnelSchlick(ndv);
+    vec3 dielectricF0 = vec3(IorToF0(materialIor));
+    vec3 fresnel = FresnelSchlick(ndv, dielectricF0);
     float volumeWeight = smoothstep(0.016, 0.095, kernelThickness);
-    float visibleFresnel = fresnel * mix(0.045, 1.0, volumeWeight);
+    vec3 visibleFresnel = fresnel * mix(0.045, 1.0, volumeWeight);
     // Fresnel rim: keeps the silhouette legible on any background (bright
     // grass included) without painting a cartoon outline - it fades to zero
     // on thin edges and is lit by the sun.
     float rimStrength = pow(1.0 - ndv, 2.0) * smoothstep(0.012, 0.10, kernelThickness);
-    vec3 rimLight = u_materialGlow * rimStrength * (0.12 + 0.55 * illuminationEnergy) * (0.30 + 0.70 * ndl);
+    /* Zero on a conductor. This is a DIELECTRIC's grazing-edge hack — it exists
+     * so a 2%-reflective body keeps a legible silhouette against a bright
+     * background. A conductor's edge is already the strongest thing on it via
+     * the coloured Fresnel below, so adding this on top double-counts the rim
+     * AND paints it the wrong colour: METAL's glow is a blue (120,200,255), and
+     * it drew a blue fringe around the liquid-metal blob. */
+    float rimGate = (liquidClass == FLUID_CLASS_CONDUCTOR) ? 0.0 : 1.0;
+    vec3 rimLight = materialGlow * rimStrength * (0.12 + 0.55 * illuminationEnergy)
+                  * (0.30 + 0.70 * ndl) * rimGate;
     vec3 viewWorld = normalize(mat3(u_viewToWorld) * V);
     vec3 reflectedWorld = reflect(-viewWorld, worldNormal);
     float skyReflection = smoothstep(-0.18, 0.62, reflectedWorld.y);
@@ -476,10 +558,10 @@ void main() {
     // the "plastic toy" silhouette. Boost the sky side with the material glow
     // only when the actual sky is dark; bright-sky maps stay unchanged.
     float skyLuma = dot(u_skyAmbient, vec3(0.2126, 0.7152, 0.0722));
-    vec3 skyReflectionColor = u_skyAmbient * 1.38 + u_materialGlow * 0.65 * clamp(1.0 - skyLuma, 0.0, 1.0);
+    vec3 skyReflectionColor = u_skyAmbient * 1.38 + materialGlow * 0.65 * clamp(1.0 - skyLuma, 0.0, 1.0);
     vec3 reflection = mix(u_groundAmbient * 0.68, skyReflectionColor, skyReflection);
     float horizonReflection = pow(1.0 - abs(reflectedWorld.y), 3.0);
-    reflection += u_materialSoft * (0.045 + horizonReflection * 0.10);
+    reflection += materialSoft * (0.045 + horizonReflection * 0.10);
 
     // Screen Space Reflection (SSR) for High/Ultra tier
     if (u_qualityTier >= 2) {
@@ -527,7 +609,7 @@ void main() {
      * the sample point instead of phase-shifting one wave, so the field drifts
      * rather than pulsing in lockstep everywhere. */
     float surfaceNoise = fbm3(worldPosition * 2.7 + vec3(0.0, u_time * 0.35, 0.0));
-    float authoredRoughness = mix(0.090, 0.150, surfaceNoise);
+    float authoredRoughness = mix(0.090, 0.150, surfaceNoise) * roughnessScale;
     float roughness = NormalFilteredRoughness(N, authoredRoughness);
     float lobeScale = BlinnExponentScale(authoredRoughness, roughness);
     vec3 sunHalf = normalize(V + L);
@@ -543,8 +625,20 @@ void main() {
     float broadSunLobe = pow(sunNdh, broadExponent) * 0.020 * ((broadExponent + 2.0) / 50.0);
     float sharpGlint = pow(sunNdh, glintExponent) * 0.22 * ((glintExponent + 2.0) / 98.0)
                      * smoothstep(0.55, 0.86, surfaceNoise);
-    vec3 specular = u_sunColor * (WaterSpecularBRDF(N, V, L, roughness) * 1.0 + broadSunLobe + sharpGlint) * ndl;
-    specular *= mix(vec3(1.0), u_materialGlow, 0.08);
+    /* The specular F0. For a dielectric this is the same scalar the Fresnel rim
+     * uses; the conductor branch below overrides it with a COLOURED F0, which is
+     * the whole difference between a wet look and a metal one. */
+    vec3 specularF0 = dielectricF0;
+    /* The two Blinn lobes below are an un-normalized hand-rolled glitter hack
+     * authored against water's 0.02 F0. A conductor's F0 is ~40x that, so
+     * scaling them by it would blow out; and it does not need them — the GGX
+     * term alone is already 45x brighter once F0 is a metal's. So they stay
+     * exactly as they were for dielectrics and switch off for a conductor. */
+    float blinnGate = 1.0;
+    if (liquidClass == FLUID_CLASS_CONDUCTOR) { specularF0 = materialBody; blinnGate = 0.0; }
+    vec3 specular = u_sunColor * (WaterSpecularBRDF(N, V, L, roughness, specularF0)
+                                  + vec3((broadSunLobe + sharpGlint) * blinnGate)) * ndl;
+    specular *= mix(vec3(1.0), materialGlow, 0.08);
     /* The cell-hash sparkle that used to live here is GONE. It took the floor of
      * the world position scaled by 90, quantising the surface into 1.1 cm CUBES,
      * and painted each selected cell a flat block of sun colour — so the "sub-centimetre glint" it
@@ -571,7 +665,8 @@ void main() {
         float pointExponent = 44.0 * lobeScale;
         float broadPointLobe = pow(max(dot(N, pointHalf), 0.0), pointExponent)
                              * 0.070 * ((pointExponent + 2.0) / 46.0);
-        specular += u_pointLightColor[i].rgb * (WaterSpecularBRDF(N, V, pointL, roughness) * 1.12 + broadPointLobe) * pointNdl * attenuation * 1.55;
+        specular += u_pointLightColor[i].rgb * (WaterSpecularBRDF(N, V, pointL, roughness, specularF0) * 1.12
+                                                + vec3(broadPointLobe * blinnGate)) * pointNdl * attenuation * 1.55;
     }
 
     // Shoreline Wetness & Edge Softening Foam
@@ -588,10 +683,72 @@ void main() {
     float crest = curvature * smoothstep(0.025, 0.085, kernelThickness) * (1.0 - smoothstep(0.16, 0.30, kernelThickness)) * 0.55 * mix(1.0, 0.16, airborneWeight);
     float foamPattern = smoothstep(0.48, 0.76, surfaceNoise);
     float foamMask = clamp(max(shoreline, crest) * foamPattern, 0.0, 0.72);
-    vec3 foamColor = mix(u_materialSoft, vec3(1.0), 0.20);
-    vec3 foam = foamColor * foamMask * (0.38 + 0.62 * dot(ambient, vec3(0.333333)));
+    vec3 foamColor = mix(materialSoft, vec3(1.0), 0.20);
+    vec3 foam = foamColor * foamMask * (0.38 + 0.62 * dot(ambient, vec3(0.333333)))
+              * (liquidClass == FLUID_CLASS_EMISSIVE ? 0.0 : crustGain);
 
+    /* --- Thermal emission ----------------------------------------------------
+     *
+     * The composite had NO emission term of any kind, which is why a hot liquid
+     * could only ever be reached by authoring a bright body colour — i.e. by
+     * lying about its albedo, which then also brightened its in-scatter, its rim
+     * and its foam.
+     *
+     * Emission saturates along the view path exactly like absorption does, so it
+     * gets the same measured `opticalPath` in metres. The extinction is stated
+     * against the same reference depth every other optical constant in this file
+     * uses: one FLUID_REFERENCE_DEPTH_M of an emissive liquid reaches 1-e^-2, so
+     * a body as deep as an authored one glows at ~86% and everything thinner is
+     * proportionally cooler. That is the "thick = glowing core, thin = cooled
+     * crust" the material wants, and it is self-limiting, so a grazing pixel
+     * cannot run away to an arbitrary brightness.
+     *
+     * The colour is NOT Kirchhoff's law. Tying emitted colour to the absorption
+     * spectrum (emissivity = absorptivity) is right for a body in thermal
+     * equilibrium and wrong here: lava's absorption peaks in blue, so a
+     * Kirchhoff term renders CYAN lava. A hot liquid radiates a blackbody
+     * spectrum set by its temperature, which the material authors directly —
+     * body for the cooler skin, glow for the core. */
+    vec3 emission = vec3(0.0);
+    float crustMask = 0.0;
+    if (liquidClass == FLUID_CLASS_EMISSIVE && emissionStrength > 0.0) {
+        /* One reference depth of an emissive liquid emits HALF its source
+         * radiance, hence ln(2)/0.20. The first attempt stated "86% at one
+         * reference depth" (2/0.20), which saturates the term by 0.3 m — and an
+         * authored body is 0.3-0.6 m through the middle, so the whole thing sat
+         * at full emission with no gradient at all and clipped to white. The
+         * subtraction view (`water - emission`) showed a rich crimson body
+         * underneath the entire time; only the emission was washing it out. */
+        float emissionDepth = 1.0 - exp(-(0.693147 / FLUID_REFERENCE_DEPTH_M) * opticalPath);
+        /* The knee sits high so the MID of a body stays red-orange and only the
+         * deepest part climbs to the incandescent core colour. Dropped to 0.30
+         * the whole body reached core and read as molten gold. */
+        float core = smoothstep(0.40, 0.95, emissionDepth);
+        vec3 emissionColor = mix(materialBody, materialGlow, core);
+        /* Crust, not foam. The same patchy field the foam used, read the other
+         * way round: a hot liquid's skin is where it has COOLED, so it SUBTRACTS
+         * emission instead of adding a white cap. Gating foam off and stopping
+         * there leaves lava as a featureless glowing blob. */
+        /* Its OWN frequency, not surfaceNoise's. surfaceNoise runs at 2.7, i.e.
+         * a 0.37 m cell, which is most of an authored body — so the crust came
+         * out as one smudge instead of a skin. At 7.0 the cell is 0.14 m and
+         * several patches fit across a body. */
+        float crustNoise = fbm3(worldPosition * 7.0 + vec3(0.0, u_time * 0.18, 0.0));
+        crustMask = smoothstep(0.42, 0.72, crustNoise) * crustGain;
+        emission = emissionColor * emissionDepth * emissionStrength
+                 * mix(1.0, 0.16, crustMask);
+    }
 
-    vec3 water = dielectricBase + specular + foam + rimLight;
+    /* A conductor has no transmission and no volume: `dielectricBase` mixes
+     * transmitted background and in-scatter under a 2% Fresnel, which is the one
+     * assembly that must not survive for metal. Reflection is the whole surface,
+     * modulated by the same coloured F0 the specular lobe uses. */
+    vec3 base = dielectricBase;
+    if (liquidClass == FLUID_CLASS_CONDUCTOR) {
+        vec3 conductorFresnel = FresnelSchlick(ndv, specularF0);
+        base = reflection * conductorFresnel;
+    }
+
+    vec3 water = base + specular + foam + rimLight + emission;
     finalColor = vec4(water, surfaceCoverage);
 }

@@ -83,6 +83,9 @@ void GpuParticleSystem_Update(float dt);
 
 // Vẽ tất cả particle dưới dạng camera-facing billboard
 void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture);
+/* Liquid-table slot written into the capture's B channel by the NEXT surface
+ * draw. core/fluid/fluid_surface.c owns the policy; this is only the wire. */
+void GpuParticleSystem_SetSurfaceMaterialId(float materialId);
 void GpuParticleSystem_DrawSurfaceEmitter(Camera3D camera, Texture2D texture, int emitterId);
 // Far side of the same splat cloud (dual-depth thickness); see fluid_capture_particle_back.fs.
 void GpuParticleSystem_DrawSurfaceBackEmitter(Camera3D camera, int emitterId);

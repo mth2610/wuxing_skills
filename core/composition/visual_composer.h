@@ -551,10 +551,13 @@ void VFX_ComposeWaterOrb(Vector3 start, Vector3 target);
 // Continuous — call every frame; it releases itself shortly after the calls
 // stop, or immediately on VFX_WaterRing_Stop(). `radius` is the ring radius in
 // metres (tube = 0.12 of it), `t01` drives density and flow speed.
-// NOTE: the fluid surface carries ONE material at a time, so a second fluid
-// body in the same frame shares this one's optics.
 void VFX_ComposeWaterRing(Vector3 center, float radius, float t01);
 void VFX_WaterRing_Stop(void);
+// Three SSF liquids — water, lava, liquid metal — in ONE capture, side by side.
+// The reference bench for the liquid table (core/fluid/fluid_surface.h): if the
+// per-pixel material id regresses, all three render in one colour.
+// Continuous — call every frame. `spacing` is the gap in metres (0 -> 1.1).
+void VFX_ComposeLiquidBench(Vector3 center, float spacing, float t01);
 void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
 void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
 void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
