@@ -2130,3 +2130,34 @@ reference offers another. Guarded by `core/tests/fluid_filter_2d_test.c`.
 **GFX_MED on Android**, and a several-hundred-tap loop of dependent fetches on a
 Mali tiler is exactly what cannot be judged from a desktop — so the mobile tiers
 keep the separable path until someone runs it on a device.
+
+## A 2D filter kernel is quadratic in a radius that GROWS as the camera approaches
+
+**Symptom.** Replacing the separable depth filter with a true 2D kernel cost
+nothing at the default framing (18.9 ms against the separable path's 20.0) and
+collapsed to **9 fps at close range** (111.9 ms against 30.9). Shipped that way,
+because the first measurement was taken at one camera distance.
+
+**Cause.** `adaptiveRadius` is derived from the kernel's PROJECTED size, so it
+grows as the camera closes in — up to the tier ceiling of 28. The separable pair
+costs O(r); a disc costs O(r²). At r=28 that is 2465 taps against 114, and the
+covered pixel count is rising at the same time.
+
+**The fix that was tried first and REVERTED: subsampling the disc.** Stepping it
+by a stride bounds the tap count at the same reach, and it worked on paper — 26.8
+ms at close range. But a fixed sparse lattice, point-sampled identically on every
+pixel, makes the LATTICE visible: the body came out under a fine regular dot grid.
+Trading stripes for dots is not a fix. The obvious repair — place the taps on
+half-texel centres so hardware bilinear box-filters each step — would rest on
+LINEAR filtering of R32F, which Vulkan makes **optional** (rlvk detects it as
+`Caps.floatFilterR32`) and which would therefore fail silently on some devices.
+
+**The fix that stands: cap the REACH, not the density.** A dense radius-10 disc is
+317 taps whatever the adaptive radius asks for. Being isotropic and gap-free it
+still out-smooths the wider separable cross, and it lands at the separable path's
+own cost (31.4 ms against 30.9 at close range) with the stripes gone.
+
+**Rule.** Any screen-space kernel whose radius is derived from a projected size
+must be measured at more than one camera distance, and a kernel with quadratic
+cost needs a hard reach cap, not just a tier ceiling. Guarded by
+`core/tests/fluid_filter_2d_test.c`, which asserts the tap count stops growing.

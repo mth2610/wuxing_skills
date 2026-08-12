@@ -11,6 +11,24 @@ uniform int u_filterRadius;
 uniform int u_fillHoles;
 /* 0 = the separable 1D pass (run twice by the host), 1 = the true 2D kernel. */
 uniform int u_filter2D;
+/* Radius ceiling for the 2D kernel, in texels.
+ *
+ * The disc is quadratic in the radius while the separable pair is linear, and the
+ * radius GROWS as the camera closes in. Unbounded that measured 112 ms/frame at
+ * close range against the separable path's 31 — the 9 fps the user hit.
+ *
+ * Subsampling the disc was tried first and rejected: stepping it by a stride
+ * bounds the tap count at the same reach, but a fixed sparse lattice point-sampled
+ * the same way on every pixel makes the LATTICE visible, and the body came out
+ * covered in a fine regular dot pattern. Trading stripes for dots is not a fix,
+ * and the obvious repair — half-texel taps so hardware bilinear box-filters each
+ * step — would rest on LINEAR filtering of R32F, which Vulkan makes optional
+ * (rlvk detects it as Caps.floatFilterR32) and which would fail silently.
+ *
+ * So bound the REACH instead. A dense radius-10 disc is 317 taps against the
+ * separable pair's 114 at radius 28, and being isotropic and gap-free it still
+ * smooths better than the wider separable cross. */
+#define FLUID_FILTER2D_MAX_RADIUS 10
 uniform mat4 u_projection;
 uniform mat4 u_inverseProjection;
 
@@ -112,11 +130,13 @@ void main() {
     if (u_filter2D != 0) {
         vec4 upper = vec4(centerDistance + threshold);
         vec4 lower = vec4(centerDistance - threshold);
-        float radiusSquared = float(adaptiveRadius * adaptiveRadius);
+        float radiusSquared;
+        int radius2D = min(adaptiveRadius, FLUID_FILTER2D_MAX_RADIUS);
+        radiusSquared = float(radius2D * radius2D);
         for (int dy = 0; dy <= 32; dy++) {
-            if (dy > adaptiveRadius) break;
+            if (dy > radius2D) break;
             for (int m = 0; m <= 32; m++) {
-                if (m > adaptiveRadius) break;
+                if (m > radius2D) break;
                 if (dy == 0 && m == 0) continue;          // the centre is already in
                 float r2 = float(m * m + dy * dy);
                 if (r2 > radiusSquared) continue;         // a disc, not a square

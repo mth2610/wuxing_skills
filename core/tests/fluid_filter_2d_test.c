@@ -24,8 +24,12 @@
 
 /* Mirror of the 2D loop's tap set: a DISC of the adaptive radius, walked as
  * point-symmetric pairs over the upper half plane. */
-static int TapCount2D(int radius, int *outPairs, int *outOffAxis)
+#define FLUID_FILTER2D_MAX_RADIUS 10
+static int TapCount2D(int requestedRadius, int *outPairs, int *outOffAxis)
 {
+    /* The shader caps the 2D reach; the adaptive radius may ask for far more. */
+    int radius = requestedRadius < FLUID_FILTER2D_MAX_RADIUS
+               ? requestedRadius : FLUID_FILTER2D_MAX_RADIUS;
     int taps = 1, pairs = 0, offAxis = 0;   /* the centre is always in */
     for (int dy = 0; dy <= radius; dy++)
         for (int m = 0; m <= radius; m++)
@@ -109,15 +113,22 @@ int main(void)
         CHECK(covered > 100);
     }
 
-    /* ---- Cost, stated rather than discovered later. The disc is quadratic where
-     * the separable pair is linear; the pass count halves, which is why the
-     * measured frame cost went up by ~1-2 ms rather than by the tap ratio. */
+    /* ---- COST MUST BE BOUNDED. This is the one that shipped broken: the disc is
+     * quadratic in the radius, the radius grows as the camera closes in, and
+     * unbounded it measured 112 ms/frame at close range against the separable
+     * path's 31 — 9 fps. The cap is what makes the 2D kernel affordable, so the
+     * tap count must stop growing however large the adaptive radius gets. */
     {
-        for (int r = 4; r <= 16; r += 6)
-            printf("      radius %2d: 2D %4d taps vs separable %3d  (%.1fx)\n",
-                   r, TapCount2D(r, NULL, NULL), TapCount1D(r),
-                   (double)TapCount2D(r, NULL, NULL) / (double)TapCount1D(r));
-        CHECK(TapCount2D(13, NULL, NULL) > TapCount1D(13));
+        int atCap = TapCount2D(FLUID_FILTER2D_MAX_RADIUS, NULL, NULL);
+        for (int r = 4; r <= 28; r += 8)
+            printf("      requested radius %2d: 2D %4d taps vs separable %3d\n",
+                   r, TapCount2D(r, NULL, NULL), TapCount1D(r));
+        CHECK(TapCount2D(28, NULL, NULL) == atCap);
+        CHECK(TapCount2D(100, NULL, NULL) == atCap);
+        /* And the cap has to be low enough to be worth having: the separable
+         * pair at the tier ceiling of 28 is 114 taps, so a 2D disc costing ten
+         * times that would be the regression again. */
+        CHECK(atCap < 4 * TapCount1D(28));
     }
 
     /* ---- Anti-drift: the paper's four rules must still be in the 2D branch, and
@@ -142,6 +153,10 @@ int main(void)
                 CHECK(strstr(twoD, "if (r2 > radiusSquared) continue;") != NULL);
                 CHECK(strstr(twoD, "if (dy == 0 && m == 0) continue;") != NULL);
                 CHECK(strstr(twoD, "if (pair == 1 && (m == 0 || dy == 0)) continue;") != NULL);
+                /* the reach cap, and no sparse stride: subsampling the disc on a
+                 * fixed lattice made the lattice itself visible as a dot grid. */
+                CHECK(strstr(twoD, "min(adaptiveRadius, FLUID_FILTER2D_MAX_RADIUS)") != NULL);
+                CHECK(strstr(twoD, "stride") == NULL);
             }
             free(shader);
         }

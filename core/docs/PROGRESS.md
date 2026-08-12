@@ -1052,3 +1052,22 @@ loop on a Mali tiler cannot be judged from here.
 2. **The half-sunk ring's waterline** — an authoring call.
 3. **`capFade`** is still a plane wave; amplitude 0.004, invisible so far.
 4. **2D on mobile** — needs one device run to decide.
+
+### Close-range regression from the 2D kernel, and the cap that fixed it (2026-08-12)
+
+The 2D filter shipped with a 3.6x frame-cost regression at close range that the
+default-framing measurement could not see. Reproduced with the camera distance as
+the variable:
+
+| camera distance | 2D, uncapped | separable |
+|---|---|---|
+| 6.0 (the framing everything else was measured at) | 18.9 ms / 53 fps | 20.0 ms / 50 fps |
+| 2.0 | **111.9 ms / 9 fps** | 30.9 ms / 32 fps |
+| 1.2 | 116.7 ms / 9 fps | 32.2 ms / 31 fps |
+
+Cause and the two candidate fixes are in `core/docs/LANDMINES.md`. The one that
+stands is a hard reach cap of 10 texels on the 2D disc (317 taps, whatever the
+adaptive radius asks for): **31.4 ms / 32 fps at distance 2.0, level with the
+separable path it replaced, with the striping gone.** Subsampling the disc was
+measured faster still (26.8 ms) and reverted — it made the sampling lattice
+visible as a dot grid.
