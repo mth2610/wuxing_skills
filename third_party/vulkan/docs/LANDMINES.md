@@ -82,11 +82,12 @@ These are decisions, not accidents — don't "simplify" them away: driver quirks
   been benchmarking the default shader for its entire existence. Fixed with
   `RLVK_REPO_ROOT` (exported by the script) plus a guard against
   `rlGetShaderIdDefault()`. Any scenario touching a repo asset needs both.
-- **`RLVK_GPU_TRACE` reports 0.000 ms on MoltenVK.** Not a capability problem: the
-  graphics queue family reports `timestampValidBits=64` and `timestampPeriod=1.0`,
-  so timestamps are supported and the deltas still come back zero — the query
-  results are read without `VK_QUERY_RESULT_WAIT_BIT` and MoltenVK appears to
-  return `VK_SUCCESS` with zeros rather than `VK_NOT_READY`. Until that is fixed,
-  GPU-side timing on macOS is unavailable; measure wall-clock inside the render
-  loop instead (process startup and shader compilation must be excluded, or they
-  dominate).
+- **`RLVK_GPU_TRACE` reports 0.000 ms on MoltenVK, and it is the host, not the
+  code.** The queue family advertises `timestampValidBits=64` and
+  `timestampPeriod=1.0 ns`, so the obvious diagnosis — "timestamps unsupported" —
+  is wrong. The harvest now uses `VK_QUERY_RESULT_WAIT_BIT` plus
+  `WITH_AVAILABILITY_BIT` and warns once if a query is unavailable; on this host
+  every query comes back **available with a value of zero**. MoltenVK is
+  advertising counters it does not fill. Treat GPU-side timing as unavailable on
+  macOS and use Instruments / Xcode's Metal frame capture when a real GPU
+  breakdown is needed.

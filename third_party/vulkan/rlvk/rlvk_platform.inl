@@ -549,9 +549,34 @@ static void rlvkBeginFrame(void)
         }
         else if (RLVK.frameCounter >= RLVK_FRAME_INDEX_COUNT)
         {
-            u64 q[3] = {0};
-            if (vkGetQueryPoolResults(RLVK.device, s_gpuPool, frameIndex * 3, 3, sizeof(q), q,
-                                      sizeof(u64), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS)
+            /* WAIT, and check availability per query.
+             *
+             * Without VK_QUERY_RESULT_WAIT_BIT the spec allows an unavailable
+             * query to leave its slot untouched and the call to report
+             * VK_NOT_READY — but MoltenVK returns VK_SUCCESS with the buffer
+             * still zeroed, so the trace happily averaged 0.000 ms forever and
+             * looked like "GPU timestamps are unsupported on this device". They
+             * are not: the queue family advertises timestampValidBits=64 and
+             * timestampPeriod=1.0 ns. Waiting is free here because the frame
+             * being harvested is RLVK_FRAME_INDEX_COUNT behind and its fence has
+             * already been waited on; the availability word is belt and braces,
+             * and catches the same failure returning as garbage rather than zero. */
+            struct { u64 value, available; } qa[3] = {{0, 0}, {0, 0}, {0, 0}};
+            VkResult qres = vkGetQueryPoolResults(RLVK.device, s_gpuPool, frameIndex * 3, 3,
+                                                  sizeof(qa), qa, sizeof(qa[0]),
+                                                  VK_QUERY_RESULT_64_BIT |
+                                                  VK_QUERY_RESULT_WAIT_BIT |
+                                                  VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+            u64 q[3] = { qa[0].value, qa[1].value, qa[2].value };
+            bool qok = (qres == VK_SUCCESS) && qa[0].available && qa[1].available && qa[2].available;
+            if (!qok)
+            {
+                static bool warned = false;
+                if (!warned) { warned = true;
+                    TRACELOG(RL_LOG_WARNING, "VKGPU: timestamps unavailable (res=%d avail=%d/%d/%d) — trace disabled",
+                             (int)qres, (int)qa[0].available, (int)qa[1].available, (int)qa[2].available); }
+            }
+            if (qok)
             {
                 s_gpuScene += (f64)(q[1] - q[0]) * s_gpuPeriod * 1e-6; // ms
                 s_gpuPresent += (f64)(q[2] - q[1]) * s_gpuPeriod * 1e-6;

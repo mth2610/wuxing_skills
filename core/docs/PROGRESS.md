@@ -940,3 +940,43 @@ passes, and the two compose.
 filter and the composite, unattributed between them. The composite is one
 full-screen pass doing SSR, refraction, four lights and foam, so it is not
 obviously small.
+
+## Per-stage SSF attribution: NOT ACHIEVED on this host (2026-08-12)
+
+The plan was attribute → scissor → half-res depth. It stopped at the first step,
+and the reason is worth more than the attempt was.
+
+**Wall-clock frame time cannot resolve a 0.5–2 ms stage here.** Three successive
+methods were tried and each failed in a way the previous one hid:
+
+| method | what went wrong |
+|---|---|
+| separate processes per configuration, slope of two run lengths | machine drift between processes exceeded the effect; "SSF off" measured SLOWER than "SSF on" |
+| separate processes, timed inside the render loop | drift across rounds (baseline 21 -> 30 ms over three rounds) larger than every stage |
+| one process, stages interleaved frame by frame in a fixed rotation | the GPU is pipelined, so a frame's cost lands partly in the NEXT frame's sample; a fixed rotation puts that bias on one bucket every time |
+| one process, interleaved with a RANDOM variant per frame | two runs of the same build: baseline 34.3 then 29.4 ms, and every delta flipped sign — adding work measured as faster |
+
+`RLVK_GPU_TRACE` would have sidestepped all of it and it does not work on this
+host (see the rlvk landmine: MoltenVK reports the queries available and returns
+zeros).
+
+**Two hypotheses were tested anyway, before the numbers were known to be
+worthless, and both are recorded so they are not retried on faith:**
+
+- **Scissoring the screen-space passes to the fluid's extent measured 0.72 ms
+  SLOWER**, not faster. The empty pixels are already nearly free — the filter
+  early-outs after one fetch and the composite discards after one — while
+  `ClearBackground` is a render-pass `loadOp CLEAR` that covers the whole target
+  and which scissor does not shrink at all.
+- Which suggested **dropping the redundant clears** (the filter, blur and resolve
+  passes assign `finalColor` on every path, so the clear before them is dead
+  work). Not applied: omitting the clear makes rlvk use `loadOp LOAD`, a
+  full-target READ, which is plausibly worse on a tiler — and with no working
+  measurement there is no way to tell. It is the best remaining candidate the
+  moment a real timer exists.
+
+**What a real measurement needs:** a quiet machine, or Instruments / Xcode Metal
+frame capture on macOS. The one number this session produced that reproduced
+across runs came from `perf_ssf_filter` — single process, uncapped, randomized
+variant, hundreds of samples per bucket — which is the shape any future in-game
+harness should copy.
