@@ -105,6 +105,48 @@ float DecodeOpticalThickness(float measuredThicknessMetres) {
     return max(measuredThicknessMetres, 0.0);
 }
 
+/* Specular antialiasing by normal filtering — Kaplanyan et al. 2016, in
+ * Filament's formulation (`normalFiltering`, materialParams
+ * specularAntiAliasingVariance/Threshold, defaults 0.15/0.25).
+ *
+ * The symptom it exists for is exactly the one here: a narrow lobe over a normal
+ * field that changes fast in screen space resolves detail the surface does not
+ * actually have, and paints it as a hard bright needle. Widening the lobe by
+ * hand was tried before this (roughness 0.035 -> 0.090, exponents 190/256 ->
+ * 48/96, to kill onion rings) and it is the wrong control: a constant widening
+ * is too much where the surface is genuinely smooth and never enough where it is
+ * not. The variance of the normal IS the amount of detail being hidden, so it is
+ * what the lobe should widen by.
+ *
+ * Here the normals are reconstructed from depth taps, so they carry splat-scale
+ * wobble the water does not have — the term below is largest exactly there, and
+ * at the silhouette, where the normal is least trustworthy.
+ *
+ * `roughness` in this file is PERCEPTUAL (WaterSpecularBRDF squares it to get
+ * GGX alpha), which matches Filament's convention, so the round trip is
+ * alpha = r^2, filter on alpha^2, and back. */
+#define FLUID_SPECULAR_AA_VARIANCE 0.15
+#define FLUID_SPECULAR_AA_THRESHOLD 0.25
+float NormalFilteredRoughness(vec3 N, float perceptualRoughness) {
+    vec3 dNdx = dFdx(N);
+    vec3 dNdy = dFdy(N);
+    float variance = FLUID_SPECULAR_AA_VARIANCE * (dot(dNdx, dNdx) + dot(dNdy, dNdy));
+    float kernelRoughness = min(2.0 * variance, FLUID_SPECULAR_AA_THRESHOLD);
+    float alpha = perceptualRoughness * perceptualRoughness;
+    float squareAlpha = clamp(alpha * alpha + kernelRoughness, 0.0, 1.0);
+    return sqrt(sqrt(squareAlpha));
+}
+
+/* How much the two hand-rolled Blinn lobes must widen to match. A Blinn exponent
+ * behaves like 2/alpha^2, so scaling it by the ratio of the unfiltered to the
+ * filtered alpha^2 keeps all three lobes describing one surface. Without this
+ * the GGX term would soften while the sharp glint kept drawing the same needle. */
+float BlinnExponentScale(float perceptualRoughness, float filteredRoughness) {
+    float alpha = perceptualRoughness * perceptualRoughness;
+    float filteredAlpha = filteredRoughness * filteredRoughness;
+    return clamp((alpha * alpha) / max(filteredAlpha * filteredAlpha, 1e-8), 0.02, 1.0);
+}
+
 float WaterSpecularBRDF(vec3 N, vec3 V, vec3 L, float roughness) {
     float ndl = max(dot(N, L), 0.0);
     float ndv = max(dot(N, V), 0.0);
@@ -421,10 +463,22 @@ void main() {
     // this scale is not a mirror, and the ripple then reads as shimmer instead
     // of as contour lines.
     float surfaceNoise = sin(dot(worldPosition, vec3(12.3, 7.1, -9.5)) + u_time * 1.1) * 0.5 + 0.5;
-    float roughness = mix(0.090, 0.150, surfaceNoise);
+    float authoredRoughness = mix(0.090, 0.150, surfaceNoise);
+    float roughness = NormalFilteredRoughness(N, authoredRoughness);
+    float lobeScale = BlinnExponentScale(authoredRoughness, roughness);
     vec3 sunHalf = normalize(V + L);
-    float broadSunLobe = pow(max(dot(N, sunHalf), 0.0), 48.0) * 0.020;
-    float sharpGlint = pow(max(dot(N, sunHalf), 0.0), 96.0) * smoothstep(0.55, 0.86, surfaceNoise) * 0.22;
+    float sunNdh = max(dot(N, sunHalf), 0.0);
+    /* Widening a lobe must not BRIGHTEN it. GGX above is normalized and dims
+     * itself; these two Blinn lobes are not, so spreading them over a larger
+     * solid angle at a fixed amplitude adds energy — the first attempt at this
+     * fix removed the needle and left a bigger, brighter comma in its place.
+     * A pow(cos, n) lobe's solid angle goes as 1/(n+2), so the amplitude has to
+     * fall with (n+2) for the widening to redistribute rather than add. */
+    float broadExponent = 48.0 * lobeScale;
+    float glintExponent = 96.0 * lobeScale;
+    float broadSunLobe = pow(sunNdh, broadExponent) * 0.020 * ((broadExponent + 2.0) / 50.0);
+    float sharpGlint = pow(sunNdh, glintExponent) * 0.22 * ((glintExponent + 2.0) / 98.0)
+                     * smoothstep(0.55, 0.86, surfaceNoise);
     vec3 specular = u_sunColor * (WaterSpecularBRDF(N, V, L, roughness) * 1.0 + broadSunLobe + sharpGlint) * ndl;
     specular *= mix(vec3(1.0), u_materialGlow, 0.08);
     /* The cell-hash sparkle that used to live here is GONE. It took the floor of
@@ -450,7 +504,9 @@ void main() {
         vec3 pointL = toLight / max(distanceToLight, 0.001);
         float pointNdl = max(dot(N, pointL), 0.0);
         vec3 pointHalf = normalize(V + pointL);
-        float broadPointLobe = pow(max(dot(N, pointHalf), 0.0), 44.0) * 0.070;
+        float pointExponent = 44.0 * lobeScale;
+        float broadPointLobe = pow(max(dot(N, pointHalf), 0.0), pointExponent)
+                             * 0.070 * ((pointExponent + 2.0) / 46.0);
         specular += u_pointLightColor[i].rgb * (WaterSpecularBRDF(N, V, pointL, roughness) * 1.12 + broadPointLobe) * pointNdl * attenuation * 1.55;
     }
 

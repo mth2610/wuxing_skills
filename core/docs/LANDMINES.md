@@ -1973,3 +1973,68 @@ is composited through tonemapping, and it turns "it looks flat" into a number yo
 can compare against known geometry — the water ring's 21.6 cm tube diameter is
 what proved dual depth was reading the real envelope. Build it first; it costs one
 build and it is allowed to overturn the premise you were given.
+
+## Widening a specular lobe brightens it unless the lobe is normalized
+
+**Symptom.** Hard bright dashes on the water ring's tube. Isolating the
+composite's additive terms in the sandbox found the sun specular carrying all of
+it — a razor needle from the GGX lobe plus a soft cigar from the `sharpGlint`
+Blinn lobe. Fresnel contributed nothing (its term rendered ~black), and the back
+surface contributed nothing either: it carries no shading at all, only thickness.
+
+**Cause and fix.** A narrow lobe over a normal field that changes fast in screen
+space resolves detail the surface does not have. The published answer is normal
+filtering (Kaplanyan et al. 2016, in Filament's `normalFiltering` formulation):
+widen roughness by the screen-space variance of the normal, because that variance
+IS the hidden detail. Widening by hand had already been tried once here
+(roughness 0.035 → 0.090, exponents 190/256 → 48/96) and is the wrong control —
+too much where the surface is smooth, never enough where it is not.
+
+**The trap.** GGX is normalized and dims itself as it widens. The two
+hand-rolled Blinn lobes beside it are NOT: spreading `pow(cos, n)` over a larger
+solid angle at a fixed amplitude adds energy. The first attempt removed the
+needle and left a bigger, brighter comma — at the variance ceiling that is 25x
+the energy. A `pow(cos, n)` lobe's solid angle goes as `1/(n+2)`, so its
+amplitude has to be scaled by `(n+2)/(n_base+2)` for the widening to
+redistribute instead of add. Guarded by `core/tests/fluid_specular_aa_test.c`.
+
+## Subtract the term; do not read it in isolation
+
+**Symptom.** A white fringe traced the water ring's silhouette. Every additive
+term rendered on its own — rimLight, Fresnel×reflection, foam, the dielectric
+base — looked innocent, none of them white.
+
+**Cause.** An isolated term is shown against black and goes through the HDR
+tonemap on its own. Foam at 0.2–0.7 of its colour reads as a dim teal fringe
+alone, and as white when it lands on top of an already-bright blue body. The
+decisive view is the composite MINUS one term: `water - foam` removed the fringe
+in one look, after `water - specular` did not.
+
+**Rule.** When several terms sum into one image, isolate by subtraction, not by
+display. Additive terms interact through the tonemap, and "this one looks dark on
+its own" proves nothing.
+
+## `receiverProximity` is a waterline, and the water ring really is half-sunk
+
+**Symptom.** Shoreline foam drew a continuous line around the water ring's
+silhouette after dual-depth thickness landed — visible only then, because the old
+decode's knee flattened the thickness gradient that gates the term.
+
+**Three fixes that did NOT work, all reverted — do not retry:**
+
+| tried | result |
+|---|---|
+| slope-normalized mean curvature, the `(1+\|grad z\|^2)^(3/2)` denominator | correct physics, no measurable change: the pixels still firing are one texel INSIDE the silhouette, where the reconstructed surface is genuinely sharply curved (the splat profile rounds each kernel down at its own disc edge) |
+| gate `crest` on the receiver instead of scaling it by 0.16 when airborne | no change — the term firing was `shoreline`, not `crest` |
+| weight `receiverProximity` by `ndv`, on the theory that a vanishing depth gap at a grazing pixel is an artefact | no change — the reconstructed body does not curve to grazing at its outline, so `ndv` there is ~0.6–0.8, not ~0 |
+
+**What it actually is.** A probe comparing the new BACK depth against the scene
+depth showed the splat cloud's far surface reaching or passing the receiver over
+nearly the whole tube: `VFX_ComposeWaterRing` spawns a torus centred at the cast
+position, so with a 0.108 m tube at y = 0 the lower half is below the ground
+plane. The foam line is the genuine waterline of a half-sunk ring. The foam term
+is behaving correctly; dual-depth only made it visible.
+
+**Rule.** Before deciding a term is misfiring, check the fixture's geometry.
+Three plausible mechanism fixes were spent on a "silhouette artefact" that was a
+real intersection with the ground.

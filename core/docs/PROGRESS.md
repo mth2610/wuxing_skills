@@ -836,3 +836,34 @@ capture (`WUXING_VFX_CAMDIST` in `main.c`, `WUXING_GFX_TIER` in `gfx_quality.c`)
   linear filtering, Mali early-Z cost of `gl_FragDepth` + `discard`). The back
   capture pass adds a SECOND `gl_FragDepth` pass, so the third question now
   matters more than it did.
+
+## Bright streaks on the ring: specular AA landed, foam line is a waterline (2026-08-12)
+
+Follow-up to the dual-depth work, on the user's report of bright streaks at the
+water ring's edge, and their question of whether it was Fresnel or a back-surface
+highlight. Neither: measured with a debug view that isolates the composite's
+additive terms.
+
+**Fixed — sun specular.** Both lobes were producing it: the GGX BRDF a razor
+needle, `sharpGlint` a soft cigar. Now filtered by normal variance (Kaplanyan et
+al. 2016 / Filament's `normalFiltering`), with the two un-normalized Blinn lobes
+energy-corrected by `(n+2)` so widening redistributes instead of adding — the
+first attempt skipped that and made the highlight bigger and brighter (25x the
+energy at the variance ceiling). Guard: `core/tests/fluid_specular_aa_test.c`.
+
+**Not fixed, because it is not broken — the foam line.** The remaining white
+fringe on the silhouette is `shoreline` foam, and the ring genuinely intersects
+the ground: a back-depth probe showed the splat cloud reaching past the receiver
+over nearly the whole tube, which is what a torus centred at y = 0 with a 0.108 m
+tube does. It only became visible because dual-depth steepened the thickness
+gradient the term is gated on. Three mechanism fixes were tried and reverted; see
+`core/docs/LANDMINES.md`. If the line is unwanted it is an authoring or a
+strength decision, not a correctness one:
+  - raise the ring so it does not sit half in the ground (`skills`/composition),
+  - or scale the shoreline foam down in `fluid_surface.fs`.
+
+Also worth knowing for any future A/B here: **consecutive runs of the same
+fixture are not identical** (`cmp` on two `--render-vfx 41 --warmup 60` captures
+differs). Silhouette-scale detail must be compared across several runs before it
+is attributed to a change — a vertical-striping "regression" was chased once and
+turned out to move between runs.
