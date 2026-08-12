@@ -917,12 +917,24 @@ halved with it, so the world-space reach is unchanged), and the resolve renders
 straight into the half-res target. Visually indistinguishable on both fixtures;
 the dual-depth block's cost drops into the noise floor.
 
-**Also measured, and it retires a parked question:** `perf_ssf_filter` says the
-narrow-range filter is bound by the pixels it touches, not by taps per pixel —
-halving resolution saves 1.2–2.0 ms over 8 passes while tripling the kernel width
-changes nothing. Half-resolution depth + bilateral upsample is therefore worth
-about 0.6–1.0 ms for the game's 4 passes, confirming the parked estimate. Note the
-benchmark itself had never worked; see the rlvk progress note.
+**Also measured, and it retires a parked question:** `perf_ssf_filter`, uncapped,
+three runs — halving the resolution saves 1.2–2.0 ms over 8 passes, while tripling
+the kernel width (adaptive radius 13 -> 32 taps per side, a real 2.5x) changes
+nothing measurable (-0.27 / +0.73 / -1.34 ms).
+
+The reading to take from that is narrower than "the filter is pixel-bound".
+The benchmark's blob covers ~12% of the frame and every other pixel early-outs on
+`centerDevice >= 0.99999`, so taps only ever apply to that 12% while resolution
+applies to all of it — the clears, the blit, and the render-pass bandwidth
+included. What the pair of numbers actually says is that for a body of this
+screen coverage the cost lives in the passes' FULL-TARGET work, not in the
+filtering of the covered region.
+
+Which points at a cheaper lever than half resolution, and one nobody has tried:
+**scissor the filter passes to the fluid's screen bounds.** The CPU already knows
+them for the CPU-registered particles and could get a conservative box for the GPU
+streams. Half resolution is still worth its measured ~0.6–1.0 ms for the game's 4
+passes, and the two compose.
 
 **Still open:** the remaining ~5.4 ms is the depth capture, the narrow-range
 filter and the composite, unattributed between them. The composite is one
