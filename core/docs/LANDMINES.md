@@ -2101,3 +2101,32 @@ rendering no fluid at all. Every one of those measurements was of an empty frame
 **Rule.** A perf run is only a perf run if the frame still contains what you are
 measuring. Capture and LOOK at one frame from the optimized build before recording
 any timing from it — the same `--render-vfx` invocation produces both.
+
+## The SSF depth filter was the paper's algorithm run through its approximate separation
+
+**Symptom.** Faint stripes on the fluid surface — both vertical AND horizontal —
+concentrated beside the silhouette. Five invented boundary conditions had already
+failed against this in an earlier session, and the residue was signed off as
+"sub-visible".
+
+**The observation that settled it.** Run each pass ALONE and look at the
+reconstructed normal: the horizontal pass smears it into horizontal ribbons, the
+vertical pass into vertical ones, perfectly complementary. Neither pass ever
+samples a diagonal neighbour, so the residue of both is a cross-hatch.
+
+**Cause.** `fluid_depth_narrow_range.fs` was a faithful implementation of Truong
+& Yuksel's `filter1D`, run twice — which is an *approximate separation*. Their own
+paper says of the bilateral Gaussian that it "is not separable, and an approximate
+separation can result in visual artefacts", and that applies to their filter too:
+their reference implementation ships a `filter2D` alongside it behind a switch,
+which is the tell. The algorithm was right; the way it was being applied was the
+approximation.
+
+**Rule.** "We implemented the paper" is not the same as "we are running the
+paper's method". Check which variant of it you are running, and whether the
+reference offers another. Guarded by `core/tests/fluid_filter_2d_test.c`.
+
+**Note on the tier gate:** 2D is HIGH-only. `GfxQuality_Default()` returns
+**GFX_MED on Android**, and a several-hundred-tap loop of dependent fetches on a
+Mali tiler is exactly what cannot be judged from a desktop — so the mobile tiers
+keep the separable path until someone runs it on a device.

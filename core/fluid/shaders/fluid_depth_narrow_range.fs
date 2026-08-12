@@ -9,6 +9,8 @@ uniform vec2 u_direction;
 uniform float u_kernelRadius;
 uniform int u_filterRadius;
 uniform int u_fillHoles;
+/* 0 = the separable 1D pass (run twice by the host), 1 = the true 2D kernel. */
+uniform int u_filter2D;
 uniform mat4 u_projection;
 uniform mat4 u_inverseProjection;
 
@@ -80,6 +82,78 @@ void main() {
     float sigmaS = max(reachPixels * 0.5, 1.0);
     int adaptiveRadius = int(min(ceil(sigmaS * 3.0), float(u_filterRadius)));
 
+    float threshold = u_kernelRadius * 10.5;
+    float lowerClamp = centerDistance - u_kernelRadius;
+
+    /* ---- The TRUE 2D kernel. ----------------------------------------------
+     *
+     * The 1D path below is the paper's `filter1D`, and running it twice is an
+     * approximate separation. Truong & Yuksel's own point about the bilateral
+     * Gaussian — "not separable, and an approximate separation can result in
+     * visual artefacts" — applies to their filter too, which is why their
+     * reference implementation ships `filter2D` alongside it behind a switch.
+     *
+     * Measured here before writing this: running only the horizontal pass smears
+     * the reconstructed normal into HORIZONTAL ribbons, only the vertical pass
+     * into VERTICAL ones. Each pass smooths along its own axis and neither ever
+     * sees a diagonal neighbour, so the residue of both is a cross-hatch that
+     * concentrates next to the silhouette.
+     *
+     * The paper's rules are unchanged — pair rejection, clamp-not-reject below
+     * the lower bound, range extension, separate bounds per side. What changes
+     * is that a "side" is now an arbitrary 2D offset rather than +x or -x, so
+     * the four sample directions of each iteration carry four bound sets.
+     *
+     * Ordering differs from the reference and it is deliberate: samples are
+     * walked outward (rows from the centre, and within a row from the centre),
+     * because range EXTENSION is a walk — a bound that has already been widened
+     * by a distant sample would let a nearer one through that should have been
+     * rejected. */
+    if (u_filter2D != 0) {
+        vec4 upper = vec4(centerDistance + threshold);
+        vec4 lower = vec4(centerDistance - threshold);
+        float radiusSquared = float(adaptiveRadius * adaptiveRadius);
+        for (int dy = 0; dy <= 32; dy++) {
+            if (dy > adaptiveRadius) break;
+            for (int m = 0; m <= 32; m++) {
+                if (m > adaptiveRadius) break;
+                if (dy == 0 && m == 0) continue;          // the centre is already in
+                float r2 = float(m * m + dy * dy);
+                if (r2 > radiusSquared) continue;         // a disc, not a square
+                float w = exp(-0.5 * r2 / (sigmaS * sigmaS));
+
+                /* Pair A spans (+m,+dy) and its point reflection; pair B spans
+                 * (-m,+dy) and its own. On an axis the two coincide, so B is
+                 * skipped there to avoid sampling the same texel twice. */
+                for (int pair = 0; pair < 2; pair++) {
+                    if (pair == 1 && (m == 0 || dy == 0)) continue;
+                    vec2 off = vec2((pair == 0 ? float(m) : -float(m)), float(dy)) * u_texel;
+                    int iPos = pair * 2, iNeg = pair * 2 + 1;
+
+                    float dPos = ViewDistance(texture(texture0, fragTexCoord + off).r);
+                    float dNeg = ViewDistance(texture(texture0, fragTexCoord - off).r);
+                    float wPos = w, wNeg = w;
+
+                    if (dPos > upper[iPos]) { wPos = 0.0; wNeg = 0.0; }
+                    else if (dPos < lower[iPos]) { dPos = lowerClamp; }
+                    else { upper[iPos] = max(upper[iPos], dPos + threshold);
+                           lower[iPos] = min(lower[iPos], dPos - threshold); }
+
+                    if (dNeg > upper[iNeg]) { wNeg = 0.0; wPos = 0.0; }
+                    else if (dNeg < lower[iNeg]) { dNeg = lowerClamp; }
+                    else { upper[iNeg] = max(upper[iNeg], dNeg + threshold);
+                           lower[iNeg] = min(lower[iNeg], dNeg - threshold); }
+
+                    weightedDepth += dPos * wPos + dNeg * wNeg;
+                    weightSum += wPos + wNeg;
+                }
+            }
+        }
+        finalColor = vec4(clamp(DeviceDepth(weightedDepth / max(weightSum, 0.0001)), 0.0, 1.0),
+                          0.0, 0.0, 1.0);
+        return;
+    }
+
     /* Narrow-range filter, Truong & Yuksel 2018, implemented from the paper.
      *
      *   - a sample FURTHER than `upper` is background or a separate sheet: its
@@ -98,8 +172,6 @@ void main() {
      *     this file used to estimate from a finite difference.
      *
      * Each side carries its own bounds, exactly as the reference does. */
-    float threshold = u_kernelRadius * 10.5;
-    float lowerClamp = centerDistance - u_kernelRadius;
     float upperPos = centerDistance + threshold, lowerPos = centerDistance - threshold;
     float upperNeg = upperPos, lowerNeg = lowerPos;
 

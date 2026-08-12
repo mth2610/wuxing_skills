@@ -1016,3 +1016,39 @@ resolution-neutral by construction (offsets are `u_texel`, the one absolute is a
 4. **`capFade`** in `WaterMultiOctaveWaves` is still a plane wave. Amplitude 0.004
    and disabling the whole term changed nothing visible; swap it to `fbm3` when
    something else touches that function.
+
+## Stripes: the true 2D narrow-range kernel (2026-08-12)
+
+The user reported stripes in BOTH axes. Researched before touching anything, then
+measured: running the horizontal pass alone smears the reconstructed normal into
+horizontal ribbons, the vertical pass alone into vertical ones. Classic separable
+artifact — neither pass sees a diagonal.
+
+The filter was a faithful `filter1D` from the paper, run twice. Truong & Yuksel's
+reference implementation ships `filter2D` behind a switch precisely because the
+separation is an approximation; that variant is now implemented here (same four
+rules — pair rejection, clamp-not-reject below the lower bound, range extension,
+per-direction bounds — over a disc walked as point-symmetric pairs, outward from
+the centre so the range extension stays a walk).
+
+**Result, both fixtures:** the striations beside the ring's rims are gone and the
+tube reads as an evenly rounded torus instead of a faceted one; the crown's
+interior striations are gone too. This one is visible at normal zoom, unlike the
+silhouette-AA change before it.
+
+**Cost:** ~+1-2 ms at HIGH by wall clock (unreliable on this machine, so treat it
+as an order of magnitude, not a figure). 529 taps at radius 13 against the
+separable pair's 52 — but the pass count halves, which is why it is not the 10x
+the tap ratio implies. Two rounds, not one: a single 2D round leaves the tube
+visibly lumpy.
+
+**HIGH only.** MED is the Android default and a several-hundred-tap dependent-fetch
+loop on a Mali tiler cannot be judged from here.
+
+### Still open after this
+
+1. **PCA anisotropic kernels for the PBD crown** (`fluid_pbd_gpu.comp` already has
+   the neighbour grid).
+2. **The half-sunk ring's waterline** — an authoring call.
+3. **`capFade`** is still a plane wave; amplitude 0.004, invisible so far.
+4. **2D on mobile** — needs one device run to decide.

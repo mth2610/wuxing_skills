@@ -28,7 +28,7 @@ static int s_resolveBackLoc, s_resolveInverseProjectionLoc;
 static int s_blurTexelLoc, s_blurDirectionLoc, s_blurRadiusLoc;
 static int s_texelLoc, s_dirLoc, s_fillLoc;
 static int s_smoothProjectionLoc, s_smoothInverseProjectionLoc;
-static int s_kernelRadiusLoc, s_filterRadiusLoc;
+static int s_kernelRadiusLoc, s_filterRadiusLoc, s_filter2DLoc;
 static int s_compositeTexelLoc, s_sceneTexelLoc, s_thicknessLoc, s_sceneLoc, s_sceneDepthLoc, s_hasDepthLoc;
 static int s_projectionLoc, s_inverseProjectionLoc, s_viewToWorldLoc, s_qualityTierLoc;
 static int s_sunDirectionLoc, s_sunColorLoc, s_skyAmbientLoc, s_groundAmbientLoc;
@@ -202,6 +202,7 @@ void FluidSurface_Init(int width,int height) {
     s_smoothInverseProjectionLoc=GetShaderLocation(s_smooth,"u_inverseProjection");
     s_kernelRadiusLoc=GetShaderLocation(s_smooth,"u_kernelRadius");
     s_filterRadiusLoc=GetShaderLocation(s_smooth,"u_filterRadius");
+    s_filter2DLoc=GetShaderLocation(s_smooth,"u_filter2D");
     s_resolveBackLoc=GetShaderLocation(s_thicknessResolve,"u_backDepthTex");
     s_resolveInverseProjectionLoc=GetShaderLocation(s_thicknessResolve,"u_inverseProjection");
     s_blurTexelLoc=GetShaderLocation(s_thicknessBlur,"u_texel");
@@ -379,6 +380,46 @@ void FluidSurface_Capture(Camera3D camera) {
      * came from. Halving them also halves the filter's cost. */
     int reconstructionRounds=GfxQuality_Get()>=GFX_HIGH?2:
                              (GfxQuality_Get()>=GFX_MED?2:1);
+    /* The TRUE 2D kernel at HIGH; the separable pair below at MED and LOW.
+     *
+     * Running the passes separately showed what the separation costs: the
+     * horizontal pass alone smears the reconstructed normal into horizontal
+     * ribbons, the vertical pass alone into vertical ones, and the residue of
+     * both is a cross-hatch hugging the silhouette. The 2D kernel has no axis to
+     * streak along and the striations are gone on both fixtures.
+     *
+     * It is not free — roughly +1-2 ms at HIGH on this machine, though the pass
+     * count halves, which is why it is not the multiple-times regression the tap
+     * count alone would suggest. MED is the ANDROID default (GfxQuality_Default),
+     * and a several-hundred-tap loop of dependent fetches on a Mali tiler is
+     * exactly the thing that cannot be checked from here, so the mobile tiers
+     * keep the cheap path until someone runs it on a device.
+     *
+     * Two rounds, not one: a single 2D round leaves the tube visibly lumpy. */
+    if (GfxQuality_Get() >= GFX_HIGH) {
+        /* True 2D: ONE pass per round instead of two, so the rounds alternate
+         * targets and must land in s_smoothB, which is what the composite reads. */
+        int two=1; Vector2 noDirection={0.0f,0.0f};
+        for (int iteration=0; iteration<reconstructionRounds; ++iteration) {
+            Texture2D source = (iteration==0) ? s_capture.texture : s_smoothA.texture;
+            bool last = (iteration == reconstructionRounds-1);
+            RenderTexture2D dest = last ? s_smoothB : s_smoothA;
+            int fillHoles = (iteration==0);
+            BeginTextureMode(dest); ClearBackground(WHITE); BeginShaderMode(s_smooth);
+            SetShaderValue(s_smooth,s_texelLoc,&texel,SHADER_UNIFORM_VEC2);
+            SetShaderValue(s_smooth,s_dirLoc,&noDirection,SHADER_UNIFORM_VEC2);
+            SetShaderValue(s_smooth,s_kernelRadiusLoc,&s_reconstructionRadius,SHADER_UNIFORM_FLOAT);
+            SetShaderValue(s_smooth,s_filterRadiusLoc,&filterRadius,SHADER_UNIFORM_INT);
+            SetShaderValue(s_smooth,s_filter2DLoc,&two,SHADER_UNIFORM_INT);
+            SetShaderValueMatrix(s_smooth,s_smoothProjectionLoc,s_fluidProjection);
+            SetShaderValueMatrix(s_smooth,s_smoothInverseProjectionLoc,inverseProjection);
+            SetShaderValue(s_smooth,s_fillLoc,&fillHoles,SHADER_UNIFORM_INT);
+            DrawTextureRec(source,(Rectangle){0,0,source.width,-source.height},(Vector2){0,0},WHITE);
+            EndShaderMode(); EndTextureMode();
+        }
+        reconstructionRounds = 0;
+    }
+    { int zero=0; SetShaderValue(s_smooth,s_filter2DLoc,&zero,SHADER_UNIFORM_INT); }
     for (int iteration=0; iteration<reconstructionRounds; ++iteration) {
         Vector2 horizontal={1.0f,0.0f}, vertical={0.0f,1.0f};
         Texture2D source = iteration ? s_smoothB.texture : s_capture.texture;
