@@ -56,7 +56,9 @@ cc "$ROOT/third_party/vulkan/tests/rlvk_visual_test.c" -o "$BIN" \
     -framework Cocoa -framework IOKit -framework CoreVideo -framework CoreFoundation -framework QuartzCore -lm
 
 cd "$CACHE"   # pipeline-cache/screenshot files land here, not in the repo
-ENV=(VK_ICD_FILENAMES="$VSDK/share/vulkan/icd.d/MoltenVK_icd.json" DYLD_LIBRARY_PATH="$VSDK/lib")
+# ...which means a scenario loading a repo asset by relative path silently gets
+# nothing. perf_ssf_filter did exactly that for as long as it existed.
+ENV=(VK_ICD_FILENAMES="$VSDK/share/vulkan/icd.d/MoltenVK_icd.json" DYLD_LIBRARY_PATH="$VSDK/lib" RLVK_REPO_ROOT="$ROOT")
 if [ "${VALIDATE:-0}" = "1" ]; then
     ENV+=(VK_LAYER_PATH="$VSDK/share/vulkan/explicit_layer.d" VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation)
 fi

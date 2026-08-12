@@ -65,3 +65,28 @@ These are decisions, not accidents — don't "simplify" them away: driver quirks
 
 ### Measurement traps
 - **A perf scenario cannot leave the frame from inside a render loop.** `perf_dispatch_count`'s "outside the frame" variant dispatches before `BeginDrawing`, and reported batching out-of-frame compute as noise — while the same change was worth **3.9 ms in the game**. `rlvkBeginFrame` is called lazily from several places (`rlEnableShader`, `rlClearBackground`, the render-pass helpers) with the comment "ensure a frame is active", so setting up dispatch state inside the loop very likely opens the frame first and the variant measures the in-frame path twice. A scenario that means to compare paths must PROVE which path it took (log it, or assert on a counter) before its numbers mean anything. Methodology rule 4, worked example.
+
+- **`perf_*` scenarios need `UNCAPPED=1`, and they will not tell you if you forget.**
+  Without it the swapchain is FIFO and every iteration blocks on the display, so
+  the scenario reports the refresh interval. `perf_ssf_filter` run capped
+  reported 11.09 ms for the native filter, 11.55 ms for the same filter at a
+  quarter of the pixels, and 10.96 ms with a 3x wider kernel — three
+  configurations, one number, all of it the monitor. Uncapped, the same
+  comparison shows a real 1.2–2.0 ms resolution delta. The script's own header
+  documents `UNCAPPED=1`; the failure mode is that plausible-looking numbers come
+  out either way.
+- **A missing shader file does not make a scenario fail.** raylib substitutes its
+  DEFAULT shader and returns a valid non-zero id, so `if (shader.id == 0)` never
+  fires. `perf_ssf_filter` loaded `core/fluid/shaders/fluid_depth_narrow_range.fs`
+  by RELATIVE path while the harness runs from `/tmp/rlvk_visual_cache` — it had
+  been benchmarking the default shader for its entire existence. Fixed with
+  `RLVK_REPO_ROOT` (exported by the script) plus a guard against
+  `rlGetShaderIdDefault()`. Any scenario touching a repo asset needs both.
+- **`RLVK_GPU_TRACE` reports 0.000 ms on MoltenVK.** Not a capability problem: the
+  graphics queue family reports `timestampValidBits=64` and `timestampPeriod=1.0`,
+  so timestamps are supported and the deltas still come back zero — the query
+  results are read without `VK_QUERY_RESULT_WAIT_BIT` and MoltenVK appears to
+  return `VK_SUCCESS` with zeros rather than `VK_NOT_READY`. Until that is fixed,
+  GPU-side timing on macOS is unavailable; measure wall-clock inside the render
+  loop instead (process startup and shader compilation must be excluded, or they
+  dominate).

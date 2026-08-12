@@ -203,3 +203,26 @@ stage takes `V = normalize(-fragPosition)`) landed and is guarded by
 
 ## Long-term (§8.6, standalone engine)
 Tiler-aware VFX (load/store ops as real levers), then extract `core/` VFX + `compute/` + `environment/` into a library whose only downward interface is rlgl + platform hooks. GL-vs-Vulkan stays a build-time choice per binary; runtime selection needs a shared-library split (deferred).
+
+## Perf tooling repairs (2026-08-12)
+
+Found while measuring the SSF surface's frame cost for `core/fluid`.
+
+- `perf_ssf_filter` had **never produced a valid number**. It loaded its shader by
+  a path relative to the repo while the harness `cd`s to its cache directory, and
+  raylib answers a missing shader file with the default shader and a non-zero id,
+  so the scenario's `id == 0` guard never fired. Now resolved through
+  `RLVK_REPO_ROOT` (exported by `run_rlvk_visual_test.sh`) and guarded against
+  `rlGetShaderIdDefault()`.
+- Its third variant now varies `u_kernelRadius`, not `u_filterRadius`. The filter
+  derives its own per-pixel reach from the kernel's projected size and treats
+  `u_filterRadius` as a ceiling only, so the original "r=10 vs r=28" comparison
+  measured nothing (-1.1 ms, i.e. noise).
+- **Result, uncapped, three runs:** halving the resolution saves 1.2–2.0 ms across
+  8 filter passes; tripling the kernel width changes nothing measurable
+  (-0.27 / +0.73 / -1.34 ms). The narrow-range filter is bound by the pixels it
+  touches, not by taps per pixel. That is the measurement the parked
+  "half-resolution + bilateral upsample" item was waiting for, and it confirms the
+  guessed ~0.6 ms ceiling for the game's 4 passes.
+- `RLVK_GPU_TRACE` is broken on MoltenVK — see the new row in `docs/LANDMINES.md`.
+  Worth fixing: it is the only GPU-side timing this backend has.

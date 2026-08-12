@@ -842,13 +842,26 @@ static void blit(Texture2D src, int dstW, int dstH);
 static const char *sc_perf_ssf_filter(void)
 {
     const int FW = 1280, FH = 720;
-    Shader filter = LoadShader(NULL, "core/fluid/shaders/fluid_depth_narrow_range.fs");
-    if (filter.id == 0) return "could not load fluid_depth_narrow_range.fs (run from the repo root)";
+    /* The harness runs from its cache directory, so a relative repo path finds
+     * nothing — and raylib does not fail when a shader file is missing, it
+     * substitutes the DEFAULT shader and hands back a perfectly valid non-zero
+     * id. This scenario spent its whole existence benchmarking that default
+     * shader and reporting a native/half delta of -0.16 ms, which is exactly the
+     * "no difference" answer a real measurement would never have given. Both
+     * halves are needed: the absolute path, and a guard that can actually fire. */
+    const char *repoRoot = getenv("RLVK_REPO_ROOT");
+    if (!repoRoot) return "RLVK_REPO_ROOT not set (run via scripts/run_rlvk_visual_test.sh)";
+    char filterPath[1024];
+    snprintf(filterPath, sizeof(filterPath),
+             "%s/core/fluid/shaders/fluid_depth_narrow_range.fs", repoRoot);
+    Shader filter = LoadShader(NULL, filterPath);
+    if (filter.id == 0 || filter.id == rlGetShaderIdDefault())
+        return "fluid_depth_narrow_range.fs did not load (raylib fell back to the default shader)";
 
-    RenderTexture2D src[2], a[2], b[2];
-    for (int i = 0; i < 2; i++)
+    RenderTexture2D src[3], a[3], b[3];
+    for (int i = 0; i < 3; i++)
     {
-        int w = i ? FW/2 : FW, h = i ? FH/2 : FH;
+        int w = (i == 1) ? FW/2 : FW, h = (i == 1) ? FH/2 : FH;   /* 0,2 native; 1 half */
         src[i] = fmtRT(w, h, RL_PIXELFORMAT_UNCOMPRESSED_R32);
         a[i]   = fmtRT(w, h, RL_PIXELFORMAT_UNCOMPRESSED_R32);
         b[i]   = fmtRT(w, h, RL_PIXELFORMAT_UNCOMPRESSED_R32);
@@ -870,18 +883,25 @@ static const char *sc_perf_ssf_filter(void)
     int locInv   = GetShaderLocation(filter, "u_inverseProjection");
     Matrix proj = MatrixFrustum(-1, 1, -0.6, 0.6, 1.0, 1000.0);
     Matrix inv = MatrixInvert(proj);
-    float depthRange = 0.022f*9.0f, kernelRadius = 0.022f;
+    float depthRange = 0.022f*9.0f, kernelRadius = 0.022f;   /* kernelRadius varies per variant */
 
     unsigned int seed = 20260811u;
-    double acc[2] = {0, 0};
-    int cnt[2] = {0, 0};
+    double acc[3] = {0, 0, 0};
+    int cnt[3] = {0, 0, 0};
     const int WARM = 40, N = 400;
     for (int f = 0; f < WARM + N; f++)
     {
         seed = seed*1103515245u + 12345u;
-        int v = (int)((seed >> 16) & 1u);            // 0 = native, 1 = half
-        int w = v ? FW/2 : FW, h = v ? FH/2 : FH;
-        int filterRadius = v ? 5 : 10;               // same world footprint either way
+        /* 0 = native r10, 1 = half r5 (the same world footprint at a quarter of
+         * the pixels), 2 = native r28 — the radius the HIGH tier actually ships.
+         * Variant 2 has the SAME pass count as 0 and ~3x the fragment work, so it
+         * separates "this is fragment-bound" from "this is per-pass overhead".
+         * Without it the 0-vs-1 delta alone is unreadable: a wash could mean
+         * either that half resolution does not help, or that nothing here is
+         * measuring fragment cost at all. */
+        int v = (int)(((seed >> 16) & 0xFFFFu) % 3u);
+        int w = (v == 1) ? FW/2 : FW, h = (v == 1) ? FH/2 : FH;
+        int filterRadius = (v == 1) ? 5 : ((v == 2) ? 28 : 10);
         Vector2 texel = { 1.0f/(float)w, 1.0f/(float)h };
 
         double t0 = GetTime();
@@ -921,9 +941,11 @@ static const char *sc_perf_ssf_filter(void)
         if (f >= WARM) { acc[v] += (GetTime() - t0)*1000.0; cnt[v]++; }
     }
 
-    printf("  [perf ssf_filter] 8 passes native %dx%d r=10: %.3f ms | half %dx%d r=5: %.3f ms | delta %.3f ms\n",
-           FW, FH, acc[0]/cnt[0], FW/2, FH/2, acc[1]/cnt[1], acc[0]/cnt[0] - acc[1]/cnt[1]);
-    for (int i = 0; i < 2; i++) { UnloadRenderTexture(src[i]); UnloadRenderTexture(a[i]); UnloadRenderTexture(b[i]); }
+    printf("  [perf ssf_filter] 8 passes | native %dx%d: %.3f ms | half %dx%d: %.3f ms"
+           " | native 3x kernel: %.3f ms || resolution delta %.3f ms, kernel delta %.3f ms\n",
+           FW, FH, acc[0]/cnt[0], FW/2, FH/2, acc[1]/cnt[1], acc[2]/cnt[2],
+           acc[0]/cnt[0] - acc[1]/cnt[1], acc[2]/cnt[2] - acc[0]/cnt[0]);
+    for (int i = 0; i < 3; i++) { UnloadRenderTexture(src[i]); UnloadRenderTexture(a[i]); UnloadRenderTexture(b[i]); }
     UnloadShader(filter);
     return NULL;
 }
@@ -963,8 +985,8 @@ static const char *sc_perf_dispatch_count(void)
     int loc = rlGetLocationUniform(program, "u_add");
     float add = 1.0f;
     unsigned int seed = 7771u;
-    double acc[2] = {0, 0};
-    int cnt[2] = {0, 0};
+    double acc[3] = {0, 0, 0};
+    int cnt[3] = {0, 0, 0};
     const int WARM = 60, N = 500;
     const int few = 1, many = 9;              // 9 = the PBD solve's dispatch count
 
@@ -1137,8 +1159,8 @@ static const char *sc_perf_dynmesh(void)
     // phase during the run. Interleave the variants frame by frame instead: every slow phase then
     // hits both variants equally and only the real difference survives.
     unsigned int seed = 22222u;
-    double acc[2] = {0, 0};
-    int cnt[2] = {0, 0};
+    double acc[3] = {0, 0, 0};
+    int cnt[3] = {0, 0, 0};
     const int WARM = 60, N = 600;
     for (int f = 0; f < WARM + N; f++)
     {
@@ -1184,8 +1206,8 @@ static const char *sc_perf_upload_fbo(void)
     size_t posBytes = (size_t)mesh.vertexCount * 3 * sizeof(float);
 
     unsigned int seed = 9001u;
-    double acc[2] = {0, 0};
-    int cnt[2] = {0, 0};
+    double acc[3] = {0, 0, 0};
+    int cnt[3] = {0, 0, 0};
     const int WARM = 60, N = 600;
     for (int f = 0; f < WARM + N; f++)
     {
@@ -1227,8 +1249,8 @@ static const char *sc_perf_fullres_ab(void)
     for (int i = 0; i < 3; i++) rt[i] = fmtRT(FW, FH, FMT);
 
     unsigned int seed = 4242u;
-    double acc[2] = {0, 0};
-    int cnt[2] = {0, 0};
+    double acc[3] = {0, 0, 0};
+    int cnt[3] = {0, 0, 0};
     const int WARM = 60, N = 600;
     for (int f = 0; f < WARM + N; f++)
     {
@@ -1268,8 +1290,8 @@ static const char *sc_perf_shadow_ab(void)
     RenderTexture2D small = LoadRenderTexture(1024, 1024);
 
     unsigned int seed = 777u;
-    double acc[2] = {0, 0};
-    int cnt[2] = {0, 0};
+    double acc[3] = {0, 0, 0};
+    int cnt[3] = {0, 0, 0};
     const int WARM = 60, N = 500;
     for (int f = 0; f < WARM + N; f++)
     {
@@ -1323,8 +1345,8 @@ static const char *sc_perf_pcf_ab(void)
     BeginTextureMode(smap); ClearBackground(WHITE); EndTextureMode();
 
     unsigned int seed = 31337u;
-    double acc[2] = {0, 0};
-    int cnt[2] = {0, 0};
+    double acc[3] = {0, 0, 0};
+    int cnt[3] = {0, 0, 0};
     const int WARM = 60, N = 500;
     for (int f = 0; f < WARM + N; f++)
     {

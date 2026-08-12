@@ -886,3 +886,45 @@ the existing Mali-safe `hash3`. Guard:
 Ruled out by the same probe, so do not re-investigate: the wave perturbation
 (`WaterMultiOctaveWaves`) and its capillary octave were disabled independently
 and the banding stayed.
+
+## SSF frame cost, measured (2026-08-12)
+
+The handoff recorded fluid at ~1.7 ms of a 16.7 ms frame. That is not what this
+measures, and the gap is large enough to act on.
+
+**Method.** GPU timestamps are unusable here (`RLVK_GPU_TRACE` returns 0.000 ms on
+MoltenVK — see `third_party/vulkan/docs/LANDMINES.md`), so: wall clock sampled
+INSIDE the render loop, after a 60-frame warm-up, over 340 frames, with the
+configurations interleaved and the minimum taken. `SetTargetFPS(60)` also had to
+stop applying to `--render-vfx`, which had been pacing every headless capture
+frame to 16.7 ms; `autoTestMode` and `visualVerifyMode` were already exempt.
+Fixture: NEW FX 41 (WATER RING) at 1280x720, the ring filling much of the frame.
+The machine was under concurrent load; deltas below ~1.5 ms are not resolvable.
+
+**Where the time went (before this session's change):**
+
+| block | cost |
+|---|---|
+| back capture + thickness resolve | 0.5 ms |
+| two Gaussian passes over thickness, native, r=10 | 3.3 ms |
+| the rest of SSF (capture, narrow-range filter, composite) | ~5.4 ms |
+| **total SSF** | **~9 ms** |
+
+So dual-depth's *measurement* is nearly free and the *smoothing* was the whole
+bill — which is the good case, because thickness is a low-frequency quantity with
+no silhouettes to preserve. It now runs at half the surface resolution (blur radii
+halved with it, so the world-space reach is unchanged), and the resolve renders
+straight into the half-res target. Visually indistinguishable on both fixtures;
+the dual-depth block's cost drops into the noise floor.
+
+**Also measured, and it retires a parked question:** `perf_ssf_filter` says the
+narrow-range filter is bound by the pixels it touches, not by taps per pixel —
+halving resolution saves 1.2–2.0 ms over 8 passes while tripling the kernel width
+changes nothing. Half-resolution depth + bilateral upsample is therefore worth
+about 0.6–1.0 ms for the game's 4 passes, confirming the parked estimate. Note the
+benchmark itself had never worked; see the rlvk progress note.
+
+**Still open:** the remaining ~5.4 ms is the depth capture, the narrow-range
+filter and the composite, unattributed between them. The composite is one
+full-screen pass doing SSR, refraction, four lights and foam, so it is not
+obviously small.

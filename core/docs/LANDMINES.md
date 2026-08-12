@@ -2074,3 +2074,30 @@ prove the guard can detect the defect.
 disabling the whole wave perturbation did NOT remove the banding (the probe run
 that identified `surfaceNoise` also ruled the wave out), and its amplitude is
 0.004. Swap it if it ever becomes visible.
+
+## `DrawTextureRec` sizes its quad from the SOURCE, so it cannot blit down a resolution
+
+**Symptom.** Moving the thickness pipeline to half resolution made the water
+surface disappear entirely — not dimmer, not banded, absent.
+
+**Cause.** The resolve pass draws a native-resolution capture into a half-resolution
+target. `DrawTextureRec` builds its quad from the SOURCE rectangle's pixel size, so
+it emitted a 1280x720 quad into a 640x360 viewport: the visible half of the quad
+carries UV 0..0.5, and the pass reads only the top-left quarter of the capture,
+magnified. The fluid was nowhere near that quarter.
+
+**Rule.** Between targets of different sizes, use `DrawTexturePro` with an explicit
+destination rectangle in the DESTINATION's dimensions. `DrawTextureRec` is only
+safe when the two match.
+
+## Verify the picture before you trust a perf number
+
+**Symptom.** A half-resolution change measured as a clean win — the added passes'
+cost dropped into the noise across two interleaved runs.
+
+**Cause.** The change had broken the surface (see above), so the "cheaper" build was
+rendering no fluid at all. Every one of those measurements was of an empty frame.
+
+**Rule.** A perf run is only a perf run if the frame still contains what you are
+measuring. Capture and LOOK at one frame from the optimized build before recording
+any timing from it — the same `--render-vfx` invocation produces both.

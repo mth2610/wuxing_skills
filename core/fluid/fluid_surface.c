@@ -20,7 +20,7 @@ static int s_count;
 static ParticleRenderStream s_gpuStreams[16];
 static int s_gpuStreamCount;
 static Texture2D s_surfaceTex;
-static RenderTexture2D s_capture, s_captureBack, s_thickness, s_smoothA, s_smoothB;
+static RenderTexture2D s_capture, s_captureBack, s_thickness, s_thicknessScratch, s_smoothA, s_smoothB;
 static RenderTexture2D s_sceneCopy;   // refraction source, see FluidSurface_LoadColorTarget
 static Shader s_captureShader, s_captureBackShader, s_smooth, s_composite;
 static Shader s_thicknessResolve, s_thicknessBlur;
@@ -169,7 +169,21 @@ void FluidSurface_Init(int width,int height) {
     /* LoadRenderTexture defaults to RGBA8. That silently reduced smoothed
      * device depth to 256 levels, turning shallow liquid into zoom-dependent
      * horizontal contour bands. Scalar R32F costs the same four bytes/pixel. */
-    s_thickness=FluidSurface_LoadScalarTarget(w,h);
+    /* Thickness runs at HALF the surface resolution.
+     *
+     * Measured: the two Gaussian passes over it cost 3.3 ms of a 16.7 ms frame at
+     * native resolution, while the back capture and the resolve that produce it
+     * together cost 0.5 ms — the measurement is nearly free and the smoothing was
+     * the entire bill. Thickness is a low-frequency quantity with no silhouettes
+     * to preserve (which is why it gets a plain Gaussian at all, per Green 2010),
+     * so a quarter of the pixels loses nothing that survives the blur. The
+     * composite's bilinear tap upsamples it for free.
+     *
+     * The DEPTH targets stay native: the surface normal is reconstructed from
+     * them and that is not low-frequency. */
+    int tw = w/2 > 1 ? w/2 : 1, th = h/2 > 1 ? h/2 : 1;
+    s_thickness=FluidSurface_LoadScalarTarget(tw,th);
+    s_thicknessScratch=FluidSurface_LoadScalarTarget(tw,th);
     s_smoothA=FluidSurface_LoadScalarTarget(w,h);
     s_smoothB=FluidSurface_LoadScalarTarget(w,h);
     s_captureShader=ResourceManager_LoadShader(NULL,"core/fluid/shaders/fluid_capture.fs");
@@ -214,7 +228,7 @@ void FluidSurface_Init(int width,int height) {
     s_materialSoftLoc=GetShaderLocation(s_composite,"u_materialSoft");
     s_timeLoc=GetShaderLocation(s_composite,"u_time");
 }
-void FluidSurface_Unload(void) { UnloadTexture(s_surfaceTex); UnloadRenderTexture(s_capture); UnloadRenderTexture(s_captureBack); UnloadRenderTexture(s_thickness); UnloadRenderTexture(s_smoothA); UnloadRenderTexture(s_smoothB); if(s_sceneCopy.id) { UnloadRenderTexture(s_sceneCopy); s_sceneCopy=(RenderTexture2D){0}; } }
+void FluidSurface_Unload(void) { UnloadTexture(s_surfaceTex); UnloadRenderTexture(s_capture); UnloadRenderTexture(s_captureBack); UnloadRenderTexture(s_thickness); UnloadRenderTexture(s_thicknessScratch); UnloadRenderTexture(s_smoothA); UnloadRenderTexture(s_smoothB); if(s_sceneCopy.id) { UnloadRenderTexture(s_sceneCopy); s_sceneCopy=(RenderTexture2D){0}; } }
 void FluidSurface_SetMaterialColors(Color body, Color glow, Color soft) {
     s_materialBody=body;
     s_materialGlow=glow;
@@ -314,28 +328,39 @@ void FluidSurface_Capture(Camera3D camera) {
         }
         EndMode3D(); EndTextureMode();
 
-        /* T = z_back - z_front, then a plain Gaussian (Green 2010). s_smoothA is
-         * free at this point — the depth filter below only starts using it
-         * afterwards — so the blur costs no extra target. */
+        /* T = z_back - z_front, then a plain Gaussian (Green 2010), both at the
+         * thickness target's own half resolution. */
         BeginTextureMode(s_thickness); ClearBackground(BLANK);
         BeginShaderMode(s_thicknessResolve);
         SetShaderValueMatrix(s_thicknessResolve,s_resolveInverseProjectionLoc,captureInverseProjection);
         SetShaderValueTexture(s_thicknessResolve,s_resolveBackLoc,s_captureBack.texture);
-        DrawTextureRec(s_capture.texture,(Rectangle){0,0,(float)s_capture.texture.width,-(float)s_capture.texture.height},(Vector2){0,0},WHITE);
+        /* Pro, not Rec: the source is a NATIVE-resolution capture and the target
+         * is half that, and DrawTextureRec sizes its quad from the SOURCE. That
+         * puts UV 0..0.5 across the whole viewport — the resolve then reads only
+         * the top-left quarter of the capture and the surface vanishes from
+         * wherever it actually is. */
+        DrawTexturePro(s_capture.texture,
+                       (Rectangle){0,0,(float)s_capture.texture.width,-(float)s_capture.texture.height},
+                       (Rectangle){0,0,(float)s_thickness.texture.width,(float)s_thickness.texture.height},
+                       (Vector2){0,0},0.0f,WHITE);
         EndShaderMode(); EndTextureMode();
 
-        int thicknessBlurRadius=GfxQuality_Get()>=GFX_HIGH?10:
-                                (GfxQuality_Get()>=GFX_MED?6:3);
+        /* Radii are HALVED with the resolution so the blur covers the same world
+         * distance it did at native res — the point is to pay less, not to smooth
+         * less. */
+        int thicknessBlurRadius=GfxQuality_Get()>=GFX_HIGH?5:
+                                (GfxQuality_Get()>=GFX_MED?3:2);
+        Vector2 thicknessTexel={1.0f/s_thickness.texture.width,1.0f/s_thickness.texture.height};
         Vector2 horizontal={1.0f,0.0f}, vertical={0.0f,1.0f};
-        BeginTextureMode(s_smoothA); ClearBackground(BLANK); BeginShaderMode(s_thicknessBlur);
-        SetShaderValue(s_thicknessBlur,s_blurTexelLoc,&texel,SHADER_UNIFORM_VEC2);
+        BeginTextureMode(s_thicknessScratch); ClearBackground(BLANK); BeginShaderMode(s_thicknessBlur);
+        SetShaderValue(s_thicknessBlur,s_blurTexelLoc,&thicknessTexel,SHADER_UNIFORM_VEC2);
         SetShaderValue(s_thicknessBlur,s_blurDirectionLoc,&horizontal,SHADER_UNIFORM_VEC2);
         SetShaderValue(s_thicknessBlur,s_blurRadiusLoc,&thicknessBlurRadius,SHADER_UNIFORM_INT);
         DrawTextureRec(s_thickness.texture,(Rectangle){0,0,(float)s_thickness.texture.width,-(float)s_thickness.texture.height},(Vector2){0,0},WHITE);
         EndShaderMode(); EndTextureMode();
         BeginTextureMode(s_thickness); ClearBackground(BLANK); BeginShaderMode(s_thicknessBlur);
         SetShaderValue(s_thicknessBlur,s_blurDirectionLoc,&vertical,SHADER_UNIFORM_VEC2);
-        DrawTextureRec(s_smoothA.texture,(Rectangle){0,0,(float)s_smoothA.texture.width,-(float)s_smoothA.texture.height},(Vector2){0,0},WHITE);
+        DrawTextureRec(s_thicknessScratch.texture,(Rectangle){0,0,(float)s_thicknessScratch.texture.width,-(float)s_thicknessScratch.texture.height},(Vector2){0,0},WHITE);
         EndShaderMode(); EndTextureMode();
     }
     /* A CEILING now, not the radius itself: the filter derives its own reach per
