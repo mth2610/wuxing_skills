@@ -1071,3 +1071,39 @@ adaptive radius asks for): **31.4 ms / 32 fps at distance 2.0, level with the
 separable path it replaced, with the striping gone.** Subsampling the disc was
 measured faster still (26.8 ms) and reverted — it made the sampling lattice
 visible as a dot grid.
+
+### Why the water ring costs more than the PBD crown, with half the particles (2026-08-12)
+
+Asked because the ring has no PBD solver and is still the slower of the two.
+Measured at the default `--render-vfx` framing, 1280x720, HIGH:
+
+| fixture | frame | SSF share |
+|---|---|---|
+| no fluid (NEW FX 0, BEAM) | 9.8 ms / 102 fps | — |
+| FLUID IMPACT | 16.6 ms @ frame 100, **14.6 @ frame 200** | ~6.8 ms |
+| WATER RING | 20.1 ms, flat | ~10.3 ms |
+
+Two things to know before comparing them by eye. The crown **decays** —
+`FLUID_PBD_LIFETIME` is 2.50 s, so after ~150 frames it is measuring an empty
+scene, while the ring re-emits every frame and never gets cheaper. And the
+particle counts run the opposite way to the cost:
+
+| | particles (HIGH) | splat radius | total splat area |
+|---|---|---|---|
+| FLUID IMPACT | 2048 (`fluid_pbd_gpu.c:92`) | 1.75 cm | 1.97 m² |
+| WATER RING | 1000 (`water_ring.inl:124`) | 6.30 cm | **12.47 m²** |
+
+The ring has **half** the particles and **6.3x** the splat area, because its
+kernel is `ringRadius * 0.070` = 6.3 cm against the crown's
+`0.0085 * visualScale(~2.06)` = 1.75 cm. It also covers 3.2x more of the screen
+(2.48% against 0.77%, measured off the captures).
+
+**Particle count is the wrong cost metric for SSF; splat AREA is.** Every splat
+fragment is shaded twice (front and back capture) and both passes write
+`gl_FragDepth`, which disables early-Z, so none of that overdraw is rejected
+cheaply.
+
+Note the cost ratio (1.5x) is much smaller than the area ratio (6.3x): most of
+SSF is per-frame fixed work — the filter, the thickness blur and the composite are
+full-screen passes both fixtures pay in full. That is the same conclusion the
+stage attribution reached, from the other direction.
