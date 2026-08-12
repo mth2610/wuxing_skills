@@ -54,7 +54,10 @@ typedef enum {
     VFX_SURFACE_FIRE_TUBE,
     VFX_SURFACE_SMOKE_PUFF,
     VFX_SURFACE_FIRE_TONGUE,
-    // Same simulation as FIRE_TONGUE, never split: the packed VOLUME layout
+    // Directionless split flipbook for the legacy multi-sprite flame path.
+    // Keep it distinct from FIRE_TONGUE: a tongue owns an authored +Z axis.
+    VFX_SURFACE_FIRE_PUFF,
+    // Same simulation as FIRE_PUFF, never split: the packed VOLUME layout
     // (R emission / G density / B self-shadow / A opacity, no colour anywhere).
     // Decoded by particle_lit.fs's volume branch, coloured by a ramp LUT.
     VFX_SURFACE_FIRE_VOLUME,

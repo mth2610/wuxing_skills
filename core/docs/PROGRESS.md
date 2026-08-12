@@ -4,6 +4,21 @@
 **Trạng thái:** **ĐÃ SỬA** — nguyên nhân gốc đã tìm ra và xác nhận bằng ảnh render.
 Nguyên nhân **không nằm ở rlvk**, không nằm ở shader, và không nằm ở màu.
 
+## 2026-08-12 — Ground shockwave mesh pass
+
+`VFX_ComposeGroundWave` now delegates its geometry to the new
+`ProceduralMesh_BuildShockwave` annulus. The mesh has a terrain-conforming,
+outward-leading raised lip; low-frequency closed outline/lip deformation;
+normals; and seam-safe `(angle, cross-band)` UVs. A dedicated shader keeps
+surface flow continuous through the U seam and draws a coloured body plus a
+restrained emissive crest. No particle, spark, or flash layer was added.
+
+Headless guards: `ground_wave_test`, `shockwave_mesh_test`, and
+`shader_stage_interface_test` pass. The full Core suite retains the four
+pre-existing unrelated failures listed below. Human visual confirmation remains
+needed with `--render-vfx 17` after a normal reconfigure/build, especially for
+the intended ragged silhouette and body/emission balance.
+
 ## 1. Nguyên nhân gốc
 
 `tuning.cfg` còn giữ `strandtrail_style = 1.0` từ một lần A/B trước đó. Đó không

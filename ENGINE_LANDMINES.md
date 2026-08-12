@@ -717,3 +717,39 @@ whether or not the function that sets it is ever reached.
 **Rule.** When adding a gate, ask what refreshes the state it reads and whether
 that refresh happens on the rejected path too. If it does not, the gate is a
 one-way latch. Guarded by `core/tests/fluid_cost_gate_test.c`.
+
+## A gate that measures a cost its own decision controls will STROBE (12/08/2026)
+
+**Symptom.** The water surface flickered on and off continuously, every frame,
+in normal play. Reported by the user; the headless fixture never showed it,
+because a tester rendering one fixture is too cheap to reach the threshold.
+
+**Cause.** The SSF cost gate refused new bodies when the previous frame ran over
+a budget. But whether the surface ran IS most of what the frame costs. Logged at
+a forced threshold, the mechanism is unmistakable:
+
+```
+GATE 184 frame=17.79ms -> admit      # cheap frame, let the water in
+GATE 185 frame=18.62ms -> REJECT     # water made it expensive
+GATE 186 frame=25.13ms -> REJECT
+GATE 190 frame=16.50ms -> admit      # no water, frame got cheap again
+GATE 192 frame=25.74ms -> REJECT
+```
+
+Admitted, the ring costs 23–27 ms; rejected, 16–17 ms. The threshold sat between
+the two, so the loop flipped at frame rate. **No threshold value fixes this** —
+any number between the two costs oscillates, and a number outside them makes the
+gate either useless or permanent. Hysteresis and smoothing only change the
+oscillation's period; a 0.5 s strobe is still a strobe.
+
+**Fix.** Break the loop instead of tuning it: judge a body's affordability ONCE,
+when it starts, and exempt a running body from the budget test. Gate inputs that
+are *not* self-referential (here, projected screen size — camera distance does
+not depend on whether SSF ran) can keep being evaluated every frame; they only
+need ordinary hysteresis.
+
+**Rule.** Before adding a load-shedding gate, ask whether the quantity it
+measures is one the gate's own decision changes. If it is, the gate is a
+feedback oscillator, and the only stable designs are decide-once-per-body or
+measuring something the decision cannot move. Guarded by
+`core/tests/fluid_cost_gate_test.c` (the anti-strobe block).

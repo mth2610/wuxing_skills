@@ -184,7 +184,7 @@
   FluidLiquidDesc FluidSurface_DielectricDesc(Color body, Color glow, Color soft);
   int FluidSurface_BindMaterial(const FluidLiquidDesc *desc);
   int FluidSurface_CurrentMaterial(void);
-  bool FluidSurface_RequestBody(FluidSurfacePriority priority, Vector3 center, float worldRadius);
+  bool FluidSurface_RequestBody(FluidSurfacePriority priority, Vector3 center, float worldRadius, bool alreadyRunning);
   void FluidSurface_SetReconstructionRadiusFor(FluidSurfacePriority priority, float radius);
   void FluidSurface_Init(int width, int height);
   void FluidSurface_Unload(void);
@@ -686,6 +686,9 @@ _Inline helpers / macros only — see header._
   WavePlaneConfig ProceduralMesh_DefaultWavePlaneConfig(void);
   void ProceduralMesh_BuildWavePlane(WavePlaneMeshData *out, Vector3 center, float width, float length, int segmentsX, int segmentsZ, float time, const WavePlaneConfig *cfg);
   void ProceduralMesh_DrawWavePlane(const WavePlaneMeshData *data, Color color);
+  ShockwaveMeshConfig ProceduralMesh_DefaultShockwaveConfig(void);
+  void ProceduralMesh_BuildShockwave(ShockwaveMeshData *out, Vector3 center, const ShockwaveMeshConfig *cfg, int slices, int radials, GroundHeightSampleFn heightFn, void *userData);
+  void ProceduralMesh_DrawShockwave(const ShockwaveMeshData *data, const Color *radialColors);
   CurlingWaveConfig ProceduralMesh_DefaultCurlingWaveConfig(void);
   void ProceduralMesh_BuildCurlingWave(CurlingWaveMeshData *out, Vector3 baseCenter, Vector3 widthDirection, const CurlingWaveConfig *cfg, int profileSegs, int widthSegs);
   void ProceduralMesh_DrawCurlingWave(const CurlingWaveMeshData *data, Color color);
@@ -718,7 +721,7 @@ _Inline helpers / macros only — see header._
   void ProceduralMesh_DrawBakedCrystalCluster(Mesh mesh, Material material, Matrix transform);
   Material ProceduralMesh_GetPassthroughMaterial(Shader shader);
 ```
-**Structs** (fields in header): PMTubeConfig, PMTubeMesh, PMDropletConfig, PMDropletMesh, PMCapsuleConfig, PMCapsuleMesh, WavePlaneConfig, WavePlaneMeshData, CurlingWaveConfig, CurlingWaveMeshData, RockMeshData, ShardClusterConfig, ShardClusterMeshData, VortexFunnelConfig, VortexFunnelMeshData, FissureMeshData, MeshDisplacementParams, CrystalDesc, CrystalClusterMeshData
+**Structs** (fields in header): PMTubeConfig, PMTubeMesh, PMDropletConfig, PMDropletMesh, PMCapsuleConfig, PMCapsuleMesh, WavePlaneConfig, WavePlaneMeshData, ShockwaveMeshConfig, ShockwaveMeshData, CurlingWaveConfig, CurlingWaveMeshData, RockMeshData, ShardClusterConfig, ShardClusterMeshData, VortexFunnelConfig, VortexFunnelMeshData, FissureMeshData, MeshDisplacementParams, CrystalDesc, CrystalClusterMeshData
 
 ### `core/composition/visual_composer.h`
 ```c

@@ -114,6 +114,77 @@ def audit(sheet, grid, cell):
             reach, clipped, float(np.mean(rough)) if rough else 0.0)
 
 
+def temporal_audit(sheet, grid, cell):
+    """Measure the flame channel the runtime actually maps through its ramp.
+
+    A flipbook may have a soft alpha edge yet still read as stamped white discs
+    when R barely changes or spends too much of its lit area near 1.0. These
+    two metrics catch that exact failure before a sheet reaches an emitter.
+
+    Brightness is not shape: a puff can cool, change every R value, and still
+    retain exactly the same gas silhouette.  The final value therefore compares
+    adjacent, individually normalised R masks.  It is the fraction of their
+    union that changed (one minus IoU), so a global fade cannot inflate it.
+    """
+    arr = np.asarray(sheet).astype(np.float32) / 255.0
+    frames = []
+    for f in range(grid * grid):
+        r, c = divmod(f, grid)
+        frames.append(arr[r * cell:(r + 1) * cell,
+                          c * cell:(c + 1) * cell, 0])
+    frames = np.asarray(frames)
+    hot = frames > 0.02
+    if not hot.any():
+        return 0.0, 0.0, 1.0, 0.0, 0.0
+    plateau = float((frames[hot] > 0.75).mean())
+    transition = float(((frames[hot] > 0.02) & (frames[hot] < 0.75)).sum()
+                       / hot.sum())
+    deltas = []
+    for i in range(len(frames) - 1):
+        mean = 0.5 * (float(frames[i].mean()) + float(frames[i + 1].mean()))
+        if mean > 1e-5:
+            deltas.append(float(np.abs(frames[i] - frames[i + 1]).mean()) / mean)
+    # The late event is the important one for a particle flipbook: a burst can
+    # change dramatically at ignition then coast as a frozen card for 75% of
+    # the sheet. Report frames 16..64 separately so that exact failure cannot
+    # be hidden by a lively first few cells.
+    late_start = max(0, len(frames) // 4)
+    late = []
+    late_shape = []
+    # A 64-cell atlas is normally played at 24–60 FPS.  Requiring a 10% mask
+    # change in *each adjacent cell* rewards popping, not fluid motion.  The
+    # quality question is whether a viewer can still see the gas advance over
+    # a short readable interval, so inspect an eighth of a second-ish window
+    # (8 cells) as well as the adjacent-frame smoothness diagnostic.
+    lookahead = max(2, len(frames) // 8)
+    late_advance = []
+    for i in range(late_start, len(frames) - 1):
+        mean = 0.5 * (float(frames[i].mean()) + float(frames[i + 1].mean()))
+        if mean > 1e-5:
+            late.append(float(np.abs(frames[i] - frames[i + 1]).mean()) / mean)
+        # Normalise each frame separately.  If frame k is merely a dimmer copy
+        # of frame k+1, these masks are identical and the result is zero.
+        peak = max(float(frames[i].max()), float(frames[i + 1].max()))
+        if peak > 1e-5:
+            a = frames[i] > peak * 0.18
+            b = frames[i + 1] > peak * 0.18
+            union = int((a | b).sum())
+            if union:
+                late_shape.append(1.0 - float((a & b).sum()) / union)
+        if i + lookahead < len(frames):
+            peak = max(float(frames[i].max()), float(frames[i + lookahead].max()))
+            if peak > 1e-5:
+                a = frames[i] > peak * 0.18
+                b = frames[i + lookahead] > peak * 0.18
+                union = int((a | b).sum())
+                if union:
+                    late_advance.append(1.0 - float((a & b).sum()) / union)
+    return (plateau, transition, float(np.mean(deltas)) if deltas else 0.0,
+            float(np.mean(late)) if late else 0.0,
+            float(np.mean(late_shape)) if late_shape else 0.0,
+            float(np.mean(late_advance)) if late_advance else 0.0)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("frames_dir",
@@ -284,6 +355,19 @@ def report(nums, args, path, sheet, want=None):
         print("  channels: flame %.1f%% of sheet, smoke %.1f%% "
               "(R and G are separate populations — see render.py)"
               % (fcov * 100, scov * 100))
+    plateau, transition, temporal, late_temporal, late_shape, late_advance = temporal_audit(
+        sheet, args.grid, sheet.size[0] // args.grid)
+    if fcov > 0.001:
+        print("  flame R: plateau %.1f%%, transition %.1f%%, adjacent change %.1f%% "
+              "(late frames 16..64 %.1f%%)"
+              % (plateau * 100, transition * 100, temporal * 100,
+                 late_temporal * 100))
+        print("  late silhouette: adjacent %.1f%%, +8 frames %.1f%% "
+              "(normalised mask IoU loss)" %
+              (late_shape * 100, late_advance * 100))
+        if late_advance < 0.15:
+            print("  WARNING: late gas silhouette is nearly frozen over 8 frames "
+                  "— tune the source turbulence, not the particle emitter.")
     if args.shape == "column" and ratio < 1.3:
         print("  WARNING: still puff-shaped — raise --buoyancy or make the domain taller.")
     if reach >= 1.0 or clipped:

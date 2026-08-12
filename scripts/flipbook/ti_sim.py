@@ -82,21 +82,53 @@ PRESETS = {
     # legacy split FLIPBOOK, whose existing look must not change when the volume
     # path is tuned.
     "fire_volume_puff": dict(
-        dt=0.9, gravity=0.0, flat=1.0, shell=0.0, impulse=0.22,
-        fuel_dens=1.0, fuel_radius=0.05, fuel_frames=0.40,
+        # 64 cells cover a short, actively burning interval, not 57.6 seconds
+        # of a steady combustor.  The previous dt=0.9 let the gas converge to
+        # a stationary volume from about frame 16 onward.
+        dt=0.2, gravity=0.0, flat=1.0, shell=0.0, impulse=0.22,
+        # Fuel is separate from smoke density and temperature.  Re-injecting
+        # density directly made the steady source converge to one frozen blob.
+        # A broad, low-density source gives the renderer a real soft envelope.
+        # Dense fuel made one opaque hot nugget per card; that cannot stack
+        # gracefully because overlapping billboards immediately read as tiles.
+        fuel_dens=0.42, burn=6.0, heat_yield=6.0, smoke_yield=0.15,
+        fuel_radius=0.085,
+        # This is a reusable particle texture, not a one-shot explosion.
+        # Particle lifetime supplies the global fade; keeping the tiny central
+        # combustor alive gives every later frame a hot, evolving gas envelope
+        # instead of a frozen soot tail after frame 16.
+        fuel_frames=1.0,
         # One connected ignition source.  Five explicit source lobes survived
         # packing as five bright islands, so a dense emitter read as glued-together
         # chunks instead of one turbulent volume.
         source_lobes=1,
-        radial=8.0, curl=2.4, swirl=4.0,
+        source_variation=0.55,
+        radial=4.5, sustain_pressure=0.32, contain=0.8, curl=29.0, swirl=32.0,
+        shape_noise=0.38,
         # Fine eddies and low viscosity break the density into gas parcels.
         # They do not pick an up direction; random billboard rotation preserves
         # this primitive's use for any emitter orientation.
-        eddy=58.0, diffuse=0.045, viscosity=0.06, buoyancy=0.0,
-        # Keep incandescent gas present longer and convert less of its lost heat
-        # into soot.  The previous volume bake was soot-dominant, making a clean
-        # fire emitter read as a smoke explosion before composition could shape it.
-        cool=0.18, soot=0.45),
+        # Large, continually changing eddies. The prior fine 52-cell field
+        # wrinkled the ignition edge, then the parcel settled into the same
+        # cauliflower shape for most of frames 16..64.
+        eddy=24.0, diffuse=0.018, viscosity=0.035, buoyancy=0.0,
+        # Cooling is deliberately moderate: the flipbook must retain flame in
+        # late cells, while the runtime particle owns the event-level fade.
+        cool=0.8, soot=0.38,
+        # Blend between two centred turbulence fields. This turns the gas over
+        # temporally without sliding the parcel across its own cell.
+        noise_phase_speed=0.9,
+        # A combustion source cannot be perfectly constant if the clip is meant
+        # to animate: constant fuel plus constant boundary conditions converges
+        # to a static fluid equilibrium. This is an isotropic flow-rate pulse,
+        # not a directional source-shape animation.
+        source_pulse_rate=1.2,
+        # Runtime particles appear continuously. Starting their animation from
+        # an un-stirred ignition sphere made new particles pile up as bright
+        # round marbles at the emitter foot. Warm the physical solver first;
+        # saved frame 1 is already a living gas parcel, with no image-space
+        # crop, time remap, or directional shape edit.
+        warmup_frames=10, lock_center=1),
 
     # A SMOKE puff, as a sprite. Same radial-burst skeleton as fire_puff, with
     # the combustion turned into an instant hand-off: cool is high and soot is
@@ -181,7 +213,26 @@ PRESETS = {
         viscosity=0.12, buoyancy=0.0,
         cool=0.30, soot=0.10),
 
-    # A rising flame: buoyancy on, radial off.
+    # A direction-bearing flame tongue.  Unlike fire_volume_puff this sheet is
+    # intentionally authored with +Z as up: it is one complete torch/jet lick,
+    # not a reusable gas parcel.  A larger physical domain leaves headroom for
+    # the plume; render.py later crops it to the cell without turning the roof
+    # of the solver into a hard silhouette edge.
+    "fire_tongue": dict(
+        dt=0.16, gravity=0.0, flat=1.0, shell=0.0, impulse=0.22,
+        fuel_dens=0.35, burn=6.0, heat_yield=6.0, smoke_yield=0.15,
+        fuel_radius=0.08, fuel_frames=0.90,
+        radial=0.70, sustain_pressure=0.12, contain=0.22,
+        curl=18.0, swirl=18.0, shape_noise=0.60,
+        diffuse=0.020, eddy=20.0, viscosity=0.10, buoyancy=12.0,
+        cool=0.55, soot=0.20,
+        source_variation=0.45, source_pulse_rate=1.40,
+        noise_phase_speed=0.85, warmup_frames=0,
+        domain=1.4),
+
+    # Legacy rising-flame baseline. Kept reproducible for comparison; new work
+    # must use fire_tongue above, whose shorter timeline and changing source do
+    # not settle into the old column's near-static late frames.
     "fire": dict(dt=0.9, gravity=0.0, flat=1.0, shell=0.0, impulse=0.22, fuel_dens=1.0, eddy=21.0, diffuse=0.10, radial=1.2, curl=2.4, viscosity=1.2, buoyancy=17.0,
                  cool=2.2, fuel_frames=0.75, fuel_radius=0.16,
                  soot=0.5, swirl=3.4),
@@ -197,6 +248,10 @@ def main():
     ap.add_argument("--name", default=None)
     ap.add_argument("--res", type=int, default=96)
     ap.add_argument("--frames", type=int, default=64)
+    ap.add_argument("--warmup", type=int, default=None,
+                    help="physical frames to solve before writing f001; useful for "
+                         "continuous emitters whose first card must not be an "
+                         "un-stirred ignition ball")
     ap.add_argument("--substeps", type=int, default=3)
     ap.add_argument("--jacobi", type=int, default=40)
     ap.add_argument("--seed", type=int, default=7)
@@ -204,6 +259,15 @@ def main():
                     help="Taichi backend; use cpu when Metal shader/cache setup fails")
     # Every physical term is a flag: this is the loop an artist runs.
     ap.add_argument("--radial", type=float, default=None, help="outward push from the centre")
+    ap.add_argument("--contain", type=float, default=None,
+                    help="isotropic radial restoring pressure; keeps a reusable puff "
+                         "from developing a baked long axis")
+    ap.add_argument("--sustain-pressure", type=float, default=None,
+                    help="fraction of radial pressure sustained by a continuous fuel "
+                         "source after the ignition impulse")
+    ap.add_argument("--shape-noise", type=float, default=None,
+                    help="fraction of centred curl turbulence allowed to puff/indent "
+                         "the boundary; 0 keeps it purely tangential")
     ap.add_argument("--curl", type=float, default=None, help="curl-noise forcing")
     ap.add_argument("--viscosity", type=float, default=None, help="velocity damping")
     ap.add_argument("--buoyancy", type=float, default=None, help="0 for a puff")
@@ -221,7 +285,7 @@ def main():
     # this. Lower it whenever the run warns about the wall — the fix is not
     # --radial, which was measured moving the 90th-percentile reach only
     # 1.28 -> 1.30 across 8.0 -> 3.0.
-    ap.add_argument("--domain", type=float, default=1.0,
+    ap.add_argument("--domain", type=float, default=None,
                     help="widen the simulated box by this factor at the SAME "
                          "grid resolution. Use it when a run warns about the "
                          "wall: >1 gives the gas room without weakening the "
@@ -262,29 +326,55 @@ def main():
                     help="density loss per simulated second; dust needs a short visual tail")
     ap.add_argument("--source-lobes", type=int, default=None,
                     help="number of overlapping seed lobes (1 = legacy smooth ball)")
+    ap.add_argument("--source-variation", type=float, default=None,
+                    help="amount of smooth, directionless fuel-flow variation inside "
+                         "one connected source (0 = uniform ball)")
+    ap.add_argument("--noise-phase-speed", type=float, default=None,
+                    help="radians per simulated second for blending two centred "
+                         "turbulence fields (0 = static field)")
+    ap.add_argument("--source-pulse-rate", type=float, default=None,
+                    help="radians per simulated second for isotropic fuel-flow "
+                         "pulses (0 = a constant combustor)")
+    ap.add_argument("--lock-center", type=int, choices=[0, 1], default=None,
+                    help="remove density-weighted bulk velocity each solver step. "
+                         "Use 1 for directionless parcel assets so turbulence churns "
+                         "inside the cell instead of becoming baked travel.")
     args = ap.parse_args()
 
     p = dict(PRESETS[args.preset])
     # Every knob is quoted at res 64 (see the scaling below), so an override
     # means the same shape whatever --res it is applied at.
-    for k in ("radial", "curl", "viscosity", "buoyancy", "cool", "swirl",
+    for k in ("radial", "contain", "sustain_pressure", "shape_noise", "curl", "viscosity", "buoyancy", "cool", "swirl",
               "diffuse", "soot", "fuel_frames", "eddy", "gravity", "flat",
               "shell", "impulse", "fuel_dens", "dt", "dissipate",
-              "fuel_radius"):
+              "fuel_radius", "noise_phase_speed", "source_pulse_rate", "source_variation", "lock_center"):
         if getattr(args, k) is not None:
             p[k] = getattr(args, k)
     if args.source_lobes is not None:
         p["source_lobes"] = args.source_lobes
     p.setdefault("source_lobes", 1)
+    p.setdefault("noise_phase_speed", 0.0)
+    p.setdefault("source_pulse_rate", 0.0)
+    p.setdefault("source_variation", 0.0)
+    p.setdefault("lock_center", 0)
+    p.setdefault("warmup_frames", 0)
+    if args.warmup is not None:
+        p["warmup_frames"] = max(0, args.warmup)
+    p.setdefault("contain", 0.0)
+    p.setdefault("sustain_pressure", 0.0)
+    p.setdefault("shape_noise", 0.0)
+    p.setdefault("domain", 1.0)
+    domain = args.domain if args.domain is not None else p["domain"]
+    p.setdefault("burn", 6.0)
+    p.setdefault("heat_yield", 6.0)
+    p.setdefault("smoke_yield", 0.15)
 
-    # RESOLUTION-INDEPENDENT FORCES. Velocities here are in VOXELS per step, so
-    # the same number moves gas further in relative terms on a finer grid: the
-    # preset tuned at res 64 filled 24% of the cell and the identical preset at
-    # res 112 filled 85%. Scaling the advective forces by 64/N makes a preset
-    # mean the same shape at any resolution — which is what stops quick-tuning
-    # from lying about the full bake (the trap that cost a 17-minute Mantaflow
-    # run earlier).
-    res_k = REF_RES / args.res
+    # RESOLUTION-INDEPENDENT FORCES. Velocities are stored in VOXELS per step.
+    # A fixed velocity therefore travels a *smaller* fraction of a finer grid,
+    # not a larger one.  Physical advection must scale as N/REF_RES.  The
+    # former inverse factor (REF_RES/N) made the 96³ production bake almost
+    # motionless while a 32³ probe looked lively, hiding a frozen atlas tail.
+    res_k = args.res / REF_RES
 
     # A BIGGER DOMAIN, WITHOUT A BIGGER GRID (--domain).
     #
@@ -309,8 +399,8 @@ def main():
     #                                              the note below already says)
     #   fuel_radius is a fraction of the domain -> 1/D, so the ignition stays
     #                                              the same PHYSICAL size
-    dom_k = 1.0 / max(args.domain, 1e-3)
-    for k in ("radial", "curl", "buoyancy", "swirl", "gravity"):
+    dom_k = 1.0 / max(domain, 1e-3)
+    for k in ("radial", "contain", "sustain_pressure", "curl", "buoyancy", "swirl", "gravity"):
         p[k] *= res_k * dom_k
     p["fuel_radius"] *= dom_k
 
@@ -322,7 +412,7 @@ def main():
     # a velocity (voxels per step) only needs 64/N. Same trap as the forces, one
     # power apart: before this, a preset dialled in at res 64 came back at res 112
     # with different lobes and there was no way to tune cheaply.
-    diff_k = p["diffuse"] / (res_k * res_k) * (dom_k * dom_k)
+    diff_k = p["diffuse"] * (res_k * res_k) * (dom_k * dom_k)
     if diff_k > 0.9:
         # dens <- (1-k)*dens + k*avg is a convex blend only for k <= 1; past that
         # the explicit step oscillates and the field goes negative.
@@ -349,53 +439,106 @@ def main():
 
     u = ti.Vector.field(3, ti.f32, shape=(N, N, N))
     u_tmp = ti.Vector.field(3, ti.f32, shape=(N, N, N))
+    # The transport velocity stays cell-centred because semi-Lagrangian
+    # backtracing samples it at arbitrary positions.  Pressure projection does
+    # not: its divergence/gradient pair must live on a MAC grid.  Applying a
+    # forward/backward pair to all three components at cell centres made a
+    # directionless radial puff creep towards negative xyz even with every
+    # directional force disabled.  These are the three face-centred components
+    # used only while projecting, then averaged back into `u` for transport.
+    u_x = ti.field(ti.f32, shape=(N + 1, N, N))
+    u_y = ti.field(ti.f32, shape=(N, N + 1, N))
+    u_z = ti.field(ti.f32, shape=(N, N, N + 1))
     dens = ti.field(ti.f32, shape=(N, N, N))
     temp = ti.field(ti.f32, shape=(N, N, N))
+    fuel = ti.field(ti.f32, shape=(N, N, N))
     fld_tmp = ti.field(ti.f32, shape=(N, N, N))
+    fuel_tmp = ti.field(ti.f32, shape=(N, N, N))
     div = ti.field(ti.f32, shape=(N, N, N))
     pre = ti.field(ti.f32, shape=(N, N, N))
     pre2 = ti.field(ti.f32, shape=(N, N, N))
+    omega = ti.Vector.field(3, ti.f32, shape=(N, N, N))
+    omega_mag = ti.field(ti.f32, shape=(N, N, N))
+    # Directionless parcels need turbulent RELATIVE motion, never a net push.
+    # These scalar reductions remove the density/heat-weighted bulk velocity
+    # before advection, making the solver's own centre a conserved frame.
+    bulk_mass = ti.field(ti.f32, shape=())
+    bulk_vx = ti.field(ti.f32, shape=())
+    bulk_vy = ti.field(ti.f32, shape=())
+    bulk_vz = ti.field(ti.f32, shape=())
     # A real random field, generated once on the CPU and uploaded. The first
     # version built "noise" from sums of sin(x), sin(y), sin(z) — which is a
     # periodic LATTICE, and it stamped a visible grid pattern into the puff. The
     # Mali ban on fract(sin(...)) is a rule for SHADERS on that device; this is
     # an offline script and can simply use randomness.
-    # It does not need to be divergence-free either: the pressure projection two
-    # steps later removes whatever divergence it introduces.
+    # It is a vector potential, not a direct force.  We curl it below so the
+    # injected turbulence is divergence-free before pressure projection.
     noise = ti.Vector.field(3, ti.f32, shape=(N, N, N))
+    noise_alt = ti.Vector.field(3, ti.f32, shape=(N, N, N))
+    noise_alt2 = ti.Vector.field(3, ti.f32, shape=(N, N, N))
+    noise_alt3 = ti.Vector.field(3, ti.f32, shape=(N, N, N))
 
     def build_noise(seed):
         rng = np.random.default_rng(seed)
-        # Coarse random, then smoothed: smoothing is what turns white noise into
-        # something with EDDIES. Unsmoothed noise just jitters each cell.
-        # Cell size matters relative to the FEATURE being stirred. At N//8 the
-        # noise cell was 8 voxels while the ignition volume is ~3, so inside the
-        # puff the field was effectively constant — turbulence that acts as a
-        # uniform push is just wind, which is why it kept blowing sideways.
-        # N//3 puts several cells across even the initial blob.
-        # The eddy size is a fraction of the DOMAIN, not a count of voxels.
-        # It used to be N//3 cells, i.e. an eddy 3 voxels wide at every
-        # resolution — so at res 112 the turbulence stirred features 1.8x
-        # smaller (relative to the puff) than the same preset did at res 64.
-        # That is the largest remaining reason a preset did not survive a
-        # resolution change; the force scaling and the diffusion coefficient
-        # are both smaller effects than this one.
-        M = max(4, int(round(p["eddy"])))
-        low = rng.standard_normal((M + 2, M + 2, M + 2, 3)).astype(np.float32)
-        for _ in range(1):
-            low = (low + np.roll(low, 1, 0) + np.roll(low, -1, 0)
-                   + np.roll(low, 1, 1) + np.roll(low, -1, 1)
-                   + np.roll(low, 1, 2) + np.roll(low, -1, 2)) / 7.0
-        idx = (np.arange(N) * (low.shape[0] - 1) / N).astype(np.int32)
-        big = low[np.ix_(idx, idx, idx)]
-        # ZERO-MEAN, per channel. A smoothed random field keeps a large-scale
-        # bias, and a constant force applied every substep is not turbulence —
-        # it is wind: the puff came out blown sideways into a comet.
+        # Generate the vector potential at the solver resolution in Fourier
+        # space, then band-limit it isotropically.  The old coarse-grid /
+        # nearest-neighbour upsample placed fixed cubical force cells into the
+        # bake.  Those grid seams survived as one diagonal plume even though
+        # the average force was zero.  A radial spectral filter has no chosen
+        # x/y/z axis and keeps the eddy scale stable in DOMAIN units.
+        white = rng.standard_normal((N, N, N, 3)).astype(np.float32)
+        wave = np.fft.fftn(white, axes=(0, 1, 2))
+        freq = np.fft.fftfreq(N) * N
+        kx, ky, kz = np.meshgrid(freq, freq, freq, indexing="ij")
+        kmag = np.sqrt(kx * kx + ky * ky + kz * kz)
+        cutoff = max(3.0, float(p["eddy"]) * 0.5)
+        # Reject DC / one-cell domain modes: they are coherent wind/shear, not
+        # local turbulence.  The soft cutoff avoids ringing at a hard spectral
+        # boundary and spans several wavelengths rather than one giant lobe.
+        band = (1.0 - np.exp(-(kmag / 2.0) ** 4)) * np.exp(-(kmag / cutoff) ** 4)
+        potential = np.fft.ifftn(wave * band[..., None], axes=(0, 1, 2)).real.astype(np.float32)
+        # Central periodic differences keep div(curl(A)) zero in the discrete
+        # stencil used here.  Do not force A/F into mirror parity: that made
+        # each random sample into one persistent two-ended axis.  Directionless
+        # means no preferred *world* direction, not an artificial requirement
+        # that every turbulent parcel is centrally symmetric.  The zero-mean
+        # force and bulk-velocity removal below keep this stochastic field from
+        # becoming baked travel.
+        d = lambda a, axis: 0.5 * (np.roll(a, -1, axis) - np.roll(a, 1, axis))
+        big = np.empty_like(potential)
+        big[..., 0] = d(potential[..., 2], 1) - d(potential[..., 1], 2)
+        big[..., 1] = d(potential[..., 0], 2) - d(potential[..., 2], 0)
+        big[..., 2] = d(potential[..., 1], 0) - d(potential[..., 0], 1)
+        # Remove the DC wind, then project the three linear basis functions out
+        # of every vector channel.  A finite random field otherwise contains a
+        # local F(r)=A*r shear that makes a persistent diagonal head-and-tail.
         big -= big.mean(axis=(0, 1, 2), keepdims=True)
+        # The bases are orthogonal on this centred grid, so the scalar least
+        # squares projection is exact and preserves F(-r)=-F(r).
+        coord = np.linspace(-1.0, 1.0, N, dtype=np.float32)
+        for basis in (coord[:, None, None], coord[None, :, None],
+                      coord[None, None, :]):
+            denom = float(np.sum(basis * basis)) * N * N
+            coeff = (big * basis[..., None]).sum(axis=(0, 1, 2)) / max(denom, 1e-6)
+            big -= basis[..., None] * coeff
+        # A finite random realization can still put most of its energy on one
+        # component (for example Fz).  That is neither gravity nor a net wind,
+        # but it bakes a tall local axis into a supposedly directionless card.
+        # Whiten the vector covariance so all three force components carry the
+        # same energy before the solver ever sees them.  This is a property of
+        # the stochastic force ensemble, not a frame-space shape correction.
+        samples = big.reshape(-1, 3).astype(np.float64)
+        cov = samples.T @ samples / max(1, len(samples))
+        values, vectors = np.linalg.eigh(cov)
+        inv_sqrt = vectors @ np.diag(1.0 / np.sqrt(np.maximum(values, 1e-8))) @ vectors.T
+        big = np.einsum("...j,ij->...i", big, inv_sqrt.astype(np.float32))
         big /= (np.abs(big).max() + 1e-6)
-        noise.from_numpy(np.ascontiguousarray(big, np.float32))
+        return np.ascontiguousarray(big, np.float32)
 
-    build_noise(args.seed)
+    noise.from_numpy(build_noise(args.seed))
+    noise_alt.from_numpy(build_noise(args.seed + 0x51A7))
+    noise_alt2.from_numpy(build_noise(args.seed + 0xB529))
+    noise_alt3.from_numpy(build_noise(args.seed + 0x68E3))
 
     @ti.func
     def samp(f, pos):
@@ -420,16 +563,27 @@ def main():
         return c
 
     @ti.kernel
-    def add_fuel(t: ti.f32, dt: ti.f32, rad: ti.f32, radial: ti.f32,
-                 shell: ti.f32, kdens: ti.f32, source_lobes: ti.i32):
-        c = ti.Vector([N * 0.5, N * 0.5, N * 0.5])
+    def add_fuel(t: ti.f32, dt: ti.f32, rad: ti.f32, shell: ti.f32,
+                 kfuel: ti.f32, source_lobes: ti.i32, pulse_rate: ti.f32,
+                 noise_phase_speed: ti.f32, source_variation: ti.f32):
+        # Voxel centres run 0..N-1. `N*0.5` chooses the upper of the two
+        # middle voxels for even grids, while every mirrored field is symmetric
+        # about (N-1)*0.5; that half-voxel disagreement was a permanent source
+        # of diagonal parcel drift.
+        c = ti.Vector([(N - 1) * 0.5, (N - 1) * 0.5, (N - 1) * 0.5])
         r = rad * N
-        for I in ti.grouped(dens):
-            d = (ti.cast(I, ti.f32) - c).norm()
+        # A source with fixed mass flow has a static solution under a fixed
+        # force field. Modulating only its scalar flow rate lets combustion keep
+        # rebuilding the gas surface without introducing a preferred direction.
+        pulse = 0.675 + 0.325 * ti.sin(t * pulse_rate)
+        for I in ti.grouped(fuel):
+            p_local = ti.cast(I, ti.f32) - c
+            d = p_local.norm()
+            source_r = r
             m = 0.0
             if source_lobes <= 1:
-                if d < r:
-                    m = (1.0 - d / r) ** 0.7
+                if d < source_r:
+                    m = (1.0 - d / source_r) ** 0.7
             else:
                 # Up to five overlapping seed clumps. Their locations are fixed
                 # in local space so the event evolves coherently frame-to-frame;
@@ -445,8 +599,20 @@ def main():
                     if ti.static(l == 4): off = ti.Vector([ 0.34, 0.22,  0.36])
                     if l < source_lobes:
                         dl = (ti.cast(I, ti.f32) - (c + off * r)).norm()
-                        m = ti.max(m, ti.max(0.0, 1.0 - dl / (r * 0.68)) ** 0.7)
+                        m = ti.max(m, ti.max(0.0, 1.0 - dl / (source_r * 0.68)) ** 0.7)
             if m > 0.0:
+                # A uniform burning sphere remains a uniform bright nugget
+                # until it has travelled far beyond the source.  Modulate the
+                # scalar fuel flow by the *magnitude* of a time-blended
+                # divergence-free turbulence field. Magnitude has no selected
+                # coordinate axis; the source remains one connected volume and
+                # its changing hot/cool pockets are authored by the emitter,
+                # never painted into the projected sprite after simulation.
+                phase = t * noise_phase_speed
+                source_eddy = (noise[I] * ti.cos(phase)
+                               + noise_alt[I] * ti.sin(phase)).norm()
+                source_eddy = ti.min(source_eddy, 1.0)
+                m *= 1.0 - source_variation * (1.0 - source_eddy)
                 # SOLID BALL (shell = 0) or a HOLLOW SHELL. A detonation ignites
                 # a surface, not a volume: the reference the owner gave is dark
                 # in the middle with a bright, filamented rim, and that hole is
@@ -454,22 +620,29 @@ def main():
                 if shell > 0.0:
                     w = r * (1.0 - shell)
                     m = ti.max(0.0, 1.0 - ti.abs(d - r * shell) / ti.max(w, 1e-3))
-                # Slight per-cell jitter so the source is not a perfect ball —
-                # a perfectly symmetric source produces a perfectly symmetric
-                # puff, which is the "solid sphere" failure.
-                m *= 0.6 + 0.4 * ti.random()
-                temp[I] += m * 6.0 * dt
-                dens[I] += m * 1.2 * kdens * dt
-                if d > 0.001:
-                    # A small launch kick only; the sustained expansion is a
-                    # force on the gas itself, applied in forces().
-                    u[I] += (ti.cast(I, ti.f32) - c).normalized() * (0.15 * radial * m * dt)
+                fuel[I] += m * kfuel * pulse * dt
+
+    @ti.kernel
+    def combust(dt: ti.f32, burn: ti.f32, heat_yield: ti.f32, smoke_yield: ti.f32):
+        """Consume fuel into heat and a small soot yield.
+
+        Fuel is the only continuously sourced quantity.  Temperature and smoke
+        therefore have independent creation/destruction paths, preventing a
+        stationary source from continually stamping the same density ball.
+        """
+        for I in ti.grouped(fuel):
+            consumed = ti.min(fuel[I], burn * fuel[I] * dt)
+            fuel[I] -= consumed
+            temp[I] += consumed * heat_yield
+            dens[I] += consumed * smoke_yield
 
     @ti.kernel
     def forces(dt: ti.f32, buoy: ti.f32, curl: ti.f32, visc: ti.f32,
-               swirl: ti.f32, t: ti.f32, radial: ti.f32, decay: ti.f32,
-               grav: ti.f32, flat: ti.f32):
-        c = ti.Vector([N * 0.5, N * 0.5, N * 0.5])
+               t: ti.f32, radial: ti.f32, decay: ti.f32,
+               grav: ti.f32, flat: ti.f32, noise_phase_speed: ti.f32,
+               contain: ti.f32, sustain_pressure: ti.f32, shape_noise: ti.f32,
+               pulse_rate: ti.f32):
+        c = ti.Vector([(N - 1) * 0.5, (N - 1) * 0.5, (N - 1) * 0.5])
         for I in ti.grouped(u):
             v = u[I]
             # RADIAL pressure, applied to all HOT gas rather than only inside the
@@ -491,7 +664,20 @@ def main():
                 # the only part of that a SPRITE can carry — the fall itself
                 # belongs to the particle, exactly as buoyancy does for smoke.
                 dir = ti.Vector([d.x, d.y, d.z * flat])
-                v += dt * radial * decay * (temp[I] + 0.35 * dens[I]) * dir / dist
+                # An explosion takes one radial impulse. A continuously fed
+                # flame puff does not: after ignition it keeps breathing as its
+                # fuel flow rises/falls. Holding a small isotropic pressure is
+                # what lets the visible gas boundary keep evolving after the
+                # warm-up frames, rather than settling into one static blob.
+                breath = 1.0 + 0.30 * ti.sin(t * pulse_rate)
+                pressure = decay + sustain_pressure * (1.0 - decay)
+                v += dt * radial * pressure * breath * (temp[I] + 0.35 * dens[I]) * dir / dist
+                # A local, directionless puff has no exterior wind or buoyant
+                # axis baked into it.  This is the opposing isotropic pressure:
+                # it grows linearly with radius, so a stray turbulent lobe gets
+                # a stronger restoring force than the hot core.  It is part of
+                # the fluid force field, never a render-space squash/crop.
+                v -= dt * contain * (0.2 + dens[I] + temp[I]) * d / N
             # UP IS Z, not Y. The renderer's image Y is the grid's z
             # (`gz = (1-v)*(rz-1)`) and its ray marches along y, so a force on
             # v.y pushes the puff straight AWAY FROM THE CAMERA. Measured with
@@ -506,38 +692,102 @@ def main():
             v.z -= dt * grav * dens[I]
             # Turbulent forcing, scaled by how much material is here: empty
             # cells should not be stirred.
-            v += dt * curl * noise[I] * (0.4 + dens[I] + temp[I])
+            # Four incommensurate odd-symmetric modes make a genuine temporal
+            # turbulence field. A single sin/cos blend of two fields only walks
+            # around one ellipse in force-space, so a continuous fuel source
+            # repeatedly found the same gas silhouette. Every summand is still
+            # a centred divergence-free curl: this increases temporal degrees
+            # of freedom without moving the parcel or baking a preferred axis.
+            phase = t * noise_phase_speed
+            turbulence = 0.5 * (
+                noise[I] * ti.cos(phase)
+                + noise_alt[I] * ti.sin(phase)
+                + noise_alt2[I] * ti.cos(1.618 * phase + 0.73)
+                + noise_alt3[I] * ti.sin(1.414 * phase + 1.91))
+            # Most eddies shear around the local radius, keeping the parcel
+            # round.  A bounded share of the same centred curl is allowed to
+            # push locally in/out: without it only the interior turns over and
+            # the rendered silhouette never changes.  This is still a
+            # zero-mean, divergence-free stochastic field — no gravity, wind,
+            # or baked up/down/side direction — and containment owns the
+            # overall radius.
+            if dist > 0.5:
+                tangent = (d / dist).cross(turbulence)
+                turbulence = tangent * (1.0 - shape_noise) + turbulence * shape_noise
+            v += dt * curl * turbulence * (0.4 + dens[I] + temp[I])
             # Viscosity: plain velocity damping, the owner's third term.
             v *= ti.exp(-visc * dt)
             u_tmp[I] = v
         for I in ti.grouped(u):
             u[I] = u_tmp[I]
-        # Vorticity confinement, re-injecting the swirl advection eats.
+
+    @ti.kernel
+    def calculate_vorticity():
+        """omega = curl(u), evaluated before pressure projection."""
         for I in ti.grouped(u):
             if 1 <= I.x < N - 1 and 1 <= I.y < N - 1 and 1 <= I.z < N - 1:
-                wx = (u[I + ti.Vector([0, 1, 0])].z - u[I - ti.Vector([0, 1, 0])].z
-                      - u[I + ti.Vector([0, 0, 1])].y + u[I - ti.Vector([0, 0, 1])].y)
-                wy = (u[I + ti.Vector([0, 0, 1])].x - u[I - ti.Vector([0, 0, 1])].x
-                      - u[I + ti.Vector([1, 0, 0])].z + u[I - ti.Vector([1, 0, 0])].z)
-                wz = (u[I + ti.Vector([1, 0, 0])].y - u[I - ti.Vector([1, 0, 0])].y
-                      - u[I + ti.Vector([0, 1, 0])].x + u[I - ti.Vector([0, 1, 0])].x)
-                w = ti.Vector([wx, wy, wz]) * 0.5
-                if w.norm() > 1e-4:
-                    u_tmp[I] = u[I] + dt * swirl * 0.02 * w
-                else:
-                    u_tmp[I] = u[I]
+                dx = ti.Vector([1, 0, 0])
+                dy = ti.Vector([0, 1, 0])
+                dz = ti.Vector([0, 0, 1])
+                w = 0.5 * ti.Vector([
+                    u[I + dy].z - u[I - dy].z - u[I + dz].y + u[I - dz].y,
+                    u[I + dz].x - u[I - dz].x - u[I + dx].z + u[I - dx].z,
+                    u[I + dx].y - u[I - dx].y - u[I + dy].x + u[I - dy].x])
+                omega[I] = w
+                omega_mag[I] = w.norm()
+            else:
+                omega[I] = ti.Vector([0.0, 0.0, 0.0])
+                omega_mag[I] = 0.0
+
+    @ti.kernel
+    def confine_vorticity(dt: ti.f32, strength: ti.f32):
+        """Add epsilon * (normalize(grad |omega|) cross omega)."""
+        for I in ti.grouped(u):
+            if 1 <= I.x < N - 1 and 1 <= I.y < N - 1 and 1 <= I.z < N - 1:
+                dx = ti.Vector([1, 0, 0])
+                dy = ti.Vector([0, 1, 0])
+                dz = ti.Vector([0, 0, 1])
+                grad = 0.5 * ti.Vector([
+                    omega_mag[I + dx] - omega_mag[I - dx],
+                    omega_mag[I + dy] - omega_mag[I - dy],
+                    omega_mag[I + dz] - omega_mag[I - dz]])
+                n = grad.normalized(1e-4)
+                u_tmp[I] = u[I] + dt * strength * 0.02 * n.cross(omega[I])
             else:
                 u_tmp[I] = u[I]
         for I in ti.grouped(u):
             u[I] = u_tmp[I]
 
     @ti.kernel
+    def velocity_to_faces():
+        """Interpolate centred transport velocity onto MAC cell faces."""
+        for I in ti.grouped(u_x):
+            if I.x == 0 or I.x == N:
+                u_x[I] = 0.0
+            else:
+                u_x[I] = 0.5 * (u[I.x - 1, I.y, I.z].x + u[I.x, I.y, I.z].x)
+        for I in ti.grouped(u_y):
+            if I.y == 0 or I.y == N:
+                u_y[I] = 0.0
+            else:
+                u_y[I] = 0.5 * (u[I.x, I.y - 1, I.z].y + u[I.x, I.y, I.z].y)
+        for I in ti.grouped(u_z):
+            if I.z == 0 or I.z == N:
+                u_z[I] = 0.0
+            else:
+                u_z[I] = 0.5 * (u[I.x, I.y, I.z - 1].z + u[I.x, I.y, I.z].z)
+
+    @ti.kernel
     def divergence():
         for I in ti.grouped(div):
             if 1 <= I.x < N - 1 and 1 <= I.y < N - 1 and 1 <= I.z < N - 1:
-                div[I] = 0.5 * (u[I + ti.Vector([1, 0, 0])].x - u[I - ti.Vector([1, 0, 0])].x
-                                + u[I + ti.Vector([0, 1, 0])].y - u[I - ti.Vector([0, 1, 0])].y
-                                + u[I + ti.Vector([0, 0, 1])].z - u[I - ti.Vector([0, 0, 1])].z)
+                # MAC divergence at cell centre. `subtract_gradient` applies
+                # the exact adjoint pressure differences to these same faces,
+                # so the six-neighbour Jacobi Poisson solve matches the
+                # discrete operator instead of injecting a one-cell bias.
+                div[I] = (u_x[I.x + 1, I.y, I.z] - u_x[I.x, I.y, I.z]
+                          + u_y[I.x, I.y + 1, I.z] - u_y[I.x, I.y, I.z]
+                          + u_z[I.x, I.y, I.z + 1] - u_z[I.x, I.y, I.z])
             else:
                 div[I] = 0.0
             pre[I] = 0.0
@@ -555,18 +805,56 @@ def main():
 
     @ti.kernel
     def subtract_gradient():
+        for I in ti.grouped(u_x):
+            if 1 <= I.x < N:
+                u_x[I] -= pre[I.x, I.y, I.z] - pre[I.x - 1, I.y, I.z]
+        for I in ti.grouped(u_y):
+            if 1 <= I.y < N:
+                u_y[I] -= pre[I.x, I.y, I.z] - pre[I.x, I.y - 1, I.z]
+        for I in ti.grouped(u_z):
+            if 1 <= I.z < N:
+                u_z[I] -= pre[I.x, I.y, I.z] - pre[I.x, I.y, I.z - 1]
         for I in ti.grouped(u):
-            if 1 <= I.x < N - 1 and 1 <= I.y < N - 1 and 1 <= I.z < N - 1:
-                u[I] -= 0.5 * ti.Vector([
-                    pre[I + ti.Vector([1, 0, 0])] - pre[I - ti.Vector([1, 0, 0])],
-                    pre[I + ti.Vector([0, 1, 0])] - pre[I - ti.Vector([0, 1, 0])],
-                    pre[I + ti.Vector([0, 0, 1])] - pre[I - ti.Vector([0, 0, 1])]])
+            u[I] = ti.Vector([
+                0.5 * (u_x[I.x, I.y, I.z] + u_x[I.x + 1, I.y, I.z]),
+                0.5 * (u_y[I.x, I.y, I.z] + u_y[I.x, I.y + 1, I.z]),
+                0.5 * (u_z[I.x, I.y, I.z] + u_z[I.x, I.y, I.z + 1])])
 
     @ti.kernel
-    def advect(dt: ti.f32):
+    def clear_bulk_velocity():
+        bulk_mass[None] = 0.0
+        bulk_vx[None] = 0.0
+        bulk_vy[None] = 0.0
+        bulk_vz[None] = 0.0
+
+    @ti.kernel
+    def measure_bulk_velocity():
+        for I in ti.grouped(dens):
+            # Hot gas has to count before soot density has accumulated. This
+            # keeps the first bright frames centered too, not only their tail.
+            w = dens[I] + temp[I]
+            ti.atomic_add(bulk_mass[None], w)
+            ti.atomic_add(bulk_vx[None], u[I].x * w)
+            ti.atomic_add(bulk_vy[None], u[I].y * w)
+            ti.atomic_add(bulk_vz[None], u[I].z * w)
+
+    @ti.kernel
+    def remove_bulk_velocity():
+        inv_mass = 1.0 / ti.max(bulk_mass[None], 1e-6)
+        mean = ti.Vector([bulk_vx[None], bulk_vy[None], bulk_vz[None]]) * inv_mass
+        for I in ti.grouped(u):
+            u[I] -= mean
+
+    @ti.kernel
+    def advect_velocity(dt: ti.f32):
         for I in ti.grouped(u):
             back = ti.cast(I, ti.f32) - u[I] * dt
             u_tmp[I] = sampv(u, back)
+        for I in ti.grouped(u):
+            u[I] = u_tmp[I]
+
+    @ti.kernel
+    def advect_scalars(dt: ti.f32):
         for I in ti.grouped(dens):
             back = ti.cast(I, ti.f32) - u[I] * dt
             fld_tmp[I] = samp(dens, back)
@@ -577,8 +865,11 @@ def main():
             fld_tmp[I] = samp(temp, back)
         for I in ti.grouped(temp):
             temp[I] = fld_tmp[I]
-        for I in ti.grouped(u):
-            u[I] = u_tmp[I]
+        for I in ti.grouped(fuel):
+            back = ti.cast(I, ti.f32) - u[I] * dt
+            fuel_tmp[I] = samp(fuel, back)
+        for I in ti.grouped(fuel):
+            fuel[I] = fuel_tmp[I]
 
     @ti.kernel
     def diffuse(k: ti.f32):
@@ -632,6 +923,7 @@ def main():
     t0 = time.time()
     wall_max = 0.0
     r90 = 0.0
+    max_divergence = 0.0
     # Radius of every voxel, as a fraction of the domain HALF-width: the one
     # extent measurement that does not go through the renderer, so it compares
     # two resolutions (or a sim against a sheet) without the framing, the
@@ -641,32 +933,62 @@ def main():
     rad_flat = rad.ravel()
     rad_order = np.argsort(rad_flat)
     rad_sorted = rad_flat[rad_order]
-    for f in range(args.frames):
-        for _ in range(args.substeps):
-            frac = f / max(1, args.frames - 1)
+    total_frames = args.frames + p["warmup_frames"]
+    for f in range(total_frames):
+        for substep in range(args.substeps):
+            frac = f / max(1, total_frames - 1)
+            step_dt = dt / args.substeps
+            force_time = (f + (substep + 0.5) / args.substeps) * dt
+            # Stable-fluid ordering: transport velocity first, then apply
+            # sources/forces, restore lost vorticity, project to divergence-free,
+            # and only then transport the scalar material fields with that
+            # projected velocity.  Keeping all three advections in one pass made
+            # force injection depend on its own unprojected backtrace.
+            advect_velocity(step_dt)
             if frac < p["fuel_frames"]:
-                add_fuel(frac, dt / args.substeps, p["fuel_radius"], p["radial"],
-                         p["shell"], p["fuel_dens"], p["source_lobes"])
+                add_fuel(force_time, step_dt, p["fuel_radius"], p["shell"],
+                         p["fuel_dens"], p["source_lobes"], p["source_pulse_rate"],
+                         p["noise_phase_speed"], p["source_variation"])
+            combust(step_dt, p["burn"], p["heat_yield"], p["smoke_yield"])
             # Impulse envelope: full push while the fuel burns, then off.
             # How long the radial impulse lasts, as a fraction of the sheet.
             # A puff coasts after a gentle shove (0.22); a DETONATION is over in
             # a few frames and everything after is momentum.
             decay = max(0.0, 1.0 - (f / max(1, args.frames - 1))
                         / max(p["impulse"], 1e-3)) ** 2
-            forces(dt / args.substeps, p["buoyancy"], p["curl"], p["viscosity"],
-                   p["swirl"], f * 0.1, p["radial"], decay, p["gravity"],
-                   p["flat"])
+            # The turbulence field is time-dependent.  Freezing it for all
+            # substeps made each atlas cell an impulse from a static field; the
+            # parcel then settled into the same cauliflower outline for the
+            # remainder of the sheet.  Sampling physical substep time makes
+            # that field continuously turn over while retaining its centred,
+            # odd-symmetric construction.
+            forces(step_dt, p["buoyancy"], p["curl"], p["viscosity"],
+                   force_time, p["radial"], decay, p["gravity"],
+                   p["flat"], p["noise_phase_speed"], p["contain"],
+                   p["sustain_pressure"], p["shape_noise"], p["source_pulse_rate"])
+            calculate_vorticity()
+            confine_vorticity(step_dt, p["swirl"])
+            velocity_to_faces()
             divergence()
             for k in range(jacobi_iters // 2):
                 jacobi(pre, pre2)
                 jacobi(pre2, pre)
             subtract_gradient()
-            advect(dt / args.substeps)
-            cool(dt / args.substeps, p["cool"], p["soot"], p.get("dissipate", 0.06))
+            if p["lock_center"]:
+                clear_bulk_velocity()
+                measure_bulk_velocity()
+                remove_bulk_velocity()
+            advect_scalars(step_dt)
+            cool(step_dt, p["cool"], p["soot"], p.get("dissipate", 0.06))
             diffuse(p["diffuse"])
+
+        if f < p["warmup_frames"]:
+            continue
 
         d = dens.to_numpy()
         tp = temp.to_numpy()
+        divergence()
+        max_divergence = max(max_divergence, float(np.max(np.abs(div.to_numpy()))))
         tot = float(d.sum())
         if tot > 1e-6:
             shell = tot - float(d[2:-2, 2:-2, 2:-2].sum())
@@ -675,19 +997,22 @@ def main():
             r90 = float(rad_sorted[np.searchsorted(np.cumsum(w), 0.9 * tot)])
         # Layout [z][y][x], which is what render.py indexes.
         np.savez_compressed(
-            os.path.join(out_dir, "f%03d.npz" % (f + 1)),
+            os.path.join(out_dir, "f%03d.npz" % (f - p["warmup_frames"] + 1)),
             density=np.ascontiguousarray(d.transpose(2, 1, 0), np.float16),
             flame=np.ascontiguousarray(tp.transpose(2, 1, 0), np.float16),
             temperature=np.ascontiguousarray(tp.transpose(2, 1, 0), np.float16),
             res=np.array([N, N, N], np.int32))
-        if f % 8 == 0:
-            print("SIM %2d/%d  %.1fs  d.max=%.3f T.max=%.3f"
-                  % (f, args.frames, time.time() - t0, float(d.max()), float(tp.max())),
+        written = f - p["warmup_frames"]
+        if written % 8 == 0:
+            print("SIM %2d/%d  %.1fs  d.max=%.3f T.max=%.3f div.max=%.4f"
+                  % (written, args.frames, time.time() - t0, float(d.max()), float(tp.max()),
+                     max_divergence),
                   flush=True)
 
     print("SIM: %d frames in %.1fs -> %s" % (args.frames, time.time() - t0, out_dir))
     print("SIM: r90 %.2f of the domain half-width (last frame), wall shell %.1f%% (peak)"
           % (r90, wall_max * 100))
+    print("SIM: peak post-projection divergence %.5f" % max_divergence)
     if wall_max > 0.02 or r90 > 1.0:
         # Advection samples are CLAMPED at the boundary, so material pressed
         # against a wall is re-sampled from itself and the solver manufactures

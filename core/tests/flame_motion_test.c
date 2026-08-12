@@ -81,18 +81,23 @@ static float Terminal(float buoyancy, float drag)
 // ── the shipped values (core/composition/fire/flame_volume.inl) ──────────────
 
 static const Curve FLAME_RISE = { 3, {0.0f, 0.35f, 1.0f}, {1.35f, 1.0f, 0.35f} };
+// Volume emitter's compact-foot pass: its authored 0.55..0.80 m/s launch is
+// multiplied by the shipping 1.15 rise knob. Mirror the highest/lowest values
+// here so a later shape tune cannot quietly turn the flame back into a jet.
+#define VOLUME_BODY_V0_MIN (0.55f * 1.15f)
+#define VOLUME_BODY_V0_MAX (0.80f * 1.15f)
 
 static void Test_FlameBodyStaysWithinItsOwnFlame(void)
 {
     // scale = 1.0 means "a 1 m flame". A body particle living its full life must
     // not travel much beyond that, or the licks visibly overshoot the shape.
-    MotionSpec fast = { 0.75f, 1.0f, 1.8f, 1.40f, &FLAME_RISE };
+    MotionSpec fast = { VOLUME_BODY_V0_MAX, 1.0f, 1.8f, 1.40f, &FLAME_RISE };
     MotionResult r = Integrate(&fast);
     CHECK_MSG(r.rise <= 1.35f,
               "longest-lived flame particle stays within ~1.3x the flame height",
               "rise=%.2f m over %.2f s (peak %.2f m/s)", r.rise, fast.life, r.peakSpeed);
 
-    MotionSpec slow = { 0.45f, 1.0f, 1.8f, 0.75f, &FLAME_RISE };
+    MotionSpec slow = { VOLUME_BODY_V0_MIN, 1.0f, 1.8f, 0.75f, &FLAME_RISE };
     MotionResult r2 = Integrate(&slow);
     CHECK_MSG(r2.rise > 0.25f,
               "shortest-lived flame particle still rises visibly",
@@ -116,9 +121,9 @@ static void Test_PerceivedSpeedInBodyLengths(void)
     // modest velocity — this is what "the particles are too fast" actually
     // measures, and why the first fix (cut velocity, raise drag) produced a
     // squat flame instead of a calm one: it treated m/s as the quantity.
-    MotionSpec m = { 0.75f, 1.0f, 1.8f, 1.40f, &FLAME_RISE };
+    MotionSpec m = { VOLUME_BODY_V0_MAX, 1.0f, 1.8f, 1.40f, &FLAME_RISE };
     MotionResult r = Integrate(&m);
-    float diameter = 2.0f * 0.145f;          // mean particle radius
+    float diameter = 2.0f * 0.135f;          // mean particle radius after taper
     float lengths = r.rise / diameter;
     // 3 diameters was measured as the point where licks stop reading as
     // travelling embers. 4.2 (the previous value) already looked like sparks.
@@ -145,7 +150,7 @@ static void Test_SmokeRisesSlowerThanFlame(void)
 {
     // Smoke must lag its fire; if it keeps pace the hand-off reads as two
     // separate effects rather than as one cooling process.
-    MotionSpec flame = { 0.75f, 1.0f, 1.8f, 1.40f, &FLAME_RISE };
+    MotionSpec flame = { VOLUME_BODY_V0_MAX, 1.0f, 1.8f, 1.40f, &FLAME_RISE };
     MotionSpec smoke = { 0.22f, 0.35f, 1.6f, 1.70f, NULL };
     float vf = Terminal(flame.buoyancy, flame.drag);
     float vs = Terminal(smoke.buoyancy, smoke.drag);

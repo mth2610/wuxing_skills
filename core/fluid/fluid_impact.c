@@ -211,8 +211,10 @@ void FluidImpact_SpawnWater(const FluidImpactEvent *event)
      * screen-space surface at all; when it says no, the ballistic droplets and
      * residue below still render as ordinary particles, which is exactly the
      * fallback the cost design asks for. */
+    /* An impact is one-shot: it asks once, here, and the body it spawns lives
+     * out its 2.5 s on that answer. Nothing re-asks, so nothing can strobe. */
     bool useSurface = FluidSurface_RequestBody(FLUID_PRIORITY_CAST, event->hitPoint,
-                                               scale * 0.30f);
+                                               scale * 0.30f, false);
     if (useSurface) {
         FluidSurface_SetMaterialColors(s_fluidBody, s_fluidGlow, s_fluidSoft);
         FluidSurface_SetReconstructionRadiusFor(FLUID_PRIORITY_CAST, scale*0.022f);

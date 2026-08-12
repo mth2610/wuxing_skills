@@ -95,13 +95,22 @@ typedef enum {
 /* Ask BEFORE building a fluid body, every frame the body wants to exist.
  * `worldRadius` is the body's approximate bounding radius in metres.
  *
+ * `alreadyRunning` — pass true when THIS body was admitted on a previous frame
+ * and is still going; false when it is starting. It is not an optimisation, it
+ * is what stops the gate strobing: the frame-budget test measures a number the
+ * gate's own decision controls (admitting the water ring costs 23-27 ms a
+ * frame, rejecting it 16-17 ms), so re-testing a running body flips it every
+ * frame at any threshold between those. A body's affordability is decided once,
+ * when it starts. The size cull is not self-referential and keeps running every
+ * frame, with hysteresis.
+ *
  * Returns false when the caller must render with ordinary particles instead —
  * the caller owns that fallback; this function only decides. It uses the
  * PREVIOUS frame's camera and frame time, so it is order-independent within a
  * frame: a basic attack does not have to be submitted after the hero's cast to
  * see that the surface is running. */
 bool FluidSurface_RequestBody(FluidSurfacePriority priority, Vector3 center,
-                              float worldRadius);
+                              float worldRadius, bool alreadyRunning);
 
 /* The reconstruction radius is still ONE value for the whole capture. A gated
  * caller sets it through this, so a boss ultimate's kernel is not resized by a

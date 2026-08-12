@@ -473,6 +473,56 @@ void ProceduralMesh_BuildWavePlane(WavePlaneMeshData *out, Vector3 center,
 void ProceduralMesh_DrawWavePlane(const WavePlaneMeshData *data, Color color);
 
 /* ============================================================================
+ * SHOCKWAVE ANNULUS MESH
+ * --------------------------------------------------------------------------
+ * A ground-conforming annulus whose cross-section has a leading raised lip.
+ * Unlike a decal, this carries a real silhouette, normal field, and seam-safe
+ * UVs: U goes around the circumference, V travels inner -> outer edge.  The
+ * builder is CPU-side because the ground query is authoritative and the
+ * large-scale irregular outline must participate in terrain conformance.
+ *
+ * `radialJitter` only affects the outer outline (in metres); `lipJitter` is
+ * vertical (metres) and is constrained to the raised profile.  `angularLobes`
+ * is intentionally integral so the deformation closes exactly at U=0/1.
+ * ==========================================================================*/
+
+#define SHOCKWAVE_MAX_SLICES 64
+#define SHOCKWAVE_MAX_RADIALS 8
+#define SHOCKWAVE_HEIGHT_SAMPLES 24
+
+typedef struct
+{
+    float radius;          /* centre -> crest-front distance, metres */
+    float bandWidth;       /* annulus width, metres */
+    float lipHeight;       /* raised crest height, metres */
+    float crestU;          /* 0..1 across band; > 0.5 gives an outward-leading lip */
+    float radialJitter;    /* outer-silhouette variation, metres */
+    float lipJitter;       /* vertical variation at the crest, metres */
+    int angularLobes;      /* low-frequency, closed deformation count */
+    float angularPhase;    /* radians; caller advances it over time */
+    float yLift;           /* lift above sampled terrain, metres */
+} ShockwaveMeshConfig;
+
+typedef struct
+{
+    Vector3 verts[SHOCKWAVE_MAX_SLICES + 1][SHOCKWAVE_MAX_RADIALS + 1];
+    Vector3 normals[SHOCKWAVE_MAX_SLICES + 1][SHOCKWAVE_MAX_RADIALS + 1];
+    Vector2 uv[SHOCKWAVE_MAX_SLICES + 1][SHOCKWAVE_MAX_RADIALS + 1];
+    int slices;
+    int radials;
+} ShockwaveMeshData;
+
+ShockwaveMeshConfig ProceduralMesh_DefaultShockwaveConfig(void);
+void ProceduralMesh_BuildShockwave(ShockwaveMeshData *out, Vector3 center,
+                                   const ShockwaveMeshConfig *cfg, int slices,
+                                   int radials, GroundHeightSampleFn heightFn,
+                                   void *userData);
+/* `radialColors` is optional; when non-NULL it contains `radials + 1` colours
+ * indexed by cross-band V. Draw inside the caller's chosen shader/blend pass. */
+void ProceduralMesh_DrawShockwave(const ShockwaveMeshData *data,
+                                  const Color *radialColors);
+
+/* ============================================================================
  * CURLING WAVE MESH SYSTEM (MỚI)
  * --------------------------------------------------------------------------
  * Tường sóng cuộn (tsunami silhouette): quét một profile tiết diện hở

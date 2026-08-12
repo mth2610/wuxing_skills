@@ -387,17 +387,28 @@ static float FluidSurface_ProjectedRadiusPx(Vector3 center, float worldRadius) {
 }
 
 bool FluidSurface_RequestBody(FluidSurfacePriority priority, Vector3 center,
-                              float worldRadius) {
+                              float worldRadius, bool alreadyRunning) {
     /* A minion never gets a screen-space surface, at any size, in any frame. */
     if (priority <= FLUID_PRIORITY_MINION) return false;
 
-    /* Over budget: only a boss ultimate still gets one. Checked before size so
-     * an over-budget frame cannot be talked into SSF by a large body.
+    /* Over budget: only a boss ultimate still gets one — and only a body that
+     * is STARTING is tested at all.
+     *
+     * That exemption is not a convenience, it is what stops the gate
+     * oscillating. The frame time this reads is a number the gate's own
+     * decision controls: measured on the water ring, admitting it puts the
+     * frame at 23-27 ms and rejecting it drops the frame to 16-17 ms. A
+     * threshold anywhere between those two costs therefore flips EVERY FRAME —
+     * admit, frame gets expensive, reject, frame gets cheap, admit — and the
+     * water visibly strobes. No threshold value fixes that; the loop has to be
+     * broken. So a body's affordability is judged once, when it starts, and it
+     * keeps that answer for as long as it keeps asking.
      *
      * GetFrameTime() is read live rather than cached at composite time — see
      * the latch note on s_surfaceRunStamp. It already reports the PREVIOUS
      * frame's duration, which is the number this test wants. */
-    if (GetFrameTime()*1000.0f > FLUID_SURFACE_BUDGET_MS && priority < FLUID_PRIORITY_ULTIMATE)
+    if (!alreadyRunning && GetFrameTime()*1000.0f > FLUID_SURFACE_BUDGET_MS
+        && priority < FLUID_PRIORITY_ULTIMATE)
         return false;
 
     /* A basic attack may only JOIN a running surface — never switch one on.
@@ -408,8 +419,14 @@ bool FluidSurface_RequestBody(FluidSurfacePriority priority, Vector3 center,
     if (priority <= FLUID_PRIORITY_BASIC &&
         GetTime() - s_surfaceRunStamp > FLUID_GATE_STAMP_TTL) return false;
 
-    if (FluidSurface_ProjectedRadiusPx(center, worldRadius)
-        < FLUID_SURFACE_MIN_PROJECTED_RADIUS_PX) return false;
+    /* Size, unlike the budget, is NOT a feedback loop — how far away the camera
+     * is does not depend on whether SSF ran. So it is judged every frame. It
+     * still gets hysteresis, because a camera hovering at the threshold would
+     * chatter for a different reason: a running body is only dropped once it is
+     * well past the size a starting body would have needed. */
+    float admitRadius = alreadyRunning ? FLUID_SURFACE_MIN_PROJECTED_RADIUS_PX * 0.6f
+                                       : FLUID_SURFACE_MIN_PROJECTED_RADIUS_PX;
+    if (FluidSurface_ProjectedRadiusPx(center, worldRadius) < admitRadius) return false;
 
     if ((int)priority > s_frameOwnerPriority) s_frameOwnerPriority = (int)priority;
     return true;

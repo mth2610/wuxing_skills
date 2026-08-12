@@ -532,6 +532,11 @@ void main() {
     // Uniform body fill is what makes a water sphere read as a plastic ball.
     float grazingWeight = mix(0.32, 1.0, pow(1.0 - ndv, 1.5));
     vec3 inScatter = waterScatterColor * scatterAmount * (0.34 + illuminationEnergy * 0.42) * grazingWeight;
+    /* A molten body does not scatter ambient light in any amount that matters —
+     * it makes its own. Leaving the dielectric in-scatter at full strength put a
+     * floor of lit crimson under the crust (measured at (188,88,55)) and cost
+     * the plates most of their contrast against the seams. */
+    if (liquidClass == FLUID_CLASS_EMISSIVE) inScatter *= 0.35;
 
     vec3 dielectricF0 = vec3(IorToF0(materialIor));
     vec3 fresnel = FresnelSchlick(ndv, dielectricF0);
@@ -552,16 +557,64 @@ void main() {
                   * (0.30 + 0.70 * ndl) * rimGate;
     vec3 viewWorld = normalize(mat3(u_viewToWorld) * V);
     vec3 reflectedWorld = reflect(-viewWorld, worldNormal);
-    float skyReflection = smoothstep(-0.18, 0.62, reflectedWorld.y);
+    bool conductor = (liquidClass == FLUID_CLASS_CONDUCTOR);
+
+    /* --- The environment a body reflects ------------------------------------
+     *
+     * A DIELECTRIC needs this to be soft. It contributes a few percent under
+     * Fresnel, and a hard-edged environment there would draw a visible seam
+     * across water for no gain.
+     *
+     * A CONDUCTOR needs the opposite, and getting this wrong is what made the
+     * liquid metal read as PLASTIC. Reflection is not a few percent of a
+     * conductor's look — it is ALL of it. Multiply a smooth two-colour
+     * hemisphere blend (nearly constant across a body) by a coloured F0 and the
+     * result is a flat tinted surface, which is exactly what plastic is. The
+     * only part of the metal blob that read as metal was its UNDERSIDE, and the
+     * reason is visible in the render: down there the normal crosses the
+     * ground/sky boundary, so it picks up hard contrast and structure.
+     *
+     * So the conductor gets a high dynamic range and a HARD horizon: a dark
+     * floor, a bright sky, and the bright band every real environment has where
+     * the two meet. Structure everywhere, not just where the body happens to
+     * bend past the terminator. */
+    float skyReflection = conductor ? smoothstep(-0.045, 0.045, reflectedWorld.y)
+                                    : smoothstep(-0.18, 0.62, reflectedWorld.y);
     // Night arenas have a dark sky ambient: without a glow floor the grazing
     // Fresnel edge reflects near-black and the ball gets a dark glossy rim -
     // the "plastic toy" silhouette. Boost the sky side with the material glow
     // only when the actual sky is dark; bright-sky maps stay unchanged.
     float skyLuma = dot(u_skyAmbient, vec3(0.2126, 0.7152, 0.0722));
     vec3 skyReflectionColor = u_skyAmbient * 1.38 + materialGlow * 0.65 * clamp(1.0 - skyLuma, 0.0, 1.0);
-    vec3 reflection = mix(u_groundAmbient * 0.68, skyReflectionColor, skyReflection);
-    float horizonReflection = pow(1.0 - abs(reflectedWorld.y), 3.0);
-    reflection += materialSoft * (0.045 + horizonReflection * 0.10);
+    vec3 reflection;
+    if (conductor) {
+        float up = reflectedWorld.y;
+        /* A GRADIENT, not a colour. The first attempt at this used one flat
+         * value per hemisphere, which split the body into a black plate and a
+         * pale plate — better than the uniform plastic it replaced, but the
+         * bright half was still a featureless patch, because there was still
+         * nothing to see up there. Every real sky is brightest at the horizon
+         * and falls off toward the zenith, and that falloff is what puts
+         * shading across the whole upper half of a mirrored body. */
+        vec3 zenith    = u_skyAmbient * 1.4;
+        vec3 horizonSky = u_skyAmbient * 4.4 + materialSoft * 0.10;
+        vec3 skyColor  = mix(horizonSky, zenith, smoothstep(0.02, 0.80, up));
+        /* The floor is dark but not dead flat, for the same reason. */
+        vec3 floorColor = u_groundAmbient * mix(0.34, 0.10, smoothstep(0.0, -0.65, up));
+        reflection = mix(floorColor, skyColor, skyReflection);
+        /* The horizon band. Narrow and bright — this is the feature the eye
+         * reads as "polished", and it is the one thing a hemisphere blend can
+         * never produce. */
+        float band = pow(1.0 - min(abs(up) * 7.0, 1.0), 3.0);
+        reflection += materialSoft * band * 1.15;
+    } else {
+        reflection = mix(u_groundAmbient * 0.68, skyReflectionColor, skyReflection);
+        float horizonReflection = pow(1.0 - abs(reflectedWorld.y), 3.0);
+        /* An additive pastel wash. Harmless at a dielectric's few percent;
+         * on a conductor it is a uniform veil over the whole body, i.e. more
+         * plastic. Not applied above. */
+        reflection += materialSoft * (0.045 + horizonReflection * 0.10);
+    }
 
     // Screen Space Reflection (SSR) for High/Ultra tier
     if (u_qualityTier >= 2) {
@@ -572,9 +625,15 @@ void main() {
         }
     }
 
-    vec3 localReflectionFill = mix(refractedScene, u_skyAmbient, 0.30) * 0.42;
-    float lowerHemisphere = 1.0 - skyReflection;
-    reflection = mix(reflection, max(reflection, localReflectionFill), airborneWeight * lowerHemisphere);
+    /* Lifts an airborne dielectric's dark underside so it does not read as a
+     * hole. A conductor's dark underside is CORRECT — it is reflecting an unlit
+     * floor — and lifting it is precisely the flattening this material must
+     * not have. */
+    if (!conductor) {
+        vec3 localReflectionFill = mix(refractedScene, u_skyAmbient, 0.30) * 0.42;
+        float lowerHemisphere = 1.0 - skyReflection;
+        reflection = mix(reflection, max(reflection, localReflectionFill), airborneWeight * lowerHemisphere);
+    }
     vec3 dielectricBase = mix(transmitted + inScatter, reflection, visibleFresnel);
 
     // Specular Highlights
@@ -720,23 +779,39 @@ void main() {
          * subtraction view (`water - emission`) showed a rich crimson body
          * underneath the entire time; only the emission was washing it out. */
         float emissionDepth = 1.0 - exp(-(0.693147 / FLUID_REFERENCE_DEPTH_M) * opticalPath);
-        /* The knee sits high so the MID of a body stays red-orange and only the
-         * deepest part climbs to the incandescent core colour. Dropped to 0.30
-         * the whole body reached core and read as molten gold. */
-        float core = smoothstep(0.40, 0.95, emissionDepth);
-        vec3 emissionColor = mix(materialBody, materialGlow, core);
         /* Crust, not foam. The same patchy field the foam used, read the other
-         * way round: a hot liquid's skin is where it has COOLED, so it SUBTRACTS
-         * emission instead of adding a white cap. Gating foam off and stopping
-         * there leaves lava as a featureless glowing blob. */
-        /* Its OWN frequency, not surfaceNoise's. surfaceNoise runs at 2.7, i.e.
+         * way round: a hot liquid's skin is where it has COOLED.
+         *
+         * Its OWN frequency, not surfaceNoise's. surfaceNoise runs at 2.7, i.e.
          * a 0.37 m cell, which is most of an authored body — so the crust came
-         * out as one smudge instead of a skin. At 7.0 the cell is 0.14 m and
-         * several patches fit across a body. */
-        float crustNoise = fbm3(worldPosition * 7.0 + vec3(0.0, u_time * 0.18, 0.0));
-        crustMask = smoothstep(0.42, 0.72, crustNoise) * crustGain;
-        emission = emissionColor * emissionDepth * emissionStrength
-                 * mix(1.0, 0.16, crustMask);
+         * out as one smudge instead of a skin. Two octaves: 7.0 for the plates
+         * (0.14 m) and 19.0 for the ragged edges between them, because a
+         * single smooth octave gives round blobs and real crust breaks in
+         * jagged sheets. */
+        float crustPlates = fbm3(worldPosition * 7.0 + vec3(0.0, u_time * 0.18, 0.0));
+        float crustDetail = fbm3(worldPosition * 19.0 - vec3(0.0, u_time * 0.11, 0.0));
+        /* Narrow enough that the plates have edges, wide enough to keep the
+         * mid-tones. At 0.36-0.60 the plates are soft blobs and the body reads
+         * as a fireball; at 0.42-0.53 they are hard-edged patches with nothing
+         * in between and it reads as cracked eggshell. */
+        crustMask = smoothstep(0.40, 0.57, crustPlates * 0.78 + crustDetail * 0.22) * crustGain;
+
+        /* Crust drives TEMPERATURE, not just brightness.
+         *
+         * Multiplying the finished emission by 0.16 under the crust was not
+         * enough: the un-crusted 60% of the body was still at full core
+         * temperature, so it read as one uniform sheet of molten gold with a
+         * few dark smudges. Cooling the crust FIRST and deriving the colour
+         * from the result is what produces the thing lava actually looks like —
+         * dark plates with incandescent cracks between them, because a cooled
+         * patch is not merely dimmer, it is REDDER. */
+        float heat = emissionDepth * (1.0 - 0.92 * crustMask);
+        /* The knee sits high so the MID of a body stays red-orange and only the
+         * hottest part climbs to the incandescent core colour. Dropped to 0.30
+         * the whole body reached core and read as molten gold. */
+        float core = smoothstep(0.48, 0.94, heat);
+        vec3 emissionColor = mix(materialBody, materialGlow, core);
+        emission = emissionColor * heat * emissionStrength;
     }
 
     /* A conductor has no transmission and no volume: `dielectricBase` mixes
@@ -748,6 +823,10 @@ void main() {
         vec3 conductorFresnel = FresnelSchlick(ndv, specularF0);
         base = reflection * conductorFresnel;
     }
+
+    /* Cooled crust is ROCK. Leaving it glossy put a wet sheen straight across
+     * the plates and undid the structure the crust exists to create. */
+    if (liquidClass == FLUID_CLASS_EMISSIVE) specular *= (1.0 - 0.80 * crustMask);
 
     vec3 water = base + specular + foam + rimLight + emission;
     finalColor = vec4(water, surfaceCoverage);

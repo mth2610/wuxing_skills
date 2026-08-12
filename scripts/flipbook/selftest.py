@@ -88,7 +88,7 @@ def main():
     cell = 128
     for cmd, label in (
         ([sys.executable, os.path.join(HERE, "render.py"), PROBE,
-          "--cell", str(cell), "--supersample", "2"], "render"),
+          "--cell", str(cell), "--supersample", "2", "--arch", "cpu"], "render"),
         ([sys.executable, os.path.join(HERE, "pack.py"),
           os.path.join(PROBE, "frames"), "--grid", "4",
           "--alpha-from-luma", "0", "--out", "_selftest.png"], "pack"),

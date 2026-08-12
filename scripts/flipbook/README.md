@@ -26,6 +26,25 @@ occupied crop in local UV space. Runtime scales and offsets the billboard to
 retain the original pivot, so it saves transparent fill-rate without changing
 the asset's silhouette or directionality.
 
+The volume-fire consumer has a fixed C symbol; use this exact pack suffix when
+rebaking it:
+
+```bash
+--meta-out core/composition/fire/flame_volume_puff_metadata.inl \
+--meta-symbol s_fvolVolumeFrameMeta
+```
+
+Its shipping look is deliberately broad and translucent: the emitter stacks
+many directionless parcels, so an opaque single card is a defect. Re-render
+the `fire_volume_puff` preset with these look controls (the simulation values
+live in that preset):
+
+```bash
+python3 scripts/flipbook/render.py build_cache/fire_volume_puff --cell 256 \
+    --supersample 1 --zoom auto --light 1 --density-scale .75 \
+    --flame-extinction .14 --flame-scale 2.5 --emission-gamma .85
+```
+
 Shipping presets: `fire_puff`, `smoke_puff` (both in use), `fire` (column),
 `smoke`.
 

@@ -354,10 +354,12 @@ static void Test_AlphaAndBudget(void)
     CHECK_MSG(chord < 1.5f, "the gap between height samples is short enough to interpolate",
               "%.2f m between samples on a 5 m ring", chord);
 
-    // The ring is built one slice at a time against the previous one, so the
-    // resident vertex storage is two rings, not the whole annulus.
-    CHECK_MSG(GROUND_WAVE_RADIALS * 2 < 32, "resident vertex storage is two rings, not the ring",
-              "%d Vector3", GROUND_WAVE_RADIALS * 2);
+    // The dedicated mesh keeps position, normal and UV fields in one bounded
+    // static buffer. It is intentionally full-ring data: normals need adjacent
+    // azimuth samples after the irregular silhouette is built.
+    long resident = (long)(GROUND_WAVE_MAX_SLICES + 1) * GROUND_WAVE_RADIALS * 3;
+    CHECK_MSG(resident < 2048, "mesh storage remains bounded and small",
+              "%ld vertex-sized fields", resident);
 }
 
 // ── the mirror guard ─────────────────────────────────────────────────────────
@@ -389,10 +391,24 @@ static void Test_MirrorStillMatchesSource(void)
     // Contracts, not tuning.
     CHECK(FileHas(inl, "BeginBlendMode(BLEND_ADDITIVE);"),
           "it still EMITS: additive, per the blend law");
+    CHECK(FileHas(inl, "ScreenDistort_BeginVFXBody();"),
+          "the coloured shockwave body is composited before its bloom");
+    CHECK(FileHas(inl, "ResourceManager_LoadShader(\"core/shaders/ground_wave.vs\""),
+          "the dedicated annular UV shader is loaded through ResourceManager");
+    CHECK(FileHas(inl, "static bool GroundWave_HasShader(void)"),
+          "a failed custom shader falls back instead of treating raylib's default shader as valid");
+    CHECK(FileHas("core/shaders/ground_wave.fs", "vec3(cos(angle) * 1.9, sin(angle) * 1.9,"),
+          "surface flow remains continuous at the annulus UV seam");
+    CHECK(FileHas("CMakeLists.txt", "core/shaders/ground_wave.fs"),
+          "the ground-wave fragment shader is copied into a configured build");
+    CHECK(FileHas("CMakeLists.txt", "core/shaders/common/noise.glsl"),
+          "the shader's common noise include is copied with it");
     CHECK(!FileHas(inl, "EffectMaterial") && !FileHas(inl, "MATERIAL_LIT"),
           "it is still NOT lit (ENGINE_LANDMINES 3: black-on-black on the ground)");
-    CHECK(FileHas(inl, "float gy = Math_Mix(gIn, gOut, u);"),
-          "every vertex still gets a terrain-derived height (interpolated, not raycast)");
+    CHECK(FileHas(inl, "ProceduralMesh_BuildShockwave(&mesh"),
+          "the composition delegates topology and terrain conformance to the shockwave mesh");
+    CHECK(!FileHas(inl, "rlBegin(RL_QUADS);"),
+          "the composition leaves immediate-mode ownership to the mesh drawer");
     CHECK(FileHas(inl, "GROUND_WAVE_Y_LIFT"),
           "the band is still lifted off the surface it lies on (z-fighting)");
     CHECK(FileHas(inl, "GfxQuality_Get()"),
@@ -401,9 +417,9 @@ static void Test_MirrorStillMatchesSource(void)
           "the broadened crest profile still matches this mirror");
     CHECK(FileHas(inl, "Math_Mix(0.30f, 1.0f, h) * face;"),
           "the shading floor still matches this mirror");
-    CHECK(FileHas(inl, "#define GROUND_WAVE_HEIGHT_AZIM 24"),
+    CHECK(FileHas("core/geometry/procedural_mesh_utils.h", "#define SHOCKWAVE_HEIGHT_SAMPLES 24"),
           "the raycast budget still matches this mirror");
-    CHECK(FileHas(inl, "s_gwHIn[j]  = heightFn("),
+    CHECK(FileHas("core/geometry/pm_shockwave.inl", "heightInner[h] = heightFn("),
           "heights are still sampled on the coarse ring, not per vertex");
     CHECK(!FileHas(inl, "heightFn ? heightFn(x, z, ud) : center.y"),
           "the per-vertex sampling that cost 455 raycasts a frame is gone");

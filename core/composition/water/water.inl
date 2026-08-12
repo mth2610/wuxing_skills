@@ -160,15 +160,27 @@ static FluidLiquidDesc VFX_LiquidLava(void)
      * rich crimson the whole time (the `water - emission` view proved it) and
      * the peach was entirely this colour. A blackbody gets brighter by climbing
      * red -> orange -> yellow -> white, so the core goes yellow and only reaches
-     * white where the tonemap clips it. */
-    FluidLiquidDesc d = FluidSurface_DielectricDesc(m->body, (Color){255, 200, 70, 255}, m->soft);
+     * white where the tonemap clips it.
+     *
+     * Measured off the render rather than guessed: the molten regions came out
+     * at (242,187,87), G/R = 0.77 — which is just this constant, so the
+     * pipeline was not washing anything out and (255,200,70) was simply too
+     * YELLOW. Molten rock sits near G/R 0.5. */
+    FluidLiquidDesc d = FluidSurface_DielectricDesc(m->body, (Color){255, 140, 30, 255}, m->soft);
     d.liquidClass = FLUID_LIQUID_EMISSIVE;
     /* Above 1.0 on purpose — lava should survive the HDR tonemap as a light
      * source, not as a bright surface — but only just. At 2.4 every channel of
      * the whitened core clipped and the body rendered pale peach; the crimson
      * skin that makes it read as lava was there underneath and was simply being
-     * buried. 1.6 blows out only the deepest core. */
-    d.emission = 1.6f;
+     * buried.
+     *
+     * 1.6 was still too hot once the crust started driving temperature: the
+     * molten regions pushed BOTH red and green past 1.0, so the tonemap
+     * flattened them into pale yellow plateaus with no internal variation —
+     * hard-edged patches that read as cracked eggshell rather than as
+     * something molten. 1.1 keeps the body just under the clip so it holds a
+     * gradient, and only the hottest seams blow out. */
+    d.emission = 1.1f;
     /* Molten silicate, roughly. Also raises F0 from water's 2% to 5.5%, which is
      * most of why a lava rim reads harder than a water one. */
     d.ior = 1.60f;
@@ -192,10 +204,12 @@ static FluidLiquidDesc VFX_LiquidMetal(void)
      * 0.91) and stays recognisably the METAL element rather than a mirror. */
     FluidLiquidDesc d = FluidSurface_DielectricDesc(m->body, m->glow, m->soft);
     d.liquidClass = FLUID_LIQUID_CONDUCTOR;
-    /* Not a mirror either: a moving liquid metal surface is slightly rough, and
-     * a perfectly sharp reflection off a splat-reconstructed normal is where the
-     * reconstruction's own wobble becomes the most visible thing on the body. */
-    d.roughnessScale = 1.6f;
+    /* Sharper than water, not blurrier. 1.6 was chosen to hide the
+     * reconstruction's normal wobble, but a broad lobe over a flat environment
+     * is exactly what plastic looks like — it smears away the one high-contrast
+     * feature (the sun) that says "mirror". The wobble it was hiding reads as
+     * a liquid metal surface RIPPLING, which is what this material is. */
+    d.roughnessScale = 0.65f;
     /* No transmission at all, so this only bounds the in-scatter the dielectric
      * assembly would have produced; the conductor branch discards it anyway. */
     d.opacityPerMetre = 60.0f;

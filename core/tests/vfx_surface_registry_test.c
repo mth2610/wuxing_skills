@@ -25,6 +25,7 @@ int main(void)
           Has(header, "VFX_SURFACE_ENERGY_TUBE") &&
           Has(header, "VFX_SURFACE_SMOKE_PUFF") &&
           Has(header, "VFX_SURFACE_FIRE_TONGUE") &&
+          Has(header, "VFX_SURFACE_FIRE_PUFF") &&
           Has(header, "VFX_SURFACE_DECAL_RESIDUE") &&
           Has(header, "VFX_SURFACE_DECAL_SCORCH") &&
           Has(header, "VFX_SURFACE_DECAL_IMPACT") &&
@@ -50,6 +51,7 @@ int main(void)
           "P4 blocks missing roles with an explicit no-legacy-fallback policy");
     CHECK(Has("core/composition/common/vc_smoke_puff.inl", "VFX_SurfaceRegistry_Get(VFX_SURFACE_SMOKE_PUFF)") &&
           Has("core/composition/fire/flame_volume.inl", "VFX_SurfaceRegistry_Get(VFX_SURFACE_FIRE_TONGUE)") &&
+          Has("core/composition/fire/flame_volume.inl", "VFX_SurfaceRegistry_Get(VFX_SURFACE_FIRE_PUFF)") &&
           Has("core/composition/common/vc_trail.inl", "VFX_SURFACE_ENERGY_RIBBON") &&
           // VFX_SURFACE_SMOKE_RIBBON is deliberately absent: its only consumer,
           // VFX_ComposeSmokeTrail, was deleted (see docs/PROGRESS.md). The

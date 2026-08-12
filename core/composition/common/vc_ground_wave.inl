@@ -79,6 +79,53 @@ static float s_gwAlpha = 1.0f;   // x on opacity
 static float s_gwConform = 1.0f; // 0 = ignore heightFn entirely (flat, and free)
 static float s_gwPerfLog = 0.0f; // 1 = report the height-sampling cost, 1 Hz
 
+typedef struct
+{
+    Shader shader;
+    int bodyColor;
+    int glowColor;
+    int opacity;
+    int surfaceIntensity;
+} GroundWaveShader;
+
+static GroundWaveShader s_gwShader = {0};
+
+static bool GroundWave_HasShader(void)
+{
+    return s_gwShader.shader.id != 0 && s_gwShader.bodyColor >= 0 &&
+           s_gwShader.glowColor >= 0 && s_gwShader.opacity >= 0 &&
+           s_gwShader.surfaceIntensity >= 0;
+}
+
+static void GroundWave_InitShader(void)
+{
+    if (s_gwShader.shader.id != 0) return;
+    s_gwShader.shader = ResourceManager_LoadShader("core/shaders/ground_wave.vs",
+                                                    "core/shaders/ground_wave.fs");
+    if (s_gwShader.shader.id == 0) return;
+    s_gwShader.bodyColor = GetShaderLocation(s_gwShader.shader, "u_bodyColor");
+    s_gwShader.glowColor = GetShaderLocation(s_gwShader.shader, "u_glowColor");
+    s_gwShader.opacity = GetShaderLocation(s_gwShader.shader, "u_opacity");
+    s_gwShader.surfaceIntensity = GetShaderLocation(s_gwShader.shader,
+                                                     "u_surfaceIntensity");
+}
+
+static void GroundWave_SetSurfaceUniforms(const VFX_ElementMaterial *mat,
+                                          float opacity, float intensity)
+{
+    Vector4 body = ColorNormalize(mat->body);
+    Vector4 glow = ColorNormalize(VC_Whiten(mat->glow, 0.30f));
+    if (s_gwShader.bodyColor >= 0)
+        SetShaderValue(s_gwShader.shader, s_gwShader.bodyColor, &body, SHADER_UNIFORM_VEC4);
+    if (s_gwShader.glowColor >= 0)
+        SetShaderValue(s_gwShader.shader, s_gwShader.glowColor, &glow, SHADER_UNIFORM_VEC4);
+    if (s_gwShader.opacity >= 0)
+        SetShaderValue(s_gwShader.shader, s_gwShader.opacity, &opacity, SHADER_UNIFORM_FLOAT);
+    if (s_gwShader.surfaceIntensity >= 0)
+        SetShaderValue(s_gwShader.shader, s_gwShader.surfaceIntensity,
+                       &intensity, SHADER_UNIFORM_FLOAT);
+}
+
 static void GroundWave_InitShared(void)
 {
     if (s_gwInit) return;
@@ -220,6 +267,7 @@ void VFX_ComposeGroundWave(Vector3 center, VC_MaterialId mat, float radius,
                            float t01, GroundHeightSampleFn heightFn, void *ud)
 {
     GroundWave_InitShared();
+    GroundWave_InitShader();
     if (radius <= 0.0f) radius = 4.0f;
     if (t01 <= 0.0f || t01 >= 1.0f) return;
 
@@ -235,11 +283,9 @@ void VFX_ComposeGroundWave(Vector3 center, VC_MaterialId mat, float radius,
     const int slices  = GroundWave_Slices();
     const int radials = GROUND_WAVE_RADIALS;
 
-    // One ring of vertices is built at a time and the previous one is kept, so
-    // the whole annulus never has to be resident: 2 x 7 vertices instead of
-    // 64 x 7. Static, no malloc, and the bound is a compile-time constant.
-    static Vector3 prevRing[GROUND_WAVE_RADIALS];
-    static Vector3 curRing[GROUND_WAVE_RADIALS];
+    // The dedicated geometry builder owns position, normal, terrain sampling
+    // and UV topology. It is static and bounded: no allocation on a cast.
+    static ShockwaveMeshData mesh;
     static Color   ringCol[GROUND_WAVE_RADIALS];
 
     // Colour and shading are the same for every slice, so they are computed once
@@ -254,90 +300,59 @@ void VFX_ComposeGroundWave(Vector3 center, VC_MaterialId mat, float radius,
         ringCol[i] = VC_WithAlpha(c, (unsigned char)(alpha * s * 255.0f));
     }
 
-    // Additive + unlit, per the blend law: this EMITS. Depth test on, depth
-    // write off, and the batch flushed on BOTH sides of every state change —
-    // an unflushed change leaks into whatever the batch was already holding
-    // (ENGINE_LANDMINES §1).
+    ShockwaveMeshConfig meshCfg = ProceduralMesh_DefaultShockwaveConfig();
+    meshCfg.radius = rNow;
+    meshCfg.bandWidth = band;
+    meshCfg.lipHeight = lip;
+    meshCfg.crestU = GROUND_WAVE_CREST_U;
+    // Shape, not particles: only the silhouette and crest receive this low
+    // frequency irregularity. The flow/shader pass will animate smaller detail.
+    meshCfg.radialJitter = band * 0.20f;
+    meshCfg.lipJitter = lip * 0.18f;
+    meshCfg.angularLobes = 5;
+    meshCfg.angularPhase = t01 * 1.20f;
+    meshCfg.yLift = GROUND_WAVE_Y_LIFT;
+    if (s_gwConform < 0.5f) heightFn = NULL;
+    ProceduralMesh_BuildShockwave(&mesh, center, &meshCfg, slices, radials - 1,
+                                  heightFn, ud);
+
+    // The coloured pressure front belongs in BODY; otherwise an additive pass
+    // loses its green hue against a bright floor. A restrained second draw in
+    // EMISSION gives the crest bloom without replacing the visible material.
+    ScreenDistort_BeginVFXBody();
+    rlDrawRenderBatchActive();
+    BeginBlendMode(BLEND_ALPHA);
+    rlDisableDepthMask();
+    rlDrawRenderBatchActive();
+    if (GroundWave_HasShader()) {
+        SkillManager_BeginShader(s_gwShader.shader);
+        GroundWave_SetSurfaceUniforms(m, alpha * 0.78f, 1.0f);
+        ProceduralMesh_DrawShockwave(&mesh, NULL);
+        rlDrawRenderBatchActive();
+        SkillManager_EndShader();
+    } else {
+        ProceduralMesh_DrawShockwave(&mesh, ringCol);
+    }
+    rlDrawRenderBatchActive();
+    rlEnableDepthMask();
+    EndBlendMode();
+    rlDrawRenderBatchActive();
+    ScreenDistort_EndVFXLayer();
+
     ScreenDistort_BeginVFXEmission();
     rlDrawRenderBatchActive();
     BeginBlendMode(BLEND_ADDITIVE);
     rlDisableDepthMask();
     rlDrawRenderBatchActive();
-    rlSetTexture(0);
-    rlBegin(RL_QUADS);
-
-    // ── Sample the ground, ONCE, on a coarse azimuthal ring ─────────────────
-    // See GROUND_WAVE_HEIGHT_AZIM: this is a raycast per call, so the count is
-    // fixed and small and everything else interpolates between these.
-    const bool conform = (heightFn != NULL) && (s_gwConform >= 0.5f);
-    const float rIn = rNow - band * 0.5f, rOut = rNow + band * 0.5f;
-    double sampleT0 = conform ? GetTime() : 0.0;
-    for (int j = 0; j < GROUND_WAVE_HEIGHT_AZIM; j++) {
-        if (!conform) { s_gwHIn[j] = center.y; s_gwHOut[j] = center.y; continue; }
-        float a = (float)j / (float)GROUND_WAVE_HEIGHT_AZIM * 2.0f * PI;
-        float c = cosf(a), sn = sinf(a);
-        s_gwHIn[j]  = heightFn(center.x + c * rIn,  center.z + sn * rIn,  ud);
-        s_gwHOut[j] = heightFn(center.x + c * rOut, center.z + sn * rOut, ud);
+    if (GroundWave_HasShader()) {
+        SkillManager_BeginShader(s_gwShader.shader);
+        GroundWave_SetSurfaceUniforms(m, alpha * 0.48f, 1.35f);
+        ProceduralMesh_DrawShockwave(&mesh, NULL);
+        rlDrawRenderBatchActive();
+        SkillManager_EndShader();
+    } else {
+        ProceduralMesh_DrawShockwave(&mesh, ringCol);
     }
-    // The wrap entry is the same angle as index 0 — copied, never re-sampled.
-    s_gwHIn[GROUND_WAVE_HEIGHT_AZIM]  = s_gwHIn[0];
-    s_gwHOut[GROUND_WAVE_HEIGHT_AZIM] = s_gwHOut[0];
-    if (conform && s_gwPerfLog >= 0.5f) {
-        static double lastLog = 0.0;
-        double now = GetTime(), ms = (now - sampleT0) * 1000.0;
-        if (now - lastLog > 1.0) {
-            lastLog = now;
-            TraceLog(LOG_INFO,
-                     "VFX_GROUND_WAVE: %d height raycasts in %.2f ms (%.0f us each)",
-                     GROUND_WAVE_HEIGHT_AZIM * 2, ms,
-                     ms * 1000.0 / (double)(GROUND_WAVE_HEIGHT_AZIM * 2));
-        }
-    }
-
-    for (int s = 0; s <= slices; s++) {
-        float ang = (float)s / (float)slices * 2.0f * PI;
-        float ca = cosf(ang), sa = sinf(ang);
-        // Where this slice falls between two height samples.
-        float hf = (float)s / (float)slices * (float)GROUND_WAVE_HEIGHT_AZIM;
-        int   hj = (int)hf;
-        if (hj >= GROUND_WAVE_HEIGHT_AZIM) hj = GROUND_WAVE_HEIGHT_AZIM - 1;
-        float hfrac = hf - (float)hj;
-        float gIn  = Math_Mix(s_gwHIn[hj],  s_gwHIn[hj + 1],  hfrac);
-        float gOut = Math_Mix(s_gwHOut[hj], s_gwHOut[hj + 1], hfrac);
-
-        for (int i = 0; i < radials; i++) {
-            float u  = (float)i / (float)(radials - 1);
-            float rr = rNow - band * 0.5f + band * u;
-            float x  = center.x + ca * rr;
-            float z  = center.z + sa * rr;
-            // CONFORM. Interpolated from the ring samples above — exact for a
-            // planar slope, which is what a band this narrow sits on. Plus the
-            // lift that keeps it off the surface it lies on (same reason
-            // DrawCoreGroundPatch and the decal system carry one), plus the lip.
-            float gy = Math_Mix(gIn, gOut, u);
-            curRing[i] = (Vector3){ x,
-                                    gy + GROUND_WAVE_Y_LIFT +
-                                        lip * GroundWave_Profile(u),
-                                    z };
-        }
-
-        if (s > 0) {
-            for (int i = 0; i < radials - 1; i++) {
-                Color c0 = ringCol[i], c1 = ringCol[i + 1];
-                rlColor4ub(c0.r, c0.g, c0.b, c0.a);
-                rlVertex3f(prevRing[i].x, prevRing[i].y, prevRing[i].z);
-                rlColor4ub(c1.r, c1.g, c1.b, c1.a);
-                rlVertex3f(prevRing[i + 1].x, prevRing[i + 1].y, prevRing[i + 1].z);
-                rlColor4ub(c1.r, c1.g, c1.b, c1.a);
-                rlVertex3f(curRing[i + 1].x, curRing[i + 1].y, curRing[i + 1].z);
-                rlColor4ub(c0.r, c0.g, c0.b, c0.a);
-                rlVertex3f(curRing[i].x, curRing[i].y, curRing[i].z);
-            }
-        }
-        for (int i = 0; i < radials; i++) prevRing[i] = curRing[i];
-    }
-
-    rlEnd();
     rlSetTexture(0);
     rlDrawRenderBatchActive();
     rlEnableDepthMask();

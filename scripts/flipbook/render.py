@@ -54,6 +54,16 @@ def main():
                          "alpha median moved only 0.54->0.72 across 1.5..7, so "
                          "this is not the knob for a card-looking sprite.")
     ap.add_argument("--flame-scale", type=float, default=3.0)
+    ap.add_argument("--flame-projection", default="integral",
+                    choices=["peak", "integral"],
+                    help="how the hot volume becomes the flame mask. 'integral' "
+                         "is the physical emission/absorption ray integral and "
+                         "the shipping default; 'peak' is a silhouette-debug "
+                         "view, not a volume render")
+    ap.add_argument("--emission-gamma", type=float, default=1.0,
+                    help="shape the normalised flame emission before packing. "
+                         "< 1 lifts the weak shoulder relative to the centre, "
+                         "preventing a white-solid disc; 1 keeps legacy linear output")
     ap.add_argument("--flame-extinction", type=float, default=6.0,
                     help="how much the flame itself blocks light; 0 makes fire "
                          "purely additive and it stops occluding its own smoke")
@@ -116,7 +126,7 @@ def main():
     flame = ti.field(ti.f32, shape=(rz, ry, rx))
     # Transmittance from the LIGHT to each voxel — the volume's own shadow.
     shad = ti.field(ti.f32, shape=(rz, ry, rx))
-    # emission, smoke, opacity, shaded value
+    # flame envelope/emission, smoke, opacity, shaded value
     out = ti.Vector.field(4, ti.f32, shape=(S, S))
 
     @ti.func
@@ -137,7 +147,8 @@ def main():
         return c0 * (1 - fz) + c1 * fz
 
     @ti.kernel
-    def march(ks: ti.f32, kf: ti.f32, kfe: ti.f32, fw: ti.f32, fh: ti.f32):
+    def march(ks: ti.f32, kf: ti.f32, kfe: ti.f32, fw: ti.f32, fh: ti.f32,
+              peak_flame: ti.i32):
         for px, py in out:
             # Orthographic side view: image X is the grid's X, image Y is the
             # grid's Z (up in Blender), and the ray runs along Y.
@@ -151,6 +162,7 @@ def main():
 
             trans = 1.0
             emis = 0.0
+            hot_envelope = 0.0
             smoke = 0.0
             shade = 0.0
             inside = (u >= 0.0) and (u <= 1.0) and (v >= 0.0) and (v <= 1.0)
@@ -162,6 +174,14 @@ def main():
                 f = sample(flame, gx, gy, gz)
                 ext = (d * ks + f * kfe) * dstep
                 emis += f * kf * trans * dstep
+                # A depth integral is excellent for smoke opacity, but a poor
+                # flame SHAPE signal: turbulent parcels can trade density along
+                # a ray while retaining the same integral, producing the frozen
+                # circular cards this baker is meant to prevent.  The maximum
+                # hot sample is the visible envelope of that same 3D volume. It
+                # preserves soft scalar gradients (this is not a hard mask) and
+                # makes its changing surface survive the 3D-to-2D projection.
+                hot_envelope = ti.max(hot_envelope, f * kf)
                 smoke += d * ks * trans * dstep
                 # The same integral WEIGHTED by how much light reaches each
                 # sample. Without it every sprite is a flat plate of one value,
@@ -173,7 +193,8 @@ def main():
                 trans *= ti.exp(-ext)
                 if trans < 0.004:      # the rest cannot contribute a visible level
                     break
-            out[px, py] = ti.Vector([emis, smoke, 1.0 - trans, shade])
+            flame_out = hot_envelope if peak_flame != 0 else emis
+            out[px, py] = ti.Vector([flame_out, smoke, 1.0 - trans, shade])
 
     t0 = time.time()
 
@@ -195,7 +216,7 @@ def main():
                 args.ambient + (1.0 - args.ambient)
                 * np.exp(-args.light * args.density_scale * above), np.float32))
             march(args.density_scale, args.flame_scale, args.flame_extinction,
-                  fw, fh)
+                  fw, fh, 1 if args.flame_projection == "peak" else 0)
         # transpose: the Taichi field is indexed [px, py] (x first), but numpy
         # and PIL read axis 0 as the ROW. Without this the sheet comes out
         # rotated 90 degrees — the flame rises along the image's X axis, which
@@ -263,7 +284,15 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     for i, img in enumerate(frames):
         rgba = np.zeros((args.cell, args.cell, 4), np.float32)
-        rgba[..., 0] = np.clip(img[..., 0] / e_max, 0, 1)     # emission
+        emission = np.clip(img[..., 0] / e_max, 0, 1)
+        # Compress only the display transfer, never the simulation. A linear
+        # percentile-normalised R channel spends too much area near its maximum
+        # once the runtime heat gain maps it through the black-body ramp: every
+        # parcel becomes a white solid disc. Gamma < 1 preserves a small hot
+        # centre while carrying a broad, continuously graded orange shoulder.
+        if args.emission_gamma != 1.0:
+            emission = emission ** max(args.emission_gamma, 0.05)
+        rgba[..., 0] = emission                            # flame emission
         rgba[..., 1] = np.clip(img[..., 1] / s_max, 0, 1)     # smoke
         # B = the SHADED smoke value, normalised by the same scale as G so the
         # two are directly comparable: B/G is exactly the fraction of light that

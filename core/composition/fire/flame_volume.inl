@@ -45,12 +45,12 @@ static float s_fvolSmokeAmt = 1.0f;
 // here: a 1 m flame whose particles travel 1-2 m in their 0.5 s lifetime reads as
 // a blowtorch, not as fire — the embers outrun the flame that made them. Visible
 // rise for a flame this size is more like 0.3-0.5 m over a particle's life.
-static float s_fvolRiseMul = 1.0f;
+static float s_fvolRiseMul = 1.15f;
 // Base width. A flame is TALL and narrow; the ratio of base radius to rise
 // height is what decides whether it reads as a flame or as a fireball. A wide
 // base with a short rise blurs into a ball no matter how good the colour ramp
 // is — and enlarging the particles to fill it makes that worse, not better.
-static float s_fvolWidthMul = 1.0f;
+static float s_fvolWidthMul = 0.75f;
 
 // E4 flipbook. Two simulated sheets, and they are not interchangeable:
 //
@@ -58,7 +58,7 @@ static float s_fvolWidthMul = 1.0f;
 //   1 = fire_puff_8x8_flame  — a radial PUFF, one billow per sprite. The
 //       building block: several of them scatter into a bed of fire, which is
 //       the reference the owner gave (many separate tongues, dark gaps).
-//   2 = fire_atlas_8x8_flame — a whole flame COLUMN in one sprite. Right for a
+//   2 = fire_tongue_8x8_flame — a whole flame COLUMN in one sprite. Right for a
 //       single isolated flame, wrong as a block: a few of them merge into one
 //       mass because each already IS the fire.
 //
@@ -83,7 +83,7 @@ static float s_fvolBodyCount = 1.0f;   // x on atlas body sprites (perf lever)
 // without raising the other is how this looked WORSE at each half-step. Note
 // the owner already measured the other direction — cutting the count to 26 made
 // the patchiness more visible, not less, because it exposes each silhouette.
-static float s_fvolBodyLive = 220.0f;
+static float s_fvolBodyLive = 190.0f;
 // Multiplier on the puff body's radius. Count and size buy the same cohesion at
 // the same fill cost; size is the cheaper one in draw calls. Which is right is
 // a look judgement, so both are tunables.
@@ -105,7 +105,11 @@ static float s_fvolBodyBlend = 0.0f;
 // clip to white — and it interacts with the background: the test arena's sky
 // sits around 0.35, so the same value that reads as fire against a night scene
 // blows out here. Tune it in the scene the effect ships in.
-static float s_fvolBodyAlpha = 0.18f;
+// Volume fire is deliberately many low-coverage layers. At 190 live parcels,
+// 0.18 let the hot cores fuse into the opaque white marbles visible at the
+// emitter foot; 0.12 preserves overlap continuity while leaving optical room
+// for neighbouring billows to add depth.
+static float s_fvolBodyAlpha = 0.12f;
 static SpriteAnim s_fvolFlameAnim = {0};
 static SpriteAnim s_fvolPuffAnim = {0};
 
@@ -143,7 +147,7 @@ static SpriteAnim s_fvolVolumeAnim = {0};
 // the flame is white-hot". The sim normalises emission to its own 99.5th
 // percentile and has no idea how bright this effect should read, so this is
 // the knob that decides incandescent vs smouldering.
-static float s_fvolHeatGain = 1.9f;
+static float s_fvolHeatGain = 1.05f;
 // Radiance gain on the flame half. SEPARATE from heatGain on purpose: heatGain
 // moves the sprite along the ramp (what COLOUR it is), this moves how much light
 // it throws (how BRIGHT it is). Conflating them means you cannot have a deep-red
@@ -154,7 +158,7 @@ static float s_fvolHeatGain = 1.9f;
 // flame lands near black once ACES has had it. Above ~4 the hottest texels cross
 // 1.0 into the HDR buffer's headroom, which is what finally makes the core blow
 // out and bloom instead of clipping to a flat orange.
-static float s_fvolEmissive = 6.0f;
+static float s_fvolEmissive = 4.8f;
 // ── SMOKINESS IS A COMPOSITION DECISION, NOT AN ASSET ONE ───────────────────
 //
 // The sheet is directionless by construction (the puff sim runs at zero gravity
@@ -172,7 +176,7 @@ static float s_fvolEmissive = 6.0f;
 // Measured on the shipping sheet: emission averages 37.5 against soot 155.1, a
 // ratio of 0.24 — heavily smoke-dominated, which is why the default reads as a
 // large sooty fire rather than a torch.
-static float s_fvolSmokeGain = 1.4f;
+static float s_fvolSmokeGain = 0.95f;
 static float s_fvolSmokeR = 82.0f, s_fvolSmokeG = 74.0f, s_fvolSmokeB = 69.0f;
 // Ramp LUTs, one per material, baked lazily. THIS is where fire's colour lives
 // now — the sheet is greyscale on purpose, so pointing this at another gradient
@@ -219,19 +223,19 @@ static void FVol_InitShared(void)
 
     Tuning_RegisterFloat("flame_core_alpha", &s_fvolCoreAlpha, 0.55f);
     Tuning_RegisterFloat("flame_smoke_amount", &s_fvolSmokeAmt, 1.0f);
-    Tuning_RegisterFloat("flame_rise_mul", &s_fvolRiseMul, 1.0f);
-    Tuning_RegisterFloat("flame_width_mul", &s_fvolWidthMul, 1.0f);
+    Tuning_RegisterFloat("flame_rise_mul", &s_fvolRiseMul, 1.15f);
+    Tuning_RegisterFloat("flame_width_mul", &s_fvolWidthMul, 0.75f);
     Tuning_RegisterFloat("flame_atlas", &s_fvolAtlas, 1.0f); // 0 sprites/1 puff/2 column
     Tuning_RegisterFloat("flame_body_count", &s_fvolBodyCount, 1.0f);
-    Tuning_RegisterFloat("flame_body_live", &s_fvolBodyLive, 220.0f);
+    Tuning_RegisterFloat("flame_body_live", &s_fvolBodyLive, 190.0f);
     Tuning_RegisterFloat("flame_body_size", &s_fvolBodySize, 1.0f);
     Tuning_RegisterFloat("flame_spread", &s_fvolSpread, 1.0f);
     Tuning_RegisterFloat("flame_body_blend", &s_fvolBodyBlend, 0.0f);
-    Tuning_RegisterFloat("flame_body_alpha", &s_fvolBodyAlpha, 0.18f);
+    Tuning_RegisterFloat("flame_body_alpha", &s_fvolBodyAlpha, 0.12f);
     Tuning_RegisterFloat("flame_volume", &s_fvolVolume, 1.0f);
-    Tuning_RegisterFloat("flame_heat_gain", &s_fvolHeatGain, 1.9f);
-    Tuning_RegisterFloat("flame_emissive", &s_fvolEmissive, 6.0f);
-    Tuning_RegisterFloat("flame_smoke_gain", &s_fvolSmokeGain, 1.4f);
+    Tuning_RegisterFloat("flame_heat_gain", &s_fvolHeatGain, 1.05f);
+    Tuning_RegisterFloat("flame_emissive", &s_fvolEmissive, 4.8f);
+    Tuning_RegisterFloat("flame_smoke_gain", &s_fvolSmokeGain, 0.95f);
     Tuning_RegisterFloat("flame_smoke_r", &s_fvolSmokeR, 82.0f);
     Tuning_RegisterFloat("flame_smoke_g", &s_fvolSmokeG, 74.0f);
     Tuning_RegisterFloat("flame_smoke_b", &s_fvolSmokeB, 69.0f);
@@ -264,9 +268,9 @@ static void FVol_InitShared(void)
     // The FLAME channel only — the sheet's smoke channel is a separate file.
     // The particle shader multiplies the whole of rgb by the vertex colour, so a
     // two-channel sheet would tint the fire with its own smoke.
-    const VFX_SurfaceProfile *fireProfile =
+    const VFX_SurfaceProfile *tongueProfile =
         VFX_SurfaceRegistry_Get(VFX_SURFACE_FIRE_TONGUE);
-    s_fvolFlameTex = fireProfile != NULL ? fireProfile->fallbackBody : (Texture2D){0};
+    s_fvolFlameTex = tongueProfile != NULL ? tongueProfile->body : (Texture2D){0};
     if (s_fvolFlameTex.id != 0)
     {
         SetTextureFilter(s_fvolFlameTex, TEXTURE_FILTER_BILINEAR);
@@ -278,10 +282,12 @@ static void FVol_InitShared(void)
         SpriteAnim_Init(&s_fvolFlameAnim, 8, 8, 64, 64.0f / 1.7f, ANIM_ONCE);
     }
     else
-        TraceLog(LOG_WARNING, "FlameVolume: fire_atlas_8x8_flame.png missing — "
-                              "using F2 sprites (run scripts/flipbook/make.py fire)");
+        TraceLog(LOG_WARNING, "FlameVolume: fire_tongue_8x8_flame.png missing — "
+                              "using F2 sprites (run scripts/flipbook/make.py fire_tongue)");
 
-    s_fvolPuffTex = fireProfile != NULL ? fireProfile->body : (Texture2D){0};
+    const VFX_SurfaceProfile *puffProfile =
+        VFX_SurfaceRegistry_Get(VFX_SURFACE_FIRE_PUFF);
+    s_fvolPuffTex = puffProfile != NULL ? puffProfile->body : (Texture2D){0};
     if (s_fvolPuffTex.id != 0)
     {
         SetTextureFilter(s_fvolPuffTex, TEXTURE_FILTER_BILINEAR);
@@ -304,7 +310,7 @@ static void FVol_InitShared(void)
     }
     else
         TraceLog(LOG_WARNING, "FlameVolume: fire_puff_8x8_flame.png missing — "
-                              "falling back to the column sheet (bake it with "
+                              "falling back to the tongue sheet (bake it with "
                               "scripts/flipbook/ti_sim.py fire_puff)");
 
     // BLACK-BODY ramp, not three smoothsteps. Weighted so the flame spends most
@@ -551,26 +557,31 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
         for (int i = 0; i < n; i++)
         {
             float ang = Random01() * 2.0f * PI;
-            float rad = sqrtf(Random01()) * 0.34f * s_fvolSpread * scale * s_fvolWidthMul;
+            // The volume sheet is one billow, therefore its emitter is the
+            // silhouette author. A compact foot plus a longer vertical travel
+            // reads as flame; the old 0.34 m disk made a wide fireball even
+            // when the asset itself was completely directionless.
+            float rad = sqrtf(Random01()) * 0.28f * s_fvolSpread * scale * s_fvolWidthMul;
             Vector3 p = {pos.x + cosf(ang) * rad,
-                         pos.y + Random01() * 0.10f * scale,
+                         pos.y + Random01() * 0.06f * scale,
                          pos.z + sinf(ang) * rad};
             float life = Math_Mix(0.75f, FVOL_BODY_LIFE_MAX, Random01());
 
             SpawnParticle((ParticleConfig){
                 .position = p,
-                .velocity = {cosf(ang) * 0.06f * scale,
-                             Math_Mix(0.45f, 0.75f, Random01()) * scale * s_fvolRiseMul,
-                             sinf(ang) * 0.06f * scale},
-                .radius = Math_Mix(0.22f, 0.62f, powf(Random01(), 1.6f))
+                .velocity = {cosf(ang) * 0.035f * scale,
+                             Math_Mix(0.55f, 0.80f, Random01()) * scale * s_fvolRiseMul,
+                             sinf(ang) * 0.035f * scale},
+                .radius = Math_Mix(0.20f, 0.54f, powf(Random01(), 1.6f))
                           * s_fvolBodySize * scale,
                 .lifetime = life,
-                // In volume mode colorStart.a is the sprite's COVERAGE and its
-                // RGB is ignored — hue comes from the ramp. Alpha can therefore
-                // be much higher than the 0.18 the legacy body needed: there is
-                // no flat tint to stack into a patch, because the sheet's own
-                // density decides where the sprite is opaque.
-                .colorStart = VC_WithAlpha(WHITE, 200),
+                // In volume mode colorStart.a is a per-billboard coverage
+                // multiplier; the sheet's A is the local gas coverage.  It
+                // still must use the authored body-alpha dial: a hard-coded
+                // 200/255 made broad soft puffs stack into one compressed
+                // opaque mass before their internal density could read.
+                .colorStart = VC_WithAlpha(WHITE,
+                                           (unsigned char)(255.0f * s_fvolBodyAlpha)),
                 .alphaCurve = &s_fvolFade,
                 .speedCurve = &s_fvolRise,
                 // Cooling. In volume mode emissiveCurve is read as the particle's

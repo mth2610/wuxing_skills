@@ -2205,3 +2205,26 @@ through the middle — so the whole body sat at full emission with no gradient.
 **Rule.** When an additive term looks wrong, subtract it before retuning it. A
 washed-out result is as often a desaturated COLOUR as an excessive magnitude, and
 the two need opposite fixes. Guarded by `core/tests/fluid_liquid_material_test.c`.
+
+## Measure the OUTPUT pixel before retuning a colour
+
+**Symptom.** Lava's molten regions read as pale yellow. Two rounds of tuning
+against that reading — halving the emission strength, then narrowing the crust
+threshold — changed the shape of the problem but not the colour, and the second
+made it worse (hard-edged pale patches, "cracked eggshell").
+
+**Cause.** Both rounds assumed the pipeline was washing the colour out (HDR
+clipping, then the ACES tonemap's highlight desaturation). Sampling the rendered
+PNG settled it in one measurement: the hot region averaged **(242,187,87),
+G/R = 0.77** — which is almost exactly the authored `glow` constant
+`(255,200,70)`, G/R = 0.78. Nothing was washing anything out. The colour on
+screen was the colour that had been authored, and it was simply too yellow;
+molten rock sits near G/R 0.5. Changing the constant to `(255,140,30)` moved the
+render to G/R 0.67, B/R 0.13.
+
+**Rule.** When a rendered colour looks wrong, read the pixels out of the
+screenshot and compare them against the constant you think produced them, before
+touching any term that modulates it. The comparison is two numbers and it
+distinguishes "my constant is wrong" from "something downstream is eating it" —
+which need opposite fixes. It is the colour equivalent of the subtraction rule
+above.

@@ -83,6 +83,7 @@ Used via `SpawnGroundDecal(DECAL_PRESET_GENERIC_*)`. White/tintable.
 | `fire_volume.png` | `VFX_SurfaceRegistry` FireTube preview profile | Seamless fire tube body; preview-only until P3 approval | emissive RGBA |
 | `fire_volume_flow.png` | `VFX_SurfaceRegistry` FireTube preview profile | Tileable RG direction field | data, RG direction |
 | `fire_atlas_8x8_flame.png` | FireTongue fallback profile | Legacy 8×8 flame-only column fallback | white flame + alpha |
+| `fire_tongue_8x8_flame.png` | `VFX_SurfaceRegistry` FireTongue body | 8×8 directional +Z flame-column flipbook; white emission mask with a soft alpha rim | white flame + alpha |
 
 ### P1 semantic-surface migration map
 

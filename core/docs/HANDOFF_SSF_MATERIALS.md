@@ -24,6 +24,12 @@ everything from the body colour. Note for authoring: poison's `glow` **equals**
 its `body`, so its Fresnel rim is green-on-green and it reads flatter than water.
 That is an authoring consequence, not a defect.
 
+> **Follow-up pass (same day).** The user reported the water STROBING and judged
+> lava/metal "not quite there" at zoom. Both addressed below; the strobe was a
+> defect in the gate I had just added (root `ENGINE_LANDMINES.md`: a gate that
+> measures a cost its own decision controls oscillates at frame rate). Lava and
+> metal were re-derived from measurements rather than from further tuning.
+
 ### 2. Lava — emission by thickness
 `FLUID_LIQUID_EMISSIVE` adds `emissionColor * (1 - exp(-k·path)) * strength`,
 with `k = ln(2)/FLUID_REFERENCE_DEPTH_M` — one reference depth emits half its
@@ -32,6 +38,21 @@ subtracts emission instead of adding a white cap, at its own frequency (7.0, a
 0.14 m cell) because `surfaceNoise`'s 0.37 m cell is most of a body.
 `opacityPerMetre` kills the refracted background; the body colour alone cannot,
 because a saturated orange transmits ~100% of red.
+
+Two things had to change after the first look, and neither was the one the
+symptom suggested:
+
+- The crust must drive **temperature**, not brightness. Multiplying the finished
+  emission by 0.16 under the crust left the un-crusted 60% at full core heat, so
+  the body read as one sheet of molten gold with dark smudges. Cooling the crust
+  *first* and deriving the colour from the result gives dark plates with
+  incandescent seams — a cooled patch is not merely dimmer, it is REDDER.
+- The core colour was too yellow, and this was **measured, not guessed**: the hot
+  region rendered at (242,187,87), G/R = 0.77, which is just the authored glow
+  constant (255,200,70). Nothing downstream was washing it out. Molten rock sits
+  near G/R 0.5; (255,140,30) renders at 0.67 with blue down from 0.36 to 0.13.
+  Emission strength 1.6 -> 1.1 and the emissive class damps the dielectric
+  in-scatter to 0.35, which is what darkens the plates.
 
 ### 3. Per-pixel material id — the unlock
 The slot rides the **same fragment that wins the depth test**, so the composite
@@ -50,12 +71,44 @@ Fresnel and paints it METAL's blue `glow`. The un-normalized Blinn glint lobes
 are gated off too: they were authored against water's 0.02 F0 and the GGX term
 alone is already ~45x brighter once F0 is a metal's.
 
+**It still read as plastic, and the user's own observation was the diagnosis:**
+the blob's dark UNDERSIDE looked more metallic than its bright top. That is the
+whole answer. Down there the normal crosses the ground/sky boundary and picks up
+contrast; everywhere else it reflected a smooth two-colour hemisphere blend that
+is nearly constant across a body. Reflection is not a few percent of a
+conductor's look, it is all of it — multiply a constant by a coloured F0 and you
+have painted plastic.
+
+So the conductor gets its own environment: a **hard** horizon (0.045 rather than
+the dielectric's 0.18-0.62 ramp), a dark floor, a sky that **grades** from a
+bright horizon to a dim zenith rather than sitting at one value, and the bright
+horizon band every real environment has. The airborne under-fill and the additive
+pastel wash are both skipped — a conductor's dark underside is correct, it is
+reflecting an unlit floor, and lifting it is exactly the flattening to avoid.
+`roughnessScale` went 1.6 -> 0.65: the broad lobe had been chosen to hide the
+reconstruction's normal wobble, but it also smears away the sun, and the wobble
+it hid reads as a liquid metal surface rippling.
+
+**Honest limit:** the tester's sky is empty, so above the horizon there is
+genuinely nothing to reflect and that region stays smooth. In a populated arena
+the SSR path (HIGH tier) fills it with real geometry. Do not tune this material
+further against an empty room.
+
 ### 5. Cost gates
-`FluidSurface_RequestBody(priority, center, worldRadius)` — ask before building.
+`FluidSurface_RequestBody(priority, center, worldRadius, alreadyRunning)` — ask
+before building, every frame the body wants to exist.
 `MINION` never; `BASIC` only joins a surface already running; `CAST` may switch
 one on; `ULTIMATE` survives an over-budget frame. Below a 16 px projected radius
 nothing gets SSF. The reconstruction radius (still single-owner) goes through
 `FluidSurface_SetReconstructionRadiusFor`, highest priority wins.
+`alreadyRunning` is load-bearing, not an optimisation. The budget test measures
+a number the gate's own decision controls (the ring costs 23-27 ms admitted,
+16-17 ms rejected), so re-testing a running body flips it every frame at any
+threshold between those and the water visibly strobes — which is exactly what
+shipped for one build. A body's affordability is judged once, when it starts.
+The size cull is not self-referential and keeps running every frame, with
+hysteresis at 0.6x so a camera hovering at the threshold cannot chatter either.
+
 Wired into `VFX_ComposeWaterRing` (rejected -> spawns the same torus with
 **visible** particle colours instead of the SSF path's alpha-0) and
 `FluidImpact_SpawnWater` (rejected -> skips the PBD solve; the ballistic droplets

@@ -28,6 +28,18 @@ int main(void) {
     Check(Has(fire, "SpriteAnim_SetFrameMetadata(&s_fvolVolumeAnim") &&
           Has(fire, "flame_volume_puff_metadata.inl"),
           "volume flipbook binds bake-generated per-frame crop metadata");
+    Check(Has(fire, "s_fvolRiseMul = 1.15f") &&
+          Has(fire, "s_fvolWidthMul = 0.75f") &&
+          Has(fire, "sqrtf(Random01()) * 0.28f") &&
+          Has(fire, "Math_Mix(0.55f, 0.80f"),
+          "volume emitter owns a narrow foot and stronger upward macro motion");
+    Check(Has(fire, "s_fvolBodyLive = 190.0f") &&
+          Has(fire, "s_fvolBodyAlpha = 0.12f") &&
+          Has(fire, "(unsigned char)(255.0f * s_fvolBodyAlpha)") &&
+          Has(fire, "s_fvolHeatGain = 1.05f") &&
+          Has(fire, "s_fvolEmissive = 4.8f") &&
+          Has(fire, "s_fvolSmokeGain = 0.95f"),
+          "volume layers stay translucent instead of fusing into a white fireball");
     Check(Has("core/composition/visual_composer.c", "SmokeEmitter_Update(dt);") && Has("core/composition/visual_composer.c", "VC_FlameEmitter_Update(dt);"), "both pools are ticked");
     return fails ? 1 : 0;
 }

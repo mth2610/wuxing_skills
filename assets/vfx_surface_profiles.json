@@ -304,18 +304,54 @@
         64
       ],
       "seam": "not_applicable",
-      "provenance": "Taichi fire puff split into flame and smoke populations",
+      "provenance": "Taichi direction-bearing rising combustion column. +Z is baked as up for one torch/ground/jet flame; it has continuous buoyancy, time-varying fuel and temporal curl so its late frames keep changing instead of settling into one static gas shape. Built by: ti_sim.py fire_tongue --res 96 --frames 64 --domain 1.4 | render.py --cell 256 --supersample 2 --zoom auto --light 1.0 --density-scale 2.2 --flame-extinction 0.10 --flame-scale 3.0 --emission-gamma 0.82 | pack.py --grid 8 --alpha-from-luma 0 --shape column --split.",
       "consumers": [
-        "VFX_FlameEmitter body"
+        "VFX_FlameEmitter body (flame_atlas = 2, directional tongue fallback)"
+      ],
+      "assets": {
+        "body": {
+          "path": "assets/textures/fire_tongue_8x8_flame.png",
+          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — white, upward flame emission mask; alpha falls continuously from the dense core through the turbulent rim"
+        },
+        "fallback_body": {
+          "path": "assets/textures/fire_atlas_8x8_flame.png",
+          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — legacy upward flame column fallback"
+        }
+      }
+    },
+    {
+      "id": "VFX_SURFACE_FIRE_PUFF",
+      "name": "fire_puff",
+      "primitive": "puff",
+      "role": "trail",
+      "wrap": "clamp",
+      "filter": "bilinear",
+      "blend": "consumer_defined",
+      "projection": "primitive_defined",
+      "approval": "approved",
+      "lifecycle": {
+        "seconds": 0.0,
+        "fade_in": 0.0,
+        "fade_out": 0.0
+      },
+      "budget": {
+        "max_draw_calls": 0,
+        "max_textures": 1
+      },
+      "flipbook": [
+        8,
+        8,
+        64
+      ],
+      "seam": "not_applicable",
+      "provenance": "Taichi directionless fire parcel split into white flame and shaded smoke populations. This is the legacy multi-sprite fallback only; its absence of a baked up axis is deliberate, because the emitter/force field chooses the macro flame shape. Built by: ti_sim.py fire_puff --res 112 --frames 64 | render.py --density-scale 7 --zoom auto | pack.py --split --shape puff.",
+      "consumers": [
+        "VFX_FlameEmitter body (flame_atlas = 1, directionless puff fallback)"
       ],
       "assets": {
         "body": {
           "path": "assets/textures/fire_puff_8x8_flame.png",
-          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — white flame core, A opacity"
-        },
-        "fallback_body": {
-          "path": "assets/textures/fire_atlas_8x8_flame.png",
-          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — legacy flame column fallback"
+          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — white directionless flame core, A opacity"
         }
       }
     },
@@ -344,7 +380,7 @@
         64
       ],
       "seam": "not_applicable",
-      "provenance": "Ray-marched Taichi directionless combustion parcel kept PACKED. fire_volume_puff uses one connected ignition source, fine isotropic eddies and a hotter, less soot-dominant life cycle without baking lift, a flame-tongue silhouette or visibly separate sub-puffs; the emitter/force field owns that shape. Its predecessor VFX_SURFACE_FIRE_TONGUE is the same sim run through pack.py --split, which collapses R to a white mask and throws the per-texel temperature field away; a sprite off that sheet can only ever be one flat hue. Built by: ti_sim.py fire_volume_puff --res 96 --frames 64 | render.py --cell 256 --supersample 2 --zoom auto --light 1.0 --density-scale 6 --flame-extinction 1.5 --flame-scale 4.5 | pack.py --grid 8 --alpha-from-luma 0 --shape puff (NO --split).",
+      "provenance": "Ray-marched Taichi directionless combustion parcel kept PACKED. fire_volume_puff uses one connected ignition source, fine isotropic eddies and a hotter, less soot-dominant life cycle without baking lift, a flame-tongue silhouette or visibly separate sub-puffs; the emitter/force field owns that shape. Its split sibling is VFX_SURFACE_FIRE_PUFF: splitting collapses R to a white mask and throws the per-texel temperature field away, so a sprite off that sheet can only ever be one flat hue. Built by: ti_sim.py fire_volume_puff --res 96 --frames 64 | render.py --cell 256 --supersample 2 --zoom auto --light 1.0 --density-scale 6 --flame-extinction 1.5 --flame-scale 4.5 | pack.py --grid 8 --alpha-from-luma 0 --shape puff (NO --split).",
       "consumers": [
         "VFX_FlameEmitter body (volume path)"
       ],

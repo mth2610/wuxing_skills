@@ -288,6 +288,8 @@ configure_file(core/trails/shaders/trail_volume.vs ${CMAKE_CURRENT_BINARY_DIR}/c
 configure_file(core/trails/shaders/trail_volume.fs ${CMAKE_CURRENT_BINARY_DIR}/core/trails/shaders/trail_volume.fs COPYONLY)
 configure_file(core/shaders/water_splash.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/water_splash.fs COPYONLY)
 configure_file(core/shaders/water_splash.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/water_splash.vs COPYONLY)
+configure_file(core/shaders/ground_wave.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/ground_wave.fs COPYONLY)
+configure_file(core/shaders/ground_wave.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/ground_wave.vs COPYONLY)
 configure_file(core/fluid/shaders/fluid_depth_smooth.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_depth_smooth.fs COPYONLY)
 configure_file(core/fluid/shaders/fluid_capture.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_capture.fs COPYONLY)
 configure_file(core/fluid/shaders/fluid_capture_particle.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_capture_particle.fs COPYONLY)
@@ -301,6 +303,7 @@ configure_file(core/fluid/shaders/fluid_surface.fs ${CMAKE_CURRENT_BINARY_DIR}/c
 configure_file(core/shaders/common/vs_header.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/vs_header.glsl COPYONLY)
 configure_file(core/shaders/common/fs_header.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/fs_header.glsl COPYONLY)
 configure_file(core/shaders/common/lighting.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/lighting.glsl COPYONLY)
+configure_file(core/shaders/common/noise.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/noise.glsl COPYONLY)
 
 # core/uv shared includes. Same trap as the trails block above: these are
 # #include'd by trail_deform.fs, shield_shell.fs and aura_shell.fs, and a

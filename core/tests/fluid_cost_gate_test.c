@@ -36,15 +36,20 @@ static float ProjectedRadiusPx(float distance, float worldRadius,
 }
 
 /* Mirror of FluidSurface_RequestBody, in the same order the C does its tests. */
-static int Admit(int priority, float frameMs, double now, double surfaceRunStamp,
-                 float projectedPx)
+static int AdmitEx(int priority, float frameMs, double now, double surfaceRunStamp,
+                   float projectedPx, int alreadyRunning)
 {
     if (priority <= PRIORITY_MINION) return 0;
-    if (frameMs > BUDGET_MS && priority < PRIORITY_ULTIMATE) return 0;
+    if (!alreadyRunning && frameMs > BUDGET_MS && priority < PRIORITY_ULTIMATE) return 0;
     if (priority <= PRIORITY_BASIC && (now - surfaceRunStamp) > STAMP_TTL) return 0;
-    if (projectedPx < MIN_RADIUS_PX) return 0;
+    float admitRadius = alreadyRunning ? MIN_RADIUS_PX * 0.6f : MIN_RADIUS_PX;
+    if (projectedPx < admitRadius) return 0;
     return 1;
 }
+/* Most cases below are about a body STARTING. */
+static int Admit(int priority, float frameMs, double now, double surfaceRunStamp,
+                 float projectedPx)
+{ return AdmitEx(priority, frameMs, now, surfaceRunStamp, projectedPx, 0); }
 
 static char *ReadFile(const char *path)
 {
@@ -115,6 +120,44 @@ int main(void)
     }
     /* A camera inside the body is emphatically not "small". */
     CHECK(ProjectedRadiusPx(0.5f, 2.0f, 45.0f, 720) > 1e8f);
+
+    /* --- The anti-STROBE property ---
+     *
+     * The frame-budget test measures a number the gate's own decision controls.
+     * Measured on the water ring: admitted, the frame costs 23-27 ms; rejected,
+     * 16-17 ms. So a threshold anywhere between those two flips EVERY FRAME —
+     * admit, frame gets expensive, reject, frame gets cheap, admit — and the
+     * water strobes. No threshold value fixes it; the loop must be broken.
+     *
+     * It is broken by exempting a RUNNING body from the budget test: a body's
+     * affordability is judged once, when it starts. Asserted as: the same frame
+     * time that would refuse to START this body cannot STOP it. */
+    {
+        const float loopHigh = 27.0f;   /* what the frame costs with SSF on */
+        const float loopLow  = 16.0f;   /* what it costs with SSF off */
+        CHECK(!AdmitEx(PRIORITY_CAST, loopHigh, now, running, big, 0)); /* may not start */
+        CHECK(AdmitEx(PRIORITY_CAST, loopHigh, now, running, big, 1));  /* but keeps going */
+        CHECK(AdmitEx(PRIORITY_CAST, loopLow, now, running, big, 0));
+        /* The strobe, stated directly: alternating the frame time between the
+         * two costs the decision itself produces must NOT alternate the answer
+         * for a running body. */
+        for (int i = 0; i < 8; ++i)
+        {
+            float ms = (i & 1) ? loopHigh : loopLow;
+            CHECK(AdmitEx(PRIORITY_CAST, ms, now, running, big, 1));
+        }
+    }
+
+    /* Size hysteresis: a running body is only dropped once it is well past the
+     * size a starting body would have needed, so a camera hovering at the
+     * threshold cannot chatter either. */
+    {
+        float borderline = MIN_RADIUS_PX * 0.8f;
+        CHECK(!AdmitEx(PRIORITY_CAST, healthy, now, running, borderline, 0));
+        CHECK(AdmitEx(PRIORITY_CAST, healthy, now, running, borderline, 1));
+        /* Far enough below and even a running body goes. */
+        CHECK(!AdmitEx(PRIORITY_CAST, healthy, now, running, MIN_RADIUS_PX * 0.4f, 1));
+    }
 
     /* --- The anti-latch property --- */
     /* This one exists because the first implementation DID latch: the budget

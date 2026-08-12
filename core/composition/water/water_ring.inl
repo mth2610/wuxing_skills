@@ -103,8 +103,10 @@ void VFX_ComposeWaterRing(Vector3 center, float radius, float t01)
      * over budget. Rejected, it still exists: the same torus of particles is
      * spawned with visible colours instead of the alpha-0 the SSF path uses,
      * which is the ordinary-particle fallback the cost design calls for. */
+    bool ringRunning = (s_waterRingEmitter != PARTICLE_EMITTER_INVALID) && s_waterRingUsesSurface;
     bool useSurface = FluidSurface_RequestBody(FLUID_PRIORITY_CAST, center,
-                                               radius * (1.0f + WATER_RING_TUBE_RATIO));
+                                               radius * (1.0f + WATER_RING_TUBE_RATIO),
+                                               ringRunning);
     s_waterRingIdle = 0.0f;
     WaterRing_SetField(center, radius, t01);
 
