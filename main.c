@@ -1190,6 +1190,11 @@ int main(int argc, char **argv) {
         DrawSkillManagerWorld3D();
     }
 
+    // Shared composition pools (including one-shot LightningArc) must render
+    // in every 3D game scene, not only the VFX tester and skill sandbox.
+    // Their body/emission submissions own their target switches internally.
+    VFX_Compose_Draw3D(camera);
+
     // =========================================================================
     // MỚI: TOÀN BỘ PHẦN TRUY XUẤT VÀ VẼ KHỐI CẦU DEBUG LIGHT ĐÃ ĐƯỢC BỐC SANG ĐÂY
     // + ĐƯỢC BỔ SUNG THÊM VIỆC VẼ MESH TỪ PREFAB TESTER
@@ -1203,17 +1208,10 @@ int main(int argc, char **argv) {
             DrawCharacter3D(player.position, 0.25f, GetColor(0xFFD39BFF), GetColor(0x3B5998FF), GetColor(0xCCCCCCFF), true, mouseTarget3D);
         }
 
-        // Stateful archetypes (VFX_SpawnProcBeam/Orbitals, VFX_ComposeLightningBolt's
-        // ProcBolt handle) live in a global pool updated unconditionally every frame
-        // (VFX_Compose_Update above) but were only ever DRAWN in SCREEN_SKILL_SANDBOX —
-        // triggering their NEWFX tab entries (BOLT/PROC BEAM/ORBITALS) spawned them
-        // correctly into the pool but nothing rendered. Draw here too.
-        VFX_Compose_Draw3D(camera);
         VFXLight_DrawDebug();   // tuning.cfg → vfx_light_debug = 1
     }
 
     if (currentScreen == SCREEN_SKILL_SANDBOX) {
-        VFX_Compose_Draw3D(camera);
         VFXLight_DrawDebug();   // tuning.cfg → vfx_light_debug = 1
     }
 

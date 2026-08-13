@@ -2337,3 +2337,60 @@ body facing a featureless sky), and the sun as a mirrored disc. Corollary: judge
 a conductor in a scene that HAS something to reflect. In an empty tester sky
 there is a real ceiling on how good it can look, and tuning against that ceiling
 just moves the material away from correct.
+### A lightning bolt is a distance field, not a stack of geometry bands
+- **Symptom:** a source-to-target electric effect reads as a cable, dotted
+  wire, or parallel cyan bands despite valid midpoint geometry.
+- **Cause:** a full-screen lightning shader first warps a 2D domain and then
+  measures distance to one centreline. Translating that into many 3D strips
+  turns its body, halo and core into separate pieces of geometry instead.
+- **Rule:** render the primary bolt on one camera-facing endpoint-pinned canvas;
+  apply its 4+3 octave FBM warp in the fragment shader, then derive all
+  body/halo/core coverage from the *same* bounded centreline distance. The
+  blue body must remain a low-alpha near-core hue carrier; bridge white core to
+  a saturated inner corona, then a pale faint outer field with overlapping
+  weights, never opaque bands.
+  Midpoint displacement remains useful for opt-in branches and non-lightning
+  paths.
+
+### Camera-facing lightning canvas can be entirely backface-culled
+- **Symptom:** a spawned lightning stroke is completely invisible, despite a
+  valid path and shader.
+- **Cause:** the immediate-mode camera-facing canvas is not a closed surface;
+  its front winding is not a semantic property of the bolt.
+- **Rule:** bracket canvas submission with batch-flushed
+  `rlDisableBackfaceCulling()` / `rlEnableBackfaceCulling()`, inside the shared
+  lightning renderer rather than at an individual effect call site.
+
+### A one-shot bolt needs an advancing discharge head
+- **Symptom:** a source-to-target lightning arc looks like a completed beam
+  simply appearing, even when its endpoints and filament shape are correct.
+- **Cause:** rendering full body/halo/core coverage at elapsed time zero gives
+  the eye no directional event to read; a static midpoint light cannot supply
+  that missing propagation cue.
+- **Rule:** expose a bounded `travelDuration` on the shared stroke and derive a
+  0→1 source-to-target `u_travel` in `core/lightning/lightning_stroke.c`.
+  `core/lightning/shaders/lightning_stroke.fs` must gate all coverage behind a
+  short antialiased leading edge and reserve any extra emission for that head.
+  Never duplicate the timing in an individual composition or sandbox fixture.
+
+### Lightning endpoints must taper independently of the canvas geometry
+- **Symptom:** an otherwise thin lightning filament ends in a flat, rectangular
+  blue cut at the caster or click point.
+- **Cause:** the endpoint-pinned quad accurately reaches the two world points,
+  but the fragment coverage continues unchanged until the quad boundary.
+- **Rule:** in `core/lightning/shaders/lightning_stroke.fs`, multiply every
+  body/core/halo coverage term by one shared endpoint taper, then use a small
+  additive contact glint only at the two endpoints. Do not shorten the geometry:
+  it would detach the bolt from its source or target.
+
+### Thin HDR mesh cores can disappear before bloom extraction
+- **Symptom:** a custom-shader mesh has a white-hot HDR core, yet produces no
+  bloom while larger particle sprites in the same scene do.
+- **Cause:** the bloom target is quarter-resolution. Sampling the full-size
+  scene only once per quarter-resolution fragment can miss a one- or two-pixel
+  highlight, so it falls below threshold before the blur chain begins. HDR
+  storage and Vulkan blending are not at fault in this case.
+- **Rule:** the bright prefilter must gather its whole 4×4 full-resolution
+  source cell before thresholding. `bloom_bright.fs` retains the brightest
+  HDR sample for thin emitters; keep its energy cap as the firefly guard. Do
+  not compensate by making every mesh core wider or raising a per-effect halo.

@@ -139,6 +139,28 @@ void Ribbon_ComputeCrossFrame(const Vector3 *points, int count,
                               RibbonMode mode, Vector3 fixedNormal, Camera3D camera,
                               Vector3 *outAxisA, Vector3 *outAxisB);
 
+// ── Midpoint displacement path synthesis ──────────────────────────────────
+// Deterministically subdivides a straight segment into a fractal polyline.
+// Each level inserts one midpoint per existing segment and offsets it in the
+// segment's perpendicular plane; `amplitudeDecay` makes each later level
+// smaller. The caller owns a fixed output array: no allocation, no pool, and
+// exact `from`/`to` endpoints. Suitable for lightning, roots, torn cracks, and
+// any short-lived irregular path before it is rendered by a Ribbon/Tube.
+#define RIBBON_MIDPOINT_MAX_LEVELS 5
+#define RIBBON_MIDPOINT_MAX_POINTS ((1 << RIBBON_MIDPOINT_MAX_LEVELS) + 1)
+
+typedef struct {
+  int levels;              // 0..5; result count is 2^levels + 1
+  float initialAmplitude;  // metres, first subdivision only
+  float amplitudeDecay;    // (0,1), typically 0.5; later levels *= this
+  unsigned int seed;       // deterministic variation per instance/reseed
+} RibbonMidpointConfig;
+
+RibbonMidpointConfig Ribbon_MidpointDefaultConfig(void);
+int Ribbon_GenerateMidpointDisplacement(Vector3 from, Vector3 to,
+                                        const RibbonMidpointConfig *config,
+                                        Vector3 *outPoints, int outCapacity);
+
 // ── Ribbon Energy Field — N configurable crossed-plane layers along a path ──
 // Generalizes the "2 fixed perpendicular planes" technique (originally
 // hand-rolled per-caller for a straight 2-point beam) to any N-point path

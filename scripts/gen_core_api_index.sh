@@ -18,6 +18,7 @@ HEADERS=(
   core/fluid/fluid_orb.h
   core/force_field.h core/particles/particle_system.h core/particles/particle_manager.h core/mesh_adjacency.h
   core/trails/trail_system.h core/ribbon_strip.h core/decals/decal_system.h
+  core/lightning/lightning_stroke.h
   core/vfx_contrast.h
   core/screen_distort.h core/metaball_fx.h core/color_gradient.h
   core/float_curve.h core/uv/flow_map.h core/deform/mesh_deform.h core/uv/uv_deform.h core/uv/surface_flow.h core/uv/uv_fx.h core/path_spline.h core/sprite_anim.h

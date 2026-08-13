@@ -1217,3 +1217,72 @@ near=1.0. Neither was observable before, because the path had no fixture.
 New guards: `core/tests/fluid_capture_projection_test.c`,
 `fluid_liquid_material_test.c`, `fluid_cost_gate_test.c`. Suite 59/63 — the same
 four pre-existing failures as before this work.
+## 2026-08-13 — Reusable lightning arc primitive
+
+- Added `Ribbon_GenerateMidpointDisplacement` in `core/ribbon_strip.h/.c`: a
+  reusable, allocation-free midpoint-subdivision path primitive (0–5 levels,
+  exact endpoints, per-level amplitude decay, deterministic integer seed).
+  It expands the caller's fixed array in place and is now the source of truth
+  for lightning, roots, cracks, and other irregular paths.
+- `VFX_LightningArc_Spawn` adapts the 32-slot `core/lightning/` stroke module
+  for source-to-target casts. Its trunk uses 3–4 levels, branches use 3 only
+  when requested. It deliberately creates no VFX light: the owning skill decides
+  whether source and/or target contact lights belong to its gameplay beat.
+- Its render path explicitly separates opaque coloured body (`VFXBody` + alpha)
+  from cyan halo / near-white core (`VFXEmission` + additive), so the lightning
+  retains its material hue over bright scenes instead of washing out.
+- The initial wide-ribbon material was removed: it necessarily read as three
+  parallel bands at an oblique camera. `core/lightning/lightning_stroke.c`
+  instead renders one endpoint-pinned camera-facing canvas with a thin core and
+  compact halo; the fragment FBM warps its centreline without exposing the
+  canvas as a ribbon.
+- Added `lightning_arc_contract_test`; focused Core test passes. Full visual
+  verification remains the renderer suite / human game run.
+
+### Arc readability retune
+
+- Screenshot diagnosis: a 32-segment trunk with only 0.16 m displacement read
+  as a cyan dotted cable at the isometric camera, then a wide profiled ribbon
+  read as three parallel bands. Default arcs now use 8–16 primary kinks,
+  0.80 m maximum lateral displacement. The final primary uses the reference
+  ShaderToy shape: one endpoint-pinned camera-facing canvas, 4+3 octave FBM
+  domain warp, then a bounded distance-to-centreline body/halo/core. Branches
+  remain available but are opt-in by default.
+- The corona was then reduced to a 1.12× line-width falloff with lower additive
+  alpha, leaving the white ion channel and blue body intact while removing the
+  fog-like outer glow.
+- Follow-up render regression: the first dedicated implementation omitted its
+  scoped backface-culling disable, so camera-facing immediate segment quads
+  could all be culled. The renderer now owns the flushed culling guard.
+- The reusable stroke now has a 100 ms source→target discharge phase. Its shader
+  reveals only the travelled section and briefly intensifies the leading ion
+  head, so a click cast reads as an electrical snap rather than a full beam
+  appearing at once. The ion channel is HDR 4.5×, while the low-energy halo
+  squares its SDF falloff rather than forming a separate cartoon-blue band.
+- The opaque blue body was reduced to a close-in carrier beneath the white
+  channel. The shared shader now tapers all layers roundly into exact endpoints
+  and adds a compact endpoint contact glint, removing the broad inner blue band
+  and squared canvas cuts.
+- Follow-up review preserved the approved FBM silhouette and focused on the
+  actual issue: colours looked like separate bands. The primary now uses a
+  near-white HDR core, overlapping saturated-blue corona, pale cubic-fade outer
+  field, and a very low-alpha pale body for bright-background hue retention.
+- The near-core corona energy was increased without changing its radius or body
+  alpha, making the contact field read stronger while preserving the smooth
+  gradient into the outer field.
+
+### Final lightning / HDR bloom pass
+
+- The global HDR bloom bright-pass now gathers every 4×4 full-resolution source
+  cell before thresholding its quarter-resolution target. This preserves a
+  one-pixel custom-shader mesh core (lightning, rune, glint) that the old single
+  sample could miss completely. Guard: `bloom_thin_emitter_contract_test`.
+- Lightning now uses a cobalt-blue corona and a blue-white ion channel instead
+  of the lightning material's purple-soft colour, preventing the cinematic
+  highlight from grading into yellow/white while keeping the field smooth.
+- `postImpactDuration` is the explicit animated hold after the source→target
+  discharge. The default is 0.30 s after the 0.10 s travel; zero ends exactly
+  on impact. During the hold the FBM phase accelerates and all layers fade
+  coherently at the end, rather than holding a static completed beam.
+- `LightningStroke_SmoothStep` is local C99 code, not the GLSL `smoothstep`;
+  this keeps the hold fade portable under strict C compilation.

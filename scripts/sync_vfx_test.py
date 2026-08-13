@@ -125,6 +125,7 @@ LIFECYCLE_SPECS = {
     # heuristic below would have guessed "timed" off the name alone, which is
     # wrong — a beam is sustained, and it has no t01 to be timed by.
     "VFX_ComposeBeam":               ("trail",   "static",     "continuous"),
+    "VFX_ComposeLightningArc":       ("event",   "burst",      "oneshot"),
     # The moving counterpart (vc_smoke_trail.inl) — first arg is a
     # followTransform like VFX_ComposeVolumeTrail, unlike the column above.
     "VFX_ComposeSmokeTrail":         ("trail",   "follower",   "continuous"),
@@ -197,6 +198,16 @@ FIXTURE_SPAWN_OVERRIDES = {
     # value, so an oversized radius reads as fat even with the taper working).
     "VFX_ComposeSmokeTrail":
         "VFX_ComposeSmokeTrail($XFORM, VC_MAT_METAL, 0.18f, 1.0f, VFX_COLUMN_SMOKE, true)",
+}
+
+# One-shot event fixtures sometimes need authored parameters too. Keep this
+# separate from persistent spawn overrides: a trigger call has no stored handle
+# and must not be treated as a frame-fed fixture.
+FIXTURE_EVENT_OVERRIDES = {
+    # The panel preview uses a generic line; direct world clicks use the real
+    # player socket and click target in sandbox/vfx_test.c.
+    "VFX_ComposeLightningArc":
+        "VFX_ComposeLightningArc($SOURCE, $TARGET, VC_MAT_LIGHTNING, 0.055f)",
 }
 
 # The same idea for per-frame (Draw) fixtures, whose generated call is a
@@ -523,6 +534,10 @@ def infer_entry(fn_name, info, available_fns):
         if "draw_call" not in entry:
             raise SystemExit(f"[sync_vfx_test] {fn_name}: draw override requires a per-frame fixture")
         entry["draw_call"] = FIXTURE_DRAW_OVERRIDES[fn_name]
+    if fn_name in FIXTURE_EVENT_OVERRIDES:
+        if "trigger_call" not in entry:
+            raise SystemExit(f"[sync_vfx_test] {fn_name}: event override requires a one-shot fixture")
+        entry["trigger_call"] = FIXTURE_EVENT_OVERRIDES[fn_name]
     if fn_name in FIXTURE_START_OVERRIDES:
         if entry.get("type") != "continuous":
             raise SystemExit(f"[sync_vfx_test] {fn_name}: start override requires a continuous fixture")

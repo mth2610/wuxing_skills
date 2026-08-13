@@ -89,6 +89,7 @@
 - A new common-header function is public API for every skill — keep its signature stable; if it must change, do the §10.1 caller-grep and update the GLSL Shader Guidelines section of `core/docs/API.md`.
 - Keep `highp` precision for any uniform shared between VS+FS (lesson: `mediump`→`highp` fix was required for Android, see commit "fs_header.glsl — đổi precision mediump float → precision highp float"). Don't introduce `mediump`/`lowp` regressions.
 - New common code only runs through the `#include` path (runtime-rewritten to `#version 300 es`) — must stay valid under both `#version 330` (desktop) and `#version 300 es` (Android) syntax.
+- Lightning is not a broad ribbon: use `core/lightning/`'s endpoint-pinned canvas, FBM-warped distance-field centreline, and one continuous core→corona→field colour profile. Reveal it with the shared `travelDuration`/`u_travel` phase, taper body/core/halo at both endpoints, and never leave the canvas edge visible.
 
 ### 10.3 GPU particle backend (`core/particles/gpu/`)
 - Read `core/particles/docs/GPU_BACKEND_API.md` first. New VFX code uses `core/particles/particle_manager.h`.

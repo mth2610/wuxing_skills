@@ -168,6 +168,90 @@ void Ribbon_ComputeCrossFrame(const Vector3 *points, int count,
   }
 }
 
+// Integer hashing keeps the midpoint generator deterministic on GLES/Mali as
+// well as desktop.  This belongs in the path primitive, rather than in a
+// lightning composition, because the exact same seeded subdivision is useful
+// for roots, cracks, and other irregular ribbons.
+static unsigned int RibbonMidpoint_Hash(unsigned int x) {
+  x ^= x >> 16;
+  x *= 0x7feb352du;
+  x ^= x >> 15;
+  x *= 0x846ca68bu;
+  x ^= x >> 16;
+  return x;
+}
+
+static float RibbonMidpoint_Signed(unsigned int x) {
+  return (float)(RibbonMidpoint_Hash(x) & 0x00ffffffu) * (2.0f / 16777215.0f) - 1.0f;
+}
+
+// A single perpendicular vector is ambiguous in 3D.  This provides a stable
+// two-axis plane perpendicular to the segment, allowing a bolt to leave its
+// start/end line in any world-space direction without a view-dependent bias.
+static void RibbonMidpoint_Frame(Vector3 direction, Vector3 *outA, Vector3 *outB) {
+  Vector3 ref = fabsf(direction.y) < 0.92f ? (Vector3){0.0f, 1.0f, 0.0f}
+                                            : (Vector3){1.0f, 0.0f, 0.0f};
+  *outA = Vector3Normalize(Vector3CrossProduct(direction, ref));
+  *outB = Vector3Normalize(Vector3CrossProduct(direction, *outA));
+}
+
+RibbonMidpointConfig Ribbon_MidpointDefaultConfig(void) {
+  return (RibbonMidpointConfig){
+      .levels = 4,
+      .initialAmplitude = 0.12f,
+      .amplitudeDecay = 0.5f,
+      .seed = 0u,
+  };
+}
+
+int Ribbon_GenerateMidpointDisplacement(Vector3 from, Vector3 to,
+                                        const RibbonMidpointConfig *config,
+                                        Vector3 *outPoints, int outCapacity) {
+  if (outPoints == NULL) return 0;
+  RibbonMidpointConfig resolved = config ? *config : Ribbon_MidpointDefaultConfig();
+  if (resolved.levels < 0) resolved.levels = 0;
+  if (resolved.levels > RIBBON_MIDPOINT_MAX_LEVELS)
+    resolved.levels = RIBBON_MIDPOINT_MAX_LEVELS;
+  if (resolved.initialAmplitude < 0.0f) resolved.initialAmplitude = 0.0f;
+  if (resolved.amplitudeDecay <= 0.0f || resolved.amplitudeDecay >= 1.0f)
+    resolved.amplitudeDecay = 0.5f;
+
+  int required = (1 << resolved.levels) + 1;
+  if (outCapacity < required) return 0;
+  outPoints[0] = from;
+  outPoints[1] = to;
+  int count = 2;
+  float amplitude = resolved.initialAmplitude;
+
+  for (int level = 0; level < resolved.levels; ++level) {
+    // Work backward so the fixed caller array expands in-place without a
+    // scratch allocation.  Every original segment is still intact when its
+    // midpoint is computed.
+    for (int segment = count - 2; segment >= 0; --segment) {
+      Vector3 a = outPoints[segment];
+      Vector3 b = outPoints[segment + 1];
+      Vector3 delta = Vector3Subtract(b, a);
+      float length = Vector3Length(delta);
+      Vector3 midpoint = Vector3Scale(Vector3Add(a, b), 0.5f);
+      if (length >= RIBBON_DEGENERATE_EPSILON && amplitude > 0.0f) {
+        Vector3 axisA, axisB;
+        RibbonMidpoint_Frame(Vector3Scale(delta, 1.0f / length), &axisA, &axisB);
+        unsigned int key = resolved.seed ^ (unsigned int)(level * 0x9e3779b9u) ^
+                           (unsigned int)(segment * 0x85ebca6bu);
+        midpoint = Vector3Add(midpoint, Vector3Scale(axisA, amplitude * RibbonMidpoint_Signed(key)));
+        midpoint = Vector3Add(midpoint, Vector3Scale(axisB, amplitude * 0.62f *
+                                                      RibbonMidpoint_Signed(key ^ 0xc2b2ae35u)));
+      }
+      outPoints[segment * 2 + 2] = b;
+      outPoints[segment * 2 + 1] = midpoint;
+      outPoints[segment * 2] = a;
+    }
+    count = count * 2 - 1;
+    amplitude *= resolved.amplitudeDecay;
+  }
+  return count;
+}
+
 // One geometry loop, two public entry points. `writeNormals` makes the strip
 // carry its per-vertex SIDE vector (the across-width unit vector) in the
 // normal attribute slot, where the trail deform vertex shader

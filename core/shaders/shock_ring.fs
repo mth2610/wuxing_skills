@@ -31,12 +31,10 @@
 // second lobe sharing this one's field: sharing the field is what made the two
 // move as one object instead of as two.
 //
-// THE TWO FORCES TRADE PLACES OVER THE LIFE. Expansion is ease-out and front
-// loaded; the erosion threshold climbs as t^2, so it is negligible while the
-// ring is moving fastest and dominant once the ring has slowed. That crossover
-// is the shape of the whole effect: it flies out as a closed ring, then stops
-// and comes apart. Tuning the two curves to cross earlier or later is the main
-// dial worth touching here.
+// THE TWO FORCES OVERLAP OVER THE LIFE. Expansion is strongly ease-out and
+// front-loaded, while quadratic erosion begins during that release.  The front
+// therefore settles at its final radius as the smoke continues to reshape,
+// rather than becoming a static clean ring before it tears apart.
 //
 // WHERE THE TENDRILS COME FROM. The sample space is COMPRESSED radially as the
 // ring expands, so one feature of the field covers more and more of the band as
@@ -141,7 +139,7 @@ float FbmRing(vec2 p, float period, int octaves)
 
 // One closed rope: 1 at its centre-line, 0 at its edges. `w` is its half-width
 // in v units.
-float Rope(float v, float centre, float w)
+float Rope(float v, float centre, float w, float u_t01)
 {
     // Squared falloff, soft from the centre out. A rope with a defined edge
     // reads as a painted band and the erosion then looks like cracks in paint
@@ -149,11 +147,11 @@ float Rope(float v, float centre, float w)
     // ASYMMETRIC: a longer tail INWARD. Smoke thrown outward still trails back
     // towards where it came from, and a rope that falls off symmetrically leaves
     // a clean circular hole in the middle that no reference has.
-    // The inward reach is capped: past about 1.4 the rope covers the whole disc
-    // rather than leaving a middle, and the polar pinch at the centre turns it
-    // into radial streaks.
+    // A new front throws a broad trail back toward its centre, closing the
+    // oversized hollow that a symmetric rope leaves.  As the ring settles that
+    // tail retracts before it can turn the late effect into a filled disc.
     float d = v - centre;
-    float reach = (d < 0.0) ? w * 1.05 : w;
+    float reach = (d < 0.0) ? w * mix(1.42, 1.15, u_t01) : w;
     float x = clamp(abs(d) / max(reach, 0.02), 0.0, 1.0);
     float f = 1.0 - x * x;
     return f * f;
@@ -189,7 +187,7 @@ void main()
     // the radius — so the annulus swallows its own middle and the ring ends its
     // life as a filled disc, which is the opposite of dispersing.
     float widA = mix(0.18, 0.30, u_t01) * mix(0.42, 1.55, widN);
-    float ropeA = Rope(v, coreV, widA);
+    float ropeA = Rope(v, coreV, widA, u_t01);
 
     // ── 2. EXPANSION ────────────────────────────────────────────────────────
     // The sample space is COMPRESSED radially as the ring grows, so a feature
@@ -200,6 +198,13 @@ void main()
     // sheet's texels are smeared into straight radial rays. 0.40 still lengthens
     // the wisps visibly without turning them into rays.
     float vs = coreV + (v - coreV) * mix(1.0, 0.40, u_t01);
+    // This is a coverage warp, never vertex displacement.  It is already
+    // present at birth so the small closed ring is smoky rather than analytic,
+    // then grows as the front settles.  Keep it radial: a comparable angular
+    // displacement would become a multi-metre tangential smear in polar UV.
+    float radialRuffle = (FbmRing(vec2(u * 6.0, 47.0 + u_seed), 6.0, 2) - 0.5) *
+                          mix(0.035, 0.14, u_t01);
+    vs += radialRuffle;
 
     // ── 3. MOTION NOISE ─────────────────────────────────────────────────────
     // A slow angular drift growing with the ring's life, so the torn pieces
@@ -286,17 +291,14 @@ void main()
     float clump = FbmRing(vec2(u * 5.0, 3.0 + u_seed), 5.0, 2);
 
     // ── 5. THE EROSION ──────────────────────────────────────────────────────
-    // t^2 so that erosion is negligible while the ring is still moving fast and
-    // takes over once expansion has eased off.
-    // t^3, NOT t^2. At t^2 the erosion has already taken a third of the sheet by
-    // the time the ring is halfway through its life, so the two forces overlap
-    // for most of it and expansion never gets a stretch of its own. Cubed, the
-    // ring flies out closed and only then comes apart.
-    float t3 = u_t01 * u_t01 * u_t01;
-    // The clump offset is what keeps the tearing from arriving everywhere at
-    // once; at 0.20 the whole ring frayed on the same frame.
-    float clumpT = (clump - 0.5) * 0.42;
-    float thrA = mix(0.02, 0.86, t3) + clumpT;
+    // Quadratic starts reshaping the smoke while the front still travels.  The
+    // low initial threshold keeps that first tiny ring closed; later it opens
+    // unevenly into the fading fragments seen after the radius has settled.
+    float t2 = u_t01 * u_t01;
+    // The clump offset staggers tearing around the ring.  Keep it narrow enough
+    // that the newborn smoke band remains closed rather than popping into arcs.
+    float clumpT = (clump - 0.5) * 0.28;
+    float thrA = mix(0.02, 0.82, t2) + clumpT;
 
     // The rope itself is thin in some arcs and full in others.
     ropeA *= mix(0.55, 1.00, clump);

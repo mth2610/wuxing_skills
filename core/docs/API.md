@@ -319,10 +319,12 @@
   void Ribbon_ConstrainSegment(Vector3 *a, Vector3 *b, float restLen, bool pinnedA, RibbonConstrainMode mode);
   void Ribbon_ComputeArcLengthUV(RibbonPoint *points, int count);
   void Ribbon_ComputeCrossFrame(const Vector3 *points, int count, RibbonMode mode, Vector3 fixedNormal, Camera3D camera, Vector3 *outAxisA, Vector3 *outAxisB);
+  RibbonMidpointConfig Ribbon_MidpointDefaultConfig(void);
+  int Ribbon_GenerateMidpointDisplacement(Vector3 from, Vector3 to, const RibbonMidpointConfig *config, Vector3 *outPoints, int outCapacity);
   void DrawRibbonEnergyField(const Vector3 *points, int count, float width, const float *widthEnvelope, const RibbonEnergyFieldLayer *layers, int layerCount, Texture2D texture, RibbonMode mode, Vector3 fixedNormal, Camera3D camera, float time);
 ```
 **Enums:** RibbonMode { RIBBON_CAMERA_FACING,RIBBON_WORLD_UP,RIBBON_FIXED_NORMAL };RibbonConstrainMode { RIBBON_CONSTRAIN_EXACT,RIBBON_CONSTRAIN_MAX,RIBBON_CONSTRAIN_MIN }
-**Structs** (fields in header): RibbonPoint, RibbonEnergyFieldLayer
+**Structs** (fields in header): RibbonPoint, RibbonMidpointConfig, RibbonEnergyFieldLayer
 
 ### `core/decals/decal_system.h`
 ```c
@@ -348,6 +350,18 @@
   void DecalSystem_GetRenderStats(DecalRenderStats *outStats);
 ```
 **Structs** (fields in header): DecalMaterialParams, DecalEntity, DecalRenderStats
+
+### `core/lightning/lightning_stroke.h`
+```c
+  LightningStrokeConfig LightningStroke_DefaultConfig(void);
+  int LightningStroke_Spawn(Vector3 from, Vector3 to, const LightningStrokeConfig *config);
+  void LightningStroke_SetEndpoints(int handle, Vector3 from, Vector3 to);
+  void LightningStroke_Kill(int handle);
+  void LightningStroke_Update(float dt);
+  void LightningStroke_DrawLayer(Camera3D camera, LightningStrokeRenderLayer layer);
+```
+**Enums:** LightningStrokeRenderLayer { LIGHTNING_STROKE_RENDER_BODY,LIGHTNING_STROKE_RENDER_HALO,LIGHTNING_STROKE_RENDER_CORE }
+**Structs** (fields in header): LightningStrokeConfig
 
 ### `core/vfx_contrast.h`
 ```c
@@ -734,6 +748,10 @@ _Inline helpers / macros only — see header._
 ```c
   void VFX_Compose_Update(float dt);
   void VFX_Compose_Draw3D(Camera3D cam);
+  VFX_LightningArcConfig VFX_LightningArc_DefaultConfig(void);
+  int VFX_LightningArc_Spawn(Vector3 from, Vector3 to, const VFX_LightningArcConfig *config);
+  void VFX_LightningArc_SetEndpoints(int handle, Vector3 from, Vector3 to);
+  void VFX_LightningArc_Kill(int handle);
   void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float density);
   int VFX_SmokeEmitter_Spawn(Vector3 pos, VC_MaterialId matId, float scale, float density);
   void VFX_SmokeEmitter_SetTransform(int handle, Vector3 pos, Vector3 wind);
@@ -796,6 +814,9 @@ _Inline helpers / macros only — see header._
   void VFX_BeginWaterStreams(float time);
   void VFX_EndWaterStreams(void);
   void VFX_Trail_Stop(int trailId);
+  void VFX_Beam_SetEndpoints(int handle, Vector3 from, Vector3 to);
+  void VFX_Beam_Stop(int handle);
+  int VFX_ComposeBeam(Vector3 from, Vector3 to, VC_MaterialId mat, float width);
   void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
   void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01, float lifetimeScale);
@@ -803,27 +824,25 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
   void VFX_ComposeFluidImpact(Vector3 pos);
   void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
-  int VFX_ComposeBeam(Vector3 from, Vector3 to, VC_MaterialId mat, float width);
-  void VFX_Beam_SetEndpoints(int handle, Vector3 from, Vector3 to);
-  void VFX_Beam_Stop(int handle);
   void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
+  int VFX_ComposeLightningArc(Vector3 from, Vector3 to, VC_MaterialId material, float width);
+  void VFX_ComposeLiquidBench(Vector3 center, float spacing, float t01);
   void VFX_ComposeParticleUpgradesTest(Vector3 pos);
   int VFX_ComposeShieldShell(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
   int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime, VFX_ColumnKind kind, bool funnel);
   void VFX_ComposeStonePillar(Vector3 basePos, float progress);
   void VFX_ComposeWaterOrb(Vector3 start, Vector3 target);
   void VFX_ComposeWaterRing(Vector3 center, float radius, float t01);
-  void VFX_WaterRing_Stop(void);
-  void VFX_ComposeLiquidBench(Vector3 center, float spacing, float t01);
   void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
   void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
   void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
   void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time, float phaseOffset);
   void VFX_SmokeTrail_Stop(int handle);
+  void VFX_WaterRing_Stop(void);
   void VFX_Compose_SubmitScreenSpaceVFX(void);
 ```
 **Enums:** VFX_VolumeKind { VOL_ENERGY,VOL_SMOKE,VOL_FIRE,VFX_VOLUME_KIND_COUNT };VFX_ColumnKind { VFX_COLUMN_SMOKE,VFX_COLUMN_FIRE,VFX_COLUMN_STEAM,VFX_COLUMN_KIND_COUNT }
-**Structs** (fields in header): VFX_ShieldSurface, VFX_TrailSurface
+**Structs** (fields in header): VFX_LightningArcConfig, VFX_ShieldSurface, VFX_TrailSurface
 
 ### `core/composition/vfx_sequence.h`
 ```c

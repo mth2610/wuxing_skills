@@ -142,6 +142,7 @@ add_executable(wuxing
     core/path_spline.c
     core/post_fx.c
     core/ribbon_strip.c
+    core/lightning/lightning_stroke.c
     core/screen_distort.c
     core/surface_material.c
     core/gfx_quality.c

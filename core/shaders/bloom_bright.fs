@@ -5,6 +5,10 @@ in vec4 fragColor;
 
 uniform sampler2D texture0;
 uniform float u_threshold;
+// Bloom is authored at quarter resolution, but the scene source is full size.
+// A single sample here would skip a one-pixel HDR mesh core completely. This
+// footprint gathers the full 4x4 source-pixel cell before thresholding.
+uniform vec2 u_sourceTexelSize;
 // Per-pixel cap on how much energy one pixel may contribute to the bloom.
 // This is the REAL ceiling on "make the core glow harder": past it, raising a
 // particle's emissiveBoost changes nothing at all, because every pixel of the
@@ -16,7 +20,23 @@ uniform float u_maxEnergy;
 out vec4 finalColor;
 
 void main() {
-    vec4 col = texture(texture0, fragTexCoord);
+    // Preserve sub-pixel / thin HDR features (lightning cores, rune lines,
+    // mesh glints) while keeping bloom itself at quarter resolution. The
+    // brightest source sample owns the prefilter; the energy cap below remains
+    // the firefly guard, so this cannot inject unbounded light into the blur.
+    vec3 col = vec3(0.0);
+    float bestBrightness = -1.0;
+    for (int y = 0; y < 4; ++y) {
+        for (int x = 0; x < 4; ++x) {
+            vec2 cellOffset = (vec2(float(x), float(y)) - vec2(1.5)) * u_sourceTexelSize;
+            vec3 sampleColor = texture(texture0, fragTexCoord + cellOffset).rgb;
+            float sampleBrightness = max(sampleColor.r, max(sampleColor.g, sampleColor.b));
+            if (sampleBrightness > bestBrightness) {
+                bestBrightness = sampleBrightness;
+                col = sampleColor;
+            }
+        }
+    }
     
     // 1. Tính toán độ sáng dựa trên kênh màu lớn nhất (max-channel) để các màu bão hòa (lam, tím) cũng bloom rực rỡ
     float brightness = max(col.r, max(col.g, col.b));
@@ -42,5 +62,5 @@ void main() {
         brightColor = (brightColor / currentEnergy) * maxEnergy;
     }
     
-    finalColor = vec4(brightColor, col.a);
+    finalColor = vec4(brightColor, 1.0);
 }

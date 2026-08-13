@@ -87,9 +87,9 @@
 // THERE IS A CEILING. At 6.0 the inner base sits at 0.34 of the front radius and
 // the smoke reaches nearly to the centre — where polar UVs pinch to a point, so
 // the sheet is squeezed to zero circumference and renders as radial streaks
-// converging on the middle. The ring stops being a ring. 5.0 keeps the inner
-// base clear of the singularity while still closing most of the void.
-#define SHOCK_CANVAS_MUL 5.0f
+// converging on the middle. 5.2 leaves enough room for an inward smoke tail
+// while keeping the visible annulus lean rather than doughnut-thick.
+#define SHOCK_CANVAS_MUL 5.2f
 // Half-thickness out of the plane, as a ratio against the FRONT's own width —
 // the thickness rule (core/docs/LANDMINES.md, "Thickness is a ratio against the
 // thing's OWN length"). Against the canvas it would fatten by 3x for free the
@@ -146,17 +146,12 @@ static float s_shockBand = 1.0f;
 static float s_shockThick = 1.0f;
 static float s_shockAlpha = 1.0f;
 static float s_shockDetail = 1.0f;
-// PARKED, not deleted. The mesh deformation reads correctly on its own but was
-// set aside while the rope's own behaviour is being judged; two shape sources
-// moving at once make it impossible to tell which one is wrong. Default 0 means
-// the ring is built perfectly round. Raise it live to bring the deform back.
-static float s_shockDeform = 0.0f;
 // How much of the canvas's inner edge is cut away, in v units. This is the size
 // of the empty middle and it is a JUDGEMENT, not a derivation: three overlapping
 // layers otherwise close the centre completely and the ring reads as a disc,
 // while cutting too much leaves the thin annulus around a void that started this.
 // Live-tunable because it is the one number here best settled by looking.
-static float s_shockHole = 0.22f;
+static float s_shockHole = 0.16f;
 
 static void ShockRing_InitShared(void)
 {
@@ -167,8 +162,7 @@ static void ShockRing_InitShared(void)
     Tuning_RegisterFloat("shock_thick", &s_shockThick, 1.0f);
     Tuning_RegisterFloat("shock_alpha", &s_shockAlpha, 1.0f);
     Tuning_RegisterFloat("shock_detail", &s_shockDetail, 1.0f);
-    Tuning_RegisterFloat("shock_deform", &s_shockDeform, 0.0f);
-    Tuning_RegisterFloat("shock_hole", &s_shockHole, 0.22f);
+    Tuning_RegisterFloat("shock_hole", &s_shockHole, 0.16f);
     s_shockInit = true;
 }
 
@@ -209,17 +203,14 @@ static bool ShockRing_HasShader(void)
 // released and decelerates, so a linear expansion reads as a growing circle
 // rather than as something that was thrown.
 //
-// IT WAS 2.6, WHICH IS TOO SHARP TO WATCH. At that exponent the ring is already
-// three quarters of the way out by t = 0.3, so for two thirds of its life it is
-// visibly standing still while the erosion eats it — it reads as a ring being
-// dissolved rather than as a front travelling. Expansion has to stay legible for
-// as long as there is a ring to look at, so the deceleration is gentler now and
-// the erosion (below) starts later to match.
+// The reference releases most of its radius almost immediately.  It then holds
+// near that radius while the smoke boundary keeps eroding and stretching; a
+// gentle ease-out instead makes the late frames read as a circle still scaling.
 static float ShockRing_Radius01(float t01)
 {
     if (t01 <= 0.0f) return 0.0f;
     if (t01 >= 1.0f) return 1.0f;
-    return 1.0f - powf(1.0f - t01, 1.7f);
+    return 1.0f - powf(1.0f - t01, 2.6f);
 }
 
 // The width of the front the eye is meant to read.
@@ -324,43 +315,6 @@ static float ShockRing_Detail(void)
     return n < 8.0f ? 8.0f : n;
 }
 
-// ── Mesh deformation ────────────────────────────────────────────────────────
-//
-// LOW FREQUENCY, AND ON THE CPU. Everything that makes the smoke look torn is a
-// fragment-stage silhouette, but a fragment shader can only ever paint inside
-// the geometry it is given — and the geometry was a mathematically perfect
-// circle, so the ring's 3D silhouette stayed perfectly circular no matter how
-// ragged its surface got. Rolling, sagging, billowing smoke needs the ring
-// itself to be out of round.
-//
-// It belongs here rather than in the vertex shader for two reasons: the sweep
-// already knows the centre, the plane axes and the angle (the VS would need all
-// three as uniforms and world position is not available to it — matModel is
-// model x view, ENGINE_LANDMINES §9), and at 64 slices this is 64 evaluations
-// per ring rather than one per vertex.
-//
-// It must stay LOW frequency. High-frequency vertex displacement competes with
-// the fragment silhouette for the same visual role, and the smoke then slides
-// against the geometry it is supposed to be made of.
-
-static float ShockRing_Hash1(float n)
-{
-    float s = sinf(n * 12.9898f) * 43758.5453f;
-    return s - floorf(s);
-}
-
-// Periodic in `lobes`, so the deformation closes at the ring's seam.
-static float ShockRing_AngleNoise(float ang01, float lobes, float seed)
-{
-    float x = ang01 * lobes;
-    float i = floorf(x);
-    float f = x - i;
-    f = f * f * (3.0f - 2.0f * f);
-    float a = ShockRing_Hash1(fmodf(i, lobes) + seed);
-    float b = ShockRing_Hash1(fmodf(i + 1.0f, lobes) + seed);
-    return a + (b - a) * f;
-}
-
 // ── The composition ─────────────────────────────────────────────────────────
 
 static void ShockRing_SetUniforms(const VFX_ElementMaterial *m, float opacity,
@@ -400,7 +354,7 @@ static void ShockRing_SetUniforms(const VFX_ElementMaterial *m, float opacity,
 static void ShockRing_SweepFace(Vector3 center, Vector3 n, Vector3 axA, Vector3 axB,
                                 const float *ringRad, const float *ringOff,
                                 const Color *ringCol, int radials, int slices,
-                                float sgn, float canvas, float t01, float seed)
+                                float sgn)
 {
     static Vector3 prevRing[SHOCK_RADIALS];
     static Vector3 curRing[SHOCK_RADIALS];
@@ -412,31 +366,12 @@ static void ShockRing_SweepFace(Vector3 center, Vector3 n, Vector3 axA, Vector3 
         float u1 = (float)s / (float)slices;
         float u0 = (float)(s - 1) / (float)slices;
 
-        // Two lobe counts that share no factor, so the ring is out of round
-        // without looking like a flower. Both grow as it expands: the front is
-        // round at the instant it leaves and loses its shape as it travels.
-        // Amplitudes are fractions of the CANVAS, which is itself ~0.9 of the
-        // radius — so 0.34 here was a third of the ring's radius and it threw
-        // half the ring out of frame. Deformation has to stay small enough that
-        // the ring is still a ring.
-        float grow = 0.20f + 0.60f * t01;
-        float rWob = (ShockRing_AngleNoise(u1, 3.0f, seed) - 0.5f) * 0.11f +
-                     (ShockRing_AngleNoise(u1, 7.0f, seed + 31.0f) - 0.5f) * 0.055f;
-        // Out of plane: parts of the ring roll up and others sag, which is what
-        // stops it reading as a flat decal lying in one plane.
-        float yWob = (ShockRing_AngleNoise(u1, 4.0f, seed + 71.0f) - 0.5f) * 0.13f +
-                     (ShockRing_AngleNoise(u1, 9.0f, seed + 13.0f) - 0.5f) * 0.055f;
-        float dR = rWob * canvas * grow * s_shockDeform;
-        float dY = yWob * canvas * grow * s_shockDeform;
-
         for (int i = 0; i < radials; i++)
         {
-            float rad = ringRad[i] + dR;
-            if (rad < 0.0f) rad = 0.0f;
             Vector3 p = Vector3Add(center,
-                                   Vector3Add(Vector3Scale(axA, ca * rad),
-                                              Vector3Scale(axB, sa * rad)));
-            curRing[i] = Vector3Add(p, Vector3Scale(n, sgn * ringOff[i] + dY));
+                                   Vector3Add(Vector3Scale(axA, ca * ringRad[i]),
+                                              Vector3Scale(axB, sa * ringRad[i])));
+            curRing[i] = Vector3Add(p, Vector3Scale(n, sgn * ringOff[i]));
         }
 
         if (s > 0)
@@ -558,8 +493,8 @@ void VFX_ComposeShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat,
         if (shaded) SkillManager_BeginShader(s_shockShader.shader);
 
         if (shaded)
-            ShockRing_SetUniforms(m, (pass == 0) ? alpha : alpha * 0.45f,
-                                  (pass == 0) ? 1.0f : 1.25f, t01, seed, hasSmoke);
+            ShockRing_SetUniforms(m, (pass == 0) ? alpha : alpha * 0.70f,
+                                  (pass == 0) ? 1.0f : 2.50f, t01, seed, hasSmoke);
         rlSetTexture(shaded && hasSmoke ? smokeSurface->body.id : 0);
         rlBegin(RL_QUADS);
         // TWO SWEEPS, at +offset and -offset: the cross-section is a LENS, not a
@@ -569,7 +504,7 @@ void VFX_ComposeShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat,
         {
             float sgn = (side == 0) ? 1.0f : -1.0f;
             ShockRing_SweepFace(center, n, axA, axB, ringRad, ringOff, ringCol,
-                                radials, slices, sgn, canvas, t01, seed);
+                                radials, slices, sgn);
         }
         rlEnd();
         rlSetTexture(0);

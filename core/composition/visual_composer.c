@@ -11,6 +11,7 @@
 #include "core/camera_context.h"
 #include "environment/environment_system.h"
 #include "core/ribbon_strip.h"
+#include "core/lightning/lightning_stroke.h"
 #include "core/path_spline.h"
 #include "core/screen_distort.h"
 #include "core/time_fx.h"
@@ -87,6 +88,7 @@ void VFX_Compose_Update(float dt)
     VC_Beam_Update(dt);
     VC_FlameEmitter_Update(dt);
 // @gen:archetype_update end
+    LightningArc_Update(dt);
     SmokeEmitter_Update(dt);
     // E3 — the choreography layer rides the same single main.c wiring. Kept
     // OUTSIDE the generated block on purpose: sync_vfx_test.py rewrites what is
@@ -115,6 +117,7 @@ void VFX_Compose_Draw3D(Camera3D cam)
     VC_Beam_Draw3D(cam);
     VC_FlameEmitter_Draw3D(cam);
 // @gen:archetype_draw end
+    LightningArc_Draw3D(cam);
     SmokeEmitter_Draw3D(cam);
 }
 

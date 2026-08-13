@@ -69,6 +69,7 @@ static float   s_burstCurrent;    // decayed strength this frame
 // Uniform locations — bright pass
 static int brightThresholdLoc;
 static int brightMaxEnergyLoc;
+static int brightSourceTexelSizeLoc;
 static float s_bloomMaxEnergy = 4.0f;  // 4.0 = the shader's historical constant
 // <=0 means "use whatever the caller configured" — so this knob can only ever
 // be an explicit override, never a silent change to a caller's setting.
@@ -137,6 +138,7 @@ void PostFX_Init(int width, int height)
 
   brightThresholdLoc = GetShaderLocation(brightShader, "u_threshold");
   brightMaxEnergyLoc = GetShaderLocation(brightShader, "u_maxEnergy");
+  brightSourceTexelSizeLoc = GetShaderLocation(brightShader, "u_sourceTexelSize");
   dsTexSizeLoc = GetShaderLocation(dsShader, "u_texelSize");
   usTexSizeLoc = GetShaderLocation(usShader, "u_texelSize");
 
@@ -457,6 +459,12 @@ void PostFX_Draw(const PostFXConfig *config)
     }
     SetShaderValue(brightShader, brightMaxEnergyLoc, &s_bloomMaxEnergy,
                    SHADER_UNIFORM_FLOAT);
+    // The target is quarter-resolution, but the bright prefilter must inspect
+    // the full-resolution HDR scene so a thin emissive mesh does not disappear
+    // before the bloom threshold ever sees it.
+    Vector2 sourceTexelSize = {1.0f / (float)width, 1.0f / (float)height};
+    SetShaderValue(brightShader, brightSourceTexelSizeLoc, &sourceTexelSize,
+                   SHADER_UNIFORM_VEC2);
 
     rlDisableColorBlend();
     DrawTexturePro(mainRenderTex.texture,

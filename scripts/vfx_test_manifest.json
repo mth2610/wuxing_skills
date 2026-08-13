@@ -217,6 +217,17 @@
       "draw_call": "VFX_ComposeLightShaft($SOURCE, $TARGET, VC_MAT_FIRE, 0.8f, 1.35f)"
     },
     {
+      "source": "common/vc_lightning_arc.inl",
+      "fn": "VFX_ComposeLightningArc",
+      "label": "LIGHTNING ARC",
+      "category": "common",
+      "fixture": "burst",
+      "lifecycle": "event",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeLightningArc($SOURCE, $TARGET, VC_MAT_LIGHTNING, 0.055f)"
+    },
+    {
       "source": "common/vc_portal_disc.inl",
       "fn": "VFX_ComposePortalDisc",
       "label": "PORTAL DISC",

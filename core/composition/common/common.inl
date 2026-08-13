@@ -37,3 +37,7 @@
 #include "vc_contact_spark.inl"
 #include "vc_decal.inl"
 // @gen:common_includes end
+
+// Pool-owned one-shot primitive; its public API is VFX_LightningArc_* rather
+// than VFX_Compose*, so it is intentionally outside the fixture generator.
+#include "vc_lightning_arc.inl"

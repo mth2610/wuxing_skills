@@ -44,6 +44,33 @@
 void VFX_Compose_Update(float dt);
 void VFX_Compose_Draw3D(Camera3D cam);
 
+// ── Primary: one-shot lightning arc ────────────────────────────────────────
+// A bounded, flickering geometric arc between arbitrary world-space endpoints.
+// `from` may be the character's cast socket and `to` the hit/click point. The
+// result owns itself through its travel plus `postImpactDuration`; SetEndpoints supports a moving source,
+// while Kill is only for cancellation. Seed 0 derives a stable seed from the
+// endpoints, otherwise callers can make replays deterministic explicitly.
+// This visual primitive never spawns a point light: the owning skill chooses
+// whether its cast source and/or hit point need gameplay-facing contact lights.
+typedef struct {
+    VC_MaterialId material;
+    float width;             // body half-width in metres; default 0.075
+    float lifetime;          // legacy total-life fallback when postImpactDuration is negative
+    float travelDuration;    // source-to-target discharge time; default 0.10
+    float postImpactDuration; // seconds to keep arcing after impact; default 0.30, 0 = die on impact
+    float coreEmission;      // HDR ion-channel multiplier; default 4.5
+    float haloEmission;      // low-energy field multiplier; default 0.32
+    float jaggedness;        // maximum lateral displacement in metres; default 0.80
+    float flickerInterval;  // seconds between geometric re-seeds; default 0.045
+    int branchCount;         // 0..2 secondary branches; default 0 (opt-in)
+    unsigned int seed;
+} VFX_LightningArcConfig;
+
+VFX_LightningArcConfig VFX_LightningArc_DefaultConfig(void);
+int  VFX_LightningArc_Spawn(Vector3 from, Vector3 to, const VFX_LightningArcConfig *config);
+void VFX_LightningArc_SetEndpoints(int handle, Vector3 from, Vector3 to);
+void VFX_LightningArc_Kill(int handle);
+
 // ── P0 primary lifecycle vocabulary ─────────────────────────────────────────
 // Event: call once and it self-dissipates. Draw: call each frame, no owned pool.
 // Emitter/Trail: Spawn returns a handle; Update/Set may retune it; Stop/Kill
@@ -518,6 +545,9 @@ void VFX_EndWaterStreams(void);
 void VFX_Trail_Stop(int trailId);
 
 // @gen:vc_declarations begin
+void VFX_Beam_SetEndpoints(int handle, Vector3 from, Vector3 to);
+void VFX_Beam_Stop(int handle);
+int VFX_ComposeBeam(Vector3 from, Vector3 to, VC_MaterialId mat, float width);
 void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
 void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
 void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01, float lifetimeScale);
@@ -525,44 +555,23 @@ int VFX_ComposeEmberTrail(Vector3 pos, Vector3 velocity, VC_MaterialId mat, floa
 void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
 void VFX_ComposeFluidImpact(Vector3 pos);
 void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
-// P4 — the sustained line (core/docs/VFX_PLAN.md §4.3, spec 06/08/2026).
-// HANDLE, not a fire-and-forget void: a beam is sustained, so it owns time
-// state (UV scroll, and from step 2 the churn phase) that a per-frame void call
-// would throw away. Keep the handle, move it with SetEndpoints, release it with
-// Stop. Hides itself below 5 cm rather than drawing a degenerate tube.
-int  VFX_ComposeBeam(Vector3 from, Vector3 to, VC_MaterialId mat, float width);
-void VFX_Beam_SetEndpoints(int handle, Vector3 from, Vector3 to);
-void VFX_Beam_Stop(int handle);
 void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
+// The convenience profile floors `width` at 0.075 m for gameplay readability;
+// use VFX_LightningArc_Spawn when a deliberately thinner custom strand is needed.
+int VFX_ComposeLightningArc(Vector3 from, Vector3 to, VC_MaterialId material, float width);
+void VFX_ComposeLiquidBench(Vector3 center, float spacing, float t01);
 void VFX_ComposeParticleUpgradesTest(Vector3 pos);
 int VFX_ComposeShieldShell(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
 int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime, VFX_ColumnKind kind, bool funnel);
 void VFX_ComposeStonePillar(Vector3 basePos, float progress);
 void VFX_ComposeWaterOrb(Vector3 start, Vector3 target);
-
-// ── SSF probe. Water ring ───────────────────────────────────────────────────
-// A liquid torus whose silhouette comes from a real torus MESH sampled by the
-// engine's mesh emitter, moved by force fields alone (vortex + curl +
-// viscosity) and rendered ONLY through the screen-space fluid surface. It
-// exists to make SSF quality legible: the far wall is seen through the near
-// wall, the hole puts undistorted background right beside refracted background,
-// and the tube runs from a thin edge to its thickest point in a few centimetres
-// of screen space.
-// Continuous — call every frame; it releases itself shortly after the calls
-// stop, or immediately on VFX_WaterRing_Stop(). `radius` is the ring radius in
-// metres (tube = 0.12 of it), `t01` drives density and flow speed.
 void VFX_ComposeWaterRing(Vector3 center, float radius, float t01);
-void VFX_WaterRing_Stop(void);
-// Five SSF liquids — water, poison, mud, lava, liquid metal — in ONE capture.
-// The reference bench for the liquid table (core/fluid/fluid_surface.h): if the
-// per-pixel material id regresses, all three render in one colour.
-// Continuous — call every frame. `spacing` is the gap in metres (0 -> 1.1).
-void VFX_ComposeLiquidBench(Vector3 center, float spacing, float t01);
 void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
 void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
 void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
 void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time, float phaseOffset);
 void VFX_SmokeTrail_Stop(int handle);
+void VFX_WaterRing_Stop(void);
 // @gen:vc_declarations end
 
 // Screen-space producers that submit SSF streams before FluidSurface_HasPending().

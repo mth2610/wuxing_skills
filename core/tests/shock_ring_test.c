@@ -45,7 +45,7 @@ static int g_checks = 0;
 #define SHOCK_CREST_U      0.5f
 #define SHOCK_CREST_K      1.0f
 #define SHOCK_CORE_RATIO   0.22f
-#define SHOCK_CANVAS_MUL   5.0f
+#define SHOCK_CANVAS_MUL   5.2f
 #define SHOCK_THICK_RATIO  0.30f
 #define SHOCK_SHADE_FLOOR  0.30f
 #define SHOCK_FACE_DIM     0.60f
@@ -62,7 +62,7 @@ static float Radius01(float t01)
 {
     if (t01 <= 0.0f) return 0.0f;
     if (t01 >= 1.0f) return 1.0f;
-    return 1.0f - powf(1.0f - t01, 1.7f);
+    return 1.0f - powf(1.0f - t01, 2.6f);
 }
 static float CoreWidth(float rNow) { return rNow * SHOCK_CORE_RATIO; }
 static float CanvasWidth(float rNow) { return CoreWidth(rNow) * SHOCK_CANVAS_MUL; }
@@ -272,17 +272,15 @@ static void Test_LifeEnvelope(void)
               "it covers far more ground in its first tenth than its last",
               "%.3f vs %.3f", firstTenth, lastTenth);
 
-    // BUT NOT SO SHARP THAT THERE IS NOTHING TO WATCH. This was 2.6, which puts
-    // the ring three quarters of the way out by t = 0.3 — so for two thirds of
-    // its life it stands still while the erosion eats it, and it reads as a ring
-    // being dissolved rather than as a front travelling. Past halfway it must
-    // still have real distance left to cover.
-    CHECK_MSG(Radius01(0.5f) > 0.55f && Radius01(0.5f) < 0.80f,
-              "it is well out by halfway, with distance still left to cover",
+    // The reference front releases its radius almost immediately, then holds
+    // near its final size while the smoke keeps changing.  A merely gentle
+    // ease-out reads as a circle still being scaled in the last frames.
+    CHECK_MSG(Radius01(0.5f) > 0.80f && Radius01(0.5f) < 0.88f,
+              "it reaches most of its radius by halfway",
               "%.3f", Radius01(0.5f));
-    CHECK_MSG(Radius01(1.0f) - Radius01(0.5f) > 0.20f,
-              "...so the second half of its life is still visibly expanding",
-              "%.3f of the radius remains", Radius01(1.0f) - Radius01(0.5f));
+    CHECK_MSG(Radius01(1.0f) - Radius01(0.6f) < 0.10f,
+              "...then visually settles while erosion keeps evolving",
+              "%.3f of the radius remains", Radius01(1.0f) - Radius01(0.6f));
 
     // Monotone and bounded: never overshoots the radius it was given, never
     // retreats.
@@ -366,7 +364,7 @@ static void Test_MirrorMatchesTheSource(void)
     CHECK(FileHas(inl, "#define SHOCK_CREST_U 0.5f"), "the crest is what this test mirrors");
     CHECK(FileHas(inl, "#define SHOCK_THICK_RATIO 0.30f"), "so is the out-of-plane thickness");
     CHECK(FileHas(inl, "#define SHOCK_CORE_RATIO 0.22f"), "and the visible front");
-    CHECK(FileHas(inl, "#define SHOCK_CANVAS_MUL 5.0f"), "and the canvas it is carved out of");
+    CHECK(FileHas(inl, "#define SHOCK_CANVAS_MUL 5.2f"), "and the canvas it is carved out of");
 
     // THE LENS. Two sweeps at +offset and -offset is the mechanical statement of
     // "it has a section", and it is the only thing separating this from a flat
@@ -375,28 +373,19 @@ static void Test_MirrorMatchesTheSource(void)
           "both faces of the lens are swept");
     CHECK(FileHas(inl, "float sgn = (side == 0) ? 1.0f : -1.0f;"),
           "...at +offset and -offset out of the plane");
-    CHECK(FileHas(inl, "curRing[i] = Vector3Add(p, Vector3Scale(n, sgn * ringOff[i] + dY));"),
+    CHECK(FileHas(inl, "curRing[i] = Vector3Add(p, Vector3Scale(n, sgn * ringOff[i]));"),
           "and the displacement is along the ring's OWN normal");
 
-    // THE MESH ITSELF IS DEFORMED. A fragment shader can only paint inside the
-    // geometry it is given: with a mathematically perfect circle underneath, the
-    // ring's 3D silhouette stays perfectly circular however torn its surface
-    // looks. Rolling, billowing smoke needs the ring to be out of round.
-    CHECK(FileHas(inl, "float rWob = (ShockRing_AngleNoise(u1, 3.0f, seed) - 0.5f) * 0.11f +"),
-          "the sweep can displace the ring radially, out of round");
-    CHECK(FileHas(inl, "float yWob = (ShockRing_AngleNoise(u1, 4.0f, seed + 71.0f) - 0.5f) * 0.13f +"),
-          "...and out of its own plane, so it need not be a flat decal");
-    CHECK(FileHas(inl, "float x = ang01 * lobes;") && FileHas(inl, "fmodf(i, lobes)"),
-          "and that deformation is periodic in the lobe count, so it closes at the seam");
-
-    // PARKED AT ZERO, not deleted. Two shape sources moving at once make it
-    // impossible to tell which one is wrong, so the deform is off by default
-    // while the rope's own behaviour is judged.
-    CHECK(FileHas(inl, "static float s_shockDeform = 0.0f;") &&
-          FileHas(inl, "Tuning_RegisterFloat(\"shock_deform\", &s_shockDeform, 0.0f);"),
-          "the mesh deform is parked behind a knob that defaults OFF");
-    CHECK(FileHas(inl, "float dR = rWob * canvas * grow * s_shockDeform;"),
-          "...and the knob really gates it, so the ring is built round today");
+    // The reference's ring stays geometrically circular.  Its apparent motion
+    // and irregular boundary come from the smoke shader's coverage, erosion and
+    // radial stretch, never from moving the mesh underneath the smoke.
+    CHECK(!FileHas(inl, "s_shockDeform"),
+          "no mesh-deformation tuning path remains");
+    CHECK(!FileHas(inl, "ShockRing_AngleNoise") &&
+          !FileHas(inl, "ShockRing_Hash1"),
+          "the CPU sweep has no angular noise that can wobble the ring");
+    CHECK(!FileHas(inl, "float dR =") && !FileHas(inl, "float dY ="),
+          "the CPU sweep keeps both radial and vertical positions analytic");
 
     // NO TERRAIN. The whole point of it being a separate primary at the API level.
     CHECK(!FileHas(inl, "GroundHeightSampleFn"), "it takes no height callback");
@@ -421,6 +410,9 @@ static void Test_MirrorMatchesTheSource(void)
                        "rlDisableDepthMask(); rlDisableBackfaceCulling(); "
                        "rlDrawRenderBatchActive();"),
           "no depth write, both walls — flushed on both sides");
+    CHECK(FileHas(inl, "ShockRing_SetUniforms(m, (pass == 0) ? alpha : alpha * 0.70f, "
+                       "(pass == 0) ? 1.0f : 2.50f, t01, seed, hasSmoke);"),
+          "the additive pass carries enough energy and coverage to cross the bloom threshold");
     CHECK(FileHas(inl, "rlEnableBackfaceCulling(); rlEnableDepthMask(); "
                        "EndBlendMode(); rlDrawRenderBatchActive();"),
           "and the restore is flushed too");
@@ -519,22 +511,26 @@ static void Test_ItIsAnErodedRopeNotGeneratedStrands(void)
 
     // THE ROPE IS CLOSED BEFORE IT IS TORN, and it is torn by a threshold that
     // CLIMBS. Erosion at a fixed threshold is a static stencil, not a tear.
-    CHECK(FileHas(fs, "float thrA = mix(0.02, 0.86, t3) + clumpT;") &&
-          FileHas(fs, "float t3 = u_t01 * u_t01 * u_t01;"),
-          "the erosion threshold climbs CUBED, so it starts late");
+    CHECK(FileHas(fs, "float thrA = mix(0.02, 0.82, t2) + clumpT;") &&
+          FileHas(fs, "float t2 = u_t01 * u_t01;"),
+          "erosion begins during expansion, not only after the ring has stopped");
+    CHECK(FileHas(fs, "float clumpT = (clump - 0.5) * 0.28;"),
+          "the newborn ring's erosion variance is narrow enough to remain closed");
+    CHECK(FileHas(inl, "static float s_shockHole = 0.16f;") &&
+          FileHas(inl, "Tuning_RegisterFloat(\"shock_hole\", &s_shockHole, 0.16f);"),
+          "the low smoke tail is not cut back into an oversized empty middle");
 
-    // t^2 IS THE CROSSOVER. Expansion is ease-out and front-loaded; erosion is
-    // quadratic and back-loaded. The ring therefore flies out closed and comes
-    // apart once it has slowed, rather than dissolving while still moving.
-    CHECK(FileHas(fs, "float t3 = u_t01 * u_t01 * u_t01;") && FileHas(inl, "return 1.0f - powf(1.0f - t01, 1.7f);"),
-          "expansion eases OUT while erosion ramps IN: the two forces trade places");
+    // A fast ease-out and quadratic erosion overlap: the circular front settles
+    // while its smoke keeps reshaping, as in the reference sequence.
+    CHECK(FileHas(fs, "float t2 = u_t01 * u_t01;") && FileHas(inl, "return 1.0f - powf(1.0f - t01, 2.6f);"),
+          "the front settles early while erosion continues to reshape it");
 
     // ONE ROPE. The second, thinner one riding outside it was judged wrong
     // against the render: sharing this one's noise field made the pair move as a
     // single object rather than as two, and it only muddied the inner rope's
     // behaviour. A second ring should be a second CALL at its own radius and
     // phase, not a second lobe on this field.
-    CHECK(FileHas(fs, "float ropeA = Rope(v, coreV, widA);"), "there is one rope");
+    CHECK(FileHas(fs, "float ropeA = Rope(v, coreV, widA, u_t01);"), "there is one rope");
     CHECK(!FileHas(fs, "ropeB") && !FileHas(fs, "thrB") && !FileHas(fs, "float widB"),
           "...and no second lobe sharing its field (sA/sB are texture layers, not ropes)");
 
@@ -542,6 +538,11 @@ static void Test_ItIsAnErodedRopeNotGeneratedStrands(void)
     // come from; nothing animates a wisp length.
     CHECK(FileHas(fs, "float vs = coreV + (v - coreV) * mix(1.0, 0.40, u_t01);"),
           "the sample space compresses radially, so the smoke is pulled outward");
+    CHECK(FileHas(fs, "float radialRuffle = (FbmRing(vec2(u * 6.0, 47.0 + u_seed), 6.0, 2) - 0.5) *") &&
+          FileHas(fs, "vs += radialRuffle;"),
+          "noise continuously ruffles smoke coverage radially without moving the mesh");
+    CHECK(FileHas(fs, "float reach = (d < 0.0) ? w * mix(1.42, 1.15, u_t01) : w;"),
+          "young smoke has a long inward tail, then pulls outward instead of filling the disc");
     // NOT FURTHER. At 0.16 the compression is over six times by the end and the
     // sheet's texels smear into straight rays — a starburst, not stretched smoke.
     CHECK(!FileHas(fs, "mix(1.0, 0.16, u_t01)"),
