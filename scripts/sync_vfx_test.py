@@ -134,7 +134,6 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeEnergyOrb":          ("draw",    "timed",      "continuous"),
     "VFX_ComposeGlintSparkle":       ("draw",    "timed",      "continuous"),
     "VFX_ComposeGroundWave":         ("draw",    "timed",      "continuous"),
-    "VFX_ComposeImpactShockwave":    ("draw",    "timed",      "continuous"),
     "VFX_ComposeImpactPackage":      ("event",   "burst",      "oneshot"),
     "VFX_ComposeImpactDust":         ("event",   "burst",      "oneshot"),
     "VFX_ComposeContactSpark":       ("event",   "burst",      "oneshot"),
@@ -214,19 +213,12 @@ FIXTURE_DRAW_OVERRIDES = {
         "VFX_ComposeWaterRing($POS, 0.9f, 1.0f)",
     "VFX_ComposeLiquidBench":
         "VFX_ComposeLiquidBench($POS, 1.1f, 1.0f)",
-    # The reference read is green energy around a hit target. This is only the
-    # bench material — gameplay remains caller-selected through the public API.
-    "VFX_ComposeImpactShockwave":
-        "VFX_ComposeImpactShockwave(Vector3Add($POS, (Vector3){0.0f, 0.85f, 0.0f}), VC_MAT_WOOD, 1.9f, $PROG)",
 }
 
 # Optional event that starts exactly once when a continuous fixture is selected.
 # It is deliberately separate from draw_call: calling a ScreenDistort source in
 # the per-frame draw branch would exhaust its small source pool immediately.
-FIXTURE_START_OVERRIDES = {
-    "VFX_ComposeImpactShockwave":
-        "VFX_TriggerImpactShockwaveDistortion(Vector3Add($POS, (Vector3){0.0f, 0.85f, 0.0f}), 1.9f, 0.16f)",
-}
+FIXTURE_START_OVERRIDES = {}
 
 # ── Element / category inference ──────────────────────────────────────────────
 
@@ -250,10 +242,6 @@ _PRESET_MAP = {
 
 def infer_category(fn_name):
     low = fn_name.lower()
-    # This is a generic hit-reaction pressure shell. "wave" describes its
-    # motion, not an element, so it must not silently appear in WATER.
-    if "VFX_ComposeImpactShockwave" in fn_name:
-        return "common"
     # Source path carries stronger intent than broad words such as "wave".
     # A ground wave belongs to earth, not water, and an element folder always
     # wins over a generic common-composition name.

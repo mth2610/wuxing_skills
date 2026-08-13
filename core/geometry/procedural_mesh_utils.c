@@ -121,7 +121,6 @@ Vector3 PMSweptSection_ClampOffset(Vector3 rawOffset, float localRadius,
 #include "pm_capsule.inl"          // Dòng chảy, Vòi rồng (Bezier, TubeMesh)
 #include "pm_water_waves.inl"   // Mặt nước, Sóng cuộn (WavePlane, CurlingWave)
 #include "pm_shockwave.inl"     // Vành shockwave bám địa hình, UV + normal
-#include "pm_impact_shockwave.inl" // Vỏ shockwave impact tự do, không terrain
 #include "pm_rocks.inl"         // Đá Low-poly, Mảnh vỡ (Rock, ShardCluster)
 #include "pm_magic_effects.inl" // Hiệu ứng phép (VortexFunnel, Fissure nứt đất)
 #include "pm_gpu_base.inl"      // Lưới Base cho GPU Displacement

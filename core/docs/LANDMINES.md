@@ -4,6 +4,93 @@
 > Cross-cutting traps (batching hazard, depth-test-vs-mask, `rlFrustum near<1.0`, lit-material-dark, emitter collision) live in root `ENGINE_LANDMINES.md` — read that too.
 > Long session logs and open backlog are in `PROGRESS.md`, not here.
 
+### A generated sheet renders EMPTY while every term still looks right — two range bugs
+Both were hit generating `assets/textures/shock_ring_smoke.png`. Each produces the
+same symptom (the consumer draws almost nothing) and neither shows up as a wrong
+value anywhere you would look.
+
+- **Normalise an accumulation buffer on a PERCENTILE, not the maximum.**
+  A particle/streak sim accumulates: wherever many strokes cross, a handful of
+  pixels end up several times hotter than anything else. Dividing the buffer by
+  its max then pushes the real content far down — measured at **88% of the sheet
+  under alpha 0.1** — so every threshold in the consumer finds nothing. The
+  generator's maths is correct, the preview looks plausible, and the effect is
+  blank. Take the level ~99.2% of *non-zero* samples fall below and clamp above it.
+- **Remap the band the data actually occupies before thresholding it.**
+  Thin smoke leaves most of a sheet empty and most of the rest under 0.3, while
+  shader constants (`smoothstep(0.26, 0.78, dens)`, an erosion threshold running
+  to 0.8) are written as if the field spans 0..1. They then measure against a
+  range the data never reaches. Put ONE remap immediately after sampling
+  (`sheet = smoothstep(lo, hi, sheet)`) and retune that line when the sheet
+  changes — never the thresholds downstream, which encode intent rather than
+  the asset's histogram.
+- **Rule:** when a new generated asset renders as nothing, plot its channel
+  histogram before touching the consumer. Both bugs are visible instantly there
+  and invisible everywhere else.
+
+### A texture that wraps a closed ring must be PERIODIC, not merely mapped once
+- **Symptom:** a large gap appears in the same place on every ring, every time.
+  It reads as an erosion bug and survives every attempt to tune the erosion.
+- **Cause:** the strip was authored non-tiling with deliberately blank ends. A
+  bare `fract(u * k)` puts those blank ends at fixed angles.
+- **Rule:** make the generator periodic in x — wrap the noise lattice AND wrap
+  particle positions — and declare `wrap: "repeat"` / `seam: "tileable_both_axes"`
+  in `assets/vfx_surface_profiles.json`. Remapping the sample into `0.06..0.94` to
+  dodge the margins works, but it is a workaround in the consumer for a defect in
+  the asset, and it costs texel density exactly where the ring is largest.
+
+### Wispy filaments are a LEVEL SET, not geometry — never generate them per-cell
+- **Symptom:** an effect meant to look like torn smoke with glowing wisps comes
+  out as a comb: evenly spaced spikes (a sunburst), or after enough warping,
+  evenly spaced curved spikes (eyelashes). Adding per-feature jitter, domain
+  warp, staggered roots and varied lengths all improve it and none of them fix
+  it — the regular spacing survives every one.
+- **Cause:** the construction generated one feature per cell of a subdivided
+  coordinate (`fract(u * N)` with a hash per cell). That has a comb built in:
+  one feature per cell means the features are evenly spaced BY DEFINITION, and
+  the eye reads the spacing long before it reads any per-feature variation.
+  Nothing applied afterwards touches the period, because the period is the
+  construction.
+- **Rule:** build such silhouettes SUBTRACTIVELY. Draw a continuous solid mass,
+  then erode it with a threshold on a noise field, and light the narrow band
+  where the field crosses that threshold. The lit set is then `{noise == thr}`,
+  an **iso-contour of the field**, which is thin everywhere by definition, curls
+  because noise gradients curl, and closes into loops because contours of a
+  scalar field close. Gaps set the rhythm, and the gaps are organic. Verified
+  against reference footage for `VFX_ComposeShockRing` — the bright green wisps
+  there are an erosion rim, not strands of smoke.
+- **And light the RIM, not the body.** A brightly lit smoke body is a cloud; the
+  body must stay dim for the contour to read. Getting this backwards makes the
+  effect look like fire.
+- **Animate the threshold, not the field.** A climbing threshold sweeps the
+  contour through a static field, so the filaments reshape continuously with
+  nothing animating them, and the mass tears open on its own schedule.
+
+### In a polar UV, u and v are not the same scale — noise amplitudes do not transfer
+- **Symptom:** a ring/disc VFX meant to grow radial wisps renders them running
+  the WRONG WAY — tangential dashes or comma marks lying along the ring — even
+  though the strand mask is provably thin in u and long in v. Reducing the warp
+  makes them straight radial spokes again; there is no amplitude in between that
+  gives curved radial strands.
+- **Cause:** on a ring, `u` spans the entire circumference (`2*PI*R`) while `v`
+  spans only the band or canvas width (for `VFX_ComposeShockRing`,
+  `SHOCK_CANVAS_MUL * SHOCK_CORE_RATIO * R = 0.66*R`). One unit of u is therefore
+  ~9.5 units of v in WORLD metres. A domain warp written with comparable numeric
+  amplitudes on both axes — `u + n*0.09`, `v + n*0.09`, which reads as balanced —
+  displaces fragments nine times further tangentially than radially, dragging
+  every strand sideways by several times its own length. Nothing in the code
+  looks wrong: both numbers are small, and the strand mask really is anisotropic.
+- **Rule:** in any polar parametrisation, name the ratio (`const float U_PER_V`)
+  and express angular amplitudes in v units divided by it, so they can be read
+  against the radial lengths in the same file. This applies to every warp, jitter
+  or offset applied to the angular coordinate, not only to noise.
+- **Corollary:** a strong warp on `v` is not the mirror of a warp on `u`. It moves
+  fragments along the very axis a strand's root and tip are measured on, so it
+  CHOPS strands rather than bending them. Keep the radial warp a light ruffle.
+- **And:** fade the canvas on RAW `v`, never the warped one — the mesh has a hard
+  boundary at v=0/v=1, and coverage the warp pushes past it is clipped by
+  geometry into a straight chord across the smoke.
+
 ### An additive sprite cannot retain contrast over a bright destination
 - **Symptom:** an orange/yellow emitter looks rich against black but its centre
   becomes pale or almost white over a bright sky, terrain, or area light.

@@ -4,29 +4,85 @@
 **Trạng thái:** **ĐÃ SỬA** — nguyên nhân gốc đã tìm ra và xác nhận bằng ảnh render.
 Nguyên nhân **không nằm ở rlvk**, không nằm ở shader, và không nằm ở màu.
 
-## 2026-08-12 — Impact shockwave disc
+## 2026-08-13 — Shock ring: một dây khói khép kín, bị xé ra
 
-Thêm `VFX_ComposeImpactShockwave`: primary độc lập cho khoảnh khắc nhân vật/vật
-thể bị trúng đòn. Đây là disc phẳng ở mặt phẳng của hit point, nở nhanh từ tâm
-va chạm; shader khoét một lỗ giữa méo/bị xé để tạo màng năng lượng khói, thay vì
-vành neon sạch. Nó không lấy mẫu terrain, không có raised lip và không phải
-spherical volume.
+`VFX_ComposeShockRing` viết lại tại chỗ (cùng signature, không thêm primary).
+Bản cũ là hoop giải tích thuần — không texture, không UV, không shader — nên
+silhouette là annulus chính xác về toán học và **không cơ chế nào** trong nó có
+thể ra rìa tơi tả.
 
-- `pm_impact_shockwave.inl` giữ mesh disc, UV vòng kín, normal và deform mép
-  ngoài; `pm_shockwave.inl` cũ vẫn chỉ phục vụ GroundWave bám địa hình.
-- Shader chỉ thêm filament/breakup trên bề mặt; flash, debris và particles vẫn
-  là các VFX độc lập, không bị gộp vào shockwave này.
-- `impact_shockwave_smoke.png` là một strip thin-smoke authored, map đúng **một
-  lần** theo polar U (không tile) và alpha của nó mới là silhouette chính. Noise
-  chỉ pan/warp UV rồi phá boundary; nhờ vậy không còn rơi về vòng neon procedural.
-  Sheet được tái tạo bởi `scripts/gen_impact_shockwave_texture.py` từ source đã
-  commit, và đăng ký `VFX_SURFACE_IMPACT_SMOKE` với projection free-space disc.
-- Khúc xạ dùng `VFX_TriggerImpactShockwaveDistortion()` một lần ở lúc hit; không
-  sample scene texture từ mesh shader đang vẽ vào scene target.
-- Theo workflow High/Mid/Low của Thomas Pluys: cùng master shader vẽ ba disc
-  lệch radius/phase/detail scale, tạo boundary lớn bị xé thay vì một vòng sạch.
-- Kiểm tra `ground_wave`, `impact_shockwave_mesh`, `impact_shockwave` và sync
-  fixture đều qua. Phần còn lại cần xác nhận bằng capture trực quan trong bench.
+**Kết luận cuối, sau khi phóng to footage tham chiếu:** những "sợi" sáng KHÔNG
+phải sợi khói, mà là **viền erosion** — tập mức `{noise == threshold}` của một
+trường fbm. Contour của fbm chính xác là đường mảnh uốn lượn, rẽ nhánh, tự khép
+vòng thấy trong video. Không cấu trúc nào khác cho ra hình đó: sợi sinh ra thì
+thẳng và đều, sprite thì tròn cục, còn thân khói sáng thì là mây. Nên **thân
+khói mờ, viền nóng**.
+
+- Mesh = canvas, shader = silhouette. Band 0.22×R → canvas 0.66×R; crest 2/3 →
+  1/3 canvas (vẫn rơi đúng vertex 2/6); sweep phát UV.
+- Hai dây đồng tâm, tách xa nhau theo `t01`; dây ngoài mỏng hơn và ngưỡng cao
+  hơn nên xé trước.
+- **Hai lực đổi ngôi:** giãn nở ease-out `1-(1-t)^2.6` (dồn về đầu), ngưỡng
+  erosion tăng theo `t²` (dồn về cuối). Vòng bay ra khép kín rồi mới rã khi đã
+  chậm lại — đúng như user mô tả.
+- Tendril = **không gian lấy mẫu bị nén theo bán kính** khi vòng nở, nên feature
+  bị kéo dãn ra ngoài. Không có gì animate chiều dài sợi cả.
+- Pass BODY (alpha) mang màu, EMISSION (additive) là bloom.
+
+**Ba ngõ cụt đã đi qua, ghi lại để không lặp:**
+1. *Sinh sợi theo cell góc* (`u_fibers`, mỗi cell một sợi) → **cái lược**. Một
+   feature mỗi cell nghĩa là các feature cách đều THEO ĐỊNH NGHĨA; mắt đọc ra
+   khoảng cách đều trước khi đọc bất kỳ biến thiên nào. Warp và jitter chỉ biến
+   nó thành cái lược đẹp hơn (hàng mi). Đừng đề xuất lại hướng generative.
+2. *Warp biên độ bằng nhau trên u và v* → **gạch ngang tiếp tuyến**. u trải hết
+   chu vi, v chỉ trải 0.66R → 1 đơn vị u = ~9.5 đơn vị v. Đã lên
+   `core/docs/LANDMINES.md`.
+3. *Shader mới không vào CMakeLists* → load fail → fallback hoop cũ, im lặng,
+   trông y hệt bản trước. Nay có test canh cả hai dòng `configure_file`.
+4. *Thắp sáng đường đồng mức* `{dens == thr}` → **viền đôi**. Mật độ cắt ngang
+   dây khói là một cái bướu, nên mọi ngưỡng dưới đỉnh đều bị cắt hai lần. Contour
+   đúng cho trường procedural, sai khi hình đã đến từ texture — lúc đó chỉ cần
+   thắp sáng chính các vệt. Test canh bằng phủ định `abs(dens - thrA)`.
+5. *Canvas 6.0* → khói phủ tới tâm, nơi polar UV bóp về một điểm nên sheet bị
+   nén còn chu vi 0 và render ra vệt tia hội tụ. Trần là 5.0; test canh
+   `holeRatio` từ cả HAI phía (đủ nhỏ, nhưng phải tránh điểm kỳ dị).
+6. *Chia cho `widA` không có sàn* → đầu đời dây hẹp, sheet bị phóng 6× ngang
+   băng, texel nhoè thành tia. `max(widA*2.2, 0.26)` — sàn để chặn độ giãn, không
+   phải guard chia-cho-0.
+7. *Chuẩn hoá sheet theo pixel sáng nhất* → 88% dưới alpha 0.1 → vòng rỗng mà
+   không term nào sai. Dùng percentile 99.2%. Kèm theo: phải remap dải dữ liệu
+   thật sự chiếm ngay sau khi sample, đừng chỉnh các ngưỡng phía dưới.
+   Cả hai đã lên `core/docs/LANDMINES.md`.
+
+**Texture riêng, MÔ PHỎNG chứ không procedural** (`scripts/gen_shock_ring_smoke.py`,
+`VFX_SURFACE_SHOCK_RING_SMOKE`, 2048×512). Đây là mảnh cuối làm vòng hết vẻ máy
+móc: fbm đồng nhất thống kê, nên xé kiểu gì cũng ra chuỗi hạt giống nhau. Advect
+hạt qua trường curl-noise cho ra nét dài quét cạnh chi tiết mảnh cạnh chỗ trống,
+vì hai vùng kề nhau có *lịch sử* khác nhau. Không cần taichi, chỉ stdlib, ~60s.
+Ba nguồn bất đối xứng, theo thứ tự quan trọng: seed theo CỤM, biến thiên
+per-particle, rồi mới đến trường. Tuần hoàn theo x nên vòng wrap thẳng.
+
+**Một vòng, biến đổi theo thời gian** — không phải nhiều vòng. Ảnh tham chiếu
+"nhiều vòng đồng tâm" là CÙNG một vòng ở ba thời điểm; vẽ nhiều bản cùng lúc thì
+có ba mặt sóng trên màn hình và vòng thôi là một vật. Bậc thang High/Mid/Low của
+Thomas Pluys do đó nằm trên trục THỜI GIAN: khói trẻ sắc, khói già tán
+(`SHOCK_DETAIL_EARLY 1.60` → `SHOCK_DETAIL_LATE 0.50`).
+
+Hai ngõ cụt nữa đã ghi trong file: ba instance gần trùng bán kính chỉ làm dày một
+cạnh rồi lấp mất giữa; echo lệch thời gian đúng hình nhưng sai bản chất.
+
+Vòng phải **TÁN đi**, không phải chỉ dừng lại: `Alpha01` mũ 1.1 → 1.6, lõi nóng
+nguội dần (`mix(1.0, 0.30, t01)`), băng chỉ nở nhẹ 0.18 → 0.30 (ở 0.50 nó nuốt
+luôn phần giữa và kết thúc đời như một cái đĩa đặc).
+
+`u_layerDetail` **không được** nhân vào tần số lấy mẫu quanh vòng — cuối đời tụt
+còn 0.5 thì chỉ còn ~1 chu kỳ sheet cho cả chu vi, mỗi cột texel phóng thành dải
+xuyên tâm và vòng hoá SAO đúng lúc đáng lẽ mềm nhất. Tần số cố định 4 và 7.
+
+`shock_hole` là knob live cho độ lớn khoảng trống giữa — thẩm mỹ, chỉnh bằng mắt.
+
+- `shock_ring_test.c`: 98 checks pass. Xác nhận trực quan bằng
+  `--render-vfx 22` (warmup 22/28/34).
 
 ## 1. Nguyên nhân gốc
 

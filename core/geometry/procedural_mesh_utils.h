@@ -523,52 +523,6 @@ void ProceduralMesh_DrawShockwave(const ShockwaveMeshData *data,
                                   const Color *radialColors);
 
 /* ============================================================================
- * IMPACT SHOCKWAVE SHELL MESH
- * --------------------------------------------------------------------------
- * A free-space pressure front for hit reactions: an expanding, ragged planar
- * disc centred at the hit position. The shader cuts an irregular soft hole
- * through its middle, making a cloud-like shockwave rather than a clean ring.
- * It deliberately has NO terrain query, raised lip, or spherical volume. The
- * caller chooses the Y of `center`.
- *
- * UV.x goes around the circumference and UV.y travels centre -> outer edge.
- * The integer `angularLobes` makes the outer deformation close at the UV seam.
- * ==========================================================================*/
-
-#define IMPACT_SHOCKWAVE_MAX_SLICES 64
-#define IMPACT_SHOCKWAVE_MAX_RADIALS 8
-#define IMPACT_SHOCKWAVE_SIDES 1
-
-typedef struct
-{
-    float radius;            /* centre -> outer disc edge, metres */
-    float radialJitter;      /* outer edge variation, metres */
-    int angularLobes;        /* low-frequency, closed deformation count */
-    float angularPhase;      /* radians; caller advances it over time */
-} ImpactShockwaveMeshConfig;
-
-typedef struct
-{
-    Vector3 verts[IMPACT_SHOCKWAVE_SIDES][IMPACT_SHOCKWAVE_MAX_SLICES + 1]
-                 [IMPACT_SHOCKWAVE_MAX_RADIALS + 1];
-    Vector3 normals[IMPACT_SHOCKWAVE_SIDES][IMPACT_SHOCKWAVE_MAX_SLICES + 1]
-                   [IMPACT_SHOCKWAVE_MAX_RADIALS + 1];
-    Vector2 uv[IMPACT_SHOCKWAVE_MAX_SLICES + 1][IMPACT_SHOCKWAVE_MAX_RADIALS + 1];
-    int slices;
-    int radials;             /* centre -> outer edge segments */
-} ImpactShockwaveMeshData;
-
-ImpactShockwaveMeshConfig ProceduralMesh_DefaultImpactShockwaveConfig(void);
-void ProceduralMesh_BuildImpactShockwave(ImpactShockwaveMeshData *out,
-                                         Vector3 center,
-                                         const ImpactShockwaveMeshConfig *cfg,
-                                         int slices, int radials);
-/* `radialColors` is optional; when non-NULL it contains `radials + 1` colours
- * indexed by centre->outer V. Draw inside the caller's shader/blend pass. */
-void ProceduralMesh_DrawImpactShockwave(const ImpactShockwaveMeshData *data,
-                                        const Color *radialColors);
-
-/* ============================================================================
  * CURLING WAVE MESH SYSTEM (MỚI)
  * --------------------------------------------------------------------------
  * Tường sóng cuộn (tsunami silhouette): quét một profile tiết diện hở

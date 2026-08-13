@@ -47,7 +47,7 @@
 ```c
   const VFX_SurfaceProfile *VFX_SurfaceRegistry_Get(VFX_SurfaceId id);
 ```
-**Enums:** VFX_SurfacePrimitive { VFX_SURFACE_PRIMITIVE_RIBBON,VFX_SURFACE_PRIMITIVE_TUBE,VFX_SURFACE_PRIMITIVE_PUFF,VFX_SURFACE_PRIMITIVE_FIRE_TONGUE,VFX_SURFACE_PRIMITIVE_DECAL,VFX_SURFACE_PRIMITIVE_DISC };VFX_SurfaceWrap { VFX_SURFACE_WRAP_CLAMP,VFX_SURFACE_WRAP_REPEAT } VFX_SurfaceFilter { VFX_SURFACE_FILTER_BILINEAR,VFX_SURFACE_FILTER_POINT };VFX_SurfaceBlend { VFX_SURFACE_BLEND_CONSUMER_DEFINED,VFX_SURFACE_BLEND_ALPHA,VFX_SURFACE_BLEND_ADDITIVE,VFX_SURFACE_BLEND_MULTIPLIED } VFX_SurfaceRole { VFX_SURFACE_ROLE_TRAIL,VFX_SURFACE_ROLE_RESIDUE,VFX_SURFACE_ROLE_SCORCH,VFX_SURFACE_ROLE_IMPACT,VFX_SURFACE_ROLE_RUNE };VFX_SurfaceId { VFX_SURFACE_SMOKE_RIBBON,VFX_SURFACE_ENERGY_RIBBON,VFX_SURFACE_SMOKE_STRAND,VFX_SURFACE_ENERGY_TUBE,VFX_SURFACE_SMOKE_TUBE,VFX_SURFACE_FIRE_TUBE,VFX_SURFACE_SMOKE_PUFF,VFX_SURFACE_FIRE_TONGUE,VFX_SURFACE_FIRE_PUFF,VFX_SURFACE_FIRE_VOLUME,VFX_SURFACE_DECAL_RESIDUE,VFX_SURFACE_DECAL_SCORCH,VFX_SURFACE_DECAL_FROST,VFX_SURFACE_DECAL_IMPACT,VFX_SURFACE_DECAL_RUNE,VFX_SURFACE_VOLUME_SMOKE,VFX_SURFACE_VOLUME_FIRE,VFX_SURFACE_VOLUME_STEAM,VFX_SURFACE_VOLUME_NOISE,VFX_SURFACE_IMPACT_SMOKE,VFX_SURFACE_COUNT }
+**Enums:** VFX_SurfacePrimitive { VFX_SURFACE_PRIMITIVE_RIBBON,VFX_SURFACE_PRIMITIVE_TUBE,VFX_SURFACE_PRIMITIVE_PUFF,VFX_SURFACE_PRIMITIVE_FIRE_TONGUE,VFX_SURFACE_PRIMITIVE_DECAL,VFX_SURFACE_PRIMITIVE_DISC };VFX_SurfaceWrap { VFX_SURFACE_WRAP_CLAMP,VFX_SURFACE_WRAP_REPEAT } VFX_SurfaceFilter { VFX_SURFACE_FILTER_BILINEAR,VFX_SURFACE_FILTER_POINT };VFX_SurfaceBlend { VFX_SURFACE_BLEND_CONSUMER_DEFINED,VFX_SURFACE_BLEND_ALPHA,VFX_SURFACE_BLEND_ADDITIVE,VFX_SURFACE_BLEND_MULTIPLIED } VFX_SurfaceRole { VFX_SURFACE_ROLE_TRAIL,VFX_SURFACE_ROLE_RESIDUE,VFX_SURFACE_ROLE_SCORCH,VFX_SURFACE_ROLE_IMPACT,VFX_SURFACE_ROLE_RUNE };VFX_SurfaceId { VFX_SURFACE_SMOKE_RIBBON,VFX_SURFACE_ENERGY_RIBBON,VFX_SURFACE_SMOKE_STRAND,VFX_SURFACE_ENERGY_TUBE,VFX_SURFACE_SMOKE_TUBE,VFX_SURFACE_FIRE_TUBE,VFX_SURFACE_SMOKE_PUFF,VFX_SURFACE_FIRE_TONGUE,VFX_SURFACE_FIRE_PUFF,VFX_SURFACE_FIRE_VOLUME,VFX_SURFACE_DECAL_RESIDUE,VFX_SURFACE_DECAL_SCORCH,VFX_SURFACE_DECAL_FROST,VFX_SURFACE_DECAL_IMPACT,VFX_SURFACE_DECAL_RUNE,VFX_SURFACE_VOLUME_SMOKE,VFX_SURFACE_VOLUME_FIRE,VFX_SURFACE_VOLUME_STEAM,VFX_SURFACE_VOLUME_NOISE,VFX_SURFACE_SHOCK_RING_SMOKE,VFX_SURFACE_COUNT }
 **Structs** (fields in header): VFX_SurfaceProfile
 
 ### `core/tuning.h`
@@ -696,9 +696,6 @@ _Inline helpers / macros only — see header._
   ShockwaveMeshConfig ProceduralMesh_DefaultShockwaveConfig(void);
   void ProceduralMesh_BuildShockwave(ShockwaveMeshData *out, Vector3 center, const ShockwaveMeshConfig *cfg, int slices, int radials, GroundHeightSampleFn heightFn, void *userData);
   void ProceduralMesh_DrawShockwave(const ShockwaveMeshData *data, const Color *radialColors);
-  ImpactShockwaveMeshConfig ProceduralMesh_DefaultImpactShockwaveConfig(void);
-  void ProceduralMesh_BuildImpactShockwave(ImpactShockwaveMeshData *out, Vector3 center, const ImpactShockwaveMeshConfig *cfg, int slices, int radials);
-  void ProceduralMesh_DrawImpactShockwave(const ImpactShockwaveMeshData *data, const Color *radialColors);
   CurlingWaveConfig ProceduralMesh_DefaultCurlingWaveConfig(void);
   void ProceduralMesh_BuildCurlingWave(CurlingWaveMeshData *out, Vector3 baseCenter, Vector3 widthDirection, const CurlingWaveConfig *cfg, int profileSegs, int widthSegs);
   void ProceduralMesh_DrawCurlingWave(const CurlingWaveMeshData *data, Color color);
@@ -731,7 +728,7 @@ _Inline helpers / macros only — see header._
   void ProceduralMesh_DrawBakedCrystalCluster(Mesh mesh, Material material, Matrix transform);
   Material ProceduralMesh_GetPassthroughMaterial(Shader shader);
 ```
-**Structs** (fields in header): PMTubeConfig, PMTubeMesh, PMDropletConfig, PMDropletMesh, PMCapsuleConfig, PMCapsuleMesh, WavePlaneConfig, WavePlaneMeshData, ShockwaveMeshConfig, ShockwaveMeshData, ImpactShockwaveMeshConfig, ImpactShockwaveMeshData, CurlingWaveConfig, CurlingWaveMeshData, RockMeshData, ShardClusterConfig, ShardClusterMeshData, VortexFunnelConfig, VortexFunnelMeshData, FissureMeshData, MeshDisplacementParams, CrystalDesc, CrystalClusterMeshData
+**Structs** (fields in header): PMTubeConfig, PMTubeMesh, PMDropletConfig, PMDropletMesh, PMCapsuleConfig, PMCapsuleMesh, WavePlaneConfig, WavePlaneMeshData, ShockwaveMeshConfig, ShockwaveMeshData, CurlingWaveConfig, CurlingWaveMeshData, RockMeshData, ShardClusterConfig, ShardClusterMeshData, VortexFunnelConfig, VortexFunnelMeshData, FissureMeshData, MeshDisplacementParams, CrystalDesc, CrystalClusterMeshData
 
 ### `core/composition/visual_composer.h`
 ```c
@@ -768,8 +765,6 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeCoreGlow(Vector3 center, VC_MaterialId mat, float radius, float intensity01);
   void VFX_ComposeEnergyOrb(Vector3 center, VC_MaterialId mat, float radius, float intensity01);
   void VFX_ComposeShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat, float radius, float t01);
-  void VFX_ComposeImpactShockwave(Vector3 center, VC_MaterialId mat, float radius, float t01);
-  void VFX_TriggerImpactShockwaveDistortion(Vector3 center, float radius, float strength);
   void VFX_ComposePortalDisc(Vector3 center, Vector3 normal, VC_MaterialId mat, float radius, float t01);
   void VFX_ComposeDebrisShards(Vector3 pos, Vector3 vel, VC_MaterialId mat, float scale, int count);
   void VFX_ComposeConvergeMotes(Vector3 center, VC_MaterialId mat, float radius, float t01, int moteCount);

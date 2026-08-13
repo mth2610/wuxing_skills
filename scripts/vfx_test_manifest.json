@@ -206,18 +206,6 @@
       "trigger_call": "VFX_ComposeImpactPackage($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, 0.4f)"
     },
     {
-      "source": "common/vc_impact_shockwave.inl",
-      "fn": "VFX_ComposeImpactShockwave",
-      "label": "IMPACT SHOCKWAVE",
-      "category": "common",
-      "fixture": "timed",
-      "lifecycle": "draw",
-      "_auto": true,
-      "type": "continuous",
-      "draw_call": "VFX_ComposeImpactShockwave(Vector3Add($POS, (Vector3){0.0f, 0.85f, 0.0f}), VC_MAT_WOOD, 1.9f, $PROG)",
-      "start_call": "VFX_TriggerImpactShockwaveDistortion(Vector3Add($POS, (Vector3){0.0f, 0.85f, 0.0f}), 1.9f, 0.16f)"
-    },
-    {
       "source": "common/vc_light_shaft.inl",
       "fn": "VFX_ComposeLightShaft",
       "label": "LIGHT SHAFT",

@@ -36,5 +36,4 @@
 #include "vc_impact_dust.inl"
 #include "vc_contact_spark.inl"
 #include "vc_decal.inl"
-#include "vc_impact_shockwave.inl"
 // @gen:common_includes end

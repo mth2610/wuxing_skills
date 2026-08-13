@@ -73,9 +73,13 @@ typedef enum {
     VFX_SURFACE_VOLUME_FIRE,
     VFX_SURFACE_VOLUME_STEAM,
     VFX_SURFACE_VOLUME_NOISE,
-    // One stretched smoke strip mapped through polar UVs by the free-space
-    // impact-shockwave composition; it is not a ground decal.
-    VFX_SURFACE_IMPACT_SMOKE,
+    // The shock ring's own strip. It TILES:
+    // it is periodic in x and its ends meet, so the ring wraps it without the
+    // consumer having to dodge blank margins. Simulated, not authored by hand —
+    // scripts/gen_shock_ring_smoke.py advects particles through a curl-noise
+    // field, because an fbm is statistically homogeneous and a ring eroded from
+    // one reads as a necklace of identical beads however it is tuned.
+    VFX_SURFACE_SHOCK_RING_SMOKE,
     VFX_SURFACE_COUNT
 } VFX_SurfaceId;
 
