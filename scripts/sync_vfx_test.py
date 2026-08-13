@@ -217,7 +217,15 @@ FIXTURE_DRAW_OVERRIDES = {
     # The reference read is green energy around a hit target. This is only the
     # bench material — gameplay remains caller-selected through the public API.
     "VFX_ComposeImpactShockwave":
-        "VFX_ComposeImpactShockwave($POS, VC_MAT_WOOD, 1.9f, $PROG)",
+        "VFX_ComposeImpactShockwave(Vector3Add($POS, (Vector3){0.0f, 0.85f, 0.0f}), VC_MAT_WOOD, 1.9f, $PROG)",
+}
+
+# Optional event that starts exactly once when a continuous fixture is selected.
+# It is deliberately separate from draw_call: calling a ScreenDistort source in
+# the per-frame draw branch would exhaust its small source pool immediately.
+FIXTURE_START_OVERRIDES = {
+    "VFX_ComposeImpactShockwave":
+        "VFX_TriggerImpactShockwaveDistortion(Vector3Add($POS, (Vector3){0.0f, 0.85f, 0.0f}), 1.9f, 0.16f)",
 }
 
 # ── Element / category inference ──────────────────────────────────────────────
@@ -527,6 +535,10 @@ def infer_entry(fn_name, info, available_fns):
         if "draw_call" not in entry:
             raise SystemExit(f"[sync_vfx_test] {fn_name}: draw override requires a per-frame fixture")
         entry["draw_call"] = FIXTURE_DRAW_OVERRIDES[fn_name]
+    if fn_name in FIXTURE_START_OVERRIDES:
+        if entry.get("type") != "continuous":
+            raise SystemExit(f"[sync_vfx_test] {fn_name}: start override requires a continuous fixture")
+        entry["start_call"] = FIXTURE_START_OVERRIDES[fn_name]
     return entry
 
 
@@ -1205,6 +1217,12 @@ def gen_trigger_block(entries):
     lines = ["// @gen:newfx_trigger begin"]
     lines += [f"{INDENT}if (!VFXTest_FireNewFx(s_testIndex, s_prefabStartPos)) {{",
               f"{INDENT}    /* continuous — handled per-frame in VFXTest_Draw3D */",
+              f"{INDENT}    switch (s_testIndex) {{"]
+    for idx, e in enumerate(entries):
+        if e.get("type") == "continuous" and e.get("start_call"):
+            lines.append(f"{INDENT}    case {idx}: {expand(e['start_call'])}; break;")
+    lines += [f"{INDENT}    default: break;",
+              f"{INDENT}    }}",
               f"{INDENT}    s_isPlayingMesh = true;",
               f"{INDENT}    s_meshTime = 0.0f;",
               f"{INDENT}}}"]

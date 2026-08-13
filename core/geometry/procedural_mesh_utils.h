@@ -525,26 +525,24 @@ void ProceduralMesh_DrawShockwave(const ShockwaveMeshData *data,
 /* ============================================================================
  * IMPACT SHOCKWAVE SHELL MESH
  * --------------------------------------------------------------------------
- * A free-space pressure shell for hit reactions: an expanding, vertically
- * thick annulus around the impact centre. It deliberately has NO terrain query
- * and no residual ground ripple. Two sides form a lens-like shell so it reads
- * from an oblique camera, not merely as a flat disc.
+ * A free-space pressure front for hit reactions: an expanding, ragged planar
+ * disc centred at the hit position. The shader cuts an irregular soft hole
+ * through its middle, making a cloud-like shockwave rather than a clean ring.
+ * It deliberately has NO terrain query, raised lip, or spherical volume. The
+ * caller chooses the Y of `center`.
  *
- * UV.x goes around the circumference and UV.y travels inner -> outer edge.
- * `angularLobes` is integral so noise closes exactly at the UV seam.
+ * UV.x goes around the circumference and UV.y travels centre -> outer edge.
+ * The integer `angularLobes` makes the outer deformation close at the UV seam.
  * ==========================================================================*/
 
 #define IMPACT_SHOCKWAVE_MAX_SLICES 64
 #define IMPACT_SHOCKWAVE_MAX_RADIALS 8
-#define IMPACT_SHOCKWAVE_SIDES 2
+#define IMPACT_SHOCKWAVE_SIDES 1
 
 typedef struct
 {
-    float radius;            /* centre -> shell front, metres */
-    float bandWidth;         /* inner -> outer annulus span, metres */
-    float halfHeight;        /* lens thickness above/below impact plane, metres */
-    float radialJitter;      /* outer-silhouette variation, metres */
-    float heightJitter;      /* vertical shell variation, metres */
+    float radius;            /* centre -> outer disc edge, metres */
+    float radialJitter;      /* outer edge variation, metres */
     int angularLobes;        /* low-frequency, closed deformation count */
     float angularPhase;      /* radians; caller advances it over time */
 } ImpactShockwaveMeshConfig;
@@ -557,7 +555,7 @@ typedef struct
                    [IMPACT_SHOCKWAVE_MAX_RADIALS + 1];
     Vector2 uv[IMPACT_SHOCKWAVE_MAX_SLICES + 1][IMPACT_SHOCKWAVE_MAX_RADIALS + 1];
     int slices;
-    int radials;
+    int radials;             /* centre -> outer edge segments */
 } ImpactShockwaveMeshData;
 
 ImpactShockwaveMeshConfig ProceduralMesh_DefaultImpactShockwaveConfig(void);
@@ -566,7 +564,7 @@ void ProceduralMesh_BuildImpactShockwave(ImpactShockwaveMeshData *out,
                                          const ImpactShockwaveMeshConfig *cfg,
                                          int slices, int radials);
 /* `radialColors` is optional; when non-NULL it contains `radials + 1` colours
- * indexed by cross-band V. Draw inside the caller's chosen shader/blend pass. */
+ * indexed by centre->outer V. Draw inside the caller's shader/blend pass. */
 void ProceduralMesh_DrawImpactShockwave(const ImpactShockwaveMeshData *data,
                                         const Color *radialColors);
 

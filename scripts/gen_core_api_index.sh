@@ -11,7 +11,7 @@ cd "$(dirname "$0")/.."
 # Ordered public headers. Composition-layer prose lives in COMPOSITION_API.md;
 # only the signature index for those symbols is included here.
 HEADERS=(
-  core/resource_manager.h core/tuning.h
+  core/resource_manager.h core/vfx_surface_registry.h core/tuning.h
   core/skill_manager.h core/skill_helper.h core/skill_curve.h
   core/fluid/fluid_impact.h
   core/fluid/fluid_surface.h

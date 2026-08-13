@@ -1,6 +1,7 @@
 // ── Impact shockwave: irregular free-space shell, NOT a ground wave ─────────
 
 #define IMPACT_SHOCKWAVE_RADIALS 7
+#define IMPACT_SHOCKWAVE_LAYERS  3
 
 typedef struct
 {
@@ -9,7 +10,28 @@ typedef struct
     int glowColor;
     int opacity;
     int emission;
+    int detailScale;
+    int layerPhase;
+    int hasSmokeTexture;
 } ImpactShockwaveShader;
+
+typedef struct
+{
+    float radiusScale;
+    float detailScale;
+    float phase;
+    float opacity;
+} ImpactShockwaveLayer;
+
+/* One master shader, three mesh/material instances. This is the High/Mid/Low
+ * resolution stack from the reference workflow: no layer is a clean ring on
+ * its own, and their misaligned boundaries form the large torn cloud. */
+static const ImpactShockwaveLayer s_impactShockLayers[IMPACT_SHOCKWAVE_LAYERS] =
+{
+    {0.91f, 12.0f, 0.00f, 0.34f}, // HIGH: thin, detailed erosion inside
+    {1.00f,  6.2f, 1.71f, 0.52f}, // MID: readable pressure body
+    {1.10f,  2.8f, 3.94f, 0.26f}  // LOW: broad, soft broken boundary
+};
 
 static ImpactShockwaveShader s_impactShockShader = {0};
 
@@ -32,13 +54,20 @@ static void ImpactShockwave_InitShader(void)
     s_impactShockShader.glowColor = GetShaderLocation(s_impactShockShader.shader, "u_glowColor");
     s_impactShockShader.opacity = GetShaderLocation(s_impactShockShader.shader, "u_opacity");
     s_impactShockShader.emission = GetShaderLocation(s_impactShockShader.shader, "u_emission");
+    s_impactShockShader.detailScale = GetShaderLocation(s_impactShockShader.shader,
+                                                         "u_detailScale");
+    s_impactShockShader.layerPhase = GetShaderLocation(s_impactShockShader.shader,
+                                                        "u_layerPhase");
+    s_impactShockShader.hasSmokeTexture = GetShaderLocation(s_impactShockShader.shader,
+                                                            "u_hasSmokeTexture");
 }
 
 static bool ImpactShockwave_HasShader(void)
 {
     return s_impactShockShader.shader.id != 0 && s_impactShockShader.bodyColor >= 0 &&
            s_impactShockShader.glowColor >= 0 && s_impactShockShader.opacity >= 0 &&
-           s_impactShockShader.emission >= 0;
+           s_impactShockShader.emission >= 0 && s_impactShockShader.detailScale >= 0 &&
+           s_impactShockShader.layerPhase >= 0 && s_impactShockShader.hasSmokeTexture >= 0;
 }
 
 static float ImpactShockwave_Radius01(float t01)
@@ -55,7 +84,9 @@ static float ImpactShockwave_Alpha01(float t01)
 }
 
 static void ImpactShockwave_SetUniforms(const VFX_ElementMaterial *mat,
-                                        float opacity, float emission)
+                                        float opacity, float emission,
+                                        float detailScale, float layerPhase,
+                                        int hasSmokeTexture)
 {
     Vector4 body = ColorNormalize(mat->body);
     Vector4 glow = ColorNormalize(VC_Whiten(mat->glow, 0.38f));
@@ -67,6 +98,12 @@ static void ImpactShockwave_SetUniforms(const VFX_ElementMaterial *mat,
                    &opacity, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_impactShockShader.shader, s_impactShockShader.emission,
                    &emission, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_impactShockShader.shader, s_impactShockShader.detailScale,
+                   &detailScale, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_impactShockShader.shader, s_impactShockShader.layerPhase,
+                   &layerPhase, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_impactShockShader.shader, s_impactShockShader.hasSmokeTexture,
+                   &hasSmokeTexture, SHADER_UNIFORM_INT);
 }
 
 static void ImpactShockwave_FillFallbackColors(const VFX_ElementMaterial *mat,
@@ -75,9 +112,11 @@ static void ImpactShockwave_FillFallbackColors(const VFX_ElementMaterial *mat,
 {
     for (int i = 0; i < count; i++) {
         float u = (float)i / (float)(count - 1);
-        float shell = sinf(PI * u);
-        Color color = VC_MixColor(mat->body, mat->glow, shell);
-        colors[i] = VC_WithAlpha(color, (unsigned char)(opacity * shell * 255.0f));
+        float inner = SmoothStep01((u - 0.18f) / 0.24f);
+        float outer = 1.0f - SmoothStep01((u - 0.76f) / 0.24f);
+        float coverage = inner * outer;
+        Color color = VC_MixColor(mat->body, mat->glow, coverage);
+        colors[i] = VC_WithAlpha(color, (unsigned char)(opacity * coverage * 255.0f));
     }
 }
 
@@ -92,29 +131,33 @@ void VFX_ComposeImpactShockwave(Vector3 center, VC_MaterialId mat,
     if (alpha <= 0.004f) return;
 
     float rNow = radius * ImpactShockwave_Radius01(t01);
-    float rise = SmoothStep01(t01 / 0.07f);
-    ImpactShockwaveMeshConfig cfg = ProceduralMesh_DefaultImpactShockwaveConfig();
-    cfg.radius = rNow;
-    cfg.bandWidth = fmaxf(0.12f, rNow * 0.30f);
-    // Starts as a dense pressure volume, then stretches thin and disintegrates.
-    cfg.halfHeight = radius * 0.24f * rise * powf(1.0f - t01, 0.55f);
-    cfg.radialJitter = cfg.bandWidth * 0.17f;
-    cfg.heightJitter = cfg.halfHeight * 0.24f;
-    cfg.angularLobes = 5;
-    cfg.angularPhase = t01 * 1.55f;
-
-    static ImpactShockwaveMeshData mesh;
-    ProceduralMesh_BuildImpactShockwave(&mesh, center, &cfg,
-                                        ImpactShockwave_Slices(),
-                                        IMPACT_SHOCKWAVE_RADIALS - 1);
     const VFX_ElementMaterial *m = VFX_Material(mat);
-    static Color fallbackColors[IMPACT_SHOCKWAVE_RADIALS];
-    ImpactShockwave_FillFallbackColors(m, alpha * 0.78f, fallbackColors,
-                                       IMPACT_SHOCKWAVE_RADIALS);
+    const VFX_SurfaceProfile *smokeSurface =
+        VFX_SurfaceRegistry_Get(VFX_SURFACE_IMPACT_SMOKE);
+    const int hasSmokeTexture = smokeSurface != NULL && smokeSurface->body.id != 0;
+    static ImpactShockwaveMeshData meshes[IMPACT_SHOCKWAVE_LAYERS];
+    static Color fallbackColors[IMPACT_SHOCKWAVE_LAYERS][IMPACT_SHOCKWAVE_RADIALS];
+    for (int i = 0; i < IMPACT_SHOCKWAVE_LAYERS; i++) {
+        const ImpactShockwaveLayer *layer = &s_impactShockLayers[i];
+        ImpactShockwaveMeshConfig cfg = ProceduralMesh_DefaultImpactShockwaveConfig();
+        cfg.radius = rNow * layer->radiusScale;
+        // A planar pressure disc, not a raised ground lip or a spherical volume.
+        // Its place in space is `center.y`; the three layers carry different
+        // edge scales/phases so their combined silhouette has no clean contour.
+        cfg.radialJitter = fmaxf(0.025f, cfg.radius * (0.035f + 0.010f * (float)i));
+        cfg.angularLobes = 4 + i * 2;
+        cfg.angularPhase = t01 * (1.15f + 0.42f * (float)i) + layer->phase;
+        ProceduralMesh_BuildImpactShockwave(&meshes[i], center, &cfg,
+                                            ImpactShockwave_Slices(),
+                                            IMPACT_SHOCKWAVE_RADIALS - 1);
+        ImpactShockwave_FillFallbackColors(m, alpha * layer->opacity,
+                                           fallbackColors[i], IMPACT_SHOCKWAVE_RADIALS);
+    }
 
     // The impact shell is coloured material first; its bloom is a separate,
-    // weaker radiance pass. It does not submit particles, a flash, a decal, or
-    // screen distortion — those are independent impact primaries.
+    // weaker radiance pass. It does not submit particles, a flash, or a decal.
+    // Refraction is a separate one-shot trigger below: submitting it here
+    // would allocate a fresh screen source on every continuous draw frame.
     ScreenDistort_BeginVFXBody();
     rlDrawRenderBatchActive();
     BeginBlendMode(BLEND_ALPHA);
@@ -123,12 +166,21 @@ void VFX_ComposeImpactShockwave(Vector3 center, VC_MaterialId mat,
     rlDrawRenderBatchActive();
     if (ImpactShockwave_HasShader()) {
         SkillManager_BeginShader(s_impactShockShader.shader);
-        ImpactShockwave_SetUniforms(m, alpha * 0.78f, 1.0f);
-        ProceduralMesh_DrawImpactShockwave(&mesh, NULL);
-        rlDrawRenderBatchActive();
+        if (hasSmokeTexture)
+            rlSetTexture(smokeSurface->body.id);
+        for (int i = 0; i < IMPACT_SHOCKWAVE_LAYERS; i++) {
+            const ImpactShockwaveLayer *layer = &s_impactShockLayers[i];
+            ImpactShockwave_SetUniforms(m, alpha * layer->opacity, 1.0f,
+                                        layer->detailScale, layer->phase, hasSmokeTexture);
+            ProceduralMesh_DrawImpactShockwave(&meshes[i], NULL);
+            rlDrawRenderBatchActive();
+        }
+        if (hasSmokeTexture)
+            rlSetTexture(0);
         SkillManager_EndShader();
     } else {
-        ProceduralMesh_DrawImpactShockwave(&mesh, fallbackColors);
+        for (int i = 0; i < IMPACT_SHOCKWAVE_LAYERS; i++)
+            ProceduralMesh_DrawImpactShockwave(&meshes[i], fallbackColors[i]);
     }
     rlEnableBackfaceCulling();
     rlEnableDepthMask();
@@ -144,18 +196,42 @@ void VFX_ComposeImpactShockwave(Vector3 center, VC_MaterialId mat,
     rlDrawRenderBatchActive();
     if (ImpactShockwave_HasShader()) {
         SkillManager_BeginShader(s_impactShockShader.shader);
-        ImpactShockwave_SetUniforms(m, alpha * 0.42f, 1.25f);
-        ProceduralMesh_DrawImpactShockwave(&mesh, NULL);
-        rlDrawRenderBatchActive();
+        if (hasSmokeTexture)
+            rlSetTexture(smokeSurface->body.id);
+        for (int i = 0; i < IMPACT_SHOCKWAVE_LAYERS; i++) {
+            const ImpactShockwaveLayer *layer = &s_impactShockLayers[i];
+            ImpactShockwave_SetUniforms(m, alpha * layer->opacity * 0.48f, 1.18f,
+                                        layer->detailScale, layer->phase, hasSmokeTexture);
+            ProceduralMesh_DrawImpactShockwave(&meshes[i], NULL);
+            rlDrawRenderBatchActive();
+        }
+        if (hasSmokeTexture)
+            rlSetTexture(0);
         SkillManager_EndShader();
     } else {
-        ImpactShockwave_FillFallbackColors(m, alpha * 0.36f, fallbackColors,
-                                           IMPACT_SHOCKWAVE_RADIALS);
-        ProceduralMesh_DrawImpactShockwave(&mesh, fallbackColors);
+        for (int i = 0; i < IMPACT_SHOCKWAVE_LAYERS; i++) {
+            const ImpactShockwaveLayer *layer = &s_impactShockLayers[i];
+            ImpactShockwave_FillFallbackColors(m, alpha * layer->opacity * 0.42f,
+                                               fallbackColors[i], IMPACT_SHOCKWAVE_RADIALS);
+            ProceduralMesh_DrawImpactShockwave(&meshes[i], fallbackColors[i]);
+        }
     }
     rlEnableBackfaceCulling();
     rlEnableDepthMask();
     EndBlendMode();
     rlDrawRenderBatchActive();
     ScreenDistort_EndVFXLayer();
+}
+
+void VFX_TriggerImpactShockwaveDistortion(Vector3 center, float radius,
+                                          float strength)
+{
+    // ScreenDistort samples the scene only during its dedicated post pass.
+    // Do not sample ScreenDistort_GetSceneTexture() in impact_shockwave.fs:
+    // that shader draws INTO the same target, which is a read/write hazard.
+    if (GfxQuality_Get() < GFX_MED) return;
+    if (radius <= 0.0f) radius = 2.4f;
+    strength = fmaxf(0.0f, fminf(strength, 0.35f));
+    if (strength <= 0.001f) return;
+    ScreenDistort_Add(center, radius, strength, 0.18f, 1.0f);
 }

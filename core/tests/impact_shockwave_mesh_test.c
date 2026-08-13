@@ -1,4 +1,4 @@
-// Headless contract for the free-space impact shockwave shell.
+// Headless contract for the planar impact shockwave disc.
 //
 // Mirrors core/geometry/pm_shockwave.inl. It validates topology/math only; a
 // human visual pass still validates the read against the impact reference.
@@ -20,12 +20,6 @@ static int checks = 0;
     else { printf("FAIL: %s\n", name); failures++; } \
 } while (0)
 
-static float LensProfile(float u)
-{
-    if (u <= 0.0f || u >= 1.0f) return 0.0f;
-    return sinf(PI * u);
-}
-
 static float AngularNoise(float angle, float frequency, float phase)
 {
     return sinf(angle * frequency + phase) * 0.70f +
@@ -42,14 +36,6 @@ static int FileHas(const char *path, const char *needle)
     buffer[n] = '\0';
     fclose(f);
     return strstr(buffer, needle) != NULL;
-}
-
-static void Test_Lens(void)
-{
-    CHECK(LensProfile(0.0f) == 0.0f, "the impact shell closes at its inner edge");
-    CHECK(LensProfile(1.0f) == 0.0f, "the impact shell closes at its outer edge");
-    CHECK(fabsf(LensProfile(0.5f) - 1.0f) < 1e-5f,
-          "the impact shell is thickest at the pressure front");
 }
 
 static void Test_AngularDeform(void)
@@ -72,26 +58,27 @@ static void Test_Contract(void)
 {
     const char *header = "core/geometry/procedural_mesh_utils.h";
     const char *src = "core/geometry/pm_impact_shockwave.inl";
-    CHECK(FileHas(header, "#define IMPACT_SHOCKWAVE_SIDES 2"),
-          "the shell has front and back surfaces, not a flat ground decal");
+    CHECK(FileHas(header, "#define IMPACT_SHOCKWAVE_SIDES 1"),
+          "the hit wave is one planar disc, not a spherical shell");
     CHECK(FileHas(header, "IMPACT_SHOCKWAVE_MAX_SLICES 64"),
           "the shell has enough azimuthal resolution for an irregular outline");
     CHECK(FileHas(src, "ProceduralMesh_BuildImpactShockwave"),
           "the mesh is explicitly an impact shockwave builder");
     CHECK(!FileHas(src, "GroundHeightSampleFn"),
           "the hit shockwave cannot raycast or conform to terrain");
-    CHECK(FileHas(src, "out->verts[side][s][i]"),
-          "the mesh owns its free-space three-dimensional positions");
-    CHECK(FileHas(src, "jitter = noise * radialJitter * u * u"),
+    CHECK(FileHas(src, "center.y,"),
+          "every disc vertex stays in the hit plane, never grows into a sphere");
+    CHECK(FileHas(src, "ringRadius = radius * v + jitter"),
+          "the mesh reaches the centre; the shader, not topology, cuts the ragged hole");
+    CHECK(FileHas(src, "jitter = noise * radialJitter * v * v"),
           "the irregularity concentrates on the outer silhouette");
-    CHECK(FileHas(src, "heightNoise = noise * heightJitter * profile"),
-          "vertical breakup is constrained to the pressure shell");
+    CHECK(!FileHas(src, "verticalScale") && !FileHas(src, "latitude"),
+          "the hit wave owns no sphere or latitude geometry");
 }
 
 int main(void)
 {
     printf("=== impact shockwave mesh ===\n");
-    Test_Lens();
     Test_AngularDeform();
     Test_Contract();
     printf("---- %d checks, %d failures\n", checks, failures);

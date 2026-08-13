@@ -182,11 +182,15 @@ void VFX_ComposeShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat,
                           float radius, float t01);
 
 // ── PRIMARY. Impact shockwave ──────────────────────────────────────────────
-// A free-space, irregular pressure shell for a character or object being hit.
-// It expands around `center`, has real vertical thickness, and never samples or
-// leaves anything on terrain. CONTINUOUS: call every frame for t01 0 -> 1.
+// A free-space, ragged planar pressure disc for a character or object being
+// hit. It expands around `center` and never samples or leaves anything on
+// terrain. CONTINUOUS: call every frame for t01 0 -> 1.
 void VFX_ComposeImpactShockwave(Vector3 center, VC_MaterialId mat,
                                 float radius, float t01);
+// Optional one-shot screen refraction for the same hit. Call ONCE alongside
+// the composition start; never per frame. `strength` is relative refraction.
+void VFX_TriggerImpactShockwaveDistortion(Vector3 center, float radius,
+                                          float strength);
 
 // ── PRIMARY. Portal disc ────────────────────────────────────────────────────
 // A flat disc lying in a plane the WORLD chose, with all its energy in the rim

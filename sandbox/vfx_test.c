@@ -685,6 +685,10 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
                         // @gen:newfx_trigger begin
           if (!VFXTest_FireNewFx(s_testIndex, s_prefabStartPos)) {
               /* continuous — handled per-frame in VFXTest_Draw3D */
+              switch (s_testIndex) {
+              case 16: VFX_TriggerImpactShockwaveDistortion(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.85f, 0.0f}), 1.9f, 0.16f); break;
+              default: break;
+              }
               s_isPlayingMesh = true;
               s_meshTime = 0.0f;
           }
@@ -766,6 +770,10 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             // @gen:newfx_trigger begin
           if (!VFXTest_FireNewFx(s_testIndex, s_prefabStartPos)) {
               /* continuous — handled per-frame in VFXTest_Draw3D */
+              switch (s_testIndex) {
+              case 16: VFX_TriggerImpactShockwaveDistortion(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.85f, 0.0f}), 1.9f, 0.16f); break;
+              default: break;
+              }
               s_isPlayingMesh = true;
               s_meshTime = 0.0f;
           }
@@ -817,7 +825,7 @@ void VFXTest_Draw3D(void)
               case 11: VFX_ComposeEnergyOrb(s_prefabStartPos, VC_MAT_FIRE, 1.5f, progress); break;
               case 12: VFX_ComposeGlintSparkle(s_prefabStartPos, VC_MAT_FIRE, 1.5f, s_meshTime); break;
               case 13: VFX_ComposeGroundWave(s_prefabStartPos, VC_MAT_EARTH, 1.5f, progress, VFX_GroundHeightFromMap, NULL); break;
-              case 16: VFX_ComposeImpactShockwave(s_prefabStartPos, VC_MAT_WOOD, 1.9f, progress); break;
+              case 16: VFX_ComposeImpactShockwave(Vector3Add(s_prefabStartPos, (Vector3){0.0f, 0.85f, 0.0f}), VC_MAT_WOOD, 1.9f, progress); break;
               case 17: VFX_ComposeLightShaft(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), VC_MAT_FIRE, 0.8f, 1.35f); break;
               case 18: VFX_ComposePortalDisc(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, progress); break;
               case 19:

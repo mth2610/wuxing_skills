@@ -735,6 +735,42 @@
           "channels": "NOISE | R:field/TILE | G:field/TILE | B:field/TILE | A:field/TILE — pure DATA, never drawn. Four independent fields; core/deform reads R and G as its two octaves. Seamless on both axes: the section is closed, so a non-periodic field creases the whole length of the body."
         }
       }
+    },
+    {
+      "id": "VFX_SURFACE_IMPACT_SMOKE",
+      "name": "impact_shockwave_smoke",
+      "primitive": "disc",
+      "role": "impact",
+      "wrap": "clamp",
+      "filter": "bilinear",
+      "blend": "consumer_defined",
+      "projection": "polar_once_around_free_space_disc",
+      "approval": "approved",
+      "lifecycle": {
+        "seconds": 0.32,
+        "fade_in": 0.018,
+        "fade_out": 0.20
+      },
+      "budget": {
+        "max_draw_calls": 3,
+        "max_textures": 1
+      },
+      "flipbook": [
+        0,
+        0,
+        0
+      ],
+      "seam": "not_applicable",
+      "provenance": "One authored thin-smoke strip, transformed into an RGBA coverage sheet by scripts/gen_impact_shockwave_texture.py. It maps ONCE around polar U; it is a shape, never a tiled material. The generated source is assets/sources/impact_shockwave_smoke_reference.png.",
+      "consumers": [
+        "VFX_ComposeImpactShockwave"
+      ],
+      "assets": {
+        "body": {
+          "path": "assets/textures/impact_shockwave_smoke.png",
+          "channels": "OPAQUE | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — thin torn smoke, authored as a single polar strip. RGB remains neutral so VFX_Material supplies element colour; A is the true density/coverage mask sampled by impact_shockwave.fs."
+        }
+      }
     }
   ]
 }

@@ -4,17 +4,27 @@
 **Trạng thái:** **ĐÃ SỬA** — nguyên nhân gốc đã tìm ra và xác nhận bằng ảnh render.
 Nguyên nhân **không nằm ở rlvk**, không nằm ở shader, và không nằm ở màu.
 
-## 2026-08-12 — Impact shockwave shell
+## 2026-08-12 — Impact shockwave disc
 
 Thêm `VFX_ComposeImpactShockwave`: primary độc lập cho khoảnh khắc nhân vật/vật
-thể bị trúng đòn. Đây là vỏ áp lực trong không gian tự do, phồng nhanh từ tâm
-va chạm, méo bất quy tắc ở silhouette rồi mỏng và tan; nó không lấy mẫu terrain
-và không để lại ground ripple.
+thể bị trúng đòn. Đây là disc phẳng ở mặt phẳng của hit point, nở nhanh từ tâm
+va chạm; shader khoét một lỗ giữa méo/bị xé để tạo màng năng lượng khói, thay vì
+vành neon sạch. Nó không lấy mẫu terrain, không có raised lip và không phải
+spherical volume.
 
-- `pm_impact_shockwave.inl` giữ mesh hai mặt, UV vòng kín, normal và deform
-  hình học; `pm_shockwave.inl` cũ vẫn chỉ phục vụ GroundWave bám địa hình.
+- `pm_impact_shockwave.inl` giữ mesh disc, UV vòng kín, normal và deform mép
+  ngoài; `pm_shockwave.inl` cũ vẫn chỉ phục vụ GroundWave bám địa hình.
 - Shader chỉ thêm filament/breakup trên bề mặt; flash, debris và particles vẫn
   là các VFX độc lập, không bị gộp vào shockwave này.
+- `impact_shockwave_smoke.png` là một strip thin-smoke authored, map đúng **một
+  lần** theo polar U (không tile) và alpha của nó mới là silhouette chính. Noise
+  chỉ pan/warp UV rồi phá boundary; nhờ vậy không còn rơi về vòng neon procedural.
+  Sheet được tái tạo bởi `scripts/gen_impact_shockwave_texture.py` từ source đã
+  commit, và đăng ký `VFX_SURFACE_IMPACT_SMOKE` với projection free-space disc.
+- Khúc xạ dùng `VFX_TriggerImpactShockwaveDistortion()` một lần ở lúc hit; không
+  sample scene texture từ mesh shader đang vẽ vào scene target.
+- Theo workflow High/Mid/Low của Thomas Pluys: cùng master shader vẽ ba disc
+  lệch radius/phase/detail scale, tạo boundary lớn bị xé thay vì một vòng sạch.
 - Kiểm tra `ground_wave`, `impact_shockwave_mesh`, `impact_shockwave` và sync
   fixture đều qua. Phần còn lại cần xác nhận bằng capture trực quan trong bench.
 

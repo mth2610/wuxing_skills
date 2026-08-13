@@ -12,7 +12,9 @@ typedef enum {
     VFX_SURFACE_PRIMITIVE_TUBE,
     VFX_SURFACE_PRIMITIVE_PUFF,
     VFX_SURFACE_PRIMITIVE_FIRE_TONGUE,
-    VFX_SURFACE_PRIMITIVE_DECAL
+    VFX_SURFACE_PRIMITIVE_DECAL,
+    // Flat polar UV surface.  Unlike a decal this follows no terrain.
+    VFX_SURFACE_PRIMITIVE_DISC
 } VFX_SurfacePrimitive;
 
 typedef enum {
@@ -71,6 +73,9 @@ typedef enum {
     VFX_SURFACE_VOLUME_FIRE,
     VFX_SURFACE_VOLUME_STEAM,
     VFX_SURFACE_VOLUME_NOISE,
+    // One stretched smoke strip mapped through polar UVs by the free-space
+    // impact-shockwave composition; it is not a ground decal.
+    VFX_SURFACE_IMPACT_SMOKE,
     VFX_SURFACE_COUNT
 } VFX_SurfaceId;
 

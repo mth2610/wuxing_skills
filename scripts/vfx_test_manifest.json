@@ -214,7 +214,8 @@
       "lifecycle": "draw",
       "_auto": true,
       "type": "continuous",
-      "draw_call": "VFX_ComposeImpactShockwave($POS, VC_MAT_WOOD, 1.9f, $PROG)"
+      "draw_call": "VFX_ComposeImpactShockwave(Vector3Add($POS, (Vector3){0.0f, 0.85f, 0.0f}), VC_MAT_WOOD, 1.9f, $PROG)",
+      "start_call": "VFX_TriggerImpactShockwaveDistortion(Vector3Add($POS, (Vector3){0.0f, 0.85f, 0.0f}), 1.9f, 0.16f)"
     },
     {
       "source": "common/vc_light_shaft.inl",

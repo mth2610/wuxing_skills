@@ -50,30 +50,47 @@ static int FileHas(const char *path, const char *needle)
 static void Test_Envelope(void)
 {
     CHECK(Radius01(0.0f) == 0.0f && Radius01(1.0f) == 1.0f,
-          "the hit shell has an explicit zero-to-full expansion domain");
+          "the hit disc has an explicit zero-to-full expansion domain");
     CHECK(Radius01(0.20f) > 0.45f,
-          "the shell expands decisively at impact instead of reading as a slow ripple");
+          "the disc expands decisively at impact instead of reading as a slow ripple");
     CHECK(Alpha01(0.0f) == 0.0f && Alpha01(1.0f) == 0.0f,
-          "the shell appears and fully dissipates within its own lifetime");
+          "the disc appears and fully dissipates within its own lifetime");
     CHECK(Alpha01(0.08f) > Alpha01(0.72f),
-          "the pressure shell is front-loaded, then gives way to separate residual VFX");
+          "the pressure front is front-loaded, then gives way to separate residual VFX");
 }
 
 static void Test_CompositionBoundary(void)
 {
     const char *src = "core/composition/common/vc_impact_shockwave.inl";
     CHECK(FileHas(src, "void VFX_ComposeImpactShockwave("),
-          "the impact shell has its own public composition primary");
+          "the impact disc has its own public composition primary");
     CHECK(FileHas(src, "ProceduralMesh_BuildImpactShockwave(&mesh"),
           "the primary uses the free-space impact mesh");
     CHECK(FileHas(src, "ScreenDistort_BeginVFXBody();") &&
           FileHas(src, "ScreenDistort_BeginVFXEmission();"),
-          "the shell keeps coloured material separate from its restrained bloom");
-    CHECK(FileHas(src, "It does not submit particles, a flash, a decal, or") &&
+          "the disc keeps coloured material separate from its restrained bloom");
+    CHECK(FileHas(src, "#define IMPACT_SHOCKWAVE_LAYERS  3") &&
+          FileHas(src, "s_impactShockLayers[IMPACT_SHOCKWAVE_LAYERS]") &&
+          FileHas(src, "HIGH: thin, detailed erosion") &&
+          FileHas(src, "LOW: broad, soft broken boundary"),
+          "one master shader drives distinct High/Mid/Low shockwave layers");
+    CHECK(FileHas(src, "It does not submit particles, a flash, or a decal.") &&
           !FileHas(src, "VFX_ComposeImpactShockwave(Vector3 center, VC_MaterialId mat,\n                                float radius, float t01, GroundHeightSampleFn"),
-          "the hit shell does not take a terrain callback or subsume other impact VFX");
-    CHECK(FileHas("core/shaders/impact_shockwave.fs", "vec3(cos(angle) * 2.1"),
-          "shader flow is circular and seam-safe rather than terrain UV based");
+          "the hit disc does not take a terrain callback or subsume other impact VFX");
+    CHECK(FileHas("core/shaders/impact_shockwave.fs", "vec2 p = baseP + uvWarp * 0.11;") &&
+          FileHas("core/shaders/impact_shockwave.fs", "float warpedRadial = length(p);") &&
+          FileHas("core/shaders/impact_shockwave.fs", "uniform float u_detailScale;"),
+          "panned noise moves UV coordinates before the radial mask at three detail scales");
+    CHECK(FileHas(src, "VFX_SurfaceRegistry_Get(VFX_SURFACE_IMPACT_SMOKE)") &&
+          FileHas(src, "rlSetTexture(smokeSurface->body.id)") &&
+          FileHas("core/shaders/impact_shockwave.fs", "uniform sampler2D texture0;") &&
+          FileHas("core/shaders/impact_shockwave.fs", "texture(texture0, vec2(smokeU, smokeV)).a"),
+          "one authored smoke strip maps once through polar UV and supplies the torn coverage");
+    CHECK(FileHas(src, "void VFX_TriggerImpactShockwaveDistortion(") &&
+          FileHas(src, "ScreenDistort_Add(center, radius, strength, 0.18f, 1.0f);"),
+          "refraction is submitted once to the dedicated screen-distortion pass");
+    CHECK(FileHas("scripts/vfx_test_manifest.json", "\"start_call\": \"VFX_TriggerImpactShockwaveDistortion"),
+          "the bench triggers the refraction once, instead of adding one source every draw frame");
 }
 
 int main(void)

@@ -56,7 +56,7 @@ LAYOUTS = {
 
 # R3: signed slots encode 128 as neutral and decode c*2-1.
 SIGNED_SLOTS = {"distort", "flowx", "flowy"}
-PRIMITIVES = {"ribbon", "tube", "puff", "fire_tongue", "decal"}
+PRIMITIVES = {"ribbon", "tube", "puff", "fire_tongue", "decal", "disc"}
 WRAPS = {"clamp", "repeat"}
 TILE_SEAMS = {"tileable_both_axes", "crossfade_runtime"}
 ROLES = {"trail", "residue", "scorch", "impact", "rune"}

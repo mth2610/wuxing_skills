@@ -1,5 +1,5 @@
 /* ===========================================================================
- * FREE-SPACE IMPACT SHOCKWAVE SHELL
+ * PLANAR IMPACT SHOCKWAVE DISC
  * ===========================================================================*/
 
 static float ImpactShockwave_Clamp(float value, float low, float high)
@@ -9,9 +9,8 @@ static float ImpactShockwave_Clamp(float value, float low, float high)
     return value;
 }
 
-/* Two integer-frequency terms make the shell uneven while producing exactly
- * the same value at the UV seam. This is geometry noise: it changes the
- * silhouette, unlike a flow map. */
+/* Geometry owns only the large torn outer edge. Integer frequencies make the
+ * first and final longitude numerically identical, so the disc has no seam. */
 static float ImpactShockwave_AngularNoise(float angle, int lobes, float phase)
 {
     float primary = sinf(angle * (float)lobes + phase);
@@ -19,20 +18,11 @@ static float ImpactShockwave_AngularNoise(float angle, int lobes, float phase)
     return primary * 0.70f + secondary * 0.30f;
 }
 
-static float ImpactShockwave_LensProfile(float u)
-{
-    if (u <= 0.0f || u >= 1.0f) return 0.0f;
-    return sinf(PI * u);
-}
-
 ImpactShockwaveMeshConfig ProceduralMesh_DefaultImpactShockwaveConfig(void)
 {
     ImpactShockwaveMeshConfig cfg = {0};
     cfg.radius = 2.5f;
-    cfg.bandWidth = 0.65f;
-    cfg.halfHeight = 0.38f;
     cfg.radialJitter = 0.11f;
-    cfg.heightJitter = 0.06f;
     cfg.angularLobes = 5;
     cfg.angularPhase = 0.0f;
     return cfg;
@@ -44,7 +34,7 @@ void ProceduralMesh_BuildImpactShockwave(ImpactShockwaveMeshData *out,
                                          int slices, int radials)
 {
     ImpactShockwaveMeshConfig fallback;
-    float radius, band, radialJitter, heightJitter;
+    float radius, radialJitter;
     int lobes;
 
     if (out == NULL) return;
@@ -60,60 +50,30 @@ void ProceduralMesh_BuildImpactShockwave(ImpactShockwaveMeshData *out,
     out->radials = radials;
 
     radius = fmaxf(cfg->radius, 0.01f);
-    band = ImpactShockwave_Clamp(cfg->bandWidth, 0.002f, radius * 1.50f);
-    radialJitter = ImpactShockwave_Clamp(cfg->radialJitter, 0.0f, band * 0.35f);
-    heightJitter = ImpactShockwave_Clamp(cfg->heightJitter, 0.0f,
-                                          fmaxf(cfg->halfHeight, 0.0f) * 0.75f);
+    radialJitter = ImpactShockwave_Clamp(cfg->radialJitter, 0.0f, radius * 0.22f);
     lobes = cfg->angularLobes;
     if (lobes < 1) lobes = 1;
 
     for (int s = 0; s <= slices; s++) {
-        float angleU = (float)s / (float)slices;
-        float angle = angleU * 2.0f * PI;
+        float u = (float)s / (float)slices;
+        float angle = u * 2.0f * PI;
         float ca = cosf(angle);
         float sa = sinf(angle);
         float noise = ImpactShockwave_AngularNoise(angle, lobes, cfg->angularPhase);
 
-        for (int i = 0; i <= radials; i++) {
-            float u = (float)i / (float)radials;
-            float profile = ImpactShockwave_LensProfile(u);
-            float jitter = noise * radialJitter * u * u;
-            float heightNoise = noise * heightJitter * profile;
-            float ringRadius = radius - band * 0.5f + band * u + jitter;
-
-            out->uv[s][i] = (Vector2){angleU, u};
-            for (int side = 0; side < IMPACT_SHOCKWAVE_SIDES; side++) {
-                float sign = (side == 0) ? 1.0f : -1.0f;
-                out->verts[side][s][i] = (Vector3){
-                    center.x + ca * ringRadius,
-                    center.y + sign * (cfg->halfHeight * profile + heightNoise),
-                    center.z + sa * ringRadius
-                };
-            }
-        }
-    }
-
-    for (int side = 0; side < IMPACT_SHOCKWAVE_SIDES; side++) {
-        for (int s = 0; s <= slices; s++) {
-            int prevS = (s == 0) ? slices - 1 : s - 1;
-            int nextS = (s == slices) ? 1 : s + 1;
-            for (int i = 0; i <= radials; i++) {
-                int prevI = (i == 0) ? 0 : i - 1;
-                int nextI = (i == radials) ? radials : i + 1;
-                Vector3 alongAngle = Vector3Subtract(out->verts[side][nextS][i],
-                                                      out->verts[side][prevS][i]);
-                Vector3 acrossBand = Vector3Subtract(out->verts[side][s][nextI],
-                                                      out->verts[side][s][prevI]);
-                Vector3 normal = Vector3CrossProduct(alongAngle, acrossBand);
-                if (Vector3LengthSqr(normal) < 1e-8f)
-                    normal = (Vector3){0.0f, 1.0f, 0.0f};
-                else
-                    normal = Vector3Normalize(normal);
-                if ((side == 0 && normal.y < 0.0f) ||
-                    (side == 1 && normal.y > 0.0f))
-                    normal = Vector3Negate(normal);
-                out->normals[side][s][i] = normal;
-            }
+        for (int r = 0; r <= radials; r++) {
+            float v = (float)r / (float)radials;
+            // Keep the centre welded; put the visual tear on the outward
+            // pressure front. The shader owns the soft, irregular centre hole.
+            float jitter = noise * radialJitter * v * v;
+            float ringRadius = radius * v + jitter;
+            out->uv[s][r] = (Vector2){u, v};
+            out->verts[0][s][r] = (Vector3){
+                center.x + ca * ringRadius,
+                center.y,
+                center.z + sa * ringRadius
+            };
+            out->normals[0][s][r] = (Vector3){0.0f, 1.0f, 0.0f};
         }
     }
 }
@@ -122,23 +82,21 @@ void ProceduralMesh_DrawImpactShockwave(const ImpactShockwaveMeshData *data,
                                         const Color *radialColors)
 {
     if (data == NULL || data->slices < 1 || data->radials < 1) return;
-    rlCheckRenderBatchLimit(IMPACT_SHOCKWAVE_SIDES * data->slices * data->radials * 4);
+    rlCheckRenderBatchLimit(data->slices * data->radials * 4);
     rlBegin(RL_QUADS);
-    for (int side = 0; side < IMPACT_SHOCKWAVE_SIDES; side++) {
-        for (int s = 0; s < data->slices; s++) {
-            for (int i = 0; i < data->radials; i++) {
-                const int ss[4] = {s, s, s + 1, s + 1};
-                const int ii[4] = {i, i + 1, i + 1, i};
-                for (int v = 0; v < 4; v++) {
-                    Vector3 p = data->verts[side][ss[v]][ii[v]];
-                    Vector3 n = data->normals[side][ss[v]][ii[v]];
-                    Vector2 uv = data->uv[ss[v]][ii[v]];
-                    Color c = radialColors ? radialColors[ii[v]] : WHITE;
-                    rlColor4ub(c.r, c.g, c.b, c.a);
-                    rlNormal3f(n.x, n.y, n.z);
-                    rlTexCoord2f(uv.x, uv.y);
-                    rlVertex3f(p.x, p.y, p.z);
-                }
+    for (int s = 0; s < data->slices; s++) {
+        for (int r = 0; r < data->radials; r++) {
+            const int ss[4] = {s, s, s + 1, s + 1};
+            const int rr[4] = {r, r + 1, r + 1, r};
+            for (int v = 0; v < 4; v++) {
+                Vector3 p = data->verts[0][ss[v]][rr[v]];
+                Vector3 n = data->normals[0][ss[v]][rr[v]];
+                Vector2 uv = data->uv[ss[v]][rr[v]];
+                Color c = radialColors ? radialColors[rr[v]] : WHITE;
+                rlColor4ub(c.r, c.g, c.b, c.a);
+                rlNormal3f(n.x, n.y, n.z);
+                rlTexCoord2f(uv.x, uv.y);
+                rlVertex3f(p.x, p.y, p.z);
             }
         }
     }
