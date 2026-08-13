@@ -1286,3 +1286,27 @@ four pre-existing failures as before this work.
   coherently at the end, rather than holding a static completed beam.
 - `LightningStroke_SmoothStep` is local C99 code, not the GLSL `smoothstep`;
   this keeps the hold fade portable under strict C compilation.
+
+## 2026-08-13 — Moving lightning trail and Lightning Impact fixture
+
+- Added `LightningStroke_SpawnPath` / `SetPath`: a reusable, bounded multi-point
+  path renderer that maps one continuous ribbon carrier to arc-length UV then
+  reuses the approved two-point lightning distance-field shader. It preserves
+  the exact core/corona/field, travel, endpoint and HDR behaviour through a
+  curved path without restarting a field per segment.
+- The former segment-canvas `core/lightning/lightning_trail` renderer and the
+  experimental Trail electric material path were removed from the lightning
+  composition: neither could form a stable continuous halo.
+- Added `VFX_LightningTrail_*` composition APIs plus the one-shot
+  `VFX_ComposeLightningGroundRicochet` reference. Two short discharges launch
+  from the impact point; every 105 ms a hop reaches its exact ground contact,
+  dissipates, then a fresh hop begins there. The five hops are 0.67x shorter
+  and 0.62x lower each time, avoiding the long projectile-hair silhouette. It
+  has no implicit VFX light.
+- The VFX tester fixture is **LIGHTNING IMPACT** and explicitly uses
+  `VC_MAT_LIGHTNING`. `sync_vfx_test.py` now owns the material, label and
+  category override, preventing broad word inference (`ground`/`ricochet`) from
+  silently turning the visual into an Earth fixture on later syncs.
+- Updated `lightning_trail_contract_test` for the multi-point stroke path,
+  continuous-UV shader contract, stop lifecycle, decay envelope and tester
+  wiring.

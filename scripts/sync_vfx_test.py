@@ -126,6 +126,7 @@ LIFECYCLE_SPECS = {
     # wrong — a beam is sustained, and it has no t01 to be timed by.
     "VFX_ComposeBeam":               ("trail",   "static",     "continuous"),
     "VFX_ComposeLightningArc":       ("event",   "burst",      "oneshot"),
+    "VFX_ComposeLightningGroundRicochet": ("event", "burst",    "oneshot"),
     # The moving counterpart (vc_smoke_trail.inl) — first arg is a
     # followTransform like VFX_ComposeVolumeTrail, unlike the column above.
     "VFX_ComposeSmokeTrail":         ("trail",   "follower",   "continuous"),
@@ -208,6 +209,21 @@ FIXTURE_EVENT_OVERRIDES = {
     # player socket and click target in sandbox/vfx_test.c.
     "VFX_ComposeLightningArc":
         "VFX_ComposeLightningArc($SOURCE, $TARGET, VC_MAT_LIGHTNING, 0.055f)",
+    # The motion lands on the ground, but the effect is electricity rather
+    # than displaced earth. Keep the tester's material semantic in the source
+    # of truth so a future sync cannot turn the preview brown.
+    "VFX_ComposeLightningGroundRicochet":
+        "VFX_ComposeLightningGroundRicochet($POS, VC_MAT_LIGHTNING, 1.0f, $SEED)",
+}
+
+# A few compositions deliberately combine a physical-surface word with an
+# elemental visual. Inference remains useful for the broad registry, while
+# these authored names keep the tester panel describing the actual effect.
+FIXTURE_METADATA_OVERRIDES = {
+    "VFX_ComposeLightningGroundRicochet": {
+        "label": "LIGHTNING IMPACT",
+        "category": "common",
+    },
 }
 
 # The same idea for per-frame (Draw) fixtures, whose generated call is a
@@ -542,6 +558,8 @@ def infer_entry(fn_name, info, available_fns):
         if entry.get("type") != "continuous":
             raise SystemExit(f"[sync_vfx_test] {fn_name}: start override requires a continuous fixture")
         entry["start_call"] = FIXTURE_START_OVERRIDES[fn_name]
+    if fn_name in FIXTURE_METADATA_OVERRIDES:
+        entry.update(FIXTURE_METADATA_OVERRIDES[fn_name])
     return entry
 
 

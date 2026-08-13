@@ -1,10 +1,10 @@
 #ifndef CORE_LIGHTNING_LIGHTNING_STROKE_H
 #define CORE_LIGHTNING_LIGHTNING_STROKE_H
 
-// Dedicated short-lived lightning renderer.  This is intentionally separate
-// from RibbonStrip: a ribbon preserves a broad continuous sheet through a
-// bend, while this module uses an endpoint-pinned, camera-facing canvas whose
-// fragment shader carves one FBM-warped distance-field filament.
+// Dedicated short-lived lightning renderer. A two-point stroke uses one
+// endpoint-pinned camera-facing canvas; a path stroke uses one connected ribbon
+// carrier with continuous arc-length UV, while preserving the same fragment
+// shader, colour profile and HDR core.
 
 #include "raylib.h"
 
@@ -33,6 +33,15 @@ typedef struct {
 LightningStrokeConfig LightningStroke_DefaultConfig(void);
 int  LightningStroke_Spawn(Vector3 from, Vector3 to, const LightningStrokeConfig *config);
 void LightningStroke_SetEndpoints(int handle, Vector3 from, Vector3 to);
+// Copies a caller-owned polyline into the fixed stroke pool.  This is the
+// continuous curved counterpart of Spawn(from,to): the path may have up to 33
+// points and must contain at least two non-coincident points.
+int  LightningStroke_SpawnPath(const Vector3 *points, int pointCount,
+                               const LightningStrokeConfig *config);
+void LightningStroke_SetPath(int handle, const Vector3 *points, int pointCount);
+// Finish a live endpoint or path stroke after its travel phase.  The remaining
+// path keeps electrically re-phasing during `postImpactDuration` then fades.
+void LightningStroke_Stop(int handle, float postImpactDuration);
 void LightningStroke_Kill(int handle);
 void LightningStroke_Update(float dt);
 

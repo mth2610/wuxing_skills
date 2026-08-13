@@ -7,6 +7,9 @@ uniform float u_mode;
 uniform float u_lineWidth;
 uniform float u_travel;
 uniform float u_lifeFade;
+uniform float u_contactStrength;
+uniform float u_travelHeadStrength;
+uniform float u_endpointTaperStrength;
 uniform float u_coreEmission;
 uniform float u_haloEmission;
 uniform vec4 u_bodyColor;
@@ -53,19 +56,21 @@ void main()
     float halo = 1.0 - smoothstep(u_lineWidth * 0.18, u_lineWidth * 1.52,
                                   distanceToFilament);
     halo *= halo * halo;
-    float tipTaper = LightningStroke_EndpointTaper(fragTexCoord.y);
+    float tipTaper = mix(1.0, LightningStroke_EndpointTaper(fragTexCoord.y),
+                         u_endpointTaperStrength);
     float contactShape = 1.0 - smoothstep(u_lineWidth * 0.025, u_lineWidth * 0.24,
                                           distanceToFilament);
     float sourceContact = exp(-pow(fragTexCoord.y / 0.018, 2.0));
     float targetContact = exp(-pow((1.0 - fragTexCoord.y) / 0.018, 2.0)) *
                           smoothstep(0.94, 0.995, u_travel);
-    float endpointContact = (sourceContact + targetContact) * contactShape;
+    float endpointContact = (sourceContact + targetContact) * contactShape * u_contactStrength;
 
     // Reveal a discharge, rather than placing a completed beam on screen at
     // frame zero. The coverage leaves a short anti-aliased leading edge; the
     // narrow travelling boost is the visible ionisation front.
     float travelCoverage = 1.0 - smoothstep(u_travel, u_travel + 0.035, fragTexCoord.y);
-    float travelHead = smoothstep(u_travel - 0.10, u_travel, fragTexCoord.y) * travelCoverage;
+    float travelHead = smoothstep(u_travel - 0.10, u_travel, fragTexCoord.y) *
+                       travelCoverage * u_travelHeadStrength;
     body *= travelCoverage * tipTaper * u_lifeFade;
     core *= travelCoverage * tipTaper * u_lifeFade;
     innerCorona *= travelCoverage * tipTaper * u_lifeFade;

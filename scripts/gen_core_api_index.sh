@@ -53,7 +53,7 @@ cat <<'PREAMBLE'
 - **No `malloc`/`free`** — static pools only. Load assets via `ResourceManager_Load*`; **never** call `UnloadShader`/`UnloadTexture` in skill code (the manager owns lifetimes).
 - **Meter scale** (1 unit = 1 m): mesh radii ~0.10–0.20, force/gravity 3.0–7.0 (vs real 9.81), particle speed 1.0–3.0.
 - **A system's `*_Init`/`*_Update`/`*_Draw`/`*_Unload` are the engine-loop lifecycle** — skill code does not call them; it calls the spawn/add entry points only. Exceptions are called out below.
-- **Trails:** `SpawnTrailEntity` returns an id. `TRAIL_TYPE_PROJECTILE` and `SpawnLightningTrail` self-terminate; **`TRAIL_TYPE_FOLLOWER` and manually-driven trails: the caller MUST `KillTrail(id)`.** Drive electric followers with `Lightning_UpdateFollowerTip`, not raw `UpdateFollowerPosition`.
+- **Trails:** `SpawnTrailEntity` returns an id. `TRAIL_TYPE_PROJECTILE` self-terminates; manually-driven trails use `KillTrail` when their lifecycle ends. Curved lightning uses `LightningStroke_SpawnPath` so it retains the stroke shader's continuous field and HDR profile.
 - **`VFXLight_Spawn` requires a `VFXPriority`** — a full pool evicts the lowest priority. Use `VFX_PRIORITY_HIGH_ULTIMATE` for casts that must not drop.
 - **Metaballs:** call `MetaballFX_RegisterBlob` every frame per blob (1-frame lifetime); never call `MetaballFX_Prepare`, `MetaballFX_Composite`, or `MetaballFX_DrawRegistered` from skill code.
 - **ScreenDistort:** skills only call `ScreenDistort_Add` (auto-expires after `lifetime`); the rest is engine lifecycle.

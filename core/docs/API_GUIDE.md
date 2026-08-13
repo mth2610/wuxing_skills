@@ -1794,6 +1794,51 @@ this with a physics trail: it cannot preserve sharp electrical kinks. Call
 socket; normally it self-expires. `seed = 0` derives a deterministic seed from
 the endpoints, while a nonzero seed supports replay/network determinism.
 
+### Moving Lightning Trail and Ground Impact
+
+```c
+VFX_LightningTrailConfig trail = VFX_LightningTrail_DefaultConfig();
+trail.material = VC_MAT_LIGHTNING;
+trail.width = 0.055f;
+trail.pointLifetime = 0.26f;
+int id = VFX_LightningTrail_Spawn(projectileHead, &trail);
+
+// Each update while the head is alive:
+VFX_LightningTrail_SetHead(id, projectileHead);
+// On cancellation: VFX_LightningTrail_Kill(id);
+// On a normal end: VFX_LightningTrail_Stop(id); // retained path fades itself
+
+// One-shot reference composition used by the VFX tester:
+VFX_ComposeLightningGroundRicochet(hitPos, VC_MAT_LIGHTNING, 1.0f, seed);
+```
+
+`LightningTrail` is the free-path counterpart to `LightningArc`. It records a
+moving head and submits the resulting polyline through
+`LightningStroke_SpawnPath` / `LightningStroke_SetPath`. The carrier is a
+single connected ribbon with one normalized arc-length UV, while the exact same
+distance-field shader used by the two-point arc supplies its narrow HDR ion
+core, blue corona, soft field, animated flow and rounded endpoints. Therefore a
+curved path remains one discharge — it never restarts a miniature bolt or halo
+at a history node.
+
+This is intentionally a dedicated lightning path, not a generic Trail material:
+the ordinary Trail system owns smoke, energy ribbons and physical tails, while
+lightning needs the stroke renderer's precise travel/reveal, endpoint contacts
+and cinematic HDR colour profile. `Stop` begins the configured `pointLifetime`
+post-impact hold while the filament keeps re-phasing; `Kill` removes it
+immediately. The low-level multi-point `LightningStroke` API is reusable for
+any authored or sampled curve.
+
+`VFX_ComposeLightningGroundRicochet` is a reusable reference composition, not a
+special renderer. Two short discharge heads leave `impactPos`; every 105 ms one
+lands, fades, and a fresh discharge starts from that exact contact. This avoids
+one long, projectile-shaped trail. There are five hops: horizontal distance
+decays by 0.67 and apex height by 0.62 each time, with a small transverse snap
+to keep the route electrically irregular. The function does not spawn contact
+lights; a skill may opt into separate source/impact lights for its own gameplay
+beat. Its eight-instance composition pool owns at most 16 active trail slots;
+on pressure it first reclaims the oldest instance and its two child trails.
+
 For another non-lightning irregular path, use the lower-level Core primitive
 instead of copying the subdivision loop:
 

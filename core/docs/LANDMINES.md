@@ -143,7 +143,16 @@ value anywhere you would look.
 ### Lightning zigzag needs precomputed geometric waypoints, not physics/noise
 - **Symptom:** an electric bolt drawn via a physics/noise trail renders as a straight line or a smooth "silk ribbon" sag, never a sharp zigzag.
 - **Cause:** `TRAIL_TYPE_PROJECTILE` homing steer damps deviation back to straight every frame; `TRAIL_TYPE_WISP`'s `ConstrainRibbonSegment` distance-solver low-pass-filters per-node jaggedness into a flowing curve. Both are built to stay smooth by design.
-- **Rule:** build a precomputed jagged polyline (perpendicular-offset kinks, no `forceField`) and drive a `TRAIL_TYPE_FOLLOWER` along it — see `SpawnLightningTrail`/`GenerateLightningWaypoints`. Don't try to make physics produce the kink.
+- **Rule:** the legacy generic-trail helpers may use a precomputed jagged polyline
+  (perpendicular-offset kinks, no `forceField`) rather than physics. For a
+  cinematic lightning discharge, use `LightningStroke_SpawnPath` instead: it
+  keeps the entire curve in the dedicated continuous lightning field. Do not
+  try to make a physics trail produce the kink.
+
+### Moving lightning is one multi-point stroke, never a bolt canvas per segment
+- **Symptom:** a curved electric trail has tiny noisy kinks, repeated seams, blue halo facets, or separates into individual bright segments.
+- **Cause:** a camera-facing lightning canvas per history segment restarts its local field; a generic Trail material also inherits trail taper/history rules that are wrong for an ionised discharge. Overlapping canvases only hides the cut at some angles and exposes broad polygonal patches at others.
+- **Rule:** use `LightningStroke_SpawnPath` / `LightningStroke_SetPath`. It copies a bounded polyline, maps one connected ribbon carrier to normalized arc length, then evaluates the proven two-point lightning shader over that single domain. The curve can bend, but the ion core, corona, field, phase, travel and endpoint treatment remain one stroke. A ground ricochet is still several discrete discharges: stop the prior hop at contact and spawn the next at that exact contact; never feed every hop into one history.
 
 ### Check `IsKeyPressed` collisions before binding a test key
 - **Symptom:** a debug toggle also cycles the map; effect looks position-dependent when it isn't.

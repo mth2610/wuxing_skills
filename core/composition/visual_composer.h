@@ -71,6 +71,37 @@ int  VFX_LightningArc_Spawn(Vector3 from, Vector3 to, const VFX_LightningArcConf
 void VFX_LightningArc_SetEndpoints(int handle, Vector3 from, Vector3 to);
 void VFX_LightningArc_Kill(int handle);
 
+// ── Primary: moving lightning trail ─────────────────────────────────────────
+// A bounded, history-driven electrical curve. Feed the moving head through
+// SetHead; Core maps the retained polyline to one continuous lightning stroke,
+// then dissipates it on Stop. This is for a sword tip, projectile, dash, or
+// any curved electrical motion; use LightningArc when both endpoints are known
+// at spawn time.
+typedef struct {
+    VC_MaterialId material;
+    float width;             // half-width in metres; default 0.055
+    float pointLifetime;     // history duration in seconds; default 0.26
+    // Retained for source compatibility. Path detail is now bounded history
+    // plus the stroke shader, rather than a segment-per-sample renderer.
+    float sampleDistance;
+    float jaggedness;        // local electrical displacement, metres; default 0.16
+    float coreEmission;      // HDR ion-channel multiplier; default 4.2
+    float haloEmission;      // soft field multiplier; default 0.36
+    float flickerInterval;   // seconds; default 0.045
+    unsigned int seed;
+} VFX_LightningTrailConfig;
+
+VFX_LightningTrailConfig VFX_LightningTrail_DefaultConfig(void);
+int  VFX_LightningTrail_Spawn(Vector3 head, const VFX_LightningTrailConfig *config);
+void VFX_LightningTrail_SetHead(int handle, Vector3 head);
+void VFX_LightningTrail_Stop(int handle);
+void VFX_LightningTrail_Kill(int handle);
+
+// Reference fixture: ground-hopping electric aftershocks. It is deliberately
+// a composition built ON LightningTrail, not an alternate core renderer.
+void VFX_ComposeLightningGroundRicochet(Vector3 impactPos, VC_MaterialId material,
+                                        float scale, unsigned int seed);
+
 // ── P0 primary lifecycle vocabulary ─────────────────────────────────────────
 // Event: call once and it self-dissipates. Draw: call each frame, no owned pool.
 // Emitter/Trail: Spawn returns a handle; Update/Set may retune it; Stop/Kill

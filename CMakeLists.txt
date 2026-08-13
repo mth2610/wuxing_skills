@@ -308,6 +308,10 @@ configure_file(core/shaders/common/fs_header.glsl ${CMAKE_CURRENT_BINARY_DIR}/co
 configure_file(core/shaders/common/lighting.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/lighting.glsl COPYONLY)
 configure_file(core/shaders/common/noise.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/noise.glsl COPYONLY)
 
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/core/lightning/shaders)
+configure_file(core/lightning/shaders/lightning_stroke.vs ${CMAKE_CURRENT_BINARY_DIR}/core/lightning/shaders/lightning_stroke.vs COPYONLY)
+configure_file(core/lightning/shaders/lightning_stroke.fs ${CMAKE_CURRENT_BINARY_DIR}/core/lightning/shaders/lightning_stroke.fs COPYONLY)
+
 # core/uv shared includes. Same trap as the trails block above: these are
 # #include'd by trail_deform.fs, shield_shell.fs and aura_shell.fs, and a
 # missing include does NOT announce itself as a shader problem — the shader

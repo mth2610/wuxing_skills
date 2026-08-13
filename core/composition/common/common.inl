@@ -41,3 +41,4 @@
 // Pool-owned one-shot primitive; its public API is VFX_LightningArc_* rather
 // than VFX_Compose*, so it is intentionally outside the fixture generator.
 #include "vc_lightning_arc.inl"
+#include "vc_lightning_trail.inl"

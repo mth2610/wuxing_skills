@@ -228,6 +228,17 @@
       "trigger_call": "VFX_ComposeLightningArc($SOURCE, $TARGET, VC_MAT_LIGHTNING, 0.055f)"
     },
     {
+      "source": "common/vc_lightning_trail.inl",
+      "fn": "VFX_ComposeLightningGroundRicochet",
+      "label": "LIGHTNING IMPACT",
+      "category": "common",
+      "fixture": "burst",
+      "lifecycle": "event",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeLightningGroundRicochet($POS, VC_MAT_LIGHTNING, 1.0f, $SEED)"
+    },
+    {
       "source": "common/vc_portal_disc.inl",
       "fn": "VFX_ComposePortalDisc",
       "label": "PORTAL DISC",

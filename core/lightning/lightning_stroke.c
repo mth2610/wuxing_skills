@@ -7,6 +7,7 @@
 #include "rlgl.h"
 #include <math.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 #define LIGHTNING_STROKE_MAX             32
 #define LIGHTNING_STROKE_MAX_POINTS RIBBON_MIDPOINT_MAX_POINTS
@@ -16,6 +17,7 @@
 
 typedef struct {
     bool active;
+    bool usesPath;
     int serial;
     Vector3 from, to;
     LightningStrokeConfig config;
@@ -38,6 +40,9 @@ typedef struct {
     int lineWidth;
     int travel;
     int lifeFade;
+    int contactStrength;
+    int travelHeadStrength;
+    int endpointTaperStrength;
     int coreEmission;
     int haloEmission;
     bool tried;
@@ -96,6 +101,9 @@ static void LightningStroke_InitShader(void)
     s_shader.lineWidth = GetShaderLocation(s_shader.shader, "u_lineWidth");
     s_shader.travel = GetShaderLocation(s_shader.shader, "u_travel");
     s_shader.lifeFade = GetShaderLocation(s_shader.shader, "u_lifeFade");
+    s_shader.contactStrength = GetShaderLocation(s_shader.shader, "u_contactStrength");
+    s_shader.travelHeadStrength = GetShaderLocation(s_shader.shader, "u_travelHeadStrength");
+    s_shader.endpointTaperStrength = GetShaderLocation(s_shader.shader, "u_endpointTaperStrength");
     s_shader.coreEmission = GetShaderLocation(s_shader.shader, "u_coreEmission");
     s_shader.haloEmission = GetShaderLocation(s_shader.shader, "u_haloEmission");
 }
@@ -106,6 +114,8 @@ static bool LightningStroke_HasShader(void)
            s_shader.bodyColor >= 0 && s_shader.haloColor >= 0 &&
            s_shader.coreColor >= 0 && s_shader.lineWidth >= 0 && s_shader.travel >= 0 &&
            s_shader.lifeFade >= 0 &&
+           s_shader.contactStrength >= 0 && s_shader.travelHeadStrength >= 0 &&
+           s_shader.endpointTaperStrength >= 0 &&
            s_shader.coreEmission >= 0 && s_shader.haloEmission >= 0;
 }
 
@@ -159,6 +169,31 @@ static void LightningStroke_BuildPath(LightningStroke *stroke)
     }
 }
 
+static bool LightningStroke_CopyPath(LightningStroke *stroke,
+                                     const Vector3 *points, int pointCount)
+{
+    if (points == NULL || pointCount < 2)
+        return false;
+    if (pointCount > LIGHTNING_STROKE_MAX_POINTS)
+        pointCount = LIGHTNING_STROKE_MAX_POINTS;
+
+    int write = 0;
+    for (int i = 0; i < pointCount; ++i)
+    {
+        if (write == 0 || Vector3DistanceSqr(points[i], stroke->points[write - 1]) > 1e-8f)
+            stroke->points[write++] = points[i];
+    }
+    if (write < 2 || Vector3DistanceSqr(stroke->points[0], stroke->points[write - 1]) <
+                         LIGHTNING_STROKE_MIN_LENGTH * LIGHTNING_STROKE_MIN_LENGTH)
+        return false;
+    stroke->usesPath = true;
+    stroke->pointCount = write;
+    stroke->from = stroke->points[0];
+    stroke->to = stroke->points[write - 1];
+    stroke->branchCount = 0;
+    return true;
+}
+
 static void LightningStroke_DrawWarpedSheet(const LightningStroke *stroke,
                                             Camera3D camera)
 {
@@ -196,6 +231,45 @@ static void LightningStroke_DrawWarpedSheet(const LightningStroke *stroke,
     rlEnd();
 }
 
+static void LightningStroke_DrawWarpedPath(const LightningStroke *stroke,
+                                           Camera3D camera)
+{
+    static RibbonPoint carrier[LIGHTNING_STROKE_MAX_POINTS];
+    if (stroke->pointCount < 2)
+        return;
+
+    float pathLength = 0.0f;
+    for (int i = 1; i < stroke->pointCount; ++i)
+        pathLength += Vector3Distance(stroke->points[i - 1], stroke->points[i]);
+    if (pathLength < LIGHTNING_STROKE_MIN_LENGTH)
+        return;
+
+    // Same relationship as the straight canvas: wide enough to contain the
+    // FBM field, never itself visible because the shader carves the filament.
+    float canvasHalfWidth = fminf(stroke->config.jaggedness * 1.55f +
+                                  stroke->config.width * 2.0f,
+                                  pathLength * 0.30f);
+    if (canvasHalfWidth < stroke->config.width * 2.0f)
+        canvasHalfWidth = stroke->config.width * 2.0f;
+    float lineWidth = stroke->config.width / canvasHalfWidth;
+    if (LightningStroke_HasShader())
+        SetShaderValue(s_shader.shader, s_shader.lineWidth, &lineWidth,
+                       SHADER_UNIFORM_FLOAT);
+
+    for (int i = 0; i < stroke->pointCount; ++i)
+    {
+        carrier[i].position = stroke->points[i];
+        carrier[i].halfWidth = canvasHalfWidth;
+        carrier[i].tint = WHITE;
+        carrier[i].v = 0.0f;
+    }
+    // The endpoint shader's `along` is now one normalized arc-length value
+    // over the WHOLE curve, not an index or a local segment coordinate.
+    Ribbon_ComputeArcLengthUV(carrier, stroke->pointCount);
+    DrawRibbonStripEx(carrier, stroke->pointCount, (Texture2D){0}, camera,
+                      RIBBON_CAMERA_FACING, (Vector3){0.0f, 1.0f, 0.0f});
+}
+
 LightningStrokeConfig LightningStroke_DefaultConfig(void)
 {
     return (LightningStrokeConfig){
@@ -228,7 +302,7 @@ int LightningStroke_Spawn(Vector3 from, Vector3 to, const LightningStrokeConfig 
             resolved.travelDuration = resolved.lifetime * 0.75f;
     }
     if (resolved.coreEmission <= 0.0f) resolved.coreEmission = 4.5f;
-    if (resolved.haloEmission <= 0.0f) resolved.haloEmission = 0.32f;
+    if (resolved.haloEmission <= 0.0f) resolved.haloEmission = 0.42f;
     if (resolved.jaggedness < 0.0f) resolved.jaggedness = 0.0f;
     if (resolved.flickerInterval < 0.016f) resolved.flickerInterval = 0.016f;
 
@@ -261,7 +335,51 @@ void LightningStroke_SetEndpoints(int handle, Vector3 from, Vector3 to)
     if (!stroke->active || (handle >> 8) != stroke->serial) return;
     stroke->from = from;
     stroke->to = to;
+    stroke->usesPath = false;
     LightningStroke_BuildPath(stroke);
+}
+
+int LightningStroke_SpawnPath(const Vector3 *points, int pointCount,
+                              const LightningStrokeConfig *config)
+{
+    if (points == NULL || pointCount < 2)
+        return -1;
+    int handle = LightningStroke_Spawn(points[0], points[pointCount - 1], config);
+    if (handle < 0)
+        return -1;
+    int slot = handle & 0xff;
+    LightningStroke *stroke = &s_strokes[slot];
+    if (!LightningStroke_CopyPath(stroke, points, pointCount))
+    {
+        stroke->active = false;
+        return -1;
+    }
+    return handle;
+}
+
+void LightningStroke_SetPath(int handle, const Vector3 *points, int pointCount)
+{
+    int slot = handle & 0xff;
+    if (handle < 0 || slot >= LIGHTNING_STROKE_MAX)
+        return;
+    LightningStroke *stroke = &s_strokes[slot];
+    if (!stroke->active || (handle >> 8) != stroke->serial)
+        return;
+    (void)LightningStroke_CopyPath(stroke, points, pointCount);
+}
+
+void LightningStroke_Stop(int handle, float postImpactDuration)
+{
+    int slot = handle & 0xff;
+    if (handle < 0 || slot >= LIGHTNING_STROKE_MAX)
+        return;
+    LightningStroke *stroke = &s_strokes[slot];
+    if (!stroke->active || (handle >> 8) != stroke->serial)
+        return;
+    if (postImpactDuration < 0.0f) postImpactDuration = 0.0f;
+    stroke->config.postImpactDuration = postImpactDuration;
+    stroke->config.lifetime = stroke->config.travelDuration + postImpactDuration;
+    stroke->elapsed = stroke->config.travelDuration;
 }
 
 void LightningStroke_Kill(int handle)
@@ -282,7 +400,7 @@ void LightningStroke_Update(float dt)
             stroke->active = false;
             continue;
         }
-        if (stroke->elapsed >= stroke->nextFlicker) {
+        if (!stroke->usesPath && stroke->elapsed >= stroke->nextFlicker) {
             LightningStroke_BuildPath(stroke);
             stroke->nextFlicker += stroke->config.flickerInterval;
         }
@@ -324,12 +442,24 @@ void LightningStroke_DrawLayer(Camera3D camera, LightningStrokeRenderLayer layer
             SetShaderValue(s_shader.shader, s_shader.coreColor, &coreColor, SHADER_UNIFORM_VEC4);
             SetShaderValue(s_shader.shader, s_shader.travel, &travel, SHADER_UNIFORM_FLOAT);
             SetShaderValue(s_shader.shader, s_shader.lifeFade, &lifeFade, SHADER_UNIFORM_FLOAT);
+            float contactStrength = 1.0f;
+            float travelHeadStrength = 1.0f;
+            float endpointTaperStrength = 1.0f;
+            SetShaderValue(s_shader.shader, s_shader.contactStrength, &contactStrength,
+                           SHADER_UNIFORM_FLOAT);
+            SetShaderValue(s_shader.shader, s_shader.travelHeadStrength, &travelHeadStrength,
+                           SHADER_UNIFORM_FLOAT);
+            SetShaderValue(s_shader.shader, s_shader.endpointTaperStrength, &endpointTaperStrength,
+                           SHADER_UNIFORM_FLOAT);
             SetShaderValue(s_shader.shader, s_shader.coreEmission, &stroke->config.coreEmission,
                            SHADER_UNIFORM_FLOAT);
             SetShaderValue(s_shader.shader, s_shader.haloEmission, &stroke->config.haloEmission,
                            SHADER_UNIFORM_FLOAT);
         }
-        LightningStroke_DrawWarpedSheet(stroke, camera);
+        if (stroke->usesPath)
+            LightningStroke_DrawWarpedPath(stroke, camera);
+        else
+            LightningStroke_DrawWarpedSheet(stroke, camera);
     }
     if (shaded) SkillManager_EndShader();
     rlDrawRenderBatchActive();

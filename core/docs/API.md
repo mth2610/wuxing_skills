@@ -13,7 +13,7 @@
 - **No `malloc`/`free`** — static pools only. Load assets via `ResourceManager_Load*`; **never** call `UnloadShader`/`UnloadTexture` in skill code (the manager owns lifetimes).
 - **Meter scale** (1 unit = 1 m): mesh radii ~0.10–0.20, force/gravity 3.0–7.0 (vs real 9.81), particle speed 1.0–3.0.
 - **A system's `*_Init`/`*_Update`/`*_Draw`/`*_Unload` are the engine-loop lifecycle** — skill code does not call them; it calls the spawn/add entry points only. Exceptions are called out below.
-- **Trails:** `SpawnTrailEntity` returns an id. `TRAIL_TYPE_PROJECTILE` and `SpawnLightningTrail` self-terminate; **`TRAIL_TYPE_FOLLOWER` and manually-driven trails: the caller MUST `KillTrail(id)`.** Drive electric followers with `Lightning_UpdateFollowerTip`, not raw `UpdateFollowerPosition`.
+- **Trails:** `SpawnTrailEntity` returns an id. `TRAIL_TYPE_PROJECTILE` self-terminates; manually-driven trails use `KillTrail` when their lifecycle ends. Curved lightning uses `LightningStroke_SpawnPath` so it retains the stroke shader's continuous field and HDR profile.
 - **`VFXLight_Spawn` requires a `VFXPriority`** — a full pool evicts the lowest priority. Use `VFX_PRIORITY_HIGH_ULTIMATE` for casts that must not drop.
 - **Metaballs:** call `MetaballFX_RegisterBlob` every frame per blob (1-frame lifetime); never call `MetaballFX_Prepare`, `MetaballFX_Composite`, or `MetaballFX_DrawRegistered` from skill code.
 - **ScreenDistort:** skills only call `ScreenDistort_Add` (auto-expires after `lifetime`); the rest is engine lifecycle.
@@ -356,6 +356,9 @@
   LightningStrokeConfig LightningStroke_DefaultConfig(void);
   int LightningStroke_Spawn(Vector3 from, Vector3 to, const LightningStrokeConfig *config);
   void LightningStroke_SetEndpoints(int handle, Vector3 from, Vector3 to);
+  int LightningStroke_SpawnPath(const Vector3 *points, int pointCount, const LightningStrokeConfig *config);
+  void LightningStroke_SetPath(int handle, const Vector3 *points, int pointCount);
+  void LightningStroke_Stop(int handle, float postImpactDuration);
   void LightningStroke_Kill(int handle);
   void LightningStroke_Update(float dt);
   void LightningStroke_DrawLayer(Camera3D camera, LightningStrokeRenderLayer layer);
@@ -752,6 +755,12 @@ _Inline helpers / macros only — see header._
   int VFX_LightningArc_Spawn(Vector3 from, Vector3 to, const VFX_LightningArcConfig *config);
   void VFX_LightningArc_SetEndpoints(int handle, Vector3 from, Vector3 to);
   void VFX_LightningArc_Kill(int handle);
+  VFX_LightningTrailConfig VFX_LightningTrail_DefaultConfig(void);
+  int VFX_LightningTrail_Spawn(Vector3 head, const VFX_LightningTrailConfig *config);
+  void VFX_LightningTrail_SetHead(int handle, Vector3 head);
+  void VFX_LightningTrail_Stop(int handle);
+  void VFX_LightningTrail_Kill(int handle);
+  void VFX_ComposeLightningGroundRicochet(Vector3 impactPos, VC_MaterialId material, float scale, unsigned int seed);
   void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float density);
   int VFX_SmokeEmitter_Spawn(Vector3 pos, VC_MaterialId matId, float scale, float density);
   void VFX_SmokeEmitter_SetTransform(int handle, Vector3 pos, Vector3 wind);
@@ -842,7 +851,7 @@ _Inline helpers / macros only — see header._
   void VFX_Compose_SubmitScreenSpaceVFX(void);
 ```
 **Enums:** VFX_VolumeKind { VOL_ENERGY,VOL_SMOKE,VOL_FIRE,VFX_VOLUME_KIND_COUNT };VFX_ColumnKind { VFX_COLUMN_SMOKE,VFX_COLUMN_FIRE,VFX_COLUMN_STEAM,VFX_COLUMN_KIND_COUNT }
-**Structs** (fields in header): VFX_LightningArcConfig, VFX_ShieldSurface, VFX_TrailSurface
+**Structs** (fields in header): VFX_LightningArcConfig, VFX_LightningTrailConfig, VFX_ShieldSurface, VFX_TrailSurface
 
 ### `core/composition/vfx_sequence.h`
 ```c

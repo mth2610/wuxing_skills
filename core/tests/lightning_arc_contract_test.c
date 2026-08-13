@@ -79,7 +79,12 @@ int main(void)
                          "reusable lightning must leave contact-light decisions to its owning skill");
     failed += RequireNot(arc, "Vector3 midpoint =",
                          "lightning must never place an area light in the middle of its air-gap");
-    failed += RequireNot(strokeSource, "DrawRibbonStrip", "lightning must not use a continuous ribbon renderer");
+    failed += Require(strokeSource, "LightningStroke_DrawWarpedPath",
+                      "multi-point lightning needs a continuous path carrier");
+    failed += Require(strokeSource, "Ribbon_ComputeArcLengthUV(carrier",
+                      "path carrier must use one normalized arc-length UV domain");
+    failed += Require(strokeSource, "LightningStroke_DrawWarpedSheet",
+                      "two-point lightning must retain its proven canvas renderer");
     failed += Require(strokeSource, "LightningStroke_DrawWarpedSheet",
                       "lightning must own an endpoint-pinned procedural sheet renderer");
     failed += Require(cmake, "core/lightning/lightning_stroke.c", "dedicated lightning module is not built");

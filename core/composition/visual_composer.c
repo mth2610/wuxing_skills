@@ -89,6 +89,7 @@ void VFX_Compose_Update(float dt)
     VC_FlameEmitter_Update(dt);
 // @gen:archetype_update end
     LightningArc_Update(dt);
+    LightningRicochet_Update(dt);
     SmokeEmitter_Update(dt);
     // E3 — the choreography layer rides the same single main.c wiring. Kept
     // OUTSIDE the generated block on purpose: sync_vfx_test.py rewrites what is
