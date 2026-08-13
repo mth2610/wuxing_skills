@@ -8,7 +8,7 @@
 /* Distinct liquids that may share one screen. The capture rasterizes a slot
  * index per pixel, so this is the width of the composite's material table, not
  * a count of bodies: any number of bodies may share a slot. */
-#define FLUID_SURFACE_MATERIAL_SLOTS 4
+#define FLUID_SURFACE_MATERIAL_SLOTS 6
 
 /* Which BRANCH of the optics a liquid takes. Not a style flag — the three
  * differ in what physically happens at and under the surface, and the composite
@@ -46,8 +46,9 @@ FluidLiquidDesc FluidSurface_DielectricDesc(Color body, Color glow, Color soft);
  * Slots are content-addressed: binding the same liquid twice reuses one slot, so
  * a caller that re-binds every frame does not consume the table. When all slots
  * hold liquids that were used more recently than this one, the least recently
- * used is evicted — with four slots and a handful of liquids on screen this
- * cannot bite, and the failure mode if it ever does is a body changing colour,
+ * used is evicted — with six slots and a handful of liquids on screen this
+ * cannot bite (LIQUID BENCH puts five on screen), and the failure mode if it ever
+ * does is a body changing colour,
  * never a crash. */
 int FluidSurface_BindMaterial(const FluidLiquidDesc *desc);
 

@@ -89,10 +89,40 @@ reflecting an unlit floor, and lifting it is exactly the flattening to avoid.
 reconstruction's normal wobble, but it also smears away the sun, and the wobble
 it hid reads as a liquid metal surface rippling.
 
+**Second pass — the two-tone split.** The hard horizon then made the body read as
+two flat plates with a razor line between them. That is not a fault in the hard
+horizon; a mirror can only show what the environment CONTAINS, and the
+environment was exactly two values. Blurring the boundary back out would only
+return the plastic. The fix is to give the environment **content**: a sky graded
+from a bright horizon to a dim zenith, a floor that is dark but LIT (0.55-1.15 of
+the ground ambient, not 0.10-0.34 — half a body was carrying no information at
+all), soft horizontal bands (the studio-softbox trick, and the only term that
+survives on a body facing a featureless sky), and the sun as an actual mirrored
+disc. Four analytic terms, no texture.
+
 **Honest limit:** the tester's sky is empty, so above the horizon there is
 genuinely nothing to reflect and that region stays smooth. In a populated arena
 the SSR path (HIGH tier) fills it with real geometry. Do not tune this material
 further against an empty room.
+
+### 4b. Mud — an opaque dielectric, no new class
+Mud needed no branch of its own: it is water's class at the far end of the same
+axis. `opacityPerMetre = 40` puts one reference depth at e^-8, so nothing
+transmits, and the composite derives the rest from that opacity alone:
+
+- the **grazing falloff fades out**. It exists so a clear body's centre stays
+  readable against the background; an opaque liquid has no background to read, so
+  the same falloff only darkens its middle for nothing.
+- a **Lambert term fades in**. An opaque medium's exit radiance is dominated by
+  scattering in the first millimetre, which is Lambert. Water gets none of it
+  (opacity 0), mud is almost entirely it, and lava's crust wants it too — cooled
+  rock is lit rock.
+
+Its colour is a **deliberate identity break** (composition rule): 
+`ELEMENT_COLOR_EARTH` is (230,126,34), an ochre authored for GLOWING earth VFX,
+and an opaque liquid wearing it renders at (189,123,23) — saturated caramel that
+reads as gummy candy. Wet earth is dark and desaturated; that is most of what
+makes it read as wet.
 
 ### 5. Cost gates
 `FluidSurface_RequestBody(priority, center, worldRadius, alreadyRunning)` — ask
@@ -192,6 +222,29 @@ bother with it.
 6. **Ask what refreshes a gate's input.** The first cost gate latched shut
    permanently because the state it read was only updated on the path it
    blocked.
+
+## The observation views (removed — this is how to put them back)
+
+Three defects this session were settled in one build each by a debug view, after
+reasoning from mechanism had missed repeatedly. The switch is gone per the
+"remove temporary env switches" rule; the recipe is not, because re-deriving it
+costs more than reading this.
+
+Add `uniform int u_debugView;` to `fluid_surface.fs`, an `s_debugView` read once
+from `getenv("WUXING_FLUID_DEBUG")` in `FluidSurface_Init`, and at the very end
+of `main()` replace `finalColor` when it is non-zero. The views that earned their
+keep:
+
+| view | shows | caught |
+|---|---|---|
+| 1 | thickness as a 1 cm **stripe** colour code | the ruler; a grey ramp does not survive the tonemap |
+| 2 | material slot as a flat colour code | that the per-pixel id was actually varying |
+| 3 / 4 | emission alone / `water - emission` | that a rich crimson body was being buried by emission |
+| 5 / 6 | `water - foam` / `water - specular` | isolate an additive term by SUBTRACTION |
+| 10 / 11 | raw filtered depth / raw thickness, **returned before every discard** | that a body reached the capture but was being discarded — no other view can see this |
+
+Views 10 and 11 are the ones to add first when a body renders as nothing: every
+other view sits after the discards and is blind to exactly that case.
 
 ## Tooling
 

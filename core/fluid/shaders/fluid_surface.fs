@@ -39,7 +39,7 @@ uniform float u_time;
  * vec4 throughout on purpose. A vec3 uniform ARRAY is the one shape whose std140
  * stride (16 bytes, not 12) disagrees with what SetShaderValueV packs, and the
  * point-light arrays above are already vec4 for the same reason. */
-#define FLUID_MATERIAL_SLOTS 4
+#define FLUID_MATERIAL_SLOTS 6   // == FLUID_SURFACE_MATERIAL_SLOTS
 #define FLUID_CLASS_DIELECTRIC 0
 #define FLUID_CLASS_EMISSIVE   1
 #define FLUID_CLASS_CONDUCTOR  2
@@ -530,8 +530,21 @@ void main() {
     // Grazing modulation: edge-on water scatters more (long apparent optical
     // path) while the centre stays clearer so the background reads through.
     // Uniform body fill is what makes a water sphere read as a plastic ball.
-    float grazingWeight = mix(0.32, 1.0, pow(1.0 - ndv, 1.5));
+    /* How opaque one reference depth of this liquid is on its own turbidity.
+     * Water ~0, mud and lava ~1. It is what separates "a volume you see into"
+     * from "a surface you see". */
+    float mediumOpacity = 1.0 - exp(-extraOpacityPerM * FLUID_REFERENCE_DEPTH_M);
+    /* The grazing falloff exists so a transparent body does not fill in like a
+     * plastic ball — the centre must stay clear enough to read the background
+     * through. An OPAQUE liquid has no background to read, so the same falloff
+     * just darkens its middle for no reason. Fade it out with opacity. */
+    float grazingWeight = mix(mix(0.32, 1.0, pow(1.0 - ndv, 1.5)), 1.0, mediumOpacity);
     vec3 inScatter = waterScatterColor * scatterAmount * (0.34 + illuminationEnergy * 0.42) * grazingWeight;
+    /* An opaque medium's exit radiance is dominated by scattering in the first
+     * millimetre, which is Lambert. Water gets none of this (mediumOpacity 0),
+     * mud is almost entirely this, and lava's crust wants it too — cooled rock
+     * is lit rock. */
+    inScatter += materialBody * illumination * (0.22 + 0.78 * ndl) * mediumOpacity * 0.85;
     /* A molten body does not scatter ambient light in any amount that matters —
      * it makes its own. Leaving the dielectric in-scatter at full strength put a
      * floor of lit crimson under the crust (measured at (188,88,55)) and cost
@@ -589,24 +602,50 @@ void main() {
     vec3 reflection;
     if (conductor) {
         float up = reflectedWorld.y;
-        /* A GRADIENT, not a colour. The first attempt at this used one flat
-         * value per hemisphere, which split the body into a black plate and a
-         * pale plate — better than the uniform plastic it replaced, but the
-         * bright half was still a featureless patch, because there was still
-         * nothing to see up there. Every real sky is brightest at the horizon
-         * and falls off toward the zenith, and that falloff is what puts
-         * shading across the whole upper half of a mirrored body. */
-        vec3 zenith    = u_skyAmbient * 1.4;
-        vec3 horizonSky = u_skyAmbient * 4.4 + materialSoft * 0.10;
-        vec3 skyColor  = mix(horizonSky, zenith, smoothstep(0.02, 0.80, up));
-        /* The floor is dark but not dead flat, for the same reason. */
-        vec3 floorColor = u_groundAmbient * mix(0.34, 0.10, smoothstep(0.0, -0.65, up));
+        /* A mirror can only show what the environment CONTAINS.
+         *
+         * The previous version paired a hard horizon with an environment made of
+         * exactly two values — a near-black floor and a bright sky — so the body
+         * came out split into two flat plates with a razor line between them.
+         * That is not a bug in the horizon; the horizon is what gives a
+         * conductor its contrast. It is that a two-level world reflects as two
+         * levels no matter how the transition is shaped, and the fix is to give
+         * the environment CONTENT rather than to blur the boundary back out.
+         *
+         * Four sources of structure, all cheap and all analytic:
+         *   1. a sky graded from a bright horizon to a dim zenith,
+         *   2. a floor that is dark but lit, not black — a real floor bounces,
+         *   3. soft horizontal bands, the studio-softbox trick: this is what
+         *      product renders use to make chrome legible, and it is the only
+         *      term here that survives on a body facing a featureless sky,
+         *   4. the sun as an actual mirrored DISC, which is the single
+         *      strongest "this is polished metal" cue available. */
+        vec3 zenith     = u_skyAmbient * 1.5;
+        vec3 horizonSky = u_skyAmbient * 4.0 + materialSoft * 0.08;
+        vec3 skyColor   = mix(horizonSky, zenith, smoothstep(0.02, 0.85, up));
+        /* Lifted from 0.10-0.34 to 0.55-1.15 of the ground ambient. At the old
+         * values the lower half was effectively black, which is half a body
+         * carrying no information at all. */
+        vec3 floorColor = u_groundAmbient * mix(1.15, 0.55, smoothstep(0.0, -0.75, up))
+                        + u_skyAmbient * 0.22;   /* the floor bounces the sky */
         reflection = mix(floorColor, skyColor, skyReflection);
-        /* The horizon band. Narrow and bright — this is the feature the eye
-         * reads as "polished", and it is the one thing a hemisphere blend can
-         * never produce. */
+
+        /* Horizontal bands. Low amplitude and multiplicative, so they modulate
+         * whatever the map's palette already is instead of imposing a colour. */
+        float bands = 0.82 + 0.18 * sin(up * 11.0 + 1.7) * sin(up * 4.3 - 0.6);
+        reflection *= bands;
+
+        /* The horizon band: narrow, bright, and the feature the eye reads as
+         * "polished". A hemisphere blend can never produce it. */
         float band = pow(1.0 - min(abs(up) * 7.0, 1.0), 3.0);
-        reflection += materialSoft * band * 1.15;
+        reflection += materialSoft * band * 1.05;
+
+        /* The mirrored sun. u_sunDirectionView points surface -> sun in VIEW
+         * space; the reflection vector is world space, so it has to be rotated
+         * back before they can be compared. */
+        vec3 sunWorld = normalize(mat3(u_viewToWorld) * normalize(u_sunDirectionView));
+        float sunDisc = pow(max(dot(reflectedWorld, sunWorld), 0.0), 260.0);
+        reflection += u_sunColor * sunDisc * 2.4;
     } else {
         reflection = mix(u_groundAmbient * 0.68, skyReflectionColor, skyReflection);
         float horizonReflection = pow(1.0 - abs(reflectedWorld.y), 3.0);

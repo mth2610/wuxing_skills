@@ -43,6 +43,13 @@
   ModelAnimation *ResourceManager_LoadModelAnimations(const char *filePath, int *outCount);
 ```
 
+### `core/vfx_surface_registry.h`
+```c
+  const VFX_SurfaceProfile *VFX_SurfaceRegistry_Get(VFX_SurfaceId id);
+```
+**Enums:** VFX_SurfacePrimitive { VFX_SURFACE_PRIMITIVE_RIBBON,VFX_SURFACE_PRIMITIVE_TUBE,VFX_SURFACE_PRIMITIVE_PUFF,VFX_SURFACE_PRIMITIVE_FIRE_TONGUE,VFX_SURFACE_PRIMITIVE_DECAL,VFX_SURFACE_PRIMITIVE_DISC };VFX_SurfaceWrap { VFX_SURFACE_WRAP_CLAMP,VFX_SURFACE_WRAP_REPEAT } VFX_SurfaceFilter { VFX_SURFACE_FILTER_BILINEAR,VFX_SURFACE_FILTER_POINT };VFX_SurfaceBlend { VFX_SURFACE_BLEND_CONSUMER_DEFINED,VFX_SURFACE_BLEND_ALPHA,VFX_SURFACE_BLEND_ADDITIVE,VFX_SURFACE_BLEND_MULTIPLIED } VFX_SurfaceRole { VFX_SURFACE_ROLE_TRAIL,VFX_SURFACE_ROLE_RESIDUE,VFX_SURFACE_ROLE_SCORCH,VFX_SURFACE_ROLE_IMPACT,VFX_SURFACE_ROLE_RUNE };VFX_SurfaceId { VFX_SURFACE_SMOKE_RIBBON,VFX_SURFACE_ENERGY_RIBBON,VFX_SURFACE_SMOKE_STRAND,VFX_SURFACE_ENERGY_TUBE,VFX_SURFACE_SMOKE_TUBE,VFX_SURFACE_FIRE_TUBE,VFX_SURFACE_SMOKE_PUFF,VFX_SURFACE_FIRE_TONGUE,VFX_SURFACE_FIRE_PUFF,VFX_SURFACE_FIRE_VOLUME,VFX_SURFACE_DECAL_RESIDUE,VFX_SURFACE_DECAL_SCORCH,VFX_SURFACE_DECAL_FROST,VFX_SURFACE_DECAL_IMPACT,VFX_SURFACE_DECAL_RUNE,VFX_SURFACE_VOLUME_SMOKE,VFX_SURFACE_VOLUME_FIRE,VFX_SURFACE_VOLUME_STEAM,VFX_SURFACE_VOLUME_NOISE,VFX_SURFACE_IMPACT_SMOKE,VFX_SURFACE_COUNT }
+**Structs** (fields in header): VFX_SurfaceProfile
+
 ### `core/tuning.h`
 ```c
   void Tuning_Init(const char *configPath);
@@ -762,6 +769,7 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeEnergyOrb(Vector3 center, VC_MaterialId mat, float radius, float intensity01);
   void VFX_ComposeShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat, float radius, float t01);
   void VFX_ComposeImpactShockwave(Vector3 center, VC_MaterialId mat, float radius, float t01);
+  void VFX_TriggerImpactShockwaveDistortion(Vector3 center, float radius, float strength);
   void VFX_ComposePortalDisc(Vector3 center, Vector3 normal, VC_MaterialId mat, float radius, float t01);
   void VFX_ComposeDebrisShards(Vector3 pos, Vector3 vel, VC_MaterialId mat, float scale, int count);
   void VFX_ComposeConvergeMotes(Vector3 center, VC_MaterialId mat, float radius, float t01, int moteCount);

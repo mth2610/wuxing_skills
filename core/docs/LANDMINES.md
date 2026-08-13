@@ -2228,3 +2228,25 @@ touching any term that modulates it. The comparison is two numbers and it
 distinguishes "my constant is wrong" from "something downstream is eating it" —
 which need opposite fixes. It is the colour equivalent of the subtraction rule
 above.
+
+## A mirror can only show what the environment CONTAINS
+
+**Symptom.** Liquid metal read as plastic. Given a hard horizon it stopped
+reading as plastic and started reading as two flat plates with a razor line
+between them — the user's words: "sao nó chia ra 2 màu rõ rệt vậy".
+
+**Cause.** Both are the same defect at different contrasts. The SSF composite's
+environment was a blend between exactly two values, a near-black floor and a
+bright sky. A dielectric never notices — it takes a few percent of it under
+Fresnel. A conductor is nothing BUT its reflection, so it renders whatever
+structure the environment has: a constant renders as flat plastic, and two
+levels render as two plates. The horizon's softness was never the variable.
+
+**Rule.** For a conductor, put the work into the environment's CONTENT, not into
+the shape of its transitions. Four analytic terms were enough here: a sky graded
+horizon-to-zenith, a floor that is dark but lit rather than black, soft
+horizontal bands (the studio-softbox trick — the only term that survives on a
+body facing a featureless sky), and the sun as a mirrored disc. Corollary: judge
+a conductor in a scene that HAS something to reflect. In an empty tester sky
+there is a real ceiling on how good it can look, and tuning against that ceiling
+just moves the material away from correct.

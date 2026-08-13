@@ -560,7 +560,7 @@ void VFX_ComposeWaterOrb(Vector3 start, Vector3 target);
 // metres (tube = 0.12 of it), `t01` drives density and flow speed.
 void VFX_ComposeWaterRing(Vector3 center, float radius, float t01);
 void VFX_WaterRing_Stop(void);
-// Three SSF liquids — water, lava, liquid metal — in ONE capture, side by side.
+// Five SSF liquids — water, poison, mud, lava, liquid metal — in ONE capture.
 // The reference bench for the liquid table (core/fluid/fluid_surface.h): if the
 // per-pixel material id regresses, all three render in one colour.
 // Continuous — call every frame. `spacing` is the gap in metres (0 -> 1.1).

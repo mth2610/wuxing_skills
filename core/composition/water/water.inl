@@ -195,6 +195,40 @@ static FluidLiquidDesc VFX_LiquidLava(void)
     return d;
 }
 
+/* Mud / earth slurry. A dielectric like water, but at the far end of the same
+ * axis: opaque within millimetres, so nothing transmits and the body is read as
+ * a lit SURFACE rather than as a volume. The composite handles that off
+ * `opacityPerMetre` alone — an opaque medium gets a Lambert term and loses the
+ * grazing falloff that keeps clear water's centre readable. */
+static FluidLiquidDesc VFX_LiquidMud(void)
+{
+    const VFX_ElementMaterial *m = VFX_Material(VC_MAT_EARTH);
+    /* A DELIBERATE identity break, per the composition rule.
+     * ELEMENT_COLOR_EARTH is (230,126,34) — "Ochre Brown / Orange", authored as
+     * the identity colour for GLOWING earth VFX (runes, shells, motes). Fed to
+     * an opaque liquid it renders at (189,123,23): a saturated caramel that
+     * reads as gummy candy, not as mud. Wet earth is dark and desaturated —
+     * that is most of what makes it read as wet. Kept in the same hue family so
+     * it is still recognisably the EARTH element, just at the value and
+     * saturation actual mud has. `glow`/`soft` stay from the table: they only
+     * drive the rim and the horizon fill here, and foam is off. */
+    FluidLiquidDesc d = FluidSurface_DielectricDesc((Color){84, 60, 41, 255},
+                                                    m->glow, m->soft);
+    /* Wet mud is a weak mirror at grazing angles and nothing at all head-on,
+     * which is most of what separates it from dry dirt. 1.45 is a wet mineral
+     * slurry; it also keeps the refraction offset small, and with transmission
+     * dead the offset is invisible anyway. */
+    d.ior = 1.45f;
+    /* Very rough. A crisp highlight is the one thing that would make this read
+     * as chocolate rather than as earth. */
+    d.roughnessScale = 4.5f;
+    /* 40/m puts one reference depth at e^-8: no background whatsoever. */
+    d.opacityPerMetre = 40.0f;
+    /* No foam. Mud does not cap; the shoreline term would draw a pale rim. */
+    d.foam = 0.0f;
+    return d;
+}
+
 static FluidLiquidDesc VFX_LiquidMetal(void)
 {
     const VFX_ElementMaterial *m = VFX_Material(VC_MAT_METAL);

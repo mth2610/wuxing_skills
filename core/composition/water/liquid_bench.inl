@@ -1,8 +1,8 @@
 // liquid_bench.inl — three SSF liquids side by side, in ONE capture.
 //
-// This is the reference bench for the liquid table: water, lava and liquid
-// metal drawn in the same frame, which is the whole point of the per-pixel
-// material id. Until that id existed the SSF surface carried ONE material
+// This is the reference bench for the liquid table: water, poison, mud, lava
+// and liquid metal drawn in the same frame, which is the whole point of the
+// per-pixel material id. Until that id existed the SSF surface carried ONE material
 // globally, so this fixture could only ever have rendered three bodies in
 // whichever colour was bound last — which is exactly what it shows if the id
 // path regresses.
@@ -15,6 +15,11 @@
 // emitters' job (WATER RING), not this one's.
 
 #define LIQUID_BENCH_SPHERES 26
+/* Five liquids, one capture. FLUID_SURFACE_MATERIAL_SLOTS must be at least this
+ * many or the table's LRU eviction starts recycling a slot that is still on
+ * screen and two bodies share a colour — which is precisely the failure this
+ * fixture exists to make visible. */
+#define LIQUID_BENCH_BODIES 5
 
 /* A squat blob of overlapping spheres. Overlap is not decoration: the surface
  * only CLOSES when neighbouring kernels intersect, which is the same constraint
@@ -56,29 +61,37 @@ void VFX_ComposeLiquidBench(Vector3 center, float spacing, float t01)
     t01 = Clamp(t01, 0.0f, 1.0f);
     float phase = (float)GetTime() * (0.55f + 0.45f * t01);
 
-    const float radius = 0.30f;
-    /* Kernels overlap by construction: 26 of them on a shell of radius 0.30 m
-     * are about 0.21 m apart, so a 0.13 m kernel bridges every gap. */
-    const float kernel = 0.13f;
+    const float radius = 0.26f;
+    /* Kernels overlap by construction: 26 of them on a shell of radius 0.26 m
+     * are about 0.18 m apart, so a 0.12 m kernel bridges every gap. */
+    const float kernel = 0.12f;
     FluidSurface_SetReconstructionRadius(kernel);
 
     /* Airborne, like the WATER RING fixture, and for the same reason: a body
      * resting on the arena floor is judged against a receiver, which bounds its
      * optical path (`waterColumnDepth`) and pulls in the shoreline foam. The
-     * bench is here to compare three liquids' OPTICS, so it holds them clear of
+     * bench is here to compare the liquids' OPTICS, so it holds them clear of
      * the ground where the only thing behind them is sky. */
     const float lift = 1.15f;
-    const Vector3 place[3] = {
-        { center.x - spacing, center.y + lift, center.z },
-        { center.x,           center.y + lift, center.z },
-        { center.x + spacing, center.y + lift, center.z }
+    const Vector3 place[LIQUID_BENCH_BODIES] = {
+        { center.x - spacing * 2.0f, center.y + lift, center.z },
+        { center.x - spacing,        center.y + lift, center.z },
+        { center.x,                  center.y + lift, center.z },
+        { center.x + spacing,        center.y + lift, center.z },
+        { center.x + spacing * 2.0f, center.y + lift, center.z }
     };
-    FluidLiquidDesc liquid[3];
+    /* Left to right, ordered so neighbours stay easy to tell apart: the two
+     * CLEAR dielectrics first (water and poison differ only in what their
+     * body colour absorbs), then the OPAQUE dielectric (mud), then the two
+     * that take a branch of their own in the composite (lava, liquid metal). */
+    FluidLiquidDesc liquid[LIQUID_BENCH_BODIES];
     liquid[0] = VFX_LiquidWater();
-    liquid[1] = VFX_LiquidLava();
-    liquid[2] = VFX_LiquidMetal();
+    liquid[1] = VFX_LiquidPoison();
+    liquid[2] = VFX_LiquidMud();
+    liquid[3] = VFX_LiquidLava();
+    liquid[4] = VFX_LiquidMetal();
 
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < LIQUID_BENCH_BODIES; ++i)
     {
         FluidSurface_BindMaterial(&liquid[i]);
         LiquidBench_Body(place[i], radius, kernel, phase + (float)i * 1.3f);
