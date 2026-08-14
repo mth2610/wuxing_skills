@@ -122,8 +122,34 @@ int main(void)
                      "the hard energy clamp must be gone — it capped emissive dead");
     failed += Require(bright, "maxEnergy / (maxEnergy + energy)",
                       "the bright pass must use the asymptotic soft ceiling");
-    failed += Require(bright, "col.rgb * weight * 2.2",
+    failed += Require(bright, "col.rgb * weight * 2.2 * coverage",
                       "the historical extraction gain must stay, or every effect dims ~2x");
+    /* The max-tap prefilter preserves a thin feature's PRESENCE but inflates its
+     * ENERGY by up to 16x (one hot texel treated as a full 4x4 cell). The old
+     * hard clamp hid that; lifting the ceiling exposed it as thin lightning
+     * blooming into a fat white tube. Coverage scales the energy back without
+     * touching fully-lit cells. */
+    failed += Require(bright, "float coverage = sqrt(max(brightCount / 16.0, 1.0 / 16.0));",
+                      "thin features must be energy-corrected by cell coverage");
+    failed += Require(bright, "if (sampleBrightness > u_threshold) brightCount += 1.0;",
+                      "coverage must be counted against the same threshold the pass uses");
+
+    /* Numeric: coverage must leave a FULL cell untouched (that is the whole
+     * point of lifting the ceiling) while pulling a one-texel spike down to a
+     * quarter — not to a sixteenth, which is how thin emitters vanished before. */
+    {
+        float full = sqrtf(16.0f / 16.0f);
+        float thin = sqrtf(1.0f / 16.0f);
+        if (fabsf(full - 1.0f) > 1e-6f) {
+            fprintf(stderr, "FAIL: coverage dims a fully lit cell (%.4f)\n", full);
+            failed++;
+        }
+        if (fabsf(thin - 0.25f) > 1e-6f) {
+            fprintf(stderr, "FAIL: one-texel coverage is %.4f, expected 0.25 "
+                            "(linear 1/16 would make thin emitters vanish)\n", thin);
+            failed++;
+        }
+    }
 
     /* Numeric: strictly increasing everywhere. This is the property the hard
      * clamp lacked and the reason 'raise emissiveBoost' did nothing past 4.0. */

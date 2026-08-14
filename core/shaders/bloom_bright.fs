@@ -36,6 +36,7 @@ void main() {
     // spike into the blur.
     vec3 col = vec3(0.0);
     float bestBrightness = -1.0;
+    float brightCount = 0.0;
     for (int y = 0; y < 4; ++y) {
         for (int x = 0; x < 4; ++x) {
             vec2 cellOffset = (vec2(float(x), float(y)) - vec2(1.5)) * u_sourceTexelSize;
@@ -45,8 +46,30 @@ void main() {
                 bestBrightness = sampleBrightness;
                 col = sampleColor;
             }
+            if (sampleBrightness > u_threshold) brightCount += 1.0;
         }
     }
+    // How much of the 4x4 cell is actually lit. Taking the max above preserves a
+    // one-pixel feature's PRESENCE, but on its own it also inflates that
+    // feature's ENERGY by up to 16x, because a single hot texel is then treated
+    // as though it filled the cell. While the old hard clamp existed that
+    // inflation was capped and invisible; lifting the ceiling exposed it, and a
+    // thin lightning filament bloomed into a fat white tube with its blue core
+    // washed out.
+    //
+    // sqrt, not linear: linear coverage is energy-exact but reduces a one-pixel
+    // core to 1/16, which is how thin emitters vanished from bloom in the first
+    // place (core/docs/LANDMINES.md). sqrt(1/16) = 1/4 keeps them clearly
+    // present while removing most of the over-contribution.
+    //
+    // A FULLY covered cell is multiplied by exactly 1.0 — but that is not the
+    // same as "broad glows are unaffected", and the difference was measured,
+    // not assumed: a large emissive body still loses roughly 10-15% of its
+    // bloom, because its rim and its mid-brightness regions are partially
+    // covered cells too. bloomIntensity is the knob that compensates; the point
+    // of this factor is that thin and broad features now scale TOGETHER, so one
+    // intensity setting can serve both.
+    float coverage = sqrt(max(brightCount / 16.0, 1.0 / 16.0));
 
     // 1. Tính toán độ sáng dựa trên kênh màu lớn nhất (max-channel) để các màu bão hòa (lam, tím) cũng bloom rực rỡ
     float brightness = max(col.r, max(col.g, col.b));
@@ -69,7 +92,7 @@ void main() {
     // mid-brightness bloom come out at the same level as before this change, so
     // the only visible difference is that bright cores are no longer capped.
     // Drop it and every existing effect quietly dims by ~2x.
-    vec3 brightColor = col.rgb * weight * 2.2;
+    vec3 brightColor = col.rgb * weight * 2.2 * coverage;
     float maxEnergy = (u_maxEnergy > 0.0) ? u_maxEnergy : 12.0;
     float energy = max(brightColor.r, max(brightColor.g, brightColor.b));
     brightColor *= maxEnergy / (maxEnergy + energy);
