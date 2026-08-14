@@ -201,7 +201,7 @@ void VFX_ComposePortalDisc(Vector3 center, Vector3 normal, VC_MaterialId mat,
     // The swirl is a UV SCROLL, not a geometry rotation: the disc never turns, so
     // its silhouette is rock steady while the material inside it moves. A
     // rotating disc reads as a spinning plate.
-    float uScroll = (float)GetTime() * PORTAL_SWIRL * s_portalSwirl;
+    float uScroll = TimeFX_Elapsed() * PORTAL_SWIRL * s_portalSwirl;
 
     // Additive + unlit per the blend law. Depth WRITE off — it emits, so it must
     // not occlude — and culling off, so the rim's far face shows through its near

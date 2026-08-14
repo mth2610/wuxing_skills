@@ -628,7 +628,7 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
         if (emitter->lightTimer <= 0.0f)
         {
             emitter->lightTimer = 0.10f;
-            float flick = 0.85f + VC_Flicker01((float)GetTime() * 7.0f, emitter->seed) * 0.3f;
+            float flick = 0.85f + VC_Flicker01(TimeFX_Elapsed() * 7.0f, emitter->seed) * 0.3f;
             Vector3 lightPos = {pos.x, pos.y + 0.55f * scale, pos.z};
             VFXLight_Spawn(lightPos, (Color){255, 150, 60, 255},
                            4.0f * scale * flick, 0.13f, VFX_PRIORITY_LOW);
@@ -825,7 +825,7 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
     if (emitter->lightTimer <= 0.0f)
     {
         emitter->lightTimer = 0.10f;
-        float flick = 0.85f + VC_Flicker01((float)GetTime() * 7.0f, emitter->seed) * 0.3f;
+        float flick = 0.85f + VC_Flicker01(TimeFX_Elapsed() * 7.0f, emitter->seed) * 0.3f;
         // Lifted to mid-flame height. At the base the light sits IN the ground
         // plane, so the vector to it is nearly parallel to the floor and
         // dot(N, toL) collapses to ~0.1 — the ground receives almost nothing no

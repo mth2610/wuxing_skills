@@ -139,7 +139,7 @@ void VFX_ComposeWaterRing(Vector3 center, float radius, float t01)
 
     /* Framerate-independent budget carried between frames: a per-call COUNT
      * makes the body's density a function of the frame rate. */
-    s_waterRingAccum += GetFrameTime() * (alive / lifetime);
+    s_waterRingAccum += TimeFX_RawDelta() * (alive / lifetime);
     int spawn = (int)s_waterRingAccum;
     if (spawn > WATER_RING_MAX_SPAWN) spawn = WATER_RING_MAX_SPAWN;
     s_waterRingAccum -= (float)spawn;

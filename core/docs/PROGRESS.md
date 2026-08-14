@@ -1350,3 +1350,76 @@ HEAD (verified in a clean worktree: `energy_burst_semantic_layers`,
 `glslangValidator -S frag` clean on all three bloom shaders. **No visual
 confirmation** — the threshold/scatter/intensity trio has to be judged by eye
 and is the reason those knobs are live-tunable rather than baked.
+
+## Headless capture determinism (blocker for all visual verification)
+
+Found while trying to sweep `bloom_intensity`: `--render-vfx` was not
+reproducible, so the sweep measured run-to-run noise rather than the parameter.
+Full analysis in `ENGINE_LANDMINES.md` ("A fixed timestep that only pins the
+LOOP does not pin the SIMULATION").
+
+- Added `TimeFX_SetRawDelta()` / `TimeFX_RawDelta()` (`core/time_fx.h`) — one
+  publisher in `main.c` beside the existing headless pin, one accessor for every
+  system that advances VFX state. Not hitstop-scaled, so no behaviour changes.
+- Converted 10 call sites under `core/composition/` and 3 in
+  `sandbox/vfx_test.c` (the tester drives every fixture, so its wall-clock dt
+  desynchronised all of them at once).
+- Left `GetFrameTime()` in place where wall clock is the correct input:
+  `core/post_fx.c` perf sampling, `core/particles/particle_system.c` perf log,
+  `core/fluid/fluid_surface.c` frame-budget gate.
+- `core/tests/core_glow_test.c` and `converge_motes_test.c` asserted the old
+  wall-clock expression as a source contract; updated.
+- New guard `core/tests/frame_delta_determinism_test.c` — walks
+  `core/composition/` recursively (51 sources) so a NEW file is covered without
+  anyone maintaining a list, and asserts the perf/budget exceptions stay on wall
+  clock so a blanket replace cannot pin them.
+
+Core suite 67/71, same 4 pre-existing failures as HEAD.
+
+STILL UNVERIFIED: the empirical proof — two captures of one fixture at a
+content-bearing warmup having equal checksums — needs a rebuild. Until that
+passes, no headless A/B result should be trusted, including the pending
+`bloomIntensity` recommendation.
+
+## G5 — colour-grade LUT
+
+3D grading delivered as a **2D strip** (16³ → 256x16), not `sampler3D`: GLES on
+Mali is a shipping target, and a strip works on every backend with no capability
+query and no second shader path. Cost is one extra tap — blue is interpolated by
+hand between two slices; red/green come free from hardware bilinear because they
+address texel centres inside a tile, which is also what stops filtering bleeding
+across a tile edge into the next slice.
+
+- `core/color_grade_lut.h/.c` — generates the NEUTRAL (identity) strip at init,
+  so enabling the system is a visual no-op until a graded asset exists. That
+  keeps "is it wired" separable from "do I like the look".
+- Applied in `post_process.fs` AFTER tone mapping, on display-referred 0..1
+  values. A LUT fed HDR would sample outside its domain and flatten every
+  highlight into the top blue slice. The formula grade stays as the coarse
+  control; the LUT carries the look.
+- Asset-optional: a strip at `assets/luts/grade.png` is adopted automatically at
+  init — no code change, no rebuild. Absent, the frame is unchanged. A load
+  failure KEEPS the current LUT and logs the expected dimensions (the usual
+  mistake is a 32³ strip from another engine).
+- `PostFXConfig.lutEnabled/.lutStrength` (on by default), live override
+  `tuning.cfg -> lut_strength`. The shader branch is additionally gated on the
+  LUT not being neutral, so the default costs a disabled uniform rather than a
+  per-pixel tap that provably cannot change anything.
+- `scripts/make_lut.py` — stdlib-only PNG writer (no Pillow, or it stops being
+  run) with a `moonlight` look matching the art direction: cool shadows, warm
+  highlights, greens desaturated, blacks TINTED NOT LIFTED — lifting them is the
+  usual "cinematic" reflex and would destroy the night arena.
+- Also fixed in passing: PostFX's tunables were registered inside the
+  `if (bloomEnabled)` branch, so `lut_strength` would not have existed with
+  bloom off. Moved to the top of `PostFX_Draw`.
+
+Verification: `core/tests/color_grade_lut_test.c` mirrors BOTH the generator and
+the shader sampler and asserts the neutral strip round-trips to identity (worst
+error 0.00000), no tile-edge bleed at red=1.0 on any slice, and that the LUT is
+applied after tone mapping. `scripts/make_lut.py neutral` was verified
+byte-identical to the C generator's output. `glslangValidator -S frag` clean;
+`-std=c99 -Wall -Wextra` clean. Core suite 68/72, same 4 pre-existing failures.
+
+NOT VERIFIED: anything on screen. Two samplers now live in the composite shader
+(bloom + LUT) and that combination has never run under rlvk here — worth a look
+first when checking the build.

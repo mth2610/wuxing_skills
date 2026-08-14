@@ -46,6 +46,14 @@ typedef struct {
   bool  tonemapEnabled;
   float exposure;          // [0.5 .. 2.0], 1.0 = neutral
 
+  // ── Colour-grade LUT (Đợt G5) ──────────────────────────────────────────
+  // Applied AFTER tone mapping, on display-referred values — see
+  // core/color_grade_lut.h. Defaults OFF, and the default LUT is the identity
+  // strip, so turning it on with no asset supplied is a visual no-op: "is it
+  // wired" stays separable from "do I like the look".
+  bool  lutEnabled;
+  float lutStrength;       // 0..1 blend toward the graded result; 0 = off
+
   // ── Radial blur (Đợt E1a) ──────────────────────────────────────────────
   // Screen-space smear away from a focal point — the "violent burst" read.
   // Normally you do NOT set these by hand: call PostFX_RadialBurst() and let

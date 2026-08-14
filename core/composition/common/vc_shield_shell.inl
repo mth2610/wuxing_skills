@@ -164,7 +164,7 @@ static void ShieldShell_BeginTextured(const VC_ShieldShell *shield, const VFX_El
     // slot the caller is already using — so the flow sheet is bound here, by
     // name, and raylib manages the unit.
     if (s_shieldShader.flowTex >= 0) SetShaderValueTexture(shader, s_shieldShader.flowTex, shield->flowTex);
-    float now = (float)GetTime();
+    float now = TimeFX_Elapsed();
     if (s_shieldShader.time >= 0) SetShaderValue(shader, s_shieldShader.time, &now, SHADER_UNIFORM_FLOAT);
     SurfaceFlow_Apply(&shield->flow, shader, &s_shieldShader.flow, now);
     // Immediate rlgl geometry needs its current material texture set as well

@@ -28,6 +28,15 @@ uniform vec3 u_highlightTint;
 uniform float u_tonemapEnabled;
 uniform float u_exposure;
 
+// ── Colour-grade LUT (Đợt G5) ────────────────────────────────────────────────
+// A 2D STRIP, not a sampler3D: GLES on Mali is a shipping target and 2D works
+// everywhere without a capability query or a second shader path.
+uniform sampler2D u_lutTex;
+uniform float u_lutEnabled;
+uniform float u_lutStrength;  // 0..1 blend toward the graded result
+uniform vec2  u_lutParams;    // (1/stripWidth, 1/stripHeight)
+uniform float u_lutSize;      // slices per axis (strip is size*size by size)
+
 // Radial blur (Đợt E1a) — screen-space smear away from a focal point. This is
 // what makes a burst read as VIOLENT rather than merely bright: brightness
 // alone says "there is light here", a directional smear says "something just
@@ -41,6 +50,28 @@ uniform float u_radialBlurStrength; // sample offset scale (~0.15 = strong)
 uniform float u_radialBlurFalloff;  // UV radius where the blur reaches full strength
 
 out vec4 finalColor;
+
+// Strip-LUT lookup. Red/green come free from hardware bilinear because they map
+// to texel CENTRES inside a tile (0.5 .. size-0.5), which is also what keeps
+// filtering from bleeding across a tile edge into the next blue slice. Blue is
+// interpolated by hand between two adjacent slices — the one thing a 2D strip
+// costs over a real sampler3D.
+vec3 ApplyColorGradeLut(vec3 col) {
+    float size = u_lutSize;
+    vec3 c = clamp(col, 0.0, 1.0);
+
+    float b = c.b * (size - 1.0);
+    float slice0 = floor(b);
+    float slice1 = min(slice0 + 1.0, size - 1.0);
+    float blend = b - slice0;
+
+    float uInTile = 0.5 + c.r * (size - 1.0);
+    float v = (0.5 + c.g * (size - 1.0)) * u_lutParams.y;
+
+    vec3 s0 = texture(u_lutTex, vec2((slice0 * size + uInTile) * u_lutParams.x, v)).rgb;
+    vec3 s1 = texture(u_lutTex, vec2((slice1 * size + uInTile) * u_lutParams.x, v)).rgb;
+    return mix(s0, s1, blend);
+}
 
 vec3 acesFilmic(vec3 x) {
     // Đã in-line các hằng số để tránh khai báo biến const trong hàm
@@ -141,6 +172,16 @@ void main() {
         
         // Color Tint
         sceneCol.rgb = gradedCol * u_colorTint;
+    }
+
+    // 3b. Colour-grade LUT (Đợt G5). Deliberately LAST in the colour chain and
+    // AFTER tone mapping: a LUT is a display-referred lookup, so feeding it HDR
+    // values would sample outside its own domain and flatten every highlight
+    // into the top blue slice. The formula grade above stays as the coarse
+    // control; the LUT carries the "look".
+    if (u_lutEnabled > 0.5 && u_lutStrength > 0.0) {
+        vec3 graded = ApplyColorGradeLut(sceneCol.rgb);
+        sceneCol.rgb = mix(sceneCol.rgb, graded, clamp(u_lutStrength, 0.0, 1.0));
     }
 
     // 4. Vignette

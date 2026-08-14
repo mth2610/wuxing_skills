@@ -1,4 +1,5 @@
 #include "trail_system.h"
+#include "core/time_fx.h"   // TimeFX_Elapsed — pinned clock; GetTime() is wall clock
 #include "core/force_field.h"
 #include "core/composition/visual_composer.h"
 #include "core/geometry/procedural_mesh_utils.h"
@@ -1492,7 +1493,7 @@ void Trail_SetFollowerOrbit(int id, float radius, float speed, Vector3 axis, flo
 
 void UpdateTrailSystem(float dt)
 {
-    float time = (float)GetTime();
+    float time = TimeFX_Elapsed();
 
     for (int a = 0; a < activeCount;)
     {
@@ -1769,7 +1770,7 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
      * của noise (nó cuộn tại chỗ). Dừng một cái vẫn còn chuyển động, và đó lại
      * đúng là thứ nhìn giống hệt "vẫn xoay". */
     float runNoiseOffset = t->tubeDeformFrozen ? 0.0f : (-t->uvScrollOffset * 0.5f);
-    float buildTime = t->tubeDeformFrozen ? 0.0f : (float)GetTime();
+    float buildTime = t->tubeDeformFrozen ? 0.0f : TimeFX_Elapsed();
     const unsigned char *runPixels = (const unsigned char *)s_tubeNoiseImg.data;
     int runW = s_tubeNoiseImg.width, runH = s_tubeNoiseImg.height;
 
@@ -2532,7 +2533,7 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
     // the C-side half of the reference's frac() rule; the shader folds again
     // after each multiply. WRAP is a multiple of 8 so the fold lands on a clean
     // binary boundary for the common integer-ish speeds.
-    float time = (float)fmod(GetTime(), 4096.0);
+    float time = fmodf(TimeFX_Elapsed(), 4096.0f);
     Matrix matView = GetCameraMatrix(camera);
     TrailCameraBasis camBasis = {
         {matView.m0, matView.m4, matView.m8},

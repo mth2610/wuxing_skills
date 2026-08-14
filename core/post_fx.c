@@ -2,6 +2,7 @@
 #include "core/tuning.h"
 #include "core/screen_distort.h" // ScreenDistort_IsHDR — scene buffer is the HDR authority
 #include "core/gfx_quality.h"    // E8 — the tier budget for the two new passes
+#include "core/color_grade_lut.h" // G5 — display-referred grading strip
 #include "rlgl.h"
 #include <string.h>
 
@@ -56,6 +57,12 @@ static int shadowTintLoc;
 static int highlightTintLoc;
 static int tonemapEnabledLoc;
 static int exposureLoc;
+static int lutTexLoc;
+static int lutEnabledLoc;
+static int lutStrengthLoc;
+static int lutParamsLoc;
+static int lutSizeLoc;
+static float s_lutStrengthOverride = 0.0f; // tuning.cfg -> lut_strength, 0 = caller's
 
 // Uniform locations — radial blur (E1a, lives in the composite shader)
 static int radialBlurEnabledLoc;
@@ -202,6 +209,12 @@ void PostFX_Init(int width, int height)
   highlightTintLoc = GetShaderLocation(compositeShader, "u_highlightTint");
   tonemapEnabledLoc = GetShaderLocation(compositeShader, "u_tonemapEnabled");
   exposureLoc = GetShaderLocation(compositeShader, "u_exposure");
+  lutTexLoc = GetShaderLocation(compositeShader, "u_lutTex");
+  lutEnabledLoc = GetShaderLocation(compositeShader, "u_lutEnabled");
+  lutStrengthLoc = GetShaderLocation(compositeShader, "u_lutStrength");
+  lutParamsLoc = GetShaderLocation(compositeShader, "u_lutParams");
+  lutSizeLoc = GetShaderLocation(compositeShader, "u_lutSize");
+  ColorGradeLut_Init();
   radialBlurEnabledLoc = GetShaderLocation(compositeShader, "u_radialBlurEnabled");
   radialBlurCenterLoc = GetShaderLocation(compositeShader, "u_radialBlurCenter");
   radialBlurStrengthLoc = GetShaderLocation(compositeShader, "u_radialBlurStrength");
@@ -225,6 +238,7 @@ void PostFX_Unload(void)
   UnloadShader(dsShader);
   UnloadShader(usShader);
   UnloadShader(compositeShader);
+  ColorGradeLut_Unload();
 }
 
 void PostFX_Begin(void) { BeginTextureMode(mainRenderTex); }
@@ -507,6 +521,23 @@ void PostFX_Draw(const PostFXConfig *config)
     PostFX_ApplyTransient(&local);
   PostFX_ApplyTuning(&local);
   PostFX_ApplyQualityTier(&local);   // last: the budget outranks both of the above
+
+  // Registered lazily, never from an Init — Tuning_Init runs after the
+  // subsystem inits, so an early registration silently keeps the default
+  // (core/docs/LANDMINES.md). Registered HERE rather than inside the bloom
+  // branch below: a knob that only comes into existence when an unrelated
+  // feature happens to be enabled is a knob that reads as broken.
+  static bool s_tunablesReg = false;
+  if (!s_tunablesReg) {
+    Tuning_RegisterFloat("bloom_max_energy", &s_bloomMaxEnergy, 0.0f);
+    Tuning_RegisterFloat("bloom_intensity", &s_bloomIntensityOverride, 0.0f);
+    Tuning_RegisterFloat("bloom_threshold", &s_bloomThresholdOverride, 0.0f);
+    Tuning_RegisterFloat("bloom_knee", &s_bloomKnee, 0.0f);
+    Tuning_RegisterFloat("bloom_scatter", &s_bloomScatterOverride, 0.0f);
+    Tuning_RegisterFloat("bloom_karis", &s_bloomKaris, 1.0f);
+    Tuning_RegisterFloat("lut_strength", &s_lutStrengthOverride, 0.0f);
+    s_tunablesReg = true;
+  }
   config = &local;
   int width = mainRenderTex.texture.width;
   int height = mainRenderTex.texture.height;
@@ -517,19 +548,6 @@ void PostFX_Draw(const PostFXConfig *config)
     BeginTextureMode(bloomTex);
     // [TỐI ƯU 1]: Xóa ClearBackground(BLACK) gây lãng phí bộ nhớ FBO
     BeginShaderMode(brightShader);
-    // Registered lazily, never from an Init — Tuning_Init runs after the
-    // subsystem inits, so an early registration silently keeps the default
-    // (core/docs/LANDMINES.md).
-    static bool s_maxEnergyReg = false;
-    if (!s_maxEnergyReg) {
-      Tuning_RegisterFloat("bloom_max_energy", &s_bloomMaxEnergy, 0.0f);
-      Tuning_RegisterFloat("bloom_intensity", &s_bloomIntensityOverride, 0.0f);
-      Tuning_RegisterFloat("bloom_threshold", &s_bloomThresholdOverride, 0.0f);
-      Tuning_RegisterFloat("bloom_knee", &s_bloomKnee, 0.0f);
-      Tuning_RegisterFloat("bloom_scatter", &s_bloomScatterOverride, 0.0f);
-      Tuning_RegisterFloat("bloom_karis", &s_bloomKaris, 1.0f);
-      s_maxEnergyReg = true;
-    }
     float threshold = (s_bloomThresholdOverride > 0.0f) ? s_bloomThresholdOverride
                                                         : config->bloomThreshold;
     SetShaderValue(brightShader, brightThresholdLoc, &threshold,
@@ -642,6 +660,29 @@ void PostFX_Draw(const PostFXConfig *config)
   float exposureVal = (config->exposure > 0.0f) ? config->exposure : 1.0f;
   SetShaderValue(compositeShader, tonemapEnabledLoc, &tonemapEnabledVal, SHADER_UNIFORM_FLOAT);
   SetShaderValue(compositeShader, exposureLoc, &exposureVal, SHADER_UNIFORM_FLOAT);
+
+  // G5 — LUT. The texture is bound unconditionally: leaving a sampler unbound
+  // while its branch is merely disabled is how you get a driver-dependent
+  // "works here, black frame there", and the branch costs nothing when off.
+  Texture2D lutTex = ColorGradeLut_Texture();
+  float lutStrength = (s_lutStrengthOverride > 0.0f) ? s_lutStrengthOverride
+                                                     : config->lutStrength;
+  if (lutStrength < 0.0f) lutStrength = 0.0f;
+  else if (lutStrength > 1.0f) lutStrength = 1.0f;
+  // Gated on the LUT not being the identity strip: with no graded asset present
+  // the branch stays off, so leaving lutEnabled on by default costs a disabled
+  // uniform rather than a per-pixel tap-and-lerp that provably cannot change
+  // anything. Mali is the reason that distinction is worth the extra condition.
+  float lutOn = (float)(config->lutEnabled && lutTex.id != 0 && lutStrength > 0.0f &&
+                        !ColorGradeLut_IsNeutral());
+  Vector2 lutParams = {1.0f / (float)(COLOR_GRADE_LUT_SIZE * COLOR_GRADE_LUT_SIZE),
+                       1.0f / (float)COLOR_GRADE_LUT_SIZE};
+  float lutSize = (float)COLOR_GRADE_LUT_SIZE;
+  if (lutTex.id != 0) SetShaderValueTexture(compositeShader, lutTexLoc, lutTex);
+  SetShaderValue(compositeShader, lutEnabledLoc, &lutOn, SHADER_UNIFORM_FLOAT);
+  SetShaderValue(compositeShader, lutStrengthLoc, &lutStrength, SHADER_UNIFORM_FLOAT);
+  SetShaderValue(compositeShader, lutParamsLoc, &lutParams, SHADER_UNIFORM_VEC2);
+  SetShaderValue(compositeShader, lutSizeLoc, &lutSize, SHADER_UNIFORM_FLOAT);
 
   // E1a — radial blur. Strength 0 is treated as OFF as well as the bool, so a
   // fully-decayed burst costs nothing even if a caller leaves the flag set.

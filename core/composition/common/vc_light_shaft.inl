@@ -133,7 +133,7 @@ void VFX_ComposeLightShaft(Vector3 from, Vector3 to, VC_MaterialId mat,
     const VFX_ElementMaterial *m = VFX_Material(mat);
     Color soft = m->soft;
     Color glow = m->glow;
-    float time = (float)GetTime();
+    float time = TimeFX_Elapsed();
 
     VFXRenderScope renderScope = VFXRender_BeginDraw(
         VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);

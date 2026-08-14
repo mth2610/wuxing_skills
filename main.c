@@ -254,6 +254,32 @@ int main(int argc, char **argv) {
   SetConfigFlags(configFlags);
   InitWindow(screenWidth, screenHeight, "Avatar: True 3D Element Testbed");
 
+  // Second half of making a headless capture reproducible (the first is the
+  // pinned timestep — see TimeFX_SetRawDelta below). raylib seeds its RNG from
+  // time(NULL) inside InitWindow, so Random01() — every particle's jitter,
+  // lifetime and size variation — returns a different sequence every run. With
+  // the timestep pinned but the RNG free, particle-heavy fixtures still varied
+  // enough between two identical runs to swamp the parameter under test.
+  //
+  // Only headless: normal play must keep its variety. The seed value is
+  // arbitrary and only has to be STABLE, since its whole job is that two runs
+  // of one fixture produce the same image.
+  if (headlessMode) {
+      SetRandomSeed(20260814u);   // raylib's own generator (Random01 -> GetRandomValue)
+      // ...and libc's, which is a SEPARATE stream that SetRandomSeed does not
+      // touch. InitWindow seeds it from time(NULL), and several places draw
+      // from it directly (core/atmosphere.c's motes and stars,
+      // core/skill_helper.c, galaxy_spiral_skill). Seeding only raylib's left
+      // scattered sprites landing a few pixels apart between two runs — small
+      // in area, but up to 166/255 per pixel, which is not a noise floor you
+      // can measure a parameter against.
+      srand(20260814u);
+  }
+  // Third leg: load-shedding gates whose input is wall clock decide differently
+  // between two runs, which changes what is DRAWN. They consult this and admit
+  // the work while capturing.
+  TimeFX_SetDeterministic(headlessMode);
+
   // Audio device + SFX/music framework (no-op & silent until the user drops
   // assets under assets/audio/). Headless autotest/render modes skip it.
   if (!headlessMode) Audio_Init();
@@ -413,7 +439,13 @@ int main(int argc, char **argv) {
                                .highlightTint = {1.10f, 1.02f, 0.90f},
                                // Đợt G1 — cinematic tone mapping on by default.
                                .tonemapEnabled = true,
-                               .exposure = 1.00f};
+                               .exposure = 1.00f,
+                               // Đợt G5 — LUT grading. On by default, but it is
+                               // a no-op (and the shader branch stays disabled)
+                               // until a graded strip exists at
+                               // assets/luts/grade.png. See core/color_grade_lut.h.
+                               .lutEnabled = true,
+                               .lutStrength = 1.00f};
 
   if (visualVerifyMode) {
       VisualVerify_Init(Skill_GetIndexByName(VisualVerify_GetSkillName()));
@@ -477,7 +509,16 @@ int main(int argc, char **argv) {
          visualVerifyMode ? !VisualVerify_IsFinished()  :
          renderVFXMode    ? (renderVFXFrame <= renderVFXWarmup) :
          !WindowShouldClose()) {
-    float dt = (autoTestMode || visualVerifyMode || renderVFXMode) ? (1.0f / 60.0f) : TimeFX_Apply(GetFrameTime());
+    // The headless paths pin dt so a capture is reproducible. That pin only ever
+    // covered THIS variable, while VFX/composition code re-read GetFrameTime()
+    // on its own — free-running here, since headless also skips SetTargetFPS —
+    // so every capture landed on a different animation phase. Publishing the raw
+    // delta through TimeFX is what makes the pin actually reach them; see
+    // TimeFX_RawDelta in core/time_fx.h.
+    const bool headlessFixedStep = (autoTestMode || visualVerifyMode || renderVFXMode);
+    float rawDt = headlessFixedStep ? (1.0f / 60.0f) : GetFrameTime();
+    TimeFX_SetRawDelta(rawDt);
+    float dt = headlessFixedStep ? rawDt : TimeFX_Apply(rawDt);
     g_totalElapsed += dt;
 
     // Android EGL present diagnostic (WUXING_PRESENT_TEST=1): bypasses ALL game

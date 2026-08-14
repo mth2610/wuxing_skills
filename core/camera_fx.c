@@ -1,4 +1,5 @@
 #include "core/camera_fx.h"
+#include "core/time_fx.h"   // TimeFX_Elapsed — pinned clock; GetTime() is wall clock
 #include "raymath.h"
 #include <math.h>
 
@@ -23,7 +24,7 @@ void CameraFX_Update(Camera3D *camera, float dt) {
   // Giảm dần chấn động
   currentTrauma = Clamp(currentTrauma - decayRate * dt, 0.0f, 1.0f);
 
-  float time = (float)GetTime();
+  float time = TimeFX_Elapsed();
   float shake = currentTrauma * currentTrauma; // Sử dụng trauma^2 cho độ giật tự nhiên
 
   // Biên độ rung lắc tối đa (tính bằng đơn vị 3D trong sandbox)

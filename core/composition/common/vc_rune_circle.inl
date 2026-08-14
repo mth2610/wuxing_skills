@@ -158,7 +158,7 @@ void VFX_ComposeRuneCircle(Vector3 center, Vector3 normal, VC_MaterialId mat,
 
     Vector3 u, v;
     Rune_PlaneBasis(normal, &u, &v);
-    float time = (float)GetTime();
+    float time = TimeFX_Elapsed();
 
     Color bodyCol = VC_Whiten(m->glow, s_runeWhite);
     Color edgeCol = m->body;

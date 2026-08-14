@@ -131,7 +131,7 @@ void VFX_ComposeGlintSparkle(Vector3 center, VC_MaterialId mat, float scale, flo
     // Spawn budget carried between frames, so the rate is framerate-independent
     // and a slow frame does not emit a burst.
     static float s_accum = 0.0f;
-    s_accum += GetFrameTime() * (34.0f * s_glintRate);
+    s_accum += TimeFX_RawDelta() * (34.0f * s_glintRate);
     int spawn = (int)s_accum;
     if (spawn > 5) spawn = 5;          // clamp after a hitch
     s_accum -= (float)spawn;

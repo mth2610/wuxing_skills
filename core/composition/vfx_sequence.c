@@ -253,7 +253,7 @@ void VFX_Sequence_Update(float scaledDt)
     // through TimeFX_Apply by the time VFX_Compose_Update receives it, so it
     // cannot be un-scaled back without knowing the factor — take the raw value
     // from the source instead.
-    float rawDt = GetFrameTime();
+    float rawDt = TimeFX_RawDelta();
 
     for (int i = 0; i < VFX_SEQ_MAX; i++) {
         struct VFX_Sequence *s = &s_seqs[i];

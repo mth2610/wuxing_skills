@@ -1,4 +1,5 @@
 #include "core/skill_manager.h"
+#include "core/time_fx.h"   // TimeFX_Elapsed — pinned clock; GetTime() is wall clock
 #include "core/skills_config.h"
 #include "entities/entities.h"
 
@@ -482,7 +483,7 @@ void UpdateSkillManager(float dt, Vector3 enemyPos, float enemyRadius)
 
 void DrawSkillManagerWorld3D(void)
 {
-  float time = (float)GetTime();
+  float time = TimeFX_Elapsed();
   EnsureBuiltInRegistered();
 
   for (int i = 0; i < MAX_ACTIVE_PORTALS; i++)

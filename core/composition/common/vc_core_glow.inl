@@ -48,7 +48,7 @@ void VFX_ComposeCoreGlow(Vector3 center, VC_MaterialId mat, float radius,
     // any per-frame emitter (VFX_PLAN §0.3). A count here would make the glow's
     // brightness a function of the frame rate.
     static float s_accum = 0.0f;
-    s_accum += GetFrameTime() * Math_Mix(CORE_GLOW_RATE_MIN, CORE_GLOW_RATE_MAX, i01);
+    s_accum += TimeFX_RawDelta() * Math_Mix(CORE_GLOW_RATE_MIN, CORE_GLOW_RATE_MAX, i01);
     int batch = (int)s_accum;
     if (batch > CORE_GLOW_BATCH_MAX)
         batch = CORE_GLOW_BATCH_MAX;
@@ -110,7 +110,7 @@ void VFX_ComposeCoreGlow(Vector3 center, VC_MaterialId mat, float radius,
     if (s_coreGlowLight > 0.5f)
     {
         static float s_lightAccum = 0.0f;
-        s_lightAccum += GetFrameTime();
+        s_lightAccum += TimeFX_RawDelta();
         if (s_lightAccum >= 0.07f)
         {
             s_lightAccum = 0.0f;

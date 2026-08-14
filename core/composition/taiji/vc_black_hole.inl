@@ -34,7 +34,7 @@ void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float 
         return;
 
     const VFX_ElementMaterial *mat = VFX_Material(matId);
-    float dt = GetFrameTime();
+    float dt = TimeFX_RawDelta();
 
     // ─────────────────────────────────────────────────────────────────────
     // LAYER 1: EVENT HORIZON — opaque near-black sphere, thin colored rim
@@ -99,7 +99,7 @@ void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float 
         VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
     SkillManager_BeginShader(s_swirlSh);
 
-    float tShader = (float)GetTime();
+    float tShader = TimeFX_Elapsed();
     if (s_uSwirlTime >= 0) SetShaderValue(s_swirlSh, s_uSwirlTime, &tShader, SHADER_UNIFORM_FLOAT);
 
     Vector4 bodyV = ColorNormalize((Color){40, 10, 60, 255});   // deep violet, barely visible face-on

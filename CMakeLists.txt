@@ -141,6 +141,7 @@ add_executable(wuxing
     core/fluid/fluid_surface.c
     core/path_spline.c
     core/post_fx.c
+    core/color_grade_lut.c
     core/ribbon_strip.c
     core/lightning/lightning_stroke.c
     core/screen_distort.c

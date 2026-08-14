@@ -1,6 +1,7 @@
 #include "vfx_test.h"
 #include "core/particles/gpu/particle_gpu_legacy.h"
 #include "core/camera_fx.h"
+#include "core/time_fx.h"   // TimeFX_RawDelta — headless captures pin dt; GetFrameTime does not
 #include "sandbox/auto_test.h"
 #include "sandbox/colour_probe.h"
 #include "sandbox/fresnel_probe.h"
@@ -297,7 +298,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
         s_hasTestPath = true;
     }
 
-    float dt = GetFrameTime();
+    float dt = TimeFX_RawDelta();
     (void)dt;
 
     /* P — chụp CHỈ vùng hiệu ứng ra autotest_output/vfx_<n>_<số>.png.
@@ -563,7 +564,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
 
     if (s_isPlayingMesh && s_testCategory == TEST_CAT_MESH)
     {
-        s_meshTime += GetFrameTime();
+        s_meshTime += TimeFX_RawDelta();
         if (s_meshTime > 5.0f)
             s_isPlayingMesh = false;
     }
@@ -800,7 +801,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
 void VFXTest_Draw3D(void)
 {
     VFXTest_InitFixtures();
-    float dt = GetFrameTime();
+    float dt = TimeFX_RawDelta();
 
     if (s_isPlayingMesh)
     {

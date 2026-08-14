@@ -59,7 +59,7 @@ void VFX_ComposeLiquidBench(Vector3 center, float spacing, float t01)
 {
     if (spacing <= 0.0f) spacing = 1.1f;
     t01 = Clamp(t01, 0.0f, 1.0f);
-    float phase = (float)GetTime() * (0.55f + 0.45f * t01);
+    float phase = TimeFX_Elapsed() * (0.55f + 0.45f * t01);
 
     const float radius = 0.26f;
     /* Kernels overlap by construction: 26 of them on a shell of radius 0.26 m

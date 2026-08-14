@@ -1,4 +1,5 @@
 #include "core/fluid/fluid_surface.h"
+#include "core/time_fx.h"   // TimeFX_IsDeterministic — capture must not be load-shed by wall clock
 #include "core/resource_manager.h"
 #include "core/screen_distort.h"
 #include "core/particles/particle_manager.h"
@@ -407,7 +408,14 @@ bool FluidSurface_RequestBody(FluidSurfacePriority priority, Vector3 center,
      * GetFrameTime() is read live rather than cached at composite time — see
      * the latch note on s_surfaceRunStamp. It already reports the PREVIOUS
      * frame's duration, which is the number this test wants. */
-    if (!alreadyRunning && GetFrameTime()*1000.0f > FLUID_SURFACE_BUDGET_MS
+    /* A reproducible capture must not have its CONTENT decided by how fast this
+     * machine happened to render the previous frame. Pinning the clock here
+     * would be the wrong fix (the gate would measure a constant and admit
+     * forever, in real play too); skipping the shed only while capturing keeps
+     * the gate honest at runtime and makes the capture show full quality, which
+     * is what it is for. See TimeFX_IsDeterministic. */
+    if (!alreadyRunning && !TimeFX_IsDeterministic()
+        && GetFrameTime()*1000.0f > FLUID_SURFACE_BUDGET_MS
         && priority < FLUID_PRIORITY_ULTIMATE)
         return false;
 

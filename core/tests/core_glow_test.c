@@ -237,7 +237,7 @@ static void Test_ExtractionChangedTheAddressAndNothingElse(void)
           "the halo still takes no emissive boost");
 
     // Rate, not count.
-    CHECK(FileHas(glow, "s_accum += GetFrameTime() * Math_Mix(CORE_GLOW_RATE_MIN, CORE_GLOW_RATE_MAX, i01);"),
+    CHECK(FileHas(glow, "s_accum += TimeFX_RawDelta() * Math_Mix(CORE_GLOW_RATE_MIN, CORE_GLOW_RATE_MAX, i01);"),
           "it still emits by rate with a carried accumulator");
 
     // The light kept its own timer: the pool is 16 slots and a 0.09 s light

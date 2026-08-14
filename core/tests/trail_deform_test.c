@@ -794,7 +794,7 @@ static void Test_MirrorStillMatchesSource(void)
           "and no fold is applied on top of an already-folded coordinate");
     CHECK(FileHas(c, "arc[0] = fmodf(t->nodeUV[headNode], 8192.0f);"),
           "the cumulative arc length is bounded before it reaches the shader");
-    CHECK(FileHas(c, "float time = (float)fmod(GetTime(), 4096.0);"),
+    CHECK(FileHas(c, "float time = fmodf(TimeFX_Elapsed(), 4096.0f);"),
           "the C layer still hands the trail shaders a wrapped clock");
     // Step 13 — the ALONG-trail colour ramp. An intensity-only ramp leaves the
     // whole ribbon one flat hue down its length.

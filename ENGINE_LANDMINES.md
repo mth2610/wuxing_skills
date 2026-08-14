@@ -753,3 +753,43 @@ measures is one the gate's own decision changes. If it is, the gate is a
 feedback oscillator, and the only stable designs are decide-once-per-body or
 measuring something the decision cannot move. Guarded by
 `core/tests/fluid_cost_gate_test.c` (the anti-strobe block).
+
+## A fixed timestep that only pins the LOOP does not pin the SIMULATION (14/08/2026)
+
+**Symptom.** `--render-vfx` produced a different image every run at identical
+settings. Sweeping `bloom_intensity` 0.12 → 0.60 gave a NON-MONOTONIC series —
+0.60 dimmer than 0.40 — and four consecutive captures at one fixed setting
+differed more from each other than the whole swept range did. The sweep read as
+a plausible, interpretable result. It was noise.
+
+**Cause.** `main.c` pins `dt = 1/60` on the headless paths (`--render-vfx`,
+`--autotest`, `--visual-verify`) so a capture is reproducible — but the pin only
+ever covered `main.c`'s own local variable. Roughly a dozen VFX systems called
+raylib's `GetFrameTime()` directly (`sandbox/vfx_test.c`, which drives EVERY
+tester fixture, plus ~10 accumulators under `core/composition/`). Headless also
+skips `SetTargetFPS(60)`, so `GetFrameTime()` there is free-running wall clock:
+frame cost varies run to run — a cold vs warm rlvk pipeline cache alone is
+enough — and integrates into a different animation phase by capture time.
+
+**The trap inside the trap.** A fixture can look perfectly deterministic because
+it has ALREADY FINISHED. LIGHTNING IMPACT gave byte-identical captures at
+`--warmup 30` and divergent ones at `--warmup 8`, where it still had content.
+The first result was the determinism of an empty frame, and it briefly "proved"
+a working instrument that did not exist.
+
+**Fix.** One publisher, one accessor: `TimeFX_SetRawDelta()` in `main.c` next to
+the pin, `TimeFX_RawDelta()` everywhere that advances VFX state. Deliberately
+NOT hitstop-scaled — a determinism fix must not also change what hitstop does.
+
+**Rule.** A fixed-timestep harness is only as good as its narrowest reader. When
+you pin time, pin it at a source every simulator reads, and treat a direct
+`GetFrameTime()` in simulation code as a bug. Wall clock stays correct for perf
+counters and frame-budget gates — pinning THOSE makes them measure a constant
+and report a healthy frame forever, so both directions are guarded by
+`core/tests/frame_delta_determinism_test.c`.
+
+**Before trusting any headless A/B:** capture the same fixture twice at the
+warmup you intend to measure at and compare checksums. An instrument that has
+not been shown to repeat cannot support a conclusion in either direction —
+including a null result. Related: `core/docs/LANDMINES.md`, and the standing
+rule to check `tuning.cfg` for persisted overrides before any visual comparison.

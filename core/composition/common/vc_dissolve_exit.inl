@@ -104,7 +104,7 @@ void VFX_ComposeDissolveExit(Vector3 pos, VC_MaterialId mat, float scale, float 
     if (t01 > 1.0f) t01 = 1.0f;
 
     const VFX_ElementMaterial *m = VFX_Material(mat);
-    float time = (float)GetTime();
+    float time = TimeFX_Elapsed();
 
     // ── Body: erodes away under the dissolve shader ──────────────────────────
     if (s_dissolveSh.id != 0)
@@ -183,7 +183,7 @@ void VFX_ComposeDissolveExit(Vector3 pos, VC_MaterialId mat, float scale, float 
     {
         static float s_emberAccum = 0.0f;
         float front = 4.0f * t01 * (1.0f - t01);        // 0 → 1 → 0
-        s_emberAccum += GetFrameTime() * (46.0f * front * s_dissolveEmber);
+        s_emberAccum += TimeFX_RawDelta() * (46.0f * front * s_dissolveEmber);
         int n = (int)s_emberAccum;
         if (n > 8) n = 8;
         s_emberAccum -= (float)n;
@@ -227,7 +227,7 @@ void VFX_ComposeDissolveExit(Vector3 pos, VC_MaterialId mat, float scale, float 
     // light fades with the front rather than with t01, or the last frame would
     // be the brightest.
     static float s_lightAccum = 0.0f;
-    s_lightAccum += GetFrameTime();
+    s_lightAccum += TimeFX_RawDelta();
     if (s_lightAccum >= 0.07f)
     {
         s_lightAccum = 0.0f;

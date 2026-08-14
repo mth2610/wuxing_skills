@@ -325,7 +325,7 @@ static void Test_MirrorMatchesTheSource(void)
           "it lies in a plane the WORLD chose, from the shared guarded frame helper");
 
     // NOT A SPINNING PLATE. The swirl multiplies a UV, never an angle.
-    CHECK(FileHas(inl, "float uScroll = (float)GetTime() * PORTAL_SWIRL * s_portalSwirl;"),
+    CHECK(FileHas(inl, "float uScroll = TimeFX_Elapsed() * PORTAL_SWIRL * s_portalSwirl;"),
           "the swirl is a UV scroll");
     CHECK(FileHas(inl, "float u0 = (float)s / (float)slices + uScroll;"),
           "...added to the polar u, so the material turns and the silhouette does not");

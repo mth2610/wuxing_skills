@@ -2469,3 +2469,15 @@ just moves the material away from correct.
 - **Rule:** adding a shader means adding its `configure_file` line in the same
   commit. Same failure shape as the trail shaders (see the comment at that line
   in `CMakeLists.txt`).
+
+### VFX must advance on the engine delta, not GetFrameTime()
+- **Symptom:** a headless `--render-vfx` capture differs every run, so any A/B
+  measures noise while looking like a clean result.
+- **Cause:** `main.c`'s fixed-timestep pin covered only its own `dt`; ~10
+  `core/composition/*.inl` accumulators (and the VFX tester itself) re-read
+  raylib's wall-clock `GetFrameTime()`.
+- **Rule:** simulation reads `TimeFX_RawDelta()`; only perf counters and
+  frame-budget gates keep `GetFrameTime()`. Full write-up, including why a
+  fixture can look deterministic purely because it has finished:
+  `ENGINE_LANDMINES.md` — "A fixed timestep that only pins the LOOP".
+  Guard: `core/tests/frame_delta_determinism_test.c`.

@@ -376,7 +376,7 @@ void VFX_ComposeSweepSlash(Vector3 origin, Vector3 dir, VC_MaterialId mat,
     // The distortion pass costs per-fragment across the whole screen for every
     // active source (PROGRESS, 28/07/2026) — hence `slash_distort` as a switch,
     // and hence the deliberately short life.
-    float dt = GetFrameTime();
+    float dt = TimeFX_RawDelta();
     // E8 tier budget. The distortion pass costs per fragment across the WHOLE
     // screen for every live source, which is exactly the shape of cost the Mali
     // A33 cannot absorb. Below MED the slash keeps its geometry and loses only

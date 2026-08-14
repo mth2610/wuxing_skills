@@ -471,7 +471,7 @@ static void Test_ProfilesAreThreeDifferentShapes(void) {
   CHECK(FileHas("core/trails/trail_system.c",
                 "float runNoiseOffset = t->tubeDeformFrozen ? 0.0f : (-t->uvScrollOffset * 0.5f);") &&
             FileHas("core/trails/trail_system.c",
-                    "float buildTime = t->tubeDeformFrozen ? 0.0f : (float)GetTime();"),
+                    "float buildTime = t->tubeDeformFrozen ? 0.0f : TimeFX_Elapsed();"),
         "freezing the deform stops BOTH its clocks — the along-offset and the "
         "noise's own time axis; stopping one still leaves motion");
   CHECK(FileHas("core/composition/common/vc_smoke_column.inl", "\"smokecolumn_freeze\"") &&

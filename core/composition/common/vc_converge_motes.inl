@@ -209,7 +209,7 @@ void VFX_ComposeConvergeMotes(Vector3 center, VC_MaterialId mat, float radius,
     // makes density a function of the frame rate — the rule that has bitten this
     // project in three separate effects.
     static float s_accum = 0.0f;
-    s_accum += GetFrameTime() * ((float)moteCount * Math_Mix(0.6f, 1.8f, t01) * s_chargeRate);
+    s_accum += TimeFX_RawDelta() * ((float)moteCount * Math_Mix(0.6f, 1.8f, t01) * s_chargeRate);
     int spawn = (int)s_accum;
     if (spawn > 24) spawn = 24;         // clamp after a hitch
     s_accum -= (float)spawn;

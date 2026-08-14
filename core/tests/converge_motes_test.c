@@ -199,7 +199,7 @@ static void Test_ExtractionChangedTheAddressAndNothingElse(void)
           "so is the lifetime spread");
     CHECK(FileHas(mot, ".render.emissiveBoost = Math_Mix(2.0f, 4.5f, t01),"),
           "and the brightness ramp");
-    CHECK(FileHas(mot, "s_accum += GetFrameTime() * ((float)moteCount * Math_Mix(0.6f, 1.8f, t01) * s_chargeRate);"),
+    CHECK(FileHas(mot, "s_accum += TimeFX_RawDelta() * ((float)moteCount * Math_Mix(0.6f, 1.8f, t01) * s_chargeRate);"),
           "it still emits by RATE with a carried accumulator");
     CHECK(FileHas(mot, "float shell = radius * Math_Mix(1.0f, 0.78f, t01);"),
           "the emitter shell still tightens as the charge fills");
