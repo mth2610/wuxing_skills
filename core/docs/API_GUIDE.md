@@ -2566,7 +2566,40 @@ Live demo: NEW FX tab → `SEQUENCE ENVELOPE E3`.
 
 ---
 
-## Making a particle GLOW (the hot core)
+## Shared appearance across particles, trails, and decals
+
+Use `VFXAppearanceId` when an effect wants a standard visual intent. The same
+enum resolves surface/blend, contrast, body coverage, HDR emission, and lighting
+for every migrated geometry provider. `VFX_APPEARANCE_INHERIT` is zero and keeps
+all legacy fields exact.
+
+```c
+particle.render.appearance = VFX_APPEARANCE_GLOW;
+trail.material.appearance = VFX_APPEARANCE_GLOW;
+decalMaterial.appearance = VFX_APPEARANCE_GLOW;
+```
+
+Available intents:
+
+- `NORMAL`: alpha, lit, no HDR emission.
+- `SMOKE` / `DUST`: alpha body with their shared contrast profile.
+- `GLOW` / `MAGIC`: unlit additive HDR emission, no body coverage.
+- `FIRE`: body plus stronger HDR emission. Packed-volume particles use one
+  premultiplied draw; ordinary sprites use an alpha/HDR fallback, while trails
+  and decals use their existing body/emission split.
+
+The caller still owns geometry, motion, colour, texture, and lifetime. It does
+not repeat blend/bloom/contrast policy. Resolution happens once when the object
+is spawned; draw loops consume already-resolved values. The GPU particle path
+currently batches additive billboards only, so named alpha/premultiplied
+appearances automatically use the CPU fallback rather than rendering with the
+wrong blend law.
+
+## Making a particle GLOW (manual override)
+
+Prefer `.render.appearance = VFX_APPEARANCE_GLOW` for the standard look. The
+fields below remain available when an effect deliberately needs authored values
+outside the shared preset.
 
 Four knobs, and the first two are mandatory — a boost on its own does nothing.
 

@@ -381,6 +381,15 @@
 **Enums:** VFXContrastProfileId { VFX_CONTRAST_NONE,VFX_CONTRAST_SMOKE,VFX_CONTRAST_FIRE,VFX_CONTRAST_ENERGY,VFX_CONTRAST_MAGIC,VFX_CONTRAST_DUST,VFX_CONTRAST_COUNT };VFXContrastLayer { VFX_CONTRAST_BODY,VFX_CONTRAST_EMISSION }
 **Structs** (fields in header): VFXContrastProfile
 
+### `core/vfx_appearance.h`
+```c
+  VFXResolvedAppearance VFXAppearance_Resolve(VFXAppearanceId id, VFXResolvedAppearance legacy);
+  bool VFXResolvedAppearance_UsesBody(VFXResolvedAppearance appearance);
+  bool VFXResolvedAppearance_UsesEmission(VFXResolvedAppearance appearance);
+```
+**Enums:** VFXAppearanceId { VFX_APPEARANCE_INHERIT,VFX_APPEARANCE_NORMAL,VFX_APPEARANCE_SMOKE,VFX_APPEARANCE_DUST,VFX_APPEARANCE_GLOW,VFX_APPEARANCE_FIRE,VFX_APPEARANCE_MAGIC,VFX_APPEARANCE_COUNT };VFXSurfaceMode { VFX_SURFACE_ALPHA,VFX_SURFACE_ADDITIVE,VFX_SURFACE_PREMULTIPLIED }
+**Structs** (fields in header): VFXResolvedAppearance
+
 ### `core/screen_distort.h`
 ```c
   void ScreenDistort_Init(int width, int height);

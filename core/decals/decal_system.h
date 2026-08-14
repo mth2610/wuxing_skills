@@ -4,6 +4,7 @@
 #include "raylib.h"
 #include "core/geometry/procedural_mesh_utils.h"
 #include "core/vfx_contrast.h"
+#include "core/vfx_appearance.h"
 #include <stdbool.h>
 
 #define MAX_DECALS 64
@@ -24,6 +25,8 @@ typedef struct {
     int priority; // 0..255; higher survives conformal-budget pressure first
     float maxDrawDistance; // <= 0 means unlimited
     VFXContrastProfileId contrastProfile; // NONE keeps legacy material exact
+    float bodyOpacity; // 0 is valid for named GLOW; INHERIT zero defaults to 1
+    VFXAppearanceId appearance;
 } DecalMaterialParams;
 
 typedef struct {

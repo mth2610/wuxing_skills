@@ -193,6 +193,10 @@ typedef struct
     // decals. Zero/NONE is identity for all existing trail materials.
     VFXContrastProfileId contrastProfile;
 
+    // Geometry-neutral appearance. INHERIT preserves blendMode/bodyOpacity/
+    // hdrGain/contrastProfile; named values resolve those fields centrally.
+    VFXAppearanceId appearance;
+
     // ── THE RECIPE (core/trails/trail_recipe.h) ─────────────────────────────
     // Non-NULL = this trail is described by a recipe, and the renderer reads
     // the warp, the layered sampling, the masks and the colour from there

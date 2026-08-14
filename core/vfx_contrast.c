@@ -1,4 +1,5 @@
 #include "core/vfx_contrast.h"
+#include "core/vfx_appearance.h"
 #include <stddef.h>
 
 static const VFXContrastProfile s_profiles[VFX_CONTRAST_COUNT] = {
@@ -93,4 +94,52 @@ void VFXContrast_GetShaderParams(VFXContrastProfileId id, float outParams[4])
     outParams[1] = profile->edgeSharpness;
     outParams[2] = profile->coreSize;
     outParams[3] = profile->coreIntensity;
+}
+
+static const VFXResolvedAppearance s_appearances[VFX_APPEARANCE_COUNT] = {
+    [VFX_APPEARANCE_INHERIT] = {
+        VFX_SURFACE_ALPHA, VFX_CONTRAST_NONE, 1.0f, 0.0f, 1.0f, false
+    },
+    [VFX_APPEARANCE_NORMAL] = {
+        VFX_SURFACE_ALPHA, VFX_CONTRAST_NONE, 1.0f, 0.0f, 1.0f, false
+    },
+    [VFX_APPEARANCE_SMOKE] = {
+        VFX_SURFACE_ALPHA, VFX_CONTRAST_SMOKE, 0.90f, 0.0f, 1.0f, false
+    },
+    [VFX_APPEARANCE_DUST] = {
+        VFX_SURFACE_ALPHA, VFX_CONTRAST_DUST, 0.78f, 0.0f, 1.0f, false
+    },
+    [VFX_APPEARANCE_GLOW] = {
+        VFX_SURFACE_ADDITIVE, VFX_CONTRAST_ENERGY, 0.0f, 2.5f, 0.85f, true
+    },
+    [VFX_APPEARANCE_FIRE] = {
+        VFX_SURFACE_PREMULTIPLIED, VFX_CONTRAST_FIRE, 0.58f, 4.0f, 0.72f, true
+    },
+    [VFX_APPEARANCE_MAGIC] = {
+        VFX_SURFACE_ADDITIVE, VFX_CONTRAST_MAGIC, 0.0f, 3.0f, 0.78f, true
+    }
+};
+
+static VFXAppearanceId VFXAppearance_Clamp(VFXAppearanceId id)
+{
+    if (id <= VFX_APPEARANCE_INHERIT || id >= VFX_APPEARANCE_COUNT)
+        return VFX_APPEARANCE_INHERIT;
+    return id;
+}
+
+VFXResolvedAppearance VFXAppearance_Resolve(VFXAppearanceId id,
+                                            VFXResolvedAppearance legacy)
+{
+    id = VFXAppearance_Clamp(id);
+    return id == VFX_APPEARANCE_INHERIT ? legacy : s_appearances[id];
+}
+
+bool VFXResolvedAppearance_UsesBody(VFXResolvedAppearance appearance)
+{
+    return appearance.bodyOpacity > 0.0f;
+}
+
+bool VFXResolvedAppearance_UsesEmission(VFXResolvedAppearance appearance)
+{
+    return appearance.emissionIntensity > 0.0f;
 }

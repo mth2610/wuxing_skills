@@ -24,6 +24,7 @@ typedef enum {
 #include "core/sprite_anim.h"
 #include "core/skill_curve.h"
 #include "core/vfx_contrast.h"
+#include "core/vfx_appearance.h"
 
 // 1. General Config
 typedef struct {
@@ -165,6 +166,11 @@ typedef struct {
     // compositions select a semantic profile instead of hand-tuning each
     // particle/ribbon/decal renderer independently.
     VFXContrastProfileId contrastProfile;
+
+    // Shared renderer-neutral visual intent. INHERIT (0) preserves every
+    // legacy field exactly; named appearances resolve blend, lighting,
+    // contrast and HDR gain centrally.
+    VFXAppearanceId appearance;
 
     // Velocity stretch
     float stretchStrength; // 0.0 = disabled (default)

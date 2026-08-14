@@ -264,10 +264,30 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->followStrength = config.followStrength;
   p->followCurve = config.followCurve;
   p->texId = config.render.texture.id;
-  p->blendMode = config.render.blendMode;
-  p->unlit = config.render.unlit;
-  p->contrastProfile = config.render.contrastProfile;
-  p->emissiveBoost = (config.render.emissiveBoost > 0.0f) ? config.render.emissiveBoost : 1.0f;
+  VFXResolvedAppearance particleAppearance = VFXAppearance_Resolve(
+      config.render.appearance,
+      (VFXResolvedAppearance){
+          .surface = (VFXSurfaceMode)config.render.blendMode,
+          .contrast = config.render.contrastProfile,
+          .bodyOpacity = config.render.blendMode == VFX_BLEND_ALPHA ? 1.0f : 0.0f,
+          .emissionIntensity = config.render.emissiveBoost > 0.0f
+                                   ? config.render.emissiveBoost : 1.0f,
+          .emissionThreshold = 1.0f,
+          .unlit = config.render.unlit != 0
+      });
+  // Only the packed-volume shader produces mathematically premultiplied RGB.
+  // A regular sprite still gets the FIRE look in one alpha/HDR draw, without
+  // feeding straight RGB into a premultiplied blend law.
+  if (config.render.appearance == VFX_APPEARANCE_FIRE &&
+      !config.render.volumeSheet)
+    particleAppearance.surface = VFX_SURFACE_ALPHA;
+  p->blendMode = (int)particleAppearance.surface;
+  p->unlit = particleAppearance.unlit ? 1 : 0;
+  p->contrastProfile = particleAppearance.contrast;
+  // Particle shaders use this as a colour gain even for non-emissive alpha
+  // particles, so semantic emission 0 maps to neutral gain 1 here.
+  p->emissiveBoost = particleAppearance.emissionIntensity > 0.0f
+                         ? particleAppearance.emissionIntensity : 1.0f;
   p->volumeSheet = config.render.volumeSheet;
   p->rampTexId = config.render.rampLUT.id;
   p->heatGain = (config.render.heatGain > 0.0f) ? config.render.heatGain : 1.0f;

@@ -26,6 +26,8 @@
 - No raw `Color{...}` literals — use `ELEMENT_COLOR_*` from `skill_manager.h`.
 - Shade/fade via `ColorAlpha`/`ColorLerp`, not manual channel math.
 - Multi-stage color → `ColorGradient`, not plain `colorStart/colorEnd`.
+- A texture used with straight alpha must keep neutral white RGB even in its
+  transparent border; additive-only dark RGB fringes become visible halos.
 
 ## 4. Resource Manager
 - Load via `ResourceManager_LoadTexture/LoadShader` only, never raw raylib load calls.

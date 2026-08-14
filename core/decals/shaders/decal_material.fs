@@ -9,6 +9,7 @@ uniform vec4 u_baseTint;
 uniform vec4 u_emissiveTint;
 uniform float u_emissiveThreshold;
 uniform float u_emissiveIntensity;
+uniform float u_bodyOpacity;
 out vec4 finalColor;
 
 void main()
@@ -34,6 +35,6 @@ void main()
     {
         float receiverLight = mix(0.64, 1.0, clamp(fragNormal.y, 0.0, 1.0));
         finalColor = vec4(body.rgb * u_baseTint.rgb * receiverLight,
-                          alpha * fragColor.a);
+                          alpha * fragColor.a * u_bodyOpacity);
     }
 }

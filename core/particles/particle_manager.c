@@ -31,6 +31,21 @@ static bool ParticleManager_GPUCanRun(unsigned int modules)
     return s_caps.computeShader && s_caps.storageBuffer && (modules & cpuOnly) == 0;
 }
 
+static VFXResolvedAppearance ParticleManager_ResolveAppearance(const ParticleConfig *p)
+{
+    return VFXAppearance_Resolve(
+        p->render.appearance,
+        (VFXResolvedAppearance){
+            .surface = (VFXSurfaceMode)p->render.blendMode,
+            .contrast = p->render.contrastProfile,
+            .bodyOpacity = p->render.blendMode == VFX_BLEND_ALPHA ? 1.0f : 0.0f,
+            .emissionIntensity = p->render.emissiveBoost > 0.0f
+                                     ? p->render.emissiveBoost : 1.0f,
+            .emissionThreshold = 1.0f,
+            .unlit = p->render.unlit != 0
+        });
+}
+
 static void ParticleManager_RefreshStats(void)
 {
     int cpu = 0, max = 0;
@@ -78,6 +93,14 @@ ParticleEmitterHandle ParticleManager_CreateEmitter(const ParticleEmitterDesc *d
         if (e->active) continue;
         memset(e, 0, sizeof(*e)); e->active = true; e->ownerId = ParticleManager_NextOwnerId(); e->desc = *desc;
         bool gpuOK = ParticleManager_GPUCanRun(desc->moduleFlags);
+        VFXResolvedAppearance appearance = ParticleManager_ResolveAppearance(&desc->particle);
+        // The current GPU billboard draw is one additive batch. A named alpha
+        // or premultiplied appearance must use the CPU renderer until blend is
+        // part of the GPU bucket key; rendering it with the wrong law is worse
+        // than the fallback. INHERIT keeps legacy backend selection exact.
+        if (desc->particle.render.appearance != VFX_APPEARANCE_INHERIT &&
+            appearance.surface != VFX_SURFACE_ADDITIVE)
+            gpuOK = false;
         e->gpu = desc->simulationPolicy == PARTICLE_SIM_GPU_ONLY ||
                  (desc->simulationPolicy == PARTICLE_SIM_AUTO && gpuOK);
         e->status = PARTICLE_EMITTER_OK;
@@ -126,18 +149,18 @@ void ParticleManager_Emit(ParticleEmitterHandle handle, int count)
     for (int i = 0; i < count; ++i) {
         if (e->gpu) {
             const ParticleConfig *p = &e->desc.particle;
-            VFXContrastLayer layer = p->render.blendMode == VFX_BLEND_ADDITIVE
+            VFXResolvedAppearance appearance = ParticleManager_ResolveAppearance(p);
+            VFXContrastLayer layer = appearance.surface == VFX_SURFACE_ADDITIVE
                                          ? VFX_CONTRAST_EMISSION
                                          : VFX_CONTRAST_BODY;
-            float boost = p->render.emissiveBoost > 0.0f
-                              ? p->render.emissiveBoost
-                              : 1.0f;
+            float boost = appearance.emissionIntensity > 0.0f
+                              ? appearance.emissionIntensity : 1.0f;
             if (layer == VFX_CONTRAST_EMISSION)
                 boost = VFXContrast_ApplyEmissionIntensity(
-                    boost, p->render.contrastProfile);
+                    boost, appearance.contrast);
             GpuParticleSystem_Spawn((GpuParticleConfig){ .position=p->position, .velocity=p->velocity,
-                .colorStart=VFXContrast_ApplyColor(p->colorStart, p->render.contrastProfile, layer),
-                .colorEnd=VFXContrast_ApplyColor(p->colorEnd, p->render.contrastProfile, layer), .radius=p->radius,
+                .colorStart=VFXContrast_ApplyColor(p->colorStart, appearance.contrast, layer),
+                .colorEnd=VFXContrast_ApplyColor(p->colorEnd, appearance.contrast, layer), .radius=p->radius,
                 .lifetime=p->lifetime, .forceField=p->forceField, .stretchStrength=p->stretchStrength,
                 .stretchMinSpeed=p->stretchMinSpeed, .collisionEnabled=p->collisionEnabled,
                 .collisionElasticity=p->collisionElasticity, .collisionFloorY=p->collisionFloorY,
@@ -156,19 +179,21 @@ void ParticleManager_EmitBatch(ParticleEmitterHandle handle,
     if (!e->active || e->status != PARTICLE_EMITTER_OK) return;
     for (int i = 0; i < count; ++i) {
         const ParticleConfig *p = &particles[i];
-        if (e->gpu) {
-            VFXContrastLayer layer = p->render.blendMode == VFX_BLEND_ADDITIVE
+        VFXResolvedAppearance appearance = ParticleManager_ResolveAppearance(p);
+        bool appearanceFitsGpu = p->render.appearance == VFX_APPEARANCE_INHERIT ||
+                                 appearance.surface == VFX_SURFACE_ADDITIVE;
+        if (e->gpu && appearanceFitsGpu) {
+            VFXContrastLayer layer = appearance.surface == VFX_SURFACE_ADDITIVE
                                          ? VFX_CONTRAST_EMISSION
                                          : VFX_CONTRAST_BODY;
-            float boost = p->render.emissiveBoost > 0.0f
-                              ? p->render.emissiveBoost
-                              : 1.0f;
+            float boost = appearance.emissionIntensity > 0.0f
+                              ? appearance.emissionIntensity : 1.0f;
             if (layer == VFX_CONTRAST_EMISSION)
                 boost = VFXContrast_ApplyEmissionIntensity(
-                    boost, p->render.contrastProfile);
+                    boost, appearance.contrast);
             GpuParticleSystem_Spawn((GpuParticleConfig){ .position=p->position, .velocity=p->velocity,
-                .colorStart=VFXContrast_ApplyColor(p->colorStart, p->render.contrastProfile, layer),
-                .colorEnd=VFXContrast_ApplyColor(p->colorEnd, p->render.contrastProfile, layer), .radius=p->radius,
+                .colorStart=VFXContrast_ApplyColor(p->colorStart, appearance.contrast, layer),
+                .colorEnd=VFXContrast_ApplyColor(p->colorEnd, appearance.contrast, layer), .radius=p->radius,
                 .lifetime=p->lifetime, .forceField=p->forceField, .stretchStrength=p->stretchStrength,
                 .stretchMinSpeed=p->stretchMinSpeed, .collisionEnabled=p->collisionEnabled,
                 .collisionElasticity=p->collisionElasticity, .collisionFloorY=p->collisionFloorY,

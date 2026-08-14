@@ -1268,6 +1268,36 @@ int SpawnTrailEntity(TrailConfig config)
     // GPU deform + packed material (mode 0 = classic pipeline untouched).
     t->deform = config.deform;
     t->material = config.material;
+    if (config.material.appearance != VFX_APPEARANCE_INHERIT)
+    {
+        BlendMode legacyBlend = config.useCustomBlendMode ? config.blendMode
+            : ((config.blendMode > 0) ? config.blendMode : BLEND_ADDITIVE);
+        VFXSurfaceMode legacySurface = legacyBlend == BLEND_ALPHA
+            ? VFX_SURFACE_ALPHA
+            : (legacyBlend == BLEND_ALPHA_PREMULTIPLY
+                   ? VFX_SURFACE_PREMULTIPLIED : VFX_SURFACE_ADDITIVE);
+        VFXResolvedAppearance appearance = VFXAppearance_Resolve(
+            config.material.appearance,
+            (VFXResolvedAppearance){
+                .surface = legacySurface,
+                .contrast = config.material.contrastProfile,
+                .bodyOpacity = config.material.bodyOpacity,
+                .emissionIntensity = config.material.hdrGain,
+                .emissionThreshold = 1.0f,
+                .unlit = true
+            });
+        t->useCustomBlendMode = true;
+        // Trail shaders already expose separate BODY and EMISSION resolvers.
+        // A premultiplied semantic therefore maps to alpha body + additive
+        // emission, rather than asking straight-colour ribbon vertices to obey
+        // a premultiplied blend contract they cannot encode.
+        t->blendMode = appearance.surface == VFX_SURFACE_ALPHA
+                           ? BLEND_ALPHA : BLEND_ADDITIVE;
+        t->material.contrastProfile = appearance.contrast;
+        t->material.bodyOpacity = appearance.bodyOpacity;
+        t->material.hdrGain = appearance.emissionIntensity > 0.0f
+                                  ? appearance.emissionIntensity : 1.0f;
+    }
     // ────────────────────────────────────────────────────────────────────
 
     for (int h = 0; h < TRAIL_HISTORY_COUNT; h++)

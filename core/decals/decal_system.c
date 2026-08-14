@@ -36,6 +36,7 @@ static int s_locMaterialBaseTint = -1;
 static int s_locMaterialEmissiveTint = -1;
 static int s_locMaterialThreshold = -1;
 static int s_locMaterialIntensity = -1;
+static int s_locMaterialBodyOpacity = -1;
 
 // Camera compensation
 static float g_cam_yaw = 0.0f;
@@ -105,6 +106,8 @@ static int Decal_CompareMaterialBucket(const DecalEntity *a, const DecalEntity *
         return a->material.emissiveThreshold < b->material.emissiveThreshold ? -1 : 1;
     if (a->material.emissiveIntensity != b->material.emissiveIntensity)
         return a->material.emissiveIntensity < b->material.emissiveIntensity ? -1 : 1;
+    if (a->material.bodyOpacity != b->material.bodyOpacity)
+        return a->material.bodyOpacity < b->material.bodyOpacity ? -1 : 1;
     return 0;
 }
 
@@ -476,6 +479,7 @@ void DecalSystem_Init(void)
     s_locMaterialEmissiveTint = GetShaderLocation(g_MaterialDecalShader, "u_emissiveTint");
     s_locMaterialThreshold = GetShaderLocation(g_MaterialDecalShader, "u_emissiveThreshold");
     s_locMaterialIntensity = GetShaderLocation(g_MaterialDecalShader, "u_emissiveIntensity");
+    s_locMaterialBodyOpacity = GetShaderLocation(g_MaterialDecalShader, "u_bodyOpacity");
 }
 
 static int FindSlot(int incomingPriority)
@@ -538,7 +542,8 @@ static int SpawnDecalCommon(Vector3 pos, float rotation, float rotSpeed,
     d->material = (DecalMaterialParams){ .baseTint = WHITE, .emissiveTint = WHITE,
                                          .emissiveThreshold = 1.1f, .emissiveIntensity = 0.0f,
                                          .priority = Decal_ClampPriority(priority), .maxDrawDistance = 0.0f,
-                                         .contrastProfile = VFX_CONTRAST_NONE };
+                                         .contrastProfile = VFX_CONTRAST_NONE, .bodyOpacity = 1.0f,
+                                         .appearance = VFX_APPEARANCE_INHERIT };
     d->blendMode = blendMode;
     d->active = true;
     d->flowScroll = false;
@@ -625,6 +630,21 @@ DecalHandle DecalSystem_AddConformalMaterialEx(Vector3 pos, float rotation, floa
     {
         d->material = *material;
         d->material.priority = Decal_ClampPriority(d->material.priority);
+        VFXResolvedAppearance appearance = VFXAppearance_Resolve(
+            d->material.appearance,
+            (VFXResolvedAppearance){
+                .surface = VFX_SURFACE_ALPHA,
+                .contrast = d->material.contrastProfile,
+                .bodyOpacity = d->material.bodyOpacity > 0.0f
+                                   ? d->material.bodyOpacity : 1.0f,
+                .emissionIntensity = d->material.emissiveIntensity,
+                .emissionThreshold = d->material.emissiveThreshold,
+                .unlit = false
+            });
+        d->material.contrastProfile = appearance.contrast;
+        d->material.bodyOpacity = appearance.bodyOpacity;
+        d->material.emissiveIntensity = appearance.emissionIntensity;
+        d->material.emissiveThreshold = appearance.emissionThreshold;
         const VFXContrastProfile *profile = VFXContrast_Get(
             d->material.contrastProfile);
         d->material.baseTint = VFXContrast_ApplyColor(
@@ -936,6 +956,7 @@ static void Decal_ApplyMaterialBucket(const DecalEntity *d)
     SetShaderValue(g_MaterialDecalShader, s_locMaterialEmissiveTint, emissiveTint, SHADER_UNIFORM_VEC4);
     SetShaderValue(g_MaterialDecalShader, s_locMaterialThreshold, &d->material.emissiveThreshold, SHADER_UNIFORM_FLOAT);
     SetShaderValue(g_MaterialDecalShader, s_locMaterialIntensity, &d->material.emissiveIntensity, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(g_MaterialDecalShader, s_locMaterialBodyOpacity, &d->material.bodyOpacity, SHADER_UNIFORM_FLOAT);
 }
 
 static void Decal_StampEmitVertex(const DecalEntity *d, float radial, float angle,

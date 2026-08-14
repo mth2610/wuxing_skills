@@ -111,6 +111,17 @@ value anywhere you would look.
   `DecalSystem_DrawBody()`/`DrawEmission()` so additive cracks never contaminate
   the premultiplied body buffer.
 
+### An additive flare sheet can draw a dark fringe when reused as an alpha body
+- **Symptom:** a glow is clean on black but gains a grey/black ring when given
+  an alpha body for bright-background readability.
+- **Cause:** additive blending hides dark RGB texels, while straight alpha
+  composites those same texels into the destination. Bilinear filtering also
+  pulls dark RGB from transparent border pixels into the visible shoulder.
+- **Rule:** any sheet shared with `BLEND_ALPHA` must carry neutral white RGB in
+  every texel, including transparent borders; shape only its alpha. Keep an
+  authored additive-only flare in emission, or generate a straight-alpha-safe
+  mask as `vc_ember_trail.inl` does. Never reuse an additive flare blindly.
+
 ### GPU particle blend state must not inherit the CPU particle pass
 - **Symptom:** a GPU VFX appears additive in some frames/scenes but alpha-blended
   in others, especially when CPU particles are present too.
