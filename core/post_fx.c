@@ -15,9 +15,22 @@ static RenderTexture2D bloomTex; // bright-pass output + final upsampled result 
 // LDR path) so nothing goes black on weak hardware. Query via PostFX_IsHDR().
 static bool s_hdrActive = false;
 
-// Dual-filter pyramid: dfTex[0]=1/8, dfTex[1]=1/16 of full resolution.
-#define DUAL_FILTER_LEVELS 2
+// Bloom pyramid below the 1/4 bright-pass target: dfTex[0]=1/8 … dfTex[4]=1/128.
+//
+// Was 2 levels (stopping at 1/16). That is the single biggest reason the old
+// glow read as "pasted on" rather than "radiating": the widest blur the chain
+// could produce was one 1/16 texel across, so a bright core got a tight halo and
+// nothing beyond it. AAA bloom gets its soft, far-reaching bleed from the deep
+// end of the pyramid — 1/64 and 1/128 contribute almost no detail and almost
+// all of the "rực rỡ". They are also nearly free: 1/128 of a 1080p frame is
+// 15x8 texels.
+#define DUAL_FILTER_LEVELS 5
 static RenderTexture2D dfTex[DUAL_FILTER_LEVELS];
+// How many levels actually got allocated. A small window (or a low-res mobile
+// backbuffer) runs out of pixels before 5 halvings, and a 0-sized render
+// texture is a driver-dependent failure rather than a black one, so the count
+// is resolved at init and every loop below is bounded by it.
+static int s_dfLevels = 0;
 
 static Shader brightShader;
 static Shader dsShader; // dual-filter downsample
@@ -69,15 +82,34 @@ static float   s_burstCurrent;    // decayed strength this frame
 // Uniform locations — bright pass
 static int brightThresholdLoc;
 static int brightMaxEnergyLoc;
+static int brightKneeLoc;
 static int brightSourceTexelSizeLoc;
-static float s_bloomMaxEnergy = 4.0f;  // 4.0 = the shader's historical constant
-// <=0 means "use whatever the caller configured" — so this knob can only ever
+// 0 = let the shader pick its own default (a SOFT ceiling at 12.0, not the old
+// hard cut at 4.0 — see bloom_bright.fs). Only ever an explicit override.
+static float s_bloomMaxEnergy = 0.0f;
+// <=0 means "use whatever the caller configured" — so these knobs can only ever
 // be an explicit override, never a silent change to a caller's setting.
 static float s_bloomIntensityOverride = 0.0f;
+static float s_bloomThresholdOverride = 0.0f;
+static float s_bloomKnee = 0.0f;      // 0 = shader default
+static float s_bloomScatterOverride = 0.0f;
+static float s_bloomKaris = 1.0f;     // 1 = firefly weighting on (see below)
 
 // Uniform locations — dual-filter passes
 static int dsTexSizeLoc;
+static int dsKarisLoc;
 static int usTexSizeLoc;
+static int usScatterLoc;
+
+// How much of each upsampled level is mixed into the level above it.
+// The upsample chain used to OVERWRITE its destination, which meant the final
+// 1/4 buffer held nothing but the smallest mip stretched back up — every bit of
+// near-range detail the pyramid had just computed was thrown away. It now
+// lerps: dst = mix(dst, tent(src), scatter). 0 = only the tight near halo,
+// 1 = only the widest haze; ~0.65 is the range that reads as a real lens.
+// The lerp form is self-normalising, so a deeper pyramid does not double the
+// total bloom energy the way an additive accumulate would.
+#define BLOOM_SCATTER_DEFAULT 0.65f
 
 static RenderTexture2D LoadRenderTextureWithFormat(int width, int height, int format)
 {
@@ -122,14 +154,23 @@ void PostFX_Init(int width, int height)
   SetTextureWrap(bloomTex.texture, TEXTURE_WRAP_CLAMP);
 
   int w = width / 4, h = height / 4;
+  s_dfLevels = 0;
   for (int i = 0; i < DUAL_FILTER_LEVELS; i++)
   {
     w /= 2;
     h /= 2;
+    // Stop before the pyramid degenerates. Below 4 texels the 13-tap
+    // downsample's ±2-texel footprint is entirely outside the image and the
+    // level contributes clamped edge colour, not blur.
+    if (w < 4 || h < 4)
+      break;
     dfTex[i] = LoadRenderTextureWithFormat(w, h, colorFmt);
     SetTextureFilter(dfTex[i].texture, TEXTURE_FILTER_BILINEAR);
     SetTextureWrap(dfTex[i].texture, TEXTURE_WRAP_CLAMP);
+    s_dfLevels++;
   }
+  TraceLog(LOG_INFO, "PostFX: bloom pyramid %d levels (1/4 .. 1/%d)", s_dfLevels + 1,
+           4 << s_dfLevels);
 
   brightShader = LoadShader(0, "core/shaders/bloom_bright.fs");
   dsShader = LoadShader(0, "core/shaders/bloom_downsample.fs");
@@ -138,9 +179,12 @@ void PostFX_Init(int width, int height)
 
   brightThresholdLoc = GetShaderLocation(brightShader, "u_threshold");
   brightMaxEnergyLoc = GetShaderLocation(brightShader, "u_maxEnergy");
+  brightKneeLoc = GetShaderLocation(brightShader, "u_knee");
   brightSourceTexelSizeLoc = GetShaderLocation(brightShader, "u_sourceTexelSize");
   dsTexSizeLoc = GetShaderLocation(dsShader, "u_texelSize");
+  dsKarisLoc = GetShaderLocation(dsShader, "u_karis");
   usTexSizeLoc = GetShaderLocation(usShader, "u_texelSize");
+  usScatterLoc = GetShaderLocation(usShader, "u_scatter");
 
   bloomEnabledLoc = GetShaderLocation(compositeShader, "u_bloomEnabled");
   bloomIntensityLoc = GetShaderLocation(compositeShader, "u_bloomIntensity");
@@ -173,8 +217,9 @@ void PostFX_Unload(void)
 {
   UnloadRenderTexture(mainRenderTex);
   UnloadRenderTexture(bloomTex);
-  for (int i = 0; i < DUAL_FILTER_LEVELS; i++)
+  for (int i = 0; i < s_dfLevels; i++)
     UnloadRenderTexture(dfTex[i]);
+  s_dfLevels = 0;
 
   UnloadShader(brightShader);
   UnloadShader(dsShader);
@@ -190,12 +235,22 @@ void PostFX_End(void) { EndTextureMode(); }
 // Uses DrawTexturePro so src is scaled to fill dst — required when src and dst
 // are different sizes (e.g. each level of the downsample/upsample pyramid).
 // `streakCfg` non-NULL = this is the DOWNSAMPLE pass and it carries E1b's
-// anamorphic uniforms. They are set INSIDE BeginShaderMode deliberately: under
-// rlvk, SetShaderValue writes into whichever shader is ACTIVE, so setting them
-// before the mode switch would silently land them on the previous shader.
+// anamorphic uniforms plus the Karis firefly weight. They are set INSIDE
+// BeginShaderMode deliberately: under rlvk, SetShaderValue writes into whichever
+// shader is ACTIVE, so setting them before the mode switch would silently land
+// them on the previous shader.
+//
+// `mixAlpha` <= 0 overwrites the destination (downsample: the destination holds
+// nothing worth keeping). > 0 lerps onto what is already there — that is how the
+// upsample chain folds a wide level into the tighter one above it instead of
+// replacing it. The factor travels as the upsample shader's `u_scatter` uniform,
+// which it emits as fragment alpha for BLEND_ALPHA to consume; it is NOT the
+// draw tint, which would have to survive vertex-colour plumbing on both
+// backends to mean anything.
 static void DualFilterPass(Shader sh, int texSizeLoc, Texture2D src,
                            int srcW, int srcH, int dstW, int dstH,
-                           const PostFXConfig *streakCfg)
+                           const PostFXConfig *streakCfg, float karis,
+                           float mixAlpha)
 {
   BeginShaderMode(sh);
 
@@ -210,18 +265,34 @@ static void DualFilterPass(Shader sh, int texSizeLoc, Texture2D src,
     SetShaderValue(sh, streakStrengthLoc, &str, SHADER_UNIFORM_FLOAT);
     SetShaderValue(sh, streakAngleLoc, &ang, SHADER_UNIFORM_FLOAT);
   }
+  if (streakCfg != NULL && dsKarisLoc >= 0)
+    SetShaderValue(sh, dsKarisLoc, &karis, SHADER_UNIFORM_FLOAT);
 
   // [TỐI ƯU]: Chuyển sang ép kiểu nghịch đảo
   Vector2 ts = {1.0f / (float)srcW, 1.0f / (float)srcH};
   SetShaderValue(sh, texSizeLoc, &ts, SHADER_UNIFORM_VEC2);
 
-  // [TỐI ƯU 1]: Tắt Alpha Blending để GPU ghi đè 100% pixel ảnh thay vì trộn màu
-  rlDisableColorBlend();
-  DrawTexturePro(src,
-                 (Rectangle){0, 0, (float)srcW, (float)srcH},
-                 (Rectangle){0, 0, (float)dstW, (float)dstH},
-                 (Vector2){0, 0}, 0.0f, WHITE);
-  rlEnableColorBlend();
+  Rectangle srcRect = {0, 0, (float)srcW, (float)srcH};
+  Rectangle dstRect = {0, 0, (float)dstW, (float)dstH};
+
+  if (mixAlpha > 0.0f)
+  {
+    if (mixAlpha > 1.0f) mixAlpha = 1.0f;
+    if (usScatterLoc >= 0)
+      SetShaderValue(sh, usScatterLoc, &mixAlpha, SHADER_UNIFORM_FLOAT);
+    // Straight (non-premultiplied) alpha: result = src.rgb*a + dst.rgb*(1-a),
+    // i.e. an exact mix() with a = the fragment alpha the shader emits.
+    BeginBlendMode(BLEND_ALPHA);
+    DrawTexturePro(src, srcRect, dstRect, (Vector2){0, 0}, 0.0f, WHITE);
+    EndBlendMode();
+  }
+  else
+  {
+    // [TỐI ƯU 1]: Tắt Alpha Blending để GPU ghi đè 100% pixel ảnh thay vì trộn màu
+    rlDisableColorBlend();
+    DrawTexturePro(src, srcRect, dstRect, (Vector2){0, 0}, 0.0f, WHITE);
+    rlEnableColorBlend();
+  }
 
   EndShaderMode();
 }
@@ -416,9 +487,9 @@ static void PostFX_PerfSample(const PostFXConfig *c, int width, int height)
   float avgMs = (float)(s_accum / (double)s_frames * 1000.0);
   TraceLog(LOG_INFO,
            "POSTFX perf: %.2f ms/frame avg over %d frames at %dx%d | tier=%d "
-           "bloom=%d streak=%d radial=%.2f tonemap=%d chroma=%d",
+           "bloom=%d/%dlv streak=%d radial=%.2f tonemap=%d chroma=%d",
            avgMs, s_frames, width, height, (int)GfxQuality_Get(),
-           c->bloomEnabled ? 1 : 0, c->bloomStreakEnabled ? 1 : 0,
+           c->bloomEnabled ? 1 : 0, s_dfLevels + 1, c->bloomStreakEnabled ? 1 : 0,
            (c->radialBlurEnabled ? c->radialBlurStrength : 0.0f),
            c->tonemapEnabled ? 1 : 0, c->chromaticEnabled ? 1 : 0);
 
@@ -446,18 +517,26 @@ void PostFX_Draw(const PostFXConfig *config)
     BeginTextureMode(bloomTex);
     // [TỐI ƯU 1]: Xóa ClearBackground(BLACK) gây lãng phí bộ nhớ FBO
     BeginShaderMode(brightShader);
-    SetShaderValue(brightShader, brightThresholdLoc, &config->bloomThreshold,
-                   SHADER_UNIFORM_FLOAT);
     // Registered lazily, never from an Init — Tuning_Init runs after the
     // subsystem inits, so an early registration silently keeps the default
     // (core/docs/LANDMINES.md).
     static bool s_maxEnergyReg = false;
     if (!s_maxEnergyReg) {
-      Tuning_RegisterFloat("bloom_max_energy", &s_bloomMaxEnergy, 4.0f);
+      Tuning_RegisterFloat("bloom_max_energy", &s_bloomMaxEnergy, 0.0f);
       Tuning_RegisterFloat("bloom_intensity", &s_bloomIntensityOverride, 0.0f);
+      Tuning_RegisterFloat("bloom_threshold", &s_bloomThresholdOverride, 0.0f);
+      Tuning_RegisterFloat("bloom_knee", &s_bloomKnee, 0.0f);
+      Tuning_RegisterFloat("bloom_scatter", &s_bloomScatterOverride, 0.0f);
+      Tuning_RegisterFloat("bloom_karis", &s_bloomKaris, 1.0f);
       s_maxEnergyReg = true;
     }
+    float threshold = (s_bloomThresholdOverride > 0.0f) ? s_bloomThresholdOverride
+                                                        : config->bloomThreshold;
+    SetShaderValue(brightShader, brightThresholdLoc, &threshold,
+                   SHADER_UNIFORM_FLOAT);
     SetShaderValue(brightShader, brightMaxEnergyLoc, &s_bloomMaxEnergy,
+                   SHADER_UNIFORM_FLOAT);
+    SetShaderValue(brightShader, brightKneeLoc, &s_bloomKnee,
                    SHADER_UNIFORM_FLOAT);
     // The target is quarter-resolution, but the bright prefilter must inspect
     // the full-resolution HDR scene so a thin emissive mesh does not disappear
@@ -477,29 +556,42 @@ void PostFX_Draw(const PostFXConfig *config)
     EndShaderMode();
     EndTextureMode();
 
-    // PASSES 2–3: Downsample chain  bloomTex(1/4) → dfTex[0](1/8) → dfTex[1](1/16)
+    // DOWNSAMPLE chain: bloomTex(1/4) → dfTex[0](1/8) → … → dfTex[n-1](1/128).
+    // Karis firefly weighting runs on the FIRST step only: that is the one fed
+    // by the full-rate bright pass, where a single blazing texel can still be a
+    // single texel. Every later level is already an average of averages, and
+    // weighting those would just dim legitimately large bright regions.
     Texture2D prevTex = bloomTex.texture;
     int prevW = bloomTex.texture.width, prevH = bloomTex.texture.height;
-    for (int i = 0; i < DUAL_FILTER_LEVELS; i++)
+    for (int i = 0; i < s_dfLevels; i++)
     {
       int dstW = dfTex[i].texture.width, dstH = dfTex[i].texture.height;
+      float karis = (i == 0) ? s_bloomKaris : 0.0f;
       BeginTextureMode(dfTex[i]);
       // [TỐI ƯU 1]: Xóa ClearBackground(BLACK)
-      DualFilterPass(dsShader, dsTexSizeLoc, prevTex, prevW, prevH, dstW, dstH, config);
+      DualFilterPass(dsShader, dsTexSizeLoc, prevTex, prevW, prevH, dstW, dstH,
+                     config, karis, -1.0f);
       EndTextureMode();
       prevTex = dfTex[i].texture;
       prevW = dstW;
       prevH = dstH;
     }
 
-    // PASSES 4–5: Upsample chain  dfTex[1](1/16) → dfTex[0](1/8) → bloomTex(1/4)
-    for (int i = DUAL_FILTER_LEVELS - 1; i >= 0; i--)
+    // UPSAMPLE chain, folding each level back into the one above it:
+    //   dst = mix(dst, tent(src), scatter)
+    // The mix is the whole point. Overwriting (what this used to do) discarded
+    // every level except the smallest, so the pyramid's depth bought nothing.
+    float scatter = (s_bloomScatterOverride > 0.0f) ? s_bloomScatterOverride
+                    : (config->bloomScatter > 0.0f) ? config->bloomScatter
+                                                    : BLOOM_SCATTER_DEFAULT;
+    for (int i = s_dfLevels - 1; i >= 0; i--)
     {
       RenderTexture2D dst = (i == 0) ? bloomTex : dfTex[i - 1];
       int dstW = dst.texture.width, dstH = dst.texture.height;
       BeginTextureMode(dst);
       // [TỐI ƯU 1]: Xóa ClearBackground(BLACK)
-      DualFilterPass(usShader, usTexSizeLoc, prevTex, prevW, prevH, dstW, dstH, NULL);
+      DualFilterPass(usShader, usTexSizeLoc, prevTex, prevW, prevH, dstW, dstH,
+                     NULL, 0.0f, scatter);
       EndTextureMode();
       prevTex = dst.texture;
       prevW = dstW;

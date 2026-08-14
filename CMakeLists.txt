@@ -275,6 +275,12 @@ configure_file(core/shaders/flow_map.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders
 configure_file(core/shaders/distortion.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/distortion.fs COPYONLY)
 configure_file(core/shaders/bloom_bright.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/bloom_bright.fs COPYONLY)
 configure_file(core/shaders/bloom_blur.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/bloom_blur.fs COPYONLY)
+# bloom_downsample/bloom_upsample were missing here, same failure shape as the
+# trail shaders below: LoadShader falls back to raylib's default on a missing
+# file, so the bloom pyramid would keep "working" as a plain bilinear resize —
+# no 13-tap filter, no Karis, and the scatter uniform silently nowhere.
+configure_file(core/shaders/bloom_downsample.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/bloom_downsample.fs COPYONLY)
+configure_file(core/shaders/bloom_upsample.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/bloom_upsample.fs COPYONLY)
 configure_file(core/shaders/post_process.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/post_process.fs COPYONLY)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/core/trails/shaders)
 configure_file(core/trails/shaders/trail_glow.fs ${CMAKE_CURRENT_BINARY_DIR}/core/trails/shaders/trail_glow.fs COPYONLY)

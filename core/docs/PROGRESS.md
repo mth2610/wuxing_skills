@@ -1310,3 +1310,43 @@ four pre-existing failures as before this work.
 - Updated `lightning_trail_contract_test` for the multi-point stroke path,
   continuous-UV shader contract, stop lifecycle, decay envelope and tester
   wiring.
+
+## Bloom pyramid overhaul (Đợt G — HDR bloom quality)
+
+Goal: the glow read as "pasted on" rather than radiating. Root causes were
+structural in `core/post_fx.c`, not authoring.
+
+- **Pyramid 3 → 6 levels** (1/4 down to 1/128). The widest blur the old chain
+  could make was one 1/16 texel across, which is why bright cores got a tight
+  halo and no far bleed. Level count is resolved at init (`s_dfLevels`) and
+  stops before a level is too small for the 13-tap footprint, so small windows
+  and low-res mobile backbuffers degrade instead of allocating 0-sized targets.
+- **Upsample now folds instead of overwriting.** `dst = mix(dst, tent(src),
+  scatter)`, factor carried by `u_scatter` → fragment alpha → `BLEND_ALPHA`.
+  Previously the chain discarded every level but the smallest.
+- **13-tap Jimenez downsample + 3×3 tent upsample**, replacing a 4-tap box and
+  a 4-tap cross. Required by the extra depth: the old kernels aliased into
+  crawling dotted lines once a level's texel covered many screen pixels.
+- **Hard energy clamp → soft ceiling.** `e * M / (M + e)`, default M = 12
+  (was a hard cut at 4). Firefly control moved to a renormalised Karis weight
+  on the first downsample only, which leaves large bright areas untouched.
+  The 2.2 extraction gain is retained deliberately so mid-brightness bloom
+  lands where it did before and only hot cores change.
+- `CMakeLists.txt`: `bloom_downsample.fs` / `bloom_upsample.fs` had never been
+  copied to the build dir — added.
+
+New live knobs (tuning.cfg, all 0 = "use the built-in default"):
+`bloom_threshold`, `bloom_knee`, `bloom_scatter`, `bloom_karis`,
+`bloom_max_energy`, plus the existing `bloom_intensity`.
+
+`PostFXConfig.bloomScatter` added (0 = engine default 0.65), so the only
+existing initialiser in `main.c` keeps working untouched. `main.c`'s shipped
+`bloomThreshold` was deliberately LEFT at 1.25 — see below.
+
+Verification: `core/tests/bloom_pyramid_contract_test.c` (new, numeric +
+shader-mirror), full core suite 66/70 with the same 4 pre-existing failures as
+HEAD (verified in a clean worktree: `energy_burst_semantic_layers`,
+`tube_frame`, `vfx_layered_field_contract`, `volume_trail`).
+`glslangValidator -S frag` clean on all three bloom shaders. **No visual
+confirmation** — the threshold/scatter/intensity trio has to be judged by eye
+and is the reason those knobs are live-tunable rather than baked.

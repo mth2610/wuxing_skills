@@ -5,10 +5,18 @@
 
 // Cấu hình tham số hiệu ứng hậu kỳ
 typedef struct {
-  // Bloom
+  // Bloom — a 6-level pyramid (1/4 down to 1/128 of the frame) whose upsample
+  // chain folds each wide level back into the tighter one above it. The deep
+  // levels are what produce a soft far-reaching bleed rather than a tight halo.
   bool bloomEnabled;
-  float bloomThreshold; // Ngưỡng lọc sáng [0.0 .. 1.0] (Luma)
+  float bloomThreshold; // Ngưỡng lọc sáng (HDR luma, >1.0 = chỉ emissive mới bloom)
   float bloomIntensity; // Cường độ phát sáng cộng dồn
+  // How far the glow spreads: the mix factor used when an upsampled level is
+  // folded into the level above it. 0 = tight near halo only, 1 = only the
+  // widest haze. 0 (the zero-initialised default) means "use the engine
+  // default" (0.65), so existing initialisers keep working untouched.
+  // Live override: tuning.cfg -> bloom_scatter.
+  float bloomScatter;
 
   // Chromatic Aberration (Tách màu RGB rìa màn hình)
   bool chromaticEnabled;

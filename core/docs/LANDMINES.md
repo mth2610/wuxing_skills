@@ -2423,5 +2423,49 @@ just moves the material away from correct.
   storage and Vulkan blending are not at fault in this case.
 - **Rule:** the bright prefilter must gather its whole 4×4 full-resolution
   source cell before thresholding. `bloom_bright.fs` retains the brightest
-  HDR sample for thin emitters; keep its energy cap as the firefly guard. Do
-  not compensate by making every mesh core wider or raising a per-effect halo.
+  HDR sample for thin emitters. Do not compensate by making every mesh core
+  wider or raising a per-effect halo. The firefly guard is no longer this
+  shader's energy cap — see the next two entries.
+
+### A hard energy clamp makes "glow harder" silently do nothing
+- **Symptom:** raising a particle's `emissiveBoost` (or a mesh core's HDR
+  value) past a certain point changes the frame not at all. Every knob above
+  that point is inert, so tuning turns into guesswork about which knob is
+  broken.
+- **Cause:** `bloom_bright.fs` cut each pixel's contribution with a hard
+  `length()` clamp at 4.0. Past the cap the derivative w.r.t. input brightness
+  is exactly zero, and a flat response is indistinguishable from a
+  disconnected uniform.
+- **Rule:** shape a ceiling, never cut one — `out = e * M / (M + e)` is
+  asymptotic to `M` and strictly increasing everywhere, so more emissive always
+  reads as more bloom. Isolated fireflies belong to the Karis-weighted first
+  downsample (`bloom_downsample.fs`, `u_karis`), which can tell a one-texel
+  spike from a genuinely bright core; a per-pixel prefilter cannot, which is
+  why it had to cap everything. Guard: `core/tests/bloom_pyramid_contract_test.c`
+  asserts strict monotonicity, which a clamp cannot satisfy.
+
+### An upsample chain that overwrites throws the whole pyramid away
+- **Symptom:** bloom reads as a tight halo pasted onto bright pixels rather
+  than light radiating from them, and making the pyramid deeper does not help —
+  it makes it slightly worse.
+- **Cause:** each upsample step wrote its destination instead of blending onto
+  it, so the final buffer contained only the *smallest* mip stretched back up.
+  Every intermediate level was computed and discarded. Nothing looks broken:
+  an overwrite still produces a plausible glow, just the wrong one.
+- **Rule:** fold, don't replace — `dst = mix(dst, tent(src), scatter)`. The lerp
+  form is self-normalising, so pyramid depth costs no extra energy calibration
+  (an additive accumulate would multiply total bloom by the level count).
+  The factor must reach the blend equation as the *shader's* fragment alpha
+  (`u_scatter`), not as the draw tint: a tint alpha that failed to survive
+  vertex-colour plumbing would arrive as 1.0 and silently restore the overwrite.
+
+### A shader missing from CMakeLists does not fail — it falls back
+- **Symptom:** edits to a `.fs` appear to do nothing when the game runs from
+  the build directory, while the same edits work when run from the repo root.
+- **Cause:** shaders are `configure_file(... COPYONLY)`'d one by one, and
+  `bloom_downsample.fs` / `bloom_upsample.fs` had never been added. `LoadShader`
+  on a missing file falls back to raylib's default shader, so the pass keeps
+  drawing — as a plain bilinear resize with every uniform gone.
+- **Rule:** adding a shader means adding its `configure_file` line in the same
+  commit. Same failure shape as the trail shaders (see the comment at that line
+  in `CMakeLists.txt`).
