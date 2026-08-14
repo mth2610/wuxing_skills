@@ -43,10 +43,8 @@ void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float pro
     unsigned char glowA = (unsigned char)(90.0f * pulse);
     float glowHW = width * 0.55f;
 
-    ScreenDistort_BeginVFXEmission();
-    rlDrawRenderBatchActive();
-    BeginBlendMode(BLEND_ADDITIVE);
-    rlDisableDepthMask();
+    VFXRenderScope renderScope = VFXRender_BeginDraw(
+        VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
     rlDisableBackfaceCulling();
     rlBegin(RL_QUADS);
     rlColor4ub(255, 140, 70, glowA);
@@ -69,9 +67,7 @@ void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float pro
     }
     rlEnd();
     rlEnableBackfaceCulling();
-    rlEnableDepthMask();
-    EndBlendMode();
-    ScreenDistort_EndVFXLayer();
+    VFXRender_EndDraw(&renderScope);
 
     if (progress < 1.0f && GetRandomValue(0, 100) < 30)
     {

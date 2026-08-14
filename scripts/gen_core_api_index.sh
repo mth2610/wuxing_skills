@@ -19,7 +19,7 @@ HEADERS=(
   core/force_field.h core/particles/particle_system.h core/particles/particle_manager.h core/mesh_adjacency.h
   core/trails/trail_system.h core/ribbon_strip.h core/decals/decal_system.h
   core/lightning/lightning_stroke.h
-  core/vfx_contrast.h core/vfx_appearance.h
+  core/vfx_contrast.h core/vfx_appearance.h core/vfx_render.h
   core/screen_distort.h core/metaball_fx.h core/color_gradient.h
   core/float_curve.h core/uv/flow_map.h core/deform/mesh_deform.h core/uv/uv_deform.h core/uv/surface_flow.h core/uv/uv_fx.h core/path_spline.h core/sprite_anim.h
   core/vfx_light.h core/post_fx.h core/camera_fx.h
@@ -57,8 +57,7 @@ cat <<'PREAMBLE'
 - **`VFXLight_Spawn` requires a `VFXPriority`** — a full pool evicts the lowest priority. Use `VFX_PRIORITY_HIGH_ULTIMATE` for casts that must not drop.
 - **Metaballs:** call `MetaballFX_RegisterBlob` every frame per blob (1-frame lifetime); never call `MetaballFX_Prepare`, `MetaballFX_Composite`, or `MetaballFX_DrawRegistered` from skill code.
 - **ScreenDistort:** skills only call `ScreenDistort_Add` (auto-expires after `lifetime`); the rest is engine lifecycle.
-- **VFX semantic layers:** manager body draws (particles, trails, decals) go to `ScreenDistort_BeginVFXBody`; actual radiance goes to `ScreenDistort_BeginVFXEmission`. Never mix additive decal RGB into the body target.
-- **Depth-state changes** must flush the batch (`rlDrawRenderBatchActive()`) before AND after — see `ENGINE_LANDMINES.md` §1.
+- **VFX rendering:** manager batches enter `VFXRender_BeginPass(BODY/EMISSION)` once per frame-wide pass. Standalone particle/ribbon/mesh draws use `VFXRender_BeginAppearance` or `VFXRender_BeginDraw`; the scope owns target, blend, depth-write and mandatory flushes. Never call `ScreenDistort_BeginVFX*` or hand-roll blend/depth state in feature code.
 - **Custom shader textures:** bind via `SetShaderValueTexture`, not `rlActiveTextureSlot`/`rlEnableTexture` — see `LANDMINES.md`.
 - **Cooldowns** are keyed `(skillIndex, agentId)`; call `SkillManager_TriggerCooldown` at cast, `SkillManager_CanCast` to gate.
 - **Composition rule:** element colors/gradients/force-fields come from `VFX_Material(VC_MAT_*)`; motion math (orbit/ring/jitter/breathe) from `vc_motion.h`. Assemble new `VFX_Compose*` from material + motion + primitives — hard-coded colors only for deliberate identity breaks, with a comment.

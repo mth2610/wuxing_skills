@@ -103,14 +103,14 @@ int main(void)
         // And the ordering the copy depends on must still be the one in main.c.
         char *main_c = ReadFile("main.c");
         CHECK(main_c != NULL);
-        // Scope the ordering to the composite step: BeginVFXBody is also called by
+        // Scope the ordering to the composite step: the body pass is also entered by
         // the ordinary VFX layer pass earlier in the file.
         char *step = main_c ? FunctionBody(main_c, "static void CompositeScreenSpaceVFX(Camera3D camera)") : NULL;
         CHECK(step != NULL);
         if (step)
         {
             const char *cap = strstr(step, "FluidSurface_Capture(camera)");
-            const char *begin = strstr(step, "ScreenDistort_BeginVFXBody()");
+            const char *begin = strstr(step, "VFXRender_BeginPass(VFX_RENDER_PASS_BODY)");
             const char *comp = strstr(step, "FluidSurface_Composite()");
             CHECK(cap && begin && comp);
             CHECK(cap && begin && cap < begin);      // snapshot before the target is bound

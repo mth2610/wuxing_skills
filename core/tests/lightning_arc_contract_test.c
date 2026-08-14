@@ -71,10 +71,10 @@ int main(void)
     failed += RequireNot(strokeSource, "? 5 :", "midpoint branch path must not become a 32-segment cable");
     failed += Require(strokeSource, "branch.levels = 3;", "secondary branches must be cheaper than the trunk");
     failed += Require(strokeSource, "LIGHTNING_STROKE_MAX_BRANCHES", "secondary-branch budget is missing");
-    failed += Require(arc, "ScreenDistort_BeginVFXBody();", "coloured body layer is missing");
-    failed += Require(arc, "BeginBlendMode(BLEND_ALPHA);", "body must alpha blend");
-    failed += Require(arc, "ScreenDistort_BeginVFXEmission();", "emission layer is missing");
-    failed += Require(arc, "BeginBlendMode(BLEND_ADDITIVE);", "halo/core must additive blend");
+    failed += Require(arc, "VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, false",
+                      "coloured alpha body scope is missing");
+    failed += Require(arc, "VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false",
+                      "additive emission scope is missing");
     failed += RequireNot(arc, "VFXLight_Spawn(",
                          "reusable lightning must leave contact-light decisions to its owning skill");
     failed += RequireNot(arc, "Vector3 midpoint =",

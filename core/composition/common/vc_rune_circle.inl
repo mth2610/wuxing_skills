@@ -166,11 +166,8 @@ void VFX_ComposeRuneCircle(Vector3 center, Vector3 normal, VC_MaterialId mat,
     // Additive, depth-test on / depth-write off, batch flushed either side —
     // ENGINE_LANDMINES §1: a depth-state change that is not flushed leaks into
     // whatever the batch was already holding.
-    ScreenDistort_BeginVFXEmission();
-    rlDrawRenderBatchActive();
-    BeginBlendMode(BLEND_ADDITIVE);
-    rlDisableDepthMask();
-    rlDrawRenderBatchActive();
+    VFXRenderScope renderScope = VFXRender_BeginDraw(
+        VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
 
     static RibbonPoint pts[RUNE_RING_POINTS];
 
@@ -263,10 +260,6 @@ void VFX_ComposeRuneCircle(Vector3 center, Vector3 normal, VC_MaterialId mat,
         }
     }
 
-    rlDrawRenderBatchActive();
-    rlEnableDepthMask();
-    EndBlendMode();
-    rlDrawRenderBatchActive();
-    ScreenDistort_EndVFXLayer();
+    VFXRender_EndDraw(&renderScope);
 
 }

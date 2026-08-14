@@ -480,12 +480,10 @@ void VFX_ComposeShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat,
     // came out as half a shell).
     for (int pass = 0; pass < 2; pass++)
     {
-        if (pass == 0) ScreenDistort_BeginVFXBody();
-        else           ScreenDistort_BeginVFXEmission();
+        VFXRenderScope renderScope = VFXRender_BeginDraw(
+            pass == 0 ? VFX_RENDER_PASS_BODY : VFX_RENDER_PASS_EMISSION,
+            pass == 0 ? VFX_SURFACE_ALPHA : VFX_SURFACE_ADDITIVE, false);
         rlDrawRenderBatchActive();
-        if (pass == 0) BeginBlendMode(BLEND_ALPHA);
-        else           BeginBlendMode(BLEND_ADDITIVE);
-        rlDisableDepthMask();
         rlDisableBackfaceCulling();
         rlDrawRenderBatchActive();
 
@@ -512,9 +510,7 @@ void VFX_ComposeShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat,
         if (shaded) SkillManager_EndShader();
 
         rlEnableBackfaceCulling();
-        rlEnableDepthMask();
-        EndBlendMode();
         rlDrawRenderBatchActive();
-        ScreenDistort_EndVFXLayer();
+        VFXRender_EndDraw(&renderScope);
     }
 }

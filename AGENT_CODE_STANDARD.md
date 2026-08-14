@@ -42,7 +42,7 @@
 ## 6. Mesh / Geometry
 - Never `DrawCylinder/DrawCone/DrawCube/DrawSphere`(+wireframe) for real meshes — use `procedural_mesh_utils.h`, `DrawRibbonStrip`, `ProceduralMesh_DrawTube`.
 - Never hand-roll Bezier/Frenet/path-sampling — use `path_spline.h` + `procedural_mesh_utils.h`.
-- `DrawRibbonStrip`/`ProceduralMesh_DrawTube` only submit geometry — caller must `BeginShaderMode()` (+`BeginBlendMode()` if alpha<1) first.
+- `DrawRibbonStrip`/`ProceduralMesh_DrawTube` are low-level geometry-only APIs for manager batching. Standalone VFX must use `VFXRender_BeginAppearance`/`VFXRender_BeginDraw`; standalone ribbons should use `DrawRibbonStripAppearanceEx`.
 - Before `rlBegin()` custom geometry: `rlColor4ub(255,255,255,255)` to reset vertex color.
 
 ## 7. Shaders

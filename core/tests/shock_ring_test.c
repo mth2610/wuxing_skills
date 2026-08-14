@@ -402,19 +402,17 @@ static void Test_MirrorMatchesTheSource(void)
     // The blend law and the flushes — depth mask, culling AND blend, both sides.
     // BODY carries the colour and EMISSION is the bloom on top: a purely additive
     // ring washes towards white and loses the element it was cast with.
-    CHECK(FileHas(inl, "if (pass == 0) ScreenDistort_BeginVFXBody(); "
-                       "else ScreenDistort_BeginVFXEmission();"),
+    CHECK(FileHas(inl, "pass == 0 ? VFX_RENDER_PASS_BODY : VFX_RENDER_PASS_EMISSION") &&
+          FileHas(inl, "pass == 0 ? VFX_SURFACE_ALPHA : VFX_SURFACE_ADDITIVE"),
           "it draws its colour in BODY and its bloom in EMISSION");
-    CHECK(FileHas(inl, "if (pass == 0) BeginBlendMode(BLEND_ALPHA); "
-                       "else BeginBlendMode(BLEND_ADDITIVE); "
-                       "rlDisableDepthMask(); rlDisableBackfaceCulling(); "
-                       "rlDrawRenderBatchActive();"),
+    CHECK(FileHas(inl, "VFXRender_BeginDraw(") &&
+          FileHas(inl, "false);") && FileHas(inl, "rlDisableBackfaceCulling();"),
           "no depth write, both walls — flushed on both sides");
     CHECK(FileHas(inl, "ShockRing_SetUniforms(m, (pass == 0) ? alpha : alpha * 0.70f, "
                        "(pass == 0) ? 1.0f : 2.50f, t01, seed, hasSmoke);"),
           "the additive pass carries enough energy and coverage to cross the bloom threshold");
-    CHECK(FileHas(inl, "rlEnableBackfaceCulling(); rlEnableDepthMask(); "
-                       "EndBlendMode(); rlDrawRenderBatchActive();"),
+    CHECK(FileHas(inl, "rlEnableBackfaceCulling();") &&
+          FileHas(inl, "VFXRender_EndDraw(&renderScope);"),
           "and the restore is flushed too");
 
     // Authored shading, not a lit material.

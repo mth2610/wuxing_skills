@@ -12,29 +12,15 @@ static void LightningArc_Draw3D(Camera3D camera)
     // The coloured body survives a bright scene; glow and core are kept as
     // separate, restrained additive radiance. The stroke renderer itself only
     // submits segmented geometry inside these caller-owned render scopes.
-    ScreenDistort_BeginVFXBody();
-    rlDrawRenderBatchActive();
-    BeginBlendMode(BLEND_ALPHA);
-    rlDisableDepthMask();
-    rlDrawRenderBatchActive();
+    VFXRenderScope bodyScope = VFXRender_BeginDraw(
+        VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, false);
     LightningStroke_DrawLayer(camera, LIGHTNING_STROKE_RENDER_BODY);
-    rlDrawRenderBatchActive();
-    rlEnableDepthMask();
-    EndBlendMode();
-    rlDrawRenderBatchActive();
-    ScreenDistort_EndVFXLayer();
+    VFXRender_EndDraw(&bodyScope);
 
-    ScreenDistort_BeginVFXEmission();
-    rlDrawRenderBatchActive();
-    BeginBlendMode(BLEND_ADDITIVE);
-    rlDisableDepthMask();
-    rlDrawRenderBatchActive();
+    VFXRenderScope emissionScope = VFXRender_BeginDraw(
+        VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
     LightningStroke_DrawLayer(camera, LIGHTNING_STROKE_RENDER_HALO);
-    rlDrawRenderBatchActive();
-    rlEnableDepthMask();
-    EndBlendMode();
-    rlDrawRenderBatchActive();
-    ScreenDistort_EndVFXLayer();
+    VFXRender_EndDraw(&emissionScope);
 }
 
 VFX_LightningArcConfig VFX_LightningArc_DefaultConfig(void)

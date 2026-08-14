@@ -100,9 +100,14 @@ For the Python auto-scan scripts that generate registry configuration to work co
 - **New skill:** stored at `skills/<element>/<name>_skill/<name>_skill.c` and `skills/<element>/<name>_skill/<name>_skill.h`.
 - **New map:** stored at `maps/<map_name>/<map_name>.c` and `maps/<map_name>/<map_name>.h`.
 
-### 2. Depth Mask & Depth Test rules:
-- Always call `rlEnableDepthMask()` and `rlEnableDepthTest()` at the start of the draw function for closed 3D meshes (stone pillars, spikes) to prevent see-through-each-other and see-through-ground/decal artifacts.
-- Conversely, for alpha-blended particles drawn afterward, call `rlDisableDepthMask()` when using `BLEND_ADDITIVE` mode to avoid unnaturally occluding particles behind them.
+### 2. Unified render-state rules:
+- Standalone VFX uses `VFXRender_BeginDraw` or `VFXRender_BeginAppearance`.
+  Declare `depthWrite=true` for closed occluding meshes and `false` for
+  translucent/additive surfaces; never toggle the depth mask or blend mode by
+  hand in feature code.
+- Particle/trail/decal managers enter one frame-wide
+  `VFXRender_BeginPass(BODY/EMISSION)` and keep their internal material buckets,
+  avoiding one state switch per particle while preserving the same semantics.
 
 ### 3. Rules for loading Alpha textures onto 3D Meshes:
 - Never multiply a texture's Alpha channel (e.g. a cracked-earth texture) directly into the diffuse color in a closed 3D mesh's fragment shader — this creates strange see-through holes into the mesh's hollow interior.

@@ -457,7 +457,8 @@ static void Test_MirrorStillMatchesSource(void)
           "mirror: spark lifetime unchanged");
     CHECK(strstr(src, ".stretchStrength = 1.10f,") != NULL,
           "mirror: spark stretch unchanged (0.10 drew round beads)");
-    CHECK(strstr(src, "rlDisableDepthMask") != NULL && strstr(src, "rlDrawRenderBatchActive") != NULL,
+    CHECK(strstr(src, "VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false") != NULL &&
+          strstr(src, "VFXRender_EndDraw(&renderScope)") != NULL,
           "depth-state change is batch-flushed (ENGINE_LANDMINES §1)");
     CHECK(strstr(src, "CameraShake") == NULL && strstr(src, "Camera_Shake") == NULL,
           "no camera shake on the composition's own initiative");

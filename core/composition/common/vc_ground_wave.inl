@@ -319,11 +319,8 @@ void VFX_ComposeGroundWave(Vector3 center, VC_MaterialId mat, float radius,
     // The coloured pressure front belongs in BODY; otherwise an additive pass
     // loses its green hue against a bright floor. A restrained second draw in
     // EMISSION gives the crest bloom without replacing the visible material.
-    ScreenDistort_BeginVFXBody();
-    rlDrawRenderBatchActive();
-    BeginBlendMode(BLEND_ALPHA);
-    rlDisableDepthMask();
-    rlDrawRenderBatchActive();
+    VFXRenderScope bodyScope = VFXRender_BeginDraw(
+        VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, false);
     if (GroundWave_HasShader()) {
         SkillManager_BeginShader(s_gwShader.shader);
         GroundWave_SetSurfaceUniforms(m, alpha * 0.78f, 1.0f);
@@ -333,17 +330,10 @@ void VFX_ComposeGroundWave(Vector3 center, VC_MaterialId mat, float radius,
     } else {
         ProceduralMesh_DrawShockwave(&mesh, ringCol);
     }
-    rlDrawRenderBatchActive();
-    rlEnableDepthMask();
-    EndBlendMode();
-    rlDrawRenderBatchActive();
-    ScreenDistort_EndVFXLayer();
+    VFXRender_EndDraw(&bodyScope);
 
-    ScreenDistort_BeginVFXEmission();
-    rlDrawRenderBatchActive();
-    BeginBlendMode(BLEND_ADDITIVE);
-    rlDisableDepthMask();
-    rlDrawRenderBatchActive();
+    VFXRenderScope emissionScope = VFXRender_BeginDraw(
+        VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
     if (GroundWave_HasShader()) {
         SkillManager_BeginShader(s_gwShader.shader);
         GroundWave_SetSurfaceUniforms(m, alpha * 0.48f, 1.35f);
@@ -354,9 +344,5 @@ void VFX_ComposeGroundWave(Vector3 center, VC_MaterialId mat, float radius,
         ProceduralMesh_DrawShockwave(&mesh, ringCol);
     }
     rlSetTexture(0);
-    rlDrawRenderBatchActive();
-    rlEnableDepthMask();
-    EndBlendMode();
-    rlDrawRenderBatchActive();
-    ScreenDistort_EndVFXLayer();
+    VFXRender_EndDraw(&emissionScope);
 }

@@ -114,10 +114,8 @@ void VFX_ComposeEnergyOrb(Vector3 center, VC_MaterialId mat, float radius,
     // only turn something off is not a quality tier. (The rule it still obeys:
     // a gate may only ever clamp DOWN, so the honest move is not to have one.)
 
-    ScreenDistort_BeginVFXEmission();
-    rlDrawRenderBatchActive();
-    BeginBlendMode(BLEND_ADDITIVE); // it emits...
-    rlDisableDepthMask();           // ...so it must not occlude what is behind it
+    VFXRenderScope renderScope = VFXRender_BeginDraw(
+        VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
     // The far wall seen through the near one is most of what reads as a shell
     // rather than a disc.
     rlDisableBackfaceCulling();
@@ -141,10 +139,8 @@ void VFX_ComposeEnergyOrb(Vector3 center, VC_MaterialId mat, float radius,
     }
 
     rlEnableBackfaceCulling();
-    rlEnableDepthMask();
-    EndBlendMode();
     rlDrawRenderBatchActive();
-    ScreenDistort_EndVFXLayer();
+    VFXRender_EndDraw(&renderScope);
 
     // The white-hot centre, and the reason CoreGlow was extracted first.
     if (s_orbCore > 0.5f)

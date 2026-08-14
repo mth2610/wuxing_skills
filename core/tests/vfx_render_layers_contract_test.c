@@ -56,28 +56,27 @@ int main(void)
     // and made every emissive effect a milky film over a bright background.
     bad += Has("core/screen_distort.c", "BeginBlendMode(BLEND_ADD_COLORS);");
 
-    bad += !Has("core/composition/common/vc_light_shaft.inl", "ScreenDistort_BeginVFXEmission();");
-    bad += !Has("core/composition/common/vc_rune_circle.inl", "ScreenDistort_BeginVFXEmission();");
-    bad += !Has("core/composition/common/vc_ground_wave.inl", "ScreenDistort_BeginVFXEmission();");
-    bad += !Has("core/composition/common/vc_shock_ring.inl", "ScreenDistort_BeginVFXEmission();");
-    bad += !Has("core/composition/common/vc_portal_disc.inl", "ScreenDistort_BeginVFXEmission();");
-    bad += !Has("core/composition/common/vc_energy_orb.inl", "ScreenDistort_BeginVFXEmission();");
-    bad += !Has("core/composition/common/vc_sweep_slash.inl", "ScreenDistort_BeginVFXEmission();");
-    bad += !Has("core/composition/earth/fissure_streak.inl", "ScreenDistort_BeginVFXEmission();");
-    bad += !Has("core/composition/taiji/vc_black_hole.inl", "ScreenDistort_BeginVFXEmission();");
-    bad += !Has("core/composition/water/water_stream.inl", "ScreenDistort_BeginVFXBody();");
-    bad += !Has("core/composition/water/water_stream.inl", "ScreenDistort_EndVFXLayer();");
-    bad += !Has("core/composition/common/vc_dissolve_exit.inl", "ScreenDistort_BeginVFXBody();");
-    bad += !Has("core/composition/common/vc_dissolve_exit.inl", "ScreenDistort_EndVFXLayer();");
-    bad += !Has("core/composition/common/vc_debris_shards.inl", "ScreenDistort_BeginVFXBody();");
-    bad += !Has("core/composition/common/vc_debris_shards.inl", "ScreenDistort_EndVFXLayer();");
-    bad += !Has("core/composition/common/vc_shield_shell.inl", "ScreenDistort_BeginVFXBody();");
-    bad += !Has("core/composition/common/vc_shield_shell.inl", "ScreenDistort_EndVFXLayer();");
-    bad += !Has("core/afterimage.c", "ScreenDistort_BeginVFXBody();");
-    bad += !Has("skills/metal/volume_smoke_skill/volume_smoke_skill.c", "ScreenDistort_BeginVFXBody();");
-    bad += !Has("skills/fire/fire_ball/fire_skill.c", "ScreenDistort_BeginVFXEmission();");
-    bad += !Has("skills/fire/fire_ball/fire_skill.c", "ScreenDistort_EndVFXLayer();");
-    bad += !Has("core/atmosphere.c", "Ambient motes are low-energy background decoration");
+    bad += !Has("core/composition/common/vc_light_shaft.inl", "VFXRender_BeginDraw");
+    bad += !Has("core/composition/common/vc_rune_circle.inl", "VFXRender_BeginDraw");
+    bad += !Has("core/composition/common/vc_ground_wave.inl", "VFX_RENDER_PASS_BODY");
+    bad += !Has("core/composition/common/vc_ground_wave.inl", "VFX_RENDER_PASS_EMISSION");
+    bad += !Has("core/composition/common/vc_shock_ring.inl", "VFXRender_BeginDraw");
+    bad += !Has("core/composition/common/vc_portal_disc.inl", "VFXRender_BeginDraw");
+    bad += !Has("core/composition/common/vc_energy_orb.inl", "VFXRender_BeginDraw");
+    bad += !Has("core/composition/common/vc_sweep_slash.inl", "VFXRender_BeginDraw");
+    bad += !Has("core/composition/earth/fissure_streak.inl", "VFXRender_BeginDraw");
+    bad += !Has("core/composition/taiji/vc_black_hole.inl", "VFXRender_BeginDraw");
+    bad += !Has("core/composition/water/water_stream.inl", "VFXRender_BeginDraw");
+    bad += !Has("core/composition/common/vc_dissolve_exit.inl", "VFXRender_BeginDraw");
+    bad += !Has("core/composition/common/vc_debris_shards.inl", "VFXRender_BeginDraw");
+    bad += !Has("core/composition/common/vc_shield_shell.inl", "VFXRender_BeginDraw");
+    bad += !Has("core/afterimage.c", "VFXRender_BeginDraw");
+    bad += !Has("skills/metal/volume_smoke_skill/volume_smoke_skill.c",
+                "VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, false");
+    bad += !Has("skills/fire/fire_ball/fire_skill.c",
+                "VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false");
+    bad += Has("skills/fire/fire_ball/fire_skill.c", "ScreenDistort_BeginVFX");
+    bad += !Has("core/atmosphere.c", "VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false");
     bad += !Has("main.c", "CompositeScreenSpaceVFX(camera);");
     bad += !Has("main.c", "MetaballFX_Composite();");
     bad += !Has("main.c", "FluidSurface_Composite();");
@@ -103,8 +102,8 @@ int main(void)
     bad += !Has("main.c", "DrawDecalVFXLayers(camera);");
     bad += !Has("main.c", "DrawParticleTrailVFXLayers(camera, globalParticleTex);");
     bad += !Has("main.c", "if (g_debugHideParticles && g_debugHideTrails) return;");
-    bad += !Has("main.c", "preserves stored coverage linearly");
-    bad += !Has("main.c", "ScreenDistort_BeginVFXBody();");
+    bad += !Has("main.c", "Edge shaping happens in each producer before alpha-over");
+    bad += !Has("main.c", "VFXRender_BeginPass(VFX_RENDER_PASS_BODY);");
     bad += !Has("main.c", "if (hasEmissionTrails) DrawTrailEntitiesEmission(camera);");
     bad += !Has("main.c", "DecalSystem_DrawBody();");
     bad += !Has("main.c", "DecalSystem_DrawEmission();");

@@ -135,11 +135,8 @@ void VFX_ComposeLightShaft(Vector3 from, Vector3 to, VC_MaterialId mat,
     Color glow = m->glow;
     float time = (float)GetTime();
 
-    ScreenDistort_BeginVFXEmission();
-    rlDrawRenderBatchActive();
-    BeginBlendMode(BLEND_ADDITIVE);
-    rlDisableDepthMask();
-    rlDrawRenderBatchActive();
+    VFXRenderScope renderScope = VFXRender_BeginDraw(
+        VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
 
     static RibbonPoint pts[LIGHT_SHAFT_POINTS];
 
@@ -197,9 +194,5 @@ void VFX_ComposeLightShaft(Vector3 from, Vector3 to, VC_MaterialId mat,
         }
     }
 
-    rlDrawRenderBatchActive();
-    rlEnableDepthMask();
-    EndBlendMode();
-    rlDrawRenderBatchActive();
-    ScreenDistort_EndVFXLayer();
+    VFXRender_EndDraw(&renderScope);
 }

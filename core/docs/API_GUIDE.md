@@ -450,8 +450,9 @@ void DecalSystem_Unload(void);
 * **`DecalSystem_AddFlowEx`**: same params as `AddEx` plus `flowSpeed`/`flowStrength`. Texture radially scrolls outward from the decal center over time (`core/decals/shaders/decal_flow.fs`) instead of staying static — for lava-crack-crawl / ripple-spreading visuals. `flowSpeed` ~0.3–1.0 (radial units/sec), `flowStrength` ~0.5–1.0 (0 = looks identical to a static decal, 1 = fully replaced by the scrolled sample). Draws via a separate shader pass from static decals — does not affect `Add`/`AddEx` behavior or performance. Already wired into `SpawnGroundDecal` for `DECAL_PRESET_FIRE_LAVA`/`DECAL_PRESET_WATER_RIPPLE` (see Ground Decal Preset section); every other preset is unaffected (static).
 * **`DecalSystem_AddOrientedEx`**: a surface-aligned static quad for a known hit normal. Use it for walls/ceilings; `rotation` rolls around `normal`, and `yOffset` lifts along the normal. Do not use it as an every-frame projector.
 * **Semantic draw split (engine render graph):** call `DrawBody` inside
-  `ScreenDistort_BeginVFXBody()` and, when `HasEmission` is true, call
-  `DrawEmission` inside `ScreenDistort_BeginVFXEmission()`. `DrawBody` prepares
+  `VFXRender_BeginPass(VFX_RENDER_PASS_BODY)` and, when `HasEmission` is true,
+  call `DrawEmission` inside `VFXRender_BeginPass(VFX_RENDER_PASS_EMISSION)`.
+  `DrawBody` prepares
   the shared decal queue; `DrawEmission` reuses it. `DecalSystem_Draw()` remains
   a compatibility entry point, but it cannot choose two render targets for its
   caller and therefore is not suitable for the layered compositor.
@@ -472,6 +473,39 @@ Rules:
 - Recommended scale: 4–5.5× structure radius.
 - Do not call `DecalSystem_Unload()` from skill code — global system, owned by the engine shutdown sequence only.
 
+### Unified VFX rendering (`core/vfx_render.h`)
+
+All VFX producers use one semantic contract. `BODY` preserves coloured matter
+and coverage over bright scenery; `EMISSION` carries radiance into the shared
+HDR scene for bloom. `VFXSurfaceMode` independently selects alpha, additive, or
+premultiplied composition.
+
+```c
+// Frame-wide manager/batcher pass: one target bind, many grouped draws.
+VFXRender_BeginPass(VFX_RENDER_PASS_BODY);
+ParticleManager_DrawBody(camera, texture);
+DrawTrailEntitiesBody(camera);
+DecalSystem_DrawBody();
+VFXRender_EndPass();
+
+// Standalone geometry: target + blend + depth-write + flush are atomic.
+VFXRenderScope scope = VFXRender_BeginDraw(
+    VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
+DrawMyGlowGeometry();
+VFXRender_EndDraw(&scope);
+```
+
+Prefer `VFXRender_BeginAppearance` when reusable geometry already has a
+`VFXAppearanceId`; it resolves the same authored appearance and skips semantic
+passes the appearance does not use. Standalone ribbons can call
+`DrawRibbonStripAppearanceEx`. Batched particle/trail/decal implementations
+retain internal bucketed blend ownership for performance; their caller owns
+only the semantic pass.
+
+Feature code must not call `ScreenDistort_BeginVFX*`, or manually pair
+`BeginBlendMode`, depth-mask changes, and framebuffer selection. Those are
+low-level compatibility hooks owned by `VFXRender`.
+
 ### Screen Distortion (`core/screen_distort.h`)
 Static pool of radial shockwave/heatwave distortions. `MAX_DISTORTION_SOURCES = 16`.
 
@@ -485,19 +519,9 @@ void ScreenDistort_Draw(Camera3D camera);        // Draw the result with distort
 void ScreenDistort_Unload(void);                 // Free (engine shutdown; not called from a skill)
 ```
 
-**VFX render-layer contract (required for new render code):** `main.c` owns
-the scene target and shared manager passes. A self-contained skill or
-composition must route its own draw through one of these pairs:
-
-```c
-ScreenDistort_BeginVFXBody();     // coloured, translucent material
-/* draw with BLEND_ALPHA */
-ScreenDistort_EndVFXLayer();
-
-ScreenDistort_BeginVFXEmission(); // light/halo only
-/* draw with BLEND_ADDITIVE */
-ScreenDistort_EndVFXLayer();
-```
+**VFX render-layer contract:** use `core/vfx_render.h` as described above.
+The `ScreenDistort_BeginVFX*` symbols remain only as Core implementation hooks
+and compatibility ABI; they are not authoring APIs.
 
 - Put smoke, decal pigment, trail/particle cores, and any surface whose hue
   must survive a bright map in the **body** layer.
@@ -505,13 +529,13 @@ ScreenDistort_EndVFXLayer();
   An effect needing both must draw its body first and halo separately.
 - Do not add per-skill branches to `main.c`, render directly into the scene
   target, or assume an additive sprite can keep hue on a bright destination.
-  The compositor alpha-overlays body, then adds emission.
-- Flush pending rlgl batches before changing layers when mixing raylib batched
-  drawing with immediate rendering. Set custom shader uniforms inside
-  `BeginShaderMode`.
+  Both semantic passes draw into the authoritative HDR scene: body uses
+  coverage-aware composition, then emission adds radiance before PostFX.
+- `VFXRenderScope` performs the mandatory flushes around blend/depth/target
+  changes. Set custom shader uniforms inside `BeginShaderMode`.
 - Shared managers follow the same contract: particle and trail bodies are
-  collected into the single frame-wide VFXBody target; particle emission and
-  decal emission are collected into VFXEmission. A VFX that emits and has
+  collected into the frame-wide BODY pass; particle emission and decal
+  emission are collected into EMISSION. A VFX that emits and has
   visible coloured mass must author both populations rather than marking its
   only population additive.
 

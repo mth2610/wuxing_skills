@@ -299,11 +299,8 @@ void VFX_ComposeSweepSlash(Vector3 origin, Vector3 dir, VC_MaterialId mat,
     // Additive, depth-test on / depth-write off, batch flushed either side —
     // ENGINE_LANDMINES §1: an unflushed depth-state change leaks into whatever
     // the batch was already holding.
-    ScreenDistort_BeginVFXEmission();
-    rlDrawRenderBatchActive();
-    BeginBlendMode(BLEND_ADDITIVE);
-    rlDisableDepthMask();
-    rlDrawRenderBatchActive();
+    VFXRenderScope renderScope = VFXRender_BeginDraw(
+        VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
 
     static RibbonPoint pts[SWEEP_SLASH_POINTS];
 
@@ -370,11 +367,7 @@ void VFX_ComposeSweepSlash(Vector3 origin, Vector3 dir, VC_MaterialId mat,
                           RIBBON_FIXED_NORMAL, n);
     }
 
-    rlDrawRenderBatchActive();
-    rlEnableDepthMask();
-    EndBlendMode();
-    rlDrawRenderBatchActive();
-    ScreenDistort_EndVFXLayer();
+    VFXRender_EndDraw(&renderScope);
 
     // ── Refraction behind the edge ──────────────────────────────────────────
     // A RATE, not one per call: this function runs every frame, and a source per

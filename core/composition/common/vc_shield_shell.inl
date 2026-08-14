@@ -205,19 +205,15 @@ static void ShieldShell_DrawPass(void)
 static void VC_ShieldShell_Draw3D(Camera3D cam)
 {
     (void)cam;
-    ScreenDistort_BeginVFXBody();
-    rlDrawRenderBatchActive();
-    rlDisableDepthMask();
+    VFXRenderScope renderScope = VFXRender_BeginDraw(
+        VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, false);
     // A translucent shell must only draw the camera-facing membrane. Rendering
     // both sides doubles every broad wisp into a milky white veil.
     rlEnableBackfaceCulling();
     // The entire membrane uses conventional alpha compositing. It must never
     // darken the scene as a side effect of its contrast treatment.
-    BeginBlendMode(BLEND_ALPHA);
     ShieldShell_DrawPass();
     rlEnableBackfaceCulling();
-    rlEnableDepthMask();
-    EndBlendMode();
     rlDrawRenderBatchActive();
-    ScreenDistort_EndVFXLayer();
+    VFXRender_EndDraw(&renderScope);
 }

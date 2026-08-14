@@ -389,9 +389,9 @@ static void Test_MirrorStillMatchesSource(void)
     CHECK(FileHas(inl, "#define GROUND_WAVE_CREST_U    0.6666667f"),
           "the crest still leads (not centred)");
     // Contracts, not tuning.
-    CHECK(FileHas(inl, "BeginBlendMode(BLEND_ADDITIVE);"),
+    CHECK(FileHas(inl, "VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false"),
           "it still EMITS: additive, per the blend law");
-    CHECK(FileHas(inl, "ScreenDistort_BeginVFXBody();"),
+    CHECK(FileHas(inl, "VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, false"),
           "the coloured shockwave body is composited before its bloom");
     CHECK(FileHas(inl, "ResourceManager_LoadShader(\"core/shaders/ground_wave.vs\""),
           "the dedicated annular UV shader is loaded through ResourceManager");

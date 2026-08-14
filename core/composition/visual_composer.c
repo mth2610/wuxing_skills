@@ -14,6 +14,7 @@
 #include "core/lightning/lightning_stroke.h"
 #include "core/path_spline.h"
 #include "core/screen_distort.h"
+#include "core/vfx_render.h"
 #include "core/time_fx.h"
 #include "core/geometry/procedural_mesh_utils.h"
 #include "core/geometry/mesh_cache.h"

@@ -9,7 +9,7 @@
 #include "core/skill_helper.h"
 #include "combat/combat.h"
 #include "core/resource_manager.h"
-#include "core/screen_distort.h"
+#include "core/vfx_render.h"
 #include "core/tuning.h"
 #include "core/utils_math.h"
 #include <math.h>
@@ -648,13 +648,11 @@ void DrawFireSkill(void) {
     return;
 
   float time = GetTime();
-  ScreenDistort_BeginVFXEmission();
-  rlDrawRenderBatchActive();
-  rlDisableDepthMask();
+  VFXRenderScope renderScope = VFXRender_BeginDraw(
+      VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
 
   BeginShaderMode(fireShader);
   SetShaderValue(fireShader, timeLoc, &time, SHADER_UNIFORM_FLOAT);
-  BeginBlendMode(BLEND_ADDITIVE);
 
   for (int e = 0; e < MAX_EMITTERS; e++) {
     if (!emitters[e].active || emitters[e].sampledCount < 2)
@@ -685,10 +683,8 @@ void DrawFireSkill(void) {
     }
     DrawRibbonStrip(ribbonBuffer, bodySegments, particleTex, camera);
   }
-  EndBlendMode();
   EndShaderMode();
 
-  BeginBlendMode(BLEND_ADDITIVE);
   for (int e = 0; e < MAX_EMITTERS; e++) {
     if (!emitters[e].active || emitters[e].sampledCount < 2)
       continue;
@@ -731,10 +727,7 @@ void DrawFireSkill(void) {
     DrawBillboardPro(camera, dragonHeadTex, sourceRec, headPos, camera.up, size,
                      origin, rotation, (Color){255, 180, 40, alpha});
   }
-  EndBlendMode();
-  rlDrawRenderBatchActive();
-  rlEnableDepthMask();
-  ScreenDistort_EndVFXLayer();
+  VFXRender_EndDraw(&renderScope);
 }
 
 void UnloadFireSkill(void) {

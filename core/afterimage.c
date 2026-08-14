@@ -1,7 +1,7 @@
 #include "core/afterimage.h"
 #include "core/resource_manager.h"
 #include "core/skill_helper.h"
-#include "core/screen_distort.h"
+#include "core/vfx_render.h"
 #include "rlgl.h"
 #include <math.h>
 
@@ -58,10 +58,8 @@ void Afterimage_Update(float dt) {
 void Afterimage_Draw(void) {
     if (!s_matLoaded) return;
 
-    ScreenDistort_BeginVFXBody();
-    rlDrawRenderBatchActive();
-    rlDisableDepthMask();
-    BeginBlendMode(BLEND_ALPHA);
+    VFXRenderScope scope = VFXRender_BeginDraw(
+        VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, false);
 
     for (int i = 0; i < MAX_AFTERIMAGES; i++) {
         if (!s_pool[i].active) continue;
@@ -82,10 +80,7 @@ void Afterimage_Draw(void) {
         }
     }
 
-    EndBlendMode();
-    rlDrawRenderBatchActive();
-    rlEnableDepthMask();
-    ScreenDistort_EndVFXLayer();
+    VFXRender_EndDraw(&scope);
 }
 
 void Afterimage_GetStats(int *active, int *max) {

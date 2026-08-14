@@ -194,7 +194,8 @@ static void Test_MirrorStillMatchesSource(void)
           "camera-facing ribbons (a shaft is seen from wherever the viewer is)");
     CHECK(strstr(src, "VC_Breathe(time + (float)sIdx") != NULL,
           "each shaft breathes on its OWN clock (one clock reads as a lamp)");
-    CHECK(strstr(src, "rlDisableDepthMask") != NULL && strstr(src, "rlDrawRenderBatchActive") != NULL,
+    CHECK(strstr(src, "VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false") != NULL &&
+          strstr(src, "VFXRender_EndDraw(&renderScope)") != NULL,
           "depth-state change is batch-flushed (ENGINE_LANDMINES §1)");
     CHECK(strstr(src, "u_cameraDepthTex") == NULL && strstr(src, "sampler2D") == NULL,
           "no second sampler (soft particles are parked — rlvk binding landmine)");

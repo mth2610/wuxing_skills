@@ -209,10 +209,9 @@ void VFX_ComposePortalDisc(Vector3 center, Vector3 normal, VC_MaterialId mat,
     // sides of every one of those, because rlgl draws the queued geometry LATER
     // and the state at DRAW time is what applies (ENGINE_LANDMINES §1 + its
     // 30/07 postscript on culling).
-    ScreenDistort_BeginVFXEmission();
+    VFXRenderScope renderScope = VFXRender_BeginDraw(
+        VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
     rlDrawRenderBatchActive();
-    BeginBlendMode(BLEND_ADDITIVE);
-    rlDisableDepthMask();
     rlDisableBackfaceCulling();
     rlDrawRenderBatchActive();
 
@@ -333,8 +332,6 @@ void VFX_ComposePortalDisc(Vector3 center, Vector3 normal, VC_MaterialId mat,
     rlColor4ub(255, 255, 255, 255);
     rlDrawRenderBatchActive();
     rlEnableBackfaceCulling();
-    rlEnableDepthMask();
-    EndBlendMode();
     rlDrawRenderBatchActive();
-    ScreenDistort_EndVFXLayer();
+    VFXRender_EndDraw(&renderScope);
 }

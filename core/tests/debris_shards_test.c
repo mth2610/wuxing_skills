@@ -344,13 +344,10 @@ static void Test_MirrorMatchesTheSource(void)
           "(core/docs/LANDMINES.md, 30/07)");
 
     // LANDMINE 2 — the batch flush, on both sides of every state change.
-    CHECK(FileHas(inl, "rlDrawRenderBatchActive(); rlEnableDepthMask(); "
-                       "rlEnableBackfaceCulling(); BeginBlendMode(BLEND_ALPHA); "
-                       "rlDrawRenderBatchActive();"),
-          "the whole state change is sandwiched between two flushes — depth mask, "
-          "culling AND blend, which is the rule's 30/07 postscript");
-    CHECK(FileHas(inl, "rlDrawRenderBatchActive(); EndBlendMode(); rlDrawRenderBatchActive();"),
-          "and on both sides of the restore");
+    CHECK(FileHas(inl, "VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, true"),
+          "the chip declares body/alpha/depth-write through the shared render scope");
+    CHECK(FileHas(inl, "VFXRender_EndDraw(&renderScope);"),
+          "the shared scope owns the flushed state restore");
     CHECK(!FileHas(inl, "rlDisableBackfaceCulling();"),
           "culling is never turned OFF here — a chip is a closed box");
 
@@ -372,8 +369,7 @@ static void Test_MirrorMatchesTheSource(void)
           "a chip is the ELEMENT's colour, not white");
 
     // The blend law, both halves in one effect.
-    CHECK(FileHas(inl, "rlEnableDepthMask(); rlEnableBackfaceCulling(); "
-                       "BeginBlendMode(BLEND_ALPHA);"),
+    CHECK(FileHas(inl, "VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, true"),
           "the chip OCCLUDES: alpha, depth-written");
     CHECK(FileHas(inl, ".render.blendMode = VFX_BLEND_ADDITIVE,"),
           "the dust EMITS: additive");

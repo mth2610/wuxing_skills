@@ -8,6 +8,7 @@
 #include "core/post_fx.h"
 #include "sandbox/sandbox_core.h"
 #include "core/screen_distort.h"
+#include "core/vfx_render.h"
 #include "core/surface_material.h"
 #include "core/gfx_quality.h"
 #include "core/atmosphere.h"
@@ -119,8 +120,8 @@ static Rectangle DebugToggleRect(int index) {
   return (Rectangle){ 10.0f, y[index], 300.0f, 24.0f }; // generous width: a finger is not a cursor
 }
 
-/* Manager-owned VFX uses the shared ScreenDistort layers. Individual skills
- * own their own BeginVFX* / EndVFXLayer pair, so main stays render-graph
+/* Manager-owned VFX uses the common semantic passes. Standalone skills and
+ * compositions own VFXRender scopes, so main remains render-graph
  * orchestration rather than an effect list. */
 static void DrawDecalVFXLayers(Camera3D camera)
 {
@@ -130,17 +131,17 @@ static void DrawDecalVFXLayers(Camera3D camera)
     if (activeDecals == 0) return;
     DecalSystem_SetCamera(camera);
 
-    // Pigment/material coverage belongs to VFXBody. Emissive cracks/runes are
-    // submitted separately below; mixing additive radiance into this target
-    // breaks the body's premultiplied-colour contract at composite time.
-    ScreenDistort_BeginVFXBody();
+    // Pigment/material coverage belongs to BODY. Emissive cracks/runes are
+    // submitted separately below so their blend and contrast policy cannot
+    // contaminate the material pass.
+    VFXRender_BeginPass(VFX_RENDER_PASS_BODY);
     DecalSystem_DrawBody();
-    ScreenDistort_EndVFXLayer();
+    VFXRender_EndPass();
 
     if (DecalSystem_HasEmission()) {
-      ScreenDistort_BeginVFXEmission();
+      VFXRender_BeginPass(VFX_RENDER_PASS_EMISSION);
       DecalSystem_DrawEmission();
-      ScreenDistort_EndVFXLayer();
+      VFXRender_EndPass();
     }
   }
 }
@@ -158,32 +159,23 @@ static void DrawParticleTrailVFXLayers(Camera3D camera, Texture2D particleTextur
   bool hasEmissionTrails = hasTrails;
   if (!hasTrails && !hasParticles) return;
 
-  // Particle/trail bodies share VFXBody with decals, water and afterimages.
-  // It stores alpha-blended RGB but preserves stored coverage linearly; edge
-  // shaping happens in each producer before this linear composite.
-  ScreenDistort_BeginVFXBody();
+  // Particle/trail bodies share BODY semantics with decals, water and
+  // afterimages. Edge shaping happens in each producer before alpha-over.
+  VFXRender_BeginPass(VFX_RENDER_PASS_BODY);
   if (hasTrails) DrawTrailEntitiesBody(camera);
-  rlDrawRenderBatchActive();
-  rlDisableDepthMask();
   if (hasParticles) ParticleManager_DrawBody(camera, particleTexture);
-  rlDrawRenderBatchActive();
-  rlEnableDepthMask();
-  ScreenDistort_EndVFXLayer();
+  VFXRender_EndPass();
 
   // Trail/particle radiance is a separate semantic layer. Keeping HDR out of
-  // VFXBody preserves soft smoke edges and lets energy trails carry a yellow
+  // BODY preserves soft smoke edges and lets energy trails carry a yellow
   // core over their darker material body.
   if (hasEmissionTrails || hasEmissionParticles) {
-    ScreenDistort_BeginVFXEmission();
+    VFXRender_BeginPass(VFX_RENDER_PASS_EMISSION);
     if (hasEmissionTrails) DrawTrailEntitiesEmission(camera);
-    if (hasEmissionParticles) {
-      rlDisableDepthMask();
+    if (hasEmissionParticles)
       ParticleManager_DrawEmission(camera, particleTexture);
-      rlDrawRenderBatchActive();
-      rlEnableDepthMask();
-    }
   }
-  if (hasEmissionTrails || hasEmissionParticles) ScreenDistort_EndVFXLayer();
+  if (hasEmissionTrails || hasEmissionParticles) VFXRender_EndPass();
 }
 
 /* Post-scene VFX that need screen-space preparation before their body pass. */
@@ -198,10 +190,10 @@ static void CompositeScreenSpaceVFX(Camera3D camera)
   if (!hasFluid && !hasMetaballs) return;
   if (hasFluid) FluidSurface_Capture(camera);
   if (hasMetaballs) MetaballFX_Prepare(camera, ELEMENT_COLOR_WATER, 0.3f, 0.12f);
-  ScreenDistort_BeginVFXBody();
+  VFXRender_BeginPass(VFX_RENDER_PASS_BODY);
   if (hasFluid) FluidSurface_Composite();
   if (hasMetaballs) MetaballFX_Composite();
-  ScreenDistort_EndVFXLayer();
+  VFXRender_EndPass();
 }
 
 int main(int argc, char **argv) {

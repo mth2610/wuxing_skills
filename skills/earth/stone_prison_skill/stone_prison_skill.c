@@ -4,6 +4,7 @@
 #include "core/color_gradient.h"
 #include "core/decals/decal_system.h"
 #include "core/screen_distort.h"
+#include "core/vfx_render.h"
 #include "core/vfx_light.h"
 #include "core/camera_fx.h"
 #include "core/force_field.h"
@@ -553,8 +554,8 @@ void DrawStonePrisonSkill(void)
             float progress = t;
             float radius = s_pillarRadius * p->scale * 15.0f * t;
 
-            rlDrawRenderBatchActive();
-            rlDisableDepthMask();
+            VFXRenderScope renderScope = VFXRender_BeginDraw(
+                VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, false);
             BeginShaderMode(s_crackShader);
             SetShaderValue(s_crackShader, s_uProgressLoc, &progress, SHADER_UNIFORM_FLOAT);
             SetShaderValue(s_crackShader, s_uCrackTimeLoc, &currentTime, SHADER_UNIFORM_FLOAT);
@@ -575,8 +576,7 @@ void DrawStonePrisonSkill(void)
             rlSetTexture(0);
 
             EndShaderMode();
-            rlDrawRenderBatchActive();
-            rlEnableDepthMask();
+            VFXRender_EndDraw(&renderScope);
             continue; // don't draw pillars yet
         }
 

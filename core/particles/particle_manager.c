@@ -249,17 +249,25 @@ void ParticleManager_Draw(Camera3D c, Texture2D t)
     // blend law, so bind it explicitly here instead of inheriting whichever
     // mode the CPU path happened to leave behind. Without this ownership split,
     // GPU VFX switched between alpha and additive based on CPU activity.
+    rlDrawRenderBatchActive();
+    rlDisableDepthMask();
     DrawParticles(c, t);
     rlDrawRenderBatchActive();
     BeginBlendMode(BLEND_ADDITIVE);
     GpuParticleSystem_Draw(c, t);
     rlDrawRenderBatchActive();
     EndBlendMode();
+    rlEnableDepthMask();
+    rlDrawRenderBatchActive();
 }
 void ParticleManager_DrawBody(Camera3D c, Texture2D t)
 {
     if (!s_initialized) return;
+    rlDrawRenderBatchActive();
+    rlDisableDepthMask();
     DrawParticlesBody(c, t);
+    rlDrawRenderBatchActive();
+    rlEnableDepthMask();
     // GPU billboards currently have an emissive-only material contract. Do
     // not force their glow sheets through alpha body compositing; black RGB in
     // a soft glow border would become a visible dark halo.
@@ -268,11 +276,14 @@ void ParticleManager_DrawEmission(Camera3D c, Texture2D t)
 {
     if (!s_initialized) return;
     rlDrawRenderBatchActive();
+    rlDisableDepthMask();
     BeginBlendMode(BLEND_ADDITIVE);
     DrawParticlesEmission(c, t);
     GpuParticleSystem_Draw(c, t);
     rlDrawRenderBatchActive();
     EndBlendMode();
+    rlEnableDepthMask();
+    rlDrawRenderBatchActive();
 }
 bool ParticleManager_HasEmissionParticles(void)
 {

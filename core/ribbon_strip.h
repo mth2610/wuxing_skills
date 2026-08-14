@@ -3,6 +3,7 @@
 
 #include "raylib.h"
 #include "core/vfx_contrast.h"
+#include "core/vfx_render.h"
 #include <stdbool.h>
 
 // =============================================================================
@@ -90,6 +91,22 @@ void DrawRibbonStripDeformedProfiledEx(const RibbonPoint *points, int count,
 // đa số ribbon trong project - tia sét, beam, trail - đều camera-facing).
 void DrawRibbonStrip(const RibbonPoint *points, int count, Texture2D texture,
                      Camera3D camera);
+
+/* High-level standalone-ribbon path. TrailSystem keeps using the profiled
+ * geometry calls so it can batch many ribbons under one scope; direct callers
+ * use this config so they cannot invent blend/depth/pass policy locally. */
+typedef struct {
+  RibbonMode mode;
+  Vector3 fixedNormal;
+  VFXRenderPass pass;
+  VFXAppearanceId appearance;
+  VFXResolvedAppearance legacyAppearance;
+  bool depthWrite;
+} VFXRibbonDrawConfig;
+
+bool DrawRibbonStripAppearanceEx(const RibbonPoint *points, int count,
+                                 Texture2D texture, Camera3D camera,
+                                 const VFXRibbonDrawConfig *config);
 
 // Rope/cloth inextensibility for one segment of a strip: pull `b` back toward
 // `a` (or both toward each other) until they are `restLen` apart. Promoted out

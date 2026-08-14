@@ -32,9 +32,9 @@ void ScreenDistort_Begin(void);
 // Kết thúc vẽ cảnh 3D
 void ScreenDistort_End(void);
 
-// General VFX render layers. Begin/End may be used by any skill, map or custom
-// renderer while a ScreenDistort scene is active. Both layers share the scene
-// depth attachment: body remains depth-occluded and emission remains HDR.
+// Low-level compatibility hooks used by the core/vfx_render.h implementation.
+// New feature code uses VFXRender so target/blend/depth state cannot drift
+// between particle, trail, ribbon, decal, map and skill renderers.
 void ScreenDistort_BeginVFXBody(void);
 void ScreenDistort_BeginVFXEmission(void);
 void ScreenDistort_EndVFXLayer(void);

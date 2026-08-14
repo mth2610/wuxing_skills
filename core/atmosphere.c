@@ -1,5 +1,5 @@
 #include "core/atmosphere.h"
-#include "core/screen_distort.h"
+#include "core/vfx_render.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <math.h>
@@ -101,13 +101,10 @@ void Atmosphere_Update(float dt, Camera3D camera) {
 void Atmosphere_Draw(Camera3D camera) {
     if (!s_ready || s_count <= 0) return;
 
-    // Ambient motes are low-energy background decoration, not authored VFX
-    // material.  Keeping them in the scene pass means an otherwise idle frame
-    // does not allocate/clear/composite the full-resolution HDR emission layer.
-    // Active skills still opt into ScreenDistort's VFX layers themselves.
-    rlDrawRenderBatchActive();
-    rlDisableDepthMask(); // motes never occlude; depth TEST still hides them behind geometry
-    BeginBlendMode(BLEND_ADDITIVE);
+    // Low-energy background radiance still uses the common scope; semantic
+    // passes share the authoritative HDR scene and allocate no extra target.
+    VFXRenderScope scope = VFXRender_BeginDraw(
+        VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
 
     for (int i = 0; i < s_count; i++) {
         const Mote *m = &s_motes[i];
@@ -118,9 +115,7 @@ void Atmosphere_Draw(Camera3D camera) {
         DrawBillboard(camera, s_dotTex, m->pos, m->size, c);
     }
 
-    EndBlendMode();
-    rlDrawRenderBatchActive();
-    rlEnableDepthMask();
+    VFXRender_EndDraw(&scope);
 }
 
 void Atmosphere_Unload(void) {

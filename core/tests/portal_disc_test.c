@@ -345,12 +345,11 @@ static void Test_MirrorMatchesTheSource(void)
           "...and defaulted to the flat pose rather than refused");
 
     // The blend law and the flushes.
-    CHECK(FileHas(inl, "rlDrawRenderBatchActive(); BeginBlendMode(BLEND_ADDITIVE); "
-                       "rlDisableDepthMask(); rlDisableBackfaceCulling(); "
-                       "rlDrawRenderBatchActive();"),
+    CHECK(FileHas(inl, "VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false") &&
+          FileHas(inl, "rlDisableBackfaceCulling();"),
           "it EMITS: additive, no depth write, both faces — flushed on both sides");
-    CHECK(FileHas(inl, "rlDrawRenderBatchActive(); rlEnableBackfaceCulling(); "
-                       "rlEnableDepthMask(); EndBlendMode(); rlDrawRenderBatchActive();"),
+    CHECK(FileHas(inl, "rlEnableBackfaceCulling();") &&
+          FileHas(inl, "VFXRender_EndDraw(&renderScope);"),
           "and the restore is flushed too");
     CHECK(!FileHas(inl, "Material_Begin("),
           "no lit material — it would be black-on-black in the night arena");

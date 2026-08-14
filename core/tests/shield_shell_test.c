@@ -70,8 +70,8 @@ int main(void)
           Has(src, "s_shieldShader.time = GetShaderLocation(shader, \"uTime\");"),
           "shield delegates two-phase flow binding to core/uv, and still drives its own clock");
     CHECK(Has(src, "rlDrawRenderBatchActive"), "render-state changes are bracketed by flushes");
-    CHECK(Has(src, "BeginBlendMode(BLEND_ALPHA)") &&
-          !Has(src, "BLEND_MULTIPLIED") && !Has(src, "BeginBlendMode(BLEND_ADDITIVE)"),
+    CHECK(Has(src, "VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, false") &&
+          !Has(src, "VFX_SURFACE_MULTIPLIED") && !Has(src, "VFX_SURFACE_ADDITIVE"),
           "the whole shield alpha-composites without a darkening pass");
     CHECK(Has(src, "rlEnableBackfaceCulling") && !Has(src, "rlDisableBackfaceCulling"),
           "shield draws one membrane instead of accumulating its back face as haze");

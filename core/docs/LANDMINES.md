@@ -101,15 +101,26 @@ value anywhere you would look.
 - **Rule:** author a shaped emissive effect as an unlit alpha **core** (to retain
   its element hue) plus a larger, lower-energy additive **halo** (to emit). Do
   not use one high-energy additive quad for both jobs. Submit the core through
-  `ScreenDistort_BeginVFXBody()` and the halo through
-  `ScreenDistort_BeginVFXEmission()`; `bright_vfx_isolation_test.c` is the
+  `VFXRender_BeginDraw(BODY, ALPHA, ...)` and the halo through
+  `VFXRender_BeginDraw(EMISSION, ADDITIVE, ...)`; `bright_vfx_isolation_test.c` is the
   renderer-independent regression probe for this blend law.
 - **Manager rule:** `main.c` must route `ParticleManager_DrawBody()` and
-  `DrawTrailEntitiesBody()` through the shared VFXBody target. The compositor
-  recovers straight body colour but preserves stored alpha linearly; a global
-  coverage power makes soft smoke/decal edges visible. Decals likewise use
+  `DrawTrailEntitiesBody()` through the shared BODY pass. Straight alpha keeps
+  coloured coverage readable while EMISSION adds radiance into the same HDR
+  scene. Decals likewise use
   `DecalSystem_DrawBody()`/`DrawEmission()` so additive cracks never contaminate
   the premultiplied body buffer.
+
+### VFX feature code must not own framebuffer, blend and depth separately
+- **Symptom:** particle, trail, ribbon, decal and one-off meshes look different
+  despite sharing the same authored appearance; state can also leak into the
+  next rlgl batch.
+- **Cause:** each producer hand-wires some combination of ScreenDistort target,
+  blend law, depth write and flush ordering.
+- **Rule:** use `VFXRender_BeginPass` for frame-wide manager batches and
+  `VFXRender_BeginDraw`/`VFXRender_BeginAppearance` for standalone geometry.
+  Keep manager-internal material bucketing so unification does not create one
+  state switch per particle or trail.
 
 ### An additive flare sheet can draw a dark fringe when reused as an alpha body
 - **Symptom:** a glow is clean on black but gains a grey/black ring when given

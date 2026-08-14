@@ -6,6 +6,7 @@ static int s_waterTimeLoc = -1;
 static int s_waterViewPosLoc = -1;
 static int s_waterLightDirLoc = -1;
 static int s_waterUvLengthLoc = -1;
+static VFXRenderScope s_waterStreamRenderScope = {0};
 
 static void InitWaterTubeShaderIfNeeded(void)
 {

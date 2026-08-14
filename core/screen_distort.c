@@ -1,4 +1,5 @@
 #include "core/screen_distort.h"
+#include "core/vfx_render.h"
 #include "rlgl.h"
 #include <math.h>
 #include <string.h>
@@ -311,6 +312,81 @@ void ScreenDistort_EndVFXLayer(void)
 {
   rlDrawRenderBatchActive();
   rlEnableFramebuffer(renderTex.id);
+}
+
+void VFXRender_BeginPass(VFXRenderPass pass)
+{
+  if (pass == VFX_RENDER_PASS_EMISSION)
+    ScreenDistort_BeginVFXEmission();
+  else
+    ScreenDistort_BeginVFXBody();
+}
+
+void VFXRender_EndPass(void)
+{
+  ScreenDistort_EndVFXLayer();
+}
+
+bool VFXRender_AppearanceDrawsPass(VFXResolvedAppearance appearance,
+                                   VFXRenderPass pass)
+{
+  return pass == VFX_RENDER_PASS_EMISSION
+             ? VFXResolvedAppearance_UsesEmission(appearance)
+             : VFXResolvedAppearance_UsesBody(appearance);
+}
+
+VFXContrastLayer VFXRender_ContrastLayer(VFXRenderPass pass)
+{
+  return pass == VFX_RENDER_PASS_EMISSION
+             ? VFX_CONTRAST_EMISSION : VFX_CONTRAST_BODY;
+}
+
+VFXRenderScope VFXRender_BeginDraw(VFXRenderPass pass,
+                                   VFXSurfaceMode surface,
+                                   bool depthWrite)
+{
+  VFXRenderScope scope = {true, depthWrite, pass, surface};
+  VFXRender_BeginPass(pass);
+  rlDrawRenderBatchActive();
+  if (depthWrite) rlEnableDepthMask();
+  else rlDisableDepthMask();
+  BeginBlendMode(surface == VFX_SURFACE_ADDITIVE
+                     ? BLEND_ADDITIVE
+                     : (surface == VFX_SURFACE_PREMULTIPLIED
+                            ? BLEND_ALPHA_PREMULTIPLY : BLEND_ALPHA));
+  rlDrawRenderBatchActive();
+  return scope;
+}
+
+VFXRenderScope VFXRender_BeginAppearance(VFXRenderPass pass,
+                                         VFXAppearanceId appearanceId,
+                                         VFXResolvedAppearance legacy,
+                                         bool depthWrite,
+                                         VFXResolvedAppearance *outResolved)
+{
+  VFXResolvedAppearance resolved = VFXAppearance_Resolve(appearanceId, legacy);
+  if (outResolved != NULL) *outResolved = resolved;
+  if (!VFXRender_AppearanceDrawsPass(resolved, pass))
+    return (VFXRenderScope){0};
+  /* EMISSION is radiance by definition. Named dual-layer looks such as FIRE
+   * keep their authored body surface, but their second semantic draw must add
+   * light rather than alpha/premult composite the same geometry twice. */
+  VFXSurfaceMode passSurface = pass == VFX_RENDER_PASS_EMISSION
+                                   ? VFX_SURFACE_ADDITIVE : resolved.surface;
+  return VFXRender_BeginDraw(pass, passSurface, depthWrite);
+}
+
+void VFXRender_EndDraw(VFXRenderScope *scope)
+{
+  if (scope == NULL || !scope->active) return;
+  rlDrawRenderBatchActive();
+  EndBlendMode();
+  /* The shared VFX default is read-only depth. Every direct scope restores
+   * the engine default (writes enabled), regardless of its requested mode. */
+  rlEnableDepthMask();
+  rlDrawRenderBatchActive();
+  VFXRender_EndPass();
+  scope->active = false;
 }
 
 void ScreenDistort_Add(Vector3 worldPos, float radius, float strength, float lifetime, float speed)

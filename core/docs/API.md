@@ -17,8 +17,7 @@
 - **`VFXLight_Spawn` requires a `VFXPriority`** — a full pool evicts the lowest priority. Use `VFX_PRIORITY_HIGH_ULTIMATE` for casts that must not drop.
 - **Metaballs:** call `MetaballFX_RegisterBlob` every frame per blob (1-frame lifetime); never call `MetaballFX_Prepare`, `MetaballFX_Composite`, or `MetaballFX_DrawRegistered` from skill code.
 - **ScreenDistort:** skills only call `ScreenDistort_Add` (auto-expires after `lifetime`); the rest is engine lifecycle.
-- **VFX semantic layers:** manager body draws (particles, trails, decals) go to `ScreenDistort_BeginVFXBody`; actual radiance goes to `ScreenDistort_BeginVFXEmission`. Never mix additive decal RGB into the body target.
-- **Depth-state changes** must flush the batch (`rlDrawRenderBatchActive()`) before AND after — see `ENGINE_LANDMINES.md` §1.
+- **VFX rendering:** manager batches enter `VFXRender_BeginPass(BODY/EMISSION)` once per frame-wide pass. Standalone particle/ribbon/mesh draws use `VFXRender_BeginAppearance` or `VFXRender_BeginDraw`; the scope owns target, blend, depth-write and mandatory flushes. Never call `ScreenDistort_BeginVFX*` or hand-roll blend/depth state in feature code.
 - **Custom shader textures:** bind via `SetShaderValueTexture`, not `rlActiveTextureSlot`/`rlEnableTexture` — see `LANDMINES.md`.
 - **Cooldowns** are keyed `(skillIndex, agentId)`; call `SkillManager_TriggerCooldown` at cast, `SkillManager_CanCast` to gate.
 - **Composition rule:** element colors/gradients/force-fields come from `VFX_Material(VC_MAT_*)`; motion math (orbit/ring/jitter/breathe) from `vc_motion.h`. Assemble new `VFX_Compose*` from material + motion + primitives — hard-coded colors only for deliberate identity breaks, with a comment.
@@ -316,6 +315,7 @@
   void DrawRibbonStripDeformedEx(const RibbonPoint *points, int count, Texture2D texture, Camera3D camera, RibbonMode mode, Vector3 fixedNormal);
   void DrawRibbonStripDeformedProfiledEx(const RibbonPoint *points, int count, Texture2D texture, Camera3D camera, RibbonMode mode, Vector3 fixedNormal, VFXContrastProfileId contrastProfile, VFXContrastLayer contrastLayer);
   void DrawRibbonStrip(const RibbonPoint *points, int count, Texture2D texture, Camera3D camera);
+  bool DrawRibbonStripAppearanceEx(const RibbonPoint *points, int count, Texture2D texture, Camera3D camera, const VFXRibbonDrawConfig *config);
   void Ribbon_ConstrainSegment(Vector3 *a, Vector3 *b, float restLen, bool pinnedA, RibbonConstrainMode mode);
   void Ribbon_ComputeArcLengthUV(RibbonPoint *points, int count);
   void Ribbon_ComputeCrossFrame(const Vector3 *points, int count, RibbonMode mode, Vector3 fixedNormal, Camera3D camera, Vector3 *outAxisA, Vector3 *outAxisB);
@@ -324,7 +324,7 @@
   void DrawRibbonEnergyField(const Vector3 *points, int count, float width, const float *widthEnvelope, const RibbonEnergyFieldLayer *layers, int layerCount, Texture2D texture, RibbonMode mode, Vector3 fixedNormal, Camera3D camera, float time);
 ```
 **Enums:** RibbonMode { RIBBON_CAMERA_FACING,RIBBON_WORLD_UP,RIBBON_FIXED_NORMAL };RibbonConstrainMode { RIBBON_CONSTRAIN_EXACT,RIBBON_CONSTRAIN_MAX,RIBBON_CONSTRAIN_MIN }
-**Structs** (fields in header): RibbonPoint, RibbonMidpointConfig, RibbonEnergyFieldLayer
+**Structs** (fields in header): RibbonPoint, VFXRibbonDrawConfig, RibbonMidpointConfig, RibbonEnergyFieldLayer
 
 ### `core/decals/decal_system.h`
 ```c
@@ -389,6 +389,19 @@
 ```
 **Enums:** VFXAppearanceId { VFX_APPEARANCE_INHERIT,VFX_APPEARANCE_NORMAL,VFX_APPEARANCE_SMOKE,VFX_APPEARANCE_DUST,VFX_APPEARANCE_GLOW,VFX_APPEARANCE_FIRE,VFX_APPEARANCE_MAGIC,VFX_APPEARANCE_COUNT };VFXSurfaceMode { VFX_SURFACE_ALPHA,VFX_SURFACE_ADDITIVE,VFX_SURFACE_PREMULTIPLIED }
 **Structs** (fields in header): VFXResolvedAppearance
+
+### `core/vfx_render.h`
+```c
+  void VFXRender_BeginPass(VFXRenderPass pass);
+  void VFXRender_EndPass(void);
+  VFXRenderScope VFXRender_BeginDraw(VFXRenderPass pass, VFXSurfaceMode surface, bool depthWrite);
+  VFXRenderScope VFXRender_BeginAppearance(VFXRenderPass pass, VFXAppearanceId appearanceId, VFXResolvedAppearance legacy, bool depthWrite, VFXResolvedAppearance *outResolved);
+  void VFXRender_EndDraw(VFXRenderScope *scope);
+  bool VFXRender_AppearanceDrawsPass(VFXResolvedAppearance appearance, VFXRenderPass pass);
+  VFXContrastLayer VFXRender_ContrastLayer(VFXRenderPass pass);
+```
+**Enums:** VFXRenderPass { VFX_RENDER_PASS_BODY,VFX_RENDER_PASS_EMISSION }
+**Structs** (fields in header): VFXRenderScope
 
 ### `core/screen_distort.h`
 ```c

@@ -95,8 +95,8 @@ void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float 
         s_swirlInit     = true;
     }
 
-    ScreenDistort_BeginVFXEmission();
-    rlDrawRenderBatchActive();
+    VFXRenderScope swirlScope = VFXRender_BeginDraw(
+        VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
     SkillManager_BeginShader(s_swirlSh);
 
     float tShader = (float)GetTime();
@@ -107,8 +107,6 @@ void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float 
     if (s_uSwirlBody >= 0) SetShaderValue(s_swirlSh, s_uSwirlBody, &bodyV, SHADER_UNIFORM_VEC4);
     if (s_uSwirlGlow >= 0) SetShaderValue(s_swirlSh, s_uSwirlGlow, &glowV, SHADER_UNIFORM_VEC4);
 
-    BeginBlendMode(BLEND_ADDITIVE);
-    rlDisableDepthMask();
     rlDisableBackfaceCulling();
 
     // Shell 0: innermost, tight band, fast counter-spin, right against the core.
@@ -136,9 +134,7 @@ void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float 
     }
 
     rlEnableBackfaceCulling();
-    rlEnableDepthMask();
-    EndBlendMode();
-    ScreenDistort_EndVFXLayer();
+    VFXRender_EndDraw(&swirlScope);
     SkillManager_EndShader();
 
     // ─────────────────────────────────────────────────────────────────────
@@ -212,14 +208,11 @@ void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float 
         if (runePath != NULL)
         {
             Texture2D runeTex = ResourceManager_LoadTexture(runePath);
-            ScreenDistort_BeginVFXEmission();
-            rlDrawRenderBatchActive();
-            BeginBlendMode(BLEND_ADDITIVE);
+            VFXRenderScope runeScope = VFXRender_BeginDraw(
+                VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
             VC_DrawGroundRune(runeTex, (Vector3){pos.x, 0.02f, pos.z},
                               radius * 1.6f, time * 14.0f, VC_WithAlpha(mat->glow, 160));
-            rlDrawRenderBatchActive();
-            EndBlendMode();
-            ScreenDistort_EndVFXLayer();
+            VFXRender_EndDraw(&runeScope);
         }
     }
 

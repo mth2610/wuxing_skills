@@ -4,11 +4,9 @@ void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, floa
     if (s_waterTubeShader.locs == NULL)
         return;
 
-    ScreenDistort_BeginVFXBody();
-    rlDrawRenderBatchActive();
-    rlDisableDepthMask();
+    VFXRenderScope renderScope = VFXRender_BeginDraw(
+        VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, false);
     rlEnableBackfaceCulling();
-    BeginBlendMode(BLEND_ALPHA);
     BeginShaderMode(s_waterTubeShader);
 
     SkillManager_BeginShader(s_waterTubeShader);
@@ -35,9 +33,8 @@ void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, floa
 
     SkillManager_EndShader();
     EndShaderMode();
-    EndBlendMode();
     rlDisableBackfaceCulling();
-    rlEnableDepthMask();
+    VFXRender_EndDraw(&renderScope);
 }
 
 void VFX_BeginWaterStreams(float time)
@@ -46,11 +43,9 @@ void VFX_BeginWaterStreams(float time)
     if (s_waterTubeShader.locs == NULL)
         return;
 
-    ScreenDistort_BeginVFXBody();
-    rlDrawRenderBatchActive();
-    rlDisableDepthMask();
+    s_waterStreamRenderScope = VFXRender_BeginDraw(
+        VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, false);
     rlEnableBackfaceCulling();
-    BeginBlendMode(BLEND_ALPHA);
     BeginShaderMode(s_waterTubeShader);
 
     SkillManager_BeginShader(s_waterTubeShader);
@@ -102,10 +97,8 @@ void VFX_EndWaterStreams(void)
 
     SkillManager_EndShader();
     EndShaderMode();
-    EndBlendMode();
     rlDisableBackfaceCulling();
-    rlEnableDepthMask();
-    ScreenDistort_EndVFXLayer();
+    VFXRender_EndDraw(&s_waterStreamRenderScope);
 }
 
 void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time)

@@ -544,6 +544,31 @@ void DrawRibbonStrip(const RibbonPoint *points, int count, Texture2D texture,
                     (Vector3){0.0f, 1.0f, 0.0f});
 }
 
+bool DrawRibbonStripAppearanceEx(const RibbonPoint *points, int count,
+                                 Texture2D texture, Camera3D camera,
+                                 const VFXRibbonDrawConfig *config)
+{
+  if (points == NULL || count < 2 || config == NULL) return false;
+  VFXResolvedAppearance resolved = VFXAppearance_Resolve(
+      config->appearance, config->legacyAppearance);
+  /* RibbonPoint stores straight RGBA bytes, so it cannot feed the
+   * premultiplied blend law directly. Named FIRE still gets its alpha body;
+   * its emission pass is converted to additive by BeginAppearance. */
+  if (config->pass == VFX_RENDER_PASS_BODY &&
+      resolved.surface == VFX_SURFACE_PREMULTIPLIED)
+    resolved.surface = VFX_SURFACE_ALPHA;
+  VFXRenderScope scope = VFXRender_BeginAppearance(
+      config->pass, VFX_APPEARANCE_INHERIT, resolved,
+      config->depthWrite, &resolved);
+  if (!scope.active) return false;
+  DrawRibbonStripProfiledEx(points, count, texture, camera,
+                            config->mode, config->fixedNormal,
+                            resolved.contrast,
+                            VFXRender_ContrastLayer(config->pass));
+  VFXRender_EndDraw(&scope);
+  return true;
+}
+
 void Ribbon_ComputeArcLengthUV(RibbonPoint *points, int count) {
   if (points == NULL || count < 2)
     return;
