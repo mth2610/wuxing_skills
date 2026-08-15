@@ -1,4 +1,4 @@
-/* Bright-background and hierarchy contract for VFX_ComposeRuneCircle.
+/* Bright-background, particle-free focal-geometry contract for VFX_ComposeRuneCircle.
  *
  * The numeric half mirrors fixed-function blending only; it cannot validate
  * texture filtering, bloom radius, camera foreshortening, or motion.  Source
@@ -58,14 +58,16 @@ int main(void)
     const Rgb brightStone = {0.62f, 0.67f, 0.72f};
     const Rgb warmRune = {1.00f, 0.28f, 0.06f};
 
-    /* Old rune: three additive submissions.  New rune: compact colour-bearing
-     * coverage, then one restrained halo. */
+    /* A bright destination cannot hold hue through a tall additive stack.  The
+     * rune must put its pigment in the alpha body, then spend only a small
+     * additive budget on one halo. */
     Rgb additiveOnly = brightStone;
-    additiveOnly = Additive(additiveOnly, warmRune, 0.22f);
-    additiveOnly = Additive(additiveOnly, warmRune, 0.85f);
+    additiveOnly = Additive(additiveOnly, warmRune, 0.32f);
+    additiveOnly = Additive(additiveOnly, warmRune, 0.92f);
     additiveOnly = Additive(additiveOnly, warmRune, 1.00f);
-    Rgb split = AlphaOver(brightStone, warmRune, 0.86f);
-    split = Additive(split, warmRune, 0.20f);
+    Rgb split = AlphaOver(brightStone, warmRune, 0.90f);
+    split = Additive(split, warmRune, 0.18f);
+    split = Additive(split, warmRune, 0.72f);
 
     if (Chroma(split) < Chroma(additiveOnly) + 0.12f) {
         fprintf(stderr, "FAIL: alpha core does not materially preserve rune chroma\n");
@@ -89,33 +91,53 @@ int main(void)
         fprintf(stderr, "FAIL: rune circle does not opt into shared magic contrast\n");
         failed++;
     }
-    if (!Has(source, "Color keylineCol = ColorLerp(")) {
-        fprintf(stderr, "FAIL: bright-ground rune has no dark precision keyline\n");
+    if (!Has(source, "Color bodyInk = VFXContrast_ApplyColor(m->body,")) {
+        fprintf(stderr, "FAIL: rune body is not sourced from the material colour\n");
+        failed++;
+    }
+    if (Has(source, "(Color){10, 10, 15, 255}")) {
+        fprintf(stderr, "FAIL: rune still paints a black keyline on bright ground\n");
         failed++;
     }
     if (!Has(source, "static const float bodyW[2][2]")) {
         fprintf(stderr, "FAIL: BODY does not separate keyline from saturated inscription\n");
         failed++;
     }
-    if (!Has(source, "bool glyphPass = isGlyph;")) {
-        fprintf(stderr, "FAIL: glyph halo still expands into a blurry solid ring\n");
+    if (!Has(source, "static const float haloW[2]")) {
+        fprintf(stderr, "FAIL: rune has no separate halo and luminous core\n");
         failed++;
     }
-    if (!Has(source, "Rune_DrawAnchors(")) {
-        fprintf(stderr, "FAIL: rune composition lacks structural anchor marks\n");
+    if (!Has(source, "static const float haloA[2] = { 0.18f, 0.72f }")) {
+        fprintf(stderr, "FAIL: rune glow does not have a visible core energy budget\n");
+        failed++;
+    }
+    if (!Has(source, "Color emissionCol = ColorLerp(m->glow, m->soft, 0.30f)")) {
+        fprintf(stderr, "FAIL: rune glow does not use the material's luminous hue ramp\n");
+        failed++;
+    }
+    if (Has(source, "Rune_DrawMotes(")) {
+        fprintf(stderr, "FAIL: rune circle still draws particle-like motes\n");
+        failed++;
+    }
+    if (Has(source, "Rune_DrawAnchors(") || Has(source, "Rune_DrawSpokes(")) {
+        fprintf(stderr, "FAIL: rune composition contains stray radial geometry\n");
+        failed++;
+    }
+    if (!Has(source, "Rune_DrawFocusGlyph(") || !Has(source, ", 4,")) {
+        fprintf(stderr, "FAIL: rune lost its concentric square focal glyph\n");
         failed++;
     }
     if (!Has(source, "Color inscriptionCol = m->glow;")) {
         fprintf(stderr, "FAIL: rune inscription does not preserve the material hue ramp\n");
         failed++;
     }
-    if (Has(source, "VC_Whiten(m->glow")) {
+    if (Has(source, "ColorLerp(inscriptionCol, WHITE")) {
         fprintf(stderr, "FAIL: rune palette is still being pushed toward pale white\n");
         failed++;
     }
 
     free(source);
     if (failed == 0)
-        puts("PASS: rune circle preserves bright-background colour and authored hierarchy");
+        puts("PASS: rune circle preserves chroma, focal glyphs, and particle-free silhouette");
     return failed != 0;
 }
