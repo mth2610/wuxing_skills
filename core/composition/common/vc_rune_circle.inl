@@ -70,9 +70,6 @@ static void Rune_InitShared(void)
             SetTextureWrap(s_runeGlyph[g], TEXTURE_WRAP_REPEAT);
         }
     }
-    if (s_runeGlyph[0].id == 0)
-        TraceLog(LOG_WARNING, "RuneCircle: rune_glyphs_*.png missing — "
-                              "falling back to dashed rings (run scripts/gen_rune_textures.py)");
 
     s_runeInit = true;
 }
@@ -95,7 +92,7 @@ static float Rune_ArcCharacter(int ring, float a01, float time)
     float fineSweep = sinf(a01 * 2.0f * PI * (float)(7 + ring * 2)
                          - time * (0.55f + 0.09f * (float)ring) * dir
                          + (float)ring * 1.71f);
-    return 0.68f + 0.23f * longSweep + 0.09f * fineSweep;
+    return 0.75f + 0.25f * longSweep;
 }
 
 static float Rune_DashMask(int ring, float a01)
@@ -193,11 +190,11 @@ void VFX_ComposeRuneCircle(Vector3 center, Vector3 normal, VC_MaterialId mat,
 
     for (int r = 0; r < ringCount; r++)
     {
-        bool isGlyph = (r % 2 == 0) && (s_runeGlyph[r % RUNE_GLYPH_SHEETS].id != 0);
         float dir   = (r % 2 == 0) ? 1.0f : -1.0f;
         float speed = (0.55f + 0.22f * (float)r) * dir * s_runeSpin;
         float spin  = time * speed;
 
+        bool isGlyph = (r % 2 == 0) && (s_runeGlyph[r % RUNE_GLYPH_SHEETS].id != 0);
         float rr = radius * open * (1.0f - 0.19f * (float)r);
         float halfW = radius * (isGlyph ? 0.052f : (0.016f - 0.002f * (float)r))
                              * s_runeWidth;
@@ -233,29 +230,28 @@ void VFX_ComposeRuneCircle(Vector3 center, Vector3 normal, VC_MaterialId mat,
         }
     }
 
-    float focusHalfW = radius * 0.010f * s_runeWidth;
+    float focusHalfW = radius * 0.0085f * s_runeWidth;
     Rune_DrawFocusGlyph(center, normal, u, v, radius * open, time, focusHalfW * 1.42f,
                         ColorAlpha(bodyInk, fade * 0.95f));
     Rune_DrawFocusGlyph(center, normal, u, v, radius * open, time, focusHalfW * 0.82f,
                         ColorAlpha(saturatedInscription, fade * 0.96f));
-
     VFXRender_EndDraw(&bodyScope);
 
     // ── PASS 2: EMISSION (soft halo + compact luminous core) ─────────────────
     VFXRenderScope emissionScope = VFXRender_BeginDraw(
         VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
 
-    static const float haloW[2] = { 2.15f, 0.62f };
-    static const float haloA[2] = { 0.18f, 0.72f };
+    static const float haloW[2] = { 1.55f, 0.44f };
+    static const float haloA[2] = { 0.10f, 0.48f };
     Color emissionCol = ColorLerp(m->glow, m->soft, 0.30f);
 
     for (int r = 0; r < ringCount; r++)
     {
-        bool isGlyph = (r % 2 == 0) && (s_runeGlyph[r % RUNE_GLYPH_SHEETS].id != 0);
         float dir   = (r % 2 == 0) ? 1.0f : -1.0f;
         float speed = (0.55f + 0.22f * (float)r) * dir * s_runeSpin;
         float spin  = time * speed;
 
+        bool isGlyph = (r % 2 == 0) && (s_runeGlyph[r % RUNE_GLYPH_SHEETS].id != 0);
         float rr = radius * open * (1.0f - 0.19f * (float)r);
         float halfW = radius * (isGlyph ? 0.052f : (0.016f - 0.002f * (float)r))
                              * s_runeWidth;
@@ -263,7 +259,7 @@ void VFX_ComposeRuneCircle(Vector3 center, Vector3 normal, VC_MaterialId mat,
 
         for (int pass = 0; pass < 2; pass++)
         {
-            Texture2D tex = s_runeTex;
+            Texture2D tex = isGlyph ? s_runeGlyph[r % RUNE_GLYPH_SHEETS] : s_runeTex;
             Color passTint = emissionCol;
 
             for (int i = 0; i < RUNE_RING_POINTS; i++)
@@ -295,6 +291,5 @@ void VFX_ComposeRuneCircle(Vector3 center, Vector3 normal, VC_MaterialId mat,
                         ColorAlpha(emissionCol, fade * haloA[0]));
     Rune_DrawFocusGlyph(center, normal, u, v, radius * open, time, focusHalfW * haloW[1],
                         ColorAlpha(emissionCol, fade * haloA[1]));
-
     VFXRender_EndDraw(&emissionScope);
 }

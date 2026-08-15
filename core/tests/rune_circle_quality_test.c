@@ -83,8 +83,16 @@ int main(void)
         fprintf(stderr, "FAIL: rune circle has no separate additive halo\n");
         failed++;
     }
+    if (!Has(source, "#define RUNE_MAX_RINGS   4")) {
+        fprintf(stderr, "FAIL: rune no longer has the reference four-ring hierarchy\n");
+        failed++;
+    }
     if (!Has(source, "Rune_ArcCharacter(")) {
         fprintf(stderr, "FAIL: rune marks have no per-arc intensity variation\n");
+        failed++;
+    }
+    if (!Has(source, "RUNE_GLYPH_SHEETS") || !Has(source, "s_runeGlyph")) {
+        fprintf(stderr, "FAIL: reference glyph-sheet ring system is missing\n");
         failed++;
     }
     if (!Has(source, "VFX_CONTRAST_MAGIC")) {
@@ -107,8 +115,8 @@ int main(void)
         fprintf(stderr, "FAIL: rune has no separate halo and luminous core\n");
         failed++;
     }
-    if (!Has(source, "static const float haloA[2] = { 0.18f, 0.72f }")) {
-        fprintf(stderr, "FAIL: rune glow does not have a visible core energy budget\n");
+    if (!Has(source, "static const float haloA[2] = { 0.10f, 0.48f }")) {
+        fprintf(stderr, "FAIL: rune glow energy budget is not restrained\n");
         failed++;
     }
     if (!Has(source, "Color emissionCol = ColorLerp(m->glow, m->soft, 0.30f)")) {

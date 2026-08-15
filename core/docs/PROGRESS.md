@@ -431,11 +431,9 @@ tạo hình thành preset (mật độ sợi, độ dày, tương phản biên, 
            24 KHÔNG ai tham chiếu
 ```
 
-> **ĐÍNH CHÍNH 10/08/2026 — con số 24 SAI, và sai theo hướng nguy hiểm.**
-> `rune_glyphs_0..3` bị đếm nhầm là mồ côi. Chúng **đang được dùng**, nạp bằng
-> đường dẫn dựng lúc chạy: `vc_rune_circle.inl:92` gọi
-> `snprintf(path, ..., "assets/textures/rune_glyphs_%d.png", g)`. `git rm` theo
-> danh sách cũ là gãy VFX vòng rune.
+> **ĐÍNH CHÍNH 15/08/2026 — rune glyph sheets vẫn được dùng.**
+> `vc_rune_circle.inl` nạp `rune_glyphs_0..3` bằng đường dẫn dựng lúc chạy;
+> không xoá asset chỉ dựa trên audit tên file.
 >
 > **Quy tắc:** một lần grep theo tên file KHÔNG chứng minh được file mồ côi.
 > Phải quét luôn các chỗ dựng đường dẫn động (`snprintf`/`TextFormat` +
