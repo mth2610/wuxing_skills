@@ -1,0 +1,10 @@
+/Users/mth2610/Desktop/c_games/wuxing_skills/core/tests/silhouette_test.c:300:13: warning: unused function 'DumpWorst' [-Wunused-function]
+static void DumpWorst(void) {
+            ^
+/Users/mth2610/Desktop/c_games/wuxing_skills/core/tests/silhouette_test.c:376:13: warning: unused function 'DumpProfile' [-Wunused-function]
+static void DumpProfile(const char *label, int row) {
+            ^
+/Users/mth2610/Desktop/c_games/wuxing_skills/core/tests/silhouette_test.c:455:12: warning: unused function 'FileHas' [-Wunused-function]
+static int FileHas(const char *path, const char *needle) {
+           ^
+3 warnings generated.

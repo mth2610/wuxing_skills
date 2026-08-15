@@ -1,0 +1,10 @@
+/Users/mth2610/Desktop/c_games/wuxing_skills/core/tests/swept_trail_test.c:73:12: warning: unused function 'LagSamples' [-Wunused-function]
+static int LagSamples(int strand)
+           ^
+/Users/mth2610/Desktop/c_games/wuxing_skills/core/tests/swept_trail_test.c:1235:14: warning: unused function 'PixelsPerMetre' [-Wunused-function]
+static float PixelsPerMetre(float dist, float fovyDeg, float screenH)
+             ^
+/Users/mth2610/Desktop/c_games/wuxing_skills/core/tests/swept_trail_test.c:1243:14: warning: unused function 'ScreenFloor' [-Wunused-function]
+static float ScreenFloor(float halfW, float pxPerMetre, float minFullPx, float *outAlphaScale)
+             ^
+3 warnings generated.

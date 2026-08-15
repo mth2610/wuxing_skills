@@ -1,0 +1,7 @@
+/Users/mth2610/Desktop/c_games/wuxing_skills/core/tests/trail_deform_test.c:53:20: warning: unused variable 'kCurlScale' [-Wunused-const-variable]
+static const float kCurlScale = 0.7f;
+                   ^
+/Users/mth2610/Desktop/c_games/wuxing_skills/core/tests/trail_deform_test.c:64:42: warning: unused variable 'kEdgeSoft' [-Wunused-const-variable]
+static const float kBundleWidth = 0.34f, kEdgeSoft = 0.18f;
+                                         ^
+2 warnings generated.

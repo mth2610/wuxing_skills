@@ -1,0 +1,4 @@
+/Users/mth2610/Desktop/c_games/wuxing_skills/core/tests/fluid_depth_filter_test.c:30:14: warning: unused function 'Clampf' [-Wunused-function]
+static float Clampf(float v, float a, float b) { return v < a ? a : (v > b ? b : v); }
+             ^
+1 warning generated.
