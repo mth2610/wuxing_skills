@@ -605,20 +605,12 @@ static void Test_MirrorStillMatchesSource(void) {
         "and so is the old inline tile-or-stretch");
 
   // ── The other two consumers ──
-  CHECK(FileHas("core/shaders/shield_shell.fs", "SurfaceFlow_FieldSample(u_bodyTex, flowTex, uv, uv, uTime)") &&
-            FileHas("core/shaders/shield_shell.fs", "#include \"core/uv/shaders/uv_field.glsl\""),
-        "shield_shell.fs samples through the packed field — the flow half is "
-        "reused, not just the trail");
-  CHECK(!FileHasCode("core/shaders/shield_shell.fs", "uniform int u_useFlow;"),
-        "and its hand-rolled u_useFlow branch is gone, replaced by a property "
-        "of the flow");
-  CHECK(FileHas("core/composition/common/vc_shield_shell.inl", "SurfaceFlow_Apply(&shield->flow, shader, &s_shieldShader.flow,") &&
-            FileHas("core/composition/common/vc_shield_shell.inl", "SurfaceFlow_CacheLocations(shader)"),
-        "the shield's C side binds a SurfaceFlow, cache-then-apply");
-  CHECK(FileHas("core/composition/common/vc_shield_shell.inl", "s_shieldShader.time = GetShaderLocation(shader, \"uTime\");"),
-        "the shield sets its own clock — FlowMap used to push it as a side "
-        "effect and SurfaceFlow has no such hook, so dropping this would have "
-        "frozen the membrane");
+  CHECK(FileHas("core/shaders/glass_shell.fs", "calcFresnel(normal, viewDir") &&
+            FileHas("core/shaders/glass_shell.fs", "u_emissionOnly"),
+        "the shield now uses a transparent shared-Fresnel glass shell");
+  CHECK(!FileHasCode("core/composition/common/vc_shield_shell.inl", "SurfaceFlow_Apply") &&
+            !FileHasCode("core/composition/common/vc_shield_shell.inl", "shield_shell.fs"),
+        "the shield shell no longer owns a flow-map shader path");
   CHECK(FileHas("core/shaders/aura_shell.fs", "sin(UVDeform_FoldAngle("),
         "aura_shell's periodic scan folds its clock through the module");
   CHECK(FileHas("core/shaders/aura_shell.fs", "float yScroll = fragPosition.y * u_heightScale - u_time * u_scrollSpeed;"),

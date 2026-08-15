@@ -214,14 +214,11 @@ static void Test_MirrorStillMatchesSource(void)
           "the triangle-wave weight still matches the centring it assumes");
     CHECK(FileHas(shared, "texture(flowTex, uv).rg * 2.0 - 1.0"),
           "the field is still decoded from RG as a signed direction");
-    // The shield now reaches the same operation through core/uv's SurfaceFlow
-    // (a one-layer flow with twoPhase on IS a FlowMap), so it names the field
-    // sampler rather than the primitive. Still exactly one flow operation
-    // shared between them — one more indirection deep on the shield's side.
+    // The glass shield no longer consumes a flow map; this contract now covers
+    // the remaining flat/volume consumers of the shared operation.
     CHECK(FileHas("core/shaders/flow_map.fs", "FlowMap_SampleTwoPhase") &&
-          FileHas("core/uv/shaders/uv_field.glsl", "FlowMap_SampleTwoPhase") &&
-          FileHas("core/shaders/shield_shell.fs", "SurfaceFlow_FieldSample"),
-          "flat and shield materials share exactly one flow operation");
+          FileHas("core/uv/shaders/uv_field.glsl", "FlowMap_SampleTwoPhase"),
+          "flat materials share exactly one flow operation");
 
     const char *c = "core/uv/flow_map.c";
     CHECK(FileHas(c, "FlowMap_CreateWithTrailTexture"),

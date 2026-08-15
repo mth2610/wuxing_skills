@@ -47,49 +47,47 @@ int main(void)
 
     CHECK(SHIELD_MAX * SHIELD_RINGS * SHIELD_SLICES * 2 <= 6400,
           "eight alpha shields stay inside the 6400-triangle primary budget");
+    CHECK(Has("core/composition/common/vc_shield_shell.inl", "SHIELD_SHELL_RINGS 32") &&
+          Has("core/composition/common/vc_shield_shell.inl", "SHIELD_SHELL_SLICES 32"),
+          "glass sphere uses a rounder 32x32 silhouette without scene feedback");
     CHECK(HdrCrestGain(0.50f, 0.0f) < 0.001f,
           "sub-crest membrane stays below the HDR/bloom path");
     CHECK(HdrCrestGain(1.0f, 0.0f) > 1.0f,
           "only a hot crest clears the HDR bloom threshold");
 
     const char *src = "core/composition/common/vc_shield_shell.inl";
-    CHECK(Has(src, "PlasmaMaterial_Load"), "NULL surface uses PlasmaMaterial fallback");
-    CHECK(Has(src, "shield_shell_hdr_flow") && Has(src, "VC_Whiten(mat->glow, 0.72f)"),
-          "fallback supplies a white HDR crest rather than only a rim");
-    CHECK(!Has(src, "AuraShellMaterial"), "aura shell is not a ShieldShell fallback");
-    CHECK(Has(src, "ResourceManager_LoadShader"), "authored shield shader goes through ResourceManager");
+    CHECK(Has(src, "ResourceManager_LoadShader") && Has(src, "glass_shell.fs"),
+          "shield uses the dedicated glass shell shader");
+    CHECK(!Has(src, "PlasmaMaterial_Load") && !Has(src, "SurfaceFlow_Apply") &&
+          !Has(src, "Material_LoadCustom"),
+          "legacy plasma, flow, and opaque material shell are removed");
     CHECK(Has(src, "VFX_Material(shield->mat)"), "element colour comes from VFX_Material");
-    CHECK(Has(src, "SetShaderValueTexture"), "surface body/flow/mask bind as shader inputs");
-    // Migrated from FlowMap to core/uv's SurfaceFlow: same two-phase read, but
-    // as layer 0 of an N-layer flow, so the membrane can be given more layers
-    // from VFX_ShieldSurface data without editing the shader. The clock check
-    // is not incidental — FlowMap_Apply used to push the time uniform as a
-    // side effect and SurfaceFlow has no such hook, so losing that line would
-    // freeze the membrane while every other assertion here stayed green.
-    CHECK(Has(src, "SurfaceFlow_Apply") && Has(src, "SurfaceFlow_CacheLocations") &&
-          Has(src, "s_shieldShader.time = GetShaderLocation(shader, \"uTime\");"),
-          "shield delegates two-phase flow binding to core/uv, and still drives its own clock");
+    CHECK(!Has(src, "SetShaderValueTexture"), "glass sphere has no surface-sheet dependency");
+    CHECK(Has(src, "SkillManager_BeginShader") && Has(src, "SkillManager_EndShader"),
+          "glass shader owns its uniforms and batching");
     CHECK(Has(src, "rlDrawRenderBatchActive"), "render-state changes are bracketed by flushes");
     CHECK(Has(src, "VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, false") &&
-          !Has(src, "VFX_SURFACE_MULTIPLIED") && !Has(src, "VFX_SURFACE_ADDITIVE"),
-          "the whole shield alpha-composites without a darkening pass");
-    CHECK(Has(src, "rlEnableBackfaceCulling") && !Has(src, "rlDisableBackfaceCulling"),
-          "shield draws one membrane instead of accumulating its back face as haze");
-    CHECK(Has("core/shaders/plasma_shell.fs", "float crest = smoothstep(0.74, 0.94, wisp)") &&
-          !Has("core/shaders/plasma_shell.fs", "mix(0.20, 1.0, interiorFlow)"),
-          "HDR is restricted to filament crests before ACES tone mapping");
-    CHECK(Has("core/shaders/shield_shell.fs", "SurfaceFlow_FieldSample") &&
-          Has("core/shaders/shield_shell.fs", "u_maskTex"),
-          "authored path has distinct flow and mask channels");
-    CHECK(Has("core/shaders/shield_shell.fs", "float strand = smoothstep(0.16, 0.62, detail)") &&
-          !Has("core/shaders/shield_shell.fs", "calcFresnel") &&
-          !Has("core/shaders/shield_shell.fs", "fragTexCoord"),
-          "surface alpha is strand-driven and its mapping has no Fresnel pole seam");
-    CHECK(Has("core/shaders/shield_shell.fs", "Shield_TriplanarBody") &&
-          Has("core/shaders/shield_shell.fs", "pow(abs(normal), vec3(4.0))"),
-          "body and flow map use a pole-free triplanar projection");
-    CHECK(Has(src, "rlSetTexture(shield->surface.body.id)"),
-          "authored body is bound to the immediate geometry batch");
+          Has(src, "VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false") &&
+          !Has(src, "VFX_SURFACE_MULTIPLIED"),
+          "the body is alpha-composited and only the Fresnel rim is additive");
+    CHECK(Has(src, "rlEnableBackfaceCulling") &&
+          Has(src, "RL_CULL_FACE_FRONT") && Has(src, "RL_CULL_FACE_BACK"),
+          "shield composites both glass interfaces with explicit cull order");
+    CHECK(Has("core/shaders/glass_shell.fs", "calcFresnel") &&
+          Has("core/shaders/glass_shell.fs", "u_emissionOnly") &&
+          Has("core/shaders/glass_shell.fs", "u_fresnelPower"),
+          "glass sphere reuses shared Fresnel math with a transparent body");
+    CHECK(Has("core/shaders/glass_shell.vs", "fragPosition = vertexPosition") &&
+          Has("core/shaders/glass_shell.fs", "normalize(-fragPosition)"),
+          "glass Fresnel keeps immediate-mode normal and view coordinates consistent");
+    CHECK(Has("core/shaders/glass_shell.fs", "u_lightDirView") &&
+          Has(src, "Environment_GetSunDirection") && Has(src, "lightView"),
+          "glass body and rim include the camera-relative environment light");
+    CHECK(Has(src, "wallPass") && Has("core/shaders/glass_shell.fs", "u_wallPass"),
+          "front and back glass interfaces receive separate optical weights");
+    CHECK(Has("CMakeLists.txt", "configure_file(core/shaders/glass_shell.fs") &&
+          Has("CMakeLists.txt", "configure_file(core/shaders/glass_shell.vs"),
+          "glass shader stages are copied into desktop build trees");
     CHECK(Has("sandbox/vfx_test.c", "VFX_ShieldShell_SpawnEx(pos, VC_MAT_FIRE, 1.5f, 1.0f,") &&
           Has("sandbox/vfx_test.c", "VFXTest_ShieldFlowSurface()") &&
           Has("sandbox/vfx_test.c", "assets/textures/energy_volume.png") &&

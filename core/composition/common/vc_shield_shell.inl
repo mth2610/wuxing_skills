@@ -1,116 +1,71 @@
-// P4 — ShieldShell: a handle-owned 3D membrane, not a billboard sphere.
+// ShieldShell — one transparent glass sphere with a shared Fresnel rim.
+// The legacy plasma/flow/mask payload remains source-compatible, but is not
+// sampled: a shield is a clean protective volume, not a second particle system.
 #include "core/tuning.h"
-#include "core/uv/surface_flow.h"
 
 #define VFX_SHIELD_SHELL_MAX 8
-#define SHIELD_SHELL_RINGS 20
-#define SHIELD_SHELL_SLICES 20
+// 32x32 keeps the silhouette round at the shield's usual screen size while
+// staying modest (2,048 triangles per sphere) and avoiding scene-texture tricks.
+#define SHIELD_SHELL_RINGS 32
+#define SHIELD_SHELL_SLICES 32
 
 typedef struct {
-    bool active, stopping, hasSurface;
+    bool active, stopping;
     Vector3 pos;
     VC_MaterialId mat;
-    VFX_ShieldSurface surface;
-    // A one-layer SurfaceFlow with twoPhase on is exactly the FlowMap this
-    // used to hold. It is a SurfaceFlow so the shield can be given a second or
-    // third layer from VFX_ShieldSurface data without touching the shader.
-    SurfaceFlow flow;
-    Texture2D flowTex; // not owned — SurfaceFlow binds no textures itself
-    float radius, target, level, elapsed, phase;
+    float radius, target, level, elapsed;
 } VC_ShieldShell;
 
 typedef struct {
     Shader shader;
-    int bodyColor, glowColor, bodyTex, maskTex, useMask;
-    int flowTex;
-    int maskTiling;
-    int opacity;
-    // FlowMap_Apply used to push the time uniform as a side effect of its
-    // timeUniformName argument. SurfaceFlow has no such hook — a flow module
-    // has no business owning the surface's clock — so the shield sets it.
-    int time;
-    SurfaceFlowLocs flow;
+    int bodyColor, rimColor, opacity, fresnelPower, rimStrength, emissionOnly;
+    int lightDirView, wallPass;
 } VC_ShieldShader;
 
 static VC_ShieldShell s_shieldShells[VFX_SHIELD_SHELL_MAX];
-static PlasmaMaterial s_shieldPlasma;
 static VC_ShieldShader s_shieldShader = {0};
 static bool s_shieldInit = false;
-static int s_shieldSerial = 0;
 static float s_shieldOpacity = 1.0f;
-static float s_shieldRim = 1.0f;
-static float s_shieldHdrFlow = 5.0f;
+static float s_shieldRim = 1.35f;
+static float s_shieldFresnelPower = 3.2f;
 
 static float ShieldShell_Clamp01(float value)
 { return value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value); }
-static float ShieldShell_Clamp(float value, float minimum, float maximum)
-{ return value < minimum ? minimum : (value > maximum ? maximum : value); }
 
 static void ShieldShell_InitShared(void)
 {
     if (s_shieldInit) return;
-    PlasmaMaterial_Load(&s_shieldPlasma, &(PlasmaMaterialParams){
-        .baseColor = WHITE, .wispColor = WHITE, .noiseScale = 3.2f,
-        .noiseSpeed = 0.55f, .fresnelPower = 3.4f, .rimStrength = 1.15f,
-        .emissive = 5.0f, .opacity = 0.72f, .displaceAmp = 0.035f,
-    });
-    s_shieldShader.shader = ResourceManager_LoadShader("core/shaders/plasma_shell.vs",
-                                                         "core/shaders/shield_shell.fs");
-    Shader shader = s_shieldShader.shader;
-    s_shieldShader.bodyColor = GetShaderLocation(shader, "u_bodyColor");
-    s_shieldShader.glowColor = GetShaderLocation(shader, "u_glowColor");
-    s_shieldShader.bodyTex = GetShaderLocation(shader, "u_bodyTex");
-    s_shieldShader.maskTex = GetShaderLocation(shader, "u_maskTex");
-    s_shieldShader.flowTex = GetShaderLocation(shader, "flowTex");
-    s_shieldShader.flow = SurfaceFlow_CacheLocations(shader);
-    s_shieldShader.time = GetShaderLocation(shader, "uTime");
-    s_shieldShader.useMask = GetShaderLocation(shader, "u_useMask");
-    s_shieldShader.maskTiling = GetShaderLocation(shader, "u_maskTiling");
-    s_shieldShader.opacity = GetShaderLocation(shader, "u_opacity");
+
+    s_shieldShader.shader = ResourceManager_LoadShader(
+        "core/shaders/glass_shell.vs", "core/shaders/glass_shell.fs");
+    s_shieldShader.bodyColor = GetShaderLocation(s_shieldShader.shader, "u_bodyColor");
+    s_shieldShader.rimColor = GetShaderLocation(s_shieldShader.shader, "u_rimColor");
+    s_shieldShader.opacity = GetShaderLocation(s_shieldShader.shader, "u_opacity");
+    s_shieldShader.fresnelPower = GetShaderLocation(s_shieldShader.shader, "u_fresnelPower");
+    s_shieldShader.rimStrength = GetShaderLocation(s_shieldShader.shader, "u_rimStrength");
+    s_shieldShader.emissionOnly = GetShaderLocation(s_shieldShader.shader, "u_emissionOnly");
+    s_shieldShader.lightDirView = GetShaderLocation(s_shieldShader.shader, "u_lightDirView");
+    s_shieldShader.wallPass = GetShaderLocation(s_shieldShader.shader, "u_wallPass");
+
     Tuning_RegisterFloat("shield_shell_opacity", &s_shieldOpacity, 1.0f);
-    Tuning_RegisterFloat("shield_shell_rim", &s_shieldRim, 1.0f);
-    Tuning_RegisterFloat("shield_shell_hdr_flow", &s_shieldHdrFlow, 5.0f);
+    Tuning_RegisterFloat("shield_shell_rim", &s_shieldRim, 1.35f);
+    Tuning_RegisterFloat("shield_shell_fresnel_power", &s_shieldFresnelPower, 3.2f);
     s_shieldInit = true;
-}
-
-static void ShieldShell_SetSurface(VC_ShieldShell *shield, const VFX_ShieldSurface *surface)
-{
-    shield->surface = surface ? *surface : (VFX_ShieldSurface){0};
-    shield->hasSurface = surface != NULL && surface->body.id != 0;
-    SurfaceFlow_Clear(&shield->flow);
-    shield->flowTex = (Texture2D){0};
-    if (!shield->hasSurface) return;
-
-    shield->flowTex = shield->surface.flowMap.id != 0
-        ? shield->surface.flowMap : shield->surface.body;
-
-    // A surface with no dedicated flow map gets a plain tiled read instead of
-    // the two-phase cross-fade — the same branch the shader's old u_useFlow
-    // int selected, now expressed as a property of the flow rather than a
-    // second code path in the .fs.
-    shield->flow.twoPhase = shield->surface.flowMap.id != 0;
-    shield->flow.twoPhaseSpeed = shield->surface.flowSpeed;
-    shield->flow.twoPhaseStrength = shield->surface.flowStrength;
-
-    float tiling = shield->surface.flowTiling > 0.0f
-        ? shield->surface.flowTiling : 1.0f;
-    SurfaceFlow_AddLayer(&shield->flow, (SurfaceFlowLayer){
-        .tiling = {tiling, tiling}, .pan = {0.0f, 0.0f},
-        .blend = SURFACE_FLOW_MUL, .env = UV_ENV_NONE});
 }
 
 int VFX_ShieldShell_SpawnEx(Vector3 pos, VC_MaterialId mat, float radius,
                              float intensity, const VFX_ShieldSurface *surface)
 {
+    (void)surface;
     ShieldShell_InitShared();
-    for (int i = 0; i < VFX_SHIELD_SHELL_MAX; ++i) if (!s_shieldShells[i].active) {
+    for (int i = 0; i < VFX_SHIELD_SHELL_MAX; ++i)
+    {
+        if (s_shieldShells[i].active) continue;
         s_shieldShells[i] = (VC_ShieldShell){
-            .active = true, .pos = pos, .mat = mat,
+            .active = true, .stopping = false, .pos = pos, .mat = mat,
             .radius = radius > 0.0f ? radius : 0.9f,
-            .target = ShieldShell_Clamp01(intensity), .level = 0.0f,
-            .phase = (float)(s_shieldSerial++) * 2.39996323f,
+            .target = ShieldShell_Clamp01(intensity), .level = 0.0f, .elapsed = 0.0f
         };
-        ShieldShell_SetSurface(&s_shieldShells[i], surface);
         return i;
     }
     return -1;
@@ -123,19 +78,39 @@ int VFX_ComposeShieldShell(Vector3 pos, VC_MaterialId mat, float radius, float i
 { return VFX_ShieldShell_Spawn(pos, mat, radius, intensity); }
 
 void VFX_ShieldShell_SetTransform(int handle, Vector3 pos)
-{ if (handle >= 0 && handle < VFX_SHIELD_SHELL_MAX && s_shieldShells[handle].active) s_shieldShells[handle].pos = pos; }
+{
+    if (handle >= 0 && handle < VFX_SHIELD_SHELL_MAX && s_shieldShells[handle].active)
+        s_shieldShells[handle].pos = pos;
+}
+
 void VFX_ShieldShell_SetIntensity(int handle, float intensity01)
-{ if (handle >= 0 && handle < VFX_SHIELD_SHELL_MAX && s_shieldShells[handle].active) { s_shieldShells[handle].target = ShieldShell_Clamp01(intensity01); s_shieldShells[handle].stopping = false; } }
+{
+    if (handle >= 0 && handle < VFX_SHIELD_SHELL_MAX && s_shieldShells[handle].active)
+    {
+        s_shieldShells[handle].target = ShieldShell_Clamp01(intensity01);
+        s_shieldShells[handle].stopping = false;
+    }
+}
+
 void VFX_ShieldShell_SetSurface(int handle, const VFX_ShieldSurface *surface)
-{ if (handle >= 0 && handle < VFX_SHIELD_SHELL_MAX && s_shieldShells[handle].active) ShieldShell_SetSurface(&s_shieldShells[handle], surface); }
+{ (void)handle; (void)surface; }
+
 void VFX_ShieldShell_Stop(int handle)
-{ if (handle >= 0 && handle < VFX_SHIELD_SHELL_MAX && s_shieldShells[handle].active) { s_shieldShells[handle].stopping = true; s_shieldShells[handle].target = 0.0f; } }
+{
+    if (handle >= 0 && handle < VFX_SHIELD_SHELL_MAX && s_shieldShells[handle].active)
+    {
+        s_shieldShells[handle].stopping = true;
+        s_shieldShells[handle].target = 0.0f;
+    }
+}
+
 void VFX_KillShieldShell(int handle)
 { if (handle >= 0 && handle < VFX_SHIELD_SHELL_MAX) s_shieldShells[handle].active = false; }
 
 static void VC_ShieldShell_Update(float dt)
 {
-    for (int i = 0; i < VFX_SHIELD_SHELL_MAX; ++i) {
+    for (int i = 0; i < VFX_SHIELD_SHELL_MAX; ++i)
+    {
         VC_ShieldShell *shield = &s_shieldShells[i];
         if (!shield->active) continue;
         shield->elapsed += dt;
@@ -144,76 +119,97 @@ static void VC_ShieldShell_Update(float dt)
     }
 }
 
-static void ShieldShell_BeginTextured(const VC_ShieldShell *shield, const VFX_ElementMaterial *mat,
-                                      float opacity)
+static void ShieldShell_DrawPass(bool emissionOnly)
 {
-    Shader shader = s_shieldShader.shader;
-    SkillManager_BeginShader(shader);
-    Vector4 body = ColorNormalize(mat->body), glow = ColorNormalize(VC_Whiten(mat->glow, 0.35f));
-    int useMask = shield->surface.mask.id != 0;
-    Texture2D maskTex = useMask ? shield->surface.mask : shield->surface.body;
-    float maskTiling = shield->surface.maskTiling > 0.0f ? shield->surface.maskTiling : 1.0f;
-    if (s_shieldShader.bodyColor >= 0) SetShaderValue(shader, s_shieldShader.bodyColor, &body, SHADER_UNIFORM_VEC4);
-    if (s_shieldShader.glowColor >= 0) SetShaderValue(shader, s_shieldShader.glowColor, &glow, SHADER_UNIFORM_VEC4);
-    if (s_shieldShader.bodyTex >= 0) SetShaderValueTexture(shader, s_shieldShader.bodyTex, shield->surface.body);
-    if (s_shieldShader.maskTex >= 0) SetShaderValueTexture(shader, s_shieldShader.maskTex, maskTex);
-    if (s_shieldShader.useMask >= 0) SetShaderValue(shader, s_shieldShader.useMask, &useMask, SHADER_UNIFORM_INT);
-    if (s_shieldShader.maskTiling >= 0) SetShaderValue(shader, s_shieldShader.maskTiling, &maskTiling, SHADER_UNIFORM_FLOAT);
-    if (s_shieldShader.opacity >= 0) SetShaderValue(shader, s_shieldShader.opacity, &opacity, SHADER_UNIFORM_FLOAT);
-    // SurfaceFlow_Apply deliberately binds no textures — it must not touch a
-    // slot the caller is already using — so the flow sheet is bound here, by
-    // name, and raylib manages the unit.
-    if (s_shieldShader.flowTex >= 0) SetShaderValueTexture(shader, s_shieldShader.flowTex, shield->flowTex);
-    float now = TimeFX_Elapsed();
-    if (s_shieldShader.time >= 0) SetShaderValue(shader, s_shieldShader.time, &now, SHADER_UNIFORM_FLOAT);
-    SurfaceFlow_Apply(&shield->flow, shader, &s_shieldShader.flow, now);
-    // Immediate rlgl geometry needs its current material texture set as well
-    // as the named sampler bindings above; otherwise a backend may batch it as
-    // an untextured sphere while the flow uniforms are technically valid.
-    rlSetTexture(shield->surface.body.id);
-}
-
-static void ShieldShell_DrawPass(void)
-{
-    for (int i = 0; i < VFX_SHIELD_SHELL_MAX; ++i) {
+    for (int i = 0; i < VFX_SHIELD_SHELL_MAX; ++i)
+    {
         VC_ShieldShell *shield = &s_shieldShells[i];
         if (!shield->active || shield->level <= 0.004f) continue;
-        const VFX_ElementMaterial *mat = VFX_Material(shield->mat);
-        float pulse = VC_Breathe(shield->elapsed + shield->phase, 1.15f, 0.035f);
-        float radius = shield->radius * (0.94f + 0.06f * shield->level) * pulse;
-        float opacity = shield->level * s_shieldOpacity;
-        if (shield->hasSurface && s_shieldShader.shader.id != 0) {
-            ShieldShell_BeginTextured(shield, mat, opacity);
-            DrawCoreSphere(shield->pos, radius, SHIELD_SHELL_RINGS, SHIELD_SHELL_SLICES, WHITE);
-            rlDrawRenderBatchActive();
-            SkillManager_EndShader();
-            rlSetTexture(0);
-        } else {
-            s_shieldPlasma.params.baseColor = mat->body;
-            s_shieldPlasma.params.wispColor = VC_Whiten(mat->glow, 0.72f);
-            s_shieldPlasma.params.opacity = opacity * 0.72f;
-            s_shieldPlasma.params.rimStrength = 1.15f * s_shieldRim;
-            s_shieldPlasma.params.emissive = ShieldShell_Clamp(s_shieldHdrFlow, 0.0f, 8.0f);
-            PlasmaMaterial_Begin(s_shieldPlasma);
-            DrawCoreSphere(shield->pos, radius, SHIELD_SHELL_RINGS, SHIELD_SHELL_SLICES, WHITE);
-            rlDrawRenderBatchActive();
-            PlasmaMaterial_End();
-        }
+
+        const VFX_ElementMaterial *material = VFX_Material(shield->mat);
+        Vector4 bodyColor = ColorNormalize(material->body);
+        Vector4 rimColor = ColorNormalize(material->glow);
+        float pulse = VC_Breathe(shield->elapsed, 1.15f, 0.012f);
+        float radius = shield->radius * (0.99f + 0.01f * pulse);
+        float opacity = ShieldShell_Clamp01(shield->level * s_shieldOpacity);
+        int emission = emissionOnly ? 1 : 0;
+
+        SetShaderValue(s_shieldShader.shader, s_shieldShader.bodyColor,
+                       &bodyColor, SHADER_UNIFORM_VEC4);
+        SetShaderValue(s_shieldShader.shader, s_shieldShader.rimColor,
+                       &rimColor, SHADER_UNIFORM_VEC4);
+        SetShaderValue(s_shieldShader.shader, s_shieldShader.opacity,
+                       &opacity, SHADER_UNIFORM_FLOAT);
+        SetShaderValue(s_shieldShader.shader, s_shieldShader.fresnelPower,
+                       &s_shieldFresnelPower, SHADER_UNIFORM_FLOAT);
+        SetShaderValue(s_shieldShader.shader, s_shieldShader.rimStrength,
+                       &s_shieldRim, SHADER_UNIFORM_FLOAT);
+        SetShaderValue(s_shieldShader.shader, s_shieldShader.emissionOnly,
+                       &emission, SHADER_UNIFORM_INT);
+
+        DrawCoreSphere(shield->pos, radius, SHIELD_SHELL_RINGS,
+                       SHIELD_SHELL_SLICES, WHITE);
     }
 }
 
 static void VC_ShieldShell_Draw3D(Camera3D cam)
 {
-    (void)cam;
-    VFXRenderScope renderScope = VFXRender_BeginDraw(
+    ShieldShell_InitShared();
+
+    // Immediate-mode sphere normals are view-space. Convert the environment
+    // key light once per draw so the glass highlight follows the actual camera
+    // orientation instead of dotting a world-space light with view-space N.
+    Vector3 forward = Vector3Normalize(Vector3Subtract(cam.target, cam.position));
+    Vector3 right = Vector3Normalize(Vector3CrossProduct(forward, cam.up));
+    Vector3 camUp = Vector3CrossProduct(right, forward);
+    Vector3 lightWorld = Vector3Negate(Environment_GetSunDirection());
+    Vector3 lightView = {
+        Vector3DotProduct(lightWorld, right),
+        Vector3DotProduct(lightWorld, camUp),
+        -Vector3DotProduct(lightWorld, forward)
+    };
+    lightView = Vector3Normalize(lightView);
+
+    VFXRenderScope body = VFXRender_BeginDraw(
         VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, false);
-    // A translucent shell must only draw the camera-facing membrane. Rendering
-    // both sides doubles every broad wisp into a milky white veil.
-    rlEnableBackfaceCulling();
-    // The entire membrane uses conventional alpha compositing. It must never
-    // darken the scene as a side effect of its contrast treatment.
-    ShieldShell_DrawPass();
-    rlEnableBackfaceCulling();
     rlDrawRenderBatchActive();
-    VFXRender_EndDraw(&renderScope);
+    rlEnableBackfaceCulling();
+    SkillManager_BeginShader(s_shieldShader.shader);
+    if (s_shieldShader.lightDirView >= 0)
+        SetShaderValue(s_shieldShader.shader, s_shieldShader.lightDirView,
+                       &lightView, SHADER_UNIFORM_VEC3);
+    // A glass volume has two interfaces. Composite the back wall first, then
+    // the front wall; a single back-face-culled draw is only a one-sided shell.
+    rlSetCullFace(RL_CULL_FACE_FRONT);
+    if (s_shieldShader.wallPass >= 0) {
+        int wall = 0;
+        SetShaderValue(s_shieldShader.shader, s_shieldShader.wallPass,
+                       &wall, SHADER_UNIFORM_INT);
+    }
+    ShieldShell_DrawPass(false);
+    rlDrawRenderBatchActive();
+    rlSetCullFace(RL_CULL_FACE_BACK);
+    if (s_shieldShader.wallPass >= 0) {
+        int wall = 1;
+        SetShaderValue(s_shieldShader.shader, s_shieldShader.wallPass,
+                       &wall, SHADER_UNIFORM_INT);
+    }
+    ShieldShell_DrawPass(false);
+    rlDrawRenderBatchActive();
+    SkillManager_EndShader();
+    rlSetCullFace(RL_CULL_FACE_BACK);
+    VFXRender_EndDraw(&body);
+
+    VFXRenderScope emission = VFXRender_BeginDraw(
+        VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
+    rlDrawRenderBatchActive();
+    rlEnableBackfaceCulling();
+    SkillManager_BeginShader(s_shieldShader.shader);
+    if (s_shieldShader.lightDirView >= 0)
+        SetShaderValue(s_shieldShader.shader, s_shieldShader.lightDirView,
+                       &lightView, SHADER_UNIFORM_VEC3);
+    ShieldShell_DrawPass(true);
+    rlDrawRenderBatchActive();
+    SkillManager_EndShader();
+    VFXRender_EndDraw(&emission);
 }

@@ -241,9 +241,11 @@ void VFX_ComposeRuneCircle(Vector3 center, Vector3 normal, VC_MaterialId mat,
     VFXRenderScope emissionScope = VFXRender_BeginDraw(
         VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
 
-    static const float haloW[2] = { 1.55f, 0.44f };
-    static const float haloA[2] = { 0.10f, 0.48f };
-    Color emissionCol = ColorLerp(m->glow, m->soft, 0.30f);
+    static const float haloW[2] = { 1.70f, 0.42f };
+    static const float haloA[2] = { 0.18f, 0.70f };
+    Color emissionCol = VFXContrast_ApplyColor(m->glow,
+                                                VFX_CONTRAST_MAGIC,
+                                                VFX_CONTRAST_EMISSION);
 
     for (int r = 0; r < ringCount; r++)
     {

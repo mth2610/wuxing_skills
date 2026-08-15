@@ -143,10 +143,9 @@ void VFX_EmberTrail_Stop(int handle);
 void VFX_KillEmberTrail(int handle);
 
 // ── P4. Shield shell ───────────────────────────────────────────────────────
-// A supplied surface owns the semantic sheets; composition never invents a
-// texture path. `body` is a tintable membrane pattern, `flowMap` is RG flow,
-// and `mask` is R opacity/erosion. Passing NULL deliberately selects the
-// procedural PlasmaMaterial fallback.
+// Legacy surface payload retained for source compatibility. ShieldShell now
+// intentionally ignores these sheets and renders one shared glass sphere;
+// `body`, `flowMap`, and `mask` are no longer sampled by the composition.
 typedef struct {
     Texture2D body;
     Texture2D flowMap;

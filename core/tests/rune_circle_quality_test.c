@@ -115,12 +115,12 @@ int main(void)
         fprintf(stderr, "FAIL: rune has no separate halo and luminous core\n");
         failed++;
     }
-    if (!Has(source, "static const float haloA[2] = { 0.10f, 0.48f }")) {
-        fprintf(stderr, "FAIL: rune glow energy budget is not restrained\n");
+    if (!Has(source, "static const float haloA[2] = { 0.18f, 0.70f }")) {
+        fprintf(stderr, "FAIL: rune glow does not have a vivid luminous core\n");
         failed++;
     }
-    if (!Has(source, "Color emissionCol = ColorLerp(m->glow, m->soft, 0.30f)")) {
-        fprintf(stderr, "FAIL: rune glow does not use the material's luminous hue ramp\n");
+    if (!Has(source, "Color emissionCol = VFXContrast_ApplyColor(m->glow,")) {
+        fprintf(stderr, "FAIL: rune glow is not using the material emission contrast\n");
         failed++;
     }
     if (Has(source, "Rune_DrawMotes(")) {
