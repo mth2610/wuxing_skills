@@ -2,6 +2,7 @@
 #include "core/shaders/common/fs_header.glsl"
 #include "core/shaders/common/lighting.glsl"
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 #include "core/uv/shaders/uv_deform.glsl"
 
 uniform vec4  u_bodyColor;
@@ -16,7 +17,7 @@ uniform float u_scanFreq;
 uniform float u_scanSpeed;
 uniform float u_scanStrength;
 
-float vnoise3(vec3 p) {
+float aura_vnoise3(vec3 p) {
     vec3 i = floor(p);
     vec3 f = fract(p);
     f = f * f * (3.0 - 2.0 * f);
@@ -32,11 +33,11 @@ float vnoise3(vec3 p) {
                mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y), f.z);
 }
 
-float fbm3(vec3 p) {
+float aura_fbm3(vec3 p) {
     float v = 0.0;
     float a = 0.5;
     for (int k = 0; k < 3; k++) {
-        v += a * vnoise3(p);
+        v += a * aura_vnoise3(p);
         p  = p * 2.1 + vec3(7.3, 13.1, 5.7);
         a *= 0.5;
     }
@@ -55,8 +56,8 @@ void main() {
     float yScroll = fragPosition.y * u_heightScale - u_time * u_scrollSpeed;
     vec3 dom = vec3(nrm.x * u_noiseScale, yScroll, nrm.z * u_noiseScale);
 
-    float n1    = fbm3(dom);
-    float n2    = fbm3(dom * 1.6 + vec3(3.7, -2.1, 5.3));
+    float n1    = aura_fbm3(dom);
+    float n2    = aura_fbm3(dom * 1.6 + vec3(3.7, -2.1, 5.3));
     float ridge = 1.0 - abs(2.0 * n1 - 1.0);
     float wisp  = ridge * (0.3 + 0.7 * n2);
     wisp = smoothstep(0.25, 0.75, wisp);
@@ -84,5 +85,5 @@ void main() {
     vec3  col       = mix(u_bodyColor.rgb, u_glowColor.rgb, glowBlend);
     col += u_glowColor.rgb * fresnel * u_rimStrength * 0.5;
 
-    finalColor = vec4(col, alpha);
+    finalColor = VFX_ResolveBody(col, 1.0, alpha);
 }

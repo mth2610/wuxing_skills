@@ -3,6 +3,7 @@
 #include "core/shaders/common/lighting.glsl"
 #include "core/shaders/common/noise.glsl"
 #include "core/shaders/common/fx.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 // ============================================================
 // Effect Material — Generic Parametrized Material (Fragment Shader)
@@ -84,5 +85,5 @@ void main() {
     // (BeginBlendMode/EndBlendMode) for the alpha<1 case to actually blend.
     float glassAlpha = mix(0.3, 0.9, fresnel);
     float alpha = mix(u_baseColor.a, glassAlpha, u_translucency);
-    finalColor = vec4(baseColor, alpha);
+    finalColor = VFX_ResolveBody(baseColor, 1.0, alpha);
 }

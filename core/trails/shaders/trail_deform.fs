@@ -2,6 +2,7 @@
 #include "core/shaders/common/fs_header.glsl"
 #include "core/shaders/common/fx.glsl"
 #include "core/shaders/common/vfx_contrast.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 #include "core/uv/shaders/uv_deform.glsl"
 #include "core/uv/shaders/surface_flow.glsl"
 
@@ -156,11 +157,11 @@ vec4 ResolvePass(vec3 colour, float inten, float vAlpha, float gain)
         // shared compositor deliberately does not reshape alpha again.
         float bodyMask = VFXContrast_BodyMask(inten, u_contrastParams);
         float coverage = clamp(bodyMask * vAlpha * u_bodyOpacity, 0.0, 1.0);
-        return vec4(colour, coverage);
+        return VFX_ResolveBody(colour, 1.0, coverage);
     }
     // Raylib additive blend applies src alpha. Keep intensity in alpha so it is
     // applied exactly once; pre-scaling RGB here would square soft edges.
-    return vec4(colour * gain, inten * vAlpha);
+    return VFX_ResolveEmission(colour, gain, 1.0, inten * vAlpha);
 }
 
 void main()

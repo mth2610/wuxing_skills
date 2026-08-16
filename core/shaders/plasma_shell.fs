@@ -2,6 +2,7 @@
 #include "core/shaders/common/fs_header.glsl"
 #include "core/shaders/common/lighting.glsl"
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 // ============================================================
 // Plasma Shell — Fragment Shader
@@ -88,5 +89,5 @@ void main() {
     float interiorCrest = crest * mix(0.35, 1.0, 1.0 - fresnel);
     color += u_wispColor.rgb * (u_emissive * interiorCrest);
 
-    finalColor = vec4(color, alpha);
+    finalColor = VFX_ResolveBody(color, 1.0, alpha);
 }

@@ -7,6 +7,7 @@ uniform float u_emissiveBoost;
 out vec4 finalColor;
 
 #include "core/shaders/common/vfx_contrast.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 void main()
 {
@@ -14,5 +15,5 @@ void main()
     vec4 body = texel * fragColor;
     if (body.a < 0.01) discard;
     float emission = u_emissiveBoost;
-    finalColor = vec4(body.rgb * emission, body.a);
+    finalColor = VFX_ResolveEmission(body.rgb, emission, 1.0, body.a);
 }

@@ -2,6 +2,7 @@
 #include "core/shaders/common/fs_header.glsl"
 #include "core/shaders/common/lighting.glsl"
 #include "core/shaders/common/fx.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 #include "core/uv/shaders/uv_field.glsl"
 
 // ── TRAIL VOLUME — opacity for a swept tube that has to read as gas ─────────
@@ -598,5 +599,5 @@ void main()
     if (u_volDebug < 0.5 && alpha < 0.003) discard;
 
     vec3 colour = s1.rgb * vColor.rgb * colDiffuse.rgb;
-    finalColor = vec4(colour, alpha);
+    finalColor = VFX_ResolveBody(colour, 1.0, alpha);
 }

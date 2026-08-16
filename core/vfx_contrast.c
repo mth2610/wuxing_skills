@@ -7,7 +7,10 @@ static const VFXContrastProfile s_profiles[VFX_CONTRAST_COUNT] = {
     [VFX_CONTRAST_SMOKE]  = { 1.00f, 0.82f, 0.72f, 0.0f,  1.0f, 0.80f, 1.00f, 0.0f,  0.0f,  0.35f, 0.0f },
     [VFX_CONTRAST_FIRE]   = { 1.10f, 0.90f, 0.80f, 1.50f, 0.78f, 1.40f, 1.35f, 1.20f, 0.12f, 0.25f, 0.12f },
     [VFX_CONTRAST_ENERGY] = { 1.35f, 0.92f, 0.62f, 1.55f, 0.76f, 1.65f, 1.50f, 1.25f, 0.22f, 0.12f, 0.18f },
-    [VFX_CONTRAST_MAGIC]  = { 1.25f, 0.90f, 0.70f, 1.35f, 0.80f, 1.25f, 1.10f, 1.15f, 0.30f, 0.20f, 0.10f },
+    // Magic carries a readable body on bright backgrounds, but keeps its
+    // high-energy accent independent.  Consumers must not retune this per
+    // effect: ShieldShell, particles and trails all resolve this profile.
+    [VFX_CONTRAST_MAGIC]  = { 0.92f, 0.90f, 0.70f, 1.35f, 0.80f, 1.25f, 1.10f, 1.15f, 0.30f, 0.20f, 0.10f },
     [VFX_CONTRAST_DUST]   = { 1.00f, 0.80f, 0.65f, 0.0f,  1.0f, 0.75f, 1.00f, 0.0f,  0.0f,  0.30f, 0.0f }
 };
 
@@ -116,7 +119,7 @@ static const VFXResolvedAppearance s_appearances[VFX_APPEARANCE_COUNT] = {
         VFX_SURFACE_PREMULTIPLIED, VFX_CONTRAST_FIRE, 0.58f, 4.0f, 0.72f, true
     },
     [VFX_APPEARANCE_MAGIC] = {
-        VFX_SURFACE_PREMULTIPLIED, VFX_CONTRAST_MAGIC, 0.42f, 3.0f, 0.78f, true
+        VFX_SURFACE_PREMULTIPLIED, VFX_CONTRAST_MAGIC, 0.24f, 3.0f, 0.78f, true
     }
 };
 

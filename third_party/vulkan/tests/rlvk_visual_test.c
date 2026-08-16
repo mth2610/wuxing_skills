@@ -878,10 +878,10 @@ static const char *sc_float_blend_rt(void)
 static const char *sc_bright_vfx(void)
 {
     const int FW = 400, FH = 300, TILE = 80;
-    const char *FS = "#version 330\\n"
-        "in vec2 fragTexCoord; in vec4 fragColor; out vec4 finalColor;\\n"
-        "uniform sampler2D texture0; uniform vec4 uSource;\\n"
-        "void main(){ finalColor = uSource; }\\n";
+    const char *FS = "#version 330\n"
+        "in vec2 fragTexCoord; in vec4 fragColor; out vec4 finalColor;\n"
+        "uniform sampler2D texture0; uniform vec4 uSource;\n"
+        "void main(){ finalColor = uSource; }\n";
     RenderTexture2D rt = fmtRT(FW, FH, RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
     Shader sh = {0}; Texture2D white = {0}; const char *why = NULL;
     if (rt.id == 0 || rt.texture.id == 0) { why = "could not create RGBA16F colour attachment"; goto done; }
@@ -932,8 +932,10 @@ static const char *sc_bright_vfx(void)
     for (int i = 0; i < 5 && why == NULL; i++)
     {
         float p[4], a[4], bg[3];
-        sampleHalfRGBA(pixels, FW, i*TILE + 24, 59, p);
-        sampleHalfRGBA(pixels, FW, i*TILE + 24, FH/2 + 59, a);
+        // rlReadTexturePixels exposes the Vulkan image origin at the bottom;
+        // the draw coordinates above are top-origin raylib coordinates.
+        sampleHalfRGBA(pixels, FW, i*TILE + 24, FH - 59, p);
+        sampleHalfRGBA(pixels, FW, i*TILE + 24, FH - (FH/2 + 59), a);
         bg[0] = backgrounds[i].r / 255.0f; bg[1] = backgrounds[i].g / 255.0f; bg[2] = backgrounds[i].b / 255.0f;
         float expectedP[3], expectedA[3];
         const float sourceRGB[3] = { source.x, source.y, source.z };

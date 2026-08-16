@@ -1,6 +1,7 @@
 #version 330
 #include "core/shaders/common/fs_header.glsl"
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 // Highly optimized magical sparkling filaments/threads shader.
 // Mathematical footprint optimized by 50% for high fill-rate performance.
@@ -96,5 +97,5 @@ void main() {
 
     // Final color with glowing emissive peaks
     vec3 glowColor = u_color.rgb * (1.0 + density * 2.0);
-    finalColor = vec4(glowColor, alpha * u_color.a);
+    finalColor = VFX_ResolveBody(glowColor, 1.0, alpha * u_color.a);
 }

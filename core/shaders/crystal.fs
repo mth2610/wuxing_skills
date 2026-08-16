@@ -2,6 +2,7 @@
 #include "core/shaders/common/fs_header.glsl"
 #include "core/shaders/common/lighting.glsl"
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 // ============================================================
 // WUXING — Crystal Shader Material (FIXED: Clear & Organic)
@@ -122,5 +123,5 @@ void main()
         finalColorRGB = mix(u_edgeColor.rgb * 2.5, finalColorRGB, edge);
     }
 
-    finalColor = vec4(finalColorRGB, alpha);
+    finalColor = VFX_ResolveBody(finalColorRGB, 1.0, alpha);
 }

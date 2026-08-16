@@ -849,8 +849,8 @@ static void Test_MirrorStillMatchesSource(void)
     // does that) and must not carry HDR; radiance belongs to emission.
     CHECK(FileHas(fs, "float bodyMask = VFXContrast_BodyMask(inten, u_contrastParams);"),
           "the BODY pass shapes coverage at the producer");
-    CHECK(FileHas(fs, "return vec4(colour, coverage);"),
-          "the BODY pass returns straight colour without HDR contamination");
+    CHECK(FileHas(fs, "return VFX_ResolveBody(colour, 1.0, coverage);"),
+          "the BODY pass returns straight colour through the shared compositor");
     CHECK(FileHas(fs, "#include \"core/shaders/common/vfx_contrast.glsl\""),
           "trail material uses the shared contrast mask instead of a local copy");
     CHECK(FileHas(c, "l->contrastParams = GetShaderLocation(shader, \"u_contrastParams\");"),
@@ -861,7 +861,7 @@ static void Test_MirrorStillMatchesSource(void)
           "main.c still runs the trail body pass");
     CHECK(FileHas("main.c", "if (hasEmissionTrails) DrawTrailEntitiesEmission(camera);"),
           "main.c runs the trail emission pass for HDR cores and halos");
-    CHECK(FileHas(fs, "return vec4(colour * gain, inten * vAlpha);"),
+    CHECK(FileHas(fs, "return VFX_ResolveEmission(colour, gain, 1.0, inten * vAlpha);"),
           "the EMISSION pass lets additive blending apply intensity exactly once");
     // ONE caller left, and that is the point of deleting the other: the split
     // between BODY and EMISSION cannot drift per mode when there is one mode.

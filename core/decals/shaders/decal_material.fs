@@ -1,4 +1,5 @@
 #version 330
+#include "core/shaders/common/vfx_composite.glsl"
 
 in vec2 fragTexCoord;
 in vec4 fragColor;
@@ -29,12 +30,13 @@ void main()
     float emissiveMask = smoothstep(u_emissiveThreshold, 1.0, brightSignal) * body.a * erosion;
     if (u_emissivePass != 0)
     {
-        finalColor = vec4(u_emissiveTint.rgb * u_emissiveIntensity, emissiveMask);
+        finalColor = VFX_ResolveEmission(u_emissiveTint.rgb,
+                                          u_emissiveIntensity, 1.0, emissiveMask);
     }
     else
     {
         float receiverLight = mix(0.64, 1.0, clamp(fragNormal.y, 0.0, 1.0));
-        finalColor = vec4(body.rgb * u_baseTint.rgb * receiverLight,
-                          alpha * fragColor.a * u_bodyOpacity);
+        finalColor = VFX_ResolveBody(body.rgb * u_baseTint.rgb * receiverLight,
+                                     1.0, alpha * fragColor.a * u_bodyOpacity);
     }
 }

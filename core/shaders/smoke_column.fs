@@ -1,6 +1,7 @@
 #version 330
 #include "core/shaders/common/fs_header.glsl"
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 // Highly optimized rising-column smoke density field.
 // Uses 2D value noise and 2D FBM with domain warping and seed generation based
@@ -107,5 +108,5 @@ void main() {
     alpha *= 1.0 - smoothstep(0.15, 1.0, abs(warpedUV.x));
     alpha *= 1.0 - smoothstep(0.97, 1.0, warpedH);
 
-    finalColor = vec4(u_color.rgb, alpha * u_color.a);
+    finalColor = VFX_ResolveBody(u_color.rgb, 1.0, alpha * u_color.a);
 }

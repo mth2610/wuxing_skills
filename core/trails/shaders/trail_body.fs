@@ -1,5 +1,6 @@
 #version 330
 #include "core/shaders/common/vfx_contrast.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 in vec2 fragTexCoord;
 in vec4 fragColor;
@@ -26,5 +27,5 @@ void main()
     float coreGain = 1.75 * max(u_contrastParams.w, 1.0);
     vec3 colour = sheet.rgb * fragColor.rgb * colDiffuse.rgb *
                   mix(1.0, coreGain, coreMask);
-    finalColor = vec4(colour, alpha);
+    finalColor = VFX_ResolveBody(colour, 1.0, alpha);
 }

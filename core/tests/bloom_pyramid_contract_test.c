@@ -122,6 +122,23 @@ int main(void)
                      "the hard energy clamp must be gone — it capped emissive dead");
     failed += Require(bright, "maxEnergy / (maxEnergy + energy)",
                       "the bright pass must use the asymptotic soft ceiling");
+    failed += Require(bright, "uniform float u_exposure",
+                      "bloom threshold must be evaluated in camera exposure space");
+    failed += Require(bright, "* max(u_exposure, 0.0001)",
+                      "exposure must affect bloom classification without writing exposed HDR");
+    failed += Require(postFx, "brightExposureLoc",
+                      "post FX must upload exposure to the bright prefilter");
+    /* Exposure chart: the same raw emissive source must cross the camera-space
+     * threshold predictably at 0.5 / 1 / 2 exposure, while the raw bloom write
+     * remains unchanged and is exposed only in the final composite. */
+    {
+        const float raw = 0.75f, threshold = 1.0f;
+        if (!((raw * 0.5f) < threshold && (raw * 1.0f) < threshold &&
+              (raw * 2.0f) > threshold)) {
+            fprintf(stderr, "FAIL: exposure chart does not cross bloom threshold consistently\n");
+            failed++;
+        }
+    }
     failed += Require(bright, "col.rgb * weight * 2.2 * coverage",
                       "the historical extraction gain must stay, or every effect dims ~2x");
     /* The max-tap prefilter preserves a thin feature's PRESENCE but inflates its

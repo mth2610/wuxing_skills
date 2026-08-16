@@ -8,6 +8,19 @@ white, warm, and cool backgrounds into RGBA16F, checks HDR values before tone ma
 measures post-tone-map contrast. The scenario is present but its first run is pending the local
 Vulkan-Headers cache (the bootstrap cannot resolve GitHub in the current environment).
 
+The local Vulkan SDK and visual raylib cache are present. With those cache paths wired locally,
+`check_rlvk_compile.sh` passes (`rlvk.h compile check: OK`). The headless/runtime harness reaches
+MoltenVK but reports `VK_ERROR_INCOMPATIBLE_DRIVER` because this agent environment has no Metal
+device; its capability failures are therefore environmental, not a backend regression.
+
+With an escalated GPU-capable process, the headless runtime now passes all checks, and the full
+visual suite passes `24/24` both normally and with `VALIDATE=1`. Validation prints two existing
+MoltenVK portability warnings for zero-stride instanced probes, but no scenario fails.
+
+The shared bloom prefilter now receives the configured exposure: threshold and soft-knee weight
+are evaluated in camera space, while raw scene-linear HDR is written into the pyramid and exposed
+exactly once by `post_process.fs`. Core bloom contracts cover the binding and ordering.
+
 > Status + remaining work for the rlvk Vulkan 1.1 backend. Full narrative and per-item evidence in [`HANDOFF.md`](HANDOFF.md) §8; the debugging log is §7 (indexed in `LANDMINES.md`).
 
 ## Perf measurement — HOW, and two traps that produce confident nonsense (2026-07-22)
@@ -234,3 +247,11 @@ Found while measuring the SSF surface's frame cost for `core/fluid`.
   guessed ~0.6 ms ceiling for the game's 4 passes.
 - `RLVK_GPU_TRACE` is broken on MoltenVK — see the new row in `docs/LANDMINES.md`.
   Worth fixing: it is the only GPU-side timing this backend has.
+### ShieldShell visual QA follow-up (2026-08-16)
+
+- ShieldShell remains the focused visual fixture (`VFX_APPEARANCE_MAGIC`); its
+  body carrier was made darker/sparser and its rim/emission was strengthened so
+  bright backgrounds do not become a milky salmon film.
+- Updated defaults: opacity `0.78`, rim `2.15`, base alpha `0.025`, Fresnel
+  alpha `0.34`, contact alpha `0.70`; shader body luminance curve reduced.
+- Post-change gates: `check_rlvk_compile.sh` **OK**; `bright_vfx` **PASS**.

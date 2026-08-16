@@ -1,6 +1,7 @@
 #version 330
 #include "core/shaders/common/fs_header.glsl"
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 uniform vec4 u_bodyColor;
 uniform vec4 u_glowColor;
@@ -29,6 +30,6 @@ void main()
     vec3 color = mix(u_bodyColor.rgb, u_glowColor.rgb,
                      clamp(crest * 0.72 + filaments * 0.28, 0.0, 1.0));
 
-    finalColor = vec4(color * u_surfaceIntensity,
-                      coverage * u_opacity * u_bodyColor.a);
+    finalColor = VFX_ResolveBody(color, u_surfaceIntensity,
+                                 coverage * u_opacity * u_bodyColor.a);
 }

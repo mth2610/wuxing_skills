@@ -88,6 +88,7 @@ static float   s_burstCurrent;    // decayed strength this frame
 
 // Uniform locations — bright pass
 static int brightThresholdLoc;
+static int brightExposureLoc;
 static int brightMaxEnergyLoc;
 static int brightKneeLoc;
 static int brightSourceTexelSizeLoc;
@@ -185,6 +186,7 @@ void PostFX_Init(int width, int height)
   compositeShader = LoadShader(0, "core/shaders/post_process.fs");
 
   brightThresholdLoc = GetShaderLocation(brightShader, "u_threshold");
+  brightExposureLoc = GetShaderLocation(brightShader, "u_exposure");
   brightMaxEnergyLoc = GetShaderLocation(brightShader, "u_maxEnergy");
   brightKneeLoc = GetShaderLocation(brightShader, "u_knee");
   brightSourceTexelSizeLoc = GetShaderLocation(brightShader, "u_sourceTexelSize");
@@ -550,7 +552,10 @@ void PostFX_Draw(const PostFXConfig *config)
     BeginShaderMode(brightShader);
     float threshold = (s_bloomThresholdOverride > 0.0f) ? s_bloomThresholdOverride
                                                         : config->bloomThreshold;
+    float exposureVal = (config->exposure > 0.0f) ? config->exposure : 1.0f;
     SetShaderValue(brightShader, brightThresholdLoc, &threshold,
+                   SHADER_UNIFORM_FLOAT);
+    SetShaderValue(brightShader, brightExposureLoc, &exposureVal,
                    SHADER_UNIFORM_FLOAT);
     SetShaderValue(brightShader, brightMaxEnergyLoc, &s_bloomMaxEnergy,
                    SHADER_UNIFORM_FLOAT);

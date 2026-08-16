@@ -2,6 +2,7 @@
 #include "core/shaders/common/fs_header.glsl"
 #include "core/shaders/common/lighting.glsl"
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 uniform vec4  u_bodyColor;
 uniform vec4  u_glowColor;
@@ -83,5 +84,5 @@ void main() {
     // Kích sáng nhân 2.5 lần để tạo hiệu ứng điện rực rỡ
     col *= 2.5; 
 
-    finalColor = vec4(col, alpha);
+    finalColor = VFX_ResolveBody(col, 2.5, alpha);
 }

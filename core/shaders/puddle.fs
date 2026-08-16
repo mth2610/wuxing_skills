@@ -9,6 +9,7 @@ uniform float u_time;
 out vec4 finalColor;
 
 #include "core/shaders/common/fx.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 void main() {
     vec2 centerDist = fragTexCoord - vec2(0.5);
@@ -62,5 +63,5 @@ void main() {
     // Tính toán Alpha cuối cùng bám sát hình thái mesh
     float finalAlpha = fragColor.a * edgeFade;
     
-    finalColor = vec4(baseColor, finalAlpha);
+    finalColor = VFX_ResolveBody(baseColor, 1.0, finalAlpha);
 }

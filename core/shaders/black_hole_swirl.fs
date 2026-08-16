@@ -2,6 +2,7 @@
 #include "core/shaders/common/fs_header.glsl"
 #include "core/shaders/common/lighting.glsl"
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 // Black-hole "swirl" shader — painted directly onto a sphere's own UV
 // surface (never a separate flat plane, which used to cut straight through
@@ -79,5 +80,5 @@ void main() {
     vec3 col   = mix(u_bodyColor.rgb, u_glowColor.rgb, density);
     float alpha = density * u_opacity * u_bodyColor.a;
 
-    finalColor = vec4(col * 2.0, alpha);
+    finalColor = VFX_ResolveBody(col, 2.0, alpha);
 }

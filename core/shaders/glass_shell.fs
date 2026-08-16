@@ -9,6 +9,8 @@ uniform vec4 u_bodyColor;
 uniform vec4 u_rimColor;
 uniform float u_opacity;
 uniform float u_rimStrength;
+uniform float u_bodyOpacity;
+uniform float u_emissionGain;
 uniform int u_emissionOnly;
 uniform int u_wallPass;
 uniform vec3 u_lightDirView;
@@ -20,6 +22,8 @@ uniform sampler2D u_flowTex;
 uniform int u_hasFlow;
 uniform sampler2D u_matcapTex;
 uniform int u_hasMatcap;
+uniform sampler2D u_sceneTex;
+uniform int u_hasScene;
 uniform float u_noiseScale;
 uniform float u_noiseSpeed;
 uniform float u_flowStrength;
@@ -83,8 +87,18 @@ void main() {
     vec3 lightDir = normalize(u_lightDirView);
     float light = max(dot(normal, lightDir), 0.0);
     float pattern = smoothstep(0.22, 0.78, energy) * (0.35 + 0.65 * noise);
+    float filament = smoothstep(0.58, 0.82, energy) *
+                     smoothstep(0.42, 0.76, noise);
     float bottomGlow = smoothstep(0.05, 0.92, -normal.y);
-    vec3 body = u_bodyColor.rgb * (0.30 + 0.22 * light + pattern * 0.55);
+    // Keep the carrier readable on white backgrounds: a low mass floor plus
+    // structured pattern, while the semantic Magic appearance supplies the
+    // stronger radiance through the separate emission pass.
+    float bodyStructure = smoothstep(0.18, 0.72, pattern);
+    /* Preserve hue without laying a milky, high-luminance film over a bright
+     * destination.  The carrier is deliberately darker/sparser; rim + the
+     * separate additive emission pass provide the perceived brightness. */
+    vec3 body = u_bodyColor.rgb * (0.055 + 0.11 * light + bodyStructure * 0.24);
+    body = pow(max(body, vec3(0.0)), vec3(1.12));
     body += u_rimColor.rgb * bottomGlow * 0.75;
     vec2 matcapUV = normal.xy * 0.5 + 0.5;
     vec3 matcap = (u_hasMatcap != 0) ? texture(u_matcapTex, matcapUV).rgb
@@ -94,16 +108,59 @@ void main() {
     glow += u_rimColor.rgb * bottomGlow * (0.65 + pattern * 1.15);
     glow += u_contactColor.rgb * contact * u_contactStrength;
 
+    /* The rear optical interface must remain present, but it cannot be an
+     * indistinguishable duplicate of the front shell.  Give it a darker,
+     * quieter carrier so the eye reads a real inner volume instead of one
+     * flat translucent disc. */
+    float rearInterface = (u_wallPass == 0) ? 1.0 : 0.0;
+    /* Rear coverage is now intentionally visible; do not attenuate its body
+     * a second time or the 0.45 volume term collapses to a barely measurable
+     * tint after the shared bodyOpacity multiplier. */
+    body *= mix(1.0, 1.35, rearInterface);
+    glow *= mix(1.0, 0.68, rearInterface);
+
+    /* Safe scene-through glass: the C side binds a copy made after the 3D
+     * scene is complete.  This is what gives the shield a real volume instead
+     * of a flat tinted disc; the authored carrier remains on top for colour. */
+    if (u_hasScene != 0 && u_emissionOnly == 0) {
+        vec2 sceneUV = gl_FragCoord.xy / u_resolution;
+        sceneUV += flow * 0.018 * (0.35 + fresnel);
+        vec3 behind = texture(u_sceneTex, sceneUV).rgb;
+        /* Scene dominates the membrane; the authored tint only colours the
+         * glass, otherwise a flat QA background makes this indistinguishable
+         * from the legacy opaque carrier. */
+        vec3 glassTint = mix(behind * 0.92, body, 0.18 + 0.22 * pattern);
+        body = mix(body, glassTint, 0.92 * softMask);
+    }
+
     if (u_emissionOnly != 0) {
-        float emissionAlpha = u_opacity * (0.20 + fresnel * 0.80 + ripple);
-        finalColor = VFX_ResolveEmission(glow, 1.0, 1.0, emissionAlpha);
+        // Emission is sparse radiance, not a second translucent body.  A
+        // non-zero floor here paints the entire sphere on bright backgrounds
+        // and defeats the shared Magic body/emission separation.
+        float emissionMask = max(fresnel * 0.92,
+                                 max(filament * 0.0,
+                                     max(contact * 0.90, ripple)));
+        float emissionAlpha = u_opacity * clamp(emissionMask, 0.0, 1.0);
+        finalColor = VFX_ResolveEmission(glow, u_emissionGain, 1.0, emissionAlpha);
         return;
     }
-    float wallWeight = (u_wallPass == 0) ? 0.45 : 1.0;
+    /* Keep the rear interface for thickness/parallax, but make it a light
+     * optical contribution.  Removing it flattens the shell; weighting it too
+     * strongly is what creates the milky full-sphere wash on bright backdrops. */
+    float wallWeight = (u_wallPass == 0) ? 0.86 : 1.0;
     float alpha = u_opacity * wallWeight * softMask *
                   (u_baseAlpha + fresnel * u_fresnelAlpha +
                    contact * u_contactAlpha + ripple * 0.18);
+    /* Rear glass has a deliberate interior volume term.  Without it the
+     * back interface only appears at the silhouette and the sphere reads as
+     * a flat rim; keep it non-emissive and subdued so the scene remains
+     * visible through the centre. */
+    alpha += rearInterface * 0.45 * u_opacity * softMask;
+    /* Glass carrier coverage is intentionally sparse.  The previous value
+     * still tinted the entire sphere; this multiplier makes the scene-through
+     * window unambiguous while rim/emission remain independently bright. */
+    alpha *= 0.35;
     finalColor = VFX_ResolvePremultiplied(
-        body + u_rimColor.rgb * fresnel * 0.45, 1.0, alpha,
+        body + u_rimColor.rgb * fresnel * 0.45, u_bodyOpacity, alpha,
         vec3(0.0), 0.0, 0.0);
 }

@@ -1,4 +1,5 @@
 #version 330
+#include "core/shaders/common/vfx_composite.glsl"
 
 in vec2 fragTexCoord;
 in vec4 fragColor;
@@ -18,5 +19,5 @@ void main() {
     grayscaleColor.b *= 1.05; // Slightly cool tint
     grayscaleColor.r *= 0.95;
     
-    finalColor = vec4(grayscaleColor, texColor.a);
+    finalColor = VFX_ResolveBody(grayscaleColor, 1.0, texColor.a);
 }

@@ -1,6 +1,7 @@
 #version 330
 #include "core/shaders/common/fs_header.glsl"
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 // ── VFX_ComposeShockRing: two closed smoke ropes, eroded open ────────────────
 //
@@ -337,5 +338,6 @@ void main()
     float cover = clamp(smoke * 0.60 + hot * 0.95, 0.0, 1.0) * edge;
     vec3 col = mix(u_bodyColor.rgb, u_glowColor.rgb, hot);
 
-    finalColor = vec4(col * u_emission, cover * u_opacity * u_bodyColor.a);
+    finalColor = VFX_ResolveBody(col, u_emission,
+                                 cover * u_opacity * u_bodyColor.a);
 }

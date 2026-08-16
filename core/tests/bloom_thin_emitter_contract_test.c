@@ -64,6 +64,8 @@ int main(void)
                       "bright prefilter must sample the HDR scene before extraction");
     failed += Require(postFx, "brightSourceTexelSizeLoc",
                       "post FX must cache the thin-emitter prefilter uniform");
+    failed += Require(postFx, "brightExposureLoc",
+                      "post FX must bind the shared exposure decision to bloom");
     failed += Require(postFx, "u_sourceTexelSize",
                       "post FX must resolve the thin-emitter prefilter uniform");
     failed += Require(postFx, "Vector2 sourceTexelSize",

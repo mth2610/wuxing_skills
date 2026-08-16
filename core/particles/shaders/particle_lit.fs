@@ -35,6 +35,7 @@ uniform sampler2D texture0;
 uniform vec2 u_resolution;
 
 #include "core/shaders/common/soft_particle.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 uniform float u_softFade;
 uniform float u_softDebug;
@@ -398,7 +399,8 @@ void main()
         // nothing despite the uniform arriving: sparks and glints are exactly
         // the population that never reaches the lit path.
         // At boost 1.0 this is still byte-identical to the pre-F1 shader.
-        finalColor = vec4(base.rgb * u_emissiveBoost, base.a * soft);
+        finalColor = VFX_ResolveEmission(base.rgb, u_emissiveBoost, 1.0,
+                                         base.a * soft);
         return;
     }
 
@@ -455,5 +457,6 @@ void main()
     // exactly the bright rim this whole shader exists to produce.
     vec3 shaded = base.rgb * lit;
     // Boost is 1.0 for lit batches, so this is a no-op for smoke and dust.
-    finalColor = vec4(mix(base.rgb, shaded, u_lightingStrength) * u_emissiveBoost, base.a * soft);
+    finalColor = VFX_ResolveBody(mix(base.rgb, shaded, u_lightingStrength),
+                                 u_emissiveBoost, base.a * soft);
 }

@@ -5,6 +5,7 @@ in vec4 fragColor;
 out vec4 finalColor;
 
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 uniform int u_semanticPass; // 0=alpha body/detail, 1=additive HDR emission
 uniform int u_debugLayer;   // 0=normal, 1..5=Mass/Structure/Edge/Accent/Emission
@@ -101,7 +102,8 @@ void main()
                                 0.0, 0.72);
         vec3 bodyRgb = mix(u_bodyColor.rgb, u_edgeColor.rgb,
                            clamp(edge * 0.72 + structure * 0.20, 0.0, 1.0));
-        finalColor = vec4(bodyRgb * fragColor.rgb, bodyAlpha * fragColor.a);
+        finalColor = VFX_ResolveBody(bodyRgb * fragColor.rgb, 1.0,
+                                     bodyAlpha * fragColor.a);
     }
     else
     {
@@ -110,7 +112,7 @@ void main()
                                  clamp(accent * 1.8, 0.0, 1.0));
         // BLEND_ADDITIVE applies source alpha. RGB remains uncompressed HDR;
         // bloom and the single final tone-map own highlight roll-off.
-        finalColor = vec4(radianceColor * u_emissionStrength,
-                          clamp(emission * u_opacity, 0.0, 1.0));
+        finalColor = VFX_ResolveEmission(radianceColor, u_emissionStrength,
+                                          1.0, clamp(emission * u_opacity, 0.0, 1.0));
     }
 }

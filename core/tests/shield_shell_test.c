@@ -104,11 +104,11 @@ int main(void)
     CHECK(Has(src, "rlEnableBackfaceCulling") &&
           Has(src, "RL_CULL_FACE_BACK") && Has(src, "RL_CULL_FACE_FRONT"),
           "mobile shell composites back then front glass interfaces");
-    CHECK(!Has(src, "ScreenDistort_RequestSceneSnapshot") &&
-          !Has(src, "ScreenDistort_GetSceneSnapshotTexture") &&
+    CHECK(Has(src, "ScreenDistort_RequestSceneSnapshot") &&
+          Has(src, "ScreenDistort_GetSceneSnapshotTexture") &&
           Has(src, "ScreenDistort_GetDepthTexture") &&
           Has(src, "SetShaderValueTexture"),
-          "shell avoids framebuffer reads and gates optional depth");
+          "shell uses the safe scene snapshot and gates optional depth");
     CHECK(Has("core/screen_distort.h", "ScreenDistort_GetDepthTexture"),
           "the optional depth source remains available through ScreenDistort");
     CHECK(Has("main.c", "ScreenDistort_SnapshotDepth();") &&
@@ -127,6 +127,14 @@ int main(void)
     CHECK(Has("core/shaders/glass_shell.fs", "VFX_ResolvePremultiplied") &&
           Has("core/shaders/glass_shell.fs", "VFX_ResolveEmission"),
           "the shell resolves body and emission through the shared compositor");
+    CHECK(Has("core/shaders/glass_shell.fs", "bodyStructure") &&
+          Has(src, "appearance.bodyOpacity") &&
+          Has(src, "appearance.emissionIntensity"),
+          "Magic appearance drives structured body coverage and emission gain");
+    CHECK(Has("core/shaders/glass_shell.fs", "float emissionMask") &&
+          Has("core/shaders/glass_shell.fs", "pattern * 0.35") &&
+          !Has("core/shaders/glass_shell.fs", "0.20 + fresnel"),
+          "emission has no full-sphere alpha floor on bright backgrounds");
     CHECK(Has("core/shaders/glass_shell.fs", "u_packedTex") &&
           Has("core/shaders/glass_shell.fs", "flowSample.rg") &&
           Has("core/shaders/glass_shell.fs", "packed.b"),

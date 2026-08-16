@@ -86,6 +86,7 @@ int main(void)
         VFX_APPEARANCE_MAGIC, legacy);
     CHECK(magic.surface == VFX_SURFACE_PREMULTIPLIED);
     CHECK(magic.bodyOpacity > 0.0f);
+    CHECK(magic.bodyOpacity < 0.30f);
     CHECK(magic.emissionIntensity > 0.0f);
 
     const VFXResolvedAppearance fire = VFXAppearance_Resolve(
@@ -134,6 +135,34 @@ int main(void)
     }
     CHECK(Has("core/shaders/fire_funnel.fs",
               "VFX_ResolveBody"));
+    CHECK(Has("core/shaders/plasma_shell.fs",
+              "VFX_ResolveBody"));
+    CHECK(Has("core/shaders/shock_ring.fs",
+              "VFX_ResolveBody"));
+    CHECK(Has("core/shaders/magic_filaments.fs",
+              "VFX_ResolveBody"));
+    CHECK(Has("core/trails/shaders/trail_deform.fs",
+              "VFX_ResolveEmission"));
+    CHECK(Has("core/shaders/vfx_layered_annulus.fs",
+              "VFX_ResolvePremultiplied") ||
+          Has("core/shaders/vfx_layered_annulus.fs", "VFX_ResolveBody"));
+    CHECK(Has("core/shaders/aura_shell.fs", "VFX_ResolveBody"));
+    CHECK(Has("core/shaders/ground_aura.fs", "VFX_ResolveBody"));
+    CHECK(Has("core/shaders/smoke_column.fs", "VFX_ResolveBody"));
+    CHECK(Has("core/shaders/black_hole_swirl.fs", "VFX_ResolveBody"));
+    CHECK(Has("core/trails/shaders/trail_body.fs", "VFX_ResolveBody"));
+    CHECK(Has("core/shaders/additive_soft.fs", "VFX_ResolveEmission"));
+    CHECK(Has("core/shaders/ground_wave.fs", "VFX_ResolveBody"));
+    CHECK(Has("core/shaders/water_splash.fs", "VFX_ResolveBody"));
+    CHECK(Has("core/shaders/crystal.fs", "VFX_ResolveBody"));
+    CHECK(Has("core/decals/shaders/decal_material.fs", "VFX_ResolveEmission"));
+    CHECK(Has("core/particles/shaders/gpu/particle_gpu_fallback.fs", "VFX_ResolveEmission"));
+    CHECK(Has("core/particles/shaders/particle_lit.fs", "VFX_ResolveBody"));
+    CHECK(Has("core/shaders/effect_material.fs", "VFX_ResolveBody"));
+    CHECK(Has("core/shaders/puddle.fs", "VFX_ResolveBody"));
+    CHECK(Has("core/shaders/rim_glow.fs", "VFX_ResolveBody"));
+    CHECK(Has("core/shaders/taiji.fs", "VFX_ResolveBody"));
+    CHECK(Has("core/trails/shaders/trail_volume.fs", "VFX_ResolveBody"));
 
     puts(failed ? "vfx appearance: FAIL" : "vfx appearance: PASS");
     return failed != 0;

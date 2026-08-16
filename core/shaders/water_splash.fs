@@ -3,6 +3,7 @@
 #include "core/shaders/common/lighting.glsl"
 #include "core/shaders/common/noise.glsl"
 #include "core/shaders/common/fx.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 // ============================================================
 // Water Splash — Fragment Shader (Crown Splash GLB Mesh)
@@ -81,5 +82,5 @@ void main() {
     // Dissolve cũng ăn dần alpha ở vùng gần mép
     alpha *= mix(1.0, 0.4, edgeFactor);
     
-    finalColor = vec4(color, alpha);
+    finalColor = VFX_ResolveBody(color, 1.0, alpha);
 }

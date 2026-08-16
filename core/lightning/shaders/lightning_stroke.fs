@@ -1,6 +1,7 @@
 #version 330
 #include "core/shaders/common/fs_header.glsl"
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 uniform float u_phase;
 uniform float u_mode;
@@ -79,7 +80,7 @@ void main()
 
     if (u_mode < 0.5)
     {
-        finalColor = vec4(u_bodyColor.rgb, u_bodyColor.a * body);
+        finalColor = VFX_ResolveBody(u_bodyColor.rgb, 1.0, u_bodyColor.a * body);
     }
     else
     {
@@ -103,6 +104,7 @@ void main()
         vec3 radiance = (outerColour * fieldWeight * u_haloColor.a * u_haloEmission +
                          innerColour * coronaWeight * u_haloColor.a * u_haloEmission * coronaEnergy +
                          u_coreColor.rgb * emissionCore * u_coreColor.a * u_coreEmission) * dischargeBoost;
-        finalColor = vec4(radiance / max(energy, 0.001), energy);
+        finalColor = VFX_ResolveEmission(radiance / max(energy, 0.001),
+                                          1.0, 1.0, energy);
     }
 }

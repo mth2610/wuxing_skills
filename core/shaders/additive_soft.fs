@@ -1,4 +1,5 @@
 #version 330 core
+#include "core/shaders/common/vfx_composite.glsl"
 
 in vec2 fragTexCoord;
 in vec4 fragColor;
@@ -21,5 +22,5 @@ void main() {
     // Đột phá cường độ phát sáng (Boost HDR Glow) bằng cách nhân tích hợp màu khuếch tán
     vec3 rgb = texColor.rgb * colDiffuse.rgb * fragColor.rgb * 1.5;
     
-    finalColor = vec4(rgb, alpha);
+    finalColor = VFX_ResolveEmission(rgb, 1.0, 1.0, alpha);
 }

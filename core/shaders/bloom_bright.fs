@@ -5,6 +5,10 @@ in vec4 fragColor;
 
 uniform sampler2D texture0;
 uniform float u_threshold;
+// Exposure is applied only for threshold/weight decisions. The written bloom
+// colour stays in raw scene-linear HDR so post_process.fs applies exposure once
+// to scene+bloom together (no double exposure in the pyramid).
+uniform float u_exposure;
 // Bloom is authored at quarter resolution, but the scene source is full size.
 // A single sample here would skip a one-pixel HDR mesh core completely. This
 // footprint gathers the full 4x4 source-pixel cell before thresholding.
@@ -41,7 +45,7 @@ void main() {
         for (int x = 0; x < 4; ++x) {
             vec2 cellOffset = (vec2(float(x), float(y)) - vec2(1.5)) * u_sourceTexelSize;
             vec3 sampleColor = texture(texture0, fragTexCoord + cellOffset).rgb;
-            float sampleBrightness = max(sampleColor.r, max(sampleColor.g, sampleColor.b));
+            float sampleBrightness = max(sampleColor.r, max(sampleColor.g, sampleColor.b)) * max(u_exposure, 0.0001);
             if (sampleBrightness > bestBrightness) {
                 bestBrightness = sampleBrightness;
                 col = sampleColor;
@@ -72,7 +76,7 @@ void main() {
     float coverage = sqrt(max(brightCount / 16.0, 1.0 / 16.0));
 
     // 1. Tính toán độ sáng dựa trên kênh màu lớn nhất (max-channel) để các màu bão hòa (lam, tím) cũng bloom rực rỡ
-    float brightness = max(col.r, max(col.g, col.b));
+    float brightness = max(col.r, max(col.g, col.b)) * max(u_exposure, 0.0001);
 
     // 2. Thuật toán chống ảo ảnh cho vật thể mảnh (Knee Anti-Aliasing)
     // Tạo một vùng đệm mượt mờ quanh ngưỡng threshold để triệt tiêu răng cưa

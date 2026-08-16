@@ -1,4 +1,5 @@
 #version 330 core
+#include "core/shaders/common/vfx_composite.glsl"
 
 in vec2 fragTexCoord;
 in vec4 fragColor;
@@ -22,5 +23,6 @@ void main() {
     vec4 baseColor = texColor * colDiffuse * fragColor;
     
     // Hòa trộn tăng sáng lõi năng lượng ở giữa kết hợp với hào quang phát sáng dọc 2 biên dải sét
-    finalColor = vec4(baseColor.rgb * (1.0 + rim * rimBrightness), baseColor.a);
+    finalColor = VFX_ResolveBody(baseColor.rgb * (1.0 + rim * rimBrightness),
+                                 1.0, baseColor.a);
 }

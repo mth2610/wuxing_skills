@@ -1,5 +1,6 @@
-// ShieldShell — mobile force-field shell. No scene-color reads: one packed
-// surface lookup plus vertex Fresnel keeps TBDR tile memory on chip.
+// ShieldShell — glass-like force-field volume. The scene colour comes from the
+// safe post-3D snapshot (never from the live render target), while the packed
+// field and additive crest provide the authored magical identity.
 #include "core/tuning.h"
 
 #define VFX_SHIELD_SHELL_MAX 8
@@ -22,8 +23,10 @@ typedef struct {
 typedef struct {
     Shader shader;
     int bodyColor, rimColor, opacity, rimStrength, emissionOnly, wallPass;
+    int bodyOpacity, emissionGain;
     int lightDirView, packedTex, hasPacked, flowTex, hasFlow, matcapTex, hasMatcap;
     int depthTex, hasDepth, depthEnabled, depthLod;
+    int sceneTex, hasScene;
     int noiseScale, noiseSpeed;
     int impactView, impactAge, rippleFrequency, rippleSpeed;
     int flowStrength, flowSpeed, parallaxDepth, innerDepth;
@@ -42,9 +45,9 @@ static float s_shieldNoiseScale = 28.0f;      // screen-space noise tiling
 static float s_shieldNoiseSpeed = 2.2f;       // noise scroll speed
 static float s_shieldContact = 1.0f;          // contact glow strength
 static float s_shieldContactThickness = 0.35f; // meters of depth gap = "touching"
-static float s_shieldBaseAlpha = 0.05f;
-static float s_shieldFresnelAlpha = 0.24f;
-static float s_shieldContactAlpha = 0.55f;
+static float s_shieldBaseAlpha = 0.025f;
+static float s_shieldFresnelAlpha = 0.18f;
+static float s_shieldContactAlpha = 0.42f;
 static float s_shieldDepthEnabled = 0.0f;
 static float s_shieldDepthLod = 0.5f;
 static float s_shieldRippleFrequency = 18.0f;
@@ -65,10 +68,13 @@ static void ShieldShell_InitShared(void)
 
     s_shieldShader.shader = ResourceManager_LoadShader(
         "core/shaders/glass_shell.vs", "core/shaders/glass_shell.fs");
+    TraceLog(LOG_INFO, "SHIELDSHELL_RENDER rev=glass-volume-alpha35-rear45-body135");
     s_shieldShader.bodyColor = GetShaderLocation(s_shieldShader.shader, "u_bodyColor");
     s_shieldShader.rimColor = GetShaderLocation(s_shieldShader.shader, "u_rimColor");
     s_shieldShader.opacity = GetShaderLocation(s_shieldShader.shader, "u_opacity");
     s_shieldShader.rimStrength = GetShaderLocation(s_shieldShader.shader, "u_rimStrength");
+    s_shieldShader.bodyOpacity = GetShaderLocation(s_shieldShader.shader, "u_bodyOpacity");
+    s_shieldShader.emissionGain = GetShaderLocation(s_shieldShader.shader, "u_emissionGain");
     s_shieldShader.emissionOnly = GetShaderLocation(s_shieldShader.shader, "u_emissionOnly");
     s_shieldShader.wallPass = GetShaderLocation(s_shieldShader.shader, "u_wallPass");
     s_shieldShader.lightDirView = GetShaderLocation(s_shieldShader.shader, "u_lightDirView");
@@ -98,16 +104,20 @@ static void ShieldShell_InitShared(void)
     s_shieldShader.flowSpeed = GetShaderLocation(s_shieldShader.shader, "u_flowSpeed");
     s_shieldShader.parallaxDepth = GetShaderLocation(s_shieldShader.shader, "u_parallaxDepth");
     s_shieldShader.innerDepth = GetShaderLocation(s_shieldShader.shader, "u_innerDepth");
+    s_shieldShader.sceneTex = GetShaderLocation(s_shieldShader.shader, "u_sceneTex");
+    s_shieldShader.hasScene = GetShaderLocation(s_shieldShader.shader, "u_hasScene");
 
-    Tuning_RegisterFloat("shield_shell_opacity", &s_shieldOpacity, 1.0f);
-    Tuning_RegisterFloat("shield_shell_rim", &s_shieldRim, 1.5f);
+    /* ShieldShell is a translucent carrier: keep its mass below the bright
+     * background while letting the rim/emission carry the silhouette. */
+    Tuning_RegisterFloat("shield_shell_opacity", &s_shieldOpacity, 0.78f);
+    Tuning_RegisterFloat("shield_shell_rim", &s_shieldRim, 2.15f);
     Tuning_RegisterFloat("shield_shell_noise_scale", &s_shieldNoiseScale, 28.0f);
     Tuning_RegisterFloat("shield_shell_noise_speed", &s_shieldNoiseSpeed, 2.2f);
     Tuning_RegisterFloat("shield_shell_contact", &s_shieldContact, 1.0f);
     Tuning_RegisterFloat("shield_shell_contact_thickness", &s_shieldContactThickness, 0.35f);
-    Tuning_RegisterFloat("shield_shell_base_alpha", &s_shieldBaseAlpha, 0.05f);
-    Tuning_RegisterFloat("shield_shell_fresnel_alpha", &s_shieldFresnelAlpha, 0.24f);
-    Tuning_RegisterFloat("shield_shell_contact_alpha", &s_shieldContactAlpha, 0.55f);
+    Tuning_RegisterFloat("shield_shell_base_alpha", &s_shieldBaseAlpha, 0.025f);
+    Tuning_RegisterFloat("shield_shell_fresnel_alpha", &s_shieldFresnelAlpha, 0.34f);
+    Tuning_RegisterFloat("shield_shell_contact_alpha", &s_shieldContactAlpha, 0.70f);
     Tuning_RegisterFloat("shield_shell_depth_enabled", &s_shieldDepthEnabled, 0.0f);
     Tuning_RegisterFloat("shield_shell_depth_lod", &s_shieldDepthLod, 0.5f);
     Tuning_RegisterFloat("shield_shell_ripple_frequency", &s_shieldRippleFrequency, 18.0f);
@@ -191,10 +201,12 @@ void VFX_KillShieldShell(int handle)
 
 static void VC_ShieldShell_Update(float dt)
 {
+    bool anyActive = false;
     for (int i = 0; i < VFX_SHIELD_SHELL_MAX; ++i)
     {
         VC_ShieldShell *shield = &s_shieldShells[i];
         if (!shield->active) continue;
+        anyActive = true;
         shield->elapsed += dt;
         shield->level += (shield->target - shield->level) * (1.0f - expf(-dt * 7.0f));
         if (shield->stopping && shield->level < 0.004f)
@@ -203,6 +215,7 @@ static void VC_ShieldShell_Update(float dt)
             continue;
         }
     }
+    if (anyActive) ScreenDistort_RequestSceneSnapshot();
 }
 
 // Bind the refraction payload once per pass (inside BeginShaderMode): the
@@ -211,6 +224,12 @@ static void VC_ShieldShell_Update(float dt)
 // turns the term off in the shader, so nothing samples garbage.
 static void ShieldShell_BindInputs(void)
 {
+    Texture2D sceneTex = ScreenDistort_GetSceneSnapshotTexture();
+    int hasScene = sceneTex.id != 0 ? 1 : 0;
+    SetShaderValue(s_shieldShader.shader, s_shieldShader.hasScene,
+                   &hasScene, SHADER_UNIFORM_INT);
+    if (hasScene && s_shieldShader.sceneTex >= 0)
+        SetShaderValueTexture(s_shieldShader.shader, s_shieldShader.sceneTex, sceneTex);
     Texture2D depthTex = ScreenDistort_GetDepthTexture();
     int hasDepth = (depthTex.id != 0 && s_shieldDepthEnabled > 0.5f) ? 1 : 0;
     SetShaderValue(s_shieldShader.shader, s_shieldShader.hasDepth, &hasDepth, SHADER_UNIFORM_INT);
@@ -232,7 +251,13 @@ static void ShieldShell_DrawPass(bool emissionOnly)
         Vector4 rimColor = ColorNormalize(material->glow);
         float pulse = VC_Breathe(shield->elapsed, 1.15f, 0.012f);
         float radius = shield->radius * (0.99f + 0.01f * pulse);
-        float opacity = ShieldShell_Clamp01(shield->level * s_shieldOpacity);
+        VFXResolvedAppearance appearance = VFXAppearance_Resolve(
+            VFX_APPEARANCE_MAGIC,
+            (VFXResolvedAppearance){ VFX_SURFACE_ALPHA, VFX_CONTRAST_MAGIC,
+                                     1.0f, 1.0f, 0.78f, true });
+        float opacity = ShieldShell_Clamp01(
+            shield->level * s_shieldOpacity *
+            (emissionOnly ? appearance.emissionIntensity : appearance.bodyOpacity));
         int emission = emissionOnly ? 1 : 0;
         int hasPacked = shield->packedMap.id != 0 ? 1 : 0;
         int hasFlow = shield->flowMap.id != 0 ? 1 : 0;
@@ -262,6 +287,15 @@ static void ShieldShell_DrawPass(bool emissionOnly)
                                               s_shieldShader.matcapTex, shield->matcapMap);
         SetShaderValue(s_shieldShader.shader, s_shieldShader.rimStrength,
                        &s_shieldRim, SHADER_UNIFORM_FLOAT);
+        /* ShieldShell is a glass volume, not a solid Magic decal.  Keep the
+         * shared Magic appearance, but attenuate only this fixture's carrier
+         * so the scene-through region remains visibly transparent. */
+        float bodyOpacity = emissionOnly ? 0.0f : appearance.bodyOpacity * 0.42f;
+        float emissionGain = emissionOnly ? appearance.emissionIntensity : 0.0f;
+        SetShaderValue(s_shieldShader.shader, s_shieldShader.bodyOpacity,
+                       &bodyOpacity, SHADER_UNIFORM_FLOAT);
+        SetShaderValue(s_shieldShader.shader, s_shieldShader.emissionGain,
+                       &emissionGain, SHADER_UNIFORM_FLOAT);
         SetShaderValue(s_shieldShader.shader, s_shieldShader.emissionOnly,
                        &emission, SHADER_UNIFORM_INT);
         SetShaderValue(s_shieldShader.shader, s_shieldShader.noiseScale,
