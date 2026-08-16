@@ -36,6 +36,10 @@ static Shader depthCopyShader;
 static int depthCopyNearLoc;
 static int depthCopyFarLoc;
 
+// --- Refraction tap: sample-safe copy of the finished scene (see header) ---
+static RenderTexture2D s_sceneSnapshot;
+static bool s_sceneSnapshotRequested = false;
+
 // Per-shader cache of soft-particle uniform locations — GetShaderLocation()
 // is a string-hash lookup the engine does not cache for you (CORE_API.md),
 // so don't call it every frame from ScreenDistort_BindDepthForSoftParticles.
@@ -280,6 +284,9 @@ void ScreenDistort_Unload(void)
   {
     UnloadRenderTexture(prevDepthTex);
   }
+  if (s_sceneSnapshot.id) UnloadRenderTexture(s_sceneSnapshot);
+  s_sceneSnapshot = (RenderTexture2D){0};
+  s_sceneSnapshotRequested = false;
   UnloadShader(distortShader);
   UnloadShader(depthCopyShader);
 }
@@ -528,6 +535,79 @@ void ScreenDistort_RequestSoftDepthRegion(Rectangle screenRegion)
     s_softDepthRegion.height = fmaxf(oldY1, y1) - s_softDepthRegion.y;
   }
 }
+
+void ScreenDistort_RequestSceneSnapshot(void)
+{
+  s_sceneSnapshotRequested = true;
+  /* The refraction consumer (glass shield) also reads the prev-frame linear
+   * depth for the contact term, but SnapshotDepth only fills prevDepthTex
+   * while a full-screen soft-depth region is armed and the keep-alive is not
+   * idle. Arm both here so the depth stays fresh for as long as a refractive
+   * effect is alive — otherwise the shield samples stale or empty depth. */
+  if (renderTex.texture.width > 0 && renderTex.texture.height > 0)
+    ScreenDistort_RequestSoftDepthRegion(
+        (Rectangle){0, 0, (float)renderTex.texture.width,
+                    (float)renderTex.texture.height});
+  if (s_softDepthIdleFrames > 0) s_softDepthIdleFrames = 0;
+}
+
+/* Colour-only target in the scene's own format: an exact-copy destination for
+ * the refraction tap. No depth attachment — the copy is a pure blit. */
+static RenderTexture2D LoadSceneSnapshotTarget(int width, int height, int format)
+{
+  RenderTexture2D target = {0};
+  target.id = rlLoadFramebuffer();
+  if (target.id == 0) return target;
+  rlEnableFramebuffer(target.id);
+  target.texture.id = rlLoadTexture(NULL, width, height, format, 1);
+  target.texture.width = width;
+  target.texture.height = height;
+  target.texture.format = format;
+  target.texture.mipmaps = 1;
+  rlFramebufferAttach(target.id, target.texture.id, RL_ATTACHMENT_COLOR_CHANNEL0,
+                      RL_ATTACHMENT_TEXTURE2D, 0);
+  if (!rlFramebufferComplete(target.id))
+    TraceLog(LOG_WARNING, "ScreenDistort: scene-snapshot target incomplete");
+  rlDisableFramebuffer();
+  SetTextureFilter(target.texture, TEXTURE_FILTER_BILINEAR);
+  SetTextureWrap(target.texture, TEXTURE_WRAP_CLAMP);
+  return target;
+}
+
+void ScreenDistort_SnapshotScene(void)
+{
+  if (!s_sceneSnapshotRequested) return;
+  s_sceneSnapshotRequested = false;
+  if (renderTex.id == 0 || renderTex.texture.id == 0) return;
+
+  const int w = renderTex.texture.width;
+  const int h = renderTex.texture.height;
+  if (s_sceneSnapshot.id == 0 || s_sceneSnapshot.texture.width != w ||
+      s_sceneSnapshot.texture.height != h ||
+      s_sceneSnapshot.texture.format != renderTex.texture.format)
+  {
+    if (s_sceneSnapshot.id) UnloadRenderTexture(s_sceneSnapshot);
+    s_sceneSnapshot = LoadSceneSnapshotTarget(w, h, renderTex.texture.format);
+  }
+  if (s_sceneSnapshot.id == 0) return;
+
+  /* 2D-time copy (main.c calls this after MyEndMode3D, before the screen-space
+   * composite). It must NOT run inside a 3D pass: EndTextureMode() resets the
+   * projection/modelview to screen ortho, corrupting every later draw in the
+   * pass (engine landmine #15 — the glass shield once vanished entirely). */
+  BeginTextureMode(s_sceneSnapshot);
+  /* An exact copy: blending would fold the scene's own alpha into it, and the
+   * negative source height is this file's RT->RT convention, which leaves
+   * storage orientation identical to the source (gl_FragCoord UVs line up). */
+  rlDisableColorBlend();
+  DrawTextureRec(renderTex.texture,
+                 (Rectangle){0, 0, (float)w, -(float)h}, (Vector2){0, 0}, WHITE);
+  rlDrawRenderBatchActive();
+  rlEnableColorBlend();
+  EndTextureMode();
+}
+
+Texture2D ScreenDistort_GetSceneSnapshotTexture(void) { return s_sceneSnapshot.texture; }
 
 void ScreenDistort_SnapshotDepth(void)
 {

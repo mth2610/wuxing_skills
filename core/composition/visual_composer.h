@@ -150,6 +150,10 @@ typedef struct {
     Texture2D body;
     Texture2D flowMap;
     Texture2D mask;
+    /* Preferred mobile input: RG=flow vector, B=energy/soft mask. */
+    Texture2D packedMap;
+    /* Optional static matcap for the outer glass shell. */
+    Texture2D matcapMap;
     float flowSpeed;
     float flowStrength;
     float flowTiling;
@@ -162,8 +166,14 @@ int  VFX_ShieldShell_SpawnEx(Vector3 pos, VC_MaterialId mat, float radius,
 void VFX_ShieldShell_SetTransform(int handle, Vector3 pos);
 void VFX_ShieldShell_SetIntensity(int handle, float intensity01);
 void VFX_ShieldShell_SetSurface(int handle, const VFX_ShieldSurface *surface);
+void VFX_ShieldShell_SetImpact(int handle, Vector3 impactWorld, float timeSinceImpact);
 void VFX_ShieldShell_Stop(int handle);
 void VFX_KillShieldShell(int handle);
+
+// Dedicated post-3D shell pass retained for render-order compatibility. It
+// does not sample the framebuffer; it draws the packed-texture/Fresnel shell.
+// Safe to call even when none are alive.
+void VFX_ShieldShell_DrawRefraction(Camera3D camera);
 
 // ── F4. Character aura ──────────────────────────────────────────────────────
 // Three layers: discrete motes crossing the silhouette (the layer that actually

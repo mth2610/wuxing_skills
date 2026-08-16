@@ -95,6 +95,42 @@ Texture2D ScreenDistort_GetDepthTexture(void);
 Texture2D ScreenDistort_GetSceneTexture(void);
 Texture2D ScreenDistort_GetRawDepthTexture(void);
 
+/* ============================================================================
+ * SCENE SNAPSHOT — refraction taps (glass shields / refractive volumes)
+ * --------------------------------------------------------------------------
+ * The VFX body pass binds `renderTex` itself (the split layer targets were
+ * retired), so an effect that wants to refract "what is behind it" cannot
+ * sample the scene target while drawing into it — undefined in GL, a
+ * read/write hazard in Vulkan (engine landmine #15; the same trap that caught
+ * FluidSurface). The safe pattern is the one FluidSurface uses privately:
+ * copy the finished scene into a separate target while it is still only a
+ * source, then sample the copy.
+ *
+ * Frame flow (wired in main.c):
+ *   VFX_Compose_Update();          // 1: refractive effect calls Request
+ *   ScreenDistort_Begin(); ...3D scene incl. VFX_Compose_Draw3D...;
+ *   ScreenDistort_End();           // 2: the complete scene now exists
+ *   ScreenDistort_SnapshotScene(); // 3: 2D time — copies renderTex iff a
+ *                                  //    request arrived (Effect draws next)
+ *
+ * The snapshot MUST run at 2D time (outside MyBeginMode3D), even though the
+ * copy looks like a plain blit and "would work inside the 3D pass":
+ * raylib's EndTextureMode() hard-resets the projection and modelview to
+ * screen-space ortho and does NOT restore the caller's matrices, so a copy
+ * taken inside the 3D pass silently corrupts every later draw (engine
+ * landmine #15 — the glass shield once vanished entirely this way).
+ *
+ * The request flag is per-frame: a full-resolution copy only happens while
+ * some refractive effect is actually alive.
+ * ==========================================================================*/
+void ScreenDistort_RequestSceneSnapshot(void);
+// Copy renderTex -> private snapshot; no-op unless requested this frame.
+void ScreenDistort_SnapshotScene(void);
+// Sample-safe copy of the current frame's scene; texture.id 0 until the
+// first successful snapshot. Same storage orientation as renderTex, so sample
+// with gl_FragCoord.xy / u_resolution.
+Texture2D ScreenDistort_GetSceneSnapshotTexture(void);
+
 // Bind depth texture vào textureSlot + set u_cameraDepthTex/u_cameraNear/
 // u_cameraFar/u_resolution lên shader (bỏ qua an toàn nếu shader không khai
 // báo, cùng pattern SkillManager_BeginShader). Gọi sau BeginShaderMode(shader),

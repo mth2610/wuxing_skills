@@ -605,7 +605,7 @@ static void Test_MirrorStillMatchesSource(void) {
         "and so is the old inline tile-or-stretch");
 
   // ── The other two consumers ──
-  CHECK(FileHas("core/shaders/glass_shell.fs", "calcFresnel(normal, viewDir") &&
+  CHECK(FileHas("core/shaders/glass_shell.fs", "calcFresnel(facingNormal, viewDir") &&
             FileHas("core/shaders/glass_shell.fs", "u_emissionOnly"),
         "the shield now uses a transparent shared-Fresnel glass shell");
   CHECK(!FileHasCode("core/composition/common/vc_shield_shell.inl", "SurfaceFlow_Apply") &&

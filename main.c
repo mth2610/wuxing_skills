@@ -1226,6 +1226,13 @@ int main(int argc, char **argv) {
     // Shared composition pools (including one-shot LightningArc) must render
     // in every 3D game scene, not only the VFX tester and skill sandbox.
     // Their body/emission submissions own their target switches internally.
+    // NEVER take the refraction scene snapshot in here: raylib's EndTextureMode
+    // resets the projection to screen ortho, so a copy made inside this 3D pass
+    // corrupts everything drawn after it (engine landmine #15 — the glass
+    // shield once vanished entirely this way). The snapshot is taken at 2D
+    // time after MyEndMode3D, and refractive draws run in a dedicated
+    // post-pass (VFX_ShieldShell_DrawRefraction) so they see the complete
+    // scene — see the block after ScreenDistort_SnapshotDepth() below.
     VFX_Compose_Draw3D(camera);
 
     // =========================================================================
@@ -1261,6 +1268,15 @@ int main(int argc, char **argv) {
     MyEndMode3D();
     ScreenDistort_End();
     ScreenDistort_SnapshotDepth(); // soft particles: snapshot this frame's depth for next frame's sampling
+    // Glass shields refract the COMPLETE scene (characters, trails, atmosphere
+    // all drawn by now). Copy it at 2D time while renderTex is still only a
+    // source — the copy must not happen inside the 3D pass (landmine #15) —
+    // then draw the shields in a dedicated world-space pass in copy-then-draw
+    // order.
+    ScreenDistort_SnapshotScene();
+    MyBeginMode3D(camera);
+    VFX_ShieldShell_DrawRefraction(camera);
+    MyEndMode3D();
     CompositeScreenSpaceVFX(camera);
 
     PostFX_Begin();

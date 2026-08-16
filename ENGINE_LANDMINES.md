@@ -45,7 +45,24 @@ sample the snapshot — taken at a point where the scene is still only a source.
 render-layer refactor is never local: whatever changes which target a pass binds
 must be checked against every consumer that samples the scene inside it, because
 the failure looks like an art problem, not a bug. Core detail + guard in
-`core/docs/LANDMINES.md`.
+`core/docs/LANDMINES.md`. Shared utility for new effects:
+`ScreenDistort_RequestSceneSnapshot()` (request while alive) +
+`ScreenDistort_SnapshotScene()` (main.c, at 2D time after `MyEndMode3D`) +
+`ScreenDistort_GetSceneSnapshotTexture()` (the sample-safe copy — the glass
+shield refracts through it, drawn there in the dedicated
+`VFX_ShieldShell_DrawRefraction` post-pass so it sees the complete scene).
+Never sample `ScreenDistort_GetSceneTexture()` inside a VFX body/emission draw;
+that IS `renderTex`, the bound target.
+
+**Second trap in the same story (16/08/2026):** the snapshot itself must NOT be
+taken inside a 3D pass (`MyBeginMode3D`). `ScreenDistort_SnapshotScene()` is a
+`BeginTextureMode`/`EndTextureMode` blit, and raylib's `EndTextureMode()`
+**hard-resets projection AND modelview to screen-space ortho without restoring
+the caller's matrices** — a copy made mid-3D-pass silently corrupts every draw
+after it (the whole composition pass). The shield once vanished entirely this
+way ("nó tàng hình luôn rồi"): the copy looked harmless because it sat under a
+blank-`rlLoadIdentity` guard that only restored the modelview stack, not the
+projection.
 
 ---
 

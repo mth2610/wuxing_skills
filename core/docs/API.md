@@ -421,6 +421,9 @@
   Texture2D ScreenDistort_GetDepthTexture(void);
   Texture2D ScreenDistort_GetSceneTexture(void);
   Texture2D ScreenDistort_GetRawDepthTexture(void);
+  void ScreenDistort_RequestSceneSnapshot(void);
+  void ScreenDistort_SnapshotScene(void);
+  Texture2D ScreenDistort_GetSceneSnapshotTexture(void);
   void ScreenDistort_BindDepthForSoftParticles(Shader shader, int textureSlot);
   void ScreenDistort_UnbindSoftParticleDepth(int textureSlot);
 ```
@@ -804,8 +807,10 @@ _Inline helpers / macros only — see header._
   void VFX_ShieldShell_SetTransform(int handle, Vector3 pos);
   void VFX_ShieldShell_SetIntensity(int handle, float intensity01);
   void VFX_ShieldShell_SetSurface(int handle, const VFX_ShieldSurface *surface);
+  void VFX_ShieldShell_SetImpact(int handle, Vector3 impactWorld, float timeSinceImpact);
   void VFX_ShieldShell_Stop(int handle);
   void VFX_KillShieldShell(int handle);
+  void VFX_ShieldShell_DrawRefraction(Camera3D camera);
   int VFX_ComposeCharacterAura(int agentId, VC_MaterialId matId, float intensity);
   void VFX_AuraSetIntensity(int handle, float intensity01);
   void VFX_KillCharacterAura(int handle);

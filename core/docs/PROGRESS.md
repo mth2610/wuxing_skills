@@ -4,6 +4,52 @@
 **Trạng thái:** **ĐÃ SỬA** — nguyên nhân gốc đã tìm ra và xác nhận bằng ảnh render.
 Nguyên nhân **không nằm ở rlvk**, không nằm ở shader, và không nằm ở màu.
 
+## 2026-08-16 — ShieldShell mobile path
+
+ShieldShell now avoids scene-color/refraction reads entirely. The shell uses a
+single packed surface texture (`R=hex`, `G=noise`, `B=mask`), a 14×14 sphere
+(392 triangles), `Cull Back`, and a vertex-computed pow-4 Fresnel term. Depth
+intersection is quality-gated and expects the existing half-resolution depth
+texture. `VFX_ShieldShell_SetImpact()` supplies a decaying impact ripple.
+
+## 2026-08-16 — Glass shell: refraction + contact (recipe của user)
+
+Quả cầu kính được viết lại theo recipe: `fresnel = pow(1-saturate(dot(N,V)),4)`,
+`contact = getDepthIntersection()`, `distortion = noise * strength`, màu/alpha
+cuối ghép từ ba term. Vì body pass bind thẳng `renderTex`, khúc xạ KHÔNG được
+sample scene sống (landmine #15) — thêm core API snapshot an toàn:
+
+- `ScreenDistort_RequestSceneSnapshot()` — gọi khi shield còn sống (trong
+  `VC_ShieldShell_Update`; cờ per-frame, không copy khi không cần).
+- `ScreenDistort_SnapshotScene()` — main.c gọi NGAY SAU `MyEndMode3D` (2D time),
+  sao chép renderTex → RT riêng (đúng format, giữ HDR, orientation khớp
+  gl_FragCoord; không cần bọc matrix nữa — lúc này matrix đã là identity).
+
+**16/08/2026 (sửa tiếp) — "nó tàng hình luôn rồi":** sau khi áp recipe, shield
+biến mất hoàn toàn. Gốc: `SnapshotScene()` bị đặt TRONG 3D pass (trước
+`VFX_Compose_Draw3D`), mà raylib `EndTextureMode()` **reset cứng projection +
+modelview về ortho màn hình, không khôi phục matrix của caller** — mọi draw sau
+đó trong pass (toàn bộ composition: shield, smoke, particle, character, trail)
+vẽ với projection sai → vô hình. `rlPushMatrix/rlPopMatrix` chỉ cứu modelview,
+không cứu projection. Sửa: snapshot dời ra 2D time sau `MyEndMode3D`, shield vẽ
+trong post-pass riêng `VFX_ShieldShell_DrawRefraction(camera)` (export qua
+`visual_composer.h`, gọi trong `MyBeginMode3D` thứ hai sau snapshot) — khúc xạ
+giờ còn THẤY cả character/trail/atmosphere (scene hoàn chỉnh), khớp pattern
+fluid. `VC_ShieldShell_Draw3D` giữ làm stub archetype (sync_vfx_test.py).
+- `ScreenDistort_GetSceneSnapshotTexture()` — texture sample được.
+
+Shield: bind snapshot (u_sceneTex) + prev-frame depth (u_depthTex), gate
+`u_hasScene/u_hasDepth` để frame đầu/thiếu depth không sample rác; contact glow
+rs dọc theo mức chạm đất (`u_contactThickness` ~0.35 m). Tunables mới:
+`shield_shell_distortion/noise_scale/noise_speed/contact/contact_thickness/
+base_alpha/fresnel_alpha/contact_alpha`. BODY = alpha (recipe), EMISSION =
+additive (rim + contact + specular + crisp edge `pow(fresnel,14)`).
+
+Test: `shield_shell_test.c` đổi contract (bind snapshot thay vì "không texture"),
+thêm mirror số cho pow-4 fresnel + contact; `uv_deform_test.c` sửa string stale
+`calcFresnel(normal, viewDir` → `facingNormal`. Còn 4 suite đỏ là lỗi pre-existing
+(energy_burst/tube_frame/vfx_layered_field/volume_trail).
+
 ## 2026-08-13 — Shock ring: một dây khói khép kín, bị xé ra
 
 `VFX_ComposeShockRing` viết lại tại chỗ (cùng signature, không thêm primary).
