@@ -30,6 +30,7 @@
 #include "rlgl.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <math.h>
 
@@ -41,6 +42,46 @@ static Color at(Image im, int x, int y) { return ((Color *)im.data)[y*im.width +
 static bool near3(Color c, int r, int g, int b, int tol)
 {
     return (abs(c.r - r) <= tol) && (abs(c.g - g) <= tol) && (abs(c.b - b) <= tol);
+}
+
+static float halfToFloat(uint16_t h)
+{
+    uint32_t sign = ((uint32_t)h & 0x8000u) << 16;
+    uint32_t exp = ((uint32_t)h >> 10) & 0x1Fu;
+    uint32_t mant = (uint32_t)h & 0x03FFu;
+    uint32_t bits;
+    if (exp == 0)
+    {
+        if (mant == 0) bits = sign;
+        else
+        {
+            exp = 1;
+            while ((mant & 0x0400u) == 0) { mant <<= 1; exp--; }
+            mant &= 0x03FFu;
+            bits = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
+        }
+    }
+    else if (exp == 0x1Fu)
+        bits = sign | 0x7F800000u | (mant << 13);
+    else
+        bits = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
+    float out;
+    memcpy(&out, &bits, sizeof(out));
+    return out;
+}
+
+static float toneMapProbe(float x) { return x / (1.0f + x); }
+
+static void sampleHalfRGBA(const uint16_t *pixels, int width, int x, int y, float out[4])
+{
+    size_t i = ((size_t)y * (size_t)width + (size_t)x) * 4u;
+    for (int c = 0; c < 4; c++) out[c] = halfToFloat(pixels[i + (size_t)c]);
+}
+
+static float rgbDistance3(const float a[3], const float b[3])
+{
+    float dr = a[0] - b[0], dg = a[1] - b[1], db = a[2] - b[2];
+    return sqrtf(dr*dr + dg*dg + db*db);
 }
 
 static Texture2D radialAlphaTex(void)   // white core, alpha falls 255->0 outward (RGBA)
@@ -828,6 +869,99 @@ static const char *sc_float_blend_rt(void)
     if (!blendCap && accumulated)
         return "cap denies R32F blending but the device accumulated anyway (cap is wrong)";
     return NULL;
+}
+
+// HDR compositor oracle for bright-background VFX. The top row uses the
+// premultiplied body+emission equation; the bottom row uses the legacy
+// source-alpha additive equation. Readback is intentionally RGBA16F so this
+// catches both blend math and the loss of HDR range before tone mapping.
+static const char *sc_bright_vfx(void)
+{
+    const int FW = 400, FH = 300, TILE = 80;
+    const char *FS = "#version 330\\n"
+        "in vec2 fragTexCoord; in vec4 fragColor; out vec4 finalColor;\\n"
+        "uniform sampler2D texture0; uniform vec4 uSource;\\n"
+        "void main(){ finalColor = uSource; }\\n";
+    RenderTexture2D rt = fmtRT(FW, FH, RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
+    Shader sh = {0}; Texture2D white = {0}; const char *why = NULL;
+    if (rt.id == 0 || rt.texture.id == 0) { why = "could not create RGBA16F colour attachment"; goto done; }
+    sh = LoadShaderFromMemory(NULL, FS);
+    if (sh.id == 0 || sh.id == rlGetShaderIdDefault()) { why = "bright_vfx shader fell back to default"; goto done; }
+    Image wi = GenImageColor(8, 8, WHITE); white = LoadTextureFromImage(wi); UnloadImage(wi);
+
+    const Color backgrounds[5] = {
+        { 5, 5, 8, 255 }, { 42, 46, 55, 255 }, { 255, 255, 255, 255 },
+        { 255, 184, 89, 255 }, { 89, 184, 255, 255 }
+    };
+    BeginDrawing();
+        BeginTextureMode(rt);
+            ClearBackground(BLACK);
+            for (int i = 0; i < 5; i++)
+            {
+                DrawRectangle(i*TILE, 0, TILE, FH/2, backgrounds[i]);
+                DrawRectangle(i*TILE, FH/2, TILE, FH/2, backgrounds[i]);
+            }
+            const float body[3] = { 0.08f, 0.35f, 0.95f };
+            const float emission[3] = { 0.04f, 0.12f, 2.4f };
+            const float coverage = 0.55f, core = 0.65f;
+            Vector4 source = {
+                body[0]*coverage + emission[0]*core,
+                body[1]*coverage + emission[1]*core,
+                body[2]*coverage + emission[2]*core, coverage
+            };
+            BeginShaderMode(sh);
+                int loc = GetShaderLocation(sh, "uSource");
+                SetShaderValue(sh, loc, &source, SHADER_UNIFORM_VEC4);
+                BeginBlendMode(BLEND_ALPHA_PREMULTIPLY);
+                    for (int i = 0; i < 5; i++)
+                        DrawTexture(white, i*TILE + 20, 55, WHITE);
+                EndBlendMode();
+                const Vector4 additive = { 0.03f, 0.10f, 0.85f, 0.40f };
+                SetShaderValue(sh, loc, &additive, SHADER_UNIFORM_VEC4);
+                BeginBlendMode(BLEND_ADDITIVE);
+                    for (int i = 0; i < 5; i++)
+                        DrawTexture(white, i*TILE + 20, FH/2 + 55, WHITE);
+                EndBlendMode();
+            EndShaderMode();
+        EndTextureMode();
+    EndDrawing();
+
+    uint16_t *pixels = (uint16_t *)rlReadTexturePixels(rt.texture.id, FW, FH,
+                                                       RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
+    if (pixels == NULL) { why = "RGBA16F readback returned nothing"; goto done; }
+    for (int i = 0; i < 5 && why == NULL; i++)
+    {
+        float p[4], a[4], bg[3];
+        sampleHalfRGBA(pixels, FW, i*TILE + 24, 59, p);
+        sampleHalfRGBA(pixels, FW, i*TILE + 24, FH/2 + 59, a);
+        bg[0] = backgrounds[i].r / 255.0f; bg[1] = backgrounds[i].g / 255.0f; bg[2] = backgrounds[i].b / 255.0f;
+        float expectedP[3], expectedA[3];
+        const float sourceRGB[3] = { source.x, source.y, source.z };
+        const float additiveRGB[3] = { additive.x, additive.y, additive.z };
+        for (int c = 0; c < 3; c++)
+        {
+            expectedP[c] = sourceRGB[c] + bg[c] * (1.0f - coverage);
+            expectedA[c] = bg[c] + additiveRGB[c] * additive.w;
+            if (fabsf(p[c] - expectedP[c]) > 0.08f || fabsf(a[c] - expectedA[c]) > 0.08f)
+            {
+                why = "RGBA16F blend equation mismatch"; break;
+            }
+        }
+        if (why != NULL) break;
+        float mappedBg[3] = { toneMapProbe(bg[0]), toneMapProbe(bg[1]), toneMapProbe(bg[2]) };
+        float mappedP[3] = { toneMapProbe(p[0]), toneMapProbe(p[1]), toneMapProbe(p[2]) };
+        float mappedA[3] = { toneMapProbe(a[0]), toneMapProbe(a[1]), toneMapProbe(a[2]) };
+        if (rgbDistance3(mappedP, mappedBg) < 0.10f)
+        { why = "premultiplied effect lost contrast on bright background"; break; }
+        if (i == 2 && rgbDistance3(mappedA, mappedBg) >= 0.10f)
+        { why = "additive control unexpectedly hides bright-background failure"; break; }
+    }
+    RL_FREE(pixels);
+done:
+    if (white.id) UnloadTexture(white);
+    if (sh.id) UnloadShader(sh);
+    if (rt.id) UnloadRenderTexture(rt);
+    return why;
 }
 
 static void blit(Texture2D src, int dstW, int dstH);
@@ -1870,6 +2004,7 @@ static const Scenario SCENARIOS[] = {
     { "imm_normal",     sc_imm_normal },
     { "readback",       sc_readback },
     { "float_blend_rt", sc_float_blend_rt },
+    { "bright_vfx",     sc_bright_vfx },
     { "ui_after_rt",    sc_ui_after_rt },
     { "stress",         sc_stress },
     { "shadow_proj",    sc_shadow_proj },

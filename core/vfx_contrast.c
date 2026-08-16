@@ -116,7 +116,7 @@ static const VFXResolvedAppearance s_appearances[VFX_APPEARANCE_COUNT] = {
         VFX_SURFACE_PREMULTIPLIED, VFX_CONTRAST_FIRE, 0.58f, 4.0f, 0.72f, true
     },
     [VFX_APPEARANCE_MAGIC] = {
-        VFX_SURFACE_ADDITIVE, VFX_CONTRAST_MAGIC, 0.0f, 3.0f, 0.78f, true
+        VFX_SURFACE_PREMULTIPLIED, VFX_CONTRAST_MAGIC, 0.42f, 3.0f, 0.78f, true
     }
 };
 

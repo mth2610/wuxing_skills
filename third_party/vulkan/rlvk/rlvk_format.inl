@@ -100,6 +100,9 @@ static int rlvkGetPixelDataSize(int width, int height, int format)
         case RL_PIXELFORMAT_UNCOMPRESSED_R32:          bpp = 32;  break;
         case RL_PIXELFORMAT_UNCOMPRESSED_R32G32B32:    bpp = 96;  break;
         case RL_PIXELFORMAT_UNCOMPRESSED_R32G32B32A32: bpp = 128; break;
+        case RL_PIXELFORMAT_UNCOMPRESSED_R16:          bpp = 16;  break;
+        case RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16:    bpp = 48;  break;
+        case RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16: bpp = 64;  break;
         default: bpp = 32; break;
     }
     return (width*height*bpp)/8;
@@ -165,4 +168,3 @@ bool rlvkFormatSupportsLinearFilter(int rlFormat)
 {
     return (rlvkQueryFormatFeatures(rlFormat) & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
 }
-

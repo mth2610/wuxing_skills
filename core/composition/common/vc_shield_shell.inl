@@ -333,8 +333,13 @@ void VFX_ShieldShell_DrawRefraction(Camera3D cam)
     };
     lightView = Vector3Normalize(lightView);
 
-    VFXRenderScope body = VFXRender_BeginDraw(
-        VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, false);
+    VFXResolvedAppearance shieldAppearance;
+    VFXResolvedAppearance shieldLegacy = {
+        VFX_SURFACE_ALPHA, VFX_CONTRAST_MAGIC, 1.0f, 3.0f, 0.78f, true
+    };
+    VFXRenderScope body = VFXRender_BeginAppearance(
+        VFX_RENDER_PASS_BODY, VFX_APPEARANCE_MAGIC, shieldLegacy, false,
+        &shieldAppearance);
     rlDrawRenderBatchActive();
     rlEnableBackfaceCulling();
     SkillManager_BeginShader(s_shieldShader.shader);
@@ -364,8 +369,9 @@ void VFX_ShieldShell_DrawRefraction(Camera3D cam)
     rlSetCullFace(RL_CULL_FACE_BACK);
     VFXRender_EndDraw(&body);
 
-    VFXRenderScope emission = VFXRender_BeginDraw(
-        VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
+    VFXRenderScope emission = VFXRender_BeginAppearance(
+        VFX_RENDER_PASS_EMISSION, VFX_APPEARANCE_MAGIC, shieldLegacy, false,
+        &shieldAppearance);
     rlDrawRenderBatchActive();
     rlEnableBackfaceCulling();
     SkillManager_BeginShader(s_shieldShader.shader);

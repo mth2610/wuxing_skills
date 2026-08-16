@@ -1,6 +1,7 @@
 #version 330
 #include "core/shaders/common/fs_header.glsl"
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 // Highly optimized energy smoke puff shader.
 // Replaced custom 3D noise with optimized 2D noise, saving 86% GPU cost.
@@ -67,5 +68,5 @@ void main() {
     
     alpha *= smoothstep(0.0, 0.05, u_progress);
 
-    finalColor = vec4(u_color.rgb, alpha * u_color.a);
+    finalColor = VFX_ResolveBody(u_color.rgb, 1.0, alpha * u_color.a);
 }

@@ -1,5 +1,6 @@
 #version 330
 #include "core/shaders/common/fs_header.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 in vec3 shieldViewDir;
 in float shieldFresnel;
@@ -94,12 +95,15 @@ void main() {
     glow += u_contactColor.rgb * contact * u_contactStrength;
 
     if (u_emissionOnly != 0) {
-        finalColor = vec4(glow, u_opacity * (0.20 + fresnel * 0.80 + ripple));
+        float emissionAlpha = u_opacity * (0.20 + fresnel * 0.80 + ripple);
+        finalColor = VFX_ResolveEmission(glow, 1.0, 1.0, emissionAlpha);
         return;
     }
     float wallWeight = (u_wallPass == 0) ? 0.45 : 1.0;
     float alpha = u_opacity * wallWeight * softMask *
                   (u_baseAlpha + fresnel * u_fresnelAlpha +
                    contact * u_contactAlpha + ripple * 0.18);
-    finalColor = vec4(body + u_rimColor.rgb * fresnel * 0.45, alpha);
+    finalColor = VFX_ResolvePremultiplied(
+        body + u_rimColor.rgb * fresnel * 0.45, 1.0, alpha,
+        vec3(0.0), 0.0, 0.0);
 }

@@ -82,6 +82,12 @@ int main(void)
     CHECK(glow.emissionIntensity > 1.0f);
     CHECK(Near(glow.bodyOpacity, 0.0f));
 
+    const VFXResolvedAppearance magic = VFXAppearance_Resolve(
+        VFX_APPEARANCE_MAGIC, legacy);
+    CHECK(magic.surface == VFX_SURFACE_PREMULTIPLIED);
+    CHECK(magic.bodyOpacity > 0.0f);
+    CHECK(magic.emissionIntensity > 0.0f);
+
     const VFXResolvedAppearance fire = VFXAppearance_Resolve(
         VFX_APPEARANCE_FIRE, legacy);
     CHECK(fire.surface == VFX_SURFACE_PREMULTIPLIED);
@@ -113,6 +119,21 @@ int main(void)
               "GetShaderLocation(g_MaterialDecalShader, \"u_bodyOpacity\")"));
     CHECK(Has("core/decals/decal_system.c",
               "s_locMaterialBodyOpacity, &d->material.bodyOpacity"));
+    CHECK(Has("core/shaders/common/vfx_composite.glsl",
+              "VFX_ResolvePremultiplied"));
+    CHECK(Has("core/shaders/common/vfx_composite.glsl",
+              "bodyColor * max(bodyIntensity, 0.0) * a"));
+    CHECK(Has("core/shaders/common/vfx_composite.glsl",
+              "emissionColor * max(coreMask, 0.0) * max(emissionGain, 0.0)"));
+    {
+        const float coverage = 0.4f, body = 0.5f, emission = 2.0f;
+        const float resolved = 0.25f * body * coverage + 0.75f * emission;
+        CHECK(Near(resolved, 1.55f));
+        CHECK(Near(0.0f * body * 0.0f + 0.0f, 0.0f));
+        CHECK(Near(0.0f * body * 0.0f + emission, emission));
+    }
+    CHECK(Has("core/shaders/fire_funnel.fs",
+              "VFX_ResolveBody"));
 
     puts(failed ? "vfx appearance: FAIL" : "vfx appearance: PASS");
     return failed != 0;

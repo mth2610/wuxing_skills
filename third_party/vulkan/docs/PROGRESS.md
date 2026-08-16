@@ -1,5 +1,13 @@
 # rlvk — Progress / Backlog
 
+## Bright-background VFX oracle (2026-08-16)
+
+`rlvk_format.inl` now reports byte sizes for R16/R16G16B16/RGBA16F readback. The visual suite
+contains a `bright_vfx` scenario that renders premultiplied and additive equations over dark,
+white, warm, and cool backgrounds into RGBA16F, checks HDR values before tone mapping, and
+measures post-tone-map contrast. The scenario is present but its first run is pending the local
+Vulkan-Headers cache (the bootstrap cannot resolve GitHub in the current environment).
+
 > Status + remaining work for the rlvk Vulkan 1.1 backend. Full narrative and per-item evidence in [`HANDOFF.md`](HANDOFF.md) §8; the debugging log is §7 (indexed in `LANDMINES.md`).
 
 ## Perf measurement — HOW, and two traps that produce confident nonsense (2026-07-22)

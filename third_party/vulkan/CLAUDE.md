@@ -8,6 +8,9 @@ functions, Vulkan 1.1-core rasterizer). Vision: standalone renderer, not wuxing-
 - **`docs/HANDOFF.md`** — the deep reference: vision, architecture, conversion table, key files, verification ladder, the full **§7 case-study debugging log**, §8 remaining, §9 architecture invariants. Read it before deep work.
 - **`docs/LANDMINES.md`** — scannable trap index + the 7 debugging-methodology rules; **read before any bug hunt** (points into HANDOFF §7 for full chains).
 - **`docs/PROGRESS.md`** — status / backlog / known gaps.
+- **`docs/BRIGHT_BACKGROUND_VFX_SPEC.md`** — researched, atomic implementation plan for
+  fire/energy/plasma/beam/lightning visibility across dark and bright scenes; includes the
+  Vulkan blend oracle, Core handoff boundaries, pixel metrics, and shipping gates.
 
 ## Working protocol
 Follows the root `CLAUDE.md` "Agent working protocol"; the rlvk specifics:

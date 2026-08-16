@@ -1,6 +1,7 @@
 #version 330
 #include "core/shaders/common/fs_header.glsl"
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 uniform vec4  u_baseColor;
 uniform float u_emissiveIntensity;
@@ -78,5 +79,5 @@ void main() {
 
     col *= u_emissiveIntensity + 0.5;
 
-    finalColor = vec4(col * u_baseColor.rgb, alpha);
+    finalColor = VFX_ResolveBody(col * u_baseColor.rgb, 1.0, alpha);
 }

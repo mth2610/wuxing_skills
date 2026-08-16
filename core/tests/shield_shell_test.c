@@ -97,10 +97,10 @@ int main(void)
     CHECK(Has(src, "SkillManager_BeginShader") && Has(src, "SkillManager_EndShader"),
           "glass shader owns its uniforms and batching");
     CHECK(Has(src, "rlDrawRenderBatchActive"), "render-state changes are bracketed by flushes");
-    CHECK(Has(src, "VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, false") &&
-          Has(src, "VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false") &&
+    CHECK(Has(src, "VFX_RENDER_PASS_BODY, VFX_APPEARANCE_MAGIC") &&
+          Has(src, "VFX_RENDER_PASS_EMISSION, VFX_APPEARANCE_MAGIC") &&
           !Has(src, "VFX_SURFACE_MULTIPLIED"),
-          "the body is alpha-composited and only the Fresnel rim is additive");
+          "the shell uses the shared Magic body+emission appearance");
     CHECK(Has(src, "rlEnableBackfaceCulling") &&
           Has(src, "RL_CULL_FACE_BACK") && Has(src, "RL_CULL_FACE_FRONT"),
           "mobile shell composites back then front glass interfaces");
@@ -124,6 +124,9 @@ int main(void)
     CHECK(Has("core/shaders/glass_shell.fs", "u_emissionOnly") &&
           Has("core/shaders/glass_shell.vs", "fresnelX2 * fresnelX2"),
           "Fresnel is calculated per vertex with multiply-chain math");
+    CHECK(Has("core/shaders/glass_shell.fs", "VFX_ResolvePremultiplied") &&
+          Has("core/shaders/glass_shell.fs", "VFX_ResolveEmission"),
+          "the shell resolves body and emission through the shared compositor");
     CHECK(Has("core/shaders/glass_shell.fs", "u_packedTex") &&
           Has("core/shaders/glass_shell.fs", "flowSample.rg") &&
           Has("core/shaders/glass_shell.fs", "packed.b"),

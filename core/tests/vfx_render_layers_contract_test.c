@@ -69,7 +69,7 @@ int main(void)
     bad += !Has("core/composition/water/water_stream.inl", "VFXRender_BeginDraw");
     bad += !Has("core/composition/common/vc_dissolve_exit.inl", "VFXRender_BeginDraw");
     bad += !Has("core/composition/common/vc_debris_shards.inl", "VFXRender_BeginDraw");
-    bad += !Has("core/composition/common/vc_shield_shell.inl", "VFXRender_BeginDraw");
+    bad += !Has("core/composition/common/vc_shield_shell.inl", "VFXRender_BeginAppearance");
     bad += !Has("core/afterimage.c", "VFXRender_BeginDraw");
     bad += !Has("skills/metal/volume_smoke_skill/volume_smoke_skill.c",
                 "VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, false");
