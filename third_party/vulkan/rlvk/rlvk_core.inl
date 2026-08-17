@@ -211,6 +211,10 @@ void rlglClose(void)
             vkDestroyShaderModule(RLVK.device, s->vertMod, RLVK_ALLOC);
         if (s->fragMod)
             vkDestroyShaderModule(RLVK.device, s->fragMod, RLVK_ALLOC);
+        if (s->compMod)
+            vkDestroyShaderModule(RLVK.device, s->compMod, RLVK_ALLOC);
+        if (s->computePipeline)
+            vkDestroyPipeline(RLVK.device, s->computePipeline, RLVK_ALLOC);
         if (s->uniforms)
             RL_FREE(s->uniforms);
         if (s->vsStage)

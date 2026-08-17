@@ -543,6 +543,24 @@ remain occluded at the centre.
 - **Guard**: `run_rlvk_visual_test.sh sampler_pair` draws with a red `texture0` plus a separately
   bound green `u_cameraDepthTex` and requires both channels at the output.
 
+### 7.33 Runtime teardown leaked linked compute programs (2026-08-16)
+
+**Symptom.** `run_rlvk_runtime_test.sh` completed all functional checks, but the validation
+layer emitted `VUID-vkDestroyDevice-device-05137` for two shader modules and two pipelines
+at `rlglClose()`.
+
+**Root cause.** `rlUnloadShader()` deliberately preserves a linked compute program when called
+on its stage handle, matching GL semantics. The runtime harness intentionally exercises that
+path, but `rlglClose()` only released `vertMod` and `fragMod`; it omitted each live slot's
+`compMod` and `computePipeline` (`rlvk_core.inl`).
+
+**Fix.** Shutdown now destroys both compute objects after its device-idle drain, alongside the
+existing graphics shader cleanup in `rlvk_core.inl`.
+
+**Guard.** `run_rlvk_runtime_test.sh` compiles and dispatches both compute-program forms, calls
+the stage-handle unload path, then closes the backend. The validated run must finish without
+`VUID-vkDestroyDevice-device-05137`.
+
 ## 8. What remains
 
 ### 8.1 Confirm in-game — **DONE (2026-07-17, user-confirmed)**
@@ -1618,3 +1636,9 @@ platform hooks. GL-vs-Vulkan stays a build-time choice per binary (both define t
    and leaves ring state consistent; it never proceeds with stale handles.
 9. **Every draw-path bug fix ships with a visual-test scenario** that failed before the fix
    and passes after. The suite is the backend's memory.
+
+## Patch Log
+
+| Date | Editor | Section edited | Based on which source | Tier |
+|---|---|---|---|---|
+| 2026-08-16 | Codex | §7.33 runtime teardown | `rlvk_core.inl`, `rlvk_shader.inl`, `tests/rlvk_runtime_test.c` | Ground-truth |
