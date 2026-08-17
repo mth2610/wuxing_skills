@@ -16,7 +16,18 @@ void main() {
     fragNormal = normalize(vertexNormal);
     fragTexCoord = vertexTexCoord;
     shieldViewDir = normalize(-vertexPosition);
-    shieldNdotV = clamp(dot(fragNormal, shieldViewDir), 0.0, 1.0);
+    // ABS, not clamp-to-zero. The far wall is BACK-FACING: its normal points away from
+    // the eye, so the signed dot is negative and clamping pinned it to 0 across the whole
+    // rear hemisphere. Everything downstream then degenerated at once — path length
+    // saturated (1/0.10), wall density went to 1 everywhere so the rear had no gradient
+    // at all, and the rim-hot blend keyed on that density turned the entire rear wall
+    // WHITE, which the rear dimming then turned grey. That is the flat colourless haze
+    // the shell showed behind its front face.
+    //
+    // What the shading actually wants is the OBLIQUITY, |N·V| — how edge-on the surface
+    // is — which is the same quantity on both walls and is what makes the far wall carry
+    // its own grazing gradient inside the near one.
+    shieldNdotV = abs(dot(fragNormal, shieldViewDir));
     float fresnelM = 1.0 - shieldNdotV;
     float fresnelX2 = fresnelM * fresnelM;
     shieldFresnel = fresnelX2 * fresnelX2;
