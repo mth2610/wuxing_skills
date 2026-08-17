@@ -40,16 +40,6 @@ uniform float u_depthLod;
 uniform float u_contactStrength;
 uniform vec4 u_contactColor;
 uniform float u_contactThickness;
-// ANALYTIC GROUND CONTACT. The depth-buffer version (depthContact below) is the general
-// one — it follows uneven terrain — but it has been returning 0 for every fragment and
-// the remaining cause is in rlvk's depth twin, not here. A shell knows its own centre and
-// the ground plane's height, so where it crosses that plane is a closed-form answer that
-// needs no depth texture at all. Flat-ground only, which is what the arena is; when the
-// depth path works, prefer it and keep this as the fallback.
-uniform vec3  u_shellCentreView;  // shell centre, view space
-uniform vec3  u_upView;           // world +Y expressed in view space
-uniform float u_shellCentreY;     // shell centre, WORLD y
-uniform float u_groundY;          // ground plane, WORLD y
 uniform float u_baseAlpha;
 uniform float u_fresnelAlpha;
 uniform float u_contactAlpha;
@@ -62,14 +52,6 @@ uniform float u_rippleSpeed;
 float shieldPow4(float x) {
     float x2 = x * x;
     return x2 * x2;
-}
-
-// Height of this fragment above the ground plane, reconstructed from the shell centre:
-// the fragment's offset from the centre projected onto world-up gives its world height.
-float groundContact() {
-    if (u_contactThickness <= 0.0) return 0.0;
-    float worldY = u_shellCentreY + dot(fragPosition - u_shellCentreView, u_upView);
-    return 1.0 - smoothstep(0.0, u_contactThickness, abs(worldY - u_groundY));
 }
 
 float depthContact(vec2 uv) {
@@ -110,9 +92,7 @@ void main() {
     float energy = max(packed.r, packed.g);
     float noise = packed.g;
     float softMask = (u_hasPacked != 0) ? packed.b : 1.0;
-    // Depth contact when it works, analytic otherwise — max(), so enabling the depth path
-    // can only add detail (uneven terrain) rather than replace a working band with nothing.
-    float contact = max(depthContact(gl_FragCoord.xy / u_resolution), groundContact());
+    float contact = depthContact(gl_FragCoord.xy / u_resolution);
     float ripple = impactRipple();
     vec3 lightDir = normalize(u_lightDirView);
     float rearInterface = (u_wallPass == 0) ? 1.0 : 0.0;

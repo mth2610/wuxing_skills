@@ -69,7 +69,6 @@ typedef struct {
     int bodyColor, rimColor, opacity, rimStrength, emissionOnly, wallPass;
     int bodyOpacity, emissionGain;
     int lightDirView, packedTex, hasPacked, flowTex, hasFlow, matcapTex, hasMatcap;
-    int shellCentreView, upView, shellCentreY, groundY;
     int depthTex, hasDepth, depthEnabled, depthLod;
     int sceneTex, hasScene;
     int noiseScale, noiseSpeed;
@@ -123,10 +122,6 @@ static void ShieldShell_InitShared(void)
     s_shieldShader.emissionOnly = GetShaderLocation(s_shieldShader.shader, "u_emissionOnly");
     s_shieldShader.wallPass = GetShaderLocation(s_shieldShader.shader, "u_wallPass");
     s_shieldShader.lightDirView = GetShaderLocation(s_shieldShader.shader, "u_lightDirView");
-    s_shieldShader.shellCentreView = GetShaderLocation(s_shieldShader.shader, "u_shellCentreView");
-    s_shieldShader.upView = GetShaderLocation(s_shieldShader.shader, "u_upView");
-    s_shieldShader.shellCentreY = GetShaderLocation(s_shieldShader.shader, "u_shellCentreY");
-    s_shieldShader.groundY = GetShaderLocation(s_shieldShader.shader, "u_groundY");
     s_shieldShader.packedTex = GetShaderLocation(s_shieldShader.shader, "u_packedTex");
     s_shieldShader.hasPacked = GetShaderLocation(s_shieldShader.shader, "u_hasPacked");
     s_shieldShader.flowTex = GetShaderLocation(s_shieldShader.shader, "u_flowTex");
@@ -355,29 +350,6 @@ static void ShieldShell_DrawPass(bool emissionOnly)
         Vector3 impactView = { Vector3DotProduct(delta, s_shieldCameraRight),
                                Vector3DotProduct(delta, s_shieldCameraUp),
                                -Vector3DotProduct(delta, s_shieldCameraForward) };
-
-        // Shell centre in view space, and world +Y in view space — the pair the shader
-        // needs to recover a fragment's world height without a world-space position.
-        Vector3 cDelta = Vector3Subtract(shield->pos, s_shieldCameraPosition);
-        Vector3 centreView = { Vector3DotProduct(cDelta, s_shieldCameraRight),
-                               Vector3DotProduct(cDelta, s_shieldCameraUp),
-                               -Vector3DotProduct(cDelta, s_shieldCameraForward) };
-        Vector3 worldUp = {0.0f, 1.0f, 0.0f};
-        Vector3 upView = { Vector3DotProduct(worldUp, s_shieldCameraRight),
-                           Vector3DotProduct(worldUp, s_shieldCameraUp),
-                           -Vector3DotProduct(worldUp, s_shieldCameraForward) };
-        float centreY = shield->pos.y;
-        float groundY = 0.0f;   /* arena ground plane (root CLAUDE.md: Y = 0 is ground) */
-        if (s_shieldShader.shellCentreView >= 0)
-            SetShaderValue(s_shieldShader.shader, s_shieldShader.shellCentreView,
-                           &centreView, SHADER_UNIFORM_VEC3);
-        if (s_shieldShader.upView >= 0)
-            SetShaderValue(s_shieldShader.shader, s_shieldShader.upView, &upView, SHADER_UNIFORM_VEC3);
-        if (s_shieldShader.shellCentreY >= 0)
-            SetShaderValue(s_shieldShader.shader, s_shieldShader.shellCentreY,
-                           &centreY, SHADER_UNIFORM_FLOAT);
-        if (s_shieldShader.groundY >= 0)
-            SetShaderValue(s_shieldShader.shader, s_shieldShader.groundY, &groundY, SHADER_UNIFORM_FLOAT);
 
         SetShaderValue(s_shieldShader.shader, s_shieldShader.bodyColor,
                        &bodyColor, SHADER_UNIFORM_VEC4);
