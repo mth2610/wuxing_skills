@@ -1,5 +1,34 @@
 # rlvk — Progress / Backlog
 
+## The rear face's grey wash is the EMISSION pass — bisected, not yet fixed (2026-08-17)
+
+Two separate things were being reported as one, and only one of them is the shell's.
+
+**The hard curved boundary across the shell is the SCENE, not the shell.** Ablation: with the
+map drawn the luminance step on a vertical scan through the shell is 11.3; with `WUXING_VFX_BG`
+skipping the map and nothing else changed, it is 1.2. The shell is faithfully showing the arena's
+horizon through its transparent middle.
+
+**The grey is the shell, and it is entirely the EMISSION pass.** Bisected by killing one pass at
+a time against a flat backdrop:
+
+| | luma inside / background | chroma inside / background |
+|---|---|---|
+| emission killed | 110.2 / 112.6 (darkens, correct) | **60.5 / 59.8** (hue kept) |
+| body killed | 123.2 / 114.2 (**+9**) | **49.8 / 58.3** (**-8.5**) |
+
+The body pass behaves: it takes light out and leaves hue. The emission pass adds light with no
+angular falloff and walks a blue destination toward neutral — §5.5's milky film, living in the
+additive pass, which is why body/alpha work never reached it.
+
+NOT fixed. Three candidate changes were tried this session — a density-scaled body tint, gating
+`pattern` by wall density, and shading the rear wall by its inward normal — and NONE moved the
+numbers, so all three were reverted rather than kept as unproven code. The remaining suspects are
+inside the emission mask itself (`emissionAlpha = max(fresnel * 0.92, max(contact * 0.90, ripple))`
+and `u_emissionGain`): if that mask has a floor that is not angular, emission spreads across the
+transparent middle by construction. That is where the next attempt should start, with the
+pass-level bisection above as the harness.
+
 ## Ground contact WORKS — and rlvk was never the problem (2026-08-17)
 
 Toggling `shield_shell_depth_enabled` now changes the frame: a band at the shell's ground

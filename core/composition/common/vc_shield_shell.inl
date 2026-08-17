@@ -92,7 +92,13 @@ static float s_shieldContactThickness = 0.35f; // meters of depth gap = "touchin
 static float s_shieldBaseAlpha = 0.025f;
 static float s_shieldFresnelAlpha = 0.18f;
 static float s_shieldContactAlpha = 0.42f;
-static float s_shieldDepthEnabled = 0.0f;
+// ON by default since 17/08/2026. It was off because the feature did not work — the
+// depth region was requested from the post-3D draw, where ScreenDistort_Begin() had
+// already cleared the validity flag, so the snapshot never ran and depthContact()
+// returned 0 for every fragment. With the request moved into the 3D pass it draws the
+// shell's real ground intersection, which is the whole point of a shield that sits on
+// terrain. Set `shield_shell_depth_enabled = 0` in tuning.cfg to go back.
+static float s_shieldDepthEnabled = 1.0f;
 static float s_shieldDepthLod = 0.5f;
 static float s_shieldRippleFrequency = 18.0f;
 static float s_shieldRippleSpeed = 8.0f;
@@ -162,7 +168,7 @@ static void ShieldShell_InitShared(void)
     Tuning_RegisterFloat("shield_shell_base_alpha", &s_shieldBaseAlpha, 0.025f);
     Tuning_RegisterFloat("shield_shell_fresnel_alpha", &s_shieldFresnelAlpha, 0.34f);
     Tuning_RegisterFloat("shield_shell_contact_alpha", &s_shieldContactAlpha, 0.70f);
-    Tuning_RegisterFloat("shield_shell_depth_enabled", &s_shieldDepthEnabled, 0.0f);
+    Tuning_RegisterFloat("shield_shell_depth_enabled", &s_shieldDepthEnabled, 1.0f);
     Tuning_RegisterFloat("shield_shell_depth_lod", &s_shieldDepthLod, 0.5f);
     Tuning_RegisterFloat("shield_shell_ripple_frequency", &s_shieldRippleFrequency, 18.0f);
     Tuning_RegisterFloat("shield_shell_ripple_speed", &s_shieldRippleSpeed, 8.0f);
