@@ -116,6 +116,41 @@ int main(void)
               "VFXAppearance_Resolve(\n            d->material.appearance"));
     CHECK(Has("core/decals/shaders/decal_material.fs",
               "alpha * fragColor.a * u_bodyOpacity"));
+
+    /* THE SURFACE MUST MATCH THE SHADER BRANCH THE SAME APPEARANCE SELECTS.
+     * particle_lit.fs branches on u_lightingStrength, which the particle system
+     * derives from `unlit`: unlit takes VFX_ResolveEmission, lit takes
+     * VFX_ResolveBody. ResolveBody returns STRAIGHT rgb, so a lit appearance may
+     * only ever be drawn ALPHA — bound premultiplied its partially covered texels
+     * are never scaled by their own coverage and soft edges blow out; bound
+     * additive its coverage term is discarded entirely and the effect can no
+     * longer darken anything, which is invisible at night and fatal in daylight
+     * (BRIGHT_BACKGROUND_VFX_SPEC.md §5.7). */
+    for (int id = VFX_APPEARANCE_INHERIT; id < VFX_APPEARANCE_COUNT; id++)
+    {
+        VFXResolvedAppearance a = VFXAppearance_Resolve(
+            (VFXAppearanceId)id,
+            (VFXResolvedAppearance){ VFX_SURFACE_ALPHA, VFX_CONTRAST_NONE,
+                                     1.0f, 0.0f, 1.0f, false });
+        if (!a.unlit)
+            CHECK(a.surface == VFX_SURFACE_ALPHA);
+    }
+
+    /* A premultiplied blend law needs premultiplied RGB, and only the packed
+     * volume sheet produces it — so the particle guard must key on the SURFACE,
+     * not on one appearance by name. It said `appearance == VFX_APPEARANCE_FIRE`
+     * while MAGIC was also premultiplied and did not inherit it. */
+    CHECK(Has("core/particles/particle_system.c",
+              "particleAppearance.surface == VFX_SURFACE_PREMULTIPLIED &&\n"
+              "      !config.render.volumeSheet"));
+    CHECK(!Has("core/particles/particle_system.c",
+               "config.render.appearance == VFX_APPEARANCE_FIRE &&\n"
+               "      !config.render.volumeSheet"));
+
+    /* Decals blend by pass and cannot honour a resolved surface; they must say so
+     * rather than discard the field, or a caller believes it asked for something. */
+    CHECK(Has("core/decals/decal_system.c",
+              "cannot honour it"));
     CHECK(Has("core/decals/decal_system.c",
               "GetShaderLocation(g_MaterialDecalShader, \"u_bodyOpacity\")"));
     CHECK(Has("core/decals/decal_system.c",

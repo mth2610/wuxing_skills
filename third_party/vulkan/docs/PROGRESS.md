@@ -1,5 +1,25 @@
 # rlvk — Progress / Backlog
 
+## Particle + decal surface contract (2026-08-17)
+
+Extending the surface/resolver audit past the composition layer. Both systems pick blend from
+DATA rather than at a call site, so the static validator cannot see them; the contract is now
+asserted in `core/tests/vfx_appearance_test.c` (verified to fail on the pre-fix shape).
+
+- **Particles** derive BOTH the shader branch and the blend from one `VFXResolvedAppearance`:
+  `unlit` selects `VFX_ResolveEmission` vs `VFX_ResolveBody`, `surface` selects the blend. The
+  guard that keeps straight RGB out of a premultiplied blend law was keyed on
+  `appearance == VFX_APPEARANCE_FIRE`, written when FIRE was the only premultiplied entry. MAGIC
+  became premultiplied in the 2026-08-16 migration and did not inherit it. **Latent, not live** -
+  no particle spawns MAGIC today (it is used only by ShieldShell geometry) - so generalising the
+  condition to `surface == VFX_SURFACE_PREMULTIPLIED` changes no current behaviour and closes the
+  trap for the next author.
+- **Decals** are self-consistent: the pass structure drives both branch and blend (body groups
+  ALPHA/MULTIPLIED, emissive group ADDITIVE). But they RESOLVED `appearance.surface` and silently
+  discarded it, which is how a caller comes to believe it asked for something. Now warns once.
+- New assertion covering both: for every appearance, `unlit == false` implies
+  `surface == VFX_SURFACE_ALPHA`, because the lit branch returns straight RGB.
+
 ## Foundation closeout (2026-08-17)
 
 Three foundation items closed; gate 4 of the tone map remains the owner's.

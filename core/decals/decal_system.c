@@ -641,6 +641,23 @@ DecalHandle DecalSystem_AddConformalMaterialEx(Vector3 pos, float rotation, floa
                 .emissionThreshold = d->material.emissiveThreshold,
                 .unlit = false
             });
+        // The decal system drives blend from its PASS structure (body groups draw
+        // BLEND_ALPHA/BLEND_MULTIPLIED, the emissive group BLEND_ADDITIVE), which
+        // keeps it self-consistent with decal_material.fs's two branches. It
+        // therefore cannot honour `appearance.surface`, and silently discarding a
+        // resolved field is how a caller comes to believe it asked for something.
+        if (appearance.surface != VFX_SURFACE_ALPHA)
+        {
+            static bool warned = false;
+            if (!warned)
+            {
+                warned = true;
+                TraceLog(LOG_WARNING,
+                         "DECAL: appearance requests surface %d, but decals blend by pass "
+                         "(body ALPHA/MULTIPLIED, emissive ADDITIVE) and cannot honour it",
+                         (int)appearance.surface);
+            }
+        }
         d->material.contrastProfile = appearance.contrast;
         d->material.bodyOpacity = appearance.bodyOpacity;
         d->material.emissiveIntensity = appearance.emissionIntensity;

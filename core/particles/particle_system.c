@@ -276,9 +276,17 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
           .unlit = config.render.unlit != 0
       });
   // Only the packed-volume shader produces mathematically premultiplied RGB.
-  // A regular sprite still gets the FIRE look in one alpha/HDR draw, without
-  // feeding straight RGB into a premultiplied blend law.
-  if (config.render.appearance == VFX_APPEARANCE_FIRE &&
+  // A regular sprite still gets the look in one alpha/HDR draw, without feeding
+  // straight RGB into a premultiplied blend law — which would leave partially
+  // covered texels un-scaled by their own coverage, i.e. soft edges blowing out.
+  //
+  // The condition is the SURFACE, not the appearance. It was written as
+  // `appearance == VFX_APPEARANCE_FIRE` when FIRE was the only premultiplied
+  // entry; MAGIC became premultiplied in the 2026-08-16 appearance migration and
+  // did not inherit the guard. No particle spawns MAGIC today, so this was a trap
+  // rather than a live bug — generalising it costs nothing now and closes it for
+  // whoever sets appearance = MAGIC on a sprite next.
+  if (particleAppearance.surface == VFX_SURFACE_PREMULTIPLIED &&
       !config.render.volumeSheet)
     particleAppearance.surface = VFX_SURFACE_ALPHA;
   p->blendMode = (int)particleAppearance.surface;

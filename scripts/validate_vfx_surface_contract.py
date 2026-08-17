@@ -22,6 +22,13 @@ Shaders that use more than one resolver are dual-pass: they branch on a uniform 
 surface depends on which pass the caller wants, so they cannot be decided statically. They are
 reported under `unchecked` rather than guessed at.
 
+SCOPE: composition-layer draws, where the call site names both the surface and the shader.
+The particle, trail and decal systems choose blend state from DATA (the appearance table's
+surface/unlit pairing, and the decal pass structure), so their contract is dynamic and cannot
+be read statically — it is covered by `core/tests/vfx_appearance_test.c` instead, which
+asserts that a lit appearance is only ever drawn ALPHA and that the particle system's
+premultiplied guard keys on the surface rather than on one appearance by name.
+
 Run standalone:  python3 scripts/validate_vfx_surface_contract.py [-v]
 """
 import glob
