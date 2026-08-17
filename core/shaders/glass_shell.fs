@@ -104,18 +104,19 @@ void main() {
     float pattern = smoothstep(0.22, 0.78, energy) * (0.35 + 0.65 * noise);
     float filament = smoothstep(0.58, 0.82, energy) *
                      smoothstep(0.42, 0.76, noise);
-    // GROUND CONTACT, and it has to be honest about what it is. depthContact() is the
-    // real mechanism — it compares scene depth against the fragment — but the shell ships
-    // with `shield_shell_depth_enabled = 0`, so it returns 0 and this term is the only
-    // thing shaping the bottom. It was `smoothstep(0.05, 0.92, -normal.y)`, which ramps
-    // across almost the WHOLE lower hemisphere: not a contact, a second broad band with a
-    // different profile from the rim, which is what made the bottom read flat and the
-    // rim-to-centre transition read as patches of colour rather than one gradient.
+    // NO FAKE GROUND CONTACT. This was `smoothstep(0.05, 0.92, -normal.y)` — a band in
+    // NORMAL space, which on a sphere projects to an ellipse on screen: a hard seam
+    // across the lower half with no physical meaning, and no relationship to where the
+    // shell actually meets the ground. Narrowing it to the bottom cap only sharpened the
+    // seam. A soft fake is still a fake, and the honest state is to draw nothing here.
     //
-    // Confined to the bottom cap, and to the FRONT wall only — on the rear wall
-    // `-normal.y` selects the surface the ground should be occluding, so lighting it
-    // there is drawing the inside of the floor.
-    float bottomGlow = smoothstep(0.62, 0.98, -normal.y) * (1.0 - rearInterface);
+    // The real mechanism is depthContact(), which traces the shell's intersection with
+    // whatever it stands on and follows uneven terrain for free. It is wired end to end
+    // (uniform set, texture bound, `hasDepth=1` verified by probe) and currently returns
+    // 0 for every fragment — see the commit that fixed its radial-vs-axial distance bug
+    // and localised the remainder to the depth snapshot. When that lands, contact comes
+    // back correctly and this term is not needed.
+    float bottomGlow = 0.0;
     // Keep the carrier readable on white backgrounds: a low mass floor plus
     // structured pattern, while the semantic Magic appearance supplies the
     // stronger radiance through the separate emission pass.
@@ -208,10 +209,17 @@ void main() {
      * The small constant that remains is the residue that keeps the very centre from
      * vanishing entirely. */
     alpha += rearInterface * u_opacity * softMask * (0.10 + 0.62 * wallDensity);
-    /* Glass carrier coverage is intentionally sparse.  The previous value
-     * still tinted the entire sphere; this multiplier makes the scene-through
-     * window unambiguous while rim/emission remain independently bright. */
-    alpha *= 0.35;
+    /* The 0.35 that used to be here was compensation for a model that no longer
+     * exists. It was added to tame a milky sphere back when the rim term was a
+     * (1-|N.V|)^4 band with a flat rear-wall veil on top: both of those laid coverage
+     * across the middle of the sphere, so the only way to get a scene-through window
+     * was to scale everything down. The wall is now Beer-Lambert on path length and the
+     * rear rides the same density, which are both ~0 face-on by construction — the
+     * window is a property of the model instead of a multiplier fighting it, and the
+     * multiplier now only starves the rim it was never aimed at.
+     *
+     * Interior coverage is `shield_shell_base_alpha` (live in tuning.cfg), which is what
+     * to reach for if the glass should read denser. */
     finalColor = VFX_ResolvePremultiplied(
         body + u_rimColor.rgb * fresnel * 0.45, u_bodyOpacity, alpha,
         vec3(0.0), 0.0, 0.0);
