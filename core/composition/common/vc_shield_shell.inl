@@ -266,7 +266,7 @@ static void VC_ShieldShell_Update(float dt)
 // sample-safe scene copy and the previous-frame linear depth. When a source
 // is missing (first frame, no depth-texture path) the matching u_has* gate
 // turns the term off in the shader, so nothing samples garbage.
-static void ShieldShell_BindInputs(void)
+static void ShieldShell_BindInputs(Camera3D cam)
 {
     Texture2D sceneTex = ScreenDistort_GetSceneSnapshotTexture();
     int hasScene = sceneTex.id != 0 ? 1 : 0;
@@ -274,6 +274,42 @@ static void ShieldShell_BindInputs(void)
                    &hasScene, SHADER_UNIFORM_INT);
     if (hasScene && s_shieldShader.sceneTex >= 0)
         SetShaderValueTexture(s_shieldShader.shader, s_shieldShader.sceneTex, sceneTex);
+    // ASK FOR DEPTH, or there will not be any. ScreenDistort_SnapshotDepth() is
+    // idle-gated — it starts idle and skips the whole pass until a consumer requests a
+    // region, because with nothing on screen that needs it the snapshot (and rlvk's
+    // depth-twin refill under Caps.noSampledDepth) is pure waste. The shield sampled
+    // ScreenDistort_GetDepthTexture() directly without ever registering, so the snapshot
+    // never ran and the texture it read was all zeros: `depthContact()` returned 0 for
+    // every fragment and toggling `shield_shell_depth_enabled` changed 0.000% of pixels.
+    // A perf gate had silently switched a feature off, which is exactly what an
+    // idle-gated resource does to a consumer that does not announce itself.
+    if (s_shieldDepthEnabled > 0.5f)
+    {
+        const float screenH = (float)GetScreenHeight();
+        const float halfFovy = cam.fovy * 0.5f * DEG2RAD;
+        bool hasBounds = false;
+        Rectangle bounds = {0};
+        for (int i = 0; i < VFX_SHIELD_SHELL_MAX; ++i)
+        {
+            const VC_ShieldShell *sh = &s_shieldShells[i];
+            if (!sh->active) continue;
+            Vector3 toCam = Vector3Subtract(sh->pos, cam.position);
+            float distance = Vector3Length(toCam);
+            if (distance <= 0.001f) continue;
+            Vector2 centre = GetWorldToScreen(sh->pos, cam);
+            float radiusPx = sh->radius * screenH / (2.0f * distance * tanf(halfFovy));
+            Rectangle r = {centre.x - radiusPx, centre.y - radiusPx,
+                           radiusPx * 2.0f, radiusPx * 2.0f};
+            if (!hasBounds) { bounds = r; hasBounds = true; }
+            else {
+                float x1 = fmaxf(bounds.x + bounds.width, r.x + r.width);
+                float y1 = fmaxf(bounds.y + bounds.height, r.y + r.height);
+                bounds.x = fminf(bounds.x, r.x); bounds.y = fminf(bounds.y, r.y);
+                bounds.width = x1 - bounds.x; bounds.height = y1 - bounds.y;
+            }
+        }
+        if (hasBounds) ScreenDistort_RequestSoftDepthRegion(bounds);
+    }
     Texture2D depthTex = ScreenDistort_GetDepthTexture();
     int hasDepth = (depthTex.id != 0 && s_shieldDepthEnabled > 0.5f) ? 1 : 0;
     SetShaderValue(s_shieldShader.shader, s_shieldShader.hasDepth, &hasDepth, SHADER_UNIFORM_INT);
@@ -424,7 +460,7 @@ void VFX_ShieldShell_DrawRefraction(Camera3D cam)
     rlDrawRenderBatchActive();
     rlEnableBackfaceCulling();
     SkillManager_BeginShader(s_shieldShader.shader);
-    ShieldShell_BindInputs();
+    ShieldShell_BindInputs(cam);
     if (s_shieldShader.lightDirView >= 0)
         SetShaderValue(s_shieldShader.shader, s_shieldShader.lightDirView,
                        &lightView, SHADER_UNIFORM_VEC3);
@@ -456,7 +492,7 @@ void VFX_ShieldShell_DrawRefraction(Camera3D cam)
     rlDrawRenderBatchActive();
     rlEnableBackfaceCulling();
     SkillManager_BeginShader(s_shieldShader.shader);
-    ShieldShell_BindInputs();
+    ShieldShell_BindInputs(cam);
     if (s_shieldShader.lightDirView >= 0)
         SetShaderValue(s_shieldShader.shader, s_shieldShader.lightDirView,
                        &lightView, SHADER_UNIFORM_VEC3);

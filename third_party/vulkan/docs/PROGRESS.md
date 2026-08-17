@@ -1,5 +1,32 @@
 # rlvk — Progress / Backlog
 
+## ShieldShell ground contact is dead — three causes found, two fixed (2026-08-17)
+
+`depthContact()` in `glass_shell.fs` returns 0 for every fragment, so toggling
+`shield_shell_depth_enabled` changes **0.000% of pixels**. Instrumented rather than guessed:
+a probe shader wrote the sampled values out and read them back — `hasDepth=1`,
+`u_depthEnabled=1`, fragment axial depth ~11.9 units, **sampled scene depth exactly 0**.
+
+Fixed:
+1. It compared `sceneDepth` against `length(fragPosition)`. `depth_copy.fs` stores the standard
+   perspective linearisation — distance along the VIEW AXIS — while `length()` is RADIAL, which
+   off-axis is always the larger. `gap` went negative across most of the shell. Now `-fragPosition.z`.
+2. The shield sampled `ScreenDistort_GetDepthTexture()` without ever calling
+   `ScreenDistort_RequestSoftDepthRegion()`. `ScreenDistort_SnapshotDepth()` is IDLE-GATED and
+   starts idle, so with no registered consumer the snapshot never runs. A perf gate had silently
+   switched a feature off — the general lesson for any idle-gated shared resource.
+
+NOT fixed: with both of those corrected the depth texture still reads 0. The remaining suspect is
+rlvk's `Caps.noSampledDepth` twin (`HANDOFF.md` §7.10 / the twin keep-alive window): the R32F
+shadow copy that serves `renderTex.depth` may not be refilled on the path
+`ScreenDistort_SnapshotDepth` reads it from, or the keep-alive gate closes it. Next step is an
+rlvk-side repro that binds an FBO depth twin and reads it back, not more shield-side work. This
+may be MoltenVK-specific and want re-checking on Mali.
+
+Until it lands the shell draws no ground contact at all, deliberately — the previous
+`smoothstep(-normal.y)` stand-in was a band in normal space, which projects to a hard elliptical
+seam with no relationship to where the shell meets anything.
+
 ## Particle + decal surface contract (2026-08-17)
 
 Extending the surface/resolver audit past the composition layer. Both systems pick blend from
