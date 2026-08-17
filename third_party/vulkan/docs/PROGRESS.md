@@ -1,5 +1,23 @@
 # rlvk — Progress / Backlog
 
+## ShieldShell ground contact: an analytic fallback was tried and REVERTED (2026-08-17)
+
+With the depth path blocked, the shell's contact band was reimplemented analytically: a shell
+knows its centre and the ground plane's height, so where it crosses `y = 0` is closed-form and
+needs no depth texture. It drew the intersection ellipse on both walls and looked right in the
+one fixture it was built against.
+
+**Reverted — the model was wrong, not the tuning.** "Contact" means *touching something*; the
+analytic version meant *crossing the plane y = 0*. Those coincide only on flat ground at that
+exact height, so a shell floating in mid-air still drew a full contact band, and it would draw
+one over a pit or a slope too. It also fed `u_contactColor` into `glow` strongly enough to swamp
+the white silhouette rim, which measured back at RGB(255,250,212) once reverted.
+
+The lesson worth keeping: routing around a broken dependency with a geometric approximation
+requires checking that the approximation's assumptions match the FEATURE'S MEANING, not just its
+appearance in the fixture in front of you. Depth contact stays the only correct mechanism, and
+unblocking it is an rlvk depth-twin task.
+
 ## ShieldShell ground contact is dead — three causes found, two fixed (2026-08-17)
 
 `depthContact()` in `glass_shell.fs` returns 0 for every fragment, so toggling
