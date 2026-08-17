@@ -58,6 +58,7 @@ static int highlightTintLoc;
 static int tonemapEnabledLoc;
 static int exposureLoc;
 static int hueRestoreLoc;
+static int shoulderViewLoc;
 static int lutTexLoc;
 static int lutEnabledLoc;
 static int lutStrengthLoc;
@@ -101,12 +102,21 @@ static float s_bloomMaxEnergy = 0.0f;
 static float s_bloomIntensityOverride = 0.0f;
 static float s_bloomThresholdOverride = 0.0f;
 static float s_bloomKnee = 0.0f;      // 0 = shader default
-// Hue-preserving highlight restoration (candidate, DEFAULT OFF). 0 keeps the
-// shipping ACES curve bit-identical; see the header comment in post_process.fs and
-// third_party/vulkan/docs/BRIGHT_BACKGROUND_VFX_SPEC.md §12.1. Because this lives in
-// tuning.cfg it PERSISTS ACROSS SESSIONS - check the file before trusting any visual
-// A/B, and record its value alongside every capture.
-static float s_hueRestore = 0.0f;
+// Hue-preserving highlight restoration. SHIPPING AT 0.6 since 17/08/2026; 0 restores the
+// old per-channel ACES curve bit-identically. Chosen by the owner from a blind A/B over
+// 0 / 0.35 / 0.6 / 1.0 after the measured gates: the curve is provably the identity below
+// exposed peak 1.0 and above 9.0, changes under 0.5% of a frame, touches 0.0000% of
+// non-emissive content, and raises mean chroma by 0.127 with a worst-case rgbDistance
+// change of -0.021 anywhere on the acceptance chart. 1.0 was rejected as too strong: it
+// pulls a hot core's non-peak channels down hard (measured 0.777,0.890,0.937 ->
+// 0.332,0.620,0.937), which costs the "hot" read. Full record:
+// third_party/vulkan/docs/BRIGHT_BACKGROUND_VFX_SPEC.md §12.1.
+//
+// Because this lives in tuning.cfg it PERSISTS ACROSS SESSIONS - check the file before
+// trusting any visual A/B, and record its value alongside every capture.
+static float s_hueRestore = 0.6f;
+// Diagnostic overlay for §11b gate 3, which expires whenever the scene gets brighter.
+static float s_shoulderView = 0.0f;
 static float s_bloomScatterOverride = 0.0f;
 static float s_bloomKaris = 1.0f;     // 1 = firefly weighting on (see below)
 
@@ -219,6 +229,7 @@ void PostFX_Init(int width, int height)
   tonemapEnabledLoc = GetShaderLocation(compositeShader, "u_tonemapEnabled");
   exposureLoc = GetShaderLocation(compositeShader, "u_exposure");
   hueRestoreLoc = GetShaderLocation(compositeShader, "u_hueRestore");
+  shoulderViewLoc = GetShaderLocation(compositeShader, "u_shoulderView");
   lutTexLoc = GetShaderLocation(compositeShader, "u_lutTex");
   lutEnabledLoc = GetShaderLocation(compositeShader, "u_lutEnabled");
   lutStrengthLoc = GetShaderLocation(compositeShader, "u_lutStrength");
@@ -544,7 +555,8 @@ void PostFX_Draw(const PostFXConfig *config)
     Tuning_RegisterFloat("bloom_threshold", &s_bloomThresholdOverride, 0.0f);
     Tuning_RegisterFloat("bloom_knee", &s_bloomKnee, 0.0f);
     Tuning_RegisterFloat("bloom_scatter", &s_bloomScatterOverride, 0.0f);
-    Tuning_RegisterFloat("postfx_hue_restore", &s_hueRestore, 0.0f);
+    Tuning_RegisterFloat("postfx_hue_restore", &s_hueRestore, 0.6f);
+    Tuning_RegisterFloat("postfx_shoulder_view", &s_shoulderView, 0.0f);
     Tuning_RegisterFloat("bloom_karis", &s_bloomKaris, 1.0f);
     Tuning_RegisterFloat("lut_strength", &s_lutStrengthOverride, 0.0f);
     s_tunablesReg = true;
@@ -676,6 +688,7 @@ void PostFX_Draw(const PostFXConfig *config)
   SetShaderValue(compositeShader, tonemapEnabledLoc, &tonemapEnabledVal, SHADER_UNIFORM_FLOAT);
   SetShaderValue(compositeShader, exposureLoc, &exposureVal, SHADER_UNIFORM_FLOAT);
   SetShaderValue(compositeShader, hueRestoreLoc, &s_hueRestore, SHADER_UNIFORM_FLOAT);
+  SetShaderValue(compositeShader, shoulderViewLoc, &s_shoulderView, SHADER_UNIFORM_FLOAT);
 
   // G5 — LUT. The texture is bound unconditionally: leaving a sampler unbound
   // while its branch is merely disabled is how you get a driver-dependent

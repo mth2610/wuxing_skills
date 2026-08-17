@@ -7,7 +7,7 @@
 # whole reason gate 4 is judged live and in motion instead of from static screenshots: a
 # still frame of a VFX is not what anyone plays.
 #
-#   scripts/set_tonemap.sh off        remove the key (shipping curve, clean tuning.cfg)
+#   scripts/set_tonemap.sh off        remove overrides (back to the SHIPPING 0.6, clean cfg)
 #   scripts/set_tonemap.sh 0.6        set a specific strength
 #   scripts/set_tonemap.sh shoulder   the gate-3 diagnostic view (magenta = active band)
 #   scripts/set_tonemap.sh blind      pick one of 0 / 0.35 / 0.6 / 1.0 at random and HIDE it
@@ -31,10 +31,19 @@ write_key() {   # write_key <value|"">
 }
 
 case "${1:-}" in
-  off)      write_key "";      echo "$KEY removed — shipping ACES curve, tuning.cfg clean" ;;
-  shoulder) write_key "-1";    echo "$KEY = -1 — shoulder view (magenta = the candidate's active band)" ;;
+  off)
+      write_key ""
+      tmp=$(mktemp); grep -v "postfx_shoulder_view" "$CFG" > "$tmp" 2>/dev/null || : > "$tmp"
+      mv "$tmp" "$CFG"
+      echo "overrides removed — back to the shipping default ($KEY = 0.6), tuning.cfg clean" ;;
+  shoulder)
+      # Its own knob since §12.1 shipped: hue restore now defaults to 0.6, so a negative
+      # sentinel on that knob would be both fragile and confusing.
+      tmp=$(mktemp); grep -v "postfx_shoulder_view" "$CFG" > "$tmp" 2>/dev/null || : > "$tmp"
+      mv "$tmp" "$CFG"; echo "postfx_shoulder_view = 1" >> "$CFG"
+      echo "postfx_shoulder_view = 1 — magenta = the tone map's active band" ;;
   blind)
-      OPTS=(0 0.35 0.6 1.0)
+      OPTS=(0 0.35 0.6 1.0)   # 0.6 is what shipped; the rest remain for re-testing
       PICK=${OPTS[$((RANDOM % ${#OPTS[@]}))]}
       write_key "$PICK"
       echo "$PICK" > "$ANSWER"

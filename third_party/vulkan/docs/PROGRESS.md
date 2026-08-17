@@ -90,6 +90,16 @@ at different apparent SIZE confounds background with scale, and deriving the bac
 from a radial median of the frame is broken by the background's own bloom (reported 39% footprint
 where the truth is 6%).
 
+## Hue-preserving tone map SHIPPED at 0.6 (2026-08-17)
+
+Owner chose 0.6 from a blind A/B after gates 0-3. `core/post_fx.c`'s `s_hueRestore` now defaults
+to `0.6f`; `postfx_hue_restore = 0` restores the old per-channel ACES curve bit-identically. The
+shoulder-view diagnostic was promoted to its own knob (`postfx_shoulder_view`) rather than deleted,
+because §11b gate 3 expires the moment a brighter map or auto-exposure lands.
+
+**Gate 5 remains OUTSTANDING**: Mali frame cost and `mediump` behaviour of the `x / peak` rescale
+have not been measured. This ships desktop-verified and Android-unverified.
+
 ## Hue-preserving tone map — gates 0-1 PASS, gate 2 is the human's (2026-08-17)
 
 Candidate lives behind `postfx_hue_restore` in tuning.cfg, **default 0 = shipping curve**. It is a

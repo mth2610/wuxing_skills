@@ -927,8 +927,18 @@ measure. And these are three fixtures at three frames, not a survey.
 
 ### 12.1 Hue-preserving tone map — candidate landed behind a knob, gates 0–1 PASS
 
-`postfx_hue_restore` (tuning.cfg, **default 0 = shipping curve**) selects a candidate curve in
-`core/shaders/post_process.fs`. It is a **bump over** the ACES fit, not a replacement, which is
+> [!NOTE]
+> **DECIDED 17/08/2026: shipping at `postfx_hue_restore = 0.6`.** Chosen by the owner from a
+> blind A/B over 0 / 0.35 / 0.6 / 1.0 (`scripts/set_tonemap.sh blind`), on FLAME VOLUME and
+> VOLUME TRAIL — fixtures untouched by that session's effect fixes, so the curve was judged on
+> its own. 1.0 was available and not chosen: it pulls a hot core's non-peak channels down hard
+> (measured `0.777,0.890,0.937 -> 0.332,0.620,0.937`), which costs the "hot" read. The default
+> in `core/post_fx.c` is now `0.6f`. **Gate 5 (Mali cost and `mediump` behaviour of the
+> `x / peak` rescale) is still OUTSTANDING** — this ships to desktop verified and to Android
+> unverified.
+
+`postfx_hue_restore` (tuning.cfg, **shipping default 0.6**; 0 restores the old curve) selects the
+curve in `core/shaders/post_process.fs`. It is a **bump over** the ACES fit, not a replacement, which is
 what keeps a tone-mapper change from being a whole-scene change:
 
 | exposed peak | behaviour |
@@ -941,6 +951,11 @@ what keeps a tone-mapper change from being a whole-scene change:
 `d = 0.00000` at peaks 0.2/0.5/0.9 and at 10/14; the shoulder band changes and is required to.
 The dither is a deterministic hash of `gl_FragCoord`, so it cancels between runs and
 "bit-identical" stays a testable claim rather than an approximate one.
+
+**The chart now runs at the shipping 0.6 by default**, not at 0 — an acceptance oracle that
+measures a configuration the game does not use is exactly the drift it exists to prevent.
+`BRIGHT_HUEFIX=<0..1>` overrides it, which is how the strength was chosen; keep the default in
+sync with `core/post_fx.c`'s `s_hueRestore`.
 
 **Gate 1 — no regression, large gain (`BRIGHT_HUEFIX=<0..1> bright_vfx`).** The full chart passes
 at strengths 0.35, 0.6 and 1.0 with every metric still enforced. Chart-wide:
@@ -1041,9 +1056,10 @@ this as a gate that expires.
 nothing anywhere reached the `>= 9` band, so the candidate's ramp-*out* — the part that keeps a hot
 core white — is currently insurance rather than an exercised path.
 
-The shoulder view rides on a negative value of the shipping knob so it needs no rebuild
-(`post_process.fs` is loaded from disk at `core/post_fx.c:193`). **Delete it, or promote it to its
-own knob, once §12.1 is decided** — a permanent debug switch rots.
+The shoulder view is now its own knob, `postfx_shoulder_view` — **kept rather than deleted**,
+because this gate expires: it passed only because every map is night-time and exposure is pinned
+at 1.00, and one capture with the overlay is how you find out that a new daylight map has regrown
+the approval surface.
 
 **Gate 4 — the human call, and it is deliberately a NARROW one.**
 

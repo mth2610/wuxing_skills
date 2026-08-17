@@ -102,7 +102,8 @@ float acesFilmicScalar(float x) {
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
 
-uniform float u_hueRestore;   // 0 = current shipping curve, exactly
+uniform float u_hueRestore;    // shipping default 0.6 (§12.1); 0 = the old per-channel curve
+uniform float u_shoulderView;  // diagnostic, 0 = off
 
 vec3 toneMapScene(vec3 x) {
     vec3 perChannel = acesFilmic(x);
@@ -256,23 +257,23 @@ void main() {
     // sees post-tone-map values the curve cannot produce, which is exactly the kind of
     // "impossible number" that sent bright_vfx chasing a phantom.
 
-    // ── Shoulder view (DIAGNOSTIC: set postfx_hue_restore = -1) ──────────────
+    // ── Shoulder view (DIAGNOSTIC: tuning.cfg postfx_shoulder_view = 1) ──────
     //
-    // Answers gate 3 of §12.1 in ONE capture instead of a diff: it paints where the
-    // hue-restoration candidate is even allowed to act. Anything not magenta is
-    // provably untouched by it, so "which materials need re-approving" stops being a
-    // judgement call.
-    //   magenta = exposed peak in [1, 9)  -> the candidate's active band, i.e. the
-    //             entire approval surface
-    //   cyan    = exposed peak >= 9       -> above the band, candidate is identity here
-    //   grey    = below 1.0               -> bit-identical, nothing to approve
+    // Paints where the tone map's hue-restoration band is even allowed to act, so
+    // "which materials would need re-approving" is one capture instead of a diff and a
+    // judgement call. Anything not magenta is provably untouched.
+    //   magenta = exposed peak in [1, 9)  -> the active band, i.e. the whole surface
+    //   cyan    = exposed peak >= 9       -> above the band, the curve is identity
+    //   grey    = below 1.0               -> identity, nothing to approve
     //
-    // Rides on the existing u_hueRestore uniform rather than adding its own, because
-    // this shader is loaded from disk at runtime (core/post_fx.c:193) while a new
-    // uniform would need post_fx.c plumbing and therefore a full rebuild. Shipping
-    // values are 0..1, so a negative value is free to mean something else. Delete this
-    // block once §12.1 is decided — a permanent debug switch rots (rlvk methodology 3).
-    if (u_hueRestore < -0.5) {
+    // KEPT after §12.1 was decided, not deleted, because §11b's gate 3 EXPIRES: it
+    // passed only because every map is night-time and exposure is pinned at 1.00. Add a
+    // daylight arena or auto-exposure and ground and sky cross 1.0, which regrows the
+    // approval surface — and this is how you find that out in one screenshot. It was a
+    // negative value of postfx_hue_restore while that knob was being A/B'd (no rebuild
+    // needed for a shader-only change); now that hue restore ships at 0.6 it gets its
+    // own knob rather than riding on a shipping one.
+    if (u_shoulderView > 0.5) {
         float peak = max(exposedScene.r, max(exposedScene.g, exposedScene.b));
         float g = dot(sceneCol.rgb, vec3(0.2126, 0.7152, 0.0722)) * 0.30;
         if      (peak >= 9.0) sceneCol.rgb = vec3(0.0, 0.9, 1.0);

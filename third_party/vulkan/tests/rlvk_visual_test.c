@@ -921,9 +921,12 @@ static const char *sc_float_blend_rt(void)
 static void blit(Texture2D src, int dstW, int dstH);
 
 static char s_brightWhy[256];
-// Gate 1 knob: BRIGHT_HUEFIX=<0..1> reruns the whole chart through the candidate
-// hue-preserving tone map (BRIGHT_BACKGROUND_VFX_SPEC.md §12.1). 0 = shipping curve.
-static float s_brightHueRestore = 0.0f;
+// The chart runs at the SHIPPING hue-restore strength, because an acceptance oracle that
+// measures a configuration the game does not use is the drift this scenario exists to
+// prevent (its first version tone mapped through Reinhard while the game ran ACES).
+// BRIGHT_HUEFIX=<0..1> overrides it, which is how the strength was chosen.
+// Keep in sync with core/post_fx.c's s_hueRestore default.
+static float s_brightHueRestore = 0.6f;
 // The scene/composite format the chart runs through. RGBA16F is the HDR path; the
 // RGBA8 run is the MOBILE FALLBACK, where §7.1 claims "premultiplied coverage remains
 // the primary bright-background mechanism even though radiance above 1.0 is
@@ -1227,7 +1230,7 @@ static const char *sc_bright_vfx(void)
     bool flipped = false;
     int prevLog = LOG_WARNING;
     const char *hueEnv = getenv("BRIGHT_HUEFIX");
-    s_brightHueRestore = hueEnv ? (float)atof(hueEnv) : 0.0f;
+    s_brightHueRestore = hueEnv ? (float)atof(hueEnv) : 0.6f;
 
     SetTraceLogLevel(LOG_ERROR);   // GetShaderLocation warns on optimised-out uniforms
 
