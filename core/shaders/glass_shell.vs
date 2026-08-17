@@ -3,6 +3,9 @@
 
 out vec3 shieldViewDir;
 out float shieldFresnel;
+// Raw |N·V|, so the fragment stage can model WALL THICKNESS rather than reuse a
+// fresnel band. shieldFresnel stays as-is for the emission/pattern terms.
+out float shieldNdotV;
 
 // DrawCoreSphere is immediate-mode geometry. BeginMode3D has already applied
 // the model-view transform on the CPU, so both attributes arrive in view space.
@@ -13,7 +16,8 @@ void main() {
     fragNormal = normalize(vertexNormal);
     fragTexCoord = vertexTexCoord;
     shieldViewDir = normalize(-vertexPosition);
-    float fresnelM = 1.0 - clamp(dot(fragNormal, shieldViewDir), 0.0, 1.0);
+    shieldNdotV = clamp(dot(fragNormal, shieldViewDir), 0.0, 1.0);
+    float fresnelM = 1.0 - shieldNdotV;
     float fresnelX2 = fresnelM * fresnelM;
     shieldFresnel = fresnelX2 * fresnelX2;
     gl_Position = mvp * vec4(vertexPosition, 1.0);

@@ -4,6 +4,7 @@
 
 in vec3 shieldViewDir;
 in float shieldFresnel;
+in float shieldNdotV;
 
 uniform vec4 u_bodyColor;
 uniform vec4 u_rimColor;
@@ -85,11 +86,23 @@ void main() {
     float contact = depthContact(gl_FragCoord.xy / u_resolution);
     float ripple = impactRipple();
     vec3 lightDir = normalize(u_lightDirView);
+    float rearInterface = (u_wallPass == 0) ? 1.0 : 0.0;
     float light = max(dot(normal, lightDir), 0.0);
     float pattern = smoothstep(0.22, 0.78, energy) * (0.35 + 0.65 * noise);
     float filament = smoothstep(0.58, 0.82, energy) *
                      smoothstep(0.42, 0.76, noise);
-    float bottomGlow = smoothstep(0.05, 0.92, -normal.y);
+    // GROUND CONTACT, and it has to be honest about what it is. depthContact() is the
+    // real mechanism — it compares scene depth against the fragment — but the shell ships
+    // with `shield_shell_depth_enabled = 0`, so it returns 0 and this term is the only
+    // thing shaping the bottom. It was `smoothstep(0.05, 0.92, -normal.y)`, which ramps
+    // across almost the WHOLE lower hemisphere: not a contact, a second broad band with a
+    // different profile from the rim, which is what made the bottom read flat and the
+    // rim-to-centre transition read as patches of colour rather than one gradient.
+    //
+    // Confined to the bottom cap, and to the FRONT wall only — on the rear wall
+    // `-normal.y` selects the surface the ground should be occluding, so lighting it
+    // there is drawing the inside of the floor.
+    float bottomGlow = smoothstep(0.62, 0.98, -normal.y) * (1.0 - rearInterface);
     // Keep the carrier readable on white backgrounds: a low mass floor plus
     // structured pattern, while the semantic Magic appearance supplies the
     // stronger radiance through the separate emission pass.
@@ -112,7 +125,7 @@ void main() {
      * indistinguishable duplicate of the front shell.  Give it a darker,
      * quieter carrier so the eye reads a real inner volume instead of one
      * flat translucent disc. */
-    float rearInterface = (u_wallPass == 0) ? 1.0 : 0.0;
+    /* declared earlier — see the hoist above bottomGlow */
     /* Rear coverage is now intentionally visible; do not attenuate its body
      * a second time or the 0.45 volume term collapses to a barely measurable
      * tint after the shared bodyOpacity multiplier. */
@@ -148,14 +161,30 @@ void main() {
      * optical contribution.  Removing it flattens the shell; weighting it too
      * strongly is what creates the milky full-sphere wash on bright backdrops. */
     float wallWeight = (u_wallPass == 0) ? 0.86 : 1.0;
+    // WALL THICKNESS, not a fresnel band. The rim term used to be shieldFresnel, which
+    // is (1-|N·V|)^4: essentially zero across the middle of the sphere and then a spike
+    // at the silhouette, so the shell read as a flat interior with a hard ring stuck to
+    // its edge. A shell's optical depth is the PATH LENGTH through its wall, 1/|N·V|,
+    // and Beer-Lambert turns that into coverage that rises smoothly all the way from the
+    // centre out. At |N·V| = 0.75 this gives 0.064 against the old 0.004 — sixteen times
+    // more presence in the mid-region, which is the whole of the "rim to centre" ramp.
+    float pathLen = 1.0 / max(shieldNdotV, 0.10);
+    float wallDensity = 1.0 - exp(-u_fresnelAlpha * 3.0 * (pathLen - 1.0));
     float alpha = u_opacity * wallWeight * softMask *
-                  (u_baseAlpha + fresnel * u_fresnelAlpha +
+                  (u_baseAlpha + wallDensity +
                    contact * u_contactAlpha + ripple * 0.18);
-    /* Rear glass has a deliberate interior volume term.  Without it the
-     * back interface only appears at the silhouette and the sphere reads as
-     * a flat rim; keep it non-emissive and subdued so the scene remains
-     * visible through the centre. */
-    alpha += rearInterface * 0.45 * u_opacity * softMask;
+    /* Rear glass carries interior volume — but SHAPED BY ITS OWN THICKNESS, not as a
+     * constant. A flat term veils the whole interior evenly, which is a milky film with
+     * no information in it: the sphere still reads as a rim with fog behind it.
+     *
+     * What makes a glass sphere read as a sphere is that you see the far wall THROUGH
+     * the near one, and the far wall has its own grazing-angle gradient — thin where you
+     * look straight through the middle, dense toward the edges. Two nested gradients,
+     * not one ring and a haze. So the rear term rides the same Beer-Lambert density the
+     * front wall uses, which is what puts a second, inner falloff inside the outer rim.
+     * The small constant that remains is the residue that keeps the very centre from
+     * vanishing entirely. */
+    alpha += rearInterface * u_opacity * softMask * (0.10 + 0.62 * wallDensity);
     /* Glass carrier coverage is intentionally sparse.  The previous value
      * still tinted the entire sphere; this multiplier makes the scene-through
      * window unambiguous while rim/emission remain independently bright. */

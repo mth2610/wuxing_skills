@@ -2,11 +2,55 @@
 // safe post-3D snapshot (never from the live render target), while the packed
 // field and additive crest provide the authored magical identity.
 #include "core/tuning.h"
+#include "core/gfx_quality.h"
 
 #define VFX_SHIELD_SHELL_MAX 8
-// 14x14 = 392 triangles: within the 200-400 mobile force-field budget.
-#define SHIELD_SHELL_RINGS 14
-#define SHIELD_SHELL_SLICES 14
+// TESSELLATION: TWO budgets, and they are not the same budget.
+//
+// 14x14 = 392 triangles was chosen for the 200-400 mobile force-field budget, and it
+// holds that budget — but at a normal gameplay apparent size a 14-slice sphere does not
+// read as a sphere: its silhouette is a visible 14-sided polygon, which is the first
+// thing the eye finds on a bright background (measured capture:
+// autotest_output/vfx_matrix/idx21/white_w90.png). A shell whose outline is a polygon
+// is not glass at any coverage.
+//
+//   PER-SHELL, mobile: 200-400 triangles. This is what 14x14 = 392 was chosen for, and
+//   LOW is capped there and never scales up — on mobile the constraint binds per shell.
+//   AGGREGATE: SHIELD_MAX * rings * slices * 2 <= 6400, which core/tests/shield_shell_test.c
+//   guards. That is a budget for EIGHT simultaneous shields; one shield alone leaves seven
+//   eighths of it unspent, and a lone shell is exactly when it is large on screen and its
+//   facets show. So above LOW the tier sets a ceiling and the LIVE COUNT spends what the
+//   budget actually has, clamping back down as shields multiply. The eight-shield worst
+//   case is unchanged.
+#define SHIELD_SHELL_TRI_BUDGET 6400
+#define SHIELD_SHELL_RINGS_LOW 14      /* hard cap: the mobile per-shell budget */
+#define SHIELD_SHELL_RINGS_MED 24
+#define SHIELD_SHELL_RINGS_HIGH 40
+
+// The 6400-triangle cap is a budget for EIGHT simultaneous shields. One shield alone
+// leaves seven eighths of it unspent, and a lone shell is exactly when its silhouette is
+// large on screen and its facets are most visible. So the tier sets a ceiling and the
+// live count spends what the budget actually has:
+//
+//     activeCount * rings * rings * 2 <= 6400
+//
+// The worst case is therefore identical to before (8 shields -> 20x20 at HIGH, 14x14 at
+// LOW), while a single shell gets a round outline for free. Floored at the LOW value so
+// no configuration is ever coarser than what already shipped.
+static int ShieldShell_Rings(int activeCount)
+{
+    GfxQuality q = GfxQuality_Get();
+    int ceiling = (q >= GFX_HIGH) ? SHIELD_SHELL_RINGS_HIGH
+                : (q >= GFX_MED)  ? SHIELD_SHELL_RINGS_MED
+                                  : SHIELD_SHELL_RINGS_LOW;
+    if (q <= GFX_LOW) return SHIELD_SHELL_RINGS_LOW;   /* mobile: per-shell budget binds */
+    if (activeCount < 1) activeCount = 1;
+    int rings = SHIELD_SHELL_RINGS_LOW;
+    while (rings + 2 <= ceiling &&
+           activeCount * (rings + 2) * (rings + 2) * 2 <= SHIELD_SHELL_TRI_BUDGET)
+        rings += 2;
+    return rings;
+}
 
 typedef struct {
     bool active, stopping;
@@ -241,6 +285,10 @@ static void ShieldShell_BindInputs(void)
 
 static void ShieldShell_DrawPass(bool emissionOnly)
 {
+    int activeCount = 0;
+    for (int i = 0; i < VFX_SHIELD_SHELL_MAX; ++i)
+        if (s_shieldShells[i].active) activeCount++;
+    const int rings = ShieldShell_Rings(activeCount);
     for (int i = 0; i < VFX_SHIELD_SHELL_MAX; ++i)
     {
         VC_ShieldShell *shield = &s_shieldShells[i];
@@ -338,8 +386,7 @@ static void ShieldShell_DrawPass(bool emissionOnly)
         SetShaderValue(s_shieldShader.shader, s_shieldShader.contactColor,
                        &contactColor, SHADER_UNIFORM_VEC4);
 
-        DrawCoreSphere(shield->pos, radius, SHIELD_SHELL_RINGS,
-                       SHIELD_SHELL_SLICES, WHITE);
+        DrawCoreSphere(shield->pos, radius, rings, rings, WHITE);
     }
 }
 

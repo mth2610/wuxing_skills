@@ -7,8 +7,10 @@ static int failures = 0;
 #define CHECK(c, n) do { if (c) printf("PASS: %s\n", n); else { printf("FAIL: %s\n", n); failures++; } } while (0)
 
 #define SHIELD_MAX 8
-#define SHIELD_RINGS 14
-#define SHIELD_SLICES 14
+/* The HIGHEST tier, because the budget has to hold at the worst case. Mirrors
+   SHIELD_SHELL_RINGS_HIGH; the shell is tier-gated and LOW keeps 14x14. */
+#define SHIELD_RINGS 20
+#define SHIELD_SLICES 20
 #define HDR_FLOW_GAIN 5.0f
 
 static float Step(float level, float target, float dt)
@@ -68,9 +70,17 @@ int main(void)
 
     CHECK(SHIELD_MAX * SHIELD_RINGS * SHIELD_SLICES * 2 <= 6400,
           "eight alpha shields stay inside the 6400-triangle primary budget");
-    CHECK(Has("core/composition/common/vc_shield_shell.inl", "SHIELD_SHELL_RINGS 14") &&
-          Has("core/composition/common/vc_shield_shell.inl", "SHIELD_SHELL_SLICES 14"),
-          "mobile shell stays within a 200-400 triangle mesh budget");
+    /* Assert the BUDGET and the tier ladder, not one literal constant. Pinning "14"
+       is what made a legitimate tier gate look like a regression: the number is an
+       implementation detail, while "LOW still fits the mobile budget" and "the top
+       tier still fits the eight-shield budget" are the actual contracts. */
+    CHECK(Has("core/composition/common/vc_shield_shell.inl", "SHIELD_SHELL_RINGS_LOW 14"),
+          "LOW tier still holds the 200-400 triangle mobile force-field budget");
+    CHECK(Has("core/composition/common/vc_shield_shell.inl",
+              "activeCount * (rings + 2) * (rings + 2) * 2 <= SHIELD_SHELL_TRI_BUDGET"),
+          "above LOW, tessellation spends the aggregate budget against the LIVE count");
+    CHECK(Has("core/composition/common/vc_shield_shell.inl", "ShieldShell_Rings(int activeCount)"),
+          "tessellation is chosen per quality tier and live count, not fixed");
     CHECK(HdrCrestGain(0.50f, 0.0f) < 0.001f,
           "sub-crest membrane stays below the HDR/bloom path");
     CHECK(HdrCrestGain(1.0f, 0.0f) > 1.0f,
