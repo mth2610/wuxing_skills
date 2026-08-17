@@ -12,6 +12,11 @@ uniform float u_fresnelPower;
 uniform float u_rimStrength;
 uniform float u_scrollSpeed;
 uniform float u_noiseScale;
+// Both of these are EXACT identities at 0, so every existing consumer is bit-identical
+// and the tests pinning this file keep passing. They exist because ENERGY ORB borrowed
+// this shader — written for a CYLINDER rising off the ground — and used it on a SPHERE.
+uniform float u_heightFadeOff;  // 1 = cancel the bottom-to-top fade (spheres have no "up")
+uniform float u_coverFloor;     // base coverage the noise modulates instead of gating
 uniform float u_heightScale;
 uniform float u_scanFreq;
 uniform float u_scanSpeed;
@@ -70,6 +75,14 @@ void main() {
     float scan    = scanRaw * scanRaw * u_scanStrength;
     float filmAlpha = wisp * 0.75 + scan * 0.30 + fresnel * 0.20;
     filmAlpha = clamp(filmAlpha, 0.0, 1.0);
+    // COVERAGE FLOOR. `wisp` comes out of a smoothstep with a 0.25 lower edge, so large
+    // regions of the surface land at exactly 0 — the alpha is noise-GATED, not
+    // noise-MODULATED, and what it draws is a sparse film rather than a volume. That is
+    // invisible on bright scenery, where coverage is the only thing that makes contrast
+    // (§5.7): measured, the orb kept 10.06% body area on a dark background and 1.04% on
+    // a white one. With a floor, noise varies the density around a base instead of
+    // switching it off.
+    filmAlpha = u_coverFloor + (1.0 - u_coverFloor) * filmAlpha;
     
     // Alpha tổng ban đầu
     float alpha = filmAlpha * u_opacity * u_bodyColor.a;
@@ -79,7 +92,11 @@ void main() {
     // Tọa độ V (fragTexCoord.y) chạy từ 0.0 (đáy) lên 1.0 (đỉnh)
     // Phép tính (1.0 - fragTexCoord.y) giữ nguyên 100% màu ở đáy và mờ dần về 0% ở đỉnh
     // ----------------------------------------------------------------------
-    alpha *= (1.0 - fragTexCoord.y);
+    // The fade below is a CYLINDER's: full at the ground, gone at the rim. On a sphere it
+    // deletes the top half's coverage by construction, which is most of why ENERGY ORB
+    // had no body to composite. u_heightFadeOff = 1 cancels it; 0 leaves it exactly as it
+    // was for the aura consumers this shader was written for.
+    alpha *= mix(1.0 - fragTexCoord.y, 1.0, clamp(u_heightFadeOff, 0.0, 1.0));
 
     float glowBlend = clamp(wisp * 0.5 + scan * 0.2, 0.0, 1.0);
     vec3  col       = mix(u_bodyColor.rgb, u_glowColor.rgb, glowBlend);

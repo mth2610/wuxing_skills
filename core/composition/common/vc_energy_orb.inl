@@ -43,6 +43,10 @@ static bool s_orbInit = false;
 static float s_orbSize = 1.0f;   // x on the whole orb's radius
 static float s_orbRim = 1.0f;    // x on rim brightness — the silhouette dial
 static float s_orbCore = 1.0f;   // 0 = no hot centre, just the shell
+// Base coverage the shell's noise modulates. This is the bright-background dial: on dark
+// scenery an effect can be seen by adding light, on bright scenery only coverage makes
+// contrast (§4/§5.7). 0 reproduces the old noise-gated film exactly.
+static float s_orbCoverFloor = 0.30f;
 
 // radiusScale · opacity · fresnelPower · scroll (sign = direction) · noiseScale.
 //
@@ -91,6 +95,7 @@ static void Orb_InitShared(void)
     Tuning_RegisterFloat("orb_size", &s_orbSize, 1.0f);
     Tuning_RegisterFloat("orb_rim", &s_orbRim, 1.0f);
     Tuning_RegisterFloat("orb_core", &s_orbCore, 1.0f);
+    Tuning_RegisterFloat("orb_cover_floor", &s_orbCoverFloor, 0.30f);
     s_orbInit = true;
 }
 
@@ -114,8 +119,21 @@ void VFX_ComposeEnergyOrb(Vector3 center, VC_MaterialId mat, float radius,
     // only turn something off is not a quality tier. (The rule it still obeys:
     // a gate may only ever clamp DOWN, so the honest move is not to have one.)
 
+    // SURFACE MUST MATCH THE SHADER'S RESOLVER. aura_shell.fs returns
+    // VFX_ResolveBody(col, 1.0, alpha) — a straight-alpha BODY — and
+    // vfx_composite.glsl's contract is that ResolveBody is drawn with the ALPHA
+    // surface. Bound ADDITIVE (as it was until 17/08/2026) the alpha is consumed as a
+    // brightness multiplier and the coverage term is thrown away, so the orb could never
+    // attenuate anything. That is not a theory: measured across five backgrounds it
+    // darkened 0.0% of its own footprint on every one, and its body area collapsed from
+    // 10.04% of the frame on a dark background to 0.07% on a white one — it effectively
+    // ceased to exist in daylight. See BRIGHT_BACKGROUND_VFX_SPEC.md §11b; re-measure
+    // with `scripts/render_vfx_matrix.sh "ENERGY ORB"`.
+    //
+    // The PASS is left as EMISSION deliberately: pass says what the draw contributes,
+    // surface says how it combines (core/vfx_render.h), and those are orthogonal.
     VFXRenderScope renderScope = VFXRender_BeginDraw(
-        VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
+        VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ALPHA, false);
     // The far wall seen through the near one is most of what reads as a shell
     // rather than a disc.
     rlDisableBackfaceCulling();
@@ -130,6 +148,13 @@ void VFX_ComposeEnergyOrb(Vector3 center, VC_MaterialId mat, float radius,
         s_orbShell.params.rimStrength = 1.2f * s_orbRim * Math_Mix(0.7f, 1.0f, intensity01);
         s_orbShell.params.scrollSpeed = k_orbShells[i].scroll;
         s_orbShell.params.noiseScale = k_orbShells[i].noiseScale;
+        // This is a SPHERE. aura_shell.fs was written for a cylinder rising off the
+        // ground and fades its alpha to zero toward the top; on a sphere that deletes
+        // the upper half's coverage outright. And its alpha is noise-GATED, so most of
+        // what is left is fully transparent. Both are why the orb measured 10.06% body
+        // area on a dark background and 1.04% on a white one — see §11b.
+        s_orbShell.params.heightFadeOff = 1.0f;
+        s_orbShell.params.coverFloor = s_orbCoverFloor;
         AuraShellMaterial_Begin(s_orbShell);
         DrawCoreSphere(center, r * k_orbShells[i].radiusScale, 20, 20, WHITE);
         // Flush before the next shell's uniforms land, or the batch draws all

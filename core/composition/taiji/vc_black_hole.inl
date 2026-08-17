@@ -95,8 +95,15 @@ void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float 
         s_swirlInit     = true;
     }
 
+    // ALPHA, not ADDITIVE: black_hole_swirl.fs returns VFX_ResolveBody, and
+    // vfx_composite.glsl's contract is that a BODY output is drawn with the ALPHA
+    // surface. Bound additive (as it was until 17/08/2026) the alpha became a brightness
+    // multiplier and the coverage term was discarded — so the swirl could only ever ADD
+    // light. For an effect named for absorbing it, that is the wrong sign entirely, and
+    // it is the same violation ENERGY ORB had, where it cost 99.3% of the body area on a
+    // bright background. Guarded by scripts/validate_vfx_surface_contract.py.
     VFXRenderScope swirlScope = VFXRender_BeginDraw(
-        VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
+        VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ALPHA, false);
     SkillManager_BeginShader(s_swirlSh);
 
     float tShader = TimeFX_Elapsed();

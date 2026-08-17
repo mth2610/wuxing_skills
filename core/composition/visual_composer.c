@@ -63,7 +63,6 @@
 // @gen:archetype_includes begin
 #include "common/vc_character_aura.inl"
 #include "common/vc_trail.inl"
-#include "common/vc_projectile.inl"
 #include "common/vc_volume_trail.inl"
 #include "common/vc_debris_shards.inl"
 #include "common/vc_ember_trail.inl"
@@ -79,7 +78,6 @@ void VFX_Compose_Update(float dt)
 // @gen:archetype_update begin
     VC_CharacterAura_Update(dt);
     VC_SweptTrail_Update(dt);
-    VC_Projectile_Update(dt);
     VC_VolumeTrail_Update(dt);
     VC_DebrisShards_Update(dt);
     VC_EmberTrail_Update(dt);
@@ -109,7 +107,6 @@ void VFX_Compose_Draw3D(Camera3D cam)
 // @gen:archetype_draw begin
     VC_CharacterAura_Draw3D(cam);
     VC_SweptTrail_Draw3D(cam);
-    VC_Projectile_Draw3D(cam);
     VC_VolumeTrail_Draw3D(cam);
     VC_DebrisShards_Draw3D(cam);
     VC_EmberTrail_Draw3D(cam);

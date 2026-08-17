@@ -106,6 +106,38 @@ if(NOT WUXING_VFX_SURFACE_VALID EQUAL 0)
         "assets/TEXTURE_PACKING.md")
 endif()
 
+# A shader that redefines a function its own #include already exports does not fail
+# loudly: GLSL rejects the duplicate body, and raylib substitutes the DEFAULT shader
+# with a valid non-zero id, so the effect renders as something else and nothing says
+# so. Three shaders shipped in that state after the shared-include migration, and a
+# VFX survey then ranked one of them the largest effect in the game while it was
+# actually drawing the fallback. Configure time is the only place this gets caught
+# before it reaches a screenshot. Do not demote this to a warning.
+execute_process(
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/validate_shader_includes.py
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    RESULT_VARIABLE WUXING_SHADER_INCLUDES_VALID)
+if(NOT WUXING_SHADER_INCLUDES_VALID EQUAL 0)
+    message(FATAL_ERROR
+        "Shader include validation failed — see the FAIL lines above. Rename the local "
+        "function with a file prefix; deleting it changes the look.")
+endif()
+
+# A draw that binds a blend surface its shader's resolver contradicts fails silently and
+# in the worst possible direction: bound ADDITIVE, a VFX_ResolveBody output has its
+# coverage term discarded, so the effect can never darken anything and is invisible on
+# bright scenery while looking perfect over the night arena. ENERGY ORB shipped that way
+# and measured 0.07% body area against white versus 10.04% against black.
+execute_process(
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/validate_vfx_surface_contract.py
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    RESULT_VARIABLE WUXING_VFX_SURFACE_CONTRACT_VALID)
+if(NOT WUXING_VFX_SURFACE_CONTRACT_VALID EQUAL 0)
+    message(FATAL_ERROR
+        "VFX surface/resolver contract violated — see the FAIL lines above and "
+        "core/shaders/common/vfx_composite.glsl's header.")
+endif()
+
 # Tự động quét toàn bộ mã nguồn của kỹ năng trong thư mục skills/
 file(GLOB_RECURSE SKILL_SOURCES CONFIGURE_DEPENDS "skills/**/*.c")
 # Tự động quét toàn bộ mã nguồn của map trong thư mục maps/

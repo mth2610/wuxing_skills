@@ -42,7 +42,14 @@ float vnoise3D(vec3 p) {
                mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y), f.z);
 }
 
-float fbm3(vec3 p) {
+// Locally-named noise: core/shaders/common/noise.glsl already exports the same symbol(s), and GLSL has no
+// overloading by scope - two bodies for one name is a compile error, and raylib
+// answers a failed compile with the DEFAULT shader, so the effect silently renders
+// as something else entirely. The local field is kept rather than dropped because
+// it is NOT the shared one (different octave count/lacunarity), so deleting it
+// would change the look. Same fix as aura_shell.fs. Guarded by
+// scripts/validate_shader_includes.py at configure time.
+float ps_fbm3(vec3 p) {
     float v = 0.0;
     float a = 0.5;
     for (int i = 0; i < 3; i++) {
@@ -65,8 +72,8 @@ void main() {
 
     // Two fbm sheets scrolling against each other; ridging (1-|2x-1|) turns
     // soft blobs into thin filament crests — the "wisp" read.
-    float n1 = fbm3(dom + vec3(t, -t * 0.6, t * 0.8));
-    float n2 = fbm3(dom * 1.7 + vec3(-t * 0.7, t, -t * 0.5));
+    float n1 = ps_fbm3(dom + vec3(t, -t * 0.6, t * 0.8));
+    float n2 = ps_fbm3(dom * 1.7 + vec3(-t * 0.7, t, -t * 0.5));
     float ridge = 1.0 - abs(2.0 * n1 - 1.0);
     float wisp = ridge * (0.35 + 0.65 * n2);
     wisp = smoothstep(0.45, 0.9, wisp); // high floor -> thin strands, not solid patches

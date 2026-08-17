@@ -23,6 +23,96 @@
 | 13 | A stale `tuning.cfg` A/B knob substitutes a whole CODE PATH | Anyone debugging a visual against a preset/style/variant knob |
 | 14 | A float render target that is blended into / bilinearly sampled is OPTIONAL hardware | Anyone creating an R32F render target: postFX, particles, fluid, shadow |
 | 15 | Sampling the scene texture while drawing INTO it (refraction/distortion taps) | Any screen-space effect that reads the scene inside a pass that binds it |
+| 16 | `rlDisableColorBlend()` is FLUSH-scoped — re-enabling before the flush un-does it | Anyone wrapping a batch draw in a blend-state toggle (postFX composites, blits) |
+| 17 | A shader redefining a function its `#include` exports renders as the DEFAULT shader, silently | Anyone adding a shared `#include` to an existing shader |
+| 18 | Shaders hot-load from disk, C does not — a measurement after a `.inl` edit describes the OLD binary | Anyone measuring a C-side fix through the game |
+
+---
+
+## 18. Shaders reload from disk; C does not — and that asymmetry produces a false negative (17/08/2026)
+
+**Symptom.** You fix something in a `.inl` or `.c`, run a headless capture to measure it, and
+the numbers are unchanged. The natural reading — "the fix was wrong" — is itself wrong: the
+binary never contained the fix.
+
+**Cause.** `core/shaders/*.fs` are loaded by path at run time (e.g. `core/post_fx.c:193`), so a
+shader edit takes effect on the next launch with no rebuild. That is genuinely useful, and it
+teaches you that edits "just work". C sources have no such property. In a session that had just
+fixed three shaders and a post-process curve with no rebuild, a one-line surface change in
+`vc_energy_orb.inl` was measured immediately and read as "the fix changed nothing"; the binary
+was 37 minutes older than the edit and `strings` showed the new symbol absent.
+
+**Rule.** Before trusting any measurement of a C-side change, check the binary is newer than the
+source. `scripts/render_vfx_matrix.sh` now refuses to run when anything under `core/`, `skills/`
+or `sandbox/` is newer than `./build/wuxing`, and says so. Note the guard has to be written as
+`find -newer`, not a pipeline: under `set -euo pipefail` an `xargs` test returning non-zero kills
+the script before it can print the reason, which is a guard that fails silently — the exact
+failure mode it exists to prevent.
+
+---
+
+## 17. A duplicate function definition makes a shader render as the DEFAULT one, silently (17/08/2026)
+
+**Symptom.** An effect renders — as something else. No crash, no missing draw, and the
+only clue is a `WARNING: RLVK: GLSL compile failed: 'fbm3' : function already has a body`
+buried in the log. Worse, measurements taken through the game keep working and keep
+lying: a survey of every VFX ranked `BLACK HOLE` the largest effect in the game at
+**7.35%** of the frame; after the fix it measured **0.03%**. The 7.35% was the fallback
+shader's output.
+
+**Cause.** GLSL has no scoping that lets a local `float fbm3(...)` coexist with one from
+an `#include`; two bodies for one name is a compile error. raylib then answers the failed
+compile with the **default shader and a valid non-zero id**, so every `id != 0` guard
+passes. Adding a shared include to an existing shader is exactly how this gets
+introduced, and the 2026-08-16 shared-compositor migration did it to three shaders
+(`black_hole_swirl.fs`, `ground_aura.fs`, `plasma_shell.fs`). The same collision was
+found and fixed in `aura_shell.fs` on that same day, and nothing caught the other three.
+
+**Rule.** Rename the LOCAL function with a file-specific prefix (`bh_fbm3`, `ga_fbm3`) —
+**do not delete it.** The local copies are usually tuned differently from the shared one
+(4 octaves vs 2 here), so deleting silently changes the look instead of the compile.
+`scripts/validate_shader_includes.py` enforces this at CMake configure time and fails the
+build; run it standalone any time you add an `#include` to a shader.
+
+---
+
+## 16. `rlDisableColorBlend()` only takes effect when the batch FLUSHES (17/08/2026)
+
+**Symptom.** A full-screen composite that is explicitly wrapped in
+`rlDisableColorBlend()` / `rlEnableColorBlend()` comes out blended anyway. In
+`core/post_fx.c` the final tone-mapped composite was being multiplied by the HDR
+scene target's **accumulated alpha** — which additive VFX push above 1.0 — so every
+VFX region rendered ~1.5x too bright and clipped to white on the 8-bit swapchain.
+That is the "my effects blow out to white" symptom that
+`third_party/vulkan/docs/BRIGHT_BACKGROUND_VFX_SPEC.md` was written to chase, and it
+was not in any shader.
+
+**Cause.** `DrawTexturePro` and friends only QUEUE vertices; the draw happens when
+the batch flushes (`EndShaderMode`, `EndTextureMode`, `EndDrawing`, a state change,
+or an explicit `rlDrawRenderBatchActive()`). Blend state is applied at that flush, not
+at call time. This is not an rlvk quirk — it is exactly how `glDisable(GL_BLEND)`
+behaves under GL, so **both backends** are affected. The natural-looking
+
+```c
+rlDisableColorBlend();
+DrawTexturePro(...);
+rlEnableColorBlend();   // ← runs BEFORE the draw ever flushes
+```
+
+therefore restores blending in time for the very draw it was meant to protect.
+
+**Rule.** Flush inside the window:
+
+```c
+rlDisableColorBlend();
+DrawTexturePro(...);
+rlDrawRenderBatchActive();   // the toggle only lands here
+rlEnableColorBlend();
+```
+
+The same applies to any `rl*` state toggle wrapped around batched draws. Pinned by
+`run_rlvk_visual_test.sh colorblend_flush`, which asserts both halves: flushed inside
+the window the draw overwrites, re-enabled before the flush it blends.
 
 ---
 

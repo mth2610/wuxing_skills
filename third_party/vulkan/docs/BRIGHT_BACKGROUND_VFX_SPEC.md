@@ -3,10 +3,14 @@
 > **Document archetype:** implementation plan / progress specification. This is not an API
 > contract and does not record completed work.
 >
-> **Status:** core implementation in progress; Vulkan RGBA16F readback and the `bright_vfx`
-> oracle are implemented, the shared Core compositor is wired into reference shaders, and the
-> bloom prefilter now evaluates threshold/weight in exposure space while writing raw HDR.
-> Full Vulkan execution remains pending the local Vulkan-Headers cache/network.
+> **Status:** the `bright_vfx` oracle is now a real acceptance chart — six element hues x five
+> backgrounds x three exposures, bloom off and on, measured through the SHIPPING ACES curve and
+> the SHIPPING bloom shaders (it loads `core/shaders/post_process.fs` and the three
+> `bloom_*.fs` rather than re-implementing them). It passes, and building it produced §5.5,
+> §5.6 and §12 below, which are measurements, not theory. The shared Core compositor is wired
+> into the reference shaders and the bloom prefilter evaluates threshold/weight in exposure
+> space while writing raw HDR. Remaining: §12's open items (hue-preserving tone map, RGBA8
+> fallback oracle, temporal metrics) and Mali confirmation.
 >
 > **Target:** Vulkan 1.1 first, with the existing raylib/rlgl-compatible GL/GLES paths kept
 > behaviorally equivalent.
@@ -181,6 +185,79 @@ rule.
 The saturated region must be wider than the white core. If bloom covers the saturated region
 completely, lower halo/core energy or narrow the core; do not counter it with global saturation.
 
+### 5.5 Three radiance terms, not two (measured)
+
+> [!NOTE]
+> **(project convention):** the 3–9 px corona carries its own **saturated** radiance, separate
+> from both the coverage term and the white core.
+
+The first `bright_vfx` fixture was built as coverage + a narrow white core, exactly as §5.2
+reads. It failed: a warm body over the bright-cool tile measured `chroma(S) = 0.051`. The cause
+is structural, not a tuning error — a translucent body over a **complementary** background mixes
+toward neutral by construction, because `bodyColor·a + bg·(1-a)` moves the result toward the
+mid-point of two opposed hues. Coverage buys luminance contrast; it cannot buy chroma there.
+
+So the premultiplied form in §5.2 is completed by a third term:
+
+```glsl
+vec3 coveredBody   = bodyColor * bodyIntensity * coverage;   // attenuates the background
+vec3 coronaLight   = bodyColor * coronaMask * coronaGain;    // SATURATED radiance, 3-9 px
+vec3 emittedLight  = emissionColor * coreMask * emissionGain;// whitened radiance, 1-3 px
+finalColor = vec4(coveredBody + coronaLight + emittedLight, coverage);
+```
+
+`coronaGain` sits well below `emissionGain` (the reference fixture uses 1.6 against 4.0) and
+uses the **body** hue, not the emission hue. With it, the same fixture measures `chroma 0.37`
+on that tile.
+
+### 5.6 Two laws for the additive halo (measured)
+
+> [!NOTE]
+> **(project convention):** the halo is a SURROUND. It must fade out inside the body radius,
+> and it must carry the saturated body hue.
+
+Both were found by measurement, and both are the difference between a readable effect and the
+"milky film" this document exists to prevent:
+
+1. **The halo is an ANNULUS, not a fill**, and both edges of it were measured. A halo still at
+   ~0.8 mask over the body adds back exactly the light the body's coverage had just removed, so
+   the body stops attenuating the background at all. But a halo that decays fast enough to clear
+   the body on its own (a squared falloff) is down to `rgbDistance 0.009` by r=11 and no longer
+   occupies the 8–32 px band §5.4 asks for — it passes "the halo is not the strongest shape"
+   vacuously, by not existing. The working profile is zero until just past the body radius, then
+   a **linear** decay to the halo radius:
+
+   ```glsl
+   float haloMask = (1.0 - smoothstep(0.0, haloRadius, r))
+                  * smoothstep(bodyRadius * 0.9, bodyRadius * 2.0, r);
+   ```
+
+   Measured with it: on the dark tile the halo reads at `rgbDistance 0.47`, on the white tile at
+   `0.017` — strong against darkness, subordinate against brightness, which is what a low-energy
+   additive surround is supposed to do. `bright_vfx` asserts a measurement floor on the dark tile
+   so the ordering test cannot go vacuous again.
+2. **The halo carries the saturated BODY hue, never the whitened EMISSION hue.** An
+   emission-coloured halo pumps light back into precisely the channels the body darkened. A blue
+   effect over the bright-cool tile measured `rgbDistance 0.06` with an emission-coloured halo and
+   `0.21` with a body-coloured one, everything else held constant.
+
+### 5.7 The darkening budget
+
+> [!NOTE]
+> **(project convention):** on any background brighter than mid-grey, the effect must pull at
+> least one channel BELOW the background. Not by a specific amount — at all.
+
+This is a **structural** rule, not a magnitude one: §8.2's `rgbDistance` already sets the
+magnitude. What no other metric checks is the *mechanism*. An effect that is visible purely
+because it adds light is riding on a property of the background it was tuned against, and it
+will fade out as the scene gets brighter — which is the failure mode that only appears in
+daylight, long after the effect was approved in the night arena. Additive output can never
+satisfy this rule (§4), which is exactly why the rule is the right one to test.
+
+The reference `ShieldShell` oscillation (`docs/PROGRESS.md`, 2026-08-16) is this failure: scalar
+alpha/gain tuning moved it between a faint wall and an opaque sphere because neither end
+established a darkening budget.
+
 ## 6. Effect recipes
 
 These are defaults, not hard-coded constants. Preserve per-effect authoring controls.
@@ -194,7 +271,10 @@ These are defaults, not hard-coded constants. Preserve per-effect authoring cont
 - `bodyColor`: deep red/orange at low temperature and neutral/dark soot where smoke dominates.
 - `coreMask`: the highest-temperature channel, narrower than flame coverage.
 - `emissionColor`: yellow-white core with an orange saturated shoulder.
-- Start with `coverage = 0.35..0.70`, `emissionGain = 3..8` in linear HDR.
+- Start with `coverage = 0.60..0.80`, `emissionGain = 3..8` in linear HDR. **The old
+  `0.35..0.70` was wrong at the bottom**: measured on the §8 chart, the reference fixture
+  needs `~0.68` at the saturated-body sample to clear `rgbDistance 0.10` against white at
+  EV2. On bright scenery contrast comes from coverage, not from emission (§4).
 - Spawn smoke as an alpha/premultiplied body, not an additive gray sprite.
 - Bloom comes from the hot channel only. A broad orange body must remain visible with bloom off.
 
@@ -204,7 +284,12 @@ These are defaults, not hard-coded constants. Preserve per-effect authoring cont
 > **(project convention):** named MAGIC effects are not pure additive by default. Pure `GLOW`
 > remains additive; structured magic uses premultiplied coverage.
 
-- Use an alpha-composite shell/body with `coverage = 0.20..0.55` to hold saturated hue.
+- Use an alpha-composite shell/body with `coverage = 0.55..0.80` to hold saturated hue.
+  **The old `0.20..0.55` was below what §8.2 requires** and is how structured magic ended
+  up invisible in daylight: at `0.20` a body cannot attenuate enough to be seen against
+  white at any exposure. ENERGY ORB needed a `0.30` base coverage FLOOR on top of its
+  noise modulation before its body area on white reached parity with its body area on
+  black (0.07% -> 9.89%).
 - Use one compact HDR core at `emissionGain = 2.5..6`.
 - Use a faint additive halo at `0.10..0.35` of core energy.
 - Refraction/distortion is structure, not brightness. It must sample
@@ -265,7 +350,27 @@ whole effect systems whose sort order can pop.
   R32F are optional and guarded by `rlvkFormatSupportsBlend()` /
   `rlvkFormatSupportsLinearFilter()` in `third_party/vulkan/rlvk.h`.
 - Preserve the existing RGBA8 fallback. On fallback, premultiplied coverage remains the primary
-  bright-background mechanism even though radiance above 1.0 is unavailable.
+  bright-background mechanism even though radiance above 1.0 is unavailable. **This is now
+  tested, not asserted:** scenario `bright_vfx_ldr` runs the whole §8 chart through an RGBA8
+  scene target and the source-readability metrics pass on coverage alone.
+- **On that path bloom is INERT below exposure 1.25.** An RGBA8 scene buffer clips at 1.0, so
+  nothing can cross a 1.25 *exposed* threshold until exposure itself does — an effect authored
+  at `emissionGain = 8` has its emission clipped away before the prefilter ever sees it.
+  Measured by `bright_vfx_ldr`, which scopes its own bloom self-check to the exposures where
+  bloom is physically possible.
+
+> [!WARNING]
+> **This fallback is NOT "the mobile path", and an earlier version of this section said it
+> was.** `ScreenDistort_Init` (`core/screen_distort.c:180`) takes RGBA8 only when
+> `WUXING_NO_HDR` is set or the RGBA16F framebuffer fails to complete. Under Vulkan 1.1
+> `R16G16B16A16_SFLOAT` is a **mandatory** colour-attachment format, so on any conformant
+> Vulkan device — desktop or Android — the probe succeeds and HDR is on. The "GLES2 devices
+> without float-renderable color" comment in that file predates the Vulkan backend. What
+> `bright_vfx_ldr` actually guards is the `WUXING_NO_HDR` override and a GL/GLES build
+> (`WUXING_USE_VULKAN=OFF`) on a device without float-renderable colour — worth keeping, but
+> do not plan mobile authoring around it. Which backend the shipping Android build uses is
+> not verifiable from here (`android.wuxing_skills/` is off-limits to agents); confirm it
+> before drawing any mobile conclusion from this scenario.
 
 ### 7.2 Exposure ordering
 
@@ -289,6 +394,14 @@ LUT afterward; preserve that ordering.
 > bloom threshold according to how bright it appears to the camera, not according to one time-of-
 > day-specific raw number.
 
+> [!NOTE]
+> **(project convention):** the bloom threshold must sit **above the brightest expected
+> background in exposed space**. Below it, the background blooms itself, veils the frame, and
+> costs every effect chroma no matter how the effect is authored — measured at ~0.06 chroma on
+> the bright tiles at EV2, where a 1.0 background exposes to 2.0 against a 1.25 threshold. This
+> is a property of the threshold versus the scene, so `bright_vfx` scopes §8.2's chroma-drop
+> limit to the non-self-blooming case and prints the drop otherwise.
+
 ### 7.3 Bloom prefilter
 
 Keep the existing max-channel brightness rule for saturated magic colors and the existing soft
@@ -306,6 +419,21 @@ vec3 bloomSource = hdrColor * weight;
 
 Do not hard-clamp `bloomSource`. The existing asymptotic soft ceiling in
 `core/shaders/bloom_bright.fs` is allowed because its derivative remains positive.
+
+### 7.3b Output dither (required)
+
+The swapchain is 8-bit and the widest, flattest gradients in the frame are exactly what this
+pipeline produces: a 32 px halo and the bloom skirt around it. On a bright background those
+quantise into visible concentric rings. One LSB of triangular-PDF noise added at the very end of
+`core/shaders/post_process.fs` breaks the ring into dither for the cost of two hashes.
+
+The hash must be **sin-free** — `fract(sin(...))` degenerates on Mali at large domains
+(`ENGINE_LANDMINES.md` #4) and `gl_FragCoord` is a large domain.
+
+Clamp **after** the dither, not before. The noise is added on top of an already tone-mapped
+value, so without the clamp a channel ACES had pinned at `1.0` comes back at `1.004`. The UNORM
+swapchain hides it, but any HDR probe reading this pass then sees post-tone-map values the curve
+cannot produce — an "impossible number" that costs a debugging session to attribute.
 
 ### 7.4 Tone mapping and color retention
 
@@ -360,8 +488,11 @@ with bloom enabled. The no-bloom image tests source readability; the bloom image
 quality.
 
 > [!NOTE]
-> **(project convention):** the first oracle color is electric blue. Once it passes, repeat with
-> orange fire and violet magic; do not tune only one primary hue.
+> **(project convention):** the chart runs all **six element hues**, not the three originally
+> specified. Kim and Thuy are the hard cases and a warm+blue-only chart hides them: a pale
+> white-gold Kim body measured `chroma 0.02` / `rgbDistance 0.04` against a white background at
+> EV2, i.e. genuinely invisible there whatever the compositor does. Near-neutral emitters have no
+> chroma headroom on bright ground — **Kim must be authored as deep gold, not white-gold.**
 
 ### 8.2 Pixel metrics after tone mapping
 
@@ -386,6 +517,22 @@ Required:
 - `rgbDistance(H, B) < rgbDistance(S, B)`; the halo cannot become the strongest shape;
 - no sample may be NaN/Inf, and no transparent sprite corner may differ from its background by more
   than `2/255`.
+
+**Recorded metric changes** (per the paragraph below, each with its reason):
+
+- `rgbDistance` is the **max-abs-channel** distance as defined above. The first implementation
+  used a Euclidean distance, which silently changed what the `0.10` threshold meant.
+- The bloom chroma-drop limit is `max(0.05, 0.15 * chromaWithoutBloom)`, not a flat `0.05`. An
+  absolute delta is not scale-free: a hue at `chroma 0.80` losing `0.07` to its own core bloom is
+  8% relative and looks correct, while a hue starting at `0.20` losing `0.06` is a third of its
+  colour. The limit must clear both an absolute floor and a relative share.
+- The transparent-corner tolerance is `4/255`, not `2/255`, because §7.3b's output dither can
+  legitimately move two samples by `2/255` between them. A real billboard border is far larger.
+- `Kim`'s chroma floor is `0.10`, not `0.12` — see the §8.1 note on near-neutral hues.
+- The saturated-body sample `S` is taken at the middle of the §5.4 band, not at its outer
+  shoulder. Both edges of that window were measured: too close to the core and the core's own
+  bloom desaturates the sample by ~0.07; too close to the taper and the background leaks through
+  and costs ~0.02 of `rgbDistance` on white at EV2.
 
 These thresholds are regression guards, not final art grading. If the approved art cannot satisfy
 one, change the metric deliberately in this document with a captured reason; do not silently loosen
@@ -579,6 +726,433 @@ fallback parity, and `third_party/vulkan/docs/LANDMINES.md` records a compute-la
 full rlvk suite is green, validation adds no new VUIDs, and frame time stays inside the agreed
 mobile budget.
 
+## 9b. What `bright_vfx` actually asserts today
+
+Six hues x five backgrounds x three exposures (0.5/1/2), in two passes:
+
+- **Pass A, bloom off — source readability.** Per tile: `rgbDistance(S,B) >= 0.10`, per-hue
+  `chroma(S)` floor, `luma(C) >= luma(S)` on the dark and mid tiles, halo weaker than body,
+  the §5.7 darkening budget on bright tiles, at most 3 of 9 body-width samples fully white, and
+  the transparent-corner check. The additive control row must never darken any channel and must
+  lose chroma to the premultiplied row of the same hue on white — it proves the chart still
+  detects the problem the document is about.
+- **Pass B, bloom on — optical quality.** Chroma retention (scoped per §7.2), halo still weaker
+  than body, plus a self-check that enabling bloom changed the halo at all, so a pyramid that
+  never reaches the composite cannot make every assertion vacuously true.
+- **Blend law at BOTH draw sites.** The 2D batch and `rlvkDrawMesh` build pipelines
+  independently; a flat premultiplied source over the five backgrounds pins both to
+  `src + dst*(1-a)` within `0.02`.
+- **Structural guards.** No NaN/Inf anywhere in the frame; the readback orientation is *resolved*
+  from a hue signature rather than assumed.
+
+## 11b. Measuring a REAL effect against the chart (`render_vfx_matrix.sh`)
+
+`bright_vfx` measures a synthetic fixture. To measure a shipping effect the same way:
+
+```bash
+scripts/render_vfx_matrix.sh 35 40 90 140     # fixture index, then lifetime frames
+```
+
+It renders one fixture at identical camera, resolution and frame across the §8.1
+backgrounds via `WUXING_VFX_BG` (which also skips map+skybox — the skybox would paint over
+the clear), plus a **background plate per colour** rendered with no fixture, and reports
+per background: footprint, body area, darkening fraction (§5.7 on real content), internal
+structure, chroma, and distance from the background.
+
+Three methodology notes, all learned by getting them wrong here first:
+
+- **Never compare screenshots taken at different apparent size.** At a smaller size every
+  structure merges, so background and scale are confounded and neither can be attributed.
+  The whole point of the matrix is that the ONLY variable is the background.
+- **The background reference must be a plate, not derived from the frame.** The first
+  version took a radial median of the image itself; the background's own bloom lifts the
+  frame near the effect, and the mask then reported 39% of the frame as effect where the
+  true footprint is 6%.
+- **Darkening is measured on LUMA, never per channel.** The colour grade's saturation
+  stage, `mix(vec3(luma), col, sat)` with `sat > 1`, is not per-channel monotonic. A
+  provably pure-additive effect (ENERGY ORB, `VFX_SURFACE_ADDITIVE` at the draw site)
+  measured **97.9% of its footprint "darkened"** against the cool background — R +77,
+  G +9, B −5 — because the added warm light raised luma and the saturation operator then
+  pushed the already-below-luma blue further down. Nothing attenuated anything. Additive
+  can only ever add light, so a drop in *luminance* is the honest coverage test, and the
+  saturation operator is luma-preserving by construction. Note this is the SAME assumption
+  — per-channel monotonicity — that §12.1's tone-map candidate also breaks.
+
+### First result — VOLUME TRAIL (fixture 35), the largest in-band effect
+
+| background | body% | darken% | structure | chroma |
+|---|---:|---:|---:|---:|
+| dark | 6.09% | 0.0% | **0.327** | 0.787 |
+| mid | 6.11% | 25.0% | 0.267 | 0.734 |
+| white | 6.07% | 99.6% | **0.085** | 0.418 |
+| warm | 4.69% | 99.0% | 0.107 | 0.736 |
+| cool | 6.11% | 36.2% | 0.126 | 0.335 |
+
+- **Silhouette and coverage: PASS.** Body area is flat across backgrounds, and on bright
+  ground it darkens 99.6% of its own footprint — this is a real premultiplied body
+  (`trail_volume.fs` ends in `VFX_ResolveBody`), not an additive one. It passes §5.7
+  comfortably, unlike ShieldShell.
+- **Internal structure: FAILS, by 4x.** The filament network's contrast collapses from
+  0.327 to 0.085. Verified not to be an artifact of the mean rising: absolute luminance
+  std falls 40.9 -> 16.5 over the same ~56,000 core pixels.
+- **Chroma halves on white (0.79 -> 0.42) and is worst on the complementary cool
+  background (0.34)** — §5.5's finding, reproduced on real content.
+
+**Why, and it is the same law again.** For an alpha body, two pixels of the same colour
+differing only in coverage compose to `out1 - out2 = (C - B)(a1 - a2)`: the effect's
+INTERNAL contrast is proportional to how far its colour sits from the background. Against
+black, an orange filament is far from its gaps; against white it is not, so filament and
+gap converge and the volume reads flat. Coverage cannot fix this — it is what coverage
+does.
+
+The fix is §5.5's split, arrived at independently by the synthetic chart: the filaments
+need their own HDR **emission**, whose brightness does not depend on the background, and
+the gaps want their own darkness (soot) rather than borrowing the scene's. VOLUME TRAIL
+currently emits nothing — its single output is a BODY.
+
+### ENERGY ORB — a contract mismatch, found by measurement and confirmed in code
+
+| background | body% | darken% | structure | chroma |
+|---|---:|---:|---:|---:|
+| dark | 10.04% | 0.0% | 0.466 | 0.617 |
+| mid | 10.08% | 0.0% | 0.189 | 0.435 |
+| white | **0.07%** | 0.0% | **0.003** | 0.092 |
+| warm | **1.13%** | 0.0% | 0.034 | 0.407 |
+| cool | 10.07% | 0.4% | 0.039 | 0.086 |
+
+It does not merely lose structure like the others — **it loses the body**: 10.04% → 0.07%
+on white, a 99.3% collapse, with `darken%` at zero everywhere. The code says why, and the
+two agree exactly:
+
+- `core/composition/common/vc_energy_orb.inl:118` opens the draw with
+  **`VFX_SURFACE_ADDITIVE`**;
+- but its shader `core/shaders/aura_shell.fs:88` returns
+  **`VFX_ResolveBody(col, 1.0, alpha)`** — a straight-alpha BODY.
+
+`vfx_composite.glsl`'s own header states the contract: `ResolveBody` must be drawn with
+the ALPHA surface. Bound additive instead, the alpha is consumed as a brightness
+multiplier and the coverage term is discarded, so the effect can never attenuate anything
+— which is precisely what the matrix measured before anyone read the file.
+
+This is also a case §6.2 and Task 3 already legislated ("named MAGIC effects are not pure
+additive by default; structured magic uses premultiplied coverage"). The 2026-08-16
+appearance migration did not reach it because the surface is hardcoded at the draw site
+rather than resolved through `VFXAppearance`.
+
+#### ENERGY ORB fixed — and what each half of the fix was worth
+
+Two changes, both defaulting to the old behaviour for every other consumer, each measured
+separately (warmup 90, `body%` = share of the frame above 32/255 from the plate):
+
+| step | body% dark | body% white | darken% white | chroma white |
+|---|---:|---:|---:|---:|
+| as found (`VFX_SURFACE_ADDITIVE`) | 10.04% | **0.07%** | 0.0% | 0.092 |
+| + surface matched to the resolver | 10.06% | 1.04% | 95.2% | 0.348 |
+| + cylinder height-fade cancelled | 10.08% | **8.09%** | 98.0% | 0.440 |
+| + coverage floor 0.30 | 10.08% | **9.89%** | 97.9% | 0.459 |
+
+**The silhouette now survives daylight at parity with night** — 9.89% against 10.08%,
+from 0.07%. Note the attribution: the blend-contract fix was necessary but bought little
+on its own; **cancelling the borrowed cylinder fade was the dominant defect**, worth 8x by
+itself. `aura_shell.fs` fades alpha to zero toward the top because it was written for an
+aura rising off the ground; on a sphere that deletes the upper half's coverage outright.
+The coverage floor is a cheap final 22%, costing ~13% of fine detail.
+
+**A metric lesson that changed the reading.** `structure` appeared to fall from 0.466 to
+0.155 across this work, which reads as a regression. It is not: the coefficient of
+variation counts a broad smooth gradient exactly like fine texture, and most of the
+original 0.466 WAS the wrong vertical fade. The analyzer now also reports `detail`
+(luminance minus a blurred copy), which only sees short-length-scale contrast; by that
+measure the fix costs 0.069 -> 0.060, not 3x. **Do not read `structure` alone after
+changing anything that alters a large-scale gradient.**
+
+**Still open on this effect:** `detail` is 0.060 on dark and 0.012 on white, a ~6x
+collapse that coverage cannot fix — it is the §5.5 law, and closing it needs the emission
+split (the orb's `VFX_ComposeCoreGlow` core plus a saturated corona), not more alpha.
+
+### The three largest in-band effects, measured (warmup 90)
+
+| | VOLUME TRAIL | FLAME VOLUME | PROJECTILE *(deleted)* |
+|---|---|---|---|
+| darken% on white (§5.7) | **99.6%** ✅ | **91.0%** ✅ | **28.7%** ❌ |
+| body% dark → white | 6.09 → 6.07 ✅ | 1.40 → 0.62 ⚠️ −56% | 1.72 → 0.36 ❌ −79% |
+| structure dark → white | 0.327 → 0.085 ❌ 4x | 0.519 → 0.063 ❌ 8x | 0.819 → 0.078 ❌ 10x |
+| chroma dark → white → cool | 0.79 → 0.42 → 0.34 | 0.55 → 0.46 → 0.29 | 0.42 → 0.29 → 0.16 |
+
+Read down the columns and the ordering is not an accident: **the more of an effect's light
+is additive emission rather than covered body, the worse every column gets.** VOLUME TRAIL
+is a real body and keeps its silhouette exactly; FLAME VOLUME loses over half its body area
+on white; PROJECTILE — the hottest fixture in the game, the only one with content above
+exposed peak 9 — loses 79% of its body, barely attenuates anything, and has the lowest
+chroma of the three. That is §4 restated as a measurement rather than an argument.
+
+**Internal structure collapses on every one of them**, 4x to 10x, including the effect that
+otherwise passes — and the three are drawn by three DIFFERENT paths: VOLUME TRAIL through
+the trail system's volume tube (`trail_volume.fs`), FLAME VOLUME through the particle
+system (`SpawnParticle`/`VC_FlameEmitter`), PROJECTILE as a score over primitives. Same
+collapse, same ordering, three unrelated renderers.
+
+That rules out a shader bug and confirms it is the LAW: with `out = C*a + B*(1-a)`, two
+pixels of one colour differing only in coverage compose to `(C - B)(a1 - a2)`, so internal
+contrast is proportional to the distance between the effect's colour and the background.
+There is no shared file to fix — the lever is per-effect authoring, §5.5's emission split,
+because emission is the one term that does not scale with `C - B`.
+
+> [!NOTE]
+> **The sign flips for dark-bodied effects, so do not generalise this to smoke.** Smoke is
+> a body with a DARK `C`, so `|C - B|` is largest against a bright background: smoke reads
+> *better* in daylight and loses its structure against black. Fire and energy have the
+> problem in daylight; smoke has it at night. Measuring a smoke effect against this table
+> produces the mirror image, not a confirmation — §6.1 already says smoke is an
+> alpha/premultiplied body and must not be given emission.
+
+**PROJECTILE was deleted on 17/08/2026 on the strength of this row** — it had no gameplay
+consumer, only the sandbox fixture, and it scored worst on every axis. `VFX_ComposeVolumeTrail`
+survives as a fixture in its own right. Deleting the projectile did not remove the
+structure-collapse defect, but not for the reason first written here: the defect is not resident
+in `trail_volume.fs`, it is the law above, and it applies to any bright-bodied effect on any
+render path.
+
+One consequence for §12.1: PROJECTILE was the only fixture with content above exposed peak 9, so
+**nothing in the game currently exercises the candidate curve's ramp-out** (the part that keeps a
+hot core white). It stays as insurance and cannot be gate-4-verified until some effect gets that
+hot again.
+
+Two caveats on reading this table. `cover%` (the >8/255 footprint, not shown) swings with
+the background because it includes the effect's bloom veil, whose spread depends on whether
+the background itself is above the bloom threshold — `body%` is the stable silhouette
+measure. And these are three fixtures at three frames, not a survey.
+
+## 12. Measured findings that are still open
+
+### 12.1 Hue-preserving tone map — candidate landed behind a knob, gates 0–1 PASS
+
+`postfx_hue_restore` (tuning.cfg, **default 0 = shipping curve**) selects a candidate curve in
+`core/shaders/post_process.fs`. It is a **bump over** the ACES fit, not a replacement, which is
+what keeps a tone-mapper change from being a whole-scene change:
+
+| exposed peak | behaviour |
+|---|---|
+| `< 1.0` | identity — bit-identical to the curve every approved material was authored against |
+| `1.0 – 5.0` | hue restoration ramps in (tone map the peak, carry the channel ratios) |
+| `> 9.0` | identity again, so a genuinely hot core still reaches white per §5.4 |
+
+**Gate 0 — bounded (rlvk `tonemap_shoulder`).** Measured through the shipping shader:
+`d = 0.00000` at peaks 0.2/0.5/0.9 and at 10/14; the shoulder band changes and is required to.
+The dither is a deterministic hash of `gl_FragCoord`, so it cancels between runs and
+"bit-identical" stays a testable claim rather than an approximate one.
+
+**Gate 1 — no regression, large gain (`BRIGHT_HUEFIX=<0..1> bright_vfx`).** The full chart passes
+at strengths 0.35, 0.6 and 1.0 with every metric still enforced. Chart-wide:
+
+| strength | mean chroma gain | worst `rgbDistance` change, anywhere |
+|---|---|---|
+| 0.35 | **+0.074** | −0.038 |
+| 0.60 | **+0.127** | −0.021 |
+| 1.00 | **+0.211** | −0.035 |
+
+At the worst cell — EV2 on bright neutral — chroma goes from `0.19–0.24` to `0.40–0.45`
+(strength 0.35) or `0.70–0.79` (strength 1.0). No cell fell below any gate at any strength.
+
+**Two things the chart cannot tell you, and they decide this.**
+
+1. **Strength 1.0 is almost certainly too strong.** Restoration pulls the non-peak channels
+   *down*: a bright core measured `(0.777, 0.890, 0.937) → (0.332, 0.620, 0.937)`. More saturated,
+   but markedly darker and less "hot". Expect the shipping value to land nearer `0.35–0.6`.
+2. **It breaks per-channel monotonicity, and §5.7 depends on that.** Under the candidate an
+   *additive* effect bright enough to enter the shoulder can end up **below** the background in a
+   channel (measured: control R `0.637 → 0.572` against a `0.613` background). "It darkens,
+   therefore it has coverage" stops being sound — if this ships, §5.7's invariant has to be
+   re-derived in scene-linear space. `bright_vfx` scopes that assertion to the shipping curve
+   rather than silently asserting something false.
+
+**Gate 2 — PASS, and it is the decisive one.** `scripts/run_tonemap_ab.sh --vfx 0 <strength>`,
+A/A noise floor **0.000% / max 0** (byte-identical), then:
+
+| strength | pixels changed >2/255 | >32/255 | max delta |
+|---|---|---|---|
+| 0.35 | 0.494% | 0.009% | 35/255 |
+| 0.60 | 0.495% | 0.262% | 61/255 |
+| 1.00 | 0.495% | 0.379% | 103/255 |
+
+**Under half a percent of the frame moves at any strength**, and the ×8 difference map shows why:
+the change is confined to the emissive beam itself. Ground, sky, the portal ellipse, stars and the
+fog gradient are pitch black in the diff — not "small changes", *zero* changes. Visually the beam
+goes from washed cream to saturated orange with nothing else touched. This is the evidence that
+converts "changing the tone mapper" from a whole-scene re-approval into an emissive-only one.
+
+Note the strength column carefully: the changed pixel COUNT is identical at every strength (it is
+determined by which pixels are above the shoulder, not by how hard they move), while the magnitude
+scales. That is the bump behaving exactly as designed.
+
+**A capture-path limitation, found by the A/A floor and worth fixing separately.** The whole-scene
+path (`WUXING_VERIFY=<skill>`) is **not** reproducible: two identical runs differ on 0.05–0.17% of
+pixels, and `>2/255`, `>8/255` and `>32/255` come back at the *same* percentage, i.e. the differing
+pixels are entirely different rather than slightly shifted — a sparse-particle or frame-phase leak,
+not a global drift. The A/A floor exceeded the A/B signal there, so that path cannot carry a pixel
+A/B until it is fixed. `--render-vfx` is byte-identical and carries gate 2 today, at the cost of
+covering a VFX fixture rather than a full gameplay frame; the "does skin/ground/sky move" half of
+the question is answered by gate 0's identity proof plus this diff map, not by that path.
+
+**To re-run gate 2** (agents do not touch `build/`):
+
+```bash
+scripts/run_tonemap_ab.sh --vfx 0 0.6          # deterministic, carries the gate today
+scripts/run_tonemap_ab.sh --verify FIRE 0.6    # whole scene — blocked on the floor above
+```
+
+It captures the same scene twice, runs **A/A first as a noise floor** — an A/B number without one
+is uninterpretable, and here that check is what caught the `--verify` path — then reports what
+fraction of the frame moved plus a ×8 difference map. Since gate 0 proves identity below the
+shoulder, *every changed pixel is a pixel that was already above it*, so "changed %" **is** the
+approval surface.
+
+**Gate 3 — PASS on the current art direction, with one standing condition.**
+
+Answered with a *single capture* instead of a diff, so the `--verify` path's nondeterminism does
+not matter: `postfx_hue_restore = -1` switches `post_process.fs` into a **shoulder view** that
+paints exposed peak `[1,9)` magenta (the candidate's entire active band), `>= 9` cyan, and
+everything else grey. Whatever is not magenta is provably untouched.
+
+| capture | in band | above band |
+|---|---|---|
+| whole scene, `WUXING_VERIFY=FIRE`, 5 timed shots | **0.0000%** (one single pixel at one shot) | 0.0000% |
+| whole scene, `WUXING_VERIFY=TUBE`, 5 timed shots | **0.0000%** (one single pixel at one shot) | 0.0000% |
+| VFX fixtures `--render-vfx 0..5` | 0.4964% / 0 / 0.0541% / 0 / 0 / 0.0574% | 0.0000% |
+
+**No character material, ground, sky, fog or star reaches exposed peak 1.0.** The material
+regression list this gate was supposed to produce is therefore empty: on the night-arena art
+direction the candidate is the identity on every non-emissive surface in the frame, not
+approximately but exactly.
+
+The two instruments cross-validate: the shoulder view counts **0.4964%** of fixture 0 in the band
+from one capture, and the gate-2 A/B counted **0.495%** of the same fixture changed from two. Two
+independent methods agreeing to three decimals is the reason to believe either.
+
+**Standing condition — re-run gate 3 whenever the scene gets brighter.** This result is a property
+of the current content, not of the curve: every shipping map is night-time and exposure is fixed at
+`1.00` (`main.c`). Raise exposure, add a daylight arena, or land the §7.5 auto-exposure and ground
+and sky *will* cross 1.0 — which grows the approval surface into exactly the materials this gate
+just cleared. The whole point of this document is that scenes are going to get brighter, so treat
+this as a gate that expires.
+
+**Two limits worth stating.** Only `FIRE` and `TUBE` are compiled into the current binary
+(`core/skills_config.h` has the other six at `0`), so the whole-scene sample is two skills; and
+nothing anywhere reached the `>= 9` band, so the candidate's ramp-*out* — the part that keeps a hot
+core white — is currently insurance rather than an exercised path.
+
+The shoulder view rides on a negative value of the shipping knob so it needs no rebuild
+(`post_process.fs` is loaded from disk at `core/post_fx.c:193`). **Delete it, or promote it to its
+own knob, once §12.1 is decided** — a permanent debug switch rots.
+
+**Gate 4 — the human call, and it is deliberately a NARROW one.**
+
+Gates 0–3 already settled everything that can be settled by measurement: below the shoulder the
+output is bit-identical, under 0.5% of a frame moves, and 0.0000% of non-emissive content is even
+eligible to change. So gate 4 is **not** "re-approve the game's look". Ground, characters, sky,
+fog, UI and every material are out of scope — they provably do not move. The only open questions
+are (a) which strength, and (b) does anything about the *emissive* look get worse.
+
+Judge it **live and in motion**, never from stills. `core/tuning.c` watches `tuning.cfg`'s mtime
+and `main.c:1075` calls `Tuning_Update()` every frame, so the knob takes effect on the next frame
+with no restart and no rebuild:
+
+```bash
+scripts/set_tonemap.sh 0.6        # or 0 / 0.35 / 1.0
+scripts/set_tonemap.sh blind      # applies one of 0/0.35/0.6/1.0 without telling you
+scripts/set_tonemap.sh reveal
+scripts/set_tonemap.sh off        # ALWAYS, when finished - see the landmine below
+```
+
+Use `blind` for the actual decision. A visible A/B cannot be judged honestly once you know which
+side is the new one; "the new one looks better" is the result that protocol always produces.
+
+**Which VFX to point it at.** Measured, not guessed: the shoulder view was swept over all 46 NEWFX
+fixtures and half of them have *no pixels at all* in the candidate's band, so testing on those
+shows literally nothing. Sustained in-band area at the default 90-frame warmup:
+
+Cite fixtures by NAME — indices are positional and shift when the manifest is pruned, which it
+was on 17/08/2026 (`scripts/vfx_fixture_index.py --list`, or pass the name straight to
+`render_vfx_matrix.sh`).
+
+| fixture | in band | note |
+|---|---:|---|
+| VOLUME TRAIL | 2.54% | largest — use it to see *whether* anything changed at all |
+| FLAME VOLUME | 0.76% | warm core: the "does it still read HOT" risk lives here |
+| SHIELD SHELL | 0.66% | the project's own reference fixture — but see the warning below |
+| LIGHT SHAFT | 0.61% | |
+| ENERGY ORB | 0.55% | saturated magic hue |
+| BEAM | 0.50% | |
+| PROJECTILE | 0.47% | **the only fixture with anything above peak 9** (0.073%), so the only one that exercises the ramp-*out* that keeps a hot core white |
+| BLACK HOLE | 0.03% | **not** a useful probe — see the correction below |
+| PROJECTILE | *deleted 17/08/2026* | was 0.47%, and the only fixture above peak 9 |
+
+> [!WARNING]
+> **This table was wrong once, and the way it was wrong is the lesson.** Its first
+> version ranked `BLACK HOLE` first at **7.35%**, three times the next effect. That
+> number was the DEFAULT shader: `black_hole_swirl.fs`, `ground_aura.fs` and
+> `plasma_shell.fs` all redefined `vnoise3`/`fbm3` that their own `#include` of
+> `noise.glsl` already exported, GLSL rejected the duplicate body, and raylib answered
+> the failed compile with the default shader and a valid non-zero id. Re-measured after
+> the fix, `BLACK HOLE` is **0.03%** — bottom of the table, not top — and `ENERGY ORB`
+> moved 0.67% → 0.55%. A measurement taken through the game measures whatever the game
+> actually drew, which is not always the thing you named. `scripts/validate_shader_includes.py`
+> now fails the build on this collision class (wired into `CMakeLists.txt`).
+
+**That table is a LOWER BOUND — it samples one frame.** Transient effects peak early and the
+90-frame capture misses them entirely: `ENERGY BURST` reads 0.00% at warmup 90 and **2.56% at
+warmup 40**; `SHOCK RING` 0.00% at 90 and 0.49% at 40; `LIGHTNING ARC` only 0.07%, only at warmup
+20. A "0%" in a single-frame sweep means "not in the band *at that frame*", nothing more — which is
+also why gate 4 is judged live, where the whole lifetime is visible.
+
+Worth a separate look: `LIGHTNING IMPACT` stayed at 0.00% at all four sampled warmups. If that
+holds under a proper time sweep it means the game's most ionised effect never crosses exposed peak
+1.0 — and therefore never crosses the 1.25 bloom threshold either, which would be a finding about
+the effect's authoring rather than about this curve.
+
+**What to look at** (all of it emissive, all of it in motion at gameplay camera distance):
+
+- does the hot core still read as HOT? This is the known risk — restoration pulls the non-peak
+  channels down, and at strength 1.0 a measured core went `(0.777, 0.890, 0.937)` to
+  `(0.332, 0.620, 0.937)`: more saturated, markedly darker;
+- is the hue the right ELEMENT hue, or has it over-shot into a different one;
+- the §8.3 eyeball list that pixels cannot prove: hue reversal, sort popping, bloom crawl on a
+  thin moving bolt, a white bloom tube swallowing a beam;
+- both a dark arena and the brightest scenery available — the candidate acts on anything above
+  exposed peak 1.0, which in a night arena is the VFX and nothing else.
+
+**Landmine:** `tuning.cfg` persists across sessions, so a strength left in it silently becomes the
+baseline for every later visual judgement (`ENGINE_LANDMINES.md` #13). Run
+`scripts/set_tonemap.sh off` when finished.
+
+**Recording the outcome:** the chosen strength goes here with its reason, and `s_hueRestore`'s
+default in `core/post_fx.c` changes from `0.0f` to it — that is a Core edit and a rebuild, and it
+is the point at which the shoulder-view diagnostic in `post_process.fs` should be deleted.
+
+Gate 5 (Mali cost + `mediump` behaviour of the `x / peak` rescale) remains.
+
+---
+
+1. **Per-channel ACES is the binding constraint at high exposure, and a hue-preserving tone map
+   is the real fix.** At EV2 over a 1.0 white background the tone-mapped background sits at
+   `0.915`, so the entire readable range for any effect is what fits below it. Every hue in the
+   chart had to be authored with its darkest channel at or under ~0.05 to clear
+   `rgbDistance 0.10` there. §7.4 currently rules a tone-mapper change out of scope for phases
+   0–4; that is the right call for *sequencing* and the wrong one for *ambition*. Tone mapping on
+   max-channel/luminance and rescaling RGB — blending toward the per-channel result only in the
+   top stop — is what buys back hue in the highlights. It needs its own whole-scene approval.
+2. **§6.1/§6.2's coverage ranges are below what §8.2 requires.** The reference fixture needs
+   `coverage ≈ 0.68` to pass on bright ground; §6.2 recommends `0.20..0.55` for magic. On bright
+   backgrounds contrast comes from coverage, not from emission. The ranges need re-deriving
+   against the chart rather than being quoted as-is.
+3. **The RGBA8 fallback has no oracle.** §7.1 keeps the fallback and states that coverage remains
+   the mechanism there, but nothing measures it. On that path `emissionGain > 1` clips *before*
+   bloom, so the core flattens to white and loses hue — the worst case of the failure this
+   document targets, on the path that ships to mobile.
+4. **No temporal metric.** §8.3 lists bloom crawl and exposure pumping as eyeball checks only. A
+   two-frame sub-pixel-shift capture on a thin bolt, asserting a bound on the per-pixel delta in
+   the halo, would make the most visible AAA tell measurable.
+
 ## 10. Prohibited shortcuts
 
 - Do not raise every `emissiveBoost` until the effect is visible.
@@ -631,3 +1205,16 @@ The project is done with this specification only when all of the following are t
 | 2026-08-16 | Codex | Completed final material audit for generic effect, metaball, puddle, rim, taiji, trail glow and trail volume outputs | `core/shaders/{effect_material,metaball_threshold,puddle,rim_glow,taiji}.fs`; `core/trails/shaders/{trail_glow,trail_volume}.fs` | Appearance contract passes; remaining direct outputs are intentional debug/data/post-FX paths |
 | 2026-08-16 | Codex | Runtime audit found two raw-loaded legacy shaders cannot consume shared includes; reverted only those two include migrations to preserve runtime compilation | `core/shaders/metaball_threshold.fs`; `core/trails/shaders/trail_glow.fs`; appearance contract | Runtime-safe exceptions documented; migrate them only after their loader is upgraded |
 | 2026-08-16 | Codex | Fixed aura shader function-name collision exposed by the full-game compile (`noise.glsl` and aura had duplicate `vnoise3/fbm3`) | `core/shaders/aura_shell.fs` | Renamed aura-local noise functions; preserves its tuned 3-octave field while allowing shared includes |
+| 2026-08-17 | Claude (Renderer) | Rebuilt `bright_vfx` into the real §8 chart: shipping ACES + shipping bloom shaders instead of a Reinhard probe and a re-implementation, §5.4 spatial fixture instead of a flat quad, all 8 §8.2 metrics, 6 hues x 5 backgrounds x 3 exposures x bloom off/on, both draw sites | `third_party/vulkan/tests/rlvk_visual_test.c`; `core/shaders/{post_process,bloom_bright,bloom_downsample,bloom_upsample}.fs` | Ground-truth: PASS, suite 25/25 normal and with validation |
+| 2026-08-17 | Claude (Renderer) | Added §5.5 (corona radiance), §5.6 (halo laws), §5.7 (darkening budget), §7.2 (bloom threshold vs background), §7.3b (output dither), §8.1 six-hue note, §8.2 recorded metric changes, §9b, §12 | measurements from the rebuilt `bright_vfx` chart | Ground-truth: every number quoted was read back from the chart |
+| 2026-08-17 | Claude (Renderer) | Fixed the flush-scoped blend toggle in the game's postFX composite (VFX regions were multiplied by the scene's accumulated alpha and clipped to white) and added the `colorblend_flush` scenario | `core/post_fx.c`; `third_party/vulkan/tests/rlvk_visual_test.c` | Ground-truth: `colorblend_flush` pins both halves; promoted to `ENGINE_LANDMINES.md` #16 |
+| 2026-08-17 | Claude (Renderer) | Output dither in `post_process.fs` (sin-free hash) and NaN/Inf containment in the shared resolver | `core/shaders/post_process.fs`; `core/shaders/common/vfx_composite.glsl` | Core suites 68/73, unchanged baseline failures |
+| 2026-08-17 | Claude (Renderer) | Halo re-derived as an annulus (§5.6) after the measurement floor showed the old profile passing the ordering test by not existing; dither clamped after the fact | `third_party/vulkan/tests/rlvk_visual_test.c`; `core/shaders/post_process.fs` | Ground-truth: dark tile `dH 0.47`, white tile `0.017` |
+| 2026-08-17 | Claude (Renderer) | §11b measured FLAME VOLUME (38) and PROJECTILE (20); wired the harness into the working protocol of root/core/skills/rlvk `CLAUDE.md` | matrix runs; `CLAUDE.md`, `core/CLAUDE.md`, `skills/CLAUDE.md`, `third_party/vulkan/CLAUDE.md` | Ground-truth: structure collapses 4x/8x/10x; PROJECTILE darkens only 28.7% |
+| 2026-08-17 | Claude (Renderer) | §11b — `render_vfx_matrix.sh` + `analyze_vfx_matrix.py`: measure a shipping effect across the §8.1 backgrounds at identical framing, plate-referenced; first result is VOLUME TRAIL | `scripts/render_vfx_matrix.sh`, `scripts/analyze_vfx_matrix.py`; `WUXING_VFX_BG` (main.c:1174) | Ground-truth: structure 0.327 -> 0.085 dark to white, std 40.9 -> 16.5 |
+| 2026-08-17 | Claude (Renderer) | Fixed duplicate `vnoise3`/`fbm3` in three shaders that were silently compiling to the DEFAULT shader; added a configure-time guard; re-measured the gate-4 table | `core/shaders/{black_hole_swirl,ground_aura,plasma_shell}.fs`; `scripts/validate_shader_includes.py`; `CMakeLists.txt` | Ground-truth: BLACK HOLE 7.35% -> 0.03% after the fix |
+| 2026-08-17 | Claude (Renderer) | Surface/resolver contract validator + CMake gate; fixed ENERGY ORB and BLACK HOLE; corrected §6.1/§6.2 coverage ranges to the measured requirement; added the RGBA8 fallback oracle `bright_vfx_ldr` | `scripts/validate_vfx_surface_contract.py`, `CMakeLists.txt`, `core/composition/{common/vc_energy_orb,taiji/vc_black_hole}.inl`, `tests/rlvk_visual_test.c` | Ground-truth: suite 27/27 normal + validation; LDR chart passes on coverage alone; bloom inert below EV1.25 there |
+| 2026-08-17 | Claude (Renderer) | §12.1 gate 4 test set — shoulder-view sweep over all 46 NEWFX fixtures + a warmup sweep showing the single-frame ranking is a lower bound | `--render-vfx` captures, `sandbox/vfx_test.c` name table | Ground-truth: 23/46 read zero at warmup 90, but ENERGY BURST is 2.56% at warmup 40 |
+| 2026-08-17 | Claude (Renderer) | §12.1 gate 4 procedure — live hot-reload toggle with a blind mode, and the scope narrowed to emissive-only by gates 0-3 | `scripts/set_tonemap.sh`; `core/tuning.c`, `main.c:1075` (hot-reload verified) | Procedure; the call itself is the owner's |
+| 2026-08-17 | Claude (Renderer) | §12.1 gate 3 — shoulder-view diagnostic; whole-scene captures show 0.0000% of non-emissive content in the candidate's band, cross-validated against the gate-2 diff | `core/shaders/post_process.fs`; captures via `WUXING_VERIFY` and `--render-vfx` | Ground-truth: two instruments agree to 0.4964% vs 0.495% on the same fixture |
+| 2026-08-17 | Claude (Renderer) | §12.1 — hue-preserving candidate behind `postfx_hue_restore` (default 0), gates 0 and 1 executed and PASS, gate 2 tooling written for the human | `core/shaders/post_process.fs`; `core/post_fx.c`; `scripts/run_tonemap_ab.sh`; `scripts/diff_captures.py`; `core/tests/color_grade_lut_test.c` | Ground-truth: `tonemap_shoulder` d=0.00000 outside the shoulder; chart passes at 3 strengths |

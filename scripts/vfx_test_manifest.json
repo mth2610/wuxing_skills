@@ -250,18 +250,6 @@
       "draw_call": "VFX_ComposePortalDisc($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, $PROG)"
     },
     {
-      "source": "common/vc_projectile.inl",
-      "fn": "VFX_ComposeProjectile",
-      "label": "PROJECTILE",
-      "category": "common",
-      "fixture": "follower",
-      "lifecycle": "trail",
-      "_auto": true,
-      "type": "continuous",
-      "spawn_call": "VFX_ComposeProjectile($XFORM, VC_MAT_FIRE, 1.5f)",
-      "kill_fn": "VFX_KillProjectile"
-    },
-    {
       "source": "common/vc_rune_circle.inl",
       "fn": "VFX_ComposeRuneCircle",
       "label": "RUNE CIRCLE",

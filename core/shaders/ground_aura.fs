@@ -10,7 +10,14 @@ uniform float u_opacity;
 uniform float u_scrollSpeed;
 uniform float u_noiseScale;
 
-float vnoise3(vec3 p) {
+// Locally-named noise: core/shaders/common/noise.glsl already exports the same symbol(s), and GLSL has no
+// overloading by scope - two bodies for one name is a compile error, and raylib
+// answers a failed compile with the DEFAULT shader, so the effect silently renders
+// as something else entirely. The local field is kept rather than dropped because
+// it is NOT the shared one (different octave count/lacunarity), so deleting it
+// would change the look. Same fix as aura_shell.fs. Guarded by
+// scripts/validate_shader_includes.py at configure time.
+float ga_vnoise3(vec3 p) {
     vec3 i = floor(p);
     vec3 f = fract(p);
     f = f * f * (3.0 - 2.0 * f);
@@ -26,11 +33,11 @@ float vnoise3(vec3 p) {
                mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y), f.z);
 }
 
-float fbm3(vec3 p) {
+float ga_fbm3(vec3 p) {
     float v = 0.0;
     float a = 0.5;
     for (int k = 0; k < 3; k++) {
-        v += a * vnoise3(p);
+        v += a * ga_vnoise3(p);
         p  = p * 2.1 + vec3(7.3, 13.1, 5.7);
         a *= 0.5;
     }
@@ -67,8 +74,8 @@ void main() {
         -r * (u_noiseScale * 0.5) - (u_time * u_scrollSpeed) // Trừ time để chảy ra ngoài
     );
     
-    float n1 = fbm3(dom);
-    float n2 = fbm3(dom * 1.8 + vec3(u_time * 0.4));
+    float n1 = ga_fbm3(dom);
+    float n2 = ga_fbm3(dom * 1.8 + vec3(u_time * 0.4));
     
     // Ép các dải nhiễu thành dạng sợi sáng chói
     float ridge = 1.0 - abs(2.0 * n1 - 1.0);

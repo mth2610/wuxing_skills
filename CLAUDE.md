@@ -11,6 +11,9 @@ C / Raylib 6.0 game project. Rendering backend: **Vulkan 1.1 via `rlvk` (priorit
   look still falls short (the toolkit is all particles, the geometry half is unused), and
   the ordered task list. `core/docs/ELDEN_VFX_SPEC.md` is now history.
 - `core/docs/API.md` — Full engine API (particle, trail, force field, shader, mesh...)
+- `third_party/vulkan/docs/BRIGHT_BACKGROUND_VFX_SPEC.md` — **how a VFX must behave on bright
+  scenery**, and §11b the harness that measures whether yours does. Read §5 before authoring
+  any effect's coverage/emission split.
 - `skills/docs/RECIPE.md` — **One-prompt skill creation guide** (archetype picker, command sequence, element presets, scale rules, aesthetic checklist)
 - `core/particles/docs/GPU_BACKEND_API.md` — internal GPU particle backend
 - `environment/docs/API.md` — Lighting, shadow, fog system
@@ -41,6 +44,30 @@ C / Raylib 6.0 game project. Rendering backend: **Vulkan 1.1 via `rlvk` (priorit
 6. **`AGENT_CODE_STANDARD.md`** — **before writing any code** (C99, memory, meter-scale, shaders, backend rules).
 
 Then **grep the actual `.h` for ground truth** — docs can lag; source wins (`DOC_MAINTENANCE.md` §5). Read with intent: don't read a whole file when a grep + one section will do; only read another module's `.h` when you need its signature (see "Token-efficiency rules" below).
+
+### Verifying a VFX on a bright background (MANDATORY before calling one done)
+Every module that produces an effect — `core/`, `core/composition/`, `skills/`, `third_party/vulkan/` —
+verifies it the same way, because "looks right in the night arena" has repeatedly meant "invisible
+or flat in daylight":
+
+```bash
+scripts/render_vfx_matrix.sh "FLAME VOLUME" 40 90 140   # name, not index
+```
+
+Renders the fixture across dark / mid / white / warm / cool backgrounds at **identical camera,
+frame and resolution**, plus a background plate per colour, and reports footprint, **darken%**
+(does it attenuate the background at all, or only add light), **structure** (internal contrast),
+and chroma. Read the result against `BRIGHT_BACKGROUND_VFX_SPEC.md` §11b, which also records what
+the first three measured effects scored. **Cite fixtures by NAME, never by index** —
+NEWFX indices are positional, so pruning one entry renumbers every entry after it and any
+document holding a number silently starts pointing at a different effect
+(`scripts/vfx_fixture_index.py --list` resolves them).
+
+Two rules the harness exists to enforce, both of which produced wrong conclusions here first:
+- **Never compare screenshots at different apparent size** — background and scale become
+  inseparable, and at a smaller size every structure merges.
+- **The background reference is a rendered plate**, never derived from the frame: the
+  background's own bloom breaks any in-frame estimate.
 
 ### Where to write
 - **Work in progress / status / backlog / session notes** → your module's **`docs/PROGRESS.md`**. Project-wide milestones → **`ROADMAP.md`**.

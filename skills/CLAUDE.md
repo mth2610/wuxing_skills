@@ -3,6 +3,20 @@
 ## Role
 Manages the entire **Skills** module of the Wuxing Skills project. Responsible for creating, maintaining, and debugging skills across the 6 elements: Water, Wood, Fire, Earth, Metal, Taiji.
 
+
+## Bright-background check (MANDATORY before a skill's VFX is done)
+A skill authored and reviewed in the night arena is not verified. Run
+
+```bash
+scripts/render_vfx_matrix.sh "FLAME VOLUME" 40 90 140   # name, not index
+```
+
+and read it against `third_party/vulkan/docs/BRIGHT_BACKGROUND_VFX_SPEC.md` §11b. The number that
+matters most is **darken%**: an effect that never pulls a channel below the background is riding
+on added light and will wash out the moment the scene gets brighter, however good it looks tonight
+(§4, §5.7). Author the coverage/emission split per §5.2–5.6 rather than raising emissive until
+something is visible (§10).
+
 ## Scope
 - **Read/write:** The entire `skills/` directory (all elements: `water/`, `wood/`, `fire/`, `earth/`, `metal/`, `taiji/`)
 - **Read/write (shared doc):** `../core/docs/API.md` — Skills Agent may edit it directly to document usage notes/conventions discovered while building skills (e.g. confirming a `[!NOTE]` assumption); see "Updating ../core/docs/API.md" below. Still never edit `core/*.c`/`*.h` themselves.

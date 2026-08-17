@@ -79,7 +79,16 @@ Every regression guard must fail on the pre-fix behavior and pass after the fix.
    - Public API changed → regenerate `core/docs/API.md` as described below and review the diff.
    - `VFX_Compose*` added/removed → run `python3 scripts/sync_vfx_test.py --check`; coordinate with the Sandbox owner before applying changes under `sandbox/`.
    - VFX surface registry changed → run `python3 scripts/validate_vfx_surface_registry.py`.
-4. **Visual confirmation:** Core has no automated visual tier yet. For appearance, integration, draw-order, or backend behavior, provide the exact sandbox fixture and expected observation for the human to run. Do not claim visual verification from green headless tests.
+4. **Bright-background behaviour (MANDATORY for any effect you author or change):**
+   `scripts/render_vfx_matrix.sh "<FIXTURE NAME>" 40 90 140` renders the fixture across five
+   background luminances at identical camera/frame and reports **darken%** (does it attenuate the
+   background, or is it riding on added light — `BRIGHT_BACKGROUND_VFX_SPEC.md` §5.7),
+   **structure** (internal contrast), and chroma. This is automated and headless; use it instead
+   of asking the human to eyeball two screenshots. Measured baselines for VOLUME TRAIL,
+   FLAME VOLUME and PROJECTILE are in spec §11b — compare against those, not against nothing.
+5. **Everything else visual:** Core has no automated tier for draw-order, integration or backend
+   appearance. Provide the exact sandbox fixture and expected observation for the human to run.
+   Do not claim visual verification from green headless tests.
 5. **Full game build/run:** human-run only, final confirmation; never read or write `build/`.
 
 For a new behavior or bug fix, add the focused repro first. If a test is impossible, explain the missing observation boundary and use the narrowest available probe rather than silently skipping verification.

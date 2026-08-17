@@ -300,7 +300,7 @@ static void Beam_BuildDeform(VC_Beam *b)
     });
 
     // 2. BODY NOISE. Breaks the sine's regularity — a pure sine reads as a
-    //    machined part (the same reason vc_projectile.inl gives its two wisps
+    //    machined part (the same reason the deleted vc_projectile.inl gave its wisps
     //    different turn rates). Small amplitude: this is variation, not shape.
     MeshDeform_AddLayer(&b->deform, (MeshDeformLayer){
         .kind = MESH_DEFORM_NOISE_CHANNEL,

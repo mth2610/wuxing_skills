@@ -25,6 +25,7 @@
 - **An R32F render target that is blended into or LINEAR-sampled is optional behaviour, and its absence is silent.** The spec's Mandatory Format Support tables require `COLOR_ATTACHMENT_BLEND` and `SAMPLED_IMAGE_FILTER_LINEAR` for `R16_SFLOAT` but **not** for `R32_SFLOAT` (only `SAMPLED_IMAGE` + `COLOR_ATTACHMENT` are guaranteed there). rlvk queried no format features at all until 2026-08-11, so `rlvkGetVkTextureFormat` handed out `VK_FORMAT_R32_SFLOAT` and every caller assumed the rest. Desktop drivers and MoltenVK do provide it — which is exactly why nothing catches it before a mobile driver. **Rule:** ask `rlvkFormatSupportsBlend()` / `rlvkFormatSupportsLinearFilter()` before relying on either, and fall back to R16F or unorm (both mandatory) when false. `Caps.floatBlendR32` / `Caps.floatFilterR32` are cached at init and the init log warns once. Scenario `float_blend_rt` asserts the caps agree with what the device actually does (3 additive writes must read back 3.0).
 
 ### Pipeline / draw safety
+- **A blend-state toggle around a batched draw does nothing unless the batch flushes inside it.** `rlDisableColorBlend(); DrawTexturePro(...); rlEnableColorBlend();` re-enables blending before the queued draw is ever submitted, so the draw blends after all — identical to `glDisable(GL_BLEND)` under GL, so this is an API footgun on BOTH backends, not an rlvk quirk. Found while building `bright_vfx`: the composite came back multiplied by the scene target's accumulated alpha (additive VFX push it above 1.0) and read back post-ACES values above 1.0, which that curve cannot produce. `core/post_fx.c` had the same shape at its bloom prefilter and its final composite; the latter was over-brightening every VFX region and clipping it to white. **Rule:** `rlDrawRenderBatchActive()` before restoring the state. Scenario `colorblend_flush` pins both halves. Promoted to `ENGINE_LANDMINES.md` #16.
 - **Rendering into an FBO, switching to another FBO, then sampling the first gives white/black output.** Closing a Vulkan render pass is not a layout transition; switch the outgoing colour image to shader-read first. → §7.32 (`fbo_switch`)
 - **A colour-layer `ClearBackground()` erases scene occlusion despite `rlDisableDepthMask()`.** rlvk's explicit clear must honour the active depth write mask, just as `glClear` does. → §7.31 (`depth_mask_clear`)
 - **Particles/VFX render as opaque squares with black borders** — looked like a blend/alpha bug; was a *stale pipeline* (failed build left the old one bound, wrong shader). Skip the draw when bind fails. → §7.2
@@ -36,6 +37,11 @@
 - **Device lost (GPU timeout) after heavy VFX ran a while** — ring/fence lifecycle desync, not a value bug. Fix the FIRST unchecked step (`vkAcquireNextImageKHR`). → §7.3
 - **Present/readback lifecycle faults.** → §7.6
 - **`VUID-…-oldLayout-01211` ×30 in the validated suite** — two independent layout-transition causes. → §7.9
+
+### Shutdown cleanup
+- **Symptom:** `run_rlvk_runtime_test.sh` passes but validation reports `VUID-vkDestroyDevice-device-05137` for compute objects.
+- **Cause:** `rlUnloadShader()` intentionally retains linked compute programs, while `rlglClose()` omitted their `compMod` and `computePipeline` cleanup in `rlvk_core.inl`.
+- **Rule:** every new device-owned object must have a shutdown destroy path, including objects deliberately retained by public API semantics. → HANDOFF §7.33
 
 ### Perf traps
 - **§7.27 (FIXED 2026-07-22, see §7.29) — the `Caps.noSampledDepth` depth twin was bounced at EVERY scope close, even when nothing samples it.** Fix: a sticky `sampleWanted` flag latched by `rlvkResolveTexBinding`; until something actually binds the twin, scope close emits no depth barriers and no copies. Measured on a 2048² RT: **13.4 → 8.9 ms/frame**. Also note the doc claim below that the cost is "unchanged by resolution" was **wrong** — it was never measured; `perf_rt256` vs `perf_rt2048` shows it scales with pixels. Historical analysis follows.
@@ -92,3 +98,9 @@ These are decisions, not accidents — don't "simplify" them away: driver quirks
   advertising counters it does not fill. Treat GPU-side timing as unavailable on
   macOS and use Instruments / Xcode's Metal frame capture when a real GPU
   breakdown is needed.
+
+## Patch Log
+
+| Date | Editor | Section edited | Based on which source | Tier |
+|---|---|---|---|---|
+| 2026-08-16 | Codex | Shutdown cleanup | `rlvk_core.inl`, `rlvk_shader.inl`, `tests/rlvk_runtime_test.c` | Ground-truth |

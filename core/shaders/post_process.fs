@@ -78,6 +78,49 @@ vec3 acesFilmic(vec3 x) {
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
 
+// ── Hue-preserving highlight restoration (CANDIDATE, default OFF) ─────────────
+//
+// Why: the ACES fit above is applied PER CHANNEL, so as one channel enters the
+// shoulder the others keep climbing and the hue slides toward white. Measured on
+// the bright_vfx chart, a saturated body over a white background loses chroma
+// 0.539 -> 0.383 -> 0.222 across exposures 0.5/1/2. That is the single largest
+// remaining obstacle to bright-background VFX, and no amount of authoring fixes it.
+//
+// How this stays approvable: it is a BUMP, not a replacement.
+//   * peak < 1.0  -> w = 0 -> the branch is not taken and the result is BIT-IDENTICAL
+//                    to the curve every already-approved material was authored against.
+//                    This is what keeps a tone-mapper change from being a whole-scene
+//                    change; rlvk's `tonemap_shoulder` scenario asserts it.
+//   * 1.0 .. 5.0  -> hue restoration ramps in. This is where the saturated body and
+//                    corona live (§5.4) and where the chroma is currently lost.
+//   * above 5.0   -> it ramps back OUT, so a genuinely hot core still reaches white.
+//                    Pure hue preservation would keep the core saturated forever,
+//                    which contradicts §5.4's "the compact core may reach white".
+//
+// One knob only (`postfx_hue_restore`, 0..1) so the approval surface is one number.
+float acesFilmicScalar(float x) {
+    return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+}
+
+uniform float u_hueRestore;   // 0 = current shipping curve, exactly
+
+vec3 toneMapScene(vec3 x) {
+    vec3 perChannel = acesFilmic(x);
+    if (u_hueRestore <= 0.0) return perChannel;
+
+    float peak = max(x.r, max(x.g, x.b));
+    if (peak <= 0.0) return perChannel;
+
+    float w = smoothstep(1.0, 2.0, peak) * (1.0 - smoothstep(5.0, 9.0, peak));
+    w *= clamp(u_hueRestore, 0.0, 1.0);
+    if (w <= 0.0) return perChannel;
+
+    // Tone map the PEAK and carry the channel ratios through unchanged: the hue is
+    // whatever it was in scene-linear, only the level is compressed.
+    vec3 hueKept = (x / peak) * acesFilmicScalar(peak);
+    return mix(perChannel, hueKept, w);
+}
+
 void main() {
     vec2 uv = fragTexCoord;
     vec2 toCenter = uv - vec2(0.5);
@@ -146,8 +189,9 @@ void main() {
     }
 
     // 2b. Tone mapping
+    vec3 exposedScene = sceneCol.rgb * u_exposure;
     if (u_tonemapEnabled > 0.5) {
-        sceneCol.rgb = acesFilmic(sceneCol.rgb * u_exposure);
+        sceneCol.rgb = toneMapScene(exposedScene);
     }
 
     // 3. Color Grading
@@ -190,6 +234,50 @@ void main() {
         float len = length(toCenter);
         float darkness = smoothstep(u_vignetteRadius - u_vignetteSoftness, u_vignetteRadius, len);
         sceneCol.rgb *= (1.0 - darkness);
+    }
+
+    // 5. Output dither.
+    //
+    // The swapchain is 8-bit. The widest, flattest gradients in this game are
+    // exactly the things this pipeline is built to produce - a 32 px VFX halo and
+    // the bloom skirt around it - and on a bright background those quantise into
+    // visible concentric rings ("bet mau"). One LSB of triangular-PDF noise breaks
+    // the ring into dither and costs two hashes.
+    //
+    // NO sin() IN THE HASH. fract(sin(x)) noise degenerates on Mali at large
+    // domains (ENGINE_LANDMINES.md / the Mali hash landmine) and gl_FragCoord IS a
+    // large domain; this is Jimenez's interleaved-gradient hash, which is sin-free.
+    float d0 = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    float d1 = fract(52.9829189 * fract(dot(gl_FragCoord.xy + 17.0, vec2(0.06711056, 0.00583715))));
+    sceneCol.rgb = clamp(sceneCol.rgb + vec3((d0 + d1 - 1.0) * (1.0 / 255.0)), 0.0, 1.0);
+    // Clamp AFTER the dither, not before: the noise is added on top of an already
+    // tone-mapped value, so without this a channel that ACES had pinned at 1.0 comes
+    // back at 1.004. The UNORM swapchain hides it, but an HDR probe reading this pass
+    // sees post-tone-map values the curve cannot produce, which is exactly the kind of
+    // "impossible number" that sent bright_vfx chasing a phantom.
+
+    // ── Shoulder view (DIAGNOSTIC: set postfx_hue_restore = -1) ──────────────
+    //
+    // Answers gate 3 of §12.1 in ONE capture instead of a diff: it paints where the
+    // hue-restoration candidate is even allowed to act. Anything not magenta is
+    // provably untouched by it, so "which materials need re-approving" stops being a
+    // judgement call.
+    //   magenta = exposed peak in [1, 9)  -> the candidate's active band, i.e. the
+    //             entire approval surface
+    //   cyan    = exposed peak >= 9       -> above the band, candidate is identity here
+    //   grey    = below 1.0               -> bit-identical, nothing to approve
+    //
+    // Rides on the existing u_hueRestore uniform rather than adding its own, because
+    // this shader is loaded from disk at runtime (core/post_fx.c:193) while a new
+    // uniform would need post_fx.c plumbing and therefore a full rebuild. Shipping
+    // values are 0..1, so a negative value is free to mean something else. Delete this
+    // block once §12.1 is decided — a permanent debug switch rots (rlvk methodology 3).
+    if (u_hueRestore < -0.5) {
+        float peak = max(exposedScene.r, max(exposedScene.g, exposedScene.b));
+        float g = dot(sceneCol.rgb, vec3(0.2126, 0.7152, 0.0722)) * 0.30;
+        if      (peak >= 9.0) sceneCol.rgb = vec3(0.0, 0.9, 1.0);
+        else if (peak >= 1.0) sceneCol.rgb = vec3(1.0, 0.0, 0.8);
+        else                  sceneCol.rgb = vec3(g);
     }
 
     finalColor = sceneCol * fragColor;

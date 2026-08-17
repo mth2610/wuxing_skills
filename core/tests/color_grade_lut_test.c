@@ -167,7 +167,11 @@ int main(void)
 
     /* Applied after tone mapping: a LUT is display-referred, and feeding it HDR
      * would clamp every highlight into the top slice. */
-    const char *tone = shader ? strstr(shader, "sceneCol.rgb = acesFilmic") : NULL;
+    /* The marker tracks the tone-map CALL SITE, not the curve's name: the shipping
+     * curve is now reached through toneMapScene(), which dispatches between the ACES
+     * fit and the hue-preserving candidate. The invariant under test is unchanged —
+     * a display-referred LUT must come after whichever curve ran. */
+    const char *tone = shader ? strstr(shader, "sceneCol.rgb = toneMapScene") : NULL;
     const char *lutApply = shader ? strstr(shader, "ApplyColorGradeLut(sceneCol.rgb)") : NULL;
     if (tone == NULL || lutApply == NULL || lutApply < tone) {
         fprintf(stderr, "FAIL: the LUT must be applied AFTER tone mapping\n");

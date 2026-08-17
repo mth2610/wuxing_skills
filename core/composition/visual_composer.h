@@ -562,16 +562,23 @@ bool VFX_GroundSurfaceFromMap(float worldX, float worldZ, Vector3 *outPosition,
 int VFX_ComposeSparkTrail(Vector3 pos, Vector3 vel, VC_MaterialId matId,
                           float length, float life);
 
-// ── COMPOSITE. Projectile ───────────────────────────────────────────────────
-// The reference bolt, and a SCORE over primaries with no visual idea of its own:
-// a small hot orb, a faint HAZE field, one defined RIBBON tail, and two FILAMENT
-// wisps spiralling inside the source before trailing behind it.
+// PURGE (17/08/2026): `VFX_ComposeProjectile` / `VFX_KillProjectile` and
+// `vc_projectile.inl` are DELETED, with deliberately no successor. It was measured, not
+// judged: of the three largest in-band effects it scored worst on every axis on a bright
+// background — it lost 79% of its body area, attenuated only 28.7% of its own footprint
+// (i.e. it was riding on added light, §4/§5.7), and its internal structure collapsed 10x.
+// Numbers and method: `third_party/vulkan/docs/BRIGHT_BACKGROUND_VFX_SPEC.md` §11b,
+// reproducible via `scripts/render_vfx_matrix.sh`.
 //
-// ONE-SHOT + POOLED: call once when the projectile spawns, keep the handle,
-// release it on impact. `followTransform` is caller-owned and must outlive the
-// handle — typically a static Matrix on the owning skill.
-int  VFX_ComposeProjectile(const Matrix *followTransform, VC_MaterialId mat, float radius);
-void VFX_KillProjectile(int handle);
+// It had no gameplay consumer — the only caller was the sandbox NEWFX fixture. Following
+// the F0 purge rule in `core/skill_helper.h`: the names are gone rather than pointed at
+// something else, because an alias that quietly changes meaning is how a purge turns into
+// a mystery. Rebuilding a bolt is a fresh authoring job, and §5.2–5.6 is the recipe.
+//
+// NOTE `VFX_ComposeVolumeTrail` SURVIVES this. It was the projectile's field layer, but
+// it is also a fixture of its own and its shader `core/trails/shaders/trail_volume.fs` is
+// shared with the trail system's volume tubes and with SMOKE COLUMN — deleting the
+// projectile does not remove the structure-collapse defect measured in that shader.
 
 // Batch helpers for the restored water stream: bind the tube shader once and
 // draw N streams inside, instead of a Begin/End per projectile. Not generated —

@@ -25,7 +25,14 @@ uniform float u_swirlSpeed;  // sign flips spin direction — counter-rotate she
 uniform float u_noiseScale;
 uniform float u_bandWidth;   // 0..1, how tightly density concentrates around the equator band
 
-float vnoise3(vec3 p) {
+// Locally-named noise: core/shaders/common/noise.glsl already exports the same symbol(s), and GLSL has no
+// overloading by scope - two bodies for one name is a compile error, and raylib
+// answers a failed compile with the DEFAULT shader, so the effect silently renders
+// as something else entirely. The local field is kept rather than dropped because
+// it is NOT the shared one (different octave count/lacunarity), so deleting it
+// would change the look. Same fix as aura_shell.fs. Guarded by
+// scripts/validate_shader_includes.py at configure time.
+float bh_vnoise3(vec3 p) {
     vec3 i = floor(p);
     vec3 f = fract(p);
     f = f * f * (3.0 - 2.0 * f);
@@ -41,11 +48,11 @@ float vnoise3(vec3 p) {
                mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y), f.z);
 }
 
-float fbm3(vec3 p) {
+float bh_fbm3(vec3 p) {
     float v = 0.0;
     float a = 0.5;
     for (int k = 0; k < 4; k++) {
-        v += a * vnoise3(p);
+        v += a * bh_vnoise3(p);
         p  = p * 2.15 + vec3(9.1, 3.7, 6.3);
         a *= 0.5;
     }
@@ -64,8 +71,8 @@ void main() {
     angle -= u_time * u_swirlSpeed;
 
     vec3 dom = vec3(cos(angle), sin(angle), r * 2.2) * u_noiseScale;
-    float n1 = fbm3(dom + vec3(0.0, 0.0, u_time * 0.12));
-    float n2 = fbm3(dom * 1.8 + vec3(u_time * 0.2, 0.0, 0.0));
+    float n1 = bh_fbm3(dom + vec3(0.0, 0.0, u_time * 0.12));
+    float n2 = bh_fbm3(dom * 1.8 + vec3(u_time * 0.2, 0.0, 0.0));
 
     float ridge = 1.0 - abs(2.0 * n1 - 1.0);
     float wisp  = ridge * (0.35 + 0.65 * n2);

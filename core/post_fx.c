@@ -57,6 +57,7 @@ static int shadowTintLoc;
 static int highlightTintLoc;
 static int tonemapEnabledLoc;
 static int exposureLoc;
+static int hueRestoreLoc;
 static int lutTexLoc;
 static int lutEnabledLoc;
 static int lutStrengthLoc;
@@ -100,6 +101,12 @@ static float s_bloomMaxEnergy = 0.0f;
 static float s_bloomIntensityOverride = 0.0f;
 static float s_bloomThresholdOverride = 0.0f;
 static float s_bloomKnee = 0.0f;      // 0 = shader default
+// Hue-preserving highlight restoration (candidate, DEFAULT OFF). 0 keeps the
+// shipping ACES curve bit-identical; see the header comment in post_process.fs and
+// third_party/vulkan/docs/BRIGHT_BACKGROUND_VFX_SPEC.md §12.1. Because this lives in
+// tuning.cfg it PERSISTS ACROSS SESSIONS - check the file before trusting any visual
+// A/B, and record its value alongside every capture.
+static float s_hueRestore = 0.0f;
 static float s_bloomScatterOverride = 0.0f;
 static float s_bloomKaris = 1.0f;     // 1 = firefly weighting on (see below)
 
@@ -211,6 +218,7 @@ void PostFX_Init(int width, int height)
   highlightTintLoc = GetShaderLocation(compositeShader, "u_highlightTint");
   tonemapEnabledLoc = GetShaderLocation(compositeShader, "u_tonemapEnabled");
   exposureLoc = GetShaderLocation(compositeShader, "u_exposure");
+  hueRestoreLoc = GetShaderLocation(compositeShader, "u_hueRestore");
   lutTexLoc = GetShaderLocation(compositeShader, "u_lutTex");
   lutEnabledLoc = GetShaderLocation(compositeShader, "u_lutEnabled");
   lutStrengthLoc = GetShaderLocation(compositeShader, "u_lutStrength");
@@ -536,6 +544,7 @@ void PostFX_Draw(const PostFXConfig *config)
     Tuning_RegisterFloat("bloom_threshold", &s_bloomThresholdOverride, 0.0f);
     Tuning_RegisterFloat("bloom_knee", &s_bloomKnee, 0.0f);
     Tuning_RegisterFloat("bloom_scatter", &s_bloomScatterOverride, 0.0f);
+    Tuning_RegisterFloat("postfx_hue_restore", &s_hueRestore, 0.0f);
     Tuning_RegisterFloat("bloom_karis", &s_bloomKaris, 1.0f);
     Tuning_RegisterFloat("lut_strength", &s_lutStrengthOverride, 0.0f);
     s_tunablesReg = true;
@@ -574,6 +583,7 @@ void PostFX_Draw(const PostFXConfig *config)
                    (Rectangle){0, 0, (float)bloomTex.texture.width,
                                (float)bloomTex.texture.height},
                    (Vector2){0, 0}, 0.0f, WHITE);
+    rlDrawRenderBatchActive();   // see the note at the final composite below
     rlEnableColorBlend();
 
     EndShaderMode();
@@ -665,6 +675,7 @@ void PostFX_Draw(const PostFXConfig *config)
   float exposureVal = (config->exposure > 0.0f) ? config->exposure : 1.0f;
   SetShaderValue(compositeShader, tonemapEnabledLoc, &tonemapEnabledVal, SHADER_UNIFORM_FLOAT);
   SetShaderValue(compositeShader, exposureLoc, &exposureVal, SHADER_UNIFORM_FLOAT);
+  SetShaderValue(compositeShader, hueRestoreLoc, &s_hueRestore, SHADER_UNIFORM_FLOAT);
 
   // G5 — LUT. The texture is bound unconditionally: leaving a sampler unbound
   // while its branch is merely disabled is how you get a driver-dependent
@@ -711,6 +722,15 @@ void PostFX_Draw(const PostFXConfig *config)
                  (Rectangle){0, 0, (float)width, -(float)height},
                  (Rectangle){0, 0, (float)GetRenderWidth(), (float)GetRenderHeight()},
                  (Vector2){0, 0}, 0.0f, WHITE);
+  // FLUSH INSIDE THE DISABLED WINDOW. rlDisableColorBlend() is flush-scoped on both
+  // backends (it is glDisable(GL_BLEND) under GL and a pipeline-state bump under rlvk):
+  // the toggle only reaches the GPU when the batch is drawn. Re-enabling before the
+  // flush therefore hands the draw back to the blender, and this composite blends with
+  // post_process.fs's own alpha - which is the HDR scene target's ACCUMULATED alpha.
+  // Additive VFX push that above 1.0, so every VFX region came out multiplied by ~1.5
+  // and clipped to white on the 8-bit swapchain: the exact "everything blows out" symptom
+  // BRIGHT_BACKGROUND_VFX_SPEC.md exists to fix. Pinned by rlvk's colorblend_flush scenario.
+  rlDrawRenderBatchActive();
   rlEnableColorBlend();
 
   EndShaderMode();

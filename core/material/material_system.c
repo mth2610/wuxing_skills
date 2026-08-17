@@ -548,6 +548,8 @@ void AuraShellMaterial_Load(AuraShellMaterial *outMat, const AuraShellMaterialPa
     outMat->uScanStrengthLoc = GetShaderLocation(outMat->shader, "u_scanStrength");
     outMat->uDisplaceAmpLoc  = GetShaderLocation(outMat->shader, "u_displaceAmp");
     outMat->uTopYLoc         = GetShaderLocation(outMat->shader, "u_topY");
+    outMat->uHeightFadeOffLoc = GetShaderLocation(outMat->shader, "u_heightFadeOff");
+    outMat->uCoverFloorLoc    = GetShaderLocation(outMat->shader, "u_coverFloor");
     outMat->uTimeLoc         = GetShaderLocation(outMat->shader, "u_time");
 }
 
@@ -592,6 +594,10 @@ void AuraShellMaterial_Begin(AuraShellMaterial mat)
         SetShaderValue(mat.shader, mat.uDisplaceAmpLoc, &mat.params.displaceAmp, SHADER_UNIFORM_FLOAT);
     if (mat.uTopYLoc >= 0)
         SetShaderValue(mat.shader, mat.uTopYLoc, &mat.params.topY, SHADER_UNIFORM_FLOAT);
+    if (mat.uHeightFadeOffLoc >= 0)
+        SetShaderValue(mat.shader, mat.uHeightFadeOffLoc, &mat.params.heightFadeOff, SHADER_UNIFORM_FLOAT);
+    if (mat.uCoverFloorLoc >= 0)
+        SetShaderValue(mat.shader, mat.uCoverFloorLoc, &mat.params.coverFloor, SHADER_UNIFORM_FLOAT);
 }
 
 void AuraShellMaterial_End(void)

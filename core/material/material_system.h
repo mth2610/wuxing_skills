@@ -269,6 +269,8 @@ typedef struct
     float scanStrength; // ring contribution weight 0..1
     float displaceAmp;  // vertex ripple world-units amplitude
     float topY;         // world Y of cylinder top rim (for top-edge fade)
+    float heightFadeOff;// 1 = cancel the cylinder bottom-to-top alpha fade (0 = keep it)
+    float coverFloor;   // base coverage the noise modulates instead of gating (0 = off)
 } AuraShellMaterialParams;
 
 typedef struct
@@ -288,6 +290,8 @@ typedef struct
     int uScanStrengthLoc;
     int uDisplaceAmpLoc;
     int uTopYLoc;
+    int uHeightFadeOffLoc;
+    int uCoverFloorLoc;
     int uTimeLoc;
 } AuraShellMaterial;
 

@@ -70,7 +70,18 @@ static float halfToFloat(uint16_t h)
     return out;
 }
 
-static float toneMapProbe(float x) { return x / (1.0f + x); }
+// Only ever fed values in [0,1] (an 8-bit readback widened for the shared metrics), so
+// the subnormal/overflow branches a general converter needs are deliberately absent.
+static uint16_t floatToHalf(float f)
+{
+    uint32_t b; memcpy(&b, &f, sizeof(b));
+    uint32_t sign = (b >> 16) & 0x8000u;
+    int exp = (int)((b >> 23) & 0xFFu) - 127 + 15;
+    uint32_t mant = (b >> 13) & 0x03FFu;
+    if (exp <= 0) return (uint16_t)sign;              /* flush to zero */
+    if (exp >= 0x1F) return (uint16_t)(sign | 0x7C00u);
+    return (uint16_t)(sign | ((uint32_t)exp << 10) | mant);
+}
 
 static void sampleHalfRGBA(const uint16_t *pixels, int width, int x, int y, float out[4])
 {
@@ -78,11 +89,23 @@ static void sampleHalfRGBA(const uint16_t *pixels, int width, int x, int y, floa
     for (int c = 0; c < 4; c++) out[c] = halfToFloat(pixels[i + (size_t)c]);
 }
 
-static float rgbDistance3(const float a[3], const float b[3])
+// docs/BRIGHT_BACKGROUND_VFX_SPEC.md 8.2 metric primitives. rgbDistance is the
+// MAX-ABS-CHANNEL distance the spec defines, not a Euclidean one - the first
+// version of bright_vfx used sqrt() here, which silently changed what its 0.10
+// threshold meant.
+static float rgbDistanceMax(const float a[3], const float b[3])
 {
-    float dr = a[0] - b[0], dg = a[1] - b[1], db = a[2] - b[2];
-    return sqrtf(dr*dr + dg*dg + db*db);
+    float d = 0.0f;
+    for (int c = 0; c < 3; c++) { float v = fabsf(a[c] - b[c]); if (v > d) d = v; }
+    return d;
 }
+static float chromaOf(const float a[3])
+{
+    float hi = a[0], lo = a[0];
+    for (int c = 1; c < 3; c++) { if (a[c] > hi) hi = a[c]; if (a[c] < lo) lo = a[c]; }
+    return hi - lo;
+}
+static float lumaOf(const float a[3]) { return 0.2126f*a[0] + 0.7152f*a[1] + 0.0722f*a[2]; }
 
 static Texture2D radialAlphaTex(void)   // white core, alpha falls 255->0 outward (RGBA)
 {
@@ -871,94 +894,951 @@ static const char *sc_float_blend_rt(void)
     return NULL;
 }
 
-// HDR compositor oracle for bright-background VFX. The top row uses the
-// premultiplied body+emission equation; the bottom row uses the legacy
-// source-alpha additive equation. Readback is intentionally RGBA16F so this
-// catches both blend math and the loss of HDR range before tone mapping.
-static const char *sc_bright_vfx(void)
-{
-    const int FW = 400, FH = 300, TILE = 80;
-    const char *FS = "#version 330\n"
-        "in vec2 fragTexCoord; in vec4 fragColor; out vec4 finalColor;\n"
-        "uniform sampler2D texture0; uniform vec4 uSource;\n"
-        "void main(){ finalColor = uSource; }\n";
-    RenderTexture2D rt = fmtRT(FW, FH, RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
-    Shader sh = {0}; Texture2D white = {0}; const char *why = NULL;
-    if (rt.id == 0 || rt.texture.id == 0) { why = "could not create RGBA16F colour attachment"; goto done; }
-    sh = LoadShaderFromMemory(NULL, FS);
-    if (sh.id == 0 || sh.id == rlGetShaderIdDefault()) { why = "bright_vfx shader fell back to default"; goto done; }
-    Image wi = GenImageColor(8, 8, WHITE); white = LoadTextureFromImage(wi); UnloadImage(wi);
+// ── Bright-background VFX acceptance oracle ──────────────────────────────────────
+// Implements docs/BRIGHT_BACKGROUND_VFX_SPEC.md §8: the same authored fixture over
+// five background luminances, at three exposures, with bloom off (source
+// readability) and on (optical quality), for every element hue.
+//
+// Two rules shape this scenario, both learned from its own first version:
+//
+//  1. THE ORACLE MUST TONE MAP WITH THE SHIPPING CURVE. v1 measured through a
+//     Reinhard probe (`x/(1+x)`) while the game runs the ACES fit in
+//     core/shaders/post_process.fs. Every §8.2 threshold is defined "after tone
+//     mapping", and Reinhard is by far the more forgiving of the two — so the
+//     gate was green on material ACES crushes. The composite below therefore
+//     LOADS core/shaders/post_process.fs and the three real bloom shaders rather
+//     than re-implementing any of them. That makes this scenario deliberately
+//     non-hermetic: a Core change to the post chain can fail it. That is the
+//     point — it is the acceptance oracle, not a backend unit test.
+//  2. A SHADER LOADED BY PATH MUST BE GUARDED. raylib answers a missing file with
+//     the default shader and a non-zero id (the perf_ssf_filter trap, PROGRESS.md).
+//
+// The FIXTURE stays a self-contained string (spec Task 1.1): it is the thing under
+// test and must not drift with Core content. It carries the §5.4 spatial
+// hierarchy in real pixels — 3 px core, 9 px body, 32 px halo — because a flat
+// constant-colour quad (what v1 drew) cannot express, and therefore cannot test,
+// any of the core/body/halo metrics the spec is actually about.
+static void blit(Texture2D src, int dstW, int dstH);
 
-    const Color backgrounds[5] = {
-        { 5, 5, 8, 255 }, { 42, 46, 55, 255 }, { 255, 255, 255, 255 },
-        { 255, 184, 89, 255 }, { 89, 184, 255, 255 }
-    };
+static char s_brightWhy[256];
+// Gate 1 knob: BRIGHT_HUEFIX=<0..1> reruns the whole chart through the candidate
+// hue-preserving tone map (BRIGHT_BACKGROUND_VFX_SPEC.md §12.1). 0 = shipping curve.
+static float s_brightHueRestore = 0.0f;
+// The scene/composite format the chart runs through. RGBA16F is the HDR path; the
+// RGBA8 run is the MOBILE FALLBACK, where §7.1 claims "premultiplied coverage remains
+// the primary bright-background mechanism even though radiance above 1.0 is
+// unavailable". That claim had never been tested, on the path that ships to phones.
+static int s_brightSceneFormat = RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16;
+
+static Shader brightRepoShader(const char *rel)
+{
+    Shader s = { 0 };
+    const char *root = getenv("RLVK_REPO_ROOT");
+    if (root == NULL)
+    {
+        snprintf(s_brightWhy, sizeof(s_brightWhy),
+                 "RLVK_REPO_ROOT not set (run via scripts/run_rlvk_visual_test.sh)");
+        return s;
+    }
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/%s", root, rel);
+    s = LoadShader(NULL, path);
+    if (s.id == 0 || s.id == rlGetShaderIdDefault())
+    {
+        snprintf(s_brightWhy, sizeof(s_brightWhy), "%s did not load (default-shader fallback)", rel);
+        s.id = 0;
+    }
+    return s;
+}
+
+static void setF(Shader s, const char *n, float v)
+{ int l = GetShaderLocation(s, n); if (l >= 0) SetShaderValue(s, l, &v, SHADER_UNIFORM_FLOAT); }
+static void setV2(Shader s, const char *n, float x, float y)
+{ float v[2] = { x, y }; int l = GetShaderLocation(s, n); if (l >= 0) SetShaderValue(s, l, v, SHADER_UNIFORM_VEC2); }
+static void setV3(Shader s, const char *n, const float *v)
+{ int l = GetShaderLocation(s, n); if (l >= 0) SetShaderValue(s, l, v, SHADER_UNIFORM_VEC3); }
+static void setV4(Shader s, const char *n, float x, float y, float z, float w)
+{ float v[4] = { x, y, z, w }; int l = GetShaderLocation(s, n); if (l >= 0) SetShaderValue(s, l, v, SHADER_UNIFORM_VEC4); }
+static void setTex(Shader s, const char *n, Texture2D t)
+{ int l = GetShaderLocation(s, n); if (l >= 0) SetShaderValueTexture(s, l, t); }
+
+// The fixture. uMode: 0 premultiplied body+core (§5.2), 1 additive halo (§5.3),
+// 2 legacy additive control, 3 exact HDR background fill, 4 flat premultiplied
+// source (blend-law probe, both draw sites).
+static const char *BRIGHT_FIXTURE_FS =
+"#version 330\n"
+"in vec2 fragTexCoord; in vec4 fragColor; out vec4 finalColor;\n"
+"uniform sampler2D texture0;\n"
+"uniform vec4 uBox;      // x,y,w,h of this draw in target pixels\n"
+"uniform vec2 uCentre;   // fixture centre in target pixels\n"
+"uniform vec4 uProfile;  // coreR, bodyR, haloR, emissionGain  (radii in pixels)\n"
+"uniform vec2 uLevels;   // coverage, bodyIntensity\n"
+"uniform vec3 uBody;\n"
+"uniform vec3 uEmit;\n"
+"uniform float uCorona;  // saturated radiance of the 3-9 px corona\n"
+"uniform float uMode;\n"
+"void main(){\n"
+"    if (uMode > 3.5) { finalColor = vec4(uEmit, uLevels.x); return; }\n"
+"    if (uMode > 2.5) { finalColor = vec4(uBody, 1.0); return; }\n"
+"    vec2 px = uBox.xy + fragTexCoord * uBox.zw;\n"
+"    float r = length(px - uCentre);\n"
+"    float coverage = uLevels.x * (1.0 - smoothstep(uProfile.y - 1.0, uProfile.y, r));\n"
+"    float coreMask = 1.0 - smoothstep(uProfile.x - 1.0, uProfile.x, r);\n"
+"    float haloMask = 1.0 - smoothstep(0.0, uProfile.z, r);\n"
+    // The halo is an ANNULUS, not a fill. Two measurements pin both edges of it:
+    // a halo still at ~0.8 mask over the body adds back exactly the light the body's
+    // coverage removed, so the body stops attenuating the background at all (the milky
+    // film ShieldShell kept landing on) - while a halo that decays fast enough to clear
+    // the body (a squared falloff) is down to 0.009 rgbDistance by r=11 and no longer
+    // occupies the 8-32 px band §5.4 asks for at all. So: zero until just past the body
+    // radius, then a LINEAR decay out to the halo radius.
+"    haloMask *= smoothstep(uProfile.y * 0.9, uProfile.y * 2.0, r);\n"
+"    float coronaMask = 1.0 - smoothstep(uProfile.y - 1.0, uProfile.y, r);\n"
+"    if (uMode < 0.5) {\n"
+"        // §5.2: coverage attenuates the background, emission is independent HDR.\n"
+"        // THREE terms, not two. The 3-9 px corona needs its own SATURATED radiance:\n"
+"        // coverage alone cannot hold hue, because a translucent body over a\n"
+"        // complementary background mixes toward neutral (measured: warm body over\n"
+"        // the bright-cool tile fell to chroma 0.05 with a body+core-only fixture).\n"
+"        // The core stays whitened and narrow; the corona carries the element hue.\n"
+"        finalColor = vec4(uBody * uLevels.y * coverage + uBody * coronaMask * uCorona\n"
+"                          + uEmit * coreMask * uProfile.w, coverage);\n"
+"    } else if (uMode < 1.5) {\n"
+"        // §5.3: additive halo — do NOT pre-scale rgb by the mask the blend applies.\n"
+"        // The halo carries the SATURATED BODY hue, never the whitened core hue.\n"
+"        // Measured: an emission-coloured halo pumps light back into exactly the\n"
+"        // channels the body's coverage darkened, and a blue effect over a blue sky\n"
+"        // then measures rgbDistance 0.06 instead of 0.21.\n"
+"        finalColor = vec4(uBody * uProfile.w, haloMask);\n"
+"    } else {\n"
+"        // The control: same energy, no coverage. Cannot attenuate the background.\n"
+"        finalColor = vec4(uBody * uLevels.y + uBody * coronaMask * uCorona\n"
+"                          + uEmit * coreMask * uProfile.w, coverage);\n"
+"    }\n"
+"}\n";
+
+typedef struct {
+    const char *name;
+    float body[3];
+    float emit[3];
+    float chromaFloor;   // §8.2 default 0.12; per-hue exceptions are documented
+    float mode;          // 0 = premultiplied archetype, 2 = additive control row
+} BrightHue;
+
+// Six element hues, not the spec's three: Kim/Thuy are the hard cases and testing
+// only warm+blue hides them. NOTE ON `metal`: authored as deep gold, not the pale
+// white-gold the art brief suggests. A pale (0.82,0.80,0.62) body measures
+// chroma 0.02 and rgbDistance 0.04 against a white background at EV2 — i.e. it is
+// genuinely invisible there, whatever the compositor does. Near-neutral emitters
+// have no chroma headroom on bright ground; that is an authoring law, not a bug to
+// tune around. Its floor is lowered to 0.10 for the same reason (§8.2 allows a
+// deliberate, recorded metric change).
+static const BrightHue BRIGHT_HUES[] = {
+    { "thuy",    { 0.04f, 0.30f, 0.92f }, { 0.30f, 0.75f, 1.00f }, 0.12f, 0.0f },
+    { "moc",     { 0.04f, 0.66f, 0.05f }, { 0.45f, 1.00f, 0.35f }, 0.12f, 0.0f },
+    { "hoa",     { 0.92f, 0.24f, 0.03f }, { 1.00f, 0.55f, 0.14f }, 0.12f, 0.0f },
+    { "tho",     { 0.60f, 0.30f, 0.04f }, { 1.00f, 0.76f, 0.30f }, 0.12f, 0.0f },
+    { "kim",     { 0.56f, 0.40f, 0.02f }, { 1.00f, 0.92f, 0.62f }, 0.10f, 0.0f },
+    { "taicuc",  { 0.52f, 0.07f, 0.92f }, { 0.82f, 0.48f, 1.00f }, 0.12f, 0.0f },
+    { "additive-control", { 0.04f, 0.30f, 0.92f }, { 0.30f, 0.75f, 1.00f }, 0.0f, 2.0f },
+};
+#define BRIGHT_ROWS ((int)(sizeof(BRIGHT_HUES)/sizeof(BRIGHT_HUES[0])))
+
+static const float BRIGHT_BG[5][3] = {     // §8.1, linear HDR
+    { 0.02f, 0.02f, 0.02f }, { 0.18f, 0.18f, 0.18f }, { 1.00f, 1.00f, 1.00f },
+    { 1.00f, 0.72f, 0.35f }, { 0.35f, 0.72f, 1.00f },
+};
+#define BRIGHT_COLS 5
+
+#define BR_TILE_W 128
+#define BR_TILE_H 112
+#define BR_FW (BR_TILE_W * BRIGHT_COLS)
+#define BR_FH (BR_TILE_H * BRIGHT_ROWS)
+
+// §5.4 spatial hierarchy, in final screen pixels.
+#define BR_CORE_R  1.5f     //  3 px wide
+#define BR_BODY_R  4.5f     //  9 px wide
+#define BR_HALO_R 16.0f     // 32 px wide
+#define BR_GAIN    4.0f
+#define BR_HALO_GAIN 0.9f   // §6.2: halo at 0.22x core energy
+#define BR_COVERAGE 0.68f
+#define BR_BODY_I   1.0f
+#define BR_CORONA   1.6f    // §5.4: the saturated 3-9 px band, well below the core
+#define BR_BOX ((int)(BR_HALO_R * 2.0f) + 8)
+
+// Game defaults, main.c:426-442. Threshold/knee/maxEnergy/scatter must track
+// PostFXConfig or this scenario stops describing the shipping look.
+#define BR_BLOOM_THRESHOLD 1.25f
+#define BR_BLOOM_INTENSITY 0.12f
+#define BR_BLOOM_KNEE      0.15f
+#define BR_BLOOM_MAXENERGY 12.0f
+#define BR_BLOOM_SCATTER   0.70f
+
+static void brightSample(const uint16_t *px, int fh, int x, int yDraw, bool flipped, float out[4])
+{
+    int y = flipped ? (fh - 1 - yDraw) : yDraw;
+    sampleHalfRGBA(px, BR_FW, x, y, out);
+}
+
+static bool brightHasNonFinite(const uint16_t *px, int count)
+{
+    for (int i = 0; i < count; i++)
+        if ((px[i] & 0x7C00u) == 0x7C00u) return true;   // half exponent all-ones = Inf/NaN
+    return false;
+}
+
+// One full post chain at a given exposure. The bloom pyramid is scene -> prefilter
+// (1/4) -> down (1/8) -> down (1/16) -> scatter-upsample back into 1/8. Every stage
+// is a uv->uv full-target blit, so bloom[uv] is the bloom of scene[uv] by
+// construction and no stage can silently mirror the pyramid against the scene.
+static uint16_t *brightComposite(RenderTexture2D scene, RenderTexture2D l0, RenderTexture2D l1,
+                                 RenderTexture2D l2, RenderTexture2D out,
+                                 Shader bright, Shader down, Shader up, Shader post,
+                                 Texture2D dummy, float exposure, bool bloomOn)
+{
     BeginDrawing();
-        BeginTextureMode(rt);
-            ClearBackground(BLACK);
-            for (int i = 0; i < 5; i++)
-            {
-                DrawRectangle(i*TILE, 0, TILE, FH/2, backgrounds[i]);
-                DrawRectangle(i*TILE, FH/2, TILE, FH/2, backgrounds[i]);
-            }
-            const float body[3] = { 0.08f, 0.35f, 0.95f };
-            const float emission[3] = { 0.04f, 0.12f, 2.4f };
-            const float coverage = 0.55f, core = 0.65f;
-            Vector4 source = {
-                body[0]*coverage + emission[0]*core,
-                body[1]*coverage + emission[1]*core,
-                body[2]*coverage + emission[2]*core, coverage
-            };
-            BeginShaderMode(sh);
-                int loc = GetShaderLocation(sh, "uSource");
-                SetShaderValue(sh, loc, &source, SHADER_UNIFORM_VEC4);
-                BeginBlendMode(BLEND_ALPHA_PREMULTIPLY);
-                    for (int i = 0; i < 5; i++)
-                        DrawTexture(white, i*TILE + 20, 55, WHITE);
-                EndBlendMode();
-                const Vector4 additive = { 0.03f, 0.10f, 0.85f, 0.40f };
-                SetShaderValue(sh, loc, &additive, SHADER_UNIFORM_VEC4);
-                BeginBlendMode(BLEND_ADDITIVE);
-                    for (int i = 0; i < 5; i++)
-                        DrawTexture(white, i*TILE + 20, FH/2 + 55, WHITE);
+    if (bloomOn)
+    {
+        BeginTextureMode(l0);
+            ClearBackground(BLANK);
+            BeginShaderMode(bright);
+                setF(bright, "u_threshold", BR_BLOOM_THRESHOLD);
+                setF(bright, "u_exposure", exposure);
+                setF(bright, "u_knee", BR_BLOOM_KNEE);
+                setF(bright, "u_maxEnergy", BR_BLOOM_MAXENERGY);
+                setV2(bright, "u_sourceTexelSize", 1.0f/BR_FW, 1.0f/BR_FH);
+                rlDisableColorBlend();   // overwrite: see the note on the composite below
+                blit(scene.texture, l0.texture.width, l0.texture.height);
+                rlDrawRenderBatchActive();
+                rlEnableColorBlend();
+            EndShaderMode();
+        EndTextureMode();
+        BeginTextureMode(l1);
+            ClearBackground(BLANK);
+            BeginShaderMode(down);
+                setV2(down, "u_texelSize", 1.0f/l0.texture.width, 1.0f/l0.texture.height);
+                setF(down, "u_karis", 1.0f);            // firefly guard on the first hop only
+                setF(down, "u_streakEnabled", 0.0f);
+                rlDisableColorBlend();
+                blit(l0.texture, l1.texture.width, l1.texture.height);
+                rlDrawRenderBatchActive();
+                rlEnableColorBlend();
+            EndShaderMode();
+        EndTextureMode();
+        BeginTextureMode(l2);
+            ClearBackground(BLANK);
+            BeginShaderMode(down);
+                setV2(down, "u_texelSize", 1.0f/l1.texture.width, 1.0f/l1.texture.height);
+                setF(down, "u_karis", 0.0f);
+                setF(down, "u_streakEnabled", 0.0f);
+                rlDisableColorBlend();
+                blit(l1.texture, l2.texture.width, l2.texture.height);
+                rlDrawRenderBatchActive();
+                rlEnableColorBlend();
+            EndShaderMode();
+        EndTextureMode();
+        BeginTextureMode(l1);
+            BeginShaderMode(up);
+                // bloom_upsample.fs writes u_scatter into ALPHA and relies on the
+                // hardware to compute mix(dst, tent, scatter) - so BLEND_ALPHA, not additive.
+                setV2(up, "u_texelSize", 1.0f/l2.texture.width, 1.0f/l2.texture.height);
+                setF(up, "u_scatter", BR_BLOOM_SCATTER);
+                BeginBlendMode(BLEND_ALPHA);
+                    blit(l2.texture, l1.texture.width, l1.texture.height);
                 EndBlendMode();
             EndShaderMode();
         EndTextureMode();
+    }
+
+    BeginTextureMode(out);
+        ClearBackground(BLANK);
+        BeginShaderMode(post);
+            setTex(post, "u_bloomTex", bloomOn ? l1.texture : dummy);
+            setTex(post, "u_lutTex", dummy);
+            setF(post, "u_bloomEnabled",     bloomOn ? 1.0f : 0.0f);
+            setF(post, "u_bloomIntensity",   BR_BLOOM_INTENSITY);
+            setF(post, "u_tonemapEnabled",   1.0f);
+            setF(post, "u_exposure",         exposure);
+            setF(post, "u_chromaticEnabled", 0.0f);
+            setF(post, "u_vignetteEnabled",  0.0f);
+            setF(post, "u_colorGradeEnabled",0.0f);
+            setF(post, "u_lutEnabled",       0.0f);
+            setF(post, "u_radialBlurEnabled",0.0f);
+            // Gate 1: BRIGHT_HUEFIX=1 reruns the entire chart through the candidate
+            // curve. Every metric stays enforced, so a run that passes proves the
+            // candidate regresses nothing; BRIGHT_DEBUG then gives the delta table.
+            setF(post, "u_hueRestore", s_brightHueRestore);
+            // OVERWRITE, never alpha-blend. Additive VFX leave alpha ABOVE 1 in the
+            // HDR scene target (BLEND_ADDITIVE accumulates alpha too), and
+            // post_process.fs passes that alpha straight through - compositing with
+            // BLEND_ALPHA then multiplies the tone-mapped image by ~1.5 and reads
+            // back values above 1.0 that ACES can never produce. The game does the
+            // same thing for the same reason (core/post_fx.c:709).
+            rlDisableColorBlend();
+            blit(scene.texture, BR_FW, BR_FH);
+            rlDrawRenderBatchActive();   // the toggle only lands at FLUSH time
+            rlEnableColorBlend();
+        EndShaderMode();
+    EndTextureMode();
     EndDrawing();
 
-    uint16_t *pixels = (uint16_t *)rlReadTexturePixels(rt.texture.id, FW, FH,
-                                                       RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
-    if (pixels == NULL) { why = "RGBA16F readback returned nothing"; goto done; }
-    for (int i = 0; i < 5 && why == NULL; i++)
+    if (s_brightSceneFormat == RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8)
     {
-        float p[4], a[4], bg[3];
-        // rlReadTexturePixels exposes the Vulkan image origin at the bottom;
-        // the draw coordinates above are top-origin raylib coordinates.
-        sampleHalfRGBA(pixels, FW, i*TILE + 24, FH - 59, p);
-        sampleHalfRGBA(pixels, FW, i*TILE + 24, FH - (FH/2 + 59), a);
-        bg[0] = backgrounds[i].r / 255.0f; bg[1] = backgrounds[i].g / 255.0f; bg[2] = backgrounds[i].b / 255.0f;
-        float expectedP[3], expectedA[3];
-        const float sourceRGB[3] = { source.x, source.y, source.z };
-        const float additiveRGB[3] = { additive.x, additive.y, additive.z };
-        for (int c = 0; c < 3; c++)
+        // Widen 8-bit to the same half-float buffer the rest of the chart reads, so one
+        // set of metrics serves both paths and the LDR run cannot quietly use easier ones.
+        unsigned char *px8 = (unsigned char *)rlReadTexturePixels(out.texture.id, BR_FW, BR_FH,
+                                                RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+        if (px8 == NULL) return NULL;
+        uint16_t *wide = (uint16_t *)RL_MALLOC((size_t)BR_FW*BR_FH*4*sizeof(uint16_t));
+        if (wide == NULL) { RL_FREE(px8); return NULL; }
+        for (size_t i = 0; i < (size_t)BR_FW*BR_FH*4; i++) wide[i] = floatToHalf(px8[i] / 255.0f);
+        RL_FREE(px8);
+        return wide;
+    }
+    return (uint16_t *)rlReadTexturePixels(out.texture.id, BR_FW, BR_FH,
+                                           RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
+}
+
+// The RGBA8 fallback held to the same contract as the HDR path. §7.1 asserts coverage
+// still carries bright-background readability there; nothing had ever checked it, and it
+// is the path that ships to phones. Emission above 1.0 clips BEFORE bloom on this path,
+// so the compact core cannot be HDR — the source-readability metrics must pass anyway,
+// on coverage alone, or the fallback is not a fallback.
+static const char *sc_bright_vfx(void);
+
+static const char *sc_bright_vfx_ldr(void)
+{
+    s_brightSceneFormat = RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+    const char *why = sc_bright_vfx();
+    s_brightSceneFormat = RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16;
+    return why;
+}
+
+static const char *sc_bright_vfx(void)
+{
+    const float exposures[3] = { 0.5f, 1.0f, 2.0f };
+    const char *why = NULL;
+    RenderTexture2D scene = {0}, l0 = {0}, l1 = {0}, l2 = {0}, outRT = {0};
+    Shader fx = {0}, bright = {0}, down = {0}, up = {0}, post = {0};
+    Texture2D white = {0}, dummy = {0};
+    uint16_t *px = NULL;
+    float chromaNoBloom[3][BRIGHT_ROWS][BRIGHT_COLS];
+    float lumaHaloNoBloom[3][BRIGHT_ROWS][BRIGHT_COLS];
+    bool flipped = false;
+    int prevLog = LOG_WARNING;
+    const char *hueEnv = getenv("BRIGHT_HUEFIX");
+    s_brightHueRestore = hueEnv ? (float)atof(hueEnv) : 0.0f;
+
+    SetTraceLogLevel(LOG_ERROR);   // GetShaderLocation warns on optimised-out uniforms
+
+    scene = fmtRT(BR_FW, BR_FH, s_brightSceneFormat);
+    outRT = fmtRT(BR_FW, BR_FH, s_brightSceneFormat);
+    l0    = fmtRT(BR_FW/4,  BR_FH/4,  RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
+    l1    = fmtRT(BR_FW/8,  BR_FH/8,  RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
+    l2    = fmtRT(BR_FW/16, BR_FH/16, RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
+    if (!scene.id || !outRT.id || !l0.id || !l1.id || !l2.id)
+    { why = "could not create the RGBA16F chart / bloom targets"; goto done; }
+
+    fx = LoadShaderFromMemory(NULL, BRIGHT_FIXTURE_FS);
+    if (fx.id == 0 || fx.id == rlGetShaderIdDefault())
+    { why = "bright_vfx fixture shader fell back to default"; goto done; }
+
+    s_brightWhy[0] = '\0';
+    bright = brightRepoShader("core/shaders/bloom_bright.fs");
+    down   = brightRepoShader("core/shaders/bloom_downsample.fs");
+    up     = brightRepoShader("core/shaders/bloom_upsample.fs");
+    post   = brightRepoShader("core/shaders/post_process.fs");
+    if (!bright.id || !down.id || !up.id || !post.id) { why = s_brightWhy; goto done; }
+
+    { Image wi = GenImageColor(8, 8, WHITE); white = LoadTextureFromImage(wi); UnloadImage(wi); }
+    { Image di = GenImageColor(4, 4, BLACK); dummy = LoadTextureFromImage(di); UnloadImage(di); }
+
+    // ---- the chart ---------------------------------------------------------------
+    BeginDrawing();
+    BeginTextureMode(scene);
+        ClearBackground(BLACK);
+        BeginShaderMode(fx);
+        for (int r = 0; r < BRIGHT_ROWS; r++)
         {
-            expectedP[c] = sourceRGB[c] + bg[c] * (1.0f - coverage);
-            expectedA[c] = bg[c] + additiveRGB[c] * additive.w;
-            if (fabsf(p[c] - expectedP[c]) > 0.08f || fabsf(a[c] - expectedA[c]) > 0.08f)
+            const BrightHue *h = &BRIGHT_HUES[r];
+            for (int c = 0; c < BRIGHT_COLS; c++)
             {
-                why = "RGBA16F blend equation mismatch"; break;
+                int tx = c*BR_TILE_W, ty = r*BR_TILE_H;
+                float cx = tx + BR_TILE_W*0.5f, cy = ty + BR_TILE_H*0.5f;
+                float bx = cx - BR_BOX*0.5f,    by = cy - BR_BOX*0.5f;
+
+                // exact linear-HDR background (mode 3), not an 8-bit Color
+                setF(fx, "uMode", 3.0f);
+                setV3(fx, "uBody", BRIGHT_BG[c]);
+                BeginBlendMode(BLEND_ALPHA);
+                    DrawTexturePro(white, (Rectangle){0,0,(float)white.width,(float)white.height},
+                                   (Rectangle){(float)tx,(float)ty,(float)BR_TILE_W,(float)BR_TILE_H},
+                                   (Vector2){0,0}, 0.0f, WHITE);
+                    rlDrawRenderBatchActive();
+                EndBlendMode();
+
+                setV4(fx, "uBox", bx, by, (float)BR_BOX, (float)BR_BOX);
+                setV2(fx, "uCentre", cx, cy);
+                setV2(fx, "uLevels", BR_COVERAGE, BR_BODY_I);
+                setF(fx, "uCorona", BR_CORONA);
+                setV3(fx, "uBody", h->body);
+                setV3(fx, "uEmit", h->emit);
+                Rectangle dst = { bx, by, (float)BR_BOX, (float)BR_BOX };
+                Rectangle src = { 0, 0, (float)white.width, (float)white.height };
+
+                setV4(fx, "uProfile", BR_CORE_R, BR_BODY_R, BR_HALO_R, BR_GAIN);
+                setF(fx, "uMode", h->mode);
+                BeginBlendMode(h->mode < 1.0f ? BLEND_ALPHA_PREMULTIPLY : BLEND_ADDITIVE);
+                    DrawTexturePro(white, src, dst, (Vector2){0,0}, 0.0f, WHITE);
+                    rlDrawRenderBatchActive();
+                EndBlendMode();
+
+                setV4(fx, "uProfile", BR_CORE_R, BR_BODY_R, BR_HALO_R, BR_HALO_GAIN);
+                setF(fx, "uMode", 1.0f);
+                BeginBlendMode(BLEND_ADDITIVE);
+                    DrawTexturePro(white, src, dst, (Vector2){0,0}, 0.0f, WHITE);
+                    rlDrawRenderBatchActive();
+                EndBlendMode();
             }
         }
-        if (why != NULL) break;
-        float mappedBg[3] = { toneMapProbe(bg[0]), toneMapProbe(bg[1]), toneMapProbe(bg[2]) };
-        float mappedP[3] = { toneMapProbe(p[0]), toneMapProbe(p[1]), toneMapProbe(p[2]) };
-        float mappedA[3] = { toneMapProbe(a[0]), toneMapProbe(a[1]), toneMapProbe(a[2]) };
-        if (rgbDistance3(mappedP, mappedBg) < 0.10f)
-        { why = "premultiplied effect lost contrast on bright background"; break; }
-        if (i == 2 && rgbDistance3(mappedA, mappedBg) >= 0.10f)
-        { why = "additive control unexpectedly hides bright-background failure"; break; }
+        EndShaderMode();
+    EndTextureMode();
+    EndDrawing();
+
+    // ---- pass A: bloom OFF = source readability (§11 first clause) -----------------
+    for (int e = 0; e < 3 && why == NULL; e++)
+    {
+        px = brightComposite(scene, l0, l1, l2, outRT, bright, down, up, post,
+                             dummy, exposures[e], false);
+        if (px == NULL) { why = "RGBA16F composite readback returned nothing"; goto done; }
+        if (brightHasNonFinite(px, BR_FW*BR_FH*4)) { why = "composite contains NaN/Inf"; goto done; }
+
+        if (e == 0)
+        {
+            // Resolve the readback origin instead of assuming it: row 1 (moc) is
+            // green-dominant and its vertical mirror row 5 (taicuc) is blue-dominant,
+            // so one sample decides it and a wrong guess cannot pass silently.
+            int sx = (int)(0*BR_TILE_W + BR_TILE_W*0.5f) + 3;
+            int sy = (int)(1*BR_TILE_H + BR_TILE_H*0.5f);
+            float p[4];
+            brightSample(px, BR_FH, sx, sy, false, p);
+            flipped = !(p[1] > p[0] && p[1] > p[2]);
+            brightSample(px, BR_FH, sx, sy, flipped, p);
+            if (!(p[1] > p[0] && p[1] > p[2]))
+            { why = "could not resolve readback orientation from the hue signature"; goto done; }
+        }
+
+        for (int r = 0; r < BRIGHT_ROWS && why == NULL; r++)
+        {
+            const BrightHue *h = &BRIGHT_HUES[r];
+            bool control = (h->mode > 1.0f);
+            for (int c = 0; c < BRIGHT_COLS && why == NULL; c++)
+            {
+                int cx = (int)(c*BR_TILE_W + BR_TILE_W*0.5f);
+                int cy = (int)(r*BR_TILE_H + BR_TILE_H*0.5f);
+                float smpB[4], smpS[4], smpC[4], smpH[4], corner[4];
+                brightSample(px, BR_FH, cx + 52, cy, flipped, smpB);
+                // S sits in the §5.4 saturated band (radius 1.5-4.5 px) at r=3.5: far
+                // enough from the 3 px core that the core's own bloom does not
+                // desaturate the sample, and inside the body's flat coverage region so
+                // the sample measures the body rather than its taper. Both edges of that
+                // window were found by measurement - at r=2.5 a near-white core washes
+                // 0.07 of chroma off pale hues, and with a wider taper the background
+                // leaks through and costs 0.02 of rgbDistance on white at EV2.
+                brightSample(px, BR_FH, cx,      cy, flipped, smpC);
+                brightSample(px, BR_FH, cx + 3,  cy, flipped, smpS);
+                brightSample(px, BR_FH, cx + 11, cy, flipped, smpH);
+                brightSample(px, BR_FH, cx + BR_BOX/2 - 1, cy + BR_BOX/2 - 1, flipped, corner);
+
+                float dS = rgbDistanceMax(smpS, smpB), dH = rgbDistanceMax(smpH, smpB);
+                if (getenv("BRIGHT_DEBUG"))
+                    printf("      EV%.1f %-16s bg%d  B(%.3f %.3f %.3f) S(%.3f %.3f %.3f)"
+                           " C(%.3f %.3f %.3f) H(%.3f %.3f %.3f) dS %.3f chroma %.3f\n",
+                           exposures[e], h->name, c, smpB[0],smpB[1],smpB[2], smpS[0],smpS[1],smpS[2],
+                           smpC[0],smpC[1],smpC[2], smpH[0],smpH[1],smpH[2], dS, chromaOf(smpS));
+                chromaNoBloom[e][r][c] = chromaOf(smpS);
+                lumaHaloNoBloom[e][r][c] = lumaOf(smpH);
+
+                if (control)
+                {
+                    // The control carries the SAME authored energy on a pure additive
+                    // surface, and proves the chart still measures the mechanism the
+                    // spec is about. Two structural facts, neither of them tuned:
+                    // additive can never pull a channel below the background (§4), and
+                    // on bright ground it therefore has to buy visibility with white,
+                    // which costs chroma against the premultiplied row of the same hue
+                    // (row 0 is the same thuy body/emission).
+                    // "Additive can never darken" holds only while the tone map is
+                    // applied PER CHANNEL and is therefore monotonic per channel. The
+                    // §12.1 candidate is not: it pulls the non-peak channels down to
+                    // restore hue, so an additive effect bright enough to enter the
+                    // shoulder CAN end up below the background in a channel (measured:
+                    // control R 0.637 -> 0.572 against a 0.613 background). That is a
+                    // real property of the candidate worth knowing - and it means §5.7's
+                    // darkening budget stops proving "this has coverage" under it, so
+                    // the invariant would have to be re-derived in scene-linear space.
+                    float lo = 1.0f;
+                    for (int k = 0; k < 3; k++) { float d = smpS[k] - smpB[k]; if (d < lo) lo = d; }
+                    // Tolerance is the DITHER bound, not zero: post_process.fs adds up to
+                    // 1 LSB per pixel, so two samples can differ by 2/255 = 0.008 with
+                    // nothing having darkened. It only bites on the LDR path, where a
+                    // clipped background makes dither the entire remaining difference.
+                    if (s_brightHueRestore <= 0.0f && lo < -0.01f)
+                    { why = "additive control darkened the background - the control is not additive"; break; }
+                    if (c == 2 && chromaOf(smpS) >= chromaNoBloom[e][0][c])
+                    { snprintf(s_brightWhy, sizeof(s_brightWhy),
+                               "additive control held chroma %.3f vs premultiplied %.3f on white at EV%.1f"
+                               " - the chart cannot detect the bug", chromaOf(smpS),
+                               chromaNoBloom[e][0][c], exposures[e]); why = s_brightWhy; break; }
+                    continue;
+                }
+
+                if (dS < 0.10f)
+                { snprintf(s_brightWhy, sizeof(s_brightWhy),
+                           "%s body lost contrast (rgbDistance %.3f < 0.10) on bg%d at EV%.1f",
+                           h->name, dS, c, exposures[e]); why = s_brightWhy; break; }
+                if (chromaOf(smpS) < h->chromaFloor)
+                { snprintf(s_brightWhy, sizeof(s_brightWhy),
+                           "%s body desaturated (chroma %.3f < %.2f) on bg%d at EV%.1f",
+                           h->name, chromaOf(smpS), h->chromaFloor, c, exposures[e]); why = s_brightWhy; break; }
+                if (c <= 1 && lumaOf(smpC) < lumaOf(smpS))
+                { snprintf(s_brightWhy, sizeof(s_brightWhy),
+                           "%s core is dimmer than its body on bg%d at EV%.1f", h->name, c, exposures[e]);
+                  why = s_brightWhy; break; }
+                // The halo must actually EXIST before "the halo is not the strongest
+                // shape" means anything. With the §5.6 inner falloff applied it is easy
+                // to tune the halo down to nothing and pass the ordering test vacuously;
+                // the dark tile is where a low-energy additive surround has to show up.
+                if (c == 0 && dH < 0.01f)
+                { snprintf(s_brightWhy, sizeof(s_brightWhy),
+                           "%s halo is below the measurement floor (dH %.4f) - the halo"
+                           " ordering test would be vacuous", h->name, dH);
+                  why = s_brightWhy; break; }
+                if (dH >= dS)
+                { snprintf(s_brightWhy, sizeof(s_brightWhy),
+                           "%s halo is a stronger shape than the body on bg%d at EV%.1f",
+                           h->name, c, exposures[e]); why = s_brightWhy; break; }
+
+                // §5-additional: the DARKENING BUDGET, and it is deliberately a
+                // STRUCTURAL test, not a magnitude one. rgbDistance already sets the
+                // magnitude; what no §8.2 metric as written checks is the MECHANISM -
+                // whether the effect actually attenuates the background (§4) or is
+                // merely riding on added light, which is the failure that only shows
+                // up once the scene gets brighter than the fixture it was tuned on.
+                // An effect that never pulls a channel below the background is the
+                // milky film ShieldShell kept landing on (PROGRESS.md 2026-08-16).
+                if (c >= 2)
+                {
+                    float lo = 1.0f;
+                    for (int k = 0; k < 3; k++)
+                    { float d = smpS[k] - smpB[k]; if (d < lo) lo = d; }
+                    if (lo >= -0.01f)
+                    { snprintf(s_brightWhy, sizeof(s_brightWhy),
+                               "%s never attenuates the background on bg%d at EV%.1f (min d %+.3f):"
+                               " it is riding on added light only", h->name, c, exposures[e], lo);
+                      why = s_brightWhy; break; }
+                }
+
+                // §8.2: the core may be white, but most of the body may not be.
+                int whiteSamples = 0;
+                for (int k = -4; k <= 4; k++)
+                {
+                    float b[4]; brightSample(px, BR_FH, cx + k, cy, flipped, b);
+                    if (b[0] > 0.98f && b[1] > 0.98f && b[2] > 0.98f) whiteSamples++;
+                }
+                if (whiteSamples > 3)
+                { snprintf(s_brightWhy, sizeof(s_brightWhy),
+                           "%s blew out %d/9 body samples to white on bg%d at EV%.1f",
+                           h->name, whiteSamples, c, exposures[e]); why = s_brightWhy; break; }
+
+                // §8.2: a transparent sprite corner must not differ from its background.
+                // §8.2 says 2/255. post_process.fs now dithers by up to 1 LSB per pixel,
+                // so two samples can legitimately differ by 2/255 from dither alone;
+                // 4/255 keeps the check meaningful (a real billboard border is far
+                // larger) without making it a coin flip. Recorded metric change.
+                if (rgbDistanceMax(corner, smpB) > 4.0f/255.0f)
+                { snprintf(s_brightWhy, sizeof(s_brightWhy),
+                           "%s billboard corner differs from the background on bg%d at EV%.1f",
+                           h->name, c, exposures[e]); why = s_brightWhy; break; }
+            }
+        }
+        RL_FREE(px); px = NULL;
     }
-    RL_FREE(pixels);
+    if (why) goto done;
+
+    // ---- pass B: bloom ON = optical quality ---------------------------------------
+    for (int e = 0; e < 3 && why == NULL; e++)
+    {
+        px = brightComposite(scene, l0, l1, l2, outRT, bright, down, up, post,
+                             dummy, exposures[e], true);
+        if (px == NULL) { why = "RGBA16F bloom composite readback returned nothing"; goto done; }
+        if (brightHasNonFinite(px, BR_FW*BR_FH*4)) { why = "bloom composite contains NaN/Inf"; goto done; }
+
+        bool bloomLanded = false;
+        for (int r = 0; r < BRIGHT_ROWS && why == NULL; r++)
+        {
+            if (BRIGHT_HUES[r].mode > 1.0f) continue;
+            for (int c = 0; c < BRIGHT_COLS && why == NULL; c++)
+            {
+                int cx = (int)(c*BR_TILE_W + BR_TILE_W*0.5f);
+                int cy = (int)(r*BR_TILE_H + BR_TILE_H*0.5f);
+                float smpB[4], smpS[4], smpH[4];
+                brightSample(px, BR_FH, cx + 52, cy, flipped, smpB);
+                brightSample(px, BR_FH, cx + 3,  cy, flipped, smpS);
+                brightSample(px, BR_FH, cx + 11, cy, flipped, smpH);
+
+                if (lumaOf(smpH) > lumaHaloNoBloom[e][r][c] + 0.002f) bloomLanded = true;
+
+                // §8.2's chroma-drop limit assumes bloom is driven by the SOURCE. Once
+                // the background itself exposes above the bloom threshold it blooms too,
+                // veils the whole frame and costs every effect chroma no matter how it
+                // is authored - measured here at 0.06 on the bright tiles at EV2, where
+                // a 1.0 background exposes to 2.0 against a 1.25 threshold. That is a
+                // property of the threshold vs the scene, not of the effect, so the
+                // limit is scoped to the non-self-blooming case and the drop is printed
+                // instead. The shipping rule this implies: the bloom threshold must sit
+                // ABOVE the brightest expected background in exposed space.
+                float bgPeak = BRIGHT_BG[c][0];
+                for (int k = 1; k < 3; k++) if (BRIGHT_BG[c][k] > bgPeak) bgPeak = BRIGHT_BG[c][k];
+                bool backgroundSelfBlooms = (bgPeak * exposures[e] >= BR_BLOOM_THRESHOLD);
+                if (backgroundSelfBlooms)
+                {
+                    if (getenv("BRIGHT_DEBUG"))
+                        printf("      note: bg%d self-blooms at EV%.1f; %s chroma %.3f -> %.3f\n",
+                               c, exposures[e], BRIGHT_HUES[r].name,
+                               chromaNoBloom[e][r][c], chromaOf(smpS));
+                }
+                // §8.2 states this limit as an ABSOLUTE 0.05 chroma drop, which is not
+                // scale-free: a richly saturated hue (chroma 0.80) losing 0.07 to its own
+                // core bloom is 8% relative and looks fine, while a hue starting at 0.20
+                // losing 0.06 is a third of its colour and looks washed. Deliberate,
+                // recorded metric change (§8.2 permits it): the drop must clear BOTH an
+                // absolute floor and a 15% relative share before it counts as a wash.
+                else if (chromaNoBloom[e][r][c] - chromaOf(smpS) >
+                         fmaxf(0.05f, 0.15f*chromaNoBloom[e][r][c]))
+                { snprintf(s_brightWhy, sizeof(s_brightWhy),
+                           "bloom washed %s out (chroma %.3f -> %.3f) on bg%d at EV%.1f",
+                           BRIGHT_HUES[r].name, chromaNoBloom[e][r][c], chromaOf(smpS), c, exposures[e]);
+                  why = s_brightWhy; break; }
+                if (rgbDistanceMax(smpH, smpB) >= rgbDistanceMax(smpS, smpB))
+                { snprintf(s_brightWhy, sizeof(s_brightWhy),
+                           "bloom made the %s halo the strongest shape on bg%d at EV%.1f",
+                           BRIGHT_HUES[r].name, c, exposures[e]); why = s_brightWhy; break; }
+            }
+        }
+        // Self-check: if enabling bloom changed nothing anywhere, the pyramid is not
+        // reaching the composite and every assertion above is vacuous.
+        //
+        // Except on the LDR fallback, where it is not a wiring fault but a property of
+        // the path: an RGBA8 scene buffer clips at 1.0, so NOTHING can cross a 1.25
+        // exposed threshold until exposure itself does. Measured consequence for mobile:
+        // on the RGBA8 path bloom is INERT below exposure 1.25, however hot the effect is
+        // authored — its emission was clipped away before the prefilter ever saw it.
+        bool bloomPossible = (s_brightSceneFormat != RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8)
+                             || (1.0f * exposures[e] >= BR_BLOOM_THRESHOLD);
+        if (why == NULL && bloomPossible && !bloomLanded)
+            why = "bloom on/off produced identical halo energy - the pyramid never reached the composite";
+        RL_FREE(px); px = NULL;
+    }
+    if (why) goto done;
+
+    // ---- blend law, both draw sites (spec Task 1.7 tolerance, Task 1.9 coverage) ---
+    // Migrated VFX reach the backend through the 2D batch AND rlvkDrawMesh, which
+    // build their pipelines independently, so both must be pinned to the same
+    // equation. Each draw site gets its OWN pass over its own small target: sharing
+    // one target would let the two quads overlap and double-blend, which reads as a
+    // blend-law failure that is really a layout mistake.
+    {
+        const float srcRGB[3] = { 0.22f, 0.51f, 1.80f };
+        const float srcA = 0.62f;
+        RenderTexture2D probe = fmtRT(128, 128, RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
+        Mesh quad = GenMeshPlane(2.0f, 2.0f, 1, 1);
+        Material mat = LoadMaterialDefault();
+        mat.shader = fx;                       // borrowed, NOT owned - see the cleanup below
+        Camera3D ortho = { 0 };
+        ortho.position = (Vector3){ 0, 0, 6 }; ortho.target = (Vector3){ 0, 0, 0 };
+        ortho.up = (Vector3){ 0, 1, 0 }; ortho.fovy = 3.0f;
+        ortho.projection = CAMERA_ORTHOGRAPHIC;
+        Matrix xform = MatrixRotateX(-PI*0.5f);   // GenMeshPlane lies in XZ; face the camera
+
+        if (probe.id == 0) why = "could not create the blend-law probe target";
+        for (int c = 0; c < 5 && why == NULL; c++)
+        {
+            for (int site = 0; site < 2 && why == NULL; site++)
+            {
+                BeginDrawing();
+                BeginTextureMode(probe);
+                    ClearBackground(BLANK);
+                    BeginShaderMode(fx);
+                        setF(fx, "uMode", 3.0f);
+                        setV3(fx, "uBody", BRIGHT_BG[c]);
+                        BeginBlendMode(BLEND_ALPHA);
+                            DrawTexturePro(white, (Rectangle){0,0,8,8}, (Rectangle){0,0,128,128},
+                                           (Vector2){0,0}, 0.0f, WHITE);
+                            rlDrawRenderBatchActive();
+                        EndBlendMode();
+                        setF(fx, "uMode", 4.0f);
+                        setV3(fx, "uEmit", srcRGB);
+                        setV2(fx, "uLevels", srcA, 1.0f);
+                        BeginBlendMode(BLEND_ALPHA_PREMULTIPLY);
+                        if (site == 0)
+                        {
+                            DrawTexturePro(white, (Rectangle){0,0,8,8}, (Rectangle){0,0,128,128},
+                                           (Vector2){0,0}, 0.0f, WHITE);
+                            rlDrawRenderBatchActive();
+                        }
+                        else
+                        {
+                            BeginMode3D(ortho);
+                                // No depth attachment on the probe target, and the plane's
+                                // winding after the -90 rotation is not worth guessing:
+                                // both are disabled so this measures BLENDING only.
+                                rlDisableDepthMask();
+                                rlDisableDepthTest();
+                                rlDisableBackfaceCulling();
+                                DrawMesh(quad, mat, xform);
+                                rlDrawRenderBatchActive();
+                                rlEnableBackfaceCulling();
+                                rlEnableDepthTest();
+                                rlEnableDepthMask();
+                            EndMode3D();
+                        }
+                        EndBlendMode();
+                    EndShaderMode();
+                EndTextureMode();
+                EndDrawing();
+
+                px = (uint16_t *)rlReadTexturePixels(probe.texture.id, 128, 128,
+                                                     RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
+                if (px == NULL) { why = "blend-law readback returned nothing"; break; }
+                float got[4];
+                sampleHalfRGBA(px, 128, 64, 64, got);
+                for (int k = 0; k < 3; k++)
+                {
+                    float expected = srcRGB[k] + BRIGHT_BG[c][k]*(1.0f - srcA);
+                    if (fabsf(got[k] - expected) > 0.02f)
+                    { snprintf(s_brightWhy, sizeof(s_brightWhy),
+                               "%s premultiplied blend off on bg%d ch%d: %.3f vs %.3f",
+                               site ? "mesh" : "batch", c, k, got[k], expected);
+                      why = s_brightWhy; break; }
+                }
+                RL_FREE(px); px = NULL;
+            }
+        }
+        // LoadMaterialDefault's maps are ours; its shader is NOT (we overwrote it with
+        // fx, and UnloadMaterial would unload fx out from under the cleanup below).
+        RL_FREE(mat.maps);
+        UnloadMesh(quad);
+        if (probe.id) UnloadRenderTexture(probe);
+        if (why) goto done;
+    }
+
+done:
+    SetTraceLogLevel(prevLog);
+    if (px) RL_FREE(px);
+    if (white.id) UnloadTexture(white);
+    if (dummy.id) UnloadTexture(dummy);
+    if (fx.id) UnloadShader(fx);
+    if (bright.id) UnloadShader(bright);
+    if (down.id) UnloadShader(down);
+    if (up.id) UnloadShader(up);
+    if (post.id) UnloadShader(post);
+    if (l0.id) UnloadRenderTexture(l0);
+    if (l1.id) UnloadRenderTexture(l1);
+    if (l2.id) UnloadRenderTexture(l2);
+    if (outRT.id) UnloadRenderTexture(outRT);
+    if (scene.id) UnloadRenderTexture(scene);
+    return why;
+}
+
+// Gate 0 for the hue-preserving tone-map candidate (BRIGHT_BACKGROUND_VFX_SPEC.md §12.1):
+// prove the change is BOUNDED before anyone is asked to look at a screenshot.
+//
+// Changing a tone mapper normally means re-approving every material in the game, which is
+// why §7.4 ruled it out of scope. The candidate is built as a BUMP over the shipping curve
+// instead of a replacement, so the approval surface collapses to the highlight region. This
+// scenario asserts the three claims that make that true, through the SHIPPING shader:
+//   below the shoulder      -> bit-identical output (nothing already approved moves)
+//   in the shoulder         -> chroma actually improves (the change is worth making)
+//   far above the shoulder  -> bit-identical again (a hot core still reaches white, §5.4)
+// The dither in post_process.fs is a deterministic hash of gl_FragCoord, so it cancels
+// exactly between the two runs and "bit-identical" stays a testable claim.
+static const char *sc_tonemap_shoulder(void)
+{
+    const int PW = 32, PH = 48, N = 9;
+    const float peaks[9] = { 0.2f, 0.5f, 0.9f, 1.5f, 2.5f, 4.0f, 7.0f, 10.0f, 14.0f };
+    const float hue[3] = { 1.0f, 0.35f, 0.08f };     // saturated warm; max channel is 1.0
+    RenderTexture2D scene = {0}, out = {0};
+    Shader fx = {0}, post = {0};
+    Texture2D white = {0}, dummy = {0};
+    uint16_t *px = NULL;
+    float got[2][9][4];
+    const char *why = NULL;
+
+    SetTraceLogLevel(LOG_ERROR);
+    scene = fmtRT(PW*N, PH, RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
+    out   = fmtRT(PW*N, PH, RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
+    if (!scene.id || !out.id) { why = "could not create the ramp targets"; goto done; }
+    fx = LoadShaderFromMemory(NULL, BRIGHT_FIXTURE_FS);
+    if (fx.id == 0 || fx.id == rlGetShaderIdDefault()) { why = "fixture shader fell back to default"; goto done; }
+    s_brightWhy[0] = '\0';
+    post = brightRepoShader("core/shaders/post_process.fs");
+    if (!post.id) { why = s_brightWhy; goto done; }
+    { Image wi = GenImageColor(8, 8, WHITE); white = LoadTextureFromImage(wi); UnloadImage(wi); }
+    { Image di = GenImageColor(4, 4, BLACK); dummy = LoadTextureFromImage(di); UnloadImage(di); }
+
+    BeginDrawing();
+    BeginTextureMode(scene);
+        ClearBackground(BLACK);
+        BeginShaderMode(fx);
+            setF(fx, "uMode", 3.0f);
+            for (int i = 0; i < N; i++)
+            {
+                float c[3] = { hue[0]*peaks[i], hue[1]*peaks[i], hue[2]*peaks[i] };
+                setV3(fx, "uBody", c);
+                BeginBlendMode(BLEND_ALPHA);
+                    DrawTexturePro(white, (Rectangle){0,0,8,8},
+                                   (Rectangle){(float)(i*PW),0,(float)PW,(float)PH},
+                                   (Vector2){0,0}, 0.0f, WHITE);
+                    rlDrawRenderBatchActive();
+                EndBlendMode();
+            }
+        EndShaderMode();
+    EndTextureMode();
+    EndDrawing();
+
+    for (int variant = 0; variant < 2; variant++)
+    {
+        BeginDrawing();
+        BeginTextureMode(out);
+            ClearBackground(BLANK);
+            BeginShaderMode(post);
+                setTex(post, "u_bloomTex", dummy);
+                setTex(post, "u_lutTex", dummy);
+                setF(post, "u_bloomEnabled", 0.0f);
+                setF(post, "u_tonemapEnabled", 1.0f);
+                setF(post, "u_exposure", 1.0f);
+                setF(post, "u_chromaticEnabled", 0.0f);
+                setF(post, "u_vignetteEnabled", 0.0f);
+                setF(post, "u_colorGradeEnabled", 0.0f);
+                setF(post, "u_lutEnabled", 0.0f);
+                setF(post, "u_radialBlurEnabled", 0.0f);
+                setF(post, "u_hueRestore", variant ? 1.0f : 0.0f);
+                rlDisableColorBlend();
+                blit(scene.texture, PW*N, PH);
+                rlDrawRenderBatchActive();
+                rlEnableColorBlend();
+            EndShaderMode();
+        EndTextureMode();
+        EndDrawing();
+        px = (uint16_t *)rlReadTexturePixels(out.texture.id, PW*N, PH,
+                                             RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
+        if (px == NULL) { why = "ramp readback returned nothing"; goto done; }
+        for (int i = 0; i < N; i++) sampleHalfRGBA(px, PW*N, i*PW + PW/2, PH/2, got[variant][i]);
+        RL_FREE(px); px = NULL;
+    }
+
+    for (int i = 0; i < N; i++)
+    {
+        float d = rgbDistanceMax(got[0][i], got[1][i]);
+        bool bounded = (peaks[i] < 1.0f) || (peaks[i] > 9.0f);
+        if (getenv("BRIGHT_DEBUG"))
+            printf("      peak %5.1f  off(%.4f %.4f %.4f) on(%.4f %.4f %.4f) d %.5f  chroma %.4f -> %.4f\n",
+                   peaks[i], got[0][i][0], got[0][i][1], got[0][i][2],
+                   got[1][i][0], got[1][i][1], got[1][i][2], d,
+                   chromaOf(got[0][i]), chromaOf(got[1][i]));
+        if (bounded && d > 1.0e-4f)
+        {
+            snprintf(s_brightWhy, sizeof(s_brightWhy),
+                     "hue restoration leaked outside its shoulder at peak %.1f (d %.5f):"
+                     " the change is NOT bounded and needs a full whole-scene approval",
+                     peaks[i], d);
+            why = s_brightWhy; goto done;
+        }
+    }
+    // It must also actually do something, or "bounded" is just "disabled".
+    {
+        float gain = chromaOf(got[1][4]) - chromaOf(got[0][4]);   // peak 2.5, mid shoulder
+        if (gain < 0.02f)
+        {
+            snprintf(s_brightWhy, sizeof(s_brightWhy),
+                     "hue restoration changed nothing in the shoulder (chroma gain %.4f)", gain);
+            why = s_brightWhy; goto done;
+        }
+    }
+
+done:
+    SetTraceLogLevel(LOG_WARNING);
+    if (px) RL_FREE(px);
+    if (white.id) UnloadTexture(white);
+    if (dummy.id) UnloadTexture(dummy);
+    if (fx.id) UnloadShader(fx);
+    if (post.id) UnloadShader(post);
+    if (out.id) UnloadRenderTexture(out);
+    if (scene.id) UnloadRenderTexture(scene);
+    return why;
+}
+
+// rlDisableColorBlend() is FLUSH-SCOPED, and that is a footgun, not an rlvk quirk:
+// the toggle only reaches the GPU when the batch is drawn, exactly as glDisable(GL_BLEND)
+// does under GL. So the very natural
+//     rlDisableColorBlend(); DrawTexturePro(...); rlEnableColorBlend();
+// re-enables blending BEFORE the draw it was meant to protect ever flushes, and the draw
+// lands blended. Found while building bright_vfx, whose composite came back multiplied by
+// the scene's accumulated alpha (additive VFX push scene alpha above 1) and read back
+// values above 1.0 that ACES can never produce. core/post_fx.c had the same shape in two
+// places. This scenario pins both halves of the rule so neither can regress silently.
+static const char *sc_colorblend_flush(void)
+{
+    const char *FS = "#version 330\n"
+        "in vec2 fragTexCoord; in vec4 fragColor; out vec4 finalColor;\n"
+        "uniform sampler2D texture0; uniform vec4 uSrc;\n"
+        "void main(){ finalColor = uSrc; }\n";
+    RenderTexture2D rt = fmtRT(64, 64, RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
+    Shader sh = LoadShaderFromMemory(NULL, FS);
+    Texture2D white = {0};
+    const char *why = NULL;
+    float got[2][4];
+    if (rt.id == 0) { why = "could not create the probe target"; goto done; }
+    if (sh.id == 0 || sh.id == rlGetShaderIdDefault()) { why = "probe shader fell back to default"; goto done; }
+    { Image wi = GenImageColor(8, 8, WHITE); white = LoadTextureFromImage(wi); UnloadImage(wi); }
+
+    for (int variant = 0; variant < 2; variant++)
+    {
+        Vector4 src = { 1.0f, 0.0f, 0.0f, 0.25f };
+        BeginDrawing();
+        BeginTextureMode(rt);
+            ClearBackground(BLANK);
+            BeginShaderMode(sh);
+                // ground truth to blend against: an opaque 0.5 grey, flushed on its own
+                Vector4 grey = { 0.5f, 0.5f, 0.5f, 1.0f };
+                SetShaderValue(sh, GetShaderLocation(sh, "uSrc"), &grey, SHADER_UNIFORM_VEC4);
+                DrawTexturePro(white, (Rectangle){0,0,8,8}, (Rectangle){0,0,64,64},
+                               (Vector2){0,0}, 0.0f, WHITE);
+                rlDrawRenderBatchActive();
+                SetShaderValue(sh, GetShaderLocation(sh, "uSrc"), &src, SHADER_UNIFORM_VEC4);
+                rlDisableColorBlend();
+                DrawTexturePro(white, (Rectangle){0,0,8,8}, (Rectangle){0,0,64,64},
+                               (Vector2){0,0}, 0.0f, WHITE);
+                if (variant == 0) rlDrawRenderBatchActive();   // flush INSIDE the window
+                rlEnableColorBlend();
+            EndShaderMode();
+        EndTextureMode();
+        EndDrawing();
+        uint16_t *px = (uint16_t *)rlReadTexturePixels(rt.texture.id, 64, 64,
+                                                       RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
+        if (px == NULL) { why = "probe readback returned nothing"; goto done; }
+        sampleHalfRGBA(px, 64, 32, 32, got[variant]);
+        RL_FREE(px);
+    }
+
+    // flushed inside the window: a true overwrite, alpha 0.25 and all
+    if (fabsf(got[0][0] - 1.0f) > 0.02f || fabsf(got[0][3] - 0.25f) > 0.02f)
+    { why = "rlDisableColorBlend did not overwrite even with the draw flushed inside it"; goto done; }
+    // re-enabled before the flush: the draw blends after all - 1.0*0.25 + 0.5*0.75
+    if (fabsf(got[1][0] - 0.625f) > 0.02f)
+    { why = "rlEnableColorBlend before the flush no longer restores blending (semantics changed)"; goto done; }
+
 done:
     if (white.id) UnloadTexture(white);
     if (sh.id) UnloadShader(sh);
@@ -2007,6 +2887,9 @@ static const Scenario SCENARIOS[] = {
     { "readback",       sc_readback },
     { "float_blend_rt", sc_float_blend_rt },
     { "bright_vfx",     sc_bright_vfx },
+    { "bright_vfx_ldr", sc_bright_vfx_ldr },
+    { "colorblend_flush", sc_colorblend_flush },
+    { "tonemap_shoulder", sc_tonemap_shoulder },
     { "ui_after_rt",    sc_ui_after_rt },
     { "stress",         sc_stress },
     { "shadow_proj",    sc_shadow_proj },

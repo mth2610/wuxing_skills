@@ -8,7 +8,9 @@ functions, Vulkan 1.1-core rasterizer). Vision: standalone renderer, not wuxing-
 - **`docs/HANDOFF.md`** — the deep reference: vision, architecture, conversion table, key files, verification ladder, the full **§7 case-study debugging log**, §8 remaining, §9 architecture invariants. Read it before deep work.
 - **`docs/LANDMINES.md`** — scannable trap index + the 7 debugging-methodology rules; **read before any bug hunt** (points into HANDOFF §7 for full chains).
 - **`docs/PROGRESS.md`** — status / backlog / known gaps.
-- **`docs/BRIGHT_BACKGROUND_VFX_SPEC.md`** — researched, atomic implementation plan for
+- **`docs/BRIGHT_BACKGROUND_VFX_SPEC.md`** — §5 the authoring laws, §8 the acceptance oracle,
+  §11b the harness for measuring a real effect, §12.1 the hue-preserving tone-map candidate and
+  its gates. Researched, atomic implementation plan for
   fire/energy/plasma/beam/lightning visibility across dark and bright scenes; includes the
   Vulkan blend oracle, Core handoff boundaries, pixel metrics, and shipping gates.
 
@@ -65,6 +67,11 @@ significant, statics span them. Never include a fragment directly, never reorder
    anything touching draw/present/blend/depth.
    `VALIDATE=1` prepends Khronos validation. First run builds a raylib cache (~2 min),
    then ~20 s. **Every draw-path bug fix gets a scenario here reproducing it first.**
+3b. `./scripts/render_vfx_matrix.sh "<FIXTURE NAME>" 40 90 140` — a REAL effect measured across
+   five background luminances at identical framing (uses `WUXING_VFX_BG` + `--render-vfx`, both
+   already in `main.c`). `bright_vfx` is the synthetic oracle; this is how a shipping effect is
+   held to the same contract. Details + measured baselines: `docs/BRIGHT_BACKGROUND_VFX_SPEC.md`
+   §11b.
 4. Full game build (`cmake --build build`) — HUMAN-run only, final confirmation.
 
 ## Debug tools (env vars, all off by default)

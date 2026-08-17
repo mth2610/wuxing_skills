@@ -1,5 +1,164 @@
 # rlvk — Progress / Backlog
 
+## Foundation closeout (2026-08-17)
+
+Three foundation items closed; gate 4 of the tone map remains the owner's.
+
+- **Surface/resolver contract is now enforced at configure time.** `ResolveBody` must be drawn
+  ALPHA, `ResolvePremultiplied` PREMULTIPLIED, `ResolveEmission` ADDITIVE - break it and the
+  coverage term is silently discarded, which is invisible on the night arena and fatal in
+  daylight. `scripts/validate_vfx_surface_contract.py` (wired into CMakeLists) found ENERGY ORB
+  and BLACK HOLE; both fixed. BLACK HOLE is the sharper case: an effect named for ABSORBING light
+  was bound so it could only ever add it. Coverage is honest about its reach - 17 composition draw
+  sites, 2 bind a `VFX_Resolve*` shader (both checked), 15 draw immediate-mode through the ribbon
+  primitive with no shader of their own, so the contract does not apply. Particle/trail/decal
+  systems pick blend state internally and are NOT covered; that is remaining work.
+- **The spec was teaching numbers its own metrics reject.** §6.1 said fire coverage 0.35-0.70 and
+  §6.2 said magic 0.20-0.55, while §8.2 needs ~0.68 at the body sample to clear white at EV2.
+  Corrected to 0.60-0.80 and 0.55-0.80 with the measurement quoted. Any effect authored against
+  the old ranges is under-covered by construction.
+- **The RGBA8 fallback has an oracle** (`bright_vfx_ldr`): the whole §8 chart through an 8-bit
+  scene target. §7.1's claim holds - source readability passes on coverage alone. Finding: bloom
+  is INERT on that path below exposure 1.25, because an RGBA8 scene clips at 1.0 and nothing can
+  cross a 1.25 exposed threshold.
+  **CORRECTION to the first version of this entry: this is NOT "the mobile path".**
+  `ScreenDistort_Init` takes RGBA8 only on `WUXING_NO_HDR` or a failed RGBA16F framebuffer, and
+  RGBA16F colour-attachment support is MANDATORY in Vulkan 1.1 - so every conformant Vulkan
+  device, Android included, gets HDR. The scenario guards the `WUXING_NO_HDR` override and
+  GL/GLES builds. Which backend the shipping Android build uses cannot be checked from here.
+
+## ENERGY ORB fixed on measurement (2026-08-17)
+
+Body area on a white background went **0.07% -> 9.89%**, parity with its 10.08% on dark, and
+`darken%` 0.0% -> 97.9%. Two causes, measured separately: the draw bound `VFX_SURFACE_ADDITIVE`
+while its shader returns `VFX_ResolveBody` (contract violation - coverage was being discarded),
+and `aura_shell.fs` applies a bottom-to-top alpha fade because it was written for a CYLINDER,
+which on a sphere deletes the upper half's coverage. The second was the dominant one, worth 8x
+alone. Both fixes are exact identities at their defaults so every other consumer of that shader is
+bit-identical; `orb_cover_floor` is a live tuning knob.
+
+Metric lesson: `structure` (CV of luminance) counts a smooth gradient the same as fine texture, so
+removing the wrong fade LOOKED like a 3x structure regression. Added `detail` (luminance minus a
+blurred copy) which sees only short-scale contrast - by it the cost is 0.069 -> 0.060. Do not read
+`structure` alone after changing anything with a large-scale gradient.
+
+## Real-effect bright-background harness (2026-08-17)
+
+`scripts/render_vfx_matrix.sh <idx> [frames...]` renders one VFX fixture across the §8.1
+backgrounds at IDENTICAL camera/frame/resolution (via the existing `WUXING_VFX_BG`, which also
+skips map+skybox), plus a background plate per colour, and `analyze_vfx_matrix.py` reports
+footprint / darkening / internal structure / chroma. Spec §11b.
+
+First result, VOLUME TRAIL (35): coverage and silhouette PASS (darkens 99.6% of its footprint on
+white - it is a real body), but **internal structure collapses 4x** dark->white (0.327 -> 0.085;
+absolute luminance std 40.9 -> 16.5 over the same 56k pixels, so not a metric artifact) and chroma
+halves. Cause is structural: for an alpha body, internal contrast is proportional to |C - B|, so
+filament and gap converge as the background approaches the effect's own brightness. Fix is §5.5's
+split - emission is the one term that does not scale with |C - B|.
+
+The three are drawn by three DIFFERENT paths (trail tube / particle system / primitive score), so
+this is the law, not a shader bug - there is no single file to fix, it is per-effect authoring.
+CORRECTION to an earlier note here: "fix it in trail_volume.fs and measure on SMOKE COLUMN" was
+wrong twice over. Smoke is a dark body, so |C - B| is LARGEST against bright scenery - smoke reads
+better in daylight and loses structure against black, the mirror of fire. Never generalise this
+table to a dark-bodied effect.
+
+Extended to FLAME VOLUME (38) and PROJECTILE (20). Structure collapses on ALL THREE (4x / 8x /
+10x dark->white) - it is the most general bright-background defect in the project and coverage does
+not fix it. The ordering is by how much of each effect is additive rather than body: VOLUME TRAIL
+keeps its silhouette exactly, FLAME VOLUME loses 56% of its body area on white, PROJECTILE loses
+79% and darkens only 28.7% of its footprint. Harness is now in the working protocol of root,
+`core/`, `skills/` and `third_party/vulkan/` CLAUDE.md - `core/CLAUDE.md`'s "Core has no automated
+visual tier" entry is replaced by it for this class of check.
+
+`VFX_ComposeProjectile` was DELETED (17/08/2026) on the strength of its row — no gameplay consumer,
+worst scores on every axis. `sync_vfx_test.py` propagated the removal from deleting the one `.inl`;
+only the hand-written declarations in `visual_composer.h` needed removing by hand (the generated
+block is below them). NEWFX indices shifted as a result, which is why tooling and docs now cite
+fixtures by NAME (`scripts/vfx_fixture_index.py`). Note the defect did NOT go with it, though not because of a shared
+shader (see the correction above) - it is the law and it survives in every bright-bodied effect. Also: PROJECTILE was the only fixture reaching
+exposed peak 9, so nothing now exercises the §12.1 candidate's ramp-out.
+
+THIRD probe mistake, caught the same way: `darken%` was measured per channel, and the colour
+grade's saturation stage is not per-channel monotonic - a provably pure-additive effect measured
+"97.9% darkened" on the cool background. It is measured on LUMA now. Corrected figures: VOLUME
+TRAIL still darkens 99.2% on white (a real body), FLAME VOLUME 57.2% (less body-driven than first
+reported), ENERGY ORB 0.0-0.8% everywhere (purely additive, confirmed in code).
+
+Two earlier probe mistakes worth remembering, both caught before they were reported: comparing screenshots
+at different apparent SIZE confounds background with scale, and deriving the background reference
+from a radial median of the frame is broken by the background's own bloom (reported 39% footprint
+where the truth is 6%).
+
+## Hue-preserving tone map — gates 0-1 PASS, gate 2 is the human's (2026-08-17)
+
+Candidate lives behind `postfx_hue_restore` in tuning.cfg, **default 0 = shipping curve**. It is a
+bump over the ACES fit, not a replacement, so the approval surface is the highlight band only.
+
+- **Gate 0** (`tonemap_shoulder`): `d = 0.00000` below the shoulder and above it — bounded, proven
+  through the shipping shader, not asserted.
+- **Gate 1** (`BRIGHT_HUEFIX=<0..1> bright_vfx`): full chart PASSES at 0.35/0.6/1.0. Mean chroma
+  gain `+0.074 / +0.127 / +0.211`; worst `rgbDistance` change anywhere `-0.038 / -0.021 / -0.035`.
+- **Gate 2** (`scripts/run_tonemap_ab.sh --vfx 0 <strength>`): **PASS.** A/A floor 0.000% (byte
+  identical); A/B changes **0.494-0.495%** of the frame at every strength, max delta 35/61/103 of
+  255 at 0.35/0.6/1.0. The difference map is black everywhere except the emissive beam - ground,
+  sky, portal, stars and fog are untouched. The changed pixel COUNT is strength-independent (it is
+  set by which pixels are above the shoulder); only the magnitude scales. This is what turns a
+  tone-mapper change into an emissive-only approval.
+- **Gate 3** (shoulder view, `postfx_hue_restore = -1`): **PASS for the current art direction.**
+  A single capture paints the candidate's active band, so the `--verify` nondeterminism is
+  irrelevant. Whole-scene captures (character + ground + sky + fog + stars, FIRE and TUBE, 5 timed
+  shots each) put **0.0000%** of the frame in the band - one single pixel, once. The material
+  regression list is empty: the candidate is the exact identity on every non-emissive surface.
+  Cross-validated: the shoulder view reads 0.4964% of `--render-vfx 0` in band, the gate-2 A/B read
+  0.495% changed on the same fixture. NOTE this gate EXPIRES - every map is night-time and exposure
+  is pinned at 1.00; a daylight arena or auto-exposure pushes ground and sky over 1.0 and regrows
+  the approval surface. Also: only FIRE and TUBE are compiled in (`core/skills_config.h`), and
+  nothing reached the `>=9` band so the ramp-out is unexercised.
+- **Capture-path limitation found by the A/A floor:** `WUXING_VERIFY=<skill>` (whole scene) is NOT
+  reproducible - two identical runs differ on 0.05-0.17% of pixels, and the >2 / >8 / >32 buckets
+  are all the same percentage, so the differing pixels are wholly different rather than shifted
+  (sparse-particle or frame-phase leak). Its A/A floor exceeded the A/B signal, so it cannot carry
+  a pixel A/B until fixed. Worth a separate look by whoever owns `sandbox/visual_verify.c`.
+
+Two caveats that decide this, both in `BRIGHT_BACKGROUND_VFX_SPEC.md` §12.1: strength 1.0 makes
+cores markedly darker (non-peak channels drop hard) so expect to ship nearer 0.35-0.6; and the
+candidate breaks per-channel monotonicity, so §5.7's darkening budget stops proving "this has
+coverage" and would need re-deriving in scene-linear space.
+
+## Bright-background VFX oracle — rebuilt as a real chart (2026-08-17)
+
+`bright_vfx` v1 was green for the wrong reason: it tone mapped through a Reinhard probe
+(`x/(1+x)`) while the game runs the ACES fit in `post_process.fs`, it drew a flat constant-colour
+quad so none of the §5.4 core/body/halo metrics could be measured at all, it implemented 1 of
+§8.2's 8 metrics, and it used a Euclidean `rgbDistance` where the spec defines max-abs-channel.
+
+It now loads the SHIPPING `post_process.fs` and the three `bloom_*.fs` instead of
+re-implementing them (deliberately non-hermetic: a Core change to the post chain can fail this
+scenario — that is what an acceptance oracle is for), draws a fixture with the real §5.4 pixel
+hierarchy, and runs six element hues x five backgrounds x three exposures x bloom off/on, plus a
+blend-law check at BOTH draw sites. **PASS**; suite 25/25 normal and under validation.
+
+Building it produced findings, not just a test — all written up in
+[`BRIGHT_BACKGROUND_VFX_SPEC.md`](BRIGHT_BACKGROUND_VFX_SPEC.md) §5.5–5.7, §7.2, §7.3b, §12:
+
+- **A game bug, in the postFX composite, not in any shader.** `rlDisableColorBlend()` is
+  flush-scoped, so `core/post_fx.c`'s `disable / draw / enable` wrapper handed the draw back to
+  the blender. The final composite was therefore multiplied by the HDR scene target's accumulated
+  alpha — additive VFX push it above 1.0 — so every VFX region rendered ~1.5x too bright and
+  clipped to white on the 8-bit swapchain. Fixed at both sites; pinned by the new
+  `colorblend_flush` scenario; promoted to `ENGINE_LANDMINES.md` #16.
+- **Coverage + a white core is not enough** — the 3–9 px corona needs its own saturated radiance,
+  or a translucent body over a complementary background mixes toward neutral (measured
+  `chroma 0.05`).
+- **The halo must fade out inside the body radius and carry the body hue, not the emission hue**
+  (measured `rgbDistance 0.06` vs `0.21` on the same fixture).
+- **Per-channel ACES is the binding constraint at EV2 on bright ground**, and §6.1/§6.2's
+  coverage ranges are below what §8.2 needs. Both are open items in §12.
+
+Also landed: output dither in `post_process.fs` (sin-free hash, Mali) and NaN/Inf containment in
+`core/shaders/common/vfx_composite.glsl`. Core suites 68/73 — the same five baseline failures.
+
 ## Bright-background VFX oracle (2026-08-16)
 
 `rlvk_format.inl` now reports byte sizes for R16/R16G16B16/RGBA16F readback. The visual suite
@@ -255,3 +414,48 @@ Found while measuring the SSF surface's frame cost for `core/fluid`.
 - Updated defaults: opacity `0.78`, rim `2.15`, base alpha `0.025`, Fresnel
   alpha `0.34`, contact alpha `0.70`; shader body luminance curve reduced.
 - Post-change gates: `check_rlvk_compile.sh` **OK**; `bright_vfx` **PASS**.
+
+## Runtime teardown validation cleanup (2026-08-16)
+
+`rlglClose()` released graphics shader modules but omitted linked compute programs that
+`rlUnloadShader()` correctly retains for GL-compatible stage-handle semantics. The validated
+runtime harness therefore completed functionally while reporting four
+`VUID-vkDestroyDevice-device-05137` leaks (two modules, two pipelines).
+
+`rlvk_core.inl` now destroys `compMod` and `computePipeline` during shutdown after the existing
+device-idle drain. `check_rlvk_compile.sh`, `run_rlvk_runtime_test.sh`, and the full
+`VALIDATE=1 run_rlvk_visual_test.sh` pass; the only remaining validation output is the known
+intentional stride-0 portability `04457` warning. Full debugging chain: `HANDOFF.md` §7.33;
+rule: `LANDMINES.md` “Shutdown cleanup”.
+
+### Session handoff — ShieldShell visual work (2026-08-16)
+
+The owner restored the best-known code state at session end. Do not assume the
+experimental ShieldShell scene-through/rear-layer iterations are retained.
+
+Remaining work:
+
+- ShieldShell is still a visual fixture, not a final glass-volume reference.
+- Final target: front scene-through glass, readable rear/inner volume, sparse
+  internal filaments, and contact glow that does not muddy the body.
+- The unresolved issue was rear/front compositing: scalar alpha/gain tuning
+  oscillated between a faint rear wall and an opaque/overexposed sphere.
+- Validate the actual checked-out state before further edits; use the runtime
+  marker and fresh dark/bright world captures, not old screenshots.
+- Do not treat `bright_vfx` synthetic gate as visual sign-off for the reference
+  glass look; it only verifies the Vulkan HDR/composite path.
+
+Known gate context from this session:
+
+- `rlvk` compile: PASS.
+- `rlvk` runtime: PASS.
+- Vulkan visual suite: 24/24 normal and 24/24 validation PASS.
+- Core suites: 68/73 PASS; five baseline failures remain documented elsewhere.
+
+## Patch Log
+
+| Date | Editor | Section edited | Based on which source | Tier |
+|---|---|---|---|---|
+| 2026-08-16 | Codex | Runtime teardown validation cleanup | `rlvk_core.inl`, `tests/rlvk_runtime_test.c` | Ground-truth |
+| 2026-08-17 | Claude | Bright-background oracle rebuilt; postFX blend-toggle bug fixed; dither + NaN guard | `tests/rlvk_visual_test.c`, `core/post_fx.c`, `core/shaders/*` | Ground-truth (25/25 normal + validation, core 68/73) |
+| 2026-08-17 | Claude | Hue-preserving tone-map candidate + gates 0-1 + gate-2 tooling | `core/shaders/post_process.fs`, `core/post_fx.c`, `scripts/{run_tonemap_ab.sh,diff_captures.py}` | Ground-truth (26/26 normal + validation, core 68/73) |
