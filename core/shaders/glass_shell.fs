@@ -57,7 +57,16 @@ float shieldPow4(float x) {
 float depthContact(vec2 uv) {
     if (u_hasDepth == 0 || u_depthEnabled < 0.5) return 0.0;
     float sceneDepth = texture(u_depthTex, uv).r;
-    float gap = sceneDepth - length(fragPosition);
+    // SAME MEASURE ON BOTH SIDES. depth_copy.fs stores the standard perspective
+    // linearisation, which is distance along the VIEW AXIS; `length(fragPosition)` is
+    // RADIAL distance from the eye. Off-axis the radial value is always the larger of
+    // the two, so `gap` went negative across most of the shell and this function
+    // returned 0 everywhere — the ground-contact term has been dead, which is why
+    // toggling `shield_shell_depth_enabled` changed exactly 0.000% of pixels.
+    // Immediate-mode attributes arrive in view space (rlvk `imm_normal`), camera down
+    // -Z, so the axial distance of a visible fragment is -fragPosition.z.
+    float fragDepth = max(-fragPosition.z, 0.0001);
+    float gap = sceneDepth - fragDepth;
     if (gap <= 0.0) return 0.0;
     return 1.0 - smoothstep(0.0, u_contactThickness, gap);
 }
@@ -87,6 +96,10 @@ void main() {
     float ripple = impactRipple();
     vec3 lightDir = normalize(u_lightDirView);
     float rearInterface = (u_wallPass == 0) ? 1.0 : 0.0;
+    // Wall thickness: path length through the shell, 1/|N.V|, turned into density by
+    // Beer-Lambert. Hoisted here because it drives BOTH the rim colour and the alpha.
+    float pathLen = 1.0 / max(shieldNdotV, 0.10);
+    float wallDensity = 1.0 - exp(-u_fresnelAlpha * 3.0 * (pathLen - 1.0));
     float light = max(dot(normal, lightDir), 0.0);
     float pattern = smoothstep(0.22, 0.78, energy) * (0.35 + 0.65 * noise);
     float filament = smoothstep(0.58, 0.82, energy) *
@@ -116,7 +129,19 @@ void main() {
     vec2 matcapUV = normal.xy * 0.5 + 0.5;
     vec3 matcap = (u_hasMatcap != 0) ? texture(u_matcapTex, matcapUV).rgb
                                      : vec3(0.25 + normal.y * 0.25);
-    vec3 glow = u_rimColor.rgb * (fresnel * u_rimStrength + pattern * 0.35 + ripple * 1.5);
+    // THE OUTER EDGE GOES WHITE, the saturated hue sits just inside it. A rim that
+    // saturates to its own colour at its brightest reads as a thick painted outline;
+    // real energy shells put a near-white hot line at the silhouette with the element
+    // hue as the band behind it — §5.4's "hot core may desaturate, the corona carries
+    // the hue". The blend keys on wall thickness, so white appears only where the shell
+    // is edge-on and thickest.
+    // NARROW. §5.4: the white core is the thinnest band and the saturated corona is
+    // wider than it — the first attempt whitened from 0.62 density outward, which is
+    // most of the visible rim, and cost 0.25 of chroma (0.553 -> 0.306 on the dark
+    // background) for an edge that then read as pale rather than hot.
+    vec3 rimHot = mix(u_rimColor.rgb, vec3(1.0), smoothstep(0.90, 0.998, wallDensity));
+    vec3 glow = rimHot * (fresnel * u_rimStrength) +
+                u_rimColor.rgb * (pattern * 0.35 + ripple * 1.5);
     glow += matcap * fresnel * 0.55;
     glow += u_rimColor.rgb * bottomGlow * (0.65 + pattern * 1.15);
     glow += u_contactColor.rgb * contact * u_contactStrength;
@@ -168,8 +193,6 @@ void main() {
     // and Beer-Lambert turns that into coverage that rises smoothly all the way from the
     // centre out. At |N·V| = 0.75 this gives 0.064 against the old 0.004 — sixteen times
     // more presence in the mid-region, which is the whole of the "rim to centre" ramp.
-    float pathLen = 1.0 / max(shieldNdotV, 0.10);
-    float wallDensity = 1.0 - exp(-u_fresnelAlpha * 3.0 * (pathLen - 1.0));
     float alpha = u_opacity * wallWeight * softMask *
                   (u_baseAlpha + wallDensity +
                    contact * u_contactAlpha + ripple * 0.18);
