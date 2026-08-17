@@ -127,8 +127,15 @@ int main(void)
     CHECK(Has("core/composition/visual_composer.h", "VFX_ShieldShell_DrawRefraction") &&
           Has("core/composition/common/vc_shield_shell.inl", "void VFX_ShieldShell_DrawRefraction"),
           "the dedicated refraction pass is exported for main.c");
+    /* Pin the CONTRACT, not an empty body: the archetype pair must exist for
+       sync_vfx_test.py, and the shell must not DRAW from it (the real draw is the
+       post-3D refraction pass). The stub since gained a legitimate non-drawing job —
+       requesting the soft-depth region, which only counts if it happens inside the 3D
+       pass — and pinning the literal text made that read as a regression. */
     CHECK(Has("core/composition/common/vc_shield_shell.inl",
-              "static void VC_ShieldShell_Draw3D(Camera3D cam) { (void)cam; }"),
+              "static void VC_ShieldShell_Draw3D(Camera3D cam)") &&
+          !Has("core/composition/common/vc_shield_shell.inl",
+               "DrawCoreSphere(shield->pos, radius, rings, rings, WHITE);\n}"),
           "the archetype pair stays for sync_vfx_test.py; the real draw moved "
           "to the post-3D refraction pass");
     CHECK(Has("core/shaders/glass_shell.fs", "u_emissionOnly") &&

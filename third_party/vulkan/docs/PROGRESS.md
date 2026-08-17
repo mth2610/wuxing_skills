@@ -1,5 +1,33 @@
 # rlvk — Progress / Backlog
 
+## Ground contact WORKS — and rlvk was never the problem (2026-08-17)
+
+Toggling `shield_shell_depth_enabled` now changes the frame: a band at the shell's ground
+intersection, localised to x 559-719, y 490-502 in the fixture. Three causes, found in order,
+each hiding the next:
+
+1. `depthContact()` compared `sceneDepth` (distance along the VIEW AXIS, from depth_copy.fs's
+   perspective linearisation) against `length(fragPosition)` (RADIAL). Off-axis the radial value
+   is always larger, so `gap` went negative across most of the shell.
+2. The shell sampled `ScreenDistort_GetDepthTexture()` without calling
+   `ScreenDistort_RequestSoftDepthRegion()`. The snapshot is idle-gated and starts idle.
+3. **The region request has to happen INSIDE the 3D pass.** `ScreenDistort_Begin()` clears
+   `s_softDepthRegionValid`, so that flag's lifetime is exactly Begin..SnapshotDepth. The shell
+   draws AFTER the 3D pass by design, so a request made from its draw landed after SnapshotDepth
+   had already run and was wiped by the next Begin — it could never arm the snapshot from where
+   it draws. Moved into `VC_ShieldShell_Draw3D`, the archetype stub that already runs in the
+   right place with the camera in hand.
+
+**rlvk was suspected and is innocent.** A scenario built the same manual FBO ScreenDistort uses —
+depth as a real TEXTURE via `rlLoadTextureDepth(..., false)`, not the renderbuffer
+`LoadRenderTexture` gives — and sampled its depth both to a plain target and from inside another
+FBO's scope. Both read the same correct value, so the `Caps.noSampledDepth` twin serves this
+shape correctly. The scenario was REMOVED rather than kept: it passed standalone and failed inside
+a full suite run because it inherited depth state (and possibly cache pressure) from whatever ran
+before it, and a test that fails for reasons unrelated to its subject trains people to ignore
+failures. Its finding is recorded here instead. Making it suite-robust is open work if the depth
+twin is ever suspected again.
+
 ## ShieldShell ground contact: an analytic fallback was tried and REVERTED (2026-08-17)
 
 With the depth path blocked, the shell's contact band was reimplemented analytically: a shell
