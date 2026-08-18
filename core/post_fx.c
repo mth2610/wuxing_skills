@@ -42,6 +42,7 @@ static Shader compositeShader;
 static int bloomEnabledLoc;
 static int bloomIntensityLoc;
 static int bloomTexLoc;
+static int bloomTexelLoc;
 static int chromaticEnabledLoc;
 static int chromaticStrengthLoc;
 static int vignetteEnabledLoc;
@@ -215,6 +216,7 @@ void PostFX_Init(int width, int height)
   bloomEnabledLoc = GetShaderLocation(compositeShader, "u_bloomEnabled");
   bloomIntensityLoc = GetShaderLocation(compositeShader, "u_bloomIntensity");
   bloomTexLoc = GetShaderLocation(compositeShader, "u_bloomTex");
+  bloomTexelLoc = GetShaderLocation(compositeShader, "u_bloomTexel");
   chromaticEnabledLoc = GetShaderLocation(compositeShader, "u_chromaticEnabled");
   chromaticStrengthLoc = GetShaderLocation(compositeShader, "u_chromaticStrength");
   vignetteEnabledLoc = GetShaderLocation(compositeShader, "u_vignetteEnabled");
@@ -689,6 +691,18 @@ void PostFX_Draw(const PostFXConfig *config)
   SetShaderValue(compositeShader, exposureLoc, &exposureVal, SHADER_UNIFORM_FLOAT);
   SetShaderValue(compositeShader, hueRestoreLoc, &s_hueRestore, SHADER_UNIFORM_FLOAT);
   SetShaderValue(compositeShader, shoulderViewLoc, &s_shoulderView, SHADER_UNIFORM_FLOAT);
+
+  /* bloomTex is a QUARTER-resolution target, and the composite used to magnify it 4x
+   * with a single bilinear fetch — which reconstructs as piecewise-linear patches that
+   * kink every 4 screen pixels, i.e. visible stair-steps along any bright curved edge.
+   * The composite now runs the same 3x3 tent the upsample chain uses, so it needs that
+   * target's texel size. Computed from the live texture rather than from the window,
+   * so a resize or a quality tier that changes the bloom resolution cannot desync it. */
+  if (bloomTexelLoc >= 0 && bloomTex.texture.width > 0 && bloomTex.texture.height > 0) {
+    float bloomTexel[2] = {1.0f / (float)bloomTex.texture.width,
+                           1.0f / (float)bloomTex.texture.height};
+    SetShaderValue(compositeShader, bloomTexelLoc, bloomTexel, SHADER_UNIFORM_VEC2);
+  }
 
   // G5 — LUT. The texture is bound unconditionally: leaving a sampler unbound
   // while its branch is merely disabled is how you get a driver-dependent

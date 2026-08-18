@@ -249,6 +249,28 @@ int main(void)
     failed += Require(down, "vec4(roundCol, 1.0)",
                       "the downsample writes unblended, so its alpha stays 1.0");
 
+    /* THE FINAL UPSAMPLE IS PART OF THE PYRAMID. bloomTex is a QUARTER-resolution
+     * target, so compositing it with a single bilinear fetch magnifies it 4x, and
+     * bilinear magnification of a buffer that carries real detail reconstructs as
+     * piecewise-linear patches with a kink every 4 screen pixels — visible stair-steps
+     * along any bright curved silhouette. It stayed invisible for as long as
+     * `bloom_scatter` was pinned at 1.0, because a collapsed pyramid leaves bloomTex
+     * holding nothing but smooth low frequencies and there is no detail to alias.
+     * So the composite runs the same tent the chain uses, and needs that target's
+     * texel size to do it. */
+    char *composite = ReadFile("core/shaders/post_process.fs");
+    failed += Require(composite, "uniform vec2 u_bloomTexel",
+                      "the composite must know the bloom target's texel size");
+    failed += Require(composite, "bloomSum / 16.0",
+                      "the composite must reconstruct the quarter-res bloom with a tent");
+    failed += Reject(composite, "texture(u_bloomTex, uv).rgb * u_bloomIntensity",
+                     "a single bilinear fetch magnifies a quarter-res target into blocks");
+    failed += Require(postFx, "bloomTexelLoc",
+                      "post FX must push the bloom texel size into the composite");
+    failed += Require(postFx, "1.0f / (float)bloomTex.texture.width",
+                      "the texel size comes from the live target, not the window size");
+    free(composite);
+
     free(postFx); free(postFxH); free(bright); free(down); free(up);
     if (failed != 0) {
         puts("bloom pyramid contract: FAIL");

@@ -5,6 +5,8 @@ in vec4 fragColor;
 
 uniform sampler2D texture0;   
 uniform sampler2D u_bloomTex; 
+// Texel size of u_bloomTex (a QUARTER-resolution target), for the tent below.
+uniform vec2 u_bloomTexel;
 
 // Cấu hình
 uniform float u_bloomEnabled;
@@ -186,7 +188,28 @@ void main() {
 
     // 2. Bloom
     if (u_bloomEnabled > 0.5) {
-        sceneCol.rgb += (texture(u_bloomTex, uv).rgb * u_bloomIntensity);
+        // TENT, NOT ONE TAP. u_bloomTex is a QUARTER-resolution target, so a single
+        // bilinear fetch magnifies it 4x — and bilinear magnification of a buffer that
+        // carries real detail reconstructs as piecewise-linear patches with a kink every
+        // 4 pixels. Along a bright curved silhouette those kinks read as stair-steps:
+        // the "hạt hạt pixel" report. It only surfaced once bloom_scatter went back to
+        // 0.65: at 1.0 the pyramid collapsed to its coarsest mip, so bloomTex held
+        // nothing but smooth low frequencies and there was no detail to alias.
+        //
+        // The same 3x3 tent the upsample chain already uses (bloom_upsample.fs) is the
+        // standard final-upsample filter for exactly this reason. Eight extra taps in one
+        // fullscreen pass, no new render targets, and the halo's total energy is
+        // unchanged because the kernel is normalised.
+        vec3 bloomSum = texture(u_bloomTex, uv + vec2(-1.0,  1.0) * u_bloomTexel).rgb * 1.0
+                      + texture(u_bloomTex, uv + vec2( 0.0,  1.0) * u_bloomTexel).rgb * 2.0
+                      + texture(u_bloomTex, uv + vec2( 1.0,  1.0) * u_bloomTexel).rgb * 1.0
+                      + texture(u_bloomTex, uv + vec2(-1.0,  0.0) * u_bloomTexel).rgb * 2.0
+                      + texture(u_bloomTex, uv                                  ).rgb * 4.0
+                      + texture(u_bloomTex, uv + vec2( 1.0,  0.0) * u_bloomTexel).rgb * 2.0
+                      + texture(u_bloomTex, uv + vec2(-1.0, -1.0) * u_bloomTexel).rgb * 1.0
+                      + texture(u_bloomTex, uv + vec2( 0.0, -1.0) * u_bloomTexel).rgb * 2.0
+                      + texture(u_bloomTex, uv + vec2( 1.0, -1.0) * u_bloomTexel).rgb * 1.0;
+        sceneCol.rgb += (bloomSum / 16.0) * u_bloomIntensity;
     }
 
     // 2b. Tone mapping
